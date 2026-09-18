@@ -1,0 +1,210 @@
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { mergeRefsToPrompt } from './merge-refs'
+
+describe('mergeRefsToPrompt skip', () => {
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('returns localPrompt only when no sources', async () => {
+    const result = await mergeRefsToPrompt({
+      sources: [],
+      localPrompt: 'hello',
+      downstreamType: 'text',
+    })
+    expect(result).toEqual({ mergedText: 'hello', skippedMerge: true })
+  })
+
+  it('returns single ref text when no localPrompt', async () => {
+    const result = await mergeRefsToPrompt({
+      sources: [{ refKey: 'T1', label: '剧本', text: 'content' }],
+      downstreamType: 'image',
+    })
+    expect(result).toEqual({ mergedText: 'content', skippedMerge: true })
+  })
+
+  it('skips merge when only whitespace localPrompt', async () => {
+    const result = await mergeRefsToPrompt({
+      sources: [{ refKey: 'T1', label: '剧本', text: 'only' }],
+      localPrompt: '   ',
+      downstreamType: 'text',
+    })
+    expect(result).toEqual({ mergedText: 'only', skippedMerge: true })
+  })
+})
+
+describe('mergeRefsToPrompt fallback concat', () => {
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('concatenates with refKey labels when no apiKey', async () => {
+    const result = await mergeRefsToPrompt({
+      sources: [{ refKey: 'T1', label: '剧本', text: 'A' }],
+      localPrompt: 'B',
+      downstreamType: 'text',
+    })
+    expect(result.skippedMerge).toBe(false)
+    expect(result.mergedText).toContain('【T1·剧本】')
+    expect(result.mergedText).toContain('A')
+    expect(result.mergedText).toContain('【local·本节点】')
+    expect(result.mergedText).toContain('B')
+  })
+})
+
+describe('mergeRefsToPrompt LLM merge', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('calls chat API when apiKey provided and multiple sources', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'merged result' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await mergeRefsToPrompt({
+      sources: [{ refKey: 'T1', label: 'L1', text: 'A' }],
+      localPrompt: 'B',
+      downstreamType: 'video',
+      apiKey: 'test-key',
+    })
+
+    expect(result).toEqual({ mergedText: 'merged result', skippedMerge: false })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(init.body as string) as { temperature: number; messages: unknown[] }
+    expect(body.temperature).toBe(0.3)
+    expect(body.messages.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('falls back to concat when API returns !ok', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden',
+    }))
+    const result = await mergeRefsToPrompt({
+      sources: [
+        { refKey: 'T1', label: 'A', text: 'one' },
+        { refKey: 'T2', label: 'B', text: 'two' },
+      ],
+      downstreamType: 'text',
+      apiKey: 'test-key',
+    })
+    expect(result.skippedMerge).toBe(false)
+    expect(result.mergedText).toContain('【T1·A】')
+    expect(result.mergedText).toContain('one')
+    expect(result.mergedText).toContain('【T2·B】')
+    expect(result.mergedText).toContain('two')
+  })
+
+  it('falls back to concat when fetch rejects or content is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
+    const rejected = await mergeRefsToPrompt({
+      sources: [
+        { refKey: 'T1', label: 'A', text: 'one' },
+        { refKey: 'T2', label: 'B', text: 'two' },
+      ],
+      downstreamType: 'video',
+      apiKey: 'test-key',
+    })
+    expect(rejected.mergedText).toContain('【T1·A】')
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '   ' } }] }),
+    }))
+    const empty = await mergeRefsToPrompt({
+      sources: [
+        { refKey: 'T1', label: 'A', text: 'one' },
+        { refKey: 'T2', label: 'B', text: 'two' },
+      ],
+      downstreamType: 'video',
+      apiKey: 'test-key',
+    })
+    expect(empty.mergedText).toContain('【T2·B】')
+  })
+
+  it('includes imageRefs role guidance for video downstream', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'merged result' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mergeRefsToPrompt({
+      sources: [{ refKey: 'T1', label: '镜头', text: '主角奔跑' }],
+      localPrompt: '城市夜景',
+      downstreamType: 'video',
+      imageRefs: [
+        { refKey: 'I1', label: '主角' },
+        { refKey: 'I2', label: '场景' },
+      ],
+      apiKey: 'test-key',
+    })
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(init.body as string) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const system = body.messages.find((m) => m.role === 'system')?.content ?? ''
+    const user = body.messages.find((m) => m.role === 'user')?.content ?? ''
+    expect(system).toContain('I1、I2')
+    expect(system).toContain('第一张为主参考')
+    expect(system).toContain('参考图 In')
+    expect(user).toContain('【参考图（按传入顺序）】')
+    expect(user).toContain('第1张参考图 I1（主角）')
+    expect(user).toContain('第2张参考图 I2（场景）')
+    expect(user).toContain('明确各参考图角色')
+  })
+
+  it('includes mentionedKeys in LLM system and user messages', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'merged result' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mergeRefsToPrompt({
+      sources: [{ refKey: 'T1', label: 'L1', text: 'A' }],
+      localPrompt: 'B',
+      downstreamType: 'video',
+      mentionedKeys: ['T1', 'I2'],
+      apiKey: 'test-key',
+    })
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(init.body as string) as {
+      messages: Array<{ role: string; content: string }>
+    }
+    const system = body.messages.find((m) => m.role === 'system')?.content ?? ''
+    const user = body.messages.find((m) => m.role === 'user')?.content ?? ''
+    expect(system).toContain('T1、I2')
+    expect(user).toContain('【优先参考】')
+    expect(user).toContain('T1、I2')
+  })
+
+  it('passes model and disables deepseek thinking on merge', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'merged' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mergeRefsToPrompt({
+      sources: [{ refKey: 'T1', label: 'L1', text: 'A' }],
+      localPrompt: 'B',
+      downstreamType: 'text',
+      apiKey: 'test-key',
+      model: 'deepseek-v4-pro',
+    })
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.model).toBe('deepseek-v4-pro')
+    expect(body.thinking).toEqual({ type: 'disabled' })
+  })
+})

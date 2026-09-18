@@ -1,0 +1,908 @@
+# Dock Studio 端到端业务打通 — 开发跟踪文档
+
+> **对标参考**：[NeoWOW Workflow](https://neowow.cn/workflow?sessionId=2074796563114016768)  
+> **UI 调研**：[NEOWOW_CANVAS_UI_RESEARCH.md](./NEOWOW_CANVAS_UI_RESEARCH.md)（§4.2 BottomToolbarWrapper / NodePanel）  
+> **创建日期**：2026-07-13  
+> **最后更新**：2026-09-16（A1 STS+Upscale 收口：Explore `upscale_image`；Tracking 过期 OSS/upscale 文案对齐 #293/#295）
+
+---
+
+## 零、完成情况审计（2026-07-16）
+
+### 0.1 总体进度
+
+| 阶段 | 完成度 | 说明 |
+|------|--------|------|
+| **Phase 0** 基础架构 | **100%** | P0-1 ~ P0-6 全部完成 |
+| **Phase 1** 核心生成节点 | **~94%** | text/image/video/audio/shot 主链路完成；T-5/I-6/V-6 待补；I-7 upscale ✅ |
+| **Phase 2** 输入与编排 | **~90%** | mediaInput ✅；sceneComposer D-1~D-4 ✅（API 手测）；videoComposition C-1~C-4 ✅（export 生产）；worldModel 未开始 |
+| **Phase 3** Dock UX | **~88%** | UX-1~UX-5 ✅；UX-6 Capabilities **部分**（`useCapabilities` + `UniversalModelSelector` 已接，未全量替换硬编码） |
+| **Phase 4** 后端补齐 | **~83%** | B-1/B-2/B-3/B-4/B-6 ✅；B-5 lip-sync 未开始 |
+| **里程碑 M1/M2** | **已完成** | 代码落地；**真实 AI 生成**待生产 API Key |
+| **里程碑 M3** | **~90%** | 编排 + export 生产 API ✅；sceneComposer/shot **浏览器 UI** 待验 |
+| **里程碑 M4** | **进行中** | OSS STS + upscale ✅；lip-sync / worldModel 未开始 |
+| **浏览器 E2E 手测** | **🟡 部分** | 2026-07-14 Dock 壳层 ✅；2026-07-16 export/sceneComposer **API** ✅；UI 闭环 ☐（见 §0.5） |
+
+### 0.4 生产环境 E2E 手测记录（2026-07-14）
+
+**环境**：https://lnkpi-web.vercel.app · API 经 `api/proxy` → CVM `119.29.173.89:5100`
+
+| 项 | 结果 | 说明 |
+|----|------|------|
+| 登录（验证码 123456） | ✅ | ~2s 完成，Header 显示积分/昵称，固定码提示可见 |
+| 创建画布 | ✅ | 跳转 `/workflow/{canvasId}` |
+| text 节点 + Dock | ✅ | 添加、选中、Dock 弹出；prompt 写回节点预览 |
+| image 节点 + Dock | ✅ | 模型/比例/生成按钮正常 |
+| video 节点 + Dock | ✅ | 文生视频/图生视频切换、模型/时长 |
+| audio 节点 + Dock | ✅ | 音色/语速、生成音频 |
+| mediaInput 节点 + Dock | ✅ | 素材名称、上传/替换 |
+| shot 分镜节点 | ☐ 待补 | 添加菜单与 Dock 层叠，自动化未点选；代码已就绪 |
+| 各节点「生成」闭环 | ☐ 待补 | 需生产配置模型 API Key 后再跑完整生成 |
+| 刷新持久化 | ☐ 待补 | 画布页可加载；节点参数刷新后需人工再验 |
+
+### 0.4b 生产环境 E2E 手测记录（2026-07-16）
+
+**环境**：https://lnkpi-web.vercel.app · API → CVM `119.29.173.89:5100` · 镜像 `lnkpi-api:396175a`
+
+| 项 | 结果 | 说明 |
+|----|------|------|
+| Deploy PR #11 | 🟡 | CVM 部署成功；GHA Wait 步骤 failure（MOTD 污染 status） |
+| Deploy PR #12 | ✅ | Recover/Sync/Build/Wait/Verify 全绿 |
+| `API_PUBLIC_URL` | ✅ | 容器 env 为公网 IP，export 不再返回 127.0.0.1 |
+| sceneComposer save | ✅ | curl `POST scene-composer/save` code=0 |
+| sceneComposer batch-generate | ✅ | 返回 materialId（占位/RuleBased 图） |
+| videoComposition export | ✅ | 公网 MP4 URL，HTTP 200 |
+| sceneComposer 展开子图 UI | ☐ | 代码 D-4 已落地，浏览器未验 |
+| videoComposition「导出合成」UI | ☐ | API 已验，Dock 按钮浏览器未验 |
+
+**一键 API 回归**：`scripts/p0-production-e2e.sh`（见 §0.5）
+
+### 0.5 P0 生产手测清单（人工 + 脚本）
+
+#### 自动化（API）
+
+```bash
+# 默认打 Vercel 生产；本地 API 可设 BASE_URL=http://127.0.0.1:5100/api
+./scripts/p0-production-e2e.sh
+```
+
+| # | 检查项 | 脚本覆盖 |
+|---|--------|---------|
+| A1 | 登录 | ✅ |
+| A2 | 创建画布 | ✅ |
+| A3 | sceneComposer save | ✅ |
+| A4 | sceneComposer batch-generate | ✅ |
+| A5 | videoComposition export + MP4 HEAD | ✅ |
+| A6 | health | ✅ |
+
+#### 浏览器 UI（约 15 分钟，需登录 13800138000 / 123456）
+
+| # | 步骤 | 预期 | 通过 |
+|---|------|------|------|
+| U1 | 创建画布 → 添加 **text** → Dock 改 prompt → 生成 | 状态 generating→completed，节点有文案 | ☐ |
+| U2 | text 连线 **video** → 选中 video → I2V 参考图带入 | Dock 见上游 prompt/参考图 | ☐ |
+| U3 | 添加 **shot** → 生成 | 子 image/video 节点或封面更新 | ☐ |
+| U4 | 添加 **导演台** → 编辑场景/镜头 → **保存编排** | 无报错，刷新后仍在 | ☐ |
+| U5 | 导演台 → **展开子图** | 画布出现 shot/image/video 子节点 | ☐ |
+| U6 | 导演台 → **批量生成素材** | 分镜 entering generating，轮询后 preview | ☐ |
+| U7 | video/audio 连线 **视频合成** → **导出合成** | Dock 出现 MP4 链接，可播放 | ☐ |
+| U8 | 改 Dock 参数 → F5 刷新 | node.data 与保存前一致 | ☐ |
+
+**阻塞真实生成**：CVM `.env` 配置 `OPENAI_API_KEY`（及视频 provider）；未配置时走 RuleBased/占位图，链路仍可验状态机。
+
+**登录修复摘要**：Vercel 外链 rewrite 跨境超时（~31s 502）→ 改为 `apps/web/api/proxy.ts` Serverless 代理（3 次重试）+ 客户端 auth retry。
+
+### 0.2 节点 E2E 矩阵（审计后）
+
+| 节点 | Dock | 生成 E2E | 状态 | 待办 |
+|------|------|----------|------|------|
+| text | ✅ | ✅ | **已完成** | T-5 txt 拖入验收 |
+| image | ✅ | ✅ | **已完成** | I-6 编辑器联动；I-7 upscale ✅ |
+| video | ✅ | ✅ | **已完成** | V-6 多选批量一致 |
+| audio | ✅ | ✅ | **已完成** | — |
+| shot | ✅ | ✅ | **代码完成** | 生产 UI 手测（§0.5 U3） |
+| mediaInput | ✅ | 🟡 | **基本完成** | M-3 升级 OSS STS |
+| sceneComposer | ✅ | 🟡 | **D-1~D-4 已落地** | 浏览器 UI：展开子图 / 批量生成（§0.5 U4–U6） |
+| videoComposition | ✅ | 🟢 | **C-1~C-4 已落地** | — |
+| worldModel | ❌ | ❌ | **未开始** | W-1~W-3 |
+| prompt | 🟡 Legacy | ⚠️ | **待定** | 是否合并进 text |
+
+### 0.3 建议下一 Sprint（主线开发）
+
+1. ~~**P0 生产验收**~~：✅ 2026-07-14 已完成登录 + 5 节点 Dock 手测
+2. ~~**P1 sceneComposer**（D-1~D-4）~~ ✅ 2026-07-14 代码落地
+3. ~~**生产手测** videoComposition export~~ ✅ 2026-07-16 API；UI 见 §0.5 U7
+4. **P0 浏览器 UI**：§0.5 U1–U8 + 配置生产 AI Key
+5. **P1 polish**：I-6、UX-6 全量 Capabilities
+6. **P2** worldModel / lip-sync
+
+---
+
+## 文档目录
+
+| # | 章节 | 用途 |
+|---|------|------|
+| 一 | NeoWOW Dock Studio 设计原则 | 架构对齐基准 |
+| 二 | 当前实现 vs 目标（节点矩阵） | 差距盘点 |
+| 三 | 目标架构 | 落地目录与分层 |
+| 四 | 分阶段开发任务拆解 | 可勾选任务清单 |
+| 五 | 推荐实施顺序（里程碑） | 排期与演示节点 |
+| 六 | 单节点 E2E 测试清单 | 验收标准模板 |
+| 七 | 建议优先开工的 3 个 Sprint | 近期排期 |
+| 八 | C2 Canvas 旁路 adapter 验收 | C2 实现状态与手测清单 |
+| 九 | C2.1 Canvas T*/I* refs 验收 | C2.1 实现状态与手测清单 |
+| 十 | BYOK 自定义网关验收 | 渠道加密 / 四 Tab / fallback_pending |
+
+---
+
+## 一、NeoWOW Dock Studio 设计原则（对标基准）
+
+```
+选中单个节点 → BottomToolbarWrapper 出现
+├── 节点卡片：只负责预览 / 状态 / 连线
+└── Dock Studio：负责编辑 + 生成
+    ├── 通用：MentionInput、语音输入、生成按钮
+    └── 按类型：模型 / 比例 / 时长 / 音色 / 参考图 …
+```
+
+### 1.1 核心交互模型
+
+| 原则 | 说明 |
+|------|------|
+| **选中即编辑** | 单击选中单个节点 → 底部 Dock 弹出，展示该节点类型专属参数面板 |
+| **节点 vs Dock 分工** | 画布节点 = 预览 + 连线端点 + 状态角标；Dock = 全部编辑与生成操作 |
+| **实时同步** | Dock 内编辑 → debounce 后 `patch` 回 `node.data` → 持久化到 canvas |
+| **生成闭环** | 点「生成」→ 登录/额度校验 → `generating` 态 → API → 轮询/回调 → 更新节点预览 → `saveCanvas` |
+| **Agent 分工** | Agent 浮动窗改画布结构（增删节点/连线）；Dock 管单节点参数与生成，互不抢 UI |
+
+### 1.2 数据流（目标态）
+
+```
+用户选中节点
+    ↓
+DockStudioShell 显示（按 node.type 路由到对应 Panel）
+    ↓
+用户编辑 prompt / 模型 / 比例 / 参考图 …
+    ↓
+debounce patch → node.data（Vue Flow store）
+    ↓
+用户点击「生成」
+    ↓
+useNodeGeneration → studioApi / canvasApi
+    ↓
+generating → polling / webhook
+    ↓
+completed → 写回 url / content / coverUrl
+    ↓
+节点预览更新 + saveCanvas
+```
+
+### 1.3 关键代码路径（当前）
+
+| 路径 | 职责 |
+|------|------|
+| `apps/web/src/pages/CanvasPage.vue` | `editorNode`、`handleNodeGenerate`、Dock 显隐 |
+| `apps/web/src/components/canvas/DockStudioToolbar.vue` | Dock 外壳 |
+| `apps/web/src/components/canvas/NodeEditorToolbar.vue` | 当前单文件聚合编辑器（待拆分） |
+| `apps/web/src/composables/useSelectedNodeEditor.ts` | 选中节点与 Dock 数据绑定 |
+| `apps/web/src/services/studio-api.ts` | text/image/video/audio 生成 |
+| `apps/web/src/services/canvas-api.ts` | shot/material、optimize-prompt |
+| `apps/server/src/canvas/canvas.controller.ts` | Canvas REST |
+| `apps/server/src/canvas/material.service.ts` | 素材与图像任务 |
+
+---
+
+## 二、当前实现 vs 目标（节点矩阵）
+
+> **图例**：✅ 完成 · 🟡 部分 · 🔴 缺失 · — 不适用  
+> **状态列**：`未开始` / `进行中` / `已完成` / `阻塞` — 迭代时手动更新
+
+| 节点 type | Dock 是否出现 | Dock 能力完整度 | 生成 E2E | 上游连线消费 | 主要缺口 | 状态 |
+|-----------|--------------|----------------|----------|-------------|---------|------|
+| **text** | ✅ | 🟢 85% | ✅ studio | ✅ 出边供下游消费 | TextDockPanel 已拆 | 已完成 |
+| **image** | ✅ | 🟢 90% | ✅ 统一 composable | ✅ 入边 text/image 预填 | upscale ✅（fal Real-ESRGAN）；比例仅存 metadata | 已完成 |
+| **video** | ✅ | 🟢 80% | ✅ 异步轮询 | ✅ I2V + 入边参考图 | crop 已 UI 未传 provider | 已完成 |
+| **audio** | ✅ | 🟢 80% | ✅ voice+settings | ✅ 入边 text 预填 | 情感/语速存 metadata | 已完成 |
+| **shot（分镜）** | ✅ | 🟢 85% | ✅ canvas | ✅ 入边 text + shotGenerateMode | ShotDockPanel 已拆 | 已完成 |
+| **sceneComposer** | ✅ | 🟢 85% | ✅ save/batch/expand | ✅ 可接 text synopsis | 浏览器 UI 闭环待验；批量生成依赖 API Key | D-1~D-4 完成 |
+| **mediaInput** | ✅ | 🟢 85% | ✅ 登录走 `uploadApi`（COS 预签名 PUT / 本地兜底） | ✅ | 预览+转节点已完成；A1 直传已收口 | 已完成 |
+| **videoComposition** | ✅ | 🟢 85% | ✅ export | ✅ 入边 video/audio/mediaInput | ✅ 生产 export 2026-07-16 | C-1~C-4 完成 |
+| **worldModel** | ❌ | — | ❌ | ❌ | **无 Dock、无 3D API** | 未开始 |
+| **prompt** | ✅ | 🟡 50% | ⚠️ 与 text 混用 | ❌ | Legacy 面板，是否合并进 text 待产品定稿 | 未开始 |
+| **group** | — | — | — | — | 容器节点，不需要 Dock | — |
+
+### 2.1 架构层共性缺口（所有节点受益）
+
+| # | 缺口 | 影响 | 状态 |
+|---|------|------|------|
+| G-1 | `NodeEditorToolbar.vue` 单文件承载全部类型 | 主类型已拆 Panel；Legacy 仅 **prompt** | 基本完成 |
+| G-2 | `handleNodeGenerate` 在 `CanvasPage.vue` 600+ 行，缺 `useNodeGeneration` | 已迁出至 composable | 已完成 |
+| G-3 | 上游图解析未标准化（连线 text/image → prompt/refImage） | `useUpstreamNodeContext` 已实现 | 已完成 |
+| G-4 | 视频/分镜异步轮询不统一（shot 有 polling，studio video 无） | `useGenerationPolling` + B-6 部分提前 | 已完成 |
+| G-5 | lip-sync 未接；OSS 直传 / upscale / capabilities 已落地 | 口型同步仍缺 | lip-sync 未开始；STS+upscale ✅ |
+
+### 2.2 未接线 / 重复组件
+
+| 组件 | 说明 | 处置建议 | 状态 |
+|------|------|---------|------|
+| `BottomNodeToolbar.vue` | 与 `NodeEditorToolbar` 重复 | 已删除，统一 Dock Studio | 已完成 |
+| `NodeEditorToolbarOverlay.vue` | 未接入主流程 | 评估删除或合并 | 未开始 |
+| `ImageNodeToolbar` / `VoiceSynthesisPanel` 等 | 调研文档提及，未实现 | Phase 0 拆分实现 | 未开始 |
+
+### 2.3 API 对照（调研 §7）
+
+| API | lnkpi 现状 | 阻塞节点 | 状态 |
+|-----|-----------|---------|------|
+| canvas CRUD + shot/material | ✅ | shot, image | 已完成 |
+| `optimize-prompt` | ✅ Dock 内 Text/Shot 已接 | shot, text | 已完成 |
+| `material/upscale` | ✅ `POST .../upscale-image`（fal Real-ESRGAN） | image | 已完成 |
+| `material/lip-sync` | ❌ | video（可选） | 未开始 |
+| OSS upload / STS | Presigned PUT 直传（COS 就绪时）+ 本地 `POST /api/upload` 兜底 | mediaInput | 直传 Presigned PUT 已做 / 本地兜底 |
+| `capabilities/list` → UniversalModelSelector | 🟡 部分对接（`useCapabilities` 已接，fallback 硬编码） | 全部生成节点 | 进行中 |
+| `GET /studio/generations/:id` | ✅（Sprint A 提前落地，原 B-6） | video 轮询 | 已完成 |
+
+---
+
+## 三、目标架构（建议落地形态）
+
+### 3.1 目录结构（Sprint A 已落地）
+
+```
+apps/web/src/components/canvas/
+├── DockStudioToolbar.vue              # 外壳 + 动画
+├── dock-studio/
+│   ├── DockStudioRouter.vue           # 按 type 路由 Panel
+│   ├── shared/
+│   │   ├── DockPromptSection.vue
+│   │   ├── DockGenerateButton.vue
+│   │   └── DockToolbarShell.vue
+│   └── panels/
+│       ├── TextDockPanel.vue          # ✅ Sprint B
+│       ├── AudioDockPanel.vue         # ✅ Sprint B
+│       ├── ShotDockPanel.vue          # ✅ Sprint B
+│       └── LegacyDockPanel.vue        # sceneComposer / prompt
+apps/web/src/constants/dockStudio.ts   # EDITABLE + 状态机常量
+```
+
+> **偏差说明（Sprint B 更新）**：`DockOptimizePrompt.vue` 已创建；Legacy 面板仅保留 sceneComposer / prompt。
+
+### 3.2 Composables
+
+```
+apps/web/src/composables/
+├── useNodeGeneration.ts         # 统一 generate + 状态机（从 CanvasPage 迁出）
+├── useUpstreamNodeContext.ts    # 解析入边：text/image/video → prompt/refUrl
+└── useGenerationPolling.ts      # 统一轮询 studio + canvas 异步任务
+```
+
+### 3.3 注册表模式（可选增强）
+
+```typescript
+// dock-studio/registry.ts — 节点 type → Panel 组件 + generate handler
+interface DockStudioEntry {
+  type: string
+  panel: Component
+  editable: boolean
+  generate?: (ctx: GenerateContext) => Promise<void>
+}
+```
+
+### 3.4 EDITABLE_NODE_TYPES 目标策略
+
+| type | 进 Dock | 只读态条件 |
+|------|---------|-----------|
+| text, image, video, audio | ✅ | generating / uploading |
+| shot, sceneComposer | ✅ | generating |
+| mediaInput | ✅（新增） | uploading |
+| videoComposition, worldModel | ✅（Phase 2+） | generating |
+| prompt | 🟡 待合并 text | — |
+| group, comment | ❌ | — |
+
+---
+
+## 四、分阶段开发任务拆解
+
+> 每项任务格式：`- [ ] ID — 描述`  
+> 完成后改为 `- [x]` 并更新关联「状态」表。
+
+---
+
+### Phase 0 — 基础架构（P0，阻塞所有节点 E2E）
+
+| ID | 任务 | 产出 | 验收标准 | 状态 |
+|----|------|------|---------|------|
+| P0-1 | 抽离 `useNodeGeneration` | composable | 现有 text/image/video/shot 行为不退化 | 已完成 |
+| P0-2 | 抽离 `useUpstreamNodeContext` | 读入边工具 | 连线 text+image → video Dock 自动带出 | 已完成 |
+| P0-3 | Dock 组件拆分 | `dock-studio/panels/*` | image/video 独立 Panel + Router | 已完成 |
+| P0-4 | 统一节点状态机 | `NODE_GENERATION_STATUS` 常量 | 生成流统一使用常量 | 已完成 |
+| P0-5 | 统一轮询层 | `useGenerationPolling` | studio 异步 video 回写 url | 已完成 |
+| P0-6 | 扩展 `EDITABLE_NODE_TYPES` 策略 | `constants/dockStudio.ts` | 常量集中管理 | 已完成 |
+
+**Phase 0 勾选清单**
+
+- [x] P0-1 — 抽离 `useNodeGeneration`
+- [x] P0-2 — 抽离 `useUpstreamNodeContext`
+- [x] P0-3 — Dock 组件拆分为 `panels/*`（image/video + Legacy）
+- [x] P0-4 — 统一节点状态机
+- [x] P0-5 — 统一轮询层 `useGenerationPolling`
+- [x] P0-6 — 扩展 `EDITABLE_NODE_TYPES` 策略
+
+---
+
+### Phase 1 — 核心生成节点 E2E（P0）
+
+#### 1.1 文本节点 `text`
+
+| ID | 任务 | 依赖 | 状态 |
+|----|------|------|------|
+| T-1 | `TextDockPanel`：模型 + 多行脚本 + 字数统计 | P0-3 | 已完成 |
+| T-2 | 接入 `optimize-prompt`（Dock 内「优化」按钮） | canvasApi | 已完成 |
+| T-3 | 生成结果写回 `content`，节点内实时预览 | P0-1 | 已完成 |
+| T-4 | 作为上游：出边自动供 image/video/shot 消费 | P0-2 | 已完成 |
+| T-5 | 本地 txt 拖入 → text 节点 → Dock 可编辑（补验收） | — | 未开始 |
+
+**E2E 验收**：选 text → Dock 改 prompt → 生成 → 节点显示文案 → 连线到 video → video Dock 自动带 prompt。
+
+- [x] T-1 — TextDockPanel
+- [x] T-2 — optimize-prompt 接入
+- [x] T-3 — 生成写回 content
+- [x] T-4 — 上游 text 出边消费
+- [ ] T-5 — 本地 txt 拖入验收
+
+---
+
+#### 1.2 图片节点 `image`
+
+| ID | 任务 | 依赖 | 状态 |
+|----|------|------|------|
+| I-1 | `ImageDockPanel`：模型 + `ImageAspectSelector` + 参考图槽 | P0-3 | 已完成 |
+| I-2 | 读入边：左侧 text 节点 → 预填 prompt | P0-2 | 已完成 |
+| I-3 | 读入边：参考图 mediaInput/image → `referenceImageUrl` | P0-2 | 已完成 |
+| I-4 | 统一 generate 路径（去掉 shot/独立双轨分散） | P0-1 | 已完成 |
+| I-5 | 生成中 skeleton + 完成后节点预览 | P0-4 | 已完成 |
+| I-6 | 右键「编辑图像」→ AIImageEditor 与 Dock 数据同步 | — | 未开始 |
+| I-7 | 放大 `upscale`（可选） | 后端 B-2 | 已完成（浮层/右键；fal；新节点落点） |
+
+**E2E 验收**：text→image 连线 → 选 image → Dock 有 prompt+比例 → 生成 → 预览图 → 保存画布。
+
+- [x] I-1 — ImageDockPanel
+- [x] I-2 — 入边 text → prompt
+- [x] I-3 — 入边 image → referenceImageUrl
+- [x] I-4 — 统一 generate 路径
+- [x] I-5 — skeleton + 预览
+- [ ] I-6 — AIImageEditor 联动
+- [x] I-7 — upscale（可选）
+
+---
+
+#### 1.3 视频节点 `video`
+
+| ID | 任务 | 依赖 | 状态 |
+|----|------|------|------|
+| V-1 | `VideoDockPanel`：T2V / I2V 模式切换 | P0-3 | 已完成 |
+| V-2 | I2V：参考图来自连线或 Dock 上传 | P0-2, I-3 | 已完成 |
+| V-3 | `VideoSettingsSelector` 全量写回并传给 API | 已有组件 | 已完成 |
+| V-4 | 异步生成 + 轮询直到 `url` 就绪 | P0-5 | 已完成 |
+| V-5 | 节点内 `<video controls>` 播放 | 已有 UI | 已完成 |
+| V-6 | 多选 text+image→video 与 Dock 单节点生成行为一致 | — | 未开始 |
+
+**E2E 验收**：image+text 连线 video → Dock 显示 I2V → 生成 → 轮询 → 可播放。
+
+- [x] V-1 — VideoDockPanel T2V/I2V
+- [x] V-2 — I2V 参考图
+- [x] V-3 — VideoSettingsSelector 全量对接
+- [x] V-4 — 异步轮询
+- [x] V-5 — 节点内播放验收
+- [ ] V-6 — 批量与 Dock 行为一致
+
+---
+
+#### 1.4 音频节点 `audio`
+
+| ID | 任务 | 依赖 | 状态 |
+|----|------|------|------|
+| A-1 | `AudioDockPanel` + **VoiceModelSelector** | 新组件 | 已完成 |
+| A-2 | 情感/语速/语言控件 | AudioVoiceSettingsSelector | 已完成 |
+| A-3 | 文本来源：Dock 输入 or 连线 text 节点 | P0-2 | 已完成 |
+| A-4 | 生成后节点内 `<audio controls>` + Dock 可重生成 | P0-1 | 已完成 |
+| A-5 | 后端：audio generate 支持 voice/emotion/speed/language | B-3 | 已完成 |
+
+**E2E 验收**：选 audio → 选音色 → 输入旁白 → 生成 → 可播放。
+
+- [x] A-1 — VoiceModelSelector
+- [x] A-2 — 情感/语速/语言
+- [x] A-3 — 文本来源（Dock / 入边）
+- [x] A-4 — 播放 + 重生成
+- [x] A-5 — 后端 voice/emotion/speed/language
+
+---
+
+#### 1.5 分镜节点 `shot`
+
+| ID | 任务 | 依赖 | 状态 |
+|----|------|------|------|
+| S-1 | `ShotDockPanel`：标题 + prompt + 生成模式 | P0-3 | 已完成 |
+| S-2 | 接入 `canvasApi.createShot/editShot` 幂等 | 已有 | 已完成 |
+| S-3 | 生成策略：auto/image/video（`shotGenerateMode`） | 已有 | 已完成 |
+| S-4 | `useShotPolling` 与 Dock 状态同步 | 已有 | 已完成 |
+| S-5 | Dock 内「优化提示词」 | DockOptimizePrompt | 已完成 |
+| S-6 | 与 StoryboardDialog 双向同步 | handleStoryboardUpdated | 已完成 |
+
+**E2E 验收**：建 shot → Dock 写 prompt → 生成 → 子 image 节点出图 → shot 封面更新。
+
+- [x] S-1 — ShotDockPanel
+- [x] S-2 — createShot/editShot 幂等
+- [x] S-3 — 生成策略（shotGenerateMode）
+- [x] S-4 — polling 与 Dock 同步
+- [x] S-5 — optimize-prompt
+- [x] S-6 — StoryboardDialog 双向同步
+
+---
+
+### Phase 2 — 输入与编排节点（P1）
+
+#### 2.1 媒体输入 `mediaInput`
+
+| ID | 任务 | 状态 |
+|----|------|------|
+| M-1 | 加入 `EDITABLE_NODE_TYPES` | 已完成 |
+| M-2 | `MediaInputDockPanel`：预览 + 文件名 + 「转为 image/video 节点」 | 已完成 |
+| M-3 | OSS/STS 上传（替换 blob URL） | 已完成（`uploadApi`：COS 预签名 PUT / 本地 `POST /upload` 兜底） |
+| M-4 | 作为上游 ref 被 image/video 消费 | 已完成 |
+
+- [x] M-1 — EDITABLE 注册
+- [x] M-2 — MediaInputDockPanel
+- [x] M-3 — OSS 上传（`uploadApi` 直传 / 本地兜底，见附录 E）
+- [x] M-4 — 上游 ref 消费
+
+---
+
+#### 2.2 导演台 `sceneComposer`
+
+| ID | 任务 | 状态 |
+|----|------|------|
+| D-1 | `SceneComposerDockPanel`：场景列表 / 镜头脚本 / 预览图 | ✅ |
+| D-2 | 定义 `sceneComposer` 数据结构（scenes[], shots[]） | ✅ |
+| D-3 | 后端 API：编排保存 + 批量生成子素材（或 Agent tool） | ✅ |
+| D-4 | 一键展开为 shot + image/video 子图 | ✅ |
+
+- [x] D-1 — SceneComposerDockPanel
+- [x] D-2 — 数据结构定义（`@lnkpi/shared/sceneComposer`）
+- [x] D-3 — `POST scene-composer/save` + `batch-generate`
+- [x] D-4 — Dock「展开子图」→ shot + image/video 连线
+
+---
+
+#### 2.3 视频合成 `videoComposition`
+
+| ID | 任务 | 状态 |
+|----|------|------|
+| C-1 | 加入 EDITABLE + `VideoCompositionDockPanel` | ✅ |
+| C-2 | 读入边：收集所有 video/audio 轨 | ✅ |
+| C-3 | 简易时间轴预览（可复用 VideoEditorPage MVP） | ✅ |
+| C-4 | 后端：合成/export API（或 ffmpeg 任务） | ✅ |
+
+- [x] C-1 — VideoCompositionDockPanel
+- [x] C-2 — 入边轨收集 + trackOrder/时长持久化 + mediaInput 支持
+- [x] C-3 — CompositionTimelinePreview 时间轴 MVP
+- [x] C-4 — `POST video-composition/export` + ffmpeg 合成 + Dock 导出按钮
+
+---
+
+#### 2.4 3D World `worldModel`
+
+| ID | 任务 | 状态 |
+|----|------|------|
+| W-1 | Beta 标记 + 最小 Dock（prompt + 模型） | 未开始 |
+| W-2 | 对接 PlayCanvasView 预览 | 未开始 |
+| W-3 | 后端 world 生成 API（长期） | 未开始 |
+
+- [ ] W-1 — 最小 WorldModel Dock
+- [ ] W-2 — PlayCanvasView 预览
+- [ ] W-3 — world 生成 API
+
+---
+
+### Phase 3 — Dock 体验对齐 Neo（P1–P2）
+
+| ID | 任务 | 说明 | 状态 |
+|----|------|------|------|
+| UX-1 | Dock 实时 sync（debounce patch，不等点生成） | Neo 核心体验 | 已完成 |
+| UX-2 | 只读态：上传中/生成中禁用编辑 | `readonly-toolbar` | 已完成 |
+| UX-3 | `bottomToolbarScale` 设置项 | 调研文档 §4.1 | 已完成 |
+| UX-4 | 本地文件节点选中 → Dock 联动 | 拖入走 upload + mediaInput | 已完成 |
+| UX-5 | 取消 `BottomNodeToolbar.vue` 重复实现 | 与 DockStudio 合并 | 已完成 |
+| UX-6 | Capabilities API 驱动模型列表 | `UniversalModelSelector` 读 `/capabilities/list` | 未开始 |
+
+- [x] UX-1 — Dock 实时 sync
+- [x] UX-2 — 只读态
+- [x] UX-3 — bottomToolbarScale
+- [x] UX-4 — 本地文件 → Dock 联动
+- [x] UX-5 — 合并 BottomNodeToolbar
+- [ ] UX-6 — Capabilities API
+
+---
+
+### Phase 4 — 后端补齐（与前端并行）
+
+| ID | API | 服务节点 | 状态 |
+|----|-----|---------|------|
+| B-1 | `POST /agent/chat/optimize-prompt`（Dock 已接） | shot, text | 已完成 |
+| B-2 | `POST /agent/canvas/material/upscale-image` | image | 已完成（fal Real-ESRGAN；积分 image_upscale） |
+| B-3 | `POST /studio/audio/generate` 扩展 voice/emotion/speed/language | audio | 已完成 |
+| B-4 | OSS STS + `POST /upload` | mediaInput | 直传 Presigned PUT 已做 / 本地兜底 |
+| B-5 | `POST /agent/canvas/material/lip-sync` | video（可选） | 未开始 |
+| B-6 | video 异步 job status 查询 | video, shot | 已完成（`GET /studio/generations/:id`） |
+
+- [x] B-1 — optimize-prompt（经 chat API）
+- [x] B-2 — upscale-image
+- [x] B-3 — audio voice/emotion/speed/language
+- [x] B-4 — 直传 Presigned PUT 已做 / 本地兜底
+- [ ] B-5 — lip-sync（可选）
+- [x] B-6 — video job status（Sprint A 提前）
+
+---
+
+## 五、推荐实施顺序（里程碑）
+
+### 5.1 里程碑总览
+
+| 里程碑 | 范围 | 可演示能力 | 目标完成 | 状态 |
+|--------|------|-----------|---------|------|
+| **M1** | Phase 0 | 架构就绪，旧功能不退化 | 2026-07-13 | 已完成 |
+| **M2** | text/image/video/audio/shot | 5 类节点完整「选中→Dock→生成→预览」 | 2026-07-13 | 已完成（待浏览器验收） |
+| **M3** | mediaInput + sceneComposer + composition | 输入→生成→合成链路 | 2026-07-16 | ~90%（export API ✅；UI ☐） |
+| **M4** | UX + 后端补齐 | 对标 NeoWOW 会话级体验 | — | 未开始 |
+
+### 5.2 依赖关系（简图）
+
+```
+Phase 0 (P0-1~P0-6)
+    ├── Phase 1: text / image / video / audio / shot（可并行，依赖 P0）
+    ├── Phase 2: mediaInput / sceneComposer / videoComposition / worldModel
+    ├── Phase 3: UX polish（可与 Phase 1 后期并行）
+    └── Phase 4: 后端 API（与前端并行，部分阻塞 Dock 控件）
+```
+
+### 5.3 甘特参考（排期可调）
+
+| 阶段 | 内容 | 建议工期 |
+|------|------|---------|
+| M1 | P0 基础架构 | 1–2 周 |
+| M2a | text + image E2E | 1 周 |
+| M2b | video + audio E2E | 1 周 |
+| M2c | shot E2E | 5 天 |
+| M3 | mediaInput + composer + composition | 2–3 周 |
+| M4 | UX + 后端补齐 | 2 周 |
+
+---
+
+## 六、单节点 E2E 测试清单
+
+> **用法**：每完成一个节点类型，复制本清单并填写节点名，逐项勾选验收。
+
+### 6.1 通用验收步骤（每个节点重复）
+
+| # | 步骤 | 预期结果 | 通过 |
+|---|------|---------|------|
+| 1 | 添加节点 → 单击选中 | Dock 弹出，Panel 类型与节点 type 一致 | ☐ |
+| 2 | 修改 Dock 参数 | `node.data` 实时更新（或 debounce 后更新） | ☐ |
+| 3 | 刷新页面 | 参数持久化，与保存前一致 | ☐ |
+| 4 | 点「生成」（已登录） | 进入 `generating`，按钮/面板只读 | ☐ |
+| 5 | 生成成功 | 节点预览更新（图/文/音视频），状态 `completed` | ☐ |
+| 6 | 生成失败 | 错误信息展示，可修改参数重试 | ☐ |
+| 7 | 上游连线（如适用） | Dock 自动带入 prompt / 参考图 / 文本 | ☐ |
+| 8 | 取消选中 / 点空白 | Dock 关闭 | ☐ |
+| 9 | 多选节点 | Dock 不显示或显示多选提示（与 Neo 一致） | ☐ |
+| 10 | `pnpm build` | 无 TS/构建错误 | ☐ |
+
+### 6.2 分节点专项验收
+
+| 节点 | 专项验收点 | 通过 |
+|------|-----------|------|
+| **text** | 生成文案在节点内可读；连线到 video 后 prompt 带入 | ✅ Dock/参数（生成待 API Key） |
+| **image** | 比例/模型生效；参考图来自入边或 Dock 上传；生成图可预览 | ✅ Dock/参数（生成待 API Key） |
+| **video** | T2V/I2V 切换；I2V 参考图正确；轮询完成后可播放 | ✅ Dock/T2V·I2V（生成待 API Key） |
+| **audio** | 音色可选；生成后可 `<audio>` 播放 | ✅ Dock/音色（生成待 API Key） |
+| **shot** | 生成后子节点创建/更新；封面与 polling 同步 | ☐ §0.5 U3 |
+| **mediaInput** | 预览正确；可转 image/video；OSS url 非 blob | ✅ Dock/上传入口 |
+| **sceneComposer** | 场景列表编辑；展开子图 | ✅ API 手测 2026-07-16（save + batch-generate） |
+| **videoComposition** | 入边轨收集 + 轨排序/时长持久化；时间轴预览；export MP4 | ✅ 生产 export（curl 2026-07-16） |
+
+### 6.3 回归清单（每次大改 Dock 后跑）
+
+- [ ] 画布：空白添加节点、连线、框选、打组、Delete 仍正常
+- [ ] 媒体拖放/粘贴 → 建节点 → 选中 Dock 联动
+- [ ] Agent 浮动窗与 Dock 不互相遮挡关键控件
+- [ ] 未登录点生成 → 正确提示登录
+
+### 6.4 节点数据贯通 RefChip 验收（2026-07-18）
+
+> 规格：`docs/superpowers/specs/2026-07-18-node-data-flow-refs-design.md`  
+> 代码验收报告：`.superpowers/sdd/task-10-report.md`  
+> **图例**：✅ 代码已验 · 🟡 待浏览器手测
+
+| # | 场景 | 期望 | 代码 | 手测 |
+|---|------|------|------|------|
+| R1 | 多 text → image | 单行 T1/T2；生成 body 含 refs；出图用合并文案 | ✅ | ☐ |
+| R2 | 多 image → image/video | I1/I2 皆在 refs；主图 I1 | ✅ | ☐ |
+| R3 | prompt.content → image | 注入长文非短 prompt | ✅ | ☐ |
+| R4 | × 芯片 | edge 删除 / localRefs 移除 | ✅ | ☐ |
+| R5 | 资产拖入 | 出现 upload/asset 芯片 | ✅ | ☐ |
+| R6 | prompt 上游长文 | 不进 prompt 生成；空框可预填 | ✅ | ☐ |
+| R7 | 图 → text | 电商方案类长文；扣 5 点 | ✅ | ☐ |
+| R8 | 音频 + 图片芯片 | 只展示不报错 | ✅ | ☐ |
+| R9 | 仅改上游 content | 下游芯片更新；不自动重生成 | ✅ | ☐ |
+| R10 | @T1 / @I2 提及 | 生成时优先 mentionedKeys | ✅ | ☐ |
+
+**构建/单测**：`pnpm build` ✅ · `pnpm --filter @lnkpi/agent test` 23 passed ✅
+
+---
+
+## 七、建议优先开工的 3 个 Sprint
+
+### Sprint A — 架构 + 图片/视频（建议第 1 周）
+
+**目标**：M1 完成 + image/video 核心 E2E 可演示
+
+| 任务 ID | 内容 |
+|---------|------|
+| P0-1 ~ P0-5 | 基础 composable + Dock 拆分 + 轮询 |
+| I-1 ~ I-5 | ImageDockPanel 完整链路 |
+| V-1 ~ V-4 | VideoDockPanel + I2V + 轮询 |
+
+**Sprint A 完成定义**
+
+- [x] `useNodeGeneration` 从 CanvasPage 迁出，build 通过
+- [x] image：text 入边 → prompt，生成 → 预览
+- [x] video：I2V 参考图 + 异步轮询 → 可播放
+- [x] 浏览器 E2E 手测验收（2026-07-14 生产 P0：登录 + Dock）
+
+---
+
+## 附录 C：Sprint A 实现偏差记录
+
+| 项 | 原规划 | 实际实现 | 后续 |
+|----|--------|---------|------|
+| Dock 壳层 | `DockStudioShell.vue` | 动画保留在 `DockStudioToolbar.vue` | 可选抽取 |
+| 非 image/video 节点 | 各自 Panel | `LegacyDockPanel` → `NodeEditorToolbar` | Sprint B 拆分 |
+| 图片比例 | 传给 image provider | 仅存 `metadata.aspectRatio` + API DTO | 待 provider 支持 |
+| 参考图上传 | OSS | `uploadApi`：COS 预签名 PUT（就绪时）+ 本地 `POST /upload` 兜底 | A1 #293 已收口 |
+| Dock 只读态 | generating 禁用编辑 | `dockReadonly` + `is-dock-readonly` CSS | — |
+| B-6 轮询 API | Phase 4 | Sprint A 提前实现 `GET /studio/generations/:id` | — |
+| 单测 | P0-1 含单测骨架 | 未加单测（build 验收通过） | 按需补 |
+
+## 附录 D：Sprint B 实现偏差记录
+
+| 项 | 原规划 | 实际实现 | 后续 |
+|----|--------|---------|------|
+| B-1 optimize API | `/agent/canvas/shot/optimize-prompt` | 复用已有 `/agent/chat/optimize-prompt` | 无需重复建 API |
+| DockOptimizePrompt prop | `style` | 改为 `optimizeStyle`（避免与 Vue style 冲突） | — |
+| 音频情感/语速 | 传入 TTS provider | 存 metadata；provider 仍只用 voice | provider 升级时读取 metadata |
+| Legacy Panel | 全部非 image/video | 仅 sceneComposer + prompt | — |
+| Shot 生成 | 子节点推断 | 增加 `shotGenerateMode`：auto/image/video | — |
+
+### Sprint B — 音频 + 分镜 + 上游图（建议第 2 周）
+
+**目标**：M2 五节点齐全
+
+| 任务 ID | 内容 |
+|---------|------|
+| A-1 ~ A-5 | AudioDockPanel + voice API |
+| S-1 ~ S-6 | ShotDockPanel + optimize + Storyboard 同步 |
+| P0-2 完善 | 上游图解析覆盖全部生成节点 |
+| T-1 ~ T-4 | text 链路补全 |
+
+**Sprint B 完成定义**
+
+- [x] audio：选音色 → 生成 → 播放
+- [x] shot：prompt → 子 image → 封面更新（逻辑已有 + shotGenerateMode）
+- [x] text→image→video 全链路上游自动带入
+- [ ] 浏览器 E2E 手测验收（待人工）
+
+---
+
+### Sprint C — 媒体输入 + Dock 体验（建议第 3 周）
+
+**目标**：M3 起步 + 体验对齐
+
+| 任务 ID | 内容 |
+|---------|------|
+| M-1 ~ M-4 | mediaInput Dock + OSS |
+| UX-1 ~ UX-4 | 实时 sync、只读态、本地文件 Dock |
+| B-1, B-3, B-4 | optimize-prompt、audio voice、OSS |
+
+**Sprint C 完成定义**
+
+- [x] mediaInput 选中出现 Dock，上传持久化 URL（登录走 API，未登录 blob）
+- [x] Dock 编辑 debounce 写回 node.data
+- [x] optimize-prompt 在 shot/text Dock 可用（Sprint B 已接）
+- [ ] 浏览器 E2E 手测验收（待人工）
+
+---
+
+## 附录 E：Sprint C 实现偏差记录
+
+| 项 | 原规划 | 实际实现 | 后续 |
+|----|--------|---------|------|
+| B-4 / M-3 上传 | OSS STS + 对象存储 | `uploadApi` Presigned PUT（COS 就绪）+ 本地 `POST /api/upload` 兜底 | A1 #293 已收口 |
+| 拖入媒体 | 建 mediaInput 节点 | 登录用户上传后建 image/video/audio/text；未登录仍 blob | 可选统一 mediaInput |
+| UX-4 文本文件 | Dock 联动 | 文本仍走 `createFileNodeAt` → text 节点 | 可扩展 |
+| `useCanvasMedia` | 传 `MediaFilePayload` | 改为直接传 `File`，由 `ingestMediaFile` 统一持久化 | — |
+
+---
+
+## 八、C2 Canvas 旁路 adapter 验收（2026-07-19）
+
+**规格**：[2026-07-19-c2-canvas-generation-adapter-design.md](./superpowers/specs/2026-07-19-c2-canvas-generation-adapter-design.md)  
+**分支**：`feature/c2-canvas-generation-adapter`（PR 待合入）  
+**状态**：**实现完成 / 待合入** — shot、shot-linked image/video、sceneComposer batch 已接入 C1 catalog + generation adapter + PointsService 统一计费
+
+### 8.1 自动化验收
+
+| 项 | 结果 | 说明 |
+|----|------|------|
+| `pnpm install --frozen-lockfile` | ✅ | lockfile 一致 |
+| `prisma generate` | ✅ | |
+| `pnpm build` | ✅ | shared / web / agent / server |
+| `pnpm test` | ✅ | shared 7 · agent 37 · web 10 · server 14 |
+
+### 8.2 实现范围摘要
+
+| 路径 | adapter + 扣费 | 所有权校验 |
+|------|----------------|------------|
+| Material image（shot / shot-linked） | ✅ count=1 | ✅ session/shot 404 |
+| Material video（shot / shot-linked） | ✅ 按时长 30/50/70 | ✅ |
+| sceneComposer batch | ✅ 整批预检一次扣除 + skipCharge | ✅ |
+| Web 参数解析 | ✅ 媒体子节点 → canvas-api | — |
+| refs / V\* / A\* | ⏭ C2.1（见 §九）/ C3 / C4 | — |
+
+### 8.3 浏览器手测清单（规格 §8.3）
+
+| # | 步骤 | 预期 | 通过 |
+|---|------|------|------|
+| C2-1 | shot + **image** 子节点：选非默认模型/分辨率 → 生成 | 请求带 model/aspect/resolution；积分 -10；节点 completed | ☐ |
+| C2-2 | shot + **video** 子节点：选模型/时长/比例/分辨率 → 生成 | 请求带完整 videoSettings；积分按秒数扣费 | ☐ |
+| C2-3 | **未展开** sceneComposer → 批量生成 | 走 catalog 默认参数 | ☐ |
+| C2-4 | **已展开** sceneComposer：改子节点配置 → 批量生成 | batch items 含子节点 model/参数 | ☐ |
+| C2-5 | 积分不足 → sceneComposer 批量生成 | 整批零启动；无 shot 进入 generating | ☐ |
+| C2-6 | 非本人 session/shot 调用 generate / batch | HTTP 404；无副作用 | ☐ |
+
+---
+
+## 九、C2.1 Canvas T*/I* refs 验收（2026-07-19）
+
+**规格**：[2026-07-19-c21-canvas-refs-design.md](./superpowers/specs/2026-07-19-c21-canvas-refs-design.md)  
+**分支**：`feature/c21-canvas-refs`（PR 待合入）  
+**状态**：**实现完成 / 待合入** — shot、shot-linked image/video、sceneComposer batch 传递并消费 `refs` + `mentionedKeys`；Material 走与 Studio 同款 `mergeRefsToPrompt` + adapter `referenceImages`
+
+### 9.1 自动化验收
+
+| 项 | 结果 | 说明 |
+|----|------|------|
+| `pnpm install --frozen-lockfile` | ✅ | lockfile 一致 |
+| `prisma generate` | ✅ | |
+| `pnpm build` | ✅ | shared / web / agent / server |
+| `pnpm test` | ✅ | shared 8 · agent 37 · web 15 · server 23 |
+
+### 9.2 实现范围摘要
+
+| 路径 | T\*/I\* merge | 目标节点语义 | blob 护栏 |
+|------|---------------|--------------|-----------|
+| 直接 shot 生成 | ✅ merge 不另计费 | local prompt + shot refs | ✅ Web + Server 扣费前 |
+| shot-linked image/video | ✅ I\* → referenceImages | 媒体节点 prompt/refs | ✅ |
+| sceneComposer batch 已展开 | ✅ 按项独立 merge | 媒体子节点 prompt/refs；空则 shot prompt | ✅ batch 预检 |
+| sceneComposer batch 未展开 | ✅ composer refs | shot prompt + composer refs | ✅ |
+| `canvasPrompt` 双重合并 | ✅ 已停用 | 上游文案走 T\* edge refs | — |
+| V\* / A\* | ⏭ 不消费 | 可展示 | — |
+
+**目标节点语义（§3.2）**：refs 归属目标节点，不做 composer→shot→child 三层隐式合并；batch 已展开用媒体子节点 refs，未展开/子节点缺失用 composer refs。
+
+**后续路线**：C3 V\* 抽帧/视频理解 → C4 A\* ASR/音色参考。
+
+### 9.3 浏览器手测清单（规格 §8.3）
+
+| # | 步骤 | 预期 | 通过 |
+|---|------|------|------|
+| C2.1-1 | **text** → **shot** → 生成 | T\* 合并文案进入 Material；无 `canvasPrompt` 重复 | ☐ |
+| C2.1-2 | **image** → shot-linked **video** → 生成 | I\* 进入图生视频 referenceImages | ☐ |
+| C2.1-3 | **已展开** sceneComposer：改媒体 prompt/@mention → 批量生成 | batch items 含媒体子节点 prompt/refs | ☐ |
+| C2.1-4 | **未展开** sceneComposer batch | composer 上 T\*/I\* 生效 | ☐ |
+| C2.1-5 | refs 含 `blob:` | Web 拦截不发请求；直打 API Server 扣费前拒绝 | ◑ 服务端已验（生产 API 400「参考图尚未上传」，积分 265→265 未扣；Web UI 拦截待手测） |
+| C2.1-6 | 积分不足 → sceneComposer 批量生成 | 整批零启动；无 shot 进入 generating | ☐ |
+
+---
+
+## 十、BYOK 自定义网关验收（2026-07-19）
+
+> **规格**：[2026-07-19-byok-provider-channels-design.md](./superpowers/specs/2026-07-19-byok-provider-channels-design.md)  
+> **计划**：[2026-07-19-byok-provider-channels.md](./superpowers/plans/2026-07-19-byok-provider-channels.md)  
+> **分支**：`feature/byok-provider-channels`  
+> **状态**：**实现完成 / 待合入** — AES-GCM 加密渠道、v0.4.0 四 Tab、Dock 可选模型、`fallback_pending` 二次确认、WebDAV 服务端代理
+
+### 10.1 自动化验收
+
+| 项 | 结果 | 说明 |
+|----|------|------|
+| `pnpm install --frozen-lockfile` | ✅ | lockfile 一致 |
+| `prisma generate` + `db push` | ✅ | 含 ProviderChannel / Preferences / Webdav |
+| `pnpm build` | ✅ | shared / agent / web / server（server 排除 `*.test.ts`） |
+| `pnpm test` | ✅ | shared / agent / web / server 全绿 |
+
+### 10.2 实现范围摘要
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| `channelId::modelName` 编解码 | ✅ | `@lnkpi/shared` |
+| AES-256-GCM + SSRF URL 护栏 | ✅ | `BYOK_ENCRYPTION_KEY_V1`；GET 永不回传明文 |
+| bootstrap / channels / preferences / webdav API | ✅ | 平台渠道只读 `platform` |
+| ProviderResolver + create*Provider opts | ✅ | 用户凭据注入生成链 |
+| Studio / Material `fallback_pending` | ✅ | confirm / cancel 平台重试 |
+| ProviderConfigDialog 四 Tab | ✅ | 渠道 / 模型 / 生成偏好 / WebDAV |
+| Dock 绑定可选模型 + 确认弹窗 | ✅ | 停用拦截；串行 dedupe |
+| WebDAV 服务端 test/sync | ✅ | sessions.json MVP；无 API Key 入同步包 |
+
+### 10.3 浏览器手测清单
+
+| # | 步骤 | 预期 | 通过 |
+|---|------|------|------|
+| BYOK-1 | 打开配置弹窗 → 四 Tab 字段可见 | 对齐 v0.4.0；保存走服务端 | ☐ |
+| BYOK-2 | 新建用户渠道 + 有效 Key → 生成 | 走用户渠道成功；bootstrap 无明文 key | ☐ |
+| BYOK-3 | 故意错误 Key → 生成 | 进入确认弹窗文案；点继续 → 平台重试成功 | ☐ |
+| BYOK-4 | 点取消 | 节点/记录 `failed`，不调平台 | ☐ |
+| BYOK-5 | Dock 模型列表 | 仅 preferences 可选项；标签 `模型名（渠道名）` | ☐ |
+| BYOK-6 | 停用模型仍挂在节点上 → 点生成 | 拦截并提示重选 | ☐ |
+| BYOK-7 | WebDAV test（可用环境） | 服务端代理成功/清晰错误；无密码回传 | ☐ |
+| BYOK-8 | `GET /provider/bootstrap` | JSON 无明文 apiKey / password | ☐ |
+
+### 10.4 运维注意
+
+- 部署前配置 `BYOK_ENCRYPTION_KEY_V1`（32 字节随机，base64），见 `.env.example`
+- 勿用 `JWT_SECRET` 兼作加密主密钥
+
+---
+
+## 附录 A：迭代记录模板
+
+复制下表到每次 Sprint 结束时的「迭代记录」区。
+
+| 日期 | Sprint | 完成任务 ID | 阻塞/风险 | 下一步 |
+|------|--------|------------|----------|--------|
+| YYYY-MM-DD | A/B/C | P0-1, I-1 | — | V-4 轮询 |
+
+### 迭代记录
+
+| 日期 | Sprint | 完成任务 ID | 阻塞/风险 | 下一步 |
+|------|--------|------------|----------|--------|
+| 2026-07-13 | — | （文档创建） | — | Sprint A：P0 + image/video |
+| 2026-07-13 | A | P0-1~P0-6, I-1~I-5, V-1~V-5, B-6 | 图片比例未进 provider；参考图 blob | Sprint B |
+| 2026-07-13 | B | T-1~T-4, A-1~A-5, S-1~S-6, B-1, B-3 | 音频 emotion/speed 未进 TTS | Sprint C |
+| 2026-07-14 | M3 | D-1~D-4 sceneComposer | 生产手测待做 | videoComposition C-1 |
+| 2026-07-14 | M3 | C-2~C-3 videoComposition | C-4 export 未做 | 生产手测 C-2/C-3 |
+| 2026-07-14 | M3 | C-4 videoComposition export API | 生产 export 手测 | M4 / worldModel |
+| 2026-07-16 | M3 | C-2~C-4 生产 export 验收 | API_PUBLIC_URL 容器 env 曾错配 127.0.0.1（已热修） | sceneComposer 生产手测 / Deploy recover 加固 PR |
+| 2026-07-16 | M3 | sceneComposer 生产 API 手测 | — | §0.5 浏览器 UI |
+| 2026-07-16 | Deploy | PR #11 API_PUBLIC_URL + recover | GHA Wait failure | PR #12 轮询修复 ✅ |
+| 2026-07-16 | — | 节点 E2E 审计 + §0.5 P0 清单 | 真实生成待 API Key | U1–U8 浏览器手测 |
+| 2026-07-19 | C2 | Canvas 旁路 adapter + 统一计费（T1–T6） | 浏览器手测 C2-1~C2-6 待验 | C2 PR 合入 → C2.1 refs |
+| 2026-07-19 | C2.1 | Canvas T\*/I\* refs + prompt merge（T1–T6） | 浏览器手测 C2.1-1~C2.1-6 待验 | C2.1 PR 合入 → C3 V\* |
+| 2026-07-19 | BYOK | 渠道加密 + 四 Tab + fallback_pending（T1–T9） | 浏览器手测 BYOK-1~8 待验 | PR 合入 → 配置加密主密钥部署 |
+
+---
+
+## 附录 B：相关文档索引
+
+| 文档 | 说明 |
+|------|------|
+| [NEOWOW_CANVAS_UI_RESEARCH.md](./NEOWOW_CANVAS_UI_RESEARCH.md) | NeoWOW 画布 UI 逆向调研 |
+| [NEOWOW_RESEARCH.md](./NEOWOW_RESEARCH.md) | NeoWOW 产品调研 |
+| [superpowers/plans/2026-07-09-neowow-workflow.md](./superpowers/plans/2026-07-09-neowow-workflow.md) | M1/M2 实现计划 |
+| [2026-07-19-c2-canvas-generation-adapter-design.md](./superpowers/specs/2026-07-19-c2-canvas-generation-adapter-design.md) | C2 Canvas 旁路 adapter 规格 |
+| [2026-07-19-c21-canvas-refs-design.md](./superpowers/specs/2026-07-19-c21-canvas-refs-design.md) | C2.1 Canvas T\*/I\* refs 规格 |
+| [2026-07-19-byok-provider-channels-design.md](./superpowers/specs/2026-07-19-byok-provider-channels-design.md) | BYOK 自定义网关规格 |
+| [2026-07-19-byok-provider-channels.md](./superpowers/plans/2026-07-19-byok-provider-channels.md) | BYOK 实现计划 |
+| [PRODUCT_CAPABILITY_MAP.md](./PRODUCT_CAPABILITY_MAP.md) | 产品能力地图 |
+
+---
+
+**最后更新**：2026-07-19（§十 BYOK 自定义网关验收；§九 C2.1）

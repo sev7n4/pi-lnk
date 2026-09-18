@@ -1,0 +1,713 @@
+"""Explore intent classification and mandatory dispatch (Phase 2a)."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from app.errors import AgentToolError
+from app.graph.canvas_commands import extract_canvas_commands
+from app.graph.composition_route import is_composition_structure_utterance
+from app.graph.explore_route import has_canvas_node_id_reference
+from app.graph.node_ref import resolve_node_ref, resolve_node_refs
+from app.graph.tool_sse import cap_tool_sse_payload, maybe_emit_tool_sse
+ExploreIntent = Literal[
+    "ui_command",
+    "lifecycle",
+    "asset_read",
+    "node_read",
+    "node_write",
+    "open_query",
+]
+
+MANDATORY_INTENTS = frozenset({"ui_command", "lifecycle", "asset_read"})
+
+_WRITE_VERBS = (
+    "更新",
+    "修改",
+    "设置",
+    "复制",
+    "上传",
+    "添加",
+    "保存",
+    "导入",
+    "应用",
+    "attach",
+    "挂",
+)
+_QUERY_VERBS = (
+    "看看",
+    "有哪些",
+    "列出",
+    "查询",
+    "检查",
+    "状态",
+    "什么情况",
+    "怎么样",
+)
+_MUTATE_VERBS = (
+    "更新",
+    "修改",
+    "设置",
+    "复制",
+    "上传",
+    "添加",
+    "保存",
+    "导出",
+    "导入",
+    "引入",
+    "定位",
+    "撤销",
+    "重做",
+    "打开",
+    "挂",
+    "应用",
+    "attach",
+)
+_READ_VERBS = _QUERY_VERBS + ("诊断", "layout", "坐标", "位置", "详细信息")
+_WORKFLOW_IMPORT_ANCHORS = (
+    "工作流",
+    "workflow",
+    "lnkpi.workflow",
+    "import_workflow",
+)
+_UPLOAD_MARKERS = ("上传", "http", "url", "picsum")
+_PLANNER_ANCHORS = (
+    "规划工作流",
+    "接到",
+    "改版",
+    "新模板",
+    "存成一套",
+    "将锁定这些核心步骤",
+    "确认锁定这些核心步骤",
+    "这份工作流更像哪一种",
+)
+_PLANNER_CONFIRM = "确认落到画布"
+_IMPORT_WRITE_TOOLS = frozenset({"import_workflow"})
+_OPERATOR_WRITE = frozenset({
+    "upsert_media_node",
+    "propose_generation",
+    "set_node_prompt",
+    "set_node_content",
+    "upsert_prompt_node",
+    "connect_nodes",
+    "apply_sidebar_attachments",
+    "attach_refs",
+    "duplicate_node",
+})
+
+
+def resolve_sidebar_image_ref_keys(
+    *,
+    image_keys: Sequence[str] = (),
+    this_turn_new_image_keys: Sequence[str] = (),
+    mentioned_keys: Sequence[str] = (),
+) -> list[str] | None:
+    images = [str(k).strip().upper() for k in image_keys if str(k).strip()]
+    image_set = set(images)
+    if not images:
+        return None
+    mentioned_i = [
+        str(k).strip().upper()
+        for k in mentioned_keys
+        if str(k).strip().upper().startswith("I") and str(k).strip().upper() in image_set
+    ]
+    # de-dupe mention order
+    seen: set[str] = set()
+    mentioned_i = [k for k in mentioned_i if not (k in seen or seen.add(k))]
+    if mentioned_i:
+        return mentioned_i
+    new_keys = {str(k).strip().upper() for k in this_turn_new_image_keys if str(k).strip()}
+    if new_keys == image_set and len(images) in (1, 2):
+        return list(images)
+    return None
+
+
+def utterance_binds_sidebar_media_propose(
+    text: str, ref_keys: list[str] | None
+) -> bool:
+    from app.graph.atomic_intent import (
+        CAMPAIGN_OVERRIDE_PHRASES,
+        regen_intent,
+        regenerate_phrase_intent,
+    )
+    from app.graph.media_utterance import (
+        media_directed_question,
+        suspected_media_create,
+        suspected_vision_qa,
+    )
+
+    if not ref_keys:
+        return False
+    t = text or ""
+    if regen_intent(t) or regenerate_phrase_intent(t):
+        return False
+    if any(p in t for p in CAMPAIGN_OVERRIDE_PHRASES):
+        return False
+    if suspected_vision_qa(t) or media_directed_question(t):
+        return False
+    if not suspected_media_create(t) and ("是什么" in t or "是啥" in t):
+        return False
+    return True
+
+
+def utterance_binds_media_propose(text: str) -> bool:
+    """True when explore should bind upsert_media_node + propose_generation."""
+    from app.graph.atomic_intent import (
+        CAMPAIGN_OVERRIDE_PHRASES,
+        MEDIA_CREATE_HINTS,
+        regen_intent,
+        regenerate_phrase_intent,
+    )
+    from app.graph.media_utterance import (
+        normalize_colloquial_create_verbs,
+        strong_generate_media,
+    )
+
+    t = text or ""
+    if not t.strip():
+        return False
+    if regen_intent(t) or regenerate_phrase_intent(t):
+        return False
+    if any(p in t for p in CAMPAIGN_OVERRIDE_PHRASES):
+        return False
+    if any(h in t for h in MEDIA_CREATE_HINTS):
+        return True
+    return strong_generate_media(normalize_colloquial_create_verbs(t))
+
+
+def _has_strong_workflow_import_anchor(text: str, low: str) -> bool:
+    """Workflow/tool anchors that win even when workflow_url (http) is present."""
+    if any(k in low for k in ("import_workflow", "lnkpi.workflow")):
+        return True
+    if "导入工作流" in text:
+        return True
+    return "导入" in text and any(k in text or k in low for k in ("工作流", "workflow"))
+
+
+def _is_workflow_import_utterance(u: str) -> bool:
+    """True only when import is anchored to workflow/tool markers.
+
+    Strong anchors (import_workflow, lnkpi.workflow, 导入+工作流/workflow) win
+    even with URL/http — workflow_url is valid input. Upload-steal protection
+    applies only to weak cases (e.g. 导入+画布+URL without workflow anchors).
+    """
+    text = u or ""
+    low = text.lower()
+    if _has_strong_workflow_import_anchor(text, low):
+        return True
+    if any(k in low for k in _UPLOAD_MARKERS):
+        return False
+    return "导入" in text and any(
+        k in text or k in low for k in _WORKFLOW_IMPORT_ANCHORS
+    )
+
+
+@dataclass
+class MandatoryExploreResult:
+    tool_results: list[Any] = field(default_factory=list)
+    canvas_commands: list[dict[str, Any]] = field(default_factory=list)
+    reply_text: str = ""
+    tools_called: list[str] = field(default_factory=list)
+
+
+def _is_planner_utterance(text: str) -> bool:
+    if not text:
+        return False
+    if any(anchor in text for anchor in _PLANNER_ANCHORS):
+        return True
+    if _PLANNER_CONFIRM in text:
+        return True
+    return "规划" in text and "工作流" in text
+
+
+def select_narrow_write_tools(
+    utterance: str,
+    *,
+    sidebar_image_keys: Sequence[str] = (),
+    this_turn_new_image_keys: Sequence[str] = (),
+    mentioned_keys: Sequence[str] = (),
+) -> frozenset[str]:
+    """Default operator set; import overlays add; composition structure binds no writes.
+
+    Composition preview/confirm are Nest HTTP (#355). P0 never binds
+    match/preview/instantiate/promote workflow template tools.
+    Sidebar kwargs are kept for API compatibility and do not shrink visibility.
+    """
+    visible = set(_OPERATOR_WRITE)
+    text = utterance or ""
+    low = text.lower()
+    if "import_workflow" in low or "导入工作流" in text:
+        visible |= _IMPORT_WRITE_TOOLS
+        return frozenset(visible)
+    if is_composition_structure_utterance(text):
+        return frozenset()
+    if _is_workflow_import_utterance(text):
+        if _has_strong_workflow_import_anchor(text, low):
+            visible |= _IMPORT_WRITE_TOOLS
+        return frozenset(visible)
+    return frozenset(visible)
+
+
+def sidebar_image_keys_from_attachments(attachments: list | None) -> tuple[str, ...]:
+    from app.graph.sidebar_attachments import REF_PREFIX
+
+    counters = {k: 0 for k in REF_PREFIX}
+    keys: list[str] = []
+    for item in attachments or []:
+        if not isinstance(item, dict):
+            continue
+        media_type = str(item.get("mediaType") or item.get("media_type") or "").strip()
+        prefix = REF_PREFIX.get(media_type)
+        if not prefix:
+            continue
+        counters[media_type] += 1
+        key = f"{prefix}{counters[media_type]}"
+        url = str(item.get("url") or "").strip()
+        if prefix == "I" and url:
+            keys.append(key)
+    return tuple(keys)
+
+
+def this_turn_new_image_keys_from_parse(
+    attachments: list | None, parse: dict | None
+) -> tuple[str, ...]:
+    raw = (parse or {}).get("this_turn_uncached_image_urls") if isinstance(parse, dict) else None
+    urls = {str(u).strip() for u in (raw or []) if str(u).strip()}
+    if not urls:
+        return ()
+    from app.graph.sidebar_attachments import REF_PREFIX
+
+    counters = {k: 0 for k in REF_PREFIX}
+    keys: list[str] = []
+    for item in attachments or []:
+        if not isinstance(item, dict):
+            continue
+        media_type = str(item.get("mediaType") or item.get("media_type") or "").strip()
+        prefix = REF_PREFIX.get(media_type)
+        if not prefix:
+            continue
+        counters[media_type] += 1
+        key = f"{prefix}{counters[media_type]}"
+        url = str(item.get("url") or "").strip()
+        if prefix == "I" and url in urls:
+            keys.append(key)
+    return tuple(keys)
+
+
+def mentioned_keys_for_sidebar_bind(
+    user_text: str, request_keys: list | None
+) -> tuple[str, ...]:
+    from app.graph.sidebar_attachments import (
+        normalize_mentioned_keys,
+        parse_mentioned_keys_from_text,
+    )
+
+    from_text = parse_mentioned_keys_from_text(user_text)
+    if from_text:
+        return tuple(from_text)
+    return tuple(normalize_mentioned_keys(request_keys))
+
+
+def classify_explore_intent(user_text: str, *, summary: dict | None = None) -> ExploreIntent:
+    """Rule-based intent for explore dispatch (Phase 2a)."""
+    u = (user_text or "").strip()
+    if not u:
+        return "open_query"
+
+    if _is_workflow_import_utterance(u):
+        return "node_write"
+
+    if _is_planner_utterance(u):
+        return "node_write"
+
+    if ("撤销" in u or "重做" in u) and ("画布" in u or "操作" in u or "撤销" in u):
+        return "ui_command"
+
+    if "精修" in u and ("打开" in u or "编辑器" in u):
+        return "ui_command"
+
+    if ("定位" in u or "视口" in u) and ("节点" in u or "「" in u or has_canvas_node_id_reference(u)):
+        return "ui_command"
+
+    if ("引入" in u or "侧栏" in u) and ("节点" in u or "「" in u or has_canvas_node_id_reference(u)):
+        return "ui_command"
+
+    if "取消" in u and any(x in u for x in ("生成", "任务", "回退", "fallback", "平台")):
+        return "lifecycle"
+
+    if "确认" in u and any(x in u for x in ("回退", "fallback", "平台")):
+        return "lifecycle"
+
+    has_node = has_canvas_node_id_reference(u) or "「" in u or (
+        isinstance(summary, dict)
+        and resolve_node_ref(u, summary) is not None
+    )
+
+    if any(k in u for k in ("资产库", "素材库", "公共素材")):
+        if any(v in u for v in _QUERY_VERBS) and "保存" not in u and not has_node:
+            return "asset_read"
+
+    if has_node and "保存" in u and "资产库" in u:
+        return "node_write"
+
+    if has_node and "导出" in u:
+        return "node_read"
+
+    if has_node and any(v in u for v in _WRITE_VERBS):
+        return "node_write"
+
+    if has_node and any(v in u for v in _READ_VERBS):
+        return "node_read"
+
+    if any(v in u for v in _MUTATE_VERBS) and has_node:
+        return "node_write"
+
+    return "open_query"
+
+
+def _serialize_result(result: Any) -> str:
+    if isinstance(result, str):
+        return result
+    try:
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except Exception:
+        return str(result)
+
+
+def _format_asset_reply(tool_name: str, result: Any) -> str:
+    if isinstance(result, dict) and result.get("error"):
+        return str(result.get("error"))
+    label = "公共素材库" if tool_name == "list_public_assets" else "我的资产库"
+    if isinstance(result, dict):
+        items = result.get("assets") or result.get("items") or []
+        if isinstance(items, list):
+            if not items:
+                return f"{label}暂无素材。"
+            names = []
+            for item in items[:8]:
+                if isinstance(item, dict):
+                    names.append(str(item.get("name") or item.get("label") or item.get("id") or ""))
+            preview = "、".join(n for n in names if n)
+            suffix = f"等共 {len(items)} 项" if len(items) > 8 else f"共 {len(items)} 项"
+            return f"{label}：{preview}（{suffix}）"
+    return f"已查询{label}。"
+
+
+def _lifecycle_user_message(result: Any) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    err = str(result.get("error") or result.get("message") or "")
+    err_type = str(result.get("error_type") or "")
+    low = err.lower()
+    if "generationrecord" in low or "无进行" in err or "no generation" in low:
+        return "该节点无进行中的生成任务。"
+    if "无关联" in err or "无生成记录" in err or "不存在" in err:
+        return "该节点无进行中的生成任务。"
+    if "fallback_pending" in low or "非 fallback" in err or "不在平台回退" in err:
+        return "该节点不在平台回退待确认状态。"
+    if err_type == "param_error" or "param" in err_type:
+        return "该节点无进行中的生成任务。"
+    if result.get("ok"):
+        return None
+    return err or None
+
+
+async def _invoke_tool(
+    tools_by_name: dict[str, Any],
+    name: str,
+    args: dict[str, Any],
+    *,
+    canvas_commands: list[dict[str, Any]],
+    tool_results: list[Any],
+    tools_called: list[str],
+    event_sink: Any | None = None,
+) -> Any:
+    await maybe_emit_tool_sse(
+        event_sink,
+        {
+            "type": "tool_call",
+            "data": {
+                "name": str(name),
+                "arguments": cap_tool_sse_payload(args or {}, kind="arguments"),
+            },
+        },
+    )
+    tool = tools_by_name.get(name)
+    if tool is None:
+        result: Any = {"error": f"unknown tool: {name}"}
+    else:
+        try:
+            result = await tool.ainvoke(args)
+        except AgentToolError as exc:
+            err = exc.error
+            result = {
+                "error": err["message"],
+                "error_type": err["error_type"],
+                "retry_hint": err.get("retry_hint"),
+            }
+    await maybe_emit_tool_sse(
+        event_sink,
+        {
+            "type": "tool_result",
+            "data": {
+                "name": str(name),
+                "result": cap_tool_sse_payload(result, kind="result"),
+            },
+        },
+    )
+    tools_called.append(name)
+    tool_results.append(result)
+    for cmd in extract_canvas_commands(result):
+        if cmd not in canvas_commands:
+            canvas_commands.append(cmd)
+    return result
+
+
+async def run_mandatory_explore(
+    intent: ExploreIntent,
+    user_text: str,
+    *,
+    summary: dict,
+    tools_by_name: dict[str, Any],
+    event_sink: Any | None = None,
+) -> MandatoryExploreResult:
+    """Direct tool dispatch without LLM (UI / lifecycle / asset_read)."""
+    canvas_commands: list[dict[str, Any]] = []
+    tool_results: list[Any] = []
+    tools_called: list[str] = []
+
+    if intent == "ui_command":
+        return await _mandatory_ui(
+            user_text,
+            summary=summary,
+            tools_by_name=tools_by_name,
+            canvas_commands=canvas_commands,
+            tool_results=tool_results,
+            tools_called=tools_called,
+            event_sink=event_sink,
+        )
+
+    if intent == "lifecycle":
+        return await _mandatory_lifecycle(
+            user_text,
+            summary=summary,
+            tools_by_name=tools_by_name,
+            canvas_commands=canvas_commands,
+            tool_results=tool_results,
+            tools_called=tools_called,
+            event_sink=event_sink,
+        )
+
+    if intent == "asset_read":
+        return await _mandatory_asset(
+            user_text,
+            tools_by_name=tools_by_name,
+            canvas_commands=canvas_commands,
+            tool_results=tool_results,
+            tools_called=tools_called,
+            event_sink=event_sink,
+        )
+
+    return MandatoryExploreResult(
+        reply_text="内部错误：非 mandatory intent",
+        canvas_commands=canvas_commands,
+        tool_results=tool_results,
+        tools_called=tools_called,
+    )
+
+
+async def _mandatory_ui(
+    user_text: str,
+    *,
+    summary: dict,
+    tools_by_name: dict[str, Any],
+    canvas_commands: list[dict[str, Any]],
+    tool_results: list[Any],
+    tools_called: list[str],
+    event_sink: Any | None = None,
+) -> MandatoryExploreResult:
+    u = user_text or ""
+
+    if "重做" in u:
+        await _invoke_tool(
+            tools_by_name, "redo", {}, canvas_commands=canvas_commands,
+            tool_results=tool_results, tools_called=tools_called,
+            event_sink=event_sink,
+        )
+        return MandatoryExploreResult(
+            tool_results=tool_results,
+            canvas_commands=canvas_commands,
+            reply_text="已重做画布操作。",
+            tools_called=tools_called,
+        )
+
+    if "撤销" in u and ("画布" in u or "操作" in u):
+        await _invoke_tool(
+            tools_by_name, "undo", {}, canvas_commands=canvas_commands,
+            tool_results=tool_results, tools_called=tools_called,
+            event_sink=event_sink,
+        )
+        return MandatoryExploreResult(
+            tool_results=tool_results,
+            canvas_commands=canvas_commands,
+            reply_text="已撤销上一步画布操作。",
+            tools_called=tools_called,
+        )
+
+    if "精修" in u or ("打开" in u and "编辑器" in u):
+        node_id = resolve_node_ref(u, summary)
+        if not node_id:
+            return MandatoryExploreResult(
+                reply_text="请指定要精修的图片节点（如 image-16 或「节点标题」）。",
+            )
+        await _invoke_tool(
+            tools_by_name,
+            "open_image_editor",
+            {"node_id": node_id},
+            canvas_commands=canvas_commands,
+            tool_results=tool_results,
+            tools_called=tools_called,
+            event_sink=event_sink,
+        )
+        return MandatoryExploreResult(
+            tool_results=tool_results,
+            canvas_commands=canvas_commands,
+            reply_text=f"已打开节点 {node_id} 的精修编辑器。",
+            tools_called=tools_called,
+        )
+
+    if "引入" in u or ("侧栏" in u and "节点" in u):
+        node_ids = resolve_node_refs(u, summary)
+        if not node_ids:
+            return MandatoryExploreResult(
+                reply_text="请指定要引入侧栏的节点（如 image-16 或「节点标题」）。",
+            )
+        await _invoke_tool(
+            tools_by_name,
+            "introduce_nodes_to_agent",
+            {"node_ids": node_ids},
+            canvas_commands=canvas_commands,
+            tool_results=tool_results,
+            tools_called=tools_called,
+            event_sink=event_sink,
+        )
+        return MandatoryExploreResult(
+            tool_results=tool_results,
+            canvas_commands=canvas_commands,
+            reply_text=f"已将 {len(node_ids)} 个节点引入 Agent 侧栏上下文。",
+            tools_called=tools_called,
+        )
+
+    if "定位" in u or "视口" in u:
+        node_ids = resolve_node_refs(u, summary)
+        if not node_ids:
+            return MandatoryExploreResult(
+                reply_text="请指定要定位的节点（如 image-16 或「节点标题」）。",
+            )
+        if len(node_ids) == 1:
+            await _invoke_tool(
+                tools_by_name,
+                "focus_node",
+                {"node_id": node_ids[0]},
+                canvas_commands=canvas_commands,
+                tool_results=tool_results,
+                tools_called=tools_called,
+                event_sink=event_sink,
+            )
+            reply = f"已将视口定位到节点 {node_ids[0]}。"
+        else:
+            await _invoke_tool(
+                tools_by_name,
+                "focus_nodes",
+                {"node_ids": node_ids},
+                canvas_commands=canvas_commands,
+                tool_results=tool_results,
+                tools_called=tools_called,
+                event_sink=event_sink,
+            )
+            reply = f"已将视口定位到 {len(node_ids)} 个节点。"
+        return MandatoryExploreResult(
+            tool_results=tool_results,
+            canvas_commands=canvas_commands,
+            reply_text=reply,
+            tools_called=tools_called,
+        )
+
+    return MandatoryExploreResult(reply_text="未能识别 UI 操作，请说明定位、撤销、重做或精修等具体需求。")
+
+
+async def _mandatory_lifecycle(
+    user_text: str,
+    *,
+    summary: dict,
+    tools_by_name: dict[str, Any],
+    canvas_commands: list[dict[str, Any]],
+    tool_results: list[Any],
+    tools_called: list[str],
+    event_sink: Any | None = None,
+) -> MandatoryExploreResult:
+    node_id = resolve_node_ref(user_text, summary)
+    if not node_id:
+        return MandatoryExploreResult(
+            reply_text="请指定节点 id（如 image-16），以便取消或确认生成任务。",
+        )
+
+    u = user_text or ""
+    if "确认" in u:
+        tool_name = "confirm_platform_fallback"
+        ok_msg = f"已确认节点 {node_id} 的平台回退继续。"
+    elif "取消" in u and any(x in u for x in ("回退", "fallback", "平台")):
+        tool_name = "cancel_platform_fallback"
+        ok_msg = f"已取消节点 {node_id} 的平台回退。"
+    else:
+        tool_name = "cancel_generation"
+        ok_msg = f"已取消节点 {node_id} 上的生成任务。"
+
+    result = await _invoke_tool(
+        tools_by_name,
+        tool_name,
+        {"node_id": node_id},
+        canvas_commands=canvas_commands,
+        tool_results=tool_results,
+        tools_called=tools_called,
+        event_sink=event_sink,
+    )
+    err_msg = _lifecycle_user_message(result)
+    reply = err_msg if err_msg else ok_msg
+    return MandatoryExploreResult(
+        tool_results=tool_results,
+        canvas_commands=canvas_commands,
+        reply_text=reply,
+        tools_called=tools_called,
+    )
+
+
+async def _mandatory_asset(
+    user_text: str,
+    *,
+    tools_by_name: dict[str, Any],
+    canvas_commands: list[dict[str, Any]],
+    tool_results: list[Any],
+    tools_called: list[str],
+    event_sink: Any | None = None,
+) -> MandatoryExploreResult:
+    u = user_text or ""
+    tool_name = "list_public_assets" if "公共" in u else "list_user_assets"
+    result = await _invoke_tool(
+        tools_by_name,
+        tool_name,
+        {},
+        canvas_commands=canvas_commands,
+        tool_results=tool_results,
+        tools_called=tools_called,
+        event_sink=event_sink,
+    )
+    return MandatoryExploreResult(
+        tool_results=tool_results,
+        canvas_commands=canvas_commands,
+        reply_text=_format_asset_reply(tool_name, result),
+        tools_called=tools_called,
+    )

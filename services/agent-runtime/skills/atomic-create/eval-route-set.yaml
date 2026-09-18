@@ -1,0 +1,257 @@
+# Platform route_decide eval gold set (R1)
+# Run: pytest tests/test_eval_route_set.py
+version: 1
+meta:
+  spec: docs/superpowers/specs/2026-08-07-platform-route-skill-boundary-design.md
+
+cases:
+  - id: rt-img2img-01
+    state:
+      messages: [{ role: user, content: "@I1 模特 @I2 产品，让模特穿上，保持构图不变" }]
+      sidebar_mentioned_keys: [I1, I2]
+      sidebar_attachments:
+        - { mediaType: image, url: "https://a/1.jpg" }
+        - { mediaType: image, url: "https://a/2.jpg" }
+    gold: { flow_mode: canvas_agent, reason: sidebar_img2img_p1 }
+
+  - id: rt-img2img-02
+    state:
+      messages: [{ role: user, content: "@I1 这个是模特图，@I2 这个是产品图，让模特穿上这件衣服。保持主图风格，背景，构图不变。" }]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-img2img-03
+    state:
+      messages: [{ role: user, content: "@I1 @I2 融合换装" }]
+      sidebar_mentioned_keys: [I1, I2]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-preserve-01
+    state:
+      messages: [{ role: user, content: "保持主图风格、背景、构图不变，生成换装图" }]
+    # Phase 2a: no atomic_generate; canvas_agent until propose (2b)
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-preserve-02
+    state:
+      messages: [{ role: user, content: "保持构图不变，按 @I1 出图" }]
+      sidebar_mentioned_keys: [I1]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-atomic-01
+    state:
+      messages: [{ role: user, content: "帮我生成一张蓝牙耳机主图" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-atomic-02
+    state:
+      messages: [{ role: user, content: "帮我生成一个模特人物图" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-atomic-03
+    state:
+      messages: [{ role: user, content: "生成一张白底产品图" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-clarify-01
+    state:
+      messages: [{ role: user, content: "天猫蓝牙耳机详情页营销方案" }]
+    gold: { flow_mode: clarify_route }
+
+  - id: rt-clarify-02
+    state:
+      messages: [{ role: user, content: "请你帮我设计蓝牙耳机主图，详情页的构图方案" }]
+    gold: { flow_mode: clarify_route }
+
+  - id: rt-clarify-03
+    state:
+      messages: [{ role: user, content: "帮我生成12个分镜镜头" }]
+    gold: { flow_mode: clarify_route }
+
+  - id: rt-skill-campaign-01
+    state:
+      messages: [{ role: user, content: "天猫蓝牙耳机详情页营销方案" }]
+      requested_skill_id: enterprise-marketing-campaign
+    gold: { flow_mode: campaign }
+
+  - id: rt-skill-campaign-02
+    state:
+      messages: [{ role: user, content: "详情页构图方案" }]
+      requested_skill_id: enterprise-marketing-campaign
+    gold: { flow_mode: campaign }
+
+  - id: rt-chat-01
+    state:
+      messages: [{ role: user, content: "你好" }]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-chat-02
+    state:
+      messages: [{ role: user, content: "这个音箱怎么样" }]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-regen-01
+    state:
+      messages: [{ role: user, content: "重新生成一张" }]
+      atomic_node_id: node-1
+      atomic_spec: { target_type: image, prompt: x, title: x }
+    # Phase 2d.2: checkpoint_regen rule kept; flow → canvas_agent
+    gold: { flow_mode: canvas_agent, reason: atomic_regenerate_checkpoint }
+
+  - id: rt-regen-clarify-01
+    state:
+      messages: [{ role: user, content: "重新生成一张" }]
+    gold: { flow_mode: clarify_route, reason: regen_no_checkpoint }
+
+  - id: rt-modify-01
+    state:
+      messages: [{ role: user, content: "把模特定妆改为双人模特" }]
+      user_brief: 洁具方案
+      plan_draft: "# plan"
+    gold: { flow_mode: campaign, is_modify: true }
+
+  - id: rt-single-01
+    state:
+      messages: [{ role: user, content: "快速生成" }]
+      focus_node_id: image-1
+    # Phase 2d.2: focus_gen rule kept; flow → canvas_agent
+    gold: { flow_mode: canvas_agent, reason: single_node_focus }
+
+  - id: rt-img2img-04
+    state:
+      messages: [{ role: user, content: "@I1 风格 @I2 产品，替换穿上" }]
+      sidebar_mentioned_keys: [I1, I2]
+      sidebar_attachments:
+        - { mediaType: image, url: "https://a/1.jpg" }
+        - { mediaType: image, url: "https://a/2.jpg" }
+    gold: { flow_mode: canvas_agent, reason: sidebar_img2img_p1 }
+
+  - id: sidebar-t1-style3-atomic
+    state:
+      messages: [{ role: user, content: "@T1 请按风格3出图" }]
+      sidebar_mentioned_keys: [T1]
+      sidebar_attachments:
+        - { refKey: T1, mediaType: text, content: "风格3说明" }
+    gold: { flow_mode: canvas_agent, reason: sidebar_ref_atomic }
+
+  - id: tmall-detail-campaign-clarify
+    state:
+      messages: [{ role: user, content: "帮我做天猫详情页营销方案出图" }]
+    gold: { flow_mode: clarify_route }
+
+  - id: rt-explore-01
+    state:
+      messages: [{ role: user, content: "看看画布上有哪些节点，状态怎么样？" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-explore-02
+    state:
+      messages: [{ role: user, content: "查询我的资产库有哪些素材" }]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-explore-cancel-01
+    state:
+      messages: [{ role: user, content: "取消 image-16 节点上正在进行的生成任务" }]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-video-ref-t1
+    state:
+      messages: [{ role: user, content: "@T1 请基于文案生成视频" }]
+      sidebar_mentioned_keys: [T1]
+    gold: { flow_mode: canvas_agent, reason: sidebar_ref_atomic }
+
+  - id: rt-video-plain-01
+    state:
+      messages: [{ role: user, content: "帮我做一个15秒产品展示视频" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-ref-i1-image
+    state:
+      messages: [{ role: user, content: "@I1 按这张出图" }]
+      sidebar_mentioned_keys: [I1]
+    gold: { flow_mode: canvas_agent, reason: sidebar_ref_atomic }
+
+  - id: rt-orch-clarify-04
+    state:
+      messages: [{ role: user, content: "全链路详情页营销方案" }]
+    gold: { flow_mode: clarify_route }
+
+  - id: rt-variant-checkpoint-01
+    state:
+      messages: [{ role: user, content: "按刚才那个风格再生成一张" }]
+      atomic_node_id: node-1
+      atomic_spec: { target_type: image, prompt: x, title: x }
+    # Phase 2a: variant-via-atomic_generate retired; canvas_agent until 2b/2d
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-chat-sink-01
+    state:
+      messages: [{ role: user, content: "请帮我生一个小女孩的图片" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-chat-sink-02
+    state:
+      messages: [{ role: user, content: "请帮我生成一张图" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-chat-sink-03
+    state:
+      messages: [{ role: user, content: "这个图片是什么？" }]
+      sidebar_attachments:
+        - { refKey: I1, mediaType: image, url: "https://a/1.jpg" }
+    gold: { flow_mode: clarify_route }
+
+  - id: rt-chat-sink-04
+    state:
+      messages: [{ role: user, content: "生活怎么样" }]
+    gold: { flow_mode: canvas_agent }
+
+  - id: rt-chat-sink-05
+    state:
+      messages: [{ role: user, content: "帮我做一套天猫详情页营销方案" }]
+    gold: { flow_mode: clarify_route }
+
+  - id: rt-chat-sink-06
+    state:
+      messages: [{ role: user, content: "帮我弄张图看看" }]
+    gold:
+      # soft suspected: clarify_route or atomic_create — never chat
+      flow_mode: clarify_route
+
+  - id: rt-chat-sink-07
+    state:
+      messages: [{ role: user, content: "这是什么？" }]
+      sidebar_attachments:
+        - { refKey: I1, mediaType: image, url: "https://a/1.jpg" }
+    gold: { flow_mode: clarify_route, reason: sidebar_media_question }
+
+  - id: rt-chat-sink-08
+    state:
+      messages: [{ role: user, content: "先生这张图不错" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-chat-sink-09
+    state:
+      messages: [{ role: user, content: "整个图表看起来不错" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-chat-sink-10
+    state:
+      messages:
+        - {
+            role: user,
+            content: "生成一只东北虎图片，卡通版，戴着红围巾、正在笑、或者背景是雪地",
+          }
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-chat-sink-11
+    state:
+      messages: [{ role: user, content: "生成东北虎图片" }]
+    gold: { flow_mode: canvas_agent, reason: default_chat }
+
+  - id: rt-sidebar-edit-01
+    state:
+      messages: [{ role: user, content: "给这只小老虎带上眼镜和帽子" }]
+      sidebar_mentioned_keys: [I1]
+      sidebar_attachments:
+        - { refKey: I1, mediaType: image, url: "https://a/tiger.jpg" }
+    gold: { flow_mode: canvas_agent, reason: sidebar_img2img_p1 }

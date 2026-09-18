@@ -1,0 +1,219 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AgentRuntimeClient } from './agent-runtime.client'
+
+describe('AgentRuntimeClient', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    delete process.env.AGENT_RUNTIME_SERVICE_TOKEN
+  })
+
+  it('healthOk returns true when /health ok', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, service: 'agent-runtime' }),
+      }),
+    )
+    const client = new AgentRuntimeClient('http://127.0.0.1:8000')
+    await expect(client.healthOk()).resolves.toBe(true)
+  })
+
+  it('healthOk returns false on network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('down')))
+    const client = new AgentRuntimeClient('http://127.0.0.1:8000')
+    await expect(client.healthOk()).resolves.toBe(false)
+  })
+
+  it('streamRun parses NDJSON events', async () => {
+    const payload =
+      JSON.stringify({ type: 'text_delta', data: { text: 'hi' } }) +
+      '\n' +
+      JSON.stringify({ type: 'done', data: {} }) +
+      '\n'
+
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(payload))
+        controller.close()
+      },
+    })
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      body: stream,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new AgentRuntimeClient('http://runtime.test', 'dev-token')
+    const events = []
+    for await (const event of client.streamRun({
+      sessionId: 's1',
+      userId: 'u1',
+      message: 'hello',
+    })) {
+      events.push(event)
+    }
+
+    expect(events).toEqual([
+      { type: 'text_delta', data: { text: 'hi' } },
+      { type: 'done', data: {} },
+    ])
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://runtime.test/v1/runs',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'x-lnkpi-service-token': 'dev-token',
+        }),
+      }),
+    )
+  })
+
+  it('streamRun emits error event for bad NDJSON lines without killing stream', async () => {
+    const payload =
+      JSON.stringify({ type: 'text_delta', data: { text: 'ok' } }) +
+      '\n' +
+      '{not-json\n' +
+      JSON.stringify({ type: 'done', data: {} }) +
+      '\n'
+
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(payload))
+        controller.close()
+      },
+    })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: stream,
+      }),
+    )
+
+    const client = new AgentRuntimeClient('http://runtime.test', 'tok')
+    const events = []
+    for await (const event of client.streamRun({
+      sessionId: 's1',
+      userId: 'u1',
+      message: 'hello',
+    })) {
+      events.push(event)
+    }
+
+    expect(events[0]).toEqual({ type: 'text_delta', data: { text: 'ok' } })
+    expect(events[1]?.type).toBe('error')
+    expect(events[2]).toEqual({ type: 'done', data: {} })
+  })
+
+  it('streamRun forwards sidebar attachments in POST body', async () => {
+    const payload = JSON.stringify({ type: 'done', data: {} }) + '\n'
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(payload))
+        controller.close()
+      },
+    })
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const attachments = [
+      {
+        id: 'a1',
+        mediaType: 'image' as const,
+        sourceKind: 'upload' as const,
+        label: 'p.jpg',
+        url: 'https://x/a.jpg',
+      },
+    ]
+    const client = new AgentRuntimeClient('http://runtime.test', 'dev-token')
+    for await (const _event of client.streamRun({
+      sessionId: 's1',
+      userId: 'u1',
+      message: 'hello',
+      attachments,
+      refOrder: ['a1'],
+    })) {
+      // drain
+    }
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(body.attachments).toEqual(attachments)
+    expect(body.ref_order).toEqual(['a1'])
+  })
+
+  it('cancelRun posts snake_case input and maps response to camelCase', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        phase: 'cancelled',
+        cancelled_node_ids: ['node-1'],
+        completed_tasks: 2,
+        total_tasks: 4,
+        skipped: false,
+        reason: 'user',
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new AgentRuntimeClient('http://runtime.test/', 'dev-token')
+    await expect(
+      client.cancelRun({
+        threadId: 'thread-1',
+        sessionId: 'session-1',
+        reason: 'user',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      phase: 'cancelled',
+      cancelledNodeIds: ['node-1'],
+      completedTasks: 2,
+      totalTasks: 4,
+      skipped: false,
+      reason: 'user',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('http://runtime.test/v1/runs/cancel', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-lnkpi-service-token': 'dev-token',
+      },
+      body: JSON.stringify({
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        reason: 'user',
+      }),
+    })
+  })
+
+  it('cancelRun maps preserved-gate response fields', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          phase: 'await_shot_topo_confirm',
+          cancelled_node_ids: [],
+          completed_tasks: 0,
+          total_tasks: 0,
+          gate_preserved: true,
+          next_nodes: ['await_shot_topo_confirm'],
+        }),
+      }),
+    )
+
+    const client = new AgentRuntimeClient('http://runtime.test', 'dev-token')
+    const result = await client.cancelRun({ threadId: 't1', sessionId: 's1' })
+
+    expect(result.gatePreserved).toBe(true)
+    expect(result.nextNodes).toEqual(['await_shot_topo_confirm'])
+  })
+})

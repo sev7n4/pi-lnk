@@ -1,0 +1,1447 @@
+import { ref, type Ref } from 'vue'
+import { resolveCompositionVideoPrompt, type VideoSettings } from '@lnkpi/shared'
+import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
+import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating } from '@/constants/dockStudio'
+import { shouldApplyGenerationPoll } from '@/utils/generationPollGate'
+import { DEFAULT_AUDIO_VOICE } from '@/constants/dockAudio'
+import {
+  mergeReferenceImageUrl,
+  resolveUpstreamContext,
+  type CanvasEdgeLike,
+} from '@/composables/useUpstreamNodeContext'
+import { resolveNodeRefs, type LocalRefBinding } from '@/composables/useNodeRefs'
+import {
+  parseRecordPromptContent,
+  parseRecordText,
+  parseRecordUrl,
+  parseRecordUrls,
+  parseRecordLastFrameUrl,
+  type GenerationPollTask,
+} from '@/composables/useGenerationPolling'
+import { parseRefMentions } from '@/composables/useRefMentions'
+import { notifyGenerationSaveLocalHint } from '@/composables/useCanvasMedia'
+import { buildNodeMediaInfoSummary } from '@/composables/useMediaInspector'
+import { canvasApi } from '@/services/canvas-api'
+import { studioApi, type CanvasGenerationScope, type GenerationRecord, type StudioRefPayload } from '@/services/studio-api'
+import {
+  resolveGenerationModel,
+  type StudioModality,
+} from '@/constants/studioModels'
+import type { CompositionTrack } from '@/utils/compositionUpstream'
+import { applyTrackOrder } from '@/utils/compositionUpstream'
+import {
+  buildBatchGenerateItems,
+  expandSceneComposerGraph,
+  readSceneComposerFromNode,
+  resolveCanvasImageParams,
+  resolveCanvasVideoParams,
+  sceneComposerToNodePatch,
+} from '@/utils/sceneComposer'
+import {
+  extractRefundedPointsFromError,
+  formatCancelledMessage,
+} from '@/utils/generationPointsMessage'
+import {
+  buildPollingFailurePatch,
+  parseShortGenerationError,
+} from '@/utils/generationDiagnostic'
+import { useAuthStore } from '@/stores/auth'
+import {
+  compositionGenerateIdsForClick,
+  type CompositionRunGroup,
+} from '@/composables/compositionRunGroup'
+
+export type FallbackConfirmDecision = 'confirm' | 'cancel'
+
+export interface FallbackPendingRequest {
+  kind: 'studio' | 'material'
+  id: string
+  nodeId: string
+  message?: string
+}
+
+export interface NodeGenerationDeps {
+  nodes: Ref<EditableFlowNode[]>
+  edges: Ref<CanvasEdgeLike[]>
+  sessionId: Ref<string>
+  patchNodeData: (id: string, patch: Record<string, unknown>) => void
+  addNode: (type: string, data: Record<string, unknown>, opts?: { id?: string; position?: { x: number; y: number } }) => string
+  addEdge: (edge: CanvasEdgeLike & { id: string; style?: Record<string, string | number> }) => void
+  saveCanvas: () => Promise<void>
+  requireLogin: () => boolean
+  startShotPolling: (shotIds: string[]) => void
+  startGenerationPolling: (tasks: GenerationPollTask[]) => void
+  stopGenerationPolling?: (nodeId: string) => void
+  stopShotPolling?: (nodeId: string) => void
+  resolveProviderModels: () => { image: string; video: string; text: string }
+  requestFallbackConfirm?: (req: FallbackPendingRequest) => Promise<FallbackConfirmDecision>
+  isModelSelectable?: (modality: StudioModality, model: string) => boolean
+  onInsufficientPoints?: () => void
+  compositionRunGroup?: Ref<CompositionRunGroup | null | undefined>
+}
+
+/** Node still accepts poll / resolve writes (not cancelled to draft). */
+function acceptsGenerationWrite(status: unknown): boolean {
+  return isNodeGenerating(status) || status === 'pending'
+}
+
+function localPrompt(data: Record<string, unknown>): string {
+  return String(data.prompt ?? data.content ?? '').trim()
+}
+
+function startedAtPatch(): Record<string, unknown> {
+  return { generationStartedAt: new Date().toISOString() }
+}
+
+function normalizeEdges(edges: CanvasEdgeLike[]) {
+  return edges.map((edge) => ({
+    id: edge.id ?? `${edge.source}->${edge.target}`,
+    source: edge.source,
+    target: edge.target,
+  }))
+}
+
+function resolveStudioRefs(
+  node: EditableFlowNode,
+  nodes: EditableFlowNode[],
+  edges: CanvasEdgeLike[],
+): StudioRefPayload[] {
+  const data = node.data ?? {}
+  return resolveNodeRefs({
+    targetNodeId: node.id,
+    targetType: String(node.type),
+    nodes,
+    edges: normalizeEdges(edges),
+    localRefs: (data.localRefs as LocalRefBinding[]) ?? [],
+    refOrder: (data.refOrder as string[]) ?? [],
+  })
+    .filter((r) => !r.stale)
+    .map((r) => ({
+      refKey: r.refKey,
+      mediaType: r.mediaType,
+      label: r.label,
+      text: r.payload.text,
+      url: r.payload.url,
+    }))
+}
+
+function firstImageRefUrl(refs: StudioRefPayload[]): string {
+  for (const ref of refs) {
+    if (ref.mediaType === 'image' && ref.url?.trim()) return ref.url.trim()
+  }
+  return ''
+}
+
+/** 找出仍是 blob 本地地址（未持久化上传）的引用，返回可读的错误消息；无问题时返回 null */
+function blobReferenceError(refs: StudioRefPayload[], data: Record<string, unknown>): string | null {
+  const direct = String(data.referenceImageUrl ?? '').trim()
+  if (direct.startsWith('blob:')) return '参考图尚未上传，请先上传后再生成'
+  for (const ref of refs) {
+    if (ref.url?.trim().startsWith('blob:')) {
+      const label = ref.label ? `（${ref.label}）` : ''
+      return `参考图 @${ref.refKey}${label}未上传成功，请在来源节点重新上传后再生成`
+    }
+  }
+  return null
+}
+
+const AUDIO_ONLY_VIDEO_REF_ERROR = '需要 Seedance 且至少一张参考图'
+
+/** S7：仅音频 ref、无 image/video（含 legacy referenceImageUrl）时返回错误文案 */
+function audioOnlyVideoRefError(refs: StudioRefPayload[], refImage: string): string | null {
+  let hasAudio = false
+  let hasImageOrVideo = Boolean(refImage.trim())
+  for (const ref of refs) {
+    if (ref.mediaType === 'audio') hasAudio = true
+    if (ref.mediaType === 'image' || ref.mediaType === 'video') hasImageOrVideo = true
+  }
+  if (hasAudio && !hasImageOrVideo) return AUDIO_ONLY_VIDEO_REF_ERROR
+  return null
+}
+
+function findNodeById(nodes: EditableFlowNode[], id: string) {
+  for (const node of nodes) {
+    if (node.id === id) return node
+  }
+  return null
+}
+
+function findIncomingEdge(edges: CanvasEdgeLike[], targetId: string) {
+  for (const edge of edges) {
+    if (edge.target === targetId) return edge
+  }
+  return null
+}
+
+function findShotMediaChild(
+  nodes: EditableFlowNode[],
+  edges: CanvasEdgeLike[],
+  shotId: string,
+  childType: string,
+): EditableFlowNode | null {
+  for (const edge of edges) {
+    if (edge.source !== shotId) continue
+    const target = findNodeById(nodes, edge.target)
+    if (target?.type === childType) return target
+  }
+  return null
+}
+
+function shotHasChildType(nodes: EditableFlowNode[], edges: CanvasEdgeLike[], shotId: string, childType: string) {
+  return findShotMediaChild(nodes, edges, shotId, childType) !== null
+}
+
+function parseConfirmMessage(metadata?: string | null): string | undefined {
+  if (!metadata) return undefined
+  try {
+    const meta = JSON.parse(metadata) as { confirmMessage?: string }
+    return typeof meta.confirmMessage === 'string' ? meta.confirmMessage : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function modalityForNodeType(nodeType: string): StudioModality | null {
+  if (nodeType === 'image') return 'image'
+  if (nodeType === 'video') return 'video'
+  if (nodeType === 'audio') return 'audio'
+  if (nodeType === 'text' || nodeType === 'prompt') return 'text'
+  return null
+}
+
+function modelFieldForModality(modality: StudioModality): string {
+  if (modality === 'image') return 'imageModel'
+  if (modality === 'video') return 'videoModel'
+  if (modality === 'audio') return 'audioModel'
+  return 'textModel'
+}
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; name?: string; message?: string }
+  return e.code === 'ERR_CANCELED' || e.name === 'CanceledError' || e.name === 'AbortError'
+}
+
+export function useNodeGeneration(deps: NodeGenerationDeps) {
+  const auth = useAuthStore()
+  const busyNodeIds = ref(new Set<string>())
+  const abortByNodeId = new Map<string, AbortController>()
+
+  function refreshPointsAfterGeneration() {
+    void auth.refreshPoints()
+  }
+
+  function patchGenerationError(nodeId: string, err: unknown, signal?: AbortSignal) {
+    const refundedPoints = extractRefundedPointsFromError(err)
+    if (signal?.aborted) {
+      if (refundedPoints) {
+        deps.patchNodeData(nodeId, { errorMessage: formatCancelledMessage(refundedPoints) })
+      }
+      return
+    }
+    if (isAbortError(err)) return
+    const short = parseShortGenerationError(err)
+    if (short.userMessage.includes('积分不足')) deps.onInsufficientPoints?.()
+    if (!nodeAcceptsWrite(nodeId)) return
+    const patch: Record<string, unknown> = {
+      status: NODE_GENERATION_STATUS.error,
+      errorMessage: short.userMessage,
+    }
+    if (short.errorCode) patch.errorCode = short.errorCode
+    if (short.taskKind === 'generation' && short.taskId) patch.generationRecordId = short.taskId
+    if (short.taskKind === 'material' && short.taskId) patch.materialId = short.taskId
+    deps.patchNodeData(nodeId, patch)
+  }
+
+  function isNodeBusy(nodeId: string): boolean {
+    return busyNodeIds.value.has(nodeId)
+  }
+
+  function markBusy(nodeId: string) {
+    const next = new Set(busyNodeIds.value)
+    next.add(nodeId)
+    busyNodeIds.value = next
+  }
+
+  function markIdle(nodeId: string) {
+    if (!busyNodeIds.value.has(nodeId)) return
+    const next = new Set(busyNodeIds.value)
+    next.delete(nodeId)
+    busyNodeIds.value = next
+  }
+
+  /** True when any node is mid-request (legacy aggregate; prefer isNodeBusy). */
+  const generating = ref(false)
+  function syncGeneratingFlag() {
+    generating.value = busyNodeIds.value.size > 0
+  }
+
+  function nodeAcceptsWrite(nodeId: string): boolean {
+    const current = findNodeById(deps.nodes.value, nodeId)
+    return acceptsGenerationWrite(current?.data?.status)
+  }
+
+function resolveMaterialId(node: EditableFlowNode | undefined): string | undefined {
+  if (!node) return undefined
+  const data = node.data ?? {}
+  if (typeof data.materialId === 'string' && data.materialId.trim()) {
+    return data.materialId.trim()
+  }
+  return undefined
+}
+
+function collectCancelTargets(nodeId: string): {
+  recordIds: string[]
+  materialIds: string[]
+} {
+  const recordIds = new Set<string>()
+  const materialIds = new Set<string>()
+  const node = findNodeById(deps.nodes.value, nodeId)
+  if (!node) return { recordIds: [], materialIds: [] }
+
+  const recordId = node.data?.generationRecordId
+  if (typeof recordId === 'string' && recordId.trim()) recordIds.add(recordId.trim())
+
+  const materialId = resolveMaterialId(node)
+  if (materialId) materialIds.add(materialId)
+
+  if (node.type === 'shot') {
+    for (const edge of deps.edges.value) {
+      if (edge.source !== nodeId) continue
+      const child = findNodeById(deps.nodes.value, edge.target)
+      if (!child || (child.type !== 'image' && child.type !== 'video')) continue
+      const childMaterialId = resolveMaterialId(child)
+      if (childMaterialId) materialIds.add(childMaterialId)
+    }
+  }
+
+  if (node.type === 'image' || node.type === 'video') {
+    const linkedShotEdge = findIncomingEdge(deps.edges.value, nodeId)
+    const shotId = linkedShotEdge?.source
+    const shotNode = shotId ? findNodeById(deps.nodes.value, shotId) : null
+    if (shotNode?.type === 'shot' && shotId) {
+      const shotMaterialId = resolveMaterialId(shotNode)
+      if (shotMaterialId) materialIds.add(shotMaterialId)
+    }
+  }
+
+  return { recordIds: [...recordIds], materialIds: [...materialIds] }
+}
+
+async function cancelRemoteGeneration(
+  nodeId: string,
+  excludedRecordIds = new Set<string>(),
+  excludedMaterialIds = new Set<string>(),
+) {
+  const { recordIds, materialIds } = collectCancelTargets(nodeId)
+  const cancellableRecordIds = recordIds.filter((id) => !excludedRecordIds.has(id))
+  const cancellableMaterialIds = materialIds.filter((id) => !excludedMaterialIds.has(id))
+  if (!cancellableRecordIds.length && !cancellableMaterialIds.length) return
+  await Promise.all([
+    ...cancellableRecordIds.map((id) => studioApi.cancelGeneration(id).catch(() => undefined)),
+    ...cancellableMaterialIds.map((id) => canvasApi.cancelMaterial(id).catch(() => undefined)),
+  ])
+  await refreshPointsAfterGeneration()
+}
+
+  async function cancelFallbackPendingNodes(nodes: EditableFlowNode[]) {
+    const targets = new Map<string, {
+      kind: 'studio' | 'material'
+      id: string
+      nodes: Array<{
+        nodeId: string
+        status: unknown
+        generationRecordId?: string
+        materialId?: string
+      }>
+    }>()
+
+    for (const node of nodes) {
+      const recordId = node.data?.generationRecordId
+      const materialId = resolveMaterialId(node)
+      const generationRecordId =
+        typeof recordId === 'string' && recordId.trim() ? recordId.trim() : undefined
+      const kind = generationRecordId ? 'studio' : 'material'
+      const id = kind === 'studio' ? generationRecordId : materialId
+      if (!id) {
+        if (node.data?.status === NODE_GENERATION_STATUS.fallback_pending) {
+          deps.patchNodeData(node.id, {
+            status: NODE_GENERATION_STATUS.error,
+            errorMessage: '无法取消平台回退：缺少任务标识',
+          })
+        }
+        continue
+      }
+      const snapshot = {
+        nodeId: node.id,
+        status: node.data?.status,
+        generationRecordId,
+        materialId,
+      }
+      const key = `${kind}:${id}`
+      const target = targets.get(key)
+      if (target) target.nodes.push(snapshot)
+      else targets.set(key, { kind, id, nodes: [snapshot] })
+    }
+
+    function stillMatchesPendingTask(
+      target: { kind: 'studio' | 'material'; id: string },
+      snapshot: {
+        nodeId: string
+        status: unknown
+        generationRecordId?: string
+        materialId?: string
+      },
+    ): boolean {
+      if (snapshot.status !== NODE_GENERATION_STATUS.fallback_pending) return false
+      const current = findNodeById(deps.nodes.value, snapshot.nodeId)
+      if (current?.data?.status !== NODE_GENERATION_STATUS.fallback_pending) return false
+      const currentRecordId =
+        typeof current.data?.generationRecordId === 'string'
+          ? current.data.generationRecordId.trim() || undefined
+          : undefined
+      const currentMaterialId = resolveMaterialId(current)
+      return target.kind === 'studio'
+        ? currentRecordId === target.id && currentRecordId === snapshot.generationRecordId
+        : currentMaterialId === target.id && currentMaterialId === snapshot.materialId
+    }
+
+    await Promise.all([...targets.values()].map(async (target) => {
+      try {
+        if (target.kind === 'studio') {
+          await studioApi.cancelPlatformFallback(target.id)
+        } else {
+          await canvasApi.cancelMaterialPlatformFallback(target.id)
+        }
+        for (const snapshot of target.nodes) {
+          if (!stillMatchesPendingTask(target, snapshot)) continue
+          deps.patchNodeData(snapshot.nodeId, {
+            status: NODE_GENERATION_STATUS.error,
+            errorMessage: '已取消平台回退',
+          })
+        }
+      } catch (err) {
+        const short = parseShortGenerationError(err)
+        for (const snapshot of target.nodes) {
+          if (!stillMatchesPendingTask(target, snapshot)) continue
+          const patch: Record<string, unknown> = {
+            status: NODE_GENERATION_STATUS.error,
+            errorMessage: short.userMessage || '平台回退取消失败',
+          }
+          if (short.errorCode) patch.errorCode = short.errorCode
+          deps.patchNodeData(snapshot.nodeId, patch)
+        }
+      }
+    }))
+    refreshPointsAfterGeneration()
+    await deps.saveCanvas().catch(() => undefined)
+  }
+
+  async function cancelPendingFallbackBeforeGenerate(node: EditableFlowNode) {
+    if (node.data?.status !== NODE_GENERATION_STATUS.fallback_pending) return
+    const recordId = node.data?.generationRecordId
+    const materialId = resolveMaterialId(node)
+    const cancellations: Array<() => Promise<unknown>> = []
+    if (typeof recordId === 'string' && recordId.trim()) {
+      cancellations.push(() => studioApi.cancelPlatformFallback(recordId.trim()))
+    }
+    if (materialId) {
+      cancellations.push(() => canvasApi.cancelMaterialPlatformFallback(materialId))
+    }
+    // Best effort: a new generation must still be allowed to replace old tasks.
+    await Promise.allSettled(cancellations.map((cancel) => Promise.resolve().then(cancel)))
+    refreshPointsAfterGeneration()
+  }
+
+  function cancelGeneration(nodeId: string) {
+    const ac = abortByNodeId.get(nodeId)
+    if (ac) {
+      ac.abort()
+      abortByNodeId.delete(nodeId)
+    }
+    deps.stopGenerationPolling?.(nodeId)
+    deps.stopShotPolling?.(nodeId)
+    const node = findNodeById(deps.nodes.value, nodeId)
+    const fallbackPendingNodes: EditableFlowNode[] = []
+    if (node?.data?.status === NODE_GENERATION_STATUS.fallback_pending) {
+      fallbackPendingNodes.push(node)
+    }
+    if (node && (node.type === 'image' || node.type === 'video')) {
+      const linkedShotEdge = findIncomingEdge(deps.edges.value, nodeId)
+      const shotId = linkedShotEdge?.source
+      const shotNode = shotId ? findNodeById(deps.nodes.value, shotId) : null
+      if (shotNode?.type === 'shot' && shotId) {
+        deps.stopShotPolling?.(shotId)
+        if (shotNode.data?.status === NODE_GENERATION_STATUS.fallback_pending) {
+          fallbackPendingNodes.push(shotNode)
+        } else {
+          deps.patchNodeData(shotId, {
+            status: NODE_GENERATION_STATUS.draft,
+            errorMessage: formatCancelledMessage(),
+          })
+        }
+        markIdle(shotId)
+      }
+    }
+    if (node?.type === 'shot') {
+      for (const edge of deps.edges.value) {
+        if (edge.source !== nodeId) continue
+        const child = findNodeById(deps.nodes.value, edge.target)
+        if (!child || (child.type !== 'image' && child.type !== 'video')) continue
+        if (!isNodeGenerating(child.data?.status)) continue
+        deps.stopGenerationPolling?.(child.id)
+        const childAc = abortByNodeId.get(child.id)
+        if (childAc) {
+          childAc.abort()
+          abortByNodeId.delete(child.id)
+        }
+        markIdle(child.id)
+        if (child.data?.status === NODE_GENERATION_STATUS.fallback_pending) {
+          fallbackPendingNodes.push(child)
+        } else {
+          deps.patchNodeData(child.id, {
+            status: NODE_GENERATION_STATUS.draft,
+            errorMessage: formatCancelledMessage(),
+          })
+        }
+      }
+    }
+    markIdle(nodeId)
+    syncGeneratingFlag()
+    if (node?.data?.status !== NODE_GENERATION_STATUS.fallback_pending) {
+      deps.patchNodeData(nodeId, {
+        status: NODE_GENERATION_STATUS.draft,
+        errorMessage: formatCancelledMessage(),
+      })
+    }
+    refreshPointsAfterGeneration()
+    const excludedRecordIds = new Set<string>()
+    const excludedMaterialIds = new Set<string>()
+    for (const pendingNode of fallbackPendingNodes) {
+      const recordId = pendingNode.data?.generationRecordId
+      if (typeof recordId === 'string' && recordId.trim()) {
+        excludedRecordIds.add(recordId.trim())
+      }
+      const materialId = resolveMaterialId(pendingNode)
+      if (materialId) excludedMaterialIds.add(materialId)
+    }
+    if (fallbackPendingNodes.length) {
+      void cancelFallbackPendingNodes(fallbackPendingNodes)
+    }
+    void cancelRemoteGeneration(nodeId, excludedRecordIds, excludedMaterialIds)
+  }
+
+  function beginNodeWork(nodeId: string): AbortSignal {
+    const existing = abortByNodeId.get(nodeId)
+    if (existing) existing.abort()
+    const ac = new AbortController()
+    abortByNodeId.set(nodeId, ac)
+    markBusy(nodeId)
+    syncGeneratingFlag()
+    return ac.signal
+  }
+
+  function endNodeWork(nodeId: string, signal?: AbortSignal) {
+    const ac = abortByNodeId.get(nodeId)
+    if (ac && (!signal || ac.signal === signal)) {
+      abortByNodeId.delete(nodeId)
+    }
+    markIdle(nodeId)
+    syncGeneratingFlag()
+  }
+
+  async function handleStudioFallback(nodeId: string, record: GenerationRecord): Promise<boolean> {
+    if (record.status !== NODE_GENERATION_STATUS.fallback_pending) return false
+    const decision = deps.requestFallbackConfirm
+      ? await deps.requestFallbackConfirm({
+          kind: 'studio',
+          id: record.id,
+          nodeId,
+          message: parseConfirmMessage(record.metadata),
+        })
+      : 'cancel'
+
+    if (decision === 'confirm') {
+      const { data: res } = await studioApi.confirmPlatformFallback(record.id)
+      return applyStudioRecord(nodeId, res.data)
+    }
+
+    await studioApi.cancelPlatformFallback(record.id)
+    if (!nodeAcceptsWrite(nodeId)) return false
+    deps.patchNodeData(nodeId, {
+      status: NODE_GENERATION_STATUS.error,
+      errorMessage: '已取消平台回退',
+      generationRecordId: record.id,
+    })
+    return true
+  }
+
+  function applyStudioRecord(nodeId: string, record: GenerationRecord): boolean {
+    const current = findNodeById(deps.nodes.value, nodeId)
+    if (
+      !shouldApplyGenerationPoll({
+        nodeStatus: current?.data?.status,
+        nodeRecordId: current?.data?.generationRecordId,
+        incomingRecordId: record.id,
+        incomingStatus: record.status,
+      })
+    ) {
+      return false
+    }
+    if (record.status === NODE_GENERATION_STATUS.fallback_pending) {
+      return false
+    }
+    if (record.status === NODE_GENERATION_STATUS.completed) {
+      const wasGenerating = current?.data?.status === NODE_GENERATION_STATUS.generating
+      const urls = parseRecordUrls(record)
+      const patch: Record<string, unknown> = {
+        status: NODE_GENERATION_STATUS.completed,
+        errorMessage: null,
+        generationRecordId: record.id,
+      }
+      if (record.type === 'text' || record.type === 'prompt') {
+        if (record.type === 'prompt') {
+          const parsed = parseRecordPromptContent(record)
+          patch.content = parsed.content
+          patch.promptMode = parsed.mode
+        } else {
+          const content = parseRecordText(record)
+          patch.content = content
+          // Keep dock prompt intact — result lives on the node card via `content`.
+        }
+      } else {
+        patch.url = urls[0] ?? parseRecordUrl(record)
+        if (urls.length) patch.images = urls
+        if (record.type === 'video') {
+          const lastFrameUrl = parseRecordLastFrameUrl(record)
+          if (lastFrameUrl) patch.lastFrameUrl = lastFrameUrl
+        }
+      }
+      const mediaSummary = buildNodeMediaInfoSummary(record)
+      if (mediaSummary) patch.mediaInfo = mediaSummary
+      deps.patchNodeData(nodeId, patch)
+      if (
+        wasGenerating &&
+        (record.type === 'image' || record.type === 'video') &&
+        (patch.url || urls.length)
+      ) {
+        notifyGenerationSaveLocalHint()
+      }
+      return true
+    }
+    if (
+      record.status === NODE_GENERATION_STATUS.generating ||
+      record.status === 'pending'
+    ) {
+      deps.patchNodeData(nodeId, {
+        status: NODE_GENERATION_STATUS.generating,
+        generationRecordId: record.id,
+      })
+      deps.startGenerationPolling([{ recordId: record.id, nodeId }])
+      return true
+    }
+    deps.patchNodeData(
+      nodeId,
+      buildPollingFailurePatch({
+        metadata: record.metadata,
+        generationRecordId: record.id,
+      }),
+    )
+    return true
+  }
+
+  async function resolveStudioRecord(nodeId: string, record: GenerationRecord) {
+    const current = findNodeById(deps.nodes.value, nodeId)
+    if (
+      !shouldApplyGenerationPoll({
+        nodeStatus: current?.data?.status,
+        nodeRecordId: current?.data?.generationRecordId,
+        incomingRecordId: record.id,
+        incomingStatus: record.status,
+      })
+    ) {
+      return
+    }
+    if (record.status === NODE_GENERATION_STATUS.fallback_pending) {
+      const handled = await handleStudioFallback(nodeId, record)
+      if (!handled) {
+        if (!nodeAcceptsWrite(nodeId)) return
+        deps.patchNodeData(nodeId, {
+          status: NODE_GENERATION_STATUS.error,
+          errorMessage: '平台回退仍待确认',
+          generationRecordId: record.id,
+        })
+      }
+      await deps.saveCanvas()
+      return
+    }
+    applyStudioRecord(nodeId, record)
+    await deps.saveCanvas()
+  }
+
+  function assertModelSelectable(node: EditableFlowNode, modality: StudioModality, model: string): boolean {
+    if (!deps.isModelSelectable || deps.isModelSelectable(modality, model)) return true
+    deps.patchNodeData(node.id, {
+      status: NODE_GENERATION_STATUS.error,
+      errorMessage: '当前模型已停用，请重新选择模型后再生成',
+    })
+    return false
+  }
+
+  function canvasScope(nodeId: string): CanvasGenerationScope {
+    return { sessionId: deps.sessionId.value, nodeId }
+  }
+
+  function compositionVideoCanvas() {
+    return {
+      nodes: deps.nodes.value.map((n) => ({
+        id: n.id,
+        type: String(n.type ?? ''),
+        data: n.data,
+      })),
+      compositionRunGroup: deps.compositionRunGroup?.value ?? undefined,
+    }
+  }
+
+  function applyLiveCompositionVideoPrompt(videoNodeId: string): string | null {
+    const resolved = resolveCompositionVideoPrompt(compositionVideoCanvas(), videoNodeId)
+    if ('error' in resolved) {
+      deps.patchNodeData(videoNodeId, {
+        status: NODE_GENERATION_STATUS.error,
+        errorMessage: '分镜还是空的，写好后再生成视频。',
+      })
+      return null
+    }
+    return resolved.prompt
+  }
+
+  function isRunGroupFailureStatus(status: unknown): boolean {
+    return (
+      status === NODE_GENERATION_STATUS.error ||
+      status === NODE_GENERATION_STATUS.failed
+    )
+  }
+
+  function runGroupMemberHasUsableOutput(node: EditableFlowNode | null | undefined): boolean {
+    if (!node || node.data?.status !== NODE_GENERATION_STATUS.completed) return false
+    const type = String(node.type)
+    if (type === 'image' || type === 'video') {
+      const url = String(node.data?.url ?? '').trim()
+      const images = node.data?.images
+      return Boolean(url) || (Array.isArray(images) && images.some((item) => String(item ?? '').trim()))
+    }
+    if (type === 'text' || type === 'prompt') {
+      return Boolean(String(node.data?.content ?? node.data?.prompt ?? '').trim())
+    }
+    return true
+  }
+
+  async function waitForRunGroupMemberSettled(nodeId: string): Promise<'ok' | 'failed'> {
+    for (;;) {
+      const node = findNodeById(deps.nodes.value, nodeId)
+      const status = node?.data?.status
+      if (isRunGroupFailureStatus(status)) return 'failed'
+      if (runGroupMemberHasUsableOutput(node)) return 'ok'
+
+      const inFlight =
+        isNodeBusy(nodeId) ||
+        isDockGenerateBusy(status) ||
+        status === NODE_GENERATION_STATUS.fallback_pending ||
+        status === 'pending'
+      if (!inFlight) return 'failed'
+
+      const recordId =
+        typeof node?.data?.generationRecordId === 'string' && node.data.generationRecordId.trim()
+          ? node.data.generationRecordId.trim()
+          : ''
+      if (recordId) {
+        try {
+          const { data } = await studioApi.getGeneration(recordId)
+          await resolveStudioRecord(nodeId, data.data)
+        } catch {
+          // retry until terminal status
+        }
+        const after = findNodeById(deps.nodes.value, nodeId)
+        if (isRunGroupFailureStatus(after?.data?.status)) return 'failed'
+        if (runGroupMemberHasUsableOutput(after)) return 'ok'
+      }
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 150))
+    }
+  }
+
+  async function generateForNode(
+    node: EditableFlowNode,
+    opts?: { asRunGroupMember?: boolean },
+  ) {
+    if (!opts?.asRunGroupMember) {
+      if (isNodeBusy(node.id)) {
+        cancelGeneration(node.id)
+        return
+      }
+      if (
+        isDockGenerateBusy(node.data?.status)
+        && node.data?.status !== NODE_GENERATION_STATUS.fallback_pending
+      ) {
+        cancelGeneration(node.id)
+        return
+      }
+      const ids = compositionGenerateIdsForClick(node.id, {
+        nodes: deps.nodes.value.map((n) => ({
+          id: n.id,
+          type: String(n.type ?? ''),
+          data: n.data,
+        })),
+        edges: deps.edges.value,
+        compositionRunGroup: deps.compositionRunGroup?.value ?? undefined,
+      })
+      if (!ids.length) return
+      if (ids.length !== 1 || ids[0] !== node.id) {
+        for (const id of ids) {
+          const member = findNodeById(deps.nodes.value, id)
+          if (!member) continue
+          const alreadyInFlight =
+            isNodeBusy(member.id) ||
+            isDockGenerateBusy(member.data?.status) ||
+            member.data?.status === NODE_GENERATION_STATUS.fallback_pending
+          if (!alreadyInFlight) {
+            await generateForNode(member, { asRunGroupMember: true })
+          }
+          const settled = await waitForRunGroupMemberSettled(id)
+          if (settled !== 'ok') return
+        }
+        return
+      }
+    }
+
+    if (!opts?.asRunGroupMember) {
+      if (isNodeBusy(node.id)) {
+        cancelGeneration(node.id)
+        return
+      }
+      if (
+        isDockGenerateBusy(node.data?.status)
+        && node.data?.status !== NODE_GENERATION_STATUS.fallback_pending
+      ) {
+        cancelGeneration(node.id)
+        return
+      }
+    }
+
+    const data = node.data ?? {}
+    const nodeType = String(node.type)
+    const upstream = resolveUpstreamContext(node.id, deps.nodes.value, deps.edges.value)
+    const local = localPrompt(data)
+    const refs = resolveStudioRefs(node, deps.nodes.value, deps.edges.value)
+    const mentionedKeys = parseRefMentions(local)
+    if (!deps.requireLogin()) return
+    if (nodeType === 'prompt') {
+      const hasImageRef = refs.some((r) => r.mediaType === 'image' && Boolean(r.url?.trim()))
+      if (!local && !hasImageRef) return
+    } else if (nodeType !== 'sceneComposer' && !local && !refs.length) {
+      const hasTextP = nodeType === 'video' && deps.nodes.value.some((n) => n.id === 'text-p')
+      if (!hasTextP) return
+    }
+
+    const blobError = blobReferenceError(refs, data)
+    if (blobError) {
+      deps.patchNodeData(node.id, {
+        status: NODE_GENERATION_STATUS.error,
+        errorMessage: blobError,
+        errorCode: 'upload_required',
+      })
+      return
+    }
+
+    const modality = modalityForNodeType(nodeType)
+    if (modality) {
+      const field = modelFieldForModality(modality)
+      const model = resolveGenerationModel(modality, data[field] as string | undefined)
+      if (!assertModelSelectable(node, modality, model)) return
+    }
+
+    const signal = beginNodeWork(node.id)
+
+    try {
+      await cancelPendingFallbackBeforeGenerate(node)
+      if (signal.aborted) return
+
+      // Phase 2c.1: dock / confirm generate start clears pending_confirm SSOT.
+      if (String(data.status ?? '') === 'pending_confirm') {
+        deps.patchNodeData(node.id, { status: NODE_GENERATION_STATUS.draft })
+      }
+
+      if (nodeType === 'prompt') {
+        deps.patchNodeData(node.id, { ...startedAtPatch(), status: NODE_GENERATION_STATUS.generating })
+        const guideSceneId =
+          typeof data.guideSceneId === 'string' && data.guideSceneId.trim()
+            ? data.guideSceneId.trim()
+            : undefined
+        const { data: res } = await studioApi.generatePrompt(
+          local,
+          resolveGenerationModel('text', data.textModel as string | undefined),
+          signal,
+          canvasScope(node.id),
+          guideSceneId,
+          refs,
+          mentionedKeys,
+        )
+        if (signal.aborted) return
+        // Bump record id before resolve — otherwise poll gate treats the new
+        // result as stale when the node still holds a prior failed recordId.
+        deps.patchNodeData(node.id, { generationRecordId: res.data.id })
+        await resolveStudioRecord(node.id, res.data)
+        return
+      }
+
+      if (nodeType === 'text') {
+        deps.patchNodeData(node.id, {
+          ...startedAtPatch(),
+          status: NODE_GENERATION_STATUS.generating,
+          prompt: local,
+        })
+        const thinking = data.textThinking === true
+        const thinkingEffort = data.textThinkingEffort === 'max' ? 'max' : 'high'
+        const { data: res } = await studioApi.generateText(
+          local,
+          resolveGenerationModel('text', data.textModel as string | undefined),
+          refs,
+          mentionedKeys,
+          signal,
+          thinking,
+          thinking ? thinkingEffort : undefined,
+          canvasScope(node.id),
+        )
+        if (signal.aborted) return
+        deps.patchNodeData(node.id, { generationRecordId: res.data.id })
+        await resolveStudioRecord(node.id, res.data)
+        return
+      }
+
+      if (nodeType === 'audio') {
+        deps.patchNodeData(node.id, {
+          ...startedAtPatch(),
+          status: NODE_GENERATION_STATUS.generating,
+          prompt: local,
+        })
+        const { data: res } = await studioApi.generateAudio(local, {
+          model: resolveGenerationModel('audio', data.audioModel as string | undefined),
+          voice: String(data.audioVoice ?? DEFAULT_AUDIO_VOICE),
+          emotion: String(data.audioEmotion ?? 'neutral'),
+          language: String(data.audioLanguage ?? 'zh'),
+          speed: typeof data.audioSpeed === 'number' ? data.audioSpeed : 1,
+          volume: typeof data.audioVolume === 'number' ? data.audioVolume : 1,
+          pitch: typeof data.audioPitch === 'number' ? data.audioPitch : 0,
+        }, refs, mentionedKeys, signal, canvasScope(node.id))
+        if (signal.aborted) return
+        deps.patchNodeData(node.id, { generationRecordId: res.data.id })
+        await resolveStudioRecord(node.id, res.data)
+        return
+      }
+
+      if (nodeType === 'sceneComposer') {
+        await saveSceneComposer(node)
+        return
+      }
+
+      if (nodeType === 'image' || nodeType === 'video') {
+        await generateImageOrVideo(node, local, data, upstream, refs, mentionedKeys, signal)
+        return
+      }
+
+      if (nodeType === 'shot') {
+        await generateShot(node, local, data, signal)
+      }
+    } catch (err) {
+      if (signal.aborted) {
+        patchGenerationError(node.id, err, signal)
+        return
+      }
+      if (isAbortError(err)) return
+      console.error('[NodeGeneration]', nodeType, err)
+      patchGenerationError(node.id, err, signal)
+    } finally {
+      endNodeWork(node.id, signal)
+      refreshPointsAfterGeneration()
+    }
+  }
+
+  async function generateImageOrVideo(
+    node: EditableFlowNode,
+    prompt: string,
+    data: Record<string, unknown>,
+    upstream: ReturnType<typeof resolveUpstreamContext>,
+    refs: StudioRefPayload[],
+    mentionedKeys: string[],
+    signal?: AbortSignal,
+  ) {
+    const nodeType = String(node.type)
+    const linkedShotEdge = findIncomingEdge(deps.edges.value, node.id)
+    const shotId = linkedShotEdge?.source
+    const shotNode = shotId ? findNodeById(deps.nodes.value, shotId) : null
+    const refImage = firstImageRefUrl(refs) || mergeReferenceImageUrl(data, upstream)
+    let requestPrompt = prompt
+
+    if (nodeType === 'video') {
+      const audioOnlyError = audioOnlyVideoRefError(refs, refImage)
+      if (audioOnlyError) {
+        deps.patchNodeData(node.id, {
+          status: NODE_GENERATION_STATUS.error,
+          errorMessage: audioOnlyError,
+        })
+        return
+      }
+      const livePrompt = applyLiveCompositionVideoPrompt(node.id)
+      if (livePrompt === null) return
+      requestPrompt = livePrompt
+    }
+
+    if (shotNode?.type === 'shot' && shotId) {
+      deps.patchNodeData(node.id, {
+        ...startedAtPatch(),
+        status: NODE_GENERATION_STATUS.generating,
+        prompt,
+      })
+      deps.patchNodeData(shotId, {
+        ...startedAtPatch(),
+        status: NODE_GENERATION_STATUS.generating,
+        prompt,
+      })
+      if (nodeType === 'video') {
+        const params = resolveCanvasVideoParams(data)
+        const { data: matRes } = await canvasApi.generateVideo(shotId, requestPrompt, {
+          ...params,
+          refs,
+          mentionedKeys,
+          referenceImageUrl: refImage || undefined,
+        })
+        const materialId = (matRes.data as { id: string }).id
+        deps.patchNodeData(node.id, { materialId })
+        deps.patchNodeData(shotId, { materialId })
+      } else {
+        const params = resolveCanvasImageParams(data)
+        const { data: matRes } = await canvasApi.generateImage(shotId, prompt, { ...params, refs, mentionedKeys })
+        const materialId = (matRes.data as { id: string }).id
+        deps.patchNodeData(node.id, { materialId })
+        deps.patchNodeData(shotId, { materialId })
+      }
+      if (signal?.aborted || !nodeAcceptsWrite(node.id) || !nodeAcceptsWrite(shotId)) return
+      deps.startShotPolling([shotId])
+      await deps.saveCanvas()
+      return
+    }
+
+    deps.patchNodeData(node.id, {
+      ...startedAtPatch(),
+      status: NODE_GENERATION_STATUS.generating,
+      prompt,
+    })
+
+    if (nodeType === 'image') {
+      const aspectRatio = String(data.imageAspect ?? '16:9')
+      const resolution = String(data.imageResolution ?? '1K')
+      const count = Number(data.imageCount ?? 1)
+      const { data: res } = await studioApi.generateImage(
+        prompt,
+        resolveGenerationModel('image', data.imageModel as string | undefined),
+        aspectRatio,
+        refs,
+        mentionedKeys,
+        resolution,
+        count,
+        signal,
+        canvasScope(node.id),
+      )
+      if (signal?.aborted) return
+      deps.patchNodeData(node.id, {
+        referenceImageUrl: refImage || undefined,
+        imageResolution: resolution,
+        imageCount: count,
+        generationRecordId: res.data.id,
+      })
+      await resolveStudioRecord(node.id, res.data)
+      return
+    }
+
+    const settings = data.videoSettings as VideoSettings | undefined
+    const videoMode = data.videoMode as string | undefined
+    const seedRaw = data.seed
+    const seed =
+      typeof seedRaw === 'number' && Number.isFinite(seedRaw) ? Math.trunc(seedRaw) : undefined
+    const negativePrompt = String(data.negativePrompt ?? '').trim() || undefined
+    const { data: res } = await studioApi.startVideoGeneration(
+      requestPrompt,
+      resolveGenerationModel('video', data.videoModel as string | undefined),
+      settings?.duration,
+      settings?.aspectRatio,
+      refs,
+      mentionedKeys,
+      settings?.resolution,
+      settings?.crop,
+      undefined,
+      signal,
+      canvasScope(node.id),
+      videoMode,
+      settings?.generateAudio,
+      seed,
+      negativePrompt,
+    )
+    if (signal?.aborted) return
+    const startedAt =
+      typeof res.data.generationStartedAt === 'string'
+        ? res.data.generationStartedAt
+        : startedAtPatch().generationStartedAt
+    deps.patchNodeData(node.id, {
+      generationRecordId: res.data.id,
+      generationStartedAt: startedAt,
+    })
+    await resolveStudioRecord(node.id, res.data)
+  }
+
+  async function handleMaterialFallback(nodeId: string, materialId: string, message?: string) {
+    const decision = deps.requestFallbackConfirm
+      ? await deps.requestFallbackConfirm({
+          kind: 'material',
+          id: materialId,
+          nodeId,
+          message,
+        })
+      : 'cancel'
+
+    if (decision === 'confirm') {
+      await canvasApi.confirmMaterialPlatformFallback(materialId)
+      if (!nodeAcceptsWrite(nodeId)) return
+      deps.patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.generating })
+      const shotEdge = findIncomingEdge(deps.edges.value, nodeId)
+      if (shotEdge?.source) deps.startShotPolling([shotEdge.source])
+      return
+    }
+
+    await canvasApi.cancelMaterialPlatformFallback(materialId)
+    if (!nodeAcceptsWrite(nodeId)) return
+    deps.patchNodeData(nodeId, {
+      status: NODE_GENERATION_STATUS.error,
+      errorMessage: '已取消平台回退',
+    })
+  }
+
+  /** Exposed for CanvasPage shot/generation polling when status becomes fallback_pending */
+  async function onFallbackPending(
+    kind: 'studio' | 'material',
+    id: string,
+    nodeId: string,
+    message?: string,
+  ) {
+    try {
+      if (kind === 'studio') {
+        await handleStudioFallback(nodeId, {
+          id,
+          type: 'video',
+          prompt: '',
+          status: NODE_GENERATION_STATUS.fallback_pending,
+          metadata: message ? JSON.stringify({ confirmMessage: message }) : null,
+          createdAt: new Date().toISOString(),
+        })
+      } else {
+        await handleMaterialFallback(nodeId, id, message)
+      }
+      await deps.saveCanvas()
+    } catch (err) {
+      const current = findNodeById(deps.nodes.value, nodeId)
+      if (current && !acceptsGenerationWrite(current.data?.status)) return
+      deps.patchNodeData(nodeId, {
+        status: NODE_GENERATION_STATUS.error,
+        errorMessage: err instanceof Error ? err.message : '平台回退处理失败',
+      })
+      await deps.saveCanvas()
+    }
+  }
+
+  async function generateShot(
+    node: EditableFlowNode,
+    prompt: string,
+    data: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) {
+    const refs = resolveStudioRefs(node, deps.nodes.value, deps.edges.value)
+    const mentionedKeys = parseRefMentions(prompt)
+    deps.patchNodeData(node.id, {
+      ...startedAtPatch(),
+      status: NODE_GENERATION_STATUS.generating,
+      prompt,
+    })
+    const title = String(data.title ?? (prompt.slice(0, 24) || '新分镜'))
+    try {
+      await canvasApi.editShot(node.id, { title, prompt })
+    } catch {
+      if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
+      const shotRes = await canvasApi.createShot(deps.sessionId.value, { title, prompt })
+      const shot = shotRes.data.data as { id: string }
+      if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
+      if (shot.id !== node.id) {
+        deps.patchNodeData(node.id, {
+          ...startedAtPatch(),
+          title,
+          prompt,
+          status: NODE_GENERATION_STATUS.generating,
+        })
+      }
+    }
+
+    if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
+
+    const hasVideoChild = shotHasChildType(deps.nodes.value, deps.edges.value, node.id, 'video')
+    const hasImageChild = shotHasChildType(deps.nodes.value, deps.edges.value, node.id, 'image')
+    const mode = String(data.shotGenerateMode ?? 'auto')
+
+    const shouldGenerateVideo = mode === 'video' || (mode === 'auto' && hasVideoChild)
+    const shouldGenerateImage = mode === 'image' || (mode === 'auto' && hasImageChild && !shouldGenerateVideo)
+
+    if (shouldGenerateVideo) {
+      const childNode = findShotMediaChild(deps.nodes.value, deps.edges.value, node.id, 'video')
+      const params = resolveCanvasVideoParams(childNode?.data ?? {})
+      const referenceImageUrl =
+        firstImageRefUrl(refs)
+        || String(childNode?.data?.referenceImageUrl ?? '').trim()
+        || undefined
+      const { data: matRes } = await canvasApi.generateVideo(node.id, prompt, {
+        ...params,
+        refs,
+        mentionedKeys,
+        referenceImageUrl,
+      })
+      const materialId = (matRes.data as { id: string }).id
+      deps.patchNodeData(node.id, { materialId })
+      if (childNode) deps.patchNodeData(childNode.id, { materialId })
+    } else if (shouldGenerateImage) {
+      const childNode = findShotMediaChild(deps.nodes.value, deps.edges.value, node.id, 'image')
+      const params = resolveCanvasImageParams(childNode?.data ?? {})
+      const { data: matRes } = await canvasApi.generateImage(node.id, prompt, { ...params, refs, mentionedKeys })
+      const materialId = (matRes.data as { id: string }).id
+      deps.patchNodeData(node.id, { materialId })
+      if (childNode) deps.patchNodeData(childNode.id, { materialId })
+    } else {
+      const params = resolveCanvasImageParams({})
+      const matRes = await canvasApi.generateImage(node.id, prompt, { ...params, refs, mentionedKeys })
+      if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
+      const material = matRes.data.data as { id: string }
+      deps.patchNodeData(node.id, { materialId: material.id })
+      deps.addNode('image', {
+        url: '',
+        ...startedAtPatch(),
+        status: NODE_GENERATION_STATUS.generating,
+        prompt,
+        materialId: material.id,
+      }, {
+        id: material.id,
+        position: { x: node.position.x + 280, y: node.position.y },
+      })
+      deps.addEdge({
+        id: `e-${node.id}-${material.id}`,
+        source: node.id,
+        target: material.id,
+        style: { stroke: '#6366f1' },
+      })
+    }
+    if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
+    deps.startShotPolling([node.id])
+    await deps.saveCanvas()
+  }
+
+  async function saveSceneComposer(node: EditableFlowNode) {
+    if (!deps.requireLogin()) return
+    const payload = readSceneComposerFromNode(node)
+    const patch = sceneComposerToNodePatch(payload)
+    deps.patchNodeData(node.id, { ...patch, status: NODE_GENERATION_STATUS.draft })
+    await canvasApi.saveSceneComposer({
+      sessionId: deps.sessionId.value,
+      composerNodeId: node.id,
+      title: payload.title,
+      prompt: payload.prompt,
+      scenes: payload.scenes,
+    })
+    await deps.saveCanvas()
+  }
+
+  async function expandSceneComposer(node: EditableFlowNode) {
+    if (!deps.requireLogin()) return
+    if (isNodeBusy(node.id)) {
+      cancelGeneration(node.id)
+      return
+    }
+    const signal = beginNodeWork(node.id)
+    try {
+      const current = readSceneComposerFromNode(node)
+      const models = deps.resolveProviderModels()
+      const expanded = expandSceneComposerGraph(node, current, {
+        nodes: deps.nodes.value,
+        addNode: deps.addNode,
+        addEdge: deps.addEdge,
+        imageModel: models.image,
+        videoModel: models.video,
+      })
+      const patch = sceneComposerToNodePatch(expanded)
+      deps.patchNodeData(node.id, { ...patch, status: NODE_GENERATION_STATUS.draft })
+      await canvasApi.saveSceneComposer({
+        sessionId: deps.sessionId.value,
+        composerNodeId: node.id,
+        title: expanded.title,
+        prompt: expanded.prompt,
+        scenes: expanded.scenes,
+      })
+      await deps.saveCanvas()
+    } catch (err) {
+      if (signal.aborted) {
+        patchGenerationError(node.id, err, signal)
+        return
+      }
+      if (isAbortError(err)) return
+      patchGenerationError(node.id, err, signal)
+    } finally {
+      endNodeWork(node.id, signal)
+      refreshPointsAfterGeneration()
+    }
+  }
+
+  async function batchGenerateSceneComposer(node: EditableFlowNode) {
+    if (!deps.requireLogin()) return
+    if (isNodeBusy(node.id)) {
+      cancelGeneration(node.id)
+      return
+    }
+    if (
+      isDockGenerateBusy(node.data?.status)
+      && node.data?.status !== NODE_GENERATION_STATUS.fallback_pending
+    ) {
+      cancelGeneration(node.id)
+      return
+    }
+    await cancelPendingFallbackBeforeGenerate(node)
+    const signal = beginNodeWork(node.id)
+    try {
+      const payload = readSceneComposerFromNode(node)
+      const items = buildBatchGenerateItems(payload, {
+        nodes: deps.nodes.value,
+        edges: deps.edges.value,
+        composerNodeId: node.id,
+      })
+      if (!items.length) return
+
+      for (const item of items) {
+        const itemBlobError = blobReferenceError(item.refs ?? [], {})
+        if (itemBlobError) {
+          deps.patchNodeData(node.id, {
+            status: NODE_GENERATION_STATUS.error,
+            errorMessage: itemBlobError,
+            errorCode: 'upload_required',
+          })
+          return
+        }
+      }
+
+      deps.patchNodeData(node.id, { ...startedAtPatch(), status: NODE_GENERATION_STATUS.generating })
+      for (const item of items) {
+        deps.patchNodeData(item.shotNodeId, {
+          ...startedAtPatch(),
+          status: NODE_GENERATION_STATUS.generating,
+          prompt: item.prompt,
+        })
+      }
+
+      await canvasApi.batchGenerateSceneComposer({
+        sessionId: deps.sessionId.value,
+        composerNodeId: node.id,
+        items,
+      })
+
+      if (
+        signal.aborted
+        || !nodeAcceptsWrite(node.id)
+        || items.some((item) => !nodeAcceptsWrite(item.shotNodeId))
+      ) {
+        return
+      }
+      deps.startShotPolling(items.map((item) => item.shotNodeId))
+      deps.patchNodeData(node.id, { status: NODE_GENERATION_STATUS.generating })
+      await deps.saveCanvas()
+    } catch (err) {
+      if (signal.aborted) {
+        patchGenerationError(node.id, err, signal)
+        return
+      }
+      if (isAbortError(err)) return
+      patchGenerationError(node.id, err, signal)
+    } finally {
+      endNodeWork(node.id, signal)
+      refreshPointsAfterGeneration()
+    }
+  }
+
+  async function exportVideoComposition(node: EditableFlowNode, tracks: CompositionTrack[]) {
+    if (!deps.requireLogin()) return
+    if (isNodeBusy(node.id)) {
+      cancelGeneration(node.id)
+      return
+    }
+    if (
+      isDockGenerateBusy(node.data?.status)
+      && node.data?.status !== NODE_GENERATION_STATUS.fallback_pending
+    ) {
+      cancelGeneration(node.id)
+      return
+    }
+    const ordered = applyTrackOrder(tracks, node.data?.trackOrder as string[] | undefined)
+    const exportTracks = ordered.filter((track) => track.url.trim())
+    if (!exportTracks.length) return
+
+    await cancelPendingFallbackBeforeGenerate(node)
+    const signal = beginNodeWork(node.id)
+    try {
+      deps.patchNodeData(node.id, { status: NODE_GENERATION_STATUS.generating })
+      const { data: res } = await canvasApi.exportVideoComposition({
+        sessionId: deps.sessionId.value,
+        compositionNodeId: node.id,
+        title: String(node.data?.title ?? '视频合成'),
+        tracks: exportTracks.map((track) => ({
+          nodeId: track.nodeId,
+          type: track.type,
+          title: track.title,
+          url: track.url,
+          durationSec: track.durationSec,
+          startSec: track.startSec,
+        })),
+      })
+      if (signal.aborted) return
+      const result = res.data as { url: string; durationSec: number }
+      deps.patchNodeData(node.id, {
+        url: result.url,
+        exportDurationSec: result.durationSec,
+        status: NODE_GENERATION_STATUS.completed,
+        exportedAt: new Date().toISOString(),
+      })
+      await deps.saveCanvas()
+    } catch (err) {
+      if (signal.aborted) {
+        patchGenerationError(node.id, err, signal)
+        return
+      }
+      if (isAbortError(err)) return
+      patchGenerationError(node.id, err, signal)
+    } finally {
+      endNodeWork(node.id, signal)
+      refreshPointsAfterGeneration()
+    }
+  }
+
+  return {
+    generating,
+    isNodeBusy,
+    cancelGeneration,
+    generateForNode,
+    saveSceneComposer,
+    expandSceneComposer,
+    batchGenerateSceneComposer,
+    exportVideoComposition,
+    onFallbackPending,
+  }
+}

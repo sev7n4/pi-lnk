@@ -1,0 +1,315 @@
+export type WorkType = 'canvas' | 'shortfilm'
+
+export type NodeType = 'prompt' | 'image' | 'video' | 'text' | 'group' | 'shot' | 'sceneComposer'
+
+export * from './canvas/groupChildIds'
+export * from './canvas/duplicateSubgraph'
+export * from './canvas/duplicateToCanvasActions'
+export * from './canvas/imageVersions'
+export * from './canvas/workflowExchange'
+export * from './canvas/workflowImportPlacement'
+export * from './canvas/workflowRecipe'
+export * from './canvas/recipeCatalog'
+export * from './canvas/compositionGold'
+export * from './canvas/compositionIr'
+export * from './canvas/compositionExtract'
+export * from './canvas/compositionBind'
+export * from './canvas/compositionExpand'
+export * from './canvas/compositionLint'
+export * from './canvas/compositionVideo'
+export * from './sceneComposer'
+export * from './videoComposition'
+export * from './nodeRefs'
+export * from './imageParams'
+export * from './imageModelProfiles'
+export * from './imageEditProfiles'
+export * from './videoModelProfiles'
+export * from './videoModelCapabilities'
+export * from './videoSettingsOptions'
+export * from './platformCredentials'
+export * from './studioModelCatalog'
+export * from './providerChannels'
+export * from './generationDiagnostics'
+export * from './publicMediaUrl'
+export * from './upstreamRefInline'
+export * from './agentContract'
+export * from './sidebarAttachments'
+export * from './agentIntent'
+export * from './promptContent'
+export * from './journeyTrace'
+export * from './mediaInfo'
+export * from './videoGeneration/types'
+export { resolveCanonicalVideoRequest } from './videoGeneration/resolveCanonicalVideoRequest'
+export * from './videoGeneration/minimaxH3Reference'
+export * from './imagePromptingGuide'
+export * from './gridSlice'
+
+export type GenerationType = 'text' | 'image' | 'video'
+
+export interface AIModel {
+  id: string
+  name: string
+  provider: string
+  type: GenerationType
+}
+
+export interface User {
+  id: string
+  phone: string
+  nickname: string
+  avatar?: string
+  points?: number
+  membership?: string
+  createdAt: string
+  inviteCode?: string
+  invitedByUserId?: string
+  inviteeCount?: number
+}
+
+export interface Session {
+  id: string
+  title: string
+  userId: string
+  canvasData?: CanvasData
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Work {
+  id: string
+  title: string
+  coverUrl: string
+  playbackUrl?: string
+  playbackKind?: 'image' | 'video'
+  type: WorkType
+  authorId: string
+  authorName: string
+  authorAvatar?: string
+  sessionId?: string
+  likes: number
+  views: number
+  category?: string
+  createdAt: string
+}
+
+export interface ApiResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+
+export interface Paginated<T> {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface LoginRequest {
+  phone: string
+  code: string
+}
+
+export interface AuthToken {
+  token: string
+  user: User
+}
+
+export interface CreateSessionRequest {
+  title?: string
+  prompt?: string
+}
+
+export interface CanvasNode {
+  id: string
+  type: NodeType
+  position: { x: number; y: number }
+  data: Record<string, unknown>
+}
+
+export interface CanvasEdge {
+  id: string
+  source: string
+  target: string
+}
+
+export interface CanvasData {
+  nodes: CanvasNode[]
+  edges: CanvasEdge[]
+  viewport?: { x: number; y: number; zoom: number }
+  compositionRunGroup?: { nodeIds: string[]; dumpHash: string; createdAt: string }
+}
+
+export interface GenerationRequest {
+  sessionId: string
+  nodeId?: string
+  type: GenerationType
+  prompt: string
+  modelId: string
+  params?: Record<string, unknown>
+}
+
+export interface GenerationResult {
+  id: string
+  type: GenerationType
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  outputUrl?: string
+  outputText?: string
+  error?: string
+}
+
+export const WORK_CATEGORIES = ['全部', '2026-赛事', '精选作品', '短片', '画布'] as const
+
+export type WorkCategory = (typeof WORK_CATEGORIES)[number]
+
+export const TEXT_MODELS: AIModel[] = [
+  { id: 'gpt-4o', name: 'GPT-4o', provider: 'OpenAI', type: 'text' },
+  { id: 'deepseek-v3', name: 'DeepSeek V3', provider: 'DeepSeek', type: 'text' },
+  { id: 'claude-sonnet', name: 'Claude Sonnet', provider: 'Anthropic', type: 'text' },
+]
+
+export const IMAGE_MODELS: AIModel[] = [
+  { id: 'dall-e-3', name: 'DALL·E 3', provider: 'OpenAI', type: 'image' },
+  { id: 'midjourney-v6', name: 'Midjourney V6', provider: 'Midjourney', type: 'image' },
+  { id: 'flux-pro', name: 'Flux Pro', provider: 'Black Forest', type: 'image' },
+  { id: 'sd-xl', name: 'Stable Diffusion XL', provider: 'Stability', type: 'image' },
+]
+
+export const VIDEO_MODELS: AIModel[] = [
+  { id: 'sora', name: 'Sora', provider: 'OpenAI', type: 'video' },
+  { id: 'kling-v1', name: '可灵 V1', provider: 'Kuaishou', type: 'video' },
+  { id: 'runway-gen3', name: 'Runway Gen-3', provider: 'Runway', type: 'video' },
+  { id: 'pika-v2', name: 'Pika V2', provider: 'Pika', type: 'video' },
+]
+
+export type VideoAspectRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | 'adaptive'
+export type VideoCropMode = 'none' | 'center' | 'fill'
+export type VideoResolution = '480p' | '720p' | '768p' | '1080p' | '2k' | '4k'
+
+export interface VideoSettings {
+  aspectRatio: VideoAspectRatio
+  duration: number // 4–15 整数秒
+  crop: VideoCropMode
+  resolution: VideoResolution
+  /** Seedance 等模型：是否生成音频，默认 true */
+  generateAudio?: boolean
+}
+
+export function clampVideoDuration(
+  n: unknown,
+  bounds?: { min?: number; max?: number },
+): number {
+  const min = bounds?.min ?? 4
+  const max = bounds?.max ?? 15
+  const v = typeof n === 'number' ? n : Number(n)
+  if (!Number.isFinite(v)) return Math.min(max, Math.max(min, 5))
+  return Math.min(max, Math.max(min, Math.round(v)))
+}
+
+export const VIDEO_ASPECT_RATIO_OPTIONS: { value: VideoAspectRatio; label: string }[] = [
+  { value: '16:9', label: '16:9 横屏' },
+  { value: '9:16', label: '9:16 竖屏' },
+  { value: '1:1', label: '1:1 方形' },
+]
+
+export const VIDEO_DURATION_MARKS = [4, 5, 10, 15] as const
+
+export const VIDEO_DURATION_OPTIONS: { value: 4 | 5 | 10 | 15; label: string }[] = [
+  { value: 4, label: '4 秒' },
+  { value: 5, label: '5 秒' },
+  { value: 10, label: '10 秒' },
+  { value: 15, label: '15 秒' },
+]
+
+export const VIDEO_RESOLUTION_OPTIONS: { value: VideoResolution; label: string }[] = [
+  { value: '480p', label: '480p' },
+  { value: '720p', label: '720p' },
+  { value: '1080p', label: '1080p' },
+]
+
+export const VIDEO_CROP_OPTIONS: { value: VideoCropMode; label: string }[] = [
+  { value: 'none', label: '不裁剪' },
+  { value: 'center', label: '居中裁剪' },
+  { value: 'fill', label: '填充裁剪' },
+]
+
+export const DEFAULT_VIDEO_SETTINGS: VideoSettings = {
+  aspectRatio: '16:9',
+  duration: 5,
+  crop: 'none',
+  resolution: '720p',
+  generateAudio: true,
+}
+
+// --- Shot/Material 模型（对标 NeoWOW Canvas Domain）---
+
+export type ShotStatus = 'draft' | 'generating' | 'generated' | 'failed'
+export type MaterialType = 'image' | 'video' | 'audio'
+export type MaterialStatus =
+  | 'idle'
+  | 'generating'
+  | 'completed'
+  | 'failed'
+  | 'fallback_pending'
+
+export interface Material {
+  id: string
+  shotId: string
+  type: MaterialType
+  url?: string
+  thumbnail?: string
+  prompt?: string
+  status: MaterialStatus
+  order: number
+}
+
+export interface Shot {
+  id: string
+  sessionId: string
+  title: string
+  prompt: string
+  order: number
+  status: ShotStatus
+  position: { x: number; y: number }
+  materials: Material[]
+}
+
+// --- Agent 驱动画布 ---
+
+export type CanvasActionType = 'add_node' | 'update_node' | 'remove_node' | 'add_edge' | 'remove_edge' | 'set_viewport'
+
+export interface CanvasAction {
+  type: CanvasActionType
+  payload: {
+    id?: string
+    nodeType?: NodeType
+    position?: { x: number; y: number }
+    data?: Record<string, unknown>
+    source?: string
+    target?: string
+    parentShotId?: string
+    viewport?: { x: number; y: number; zoom: number }
+  }
+}
+
+export interface AgentChatMessage {
+  id: string
+  sessionId: string
+  role: 'user' | 'assistant' | 'system' | 'tool'
+  content: string
+  toolCalls?: string
+  attachments?: string
+  /** JSON: LinkedCanvasOutput[] — assistant turn canvas outputs for relocation */
+  linkedOutputs?: string
+  /** JSON: AgentMessageMetadata */
+  metadata?: string
+  createdAt: string
+}
+
+export interface CapabilityItem {
+  id: string
+  name: string
+  type: GenerationType
+  provider: string
+  description?: string
+}

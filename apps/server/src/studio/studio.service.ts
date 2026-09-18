@@ -1,0 +1,2452 @@
+import {
+  BadGatewayException,
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common'
+import {
+  buildAudioRequest,
+  buildEffectiveImagePrompt,
+  buildEffectiveVideoPrompt,
+  buildImageEditRequest,
+  buildImageProviderGenerateOptions,
+  buildImageProviderOptions,
+  buildVideoProviderGenerateOptions,
+  buildVideoProviderOptions,
+  buildVideoReferenceBundle,
+  createAudioProvider,
+  createImageEditProvider,
+  createImageProvider,
+  createSegmentProvider,
+  createTextProvider,
+  createVideoProvider,
+  generatePromptFromUserInput,
+  generateTextForRefs,
+  generateVisionQaJson,
+  imageRefDescriptorsFromRefs,
+  mergeRefsToPrompt,
+  resolvePromptGenerateText,
+  Seedance1xUnsupportedError,
+  stripRefImagePromptTags,
+  supportsVisionTextModel,
+  type MergeTextSource,
+} from '@lnkpi/agent'
+import {
+  BYOK_FALLBACK_CONFIRM_MESSAGE,
+  evaluateMediaRefPreflight,
+  mapMessageToErrorCode,
+  P1_IMAGE_EDIT_MODEL_KEY,
+  redactProviderSnippet,
+  resolveImageSize,
+  resolveModelKey,
+  resolvePlatformImageProviderOpts,
+  resolvePublicMediaUrls,
+  resolveVideoModelProfile,
+  type ErrorCode,
+  type GenerationRefPayload,
+  type GenerationDiagnostic,
+  type ImageRefWire,
+  type ImageResolutionTier,
+  type MediaInfo,
+  type MediaRefPreflight,
+  type StudioModality,
+  type VideoGenerationMode,
+  type CanvasData,
+  assertMiniMaxH3ReferenceLimits,
+  resolveCompositionVideoPrompt,
+} from '@lnkpi/shared'
+import {
+  alreadyRefunded,
+  applyChargeMeta,
+  applyRefundMeta,
+  isCancelledException,
+  isCancelledMeta,
+  rethrowWithRefundedPoints,
+  throwCancelledException,
+} from '../points/charge-session'
+import { PointsService } from '../points/points.service'
+import {
+  consumeMeta,
+  refundMeta,
+  type PointCategory,
+} from '../points/point-tx.types'
+import {
+  falH3MaxVideoRecordMeta,
+  minimaxH3VideoRecordMeta,
+  videoCreditsForModel,
+} from '../points/video-credits'
+import { PrismaService } from '../prisma/prisma.service'
+import { classifyByokFailure } from '../provider/byok-fallback'
+import { mergeChatModel } from '../provider/merge-chat-model'
+import {
+  providerContextFromResolved,
+  type ProviderContext,
+} from '../provider/provider-context'
+import {
+  ProviderResolverService,
+  type ResolvedGenerationProvider,
+} from '../provider/provider-resolver.service'
+import { MediaProbeService } from '../media/media-probe.service'
+import {
+  buildMediaInfoPayload,
+  enrichVideoMediaInfoDimensions,
+} from '../media/build-media-info'
+import { inlineUpstreamReferenceImages } from '../media/upstream-ref-inline'
+import { downscaleOversizedReferenceImages } from '../media/upstream-ref-downscale'
+import {
+  assertSameDimensions,
+  compositeUnmaskedPixels,
+  MaskDimensionMismatchError,
+  readImageBuffer,
+} from '../media/composite-unmasked'
+import { UploadService } from '../upload/upload.service'
+import { hasCompositionPBlock } from './video-generation-request.util'
+
+const AUDIO_PLACEHOLDER = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
+
+// Grace window before returning the async `generating` record: fast image
+// providers usually finish within this, sparing the client a polling round.
+const IMAGE_FAST_PATH_MS = 3000
+
+const segmentTimestamps = new Map<string, number[]>()
+
+export function allowSegmentRate(
+  userId: string,
+  now = Date.now(),
+  windowMs = 60_000,
+  max = 20,
+): boolean {
+  const recent = (segmentTimestamps.get(userId) ?? []).filter((t) => now - t < windowMs)
+  if (recent.length >= max) {
+    return false
+  }
+  recent.push(now)
+  segmentTimestamps.set(userId, recent)
+  return true
+}
+
+export function resetSegmentRateLimitForTests(): void {
+  segmentTimestamps.clear()
+}
+
+export interface StudioRefInput {
+  refKey: string
+  mediaType: string
+  label?: string
+  text?: string
+  url?: string
+}
+
+function extractTextSources(refs?: StudioRefInput[]): MergeTextSource[] {
+  return (refs ?? [])
+    .filter((r) => r.mediaType === 'text' && r.text?.trim())
+    .map((r) => ({
+      refKey: r.refKey,
+      label: r.label?.trim() || r.refKey,
+      text: r.text!.trim(),
+    }))
+}
+
+// Full referenceImages[] is kept in metadata; agnes-image-* uses native extra_body.image for all refs.
+function extractReferenceImages(refs?: StudioRefInput[]): string[] {
+  return resolvePublicMediaUrls(
+    (refs ?? [])
+      .filter((r) => r.mediaType === 'image' && r.url?.trim())
+      .map((r) => r.url!.trim()),
+  )
+}
+
+function resolveStudioVideoMode(
+  explicit: string | undefined,
+  referenceBundle: ReturnType<typeof buildVideoReferenceBundle>,
+): VideoGenerationMode {
+  if (
+    explicit === 'first_last_frame'
+    || explicit === 'image_to_video'
+    || explicit === 'text_to_video'
+    || explicit === 'reference_to_video'
+  ) {
+    return explicit
+  }
+  return referenceBundle.images.length ? 'image_to_video' : 'text_to_video'
+}
+
+function isOfficialMiniMaxH3ReferenceToVideo(
+  model: string | undefined,
+  videoMode: VideoGenerationMode,
+): boolean {
+  if (videoMode !== 'reference_to_video') return false
+  const modelKey = model ?? ''
+  const profile = resolveVideoModelProfile(modelKey, modelKey)
+  return profile.refWire === 'minimax_h3_content' || /^minimax-h3$/i.test(modelKey)
+}
+
+function providerOpts(resolved: ResolvedGenerationProvider) {
+  const { apiKey, baseUrl } = resolved.credentials
+  if (resolved.source === 'user' && !apiKey) return undefined
+  return {
+    apiKey,
+    baseUrl: baseUrl || undefined,
+  }
+}
+
+/**
+ * Text upstream credentials shared with Agent via providerContextFromResolved (AC-8).
+ * When providerRef is set and complete, no env overlay — same source/baseUrl as 启 run.
+ */
+function textGenCreds(
+  resolved: ResolvedGenerationProvider,
+  model?: string,
+): { apiKey?: string; baseUrl?: string } {
+  const ref = model?.trim()
+  if (ref) {
+    try {
+      const ctx = providerContextFromResolved(ref, resolved)
+      return { apiKey: ctx.apiKey, baseUrl: ctx.baseUrl }
+    } catch {
+      // incomplete BYOK / missing platform creds — fall through
+    }
+  }
+  const opts = providerOpts(resolved)
+  return {
+    apiKey: opts?.apiKey ?? process.env.OPENAI_API_KEY,
+    baseUrl: opts?.baseUrl ?? process.env.OPENAI_BASE_URL,
+  }
+}
+
+function parseMeta(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {}
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function studioPointCategory(type: string): PointCategory {
+  if (type === 'text' || type === 'prompt') return 'text'
+  if (type === 'image' || type === 'image_edit' || type === 'image_upscale') return 'image'
+  if (type === 'audio' || type === 'video') return type
+  return 'other'
+}
+
+function hintForCode(code: ErrorCode): string | undefined {
+  switch (code) {
+    case 'upstream_timeout':
+      return '请稍后重试'
+    case 'insufficient_points':
+      return '请充值后再试'
+    case 'cancelled':
+      return '可重新发起生成'
+    case 'upload_required':
+      return '请先上传参考图'
+    case 'model_unavailable':
+      return '请更换可用模型'
+    case 'upstream_error':
+      return '请稍后重试或更换模型'
+    case 'fallback_pending':
+      return '可确认使用平台通道或取消'
+    case 'invalid_input':
+      return '请检查输入后重试'
+    default:
+      return undefined
+  }
+}
+
+function userMessageForCode(code: ErrorCode, fallback: string): string {
+  switch (code) {
+    case 'insufficient_points':
+      return '积分不足'
+    case 'upstream_timeout':
+      return '上游超时，请稍后重试'
+    case 'cancelled':
+      return '已取消'
+    case 'upload_required':
+      return '参考图尚未上传'
+    case 'model_unavailable':
+      return '模型不可用'
+    case 'upstream_error':
+      return '上游服务异常'
+    case 'fallback_pending':
+      return '需要确认是否使用平台回退'
+    case 'invalid_input':
+      return '输入无效'
+    default:
+      return fallback.trim() || '生成失败'
+  }
+}
+
+function errMessage(err: unknown): string {
+  if (err instanceof BadRequestException) {
+    const response = err.getResponse()
+    if (typeof response === 'string') return response
+    if (response && typeof response === 'object') {
+      const message = (response as { message?: unknown }).message
+      if (typeof message === 'string') return message
+      if (Array.isArray(message)) return message.map(String).join('; ')
+    }
+  }
+  if (err instanceof Error) return err.message
+  return '生成失败'
+}
+
+function applyFailureDiagnosticMeta(
+  existingMeta: Record<string, unknown>,
+  err: unknown,
+  overrides: { userMessage?: string; errorCode?: ErrorCode } = {},
+): Record<string, unknown> {
+  const errMsg = errMessage(err)
+  const errorCode = overrides.errorCode ?? mapMessageToErrorCode(errMsg)
+  const userMessage = overrides.userMessage ?? userMessageForCode(errorCode, errMsg)
+  return {
+    ...existingMeta,
+    errorCode,
+    errorRaw: errMsg.slice(0, 8000),
+    userMessage,
+    failedAt: new Date().toISOString(),
+  }
+}
+
+function throwGenerationFailure(opts: {
+  userMessage: string
+  errorCode: ErrorCode
+  taskId: string
+  refundedPoints?: number
+}): never {
+  throw new BadRequestException({
+    message: opts.userMessage,
+    errorCode: opts.errorCode,
+    taskKind: 'generation',
+    taskId: opts.taskId,
+    ...(opts.refundedPoints != null ? { refundedPoints: opts.refundedPoints } : {}),
+  })
+}
+
+type CancelFlag = { isCancelled(): boolean }
+
+export type CanvasGenerationScope = {
+  sessionId?: string
+  nodeId?: string
+}
+
+function withCanvasScope(scope?: CanvasGenerationScope) {
+  if (!scope?.sessionId && !scope?.nodeId) return {}
+  return {
+    ...(scope.sessionId ? { sessionId: scope.sessionId } : {}),
+    ...(scope.nodeId ? { nodeId: scope.nodeId } : {}),
+  }
+}
+
+function parseSessionCanvas(raw: string | null | undefined): CanvasData | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw) as CanvasData
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.nodes)) {
+      return undefined
+    }
+    return parsed
+  } catch {
+    return undefined
+  }
+}
+
+const EMPTY_P_BLOCK_V_MESSAGE = '分镜还是空的，写好后再生成视频。'
+
+/** Map generateVisionQaJson throws to structured errorClass + neutral Chinese reason. */
+function classifyVisionCatch(err: unknown): { errorClass: string; reason: string } {
+  const raw = err instanceof Error ? err.message : String(err)
+  const lower = raw.toLowerCase()
+  if (/\b429\b/.test(raw) || lower.includes('rate limit')) {
+    return { errorClass: 'VISION_RATE_LIMIT', reason: '识图请求过于频繁，请稍后再试' }
+  }
+  if (lower.includes('timeout') || lower.includes('timed out') || raw.includes('超时')) {
+    return { errorClass: 'VISION_TIMEOUT', reason: '识图超时，请稍后重试' }
+  }
+  if (lower.includes('fetch failed') || lower.includes('download')) {
+    return { errorClass: 'VISION_FETCH_FAILED', reason: '参考图读取失败，请重新上传' }
+  }
+  return { errorClass: 'VISION_UPSTREAM', reason: '识图失败' }
+}
+
+@Injectable()
+export class StudioService {
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(PointsService) private readonly points: PointsService,
+    @Inject(ProviderResolverService) private readonly resolver: ProviderResolverService,
+    @Inject(MediaProbeService) private readonly mediaProbe: MediaProbeService,
+    @Inject(UploadService) private readonly upload: UploadService,
+  ) {}
+
+  async listGenerations(userId: string, type?: string, sessionId?: string) {
+    return this.prisma.generationRecord.findMany({
+      where: {
+        userId,
+        ...(type ? { type } : {}),
+        ...(sessionId ? { sessionId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    })
+  }
+
+  private async resolveMergedPrompt(
+    localPrompt: string,
+    refs: StudioRefInput[] | undefined,
+    downstreamType: 'text' | 'image' | 'video' | 'audio',
+    mentionedKeys?: string[],
+    credentials?: { apiKey?: string; baseUrl?: string },
+    model?: string,
+    videoImageRefs?: Array<{ refKey: string; label: string }>,
+  ) {
+    const { mergedText, skippedMerge } = await mergeRefsToPrompt({
+      sources: extractTextSources(refs),
+      localPrompt: localPrompt.trim() || undefined,
+      downstreamType,
+      mentionedKeys: mentionedKeys?.length ? mentionedKeys : undefined,
+      imageRefs:
+        downstreamType === 'video'
+          ? videoImageRefs
+          : downstreamType === 'image'
+            ? imageRefDescriptorsFromRefs(refs)
+            : undefined,
+      apiKey: credentials?.apiKey ?? process.env.OPENAI_API_KEY,
+      baseUrl: credentials?.baseUrl ?? process.env.OPENAI_BASE_URL,
+      model: mergeChatModel(downstreamType, model),
+    })
+    return {
+      mergedText,
+      skippedMerge,
+      referenceImages: extractReferenceImages(refs),
+    }
+  }
+
+  private pendingMeta(
+    resolved: ResolvedGenerationProvider,
+    err: unknown,
+    extra: Record<string, unknown> = {},
+  ) {
+    const raw = errMessage(err).slice(0, 8000)
+    const failureClass = classifyByokFailure(err)
+    return {
+      ...extra,
+      channelId: resolved.channelId,
+      failureClass,
+      confirmMessage: BYOK_FALLBACK_CONFIRM_MESSAGE,
+      originalModel: extra.originalModel,
+      byokErrorRaw: raw,
+      errorRaw: raw,
+      errorCode: 'fallback_pending' as ErrorCode,
+      userMessage: raw
+        ? `BYOK 上游失败（${failureClass}）：${raw.slice(0, 240)}`
+        : 'BYOK 上游失败，可改用平台模型继续',
+      failedAt: new Date().toISOString(),
+    }
+  }
+
+  private byokPendingMeta(
+    resolved: ResolvedGenerationProvider,
+    err: unknown,
+    cost: number,
+    extra: Record<string, unknown> = {},
+  ) {
+    return applyRefundMeta(
+      applyChargeMeta(this.pendingMeta(resolved, err, extra), cost),
+      cost,
+      'byok_failed',
+    )
+  }
+
+  private platformFallbackCost(type: string, meta: Record<string, unknown>): number {
+    if (type === 'text' || type === 'prompt' || type === 'audio') return 5
+    if (type === 'image') return 10 * (Number(meta.count ?? 1) || 1)
+    if (type === 'video') {
+      return videoCreditsForModel({
+        duration: Number(meta.duration ?? 5),
+        modelKey:
+          (typeof meta.modelKey === 'string' && meta.modelKey) ||
+          (typeof meta.originalModel === 'string' && meta.originalModel) ||
+          undefined,
+        resolution: typeof meta.resolution === 'string' ? meta.resolution : undefined,
+        videoMode: typeof meta.videoMode === 'string' ? meta.videoMode : undefined,
+        referenceImageCount: typeof meta.referenceImageCount === 'number'
+          ? meta.referenceImageCount
+          : Array.isArray(meta.referenceImages)
+            ? meta.referenceImages.length
+            : undefined,
+        referenceVideoCount: typeof meta.referenceVideoCount === 'number'
+          ? meta.referenceVideoCount
+          : Array.isArray(meta.referenceVideos)
+            ? meta.referenceVideos.length
+            : undefined,
+      })
+    }
+    throw new BadRequestException('不支持的生成类型')
+  }
+
+  /** Catalog gateway id for platform confirm — never reuse user-channel modelName. */
+  private platformGatewayModelId(
+    modality: StudioModality,
+    meta: Record<string, unknown>,
+  ): string {
+    const requested =
+      typeof meta.modelKey === 'string' && meta.modelKey.trim()
+        ? meta.modelKey
+        : undefined
+    return resolveModelKey(modality, requested).entry.gatewayModelId
+  }
+
+  /** Internal agent path: vision QA for product_visual — no points charge. */
+  async runVisionQaInternal(
+    _userId: string,
+    params: {
+      systemPrompt: string
+      userContent: string
+      imageUrls: string[]
+      provider: ProviderContext
+    },
+  ): Promise<{ text: string; visionUsed: boolean }> {
+    const provider = params.provider
+    if (!provider?.providerRef || !provider.model || !provider.baseUrl || !provider.source) {
+      return {
+        text: JSON.stringify({
+          pass: false,
+          reason: '识图凭证不完整，请重新选择模型后再试',
+          errorClass: 'VISION_PROVIDER_CONTEXT_INVALID',
+          product_summary: '',
+        }),
+        visionUsed: false,
+      }
+    }
+    if (!provider.apiKey?.trim()) {
+      if (provider.source === 'user') {
+        return {
+          text: JSON.stringify({
+            pass: false,
+            reason: '自定义渠道未配置 API Key',
+            errorClass: 'VISION_BYOK_MISSING_KEY',
+            product_summary: '',
+          }),
+          visionUsed: false,
+        }
+      }
+      return {
+        text: JSON.stringify({
+          pass: false,
+          reason: '识图凭证不完整，请重新选择模型后再试',
+          errorClass: 'VISION_PROVIDER_CONTEXT_INVALID',
+          product_summary: '',
+        }),
+        visionUsed: false,
+      }
+    }
+    if (!supportsVisionTextModel(provider.model)) {
+      return {
+        text: JSON.stringify({
+          pass: false,
+          reason:
+            '当前模型不支持识图。请换成 DeepSeek Flash 或 Gemini / GPT-4o 后再问。我没有根据这张图编造产品信息。',
+          errorClass: 'VISION_UNSUPPORTED',
+          product_summary: '',
+        }),
+        visionUsed: false,
+      }
+    }
+    const urls = params.imageUrls.map((u) => u.trim()).filter(Boolean)
+    if (!urls.length) {
+      throw new BadRequestException('imageUrls 不能为空')
+    }
+    const providerRefs = await inlineUpstreamReferenceImages(urls)
+    try {
+      return await generateVisionQaJson(params.systemPrompt, params.userContent, providerRefs, {
+        model: provider.model,
+        apiKey: provider.apiKey,
+        baseUrl: provider.baseUrl,
+        maxRetries: 0,
+      })
+    } catch (err) {
+      const { errorClass, reason } = classifyVisionCatch(err)
+      return {
+        text: JSON.stringify({ pass: false, reason, errorClass, product_summary: '' }),
+        visionUsed: false,
+      }
+    }
+  }
+
+  async generateText(
+    userId: string,
+    prompt: string,
+    model?: string,
+    refs?: StudioRefInput[],
+    mentionedKeys?: string[],
+    cancel?: CancelFlag,
+    thinking?: boolean,
+    thinkingEffort?: 'high' | 'max',
+    scope?: CanvasGenerationScope,
+  ) {
+    const cost = 5
+    const chargeReason = '文本生成'
+    await this.points.consume(
+      userId,
+      cost,
+      chargeReason,
+      consumeMeta('text', { model: model ?? null, generationId: null }),
+    )
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
+    const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('text', resolved.modelName)
+    const gatewayModelId =
+      resolved.source === 'user' ? resolved.modelName : entry.gatewayModelId
+    const { mergedText, skippedMerge, referenceImages } = await this.resolveMergedPrompt(
+      prompt,
+      refs,
+      'text',
+      mentionedKeys,
+      resolved.source === 'user' ? resolved.credentials : undefined,
+      gatewayModelId,
+    )
+    const storeModel = resolved.source === 'user' ? model ?? resolvedKey : resolvedKey
+    const textOpts = {
+      thinking: !!thinking,
+      thinkingEffort: thinkingEffort === 'max' ? ('max' as const) : ('high' as const),
+    }
+    const baseMeta = {
+      modelKey: resolvedKey,
+      gatewayModelId,
+      channelId: resolved.channelId,
+      skippedMerge,
+      refsCount: refs?.length ?? 0,
+      visionUsed: false,
+      referenceImages,
+      thinking: textOpts.thinking,
+      thinkingEffort: textOpts.thinking ? textOpts.thinkingEffort : undefined,
+      ...(fallback && resolved.source === 'platform' ? { modelFallback: true } : {}),
+    }
+
+    try {
+      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+        throw new Error('missing api key')
+      }
+      const creds = textGenCreds(resolved, model)
+      const providerRefs = referenceImages.length
+        ? await inlineUpstreamReferenceImages(referenceImages)
+        : referenceImages
+      const { text, visionUsed } = await generateTextForRefs(mergedText, providerRefs, {
+        model: gatewayModelId,
+        apiKey: creds.apiKey,
+        baseUrl: creds.baseUrl,
+        textOpts,
+      })
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('text', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      return this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'text',
+          prompt: mergedText,
+          model: storeModel,
+          url: null,
+          status: 'completed',
+          metadata: JSON.stringify(applyChargeMeta({ ...baseMeta, text, visionUsed }, cost)),
+          ...withCanvasScope(scope),
+        },
+      })
+    } catch (err) {
+      if (isCancelledException(err)) throw err
+      if (resolved.source !== 'user') {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-失败退款`,
+          refundMeta('text', 'failed_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        const failedMeta = applyFailureDiagnosticMeta(
+          applyRefundMeta(applyChargeMeta({ ...baseMeta }, cost), cost, 'platform_failed'),
+          err,
+        )
+        const failed = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'text',
+            prompt: mergedText,
+            model: storeModel,
+            url: null,
+            status: 'failed',
+            metadata: JSON.stringify(failedMeta),
+            ...withCanvasScope(scope),
+          },
+        })
+        throwGenerationFailure({
+          userMessage: String(failedMeta.userMessage ?? '生成失败'),
+          errorCode: failedMeta.errorCode as ErrorCode,
+          taskId: failed.id,
+          refundedPoints: cost,
+        })
+      }
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-BYOK失败退款`,
+        refundMeta('text', 'byok_refund', {
+          model: resolved.modelName,
+          generationId: null,
+        }),
+      )
+      return this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'text',
+          prompt: mergedText,
+          model: storeModel,
+          url: null,
+          status: 'fallback_pending',
+          metadata: JSON.stringify(
+            this.byokPendingMeta(resolved, err, cost, {
+              originalModel: model,
+              ...baseMeta,
+            }),
+          ),
+          ...withCanvasScope(scope),
+        },
+      })
+    }
+  }
+
+  async generatePrompt(
+    userId: string,
+    prompt: string,
+    model?: string,
+    cancel?: CancelFlag,
+    scope?: CanvasGenerationScope,
+    guideSceneId?: string,
+    refs?: StudioRefInput[],
+    mentionedKeys?: string[],
+  ) {
+    const referenceImages = extractReferenceImages(refs)
+    const trimmed = resolvePromptGenerateText(prompt, referenceImages)
+    if (!trimmed) throw new BadRequestException('prompt 不能为空')
+    const cost = 5
+    const chargeReason = '提示词模式生成'
+    await this.points.consume(
+      userId,
+      cost,
+      chargeReason,
+      consumeMeta('text', { model: model ?? null, generationId: null }),
+    )
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
+    const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('text', resolved.modelName)
+    const gatewayModelId =
+      resolved.source === 'user' ? resolved.modelName : entry.gatewayModelId
+    const storeModel = resolved.source === 'user' ? model ?? resolvedKey : resolvedKey
+    const creds = textGenCreds(resolved, model)
+    const baseMeta = {
+      modelKey: resolvedKey,
+      gatewayModelId,
+      channelId: resolved.channelId,
+      refsCount: refs?.length ?? 0,
+      visionUsed: false,
+      referenceImages,
+      ...(fallback && resolved.source === 'platform' ? { modelFallback: true } : {}),
+      ...(guideSceneId ? { guideSceneId } : {}),
+      ...(mentionedKeys?.length ? { mentionedKeys } : {}),
+    }
+
+    try {
+      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+        throw new Error('missing api key')
+      }
+      const providerRefs = referenceImages.length
+        ? await inlineUpstreamReferenceImages(referenceImages)
+        : referenceImages
+      const { mode, content, visionUsed } = await generatePromptFromUserInput(trimmed, {
+        model: gatewayModelId,
+        apiKey: creds.apiKey,
+        baseUrl: creds.baseUrl,
+        guideSceneId,
+        referenceImages: providerRefs,
+        mentionedKeys,
+      })
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('text', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      return this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'prompt',
+          prompt: trimmed,
+          model: storeModel,
+          url: null,
+          status: 'completed',
+          metadata: JSON.stringify(
+            applyChargeMeta({ ...baseMeta, mode, content, visionUsed }, cost),
+          ),
+          ...withCanvasScope(scope),
+        },
+      })
+    } catch (err) {
+      if (isCancelledException(err)) throw err
+      if (resolved.source !== 'user') {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-失败退款`,
+          refundMeta('text', 'failed_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        const failedMeta = applyFailureDiagnosticMeta(
+          applyRefundMeta(applyChargeMeta({ ...baseMeta }, cost), cost, 'platform_failed'),
+          err,
+        )
+        const failed = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'prompt',
+            prompt: trimmed,
+            model: storeModel,
+            url: null,
+            status: 'failed',
+            metadata: JSON.stringify(failedMeta),
+            ...withCanvasScope(scope),
+          },
+        })
+        throwGenerationFailure({
+          userMessage: String(failedMeta.userMessage ?? '生成失败'),
+          errorCode: failedMeta.errorCode as ErrorCode,
+          taskId: failed.id,
+          refundedPoints: cost,
+        })
+      }
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-BYOK失败退款`,
+        refundMeta('text', 'byok_refund', {
+          model: resolved.modelName,
+          generationId: null,
+        }),
+      )
+      return this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'prompt',
+          prompt: trimmed,
+          model: storeModel,
+          url: null,
+          status: 'fallback_pending',
+          metadata: JSON.stringify(
+            this.byokPendingMeta(resolved, err, cost, {
+              originalModel: model,
+              ...baseMeta,
+            }),
+          ),
+          ...withCanvasScope(scope),
+        },
+      })
+    }
+  }
+
+  /** Expand user prompt via prompt-modes (no separate charge; used by turnaround image pipeline). */
+  async expandPromptContent(
+    userId: string,
+    prompt: string,
+    model?: string,
+  ): Promise<{ mode: string; content: string }> {
+    const trimmed = prompt?.trim()
+    if (!trimmed) throw new BadRequestException('prompt 不能为空')
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
+    const { modelKey: resolvedKey, entry } = resolveModelKey('text', resolved.modelName)
+    const gatewayModelId =
+      resolved.source === 'user' ? resolved.modelName : entry.gatewayModelId
+    const creds = textGenCreds(resolved, model)
+    if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+      throw new Error('missing api key')
+    }
+    const { mode, content } = await generatePromptFromUserInput(trimmed, {
+      model: gatewayModelId,
+      apiKey: creds.apiKey,
+      baseUrl: creds.baseUrl,
+    })
+    return { mode, content }
+  }
+
+  async getGeneration(userId: string, id: string) {
+    const record = await this.prisma.generationRecord.findFirst({
+      where: { id, userId },
+    })
+    if (!record) {
+      throw new BadRequestException('生成记录不存在')
+    }
+    const meta = parseMeta(record.metadata)
+    const mediaInfo = meta.mediaInfo as MediaInfo | undefined
+    const refPreflight = meta.refPreflight as MediaRefPreflight | undefined
+    return {
+      ...record,
+      ...(mediaInfo ? { mediaInfo } : {}),
+      ...(refPreflight ? { refPreflight } : {}),
+    }
+  }
+
+  private async buildMediaInfo(
+    outputUrl: string | null,
+    referenceUrls: string[],
+  ): Promise<MediaInfo> {
+    return buildMediaInfoPayload(this.mediaProbe, outputUrl, referenceUrls)
+  }
+
+  private async enrichVideoMediaInfoDimensions(
+    mediaInfo: MediaInfo,
+    lastFrameUrl?: string | null,
+  ): Promise<MediaInfo> {
+    return enrichVideoMediaInfoDimensions(this.mediaProbe, mediaInfo, lastFrameUrl)
+  }
+
+  async getGenerationDiagnostic(userId: string, id: string): Promise<GenerationDiagnostic> {
+    const record = await this.getGeneration(userId, id)
+    if (
+      record.status !== 'failed'
+      && record.status !== 'error'
+      && record.status !== 'fallback_pending'
+    ) {
+      throw new NotFoundException('诊断不可用')
+    }
+    const meta = parseMeta(record.metadata)
+    const errRaw =
+      (typeof meta.byokErrorRaw === 'string' && meta.byokErrorRaw.trim()
+        ? meta.byokErrorRaw
+        : '')
+      || (meta.errorRaw != null ? String(meta.errorRaw) : '')
+    const code =
+      (typeof meta.errorCode === 'string' ? (meta.errorCode as ErrorCode) : undefined) ??
+      mapMessageToErrorCode(errRaw)
+    const defaultMessage =
+      record.status === 'fallback_pending' ? '平台回退待确认' : '生成失败'
+    const userMessage =
+      (typeof meta.userMessage === 'string' && meta.userMessage.trim()
+        ? meta.userMessage
+        : undefined) ?? defaultMessage
+    const occurredAt =
+      typeof meta.failedAt === 'string' && meta.failedAt
+        ? meta.failedAt
+        : record.createdAt.toISOString()
+
+    return {
+      userMessage,
+      code,
+      taskKind: 'generation',
+      taskId: record.id,
+      model: record.model ?? (typeof meta.model === 'string' ? meta.model : null) ?? null,
+      channelId: typeof meta.channelId === 'string' ? meta.channelId : null,
+      apiFormat: typeof meta.apiFormat === 'string' ? meta.apiFormat : null,
+      httpStatus: typeof meta.httpStatus === 'number' ? meta.httpStatus : null,
+      occurredAt,
+      providerSnippet: errRaw ? redactProviderSnippet(errRaw) : null,
+      hint:
+        record.status === 'fallback_pending'
+          ? '请确认是否使用平台回退继续，或取消本次生成。'
+          : hintForCode(code),
+    }
+  }
+
+  async generateImage(
+    userId: string,
+    prompt: string,
+    model?: string,
+    aspectRatio = '16:9',
+    refs?: StudioRefInput[],
+    mentionedKeys?: string[],
+    resolution = '1K',
+    count = 1,
+    scope?: CanvasGenerationScope,
+  ) {
+    const n = Math.max(1, Math.min(4, Number(count) || 1))
+    const cost = 10 * n
+    const chargeReason = '图像生成'
+    await this.points.consume(
+      userId,
+      cost,
+      chargeReason,
+      consumeMeta('image', { model: model ?? null, generationId: null }),
+    )
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
+    const { mergedText, skippedMerge, referenceImages } = await this.resolveMergedPrompt(
+      prompt,
+      refs,
+      'image',
+      mentionedKeys,
+      resolved.source === 'user' ? resolved.credentials : undefined,
+      resolved.modelName,
+    )
+    const pixelSize = resolveImageSize(aspectRatio, resolution as ImageResolutionTier)
+    const built = buildImageProviderOptions({
+      modelKey: resolved.modelName,
+      aspectRatio,
+      resolution: resolution as ImageResolutionTier,
+      pixelSize,
+      n,
+      referenceImages,
+      byok: resolved.source === 'user',
+      channelBaseUrl: resolved.credentials.baseUrl,
+    })
+    const modelId = resolved.source === 'user' ? resolved.modelName : built.modelId
+    const storeModel =
+      resolved.source === 'user' ? model ?? built.meta.modelKey : built.meta.modelKey
+    const effectivePrompt = buildEffectiveImagePrompt(
+      mergedText,
+      built,
+      imageRefDescriptorsFromRefs(refs),
+    )
+    const providerOptions = buildImageProviderGenerateOptions(built)
+    const record = await this.prisma.generationRecord.create({
+      data: {
+        userId,
+        type: 'image',
+        prompt: effectivePrompt,
+        model: storeModel,
+        status: 'generating',
+        metadata: JSON.stringify(
+          applyChargeMeta(
+            {
+              ...built.meta,
+              modelId,
+              aspectRatio,
+              resolution,
+              count: n,
+              size: built.size,
+              pixelSize,
+              referenceImages,
+              skippedMerge,
+              channelId: resolved.channelId,
+              originalModel: model,
+              providerSource: resolved.source,
+              responseMode: built.meta.responseMode,
+              refWire: built.meta.refWire,
+            },
+            cost,
+          ),
+        ),
+        ...withCanvasScope(scope),
+      },
+    })
+    const completion = this.completeImage(
+      record.id,
+      userId,
+      cost,
+      chargeReason,
+      effectivePrompt,
+      providerOptions,
+      resolved,
+    ).catch((err) => {
+      console.error('Image generation failed:', err)
+      return null
+    })
+    // Fast path: quick providers finish within the grace window, so the client
+    // gets the terminal record directly instead of one extra polling round-trip.
+    if (built.meta.responseMode === 'async_task') {
+      void completion
+      return record
+    }
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
+    const fast = await Promise.race([
+      completion,
+      new Promise<null>((resolve) => {
+        graceTimer = setTimeout(() => resolve(null), IMAGE_FAST_PATH_MS)
+      }),
+    ])
+    if (graceTimer) clearTimeout(graceTimer)
+    return fast ?? record
+  }
+
+  private async completeImage(
+    id: string,
+    userId: string,
+    cost: number,
+    chargeReason: string,
+    prompt: string,
+    options: import('@lnkpi/agent').ImageProviderGenerateOptions,
+    resolved: ResolvedGenerationProvider,
+  ) {
+    try {
+      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+        throw new Error('missing api key')
+      }
+      const genOptions =
+        options.referenceImages?.length
+          ? {
+              ...options,
+              referenceImages: await inlineUpstreamReferenceImages(options.referenceImages),
+            }
+          : options
+      const { url, urls } = await createImageProvider(providerOpts(resolved)).generate(
+        prompt,
+        genOptions,
+      )
+      const imageUrls = urls?.length ? urls : [url]
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return null
+      const meta = parseMeta(existing.metadata)
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return null
+      const referenceUrls = Array.isArray(meta.referenceImages)
+        ? (meta.referenceImages as string[]).filter((url) => typeof url === 'string' && url.trim())
+        : []
+      const mediaInfo = await this.buildMediaInfo(imageUrls[0] ?? null, referenceUrls)
+      const updated = await this.prisma.generationRecord.updateMany({
+        where: { id, status: 'generating' },
+        data: {
+          url: imageUrls[0],
+          status: 'completed',
+          metadata: JSON.stringify({ ...meta, urls: imageUrls, mediaInfo }),
+        },
+      })
+      if (updated.count === 0) return null
+      return this.prisma.generationRecord.findFirst({ where: { id } })
+    } catch (err) {
+      console.error('Image generation failed:', err)
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return null
+      const meta = parseMeta(existing.metadata)
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return null
+      if (resolved.source === 'user') {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-BYOK失败退款`,
+          refundMeta('image', 'byok_refund', {
+            model: resolved.modelName,
+            generationId: id,
+          }),
+        )
+        return this.prisma.generationRecord.update({
+          where: { id },
+          data: {
+            status: 'fallback_pending',
+            metadata: JSON.stringify(this.byokPendingMeta(resolved, err, cost, meta)),
+          },
+        })
+      }
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-失败退款`,
+        refundMeta('image', 'failed_refund', {
+          model: resolved.modelName,
+          generationId: id,
+        }),
+      )
+      const failedMeta = applyFailureDiagnosticMeta(
+        applyRefundMeta(meta, cost, 'platform_failed'),
+        err,
+      )
+      return this.prisma.generationRecord.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          metadata: JSON.stringify(failedMeta),
+        },
+      })
+    }
+  }
+
+  async generateImageVariation(
+    userId: string,
+    prompt: string,
+    basePrompt?: string,
+    model?: string,
+    cancel?: CancelFlag,
+    scope?: CanvasGenerationScope,
+  ) {
+    const cost = 10
+    const chargeReason = '图像变体'
+    await this.points.consume(
+      userId,
+      cost,
+      chargeReason,
+      consumeMeta('image', { model: model ?? null, generationId: null }),
+    )
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
+    const combined = basePrompt ? `${basePrompt}。变体要求：${prompt}` : prompt
+    try {
+      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+        throw new Error('missing api key')
+      }
+      const { url } = await createImageProvider(providerOpts(resolved)).generate(combined, {
+        modelId: resolved.modelName || undefined,
+      })
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('image', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      return this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'image',
+          prompt: combined,
+          model: model ?? resolved.modelName,
+          url,
+          status: 'completed',
+          metadata: JSON.stringify(
+            applyChargeMeta(
+              {
+                variation: true,
+                basePrompt,
+                channelId: resolved.channelId,
+              },
+              cost,
+            ),
+          ),
+          ...withCanvasScope(scope),
+        },
+      })
+    } catch (err) {
+      if (isCancelledException(err)) throw err
+      if (resolved.source !== 'user') {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-失败退款`,
+          refundMeta('image', 'failed_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        const failedMeta = applyFailureDiagnosticMeta(
+          applyRefundMeta(
+            applyChargeMeta(
+              {
+                variation: true,
+                basePrompt,
+                channelId: resolved.channelId,
+              },
+              cost,
+            ),
+            cost,
+            'platform_failed',
+          ),
+          err,
+        )
+        const failed = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'image',
+            prompt: combined,
+            model: model ?? resolved.modelName,
+            url: null,
+            status: 'failed',
+            metadata: JSON.stringify(failedMeta),
+            ...withCanvasScope(scope),
+          },
+        })
+        throwGenerationFailure({
+          userMessage: String(failedMeta.userMessage ?? '生成失败'),
+          errorCode: failedMeta.errorCode as ErrorCode,
+          taskId: failed.id,
+          refundedPoints: cost,
+        })
+      }
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-BYOK失败退款`,
+        refundMeta('image', 'byok_refund', {
+          model: resolved.modelName,
+          generationId: null,
+        }),
+      )
+      return this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'image',
+          prompt: combined,
+          model: model ?? resolved.modelName,
+          url: null,
+          status: 'fallback_pending',
+          metadata: JSON.stringify(
+            this.byokPendingMeta(resolved, err, cost, {
+              originalModel: model,
+              variation: true,
+              basePrompt,
+            }),
+          ),
+          ...withCanvasScope(scope),
+        },
+      })
+    }
+  }
+
+  async editImage(
+    userId: string,
+    input: {
+      prompt: string
+      imageUrl: string
+      maskUrl: string
+      sessionId?: string
+      nodeId?: string
+      parentRecordId?: string
+      parentVersionId?: string
+    },
+    cancel?: CancelFlag,
+  ) {
+    const cost = 10
+    const chargeReason = '图像精修'
+    const scope = { sessionId: input.sessionId, nodeId: input.nodeId }
+
+    let base: Buffer
+    let mask: Buffer
+    try {
+      ;[base, mask] = await Promise.all([
+        readImageBuffer(input.imageUrl),
+        readImageBuffer(input.maskUrl),
+      ])
+      await assertSameDimensions(base, mask)
+    } catch (err) {
+      if (err instanceof MaskDimensionMismatchError) {
+        throw new BadRequestException(err.message)
+      }
+      throw err
+    }
+
+    await this.points.consume(
+      userId,
+      cost,
+      chargeReason,
+      consumeMeta('image', { model: P1_IMAGE_EDIT_MODEL_KEY, generationId: null }),
+    )
+    const resolved = await this.resolver.resolveForGeneration(
+      userId,
+      P1_IMAGE_EDIT_MODEL_KEY,
+      'image',
+    )
+    const built = buildImageEditRequest({
+      userPrompt: input.prompt,
+      imageUrl: input.imageUrl,
+      maskUrl: input.maskUrl,
+    })
+    const editMeta = {
+      editMode: 'inpaint' as const,
+      composited: false,
+      baseImageUrl: input.imageUrl,
+      maskUrl: input.maskUrl,
+      parentRecordId: input.parentRecordId,
+      parentVersionId: input.parentVersionId,
+      chargeReason,
+      channelId: resolved.channelId,
+      modelKey: built.meta.modelKey,
+      gatewayModelId: built.meta.gatewayModelId,
+    }
+    const record = await this.prisma.generationRecord.create({
+      data: {
+        userId,
+        type: 'image_edit',
+        prompt: input.prompt,
+        model: P1_IMAGE_EDIT_MODEL_KEY,
+        status: 'generating',
+        metadata: JSON.stringify(applyChargeMeta(editMeta, cost)),
+        ...withCanvasScope(scope),
+      },
+    })
+
+    const refundAndFail = async (err: unknown) => {
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-失败退款`,
+        refundMeta('image', 'failed_refund', {
+          model: resolved.modelName,
+          generationId: record.id,
+        }),
+      )
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id: record.id } })
+      const meta = parseMeta(existing?.metadata)
+      const failedMeta = applyFailureDiagnosticMeta(
+        applyRefundMeta(meta, cost, 'platform_failed'),
+        err,
+      )
+      const failed = await this.prisma.generationRecord.update({
+        where: { id: record.id },
+        data: {
+          status: 'failed',
+          metadata: JSON.stringify(failedMeta),
+        },
+      })
+      throwGenerationFailure({
+        userMessage: String(failedMeta.userMessage ?? '精修失败'),
+        errorCode: failedMeta.errorCode as ErrorCode,
+        taskId: failed.id,
+        refundedPoints: cost,
+      })
+    }
+
+    try {
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('image', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: record.id,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      const inlined = await inlineUpstreamReferenceImages([input.imageUrl, input.maskUrl])
+      const inlinedImage = inlined[0] ?? input.imageUrl
+      const inlinedMask = inlined[1] ?? input.maskUrl
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('image', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: record.id,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+        throw new Error('missing api key')
+      }
+      const { url: upstreamUrl } = await createImageEditProvider(providerOpts(resolved)).edit({
+        userPrompt: input.prompt,
+        imageUrl: inlinedImage,
+        maskUrl: inlinedMask,
+      })
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('image', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: record.id,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      const result = await readImageBuffer(upstreamUrl)
+      const { buffer: composited } = await compositeUnmaskedPixels({ base, result, mask })
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('image', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: record.id,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      const saved = await this.upload.saveUserFile(userId, composited, 'edit.png', 'image/png')
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id: record.id } })
+      const meta = parseMeta(existing?.metadata)
+      const updated = await this.prisma.generationRecord.updateMany({
+        where: { id: record.id, status: 'generating' },
+        data: {
+          url: saved.url,
+          status: 'completed',
+          metadata: JSON.stringify({
+            ...meta,
+            editMode: 'inpaint',
+            composited: true,
+            baseImageUrl: input.imageUrl,
+            maskUrl: input.maskUrl,
+            parentRecordId: input.parentRecordId,
+            parentVersionId: input.parentVersionId,
+            chargeReason,
+          }),
+        },
+      })
+      if (updated.count === 0) {
+        throwCancelledException(cost)
+      }
+      return this.prisma.generationRecord.findFirst({ where: { id: record.id } })
+    } catch (err) {
+      if (isCancelledException(err)) {
+        const existing = await this.prisma.generationRecord.findFirst({ where: { id: record.id } })
+        const meta = parseMeta(existing?.metadata)
+        const cancelledMeta = applyFailureDiagnosticMeta(
+          applyRefundMeta({ ...meta, cancelled: true }, cost, 'cancelled'),
+          err,
+          { errorCode: 'cancelled', userMessage: '已取消' },
+        )
+        await this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            status: 'failed',
+            metadata: JSON.stringify(cancelledMeta),
+          },
+        })
+        throw err
+      }
+      return refundAndFail(err)
+    }
+  }
+
+  async segmentImage(
+    userId: string,
+    input: { imageUrl: string; x: number; y: number; label?: 0 | 1 },
+  ): Promise<{ maskUrl: string }> {
+    const imageUrl = input.imageUrl?.trim()
+    if (!imageUrl) {
+      throw new BadRequestException('imageUrl 不能为空')
+    }
+    if (!Number.isFinite(input.x) || input.x < 0) {
+      throw new BadRequestException('x 无效')
+    }
+    if (!Number.isFinite(input.y) || input.y < 0) {
+      throw new BadRequestException('y 无效')
+    }
+    if (!allowSegmentRate(userId)) {
+      throw new HttpException('点选过于频繁，请稍后再试', HttpStatus.TOO_MANY_REQUESTS)
+    }
+
+    const apiKey = process.env.FAL_KEY?.trim()
+    if (!apiKey) {
+      throw new ServiceUnavailableException('点选暂不可用')
+    }
+
+    const [inlinedUrl] = await inlineUpstreamReferenceImages([imageUrl])
+    const publicUrl = inlinedUrl ?? imageUrl
+
+    try {
+      return await createSegmentProvider({ apiKey }).segment({
+        imageUrl: publicUrl,
+        x: input.x,
+        y: input.y,
+        label: input.label ?? 1,
+      })
+    } catch (err) {
+      if (
+        err instanceof BadRequestException
+        || err instanceof ServiceUnavailableException
+        || err instanceof HttpException
+      ) {
+        throw err
+      }
+      throw new BadGatewayException('云端点选失败')
+    }
+  }
+
+  async generateVideo(
+    userId: string,
+    prompt: string,
+    model?: string,
+    duration = 5,
+    aspectRatio = '16:9',
+    refs?: StudioRefInput[],
+    mentionedKeys?: string[],
+    resolution = '720p',
+    crop = 'none',
+    referenceImageUrl?: string,
+    scope?: CanvasGenerationScope,
+    videoMode?: string,
+    generateAudio?: boolean,
+    seed?: number,
+    negativePrompt?: string,
+  ) {
+    if (scope?.sessionId && scope?.nodeId) {
+      const session = await this.prisma.session.findUnique({ where: { id: scope.sessionId } })
+      const canvas = parseSessionCanvas(session?.canvasData)
+      if (canvas) {
+        const livePrompt = resolveCompositionVideoPrompt(canvas, scope.nodeId)
+        if ('error' in livePrompt) {
+          throw new BadRequestException(EMPTY_P_BLOCK_V_MESSAGE)
+        }
+        if (hasCompositionPBlock(canvas, scope.nodeId)) {
+          prompt = livePrompt.prompt
+        }
+      }
+    }
+    const videoRefs: GenerationRefPayload[] = (refs ?? []).map((ref) => ({
+      ...ref,
+      mediaType: ref.mediaType as GenerationRefPayload['mediaType'],
+    }))
+    const referenceBundle = buildVideoReferenceBundle(videoRefs, referenceImageUrl)
+    for (const group of [
+      referenceBundle.images,
+      referenceBundle.videos,
+      referenceBundle.audios,
+    ]) {
+      for (const ref of group) {
+        ref.url = resolvePublicMediaUrls([ref.url])[0] ?? ref.url
+      }
+    }
+    const resolvedVideoMode = resolveStudioVideoMode(videoMode, referenceBundle)
+    if (
+      referenceBundle.audios.length
+      && !referenceBundle.images.length
+      && !referenceBundle.videos.length
+      && !isOfficialMiniMaxH3ReferenceToVideo(model, resolvedVideoMode)
+    ) {
+      throw new BadRequestException('参考音频须配合参考图或视频')
+    }
+    if (resolvedVideoMode === 'reference_to_video') {
+      const profile = resolveVideoModelProfile(model ?? '', model ?? '')
+      if (profile.refWire === 'minimax_h3_content') {
+        try {
+          assertMiniMaxH3ReferenceLimits({
+            imageCount: referenceBundle.images.length,
+            videoCount: referenceBundle.videos.length,
+            audioCount: referenceBundle.audios.length,
+            promptLength: prompt.length,
+          })
+        } catch (err) {
+          throw new BadRequestException((err as Error).message)
+        }
+      }
+    }
+    const durationCredits = videoCreditsForModel({
+      duration,
+      modelKey: model,
+      resolution,
+      videoMode: resolvedVideoMode,
+      referenceImageCount: referenceBundle.images.length,
+      referenceVideoCount: referenceBundle.videos.length,
+    })
+    const chargeReason = '视频生成'
+    await this.points.consume(
+      userId,
+      durationCredits,
+      chargeReason,
+      consumeMeta('video', { model: model ?? null, generationId: null }),
+    )
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'video')
+    const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
+      prompt,
+      refs,
+      'video',
+      mentionedKeys,
+      resolved.source === 'user' ? resolved.credentials : undefined,
+      resolved.modelName,
+      referenceBundle.images.map(({ refKey, label }) => ({ refKey, label })),
+    )
+    const built = (() => {
+      try {
+        return buildVideoProviderOptions({
+          modelKey: resolved.modelName,
+          duration,
+          aspectRatio,
+          resolution,
+          crop,
+          referenceBundle,
+          videoMode: resolvedVideoMode,
+          gatewayModelHint: resolved.source === 'user' ? resolved.modelName : undefined,
+          channelBaseUrl: resolved.credentials.baseUrl,
+          generateAudio,
+          seed,
+          negativePrompt,
+        })
+      } catch (err) {
+        if (err instanceof Seedance1xUnsupportedError) {
+          throw new BadRequestException(err.message)
+        }
+        throw err
+      }
+    })()
+    const storeModel =
+      resolved.source === 'user' ? model ?? built.meta.modelKey : built.meta.modelKey
+    const effectivePrompt = buildEffectiveVideoPrompt(mergedText, built)
+    const providerOptions = buildVideoProviderGenerateOptions(built)
+    if (resolved.source === 'user') {
+      providerOptions.model = resolved.modelName
+    }
+    const effectiveBundle = built.effectiveReferenceBundle
+    let upstreamImageRefs = effectiveBundle.images
+    let refPreflight: MediaRefPreflight | undefined
+    let refDownscaled = false
+    if (effectiveBundle.images.length > 0) {
+      let probedRefs = await Promise.all(
+        effectiveBundle.images.map(async (ref) => ({
+          ...(await this.mediaProbe.probeUrl(ref.url)),
+          refKey: ref.refKey,
+        })),
+      )
+      refPreflight = evaluateMediaRefPreflight(probedRefs, {
+        blockWire: built.meta.refWire === 'agnes_keyframes' ? 'agnes_keyframes' : undefined,
+      })
+      if (refPreflight.level === 'error' && built.meta.refWire === 'agnes_keyframes') {
+        const downscaled = await downscaleOversizedReferenceImages(upstreamImageRefs)
+        if (downscaled.changed) {
+          upstreamImageRefs = upstreamImageRefs.map((ref, index) => ({
+            ...ref,
+            url: downscaled.urls[index] ?? ref.url,
+          }))
+          probedRefs = downscaled.probed.map((item, index) => ({
+            ...item,
+            refKey: upstreamImageRefs[index]?.refKey ?? item.refKey,
+          }))
+          refPreflight = evaluateMediaRefPreflight(probedRefs, {
+            blockWire: 'agnes_keyframes',
+          })
+          refDownscaled = true
+        }
+      }
+      if (refPreflight.level === 'error' && built.meta.refWire === 'agnes_keyframes') {
+        await this.points.refund(
+          userId,
+          durationCredits,
+          `${chargeReason}-预检拒绝退款`,
+          refundMeta('video', 'failed_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        throw new BadRequestException(refPreflight.message)
+      }
+    }
+    const record = await this.prisma.generationRecord.create({
+      data: {
+        userId,
+        type: 'video',
+        prompt: effectivePrompt,
+        model: storeModel,
+        status: 'generating',
+        metadata: JSON.stringify(
+          applyChargeMeta(
+            {
+              ...built.meta,
+              duration,
+              aspectRatio,
+              resolution,
+              crop,
+              ...(resolvedVideoMode ? { videoMode: resolvedVideoMode } : {}),
+              referenceImageCount: referenceBundle.images.length,
+              referenceVideoCount: referenceBundle.videos.length,
+              referenceImages: upstreamImageRefs.map(({ url }) => url),
+              referenceVideos: effectiveBundle.videos.map(({ url }) => url),
+              referenceAudios: effectiveBundle.audios.map(({ url }) => url),
+              skippedMerge,
+              mergedText,
+              channelId: resolved.channelId,
+              originalModel: model,
+              providerSource: resolved.source,
+              ...(refDownscaled ? { refDownscaled: true } : {}),
+              ...(refPreflight && refPreflight.level === 'warn' ? { refPreflight } : {}),
+              ...falH3MaxVideoRecordMeta({
+                modelKey: resolved.modelName || model,
+                hasStartImage: upstreamImageRefs.length > 0,
+                credentialSource: resolved.source,
+              }),
+              ...minimaxH3VideoRecordMeta({
+                modelKey: resolved.modelName || model,
+                credentialSource: resolved.source,
+              }),
+            },
+            durationCredits,
+          ),
+        ),
+        ...withCanvasScope(scope),
+      },
+    })
+    this.completeVideo(
+      record.id,
+      userId,
+      durationCredits,
+      chargeReason,
+      effectivePrompt,
+      providerOptions,
+      resolved,
+    ).catch(console.error)
+    return record
+  }
+
+  async generateAudio(
+    userId: string,
+    text: string,
+    options: {
+      model?: string
+      voice?: string
+      emotion?: string
+      language?: string
+      speed?: number
+      volume?: number
+      pitch?: number
+    } = {},
+    refs?: StudioRefInput[],
+    mentionedKeys?: string[],
+    cancel?: CancelFlag,
+    scope?: CanvasGenerationScope,
+  ) {
+    const cost = 5
+    const chargeReason = '音频生成'
+    await this.points.consume(
+      userId,
+      cost,
+      chargeReason,
+      consumeMeta('audio', { model: options.model ?? null, generationId: null }),
+    )
+    const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
+    const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
+      text,
+      refs,
+      'audio',
+      mentionedKeys,
+      resolved.source === 'user' ? resolved.credentials : undefined,
+      resolved.modelName,
+    )
+    const built = buildAudioRequest({
+      mergedText,
+      modelKey: resolved.modelName,
+      voice: options.voice,
+      emotion: options.emotion,
+      language: options.language,
+      speed: options.speed,
+      volume: options.volume,
+      pitch: options.pitch,
+    })
+    const audioOpts =
+      resolved.source === 'user'
+        ? { ...built.options, model: resolved.modelName }
+        : built.options
+    const storeModel =
+      resolved.source === 'user' ? options.model ?? built.meta.modelKey : built.meta.modelKey
+
+    try {
+      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+        throw new Error('missing api key')
+      }
+      const { url } = await createAudioProvider(providerOpts(resolved)).generate(
+        built.text,
+        audioOpts,
+      )
+      const storeUrl = url.startsWith('data:') ? AUDIO_PLACEHOLDER : url
+      if (cancel?.isCancelled()) {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-取消退款`,
+          refundMeta('audio', 'cancelled_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        throwCancelledException(cost)
+      }
+      const record = await this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'audio',
+          prompt: mergedText,
+          model: storeModel,
+          url: storeUrl,
+          status: 'completed',
+          metadata: JSON.stringify(
+            applyChargeMeta(
+              {
+                ...built.meta,
+                skippedMerge,
+                voice: built.options.voice ?? options.voice ?? 'default',
+                emotion: options.emotion ?? 'neutral',
+                language: options.language ?? 'zh',
+                speed: options.speed ?? 1,
+                volume: options.volume,
+                pitch: options.pitch,
+                hasTtsData: url.startsWith('data:'),
+                channelId: resolved.channelId,
+              },
+              cost,
+            ),
+          ),
+          ...withCanvasScope(scope),
+        },
+      })
+      return { ...record, url }
+    } catch (err) {
+      if (isCancelledException(err)) throw err
+      if (resolved.source !== 'user') {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-失败退款`,
+          refundMeta('audio', 'failed_refund', {
+            model: resolved.modelName,
+            generationId: null,
+          }),
+        )
+        const failedMeta = applyFailureDiagnosticMeta(
+          applyRefundMeta(
+            applyChargeMeta(
+              {
+                ...built.meta,
+                skippedMerge,
+                voice: built.options.voice ?? options.voice ?? 'default',
+                emotion: options.emotion ?? 'neutral',
+                language: options.language ?? 'zh',
+                speed: options.speed ?? 1,
+                volume: options.volume,
+                pitch: options.pitch,
+                channelId: resolved.channelId,
+              },
+              cost,
+            ),
+            cost,
+            'platform_failed',
+          ),
+          err,
+        )
+        const failed = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'audio',
+            prompt: mergedText,
+            model: storeModel,
+            url: null,
+            status: 'failed',
+            metadata: JSON.stringify(failedMeta),
+            ...withCanvasScope(scope),
+          },
+        })
+        throwGenerationFailure({
+          userMessage: String(failedMeta.userMessage ?? '生成失败'),
+          errorCode: failedMeta.errorCode as ErrorCode,
+          taskId: failed.id,
+          refundedPoints: cost,
+        })
+      }
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-BYOK失败退款`,
+        refundMeta('audio', 'byok_refund', {
+          model: resolved.modelName,
+          generationId: null,
+        }),
+      )
+      const record = await this.prisma.generationRecord.create({
+        data: {
+          userId,
+          type: 'audio',
+          prompt: mergedText,
+          model: storeModel,
+          url: null,
+          status: 'fallback_pending',
+          metadata: JSON.stringify(
+            this.byokPendingMeta(resolved, err, cost, {
+              ...built.meta,
+              originalModel: options.model,
+              skippedMerge,
+              voice: options.voice,
+              emotion: options.emotion,
+              language: options.language,
+              speed: options.speed,
+              volume: options.volume,
+              pitch: options.pitch,
+              audioOptions: audioOpts,
+            }),
+          ),
+          ...withCanvasScope(scope),
+        },
+      })
+      return record
+    }
+  }
+
+  async confirmPlatformFallback(userId: string, recordId: string, cancel?: CancelFlag) {
+    const record = await this.getGeneration(userId, recordId)
+    if (record.status !== 'fallback_pending') {
+      throw new BadRequestException('当前状态不可确认平台回退')
+    }
+    const meta = parseMeta(record.metadata)
+    const platformCost = this.platformFallbackCost(record.type, meta)
+    const pointCategory = studioPointCategory(record.type)
+    const pointExtra = {
+      model: record.model ?? null,
+      generationId: record.id,
+    }
+    await this.points.consume(
+      userId,
+      platformCost,
+      '平台回退生成',
+      consumeMeta(pointCategory, pointExtra),
+    )
+    const chargedMeta = { ...meta, chargedPoints: platformCost, priorByokRefunded: true }
+
+    try {
+      if (record.type === 'image') {
+        const size = String(meta.size ?? '1024x1024')
+        const resolution = typeof meta.nativeParams === 'object' && meta.nativeParams
+          ? (meta.nativeParams as Record<string, unknown>).resolution
+          : undefined
+        const n = Number(meta.count ?? 1) || 1
+        const modelId = this.platformGatewayModelId('image', meta)
+        const refs = Array.isArray(meta.referenceImages)
+          ? (meta.referenceImages as string[]).filter((url) => typeof url === 'string' && url.trim())
+          : []
+        const useNativeRefs = refs.length > 0 && meta.refImageMode === 'native'
+        const prompt = useNativeRefs ? stripRefImagePromptTags(record.prompt) : record.prompt
+        const modelKey =
+          typeof meta.modelKey === 'string' && meta.modelKey.trim()
+            ? meta.modelKey
+            : undefined
+        const providerRefs = useNativeRefs ? await inlineUpstreamReferenceImages(refs) : undefined
+        const { url, urls } = await createImageProvider(
+          resolvePlatformImageProviderOpts(modelKey ?? modelId),
+        ).generate(prompt, {
+          size,
+          resolution: typeof resolution === 'string' ? resolution : undefined,
+          n,
+          modelId,
+          referenceImages: providerRefs,
+          refWire:
+            meta.refWire === 'agnes_extra_body' ||
+            meta.refWire === 'apimart_image_urls' ||
+            meta.refWire === 'legacy_prompt_tags' ||
+            meta.refWire === 'none'
+              ? (meta.refWire as ImageRefWire)
+              : undefined,
+          responseMode:
+            meta.responseMode === 'async_task' || meta.responseMode === 'sync_url'
+              ? meta.responseMode
+              : undefined,
+          quality:
+            typeof meta.nativeParams === 'object' &&
+            meta.nativeParams &&
+            typeof (meta.nativeParams as Record<string, unknown>).quality === 'string'
+              ? ((meta.nativeParams as Record<string, unknown>).quality as string)
+              : undefined,
+        })
+        const imageUrls = urls?.length ? urls : [url]
+        if (cancel?.isCancelled()) {
+          await this.points.refund(
+            userId,
+            platformCost,
+            '平台回退-取消退款',
+            refundMeta(pointCategory, 'cancelled_refund', pointExtra),
+          )
+          throwCancelledException(platformCost)
+        }
+        return this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            url: imageUrls[0],
+            status: 'completed',
+            metadata: JSON.stringify({
+              ...chargedMeta,
+              urls: imageUrls,
+              gatewayModelId: modelId,
+              providerFallback: true,
+              channelId: 'platform',
+            }),
+          },
+        })
+      }
+
+      if (record.type === 'text' || record.type === 'prompt') {
+        const gatewayModelId = this.platformGatewayModelId('text', meta)
+        const referenceImages = Array.isArray(meta.referenceImages)
+          ? (meta.referenceImages as string[])
+          : []
+        let text: string
+        let promptMeta: Record<string, unknown> = {}
+        if (record.type === 'prompt') {
+          const guideSceneId =
+            typeof meta.guideSceneId === 'string' && meta.guideSceneId.trim()
+              ? meta.guideSceneId.trim()
+              : undefined
+          const { mode, content, visionUsed } = await generatePromptFromUserInput(record.prompt, {
+            model: gatewayModelId,
+            apiKey: process.env.OPENAI_API_KEY,
+            baseUrl: process.env.OPENAI_BASE_URL,
+            guideSceneId,
+            referenceImages: referenceImages.length
+              ? await inlineUpstreamReferenceImages(referenceImages)
+              : referenceImages,
+            mentionedKeys: Array.isArray(meta.mentionedKeys)
+              ? (meta.mentionedKeys as string[])
+              : undefined,
+          })
+          text = content
+          promptMeta = {
+            mode,
+            content,
+            visionUsed,
+            referenceImages,
+            ...(guideSceneId ? { guideSceneId } : {}),
+          }
+        } else if (referenceImages.length > 0) {
+          const providerRefs = await inlineUpstreamReferenceImages(referenceImages)
+          const result = await generateTextForRefs(record.prompt, providerRefs, {
+            model: gatewayModelId,
+            apiKey: process.env.OPENAI_API_KEY,
+            baseUrl: process.env.OPENAI_BASE_URL,
+          })
+          text = result.text
+        } else {
+          const result = await createTextProvider(undefined).generate(record.prompt, gatewayModelId)
+          text = result.text
+        }
+        if (cancel?.isCancelled()) {
+          await this.points.refund(
+            userId,
+            platformCost,
+            '平台回退-取消退款',
+            refundMeta(pointCategory, 'cancelled_refund', pointExtra),
+          )
+          throwCancelledException(platformCost)
+        }
+        return this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            status: 'completed',
+            metadata: JSON.stringify({
+              ...chargedMeta,
+              ...promptMeta,
+              text: record.type === 'text' ? text : meta.text,
+              gatewayModelId,
+              providerFallback: true,
+              channelId: 'platform',
+            }),
+          },
+        })
+      }
+
+      if (record.type === 'audio') {
+        const platformModel = this.platformGatewayModelId('audio', meta)
+        const prevAudio = (meta.audioOptions as Record<string, unknown> | undefined) ?? {}
+        const audioOptions = {
+          ...prevAudio,
+          model: platformModel,
+          voice: prevAudio.voice ?? meta.voice,
+          speed: prevAudio.speed ?? meta.speed,
+          volume: prevAudio.volume ?? meta.volume,
+          pitch: prevAudio.pitch ?? meta.pitch,
+        }
+        const { url } = await createAudioProvider(undefined).generate(
+          record.prompt,
+          audioOptions as { model?: string; voice?: string; speed?: number; volume?: number; pitch?: number },
+        )
+        const storeUrl = url.startsWith('data:') ? AUDIO_PLACEHOLDER : url
+        if (cancel?.isCancelled()) {
+          await this.points.refund(
+            userId,
+            platformCost,
+            '平台回退-取消退款',
+            refundMeta(pointCategory, 'cancelled_refund', pointExtra),
+          )
+          throwCancelledException(platformCost)
+        }
+        return this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            url: storeUrl,
+            status: 'completed',
+            metadata: JSON.stringify({
+              ...chargedMeta,
+              audioOptions,
+              gatewayModelId: platformModel,
+              hasTtsData: url.startsWith('data:'),
+              providerFallback: true,
+              channelId: 'platform',
+            }),
+          },
+        })
+      }
+
+      if (record.type === 'video') {
+        const platformModel = this.platformGatewayModelId('video', meta)
+        const { url } = await createVideoProvider(undefined).generate(record.prompt, {
+          model: platformModel,
+          duration: Number(meta.duration ?? 5),
+          aspectRatio: String(meta.aspectRatio ?? '16:9'),
+          resolution: String(meta.resolution ?? '720p'),
+          crop: meta.crop === undefined ? undefined : String(meta.crop),
+          image: Array.isArray(meta.referenceImages)
+            ? (meta.referenceImages as string[])[0]
+            : undefined,
+        })
+        if (cancel?.isCancelled()) {
+          await this.points.refund(
+            userId,
+            platformCost,
+            '平台回退-取消退款',
+            refundMeta(pointCategory, 'cancelled_refund', pointExtra),
+          )
+          throwCancelledException(platformCost)
+        }
+        return this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            url,
+            status: 'completed',
+            metadata: JSON.stringify({
+              ...chargedMeta,
+              gatewayModelId: platformModel,
+              providerFallback: true,
+              channelId: 'platform',
+            }),
+          },
+        })
+      }
+
+      throw new BadRequestException('不支持的生成类型')
+    } catch (err) {
+      if (isCancelledException(err)) {
+        const cancelledMeta = applyFailureDiagnosticMeta(
+          applyRefundMeta(chargedMeta, platformCost, 'cancelled'),
+          err,
+          { errorCode: 'cancelled', userMessage: '已取消' },
+        )
+        await this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            status: 'failed',
+            metadata: JSON.stringify(cancelledMeta),
+          },
+        })
+        throw err
+      }
+      if (err instanceof BadRequestException && err.message === '不支持的生成类型') {
+        await this.points.refund(
+          userId,
+          platformCost,
+          '平台回退失败退款',
+          refundMeta(pointCategory, 'failed_refund', pointExtra),
+        )
+        rethrowWithRefundedPoints(err, platformCost)
+      }
+      await this.points.refund(
+        userId,
+        platformCost,
+        '平台回退失败退款',
+        refundMeta(pointCategory, 'failed_refund', pointExtra),
+      )
+      const failedMeta = applyFailureDiagnosticMeta(
+        applyRefundMeta(chargedMeta, platformCost, 'platform_fallback_failed'),
+        err,
+      )
+      await this.prisma.generationRecord.update({
+        where: { id: record.id },
+        data: {
+          status: 'failed',
+          metadata: JSON.stringify(failedMeta),
+        },
+      })
+      throwGenerationFailure({
+        userMessage: String(failedMeta.userMessage ?? '生成失败'),
+        errorCode: failedMeta.errorCode as ErrorCode,
+        taskId: record.id,
+        refundedPoints: platformCost,
+      })
+    }
+  }
+
+  async cancelPlatformFallback(userId: string, recordId: string) {
+    const record = await this.getGeneration(userId, recordId)
+    if (record.status !== 'fallback_pending') {
+      throw new BadRequestException('当前状态不可取消平台回退')
+    }
+    const meta = parseMeta(record.metadata)
+    if (!alreadyRefunded(meta)) {
+      const cost =
+        typeof meta.chargedPoints === 'number'
+          ? meta.chargedPoints
+          : this.platformFallbackCost(record.type, meta)
+      await this.points.refund(
+        userId,
+        cost,
+        '平台回退取消退款',
+        refundMeta(studioPointCategory(record.type), 'cancelled_refund', {
+          model: record.model ?? null,
+          generationId: record.id,
+        }),
+      )
+    }
+    const byokErrorRaw =
+      (typeof meta.byokErrorRaw === 'string' && meta.byokErrorRaw.trim()
+        ? meta.byokErrorRaw
+        : undefined)
+      ?? (typeof meta.errorRaw === 'string' && meta.errorRaw.trim() && meta.errorRaw !== '已取消'
+        ? meta.errorRaw
+        : undefined)
+    const cancelledMeta: Record<string, unknown> = {
+      ...meta,
+      cancelled: true,
+      ...(byokErrorRaw ? { byokErrorRaw, errorRaw: byokErrorRaw } : {}),
+      errorCode: 'cancelled',
+      userMessage: byokErrorRaw
+        ? `已取消平台回退。原 BYOK 错误：${byokErrorRaw.slice(0, 500)}`
+        : '已取消',
+      failedAt: new Date().toISOString(),
+    }
+    return this.prisma.generationRecord.update({
+      where: { id: record.id },
+      data: {
+        status: 'failed',
+        metadata: JSON.stringify(cancelledMeta),
+      },
+    })
+  }
+
+  async cancelGeneration(userId: string, recordId: string) {
+    const record = await this.getGeneration(userId, recordId)
+    if (record.status !== 'generating') {
+      throw new BadRequestException('当前状态不可取消')
+    }
+    const meta = parseMeta(record.metadata)
+    const cost = typeof meta.chargedPoints === 'number' ? meta.chargedPoints : 0
+    const chargeReason =
+      record.type === 'video'
+        ? '视频生成'
+        : record.type === 'image'
+          ? '图像生成'
+          : record.type === 'image_edit'
+            ? '图像精修'
+            : record.type === 'image_upscale'
+              ? '图像放大'
+              : '生成'
+    let updatedMeta: Record<string, unknown> = { ...meta, cancelled: true }
+    if (cost > 0 && !alreadyRefunded(meta)) {
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-取消退款`,
+        refundMeta(studioPointCategory(record.type), 'cancelled_refund', {
+          model: record.model ?? null,
+          generationId: record.id,
+        }),
+      )
+      updatedMeta = applyRefundMeta(updatedMeta, cost, 'cancelled')
+    }
+    updatedMeta = applyFailureDiagnosticMeta(updatedMeta, new Error('已取消'), {
+      errorCode: 'cancelled',
+      userMessage: '已取消',
+    })
+    return this.prisma.generationRecord.update({
+      where: { id: record.id },
+      data: {
+        status: 'failed',
+        metadata: JSON.stringify(updatedMeta),
+      },
+    })
+  }
+
+  private async completeVideo(
+    id: string,
+    userId: string,
+    cost: number,
+    chargeReason: string,
+    prompt: string,
+    options: import('@lnkpi/agent').VideoProviderGenerateOptions,
+    resolved: ResolvedGenerationProvider,
+  ) {
+    try {
+      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+        throw new Error('missing api key')
+      }
+      const { url, lastFrameUrl } = await createVideoProvider({
+        ...providerOpts(resolved),
+        model: resolved.modelName,
+      }).generate(
+        prompt,
+        options,
+      )
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      const referenceUrls = [
+        ...(Array.isArray(meta.referenceImages) ? (meta.referenceImages as string[]) : []),
+        ...(Array.isArray(meta.referenceVideos) ? (meta.referenceVideos as string[]) : []),
+        ...(Array.isArray(meta.referenceAudios) ? (meta.referenceAudios as string[]) : []),
+      ].filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+      const mediaInfo = await this.enrichVideoMediaInfoDimensions(
+        await this.buildMediaInfo(url, referenceUrls),
+        lastFrameUrl,
+      )
+      const updated = await this.prisma.generationRecord.updateMany({
+        where: { id, status: 'generating' },
+        data: {
+          url,
+          status: 'completed',
+          metadata: JSON.stringify({
+            ...meta,
+            ...(lastFrameUrl ? { lastFrameUrl } : {}),
+            mediaInfo,
+          }),
+        },
+      })
+      if (updated.count === 0) return
+    } catch (err) {
+      console.error('Video generation failed:', err)
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      if (resolved.source === 'user') {
+        await this.points.refund(
+          userId,
+          cost,
+          `${chargeReason}-BYOK失败退款`,
+          refundMeta('video', 'byok_refund', {
+            model: resolved.modelName,
+            generationId: id,
+          }),
+        )
+        await this.prisma.generationRecord.update({
+          where: { id },
+          data: {
+            status: 'fallback_pending',
+            metadata: JSON.stringify(this.byokPendingMeta(resolved, err, cost, meta)),
+          },
+        })
+        return
+      }
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-失败退款`,
+        refundMeta('video', 'failed_refund', {
+          model: resolved.modelName,
+          generationId: id,
+        }),
+      )
+      const failedMeta = applyFailureDiagnosticMeta(
+        applyRefundMeta(meta, cost, 'platform_failed'),
+        err,
+      )
+      await this.prisma.generationRecord.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          metadata: JSON.stringify(failedMeta),
+        },
+      })
+    }
+  }
+}

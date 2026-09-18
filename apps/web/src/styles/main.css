@@ -1,0 +1,285 @@
+@import './neowow-tokens.css';
+@import './neo-node.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: var(--neo-border);
+  }
+
+  body {
+    min-height: 100vh;
+    background-color: var(--neo-bg);
+    color: var(--neo-text-primary);
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--neo-border-strong);
+  }
+}
+
+@layer components {
+  .glass-panel {
+    border-radius: 1rem;
+    border: 1px solid var(--neo-border);
+    background: var(--neo-hover-bg);
+    backdrop-filter: blur(24px);
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50;
+    background: var(--neo-brand-gradient);
+    box-shadow: 0 4px 16px rgba(109, 93, 252, 0.32);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.08);
+    box-shadow: 0 6px 20px rgba(109, 93, 252, 0.42);
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition;
+    border: 1px solid var(--neo-border);
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-secondary);
+  }
+
+  .btn-ghost:hover {
+    background: var(--neo-active-bg);
+    color: var(--neo-text-primary);
+  }
+
+  .input-field {
+    @apply w-full rounded-xl px-4 py-3 text-sm outline-none transition;
+    border: 1px solid var(--neo-border-strong);
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-primary);
+  }
+
+  .input-field::placeholder {
+    color: var(--neo-text-muted);
+  }
+
+  .input-field:focus {
+    border-color: var(--neo-border-strong);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 12%, transparent);
+  }
+
+  /* 画布浮动 chrome：左上返回/标题、右上主题/积分/头像、左侧工具轨 */
+  .neo-chrome {
+    border: 1px solid var(--neo-border);
+    background: var(--neo-chrome-bg);
+    color: var(--neo-text-secondary);
+    box-shadow: var(--neo-chrome-shadow);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  }
+
+  .neo-chrome:hover {
+    background: var(--neo-chrome-bg);
+    color: var(--neo-text-primary);
+  }
+
+  /* 轻量玻璃轨道：左侧小菜单 / 底部小地图工具条，比 dock 更透、能看清画布 */
+  .neo-glass-lite {
+    border: 1px solid var(--neo-glass-lite-border);
+    background: var(--neo-glass-lite-bg);
+    box-shadow: var(--neo-glass-lite-shadow);
+    backdrop-filter: blur(var(--neo-glass-lite-blur)) saturate(1.4);
+    -webkit-backdrop-filter: blur(var(--neo-glass-lite-blur)) saturate(1.4);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  /* 弹出卡片 / 下拉菜单 / popover 统一表面 */
+  .neo-popover {
+    border: 1px solid var(--neo-border);
+    background: var(--neo-popover-bg);
+    color: var(--neo-text-primary);
+    box-shadow: var(--neo-popover-shadow);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* popover 内的次级 hover 项 */
+  .neo-popover-item {
+    color: var(--neo-text-secondary);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .neo-popover-item:hover {
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-primary);
+  }
+
+  /* 左侧 dock 二级面板：卡片行（添加节点、连线选类型等） */
+  .neo-popover-card-item {
+    border: 1px solid transparent;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      box-shadow 0.15s ease,
+      transform 0.1s ease,
+      color 0.15s ease;
+  }
+
+  .neo-popover-card-item:hover {
+    background: var(--neo-hover-bg);
+    border-color: var(--neo-border);
+    color: var(--neo-text-primary);
+  }
+
+  .neo-popover-card-item:active {
+    transform: scale(0.99);
+    background: color-mix(in srgb, var(--neo-hi-bg) 28%, var(--neo-hover-bg));
+    border-color: color-mix(in srgb, var(--neo-hi-text) 14%, var(--neo-border));
+  }
+
+  /* 左侧 dock 二级面板：顶栏 tab（资产库 / 任务生命周期） */
+  .neo-dock-panel-tab {
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.625rem;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--neo-text-muted);
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .neo-dock-panel-tab:hover {
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-secondary);
+  }
+
+  .neo-dock-panel-tab.is-active {
+    background: var(--neo-hi-bg);
+    color: var(--neo-hi-text);
+    box-shadow: var(--neo-hi-shadow);
+  }
+
+  /* 左侧 dock 二级面板：筛选 chip */
+  .neo-dock-panel-chip {
+    border-radius: 9999px;
+    padding: 0.25rem 0.625rem;
+    font-size: 10px;
+    color: var(--neo-text-muted);
+    background: var(--neo-hover-bg);
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .neo-dock-panel-chip:hover {
+    background: var(--neo-active-bg);
+    color: var(--neo-text-secondary);
+  }
+
+  .neo-dock-panel-chip.is-active {
+    background: var(--neo-active-bg);
+    color: var(--neo-text-primary);
+    border: 1px solid color-mix(in srgb, var(--neo-hi-text) 12%, var(--neo-border));
+  }
+
+  /* dock / 工具条上的小控件按钮（模型选择、参数选择等触发器） */
+  .neo-ctl {
+    border: 1px solid var(--neo-border);
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-primary);
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .neo-ctl:hover {
+    background: var(--neo-active-bg);
+    border-color: var(--neo-border-strong);
+  }
+
+  /* dock / Agent 单层 ghost 控件：默认无边框，hover/focus 才显形 */
+  .dock-ghost-ctl {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--neo-text-secondary);
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+  }
+
+  .dock-ghost-ctl:hover,
+  .dock-ghost-ctl:focus-visible {
+    border-color: var(--neo-border);
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-primary);
+  }
+
+  .dock-ghost-ctl.is-open,
+  .dock-ghost-ctl.has-value {
+    color: var(--neo-text-primary);
+  }
+
+  .dock-ghost-ctl.is-open {
+    border-color: var(--neo-border);
+    background: var(--neo-hover-bg);
+  }
+
+  .dock-ghost-ctl:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+
+  .neo-ctl:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  /* 选项 chip：is-on 时品牌色高亮 */
+  .neo-chip {
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-secondary);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .neo-chip:hover {
+    background: var(--neo-active-bg);
+  }
+
+  .neo-chip.is-on {
+    background: var(--neo-hi-bg);
+    color: var(--neo-hi-text);
+    box-shadow: var(--neo-hi-shadow);
+  }
+
+  /* dock-studio 内分段切换（模式/effort 等） */
+  .dock-seg-btn {
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 10px;
+    line-height: 1.2;
+    color: var(--neo-text-muted);
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .dock-seg-btn:hover:not(:disabled) {
+    background: var(--neo-hover-bg);
+    color: var(--neo-text-secondary);
+  }
+
+  .dock-seg-btn.is-on {
+    background: var(--neo-hi-bg);
+    color: var(--neo-hi-text);
+    box-shadow: var(--neo-hi-shadow);
+  }
+}
+
+/* Agent 画布引用 Pick 模式：自定义光标（靶心十字） */
+.canvas-ref-pick-mode .canvas-flow,
+.canvas-ref-pick-mode .canvas-flow .vue-flow__pane {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='7' stroke='%23fff' stroke-width='1.5' opacity='0.9'/%3E%3Ccircle cx='12' cy='12' r='2' fill='%23fff'/%3E%3Cpath stroke='%23fff' stroke-width='1.5' d='M12 3v4M12 17v4M3 12h4M17 12h4'/%3E%3C/svg%3E")
+      12 12,
+    crosshair !important;
+}

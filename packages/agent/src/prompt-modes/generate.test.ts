@@ -1,0 +1,153 @@
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { generatePromptContent, generatePromptFromUserInput } from './generate'
+import { FOUR_PANEL_PRODUCT_SYSTEM } from './modes/four-panel-product'
+
+describe('generatePromptContent without key', () => {
+  it('returns placeholder that includes user prompt and is longer than input', async () => {
+    delete process.env.OPENAI_API_KEY
+    const input = '美女模特车模展会'
+    const { mode, content } = await generatePromptContent(input, 'image_prompt_multi_style')
+    expect(mode).toBe('image_prompt_multi_style')
+    expect(content).toContain(input)
+    expect(content.length).toBeGreaterThan(input.length)
+    expect(content).not.toBe(input)
+  })
+})
+
+describe('generatePromptContent with key', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('throws when API returns !ok', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+    }))
+    await expect(
+      generatePromptContent('test', 'generic', { apiKey: 'test-key' }),
+    ).rejects.toThrow(/LLM 请求失败/)
+  })
+
+  it('throws when API returns empty content', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '' } }] }),
+    }))
+    await expect(
+      generatePromptContent('test', 'generic', { apiKey: 'test-key' }),
+    ).rejects.toThrow(/LLM 返回空内容/)
+  })
+
+  it('retries commercial_storyboard once when validation fails', async () => {
+    const valid = `## 1. 商业策略上下文\nx\n## 2. 规则映射摘要\nx\n## 3. 分镜执行脚本\n| 序号 | 时长(秒) | 景别与视角 | 画面内容 | 镜头运动 | 营销文案(旁白/大字) | 声音设计 | 剪辑节奏 |\n| 1 | 0-3 | 中景+平视 | 手指点击，居中，冷蓝 | 固定 | 无 | 无 | 硬切 |\n| 2 | 3-6 | 特写+平视 | 屏幕亮，居中，冷蓝 | 固定 | 无 | 无 | 硬切 |\n| 3 | 6-9 | 近景+平视 | 离盘，居中，冷蓝 | 固定 | 无 | 无 | 硬切 |\n| 4 | 9-12 | 微距+平视 | 雷达，居中，冷蓝 | 固定 | 无 | 无 | 硬切 |\n| 5 | 12-15 | 全景+平视 | 转弯，居中，冷蓝 | 固定 | 无 | 无 | 硬切 |\n| 6 | 15-18 | 中景+平视 | 后排，居中，暖 | 固定 | 无 | 无 | 硬切 |\n| 7 | 18-21 | 特写+平视 | 上扬，居中，暖 | 固定 | 无 | 无 | 硬切 |\n| 8 | 21-24 | 特写+平视 | Logo，居中，黑金 | 固定 | 无 | 无 | 硬切 |\n## 4. 质量校验锁\n- [x] 开头3秒验证：ok\n- [x] 产品露出验证：ok\n- [x] 文字可读性验证：ok\n- [x] 声音独占验证：ok\n- [x] 物理可行性验证：ok`
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: '只有散文，没有表格' } }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: valid } }] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const { content } = await generatePromptContent('问界M9 30秒商业分镜', 'commercial_storyboard', {
+      apiKey: 'test-key',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(content).toContain('分镜执行脚本')
+  })
+
+  it('sends image_url on the last user turn for vision models', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '哑光绿保温杯提示词' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { visionUsed } = await generatePromptContent('写主图提示词', 'generic', {
+      apiKey: 'test-key',
+      model: 'ch_x::deepseek-flash',
+      referenceImages: ['https://cdn.example/bottle.jpg'],
+      mentionedKeys: ['I1'],
+    })
+    expect(visionUsed).toBe(true)
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    expect(body.model).toBe('deepseek-flash')
+    const last = body.messages[body.messages.length - 1]
+    expect(Array.isArray(last.content)).toBe(true)
+    expect(last.content.some((p: { type: string }) => p.type === 'image_url')).toBe(true)
+    expect(body.messages[0].content).toContain('优先参考')
+    expect(body.messages[0].content).toContain('I1')
+  })
+
+  it('falls back to text-only image URL note for non-vision models', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'fallback' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { visionUsed } = await generatePromptContent('写主图提示词', 'generic', {
+      apiKey: 'test-key',
+      model: 'deepseek-v4-pro',
+      referenceImages: ['https://cdn.example/bottle.jpg'],
+    })
+    expect(visionUsed).toBe(false)
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    const last = body.messages[body.messages.length - 1]
+    expect(typeof last.content).toBe('string')
+    expect(last.content).toContain('不支持直接识图')
+    expect(last.content).toContain('https://cdn.example/bottle.jpg')
+  })
+
+  it('allows empty prompt when reference images exist', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'from image' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await generatePromptContent('', 'generic', {
+      apiKey: 'test-key',
+      model: 'gemini-3.1-flash',
+      referenceImages: ['https://cdn.example/bottle.jpg'],
+    })
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    const last = body.messages[body.messages.length - 1]
+    expect(JSON.stringify(last.content)).toContain('参考图')
+  })
+
+  it('uses product four-panel overlay and skips generic few-shots', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '同一SKU四格产品图' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { mode } = await generatePromptContent('生成这个产品的三视图提示词', 'generic', {
+      apiKey: 'test-key',
+    })
+    expect(mode).toBe('generic')
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    expect(body.messages[0].content).toContain('同一 SKU')
+    expect(body.messages[0].content).toContain('90度侧面')
+    expect(body.messages[0].content).not.toMatch(/侧面或约/)
+    expect(body.messages[0].content).not.toMatch(/Negative Prompt：/)
+    const userTurns = body.messages.filter((m: { role: string }) => m.role === 'user')
+    expect(userTurns).toHaveLength(1)
+    expect(FOUR_PANEL_PRODUCT_SYSTEM).toContain('90度侧面')
+  })
+})
+
+describe('generatePromptFromUserInput product routing', () => {
+  afterEach(() => {
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('maps product three-view to generic without character mode', async () => {
+    delete process.env.OPENAI_API_KEY
+    const { mode } = await generatePromptFromUserInput('生成这个产品的三视图提示词')
+    expect(mode).toBe('generic')
+    expect(mode).not.toBe('character_turnaround')
+  })
+})

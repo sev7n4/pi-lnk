@@ -1,0 +1,220 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import type { User } from '@lnkpi/shared'
+import type { SliderCaptchaChallengePublic } from '@/components/auth/captcha-types'
+import { api } from '@/services/api'
+import { membershipApi } from '@/services/users-api'
+
+const AUTH_TIMEOUT_MS = 45_000
+
+async function withAuthRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600 * (i + 1)))
+      }
+    }
+  }
+  throw lastError
+}
+
+export const useAuthStore = defineStore('auth', () => {
+  const user = ref<User | null>(null)
+  const token = ref<string | null>(localStorage.getItem('token'))
+  const showLoginDialog = ref(false)
+  const captchaTicket = ref<string | null>(null)
+
+  const isLoggedIn = computed(() => !!token.value && !!user.value)
+
+  let captchaPrefetch: Promise<SliderCaptchaChallengePublic> | null = null
+  let captchaCached: SliderCaptchaChallengePublic | null = null
+
+  async function requestCaptchaChallenge() {
+    const { data } = await withAuthRetry(() =>
+      api.post<{ data: SliderCaptchaChallengePublic }>(
+        '/auth/captcha/challenge',
+        {},
+        { timeout: AUTH_TIMEOUT_MS },
+      ),
+    )
+    return data.data
+  }
+
+  /** Warm a challenge while the login shell is open so send-code feels instant. */
+  function prefetchCaptchaChallenge() {
+    if (captchaCached || captchaPrefetch) return
+    const p = requestCaptchaChallenge()
+      .then((c) => {
+        captchaCached = c
+        return c
+      })
+      .catch((err) => {
+        throw err
+      })
+    captchaPrefetch = p
+    void p.finally(() => {
+      if (captchaPrefetch === p) captchaPrefetch = null
+    }).catch(() => undefined)
+  }
+
+  function clearCaptchaPrefetch() {
+    captchaCached = null
+    captchaPrefetch = null
+  }
+
+  async function fetchCaptchaChallenge() {
+    if (captchaCached) {
+      const c = captchaCached
+      captchaCached = null
+      // Warm the next one in background
+      prefetchCaptchaChallenge()
+      return c
+    }
+    if (captchaPrefetch) {
+      try {
+        const c = await captchaPrefetch
+        if (captchaCached === c) captchaCached = null
+        prefetchCaptchaChallenge()
+        return c
+      } catch {
+        /* fall through to fresh request */
+      }
+    }
+    const c = await requestCaptchaChallenge()
+    prefetchCaptchaChallenge()
+    return c
+  }
+
+  async function verifyCaptcha(challengeId: string, offsetX: number) {
+    const { data } = await withAuthRetry(() =>
+      api.post<{ data: { captchaTicket: string; expiresAt: string } }>(
+        '/auth/captcha/verify',
+        { challengeId, offsetX },
+        { timeout: AUTH_TIMEOUT_MS },
+      ),
+    )
+    captchaTicket.value = data.data.captchaTicket
+    return data.data
+  }
+
+  async function sendCode(phone: string, ticket?: string) {
+    const captchaTicketToSend = ticket ?? captchaTicket.value ?? undefined
+    await withAuthRetry(() =>
+      api.post('/auth/send-code', { phone, captchaTicket: captchaTicketToSend }, { timeout: AUTH_TIMEOUT_MS }),
+    )
+    captchaTicket.value = null
+  }
+
+  async function fetchAuthConfig() {
+    const { data } = await withAuthRetry(() =>
+      api.get<{
+        data: { smsMode: string; fixedCodeHint: string | null; message: string | null }
+      }>('/auth/config', { timeout: AUTH_TIMEOUT_MS }),
+    )
+    return data.data
+  }
+
+  function applySession(payload: { token: string; user: User }) {
+    token.value = payload.token
+    user.value = payload.user
+    localStorage.setItem('token', payload.token)
+    showLoginDialog.value = false
+  }
+
+  async function login(phone: string, code: string) {
+    const res = await withAuthRetry(() =>
+      api.post<{ code?: number; data: { token: string; user: User } }>(
+        '/auth/login',
+        { phone, code },
+        { timeout: AUTH_TIMEOUT_MS },
+      ),
+    )
+    const payload = res.data?.data
+    if (!payload?.token || !payload?.user) {
+      throw new Error('登录响应格式异常')
+    }
+    applySession(payload)
+  }
+
+  async function register(phone: string, code: string, inviteCode?: string) {
+    const trimmedInvite = inviteCode?.trim()
+    const res = await withAuthRetry(() =>
+      api.post<{ code?: number; data: { token: string; user: User } }>(
+        '/auth/register',
+        { phone, code, ...(trimmedInvite ? { inviteCode: trimmedInvite } : {}) },
+        { timeout: AUTH_TIMEOUT_MS },
+      ),
+    )
+    const payload = res.data?.data
+    if (!payload?.token || !payload?.user) {
+      throw new Error('注册响应格式异常')
+    }
+    applySession(payload)
+  }
+
+  function logout() {
+    token.value = null
+    user.value = null
+    localStorage.removeItem('token')
+  }
+
+  function openLogin() {
+    showLoginDialog.value = true
+  }
+
+  async function restoreSession() {
+    if (!token.value) return
+    try {
+      const { data } = await withAuthRetry(() =>
+        api.get<{ data: User }>('/auth/profile', { timeout: AUTH_TIMEOUT_MS }),
+      )
+      user.value = data.data
+    } catch {
+      logout()
+    }
+  }
+
+  function setPoints(n: number) {
+    if (user.value) user.value.points = n
+  }
+
+  async function refreshPoints(): Promise<number> {
+    if (!token.value) return user.value?.points ?? 0
+    try {
+      const { data } = await membershipApi.getPoints()
+      const points = data.data.points
+      if (user.value) {
+        user.value.points = points
+        user.value.membership = data.data.membership
+      }
+      return points
+    } catch {
+      return user.value?.points ?? 0
+    }
+  }
+
+  return {
+    user,
+    token,
+    isLoggedIn,
+    showLoginDialog,
+    captchaTicket,
+    fetchCaptchaChallenge,
+    prefetchCaptchaChallenge,
+    clearCaptchaPrefetch,
+    verifyCaptcha,
+    sendCode,
+    fetchAuthConfig,
+    login,
+    register,
+    logout,
+    openLogin,
+    restoreSession,
+    setPoints,
+    refreshPoints,
+  }
+})

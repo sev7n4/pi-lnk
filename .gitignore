@@ -1,8 +1,28 @@
-node_modules/
-dist/
-.turbo/
+node_modules
+dist
 .env
 .env.local
+.env.*.local
 *.log
 .DS_Store
-.vendor-cache/
+coverage
+.turbo
+.vite
+*.tsbuildinfo
+uploads/
+
+# Superpowers / worktrees
+.superpowers/
+.worktrees/
+
+# Prisma
+apps/server/prisma/*.db
+apps/server/prisma/*.db-journal
+
+# IDE
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Trae IDE
+.trae/

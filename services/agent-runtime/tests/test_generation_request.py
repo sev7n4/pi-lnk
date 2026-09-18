@@ -1,0 +1,148 @@
+"""T22: GenerationRequest DTO — sidebar vs Dock parity + runtime wiring."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from langchain_core.messages import HumanMessage
+
+from app.graph.generation_request import (
+    apply_generation_request_to_state,
+    build_generation_request_from_atomic_state,
+    build_generation_request_from_dock,
+    generation_request_parity_keys,
+)
+from app.graph.nodes.intake import make_intake_node
+
+STYLE3 = "@T1 请按风格3出图"
+T1_REF = {"refKey": "T1", "mediaType": "text", "text": "风格3说明正文"}
+SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
+
+
+def test_style3_sidebar_dock_parity():
+    sidebar_state = {
+        "messages": [HumanMessage(content=STYLE3)],
+        "sidebar_mentioned_keys": ["T1"],
+        "sidebar_attachments": [dict(T1_REF)],
+        "atomic_spec": {
+            "target_type": "image",
+            "prompt": STYLE3,
+            "title": STYLE3[:24],
+            "confirm_gate": False,
+        },
+        "atomic_node_id": "image-style3",
+    }
+    dock_node = {
+        "id": "image-style3",
+        "type": "image",
+        "data": {"prompt": STYLE3},
+    }
+    sidebar_req = build_generation_request_from_atomic_state(sidebar_state)
+    dock_req = build_generation_request_from_dock(
+        dock_node,
+        refs=[T1_REF],
+        mentioned_keys=["T1"],
+    )
+    assert generation_request_parity_keys(sidebar_req) == generation_request_parity_keys(dock_req)
+    assert sidebar_req["slots"] == {"ref": "T1", "style": "3"}
+    assert sidebar_req["modality"] == "image"
+    assert sidebar_req["prompt"] == STYLE3
+
+
+def test_colloquial_create_with_sidebar_refs():
+    utterance = "请帮我生一个小女孩的图片"
+    state = {
+        "messages": [HumanMessage(content=utterance)],
+        "sidebar_mentioned_keys": ["I1"],
+        "sidebar_attachments": [
+            {"refKey": "I1", "mediaType": "image", "url": "https://a/1.jpg"}
+        ],
+        "atomic_spec": {
+            "target_type": "image",
+            "prompt": utterance,
+            "title": "小女孩",
+        },
+        "atomic_node_id": "img-1",
+    }
+    req = build_generation_request_from_atomic_state(state)
+    assert "小女孩" in req["prompt"]
+    assert req["modality"] == "image"
+    assert req["mentioned_keys"] == ["I1"]
+    assert any(r.get("url") == "https://a/1.jpg" for r in (req.get("refs") or []))
+
+
+def test_atomic_state_uses_spec_prompt():
+    state = {
+        "messages": [HumanMessage(content="帮我生成一张蓝牙耳机主图")],
+        "atomic_spec": {
+            "target_type": "image",
+            "prompt": "帮我生成一张蓝牙耳机主图",
+            "title": "蓝牙耳机主图",
+        },
+    }
+    req = build_generation_request_from_atomic_state(state)
+    assert req["prompt"] == "帮我生成一张蓝牙耳机主图"
+    assert req["modality"] == "image"
+    assert req["mentioned_keys"] == []
+
+
+def test_apply_generation_request_after_clarify_resume_fields():
+    state = {
+        "messages": [HumanMessage(content="请帮我生一个小女孩的图片")],
+        "atomic_spec": {
+            "target_type": "image",
+            "prompt": "请帮我生一个小女孩的图片",
+            "title": "小女孩",
+        },
+        "sidebar_attachments": [],
+    }
+    patch = apply_generation_request_to_state(state)
+    gr = patch.get("generation_request") or {}
+    assert set(gr.keys()) >= {"prompt", "refs", "mentioned_keys", "modality"}
+
+
+@pytest.mark.asyncio
+async def test_soft_create_clarify_resume_keeps_subject_in_generation_prompt():
+    """Intake clarify resume should keep original subject for GenerationRequest helpers."""
+    original = "帮我弄张小女孩图片看看"
+    state = {
+        "messages": [HumanMessage(content=original), HumanMessage(content="1")],
+        "clarify_context": {
+            "kind": "route_orchestration",
+            "original_utterance": original,
+            "clarify_question": "回复 1 / 2",
+            "mentioned_keys": ["I1"],
+        },
+        "sidebar_mentioned_keys": ["I1"],
+        "sidebar_attachments": [
+            {"refKey": "I1", "mediaType": "image", "url": "https://a/1.jpg"}
+        ],
+    }
+    resumed = await make_intake_node(SKILLS_DIR)(state)
+    final_state = {
+        **state,
+        **resumed,
+        "atomic_spec": {
+            "target_type": "image",
+            "prompt": original,
+            "title": "小女孩",
+        },
+        "messages": [*state["messages"], *(resumed.get("messages") or [])],
+    }
+    req = build_generation_request_from_atomic_state(final_state)
+
+    assert "小女孩" in req["prompt"]
+    assert req["prompt"] != "基于引用内容生成图片"
+
+
+def test_apply_generation_request_syncs_atomic_spec():
+    state = {
+        "messages": [HumanMessage(content=STYLE3)],
+        "sidebar_mentioned_keys": ["T1"],
+        "sidebar_attachments": [dict(T1_REF)],
+        "atomic_spec": {"target_type": "image", "prompt": "placeholder", "title": "x"},
+    }
+    patch = apply_generation_request_to_state(state)
+    assert patch["atomic_spec"]["prompt"] == STYLE3
+    assert patch["generation_request"]["slots"] == {"ref": "T1", "style": "3"}

@@ -1,0 +1,29 @@
+# Agent Runtime（生产）— 轻量镜像，仅内网被 Nest 调用，勿对公网暴露 8000
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+  && rm -rf /var/lib/apt/lists/*
+
+# 依赖层先装：app/skills 变更不重装 pip（CVM 访问 PyPI 易超时）
+# 使用 pyproject.toml 管理依赖，避免硬编码
+# 修复：pyproject.toml 声明了 packages = ["app", "skills"]，pip install . 需要这些目录存在
+# 所以先 COPY 整个项目（包括空的 app/ 和 skills/ 目录）再 pip install
+COPY services/agent-runtime/pyproject.toml ./
+COPY services/agent-runtime/app ./app
+COPY services/agent-runtime/skills ./skills
+RUN pip install --no-cache-dir --default-timeout=120 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    .
+
+ENV LNKPI_SKILLS_DIR=/app/skills
+ENV PYTHONPATH=/app
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
+  CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

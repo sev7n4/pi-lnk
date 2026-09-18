@@ -1,0 +1,352 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String             @id @default(cuid())
+  phone      String             @unique
+  nickname   String
+  avatar     String?
+  points     Int                @default(1000)
+  membership String             @default("free")
+  createdAt  DateTime           @default(now())
+  inviteCode       String?  @unique
+  invitedByUserId  String?
+  invitedBy        User?    @relation("UserInvites", fields: [invitedByUserId], references: [id])
+  invitees         User[]   @relation("UserInvites")
+  inviteRedemptionsAsInvitee InviteRedemption? @relation("RedemptionInvitee")
+  inviteRedemptionsAsInviter InviteRedemption[] @relation("RedemptionInviter")
+  sessions   Session[]
+  works      Work[]
+  stories    Story[]
+  generations GenerationRecord[]
+  pointTransactions PointTransaction[]
+  providerChannels ProviderChannel[]
+  aiPreferences    UserAiPreferences?
+  webdavConfig     UserWebdavConfig?
+  assets           UserAsset[]
+  workflowRecipes  UserWorkflowRecipe[]
+}
+
+model InviteRedemption {
+  id                         String   @id @default(cuid())
+  inviteeId                  String   @unique
+  invitee                    User     @relation("RedemptionInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  inviterId                  String
+  inviter                    User     @relation("RedemptionInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviteCode                 String
+  inviteePoints              Int
+  inviterPoints              Int
+  inviterRewardSkippedReason String?
+  createdAt                  DateTime @default(now())
+
+  @@index([inviterId, createdAt])
+}
+
+// 用户全局资产库：跨画布可用，用户在节点上主动保存或面板上传入库
+model UserAsset {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind         String   @default("image") // image | video | audio
+  url          String
+  label        String   @default("")
+  sourceNodeId String?
+  metadata     String?
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, url])
+  @@index([userId, createdAt])
+}
+
+model UserWorkflowRecipe {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipeId        String
+  version         String
+  title           String
+  parentId        String?
+  parentVersion   String?
+  body            String
+  sourceSessionId String?
+  sourceHash      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, recipeId])
+  @@index([userId, createdAt])
+}
+
+model ProviderChannel {
+  id              String   @id @default(cuid())
+  userId          String?
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  apiFormat       String
+  baseUrl         String
+  encryptedApiKey String?
+  iv              String?
+  authTag         String?
+  keyVersion      Int      @default(1)
+  models          String   @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model UserAiPreferences {
+  userId                 String  @id
+  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectableImageModels  String  @default("[]")
+  selectableVideoModels  String  @default("[]")
+  selectableTextModels   String  @default("[]")
+  selectableAudioModels  String  @default("[]")
+  defaultImageModel      String  @default("")
+  defaultVideoModel      String  @default("")
+  defaultTextModel       String  @default("")
+  defaultAudioModel      String  @default("")
+  canvasImageCount       Int     @default(3)
+  defaultImageAspect     String  @default("16:9")
+  defaultImageResolution String  @default("1K")
+  defaultVideoAspect     String  @default("16:9")
+  defaultVideoDuration   Int     @default(5)
+  defaultVideoResolution String  @default("720p")
+  defaultVideoCrop       String  @default("none")
+  audioVoice             String  @default("female-shaonv")
+  audioFormat            String  @default("mp3")
+  audioSpeed             Float   @default(1)
+  audioInstructions      String?
+  systemPrompt           String?
+}
+
+model UserWebdavConfig {
+  userId            String    @id
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  url               String    @default("")
+  directory         String    @default("")
+  username          String    @default("")
+  encryptedPassword String?
+  iv                String?
+  authTag           String?
+  keyVersion        Int       @default(1)
+  connectionMode    String    @default("proxy")
+  lastSyncedAt      DateTime?
+}
+
+model PointTransaction {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount       Int
+  reason       String
+  kind         String   @default("consume")
+  category     String   @default("other")
+  status       String?
+  model        String?
+  generationId String?
+  balanceAfter Int?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, kind, category, createdAt])
+}
+
+model GenerationRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  prompt    String
+  model     String?
+  url       String?
+  status    String   @default("completed")
+  metadata  String?
+  sessionId String?
+  nodeId    String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, sessionId, createdAt])
+}
+
+model Story {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  synopsis     String   @default("")
+  sessionId    String?
+  session      Session? @relation(fields: [sessionId], references: [id])
+  status       String   @default("draft")
+  episodeCount Int      @default(1)
+  coverUrl     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Session {
+  id                   String         @id @default(cuid())
+  title                String         @default("未命名画布")
+  userId               String
+  user                 User           @relation(fields: [userId], references: [id])
+  canvasData           String?
+  compositionPreview   String?
+  compositionPending   String?
+  stagedActions        String?
+  stagedAt             DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  works         Work[]
+  shots         Shot[]
+  agentMessages AgentMessage[]
+  agentThreads  AgentThread[]
+  stories       Story[]
+}
+
+model Shot {
+  id        String     @id @default(cuid())
+  sessionId String
+  session   Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  title     String     @default("未命名分镜")
+  prompt    String     @default("")
+  order     Int        @default(0)
+  status    String     @default("draft")
+  positionX Float      @default(0)
+  positionY Float      @default(0)
+  materials Material[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Material {
+  id        String   @id @default(cuid())
+  shotId    String
+  shot      Shot     @relation(fields: [shotId], references: [id], onDelete: Cascade)
+  type      String   @default("image")
+  url       String?
+  thumbnail String?
+  prompt    String?
+  status    String   @default("idle")
+  metadata  String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model AgentThread {
+  id        String   @id // threadId，格式 sessionId:suffix
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  title     String   @default("新对话")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages  AgentMessage[]
+
+  @@index([sessionId, updatedAt(sort: Desc)])
+}
+
+model AgentMessage {
+  id            String      @id @default(cuid())
+  sessionId     String
+  session       Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  threadId      String
+  thread        AgentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role          String
+  content       String
+  toolCalls     String?
+  attachments   String?
+  /** JSON: LinkedCanvasOutput[] — 本轮 assistant 产出的可定位节点 */
+  linkedOutputs String?
+  /** JSON: AgentMessageMetadata */
+  metadata      String?
+  createdAt     DateTime    @default(now())
+
+  @@index([threadId, createdAt])
+  @@index([sessionId, threadId, createdAt])
+}
+
+/// Idempotency records for POST /agent/chat/conversation — prevent duplicate requests
+/// from network retries. 5 min TTL, lazy-cleaned on each lookup.
+model IdempotencyRecord {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  sessionId      String
+  threadId       String
+  status         String   @default("processing") // processing | completed | error
+  resultSummary  String?  // assistant text summary (≤500 chars) after completion
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime // createdAt + 5 min
+
+  @@index([expiresAt])
+}
+
+model Work {
+  id           String   @id @default(cuid())
+  title        String
+  coverUrl     String
+  playbackUrl  String?
+  playbackKind String?
+  type         String   @default("canvas")
+  authorId     String
+  author       User     @relation(fields: [authorId], references: [id])
+  sessionId    String?
+  session      Session? @relation(fields: [sessionId], references: [id])
+  likes        Int      @default(0)
+  views        Int      @default(0)
+  category     String?
+  createdAt    DateTime @default(now())
+}
+
+model VerificationCode {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model ThreadLock {
+  threadId       String   @id
+  leaseHolder    String
+  leaseExpiresAt DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([leaseExpiresAt])
+}
+
+// 生成进度记录：外置 transient 数据，减少 checkpoint 体积（W15）
+model GenProgress {
+  id        String   @id @default(cuid())
+  threadId  String
+  sessionId String
+  lines     String   // JSON 数组
+  summary   String?  // JSON
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([threadId, createdAt])
+}
+
+// Context 快照：brief/plan/manifest 摘要外置，减少 LLM 上下文扫描（W18）
+model ContextSnapshot {
+  id            String   @id @default(cuid())
+  threadId      String
+  sessionId     String
+  stage         String   // plan | split
+  brief         String?
+  planSummary   String?
+  manifestJson  String?  // JSON 数组摘要
+  messageCount  Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([threadId, stage, createdAt])
+}

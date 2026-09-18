@@ -1,0 +1,2574 @@
+import 'reflect-metadata'
+import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Test } from '@nestjs/testing'
+import { IMPORT_PLACE_MARGIN, rectsOverlap, unionNodeBBox, type CanvasData } from '@lnkpi/shared'
+import { PrismaService } from '../prisma/prisma.service'
+import { PersistRemoteService } from '../assets/persist-remote.service'
+import { StudioService } from '../studio/studio.service'
+import { ImageSliceService } from '../studio/image-slice.service'
+import { UpscaleService } from '../studio/upscale.service'
+import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
+import { MaterialService } from '../canvas/material.service'
+import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+
+const emptyCanvas = (): CanvasData => ({ nodes: [], edges: [] })
+
+describe('AgentCanvasToolsService', () => {
+  let svc: AgentCanvasToolsService
+  let canvas: CanvasData
+  const sessionFindUnique = vi.fn()
+  const sessionUpdate = vi.fn()
+  const prefsFindUnique = vi.fn()
+  const generateImage = vi.fn()
+  const generateVideo = vi.fn()
+  const generateText = vi.fn()
+  const generatePrompt = vi.fn()
+  const generateAudio = vi.fn()
+  const expandPromptContent = vi.fn()
+  const getGeneration = vi.fn()
+  const cancelGenerationStudio = vi.fn()
+  const getGenerationDiagnostic = vi.fn()
+  const confirmPlatformFallback = vi.fn()
+  const cancelPlatformFallback = vi.fn()
+  const cancelPlatformFallbackMaterial = vi.fn()
+  const listGenerations = vi.fn()
+  const cancelGenerationMaterial = vi.fn()
+  const getMaterialDiagnostic = vi.fn()
+  const confirmPlatformFallbackMaterial = vi.fn()
+  const materialFindFirst = vi.fn()
+  const persistRemote = vi.fn()
+  const upscale = vi.fn()
+  const sliceImage = vi.fn()
+  const userWorkflowRecipeCreate = vi.fn()
+
+  const defaultPrefs = {
+    userId: 'u1',
+    defaultImageModel: 'platform::user-default-image',
+    defaultVideoModel: 'platform::user-default-video',
+    defaultTextModel: 'platform::user-default-text',
+    defaultAudioModel: 'platform::user-default-audio',
+    canvasImageCount: 2,
+    defaultImageAspect: '9:16',
+    defaultImageResolution: '2K',
+    defaultVideoAspect: '9:16',
+    defaultVideoDuration: 10,
+    defaultVideoResolution: '1080p',
+    defaultVideoCrop: 'center',
+    audioVoice: 'female-shaonv',
+    audioFormat: 'mp3',
+    audioSpeed: 1,
+    audioInstructions: null,
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    canvas = emptyCanvas()
+    sessionFindUnique.mockImplementation(async () => ({
+      id: 's1',
+      userId: 'u1',
+      canvasData: JSON.stringify(canvas),
+    }))
+    sessionUpdate.mockImplementation(async ({ data }: { data: { canvasData: string } }) => {
+      canvas = JSON.parse(data.canvasData) as CanvasData
+      return { id: 's1', canvasData: data.canvasData }
+    })
+    prefsFindUnique.mockResolvedValue(defaultPrefs)
+    generateImage.mockResolvedValue({
+      id: 'gen-1',
+      status: 'completed',
+      url: 'https://cdn.example/img.png',
+    })
+    generateVideo.mockResolvedValue({
+      id: 'gen-v1',
+      status: 'completed',
+      url: 'https://cdn.example/vid.mp4',
+    })
+    getGeneration.mockResolvedValue({
+      id: 'gen-1',
+      status: 'completed',
+      url: 'https://cdn.example/img.png',
+    })
+    generateText.mockResolvedValue({
+      id: 'gen-t1',
+      status: 'completed',
+      metadata: JSON.stringify({ text: '买它！限时优惠。' }),
+    })
+    generatePrompt.mockResolvedValue({
+      id: 'gen-p1',
+      status: 'completed',
+      metadata: JSON.stringify({ mode: 'image_prompt_multi_style', content: '扩写后的 prompt...' }),
+    })
+    expandPromptContent.mockResolvedValue({
+      mode: 'character_turnaround',
+      content: '画面分为四格布局…近景特写…正面全身…侧面全身…背面全身…纯白背景',
+    })
+    generateAudio.mockResolvedValue({
+      id: 'gen-a1',
+      status: 'completed',
+      url: 'https://cdn.example/audio.mp3',
+    })
+    cancelGenerationStudio.mockResolvedValue({ id: 'rec-1', status: 'failed' })
+    getGenerationDiagnostic.mockResolvedValue({
+      errorCode: 'upstream',
+      userMessage: '上游失败',
+      providerSnippet: '',
+    })
+    confirmPlatformFallback.mockResolvedValue({
+      id: 'rec-1',
+      status: 'completed',
+      url: 'https://cdn.example/fallback.png',
+    })
+    cancelPlatformFallback.mockResolvedValue({ id: 'rec-1', status: 'failed' })
+    cancelGenerationMaterial.mockResolvedValue({ id: 'mat-1', status: 'failed' })
+    getMaterialDiagnostic.mockResolvedValue({
+      errorCode: 'upstream',
+      userMessage: '素材生成失败',
+    })
+    confirmPlatformFallbackMaterial.mockResolvedValue({
+      id: 'mat-1',
+      status: 'completed',
+      url: 'https://cdn.example/mat.png',
+    })
+    cancelPlatformFallbackMaterial.mockResolvedValue({ id: 'mat-1', status: 'failed' })
+    materialFindFirst.mockResolvedValue(null)
+    upscale.mockResolvedValue({
+      url: 'https://cdn.example/upscaled.png',
+      scale: 2,
+      providerId: 'fal',
+      recordId: 'up-1',
+    })
+    sliceImage.mockResolvedValue({
+      urls: [
+        'https://cdn.example/slice-1.png',
+        'https://cdn.example/slice-2.png',
+        'https://cdn.example/slice-3.png',
+        'https://cdn.example/slice-4.png',
+      ],
+      cols: 2,
+      rows: 2,
+      width: 800,
+      height: 600,
+    })
+    listGenerations.mockResolvedValue([
+      {
+        id: 'g1',
+        type: 'image',
+        status: 'completed',
+        prompt: 'test',
+        url: 'https://cdn/x.png',
+        nodeId: 'img-1',
+        sessionId: 's1',
+        createdAt: new Date('2026-08-08T00:00:00Z'),
+      },
+    ])
+
+    // Serialize concurrent $transaction callbacks.
+    // serializable / read-committed TX chain would queue concurrent
+    // persist() calls so each one sees the post-commit state of the
+    // previous. Without this queue, the mock would let N concurrent
+    // findUnique calls race ahead of any update and the race-condition
+    // regression test would lose updates even though persist() is now
+    // correct.
+    let txChain: Promise<unknown> = Promise.resolve()
+    const $transaction = (fn: (tx: {
+      session: { findUnique: typeof sessionFindUnique; update: typeof sessionUpdate }
+    }) => Promise<unknown>) => {
+      const next = txChain.then(() =>
+        fn({ session: { findUnique: sessionFindUnique, update: sessionUpdate } }),
+      )
+      txChain = next.catch(() => undefined)
+      return next
+    }
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        AgentCanvasToolsService,
+        {
+          provide: PrismaService,
+          useValue: {
+            session: { findUnique: sessionFindUnique, update: sessionUpdate },
+            userAiPreferences: { findUnique: prefsFindUnique },
+            material: { findFirst: materialFindFirst },
+            userWorkflowRecipe: { create: userWorkflowRecipeCreate },
+            $transaction,
+          },
+        },
+        {
+          provide: StudioService,
+          useValue: {
+            generateImage,
+            generateVideo,
+            generateText,
+            generatePrompt,
+            generateAudio,
+            getGeneration,
+            expandPromptContent,
+            cancelGeneration: cancelGenerationStudio,
+            getGenerationDiagnostic,
+            confirmPlatformFallback,
+            cancelPlatformFallback,
+            listGenerations,
+          },
+        },
+        VideoGenerationOrchestrator,
+        {
+          provide: MaterialService,
+          useValue: {
+            cancelGeneration: cancelGenerationMaterial,
+            getMaterialDiagnostic,
+            confirmPlatformFallback: confirmPlatformFallbackMaterial,
+            cancelPlatformFallback: cancelPlatformFallbackMaterial,
+          },
+        },
+        {
+          provide: PersistRemoteService,
+          useValue: { persistRemote },
+        },
+        {
+          provide: UpscaleService,
+          useValue: { upscale },
+        },
+        {
+          provide: ImageSliceService,
+          useValue: { slice: sliceImage },
+        },
+      ],
+    }).compile()
+    svc = moduleRef.get(AgentCanvasToolsService)
+    // Speed up polling in unit tests
+    svc.pollIntervalMs = 1
+    svc.pollTimeoutMs = 50
+  })
+
+  it('upsertPromptNode creates prompt node and returns add_node action', async () => {
+    const result = await svc.upsertPromptNode({
+      sessionId: 's1',
+      userId: 'u1',
+      prompt: '卫生洁具营销',
+      content: '# 方案\n...',
+    })
+    expect(result.nodeId).toBeTruthy()
+    expect(result.actions.some((a) => a.type === 'add_node')).toBe(true)
+    expect(sessionUpdate).toHaveBeenCalled()
+    expect(canvas.nodes).toHaveLength(1)
+    expect(canvas.nodes[0].type).toBe('prompt')
+    expect(canvas.nodes[0].data.prompt).toBe('卫生洁具营销')
+    expect(canvas.nodes[0].data.content).toBe('# 方案\n...')
+  })
+
+  it('upsertPromptNode updates existing prompt node', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'prompt-1',
+          type: 'prompt',
+          position: { x: 0, y: 0 },
+          data: { prompt: 'old', content: 'old' },
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.upsertPromptNode({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'prompt-1',
+      prompt: 'new prompt',
+      content: 'new content',
+    })
+    expect(result.nodeId).toBe('prompt-1')
+    expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+    expect(canvas.nodes[0].data.prompt).toBe('new prompt')
+    expect(canvas.nodes[0].data.content).toBe('new content')
+  })
+
+  it('getNode returns node snapshot', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 100, y: 0 },
+          data: { title: '白底', url: 'https://x/a.png', status: 'completed' },
+        },
+      ],
+      edges: [],
+    }
+    const node = await svc.getNode({ sessionId: 's1', nodeId: 'img-1' })
+    expect(node.id).toBe('img-1')
+    expect(node.data.url).toBe('https://x/a.png')
+  })
+
+  it('getCanvasSummary returns id/type/title/status without full content', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'p1',
+          type: 'prompt',
+          position: { x: 0, y: 0 },
+          data: { title: '方案', status: 'draft', content: '# huge' },
+        },
+      ],
+      edges: [],
+    }
+    const summary = await svc.getCanvasSummary({ sessionId: 's1' })
+    expect(summary.nodes).toEqual([{ id: 'p1', type: 'prompt', title: '方案', status: 'draft' }])
+    expect(JSON.stringify(summary)).not.toContain('# huge')
+  })
+
+  it('addNodesBatch creates skeleton nodes with grid offset and returns key map', async () => {
+    const result = await svc.addNodesBatch({
+      sessionId: 's1',
+      userId: 'u1',
+      items: [
+        { key: 'white_bg', title: '白底图', targetType: 'image' },
+        { key: 'hero_main', title: '主图', targetType: 'image' },
+      ],
+    })
+    expect(result.nodes).toHaveLength(2)
+    expect(result.nodes[0].key).toBe('white_bg')
+    expect(result.nodes[1].key).toBe('hero_main')
+    expect(result.actions.every((a) => a.type === 'add_node')).toBe(true)
+    expect(canvas.nodes).toHaveLength(2)
+    expect(canvas.nodes[1].position.x - canvas.nodes[0].position.x).toBe(280)
+  })
+
+  it('connectNodes adds edges', async () => {
+    canvas = {
+      nodes: [
+        { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'image', position: { x: 280, y: 0 }, data: {} },
+      ],
+      edges: [],
+    }
+    const result = await svc.connectNodes({
+      sessionId: 's1',
+      edges: [{ source: 'a', target: 'b' }],
+    })
+    expect(result.actions.some((a) => a.type === 'add_edge')).toBe(true)
+    expect(canvas.edges).toHaveLength(1)
+    expect(canvas.edges[0].source).toBe('a')
+    expect(canvas.edges[0].target).toBe('b')
+  })
+
+  it('setNodePrompt updates prompt on node', async () => {
+    canvas = {
+      nodes: [{ id: 'img-1', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    }
+    const result = await svc.setNodePrompt({
+      sessionId: 's1',
+      nodeId: 'img-1',
+      prompt: '白底产品图',
+    })
+    expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+    expect(canvas.nodes[0].data.prompt).toBe('白底产品图')
+  })
+
+  it('setNodeContent writes content and completed status', async () => {
+    canvas = {
+      nodes: [{ id: 't1', type: 'text', position: { x: 0, y: 0 }, data: { prompt: '主文案' } }],
+      edges: [],
+    }
+    const result = await svc.setNodeContent({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 't1',
+      content: '静音·洁净·极简',
+    })
+    expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+    expect(canvas.nodes.find((n) => n.id === 't1')?.data.content).toBe('静音·洁净·极简')
+    expect(canvas.nodes.find((n) => n.id === 't1')?.data.status).toBe('completed')
+  })
+
+  it('attachRefs sets refOrder and ensures edges exist', async () => {
+    canvas = {
+      nodes: [
+        { id: 'src', type: 'prompt', position: { x: 0, y: 0 }, data: { content: 'plan' } },
+        { id: 'img-1', type: 'image', position: { x: 280, y: 0 }, data: {} },
+      ],
+      edges: [],
+    }
+    const result = await svc.attachRefs({
+      sessionId: 's1',
+      nodeId: 'img-1',
+      refOrder: ['src'],
+    })
+    expect(canvas.edges.some((e) => e.source === 'src' && e.target === 'img-1')).toBe(true)
+    expect(canvas.nodes.find((n) => n.id === 'img-1')?.data.refOrder).toEqual(
+      expect.arrayContaining([expect.stringContaining('src')]),
+    )
+    expect(result.actions.length).toBeGreaterThan(0)
+  })
+
+  it('runImageGeneration calls Studio, writes url, returns actions', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: '洁具白底图', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.runImageGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'img-1',
+    })
+    expect(generateImage).toHaveBeenCalled()
+    expect(result.status).toBe('completed')
+    expect(result.url).toBe('https://cdn.example/img.png')
+    expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+    expect(canvas.nodes[0].data.url).toBe('https://cdn.example/img.png')
+    expect(canvas.nodes[0].data.status).toBe('completed')
+  })
+
+  it('runImageGeneration falls back to account default image prefs when node lacks fields', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: '洁具白底图', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runImageGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'img-1',
+    })
+    expect(prefsFindUnique).toHaveBeenCalledWith({ where: { userId: 'u1' } })
+    expect(generateImage).toHaveBeenCalledWith(
+      'u1',
+      '洁具白底图',
+      'platform::user-default-image',
+      '9:16',
+      expect.any(Array),
+      undefined,
+      '2K',
+      2,
+      { sessionId: 's1', nodeId: 'img-1' },
+    )
+  })
+
+  it('runVideoGeneration falls back to account default video prefs when node lacks fields', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'vid-1',
+          type: 'video',
+          position: { x: 0, y: 0 },
+          data: { prompt: '产品展示视频', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    getGeneration.mockResolvedValue({
+      id: 'gen-v1',
+      status: 'completed',
+      url: 'https://cdn.example/vid.mp4',
+    })
+    const result = await svc.runVideoGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'vid-1',
+    })
+    expect(prefsFindUnique).toHaveBeenCalledWith({ where: { userId: 'u1' } })
+    expect(generateVideo).toHaveBeenCalledWith(
+      'u1',
+      '产品展示视频',
+      'platform::user-default-video',
+      10,
+      '9:16',
+      expect.any(Array),
+      undefined,
+      '1080p',
+      'center',
+      undefined,
+      { sessionId: 's1', nodeId: 'vid-1' },
+      'text_to_video',
+      undefined,
+      undefined,
+      undefined,
+    )
+    expect(result.status).toBe('completed')
+    expect(result.url).toBe('https://cdn.example/vid.mp4')
+    expect(result.generationRecordId).toBe('gen-v1')
+    expect(canvas.nodes[0].data.url).toBe('https://cdn.example/vid.mp4')
+  })
+
+  it('runVideoGeneration passes node referenceImageUrl to Studio', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'vid-1',
+          type: 'video',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '产品展示视频',
+            status: 'draft',
+            referenceImageUrl: 'https://example.com/node-ref.png',
+          },
+        },
+      ],
+      edges: [],
+    }
+    getGeneration.mockResolvedValue({
+      id: 'gen-v1',
+      status: 'completed',
+      url: 'https://cdn.example/vid.mp4',
+    })
+    await svc.runVideoGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'vid-1',
+    })
+    expect(generateVideo).toHaveBeenCalledWith(
+      'u1',
+      '产品展示视频',
+      'platform::user-default-video',
+      10,
+      '9:16',
+      expect.any(Array),
+      undefined,
+      '1080p',
+      'center',
+      'https://example.com/node-ref.png',
+      { sessionId: 's1', nodeId: 'vid-1' },
+      'text_to_video',
+      undefined,
+      undefined,
+      undefined,
+    )
+  })
+
+  it('runVideoGeneration passes videoMode and generateAudio from node data', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'vid-1',
+          type: 'video',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '产品展示视频',
+            status: 'draft',
+            videoMode: 'image_to_video',
+            videoSettings: {
+              aspectRatio: '9:16',
+              duration: 4,
+              resolution: '1080p',
+              crop: 'center',
+              generateAudio: false,
+            },
+          },
+        },
+      ],
+      edges: [],
+    }
+    getGeneration.mockResolvedValue({
+      id: 'gen-v1',
+      status: 'completed',
+      url: 'https://cdn.example/vid.mp4',
+    })
+    await svc.runVideoGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'vid-1',
+    })
+    expect(generateVideo).toHaveBeenCalledWith(
+      'u1',
+      '产品展示视频',
+      'platform::user-default-video',
+      4,
+      '9:16',
+      expect.any(Array),
+      undefined,
+      '1080p',
+      'center',
+      undefined,
+      { sessionId: 's1', nodeId: 'vid-1' },
+      'image_to_video',
+      false,
+      undefined,
+      undefined,
+    )
+  })
+
+  it('addNodesBatch merges explicit video P6 overrides onto video skeleton', async () => {
+    const result = await svc.addNodesBatch({
+      sessionId: 's1',
+      userId: 'u1',
+      items: [
+        {
+          key: 'show_video',
+          title: '视频',
+          targetType: 'video',
+          videoSettings: { duration: 4, generateAudio: false },
+          videoMode: 'image_to_video',
+          referenceImageUrl: 'https://cdn.example/ref.png',
+        },
+      ],
+    })
+    expect(result.nodes).toHaveLength(1)
+    const videoNode = canvas.nodes.find((n) => n.type === 'video')
+    expect(videoNode?.data.videoSettings).toMatchObject({
+      duration: 4,
+      generateAudio: false,
+      aspectRatio: '9:16',
+    })
+    expect(videoNode?.data.videoMode).toBe('image_to_video')
+    expect(videoNode?.data.referenceImageUrl).toBe('https://cdn.example/ref.png')
+  })
+
+  it('runTextGeneration calls Studio and writes content', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'txt-1',
+          type: 'text',
+          position: { x: 0, y: 0 },
+          data: { prompt: '写一段天猫开场文案', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.runTextGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'txt-1',
+    })
+    expect(generateText).toHaveBeenCalled()
+    expect(result.status).toBe('completed')
+    expect(result.generationRecordId).toBe('gen-t1')
+    expect(canvas.nodes[0].data.content).toBe('买它！限时优惠。')
+    expect(canvas.nodes[0].data.status).toBe('completed')
+  })
+
+  it('runPromptGeneration writes content and promptMode', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'prm-1',
+          type: 'prompt',
+          position: { x: 0, y: 0 },
+          data: { prompt: '蓝牙耳机白底图', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.runPromptGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'prm-1',
+    })
+    expect(generatePrompt).toHaveBeenCalled()
+    expect(result.status).toBe('completed')
+    expect(canvas.nodes[0].data.content).toBe('扩写后的 prompt...')
+    expect(canvas.nodes[0].data.promptMode).toBe('image_prompt_multi_style')
+  })
+
+  it('runPromptGeneration forwards local image refs to studio.generatePrompt', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'prm-2',
+          type: 'prompt',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '按图写提示词',
+            status: 'draft',
+            localRefs: [
+              {
+                id: 'att-1',
+                mediaType: 'image',
+                sourceKind: 'upload',
+                label: 'bottle.jpg',
+                url: 'https://cdn.example/bottle.jpg',
+              },
+            ],
+            refOrder: ['att-1'],
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runPromptGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'prm-2',
+    })
+    expect(generatePrompt).toHaveBeenCalledWith(
+      'u1',
+      '按图写提示词',
+      expect.anything(),
+      undefined,
+      expect.objectContaining({ sessionId: 's1', nodeId: 'prm-2' }),
+      undefined,
+      expect.arrayContaining([
+        expect.objectContaining({
+          mediaType: 'image',
+          url: 'https://cdn.example/bottle.jpg',
+        }),
+      ]),
+      undefined,
+    )
+  })
+
+  it('runAudioGeneration writes url and completed status', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-1',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: { prompt: '给这段文案配旁白', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-1',
+    })
+    expect(generateAudio).toHaveBeenCalled()
+    expect(result.status).toBe('completed')
+    expect(result.url).toBe('https://cdn.example/audio.mp3')
+    expect(canvas.nodes[0].data.url).toBe('https://cdn.example/audio.mp3')
+  })
+
+  it('startImageGeneration passes node.data.mentionedKeys to studio', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '洁具白底图',
+            status: 'draft',
+            mentionedKeys: ['I1', 'T1'],
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.startImageGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'img-1',
+    })
+    expect(generateImage).toHaveBeenCalledWith(
+      'u1',
+      '洁具白底图',
+      'platform::user-default-image',
+      '9:16',
+      expect.any(Array),
+      ['I1', 'T1'],
+      '2K',
+      2,
+      { sessionId: 's1', nodeId: 'img-1' },
+    )
+  })
+
+  it('runImageGeneration prefers node image fields over account defaults', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '洁具白底图',
+            status: 'draft',
+            imageModel: 'platform::node-model',
+            imageAspect: '1:1',
+            imageResolution: '4K',
+            imageCount: 1,
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runImageGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'img-1',
+    })
+    expect(generateImage).toHaveBeenCalledWith(
+      'u1',
+      '洁具白底图',
+      'platform::node-model',
+      '1:1',
+      expect.any(Array),
+      undefined,
+      '4K',
+      1,
+      { sessionId: 's1', nodeId: 'img-1' },
+    )
+  })
+
+  it('runImageGeneration turnaround pipeline expands prompt and uses 2:1', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-turn',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '山海经吞金兽的三视图，CG风格',
+            status: 'draft',
+            pipeline: 'turnaround_image',
+            imageAspect: '2:1',
+            imageResolution: '1K',
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runImageGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'img-turn',
+    })
+    expect(expandPromptContent).toHaveBeenCalledWith(
+      'u1',
+      '山海经吞金兽的三视图，CG风格',
+      'platform::user-default-text',
+    )
+    expect(generateImage).toHaveBeenCalledWith(
+      'u1',
+      expect.stringContaining('四格布局'),
+      'platform::user-default-image',
+      '2:1',
+      [],
+      undefined,
+      '2K',
+      2,
+      { sessionId: 's1', nodeId: 'img-turn' },
+    )
+    expect(canvas.nodes[0].data.expandedPrompt).toContain('四格布局')
+    expect(canvas.nodes[0].data.promptMode).toBe('character_turnaround')
+    expect(canvas.nodes[0].data.imageResolution).toBe('2K')
+  })
+
+  it('startImageGeneration expands product four-panel prompts without pipeline stamp', async () => {
+    expandPromptContent.mockResolvedValue({
+      mode: 'generic',
+      content: '同一SKU四格横排…近景特写…正面…90度侧面…背面',
+    })
+    canvas = {
+      nodes: [
+        {
+          id: 'img-product',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '生成这个产品的三视图',
+            status: 'draft',
+            imageAspect: '16:9',
+            imageResolution: '1K',
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runImageGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'img-product',
+    })
+    expect(expandPromptContent).toHaveBeenCalledWith(
+      'u1',
+      '生成这个产品的三视图',
+      'platform::user-default-text',
+    )
+    expect(generateImage).toHaveBeenCalledWith(
+      'u1',
+      expect.stringContaining('同一SKU'),
+      'platform::user-default-image',
+      '2:1',
+      [],
+      undefined,
+      '2K',
+      2,
+      { sessionId: 's1', nodeId: 'img-product' },
+    )
+  })
+
+  it('addNodesBatch stamps account defaults onto image/video/text/audio skeletons', async () => {
+    const result = await svc.addNodesBatch({
+      sessionId: 's1',
+      userId: 'u1',
+      items: [
+        { key: 'white_bg', title: '白底图', targetType: 'image' },
+        { key: 'show_video', title: '视频', targetType: 'video' },
+        { key: 'copy', title: '文案', targetType: 'text' },
+        { key: 'vo', title: '配音', targetType: 'audio' },
+      ],
+    })
+    expect(result.nodes).toHaveLength(4)
+    const byType = Object.fromEntries(canvas.nodes.map((n) => [n.type, n.data]))
+    expect(byType.image).toMatchObject({
+      imageModel: 'platform::user-default-image',
+      imageAspect: '9:16',
+      imageResolution: '2K',
+      imageCount: 2,
+    })
+    expect(byType.video).toMatchObject({
+      videoModel: 'platform::user-default-video',
+      videoSettings: {
+        aspectRatio: '9:16',
+        duration: 10,
+        resolution: '1080p',
+        crop: 'center',
+      },
+    })
+    expect(byType.text).toMatchObject({
+      textModel: 'platform::user-default-text',
+    })
+    expect(byType.audio).toMatchObject({
+      audioModel: 'platform::user-default-audio',
+      audioVoice: 'female-shaonv',
+      audioFormat: 'mp3',
+      audioSpeed: 1,
+    })
+  })
+
+  it('runImageGeneration persists error status when Studio fails after generating', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: '洁具白底图', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    generateImage.mockRejectedValueOnce(new Error('studio unavailable'))
+    const result = await svc.runImageGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'img-1',
+    })
+    expect(result.status).toBe('error')
+    expect(canvas.nodes[0].data.status).toBe('error')
+    expect(canvas.nodes[0].data.errorMessage).toBe('studio unavailable')
+    expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+  })
+
+  it('write paths reject when session.userId mismatches input.userId', async () => {
+    await expect(
+      svc.upsertPromptNode({
+        sessionId: 's1',
+        userId: 'other-user',
+        prompt: 'x',
+        content: 'y',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException)
+
+    await expect(
+      svc.addNodesBatch({
+        sessionId: 's1',
+        userId: 'other-user',
+        items: [{ key: 'k', title: 't', targetType: 'image' }],
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException)
+
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: 'p', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    await expect(
+      svc.runImageGeneration({
+        sessionId: 's1',
+        userId: 'other-user',
+        nodeId: 'img-1',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException)
+    expect(generateImage).not.toHaveBeenCalled()
+  })
+
+  it('getGenerationStatus returns node status and url', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { status: 'completed', url: 'https://cdn.example/img.png' },
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.getGenerationStatus({ sessionId: 's1', nodeId: 'img-1' })
+    expect(result).toEqual({ status: 'completed', url: 'https://cdn.example/img.png' })
+  })
+
+  it('throws when session missing', async () => {
+    sessionFindUnique.mockResolvedValueOnce(null)
+    await expect(
+      svc.getNode({ sessionId: 'missing', nodeId: 'x' }),
+    ).rejects.toBeInstanceOf(NotFoundException)
+  })
+
+  // Regression test for the production race condition that caused
+  // Session.canvasData to lose update_node patches when multiple
+  // runImageGeneration calls landed concurrently (Phase 2.5 evidence
+  // in debug-task-node-desync.md). With persist() now using a
+  // Prisma $transaction that re-reads canvasData inside the TX,
+  // every concurrent call's update must land in the final canvas.
+  it('runImageGeneration under 3-way concurrency persists all updates to canvasData', async () => {
+    canvas = {
+      nodes: [
+        { id: 'img-a', type: 'image', position: { x: 0, y: 0 }, data: { prompt: 'A', status: 'draft' } },
+        { id: 'img-b', type: 'image', position: { x: 280, y: 0 }, data: { prompt: 'B', status: 'draft' } },
+        { id: 'img-c', type: 'image', position: { x: 560, y: 0 }, data: { prompt: 'C', status: 'draft' } },
+      ],
+      edges: [],
+    }
+    generateImage
+      .mockResolvedValueOnce({ id: 'rec-a', status: 'completed', url: 'https://cdn/a.png' })
+      .mockResolvedValueOnce({ id: 'rec-b', status: 'completed', url: 'https://cdn/b.png' })
+      .mockResolvedValueOnce({ id: 'rec-c', status: 'completed', url: 'https://cdn/c.png' })
+    getGeneration.mockImplementation(async (_uid: string, recordId: string) => {
+      const urls: Record<string, string> = {
+        'rec-a': 'https://cdn/a.png',
+        'rec-b': 'https://cdn/b.png',
+        'rec-c': 'https://cdn/c.png',
+      }
+      return { id: recordId, status: 'completed', url: urls[recordId] }
+    })
+
+    const results = await Promise.all([
+      svc.runImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-a' }),
+      svc.runImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-b' }),
+      svc.runImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-c' }),
+    ])
+
+    expect(results.every((r) => r.status === 'completed')).toBe(true)
+
+    // The critical assertion: every node must carry all three persisted
+    // patches (started, recordId, finish) in the final canvas. Before
+    // the TX re-read fix, the in-memory canvas was used to compute the
+    // patch, so concurrent writers would clobber each other and
+    // recordId / url / status would be missing on some nodes.
+    const byNode = new Map(canvas.nodes.map((n) => [n.id, n]))
+    for (const [nodeId, recordId, url] of [
+      ['img-a', 'rec-a', 'https://cdn/a.png'],
+      ['img-b', 'rec-b', 'https://cdn/b.png'],
+      ['img-c', 'rec-c', 'https://cdn/c.png'],
+    ] as const) {
+      const node = byNode.get(nodeId)
+      expect(node, `node ${nodeId} should be in final canvas`).toBeTruthy()
+      expect(node!.data.status, `${nodeId} status`).toBe('completed')
+      expect(node!.data.generationRecordId, `${nodeId} recordId`).toBe(recordId)
+      expect(node!.data.url, `${nodeId} url`).toBe(url)
+      expect(node!.data.generationStartedAt, `${nodeId} startedAt`).toBeTruthy()
+    }
+  })
+
+  describe('W8 stage/commit', () => {
+    const stagedAt = new Date()
+
+    beforeEach(() => {
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions: null,
+        stagedAt: null,
+      }))
+      sessionUpdate.mockImplementation(
+        async ({
+          data,
+        }: {
+          data: {
+            canvasData?: string
+            stagedActions?: string | null
+            stagedAt?: Date | null
+          }
+        }) => {
+          if (data.canvasData) canvas = JSON.parse(data.canvasData) as CanvasData
+          return { id: 's1', ...data }
+        },
+      )
+    })
+
+    it('stageCanvasActions accumulates without changing canvasData', async () => {
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions: null,
+        stagedAt: null,
+      }))
+      const action = {
+        type: 'add_node' as const,
+        payload: {
+          id: 'staged-1',
+          nodeType: 'image' as const,
+          position: { x: 0, y: 0 },
+          data: { title: 'staged' },
+        },
+      }
+      const result = await svc.stageCanvasActions({ sessionId: 's1', actions: [action] })
+      expect(result.stagedCount).toBe(1)
+      expect(canvas.nodes).toHaveLength(0)
+      expect(sessionUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            stagedActions: expect.stringContaining('staged-1'),
+            stagedAt: expect.any(Date),
+          }),
+        }),
+      )
+    })
+
+    it('commitStage applies staged actions to canvasData', async () => {
+      const action = {
+        type: 'add_node' as const,
+        payload: {
+          id: 'staged-1',
+          nodeType: 'image' as const,
+          position: { x: 0, y: 0 },
+          data: { title: 'staged' },
+        },
+      }
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions: JSON.stringify([action]),
+        stagedAt,
+      }))
+      const result = await svc.commitStage({ sessionId: 's1' })
+      expect(result.actions).toHaveLength(1)
+      expect(canvas.nodes).toHaveLength(1)
+      expect(canvas.nodes[0].id).toBe('staged-1')
+    })
+
+    it('rollbackStage clears stagedActions without touching canvas', async () => {
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions: '[]',
+        stagedAt,
+      }))
+      const result = await svc.rollbackStage({ sessionId: 's1' })
+      expect(result.cleared).toBe(true)
+      expect(canvas.nodes).toHaveLength(0)
+      expect(sessionUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { stagedActions: null, stagedAt: null },
+        }),
+      )
+    })
+
+    it('expireStaleStage auto-clears stage older than TTL on commit', async () => {
+      const stale = new Date(Date.now() - 31 * 60 * 1000)
+      const action = {
+        type: 'add_node' as const,
+        payload: {
+          id: 'old-staged',
+          nodeType: 'image' as const,
+          position: { x: 0, y: 0 },
+          data: {},
+        },
+      }
+      let stagedActions: string | null = JSON.stringify([action])
+      let stagedAtVal: Date | null = stale
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions,
+        stagedAt: stagedAtVal,
+      }))
+      sessionUpdate.mockImplementation(
+        async ({
+          data,
+        }: {
+          data: {
+            canvasData?: string
+            stagedActions?: string | null
+            stagedAt?: Date | null
+          }
+        }) => {
+          if (data.canvasData) canvas = JSON.parse(data.canvasData) as CanvasData
+          if (data.stagedActions !== undefined) stagedActions = data.stagedActions
+          if (data.stagedAt !== undefined) stagedAtVal = data.stagedAt
+          return { id: 's1', ...data }
+        },
+      )
+      const result = await svc.commitStage({ sessionId: 's1' })
+      expect(result.actions).toHaveLength(0)
+      expect(canvas.nodes).toHaveLength(0)
+      expect(stagedActions).toBeNull()
+    })
+
+    it('persist rejects when stagedActions pending', async () => {
+      canvas = {
+        nodes: [{ id: 'img-1', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+      }
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions: '[]',
+        stagedAt,
+      }))
+      await expect(
+        svc.setNodePrompt({ sessionId: 's1', nodeId: 'img-1', prompt: 'p' }),
+      ).rejects.toThrow(/staged actions pending/i)
+    })
+
+    it('upsertPromptNode with stage does not mutate canvasData', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'plan-1',
+            type: 'prompt',
+            position: { x: 0, y: 0 },
+            data: { prompt: 'old', content: 'old', title: 'old' },
+          },
+        ],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+      }
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions: null,
+        stagedAt: null,
+      }))
+      await svc.upsertPromptNode({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'plan-1',
+        prompt: '营销方案',
+        content: 'new draft',
+        stage: true,
+      })
+      expect(canvas.nodes[0].data.content).toBe('old')
+      expect(sessionUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            stagedActions: expect.stringContaining('plan-1'),
+          }),
+        }),
+      )
+    })
+
+    it('setNodeContent with stage does not mutate canvasData', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'copy-1',
+            type: 'text',
+            position: { x: 0, y: 0 },
+            data: { content: 'draft', title: '主文案' },
+          },
+        ],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+      }
+      sessionFindUnique.mockImplementation(async () => ({
+        id: 's1',
+        userId: 'u1',
+        canvasData: JSON.stringify(canvas),
+        stagedActions: null,
+        stagedAt: null,
+      }))
+      await svc.setNodeContent({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'copy-1',
+        content: 'confirmed copy',
+        stage: true,
+      })
+      expect(canvas.nodes[0].data.content).toBe('draft')
+      expect(sessionUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            stagedActions: expect.stringContaining('copy-1'),
+          }),
+        }),
+      )
+    })
+  })
+
+  describe('generation lifecycle', () => {
+    beforeEach(() => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              prompt: 'test',
+              status: 'generating',
+              generationRecordId: 'rec-1',
+            },
+          },
+        ],
+        edges: [],
+      }
+    })
+
+    it('cancelGeneration resolves record from node and patches canvas', async () => {
+      const result = await svc.cancelGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+      })
+      expect(cancelGenerationStudio).toHaveBeenCalledWith('u1', 'rec-1')
+      expect(result.status).toBe('cancelled')
+      expect(canvas.nodes[0].data.status).toBe('error')
+      expect(canvas.nodes[0].data.errorMessage).toBe('已取消')
+    })
+
+    it('getGenerationDiagnostic delegates to studio', async () => {
+      const d = await svc.getGenerationDiagnostic({
+        sessionId: 's1',
+        userId: 'u1',
+        generationRecordId: 'rec-1',
+      })
+      expect(getGenerationDiagnostic).toHaveBeenCalledWith('u1', 'rec-1')
+      expect(d.userMessage).toBe('上游失败')
+    })
+
+    it('cancelGeneration routes material records to MaterialService', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-mat',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { materialId: 'mat-1', status: 'generating' },
+          },
+        ],
+        edges: [],
+      }
+      const result = await svc.cancelGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-mat',
+      })
+      expect(cancelGenerationMaterial).toHaveBeenCalledWith('u1', 'mat-1')
+      expect(cancelGenerationStudio).not.toHaveBeenCalled()
+      expect(result.recordKind).toBe('material')
+      expect(result.status).toBe('cancelled')
+    })
+
+    it('getGenerationDiagnostic routes material records to MaterialService', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-mat',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { materialId: 'mat-1' },
+          },
+        ],
+        edges: [],
+      }
+      const d = await svc.getGenerationDiagnostic({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-mat',
+      })
+      expect(getMaterialDiagnostic).toHaveBeenCalledWith('u1', 'mat-1')
+      expect(getGenerationDiagnostic).not.toHaveBeenCalled()
+      expect(d.userMessage).toBe('素材生成失败')
+    })
+  })
+
+  describe('P1 explore harness', () => {
+    beforeEach(() => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '主图',
+              url: 'https://cdn.example/img.png',
+              status: 'completed',
+            },
+          },
+          {
+            id: 'txt-1',
+            type: 'text',
+            position: { x: 0, y: 0 },
+            data: { content: '文案内容', title: '文案' },
+          },
+        ],
+        edges: [],
+      }
+    })
+
+    it('listGenerationTasks delegates to studio', async () => {
+      const result = await svc.listGenerationTasks({
+        sessionId: 's1',
+        userId: 'u1',
+      })
+      expect(listGenerations).toHaveBeenCalledWith('u1', undefined, 's1')
+      expect(result.tasks).toHaveLength(1)
+      expect(result.tasks[0].nodeId).toBe('img-1')
+    })
+
+    it('introduceNodesToAgent builds attachments and canvasCommands', async () => {
+      const result = await svc.introduceNodesToAgent({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: ['img-1', 'txt-1', 'missing'],
+      })
+      expect(result.attachments).toHaveLength(2)
+      expect(result.skipped).toEqual(['missing'])
+      expect(result.canvasCommands[0]?.type).toBe('introduce_nodes')
+    })
+
+    it('getCanvasLayout returns node positions and sizes', async () => {
+      const layout = await svc.getCanvasLayout({ sessionId: 's1' })
+      expect(layout.nodes).toHaveLength(2)
+      expect(layout.nodes[0]?.id).toBe('img-1')
+      expect(layout.nodes[0]?.size.w).toBeGreaterThan(0)
+      expect(layout.nodes[0]?.absolutePosition).toEqual(layout.nodes[0]?.position)
+      expect(layout.groups).toEqual([])
+    })
+
+    it('duplicateNode copies selected nodes without edges by default', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'p1',
+            type: 'prompt',
+            position: { x: 0, y: 0 },
+            data: { title: 'Prompt' },
+          },
+          {
+            id: 'i1',
+            type: 'image',
+            position: { x: 200, y: 0 },
+            data: { title: 'Image', url: 'https://cdn.example/img.png', status: 'completed' },
+          },
+        ],
+        edges: [{ id: 'e-p1-i1', source: 'p1', target: 'i1' }],
+      }
+      const result = await svc.duplicateNode({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: ['p1', 'i1'],
+      })
+      expect(result.nodeIds).toHaveLength(2)
+      expect(canvas.nodes).toHaveLength(4)
+      expect(canvas.edges).toHaveLength(1)
+      expect(result.actions.some((a) => a.type === 'add_edge')).toBe(false)
+    })
+
+    it('duplicateNode includeUpstream reuses upstream node via edge only', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'ref',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { title: 'Ref', url: 'https://cdn.example/ref.png', status: 'completed' },
+          },
+          {
+            id: 'img',
+            type: 'image',
+            position: { x: 200, y: 0 },
+            data: { title: 'Image', url: 'https://cdn.example/img.png', status: 'completed' },
+          },
+        ],
+        edges: [{ id: 'e-ref-img', source: 'ref', target: 'img' }],
+      }
+      const result = await svc.duplicateNode({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img',
+        includeUpstream: true,
+      })
+      expect(result.nodeIds).toHaveLength(1)
+      expect(canvas.nodes).toHaveLength(3)
+      expect(canvas.edges).toHaveLength(2)
+      const copyId = result.nodeIds[0]
+      expect(canvas.edges.some((edge) => edge.source === 'ref' && edge.target === copyId)).toBe(true)
+    })
+
+    it('duplicateNode includeUpstream on multi-select skips internal edges', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'ext',
+            type: 'prompt',
+            position: { x: 0, y: 0 },
+            data: { title: 'External' },
+          },
+          {
+            id: 'p1',
+            type: 'prompt',
+            position: { x: 100, y: 0 },
+            data: { title: 'Prompt' },
+          },
+          {
+            id: 'i1',
+            type: 'image',
+            position: { x: 300, y: 0 },
+            data: { title: 'Image', url: 'https://cdn.example/img.png', status: 'completed' },
+          },
+        ],
+        edges: [
+          { id: 'e-ext-p1', source: 'ext', target: 'p1' },
+          { id: 'e-p1-i1', source: 'p1', target: 'i1' },
+        ],
+      }
+      const result = await svc.duplicateNode({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: ['p1', 'i1'],
+        includeUpstream: true,
+      })
+      expect(result.nodeIds).toHaveLength(2)
+      expect(canvas.nodes).toHaveLength(5)
+      expect(canvas.edges).toHaveLength(3)
+      const copyP = result.nodeIds.find((id) => canvas.nodes.find((n) => n.id === id)?.type === 'prompt')
+      expect(copyP).toBeTruthy()
+      expect(canvas.edges.some((edge) => edge.source === 'ext' && edge.target === copyP)).toBe(true)
+      expect(result.actions.filter((a) => a.type === 'add_edge')).toHaveLength(1)
+    })
+
+    it('duplicateNode clears generationRecordId on copy', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-gen',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: 'Generated',
+              url: 'https://cdn.example/gen.png',
+              status: 'completed',
+              generationRecordId: 'rec-1',
+            },
+          },
+        ],
+        edges: [],
+      }
+      const result = await svc.duplicateNode({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-gen',
+      })
+      expect(result.nodeIds).toHaveLength(1)
+      const copy = canvas.nodes.find((node) => node.id === result.nodeIds[0])
+      expect(copy?.data?.generationRecordId).toBeUndefined()
+      expect(copy?.data?.url).toBe('https://cdn.example/gen.png')
+    })
+
+    it('upscaleImage calls UpscaleService with mapped providerId', async () => {
+      const result = await svc.upscaleImage({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+        imageUrl: 'https://cdn.example/src.png',
+        scale: 2,
+        provider: 'fal',
+      })
+      expect(upscale).toHaveBeenCalledWith({
+        userId: 'u1',
+        sessionId: 's1',
+        nodeId: 'img-1',
+        imageUrl: 'https://cdn.example/src.png',
+        scale: 2,
+        providerId: 'fal',
+      })
+      expect(result).toEqual({
+        url: 'https://cdn.example/upscaled.png',
+        scale: 2,
+        providerId: 'fal',
+        recordId: 'up-1',
+      })
+    })
+
+    it('gridSliceImage prefers sourceUrl and delegates to ImageSliceService', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { url: 'https://cdn.example/node.png' },
+          },
+        ],
+        edges: [],
+      }
+      const result = await svc.gridSliceImage({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+        sourceUrl: 'https://cdn.example/explicit.png',
+        cols: 2,
+        rows: 2,
+      })
+      expect(sliceImage).toHaveBeenCalledWith({
+        userId: 'u1',
+        sourceUrl: 'https://cdn.example/explicit.png',
+        cols: 2,
+        rows: 2,
+        sessionId: 's1',
+      })
+      expect(result.urls).toHaveLength(4)
+    })
+
+    it('gridSliceImage resolves node data.url when sourceUrl is omitted', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { url: 'https://cdn.example/node.png' },
+          },
+        ],
+        edges: [],
+      }
+      await svc.gridSliceImage({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+        cols: 3,
+        rows: 3,
+      })
+      expect(sliceImage).toHaveBeenCalledWith({
+        userId: 'u1',
+        sourceUrl: 'https://cdn.example/node.png',
+        cols: 3,
+        rows: 3,
+        sessionId: 's1',
+      })
+    })
+
+    it('gridSliceImage rejects when neither sourceUrl nor resolvable node url', async () => {
+      await expect(
+        svc.gridSliceImage({ sessionId: 's1', userId: 'u1', cols: 2, rows: 2 }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      canvas = {
+        nodes: [{ id: 'img-1', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+        edges: [],
+      }
+      await expect(
+        svc.gridSliceImage({ sessionId: 's1', userId: 'u1', nodeId: 'img-1', cols: 2, rows: 2 }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      expect(sliceImage).not.toHaveBeenCalled()
+    })
+
+    it('getImageEditCapabilities reports only inpaint when image has url', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { url: 'https://x/a.png' },
+          },
+        ],
+        edges: [],
+      }
+      const caps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'img-1' })
+      expect(caps.canEdit).toBe(true)
+      expect(caps.supportedModes).toEqual(['inpaint'])
+    })
+
+    it('getImageEditCapabilities is empty without url', async () => {
+      canvas = {
+        nodes: [{ id: 'img-1', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+        edges: [],
+      }
+      const caps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'img-1' })
+      expect(caps.canEdit).toBe(false)
+      expect(caps.supportedModes).toEqual([])
+    })
+
+    it('getImageEditCapabilities allows image mediaInput', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'media-1',
+            type: 'mediaInput',
+            position: { x: 0, y: 0 },
+            data: { url: 'https://x/a.png', mediaKind: 'image' },
+          },
+        ],
+        edges: [],
+      }
+      const caps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'media-1' })
+      expect(caps.canEdit).toBe(true)
+      expect(caps.supportedModes).toEqual(['inpaint'])
+    })
+
+    it('getImageEditCapabilities allows mediaInput with image mimeType', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'media-2',
+            type: 'mediaInput',
+            position: { x: 0, y: 0 },
+            data: { url: 'https://x/a.png', mimeType: 'image/png' },
+          },
+        ],
+        edges: [],
+      }
+      const caps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'media-2' })
+      expect(caps.canEdit).toBe(true)
+      expect(caps.supportedModes).toEqual(['inpaint'])
+    })
+
+    it('getImageEditCapabilities rejects video and audio mediaInput even with a url', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'vid-in',
+            type: 'mediaInput',
+            position: { x: 0, y: 0 },
+            data: { url: 'https://x/a.mp4', mediaKind: 'video' },
+          },
+          {
+            id: 'aud-in',
+            type: 'mediaInput',
+            position: { x: 0, y: 0 },
+            data: { url: 'https://x/a.mp3', mediaKind: 'audio', mimeType: 'audio/mpeg' },
+          },
+        ],
+        edges: [],
+      }
+      const videoCaps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'vid-in' })
+      const audioCaps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'aud-in' })
+      expect(videoCaps.canEdit).toBe(false)
+      expect(videoCaps.supportedModes).toEqual([])
+      expect(audioCaps.canEdit).toBe(false)
+      expect(audioCaps.supportedModes).toEqual([])
+    })
+  })
+
+  describe('P2 layout harness', () => {
+    beforeEach(() => {
+      canvas = {
+        nodes: [
+          { id: 'img-1', type: 'image', position: { x: 100, y: 100 }, data: { title: 'A' } },
+          { id: 'txt-1', type: 'text', position: { x: 420, y: 160 }, data: { title: 'B' } },
+          { id: 'vid-1', type: 'video', position: { x: 760, y: 80 }, data: { title: 'C' } },
+        ],
+        edges: [],
+      }
+    })
+
+    it('groupNodes persists a group with child parentNode links', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+      const result = await svc.groupNodes({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: ['img-1', 'txt-1'],
+        title: 'Block A',
+      })
+      expect(result.groupId).toBe('group-1700000000000')
+      const group = canvas.nodes.find((n) => n.id === result.groupId)
+      expect(group?.type).toBe('group')
+      expect(group?.data?.title).toBe('Block A')
+      expect(canvas.nodes.find((n) => n.id === 'img-1')?.parentNode).toBe(result.groupId)
+      expect(canvas.nodes.find((n) => n.id === 'txt-1')?.parentNode).toBe(result.groupId)
+      vi.restoreAllMocks()
+    })
+
+    it('ungroupNode restores flat coordinates and removes the group node', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+      const grouped = await svc.groupNodes({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: ['img-1', 'txt-1'],
+      })
+      await svc.ungroupNode({
+        sessionId: 's1',
+        userId: 'u1',
+        groupId: grouped.groupId,
+      })
+      expect(canvas.nodes.some((n) => n.id === grouped.groupId)).toBe(false)
+      expect(canvas.nodes.find((n) => n.id === 'img-1')?.position).toEqual({ x: 100, y: 100 })
+      expect(canvas.nodes.find((n) => n.id === 'txt-1')?.position).toEqual({ x: 420, y: 160 })
+      expect(canvas.nodes.find((n) => n.id === 'img-1')?.parentNode).toBeUndefined()
+      vi.restoreAllMocks()
+    })
+
+    it('arrangeNodesGrid repositions selected nodes on canvas', async () => {
+      await svc.arrangeNodesGrid({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: ['img-1', 'txt-1', 'vid-1'],
+        gap: 20,
+      })
+      const img = canvas.nodes.find((n) => n.id === 'img-1')
+      const txt = canvas.nodes.find((n) => n.id === 'txt-1')
+      const vid = canvas.nodes.find((n) => n.id === 'vid-1')
+      expect(img?.position).toEqual({ x: 100, y: 80 })
+      expect(txt?.position.x).toBe(100 + 280 + 20)
+      expect(vid?.position.y).toBeGreaterThan(img!.position.y)
+    })
+
+    it('moveNodes updates absolute coordinates', async () => {
+      await svc.moveNodes({
+        sessionId: 's1',
+        userId: 'u1',
+        items: [{ nodeId: 'img-1', x: 300, y: 400 }],
+      })
+      expect(canvas.nodes.find((n) => n.id === 'img-1')?.position).toEqual({ x: 300, y: 400 })
+    })
+
+    it('applyLayoutOps runs group then grid atomically', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_001)
+      const result = await svc.applyLayoutOps({
+        sessionId: 's1',
+        userId: 'u1',
+        ops: [
+          { op: 'group', nodeIds: ['img-1', 'txt-1'], title: 'Workflow block' },
+          { op: 'move', items: [{ nodeId: 'vid-1', x: 900, y: 900 }] },
+        ],
+      })
+      expect(result.results).toHaveLength(2)
+      expect(result.results[0]?.op).toBe('group')
+      expect(result.layout.groups).toHaveLength(1)
+      expect(canvas.nodes.find((n) => n.id === 'img-1')?.parentNode).toBeTruthy()
+      expect(canvas.nodes.find((n) => n.id === 'vid-1')?.position).toEqual({ x: 900, y: 900 })
+      vi.restoreAllMocks()
+    })
+  })
+
+  describe('saveNodeToAssetLibrary', () => {
+    it('delegates to PersistRemoteService and returns persisted url', async () => {
+      canvas.nodes.push({
+        id: 'img-1',
+        type: 'image',
+        position: { x: 0, y: 0 },
+        data: { url: 'https://upstream.example/out.png', title: 'shot' },
+      } as CanvasData['nodes'][number])
+      persistRemote.mockResolvedValue({
+        persistedUrl: 'https://cos.example/persisted.png',
+        assetId: 'asset-1',
+        storageTier: 'persisted',
+      })
+
+      const result = await svc.saveNodeToAssetLibrary({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+        label: 'my shot',
+      })
+
+      expect(persistRemote).toHaveBeenCalledWith({
+        userId: 'u1',
+        url: 'https://upstream.example/out.png',
+        kind: 'image',
+        label: 'my shot',
+        sessionId: 's1',
+        sourceNodeId: 'img-1',
+        replaceNodeUrl: false,
+      })
+      expect(result).toEqual({
+        assetId: 'asset-1',
+        url: 'https://cos.example/persisted.png',
+        kind: 'image',
+      })
+    })
+
+    it('surfaces 503 when storage adapter is unconfigured', async () => {
+      canvas.nodes.push({
+        id: 'img-1',
+        type: 'image',
+        position: { x: 0, y: 0 },
+        data: { url: 'https://upstream.example/out.png' },
+      } as CanvasData['nodes'][number])
+      persistRemote.mockRejectedValue(new ServiceUnavailableException('对象存储未配置'))
+
+      await expect(
+        svc.saveNodeToAssetLibrary({
+          sessionId: 's1',
+          userId: 'u1',
+          nodeId: 'img-1',
+        }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException)
+    })
+
+    it('rejects nodes without media url', async () => {
+      canvas.nodes.push({
+        id: 'img-1',
+        type: 'image',
+        position: { x: 0, y: 0 },
+        data: {},
+      } as CanvasData['nodes'][number])
+
+      await expect(
+        svc.saveNodeToAssetLibrary({
+          sessionId: 's1',
+          userId: 'u1',
+          nodeId: 'img-1',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      expect(persistRemote).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('exportMediaPackage', () => {
+    it('returns empty canvasCommands nodeIds and exportMode full_package when nodeIds is empty', async () => {
+      const result = await svc.exportMediaPackage({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: [],
+      })
+      expect(result.manifest.count).toBe(0)
+      expect(result.manifest.items).toEqual([])
+      expect(result.manifest.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+      expect(result.canvasCommands).toEqual([
+        { type: 'export_pack', nodeIds: [], exportMode: 'full_package' },
+      ])
+    })
+
+    it('scopes canvasCommands to graph node ids including nodes without url', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { title: '主图', url: 'https://cdn.example/img.png' },
+          },
+          {
+            id: 'img-no-url',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { title: '无URL' },
+          },
+          {
+            id: 'prompt-1',
+            type: 'prompt',
+            position: { x: 10, y: 10 },
+            data: { title: '提示词', text: 'hello' },
+          },
+          {
+            id: 'other-1',
+            type: 'image',
+            position: { x: 20, y: 20 },
+            data: { title: '未选中', url: 'https://cdn.example/other.png' },
+          },
+        ],
+        edges: [],
+      }
+      const result = await svc.exportMediaPackage({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeIds: ['img-1', 'img-no-url', 'prompt-1', 'missing-id'],
+      })
+      expect(result.manifest.count).toBe(1)
+      expect(result.manifest.items).toHaveLength(1)
+      expect(result.manifest.items[0]).toMatchObject({
+        nodeId: 'img-1',
+        url: 'https://cdn.example/img.png',
+        fileName: '主图.png',
+      })
+      expect(result.manifest.items[0].downloadPath).toMatch(/^\/api\/media\/stream-download\?/)
+      expect(result.manifest.items[0].downloadPath).toContain('sessionId=s1')
+      expect(result.canvasCommands).toEqual([
+        {
+          type: 'export_pack',
+          nodeIds: ['img-1', 'img-no-url', 'prompt-1'],
+          exportMode: 'full_package',
+        },
+      ])
+    })
+  })
+
+  describe('importWorkflow', () => {
+    const minimalWorkflow = {
+      format: 'lnkpi.workflow',
+      version: '1.0.0',
+      exportedAt: '2026-09-12T01:00:00.000Z',
+      mode: 'full',
+      exportMode: 'lightweight',
+      graph: {
+        nodes: [
+          {
+            id: 'prompt-golden-1',
+            type: 'prompt',
+            position: { x: 80, y: 120 },
+            data: {
+              title: 'Scene prompt',
+              prompt: 'A serene mountain lake at dawn, cinematic lighting',
+            },
+            mediaRole: 'none',
+          },
+          {
+            id: 'image-golden-1',
+            type: 'image',
+            position: { x: 400, y: 120 },
+            data: {
+              title: 'Hero frame',
+              prompt: 'A serene mountain lake at dawn, cinematic lighting',
+              url: 'https://cdn.example.com/workflows/golden-lake.png',
+              generationRecordId: 'gen-golden-001',
+            },
+            mediaRole: 'generated',
+          },
+        ],
+        edges: [
+          {
+            id: 'edge-golden-1',
+            source: 'prompt-golden-1',
+            target: 'image-golden-1',
+          },
+        ],
+      },
+      mediaIndex: [
+        {
+          nodeId: 'image-golden-1',
+          kind: 'image',
+          fileName: 'golden-lake.png',
+          url: 'https://cdn.example.com/workflows/golden-lake.png',
+        },
+      ],
+    }
+
+    it('merges a minimal inline workflow with remapped ids and focus_nodes', async () => {
+      persistRemote.mockResolvedValue({
+        persistedUrl: 'https://cos.example/golden-lake.png',
+        assetId: 'asset-wf-1',
+        storageTier: 'persisted',
+      })
+
+      const result = await svc.importWorkflow({
+        sessionId: 's1',
+        userId: 'u1',
+        workflow: minimalWorkflow,
+      })
+
+      expect(canvas.nodes).toHaveLength(2)
+      expect(canvas.edges).toHaveLength(1)
+      expect(result.addedNodeIds).toHaveLength(2)
+      expect(result.addedNodeIds).not.toContain('prompt-golden-1')
+      expect(result.addedNodeIds).not.toContain('image-golden-1')
+      expect(result.idMap['prompt-golden-1']).toBeTruthy()
+      expect(result.idMap['prompt-golden-1']).not.toBe('prompt-golden-1')
+      expect(result.idMap['image-golden-1']).toBeTruthy()
+      expect(result.idMap['image-golden-1']).not.toBe('image-golden-1')
+      expect(canvas.nodes.map((n) => n.id).sort()).toEqual([...result.addedNodeIds].sort())
+      expect(canvas.edges[0].source).toBe(result.idMap['prompt-golden-1'])
+      expect(canvas.edges[0].target).toBe(result.idMap['image-golden-1'])
+      expect(result.actions.filter((a) => a.type === 'add_node')).toHaveLength(2)
+      expect(result.actions.filter((a) => a.type === 'add_edge')).toHaveLength(1)
+      expect(result.canvasCommands).toEqual([
+        { type: 'focus_nodes', nodeIds: result.addedNodeIds },
+      ])
+      expect(userWorkflowRecipeCreate).not.toHaveBeenCalled()
+    })
+
+    it('rejects invalid workflow and leaves canvas unchanged', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'seed-keep',
+            type: 'prompt',
+            position: { x: 10, y: 10 },
+            data: { title: 'keep' },
+          },
+        ],
+        edges: [],
+      }
+
+      await expect(
+        svc.importWorkflow({
+          sessionId: 's1',
+          userId: 'u1',
+          workflow: { format: 'nope' },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      expect(sessionUpdate).not.toHaveBeenCalled()
+      expect(canvas.nodes).toHaveLength(1)
+      expect(canvas.nodes[0].id).toBe('seed-keep')
+    })
+
+    it('places imported roots so union bboxes do not overlap with margin', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'seed-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { title: 'seed' },
+          },
+        ],
+        edges: [],
+      }
+
+      const overlapWorkflow = {
+        ...minimalWorkflow,
+        graph: {
+          nodes: [
+            {
+              id: 'prompt-overlap-1',
+              type: 'prompt',
+              position: { x: 0, y: 0 },
+              data: { title: 'Imported', prompt: 'hello' },
+              mediaRole: 'none',
+            },
+          ],
+          edges: [],
+        },
+        mediaIndex: [],
+      }
+
+      const result = await svc.importWorkflow({
+        sessionId: 's1',
+        userId: 'u1',
+        workflow: overlapWorkflow,
+      })
+
+      const seed = canvas.nodes.find((n) => n.id === 'seed-1')
+      const imported = canvas.nodes.filter((n) => n.id !== 'seed-1')
+      expect(seed).toBeTruthy()
+      expect(imported).toHaveLength(1)
+      expect(result.addedNodeIds).toEqual([imported[0].id])
+      const seedBBox = unionNodeBBox([seed!])
+      const importedBBox = unionNodeBBox(imported)
+      expect(seedBBox).toBeTruthy()
+      expect(importedBBox).toBeTruthy()
+      expect(rectsOverlap(seedBBox!, importedBBox!, IMPORT_PLACE_MARGIN)).toBe(false)
+    })
+
+    it('keeps original url and still merges when persistRemote rejects', async () => {
+      persistRemote.mockRejectedValue(new Error('persist failed'))
+
+      const result = await svc.importWorkflow({
+        sessionId: 's1',
+        userId: 'u1',
+        workflow: minimalWorkflow,
+      })
+
+      expect(canvas.nodes).toHaveLength(2)
+      expect(canvas.edges).toHaveLength(1)
+      const imageNode = canvas.nodes.find((n) => n.type === 'image')
+      expect(imageNode?.data.url).toBe('https://cdn.example.com/workflows/golden-lake.png')
+      expect(result.mediaFail).toBeGreaterThanOrEqual(1)
+      expect(result.addedNodeIds).toHaveLength(2)
+    })
+
+    it('persists source url from localRefs when data.url is missing', async () => {
+      persistRemote.mockImplementation(async ({ url }: { url: string }) => ({
+        persistedUrl: url,
+      }))
+
+      const localRefsOnlyWorkflow = {
+        format: 'lnkpi.workflow',
+        version: '1.0.0',
+        exportedAt: '2026-09-17T01:00:00.000Z',
+        mode: 'full',
+        exportMode: 'lightweight',
+        graph: {
+          nodes: [
+            {
+              id: 'image-src-1',
+              type: 'image',
+              position: { x: 0, y: 0 },
+              data: {
+                localRefs: [
+                  {
+                    id: 'a',
+                    mediaType: 'image',
+                    sourceKind: 'upload',
+                    label: 'I1',
+                    url: 'https://cdn.example/i1.png',
+                  },
+                ],
+              },
+              mediaRole: 'uploaded',
+            },
+          ],
+          edges: [],
+        },
+        mediaIndex: [],
+      }
+
+      const result = await svc.importWorkflow({
+        sessionId: 's1',
+        userId: 'u1',
+        workflow: localRefsOnlyWorkflow,
+      })
+
+      expect(persistRemote).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'https://cdn.example/i1.png', kind: 'image' }),
+      )
+      expect(result.mediaOk).toBe(1)
+      expect(canvas.nodes).toHaveLength(1)
+      const node = canvas.nodes[0]
+      expect(node.data.url).toBe('https://cdn.example/i1.png')
+      expect(node.data.localRefs).toEqual([
+        {
+          id: 'a',
+          mediaType: 'image',
+          sourceKind: 'upload',
+          label: 'I1',
+          url: 'https://cdn.example/i1.png',
+        },
+      ])
+    })
+
+    describe('default along-edges layout', () => {
+      const stackedChainWorkflow = {
+        format: 'lnkpi.workflow',
+        version: '1.0.0',
+        exportedAt: '2026-09-16T01:00:00.000Z',
+        mode: 'full',
+        exportMode: 'lightweight',
+        graph: {
+          nodes: [
+            {
+              id: 'prompt-stack-1',
+              type: 'prompt',
+              position: { x: 0, y: 0 },
+              data: { title: 'A', prompt: 'a' },
+              mediaRole: 'none',
+            },
+            {
+              id: 'image-stack-1',
+              type: 'image',
+              position: { x: 0, y: 80 },
+              data: { title: 'B', prompt: 'b' },
+              mediaRole: 'none',
+            },
+          ],
+          edges: [
+            {
+              id: 'edge-stack-1',
+              source: 'prompt-stack-1',
+              target: 'image-stack-1',
+            },
+          ],
+        },
+        mediaIndex: [],
+      }
+
+      it('arranges added chain left-to-right and keeps seed fixed', async () => {
+        canvas = {
+          nodes: [
+            {
+              id: 'seed-keep',
+              type: 'text',
+              position: { x: 12, y: 34 },
+              data: { title: 'seed' },
+            },
+          ],
+          edges: [],
+        }
+
+        const result = await svc.importWorkflow({
+          sessionId: 's1',
+          userId: 'u1',
+          workflow: stackedChainWorkflow,
+        })
+
+        const seed = canvas.nodes.find((n) => n.id === 'seed-keep')
+        expect(seed?.position).toEqual({ x: 12, y: 34 })
+
+        const promptId = result.idMap['prompt-stack-1']
+        const imageId = result.idMap['image-stack-1']
+        expect(promptId && imageId).toBeTruthy()
+        const prompt = canvas.nodes.find((n) => n.id === promptId)!
+        const image = canvas.nodes.find((n) => n.id === imageId)!
+        // stacked import becomes left→right columns (gap = maxColWidth + 40)
+        expect(prompt.position.x).toBeLessThan(image.position.x)
+        expect(image.position.x - prompt.position.x).toBe(280 + 40)
+        // no longer stacked on same x
+        expect(prompt.position.x).not.toBe(image.position.x)
+
+        const addActions = result.actions.filter((a) => a.type === 'add_node')
+        const byId = Object.fromEntries(
+          addActions.map((a) => [a.payload.id, a.payload.position]),
+        )
+        expect(byId[promptId!]).toEqual(prompt.position)
+        expect(byId[imageId!]).toEqual(image.position)
+      })
+
+      it('skips along-edges when arrangeAlongEdges is false', async () => {
+        const result = await svc.importWorkflow({
+          sessionId: 's1',
+          userId: 'u1',
+          workflow: stackedChainWorkflow,
+          arrangeAlongEdges: false,
+        })
+
+        const promptId = result.idMap['prompt-stack-1']
+        const imageId = result.idMap['image-stack-1']
+        const prompt = canvas.nodes.find((n) => n.id === promptId)!
+        const image = canvas.nodes.find((n) => n.id === imageId)!
+        expect(prompt.position.x).toBe(image.position.x)
+        expect(image.position.y - prompt.position.y).toBe(80)
+      })
+    })
+  })
+
+  describe('Phase 2b upsertMediaNode + proposeGeneration', () => {
+    it('upsertMediaNode creates image node and returns nodeId + add_node', async () => {
+      const result = await svc.upsertMediaNode({
+        sessionId: 's1',
+        userId: 'u1',
+        targetType: 'image',
+        prompt: '蓝色天空产品主图',
+        title: '产品主图',
+      })
+      expect(result.nodeId).toBeTruthy()
+      expect(result.actions.some((a) => a.type === 'add_node')).toBe(true)
+      expect(canvas.nodes).toHaveLength(1)
+      expect(canvas.nodes[0].type).toBe('image')
+      expect(canvas.nodes[0].id).toBe(result.nodeId)
+      expect(canvas.nodes[0].data.prompt).toBe('蓝色天空产品主图')
+      expect(canvas.nodes[0].data.title).toBe('产品主图')
+      expect(canvas.nodes[0].data.status).toBe('draft')
+    })
+
+    it('upsertMediaNode updates existing media node prompt', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '旧标题',
+              prompt: 'old prompt',
+              status: 'draft',
+              imageModel: 'platform::user-default-image',
+            },
+          },
+        ],
+        edges: [],
+      }
+      const result = await svc.upsertMediaNode({
+        sessionId: 's1',
+        userId: 'u1',
+        targetType: 'image',
+        nodeId: 'img-1',
+        prompt: 'new prompt',
+        title: '新标题',
+      })
+      expect(result.nodeId).toBe('img-1')
+      expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+      expect(canvas.nodes).toHaveLength(1)
+      expect(canvas.nodes[0].data.prompt).toBe('new prompt')
+      expect(canvas.nodes[0].data.title).toBe('新标题')
+    })
+
+    it('proposeGeneration sets pending_confirm without calling generate*', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '产品主图',
+              prompt: '蓝色天空产品主图',
+              status: 'draft',
+              imageModel: 'platform::user-default-image',
+              imageAspect: '9:16',
+            },
+          },
+        ],
+        edges: [],
+      }
+      const orchStart = vi.spyOn(
+        (svc as unknown as { videoOrchestrator: { start: (...args: unknown[]) => unknown } }).videoOrchestrator,
+        'start',
+      )
+
+      const result = await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+      })
+
+      expect(result.nodeId).toBe('img-1')
+      expect(result.status).toBe('pending_confirm')
+      expect(result.summary).toMatchObject({
+        type: 'image',
+        promptPreview: expect.stringContaining('蓝色天空'),
+        title: '产品主图',
+        imageModel: 'platform::user-default-image',
+      })
+      expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+      expect(canvas.nodes[0].data.status).toBe('pending_confirm')
+      expect(generateImage).not.toHaveBeenCalled()
+      expect(generateVideo).not.toHaveBeenCalled()
+      expect(orchStart).not.toHaveBeenCalled()
+    })
+
+    it('proposeGeneration rejects empty prompt without pending or generate*', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '仅有标题',
+              prompt: '   ',
+              status: 'draft',
+              imageModel: 'platform::user-default-image',
+            },
+          },
+        ],
+        edges: [],
+      }
+      const orchStart = vi.spyOn(
+        (svc as unknown as { videoOrchestrator: { start: (...args: unknown[]) => unknown } }).videoOrchestrator,
+        'start',
+      )
+
+      await expect(
+        svc.proposeGeneration({
+          sessionId: 's1',
+          userId: 'u1',
+          nodeId: 'img-1',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+
+      expect(canvas.nodes[0].data.status).toBe('draft')
+      expect(sessionUpdate).not.toHaveBeenCalled()
+      expect(generateImage).not.toHaveBeenCalled()
+      expect(generateVideo).not.toHaveBeenCalled()
+      expect(orchStart).not.toHaveBeenCalled()
+    })
+  })
+
+  // Phase 2c.1 C3: clearProposeGeneration cancels pending without generating
+  describe('Phase 2c.1 C3: clearProposeGeneration', () => {
+    type ClearProposeFn = (input: {
+      sessionId: string
+      userId: string
+      nodeId: string
+    }) => Promise<{
+      nodeId: string
+      status: 'draft'
+      actions: Array<{ type: string }>
+    }>
+
+    function clearProposeGeneration(): ClearProposeFn {
+      const fn = (svc as unknown as { clearProposeGeneration?: ClearProposeFn }).clearProposeGeneration
+      expect(typeof fn).toBe('function')
+      if (typeof fn !== 'function') {
+        throw new Error('clearProposeGeneration is not implemented yet')
+      }
+      return fn.bind(svc)
+    }
+
+    it('propose then clear → draft; generateImage not called', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '产品主图',
+              prompt: '蓝色天空产品主图',
+              status: 'draft',
+              imageModel: 'platform::user-default-image',
+            },
+          },
+        ],
+        edges: [],
+      }
+
+      await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+      })
+      expect(canvas.nodes[0].data.status).toBe('pending_confirm')
+
+      const result = await clearProposeGeneration()({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+      })
+
+      expect(result.nodeId).toBe('img-1')
+      expect(result.status).toBe('draft')
+      expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
+      expect(canvas.nodes[0].data.status).toBe('draft')
+      expect(generateImage).not.toHaveBeenCalled()
+    })
+
+    it('clear missing node → NotFound', async () => {
+      canvas = emptyCanvas()
+
+      await expect(
+        clearProposeGeneration()({
+          sessionId: 's1',
+          userId: 'u1',
+          nodeId: 'missing-node',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException)
+
+      expect(generateImage).not.toHaveBeenCalled()
+    })
+
+    it('clear non-pending → idempotent draft OK', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '已是草稿',
+              prompt: 'prompt',
+              status: 'draft',
+              imageModel: 'platform::user-default-image',
+            },
+          },
+        ],
+        edges: [],
+      }
+
+      const result = await clearProposeGeneration()({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+      })
+
+      expect(result.nodeId).toBe('img-1')
+      expect(result.status).toBe('draft')
+      expect(canvas.nodes[0].data.status).toBe('draft')
+      expect(generateImage).not.toHaveBeenCalled()
+    })
+  })
+})

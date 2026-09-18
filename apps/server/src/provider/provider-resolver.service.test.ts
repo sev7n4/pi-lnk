@@ -1,0 +1,353 @@
+import 'reflect-metadata'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { NotFoundException } from '@nestjs/common'
+import { Test } from '@nestjs/testing'
+import { CryptoService } from './crypto.service'
+import { PLATFORM_CHANNEL_ID } from './provider.service'
+import { ProviderResolverService } from './provider-resolver.service'
+import { PrismaService } from '../prisma/prisma.service'
+
+type ChannelRow = {
+  id: string
+  userId: string | null
+  name: string
+  apiFormat: string
+  baseUrl: string
+  encryptedApiKey: string | null
+  iv: string | null
+  authTag: string | null
+  keyVersion: number
+  models: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+function createMemoryPrisma(seed: ChannelRow[] = []) {
+  const channels = new Map<string, ChannelRow>(seed.map((row) => [row.id, row]))
+  return {
+    providerChannel: {
+      findUnique: async ({ where }: { where: { id?: string } }) => {
+        if (where.id) return channels.get(where.id) ?? null
+        return null
+      },
+    },
+    _channels: channels,
+  }
+}
+
+describe('ProviderResolverService', () => {
+  const originalKey = process.env.BYOK_ENCRYPTION_KEY_V1
+  const originalOpenAiKey = process.env.OPENAI_API_KEY
+  const originalOpenAiBase = process.env.OPENAI_BASE_URL
+  const originalApimartKey = process.env.APIMART_API_KEY
+  const originalApimartBase = process.env.APIMART_BASE_URL
+  const originalFalKey = process.env.FAL_KEY
+  const originalFalBase = process.env.FAL_BASE_URL
+  const originalMinimaxKey = process.env.MINIMAX_API_KEY
+  const originalMinimaxBase = process.env.MINIMAX_BASE_URL
+  let resolver: ProviderResolverService
+  let crypto: CryptoService
+  let prisma: ReturnType<typeof createMemoryPrisma>
+
+  beforeEach(async () => {
+    process.env.BYOK_ENCRYPTION_KEY_V1 = Buffer.alloc(32, 7).toString('base64')
+    process.env.OPENAI_API_KEY = 'platform-env-key'
+    process.env.OPENAI_BASE_URL = 'https://platform.example.com/v1'
+    process.env.APIMART_API_KEY = 'apimart-env-key'
+    process.env.APIMART_BASE_URL = 'https://api.apimart.ai/v1'
+    delete process.env.FAL_KEY
+    delete process.env.FAL_BASE_URL
+    delete process.env.MINIMAX_API_KEY
+    delete process.env.MINIMAX_BASE_URL
+    prisma = createMemoryPrisma([
+      {
+        id: PLATFORM_CHANNEL_ID,
+        userId: null,
+        name: '平台服务',
+        apiFormat: 'openai',
+        baseUrl: 'https://platform.example.com/v1',
+        encryptedApiKey: null,
+        iv: null,
+        authTag: null,
+        keyVersion: 1,
+        models: '[]',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ])
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        ProviderResolverService,
+        CryptoService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile()
+    resolver = moduleRef.get(ProviderResolverService)
+    crypto = moduleRef.get(CryptoService)
+  })
+
+  afterEach(() => {
+    if (originalKey === undefined) delete process.env.BYOK_ENCRYPTION_KEY_V1
+    else process.env.BYOK_ENCRYPTION_KEY_V1 = originalKey
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = originalOpenAiKey
+    if (originalOpenAiBase === undefined) delete process.env.OPENAI_BASE_URL
+    else process.env.OPENAI_BASE_URL = originalOpenAiBase
+    if (originalApimartKey === undefined) delete process.env.APIMART_API_KEY
+    else process.env.APIMART_API_KEY = originalApimartKey
+    if (originalApimartBase === undefined) delete process.env.APIMART_BASE_URL
+    else process.env.APIMART_BASE_URL = originalApimartBase
+    if (originalFalKey === undefined) delete process.env.FAL_KEY
+    else process.env.FAL_KEY = originalFalKey
+    if (originalFalBase === undefined) delete process.env.FAL_BASE_URL
+    else process.env.FAL_BASE_URL = originalFalBase
+    if (originalMinimaxKey === undefined) delete process.env.MINIMAX_API_KEY
+    else process.env.MINIMAX_API_KEY = originalMinimaxKey
+    if (originalMinimaxBase === undefined) delete process.env.MINIMAX_BASE_URL
+    else process.env.MINIMAX_BASE_URL = originalMinimaxBase
+  })
+
+  it('decrypts user channel credentials', async () => {
+    const enc = crypto.encrypt('sk-user-secret')
+    prisma._channels.set('ch_user', {
+      id: 'ch_user',
+      userId: 'u1',
+      name: 'mine',
+      apiFormat: 'openai',
+      baseUrl: 'https://user.example.com/v1',
+      encryptedApiKey: enc.ciphertext,
+      iv: enc.iv,
+      authTag: enc.authTag,
+      keyVersion: enc.keyVersion,
+      models: '[]',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    const result = await resolver.resolveForGeneration('u1', 'ch_user::gpt-custom', 'text')
+    expect(result).toEqual({
+      channelId: 'ch_user',
+      modelName: 'gpt-custom',
+      apiFormat: 'openai',
+      credentials: { apiKey: 'sk-user-secret', baseUrl: 'https://user.example.com/v1' },
+      source: 'user',
+    })
+  })
+
+  it('resolves platform channel from env credentials', async () => {
+    const result = await resolver.resolveForGeneration('u1', 'platform::agnes-image-2.1-flash', 'image')
+    expect(result).toEqual({
+      channelId: 'platform',
+      modelName: 'agnes-image-2.1-flash',
+      apiFormat: 'openai',
+      credentials: {
+        apiKey: 'platform-env-key',
+        baseUrl: 'https://platform.example.com/v1',
+      },
+      source: 'platform',
+    })
+  })
+
+  it('routes platform seedream/image2 to APIMart credentials', async () => {
+    const seedream = await resolver.resolveForGeneration('u1', 'platform::seedream-5.0-pro', 'image')
+    expect(seedream.credentials).toEqual({
+      apiKey: 'apimart-env-key',
+      baseUrl: 'https://api.apimart.ai/v1',
+    })
+
+    const image2 = await resolver.resolveForGeneration('u1', 'image2', 'image')
+    expect(image2.credentials).toEqual({
+      apiKey: 'apimart-env-key',
+      baseUrl: 'https://api.apimart.ai/v1',
+    })
+  })
+
+  it('keeps Agnes credentials for platform text models', async () => {
+    const result = await resolver.resolveForGeneration('u1', 'platform::agnes-2.0-flash', 'text')
+    expect(result.credentials).toEqual({
+      apiKey: 'platform-env-key',
+      baseUrl: 'https://platform.example.com/v1',
+    })
+  })
+
+  it('prefers OPENAI_BASE_URL over stale platform channel baseUrl', async () => {
+    const row = prisma._channels.get(PLATFORM_CHANNEL_ID)!
+    row.baseUrl = 'https://stale.example.com/v1'
+    process.env.OPENAI_BASE_URL = 'https://fresh.example.com/v1'
+
+    const result = await resolver.resolveForGeneration('u1', 'platform::agnes-2.0-flash', 'text')
+    expect(result.credentials.baseUrl).toBe('https://fresh.example.com/v1')
+  })
+
+  it('treats legacy bare model keys as platform', async () => {
+    const result = await resolver.resolveForGeneration('u1', 'agnes-image-2.1-flash', 'image')
+    expect(result.channelId).toBe('platform')
+    expect(result.modelName).toBe('agnes-image-2.1-flash')
+    expect(result.source).toBe('platform')
+  })
+
+  it('returns user source without apiKey when channel has no secret', async () => {
+    prisma._channels.set('ch_nokey', {
+      id: 'ch_nokey',
+      userId: 'u1',
+      name: 'empty',
+      apiFormat: 'openai',
+      baseUrl: 'https://user.example.com/v1',
+      encryptedApiKey: null,
+      iv: null,
+      authTag: null,
+      keyVersion: 1,
+      models: '[]',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    const result = await resolver.resolveForGeneration('u1', 'ch_nokey::m1', 'text')
+    expect(result.source).toBe('user')
+    expect(result.credentials.apiKey).toBeUndefined()
+    expect(result.credentials.baseUrl).toBe('https://user.example.com/v1')
+  })
+
+  it('routes platform h3-max-turbo to FAL credentials', async () => {
+    process.env.FAL_KEY = 'fal-env-key'
+
+    const result = await resolver.resolveForGeneration('u1', 'platform::h3-max-turbo', 'video')
+    expect(result).toEqual({
+      channelId: 'platform',
+      modelName: 'h3-max-turbo',
+      apiFormat: 'openai',
+      credentials: {
+        apiKey: 'fal-env-key',
+        baseUrl: 'https://fal.run',
+      },
+      source: 'platform',
+    })
+  })
+
+  it('honors FAL_BASE_URL override for platform H3 Max', async () => {
+    process.env.FAL_KEY = 'fal-env-key'
+    process.env.FAL_BASE_URL = 'https://fal.custom.example'
+
+    const result = await resolver.resolveForGeneration('u1', 'platform::h3-max', 'video')
+    expect(result.credentials).toEqual({
+      apiKey: 'fal-env-key',
+      baseUrl: 'https://fal.custom.example',
+    })
+  })
+
+  it('does not fall back to OPENAI_API_KEY when FAL_KEY is missing', async () => {
+    const result = await resolver.resolveForGeneration('u1', 'platform::h3-max-turbo', 'video')
+    expect(result.credentials.apiKey).not.toBe('platform-env-key')
+    expect(result.credentials.apiKey).toBeFalsy()
+    expect(result.credentials.baseUrl).toBe('https://fal.run')
+  })
+
+  it('keeps user BYOK credentials for h3-max-turbo', async () => {
+    const enc = crypto.encrypt('sk-user-fal')
+    prisma._channels.set('ch_user', {
+      id: 'ch_user',
+      userId: 'u1',
+      name: 'mine',
+      apiFormat: 'openai',
+      baseUrl: 'https://user-fal.example.com',
+      encryptedApiKey: enc.ciphertext,
+      iv: enc.iv,
+      authTag: enc.authTag,
+      keyVersion: enc.keyVersion,
+      models: '[]',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    const result = await resolver.resolveForGeneration('u1', 'ch_user::h3-max-turbo', 'video')
+    expect(result).toEqual({
+      channelId: 'ch_user',
+      modelName: 'h3-max-turbo',
+      apiFormat: 'openai',
+      credentials: { apiKey: 'sk-user-fal', baseUrl: 'https://user-fal.example.com' },
+      source: 'user',
+    })
+  })
+
+  it('routes platform minimax-h3 to MiniMax credentials', async () => {
+    process.env.MINIMAX_API_KEY = 'minimax-env-key'
+
+    const result = await resolver.resolveForGeneration('u1', 'platform::minimax-h3', 'video')
+    expect(result).toEqual({
+      channelId: 'platform',
+      modelName: 'minimax-h3',
+      apiFormat: 'openai',
+      credentials: {
+        apiKey: 'minimax-env-key',
+        baseUrl: 'https://api.minimax.io',
+      },
+      source: 'platform',
+    })
+  })
+
+  it('does not fall back to OPENAI_API_KEY when MINIMAX_API_KEY is missing', async () => {
+    const result = await resolver.resolveForGeneration('u1', 'platform::minimax-h3', 'video')
+    expect(result.credentials.apiKey).not.toBe('platform-env-key')
+    expect(result.credentials.apiKey).toBeFalsy()
+    expect(result.credentials.baseUrl).toBe('https://api.minimax.io')
+  })
+
+  it('keeps platform h3-max-turbo on FAL_KEY instead of MiniMax', async () => {
+    process.env.FAL_KEY = 'fal-env-key'
+    process.env.MINIMAX_API_KEY = 'minimax-env-key'
+
+    const result = await resolver.resolveForGeneration('u1', 'platform::h3-max-turbo', 'video')
+    expect(result.credentials).toEqual({
+      apiKey: 'fal-env-key',
+      baseUrl: 'https://fal.run',
+    })
+  })
+
+  it('keeps user BYOK credentials for minimax-h3', async () => {
+    const enc = crypto.encrypt('sk-user-minimax')
+    prisma._channels.set('ch_user', {
+      id: 'ch_user',
+      userId: 'u1',
+      name: 'mine',
+      apiFormat: 'openai',
+      baseUrl: 'https://user-minimax.example.com',
+      encryptedApiKey: enc.ciphertext,
+      iv: enc.iv,
+      authTag: enc.authTag,
+      keyVersion: enc.keyVersion,
+      models: '[]',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    const result = await resolver.resolveForGeneration('u1', 'ch_user::minimax-h3', 'video')
+    expect(result).toEqual({
+      channelId: 'ch_user',
+      modelName: 'minimax-h3',
+      apiFormat: 'openai',
+      credentials: { apiKey: 'sk-user-minimax', baseUrl: 'https://user-minimax.example.com' },
+      source: 'user',
+    })
+  })
+
+  it('returns 404 for cross-user channel access', async () => {
+    prisma._channels.set('ch_other', {
+      id: 'ch_other',
+      userId: 'u2',
+      name: 'other',
+      apiFormat: 'openai',
+      baseUrl: 'https://other.example.com/v1',
+      encryptedApiKey: null,
+      iv: null,
+      authTag: null,
+      keyVersion: 1,
+      models: '[]',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    await expect(
+      resolver.resolveForGeneration('u1', 'ch_other::m1', 'text'),
+    ).rejects.toBeInstanceOf(NotFoundException)
+  })
+})

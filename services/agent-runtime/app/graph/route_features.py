@@ -1,0 +1,173 @@
+"""P1: structured RouteFeatures from RouteContext + AtomicIntent (RU-3, RU-6)."""
+
+from __future__ import annotations
+
+from typing import TypedDict
+
+from app.graph.atomic_intent import (
+    regen_intent,
+    regenerate_phrase_intent,
+    utterance_suggests_media_create,
+)
+from app.graph.atomic_intent_ir import AtomicIntent, intent_suggests_media_create
+from app.graph.explore_route import explore_explicit_intent
+from app.graph.intent import focus_gen_intent
+from app.graph.l0_action import has_preserve_intent, utterance_has_multi_image_refs
+from app.graph.media_utterance import (
+    media_directed_question,
+    normalize_colloquial_create_verbs,
+    strong_generate_media,
+    suspected_media_create,
+    suspected_vision_qa,
+)
+from app.graph.planning_guard import has_planning_image_conflict
+from app.graph.route_context import RouteContext
+
+# Orchestration phrase table — no bare 「出图」 (RU-3 / design §9.8.2)
+_ORCHESTRATION_PHRASES = (
+    "详情页",
+    "全链路",
+    "营销方案",
+    "分镜脚本方案",
+    "详情页方案",
+    "详情页营销",
+    "详情页构图",
+    "详情页的构图",
+    "整套分镜",
+    "全套分镜",
+    "campaign",
+    "拆画布",
+    "14个节点",
+    "14节点",
+)
+
+
+class RouteFeatures(TypedDict, total=False):
+    has_text_ref: bool
+    has_image_ref: bool
+    has_multi_image_ref: bool
+    has_sidebar_media: bool
+    suspected_media_create: bool
+    suspected_vision_qa: bool
+    media_directed_question: bool
+    media_create_high: bool
+    explicit_skill: bool
+    has_regen_checkpoint: bool
+    preserve_composition: bool
+    orchestration_phrases: bool
+    modality_conflict_risk: bool
+    explore_blocked: bool
+
+
+def _text_keys(keys: list[str]) -> list[str]:
+    return [k for k in keys if str(k).upper().startswith("T")]
+
+
+def _image_keys(keys: list[str]) -> list[str]:
+    return [k for k in keys if str(k).upper().startswith("I")]
+
+
+def _has_orchestration_phrases(utterance: str) -> bool:
+    t = (utterance or "").strip()
+    if not t:
+        return False
+    if "出图" in t and not any(p in t for p in _ORCHESTRATION_PHRASES if p != "出图"):
+        # Single 「出图」/ ref-backed generate is not orchestration.
+        if not any(p in t for p in ("详情页", "全链路", "营销方案", "分镜", "campaign", "拆画布", "节点")):
+            return False
+    return any(p in t for p in _ORCHESTRATION_PHRASES)
+
+
+def _explore_blocked(utterance: str, intent: AtomicIntent) -> bool:
+    if not utterance:
+        return False
+    blocked = (
+        (intent_suggests_media_create(intent) and not explore_explicit_intent(utterance))
+        or focus_gen_intent(utterance)
+        or regenerate_phrase_intent(utterance)
+        or regen_intent(utterance)
+    )
+    return blocked
+
+
+def orchestration_campaign_signal(utterance: str) -> bool:
+    """High-complexity orchestration without Skill → clarify_route (§9.13, no bool classifier)."""
+    t = (utterance or "").strip()
+    if not t:
+        return False
+    if _has_orchestration_phrases(t):
+        return True
+    from app.graph.planning_guard import detect_action, is_planning_intent
+
+    if "详情页" in t and is_planning_intent(t) and detect_action(t) != "write":
+        return True
+    from app.graph.atomic_intent import _parse_orch_count, _storyboard_shot_count
+
+    shots = _storyboard_shot_count(t)
+    if shots is not None and shots >= 4:
+        return True
+    if "分镜" in t and any(x in t for x in ("12", "十二", "整套", "全套")):
+        return True
+    return False
+
+
+def extract_route_features(ctx: RouteContext, intent: AtomicIntent) -> RouteFeatures:
+    """Derive L0 routing features — no flow_mode decisions here."""
+    utterance = str(ctx.get("utterance") or intent.utterance or "").strip()
+    keys = list(ctx.get("mentioned_keys") or [])
+    attachments = ctx.get("sidebar_attachments") or []
+
+    text_keys = _text_keys(keys)
+    image_keys = _image_keys(keys)
+    has_text_attachment = any(
+        str(a.get("mediaType") or "").lower() == "text" for a in attachments
+    )
+    has_image_attachment = any(
+        str(a.get("mediaType") or "").lower() == "image" for a in attachments
+    )
+    has_sidebar_media = any(
+        str(a.get("mediaType") or "").lower() in ("image", "video")
+        and str(a.get("url") or "").strip()
+        for a in attachments
+        if isinstance(a, dict)
+    )
+
+    suspected_create = suspected_media_create(utterance)
+    suspected_vision = suspected_vision_qa(utterance)
+    normalized = normalize_colloquial_create_verbs(utterance)
+    # Soft signal only (Phase 2a): must NOT alone set flow_mode=atomic_create.
+    # Routing uses hard/precedence without atomic_generate; propose tools are Phase 2b.
+    media_high = bool(
+        utterance_suggests_media_create(normalized)
+        or strong_generate_media(utterance)
+        or strong_generate_media(normalized)
+    )
+
+    checkpoint = ctx.get("checkpoint") or {}
+    atomic_node_id = str(checkpoint.get("atomic_node_id") or ctx.get("atomic_node_id") or "").strip()
+    atomic_spec = checkpoint.get("atomic_spec") or ctx.get("atomic_spec")
+    has_checkpoint = bool(atomic_node_id and isinstance(atomic_spec, dict))
+
+    multi_image = (
+        len(image_keys) >= 2
+        or utterance_has_multi_image_refs(utterance)
+        or sum(1 for a in attachments if str(a.get("mediaType") or "").lower() == "image") >= 2
+    )
+
+    return RouteFeatures(
+        has_text_ref=bool(text_keys or has_text_attachment),
+        has_image_ref=bool(image_keys or has_image_attachment),
+        has_multi_image_ref=multi_image,
+        has_sidebar_media=has_sidebar_media,
+        suspected_media_create=suspected_create,
+        suspected_vision_qa=suspected_vision,
+        media_directed_question=media_directed_question(utterance),
+        media_create_high=media_high,
+        explicit_skill=bool(str(ctx.get("requested_skill_id") or "").strip()),
+        has_regen_checkpoint=has_checkpoint,
+        preserve_composition=has_preserve_intent(utterance),
+        orchestration_phrases=_has_orchestration_phrases(utterance),
+        modality_conflict_risk=has_planning_image_conflict(utterance)
+        and not has_preserve_intent(utterance),
+        explore_blocked=_explore_blocked(utterance, intent),
+    )

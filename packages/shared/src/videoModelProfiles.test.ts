@@ -1,0 +1,325 @@
+import { describe, expect, it } from 'vitest'
+import {
+  clampVideoGenerationInput,
+  isSeedance1x,
+  resolveSeedance20Gateway,
+  resolveVideoGatewayModelId,
+  resolveVideoModelProfile,
+} from './videoModelProfiles'
+
+describe('resolveVideoModelProfile', () => {
+  it('maps seedance-2.0-min to doubao-seedance-2.0-mini async multimodal', () => {
+    const p = resolveVideoModelProfile('seedance-2.0-min', 'seedance-2.0-min')
+    expect(p.gatewayModelId).toBe('doubao-seedance-2.0-mini')
+    expect(p.responseMode).toBe('async_task')
+    expect(p.maxImageRefs).toBe(9)
+    expect(p.maxVideoRefs).toBe(3)
+    expect(p.maxAudioRefs).toBe(3)
+    expect(p.variantTag).toBe('mini')
+  })
+
+  it('maps agnes-video to agnes_poll pixel_frames', () => {
+    const p = resolveVideoModelProfile('agnes-video-v2.0', 'agnes-video-v2.0')
+    expect(p.responseMode).toBe('agnes_poll')
+    expect(p.sizeWire).toBe('pixel_frames')
+    expect(p.maxImageRefs).toBe(8)
+  })
+
+  it('maps agnes-video-2.5-flash to 720p seconds protocol', () => {
+    const p = resolveVideoModelProfile('agnes-video-2.5-flash', 'agnes-video-2.5-flash')
+    expect(p.responseMode).toBe('agnes_poll')
+    expect(p.sizeWire).toBe('ratio_duration')
+    expect(p.refWire).toBe('agnes_single_image')
+    expect(p.minDuration).toBe(4)
+    expect(p.maxDuration).toBe(12)
+    expect(p.maxImageRefs).toBe(5)
+    expect(p.maxVideoRefs).toBe(0)
+    expect(p.maxAudioRefs).toBe(0)
+    expect(p.allowedResolutions).toEqual(['720p'])
+    expect(p.allowedAspectRatios).toEqual(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'])
+  })
+
+  it('resolves h3-max-turbo profile', () => {
+    const p = resolveVideoModelProfile('h3-max-turbo', 'minimax/h3-max-turbo')
+    expect(p.refWire).toBe('fal_h3_max')
+    expect(p.sizeWire).toBe('ratio_duration')
+    expect(p.responseMode).toBe('async_task')
+    expect(p.gatewayModelId).toBe('minimax/h3-max-turbo')
+    expect(p.minDuration).toBe(5)
+    expect(p.maxDuration).toBe(15)
+    expect(p.maxImageRefs).toBe(2)
+    expect(p.maxVideoRefs).toBe(0)
+    expect(p.maxAudioRefs).toBe(0)
+    expect(p.allowedResolutions).toEqual(expect.arrayContaining(['480p', '768p']))
+    expect(p.maxResolution).toBe('768p')
+    expect(p.defaultGenerateAudio).toBe(true)
+    expect(p.pollIntervalMs).toBe(2000)
+    expect(p.maxPollMs).toBe(600_000)
+  })
+
+  it('resolves h3-max profile', () => {
+    const p = resolveVideoModelProfile('h3-max', 'minimax/h3-max')
+    expect(p.refWire).toBe('fal_h3_max')
+    expect(p.sizeWire).toBe('ratio_duration')
+    expect(p.responseMode).toBe('async_task')
+    expect(p.gatewayModelId).toBe('minimax/h3-max')
+    expect(p.maxImageRefs).toBe(2)
+    expect(p.maxVideoRefs).toBe(0)
+    expect(p.maxAudioRefs).toBe(0)
+    expect(p.defaultGenerateAudio).toBe(true)
+    expect(p.pollIntervalMs).toBe(2000)
+    expect(p.maxPollMs).toBe(600_000)
+    expect(p.allowedResolutions).toEqual(['480p', '768p'])
+    expect(p.allowedAspectRatios).toEqual(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'])
+    expect(p.maxResolution).toBe('768p')
+  })
+
+  it('detects fal h3 max by modelKey or gateway before Agnes/Seedance fallbacks', () => {
+    expect(resolveVideoModelProfile('h3-max-turbo', 'agnes-video-v2.0').refWire).toBe('fal_h3_max')
+    expect(resolveVideoModelProfile('custom-key', 'minimax/h3-max').refWire).toBe('fal_h3_max')
+  })
+
+  it('resolves minimax-h3 profile', () => {
+    const p = resolveVideoModelProfile('minimax-h3', 'MiniMax-H3')
+    expect(p.refWire).toBe('minimax_h3_content')
+    expect(p.sizeWire).toBe('ratio_duration')
+    expect(p.responseMode).toBe('async_task')
+    expect(p.minDuration).toBe(4)
+    expect(p.maxDuration).toBe(15)
+    expect(p.maxImageRefs).toBe(9)
+    expect(p.maxVideoRefs).toBe(3)
+    expect(p.maxAudioRefs).toBe(3)
+    expect(p.allowedResolutions).toEqual(['768p', '2k'])
+    expect(p.allowedAspectRatios).toEqual(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'])
+    expect(p.gatewayModelId).toBe('MiniMax-H3')
+    expect(p.defaultGenerateAudio).toBe(true)
+    expect(p.pollIntervalMs).toBe(10_000)
+    expect(p.maxPollMs).toBe(1_200_000)
+    expect(p.maxResolution).toBe('2k')
+  })
+
+  it('detects official MiniMax H3 by modelKey or gateway before Agnes/Seedance/legacy', () => {
+    expect(resolveVideoModelProfile('minimax-h3', 'agnes-video-v2.0').refWire).toBe('minimax_h3_content')
+    expect(resolveVideoModelProfile('MINIMAX-H3', 'doubao-seedance-2.0').refWire).toBe('minimax_h3_content')
+    expect(resolveVideoModelProfile('custom-key', 'MiniMax-H3').refWire).toBe('minimax_h3_content')
+    expect(resolveVideoModelProfile('custom-key', 'minimax-h3').refWire).toBe('minimax_h3_content')
+  })
+
+  it('does not treat fal h3-max models as official MiniMax H3', () => {
+    expect(resolveVideoModelProfile('h3-max', 'minimax/h3-max').refWire).toBe('fal_h3_max')
+    expect(resolveVideoModelProfile('h3-max-turbo', 'minimax/h3-max-turbo').refWire).toBe('fal_h3_max')
+    expect(resolveVideoModelProfile('minimax-h3-max', 'MiniMax-H3-Max').refWire).not.toBe(
+      'minimax_h3_content',
+    )
+  })
+})
+
+describe('clampVideoGenerationInput', () => {
+  it('downgrades seedance mini 1080p to 720p', () => {
+    const profile = resolveVideoModelProfile('seedance-2.0-min', 'doubao-seedance-2.0-mini')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '1080p',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r.resolution).toBe('720p')
+    expect(r.droppedFields.some((d) => d.field === 'resolution')).toBe(true)
+  })
+
+  it('keeps seedance standard 1080p without downgrade', () => {
+    const profile = resolveVideoModelProfile('seedance-2.0', 'doubao-seedance-2.0')
+    expect(profile.variantTag).toBe('standard')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '1080p',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r.resolution).toBe('1080p')
+    expect(r.droppedFields.some((d) => d.field === 'resolution')).toBe(false)
+  })
+
+  it('downgrades seedance fast 1080p to 720p with droppedFields', () => {
+    const profile = resolveVideoModelProfile('seedance-2.0-fast', 'doubao-seedance-2.0-fast')
+    expect(profile.variantTag).toBe('fast')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '1080p',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r.resolution).toBe('720p')
+    expect(r.droppedFields).toEqual([
+      { field: 'resolution', reason: '1080p not on fast; use 720p' },
+    ])
+  })
+
+  it('keeps seedance face 1080p without downgrade', () => {
+    const profile = resolveVideoModelProfile('seedance-2.0-face', 'doubao-seedance-2.0-face')
+    expect(profile.variantTag).toBe('face')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '1080p',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r.resolution).toBe('1080p')
+    expect(r.droppedFields.some((d) => d.field === 'resolution')).toBe(false)
+  })
+
+  it('downgrades fal h3 max 1080p and 4k to 768p', () => {
+    const profile = resolveVideoModelProfile('h3-max-turbo', 'minimax/h3-max-turbo')
+    const r1080 = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '1080p',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r1080.resolution).toBe('768p')
+    expect(r1080.droppedFields.some((d) => d.field === 'resolution')).toBe(true)
+
+    const r4k = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '4k',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r4k.resolution).toBe('768p')
+  })
+
+  it('snaps omitted fal h3 max resolution from default 720p to 768p', () => {
+    const profile = resolveVideoModelProfile('h3-max-turbo', 'minimax/h3-max-turbo')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(['480p', '768p']).toContain(r.resolution)
+    expect(r.resolution).toBe('768p')
+  })
+
+  it('snaps explicit fal h3 max 720p to nearest allowed 768p', () => {
+    const profile = resolveVideoModelProfile('h3-max', 'minimax/h3-max')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '720p',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r.resolution).toBe('768p')
+    expect(r.droppedFields.some((d) => d.field === 'resolution')).toBe(true)
+  })
+
+  it('clamps official MiniMax H3 4k to 2k', () => {
+    const profile = resolveVideoModelProfile('minimax-h3', 'MiniMax-H3')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '4k',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(r.resolution).toBe('2k')
+    expect(r.droppedFields.some((d) => d.field === 'resolution')).toBe(true)
+  })
+
+  it('snaps official MiniMax H3 720p to nearest allowed 768p', () => {
+    const profile = resolveVideoModelProfile('minimax-h3', 'MiniMax-H3')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      resolution: '720p',
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    })
+    expect(['768p', '2k']).toContain(r.resolution)
+    expect(r.resolution).toBe('768p')
+    expect(r.droppedFields.some((d) => d.field === 'resolution')).toBe(true)
+  })
+})
+
+describe('resolveVideoGatewayModelId', () => {
+  it('rewrites seedance catalog id', () => {
+    expect(resolveVideoGatewayModelId('seedance-2.0-min', 'seedance-2.0-min')).toBe(
+      'doubao-seedance-2.0-mini',
+    )
+  })
+})
+
+describe('resolveSeedance20Gateway', () => {
+  it('maps catalog modelKey seedance-2.0-min to mini gateway', () => {
+    expect(resolveSeedance20Gateway('seedance-2.0-min', 'seedance-2.0-min')).toBe(
+      'doubao-seedance-2.0-mini',
+    )
+  })
+
+  it('maps BYOK gateway id doubao-seedance-2.0-fast without catalog entry', () => {
+    expect(resolveSeedance20Gateway('doubao-seedance-2.0-fast', 'doubao-seedance-2.0-fast')).toBe(
+      'doubao-seedance-2.0-fast',
+    )
+  })
+
+  it('returns null for non-seedance models', () => {
+    expect(resolveSeedance20Gateway('agnes-video-v2.0', 'agnes-video-v2.0')).toBeNull()
+  })
+
+  it('maps BytePlus base id doubao-seedance-2-0-260128 to mini gateway', () => {
+    expect(
+      resolveSeedance20Gateway('doubao-seedance-2-0-260128', 'doubao-seedance-2-0-260128'),
+    ).toBe('doubao-seedance-2.0-mini')
+  })
+})
+
+describe('isSeedance1x', () => {
+  it('detects legacy 1.0 gateway ids', () => {
+    expect(isSeedance1x('doubao-seedance-1-0-lite-i2v-250428')).toBe(true)
+    expect(isSeedance1x('doubao-seedance-2.0-fast')).toBe(false)
+  })
+})
+
+describe('resolveVideoGatewayModelId (extended)', () => {
+  it('preserves fast gateway instead of rewriting to mini', () => {
+    expect(
+      resolveVideoGatewayModelId('seedance-2.0-fast', 'doubao-seedance-2.0-fast'),
+    ).toBe('doubao-seedance-2.0-fast')
+  })
+
+  it('still maps seedance-2.0-min catalog key to mini', () => {
+    expect(resolveVideoGatewayModelId('seedance-2.0-min', 'seedance-2.0-min')).toBe(
+      'doubao-seedance-2.0-mini',
+    )
+  })
+})
+
+describe('resolveVideoModelProfile BYOK fast hint', () => {
+  it('uses apimart_multimodal for BYOK fast gateway hint', () => {
+    const p = resolveVideoModelProfile(
+      'doubao-seedance-2.0-fast',
+      'doubao-seedance-2.0-fast',
+      { channelBaseUrl: 'https://api.apimart.ai/v1' },
+    )
+    expect(p.refWire).toBe('apimart_multimodal')
+    expect(p.gatewayModelId).toBe('doubao-seedance-2.0-fast')
+    expect(p.variantTag).toBe('fast')
+  })
+
+  it('uses apimart_multimodal for BytePlus mini id while preserving upstream gatewayModelId', () => {
+    const p = resolveVideoModelProfile(
+      'doubao-seedance-2-0-260128',
+      'doubao-seedance-2-0-260128',
+      { channelBaseUrl: 'https://api.apimart.ai/v1' },
+    )
+    expect(p.refWire).toBe('apimart_multimodal')
+    expect(p.gatewayModelId).toBe('doubao-seedance-2-0-260128')
+    expect(p.variantTag).toBe('mini')
+  })
+})

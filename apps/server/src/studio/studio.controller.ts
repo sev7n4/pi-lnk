@@ -1,0 +1,604 @@
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Inject, NotFoundException, Param, Post, Query, Req, UseGuards } from '@nestjs/common'
+import { Type } from 'class-transformer'
+import { IsArray, IsBoolean, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { AuthGuard } from '../auth/auth.guard'
+import { MediaProbeService } from '../media/media-probe.service'
+import { createCancelFlag } from '../points/charge-session'
+import { PrismaService } from '../prisma/prisma.service'
+import { checkMediaProbeRateLimit } from './media-probe-rate-limit'
+import { isAllowedMediaProbeUrl } from './media-probe-url.util'
+import { ImageSliceService } from './image-slice.service'
+import { StudioService } from './studio.service'
+import { VideoGenerationOrchestrator } from './video-generation.orchestrator'
+import { resolveVideoStartRequest, type VideoStartBody } from './video-generation-request.util'
+import type { CanvasData } from '@lnkpi/shared'
+
+class StudioRefDto {
+  @IsString()
+  refKey!: string
+
+  @IsString()
+  mediaType!: string
+
+  @IsOptional()
+  @IsString()
+  label?: string
+
+  @IsOptional()
+  @IsString()
+  text?: string
+
+  @IsOptional()
+  @IsString()
+  url?: string
+}
+
+class CanvasScopeFields {
+  @IsOptional()
+  @IsString()
+  sessionId?: string
+
+  @IsOptional()
+  @IsString()
+  nodeId?: string
+}
+
+class GenerateImageDto extends CanvasScopeFields {
+  @IsString()
+  prompt!: string
+
+  @IsOptional()
+  @IsString()
+  model?: string
+
+  @IsOptional()
+  @IsString()
+  aspectRatio?: string
+
+  @IsOptional()
+  @IsString()
+  resolution?: string
+
+  @IsOptional()
+  @IsNumber()
+  count?: number
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StudioRefDto)
+  refs?: StudioRefDto[]
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  mentionedKeys?: string[]
+}
+
+class GenerateVideoDto extends CanvasScopeFields {
+  @IsString()
+  prompt!: string
+
+  @IsOptional()
+  @IsString()
+  model?: string
+
+  @IsOptional()
+  @IsNumber()
+  duration?: number
+
+  @IsOptional()
+  @IsString()
+  aspectRatio?: string
+
+  @IsOptional()
+  @IsString()
+  resolution?: string
+
+  @IsOptional()
+  @IsString()
+  crop?: string
+
+  @IsOptional()
+  @IsString()
+  referenceImageUrl?: string
+
+  @IsOptional()
+  @IsString()
+  videoMode?: string
+
+  @IsOptional()
+  @IsBoolean()
+  generateAudio?: boolean
+
+  @IsOptional()
+  @IsNumber()
+  seed?: number
+
+  @IsOptional()
+  @IsString()
+  negativePrompt?: string
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StudioRefDto)
+  refs?: StudioRefDto[]
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  mentionedKeys?: string[]
+}
+
+class GenerateAudioDto extends CanvasScopeFields {
+  @IsString()
+  text!: string
+
+  @IsOptional()
+  @IsString()
+  model?: string
+
+  @IsOptional()
+  @IsString()
+  voice?: string
+
+  @IsOptional()
+  @IsString()
+  emotion?: string
+
+  @IsOptional()
+  @IsString()
+  language?: string
+
+  @IsOptional()
+  @IsNumber()
+  speed?: number
+
+  @IsOptional()
+  @IsNumber()
+  volume?: number
+
+  @IsOptional()
+  @IsNumber()
+  pitch?: number
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StudioRefDto)
+  refs?: StudioRefDto[]
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  mentionedKeys?: string[]
+}
+
+class GenerateTextDto extends CanvasScopeFields {
+  @IsString()
+  prompt!: string
+
+  @IsOptional()
+  @IsString()
+  model?: string
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StudioRefDto)
+  refs?: StudioRefDto[]
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  mentionedKeys?: string[]
+
+  @IsOptional()
+  @IsBoolean()
+  thinking?: boolean
+
+  @IsOptional()
+  @IsIn(['high', 'max'])
+  thinkingEffort?: 'high' | 'max'
+}
+
+class GeneratePromptDto extends CanvasScopeFields {
+  @IsString()
+  prompt!: string
+
+  @IsOptional()
+  @IsString()
+  model?: string
+
+  @IsOptional()
+  @IsString()
+  guideSceneId?: string
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StudioRefDto)
+  refs?: StudioRefDto[]
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  mentionedKeys?: string[]
+}
+
+class ImageVariationDto extends CanvasScopeFields {
+  @IsString()
+  prompt!: string
+
+  @IsOptional()
+  @IsString()
+  basePrompt?: string
+
+  @IsOptional()
+  @IsString()
+  model?: string
+}
+
+class ImageEditDto extends CanvasScopeFields {
+  @IsString()
+  prompt!: string
+
+  @IsString()
+  imageUrl!: string
+
+  @IsString()
+  maskUrl!: string
+
+  @IsOptional()
+  @IsString()
+  parentRecordId?: string
+
+  @IsOptional()
+  @IsString()
+  parentVersionId?: string
+}
+
+class ImageSegmentDto {
+  @IsString()
+  imageUrl!: string
+
+  @IsNumber()
+  x!: number
+
+  @IsNumber()
+  y!: number
+
+  @IsOptional()
+  @IsIn([0, 1])
+  label?: 0 | 1
+}
+
+class ImageSliceDto {
+  @IsString()
+  @IsNotEmpty()
+  sourceUrl!: string
+
+  @IsNumber()
+  cols!: number
+
+  @IsNumber()
+  rows!: number
+
+  @IsString()
+  @IsNotEmpty()
+  sessionId!: string
+}
+
+@Controller('studio')
+export class StudioController {
+  constructor(
+    @Inject(StudioService) private readonly studioService: StudioService,
+    @Inject(VideoGenerationOrchestrator) private readonly videoOrchestrator: VideoGenerationOrchestrator,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(MediaProbeService) private readonly mediaProbeService: MediaProbeService,
+    @Inject(ImageSliceService) private readonly imageSliceService: ImageSliceService,
+  ) {}
+
+  private parseCanvas(raw: string | null | undefined): CanvasData {
+    if (!raw) return { nodes: [], edges: [] }
+    try {
+      return JSON.parse(raw) as CanvasData
+    } catch {
+      return { nodes: [], edges: [] }
+    }
+  }
+
+  @Get('generations')
+  @UseGuards(AuthGuard)
+  async list(
+    @Req() req: { user: { sub: string } },
+    @Query('type') type?: string,
+    @Query('sessionId') sessionId?: string,
+  ) {
+    const data = await this.studioService.listGenerations(req.user.sub, type, sessionId)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('text/generate')
+  @UseGuards(AuthGuard)
+  async generateText(
+    @Req() req: { user: { sub: string }; on(event: string, cb: () => void): void; aborted?: boolean },
+    @Body() dto: GenerateTextDto,
+  ) {
+    const cancel = createCancelFlag(req)
+    const data = await this.studioService.generateText(
+      req.user.sub,
+      dto.prompt,
+      dto.model,
+      dto.refs,
+      dto.mentionedKeys,
+      cancel,
+      dto.thinking,
+      dto.thinkingEffort,
+      { sessionId: dto.sessionId, nodeId: dto.nodeId },
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('prompt/generate')
+  @UseGuards(AuthGuard)
+  async generatePrompt(
+    @Req() req: { user: { sub: string }; on(event: string, cb: () => void): void; aborted?: boolean },
+    @Body() dto: GeneratePromptDto,
+  ) {
+    const cancel = createCancelFlag(req)
+    const data = await this.studioService.generatePrompt(
+      req.user.sub,
+      dto.prompt,
+      dto.model,
+      cancel,
+      { sessionId: dto.sessionId, nodeId: dto.nodeId },
+      dto.guideSceneId,
+      dto.refs,
+      dto.mentionedKeys,
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('image/variation')
+  @UseGuards(AuthGuard)
+  async imageVariation(
+    @Req() req: { user: { sub: string }; on(event: string, cb: () => void): void; aborted?: boolean },
+    @Body() dto: ImageVariationDto,
+  ) {
+    const cancel = createCancelFlag(req)
+    const data = await this.studioService.generateImageVariation(
+      req.user.sub,
+      dto.prompt,
+      dto.basePrompt,
+      dto.model,
+      cancel,
+      { sessionId: dto.sessionId, nodeId: dto.nodeId },
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('image/edit')
+  @UseGuards(AuthGuard)
+  async editImage(
+    @Req() req: { user: { sub: string }; on(event: string, cb: () => void): void; aborted?: boolean },
+    @Body() dto: ImageEditDto,
+  ) {
+    const cancel = createCancelFlag(req)
+    const data = await this.studioService.editImage(
+      req.user.sub,
+      {
+        prompt: dto.prompt,
+        imageUrl: dto.imageUrl,
+        maskUrl: dto.maskUrl,
+        sessionId: dto.sessionId,
+        nodeId: dto.nodeId,
+        parentRecordId: dto.parentRecordId,
+        parentVersionId: dto.parentVersionId,
+      },
+      cancel,
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('image/segment')
+  @UseGuards(AuthGuard)
+  async segmentImage(
+    @Req() req: { user: { sub: string } },
+    @Body() dto: ImageSegmentDto,
+  ) {
+    const data = await this.studioService.segmentImage(req.user.sub, {
+      imageUrl: dto.imageUrl,
+      x: dto.x,
+      y: dto.y,
+      label: dto.label,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('image/slice')
+  @UseGuards(AuthGuard)
+  async sliceImage(
+    @Req() req: { user: { sub: string } },
+    @Body() dto: ImageSliceDto,
+  ) {
+    const data = await this.imageSliceService.slice({
+      userId: req.user.sub,
+      sourceUrl: dto.sourceUrl,
+      cols: dto.cols,
+      rows: dto.rows,
+      sessionId: dto.sessionId,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Get('generations/:id/diagnostic')
+  @UseGuards(AuthGuard)
+  async generationDiagnostic(@Req() req: { user: { sub: string } }, @Param('id') id: string) {
+    const data = await this.studioService.getGenerationDiagnostic(req.user.sub, id)
+    return { data }
+  }
+
+  @Get('generations/:id')
+  @UseGuards(AuthGuard)
+  async getGeneration(@Req() req: { user: { sub: string } }, @Param('id') id: string) {
+    const data = await this.studioService.getGeneration(req.user.sub, id)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Get('media-probe')
+  @UseGuards(AuthGuard)
+  async mediaProbe(@Req() req: { user: { sub: string } }, @Query('url') url?: string) {
+    const trimmed = url?.trim()
+    if (!trimmed) {
+      throw new BadRequestException('缺少 url')
+    }
+    if (!isAllowedMediaProbeUrl(trimmed)) {
+      throw new BadRequestException('URL 不在允许范围内')
+    }
+    checkMediaProbeRateLimit(req.user.sub)
+    const data = await this.mediaProbeService.probeUrl(trimmed)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('image/generate')
+  @UseGuards(AuthGuard)
+  async generateImage(@Req() req: { user: { sub: string } }, @Body() dto: GenerateImageDto) {
+    // Async mode: returns a `generating` record; client polls. Disconnect must
+    // not cancel the background generation, so no cancel flag here.
+    const data = await this.studioService.generateImage(
+      req.user.sub,
+      dto.prompt,
+      dto.model,
+      dto.aspectRatio,
+      dto.refs,
+      dto.mentionedKeys,
+      dto.resolution,
+      dto.count,
+      { sessionId: dto.sessionId, nodeId: dto.nodeId },
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('video/start')
+  @UseGuards(AuthGuard)
+  async startVideoGeneration(@Req() req: { user: { sub: string } }, @Body() dto: GenerateVideoDto) {
+    let canvas: CanvasData | undefined
+    if (dto.sessionId?.trim()) {
+      const session = await this.prisma.session.findUnique({ where: { id: dto.sessionId } })
+      if (!session) throw new NotFoundException('会话不存在')
+      if (session.userId !== req.user.sub) throw new ForbiddenException()
+      canvas = this.parseCanvas(session.canvasData)
+    }
+
+    const { request, legacyReferenceImageUrl } = resolveVideoStartRequest({
+      body: dto as VideoStartBody,
+      canvas,
+      sessionId: dto.sessionId,
+      nodeId: dto.nodeId,
+    })
+
+    const started = await this.videoOrchestrator.start(
+      req.user.sub,
+      request,
+      async () => {},
+      legacyReferenceImageUrl,
+    )
+
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        id: started.generationRecordId,
+        type: 'video',
+        prompt: request.prompt,
+        model: request.model ?? null,
+        status: started.status,
+        url: null,
+        generationStartedAt: started.generationStartedAt,
+        sessionId: request.scope.sessionId || null,
+        nodeId: request.scope.nodeId || null,
+        createdAt: started.generationStartedAt,
+      },
+    }
+  }
+
+  @Post('video/generate')
+  @UseGuards(AuthGuard)
+  async generateVideo(@Req() req: { user: { sub: string } }, @Body() dto: GenerateVideoDto) {
+    const data = await this.studioService.generateVideo(
+      req.user.sub,
+      dto.prompt,
+      dto.model,
+      dto.duration,
+      dto.aspectRatio,
+      dto.refs,
+      dto.mentionedKeys,
+      dto.resolution,
+      dto.crop,
+      dto.referenceImageUrl,
+      { sessionId: dto.sessionId, nodeId: dto.nodeId },
+      dto.videoMode,
+      dto.generateAudio,
+      dto.seed,
+      dto.negativePrompt,
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('audio/generate')
+  @UseGuards(AuthGuard)
+  async generateAudio(
+    @Req() req: { user: { sub: string }; on(event: string, cb: () => void): void; aborted?: boolean },
+    @Body() dto: GenerateAudioDto,
+  ) {
+    const cancel = createCancelFlag(req)
+    const data = await this.studioService.generateAudio(
+      req.user.sub,
+      dto.text,
+      {
+        model: dto.model,
+        voice: dto.voice,
+        emotion: dto.emotion,
+        language: dto.language,
+        speed: dto.speed,
+        volume: dto.volume,
+        pitch: dto.pitch,
+      },
+      dto.refs,
+      dto.mentionedKeys,
+      cancel,
+      { sessionId: dto.sessionId, nodeId: dto.nodeId },
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('generations/:id/confirm-platform-fallback')
+  @UseGuards(AuthGuard)
+  async confirmPlatformFallback(
+    @Req() req: { user: { sub: string }; on(event: string, cb: () => void): void; aborted?: boolean },
+    @Param('id') id: string,
+  ) {
+    const cancel = createCancelFlag(req)
+    const data = await this.studioService.confirmPlatformFallback(req.user.sub, id, cancel)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('generations/:id/cancel-platform-fallback')
+  @UseGuards(AuthGuard)
+  async cancelPlatformFallback(
+    @Req() req: { user: { sub: string } },
+    @Param('id') id: string,
+  ) {
+    const data = await this.studioService.cancelPlatformFallback(req.user.sub, id)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('generations/:id/cancel')
+  @UseGuards(AuthGuard)
+  async cancelGeneration(@Req() req: { user: { sub: string } }, @Param('id') id: string) {
+    const data = await this.studioService.cancelGeneration(req.user.sub, id)
+    return { code: 0, message: 'ok', data }
+  }
+}

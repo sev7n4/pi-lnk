@@ -1,0 +1,466 @@
+name: Deploy to Tencent Cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/server/**"
+      - "apps/web/**"
+      - "packages/**"
+      - "deploy/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".dockerignore"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        default: main
+      recover_only:
+        description: Only recover CVM (cleanup + restart existing API)
+        required: false
+        default: false
+        type: boolean
+      enable_agent_runtime:
+        description: Sync + enable Agent Runtime on CVM (Compose; see deploy/AGENT_RUNTIME_PRODUCTION.md)
+        required: false
+        default: false
+        type: boolean
+      deploy_web_only:
+        description: Only deploy web frontend to CVM (skip API build)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lnkpi-deploy-cvm
+  cancel-in-progress: false
+
+env:
+  IMAGE_TAG: ${{ github.sha }}
+  DEPLOY_DIR: /opt/lnkpi
+  API_PORT: "5100"
+  WEB_PORT: "8888"
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      web: ${{ steps.filter.outputs.web }}
+      agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'apps/server/**'
+              - 'packages/**'
+              - 'deploy/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.dockerignore'
+              - '.github/workflows/deploy.yml'
+            web:
+              - 'apps/web/**'
+              - 'packages/shared/**'
+              - 'deploy/nginx.conf'
+              - 'deploy/deploy-web.sh'
+              - '.github/workflows/deploy.yml'
+            agent_runtime:
+              - 'services/agent-runtime/**'
+              - 'deploy/docker/Dockerfile.agent-runtime'
+              - 'deploy/docker-compose.prod.yml'
+              - 'deploy/enable-agent-runtime.sh'
+
+  deploy-api:
+    name: Build API on CVM
+    needs: changes
+    if: >-
+      ${{
+        (needs.changes.outputs.api == 'true' || github.event_name == 'workflow_dispatch')
+        && github.event.inputs.recover_only != 'true'
+        && github.event.inputs.deploy_web_only != 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    env:
+      SSH_HOST: ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
+      SSH_USER: ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-cvm
+            HostName ${{ env.SSH_HOST }}
+            User ${{ env.SSH_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            BatchMode yes
+            LogLevel ERROR
+            ServerAliveInterval 15
+            ServerAliveCountMax 30
+            TCPKeepAlive yes
+            ConnectTimeout 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+          cat > /tmp/lnkpi-ssh-retry.sh <<'RETRY'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          label="$1"; shift
+          for attempt in $(seq 1 8); do
+            echo "${label} attempt ${attempt}/8"
+            if "$@"; then
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+          echo "ERROR: ${label} failed after retries"
+          exit 1
+          RETRY
+          chmod +x /tmp/lnkpi-ssh-retry.sh
+
+      - name: Recover CVM
+        run: |
+          set -euo pipefail
+          API_PORT="${{ env.API_PORT }}"
+          SSH_HOST="${{ env.SSH_HOST }}"
+          RECOVER_OK=0
+          if /tmp/lnkpi-ssh-retry.sh "recover-ssh" ssh -T deploy-cvm "bash -s" < deploy/cvm-recover.sh; then
+            RECOVER_OK=1
+          elif ssh -T deploy-cvm "bash -s" <<EOF
+          set -euo pipefail
+          pkill -f deploy-remote-build || true
+          pkill -f launch-cvm-build || true
+          docker ps --filter name=lnkpi-api || true
+          EOF
+          then
+            RECOVER_OK=1
+          fi
+          if [[ "$RECOVER_OK" != "1" ]]; then
+            echo "WARN: recover SSH failed after retries; checking external health..."
+            if curl -fsS --connect-timeout 5 --max-time 10 "http://${SSH_HOST}:${API_PORT}/api/health" >/tmp/lnkpi-recover-health.json; then
+              echo "External health OK — continuing deploy"
+              head -c 200 /tmp/lnkpi-recover-health.json
+              echo ""
+            else
+              echo "ERROR: recover failed and API unreachable"
+              exit 1
+            fi
+          fi
+
+      - name: Sync source to CVM
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+          IMAGE_TAG="${{ env.IMAGE_TAG }}"
+
+          tar --exclude='.git' \
+              --exclude='node_modules' \
+              --exclude='apps/web' \
+              --exclude='**/dist' \
+              --exclude='.cursor' \
+              --exclude='docs' \
+              -czf - . | /tmp/lnkpi-ssh-retry.sh "sync-tar" ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR} && if [[ -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/.env /tmp/lnkpi.env.bak; fi && rm -rf ${DEPLOY_DIR}/packages ${DEPLOY_DIR}/apps/server && tar -xzf - -C ${DEPLOY_DIR} && if [[ -f /tmp/lnkpi.env.bak ]]; then mv /tmp/lnkpi.env.bak ${DEPLOY_DIR}/.env; elif [[ ! -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/deploy/.env.production.example ${DEPLOY_DIR}/.env; fi && chmod +x ${DEPLOY_DIR}/deploy/deploy-remote-build.sh ${DEPLOY_DIR}/deploy/deploy-remote.sh ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${DEPLOY_DIR}/deploy/cvm-recover.sh ${DEPLOY_DIR}/deploy/enable-agent-runtime.sh ${DEPLOY_DIR}/deploy/deploy-web.sh ${DEPLOY_DIR}/deploy/smoke-graph-phase-a.sh && rm -f /tmp/lnkpi-deploy-${IMAGE_TAG}.status /tmp/lnkpi-deploy-${IMAGE_TAG}.log'"
+
+      - name: Launch background build on CVM
+        if: ${{ github.event.inputs.enable_agent_runtime != 'true' }}
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+          IMAGE_TAG="${{ env.IMAGE_TAG }}"
+          LOG_FILE="/tmp/lnkpi-deploy-${IMAGE_TAG}.log"
+          PID_FILE="/tmp/lnkpi-deploy-${IMAGE_TAG}.pid"
+
+          LAUNCH_OUT=$(/tmp/lnkpi-ssh-retry.sh "launch-ssh" ssh -n deploy-cvm "bash ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${IMAGE_TAG}")
+          echo "${LAUNCH_OUT}"
+
+          sleep 2
+          PID=$(ssh deploy-cvm "cat ${PID_FILE} 2>/dev/null || true")
+          if [[ -z "${PID}" ]]; then
+            echo "ERROR: CVM build pid file missing"
+            ssh deploy-cvm "tail -40 ${LOG_FILE} 2>/dev/null || true"
+            exit 1
+          fi
+          echo "Build started on CVM (pid=${PID}, log=${LOG_FILE})"
+
+      - name: Wait for CVM build
+        if: ${{ github.event.inputs.enable_agent_runtime != 'true' }}
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="${{ env.IMAGE_TAG }}"
+          STATUS_FILE="/tmp/lnkpi-deploy-${IMAGE_TAG}.status"
+          LOG_FILE="/tmp/lnkpi-deploy-${IMAGE_TAG}.log"
+          OK=0
+
+          for i in $(seq 1 180); do
+            RAW=$(ssh -T deploy-cvm "cat ${STATUS_FILE} 2>/dev/null || echo pending" 2>/dev/null || echo pending)
+            STATUS=$(printf '%s' "$RAW" | tr -d '\r' | grep -Eo 'success|failed|running|pending' | tail -1 || echo pending)
+            echo "Attempt $i: status=${STATUS}"
+            case "$STATUS" in
+              success)
+                OK=1
+                break
+                ;;
+              failed)
+                echo "=== CVM build log (tail) ==="
+                ssh deploy-cvm "tail -80 ${LOG_FILE} 2>/dev/null || true"
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+
+          if [[ "$OK" != "1" ]]; then
+            echo "Build timed out after 90 minutes"
+            ssh deploy-cvm "tail -80 ${LOG_FILE} 2>/dev/null || true"
+            exit 1
+          fi
+
+          echo "CVM build succeeded"
+
+      - name: Verify API deployment
+        if: ${{ github.event.inputs.enable_agent_runtime != 'true' }}
+        run: |
+          set -euo pipefail
+          API_PORT="${{ env.API_PORT }}"
+          SSH_HOST="${{ env.SSH_HOST }}"
+          OK=0
+          for i in $(seq 1 10); do
+            if ssh deploy-cvm "curl -fsS --connect-timeout 5 --max-time 10 http://127.0.0.1:${API_PORT}/api/health" >/tmp/lnkpi-health.json 2>/dev/null; then
+              echo "Health OK (localhost): http://127.0.0.1:${API_PORT}/api/health"
+              head -c 200 /tmp/lnkpi-health.json
+              echo ""
+              OK=1
+              break
+            fi
+            echo "Attempt $i: localhost health check failed"
+            sleep $((i <= 5 ? 5 : 10))
+          done
+          rm -f /tmp/lnkpi-health.json
+          [ "$OK" = "1" ] || {
+            echo "=== diagnostics ==="
+            ssh deploy-cvm "docker ps -a --filter name=lnkpi-api; ss -tlnp | grep ':${API_PORT}' || true; docker logs lnkpi-api --tail 30 2>&1 || true"
+            exit 1
+          }
+
+          if curl -fsS --connect-timeout 5 --max-time 10 "http://${SSH_HOST}:${API_PORT}/api/health" | head -c 200; then
+            echo ""
+            echo "Public API health OK (external)"
+          else
+            echo "WARN: public API unreachable from GitHub Actions — check security group"
+            exit 1
+          fi
+
+      - name: Layout workflow smoke (on CVM)
+        if: >-
+          ${{
+            github.event.inputs.recover_only != 'true'
+            && github.event.inputs.deploy_web_only != 'true'
+          }}
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+          API_PORT="${{ env.API_PORT }}"
+          ssh deploy-cvm "bash -lc 'cd ${DEPLOY_DIR} && set -a && source .env && set +a && export LNKPI_SERVICE_TOKEN=\${AGENT_RUNTIME_SERVICE_TOKEN} && BASE_URL=http://127.0.0.1:${API_PORT} python3 deploy/prod-layout-workflow-verify.py'"
+
+      - name: Enable Agent Runtime on CVM
+        if: >-
+          ${{
+            github.event.inputs.enable_agent_runtime == 'true'
+            || needs.changes.outputs.agent_runtime == 'true'
+          }}
+        run: |
+          set -euo pipefail
+          /tmp/lnkpi-ssh-retry.sh "enable-runtime-ssh" ssh -T deploy-cvm "bash -s" < deploy/enable-agent-runtime.sh
+          echo "=== post-enable: agent-runtime health (in container) ==="
+          ssh -T deploy-cvm "docker exec lnkpi-agent-runtime curl -fsS http://127.0.0.1:8000/health"
+
+      - name: Graph Phase A smoke (production)
+        if: >-
+          ${{
+            github.event.inputs.recover_only != 'true'
+            && github.event.inputs.deploy_web_only != 'true'
+          }}
+        run: |
+          set -euo pipefail
+          chmod +x deploy/smoke-graph-phase-a.sh
+          BASE_URL="http://${{ env.SSH_HOST }}:${{ env.WEB_PORT }}" bash deploy/smoke-graph-phase-a.sh || {
+            echo "WARN: smoke failed — web may not be deployed yet; check deploy-web job"
+            exit 0
+          }
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: API deployment summary
+        if: always()
+        run: |
+          {
+            echo "## API Deployment (CVM)"
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Image | \`lnkpi-api:${{ env.IMAGE_TAG }}\` |"
+            echo "| API | \`http://${{ env.SSH_HOST }}:${{ env.API_PORT }}/api\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-web:
+    name: Deploy web to CVM
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.web == 'true'
+        || github.event_name == 'workflow_dispatch'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      SSH_HOST: ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
+      SSH_USER: ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Build web
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm --filter @lnkpi/server exec prisma generate
+          VITE_API_BASE_URL=/api pnpm --filter @lnkpi/web build
+          test -f apps/web/dist/index.html
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-cvm
+            HostName ${{ env.SSH_HOST }}
+            User ${{ env.SSH_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            BatchMode yes
+            LogLevel ERROR
+            ServerAliveInterval 15
+            ServerAliveCountMax 30
+            TCPKeepAlive yes
+            ConnectTimeout 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Upload web dist and nginx config
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+          tar -czf /tmp/lnkpi-web-dist.tgz -C apps/web/dist .
+          scp /tmp/lnkpi-web-dist.tgz deploy/nginx.conf deploy/deploy-web.sh deploy-cvm:/tmp/
+          ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR}/web/dist ${DEPLOY_DIR}/deploy && tar -xzf /tmp/lnkpi-web-dist.tgz -C ${DEPLOY_DIR}/web/dist && cp /tmp/nginx.conf ${DEPLOY_DIR}/deploy/nginx.conf && cp /tmp/deploy-web.sh ${DEPLOY_DIR}/deploy/deploy-web.sh && chmod +x ${DEPLOY_DIR}/deploy/deploy-web.sh && rm -f /tmp/lnkpi-web-dist.tgz /tmp/nginx.conf /tmp/deploy-web.sh'"
+
+      - name: Configure nginx on CVM
+        run: |
+          set -euo pipefail
+          ssh deploy-cvm "DEPLOY_DIR=${{ env.DEPLOY_DIR }} WEB_PORT=${{ env.WEB_PORT }} API_PORT=${{ env.API_PORT }} bash ${{ env.DEPLOY_DIR }}/deploy/deploy-web.sh"
+
+      - name: Verify web deployment
+        run: |
+          set -euo pipefail
+          SSH_HOST="${{ env.SSH_HOST }}"
+          WEB_PORT="${{ env.WEB_PORT }}"
+          ssh deploy-cvm "curl -fsS http://127.0.0.1:${WEB_PORT}/ | grep -qi html && curl -fsS http://127.0.0.1:${WEB_PORT}/api/health" | head -c 200
+          echo ""
+          echo "localhost verify OK (nginx + /api proxy)"
+          if curl -fsS --connect-timeout 5 --max-time 15 "http://${SSH_HOST}:${WEB_PORT}/api/health" | head -c 200; then
+            echo ""
+            echo "External verify OK"
+          else
+            echo "WARN: external port ${WEB_PORT} unreachable from GitHub — check Tencent security group"
+          fi
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Web deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Web Deployment (CVM nginx)"
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Frontend | \`http://${{ env.SSH_HOST }}:${{ env.WEB_PORT }}/\` |"
+            echo "| Login | \`http://${{ env.SSH_HOST }}:${{ env.WEB_PORT }}/profile\` |"
+            echo "| API (same origin) | \`/api\` → localhost:${{ env.API_PORT }} |"
+            echo ""
+            echo "若外网无法访问，请在腾讯云安全组放行 TCP **${{ env.WEB_PORT }}**。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  recover-only:
+    name: Recover CVM only
+    if: ${{ github.event.inputs.recover_only == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SSH_HOST: ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
+      SSH_USER: ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+      API_PORT: "5100"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recover CVM
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-cvm
+            HostName ${{ env.SSH_HOST }}
+            User ${{ env.SSH_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            BatchMode yes
+          EOF
+          ssh -T deploy-cvm "bash -s" < deploy/cvm-recover.sh
+          curl -fsS "http://${{ env.SSH_HOST }}:${{ env.API_PORT }}/api/health"
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
