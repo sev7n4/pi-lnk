@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common'
 import { applyCanvasActions, type AgentStreamEvent } from '@lnkpi/agent'
@@ -33,6 +34,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
+import { PiRuntimeClient, PiRuntimeError } from './pi-runtime/pi-runtime.client'
+import { mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 const TRACE_PERSIST_EVENT_TYPES = new Set([
   'step',
@@ -188,6 +191,37 @@ export class AgentService {
     }
 
     let assistantText = ''
+
+    // ---- B4：pi-runtime 开关（spec §6.2.0 B4 / §10.3 D-ζ'）----
+    // active：主切 pi-runtime（healthz 失败则继续向下走 LangGraph 回落路径）
+    // shadow：LangGraph 照常服务，pi-runtime 仅接收镜像流量（零用户感知）
+    const piMode = this.getPiRuntimeMode()
+    const piUrl = this.getPiRuntimeUrl()
+    if (piMode !== 'off' && piUrl && userId) {
+      const piClient = this.createPiRuntimeClient(piUrl)
+      if (piMode === 'active' && (await piClient.healthz())) {
+        for await (const event of this.streamFromPiRuntime(
+          piClient,
+          sessionId,
+          userMessage,
+          userId,
+          threadId,
+        )) {
+          if (event.type === 'text_delta') {
+            assistantText += (event.data as { text: string }).text
+          }
+          yield event
+        }
+        if (idempotencyKey) {
+          await this.completeIdempotencyKey(idempotencyKey, assistantText)
+        }
+        return
+      }
+      if (piMode === 'shadow') {
+        // 镜像会话与真实会话隔离（pi 侧独立 sessionId，删除即回收）
+        this.mirrorToPiRuntime(piClient, `shadow-${sessionId}`, userMessage)
+      }
+    }
 
     const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
     if (runtimeUrl && userId) {
@@ -362,6 +396,79 @@ export class AgentService {
     )
   }
 
+  // ---------------------------------------------------------------------------
+  // B4：pi-runtime 接入（spec §6.2.0 B4 + §10.3 D-ζ' 双 runtime 开关）
+  //
+  // PI_RUNTIME_MODE 三态（默认 off，保证零行为变化）：
+  //   off    — 全部走老 LangGraph agent-runtime（现状）
+  //   shadow — 生产仍走 LangGraph；同一 prompt 镜像一份到 pi-runtime（P0 shadow
+  //            验证 ≥7 天），pi 输出不返回给 Vue UI，仅记日志供 diff 收集
+  //   active — chat 流主切 pi-runtime；healthz 不通过时自动回落 LangGraph
+  // ---------------------------------------------------------------------------
+
+  private readonly piLogger = new Logger('AgentService.pi')
+
+  getPiRuntimeMode(): 'off' | 'shadow' | 'active' {
+    const raw = process.env.PI_RUNTIME_MODE?.trim().toLowerCase()
+    return raw === 'shadow' || raw === 'active' ? raw : 'off'
+  }
+
+  getPiRuntimeUrl(): string | undefined {
+    return process.env.PI_RUNTIME_URL?.trim() || undefined
+  }
+
+  /** Overridable in unit tests */
+  createPiRuntimeClient(baseUrl: string): PiRuntimeClient {
+    return new PiRuntimeClient({ baseUrl })
+  }
+
+  /** 确保会话存在：409（已存在）视为可复用（pi 会话按 sessionId 持久多轮历史）。 */
+  private async ensurePiSession(client: PiRuntimeClient, sessionId: string): Promise<void> {
+    try {
+      await client.createSession(sessionId)
+    } catch (err) {
+      if (err instanceof PiRuntimeError && err.status === 409) return
+      throw err
+    }
+  }
+
+  /** 把回调式 SSE 订阅桥接为 async generator（供 for-await 消费，结束自动退订）。 */
+  private async *iteratePiEvents(
+    client: PiRuntimeClient,
+    sessionId: string,
+  ): AsyncGenerator<PiRuntimeEvent> {
+    const queue: PiRuntimeEvent[] = []
+    let wake: (() => void) | null = null
+    let closed = false
+    const cancel = client.streamEvents(
+      sessionId,
+      (event) => {
+        queue.push(event)
+        wake?.()
+        wake = null
+      },
+      () => {
+        closed = true
+        wake?.()
+        wake = null
+      },
+    )
+    try {
+      while (true) {
+        if (queue.length === 0) {
+          if (closed) break
+          await new Promise<void>((resolve) => {
+            wake = resolve
+          })
+          continue
+        }
+        yield queue.shift() as PiRuntimeEvent
+      }
+    } finally {
+      cancel()
+    }
+  }
+
   private async *streamFromRuntime(
     client: AgentRuntimeClient,
     sessionId: string,
@@ -456,6 +563,104 @@ export class AgentService {
       linkedOutputs: deriveLinkedOutputs(canvasActions),
       metadata,
     })
+  }
+
+  /**
+   * B4：pi-runtime 事件流 → 现有 AgentStreamEvent（active 模式主路径）。
+   * 与 streamFromRuntime 同构：累积 assistantText / canvasActions，回合结束
+   * 走同一个 finalizeTurn 持久化。canvas_action 提取待 pi 侧 custom tool
+   * 事件形态定型后补（Round 5），当前工具结果经 tool_result 透传。
+   */
+  private async *streamFromPiRuntime(
+    client: PiRuntimeClient,
+    sessionId: string,
+    userMessage: string,
+    userId: string,
+    threadId?: string,
+  ): AsyncGenerator<AgentStreamEvent> {
+    await this.ensurePiSession(client, sessionId)
+    const events = this.iteratePiEvents(client, sessionId)
+    // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
+    const iterator = events[Symbol.asyncIterator]()
+    void client.prompt(sessionId, userMessage).catch(() => {
+      // prompt 失败会以 error 事件形式出现在事件流中，此处静默
+    })
+
+    let assistantText = ''
+    const canvasActions: CanvasAction[] = []
+    let done = false
+    try {
+      while (!done) {
+        const { value: event, done: streamClosed } = await iterator.next()
+        if (streamClosed || !event) break
+        if (event.type === 'agent_end' || event.type === 'error') {
+          done = true
+        }
+        const ui = mapPiEventToUiEvent(event)
+        if (!ui) continue
+        if (ui.type === 'text_delta') {
+          assistantText += (ui.data as { text: string }).text
+        } else if (ui.type === 'canvas_action') {
+          canvasActions.push(ui.data as CanvasAction)
+        }
+        yield ui as AgentStreamEvent
+      }
+    } finally {
+      // 会话即时清理：历史已由 JsonlSessionRepo 落盘，内存句柄不留
+      await client.deleteSession(sessionId).catch(() => {})
+    }
+
+    const effectiveThreadId = threadId?.trim() || sessionId
+    await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
+      rewriteCanvasData: false,
+    })
+  }
+
+  /**
+   * B4：P0 shadow 镜像（spec §4.4.1）。
+   * 同一 prompt 复制到 pi-runtime，输出不返回 UI，仅记结构化日志供 diff 收集
+   * （Prometheus/LangSmith 对接是后续任务，本方法先保证零用户感知 + 可观测）。
+   */
+  mirrorToPiRuntime(client: PiRuntimeClient, shadowSessionId: string, userMessage: string): void {
+    void (async () => {
+      const startedAt = Date.now()
+      let textLength = 0
+      let toolCalls = 0
+      let status: string = 'unknown'
+      try {
+        await this.ensurePiSession(client, shadowSessionId)
+        const iterator = this.iteratePiEvents(client, shadowSessionId)[Symbol.asyncIterator]()
+        void client.prompt(shadowSessionId, userMessage).catch(() => {})
+        const deadline = Date.now() + 90_000
+        while (Date.now() < deadline) {
+          const { value: event, done: streamClosed } = await iterator.next()
+          if (streamClosed || !event) break
+          if (event.type === 'agent_end') {
+            status = (event.data as { status?: string }).status ?? 'completed'
+            break
+          }
+          if (event.type === 'error') {
+            status = 'error'
+            break
+          }
+          const delta = mapPiEventToUiEvent(event)
+          if (delta?.type === 'text_delta') {
+            textLength += (delta.data as { text: string }).text.length
+          } else if (delta?.type === 'tool_call') {
+            toolCalls += 1
+          }
+        }
+        this.piLogger.log(
+          `shadow ${shadowSessionId}: status=${status} textLen=${textLength} toolCalls=${toolCalls} elapsed=${Date.now() - startedAt}ms`,
+        )
+      } catch (err) {
+        this.piLogger.warn(
+          `shadow ${shadowSessionId} failed after ${Date.now() - startedAt}ms: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      } finally {
+        await client.deleteSession(shadowSessionId).catch(() => {})
+      }
+    })()
   }
 
   private async finalizeTurn(

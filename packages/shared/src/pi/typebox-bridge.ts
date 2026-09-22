@@ -20,7 +20,12 @@ import { Type, type TSchema } from "typebox";
 
 /** 把 Zod schema 转成 pi AgentHarnessTool.parameters 可直接使用的 TypeBox TSchema。 */
 export function zodToTypeBox(schema: z.ZodType): TSchema {
-	const json = zodToJsonSchema(schema, { $refStrategy: "none" }) as Record<string, unknown>;
+	// zod 3.25 classic API 与 zod-to-json-schema 的泛型签名存在 TS2589 深递归，
+	// 桥接输入约定为「纯描述型」schema（见文件头边界说明），cast 绕过 assignability 检查
+	type ZodToJsonSchemaInput = Parameters<typeof zodToJsonSchema>[0];
+	const json = zodToJsonSchema(schema as unknown as ZodToJsonSchemaInput, {
+		$refStrategy: "none",
+	}) as Record<string, unknown>;
 	// zod-to-json-schema 顶层可能带 $schema 元属性，LLM function calling 不需要
 	const { $schema: _schema, ...rest } = json;
 	return Type.Unsafe(rest);
