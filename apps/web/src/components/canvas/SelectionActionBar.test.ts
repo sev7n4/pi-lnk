@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import SelectionActionBar from './SelectionActionBar.vue'
 
 vi.mock('@vue-flow/core', () => ({
   useVueFlow: () => ({
@@ -10,73 +9,90 @@ vi.mock('@vue-flow/core', () => ({
     findNode: () => undefined,
   }),
 }))
+vi.mock('@/composables/useCanvasGrouping', () => ({
+  getAbsolutePosition: () => ({ x: 100, y: 100 }),
+  getNodeSize: () => ({ w: 200, h: 200 }),
+}))
+
+import SelectionActionBar from './SelectionActionBar.vue'
+
+function mountBar(props: Record<string, unknown> = {}) {
+  const wrapper = mount(SelectionActionBar, {
+    props: { node: { id: 'n1', type: 'image' }, gridSlice: true, hasUrl: true, ...props },
+    global: { stubs: { teleport: true } },
+  })
+  return wrapper
+}
 
 describe('SelectionActionBar', () => {
-  const node = {
-    id: 'img-1',
-    type: 'image',
-    position: { x: 100, y: 80 },
-    data: { url: 'https://cdn/a.png' },
-  }
-
-  it('renders 放大 and 编辑; disables upscale with tooltip when capability off', async () => {
-    const wrapper = mount(SelectionActionBar, {
-      props: {
-        node: node as never,
-        imageUpscale: false,
-        loading: false,
-      },
-    })
-
-    const buttons = wrapper.findAll('button')
-    expect(buttons.map((b) => b.text())).toEqual(['放大', '编辑'])
-
-    const upscale = buttons[0]
-    expect(upscale.attributes('disabled')).toBeDefined()
-    expect(upscale.attributes('title')).toContain('未启用')
-
-    await upscale.trigger('click')
-    expect(wrapper.emitted('upscale')).toBeUndefined()
-
-    await buttons[1].trigger('click')
-    expect(wrapper.emitted('edit')).toHaveLength(1)
+  it('forwards grid picker slice(cols, rows)', async () => {
+    const wrapper = mountBar()
+    await wrapper.get('button').trigger('click')
+    await wrapper.get('[data-testid="custom-toggle"]').trigger('pointerenter', { pointerType: 'mouse' })
+    await wrapper.get('[data-cell="3-2"]').trigger('pointerenter', { pointerType: 'mouse' })
+    await wrapper.get('[data-cell="3-2"]').trigger('click')
+    expect(wrapper.emitted('slice')).toEqual([[3, 2]])
     wrapper.unmount()
   })
 
-  it('emits upscale when enabled; shows loading label', async () => {
-    const wrapper = mount(SelectionActionBar, {
-      props: {
-        node: node as never,
-        imageUpscale: true,
-        loading: false,
-      },
-    })
-
-    await wrapper.get('button.accent').trigger('click')
-    expect(wrapper.emitted('upscale')).toHaveLength(1)
-
-    await wrapper.setProps({ loading: true })
-    expect(wrapper.get('button.accent').text()).toContain('放大中')
-    expect(wrapper.get('button.accent').attributes('disabled')).toBeDefined()
+  it('emits download and save-asset, disables them without url', async () => {
+    const wrapper = mountBar()
+    await wrapper.get('[data-action="download"]').trigger('click')
+    await wrapper.get('[data-action="save-asset"]').trigger('click')
+    expect(wrapper.emitted('download')).toBeTruthy()
+    expect(wrapper.emitted('save-asset')).toBeTruthy()
+    await wrapper.setProps({ hasUrl: false })
+    expect(wrapper.get('[data-action="download"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-action="save-asset"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 
-  it('forwards grid-slice events when enabled', async () => {
-    const wrapper = mount(SelectionActionBar, {
-      props: {
-        node: node as never,
-        imageUpscale: true,
-        gridSlice: true,
-      },
-    })
+  it('renders refine button and no upscale button', async () => {
+    const wrapper = mountBar()
+    const refine = wrapper.get('[data-action="refine"]')
+    expect(refine.text()).toContain('精修')
+    expect(refine.attributes('disabled')).toBeUndefined()
+    const allText = wrapper.findAll('button').map((b) => b.text()).join('|')
+    expect(allText).not.toContain('放大')
+    expect(wrapper.find('[data-action="upscale"]').exists()).toBe(false)
+    await refine.trigger('click')
+    expect(wrapper.emitted('edit')).toBeTruthy()
+    wrapper.unmount()
+  })
 
-    const trigger = wrapper.findAll('button').find((b) => b.text().includes('宫格裁剪'))
-    expect(trigger).toBeTruthy()
-    await trigger!.trigger('click')
-    const threeByThree = wrapper.findAll('button').find((b) => b.text() === '3×3')
-    expect(threeByThree).toBeTruthy()
-    await threeByThree!.trigger('click')
-    expect(wrapper.emitted('quick-slice')).toEqual([[3]])
+  it('renders exactly the expected action buttons (no extra/missing)', async () => {
+    const wrapper = mountBar()
+    const actions = wrapper.findAll('.toolbar-action')
+    // 6 个工具按钮 + 宫格下拉入口（同 class）
+    expect(actions).toHaveLength(7)
+    const byId = Object.fromEntries(
+      actions.filter((b) => b.attributes('data-action')).map((b) => [b.attributes('data-action'), b.text().trim()]),
+    )
+    expect(Object.keys(byId).sort()).toEqual(['crop', 'download', 'matting', 'refine', 'rotate', 'save-asset'])
+    expect(byId['refine']).toBe('精修')
+    expect(byId['matting']).toBe('抠图')
+    expect(byId['crop']).toBe('裁剪')
+    expect(byId['rotate']).toBe('旋转/翻转')
+    expect(byId['download']).toBe('下载图片')
+    expect(byId['save-asset']).toBe('存入资产库')
+    wrapper.unmount()
+  })
+
+  it('renders disabled tool placeholders with explanatory titles', async () => {
+    const wrapper = mountBar()
+    for (const id of ['matting', 'crop', 'rotate']) {
+      const btn = wrapper.get(`[data-action="${id}"]`)
+      expect(btn.attributes('disabled')).toBeDefined()
+      expect(String(btn.attributes('title'))).toContain('后续能力包点亮')
+    }
+    wrapper.unmount()
+  })
+
+  it('counter-scales the bar so it keeps constant on-screen size（2026-09-22 修订：精确 1/zoom，不再 clamp）', async () => {
+    const wrapper = mountBar({ zoom: 0.4 })
+    const inner = wrapper.get('[data-testid="bar-inner"]')
+    // zoom 0.4 → 精确反缩放 2.5，屏幕宽度恒等于 BAR_WIDTH_PX（与多选菜单等宽）
+    expect(inner.attributes('style')).toContain('scale(2.5)')
     wrapper.unmount()
   })
 })

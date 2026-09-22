@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { containRect, loupeBackground, clampLoupeZoom, refineWorkInsetRight } from './refineWorkLayout'
+import { containRect, loupeBackground, clampLoupeZoom, refineWorkInsetRight, oneToOneScaleOf } from './refineWorkLayout'
 
 describe('refineWorkInsetRight', () => {
   it('matches the work viewport so expanded compare does not cover the side panel', () => {
     expect(
       refineWorkInsetRight({
         innerWidth: 1280,
-        chrome: 'docked',
         collapsed: false,
         panelWidth: 400,
       }),
@@ -14,15 +13,13 @@ describe('refineWorkInsetRight', () => {
     expect(
       refineWorkInsetRight({
         innerWidth: 1280,
-        chrome: 'docked',
         collapsed: true,
         panelWidth: 400,
       }),
     ).toBe(44)
     expect(
       refineWorkInsetRight({
-        innerWidth: 1280,
-        chrome: 'floating',
+        innerWidth: 480,
         collapsed: false,
         panelWidth: 400,
       }),
@@ -78,5 +75,20 @@ describe('clampLoupeZoom', () => {
     expect(clampLoupeZoom(8)).toBe(6)
     expect(clampLoupeZoom(3)).toBe(3)
     expect(clampLoupeZoom(Number.NaN)).toBe(2.5)
+  })
+})
+
+describe('oneToOneScaleOf', () => {
+  it('放大到原始像素 1:1（窄显示宽 → 倍率封顶 8）', () => {
+    expect(oneToOneScaleOf(4000, 500)).toBe(8)
+  })
+
+  it('缩小到原始像素 1:1（宽显示宽 → 倍率取到 1）', () => {
+    expect(oneToOneScaleOf(100, 500)).toBe(1)
+  })
+
+  it('尺寸缺失时退化为 1', () => {
+    expect(oneToOneScaleOf(100, 0)).toBe(1)
+    expect(oneToOneScaleOf(0, 500)).toBe(1)
   })
 })

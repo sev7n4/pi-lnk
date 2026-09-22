@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, defineAsyncComponent, nextTick, provide, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, defineAsyncComponent, nextTick, provide, watch, h, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   VueFlow,
@@ -21,9 +21,9 @@ import { Background } from '@vue-flow/background'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
-import type { Session, CanvasAction, ImageVersionEntry } from '@lnkpi/shared'
-import { appendEditVersion, revertImageVersion, seedImageVersions } from '@lnkpi/shared'
-import { ElMessage } from 'element-plus'
+import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult } from '@lnkpi/shared'
+import { appendEditVersion, revertImageVersion, seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, getGroupChildIds, type GroupChildNode } from '@lnkpi/shared'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
@@ -34,8 +34,11 @@ import { useGenerationPolling, parseRecordPromptContent, parseRecordText, parseR
 import { buildNodeMediaInfoSummary, buildMaterialMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
 import type { GenerationRecord } from '@/services/studio-api'
 import { useNodeGeneration } from '@/composables/useNodeGeneration'
+import { useSelectionGenerate } from '@/composables/useSelectionGenerate'
+import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { type CompositionRunGroup } from '@/composables/compositionRunGroup'
 import { createInitialSceneComposerNodeData } from '@/utils/sceneComposer'
+import { randomId } from '@/utils/randomId'
 import { studioApi } from '@/services/studio-api'
 import { canvasApi } from '@/services/canvas-api'
 import { resolveCompositionTracks, mergeCompositionTracks, compositionTracksToNodePatch } from '@/utils/compositionUpstream'
@@ -58,6 +61,7 @@ import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import CanvasFloatingChrome from '@/components/canvas/CanvasFloatingChrome.vue'
 import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
+import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
@@ -66,6 +70,9 @@ import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { BYOK_FALLBACK_CONFIRM_MESSAGE } from '@lnkpi/shared'
 import { CX_IMAGE_EDIT_ENABLED, canOpenRefineForNode, decideRefineDismiss } from '@/utils/refineSession'
 import { decideAgentOpenWhileRefine, shouldApplyRefineToNode } from '@/utils/refineChrome'
+import { centerExpandPosition, containFitSize } from '@/utils/centerExpand'
+import type { RefineApplyPayload } from '@/components/canvas/refine/compareViewModel'
+import { shouldHideCanvasChrome } from '@/utils/canvasChromeVisibility'
 import type { FallbackPendingRequest } from '@/composables/useNodeGeneration'
 import { createFallbackConfirmQueue, fallbackConfirmKey } from '@/composables/fallbackConfirmQueue'
 import type { StudioModality } from '@/constants/studioModels'
@@ -87,6 +94,7 @@ import {
 } from '@/composables/useCanvasGrouping'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import MultiSelectToolbarOverlay from '@/components/canvas/MultiSelectToolbarOverlay.vue'
+import SelectionBatchProgressCard from '@/components/canvas/SelectionBatchProgressCard.vue'
 import MultiSelectConnectOverlay from '@/components/canvas/MultiSelectConnectOverlay.vue'
 import BatchConnectPickerLine from '@/components/canvas/BatchConnectPickerLine.vue'
 import EdgeScissorsOverlay from '@/components/canvas/EdgeScissorsOverlay.vue'
@@ -102,7 +110,7 @@ import {
   type CanvasSnapshot,
   type GenerationFieldsCache,
 } from '@/composables/useCanvasUndoStack'
-import { detectFileKind, setupCanvasMediaHandlers, type MediaFilePayload } from '@/composables/useCanvasMedia'
+import { detectFileKind, setupCanvasMediaHandlers, downloadMediaFile, mediaDownloadName, type MediaFilePayload } from '@/composables/useCanvasMedia'
 import {
   exportWorkflowPackage,
   importWorkflowPackage,
@@ -125,18 +133,16 @@ import {
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
-import RefineSidePanel from '@/components/canvas/refine/RefineSidePanel.vue'
-import RefineWorkViewport from '@/components/canvas/refine/RefineWorkViewport.vue'
+import RefineWorkbench from '@/components/canvas/refine/RefineWorkbench.vue'
 import MediaPreviewOverlay from '@/components/canvas/MediaPreviewOverlay.vue'
 import MediaInspectorDrawer from '@/components/media/MediaInspectorDrawer.vue'
 import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
 import SelectionActionBar from '@/components/canvas/SelectionActionBar.vue'
 import GridSliceWorkbench from '@/components/canvas/grid-slice/GridSliceWorkbench.vue'
-import { useImageUpscale } from '@/composables/useImageUpscale'
 import { runGridSlice } from '@/composables/useGridSlice'
 import { clampGridDims, GRID_SLICE_LAYOUT_GAP, layoutSliceChildPositions } from '@/utils/gridSlice'
-import { useCapabilities } from '@/composables/useCapabilities'
-import { canUpscaleNode } from '@/utils/upscaleNode'
+import { saveAssetToLibrary } from '@/composables/useAssetLibrary'
+import { resolveMediaUrl } from '@/services/api-base'
 import { apiErrorMessage } from '@/utils/apiError'
 import {
   duplicateSubgraph,
@@ -148,6 +154,7 @@ import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
 import { mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
+import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
 import { buildPollingFailurePatch } from '@/utils/generationDiagnostic'
 
 const PlayCanvasView = defineAsyncComponent(
@@ -740,8 +747,6 @@ const editorNode = computed((): EditableFlowNode | null => {
   return null
 })
 
-const { imageUpscale: imageUpscaleCapability } = useCapabilities()
-const { loading: upscaleLoading, runUpscale } = useImageUpscale()
 const gridSliceBusy = ref(false)
 const gridSlicePanelNodeId = ref<string | null>(null)
 
@@ -758,8 +763,16 @@ const refinePanelNode = computed((): EditableFlowNode | null => {
   return findNodeById(target.nodeId)
 })
 
-/** 单选 + 可放大图像节点时显示选中浮层（多选不出现） */
-const selectionUpscaleNode = computed((): EditableFlowNode | null => {
+/** 精修 / 宫格切分工作台打开时，画布级 chrome 全部让位（spec §7） */
+const canvasChromeHidden = computed(() =>
+  shouldHideCanvasChrome({
+    refineOpen: !!refinePanelNode.value,
+    gridSliceOpen: !!gridSlicePanelNode.value,
+  }),
+)
+
+/** 单选 + 可操作图像节点时显示选中浮层（多选不出现） */
+const selectionActionBarNode = computed((): EditableFlowNode | null => {
   if (refinePanelNode.value || gridSlicePanelNode.value) return null
   if (multiSelectedIds.value.length !== 1) return null
   const node = findNodeById(multiSelectedIds.value[0])
@@ -767,7 +780,7 @@ const selectionUpscaleNode = computed((): EditableFlowNode | null => {
   const data = (node.data ?? {}) as Record<string, unknown>
   if (!String(data.url ?? '').trim()) return null
   if (
-    !canUpscaleNode({
+    !canOpenRefineForNode({
       type: String(node.type ?? ''),
       mediaKind: typeof data.mediaKind === 'string' ? data.mediaKind : null,
       mimeType: typeof data.mimeType === 'string' ? data.mimeType : null,
@@ -798,8 +811,18 @@ const gridSliceEntryDisabled = computed(() => {
   return isNodeGenerating(data.status) || data.status === 'uploading'
 })
 
+/** 宫格切分原图尺寸（mediaInfo）：供 64px 单格下限禁用判定 */
+const gridSliceImageSize = computed(() => {
+  const info = selectionGridSliceNode.value?.data?.mediaInfo as
+    | { kind?: string; width?: number; height?: number }
+    | undefined
+  if (!info || info.kind !== 'image') return null
+  if (typeof info.width !== 'number' || typeof info.height !== 'number') return null
+  return { width: info.width, height: info.height }
+})
+
 const gridSliceDisabledTitle = computed(() => {
-  if (gridSliceBusy.value) return '裁剪中…'
+  if (gridSliceBusy.value) return '切分中 · 大图约需数十秒'
   const node = selectionGridSliceNode.value
   if (!node) return '当前图片不可裁剪'
   const data = (node.data ?? {}) as Record<string, unknown>
@@ -934,6 +957,247 @@ const multiSelectCanGenerateVideo = computed(() => {
   }
   return hasText && hasImage
 })
+
+// 派生：plan（懒计算，仅当选区 ≥ 2 时）
+// meta 同时承载 regenerate 版 plan 与整批阻断态（pending_confirm / 24 上限），
+// 供工具栏显示「重新生成 · M」「待确认 · N」「超上限 · N」。
+interface MultiSelectBatchMeta {
+  plan: PlanSelectionGenerateResult | null
+  regenPlan: PlanSelectionGenerateResult | null
+  blocked: 'pending_confirm' | 'limit_24' | 'missing_prompt' | null
+  blockedCount: number
+  /** 缺提示词（无可尝试输入）节点数 */
+  missingCount: number
+}
+
+/** 节点是否有可尝试的生成输入：本地提示词/内容，或上游可用输出可作参考（与 generateForNode 的静默跳过条件对齐）。 */
+function nodeHasAttemptableInput(id: string): boolean {
+  const node = findNodeById(id)
+  if (!node) return false
+  const d = (node.data ?? {}) as Record<string, unknown>
+  if (String(d.prompt ?? d.content ?? '').trim()) return true
+  const upstreamIds = edges.value.filter(e => e.target === id).map(e => e.source)
+  return upstreamIds.some(uid => {
+    const u = findNodeById(uid)
+    if (!u) return false
+    const status = (u.data as Record<string, unknown>).status
+    if (status !== NODE_GENERATION_STATUS.completed) return false
+    const type = String(u.type)
+    if (type === 'image' || type === 'video') {
+      const url = String((u.data as Record<string, unknown>).url ?? '').trim()
+      const images = (u.data as Record<string, unknown>).images
+      return Boolean(url) || (Array.isArray(images) && images.some((item) => String(item ?? '').trim()))
+    }
+    if (type === 'text' || type === 'prompt') {
+      return Boolean(String((u.data as Record<string, unknown>).content ?? (u.data as Record<string, unknown>).prompt ?? '').trim())
+    }
+    return true
+  })
+}
+
+const multiSelectBatchMeta = computed<MultiSelectBatchMeta | null>(() => {
+  if (!isFeatureOn('selection_batch_generate')) return null
+  if (multiSelectedIds.value.length < 2) return null
+  const build = (regenerate: boolean) => planSelectionGenerate({
+    selectedIds: multiSelectedIds.value,
+    canvas: {
+      nodes: nodes.value.map(n => ({ id: n.id, type: String(n.type ?? ''), data: n.data as Record<string, unknown> })),
+      edges: edges.value as Array<{ id: string; source: string; target: string }>,
+    },
+    hasUsableOutput: (n) => {
+      const full = nodes.value.find(x => x.id === n.id)
+      if (!full) return false
+      const status = (full.data as Record<string, unknown>).status
+      if (status !== NODE_GENERATION_STATUS.completed) return false
+      const type = String(full.type)
+      if (type === 'image' || type === 'video') {
+        const url = String((full.data as Record<string, unknown>).url ?? '').trim()
+        const images = (full.data as Record<string, unknown>).images
+        return Boolean(url) || (Array.isArray(images) && images.some((item) => String(item ?? '').trim()))
+      }
+      if (type === 'text' || type === 'prompt') {
+        return Boolean(String((full.data as Record<string, unknown>).content ?? (full.data as Record<string, unknown>).prompt ?? '').trim())
+      }
+      return true
+    },
+    isInFlight: (id) => isNodeBusy(id),
+    hasAttemptableInput: (n) => nodeHasAttemptableInput(n.id),
+    regenerate,
+  })
+  try {
+    const plan = build(false)
+    const regenPlan = build(true)
+    const missingCount = plan.skip.filter(s => s.reason === 'missing_prompt').length
+    return { plan, regenPlan, blocked: null, blockedCount: 0, missingCount }
+  } catch (e) {
+    if (e instanceof SelectionBatchLimitError) {
+      return { plan: null, regenPlan: null, blocked: 'limit_24', blockedCount: e.actualCount, missingCount: 0 }
+    }
+    if (e instanceof SelectionBatchPendingConfirmError) {
+      return { plan: null, regenPlan: null, blocked: 'pending_confirm', blockedCount: countPendingInSelection(), missingCount: 0 }
+    }
+    throw e
+  }
+})
+
+/** 选区内（含 group 展开）pending_confirm 节点计数，用于阻断态提示。 */
+function countPendingInSelection(): number {
+  let count = 0
+  for (const id of multiSelectedIds.value) {
+    const node = findNodeById(id)
+    if (!node) continue
+    const type = String(node.type ?? '')
+    if (type === 'group') {
+      const childIds = getGroupChildIds(nodes.value as unknown as GroupChildNode[], id)
+      for (const cid of childIds) {
+        const child = findNodeById(cid)
+        if (child && String((child.data as Record<string, unknown> | undefined)?.status ?? '') === 'pending_confirm') count++
+      }
+      continue
+    }
+    if (String((node.data as Record<string, unknown> | undefined)?.status ?? '') === 'pending_confirm') count++
+  }
+  return count
+}
+
+const multiSelectPlan = computed<PlanSelectionGenerateResult | null>(() => multiSelectBatchMeta.value?.plan ?? null)
+
+// 选择 batch API
+const selectionBatchApi = useSelectionGenerate({
+  nodes: nodes as Ref<EditableFlowNode[]>,
+  edges: edges as Ref<CanvasEdgeLike[]>,
+  generateForNode: (node) => (generateForNode as any)(node, { asRunGroupMember: true }),
+  // 等待节点真正 settle（completed/error）再计数，修复"任务未完成就弹完成汇总"
+  waitForNodeSettled: (id) => waitForRunGroupMemberSettled(id),
+  hasUsableOutput: (n) => {
+    const status = (n.data as Record<string, unknown>).status
+    if (status !== NODE_GENERATION_STATUS.completed) return false
+    const type = String(n.type)
+    if (type === 'image' || type === 'video') {
+      const url = String((n.data as Record<string, unknown>).url ?? '').trim()
+      const images = (n.data as Record<string, unknown>).images
+      return Boolean(url) || (Array.isArray(images) && images.some((item) => String(item ?? '').trim()))
+    }
+    if (type === 'text' || type === 'prompt') {
+      return Boolean(String((n.data as Record<string, unknown>).content ?? (n.data as Record<string, unknown>).prompt ?? '').trim())
+    }
+    return true
+  },
+  resolveUpstreamIds: (n) => {
+    // 简化：仅从 edges 推上游
+    return edges.value.filter(e => e.target === n.id).map(e => e.source)
+  },
+  cancelGeneration: (id) => cancelGeneration(id),
+  isInFlight: (id) => isNodeBusy(id),
+  toast: (msg, kind) => {
+    if (kind === 'error') ElMessage.error(msg)
+    else if (kind === 'warn') ElMessage.warning(msg)
+    else ElMessage.info(msg)
+  },
+})
+
+// 给工具栏的 selectionBatch prop
+const selectionBatchProp = computed(() => {
+  if (!isFeatureOn('selection_batch_generate')) return undefined
+  const meta = multiSelectBatchMeta.value
+  if (!meta) return undefined
+  return {
+    runCount: meta.plan?.run.length ?? 0,
+    regenCount: meta.regenPlan?.run.length ?? 0,
+    state: selectionBatchApi.state.value,
+    blocked: meta.blocked ?? undefined,
+    blockedCount: meta.blockedCount || undefined,
+    missingCount: meta.missingCount || undefined,
+  }
+})
+
+// 最近一次批量是否为重新生成（进度卡标题区分用）
+const lastBatchRegenerate = ref(false)
+
+/** 计划中缺提示词节点数 → 点名提示（这些节点不会执行） */
+function warnMissingPrompt(plan: PlanSelectionGenerateResult) {
+  const missing = plan.skip.filter(s => s.reason === 'missing_prompt').length
+  if (missing > 0) {
+    ElMessage.warning(`${missing} 个节点未写提示词且无可用上游输出，未执行`)
+  }
+}
+
+// 处理点击
+async function handleSelectionBatchGenerate() {
+  const plan = multiSelectPlan.value
+  if (!plan || plan.run.length === 0) return
+  lastBatchRegenerate.value = false
+  warnMissingPrompt(plan)
+  try {
+    await selectionBatchApi.start(plan)
+  } catch {
+    // start() 内部已 toast 并把状态回落 idle，这里只吞掉 rejection，避免 unhandled rejection
+    return
+  }
+  // 收尾 toast
+  const p = selectionBatchApi.progress.value
+  ElMessage.info(
+    `完成 ${p.done}，失败 ${p.failed}，取消 ${p.cancelled}，超时 ${p.timeout}，跳过 ${p.skipped}`,
+  )
+}
+
+/** 批量重新生成：确认弹窗（覆盖产物 + 积分提示）→ 与普通批量共用同一执行器。 */
+async function handleSelectionBatchRegenerate() {
+  const meta = multiSelectBatchMeta.value
+  const plan = meta?.regenPlan
+  if (!plan || plan.run.length === 0) return
+  lastBatchRegenerate.value = true
+  warnMissingPrompt(plan)
+  try {
+    await ElMessageBox.confirm(
+      `将重新生成 ${plan.run.length} 个节点，覆盖现有产物（不可撤销），并可能消耗积分。`,
+      '批量重新生成',
+      { confirmButtonText: '重新生成', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await selectionBatchApi.start(plan, { regenerate: true })
+  } catch {
+    return
+  }
+  const p = selectionBatchApi.progress.value
+  ElMessage.info(
+    `完成 ${p.done}，失败 ${p.failed}，取消 ${p.cancelled}，超时 ${p.timeout}，跳过 ${p.skipped}`,
+  )
+}
+
+/** 阻断态点击：pending_confirm → 定位待确认节点；超上限 → toast；缺提示词 → 定位第一个问题节点。 */
+function handleSelectionBatchBlocked(reason: 'pending_confirm' | 'limit_24' | 'missing_prompt') {
+  if (reason === 'pending_confirm') {
+    ElMessage.info('选区包含待确认节点，请先在侧栏确认生成')
+    const pendingId = multiSelectedIds.value
+      .map(findNodeById)
+      .find(n => n && String((n.data as Record<string, unknown> | undefined)?.status ?? '') === 'pending_confirm')
+    if (pendingId) selectOnlyNode(pendingId.id)
+    return
+  }
+  if (reason === 'missing_prompt') {
+    ElMessage.warning('选区节点均未写提示词且无可用上游输出，已定位第一个问题节点')
+    const problemId = multiSelectedIds.value
+      .flatMap(id => {
+        const node = findNodeById(id)
+        if (node && String(node.type ?? '') === 'group') {
+          return getGroupChildIds(nodes.value as unknown as GroupChildNode[], id)
+        }
+        return [id]
+      })
+      .find(id => !nodeHasAttemptableInput(id))
+    if (problemId) selectOnlyNode(problemId)
+    return
+  }
+  ElMessage.warning('选区可执行节点超过 24 个上限，请减少选区后重试')
+}
+
+function handleSelectionBatchStop() {
+  selectionBatchApi.stop()
+}
 
 const nodeTypes = {
   prompt: CanvasNodePrompt,
@@ -2560,56 +2824,6 @@ function openRefineForSelected() {
   openRefineForNode(editorNode.value)
 }
 
-async function handleUpscaleForNode(nodeId: string) {
-  if (!imageUpscaleCapability.value || upscaleLoading.value) return
-  const node = findNodeById(nodeId)
-  if (!node) return
-  const data = (node.data ?? {}) as Record<string, unknown>
-  const imageUrl = String(data.url ?? '').trim()
-  if (!imageUrl) return
-
-  try {
-    await runUpscale({
-      sessionId: sessionId.value,
-      nodeId: node.id,
-      imageUrl,
-      scale: 2,
-      onSuccess: ({ url }) => {
-        const { w } = getNodeSize(node as FlowNode)
-        const childId = addNode(
-          'image',
-          {
-            url,
-            status: 'completed',
-            title: '放大 2×',
-            prompt: '',
-            imageModel: getProviderConfig('image').model,
-          },
-          {
-            position: { x: node.position.x + w + 36, y: node.position.y },
-          },
-        )
-        addEdge({
-          id: `e-${node.id}-${childId}`,
-          source: node.id,
-          target: childId,
-        })
-        selectOnlyNode(childId)
-        void persistUserEditAsync()
-        void focusNodeById(childId)
-      },
-    })
-  } catch (err) {
-    ElMessage.error(apiErrorMessage(err, '放大失败'))
-  }
-}
-
-function handleSelectionUpscale() {
-  const node = selectionUpscaleNode.value
-  if (!node) return
-  void handleUpscaleForNode(node.id)
-}
-
 function layoutGridSliceChildren(source: EditableFlowNode, childIds: string[], cols: number) {
   const { w: sourceW } = getNodeSize(source as FlowNode)
   const origin = {
@@ -2644,6 +2858,60 @@ function selectNodeIds(ids: string[]) {
   selectedNodeId.value = ids[0]
 }
 
+/** 撤回切分：移除单个切片子节点及其关联边（纯前端状态操作，不调后端） */
+function removeSliceChildNode(id: string) {
+  if (!findNodeById(id)) return
+  nodes.value = nodes.value.filter((entry) => entry.id !== id)
+  edges.value = edges.value.filter((edge) => edge.source !== id && edge.target !== id)
+  if (multiSelectedIds.value.includes(id)) {
+    const rest = multiSelectedIds.value.filter((v) => v !== id)
+    multiSelectedIds.value = rest
+    if (selectedNodeId.value === id) {
+      if (rest.length === 1) selectOnlyNode(rest[0]!)
+      else clearSelection()
+    }
+  }
+  persistUserEdit()
+}
+
+/** 切分结果提示：无 action 走普通 success，有 action 用 VNode 挂「撤回本次切分」按钮 */
+function showSliceResultToast(msg: string, actions?: Array<{ label: string; onClick: () => void }>) {
+  if (!actions?.length) {
+    ElMessage.success(msg)
+    return
+  }
+  let toast: { close: () => void } | null = null
+  toast = ElMessage.success({
+    message: h('span', { class: 'grid-slice-toast' }, [
+      h('span', null, msg),
+      ...actions.map((action) =>
+        h(
+          'button',
+          {
+            type: 'button',
+            style: {
+              marginLeft: '10px',
+              padding: '0',
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--el-color-primary)',
+              font: 'inherit',
+              cursor: 'pointer',
+            },
+            onClick: () => {
+              toast?.close()
+              action.onClick()
+            },
+          },
+          action.label,
+        ),
+      ),
+    ]),
+    duration: 6000,
+    showClose: true,
+  })
+}
+
 async function executeGridSlice(node: EditableFlowNode, cols: number, rows: number) {
   const data = (node.data ?? {}) as Record<string, unknown>
   const sourceUrl = String(data.url ?? '').trim()
@@ -2671,8 +2939,10 @@ async function executeGridSlice(node: EditableFlowNode, cols: number, rows: numb
         ),
       addEdge,
       layoutChildren: (childIds) => layoutGridSliceChildren(node, childIds, dims.cols),
+      getNode: (id) => findNodeById(id) ?? undefined,
+      removeNode: removeSliceChildNode,
+      notify: showSliceResultToast,
     })
-    ElMessage.success(`已裁剪为 ${result.nodeIds.length} 张`)
     selectNodeIds(result.nodeIds)
     void persistUserEditAsync()
     return result
@@ -2684,10 +2954,10 @@ async function executeGridSlice(node: EditableFlowNode, cols: number, rows: numb
   }
 }
 
-async function handleGridSliceQuick(n: number) {
+async function handleGridSliceSlice(cols: number, rows: number) {
   const node = selectionGridSliceNode.value
   if (!node || gridSliceEntryDisabled.value) return
-  await executeGridSlice(node, n, n)
+  await executeGridSlice(node, cols, rows)
 }
 
 function closeGridSliceWorkbench() {
@@ -2716,7 +2986,7 @@ function closeRefineWorkbench() {
   canvasEditor.closeImageEditor()
 }
 
-function handleRefineApply(payload: { url: string; prompt: string; recordId?: string }) {
+function handleRefineApply(payload: RefineApplyPayload) {
   const nodeId = canvasEditor.imageTarget?.nodeId
   if (!nodeId) return
   const node = findNodeById(nodeId)
@@ -2725,7 +2995,7 @@ function handleRefineApply(payload: { url: string; prompt: string; recordId?: st
   const sessionBeforeUrl = String(canvasEditor.imageTarget?.url ?? '')
   if (!shouldApplyRefineToNode({ nodeUrl, sessionBeforeUrl })) return
   const next = appendEditVersion(imageVersionStateFromData((node.data ?? {}) as Record<string, unknown>), {
-    id: crypto.randomUUID(),
+    id: randomId(),
     url: payload.url,
     createdAt: new Date().toISOString(),
     generationRecordId: payload.recordId,
@@ -2738,7 +3008,31 @@ function handleRefineApply(payload: { url: string; prompt: string; recordId?: st
     generationRecordId: next.generationRecordId,
     status: 'completed',
   })
+  applyOutpaintCenterAnchor(node, payload.metadata)
   persistUserEdit()
+}
+
+/**
+ * T9（规格 §3.4）：扩图版本应用到节点时以原图中心锚定——节点按新画布尺寸居中放大
+ * （position = oldCenter − newSize/2），与其他节点的重叠按画布既有 z 序处理，不做避让。
+ * 普通精修版本无 metadata，尺寸不变、position 不动。
+ * 节点显示尺寸取 data.nodeSize（此前应用链路写入）否则图片卡默认 280×280（neoNodeMeta），
+ * 新尺寸按新画布等比 contain 进旧框，保证整张扩图画布在节点内完整可见。
+ */
+function applyOutpaintCenterAnchor(
+  node: EditableFlowNode,
+  metadata: RefineApplyPayload['metadata'],
+) {
+  const { editMode, outpaintFrom, outpaintTo } = metadata ?? {}
+  if (editMode !== 'outpaint' || !outpaintFrom || !outpaintTo) return
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const stored = data.nodeSize as { width: number; height: number } | undefined
+  const oldSize =
+    stored && stored.width > 0 && stored.height > 0 ? stored : { width: 280, height: 280 }
+  const newSize = containFitSize(oldSize, outpaintTo)
+  if (newSize.width === oldSize.width && newSize.height === oldSize.height) return
+  node.position = centerExpandPosition(node.position, oldSize, newSize)
+  patchNodeData(node.id, { nodeSize: newSize })
 }
 
 function handleRefineRevert(payload: { versionId: string }) {
@@ -2895,6 +3189,39 @@ function findNodeById(id: string) {
   return null
 }
 
+/** 选中条「下载」与右键「下载图片」共用：从节点取 url 触发浏览器下载 */
+function downloadNodeImage(nodeId: string) {
+  const node = findNodeById(nodeId)
+  const data = (node?.data ?? {}) as Record<string, unknown>
+  const url = String(data.url ?? '').trim()
+  if (url) {
+    const label = data.label ?? data.prompt
+    void downloadMediaFile(
+      resolveMediaUrl(url),
+      mediaDownloadName(url, 'image', label === undefined ? undefined : String(label)),
+      { sessionId: sessionId.value },
+    )
+  }
+}
+
+/** 选中条「存库」与右键「存入资产库」共用：把节点媒体存进全局资产库 */
+function saveNodeAsset(nodeId: string) {
+  const node = findNodeById(nodeId)
+  const data = (node?.data ?? {}) as Record<string, unknown>
+  const url = String(data.url ?? '').trim()
+  if (url) {
+    void saveAssetToLibrary({
+      kind: 'image',
+      url: resolveMediaUrl(url),
+      label: typeof data.label === 'string' ? data.label : undefined,
+      prompt: typeof data.prompt === 'string' ? data.prompt : undefined,
+      sourceNodeId: nodeId,
+      sessionId: sessionId.value,
+      generationRecordId: typeof data.generationRecordId === 'string' ? data.generationRecordId : undefined,
+    })
+  }
+}
+
 function onNodeContextMenu(event: NodeMouseEvent) {
   event.event.preventDefault()
   const { x, y } = getEventCoords(event.event)
@@ -3041,8 +3368,13 @@ function handleContextAction(action: string) {
     return
   }
 
-  if (action === 'upscale-image' && menu.nodeId) {
-    void handleUpscaleForNode(menu.nodeId)
+  if (action === 'download-image' && menu.nodeId) {
+    downloadNodeImage(menu.nodeId)
+    return
+  }
+
+  if (action === 'save-asset' && menu.nodeId) {
+    saveNodeAsset(menu.nodeId)
     return
   }
 
@@ -3168,6 +3500,7 @@ const {
   isNodeBusy,
   cancelGeneration,
   generateForNode,
+  waitForRunGroupMemberSettled,
   saveSceneComposer,
   expandSceneComposer,
   batchGenerateSceneComposer,
@@ -3480,7 +3813,6 @@ function canOpenAgentPanel(): boolean {
   const d = decideAgentOpenWhileRefine({
     refineOpen: Boolean(canvasEditor.imageTarget),
     refineBusy: canvasEditor.refineBusy,
-    refineChrome: canvasEditor.refineChrome,
   })
   if (d === 'block') {
     ElMessage.warning('精修进行中，请先取消')
@@ -3601,12 +3933,20 @@ onUnmounted(() => {
           @done="pickMode.deactivate()"
         />
         <CanvasFloatingChrome
+          v-if="!canvasChromeHidden"
           :title="sessionTitle"
           :saving="saving"
           @update:title="sessionTitle = $event"
           @save="saveCanvas"
           @storyboard="showStoryboard = true"
           @publish="openPublish"
+        />
+
+        <RefineCanvasBack
+          v-if="refinePanelNode"
+          class="absolute left-3 top-3 z-[50]"
+          :disabled="canvasEditor.refineBusy"
+          @back="closeRefineWorkbench"
         />
 
         <VueFlow
@@ -3664,6 +4004,7 @@ onUnmounted(() => {
             :selected-ids="multiSelectedIds"
             :can-generate-video="multiSelectCanGenerateVideo"
             :can-ungroup="multiSelectCanUngroup"
+            :selection-batch="selectionBatchProp"
             @group="handleGroupSelection"
             @ungroup="handleUngroupSelection"
             @delete="handleDeleteSelection"
@@ -3673,21 +4014,31 @@ onUnmounted(() => {
             @add-agent-ref="handleAddToAgentRefs()"
             @duplicate="handleKeyboardDuplicate"
             @duplicate-upstream="handleToolbarDuplicateUpstream"
+            @generate-selection="handleSelectionBatchGenerate"
+            @generate-regen="handleSelectionBatchRegenerate"
+            @stop-selection="handleSelectionBatchStop"
+            @blocked-hint="handleSelectionBatchBlocked"
           />
-
+          <SelectionBatchProgressCard
+            :state="selectionBatchApi.state.value"
+            :regenerate="lastBatchRegenerate"
+            :progress="selectionBatchApi.progress.value"
+            @stop="handleSelectionBatchStop"
+          />
           <SelectionActionBar
-            v-if="selectionUpscaleNode"
-            :node="selectionUpscaleNode as FlowNode"
-            :image-upscale="imageUpscaleCapability"
-            :loading="upscaleLoading"
+            v-if="selectionActionBarNode"
+            :node="selectionActionBarNode as FlowNode"
             :grid-slice="Boolean(selectionGridSliceNode)"
             :grid-slice-loading="gridSliceBusy"
             :grid-slice-disabled="gridSliceEntryDisabled"
             :grid-slice-disabled-title="gridSliceDisabledTitle"
-            @upscale="handleSelectionUpscale"
+            :grid-slice-image="gridSliceImageSize"
+            :has-url="Boolean(selectionActionBarNode?.data?.url)"
             @edit="openRefineForSelected"
-            @quick-slice="handleGridSliceQuick"
+            @slice="handleGridSliceSlice"
             @open-custom="handleGridSliceOpenCustom"
+            @download="selectionActionBarNode && downloadNodeImage(selectionActionBarNode.id)"
+            @save-asset="selectionActionBarNode && saveNodeAsset(selectionActionBarNode.id)"
           />
 
           <MultiSelectConnectOverlay
@@ -3729,17 +4080,11 @@ onUnmounted(() => {
         </VueFlow>
         <PlayCanvasView v-else class="h-full" :nodes="playCanvasNodes" />
 
-        <RefineWorkViewport
-          v-if="refinePanelNode"
-          v-show="!canvasEditor.compareLightboxOpen"
-          :url="refineBeforeUrl"
-          :width="refineMediaWidth"
-          :height="refineMediaHeight"
-        />
-        <RefineSidePanel
+        <RefineWorkbench
           v-if="refinePanelNode"
           :node-id="refinePanelNode.id"
           :before-url="refineBeforeUrl"
+          :url="refineBeforeUrl"
           :versions="refineVersions"
           :current-version-id="refineCurrentVersionId"
           :session-id="sessionId"
@@ -3784,6 +4129,7 @@ onUnmounted(() => {
         />
 
         <NodePanelDock
+          v-if="!canvasChromeHidden"
           @add="handleDockAdd"
           @open-settings="showModelSettings = true"
           @asset-apply="handleAssetApply"
@@ -3792,7 +4138,7 @@ onUnmounted(() => {
           @history-retry="handleHistoryRetry"
         />
 
-        <div class="pointer-events-none absolute right-3 top-3 z-[50] flex items-center gap-2">
+        <div v-if="!canvasChromeHidden" class="pointer-events-none absolute right-3 top-3 z-[50] flex items-center gap-2">
           <button
             type="button"
             class="canvas-theme-toggle neo-chrome pointer-events-auto flex h-9 items-center justify-center rounded-xl px-3 text-xs transition"
@@ -3928,7 +4274,6 @@ onUnmounted(() => {
       :has-url="contextMenu.hasUrl"
       :media-kind="contextMenu.mediaKind"
       :mime-type="contextMenu.mimeType"
-      :image-upscale="imageUpscaleCapability"
       :multi-selected-count="
         contextMenu.nodeId &&
         multiSelectedIds.includes(contextMenu.nodeId) &&

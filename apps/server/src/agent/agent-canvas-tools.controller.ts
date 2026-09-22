@@ -772,30 +772,6 @@ class ApplyLayoutOpsDto {
   ops!: Array<Record<string, unknown>>
 }
 
-class UpscaleImageDto {
-  @IsString()
-  sessionId!: string
-
-  @IsString()
-  userId!: string
-
-  @IsOptional()
-  @IsString()
-  nodeId?: string
-
-  @IsOptional()
-  @IsString()
-  imageUrl?: string
-
-  @IsOptional()
-  @IsIn([2, 4])
-  scale?: 2 | 4
-
-  @IsOptional()
-  @IsString()
-  provider?: string
-}
-
 class GridSliceImageDto {
   @IsString()
   sessionId!: string
@@ -942,56 +918,6 @@ class SaveContextSnapshotDto {
 
   @IsOptional()
   messageCount?: number
-}
-
-@Controller('agent/debug')
-export class AgentCanvasToolsDebugController {
-  @Post('preview-composition-debug')
-  previewCompositionDebug(@Body() body: any) {
-    const atts = body?.attachments || [];
-    // Replicate the byRef computation that compositionBind does
-    const byRef: Record<string, unknown[]> = {};
-    const CHIP_KEY = /^@?I(\d+)$/i;
-    const mentioned: string[] = [];
-    const text = String(body?.utterance ?? '');
-    let m: RegExpExecArray | null;
-    const re = /@I(\d+)/g;
-    while ((m = re.exec(text)) !== null) mentioned.push('I' + m[1]);
-    const images = atts.filter((a: any) => a?.mediaType === 'image');
-    const unlabeled: any[] = [];
-    for (const image of images) {
-      const label = String(image?.label ?? '').trim();
-      const refKey = String(image?.refKey ?? '').trim();
-      const id = String(image?.id ?? '').trim();
-      let key: string | undefined;
-      for (const s of [refKey, label, id]) {
-        const match = s.match(CHIP_KEY);
-        if (match) { key = 'I' + match[1]; break; }
-      }
-      if (key) {
-        if (!byRef[key]) byRef[key] = [];
-        byRef[key].push(image);
-      } else {
-        unlabeled.push(image);
-      }
-    }
-    for (const item of unlabeled) {
-      if (mentioned.length > 0) {
-        const m2 = mentioned.find(ref => !byRef[ref]);
-        if (m2 && !byRef[m2]) byRef[m2] = [item];
-      }
-    }
-    return {
-      code: 0,
-      data: {
-        attachmentsLen: atts.length,
-        imageCount: images.length,
-        mentionedFromUtterance: mentioned,
-        byRefKeys: Object.keys(byRef),
-        byRefCount: Object.fromEntries(Object.entries(byRef).map(([k, v]) => [k, (v as any[]).length])),
-      },
-    };
-  }
 }
 
 @Controller('agent/internal')
@@ -1356,12 +1282,6 @@ export class AgentCanvasToolsController {
   @Post('get-image-edit-capabilities')
   async getImageEditCapabilities(@Body() dto: SessionNodeDto) {
     const data = await this.tools.getImageEditCapabilities(dto)
-    return { code: 0, message: 'ok', data }
-  }
-
-  @Post('upscale-image')
-  async upscaleImage(@Body() dto: UpscaleImageDto) {
-    const data = await this.tools.upscaleImage(dto)
     return { code: 0, message: 'ok', data }
   }
 

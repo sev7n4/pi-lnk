@@ -8,6 +8,14 @@ const props = defineProps<{
   selectedIds: string[]
   canGenerateVideo?: boolean
   canUngroup?: boolean
+  selectionBatch?: {
+    runCount: number
+    regenCount?: number
+    state: 'idle' | 'running' | 'stopping' | 'done'
+    blocked?: 'pending_confirm' | 'limit_24' | 'missing_prompt'
+    blockedCount?: number
+    missingCount?: number
+  }
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +28,10 @@ const emit = defineEmits<{
   addAgentRef: []
   duplicate: []
   duplicateUpstream: []
+  generateSelection: []
+  generateRegen: []
+  stopSelection: []
+  blockedHint: [reason: 'pending_confirm' | 'limit_24' | 'missing_prompt']
 }>()
 
 const { viewport, nodes: flowNodes } = useVueFlow()
@@ -90,6 +102,7 @@ const visible = computed(() => props.selectedIds.length >= 2 || !!props.canUngro
     :can-generate-video="canGenerateVideo"
     :can-ungroup="canUngroup"
     :screen-position="screenPosition"
+    :selection-batch="selectionBatch"
     @group="emit('group')"
     @ungroup="emit('ungroup')"
     @delete="emit('delete')"
@@ -99,5 +112,9 @@ const visible = computed(() => props.selectedIds.length >= 2 || !!props.canUngro
     @add-agent-ref="emit('addAgentRef')"
     @duplicate="emit('duplicate')"
     @duplicate-upstream="emit('duplicateUpstream')"
+    @generate-selection="emit('generateSelection')"
+    @generate-regen="emit('generateRegen')"
+    @stop-selection="emit('stopSelection')"
+    @blocked-hint="emit('blockedHint', $event)"
   />
 </template>

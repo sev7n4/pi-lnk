@@ -1,41 +1,107 @@
-# PI-Lnk
+# 超创平台 (lnkpi)
 
-> **PI-Lnk** — 把当前 lnkpi 项目的画布 / Studio / 侧栏业务能力 + 工具能力，与 [earendil-works/pi](https://github.com/earendil-works/pi) 的 agent core 内核组合在一起的下一代产品。
+> AI 无限画布创作工作流平台 — 深度对标 NeoWOW，AI Native Agent 全面驱动画布。
 
-## 这是什么项目
+## 核心架构
 
-PI-Lnk 是 **lnkpi 的 fork**，但**内核从自研 LangGraph Runtime + 自研 `@lnkpi/agent` 切换到 `@earendil-works/pi-agent-core`**。
+```
+用户自然语言 → Agent 对话 (SSE) → Canvas Tools → 画布实时更新
+                     ↓
+              OpenAI / 规则引擎
+                     ↓
+         create_shot / generate_image / generate_video / ...
+```
 
-目标：
-- 释放 pi 的极简 agent core（agent loop ~857 行 / Agent class ~607 行）+ skills 系统 + sessions 系统 + tool proxy + 插件 / skills / package 生态
-- 保留 lnkpi 已有的全部业务能力：无限画布、Studio、RefChip、Vision Provider、侧栏素材、Skill 选择器
-- 砍掉 26000+ 行自研 runtime / harness 代码，让商业化演进不再被自研工程债务卡住
+## 功能概览
 
-## 项目状态
+| 模块 | 状态 | 对标 NeoWOW |
+|------|------|------------|
+| 创作启动器 | ✅ | `/workflow` |
+| 无限画布 + 分镜节点 | ✅ | `WorkflowCanvas` |
+| **Agent 驱动画布** | ✅ | `/agent/chat/conversation` |
+| Canvas API (6 端点) | ✅ | `/agent/canvas/*` |
+| 图像生成 Provider | ✅ | OpenAI / Placeholder 降级 |
+| Shot/Material 持久化 | ✅ | Prisma + 轮询 |
+| PlayCanvas POC | ✅ | 3D 画布评估模式 |
+| @mention 输入 | ✅ | `MentionInput.vue` |
+| 语音输入 | ✅ | Web Speech API |
+| Agent 工具链 (8 tools) | ✅ | Canvas Domain API |
+| SSE 流式对话 | ✅ | 流式 Agent 回复 |
+| 三栏布局 (会话/画布/Agent) | ✅ | SessionSelector + Canvas + Chat |
+| 底部生成栏 + 模型选择 | ✅ | GenerationBar |
+| 手机验证码登录 | ✅ | LoginDialog |
+| 社区作品流 | ✅ | NeoTV |
 
-| 维度 | 状态 |
-|---|---|
-| 仓库初始化 | ✅ 完成（2026-09-19） |
-| 内核选型 | ✅ `@earendil-works/pi-agent-core` v0.85.1 |
-| 业务能力迁移范围 | 待评估（见 [讨论文档 §6](./docs/discussion/2026-09-19-pi-lnk-migration-discussion.md)） |
-| 第一个 spec / plan | ⏳ 未开始（讨论先行；按用户指示暂不写 spec / plan） |
+## 技术栈
 
-## 第一个资产
+- **前端**: Vue 3 + TypeScript + Vite + Tailwind + Vue Flow
+- **Agent**: `@lnkpi/agent` — 原生 Tool-Calling Agent 框架
+- **后端**: NestJS + Prisma + SQLite + SSE
+- **对标调研**: [NeoWOW 深度调研](./docs/NEOWOW_RESEARCH.md)
 
-[📄 **docs/discussion/2026-09-19-pi-lnk-migration-discussion.md**](./docs/discussion/2026-09-19-pi-lnk-migration-discussion.md)
+## 快速开始
 
-这是 PI-Lnk 项目的**第一份正式文档**，记录了：
-- 7 个核心决策（已拍板）
-- 当前 lnkpi agent 栈的分层拆解（LOC + 职责）
-- earendil-works/pi 的真实架构（基于源码，不是基于文档宣传）
-- 层 ↔ 包 映射 + 改动矩阵
-- F1–F9 + 9 spec 能力覆盖分析
-- 复杂度评估 + 影响分析 + 风险与回退
+```bash
+pnpm install
+pnpm --filter @lnkpi/server db:push
+pnpm --filter @lnkpi/server db:seed
+pnpm dev
+```
 
-## 后续路径
+- 前端: http://localhost:5173
+- 后端: http://localhost:3001/api
+- 开发验证码: `123456`
 
-按用户当前指令：
-- ❌ 不写 spec
-- ❌ 不写 plan
-- ✅ 持续讨论、拆解、可行性 / 复杂度 / 影响分析
-- ✅ 等讨论收敛后再进入 spec / plan 阶段
+## Agent 配置
+
+```bash
+# .env — 配置后自动切换为 OpenAI Agent（否则使用规则引擎）
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_CHAT_MODEL=gpt-4o
+OPENAI_IMAGE_MODEL=dall-e-3
+```
+
+## Agent Native 验收 (M2)
+
+1. 登录：`13800000000` / 验证码 `123456`
+2. 打开 `/workflow`，输入创意创建画布
+3. 在 Agent 面板输入「创作赛博朋克城市夜景」→ 应出现分镜 + 图像节点
+4. 刷新页面 → 节点持久化保留
+5. Canvas API 测试：`bash apps/server/scripts/test-canvas-api.sh`
+
+无 `OPENAI_API_KEY` 时使用 RuleBasedAgent + Unsplash 占位图，功能仍可验收。
+
+## Phase 2 验收 (M4)
+
+1. 画布底部生成栏输入 prompt → 自动创建分镜 + 异步生成图像
+2. 工具栏「分镜」→ 打开分镜面板浏览所有 shot
+3. 工具栏「发布」或 `/workflow` 页「发布作品」→ 发布到社区
+4. 刷新 `/workflow` → 新作品出现在列表
+
+## Phase 3 验收
+
+1. 作品卡片「查看创作过程」→ `/replay/:sessionId` 时间轴回放
+2. 点击作者 → `/creator/:id` 创作者主页
+3. 点击「分享」→ `/share/:id` 作品详情页
+4. Header「积分」→ 会员弹窗，可领取每日积分 / 升级套餐
+
+## Phase 4 验收
+
+1. Header「工作室」→ 图像/视频/音频工作室独立生成
+2. 「生成记录」查看历史
+3. 「视频编辑器」组合视频素材时间轴
+4. Header「短片」→ 新建漫剧故事并进入画布
+
+## 项目结构
+
+```
+lnkpi/
+├── apps/web/              # Vue 3 前端
+├── apps/server/           # NestJS 后端 (/agent/* API)
+├── packages/agent/        # AI Native Agent 框架 + Canvas Tools
+├── packages/shared/       # 共享类型 (Shot/Material/CanvasAction)
+└── docs/
+    ├── NEOWOW_RESEARCH.md          # 竞品深度调研
+    └── PRODUCT_CAPABILITY_MAP.md   # 能力对标路线图
+```
