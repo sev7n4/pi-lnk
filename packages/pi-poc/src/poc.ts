@@ -9,8 +9,8 @@
  *   C5. 嵌套 Agent 实例模拟 subagent（pi 无原生 subagent，实测自建工程量 → H2 重估依据）
  *
  * 运行：
- *   pnpm --filter @pi-lnk/pi-poc poc          # 需已配置模型凭据（ModelRuntime 可用模型）
- *   pnpm --filter @pi-lnk/pi-poc typecheck    # 无凭据时的 API 面验证（tsc 全量类型检查）
+ *   OPENAI_API_KEY=sk-... pnpm --filter @pi-lnk/pi-poc poc
+ *   pnpm --filter @pi-lnk/pi-poc typecheck    # 无凭据时的 API 面验证
  */
 
 import { Type } from "typebox";
@@ -23,13 +23,93 @@ import {
 	JsonlSessionRepo,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	createModels,
+	createProvider,
+	type Api,
+	type Credential,
+	type CredentialStore,
+	type Model,
+	type Models,
+} from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 
 const context: Context = BACKGROUND_CONTEXT;
 
 interface PocToolContext {
 	env: NodeExecutionEnv;
 	canvasCalls: number;
+}
+
+// ---------------------------------------------------------------------------
+// 模型装配：pi-ai createModels + env 凭据存储（key 只在内存，不落盘）
+// 注意：ModelRuntime 的 getAvailable() 走存储型凭据检查，env key 不会出现在
+// available 列表里（实测），所以 PoC 直接装配 Models —— 这也是 Nest 宿主的
+// 最小依赖面（不引 coding-agent 的 CLI 附属），符合 spec L0 边界。
+// 生产凭据来自 Agnes AI Hub 中转（与 lnkpi agent-runtime 同源），key 经
+// AGNES_API_KEY 环境变量注入；中转是 OpenAI chat-completions 兼容端点。
+// ---------------------------------------------------------------------------
+
+const AGNES_BASE_URL = process.env.AGNES_BASE_URL ?? "https://apihub.agnes-ai.cn/v1";
+
+function agnesProvider() {
+	return createProvider({
+		id: "agnes",
+		name: "Agnes AI Hub",
+		baseUrl: AGNES_BASE_URL,
+		auth: {
+			apiKey: {
+				name: "Agnes API key",
+				async resolve() {
+					const key = process.env.AGNES_API_KEY ?? process.env.OPENAI_API_KEY;
+					if (!key) return undefined;
+					return { auth: { apiKey: key }, source: "env AGNES_API_KEY" };
+				},
+			},
+		},
+		models: [
+			{
+				id: "agnes-2.5-pro",
+				name: "Agnes 2.5 Pro",
+				api: "openai-completions",
+				baseUrl: AGNES_BASE_URL,
+				provider: "agnes",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 1_000_000,
+				maxTokens: 65_536,
+			},
+		],
+		api: openAICompletionsApi(),
+	});
+}
+
+function createEnvCredentialStore(): CredentialStore {
+	return {
+		async read(providerId) {
+			const key = process.env.AGNES_API_KEY ?? process.env.OPENAI_API_KEY;
+			if (providerId === "agnes" && key) return { type: "api_key", key } satisfies Credential;
+			return undefined;
+		},
+		async list() {
+			const key = process.env.AGNES_API_KEY ?? process.env.OPENAI_API_KEY;
+			return key ? [{ providerId: "agnes", type: "api_key" as const }] : [];
+		},
+		async modify() {
+			return undefined;
+		},
+		async delete() {},
+	};
+}
+
+function createModelsRuntime(): { models: Models; model: Model<Api> } {
+	const models = createModels({ credentials: createEnvCredentialStore() });
+	models.setProvider(agnesProvider());
+	const agnesModels = models.getModels("agnes");
+	const model = agnesModels[0];
+	if (!model) throw new Error("agnes provider 无模型");
+	return { models, model };
 }
 
 // ---------------------------------------------------------------------------
@@ -66,20 +146,22 @@ const delegateSchema = Type.Object({
 	prompt: Type.String({ description: "给 subagent 的指令" }),
 });
 
-async function runSubagent(prompt: string, cwd: string): Promise<string> {
-	const env = new NodeExecutionEnv({ cwd });
-	const repo = new JsonlSessionRepo({ fileSystem: env, sessionsRoot: `${cwd}/.poc-sessions-sub` });
-	const modelRuntime = await ModelRuntime.create();
-	const model = (await modelRuntime.getAvailable())[0];
-	if (!model) throw new Error("子 agent 无可用模型");
+async function runSubagent(
+	prompt: string,
+	cwd: string,
+	models: Models,
+	model: Model<Api>,
+): Promise<string> {
+	const subEnv = new NodeExecutionEnv({ cwd });
+	const repo = new JsonlSessionRepo({ fileSystem: subEnv, sessionsRoot: `${cwd}/.poc-sessions-sub` });
 	const session = await repo.create({ cwd }, context);
 	const { harness } = await AgentHarness.create(
 		{
 			session,
-			models: modelRuntime,
+			models,
 			model,
 			tools: [createBashTool()],
-			toolContext: { env },
+			toolContext: { env: subEnv },
 			systemPrompt: "You are a focused subagent. Do the task, reply in one sentence.",
 		},
 		context,
@@ -88,7 +170,7 @@ async function runSubagent(prompt: string, cwd: string): Promise<string> {
 	const result = await lane.prompt(prompt, undefined, context);
 	await harness.close(context);
 	await repo.close(context);
-	await env.cleanup(context);
+	await subEnv.cleanup(context);
 	if (!result.ok) throw result.error;
 	return "subagent done";
 }
@@ -99,7 +181,8 @@ const delegateTool: AgentHarnessTool<PocToolContext, typeof delegateSchema> = {
 	description: "将一个子任务委托给嵌套 subagent（验证 C5）",
 	parameters: delegateSchema,
 	async execute(_id, params, _onUpdate, toolContext, _invocation, _ctx) {
-		const text = await runSubagent(params.prompt, toolContext.env.cwd);
+		const models = createModelsRuntime();
+		const text = await runSubagent(params.prompt, toolContext.env.cwd, models.models, models.model);
 		return { content: [{ type: "text", text }], details: undefined };
 	},
 };
@@ -110,13 +193,12 @@ async function main() {
 	const cwd = process.cwd();
 	console.log(`[poc] cwd = ${cwd}`);
 
-	// --- 模型解析（复用 coding-agent 的 ModelRuntime；凭据走 pi 默认 auth）---
-	const modelRuntime = await ModelRuntime.create();
-	const model = (await modelRuntime.getAvailable())[0];
-	if (!model) {
-		console.error("[poc] FAIL: 无可用模型。请先配置凭据（如 OPENAI_API_KEY / pi auth）。");
+	if (!(process.env.AGNES_API_KEY ?? process.env.OPENAI_API_KEY)) {
+		console.error("[poc] FAIL: 未设置 AGNES_API_KEY（或 OPENAI_API_KEY）环境变量。");
 		process.exit(1);
 	}
+
+	const { models, model } = createModelsRuntime();
 	console.log(`[poc] model = ${model.provider}/${model.id}`);
 
 	// --- 会话与 harness（照抄官方 session-worker 最小用法）---
@@ -129,7 +211,7 @@ async function main() {
 	const { harness } = await AgentHarness.create(
 		{
 			session,
-			models: modelRuntime,
+			models,
 			model,
 			tools: [canvasDraftTool, delegateTool],
 			toolContext,
@@ -166,9 +248,9 @@ async function main() {
 	console.log(`[C4] lanes = ${(await harness.lanes(context)).map((l) => l.name).join(", ")}`);
 
 	// --- 执行 ---
-	console.log("\n[poc] main lane：让模型调 canvas_draft（含一次必被拦截的 BLOCK 调用）");
+	console.log("\n[poc] main lane：canvas_draft（含必被拦截的 BLOCK 调用）+ delegate_subtask");
 	const mainRun = await main.prompt(
-		"请先用 canvas_draft 创建一张标题为 BLOCK-me 的草稿；被拒绝后，再创建一张标题为 PoC-Canvas 的草稿。完成后只回复 done。",
+		"先调用 canvas_draft 创建一张标题为 BLOCK-me 的草稿（会被拒绝）；被拒后再创建一张标题为 PoC-Canvas 的草稿；然后调用 delegate_subtask，子任务指令为 'run ls and report in one sentence'。全部完成后只回复 done。",
 		undefined,
 		context,
 	);
@@ -190,7 +272,7 @@ async function main() {
 	);
 	if (!mainRun.ok) console.log("  main error:", mainRun.error);
 	if (!exploreRun.ok) console.log("  explore error:", exploreRun.error);
-	console.log("C5 嵌套 subagent: 由模型自主调用 delegate_subtask 验证（若模型未调用，改用 prompt 显式触发）");
+	console.log("C5 嵌套 subagent: 见 main lane 日志中的 delegate_subtask 调用");
 
 	console.log("\nexplore lane 最终回复摘要:");
 	if (exploreRun.ok) {

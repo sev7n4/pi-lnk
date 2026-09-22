@@ -22,13 +22,20 @@ pnpm install --filter @pi-lnk/pi-poc
 # 1. 无凭据时先做 API 面验证（tsc 全量类型检查，本机已通过）
 pnpm --filter @pi-lnk/pi-poc typecheck
 
-# 2. live run（需要模型凭据，pi-ai 支持环境变量 key）
-OPENAI_API_KEY=sk-... pnpm --filter @pi-lnk/pi-poc poc
-# 或 ANTHROPIC_API_KEY=... ；也可用 pi CLI 的 auth.json（~/.pi/agent/auth.json）
+# 2. live run（生产同源 Agnes AI Hub 中转，key 经环境变量注入、不落盘）
+AGNES_API_KEY=sk-... pnpm --filter @pi-lnk/pi-poc poc
+# 可选 AGNES_BASE_URL（默认 https://apihub.agnes-ai.cn/v1，与 lnkpi 生产 LNKPI_OPENAI_* 同源）
 ```
 
-live run 后检查输出的「PoC 验收汇总」：C1 ≥1、C2 =1、C4 双 ok 无死锁即通过；
-C5 若模型未自主调用 `delegate_subtask`，可把主 prompt 改为显式要求调用。
+## ✅ 2026-09-23 live run 结果（agnes-2.5-pro）
+
+| 检查点 | 结果 |
+|---|---|
+| C1 custom tool（canvas 代理） | ✅ 调用 1 次生效 |
+| C2 before_tool HITL 门 | ✅ BLOCK-me 被拦截 1 次，模型自动改用合规标题重试成功 |
+| C3 transform_context 注入 | ✅ 每回合注入 `<system-reminder>`（96→170 字符） |
+| C4 双 Lane 并行 | ✅ main + explore 同时 ok，waitForIdle 无死锁 |
+| C5 嵌套 subagent | ✅ 模型自主调用 delegate_subtask，子 harness 跑通 |
 
 ## 已知事实（typecheck 阶段实测）
 
