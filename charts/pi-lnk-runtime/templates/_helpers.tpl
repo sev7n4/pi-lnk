@@ -25,5 +25,5 @@ env: {{ .Values.envClass | default "dev" }}
 {{- end -}}
 
 {{- define "pi-lnk-runtime.serviceAccountName" -}}
-{{- default (include "pi-lnk-runtime.fullname" .) .Values.serviceAccount.name -}}
+{{- default (include "pi-lnk-runtime.fullname" .) ((.Values.serviceAccount | default dict).name) -}}
 {{- end -}}
