@@ -28,6 +28,9 @@ app.get("/healthz", async () => {
 	};
 });
 
+// spec §5.4.1 readiness 探针端点（Day-1 与 healthz 同语义；Day-2 可加依赖检查）
+app.get("/readyz", async () => ({ status: "ready" }));
+
 app.post<{ Body: { sessionId?: string; systemPrompt?: string } }>(
 	"/sessions",
 	async (request, reply) => {
