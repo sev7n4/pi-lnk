@@ -30,8 +30,9 @@ pvc:
 networkPolicy:
   enabled: true
   # NodePort 入口来源（dev：宿主机 docker 网段 + 节点网段；prod 收紧到 Nest 出口）
+  # 172.16.0.0/12 覆盖 docker0(172.17) 及所有自定义 compose 网络（如 lnkpi-net 172.20）
   ingressCidrs:
-    - 172.17.0.0/16
+    - 172.16.0.0/12
     - 10.0.0.0/8
   # egress 白名单：LLM provider（443）
   egressCidrs:
