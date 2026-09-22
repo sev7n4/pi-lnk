@@ -1,0 +1,41 @@
+# @pi-lnk/pi-poc — N2 PoC Spike
+
+验证 [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi) v0.85.1 承载 PI-Lnk 四流
+（atomic / chat / explore / marketing）的 5 个关键假设。对应讨论文档 A.6 与 spec R16。
+
+## 验收清单
+
+| # | 假设 | 验证方式 | 对应硬骨头 |
+|---|---|---|---|
+| C1 | Nest 宿主能起 pi 会话 + custom tool | `canvas_draft` 工具模拟 canvas 服务代理（service token 模式） | F7 |
+| C2 | `before_tool` hook = 工具级 HITL 确认门 | 标题含 `BLOCK` 的 canvas 调用被拦截 | Sidebar 确认门 |
+| C3 | `transform_context` = system-reminder 注入位 | 每回合向 systemPrompt 追加 `<system-reminder>` | F2 上下文管理 |
+| C4 | 双 Lane 并行（explore 后台 + main 前台） | 两条 lane 同时 prompt + `waitForIdle` | F9 |
+| C5 | 嵌套 Agent 实例 = subagent 自建最小方案 | `delegate_subtask` 工具内起子 harness | H2 工程量重估（R16） |
+
+## 运行
+
+```bash
+# 在 worktree 根目录
+pnpm install --filter @pi-lnk/pi-poc
+
+# 1. 无凭据时先做 API 面验证（tsc 全量类型检查，本机已通过）
+pnpm --filter @pi-lnk/pi-poc typecheck
+
+# 2. live run（需要模型凭据，pi-ai 支持环境变量 key）
+OPENAI_API_KEY=sk-... pnpm --filter @pi-lnk/pi-poc poc
+# 或 ANTHROPIC_API_KEY=... ；也可用 pi CLI 的 auth.json（~/.pi/agent/auth.json）
+```
+
+live run 后检查输出的「PoC 验收汇总」：C1 ≥1、C2 =1、C4 双 ok 无死锁即通过；
+C5 若模型未自主调用 `delegate_subtask`，可把主 prompt 改为显式要求调用。
+
+## 已知事实（typecheck 阶段实测）
+
+- `NodeExecutionEnv` 需从 `@earendil-works/pi-agent-core/node` 子路径导入
+- 模型可用列表用 `modelRuntime.getAvailable()`（`snapshot` 是 private）
+- `lane.prompt(text, undefined, context)` —— string 重载要求 images 参数占位
+- 工具 execute 必须返回 `details`（可为 undefined）
+- 自定义工具 schema 用 `typebox@1.3.7` 的 `Type.Object`，execute 第 5 参是 `AgentHarnessToolInvocation`（含 durable replay memo）
+
+这些是讨论文档 A.6 之外新增的 API 细节，写 L2 `lnkpi-extension` 时直接复用本包代码。
