@@ -1,0 +1,23 @@
+{{- if .Values.hpa.enabled }}
+{{- /* Day-1 不启用（values.yaml hpa.enabled=false），模板占位；注意 SSE 长连接
+场景下副本扩缩会造成会话粘性，启用前需先落 session 亲和方案（Round 5） */ -}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "pi-lnk-runtime.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "pi-lnk-runtime.fullname" . }}
+  minReplicas: {{ .Values.replicaCount }}
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+{{- end }}

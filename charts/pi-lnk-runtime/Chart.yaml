@@ -1,0 +1,7 @@
+apiVersion: v2
+name: pi-lnk-runtime
+description: PI-Lnk pi-runtime agent runtime (vendored pi-agent-core) — spec §5.2
+type: application
+version: 0.1.0
+# 绑定 pi-agent-core vendor 版本（spec §5.2.3：升级 vendor 时必须同步 bump）
+appVersion: "0.85.1"

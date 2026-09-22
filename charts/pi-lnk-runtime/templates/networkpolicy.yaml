@@ -1,0 +1,59 @@
+{{- if .Values.networkPolicy.enabled }}
+# spec §5.3.1：默认 deny + 白名单。
+# egress 白名单：集群 DNS + LLM provider（Agnes 中转等，443）。
+# ingress 白名单：Nest L6 入口（K8s 外）经 NodePort 进来的来源 CIDR +
+# 集群内部（pod/service CIDR，健康探针与未来的 K8s 内 Nest）。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pi-runtime-default-deny
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pi-runtime-allow
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: pi-runtime
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.ingressCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+  egress:
+    # 集群 DNS（K3s: kube-system coredns 10.43.0.10）
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # LLM provider egress（Agnes 中转 / 未来多 provider）
+    - to:
+        {{- range .Values.networkPolicy.egressCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

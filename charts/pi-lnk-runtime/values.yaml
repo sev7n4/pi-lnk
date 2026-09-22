@@ -1,0 +1,55 @@
+# 默认 values（dev 单节点，spec §5.2.1）
+# 与 spec 的差异点（端口定案后更新，见 AGENTS.md 端口表）：
+#   - 容器端口 8100（spec 写作时为 8080 旧值）
+#   - dev 用 NodePort 暴露给 K8s 外的 Nest（本机 docker）；Traefik/servicelb 在 CVM 上禁用（内存约束）
+
+replicaCount: 1
+
+image:
+  repository: 127.0.0.1:5000/pi-runtime
+  tag: "0.0.1"
+  pullPolicy: IfNotPresent
+
+service:
+  type: NodePort
+  port: 8100
+  nodePort: 30100
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1.5Gi
+
+pvc:
+  size: 5Gi
+  storageClassName: local-path
+
+networkPolicy:
+  enabled: true
+  # NodePort 入口来源（dev：宿主机 docker 网段 + 节点网段；prod 收紧到 Nest 出口）
+  ingressCidrs:
+    - 172.17.0.0/16
+    - 10.0.0.0/8
+  # egress 白名单：LLM provider（443）
+  egressCidrs:
+    - 0.0.0.0/0
+
+env:
+  PORT: "8100"
+  NODE_ENV: "production"
+  PI_RUNTIME_DATA_DIR: "/data/sessions"
+
+# D-ζ' 双 runtime 开关（shadow/active 由部署侧控制，Day-1 默认 off）
+piRuntimeMode: "off"
+
+secrets:
+  # 生产值由部署时 --set 或 -f secrets.yaml 注入，仓库不落明文
+  AGNES_API_KEY: "REPLACE_ME"
+  AGNES_BASE_URL: "https://apihub.agnes-ai.cn/v1"
+  AGNES_MODEL_ID: "agnes-2.5-pro"
+
+hpa:
+  enabled: false

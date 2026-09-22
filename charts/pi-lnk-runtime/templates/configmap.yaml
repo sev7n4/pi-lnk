@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-runtime-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pi-lnk-runtime.labels" . | nindent 4 }}
+data:
+  agent.json: |
+    {
+      "steeringMode": "one-at-a-time",
+      "followUpMode": "one-at-a-time",
+      "toolExecution": "parallel",
+      "sessionBackend": "sqlite-node"
+    }
