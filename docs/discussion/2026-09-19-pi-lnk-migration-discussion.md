@@ -1,6 +1,6 @@
 # 「侧栏 agent 切换至 earendil-works/pi 内核」讨论文档
 
-> **状态**：讨论稿 v1（2026-09-19）
+> **状态**：讨论稿 v1.3（2026-09-19 初版；2026-09-22 增补 A.4 业界先例；2026-09-23 增补 A.5 目标架构借鉴蓝图、A.6 N1 定向深挖）
 > **路径**：Architectural — brainstorming 阶段；**非 spec、非 plan**
 > **新项目仓库**：[PI-Lnk](https://github.com/your-org/pi-lnk)（本文档是该仓库的第一个资产）
 > **来源项目**：[lnkpi](https://github.com/your-org/lnkpi)（超创平台 / AI 无限画布创作工作流平台）
@@ -675,13 +675,141 @@ coding-agent 的高层 session 管理。**值得借鉴模式，但不直接依�
 | 总工程量 | 20–30 人/天 | **23–32 人/天** | 一致 |
 | 净删除 LOC | -26000 | **-26000** | 一致 |
 
+### A.4 业界先例：WorkBuddy/CodeBuddy 架构逆向（2026-09-22 增补）
+
+> **调研方法**：对本机 `/Applications/WorkBuddy.app` 做 asar 解包与 bundle 逆向（`app.asar` 298MB + `app.asar.unpacked`），全部结论基于一手证据（依赖清单、bundle 字符串、文件清单），非公开资料猜测。
+
+#### A.4.1 事实结论
+
+WorkBuddy 桌面端（`@genie/workbuddy-desktop` v5.5.6，Electron）的 agent 内核为内嵌的 **CodeBuddy Code CLI**（内部代号 `@genie/agent-cli`，公开 npm 名 `@tencent-ai/codebuddy-code` v2.137.1，仓库 `cnb.cool/codebuddy/codebuddy-code`），业界普遍称其为"腾讯版 Claude Code"。其 agent loop 为**自研** `@genie/*` 单仓（core / runtime / agent-provider / prompts / plugin-chat / plugin-core）。
+
+各家技术来源对照：
+
+| 来源 | 是否借鉴 | 证据 |
+|---|---|---|
+| Claude Code（Anthropic） | ✅ 借鉴最深（非抄源码） | ① bundle 含 Claude Code 内部协议名：`system-reminder`×65、`subagent_type`、`TodoWrite`、`AskUserQuestion`，hooks / plan mode / skills 概念同构；② **真依赖** `@anthropic-ai/sandbox-runtime@0.0.17`（seccomp 沙箱加固）；③ 插件市场拉取 `anthropics/claude-plugins-official` 统计，marketplace 白名单含 `claude-plugins-official` / `anthropic-marketplace`；④ ink TUI、vendored ripgrep、headless 模式同款基建 |
+| OpenAI Agents SDK | ⚠️ 引入但仅作工具库 | 打包 `@openai/agents@0.5.2` + agents-core + agents-realtime，主循环未用；仅消费 `toFunctionToolName` 等工具函数（归一化 MCP 工具名）；`openai` SDK v6 作模型客户端；`openai-codex` 为其中一个 model provider |
+| Codex CLI / pi-agent-core / OpenClaw / Hermes | ❌ 未复用 | `pi-agent-core` / `earendil` 全 bundle 0 命中；codex 仅 `~/.codex/` 目录兼容 + provider 接入；openclaw 命中的是腾讯内部 `qqbot/openclaw` 端点；hermes 仅出现在沙箱白名单 `~/.hermes/` |
+
+架构分层：主进程做会话编排 + MCP apps host + 连接器（企微/飞书/钉钉/Slack/QQ），CLI 内核持有多 provider 矩阵（openai/anthropic/google/deepseek/kimi/minimax/groq/cerebras/bedrock/vertex/github-copilot/openrouter/vercel-ai 等 20+）、MCP SDK 1.29、ACP 协议（`@agentclientprotocol/sdk`）、自研 sandbox-cli 5.5.5 + Anthropic sandbox-runtime + vendored toybox/zsh。技能体系直接读取 `~/.claude/`、`~/.codex/`、`~/.openclaw/`、`~/.hermes/`、`~/.agents/skills/`（沙箱白名单），即与 Claude Code 插件/技能生态双向兼容。
+
+#### A.4.2 对本文档决策的映射
+
+| 映射点 | 启示 |
+|---|---|
+| **D-γ（vendor pi 到 monorepo）** | CodeBuddy 走的是"自研 loop + 借用生态"路线，与本方案"vendor 成熟内核"是同一种务实主义的两个变体。它借的是协议（MCP/ACP）、格式（SKILL.md / plugin marketplace）、组件（sandbox-runtime、ink），而非别人的循环——支持本方案"内核用 pi、生态协议照单全收"的取向 |
+| **D-β（strangler-fig）** | CodeBuddy CLI 以独立进程内嵌进桌面端主进程（类似 D-α 的独立 Node 服务形态），验证了"内核进程化 + 宿主编排"的可行性 |
+| **可借鉴模式** | ① `<system-reminder>` 注入机制；② subagent 派生协议；③ 与 Claude Code 技能市场双向兼容（零成本获得整个技能生态）；④ 用 `@openai/agents-core` 当工具函数库而非框架 |
+| **风险提示** | 头部产品（CodeBuddy/WorkBuddy）均未采用 pi-agent-core，无业界先例 → vendor pi 等于自担内核演进风险，应在 spec 阶段对 pi 上游停更/ breaking change 场景给出预案（呼应 §8 风险与回退） |
+
+### A.5 目标架构借鉴蓝图（2026-09-23 增补）
+
+> **来源**：基于 A.4 一手逆向证据的架构推演。核心论点：WorkBuddy 的护城河不是内核（其 loop 为自研且不比 pi 高明），而是 **harness 模式 + 生态兼容 + 宿主编排** 三层。PI-Lnk 的借鉴姿态：内核 vendor（D-γ' 已拍板）+ harness 模式照抄 + 生态协议照单全收。
+
+#### A.5.1 五层目标架构
+
+| 层 | 内容 | 设计要点 | 版本节奏 | 借鉴来源 |
+|---|---|---|---|---|
+| **L4 宿主与产品编排** | Nest + 侧栏 Vue | pi-runtime 自 P0 起独立进程（D-α' K3s）；接口预留 headless/多形态，L3↔L4 边界按"未来能换宿主"切 | v1.1+ | WorkBuddy 桌面宿主（headless / 连接器 / 沙箱 / 多形态商业化路径） |
+| **L3 业务能力层** | canvas / studio / provider-resolver / 计费 / BYOK | 真实副作用唯一出口；pi 工具全部 service token 代理回 Nest——F7"ProviderContext 唯一真相"的架构化表达 | 不动 | — |
+| **L2 Harness 扩展层** | `lnkpi-extension` 包 | 投入最重的一层：system-reminder 注入（替代 state dict 上下文管理）、subagent_type 派生（对应 4 个子图）、HITL 确认门（`shouldStopAfterTurn` + AgentHarness `SuspendedRun`）、12 mode → slash command + skill | v1.0 | Claude Code harness 四模式（CodeBuddy 实证） |
+| **L1 生态协议层** | MCP 客户端 + agentskills.io SKILL.md | 现有 marketing skill 零修改迁；**v1.1 杀手级功能：直接兼容安装 Claude Code 技能市场的技能**（CodeBuddy 已验证可行性） | v1.0 基础 → v1.1 市场 | 双家生态（MCP 1.29 / ACP / agentskills.io） |
+| **L0 内核** | vendored pi-agent-core | 只用不改。AgentEvent 11 种 → 现有 17 种 SSE；steering/followUp 承载 F9；vendor + pin + patch（D-γ'） | v1.0 | 站在 pi 肩上（对应 CodeBuddy 自研 @genie/core 的位置） |
+
+#### A.5.2 借鉴清单（按版本节奏）
+
+| 节奏 | 借鉴项 | 来源 |
+|---|---|---|
+| **v1.0（迁移本身）** | system-reminder 注入、subagent 协议、HITL 门、工具名归一化（可学 WorkBuddy 用 `@openai/agents-core` 的 `toFunctionToolName` 当工具库） | CodeBuddy 实证过的模式 |
+| **v1.1** | Claude Code 技能市场双向兼容、OAuth 启用（D-δ' 条件）、marketing 流、headless 形态 | WorkBuddy 增长路径 |
+| **v2** | 技能市场反向输出（把侧栏创作 skill 打包发出——WorkBuddy 用插件生态位商业化的路径） | 商业化 |
+
+#### A.5.3 明确不抄清单
+
+| 不抄项 | 理由 |
+|---|---|
+| 沙箱内核（toybox / seccomp） | CLI 形态产物；Nest 宿主用 K3s NetworkPolicy + service token 已够 |
+| 20+ provider 矩阵自建 | pi-ai 内置 50+，仅补 fal / Agnes |
+| 连接器矩阵（企微/飞书/钉钉…） | WorkBuddy 卖企业协作，PI-Lnk 卖创作——产品域不同 |
+
+#### A.5.4 架构纪律与对 v1.0 的约束
+
+1. **内核纪律**：永远不打 vendor 目录补丁迁就业务，业务适配全部上推到 L2（对应 CodeBuddy "主循环神圣不可侵犯"）。
+2. **对 30 天硬截止（D-β'.b）的关系**：A.5.2 中 v1.0 列的每一项均已在 spec P1（atomic-first）路线内，不新增工期；v1.1/v2 项属架构预留而非 30 天承诺。判定标准沿用 spec §3.3：任何借鉴想法先问"是否影响 P0+P1 硬截止"。
+3. **v1.0 的目标不是"追上"，是把地基修成 WorkBuddy/Claude Code 的形状**：golden case 100% + 硬截止优先于任何借鉴功能。
+
+### A.6 N1 定向深挖：harness 落地方案 + H1 方法模板 + 技能市场兼容 scope（2026-09-23 增补）
+
+> **方法**：应 N1 决定，合并 3 个问题驱动的定向深挖（放弃泛调研）：① 重新 clone `earendil-works/pi` v0.85.1，精读 harness 全目录（5954 行，此前只读过 agent-harness.ts 前 80 行）；② Devin（playbook/Knowledge 体系）+ Manus（context engineering 六原则）公开实践；③ 从本机 CodeBuddy bundle 提取 Claude Code 插件格式解析逻辑。产出直接服务 spec 第 14/15 章 H1–H4。
+
+#### A.6.1 pi harness 层实测校准（修正 §3.2 / §3.3 / A.2）
+
+精读范围：`agent-harness.ts`（622 行全文）、`hooks.ts`（533）、`session/types.ts`（601）、`prompt-templates.ts`（270）、compaction/tools/execution/runtime 目录清单。关键事实：
+
+| 事实 | 内容 | 对 PI-Lnk 的意义 |
+|---|---|---|
+| **12 个 hook** | `before_run` / `before_drive` / `before_run_end` / `transform_context` / `before_request` / `before_payload` / `after_response` / `before_tool` / `after_tool` / `before_compaction` / `before_navigation` | system-reminder 注入、HITL 门、审计埋点全部有官方挂点 |
+| **HITL 门机制** | `before_tool` hook 返回 `{ block: { reason, terminate? } }` 即可拦截工具调用 | Sidebar 4 种确认门的直接实现位（比 `shouldStopAfterTurn` 更细粒度） |
+| **SuspendedRun** | `{ operationId, status: "suspended", deferred: DeferredHandle }`，基于 deferred tool result 的挂起/恢复（源码注释：M8 预留公共 drive） | "确认/修改/换方向"按钮的后端语义 |
+| **Lane 机制** | 一个 Session 多 `AgentLane`，每 lane 独立 tip / 队列 / 模型配置，`lane_created` 事件 | 轻量并行流的现成载体（explore 后台跑、前台 atomic 互不干扰） |
+| **OperationRequest 五类** | `prompt` / `skill`（name + additionalInstructions）/ `prompt_template`（name + args[]）/ `compaction` / `navigation` | skill 调用与 slash command 是一等公民操作 |
+| **PromptTemplate** | `.md` + YAML frontmatter（`description` / `argument-hint`），目录扫描非递归 | 12 prompt-mode 迁移目标确认：每 mode 一个 md 文件 |
+| **Entry 四型** | `message` / `compaction` / `branch_summary` / `custom`（`customType` + JsonValue，`appendCustomEntry`） | 任务卡 / canvas 快照等自定义状态持久化挂 custom entry |
+| **Compaction 三触发** | `manual` / `threshold` / `overflow` + branch-summarization（navigate 时可选 summarize） | 长 atomic 会话的上下文治理现成方案 |
+| **activeTools 运行时可切** | `config_update` 事件含 `activeTools` 变更 | 阶段性收窄工具面（对应 Manus "mask 不移除"） |
+| ⚠️ **校准：subagent 零命中** | `subagent` / `sub-agent` 在 packages/agent 与 packages/coding-agent 全仓库 **0 处**（v0.85.1） | **修正 §3.3 "extensions 注册 sub-agents" 的说法**：pi 无内置 subagent，需在 L2 自建——嵌套 `Agent` 实例（独立 session backend）或复用 harness Lane。纳入 spec H2 工程量评估 |
+
+#### A.6.2 harness 四模式落地方案草图（映射 spec 第 14/15 章）
+
+| 模式（A.5 L2） | pi v0.85.1 落点 | 备注 |
+|---|---|---|
+| system-reminder 注入 | `transform_context` hook（改写 messages/systemPrompt）或 `before_run` 追加消息 | 每回合注入画布状态 / 积分 / 上传图片缓存等；Manus 六原则之"复述目标"同构 |
+| subagent 派生 | **自建**：嵌套 Agent（独立 pi-session-backend-sqlite-node 文件）或 harness Lane；subagent 定义格式可参照 Claude Code `agents/` 目录约定 | pi 无内置（A.6.1 校准），这是 L2 最重的一块自研 |
+| HITL 确认门 | `before_tool` hook `{ block: { reason } }` → 前端确认后 `resume`/重新驱动；长确认用 SuspendedRun(deferred) | 替代 LangGraph interrupt，比之更细（工具级而非节点级） |
+| 12 mode → slash | `loadPromptTemplates` + `OperationRequest { kind: "prompt_template" }`；mode router 本身做成一个 skill | frontmatter 即 mode 元数据 |
+
+#### A.6.3 H1 方法模板（Devin/Manus 实践 → 26.7K 行业务规则迁出）
+
+Devin/Cognition 两个可直接借用的机制：
+
+- **Playbook 五段结构**：`Overview / What Is Needed From User / Procedure / Specifications / Advice & Forbidden Actions`。Cognition 自己的"Python→C 翻译"案例的做法是**先强化该代码区的单测，再委托 agent 迁移**——这正是 H1 的直接对应：每个 LangGraph 子图迁移前，先把该子图 golden case 从现有测试里固化成独立可跑套件，再动手迁。
+- **Knowledge vs Playbook 的控制面划分**：反复出现的提示升格为 Knowledge（跨会话检索），一次性过程用 playbook（会话级附加）。映射到我们：业务规则 D-1…D-9 / Sidebar L1 约束 → 登记为 skill 或 AGENTS.md 级 Knowledge（一次登记，四条流共享）；每条流的迁移步骤 → 单独 playbook，附 `Specifications`（= golden case 清单）与 `Forbidden Actions`（= 不许改动的契约面）。
+
+Manus context engineering 六原则对 pi 落地的对应：
+
+| Manus 原则 | PI-Lnk 落点 |
+|---|---|
+| KV-cache 前缀稳定 | system prompt 无时间戳等动态量；transform_context 保持前缀 append-only |
+| mask 不移除工具 | 用 harness `activeTools` 切换，不动态增删工具定义 |
+| 文件系统即上下文 | 大素材（图片/网页解析）落 Nest 存储，上下文只留句柄 |
+| todo 复述 | 长任务用 system-reminder 每回合重述任务卡目标 |
+| 保留错误 | 工具失败 trace 不清洗，留在 transcript（pi 事件流天然保留） |
+| 防 few-shot 模式化 | 12 mode 的示例在迁移时做受控变体，不逐字复制 |
+
+#### A.6.4 v1.1 技能市场兼容 scope 预估（来自 CodeBuddy bundle 逆向，零外部调研成本）
+
+一手证据（`codebuddy.js` 提取）：
+
+- **插件贡献面 schema**：一个插件可贡献 `skills / commands / hooks / agents / mcpServers / lspServers / outputStyles / themes / monitors`（另有 `dependencies`）；hooks 约定 `hooks/hooks.json`。
+- **marketplace 三层文件约定**：`known_marketplaces.json`（已注册市场）→ `marketplace.json`（市场清单，含 plugins 数组）→ `plugin.json`（插件清单）+ `installed_plugins.json` + `install-counts-cache.json`；缓存布局 `marketplaces/cache/plugins/`。
+- **兼容标记目录**：`.claude-plugin` / `.workbuddy-plugin` / `.codebuddy-plugin` 三者并列识别，marketplace 白名单含 `claude-plugins-official` / `anthropic-marketplace`。
+
+映射到 pi + 工程量分档：
+
+| 档位 | 内容 | 映射到 pi | 预估 |
+|---|---|---|---|
+| **第一档：只读兼容** | 解析 Claude Code 插件的 `skills/` + `commands/` | `loadSkills` 零改造（同为 agentskills.io）；`commands/*.md` → `loadPromptTemplates`（frontmatter 兼容） | ~3–5 天 |
+| **第二档：全量兼容** | `hooks.json` / `agents/` / `mcpServers` / `lspServers` | hooks → pi HookMap 子集适配器；agents → 依赖 A.6.2 自建 subagent 层 | ~2–3 周 |
+
+**建议**：v1.1 只做第一档 + `known_marketplaces.json`/`installed_plugins.json` 文件约定沿用；第二档等 v2 视自建 subagent 层成熟度再评估。
+
 ---
 
 ## 附录 B：本文档元信息
 
 | 字段 | 值 |
 |---|---|
-| 版本 | v1（2026-09-19 初版） |
+| 版本 | v1.3（2026-09-19 初版；2026-09-22 增补 A.4 业界先例；2026-09-23 增补 A.5 目标架构借鉴蓝图、A.6 N1 定向深挖） |
 | 仓库 | PI-Lnk（新项目） |
 | 路径 | `docs/discussion/2026-09-19-pi-lnk-migration-discussion.md` |
 | 关联 brainstorming thread | `01a0b57a-04c1-7763-9f74-ab57666a52dc` |

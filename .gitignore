@@ -14,6 +14,7 @@ uploads/
 # Superpowers / worktrees
 .superpowers/
 .worktrees/
+.workbuddy/
 
 # Prisma
 apps/server/prisma/*.db
