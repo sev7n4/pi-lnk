@@ -1372,6 +1372,8 @@ v1.0 必须有的 5 个 Grafana dashboard：
 | 10 | `tool_execution_end` | pi-agent-core |
 | 11 | （pi 端无独立 `error` 事件，错误通过 `tool_execution_end.isError` 传达） | — |
 
+> **实测校准（2026-09-23，B8 端到端冒烟，agnes-2.5-pro）**：① 上表是 `Agent.subscribe()` 的 **AgentEvent** 命名；`AgentHarness` 事件总线（`harness.events`）的实际类型为 `run_start/run_end/turn_start/turn_end/message_start/message_update/message_end/tool_start/tool_update/tool_end`——pi-runtime 已做归一（run→agent、tool→tool_execution）转发 SSE。② `message_update` 的增量事件挂在字段 `event`（非 `assistantMessageEvent`），类型枚举为 `thinking_start/thinking_delta/text_start/text_delta/thinking_end/text_end`，文本增量 = `type:"text_delta"` + `delta` 字段。③ harness 层有 `fault`/`handler_error` 事件，pi-runtime 归一为 `error` 转发（否则丢错）。
+
 #### 8.5.2 当前前端 17 种事件（待 v1.0 spec 写作时实测枚举）
 
 第一资产 §7.1 提到当前前端有 17 种事件，但**未在第一资产中枚举**。v1.0 spec 写作时需要：

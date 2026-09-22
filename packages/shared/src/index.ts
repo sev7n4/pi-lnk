@@ -315,3 +315,4 @@ export interface CapabilityItem {
   provider: string
   description?: string
 }
+export * from './pi/typebox-bridge'

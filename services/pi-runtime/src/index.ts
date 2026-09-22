@@ -1,25 +1,22 @@
 /**
- * pi-runtime 服务入口（spec §6.2.0 B2 骨架）
+ * pi-runtime 服务入口（spec §6.2.0 B2 骨架 → B8 实流）
  *
- * P0'' 内交付：healthz + 会话端点骨架。AgentHarness 的完整会话生命周期
- * （create / prompt / events SSE / interrupt / followUp）在 B8（Nest RPC 客户端）
- * 与 P1 atomic 迁移中逐步填实 —— 端点形状现在定好，避免 B8 时返工。
- *
+ * 会话生命周期由 SessionManager 承载（真实 AgentHarness，事件经 SSE 流出）。
  * 部署形态：D-α' K3s Day-1（容器化见 Dockerfile，B7）。
  */
 import Fastify from "fastify";
-import { assembleModel, type AssembledModel } from "./model-assembly.js";
+import { SessionManager, ConflictError, NotFoundError, type NormalizedEvent } from "./session-manager.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
+const HEARTBEAT_MS = 15_000;
+
+const manager = new SessionManager();
 
 const app = Fastify({
 	logger: true,
 	bodyLimit: 4 * 1024 * 1024,
 });
-
-/** 会话注册表：sessionId → 组装好的模型上下文。P0 内换成完整 AgentHarness 会话。 */
-const sessions = new Map<string, AssembledModel>();
 
 app.get("/healthz", async () => {
 	return {
@@ -27,28 +24,38 @@ app.get("/healthz", async () => {
 		service: "pi-runtime",
 		version: "0.0.1",
 		pi: "0.85.1 (vendored, see vendor/earendil-works/pi/VENDORED.md)",
-		sessions: sessions.size,
+		sessions: manager.count(),
 	};
 });
 
-app.post<{ Body: { sessionId?: string; modelId?: string } }>(
+app.post<{ Body: { sessionId?: string; systemPrompt?: string } }>(
 	"/sessions",
 	async (request, reply) => {
 		const sessionId = request.body?.sessionId ?? crypto.randomUUID();
-		if (sessions.has(sessionId)) {
-			return reply.code(409).send({ error: "session exists", sessionId });
-		}
 		try {
-			const assembled = assembleModel();
-			sessions.set(sessionId, assembled);
-			return reply.code(201).send({
-				sessionId,
-				provider: assembled.providerId,
-				model: assembled.model.id,
-				// TODO(B8): 返回完整 AgentHarness session 句柄（prompt / events / interrupt / followUp）
+			const { provider, model } = await manager.create(sessionId, {
+				systemPrompt: request.body?.systemPrompt,
 			});
+			return reply.code(201).send({ sessionId, provider, model });
 		} catch (err) {
+			if (err instanceof ConflictError) {
+				return reply.code(409).send({ error: err.message });
+			}
+			// 模型凭据缺失等装配期错误：503（下游不可用）
 			return reply.code(503).send({ error: (err as Error).message });
+		}
+	},
+);
+
+app.post<{ Params: { sessionId: string }; Body: { text: string; lane?: string } }>(
+	"/sessions/:sessionId/prompt",
+	async (request, reply) => {
+		const { sessionId } = request.params;
+		try {
+			return await manager.prompt(sessionId, request.body.text, request.body.lane ?? "main");
+		} catch (err) {
+			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			throw err;
 		}
 	},
 );
@@ -57,16 +64,34 @@ app.get<{ Params: { sessionId: string } }>(
 	"/sessions/:sessionId/events",
 	async (request, reply) => {
 		const { sessionId } = request.params;
-		if (!sessions.has(sessionId)) {
+		if (!manager.has(sessionId)) {
 			return reply.code(404).send({ error: "session not found" });
 		}
-		// TODO(B8): AgentEvent 11 种事件 → SSE 流（对接 Nest 的 17 种 SSE 映射，spec L0）
+
 		reply.raw.writeHead(200, {
 			"content-type": "text/event-stream",
 			"cache-control": "no-cache",
 			connection: "keep-alive",
 		});
-		reply.raw.write(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+
+		const writeEvent = (event: NormalizedEvent) => {
+			reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+		};
+
+		// 重连/后订阅重放：先补发缓冲，再挂实时监听
+		const buffered = manager.subscribe(sessionId, writeEvent);
+		for (const event of buffered) writeEvent(event);
+
+		const heartbeat = setInterval(() => {
+			reply.raw.write(`: heartbeat\n\n`);
+		}, HEARTBEAT_MS);
+
+		request.raw.on("close", () => {
+			clearInterval(heartbeat);
+			manager.unsubscribe(sessionId, writeEvent);
+			app.log.info({ sessionId }, "sse client disconnected");
+		});
+
 		return reply;
 	},
 );
@@ -74,8 +99,8 @@ app.get<{ Params: { sessionId: string } }>(
 app.delete<{ Params: { sessionId: string } }>(
 	"/sessions/:sessionId",
 	async (request, reply) => {
-		const deleted = sessions.delete(request.params.sessionId);
-		return deleted ? reply.code(204).send() : reply.code(404).send();
+		const removed = await manager.remove(request.params.sessionId);
+		return removed ? reply.code(204).send() : reply.code(404).send();
 	},
 );
 
