@@ -20,11 +20,13 @@ PI-Lnk 独立 agent 运行时（spec §6.2.0 **B2**），部署形态 D-α' K3s 
 
 ```bash
 pnpm install --filter @pi-lnk/pi-runtime
-pnpm --filter @pi-lnk/pi-runtime dev          # 本地开发
-AGNES_API_KEY=sk-... PORT=8080 pnpm --filter @pi-lnk/pi-runtime start
-curl localhost:8080/healthz
-curl -X POST localhost:8080/sessions -H 'content-type: application/json' -d '{}'
+pnpm --filter @pi-lnk/pi-runtime dev          # 本地开发（默认 :8100，PORT 可覆盖）
+AGNES_API_KEY=sk-... pnpm --filter @pi-lnk/pi-runtime start
+curl --noproxy '*' localhost:8100/healthz
+curl --noproxy '*' -X POST localhost:8100/sessions -H 'content-type: application/json' -d '{}'
 ```
+
+> 端口约定见根目录 AGENTS.md：pi-runtime 默认 **8100**（避开本机 8080 占用与老 runtime 8000）；K3s 内走 ClusterIP，不直接暴露公网——上线后访问链路不变：浏览器 → Vercel/nginx `:8888` → Nest → (集群内) pi-runtime。
 
 ## 后续任务（spec §6.2.0）
 

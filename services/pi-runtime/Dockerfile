@@ -14,10 +14,10 @@ RUN pnpm --filter @pi-lnk/pi-runtime build
 
 FROM node:22-slim AS runtime
 WORKDIR /app
-ENV NODE_ENV=production PORT=8080
+ENV NODE_ENV=production PORT=8100
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/services/pi-runtime/node_modules ./services/pi-runtime/node_modules
 COPY --from=build /app/services/pi-runtime/dist ./services/pi-runtime/dist
 COPY --from=build /app/services/pi-runtime/package.json ./services/pi-runtime/
-EXPOSE 8080
+EXPOSE 8100
 CMD ["node", "services/pi-runtime/dist/index.js"]

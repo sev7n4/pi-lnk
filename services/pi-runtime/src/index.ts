@@ -10,7 +10,7 @@
 import Fastify from "fastify";
 import { assembleModel, type AssembledModel } from "./model-assembly.js";
 
-const PORT = Number(process.env.PORT ?? 8080);
+const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 const app = Fastify({

@@ -3,7 +3,7 @@
 本项目 fork 自 [lnkpi](https://github.com/your-org/lnkpi)，
 目标是**把内核从自研 LangGraph Runtime + 自研 `@lnkpi/agent` 切换到 [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi) v0.85.1**。
 
-## 当前阶段：PoC 验证 → Phase 0 启动
+## 当前阶段：Phase 0'' 基建子阶段（进行中）
 
 讨论与规格阶段已完成：
 
@@ -12,7 +12,11 @@
 - **实现侧 spec（Final v1.0）**：[`docs/superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md`](./docs/superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md)
   （16 章，Fast-Ramp Atomic-First + K3s Day-1 Minimal，P0+P1 硬截止 30 天）
 
-当前任务：**N2 PoC spike**（5 天 timebox，验收 5 条见 spec 关联讨论文档 A.6），通过后进入 Phase 0（vendor pi + services/pi-runtime）。
+已完成：N2 PoC spike（5/5 live PASS，`packages/pi-poc`，含实测 API 模式）；B1 vendor pi v0.85.1；B2 `services/pi-runtime` 骨架（端点冒烟通过）。
+
+进行中 / 待做（spec §6.2.0）：B3 Zod↔TypeBox 桥接、B4 Nest L6 入口接入、B5 Helm chart、B6 K3s 单节点 + Prometheus/Grafana、B7 镜像构建 + registry、B8 Nest↔pi-runtime RPC 客户端 + AgentEvent SSE 实流。B3/B8 完成后进 P0 shadow 验证（chat 流 ≥7 天 + 7 项 KPI，见 spec §4.4/§6.2.2）。
+
+**所有开发工作按本文件 + spec 执行**；改动落盘后必须逐项 Grep 复核（历史上有 Edit 报成功但未落盘的案例）。
 
 ## 核心规则（继承自 lnkpi）
 
@@ -45,9 +49,13 @@ pi-lnk/
 │   └── web/             # Vue 3 前端
 ├── packages/
 │   ├── agent/           # @lnkpi/agent —— 自研 agent（D-η'：纯函数工具保留，prompt-modes 删除）
+│   ├── pi-poc/          # N2 PoC spike（5/5 PASS，实测 API 模式的参考实现）
 │   └── shared/          # 共享包
 ├── services/
-│   └── agent-runtime/   # 旧 LangGraph Runtime（Python，D-ζ' 保留 30 天回退后归档）
+│   ├── agent-runtime/   # 旧 LangGraph Runtime（Python，D-ζ' 保留 30 天回退后归档）
+│   └── pi-runtime/      # 新 agent 运行时（fastify，承载 vendored pi，K3s 部署）
+├── vendor/
+│   └── earendil-works/pi/  # pi v0.85.1 只读镜像（纪律见其 VENDORED.md，禁止业务 patch）
 ├── deploy/              # 部署脚本与配置
 ├── docs/
 │   ├── discussion/      # 讨论文档（第一资产，v1.3）
@@ -55,5 +63,15 @@ pi-lnk/
 └── scripts/
 ```
 
-> **注意**：pi 尚未 vendor（Phase 0 动作）。PoC spike 在独立分支/worktree 进行，不污染主干。
+## 端口约定（本地开发 + 部署）
+
+| 服务 | 端口 | 说明 |
+|---|---|---|
+| Web（Vite dev） | 5173 | 本地 dev 走 Vite proxy `/api`；生产 Vercel `/api` rewrite |
+| Nest API（apps/server） | 3001（`PORT` 可覆盖） | 生产 CVM 直连 `:5100`，公网统一走 nginx `:8888` |
+| pi-runtime | **8100**（`PORT` 可覆盖） | 新 agent 运行时；Nest 经 `PI_RUNTIME_URL` 调用 |
+| 老 agent-runtime（Python） | 8000 | 迁移期共存（D-ζ'），归档后释放 |
+
+> 端口分配原则：新服务避开本机已占用端口（8080 被占）和老服务端口（8000）；pi-runtime 在 K3s 内走 ClusterIP，**不直接暴露公网**——上线后的访问链路不变：浏览器 → Vercel/nginx `:8888` → Nest → (集群内) pi-runtime。
+
 > 讨论文档 A.6 重要校准：**pi v0.85.1 无 subagent 支持（全仓 0 命中）**，subagent 需 L2 自建（嵌套 Agent 实例或复用 Lane），HITL 挂点用 `before_tool` hook，上下文注入用 `transform_context`。
