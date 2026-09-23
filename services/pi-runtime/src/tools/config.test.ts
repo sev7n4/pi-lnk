@@ -15,14 +15,22 @@ test("env 缺失 → 返回空数组（纯文本模式不受影响）", () => {
 	}
 });
 
-test("env 齐全 → 返回 7 个 read 工具", () => {
+test("env 齐全 → 返回 7 read + 13 write = 20 个工具（B-2）", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 7);
+		assert.equal(tools.length, 20);
+		assert.ok(tools.some((t) => t.name === "upsert_media_node"));
+		assert.ok(tools.some((t) => t.name === "connect_nodes"));
+		assert.ok(!tools.some((t) => t.name === "introduce_nodes_to_agent"));
 	} finally {
 		delete process.env.NEST_BASE_URL;
 		delete process.env.NEST_SERVICE_TOKEN;
 	}
+});
+
+test("M-3：grid-slice-image 超时覆盖 120s（老链路第 4 档）", async () => {
+	const { TOOL_TIMEOUT_OVERRIDES } = await import("./config.js");
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/grid-slice-image"], 120_000);
 });

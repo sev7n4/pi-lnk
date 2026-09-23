@@ -431,3 +431,94 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     })
   })
 })
+
+describe('AgentService B-2 ruleGroups + minors', () => {
+  it('active：assemble 收到 ruleGroups [core, writeTools]', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+
+    const agentMessageFindMany = vi.fn().mockResolvedValue([])
+    const agentMessageCreate = vi.fn().mockResolvedValue({})
+    const agentThreadFindUnique = vi.fn().mockResolvedValue(null)
+    const agentThreadUpsert = vi.fn().mockResolvedValue({})
+    const sessionFindUnique = vi.fn().mockResolvedValue({ id: 's1', canvasData: null })
+    const service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentThread: { findUnique: agentThreadFindUnique, upsert: agentThreadUpsert, update: vi.fn() },
+        session: { findUnique: sessionFindUnique, update: vi.fn() },
+        idempotencyRecord: {
+          create: vi.fn(),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+      { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
+    )
+    const pi = {
+      healthz: vi.fn().mockResolvedValue({ status: 'ok' }),
+      createSession: vi.fn().mockResolvedValue({ sessionId: 'x', provider: 'agnes', model: 'm' }),
+      prompt: vi.fn().mockResolvedValue(undefined),
+      deleteSession: vi.fn().mockResolvedValue(true),
+      streamEvents: vi.fn((_sid: string, onEvent: (e: { type: string; ts: number; data: unknown }) => void) => {
+        onEvent({ type: 'agent_end', ts: Date.now(), data: { status: 'completed' } })
+        return () => {}
+      }),
+    } as never
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const assemble = vi.fn().mockResolvedValue('PROMPT')
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({ assemble } as never)
+
+    const events: Array<{ type: string }> = []
+    for await (const event of service.streamConversation('s1', '你好', 'u1', 't1')) {
+      events.push(event)
+    }
+    expect(events.map((e) => e.type)).toContain('done')
+    expect(assemble.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools'] })
+  })
+
+  it('F3：老链路（pi off）不再触发 priorMessages 查询', async () => {
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+
+    const agentMessageFindMany = vi.fn().mockResolvedValue([])
+    const agentMessageCreate = vi.fn().mockResolvedValue({})
+    const service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentThread: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn(), update: vi.fn() },
+        session: { findUnique: vi.fn().mockResolvedValue({ id: 's1', canvasData: null }), update: vi.fn() },
+        idempotencyRecord: {
+          create: vi.fn(),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+      { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
+    )
+    // LangGraph 客户端打桩，让它自然走完（不 emit 也行，只看 findMany 是否被调用）
+    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+      healthOk: vi.fn().mockResolvedValue(true),
+      streamRun: vi.fn(async function* () {
+        yield { type: 'done', data: {} }
+      }),
+    } as never)
+
+    const events: Array<{ type: string }> = []
+    for await (const event of service.streamConversation('s1', '你好', 'u1', 't1')) {
+      events.push(event)
+    }
+    expect(agentMessageFindMany).not.toHaveBeenCalled()
+    expect(events.map((e) => e.type)).toContain('done')
+  })
+})
