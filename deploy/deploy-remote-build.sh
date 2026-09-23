@@ -52,9 +52,40 @@ if [[ "${docker_use_pct:-0}" -gt 85 ]]; then
 else
   log "Docker disk ${docker_use_pct}% — keeping builder cache"
 fi
-docker images lnkpi-api --format '{{.Tag}}' 2>/dev/null | while read -r tag; do
-  [[ -z "$tag" || "$tag" == "<none>" ]] && continue
-  [[ "$tag" == "$IMAGE_TAG" || "$tag" == "latest" ]] && continue
+# 回滚支持：保留当前 tag、latest，以及最近 KEEP_PREVIOUS 个历史版本（默认 1），其余 tag 清理。
+# 依据：lnkpi-api 各层（依赖 562MB / apt 473MB / 基础 243MB）在两次构建间内容稳定，
+# Docker 按层内容寻址共享 → 多留一个历史版本的真实磁盘增量 ≈ 业务层（apps/server/dist，约 1MB）。
+KEEP_PREVIOUS="${LNKPI_KEEP_PREVIOUS:-1}"
+protect_ids="$(
+  docker images --format '{{.ID}}' --filter "reference=lnkpi-api:${IMAGE_TAG}" 2>/dev/null || true
+  docker images --format '{{.ID}}' --filter 'reference=lnkpi-api:latest' 2>/dev/null || true
+)"
+prev_ids="$(
+  docker images --format '{{.ID}} {{.CreatedAt}}' lnkpi-api 2>/dev/null \
+    | sort -k2,3 -r \
+    | awk '{print $1}' \
+    | uniq \
+    | grep -vxF -f <(printf '%s\n' "$protect_ids" | sed '/^[[:space:]]*$/d') \
+    | head -n "$KEEP_PREVIOUS" || true
+)"
+keep_ids="$(printf '%s\n%s\n' "$protect_ids" "$prev_ids" | sed '/^[[:space:]]*$/d' | sort -u)"
+prev_tag=""
+if [[ -n "${prev_ids//[[:space:]]/}" ]]; then
+  prev_tag="$(docker images --format '{{.ID}} {{.Tag}}' lnkpi-api 2>/dev/null \
+    | awk -v id="$(printf '%s\n' "$prev_ids" | head -n1)" '$1==id && $2!="latest" && $2!="<none>" {print $2; exit}')"
+  if [[ -n "$prev_tag" ]]; then
+    printf '%s\n' "$prev_tag" > .last-api-image 2>/dev/null || true
+    log "rollback point kept: lnkpi-api:${prev_tag}"
+    log "rollback cmd: LNKPI_API_IMAGE=lnkpi-api:${prev_tag} docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
+  fi
+else
+  log "no previous lnkpi-api image to keep (first deploy or already pruned)"
+fi
+log "=== Prune old lnkpi-api images (keep ${LNKPI_API_IMAGE}, latest${prev_tag:+, lnkpi-api:${prev_tag}}) ==="
+docker images --format '{{.ID}} {{.Tag}}' lnkpi-api 2>/dev/null | while read -r id tag; do
+  [[ -z "${tag:-}" || "$tag" == "<none>" ]] && continue
+  printf '%s\n' "$keep_ids" | grep -qx "$id" && continue
+  log "pruning lnkpi-api:${tag}"
   docker rmi "lnkpi-api:${tag}" 2>/dev/null || true
 done
 
