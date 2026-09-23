@@ -51,7 +51,17 @@ app.get("/metrics", async (_request, reply) => {
 	return metrics.render(manager.count(), VERSION);
 });
 
-app.post<{ Body: { sessionId?: string; systemPrompt?: string; userId?: string } }>(
+app.post<{
+	Body: {
+		sessionId?: string;
+		systemPrompt?: string;
+		userId?: string;
+		attachments?: Array<{ url?: string; text?: string; mediaType?: string }>;
+		mentionedKeys?: string[];
+		refOrder?: string[];
+		focusNodeId?: string;
+	};
+}>(
 	"/sessions",
 	async (request, reply) => {
 		const sessionId = request.body?.sessionId ?? crypto.randomUUID();
@@ -59,6 +69,10 @@ app.post<{ Body: { sessionId?: string; systemPrompt?: string; userId?: string } 
 			const { provider, model } = await manager.create(sessionId, {
 				systemPrompt: request.body?.systemPrompt,
 				userId: request.body?.userId,
+				attachments: request.body?.attachments,
+				mentionedKeys: request.body?.mentionedKeys,
+				refOrder: request.body?.refOrder,
+				focusNodeId: request.body?.focusNodeId,
 			});
 			return reply.code(201).send({ sessionId, provider, model });
 		} catch (err) {

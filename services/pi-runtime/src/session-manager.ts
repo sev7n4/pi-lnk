@@ -25,7 +25,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel } from "./model-assembly.js";
-import type { LnkpiToolContext } from "./tools/types.js";
+import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
 
 export type NormalizedEventType =
 	| "agent_start"
@@ -103,7 +103,15 @@ export class SessionManager {
 
 	async create(
 		id: string,
-		opts: { systemPrompt?: string; workingDir?: string; userId?: string } = {},
+		opts: {
+			systemPrompt?: string;
+			workingDir?: string;
+			userId?: string;
+			attachments?: SidebarAttachment[];
+			mentionedKeys?: string[];
+			refOrder?: string[];
+			focusNodeId?: string;
+		} = {},
 	): Promise<{ provider: string; model: string }> {
 		if (this.sessions.has(id)) throw new ConflictError(id);
 		const { models, model, providerId } = this.modelFactory();
@@ -120,7 +128,14 @@ export class SessionManager {
 				models,
 				model,
 				tools: this.tools,
-				toolContext: { sessionId: id, userId: opts.userId },
+				toolContext: {
+					sessionId: id,
+					userId: opts.userId,
+					attachments: opts.attachments,
+					mentionedKeys: opts.mentionedKeys,
+					refOrder: opts.refOrder,
+					focusNodeId: opts.focusNodeId,
+				},
 				systemPrompt: opts.systemPrompt || this.systemPromptDefault,
 			},
 			this.context,

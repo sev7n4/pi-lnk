@@ -16,3 +16,15 @@ test("LnkpiTool 类型接受带 tier 的工具定义", () => {
 	assert.equal(tool.tier, "read");
 	assert.equal(ctx.sessionId, "s1");
 });
+
+test("LnkpiToolContext 接受画布上下文字段", () => {
+	const ctx: LnkpiToolContext = {
+		sessionId: "s",
+		attachments: [{ url: "https://x/a.png", mediaType: "image" }],
+		mentionedKeys: ["I1"],
+		refOrder: ["I1"],
+		focusNodeId: "node-1",
+	};
+	assert.equal(ctx.mentionedKeys?.[0], "I1");
+	assert.equal(ctx.attachments?.[0]?.mediaType, "image");
+});

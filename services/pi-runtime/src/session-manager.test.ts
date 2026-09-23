@@ -16,10 +16,23 @@ describe("SessionManager harnessFactory 注入缝", () => {
 			} as never;
 		};
 		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, fakeHarnessFactory);
-		await sm.create("s1", { userId: "u1", systemPrompt: "SYS" });
+		await sm.create("s1", {
+			userId: "u1",
+			systemPrompt: "SYS",
+			attachments: [{ url: "https://x/a.png", mediaType: "image" }],
+			mentionedKeys: ["I1"],
+			refOrder: ["I1"],
+			focusNodeId: "node-1",
+		});
 		const cfg = captured as { systemPrompt: string; toolContext: Record<string, unknown> };
 		assert.equal(cfg.systemPrompt, "SYS");
 		assert.equal(cfg.toolContext.userId, "u1");
 		assert.equal(cfg.toolContext.sessionId, "s1");
+		assert.deepEqual(cfg.toolContext.mentionedKeys, ["I1"]);
+		assert.equal(cfg.toolContext.focusNodeId, "node-1");
+		assert.deepEqual((cfg.toolContext.attachments as unknown[])[0], {
+			url: "https://x/a.png",
+			mediaType: "image",
+		});
 	});
 });
