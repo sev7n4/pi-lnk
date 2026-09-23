@@ -48,9 +48,10 @@ piRuntimeMode: "off"
 
 secrets:
   # 生产值由部署时 --set 或 -f secrets.yaml 注入，仓库不落明文
+  # 注意：官方国内站 API 端点是 api.agnes-ai.cn（apihub.* 是老平台，部分账号 key 不通用）
   AGNES_API_KEY: "REPLACE_ME"
-  AGNES_BASE_URL: "https://apihub.agnes-ai.cn/v1"
-  AGNES_MODEL_ID: "agnes-2.5-pro"
+  AGNES_BASE_URL: "https://api.agnes-ai.cn/v1"
+  AGNES_MODEL_ID: "agnes-2.5-flash"
 
 hpa:
   enabled: false
