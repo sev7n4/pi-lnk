@@ -3,7 +3,6 @@ import {
   Inject,
   Injectable,
   Logger,
-  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common'
 import { applyCanvasActions, type AgentStreamEvent } from '@lnkpi/agent'
@@ -99,7 +98,7 @@ export class AgentService {
     @Inject(ShotService) private readonly shotService: ShotService,
     @Inject(MaterialService) private readonly materialService: MaterialService,
     @Inject(ProviderResolverService) private readonly providerResolver: ProviderResolverService,
-    @Optional()
+    // F4：去掉 @Optional——module 已提供 AgentCanvasToolsService，DI 缺失应 fail-fast
     @Inject(AgentCanvasToolsService)
     private readonly canvasTools?: AgentCanvasToolsService,
   ) {}
@@ -197,13 +196,19 @@ export class AgentService {
     }
 
     const persistedUserContent = sanitizeAgentMessageContent('user', userMessage)
+    // B4：pi-runtime 开关提前判定（F3：priorMessages 查询只在 pi 分支需要，老链路不再多付一次查询）
+    const piMode = this.getPiRuntimeMode()
+    const piUrl = this.getPiRuntimeUrl()
+    const piEligible = piMode !== 'off' && piUrl && userId
     // #12：在本轮 user 消息落库前取历史（保证近期摘要不含本轮内容）
-    const priorAgentMessages = await this.prisma.agentMessage.findMany({
-      where: { threadId: effectiveThreadId },
-      orderBy: { createdAt: 'desc' },
-      take: 24,
-      select: { role: true, content: true },
-    })
+    const priorAgentMessages = piEligible
+      ? await this.prisma.agentMessage.findMany({
+          where: { threadId: effectiveThreadId },
+          orderBy: { createdAt: 'desc' },
+          take: 24,
+          select: { role: true, content: true },
+        })
+      : []
     const priorMessages = priorAgentMessages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content ?? '' }))
@@ -225,9 +230,7 @@ export class AgentService {
     // ---- B4：pi-runtime 开关（spec §6.2.0 B4 / §10.3 D-ζ'）----
     // active：主切 pi-runtime（healthz 失败则继续向下走 LangGraph 回落路径）
     // shadow：LangGraph 照常服务，pi-runtime 仅接收镜像流量（零用户感知）
-    const piMode = this.getPiRuntimeMode()
-    const piUrl = this.getPiRuntimeUrl()
-    if (piMode !== 'off' && piUrl && userId) {
+    if (piEligible) {
       const piClient = this.createPiRuntimeClient(piUrl)
       const piContext: PiCanvasContext = {
         attachments: validatedAttachments,
@@ -648,6 +651,8 @@ export class AgentService {
       attachments: piContext?.attachments,
       mentionedKeys: piContext?.mentionedKeys,
       priorMessages: piContext?.priorMessages,
+      // B-2：写工具已在 pi registry 注册，规则 4/5 启用（第 10 条守卫随之退出）
+      ruleGroups: ['core', 'writeTools'],
     })
     await this.ensurePiSession(client, sessionId, {
       systemPrompt,
@@ -719,6 +724,7 @@ export class AgentService {
           attachments: piContext?.attachments,
           mentionedKeys: piContext?.mentionedKeys,
           priorMessages: piContext?.priorMessages,
+          ruleGroups: ['core', 'writeTools'],
         })
         await this.ensurePiSession(client, shadowSessionId, {
           systemPrompt,
