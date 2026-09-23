@@ -37,6 +37,13 @@ networkPolicy:
   # egress 白名单：LLM provider（443）
   egressCidrs:
     - 0.0.0.0/0
+  # 额外 egress（P1 工具转发：Pod → 宿主 Nest :5100）。列表项：
+  #   cidr: 目标网段；ports: TCP 端口列表
+  egressExtra: []
+  # 示例（dev 单节点，宿主 NodeIP 见 `kubectl get nodes -o wide`）：
+  # egressExtra:
+  #   - cidr: 10.1.0.12/32
+  #     ports: [5100]
 
 env:
   PORT: "8100"
@@ -52,6 +59,11 @@ secrets:
   AGNES_API_KEY: "REPLACE_ME"
   AGNES_BASE_URL: "https://api.agnes-ai.cn/v1"
   AGNES_MODEL_ID: "agnes-2.5-flash"
+  # P1 工具转发凭据（Nest AgentInternalGuard 校验 x-lnkpi-service-token）：
+  #   NEST_SERVICE_TOKEN = Nest 侧 AGENT_RUNTIME_SERVICE_TOKEN 的值。
+  #   两者都未设置时 pi-runtime 降级纯文本模式（tools=[]）。
+  # 部署时：--set secrets.NEST_SERVICE_TOKEN=<值> \
+  #         --set env.NEST_BASE_URL=http://<NodeIP>:5100/api   （必须带 /api 全局前缀）
 
 hpa:
   enabled: false
