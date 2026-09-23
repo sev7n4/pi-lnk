@@ -33,11 +33,25 @@ function labelOf(item: SidebarBlockInput): string {
 	return parts[parts.length - 1] ?? url;
 }
 
+/** F6：text 素材截断（老链路侧栏块无截断，此处按评审建议收口为 200 字上限）。 */
+const TEXT_LABEL_MAX = 200;
+
+function labelOf(item: SidebarBlockInput): string {
+	const text = (item.text ?? "").trim();
+	if (text) return text.slice(0, TEXT_LABEL_MAX);
+	const url = (item.url ?? "").split("?")[0].split("#")[0];
+	const parts = url.split("/").filter(Boolean);
+	return parts[parts.length - 1] ?? url;
+}
+
 export function buildSidebarBlock(attachments: SidebarBlockInput[]): string {
 	if (!attachments.length) return "";
-	const keys = assignSidebarRefKeys(attachments);
+	// F2：先过滤合法 mediaType 再 zip keys（未知 mediaType 直接跳过，避免 index 错位）
+	const valid = attachments.filter((item) => Boolean(REF_PREFIX[(item.mediaType ?? "").trim()]));
+	if (!valid.length) return "";
+	const keys = assignSidebarRefKeys(valid);
 	const lines = ["侧栏参考素材："];
-	attachments.forEach((item, i) => {
+	valid.forEach((item, i) => {
 		if (keys[i]) lines.push(`${keys[i]}=${labelOf(item)}`);
 	});
 	return lines.join("\n");
