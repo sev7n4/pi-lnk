@@ -11,11 +11,13 @@ import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService } from './agent.service'
 import { AgentRuntimeClient } from './agent-runtime.client'
+import { PiRuntimeError } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 
 describe('AgentService pi-runtime switch (B4)', () => {
   const agentMessageCreate = vi.fn()
+  const agentMessageFindMany = vi.fn()
   const agentThreadFindUnique = vi.fn()
   const agentThreadUpsert = vi.fn()
   const agentThreadUpdate = vi.fn()
@@ -35,6 +37,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
     delete process.env.PI_RUNTIME_URL
 
     agentMessageCreate.mockResolvedValue({})
+    agentMessageFindMany.mockResolvedValue([])
     agentThreadFindUnique.mockResolvedValue(null)
     agentThreadUpsert.mockResolvedValue({})
     agentThreadUpdate.mockResolvedValue({})
@@ -47,7 +50,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
         agentThread: {
           findUnique: agentThreadFindUnique,
           upsert: agentThreadUpsert,
@@ -150,7 +153,10 @@ describe('AgentService pi-runtime switch (B4)', () => {
       events.push(event)
     }
 
-    expect(pi.createSession).toHaveBeenCalledWith('s1')
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ userId: 'u1' }),
+    )
     expect(pi.prompt).toHaveBeenCalledWith('s1', '你好')
     expect(events.map((e) => e.type)).toEqual([
       'pi_agent_start',
@@ -218,9 +224,210 @@ describe('AgentService pi-runtime switch (B4)', () => {
     }
 
     expect(mirror).toHaveBeenCalledTimes(1)
-    expect(mirror).toHaveBeenCalledWith(expect.anything(), 'shadow-s1', 'hello')
+    expect(mirror).toHaveBeenCalledWith(
+      expect.anything(),
+      'shadow-s1',
+      'hello',
+      'u1',
+      's1',
+      expect.anything(),
+    )
     // UI 流完全来自 LangGraph（P0 零用户感知）
     expect(events.map((e) => e.type)).toEqual(['text_delta', 'done'])
     expect(events[0].data).toEqual({ text: 'primary' })
+  })
+})
+
+describe('AgentService pi-runtime prompt assembly (#12)', () => {
+  const agentMessageCreate = vi.fn()
+  const agentMessageFindMany = vi.fn()
+  const agentThreadFindUnique = vi.fn()
+  const agentThreadUpsert = vi.fn()
+  const agentThreadUpdate = vi.fn()
+  const sessionFindUnique = vi.fn()
+  const sessionUpdate = vi.fn()
+  const idempotencyRecordCreate = vi.fn()
+  const idempotencyRecordFindUnique = vi.fn()
+  const idempotencyRecordUpdateMany = vi.fn()
+  const idempotencyRecordDeleteMany = vi.fn()
+
+  let service: AgentService
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.AGENT_RUNTIME_URL
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+
+    agentMessageCreate.mockResolvedValue({})
+    agentMessageFindMany.mockResolvedValue([])
+    agentThreadFindUnique.mockResolvedValue(null)
+    agentThreadUpsert.mockResolvedValue({})
+    agentThreadUpdate.mockResolvedValue({})
+    sessionFindUnique.mockResolvedValue({ id: 's1', canvasData: null })
+    sessionUpdate.mockResolvedValue({})
+    idempotencyRecordCreate.mockResolvedValue({})
+    idempotencyRecordFindUnique.mockResolvedValue(null)
+    idempotencyRecordUpdateMany.mockResolvedValue({ count: 1 })
+    idempotencyRecordDeleteMany.mockResolvedValue({ count: 0 })
+
+    service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentThread: {
+          findUnique: agentThreadFindUnique,
+          upsert: agentThreadUpsert,
+          update: agentThreadUpdate,
+        },
+        session: { findUnique: sessionFindUnique, update: sessionUpdate },
+        idempotencyRecord: {
+          create: idempotencyRecordCreate,
+          findUnique: idempotencyRecordFindUnique,
+          updateMany: idempotencyRecordUpdateMany,
+          deleteMany: idempotencyRecordDeleteMany,
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+  })
+
+  afterEach(() => {
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+  })
+
+  function stubPiClient(events: PiRuntimeEvent[], healthzOk = true) {
+    const createSession = vi.fn().mockResolvedValue({
+      sessionId: 'x',
+      provider: 'agnes',
+      model: 'agnes-2.5-pro',
+    })
+    return {
+      healthz: vi.fn().mockResolvedValue(healthzOk ? { status: 'ok' } : null),
+      createSession,
+      prompt: vi.fn().mockResolvedValue(undefined),
+      deleteSession: vi.fn().mockResolvedValue(true),
+      streamEvents: vi.fn(
+        (_sessionId: string, onEvent: (event: PiRuntimeEvent) => void) => {
+          for (const event of events) onEvent(event)
+          return () => {}
+        },
+      ),
+    } as unknown as PiRuntimeClient & { createSession: ReturnType<typeof vi.fn> }
+  }
+
+  function piEvent(type: PiRuntimeEvent['type'], data: unknown): PiRuntimeEvent {
+    return { type, ts: Date.now(), data } as PiRuntimeEvent
+  }
+
+  function stubAssembler(prompt: string) {
+    const assemble = vi.fn().mockResolvedValue(prompt)
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({ assemble } as never)
+    return assemble
+  }
+
+  it('active：createSession 收到组装后的 systemPrompt + userId + 画布上下文', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT-s1')
+
+    const events: Array<{ type: string }> = []
+    for await (const event of service.streamConversation(
+      's1', '你好', 'u1', 't1',
+      undefined, undefined, undefined, undefined,
+      'node-9',
+      [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
+      ['I1'], ['I1'],
+    )) {
+      events.push(event)
+    }
+
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({
+        systemPrompt: 'PROMPT-s1',
+        userId: 'u1',
+        focusNodeId: 'node-9',
+        mentionedKeys: ['I1'],
+        attachments: [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
+      }),
+    )
+    expect(events.map((e) => e.type)).toContain('done')
+  })
+
+  it('priorMessages 取自 AgentMessage 历史且不含本轮 user 消息', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    agentMessageFindMany.mockResolvedValue([
+      { role: 'assistant', content: '第一答' },
+      { role: 'user', content: '第一问' },
+    ])
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const assemble = stubAssembler('PROMPT-s1')
+
+    for await (const _event of service.streamConversation('s1', '本轮新消息', 'u1', 't1')) {
+      void _event
+    }
+
+    expect(agentMessageFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { threadId: 't1' } }),
+    )
+    const input = assemble.mock.calls[0][0] as {
+      priorMessages: Array<{ role: string; content: string }>
+    }
+    expect(input.priorMessages).toEqual([
+      { role: 'user', content: '第一问' },
+      { role: 'assistant', content: '第一答' },
+    ])
+    // 本轮消息单独持久化（不在 priorMessages 里）
+    expect(agentMessageCreate).toHaveBeenCalled()
+  })
+
+  it('createSession 409（复用）不阻塞本轮', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    pi.createSession.mockRejectedValue(new PiRuntimeError('session exists: s1', 409))
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT-s1')
+
+    const events: Array<{ type: string }> = []
+    for await (const event of service.streamConversation('s1', '你好', 'u1')) {
+      events.push(event)
+    }
+    expect(events.map((e) => e.type)).toEqual(['done'])
+  })
+
+  it('shadow 镜像：createSession 收到以真实 sessionId 组装的 systemPrompt + userId', async () => {
+    process.env.PI_RUNTIME_MODE = 'shadow'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+
+    const pi = stubPiClient([])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT-real')
+    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+      healthOk: vi.fn().mockResolvedValue(true),
+      streamRun: vi.fn(async function* () {
+        yield { type: 'done', data: {} }
+      }),
+    } as unknown as AgentRuntimeClient)
+
+    for await (const _event of service.streamConversation('s1', 'hello', 'u1', 't1')) {
+      void _event
+    }
+
+    await vi.waitFor(() => {
+      expect(pi.createSession).toHaveBeenCalledWith(
+        'shadow-s1',
+        expect.objectContaining({ systemPrompt: 'PROMPT-real', userId: 'u1' }),
+      )
+    })
   })
 })

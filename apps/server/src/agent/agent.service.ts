@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common'
 import { applyCanvasActions, type AgentStreamEvent } from '@lnkpi/agent'
@@ -24,6 +25,7 @@ import {
 } from '@lnkpi/shared'
 import { MaterialService } from '../canvas/material.service'
 import { ShotService } from '../canvas/shot.service'
+import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { isObjectStorageConfigured } from '../storage/object-storage-env'
 import {
@@ -35,7 +37,21 @@ import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient, PiRuntimeError } from './pi-runtime/pi-runtime.client'
+import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+
+/** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
+export interface PiCanvasContext {
+  attachments?: SidebarAttachment[]
+  mentionedKeys?: string[]
+  refOrder?: string[]
+  focusNodeId?: string
+  priorMessages: Array<{
+    role: 'user' | 'assistant' | 'tool'
+    content: string
+    toolNames?: string[]
+  }>
+}
 
 const TRACE_PERSIST_EVENT_TYPES = new Set([
   'step',
@@ -83,6 +99,9 @@ export class AgentService {
     @Inject(ShotService) private readonly shotService: ShotService,
     @Inject(MaterialService) private readonly materialService: MaterialService,
     @Inject(ProviderResolverService) private readonly providerResolver: ProviderResolverService,
+    @Optional()
+    @Inject(AgentCanvasToolsService)
+    private readonly canvasTools?: AgentCanvasToolsService,
   ) {}
 
   getCapabilities() {
@@ -178,6 +197,17 @@ export class AgentService {
     }
 
     const persistedUserContent = sanitizeAgentMessageContent('user', userMessage)
+    // #12：在本轮 user 消息落库前取历史（保证近期摘要不含本轮内容）
+    const priorAgentMessages = await this.prisma.agentMessage.findMany({
+      where: { threadId: effectiveThreadId },
+      orderBy: { createdAt: 'desc' },
+      take: 24,
+      select: { role: true, content: true },
+    })
+    const priorMessages = priorAgentMessages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content ?? '' }))
+      .reverse()
     if (persistedUserContent) {
       await this.prisma.agentMessage.create({
         data: {
@@ -199,6 +229,13 @@ export class AgentService {
     const piUrl = this.getPiRuntimeUrl()
     if (piMode !== 'off' && piUrl && userId) {
       const piClient = this.createPiRuntimeClient(piUrl)
+      const piContext: PiCanvasContext = {
+        attachments: validatedAttachments,
+        mentionedKeys: validatedMentionedKeys,
+        refOrder,
+        focusNodeId,
+        priorMessages,
+      }
       if (piMode === 'active' && (await piClient.healthz())) {
         for await (const event of this.streamFromPiRuntime(
           piClient,
@@ -206,6 +243,7 @@ export class AgentService {
           userMessage,
           userId,
           threadId,
+          piContext,
         )) {
           if (event.type === 'text_delta') {
             assistantText += (event.data as { text: string }).text
@@ -219,7 +257,7 @@ export class AgentService {
       }
       if (piMode === 'shadow') {
         // 镜像会话与真实会话隔离（pi 侧独立 sessionId，删除即回收）
-        this.mirrorToPiRuntime(piClient, `shadow-${sessionId}`, userMessage)
+        this.mirrorToPiRuntime(piClient, `shadow-${sessionId}`, userMessage, userId, sessionId, piContext)
       }
     }
 
@@ -422,12 +460,38 @@ export class AgentService {
     return new PiRuntimeClient({ baseUrl })
   }
 
-  /** 确保会话存在：409（已存在）视为可复用（pi 会话按 sessionId 持久多轮历史）。 */
-  private async ensurePiSession(client: PiRuntimeClient, sessionId: string): Promise<void> {
+  /** Overridable in unit tests（#12：每轮 system prompt 组装器） */
+  createPiPromptAssembler(): PiPromptAssembler {
+    return new PiPromptAssembler(this.canvasTools as never)
+  }
+
+  /** 确保会话存在：409（已存在）视为可复用——正常每轮 delete 后重建，409 仅出现在同轮重试。 */
+  private async ensurePiSession(
+    client: PiRuntimeClient,
+    sessionId: string,
+    opts?: {
+      systemPrompt?: string
+      userId?: string
+      attachments?: SidebarAttachment[]
+      mentionedKeys?: string[]
+      refOrder?: string[]
+      focusNodeId?: string
+    },
+  ): Promise<void> {
     try {
-      await client.createSession(sessionId)
+      await client.createSession(sessionId, {
+        systemPrompt: opts?.systemPrompt,
+        userId: opts?.userId,
+        attachments: opts?.attachments,
+        mentionedKeys: opts?.mentionedKeys,
+        refOrder: opts?.refOrder,
+        focusNodeId: opts?.focusNodeId,
+      })
     } catch (err) {
-      if (err instanceof PiRuntimeError && err.status === 409) return
+      if (err instanceof PiRuntimeError && err.status === 409) {
+        this.piLogger.warn(`pi session ${sessionId} reused (409) — systemPrompt not updated`)
+        return
+      }
       throw err
     }
   }
@@ -577,8 +641,22 @@ export class AgentService {
     userMessage: string,
     userId: string,
     threadId?: string,
+    piContext?: PiCanvasContext,
   ): AsyncGenerator<AgentStreamEvent> {
-    await this.ensurePiSession(client, sessionId)
+    const systemPrompt = await this.createPiPromptAssembler().assemble({
+      sessionId,
+      attachments: piContext?.attachments,
+      mentionedKeys: piContext?.mentionedKeys,
+      priorMessages: piContext?.priorMessages,
+    })
+    await this.ensurePiSession(client, sessionId, {
+      systemPrompt,
+      userId,
+      attachments: piContext?.attachments,
+      mentionedKeys: piContext?.mentionedKeys,
+      refOrder: piContext?.refOrder,
+      focusNodeId: piContext?.focusNodeId,
+    })
     const events = this.iteratePiEvents(client, sessionId)
     // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
     const iterator = events[Symbol.asyncIterator]()
@@ -621,14 +699,35 @@ export class AgentService {
    * 同一 prompt 复制到 pi-runtime，输出不返回 UI，仅记结构化日志供 diff 收集
    * （Prometheus/LangSmith 对接是后续任务，本方法先保证零用户感知 + 可观测）。
    */
-  mirrorToPiRuntime(client: PiRuntimeClient, shadowSessionId: string, userMessage: string): void {
+  mirrorToPiRuntime(
+    client: PiRuntimeClient,
+    shadowSessionId: string,
+    userMessage: string,
+    userId?: string,
+    realSessionId?: string,
+    piContext?: PiCanvasContext,
+  ): void {
     void (async () => {
       const startedAt = Date.now()
       let textLength = 0
       let toolCalls = 0
       let status: string = 'unknown'
       try {
-        await this.ensurePiSession(client, shadowSessionId)
+        // 画布摘要按真实 sessionId 拉取（shadow-sid 在 Nest 无画布数据）
+        const systemPrompt = await this.createPiPromptAssembler().assemble({
+          sessionId: realSessionId ?? shadowSessionId,
+          attachments: piContext?.attachments,
+          mentionedKeys: piContext?.mentionedKeys,
+          priorMessages: piContext?.priorMessages,
+        })
+        await this.ensurePiSession(client, shadowSessionId, {
+          systemPrompt,
+          userId,
+          attachments: piContext?.attachments,
+          mentionedKeys: piContext?.mentionedKeys,
+          refOrder: piContext?.refOrder,
+          focusNodeId: piContext?.focusNodeId,
+        })
         const iterator = this.iteratePiEvents(client, shadowSessionId)[Symbol.asyncIterator]()
         void client.prompt(shadowSessionId, userMessage).catch(() => {})
         const deadline = Date.now() + 90_000
