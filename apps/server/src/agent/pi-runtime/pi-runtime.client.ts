@@ -22,6 +22,16 @@ export interface CreateSessionResult {
 	model: string;
 }
 
+/** #12：/sessions 全量可选字段（pi-runtime 侧原样透传进 toolContext）。 */
+export interface CreateSessionOptions {
+	systemPrompt?: string;
+	userId?: string;
+	attachments?: Array<{ url?: string; text?: string; mediaType?: string }>;
+	mentionedKeys?: string[];
+	refOrder?: string[];
+	focusNodeId?: string;
+}
+
 export class PiRuntimeError extends Error {
 	constructor(
 		message: string,
@@ -64,10 +74,18 @@ export class PiRuntimeClient {
 		}
 	}
 
-	async createSession(sessionId: string, systemPrompt?: string): Promise<CreateSessionResult> {
+	async createSession(sessionId: string, opts: CreateSessionOptions = {}): Promise<CreateSessionResult> {
 		const { status, body } = await this.request<CreateSessionResult & { error?: string }>("/sessions", {
 			method: "POST",
-			body: JSON.stringify({ sessionId, systemPrompt }),
+			body: JSON.stringify({
+				sessionId,
+				systemPrompt: opts.systemPrompt,
+				userId: opts.userId,
+				attachments: opts.attachments,
+				mentionedKeys: opts.mentionedKeys,
+				refOrder: opts.refOrder,
+				focusNodeId: opts.focusNodeId,
+			}),
 		});
 		if (status !== 201 || !body || body.error) {
 			throw new PiRuntimeError(body?.error ?? `createSession failed: HTTP ${status}`, status);
