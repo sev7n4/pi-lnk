@@ -7,13 +7,14 @@
 import Fastify from "fastify";
 import { SessionManager, ConflictError, NotFoundError, type NormalizedEvent } from "./session-manager.js";
 import { Metrics, VERSION, routeLabel } from "./metrics.js";
+import { resolveTools } from "./tools/config.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const HEARTBEAT_MS = 15_000;
 
-const manager = new SessionManager();
 const metrics = new Metrics();
+const manager = new SessionManager(resolveTools(metrics));
 
 const app = Fastify({
 	logger: true,
