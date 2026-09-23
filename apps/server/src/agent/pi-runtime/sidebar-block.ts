@@ -25,14 +25,6 @@ export function assignSidebarRefKeys(attachments: Array<{ mediaType?: string }>)
 	return keys;
 }
 
-function labelOf(item: SidebarBlockInput): string {
-	const text = (item.text ?? "").trim();
-	if (text) return text;
-	const url = (item.url ?? "").split("?")[0].split("#")[0];
-	const parts = url.split("/").filter(Boolean);
-	return parts[parts.length - 1] ?? url;
-}
-
 /** F6：text 素材截断（老链路侧栏块无截断，此处按评审建议收口为 200 字上限）。 */
 const TEXT_LABEL_MAX = 200;
 
