@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
 
@@ -19,7 +19,9 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
 	}
 	const client = new NestClient({
 		...cfg,
+		// grid_slice_image 在老链路是独立 120s 档（10/210/690 之外的第 4 档），此处对齐
+		timeoutOverrides: { "/agent/internal/grid-slice-image": 120_000 },
 		onCall: (tool, outcome) => metrics.observeToolCall(tool, outcome),
 	});
-	return buildCanvasReadTools(client);
+	return [...buildCanvasReadTools(client), ...buildCanvasWriteTools(client)];
 }
