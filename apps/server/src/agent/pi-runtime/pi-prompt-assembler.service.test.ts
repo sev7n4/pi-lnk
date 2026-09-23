@@ -58,7 +58,7 @@ describe("PiPromptAssembler（#12 每轮 system prompt 组装）", () => {
 		expect(prompt.includes("不要调用 run_*_generation（禁止调用任何 run_*）")).toBe(true);
 	});
 
-	it("侧栏块 + 第 10 条守卫始终存在", async () => {
+	it("侧栏块存在；默认组（writeTools 未启用）含第 10 条守卫", async () => {
 		const asm = makeAssembler({ nodes: [] });
 		const prompt = await asm.assemble({
 			sessionId: "s1",

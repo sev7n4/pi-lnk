@@ -164,6 +164,21 @@ describe("canvas-write: apply_sidebar_attachments", () => {
 		assert.ok(String((res.content as Array<{ text: string }>)[0].text).includes("没有侧栏附件"));
 	});
 
+	it("mode 缺省运行时兜底 localRefs（I-1：harness 不应用 TypeBox default）；显式空 attachments 回落 toolContext（M-1）", async () => {
+		const { client, calls } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		await run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] });
+		assert.equal(calls[0].body.mode, "localRefs");
+		assert.deepEqual(calls[0].body.attachments, [{ url: "https://x/a.png", mediaType: "image" }]);
+
+		await run(
+			findTool(tools, "apply_sidebar_attachments"),
+			{ node_ids: ["n1"], mode: "localRefs", attachments: [] },
+			{ sessionId: "s1", userId: "u1", attachments: [{ text: "side" }] },
+		);
+		assert.deepEqual(calls[1].body.attachments, [{ text: "side" }]);
+	});
+
 	it("显式 attachments 优先；mentionedKeys 独立回落 toolContext（对齐老链路各字段独立 fallback）", async () => {
 		const { client, calls } = makeClient();
 		const tools = createCanvasWriteTools(client);
@@ -181,7 +196,7 @@ describe("canvas-write: apply_sidebar_attachments", () => {
 			mode: "attach_edges",
 			mentionedKeys: ["I1"],
 		});
-		// 显式 mentioned_keys 为空数组时同样不 发 mentionedKeys
+		// 显式 mentioned_keys 为空数组时不发 mentionedKeys
 		await run(findTool(tools, "apply_sidebar_attachments"), {
 			node_ids: ["n1"],
 			mode: "localRefs",

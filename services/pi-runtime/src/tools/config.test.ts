@@ -29,3 +29,8 @@ test("env 齐全 → 返回 7 read + 13 write = 20 个工具（B-2）", () => {
 		delete process.env.NEST_SERVICE_TOKEN;
 	}
 });
+
+test("M-3：grid-slice-image 超时覆盖 120s（老链路第 4 档）", async () => {
+	const { TOOL_TIMEOUT_OVERRIDES } = await import("./config.js");
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/grid-slice-image"], 120_000);
+});

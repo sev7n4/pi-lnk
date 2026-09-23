@@ -47,6 +47,8 @@ const WRITE_TOOLS_RULES = `4. 用户要创建图片/视频/文本/音频节点�
 
 /**
  * 规则组拼装：writeTools 启用 → core（无第 10 条）+ 规则 4/5；否则 core + 第 10 条守卫。
+ * 声明偏离（M-2）：注入顺序为 1,2,3,7,4,5（explore.py 为 1..9 顺序）——规则带编号，
+ * 顺序差异对模型语义无影响，不追求顺序对齐。
  */
 function composeRuleText(groups: RuleGroup[]): string {
 	if (groups.includes("writeTools")) {

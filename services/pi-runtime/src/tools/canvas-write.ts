@@ -178,7 +178,7 @@ export function createCanvasWriteTools(
 					}),
 				),
 				ref_order: Type.Optional(Type.Array(Type.String(), { description: "Attachment id order" })),
-				mode: Type.String({ default: "localRefs", description: "localRefs or attach_edges" }),
+				mode: Type.Optional(Type.String({ default: "localRefs", description: "localRefs or attach_edges" })),
 				mentioned_keys: Type.Optional(
 					Type.Array(Type.String(), {
 						description: "Sidebar chip keys such as I1/I2, never canvas image-* ids",
@@ -191,14 +191,16 @@ export function createCanvasWriteTools(
 					node_ids: string[];
 					attachments?: Record<string, unknown>[];
 					ref_order?: string[];
-					mode: string;
+					mode?: string;
 					mentioned_keys?: string[];
 				},
 				_u,
 				tc: LnkpiToolContext,
 			) => {
-				// 对齐老链路双层 fallback 的工具侧一层：缺省回落本轮侧栏上下文；两层皆空短路（不打 Nest、不计熔断）。
-				const attachments = p.attachments ?? tc.attachments;
+				// harness 不应用 TypeBox default（I-1）：mode 缺省必须在运行时兜底，否则 Nest DTO 必填 400。
+				const mode = p.mode || "localRefs";
+				// 对齐老链路 fallback：显式空数组同样回落本轮侧栏（M-1）；两层皆空短路（不打 Nest、不计熔断）。
+				const attachments = p.attachments?.length ? p.attachments : tc.attachments;
 				if (!attachments || attachments.length === 0) {
 					return textRaw({ ok: false, error: "没有侧栏附件" });
 				}
@@ -207,7 +209,7 @@ export function createCanvasWriteTools(
 					nodeIds: p.node_ids,
 					attachments,
 					refOrder: p.ref_order ?? tc.refOrder ?? [],
-					mode: p.mode,
+					mode,
 				};
 				const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
 				if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
