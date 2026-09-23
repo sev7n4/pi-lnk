@@ -104,7 +104,8 @@ export class Metrics {
 	}
 }
 
-export const VERSION = "0.0.2";
+/** build_info 版本：部署时由 chart env PI_RUNTIME_VERSION 注入（与镜像 tag 对齐），未设置回退 dev。 */
+export const VERSION = process.env.PI_RUNTIME_VERSION ?? "dev";
 
 /** 把 request.url 归一成 route 模板（/sessions/:id/prompt），避免 label 基数爆炸。 */
 export function routeLabel(url: string): string {

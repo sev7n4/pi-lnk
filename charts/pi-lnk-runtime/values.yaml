@@ -37,18 +37,26 @@ networkPolicy:
   # egress 白名单：LLM provider（443）
   egressCidrs:
     - 0.0.0.0/0
-  # 额外 egress（P1 工具转发：Pod → 宿主 Nest :5100）。列表项：
+  # 额外 egress（P1 工具转发：Pod → 宿主 Nest）。列表项：
   #   cidr: 目标网段；ports: TCP 端口列表
   egressExtra: []
-  # 示例（dev 单节点，宿主 NodeIP 见 `kubectl get nodes -o wide`）：
+  # ⚠️ docker 会把 pod 发往宿主已发布端口（如 :5100）的流量 DNAT 成
+  # "容器IP:内部端口"（如 172.20.x.x:3001），且 DNAT 发生在 netpol 过滤之前，
+  # 所以白名单必须放行 DNAT 后的真实目的地，而不是宿主 IP:发布端口
+  # （实测放行 10.1.0.12/32:5100 仍会被 REJECT，ECONNREFUSED）。
+  # 示例（dev 单节点，Nest 跑在 lnkpi-net compose 网络内）：
   # egressExtra:
-  #   - cidr: 10.1.0.12/32
+  #   - cidr: 172.20.0.0/16   # lnkpi-net 子网（DNAT 后目的地）
+  #     ports: [3001]         # Nest 容器内部端口
+  #   - cidr: 10.1.0.12/32    # 宿主 NodeIP（留作直连场景）
   #     ports: [5100]
 
 env:
   PORT: "8100"
   NODE_ENV: "production"
   PI_RUNTIME_DATA_DIR: "/data/sessions"
+  # build_info 版本标签（与镜像 tag 对齐，部署时 --set 覆盖）
+  PI_RUNTIME_VERSION: "0.0.1"
 
 # D-ζ' 双 runtime 开关（shadow/active 由部署侧控制，Day-1 默认 off）
 piRuntimeMode: "off"
