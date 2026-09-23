@@ -103,8 +103,8 @@ test("onCall 钩子记录 ok/error/circuit_open", async () => {
 			await assert.rejects(() => c.post("/agent/internal/get-node", {}), NestToolError);
 			await assert.rejects(() => c.post("/agent/internal/get-node", {}), NestCircuitOpenError);
 			assert.deepEqual(seen, [
-				["get-node", "error"],
-				["get-node", "circuit_open"],
+				["get_node", "error"],
+				["get_node", "circuit_open"],
 			]);
 		},
 	);

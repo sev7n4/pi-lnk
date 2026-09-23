@@ -114,4 +114,32 @@ describe("B8 PiRuntimeClient", () => {
 		const client2 = new PiRuntimeClient({ baseUrl: "http://x", fetchImpl: (async () => conf) as typeof fetch });
 		await expect(client2.createSession("s1")).rejects.toThrow(/session exists/);
 	});
+
+	it("createSession 以 opts 对象透传 systemPrompt/userId/画布上下文", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m" }), {
+					status: 201,
+				});
+			}) as typeof fetch,
+		});
+		await client.createSession("s1", {
+			systemPrompt: "SYS",
+			userId: "u1",
+			attachments: [{ url: "https://x/a.png", mediaType: "image" }],
+			mentionedKeys: ["I1"],
+			refOrder: ["I1"],
+			focusNodeId: "node-1",
+		});
+		expect(calls).toHaveLength(1);
+		const body = JSON.parse(String(calls[0].init.body));
+		expect(body.systemPrompt).toBe("SYS");
+		expect(body.userId).toBe("u1");
+		expect(body.mentionedKeys).toEqual(["I1"]);
+		expect(body.focusNodeId).toBe("node-1");
+		expect(body.attachments).toEqual([{ url: "https://x/a.png", mediaType: "image" }]);
+	});
 });

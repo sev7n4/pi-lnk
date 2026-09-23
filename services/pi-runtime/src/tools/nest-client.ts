@@ -32,6 +32,8 @@ interface BreakerState {
 }
 
 const pathTail = (p: string) => p.split("/").pop() ?? p;
+/** metrics 标签统一 snake_case（对齐老 runtime 工具名，如 get_canvas_summary）。 */
+const toolLabel = (p: string) => pathTail(p).replace(/-/g, "_");
 
 export class NestClient {
 	private readonly breaker = new Map<string, BreakerState>();
@@ -77,7 +79,7 @@ export class NestClient {
 		try {
 			this.checkCircuit(path);
 		} catch (err) {
-			this.opts.onCall?.(pathTail(path), "circuit_open");
+			this.opts.onCall?.(toolLabel(path), "circuit_open");
 			throw err;
 		}
 		const timeoutMs = this.timeoutMsFor(path);
@@ -94,7 +96,7 @@ export class NestClient {
 			if (!res.ok) {
 				// 熔断只对"服务不可用"类失败计数（5xx/超时/网络），4xx 属业务错误不计（对齐老 runtime）
 				if (res.status >= 500) this.recordFailure(path);
-				this.opts.onCall?.(pathTail(path), "error");
+				this.opts.onCall?.(toolLabel(path), "error");
 				throw new NestToolError(
 					`nest ${path} http ${res.status}: ${payload?.message ?? res.statusText}`,
 					"http",
@@ -102,20 +104,20 @@ export class NestClient {
 			}
 			if (!payload || payload.code !== 0) {
 				// HTTP 200 但包络错误 = 业务错误，不计熔断（避免模型连续用错参数把工具熔死）
-				this.opts.onCall?.(pathTail(path), "error");
+				this.opts.onCall?.(toolLabel(path), "error");
 				throw new NestToolError(
 					`nest ${path} code=${payload?.code}: ${payload?.message ?? "empty envelope"}`,
 					"envelope",
 				);
 			}
 			this.recordSuccess(path);
-			this.opts.onCall?.(pathTail(path), "ok");
+			this.opts.onCall?.(toolLabel(path), "ok");
 			return payload.data;
 		} catch (err) {
 			if (err instanceof NestToolError || err instanceof NestCircuitOpenError) throw err;
 			const isTimeout = err instanceof Error && err.name === "TimeoutError";
 			this.recordFailure(path);
-			this.opts.onCall?.(pathTail(path), "error");
+			this.opts.onCall?.(toolLabel(path), "error");
 			throw new NestToolError(
 				`nest ${path} ${isTimeout ? "timeout after " + timeoutMs + "ms" : "network error"}: ${err instanceof Error ? err.message : String(err)}`,
 				isTimeout ? "timeout" : "http",
