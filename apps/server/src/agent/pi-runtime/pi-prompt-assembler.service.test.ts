@@ -36,10 +36,26 @@ describe("PiPromptAssembler（#12 每轮 system prompt 组装）", () => {
 		expect(prompt.includes("当前画布摘要：")).toBe(false);
 	});
 
-	it("ruleGroups 含 writeTools 时组文本被注入（B-2 占位，原文断言随 B-2 替换）", async () => {
+	it("ruleGroups 含 writeTools 时注入规则 4/5 原文，且不再注入第 10 条守卫（B-2）", async () => {
 		const asm = makeAssembler({ nodes: [] });
 		const prompt = await asm.assemble({ sessionId: "s1", ruleGroups: ["core", "writeTools"] });
-		expect(prompt.includes("writeTools 组占位")).toBe(true);
+		// 规则 4 原文特征句（explore.py:95 逐字，含无空格拼接点）
+		expect(prompt.includes("用 upsert_media_node创建或更新节点（可带 prompt）")).toBe(true);
+		expect(prompt.includes("mentioned_keys 用 I1/I2芯片序")).toBe(true);
+		// 规则 5 原文特征句
+		expect(prompt.includes("口语搭骨架")).toBe(true);
+		expect(prompt.includes("不要把 @I* 芯片连成边")).toBe(true);
+		// 第 10 条守卫退出
+		expect(prompt.includes("写操作尚未开放")).toBe(false);
+		// 规则 6（tool_search）与 8/9 不注入（见计划 §1.2 声明偏离）
+		expect(prompt.includes("tool_search")).toBe(false);
+		expect(prompt.includes("upscale_image")).toBe(false);
+	});
+
+	it("core 规则 3 为 explore.py 原文（F1：恢复 run_*_generation 措辞）", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const prompt = await asm.assemble({ sessionId: "s1" });
+		expect(prompt.includes("不要调用 run_*_generation（禁止调用任何 run_*）")).toBe(true);
 	});
 
 	it("侧栏块 + 第 10 条守卫始终存在", async () => {
