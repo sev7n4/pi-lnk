@@ -344,11 +344,32 @@ def similarity(left, right):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def is_rate_limited(side):
+    text = (side.get("error") or "").lower()
+    return "429" in text or "rate limit" in text
+
+
+def run_with_retry(fn, label, retries, backoff):
+    """低配额 key（Agnes 免费版）极易 429，撞限流时退避重跑，避免污染 K4 样本。"""
+    side = fn()
+    attempt = 0
+    while is_rate_limited(side) and attempt < retries:
+        attempt += 1
+        wait = backoff * attempt
+        print("      [%s] 命中 429 限流，%ss 后重试 (%d/%d)" % (label, wait, attempt, retries))
+        time.sleep(wait)
+        side = fn()
+    return side
+
+
 def compare(old, pi, threshold):
     old_tools = [t["name"] for t in old["toolCalls"]]
     pi_tools = [t["name"] for t in pi["toolCalls"]]
     sim = similarity(old["text"], pi["text"])
+    # 一侧报错（429/超时/断流）时文本相似度没有意义，不计入 K4 diff 率
+    comparable = bool(old["ok"] and pi["ok"] and not old["error"] and not pi["error"])
     return {
+        "comparable": comparable,
         "textSimilarity": round(sim, 4),
         "textEqual": normalize(old["text"]) == normalize(pi["text"]),
         "toolSeqEqual": old_tools == pi_tools,
@@ -388,7 +409,10 @@ def print_case(index, total, prompt, old, pi, diff, threshold):
         else:
             print("      tool: (无)")
     print("-" * 78)
-    verdict = "异" if diff["isDiff"] else "同"
+    if not diff["comparable"]:
+        verdict = "不可比（一侧报错，不计入 K4）"
+    else:
+        verdict = "异" if diff["isDiff"] else "同"
     print("diff: %s | 文本相似度 %.4f (阈值 %.2f) | 文本完全一致=%s" % (
         verdict, diff["textSimilarity"], threshold, diff["textEqual"]
     ))
@@ -425,44 +449,61 @@ def cmd_report(out_dir, threshold):
         return 0
 
     total = len(rows)
-    diffs = [r for r in rows if r["diff"]["isDiff"]]
-    sims = [r["diff"]["textSimilarity"] for r in rows]
+    comparable = [r for r in rows if r["diff"].get("comparable")]
+    invalid = total - len(comparable)
+    rate_limited = sum(
+        1 for r in rows if is_rate_limited(r["old"]) or is_rate_limited(r["pi"])
+    )
     old_ok = sum(1 for r in rows if r["old"]["ok"])
     pi_ok = sum(1 for r in rows if r["pi"]["ok"])
     old_ms = [r["old"]["elapsedMs"] for r in rows if r["old"]["elapsedMs"]]
     pi_ms = [r["pi"]["elapsedMs"] for r in rows if r["pi"]["elapsedMs"]]
-    tool_mismatch = sum(1 for r in rows if not r["diff"]["toolSeqEqual"])
+    tool_mismatch = sum(1 for r in comparable if not r["diff"]["toolSeqEqual"])
 
     print("=" * 78)
     print("K4 shadow diff 报告  (阈值≈相似度 < %.2f 或 tool 序列不一致 记为 diff)" % threshold)
-    print("结果目录: %s   用例数: %d" % (out_dir, total))
+    print("结果目录: %s   用例总数: %d" % (out_dir, total))
     print("-" * 78)
     print("老链路成功率      : %d/%d" % (old_ok, total))
     print("pi-runtime 成功率 : %d/%d" % (pi_ok, total))
-    print("K4 diff 率        : %d/%d = %.1f%%   (spec 阈值 < 5%%)" % (
-        len(diffs), total, 100.0 * len(diffs) / total
+    print("计入 K4 的样本    : %d/%d  (排除 %d 条一侧报错；其中 429 限流 %d 条)" % (
+        len(comparable), total, invalid, rate_limited
     ))
-    print("tool 序列不一致率 : %d/%d = %.1f%%" % (
-        tool_mismatch, total, 100.0 * tool_mismatch / total
-    ))
-    print("文本相似度        : min %.3f / p50 %.3f / mean %.3f" % (
-        min(sims), percentile(sims, 50), sum(sims) / len(sims)
-    ))
+    if comparable:
+        sims = [r["diff"]["textSimilarity"] for r in comparable]
+        diffs = [r for r in comparable if r["diff"]["isDiff"]]
+        print("K4 diff 率        : %d/%d = %.1f%%   (spec 阈值 < 5%%)" % (
+            len(diffs), len(comparable), 100.0 * len(diffs) / len(comparable)
+        ))
+        print("tool 序列不一致率 : %d/%d = %.1f%%" % (
+            tool_mismatch, len(comparable), 100.0 * tool_mismatch / len(comparable)
+        ))
+        print("文本相似度        : min %.3f / p50 %.3f / mean %.3f" % (
+            min(sims), percentile(sims, 50), sum(sims) / len(sims)
+        ))
+    else:
+        print("K4 diff 率        : 无有效样本（两侧均需成功且无错误事件）")
     if old_ms and pi_ms:
         print("老链路耗时        : p50 %sms / p95 %sms" % (percentile(old_ms, 50), percentile(old_ms, 95)))
         print("pi 耗时           : p50 %sms / p95 %sms   (spec K3: p99 ≤ 老 × 1.5)" % (
             percentile(pi_ms, 50), percentile(pi_ms, 95)
         ))
     print("-" * 78)
-    print("%-22s %-8s %-8s %-9s %s" % ("case", "sim", "diff", "耗时新/老", "note"))
+    print("%-22s %-8s %-10s %-9s %s" % ("case", "sim", "diff", "耗时新/老", "note"))
     for row in rows:
         note = ",".join(row["diff"]["toolsOnlyOld"] + row["diff"]["toolsOnlyPi"]) or ""
-        if row["old"]["error"] or row["pi"]["error"]:
+        if is_rate_limited(row["old"]) or is_rate_limited(row["pi"]):
+            note = (note + " 429").strip()
+        elif row["old"]["error"] or row["pi"]["error"]:
             note = (note + " err").strip()
-        print("%-22s %-8.3f %-8s %-9s %s" % (
+        if not row["diff"].get("comparable"):
+            verdict = "不可比"
+        else:
+            verdict = "异" if row["diff"]["isDiff"] else "同"
+        print("%-22s %-8.3f %-10s %-9s %s" % (
             snippet(row.get("caseId") or row.get("prompt", ""), 20),
             row["diff"]["textSimilarity"],
-            "异" if row["diff"]["isDiff"] else "同",
+            verdict,
             ("×%.2f" % row["diff"]["latencyRatio"]) if row["diff"]["latencyRatio"] else "-",
             note,
         ))
@@ -498,6 +539,9 @@ def main(argv=None):
     parser.add_argument("--pi-url", default=DEFAULT_PI_URL)
     parser.add_argument("--token", default=None, help="默认读 AGENT_RUNTIME_SERVICE_TOKEN 或 %s" % ENV_FILE)
     parser.add_argument("--timeout", type=int, default=180, help="单次运行超时秒数")
+    parser.add_argument("--delay", type=float, default=3.0, help="两次运行之间的间隔秒数（默认 3，规避免费 key 限流）")
+    parser.add_argument("--retries", type=int, default=2, help="命中 429 时的重试次数")
+    parser.add_argument("--backoff", type=int, default=25, help="429 退避基数秒（第 n 次重试等 n×backoff）")
     parser.add_argument("--diff-threshold", type=float, default=0.85, help="相似度低于此值记为 diff")
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
     parser.add_argument("--pi-system", default=None, help="给 pi 会话注入 systemPrompt（实验用）")
@@ -527,14 +571,28 @@ def main(argv=None):
         prompt = case["prompt"]
         if not args.json:
             print("\n>>> 运行 case %s …（老链路 + pi-runtime 串行，避免争抢 LLM 配额）" % case["id"])
-        old = run_old(args.old_url, token, prompt, args.timeout)
-        pi = run_pi(
-            args.pi_url,
-            prompt,
-            args.timeout,
-            system_prompt=system_prompt,
-            keep_session=args.keep_session,
+        old = run_with_retry(
+            lambda: run_old(args.old_url, token, prompt, args.timeout),
+            "老链路",
+            args.retries,
+            args.backoff,
         )
+        if args.delay:
+            time.sleep(args.delay)
+        pi = run_with_retry(
+            lambda: run_pi(
+                args.pi_url,
+                prompt,
+                args.timeout,
+                system_prompt=system_prompt,
+                keep_session=args.keep_session,
+            ),
+            "pi-runtime",
+            args.retries,
+            args.backoff,
+        )
+        if args.delay and idx < len(cases):
+            time.sleep(args.delay)
         diff = compare(old, pi, args.diff_threshold)
         record = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -557,11 +615,18 @@ def main(argv=None):
         return 0
 
     if len(results) > 1:
-        diffs = [r for r in results if r["diff"]["isDiff"]]
+        comparable = [r for r in results if r["diff"]["comparable"]]
+        diffs = [r for r in comparable if r["diff"]["isDiff"]]
         print("\n" + "=" * 78)
-        print("本轮 %d 个用例：diff %d 个 (%.1f%%)，结果已存 %s" % (
-            len(results), len(diffs), 100.0 * len(diffs) / len(results), args.out_dir
-        ))
+        if comparable:
+            print("本轮 %d 个用例：有效 %d 个，diff %d 个 (%.1f%%)，结果已存 %s" % (
+                len(results), len(comparable), len(diffs),
+                100.0 * len(diffs) / len(comparable), args.out_dir,
+            ))
+        else:
+            print("本轮 %d 个用例：无有效样本（一侧报错，多为 Agnes 免费 key 429 限流），结果已存 %s" % (
+                len(results), args.out_dir,
+            ))
     return 0
 
 
