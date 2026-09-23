@@ -1,0 +1,106 @@
+/**
+ * 最小 Prometheus 指标（spec K2 5xx 率 / K3 p99 的度量入口）
+ *
+ * 零依赖：直接输出 text/plain; version=0.0.4 文本格式。
+ * 覆盖：
+ *   - pi_runtime_http_requests_total{route,status}      请求计数（K2 分母/5xx）
+ *   - pi_runtime_http_request_duration_seconds{route}   响应耗时直方图（K3 p99）
+ *   - pi_runtime_llm_prompt_errors_total{reason}        prompt 阶段错误（429/上游 5xx 等）
+ *   - pi_runtime_sessions_active                        活跃会话数 gauge
+ *   - pi_runtime_build_info / pi_runtime_uptime_seconds
+ */
+
+const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
+
+interface HistogramState {
+	count: number;
+	sum: number;
+	buckets: number[]; // cumulative, aligned with HIST_BUCKETS
+}
+
+function newHistogram(): HistogramState {
+	return { count: 0, sum: 0, buckets: HIST_BUCKETS.map(() => 0) };
+}
+
+export class Metrics {
+	private httpTotal = new Map<string, number>(); // key: route|method|status
+	private httpHist = new Map<string, HistogramState>(); // key: route
+	private promptErrors = new Map<string, number>(); // key: reason
+	private startedAt = Date.now();
+
+	observeHttp(route: string, method: string, status: number, durationSec: number): void {
+		const totalKey = `${route}|${method}|${status}`;
+		this.httpTotal.set(totalKey, (this.httpTotal.get(totalKey) ?? 0) + 1);
+		let h = this.httpHist.get(route);
+		if (!h) {
+			h = newHistogram();
+			this.httpHist.set(route, h);
+		}
+		h.count += 1;
+		h.sum += durationSec;
+		for (let i = 0; i < HIST_BUCKETS.length; i++) {
+			if (durationSec <= HIST_BUCKETS[i]) h.buckets[i] += 1;
+		}
+	}
+
+	observePromptError(reason: string): void {
+		this.promptErrors.set(reason, (this.promptErrors.get(reason) ?? 0) + 1);
+	}
+
+	render(activeSessions: number, version: string): string {
+		const lines: string[] = [];
+		const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+		lines.push("# HELP pi_runtime_build_info Build metadata.");
+		lines.push("# TYPE pi_runtime_build_info gauge");
+		lines.push(`pi_runtime_build_info{version="${esc(version)}"} 1`);
+
+		lines.push("# HELP pi_runtime_uptime_seconds Process uptime in seconds.");
+		lines.push("# TYPE pi_runtime_uptime_seconds gauge");
+		lines.push(`pi_runtime_uptime_seconds ${((Date.now() - this.startedAt) / 1000).toFixed(1)}`);
+
+		lines.push("# HELP pi_runtime_sessions_active Currently active sessions.");
+		lines.push("# TYPE pi_runtime_sessions_active gauge");
+		lines.push(`pi_runtime_sessions_active ${activeSessions}`);
+
+		lines.push("# HELP pi_runtime_http_requests_total HTTP requests processed.");
+		lines.push("# TYPE pi_runtime_http_requests_total counter");
+		for (const [key, count] of [...this.httpTotal.entries()].sort()) {
+			const [route, method, status] = key.split("|");
+			lines.push(`pi_runtime_http_requests_total{route="${esc(route)}",method="${method}",status="${status}"} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_http_request_duration_seconds HTTP request latency in seconds.");
+		lines.push("# TYPE pi_runtime_http_request_duration_seconds histogram");
+		for (const [route, h] of [...this.httpHist.entries()].sort()) {
+			for (let i = 0; i < HIST_BUCKETS.length; i++) {
+				lines.push(`pi_runtime_http_request_duration_seconds_bucket{route="${esc(route)}",le="${HIST_BUCKETS[i]}"} ${h.buckets[i]}`);
+			}
+			lines.push(`pi_runtime_http_request_duration_seconds_bucket{route="${esc(route)}",le="+Inf"} ${h.count}`);
+			lines.push(`pi_runtime_http_request_duration_seconds_sum{route="${esc(route)}"} ${h.sum.toFixed(4)}`);
+			lines.push(`pi_runtime_http_request_duration_seconds_count{route="${esc(route)}"} ${h.count}`);
+		}
+
+		lines.push("# HELP pi_runtime_llm_prompt_errors_total Prompt-stage failures by reason.");
+		lines.push("# TYPE pi_runtime_llm_prompt_errors_total counter");
+		for (const [reason, count] of [...this.promptErrors.entries()].sort()) {
+			lines.push(`pi_runtime_llm_prompt_errors_total{reason="${esc(reason)}"} ${count}`);
+		}
+
+		return `${lines.join("\n")}\n`;
+	}
+}
+
+export const VERSION = "0.0.2";
+
+/** 把 request.url 归一成 route 模板（/sessions/:id/prompt），避免 label 基数爆炸。 */
+export function routeLabel(url: string): string {
+	const path = url.split("?")[0];
+	const parts = path.split("/").filter(Boolean);
+	if (parts.length === 0) return "root";
+	if (parts[0] !== "sessions") return parts[0]; // healthz / readyz / metrics
+	if (parts.length === 1) return "sessions";
+	// /sessions/:id 或 /sessions/:id/<action>
+	const action = parts.length >= 3 ? `/${parts[2].replace(/[^a-z]/gi, "")}` : "";
+	return `sessions/:id${action}`;
+}

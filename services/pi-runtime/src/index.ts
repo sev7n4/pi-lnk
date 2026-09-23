@@ -6,16 +6,29 @@
  */
 import Fastify from "fastify";
 import { SessionManager, ConflictError, NotFoundError, type NormalizedEvent } from "./session-manager.js";
+import { Metrics, VERSION, routeLabel } from "./metrics.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const HEARTBEAT_MS = 15_000;
 
 const manager = new SessionManager();
+const metrics = new Metrics();
 
 const app = Fastify({
 	logger: true,
 	bodyLimit: 4 * 1024 * 1024,
+});
+
+// K2/K3 度量：请求计数 + 耗时直方图（SSE 长连接计入 /events 的总时长）
+app.addHook("onRequest", async (request) => {
+	(request as unknown as Record<string, unknown>)["__t0"] = process.hrtime.bigint();
+});
+app.addHook("onResponse", async (request, reply) => {
+	const t0 = (request as unknown as Record<string, unknown>)["__t0"] as bigint | undefined;
+	if (t0 === undefined) return;
+	const durationSec = Number(process.hrtime.bigint() - t0) / 1e9;
+	metrics.observeHttp(routeLabel(request.url), request.method, reply.statusCode, durationSec);
 });
 
 app.get("/healthz", async () => {
@@ -30,6 +43,12 @@ app.get("/healthz", async () => {
 
 // spec §5.4.1 readiness 探针端点（Day-1 与 healthz 同语义；Day-2 可加依赖检查）
 app.get("/readyz", async () => ({ status: "ready" }));
+
+// spec K2/K3 Prometheus 度量入口
+app.get("/metrics", async (_request, reply) => {
+	reply.header("content-type", "text/plain; version=0.0.4; charset=utf-8");
+	return metrics.render(manager.count(), VERSION);
+});
 
 app.post<{ Body: { sessionId?: string; systemPrompt?: string } }>(
 	"/sessions",
@@ -58,6 +77,9 @@ app.post<{ Params: { sessionId: string }; Body: { text: string; lane?: string } 
 			return await manager.prompt(sessionId, request.body.text, request.body.lane ?? "main");
 		} catch (err) {
 			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			const msg = (err as Error).message ?? "";
+			const reason = /429|rate/i.test(msg) ? "upstream_rate_limited" : "upstream_error";
+			metrics.observePromptError(reason);
 			throw err;
 		}
 	},
