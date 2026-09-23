@@ -25,6 +25,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel } from "./model-assembly.js";
+import type { LnkpiToolContext } from "./tools/types.js";
 
 export type NormalizedEventType =
 	| "agent_start"
@@ -68,7 +69,7 @@ const EVENT_MAP: ReadonlyArray<readonly [string, NormalizedEventType]> = [
 
 interface SessionEntry {
 	id: string;
-	harness: AgentHarness<Record<string, never>>;
+	harness: AgentHarness<LnkpiToolContext>;
 	env: NodeExecutionEnv;
 	repo: JsonlSessionRepo;
 	listeners: Set<EventListener>;
@@ -84,7 +85,7 @@ export class SessionManager {
 	private readonly context: Context = BACKGROUND_CONTEXT;
 
 	constructor(
-		private readonly tools: AgentHarnessTool<Record<string, never>>[] = [],
+		private readonly tools: AgentHarnessTool<LnkpiToolContext>[] = [],
 		private readonly systemPromptDefault = process.env.PI_RUNTIME_SYSTEM_PROMPT ?? "",
 	) {}
 
@@ -98,7 +99,7 @@ export class SessionManager {
 
 	async create(
 		id: string,
-		opts: { systemPrompt?: string; workingDir?: string } = {},
+		opts: { systemPrompt?: string; workingDir?: string; userId?: string } = {},
 	): Promise<{ provider: string; model: string }> {
 		if (this.sessions.has(id)) throw new ConflictError(id);
 		const { models, model, providerId } = assembleModel();
@@ -109,13 +110,13 @@ export class SessionManager {
 		const repo = new JsonlSessionRepo({ fileSystem: env, sessionsRoot: join(cwd, "sessions") });
 		const session = await repo.create({ cwd }, this.context);
 
-		const { harness } = await AgentHarness.create<Record<string, never>>(
+		const { harness } = await AgentHarness.create<LnkpiToolContext>(
 			{
 				session,
 				models,
 				model,
 				tools: this.tools,
-				toolContext: {},
+				toolContext: { sessionId: id, userId: opts.userId },
 				systemPrompt: opts.systemPrompt || this.systemPromptDefault,
 			},
 			this.context,

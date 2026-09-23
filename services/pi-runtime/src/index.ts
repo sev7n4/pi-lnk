@@ -7,13 +7,14 @@
 import Fastify from "fastify";
 import { SessionManager, ConflictError, NotFoundError, type NormalizedEvent } from "./session-manager.js";
 import { Metrics, VERSION, routeLabel } from "./metrics.js";
+import { resolveTools } from "./tools/config.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const HEARTBEAT_MS = 15_000;
 
-const manager = new SessionManager();
 const metrics = new Metrics();
+const manager = new SessionManager(resolveTools(metrics));
 
 const app = Fastify({
 	logger: true,
@@ -50,13 +51,14 @@ app.get("/metrics", async (_request, reply) => {
 	return metrics.render(manager.count(), VERSION);
 });
 
-app.post<{ Body: { sessionId?: string; systemPrompt?: string } }>(
+app.post<{ Body: { sessionId?: string; systemPrompt?: string; userId?: string } }>(
 	"/sessions",
 	async (request, reply) => {
 		const sessionId = request.body?.sessionId ?? crypto.randomUUID();
 		try {
 			const { provider, model } = await manager.create(sessionId, {
 				systemPrompt: request.body?.systemPrompt,
+				userId: request.body?.userId,
 			});
 			return reply.code(201).send({ sessionId, provider, model });
 		} catch (err) {

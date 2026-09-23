@@ -56,4 +56,15 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # 额外 egress（P1 工具转发：Pod → 宿主 Nest :5100，见 values egressExtra）
+    {{- range .Values.networkPolicy.egressExtra }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr | quote }}
+      ports:
+        {{- range .ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
 {{- end }}

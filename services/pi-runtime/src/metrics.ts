@@ -26,6 +26,7 @@ export class Metrics {
 	private httpTotal = new Map<string, number>(); // key: route|method|status
 	private httpHist = new Map<string, HistogramState>(); // key: route
 	private promptErrors = new Map<string, number>(); // key: reason
+	private toolCalls = new Map<string, number>(); // key: tool|result
 	private startedAt = Date.now();
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
@@ -45,6 +46,11 @@ export class Metrics {
 
 	observePromptError(reason: string): void {
 		this.promptErrors.set(reason, (this.promptErrors.get(reason) ?? 0) + 1);
+	}
+
+	observeToolCall(tool: string, outcome: "ok" | "error" | "circuit_open"): void {
+		const key = `${tool}|${outcome}`;
+		this.toolCalls.set(key, (this.toolCalls.get(key) ?? 0) + 1);
 	}
 
 	render(activeSessions: number, version: string): string {
@@ -85,6 +91,13 @@ export class Metrics {
 		lines.push("# TYPE pi_runtime_llm_prompt_errors_total counter");
 		for (const [reason, count] of [...this.promptErrors.entries()].sort()) {
 			lines.push(`pi_runtime_llm_prompt_errors_total{reason="${esc(reason)}"} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_tool_calls_total Tool invocations by tool and result.");
+		lines.push("# TYPE pi_runtime_tool_calls_total counter");
+		for (const [key, count] of [...this.toolCalls.entries()].sort()) {
+			const [tool, result] = key.split("|");
+			lines.push(`pi_runtime_tool_calls_total{tool="${esc(tool)}",result="${result}"} ${count}`);
 		}
 
 		return `${lines.join("\n")}\n`;
