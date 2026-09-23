@@ -2,7 +2,7 @@ name: Deploy to Tencent Cloud
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "apps/server/**"
       - "apps/web/**"
@@ -18,7 +18,7 @@ on:
       branch:
         description: Branch to deploy
         required: true
-        default: main
+        default: master
       recover_only:
         description: Only recover CVM (cleanup + restart existing API)
         required: false
