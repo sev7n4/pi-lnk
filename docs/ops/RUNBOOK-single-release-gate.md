@@ -118,7 +118,22 @@ ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=s
 > 注意：`deploy-remote-build.sh` 的清理发生在构建**之前**，此刻「当前运行中的镜像」是靠 `latest` tag 保护的；新脚本在此基础上多保留历史版本，因此首次运行不会产生额外保留（属预期）。下一次部署起，`.last-api-image` 会稳定指向上一版。
 
 **磁盘现状（2026-09-23 清理后）**：40G 用 31G，**可用 9.9G**（`docker builder prune` 释放 4.07 GB 构建缓存；代价是下次构建为冷构建，会慢一些）。
-⚠️ **禁止 `docker image prune -a`** —— 同机还跑着 pintuotuo / aimarket 等项目的镜像。可继续清理的候选：`/opt/lnkcanvas` 800M（已停用项目）、`/opt/actions-runner` 2.1G（是否仍在用待确认）。
+⚠️ **禁止 `docker image prune -a`** —— 同机还跑着 pintuotuo / aimarket 等项目的镜像。
+
+**两个候选目录的核查结论（2026-09-23 实测，结论相反）**：
+
+| 目录 | 大小 | 结论 | 依据 |
+| --- | --- | --- | --- |
+| `/opt/lnkcanvas` | 800 MB | **可整体删除**（其中 `.next` 构建产物 796 MB，源码仅 4 MB） | 全盘 grep 无外部引用；无容器、无 nginx 引用、无 volume 挂载、无 systemd/cron；`.git` 是空仓库（无任何 commit）；最后活动 2026-07-16，端口 3000 空闲；属主 uid 501 在本机无对应用户（旧环境遗留） |
+| `/opt/actions-runner` | 2.1 GB | **⚠️ 不可删除** —— 是 `sev7n4/aimarket` 的**活跃** self-hosted runner（`agentName=aimarket-build-1`，systemd `actions.runner.sev7n4-aimarket.aimarket-build-1.service` active，`Runner.Listener` 进程在跑，`_diag` 今日 14:54 仍有日志）。**但其中 ≈1.4 GB 是可清的版本升级残留** | 见下 |
+
+`actions-runner` 可回收明细（清理后 runner 功能不受影响）：
+
+- `_work/_update/` **671 MB** —— 自升级下载解包暂存（2026-08-26），升级到 2.337.0 已生效，属冗余副本
+- `bin.2.336.0` 80 MB + `externals.2.336.0` 587 MB = **667 MB** —— 旧版本目录，`bin` / `externals` 软链均已指向 2.337.0，无进程引用 2.336.0（保留它只是保留"回滚到上一版"的能力，删掉则需重新下载）
+- `_diag/*.log` **96 MB** —— 791 个历史日志（保留最近 7 天即可）
+
+合计可回收 ≈ **2.2 GB**（lnkcanvas 800 MB + runner 残留 1.4 GB），清理后可用空间从 9.8G → 约 12G。
 
 ---
 
