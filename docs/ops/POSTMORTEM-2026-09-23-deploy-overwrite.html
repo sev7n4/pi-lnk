@@ -56,7 +56,7 @@
 <div class="wrap">
 
 <h1>复盘：两个仓库并行开发，如何把生产上的 runtime 分流悄悄覆盖掉</h1>
-<p class="sub">事件日期 2026-09-23 · 影响对象：生产 CVM 119.29.173.89 上的 <code>PI_RUNTIME_MODE=active</code> 分流链路 · 结论：业务无损伤，根因已消除，另有 1 处残留交叉点待收敛</p>
+<p class="sub">事件日期 2026-09-23 · 影响对象：生产 CVM 119.29.173.89 上的 <code>PI_RUNTIME_MODE=active</code> 分流链路 · 结论：业务无损伤，根因已消除，1 处残留交叉点已于同日收窄</p>
 
 <div class="meta">
   <span class="pill">状态：已闭环</span>
@@ -73,7 +73,7 @@
   <li><b>为什么长期没暴露</b>：覆盖后是"静默降级"而不是报错；且当时 pi-lnk 的工作流挂在 <code>main</code> 分支、实际工作在 <code>master</code>，等于没有自动化，无法形成对照。</li>
   <li><b>修复</b>：① 历史合流（两仓库收敛到同一条链）② 部署脚本加 B4 防呆守卫 ③ <b>部署权收敛到单一发布门 pi-lnk</b>（lnkpi 只自动发前端）④ 镜像保留上一版，回滚不再需要重建。</li>
   <li><b>代价（有意权衡）</b>：lnkpi 的 <b>API 改动不再自动上线</b>，需过一次发布门；<b>前端开发完全不受影响</b>。</li>
-  <li><b>残留</b>：lnkpi 的 <code>deploy-agent-runtime.yml</code> 仍会自动 tar 覆盖 <code>/opt/lnkpi</code> 的部分源码文件（含守卫脚本本身）→ 存在"守卫被回退"的时间窗，建议一并收窄（见第 6 节）。</li>
+  <li><b>残留（已收窄）</b>：lnkpi 的 <code>deploy-agent-runtime.yml</code> 曾会自动 tar 覆盖 <code>/opt/lnkpi</code> 的部分源码文件（含守卫脚本本身）→ 存在"守卫被回退"的时间窗。<b>✅ 2026-09-23 已收窄</b>：该工作流的 tar 白名单化（只写 <code>services/agent-runtime/**</code>）+ 新增发布门不变量 Guard（见 5.3 ① 与第 6 节）。</li>
 </ul>
 </div>
 
@@ -236,7 +236,7 @@
 <text x="402" y="238" font-size="12" font-weight="500" fill="#0C447C">部署门预检</text>
 <text x="402" y="254" font-size="12" fill="#185FA5">守卫 + tag 一致性</text>
 <line x1="600" y1="146" x2="600" y2="178" stroke="#854F0B" stroke-width="1.5" marker-end="url(#m3a)"/>
-<text x="300" y="168" font-size="12" fill="#633806">合流：git merge upstream/main（deploy.yml 用 --ours）</text>
+<text x="300" y="168" font-size="12" fill="#633806">合流：git merge upstream/main（deploy.yml 保 pi-lnk 版）</text>
 <line x1="340" y1="278" x2="340" y2="338" stroke="#3B6D11" stroke-width="2" marker-end="url(#m3g)"/>
 <text x="354" y="312" font-size="12" fill="#3B6D11">预检通过 → CVM 本地构建并部署</text>
 <rect x="140" y="340" width="400" height="96" rx="12" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
@@ -264,7 +264,7 @@
 <h3>合流时的固定陷阱</h3>
 <p>lnkpi 的 <code>30a3781e</code> 改了 <code>.github/workflows/deploy.yml</code>；两仓库共享该文件路径，<b>直接 merge 会把"禁用 API 部署"带进 pi-lnk，静默废掉唯一发布门</b>。固定做法：</p>
 <pre>git merge upstream/main --no-commit --no-ff
-git checkout --ours .github/workflows/deploy.yml &amp;&amp; git add .github/workflows/deploy.yml
+git checkout HEAD -- .github/workflows/deploy.yml &amp;&amp; git add .github/workflows/deploy.yml
 git commit -m "merge: sync lnkpi main" &amp;&amp; git push origin master</pre>
 </div>
 
@@ -349,8 +349,8 @@ git commit -m "merge: sync lnkpi main" &amp;&amp; git push origin master</pre>
 <tr>
   <td><code>services/agent-runtime/**</code>、<code>deploy/docker/**</code></td>
   <td><code>Deploy Agent Runtime</code>（lnkpi 侧仍会自动跑）</td>
-  <td class="warn">老 runtime 会部署，且会覆盖源码树</td>
-  <td>见 5.3 残留交叉点 ①</td>
+  <td class="ok">只写 <code>services/agent-runtime/**</code>；其余路径被 Guard 拦截</td>
+  <td>无需操作（已收窄，见 5.3 ①）</td>
 </tr>
 <tr>
   <td><code>docs/**</code>、<code>*.md</code>、<code>README</code>、<code>LICENSE</code></td>
@@ -371,14 +371,17 @@ git commit -m "merge: sync lnkpi main" &amp;&amp; git push origin master</pre>
 <pre># 1. 先在 lnkpi 正常开发并 push（CI 照跑；API 不会自动上线）
 cd ~/workspace/lnkpi && git push origin main
 
-# 2. 同步到发布门（只搬源码；deploy.yml 必须用 --ours 保留 pi-lnk 版本）
+# 2. 同步到发布门（只搬源码；deploy.yml 必须保 pi-lnk 版本）
 cd ~/workspace/pi-lnk
 git fetch upstream
 git merge upstream/main --no-commit --no-ff
-git checkout --ours .github/workflows/deploy.yml && git add .github/workflows/deploy.yml
+git checkout HEAD -- .github/workflows/deploy.yml && git add .github/workflows/deploy.yml
+grep -c "allow_api_deploy" .github/workflows/deploy.yml    # 必须是 0
 git commit -m "merge: sync lnkpi main (API changes)"
 git push origin master
-# → 自动触发发布门部署（约 7-13 分钟），完成后跑三条验收</pre>
+# → 自动触发发布门部署（约 7-13 分钟），完成后跑三条验收
+# 完整命令流 + 自检 + 故障排查：pi-lnk docs/ops/RUNBOOK-lnkpi-to-pi-lnk-sync.md
+# 注意：git checkout --ours <path> 只在路径冲突时有效；用 HEAD -- 更稳（语义相同）</pre>
 <p class="muted">提示：若只想验证前端效果，第 1 步后即可访问 <code>http://119.29.173.89:8888/</code>；只有"前端调了 API 新接口"这类改动才必须走第 2 步，否则会出现前端已上线、接口还是旧版本的错配。</p>
 
 <h3>5.3 残留交叉点（按风险排序）</h3>
@@ -386,13 +389,13 @@ git push origin master
 <thead><tr><th style="width:56px">#</th><th style="width:210px">现象</th><th>后果与建议</th></tr></thead>
 <tbody>
 <tr>
-  <td>①<br><span class="warn">中风险</span></td>
-  <td>lnkpi 的 <code>deploy-agent-runtime.yml</code> 仍会 tar 覆盖 <code>/opt/lnkpi</code>：它<b>没有 <code>rm -rf</code></b>，只覆盖同名文件</td>
+  <td>①<br><span class="ok">已收窄</span></td>
+  <td><s>lnkpi 的 <code>deploy-agent-runtime.yml</code> 仍会 tar 覆盖 <code>/opt/lnkpi</code>：它<b>没有 <code>rm -rf</code></b>，只覆盖同名文件</s></td>
   <td>
-    <b>好消息</b>：<code>pi-runtime/</code> 目录会存活（不会被删）。<br>
-    <b>坏消息</b>：<code>apps/server/src/agent/agent.service.ts</code> 被换成无 B4 版本，<code>deploy/launch-cvm-build.sh</code>（守卫）与 <code>deploy-remote-build.sh</code>（保留策略）被回退成 lnkpi 版本 —— 存在<b>「守卫被回退」的时间窗</b>。<br>
-    运行中的容器不受影响（B4 在镜像里），下次经发布门部署会先同步回 B4 源码 + 守卫，自愈。<br>
-    <b>建议</b>：把该工作流的 tar 收窄为只同步 agent-runtime 必需文件（<code>services/agent-runtime/**</code> + <code>Dockerfile.agent-runtime</code> + compose + enable 脚本），或与 <code>deploy-api</code> 一样改为仅手动触发。
+    <b>✅ 2026-09-23 已处理</b>（lnkpi <code>2a4d5220</code> / pi-lnk <code>0c6b91b</code>）：
+    <b>①</b> tar 改为白名单，只打包 <code>services/agent-runtime</code>（该 workflow 唯一有权写入的路径）；
+    <b>②</b> 新增 <code>Guard: release-gate invariants</code> 步骤，逐步校验：生产树仍带 B4 分流代码 / <code>deploy/launch-cvm-build.sh</code> 的 B4 守卫在位 / 发布门独占文件（compose、<code>enable-agent-runtime.sh</code>、<code>Dockerfile.agent-runtime</code>）无漂移 —— 任一不满足即<b>红灯并提示"走发布门"</b>，不再静默覆盖。
+    <br><span class="muted">原风险（保留对照）：<code>agent.service.ts</code> 被换成无 B4 版本、守卫与保留策略被回退，形成"守卫被回退"时间窗；运行中容器不受影响（B4 在镜像里），下次经发布门部署会自愈。</span>
   </td>
 </tr>
 <tr>
@@ -425,7 +428,9 @@ git push origin master
 <table>
 <thead><tr><th style="width:56px">优先级</th><th>事项</th><th style="width:250px">说明 / 下一步</th></tr></thead>
 <tbody>
-<tr><td><span class="warn">P1-高</span></td><td>收窄 lnkpi 的 <code>deploy-agent-runtime.yml</code> 同步范围</td><td>消除"守卫被回退"时间窗（见 5.3 ①）；需你确认后我改</td></tr>
+<tr><td><span class="ok">✅ 完成</span></td><td><s>收窄 lnkpi 的 <code>deploy-agent-runtime.yml</code> 同步范围</s></td><td>lnkpi <code>2a4d5220</code> / pi-lnk <code>0c6b91b</code>：tar 白名单 + 发布门不变量 Guard（见 5.3 ①）</td></tr>
+<tr><td><span class="ok">✅ 完成</span></td><td><s>同步命令流沉淀（暂不自动化）</s></td><td>pi-lnk <code>docs/ops/RUNBOOK-lnkpi-to-pi-lnk-sync.md</code>：完整命令、<code>checkout HEAD --</code> 陷阱、三层门控</td></tr>
+<tr><td><span class="ok">✅ 完成</span></td><td><s>回滚可用性演练</s></td><td>2026-09-23 17:26 实测：<code>active→shadow</code> 验收 16/0 → 切回 <code>active</code> 复跑 16/0</td></tr>
 <tr><td><span class="warn">中</span></td><td>把 B4 守卫与镜像保留策略上游化到 lnkpi</td><td>让"从任何仓库构建"都不会静默产出假镜像</td></tr>
 <tr><td><span class="warn">中</span></td><td>P1：canvas tool 迁移（下一步工作）</td><td>工具清单盘点 → pi-runtime 侧 atomic 注册表 → shadow 双跑比对</td></tr>
 <tr><td>P2</td><td>K1 golden 用例集仅 3 条</td><td>需要扩充，否则 shadow 比对缺基线</td></tr>

@@ -3,7 +3,7 @@
 > 完整版（含 4 张矢量图）见 [`POSTMORTEM-2026-09-23-deploy-overwrite.html`](./POSTMORTEM-2026-09-23-deploy-overwrite.html)
 > 操作手册见 [`RUNBOOK-single-release-gate.md`](./RUNBOOK-single-release-gate.md)
 
-- **状态**：已闭环（根因消除，另有 1 处残留交叉点待收窄）
+- **状态**：已闭环（根因消除；1 处残留交叉点已于 2026-09-23 同批收窄，见 §残留交叉点 ①）
 - **业务影响**：无（接口与数据无损伤，期间流量由老 runtime 正常服务）
 - **修复主题**：单一发布门 + 构建防呆守卫 + 镜像回滚保留
 
@@ -69,7 +69,7 @@ flowchart LR
   subgraph LB["泳道 B · pi-lnk（runtime / 分流迭代）"]
     B1["编码 B4 / pi-runtime"] --> B2["CI on master"] --> B3["push master<br/>命中过滤自动触发"]
   end
-  A3 -.->|"合流：merge upstream/main（deploy.yml 用 --ours）"| B1
+  A3 -.->|"合流：merge upstream/main（deploy.yml 保 pi-lnk 版）"| B1
   B3 --> G["唯一发布门 · pi-lnk master<br/>镜像 lnkpi-api:&lt;sha&gt; 天然含 B4"]
   G --> V["验收：tag=sha / MODE=active / 端到端 16-0"]
   V --> R["回滚：.env 切开关（秒级）<br/>或 LNKPI_API_IMAGE=旧 sha + up --no-build"]
@@ -88,7 +88,7 @@ flowchart LR
 | pi-lnk | `575bee5` / `a042331` / `396b86c` | 运维手册与磁盘口径 |
 | 两仓库 | `3bd984e3` / `e34bdad` | 统一 MIT 协议，消除 LICENSE add/add 冲突 |
 
-> **合流固定陷阱**：lnkpi 的 `30a3781e` 改了 `.github/workflows/deploy.yml`。两仓库共享该路径，**直接 merge 会把"禁用 API 部署"带进 pi-lnk，静默废掉唯一发布门**。必须 `git merge --no-commit` → `git checkout --ours .github/workflows/deploy.yml && git add` → 再 commit。
+> **合流固定陷阱**：lnkpi 的 `30a3781e` 改了 `.github/workflows/deploy.yml`。两仓库共享该路径，**直接 merge 会把"禁用 API 部署"带进 pi-lnk，静默废掉唯一发布门**。必须 `git merge --no-commit` → `git checkout HEAD -- .github/workflows/deploy.yml && git add` → 再 commit。（`git checkout --ours <path>` 只在路径冲突时有效，等价但更脆；`HEAD --` 在自动合并成功时也能用。）
 
 ## 验证闭环
 
@@ -107,7 +107,7 @@ flowchart LR
 | 后端 API `apps/server/**`、`packages/**` | Deploy（api 命中），但 `Build API on CVM` 条件已改为"仅手动显式开启" | ❌ 不会 | 需过一次发布门 |
 | `deploy/**`、`package.json`、`pnpm-lock.yaml`、`.dockerignore` | 同上 | ❌ 不会 | 同上 |
 | `.github/workflows/deploy.yml` | api + web 都命中 | ⚠️ 只重发前端 | 无需操作 |
-| `services/agent-runtime/**`、`deploy/docker/**` | `Deploy Agent Runtime`（lnkpi 侧仍自动跑） | ⚠️ 会部署老 runtime，且覆盖源码树 | 见下方残留交叉点 ① |
+| `services/agent-runtime/**`、`deploy/docker/**` | `Deploy Agent Runtime`（lnkpi 侧仍自动跑） | ✅ 只写 `services/agent-runtime/**`，其余路径被 Guard 拦截 | 无需操作；见残留交叉点 ①（已收窄） |
 | `docs/**`、`*.md`、`README`、`LICENSE` | 不命中部署过滤；CI 因 `paths-ignore` 也不跑 | — | 无 |
 | 任意代码改动 | CI（测试/构建/契约） | — | 照旧，不受影响 |
 
@@ -117,22 +117,26 @@ flowchart LR
 # 1. lnkpi 正常开发并 push（CI 照跑；API 不会自动上线）
 cd ~/workspace/lnkpi && git push origin main
 
-# 2. 同步到发布门（只搬源码；deploy.yml 必须用 --ours）
+# 2. 同步到发布门（只搬源码；deploy.yml 必须保 pi-lnk 版）
 cd ~/workspace/pi-lnk
 git fetch upstream
 git merge upstream/main --no-commit --no-ff
-git checkout --ours .github/workflows/deploy.yml && git add .github/workflows/deploy.yml
+git checkout HEAD -- .github/workflows/deploy.yml && git add .github/workflows/deploy.yml
+grep -c "allow_api_deploy" .github/workflows/deploy.yml   # 必须是 0
 git commit -m "merge: sync lnkpi main (API changes)"
 git push origin master        # → 自动触发发布门部署，完成后跑三条验收
 ```
+
+> 完整命令流（含自检与常见故障）：[`RUNBOOK-lnkpi-to-pi-lnk-sync.md`](./RUNBOOK-lnkpi-to-pi-lnk-sync.md)。
+> 注意 `git checkout --ours <path>` **只在路径处于冲突状态时**有效；用 `git checkout HEAD -- <path>` 更稳（语义相同：恢复 pi-lnk 合并前的版本）。
 
 若只是纯前端改动，第 1 步后即可访问 `http://119.29.173.89:8888/`；只有当"前端调用了 API 新接口"时才必须走第 2 步，否则会出现前端已上线、接口仍旧版本的错配。
 
 ### 残留交叉点
 
-1. **中风险 — `services/agent-runtime/**` 改动仍会覆盖源码树**：lnkpi 的 `deploy-agent-runtime.yml` 无 `rm -rf`，只覆盖同名文件。好消息是 `pi-runtime/` 目录存活；坏消息是 `agent.service.ts` 被换成无 B4 版本、`deploy/launch-cvm-build.sh`（守卫）与 `deploy-remote-build.sh`（保留策略）被回退 → 存在"守卫被回退"的时间窗。运行中的容器不受影响（B4 在镜像里），下次经发布门部署会先同步回 B4 源码与守卫（自愈）。**建议**：把该工作流 tar 收窄为只同步 agent-runtime 必需文件，或与 `deploy-api` 一样改为仅手动触发。
+1. ~~**中风险 — `services/agent-runtime/**` 改动仍会覆盖源码树**~~ → **✅ 已收窄（2026-09-23，lnkpi `2a4d5220` / pi-lnk `0c6b91b`）**：该工作流的 `tar` 改为白名单，只打包 `services/agent-runtime`；同时新增 `Guard: release-gate invariants` 步骤，校验生产树上 ① B4 分流代码在位 ② B4 构建守卫在位 ③ 发布门独占文件（compose / enable-agent-runtime.sh / agent-runtime Dockerfile）无漂移——任一不满足即红灯并提示"走发布门"，**不再静默覆盖**。原风险描述（保留供对照）：无 `rm -rf`、只覆盖同名文件，`agent.service.ts` 会被换成无 B4 版本、`deploy/launch-cvm-build.sh`（守卫）与 `deploy-remote-build.sh`（保留策略）被回退，形成"守卫被回退"时间窗；运行中容器不受影响（B4 在镜像里），下次经发布门部署会自愈。
 2. **低风险 — `deploy-web` 覆盖 `deploy/{nginx.conf,deploy-web.sh}`**：只写这两个文件 + `web/dist`，不碰源码树，两仓库同源实际一致。
-3. **低风险 — 守卫与保留策略未回流 lnkpi**：从 lnkpi 手动构建仍是无守卫版本，建议后续上游化。
+3. **低风险 — 守卫与保留策略未回流 lnkpi**：从 lnkpi 手动构建仍是无守卫版本。**注意**：收窄后 lnkpi 的 `Deploy Agent Runtime` 也不再同步 `deploy/**`，所以 lnkpi 侧的守卫脚本改动必须走发布门才生效（Guard 会校验漂移）。
 
 ### 关于 `#920`
 
@@ -142,7 +146,9 @@ git push origin master        # → 自动触发发布门部署，完成后跑�
 
 | 优先级 | 事项 | 说明 |
 | --- | --- | --- |
-| 高 | 收窄 lnkpi 的 `deploy-agent-runtime.yml` 同步范围 | 消除"守卫被回退"时间窗 |
+| 高 | ~~收窄 lnkpi 的 `deploy-agent-runtime.yml` 同步范围~~ **✅ 已完成** | lnkpi `2a4d5220` / pi-lnk `0c6b91b`：tar 白名单 + 发布门不变量 Guard，消除"守卫被回退"时间窗 |
+| 高 | ~~同步命令流沉淀（不自动化）~~ **✅ 已完成** | [`RUNBOOK-lnkpi-to-pi-lnk-sync.md`](./RUNBOOK-lnkpi-to-pi-lnk-sync.md)：完整命令、`checkout HEAD --` 陷阱、三层门控、验收三件套 |
+| — | ~~回滚可用性验证~~ **✅ 已完成（2026-09-23 17:26 演练）** | `active→shadow` 后验收 16/0、再切回 `active` 复跑 16/0；回滚点镜像与 `.last-api-image` 一致 |
 | 中 | 把 B4 守卫与镜像保留策略上游化到 lnkpi | 让任何仓库构建都不会静默产出假镜像 |
 | 中 | P1：canvas tool 迁移 | 工具清单 → pi-runtime atomic 注册表 → shadow 双跑比对 |
 | P2 | K1 golden 用例集仅 3 条 | 不足则 shadow 比对缺基线 |

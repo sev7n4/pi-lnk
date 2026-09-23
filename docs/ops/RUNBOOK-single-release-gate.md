@@ -4,11 +4,13 @@
 
 > 背景与根因复盘：[`POSTMORTEM-2026-09-23-deploy-overwrite.md`](./POSTMORTEM-2026-09-23-deploy-overwrite.md)（含"对 lnkpi 独立开发的影响"与残留交叉点）
 > 图文完整版（4 张矢量图，浏览器直接打开）：[`POSTMORTEM-2026-09-23-deploy-overwrite.html`](./POSTMORTEM-2026-09-23-deploy-overwrite.html)
+> 日常同步命令流（lnkpi 的后端改动怎么上生产，含 `checkout --ours` 陷阱）：[`RUNBOOK-lnkpi-to-pi-lnk-sync.md`](./RUNBOOK-lnkpi-to-pi-lnk-sync.md)
 
 已完成的改动（无需重做）：
 - pi-lnk `1c96a14`：三个工作流触发分支 `main → master`（发布门对齐到实际工作分支）
 - pi-lnk `aca108a`：`deploy/launch-cvm-build.sh` 加 B4 守卫（源码树缺分流代码时拒绝构建）
 - lnkpi `30a3781e`：`deploy-api` 改为仅手动显式开启；自动部署只剩 `deploy-web`（只写 `web/dist`，不碰源码树）
+- lnkpi `2a4d5220` + pi-lnk `0c6b91b`：`deploy-agent-runtime.yml` 同步范围收窄为白名单（只写 `services/agent-runtime/**`）+ 新增发布门不变量 Guard（两侧文件除分支名外逐字节一致）
 
 ---
 
@@ -83,7 +85,7 @@ EOF
    - `Health check` 失败 → `ssh deploy-cvm 'docker logs lnkpi-api --tail 60'`
 
 **日常开发约定**（做完上面这步就生效）：
-- 画布改动的日常发版：lnkpi PR 合并 main → 自动部署 web；若同时改了 `apps/server/**`，必须先在 pi-lnk 执行 `git fetch upstream && git merge upstream/main && git push` 再走阶段 2，否则线上 API 还是旧代码。
+- 画布改动的日常发版：lnkpi PR 合并 main → 自动部署 web；若同时改了 `apps/server/**`，必须先在 pi-lnk 走一次同步命令流（见 [`RUNBOOK-lnkpi-to-pi-lnk-sync.md`](./RUNBOOK-lnkpi-to-pi-lnk-sync.md) §3，**不能只 `merge upstream/main` 就 push**，会带回"禁用 API 部署"）再走阶段 2，否则线上 API 还是旧代码。
 - runtime / 分流改动：只在 pi-lnk 做，提交进 master 即自动部署，lnkpi 不受影响。
 
 ---
@@ -115,8 +117,14 @@ ssh deploy-cvm "cd /opt/lnkpi && LNKPI_API_IMAGE=lnkpi-api:<旧sha> docker compo
 **不依赖镜像的秒级止血**（任何时候都可用，优先级最高）。
 
 ```bash
-ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=shadow/' .env && docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
+ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=shadow/' .env && \
+  export LNKPI_API_IMAGE=\$(docker inspect lnkpi-api --format '{{.Config.Image}}') && \
+  docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
 ```
+
+> ⚠️ `LNKPI_API_IMAGE` 必须显式 export。compose 里写的是 `${LNKPI_API_IMAGE:-lnkpi-api:local}`，而插值来源 `deploy/.env` **没有这个键**（`/opt/lnkpi/.env` 才是容器 env_file），不 export 就会去找并不存在的 `lnkpi-api:local`。
+
+**✅ 回滚演练已执行（2026-09-23 17:26，实测通过）**：`active → shadow` 后容器 15 s 内 healthy、公网 `/api/health` 200、`prod-agent-thread-verify.py` = **PASS=16 FAIL=0**（与 active 基线完全一致）；随后切回 `active` 复跑同样 **16/0**。回滚点镜像 `lnkpi-api:1c96a14236e6` 在位且 `.last-api-image` 指向一致。`.env` 已备份为 `/opt/lnkpi/.env.bak-20260923-172651`。
 
 > 注意：`deploy-remote-build.sh` 的清理发生在构建**之前**，此刻「当前运行中的镜像」是靠 `latest` tag 保护的；新脚本在此基础上多保留历史版本，因此首次运行不会产生额外保留（属预期）。下一次部署起，`.last-api-image` 会稳定指向上一版。
 
@@ -152,8 +160,13 @@ ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=s
 ## 速查：日常三条命令
 
 ```bash
-# 同步画布上游到发布门
-cd /Users/4seven/workspace/pi-lnk && git fetch upstream && git merge upstream/main && git push
+# 同步画布上游到发布门（⚠️ 不能只 merge+push，会带回 lnkpi 的"禁用 API 部署"而废掉发布门）
+# 完整命令流见 RUNBOOK-lnkpi-to-pi-lnk-sync.md §3；最小安全版：
+cd /Users/4seven/workspace/pi-lnk
+git fetch upstream && git merge --no-commit upstream/main
+git checkout HEAD -- .github/workflows/deploy.yml && git add .github/workflows/deploy.yml
+grep -c "allow_api_deploy" .github/workflows/deploy.yml    # 必须是 0
+git commit -m "chore: sync upstream lnkpi main" && git push origin master
 
 # 生产健康
 ssh deploy-cvm 'docker ps --format "{{.Names}} {{.Image}} {{.Status}}" | grep lnkpi'
