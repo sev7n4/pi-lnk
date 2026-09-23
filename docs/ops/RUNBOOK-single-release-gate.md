@@ -85,24 +85,40 @@ EOF
 
 ---
 
-## 阶段 3 · 让回滚真的秒级（需你拍板，二选一）
+## 阶段 3 · 回滚 ✅ 已落地（2026-09-23，采用方案 A）
 
-现状缺口：`deploy/deploy-remote-build.sh` 会删除除当前 tag 与 `latest` 外的所有 lnkpi-api 镜像，本地 registry 也只推了 `pi-runtime` → **按旧 sha 回滚不成立，只能重建（约 7 分钟）**。
+**原缺口**：`deploy/deploy-remote-build.sh` 会删除除当前 tag 与 `latest` 外的所有 lnkpi-api 镜像 → 按旧 sha 回滚只能重建（约 7 分钟）。
 
-- 方案 A（保守，占盘 +1.62G，8.2G 可用够用）：保留最近 2 个镜像。把脚本里
-  ```bash
-  docker images lnkpi-api --format '{{.Tag}}' | while read -r tag; do
-    [[ "$tag" == "$IMAGE_TAG" || "$tag" == "latest" ]] && continue
-    docker rmi "lnkpi-api:${tag}" 2>/dev/null || true
-  ```
-  改为按创建时间排序后只保留最新 2 个再删其余。
-- 方案 B（彻底，占盘相同）：构建完顺手把镜像推本地 registry（`docker push 127.0.0.1:5000/lnkpi-api:$IMAGE_TAG`），回滚时 `docker pull` + `LNKPI_API_IMAGE=127.0.0.1:5000/lnkpi-api:<sha> docker compose -f deploy/docker-compose.prod.yml up -d --no-build`。
+**已改为**（commit `b219af5`，本地与 CVM 均已同步生效）：保留 `当前 tag + latest + 最近 KEEP_PREVIOUS 个历史版本`（默认 1，需要更多可用 `LNKPI_KEEP_PREVIOUS=2` 调），构建前执行；同时把回滚目标写入 `/opt/lnkpi/.last-api-image`，并把完整回滚命令打进部署日志。
 
-无论选哪个，**不依赖镜像的秒级止血**始终可用：
+**为什么磁盘几乎不涨**（`docker history` 实测 lnkpi-api 各层）：
+
+| 层 | 大小 | 两次构建之间 |
+| --- | --- | --- |
+| 应用依赖层（pnpm node_modules） | 562 MB | 内容稳定 → 层共享 |
+| 系统包层（ffmpeg / openssl） | 473 MB | 内容稳定 → 层共享 |
+| Node 22 + Debian 基础层 | 243 MB | 内容稳定 → 层共享 |
+| **业务层（apps/server/dist）** | **1.1 MB** | **每次变动** |
+
+镜像层按内容寻址，多留一个历史版本只多存业务层 → **真实代价约 1 MB**（最坏情况依赖层也重生成约 1 GB），而不是 `docker images` 显示的 1.68 GB（那是逻辑大小＝各层之和）。
+
+**回滚操作（秒级，不重建）**：
+
+```bash
+ssh deploy-cvm 'cat /opt/lnkpi/.last-api-image'   # 查最近可回滚的 sha
+ssh deploy-cvm "cd /opt/lnkpi && LNKPI_API_IMAGE=lnkpi-api:<旧sha> docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
+```
+
+**不依赖镜像的秒级止血**（任何时候都可用，优先级最高）。
 
 ```bash
 ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=shadow/' .env && docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
 ```
+
+> 注意：`deploy-remote-build.sh` 的清理发生在构建**之前**，此刻「当前运行中的镜像」是靠 `latest` tag 保护的；新脚本在此基础上多保留历史版本，因此首次运行不会产生额外保留（属预期）。下一次部署起，`.last-api-image` 会稳定指向上一版。
+
+**磁盘现状（2026-09-23 清理后）**：40G 用 31G，**可用 9.9G**（`docker builder prune` 释放 4.07 GB 构建缓存；代价是下次构建为冷构建，会慢一些）。
+⚠️ **禁止 `docker image prune -a`** —— 同机还跑着 pintuotuo / aimarket 等项目的镜像。可继续清理的候选：`/opt/lnkcanvas` 800M（已停用项目）、`/opt/actions-runner` 2.1G（是否仍在用待确认）。
 
 ---
 
