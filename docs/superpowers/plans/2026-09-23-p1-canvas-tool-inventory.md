@@ -4,6 +4,8 @@
 > SSOT：`services/agent-runtime/app/tools/tool_registry.py`（placement/tier）+ `definitions.py`（structured tool 声明）。
 > 生成方式：从上述两个文件解析生成（非手抄），可与代码逐条对照。
 
+> **路线修订（2026-09-24，已定稿）**：分期顺序经产品/架构评审后重排，见 `2026-09-24-p1-roadmap-revision.md`（用户拍板「都按默认」）。要点：P0=UI_COMMAND → P1=B-5 生成闭环（B-3 并入，HITL 走 harness Gate 重构）→ D-η' skill 缺口核查；**B-6/B-7 显式关闭**（graph_node/destructive 工具均不向 Explore 界面暴露，无迁移对象）；B-4 降级为使用率数据决策。本档 §2 清单仍为 SSOT，§3 顺序以修订档为准。
+
 > **状态更新（2026-09-24，#13 收尾）**：① B-1 批次**关闭**——7 个 read 已上线（PR #1，pi-runtime 0.0.4+，生产 e2e 已验 `get_canvas_summary` 真实调用）；`get_image_edit_capabilities` / `list_public_assets` 按 `DEFERRED_TOOL_NAMES` 决策**不迁**（老链路同样未向模型暴露，行为对齐）。② B-2（写×13）按计划推进；其中 `introduce_nodes_to_agent` 同属 DEFERRED，默认**注册但不暴露**（对齐老链路）。③ UI_COMMAND×5 通道设计定案见 `2026-09-24-ui-command-canvas-action-design.md`。④ K4 首轮基线已产出（runtime-compare --suite，有效 2 用例 diff 2/2——根因即缺写工具，作为 B-2 验收对照基线）。
 
 ## 0. 结论速览
