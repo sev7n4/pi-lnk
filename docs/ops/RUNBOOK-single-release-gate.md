@@ -2,6 +2,9 @@
 
 适用时间：2026-09-23 起。目标：两个仓库各自独立开发 + CI，但**只有 pi-lnk 能部署生产**，且切换后的 runtime 链路不会被覆盖。
 
+> 背景与根因复盘：[`POSTMORTEM-2026-09-23-deploy-overwrite.md`](./POSTMORTEM-2026-09-23-deploy-overwrite.md)（含"对 lnkpi 独立开发的影响"与残留交叉点）
+> 图文完整版（4 张矢量图，浏览器直接打开）：[`POSTMORTEM-2026-09-23-deploy-overwrite.html`](./POSTMORTEM-2026-09-23-deploy-overwrite.html)
+
 已完成的改动（无需重做）：
 - pi-lnk `1c96a14`：三个工作流触发分支 `main → master`（发布门对齐到实际工作分支）
 - pi-lnk `aca108a`：`deploy/launch-cvm-build.sh` 加 B4 守卫（源码树缺分流代码时拒绝构建）

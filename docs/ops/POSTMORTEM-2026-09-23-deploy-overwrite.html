@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>复盘：两仓库并行开发导致生产分流被覆盖（2026-09-23）</title>
+<style>
+  :root{
+    --ink:#2C2C2A; --ink2:#5F5E5A; --ink3:#888780;
+    --line:#D3D1C7; --line2:#B4B2A9; --bg:#FFFFFF; --soft:#F1EFE8;
+    --red:#A32D2D; --red-bg:#FCEBEB; --red-ink:#791F1F;
+    --green:#3B6D11; --green-bg:#EAF3DE; --green-ink:#27500A;
+    --amber:#854F0B; --amber-bg:#FAEEDA; --amber-ink:#633806;
+    --blue:#185FA5; --blue-bg:#E6F1FB; --blue-ink:#0C447C;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:400 14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 28px 80px}
+  h1{font-size:24px;font-weight:500;line-height:1.35;margin:0 0 6px}
+  h2{font-size:18px;font-weight:500;margin:44px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;font-weight:500;margin:26px 0 8px}
+  p{margin:10px 0}
+  .sub{color:var(--ink2);font-size:13px;margin:0 0 22px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 28px}
+  .pill{font-size:12px;padding:3px 10px;border:1px solid var(--line2);border-radius:999px;color:var(--ink2);background:var(--soft)}
+  .card{border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:18px 0;background:var(--bg)}
+  .card.red{border-color:#E8B4B4;background:var(--red-bg)}
+  .card.green{border-color:#C0DD97;background:var(--green-bg)}
+  .card.amber{border-color:#FAC775;background:var(--amber-bg)}
+  .card h3{margin-top:0}
+  figure{margin:22px 0;border:1px solid var(--line);border-radius:12px;padding:16px 14px 8px;background:var(--bg)}
+  figcaption{font-size:12px;color:var(--ink2);margin:8px 2px 4px}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:14px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--soft);font-weight:500}
+  td code,li code,p code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+    background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+  pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.6;margin:12px 0}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  .ok{color:var(--green);font-weight:500}
+  .bad{color:var(--red);font-weight:500}
+  .warn{color:var(--amber);font-weight:500}
+  .muted{color:var(--ink2)}
+  .sha{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:var(--soft);
+    border:1px solid var(--line);border-radius:4px;padding:1px 6px;white-space:nowrap}
+  hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+  .foot{font-size:12px;color:var(--ink3);margin-top:40px;border-top:1px solid var(--line);padding-top:14px}
+  svg{display:block;max-width:100%;height:auto}
+  @media print{body{font-size:12px}.wrap{max-width:none;padding:0}figure,table{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>复盘：两个仓库并行开发，如何把生产上的 runtime 分流悄悄覆盖掉</h1>
+<p class="sub">事件日期 2026-09-23 · 影响对象：生产 CVM 119.29.173.89 上的 <code>PI_RUNTIME_MODE=active</code> 分流链路 · 结论：业务无损伤，根因已消除，另有 1 处残留交叉点待收敛</p>
+
+<div class="meta">
+  <span class="pill">状态：已闭环</span>
+  <span class="pill">业务影响：无（数据/接口无损伤）</span>
+  <span class="pill">修复：发布门 + 防呆守卫 + 回滚保留</span>
+  <span class="pill">配套手册：RUNBOOK-single-release-gate.md</span>
+</div>
+
+<div class="card amber">
+<h3>一页速览（TL;DR）</h3>
+<ul>
+  <li><b>现象</b>：11:17 一次部署后，<code>/opt/lnkpi/apps/server/src/agent/pi-runtime/</code> 目录整体消失，<code>PI_RUNTIME_MODE=active</code> 仍在 <code>.env</code> 里却不再生效 —— 所有请求静默走回老 LangGraph runtime，<span class="bad">无报错、无回退提示</span>。</li>
+  <li><b>根因</b>：pi-lnk 与 lnkpi 是 fork 关系的两个仓库，<b>共用同一份 <code>deploy.yml</code>（diff = 0 行）、同一个部署目标 <code>/opt/lnkpi</code></b>，而同步动作是 <code>rm -rf apps/server packages</code> 后再解包 —— <b>包内没有的文件会被物理删除</b>。lnkpi 源码不含 B4 分流文件，所以从 lnkpi 发版＝定时擦掉分流代码。</li>
+  <li><b>为什么长期没暴露</b>：覆盖后是"静默降级"而不是报错；且当时 pi-lnk 的工作流挂在 <code>main</code> 分支、实际工作在 <code>master</code>，等于没有自动化，无法形成对照。</li>
+  <li><b>修复</b>：① 历史合流（两仓库收敛到同一条链）② 部署脚本加 B4 防呆守卫 ③ <b>部署权收敛到单一发布门 pi-lnk</b>（lnkpi 只自动发前端）④ 镜像保留上一版，回滚不再需要重建。</li>
+  <li><b>代价（有意权衡）</b>：lnkpi 的 <b>API 改动不再自动上线</b>，需过一次发布门；<b>前端开发完全不受影响</b>。</li>
+  <li><b>残留</b>：lnkpi 的 <code>deploy-agent-runtime.yml</code> 仍会自动 tar 覆盖 <code>/opt/lnkpi</code> 的部分源码文件（含守卫脚本本身）→ 存在"守卫被回退"的时间窗，建议一并收窄（见第 6 节）。</li>
+</ul>
+</div>
+
+<h2>1 · 时间线</h2>
+<table>
+<thead><tr><th style="width:96px">时间（约）</th><th>事件</th><th style="width:230px">证据 / 载体</th></tr></thead>
+<tbody>
+<tr><td>03:16</td><td>lnkpi 推送精修抠图工作 <code>df45200</code>（PR #402）</td><td>lnkpi origin/main</td></tr>
+<tr><td>06:12</td><td>lnkpi 推送 <code>30a3781e</code>：本仓库停用 API 直部署</td><td>CI run #920 · Deploy run #415</td></tr>
+<tr><td class="bad">11:17</td><td class="bad">从本地环境（源码为 df452008，不含 B4）触发部署 → 覆盖 <code>/opt/lnkpi</code>，B4 目录被删除</td><td>现场：pi-runtime 目录消失</td></tr>
+<tr><td>11:30 前后</td><td>画布测试发现 canvas 工具"还能用"（假象）→ 追问"工具没迁为何可用"，排查定位到覆盖</td><td>画布实测反馈</td></tr>
+<tr><td>12:40 前后</td><td>修复：只 scp B4 相关文件（保留用户新增的 matting 代码）+ 重建镜像 tag <code>2b636e7</code>，active 真正生效</td><td>sessions 2→3 · prompts 2→4</td></tr>
+<tr><td>13:48</td><td>⚠️ 守卫脚本测试<b>误触发了一次真实构建</b>（CVM 上跑完并重建了 API 容器，镜像 tag 变 <code>guard-test</code>）</td><td>已核查：healthy + 16/0，业务无损伤</td></tr>
+<tr><td>13:50</td><td>① 历史合流 <span class="sha">3242fa8</span>（B4 + 抠图共存）② 部署防呆守卫 <span class="sha">aca108a</span></td><td>pi-lnk master</td></tr>
+<tr><td>14:10</td><td>核查发现两仓库 <code>deploy.yml</code> 内容完全一致 → 覆盖不是偶发事故，而是 lnkpi 发版的<b>默认行为</b></td><td>diff = 0 行</td></tr>
+<tr><td>14:20</td><td>发布门落地：pi-lnk 工作流对齐 master <span class="sha">1c96a14</span>；lnkpi 停用 API 直部署 <span class="sha">30a3781e</span></td><td>lnkpi Deploy #415 → deploy-api = skipped</td></tr>
+<tr><td>14:50</td><td>首次全自动部署闭环成功（镜像 tag = 提交 sha）</td><td>run success · 端到端 16/0</td></tr>
+<tr><td>15:10</td><td>回滚保留策略上线 <span class="sha">b219af5</span>；磁盘清理释放 4.07 GB</td><td>部署日志 · df 8.2G→9.9G</td></tr>
+<tr><td>15:20</td><td>两仓库统一 MIT 协议（lnkpi <span class="sha">3bd984e3</span> → pi-lnk 同步 <span class="sha">e34bdad</span>）</td><td>GitHub license = MIT</td></tr>
+<tr><td>15:22</td><td>删 <code>/opt/lnkcanvas</code>（先归档 423 文件，源码上游有留存）；<code>actions-runner</code> 经核实为 aimarket 活跃 runner，保持不动</td><td>df 9.3G→11G</td></tr>
+</tbody>
+</table>
+
+<h2>2 · 现状问题分析（事故当时）</h2>
+
+<h3>2.1 结构性问题：一个代码库、两条开发线、一个部署目标</h3>
+<p>两仓库是 fork 关系：<code>lnkpi</code>（画布主线，origin = lnkpi.git）与 <code>pi-lnk</code>（Phase-0 分支，origin = pi-lnk.git，upstream = lnkpi.git）。它们<b>共享同一份工作流文件与同一个部署目录</b>，而 pi-lnk 的工作流当时挂在 <code>main</code>、实际开发在 <code>master</code> —— 于是"谁在发版"和"谁有能力发版"是错位的。</p>
+
+<figure>
+<svg viewBox="0 0 680 424" width="100%" role="img" aria-labelledby="d1t">
+<title id="d1t">事故当时的部署拓扑</title>
+<desc>lnkpi 推 main 会自动部署并覆盖 CVM 上的 /opt/lnkpi，删除 B4 分流文件</desc>
+<defs>
+  <marker id="m1r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#A32D2D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="m1g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<text x="40" y="30" font-size="13" font-weight="500" fill="#2C2C2A">事故当时的部署拓扑（两个仓库 → 一个目标）</text>
+<rect x="40" y="48" width="250" height="58" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="58" y="74" font-size="13" font-weight="500" fill="#633806">lnkpi（画布主线）</text>
+<text x="58" y="92" font-size="12" fill="#854F0B">origin/main · 源码不含 B4 分流</text>
+<rect x="390" y="48" width="250" height="58" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="408" y="74" font-size="13" font-weight="500" fill="#0C447C">pi-lnk（Phase-0 分支）</text>
+<text x="408" y="92" font-size="12" fill="#185FA5">origin/master · 源码含 B4 分流</text>
+<rect x="150" y="170" width="380" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="170" y="194" font-size="13" font-weight="500" fill="#2C2C2A">同一份 .github/workflows/deploy.yml</text>
+<text x="170" y="212" font-size="12" fill="#5F5E5A">两仓库内容完全一致（diff = 0 行）</text>
+<line x1="165" y1="106" x2="165" y2="168" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#m1r)"/>
+<text x="178" y="132" font-size="12" fill="#A32D2D">push main → 自动部署（实时生效）</text>
+<line x1="515" y1="106" x2="515" y2="168" stroke="#888780" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#m1g)"/>
+<text x="528" y="132" font-size="12" fill="#5F5E5A">push master → 无触发</text>
+<line x1="340" y1="226" x2="340" y2="284" stroke="#A32D2D" stroke-width="2" marker-end="url(#m1r)"/>
+<text x="354" y="258" font-size="12" fill="#A32D2D">先 rm -rf apps/server packages，再解包</text>
+<rect x="150" y="286" width="380" height="92" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="170" y="310" font-size="13" font-weight="500" fill="#791F1F">CVM /opt/lnkpi（派生的运行树，非 git 仓库）</text>
+<text x="170" y="332" font-size="12" fill="#A32D2D">apps/server/src/agent/pi-runtime/　× 被删除</text>
+<text x="170" y="352" font-size="12" fill="#5F5E5A">容器 lnkpi-api :5100 · PI_RUNTIME_MODE=active</text>
+<text x="40" y="404" font-size="12" fill="#791F1F">结果：分流代码离开源码树 → NestJS 静默回落老 runtime，开关等于没开</text>
+</svg>
+<figcaption>图 1 · 事故当时：lnkpi 的 push 会自动落到同一个部署目标上，而它包里没有 B4 文件。</figcaption>
+</figure>
+
+<h3>2.2 覆盖机理：为什么"改的内容不相关"不构成保护</h3>
+<p>关键在<b>同步动作的删除语义</b>。两个工作流的同步步骤长得像，行为却不同：</p>
+<ul>
+  <li><code>deploy.yml</code>（发 API 的那个）：<code>rm -rf $DEPLOY_DIR/packages $DEPLOY_DIR/apps/server</code> 之后再解包 → <b>包内没有的文件会被物理删除</b>。</li>
+  <li><code>deploy-agent-runtime.yml</code>：直接 <code>tar -xzf - -C $DEPLOY_DIR</code> → <b>只覆盖同名文件，不删除</b>。</li>
+</ul>
+<p>而 <code>apps/server/**</code> 与 <code>deploy/**</code> 恰好是两个仓库<b>都有的路径</b>。B4 的分流代码就住在 <code>apps/server/src/agent/</code> 里，和画布后端代码同树同构建 —— 于是"我只改画布，没动 runtime"对覆盖毫无帮助。</p>
+
+<figure>
+<svg viewBox="0 0 680 402" width="100%" role="img" aria-labelledby="d2t">
+<title id="d2t">覆盖机理：文件级的共享与删除</title>
+<desc>lnkpi 包内不含 B4 文件，同步时 agent.service.ts 被覆盖、pi-runtime 目录被删除、部署脚本被回退</desc>
+<defs>
+  <marker id="m2r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#A32D2D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<text x="40" y="30" font-size="13" font-weight="500" fill="#2C2C2A">覆盖机理：同一条 apps/server 树，两种同步语义</text>
+<text x="40" y="64" font-size="12" font-weight="500" fill="#5F5E5A">lnkpi 打包并同步的内容</text>
+<text x="330" y="64" font-size="12" font-weight="500" fill="#5F5E5A">CVM 上原有的 B4 资产 → 结果</text>
+<rect x="40" y="78" width="230" height="54" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="56" y="100" font-size="13" font-weight="500" fill="#633806">agent.service.ts</text>
+<text x="56" y="118" font-size="12" fill="#854F0B">包内是「无 B4 分流」的版本</text>
+<rect x="40" y="146" width="230" height="54" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="56" y="168" font-size="13" font-weight="500" fill="#633806">pi-runtime/ 目录</text>
+<text x="56" y="186" font-size="12" fill="#854F0B">包里根本没有这个目录</text>
+<rect x="40" y="214" width="230" height="54" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="56" y="236" font-size="13" font-weight="500" fill="#633806">deploy/*.sh</text>
+<text x="56" y="254" font-size="12" fill="#854F0B">无 B4 守卫、无镜像保留策略</text>
+<rect x="330" y="78" width="310" height="54" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="346" y="100" font-size="13" font-weight="500" fill="#791F1F">agent.service.ts（含 B4 分流）</text>
+<text x="346" y="118" font-size="12" fill="#A32D2D">→ 被覆盖，分流逻辑从源码树消失</text>
+<rect x="330" y="146" width="310" height="54" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="346" y="168" font-size="13" font-weight="500" fill="#791F1F">pi-runtime/ 目录（B4 独有）</text>
+<text x="346" y="186" font-size="12" fill="#A32D2D">→ 被删除（rm -rf apps/server 的后果）</text>
+<rect x="330" y="214" width="310" height="54" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="346" y="236" font-size="13" font-weight="500" fill="#791F1F">deploy/*.sh（守卫 / 保留策略）</text>
+<text x="346" y="254" font-size="12" fill="#A32D2D">→ 被回退为无守卫版本</text>
+<line x1="272" y1="105" x2="328" y2="105" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#m2r)"/>
+<line x1="272" y1="173" x2="328" y2="173" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#m2r)"/>
+<line x1="272" y1="241" x2="328" y2="241" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#m2r)"/>
+<rect x="40" y="296" width="600" height="86" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="58" y="322" font-size="13" font-weight="500" fill="#2C2C2A">两种同步语义的差别，就是事故的全部机制</text>
+<text x="58" y="344" font-size="12" fill="#5F5E5A">deploy.yml：rm -rf apps/server packages 后再解包 → 包内没有的文件会被删除</text>
+<text x="58" y="364" font-size="12" fill="#5F5E5A">deploy-agent-runtime.yml：直接解包覆盖 → 只覆盖同名文件，不删除</text>
+</svg>
+<figcaption>图 2 · 文件级机理：<code>agent.service.ts</code>（B4 逻辑）被覆盖、<code>pi-runtime/</code>（B4 独有）被删除；两者任一缺失，分流都不成立。</figcaption>
+</figure>
+
+<h3>2.3 为什么长期没被发现：静默降级</h3>
+<p>分流开关的三态里，<code>active</code> 的判定依赖"源码/镜像里存在 B4 + 运行时健康检查通过"。当 B4 代码根本不在构建产物里时，NestJS 走的是<b>老 runtime 的分支</b> —— 接口照样返回 200，画布照样能用（因为老 runtime 一直在服役），<b>没有任何日志告警说"分流没生效"</b>。唯一能发现它的方式是对照指标：pi-runtime 的 <code>sessions/:id/prompt</code> 计数是否在涨。这也是后来把"指标增长"写进验收判据的原因。</p>
+
+<h3>2.4 次生问题：镜像 tag 污染与"回滚其实要重建"</h3>
+<ul>
+  <li>守卫脚本测试时误触发过一次真实构建，容器被重建、镜像 tag 变成 <code>lnkpi-api:guard-test</code>（已核查业务无损伤，并补了可辨识别名）。<b>教训</b>：<code>launch-cvm-build.sh</code> 传参即真实启动后台构建，测试必须用桩。</li>
+  <li>原部署脚本会删除除当前 tag 与 <code>latest</code> 之外的所有 <code>lnkpi-api</code> 镜像 → 所谓"按旧 sha 回滚"实际需要重建（约 13 分钟），与文档口径不符。已在 15:10 修正（见第 4 节）。</li>
+</ul>
+
+<h2>3 · 解决方案（目标模式）</h2>
+<p>目标不是"禁止 lnkpi 发版"，而是<b>把"能不能写生产"和"改了什么"解耦</b>：两个仓库各自独立开发、各自跑 CI，但只有一处能做部署决策。</p>
+
+<figure>
+<svg viewBox="0 0 680 456" width="100%" role="img" aria-labelledby="d3t">
+<title id="d3t">目标模式：双泳道独立开发与单一发布门</title>
+<desc>lnkpi 与 pi-lnk 各自独立开发与 CI，部署权收敛到 pi-lnk 的单一发布门，镜像天然包含 B4</desc>
+<defs>
+  <marker id="m3a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#854F0B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="m3g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#3B6D11" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<text x="40" y="30" font-size="13" font-weight="500" fill="#2C2C2A">目标模式：各自独立开发 + CI，部署权收敛到单一发布门</text>
+<rect x="40" y="48" width="600" height="96" rx="12" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="58" y="72" font-size="13" font-weight="500" fill="#633806">泳道 A · lnkpi —— 画布前后端迭代（独立开发 + CI）</text>
+<rect x="58" y="86" width="150" height="44" rx="8" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/>
+<text x="74" y="106" font-size="12" font-weight="500" fill="#633806">编码 → PR</text>
+<text x="74" y="122" font-size="12" fill="#854F0B">CI 测试 / 构建</text>
+<rect x="222" y="86" width="150" height="44" rx="8" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/>
+<text x="238" y="106" font-size="12" font-weight="500" fill="#633806">push main</text>
+<text x="238" y="122" font-size="12" fill="#854F0B">自动只发前端 dist</text>
+<rect x="386" y="86" width="150" height="44" rx="8" fill="#FFFFFF" stroke="#854F0B" stroke-width="0.5"/>
+<text x="402" y="106" font-size="12" font-weight="500" fill="#633806">API 改动</text>
+<text x="402" y="122" font-size="12" fill="#854F0B">不直发，交发布门</text>
+<rect x="40" y="180" width="600" height="96" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="58" y="204" font-size="13" font-weight="500" fill="#0C447C">泳道 B · pi-lnk —— runtime / 分流迭代（含 B4，唯一可发 API）</text>
+<rect x="58" y="218" width="150" height="44" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="74" y="238" font-size="12" font-weight="500" fill="#0C447C">编码 B4 / pi-runtime</text>
+<text x="74" y="254" font-size="12" fill="#185FA5">CI on master</text>
+<rect x="222" y="218" width="150" height="44" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="238" y="238" font-size="12" font-weight="500" fill="#0C447C">push master</text>
+<text x="238" y="254" font-size="12" fill="#185FA5">命中过滤器自动触发</text>
+<rect x="386" y="218" width="150" height="44" rx="8" fill="#FFFFFF" stroke="#185FA5" stroke-width="0.5"/>
+<text x="402" y="238" font-size="12" font-weight="500" fill="#0C447C">部署门预检</text>
+<text x="402" y="254" font-size="12" fill="#185FA5">守卫 + tag 一致性</text>
+<line x1="600" y1="146" x2="600" y2="178" stroke="#854F0B" stroke-width="1.5" marker-end="url(#m3a)"/>
+<text x="300" y="168" font-size="12" fill="#633806">合流：git merge upstream/main（deploy.yml 用 --ours）</text>
+<line x1="340" y1="278" x2="340" y2="338" stroke="#3B6D11" stroke-width="2" marker-end="url(#m3g)"/>
+<text x="354" y="312" font-size="12" fill="#3B6D11">预检通过 → CVM 本地构建并部署</text>
+<rect x="140" y="340" width="400" height="96" rx="12" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+<text x="160" y="364" font-size="13" font-weight="500" fill="#27500A">唯一发布门 · pi-lnk master</text>
+<text x="160" y="386" font-size="12" fill="#3B6D11">镜像 lnkpi-api:&lt;sha&gt; 天然包含 B4 分流代码</text>
+<text x="160" y="406" font-size="12" fill="#3B6D11">预检 + 健康检查 + 端到端验收 16/0</text>
+</svg>
+<figcaption>图 3 · 目标模式：泳道 A 只发前端、泳道 B 专管 runtime 与部署；合流是把 lnkpi 的源码搬进 pi-lnk，而不是让 lnkpi 直接发 API。</figcaption>
+</figure>
+
+<h3>3.1 四项机制与对应改动</h3>
+<table>
+<thead><tr><th style="width:74px">仓库</th><th style="width:110px">提交</th><th>内容</th><th style="width:190px">效果</th></tr></thead>
+<tbody>
+<tr><td>pi-lnk</td><td><span class="sha">3242fa8</span></td><td>合并 upstream/main（抠图 <code>df45200</code> + 规格 <code>5e5a0c9</code>）</td><td>两仓库收敛到同一条历史</td></tr>
+<tr><td>pi-lnk</td><td><span class="sha">aca108a</span></td><td><code>launch-cvm-build.sh</code> 加 B4 守卫（缺 <code>pi-runtime/</code> 或 <code>agent.service.ts</code> 无分流引用则 exit 1）+ tag/HEAD 一致性 WARN</td><td>从错误源码树构建会<b>显式失败</b>，而不是静默产出假镜像</td></tr>
+<tr><td>pi-lnk</td><td><span class="sha">1c96a14</span></td><td><code>ci.yml</code> / <code>deploy.yml</code> / <code>deploy-agent-runtime.yml</code> 触发分支 main → master</td><td>发布门真正有自动化（此前等于没有）</td></tr>
+<tr><td>lnkpi</td><td><span class="sha">30a3781e</span></td><td><code>deploy.yml</code> 加部署所有权说明；新增 <code>allow_api_deploy</code>（默认 false）；<code>deploy-api</code> 改为"仅手动显式开启"</td><td>lnkpi 自动部署只剩 <code>deploy-web</code>（只写 <code>web/dist</code>）</td></tr>
+<tr><td>pi-lnk</td><td><span class="sha">b219af5</span></td><td>镜像清理改为保留「当前 tag + latest + 最近 N 个历史」（<code>LNKPI_KEEP_PREVIOUS</code>），回滚点写入 <code>.last-api-image</code></td><td>按 sha 回滚变为秒级 no-build</td></tr>
+<tr><td>pi-lnk</td><td><span class="sha">575bee5</span> / <span class="sha">a042331</span> / <span class="sha">396b86c</span></td><td>运维手册 <code>docs/ops/RUNBOOK-single-release-gate.md</code>（阶段 0-4 + 磁盘口径）</td><td>操作可复现、不靠记忆</td></tr>
+<tr><td>两仓库</td><td><span class="sha">3bd984e3</span> / <span class="sha">e34bdad</span></td><td>统一 MIT 协议（LICENSE + package.json + README）</td><td>消除 LICENSE add/add 合并冲突</td></tr>
+</tbody>
+</table>
+<div class="card amber">
+<h3>合流时的固定陷阱</h3>
+<p>lnkpi 的 <code>30a3781e</code> 改了 <code>.github/workflows/deploy.yml</code>；两仓库共享该文件路径，<b>直接 merge 会把"禁用 API 部署"带进 pi-lnk，静默废掉唯一发布门</b>。固定做法：</p>
+<pre>git merge upstream/main --no-commit --no-ff
+git checkout --ours .github/workflows/deploy.yml &amp;&amp; git add .github/workflows/deploy.yml
+git commit -m "merge: sync lnkpi main" &amp;&amp; git push origin master</pre>
+</div>
+
+<h2>4 · 验证闭环：三态开关、验收判据、回滚</h2>
+<p>"切换后做验证如何不相互影响"靠的不是记性，而是三样东西：<b>三态开关</b>（把风险分级暴露）、<b>每次部署固定的验收判据</b>（把"感觉能用"变成可判定）、<b>两条回滚路径</b>（一条秒级止血、一条版本回退）。</p>
+
+<figure>
+<svg viewBox="0 0 680 440" width="100%" role="img" aria-labelledby="d4t">
+<title id="d4t">三态切换、验收判据与回滚闭环</title>
+<desc>off、shadow、active 三态的语义与验收口径，以及两条回滚路径</desc>
+<defs>
+  <marker id="m4g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="m4b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#3B6D11" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<text x="40" y="30" font-size="13" font-weight="500" fill="#2C2C2A">切换三态、验收判据与回滚闭环</text>
+<rect x="40" y="48" width="180" height="96" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="58" y="74" font-size="13" font-weight="500" fill="#2C2C2A">off</text>
+<text x="58" y="98" font-size="12" fill="#5F5E5A">改 .env + recreate</text>
+<text x="58" y="118" font-size="12" fill="#5F5E5A">流量全走老 runtime</text>
+<rect x="250" y="48" width="180" height="96" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="268" y="74" font-size="13" font-weight="500" fill="#633806">shadow</text>
+<text x="268" y="98" font-size="12" fill="#854F0B">镜像双跑比对</text>
+<text x="268" y="118" font-size="12" fill="#854F0B">不影响真实用户</text>
+<rect x="460" y="48" width="180" height="96" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+<text x="478" y="74" font-size="13" font-weight="500" fill="#27500A">active</text>
+<text x="478" y="98" font-size="12" fill="#3B6D11">SSE 走 pi-runtime</text>
+<text x="478" y="118" font-size="12" fill="#3B6D11">16/0 + 指标增长</text>
+<line x1="222" y1="96" x2="248" y2="96" stroke="#888780" stroke-width="1.5" marker-end="url(#m4g)"/>
+<line x1="432" y1="96" x2="458" y2="96" stroke="#3B6D11" stroke-width="1.5" marker-end="url(#m4b)"/>
+<rect x="40" y="176" width="600" height="104" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
+<text x="58" y="202" font-size="13" font-weight="500" fill="#2C2C2A">每次部署后必跑的三条验收</text>
+<text x="58" y="226" font-size="12" fill="#5F5E5A">① 容器 image tag == 提交 sha，且 health = healthy</text>
+<text x="58" y="246" font-size="12" fill="#5F5E5A">② docker exec printenv PI_RUNTIME_MODE == active</text>
+<text x="58" y="266" font-size="12" fill="#5F5E5A">③ prod-agent-thread-verify.py → PASS=16 FAIL=0</text>
+<rect x="40" y="300" width="600" height="120" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="58" y="326" font-size="13" font-weight="500" fill="#791F1F">回滚两条路径（都不触发重新构建）</text>
+<text x="58" y="350" font-size="12" fill="#A32D2D">① 秒级止血：.env 改 PI_RUNTIME_MODE=off|shadow + compose --force-recreate</text>
+<text x="58" y="372" font-size="12" fill="#A32D2D">② 版本回退：LNKPI_API_IMAGE=lnkpi-api:&lt;旧 sha&gt; compose up -d --no-build</text>
+<text x="58" y="396" font-size="12" fill="#5F5E5A">旧镜像由保留策略保证存在（默认保留最近 1 个，回滚点见 /opt/lnkpi/.last-api-image）</text>
+</svg>
+<figcaption>图 4 · 三态与闭环：切换是"改 .env + force-recreate"（秒级），回滚亦然；三条验收判据是每次部署的固定动作。</figcaption>
+</figure>
+
+<h3>4.1 磁盘代价（实测，反直觉）</h3>
+<p><code>docker images</code> 显示每个 <code>lnkpi-api</code> 镜像 1.68 GB，但用 <code>docker history</code> 拆开看：依赖层 562 MB + 系统包层（ffmpeg/openssl）473 MB + 基础层 243 MB 都是<b>镜像间共享</b>的，每次部署真正变化的只有业务层 <code>apps/server/dist</code> —— 约 <b>1.1 MB</b>。所以"多保留一个历史版本"的真实磁盘增量约 1 MB（最坏情况依赖层重生成约 1 GB），<b>不是 1.68 GB</b>（那是逻辑大小＝各层之和）。</p>
+
+<h2>5 · 这次变化对 lnkpi 独立开发的影响</h2>
+<p>直接结论：<b>前端开发零影响；后端 API 改动不再自动上线，需要过一次发布门。</b>下面是逐类改动的精确行为（依据 lnkpi 当前 <code>origin/main</code> 的工作流实测）。</p>
+
+<h3>5.1 行为矩阵</h3>
+<table>
+<thead><tr><th style="width:210px">你在 lnkpi 改什么</th><th style="width:230px">触发的工作流</th><th style="width:150px">会自动部署到生产？</th><th>你要做什么</th></tr></thead>
+<tbody>
+<tr>
+  <td>画布前端 <code>apps/web/**</code></td>
+  <td>Deploy（web 过滤命中）→ <code>Deploy web to CVM</code></td>
+  <td class="ok">会，约 1-2 分钟</td>
+  <td>不用管，照旧。只写 <code>/opt/lnkpi/web/dist</code> + <code>deploy/nginx.conf</code>、<code>deploy/deploy-web.sh</code></td>
+</tr>
+<tr>
+  <td>后端 API <code>apps/server/**</code>、<code>packages/**</code></td>
+  <td>Deploy（api 过滤命中），但 <code>Build API on CVM</code> 的 if 条件已改为「仅手动显式开启」</td>
+  <td class="bad">不会</td>
+  <td><b>需过一次发布门</b>（见 5.2）</td>
+</tr>
+<tr>
+  <td><code>deploy/**</code>、<code>package.json</code>、<code>pnpm-lock.yaml</code>、<code>.dockerignore</code></td>
+  <td>同上（命中 api 过滤）</td>
+  <td class="bad">不会</td>
+  <td>同 5.2</td>
+</tr>
+<tr>
+  <td><code>.github/workflows/deploy.yml</code></td>
+  <td>api 与 web 过滤都命中 → <code>Deploy web to CVM</code> 会跑</td>
+  <td class="warn">只重发前端，API 不重建</td>
+  <td>无需操作（这正是 <code>#415</code> 里发生的事）</td>
+</tr>
+<tr>
+  <td><code>services/agent-runtime/**</code>、<code>deploy/docker/**</code></td>
+  <td><code>Deploy Agent Runtime</code>（lnkpi 侧仍会自动跑）</td>
+  <td class="warn">老 runtime 会部署，且会覆盖源码树</td>
+  <td>见 5.3 残留交叉点 ①</td>
+</tr>
+<tr>
+  <td><code>docs/**</code>、<code>*.md</code>、<code>README</code>、<code>LICENSE</code></td>
+  <td>不命中部署过滤；CI 也因 <code>paths-ignore</code> 不跑</td>
+  <td class="muted">不触发</td>
+  <td>无</td>
+</tr>
+<tr>
+  <td>任意代码改动</td>
+  <td>CI（测试 / 构建 / 契约校验）</td>
+  <td class="muted">不部署</td>
+  <td>照旧，完全不受影响</td>
+</tr>
+</tbody>
+</table>
+
+<h3>5.2 API 改动的正确上线路径（一条命令流）</h3>
+<pre># 1. 先在 lnkpi 正常开发并 push（CI 照跑；API 不会自动上线）
+cd ~/workspace/lnkpi && git push origin main
+
+# 2. 同步到发布门（只搬源码；deploy.yml 必须用 --ours 保留 pi-lnk 版本）
+cd ~/workspace/pi-lnk
+git fetch upstream
+git merge upstream/main --no-commit --no-ff
+git checkout --ours .github/workflows/deploy.yml && git add .github/workflows/deploy.yml
+git commit -m "merge: sync lnkpi main (API changes)"
+git push origin master
+# → 自动触发发布门部署（约 7-13 分钟），完成后跑三条验收</pre>
+<p class="muted">提示：若只想验证前端效果，第 1 步后即可访问 <code>http://119.29.173.89:8888/</code>；只有"前端调了 API 新接口"这类改动才必须走第 2 步，否则会出现前端已上线、接口还是旧版本的错配。</p>
+
+<h3>5.3 残留交叉点（按风险排序）</h3>
+<table>
+<thead><tr><th style="width:56px">#</th><th style="width:210px">现象</th><th>后果与建议</th></tr></thead>
+<tbody>
+<tr>
+  <td>①<br><span class="warn">中风险</span></td>
+  <td>lnkpi 的 <code>deploy-agent-runtime.yml</code> 仍会 tar 覆盖 <code>/opt/lnkpi</code>：它<b>没有 <code>rm -rf</code></b>，只覆盖同名文件</td>
+  <td>
+    <b>好消息</b>：<code>pi-runtime/</code> 目录会存活（不会被删）。<br>
+    <b>坏消息</b>：<code>apps/server/src/agent/agent.service.ts</code> 被换成无 B4 版本，<code>deploy/launch-cvm-build.sh</code>（守卫）与 <code>deploy-remote-build.sh</code>（保留策略）被回退成 lnkpi 版本 —— 存在<b>「守卫被回退」的时间窗</b>。<br>
+    运行中的容器不受影响（B4 在镜像里），下次经发布门部署会先同步回 B4 源码 + 守卫，自愈。<br>
+    <b>建议</b>：把该工作流的 tar 收窄为只同步 agent-runtime 必需文件（<code>services/agent-runtime/**</code> + <code>Dockerfile.agent-runtime</code> + compose + enable 脚本），或与 <code>deploy-api</code> 一样改为仅手动触发。
+  </td>
+</tr>
+<tr>
+  <td>②<br><span class="ok">低风险</span></td>
+  <td><code>deploy-web</code> 会覆盖 <code>/opt/lnkpi/deploy/{nginx.conf,deploy-web.sh}</code></td>
+  <td>只写这两个文件 + <code>web/dist</code>，<b>不碰源码树</b>；两仓库这两个文件同源，实际内容一致。无需处理。</td>
+</tr>
+<tr>
+  <td>③<br><span class="ok">低风险</span></td>
+  <td>守卫与镜像保留策略目前只存在于 pi-lnk，未回流 lnkpi</td>
+  <td>若从 lnkpi 手动跑构建，仍是<b>无守卫</b>版本。建议后续把这两个脚本上游化到 lnkpi（改完记得反向同步一次），或在 lnkpi 侧显式标注"禁止此仓库构建 API"。</td>
+</tr>
+</tbody>
+</table>
+
+<h3>5.4 关于你看到的 <code>#920</code></h3>
+<p><b>它不是 PR，是 lnkpi 的 CI 工作流第 920 次运行</b>（<code>run_number = 920</code>），对应提交 <code>30a3781e</code>（push 触发，结论 success）。它只跑测试与契约校验，<b>不部署任何东西</b>。</p>
+<p>同一次 push 还触发了 <code>Deploy to Tencent Cloud #415</code>，job 结果正是设计意图：</p>
+<table>
+<thead><tr><th style="width:300px">job</th><th style="width:120px">结果</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>Detect changes</code></td><td class="ok">success</td><td>路径过滤判定</td></tr>
+<tr><td><code>Deploy web to CVM</code></td><td class="warn">success（会跑）</td><td>因为该提交修改了 <code>deploy.yml</code>，命中 web 过滤 —— 只重发前端 dist，无害</td></tr>
+<tr><td><code>Build API on CVM (disabled — owned by pi-lnk)</code></td><td class="ok">skipped</td><td>✅ 正是"停用 lnkpi API 直部署"生效的证据</td></tr>
+<tr><td><code>Recover CVM only</code></td><td class="ok">skipped</td><td>非手动触发</td></tr>
+</tbody>
+</table>
+
+<h2>6 · 残留风险与待办</h2>
+<table>
+<thead><tr><th style="width:56px">优先级</th><th>事项</th><th style="width:250px">说明 / 下一步</th></tr></thead>
+<tbody>
+<tr><td><span class="warn">P1-高</span></td><td>收窄 lnkpi 的 <code>deploy-agent-runtime.yml</code> 同步范围</td><td>消除"守卫被回退"时间窗（见 5.3 ①）；需你确认后我改</td></tr>
+<tr><td><span class="warn">中</span></td><td>把 B4 守卫与镜像保留策略上游化到 lnkpi</td><td>让"从任何仓库构建"都不会静默产出假镜像</td></tr>
+<tr><td><span class="warn">中</span></td><td>P1：canvas tool 迁移（下一步工作）</td><td>工具清单盘点 → pi-runtime 侧 atomic 注册表 → shadow 双跑比对</td></tr>
+<tr><td>P2</td><td>K1 golden 用例集仅 3 条</td><td>需要扩充，否则 shadow 比对缺基线</td></tr>
+<tr><td>P2</td><td>K6 监控栈未部署</td><td>受限于 CVM 内存（当前余量约 1 GB 级）</td></tr>
+<tr><td>P3</td><td><code>/opt/actions-runner</code> 中约 1.4 GB 升级残留</td><td>用户已决定暂不处理；<b>该目录本身不可删</b>（aimarket 活跃 runner）</td></tr>
+<tr><td>P3</td><td><code>/opt/lnkpi/.worktrees/poc-pi-agent-spike</code>（863 文件陈旧副本）</td><td>同步脚本不会清理，属残留垃圾</td></tr>
+<tr><td>P3</td><td>compose 里的 <code>matting</code> 服务未运行</td><td>与本次事故无关，待后续确认是否需要</td></tr>
+</tbody>
+</table>
+
+<h2>7 · 附录：关键命令速查</h2>
+<h3>7.1 验收三件套（每次部署后）</h3>
+<pre>ssh deploy-cvm 'docker ps --format "{{.Names}} {{.Image}} {{.Status}}" | grep lnkpi-api'
+ssh deploy-cvm 'docker exec lnkpi-api printenv PI_RUNTIME_MODE'      # 期望: active
+python3 deploy/prod-agent-thread-verify.py                           # 期望: PASS=16 FAIL=0</pre>
+
+<h3>7.2 秒级回滚（不重建）</h3>
+<pre># 路径 ①：切开关止血（最快，不依赖镜像）
+ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=shadow/' .env \
+  && docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
+
+# 路径 ②：回退到上一个镜像版本
+ssh deploy-cvm 'cat /opt/lnkpi/.last-api-image'                       # 取回滚目标 sha
+ssh deploy-cvm 'cd /opt/lnkpi && LNKPI_API_IMAGE=lnkpi-api:&lt;旧 sha&gt; \
+  docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api'</pre>
+
+<h3>7.3 触发发布门部署（无需点 UI）</h3>
+<pre>curl -X POST -H "Authorization: token &lt;gh_token&gt;" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/sev7n4/pi-lnk/actions/workflows/deploy.yml/dispatches \
+  -d '{"ref":"master","inputs":{"branch":"master"}}'</pre>
+
+<h3>7.4 磁盘纪律</h3>
+<pre>docker builder prune -f          # 安全：只清未使用的构建缓存（曾释放 4.07 GB）
+# ⚠️ 禁止 docker image prune -a —— 同机还跑着 pintuotuo / aimarket 的镜像</pre>
+
+<div class="foot">
+沉淀文档：<code>docs/ops/POSTMORTEM-2026-09-23-deploy-overwrite.html</code>（本文，含图）· 精简版 <code>docs/ops/POSTMORTEM-2026-09-23-deploy-overwrite.md</code> · 操作手册 <code>docs/ops/RUNBOOK-single-release-gate.md</code><br>
+所有图均为可缩放的矢量图（SVG），随文存档；文中提交号、run 编号与磁盘数字均取自当日实测。
+</div>
+
+</div>
+</body>
+</html>
