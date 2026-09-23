@@ -80,6 +80,8 @@ interface SessionEntry {
 
 const BUFFER_LIMIT = 500;
 
+export type HarnessFactory = typeof AgentHarness.create;
+
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
@@ -87,6 +89,8 @@ export class SessionManager {
 	constructor(
 		private readonly tools: AgentHarnessTool<LnkpiToolContext>[] = [],
 		private readonly systemPromptDefault = process.env.PI_RUNTIME_SYSTEM_PROMPT ?? "",
+		private readonly modelFactory: typeof assembleModel = assembleModel,
+		private readonly harnessFactory: HarnessFactory = AgentHarness.create,
 	) {}
 
 	has(id: string): boolean {
@@ -102,7 +106,7 @@ export class SessionManager {
 		opts: { systemPrompt?: string; workingDir?: string; userId?: string } = {},
 	): Promise<{ provider: string; model: string }> {
 		if (this.sessions.has(id)) throw new ConflictError(id);
-		const { models, model, providerId } = assembleModel();
+		const { models, model, providerId } = this.modelFactory();
 
 		const cwd = opts.workingDir ?? join(DATA_ROOT, id);
 		await mkdir(cwd, { recursive: true });
@@ -110,7 +114,7 @@ export class SessionManager {
 		const repo = new JsonlSessionRepo({ fileSystem: env, sessionsRoot: join(cwd, "sessions") });
 		const session = await repo.create({ cwd }, this.context);
 
-		const { harness } = await AgentHarness.create<LnkpiToolContext>(
+		const { harness } = await this.harnessFactory<LnkpiToolContext>(
 			{
 				session,
 				models,

@@ -36,7 +36,7 @@ app.get("/healthz", async () => {
 	return {
 		status: "ok",
 		service: "pi-runtime",
-		version: "0.0.1",
+		version: VERSION,
 		pi: "0.85.1 (vendored, see vendor/earendil-works/pi/VENDORED.md)",
 		sessions: manager.count(),
 	};
