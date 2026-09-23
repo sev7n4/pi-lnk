@@ -110,6 +110,65 @@ test("onCall 钩子记录 ok/error/circuit_open", async () => {
 	);
 });
 
+test("业务错误（4xx/envelope）不计熔断；5xx 计入", async () => {
+	let n = 0;
+	await withServer(
+		(_req, res) => {
+			n += 1;
+			// 前 3 次 400（业务错误），之后 500（服务端故障）
+			res.statusCode = n <= 3 ? 400 : 500;
+			res.end("err");
+		},
+		async (base, hits) => {
+			const c = new NestClient({ baseUrl: base, token: "t", breakerThreshold: 2, breakerCooldownMs: 10_000 });
+			for (let i = 0; i < 3; i++) {
+				await assert.rejects(() => c.post("/x", {}), NestToolError);
+			}
+			assert.equal(hits(), 3, "4xx 属业务错误，不得触发熔断（若熔断则第 3 次 fail fast，hits 会是 2）");
+			for (let i = 0; i < 2; i++) {
+				await assert.rejects(() => c.post("/x", {}), NestToolError);
+			}
+			await assert.rejects(() => c.post("/x", {}), NestCircuitOpenError, "5xx 连续 2 次应开路");
+		},
+	);
+});
+
+test("loadNestConfig：读出熔断 env 覆盖（非法/缺省不注入）", () => {
+	const prev = {
+		b: process.env.NEST_BASE_URL,
+		t: process.env.NEST_SERVICE_TOKEN,
+		th: process.env.NEST_BREAKER_THRESHOLD,
+		cd: process.env.NEST_BREAKER_COOLDOWN_MS,
+	};
+	delete process.env.NEST_BREAKER_THRESHOLD;
+	delete process.env.NEST_BREAKER_COOLDOWN_MS;
+	process.env.NEST_BASE_URL = "http://x";
+	process.env.NEST_SERVICE_TOKEN = "tok";
+	try {
+		assert.deepEqual(loadNestConfig(), { baseUrl: "http://x", token: "tok" }, "未配置时不得带 breaker 字段");
+		process.env.NEST_BREAKER_THRESHOLD = "3";
+		process.env.NEST_BREAKER_COOLDOWN_MS = "1500";
+		assert.deepEqual(loadNestConfig(), {
+			baseUrl: "http://x",
+			token: "tok",
+			breakerThreshold: 3,
+			breakerCooldownMs: 1500,
+		});
+		process.env.NEST_BREAKER_THRESHOLD = "abc";
+		delete process.env.NEST_BREAKER_COOLDOWN_MS;
+		assert.equal(loadNestConfig()?.breakerThreshold, undefined, "非法值不注入");
+	} finally {
+		if (prev.b === undefined) delete process.env.NEST_BASE_URL;
+		else process.env.NEST_BASE_URL = prev.b;
+		if (prev.t === undefined) delete process.env.NEST_SERVICE_TOKEN;
+		else process.env.NEST_SERVICE_TOKEN = prev.t;
+		if (prev.th === undefined) delete process.env.NEST_BREAKER_THRESHOLD;
+		else process.env.NEST_BREAKER_THRESHOLD = prev.th;
+		if (prev.cd === undefined) delete process.env.NEST_BREAKER_COOLDOWN_MS;
+		else process.env.NEST_BREAKER_COOLDOWN_MS = prev.cd;
+	}
+});
+
 test("loadNestConfig：env 齐全返回配置，缺任一返回 null", () => {
 	const prev = { b: process.env.NEST_BASE_URL, t: process.env.NEST_SERVICE_TOKEN };
 	try {

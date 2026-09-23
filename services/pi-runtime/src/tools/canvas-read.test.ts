@@ -63,34 +63,36 @@ test("双会话并发调用不串号（toolContext 各自带 sessionId）", asyn
 	);
 });
 
-test("list_generation_tasks：userId 存在才带上；type 透传", async () => {
+test("list_generation_tasks：必带 userId；type 透传", async () => {
 	const fake = fakeClient();
 	const tools = buildCanvasReadTools(fake as never);
 	const t = tools.find((x) => x.name === "list_generation_tasks")!;
 	await call(t!, { type: "image" }, ctx("s1", "u1"));
-	await call(t!, {}, ctx("s1"));
+	await assert.rejects(() => call(t!, {}, ctx("s1")), /userId/, "缺 userId 不得打 Nest");
 	assert.deepEqual(fake.calls[0].body, { sessionId: "s1", userId: "u1", type: "image" });
-	assert.deepEqual(fake.calls[1].body, { sessionId: "s1" });
+	assert.equal(fake.calls.length, 1);
 });
 
-test("list_user_assets：无会话但有 userId；get_canvas_summary 无参", async () => {
+test("list_user_assets：仅 userId（必带）；get_canvas_summary 无参", async () => {
 	const fake = fakeClient();
 	const tools = buildCanvasReadTools(fake as never);
 	await call(tools.find((x) => x.name === "list_user_assets")!, {}, ctx("s1", "u9"));
+	await assert.rejects(
+		() => call(tools.find((x) => x.name === "list_user_assets")!, {}, ctx("s1")),
+		/userId/,
+	);
 	await call(tools.find((x) => x.name === "get_canvas_summary")!, {}, ctx("s1"));
 	assert.deepEqual(fake.calls[0], { path: "/agent/internal/list-user-assets", body: { userId: "u9" } });
 	assert.deepEqual(fake.calls[1], { path: "/agent/internal/get-canvas-summary", body: { sessionId: "s1" } });
 });
 
-test("get_generation_diagnostic：两个可选 id 至少一个，否则抛错（不打 Nest）", async () => {
+test("get_generation_diagnostic：必带 userId 且两个可选 id 至少一个，否则抛错（不打 Nest）", async () => {
 	const fake = fakeClient();
 	const tools = buildCanvasReadTools(fake as never);
 	const t = tools.find((x) => x.name === "get_generation_diagnostic")!;
-	await call(t!, { node_id: "n1" }, ctx("s1"));
-	assert.deepEqual(fake.calls[0].body, { sessionId: "s1", nodeId: "n1" });
-	await assert.rejects(
-		() => call(t!, {}, ctx("s1")),
-		/generation_record_id|node_id/,
-	);
+	await call(t!, { node_id: "n1" }, ctx("s1", "u1"));
+	assert.deepEqual(fake.calls[0].body, { sessionId: "s1", userId: "u1", nodeId: "n1" });
+	await assert.rejects(() => call(t!, {}, ctx("s1", "u1")), /generation_record_id|node_id/);
+	await assert.rejects(() => call(t!, { node_id: "n1" }, ctx("s1")), /userId/);
 	assert.equal(fake.calls.length, 1);
 });

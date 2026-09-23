@@ -51,13 +51,14 @@ app.get("/metrics", async (_request, reply) => {
 	return metrics.render(manager.count(), VERSION);
 });
 
-app.post<{ Body: { sessionId?: string; systemPrompt?: string } }>(
+app.post<{ Body: { sessionId?: string; systemPrompt?: string; userId?: string } }>(
 	"/sessions",
 	async (request, reply) => {
 		const sessionId = request.body?.sessionId ?? crypto.randomUUID();
 		try {
 			const { provider, model } = await manager.create(sessionId, {
 				systemPrompt: request.body?.systemPrompt,
+				userId: request.body?.userId,
 			});
 			return reply.code(201).send({ sessionId, provider, model });
 		} catch (err) {

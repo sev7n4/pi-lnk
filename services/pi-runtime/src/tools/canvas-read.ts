@@ -68,8 +68,9 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 				_u,
 				tc: LnkpiToolContext,
 			) => {
+				if (!tc.userId) throw new Error("get_generation_diagnostic requires userId in toolContext");
 				if (!p.generation_record_id && !p.node_id) throw new Error(`get_generation_diagnostic requires ${DIAG_REQUIRED}`);
-				const body: Record<string, unknown> = { sessionId: tc.sessionId };
+				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId };
 				if (p.node_id) body.nodeId = p.node_id;
 				if (p.generation_record_id) body.generationRecordId = p.generation_record_id;
 				return textResult(await client.post("/agent/internal/get-generation-diagnostic", body));
@@ -93,8 +94,8 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 				"List generation records for the current session (task panel). Optional type filter e.g. image/video.",
 			parameters: Type.Object({ type: Type.Optional(Type.String()) }),
 			execute: async (_id, p: { type?: string }, _u, tc: LnkpiToolContext) => {
-				const body: Record<string, unknown> = { sessionId: tc.sessionId };
-				if (tc.userId) body.userId = tc.userId;
+				if (!tc.userId) throw new Error("list_generation_tasks requires userId in toolContext");
+				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId };
 				if (p.type) body.type = p.type;
 				return textResult(await client.post("/agent/internal/list-generation-tasks", body));
 			},
@@ -106,6 +107,7 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 			description: "List assets in the user's asset library.",
 			parameters: Type.Object({}),
 			execute: async (_id, _p, _u, tc: LnkpiToolContext) => {
+				if (!tc.userId) throw new Error("list_user_assets requires userId in toolContext");
 				return textResult(await client.post("/agent/internal/list-user-assets", { userId: tc.userId }));
 			},
 		},

@@ -92,7 +92,8 @@ export class NestClient {
 				| { code?: number; message?: string; data?: unknown }
 				| null;
 			if (!res.ok) {
-				this.recordFailure(path);
+				// 熔断只对"服务不可用"类失败计数（5xx/超时/网络），4xx 属业务错误不计（对齐老 runtime）
+				if (res.status >= 500) this.recordFailure(path);
 				this.opts.onCall?.(pathTail(path), "error");
 				throw new NestToolError(
 					`nest ${path} http ${res.status}: ${payload?.message ?? res.statusText}`,
@@ -100,7 +101,7 @@ export class NestClient {
 				);
 			}
 			if (!payload || payload.code !== 0) {
-				this.recordFailure(path);
+				// HTTP 200 但包络错误 = 业务错误，不计熔断（避免模型连续用错参数把工具熔死）
 				this.opts.onCall?.(pathTail(path), "error");
 				throw new NestToolError(
 					`nest ${path} code=${payload?.code}: ${payload?.message ?? "empty envelope"}`,
@@ -123,9 +124,29 @@ export class NestClient {
 	}
 }
 
-export function loadNestConfig(): { baseUrl: string; token: string } | null {
+export interface NestConfig {
+	baseUrl: string;
+	token: string;
+	breakerThreshold?: number;
+	breakerCooldownMs?: number;
+}
+
+const readPositiveInt = (v: string | undefined): number | undefined => {
+	if (!v) return undefined;
+	const n = Number(v);
+	return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+
+export function loadNestConfig(): NestConfig | null {
 	const baseUrl = process.env.NEST_BASE_URL;
 	const token = process.env.NEST_SERVICE_TOKEN;
 	if (!baseUrl || !token) return null;
-	return { baseUrl, token };
+	const threshold = readPositiveInt(process.env.NEST_BREAKER_THRESHOLD);
+	const cooldownMs = readPositiveInt(process.env.NEST_BREAKER_COOLDOWN_MS);
+	return {
+		baseUrl,
+		token,
+		...(threshold !== undefined ? { breakerThreshold: threshold } : {}),
+		...(cooldownMs !== undefined ? { breakerCooldownMs: cooldownMs } : {}),
+	};
 }
