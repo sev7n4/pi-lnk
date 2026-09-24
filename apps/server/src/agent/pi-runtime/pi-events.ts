@@ -98,3 +98,33 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 			return { type: `pi_${event.type}`, data: event.data, };
 	}
 }
+
+/** UI_COMMAND 工具 details 中的画布命令（形态对齐前端 AgentSideRail canvas_command 分支）。 */
+export interface PiCanvasCommand {
+	type: string;
+	nodeId?: string;
+	nodeIds?: string[];
+}
+
+/**
+ * UI_COMMAND 批次：从 tool_execution_end 的 result.details.canvasCommands
+ * 提取 UI 命令（派生 canvas_command 事件，同名同形态于老链路 runs.py:1220）。
+ * ⚠️ 事件名是 canvas_command 不是 canvas_action——后者走 CanvasActionSchema，
+ * 只认 add_node 等 6 种画布数据动作，focus/undo 会被前端静默丢弃。
+ * 仅本地 UI_COMMAND 工具的 details 含 canvasCommands 键；Nest 转发工具的
+ * details 是 {ok,data} 形态，天然不命中，无需按工具名白名单。
+ */
+export function extractCanvasCommands(event: PiRuntimeEvent): PiCanvasCommand[] {
+	if (event.type !== "tool_execution_end") return [];
+	const d = event.data as {
+		isError?: boolean;
+		result?: { details?: { canvasCommands?: unknown } };
+	};
+	if (d.isError) return [];
+	const cmds = d.result?.details?.canvasCommands;
+	if (!Array.isArray(cmds)) return [];
+	return cmds.filter(
+		(c): c is PiCanvasCommand =>
+			!!c && typeof c === "object" && typeof (c as { type?: unknown }).type === "string",
+	);
+}
