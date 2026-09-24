@@ -93,8 +93,30 @@ export class PiRuntimeClient {
 		return body;
 	}
 
-	async prompt(sessionId: string, text: string, lane = "main"): Promise<void> {
-		const { status, body } = await this.request<{ error?: string }>(
+	/**
+	 * 创建会话；若已存在（409，通常是上一轮 DELETE 与本轮 create 的竞态）则
+	 * **删除陈旧会话后重建**，而非静默复用。
+	 *
+	 * 复用旧会话有两个实测危害（2026-09-24 生产 e2e 定位）：
+	 *  ① systemPrompt 陈旧（本轮画布上下文/规则不生效）；
+	 *  ② pi-runtime 订阅语义会把旧会话的**事件缓冲回放**给新订阅者 →
+	 *     本轮 SSE 收到上一轮的事件流（模型表现为"复述上一轮"）。
+	 * 非 409 错误直接抛出，不误删会话。
+	 */
+	async createSessionReplacingStale(
+		sessionId: string,
+		opts: CreateSessionOptions = {},
+	): Promise<CreateSessionResult> {
+		try {
+			return await this.createSession(sessionId, opts);
+		} catch (err) {
+			if (!(err instanceof PiRuntimeError) || err.status !== 409) throw err;
+			await this.deleteSession(sessionId);
+			return await this.createSession(sessionId, opts);
+		}
+	}
+
+	async prompt(sessionId: string, text: string, lane = "main"): Promise<void> {		const { status, body } = await this.request<{ error?: string }>(
 			`/sessions/${encodeURIComponent(sessionId)}/prompt`,
 			{ method: "POST", body: JSON.stringify({ text, lane }) },
 		);

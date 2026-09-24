@@ -143,3 +143,46 @@ describe("B8 PiRuntimeClient", () => {
 		expect(body.attachments).toEqual([{ url: "https://x/a.png", mediaType: "image" }]);
 	});
 });
+
+describe("createSessionReplacingStale（409 竞态修复）", () => {
+	/** 上一轮 DELETE 与本轮 create 竞态会撞 409；静默复用旧会话会把上一轮的
+	 *  事件缓冲回放给本轮 SSE（2026-09-24 生产实测），必须删除后重建。 */
+	it("首次 409 → DELETE 陈旧会话 → 重建成功", async () => {
+		const calls: string[] = [];
+		let attempt = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				const method = init?.method ?? "GET";
+				calls.push(`${method} ${url}`);
+				if (method === "POST") {
+					attempt += 1;
+					if (attempt === 1) {
+						return new Response(JSON.stringify({ error: "session exists: s1" }), { status: 409 });
+					}
+					return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m" }), {
+						status: 201,
+					});
+				}
+				return new Response(null, { status: 204 });
+			}) as typeof fetch,
+		});
+		await expect(client.createSessionReplacingStale("s1", { systemPrompt: "SYS" })).resolves.toMatchObject({
+			provider: "agnes",
+		});
+		expect(calls).toEqual(["POST http://x/sessions", "DELETE http://x/sessions/s1", "POST http://x/sessions"]);
+	});
+
+	it("非 409 错误直接抛出（不误删会话）", async () => {
+		const calls: string[] = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push(`${init?.method ?? "GET"} ${url}`);
+				return new Response(JSON.stringify({ error: "missing credentials" }), { status: 503 });
+			}) as typeof fetch,
+		});
+		await expect(client.createSessionReplacingStale("s1")).rejects.toThrow(/missing credentials/);
+		expect(calls).toEqual(["POST http://x/sessions"]);
+	});
+});

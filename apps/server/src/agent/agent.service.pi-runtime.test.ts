@@ -101,6 +101,18 @@ describe('AgentService pi-runtime switch (B4)', () => {
     return {
       healthz,
       createSession,
+      // ensurePiSession 走 409 安全路径：409 → 删除陈旧会话 → 重建（与真实 client 同语义）
+      createSessionReplacingStale: vi.fn(async (sid: string, opts: never) => {
+        try {
+          return await createSession(sid, opts)
+        } catch (err) {
+          if (err instanceof PiRuntimeError && err.status === 409) {
+            await deleteSession(sid)
+            return await createSession(sid, opts)
+          }
+          throw err
+        }
+      }),
       prompt,
       deleteSession,
       streamEvents: vi.fn(
@@ -305,11 +317,24 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
       provider: 'agnes',
       model: 'agnes-2.5-pro',
     })
+    const deleteSession = vi.fn().mockResolvedValue(true)
     return {
       healthz: vi.fn().mockResolvedValue(healthzOk ? { status: 'ok' } : null),
       createSession,
+      // 同 stubPiClient：409 → 删陈旧 + 重建
+      createSessionReplacingStale: vi.fn(async (sid: string, opts: never) => {
+        try {
+          return await createSession(sid, opts)
+        } catch (err) {
+          if (err instanceof PiRuntimeError && err.status === 409) {
+            await deleteSession(sid)
+            return await createSession(sid, opts)
+          }
+          throw err
+        }
+      }),
       prompt: vi.fn().mockResolvedValue(undefined),
-      deleteSession: vi.fn().mockResolvedValue(true),
+      deleteSession,
       streamEvents: vi.fn(
         (_sessionId: string, onEvent: (event: PiRuntimeEvent) => void) => {
           for (const event of events) onEvent(event)
@@ -389,11 +414,13 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(agentMessageCreate).toHaveBeenCalled()
   })
 
-  it('createSession 409（复用）不阻塞本轮', async () => {
+  it('createSession 409：删除陈旧会话后重建（不静默复用），本轮不阻塞', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
-    pi.createSession.mockRejectedValue(new PiRuntimeError('session exists: s1', 409))
+    pi.createSession
+      .mockRejectedValueOnce(new PiRuntimeError('session exists: s1', 409))
+      .mockResolvedValue({ sessionId: 's1', provider: 'agnes', model: 'agnes-2.5-pro' })
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
     stubAssembler('PROMPT-s1')
 
@@ -402,6 +429,9 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
       events.push(event)
     }
     expect(events.map((e) => e.type)).toEqual(['done'])
+    // 409 → 删陈旧 + 重建（第二次 createSession 成功）；本轮结束的 finally 也会再删一次
+    expect(pi.createSession).toHaveBeenCalledTimes(2)
+    expect(pi.deleteSession).toHaveBeenCalledWith('s1')
   })
 
   it('shadow 镜像：createSession 收到以真实 sessionId 组装的 systemPrompt + userId', async () => {
@@ -463,6 +493,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
     const pi = {
       healthz: vi.fn().mockResolvedValue({ status: 'ok' }),
       createSession: vi.fn().mockResolvedValue({ sessionId: 'x', provider: 'agnes', model: 'm' }),
+      createSessionReplacingStale: vi.fn().mockResolvedValue({ sessionId: 'x', provider: 'agnes', model: 'm' }),
       prompt: vi.fn().mockResolvedValue(undefined),
       deleteSession: vi.fn().mockResolvedValue(true),
       streamEvents: vi.fn((_sid: string, onEvent: (e: { type: string; ts: number; data: unknown }) => void) => {
