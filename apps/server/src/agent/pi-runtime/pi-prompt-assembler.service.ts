@@ -16,7 +16,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { compressRecentTurns, type TurnMessage } from "./compress-recent-turns";
 import { buildSidebarBlock, type SidebarBlockInput } from "./sidebar-block";
 
-export type RuleGroup = "core" | "writeTools";
+export type RuleGroup = "core" | "writeTools" | "genTools";
 
 /** 与老链路 1:1 的最小结构（getCanvasSummary.data）。 */
 export interface CanvasSummaryData {
@@ -27,12 +27,20 @@ export interface CanvasSummaryProvider {
 	getCanvasSummary(input: { sessionId: string }): Promise<CanvasSummaryData>;
 }
 
-const CORE_RULES = `你是 lnkpi 无限画布助手。用简洁中文回答。
+const CORE_RULES_PREFIX = `你是 lnkpi 无限画布助手。用简洁中文回答。
 规则：
 1. 必须通过工具完成读写操作，禁止假装已执行。
-2. 平台支持在画布上生成图片/视频等媒体；不得否认平台的图片生成能力，也不要引导用户使用第三方作图工具。
-3. 不要声称「正在生成」「马上生成」「已开始出图」；不要调用 run_*_generation（禁止调用任何 run_*）。真正出图/出视频须等用户在 UI 确认后由系统执行。
-7. 若已提供【侧栏参考图解析】，不得声称只能看到文件名或画布节点标题。@I1/@I2 是侧栏芯片 key，不是画布节点 id。禁止问「I1 对应画布哪张图」；禁止把芯片映射到已有画布节点（除非用户明确要求改该节点）。侧栏图≥3 且未 @、或只有旧图且未 @：先问用哪几张或请 @I1，不要对闲聊新建节点。`;
+2. 平台支持在画布上生成图片/视频等媒体；不得否认平台的图片生成能力，也不要引导用户使用第三方作图工具。`;
+
+/** 规则 3（genTools 未启用，B-5 前默认）：explore.py:93-94 原文。 */
+const RULE_3_NO_GEN = `3. 不要声称「正在生成」「马上生成」「已开始出图」；不要调用 run_*_generation（禁止调用任何 run_*）。真正出图/出视频须等用户在 UI 确认后由系统执行。`;
+
+/** 规则 3'（genTools 启用，B-5）：run_* 经 Gate 强制校验，确认前仍然禁止。 */
+const RULE_3_GEN = `3. 不要声称「正在生成」「马上生成」「已开始出图」；用户明确同意前禁止调用 run_*_generation（生成执行由系统强制校验，见规则 11），确认后可调用，也不要假装已出图。`;
+
+const CORE_RULES_TAIL = `7. 若已提供【侧栏参考图解析】，不得声称只能看到文件名或画布节点标题。@I1/@I2 是侧栏芯片 key，不是画布节点 id。禁止问「I1 对应画布哪张图」；禁止把芯片映射到已有画布节点（除非用户明确要求改该节点）。侧栏图≥3 且未 @、或只有旧图且未 @：先问用哪几张或请 @I1，不要对闲聊新建节点。`;
+
+const CORE_RULES = `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}`;
 
 /** 第 10 条守卫：仅在 writeTools 组未启用时注入（写工具上线后模型已可写，守卫退出）。 */
 const RULE_10_WRITE_GUARD = `10. 当前会话仅开放只读查询工具（画布摘要/节点/生成状态/素材列表等）；创建、修改、连线、生成执行等写操作尚未开放——用户要求时如实说明，禁止虚构已执行。`;
@@ -46,15 +54,29 @@ const WRITE_TOOLS_RULES = `4. 用户要创建图片/视频/文本/音频节点�
 5. 口语搭骨架（含「生图生视频」、多节点+连线+填 dock）：至少 upsert_media_node 两个媒体节点（一张 image 与一条 video，或 image→video 链），每个可生成节点 prompt 非空（创建时带 prompt 或 set_node_prompt），用 connect_nodes 连 canvas 节点 id，再对每个可生成节点 propose_generation。不要压成单个 atomic 式节点；不要 import_workflow / instantiate_workflow_template 顶替本句；不要把 @I* 芯片连成边。确认前不要 run_*、不要声称已出图。`;
 
 /**
- * 规则组拼装：writeTools 启用 → core（无第 10 条）+ 规则 4/5；否则 core + 第 10 条守卫。
- * 声明偏离（M-2）：注入顺序为 1,2,3,7,4,5（explore.py 为 1..9 顺序）——规则带编号，
+ * genTools 组（B-5 启用）：生成闭环规则。编号 11/12/13 有意不占用老链路 6/8/9
+ * （tool_search / B-4 工具 / upscale_image——三者已被路线修订 D4/关闭决策废弃，
+ * 复用编号会误导维护者）。规则 9 不拷贝 = roadmap D4（upscale_image 不迁）。
+ */
+const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation 只能对「已 propose_generation 且用户在后续消息中明确同意」的节点调用（系统强制校验 pending_confirm；同轮提议后直接调用会被拦截）。禁止用 run_* 或文生图提示词冒充放大/超分。
+12. run_* 返回 status=timeout：如实告知生成未完成，可用 get_generation_status 稍后再查；status=fallback_pending：说明该节点需用户在画布上确认平台兜底，不要声称成功或失败，不要自行重试，也不要调用不存在的确认工具；status=failed/error：简要说明并给下一步建议，禁止虚构 url。
+13. 用户要求取消进行中的生成：调用 cancel_generation（有 generation_record_id 用之，否则用 node_id，从画布摘要解析而非标题文本），结果如实转述；仅 generating 状态可取消，其余状态如实说明。`;
+
+/**
+ * 规则组拼装：genTools 启用 → 规则 3' 替换规则 3 并追加 11/12/13；
+ * writeTools 启用 → 规则 4/5，否则第 10 条写守卫。
+ * 声明偏离（M-2）：注入顺序为 1,2,3,7,4,5,11,12,13（explore.py 为 1..9 顺序）——规则带编号，
  * 顺序差异对模型语义无影响，不追求顺序对齐。
  */
 function composeRuleText(groups: RuleGroup[]): string {
-	if (groups.includes("writeTools")) {
-		return `${CORE_RULES}\n${WRITE_TOOLS_RULES}`;
-	}
-	return `${CORE_RULES}\n${RULE_10_WRITE_GUARD}`;
+	const core = groups.includes("genTools")
+		? `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}`
+		: `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}`;
+	const parts: string[] = [core];
+	if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES);
+	if (groups.includes("genTools")) parts.push(GEN_TOOLS_RULES);
+	if (!groups.includes("writeTools")) parts.push(RULE_10_WRITE_GUARD);
+	return parts.filter(Boolean).join("\n");
 }
 
 @Injectable()

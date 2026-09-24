@@ -8,6 +8,8 @@
  * 验证所需的最小映射，未映射事件原样透传（type 加 `pi_` 前缀避免歧义）。
  */
 
+import { CanvasActionSchema, type CanvasAction } from "@lnkpi/shared";
+
 /** pi-runtime SSE 归一事件（与 services/pi-runtime/src/session-manager.ts 对齐） */
 export interface PiRuntimeEvent<T = unknown> {
 	type: PiEventType;
@@ -127,4 +129,27 @@ export function extractCanvasCommands(event: PiRuntimeEvent): PiCanvasCommand[] 
 		(c): c is PiCanvasCommand =>
 			!!c && typeof c === "object" && typeof (c as { type?: unknown }).type === "string",
 	);
+}
+
+/**
+ * B-5：从 tool_execution_end 的 result.details.actions 提取画布数据动作
+ * （派生 canvas_action 事件，语义对齐老链路 NestEventProxy 转发工具返回的 actions）。
+ * safeParse 逐条校验：脏数据跳过（Review Focus #5），isError 结果不派生。
+ * 仅 gen/lifecycle 工具的 details 含 actions 键；其余工具 details 为 undefined，天然不命中。
+ */
+export function extractCanvasActions(event: PiRuntimeEvent): CanvasAction[] {
+	if (event.type !== "tool_execution_end") return [];
+	const d = event.data as {
+		isError?: boolean;
+		result?: { details?: { actions?: unknown } };
+	};
+	if (d.isError) return [];
+	const actions = d.result?.details?.actions;
+	if (!Array.isArray(actions)) return [];
+	const out: CanvasAction[] = [];
+	for (const a of actions) {
+		const parsed = CanvasActionSchema.safeParse(a);
+		if (parsed.success) out.push(parsed.data);
+	}
+	return out;
 }

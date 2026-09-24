@@ -5,6 +5,11 @@ import type { LnkpiToolContext } from "./types.js";
 
 const tc: LnkpiToolContext = { sessionId: "s1", userId: "u1" };
 
+/** 对齐 harness execute 六参签名（同 ui-command.test.ts 的调用方式）。 */
+function run(tool: NonNullable<ReturnType<typeof createGenerationTools>[number]>, params: unknown) {
+	return tool.execute!("tc1", params as never, () => {}, tc as never, {} as never, undefined as never);
+}
+
 function fakeClient() {
 	const calls: Array<{ path: string; body: unknown }> = [];
 	return {
@@ -40,7 +45,7 @@ test("six gen/lifecycle tools registered with tiers", () => {
 test("run_image_generation posts correct body and surfaces actions in details", async () => {
 	const client = fakeClient();
 	const tool = createGenerationTools(client as never).find((t) => t.name === "run_image_generation")!;
-	const res = await tool.execute!("id", { node_id: "n_1" }, undefined, tc);
+	const res = await run(tool, { node_id: "n_1" });
 	assert.deepEqual(client.calls, [
 		{
 			path: "/agent/internal/run-image-generation",
@@ -55,7 +60,7 @@ test("run_* fails closed without userId", async () => {
 		(t) => t.name === "run_image_generation",
 	)!;
 	await assert.rejects(
-		() => tool.execute!("id", { node_id: "n_1" }, undefined, { sessionId: "s1" }),
+		() => tool.execute!("tc1", { node_id: "n_1" } as never, () => {}, { sessionId: "s1" } as never, {} as never, undefined as never),
 		/userId/,
 	);
 });
@@ -63,8 +68,11 @@ test("run_* fails closed without userId", async () => {
 test("cancel_generation requires at least one identifier", async () => {
 	const client = fakeClient();
 	const tool = createGenerationTools(client as never).find((t) => t.name === "cancel_generation")!;
-	await assert.rejects(() => tool.execute!("id", {}, undefined, tc), /generation_record_id or node_id/);
-	await tool.execute!("id", { node_id: "n_1" }, undefined, tc);
+	await assert.rejects(
+		() => tool.execute!("tc1", {} as never, () => {}, tc as never, {} as never, undefined as never),
+		/generation_record_id or node_id/,
+	);
+	await run(tool, { node_id: "n_1" });
 	assert.deepEqual(client.calls[0], {
 		path: "/agent/internal/cancel-generation",
 		body: { sessionId: "s1", userId: "u1", nodeId: "n_1" },
@@ -74,13 +82,13 @@ test("cancel_generation requires at least one identifier", async () => {
 test("cancel_generation forwards generationRecordId", async () => {
 	const client = fakeClient();
 	const tool = createGenerationTools(client as never).find((t) => t.name === "cancel_generation")!;
-	await tool.execute!("id", { generation_record_id: "g9" }, undefined, tc);
+	await run(tool, { generation_record_id: "g9" });
 	assert.deepEqual(client.calls[0].body, { sessionId: "s1", userId: "u1", generationRecordId: "g9" });
 });
 
 test("non-array actions degrade to empty details.actions", async () => {
 	const client = { post: async () => ({ status: "completed" }) };
 	const tool = createGenerationTools(client as never).find((t) => t.name === "run_text_generation")!;
-	const res = await tool.execute!("id", { node_id: "n_1" }, undefined, tc);
+	const res = await run(tool, { node_id: "n_1" });
 	assert.deepEqual((res.details as { actions: unknown[] }).actions, []);
 });

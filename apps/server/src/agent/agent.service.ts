@@ -37,7 +37,7 @@ import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
 export interface PiCanvasContext {
@@ -678,8 +678,8 @@ export class AgentService {
       attachments: piContext?.attachments,
       mentionedKeys: piContext?.mentionedKeys,
       priorMessages: piContext?.priorMessages,
-      // B-2：写工具已在 pi registry 注册，规则 4/5 启用（第 10 条守卫随之退出）
-      ruleGroups: ['core', 'writeTools'],
+      // B-5：run_* 生成工具已注册，genTools 规则组启用（规则 3' + 11/12/13）
+      ruleGroups: ['core', 'writeTools', 'genTools'],
     })
     await this.ensurePiSession(client, sessionId, {
       systemPrompt,
@@ -711,6 +711,11 @@ export class AgentService {
         if (event.type === 'tool_execution_end') {
           for (const cmd of extractCanvasCommands(event)) {
             yield { type: 'canvas_command', data: cmd }
+          }
+          // B-5：gen/lifecycle 工具 details.actions → canvas_action（画布数据动作通道；
+          // 对齐老链路 NestEventProxy 转发语义），节点状态经此实时到前端
+          for (const action of extractCanvasActions(event)) {
+            yield { type: 'canvas_action', data: action }
           }
         }
         const ui = mapPiEventToUiEvent(event)
@@ -758,7 +763,7 @@ export class AgentService {
           attachments: piContext?.attachments,
           mentionedKeys: piContext?.mentionedKeys,
           priorMessages: piContext?.priorMessages,
-          ruleGroups: ['core', 'writeTools'],
+          ruleGroups: ['core', 'writeTools', 'genTools'],
         })
         await this.ensurePiSession(client, shadowSessionId, {
           systemPrompt,
