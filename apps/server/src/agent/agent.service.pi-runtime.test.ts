@@ -504,7 +504,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
 })
 
 describe('AgentService B-2 ruleGroups + minors', () => {
-  it('active：assemble 收到 ruleGroups [core, writeTools]', async () => {
+  it('active：assemble 收到 ruleGroups [core, writeTools, genTools]（B-5）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
 
@@ -551,7 +551,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
       events.push(event)
     }
     expect(events.map((e) => e.type)).toContain('done')
-    expect(assemble.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools'] })
+    expect(assemble.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
   })
 
   it('F3：老链路（pi off）不再触发 priorMessages 查询', async () => {
