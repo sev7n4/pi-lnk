@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from "./pi-events";
+import {
+	extractCanvasActions,
+	extractCanvasCommands,
+	mapPiEventToUiEvent,
+	type PiRuntimeEvent,
+} from "./pi-events";
 
 const toolEnd = (result: unknown, isError = false): PiRuntimeEvent =>
 	({
@@ -47,5 +52,49 @@ describe("extractCanvasCommands（UI_COMMAND → canvas_command 派生）", () =
 			toolEnd({ content: [], details: { ok: true, canvasCommands: [{ type: "undo" }] } }),
 		);
 		expect(ui?.type).toBe("tool_result");
+	});
+});
+
+describe("extractCanvasActions（B-5 gen 工具 → canvas_action 派生）", () => {
+	it("从 result.details.actions 提取合法 CanvasAction", () => {
+		const actions = extractCanvasActions(
+			toolEnd({
+				content: [],
+				details: {
+					actions: [{ type: "update_node", payload: { id: "n_1", data: { status: "completed" } } }],
+				},
+			}),
+		);
+		expect(actions).toEqual([{ type: "update_node", payload: { id: "n_1", data: { status: "completed" } } }]);
+	});
+
+	it("非法形状逐条跳过，合法条目保留", () => {
+		const actions = extractCanvasActions(
+			toolEnd({
+				details: {
+					actions: [
+						{ type: "nonsense_type", payload: {} },
+						{ type: "update_node", payload: { id: "n_2" } },
+						"junk",
+						42,
+					],
+				},
+			}),
+		);
+		expect(actions).toEqual([{ type: "update_node", payload: { id: "n_2" } }]);
+	});
+
+	it("isError 事件不派生", () => {
+		expect(
+			extractCanvasActions(
+				toolEnd({ details: { actions: [{ type: "update_node", payload: { id: "n" } }] } }, true),
+			),
+		).toEqual([]);
+	});
+
+	it("缺 details / actions 非数组 / 非 tool_execution_end 均返回空", () => {
+		expect(extractCanvasActions(toolEnd({}))).toEqual([]);
+		expect(extractCanvasActions(toolEnd({ details: { actions: "oops" } }))).toEqual([]);
+		expect(extractCanvasActions({ type: "message_update", ts: 1, data: {} } as never)).toEqual([]);
 	});
 });

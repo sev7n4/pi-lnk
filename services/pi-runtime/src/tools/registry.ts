@@ -5,6 +5,7 @@ import type { Metrics } from "../metrics.js";
 import { createCanvasReadTools } from "./canvas-read.js";
 import { createCanvasWriteTools } from "./canvas-write.js";
 import { createUiCommandTools } from "./ui-command.js";
+import { createGenerationTools } from "./generation.js";
 
 export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
 	return createCanvasReadTools(client);
@@ -21,4 +22,12 @@ export function buildCanvasWriteTools(client: NestClient): LnkpiTool[] {
 /** UI_COMMAND 批次：5 个本地 UI 命令工具（不依赖 NestClient）。 */
 export function buildUiCommandTools(metrics: Metrics): LnkpiTool[] {
 	return createUiCommandTools(metrics);
+}
+
+/**
+ * B-5/B-3 批次：5 个 run_* 生成工具（tier=gen）+ cancel_generation（tier=lifecycle）。
+ * HITL 由 before_tool Gate 强制（generation-gate.ts），工具本身不含门禁逻辑。
+ */
+export function buildGenerationTools(client: NestClient): LnkpiTool[] {
+	return createGenerationTools(client);
 }

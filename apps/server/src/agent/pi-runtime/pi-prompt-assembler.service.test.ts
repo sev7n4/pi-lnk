@@ -75,3 +75,35 @@ describe("PiPromptAssembler（#12 每轮 system prompt 组装）", () => {
 		expect(prompt.includes("侧栏参考素材：")).toBe(false);
 	});
 });
+
+describe("genTools 规则组（B-5 生成闭环）", () => {
+	it("genTools 未启用：规则 3 仍是「禁止调用任何 run_*」原文，无 11/12/13", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const prompt = await asm.assemble({ sessionId: "s1", ruleGroups: ["core", "writeTools"] });
+		expect(prompt.includes("禁止调用任何 run_*")).toBe(true);
+		expect(prompt.includes("fallback_pending")).toBe(false);
+		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(false);
+	});
+
+	it("genTools 启用：规则 3' 替换原文，注入规则 11/12/13 与 cancel_generation", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const prompt = await asm.assemble({ sessionId: "s1", ruleGroups: ["core", "writeTools", "genTools"] });
+		expect(prompt.includes("禁止调用任何 run_*")).toBe(false);
+		expect(prompt.includes("用户明确同意前禁止调用 run_*_generation")).toBe(true);
+		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
+		expect(prompt.includes("status=fallback_pending")).toBe(true);
+		expect(prompt.includes("cancel_generation")).toBe(true);
+		// 规则 4/5（writeTools）与第 10 条守卫（writeTools 已启用 → 退出）不受影响
+		expect(prompt.includes("口语搭骨架")).toBe(true);
+		expect(prompt.includes("写操作尚未开放")).toBe(false);
+		// D4：规则 9 / upscale_image 工具名不出现（「冒充放大」句不含工具名）
+		expect(prompt.includes("upscale_image")).toBe(false);
+	});
+
+	it("genTools 单独启用（无 writeTools）：第 10 条守卫仍在", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const prompt = await asm.assemble({ sessionId: "s1", ruleGroups: ["core", "genTools"] });
+		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
+		expect(prompt.includes("写操作尚未开放")).toBe(true);
+	});
+});

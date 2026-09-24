@@ -36,3 +36,43 @@ describe("SessionManager harnessFactory 注入缝", () => {
 		});
 	});
 });
+
+describe("SessionManager SessionHooks（B-5 Gate 接线缝）", () => {
+	it("create 后调用 onSessionCreated（带 sessionId 与 harness）", async () => {
+		const seen: Array<{ id: string; hasHarness: boolean }> = [];
+		const fakeHarnessFactory = async () => ({
+			harness: {
+				events: { on: () => () => {} },
+				lane: async () => ({ prompt: async () => ({ ok: true }) }),
+				close: async () => {},
+			},
+		}) as never;
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, {
+			onSessionCreated(id, harness) {
+				seen.push({ id, hasHarness: !!harness });
+			},
+		});
+		await sm.create("s1", {});
+		assert.deepEqual(seen, [{ id: "s1", hasHarness: true }]);
+	});
+
+	it("prompt 入口调用 onPrompt", async () => {
+		const prompts: string[] = [];
+		const fakeHarnessFactory = async () => ({
+			harness: {
+				events: { on: () => () => {} },
+				lane: async () => ({ prompt: async () => ({ ok: true }) }),
+				close: async () => {},
+			},
+		}) as never;
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, {
+			onPrompt(id) {
+				prompts.push(id);
+			},
+		});
+		await sm.create("s1", {});
+		await sm.prompt("s1", "hello");
+		await new Promise((r) => setTimeout(r, 10));
+		assert.deepEqual(prompts, ["s1"]);
+	});
+});

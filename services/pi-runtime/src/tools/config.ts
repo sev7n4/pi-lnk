@@ -1,17 +1,29 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildGenerationTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
 
 let warned = false;
 
-/** 超时覆盖表（对齐老链路档位）：grid_slice_image 是 10/210/690 之外的第 4 档 120s。 */
+/** 超时覆盖表（对齐老链路档位）：10s 默认 / 120s grid / 210s image 系 / 690s video 系（B-5）。 */
 export const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
 	"/agent/internal/grid-slice-image": 120_000,
+	"/agent/internal/run-image-generation": 210_000,
+	"/agent/internal/wait-image-generation": 210_000,
+	"/agent/internal/run-text-generation": 210_000,
+	"/agent/internal/run-prompt-generation": 210_000,
+	"/agent/internal/run-audio-generation": 210_000,
+	"/agent/internal/run-video-generation": 690_000,
+	"/agent/internal/wait-video-generation": 690_000,
 };
 
 export function resolveTools(metrics: Metrics): LnkpiTool[] {
+	return resolveToolsWithClient(metrics).tools;
+}
+
+/** B-5：连同 client 一并返回——HITL Gate（checkGenerationGate）需要复用同一实例查画布 SSOT。 */
+export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; client: NestClient | null } {
 	const cfg = loadNestConfig();
 	if (!cfg) {
 		if (!warned) {
@@ -20,7 +32,7 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
 				"[pi-runtime] NEST_BASE_URL/NEST_SERVICE_TOKEN not set — canvas tools disabled (pure-text mode)",
 			);
 		}
-		return [];
+		return { tools: [], client: null };
 	}
 	const client = new NestClient({
 		...cfg,
@@ -28,9 +40,11 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
 		timeoutOverrides: TOOL_TIMEOUT_OVERRIDES,
 		onCall: (tool, outcome) => metrics.observeToolCall(tool, outcome),
 	});
-	return [
+	const tools: LnkpiTool[] = [
 		...buildCanvasReadTools(client),
 		...buildCanvasWriteTools(client),
 		...buildUiCommandTools(metrics),
+		...buildGenerationTools(client),
 	];
+	return { tools, client };
 }
