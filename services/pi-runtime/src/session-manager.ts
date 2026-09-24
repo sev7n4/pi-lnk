@@ -82,6 +82,16 @@ const BUFFER_LIMIT = 500;
 
 export type HarnessFactory = typeof AgentHarness.create;
 
+/**
+ * B-5：会话级生命周期钩子。onSessionCreated 在 harness 创建后（注册事件订阅之前）
+ * 调用——HITL Gate 用它注册 per-session before_tool/after_tool hook（闭包捕获 sessionId）；
+ * onPrompt 在每次用户 prompt 进入时调用——Gate 的 turn 计数数据源。
+ */
+export interface SessionHooks {
+	onSessionCreated?(sessionId: string, harness: AgentHarness<LnkpiToolContext>): void;
+	onPrompt?(sessionId: string): void;
+}
+
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
@@ -91,6 +101,7 @@ export class SessionManager {
 		private readonly systemPromptDefault = process.env.PI_RUNTIME_SYSTEM_PROMPT ?? "",
 		private readonly modelFactory: typeof assembleModel = assembleModel,
 		private readonly harnessFactory: HarnessFactory = AgentHarness.create,
+		private readonly hooks?: SessionHooks,
 	) {}
 
 	has(id: string): boolean {
@@ -152,6 +163,8 @@ export class SessionManager {
 			prompting: false,
 		};
 
+		this.hooks?.onSessionCreated?.(id, harness);
+
 		for (const [harnessType, sseType] of EVENT_MAP) {
 			entry.unsubscribes.push(
 				harness.events.on(harnessType as never, (evt: { lane?: string }) => {
@@ -182,6 +195,7 @@ export class SessionManager {
 	/** 触发一次 prompt。不 await 完成——事件经 events 总线流出；run 结束由 agent_end 表达。 */
 	async prompt(id: string, text: string, laneName = "main"): Promise<{ accepted: boolean }> {
 		const entry = this.require(id);
+		this.hooks?.onPrompt?.(id);
 		const lane = await entry.harness.lane(laneName, this.context);
 		entry.prompting = true;
 		void lane

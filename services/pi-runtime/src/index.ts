@@ -7,14 +7,42 @@
 import Fastify from "fastify";
 import { SessionManager, ConflictError, NotFoundError, type NormalizedEvent } from "./session-manager.js";
 import { Metrics, VERSION, routeLabel } from "./metrics.js";
-import { resolveTools } from "./tools/config.js";
+import { resolveToolsWithClient } from "./tools/config.js";
+import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const HEARTBEAT_MS = 15_000;
 
 const metrics = new Metrics();
-const manager = new SessionManager(resolveTools(metrics));
+const { tools, client: nestClient } = resolveToolsWithClient(metrics);
+
+// B-5 HITL Gate（roadmap D3）：确认权收归 harness。
+// ① before_tool：run_* 双重校验（同轮自批拦截 + 画布 SSOT pending_confirm），fail-closed；
+// ② after_tool：propose_generation 成功 → 记录本轮提议（① 的数据源）；
+// ③ onPrompt：用户轮计数（区分「同轮自批」与「跨轮确认后执行」）。
+const gateStore = new GenerationGateStore();
+const manager = new SessionManager(tools, undefined, undefined, undefined, {
+	onSessionCreated(sessionId, harness) {
+		gateStore.resetSession(sessionId); // B4 每轮重建语义：新会话即新轮
+		harness.hooks.on("after_tool", async (event) => {
+			if (event.toolName !== "propose_generation" || event.isError) return undefined;
+			const nodeId = (event.args as { node_id?: unknown } | undefined)?.node_id;
+			if (typeof nodeId === "string" && nodeId) gateStore.markProposed(sessionId, nodeId);
+			return undefined;
+		});
+		if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
+		const gateClient = nestClient;
+		harness.hooks.on("before_tool", async (event) => {
+			const check = await checkGenerationGate(gateStore, gateClient, sessionId, event.toolName, event.args);
+			return check.allowed ? undefined : { block: { reason: check.reason ?? "generation gated" } };
+		});
+		return undefined;
+	},
+	onPrompt(sessionId) {
+		gateStore.bumpUserTurn(sessionId);
+	},
+});
 
 const app = Fastify({
 	logger: true,

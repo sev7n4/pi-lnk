@@ -15,16 +15,37 @@ test("env 缺失 → 返回空数组（纯文本模式不受影响）", () => {
 	}
 });
 
-test("env 齐全 → 返回 7 read + 13 write + 5 ui_command = 25 个工具", () => {
+test("env 齐全 → 返回 7 read + 13 write + 5 ui_command + 6 gen/lifecycle = 31 个工具", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 25);
+		assert.equal(tools.length, 31);
 		assert.ok(tools.some((t) => t.name === "upsert_media_node"));
 		assert.ok(tools.some((t) => t.name === "connect_nodes"));
 		assert.ok(tools.some((t) => t.name === "focus_node" && t.tier === "ui_command"));
 		assert.ok(!tools.some((t) => t.name === "introduce_nodes_to_agent"));
+	} finally {
+		delete process.env.NEST_BASE_URL;
+		delete process.env.NEST_SERVICE_TOKEN;
+	}
+});
+
+test("B-5：gen/lifecycle 工具已注册（31 总数）", () => {
+	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
+	process.env.NEST_SERVICE_TOKEN = "tok";
+	try {
+		const names = resolveTools(new Metrics()).map((t) => t.name);
+		for (const n of [
+			"run_image_generation",
+			"run_video_generation",
+			"run_text_generation",
+			"run_prompt_generation",
+			"run_audio_generation",
+			"cancel_generation",
+		]) {
+			assert.ok(names.includes(n), `missing ${n}`);
+		}
 	} finally {
 		delete process.env.NEST_BASE_URL;
 		delete process.env.NEST_SERVICE_TOKEN;

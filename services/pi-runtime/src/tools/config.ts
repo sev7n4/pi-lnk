@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildGenerationTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
 
@@ -19,6 +19,11 @@ export const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
 };
 
 export function resolveTools(metrics: Metrics): LnkpiTool[] {
+	return resolveToolsWithClient(metrics).tools;
+}
+
+/** B-5：连同 client 一并返回——HITL Gate（checkGenerationGate）需要复用同一实例查画布 SSOT。 */
+export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; client: NestClient | null } {
 	const cfg = loadNestConfig();
 	if (!cfg) {
 		if (!warned) {
@@ -27,7 +32,7 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
 				"[pi-runtime] NEST_BASE_URL/NEST_SERVICE_TOKEN not set — canvas tools disabled (pure-text mode)",
 			);
 		}
-		return [];
+		return { tools: [], client: null };
 	}
 	const client = new NestClient({
 		...cfg,
@@ -35,9 +40,11 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
 		timeoutOverrides: TOOL_TIMEOUT_OVERRIDES,
 		onCall: (tool, outcome) => metrics.observeToolCall(tool, outcome),
 	});
-	return [
+	const tools: LnkpiTool[] = [
 		...buildCanvasReadTools(client),
 		...buildCanvasWriteTools(client),
 		...buildUiCommandTools(metrics),
+		...buildGenerationTools(client),
 	];
+	return { tools, client };
 }
