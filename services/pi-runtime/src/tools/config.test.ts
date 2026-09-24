@@ -35,3 +35,14 @@ test("M-3：grid-slice-image 超时覆盖 120s（老链路第 4 档）", async (
 	const { TOOL_TIMEOUT_OVERRIDES } = await import("./config.js");
 	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/grid-slice-image"], 120_000);
 });
+
+test("B-5：gen 工具超时档位对齐老链路（image/text/prompt/audio 210s、video 690s）", async () => {
+	const { TOOL_TIMEOUT_OVERRIDES } = await import("./config.js");
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/run-image-generation"], 210_000);
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/wait-image-generation"], 210_000);
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/run-text-generation"], 210_000);
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/run-prompt-generation"], 210_000);
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/run-audio-generation"], 210_000);
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/run-video-generation"], 690_000);
+	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/wait-video-generation"], 690_000);
+});

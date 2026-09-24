@@ -6,9 +6,16 @@ import type { Metrics } from "../metrics.js";
 
 let warned = false;
 
-/** 超时覆盖表（对齐老链路档位）：grid_slice_image 是 10/210/690 之外的第 4 档 120s。 */
+/** 超时覆盖表（对齐老链路档位）：10s 默认 / 120s grid / 210s image 系 / 690s video 系（B-5）。 */
 export const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
 	"/agent/internal/grid-slice-image": 120_000,
+	"/agent/internal/run-image-generation": 210_000,
+	"/agent/internal/wait-image-generation": 210_000,
+	"/agent/internal/run-text-generation": 210_000,
+	"/agent/internal/run-prompt-generation": 210_000,
+	"/agent/internal/run-audio-generation": 210_000,
+	"/agent/internal/run-video-generation": 690_000,
+	"/agent/internal/wait-video-generation": 690_000,
 };
 
 export function resolveTools(metrics: Metrics): LnkpiTool[] {
