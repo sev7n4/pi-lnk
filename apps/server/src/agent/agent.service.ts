@@ -240,18 +240,26 @@ export class AgentService {
         priorMessages,
       }
       if (piMode === 'active' && (await piClient.healthz())) {
-        for await (const event of this.streamFromPiRuntime(
-          piClient,
-          sessionId,
-          userMessage,
-          userId,
-          threadId,
-          piContext,
-        )) {
-          if (event.type === 'text_delta') {
-            assistantText += (event.data as { text: string }).text
+        // pi 会话按 sessionId 串行化：上一轮的 DELETE 与本轮的 create/prompt 不得交错
+        // （2026-09-24 生产实测：迟到的 DELETE 会删掉本轮刚建的会话 → 本轮空响应）
+        const releasePiLock = await this.acquirePiSessionLock(sessionId)
+        try {
+          for await (const event of this.streamFromPiRuntime(
+            piClient,
+            sessionId,
+            userMessage,
+            userId,
+            threadId,
+            piContext,
+          )) {
+            if (event.type === 'text_delta') {
+              assistantText += (event.data as { text: string }).text
+            }
+            yield event
           }
-          yield event
+        } finally {
+          // streamFromPiRuntime 的 finally（DELETE 会话）已在其生成器结束时完成
+          releasePiLock()
         }
         if (idempotencyKey) {
           await this.completeIdempotencyKey(idempotencyKey, assistantText)
@@ -469,6 +477,31 @@ export class AgentService {
   }
 
   /** 确保会话存在：409（已存在）视为可复用——正常每轮 delete 后重建，409 仅出现在同轮重试。 */
+  /** 每 sessionId 一条串行链（同会话的两轮不得交错；Nest 单实例，进程内锁足够）。 */
+  private readonly piSessionChains = new Map<string, Promise<void>>()
+
+  /**
+   * pi 会话串行化锁：保证「本轮 create/prompt/删除」整段互斥。
+   * 场景：用户连发两轮时，上一轮结束的 DELETE 与下一轮 create/prompt 竞态——
+   *  · 若 DELETE 先到：下一轮 create 撞 409（已由 createSessionReplacingStale 兜底）；
+   *  · 若 DELETE 后到：会删掉下一轮刚建的会话 → 本轮空响应（本锁解决这一侧）。
+   */
+  private async acquirePiSessionLock(sessionId: string): Promise<() => void> {
+    const prev = this.piSessionChains.get(sessionId) ?? Promise.resolve()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const tail = prev.then(() => gate)
+    this.piSessionChains.set(sessionId, tail)
+    await prev.catch(() => {})
+    return () => {
+      release()
+      // 仅当自己仍是队尾时清理，避免删掉后来者的链
+      if (this.piSessionChains.get(sessionId) === tail) this.piSessionChains.delete(sessionId)
+    }
+  }
+
   private async ensurePiSession(
     client: PiRuntimeClient,
     sessionId: string,

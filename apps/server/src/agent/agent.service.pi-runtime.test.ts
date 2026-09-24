@@ -434,6 +434,47 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(pi.deleteSession).toHaveBeenCalledWith('s1')
   })
 
+  it('同一会话连发两轮：本轮 create 必须晚于上一轮 DELETE 完成（防迟到删除误杀新会话）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    // 记录关键事件的真实时序；DELETE 放大 40ms，制造「删除已调用未完成」的飞行窗口
+    const order: string[] = []
+    pi.deleteSession.mockImplementation(async () => {
+      order.push('delete-called')
+      await new Promise((r) => setTimeout(r, 40))
+      order.push('delete-resolved')
+      return true
+    })
+    pi.createSession.mockImplementation(async () => {
+      order.push('create-called')
+      return { sessionId: 'x', provider: 'agnes', model: 'agnes-2.5-pro' }
+    })
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT-s1')
+
+    const drain = async () => {
+      const out: string[] = []
+      for await (const event of service.streamConversation('s1', 'hi', 'u1')) out.push(event.type)
+      return out
+    }
+
+    const first = drain()
+    await new Promise((r) => setTimeout(r, 5))
+    const second = drain()
+    const [a, b] = await Promise.all([first, second])
+
+    expect(a).toEqual(['done'])
+    expect(b).toEqual(['done'])
+    // 不变量：第二次 create 必须在第一次 DELETE 真正完成之后
+    // （只看调用顺序抓不住竞态——生产事故里 DELETE 已调用、迟到解析时误删了新会话）
+    const firstDeleteResolved = order.indexOf('delete-resolved')
+    expect(firstDeleteResolved).toBeGreaterThanOrEqual(0)
+    const createIdxs = order.reduce<number[]>((acc, e, i) => (e === 'create-called' ? [...acc, i] : acc), [])
+    expect(createIdxs).toHaveLength(2)
+    expect(createIdxs[1]).toBeGreaterThan(firstDeleteResolved)
+  })
+
   it('shadow 镜像：createSession 收到以真实 sessionId 组装的 systemPrompt + userId', async () => {
     process.env.PI_RUNTIME_MODE = 'shadow'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
