@@ -37,7 +37,7 @@ import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient, PiRuntimeError } from './pi-runtime/pi-runtime.client'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
 export interface PiCanvasContext {
@@ -678,6 +678,13 @@ export class AgentService {
         if (streamClosed || !event) break
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true
+        }
+        // UI_COMMAND 批次：canvas_command 是 UI 命令（focus/undo/redo/open_image_editor），
+        // 直通前端 AgentSideRail canvas_command 分支；不得进 canvasActions（那是画布数据动作通道）
+        if (event.type === 'tool_execution_end') {
+          for (const cmd of extractCanvasCommands(event)) {
+            yield { type: 'canvas_command', data: cmd }
+          }
         }
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue

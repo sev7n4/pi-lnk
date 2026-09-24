@@ -1,4 +1,9 @@
-# UI_COMMAND×5 → canvas_action/SSE 通道设计（P1-#13 并行项）
+# UI_COMMAND×5 → canvas_command/SSE 通道设计（P1-#13 并行项）
+
+> ⚠️ **勘误（2026-09-24 实现前代码核对，见 `2026-09-24-ui-command-tools-impl.md`）**：
+> ① UI 命令事件名应为 **`canvas_command`**（老链路 `runs.py:1220` 发出、前端 `AgentSideRail.vue:1968` 消费），原稿误写 `canvas_action`——该通道走 `CanvasActionSchema`，只认 add_node 等 6 种画布数据动作，focus/undo 会被前端静默丢弃。下文 §2.3/§3 的 canvas_action 均按 canvas_command 执行。
+> ② `canvas_command` 不得进 canvasActions 累积（那是画布数据动作通道，参与 finalizeTurn 持久化）。
+> ③ undo/redo 前端行为对齐已验证：老链路 agent 写入同样不进前端 undo 栈（`CanvasPage.vue:1454` handleAgentActions 注释「勿 persistUserEdit」），pi 链路上线为行为对齐，无新增回归。
 
 ## 文档头（SPEC-CONVENTIONS）
 

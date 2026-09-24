@@ -49,6 +49,8 @@ export interface AgentStreamEvent {
     | 'tool_call'
     | 'tool_result'
     | 'canvas_action'
+    // UI 命令（focus/undo/redo/open_image_editor），AgentSideRail canvas_command 分支消费
+    | 'canvas_command'
     | 'node_status'
     | 'task_list'
     | 'task_update'
