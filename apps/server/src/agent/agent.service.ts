@@ -35,7 +35,7 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
-import { PiRuntimeClient, PiRuntimeError } from './pi-runtime/pi-runtime.client'
+import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
@@ -481,22 +481,16 @@ export class AgentService {
       focusNodeId?: string
     },
   ): Promise<void> {
-    try {
-      await client.createSession(sessionId, {
-        systemPrompt: opts?.systemPrompt,
-        userId: opts?.userId,
-        attachments: opts?.attachments,
-        mentionedKeys: opts?.mentionedKeys,
-        refOrder: opts?.refOrder,
-        focusNodeId: opts?.focusNodeId,
-      })
-    } catch (err) {
-      if (err instanceof PiRuntimeError && err.status === 409) {
-        this.piLogger.warn(`pi session ${sessionId} reused (409) — systemPrompt not updated`)
-        return
-      }
-      throw err
-    }
+    // 409 竞态（上一轮 DELETE 未完成就来了本轮 create）：删除陈旧会话后重建，
+    // 不复用——旧会话 systemPrompt 陈旧且其事件缓冲会把上一轮事件回放给本轮 SSE
+    await client.createSessionReplacingStale(sessionId, {
+      systemPrompt: opts?.systemPrompt,
+      userId: opts?.userId,
+      attachments: opts?.attachments,
+      mentionedKeys: opts?.mentionedKeys,
+      refOrder: opts?.refOrder,
+      focusNodeId: opts?.focusNodeId,
+    })
   }
 
   /** 把回调式 SSE 订阅桥接为 async generator（供 for-await 消费，结束自动退订）。 */
