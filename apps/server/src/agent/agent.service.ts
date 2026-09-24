@@ -476,7 +476,7 @@ export class AgentService {
     return new PiPromptAssembler(this.canvasTools as never)
   }
 
-  /** 确保会话存在：409（已存在）视为可复用——正常每轮 delete 后重建，409 仅出现在同轮重试。 */
+  /** 确保会话存在：409 → 删陈旧重建（不复用，见 createSessionReplacingStale 注释）。 */
   /** 每 sessionId 一条串行链（同会话的两轮不得交错；Nest 单实例，进程内锁足够）。 */
   private readonly piSessionChains = new Map<string, Promise<void>>()
 

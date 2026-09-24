@@ -52,10 +52,15 @@ export class PiRuntimeClient {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 10_000);
 		try {
+			// content-type 仅在有 body 时携带：Fastify 对「空 body + application/json」
+			// 直接 400（Body cannot be empty...），DELETE 这类无 body 请求必须不带
+			// 该 header——2026-09-24 生产实测，此 bug 使 DELETE 全部 400 → 会话泄漏。
+			const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) ?? {}) };
+			if (init?.body && !headers["content-type"]) headers["content-type"] = "application/json";
 			const res = await this.fetchImpl(`${this.options.baseUrl}${path}`, {
 				...init,
 				signal: controller.signal,
-				headers: { "content-type": "application/json", ...init?.headers },
+				headers,
 			});
 			const text = await res.text();
 			const body = text ? (JSON.parse(text) as T) : null;
@@ -94,14 +99,16 @@ export class PiRuntimeClient {
 	}
 
 	/**
-	 * 创建会话；若已存在（409，通常是上一轮 DELETE 与本轮 create 的竞态）则
+	 * 创建会话；若已存在（409，通常是上一轮 DELETE 未生效的竞态）则
 	 * **删除陈旧会话后重建**，而非静默复用。
 	 *
 	 * 复用旧会话有两个实测危害（2026-09-24 生产 e2e 定位）：
 	 *  ① systemPrompt 陈旧（本轮画布上下文/规则不生效）；
 	 *  ② pi-runtime 订阅语义会把旧会话的**事件缓冲回放**给新订阅者 →
 	 *     本轮 SSE 收到上一轮的事件流（模型表现为"复述上一轮"）。
-	 * 非 409 错误直接抛出，不误删会话。
+	 *
+	 * 409 清理路径的 deleteSession 失败不直接抛——吞掉后重试 create，仍 409
+	 * 才抛明确冲突。非 409 错误直接抛出，不误删会话。
 	 */
 	async createSessionReplacingStale(
 		sessionId: string,
@@ -111,8 +118,18 @@ export class PiRuntimeClient {
 			return await this.createSession(sessionId, opts);
 		} catch (err) {
 			if (!(err instanceof PiRuntimeError) || err.status !== 409) throw err;
-			await this.deleteSession(sessionId);
-			return await this.createSession(sessionId, opts);
+			await this.deleteSession(sessionId).catch(() => {});
+			try {
+				return await this.createSession(sessionId, opts);
+			} catch (retryErr) {
+				if (retryErr instanceof PiRuntimeError && retryErr.status === 409) {
+					throw new PiRuntimeError(
+						`session ${sessionId} still conflicts after stale cleanup`,
+						409,
+					);
+				}
+				throw retryErr;
+			}
 		}
 	}
 

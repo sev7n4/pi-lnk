@@ -185,4 +185,58 @@ describe("createSessionReplacingStale（409 竞态修复）", () => {
 		await expect(client.createSessionReplacingStale("s1")).rejects.toThrow(/missing credentials/);
 		expect(calls).toEqual(["POST http://x/sessions"]);
 	});
+
+	it("409 清理路径 deleteSession 失败不抛：吞掉重试 create，仍 409 才抛冲突", async () => {
+		const calls: string[] = [];
+		let attempt = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				const method = init?.method ?? "GET";
+				calls.push(`${method} ${url}`);
+				if (method === "DELETE") return new Response(null, { status: 400 });
+				attempt += 1;
+				if (attempt === 1) {
+					return new Response(JSON.stringify({ error: "session exists: s1" }), { status: 409 });
+				}
+				return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m" }), {
+					status: 201,
+				});
+			}) as typeof fetch,
+		});
+		await expect(client.createSessionReplacingStale("s1")).resolves.toMatchObject({ provider: "agnes" });
+		expect(calls).toEqual(["POST http://x/sessions", "DELETE http://x/sessions/s1", "POST http://x/sessions"]);
+	});
+
+	it("409 清理后 create 仍 409 → 抛明确冲突错误", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				if ((init?.method ?? "GET") === "DELETE") return new Response(null, { status: 204 });
+				return new Response(JSON.stringify({ error: "session exists: s1" }), { status: 409 });
+			}) as typeof fetch,
+		});
+		await expect(client.createSessionReplacingStale("s1")).rejects.toThrow(/still conflicts/);
+	});
+
+	it("DELETE 不携带 content-type（空 body + json header 会 400）；POST 带", async () => {
+		// 生产实测（2026-09-24）：Fastify 对「空 body + application/json」一律 400，
+		// 导致 DELETE /sessions/:id 从未成功 → 会话泄漏 → 每轮 create 撞 409。
+		const seen: Array<{ method: string; contentType?: string }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				const headers = (init?.headers ?? {}) as Record<string, string>;
+				seen.push({ method: init?.method ?? "GET", contentType: headers["content-type"] });
+				if ((init?.method ?? "") === "DELETE") return new Response(null, { status: 204 });
+				return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m" }), {
+					status: 201,
+				});
+			}) as typeof fetch,
+		});
+		await client.deleteSession("s1");
+		await client.createSession("s2", { systemPrompt: "SYS" });
+		expect(seen[0]).toEqual({ method: "DELETE", contentType: undefined });
+		expect(seen[1]).toEqual({ method: "POST", contentType: "application/json" });
+	});
 });
