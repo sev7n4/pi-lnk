@@ -8,7 +8,7 @@
  */
 import type { LnkpiTool } from "../tools/types.js";
 import type { Metrics } from "../metrics.js";
-import { discoverSkills, buildSkillIndexBlock, type SkillIndexEntry } from "./loader.js";
+import { discoverSkills, buildSkillIndexBlock, loadSkill, type SkillIndexEntry } from "./loader.js";
 import { createSkillTools } from "../tools/skill-tool.js";
 
 export class SkillRegistry {
@@ -20,6 +20,12 @@ export class SkillRegistry {
 		this.entries = discoverSkills(root);
 		this.indexBlock = buildSkillIndexBlock(this.entries);
 		this.tools = createSkillTools(this.entries, metrics);
+	}
+
+	loadBody(name: string): string | undefined {
+		const entry = this.entries.find((e) => e.name === name);
+		if (!entry) return undefined;
+		return loadSkill(entry).body;
 	}
 }
 

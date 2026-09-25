@@ -86,6 +86,8 @@ app.get("/metrics", async (_request, reply) => {
 	return metrics.render(manager.count(), VERSION);
 });
 
+app.get("/skills", async () => ({ skills: manager.listSkills() }));
+
 app.post<{
 	Body: {
 		sessionId?: string;
@@ -120,12 +122,14 @@ app.post<{
 	},
 );
 
-app.post<{ Params: { sessionId: string }; Body: { text: string; lane?: string } }>(
+app.post<{ Params: { sessionId: string }; Body: { text: string; lane?: string; forceSkills?: string[] } }>(
 	"/sessions/:sessionId/prompt",
 	async (request, reply) => {
 		const { sessionId } = request.params;
 		try {
-			return await manager.prompt(sessionId, request.body.text, request.body.lane ?? "main");
+			return await manager.prompt(sessionId, request.body.text, request.body.lane ?? "main", {
+				forceSkills: request.body.forceSkills,
+			});
 		} catch (err) {
 			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
 			const msg = (err as Error).message ?? "";
