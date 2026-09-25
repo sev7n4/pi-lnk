@@ -4,6 +4,9 @@
 .cursor
 .vscode
 *.md
+# D-η' (follow-up-3): skills 必须进镜像（skills/ → /app/skills；误伤 = gauge=0 软失败，难察觉）。
+# dockerignore 的 * 不跨目录，`*.md` 今天不命中 skills/**/SKILL.md——显式白名单防未来清理误伤。
+!skills/**/SKILL.md
 docs/
 
 # 前端与本地开发（API 镜像不需要）

@@ -28,6 +28,7 @@ export class Metrics {
 	private promptErrors = new Map<string, number>(); // key: reason
 	private toolCalls = new Map<string, number>(); // key: tool|result
 	private skillsLoaded = 0;
+	private skillsPromptTokens = 0;
 	private startedAt = Date.now();
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
@@ -58,6 +59,11 @@ export class Metrics {
 		this.skillsLoaded = n;
 	}
 
+	/** skills index 块的 approx token 数（进程内恒定，启动时设一次；未配置为 0）。 */
+	setSkillsPromptTokens(n: number): void {
+		this.skillsPromptTokens = n;
+	}
+
 	render(activeSessions: number, version: string): string {
 		const lines: string[] = [];
 		const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -77,6 +83,10 @@ export class Metrics {
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
 		lines.push("# TYPE pi_runtime_skills_loaded gauge");
 		lines.push(`pi_runtime_skills_loaded ${this.skillsLoaded}`);
+
+		lines.push("# HELP pi_runtime_prompt_skills_tokens Approx tokens of the resident skills index block.");
+		lines.push("# TYPE pi_runtime_prompt_skills_tokens gauge");
+		lines.push(`pi_runtime_prompt_skills_tokens ${this.skillsPromptTokens}`);
 
 		lines.push("# HELP pi_runtime_http_requests_total HTTP requests processed.");
 		lines.push("# TYPE pi_runtime_http_requests_total counter");

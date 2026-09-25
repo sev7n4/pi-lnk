@@ -5,7 +5,7 @@ import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { SessionManager } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
-import { SkillRegistry } from "./skills/loader.js";
+import { SkillRegistry } from "./skills/registry.js";
 
 /** 建一个含 1 个合法 skill 的临时目录，测试结束自动清理。 */
 function makeTempSkillDir(): string {

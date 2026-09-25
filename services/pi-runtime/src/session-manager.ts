@@ -25,7 +25,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel } from "./model-assembly.js";
-import type { SkillRegistry } from "./skills/loader.js";
+import type { SkillRegistry } from "./skills/registry.js";
 import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
 
 export type NormalizedEventType =

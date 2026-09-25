@@ -6,9 +6,6 @@
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { LnkpiTool } from "../tools/types.js";
-import type { Metrics } from "../metrics.js";
-import { createSkillTools } from "../tools/skill-tool.js";
 
 const NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -53,23 +50,6 @@ export function loadSkill(entry: SkillIndexEntry): LoadedSkill {
 	validateName(String(frontmatter.name ?? ""), entry.skillId);
 	validateDescription(String(frontmatter.description ?? ""));
 	return { ...entry, body };
-}
-
-/**
- * 技能注册表（D-η' Task 4）：进程内加载一次（构造时扫描），把 index 块与
- * load_skill 工具一并暴露给 SessionManager 注入。skills 目录缺失/为空时
- * indexBlock 为 ""、tools 为空数组——会话行为与未配置 skills 时逐字节一致。
- */
-export class SkillRegistry {
-	readonly entries: SkillIndexEntry[];
-	readonly indexBlock: string;
-	readonly tools: LnkpiTool[];
-
-	constructor(root: string, metrics: Metrics) {
-		this.entries = discoverSkills(root);
-		this.indexBlock = buildSkillIndexBlock(this.entries);
-		this.tools = createSkillTools(this.entries, metrics);
-	}
 }
 
 export function buildSkillIndexBlock(entries: SkillIndexEntry[]): string {
