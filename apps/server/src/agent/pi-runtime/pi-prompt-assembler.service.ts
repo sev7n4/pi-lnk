@@ -18,6 +18,18 @@ import { buildSidebarBlock, type SidebarBlockInput } from "./sidebar-block";
 
 export type RuleGroup = "core" | "writeTools" | "genTools";
 
+export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "memory";
+
+export interface PromptLayer {
+	id: string;
+	kind: PromptLayerKind;
+	content: string;
+}
+
+export function approxTokens(s: string): number {
+	return Math.ceil(s.length / 4);
+}
+
 /** 与老链路 1:1 的最小结构（getCanvasSummary.data）。 */
 export interface CanvasSummaryData {
 	nodes: Array<{ id: string; type: string; title: string; status: string }>;
@@ -83,6 +95,11 @@ function composeRuleText(groups: RuleGroup[]): string {
 export class PiPromptAssembler {
 	private readonly logger = new Logger(PiPromptAssembler.name);
 
+	/** 测试观测口：最近一次 assemble 的 layers 与 manifest 行（non-production API）。 */
+	lastLayers?: PromptLayer[];
+	/** 测试观测口（non-production API）。 */
+	lastManifest?: string;
+
 	constructor(private readonly canvasTools: CanvasSummaryProvider) {}
 
 	async assemble(input: {
@@ -94,12 +111,16 @@ export class PiPromptAssembler {
 		maxTurns?: number;
 	}): Promise<string> {
 		const groups = input.ruleGroups ?? ["core"];
-		const parts: string[] = [composeRuleText(groups)];
+		const layers: PromptLayer[] = [{ id: "rules", kind: "rules", content: composeRuleText(groups) }];
 
 		try {
 			const summary = await this.canvasTools.getCanvasSummary({ sessionId: input.sessionId });
 			if (summary?.nodes) {
-				parts.push(`当前画布摘要：\n${JSON.stringify(summary)}`);
+				layers.push({
+					id: "canvas-summary",
+					kind: "canvas",
+					content: `当前画布摘要：\n${JSON.stringify(summary)}`,
+				});
 			}
 		} catch (err) {
 			this.logger.warn(
@@ -109,12 +130,18 @@ export class PiPromptAssembler {
 
 		if (input.attachments?.length) {
 			const block = buildSidebarBlock(input.attachments);
-			if (block) parts.push(block);
+			if (block) layers.push({ id: "sidebar", kind: "sidebar", content: block });
 		}
 
 		const recent = compressRecentTurns(input.priorMessages ?? [], input.maxTurns ?? 4);
-		if (recent) parts.push(`近期对话摘要：\n${recent}`);
+		if (recent) layers.push({ id: "recent-turns", kind: "recent", content: `近期对话摘要：\n${recent}` });
 
-		return parts.filter(Boolean).join("\n");
+		this.lastLayers = layers;
+		this.lastManifest = `prompt manifest ${input.sessionId}: ${layers
+			.map((l) => `${l.id}:${l.kind}:${approxTokens(l.content)}tok`)
+			.join(" ")}`;
+		this.logger.log(this.lastManifest);
+
+		return layers.map((l) => l.content).join("\n");
 	}
 }

@@ -58,6 +58,23 @@ describe("PiPromptAssembler（#12 每轮 system prompt 组装）", () => {
 		expect(prompt.includes("不要调用 run_*_generation（禁止调用任何 run_*）")).toBe(true);
 	});
 
+	it("assemble 输出与 layers join 一致（重构不改文本）", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const out = await asm.assemble({ sessionId: "s1", ruleGroups: ["core"] });
+		// 捕获内部 layers：通过新增的 lastLayers 暴露（仅测试用）
+		expect(asm.lastLayers?.map((l) => l.kind)).toEqual(["rules", "canvas"]);
+		expect(out).toBe(asm.lastLayers!.map((l) => l.content).join("\n"));
+	});
+
+	it("manifest 日志包含每层 id/kind/approxTokens", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		await asm.assemble({ sessionId: "s1", ruleGroups: ["core", "genTools"] });
+		const logged = asm.lastManifest as string;
+		expect(logged).toContain("rules:");
+		expect(logged).toContain("canvas:");
+		expect(logged).toMatch(/canvas:\d+tok/);
+	});
+
 	it("侧栏块存在；默认组（writeTools 未启用）含第 10 条守卫", async () => {
 		const asm = makeAssembler({ nodes: [] });
 		const prompt = await asm.assemble({
