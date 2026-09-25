@@ -7,7 +7,7 @@
 import Fastify from "fastify";
 import { SessionManager, ConflictError, NotFoundError, type NormalizedEvent } from "./session-manager.js";
 import { Metrics, VERSION, routeLabel } from "./metrics.js";
-import { SkillRegistry } from "./skills/loader.js";
+import { SkillRegistry, approxTokens } from "./skills/registry.js";
 import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 
@@ -22,6 +22,7 @@ const { tools, client: nestClient } = resolveToolsWithClient(metrics);
 // 目录缺失/为空时 indexBlock=""、tools=[]，会话行为与未配置 skills 逐字节一致。
 const skillRegistry = new SkillRegistry(process.env.PI_RUNTIME_SKILLS_DIR ?? "./skills", metrics);
 metrics.setSkillsLoaded(skillRegistry.entries.length);
+metrics.setSkillsPromptTokens(approxTokens(skillRegistry.indexBlock)); // follow-up-1：index 常驻 token 观测
 
 // B-5 HITL Gate（roadmap D3）：确认权收归 harness。
 // ① before_tool：run_* 双重校验（同轮自批拦截 + 画布 SSOT pending_confirm），fail-closed；

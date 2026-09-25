@@ -18,3 +18,11 @@ test("renders pi_runtime_skills_loaded gauge", () => {
 	m.setSkillsLoaded(2);
 	assert.ok(m.render(0, "test").includes("pi_runtime_skills_loaded 2"));
 });
+
+test("renders pi_runtime_prompt_skills_tokens gauge（follow-up-1）", () => {
+	const m = new Metrics();
+	m.setSkillsPromptTokens(226);
+	const out = m.render(0, "test");
+	assert.ok(out.includes("pi_runtime_prompt_skills_tokens 226"));
+	assert.ok(out.indexOf("pi_runtime_prompt_skills_tokens") > out.indexOf("pi_runtime_skills_loaded"));
+});
