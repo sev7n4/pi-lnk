@@ -53,6 +53,19 @@ describe("extractCanvasCommands（UI_COMMAND → canvas_command 派生）", () =
 		);
 		expect(ui?.type).toBe("tool_result");
 	});
+
+	it("tool_call/tool_result 携带老契约 name 字段（前端读 data.name，缺失渲染为「调用 undefined」）", () => {
+		const call = mapPiEventToUiEvent({
+			type: "tool_execution_start",
+			ts: Date.now(),
+			data: { toolCallId: "c1", toolName: "load_skill", args: { name: "ecommerce-product-photo" } },
+		} as never);
+		expect((call?.data as Record<string, unknown>).name).toBe("load_skill");
+
+		const result = mapPiEventToUiEvent(toolEnd({ content: [] }));
+		expect((result?.data as Record<string, unknown>).name).toBe("focus_node");
+		expect((result?.data as Record<string, unknown>).toolName).toBe("focus_node"); // 兼容保留
+	});
 });
 
 describe("extractCanvasActions（B-5 gen 工具 → canvas_action 派生）", () => {

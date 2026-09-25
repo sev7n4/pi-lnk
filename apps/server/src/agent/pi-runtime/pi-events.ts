@@ -77,13 +77,15 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 	switch (event.type) {
 		case "tool_execution_start": {
 			const d = event.data as { toolCallId: string; toolName: string; args: unknown };
-			return { type: "tool_call", data: { toolCallId: d.toolCallId, toolName: d.toolName, args: d.args } };
+			// name 为老 runtime tool_call 契约字段（前端 SideRail/Panel/FloatingWindow/reducer 均读
+			// data.name）——2026-09-25 侧栏实测「调用 undefined」即缺它所致；toolName 保留兼容。
+			return { type: "tool_call", data: { toolCallId: d.toolCallId, name: d.toolName, toolName: d.toolName, args: d.args } };
 		}
 		case "tool_execution_end": {
 			const d = event.data as { toolCallId: string; toolName: string; result: unknown; isError: boolean };
 			return {
 				type: "tool_result",
-				data: { toolCallId: d.toolCallId, toolName: d.toolName, result: d.result, isError: d.isError },
+				data: { toolCallId: d.toolCallId, name: d.toolName, toolName: d.toolName, result: d.result, isError: d.isError },
 			};
 		}
 		case "agent_end": {
