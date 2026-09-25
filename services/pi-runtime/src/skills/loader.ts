@@ -92,17 +92,73 @@ function parseSkillMd(content: string): { frontmatter: Record<string, unknown>; 
 	return { frontmatter: parseSimpleYaml(raw), body };
 }
 
-/** 最小 YAML 子集解析：仅支持 `key: value` 行（name/description 已够用；值可带引号）。 */
+/**
+ * 最小 YAML 子集解析：`key: value` 单行（值可带引号）+ `>`/`|` 多行块标量
+ * （含 `-`/`+` chomping 后缀；`>` 折叠为空格、`|` 保留换行）。
+ * 第三方 Anthropic 格式 skill 常用 `>` 写长 description（drop-in 验收覆盖），
+ * 为此扩展解析器而非引入 `yaml` 依赖（Task 2 注记：禁止轻率新增）。
+ */
 function parseSimpleYaml(raw: string): Record<string, unknown> {
 	const out: Record<string, unknown> = {};
-	for (const line of raw.split("\n")) {
-		const m = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
+	const lines = raw.split("\n");
+	for (let i = 0; i < lines.length; i++) {
+		const m = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(lines[i]);
 		if (!m) continue;
-		let v: unknown = m[2].trim();
-		if (typeof v === "string" && v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
-		out[m[1]] = v;
+		const header = m[2].trim();
+		if (/^[|>][+-]?$/.test(header)) {
+			out[m[1]] = parseBlockScalar(lines, i, header[0] as ">" | "|", (end) => {
+				i = end;
+			});
+		} else {
+			let v: unknown = header;
+			if (typeof v === "string" && v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+			out[m[1]] = v;
+		}
 	}
 	return out;
+}
+
+/**
+ * 多行块标量：从 header 行之后收集缩进更深的行直至 dedent，返回折叠后的字符串。
+ * `>`：段内换行折叠为空格、空行折叠为换行（YAML folding 语义）；`|`：保留换行。
+ * chomping 默认/`-`/`+` 对 trim 后的结果无差异，统一 strip 首尾空白。
+ */
+function parseBlockScalar(
+	lines: string[],
+	headerIdx: number,
+	style: ">" | "|",
+	setIndex: (end: number) => void,
+): string {
+	const baseIndent = /^ */.exec(lines[headerIdx])![0].length;
+	const body: string[] = [];
+	let j = headerIdx + 1;
+	while (j < lines.length) {
+		const line = lines[j];
+		if (line.trim() === "") {
+			body.push("");
+			j++;
+			continue;
+		}
+		const indent = /^ */.exec(line)![0].length;
+		if (indent <= baseIndent) break;
+		body.push(line.slice(indent));
+		j++;
+	}
+	setIndex(j - 1);
+	if (style === "|") return body.join("\n").trim();
+	// `>` folding：按空行分段，段内行以空格连接，段间以换行连接
+	const paragraphs: string[][] = [[]];
+	for (const line of body) {
+		if (line === "") {
+			if (paragraphs[paragraphs.length - 1].length > 0) paragraphs.push([]);
+		} else {
+			paragraphs[paragraphs.length - 1].push(line);
+		}
+	}
+	return paragraphs
+		.filter((p) => p.length > 0)
+		.map((p) => p.join(" "))
+		.join("\n");
 }
 
 function validateName(name: string, dirName: string): void {
