@@ -219,6 +219,33 @@ describe("createSessionReplacingStale（409 竞态修复）", () => {
 		await expect(client.createSessionReplacingStale("s1")).rejects.toThrow(/still conflicts/);
 	});
 
+	it("prompt 携带 forceSkills；listSkills 走 GET /skills", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				if ((init?.method ?? "GET") === "GET") {
+					return new Response(
+						JSON.stringify({ skills: [{ name: "x", description: "X skill" }] }),
+						{ status: 200 },
+					);
+				}
+				return new Response(JSON.stringify({}), { status: 200 });
+			}) as typeof fetch,
+		});
+		await client.prompt("s1", "hello", "main", { forceSkills: ["x"] });
+		expect(calls).toHaveLength(1);
+		const body = JSON.parse(String(calls[0].init.body));
+		expect(body).toEqual({ text: "hello", lane: "main", forceSkills: ["x"] });
+
+		const skills = await client.listSkills();
+		expect(calls).toHaveLength(2);
+		expect(calls[1].init.method).toBe("GET");
+		expect(calls[1].url).toMatch(/\/skills$/);
+		expect(skills).toEqual({ skills: [{ name: "x", description: "X skill" }] });
+	});
+
 	it("DELETE 不携带 content-type（空 body + json header 会 400）；POST 带", async () => {
 		// 生产实测（2026-09-24）：Fastify 对「空 body + application/json」一律 400，
 		// 导致 DELETE /sessions/:id 从未成功 → 会话泄漏 → 每轮 create 撞 409。

@@ -36,6 +36,7 @@ import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { parseSkillCommand } from './pi-runtime/skill-command'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
@@ -692,7 +693,19 @@ export class AgentService {
     const events = this.iteratePiEvents(client, sessionId)
     // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
     const iterator = events[Symbol.asyncIterator]()
-    void client.prompt(sessionId, userMessage).catch(() => {
+    // 可观测性专项 ④：/skill <name> <rest> 显性指令 → 校验后转发 forceSkills
+    let promptText = userMessage
+    let forceSkills: string[] | undefined
+    const skillCmd = parseSkillCommand(userMessage)
+    if (skillCmd) {
+      const known = await client.listSkills().catch(() => null)
+      if (known?.skills.some((s) => s.name === skillCmd.name)) {
+        forceSkills = [skillCmd.name]
+        promptText = skillCmd.rest || `请使用 skill ${skillCmd.name} 完成我的需求`
+      }
+      // 未知名：保持原文原样发送（降级为普通消息），由模型隐性匹配兜底
+    }
+    void client.prompt(sessionId, promptText, "main", { forceSkills }).catch(() => {
       // prompt 失败会以 error 事件形式出现在事件流中，此处静默
     })
 
