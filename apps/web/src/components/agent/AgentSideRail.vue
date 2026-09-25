@@ -2475,7 +2475,7 @@ defineExpose({
                   @focus-all="onFocusAll($event)"
                 />
                 <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
-                  <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[var(--neo-text-secondary)]">⚙ {{ tc.name }}</div>
+                  <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[var(--neo-text-secondary)]">⚙ {{ tc.name }}<template v-if="tc.argsSummary"> · {{ tc.argsSummary }}</template></div>
                 </div>
                 <div
                   v-if="canShowMessageActions(msg)"

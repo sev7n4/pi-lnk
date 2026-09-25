@@ -9,6 +9,7 @@ import {
   validateSidebarAttachments,
 } from '@lnkpi/shared'
 import { parsePersistedToolCalls } from '@/components/agent/agentCanvasOutputs'
+import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
 import {
   applyCanvasAction,
   applyExplore,
@@ -123,10 +124,17 @@ export const useAgentStore = defineStore('agent', () => {
   function beginToolCall(call: { toolCallId?: string; name: string; args?: unknown }) {
     const last = lastAssistant()
     if (!last) return
-    last.toolCalls?.push({ name: call.name, toolCallId: call.toolCallId })
+    last.toolCalls?.push({
+      name: call.name,
+      toolCallId: call.toolCallId,
+      argsSummary: summarizeToolArgs(call.name, call.args),
+    })
     ensureExecutionTrace()
     if (last.executionTrace) {
-      applyToolCall(last.executionTrace, call.name, undefined, { toolCallId: call.toolCallId })
+      applyToolCall(last.executionTrace, call.name, undefined, {
+        toolCallId: call.toolCallId,
+        args: summarizeToolArgs(call.name, call.args),
+      })
     }
   }
 

@@ -212,7 +212,7 @@ function scrollToBottom() {
             >
               <p class="whitespace-pre-wrap">{{ msg.content }}<span v-if="msg.streaming" class="animate-pulse">▊</span></p>
               <div v-if="msg.toolCalls?.length" class="mt-1 space-y-0.5 border-t border-white/10 pt-1">
-                <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[#818cf8]">⚙ {{ tc.name }}</div>
+                <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[#818cf8]">⚙ {{ tc.name }}<template v-if="tc.argsSummary"> · {{ tc.argsSummary }}</template></div>
               </div>
             </div>
           </div>

@@ -42,6 +42,7 @@ export interface ExecutionStep {
     taskId?: string
     toolName?: string
     toolCallId?: string
+    args?: string
     errorCode?: string
   }
 }
@@ -404,7 +405,7 @@ export function applyToolCall(
   trace.steps.push({
     id: nextStepId('tool'),
     kind: 'tool',
-    label: `调用 ${name}`,
+    label: meta?.args ? `调用 ${name} · ${meta.args}` : `调用 ${name}`,
     status: result !== undefined ? 'done' : 'running',
     startedAt: now,
     endedAt: result !== undefined ? now : undefined,
