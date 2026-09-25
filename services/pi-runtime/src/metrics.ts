@@ -27,6 +27,7 @@ export class Metrics {
 	private httpHist = new Map<string, HistogramState>(); // key: route
 	private promptErrors = new Map<string, number>(); // key: reason
 	private toolCalls = new Map<string, number>(); // key: tool|result
+	private skillsLoaded = 0;
 	private startedAt = Date.now();
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
@@ -53,6 +54,10 @@ export class Metrics {
 		this.toolCalls.set(key, (this.toolCalls.get(key) ?? 0) + 1);
 	}
 
+	setSkillsLoaded(n: number): void {
+		this.skillsLoaded = n;
+	}
+
 	render(activeSessions: number, version: string): string {
 		const lines: string[] = [];
 		const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -68,6 +73,10 @@ export class Metrics {
 		lines.push("# HELP pi_runtime_sessions_active Currently active sessions.");
 		lines.push("# TYPE pi_runtime_sessions_active gauge");
 		lines.push(`pi_runtime_sessions_active ${activeSessions}`);
+
+		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
+		lines.push("# TYPE pi_runtime_skills_loaded gauge");
+		lines.push(`pi_runtime_skills_loaded ${this.skillsLoaded}`);
 
 		lines.push("# HELP pi_runtime_http_requests_total HTTP requests processed.");
 		lines.push("# TYPE pi_runtime_http_requests_total counter");

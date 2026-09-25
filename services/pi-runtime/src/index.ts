@@ -7,6 +7,7 @@
 import Fastify from "fastify";
 import { SessionManager, ConflictError, NotFoundError, type NormalizedEvent } from "./session-manager.js";
 import { Metrics, VERSION, routeLabel } from "./metrics.js";
+import { SkillRegistry } from "./skills/loader.js";
 import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 
@@ -16,6 +17,11 @@ const HEARTBEAT_MS = 15_000;
 
 const metrics = new Metrics();
 const { tools, client: nestClient } = resolveToolsWithClient(metrics);
+
+// D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。
+// 目录缺失/为空时 indexBlock=""、tools=[]，会话行为与未配置 skills 逐字节一致。
+const skillRegistry = new SkillRegistry(process.env.PI_RUNTIME_SKILLS_DIR ?? "./skills", metrics);
+metrics.setSkillsLoaded(skillRegistry.entries.length);
 
 // B-5 HITL Gate（roadmap D3）：确认权收归 harness。
 // ① before_tool：run_* 双重校验（同轮自批拦截 + 画布 SSOT pending_confirm），fail-closed；
@@ -42,7 +48,7 @@ const manager = new SessionManager(tools, undefined, undefined, undefined, {
 	onPrompt(sessionId) {
 		gateStore.bumpUserTurn(sessionId);
 	},
-});
+}, skillRegistry);
 
 const app = Fastify({
 	logger: true,
