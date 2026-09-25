@@ -246,3 +246,42 @@ describe('workflowStepsFromSnapshot', () => {
     expect(steps.find((s) => s.journeyStepId === 'macro_select')?.status).toBe('running')
   })
 })
+
+describe('applyToolCall toolCallId 合并（可观测性专项）', () => {
+  it('A1: 同名工具交错调用按 toolCallId 各自闭合', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'upsert_media_node', undefined, { toolCallId: 'c1' })
+    applyToolCall(trace, 'upsert_media_node', undefined, { toolCallId: 'c2' })
+    applyToolCall(trace, 'upsert_media_node', { message: 'ok' }, { toolCallId: 'c1' })
+    applyToolCall(trace, 'upsert_media_node', { message: 'ok' }, { toolCallId: 'c2' })
+    const toolSteps = trace.steps.filter((s) => s.kind === 'tool')
+    expect(toolSteps).toHaveLength(2)
+    expect(toolSteps.every((s) => s.status === 'done')).toBe(true)
+    expect(toolSteps.map((s) => s.meta?.toolCallId).sort()).toEqual(['c1', 'c2'])
+  })
+
+  it('A2: tool_result 先到（乱序）降级为新建完成态步骤，不崩', () => {
+    const trace = createExecutionTrace()
+    expect(() =>
+      applyToolCall(trace, 'load_skill', { message: 'ok' }, { toolCallId: 'c9' }),
+    ).not.toThrow()
+    expect(trace.steps.filter((s) => s.kind === 'tool')).toHaveLength(1)
+  })
+
+  it('A3: 无 toolCallId（老链路）保持 name+running 匹配语义', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'explore_canvas')
+    applyToolCall(trace, 'explore_canvas', { status: 'ok' })
+    const toolSteps = trace.steps.filter((s) => s.kind === 'tool')
+    expect(toolSteps).toHaveLength(1)
+    expect(toolSteps[0].status).toBe('done')
+  })
+
+  it('A6: 已闭合的 toolCallId 重复收到 result（重放）不产生新步骤', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'load_skill', undefined, { toolCallId: 'c1' })
+    applyToolCall(trace, 'load_skill', { message: 'a' }, { toolCallId: 'c1' })
+    applyToolCall(trace, 'load_skill', { message: 'a' }, { toolCallId: 'c1' })
+    expect(trace.steps.filter((s) => s.kind === 'tool')).toHaveLength(1)
+  })
+})

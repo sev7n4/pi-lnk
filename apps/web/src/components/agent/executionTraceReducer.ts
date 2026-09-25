@@ -41,6 +41,7 @@ export interface ExecutionStep {
     nodeId?: string
     taskId?: string
     toolName?: string
+    toolCallId?: string
     errorCode?: string
   }
 }
@@ -385,11 +386,16 @@ export function applyToolCall(
   trace: ExecutionTraceState,
   name: string,
   result?: unknown,
+  meta?: { toolCallId?: string; args?: string },
 ) {
-  const existing = trace.steps.find(
-    (s) => s.kind === 'tool' && s.meta?.toolName === name && s.status === 'running',
-  )
-  if (existing && result !== undefined) {
+  // toolCallId 优先精确匹配（支持同名并发）；无 id 时回退老语义：同 name 的 running 步
+  const existing = meta?.toolCallId
+    ? trace.steps.find((s) => s.kind === 'tool' && s.meta?.toolCallId === meta.toolCallId)
+    : trace.steps.find(
+        (s) => s.kind === 'tool' && s.meta?.toolName === name && s.status === 'running',
+      )
+  if (existing) {
+    if (result === undefined) return // 重放/重复 start：幂等
     existing.detail = summarizeToolResult(result)
     completeStep(existing)
     return
@@ -403,7 +409,7 @@ export function applyToolCall(
     startedAt: now,
     endedAt: result !== undefined ? now : undefined,
     ms: result !== undefined ? 0 : undefined,
-    meta: { toolName: name },
+    meta: { toolName: name, toolCallId: meta?.toolCallId },
     detail: result !== undefined ? summarizeToolResult(result) : undefined,
   })
 }
