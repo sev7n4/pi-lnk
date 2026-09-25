@@ -67,6 +67,20 @@ curl -s --noproxy '*' localhost:30100/metrics | grep tool_calls
 curl -s --noproxy '*' -X DELETE localhost:30100/sessions/$SID   # 清理
 ```
 
+## Skills 链路（D-η'，2026-09-25 起）
+
+- **目录链路**：仓库根 `skills/` → Dockerfile `COPY skills ./skills` → 镜像 `/app/skills` → env `PI_RUNTIME_SKILLS_DIR=/app/skills`（chart values 已设）。进程启动时扫描一次，之后不再读盘。
+- **格式**：Anthropic 事实标准（github.com/anthropics/skills）——目录名 = skill 名，`SKILL.md` YAML frontmatter（`name`/`description`，description 支持单行引号与 `>`/`|` 多行）+ 正文；坏 skill 启动时 warn 跳过，不影响其余。
+- **渐进披露**：index 块（name+description 列表）常驻 systemPrompt 尾部；模型命中后调用 `load_skill` 工具按需取正文。本地只读，不走 Nest、不经 Gate。
+- **drop-in 新增 skill 步骤**（零代码改动）：
+  1. 在仓库根 `skills/<skill-name>/` 放入 `SKILL.md`（name 必须与目录名一致，小写字母/数字/连字符，≤64 字符；description ≤1024 字符）；
+  2. 重走上方「命令流」——注意 **step 1 的 rsync 必须带上 `skills/`**（`rsync -az --delete skills/ root@119.29.173.89:/root/pi-lnk-build/skills/ ...`），否则新 skill 不进构建上下文；
+  3. helm upgrade 后验收：`/metrics` 出现 `pi_runtime_skills_loaded <n>`（n 为 skill 数）。
+- **/metrics 观测点**：
+  - `pi_runtime_skills_loaded`：启动时发现的 skill 数（gauge）；
+  - `pi_runtime_tool_calls_total{tool="load_skill",result="ok"|"error"}`：load_skill 调用计数（result=ok 即成功取到正文）。
+- **CVM 冒烟**：公网发「帮我做一张商品白底图」，观察 SSE tool_call 是否出现 `load_skill`；或本地 `curl -s --noproxy '*' localhost:30100/metrics | grep -E 'skills_loaded|load_skill'`。
+
 ## 陷阱（实测）
 
 1. **NetworkPolicy × docker DNAT**：docker 会把 pod 发往宿主已发布端口（:5100）的流量 DNAT 成 `容器IP:内部端口`（172.20.0.3:3001），**DNAT 发生在 netpol 过滤之前** → egress 白名单放行 `宿主IP:5100` 无效（ECONNREFUSED，icmp-port-unreachable 由 kube-router policy 链 REJECT 产生）。必须放行 **DNAT 后目的地**：`172.20.0.0/16 + 3001`。

@@ -55,6 +55,8 @@ env:
   PORT: "8100"
   NODE_ENV: "production"
   PI_RUNTIME_DATA_DIR: "/data/sessions"
+  # 仓库根 skills/ 随镜像落在 /app/skills（drop-in 目录，新增 skill 无需改代码）
+  PI_RUNTIME_SKILLS_DIR: "/app/skills"
   # build_info 版本标签（与镜像 tag 对齐，部署时 --set 覆盖）
   PI_RUNTIME_VERSION: "0.0.1"
 

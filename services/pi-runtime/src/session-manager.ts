@@ -25,6 +25,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel } from "./model-assembly.js";
+import type { SkillRegistry } from "./skills/loader.js";
 import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
 
 export type NormalizedEventType =
@@ -102,6 +103,7 @@ export class SessionManager {
 		private readonly modelFactory: typeof assembleModel = assembleModel,
 		private readonly harnessFactory: HarnessFactory = AgentHarness.create,
 		private readonly hooks?: SessionHooks,
+		private readonly skills?: SkillRegistry,
 	) {}
 
 	has(id: string): boolean {
@@ -138,7 +140,7 @@ export class SessionManager {
 				session,
 				models,
 				model,
-				tools: this.tools,
+				tools: [...this.tools, ...(this.skills?.tools ?? [])],
 				toolContext: {
 					sessionId: id,
 					userId: opts.userId,
@@ -147,7 +149,7 @@ export class SessionManager {
 					refOrder: opts.refOrder,
 					focusNodeId: opts.focusNodeId,
 				},
-				systemPrompt: opts.systemPrompt || this.systemPromptDefault,
+				systemPrompt: this.composeSystemPrompt(opts.systemPrompt),
 			},
 			this.context,
 		);
@@ -257,6 +259,14 @@ export class SessionManager {
 		const entry = this.sessions.get(id);
 		if (!entry) throw new NotFoundError(id);
 		return entry;
+	}
+
+	/** D-η'：base 为空回退默认 prompt；skills index 块常驻尾部（无 skills 时原样返回）。 */
+	private composeSystemPrompt(base?: string): string {
+		const prompt = base || this.systemPromptDefault;
+		const index = this.skills?.indexBlock ?? "";
+		if (!index) return prompt;
+		return prompt ? `${prompt}\n\n${index}` : index;
 	}
 }
 
