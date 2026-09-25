@@ -1929,15 +1929,16 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.appendText((event.data as { text: string }).text)
       scrollToBottom()
       break
-    case 'tool_call':
-      agent.addToolCall((event.data as { name: string }).name)
+    case 'tool_call': {
+      const d = event.data as { name: string; toolCallId?: string; args?: unknown }
+      agent.beginToolCall({ toolCallId: d.toolCallId, name: d.name, args: d.args })
       break
-    case 'tool_result':
-      agent.addToolCall(
-        (event.data as { name: string }).name,
-        (event.data as { result: unknown }).result,
-      )
+    }
+    case 'tool_result': {
+      const d = event.data as { name: string; toolCallId?: string; result: unknown }
+      agent.endToolCall(d.toolCallId, d.name, d.result)
       break
+    }
     case 'canvas_action':
       agent.addCanvasAction(event.data as Parameters<typeof agent.addCanvasAction>[0])
       break
@@ -2474,7 +2475,7 @@ defineExpose({
                   @focus-all="onFocusAll($event)"
                 />
                 <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
-                  <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[var(--neo-text-secondary)]">⚙ {{ tc.name }}</div>
+                  <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[var(--neo-text-secondary)]">⚙ {{ tc.name }}<template v-if="tc.argsSummary"> · {{ tc.argsSummary }}</template></div>
                 </div>
                 <div
                   v-if="canShowMessageActions(msg)"

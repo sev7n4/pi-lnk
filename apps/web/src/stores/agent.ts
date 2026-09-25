@@ -9,6 +9,7 @@ import {
   validateSidebarAttachments,
 } from '@lnkpi/shared'
 import { parsePersistedToolCalls } from '@/components/agent/agentCanvasOutputs'
+import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
 import {
   applyCanvasAction,
   applyExplore,
@@ -33,7 +34,7 @@ export interface AgentStreamMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
-  toolCalls?: Array<{ name: string; result?: unknown }>
+  toolCalls?: Array<{ name: string; result?: unknown; toolCallId?: string; argsSummary?: string }>
   streaming?: boolean
   textReplaceHistory?: string[]
   executionTrace?: ExecutionTraceState
@@ -117,6 +118,39 @@ export const useAgentStore = defineStore('agent', () => {
       if (last.executionTrace) {
         applyToolCall(last.executionTrace, name, result)
       }
+    }
+  }
+
+  function beginToolCall(call: { toolCallId?: string; name: string; args?: unknown }) {
+    const last = lastAssistant()
+    if (!last) return
+    last.toolCalls?.push({
+      name: call.name,
+      toolCallId: call.toolCallId,
+      argsSummary: summarizeToolArgs(call.name, call.args),
+    })
+    ensureExecutionTrace()
+    if (last.executionTrace) {
+      applyToolCall(last.executionTrace, call.name, undefined, {
+        toolCallId: call.toolCallId,
+        args: summarizeToolArgs(call.name, call.args),
+      })
+    }
+  }
+
+  function endToolCall(toolCallId: string | undefined, name: string, result?: unknown) {
+    const last = lastAssistant()
+    if (!last) return
+    if (toolCallId) {
+      const entry = last.toolCalls?.find(
+        (tc) => tc.toolCallId === toolCallId && tc.result === undefined,
+      )
+      if (entry) entry.result = result
+      if (!entry) last.toolCalls?.push({ name, result, toolCallId })
+    }
+    ensureExecutionTrace()
+    if (last.executionTrace) {
+      applyToolCall(last.executionTrace, name, result, { toolCallId })
     }
   }
 
@@ -305,6 +339,8 @@ export const useAgentStore = defineStore('agent', () => {
     appendText,
     replaceAssistantText,
     addToolCall,
+    beginToolCall,
+    endToolCall,
     trackNodeStatus,
     trackTaskUpdate,
     trackStep,

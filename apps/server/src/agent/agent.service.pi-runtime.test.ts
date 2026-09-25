@@ -169,7 +169,9 @@ describe('AgentService pi-runtime switch (B4)', () => {
       's1',
       expect.objectContaining({ userId: 'u1' }),
     )
-    expect(pi.prompt).toHaveBeenCalledWith('s1', '你好')
+    expect(pi.prompt).toHaveBeenCalledWith('s1', '你好', 'main', {
+      forceSkills: undefined,
+    })
     expect(events.map((e) => e.type)).toEqual([
       'pi_agent_start',
       'text_delta',
@@ -186,6 +188,49 @@ describe('AgentService pi-runtime switch (B4)', () => {
         data: expect.objectContaining({ role: 'assistant' }),
       }),
     )
+  })
+
+  it('pi 路径 canvas_action：extractCanvasActions 派生同步入 canvasActions 与 executionEvents（修死分支）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const action = { type: 'update_node', payload: { id: 'n_1', data: { status: 'completed' } } }
+    const pi = stubPiClient([
+      piEvent('agent_start', {}),
+      piEvent('tool_execution_end', {
+        toolCallId: 'c1',
+        toolName: 'gen',
+        result: { content: [], details: { actions: [action] } },
+      }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', '画一下', 'u1', 't1')) {
+      events.push(event)
+    }
+
+    // 流内 canvas_action 仍直通前端（实时语义不变）
+    expect(events.filter((e) => e.type === 'canvas_action')).toEqual([
+      { type: 'canvas_action', data: action },
+    ])
+    // 持久化：toolCalls 经 canvasActions 收到 action，metadata.executionEvents
+    // 经 executionEvents 收到同一 action（此前死分支导致两者均丢失）
+    expect(agentMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          toolCalls: JSON.stringify([action]),
+          metadata: expect.any(String),
+        }),
+      }),
+    )
+    const persisted = agentMessageCreate.mock.calls.at(-1)?.[0] as {
+      data: { metadata: string }
+    }
+    const metadata = JSON.parse(persisted.data.metadata) as {
+      executionEvents: Array<{ type: string; data: unknown }>
+    }
+    expect(metadata.executionEvents).toContainEqual({ type: 'canvas_action', data: action })
   })
 
   it('active + healthz 失败：回落 LangGraph 路径（D-ζ’ 回退语义）', async () => {

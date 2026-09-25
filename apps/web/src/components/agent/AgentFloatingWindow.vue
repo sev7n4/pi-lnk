@@ -125,17 +125,21 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.appendText((event.data as { text: string }).text)
       scrollToBottom()
       break
-    case 'tool_call':
-      agent.addToolCall((event.data as { name: string }).name)
+    case 'tool_call': {
+      const d = event.data as { name: string; toolCallId?: string; args?: unknown }
+      agent.beginToolCall({ toolCallId: d.toolCallId, name: d.name, args: d.args })
       break
-    case 'tool_result':
-      agent.addToolCall(
-        (event.data as { name: string }).name,
-        (event.data as { result: unknown }).result,
-      )
+    }
+    case 'tool_result': {
+      const d = event.data as { name: string; toolCallId?: string; result: unknown }
+      agent.endToolCall(d.toolCallId, d.name, d.result)
       break
+    }
     case 'canvas_action':
       agent.addCanvasAction(event.data as Parameters<typeof agent.addCanvasAction>[0])
+      break
+    case 'thinking':
+      agent.trackThinking(event.data as { status: string; summary?: string })
       break
     case 'error':
       agent.appendText(`\n\n⚠️ ${(event.data as { message: string }).message}`)
@@ -211,7 +215,7 @@ function scrollToBottom() {
             >
               <p class="whitespace-pre-wrap">{{ msg.content }}<span v-if="msg.streaming" class="animate-pulse">▊</span></p>
               <div v-if="msg.toolCalls?.length" class="mt-1 space-y-0.5 border-t border-white/10 pt-1">
-                <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[#818cf8]">⚙ {{ tc.name }}</div>
+                <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[#818cf8]">⚙ {{ tc.name }}<template v-if="tc.argsSummary"> · {{ tc.argsSummary }}</template></div>
               </div>
             </div>
           </div>

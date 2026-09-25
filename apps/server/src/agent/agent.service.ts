@@ -36,8 +36,9 @@ import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { parseSkillCommand } from './pi-runtime/skill-command'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
 export interface PiCanvasContext {
@@ -692,12 +693,26 @@ export class AgentService {
     const events = this.iteratePiEvents(client, sessionId)
     // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
     const iterator = events[Symbol.asyncIterator]()
-    void client.prompt(sessionId, userMessage).catch(() => {
+    // 可观测性专项 ④：/skill <name> <rest> 显性指令 → 校验后转发 forceSkills
+    let promptText = userMessage
+    let forceSkills: string[] | undefined
+    const skillCmd = parseSkillCommand(userMessage)
+    if (skillCmd) {
+      const known = await client.listSkills().catch(() => null)
+      if (known?.skills.some((s) => s.name === skillCmd.name)) {
+        forceSkills = [skillCmd.name]
+        promptText = skillCmd.rest || `请使用 skill ${skillCmd.name} 完成我的需求`
+      }
+      // 未知名：保持原文原样发送（降级为普通消息），由模型隐性匹配兜底
+    }
+    void client.prompt(sessionId, promptText, "main", { forceSkills }).catch(() => {
       // prompt 失败会以 error 事件形式出现在事件流中，此处静默
     })
 
     let assistantText = ''
     const canvasActions: CanvasAction[] = []
+    const thinkingAccumulator = createThinkingAccumulator()
+    const executionEvents: Array<{ type: string; data: unknown }> = []
     let done = false
     try {
       while (!done) {
@@ -715,15 +730,27 @@ export class AgentService {
           // B-5：gen/lifecycle 工具 details.actions → canvas_action（画布数据动作通道；
           // 对齐老链路 NestEventProxy 转发语义），节点状态经此实时到前端
           for (const action of extractCanvasActions(event)) {
+            canvasActions.push(action)
+            executionEvents.push({ type: 'canvas_action', data: action })
             yield { type: 'canvas_action', data: action }
           }
+        }
+        // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件（delta 只累积）
+        const thinkingUi = thinkingAccumulator.feed(event)
+        if (thinkingUi) {
+          executionEvents.push({ type: 'thinking', data: thinkingUi.data })
+          yield thinkingUi as AgentStreamEvent
         }
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue
         if (ui.type === 'text_delta') {
           assistantText += (ui.data as { text: string }).text
-        } else if (ui.type === 'canvas_action') {
-          canvasActions.push(ui.data as CanvasAction)
+        }
+        // 执行事件持久化收集（刷新后前端可恢复执行过程）；canvas_action 已在
+        // extractCanvasActions 循环内同步入 canvasActions/executionEvents，
+        // mapPiEventToUiEvent 不产出该类型
+        if (ui.type === 'tool_call' || ui.type === 'tool_result') {
+          executionEvents.push({ type: ui.type, data: ui.data })
         }
         yield ui as AgentStreamEvent
       }
@@ -735,6 +762,7 @@ export class AgentService {
     const effectiveThreadId = threadId?.trim() || sessionId
     await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
       rewriteCanvasData: false,
+      metadata: buildTurnMetadata({ executionEvents }),
     })
   }
 

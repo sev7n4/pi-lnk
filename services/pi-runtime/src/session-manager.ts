@@ -93,6 +93,25 @@ export interface SessionHooks {
 	onPrompt?(sessionId: string): void;
 }
 
+/** 可观测性专项 ④：显性 skill 调用——把 skill 正文作为指令前缀注入 prompt 文本。 */
+export function withForcedSkills(
+	text: string,
+	forceSkills: string[] | undefined,
+	resolveBody: (name: string) => string | undefined,
+): string {
+	if (!forceSkills || forceSkills.length === 0) return text;
+	const parts: string[] = [];
+	for (const name of forceSkills) {
+		const body = resolveBody(name);
+		parts.push(
+			body
+				? `[用户显式调用 skill: ${name}]\n请严格按以下指导执行：\n\n${body}`
+				: `[用户显式调用了未安装的 skill: ${name}；先告知用户该技能不存在，再按其原意尽力完成]`,
+		);
+	}
+	return `${parts.join("\n\n")}\n\n---\n用户请求：${text}`;
+}
+
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
@@ -112,6 +131,10 @@ export class SessionManager {
 
 	count(): number {
 		return this.sessions.size;
+	}
+
+	listSkills(): Array<{ name: string; description: string }> {
+		return (this.skills?.entries ?? []).map((e) => ({ name: e.name, description: e.description }));
 	}
 
 	async create(
@@ -195,13 +218,21 @@ export class SessionManager {
 	}
 
 	/** 触发一次 prompt。不 await 完成——事件经 events 总线流出；run 结束由 agent_end 表达。 */
-	async prompt(id: string, text: string, laneName = "main"): Promise<{ accepted: boolean }> {
+	async prompt(
+		id: string,
+		text: string,
+		laneName = "main",
+		opts?: { forceSkills?: string[] },
+	): Promise<{ accepted: boolean }> {
 		const entry = this.require(id);
+		const effectiveText = withForcedSkills(text, opts?.forceSkills, (name) =>
+			this.skills?.loadBody(name),
+		);
 		this.hooks?.onPrompt?.(id);
 		const lane = await entry.harness.lane(laneName, this.context);
 		entry.prompting = true;
 		void lane
-			.prompt(text, undefined, this.context)
+			.prompt(effectiveText, undefined, this.context)
 			.then((result) => {
 				if (!result.ok) {
 					this.dispatch(entry, {

@@ -133,13 +133,36 @@ export class PiRuntimeClient {
 		}
 	}
 
-	async prompt(sessionId: string, text: string, lane = "main"): Promise<void> {		const { status, body } = await this.request<{ error?: string }>(
+	async prompt(
+		sessionId: string,
+		text: string,
+		lane = "main",
+		opts?: { forceSkills?: string[] },
+	): Promise<void> {
+		const { status, body } = await this.request<{ error?: string }>(
 			`/sessions/${encodeURIComponent(sessionId)}/prompt`,
-			{ method: "POST", body: JSON.stringify({ text, lane }) },
+			{
+				method: "POST",
+				body: JSON.stringify({
+					text,
+					lane,
+					...(opts?.forceSkills?.length ? { forceSkills: opts.forceSkills } : {}),
+				}),
+			},
 		);
 		if (status !== 200 || body?.error) {
 			throw new PiRuntimeError(body?.error ?? `prompt failed: HTTP ${status}`, status);
 		}
+	}
+
+	async listSkills(): Promise<{ skills: Array<{ name: string; description: string }> }> {
+		const { status, body } = await this.request<{
+			skills?: Array<{ name: string; description: string }>;
+		}>("/skills", { method: "GET" });
+		if (status >= 400) {
+			throw new PiRuntimeError(`listSkills failed: HTTP ${status}`, status);
+		}
+		return { skills: body?.skills ?? [] };
 	}
 
 	async deleteSession(sessionId: string): Promise<void> {
