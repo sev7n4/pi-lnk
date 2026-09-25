@@ -37,7 +37,7 @@ import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
 export interface PiCanvasContext {
@@ -698,6 +698,8 @@ export class AgentService {
 
     let assistantText = ''
     const canvasActions: CanvasAction[] = []
+    const thinkingAccumulator = createThinkingAccumulator()
+    const executionEvents: Array<{ type: string; data: unknown }> = []
     let done = false
     try {
       while (!done) {
@@ -718,12 +720,26 @@ export class AgentService {
             yield { type: 'canvas_action', data: action }
           }
         }
+        // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件（delta 只累积）
+        const thinkingUi = thinkingAccumulator.feed(event)
+        if (thinkingUi) {
+          executionEvents.push({ type: 'thinking', data: thinkingUi.data })
+          yield thinkingUi as AgentStreamEvent
+        }
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue
         if (ui.type === 'text_delta') {
           assistantText += (ui.data as { text: string }).text
         } else if (ui.type === 'canvas_action') {
           canvasActions.push(ui.data as CanvasAction)
+        }
+        // 执行事件持久化收集（刷新后前端可恢复执行过程）
+        if (
+          ui.type === 'tool_call' ||
+          ui.type === 'tool_result' ||
+          ui.type === 'canvas_action'
+        ) {
+          executionEvents.push({ type: ui.type, data: ui.data })
         }
         yield ui as AgentStreamEvent
       }
@@ -735,6 +751,7 @@ export class AgentService {
     const effectiveThreadId = threadId?.trim() || sessionId
     await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
       rewriteCanvasData: false,
+      metadata: buildTurnMetadata({ executionEvents }),
     })
   }
 

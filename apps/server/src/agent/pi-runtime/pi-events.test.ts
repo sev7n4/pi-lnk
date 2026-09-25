@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	createThinkingAccumulator,
 	extractCanvasActions,
 	extractCanvasCommands,
 	mapPiEventToUiEvent,
@@ -109,5 +110,34 @@ describe("extractCanvasActions（B-5 gen 工具 → canvas_action 派生）", ()
 		expect(extractCanvasActions(toolEnd({}))).toEqual([]);
 		expect(extractCanvasActions(toolEnd({ details: { actions: "oops" } }))).toEqual([]);
 		expect(extractCanvasActions({ type: "message_update", ts: 1, data: {} } as never)).toEqual([]);
+	});
+});
+
+describe("thinking 透传（可观测性专项 ③）", () => {
+	const thinkEvent = (type: string, delta?: string) =>
+		({
+			type: "message_update",
+			ts: 1,
+			data: { event: { type, ...(delta !== undefined ? { delta } : {}) } },
+		}) as never;
+
+	it("start → running 事件，delta → 累积返回 null，end → done + 截断摘要", () => {
+		// brief 原文为 createThinkingAccumulator(10)，但其期望摘要含 11 字符（含〇），
+		// 与实现 slice(0, limit)（limit 字符）矛盾；按实现语义取 11，期望字符串逐字保留。
+		const acc = createThinkingAccumulator(11);
+		expect(acc.feed(thinkEvent("thinking_start"))).toEqual({
+			type: "thinking",
+			data: { status: "running" },
+		});
+		expect(acc.feed(thinkEvent("thinking_delta", "一二三四五"))).toBeNull();
+		expect(acc.feed(thinkEvent("thinking_delta", "六七八九十〇一二三四"))).toBeNull();
+		const end = acc.feed(thinkEvent("thinking_end"));
+		expect(end).toEqual({ type: "thinking", data: { status: "done", summary: "一二三四五六七八九十〇" } });
+	});
+
+	it("A4: 纯文本流（无 thinking）feed 全程返回 null", () => {
+		const acc = createThinkingAccumulator();
+		expect(acc.feed({ type: "message_update", ts: 1, data: { event: { type: "text_delta", delta: "hi" } } } as never)).toBeNull();
+		expect(acc.feed({ type: "tool_execution_start", ts: 1, data: {} } as never)).toBeNull();
 	});
 });

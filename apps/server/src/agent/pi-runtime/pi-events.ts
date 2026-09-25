@@ -170,3 +170,49 @@ export function extractCanvasActions(event: PiRuntimeEvent): CanvasAction[] {
 	}
 	return out;
 }
+
+/** message_update 内嵌的 thinking 子事件（thinking_start/delta/end，实测见文件头注释）。 */
+export interface ThinkingPhase {
+	phase: "start" | "delta" | "end";
+	text?: string;
+}
+
+export function extractThinking(event: PiRuntimeEvent): ThinkingPhase | null {
+	if (event.type !== "message_update") return null;
+	const data = event.data as {
+		event?: { type?: string; delta?: string };
+		assistantMessageEvent?: { type?: string; delta?: string };
+	};
+	const ame = data.event ?? data.assistantMessageEvent;
+	if (!ame) return null;
+	if (ame.type === "thinking_start") return { phase: "start" };
+	if (ame.type === "thinking_delta" && typeof ame.delta === "string") {
+		return { phase: "delta", text: ame.delta };
+	}
+	if (ame.type === "thinking_end") return { phase: "end" };
+	return null;
+}
+
+/**
+ * thinking 累积器（可观测性专项 ③）：把 pi 的流式 thinking 子事件折叠为
+ * 老 UI 契约的 `thinking` 事件（start→running，end→done+截断摘要）。
+ * delta 只累积不透传（v1 不做逐字思考流），摘要取前 limit 字符。
+ */
+export function createThinkingAccumulator(limit = 200): {
+	feed(event: PiRuntimeEvent): UiEvent | null;
+} {
+	let buffer = "";
+	return {
+		feed(event: PiRuntimeEvent): UiEvent | null {
+			const t = extractThinking(event);
+			if (!t) return null;
+			if (t.phase === "start") return { type: "thinking", data: { status: "running" } };
+			if (t.phase === "delta" && t.text) {
+				buffer += t.text;
+				return null;
+			}
+			const summary = buffer.slice(0, limit);
+			return { type: "thinking", data: { status: "done", summary: summary || undefined } };
+		},
+	};
+}

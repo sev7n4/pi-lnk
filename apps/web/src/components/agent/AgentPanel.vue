@@ -120,6 +120,9 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'canvas_action':
       agent.addCanvasAction(event.data as Parameters<typeof agent.addCanvasAction>[0])
       break
+    case 'thinking':
+      agent.trackThinking(event.data as { status: string; summary?: string })
+      break
     case 'error':
       agent.appendText(`\n\n⚠️ ${(event.data as { message: string }).message}`)
       break
