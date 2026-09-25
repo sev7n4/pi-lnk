@@ -730,6 +730,8 @@ export class AgentService {
           // B-5：gen/lifecycle 工具 details.actions → canvas_action（画布数据动作通道；
           // 对齐老链路 NestEventProxy 转发语义），节点状态经此实时到前端
           for (const action of extractCanvasActions(event)) {
+            canvasActions.push(action)
+            executionEvents.push({ type: 'canvas_action', data: action })
             yield { type: 'canvas_action', data: action }
           }
         }
@@ -743,15 +745,11 @@ export class AgentService {
         if (!ui) continue
         if (ui.type === 'text_delta') {
           assistantText += (ui.data as { text: string }).text
-        } else if (ui.type === 'canvas_action') {
-          canvasActions.push(ui.data as CanvasAction)
         }
-        // 执行事件持久化收集（刷新后前端可恢复执行过程）
-        if (
-          ui.type === 'tool_call' ||
-          ui.type === 'tool_result' ||
-          ui.type === 'canvas_action'
-        ) {
+        // 执行事件持久化收集（刷新后前端可恢复执行过程）；canvas_action 已在
+        // extractCanvasActions 循环内同步入 canvasActions/executionEvents，
+        // mapPiEventToUiEvent 不产出该类型
+        if (ui.type === 'tool_call' || ui.type === 'tool_result') {
           executionEvents.push({ type: ui.type, data: ui.data })
         }
         yield ui as AgentStreamEvent
