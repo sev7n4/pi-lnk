@@ -89,7 +89,11 @@ describe('AgentService pi-runtime switch (B4)', () => {
   })
 
   /** 构造一个脚本化 pi-runtime client：订阅时同步回放脚本事件。 */
-  function stubPiClient(events: PiRuntimeEvent[], healthzOk = true) {
+  function stubPiClient(
+    events: PiRuntimeEvent[],
+    healthzOk = true,
+    knownSkills: Array<{ name: string }> = [],
+  ) {
     const deleteSession = vi.fn().mockResolvedValue(true)
     const createSession = vi.fn().mockResolvedValue({
       sessionId: 'x',
@@ -115,6 +119,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
       }),
       prompt,
       deleteSession,
+      listSkills: vi.fn().mockResolvedValue({ skills: knownSkills }),
       streamEvents: vi.fn(
         (
           _sessionId: string,
@@ -188,6 +193,58 @@ describe('AgentService pi-runtime switch (B4)', () => {
         data: expect.objectContaining({ role: 'assistant' }),
       }),
     )
+  })
+
+  it('T2-5：dock 短 skillId（canvas）经 mapUiSkillId 映射命中白名单 → forceSkills 注入', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })], true, [
+      { name: 'enterprise-marketing-campaign' },
+      { name: 'ecommerce-product-visual' },
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    for await (const _ of service.streamConversation(
+      's1',
+      '做个营销方案',
+      'u1',
+      't1',
+      undefined,
+      undefined,
+      'canvas',
+    )) {
+      // drain
+    }
+
+    expect(pi.prompt).toHaveBeenCalledWith('s1', '做个营销方案', 'main', {
+      forceSkills: ['enterprise-marketing-campaign'],
+    })
+  })
+
+  it('T2-6：未接入占位 skillId（storyboard）→ fail-soft 原文发送、无 forceSkills', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })], true, [
+      { name: 'enterprise-marketing-campaign' },
+      { name: 'ecommerce-product-visual' },
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    for await (const _ of service.streamConversation(
+      's1',
+      'hello',
+      'u1',
+      't1',
+      undefined,
+      undefined,
+      'storyboard',
+    )) {
+      // drain
+    }
+
+    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
+      forceSkills: undefined,
+    })
   })
 
   it('pi 路径 canvas_action：extractCanvasActions 派生同步入 canvasActions 与 executionEvents（修死分支）', async () => {

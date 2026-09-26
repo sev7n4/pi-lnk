@@ -708,13 +708,16 @@ export class AgentService {
     const iterator = events[Symbol.asyncIterator]()
     // 可观测性专项 ④ + P1 skillId 转接：文本 /skill 命令优先，dock skillId 兜底；未知名 fail-soft 原文发送。
     // listSkills 仅在可能需要校验时调用（有命令或有 skillId），失败降级 null（fail-soft）
+    // P1 标尺④修复：dock 传的是 UI 短 id（canvas/product-visual），须先经 mapUiSkillId 映射为
+    // runtime skill 名再进 resolveForceSkills 白名单校验（与老 LangGraph 路径 :597 对齐；
+    // 未接入占位 id 映射为 undefined → fail-soft，与 T2-3 语义一致）
     const skillCmd = parseSkillCommand(userMessage)
     const known =
       skillCmd || skillId?.trim()
         ? await client.listSkills().catch(() => null)
         : null
     const { forceSkills, promptText } = resolveForceSkills(
-      skillId,
+      mapUiSkillId(skillId),
       userMessage,
       known?.skills ?? null,
     )
