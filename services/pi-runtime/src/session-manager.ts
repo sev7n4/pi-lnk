@@ -115,7 +115,17 @@ export function withForcedSkills(
 
 /** 思考默认档位：vendored pi harness 默认 off（模型不产出 thinking_delta，前端「思考」步骤恒空）。
  * 会话级默认 medium（P1 前端开关落地前的过渡值）；ops 可用 env PI_RUNTIME_THINKING_LEVEL=off 快速关闭（helm --set env.* 后 rollout restart）。 */
-const DEFAULT_THINKING_LEVEL = (process.env.PI_RUNTIME_THINKING_LEVEL ?? "medium") as ThinkingLevel;
+export const DEFAULT_THINKING_LEVEL = (process.env.PI_RUNTIME_THINKING_LEVEL ?? "medium") as ThinkingLevel;
+
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/** 会话级 thinking 档位：Nest 显式传入且合法时覆盖 env 默认。
+ * 注意：harness 的 thinkingLevel 仅 create 时可设，prompt 阶段不可改——多轮同 sessionId
+ * 换档依赖 createSessionReplacingStale 重建会话（Nest 现有机制）。 */
+export function resolveThinkingLevel(level?: string): ThinkingLevel {
+	if (level && THINKING_LEVELS.has(level)) return level as ThinkingLevel;
+	return DEFAULT_THINKING_LEVEL;
+}
 
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
@@ -152,6 +162,7 @@ export class SessionManager {
 			mentionedKeys?: string[];
 			refOrder?: string[];
 			focusNodeId?: string;
+			thinkingLevel?: string;
 		} = {},
 	): Promise<{ provider: string; model: string }> {
 		if (this.sessions.has(id)) throw new ConflictError(id);
@@ -178,7 +189,7 @@ export class SessionManager {
 					focusNodeId: opts.focusNodeId,
 				},
 				systemPrompt: this.composeSystemPrompt(opts.systemPrompt),
-				thinkingLevel: DEFAULT_THINKING_LEVEL,
+				thinkingLevel: resolveThinkingLevel(opts.thinkingLevel),
 			},
 			this.context,
 		);

@@ -36,6 +36,7 @@ import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
@@ -252,6 +253,7 @@ export class AgentService {
             userId,
             threadId,
             piContext,
+            { thinking, thinkingEffort },
           )) {
             if (event.type === 'text_delta') {
               assistantText += (event.data as { text: string }).text
@@ -513,6 +515,7 @@ export class AgentService {
       mentionedKeys?: string[]
       refOrder?: string[]
       focusNodeId?: string
+      thinkingLevel?: 'off' | 'medium' | 'high'
     },
   ): Promise<void> {
     // 409 竞态（上一轮 DELETE 未完成就来了本轮 create）：删除陈旧会话后重建，
@@ -524,6 +527,7 @@ export class AgentService {
       mentionedKeys: opts?.mentionedKeys,
       refOrder: opts?.refOrder,
       focusNodeId: opts?.focusNodeId,
+      thinkingLevel: opts?.thinkingLevel,
     })
   }
 
@@ -673,6 +677,7 @@ export class AgentService {
     userId: string,
     threadId?: string,
     piContext?: PiCanvasContext,
+    thinkingOpts?: { thinking?: boolean; thinkingEffort?: 'high' | 'max' },
   ): AsyncGenerator<AgentStreamEvent> {
     const systemPrompt = await this.createPiPromptAssembler().assemble({
       sessionId,
@@ -689,6 +694,8 @@ export class AgentService {
       mentionedKeys: piContext?.mentionedKeys,
       refOrder: piContext?.refOrder,
       focusNodeId: piContext?.focusNodeId,
+      // D-T1：老 UI effort 两档映射为 pi 档位，逐请求透传
+      thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
     })
     const events = this.iteratePiEvents(client, sessionId)
     // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
