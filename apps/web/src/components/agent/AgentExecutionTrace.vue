@@ -72,7 +72,10 @@ const durationLabel = computed(() => {
 })
 
 const showTrace = computed(
-  () => hasWorkflow.value || operationSteps.value.length > 0 || props.streaming,
+  // usage 存在即渲染：纯文本回合（无步骤）也要露出回合摘要行（tokens 实耗）；
+  // 不用 totalMs 作门——否则老历史消息（无 usage）会多出重复的「执行过程」头行
+  () => hasWorkflow.value || operationSteps.value.length > 0 || props.streaming
+    || props.trace.usage != null,
 )
 
 function toggle() {
