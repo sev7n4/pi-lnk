@@ -31,6 +31,7 @@ services:
       PORT: "3001"
       DATABASE_URL: file:/app/apps/server/data/lnkpi.db
       MATTING_SERVICE_URL: ${MATTING_SERVICE_URL:-http://lnkpi-matting:8000}
+      LNKPI_SEGMENT_SERVICE_URL: ${LNKPI_SEGMENT_SERVICE_URL:-http://lnkpi-segment:8000}
     ports:
       - "0.0.0.0:5100:3001"
     volumes:
@@ -106,6 +107,25 @@ services:
       # matting-models named volume 为空卷时会遮蔽镜像层预置模型（/root/.u2net），
       # 首启需同步/下载模型（~170MB）才能通过 health，放宽 start_period 防反复重启。
       start_period: 180s
+
+  # 仅内网；勿映射端口到公网。MobileSAM ONNX 预置在镜像层（~45MB），点提示分割。
+  # mem_limit 700m：onnxruntime CPU 推理 + 4 条 embedding 缓存，试用期不扩内存的前提下可运行。
+  segment:
+    image: ${LNKPI_SEGMENT_IMAGE:-lnkpi-segment:local}
+    build:
+      context: ./docker/segment
+    container_name: lnkpi-segment
+    restart: unless-stopped
+    mem_limit: 700m
+    # 无 ports：只通过 lnkpi-net 被 api 访问
+    networks:
+      - lnkpi
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
 networks:
   lnkpi:
