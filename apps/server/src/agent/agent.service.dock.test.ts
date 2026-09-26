@@ -72,7 +72,7 @@ describe('AgentService dock forwarding', () => {
       'thread-1',
       undefined,
       undefined,
-      'canvas',
+      'product-visual',
       'platform::gpt-4o-mini',
     )) {
       // drain
@@ -84,7 +84,7 @@ describe('AgentService dock forwarding', () => {
         sessionId: 's1',
         threadId: 'thread-1',
         message: 'hello',
-        skillId: 'enterprise-marketing-campaign',
+        skillId: 'ecommerce-product-photo',
         llmProviderRef: 'platform::gpt-4o-mini',
         llmModel: 'gpt-4o-mini',
         llmApiKey: 'sk-test',
