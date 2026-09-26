@@ -14,6 +14,11 @@
 
 ## 命令流（发布新版本）
 
+> ⚠️ **2026-09-26 实踩：docker 构建层缓存吃过新代码**——rsync 后源码已更新，但 `docker build` 命中陈旧的 COPY/build 层，镜像里 dist 仍是旧代码（build_info 只反映 `--set env.PI_RUNTIME_VERSION`，**不能作为代码版本的证据**）。规定：
+> 1. pi-runtime 构建一律加 `--no-cache`（全程仅 ~90s，可接受）；
+> 2. 构建后**必须验证镜像内产物**：`kubectl exec deploy/pi-lnk-runtime -n pi-lnk-runtime -- grep -c <新改动特征串> /app/services/pi-runtime/dist/<文件>.js`；
+> 3. **同 tag 重推镜像时**，IfNotPresent 不会重拉——必须 `k3s ctr -n k8s.io images rm 127.0.0.1:5000/pi-runtime:<tag>` 后再 `kubectl rollout restart deploy/pi-lnk-runtime -n pi-lnk-runtime`。
+
 ```bash
 # 1. 同步源码到 CVM（主仓执行）
 rsync -az --delete --exclude node_modules --exclude dist --exclude .git \
