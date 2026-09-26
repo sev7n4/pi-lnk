@@ -97,6 +97,7 @@ app.post<{
 		mentionedKeys?: string[];
 		refOrder?: string[];
 		focusNodeId?: string;
+		thinkingLevel?: string;
 	};
 }>(
 	"/sessions",
@@ -110,6 +111,7 @@ app.post<{
 				mentionedKeys: request.body?.mentionedKeys,
 				refOrder: request.body?.refOrder,
 				focusNodeId: request.body?.focusNodeId,
+				thinkingLevel: request.body?.thinkingLevel,
 			});
 			return reply.code(201).send({ sessionId, provider, model });
 		} catch (err) {

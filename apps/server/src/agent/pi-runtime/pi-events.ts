@@ -211,8 +211,51 @@ export function createThinkingAccumulator(limit = 200): {
 				buffer += t.text;
 				return null;
 			}
-			const summary = buffer.slice(0, limit);
-			return { type: "thinking", data: { status: "done", summary: summary || undefined } };
+		const summary = buffer.slice(0, limit);
+		return { type: "thinking", data: { status: "done", summary: summary || undefined } };
+		},
+	};
+}
+
+export interface TurnUsage {
+	inputTokens: number;
+	outputTokens: number;
+}
+
+function extractUsageDelta(event: PiRuntimeEvent): TurnUsage | null {
+	if (event.type !== "message_end") return null;
+	const usage = (event.data as { message?: { usage?: { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown } } })
+		.message?.usage;
+	if (!usage || typeof usage !== "object") return null;
+	const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+	// 口径对齐 vendor models.ts:892 calculateCost：inputTokens = input + cacheRead + cacheWrite
+	const inputTokens = num(usage.input) + num(usage.cacheRead) + num(usage.cacheWrite);
+	return { inputTokens, outputTokens: num(usage.output) };
+}
+
+/** P1 状态行：message_end.usage 逐条累积，agent_end 前折叠为一次 turn_usage 事件。
+ * 仅当本回合出现过至少一条带 usage 的 message_end 才发（seenUsage 门）——区分
+ * 「上游没回 usage」（不显示 tokens 段）与「usage 真为 0」（显示 0），杜绝误导。 */
+export function createUsageAccumulator(): {
+	feed(event: PiRuntimeEvent): UiEvent | null;
+} {
+	let input = 0;
+	let output = 0;
+	let seenUsage = false;
+	return {
+		feed(event: PiRuntimeEvent): UiEvent | null {
+			const delta = extractUsageDelta(event);
+			if (delta) {
+				seenUsage = true;
+				input += delta.inputTokens;
+				output += delta.outputTokens;
+				return null;
+			}
+			if (event.type === "agent_end") {
+				if (!seenUsage) return null;
+				return { type: "turn_usage", data: { inputTokens: input, outputTokens: output } };
+			}
+			return null;
 		},
 	};
 }

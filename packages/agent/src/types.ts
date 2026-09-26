@@ -58,6 +58,8 @@ export interface AgentStreamEvent {
     | 'step'
     | 'phase_hint'
     | 'thinking'
+    // P1 回合 token 实耗（message_end.usage 汇总，agent_end 前恰发一次）
+    | 'turn_usage'
     | 'explore'
     | 'interrupt'
     | 'journey_update'

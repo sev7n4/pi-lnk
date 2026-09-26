@@ -30,6 +30,7 @@ export interface CreateSessionOptions {
 	mentionedKeys?: string[];
 	refOrder?: string[];
 	focusNodeId?: string;
+	thinkingLevel?: "off" | "medium" | "high";
 }
 
 export class PiRuntimeError extends Error {
@@ -90,6 +91,7 @@ export class PiRuntimeClient {
 				mentionedKeys: opts.mentionedKeys,
 				refOrder: opts.refOrder,
 				focusNodeId: opts.focusNodeId,
+				...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
 			}),
 		});
 		if (status !== 201 || !body || body.error) {

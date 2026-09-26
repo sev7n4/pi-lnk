@@ -36,9 +36,11 @@ import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
+import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createThinkingAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
 export interface PiCanvasContext {
@@ -65,6 +67,7 @@ const TRACE_PERSIST_EVENT_TYPES = new Set([
   'thinking',
   'explore',
   'error',
+  'turn_usage',
 ])
 
 export function buildTurnMetadata(input: {
@@ -252,6 +255,9 @@ export class AgentService {
             userId,
             threadId,
             piContext,
+            { thinking, thinkingEffort },
+            // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
+            skillId,
           )) {
             if (event.type === 'text_delta') {
               assistantText += (event.data as { text: string }).text
@@ -513,6 +519,7 @@ export class AgentService {
       mentionedKeys?: string[]
       refOrder?: string[]
       focusNodeId?: string
+      thinkingLevel?: 'off' | 'medium' | 'high'
     },
   ): Promise<void> {
     // 409 竞态（上一轮 DELETE 未完成就来了本轮 create）：删除陈旧会话后重建，
@@ -524,6 +531,7 @@ export class AgentService {
       mentionedKeys: opts?.mentionedKeys,
       refOrder: opts?.refOrder,
       focusNodeId: opts?.focusNodeId,
+      thinkingLevel: opts?.thinkingLevel,
     })
   }
 
@@ -673,6 +681,9 @@ export class AgentService {
     userId: string,
     threadId?: string,
     piContext?: PiCanvasContext,
+    thinkingOpts?: { thinking?: boolean; thinkingEffort?: 'high' | 'max' },
+    // P1：与 Task 1 的 thinkingOpts 并列独立第 8 参（按计划裁定不并入 opts，保持既有调用点兼容）
+    skillId?: string,
   ): AsyncGenerator<AgentStreamEvent> {
     const systemPrompt = await this.createPiPromptAssembler().assemble({
       sessionId,
@@ -689,22 +700,24 @@ export class AgentService {
       mentionedKeys: piContext?.mentionedKeys,
       refOrder: piContext?.refOrder,
       focusNodeId: piContext?.focusNodeId,
+      // D-T1：老 UI effort 两档映射为 pi 档位，逐请求透传
+      thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
     })
     const events = this.iteratePiEvents(client, sessionId)
     // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
     const iterator = events[Symbol.asyncIterator]()
-    // 可观测性专项 ④：/skill <name> <rest> 显性指令 → 校验后转发 forceSkills
-    let promptText = userMessage
-    let forceSkills: string[] | undefined
+    // 可观测性专项 ④ + P1 skillId 转接：文本 /skill 命令优先，dock skillId 兜底；未知名 fail-soft 原文发送。
+    // listSkills 仅在可能需要校验时调用（有命令或有 skillId），失败降级 null（fail-soft）
     const skillCmd = parseSkillCommand(userMessage)
-    if (skillCmd) {
-      const known = await client.listSkills().catch(() => null)
-      if (known?.skills.some((s) => s.name === skillCmd.name)) {
-        forceSkills = [skillCmd.name]
-        promptText = skillCmd.rest || `请使用 skill ${skillCmd.name} 完成我的需求`
-      }
-      // 未知名：保持原文原样发送（降级为普通消息），由模型隐性匹配兜底
-    }
+    const known =
+      skillCmd || skillId?.trim()
+        ? await client.listSkills().catch(() => null)
+        : null
+    const { forceSkills, promptText } = resolveForceSkills(
+      skillId,
+      userMessage,
+      known?.skills ?? null,
+    )
     void client.prompt(sessionId, promptText, "main", { forceSkills }).catch(() => {
       // prompt 失败会以 error 事件形式出现在事件流中，此处静默
     })
@@ -712,6 +725,7 @@ export class AgentService {
     let assistantText = ''
     const canvasActions: CanvasAction[] = []
     const thinkingAccumulator = createThinkingAccumulator()
+    const usageAccumulator = createUsageAccumulator()
     const executionEvents: Array<{ type: string; data: unknown }> = []
     let done = false
     try {
@@ -740,6 +754,12 @@ export class AgentService {
         if (thinkingUi) {
           executionEvents.push({ type: 'thinking', data: thinkingUi.data })
           yield thinkingUi as AgentStreamEvent
+        }
+        // P1 状态行：usage 累积，agent_end 前恰发一次 turn_usage（seenUsage 门，见 pi-events.ts）
+        const usageUi = usageAccumulator.feed(event)
+        if (usageUi) {
+          executionEvents.push({ type: 'turn_usage', data: usageUi.data })
+          yield usageUi as AgentStreamEvent
         }
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	createThinkingAccumulator,
+	createUsageAccumulator,
 	extractCanvasActions,
 	extractCanvasCommands,
 	mapPiEventToUiEvent,
@@ -139,5 +140,39 @@ describe("thinking 透传（可观测性专项 ③）", () => {
 		const acc = createThinkingAccumulator();
 		expect(acc.feed({ type: "message_update", ts: 1, data: { event: { type: "text_delta", delta: "hi" } } } as never)).toBeNull();
 		expect(acc.feed({ type: "tool_execution_start", ts: 1, data: {} } as never)).toBeNull();
+	});
+});
+
+describe("turn_usage（P1 状态行）", () => {
+	const msgEnd = (usage?: Record<string, unknown>) =>
+		({
+			type: "message_end",
+			ts: 1,
+			data: { message: usage ? { usage } : {} },
+		}) as never;
+
+	it("T3-1: 多条 message_end 累积（inputTokens=input+cacheRead+cacheWrite），agent_end 触发一次", () => {
+		const acc = createUsageAccumulator();
+		expect(acc.feed(msgEnd({ input: 100, cacheRead: 40, cacheWrite: 10, output: 20 }))).toBeNull();
+		expect(acc.feed(msgEnd({ input: 50, output: 30 }))).toBeNull();
+		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
+		expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 200, outputTokens: 50 } });
+	});
+
+	it("T3-2: 从未出现 usage → agent_end 不发 turn_usage；出现过 usage → 全零也发", () => {
+		const accNone = createUsageAccumulator();
+		accNone.feed(msgEnd());
+		expect(accNone.feed({ type: "agent_end", ts: 1, data: {} } as never)).toBeNull();
+		const accZero = createUsageAccumulator();
+		accZero.feed(msgEnd({ input: 0, output: 0 }));
+		expect(accZero.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
+			type: "turn_usage",
+			data: { inputTokens: 0, outputTokens: 0 },
+		});
+	});
+
+	it("T3-3: 无 message_end 直接 agent_end → 不发（null）", () => {
+		const acc = createUsageAccumulator();
+		expect(acc.feed({ type: "agent_end", ts: 1, data: {} } as never)).toBeNull();
 	});
 });
