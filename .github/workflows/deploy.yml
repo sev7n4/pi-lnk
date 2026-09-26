@@ -30,7 +30,7 @@ on:
         default: false
         type: boolean
       deploy_web_only:
-        description: Only deploy web frontend to CVM (skip API build)
+        description: "Emergency only: deploy THIS repo's web build to CVM. Web deploys are normally owned by the lnkpi repo — enabling this will overwrite /opt/lnkpi/web/dist with this repo's (older) frontend"
         required: false
         default: false
         type: boolean
@@ -330,12 +330,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy-web:
-    name: Deploy web to CVM
+    name: Deploy web to CVM (emergency only)
     needs: changes
     if: >-
       ${{
-        needs.changes.outputs.web == 'true'
-        || github.event_name == 'workflow_dispatch'
+        github.event_name == 'workflow_dispatch'
+        && github.event.inputs.deploy_web_only == 'true'
+        && github.event.inputs.recover_only != 'true'
       }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
