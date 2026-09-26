@@ -20,6 +20,7 @@ import {
 	AgentHarness,
 	type AgentHarnessTool,
 	type Context,
+	type ThinkingLevel,
 	BACKGROUND_CONTEXT,
 	JsonlSessionRepo,
 } from "@earendil-works/pi-agent-core";
@@ -112,6 +113,10 @@ export function withForcedSkills(
 	return `${parts.join("\n\n")}\n\n---\n用户请求：${text}`;
 }
 
+/** 思考默认档位：vendored pi harness 默认 off（模型不产出 thinking_delta，前端「思考」步骤恒空）。
+ * 会话级默认 medium（P1 前端开关落地前的过渡值）；ops 可用 env PI_RUNTIME_THINKING_LEVEL=off 快速关闭（helm --set env.* 后 rollout restart）。 */
+const DEFAULT_THINKING_LEVEL = (process.env.PI_RUNTIME_THINKING_LEVEL ?? "medium") as ThinkingLevel;
+
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
@@ -173,6 +178,7 @@ export class SessionManager {
 					focusNodeId: opts.focusNodeId,
 				},
 				systemPrompt: this.composeSystemPrompt(opts.systemPrompt),
+				thinkingLevel: DEFAULT_THINKING_LEVEL,
 			},
 			this.context,
 		);

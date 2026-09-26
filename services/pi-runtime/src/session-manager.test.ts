@@ -40,8 +40,9 @@ describe("SessionManager harnessFactory 注入缝", () => {
 			refOrder: ["I1"],
 			focusNodeId: "node-1",
 		});
-		const cfg = captured as { systemPrompt: string; toolContext: Record<string, unknown> };
+		const cfg = captured as { systemPrompt: string; toolContext: Record<string, unknown>; thinkingLevel?: string };
 		assert.equal(cfg.systemPrompt, "SYS");
+		assert.equal(cfg.thinkingLevel, "medium");
 		assert.equal(cfg.toolContext.userId, "u1");
 		assert.equal(cfg.toolContext.sessionId, "s1");
 		assert.deepEqual(cfg.toolContext.mentionedKeys, ["I1"]);
