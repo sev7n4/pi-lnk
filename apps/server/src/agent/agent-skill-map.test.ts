@@ -7,13 +7,15 @@ describe('mapUiSkillId', () => {
     expect(mapUiSkillId('')).toBeUndefined()
   })
 
-  it('maps canvas to enterprise-marketing-campaign', () => {
-    expect(mapUiSkillId('canvas')).toBe('enterprise-marketing-campaign')
+  it('maps product-visual to ecommerce-product-photo（pi 侧真实技能名）', () => {
+    expect(mapUiSkillId('product-visual')).toBe('ecommerce-product-photo')
+    expect(mapUiSkillId('ecommerce-product-photo')).toBe('ecommerce-product-photo')
   })
 
-  it('maps product-visual to ecommerce-product-visual', () => {
-    expect(mapUiSkillId('product-visual')).toBe('ecommerce-product-visual')
-    expect(mapUiSkillId('ecommerce-product-visual')).toBe('ecommerce-product-visual')
+  it('未迁移的老技能不再映射（canvas → undefined，fail-soft）', () => {
+    expect(mapUiSkillId('canvas')).toBeUndefined()
+    expect(mapUiSkillId('enterprise-marketing-campaign')).toBeUndefined()
+    expect(mapUiSkillId('ecommerce-product-visual')).toBeUndefined()
   })
 
   it('returns undefined for unmapped dock skills', () => {
