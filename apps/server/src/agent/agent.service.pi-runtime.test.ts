@@ -195,12 +195,11 @@ describe('AgentService pi-runtime switch (B4)', () => {
     )
   })
 
-  it('T2-5：dock 短 skillId（canvas）经 mapUiSkillId 映射命中白名单 → forceSkills 注入', async () => {
+  it('T2-5：dock 短 skillId（product-visual）经 mapUiSkillId 映射命中白名单 → forceSkills 注入', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })], true, [
-      { name: 'enterprise-marketing-campaign' },
-      { name: 'ecommerce-product-visual' },
+      { name: 'ecommerce-product-photo' },
     ])
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
@@ -211,13 +210,13 @@ describe('AgentService pi-runtime switch (B4)', () => {
       't1',
       undefined,
       undefined,
-      'canvas',
+      'product-visual',
     )) {
       // drain
     }
 
     expect(pi.prompt).toHaveBeenCalledWith('s1', '做个营销方案', 'main', {
-      forceSkills: ['enterprise-marketing-campaign'],
+      forceSkills: ['ecommerce-product-photo'],
     })
   })
 
@@ -238,6 +237,31 @@ describe('AgentService pi-runtime switch (B4)', () => {
       undefined,
       undefined,
       'storyboard',
+    )) {
+      // drain
+    }
+
+    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
+      forceSkills: undefined,
+    })
+  })
+
+  it('T2-6b：未迁移的老 dock 技能（canvas → enterprise-marketing-campaign）→ fail-soft 无 forceSkills', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })], true, [
+      { name: 'ecommerce-product-photo' },
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    for await (const _ of service.streamConversation(
+      's1',
+      'hello',
+      'u1',
+      't1',
+      undefined,
+      undefined,
+      'canvas',
     )) {
       // drain
     }

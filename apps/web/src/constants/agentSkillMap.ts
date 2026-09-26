@@ -1,6 +1,8 @@
 /**
  * Agent dock skills — only entries with Nest → Runtime mapping (see agent-skill-map.ts).
- * Unconnected placeholders (分镜/润色/整理) are omitted until Skill packages exist.
+ * 只保留 pi-runtime /skills 真实存在的技能（以生产 listSkills 为事实源）：
+ * 老 runtime 的 enterprise-marketing-campaign / ecommerce-product-visual 不迁移（不在 pi 侧安装），
+ * 因此 dock 不再列出——保留只会静默 fail-soft，用户选了却不生效。
  */
 
 export interface AgentSkillDef {
@@ -14,16 +16,10 @@ export interface AgentSkillDef {
 /** Backend-connected skills shown in the Agent dock 「技能」 menu. */
 export const AGENT_SKILLS: AgentSkillDef[] = [
   {
-    id: 'canvas',
-    label: '营销方案编排',
-    desc: '多节点 Campaign 方案与画布拆分（enterprise-marketing-campaign）',
-    runtimeSkillId: 'enterprise-marketing-campaign',
-  },
-  {
     id: 'product-visual',
     label: '实物产品视觉出图',
-    desc: '实拍产品多类型视觉方案与并行出图（ecommerce-product-visual）',
-    runtimeSkillId: 'ecommerce-product-visual',
+    desc: '实拍产品多类型视觉方案与并行出图（ecommerce-product-photo）',
+    runtimeSkillId: 'ecommerce-product-photo',
   },
 ]
 

@@ -19,12 +19,19 @@ describe('agentSkillMap', () => {
     expect(getAgentSkill('')).toBeUndefined()
   })
 
-  it('getAgentSkill resolves canvas', () => {
-    expect(getAgentSkill('canvas')?.runtimeSkillId).toBe('enterprise-marketing-campaign')
+  it('getAgentSkill resolves product-visual → pi 侧真实技能名', () => {
+    expect(getAgentSkill('product-visual')?.runtimeSkillId).toBe('ecommerce-product-photo')
+  })
+
+  it('未迁移的老技能（canvas/enterprise-marketing-campaign）不在 dock 列表', () => {
+    expect(getAgentSkill('canvas')).toBeUndefined()
+    expect(AGENT_SKILLS.some((s) => s.runtimeSkillId === 'enterprise-marketing-campaign')).toBe(
+      false,
+    )
   })
 
   it('placeholder differs for auto vs skill', () => {
     expect(agentInputPlaceholder(undefined)).toContain('@')
-    expect(agentInputPlaceholder(getAgentSkill('canvas'))).toContain('营销方案编排')
+    expect(agentInputPlaceholder(getAgentSkill('product-visual'))).toContain('实物产品视觉出图')
   })
 })
