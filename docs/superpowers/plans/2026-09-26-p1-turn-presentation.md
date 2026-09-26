@@ -31,9 +31,10 @@
 1. **thinking=false 时不得发 thinkingLevel:"off" 以外的值，且默认档位行为不变**（未传 thinkingLevel 的旧 Nest → DEFAULT_THINKING_LEVEL=medium 兜底）——Task 1 测试 T1-3 钉死。
 2. **skillId 与文本 /skill 命令同时出现**：显式文本命令优先，skillId 不叠加——Task 2 测试 T2-2 钉死。
 3. **skillId 未知名**：fail-soft 按普通消息发送，不 500 不空回复——Task 2 测试 T2-3 钉死。
-4. **message_end 缺 usage / usage 数值异常**（0、负数、非数字）：跳过该条累积，turn_usage 仍要发（全零也要发，前端显示 0 tokens 而非悬挂）——Task 3 测试 T3-2 钉死。
+4. **message_end 缺 usage / usage 数值异常**（0、负数、非数字）：非法值按 0 处理；**本回合从未出现 usage → agent_end 不发 turn_usage**（前端不渲染 tokens 段，杜绝「消耗 0 tokens」误导）；出现过 usage → 全零也发——Task 3 测试 T3-2 钉死。
 5. **多轮同 sessionId**：createSessionReplacingStale 重建会话，thinkingLevel 每轮随新会话生效；prompt 阶段不得再改档位（harness thinkingLevel 仅 create 时可设）——Task 1 实现注释钉死。
 6. **刷新回放**：turn_usage 持久化后 replay 不产生重复摘要行——Task 3（持久化幂等）+ Task 6（reducer 幂等）共同覆盖。
+7. **waiting 假阳性**（chipSet 基于 assistantText 片段匹配，流式途中即命中）：propose pending_confirm 一票通过，纯文本 chip 需文本静默 ≥2s——Task 4 测试 resolveWaiting 钉死。
 
 ---
 
@@ -148,10 +149,10 @@ export function resolveThinkingLevel(level?: string): ThinkingLevel {
 
 ```bash
 cd /Users/4seven/workspace/pi-lnk/apps/server && ./node_modules/.bin/vitest run
-cd /Users/4seven/workspace/pi-lnk/services/pi-runtime && ./node_modules/.bin/vitest run 2>/dev/null || ./node_modules/.bin/tsc --noEmit
+cd /Users/4seven/workspace/pi-lnk/services/pi-runtime && ./node_modules/.bin/tsc --noEmit && node --test src/session-manager.thinking-level.test.ts
 ```
 
-（pi-runtime 若无 vitest 配置则以 `node --test` 约定为准：`cd services/pi-runtime && ./node_modules/.bin/tsc --noEmit && node --experimental-strip-types --test src/session-manager.thinking-level.test.ts`——以包内既有测试运行方式为准，查 `package.json` scripts。）
+（若 pi-runtime package.json 的 test script 与上述不同，以 script 为准——但 node:test 框架不变。）
 
 Expected: 全绿。
 
@@ -255,7 +256,7 @@ git commit -m "feat(agent): dock 技能选择器 skillId 转接 pi-runtime force
 
 **Interfaces:**
 - Consumes: pi `message_end` 事件 data 为 `{ message, entryId? }`（vendor harness.md:1153），`message.usage` 形如 `{ input, output, cacheRead, cacheWrite, cost? }`（vendor models.ts calculateCost 读 `usage.input/cacheRead/cacheWrite`，缺 usage 为 undefined）。
-- Produces: UI 事件 `{ type: 'turn_usage', data: { inputTokens: number; outputTokens: number } }`（agent_end 之前恰发一次）；`createUsageAccumulator(): { feed(event: PiRuntimeEvent): UiEvent | null }`——Task 6 前端显示依赖。
+- Produces: UI 事件 `{ type: 'turn_usage', data: { inputTokens: number; outputTokens: number } }`——**仅当本回合出现过至少一条带 usage 的 message_end 时**在 agent_end 前恰发一次（从未出现则不发，前端不渲染 tokens 段，杜绝「消耗 0 tokens」误导）；inputTokens 口径 = `usage.input + usage.cacheRead + usage.cacheWrite`（对齐 vendor models.ts:892 calculateCost）。`createUsageAccumulator(): { feed(event: PiRuntimeEvent): UiEvent | null }`——Task 6 前端显示依赖。
 
 - [ ] **Step 1: 写失败测试（pi-events.test.ts 追加）**
 
@@ -268,29 +269,29 @@ describe("turn_usage（P1 状态行）", () => {
       data: { message: usage ? { usage } : {} },
     }) as never;
 
-  it("T3-1: 多条 message_end 累积 input/output，agent_end 触发一次 turn_usage", () => {
+  it("T3-1: 多条 message_end 累积（inputTokens=input+cacheRead+cacheWrite），agent_end 触发一次", () => {
     const acc = createUsageAccumulator();
-    expect(acc.feed(msgEnd({ input: 100, output: 20, cacheRead: 0, cacheWrite: 0 }))).toBeNull();
+    expect(acc.feed(msgEnd({ input: 100, cacheRead: 40, cacheWrite: 10, output: 20 }))).toBeNull();
     expect(acc.feed(msgEnd({ input: 50, output: 30 }))).toBeNull();
     const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
-    expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 150, outputTokens: 50 } });
+    expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 200, outputTokens: 50 } });
   });
 
-  it("T3-2: usage 缺失/非法值跳过该条；全零仍发 turn_usage", () => {
-    const acc = createUsageAccumulator();
-    acc.feed(msgEnd());
-    acc.feed(msgEnd({ input: -5, output: "x" }));
-    acc.feed(msgEnd({ input: 0, output: 0 }));
-    const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
-    expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 0, outputTokens: 0 } });
-  });
-
-  it("T3-3: 无 message_end 直接 agent_end → turn_usage 全零", () => {
-    const acc = createUsageAccumulator();
-    expect(acc.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
+  it("T3-2: 从未出现 usage → agent_end 不发 turn_usage；出现过 usage → 全零也发", () => {
+    const accNone = createUsageAccumulator();
+    accNone.feed(msgEnd());
+    expect(accNone.feed({ type: "agent_end", ts: 1, data: {} } as never)).toBeNull();
+    const accZero = createUsageAccumulator();
+    accZero.feed(msgEnd({ input: 0, output: 0 }));
+    expect(accZero.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
       type: "turn_usage",
       data: { inputTokens: 0, outputTokens: 0 },
     });
+  });
+
+  it("T3-3: 无 message_end 直接 agent_end → 不发（null）", () => {
+    const acc = createUsageAccumulator();
+    expect(acc.feed({ type: "agent_end", ts: 1, data: {} } as never)).toBeNull();
   });
 });
 ```
@@ -313,29 +314,35 @@ export interface TurnUsage {
 
 function extractUsageDelta(event: PiRuntimeEvent): TurnUsage | null {
 	if (event.type !== "message_end") return null;
-	const usage = (event.data as { message?: { usage?: { input?: unknown; output?: unknown } } })
+	const usage = (event.data as { message?: { usage?: { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown } } })
 		.message?.usage;
 	if (!usage || typeof usage !== "object") return null;
-	const input = typeof usage.input === "number" && Number.isFinite(usage.input) && usage.input > 0 ? usage.input : 0;
-	const output = typeof usage.output === "number" && Number.isFinite(usage.output) && usage.output > 0 ? usage.output : 0;
-	return { inputTokens: input, outputTokens: output };
+	const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+	// 口径对齐 vendor models.ts:892 calculateCost：inputTokens = input + cacheRead + cacheWrite
+	const inputTokens = num(usage.input) + num(usage.cacheRead) + num(usage.cacheWrite);
+	return { inputTokens, outputTokens: num(usage.output) };
 }
 
-/** P1 状态行：message_end.usage 逐条累积，agent_end 前折叠为一次 turn_usage 事件（全零也发）。 */
+/** P1 状态行：message_end.usage 逐条累积，agent_end 前折叠为一次 turn_usage 事件。
+ * 仅当本回合出现过至少一条带 usage 的 message_end 才发（seenUsage 门）——区分
+ * 「上游没回 usage」（不显示 tokens 段）与「usage 真为 0」（显示 0），杜绝误导。 */
 export function createUsageAccumulator(): {
 	feed(event: PiRuntimeEvent): UiEvent | null;
 } {
 	let input = 0;
 	let output = 0;
+	let seenUsage = false;
 	return {
 		feed(event: PiRuntimeEvent): UiEvent | null {
 			const delta = extractUsageDelta(event);
 			if (delta) {
+				seenUsage = true;
 				input += delta.inputTokens;
 				output += delta.outputTokens;
 				return null;
 			}
 			if (event.type === "agent_end") {
+				if (!seenUsage) return null;
 				return { type: "turn_usage", data: { inputTokens: input, outputTokens: output } };
 			}
 			return null;
@@ -380,14 +387,14 @@ git commit -m "feat(agent): pi 链路 turn_usage 事件（message_end usage 汇�
 - Modify: `apps/web/src/components/agent/AgentPanel.vue`、`AgentFloatingWindow.vue`（同一行文案，轻量接入）
 
 **Interfaces:**
-- Consumes: `ExecutionTraceState`（steps/turnStartedAt）、`agent.isStreaming`、SideRail 既有 `chipSet` computed（waiting 判定信号：`chipSet !== null` 即进入确认等待）。
-- Produces: `turnStatusLine(input: { isStreaming: boolean; turnStartedAt?: number; now: number; waiting: boolean; lastFailed?: string }): { text: string; mode: 'running' | 'waiting' | 'failed' }`——`running` → `生成回复中 · Ns`（N 为秒，实时）、`waiting` → `等待你确认`（秒数冻结）、`failed` → `生成失败 · <原因摘要>`。Task 6 摘要行复用 `turnStartedAt`。
+- Consumes: `ExecutionTraceState`（steps/turnStartedAt）、`agent.isStreaming`、SideRail 既有 `chipSet` computed、store 新增 `proposePendingConfirm` 标志（tool_result name==='propose_generation' 且 result.status==='pending_confirm' 时置位，新回合重置）与 `lastTextDeltaAt`（最近一次 text_delta 时间戳）。
+- Produces: ①`turnStatusLine(input: { isStreaming: boolean; turnStartedAt?: number; now: number; waiting: boolean; lastFailed?: string }): { text: string; mode: 'running' | 'waiting' | 'failed' } | null`——`running` → `生成回复中 · Ns`、`waiting` → `等待你确认`（秒数冻结）、`failed` → `生成失败 · <原因摘要>`；②`resolveWaiting(input: { isStreaming: boolean; proposePendingConfirm: boolean; chipSet: string | null; textIdleMs: number }): boolean`——**waiting 判定收紧**（防流式途中 chipSet 片段命中假阳性）：`isStreaming && (proposePendingConfirm || (chipSet !== null && textIdleMs >= 2000))`；③`failureReason(err: unknown): string`——error→人话映射（401→「渠道密钥无效」、403→「渠道无权限」、429→「额度或频率受限」、含 timeout/aborted→「上游响应超时」、其余→「生成失败，请重试」），`lastFailed` 来源即此映射（非 JSON 工具摘要）。Task 6 摘要行复用 `turnStartedAt`。
 
 - [ ] **Step 1: 写失败测试**
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { turnStatusLine } from '@/components/agent/turnStatusBar'
+import { turnStatusLine, resolveWaiting, failureReason } from '@/components/agent/turnStatusBar'
 
 describe('turnStatusLine（P1 状态行）', () => {
   const t0 = 1_000_000
@@ -400,11 +407,34 @@ describe('turnStatusLine（P1 状态行）', () => {
       .toEqual({ text: '等待你确认', mode: 'waiting' })
   })
   it('failed：带原因摘要，isStreaming 可已为 false', () => {
-    expect(turnStatusLine({ isStreaming: false, turnStartedAt: t0, now: t0 + 2000, waiting: false, lastFailed: '渠道连接超时' }))
-      .toEqual({ text: '生成失败 · 渠道连接超时', mode: 'failed' })
+    expect(turnStatusLine({ isStreaming: false, turnStartedAt: t0, now: t0 + 2000, waiting: false, lastFailed: '渠道密钥无效' }))
+      .toEqual({ text: '生成失败 · 渠道密钥无效', mode: 'failed' })
   })
   it('非流式无失败 → null（不渲染状态行）', () => {
     expect(turnStatusLine({ isStreaming: false, turnStartedAt: t0, now: t0, waiting: false })).toBeNull()
+  })
+})
+
+describe('resolveWaiting（P1 waiting 收紧）', () => {
+  it('propose pending_confirm 一票通过（即使文本仍在静默前）', () => {
+    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: true, chipSet: null, textIdleMs: 0 })).toBe(true)
+  })
+  it('纯文本片段 chip 需文本静默 ≥2s（防流式途中假阳性）', () => {
+    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false, chipSet: 'copy', textIdleMs: 300 })).toBe(false)
+    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false, chipSet: 'copy', textIdleMs: 2500 })).toBe(true)
+  })
+  it('非流式恒 false；无 chip 且无 propose 恒 false', () => {
+    expect(resolveWaiting({ isStreaming: false, proposePendingConfirm: true, chipSet: 'plan', textIdleMs: 9999 })).toBe(false)
+    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false, chipSet: null, textIdleMs: 9999 })).toBe(false)
+  })
+})
+
+describe('failureReason（P1 失败人话）', () => {
+  it('状态码与超时映射；未知兜底', () => {
+    expect(failureReason({ status: 401 })).toBe('渠道密钥无效')
+    expect(failureReason({ status: 429 })).toBe('额度或频率受限')
+    expect(failureReason(new Error('request timeout'))).toBe('上游响应超时')
+    expect(failureReason('boom')).toBe('生成失败，请重试')
   })
 })
 ```
@@ -419,24 +449,36 @@ Expected: FAIL（模块不存在）。
 
 - [ ] **Step 3: 实现**
 
+`turnStatusBar.ts` 三个纯函数（`turnStatusLine` 如上测试所示，不重复贴；另两个）：
+
 ```ts
-/** P1 状态行（设计 §2 第 1 层）：running 秒数实时、waiting 收口、failed 人话。 */
-export function turnStatusLine(input: {
+/** waiting 收紧：propose pending_confirm 一票通过；文本片段类 chip 需静默 2s
+ * （detectAgentChipSet 基于 assistantText 片段匹配，流式途中即可能命中——假阳性防线）。 */
+const WAITING_TEXT_IDLE_MS = 2000
+export function resolveWaiting(input: {
   isStreaming: boolean
-  turnStartedAt?: number
-  now: number
-  waiting: boolean
-  lastFailed?: string
-}): { text: string; mode: 'running' | 'waiting' | 'failed' } | null {
-  if (input.lastFailed) return { text: `生成失败 · ${input.lastFailed}`, mode: 'failed' }
-  if (!input.isStreaming) return null
-  if (input.waiting) return { text: '等待你确认', mode: 'waiting' }
-  const sec = input.turnStartedAt ? Math.max(0, Math.floor((input.now - input.turnStartedAt) / 1000)) : 0
-  return { text: `生成回复中 · ${sec}s`, mode: 'running' }
+  proposePendingConfirm: boolean
+  chipSet: string | null
+  textIdleMs: number
+}): boolean {
+  if (!input.isStreaming) return false
+  if (input.proposePendingConfirm) return true
+  return input.chipSet !== null && input.textIdleMs >= WAITING_TEXT_IDLE_MS
+}
+
+/** error → 人话（来源：SSE error 事件 data / 请求异常；禁用 JSON 工具摘要）。 */
+export function failureReason(err: unknown): string {
+  const status = (err as { status?: number } | null)?.status
+  if (status === 401) return '渠道密钥无效'
+  if (status === 403) return '渠道无权限'
+  if (status === 429) return '额度或频率受限'
+  const msg = String((err as { message?: string } | null)?.message ?? err ?? '')
+  if (/timeout|timed?\s*out|abort/i.test(msg)) return '上游响应超时'
+  return '生成失败，请重试'
 }
 ```
 
-SideRail 接入：streaming footer 处新增状态行节点，`waiting` 取 `chipSet.value !== null`（plan/copy/topo/atomic/propose/recipe/delivery 任一确认 chip 均视为等待用户），`lastFailed` 取最近 failed 步骤的 detail（computed）；秒数用组件内 `nowSec = ref(Date.now())` + `setInterval(1s)`（streaming 期间启动、结束清除，onUnmounted 兜底清理）。Panel/FloatingWindow 复用同一 computed 的 `text`（无 interval 的静态秒数可接受，注释注明）。
+SideRail 接入：streaming footer 处新增状态行节点——`waiting = resolveWaiting({ isStreaming, proposePendingConfirm: agent.proposePendingConfirm, chipSet: chipSet.value, textIdleMs: Date.now() - agent.lastTextDeltaAt })`；`lastFailed` 取本回合 error 经 `failureReason` 的结果（store 增 `turnError` ref，error 事件/请求异常时置位、新回合重置）。store 增 `proposePendingConfirm`（tool_result 分支：name==='propose_generation' 且 result.status==='pending_confirm' 置位）与 `lastTextDeltaAt`（text_delta 分支更新时间戳），新回合重置。秒数用组件内 `nowSec = ref(Date.now())` + `setInterval(1s)`（streaming 期间启动、结束清除，onUnmounted 兜底清理）。Panel/FloatingWindow 复用同一 computed 的 `text`（无 interval 的静态秒数可接受，注释注明三窗口秒数可能不同步属预期）。
 
 - [ ] **Step 4: 全量测试 + 提交**
 
@@ -549,6 +591,19 @@ describe('applyTurnUsage + turnSummaryLine（P1 摘要行）', () => {
     // 预置：2 条 add_node canvas 步 + 1 条 propose_generation tool 步（测试内用 applyCanvasAction/applyToolCall 构造）
     expect(turnSummaryLine(trace)).toBe('已创建 2 个节点 · 提议生成 3 张 · 用时 16s · 消耗 3.4k tokens')
   })
+  it('T6-3: replay 后摘要行完整（totalMs 取持久化事件重放结果，非回放时刻）', () => {
+    const source = createExecutionTrace()
+    applyToolCall(source, 'propose_generation', { status: 'pending_confirm' }, { args: '1 个节点' })
+    applyTurnUsage(source, { inputTokens: 500, outputTokens: 100 })
+    finalizeExecutionTrace(source)
+    const replayed = createExecutionTrace()
+    replayExecutionTraceEvents(replayed, collectEventsForReplay(source))
+    finalizeExecutionTrace(replayed)
+    expect(turnSummaryLine(replayed)).toBe(turnSummaryLine(source))
+  })
+```
+
+（`collectEventsForReplay` 是测试辅助：把 source.steps 序列化为 P0 持久化 executionEvents 形态——按 `replayExecutionTraceEvents` 真实入参构造，实现时展开。若 replay 路径不还原 totalMs，则 `finalizeExecutionTrace` 增分支：steps 存在但 totalMs 未定且末步 endedAt 可用时以事件时间差兜底，并在测试钉死。）
 })
 ```
 
@@ -579,7 +634,8 @@ git commit -m "feat(web): token 实耗显示与回合摘要行（节点/张数/�
 - [ ] **Step 2: `pnpm verify-spec-figures --file docs/superpowers/plans/2026-09-26-p1-turn-presentation.md`** Expected: PASS。
 - [ ] **Step 3: pi-runtime 先部署**（Task 1 的 create body 变更向后兼容：旧 Nest 不发 thinkingLevel → DEFAULT 兜底）。按 runbook：rsync → docker build（**--no-cache**）→ helm `--set image.tag=<新版本>` → curl :30100/metrics healthy。之后 `docker exec` 验证 dist 含新代码（runbook 警示）。
 - [ ] **Step 4: Nest + 前端过发布门**：merge master → dispatch deploy.yml → 三件套（镜像 sha+healthy / PI_RUNTIME_MODE=active / thread-verify PASS=16 FAIL=0）。
-- [ ] **Step 5: 浏览器实测（对照设计 §6 标尺 1-8）**：①发送 1s 内「生成回复中 · 0s」跳动；②确认 chip 出现时状态行「等待你确认」且秒停；③dock 开深度思考 → 执行过程出现「深度思考」步骤且关掉后消失（T1 链路）；④dock 选技能 → 执行过程「已加载技能 · <名>」（T2 链路）；⑤默认折叠头行「N 步 · 最新：…」，展开逐条图标人话；⑥回合结束摘要行；⑦刷新回放完整；⑧失败态（可拔 BYOK key 构造）「生成失败 · 摘要」。
+- [ ] **Step 5: 生产 usage 探针（Task 3 数据源实证）**：SSE 直探一轮真实对话，确认 `message_end` 事件的 `message.usage` 非空且 `turn_usage` 事件到达前端。**若 agnes 流式不回 usage**（OpenAI 流式需 `stream_options:{include_usage:true}`）：tokens 显示整体降级为不显示（状态行只留秒数、摘要行省略 tokens 段——T3 的 seenUsage 门已保证），并在计划执行记录中注明。
+- [ ] **Step 6: 浏览器实测（对照设计 §6 标尺 1-8）**：①发送 1s 内「生成回复中 · 0s」跳动；②确认 chip 出现时状态行「等待你确认」且秒停；③dock 开深度思考 → 执行过程出现「深度思考」步骤且关掉后消失（T1 链路）；**开 max 档发一轮，确认上游接受 reasoning_effort=high 不 400**（D-T1 映射实证）；④dock 选技能 → 执行过程「已加载技能 · <名>」（T2 链路）；⑤默认折叠头行「N 步 · 最新：…」，展开逐条图标人话；⑥回合结束摘要行；⑦刷新回放完整；⑧失败态（可拔 BYOK key 构造 401）「生成失败 · 渠道密钥无效」。
 
 ## Self-Review 记录
 
