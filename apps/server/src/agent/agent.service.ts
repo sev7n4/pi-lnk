@@ -40,7 +40,7 @@ import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createThinkingAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
 export interface PiCanvasContext {
@@ -67,6 +67,7 @@ const TRACE_PERSIST_EVENT_TYPES = new Set([
   'thinking',
   'explore',
   'error',
+  'turn_usage',
 ])
 
 export function buildTurnMetadata(input: {
@@ -724,6 +725,7 @@ export class AgentService {
     let assistantText = ''
     const canvasActions: CanvasAction[] = []
     const thinkingAccumulator = createThinkingAccumulator()
+    const usageAccumulator = createUsageAccumulator()
     const executionEvents: Array<{ type: string; data: unknown }> = []
     let done = false
     try {
@@ -752,6 +754,12 @@ export class AgentService {
         if (thinkingUi) {
           executionEvents.push({ type: 'thinking', data: thinkingUi.data })
           yield thinkingUi as AgentStreamEvent
+        }
+        // P1 状态行：usage 累积，agent_end 前恰发一次 turn_usage（seenUsage 门，见 pi-events.ts）
+        const usageUi = usageAccumulator.feed(event)
+        if (usageUi) {
+          executionEvents.push({ type: 'turn_usage', data: usageUi.data })
+          yield usageUi as AgentStreamEvent
         }
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue
