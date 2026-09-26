@@ -47,10 +47,12 @@ export function presentToolStep(step: {
 }
 
 /** 折叠头行：「N 步 · 最新：<icon> <label>」（phase/workflow_step 不计——workflow 轨迹另有进度语义）。 */
-export function timelineHeadline(trace: { steps: Array<{ kind: string }> }): string {
+export function timelineHeadline(trace: {
+  steps: Array<{ kind: string; label: string; meta?: { toolName?: string; args?: string } }>
+}): string {
   const visible = trace.steps.filter((s) => s.kind !== 'phase' && s.kind !== 'workflow_step')
   const last = visible[visible.length - 1]
   if (!last || visible.length === 0) return '0 步'
-  const shown = presentToolStep(last as { label: string; meta?: { toolName?: string; args?: string } })
+  const shown = presentToolStep(last)
   return `${visible.length} 步 · 最新：${shown.icon} ${shown.label}`
 }
