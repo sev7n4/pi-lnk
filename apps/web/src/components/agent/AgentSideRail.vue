@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, nextTick, watch } from 'vue'
+import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
@@ -127,6 +127,7 @@ import { extractThreadJourney } from '@/components/agent/journeyTraceHelpers'
 import type { JourneyTraceSnapshot } from '@/components/agent/journeyTraceTypes'
 import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
+import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
 import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
@@ -530,6 +531,49 @@ const chipSet = computed(() => {
   })
 })
 const awaitingConfirm = computed(() => chipSet.value === 'plan')
+
+/* ---- P1 回合状态行：实时秒数 ticker + waiting 收口 + 失败态 ---- */
+const nowSec = ref(Date.now())
+let statusTicker: number | null = null
+watch(
+  () => agent.isStreaming,
+  (streaming) => {
+    if (streaming) {
+      nowSec.value = Date.now()
+      if (statusTicker === null) {
+        statusTicker = window.setInterval(() => {
+          nowSec.value = Date.now()
+        }, 1000)
+      }
+    } else if (statusTicker !== null) {
+      window.clearInterval(statusTicker)
+      statusTicker = null
+    }
+  },
+  { immediate: true },
+)
+onUnmounted(() => {
+  if (statusTicker !== null) window.clearInterval(statusTicker)
+})
+
+const turnStatus = computed(() => {
+  // waiting 收紧：propose pending_confirm 一票通过；文本片段类 chip 需静默 ≥2s
+  // （detectAgentChipSet 基于 assistantText 片段匹配，流式途中即可能命中——假阳性防线）
+  const waiting = resolveWaiting({
+    isStreaming: agent.isStreaming,
+    proposePendingConfirm: agent.proposePendingConfirm,
+    chipSet: chipSet.value,
+    textIdleMs: nowSec.value - agent.lastTextDeltaAt,
+  })
+  const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
+  return turnStatusLine({
+    isStreaming: agent.isStreaming,
+    turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
+    now: nowSec.value,
+    waiting,
+    lastFailed,
+  })
+})
 const awaitingCopyConfirm = computed(() => chipSet.value === 'copy')
 const awaitingTopoConfirm = computed(() => chipSet.value === 'topo')
 const awaitingAtomicConfirm = computed(() => chipSet.value === 'atomic')
@@ -1694,6 +1738,7 @@ async function sendMessage(message: string, userDecision?: 'confirm' | 'revise')
     }
   } catch (err) {
     if ((err as Error)?.name !== 'AbortError') {
+      agent.markTurnError(err)
       agent.appendText(`\n\n⚠️ 请求失败: ${err}`)
     }
   } finally {
@@ -1956,6 +2001,9 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'thinking':
       agent.trackThinking(event.data as { status: string; summary?: string })
       break
+    case 'turn_usage':
+      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number })
+      break
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])
       break
@@ -2128,6 +2176,7 @@ function handleEvent(event: { type: string; data: unknown }) {
         retry_hint?: string
         tool_name?: string
       }
+      agent.markTurnError(data)
       agent.trackStructuredError(data)
       agent.appendText(`\n\n⚠️ ${data.message || '发生错误'}`)
       break
@@ -2551,6 +2600,14 @@ defineExpose({
             class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1"
             :class="{ 'agent-input-area--scrollable': hasDockPresentation }"
           >
+            <p
+              v-if="turnStatus"
+              class="agent-turn-status mx-0.5 mb-1 text-[11px]"
+              :class="`agent-turn-status--${turnStatus.mode}`"
+              data-testid="turn-status-line"
+            >
+              {{ turnStatus.text }}
+            </p>
             <div
               v-if="showCancelledCallout"
               class="mb-2 px-0.5"
@@ -3801,6 +3858,19 @@ defineExpose({
 
 .agent-preset-primary:hover:not(:disabled) {
   filter: brightness(1.04);
+}
+
+/* ---- P1 回合状态行 ---- */
+.agent-turn-status {
+  color: var(--neo-text-muted);
+}
+
+.agent-turn-status--failed {
+  color: #fca5a5;
+}
+
+.agent-turn-status--waiting {
+  color: var(--neo-text-secondary);
 }
 
 .agent-composer {

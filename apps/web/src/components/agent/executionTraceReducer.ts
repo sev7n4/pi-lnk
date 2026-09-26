@@ -2,6 +2,7 @@ import type { CanvasAction } from '@lnkpi/shared'
 import { formatStructuredError } from '@/components/agent/executionStepErrors'
 import {
   canvasActionLabel,
+  formatDuration,
   labelFromTextReplace,
   nodeStatusLabel,
 } from '@/components/agent/executionStepLabels'
@@ -53,6 +54,8 @@ export interface ExecutionTraceState {
   turnStartedAt: number
   turnEndedAt?: number
   totalMs?: number
+  /** P1 回合 token 实耗（turn_usage 事件覆盖写入，replay 幂等） */
+  usage?: { inputTokens: number; outputTokens: number }
 }
 
 let stepCounter = 0
@@ -485,6 +488,52 @@ export function visibleStepCount(trace: ExecutionTraceState): number {
   return trace.steps.length
 }
 
+/** P1：turn_usage 事件写入（重复调用覆盖不叠加——replay/多事件幂等）。 */
+export function applyTurnUsage(
+  trace: ExecutionTraceState,
+  usage: { inputTokens: number; outputTokens: number },
+) {
+  trace.usage = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
+}
+
+/** tokens 人类化：≥1k 显示 X.Xk（3400 → 3.4k），否则原数。 */
+function formatTokens(total: number): string {
+  if (total < 1000) return `${total}`
+  return `${(Math.round(total / 100) / 10).toFixed(1)}k`
+}
+
+/** 从 propose_generation 步骤解析张数：args「N 个节点」数字优先，缺省计 1。 */
+function proposeCount(step: ExecutionStep): number {
+  const args = step.meta?.args ?? (() => {
+    const prefix = '调用 propose_generation · '
+    return step.label.startsWith(prefix) ? step.label.slice(prefix.length) : undefined
+  })()
+  const m = /(\d+)\s*个节点/.exec(args ?? '')
+  return m ? Number(m[1]) : 1
+}
+
+/** P1 回合摘要行（done 后一次）：已创建 N 个节点 · 提议生成 M 张 · 用时 Ss · 消耗 X tokens。
+ * 各段数据缺失时省略对应段；无任何内容返回 null。 */
+export function turnSummaryLine(trace: ExecutionTraceState): string | null {
+  const nodeCount = trace.steps.filter(
+    (s) => s.kind === 'canvas' && s.label.startsWith('添加'),
+  ).length
+  const proposeSteps = trace.steps.filter(
+    (s) => s.kind === 'tool' && s.meta?.toolName === 'propose_generation',
+  )
+  const imageCount = proposeSteps.reduce((sum, s) => sum + proposeCount(s), 0)
+  const segments: string[] = []
+  if (nodeCount > 0) segments.push(`已创建 ${nodeCount} 个节点`)
+  if (imageCount > 0) segments.push(`提议生成 ${imageCount} 张`)
+  if (trace.totalMs != null) segments.push(`用时 ${formatDuration(trace.totalMs)}`)
+  if (trace.usage) {
+    segments.push(
+      `消耗 ${formatTokens(trace.usage.inputTokens + trace.usage.outputTokens)} tokens`,
+    )
+  }
+  return segments.length > 0 ? segments.join(' · ') : null
+}
+
 export function replayExecutionTraceEvents(
   events: Array<{ type: string; data: unknown }>,
 ): ExecutionTraceState {
@@ -518,6 +567,9 @@ export function replayExecutionTraceEvents(
         break
       case 'thinking':
         applyThinking(trace, event.data as { status: string; summary?: string })
+        break
+      case 'turn_usage':
+        applyTurnUsage(trace, event.data as { inputTokens: number; outputTokens: number })
         break
       case 'explore':
         applyExplore(trace, event.data as Parameters<typeof applyExplore>[1])

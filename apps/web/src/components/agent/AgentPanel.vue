@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from 'vue'
+import { computed, ref, nextTick, onMounted } from 'vue'
 import { useAgentStore } from '@/stores/agent'
 import { useAuthStore } from '@/stores/auth'
 import { apiUrl } from '@/services/api-base'
 import { lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { createAgentThreadId } from '@/components/agent/streamRecovery'
+import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
+import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
 
 const props = defineProps<{
   sessionId: string
@@ -89,6 +91,7 @@ async function send() {
       }
     }
   } catch (err) {
+    agent.markTurnError(err)
     agent.appendText(`\n\n⚠️ 请求失败: ${err}`)
   } finally {
     agent.finishStreaming()
@@ -123,7 +126,11 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'thinking':
       agent.trackThinking(event.data as { status: string; summary?: string })
       break
+    case 'turn_usage':
+      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number })
+      break
     case 'error':
+      agent.markTurnError(event.data)
       agent.appendText(`\n\n⚠️ ${(event.data as { message: string }).message}`)
       break
   }
@@ -138,6 +145,29 @@ function scrollToBottom() {
 }
 
 onMounted(loadHistory)
+
+// P1 状态行（轻量接入）：无秒级 ticker，秒数为静态快照——三个窗口秒数可能不同步，属预期
+const turnStatus = computed(() => {
+  const waiting = resolveWaiting({
+    isStreaming: agent.isStreaming,
+    proposePendingConfirm: agent.proposePendingConfirm,
+    chipSet: null,
+    textIdleMs: 0,
+  })
+  return turnStatusLine({
+    isStreaming: agent.isStreaming,
+    turnStartedAt: [...agent.messages].reverse().find((m) => m.role === 'assistant')?.executionTrace?.turnStartedAt,
+    now: Date.now(),
+    waiting,
+    lastFailed: agent.turnError != null ? failureReason(agent.turnError) : undefined,
+  })
+})
+
+// P1 回合摘要行（轻量）：最近回合 done 后显示节点/张数/耗时/tokens
+const summaryLine = computed(() => {
+  const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
+  return last && !last.streaming ? turnSummaryLine(last.executionTrace ?? { steps: [], collapsed: true, turnStartedAt: 0 }) : null
+})
 </script>
 
 <template>
@@ -194,6 +224,25 @@ onMounted(loadHistory)
         </div>
       </div>
     </div>
+
+    <!-- 回合状态行 -->
+    <p
+      v-if="turnStatus"
+      class="px-4 pb-1 text-[11px]"
+      :class="turnStatus.mode === 'failed' ? 'text-red-300' : 'text-white/50'"
+      data-testid="turn-status-line"
+    >
+      {{ turnStatus.text }}
+    </p>
+
+    <!-- P1 回合摘要行 -->
+    <p
+      v-if="summaryLine"
+      class="px-4 pb-1 text-[10px] text-white/40"
+      data-testid="turn-summary-line"
+    >
+      {{ summaryLine }}
+    </p>
 
     <!-- Input -->
     <div class="border-t border-white/5 p-3">

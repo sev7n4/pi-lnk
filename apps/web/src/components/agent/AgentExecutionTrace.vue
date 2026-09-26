@@ -5,6 +5,8 @@ import type { ExecutionTraceState, ExecutionStep } from '@/components/agent/exec
 import { formatDuration } from '@/components/agent/executionStepLabels'
 import type { JourneyTraceSnapshot } from '@/components/agent/journeyTraceTypes'
 import { PRESENTATION_STEPS } from '@/components/agent/presentation/types'
+import { presentToolStep, timelineHeadline } from '@/components/agent/toolPresentation'
+import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 
 const props = defineProps<{
@@ -54,6 +56,12 @@ const headerLabel = computed(() => {
     return `执行过程（进行中… · ${stepCount.value} 步）`
   }
   if (count === 0) return '执行过程'
+  // P1 认知负荷：折叠头行附最新一步人话（N 步 · 最新：<icon> <label>）——仅操作轨迹；
+  // workflow 轨迹已有「第 n/9 步」进度语义，不叠加
+  if (!expanded.value && !hasWorkflow.value) {
+    const headline = timelineHeadline(props.trace)
+    if (headline.includes('· 最新：')) return `执行过程（${headline}）`
+  }
   return `执行过程（${count} 步）`
 })
 
@@ -98,6 +106,14 @@ function onStepClick(step: ExecutionStep) {
   const nodeId = step.meta?.nodeId
   if (nodeId) emit('focusNode', nodeId)
 }
+
+/** P1 注册表：tool 步经人话化翻译（icon + 动词 · args），其余步骤维持原 label。 */
+function stepDisplay(step: ExecutionStep): string {
+  if (step.kind !== 'tool') return step.label
+  return presentToolStep(step).label
+}
+
+const summaryLine = computed(() => turnSummaryLine(props.trace))
 </script>
 
 <template>
@@ -123,21 +139,23 @@ function onStepClick(step: ExecutionStep) {
         <p class="mb-1 text-[10px] font-medium text-[var(--neo-text-muted)]">操作明细</p>
         <ul class="space-y-0.5">
           <li
-            v-for="step in operationSteps"
+            v-for="(step, i) in operationSteps"
             :key="step.id"
             data-testid="operation-step"
-            class="flex items-start gap-1.5 text-[10px] leading-snug"
+            class="agent-trace-step flex items-start gap-1.5 text-[10px] leading-snug"
+            :style="{ animationDelay: `${Math.min(i * 60, 600)}ms` }"
             :class="[
               step.meta?.nodeId ? 'cursor-pointer hover:text-[var(--neo-text-primary)]' : '',
               step.status === 'failed' ? 'text-red-400/90' : 'text-[var(--neo-text-muted)]',
               step.status === 'running' ? 'animate-pulse' : '',
               step.kind === 'thinking' ? 'italic opacity-80' : '',
               step.kind === 'explore' ? 'opacity-90' : '',
+              step.status === 'done' ? 'agent-trace-step--done' : '',
             ]"
             @click="onStepClick(step)"
           >
             <span class="min-w-0 flex-1">
-              <span>{{ statusIcon(step) }} {{ step.label }}{{ stepDuration(step) }}</span>
+              <span>{{ statusIcon(step) }} {{ stepDisplay(step) }}{{ stepDuration(step) }}</span>
               <p v-if="step.detail" class="mt-0.5 pl-3 opacity-75">{{ step.detail }}</p>
             </span>
             <CanvasLocatePinIcon
@@ -149,5 +167,42 @@ function onStepClick(step: ExecutionStep) {
         </ul>
       </section>
     </div>
+    <!-- P1 回合摘要行：done 后一次（节点/张数/耗时/tokens） -->
+    <p
+      v-if="!streaming && summaryLine"
+      data-testid="turn-summary-line"
+      class="mt-1 pl-4 text-[10px] text-[var(--neo-text-muted)]"
+    >
+      {{ summaryLine }}
+    </p>
   </div>
 </template>
+
+<style scoped>
+/* P1 动效节拍：步骤 stagger 入场（delay 由行内 style 按 i*60ms 注入，上限 600ms） */
+.agent-trace-step {
+  animation: agent-trace-step-in 0.22s ease-out both;
+}
+
+.agent-trace-step--done {
+  transition: opacity 0.2s ease;
+}
+
+@keyframes agent-trace-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-trace-step {
+    animation: none;
+  }
+}
+</style>

@@ -22,6 +22,7 @@ import {
   applyTextReplaceStage,
   applyThinking,
   applyToolCall,
+  applyTurnUsage,
   createExecutionTrace,
   finalizeExecutionTrace,
   replayExecutionTraceEvents,
@@ -52,6 +53,12 @@ export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
   const isStreaming = ref(false)
   const pendingActions = ref<CanvasAction[]>([])
+  /** P1 状态行：本回合 propose_generation 已返回 pending_confirm（waiting 一票通过） */
+  const proposePendingConfirm = ref(false)
+  /** P1 状态行：最近一次 text_delta 时间戳（waiting 文本静默 ≥2s 判定用） */
+  const lastTextDeltaAt = ref(0)
+  /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
+  const turnError = ref<unknown>(null)
 
   function lastAssistant(): AgentStreamMessage | undefined {
     return [...messages.value].reverse().find((m) => m.role === 'assistant')
@@ -69,6 +76,10 @@ export const useAgentStore = defineStore('agent', () => {
     content: string,
     extras?: { attachments?: SidebarAttachment[]; attachmentRefKeys?: string[] },
   ) {
+    // 新回合开始：重置回合级状态行信号（propose 置位 / 文本时间戳 / 失败态）
+    proposePendingConfirm.value = false
+    lastTextDeltaAt.value = 0
+    turnError.value = null
     messages.value.push({
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -93,6 +104,8 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function appendText(text: string) {
+    // text_delta 落点：刷新最近文本时间戳（waiting 的文本静默判定依赖它）
+    lastTextDeltaAt.value = Date.now()
     const last = lastAssistant()
     if (last) {
       last.content += text
@@ -139,6 +152,13 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function endToolCall(toolCallId: string | undefined, name: string, result?: unknown) {
+    // tool_result 落点：propose_generation 返回 pending_confirm → waiting 一票通过信号
+    if (
+      name === 'propose_generation'
+      && (result as { status?: string } | null)?.status === 'pending_confirm'
+    ) {
+      proposePendingConfirm.value = true
+    }
     const last = lastAssistant()
     if (!last) return
     if (toolCallId) {
@@ -207,6 +227,13 @@ export const useAgentStore = defineStore('agent', () => {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyThinking(last.executionTrace, data)
+  }
+
+  /** P1：turn_usage 事件落 trace（摘要行数据源），沿 thinking 同款接线。 */
+  function trackTurnUsage(data: { inputTokens: number; outputTokens: number }) {
+    ensureExecutionTrace()
+    const last = lastAssistant()
+    if (last?.executionTrace) applyTurnUsage(last.executionTrace, data)
   }
 
   function trackExplore(data: Parameters<typeof applyExplore>[1]) {
@@ -289,6 +316,7 @@ export const useAgentStore = defineStore('agent', () => {
       turnStartedAt: raw.turnStartedAt ?? Date.now(),
       turnEndedAt: raw.turnEndedAt,
       totalMs: raw.totalMs,
+      usage: raw.usage,
     }
   }
 
@@ -325,15 +353,26 @@ export const useAgentStore = defineStore('agent', () => {
     })
   }
 
+  /** P1 状态行：SSE error 事件 / 请求异常时置位本回合失败态（新回合由 addUserMessage 重置）。 */
+  function markTurnError(err: unknown) {
+    turnError.value = err
+  }
+
   function clear() {
     messages.value = []
     pendingActions.value = []
+    proposePendingConfirm.value = false
+    lastTextDeltaAt.value = 0
+    turnError.value = null
   }
 
   return {
     messages,
     isStreaming,
     pendingActions,
+    proposePendingConfirm,
+    lastTextDeltaAt,
+    turnError,
     addUserMessage,
     startAssistantMessage,
     appendText,
@@ -351,6 +390,8 @@ export const useAgentStore = defineStore('agent', () => {
     trackJourneyUpdate,
     addCanvasAction,
     flushActions,
+    markTurnError,
+    trackTurnUsage,
     finishStreaming,
     loadHistory,
     clear,

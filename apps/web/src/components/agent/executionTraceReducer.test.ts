@@ -10,9 +10,11 @@ import {
   applyTaskUpdate,
   applyTextReplaceStage,
   applyToolCall,
+  applyTurnUsage,
   createExecutionTrace,
   finalizeExecutionTrace,
   replayExecutionTraceEvents,
+  turnSummaryLine,
   workflowStepsFromSnapshot,
 } from '@/components/agent/executionTraceReducer'
 import { labelFromTextReplace } from '@/components/agent/executionStepLabels'
@@ -283,5 +285,44 @@ describe('applyToolCall toolCallId 合并（可观测性专项）', () => {
     applyToolCall(trace, 'load_skill', { message: 'a' }, { toolCallId: 'c1' })
     applyToolCall(trace, 'load_skill', { message: 'a' }, { toolCallId: 'c1' })
     expect(trace.steps.filter((s) => s.kind === 'tool')).toHaveLength(1)
+  })
+})
+
+describe('applyTurnUsage + turnSummaryLine（P1 摘要行）', () => {
+  it('T6-1: usage 覆盖幂等（replay 不叠加）', () => {
+    const trace = createExecutionTrace()
+    applyTurnUsage(trace, { inputTokens: 100, outputTokens: 20 })
+    applyTurnUsage(trace, { inputTokens: 100, outputTokens: 20 })
+    expect(trace.usage).toEqual({ inputTokens: 100, outputTokens: 20 })
+  })
+
+  it('T6-2: 摘要行组装节点数/张数/耗时/tokens；无 usage 省略 tokens 段', () => {
+    const trace = createExecutionTrace()
+    trace.totalMs = 16000
+    applyCanvasAction(trace, { type: 'add_node', payload: { nodeType: 'image', data: { title: '耳机' } } })
+    applyCanvasAction(trace, { type: 'add_node', payload: { nodeType: 'image', data: { title: '音箱' } } })
+    applyToolCall(trace, 'propose_generation', { status: 'pending_confirm' }, { args: '3 个节点' })
+    applyTurnUsage(trace, { inputTokens: 3000, outputTokens: 400 })
+    expect(turnSummaryLine(trace)).toBe('已创建 2 个节点 · 提议生成 3 张 · 用时 16s · 消耗 3.4k tokens')
+  })
+
+  it('T6-2b: 无 usage 省略 tokens 段；无画布/提议步骤省略对应段', () => {
+    const trace = createExecutionTrace()
+    trace.totalMs = 5000
+    expect(turnSummaryLine(trace)).toBe('用时 5s')
+  })
+
+  it('T6-3: replay 后摘要行完整（turn_usage 事件回放还原 usage）', () => {
+    const source = createExecutionTrace()
+    applyToolCall(source, 'propose_generation', { status: 'pending_confirm' }, { args: '1 个节点' })
+    applyTurnUsage(source, { inputTokens: 500, outputTokens: 100 })
+    const replayed = replayExecutionTraceEvents([
+      { type: 'tool_call', data: { name: 'propose_generation' } },
+      { type: 'tool_result', data: { name: 'propose_generation', result: { status: 'pending_confirm' } } },
+      { type: 'turn_usage', data: { inputTokens: 500, outputTokens: 100 } },
+    ])
+    expect(replayed.usage).toEqual({ inputTokens: 500, outputTokens: 100 })
+    expect(turnSummaryLine(replayed)).toContain('消耗 600 tokens')
+    expect(turnSummaryLine(source)).toContain('提议生成 1 张')
   })
 })
