@@ -944,8 +944,18 @@ merge 到 pi-lnk master → dispatch deploy.yml `{ref:master, branch:master}` �
 
 **P1 状态行 + 收口**：实时秒数（前端计时）、`waiting_user` 收口（footer 显示「等待你确认」并停止计时——现状转圈不止是体验错误）、`turn_usage` UI 事件（Nest 从 pi usage 汇总 inputTokens/outputTokens，前端显示 token 实耗，换算接口 `usageToCredits` 留纯函数）、失败态人话、回合摘要行（前端由 trace + turn_usage 汇总，零后端）。
 
-**P1 时间线**：认知负荷控制（默认折叠、头行「N 步 · 最新：🖼️ 提议生成 3 张图」，优先于注册表）、步骤动效节拍（纯 CSS）、工具展示注册表（前端纯映射表，读工具人话化，D2：不进事件契约）、thinking 开关经 ensurePiSession 透传 pi-runtime（老链路已有 thinking/thinkingEffort，pi 路径缺失）。
+**P1 时间线**：认知负荷控制（默认折叠、头行「N 步 · 最新：🖼️ 提议生成 3 张图」，优先于注册表）、步骤动效节拍（纯 CSS）、工具展示注册表（前端纯映射表，读工具人话化，D2：不进事件契约）、thinking 开关经 ensurePiSession 透传 pi-runtime（老链路已有 thinking/thinkingEffort，pi 路径缺失）、**dock 技能选择器 skillId→forceSkills 转接**（2026-09-26 拍板并入 P1，见下）。
 
-**P2 结果层**：linkedOutputs 接线（近零成本拿产物缩略卡）、生成占位→完成替换（node_status 通道已有）、预计消耗（粗估）、侧栏技能选择器（D4：正式项，显性调用主要形态）。
+**P1 补充（2026-09-26 拍板）：skillId 转接（与 P1 呈现层合并做，最便宜项）**
+- 现状缺口：dock 技能选择器发出的 `skillId` 只被老 LangGraph 路径消费（`mapUiSkillId` → streamRun）；pi active 路径只认消息文本里的 `/skill <name> <rest>` 显性指令，dock 选技能对 pi 路径无效。
+- 改法（Nest 侧 ~20 行，pi-runtime 零改动）：`chatConversation` 收到 skillId 且走 pi 路径时，复用 Task 4/5 既有通道——skillId 经白名单校验（`client.listSkills()`，未知名 fail-soft 保持原行为）映射为 `forceSkills: [name]`，与文本 `/skill` 命令互不冲突（显式命令优先）。
+- 落点：`apps/server/src/agent/agent.service.ts` streamFromPiRuntime 签名增加 skillId（或并入 piContext）；`streamFromRuntime` 行为不变。
+- 注意：P2 结果层的「侧栏技能选择器」（D4）是前端正式形态，本转接是其后端地基——先通后端，选择器上线即生效。
+
+**另立项（2026-09-26 拍板纳入排期，均需独立 spec，不在本计划 P1/P2 范围）**
+- **BYOK 进 pi-runtime**（per-session model/key 注入契约）：现状 pi 链路模型 env 装配（agnes-2.5-flash + 平台 key），dock 的 model/thinking/thinkingEffort 逐请求参数全部丢弃；thinkingLevel 透传的逐请求部分随 P1 做，BYOK 密钥通道（providerResolver → pi-runtime per-session 注入、toolContext 安全模型不破坏）工作量周级，需先出设计 spec。命名建议避开 P1/P2（如 K-1），与本计划呈现层分层名区分。
+- **侧栏识图（芯片上传 vision 解析）**：现状芯片上传结构链路已通（toolContext.attachments + apply_sidebar_attachments 写 localRefs + systemPrompt 侧栏块），但模型只看到文件名，看不到图片像素（sidebar-block.ts 注释明确 vision 解析块后置，见审计 §4）；老链路有 parse_sidebar_media → run-vision-qa 识图。接入须对齐 `docs/superpowers/specs/2026-09-16-agent-sidebar-vision-provider-context-design.md` 的 D-SYNC（识图与对话同一 `channel::model`、BYOK 同源，杜绝掉平台免费额度），且依赖 BYOK 进 pi 的密钥通道先落。
+
+**P2 结果层**：linkedOutputs 接线（近零成本拿产物缩略卡）、生成占位→完成替换（node_status 通道已有）、预计消耗（粗估）、侧栏技能选择器（D4：正式项，显性调用主要形态；后端 skillId 转接已前移至 P1）。
 
 **P2 后独立立项**：presentation envelope 输出契约设计（模型按 schema 输出 or Nest 派生，工作量周级，D3）。
