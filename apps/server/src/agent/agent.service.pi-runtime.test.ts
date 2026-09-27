@@ -14,6 +14,8 @@ import { AgentRuntimeClient } from './agent-runtime.client'
 import { PiRuntimeError } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
+import type { SidebarAttachment } from '@lnkpi/shared'
+import { resetSidebarParseCache } from './sidebar-vision'
 
 describe('AgentService pi-runtime switch (B4)', () => {
   const agentMessageCreate = vi.fn()
@@ -161,6 +163,130 @@ describe('AgentService pi-runtime switch (B4)', () => {
       setResolver(BYOK_RESOLVED)
       const opts = await runTurn(undefined)
       expect(opts?.llm).toBeUndefined()
+    })
+  })
+
+  describe('③ 侧栏识图进 pi（老 runtime parse_sidebar_media 等价物）', () => {
+    const IMAGE_ATTACHMENT: SidebarAttachment[] = [
+      { id: 'a1', mediaType: 'image', sourceKind: 'upload', label: '参考图 1', url: 'https://cdn/1.png' },
+    ]
+    const VISION_OK = {
+      pass: true,
+      reason: 'ok',
+      visionUsed: true,
+      userFacingSummary: '一双白色运动鞋，侧拍',
+      category: '运动鞋',
+    }
+
+    /**
+     * 注意：基础 systemPrompt 的规则 7 里本身就有「若已提供【侧栏参考图解析】」这句字面量，
+     * 所以断言不能用裸的【侧栏参考图解析】，要用解析块的起始行做标记。
+     */
+    const PARSE_BLOCK_MARKER = '【侧栏参考图解析】\n摘要：'
+
+    // 解析缓存是模块级 Map，跨用例必须清（否则前一条用例的成功块会被下一条命中）
+    beforeEach(() => {
+      resetSidebarParseCache()
+    })
+
+    function setResolver(modelName: string) {
+      const resolver = (service as unknown as { providerResolver: { resolveForGeneration: unknown } })
+        .providerResolver as { resolveForGeneration: ReturnType<typeof vi.fn> }
+      resolver.resolveForGeneration.mockResolvedValue({
+        modelName,
+        credentials: { apiKey: 'sk-x', baseUrl: 'https://gw/v1' },
+        source: 'user',
+      })
+    }
+
+    function setVisionTools(impl: (input: unknown) => Promise<unknown>) {
+      ;(service as unknown as { canvasTools: unknown }).canvasTools = { runVisionQa: vi.fn(impl) }
+      return (service as unknown as { canvasTools: { runVisionQa: ReturnType<typeof vi.fn> } })
+        .canvasTools.runVisionQa
+    }
+
+    async function runTurnWithAttachments(attachments?: SidebarAttachment[]) {
+      process.env.PI_RUNTIME_MODE = 'active'
+      process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+      const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+      vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+      for await (const _e of service.streamConversation(
+        's1',
+        '这图是什么',
+        'u1',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'ch_x::deepseek-flash',
+        undefined,
+        attachments,
+      )) {
+        // drain
+      }
+      return pi.createSession.mock.calls[0]?.[1] as { systemPrompt?: string } | undefined
+    }
+
+    afterEach(() => {
+      delete process.env.PI_SIDEBAR_VISION
+      ;(service as unknown as { canvasTools?: unknown }).canvasTools = undefined
+    })
+
+    it('贴图 + 视觉模型 → 调 runVisionQa，解析块并入 systemPrompt', async () => {
+      setResolver('deepseek-flash')
+      const runVisionQa = setVisionTools(async () => VISION_OK)
+      const opts = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      expect(runVisionQa).toHaveBeenCalledTimes(1)
+      const call = runVisionQa.mock.calls[0]?.[0] as { imageUrls: string[]; model: string }
+      expect(call.imageUrls).toEqual(['https://cdn/1.png'])
+      expect(call.model).toBe('deepseek-flash')
+      expect(opts?.systemPrompt).toContain(PARSE_BLOCK_MARKER)
+      expect(opts?.systemPrompt).toContain('摘要：一双白色运动鞋，侧拍')
+    })
+
+    it('非视觉模型 → 不调 runVisionQa，但出「未能识别」块（对齐 VISION_UNSUPPORTED）', async () => {
+      setResolver('deepseek-v4-pro')
+      const runVisionQa = setVisionTools(async () => VISION_OK)
+      const opts = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      expect(runVisionQa).not.toHaveBeenCalled()
+      // 老链路在 vision_used=false 时仍输出块（摘要=未知）+ 兜底话术，
+      // 目的是不让模型拿着文件名去编一版空品类的上架方案。
+      expect(opts?.systemPrompt).toContain('【侧栏参考图解析】')
+      expect(opts?.systemPrompt).toContain('摘要：未知')
+      expect(opts?.systemPrompt).toContain('参考图未能识别')
+    })
+
+    it('识图抛错 → fail-soft：出「未能识别」块，不阻断对话', async () => {
+      setResolver('deepseek-flash')
+      setVisionTools(async () => {
+        throw new Error('vision upstream 500')
+      })
+      const opts = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      expect(opts?.systemPrompt).toContain('摘要：未知')
+      expect(opts?.systemPrompt).toContain('参考图未能识别')
+    })
+
+    it('无贴图 / 开关 off → 不调 runVisionQa，且不注入任何解析块', async () => {
+      setResolver('deepseek-flash')
+      const runVisionQa = setVisionTools(async () => VISION_OK)
+      const noAtt = await runTurnWithAttachments(undefined)
+      expect(runVisionQa).not.toHaveBeenCalled()
+      expect(noAtt?.systemPrompt ?? '').not.toContain('【侧栏参考图解析】\n摘要')
+
+      process.env.PI_SIDEBAR_VISION = 'off'
+      const off = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      expect(runVisionQa).not.toHaveBeenCalled()
+      expect(off?.systemPrompt ?? '').not.toContain('【侧栏参考图解析】\n摘要')
+    })
+
+    it('跨轮复用：同 provider + 同图片集合，第二轮不再调 vision', async () => {
+      setResolver('deepseek-flash')
+      const runVisionQa = setVisionTools(async () => VISION_OK)
+      const first = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      const second = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      expect(runVisionQa).toHaveBeenCalledTimes(1)
+      expect(first?.systemPrompt).toContain('摘要：一双白色运动鞋，侧拍')
+      expect(second?.systemPrompt).toContain('摘要：一双白色运动鞋，侧拍')
     })
   })
 
