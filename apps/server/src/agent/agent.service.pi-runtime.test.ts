@@ -601,6 +601,76 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(createIdxs[1]).toBeGreaterThan(firstDeleteResolved)
   })
 
+  it('active：getThreadState 短路——返回 null 且不再打老 runtime（老 runtime 退役前置 ①）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    const spy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+      getThreadState: vi.fn().mockResolvedValue({ threadId: 't1', phase: 'x' }),
+    } as unknown as AgentRuntimeClient)
+
+    expect(await service.getThreadState('t1')).toBeNull()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('active：getThreadTimeline 同样短路', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    const spy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+      getThreadTimeline: vi.fn().mockResolvedValue({ threadId: 't1', entries: [] }),
+    } as unknown as AgentRuntimeClient)
+
+    expect(await service.getThreadTimeline('t1')).toBeNull()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('active：runtime-health 心跳探 pi-runtime，不再打老 runtime（退役前置 ①b）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    const oldSpy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+      healthOk: vi.fn().mockResolvedValue(true),
+    } as unknown as AgentRuntimeClient)
+    const piSpy = vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue({
+      healthz: vi.fn().mockResolvedValue({ status: 'ok', sessions: 0 }),
+    } as unknown as PiRuntimeClient)
+
+    const result = await service.checkRuntimeHealth()
+    expect(result.ok).toBe(true)
+    expect(piSpy).toHaveBeenCalledWith('http://127.0.0.1:8100')
+    expect(oldSpy).not.toHaveBeenCalled()
+  })
+
+  it('active + pi 不可达：心跳回落探老 runtime（对话确实走 D-ζ\' 回落）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue({
+      healthz: vi.fn().mockResolvedValue(null),
+    } as unknown as PiRuntimeClient)
+    const oldSpy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+      healthOk: vi.fn().mockResolvedValue(true),
+    } as unknown as AgentRuntimeClient)
+
+    const result = await service.checkRuntimeHealth()
+    expect(result.ok).toBe(true)
+    expect(oldSpy).toHaveBeenCalledWith('http://127.0.0.1:8000')
+  })
+
+  it('off（默认）：thread-state 仍读老 runtime checkpoint（行为不变）', async () => {
+    delete process.env.PI_RUNTIME_MODE
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    const getThreadState = vi.fn().mockResolvedValue({ threadId: 't1', phase: 'await_confirm' })
+    const spy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+      getThreadState,
+    } as unknown as AgentRuntimeClient)
+
+    expect(await service.getThreadState('t1')).toEqual({ threadId: 't1', phase: 'await_confirm' })
+    expect(spy).toHaveBeenCalledWith('http://127.0.0.1:8000')
+  })
+
   it('shadow 镜像：createSession 收到以真实 sessionId 组装的 systemPrompt + userId', async () => {
     process.env.PI_RUNTIME_MODE = 'shadow'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
