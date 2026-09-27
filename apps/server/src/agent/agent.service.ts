@@ -394,9 +394,22 @@ export class AgentService {
     return this.createRuntimeClient(runtimeUrl).cancelRun(input)
   }
 
-  /** Proxy agent-runtime health check for frontend heartbeat detection. */
+  /** Proxy agent-runtime health check for frontend heartbeat detection.
+   *
+   * pi active 时对话真正依赖的是 pi-runtime，心跳必须探 pi：否则老 runtime 退役后
+   * 前端每 15s 拿到 ok:false → 误报「生成服务暂时不可达」并拦掉重连（下线前置 ①b）。
+   * pi 不可达时 chat 会按 D-ζ' 回落 LangGraph，此时继续探回落链路——只要回落链路
+   * 还活着，心跳就不该报不可达。 */
   async checkRuntimeHealth(): Promise<{ ok: boolean; latencyMs?: number }> {
     const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
+    if (this.getPiRuntimeMode() === 'active') {
+      const piUrl = this.getPiRuntimeUrl()
+      if (piUrl) {
+        const start = Date.now()
+        const piOk = (await this.createPiRuntimeClient(piUrl).healthz()) !== null
+        if (piOk) return { ok: true, latencyMs: Date.now() - start }
+      }
+    }
     if (!runtimeUrl) return { ok: false }
     const client = this.createRuntimeClient(runtimeUrl)
     const start = Date.now()
@@ -404,7 +417,10 @@ export class AgentService {
     return { ok, latencyMs: ok ? Date.now() - start : undefined }
   }
 
-  /** W12: Read LangGraph checkpoint phase for reconnect UI. */
+  /** W12: Read LangGraph checkpoint phase for reconnect UI.
+   * pi active 时对话状态在 pi-runtime，老 LangGraph 根本没有该 thread 的 checkpoint
+   * （生产实测：24h 内 47 次查询全部空转）→ 直接返回 null，与「查不到」等价，
+   * 同时不再打到即将退役的老 runtime（下线前置 ①）。 */
   async getThreadState(threadId: string): Promise<{
     threadId: string
     phase: string | null
@@ -418,6 +434,8 @@ export class AgentService {
     atomicTitle?: string | null
     flowMode?: string | null
   } | null> {
+    // 下线前置 ①：pi active 下对话状态不在 LangGraph，查也无意义
+    if (this.getPiRuntimeMode() === 'active') return null
     const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
     if (!runtimeUrl || !threadId.trim()) return null
     const client = this.createRuntimeClient(runtimeUrl)
@@ -438,6 +456,8 @@ export class AgentService {
     }>
     checkpointCount: number
   } | null> {
+    // 同 getThreadState：pi active 下 checkpoint 历史不在 LangGraph
+    if (this.getPiRuntimeMode() === 'active') return null
     const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
     if (!runtimeUrl || !threadId.trim()) return null
     const client = this.createRuntimeClient(runtimeUrl)
