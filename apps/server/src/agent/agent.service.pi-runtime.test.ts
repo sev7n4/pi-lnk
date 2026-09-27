@@ -4,7 +4,7 @@
  * 覆盖三态开关语义：
  *   off（默认）  — PI_RUNTIME_URL 存在也不触碰 pi-runtime
  *   active      — healthz 通过 → 事件流走 pi-runtime 并正确映射/清理
- *   active 失败  — healthz 不通过 → 回落 LangGraph 路径（D-ζ' 回退）
+ *   active 失败  — healthz 不通过 → 直接报不可用，不再回落 LangGraph（退役收口）
  *   shadow      — LangGraph 照常服务，pi 仅接收镜像（事件不进 UI 流）
  */
 import 'reflect-metadata'
@@ -528,9 +528,10 @@ describe('AgentService pi-runtime switch (B4)', () => {
     expect(metadata.executionEvents).toContainEqual({ type: 'canvas_action', data: action })
   })
 
-  it('active + healthz 失败：回落 LangGraph 路径（D-ζ’ 回退语义）', async () => {
+  it('active + healthz 失败：直接报不可用，**不回落** LangGraph（退役收口）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    // 老 runtime 仍"活着"——若还有回落逻辑就会被它接走，这里正是要断言不再被接走
     process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
     const pi = stubPiClient([], false)
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
@@ -539,7 +540,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
       yield { type: 'text_delta', data: { text: 'from-langgraph' } }
       yield { type: 'done', data: {} }
     })
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
+    const createRuntimeClient = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
       healthOk: vi.fn().mockResolvedValue(true),
       streamRun,
     } as unknown as AgentRuntimeClient)
@@ -550,8 +551,13 @@ describe('AgentService pi-runtime switch (B4)', () => {
     }
 
     expect(pi.createSession).not.toHaveBeenCalled()
-    expect(events.map((e) => e.type)).toEqual(['text_delta', 'done'])
-    expect(events[0].data).toEqual({ text: 'from-langgraph' })
+    // 关键：老 runtime 一次都没被实例化（不再作为兜底）
+    expect(createRuntimeClient).not.toHaveBeenCalled()
+    expect(streamRun).not.toHaveBeenCalled()
+    expect(events.map((e) => e.type)).toEqual(['error', 'done'])
+    expect(events[0].data).toEqual(
+      expect.objectContaining({ error_type: 'runtime_unavailable' }),
+    )
   })
 
   it('shadow：LangGraph 照常服务，pi 仅接收镜像且事件不进 UI 流', async () => {
@@ -856,7 +862,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(oldSpy).not.toHaveBeenCalled()
   })
 
-  it('active + pi 不可达：心跳回落探老 runtime（对话确实走 D-ζ\' 回落）', async () => {
+  it('active + pi 不可达：心跳如实报不可用，不再探老 runtime（与 chat 不回落一致）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
@@ -868,8 +874,9 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     } as unknown as AgentRuntimeClient)
 
     const result = await service.checkRuntimeHealth()
-    expect(result.ok).toBe(true)
-    expect(oldSpy).toHaveBeenCalledWith('http://127.0.0.1:8000')
+    // 老 runtime 虽"活着"，但 active 下它不再服务 chat → 心跳不能报可用
+    expect(result.ok).toBe(false)
+    expect(oldSpy).not.toHaveBeenCalled()
   })
 
   it('off（默认）：thread-state 仍读老 runtime checkpoint（行为不变）', async () => {
