@@ -35,7 +35,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
-import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { PiRuntimeClient, type PiSessionLlmOverride } from './pi-runtime/pi-runtime.client'
+import { resolveModelCapability } from '../provider/model-capability'
 import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
@@ -256,9 +257,11 @@ export class AgentService {
             threadId,
             piContext,
             { thinking, thinkingEffort },
-            // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
-            skillId,
-          )) {
+    // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
+    skillId,
+    // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
+    model,
+  )) {
             if (event.type === 'text_delta') {
               assistantText += (event.data as { text: string }).text
             }
@@ -493,6 +496,53 @@ export class AgentService {
     return process.env.PI_RUNTIME_URL?.trim() || undefined
   }
 
+  /** K-1 回滚开关：置 off → 停发 llm 字段，全量回落 pi-runtime env 装配（秒级止血，不改代码）。 */
+  piLlmPassthroughEnabled(): boolean {
+    return (process.env.PI_LLM_PASSTHROUGH?.trim().toLowerCase() || 'on') !== 'off'
+  }
+
+  /**
+   * K-1：解析本轮 pi 会话的 BYOK 覆盖（per-session 注入，多用户并发互相隔离）。
+   *
+   * 失败语义：任何一步拿不到 → undefined（pi 走 env 装配）。对齐老路径 ctx 缺省语义，
+   * 不引入 fallback_pending（spec §4）。
+   *
+   * 决策 A：只透传 BYOK（source=user），平台用户保持 env 装配——生产上 Nest 平台通道
+   * （apihub + 老 key + agnes-2.0-flash）与 pi-runtime env（api.agnes-ai.cn + 新 key +
+   * agnes-2.5-flash）**不同源**，透传会让平台用户换网关换模型，属回归。
+   */
+  private async resolvePiSessionLlm(
+    userId: string | undefined,
+    model?: string,
+  ): Promise<PiSessionLlmOverride | undefined> {
+    if (!userId) return undefined
+    if (!this.piLlmPassthroughEnabled()) return undefined
+    let requested = model?.trim()
+    if (!requested) {
+      requested = await this.loadDefaultTextModel(userId).catch(() => undefined)
+    }
+    if (!requested) return undefined
+    let ctx: ProviderContext
+    try {
+      ctx = await buildTextProviderContext(this.providerResolver, userId, requested)
+    } catch {
+      // 渠道停用/无 key/解密失败 → 不发 llm → env 兜底（UI 侧已有「模型已停用」拦截）
+      return undefined
+    }
+    if (ctx.source !== 'user') return undefined
+    const cap = resolveModelCapability(ctx.providerRef)
+    return {
+      model: ctx.model,
+      apiKey: ctx.apiKey,
+      baseUrl: ctx.baseUrl,
+      providerRef: ctx.providerRef,
+      source: ctx.source,
+      reasoning: cap.reasoning,
+      contextWindow: cap.contextWindow,
+      maxTokens: cap.maxTokens,
+    }
+  }
+
   /** Overridable in unit tests */
   createPiRuntimeClient(baseUrl: string): PiRuntimeClient {
     return new PiRuntimeClient({ baseUrl })
@@ -540,6 +590,8 @@ export class AgentService {
       refOrder?: string[]
       focusNodeId?: string
       thinkingLevel?: 'off' | 'medium' | 'high'
+      /** K-1：BYOK 会话级模型覆盖（仅 source=user 的渠道；平台用户不传） */
+      llm?: PiSessionLlmOverride
     },
   ): Promise<void> {
     // 409 竞态（上一轮 DELETE 未完成就来了本轮 create）：删除陈旧会话后重建，
@@ -552,6 +604,8 @@ export class AgentService {
       refOrder: opts?.refOrder,
       focusNodeId: opts?.focusNodeId,
       thinkingLevel: opts?.thinkingLevel,
+      // K-1：BYOK 覆盖随会话创建注入（畸形由 pi-runtime 侧 400，此处不二次校验）
+      llm: opts?.llm,
     })
   }
 
@@ -704,7 +758,11 @@ export class AgentService {
     thinkingOpts?: { thinking?: boolean; thinkingEffort?: 'high' | 'max' },
     // P1：与 Task 1 的 thinkingOpts 并列独立第 8 参（按计划裁定不并入 opts，保持既有调用点兼容）
     skillId?: string,
+    // K-1：dock 模型选择（BYOK 渠道）→ resolvePiSessionLlm → create body 的 llm 字段
+    model?: string,
   ): AsyncGenerator<AgentStreamEvent> {
+    // K-1：BYOK 覆盖必须在 create 之前解析（会话创建即装配模型，中途不可换）
+    const llm = await this.resolvePiSessionLlm(userId, model)
     const systemPrompt = await this.createPiPromptAssembler().assemble({
       sessionId,
       attachments: piContext?.attachments,
@@ -722,6 +780,8 @@ export class AgentService {
       focusNodeId: piContext?.focusNodeId,
       // D-T1：老 UI effort 两档映射为 pi 档位，逐请求透传
       thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
+      // K-1：BYOK 渠道覆盖（undefined → pi-runtime env 装配）
+      llm,
     })
     const events = this.iteratePiEvents(client, sessionId)
     // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
@@ -843,6 +903,8 @@ export class AgentService {
           mentionedKeys: piContext?.mentionedKeys,
           refOrder: piContext?.refOrder,
           focusNodeId: piContext?.focusNodeId,
+          // K-1：影子镜像**故意不传 llm** —— 镜像流量若走 BYOK 会重复消耗用户渠道配额，
+          // 且 shadow 只用于 diff 收集，用平台 env 装配即可。
         })
         const iterator = this.iteratePiEvents(client, shadowSessionId)[Symbol.asyncIterator]()
         void client.prompt(shadowSessionId, userMessage).catch(() => {})

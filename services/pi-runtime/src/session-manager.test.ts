@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { SessionManager } from "./session-manager.js";
+import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import { SkillRegistry } from "./skills/registry.js";
 
@@ -169,5 +170,86 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 		await sm.create("s1", {});
 		const cfg = captured as { systemPrompt: string };
 		assert.equal(cfg.systemPrompt, registry.indexBlock);
+	});
+});
+
+describe("SessionManager BYOK override 透传（K-1）", () => {
+	const OVERRIDE: SessionLlmOverride = {
+		model: "deepseek-flash",
+		apiKey: "sk-SECRET-DO-NOT-LEAK",
+		baseUrl: "https://api.deepseek.com/",
+		providerRef: "cmrrxageh000bql01xg1y6kjn::deepseek-flash",
+		source: "user",
+	};
+
+	/** 假 modelFactory：捕获 override 并按它装配一个占位 model（不依赖 env 凭据）。 */
+	function fakeModelFactory(onOverride: (override: SessionLlmOverride | undefined) => void) {
+		return ((override?: SessionLlmOverride) => {
+			onOverride(override);
+			return {
+				models: {},
+				model: { id: override?.model ?? "env-model", provider: override ? "byok" : "agnes" },
+				providerId: override ? "byok-hash" : "agnes",
+			};
+		}) as never;
+	}
+
+	/** 假 harnessFactory：捕获传入给 harness 的配置。 */
+	function fakeHarnessFactory(onCfg: (cfg: unknown) => void) {
+		return (async (cfg: unknown) => {
+			onCfg(cfg);
+			return {
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			} as never;
+		}) as never;
+	}
+
+	it("create() 带 llm 时把 override 原样传给 modelFactory", async () => {
+		let capturedOverride: SessionLlmOverride | undefined;
+		const sm = new SessionManager(
+			[],
+			"",
+			fakeModelFactory((o) => {
+				capturedOverride = o;
+			}),
+			fakeHarnessFactory(() => {}),
+		);
+		await sm.create("s-byok", { llm: OVERRIDE });
+		assert.deepEqual(capturedOverride, OVERRIDE);
+	});
+
+	it("create() 不带 llm 时 modelFactory 收到 undefined（env 装配）", async () => {
+		let capturedOverride: SessionLlmOverride | undefined = OVERRIDE;
+		const sm = new SessionManager(
+			[],
+			"",
+			fakeModelFactory((o) => {
+				capturedOverride = o;
+			}),
+			fakeHarnessFactory(() => {}),
+		);
+		await sm.create("s-env", {});
+		assert.equal(capturedOverride, undefined);
+	});
+
+	it("harness 拿到的 model 是 override 装配结果（id = 渠道模型名）", async () => {
+		let capturedCfg: unknown = null;
+		const sm = new SessionManager(
+			[],
+			"",
+			fakeModelFactory(() => {}),
+			fakeHarnessFactory((cfg) => {
+				capturedCfg = cfg;
+			}),
+		);
+		const result = await sm.create("s-byok-2", { llm: OVERRIDE });
+		const cfg = capturedCfg as { model: { id: string } };
+		assert.equal(cfg.model.id, "deepseek-flash");
+		assert.equal(result.provider, "byok-hash");
+		assert.equal(result.model, "deepseek-flash");
 	});
 });

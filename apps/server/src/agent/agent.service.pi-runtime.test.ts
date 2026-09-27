@@ -76,6 +76,94 @@ describe('AgentService pi-runtime switch (B4)', () => {
     delete process.env.PI_RUNTIME_URL
   })
 
+  describe('K-1 BYOK 透传 pi-runtime（决策 A：只透传 source=user）', () => {
+    const BYOK_RESOLVED = {
+      modelName: 'deepseek-flash',
+      credentials: { apiKey: 'sk-BYOK', baseUrl: 'https://api.deepseek.com/' },
+      source: 'user' as const,
+    }
+    const PLATFORM_RESOLVED = {
+      modelName: 'agnes-2.0-flash',
+      credentials: { apiKey: 'sk-PLATFORM', baseUrl: 'https://apihub.agnes-ai.cn/v1' },
+      source: 'platform' as const,
+    }
+
+    function setResolver(resolved: typeof BYOK_RESOLVED | null) {
+      const resolver = (service as unknown as { providerResolver: { resolveForGeneration: unknown } })
+        .providerResolver as { resolveForGeneration: ReturnType<typeof vi.fn> }
+      if (!resolved) {
+        resolver.resolveForGeneration.mockRejectedValue(new Error('channel not found'))
+      } else {
+        resolver.resolveForGeneration.mockResolvedValue(resolved)
+      }
+    }
+
+    /** 跑一轮 active 对话，返回 createSession 收到的 opts。 */
+    async function runTurn(model?: string) {
+      process.env.PI_RUNTIME_MODE = 'active'
+      process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+      const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+      vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+      for await (const _e of service.streamConversation(
+        's1',
+        'hello',
+        'u1',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        model,
+      )) {
+        // drain
+      }
+      return pi.createSession.mock.calls[0]?.[1] as Record<string, unknown> | undefined
+    }
+
+    afterEach(() => {
+      delete process.env.PI_LLM_PASSTHROUGH
+    })
+
+    it('BYOK 模型 → create body 带 llm（source=user + 能力字段）', async () => {
+      setResolver(BYOK_RESOLVED)
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      expect(opts?.llm).toEqual({
+        model: 'deepseek-flash',
+        apiKey: 'sk-BYOK',
+        baseUrl: 'https://api.deepseek.com/',
+        providerRef: 'ch_byok::deepseek-flash',
+        source: 'user',
+        reasoning: false,
+        contextWindow: 128_000,
+        maxTokens: 8_192,
+      })
+    })
+
+    it('平台模型 → 不带 llm（决策 A：平台用户保持 pi env 装配，零变化）', async () => {
+      setResolver(PLATFORM_RESOLVED)
+      const opts = await runTurn('platform::agnes-2.0-flash')
+      expect(opts?.llm).toBeUndefined()
+    })
+
+    it('PI_LLM_PASSTHROUGH=off → 不发 llm（回滚开关）', async () => {
+      process.env.PI_LLM_PASSTHROUGH = 'off'
+      setResolver(BYOK_RESOLVED)
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      expect(opts?.llm).toBeUndefined()
+    })
+
+    it('resolve 失败（渠道停用/无 key）→ fail-soft 不发 llm', async () => {
+      setResolver(null)
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      expect(opts?.llm).toBeUndefined()
+    })
+
+    it('未指定 model 且无默认模型 → 不发 llm', async () => {
+      setResolver(BYOK_RESOLVED)
+      const opts = await runTurn(undefined)
+      expect(opts?.llm).toBeUndefined()
+    })
+  })
+
   describe('getPiRuntimeMode', () => {
     it('默认 off；仅接受 shadow/active（大小写不敏感）', () => {
       expect(service.getPiRuntimeMode()).toBe('off')

@@ -22,6 +22,19 @@ export interface CreateSessionResult {
 	model: string;
 }
 
+/** K-1：会话级 LLM 覆盖（BYOK）。与 pi-runtime `SessionLlmOverride` 同构。
+ * apiKey 明文仅在 Nest→pi-runtime 的 loopback/内网请求体中出现，不落盘、不入日志。 */
+export interface PiSessionLlmOverride {
+	model: string;
+	apiKey: string;
+	baseUrl: string;
+	providerRef: string;
+	source: "user" | "platform";
+	reasoning?: boolean;
+	contextWindow?: number;
+	maxTokens?: number;
+}
+
 /** #12：/sessions 全量可选字段（pi-runtime 侧原样透传进 toolContext）。 */
 export interface CreateSessionOptions {
 	systemPrompt?: string;
@@ -31,6 +44,8 @@ export interface CreateSessionOptions {
 	refOrder?: string[];
 	focusNodeId?: string;
 	thinkingLevel?: "off" | "medium" | "high";
+	/** K-1：BYOK 覆盖；不传则 pi-runtime 走 env 装配 */
+	llm?: PiSessionLlmOverride;
 }
 
 export class PiRuntimeError extends Error {
@@ -92,6 +107,8 @@ export class PiRuntimeClient {
 				refOrder: opts.refOrder,
 				focusNodeId: opts.focusNodeId,
 				...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+// K-1：BYOK 覆盖（不传则 pi-runtime 走 env 装配）
+...(opts.llm ? { llm: opts.llm } : {}),
 			}),
 		});
 		if (status !== 201 || !body || body.error) {

@@ -10,6 +10,7 @@ import { Metrics, VERSION, routeLabel } from "./metrics.js";
 import { SkillRegistry, approxTokens } from "./skills/registry.js";
 import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
+import { parseLlmOverride } from "./llm-override.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -98,11 +99,19 @@ app.post<{
 		refOrder?: string[];
 		focusNodeId?: string;
 		thinkingLevel?: string;
+		/** K-1：BYOK 会话级模型覆盖（畸形 → 400，不静默兜底） */
+		llm?: unknown;
 	};
 }>(
 	"/sessions",
 	async (request, reply) => {
 		const sessionId = request.body?.sessionId ?? crypto.randomUUID();
+		// 畸形 llm 直接 400：宁可本轮失败，也不"以为用 BYOK 实际走平台 key"（错账）。
+		// 错误信息只描述结论，不回显请求体（apiKey 明文红线）。
+		const llm = parseLlmOverride(request.body?.llm);
+		if (llm.state === "invalid") {
+			return reply.code(400).send({ error: "invalid llm override: 必填字段缺失或类型错误" });
+		}
 		try {
 			const { provider, model } = await manager.create(sessionId, {
 				systemPrompt: request.body?.systemPrompt,
@@ -112,7 +121,13 @@ app.post<{
 				refOrder: request.body?.refOrder,
 				focusNodeId: request.body?.focusNodeId,
 				thinkingLevel: request.body?.thinkingLevel,
+				llm: llm.state === "ok" ? llm.value : undefined,
 			});
+			// K-1 观测：只打 providerId（哈希）+ model id —— 不打 apiKey / baseUrl（密钥红线）。
+			// 出现 byok-* 即证明本会话走了 BYOK 覆盖，agnes 表示 env 装配。
+			if (llm.state === "ok") {
+				app.log.info({ sessionId, provider, model }, "session created with BYOK override");
+			}
 			return reply.code(201).send({ sessionId, provider, model });
 		} catch (err) {
 			if (err instanceof ConflictError) {
