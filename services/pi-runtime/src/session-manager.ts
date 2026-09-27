@@ -25,7 +25,7 @@ import {
 	JsonlSessionRepo,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { assembleModel } from "./model-assembly.js";
+import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
 
@@ -163,10 +163,12 @@ export class SessionManager {
 			refOrder?: string[];
 			focusNodeId?: string;
 			thinkingLevel?: string;
+			/** K-1：BYOK 会话级模型覆盖（仅来自 Nest create 注入，本进程不从其它来源读取）。 */
+			llm?: SessionLlmOverride;
 		} = {},
 	): Promise<{ provider: string; model: string }> {
 		if (this.sessions.has(id)) throw new ConflictError(id);
-		const { models, model, providerId } = this.modelFactory();
+		const { models, model, providerId } = this.modelFactory(opts.llm);
 
 		const cwd = opts.workingDir ?? join(DATA_ROOT, id);
 		await mkdir(cwd, { recursive: true });

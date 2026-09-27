@@ -1,0 +1,72 @@
+/**
+ * K-1：BYOK 会话级模型装配（spec `docs/superpowers/specs/2026-09-26-byok-into-pi-runtime-design.md` §3.2）
+ *
+ * 覆盖：
+ *   - 无 override → env 装配（providerId=agnes，与改造前逐字节一致）
+ *   - 有 override → 用会话注入的 model/baseUrl/key，五字段全量生效
+ *   - 能力字段（reasoning/contextWindow/maxTokens）保守默认 + 显式覆盖
+ *   - providerId 由 providerRef 哈希派生（避免多渠道 Map 键冲突）
+ *   - 红线自证：装配结果的可序列化面里不含 apiKey 明文
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
+
+const OVERRIDE: SessionLlmOverride = {
+	model: "deepseek-flash",
+	apiKey: "sk-SECRET-DO-NOT-LEAK",
+	baseUrl: "https://api.deepseek.com/",
+	providerRef: "cmrrxageh000bql01xg1y6kjn::deepseek-flash",
+	source: "user",
+};
+
+describe("assembleModel 会话级 override（K-1）", () => {
+	it("无 override：env 装配，providerId 仍是 agnes（平台用户零变化）", () => {
+		const { providerId } = assembleModel();
+		assert.equal(providerId, "agnes");
+	});
+
+	it("有 override：model / baseUrl 取会话注入值，providerId 为哈希派生", () => {
+		const { providerId, model } = assembleModel(OVERRIDE);
+		assert.equal(model.id, "deepseek-flash");
+		assert.equal(model.baseUrl, "https://api.deepseek.com/");
+		assert.match(providerId, /^byok-[0-9a-f]{12}$/);
+	});
+
+	it("能力字段保守默认：reasoning=false / contextWindow=128000 / maxTokens=8192", () => {
+		const { model } = assembleModel(OVERRIDE);
+		assert.equal(model.reasoning, false);
+		assert.equal(model.contextWindow, 128_000);
+		assert.equal(model.maxTokens, 8_192);
+	});
+
+	it("能力字段可显式覆盖（reasoning 模型 + 小上下文窗）", () => {
+		const { model } = assembleModel({
+			...OVERRIDE,
+			reasoning: true,
+			contextWindow: 64_000,
+			maxTokens: 4_096,
+		});
+		assert.equal(model.reasoning, true);
+		assert.equal(model.contextWindow, 64_000);
+		assert.equal(model.maxTokens, 4_096);
+	});
+
+	it("不同 providerRef → 不同 providerId（Map 键不冲突）；同 ref → 稳定", () => {
+		const a = assembleModel(OVERRIDE).providerId;
+		const b = assembleModel({ ...OVERRIDE, providerRef: "ch_other::gpt-5" }).providerId;
+		const a2 = assembleModel(OVERRIDE).providerId;
+		assert.notEqual(a, b);
+		assert.equal(a, a2);
+	});
+
+	it("红线①：装配结果的可序列化面不含 apiKey 明文", () => {
+		const { models, model, providerId } = assembleModel(OVERRIDE);
+		const serialized = JSON.stringify({
+			providerId,
+			model: { id: model.id, baseUrl: model.baseUrl, provider: model.provider },
+			models: models.getModels(providerId),
+		});
+		assert.ok(!serialized.includes("sk-SECRET-DO-NOT-LEAK"), "apiKey 不得出现在可序列化面");
+	});
+});

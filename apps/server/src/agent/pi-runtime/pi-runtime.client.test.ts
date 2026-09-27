@@ -141,6 +141,74 @@ describe("B8 PiRuntimeClient", () => {
 		expect(body.mentionedKeys).toEqual(["I1"]);
 		expect(body.focusNodeId).toBe("node-1");
 		expect(body.attachments).toEqual([{ url: "https://x/a.png", mediaType: "image" }]);
+		// K-1：不带 llm 时 body 里不应出现该键（旧 pi-runtime 忽略未知字段，但保持干净）
+		expect(body.llm).toBeUndefined();
+	});
+
+	it("K-1：createSession 带 llm 时整体透传（含能力字段）", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ sessionId: "s1", provider: "byok-abc", model: "m" }), {
+					status: 201,
+				});
+			}) as typeof fetch,
+		});
+		await client.createSession("s1", {
+			llm: {
+				model: "deepseek-flash",
+				apiKey: "sk-SECRET",
+				baseUrl: "https://api.deepseek.com/",
+				providerRef: "ch_1::deepseek-flash",
+				source: "user",
+				reasoning: false,
+				contextWindow: 128_000,
+				maxTokens: 8_192,
+			},
+		});
+		const body = JSON.parse(String(calls[0]!.init.body));
+		expect(body.llm).toEqual({
+			model: "deepseek-flash",
+			apiKey: "sk-SECRET",
+			baseUrl: "https://api.deepseek.com/",
+			providerRef: "ch_1::deepseek-flash",
+			source: "user",
+			reasoning: false,
+			contextWindow: 128_000,
+			maxTokens: 8_192,
+		});
+	});
+
+	it("红线⑤：createSession 失败时异常消息不含请求体（apiKey 不进日志）", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "boom" }), { status: 500 })) as typeof fetch,
+		});
+		await expect(
+			client.createSession("s1", {
+				llm: {
+					model: "deepseek-flash",
+					apiKey: "sk-SECRET-DO-NOT-LEAK",
+					baseUrl: "https://api.deepseek.com/",
+					providerRef: "ch_1::deepseek-flash",
+					source: "user",
+				},
+			}),
+		).rejects.toThrow(/boom/);
+		await expect(
+			client.createSession("s1", {
+				llm: {
+					model: "deepseek-flash",
+					apiKey: "sk-SECRET-DO-NOT-LEAK",
+					baseUrl: "https://api.deepseek.com/",
+					providerRef: "ch_1::deepseek-flash",
+					source: "user",
+				},
+			}),
+		).rejects.not.toThrow(/sk-SECRET-DO-NOT-LEAK/);
 	});
 });
 
