@@ -96,7 +96,7 @@ fi
 docker tag "${LNKPI_API_IMAGE}" lnkpi-api:latest
 
 log "=== Starting container ==="
-# 只起 api：agent-runtime 需按 AGENT_RUNTIME_PRODUCTION.md 手动 build/up，避免缺镜像时 up 阻塞
+# 只起 api：pi-runtime 由 K3s 独立部署（见 docs/ops/RUNBOOK-pi-runtime-deploy.md），不在本 compose 内
 $COMPOSE up -d --no-build --force-recreate --remove-orphans api
 
 log "=== Port binding ==="

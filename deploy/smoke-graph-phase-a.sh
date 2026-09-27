@@ -40,6 +40,6 @@ fi
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
-  echo "Hint: run deploy/enable-agent-runtime.sh on CVM if runtime health failed."
+  echo "Hint: pi-runtime 起在 K3s（NodePort 30100）——见 docs/ops/RUNBOOK-pi-runtime-deploy.md"
   exit 1
 fi

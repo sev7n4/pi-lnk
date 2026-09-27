@@ -24,11 +24,6 @@ on:
         required: false
         default: false
         type: boolean
-      enable_agent_runtime:
-        description: Sync + enable Agent Runtime on CVM (Compose; see deploy/AGENT_RUNTIME_PRODUCTION.md)
-        required: false
-        default: false
-        type: boolean
       deploy_web_only:
         description: "Emergency only: deploy THIS repo's web build to CVM. Web deploys are normally owned by the lnkpi repo — enabling this will overwrite /opt/lnkpi/web/dist with this repo's (older) frontend"
         required: false
@@ -55,7 +50,6 @@ jobs:
     outputs:
       api: ${{ steps.filter.outputs.api }}
       web: ${{ steps.filter.outputs.web }}
-      agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,11 +74,6 @@ jobs:
               - 'deploy/nginx.conf'
               - 'deploy/deploy-web.sh'
               - '.github/workflows/deploy.yml'
-            agent_runtime:
-              - 'services/agent-runtime/**'
-              - 'deploy/docker/Dockerfile.agent-runtime'
-              - 'deploy/docker-compose.prod.yml'
-              - 'deploy/enable-agent-runtime.sh'
 
   deploy-api:
     name: Build API on CVM
@@ -184,10 +173,9 @@ jobs:
               --exclude='**/dist' \
               --exclude='.cursor' \
               --exclude='docs' \
-              -czf - . | /tmp/lnkpi-ssh-retry.sh "sync-tar" ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR} && if [[ -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/.env /tmp/lnkpi.env.bak; fi && rm -rf ${DEPLOY_DIR}/packages ${DEPLOY_DIR}/apps/server && tar -xzf - -C ${DEPLOY_DIR} && if [[ -f /tmp/lnkpi.env.bak ]]; then mv /tmp/lnkpi.env.bak ${DEPLOY_DIR}/.env; elif [[ ! -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/deploy/.env.production.example ${DEPLOY_DIR}/.env; fi && chmod +x ${DEPLOY_DIR}/deploy/deploy-remote-build.sh ${DEPLOY_DIR}/deploy/deploy-remote.sh ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${DEPLOY_DIR}/deploy/cvm-recover.sh ${DEPLOY_DIR}/deploy/enable-agent-runtime.sh ${DEPLOY_DIR}/deploy/deploy-web.sh ${DEPLOY_DIR}/deploy/smoke-graph-phase-a.sh && rm -f /tmp/lnkpi-deploy-${IMAGE_TAG}.status /tmp/lnkpi-deploy-${IMAGE_TAG}.log'"
+              -czf - . | /tmp/lnkpi-ssh-retry.sh "sync-tar" ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR} && if [[ -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/.env /tmp/lnkpi.env.bak; fi && rm -rf ${DEPLOY_DIR}/packages ${DEPLOY_DIR}/apps/server && tar -xzf - -C ${DEPLOY_DIR} && if [[ -f /tmp/lnkpi.env.bak ]]; then mv /tmp/lnkpi.env.bak ${DEPLOY_DIR}/.env; elif [[ ! -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/deploy/.env.production.example ${DEPLOY_DIR}/.env; fi && chmod +x ${DEPLOY_DIR}/deploy/deploy-remote-build.sh ${DEPLOY_DIR}/deploy/deploy-remote.sh ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${DEPLOY_DIR}/deploy/cvm-recover.sh ${DEPLOY_DIR}/deploy/deploy-web.sh ${DEPLOY_DIR}/deploy/smoke-graph-phase-a.sh && rm -f /tmp/lnkpi-deploy-${IMAGE_TAG}.status /tmp/lnkpi-deploy-${IMAGE_TAG}.log'"
 
       - name: Launch background build on CVM
-        if: ${{ github.event.inputs.enable_agent_runtime != 'true' }}
         run: |
           set -euo pipefail
           DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
@@ -208,7 +196,6 @@ jobs:
           echo "Build started on CVM (pid=${PID}, log=${LOG_FILE})"
 
       - name: Wait for CVM build
-        if: ${{ github.event.inputs.enable_agent_runtime != 'true' }}
         run: |
           set -euo pipefail
           IMAGE_TAG="${{ env.IMAGE_TAG }}"
@@ -243,7 +230,6 @@ jobs:
           echo "CVM build succeeded"
 
       - name: Verify API deployment
-        if: ${{ github.event.inputs.enable_agent_runtime != 'true' }}
         run: |
           set -euo pipefail
           API_PORT="${{ env.API_PORT }}"
@@ -286,18 +272,6 @@ jobs:
           DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
           API_PORT="${{ env.API_PORT }}"
           ssh deploy-cvm "bash -lc 'cd ${DEPLOY_DIR} && set -a && source .env && set +a && export LNKPI_SERVICE_TOKEN=\${AGENT_RUNTIME_SERVICE_TOKEN} && BASE_URL=http://127.0.0.1:${API_PORT} python3 deploy/prod-layout-workflow-verify.py'"
-
-      - name: Enable Agent Runtime on CVM
-        if: >-
-          ${{
-            github.event.inputs.enable_agent_runtime == 'true'
-            || needs.changes.outputs.agent_runtime == 'true'
-          }}
-        run: |
-          set -euo pipefail
-          /tmp/lnkpi-ssh-retry.sh "enable-runtime-ssh" ssh -T deploy-cvm "bash -s" < deploy/enable-agent-runtime.sh
-          echo "=== post-enable: agent-runtime health (in container) ==="
-          ssh -T deploy-cvm "docker exec lnkpi-agent-runtime curl -fsS http://127.0.0.1:8000/health"
 
       - name: Graph Phase A smoke (production)
         if: >-
