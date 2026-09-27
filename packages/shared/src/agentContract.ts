@@ -587,9 +587,6 @@ export const AgentConversationRequestSchema = z.object({
   sessionId: z.string(),
   message: z.string(),
   threadId: z.string().optional(),
-  userDecision: z
-    .enum(['confirm', 'revise', 'replan', 'confirm_gen', 'topo_revise', 'node_revise'])
-    .optional(),
   skillId: z.string().optional(),
   focusNodeId: z.string().optional(),
   model: z.string().optional(),

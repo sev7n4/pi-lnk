@@ -168,10 +168,6 @@ export class AgentService {
     userMessage: string,
     userId?: string,
     threadId?: string,
-    // ⚠️ 遗留参数：`userDecision`（confirm/revise/...）是老 LangGraph `interrupt_before`
-    // 恢复机制的入参。老 runtime 退役后 pi 路径**完全不读它**，仅为保持调用点位置签名而留。
-    // 清理需要同时改 controller DTO + shared agentContract + 前端 AgentSideRail，单独立项。
-    userDecision?: 'confirm' | 'revise' | 'replan' | 'confirm_gen' | 'topo_revise' | 'node_revise',
     idempotencyKey?: string,
     skillId?: string,
     model?: string,
