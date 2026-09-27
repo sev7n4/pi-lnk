@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
   type AgentChatMessage,
+  type AgentMessageMetadata,
   type CanvasAction,
   LinkedCanvasOutputSchema,
   type LinkedCanvasOutput,
@@ -13,7 +14,6 @@ import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
 import {
   applyCanvasAction,
   applyExplore,
-  applyJourneyUpdate,
   applyNodeStatus,
   applyPhaseHint,
   applyStep,
@@ -28,7 +28,6 @@ import {
   replayExecutionTraceEvents,
   type ExecutionTraceState,
 } from '@/components/agent/executionTraceReducer'
-import type { AgentMessageMetadata, JourneyTraceSnapshot } from '@/components/agent/journeyTraceTypes'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 
 export interface AgentStreamMessage {
@@ -39,7 +38,6 @@ export interface AgentStreamMessage {
   streaming?: boolean
   textReplaceHistory?: string[]
   executionTrace?: ExecutionTraceState
-  journeyTrace?: JourneyTraceSnapshot
   presentation?: AgentPresentationEnvelope
   attachments?: SidebarAttachment[]
   attachmentRefKeys?: string[]
@@ -242,16 +240,6 @@ export const useAgentStore = defineStore('agent', () => {
     if (last?.executionTrace) applyExplore(last.executionTrace, data)
   }
 
-  function trackJourneyUpdate(snapshot: JourneyTraceSnapshot) {
-    ensureExecutionTrace()
-    const last = lastAssistant()
-    if (!last) return
-    last.journeyTrace = snapshot
-    if (last.executionTrace) {
-      applyJourneyUpdate(last.executionTrace, snapshot)
-    }
-  }
-
   function addCanvasAction(action: CanvasAction) {
     trackCanvasAction(action)
     pendingActions.value.push(action)
@@ -328,13 +316,6 @@ export const useAgentStore = defineStore('agent', () => {
       if (!executionTrace && meta?.executionEvents?.length) {
         executionTrace = replayExecutionTraceEvents(meta.executionEvents)
       }
-      const journeyTrace = meta?.journeyTrace
-      if (journeyTrace) {
-        if (!executionTrace) {
-          executionTrace = createExecutionTrace()
-        }
-        applyJourneyUpdate(executionTrace, journeyTrace)
-      }
       const presentation =
         meta?.presentation && typeof meta.presentation === 'object'
           ? (meta.presentation as unknown as AgentPresentationEnvelope)
@@ -347,7 +328,6 @@ export const useAgentStore = defineStore('agent', () => {
         linkedOutputs: parseLinkedOutputs(persisted.linkedOutputs),
         canvasActions: parsePersistedToolCalls(persisted.toolCalls),
         executionTrace,
-        journeyTrace,
         presentation,
       }
     })
@@ -387,7 +367,6 @@ export const useAgentStore = defineStore('agent', () => {
     trackStructuredError,
     trackThinking,
     trackExplore,
-    trackJourneyUpdate,
     addCanvasAction,
     flushActions,
     markTurnError,

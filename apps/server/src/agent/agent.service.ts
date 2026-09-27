@@ -9,7 +9,6 @@ import type {
   AgentMessageMetadata,
   CanvasAction,
   CanvasData,
-  JourneyTraceSnapshot,
   ExecutionTraceState,
   LinkedCanvasOutput,
   SidebarAttachment,
@@ -79,13 +78,11 @@ const TRACE_PERSIST_EVENT_TYPES = new Set([
 ])
 
 export function buildTurnMetadata(input: {
-  journeyTrace?: JourneyTraceSnapshot
   presentation?: Record<string, unknown>
   executionTrace?: ExecutionTraceState
   executionEvents?: Array<{ type: string; data: unknown }>
 }): AgentMessageMetadata | undefined {
   const metadata: AgentMessageMetadata = {}
-  if (input.journeyTrace) metadata.journeyTrace = input.journeyTrace
   if (input.executionTrace) metadata.executionTrace = input.executionTrace
   if (input.presentation) metadata.presentation = input.presentation
   if (input.executionEvents?.length) metadata.executionEvents = input.executionEvents
@@ -810,7 +807,7 @@ export class AgentService {
     opts: { rewriteCanvasData: boolean; linkedOutputs?: LinkedCanvasOutput[]; metadata?: AgentMessageMetadata },
   ) {
     const shouldPersistAssistant = Boolean(
-      assistantText || opts.metadata?.journeyTrace || opts.metadata?.presentation || opts.metadata?.executionEvents?.length,
+      assistantText || opts.metadata?.presentation || opts.metadata?.executionEvents?.length,
     )
     if (shouldPersistAssistant) {
       await this.prisma.agentMessage.create({

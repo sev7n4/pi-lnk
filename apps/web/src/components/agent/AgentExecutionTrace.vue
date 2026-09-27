@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import AgentJourneyStepList from '@/components/agent/AgentJourneyStepList.vue'
 import type { ExecutionTraceState, ExecutionStep } from '@/components/agent/executionTraceReducer'
 import { formatDuration } from '@/components/agent/executionStepLabels'
-import type { JourneyTraceSnapshot } from '@/components/agent/journeyTraceTypes'
-import { PRESENTATION_STEPS } from '@/components/agent/presentation/types'
 import { presentToolStep, timelineHeadline } from '@/components/agent/toolPresentation'
 import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
@@ -12,7 +9,6 @@ import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 const props = defineProps<{
   trace: ExecutionTraceState
   streaming?: boolean
-  journeySnapshot?: JourneyTraceSnapshot | null
 }>()
 
 const emit = defineEmits<{
@@ -28,37 +24,17 @@ watch(
   },
 )
 
-const workflowSteps = computed(() => props.trace.steps.filter((s) => s.kind === 'workflow_step'))
-const operationSteps = computed(() => props.trace.steps.filter((s) => s.kind !== 'workflow_step'))
-const hasWorkflow = computed(() => workflowSteps.value.length > 0)
 const stepCount = computed(() => props.trace.steps.length)
 
-const currentJourneyStepNumber = computed(() => {
-  const running = workflowSteps.value.find((s) => s.status === 'running')
-  if (running?.journeyStepId) {
-    const idx = PRESENTATION_STEPS.findIndex((step) => step.id === running.journeyStepId)
-    if (idx >= 0) return idx + 1
-  }
-  const current = props.journeySnapshot?.current
-  if (current) {
-    const idx = PRESENTATION_STEPS.findIndex((step) => step.id === current)
-    if (idx >= 0) return idx + 1
-  }
-  return null
-})
-
 const headerLabel = computed(() => {
-  const count = hasWorkflow.value ? 9 : stepCount.value
+  const count = stepCount.value
   if (props.streaming) {
-    const n = currentJourneyStepNumber.value
-    if (n != null) return `执行过程（进行中… · 第 ${n}/9 步）`
-    if (stepCount.value === 0) return '执行过程（进行中…）'
-    return `执行过程（进行中… · ${stepCount.value} 步）`
+    if (count === 0) return '执行过程（进行中…）'
+    return `执行过程（进行中… · ${count} 步）`
   }
   if (count === 0) return '执行过程'
-  // P1 认知负荷：折叠头行附最新一步人话（N 步 · 最新：<icon> <label>）——仅操作轨迹；
-  // workflow 轨迹已有「第 n/9 步」进度语义，不叠加
-  if (!expanded.value && !hasWorkflow.value) {
+  // P1 认知负荷：折叠头行附最新一步人话（N 步 · 最新：<icon> <label>）
+  if (!expanded.value) {
     const headline = timelineHeadline(props.trace)
     if (headline.includes('· 最新：')) return `执行过程（${headline}）`
   }
@@ -74,8 +50,7 @@ const durationLabel = computed(() => {
 const showTrace = computed(
   // usage 存在即渲染：纯文本回合（无步骤）也要露出回合摘要行（tokens 实耗）；
   // 不用 totalMs 作门——否则老历史消息（无 usage）会多出重复的「执行过程」头行
-  () => hasWorkflow.value || operationSteps.value.length > 0 || props.streaming
-    || props.trace.usage != null,
+  () => stepCount.value > 0 || props.streaming || props.trace.usage != null,
 )
 
 function toggle() {
@@ -131,18 +106,11 @@ const summaryLine = computed(() => turnSummaryLine(props.trace))
       <span v-if="durationLabel && !expanded" class="opacity-70">{{ durationLabel }}</span>
     </button>
     <div v-if="expanded" class="mt-1 space-y-2 pl-4">
-      <section v-if="hasWorkflow" data-testid="journey-section">
-        <p class="mb-1 text-[10px] font-medium text-[var(--neo-text-muted)]">工作流进度</p>
-        <AgentJourneyStepList
-          :steps="workflowSteps"
-          :journey-steps="journeySnapshot?.steps"
-        />
-      </section>
-      <section v-if="operationSteps.length > 0" data-testid="operation-section">
+      <section v-if="stepCount > 0" data-testid="operation-section">
         <p class="mb-1 text-[10px] font-medium text-[var(--neo-text-muted)]">操作明细</p>
         <ul class="space-y-0.5">
           <li
-            v-for="(step, i) in operationSteps"
+            v-for="(step, i) in trace.steps"
             :key="step.id"
             data-testid="operation-step"
             class="agent-trace-step flex items-start gap-1.5 text-[10px] leading-snug"

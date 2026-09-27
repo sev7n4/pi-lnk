@@ -7,8 +7,6 @@ import AgentShotTable from './AgentShotTable.vue'
 import AgentTopoCardList from './AgentTopoCardList.vue'
 import AgentDeliveryCards from './AgentDeliveryCards.vue'
 import AgentDeliverySummaryTable from './AgentDeliverySummaryTable.vue'
-import { stepperFromJourneySnapshot } from '@/components/agent/journeyTraceHelpers'
-import type { JourneyTraceSnapshot } from '@/components/agent/journeyTraceTypes'
 import type { AgentPresentationEnvelope, AgentPresentationPrimaryAction } from './types'
 
 const FOCUS_ALL_MESSAGE = '__focus_all_canvas__'
@@ -19,7 +17,6 @@ const props = defineProps<{
   disabled?: boolean
   macroSelectedIds?: string[]
   deliverySelections?: Record<string, string>
-  journeySnapshot?: JourneyTraceSnapshot | null
 }>()
 
 const emit = defineEmits<{
@@ -35,18 +32,8 @@ const exportBusy = ref(false)
 
 const macroSelections = ref<string[]>(props.macroSelectedIds ?? [])
 
-const stepperCurrent = computed(
-  () =>
-    (props.journeySnapshot
-      ? stepperFromJourneySnapshot(props.journeySnapshot).current
-      : props.presentation.stepper.current),
-)
-const stepperCompleted = computed(
-  () =>
-    (props.journeySnapshot
-      ? stepperFromJourneySnapshot(props.journeySnapshot).completed
-      : props.presentation.stepper.completed),
-)
+const stepperCurrent = computed(() => props.presentation.stepper.current)
+const stepperCompleted = computed(() => props.presentation.stepper.completed)
 
 const isProseBlock = computed(() => props.presentation.kind === 'prose_block')
 const isMacroCards = computed(() => props.presentation.kind === 'macro_scheme_cards')

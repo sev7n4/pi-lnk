@@ -3,8 +3,7 @@ import type {
   ExecutionEvent,
   ExecutionEventKind,
   ExecutionTraceState,
-  JourneyTraceSnapshot,
-} from './journeyTrace'
+} from './agentTrace'
 
 describe('ExecutionTraceState', () => {
   it('roundtrips through JSON', () => {
@@ -53,23 +52,3 @@ describe('ExecutionTraceState', () => {
   })
 })
 
-describe('JourneyTraceSnapshot + ExecutionTraceState coexistence', () => {
-  it('can carry both journey and execution traces on the same message', () => {
-    const journey: JourneyTraceSnapshot = {
-      version: 1,
-      flowMode: 'product_visual',
-      steps: [],
-      current: 'done',
-      startedAt: '2026-09-18T00:00:00.000Z',
-      updatedAt: '2026-09-18T00:01:00.000Z',
-    }
-    const execution: ExecutionTraceState = {
-      events: [],
-      updatedAt: 60_000,
-    }
-    const payload = { journeyTrace: journey, executionTrace: execution }
-    const restored = JSON.parse(JSON.stringify(payload))
-    expect(restored.journeyTrace).toEqual(journey)
-    expect(restored.executionTrace).toEqual(execution)
-  })
-})
