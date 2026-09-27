@@ -112,6 +112,25 @@ describe("extractCanvasActions（B-5 gen 工具 → canvas_action 派生）", ()
 		expect(extractCanvasActions(toolEnd({ details: { actions: "oops" } }))).toEqual([]);
 		expect(extractCanvasActions({ type: "message_update", ts: 1, data: {} } as never)).toEqual([]);
 	});
+
+	it("nodeType=audio 保留（2026-09-28 补入 NODE_TYPES，此前被静默丢弃）", () => {
+		const actions = extractCanvasActions(
+			toolEnd({
+				details: { actions: [{ type: "add_node", payload: { id: "a1", nodeType: "audio" } }] },
+			}),
+		);
+		expect(actions).toEqual([{ type: "add_node", payload: { id: "a1", nodeType: "audio" } }]);
+	});
+
+	it("白名单外 nodeType 仍被丢弃：mediaInput / videoComposition / worldModel 有意不支持", () => {
+		for (const nodeType of ["mediaInput", "videoComposition", "worldModel"]) {
+			expect(
+				extractCanvasActions(
+					toolEnd({ details: { actions: [{ type: "add_node", payload: { nodeType } }] } }),
+				),
+			).toEqual([]);
+		}
+	});
 });
 
 describe("thinking 透传（可观测性专项 ③）", () => {
