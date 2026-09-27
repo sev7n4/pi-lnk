@@ -3,7 +3,6 @@ import {
   Inject,
   Injectable,
   Logger,
-  ServiceUnavailableException,
 } from '@nestjs/common'
 import { applyCanvasActions, type AgentStreamEvent } from '@lnkpi/agent'
 import type {
@@ -241,8 +240,10 @@ export class AgentService {
 
     let assistantText = ''
 
-    // ---- B4：pi-runtime 开关（spec §6.2.0 B4 / §10.3 D-ζ'）----
-    // active：主切 pi-runtime（healthz 失败则继续向下走 LangGraph 回落路径）
+    // ---- B4：pi-runtime 开关（spec §6.2.0 B4）----
+    // active：主切 pi-runtime；**healthz 不通过即如实报错，不再回落 LangGraph**
+    //         （老 runtime 退役收口：回落链路已无存在理由，留着只会掩盖 pi 故障。
+    //          运维止血改为 PI_RUNTIME_MODE=off → 走 LangGraph，语义不变）
     // shadow：LangGraph 照常服务，pi-runtime 仅接收镜像流量（零用户感知）
     if (piEligible) {
       const piClient = this.createPiRuntimeClient(piUrl)
@@ -253,7 +254,19 @@ export class AgentService {
         focusNodeId,
         priorMessages,
       }
-      if (piMode === 'active' && (await piClient.healthz())) {
+      if (piMode === 'active') {
+        if (!(await piClient.healthz())) {
+          // 老 runtime 退役收口：不再回落 LangGraph，如实报错。
+          // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 全挂）。
+          this.piLogger.warn(`pi-runtime healthz failed, no fallback (session=${sessionId})`)
+          for await (const event of this.streamRuntimeUnavailable()) {
+            yield event
+          }
+          if (idempotencyKey) {
+            await this.completeIdempotencyKey(idempotencyKey, '')
+          }
+          return
+        }
         // pi 会话按 sessionId 串行化：上一轮的 DELETE 与本轮的 create/prompt 不得交错
         // （2026-09-24 生产实测：迟到的 DELETE 会删掉本轮刚建的会话 → 本轮空响应）
         const releasePiLock = await this.acquirePiSessionLock(sessionId)
@@ -266,11 +279,11 @@ export class AgentService {
             threadId,
             piContext,
             { thinking, thinkingEffort },
-    // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
-    skillId,
-    // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
-    model,
-  )) {
+            // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
+            skillId,
+            // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
+            model,
+          )) {
             if (event.type === 'text_delta') {
               assistantText += (event.data as { text: string }).text
             }
@@ -287,7 +300,14 @@ export class AgentService {
       }
       if (piMode === 'shadow') {
         // 镜像会话与真实会话隔离（pi 侧独立 sessionId，删除即回收）
-        this.mirrorToPiRuntime(piClient, `shadow-${sessionId}`, userMessage, userId, sessionId, piContext)
+        this.mirrorToPiRuntime(
+          piClient,
+          `shadow-${sessionId}`,
+          userMessage,
+          userId,
+          sessionId,
+          piContext,
+        )
       }
     }
 
@@ -332,6 +352,7 @@ export class AgentService {
     }
   }
 
+  /** off / 非 pi 场景，或 active 下 pi-runtime 不可达：无可用链路。 */
   private async *streamRuntimeUnavailable(): AsyncGenerator<AgentStreamEvent> {
     yield {
       type: 'error',
@@ -394,24 +415,13 @@ export class AgentService {
 
   // ── Runtime Health ───────────────────────────────────────────
 
-  async cancelRun(input: {
-    threadId: string
-    sessionId: string
-    reason?: 'user' | 'timeout'
-  }) {
-    const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
-    if (!runtimeUrl) {
-      throw new ServiceUnavailableException('Agent runtime is not configured')
-    }
-    return this.createRuntimeClient(runtimeUrl).cancelRun(input)
-  }
-
   /** Proxy agent-runtime health check for frontend heartbeat detection.
    *
    * pi active 时对话真正依赖的是 pi-runtime，心跳必须探 pi：否则老 runtime 退役后
    * 前端每 15s 拿到 ok:false → 误报「生成服务暂时不可达」并拦掉重连（下线前置 ①b）。
-   * pi 不可达时 chat 会按 D-ζ' 回落 LangGraph，此时继续探回落链路——只要回落链路
-   * 还活着，心跳就不该报不可达。 */
+   * pi 不可达即报不可达——chat 已不再回落老 runtime，心跳若因老 runtime 活着而报 ok，
+   * 就会出现「心跳绿、发消息立刻失败」的自相矛盾。
+   * 例外：active 但没配 PI_RUNTIME_URL 时 chat 实际走 LangGraph，继续向下探。 */
   async checkRuntimeHealth(): Promise<{ ok: boolean; latencyMs?: number }> {
     const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
     if (this.getPiRuntimeMode() === 'active') {
@@ -419,8 +429,11 @@ export class AgentService {
       if (piUrl) {
         const start = Date.now()
         const piOk = (await this.createPiRuntimeClient(piUrl).healthz()) !== null
-        if (piOk) return { ok: true, latencyMs: Date.now() - start }
+        // active 下 pi 是**唯一**服务链路（chat 已不再回落）→ 心跳必须如实反映 pi 状态。
+        // 若这里因老 runtime 还活着而报 ok，前端会放行而 chat 随即报不可用，自相矛盾。
+        return { ok: piOk, latencyMs: piOk ? Date.now() - start : undefined }
       }
+      // 未配 PI_RUNTIME_URL 时 chat 仍走 LangGraph，继续向下探
     }
     if (!runtimeUrl) return { ok: false }
     const client = this.createRuntimeClient(runtimeUrl)
@@ -491,7 +504,8 @@ export class AgentService {
   //   off    — 全部走老 LangGraph agent-runtime（现状）
   //   shadow — 生产仍走 LangGraph；同一 prompt 镜像一份到 pi-runtime（P0 shadow
   //            验证 ≥7 天），pi 输出不返回给 Vue UI，仅记日志供 diff 收集
-  //   active — chat 流主切 pi-runtime；healthz 不通过时自动回落 LangGraph
+  //   active — chat 流主切 pi-runtime；healthz 不通过时**直接报不可用，不回落**
+  //            （退役收口：老 runtime 不再是兜底；运维止血 = 切回 off/shadow）
   // ---------------------------------------------------------------------------
 
   private readonly piLogger = new Logger('AgentService.pi')
