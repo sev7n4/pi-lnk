@@ -2,6 +2,10 @@
 
 更新时间：2026-09-23。**本文件是「lnkpi 的改动怎么上生产」的唯一权威操作流**（暂不自动化，手工执行）。
 
+> 🚩 **2026-09-27 状态更新（必读）**：**两个仓库已决定拆成两条独立产品线，本同步流进入"停止"状态。**
+> 见 [`§10`](#10--迁移完成后以哪个仓库为准)。当前唯一的合法同步动作是**手工镜像非 agent 的画布 bugfix**；
+> **禁止 `git merge upstream/main` 整条合并**。
+
 > 背景与根因：[`POSTMORTEM-2026-09-23-deploy-overwrite.md`](./POSTMORTEM-2026-09-23-deploy-overwrite.md) ／ 图文版 [`.html`](./POSTMORTEM-2026-09-23-deploy-overwrite.html)
 > 发布门落地与回滚：[`RUNBOOK-single-release-gate.md`](./RUNBOOK-single-release-gate.md)
 
@@ -26,7 +30,7 @@
 | `deploy/**`、`**/Dockerfile` | **不自动上线** → 走本流程 |
 | `services/pi-runtime/**`、`charts/**`、`vendor/**` | 走本流程 |
 | `docs/**`、`*.md` | 不触发任何部署 |
-| ~~`services/agent-runtime/**`~~ | **已于 2026-09-27 退役删除**（见 `RUNBOOK-old-runtime-retirement.md`）。lnkpi 侧若仍保留该目录，merge upstream 后需再删一次 |
+| `services/agent-runtime/**` | **永不从 lnkpi 同步**。pi-lnk 侧已退役删除；lnkpi 侧**保留是刚需**（lnkpi 无 pi-runtime，其 agent 链路仍是 LangGraph）→ 合并进来就是事故，见 §10 |
 
 ## 3 · 命令流（逐条复制）
 
@@ -98,7 +102,7 @@ cd /Users/4seven/workspace/pi-lnk && python3 deploy/prod-agent-thread-verify.py 
 
 | 路径 | 谁能写 | 说明 |
 | --- | --- | --- |
-| ~~`services/agent-runtime/**`~~ | — | **已退役删除**（2026-09-27）。⚠️ lnkpi 侧若仍存在，merge upstream 会被带回来，需重新删除 |
+| ~~`services/agent-runtime/**`~~ | — | **永不从 lnkpi 同步**。pi-lnk 侧已退役删除（2026-09-27）；**lnkpi 侧保留是刚需**——lnkpi 没有 pi-runtime（`lnkpi/apps/server/src` 中 `PI_RUNTIME_*` 零匹配），它的 agent 链路仍是 LangGraph，删了就没有 agent 后端。⚠️ 所以正确的防御不是"合并后再删一次"，而是**根本不要合并这条路径** |
 | `deploy/**`（compose、守卫脚本、verify 脚本） | **仅 pi-lnk 发布门** | lnkpi 侧改了必须走本流程；`deploy/docker-compose.prod.yml` 由 lnkpi 工作流的 Guard 步骤校验漂移（老 runtime 的 `Dockerfile.agent-runtime` / `enable-agent-runtime.sh` 已随退役删除） |
 | `apps/server/**`、`packages/**` | **仅 pi-lnk 发布门** | B4 分流代码就在这里 |
 | `apps/web/**` | lnkpi | 前端自动发版 |
@@ -113,15 +117,19 @@ lnkpi 的 `Deploy Agent Runtime` 收窄要点（历史）：
 ## 8 · 回滚 / 止血
 
 ```bash
-# ① 秒级止血（不依赖镜像）：active → shadow，用户侧零感知（走老 LangGraph 链路）
-ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=shadow/' .env && \
-  export LNKPI_API_IMAGE=\$(docker inspect lnkpi-api --format '{{.Config.Image}}') && \
-  docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
-
-# ② 版本回退：用保留的历史镜像（≈1 MB 增量，秒级）
+# ① 版本回退（唯一有效手段）：用保留的历史镜像（≈1 MB 增量，秒级）
 ssh deploy-cvm 'cat /opt/lnkpi/.last-api-image'
 ssh deploy-cvm "cd /opt/lnkpi && LNKPI_API_IMAGE=lnkpi-api:<旧sha> docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
+
+# ② 停服务（维护态）：PI_RUNTIME_MODE=off → chat 直接 unavailable，属"关停"不是"切链路"
+ssh deploy-cvm "cd /opt/lnkpi && sed -i 's/^PI_RUNTIME_MODE=.*/PI_RUNTIME_MODE=off/' .env && \
+  docker compose -f deploy/docker-compose.prod.yml up -d --no-build --force-recreate api"
 ```
+
+> ⚠️⚠️ **2026-09-27 起本节的语义已变，旧版本是错的**：老 LangGraph runtime 已退役删除，
+> `PI_RUNTIME_MODE` 从三态变成**二态**——`active`（默认）/ `off`（维护态关停）。
+> **不存在 `shadow`，也不存在"切回老链路"这条路了**：任何非 `off` 的值（含 `shadow`）都会被当作 `active`。
+> 所以**止血只能靠版本回退**，不要再照抄旧文档里的 `sed ... PI_RUNTIME_MODE=shadow`。
 
 > ⚠️ `LNKPI_API_IMAGE` 必须显式 export：compose 的 `${LNKPI_API_IMAGE:-lnkpi-api:local}` 从 **`deploy/.env`**（无此键）取值，不 export 会去找不存在的 `lnkpi-api:local`。
 
@@ -134,8 +142,37 @@ ssh deploy-cvm "cd /opt/lnkpi && LNKPI_API_IMAGE=lnkpi-api:<旧sha> docker compo
 - 本机 shell 的 `grep` 偶发返回空结果（内容其实已写入）→ 用 Grep 工具或 python 复核关键改动
 - 同机勿混淆 `pintuotuo-*` / `aimarket-*` 容器与镜像；**禁用 `docker image prune -a`**
 
-## 10 · 迁移完成后以哪个仓库为准
+## 10 · 以哪个仓库为准（2026-09-27 决策：**选 A，并拆成两条产品线**）
 
-- **代码版本基准 = pi-lnk master**（部署源、生产树来源）
-- **画布日常开发主线 = lnkpi**（上游，PR/CI/发版都在它）
-- 长期：P1 完成后把 B4 + `services/pi-runtime` + `charts` + `vendor/pi` 上游化进 lnkpi main，让 pi-lnk 退役 → 这条同步流就不需要了（见 POSTMORTEM 的"上游化"建议）
+### 决策
+
+**pi-lnk = 唯一权威仓库（SSOT）。** 两个仓库**不再是"上游/下游"关系**，而是**两条独立演进的产品线**，
+`lnkpi → pi-lnk` 的同步流**停止**。
+
+### 为什么（实测依据，2026-09-27）
+
+| 事实 | 数据 |
+| --- | --- |
+| pi-lnk 领先 upstream | **134 个提交**（pi-runtime 迁移 + 整个 P1 都在这边） |
+| lnkpi 领先 upstream | 4 个提交（当日 #423–#426，均为画布/编辑类） |
+| lnkpi 对 pi-runtime 的感知 | **零**：`lnkpi/apps/server/src` 中 `PI_RUNTIME_*` 零匹配；`lnkpi/services/` 只有 `agent-runtime`，`pi-lnk/services/` 只有 `pi-runtime` |
+| 老 runtime 退役 | 只在 pi-lnk 完成（2026-09-27，PR #38/#39）；lnkpi 侧 `services/agent-runtime` **保留是刚需** |
+
+### 两条产品线（用户规划）
+
+| 仓库 | 定位 | 动作 |
+| --- | --- | --- |
+| **pi-lnk** | **无限画布 + pi-runtime**（当前已迁移完成的项目） | 唯一发布门，持续演进 |
+| **lnkpi** | **以 pi-runtime 为核心的智能体产品**（对标 WorkBuddy），**剥离无限画布前后端** | 独立演进：引入 pi-runtime、剥离画布、老 runtime 随之退役 |
+
+### 红线（必须遵守）
+
+1. **禁止 `git merge upstream/main` 整条合并。** 它会把 `services/agent-runtime` 和基于 LangGraph 的
+   `agent.service.ts` 带回来，直接覆盖 pi 链路。
+2. **agent 链路永不从 lnkpi 同步。** 涉及 `apps/server/src/agent/**`、`services/pi-runtime/**`、`charts/**`、`vendor/**`
+   的改动，只在 pi-lnk 做。
+3. **分家完成前，允许的唯一同步动作**：把 lnkpi 上**纯画布/编辑类、与 agent 无关**的 bugfix
+   **手工 cherry-pick** 过来（如 `16fc244` 镜像 lnkpi#423）。挑之前先确认改动不碰上面第 2 条的路径。
+4. **本文件保留为历史操作流参考**，但 §3 的"整条 merge 命令流"**不再执行**。
+5. **长期计划作废**：原 §10 的"把 B4 + pi-runtime + charts + vendor 上游化进 lnkpi，让 pi-lnk 退役"
+   与现在的产品线规划冲突——pi-lnk 不会退役，两条线各自独立。
