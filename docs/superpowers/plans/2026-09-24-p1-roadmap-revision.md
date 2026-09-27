@@ -50,6 +50,10 @@ undo/redo 上线前必须验证：前端 client undo stack 是否覆盖 pi→Nes
 
 ## 4. 老 runtime 退役判据（P1 north star）
 
+> **⚠️ 状态更新（2026-09-27）：本节三条判据已豁免关闭，退役已完成。**
+> 见 §7——项目未正式上线、无生产流量（仅作者个人单测），三条判据（K4 diff=0 / top-20 使用率 / shadow 7 天）
+> 均以「真实流量」为前提，无流量即无判据意义。用户 2026-09-27 拍板「退役范围直接做满：停服务 + 删代码」。
+
 三条全绿后，生产仅保留 pi-runtime（老 LangGraph runtime 下线，双轨结束）：
 
 1. K4 suite 有效用例 diff 收敛到 0（runtime-compare --suite）；
@@ -86,3 +90,50 @@ undo/redo 上线前必须验证：前端 client undo stack 是否覆盖 pi→Nes
    - **格式对齐 Anthropic 事实标准**（`github.com/anthropics/skills`）：`SKILL.md` + `name`/`description` frontmatter + 渐进披露（frontmatter 常驻 ~100 tokens、body 按需加载、`references/`/`scripts/` 可选目录）——换取 awesome-claude-skills 生态兼容；
    - **验收线 = 免改码 drop-in**：第三方 SKILL.md 放进 skills 目录 → 重启 → manifest 显示注入 → 模型仅凭 description 自然触发（不点名 skill）；
    - **双验证用例**：①外部最佳实践（官方仓纯提示词型如 brand-guidelines + 一个带 references/ 的）；②领域自写：老 `ecommerce-product-visual` 领域知识按标准格式重写（内容重写、格式不迁），贴画布商品图生成核心场景。
+
+## 7. 2026-09-27 收官：退役完成 + §4 判据豁免
+
+- **用户拍板（2026-09-27）**：「目前这个项目没有正式上线，没有什么数据流量，仅限我个人单测，是否可以直接走退役？」→ 结论可直接退役；
+  退役范围「直接做满：**停服务 + 删代码**」。
+
+### 7.1 §4 三条判据豁免理由
+
+| 判据 | 为何豁免 |
+|---|---|
+| K4 suite diff = 0 | 以「双轨并行、逐用例对照」为前提。老 runtime 代码与服务已整体删除，双轨不复存在，对照对象消失 |
+| top-20 工具使用率 100% 可用 | 以「生产调用量分布」为前提。无生产流量，无法积累分布；且两容器 2026-09-23 重建后 docker logs 已丢，数据源本就缺失 |
+| shadow 连续 7 天无差异 | shadow 需真实流量双写对照。无流量 = 7 天空跑，不构成任何证据 |
+
+**结论**：三条判据是「有真实流量时如何证明可退役」的手段，不是退役本身的目的。
+在无流量场景下继续等待数据属于空转，故整体豁免，以**功能等价 + 生产验收**替代（见 7.2）。
+
+### 7.2 替代验收（已通过）
+
+生产验收脚本 `.tmp/retire-full-verify.py`，结果 **PASS=4 FAIL=0**：
+
+1. 心跳命中 pi-runtime：`{"ok":true,"latencyMs":18}`
+2. `GET /api/agent/thread-state` → `data: null`（短路生效，不再打老 runtime）
+3. `GET /api/agent/thread-timeline` → `data: null`
+4. 真实对话：响应 `len=2722` / `0.9s` / `done=True` / 有 `text_delta` / 无 `runtime_unavailable`
+
+CVM 侧复核：老 runtime 容器不存在；`PI_RUNTIME_MODE=active`、`PI_RUNTIME_URL=http://172.20.0.1:30100`；
+`/opt/lnkpi/services/agent-runtime` 已归档为 `agent-runtime.retired-20260928`。
+
+### 7.3 退役落地清单（截至 2026-09-28 全部完成）
+
+| 项 | 内容 | 结果 |
+|---|---|---|
+| 前置 ① | thread-state/timeline 短路 + 心跳改探 pi | PR #34 ✅ |
+| 前置 ② | K-1 BYOK 进 pi | PR #35 ✅ |
+| 前置 ③ | 侧栏识图进 pi | PR #36 ✅ |
+| 前置 ④⑤ | chat 不回落 + 删除 `runs/cancel` | PR #37 ✅ |
+| 完全退役 | 停服务 + 删代码 | PR #38 `ed2da68` ✅ |
+| 漏网修复 | 发布门仍调已删的 `enable-agent-runtime.sh` | PR #39 `7507033` ✅ |
+| P0 文档 | 同步手册停止同步流 + AGENTS.md 仓库红线 | PR #40 `24c408d` ✅ |
+| P1-a | 摘死参 `userDecision` | PR #41 `d19e9e4` ✅ |
+| P1-b | 拆 journey_trace 死链路 | PR #42 `4053145` ✅ |
+
+### 7.4 后续
+
+退役这条线已闭环。下一步重心转为**两条产品线拆分**（画布产品 vs 以 pi-runtime 为核心的 agent 产品）
+与 **WorkBuddy harness 对齐**（§6 的 D-η' 批次：assembler typed layers + 注入 manifest 观测）。

@@ -12,10 +12,41 @@ export const PositionSchema = z.object({
 
 export type Position = z.infer<typeof PositionSchema>
 
+// CanvasAction 单一来源（SSOT）：形状与 TS 类型均由此 schema 派生。
+// ⚠️ 不要再在别处（如 index.ts / videoGeneration/types.ts）另写一份 CanvasAction ——
+// barrel 里本地声明会静默遮蔽 export * 的同名导出，历史上因此出现过三份同名类型。
+export const CanvasActionTypeSchema = z.enum([
+  'add_node',
+  'update_node',
+  'remove_node',
+  'add_edge',
+  'remove_edge',
+  'set_viewport',
+])
+
+export type CanvasActionType = z.infer<typeof CanvasActionTypeSchema>
+
+/**
+ * 节点类型白名单（= NodeType 全集）。
+ * ⚠️ 已知缺口：画布实际可创建的节点类型多于本白名单（audio / mediaInput /
+ * videoComposition / worldModel），详见 index.ts 的 NodeType 与 web 侧 DockNodeType 的差异。
+ * 提取动作时按本白名单收窄是**既有行为**，收敛时未改动，勿在收敛批次内顺手放宽。
+ */
+export const NODE_TYPES = [
+  'prompt',
+  'image',
+  'video',
+  'text',
+  'group',
+  'shot',
+  'sceneComposer',
+] as const
+
 export const CanvasActionSchema = z.object({
-  type: z.enum(['add_node', 'update_node', 'remove_node', 'add_edge', 'remove_edge', 'set_viewport']),
+  type: CanvasActionTypeSchema,
   payload: z.object({
     id: z.string().optional(),
+    // 保持 string：与收敛前运行时校验行为一致（白名单收窄在 extractCanvasActions 内做）
     nodeType: z.string().optional(),
     position: PositionSchema.optional(),
     data: z.record(z.unknown()).optional(),

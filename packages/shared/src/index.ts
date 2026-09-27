@@ -278,22 +278,9 @@ export interface Shot {
 }
 
 // --- Agent 驱动画布 ---
-
-export type CanvasActionType = 'add_node' | 'update_node' | 'remove_node' | 'add_edge' | 'remove_edge' | 'set_viewport'
-
-export interface CanvasAction {
-  type: CanvasActionType
-  payload: {
-    id?: string
-    nodeType?: NodeType
-    position?: { x: number; y: number }
-    data?: Record<string, unknown>
-    source?: string
-    target?: string
-    parentShotId?: string
-    viewport?: { x: number; y: number; zoom: number }
-  }
-}
+// ⚠️ CanvasAction / CanvasActionType 的单一来源是 `./agentContract`（zod schema 派生），
+// 由下方 `export * from './agentContract'` 透出。此处**不再重复声明**——
+// 本地声明会静默遮蔽 export * 的同名导出，历史上正是因此出现过多份互不一致的 CanvasAction。
 
 export interface AgentChatMessage {
   id: string
