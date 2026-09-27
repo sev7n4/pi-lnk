@@ -283,7 +283,6 @@ describe('AgentService streamConversation', () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       attachments,
       ['a1'],
     )) {

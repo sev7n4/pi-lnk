@@ -72,7 +72,6 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
       'u1',
       'thread-1',
       undefined,
-      undefined,
       'product-visual',
       'platform::gpt-4o-mini',
     )) {
@@ -109,7 +108,6 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
       's1',
       'hello',
       'u1',
-      undefined,
       undefined,
       undefined,
       'storyboard',
@@ -153,7 +151,6 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
       's1',
       'hello',
       'u1',
-      undefined,
       undefined,
       undefined,
       'storyboard',

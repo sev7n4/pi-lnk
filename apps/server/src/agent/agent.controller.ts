@@ -64,12 +64,6 @@ class ConversationDto {
   @IsString()
   threadId?: string
 
-  /** W5：用户结构化决策（确认/修改/换方向），写入 state 后恢复 interrupt_before gate。
-   *  文本消息（"1"/"2"/"确认方案"等）也能走兼容分支，但显式传值更可靠。 */
-  @IsOptional()
-  @IsIn(['confirm', 'revise', 'replan', 'confirm_gen', 'topo_revise', 'node_revise'])
-  userDecision?: 'confirm' | 'revise' | 'replan' | 'confirm_gen' | 'topo_revise' | 'node_revise'
-
   /** Dock 技能 id（UI 命名），Nest 映射后转接 pi-runtime forceSkills */
   @IsOptional()
   @IsString()
@@ -270,7 +264,6 @@ export class AgentController {
         dto.message,
         req.user.sub,
         dto.threadId,
-        dto.userDecision,
         idempotencyKey,
         dto.skillId,
         dto.model,

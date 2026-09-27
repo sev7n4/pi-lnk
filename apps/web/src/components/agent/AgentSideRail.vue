@@ -761,11 +761,11 @@ function toggleMacroSelection(schemeId: string, checked: boolean) {
 
 async function sendMacroSchemeConfirm() {
   const message = buildMacroSchemeConfirmMessage(macroSelections.value)
-  await sendMessage(message, 'confirm')
+  await sendMessage(message)
 }
 
 async function sendMacroSchemeRevise() {
-  await sendMessage('需要调整方案', 'revise')
+  await sendMessage('需要调整方案')
 }
 
 async function sendShotConfirm() {
@@ -835,7 +835,7 @@ async function sendRetakeContinue() {
 }
 
 async function sendShotRevise() {
-  await sendMessage('调整构图', 'revise')
+  await sendMessage('调整构图')
 }
 
 function syncDeliveryCheckpoint(
@@ -866,11 +866,11 @@ function toggleSchemeSelection(typeId: string, schemeId: string, checked: boolea
 
 async function sendSchemeConfirm() {
   const message = buildSchemeConfirmMessage(schemeSelections.value)
-  await sendMessage(message, 'confirm')
+  await sendMessage(message)
 }
 
 async function sendSchemeRevisePreset() {
-  await sendMessage('需要调整方案', 'revise')
+  await sendMessage('需要调整方案')
 }
 
 async function sendDeliverySwitch(typeId: string, schemeId: string) {
@@ -885,12 +885,12 @@ async function sendDeliveryRefine(typeId: string, feedback: string) {
 }
 
 async function sendDeliveryConfirmAll() {
-  await sendMessage(buildDeliveryConfirmMessage(deliverySelections.value), 'confirm')
+  await sendMessage(buildDeliveryConfirmMessage(deliverySelections.value))
 }
 
 async function onDeliveryPrimaryAction(_message: string) {
   if (productVisualSchemeV2.value) {
-    await sendMessage(buildShotDeliveryConfirmMessage(deliverySelections.value), 'confirm')
+    await sendMessage(buildShotDeliveryConfirmMessage(deliverySelections.value))
   } else {
     await sendDeliveryConfirmAll()
   }
@@ -1489,12 +1489,11 @@ async function send() {
 
   const message = input.value.trim()
   input.value = ''
-  // W5：手动输入若匹配确认/修改关键词，带上 userDecision，供 interrupt_before gate 恢复
-  await sendMessage(message, mapPresetToDecision(message))
+  await sendMessage(message)
 }
 
 async function onForceChoiceAction(message: string) {
-  await sendMessage(message, mapPresetToDecision(message))
+  await sendMessage(message)
 }
 
 function fillExampleUtterance(text: string) {
@@ -1569,46 +1568,12 @@ async function sendPreset(text: string) {
     return
   }
   input.value = ''
-  // W5 修复：按钮选择是结构化决策（confirm/revise），需显式传递 userDecision
-  // 否则后端 interrupt_before 恢复（aupdate_state + astream(None)）拿不到 userDecision，会卡在 await_confirm
-  const decision = mapPresetToDecision(text)
-  await sendMessage(text.trim(), decision)
+  await sendMessage(text.trim())
 }
 
 async function startNewTask() {
   if (agent.isStreaming || isUploading.value) return
   await sendMessage('__new_task__')
-}
-
-/** 把按钮文本映射为后端可识别的 userDecision 值。 */
-function mapPresetToDecision(text: string): 'confirm' | 'revise' | undefined {
-  const t = (text || '').trim()
-  if (
-    t === '1'
-    || t === 'A'
-    || t === '确认方案'
-    || t === '确认出图'
-    || t === '确认生成'
-    || t === '写入主文案'
-  ) {
-    return 'confirm'
-  }
-  if (
-    t === '2'
-    || t === 'B'
-    || t === '3'
-    || t === 'C'
-    || t === '取消'
-    || t === '换方向'
-    || t === '自己说明修改'
-    || t === '要修改'
-    || t === '要改拓扑：'
-    || t === '退出'
-    || t === '退出当前流程'
-  ) {
-    return 'revise'
-  }
-  return undefined
 }
 
 function goToWorkflowHome() {
@@ -1628,7 +1593,7 @@ async function createOwnCanvas() {
   }
 }
 
-async function sendMessage(message: string, userDecision?: 'confirm' | 'revise') {
+async function sendMessage(message: string) {
   const selectableTextModels = preferences.value?.selectableTextModels ?? []
   if (planningModel.value && !selectableTextModels.includes(planningModel.value)) {
     ElMessage.warning('当前规划模型已停用，请重新选择')
@@ -1696,7 +1661,6 @@ async function sendMessage(message: string, userDecision?: 'confirm' | 'revise')
         sessionId: props.sessionId,
         message,
         threadId: agentThreadId.value,
-        userDecision,
         skillId: activeSkillId.value ?? undefined,
         model: planningModel.value || undefined,
         thinking: showPlanningThinkingControls.value ? planningThinking.value : false,
