@@ -761,11 +761,11 @@ function toggleMacroSelection(schemeId: string, checked: boolean) {
 
 async function sendMacroSchemeConfirm() {
   const message = buildMacroSchemeConfirmMessage(macroSelections.value)
-  await sendMessage(message, 'confirm')
+  await sendMessage(message)
 }
 
 async function sendMacroSchemeRevise() {
-  await sendMessage('需要调整方案', 'revise')
+  await sendMessage('需要调整方案')
 }
 
 async function sendShotConfirm() {
@@ -835,7 +835,7 @@ async function sendRetakeContinue() {
 }
 
 async function sendShotRevise() {
-  await sendMessage('调整构图', 'revise')
+  await sendMessage('调整构图')
 }
 
 function syncDeliveryCheckpoint(
@@ -866,11 +866,11 @@ function toggleSchemeSelection(typeId: string, schemeId: string, checked: boolea
 
 async function sendSchemeConfirm() {
   const message = buildSchemeConfirmMessage(schemeSelections.value)
-  await sendMessage(message, 'confirm')
+  await sendMessage(message)
 }
 
 async function sendSchemeRevisePreset() {
-  await sendMessage('需要调整方案', 'revise')
+  await sendMessage('需要调整方案')
 }
 
 async function sendDeliverySwitch(typeId: string, schemeId: string) {
@@ -885,12 +885,12 @@ async function sendDeliveryRefine(typeId: string, feedback: string) {
 }
 
 async function sendDeliveryConfirmAll() {
-  await sendMessage(buildDeliveryConfirmMessage(deliverySelections.value), 'confirm')
+  await sendMessage(buildDeliveryConfirmMessage(deliverySelections.value))
 }
 
 async function onDeliveryPrimaryAction(_message: string) {
   if (productVisualSchemeV2.value) {
-    await sendMessage(buildShotDeliveryConfirmMessage(deliverySelections.value), 'confirm')
+    await sendMessage(buildShotDeliveryConfirmMessage(deliverySelections.value))
   } else {
     await sendDeliveryConfirmAll()
   }
