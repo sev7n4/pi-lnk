@@ -122,11 +122,20 @@
    若 agent 产品线不需要画布，这块应搬到画布侧；若未来 agent 产品线也有自己的"执行结果落地"，则应抽象成接口。
 2. **web 侧 dock 控件是否下沉为共享 UI 包？** `DockTypeIcon`/`DockGenerateButton`/`MentionInput`/`UniversalModelSelector`
    被 agent 复用。下沉 = 多一个共享包；不沉 = agent 产品线自己重写 UI。
-3. **`shared` 劈开后 agent 产品线是否还需要 `NodeType`？** 见 §7 的已知缺口——`NodeType` 只有 7 个，
-   而画布实际有 11 种节点类型，这个类型本身就需要先订正。
+3. ~~**`shared` 劈开后 agent 产品线是否还需要 `NodeType`？**~~ → **已裁决并订正（2026-09-28）**：`NodeType` 补入 `audio`，
+   与 `NODE_TYPES` 重新对齐；剩余 3 类有意不支持（见 §7）。归属问题随 path A 推进时再定。
 
 ## 7. 附注：测绘中发现的既有缺口（与拆仓独立）
 
 `extractCanvasActions` 的 `NODE_TYPES` 白名单照抄 `NodeType`（7 个：prompt/image/video/text/group/shot/sceneComposer），
 而画布实际可创建的节点类型有 11 个（`DockNodeType` 另含 `audio` / `mediaInput` / `videoComposition` / `worldModel`）
-→ **这 4 类画布动作会被静默丢弃**。已在 PR #43 标注，需单独定夺是否放宽。
+→ 这 4 类画布动作会被**静默丢弃**。
+
+**2026-09-28 已裁决**（用户定夺）：
+
+- ✅ **补入 `audio`** —— 画布确实可创建音频节点，且 shared 侧多处已按 audio 处理
+  （`selectionBatchGenerate` 的 `SUPPORTED_TYPES`、`nodeRefs` 的 `RefMediaType`、`studioModelCatalog` 音频模型），
+  之前只是白名单漏了。同步改了两处 SSOT：`agentContract.ts` 的 `NODE_TYPES` 与 `index.ts` 的 `NodeType`。
+- ⏸ **`mediaInput` / `videoComposition` / `worldModel` 有意不支持** —— 当前无实际需求（项目未商业化、无对应流量），
+  等出现实际需求时再补。已加回归测试锁定「这三类仍被丢弃」，防止将来被误放宽。
+- ❌ 不做丢弃计数观测 —— 原提议「先加计数跑一周看数据」在无商业流量的前提下没有意义，已取消。

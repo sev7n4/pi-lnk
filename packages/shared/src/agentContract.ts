@@ -28,14 +28,20 @@ export type CanvasActionType = z.infer<typeof CanvasActionTypeSchema>
 
 /**
  * 节点类型白名单（= NodeType 全集）。
- * ⚠️ 已知缺口：画布实际可创建的节点类型多于本白名单（audio / mediaInput /
- * videoComposition / worldModel），详见 index.ts 的 NodeType 与 web 侧 DockNodeType 的差异。
- * 提取动作时按本白名单收窄是**既有行为**，收敛时未改动，勿在收敛批次内顺手放宽。
+ *
+ * 2026-09-28 补入 `audio`：画布 DockNodeType 确实可创建音频节点，
+ * 且 shared 侧多处已按 audio 处理（selectionBatchGenerate 的 SUPPORTED_TYPES、
+ * nodeRefs 的 RefMediaType、studioModelCatalog 的音频模型），之前只是本白名单漏了，
+ * 导致这类画布动作被 extractCanvasActions 静默丢弃。
+ *
+ * ⚠️ 仍**有意**不支持：mediaInput / videoComposition / worldModel——三者当前无实际需求
+ * （项目未商业化、无对应流量），等出现实际需求时再补。补之前这三类画布动作仍会被静默丢弃。
  */
 export const NODE_TYPES = [
   'prompt',
   'image',
   'video',
+  'audio',
   'text',
   'group',
   'shot',
