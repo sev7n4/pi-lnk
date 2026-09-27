@@ -52,6 +52,22 @@ describe("PiPromptAssembler（#12 每轮 system prompt 组装）", () => {
 		expect(prompt.includes("upscale_image")).toBe(false);
 	});
 
+	it("规则 14：无工作流模板能力——如实说明，禁止虚构模板（B 决策：workflow 不迁 pi）", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		// core 组即注入（与是否启用 writeTools/genTools 无关）
+		for (const groups of [["core"], ["core", "writeTools"], ["core", "writeTools", "genTools"]] as const) {
+			const prompt = await asm.assemble({
+				sessionId: "s1",
+				ruleGroups: groups as Array<"core" | "writeTools" | "genTools">,
+			});
+			expect(prompt.includes("本会话没有工作流模板能力")).toBe(true);
+			expect(prompt.includes("直接用节点 + 连线搭骨架来替代")).toBe(true);
+			// 规则正文不得再引用 pi 侧不存在的 workflow 工具名
+			expect(prompt.includes("instantiate_workflow_template")).toBe(false);
+			expect(prompt.includes("import_workflow")).toBe(false);
+		}
+	});
+
 	it("core 规则 3 为 explore.py 原文（F1：恢复 run_*_generation 措辞）", async () => {
 		const asm = makeAssembler({ nodes: [] });
 		const prompt = await asm.assemble({ sessionId: "s1" });
