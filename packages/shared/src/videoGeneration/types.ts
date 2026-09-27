@@ -1,9 +1,9 @@
+import type { CanvasAction } from '../agentContract'
 import type { GenerationRefPayload } from '../nodeRefs'
 
-export type CanvasAction = {
-  type: 'add_node' | 'update_node' | 'remove_node' | 'add_edge' | 'remove_edge' | 'set_viewport'
-  payload: Record<string, unknown>
-}
+// ⚠️ 此处原有一份本地 CanvasAction（payload: Record<string, unknown>），已删除：
+// 它被 index.ts 的本地同名声明遮蔽、无人直接引用，属于第三份漂移副本。
+// 统一改用 `./agentContract` 的 CanvasAction（由 index.ts 的 export * 透出）。
 
 export type VideoGenerationMode =
   | 'text_to_video'
