@@ -1,8 +1,8 @@
 /**
  * 侧栏识图提示词（③）
  *
- * 逐字平移自老 runtime：`services/agent-runtime/skills/_shared/sidebar-media-parse/1.0.0.md`。
- * 老 runtime 从自身包内读该 md；Nest 侧没有该目录（API 镜像不含 services/agent-runtime），
+ * 逐字平移自老 runtime：`services/agent-runtime/skills/_shared/sidebar-media-parse/1.0.0.md`。 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
+ * 老 runtime 从自身包内读该 md；Nest 侧没有该目录（API 镜像不含 services/agent-runtime）， （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
  * 所以在此固化一份。**两边改任一处都要同步**——否则识图输出字段会漂移。
  */
 export const SIDEBAR_MEDIA_PARSE_PROMPT = `你是侧栏参考图解析员。用户可能附带文字需求，也可能**未说明产品名称**。你必须**看图**理解画面主体，并同时完成：① 给后续对话/方案用的产品摘要；② 与电商图源审核对齐的 QA 字段。

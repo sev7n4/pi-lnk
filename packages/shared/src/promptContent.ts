@@ -10,7 +10,7 @@ export const PROMPT_MODE_LABELS: Record<string, string> = {
   generic: '通用创作',
 }
 
-/** Keep in sync with services/agent-runtime/app/graph/atomic_intent.py turnaround_pipeline_user_note */
+/** Keep in sync with services/agent-runtime/app/graph/atomic_intent.py turnaround_pipeline_user_note （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处） */
 export const TURNAROUND_PIPELINE_USER_NOTE =
   '已按角色设定图模版扩写并出图；在原有三视图（正/侧/背）基础上增加近景特写，共四格横排；使用 2:1 画幅（非账户默认比例）。'
 

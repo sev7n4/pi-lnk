@@ -4,10 +4,8 @@
 #   docker compose -f deploy/docker-compose.prod.yml \
 #     -f deploy/docker-compose.observability.yml up -d
 #
-# Then in /opt/lnkpi/.env for agent-runtime:
-#   LNKPI_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
-#   LNKPI_LANGSMITH_OTEL_ENABLED=true
-#   # optional dev: LNKPI_LANGSMITH_API_KEY=... (disables OTEL_ONLY, also sends to LangSmith)
+# ⚠️ 本 overlay 当前未在生产启用（K6 监控栈未部署）。原 agent-runtime 的 OTLP 接入
+# 片段已随老 runtime 退役移除；将来接 pi-runtime 时在此补对应服务的 environment。
 #
 # Grafana UI (local only): http://127.0.0.1:3000 → Explore → Tempo
 
@@ -52,11 +50,6 @@ services:
       - lnkpi
     depends_on:
       - tempo
-
-  agent-runtime:
-    environment:
-      LNKPI_OTEL_EXPORTER_OTLP_ENDPOINT: ${LNKPI_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      LNKPI_LANGSMITH_OTEL_ENABLED: ${LNKPI_LANGSMITH_OTEL_ENABLED:-true}
 
 volumes:
   lnkpi-tempo-data:

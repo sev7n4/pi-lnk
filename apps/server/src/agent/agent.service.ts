@@ -31,7 +31,6 @@ import {
   type ProviderContext,
 } from '../provider/provider-context'
 import { ProviderResolverService } from '../provider/provider-resolver.service'
-import { AgentRuntimeClient } from './agent-runtime.client'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient, type PiSessionLlmOverride } from './pi-runtime/pi-runtime.client'
@@ -169,6 +168,9 @@ export class AgentService {
     userMessage: string,
     userId?: string,
     threadId?: string,
+    // ⚠️ 遗留参数：`userDecision`（confirm/revise/...）是老 LangGraph `interrupt_before`
+    // 恢复机制的入参。老 runtime 退役后 pi 路径**完全不读它**，仅为保持调用点位置签名而留。
+    // 清理需要同时改 controller DTO + shared agentContract + 前端 AgentSideRail，单独立项。
     userDecision?: 'confirm' | 'revise' | 'replan' | 'confirm_gen' | 'topo_revise' | 'node_revise',
     idempotencyKey?: string,
     skillId?: string,
@@ -240,11 +242,9 @@ export class AgentService {
 
     let assistantText = ''
 
-    // ---- B4：pi-runtime 开关（spec §6.2.0 B4）----
-    // active：主切 pi-runtime；**healthz 不通过即如实报错，不再回落 LangGraph**
-    //         （老 runtime 退役收口：回落链路已无存在理由，留着只会掩盖 pi 故障。
-    //          运维止血改为 PI_RUNTIME_MODE=off → 走 LangGraph，语义不变）
-    // shadow：LangGraph 照常服务，pi-runtime 仅接收镜像流量（零用户感知）
+    // ---- pi-runtime：唯一对话链路（老 LangGraph runtime 已退役）----
+    // 老 runtime 退役后没有第二条链路：pi 不可用就如实报错，不再有任何回落。
+    // `PI_RUNTIME_MODE=off` 是**维护态开关**（停用 agent 服务），不是切到另一条链路。
     if (piEligible) {
       const piClient = this.createPiRuntimeClient(piUrl)
       const piContext: PiCanvasContext = {
@@ -254,94 +254,47 @@ export class AgentService {
         focusNodeId,
         priorMessages,
       }
-      if (piMode === 'active') {
-        if (!(await piClient.healthz())) {
-          // 老 runtime 退役收口：不再回落 LangGraph，如实报错。
-          // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 全挂）。
-          this.piLogger.warn(`pi-runtime healthz failed, no fallback (session=${sessionId})`)
-          for await (const event of this.streamRuntimeUnavailable()) {
-            yield event
-          }
-          if (idempotencyKey) {
-            await this.completeIdempotencyKey(idempotencyKey, '')
-          }
-          return
-        }
-        // pi 会话按 sessionId 串行化：上一轮的 DELETE 与本轮的 create/prompt 不得交错
-        // （2026-09-24 生产实测：迟到的 DELETE 会删掉本轮刚建的会话 → 本轮空响应）
-        const releasePiLock = await this.acquirePiSessionLock(sessionId)
-        try {
-          for await (const event of this.streamFromPiRuntime(
-            piClient,
-            sessionId,
-            userMessage,
-            userId,
-            threadId,
-            piContext,
-            { thinking, thinkingEffort },
-            // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
-            skillId,
-            // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
-            model,
-          )) {
-            if (event.type === 'text_delta') {
-              assistantText += (event.data as { text: string }).text
-            }
-            yield event
-          }
-        } finally {
-          // streamFromPiRuntime 的 finally（DELETE 会话）已在其生成器结束时完成
-          releasePiLock()
+      if (!(await piClient.healthz())) {
+        // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 维护态）。
+        this.piLogger.warn(`pi-runtime healthz failed (session=${sessionId})`)
+        for await (const event of this.streamRuntimeUnavailable()) {
+          yield event
         }
         if (idempotencyKey) {
-          await this.completeIdempotencyKey(idempotencyKey, assistantText)
+          await this.completeIdempotencyKey(idempotencyKey, '')
         }
         return
       }
-      if (piMode === 'shadow') {
-        // 镜像会话与真实会话隔离（pi 侧独立 sessionId，删除即回收）
-        this.mirrorToPiRuntime(
+      // pi 会话按 sessionId 串行化：上一轮的 DELETE 与本轮的 create/prompt 不得交错
+      // （2026-09-24 生产实测：迟到的 DELETE 会删掉本轮刚建的会话 → 本轮空响应）
+      const releasePiLock = await this.acquirePiSessionLock(sessionId)
+      try {
+        for await (const event of this.streamFromPiRuntime(
           piClient,
-          `shadow-${sessionId}`,
-          userMessage,
-          userId,
-          sessionId,
-          piContext,
-        )
-      }
-    }
-
-    const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
-    if (runtimeUrl && userId) {
-      const client = this.createRuntimeClient(runtimeUrl)
-      if (await client.healthOk()) {
-        for await (const event of this.streamFromRuntime(
-          client,
           sessionId,
           userMessage,
           userId,
           threadId,
-          userDecision,
+          piContext,
+          { thinking, thinkingEffort },
+          // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
           skillId,
+          // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
           model,
-          focusNodeId,
-          validatedAttachments,
-          refOrder,
-          validatedMentionedKeys,
-          thinking,
-          thinkingEffort,
         )) {
           if (event.type === 'text_delta') {
             assistantText += (event.data as { text: string }).text
           }
           yield event
         }
-        // Complete idempotency key after successful runtime stream
-        if (idempotencyKey) {
-          await this.completeIdempotencyKey(idempotencyKey, assistantText)
-        }
-        return
+      } finally {
+        // streamFromPiRuntime 的 finally（DELETE 会话）已在其生成器结束时完成
+        releasePiLock()
       }
+      if (idempotencyKey) {
+        await this.completeIdempotencyKey(idempotencyKey, assistantText)
+      }
+      return
     }
 
     for await (const event of this.streamRuntimeUnavailable()) {
@@ -415,104 +368,50 @@ export class AgentService {
 
   // ── Runtime Health ───────────────────────────────────────────
 
-  /** Proxy agent-runtime health check for frontend heartbeat detection.
+  /** 前端心跳（每 15s）探的「生成服务是否可达」。
    *
-   * pi active 时对话真正依赖的是 pi-runtime，心跳必须探 pi：否则老 runtime 退役后
-   * 前端每 15s 拿到 ok:false → 误报「生成服务暂时不可达」并拦掉重连（下线前置 ①b）。
-   * pi 不可达即报不可达——chat 已不再回落老 runtime，心跳若因老 runtime 活着而报 ok，
-   * 就会出现「心跳绿、发消息立刻失败」的自相矛盾。
-   * 例外：active 但没配 PI_RUNTIME_URL 时 chat 实际走 LangGraph，继续向下探。 */
+   * 老 runtime 退役后 pi-runtime 是唯一链路，心跳 = 探 pi，不再有第二条可探。
+   * 维护态（PI_RUNTIME_MODE=off）下 chat 会直接报不可用，心跳也必须报不可用，
+   * 否则会出现「心跳绿、发消息立刻失败」的自相矛盾。 */
   async checkRuntimeHealth(): Promise<{ ok: boolean; latencyMs?: number }> {
-    const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
-    if (this.getPiRuntimeMode() === 'active') {
-      const piUrl = this.getPiRuntimeUrl()
-      if (piUrl) {
-        const start = Date.now()
-        const piOk = (await this.createPiRuntimeClient(piUrl).healthz()) !== null
-        // active 下 pi 是**唯一**服务链路（chat 已不再回落）→ 心跳必须如实反映 pi 状态。
-        // 若这里因老 runtime 还活着而报 ok，前端会放行而 chat 随即报不可用，自相矛盾。
-        return { ok: piOk, latencyMs: piOk ? Date.now() - start : undefined }
-      }
-      // 未配 PI_RUNTIME_URL 时 chat 仍走 LangGraph，继续向下探
-    }
-    if (!runtimeUrl) return { ok: false }
-    const client = this.createRuntimeClient(runtimeUrl)
+    if (this.getPiRuntimeMode() !== 'active') return { ok: false }
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return { ok: false }
     const start = Date.now()
-    const ok = await client.healthOk(5000)
+    const ok = (await this.createPiRuntimeClient(piUrl).healthz()) !== null
     return { ok, latencyMs: ok ? Date.now() - start : undefined }
   }
 
-  /** W12: Read LangGraph checkpoint phase for reconnect UI.
-   * pi active 时对话状态在 pi-runtime，老 LangGraph 根本没有该 thread 的 checkpoint
-   * （生产实测：24h 内 47 次查询全部空转）→ 直接返回 null，与「查不到」等价，
-   * 同时不再打到即将退役的老 runtime（下线前置 ①）。 */
-  async getThreadState(threadId: string): Promise<{
-    threadId: string
-    phase: string | null
-    nextNodes: string[]
-    interrupted: boolean
-    finished: boolean
-    runCancelled?: boolean | null
-    hasAtomicCheckpoint?: boolean
-    atomicNodeId?: string | null
-    atomicTargetType?: string | null
-    atomicTitle?: string | null
-    flowMode?: string | null
-  } | null> {
-    // 下线前置 ①：pi active 下对话状态不在 LangGraph，查也无意义
-    if (this.getPiRuntimeMode() === 'active') return null
-    const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
-    if (!runtimeUrl || !threadId.trim()) return null
-    const client = this.createRuntimeClient(runtimeUrl)
-    return client.getThreadState(threadId.trim())
+  /**
+   * W12: 重连时的 checkpoint 相位。
+   *
+   * 老 LangGraph runtime 已退役，checkpoint 概念随它一起消失（pi-runtime 无此状态），
+   * 所以恒为 null——与「查不到」等价，前端按无状态处理。
+   * 端点保留：前端 `AgentSideRail.vue` 重连时仍会调 `/api/agent/thread-state`，
+   * 删端点会让它 404。将来若 pi 侧补恢复态，从这里接回即可。
+   */
+  async getThreadState(_threadId: string): Promise<null> {
+    return null
   }
 
-  /** W27: Graph control-flow phase timeline (checkpoint history). */
-  async getThreadTimeline(threadId: string): Promise<{
-    threadId: string
-    entries: Array<{
-      step: number | null
-      source: string | null
-      phase: string | null
-      nextNodes: string[]
-      skillId: string | null
-      promptVersion: string | null
-      interrupted: boolean
-    }>
-    checkpointCount: number
-  } | null> {
-    // 同 getThreadState：pi active 下 checkpoint 历史不在 LangGraph
-    if (this.getPiRuntimeMode() === 'active') return null
-    const runtimeUrl = process.env.AGENT_RUNTIME_URL?.trim()
-    if (!runtimeUrl || !threadId.trim()) return null
-    const client = this.createRuntimeClient(runtimeUrl)
-    return client.getThreadTimeline(threadId.trim())
-  }
-
-  /** Overridable in unit tests */
-  createRuntimeClient(baseUrl: string): AgentRuntimeClient {
-    return new AgentRuntimeClient(
-      baseUrl,
-      process.env.AGENT_RUNTIME_SERVICE_TOKEN?.trim(),
-    )
+  /** 同 getThreadState：checkpoint 历史随老 LangGraph runtime 一起退役，恒 null。 */
+  async getThreadTimeline(_threadId: string): Promise<null> {
+    return null
   }
 
   // ---------------------------------------------------------------------------
-  // B4：pi-runtime 接入（spec §6.2.0 B4 + §10.3 D-ζ' 双 runtime 开关）
+  // pi-runtime：唯一对话链路（老 LangGraph runtime 已于 2026-09-27 退役）
   //
-  // PI_RUNTIME_MODE 三态（默认 off，保证零行为变化）：
-  //   off    — 全部走老 LangGraph agent-runtime（现状）
-  //   shadow — 生产仍走 LangGraph；同一 prompt 镜像一份到 pi-runtime（P0 shadow
-  //            验证 ≥7 天），pi 输出不返回给 Vue UI，仅记日志供 diff 收集
-  //   active — chat 流主切 pi-runtime；healthz 不通过时**直接报不可用，不回落**
-  //            （退役收口：老 runtime 不再是兜底；运维止血 = 切回 off/shadow）
+  // PI_RUNTIME_MODE 二态（默认 active）：
+  //   active — 正常服务。pi healthz 不通过 → 直接报不可用（没有第二条链路可回落）
+  //   off    — **维护态开关**：停用 agent 服务，chat 与心跳都报不可用。
+  //            不再是「切回老 runtime」——那条链路已删。
   // ---------------------------------------------------------------------------
 
   private readonly piLogger = new Logger('AgentService.pi')
 
-  getPiRuntimeMode(): 'off' | 'shadow' | 'active' {
-    const raw = process.env.PI_RUNTIME_MODE?.trim().toLowerCase()
-    return raw === 'shadow' || raw === 'active' ? raw : 'off'
+  getPiRuntimeMode(): 'off' | 'active' {
+    return process.env.PI_RUNTIME_MODE?.trim().toLowerCase() === 'off' ? 'off' : 'active'
   }
 
   getPiRuntimeUrl(): string | undefined {
@@ -524,16 +423,6 @@ export class AgentService {
     return (process.env.PI_LLM_PASSTHROUGH?.trim().toLowerCase() || 'on') !== 'off'
   }
 
-  /**
-   * K-1：解析本轮 pi 会话的 BYOK 覆盖（per-session 注入，多用户并发互相隔离）。
-   *
-   * 失败语义：任何一步拿不到 → undefined（pi 走 env 装配）。对齐老路径 ctx 缺省语义，
-   * 不引入 fallback_pending（spec §4）。
-   *
-   * 决策 A：只透传 BYOK（source=user），平台用户保持 env 装配——生产上 Nest 平台通道
-   * （apihub + 老 key + agnes-2.0-flash）与 pi-runtime env（api.agnes-ai.cn + 新 key +
-   * agnes-2.5-flash）**不同源**，透传会让平台用户换网关换模型，属回归。
-   */
   /**
    * ③ 侧栏识图：pi 路径下 `parse_sidebar_media`（老 LangGraph 图节点）的等价物。
    *
@@ -635,6 +524,16 @@ export class AgentService {
     )}\n${SIDEBAR_VISION_FAIL_HINT}`
   }
 
+  /**
+   * K-1：解析本轮 pi 会话的 BYOK 覆盖（per-session 注入，多用户并发互相隔离）。
+   *
+   * 失败语义：任何一步拿不到 → undefined（pi 走 env 装配）。对齐老路径 ctx 缺省语义，
+   * 不引入 fallback_pending（spec §4）。
+   *
+   * 决策 A：只透传 BYOK（source=user），平台用户保持 env 装配——生产上 Nest 平台通道
+   * （apihub + 老 key + agnes-2.0-flash）与 pi-runtime env（api.agnes-ai.cn + 新 key +
+   * agnes-2.5-flash）**不同源**，透传会让平台用户换网关换模型，属回归。
+   */
   private async resolvePiSessionLlm(
     userId: string | undefined,
     model?: string,
@@ -703,174 +602,9 @@ export class AgentService {
     }
   }
 
-  private async ensurePiSession(
-    client: PiRuntimeClient,
-    sessionId: string,
-    opts?: {
-      systemPrompt?: string
-      userId?: string
-      attachments?: SidebarAttachment[]
-      mentionedKeys?: string[]
-      refOrder?: string[]
-      focusNodeId?: string
-      thinkingLevel?: 'off' | 'medium' | 'high'
-      /** K-1：BYOK 会话级模型覆盖（仅 source=user 的渠道；平台用户不传） */
-      llm?: PiSessionLlmOverride
-    },
-  ): Promise<void> {
-    // 409 竞态（上一轮 DELETE 未完成就来了本轮 create）：删除陈旧会话后重建，
-    // 不复用——旧会话 systemPrompt 陈旧且其事件缓冲会把上一轮事件回放给本轮 SSE
-    await client.createSessionReplacingStale(sessionId, {
-      systemPrompt: opts?.systemPrompt,
-      userId: opts?.userId,
-      attachments: opts?.attachments,
-      mentionedKeys: opts?.mentionedKeys,
-      refOrder: opts?.refOrder,
-      focusNodeId: opts?.focusNodeId,
-      thinkingLevel: opts?.thinkingLevel,
-      // K-1：BYOK 覆盖随会话创建注入（畸形由 pi-runtime 侧 400，此处不二次校验）
-      llm: opts?.llm,
-    })
-  }
-
-  /** 把回调式 SSE 订阅桥接为 async generator（供 for-await 消费，结束自动退订）。 */
-  private async *iteratePiEvents(
-    client: PiRuntimeClient,
-    sessionId: string,
-  ): AsyncGenerator<PiRuntimeEvent> {
-    const queue: PiRuntimeEvent[] = []
-    let wake: (() => void) | null = null
-    let closed = false
-    const cancel = client.streamEvents(
-      sessionId,
-      (event) => {
-        queue.push(event)
-        wake?.()
-        wake = null
-      },
-      () => {
-        closed = true
-        wake?.()
-        wake = null
-      },
-    )
-    try {
-      while (true) {
-        if (queue.length === 0) {
-          if (closed) break
-          await new Promise<void>((resolve) => {
-            wake = resolve
-          })
-          continue
-        }
-        yield queue.shift() as PiRuntimeEvent
-      }
-    } finally {
-      cancel()
-    }
-  }
-
-  private async *streamFromRuntime(
-    client: AgentRuntimeClient,
-    sessionId: string,
-    userMessage: string,
-    userId: string,
-    threadId?: string,
-    userDecision?: 'confirm' | 'revise' | 'replan' | 'confirm_gen' | 'topo_revise' | 'node_revise',
-    skillId?: string,
-    model?: string,
-    focusNodeId?: string,
-    attachments?: SidebarAttachment[],
-    refOrder?: string[],
-    mentionedKeys?: string[],
-    thinking?: boolean,
-    thinkingEffort?: 'high' | 'max',
-  ): AsyncGenerator<AgentStreamEvent> {
-    let assistantText = ''
-    const canvasActions: CanvasAction[] = []
-    let journeyTrace: JourneyTraceSnapshot | undefined
-    const executionEvents: Array<{ type: string; data: unknown }> = []
-    let turnPresentation: Record<string, unknown> | undefined
-
-    const runtimeSkillId = mapUiSkillId(skillId)
-    let ctx: ProviderContext | undefined
-    if (userId) {
-      const requested = model?.trim() || (await this.loadDefaultTextModel(userId))
-      if (requested) {
-        ctx = await buildTextProviderContext(this.providerResolver, userId, requested)
-      }
-    }
-
-    const thinkingOn = thinking === true
-    for await (const event of client.streamRun({
-      sessionId,
-      userId,
-      message: userMessage,
-      // 新建对话应换 thread，避免 MemorySaver 把旧 await_confirm 状态续上
-      threadId: threadId?.trim() || sessionId,
-      // W5 修复：把前端结构化决策（按钮点击）传给 agent-runtime
-      // interrupt_before 恢复：注入 user_decision 后 astream(None)，不再重跑 intake
-      userDecision,
-      skillId: runtimeSkillId,
-      llmProviderRef: ctx?.providerRef,
-      llmModel: ctx?.model,
-      llmApiKey: ctx?.apiKey,
-      llmBaseUrl: ctx?.baseUrl,
-      llmSource: ctx?.source,
-      focusNodeId,
-      attachments,
-      refOrder,
-      mentionedKeys,
-      thinking: thinkingOn,
-      thinkingEffort: thinkingOn ? (thinkingEffort === 'max' ? 'max' : 'high') : undefined,
-    })) {
-      if (TRACE_PERSIST_EVENT_TYPES.has(event.type)) {
-        executionEvents.push({ type: event.type, data: event.data })
-      }
-      if (event.type === 'interrupt' || event.type === 'done') {
-        const pres = (event.data as { presentation?: unknown })?.presentation
-        if (pres && typeof pres === 'object' && !Array.isArray(pres)) {
-          turnPresentation = pres as Record<string, unknown>
-        }
-      }
-      if (event.type === 'text_delta') {
-        assistantText += (event.data as { text: string }).text
-      }
-      if (event.type === 'text_replace') {
-        assistantText = (event.data as { text: string }).text
-      }
-      if (event.type === 'canvas_action') {
-        canvasActions.push(event.data as CanvasAction)
-      }
-      if (event.type === 'journey_update') {
-        const snap = (event.data as { snapshot?: JourneyTraceSnapshot }).snapshot
-        if (snap) {
-          journeyTrace = snap
-        }
-      }
-      yield event
-    }
-
-    const metadata = buildTurnMetadata({
-      journeyTrace,
-      presentation: turnPresentation,
-      executionEvents,
-    })
-
-    const effectiveThreadId = threadId?.trim() || sessionId
-    await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
-      // Nest internal tools already wrote Session.canvasData; skip re-apply to avoid duplicate add_node
-      rewriteCanvasData: false,
-      linkedOutputs: deriveLinkedOutputs(canvasActions),
-      metadata,
-    })
-  }
-
   /**
-   * B4：pi-runtime 事件流 → 现有 AgentStreamEvent（active 模式主路径）。
-   * 与 streamFromRuntime 同构：累积 assistantText / canvasActions，回合结束
-   * 走同一个 finalizeTurn 持久化。canvas_action 提取待 pi 侧 custom tool
-   * 事件形态定型后补（Round 5），当前工具结果经 tool_result 透传。
+   * pi-runtime 事件流 → 现有 AgentStreamEvent（退役后唯一主路径）。
+   * 累积 assistantText / canvasActions，回合结束走 finalizeTurn 持久化。
    */
   private async *streamFromPiRuntime(
     client: PiRuntimeClient,
@@ -996,80 +730,79 @@ export class AgentService {
 
     const effectiveThreadId = threadId?.trim() || sessionId
     await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
+      // Nest internal tools already wrote Session.canvasData; skip re-apply to avoid duplicate add_node
       rewriteCanvasData: false,
+      // 退役对齐：老 LangGraph 路径（streamFromRuntime）同样传 deriveLinkedOutputs，
+      // pi 路径此前漏了这一项 → 助手消息的「产出」挂件为空。老路径已删，此处补回对等语义。
+      linkedOutputs: deriveLinkedOutputs(canvasActions),
       metadata: buildTurnMetadata({ executionEvents }),
     })
   }
-
-  /**
-   * B4：P0 shadow 镜像（spec §4.4.1）。
-   * 同一 prompt 复制到 pi-runtime，输出不返回 UI，仅记结构化日志供 diff 收集
-   * （Prometheus/LangSmith 对接是后续任务，本方法先保证零用户感知 + 可观测）。
-   */
-  mirrorToPiRuntime(
+  private async ensurePiSession(
     client: PiRuntimeClient,
-    shadowSessionId: string,
-    userMessage: string,
-    userId?: string,
-    realSessionId?: string,
-    piContext?: PiCanvasContext,
-  ): void {
-    void (async () => {
-      const startedAt = Date.now()
-      let textLength = 0
-      let toolCalls = 0
-      let status: string = 'unknown'
-      try {
-        // 画布摘要按真实 sessionId 拉取（shadow-sid 在 Nest 无画布数据）
-        const systemPrompt = await this.createPiPromptAssembler().assemble({
-          sessionId: realSessionId ?? shadowSessionId,
-          attachments: piContext?.attachments,
-          mentionedKeys: piContext?.mentionedKeys,
-          priorMessages: piContext?.priorMessages,
-          ruleGroups: ['core', 'writeTools', 'genTools'],
-        })
-        await this.ensurePiSession(client, shadowSessionId, {
-          systemPrompt,
-          userId,
-          attachments: piContext?.attachments,
-          mentionedKeys: piContext?.mentionedKeys,
-          refOrder: piContext?.refOrder,
-          focusNodeId: piContext?.focusNodeId,
-          // K-1：影子镜像**故意不传 llm** —— 镜像流量若走 BYOK 会重复消耗用户渠道配额，
-          // 且 shadow 只用于 diff 收集，用平台 env 装配即可。
-        })
-        const iterator = this.iteratePiEvents(client, shadowSessionId)[Symbol.asyncIterator]()
-        void client.prompt(shadowSessionId, userMessage).catch(() => {})
-        const deadline = Date.now() + 90_000
-        while (Date.now() < deadline) {
-          const { value: event, done: streamClosed } = await iterator.next()
-          if (streamClosed || !event) break
-          if (event.type === 'agent_end') {
-            status = (event.data as { status?: string }).status ?? 'completed'
-            break
-          }
-          if (event.type === 'error') {
-            status = 'error'
-            break
-          }
-          const delta = mapPiEventToUiEvent(event)
-          if (delta?.type === 'text_delta') {
-            textLength += (delta.data as { text: string }).text.length
-          } else if (delta?.type === 'tool_call') {
-            toolCalls += 1
-          }
+    sessionId: string,
+    opts?: {
+      systemPrompt?: string
+      userId?: string
+      attachments?: SidebarAttachment[]
+      mentionedKeys?: string[]
+      refOrder?: string[]
+      focusNodeId?: string
+      thinkingLevel?: 'off' | 'medium' | 'high'
+      /** K-1：BYOK 会话级模型覆盖（仅 source=user 的渠道；平台用户不传） */
+      llm?: PiSessionLlmOverride
+    },
+  ): Promise<void> {
+    // 409 竞态（上一轮 DELETE 未完成就来了本轮 create）：删除陈旧会话后重建，
+    // 不复用——旧会话 systemPrompt 陈旧且其事件缓冲会把上一轮事件回放给本轮 SSE
+    await client.createSessionReplacingStale(sessionId, {
+      systemPrompt: opts?.systemPrompt,
+      userId: opts?.userId,
+      attachments: opts?.attachments,
+      mentionedKeys: opts?.mentionedKeys,
+      refOrder: opts?.refOrder,
+      focusNodeId: opts?.focusNodeId,
+      thinkingLevel: opts?.thinkingLevel,
+      // K-1：BYOK 覆盖随会话创建注入（畸形由 pi-runtime 侧 400，此处不二次校验）
+      llm: opts?.llm,
+    })
+  }
+
+  /** 把回调式 SSE 订阅桥接为 async generator（供 for-await 消费，结束自动退订）。 */
+  private async *iteratePiEvents(
+    client: PiRuntimeClient,
+    sessionId: string,
+  ): AsyncGenerator<PiRuntimeEvent> {
+    const queue: PiRuntimeEvent[] = []
+    let wake: (() => void) | null = null
+    let closed = false
+    const cancel = client.streamEvents(
+      sessionId,
+      (event) => {
+        queue.push(event)
+        wake?.()
+        wake = null
+      },
+      () => {
+        closed = true
+        wake?.()
+        wake = null
+      },
+    )
+    try {
+      while (true) {
+        if (queue.length === 0) {
+          if (closed) break
+          await new Promise<void>((resolve) => {
+            wake = resolve
+          })
+          continue
         }
-        this.piLogger.log(
-          `shadow ${shadowSessionId}: status=${status} textLen=${textLength} toolCalls=${toolCalls} elapsed=${Date.now() - startedAt}ms`,
-        )
-      } catch (err) {
-        this.piLogger.warn(
-          `shadow ${shadowSessionId} failed after ${Date.now() - startedAt}ms: ${err instanceof Error ? err.message : String(err)}`,
-        )
-      } finally {
-        await client.deleteSession(shadowSessionId).catch(() => {})
+        yield queue.shift() as PiRuntimeEvent
       }
-    })()
+    } finally {
+      cancel()
+    }
   }
 
   private async finalizeTurn(

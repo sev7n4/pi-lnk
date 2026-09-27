@@ -52,7 +52,6 @@ pi-lnk/
 │   ├── pi-poc/          # N2 PoC spike（5/5 PASS，实测 API 模式的参考实现）
 │   └── shared/          # 共享包
 ├── services/
-│   ├── agent-runtime/   # 旧 LangGraph Runtime（Python，D-ζ' 保留 30 天回退后归档）
 │   └── pi-runtime/      # 新 agent 运行时（fastify，承载 vendored pi，K3s 部署）
 ├── vendor/
 │   └── earendil-works/pi/  # pi v0.85.1 只读镜像（纪律见其 VENDORED.md，禁止业务 patch）
@@ -70,8 +69,9 @@ pi-lnk/
 | Web（Vite dev） | 5173 | 本地 dev 走 Vite proxy `/api`；生产 Vercel `/api` rewrite |
 | Nest API（apps/server） | 3001（`PORT` 可覆盖） | 生产 CVM 直连 `:5100`，公网统一走 nginx `:8888` |
 | pi-runtime | **8100**（`PORT` 可覆盖） | 新 agent 运行时；Nest 经 `PI_RUNTIME_URL` 调用 |
-| 老 agent-runtime（Python） | 8000 | 迁移期共存（D-ζ'），归档后释放 |
 
-> 端口分配原则：新服务避开本机已占用端口（8080 被占）和老服务端口（8000）；pi-runtime 在 K3s 内走 ClusterIP，**不直接暴露公网**——上线后的访问链路不变：浏览器 → Vercel/nginx `:8888` → Nest → (集群内) pi-runtime。
+> 端口分配原则：新服务避开本机已占用端口（8080 被占）；pi-runtime 在 K3s 内走 ClusterIP，**不直接暴露公网**——访问链路：浏览器 → nginx `:8888` → Nest → (集群内) pi-runtime。
+>
+> ⚠️ 老 LangGraph agent-runtime（Python, :8000）已于 **2026-09-27 退役删除**（`services/agent-runtime/`、`Dockerfile.agent-runtime`、`deploy-agent-runtime.yml` 一并移除）。pi-runtime 是**唯一**对话链路：`PI_RUNTIME_MODE=off` 现在是**维护态关停**（chat 与心跳都报不可用），不再代表「切回另一条链路」。
 
 > 讨论文档 A.6 重要校准：**pi v0.85.1 无 subagent 支持（全仓 0 命中）**，subagent 需 L2 自建（嵌套 Agent 实例或复用 Lane），HITL 挂点用 `before_tool` hook，上下文注入用 `transform_context`。

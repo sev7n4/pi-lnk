@@ -1,5 +1,5 @@
 /** 商业品牌分镜提示词 — 战略层 / 规则库 / 金样例
- *  Keep in sync with services/agent-runtime/app/tools/commercial_storyboard_presets.py */
+ *  Keep in sync with services/agent-runtime/app/tools/commercial_storyboard_presets.py （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处） */
 
 export type CommercialRhythmModel = 'lightning_cut' | 'aida_narrative' | 'immersive_empathy'
 

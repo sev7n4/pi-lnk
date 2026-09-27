@@ -2,7 +2,7 @@ import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanvasAction } from '@lnkpi/shared'
 import { AgentService, deriveLinkedOutputs, buildTurnMetadata } from './agent.service'
-import { AgentRuntimeClient } from './agent-runtime.client'
+import { piEvent, stubPiClient } from './agent.test-utils'
 
 describe('deriveLinkedOutputs', () => {
   it('maps add_node actions to linked outputs', () => {
@@ -103,7 +103,9 @@ describe('AgentService streamConversation', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    delete process.env.AGENT_RUNTIME_URL
+    // 退役后 PI_RUNTIME_MODE 默认 active；这里显式设，避免受本地 .env / CI 环境影响
+    process.env.PI_RUNTIME_MODE = 'active'
+    delete process.env.PI_RUNTIME_URL
 
     agentMessageCreate.mockResolvedValue({})
     agentMessageFindMany.mockResolvedValue([
@@ -150,17 +152,15 @@ describe('AgentService streamConversation', () => {
     )
   })
 
-  it('returns runtime_unavailable error when AGENT_RUNTIME_URL is unset', async () => {
-    const healthSpy = vi.spyOn(AgentRuntimeClient.prototype, 'healthOk')
-    const streamSpy = vi.spyOn(AgentRuntimeClient.prototype, 'streamRun')
+  it('returns runtime_unavailable error when PI_RUNTIME_URL is unset', async () => {
+    const piSpy = vi.spyOn(service, 'createPiRuntimeClient')
 
     const events: Array<{ type: string; data?: unknown }> = []
     for await (const event of service.streamConversation('s1', 'hello', 'u1')) {
       events.push(event)
     }
 
-    expect(healthSpy).not.toHaveBeenCalled()
-    expect(streamSpy).not.toHaveBeenCalled()
+    expect(piSpy).not.toHaveBeenCalled()
     expect(events).toEqual([
       {
         type: 'error',
@@ -174,48 +174,31 @@ describe('AgentService streamConversation', () => {
     expect(agentMessageCreate).toHaveBeenCalledTimes(1)
   })
 
-  it('uses Runtime when AGENT_RUNTIME_URL healthy', async () => {
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'text_delta', data: { text: 'from-runtime' } }
-      yield {
-        type: 'canvas_action',
-        data: {
-          type: 'add_node',
-          payload: {
-            id: 'prompt-1',
-            nodeType: 'prompt',
-            data: { prompt: '方案' },
-            position: { x: 0, y: 0 },
+  it('streams pi-runtime events, collects canvas actions and persists the turn', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      piEvent('message_update', { event: { type: 'text_delta', delta: 'from-pi' } }),
+      piEvent('tool_execution_end', {
+        isError: false,
+        result: {
+          details: {
+            actions: [
+              {
+                type: 'add_node',
+                payload: {
+                  id: 'prompt-1',
+                  nodeType: 'prompt',
+                  data: { prompt: '方案' },
+                  position: { x: 0, y: 0 },
+                },
+              },
+            ],
           },
         },
-      }
-      yield { type: 'step', data: { id: 'dialog_draft', label: '出方案', status: 'done', ms: 10 } }
-      yield {
-        type: 'journey_update',
-        data: {
-          snapshot: {
-            version: 1,
-            flowMode: 'product_visual',
-            current: 'macro_select',
-            startedAt: '2026-08-13T00:00:00Z',
-            updatedAt: '2026-08-13T00:00:00Z',
-            steps: [],
-          },
-        },
-      }
-      yield {
-        type: 'done',
-        data: {
-          presentation: { kind: 'macro_scheme_cards', stepper: { current: 'macro_select', completed: [] } },
-        },
-      }
-    })
-
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
+      }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     const events: Array<{ type: string; data?: unknown }> = []
     for await (const event of service.streamConversation(
@@ -227,21 +210,18 @@ describe('AgentService streamConversation', () => {
       events.push(event)
     }
 
-    expect(streamRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        threadId: 's1:thread-a',
-        message: '营销',
-      }),
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ userId: 'u1' }),
     )
+    // tool_execution_end 同时派生 canvas_action（details.actions）与 tool_result（UI 执行过程）
     expect(events.map((e) => e.type)).toEqual([
       'text_delta',
       'canvas_action',
-      'step',
-      'journey_update',
+      'tool_result',
       'done',
     ])
-    // Runtime path skips canvasData rewrite (Nest tools already wrote)
+    // pi 路径跳过 canvasData 重写（Nest 内部工具已写）
     expect(sessionUpdate).not.toHaveBeenCalled()
     expect(agentMessageCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -254,24 +234,21 @@ describe('AgentService streamConversation', () => {
             status: 'done',
           },
         ]),
-        metadata: expect.stringContaining('macro_scheme_cards'),
       }),
     })
   })
 
-  it('returns runtime_unavailable when Runtime health fails', async () => {
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(false),
-      streamRun: vi.fn(),
-    } as unknown as AgentRuntimeClient)
+  it('returns runtime_unavailable when pi-runtime healthz fails', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([], false)
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     const events: Array<{ type: string; data?: unknown }> = []
     for await (const event of service.streamConversation('s1', 'hello', 'u1')) {
       events.push(event)
     }
 
+    expect(pi.createSession).not.toHaveBeenCalled()
     expect(events[0]).toEqual({
       type: 'error',
       data: {
@@ -282,16 +259,10 @@ describe('AgentService streamConversation', () => {
     expect(events[events.length - 1]).toEqual({ type: 'done', data: {} })
   })
 
-  it('forwards validated sidebar attachments to runtime', async () => {
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'text_delta', data: { text: 'ok' } }
-      yield { type: 'done', data: {} }
-    })
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
+  it('forwards validated sidebar attachments to pi session', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     const attachments = [
       {
@@ -319,7 +290,8 @@ describe('AgentService streamConversation', () => {
       // drain
     }
 
-    expect(streamRun).toHaveBeenCalledWith(
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1',
       expect.objectContaining({
         attachments,
         refOrder: ['a1'],
@@ -354,7 +326,6 @@ describe('AgentService idempotency', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    delete process.env.AGENT_RUNTIME_URL
     agentMessageCreate.mockResolvedValue({})
     agentMessageFindMany.mockResolvedValue([])
     sessionFindUnique.mockResolvedValue(null)
@@ -477,7 +448,8 @@ describe('AgentService checkRuntimeHealth', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    delete process.env.AGENT_RUNTIME_URL
+    process.env.PI_RUNTIME_MODE = 'active'
+    delete process.env.PI_RUNTIME_URL
 
     service = new AgentService(
       {
@@ -499,29 +471,34 @@ describe('AgentService checkRuntimeHealth', () => {
     )
   })
 
-  it('returns ok:false when AGENT_RUNTIME_URL is unset', async () => {
+  it('returns ok:false when PI_RUNTIME_URL is unset', async () => {
     const result = await service.checkRuntimeHealth()
     expect(result).toEqual({ ok: false })
   })
 
-  it('returns ok:true when runtime is healthy', async () => {
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-    } as unknown as AgentRuntimeClient)
+  it('returns ok:true when pi-runtime is healthy', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([]))
 
     const result = await service.checkRuntimeHealth()
     expect(result.ok).toBe(true)
     expect(result.latencyMs).toBeGreaterThanOrEqual(0)
   })
 
-  it('returns ok:false when runtime is unreachable', async () => {
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(false),
-    } as unknown as AgentRuntimeClient)
+  it('returns ok:false when pi-runtime is unreachable', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([], false))
 
     const result = await service.checkRuntimeHealth()
     expect(result).toEqual({ ok: false })
+  })
+
+  it('returns ok:false in maintenance mode (PI_RUNTIME_MODE=off)', async () => {
+    process.env.PI_RUNTIME_MODE = 'off'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const piSpy = vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([]))
+
+    expect(await service.checkRuntimeHealth()).toEqual({ ok: false })
+    expect(piSpy).not.toHaveBeenCalled()
   })
 })

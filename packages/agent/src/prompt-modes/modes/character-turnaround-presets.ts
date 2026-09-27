@@ -1,5 +1,5 @@
 /** 人物多视图风格预设与金样例
- *  Keep in sync with services/agent-runtime/app/tools/character_turnaround_presets.py */
+ *  Keep in sync with services/agent-runtime/app/tools/character_turnaround_presets.py （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处） */
 
 export interface CharacterTurnaroundStylePreset {
   id: string

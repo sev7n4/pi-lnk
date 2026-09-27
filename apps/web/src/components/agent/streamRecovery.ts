@@ -20,7 +20,7 @@ export function isStreamStale(lastActivityAt: number, now = Date.now()): boolean
 }
 
 /**
- * Thread suffix for agent-runtime LangGraph threads.
+ * Thread suffix for pi-runtime threads（老 LangGraph runtime 已退役，thread 语义保留）。
  * crypto.randomUUID requires a secure context (HTTPS/localhost); production CVM is HTTP.
  */
 export function randomThreadSuffix(): string {
@@ -73,7 +73,7 @@ export function buildIdempotencyKey(threadId: string): string {
 }
 
 /**
- * Decide whether the frontend should poll agent-runtime health after SSE ends.
+ * Decide whether the frontend should poll runtime health (pi-runtime) after SSE ends.
  * Returns true when the assistant content suggests generation is still in progress
  * and hasn't reached a terminal state.
  */
@@ -89,7 +89,7 @@ export function shouldPollRuntimeHealth(assistantContent: string): boolean {
 }
 
 /**
- * Check agent-runtime health via Nest proxy endpoint.
+ * Check runtime health via Nest proxy endpoint（心跳探的是 pi-runtime）。
  * Returns { ok: boolean, latencyMs?: number } or null on network failure.
  */
 export async function checkRuntimeHealthViaNest(): Promise<{ ok: boolean; latencyMs?: number } | null> {

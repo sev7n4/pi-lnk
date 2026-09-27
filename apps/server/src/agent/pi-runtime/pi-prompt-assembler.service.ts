@@ -1,7 +1,7 @@
 /**
  * PiPromptAssembler（#12）：Nest 每轮组装 pi-runtime 会话的完整 system prompt。
  *
- * 规则文本出处：services/agent-runtime/app/graph/nodes/explore.py:87-132（_EXPLORE_SYSTEM）。
+ * 规则文本出处：services/agent-runtime/app/graph/nodes/explore.py:87-132（_EXPLORE_SYSTEM）。 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
  * 规则分组（B-2 起）：
  *   - core（默认注入）：前缀 + 规则 1/2/3/7（原文）；第 10 条「写操作未开放」守卫
  *     仅在 writeTools 未启用时附加（写工具上线后守卫退出）。

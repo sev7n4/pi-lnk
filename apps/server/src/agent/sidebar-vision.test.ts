@@ -1,5 +1,5 @@
 /**
- * 侧栏识图（③）纯函数测试——逐条对齐老 runtime 的 pytest：
+ * 侧栏识图（③）纯函数测试——逐条对齐老 runtime 的 pytest（老 runtime 已于 2026-09-27 退役删除，下列路径仅作历史语义出处）：
  *   services/agent-runtime/tests/test_supports_vision_model.py
  *   services/agent-runtime/app/graph/sidebar_media_parse.py: format_parse_context_block
  */

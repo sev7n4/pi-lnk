@@ -2,7 +2,7 @@ import 'reflect-metadata'
 import { BadRequestException } from '@nestjs/common'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService } from './agent.service'
-import { AgentRuntimeClient } from './agent-runtime.client'
+import { piEvent, stubPiClient } from './agent.test-utils'
 
 function makeMessages(sessionId: string, threadId: string, count: number) {
   const base = new Date('2026-01-01T00:00:00Z')
@@ -34,7 +34,8 @@ describe('AgentService messages & threads', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    delete process.env.AGENT_RUNTIME_URL
+    process.env.PI_RUNTIME_MODE = 'active'
+    delete process.env.PI_RUNTIME_URL
 
     agentMessageCreate.mockResolvedValue({})
     agentThreadFindUnique.mockResolvedValue(null)
@@ -156,18 +157,15 @@ describe('AgentService messages & threads', () => {
   })
 
   it('streamConversation upserts thread and passes threadId on first user message', async () => {
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     agentMessageFindMany.mockResolvedValue([])
     agentThreadFindUnique.mockResolvedValue(null)
 
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'text_delta', data: { text: 'hi' } }
-      yield { type: 'done', data: {} }
-    })
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
+    const pi = stubPiClient([
+      piEvent('message_update', { event: { type: 'text_delta', delta: 'hi' } }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     for await (const _event of service.streamConversation(
       's1',
@@ -202,20 +200,17 @@ describe('AgentService messages & threads', () => {
         content: '帮我生成唐朝宰相三视图',
       },
     })
-    expect(streamRun).toHaveBeenCalled()
+    expect(pi.prompt).toHaveBeenCalled()
   })
 
   it('streamConversation touches thread updatedAt when thread already exists', async () => {
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     agentMessageFindMany.mockResolvedValue([])
     agentThreadFindUnique.mockResolvedValue({ id: 's1:existing' })
 
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun: vi.fn(async function* () {
-        yield { type: 'done', data: {} }
-      }),
-    } as unknown as AgentRuntimeClient)
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(
+      stubPiClient([piEvent('agent_end', { status: 'completed' })]),
+    )
 
     for await (const _event of service.streamConversation(
       's1',

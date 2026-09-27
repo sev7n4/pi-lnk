@@ -1,4 +1,5 @@
-# Receives OTLP from agent-runtime (and future Nest), exports to Tempo.
+# Receives OTLP from Nest / pi-runtime, exports to Tempo.
+# （原 agent-runtime 来源已随老 runtime 退役移除）
 
 receivers:
   otlp:

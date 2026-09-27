@@ -1,4 +1,4 @@
-/** Mirror of `services/agent-runtime/app/graph/intent.py` MODIFY_HINTS (W9). */
+/** Mirror of `services/agent-runtime/app/graph/intent.py` MODIFY_HINTS (W9). （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处） */
 export const MODIFY_INTENT_KEYWORDS = [
   '改成',
   '改一下',
