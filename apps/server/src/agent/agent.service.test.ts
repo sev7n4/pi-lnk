@@ -63,20 +63,11 @@ describe('deriveLinkedOutputs', () => {
 })
 
 describe('buildTurnMetadata', () => {
-  it('merges journeyTrace, presentation and execution events', () => {
+  it('merges presentation and execution events', () => {
     const meta = buildTurnMetadata({
-      journeyTrace: {
-        version: 1,
-        flowMode: 'product_visual',
-        current: 'macro_select',
-        startedAt: '2026-08-13T00:00:00Z',
-        updatedAt: '2026-08-13T00:00:00Z',
-        steps: [],
-      },
       presentation: { kind: 'macro_scheme_cards', body: { schemes: [] } },
       executionEvents: [{ type: 'step', data: { id: 's1', label: 'x', status: 'done' } }],
     })
-    expect(meta?.journeyTrace?.current).toBe('macro_select')
     expect(meta?.presentation?.kind).toBe('macro_scheme_cards')
     expect(meta?.executionEvents).toHaveLength(1)
   })

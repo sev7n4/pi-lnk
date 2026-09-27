@@ -103,7 +103,8 @@ export interface AgentPresentationEnvelope {
   options?: Array<{ id: string; label: string; message: string }>
 }
 
-/** Nine-step product_visual journey labels (spec §1). */
+/** 九步展示进度条（spec §1）。⚠️ 老 runtime 的 journey_update 已随退役删除，
+ *  此表仅服务于 presentation envelope 自带 stepper（AgentStepper / AgentPresentationHost）。 */
 export const PRESENTATION_STEPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'image_qa', label: '检查产品图' },
   { id: 'scheme_draft', label: '理解需求 · 出方案' },

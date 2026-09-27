@@ -62,7 +62,6 @@ export interface AgentStreamEvent {
     | 'turn_usage'
     | 'explore'
     | 'interrupt'
-    | 'journey_update'
     | 'force_choice'
     | 'run_cancelled'
     | 'ping'

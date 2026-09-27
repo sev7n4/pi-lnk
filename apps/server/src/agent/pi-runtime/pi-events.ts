@@ -2,7 +2,7 @@
  * B8：pi AgentEvent（归一）→ 现有 UI 事件映射（spec §8.5.2）
  *
  * 现有事件名实测自 apps/server/src/agent/agent.service.ts 的消费端
- * （text_delta / text_replace / canvas_action / journey_update / interrupt / done ...）。
+ * （text_delta / text_replace / canvas_action / interrupt / done ...）。
  *
  * ⚠️ 完整 11 → 17 映射表在 spec 写作 Round 5 补完；本文件先落地 P0 shadow
  * 验证所需的最小映射，未映射事件原样透传（type 加 `pi_` 前缀避免歧义）。

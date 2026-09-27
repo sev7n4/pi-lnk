@@ -123,8 +123,6 @@ import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.v
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
-import { extractThreadJourney } from '@/components/agent/journeyTraceHelpers'
-import type { JourneyTraceSnapshot } from '@/components/agent/journeyTraceTypes'
 import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
@@ -459,8 +457,6 @@ const reconnecting = ref(false)
 const recoveredPhaseHint = ref<string | null>(null)
 /** P0-06: authoritative gate from SSE interrupt or thread-state reconnect */
 const interruptGate = ref<AgentInterruptPayload | null>(null)
-/** Thread-level journey snapshot for Stepper + trace enrichment */
-const threadJourneyTrace = ref<JourneyTraceSnapshot | null>(null)
 /** LangGraph checkpoint: same thread can regenerate/variant on prior atomic node */
 const hasAtomicCheckpoint = ref(false)
 /** Phase 2c.3: thread-state atomicNodeId for dock-mapped atomic confirm */
@@ -1288,7 +1284,6 @@ function newAgentSession() {
   threadRunState.value = null
   cancelledPresentation.value = null
   cancelledProgressText.value = null
-  threadJourneyTrace.value = null
   hasAtomicCheckpoint.value = false
   atomicNodeId.value = null
   retakePending.value = false
@@ -1352,7 +1347,6 @@ async function refreshThreadCheckpoint() {
         effectiveUtterance?: string | null
         presentation?: AgentPresentationEnvelope | null
         selectedMacroSchemeIds?: string[] | null
-        journeyTrace?: JourneyTraceSnapshot | null
       }
     }
     hasAtomicCheckpoint.value = Boolean(json.data?.hasAtomicCheckpoint)
@@ -1369,17 +1363,6 @@ async function refreshThreadCheckpoint() {
     }
     if (json.data?.selectedMacroSchemeIds?.length) {
       macroSelections.value = [...json.data.selectedMacroSchemeIds]
-    }
-    if (json.data?.journeyTrace) {
-      // Spec §4.2 (issue #4): merge by updatedAt, newer wins
-      const incoming = json.data.journeyTrace
-      const current = threadJourneyTrace.value
-      const incomingTs = incoming?.updatedAt ? Date.parse(incoming.updatedAt) : 0
-      const currentTs = current?.updatedAt ? Date.parse(current.updatedAt) : 0
-      if (!current || incomingTs >= currentTs) {
-        threadJourneyTrace.value = incoming
-        agent.trackJourneyUpdate(incoming)
-      }
     }
     if (json.data?.shotManifest) {
       syncShotManifest(json.data.shotManifest)
@@ -1408,7 +1391,6 @@ async function refreshThreadCheckpoint() {
 async function loadHistory() {
   agent.clear()
   taskProgress.value = emptyTaskProgress()
-  threadJourneyTrace.value = null
   try {
     const res = await fetch(
       apiUrl(
@@ -1422,7 +1404,6 @@ async function loadHistory() {
     const json = await res.json()
     if (json.data?.length) {
       agent.loadHistory(json.data)
-      threadJourneyTrace.value = extractThreadJourney(json.data)
     }
   } catch {
     ElMessage.warning('对话历史加载失败，请检查网络后刷新')
@@ -1772,7 +1753,6 @@ async function reconnectStream() {
         userRequestLabels?: string[] | null
         presentation?: AgentPresentationEnvelope | null
         selectedMacroSchemeIds?: string[] | null
-        journeyTrace?: JourneyTraceSnapshot | null
       } | null
     }
     const phase = json.data?.phase ?? null
@@ -1787,17 +1767,6 @@ async function reconnectStream() {
     }
     if (json.data?.selectedMacroSchemeIds?.length) {
       macroSelections.value = [...json.data.selectedMacroSchemeIds]
-    }
-    if (json.data?.journeyTrace) {
-      // Spec §4.2 (issue #4): merge by updatedAt, newer wins
-      const incoming = json.data.journeyTrace
-      const current = threadJourneyTrace.value
-      const incomingTs = incoming?.updatedAt ? Date.parse(incoming.updatedAt) : 0
-      const currentTs = current?.updatedAt ? Date.parse(current.updatedAt) : 0
-      if (!current || incomingTs >= currentTs) {
-        threadJourneyTrace.value = incoming
-        agent.trackJourneyUpdate(incoming)
-      }
     }
     if (json.data?.shotManifest) {
       syncShotManifest(json.data.shotManifest)
@@ -1971,13 +1940,6 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])
       break
-    case 'journey_update': {
-      const snap = (event.data as { snapshot: JourneyTraceSnapshot }).snapshot
-      threadJourneyTrace.value = snap
-      agent.trackJourneyUpdate(snap)
-      scrollToBottom()
-      break
-    }
     case 'canvas_command': {
       const cmd = event.data as {
         type: string
@@ -2475,7 +2437,6 @@ defineExpose({
                   v-if="msg.role === 'assistant' && msg.executionTrace"
                   :trace="msg.executionTrace"
                   :streaming="Boolean(msg.streaming)"
-                  :journey-snapshot="msg.journeyTrace ?? threadJourneyTrace"
                   @focus-node="onFocusNode($event)"
                 />
                 <AgentPresentationHost
@@ -2483,7 +2444,6 @@ defineExpose({
                   :presentation="historyPresentation(msg)!"
                   disabled
                   :macro-selected-ids="historyMacroSelectedIds(historyPresentation(msg)!)"
-                  :journey-snapshot="msg.journeyTrace ?? threadJourneyTrace"
                   @focus-node="onFocusNode($event)"
                   @focus-all="onFocusAll($event)"
                 />
@@ -2550,7 +2510,6 @@ defineExpose({
             >
               <AgentPresentationHost
                 :presentation="completionPresentation"
-                :journey-snapshot="threadJourneyTrace"
                 :disabled="agent.isStreaming"
                 @focus-node="onFocusNode($event)"
                 @focus-all="onFocusAll($event)"
@@ -2913,7 +2872,6 @@ defineExpose({
             >
               <AgentPresentationHost
                 :presentation="deliveryPresentationForUi"
-                :journey-snapshot="threadJourneyTrace"
                 :delivery-selections="deliverySelections"
                 :disabled="agent.isStreaming"
                 @primary-action="onDeliveryPrimaryAction"
@@ -2925,7 +2883,6 @@ defineExpose({
             <div v-else-if="showGatePresentation && gatePresentation" class="mb-2">
               <AgentPresentationHost
                 :presentation="gatePresentation"
-                :journey-snapshot="threadJourneyTrace"
                 :disabled="agent.isStreaming"
                 @primary-action="onGatePrimaryAction"
                 @focus-node="onFocusNode($event)"
