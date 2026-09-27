@@ -37,6 +37,15 @@ import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { PiRuntimeClient, type PiSessionLlmOverride } from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability } from '../provider/model-capability'
+import {
+  formatParseContextBlock,
+  getCachedParseBlock,
+  imageUrlsForParse,
+  setCachedParseBlock,
+  SIDEBAR_VISION_FAIL_HINT,
+  supportsVisionModel,
+} from './sidebar-vision'
+import { SIDEBAR_MEDIA_PARSE_PROMPT } from './sidebar-media-parse-prompt'
 import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
@@ -511,6 +520,107 @@ export class AgentService {
    * （apihub + 老 key + agnes-2.0-flash）与 pi-runtime env（api.agnes-ai.cn + 新 key +
    * agnes-2.5-flash）**不同源**，透传会让平台用户换网关换模型，属回归。
    */
+  /**
+   * ③ 侧栏识图：pi 路径下 `parse_sidebar_media`（老 LangGraph 图节点）的等价物。
+   *
+   * 老链路是「侧栏贴图 → runtime 调 Nest vision QA → 结构化字段 → 作为文本上下文给模型」，
+   * 不是让对话模型直接看图；pi 路径此前**完全没有这一步**（侧栏块只有文件名），
+   * 表现为「它说只看到文件名」。这里在 Nest 侧做前置，把解析结果文本注入 pi systemPrompt。
+   *
+   * 失败语义（对齐老链路，不是简单返回空）：
+   *   - 无贴图 / 开关 off / 拿不到渠道 → ''（压根没尝试解析，与老链路 `parse=None` 一致）
+   *   - 尝试了但没成功（模型不支持视觉 / 上游失败 / vision_used=false）→ 仍出块
+   *     （摘要=未知）+「未能识别」兜底话术，避免模型拿着文件名编一版空品类方案。
+   */
+  private async buildSidebarVisionBlock(input: {
+    sessionId: string
+    userId: string | undefined
+    userMessage: string
+    attachments: SidebarAttachment[] | undefined
+    model?: string
+  }): Promise<string> {
+    const { sessionId, userId, userMessage, attachments, model } = input
+    if (!userId || !this.canvasTools) return ''
+    // 回滚开关：置 off → 停掉侧栏识图（与 PI_LLM_PASSTHROUGH 同款运维习惯）
+    if ((process.env.PI_SIDEBAR_VISION?.trim().toLowerCase() || 'on') === 'off') return ''
+    const imageUrls = imageUrlsForParse(attachments)
+    if (!imageUrls.length) return ''
+    // 有贴图就必须给模型一个交代：成功给解析块，失败给「未能识别」兜底块——
+    // 否则模型手里只有文件名（正是老链路要防的「照着文件名编方案」）。
+
+    const requested =
+      model?.trim() || (await this.loadDefaultTextModel(userId).catch(() => undefined))
+    let ctx: ProviderContext | undefined
+    if (requested) {
+      try {
+        ctx = await buildTextProviderContext(this.providerResolver, userId, requested)
+      } catch {
+        // 渠道停用/无 key/解密失败 → 兜底块（老链路 VISION_PROVIDER_CONTEXT_INVALID）
+        ctx = undefined
+      }
+    }
+    if (!ctx) return this.failedParseBlock(userMessage)
+    // 跨轮复用：同 provider + 同图片集合直接取缓存块（只缓存成功，失败下一轮可自愈）
+    const cached = getCachedParseBlock(imageUrls, ctx.providerRef)
+    if (cached) return cached
+
+    // 模型不支持视觉 → 不调 vision，但**仍出块**（摘要=未知）+ 失败兜底话术，
+    // 对齐老链路 VISION_UNSUPPORTED：不让它拿着文件名去编一版方案。
+    if (!supportsVisionModel(ctx.model)) {
+      return this.failedParseBlock(userMessage)
+    }
+
+    try {
+      const parsed = await this.canvasTools.runVisionQa({
+        sessionId,
+        userId,
+        imageUrls,
+        userText: userMessage,
+        systemPrompt: SIDEBAR_MEDIA_PARSE_PROMPT,
+        userContent: `请解析这 ${imageUrls.length} 张侧栏参考图。${
+          userMessage.trim() ? `\n\n【用户说明】\n${userMessage.trim()}` : ''
+        }`,
+        providerRef: ctx.providerRef,
+        model: ctx.model,
+        apiKey: ctx.apiKey,
+        baseUrl: ctx.baseUrl,
+        source: ctx.source,
+      })
+      if (!parsed?.visionUsed) {
+        return this.failedParseBlock(userMessage)
+      }
+      const block = formatParseContextBlock(
+        {
+          visionUsed: true,
+          userFacingSummary: parsed.userFacingSummary ?? parsed.productSummary,
+          fields: {
+            category: parsed.category,
+            appearance: parsed.appearance,
+            materialHint: parsed.materialHint,
+            textInImage: parsed.textInImage,
+          },
+          unknown: parsed.unknown,
+        },
+        { userText: userMessage },
+      )
+      setCachedParseBlock(imageUrls, ctx.providerRef, block)
+      return block
+    } catch {
+      return this.failedParseBlock(userMessage)
+    }
+  }
+
+  /**
+   * 识图未成功时的文本块：仍给【侧栏参考图解析】骨架（摘要=未知），再追加兜底话术。
+   * 不缓存——失败是可能自愈的（上游抖动/超时），下一轮应重试。
+   */
+  private failedParseBlock(userMessage: string): string {
+    return `${formatParseContextBlock(
+      { visionUsed: false, userFacingSummary: '', fields: {}, unknown: [] },
+      { userText: userMessage },
+    )}\n${SIDEBAR_VISION_FAIL_HINT}`
+  }
+
   private async resolvePiSessionLlm(
     userId: string | undefined,
     model?: string,
@@ -763,6 +873,14 @@ export class AgentService {
   ): AsyncGenerator<AgentStreamEvent> {
     // K-1：BYOK 覆盖必须在 create 之前解析（会话创建即装配模型，中途不可换）
     const llm = await this.resolvePiSessionLlm(userId, model)
+    // ③ 侧栏识图前置：结果作为文本上下文并入 systemPrompt（失败返回 ''，不阻断）
+    const visionBlock = await this.buildSidebarVisionBlock({
+      sessionId,
+      userId,
+      userMessage,
+      attachments: piContext?.attachments,
+      model,
+    })
     const systemPrompt = await this.createPiPromptAssembler().assemble({
       sessionId,
       attachments: piContext?.attachments,
@@ -772,7 +890,7 @@ export class AgentService {
       ruleGroups: ['core', 'writeTools', 'genTools'],
     })
     await this.ensurePiSession(client, sessionId, {
-      systemPrompt,
+      systemPrompt: visionBlock ? `${systemPrompt}\n\n${visionBlock}` : systemPrompt,
       userId,
       attachments: piContext?.attachments,
       mentionedKeys: piContext?.mentionedKeys,
