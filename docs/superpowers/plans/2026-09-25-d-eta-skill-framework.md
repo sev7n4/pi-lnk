@@ -43,7 +43,12 @@
 - Test: `apps/server/src/agent/pi-runtime/pi-prompt-assembler.service.test.ts`
 
 **Interfaces:**
-- Produces: `export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "memory";`（`memory` 为阶段二预留，本期不产出）、`export interface PromptLayer { id: string; kind: PromptLayerKind; content: string; }`、`export function approxTokens(s: string): number`（`Math.ceil(s.length / 4)`）。`assemble()` 对外签名与返回类型（`Promise<string>`）不变。
+- Produces: `export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "skill" | "memory";`（`skill` 与 `memory` 为预留：`skill` 是 D-η' 第一个按层管理的住客，`memory` 阶段二；本期不产出）、`export interface PromptLayer { id: string; kind: PromptLayerKind; content: string; approxTokens: number; }`、`export function approxTokens(s: string): number`（`Math.ceil(s.length / 4)`）。`assemble()` 对外签名与返回类型（`Promise<string>`）不变。
+- ⚠️ **2026-09-28 实现校准**：`PromptLayer` 增加 `approxTokens` 字段、`kind` 增加 `skill`，并新增结构化
+  `PromptManifest { sessionId, layers, totalTokens, promptHash }` 与 `lastManifestDetail`。
+  依据 `docs/discussion/2026-09-25-workbuddy-alignment.md` §4 第 1、2 项——该处要求层自带
+  `approxTokens`、且 kind 含 `skill`；与本文档原口径（无 approxTokens、无 skill）冲突，
+  实现取**并集**以同时满足。另补 `prompt_hash`（对齐 §4 第 2 项的 manifest 三要素）。
 
 - [ ] **Step 1: 写失败测试（manifest + 输出不变）**
 
@@ -80,16 +85,32 @@ Expected: FAIL（`lastLayers`/`lastManifest` 不存在）
 `pi-prompt-assembler.service.ts` 修改（保持 `composeRuleText` 等既有函数不动）：
 
 ```ts
-export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "memory";
+export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "skill" | "memory";
 
 export interface PromptLayer {
 	id: string;
 	kind: PromptLayerKind;
 	content: string;
+	/** 该层 token 估算，随层携带（manifest/观测直接消费）。 */
+	approxTokens: number;
+}
+
+/** 每轮注入 manifest（结构化，供 log/metrics 消费）。 */
+export interface PromptManifest {
+	sessionId: string;
+	layers: Array<{ id: string; kind: PromptLayerKind; tokens: number }>;
+	totalTokens: number;
+	/** 最终 prompt 的稳定哈希（12 位 hex），用于跨轮 diff / 回归比对。 */
+	promptHash: string;
 }
 
 export function approxTokens(s: string): number {
 	return Math.ceil(s.length / 4);
+}
+
+/** 构造层并顺带算出 token 估算（避免调用点漏算）。 */
+function layer(id: string, kind: PromptLayerKind, content: string): PromptLayer {
+	return { id, kind, content, approxTokens: approxTokens(content) };
 }
 ```
 
