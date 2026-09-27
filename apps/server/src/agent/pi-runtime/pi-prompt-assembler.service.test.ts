@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PiPromptAssembler } from "./pi-prompt-assembler.service";
+import {
+	PiPromptAssembler,
+	approxTokens,
+	promptHash,
+} from "./pi-prompt-assembler.service";
 
 const makeAssembler = (summary: { nodes: unknown[] }) =>
 	new PiPromptAssembler({
@@ -138,5 +142,48 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 		const prompt = await asm.assemble({ sessionId: "s1", ruleGroups: ["core", "genTools"] });
 		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
 		expect(prompt.includes("写操作尚未开放")).toBe(true);
+	});
+});
+
+describe("注入 manifest 观测（WorkBuddy 对齐 §4-2）", () => {
+	it("每层自带 approxTokens，且等于 approxTokens(content)", async () => {
+		const asm = makeAssembler({ nodes: [{ id: "n1", type: "image", title: "T", status: "ready" }] });
+		await asm.assemble({ sessionId: "s1", priorMessages: [{ role: "user", content: "u1" }] });
+		const layers = asm.lastLayers!;
+		expect(layers.length).toBeGreaterThan(1);
+		for (const l of layers) {
+			expect(l.approxTokens).toBe(approxTokens(l.content));
+		}
+	});
+
+	it("manifest 一行日志含 total 与 hash", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		await asm.assemble({ sessionId: "s1" });
+		const logged = asm.lastManifest as string;
+		expect(logged).toMatch(/total=\d+tok/);
+		expect(logged).toMatch(/hash=[0-9a-f]{12}/);
+	});
+
+	it("promptHash 稳定：同输入两次 hash 相同，内容变化则不同", async () => {
+		const a = makeAssembler({ nodes: [] });
+		const b = makeAssembler({ nodes: [] });
+		const p1 = await a.assemble({ sessionId: "s1", ruleGroups: ["core"] });
+		const p2 = await b.assemble({ sessionId: "s1", ruleGroups: ["core"] });
+		expect(promptHash(p1)).toBe(promptHash(p2));
+		expect(a.lastManifestDetail!.promptHash).toBe(promptHash(p1));
+		// 换规则组 → 内容变 → hash 变
+		const c = makeAssembler({ nodes: [] });
+		await c.assemble({ sessionId: "s1", ruleGroups: ["core", "genTools"] });
+		expect(c.lastManifestDetail!.promptHash).not.toBe(a.lastManifestDetail!.promptHash);
+	});
+
+	it("结构化 manifest：layers 列表 + totalTokens 为各层之和", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		await asm.assemble({ sessionId: "s1", ruleGroups: ["core", "writeTools", "genTools"] });
+		const m = asm.lastManifestDetail!;
+		expect(m.sessionId).toBe("s1");
+		expect(m.layers.map((l) => l.id)).toEqual(asm.lastLayers!.map((l) => l.id));
+		expect(m.totalTokens).toBe(m.layers.reduce((s, l) => s + l.tokens, 0));
+		expect(m.layers[0]).toMatchObject({ id: "rules", kind: "rules" });
 	});
 });

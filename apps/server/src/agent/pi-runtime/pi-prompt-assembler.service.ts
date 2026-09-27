@@ -12,22 +12,48 @@
  * 摘要获取失败时省略该块并继续（ Review Focus：prompt 必须始终成立）；
  * 摘要 JSON 不截断（有意对齐老链路）。
  */
+import { createHash } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
 import { compressRecentTurns, type TurnMessage } from "./compress-recent-turns";
 import { buildSidebarBlock, type SidebarBlockInput } from "./sidebar-block";
 
 export type RuleGroup = "core" | "writeTools" | "genTools";
 
-export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "memory";
+/**
+ * 分层 kind：rules/canvas/sidebar/recent 为已启用层；
+ * `skill` / `memory` 为 D-η' 与阶段二预留（Seam first —— 先留注入点，策略后定）。
+ */
+export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "skill" | "memory";
 
 export interface PromptLayer {
 	id: string;
 	kind: PromptLayerKind;
 	content: string;
+	/** 该层 token 估算，随层携带（manifest/观测直接消费，无需二次计算）。 */
+	approxTokens: number;
+}
+
+/** 每轮注入 manifest（结构化，供 log/metrics 消费）。 */
+export interface PromptManifest {
+	sessionId: string;
+	layers: Array<{ id: string; kind: PromptLayerKind; tokens: number }>;
+	totalTokens: number;
+	/** 最终 prompt 的稳定哈希，用于跨轮 diff / 回归比对。 */
+	promptHash: string;
 }
 
 export function approxTokens(s: string): number {
 	return Math.ceil(s.length / 4);
+}
+
+/** 构造层并顺带算出 token 估算（避免调用点漏算）。 */
+function layer(id: string, kind: PromptLayerKind, content: string): PromptLayer {
+	return { id, kind, content, approxTokens: approxTokens(content) };
+}
+
+/** 最终 prompt 的稳定哈希（12 位 hex，够做跨轮 diff，不用于安全）。 */
+export function promptHash(prompt: string): string {
+	return createHash("sha256").update(prompt, "utf8").digest("hex").slice(0, 12);
 }
 
 /** 与老链路 1:1 的最小结构（getCanvasSummary.data）。 */
@@ -98,8 +124,10 @@ export class PiPromptAssembler {
 
 	/** 测试观测口：最近一次 assemble 的 layers 与 manifest 行（non-production API）。 */
 	lastLayers?: PromptLayer[];
-	/** 测试观测口（non-production API）。 */
+	/** 测试观测口（non-production API）：人类可读的一行 manifest（含 hash）。 */
 	lastManifest?: string;
+	/** 测试观测口（non-production API）：结构化 manifest，供 metrics 消费。 */
+	lastManifestDetail?: PromptManifest;
 
 	constructor(private readonly canvasTools: CanvasSummaryProvider) {}
 
@@ -112,16 +140,14 @@ export class PiPromptAssembler {
 		maxTurns?: number;
 	}): Promise<string> {
 		const groups = input.ruleGroups ?? ["core"];
-		const layers: PromptLayer[] = [{ id: "rules", kind: "rules", content: composeRuleText(groups) }];
+		const layers: PromptLayer[] = [layer("rules", "rules", composeRuleText(groups))];
 
 		try {
 			const summary = await this.canvasTools.getCanvasSummary({ sessionId: input.sessionId });
 			if (summary?.nodes) {
-				layers.push({
-					id: "canvas-summary",
-					kind: "canvas",
-					content: `当前画布摘要：\n${JSON.stringify(summary)}`,
-				});
+				layers.push(
+					layer("canvas-summary", "canvas", `当前画布摘要：\n${JSON.stringify(summary)}`),
+				);
 			}
 		} catch (err) {
 			this.logger.warn(
@@ -131,18 +157,28 @@ export class PiPromptAssembler {
 
 		if (input.attachments?.length) {
 			const block = buildSidebarBlock(input.attachments);
-			if (block) layers.push({ id: "sidebar", kind: "sidebar", content: block });
+			if (block) layers.push(layer("sidebar", "sidebar", block));
 		}
 
 		const recent = compressRecentTurns(input.priorMessages ?? [], input.maxTurns ?? 4);
-		if (recent) layers.push({ id: "recent-turns", kind: "recent", content: `近期对话摘要：\n${recent}` });
+		if (recent) layers.push(layer("recent-turns", "recent", `近期对话摘要：\n${recent}`));
+
+		const prompt = layers.map((l) => l.content).join("\n");
+		const hash = promptHash(prompt);
+		const totalTokens = layers.reduce((sum, l) => sum + l.approxTokens, 0);
 
 		this.lastLayers = layers;
+		this.lastManifestDetail = {
+			sessionId: input.sessionId,
+			layers: layers.map((l) => ({ id: l.id, kind: l.kind, tokens: l.approxTokens })),
+			totalTokens,
+			promptHash: hash,
+		};
 		this.lastManifest = `prompt manifest ${input.sessionId}: ${layers
-			.map((l) => `${l.id}:${l.kind}:${approxTokens(l.content)}tok`)
-			.join(" ")}`;
+			.map((l) => `${l.id}:${l.kind}:${l.approxTokens}tok`)
+			.join(" ")} total=${totalTokens}tok hash=${hash}`;
 		this.logger.log(this.lastManifest);
 
-		return layers.map((l) => l.content).join("\n");
+		return prompt;
 	}
 }
