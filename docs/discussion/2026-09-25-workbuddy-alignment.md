@@ -50,7 +50,7 @@
 |---|---|---|---|
 | 1 | assembler 升级 typed layers：`parts: string[]` → `PromptLayer[] { id, kind: rules\|canvas\|sidebar\|skill\|memory, content, approxTokens }`，最终 join | **D-η' 批次内** | skill 是第一个必须按层管理的住客；120 行小文件改动窗口最便宜 |
 | 2 | 注入 manifest 观测：每轮 log/metrics 落 `{layer_id → tokens, 注入清单, prompt_hash}` | **D-η' 顺带** | harness 调优的数据地基；渐进加载/skill 路由/记忆准入的裁决依据；约半天 |
-| 3 | #11 `LnkpiTool` 加 `summary` / `deferred?` 元数据字段（占位不实现加载） | #11 开工时 | 渐进加载将来是注册表改造，现在加字段 = 以后零迁移 |
+| 3 | ✅ **已完成 2026-09-28**：#11 `LnkpiTool` 加 `summary` / `deferred?` 元数据字段（占位不实现加载） | #11 开工时 → 提前落地 | 渐进加载将来是注册表改造，现在加字段 = 以后零迁移。实现：`services/pi-runtime/src/tools/types.ts`（另加 `toolSummary()` accessor，摘要缺省回退 `description`）。⚠️ 纯字段、零运行时行为，无需单独部署 |
 | 4 | 契约收敛：双 CanvasAction 收敛为单一 schema 派生 | 独立小批次穿插 | 半天量级，拖久漂移风险增大 |
 | 5 | 记忆层 / MCP 网关 / hooks 扩面 / subagent | 阶段二/三 park | seam 已由 #1 预留（kind 枚举含 `memory`），策略等数据 |
 | 6 | Jev 快判断层 | park（实验性） | before_tool Gate 已覆盖最痛的风险拦截 |

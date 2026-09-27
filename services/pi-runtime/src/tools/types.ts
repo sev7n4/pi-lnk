@@ -38,4 +38,32 @@ export interface LnkpiToolContext {
 	focusNodeId?: string;
 }
 
-export type LnkpiTool = AgentHarnessTool<LnkpiToolContext> & { tier: ToolTier };
+/**
+ * 工具定义（`tier` 之外的字段全部来自 harness 的 AgentTool）。
+ *
+ * ⚠️ `summary` / `deferred` 是**渐进加载的占位 seam**（WorkBuddy 对齐 §4 #3）：
+ * 现在只落地字段，不实现任何加载/筛选逻辑——等注入观测数据到位后再定策略。
+ * 字段先存在 = 将来工具渐进加载改造注册表时零迁移。
+ */
+export type LnkpiTool = AgentHarnessTool<LnkpiToolContext> & {
+	tier: ToolTier;
+	/**
+	 * 工具的一句话摘要，供「先名后详情」的索引展示（渐进加载第一阶段的唯一可见内容）。
+	 * 未填时消费方经 {@link toolSummary} 回退 `description`。
+	 */
+	summary?: string;
+	/**
+	 * 标记为延迟加载工具：完整 schema 在意图命中后才注入。
+	 * ⚠️ 与 vendor `AgentHarnessStreamOptions.deferred` 同名但语义无关
+	 * （后者是 provider 异步续生成），勿混淆。
+	 */
+	deferred?: boolean;
+};
+
+/**
+ * 渐进加载 accessor：摘要缺省回退 `description`。
+ * 让消费方现在就统一走这个函数，将来 summary 逐个补齐时无需改调用点。
+ */
+export function toolSummary(tool: LnkpiTool): string {
+	return tool.summary ?? tool.description;
+}
