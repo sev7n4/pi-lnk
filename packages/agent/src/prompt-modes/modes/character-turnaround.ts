@@ -5,7 +5,7 @@ import {
 } from './character-turnaround-presets'
 
 /** 人物多视图 / 四视图提示词骨架（单段中文，可直接用于 AI 生图）
- *  Keep in sync with services/agent-runtime/app/tools/prompt_templates.py */
+ *  Keep in sync with services/agent-runtime/app/tools/prompt_templates.py （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处） */
 export const CHARACTER_TURNAROUND_TEMPLATE = `一张专业的{摄影风格}写实摄影{图类型}，主角是一位{角色一句话概述}。
 
 角色特征：{性别}，{年龄}，{体型描述（含身高）}，{肤色}，

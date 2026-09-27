@@ -26,7 +26,7 @@
 | `deploy/**`、`**/Dockerfile` | **不自动上线** → 走本流程 |
 | `services/pi-runtime/**`、`charts/**`、`vendor/**` | 走本流程 |
 | `docs/**`、`*.md` | 不触发任何部署 |
-| `services/agent-runtime/**` | lnkpi 的 `Deploy Agent Runtime` 会自动跑，但**只写 `/opt/lnkpi/services/agent-runtime/**`**（见 §7） |
+| ~~`services/agent-runtime/**`~~ | **已于 2026-09-27 退役删除**（见 `RUNBOOK-old-runtime-retirement.md`）。lnkpi 侧若仍保留该目录，merge upstream 后需再删一次 |
 
 ## 3 · 命令流（逐条复制）
 
@@ -50,7 +50,8 @@ git add .github/workflows/deploy.yml
 
 # ── D. 合并结果自检（四条都要过）
 git status --short | head -40
-grep -n "branches:" .github/workflows/deploy.yml .github/workflows/deploy-agent-runtime.yml  # 都必须是 master
+grep -n "branches:" .github/workflows/deploy.yml                        # 必须是 master
+ls .github/workflows/                                                    # deploy-agent-runtime.yml 应不存在（老 runtime 已退役）
 grep -c "allow_api_deploy" .github/workflows/deploy.yml     # 必须是 0（>0 = 被 lnkpi 版覆盖，回 C 步）
 grep -n "B4 防呆检查" deploy/launch-cvm-build.sh            # 必须命中（发布门构建守卫在）
 
@@ -97,14 +98,17 @@ cd /Users/4seven/workspace/pi-lnk && python3 deploy/prod-agent-thread-verify.py 
 
 | 路径 | 谁能写 | 说明 |
 | --- | --- | --- |
-| `services/agent-runtime/**` | **两个仓库都可以** | lnkpi 的 `Deploy Agent Runtime` 可直发；pi-lnk 发布门也会同步 |
-| `deploy/**`（compose、守卫脚本、verify 脚本） | **仅 pi-lnk 发布门** | lnkpi 侧改了必须走本流程；`deploy/docker/Dockerfile.agent-runtime`、`deploy/enable-agent-runtime.sh`、`deploy/docker-compose.prod.yml` 由 lnkpi 工作流的 Guard 步骤校验漂移 |
+| ~~`services/agent-runtime/**`~~ | — | **已退役删除**（2026-09-27）。⚠️ lnkpi 侧若仍存在，merge upstream 会被带回来，需重新删除 |
+| `deploy/**`（compose、守卫脚本、verify 脚本） | **仅 pi-lnk 发布门** | lnkpi 侧改了必须走本流程；`deploy/docker-compose.prod.yml` 由 lnkpi 工作流的 Guard 步骤校验漂移（老 runtime 的 `Dockerfile.agent-runtime` / `enable-agent-runtime.sh` 已随退役删除） |
 | `apps/server/**`、`packages/**` | **仅 pi-lnk 发布门** | B4 分流代码就在这里 |
 | `apps/web/**` | lnkpi | 前端自动发版 |
 
-lnkpi 的 `Deploy Agent Runtime` 收窄要点（本次改动）：
+lnkpi 的 `Deploy Agent Runtime` 收窄要点（历史）：
 - `tar` 白名单化，只打包 `services/agent-runtime`（原实现打包整棵树并覆盖 `/opt/lnkpi`）
 - 新增 `Guard: release-gate invariants` 步骤：校验 ① 生产树仍带 B4 分流 ② B4 构建守卫在位 ③ 发布门独占文件无漂移；任一不满足即**红灯并给出走发布门的指引**，不再静默覆盖
+
+> ⚠️ 该工作流（`deploy-agent-runtime.yml`）与整个 `services/agent-runtime/` 已于 2026-09-27 退役删除；
+> lnkpi 侧若仍保留，会继续尝试自动跑并可能把目录写回 `/opt/lnkpi`。上线前确认两侧一致。
 
 ## 8 · 回滚 / 止血
 

@@ -1,5 +1,5 @@
 /**
- * 近期对话压缩器（#12，语义 1:1 平移 services/agent-runtime/app/graph/recent_turns.py:58-106）。
+ * 近期对话压缩器（#12，语义 1:1 平移 services/agent-runtime/app/graph/recent_turns.py:58-106）。 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
  *
  * 已知差异（计划 §「与审计的偏离」2）：pi 路径 Nest 侧暂无工具调用持久化，
  * 「助手工具」行由调用方传入 toolNames（canvas_action 落库后由 B-2 批次接上）。

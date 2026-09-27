@@ -1,18 +1,19 @@
 /**
- * B4：pi-runtime 开关测试（spec §6.2.0 B4 / §10.3 D-ζ'）
+ * pi-runtime 开关与链路测试（老 LangGraph runtime 已于 2026-09-27 退役）
  *
- * 覆盖三态开关语义：
- *   off（默认）  — PI_RUNTIME_URL 存在也不触碰 pi-runtime
- *   active      — healthz 通过 → 事件流走 pi-runtime 并正确映射/清理
- *   active 失败  — healthz 不通过 → 直接报不可用，不再回落 LangGraph（退役收口）
- *   shadow      — LangGraph 照常服务，pi 仅接收镜像（事件不进 UI 流）
+ * 覆盖二态开关语义：
+ *   active（默认） — healthz 通过 → 事件流走 pi-runtime 并正确映射/清理
+ *   active 失败    — healthz 不通过 → 直接报不可用（没有第二条链路）
+ *   off（维护态）  — 停用 agent 服务，chat 与心跳都报不可用
+ *
+ * 退役变化：原三态里的 shadow（镜像到 pi、LangGraph 照常服务）随老 runtime 一起删除，
+ * `off` 的语义从「切回 LangGraph」变成「维护态关停」。
  */
 import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService } from './agent.service'
-import { AgentRuntimeClient } from './agent-runtime.client'
-import { PiRuntimeError } from './pi-runtime/pi-runtime.client'
-import type { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { piEvent, stubPiClient } from './agent.test-utils'
+import { PiRuntimeError, type PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 import type { SidebarAttachment } from '@lnkpi/shared'
 import { resetSidebarParseCache } from './sidebar-vision'
@@ -34,7 +35,6 @@ describe('AgentService pi-runtime switch (B4)', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    delete process.env.AGENT_RUNTIME_URL
     delete process.env.PI_RUNTIME_MODE
     delete process.env.PI_RUNTIME_URL
 
@@ -291,68 +291,22 @@ describe('AgentService pi-runtime switch (B4)', () => {
   })
 
   describe('getPiRuntimeMode', () => {
-    it('默认 off；仅接受 shadow/active（大小写不敏感）', () => {
+    it('二态：默认 active；仅 OFF 显式关停（大小写/空白不敏感）', () => {
+      expect(service.getPiRuntimeMode()).toBe('active')
+      process.env.PI_RUNTIME_MODE = 'OFF'
       expect(service.getPiRuntimeMode()).toBe('off')
-      process.env.PI_RUNTIME_MODE = 'SHADOW'
-      expect(service.getPiRuntimeMode()).toBe('shadow')
+      process.env.PI_RUNTIME_MODE = ' off '
+      expect(service.getPiRuntimeMode()).toBe('off')
       process.env.PI_RUNTIME_MODE = ' Active '
       expect(service.getPiRuntimeMode()).toBe('active')
-      process.env.PI_RUNTIME_MODE = 'yes'
-      expect(service.getPiRuntimeMode()).toBe('off')
+      // 退役后 shadow 不再是合法态：镜像通道已随老 runtime 一起删除
+      process.env.PI_RUNTIME_MODE = 'shadow'
+      expect(service.getPiRuntimeMode()).toBe('active')
     })
   })
 
-  /** 构造一个脚本化 pi-runtime client：订阅时同步回放脚本事件。 */
-  function stubPiClient(
-    events: PiRuntimeEvent[],
-    healthzOk = true,
-    knownSkills: Array<{ name: string }> = [],
-  ) {
-    const deleteSession = vi.fn().mockResolvedValue(true)
-    const createSession = vi.fn().mockResolvedValue({
-      sessionId: 'x',
-      provider: 'agnes',
-      model: 'agnes-2.5-pro',
-    })
-    const prompt = vi.fn().mockResolvedValue(undefined)
-    const healthz = vi.fn().mockResolvedValue(healthzOk ? { status: 'ok' } : null)
-    return {
-      healthz,
-      createSession,
-      // ensurePiSession 走 409 安全路径：409 → 删除陈旧会话 → 重建（与真实 client 同语义）
-      createSessionReplacingStale: vi.fn(async (sid: string, opts: never) => {
-        try {
-          return await createSession(sid, opts)
-        } catch (err) {
-          if (err instanceof PiRuntimeError && err.status === 409) {
-            await deleteSession(sid)
-            return await createSession(sid, opts)
-          }
-          throw err
-        }
-      }),
-      prompt,
-      deleteSession,
-      listSkills: vi.fn().mockResolvedValue({ skills: knownSkills }),
-      streamEvents: vi.fn(
-        (
-          _sessionId: string,
-          onEvent: (event: PiRuntimeEvent) => void,
-        ) => {
-          for (const event of events) onEvent(event)
-          return () => {}
-        },
-      ),
-    } as unknown as PiRuntimeClient & {
-      deleteSession: ReturnType<typeof vi.fn>
-    }
-  }
-
-  function piEvent(type: PiRuntimeEvent['type'], data: unknown): PiRuntimeEvent {
-    return { type, ts: Date.now(), data } as PiRuntimeEvent
-  }
-
-  it('off（默认）：即使配置了 PI_RUNTIME_URL 也不触碰 pi-runtime', async () => {
+  it('off（维护态）：即使配置了 PI_RUNTIME_URL 也不触碰 pi-runtime', async () => {
+    process.env.PI_RUNTIME_MODE = 'off'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([])
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
@@ -364,8 +318,26 @@ describe('AgentService pi-runtime switch (B4)', () => {
 
     expect(pi.healthz).not.toHaveBeenCalled()
     expect(pi.createSession).not.toHaveBeenCalled()
-    // 无 LangGraph runtime → 走 runtime_unavailable（现状行为不变）
+    // 维护态下没有第二条链路可退 → 直接 runtime_unavailable
     expect(events.map((e) => e.type)).toEqual(['error', 'done'])
+  })
+
+  it('默认（未设 PI_RUNTIME_MODE）即 active：chat 走 pi-runtime', async () => {
+    delete process.env.PI_RUNTIME_MODE
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      piEvent('message_update', { event: { type: 'text_delta', delta: 'hi' } }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string }> = []
+    for await (const event of service.streamConversation('s1', 'hello', 'u1')) {
+      events.push(event)
+    }
+
+    expect(pi.healthz).toHaveBeenCalled()
+    expect(events.map((e) => e.type)).toContain('text_delta')
   })
 
   it('active + healthz 通过：chat 流路由到 pi-runtime 并正确映射/清理', async () => {
@@ -528,22 +500,11 @@ describe('AgentService pi-runtime switch (B4)', () => {
     expect(metadata.executionEvents).toContainEqual({ type: 'canvas_action', data: action })
   })
 
-  it('active + healthz 失败：直接报不可用，**不回落** LangGraph（退役收口）', async () => {
+  it('active + healthz 失败：直接报不可用——老 runtime 已删，没有任何回落链路', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    // 老 runtime 仍"活着"——若还有回落逻辑就会被它接走，这里正是要断言不再被接走
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
     const pi = stubPiClient([], false)
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'text_delta', data: { text: 'from-langgraph' } }
-      yield { type: 'done', data: {} }
-    })
-    const createRuntimeClient = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
 
     const events: Array<{ type: string; data?: unknown }> = []
     for await (const event of service.streamConversation('s1', 'hello', 'u1')) {
@@ -551,48 +512,26 @@ describe('AgentService pi-runtime switch (B4)', () => {
     }
 
     expect(pi.createSession).not.toHaveBeenCalled()
-    // 关键：老 runtime 一次都没被实例化（不再作为兜底）
-    expect(createRuntimeClient).not.toHaveBeenCalled()
-    expect(streamRun).not.toHaveBeenCalled()
+    expect(pi.prompt).not.toHaveBeenCalled()
     expect(events.map((e) => e.type)).toEqual(['error', 'done'])
     expect(events[0].data).toEqual(
       expect.objectContaining({ error_type: 'runtime_unavailable' }),
     )
   })
 
-  it('shadow：LangGraph 照常服务，pi 仅接收镜像且事件不进 UI 流', async () => {
-    process.env.PI_RUNTIME_MODE = 'shadow'
+  it('off（维护态）：chat 直接报不可用（老 runtime 已无，off 不再是切链路）', async () => {
+    process.env.PI_RUNTIME_MODE = 'off'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-
-    const mirror = vi.spyOn(service, 'mirrorToPiRuntime').mockImplementation(() => {})
-
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'text_delta', data: { text: 'primary' } }
-      yield { type: 'done', data: {} }
-    })
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     const events: Array<{ type: string; data?: unknown }> = []
     for await (const event of service.streamConversation('s1', 'hello', 'u1')) {
       events.push(event)
     }
 
-    expect(mirror).toHaveBeenCalledTimes(1)
-    expect(mirror).toHaveBeenCalledWith(
-      expect.anything(),
-      'shadow-s1',
-      'hello',
-      'u1',
-      's1',
-      expect.anything(),
-    )
-    // UI 流完全来自 LangGraph（P0 零用户感知）
-    expect(events.map((e) => e.type)).toEqual(['text_delta', 'done'])
-    expect(events[0].data).toEqual({ text: 'primary' })
+    expect(pi.healthz).not.toHaveBeenCalled()
+    expect(events.map((e) => e.type)).toEqual(['error', 'done'])
   })
 })
 
@@ -613,7 +552,6 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    delete process.env.AGENT_RUNTIME_URL
     delete process.env.PI_RUNTIME_MODE
     delete process.env.PI_RUNTIME_URL
 
@@ -656,43 +594,6 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     delete process.env.PI_RUNTIME_MODE
     delete process.env.PI_RUNTIME_URL
   })
-
-  function stubPiClient(events: PiRuntimeEvent[], healthzOk = true) {
-    const createSession = vi.fn().mockResolvedValue({
-      sessionId: 'x',
-      provider: 'agnes',
-      model: 'agnes-2.5-pro',
-    })
-    const deleteSession = vi.fn().mockResolvedValue(true)
-    return {
-      healthz: vi.fn().mockResolvedValue(healthzOk ? { status: 'ok' } : null),
-      createSession,
-      // 同 stubPiClient：409 → 删陈旧 + 重建
-      createSessionReplacingStale: vi.fn(async (sid: string, opts: never) => {
-        try {
-          return await createSession(sid, opts)
-        } catch (err) {
-          if (err instanceof PiRuntimeError && err.status === 409) {
-            await deleteSession(sid)
-            return await createSession(sid, opts)
-          }
-          throw err
-        }
-      }),
-      prompt: vi.fn().mockResolvedValue(undefined),
-      deleteSession,
-      streamEvents: vi.fn(
-        (_sessionId: string, onEvent: (event: PiRuntimeEvent) => void) => {
-          for (const event of events) onEvent(event)
-          return () => {}
-        },
-      ),
-    } as unknown as PiRuntimeClient & { createSession: ReturnType<typeof vi.fn> }
-  }
-
-  function piEvent(type: PiRuntimeEvent['type'], data: unknown): PiRuntimeEvent {
-    return { type, ts: Date.now(), data } as PiRuntimeEvent
-  }
 
   function stubAssembler(prompt: string) {
     const assemble = vi.fn().mockResolvedValue(prompt)
@@ -821,102 +722,58 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(createIdxs[1]).toBeGreaterThan(firstDeleteResolved)
   })
 
-  it('active：getThreadState 短路——返回 null 且不再打老 runtime（老 runtime 退役前置 ①）', async () => {
+  it('退役后 getThreadState 恒 null——checkpoint 概念随老 LangGraph runtime 一起移除', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    const spy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      getThreadState: vi.fn().mockResolvedValue({ threadId: 't1', phase: 'x' }),
-    } as unknown as AgentRuntimeClient)
+    const piSpy = vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([]))
 
     expect(await service.getThreadState('t1')).toBeNull()
-    expect(spy).not.toHaveBeenCalled()
+    // 端点只是保留给前端重连用，实现里不再有任何下游调用
+    expect(piSpy).not.toHaveBeenCalled()
   })
 
-  it('active：getThreadTimeline 同样短路', async () => {
+  it('退役后 getThreadTimeline 同样恒 null', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    const spy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      getThreadTimeline: vi.fn().mockResolvedValue({ threadId: 't1', entries: [] }),
-    } as unknown as AgentRuntimeClient)
 
     expect(await service.getThreadTimeline('t1')).toBeNull()
-    expect(spy).not.toHaveBeenCalled()
   })
 
-  it('active：runtime-health 心跳探 pi-runtime，不再打老 runtime（退役前置 ①b）', async () => {
+  it('active：runtime-health 心跳探 pi-runtime', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    const oldSpy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-    } as unknown as AgentRuntimeClient)
-    const piSpy = vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue({
-      healthz: vi.fn().mockResolvedValue({ status: 'ok', sessions: 0 }),
-    } as unknown as PiRuntimeClient)
+    const piSpy = vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([]))
 
     const result = await service.checkRuntimeHealth()
     expect(result.ok).toBe(true)
+    expect(typeof result.latencyMs).toBe('number')
     expect(piSpy).toHaveBeenCalledWith('http://127.0.0.1:8100')
-    expect(oldSpy).not.toHaveBeenCalled()
   })
 
-  it('active + pi 不可达：心跳如实报不可用，不再探老 runtime（与 chat 不回落一致）', async () => {
+  it('active + pi 不可达：心跳如实报不可用（与 chat 不回落一致）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue({
-      healthz: vi.fn().mockResolvedValue(null),
-    } as unknown as PiRuntimeClient)
-    const oldSpy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-    } as unknown as AgentRuntimeClient)
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([], false))
 
     const result = await service.checkRuntimeHealth()
-    // 老 runtime 虽"活着"，但 active 下它不再服务 chat → 心跳不能报可用
     expect(result.ok).toBe(false)
-    expect(oldSpy).not.toHaveBeenCalled()
+    expect(result.latencyMs).toBeUndefined()
   })
 
-  it('off（默认）：thread-state 仍读老 runtime checkpoint（行为不变）', async () => {
-    delete process.env.PI_RUNTIME_MODE
+  it('off（维护态）：心跳报不可用——off 不再代表「切到另一条链路」', async () => {
+    process.env.PI_RUNTIME_MODE = 'off'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
-    const getThreadState = vi.fn().mockResolvedValue({ threadId: 't1', phase: 'await_confirm' })
-    const spy = vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      getThreadState,
-    } as unknown as AgentRuntimeClient)
+    const piSpy = vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([]))
 
-    expect(await service.getThreadState('t1')).toEqual({ threadId: 't1', phase: 'await_confirm' })
-    expect(spy).toHaveBeenCalledWith('http://127.0.0.1:8000')
+    expect(await service.checkRuntimeHealth()).toEqual({ ok: false })
+    expect(piSpy).not.toHaveBeenCalled()
   })
 
-  it('shadow 镜像：createSession 收到以真实 sessionId 组装的 systemPrompt + userId', async () => {
-    process.env.PI_RUNTIME_MODE = 'shadow'
-    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+  it('未配 PI_RUNTIME_URL：心跳报不可用（chat 同样不可用，两者不矛盾）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    delete process.env.PI_RUNTIME_URL
 
-    const pi = stubPiClient([])
-    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    stubAssembler('PROMPT-real')
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun: vi.fn(async function* () {
-        yield { type: 'done', data: {} }
-      }),
-    } as unknown as AgentRuntimeClient)
-
-    for await (const _event of service.streamConversation('s1', 'hello', 'u1', 't1')) {
-      void _event
-    }
-
-    await vi.waitFor(() => {
-      expect(pi.createSession).toHaveBeenCalledWith(
-        'shadow-s1',
-        expect.objectContaining({ systemPrompt: 'PROMPT-real', userId: 'u1' }),
-      )
-    })
+    expect(await service.checkRuntimeHealth()).toEqual({ ok: false })
   })
 })
 
@@ -971,7 +828,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
     expect(assemble.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
   })
 
-  it('F3：老链路（pi off）不再触发 priorMessages 查询', async () => {
+  it('F3：链路不可用（未配 PI_RUNTIME_URL）时不触发 priorMessages 查询', async () => {
     delete process.env.PI_RUNTIME_MODE
     delete process.env.PI_RUNTIME_URL
 
@@ -995,13 +852,8 @@ describe('AgentService B-2 ruleGroups + minors', () => {
       { resolveForGeneration: vi.fn() } as never,
       { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
     )
-    // LangGraph 客户端打桩，让它自然走完（不 emit 也行，只看 findMany 是否被调用）
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun: vi.fn(async function* () {
-        yield { type: 'done', data: {} }
-      }),
-    } as never)
+    // 未配 PI_RUNTIME_URL → 无可用链路，直接 runtime_unavailable（不查历史消息）
+    // 退役前这里靠桩 LangGraph client 让流程走完；现在没有第二条链路可桩。
 
     const events: Array<{ type: string }> = []
     for await (const event of service.streamConversation('s1', '你好', 'u1', 't1')) {

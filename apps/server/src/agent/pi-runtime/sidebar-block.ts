@@ -1,6 +1,6 @@
 /**
  * 侧栏参考素材块（#12）。key 分配 1:1 平移
- * services/agent-runtime/app/graph/sidebar_attachments.py:29-43（T/I/V/A 按 mediaType 计数）。
+ * services/agent-runtime/app/graph/sidebar_attachments.py:29-43（T/I/V/A 按 mediaType 计数）。 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
  * vision 解析块（_PARSE_FAIL_NO_EMPTY_LISTING 等）明确后置，见审计 §4。
  */
 

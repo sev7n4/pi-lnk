@@ -1,4 +1,4 @@
-/** B-1 批次 read 工具（7 个）。端点/body 对照 services/agent-runtime/app/tools/nest_client.py:216-596。 */
+/** B-1 批次 read 工具（7 个）。端点/body 对照 services/agent-runtime/app/tools/nest_client.py:216-596。 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处） */
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";

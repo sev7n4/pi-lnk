@@ -12,7 +12,8 @@ function loadGuidanceFromYaml(): {
 } {
   const path = resolve(
     import.meta.dirname,
-    '../../../../services/agent-runtime/skills/ecommerce-product-visual/assets/copy/1.0.0.yaml',
+    // SSOT 已随老 runtime 退役下沉到本目录（见 productVisualCopy.guidance.yaml 头部注释）
+    './productVisualCopy.guidance.yaml',
   )
   const text = readFileSync(path, 'utf8')
   const guidance: Record<string, unknown> = {}
@@ -71,7 +72,7 @@ function loadGuidanceFromYaml(): {
 }
 
 describe('PRODUCT_VISUAL_GUIDANCE', () => {
-  it('matches runtime copy YAML guidance.* keys', () => {
+  it('matches copy YAML SSOT guidance.* keys', () => {
     const guidance = loadGuidanceFromYaml()
     expect(PRODUCT_VISUAL_GUIDANCE.macroStyleInCards).toBe(guidance.macro_style_in_cards)
     expect(PRODUCT_VISUAL_GUIDANCE.attachmentHint).toBe(guidance.attachment_hint)

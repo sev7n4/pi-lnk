@@ -1,9 +1,14 @@
 import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService } from './agent.service'
-import { AgentRuntimeClient } from './agent-runtime.client'
+import { piEvent, stubPiClient } from './agent.test-utils'
 
-describe('AgentService dock forwarding', () => {
+/**
+ * dock（UI 技能选择器 + 模型选择）在退役后的转接断言：
+ * 老链路把这些字段塞进 LangGraph `streamRun` body（llmProviderRef/llmModel/...），
+ * pi 链路换成两个出口——skillId → prompt 的 forceSkills，模型 → 会话级 llm 覆盖。
+ */
+describe('AgentService dock forwarding (pi-runtime)', () => {
   const agentMessageCreate = vi.fn()
   const resolveForGeneration = vi.fn()
   const userAiPreferencesFindUnique = vi.fn()
@@ -12,7 +17,8 @@ describe('AgentService dock forwarding', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    process.env.AGENT_RUNTIME_URL = 'http://127.0.0.1:8000'
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     agentMessageCreate.mockResolvedValue({})
     userAiPreferencesFindUnique.mockResolvedValue(null)
     resolveForGeneration.mockResolvedValue({
@@ -54,16 +60,11 @@ describe('AgentService dock forwarding', () => {
     )
   })
 
-  it('forwards mapped skillId and resolved model to runtime', async () => {
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'text_delta', data: { text: 'ok' } }
-      yield { type: 'done', data: {} }
-    })
-
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
+  it('forwards mapped skillId to forceSkills; platform model stays on pi env (K-1 决策 A)', async () => {
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })], true, [
+      { name: 'ecommerce-product-photo' },
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     for await (const _ of service.streamConversation(
       's1',
@@ -79,22 +80,18 @@ describe('AgentService dock forwarding', () => {
     }
 
     expect(resolveForGeneration).toHaveBeenCalledWith('u1', 'platform::gpt-4o-mini', 'text')
-    expect(streamRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        threadId: 'thread-1',
-        message: 'hello',
-        skillId: 'ecommerce-product-photo',
-        llmProviderRef: 'platform::gpt-4o-mini',
-        llmModel: 'gpt-4o-mini',
-        llmApiKey: 'sk-test',
-        llmBaseUrl: 'https://api.example.com/v1',
-        llmSource: 'platform',
-      }),
+    // dock 短 id 经 mapUiSkillId 映射为 runtime 技能名 → forceSkills
+    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
+      forceSkills: ['ecommerce-product-photo'],
+    })
+    // 平台渠道（source=platform）不透传——生产上 Nest 平台通道与 pi env 不同源
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ llm: undefined }),
     )
   })
 
-  it('falls back to user defaultTextModel when conversation model is omitted', async () => {
+  it('falls back to user defaultTextModel; BYOK (source=user) is injected into the pi session', async () => {
     userAiPreferencesFindUnique.mockResolvedValue({
       defaultTextModel: 'ch-deepseek::deepseek-v4-flash',
     })
@@ -105,14 +102,8 @@ describe('AgentService dock forwarding', () => {
       credentials: { apiKey: 'sk-byok', baseUrl: 'https://api.deepseek.example/v1' },
       source: 'user',
     })
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'done', data: {} }
-    })
-
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     for await (const _ of service.streamConversation(
       's1',
@@ -135,26 +126,28 @@ describe('AgentService dock forwarding', () => {
       'ch-deepseek::deepseek-v4-flash',
       'text',
     )
-    expect(streamRun).toHaveBeenCalledWith(
+    // BYOK 真进 pi：会话创建即装配模型
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1',
       expect.objectContaining({
-        llmProviderRef: 'ch-deepseek::deepseek-v4-flash',
-        llmModel: 'deepseek-v4-flash',
-        llmApiKey: 'sk-byok',
-        llmBaseUrl: 'https://api.deepseek.example/v1',
-        llmSource: 'user',
+        llm: expect.objectContaining({
+          model: 'deepseek-v4-flash',
+          apiKey: 'sk-byok',
+          baseUrl: 'https://api.deepseek.example/v1',
+          providerRef: 'ch-deepseek::deepseek-v4-flash',
+          source: 'user',
+        }),
       }),
     )
+    // storyboard 未接入 → fail-soft 原文发送、无 forceSkills
+    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
+      forceSkills: undefined,
+    })
   })
 
   it('skips provider resolution when model and defaultTextModel are both omitted', async () => {
-    const streamRun = vi.fn(async function* () {
-      yield { type: 'done', data: {} }
-    })
-
-    vi.spyOn(service, 'createRuntimeClient').mockReturnValue({
-      healthOk: vi.fn().mockResolvedValue(true),
-      streamRun,
-    } as unknown as AgentRuntimeClient)
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     for await (const _ of service.streamConversation(
       's1',
@@ -169,15 +162,12 @@ describe('AgentService dock forwarding', () => {
     }
 
     expect(resolveForGeneration).not.toHaveBeenCalled()
-    expect(streamRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        skillId: undefined,
-        llmProviderRef: undefined,
-        llmModel: undefined,
-        llmApiKey: undefined,
-        llmBaseUrl: undefined,
-        llmSource: undefined,
-      }),
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ llm: undefined }),
     )
+    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
+      forceSkills: undefined,
+    })
   })
 })

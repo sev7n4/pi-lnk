@@ -1,6 +1,6 @@
 /**
  * B-2 批次写工具（13 个）+ connect_nodes（自 B-6 提前，见计划决策 D1）。
- * 端点/body 对照 services/agent-runtime/app/tools/nest_client.py 与
+ * 端点/body 对照 services/agent-runtime/app/tools/nest_client.py 与 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
  * apps/server/src/agent/agent-canvas-tools.controller.ts（2026-09-24 逐条核对）。
  * introduce_nodes_to_agent 属老链路 DEFERRED_TOOL_NAMES：默认不暴露（includeDeferred 显式开启）。
  */

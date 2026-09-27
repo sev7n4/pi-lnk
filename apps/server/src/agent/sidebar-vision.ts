@@ -1,7 +1,7 @@
 /**
  * 侧栏识图（③）：把老 LangGraph `parse_sidebar_media` 的能力补到 pi 路径。
  *
- * 逐条平移自老 runtime（非重写）：
+ * 逐条平移自老 runtime（非重写；老 runtime 已于 2026-09-27 退役删除，下列路径仅作历史语义出处）：
  *   `services/agent-runtime/app/graph/product_visual_v2/vision_qa_client.py: supports_vision_model`
  *   `services/agent-runtime/app/graph/sidebar_media_parse.py: image_urls_for_parse / format_parse_context_block`
  *

@@ -1,6 +1,6 @@
 /**
  * Product visual v2 user-facing guidance — mirrors
- * `services/agent-runtime/skills/ecommerce-product-visual/assets/copy/1.0.0.yaml` guidance.*
+ * `./productVisualCopy.guidance.yaml` guidance.*（老 runtime 退役后下沉到本目录；原出处 services/agent-runtime/skills/... 已删除）
  */
 
 export interface ProductVisualExampleUtterance {

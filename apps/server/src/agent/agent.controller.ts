@@ -46,7 +46,7 @@ class SidebarAttachmentDto {
   @IsString()
   sourceNodeId?: string
 
-  /** product_visual: product vs model attachment role (forwarded to agent-runtime). */
+  /** product_visual: product vs model attachment role (forwarded to pi-runtime). */
   @IsOptional()
   @IsIn(['product', 'model'])
   role?: 'product' | 'model'
@@ -70,7 +70,7 @@ class ConversationDto {
   @IsIn(['confirm', 'revise', 'replan', 'confirm_gen', 'topo_revise', 'node_revise'])
   userDecision?: 'confirm' | 'revise' | 'replan' | 'confirm_gen' | 'topo_revise' | 'node_revise'
 
-  /** Dock 技能 id（UI 命名），Nest 映射后转发给 agent-runtime */
+  /** Dock 技能 id（UI 命名），Nest 映射后转接 pi-runtime forceSkills */
   @IsOptional()
   @IsString()
   skillId?: string
@@ -171,7 +171,7 @@ export class AgentController {
     return { code: 0, message: 'ok', data }
   }
 
-  /** Proxy agent-runtime health check for frontend heartbeat detection. */
+  /** 前端心跳：探 pi-runtime 是否可达（老 agent-runtime 已退役）。 */
   @Get('runtime-health')
   async runtimeHealth() {
     const data = await this.agentService.checkRuntimeHealth()
@@ -197,7 +197,7 @@ export class AgentController {
     return { code: 0, message: 'ok', data }
   }
 
-  /** W12: LangGraph checkpoint phase for agent reconnect. */
+  /** W12: 重连时的 checkpoint 相位。老 LangGraph runtime 已退役 → 恒 null（端点保留给前端）。 */
   @Get('thread-state')
   @UseGuards(AuthGuard)
   async threadState(
@@ -207,7 +207,7 @@ export class AgentController {
     return { code: 0, message: 'ok', data }
   }
 
-  /** W27: Graph phase timeline from checkpoint history (debug / ops). */
+  /** W27: 相位时间线。同 thread-state：checkpoint 历史随老 runtime 退役 → 恒 null。 */
   @Get('thread-timeline')
   @UseGuards(AuthGuard)
   async threadTimeline(
