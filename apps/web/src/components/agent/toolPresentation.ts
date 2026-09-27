@@ -19,6 +19,8 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
 
 const RUN_PREFIX_ICON = '🎨'
 const FALLBACK_ICON = '⚙'
+/** 思考步图标：thinking 不是工具调用，独立图标避免落进 ⚙「调用 xxx」兜底语义。 */
+const THINKING_ICON = '🧠'
 
 /** P1 时间线默认折叠（v1 不做用户偏好持久化）。 */
 export const collapsedDefault = true
@@ -32,8 +34,11 @@ function argsFromLabel(toolName: string, label: string): string | undefined {
 /** 步骤 → { icon, label }：icon/动词查注册表，args 取 meta.args 优先、label 后缀兜底。 */
 export function presentToolStep(step: {
   label: string
+  kind?: string
   meta?: { toolName?: string; args?: string }
 }): { icon: string; label: string } {
+  // thinking 步（模型思考流）不走工具注册表：直接保留原 label，图标用 🧠
+  if (step.kind === 'thinking') return { icon: THINKING_ICON, label: step.label || '思考中…' }
   const name = step.meta?.toolName ?? ''
   if (!name) return { icon: FALLBACK_ICON, label: step.label || '执行步骤' }
   const hit = TOOL_PRESENTATION[name]
