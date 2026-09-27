@@ -113,7 +113,6 @@ describe('AgentService pi-runtime switch (B4)', () => {
         undefined,
         undefined,
         undefined,
-        undefined,
         model,
       )) {
         // drain
@@ -214,7 +213,6 @@ describe('AgentService pi-runtime switch (B4)', () => {
         's1',
         '这图是什么',
         'u1',
-        undefined,
         undefined,
         undefined,
         undefined,
@@ -395,7 +393,6 @@ describe('AgentService pi-runtime switch (B4)', () => {
       'u1',
       't1',
       undefined,
-      undefined,
       'product-visual',
     )) {
       // drain
@@ -421,7 +418,6 @@ describe('AgentService pi-runtime switch (B4)', () => {
       'u1',
       't1',
       undefined,
-      undefined,
       'storyboard',
     )) {
       // drain
@@ -445,7 +441,6 @@ describe('AgentService pi-runtime switch (B4)', () => {
       'hello',
       'u1',
       't1',
-      undefined,
       undefined,
       'canvas',
     )) {
@@ -611,7 +606,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     const events: Array<{ type: string }> = []
     for await (const event of service.streamConversation(
       's1', '你好', 'u1', 't1',
-      undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined,
       'node-9',
       [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
       ['I1'], ['I1'],
