@@ -100,6 +100,22 @@
 
 **推荐组合**：**C 立刻做（几乎零风险）+ A 作为主线推进**，等 A 完成后 B 自然水到渠成。
 
+### 5.1 C 的第一步：独立边界守卫（2026-09-28 已落地）
+
+`services/pi-runtime/src/independence.test.ts`——两条 CI 守卫：
+
+1. 源码不得 import 任何外部 workspace 包（`@lnkpi/{agent,shared,server,web}`、`@pi-lnk/pi-poc`）
+2. `package.json` 不得声明外部 workspace 依赖
+
+理由：**「现在独立」不等于「将来独立」**。物理拆仓前的等待期里，只要有人在 pi-runtime 里 import 一次
+`@lnkpi/shared`，这颗种子就被焊死在 monorepo 上，将来又要重新劈一遍。守卫把已有的独立性固化成
+可执行约束，成本≈0，且完全可逆（删文件即可）。
+
+已做负向验证：临时注入 `import type { Foo } from "@lnkpi/shared"` 后测试 fail 1，确认守卫不是摆设。
+
+⚠️ **守卫不是拆仓本身**。`services/pi-runtime` 仍在 monorepo 内、仍由本仓库 CI 构建、helm chart 仍在本仓库。
+真正独立成仓（含独立 CI / 发布流）尚未开始，需先裁决 §6 的三个开放问题。
+
 ## 6. 开放问题（需你裁决）
 
 1. **`packages/agent` 里的 `applyCanvasActions` 到底算谁的？** 它是画布领域逻辑，但被 `agent.service.ts` 用来落地动作。
