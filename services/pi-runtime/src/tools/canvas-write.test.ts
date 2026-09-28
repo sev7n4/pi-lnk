@@ -57,6 +57,15 @@ describe("canvas-write: body 形态与条件字段", () => {
 		});
 	});
 
+	it("upsert_prompt_node 全量覆盖语义锁定：缺任一字段 fail-closed 不打 Nest（有意不与 set_node_text 合并的裁决依据）", async () => {
+		const { client, calls } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const tool = findTool(tools, "upsert_prompt_node");
+		await assert.rejects(run(tool, { prompt: "P" } as never), /BOTH prompt and content/);
+		await assert.rejects(run(tool, { content: "C" } as never), /BOTH prompt and content/);
+		assert.equal(calls.length, 0);
+	});
+
 	it("upsert_media_node 走 targetType；title/nodeId 条件发", async () => {
 		const { client, calls } = makeClient();
 		const tools = createCanvasWriteTools(client);

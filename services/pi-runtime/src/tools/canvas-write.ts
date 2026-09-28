@@ -35,7 +35,7 @@ export function createCanvasWriteTools(
 			name: "upsert_prompt_node",
 			label: "新建/更新提示词节点",
 			description:
-				"Create or update a prompt (text) node. prompt doubles as the node title; content is the node body.",
+				"Create or update a prompt (text) node. prompt doubles as the node title; content is the node body. FULL-OVERWRITE semantics: with node_id both prompt and content replace the node's text (partial updates use set_node_text).",
 			parameters: Type.Object({
 				prompt: Type.String({ description: "用户短需求原文，作 prompt 节点标题" }),
 				content: Type.String({
@@ -45,6 +45,14 @@ export function createCanvasWriteTools(
 				node_id: Type.Optional(Type.String({ description: "Existing node id to update" })),
 			}),
 			execute: async (_id, p: { prompt: string; content: string; node_id?: string }, _u, tc: LnkpiToolContext) => {
+				// 全量覆盖语义锁定（③ 后续裁决：有意不与 set_node_text 合并）——
+				// Nest upsertPromptNode 带 nodeId 时 prompt/content/title 一起覆盖，不保留未传字段。
+				// harness 不做 schema 校验，缺参必须在此 fail-closed，否则静默丢字段。
+				if (!p.prompt || !p.content) {
+					throw new Error(
+						"upsert_prompt_node requires BOTH prompt and content (full overwrite; for partial updates use set_node_text)",
+					);
+				}
 				if (!tc.userId) throw new Error("upsert_prompt_node requires userId in toolContext");
 				const body: Record<string, unknown> = {
 					sessionId: tc.sessionId,
