@@ -1821,6 +1821,16 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
   persistUserEdit()
 }
 
+/** agent arrange_nodes 工具 → 复用 layoutNodesInGrid / layoutNodesAlongEdges（零新建布局算法）。 */
+function handleAgentArrangeNodes(payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }) {
+  const current = nodes.value as unknown as FlowNode[]
+  const next = payload.mode === 'along_edges' && payload.edges?.length
+    ? layoutNodesAlongEdges(current, payload.edges, payload.nodeIds, payload.gap)
+    : layoutNodesInGrid(current, payload.nodeIds, payload.gap)
+  nodes.value = next as EditableFlowNode[]
+  persistUserEdit()
+}
+
 function findSelectedNodes() {
   const out: EditableFlowNode[] = []
   for (const id of multiSelectedIds.value) {
@@ -4227,6 +4237,7 @@ onUnmounted(() => {
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"
         @clear-propose-generation="handleClearProposeGeneration"
+        @arrange-nodes="handleAgentArrangeNodes"
         :can-open="canOpenAgentPanel"
       />
     </div>

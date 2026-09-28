@@ -112,6 +112,12 @@ export interface AskUserQuestion {
 	allowOther?: boolean;
 }
 
+/** arrange_nodes 工具产出的有向边（spec docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md）。 */
+export interface ArrangeEdge {
+	source: string;
+	target: string;
+}
+
 /** UI_COMMAND 工具 details 中的画布命令（形态对齐前端 AgentSideRail canvas_command 分支）。 */
 export interface PiCanvasCommand {
 	type: string;
@@ -119,6 +125,10 @@ export interface PiCanvasCommand {
 	nodeIds?: string[];
 	/** ask_user 工具产出；仅 type="ask_user" 时有。extractCanvasCommands filter 不变（只校验 type:string），questions 透传。 */
 	questions?: AskUserQuestion[];
+	/** arrange_nodes 工具产出；仅 type="arrange_nodes" 时有。extractCanvasCommands filter 不变（只校验 type:string），新字段透传。 */
+	mode?: "grid" | "along_edges";
+	gap?: number;
+	edges?: ArrangeEdge[];
 }
 
 /**
