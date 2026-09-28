@@ -1964,6 +1964,9 @@ function handleEvent(event: { type: string; data: unknown }) {
         nodeIds?: string[]
         exportMode?: 'full_package' | 'lightweight'
         attachments?: SidebarAttachment[]
+        mode?: 'grid' | 'along_edges'
+        gap?: number
+        edges?: { source: string; target: string }[]
       }
       if (cmd.type === 'focus_node' && cmd.nodeId) {
         onFocusNode(cmd.nodeId)
@@ -1981,7 +1984,7 @@ function handleEvent(event: { type: string; data: unknown }) {
         emit('redo')
       } else if (cmd.type === 'open_image_editor' && cmd.nodeId) {
         emit('openImageEditor', cmd.nodeId)
-      } else if (cmd.type === 'arrange_nodes' && cmd.nodeIds?.length >= 2) {
+      } else if (cmd.type === 'arrange_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
         emit('arrangeNodes', {
           nodeIds: cmd.nodeIds,
           mode: cmd.mode === 'along_edges' ? 'along_edges' : 'grid',
