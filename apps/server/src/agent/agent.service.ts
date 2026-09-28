@@ -389,6 +389,22 @@ export class AgentService {
   }
 
   /**
+   * 中断会话当前正在跑的 run（前端「停止」按钮）。
+   *
+   * 老 runtime 退役时 `/agent/runs/cancel` 整条链被删，但前端仍在校准它 → 404，
+   * 结果「停止」只断开 SSE，pi-runtime 那一轮照跑完（继续烧 token、占会话）。
+   * 这里补回语义：转发到 pi-runtime 的 `/sessions/:id/abort`。
+   *
+   * ⚠️ 会话**保留不删除**——用户停止后可以接着发新消息。
+   * pi-runtime 侧没有活跃 run 时返回 skipped=true（前端提示「已断开回复」）。
+   */
+  async cancelRun(input: { sessionId: string }): Promise<{ ok: boolean; skipped: boolean }> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return { ok: false, skipped: true }
+    return this.createPiRuntimeClient(piUrl).abortRun(input.sessionId)
+  }
+
+  /**
    * W12: 重连时的 checkpoint 相位。
    *
    * 老 LangGraph runtime 已退役，checkpoint 概念随它一起消失（pi-runtime 无此状态），

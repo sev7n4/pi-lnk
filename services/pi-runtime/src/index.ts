@@ -157,6 +157,21 @@ app.post<{ Params: { sessionId: string }; Body: { text: string; lane?: string; f
 	},
 );
 
+/**
+ * 中断该会话当前正在跑的 run（前端「停止」按钮）。
+ * 会话本身保留——用户可接着发新消息；无活跃 run 时 skipped=true，
+ * 前端据此提示「已断开回复，后台可能仍在收尾」。
+ */
+app.post<{ Params: { sessionId: string } }>(
+	"/sessions/:sessionId/abort",
+	async (request, reply) => {
+		const { sessionId } = request.params;
+		const aborted = manager.abort(sessionId);
+		app.log.info({ sessionId, aborted }, "abort requested");
+		return reply.send({ ok: aborted, skipped: !aborted });
+	},
+);
+
 app.get<{ Params: { sessionId: string } }>(
 	"/sessions/:sessionId/events",
 	async (request, reply) => {

@@ -184,6 +184,21 @@ export class PiRuntimeClient {
 		return { skills: body?.skills ?? [] };
 	}
 
+	/**
+	 * 中断会话当前正在跑的 run（前端「停止」按钮走这条）。
+	 * 会话保留——用户可接着发新消息；pi-runtime 侧无活跃 run 时 skipped=true。
+	 */
+	async abortRun(sessionId: string): Promise<{ ok: boolean; skipped: boolean }> {
+		const { status, body } = await this.request<{ ok?: boolean; skipped?: boolean }>(
+			`/sessions/${encodeURIComponent(sessionId)}/abort`,
+			{ method: "POST" },
+		);
+		if (status >= 400) {
+			throw new PiRuntimeError(`abortRun failed: HTTP ${status}`, status);
+		}
+		return { ok: body?.ok === true, skipped: body?.skipped === true };
+	}
+
 	async deleteSession(sessionId: string): Promise<void> {
 		const { status } = await this.request(`/sessions/${encodeURIComponent(sessionId)}`, {
 			method: "DELETE",
