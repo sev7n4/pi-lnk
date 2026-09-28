@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 /**
  * ask_user 选项卡组件（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md §5.3）。
  * AgentSideRail canvas_command 分支收到 type=ask_user 时渲染本组件；
