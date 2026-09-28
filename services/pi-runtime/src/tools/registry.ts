@@ -6,6 +6,7 @@ import { createCanvasReadTools } from "./canvas-read.js";
 import { createCanvasWriteTools } from "./canvas-write.js";
 import { createUiCommandTools } from "./ui-command.js";
 import { createAskUserTools } from "./ask-user.js";
+import { createArrangeNodesTools } from "./arrange-nodes.js";
 import { createGenerationTools } from "./generation.js";
 
 export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
@@ -28,6 +29,11 @@ export function buildUiCommandTools(metrics: Metrics): LnkpiTool[] {
 /** ask_user 批次：向用户提问/选项卡工具（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md，D1-D5 已拍板）。 */
 export function buildAskUserTools(metrics: Metrics): LnkpiTool[] {
 	return createAskUserTools(metrics);
+}
+
+/** arrange_nodes 批次：自动排列节点工具（spec docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md，D1-D5 已拍板）。 */
+export function buildArrangeNodesTools(metrics: Metrics): LnkpiTool[] {
+	return createArrangeNodesTools(metrics);
 }
 
 /**
