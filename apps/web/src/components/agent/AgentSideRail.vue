@@ -1424,6 +1424,13 @@ function parseMessageMetadataSafe(raw?: string): { executionEvents?: Array<{ typ
   }
 }
 
+/** P1#6 缩略图 url 源：canvasNodes 按 nodeId 查 url。 */
+function resolveCanvasNodeUrl(nodeId: string): string | undefined {
+  const node = props.canvasNodes?.find((n) => n.id === nodeId)
+  const url = (node?.data as { url?: string } | undefined)?.url
+  return typeof url === 'string' && url ? url : undefined
+}
+
 async function loadHistory() {
   agent.clear()
   taskProgress.value = emptyTaskProgress()
@@ -1446,6 +1453,16 @@ async function loadHistory() {
       const meta = parseMessageMetadataSafe(lastAssistantMsg?.metadata)
       const seeded = seedTaskProgressFromEvents(meta?.executionEvents ?? [])
       if (seeded) taskProgress.value = seeded
+      // P1#7：最后一回合若有未答 ask_user 且之后无用户消息，恢复待答卡
+      const lastAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+      const hasUserAfter = msgs.slice(lastAssistantIdx + 1).some((m) => m.role === 'user')
+      const askCmd = (meta?.executionEvents ?? [])
+        .filter((e) => e.type === 'canvas_command')
+        .map((e) => e.data as { type?: string; questions?: typeof pendingAskUser.value })
+        .find((c) => c.type === 'ask_user' && c.questions?.length)
+      if (askCmd && !hasUserAfter) {
+        pendingAskUser.value = askCmd.questions!
+      }
     }
   } catch {
     ElMessage.warning('对话历史加载失败，请检查网络后刷新')
@@ -2486,6 +2503,7 @@ defineExpose({
                 <AgentCanvasOutputs
                   v-if="msg.role === 'assistant' && (assistantOutputsById.get(msg.id)?.length ?? 0) > 0"
                   :outputs="assistantOutputsById.get(msg.id) ?? []"
+                  :resolve-node-url="resolveCanvasNodeUrl"
                   @focus-node="onFocusNode($event)"
                   @focus-all="onFocusAll($event)"
                 />
