@@ -8,6 +8,14 @@ import { createUiCommandTools } from "./ui-command.js";
 import { createAskUserTools } from "./ask-user.js";
 import { createArrangeNodesTools } from "./arrange-nodes.js";
 import { createGenerationTools } from "./generation.js";
+import { buildWebTools } from "./web.js";
+import { buildDeleteNodesTools } from "./delete-nodes.js";
+
+/** P0 批次：web_search/web_fetch（感知层）。TAVILY_API_KEY 未配置时由 config.ts 条件装配。 */
+export { buildWebTools };
+
+/** P0 批次：delete_nodes（tier=destructive，复用 Nest remove-nodes）。 */
+export { buildDeleteNodesTools };
 
 export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
 	return createCanvasReadTools(client);

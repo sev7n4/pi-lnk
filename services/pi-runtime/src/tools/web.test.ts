@@ -63,6 +63,14 @@ test("truncateMarkdown：startIndex 越界收敛到合法区间", () => {
 // ---- Task 2：web_search / web_fetch 工具 ----
 
 import { buildWebTools } from "./web.js";
+import type { LnkpiTool } from "./types.js";
+
+// harness execute 类型是 6 参（toolCallId, params, onUpdate, toolContext, invocation, context）；
+// 测试只关心前 4 个语义位，尾部两个以 never 垫齐。content[0] 恒为 text（本工具族不产 image）。
+type ToolResult = { content: { text: string }[] };
+function runTool(tool: LnkpiTool, params: unknown, tc: unknown = {}): Promise<ToolResult> {
+	return tool.execute!("1", params as never, undefined as never, tc as never, undefined as never, undefined as never) as Promise<ToolResult>;
+}
 
 function mockFetch(responses: { status?: number; headers?: Record<string, string>; body?: string }[]) {
 	const calls: string[] = [];
@@ -108,9 +116,7 @@ test("web_search：映射 Tavily 响应为 title/url/content 文本块", async (
 			},
 		]);
 		const [tool] = buildWebTools({ fetchImpl: impl });
-		const out = await tool.execute!("1", { query: "bauhaus poster design" }, undefined as never, {
-			sessionId: "s1",
-		} as never);
+		const out = await runTool(tool, { query: "bauhaus poster design" }, { sessionId: "s1" });
 		const parsed = JSON.parse(out.content[0].text);
 		assert.equal(parsed.ok, true);
 		assert.equal(parsed.data.result_count, 2);
@@ -124,10 +130,7 @@ test("web_search：映射 Tavily 响应为 title/url/content 文本块", async (
 test("web_search：TAVILY_API_KEY 缺失 → 报错（防御层，主防线是不注册）", async () => {
 	delete process.env.TAVILY_API_KEY;
 	const [tool] = buildWebTools({ fetchImpl: mockFetch([]).impl });
-	await assert.rejects(
-		() => tool.execute!("1", { query: "x" }, undefined as never, {} as never),
-		/TAVILY_API_KEY missing/,
-	);
+	await assert.rejects(() => runTool(tool, { query: "x" }), /TAVILY_API_KEY missing/);
 });
 
 test("web_search：Tavily 5xx → web_search failed 明确文案（Review#3）", async () => {
@@ -135,7 +138,7 @@ test("web_search：Tavily 5xx → web_search failed 明确文案（Review#3）",
 	try {
 		const { impl } = mockFetch([{ status: 500, headers: { "content-type": "text/plain" }, body: "boom" }]);
 		const [tool] = buildWebTools({ fetchImpl: impl });
-		await assert.rejects(() => tool.execute!("1", { query: "x" }, undefined as never, {} as never), /web_search failed/);
+		await assert.rejects(() => runTool(tool, { query: "x" }), /web_search failed/);
 	} finally {
 		delete process.env.TAVILY_API_KEY;
 	}
@@ -145,7 +148,7 @@ test("web_fetch：html → markdown 正文抽取（含标题）", async () => {
 	const { impl } = mockFetch([{ headers: { "content-type": "text/html; charset=utf-8" }, body: HTML_PAGE }]);
 	const tools = buildWebTools({ fetchImpl: impl });
 	const tool = findTool(tools, "web_fetch");
-	const out = await tool.execute!("1", { url: "https://example.com/page" }, undefined as never, {} as never);
+	const out = await runTool(tool, { url: "https://example.com/page" });
 	const parsed = JSON.parse(out.content[0].text);
 	assert.equal(parsed.data.next_index, null);
 	assert.ok(parsed.data.content.includes("Bauhaus"));
@@ -153,26 +156,20 @@ test("web_fetch：html → markdown 正文抽取（含标题）", async () => {
 
 test("web_fetch：畸形 URL → invalid url 明确报错（Review#1）", async () => {
 	const tool = findTool(buildWebTools({ fetchImpl: mockFetch([]).impl }), "web_fetch");
-	await assert.rejects(() => tool.execute!("1", { url: "not a url" }, undefined as never, {} as never), /invalid url/);
-	await assert.rejects(() => tool.execute!("1", { url: "ftp://example.com/x" }, undefined as never, {} as never), /refused/);
+	await assert.rejects(() => runTool(tool, { url: "not a url" }), /invalid url/);
+	await assert.rejects(() => runTool(tool, { url: "ftp://example.com/x" }), /refused/);
 });
 
 test("web_fetch：非 HTML content-type → unsupported 明确报错（Review#2）", async () => {
 	const { impl } = mockFetch([{ headers: { "content-type": "application/pdf" }, body: "%PDF-1.4" }]);
 	const tool = findTool(buildWebTools({ fetchImpl: impl }), "web_fetch");
-	await assert.rejects(
-		() => tool.execute!("1", { url: "https://example.com/doc.pdf" }, undefined as never, {} as never),
-		/unsupported content-type/,
-	);
+	await assert.rejects(() => runTool(tool, { url: "https://example.com/doc.pdf" }), /unsupported content-type/);
 });
 
 test("web_fetch：私网地址 → refused（Review#5 复用 isPrivateHost）", async () => {
 	const tool = findTool(buildWebTools({ fetchImpl: mockFetch([]).impl }), "web_fetch");
-	await assert.rejects(() => tool.execute!("1", { url: "http://127.0.0.1:5100/x" }, undefined as never, {} as never), /refused/);
-	await assert.rejects(
-		() => tool.execute!("1", { url: "http://169.254.169.254/latest/meta-data" }, undefined as never, {} as never),
-		/refused/,
-	);
+	await assert.rejects(() => runTool(tool, { url: "http://127.0.0.1:5100/x" }), /refused/);
+	await assert.rejects(() => runTool(tool, { url: "http://169.254.169.254/latest/meta-data" }), /refused/);
 });
 
 test("web_fetch：超长页面截断 + start_index 续读 + 缓存命中不二次外呼", async () => {
@@ -180,15 +177,11 @@ test("web_fetch：超长页面截断 + start_index 续读 + 缓存命中不二�
 		"<!doctype html><html><body><article><p>" + "word ".repeat(8000) + "</p></article></body></html>";
 	const { impl, calls } = mockFetch([{ headers: { "content-type": "text/html" }, body: longBody }]);
 	const tool = findTool(buildWebTools({ fetchImpl: impl }), "web_fetch");
-	const r1 = JSON.parse(
-		(await tool.execute!("1", { url: "https://example.com/long" }, undefined as never, {} as never)).content[0].text,
-	);
+	const r1 = JSON.parse((await runTool(tool, { url: "https://example.com/long" })).content[0].text);
 	assert.equal(r1.data.total_chars > 20_000, true);
 	assert.ok(r1.data.content.includes("start_index="));
 	const r2 = JSON.parse(
-		(
-			await tool.execute!("1", { url: "https://example.com/long", start_index: r1.data.next_index }, undefined as never, {} as never)
-		).content[0].text,
+		(await runTool(tool, { url: "https://example.com/long", start_index: r1.data.next_index })).content[0].text,
 	);
 	assert.equal(r2.data.start_index, r1.data.next_index);
 	assert.equal(calls.length, 1, "cache hit should not refetch");
