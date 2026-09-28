@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   hasOutpaintExtension,
   initialOutpaintRect,
@@ -51,7 +51,7 @@ describe('canvasEditor refine target', () => {
     editor.refineCoverage = 0.4
     editor.openImageEditor({ nodeId: 'n1', url: 'https://cdn/a.png' })
     editor.closeImageEditor()
-    expect(editor.refineTool).toBe('brush')
+    expect(editor.refineTool).toBe('rect')
     expect(editor.refineBrushSize).toBe(24)
     expect(editor.refineCoverage).toBe(0)
   })
@@ -114,27 +114,28 @@ describe('canvasEditor refine target', () => {
     editor.setRefineWandTolerance(40)
     editor.openImageEditor({ nodeId: 'n1', url: 'https://cdn/a.png' })
     editor.closeImageEditor()
-    expect(editor.refineTool).toBe('brush')
+    expect(editor.refineTool).toBe('rect')
     expect(editor.refineWandTolerance).toBe(24)
   })
 
-  it('tracks refineMaskOp from eraser/brush and keeps it when switching to wand/polygon', () => {
+  it('tracks refineMaskOp from eraser/brush and keeps it for wand/polygon/rect/point', () => {
     setActivePinia(createPinia())
     const editor = useCanvasEditorStore()
     expect(editor.refineMaskOp).toBe('add')
     editor.setRefineTool('eraser')
-    expect(editor.refineTool).toBe('eraser')
     expect(editor.refineMaskOp).toBe('subtract')
     editor.setRefineTool('wand')
-    expect(editor.refineTool).toBe('wand')
     expect(editor.refineMaskOp).toBe('subtract')
     editor.setRefineTool('polygon')
-    expect(editor.refineTool).toBe('polygon')
     expect(editor.refineMaskOp).toBe('subtract')
     editor.setRefineTool('brush')
     expect(editor.refineMaskOp).toBe('add')
+    // 规格修订：rect 不再硬编码 add——保持当前开关值
     editor.setRefineTool('rect')
     expect(editor.refineMaskOp).toBe('add')
+    editor.setRefineTool('eraser')
+    editor.setRefineTool('rect')
+    expect(editor.refineMaskOp).toBe('subtract') // 回归先红 ①：旧实现会把这里翻回 'add'
   })
 
   it('keeps refineMaskOp when switching to point', () => {
@@ -154,7 +155,7 @@ describe('canvasEditor refine target', () => {
     editor.setRefineTool('eraser')
     editor.setRefineTool('polygon')
     editor.closeImageEditor()
-    expect(editor.refineTool).toBe('brush')
+    expect(editor.refineTool).toBe('rect')
     expect(editor.refineMaskOp).toBe('add')
   })
 
@@ -234,6 +235,38 @@ describe('refineSessionResults', () => {
     editor.setRefineMode('select')
     expect(editor.refineSessionResults.length).toBe(1)
     expect(editor.currentRefineSessionResult?.url).toBe('u0')
+  })
+
+  it('refineMaskAvailable：无句柄或零覆盖为 false，有句柄且覆盖 > 0 才为 true', () => {
+    const editor = useCanvasEditorStore()
+    expect(editor.refineMaskAvailable).toBe(false)
+
+    editor.registerRefineMask({
+      exportPng: async () => new Blob(),
+      clear: () => {},
+      getCanvas: () => document.createElement('canvas'),
+      invert: () => {},
+    })
+    expect(editor.refineMaskAvailable).toBe(false) // 有句柄但零覆盖
+
+    editor.refineCoverage = 0.4
+    expect(editor.refineMaskAvailable).toBe(true)
+
+    editor.registerRefineMask(null)
+    expect(editor.refineMaskAvailable).toBe(false)
+  })
+
+  it('明文 HTTP（crypto.randomUUID 不可用）时 push 仍写入且 id 非空（randomId 降级）', () => {
+    vi.stubGlobal('crypto', { getRandomValues: () => new Uint8Array(1) })
+    try {
+      const editor = useCanvasEditorStore()
+      editor.pushRefineSessionResult({ url: 'u0', prompt: '' })
+      expect(editor.refineSessionResults.length).toBe(1)
+      expect(editor.refineSessionResults[0]!.id).toBeTruthy()
+      expect(editor.currentRefineSessionResult?.url).toBe('u0')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('换图清空：openImageEditor nodeId 变化时清空会话结果', () => {
