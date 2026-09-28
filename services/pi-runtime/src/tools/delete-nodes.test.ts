@@ -48,3 +48,10 @@ test("delete_nodes：空数组 → 拒绝", async () => {
 	const [tool] = buildDeleteNodesTools(fakeClient());
 	await assert.rejects(() => runTool(tool, { node_ids: [] }, tc), /requires node_ids/);
 });
+
+test("delete_nodes：toolContext 缺 sessionId → fail-closed 拒绝（终审 M-1）", async () => {
+	const capture: { path?: string; body?: unknown } = {};
+	const [tool] = buildDeleteNodesTools(fakeClient(capture));
+	await assert.rejects(() => runTool(tool, { node_ids: ["n1"] }, {} as LnkpiToolContext), /missing sessionId/);
+	assert.equal(capture.path, undefined, "must not reach Nest without sessionId");
+});

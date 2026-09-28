@@ -30,6 +30,7 @@ export function buildDeleteNodesTools(client: NestClient): LnkpiTool[] {
 			}),
 			execute: async (_id, p: { node_ids: string[] }, _u, tc: LnkpiToolContext) => {
 				// harness 不做 schema 校验，约束在此兜底（对齐 canvas-write 模式）
+				if (!tc?.sessionId) throw new Error("delete_nodes: missing sessionId in toolContext");
 				if (!Array.isArray(p.node_ids) || p.node_ids.length === 0) {
 					throw new Error("delete_nodes requires node_ids (1-50 per call)");
 				}

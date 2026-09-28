@@ -31,21 +31,41 @@ interface TavilyResult {
 	content?: string;
 }
 
-/** SSRF 防护纯函数：私网/loopback/link-local 主机名拒绝。无 DNS 解析（记录为限制）。 */
+function isPrivateIPv4(ip: string): boolean {
+	const p = ip.split(".").map(Number);
+	const a = p[0];
+	const b = p[1];
+	if (a === 127 || a === 10 || a === 0) return true;
+	if (a === 172 && b >= 16 && b <= 31) return true;
+	if (a === 192 && b === 168) return true;
+	if (a === 169 && b === 254) return true;
+	return false;
+}
+
+/** SSRF 防护纯函数：私网/loopback/link-local 主机名拒绝。无 DNS 解析（记录为限制）。
+ *  IPv6 规则（fc/fd/fe80 前缀）只对含 ":" 的字面量生效——fcXX.com 这类普通域名不误杀（终审 I-2）。
+ *  IPv4-mapped IPv6（::ffff:127.0.0.1 / ::ffff:7f00:1）剥前缀后复用 IPv4 判定（终审 I-1）。 */
 export function isPrivateHost(hostname: string): boolean {
-	const h = hostname.toLowerCase().replace(/\.$/, "");
+	const h = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
 	if (h === "localhost" || h === "::1" || h === "0.0.0.0") return true;
-	const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-	if (m) {
-		const a = Number(m[1]);
-		const b = Number(m[2]);
-		if (a === 127 || a === 10 || a === 0) return true;
-		if (a === 172 && b >= 16 && b <= 31) return true;
-		if (a === 192 && b === 168) return true;
-		if (a === 169 && b === 254) return true;
-		return false;
+	if (h.includes(":")) {
+		// IPv4-embedded IPv6（::ffff:1.2.3.4 / 0:0:0:0:0:ffff:1.2.3.4 / NAT64 64:ff9b::1.2.3.4）：
+		// 尾部点分十进制直接复用 IPv4 判定（终审 I-1）
+		const dotted = h.match(/(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+		if (dotted) return isPrivateIPv4(dotted[1]);
+		// 十六进制压缩形态 ::ffff:7f00:1 → 两段 16bit 拆 4 字节
+		const hexMapped = h.match(/(?:^|:)ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+		if (hexMapped) {
+			const hi = parseInt(hexMapped[1], 16);
+			const lo = parseInt(hexMapped[2], 16);
+			if (Number.isNaN(hi) || Number.isNaN(lo)) return false;
+			return isPrivateIPv4([(hi >> 8) & 0xff, hi & 0xff, (lo >> 8) & 0xff, lo & 0xff].join("."));
+		}
+		// unique local fc00::/7、link-local fe80::/10
+		return h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80");
 	}
-	if (h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80")) return true;
+	const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (m) return isPrivateIPv4(h);
 	return false;
 }
 
@@ -60,18 +80,43 @@ export function truncateMarkdown(
 	return { text: md.slice(start, end), total, next: end < total ? end : null };
 }
 
-export function buildWebTools(deps: { fetchImpl?: typeof fetch } = {}): LnkpiTool[] {
+export function buildWebTools(deps: { fetchImpl?: typeof fetch; now?: () => number } = {}): LnkpiTool[] {
 	const fetchImpl = deps.fetchImpl ?? fetch;
+	const now = deps.now ?? (() => Date.now());
 	// 15min TTL 内存缓存（无 LRU 上限，低频场景可接受，spec §12 P2 再议）
 	const cache = new Map<string, { ts: number; md: string }>();
 	const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
 
+	const MAX_REDIRECTS = 5;
+
+	/** 每跳重校验协议 + SSRF（终审 C-1：redirect:"follow" 会被公网页面 302 引到私网）。 */
+	async function fetchWithRedirects(initUrl: URL): Promise<Response> {
+		let url = initUrl;
+		for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+			if (url.protocol !== "https:" && url.protocol !== "http:") {
+				throw new Error("web_fetch refused non-http(s) url: " + url.toString());
+			}
+			if (isPrivateHost(url.hostname)) {
+				throw new Error("web_fetch refused private address: " + url.hostname);
+			}
+			const res = await fetchImpl(url.toString(), {
+				headers: { "user-agent": "pi-lnk-agent/0.1", accept: "text/html,text/plain" },
+				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+				redirect: "manual",
+			});
+			if (res.status >= 300 && res.status < 400) {
+				const loc = res.headers.get("location");
+				if (!loc) return res; // 无 Location 的 3xx 当普通响应处理
+				url = new URL(loc, url);
+				continue;
+			}
+			return res;
+		}
+		throw new Error("web_fetch too many redirects (max " + MAX_REDIRECTS + ")");
+	}
+
 	async function fetchMarkdown(url: URL): Promise<string> {
-		const res = await fetchImpl(url.toString(), {
-			headers: { "user-agent": "pi-lnk-agent/0.1", accept: "text/html,text/plain" },
-			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			redirect: "follow",
-		});
+		const res = await fetchWithRedirects(url);
 		const ctype = res.headers.get("content-type") ?? "";
 		if (!/^(text\/html|text\/plain)/i.test(ctype)) {
 			throw new Error(
@@ -175,9 +220,23 @@ export function buildWebTools(deps: { fetchImpl?: typeof fetch } = {}): LnkpiToo
 				}
 				const key = url.toString();
 				const cached = cache.get(key);
-				const fresh = cached !== undefined && Date.now() - cached.ts < CACHE_TTL_MS;
-				const md = fresh && cached ? cached.md : await fetchMarkdown(url);
-				if (!fresh) cache.set(key, { ts: Date.now(), md });
+				const fresh = cached !== undefined && now() - cached.ts < CACHE_TTL_MS;
+				let md: string;
+				if (fresh && cached) {
+					md = cached.md;
+				} else {
+					try {
+						md = await fetchMarkdown(url);
+					} catch (err) {
+						// 终审 M-3：网络层错误包装成模型可读文案（含 http 局限提示）
+						throw new Error(
+							"web_fetch failed: " +
+								(err instanceof Error ? err.message : String(err)) +
+								" (note: 仅支持公网可访问的 http(s) 页面；生产环境 http:80 被网络策略拦截)",
+						);
+					}
+					cache.set(key, { ts: now(), md });
+				}
 				const { text, total, next } = truncateMarkdown(md, p.start_index ?? 0);
 				const tail = next !== null ? "\n\n…[truncated, " + total + " chars total, call again with start_index=" + next + "]" : "";
 				return textResult({
