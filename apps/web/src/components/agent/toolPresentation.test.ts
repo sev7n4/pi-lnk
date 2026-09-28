@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { presentToolStep, timelineHeadline, collapsedDefault } from '@/components/agent/toolPresentation'
+import { presentToolStep, timelineHeadline, collapsedDefault, TOOL_PRESENTATION } from '@/components/agent/toolPresentation'
 import { createExecutionTrace, applyToolCall } from '@/components/agent/executionTraceReducer'
 import type { ExecutionStep } from '@/components/agent/executionTraceReducer'
 
@@ -65,5 +65,23 @@ describe('toolPresentation（P1 注册表）', () => {
   })
   it('collapsedDefault：v1 固定默认折叠', () => {
     expect(collapsedDefault).toBe(true)
+  })
+})
+
+describe('TOOL_PRESENTATION 全量覆盖（P1#3）', () => {
+  const ALL_LOCAL_TOOLS = [
+    'get_canvas_summary', 'get_node', 'get_generation_status', 'get_generation_diagnostic',
+    'get_canvas_layout', 'list_generation_tasks', 'list_user_assets',
+    'upsert_prompt_node', 'upsert_media_node', 'set_node_text', 'attach_refs', 'propose_generation',
+    'apply_sidebar_attachments', 'apply_asset_to_node', 'save_node_to_asset_library', 'duplicate_node',
+    'upload_media_to_canvas', 'grid_slice_image', 'connect_nodes', 'introduce_nodes_to_agent',
+    'cancel_generation', 'load_skill', 'ask_user', 'arrange_nodes',
+    'focus_node', 'focus_nodes', 'undo', 'redo', 'open_image_editor',
+  ] as const
+
+  it('每个本地 runtime 工具都有展示条目', () => {
+    for (const name of ALL_LOCAL_TOOLS) {
+      expect(TOOL_PRESENTATION[name], `missing presentation for ${name}`).toBeDefined()
+    }
   })
 })
