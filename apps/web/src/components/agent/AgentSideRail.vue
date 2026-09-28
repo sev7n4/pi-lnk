@@ -41,6 +41,8 @@ import {
 } from '@/components/agent/assistantReconcile'
 import ProductVisualDeliveryCard from '@/components/agent/ProductVisualDeliveryCard.vue'
 import AskUserCard from '@/components/agent/AskUserCard.vue'
+import ToolCallCard from '@/components/agent/ToolCallCard.vue'
+import { collapseToolCalls } from '@/components/agent/collapseToolCalls'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
 import AgentMacroSchemeCards from '@/components/agent/presentation/AgentMacroSchemeCards.vue'
@@ -2485,7 +2487,11 @@ defineExpose({
                   @focus-all="onFocusAll($event)"
                 />
                 <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
-                  <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[var(--neo-text-secondary)]">⚙ {{ tc.name }}<template v-if="tc.argsSummary"> · {{ tc.argsSummary }}</template></div>
+                  <ToolCallCard
+                    v-for="(cc, i) in collapseToolCalls(msg.toolCalls)"
+                    :key="i"
+                    :call="cc"
+                  />
                 </div>
                 <div
                   v-if="canShowMessageActions(msg)"
