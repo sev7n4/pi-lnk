@@ -733,6 +733,12 @@ const deliverySelections = ref<Record<string, string>>({})
 
 /** ask_user 选项卡待选问题（canvas_command type=ask_user 时填充，用户选完清空）。 */
 const pendingAskUser = ref<Array<{ id: string; question: string; options: { label: string; value: string }[]; multiSelect?: boolean; allowOther?: boolean }>>([])
+/** 卡片只挂在最后一轮 assistant 回复之后（对话流内，不在消息列表顶部）；用户发新消息后自动隐藏。 */
+const lastMessageIsAssistant = computed(() => {
+  const msgs = agent.messages
+  const last = msgs[msgs.length - 1]
+  return !!last && last.role === 'assistant'
+})
 
 async function onAskSelect(value: string) {
   pendingAskUser.value = []
@@ -1592,6 +1598,7 @@ async function createOwnCanvas() {
 }
 
 async function sendMessage(message: string) {
+  pendingAskUser.value = []
   const selectableTextModels = preferences.value?.selectableTextModels ?? []
   if (planningModel.value && !selectableTextModels.includes(planningModel.value)) {
     ElMessage.warning('当前规划模型已停用，请重新选择')
@@ -2412,12 +2419,6 @@ defineExpose({
               <p class="text-sm">描述你的创意</p>
               <p class="mt-1 text-[11px] opacity-70">我会驱动画布创建节点、连线与生成任务</p>
             </div>
-            <AskUserCard
-              v-if="pendingAskUser.length"
-              :questions="pendingAskUser"
-              @select="onAskSelect"
-              @cancel="onAskCancel"
-            />
             <div
               v-for="msg in agent.messages"
               :key="msg.id"
@@ -2533,6 +2534,13 @@ defineExpose({
                 </div>
               </div>
             </div>
+            <AskUserCard
+              v-if="pendingAskUser.length && lastMessageIsAssistant"
+              class="mx-3"
+              :questions="pendingAskUser"
+              @select="onAskSelect"
+              @cancel="onAskCancel"
+            />
             <AgentTaskProgressCard
               v-if="showTaskCard"
               class="mx-3"
