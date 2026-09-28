@@ -49,6 +49,7 @@ import { SIDEBAR_MEDIA_PARSE_PROMPT } from './sidebar-media-parse-prompt'
 import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
+import { stripPlanMarkers } from './planMarkers'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
@@ -660,7 +661,8 @@ export class AgentService {
       ruleGroups: ['core', 'writeTools', 'genTools'],
     })
     await this.ensurePiSession(client, sessionId, {
-      systemPrompt: visionBlock ? `${systemPrompt}\n\n${visionBlock}` : systemPrompt,
+      // P1#5：尾部追加任务计划汇报约定（⟦plan⟧/⟦task-done⟧ 内联标记，Nest 剥离后派生 task 事件）
+      systemPrompt: `${systemPrompt}${visionBlock ? `\n\n${visionBlock}` : ''}\n\n## 任务计划汇报（多步任务时启用）\n多步出图/改造任务开工前，先单独一行输出计划标记（会被界面渲染为任务清单，用户可见）：\n⟦plan⟧[{"n":1,"title":"起稿"},{"n":2,"title":"配图"}]\n每完成一项，单独一行输出：⟦task-done⟧<n>\n标记行之外不要解释标记本身；单步简单任务不要输出标记。`,
       userId,
       attachments: piContext?.attachments,
       mentionedKeys: piContext?.mentionedKeys,
@@ -735,7 +737,30 @@ export class AgentService {
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue
         if (ui.type === 'text_delta') {
-          assistantText += (ui.data as { text: string }).text
+          // P1#5：plan 内联标记剥离 + 派生既有 task_list/task_update 事件（todo 面板数据源）
+          const rawText = (ui.data as { text: string }).text
+          const stripped = stripPlanMarkers(rawText)
+          assistantText += stripped.text
+          ;(ui.data as { text: string }).text = stripped.text
+          if (stripped.plan?.length) {
+            const planEv = {
+              type: 'task_list',
+              data: {
+                items: stripped.plan.map((it) => ({
+                  id: `plan-${it.n}`,
+                  title: it.title,
+                  status: 'running',
+                })),
+              },
+            }
+            executionEvents.push(planEv)
+            yield planEv as AgentStreamEvent
+          }
+          if (stripped.doneN != null) {
+            const doneEv = { type: 'task_update', data: { id: `plan-${stripped.doneN}`, status: 'done' } }
+            executionEvents.push(doneEv)
+            yield doneEv as AgentStreamEvent
+          }
         }
         // 执行事件持久化收集（刷新后前端可恢复执行过程）；canvas_action 已在
         // extractCanvasActions 循环内同步入 canvasActions/executionEvents，
