@@ -11,7 +11,8 @@
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "test": "pnpm -r --if-present test",
-       "verify-u-i2v-phase3": "npx tsx scripts/verify-u-i2v-phase3.ts",
+    "verify-contract": "npx tsx scripts/verify-contract.ts",
+    "verify-u-i2v-phase3": "npx tsx scripts/verify-u-i2v-phase3.ts",
     "verify-spec-figures": "npx tsx scripts/verify-spec-figures.ts"
   },
   "devDependencies": {
