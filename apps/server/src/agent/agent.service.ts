@@ -712,6 +712,10 @@ export class AgentService {
         // 直通前端 AgentSideRail canvas_command 分支；不得进 canvasActions（那是画布数据动作通道）
         if (event.type === 'tool_execution_end') {
           for (const cmd of extractCanvasCommands(event)) {
+            // P1#7：ask_user 进 executionEvents → metadata 落库，刷新/重连后可恢复待答卡
+            if (cmd.type === 'ask_user') {
+              executionEvents.push({ type: 'canvas_command', data: cmd })
+            }
             yield { type: 'canvas_command', data: cmd }
           }
           // B-5：gen/lifecycle 工具 details.actions → canvas_action（画布数据动作通道；
