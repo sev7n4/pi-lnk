@@ -127,7 +127,7 @@ const summaryLine = computed(() => turnSummaryLine(props.trace))
           >
             <span class="min-w-0 flex-1">
               <span>{{ statusIcon(step) }} {{ stepDisplay(step) }}{{ stepDuration(step) }}</span>
-              <p v-if="step.detail" class="mt-0.5 pl-3 opacity-75">{{ step.detail }}</p>
+              <p v-if="step.detail" class="mt-0.5 pl-3 opacity-75" :class="step.kind === 'thinking' ? 'whitespace-pre-wrap' : ''">{{ step.detail }}</p>
             </span>
             <CanvasLocatePinIcon
               v-if="step.meta?.nodeId"

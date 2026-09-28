@@ -209,3 +209,16 @@ describe("turn_usage（P1 状态行）", () => {
 		expect(acc.feed({ type: "agent_end", ts: 1, data: {} } as never)).toBeNull();
 	});
 });
+
+describe("thinking 全文透传（P0 思考面板）", () => {
+	it("end 时全文透传，clamp 2000 字", () => {
+		const acc = createThinkingAccumulator();
+		const longText = "a".repeat(2500);
+		acc.feed({ type: "message_update", ts: 1, data: { event: { type: "thinking_start" } } } as never);
+		acc.feed({ type: "message_update", ts: 2, data: { event: { type: "thinking_delta", delta: longText } } } as never);
+		const out = acc.feed({ type: "message_update", ts: 3, data: { event: { type: "thinking_end" } } } as never);
+		expect(out?.type).toBe("thinking");
+		const summary = (out!.data as { summary?: string }).summary ?? "";
+		expect(summary.length).toBe(2000);
+	});
+});

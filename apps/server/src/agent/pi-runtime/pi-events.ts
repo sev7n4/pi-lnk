@@ -227,10 +227,11 @@ export function extractThinking(event: PiRuntimeEvent): ThinkingPhase | null {
 
 /**
  * thinking 累积器（可观测性专项 ③）：把 pi 的流式 thinking 子事件折叠为
- * 老 UI 契约的 `thinking` 事件（start→running，end→done+截断摘要）。
- * delta 只累积不透传（v1 不做逐字思考流），摘要取前 limit 字符。
+ * 老 UI 契约的 `thinking` 事件（start→running，end→done+全文）。
+ * delta 只累积不透传（v1 不做逐字思考流）；P0 思考面板：end 时全文透传，
+ * clamp 2000 字防超大 payload，前端折叠展示。
  */
-export function createThinkingAccumulator(limit = 200): {
+export function createThinkingAccumulator(limit = 2000): {
 	feed(event: PiRuntimeEvent): UiEvent | null;
 } {
 	let buffer = "";
