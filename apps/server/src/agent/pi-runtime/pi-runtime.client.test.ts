@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	extractTextDelta,
 	mapPiEventToUiEvent,
@@ -472,5 +472,72 @@ describe("P0-③ streamEvents 断线重连", () => {
 		for await (const f of parseSseFrames(stream)) out.push(f as { id?: string });
 		expect(out).toHaveLength(1);
 		expect(out[0].id).toBe("5");
+	});
+});
+
+describe("P0-③ 终审修复：重连预算按「连续失败窗口」计", () => {
+	const enc = new TextEncoder();
+
+	it("健康运行 130s 后断流仍重连（预算不从订阅起点计时）", async () => {
+		vi.useFakeTimers();
+		try {
+			const calls: string[] = [];
+			const controllers: Array<ReadableStreamDefaultController<Uint8Array>> = [];
+			const enc2 = enc;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async () => {
+					calls.push("connect");
+					return new Response(
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controllers.push(controller);
+								controller.enqueue(enc2.encode('id: 0\nevent: agent_start\ndata: {"type":"agent_start","ts":1,"seq":0}\n\n'));
+								// 保持打开：模拟长任务期间连接一直健康
+							},
+						}),
+						{ status: 200 },
+					);
+				}) as typeof fetch,
+			});
+			const errors: unknown[] = [];
+			const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
+			// 健康运行 130s（超过 120s 预算）
+			await vi.advanceTimersByTimeAsync(130_000);
+			expect(calls.length).toBe(1);
+			// 断流 → 必须重连（修复前：deadline 已过 → 直接 504 终止）
+			controllers[0]!.error(new TypeError("stream broken"));
+			await vi.advanceTimersByTimeAsync(300); // 退避 250ms
+			expect(calls.length).toBe(2);
+			expect(errors).toHaveLength(0);
+			cancel();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("持续网络失败 120s → 预算耗尽 onError(504) 终止（Review Focus 3）", async () => {
+		vi.useFakeTimers();
+		try {
+			let calls = 0;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async () => {
+					calls++;
+					throw new TypeError("network down");
+				}) as typeof fetch,
+			});
+			const errors: unknown[] = [];
+			const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
+			// 连续失败 120s+：退避 250ms→5s 封顶，有限次重试后 504
+			await vi.advanceTimersByTimeAsync(130_000);
+			expect(errors).toHaveLength(1);
+			expect((errors[0] as { status?: number }).status).toBe(504);
+			expect(calls).toBeGreaterThan(1);
+			expect(calls).toBeLessThan(30); // 退避封顶保证有限次
+			cancel();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

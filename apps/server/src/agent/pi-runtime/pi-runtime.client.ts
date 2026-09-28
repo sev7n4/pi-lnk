@@ -233,7 +233,9 @@ export class PiRuntimeClient {
 		void (async () => {
 			let lastEventId: string | undefined;
 			let backoff = 250;
-			const deadline = Date.now() + RECONNECT_BUDGET_MS;
+			// 预算按「连续失败窗口」计（终审修复）：连接成功即清零。若从订阅起点绝对计时，
+			// 健康运行 >120s 的长任务断线后将零次重连——恰是本特性最需要覆盖的场景。
+			let firstFailureAt: number | undefined;
 			while (!controller.signal.aborted) {
 				const url =
 					`${this.options.baseUrl}/sessions/${encodeURIComponent(sessionId)}/events` +
@@ -246,7 +248,8 @@ export class PiRuntimeClient {
 					if (!res.ok || !res.body) {
 						throw new PiRuntimeError(`streamEvents failed: HTTP ${res.status}`, res.status);
 					}
-					backoff = 250; // 连接成功即重置退避
+					backoff = 250; // 连接成功即重置退避与失败窗口
+					firstFailureAt = undefined;
 					for await (const frame of parseSseFrames(res.body)) {
 						if (frame.id !== undefined) lastEventId = frame.id;
 						if (frame.event && frame.data !== undefined) {
@@ -267,7 +270,8 @@ export class PiRuntimeClient {
 						onError?.(err);
 						return;
 					}
-					if (Date.now() >= deadline) {
+					if (firstFailureAt === undefined) firstFailureAt = Date.now();
+					else if (Date.now() - firstFailureAt >= RECONNECT_BUDGET_MS) {
 						onError?.(new PiRuntimeError("streamEvents: reconnect budget exhausted", 504));
 						return;
 					}

@@ -131,6 +131,9 @@ export class NestClient {
 			return payload.data;
 		} catch (err) {
 			if (err instanceof NestToolError || err instanceof NestCircuitOpenError) throw err;
+			// P0-② 终审修复：用户主动取消（外部 signal 已触发）不计熔断——
+			// 否则连续点 5 次「停止」会把 run_* 熔死 60s。原样上抛，工具以 error result 收尾。
+			if (opts?.signal?.aborted) throw err;
 			const isTimeout = err instanceof Error && err.name === "TimeoutError";
 			this.recordFailure(path);
 			this.opts.onCall?.(toolLabel(path), "error", { errorKind: isTimeout ? "timeout" : "network" });
