@@ -4,6 +4,7 @@ import type { ExecutionTraceState, ExecutionStep } from '@/components/agent/exec
 import { formatDuration } from '@/components/agent/executionStepLabels'
 import { presentToolStep, timelineHeadline } from '@/components/agent/toolPresentation'
 import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
+import { derivePhase, PHASE_BADGE } from '@/components/agent/phaseAggregator'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 
 const props = defineProps<{
@@ -92,6 +93,12 @@ function stepDisplay(step: ExecutionStep): string {
 }
 
 const summaryLine = computed(() => turnSummaryLine(props.trace))
+
+/** P1#4 阶段徽章：从 trace 步骤纯派生（仅流式期间显示）。 */
+const phaseBadge = computed(() => {
+  const p = derivePhase(props.trace.steps)
+  return p ? PHASE_BADGE[p] : null
+})
 </script>
 
 <template>
@@ -102,6 +109,11 @@ const summaryLine = computed(() => turnSummaryLine(props.trace))
       @click="toggle"
     >
       <span class="inline-block w-3 shrink-0">{{ expanded ? '▾' : '▸' }}</span>
+      <span
+        v-if="phaseBadge && streaming"
+        class="mr-1 inline-flex items-center gap-0.5 rounded-full bg-[var(--neo-panel)] px-1.5 py-0.5"
+        data-testid="phase-badge"
+      >{{ phaseBadge.icon }} {{ phaseBadge.label }}</span>
       <span>{{ headerLabel }}</span>
       <span v-if="durationLabel && !expanded" class="opacity-70">{{ durationLabel }}</span>
     </button>
