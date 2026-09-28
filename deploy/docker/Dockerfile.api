@@ -36,7 +36,10 @@ RUN node -e "\
   }"
 
 # 安装除 apps/web 外全部 workspace（保留 agent/shared 的 devDeps 供 tsc build）
-RUN pnpm install --frozen-lockfile --filter '!@lnkpi/web'
+# ⚠️ registry 必须显式指向国内镜像：CVM 构建容器到 registry.npmjs.org(Cloudflare) 的连接会
+#   挂起（实测 pnpm 卡死 40min+，进程 CPU 时间停在 23s 不再增长，ESTABLISHED 但收发队列为 0），
+#   导致 docker build 永不结束、deploy run 被后续进组的 run 挤掉。走 npmmirror 稳定秒级。
+RUN pnpm install --frozen-lockfile --filter '!@lnkpi/web' --registry=https://registry.npmmirror.com
 RUN pnpm --filter @lnkpi/shared build
 RUN pnpm --filter @lnkpi/agent build
 RUN node deploy/docker/patch-workspace-packages.cjs
