@@ -110,6 +110,50 @@ test("onCall 钩子记录 ok/error/circuit_open", async () => {
 	);
 });
 
+test("③ onCall info：ok 带 resultBytes；4xx/5xx/envelope/timeout 各归其类", async () => {
+	const seen: Array<[string, string, { resultBytes?: number; errorKind?: string } | undefined]> = [];
+	const respond = (status: number, body: string) => (_req: unknown, res: { statusCode: number; end(b: string): void }) => {
+		res.statusCode = status;
+		res.end(body);
+	};
+	// ok：包络 data 序列化字节数
+	await withServer(
+		respond(200, JSON.stringify({ code: 0, message: "ok", data: { hello: "world" } })),
+		async (base) => {
+			const c = new NestClient({ baseUrl: base, token: "t", onCall: (t, o, i) => seen.push([t, o, i]) });
+			await c.post("/agent/internal/get-canvas-summary", {});
+			assert.equal(seen[0][2]?.resultBytes, Buffer.byteLength(JSON.stringify({ hello: "world" })));
+		},
+	);
+	// 4xx → upstream_4xx
+	await withServer(
+		respond(400, "bad"),
+		async (base) => {
+			const c = new NestClient({ baseUrl: base, token: "t", onCall: (t, o, i) => seen.push([t, o, i]) });
+			await assert.rejects(() => c.post("/agent/internal/get-node", {}), NestToolError);
+			assert.equal(seen[1][2]?.errorKind, "upstream_4xx");
+		},
+	);
+	// envelope → envelope
+	await withServer(
+		respond(200, JSON.stringify({ code: 1, message: "biz error" })),
+		async (base) => {
+			const c = new NestClient({ baseUrl: base, token: "t", onCall: (t, o, i) => seen.push([t, o, i]) });
+			await assert.rejects(() => c.post("/agent/internal/get-node", {}), NestToolError);
+			assert.equal(seen[2][2]?.errorKind, "envelope");
+		},
+	);
+	// timeout → timeout
+	await withServer(
+		() => undefined, // never responds
+		async (base) => {
+			const c = new NestClient({ baseUrl: base, token: "t", defaultTimeoutMs: 50, onCall: (t, o, i) => seen.push([t, o, i]) });
+			await assert.rejects(() => c.post("/agent/internal/get-node", {}), NestToolError);
+			assert.equal(seen[3][2]?.errorKind, "timeout");
+		},
+	);
+});
+
 test("业务错误（4xx/envelope）不计熔断；5xx 计入", async () => {
 	let n = 0;
 	await withServer(

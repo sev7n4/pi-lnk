@@ -43,7 +43,11 @@ const manager = new SessionManager(tools, undefined, undefined, undefined, {
 		const gateClient = nestClient;
 		harness.hooks.on("before_tool", async (event) => {
 			const check = await checkGenerationGate(gateStore, gateClient, sessionId, event.toolName, event.args);
-			return check.allowed ? undefined : { block: { reason: check.reason ?? "generation gated" } };
+			if (!check.allowed) {
+				metrics.observeToolCall(event.toolName, "error", "gate_blocked"); // ③：HITL 拦截归因观测
+				return { block: { reason: check.reason ?? "generation gated" } };
+			}
+			return undefined;
 		});
 		return undefined;
 	},

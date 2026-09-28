@@ -12,6 +12,12 @@
 
 const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
 
+/** 工具结果体积直方图桶（字节）（③：工具结果 token 观测的原始量）。 */
+const BYTES_BUCKETS = [256, 1024, 4096, 16384, 65536, 262144, 1_048_576];
+
+/** 工具调用错误分类（③：误用/故障归因的原始数据源，供混乱矩阵分析）。 */
+export type ToolErrorKind = "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network" | "gate_blocked";
+
 interface HistogramState {
 	count: number;
 	sum: number;
@@ -26,7 +32,8 @@ export class Metrics {
 	private httpTotal = new Map<string, number>(); // key: route|method|status
 	private httpHist = new Map<string, HistogramState>(); // key: route
 	private promptErrors = new Map<string, number>(); // key: reason
-	private toolCalls = new Map<string, number>(); // key: tool|result
+	private toolCalls = new Map<string, number>(); // key: tool|result[|kind]
+	private toolResultBytes = new Map<string, HistogramState>(); // key: tool
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	private startedAt = Date.now();
@@ -50,9 +57,23 @@ export class Metrics {
 		this.promptErrors.set(reason, (this.promptErrors.get(reason) ?? 0) + 1);
 	}
 
-	observeToolCall(tool: string, outcome: "ok" | "error" | "circuit_open"): void {
-		const key = `${tool}|${outcome}`;
+	observeToolCall(tool: string, outcome: "ok" | "error" | "circuit_open", kind?: ToolErrorKind): void {
+		const key = kind && outcome === "error" ? `${tool}|${outcome}|${kind}` : `${tool}|${outcome}`;
 		this.toolCalls.set(key, (this.toolCalls.get(key) ?? 0) + 1);
+	}
+
+	/** 工具结果体积观测（字节）：返回给模型的内容序列化后大小，用于上下文预算回归。 */
+	observeToolResult(tool: string, bytes: number): void {
+		let h = this.toolResultBytes.get(tool);
+		if (!h) {
+			h = { count: 0, sum: 0, buckets: BYTES_BUCKETS.map(() => 0) };
+			this.toolResultBytes.set(tool, h);
+		}
+		h.count += 1;
+		h.sum += bytes;
+		for (let i = 0; i < BYTES_BUCKETS.length; i++) {
+			if (bytes <= BYTES_BUCKETS[i]) h.buckets[i] += 1;
+		}
 	}
 
 	setSkillsLoaded(n: number): void {
@@ -115,8 +136,23 @@ export class Metrics {
 		lines.push("# HELP pi_runtime_tool_calls_total Tool invocations by tool and result.");
 		lines.push("# TYPE pi_runtime_tool_calls_total counter");
 		for (const [key, count] of [...this.toolCalls.entries()].sort()) {
-			const [tool, result] = key.split("|");
-			lines.push(`pi_runtime_tool_calls_total{tool="${esc(tool)}",result="${result}"} ${count}`);
+			const [tool, result, kind] = key.split("|");
+			const labels =
+				kind !== undefined
+					? `tool="${esc(tool)}",result="${esc(result)}",kind="${esc(kind)}"`
+					: `tool="${esc(tool)}",result="${esc(result)}"`;
+			lines.push(`pi_runtime_tool_calls_total{${labels}} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_tool_result_bytes Tool result size returned to the model (serialized bytes).");
+		lines.push("# TYPE pi_runtime_tool_result_bytes histogram");
+		for (const [tool, h] of [...this.toolResultBytes.entries()].sort()) {
+			for (let i = 0; i < BYTES_BUCKETS.length; i++) {
+				lines.push(`pi_runtime_tool_result_bytes_bucket{tool="${esc(tool)}",le="${BYTES_BUCKETS[i]}"} ${h.buckets[i]}`);
+			}
+			lines.push(`pi_runtime_tool_result_bytes_bucket{tool="${esc(tool)}",le="+Inf"} ${h.count}`);
+			lines.push(`pi_runtime_tool_result_bytes_sum{tool="${esc(tool)}"} ${h.sum.toFixed(0)}`);
+			lines.push(`pi_runtime_tool_result_bytes_count{tool="${esc(tool)}"} ${h.count}`);
 		}
 
 		return `${lines.join("\n")}\n`;

@@ -38,7 +38,10 @@ export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; 
 		...cfg,
 		// M-3：超时覆盖表导出为常量以便测试断言
 		timeoutOverrides: TOOL_TIMEOUT_OVERRIDES,
-		onCall: (tool, outcome) => metrics.observeToolCall(tool, outcome),
+		onCall: (tool, outcome, info) => {
+			metrics.observeToolCall(tool, outcome, info?.errorKind);
+			if (info?.resultBytes !== undefined) metrics.observeToolResult(tool, info.resultBytes);
+		},
 	});
 	const tools: LnkpiTool[] = [
 		...buildCanvasReadTools(client),

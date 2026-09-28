@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { LnkpiToolContext } from "./types.js";
 import { buildCanvasReadTools } from "./registry.js";
@@ -95,4 +95,72 @@ test("get_generation_diagnostic：必带 userId 且两个可选 id 至少一个�
 	await assert.rejects(() => call(t!, {}, ctx("s1", "u1")), /generation_record_id|node_id/);
 	await assert.rejects(() => call(t!, { node_id: "n1" }, ctx("s1")), /userId/);
 	assert.equal(fake.calls.length, 1);
+});
+
+describe("读工具结果瘦身（③ trimData/slimLayout）", () => {
+	function makeDataClient(data: unknown) {
+		return {
+			post: async () => data,
+		} as never;
+	}
+
+	function parse(res: unknown) {
+		const content = (res as { content: Array<{ text: string }> }).content;
+		return JSON.parse(content[0].text).data;
+	}
+
+	it("get_canvas_summary：>50 节点截断并附 nodes_total/truncated；≤50 原样无附加键", async () => {
+		const tools = buildCanvasReadTools(makeDataClient({ nodes: Array.from({ length: 60 }, (_, i) => ({ id: `n${i}`, type: "image", title: `t${i}`, status: "idle" })) }) as never);
+		const summary = tools.find((x) => x.name === "get_canvas_summary")!;
+		const big = parse(await call(summary!, {}, ctx("s1")));
+		assert.equal(big.nodes.length, 50);
+		assert.equal(big.nodes_total, 60);
+		assert.equal(big.truncated, true);
+
+		const small = buildCanvasReadTools(makeDataClient({ nodes: [{ id: "n1", type: "image", title: "t", status: "idle" }] }) as never);
+		const light = parse(await call(small.find((x) => x.name === "get_canvas_summary")!, {}, ctx("s1")));
+		assert.equal(light.nodes.length, 1);
+		assert.equal("nodes_total" in light, false);
+		assert.equal("truncated" in light, false);
+	});
+
+	it("get_canvas_layout：节点丢冗余 absolutePosition（=position）并截断；groups 保留", async () => {
+		const data = {
+			nodes: Array.from({ length: 52 }, (_, i) => ({
+				id: `n${i}`,
+				type: "image",
+				title: `t${i}`,
+				status: "idle",
+				position: { x: i, y: i },
+				absolutePosition: { x: i, y: i },
+				size: { w: 100, h: 100 },
+			})),
+			groups: [{ id: "g1" }],
+		};
+		const tools = buildCanvasReadTools(makeDataClient(data) as never);
+		const layout = tools.find((x) => x.name === "get_canvas_layout")!;
+		const out = parse(await call(layout!, {}, ctx("s1")));
+		assert.equal(out.nodes.length, 50);
+		assert.equal(out.nodes_total, 52);
+		assert.equal(out.truncated, true);
+		assert.equal("absolutePosition" in out.nodes[0], false);
+		assert.deepEqual(out.groups, [{ id: "g1" }]);
+	});
+
+	it("list_generation_tasks：数组形态 data 截断为 {items,total,truncated}", async () => {
+		const tools = buildCanvasReadTools(makeDataClient(Array.from({ length: 55 }, (_, i) => ({ id: `t${i}` }))) as never);
+		const tasks = tools.find((x) => x.name === "list_generation_tasks")!;
+		const out = parse(await call(tasks!, {}, ctx("s1", "u1")));
+		assert.equal(out.items.length, 50);
+		assert.equal(out.total, 55);
+		assert.equal(out.truncated, true);
+	});
+
+	it("get_node：单节点详情不瘦身", async () => {
+		const data = { id: "n1", content: "x".repeat(10_000), refs: ["a"] };
+		const tools = buildCanvasReadTools(makeDataClient(data) as never);
+		const node = tools.find((x) => x.name === "get_node")!;
+		const out = parse(await call(node!, { node_id: "n1" }, ctx("s1")));
+		assert.deepEqual(out, data);
+	});
 });
