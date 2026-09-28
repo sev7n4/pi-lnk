@@ -331,7 +331,8 @@ export class SessionManager {
 		return true;
 	}
 
-	private dispatch(entry: SessionEntry, event: NormalizedEvent): void {
+	/** seq 由本方法独占分配；调用方只提供无 seq 的事件骨架。 */
+	private dispatch(entry: SessionEntry, event: Omit<NormalizedEvent, "seq">): void {
 		const withSeq = { ...event, seq: entry.nextSeq++ };
 		entry.buffer.push(withSeq);
 		if (entry.buffer.length > BUFFER_LIMIT) entry.buffer.shift();
