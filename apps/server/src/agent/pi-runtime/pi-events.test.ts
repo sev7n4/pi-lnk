@@ -162,6 +162,20 @@ describe("thinking 透传（可观测性专项 ③）", () => {
 	});
 });
 
+describe("error 映射（P0 错误链路修复）", () => {
+	it("pi error 事件映射为 UI error 事件（不再 pi_error 透传静默丢弃）", () => {
+		const ui = mapPiEventToUiEvent({
+			type: "error",
+			ts: 1,
+			data: { message: "上游 429", error_type: "rate_limit" },
+		} as never);
+		expect(ui).not.toBeNull();
+		expect(ui!.type).toBe("error");
+		expect((ui!.data as { message?: string }).message).toBe("上游 429");
+		expect((ui!.data as { error_type?: string }).error_type).toBe("rate_limit");
+	});
+});
+
 describe("turn_usage（P1 状态行）", () => {
 	const msgEnd = (usage?: Record<string, unknown>) =>
 		({

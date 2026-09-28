@@ -98,6 +98,25 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 		case "message_update":
 			// message_update 但取不到文本 delta（thinking/工具参数流）：Round 5 决定 UI 事件
 			return null;
+		case "error": {
+			// P0 错误链路修复：error 原先落 default → pi_error 透传 → 前端静默丢弃，
+			// 运行中报错用户只见「空回复兜底」。映射为前端已有完整分支的 error 事件。
+			const d = event.data as {
+				message?: string;
+				error_type?: string;
+				retry_hint?: string;
+				tool_name?: string;
+			};
+			return {
+				type: "error",
+				data: {
+					message: d.message,
+					error_type: d.error_type,
+					retry_hint: d.retry_hint,
+					tool_name: d.tool_name,
+				},
+			};
+		}
 		default:
 			return { type: `pi_${event.type}`, data: event.data, };
 	}
