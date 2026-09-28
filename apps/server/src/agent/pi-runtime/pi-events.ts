@@ -15,6 +15,8 @@ export interface PiRuntimeEvent<T = unknown> {
 	type: PiEventType;
 	lane?: string;
 	ts: number;
+	/** 会话内单调 seq（pi-runtime P0-③ 起在 data 内携带，供诊断与增量重连对照）。 */
+	seq?: number;
 	data: T;
 }
 

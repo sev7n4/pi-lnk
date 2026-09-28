@@ -335,3 +335,142 @@ describe("createSessionReplacingStale（409 竞态修复）", () => {
 		expect(seen[1]).toEqual({ method: "POST", contentType: "application/json" });
 	});
 });
+
+describe("P0-③ streamEvents 断线重连", () => {
+	const enc = new TextEncoder();
+	/** 正常 SSE 响应：逐帧 enqueue 后正常关闭（clean end）。 */
+	function sseResponse(frames: string[], status = 200): Response {
+		return new Response(
+			new ReadableStream({
+				start(controller) {
+					for (const f of frames) controller.enqueue(enc.encode(f));
+					controller.close();
+				},
+			}),
+			{ status },
+		);
+	}
+	/** 中途断流的 SSE 响应：先发帧，10ms 后断流（模拟已投递帧随后网络中断；error 与 enqueue 同步时 undici 会丢弃缓冲帧）。 */
+	function brokenStreamResponse(frames: string[]): Response {
+		return new Response(
+			new ReadableStream({
+				start(controller) {
+					for (const f of frames) controller.enqueue(enc.encode(f));
+					setTimeout(() => controller.error(new TypeError("stream broken")), 10);
+				},
+			}),
+			{ status: 200 },
+		);
+	}
+	/** 对齐 pi-runtime /events 真实 wire format：NormalizedEvent = {type,lane,ts,seq,data}。 */
+	const mkFrame = (id: number, type: string) =>
+		`id: ${id}\nevent: ${type}\ndata: ${JSON.stringify({
+			type,
+			ts: 1,
+			seq: id,
+			data: { seq: id },
+		})}\n\n`;
+
+	it("断线后携带 lastEventId 重连，事件不丢不重", async () => {
+		const calls: string[] = [];
+		let attempt = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async (url: string) => {
+				calls.push(url);
+				attempt++;
+				if (attempt === 1) return brokenStreamResponse([mkFrame(0, "agent_start")]);
+				return sseResponse([mkFrame(1, "agent_end")]);
+			}) as typeof fetch,
+		});
+		const seen: Array<{ seq?: number; type: string }> = [];
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents(
+			"s1",
+			(e) => seen.push({ seq: e.seq, type: e.type }),
+			(e) => errors.push(e),
+		);
+		await new Promise((r) => setTimeout(r, 400)); // 首次退避 250ms
+		cancel();
+		expect(seen.map((s) => s.type)).toEqual(["agent_start", "agent_end"]);
+		expect(seen.map((s) => s.seq)).toEqual([0, 1]); // 顶层 seq（NormalizedEvent.seq）
+		expect(errors).toHaveLength(0);
+		expect(calls[1]).toMatch(/\/events\?lastEventId=0$/);
+	});
+
+	it("404 终止不重连（会话已删除属预期终态）", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return new Response("not found", { status: 404 });
+			}) as typeof fetch,
+		});
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
+		await new Promise((r) => setTimeout(r, 50));
+		cancel();
+		expect(calls).toBe(1);
+		expect(errors).toHaveLength(1);
+	});
+
+	it("body clean end 直接返回，不重连、不触发 onError（turn 结束语义）", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return sseResponse([mkFrame(0, "agent_start"), mkFrame(1, "agent_end")]);
+			}) as typeof fetch,
+		});
+		const seen: string[] = [];
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents(
+			"s1",
+			(e) => seen.push(e.type),
+			(e) => errors.push(e),
+		);
+		await new Promise((r) => setTimeout(r, 100));
+		cancel();
+		expect(seen).toEqual(["agent_start", "agent_end"]);
+		expect(errors).toHaveLength(0);
+		expect(calls).toBe(1);
+	});
+
+	it("onEvent 回调异常不重试（重连会重放已处理事件 → 状态重复累积），终止并上报", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return sseResponse([mkFrame(0, "agent_start"), mkFrame(1, "agent_end")]);
+			}) as typeof fetch,
+		});
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents(
+			"s1",
+			() => {
+				throw new Error("consumer bug");
+			},
+			(e) => errors.push(e),
+		);
+		await new Promise((r) => setTimeout(r, 100));
+		cancel();
+		expect(calls).toBe(1); // 不重连
+		expect(errors).toHaveLength(1); // 异常上报
+	});
+
+	it("parseSseFrames 捕获 id 字段（增量重连 offset 的数据源）", async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(enc.encode(mkFrame(5, "agent_start")));
+				controller.close();
+			},
+		});
+		const out: Array<{ id?: string }> = [];
+		for await (const f of parseSseFrames(stream)) out.push(f as { id?: string });
+		expect(out).toHaveLength(1);
+		expect(out[0].id).toBe("5");
+	});
+});
