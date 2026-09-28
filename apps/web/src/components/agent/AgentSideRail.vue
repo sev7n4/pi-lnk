@@ -40,6 +40,7 @@ import {
   shouldApplyReconciledAssistant,
 } from '@/components/agent/assistantReconcile'
 import ProductVisualDeliveryCard from '@/components/agent/ProductVisualDeliveryCard.vue'
+import AskUserCard from '@/components/agent/AskUserCard.vue'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
 import AgentMacroSchemeCards from '@/components/agent/presentation/AgentMacroSchemeCards.vue'
@@ -727,6 +728,18 @@ const retakePending = ref(false)
 const effectiveUtterance = ref<string | null>(null)
 const schemeSelections = ref<Record<string, string[]>>({})
 const deliverySelections = ref<Record<string, string>>({})
+
+/** ask_user 选项卡待选问题（canvas_command type=ask_user 时填充，用户选完清空）。 */
+const pendingAskUser = ref<Array<{ id: string; question: string; options: { label: string; value: string }[]; multiSelect?: boolean; allowOther?: boolean }>>([])
+
+async function onAskSelect(value: string) {
+  pendingAskUser.value = []
+  await sendMessage(value)
+}
+function onAskCancel() {
+  pendingAskUser.value = []
+  void sendMessage('取消')
+}
 const deliveryGenByKey = ref<Record<string, { node_id?: string | null; url?: string | null; title?: string | null }>>({})
 const deliveryRefineDraft = ref<Record<string, string>>({})
 const schemeSelectTypes = computed(() => selectableImageTypes(productVisualPlan.value))
@@ -1971,6 +1984,9 @@ function handleEvent(event: { type: string; data: unknown }) {
           if (sidebar.pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) break
           sidebar.addFromPayload(att)
         }
+      } else if (cmd.type === 'ask_user') {
+        const questions = (cmd as { questions?: typeof pendingAskUser.value }).questions
+        if (questions?.length) pendingAskUser.value = questions
       }
       break
     }
@@ -2384,6 +2400,12 @@ defineExpose({
               <p class="text-sm">描述你的创意</p>
               <p class="mt-1 text-[11px] opacity-70">我会驱动画布创建节点、连线与生成任务</p>
             </div>
+            <AskUserCard
+              v-if="pendingAskUser.length"
+              :questions="pendingAskUser"
+              @select="onAskSelect"
+              @cancel="onAskCancel"
+            />
             <div
               v-for="msg in agent.messages"
               :key="msg.id"
