@@ -1,0 +1,269 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { isPrivateHost, truncateMarkdown } from "./web.js";
+
+test("isPrivateHost：私网/loopback 全拒绝", () => {
+	for (const h of [
+		"localhost",
+		"127.0.0.1",
+		"127.255.255.255",
+		"10.0.0.1",
+		"10.255.0.7",
+		"172.16.0.1",
+		"172.31.255.255",
+		"192.168.1.1",
+		"169.254.169.254", // cloud metadata endpoint
+		"0.0.0.0",
+		"::1",
+		"fd00::1", // IPv6 unique local
+		"fe80::1", // IPv6 link-local
+	]) {
+		assert.equal(isPrivateHost(h), true, `expected private: ${h}`);
+	}
+});
+
+test("isPrivateHost：公网全放行（含 172 边界外）", () => {
+	for (const h of ["example.com", "8.8.8.8", "1.2.3.4", "172.32.0.1", "api.tavily.com"]) {
+		assert.equal(isPrivateHost(h), false, `expected public: ${h}`);
+	}
+});
+
+test("isPrivateHost：字母 fc/fd 开头的普通域名不误杀（终审 I-2）", () => {
+	for (const h of ["fdroid.org", "fcbarcelona.com", "fe80.example.com"]) {
+		assert.equal(isPrivateHost(h), false, `expected public: ${h}`);
+	}
+});
+
+test("isPrivateHost：IPv4-mapped IPv6 全拒绝（终审 I-1）", () => {
+	for (const h of [
+		"[::ffff:127.0.0.1]",
+		"[::ffff:169.254.169.254]",
+		"[::ffff:10.0.0.1]",
+		"[::ffff:192.168.1.1]",
+		"[0:0:0:0:0:ffff:10.1.2.3]",
+		"[::ffff:7f00:1]",
+	]) {
+		assert.equal(isPrivateHost(h), true, `expected private: ${h}`);
+	}
+	for (const h of ["[::ffff:8.8.8.8]", "[2001:db8::1]", "[64:ff9b::1.2.3.4]".replace("1.2.3.4", "8.8.8.8")]) {
+		assert.equal(isPrivateHost(h), false, `expected public: ${h}`);
+	}
+});
+
+test("truncateMarkdown：短文一次返回，next=null", () => {
+	const r = truncateMarkdown("hello", 0);
+	assert.equal(r.text, "hello");
+	assert.equal(r.total, 5);
+	assert.equal(r.next, null);
+});
+
+test("truncateMarkdown：恰好 20000 字符一次返回，next=null", () => {
+	const md = "x".repeat(20_000);
+	const r = truncateMarkdown(md, 0);
+	assert.equal(r.text.length, 20_000);
+	assert.equal(r.next, null);
+});
+
+test("truncateMarkdown：20001 字符切两窗，next 指向续读偏移", () => {
+	const md = "x".repeat(20_001);
+	const r1 = truncateMarkdown(md, 0);
+	assert.equal(r1.text.length, 20_000);
+	assert.equal(r1.next, 20_000);
+	const r2 = truncateMarkdown(md, r1.next!);
+	assert.equal(r2.text.length, 1);
+	assert.equal(r2.next, null);
+});
+
+test("truncateMarkdown：startIndex 越界收敛到合法区间", () => {
+	const r = truncateMarkdown("hello", 999);
+	assert.equal(r.text, "");
+	assert.equal(r.next, null);
+	const r2 = truncateMarkdown("hello", -5);
+	assert.equal(r2.text, "hello");
+});
+
+// ---- Task 2：web_search / web_fetch 工具 ----
+
+import { buildWebTools } from "./web.js";
+import type { LnkpiTool } from "./types.js";
+
+// harness execute 类型是 6 参（toolCallId, params, onUpdate, toolContext, invocation, context）；
+// 测试只关心前 4 个语义位，尾部两个以 never 垫齐。content[0] 恒为 text（本工具族不产 image）。
+type ToolResult = { content: { text: string }[] };
+function runTool(tool: LnkpiTool, params: unknown, tc: unknown = {}): Promise<ToolResult> {
+	return tool.execute!("1", params as never, undefined as never, tc as never, undefined as never, undefined as never) as Promise<ToolResult>;
+}
+
+function mockFetch(responses: { status?: number; headers?: Record<string, string>; body?: string }[]) {
+	const calls: string[] = [];
+	const impl = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+		calls.push(String(input));
+		const r = responses.shift() ?? { status: 200, headers: {}, body: "" };
+		return {
+			ok: (r.status ?? 200) >= 200 && (r.status ?? 200) < 300,
+			status: r.status ?? 200,
+			statusText: "x",
+			headers: new Headers(r.headers ?? {}),
+			arrayBuffer: async () => new TextEncoder().encode(r.body ?? "").buffer,
+			json: async () => JSON.parse(r.body ?? "null"),
+			text: async () => r.body ?? "",
+		} as unknown as Response;
+	}) as typeof fetch;
+	return { impl, calls };
+}
+
+function findTool(tools: ReturnType<typeof buildWebTools>, name: string) {
+	const t = tools.find((x) => x.name === name);
+	assert.ok(t, "missing tool " + name);
+	return t;
+}
+
+const HTML_PAGE =
+	'<!doctype html><html><head><title>Ref Page</title></head><body><article><h1>Bauhaus</h1><p>' +
+	"design ".repeat(200) +
+	"</p></article></body></html>";
+
+test("web_search：映射 Tavily 响应为 title/url/content 文本块", async () => {
+	process.env.TAVILY_API_KEY = "test-key";
+	try {
+		const { impl } = mockFetch([
+			{
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					results: [
+						{ title: "Bauhaus posters", url: "https://example.com/a", content: "great examples of bauhaus style posters" },
+						{ title: "More", url: "https://example.com/b", content: "second" },
+					],
+				}),
+			},
+		]);
+		const [tool] = buildWebTools({ fetchImpl: impl });
+		const out = await runTool(tool, { query: "bauhaus poster design" }, { sessionId: "s1" });
+		const parsed = JSON.parse(out.content[0].text);
+		assert.equal(parsed.ok, true);
+		assert.equal(parsed.data.result_count, 2);
+		assert.ok(parsed.data.results[0].includes("Bauhaus posters"));
+		assert.ok(parsed.data.results[0].includes("https://example.com/a"));
+	} finally {
+		delete process.env.TAVILY_API_KEY;
+	}
+});
+
+test("web_search：TAVILY_API_KEY 缺失 → 报错（防御层，主防线是不注册）", async () => {
+	delete process.env.TAVILY_API_KEY;
+	const [tool] = buildWebTools({ fetchImpl: mockFetch([]).impl });
+	await assert.rejects(() => runTool(tool, { query: "x" }), /TAVILY_API_KEY missing/);
+});
+
+test("web_search：Tavily 5xx → web_search failed 明确文案（Review#3）", async () => {
+	process.env.TAVILY_API_KEY = "test-key";
+	try {
+		const { impl } = mockFetch([{ status: 500, headers: { "content-type": "text/plain" }, body: "boom" }]);
+		const [tool] = buildWebTools({ fetchImpl: impl });
+		await assert.rejects(() => runTool(tool, { query: "x" }), /web_search failed/);
+	} finally {
+		delete process.env.TAVILY_API_KEY;
+	}
+});
+
+test("web_fetch：html → markdown 正文抽取（含标题）", async () => {
+	const { impl } = mockFetch([{ headers: { "content-type": "text/html; charset=utf-8" }, body: HTML_PAGE }]);
+	const tools = buildWebTools({ fetchImpl: impl });
+	const tool = findTool(tools, "web_fetch");
+	const out = await runTool(tool, { url: "https://example.com/page" });
+	const parsed = JSON.parse(out.content[0].text);
+	assert.equal(parsed.data.next_index, null);
+	assert.ok(parsed.data.content.includes("Bauhaus"));
+});
+
+test("web_fetch：畸形 URL → invalid url 明确报错（Review#1）", async () => {
+	const tool = findTool(buildWebTools({ fetchImpl: mockFetch([]).impl }), "web_fetch");
+	await assert.rejects(() => runTool(tool, { url: "not a url" }), /invalid url/);
+	await assert.rejects(() => runTool(tool, { url: "ftp://example.com/x" }), /refused/);
+});
+
+test("web_fetch：非 HTML content-type → unsupported 明确报错（Review#2）", async () => {
+	const { impl } = mockFetch([{ headers: { "content-type": "application/pdf" }, body: "%PDF-1.4" }]);
+	const tool = findTool(buildWebTools({ fetchImpl: impl }), "web_fetch");
+	await assert.rejects(() => runTool(tool, { url: "https://example.com/doc.pdf" }), /unsupported content-type/);
+});
+
+test("web_fetch：私网地址 → refused（Review#5 复用 isPrivateHost）", async () => {
+	const tool = findTool(buildWebTools({ fetchImpl: mockFetch([]).impl }), "web_fetch");
+	await assert.rejects(() => runTool(tool, { url: "http://127.0.0.1:5100/x" }), /refused/);
+	await assert.rejects(() => runTool(tool, { url: "http://169.254.169.254/latest/meta-data" }), /refused/);
+});
+
+test("web_search：空结果 → result_count=0 + note（终审 I-3c）", async () => {
+	process.env.TAVILY_API_KEY = "test-key";
+	try {
+		const { impl } = mockFetch([
+			{ headers: { "content-type": "application/json" }, body: JSON.stringify({ results: [] }) },
+		]);
+		const [tool] = buildWebTools({ fetchImpl: impl });
+		const out = await runTool(tool, { query: "obscure query" });
+		const parsed = JSON.parse(out.content[0].text);
+		assert.equal(parsed.data.result_count, 0);
+		assert.ok(parsed.data.note);
+	} finally {
+		delete process.env.TAVILY_API_KEY;
+	}
+});
+
+test("web_fetch：302 重定向到私网 → 每跳重校验 refused（终审 C-1）", async () => {
+	const { impl, calls } = mockFetch([
+		{ status: 302, headers: { location: "https://169.254.169.254/latest/meta-data/" }, body: "" },
+	]);
+	const tool = findTool(buildWebTools({ fetchImpl: impl }), "web_fetch");
+	await assert.rejects(() => runTool(tool, { url: "https://evil.example.com/redir" }), /refused/);
+	assert.equal(calls.length, 1, "redirect hop must not be followed to private address");
+});
+
+test("web_fetch：302 重定向到公网 → 正常跟随并抽取（C-1 修复不误伤）", async () => {
+	const { impl } = mockFetch([
+		{ status: 302, headers: { location: "https://example.com/final" }, body: "" },
+		{ headers: { "content-type": "text/html; charset=utf-8" }, body: HTML_PAGE },
+	]);
+	const tool = findTool(buildWebTools({ fetchImpl: impl }), "web_fetch");
+	const out = await runTool(tool, { url: "https://example.com/start" });
+	const parsed = JSON.parse(out.content[0].text);
+	assert.ok(parsed.data.content.includes("Bauhaus"));
+});
+
+test("web_fetch：缓存 TTL 过期 → 二次外呼（终审 I-3b）", async () => {
+	const longBody = "<!doctype html><html><body><article><p>" + "word ".repeat(8000) + "</p></article></body></html>";
+	let now = 1_000_000;
+	const { impl, calls } = mockFetch([
+		{ headers: { "content-type": "text/html" }, body: longBody },
+		{ headers: { "content-type": "text/html" }, body: longBody },
+	]);
+	const tool = findTool(buildWebTools({ fetchImpl: impl, now: () => now }), "web_fetch");
+	await runTool(tool, { url: "https://example.com/ttl" });
+	assert.equal(calls.length, 1);
+	now += 16 * 60 * 1000; // 越过 15min TTL
+	await runTool(tool, { url: "https://example.com/ttl" });
+	assert.equal(calls.length, 2, "expired cache entry must refetch");
+});
+
+test("web_fetch：网络层错误 → web_search 同款明确文案包装（终审 M-3）", async () => {
+	const impl = (async () => {
+		throw new TypeError("fetch failed");
+	}) as typeof fetch;
+	const tool = findTool(buildWebTools({ fetchImpl: impl }), "web_fetch");
+	await assert.rejects(() => runTool(tool, { url: "https://unreachable.example.net/x" }), /web_fetch failed/);
+});
+
+test("web_fetch：超长页面截断 + start_index 续读 + 缓存命中不二次外呼", async () => {
+	const longBody =
+		"<!doctype html><html><body><article><p>" + "word ".repeat(8000) + "</p></article></body></html>";
+	const { impl, calls } = mockFetch([{ headers: { "content-type": "text/html" }, body: longBody }]);
+	const tool = findTool(buildWebTools({ fetchImpl: impl }), "web_fetch");
+	const r1 = JSON.parse((await runTool(tool, { url: "https://example.com/long" })).content[0].text);
+	assert.equal(r1.data.total_chars > 20_000, true);
+	assert.ok(r1.data.content.includes("start_index="));
+	const r2 = JSON.parse(
+		(await runTool(tool, { url: "https://example.com/long", start_index: r1.data.next_index })).content[0].text,
+	);
+	assert.equal(r2.data.start_index, r1.data.next_index);
+	assert.equal(calls.length, 1, "cache hit should not refetch");
+});

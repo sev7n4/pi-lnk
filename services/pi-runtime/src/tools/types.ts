@@ -12,8 +12,6 @@ export type ToolTier =
 	| "read"
 	| "write_light"
 	| "lifecycle"
-	| "workflow_io"
-	| "export"
 	| "gen"
 	| "graph_batch"
 	| "destructive"

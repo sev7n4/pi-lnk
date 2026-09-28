@@ -74,6 +74,10 @@ secrets:
   #   两者都未设置时 pi-runtime 降级纯文本模式（tools=[]）。
   # 部署时：--set secrets.NEST_SERVICE_TOKEN=<值> \
   #         --set env.NEST_BASE_URL=http://<NodeIP>:5100/api   （必须带 /api 全局前缀）
+  # TAVILY_API_KEY: web_search/web_fetch 检索源 key（https://tavily.com 免费申请，1000 次/月）
+  #   未配置或为 REPLACE_ME 时 web 工具不注册（fail-closed 降级，spec §4）
+  #   部署时：--set secrets.TAVILY_API_KEY=<值>
+  TAVILY_API_KEY: "REPLACE_ME"
 
 hpa:
   enabled: false
