@@ -112,7 +112,7 @@ import MentionInput, { type MentionOption } from '@/components/canvas/MentionInp
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
-import { catalogModelKeyFromValue, isDeepSeekV4Model } from '@/constants/studioModels'
+import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
 import {
   AGENT_SKILLS,
   agentInputPlaceholder,
@@ -1029,11 +1029,13 @@ const speech = useSpeechRecognition()
 
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
 const planningModel = ref(preferences.value?.defaultTextModel ?? '')
-/** DeepSeek 深度思考：默认关，Dock 可开（与文本节点对齐） */
+/** PI 链路深度思考：默认关，Dock 可开（与文本节点对齐）。
+ * 可见条件必须与 pi-runtime 的能力判定同源（shared `supportsThinkingLevel`）——
+ * 否则会出现「开关能开、但 pi 侧 model.reasoning=false 被强制降级为 off」的假象。 */
 const planningThinking = ref(false)
 const planningThinkingEffort = ref<'high' | 'max'>('high')
 const showPlanningThinkingControls = computed(() =>
-  isDeepSeekV4Model(catalogModelKeyFromValue(planningModel.value || '')),
+  supportsThinkingLevel(catalogModelKeyFromValue(planningModel.value || '')),
 )
 
 watch(showPlanningThinkingControls, (show) => {
