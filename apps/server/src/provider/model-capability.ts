@@ -1,4 +1,4 @@
-import { decodeChannelModel } from '@lnkpi/shared'
+import { decodeChannelModel, supportsThinkingLevel } from '@lnkpi/shared'
 
 export type ModelCapability = {
   reasoning: boolean
@@ -21,15 +21,11 @@ const DEFAULT_CAPABILITY: ModelCapability = {
 
 /**
  * 第 2 层：内置静态能力表（按模型名匹配常见系）。
+ * reasoning 的模式表已上移到 `@lnkpi/shared` 的 `supportsThinkingLevel`——前端「深度思考」开关的
+ * 可见性判的是同一张表，两端必须同源，否则会出现「开关能开但 pi 强制 off」的假象。
  * 第 1 层（渠道 models 元数据扩展字段）现状不存在——`pullModels` 只存
- * `{ name, capability(模态) }`——将来扩字段时在此处优先消费即可，契约不变。
+ * `{ name, capability(模态) }`——将来扩字段时在 shared 侧优先消费即可，契约不变。
  */
-const REASONING_MODEL_PATTERNS: RegExp[] = [
-  /^o[1-9]/i, // o1 / o3 / o4 系
-  /^gpt-5/i,
-  /deepseek-r1/i,
-  /deepseek-reasoner/i,
-]
 
 const CONTEXT_WINDOW_RULES: ReadonlyArray<readonly [RegExp, number]> = [
   [/^claude/i, 200_000],
@@ -49,7 +45,7 @@ export function resolveModelCapability(providerRef: string): ModelCapability {
   if (!name) return { ...DEFAULT_CAPABILITY }
 
   return {
-    reasoning: REASONING_MODEL_PATTERNS.some((re) => re.test(name)),
+    reasoning: supportsThinkingLevel(raw),
     contextWindow:
       CONTEXT_WINDOW_RULES.find(([re]) => re.test(name))?.[1] ?? DEFAULT_CAPABILITY.contextWindow,
     maxTokens: DEFAULT_CAPABILITY.maxTokens,
