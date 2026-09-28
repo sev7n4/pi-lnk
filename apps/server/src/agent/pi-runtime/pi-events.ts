@@ -103,11 +103,22 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 	}
 }
 
+/** ask_user 工具产出的问题定义（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md）。 */
+export interface AskUserQuestion {
+	id: string;
+	question: string;
+	options: { label: string; value: string }[];
+	multiSelect?: boolean;
+	allowOther?: boolean;
+}
+
 /** UI_COMMAND 工具 details 中的画布命令（形态对齐前端 AgentSideRail canvas_command 分支）。 */
 export interface PiCanvasCommand {
 	type: string;
 	nodeId?: string;
 	nodeIds?: string[];
+	/** ask_user 工具产出；仅 type="ask_user" 时有。extractCanvasCommands filter 不变（只校验 type:string），questions 透传。 */
+	questions?: AskUserQuestion[];
 }
 
 /**

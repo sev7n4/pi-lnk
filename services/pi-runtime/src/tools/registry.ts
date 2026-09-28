@@ -5,6 +5,7 @@ import type { Metrics } from "../metrics.js";
 import { createCanvasReadTools } from "./canvas-read.js";
 import { createCanvasWriteTools } from "./canvas-write.js";
 import { createUiCommandTools } from "./ui-command.js";
+import { createAskUserTools } from "./ask-user.js";
 import { createGenerationTools } from "./generation.js";
 
 export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
@@ -22,6 +23,11 @@ export function buildCanvasWriteTools(client: NestClient): LnkpiTool[] {
 /** UI_COMMAND 批次：5 个本地 UI 命令工具（不依赖 NestClient）。 */
 export function buildUiCommandTools(metrics: Metrics): LnkpiTool[] {
 	return createUiCommandTools(metrics);
+}
+
+/** ask_user 批次：向用户提问/选项卡工具（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md，D1-D5 已拍板）。 */
+export function buildAskUserTools(metrics: Metrics): LnkpiTool[] {
+	return createAskUserTools(metrics);
 }
 
 /**
