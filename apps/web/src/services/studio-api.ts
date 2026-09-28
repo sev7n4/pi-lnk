@@ -99,8 +99,10 @@ export const studioApi = {
       model?: string
       /** 输出尺寸档位（白名单：IMAGE2_EDIT_SIZES），'auto' 跟随原图。 */
       size?: string
-      /** 通道模式：edit 普通精修 / outpaint 扩图（Task 7 接线）。 */
-      mode?: 'edit' | 'outpaint'
+      /** 通道模式：inpaint 蒙版选区精修/局部重绘 / outpaint 扩图（服务端白名单校验）。 */
+      mode?: 'inpaint' | 'outpaint'
+      /** 替换参考图（元素编辑/重绘「+」上传）：追加进 image_urls 供模型做对象替换。 */
+      referenceImageUrls?: string[]
       /** 扩图起止边（Task 7 接线）：原图尺寸 / 新画布尺寸，对象契约对齐服务端 DTO。 */
       outpaintFrom?: { width: number; height: number }
       outpaintTo?: { width: number; height: number }
@@ -116,6 +118,23 @@ export const studioApi = {
     ),
   segmentImage: (body: { imageUrl: string; x: number; y: number; label?: 0 | 1 }) =>
     api.post<{ data: { maskUrl: string } }>('/studio/image/segment', body),
+  /** 元素编辑焦点识别：点/多点/框提示 → SAM 对象蒙版 + 识图命名（bbox 为原图像素）。 */
+  recognizeElement: (
+    body: {
+      imageUrl: string
+      x?: number
+      y?: number
+      label?: 0 | 1
+      points?: { x: number; y: number; label?: 0 | 1 }[]
+      box?: { x1: number; y1: number; x2: number; y2: number }
+      dilate?: number
+      model?: string
+    },
+    signal?: AbortSignal,
+  ) =>
+    api.post<{
+      data: { name: string; maskUrl: string; bbox: { x: number; y: number; width: number; height: number } }
+    }>('/studio/element-recognize', body, { timeout: 60_000, signal }),
   mattingImage: (body: { imageUrl: string }, signal?: AbortSignal) =>
     api.post<{ data: { url: string } }>('/studio/image/matting', body, { timeout: 45_000, signal }),
   imageSlice: async (
