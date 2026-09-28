@@ -11,8 +11,21 @@ import type { NestClient } from "./nest-client.js";
 
 export const DELETE_NODES_MAX = 50;
 
-function textResult(data: unknown): { content: [{ type: "text"; text: string }]; details: undefined } {
-	return { content: [{ type: "text", text: JSON.stringify({ ok: true, data }) }], details: undefined };
+/** Nest 响应里的 CanvasAction[]（remove-nodes 返回 {actions}）。 */
+function extractActions(data: unknown): Record<string, unknown>[] {
+	const actions = (data as { actions?: unknown } | null | undefined)?.actions;
+	if (!Array.isArray(actions)) return [];
+	return actions.filter((a): a is Record<string, unknown> => !!a && typeof a === "object");
+}
+
+function resultWithActions(data: unknown) {
+	return {
+		content: [{ type: "text" as const, text: JSON.stringify({ ok: true, data }) }],
+		// ⚠️ 必须走 details.actions：Nest agent.service 的 extractCanvasActions 只认
+		// tool_execution_end.result.details.actions → canvas_action SSE → 前端实时删节点。
+		// PR #65 曾用 textResult（details:undefined）丢掉 actions，导致「Nest 已删、画布仍在」。
+		details: { actions: extractActions(data) },
+	};
 }
 
 export function buildDeleteNodesTools(client: NestClient): LnkpiTool[] {
@@ -41,7 +54,7 @@ export function buildDeleteNodesTools(client: NestClient): LnkpiTool[] {
 					sessionId: tc.sessionId,
 					nodeIds: p.node_ids,
 				});
-				return textResult(data);
+				return resultWithActions(data);
 			},
 		},
 	];

@@ -5,7 +5,7 @@ import type { NestClient } from "./nest-client.js";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 
 // harness execute 类型是 6 参；测试只关心前 4 个语义位，尾部两个以 never 垫齐。
-type ToolResult = { content: { text: string }[] };
+type ToolResult = { content: { text: string }[]; details?: unknown };
 function runTool(tool: LnkpiTool, params: unknown, tc: unknown = {}): Promise<ToolResult> {
 	return tool.execute!("1", params as never, undefined as never, tc as never, undefined as never, undefined as never) as Promise<ToolResult>;
 }
@@ -54,4 +54,32 @@ test("delete_nodes：toolContext 缺 sessionId → fail-closed 拒绝（终审 M
 	const [tool] = buildDeleteNodesTools(fakeClient(capture));
 	await assert.rejects(() => runTool(tool, { node_ids: ["n1"] }, {} as LnkpiToolContext), /missing sessionId/);
 	assert.equal(capture.path, undefined, "must not reach Nest without sessionId");
+});
+
+test("delete_nodes：Nest 返回的 actions 进 details.actions（canvas_action SSE 通道）", async () => {
+	// 回归：PR #65 曾用 textResult（details:undefined）丢掉 actions，
+	// 导致 Nest 已删但前端画布节点不消失（canvas_action 事件从未派生）
+	const capture: { path?: string; body?: unknown } = {};
+	const client = {
+		post: async (path: string, body: unknown) => {
+			capture.path = path;
+			capture.body = body;
+			return {
+				actions: [
+					{ type: "remove_edge", payload: { id: "e1" } },
+					{ type: "remove_node", payload: { id: "n1" } },
+				],
+			};
+		},
+	} as unknown as NestClient;
+	const [tool] = buildDeleteNodesTools(client);
+	const out = await runTool(tool, { node_ids: ["n1"] }, tc);
+	assert.deepEqual(out.details, {
+		actions: [
+			{ type: "remove_edge", payload: { id: "e1" } },
+			{ type: "remove_node", payload: { id: "n1" } },
+		],
+	});
+	// 文本载荷保持 {ok,data} 形态（模型仍能看到删除统计）
+	assert.ok(out.content[0].text.includes("actions"));
 });
