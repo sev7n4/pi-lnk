@@ -1,5 +1,6 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common'
-import { applyCanvasActions, parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common'
+import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
+import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
   computeImportTranslation,
@@ -14,6 +15,7 @@ import {
   summarizePromptCompletion,
   validateWorkflow,
   type CanvasAction,
+  type CanvasActionApplier,
   type CanvasData,
   type CanvasNode,
   type DuplicateCanvasNode,
@@ -359,7 +361,17 @@ export class AgentCanvasToolsService {
     @Inject(VideoGenerationOrchestrator) private readonly videoOrchestrator: VideoGenerationOrchestrator,
     @Inject(PersistRemoteService) private readonly persistRemote: PersistRemoteService,
     @Inject(ImageSliceService) private readonly imageSliceService: ImageSliceService,
+    // 两产品线拆分 path A 的 seam：画布动作落地实现可替换（归属待定）。
+    // 可选 —— 未提供时回退默认实现，保证现有调用/测试行为不变。
+    @Optional()
+    @Inject(CANVAS_ACTION_APPLIER)
+    private readonly canvasActionApplier?: CanvasActionApplier,
   ) {}
+
+  /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
+  private get applier(): CanvasActionApplier {
+    return this.canvasActionApplier ?? defaultCanvasActionApplier
+  }
 
   private async loadAccountGenPrefs(userId: string): Promise<AccountGenPrefs> {
     const row = await this.prisma.userAiPreferences.findUnique({ where: { userId } })
@@ -2753,7 +2765,7 @@ export class AgentCanvasToolsService {
       const staged = parseStagedActions(session.stagedActions)
       if (staged.length === 0) return { actions: [] }
       const current = parseCanvas(session.canvasData)
-      const updated = applyCanvasActions(current, staged)
+      const updated = this.applier.apply(current, staged)
       await tx.session.update({
         where: { id: input.sessionId },
         data: {
@@ -2924,7 +2936,7 @@ export class AgentCanvasToolsService {
         )
       }
       const current = parseCanvas(session.canvasData)
-      const updated = applyCanvasActions(current, actions)
+      const updated = this.applier.apply(current, actions)
       const merged: CanvasData = { ...current, ...updated }
       await tx.session.update({
         where: { id: sessionId },

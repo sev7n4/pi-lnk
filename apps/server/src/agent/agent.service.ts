@@ -3,11 +3,14 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
 } from '@nestjs/common'
-import { applyCanvasActions, type AgentStreamEvent } from '@lnkpi/agent'
+import type { AgentStreamEvent } from '@lnkpi/agent'
+import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import type {
   AgentMessageMetadata,
   CanvasAction,
+  CanvasActionApplier,
   CanvasData,
   ExecutionTraceState,
   LinkedCanvasOutput,
@@ -110,7 +113,17 @@ export class AgentService {
     // F4：去掉 @Optional——module 已提供 AgentCanvasToolsService，DI 缺失应 fail-fast
     @Inject(AgentCanvasToolsService)
     private readonly canvasTools?: AgentCanvasToolsService,
+    // 两产品线拆分 path A 的 seam：画布动作落地实现可替换（归属待定）。
+    // 可选 —— 未提供时回退默认实现，保证现有调用/测试行为不变。
+    @Optional()
+    @Inject(CANVAS_ACTION_APPLIER)
+    private readonly canvasActionApplier?: CanvasActionApplier,
   ) {}
+
+  /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
+  private get applier(): CanvasActionApplier {
+    return this.canvasActionApplier ?? defaultCanvasActionApplier
+  }
 
   getCapabilities() {
     return {
@@ -836,7 +849,7 @@ export class AgentService {
           const currentData: CanvasData = session.canvasData
             ? JSON.parse(session.canvasData)
             : { nodes: [], edges: [] }
-          const updated = applyCanvasActions(currentData, canvasActions)
+          const updated = this.applier.apply(currentData, canvasActions)
           await this.prisma.session.update({
             where: { id: sessionId },
             data: { canvasData: JSON.stringify(updated) },
