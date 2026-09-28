@@ -4,9 +4,9 @@ import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { panFromDrag, panZoomFromWheel } from './compareLightboxTransform'
 import MaskEditor from './MaskEditor.vue'
 import ImageLoupe from './ImageLoupe.vue'
-import RefineModeBar from './RefineModeBar.vue'
 import RefineToolRail from './RefineToolRail.vue'
 import RefineOutpaintCanvas from './RefineOutpaintCanvas.vue'
+import CropCanvas from './CropCanvas.vue'
 import { dispatchRefinePointSelect } from './maskRemote'
 import { containRect, oneToOneScaleOf } from './refineWorkLayout'
 
@@ -139,8 +139,23 @@ function onMaskHistory(depth: { undo: number; redo: number }) {
   maskCanUndo.value = depth.undo > 0
   maskCanRedo.value = depth.redo > 0
 }
-function runUndo() { maskRef.value?.undo() }
-function runRedo() { maskRef.value?.redo() }
+function runUndo() {
+  // inpaint 芯片化（2026-09-25）：有芯片时撤销=移除最后一枚芯片（与芯片条语义一致）
+  if (editor.refineMode === 'inpaint' && editor.refineElementItems.length > 0) {
+    editor.undoInpaintChip()
+    return
+  }
+  maskRef.value?.undo()
+}
+function runRedo() {
+  if (editor.refineMode === 'inpaint' && editor.refineElementItems.length > 0) return
+  maskRef.value?.redo()
+}
+/** inpaint 笔画松手 → 自动成芯片（2026-09-25 用户拍板） */
+function onStrokeCommit(piece: HTMLCanvasElement) {
+  if (editor.refineMode !== 'inpaint') return
+  editor.addInpaintStrokeChip(piece)
+}
 function isEditableTarget(target: EventTarget | null): boolean {
   const tag = (target as HTMLElement | null)?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
@@ -228,10 +243,9 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="refine-work__col">
-      <RefineModeBar />
-      <!-- 普通工作图（蒙版精修）：非扩图模式显示 -->
+      <!-- 普通工作图（蒙版精修）：扩图 / 裁剪专属画布模式下隐藏 -->
       <div
-        v-show="editor.refineMode !== 'outpaint'"
+        v-show="editor.refineMode !== 'outpaint' && editor.refineMode !== 'crop'"
         ref="stageRef"
         class="refine-work__stage"
         :class="{ 'is-pan': spaceDown }"
@@ -254,10 +268,12 @@ onBeforeUnmount(() => {
                 :color="editor.refineBrushColor"
                 :wand-tolerance="editor.refineWandTolerance"
                 :mask-op="editor.refineMaskOp"
+                :emit-strokes="editor.refineMode === 'inpaint'"
                 :disabled="editor.refineBusy || spaceDown"
                 @coverage="(p) => { editor.refineCoverage = p.ratio }"
                 @point-select="dispatchRefinePointSelect"
                 @history="onMaskHistory"
+                @stroke-commit="onStrokeCommit"
               />
             </ImageLoupe>
           </div>
@@ -268,6 +284,14 @@ onBeforeUnmount(() => {
            不能作为视口来源（见 fix/outpaint-canvas-visibility 回归测试）。 -->
       <RefineOutpaintCanvas
         v-show="editor.refineMode === 'outpaint'"
+        :base-url="url"
+        :base-width="imgW || props.width || 0"
+        :base-height="imgH || props.height || 0"
+        :busy="editor.refineBusy"
+      />
+      <!-- 裁剪画布：crop 模式显示；与扩图画布同样由组件自测视口（stage 此时 display:none） -->
+      <CropCanvas
+        v-show="editor.refineMode === 'crop'"
         :base-url="url"
         :base-width="imgW || props.width || 0"
         :base-height="imgH || props.height || 0"

@@ -66,7 +66,7 @@ import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftContro
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
 import ByokFallbackConfirmDialog from '@/components/canvas/ByokFallbackConfirmDialog.vue'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
-import { BYOK_FALLBACK_CONFIRM_MESSAGE } from '@lnkpi/shared'
+import { BYOK_FALLBACK_CONFIRM_MESSAGE, imageEditModelLabel, resolveImageEditModelKey } from '@lnkpi/shared'
 import { CX_IMAGE_EDIT_ENABLED, canOpenRefineForNode, decideRefineDismiss } from '@/utils/refineSession'
 import { decideAgentOpenWhileRefine } from '@/utils/refineChrome'
 import { containFitSize } from '@/utils/centerExpand'
@@ -117,7 +117,7 @@ import {
   type WorkflowExportMode,
 } from '@/composables/useWorkflowExchange'
 import { fitImportedViewport } from '@/composables/fitImportedViewport'
-import { fileToPersistedPayload, inferMediaInputKind } from '@/composables/useMediaUpload'
+import { fileToPersistedPayload, inferMediaInputKind, persistMediaUrl } from '@/composables/useMediaUpload'
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
   CANVAS_NODE_ADD_AGENT_KEY,
@@ -138,6 +138,23 @@ import MediaPreviewOverlay from '@/components/canvas/MediaPreviewOverlay.vue'
 import MediaInspectorDrawer from '@/components/media/MediaInspectorDrawer.vue'
 import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
 import SelectionActionBar from '@/components/canvas/SelectionActionBar.vue'
+import NodeCropOverlay from '@/components/canvas/NodeCropOverlay.vue'
+import NodeOutpaintOverlay from '@/components/canvas/NodeOutpaintOverlay.vue'
+import NodeInpaintOverlay from '@/components/canvas/NodeInpaintOverlay.vue'
+import NodeElementEditOverlay from '@/components/canvas/NodeElementEditOverlay.vue'
+import AnnotateOverlay from '@/components/canvas/AnnotateOverlay.vue'
+import { drawAnnotates, type AnnotateShape } from '@/components/canvas/annotateModel'
+import { combineElementEditPrompt, paintElementEditMask, preloadElementMaskImages, type ElementEditItem } from '@/components/canvas/elementEditModel'
+import { displayRectToPixelRect } from '@/components/canvas/nodeCropModel'
+import { loadCropSourceImage, renderCropBlob } from '@/components/canvas/refine/cropExport'
+import { exportMaskPng } from '@/components/canvas/refine/maskExport'
+import { computeOutpaintLayers } from '@/components/canvas/refine/outpaintComposite'
+import {
+  hasOutpaintExtension,
+  type OutpaintRect,
+} from '@/components/canvas/refine/outpaintGeometry'
+import { renderOutpaintPngs } from '@/components/canvas/refine/outpaintRender'
+import { OUTPAINT_FALLBACK_PROMPT } from '@/components/canvas/refine/outpaintFallback'
 import GridSliceWorkbench from '@/components/canvas/grid-slice/GridSliceWorkbench.vue'
 import { runGridSlice } from '@/composables/useGridSlice'
 import { clampGridDims, GRID_SLICE_LAYOUT_GAP, layoutSliceChildPositions } from '@/utils/gridSlice'
@@ -408,6 +425,17 @@ const workflowImportInputRef = ref<HTMLInputElement | null>(null)
 const pendingMediaPos = ref<{ x: number; y: number } | null>(null)
 
 const { getConfig: getProviderConfig } = useModelProviderSettings()
+
+/**
+ * 快捷编辑链路（元素编辑 / 重绘 / 扩图）的生成模型：跟随画布 dock 选中的图像模型——
+ * BYOK 渠道优先（用户插了自己的 key 就不该烧平台积分），平台/未配置回落 image2。
+ * 与精修链路共用 shared 的 resolveImageEditModelKey，勿在组件里重写判定。
+ */
+const editModelKey = computed(() => resolveImageEditModelKey(getProviderConfig('image').model))
+
+/** 快捷浮层上展示的生效模型名（避免「我选了 BYOK、实际烧平台」的错觉）。 */
+const editModelLabel = computed(() => imageEditModelLabel(editModelKey.value))
+
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
 
 const fallbackDialog = ref<{
@@ -751,6 +779,33 @@ const gridSliceBusy = ref(false)
 const gridSlicePanelNodeId = ref<string | null>(null)
 /** 浮层一键抠图进行中（防重入 + matting 按钮 loading） */
 const mattingBusy = ref(false)
+/** 节点直裁：正在裁剪的节点 id（浮层「裁剪」进入，节点卡上覆盖裁剪层） */
+const nodeCropNodeId = ref<string | null>(null)
+/** 节点直裁导出/落盘进行中（确认按钮 loading + 防重入） */
+const nodeCropBusy = ref(false)
+/** 节点直出扩图：正在扩图的节点 id + 生成进行中 */
+const nodeOutpaintNodeId = ref<string | null>(null)
+const nodeOutpaintBusy = ref(false)
+/** 节点直出局部重绘：正在重绘的节点 id + 生成进行中 */
+const nodeInpaintNodeId = ref<string | null>(null)
+const nodeInpaintBusy = ref(false)
+/** 节点直出元素编辑：正在编辑的节点 id + 生成进行中（多选区局部编辑，复刻竞品） */
+const nodeElementEditNodeId = ref<string | null>(null)
+const nodeElementEditBusy = ref(false)
+
+/**
+ * 底部 dock 收缩（2026-09-25 用户拍板）：单击图片节点 dock 正常弹出（与快捷菜单并存）；
+ * 用户点快捷菜单进入任一编辑浮层（裁剪/扩图/重绘/元素编辑）时 dock 自动收缩为底部热区
+ * （悬停展开、划走收回），不再整块隐藏——保留提示词等原有能力。
+ */
+const dockCollapsedByOverlay = computed(
+  () =>
+    !!nodeCropNodeId.value ||
+    !!nodeOutpaintNodeId.value ||
+    !!nodeInpaintNodeId.value ||
+    !!nodeElementEditNodeId.value ||
+    !!nodeAnnotateNodeId.value,
+)
 
 const gridSlicePanelNode = computed((): EditableFlowNode | null => {
   if (!gridSlicePanelNodeId.value) return null
@@ -773,9 +828,10 @@ const canvasChromeHidden = computed(() =>
   }),
 )
 
-/** 单选 + 可操作图像节点时显示选中浮层（多选不出现） */
+/** 单选 + 可操作图像节点时显示选中浮层（多选不出现；节点直裁/扩图/重绘进行中让位） */
 const selectionActionBarNode = computed((): EditableFlowNode | null => {
   if (refinePanelNode.value || gridSlicePanelNode.value) return null
+  if (nodeCropNodeId.value || nodeOutpaintNodeId.value || nodeInpaintNodeId.value || nodeElementEditNodeId.value) return null
   if (multiSelectedIds.value.length !== 1) return null
   const node = findNodeById(multiSelectedIds.value[0])
   if (!node) return null
@@ -1817,16 +1873,6 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
           selected,
         )
       : layoutNodesInGrid(current, selected)
-  nodes.value = next as EditableFlowNode[]
-  persistUserEdit()
-}
-
-/** agent arrange_nodes 工具 → 复用 layoutNodesInGrid / layoutNodesAlongEdges（零新建布局算法）。 */
-function handleAgentArrangeNodes(payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }) {
-  const current = nodes.value as unknown as FlowNode[]
-  const next = payload.mode === 'along_edges' && payload.edges?.length
-    ? layoutNodesAlongEdges(current, payload.edges, payload.nodeIds, payload.gap)
-    : layoutNodesInGrid(current, payload.nodeIds, payload.gap)
   nodes.value = next as EditableFlowNode[]
   persistUserEdit()
 }
@@ -3060,6 +3106,456 @@ async function handleFloatingMatting(node: EditableFlowNode) {
   }
 }
 
+// —— 节点直裁（浮层「裁剪」→ 节点卡覆盖裁剪层，竞品交互） ——
+
+const nodeCropNode = computed((): EditableFlowNode | null => {
+  if (!nodeCropNodeId.value) return null
+  const node = findNodeById(nodeCropNodeId.value)
+  if (!node || !String((node.data as Record<string, unknown> | undefined)?.url ?? '').trim()) return null
+  return node as EditableFlowNode
+})
+
+const nodeCropUrl = computed(() => String((nodeCropNode.value?.data as Record<string, unknown> | undefined)?.url ?? ''))
+
+function closeNodeCrop() {
+  nodeCropNodeId.value = null
+}
+
+function handleFloatingCropStart(node: EditableFlowNode) {
+  if (nodeCropBusy.value) return
+  if (refinePanelNode.value || gridSlicePanelNode.value) {
+    ElMessage.warning('请先退出当前工作台')
+    return
+  }
+  nodeOutpaintNodeId.value = null
+  nodeInpaintNodeId.value = null
+  nodeElementEditNodeId.value = null
+  nodeAnnotateNodeId.value = null
+  nodeCropNodeId.value = node.id
+}
+
+/**
+ * 节点直裁确认：display rect → cover 映射回原图像素 → renderCropBlob(θ=0) →
+ * persist → applyRefineAsChild 下游新节点（同抠图/精修应用链路）。
+ * appliedKey 用「源节点 + 像素框」做幂等键：同源同框重复裁剪只落一个下游节点。
+ */
+async function handleNodeCropConfirm(displayRect: { x: number; y: number; width: number; height: number }) {
+  const node = nodeCropNode.value
+  if (!node || nodeCropBusy.value) return
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const imageUrl = String(data.url ?? '').trim()
+  if (!imageUrl) return
+  nodeCropBusy.value = true
+  try {
+    const img = await loadCropSourceImage(imageUrl)
+    const { w, h } = getNodeSize(node as FlowNode)
+    const pixelRect = displayRectToPixelRect(displayRect, img.naturalWidth, img.naturalHeight, w, h)
+    const blob = await renderCropBlob(img, { rect: pixelRect, rotationDeg: 0 })
+    const file = new File([blob], 'crop.png', { type: 'image/png' })
+    const fallbackUrl = URL.createObjectURL(file)
+    let persisted: string
+    try {
+      persisted = await persistMediaUrl(file, fallbackUrl)
+    } catch (e) {
+      URL.revokeObjectURL(fallbackUrl)
+      throw e
+    }
+    if (persisted !== fallbackUrl) URL.revokeObjectURL(fallbackUrl)
+    const appliedKey = `crop:${node.id}:${pixelRect.x},${pixelRect.y},${pixelRect.width},${pixelRect.height}`
+    const applied = applyRefineAsChild({
+      sourceNode: { id: node.id, position: { ...node.position } },
+      result: { url: persisted, prompt: '裁剪', appliedKey },
+      addNode: (type, childData, opts) =>
+        addNode(type, { prompt: '', imageModel: getProviderConfig('image').model, ...childData } as never, opts),
+      addEdge,
+      findAppliedNode: (key) => nodes.value.find((n) => (n.data as Record<string, unknown>)?.appliedKey === key),
+    })
+    selectNodeIds([applied.nodeId])
+    void persistUserEditAsync()
+    closeNodeCrop()
+    if (applied.created) ElMessage.success('已裁剪并应用到画布（下游新节点）')
+    else ElMessage.info('该裁剪结果已应用过，已为你定位节点')
+  } catch (err) {
+    const message = err instanceof Error && err.message ? err.message : '裁剪失败，请重试'
+    ElMessage.error(message)
+  } finally {
+    nodeCropBusy.value = false
+  }
+}
+
+// —— 节点直出扩图（浮层「扩图」→ 节点外圈扩图框，轻量复刻竞品） ——
+
+const nodeOutpaintNode = computed((): EditableFlowNode | null => {
+  if (!nodeOutpaintNodeId.value) return null
+  const node = findNodeById(nodeOutpaintNodeId.value)
+  if (!node || !String((node.data as Record<string, unknown> | undefined)?.url ?? '').trim()) return null
+  return node as EditableFlowNode
+})
+
+const nodeOutpaintUrl = computed(() => String((nodeOutpaintNode.value?.data as Record<string, unknown> | undefined)?.url ?? ''))
+
+function closeNodeOutpaint() {
+  if (nodeOutpaintBusy.value) return
+  nodeOutpaintNodeId.value = null
+}
+
+function handleFloatingOutpaintStart(node: EditableFlowNode) {
+  if (nodeOutpaintBusy.value) return
+  if (refinePanelNode.value || gridSlicePanelNode.value) {
+    ElMessage.warning('请先退出当前工作台')
+    return
+  }
+  nodeCropNodeId.value = null
+  nodeInpaintNodeId.value = null
+  nodeElementEditNodeId.value = null
+  nodeAnnotateNodeId.value = null
+  nodeOutpaintNodeId.value = node.id
+}
+
+/** 共用：把 editImage 生成结果落为下游新节点（与 handleRefineApply 同语义，appliedKey = recordId）。 */
+function applyGeneratedEditChild(node: EditableFlowNode, result: {
+  url: string
+  recordId?: string
+  prompt: string
+  nodeSize?: { width: number; height: number }
+  successText: string
+}) {
+  const applied = applyRefineAsChild({
+    sourceNode: { id: node.id, position: { ...node.position } },
+    result: {
+      url: result.url,
+      prompt: result.prompt,
+      recordId: result.recordId,
+      appliedKey: result.recordId ?? `gen:${result.url}`,
+      nodeSize: result.nodeSize,
+    },
+    addNode: (type, childData, opts) =>
+      addNode(type, { prompt: '', imageModel: getProviderConfig('image').model, ...childData } as never, opts),
+    addEdge,
+    findAppliedNode: (key) => nodes.value.find((n) => (n.data as Record<string, unknown>)?.appliedKey === key),
+  })
+  selectNodeIds([applied.nodeId])
+  void persistUserEditAsync()
+  if (applied.created) ElMessage.success(result.successText)
+  else ElMessage.info('该结果已应用过，已为你定位节点')
+}
+
+/**
+ * 节点直出扩图确认：像素矩形（floor 后）→ 合成底图+蒙版两张 PNG → persist →
+ * image/edit mode:'outpaint'（size 'auto'，单次一张，prompt 走兜底文案）→ 下游新节点
+ * （nodeSize 按 outpaintTo contain-fit，与精修应用链路一致）。
+ */
+async function handleNodeOutpaintConfirm(pixelRect: OutpaintRect) {
+  const node = nodeOutpaintNode.value
+  if (!node || nodeOutpaintBusy.value) return
+  const imageUrl = nodeOutpaintUrl.value
+  if (!imageUrl) return
+  nodeOutpaintBusy.value = true
+  try {
+    const img = await loadCropSourceImage(imageUrl)
+    const base = { width: img.naturalWidth, height: img.naturalHeight }
+    if (!hasOutpaintExtension(base, pixelRect)) {
+      ElMessage.info('请先拖动手柄向外扩展画布')
+      return
+    }
+    const { baseSpec, maskSpec } = computeOutpaintLayers(base, pixelRect)
+    const { baseBlob, maskBlob } = await renderOutpaintPngs(img, { baseSpec, maskSpec })
+    const baseFile = new File([baseBlob], 'outpaint-base.png', { type: 'image/png' })
+    const maskFile = new File([maskBlob], 'outpaint-mask.png', { type: 'image/png' })
+    const baseFallback = URL.createObjectURL(baseFile)
+    const maskFallback = URL.createObjectURL(maskFile)
+    let persistedBase = baseFallback
+    let persistedMask = maskFallback
+    try {
+      persistedBase = await persistMediaUrl(baseFile, baseFallback)
+      persistedMask = await persistMediaUrl(maskFile, maskFallback)
+    } finally {
+      if (persistedBase !== baseFallback) URL.revokeObjectURL(baseFallback)
+      if (persistedMask !== maskFallback) URL.revokeObjectURL(maskFallback)
+    }
+    const { data } = await studioApi.editImage(
+      {
+        prompt: OUTPAINT_FALLBACK_PROMPT,
+        imageUrl: persistedBase,
+        maskUrl: persistedMask,
+        model: editModelKey.value,
+        size: 'auto',
+        mode: 'outpaint',
+        outpaintFrom: base,
+        outpaintTo: { width: pixelRect.width, height: pixelRect.height },
+        nodeId: node.id,
+      },
+    )
+    const url = data.data.url
+    if (!url) throw new Error('扩图结果为空')
+    applyGeneratedEditChild(node, {
+      url,
+      recordId: data.data.id,
+      prompt: '扩图',
+      nodeSize: containFitSize({ width: 280, height: 280 }, { width: pixelRect.width, height: pixelRect.height }),
+      successText: '已扩图并应用到画布（下游新节点）',
+    })
+    nodeOutpaintNodeId.value = null
+  } catch (err) {
+    const message = apiErrorMessage(err, '扩图失败，请重试')
+    ElMessage.error(message)
+  } finally {
+    nodeOutpaintBusy.value = false
+  }
+}
+
+// —— 节点直出局部重绘（浮层「局部重绘」→ 蒙版画笔 + prompt 卡，轻量复刻竞品） ——
+
+const nodeInpaintNode = computed((): EditableFlowNode | null => {
+  if (!nodeInpaintNodeId.value) return null
+  const node = findNodeById(nodeInpaintNodeId.value)
+  if (!node || !String((node.data as Record<string, unknown> | undefined)?.url ?? '').trim()) return null
+  return node as EditableFlowNode
+})
+
+const nodeInpaintUrl = computed(() => String((nodeInpaintNode.value?.data as Record<string, unknown> | undefined)?.url ?? ''))
+
+function closeNodeInpaint() {
+  if (nodeInpaintBusy.value) return
+  nodeInpaintNodeId.value = null
+}
+
+function handleFloatingInpaintStart(node: EditableFlowNode) {
+  if (nodeInpaintBusy.value) return
+  if (refinePanelNode.value || gridSlicePanelNode.value) {
+    ElMessage.warning('请先退出当前工作台')
+    return
+  }
+  nodeCropNodeId.value = null
+  nodeOutpaintNodeId.value = null
+  nodeElementEditNodeId.value = null
+  nodeAnnotateNodeId.value = null
+  nodeInpaintNodeId.value = node.id
+}
+
+// —— 节点直出元素编辑（多选区局部编辑，复刻竞品） ——
+
+const nodeElementEditNode = computed((): EditableFlowNode | null => {
+  if (!nodeElementEditNodeId.value) return null
+  const node = findNodeById(nodeElementEditNodeId.value)
+  if (!node || !String((node.data as Record<string, unknown> | undefined)?.url ?? '').trim()) return null
+  return node as EditableFlowNode
+})
+
+const nodeElementEditUrl = computed(() => String((nodeElementEditNode.value?.data as Record<string, unknown> | undefined)?.url ?? ''))
+
+function closeNodeElementEdit() {
+  if (nodeElementEditBusy.value) return
+  nodeElementEditNodeId.value = null
+  nodeAnnotateNodeId.value = null
+}
+
+function handleFloatingElementEditStart(node: EditableFlowNode) {
+  if (nodeElementEditBusy.value) return
+  if (refinePanelNode.value || gridSlicePanelNode.value) {
+    ElMessage.warning('请先退出当前工作台')
+    return
+  }
+  nodeCropNodeId.value = null
+  nodeOutpaintNodeId.value = null
+  nodeInpaintNodeId.value = null
+  nodeElementEditNodeId.value = node.id
+}
+
+/**
+ * 元素编辑确认：多选区合成整图蒙版（paintElementEditMask）→ exportMaskPng → persist →
+ * image/edit mode:'inpaint'（combined prompt，size 'auto'，单次一张）→ 下游新节点。
+ * 需要原图自然尺寸：由节点 url 加载探测（蒙版按原图分辨率建立）。
+ */
+async function handleNodeElementEditConfirm(payload: { items: ElementEditItem[] }) {
+  const node = nodeElementEditNode.value
+  if (!node || nodeElementEditBusy.value) return
+  const imageUrl = nodeElementEditUrl.value
+  if (!imageUrl) return
+  if (!payload.items.length) return
+  nodeElementEditBusy.value = true
+  try {
+    const img = await loadCropSourceImage(imageUrl)
+    const naturalW = img.naturalWidth
+    const naturalH = img.naturalHeight
+    if (!(naturalW > 0) || !(naturalH > 0)) throw new Error('原图加载失败')
+    // 节点卡显示尺寸：与 overlay 的 cover 坐标系一致
+    const { w: boxW, h: boxH } = getNodeSize(node as FlowNode)
+    const maskImages = await preloadElementMaskImages(payload.items)
+    const maskCanvas = paintElementEditMask(payload.items, naturalW, naturalH, boxW, boxH, maskImages)
+    const blob = await exportMaskPng(maskCanvas)
+    const file = new File([blob], 'mask.png', { type: 'image/png' })
+    const fallbackUrl = URL.createObjectURL(file)
+    let maskUrl: string
+    try {
+      maskUrl = await persistMediaUrl(file, fallbackUrl)
+    } catch (e) {
+      URL.revokeObjectURL(fallbackUrl)
+      throw e
+    }
+    if (maskUrl !== fallbackUrl) URL.revokeObjectURL(fallbackUrl)
+    const refUrls = payload.items
+      .map((it) => it.refUrl?.trim())
+      .filter((u): u is string => !!u)
+    const { data } = await studioApi.editImage(
+      {
+        prompt: combineElementEditPrompt(payload.items) || '元素编辑',
+        imageUrl,
+        maskUrl,
+        model: editModelKey.value,
+        size: 'auto',
+        mode: 'inpaint',
+        referenceImageUrls: refUrls.length ? refUrls : undefined,
+        nodeId: node.id,
+      },
+    )
+    const url = data.data.url
+    if (!url) throw new Error('元素编辑结果为空')
+    applyGeneratedEditChild(node, {
+      url,
+      recordId: data.data.id,
+      prompt: payload.items.map((it) => `${it.name} ${it.modify}`.trim()).join('；'),
+      successText: `已完成 ${payload.items.length} 处元素编辑（下游新节点）`,
+    })
+    nodeElementEditNodeId.value = null
+    nodeAnnotateNodeId.value = null
+  } catch (err) {
+    const message = apiErrorMessage(err, '元素编辑失败，请重试')
+    ElMessage.error(message)
+  } finally {
+    nodeElementEditBusy.value = false
+  }
+}
+
+// —— 节点直出标注（复刻竞品工具条 + 直线箭头/马赛克/水印/签名，2026-09-25） ——
+
+const nodeAnnotateNodeId = ref<string | null>(null)
+const nodeAnnotateBusy = ref(false)
+
+const nodeAnnotateNode = computed((): EditableFlowNode | null => {
+  if (!nodeAnnotateNodeId.value) return null
+  const node = findNodeById(nodeAnnotateNodeId.value)
+  if (!node || !String((node.data as Record<string, unknown> | undefined)?.url ?? '').trim()) return null
+  return node as EditableFlowNode
+})
+
+const nodeAnnotateUrl = computed(() => String((nodeAnnotateNode.value?.data as Record<string, unknown> | undefined)?.url ?? ''))
+
+function handleFloatingAnnotateStart(node: EditableFlowNode) {
+  if (nodeAnnotateBusy.value) return
+  if (refinePanelNode.value || gridSlicePanelNode.value) {
+    ElMessage.warning('请先退出当前工作台')
+    return
+  }
+  nodeCropNodeId.value = null
+  nodeOutpaintNodeId.value = null
+  nodeInpaintNodeId.value = null
+  nodeElementEditNodeId.value = null
+  nodeAnnotateNodeId.value = node.id
+}
+
+function closeNodeAnnotate() {
+  if (nodeAnnotateBusy.value) return
+  nodeAnnotateNodeId.value = null
+}
+
+/**
+ * 标注确认：drawAnnotates 烧录原图（马赛克像素化 + 矢量叠加）→ PNG → persist →
+ * 下游新节点（纯本地处理，免费不消耗积分）。
+ */
+async function handleNodeAnnotateConfirm(payload: { ops: AnnotateShape[] }) {
+  const node = nodeAnnotateNode.value
+  if (!node || nodeAnnotateBusy.value) return
+  const imageUrl = nodeAnnotateUrl.value
+  if (!imageUrl) return
+  if (!payload.ops.length) return
+  nodeAnnotateBusy.value = true
+  try {
+    const img = await loadCropSourceImage(imageUrl)
+    const naturalW = img.naturalWidth
+    const naturalH = img.naturalHeight
+    if (!(naturalW > 0) || !(naturalH > 0)) throw new Error('原图加载失败')
+    const { w: boxW, h: boxH } = getNodeSize(node as FlowNode)
+    const canvas = document.createElement('canvas')
+    drawAnnotates(canvas, payload.ops, img, naturalW, naturalH, boxW, boxH)
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('标注导出失败'))), 'image/png')
+    })
+    const file = new File([blob], 'annotate.png', { type: 'image/png' })
+    const fallbackUrl = URL.createObjectURL(file)
+    let url: string
+    try {
+      url = await persistMediaUrl(file, fallbackUrl)
+    } catch (e) {
+      URL.revokeObjectURL(fallbackUrl)
+      throw e
+    }
+    if (url !== fallbackUrl) URL.revokeObjectURL(fallbackUrl)
+    applyGeneratedEditChild(node, {
+      url,
+      prompt: '标注',
+      successText: '标注已保存（下游新节点，免费）',
+    })
+    nodeAnnotateNodeId.value = null
+  } catch (err) {
+    const message = apiErrorMessage(err, '标注保存失败，请重试')
+    ElMessage.error(message)
+  } finally {
+    nodeAnnotateBusy.value = false
+  }
+}
+
+/**
+ * 节点直出局部重绘确认：蒙版 canvas → exportMaskPng → persist →
+ * image/edit mode:'edit'（size 'auto'，单次一张）→ 下游新节点。
+ */
+async function handleNodeInpaintConfirm(payload: { prompt: string; maskCanvas: HTMLCanvasElement; refUrls?: string[] }) {
+  const node = nodeInpaintNode.value
+  if (!node || nodeInpaintBusy.value) return
+  const imageUrl = nodeInpaintUrl.value
+  if (!imageUrl) return
+  nodeInpaintBusy.value = true
+  try {
+    const blob = await exportMaskPng(payload.maskCanvas)
+    const file = new File([blob], 'mask.png', { type: 'image/png' })
+    const fallbackUrl = URL.createObjectURL(file)
+    let maskUrl: string
+    try {
+      maskUrl = await persistMediaUrl(file, fallbackUrl)
+    } catch (e) {
+      URL.revokeObjectURL(fallbackUrl)
+      throw e
+    }
+    if (maskUrl !== fallbackUrl) URL.revokeObjectURL(fallbackUrl)
+    const { data } = await studioApi.editImage(
+      {
+        prompt: payload.prompt,
+        imageUrl,
+        maskUrl,
+        model: editModelKey.value,
+        size: 'auto',
+        mode: 'inpaint',
+        referenceImageUrls: payload.refUrls?.length ? payload.refUrls : undefined,
+        nodeId: node.id,
+      },
+    )
+    const url = data.data.url
+    if (!url) throw new Error('重绘结果为空')
+    applyGeneratedEditChild(node, {
+      url,
+      recordId: data.data.id,
+      prompt: payload.prompt,
+      successText: '已重绘并应用到画布（下游新节点）',
+    })
+    nodeInpaintNodeId.value = null
+  } catch (err) {
+    const message = apiErrorMessage(err, '局部重绘失败，请重试')
+    ElMessage.error(message)
+  } finally {
+    nodeInpaintBusy.value = false
+  }
+}
+
 function handleAgentOpenImageEditor(nodeId: string) {
   const url = String((findNodeById(nodeId)?.data as Record<string, unknown> | undefined)?.url ?? '').trim()
   if (!url) return
@@ -3076,6 +3572,23 @@ watch(
     if (!target || !gridSlicePanelNodeId.value) return
     canvasEditor.closeImageEditor()
     ElMessage.warning('请先退出宫格裁剪')
+  },
+)
+
+// 节点直裁/扩图/重绘/元素编辑让位：选中集变化 / 精修打开 → 收掉覆盖层（confirm 成功路径已先行 close）
+watch(multiSelectedIds, () => {
+  if (nodeCropNodeId.value) closeNodeCrop()
+  if (nodeOutpaintNodeId.value) closeNodeOutpaint()
+  if (nodeInpaintNodeId.value) closeNodeInpaint()
+  if (nodeElementEditNodeId.value) closeNodeElementEdit()
+})
+watch(
+  () => canvasEditor.imageTarget?.nodeId,
+  (nodeId) => {
+    if (!nodeId) return
+    if (nodeCropNodeId.value) closeNodeCrop()
+    if (nodeOutpaintNodeId.value) closeNodeOutpaint()
+    if (nodeInpaintNodeId.value) closeNodeInpaint()
   },
 )
 
@@ -4038,10 +4551,59 @@ onUnmounted(() => {
             :matting-busy="mattingBusy"
             @edit="openRefineForSelected"
             @matting="selectionActionBarNode && handleFloatingMatting(selectionActionBarNode)"
+            @crop="selectionActionBarNode && handleFloatingCropStart(selectionActionBarNode)"
+            @outpaint="selectionActionBarNode && handleFloatingOutpaintStart(selectionActionBarNode)"
+            @inpaint="selectionActionBarNode && handleFloatingInpaintStart(selectionActionBarNode)"
+            @element-edit="selectionActionBarNode && handleFloatingElementEditStart(selectionActionBarNode)"
+            @annotate="selectionActionBarNode && handleFloatingAnnotateStart(selectionActionBarNode)"
             @slice="handleGridSliceSlice"
             @open-custom="handleGridSliceOpenCustom"
             @download="selectionActionBarNode && downloadNodeImage(selectionActionBarNode.id)"
             @save-asset="selectionActionBarNode && saveNodeAsset(selectionActionBarNode.id)"
+          />
+          <NodeCropOverlay
+            v-if="nodeCropNode"
+            :node="nodeCropNode as FlowNode"
+            :url="nodeCropUrl"
+            :busy="nodeCropBusy"
+            @confirm="handleNodeCropConfirm"
+            @cancel="closeNodeCrop"
+          />
+          <NodeOutpaintOverlay
+            v-if="nodeOutpaintNode"
+            :node="nodeOutpaintNode as FlowNode"
+            :url="nodeOutpaintUrl"
+            :busy="nodeOutpaintBusy"
+            :model-label="editModelLabel"
+            @confirm="handleNodeOutpaintConfirm"
+            @cancel="closeNodeOutpaint"
+          />
+          <NodeInpaintOverlay
+            v-if="nodeInpaintNode"
+            :node="nodeInpaintNode as FlowNode"
+            :url="nodeInpaintUrl"
+            :busy="nodeInpaintBusy"
+            :model-label="editModelLabel"
+            @confirm="handleNodeInpaintConfirm"
+            @cancel="closeNodeInpaint"
+          />
+          <NodeElementEditOverlay
+            v-if="nodeElementEditNode"
+            :node="nodeElementEditNode as FlowNode"
+            :url="nodeElementEditUrl"
+            :busy="nodeElementEditBusy"
+            :model-label="editModelLabel"
+            @confirm="handleNodeElementEditConfirm"
+            @cancel="closeNodeElementEdit"
+          />
+
+          <AnnotateOverlay
+            v-if="nodeAnnotateNode"
+            :node="nodeAnnotateNode as FlowNode"
+            :url="nodeAnnotateUrl"
+            :busy="nodeAnnotateBusy"
+            @confirm="handleNodeAnnotateConfirm"
+            @cancel="closeNodeAnnotate"
           />
 
           <MultiSelectConnectOverlay
@@ -4107,6 +4669,7 @@ onUnmounted(() => {
         />
         <DockStudioToolbar
           v-if="!refinePanelNode && !gridSlicePanelNode"
+          :collapsed="dockCollapsedByOverlay"
           :node="editorNode"
           :upstream="editorUpstream"
           :refs="selectedRefs"
@@ -4237,7 +4800,6 @@ onUnmounted(() => {
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"
         @clear-propose-generation="handleClearProposeGeneration"
-        @arrange-nodes="handleAgentArrangeNodes"
         :can-open="canOpenAgentPanel"
       />
     </div>

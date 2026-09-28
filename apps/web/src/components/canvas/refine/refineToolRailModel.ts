@@ -1,45 +1,10 @@
 import type { CompareMode } from '@/utils/refineChrome'
-import type { RefineMaskTool } from '@/stores/canvasEditor'
 
 /**
  * 画布左栏工具条的分组模型。
  * 判据（spec §3.2）：产出「中间态」（选区 / 蒙版 / 视图）→ 画布左栏；产出「最终产物」→ 工具箱。
  */
-export type RefineInputGroupId = 'smart' | 'marquee' | 'paint'
-export type RefineToolCommand = 'invert' | 'clear'
 export type RefineViewToolId = 'compare' | 'fit'
-/** 模式条要为当前工具显示哪一套参数 */
-export type RefineToolParamKind = 'brush' | 'wand' | 'polygon-hint' | 'none'
-
-export interface RefineToolVariant { tool: RefineMaskTool; label: string }
-export interface RefineInputGroup {
-  id: RefineInputGroupId
-  label: string
-  variants: RefineToolVariant[]
-  commands: { id: RefineToolCommand; label: string }[]
-}
-
-/** 3 个输入工具，各自的二级菜单容纳全部 6 个蒙版工具。 */
-export const REFINE_INPUT_GROUPS: RefineInputGroup[] = [
-  {
-    id: 'smart',
-    label: '智能选择',
-    variants: [{ tool: 'point', label: '点选主体' }, { tool: 'wand', label: '魔棒' }],
-    commands: [{ id: 'invert', label: '反选' }],
-  },
-  {
-    id: 'marquee',
-    label: '框选',
-    variants: [{ tool: 'rect', label: '矩形' }, { tool: 'polygon', label: '多边形' }],
-    commands: [],
-  },
-  {
-    id: 'paint',
-    label: '涂抹',
-    variants: [{ tool: 'brush', label: '画笔' }, { tool: 'eraser', label: '橡皮' }],
-    commands: [{ id: 'clear', label: '清除选区' }],
-  },
-]
 
 export const REFINE_VIEW_TOOLS: { id: RefineViewToolId; label: string }[] = [
   { id: 'compare', label: '对照' },
@@ -57,29 +22,8 @@ export const REFINE_FIT_OPTIONS = [
 ] as const
 export type RefineFitOptionId = (typeof REFINE_FIT_OPTIONS)[number]['id']
 
-const GROUP_OF_TOOL: Record<RefineMaskTool, RefineInputGroupId> = {
-  point: 'smart', wand: 'smart', rect: 'marquee', polygon: 'marquee', brush: 'paint', eraser: 'paint',
-}
-
-const LABEL_OF_TOOL: Record<RefineMaskTool, string> = {
-  point: '点选主体', wand: '魔棒', rect: '矩形', polygon: '多边形', brush: '画笔', eraser: '橡皮',
-}
-
-const PARAM_OF_TOOL: Record<RefineMaskTool, RefineToolParamKind> = {
-  brush: 'brush', eraser: 'brush', wand: 'wand', polygon: 'polygon-hint', rect: 'none', point: 'none',
-}
-
-export function groupForTool(tool: RefineMaskTool): RefineInputGroupId { return GROUP_OF_TOOL[tool] }
-export function toolLabel(tool: RefineMaskTool): string { return LABEL_OF_TOOL[tool] }
-export function inputToolActive(tool: RefineMaskTool, groupId: RefineInputGroupId): boolean {
-  return GROUP_OF_TOOL[tool] === groupId
-}
-export function toolParamKind(tool: RefineMaskTool): RefineToolParamKind { return PARAM_OF_TOOL[tool] }
 export function compareModeLabel(mode: CompareMode): string {
   return mode === 'wipe' ? '滑竿对照' : '左右对照'
-}
-export function refineWorkspaceLabel(input: { compareOpen: boolean; compareMode: CompareMode }): string {
-  return input.compareOpen ? `对照 · ${compareModeLabel(input.compareMode)}` : '工作图'
 }
 
 /** 「适配」菜单里的即时缩放动作（follow-up #10）：只改视图层级，不产生任何数据 */
@@ -111,12 +55,13 @@ interface RefineCapabilityGroup {
 
 /** 能力组占位（迁自原 RefineToolbox 的 CAPABILITY_GROUPS，§9）。outpaint 已由左栏独立按钮承担，不再列入。
  *  matting（抠素材）已从占位移除：它已注册为精修工作台的独立模式（refine-matting，见 workbenchToolRegistry），
- *  由 rail 的能力组形态（禁用占位）改为可点亮的真模式入口，故不再作为待实现占位展示。 */
+ *  由 rail 的能力组形态（禁用占位）改为可点亮的真模式入口，故不再作为待实现占位展示。
+ *  crop（裁剪）同 matting 路径点亮为独立模式（refine-crop，2026-09-24 image-editor-unified 批次 A）。
+ *  inpaint（局部重绘）同路径点亮为独立模式（refine-inpaint，2026-09-24 快捷工具链批次）。 */
 export const REFINE_CAPABILITY_GROUPS: RefineCapabilityGroup[] = [
   {
     id: 'compose', label: '构图', price: '免费',
     items: [
-      { id: 'crop', label: '裁剪', icon: ['M7 3.5v13.5h13.5', 'M3.5 7h13.5v13.5'] },
       { id: 'grid-slice', label: '宫格切分', icon: ['M4 4h16v16H4z', 'M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16'] },
       { id: 'rotate-flip', label: '旋转翻转', icon: ['M5.5 9a7.5 7.5 0 0 1 13-1.5', 'M18.5 3.5v4h-4', 'M18.5 15a7.5 7.5 0 0 1-13 1.5', 'M5.5 20.5v-4h4'] },
     ],
@@ -124,7 +69,6 @@ export const REFINE_CAPABILITY_GROUPS: RefineCapabilityGroup[] = [
   {
     id: 'content', label: '改内容', price: '积分',
     items: [
-      { id: 'inpaint', label: '局部重绘', icon: ['M5 19.5l3.8-.7L19.2 8.4a1.7 1.7 0 0 0 0-2.4l-1.2-1.2a1.7 1.7 0 0 0-2.4 0L5.7 15.2z', 'M14.8 6.6l2.6 2.6'] },
       { id: 'erase-replace', label: '消除替换', icon: ['M7 8h10l4 4-4 4H7l-4-4z', 'M9.5 11.5h5'] },
     ],
   },

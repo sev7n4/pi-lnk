@@ -8,3 +8,23 @@
  */
 export const TOOL_ICON_MATTING =
   '<circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M20 4L8.12 15.88" /><path d="M14.47 14.48L20 20" /><path d="M8.12 8.12L12 12" />'
+
+/** 「选区」模式入口：四角框线（marquee corner brackets），表述「框出一片区域」（spec §5.1） */
+export const TOOL_ICON_SELECT =
+  '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8" /><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8" /><path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16" /><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" />'
+
+/** 「扩图」模式入口：虚线外框 + 实线内框，表述「画布向外扩展」（spec §5.1） */
+export const TOOL_ICON_OUTPAINT =
+  '<rect x="4" y="4" width="16" height="16" rx="1.5" stroke-dasharray="3 2.5" /><rect x="8.5" y="8.5" width="7" height="7" rx="1" />'
+
+/** 「裁剪」模式入口：经典 crop 标（两把 L 形尺） */
+export const TOOL_ICON_CROP =
+  '<path d="M6.5 2.5v13a2 2 0 0 0 2 2h13" /><path d="M17.5 21.5v-13a2 2 0 0 0-2-2h-13" />'
+
+/** 「局部重绘」入口：画笔（笔杆 + 笔头斜切），与 rail 能力区占位图标同形 */
+export const TOOL_ICON_INPAINT =
+  '<path d="M5 19.5l3.8-.7L19.2 8.4a1.7 1.7 0 0 0 0-2.4l-1.2-1.2a1.7 1.7 0 0 0-2.4 0L5.7 15.2z" /><path d="M14.8 6.6l2.6 2.6" />'
+
+/** 「元素编辑」入口：定位靶心 + 选区角（多选区局部编辑） */
+export const TOOL_ICON_ELEMENT =
+  '<circle cx="12" cy="12" r="3.2" /><circle cx="12" cy="12" r="8" stroke-dasharray="3 2.5" /><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3" />'

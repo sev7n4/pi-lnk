@@ -23,7 +23,7 @@ vi.mock('@/composables/useMediaUpload', () => ({
 
 vi.mock('element-plus', async (importOriginal) => {
   const actual = await importOriginal<typeof import('element-plus')>()
-  return { ...actual, ElMessage: { warning: vi.fn(), error: vi.fn() } }
+  return { ...actual, ElMessage: { warning: vi.fn(), error: vi.fn(), info: vi.fn() } }
 })
 
 vi.mock('./outpaintRender', () => ({
@@ -100,7 +100,7 @@ describe('RefineSidePanel 三段式', () => {
     mountPanel()
     expect(q('[data-testid="refine-toolbox"]')).toBeNull()
     expect(qa('[data-testid="workbench-panel-scroll"]').length).toBe(1)
-    expect(q('[data-testid="refine-select-panel"]')).not.toBeNull()
+    expect(q('[data-testid="refine-selection-panel"]')).not.toBeNull()
   })
 
   it('不再有旧的三排图标工具条', () => {
@@ -126,6 +126,16 @@ describe('RefineSidePanel 三段式', () => {
     expect(q('[data-testid="refine-compare-band"]')).toBeNull()
     expect(q('[data-testid="refine-toolbox"]')).toBeNull()
     expect(q('[data-testid="refine-dock"]')).toBeNull()
+  })
+
+  it('折叠态不渲染 Esc 页脚', () => {
+    const w = mountPanel({ collapsed: true })
+    expect(w.find('[data-testid="refine-panel-esc-hint"]').exists()).toBe(false)
+  })
+
+  it('展开态渲染 Esc 页脚', () => {
+    const w = mountPanel()
+    expect(w.find('[data-testid="refine-panel-esc-hint"]').exists()).toBe(true)
   })
 
   it('右栏头部的收起钮仍在', () => {
@@ -203,6 +213,15 @@ describe('RefineSidePanel 三段式', () => {
     expect(q('[data-testid="workbench-panel-scroll"]')!.getAttribute('style')).toBeNull()
   })
 
+  it('固定页脚显示 Esc 三态文案（模式优先于对照）', async () => {
+    const editor = useCanvasEditorStore()
+    mountPanel()
+    expect(q('[data-testid="refine-panel-esc-hint"]')?.textContent).toContain('关闭精修')
+    editor.refineMode = 'outpaint'
+    await flushPromises()
+    expect(q('[data-testid="refine-panel-esc-hint"]')?.textContent).toContain('回到选区')
+  })
+
   it('模型选择器渲染精修通道真实模型（来自 shared，不写死）', async () => {
     mountPanel()
     const trigger = q('[data-testid="dock-model-select"]')
@@ -233,7 +252,7 @@ describe('RefineSidePanel 三段式', () => {
     const body = call[0]
     expect(body.model).toBe('image2')
     expect(body.size).toBe('auto')
-    expect(body.mode).toBe('edit')
+    expect(body.mode).toBe('inpaint')
     // 结果进入会话胶片条（afterUrl 由 store 当前结果派生）
     expect(editor.refineSessionResults.length).toBe(1)
   })
@@ -472,6 +491,22 @@ describe('RefineSidePanel matting 接线（Task 7）', () => {
     expect(editor.refineSessionResults[0]!.url).toBe('blob:mat')
     expect(editor.refineSessionResults[0]!.prompt).toBe('抠图')
     expect(editor.currentRefineSessionResult?.url).toBe('blob:mat')
+  })
+
+  it('run-mask 无选区时：按钮可点，toast 引导涂抹/框选，留在 matting 模式且不产生结果（2026-09-25：去掉跳转选区面板的断链）', async () => {
+    const editor = useCanvasEditorStore()
+    editor.setRefineMode('matting')
+    mountPanel()
+    await flushPromises()
+    const runMask = q('[data-testid="matting-run-mask"]') as HTMLButtonElement | null
+    expect(runMask).not.toBeNull()
+    expect(runMask!.disabled).toBe(false)
+    await runMask!.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(ElMessage.info).toHaveBeenCalled()
+    expect(editor.refineMode).toBe('matting')
+    expect(editor.refineSessionResults.length).toBe(0)
   })
 
   it('matting 503 时 toast 且不 push', async () => {
