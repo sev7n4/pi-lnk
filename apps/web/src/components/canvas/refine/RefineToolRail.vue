@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
-import type { RefineMaskTool } from '@/stores/canvasEditor'
-import { TOOL_ICON_MATTING } from '@/components/canvas/toolIcons'
+import { TOOL_ICON_CROP, TOOL_ICON_ELEMENT, TOOL_ICON_INPAINT, TOOL_ICON_MATTING, TOOL_ICON_OUTPAINT, TOOL_ICON_SELECT } from '@/components/canvas/toolIcons'
 import {
-  REFINE_CAPABILITY_ITEMS, REFINE_COMPARE_OPTIONS, REFINE_FIT_OPTIONS, REFINE_INPUT_GROUPS, REFINE_VIEW_TOOLS, REFINE_ZOOM_ACTIONS,
-  inputToolActive,
-  type RefineFitOptionId, type RefineInputGroupId, type RefineToolCommand,
+  REFINE_CAPABILITY_ITEMS, REFINE_COMPARE_OPTIONS, REFINE_FIT_OPTIONS, REFINE_VIEW_TOOLS, REFINE_ZOOM_ACTIONS,
+  type RefineFitOptionId,
 } from './refineToolRailModel'
 
 const props = withDefaults(defineProps<{
@@ -30,20 +28,52 @@ const emit = defineEmits<{
 const editor = useCanvasEditorStore()
 const railRef = ref<HTMLElement | null>(null)
 
-/** 扩图模式：画笔 / 橡皮禁用，且手柄冻结（规格 §3）。 */
+/** 模式入口统一式（spec 图 3 上半段）：setRefineMode(激活 ? 'select' : 目标模式) */
 const outpaintActive = computed(() => editor.refineMode === 'outpaint')
 function toggleOutpaint() {
-  editor.toggleRefineMode()
+  editor.setRefineMode(outpaintActive.value ? 'select' : 'outpaint')
 }
 
-/** 抠图模式入口（Task 10 修复轮）：toggle 语义与扩图对称，但不走 store 的 toggleRefineMode（那是扩图专用）。 */
 const mattingActive = computed(() => editor.refineMode === 'matting')
 function toggleMatting() {
   editor.setRefineMode(mattingActive.value ? 'select' : 'matting')
 }
 
+const cropActive = computed(() => editor.refineMode === 'crop')
+function toggleCrop() {
+  editor.setRefineMode(cropActive.value ? 'select' : 'crop')
+}
+
+/** 局部重绘模式入口：进模式默认画笔（画笔优先的精修子模式） */
+const inpaintActive = computed(() => editor.refineMode === 'inpaint')
+function toggleInpaint() {
+  if (inpaintActive.value) {
+    editor.setRefineMode('select')
+    return
+  }
+  editor.setRefineMode('inpaint')
+  editor.setRefineTool('brush')
+}
+
+/** 元素编辑模式入口：多选区局部编辑（选区 → 面板添加 → 生成） */
+const elementActive = computed(() => editor.refineMode === 'element')
+function toggleElement() {
+  editor.setRefineMode(elementActive.value ? 'select' : 'element')
+}
+
+const selectActive = computed(() => editor.refineMode === 'select')
+function pickSelect() {
+  editor.setRefineMode('select') // 选区目标模式就是 select，恒幂等
+}
+
+/** 选区引导（2026-09-23 用户反馈）：抠图模式下无选区时，让「选区」入口呼吸提示——圈选后才能「用当前选区抠」。 */
+const selectNeedsAttention = computed(() => editor.refineMode === 'matting' && !editor.refineMaskAvailable)
+const selectTitle = computed(() =>
+  selectNeedsAttention.value ? '选区（先圈选区域，回到「抠图」即可按选区抠图）' : '选区（智能 / 形状 / 涂抹三类工具在右侧面板）',
+)
+
 /** 同一时刻只允许一个二级菜单展开 */
-type OpenMenu = { kind: 'input'; id: RefineInputGroupId } | { kind: 'view'; id: 'compare' | 'fit' } | null
+type OpenMenu = { kind: 'view'; id: 'compare' | 'fit' } | null
 const openMenu = ref<OpenMenu>(null)
 
 function onDocPointerDown(event: PointerEvent) {
@@ -56,31 +86,6 @@ function onDocPointerDown(event: PointerEvent) {
 onMounted(() => document.addEventListener('pointerdown', onDocPointerDown, true))
 onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDown, true))
 
-const GLYPH: Record<RefineInputGroupId, string> = { smart: '◉', marquee: '▢', paint: '✎' }
-
-/** 二级菜单里的工具项只留图标（follow-up #11/#12），文字进 title / aria-label */
-const VARIANT_ICONS: Record<RefineMaskTool, string[]> = {
-  point: ['M12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z', 'M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z'],
-  wand: ['M6 18.5 17 7.5', 'M15.5 4.5l4 4', 'M5 15.5l3.5 3.5', 'M17.5 6.5l1 1'],
-  rect: ['M4 5.5h16v13H4z'],
-  polygon: ['M12 3.5l8.5 6.2-3.2 10H6.7L3.5 9.7z'],
-  brush: ['M5 19.5l3.8-.7L19.2 8.4a1.7 1.7 0 0 0 0-2.4l-1.2-1.2a1.7 1.7 0 0 0-2.4 0L5.7 15.2z', 'M14.8 6.6l2.6 2.6'],
-  eraser: ['M5 15.2l7.4-7.4a1.6 1.6 0 0 1 2.3 0l3.9 3.9a1.6 1.6 0 0 1 0 2.3L13.5 19H8.6z', 'M5 19.5h14.5'],
-}
-
-function toggleInputGroup(id: RefineInputGroupId) {
-  openMenu.value = openMenu.value?.kind === 'input' && openMenu.value.id === id ? null : { kind: 'input', id }
-}
-function pickTool(tool: RefineMaskTool) {
-  editor.setRefineTool(tool)
-  openMenu.value = null
-}
-function runCommand(id: RefineToolCommand) {
-  const mask = editor.getRefineMask()
-  if (id === 'invert') mask?.invert()
-  else mask?.clear()
-  openMenu.value = null
-}
 function toggleView(id: 'compare' | 'fit') {
   openMenu.value = openMenu.value?.kind === 'view' && openMenu.value.id === id ? null : { kind: 'view', id }
 }
@@ -98,13 +103,12 @@ function pickFit(id: RefineFitOptionId) {
 function toggleLoupe() {
   editor.setRefineLoupe(!editor.refineLoupeOn)
 }
-const isInputOpen = (id: RefineInputGroupId) => openMenu.value?.kind === 'input' && openMenu.value.id === id
 const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' && openMenu.value.id === id
 </script>
 
 <template>
   <nav ref="railRef" class="refine-rail neo-glass-lite" data-testid="refine-rail" aria-label="画布工具">
-    <!-- 扩图模式入口（Task 7）：激活时高亮；busy 时冻结不可切换；扩图模式禁画笔/橡皮 -->
+    <!-- 扩图模式入口（Task 7）：激活时高亮；busy 时冻结不可切换；画笔/橡皮在右侧面板 -->
     <div class="refine-rail__slot">
       <button
         type="button"
@@ -117,12 +121,14 @@ const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' &&
         :disabled="editor.refineBusy"
         @click="toggleOutpaint"
       >
-        <span class="refine-rail__glyph">⤢</span>
+        <span class="refine-rail__glyph">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" v-html="TOOL_ICON_OUTPAINT" />
+        </span>
         <span class="refine-rail__name">扩图</span>
       </button>
     </div>
 
-    <!-- 抠图模式入口：激活时高亮；busy 时冻结不可切换；与扩图互斥（setRefineMode 覆盖式切换） -->
+    <!-- 一键抠图模式入口（rail 只此一个抠图入口；一键 / 选区抠图双动作在右侧抠图面板内） -->
     <div class="refine-rail__slot">
       <button
         type="button"
@@ -142,59 +148,84 @@ const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' &&
       </button>
     </div>
 
-    <div class="refine-rail__hr" />
-
-    <!-- 输入组：往图上放东西，只产出选区 / 蒙版 -->
-    <div v-for="group in REFINE_INPUT_GROUPS" :key="group.id" class="refine-rail__slot">
+    <!-- 裁剪模式入口：激活时高亮；busy 时冻结不可切换；与扩图/抠图互斥（setRefineMode 覆盖式切换） -->
+    <div class="refine-rail__slot">
       <button
         type="button"
         class="refine-rail__btn"
-        :class="{ 'is-active': inputToolActive(editor.refineTool, group.id) }"
-        :data-testid="`rail-input-${group.id}`"
-        :aria-label="group.label"
-        :title="group.label"
-        :aria-expanded="isInputOpen(group.id)"
-        @click="toggleInputGroup(group.id)"
+        :class="{ 'is-active': cropActive }"
+        data-testid="rail-mode-crop"
+        aria-label="裁剪"
+        title="裁剪（拖框 / 比例 / 旋转，纯本地免费）"
+        :aria-pressed="cropActive"
+        :disabled="editor.refineBusy"
+        @click="toggleCrop"
       >
-        <span class="refine-rail__glyph">{{ GLYPH[group.id] }}</span>
-        <span class="refine-rail__name">{{ group.label }}</span>
+        <span class="refine-rail__glyph">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" v-html="TOOL_ICON_CROP" />
+        </span>
+        <span class="refine-rail__name">裁剪</span>
       </button>
+    </div>
 
-      <div v-if="isInputOpen(group.id)" class="refine-rail__fly" role="menu">
-        <div class="refine-rail__fly-title">{{ group.label }}</div>
-        <div class="refine-rail__fly-icons">
-          <button
-            v-for="variant in group.variants"
-            :key="variant.tool"
-            type="button"
-            role="menuitemradio"
-            class="refine-rail__opt-icon"
-            :class="{ 'is-on': editor.refineTool === variant.tool }"
-            :data-testid="`rail-variant-${variant.tool}`"
-            :title="variant.label"
-            :aria-label="variant.label"
-            :disabled="outpaintActive && (variant.tool === 'brush' || variant.tool === 'eraser')"
-            @click="pickTool(variant.tool)"
-          >
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-              <path v-for="(d, i) in VARIANT_ICONS[variant.tool]" :key="i" :d="d" />
-            </svg>
-          </button>
-        </div>
-        <template v-if="group.commands.length">
-          <div class="refine-rail__fly-div" />
-          <button
-            v-for="cmd in group.commands"
-            :key="cmd.id"
-            type="button"
-            class="refine-rail__cmd"
-            :data-testid="`rail-command-${cmd.id}`"
-            @click="runCommand(cmd.id)"
-          >
-            {{ cmd.label }}
-          </button>
-        </template>
-      </div>
+    <!-- 局部重绘模式入口：激活时高亮；busy 时冻结不可切换；画笔/橡皮在右侧面板 -->
+    <div class="refine-rail__slot">
+      <button
+        type="button"
+        class="refine-rail__btn"
+        :class="{ 'is-active': inpaintActive }"
+        data-testid="rail-mode-inpaint"
+        aria-label="局部重绘"
+        title="局部重绘（画笔涂抹区域 + 描述改动，只重画圈出的部分）"
+        :aria-pressed="inpaintActive"
+        :disabled="editor.refineBusy"
+        @click="toggleInpaint"
+      >
+        <span class="refine-rail__glyph">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" v-html="TOOL_ICON_INPAINT" />
+        </span>
+        <span class="refine-rail__name">局部重绘</span>
+      </button>
+    </div>
+
+    <!-- 元素编辑模式入口：多选区局部编辑（圈选 → 配名称/描述 → 生成） -->
+    <div class="refine-rail__slot">
+      <button
+        type="button"
+        class="refine-rail__btn"
+        :class="{ 'is-active': elementActive }"
+        data-testid="rail-mode-element"
+        aria-label="元素编辑"
+        title="元素编辑（圈选多处元素分别描述，一次生成）"
+        :aria-pressed="elementActive"
+        :disabled="editor.refineBusy"
+        @click="toggleElement"
+      >
+        <span class="refine-rail__glyph">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" v-html="TOOL_ICON_ELEMENT" />
+        </span>
+        <span class="refine-rail__name">元素编辑</span>
+      </button>
+    </div>
+
+    <!-- 选区模式入口（spec §4.2）：select 是基座模式，点击恒幂等 -->
+    <div class="refine-rail__slot">
+      <button
+        type="button"
+        class="refine-rail__btn"
+        :class="{ 'is-active': selectActive, 'is-hint': selectNeedsAttention }"
+        data-testid="rail-mode-select"
+        aria-label="选区"
+        :title="selectTitle"
+        :aria-pressed="selectActive"
+        :disabled="editor.refineBusy"
+        @click="pickSelect"
+      >
+        <span class="refine-rail__glyph">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" v-html="TOOL_ICON_SELECT" />
+        </span>
+        <span class="refine-rail__name">选区</span>
+      </button>
     </div>
 
     <!-- 查看组分隔（follow-up #5）：只留发丝线，不再放文字标签 -->
@@ -237,7 +268,7 @@ const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' &&
         </button>
         <div class="refine-rail__fly-div" />
         <div class="refine-rail__fly-note">
-          对照需要「处理后」的版本，未产出时两项置灰。<br>选中后画布顶部出模式条，<b>Esc</b> 回到工作图。
+          对照需要「处理后」的版本，未产出时两项置灰。<br>选中后打开全屏对照，<b>Esc</b> 或对照头部的返回按钮回到工作图。
         </div>
       </div>
     </div>
@@ -385,6 +416,19 @@ const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' &&
   border-color: color-mix(in srgb, var(--neo-hi-text) 30%, var(--neo-border));
   background: var(--neo-hi-bg); color: var(--neo-hi-text); box-shadow: var(--neo-hi-shadow);
 }
+/* 选区引导呼吸（仅抠图模式且无选区）：强调色描边 + 柔和呼吸光环，圈选后自动消失 */
+.refine-rail__btn.is-hint .refine-rail__glyph {
+  border-color: var(--neo-accent-text);
+  color: var(--neo-text-primary);
+  animation: refine-rail-hint 1.8s ease-in-out infinite;
+}
+@keyframes refine-rail-hint {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--neo-accent-text) 0%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--neo-accent-text) 28%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .refine-rail__btn.is-hint .refine-rail__glyph { animation: none; }
+}
 .refine-rail__name { font-size: 10px; white-space: nowrap; }
 .refine-rail__hr { width: 24px; height: 1px; margin: 6px 0 4px; background: var(--neo-border); }
 .refine-rail__fly {
@@ -395,14 +439,6 @@ const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' &&
 /* 底部两枚（对照 / 适配）向上弹，避免飞出视口下缘 */
 .refine-rail__fly--up { top: auto; bottom: -6px; }
 .refine-rail__fly-title { padding: 2px 6px 6px; color: var(--neo-text-muted); font-size: 10.5px; }
-.refine-rail__fly-icons { display: flex; align-items: center; gap: 4px; padding: 0 2px 2px; }
-.refine-rail__opt-icon {
-  display: flex; width: 32px; height: 32px; align-items: center; justify-content: center;
-  border: 1px solid transparent; border-radius: 9px; background: transparent;
-  color: var(--neo-text-secondary); cursor: pointer;
-}
-.refine-rail__opt-icon:hover { background: var(--neo-hover-bg); }
-.refine-rail__opt-icon.is-on { border-color: rgba(74, 158, 255, .5); background: rgba(0, 89, 179, .16); color: #7cc0ff; }
 .refine-rail__opt {
   display: flex; width: 100%; align-items: center; gap: 8px; padding: 6px;
   border: none; border-radius: 9px; background: transparent; color: inherit; text-align: left; cursor: pointer;
@@ -417,7 +453,5 @@ const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' &&
 .refine-rail__opt.is-on .refine-rail__radio { border-color: #4a9eff; background: radial-gradient(circle, #4a9eff 0 3.5px, transparent 4px); }
 .refine-rail__pin { margin-left: 5px; padding: 0 5px; border-radius: 5px; background: rgba(74, 158, 255, .2); color: #7cc0ff; font-size: 9.5px; font-weight: 500; }
 .refine-rail__fly-div { height: 1px; margin: 6px 4px; background: var(--neo-border); }
-.refine-rail__cmd { display: block; width: 100%; padding: 5px 6px; border: none; border-radius: 9px; background: transparent; color: var(--neo-text-secondary); font-size: 12px; text-align: left; cursor: pointer; }
-.refine-rail__cmd:hover { background: var(--neo-hover-bg); }
 .refine-rail__fly-note { padding: 2px 6px 0; color: var(--neo-text-muted); font-size: 10px; line-height: 1.5; }
 </style>

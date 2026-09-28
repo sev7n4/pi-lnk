@@ -63,28 +63,58 @@ describe('SelectionActionBar', () => {
   it('renders exactly the expected action buttons (no extra/missing)', async () => {
     const wrapper = mountBar()
     const actions = wrapper.findAll('.toolbar-action')
-    // 6 个工具按钮 + 宫格下拉入口（同 class）
-    expect(actions).toHaveLength(7)
+    // 10 个工具按钮 + 宫格下拉入口（同 class）
+    expect(actions).toHaveLength(11)
     const byId = Object.fromEntries(
       actions.filter((b) => b.attributes('data-action')).map((b) => [b.attributes('data-action'), b.text().trim()]),
     )
-    expect(Object.keys(byId).sort()).toEqual(['crop', 'download', 'matting', 'refine', 'rotate', 'save-asset'])
+    expect(Object.keys(byId).sort()).toEqual([
+      'annotate', 'crop', 'download', 'element-edit', 'inpaint', 'matting', 'outpaint', 'refine', 'rotate', 'save-asset',
+    ])
     expect(byId['refine']).toBe('精修')
     expect(byId['matting']).toBe('抠图')
+    expect(byId['outpaint']).toBe('扩图')
     expect(byId['crop']).toBe('裁剪')
-    expect(byId['rotate']).toBe('旋转/翻转')
-    expect(byId['download']).toBe('下载图片')
-    expect(byId['save-asset']).toBe('存入资产库')
+    expect(byId['inpaint']).toBe('重绘')
+    expect(byId['element-edit']).toBe('元素编辑')
+    expect(byId['annotate']).toBe('标注')
+    expect(byId['rotate']).toBe('旋转')
+    expect(byId['download']).toBe('下载')
+    expect(byId['save-asset']).toBe('存图')
     wrapper.unmount()
   })
 
   it('renders disabled tool placeholders with explanatory titles', async () => {
     const wrapper = mountBar()
-    for (const id of ['crop', 'rotate']) {
-      const btn = wrapper.get(`[data-action="${id}"]`)
-      expect(btn.attributes('disabled')).toBeDefined()
-      expect(String(btn.attributes('title'))).toContain('后续能力包点亮')
-    }
+    const rotate = wrapper.get('[data-action="rotate"]')
+    expect(rotate.attributes('disabled')).toBeDefined()
+    expect(String(rotate.attributes('title'))).toContain('后续能力包点亮')
+    wrapper.unmount()
+  })
+
+  it('点击 crop 工具 emit crop（节点直裁入口）', async () => {
+    const wrapper = mountBar()
+    const crop = wrapper.get('[data-action="crop"]')
+    expect(crop.attributes('disabled')).toBeUndefined()
+    await crop.trigger('click')
+    expect(wrapper.emitted('crop')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('点击 outpaint / inpaint 工具 emit 对应事件（节点直出扩图/局部重绘入口）', async () => {
+    const wrapper = mountBar()
+    const outpaint = wrapper.get('[data-action="outpaint"]')
+    expect(outpaint.attributes('disabled')).toBeUndefined()
+    await outpaint.trigger('click')
+    expect(wrapper.emitted('outpaint')).toBeTruthy()
+    const inpaint = wrapper.get('[data-action="inpaint"]')
+    expect(inpaint.attributes('disabled')).toBeUndefined()
+    await inpaint.trigger('click')
+    expect(wrapper.emitted('inpaint')).toBeTruthy()
+    const element = wrapper.get('[data-action="element-edit"]')
+    expect(element.attributes('disabled')).toBeUndefined()
+    await element.trigger('click')
+    expect(wrapper.emitted('element-edit')).toBeTruthy()
     wrapper.unmount()
   })
 

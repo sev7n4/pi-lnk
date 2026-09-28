@@ -6,16 +6,17 @@ import {
   IMAGE2_EDIT_SIZES,
   IMAGE_EDIT_MODEL_KEYS,
   IMAGE_EDIT_MODEL_PRICING,
-  P1_IMAGE_EDIT_MODEL_KEY,
+  resolveImageEditModelKey,
   resolveImageEditProfile,
 } from '@lnkpi/shared'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
+import { sameOriginApiMediaUrl } from '@/services/media-url'
 import { persistMediaUrl } from '@/composables/useMediaUpload'
 import { estimateImageCredits } from '@/constants/credits'
 import { studioApi } from '@/services/studio-api'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { maskCoverageMessage } from '@/utils/maskCoverage'
-import { STAIN_PRESET_PROMPT } from '@/utils/refineSession'
+import { refineSelectionEscHint } from './refineSelectionModel'
 import { applyGuideEditIntent, editIntentDisabledReason } from './guideEditIntentApply'
 import { baseCanvasFromMetadata, type RefineApplyPayload, type RefineCompareMetadata } from './compareViewModel'
 import CompareLightbox from './CompareLightbox.vue'
@@ -25,6 +26,8 @@ import RefineOutpaintDock from './RefineOutpaintDock.vue'
 import MattingDock from './MattingDock.vue'
 import SessionFilmstrip from './SessionFilmstrip.vue'
 import { compositeMattingPng } from './mattingComposite'
+import { isMaskPixelHit } from '@/components/canvas/elementEditModel'
+import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import { getWorkbenchTool, toolIdForRefineMode } from '@/components/canvas/workbench/workbenchToolRegistry'
 import { countMaskPixelsFromImageData, exportMaskPng } from './maskExport'
 import { loadMaskRgbaFromUrl, mergeMaskRgba, registerRefinePointSelectHandler } from './maskRemote'
@@ -71,6 +74,10 @@ const emit = defineEmits<{
 }>()
 
 const editor = useCanvasEditorStore()
+/** 面板固定页脚（spec §4.5 表）：Esc 三态文案，对全部模式生效。 */
+const escHint = computed(() =>
+  refineSelectionEscHint({ refineMode: editor.refineMode, compareLightboxOpen: editor.compareLightboxOpen }),
+)
 const prompt = ref('')
 const activeGuideEditIntentId = ref<string | null>(null)
 const guideCapabilities =
@@ -97,12 +104,15 @@ const compareBeforeUrl = ref(props.beforeUrl)
 const afterUrl = computed(() => editor.currentRefineSessionResult?.url ?? undefined)
 /** matting 服务不可用（503）标记：禁用 run-auto 并提示。 */
 const mattingUnavailable = ref(false)
-/** 当前是否有可用于「选区抠图」的选区蒙版。 */
-const maskAvailable = computed(() => {
-  const mask = editor.getRefineMask()
-  const canvas = mask?.getCanvas()
-  return !!canvas && editor.refineCoverage > 0
-})
+/** 选区抠图引导标记：已提升到 store（refineMattingReturnPending）——rail「选取抠图」入口与本面板双侧读写。 */
+const mattingReturnPending = computed(() => editor.refineMattingReturnPending)
+const showMattingReturn = computed(() => editor.refineMode === 'select' && mattingReturnPending.value)
+function returnToMatting() {
+  editor.setRefineMattingReturnPending(false)
+  editor.setRefineMode('matting')
+}
+/** 当前是否有可用于「选区抠图」的选区蒙版（判据收敛到 store 的 refineMaskAvailable，rail 引导共用）。 */
+const maskAvailable = computed(() => editor.refineMaskAvailable)
 /** 当前激活工具是否为 matting 面板（动态 panel 下发 5 props / 监听 3 events）。 */
 const isMattingPanel = computed(() => editor.refineMode === 'matting')
 /** matting dock：注册表声明 panel。 */
@@ -127,16 +137,36 @@ function resetPointFallbackState() {
 async function loadWorkImage(url: string): Promise<HTMLImageElement> {
   const img = new Image()
   img.crossOrigin = 'anonymous'
-  img.src = url
+  img.src = sameOriginApiMediaUrl(url)
   await img.decode()
   return img
 }
 
 /** 精修通道模型 / 尺寸改为受控选择器（M2 T4）。默认值取 shared 白名单与定价表，不写死。 */
-const modelKey = ref<string>(P1_IMAGE_EDIT_MODEL_KEY)
+const { getConfig } = useModelProviderSettings()
+/**
+ * 默认跟随画布 dock 选中的图像模型：BYOK 渠道优先（用户插了自己的 key 就不该烧平台积分），
+ * 平台渠道回落 image2。面板内仍可手动切换（用户显式选择优先于默认值）。
+ */
+const dockEditModelKey = computed(() => resolveImageEditModelKey(getConfig('image').model))
+const modelKey = ref<string>(dockEditModelKey.value)
+/** 可选模型 = 平台白名单 + dock 当前渠道（去重）。 */
+const editModelOptions = computed(() =>
+  Array.from(new Set<string>([...IMAGE_EDIT_MODEL_KEYS, dockEditModelKey.value])),
+)
+/** 面板内未手动改过时，dock 换模型要跟着变（用户手动选过则保留其选择）。 */
+const modelPinnedByUser = ref(false)
+watch(dockEditModelKey, (next) => {
+  if (!modelPinnedByUser.value) modelKey.value = next
+})
+function onModelKeyUpdate(next: string) {
+  modelPinnedByUser.value = true
+  modelKey.value = next
+}
 const sizeOverride = ref<string | 'auto'>('auto')
 /** dock 的 mode：扩图模式下传 'outpaint' 以隐藏尺寸选择器（Task 7 接线）。 */
-const dockMode = computed<'edit' | 'outpaint'>(() => (editor.refineMode === 'outpaint' ? 'outpaint' : 'edit'))
+/** server @IsIn(['inpaint','outpaint'])：蒙版选区精修 = inpaint；扩图 = outpaint。 */
+const dockMode = computed<'inpaint' | 'outpaint'>(() => (editor.refineMode === 'outpaint' ? 'outpaint' : 'inpaint'))
 /** credits 按 shared 模型定价表动态计算（image2 = 10），模型不可识别时回落到默认估算。 */
 const credits = computed(() => IMAGE_EDIT_MODEL_PRICING[modelKey.value] ?? estimateImageCredits(1))
 const coverageKind = computed(() => maskCoverageMessage(editor.refineCoverage))
@@ -223,11 +253,6 @@ function formatError(err: unknown, fallback: string): string {
   return fallback
 }
 
-function applyStainPreset() {
-  activeGuideEditIntentId.value = null
-  prompt.value = STAIN_PRESET_PROMPT
-}
-
 function editIntentChipDisabled(intentId: string): boolean {
   return busy.value || !!editIntentDisabledReason(intentId, guideCapabilities)
 }
@@ -283,6 +308,12 @@ function toggleCollapsed() {
 }
 
 async function onPointSelect({ x, y }: { x: number; y: number }) {
+  // 元素编辑模式：本组件的 handler 是单槽持有者（父 mounted 晚于子面板会覆盖其注册），
+  // 焦点点选在此转发给元素编辑识别（2026-09-25 修复精修入口焦点识别失效）。
+  if (editor.refineMode === 'element') {
+    void editor.recognizeElementAtPoint({ x, y })
+    return
+  }
   if (busy.value || segmentBusy.value) return
   const mask = editor.getRefineMask()
   const canvas = mask?.getCanvas()
@@ -358,8 +389,18 @@ async function runRefine() {
       return
     }
   }
+  // inpaint 芯片化（2026-09-25）：有芯片时生成蒙版 = 芯片碎片合并（与芯片条删除/替换图语义一致）
+  let chipMask: HTMLCanvasElement | null = null
+  let chipRefs: string[] = []
+  if (editor.refineMode === 'inpaint' && editor.refineElementItems.length > 0) {
+    chipMask = editor.refineElementMaskCanvas
+    if (!chipMask) return
+    chipRefs = editor.refineElementItems
+      .map((it) => it.refUrl?.trim())
+      .filter((u): u is string => !!u)
+  }
   const mask = editor.getRefineMask()
-  const canvas = mask?.getCanvas()
+  const canvas = (chipMask ?? mask?.getCanvas()) as HTMLCanvasElement | null
   if (!mask || !canvas) return
 
   errorMessage.value = ''
@@ -369,7 +410,9 @@ async function runRefine() {
   busy.value = true
 
   try {
-    const blob = await (mask.exportPng?.() ?? exportMaskPng(canvas))
+    const blob = chipMask
+      ? await exportMaskPng(canvas)
+      : await (mask.exportPng?.() ?? exportMaskPng(canvas))
     const file = new File([blob], 'mask.png', { type: 'image/png' })
     const fallbackUrl = URL.createObjectURL(file)
     let maskUrl: string
@@ -389,6 +432,7 @@ async function runRefine() {
         model: modelKey.value,
         size: sizeOverride.value,
         mode: dockMode.value,
+        referenceImageUrls: chipRefs.length ? chipRefs : undefined,
         sessionId: props.sessionId,
         nodeId: props.nodeId,
         parentRecordId: props.generationRecordId,
@@ -398,6 +442,7 @@ async function runRefine() {
     const url = data.data.url
     if (url) {
       editor.pushRefineSessionResult({ url, recordId: data.data.id, prompt: prompt.value || '精修' })
+      if (chipMask) editor.clearRefineElementItems()
     }
   } catch (err) {
     const message = formatError(err, '精修失败，请重试')
@@ -416,7 +461,7 @@ function maskCanvasToCompositeRgba(data: Uint8ClampedArray): Uint8ClampedArray {
     const g = data[i + 1]!
     const b = data[i + 2]!
     const a = data[i + 3]!
-    const selected = a > 127 || 0.299 * r + 0.587 * g + 0.114 * b > 127
+    const selected = isMaskPixelHit(r, g, b, a)
     out[i] = selected ? 255 : 0
     out[i + 1] = 0
     out[i + 2] = 0
@@ -457,15 +502,26 @@ async function runMattingAuto() {
   }
 }
 
+/** 元素编辑面板 busy 上抛：与精修全局 busy 同步（生成中锁 rail/画布切换）。 */
+function onElementPanelBusy(value: boolean) {
+  editor.setRefineBusy(value)
+  busy.value = value
+}
+
 /**
  * 选区抠图（matting-mask）：本地用当前蒙版 + 原图合成透明 PNG，不依赖 rembg。
  * mask 取本地 canvas（与 onPointSelect 同源），转 RGBA 后 compositeMattingPng → persist → 入会话。
+ * 2026-09-25 修正：无选区时不再跳「选区」面板（matting 模式下蒙版画布本就可用，
+ * 跳转造成「只选区不抠图」的流程断点）——就地提示先在图上直接涂抹/框选。
  */
 async function runMattingMask() {
   if (editor.refineMode !== 'matting') return
   const mask = editor.getRefineMask()
   const canvas = mask?.getCanvas()
-  if (!canvas) return
+  if (!canvas || editor.refineCoverage <= 0) {
+    ElMessage.info('还没有选区：直接在图上涂抹或框选（左侧 rail 可换矩形/画笔），再点「选区抠图」')
+    return
+  }
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
@@ -486,6 +542,7 @@ async function runMattingMask() {
     }
     if (url !== fallbackUrl) URL.revokeObjectURL(fallbackUrl)
     editor.pushRefineSessionResult({ url, prompt: '选区抠图' })
+    ElMessage.success('选区抠图完成，已加入下方会话胶片条，点「应用到画布」即生效')
   } catch (err) {
     const message = formatError(err, '选区抠图失败，请重试')
     if (message) ElMessage.error(message)
@@ -502,7 +559,7 @@ async function loadBaseImage(url: string): Promise<HTMLImageElement | null> {
     img.crossOrigin = 'anonymous'
     img.onload = () => resolve(img)
     img.onerror = () => resolve(null)
-    img.src = url
+    img.src = sameOriginApiMediaUrl(url)
     // jsdom 等无 onload 环境：已 complete 则返回，否则兜底 null。
     setTimeout(() => resolve(img.complete ? img : null), 0)
   })
@@ -656,12 +713,22 @@ onBeforeUnmount(() => {
             v-if="activeTool"
             :busy="busy"
             v-bind="isMattingPanel ? { beforeUrl: props.beforeUrl, mattingUnavailable, maskAvailable, canApply } : {}"
-            @apply-stain-preset="applyStainPreset"
             @run-auto="runMattingAuto"
             @run-mask="runMattingMask"
             @apply="onApply"
+            @busy="onElementPanelBusy"
           />
         </div>
+        <!-- 选区引导回程 CTA（2026-09-24 用户反馈：被引导来圈选后找不到回去的入口） -->
+        <button
+          v-if="showMattingReturn"
+          type="button"
+          class="refine-side__matting-return"
+          data-testid="refine-return-matting"
+          @click="returnToMatting"
+        >
+          ← 返回抠图（执行选区抠图）
+        </button>
         <!-- 会话胶片条（Task 7）：替换原 VersionStrip；选中切换 store 当前结果 → afterUrl 派生切换 -->
         <SessionFilmstrip
           class="refine-side__filmstrip"
@@ -679,7 +746,7 @@ onBeforeUnmount(() => {
         :credits="credits"
         :before-url="beforeUrl"
         :model-key="modelKey"
-        :available-model-keys="IMAGE_EDIT_MODEL_KEYS"
+        :available-model-keys="editModelOptions"
         :sizes="IMAGE2_EDIT_SIZES"
         :size-override="sizeOverride"
         :mode="dockMode"
@@ -694,7 +761,7 @@ onBeforeUnmount(() => {
         :active-edit-intent-id="activeGuideEditIntentId"
         :ref-role-hints="activeRefRoleHints"
         @update:prompt="prompt = $event"
-        @update:model-key="modelKey = $event"
+        @update:model-key="onModelKeyUpdate"
         @update:size-override="sizeOverride = $event"
         @run="runRefine"
         @apply="onApply"
@@ -718,20 +785,23 @@ onBeforeUnmount(() => {
         size="md"
         :prompt="prompt"
         :model-key="modelKey"
-        :available-model-keys="IMAGE_EDIT_MODEL_KEYS"
+        :available-model-keys="editModelOptions"
         :credits="credits"
         :can-run="outpaintCanRun"
         :busy="busy"
         :can-apply="canApply"
         :error-message="errorMessage"
         @update:prompt="prompt = $event"
-        @update:modelKey="modelKey = $event"
+        @update:modelKey="onModelKeyUpdate"
         @run="runRefine"
         @apply="onApply"
         @retry="runRefine"
         @exit="editor.setRefineMode('select')"
         @cancel="onBackOrCancel"
       />
+
+      <!-- 固定页脚（spec 图 6 ⑤）：Esc 三态，模式优先于对照 -->
+      <div v-if="!collapsed" class="refine-side__esc" data-testid="refine-panel-esc-hint">{{ escHint }}</div>
     </aside>
   </Teleport>
 
@@ -746,14 +816,14 @@ onBeforeUnmount(() => {
         size="lg"
         :prompt="prompt"
         :model-key="modelKey"
-        :available-model-keys="IMAGE_EDIT_MODEL_KEYS"
+        :available-model-keys="editModelOptions"
         :credits="credits"
         :can-run="outpaintCanRun"
         :busy="busy"
         :can-apply="canApply"
         :error-message="errorMessage"
         @update:prompt="prompt = $event"
-        @update:modelKey="modelKey = $event"
+        @update:modelKey="onModelKeyUpdate"
         @run="runRefine"
         @apply="onApply"
         @retry="runRefine"
@@ -836,7 +906,22 @@ onBeforeUnmount(() => {
 .refine-side__body { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
 /* 唯一滚动区（§4.3 布局铁律：dock 与版本条是 flex 兄弟，绝不覆盖滚动区） */
 .refine-side__scroll { min-height: 0; flex: 1; overflow-y: auto; }
+.refine-side__matting-return {
+  flex: 0 0 auto;
+  margin: 0 12px 8px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--neo-accent-text) 55%, var(--neo-border));
+  border-radius: 10px;
+  background: var(--neo-accent-soft, rgba(109, 93, 252, 0.16));
+  color: var(--neo-accent-text);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+.refine-side__matting-return:hover { filter: brightness(1.1); }
 .refine-side__filmstrip { flex: 0 0 auto; padding: 8px 12px; border-top: 1px solid var(--neo-border); }
+
+.refine-side__esc { flex: 0 0 auto; padding: 8px 14px; border-top: 1px solid var(--neo-border); color: var(--neo-text-muted); font-size: 11px; }
 
 .refine-outpaint-floating {
   position: fixed;

@@ -1,0 +1,330 @@
+import type { CropRect } from './refine/cropGeometry'
+
+/**
+ * 元素编辑（多选区局部编辑，复刻竞品 2026-09-25）纯函数模型，web 本地、无框架依赖。
+ *
+ * 一条编辑项 = 一个选区形状（矩形 / 焦点点位默认框 / 画笔笔画，display 节点坐标）+
+ * 识别对象名 + 修改内容。生成时全部项合并为一张整图蒙版（白色 = 编辑区）+
+ * combined prompt（「对象名 修改内容」以「；」连接），走 image/edit mode:'inpaint' 单次生成。
+ */
+
+/** 笔画：一次按住拖出的完整折线（display 坐标点列 + 笔刷显示直径） */
+export interface ElementEditStroke {
+  points: { x: number; y: number }[]
+  size: number
+}
+
+export type ElementEditShape =
+  | { kind: 'rect'; rect: CropRect }
+  | { kind: 'strokes'; strokes: ElementEditStroke[] }
+  | { kind: 'mask'; maskUrl: string; bbox: CropRect }
+
+export interface ElementEditItem {
+  id: string
+  /** 识别出的对象名（焦点点击自动识别；框选/画笔默认「选区」），芯片上可二次编辑 */
+  name: string
+  /** 想要的修改内容（芯片条【修改】输入） */
+  modify: string
+  shape: ElementEditShape
+  /** 焦点识别进行中（芯片条转圈，生成禁用） */
+  recognizing?: boolean
+  /** 选区缩略图（原图裁剪 dataURL） */
+  thumb?: string
+  /** 替换图（本地/资产库）：生成时作为参考图传给模型做对象替换 */
+  refUrl?: string | null
+  /** 累计点提示（原图像素坐标，label 1=正点 0=负点），mask 类选区用于加/减点重识别 */
+  promptPoints?: { x: number; y: number; label: 0 | 1 }[]
+  /** 选区扩缩像素（原图像素，正=扩大 负=缩小），mask 类选区用于粒度微调 */
+  dilate?: number
+  /** mask 着色叠加 dataURL（display 展示层，与底图同 object-fit: cover 对齐） */
+  tintUrl?: string
+}
+
+/**
+ * 焦点选择（point）点击处的默认选区框（display 坐标）：
+ * 以点击点为中心、边长 = 节点短边 18%（下限 48、上限 140）。识别成功后会被 bbox 覆写。
+ */
+export function pointRectAt(
+  p: { x: number; y: number },
+  boxW: number,
+  boxH: number,
+): CropRect {
+  const side = Math.min(140, Math.max(48, Math.min(boxW, boxH) * 0.18))
+  return {
+    x: Math.max(0, Math.min(boxW - side, p.x - side / 2)),
+    y: Math.max(0, Math.min(boxH - side, p.y - side / 2)),
+    width: side,
+    height: side,
+  }
+}
+
+/**
+ * combined prompt：「眼睛 改成蓝色发光；鼻子 增加闭环」——空段去重后以「；」连接。
+ * 带 refUrl 的项（替换图）追加对象替换语义：把该区域替换为参考图内容并自然融入原图。
+ */
+export function combineElementEditPrompt(
+  items: { name: string; modify: string; refUrl?: string | null }[],
+): string {
+  return items
+    .map((it) => {
+      const seg = `${it.name.trim()} ${it.modify.trim()}`.trim()
+      if (!seg) return ''
+      if (it.refUrl) {
+        return `${seg}（把该区域替换为参考图中的对象，保持与原图一致的光照、透视与色调，自然融入）`
+      }
+      return seg
+    })
+    .filter((seg) => seg.length > 0)
+    .filter((seg, i, arr) => arr.indexOf(seg) === i)
+    .join('；')
+}
+
+/**
+ * 快捷重绘 prompt 组合：全局描述 + 各芯片「区域名 修改内容」以「；」连接；
+ * 带替换图的芯片追加对象替换语义（与 combineElementEditPrompt 同款）。
+ */
+export function combineInpaintPrompt(
+  globalPrompt: string,
+  items: { name: string; modify: string; refUrl?: string | null }[],
+): string {
+  const segs: string[] = []
+  const g = globalPrompt.trim()
+  if (g) segs.push(g)
+  for (const it of items) {
+    const m = it.modify.trim()
+    if (!m) continue
+    const seg = `${it.name.trim() || '选区'} ${m}`.trim()
+    if (it.refUrl) {
+      segs.push(`${seg}（把该区域替换为参考图中的对象，保持与原图一致的光照、透视与色调，自然融入）`)
+    } else {
+      segs.push(seg)
+    }
+  }
+  return segs.filter((seg, i, arr) => arr.indexOf(seg) === i).join('；')
+}
+
+/** 简单递增 id（同帧多项不冲突即可；无需 uuid） */
+let elementEditSeq = 0
+export function nextElementEditId(): string {
+  elementEditSeq += 1
+  return `ee-${Date.now().toString(36)}-${elementEditSeq}`
+}
+
+/** 形状在 display 坐标系的包围盒（缩略图快照 / 命中定位用）。 */
+export function elementEditShapeBBox(shape: ElementEditShape): CropRect {
+  if (shape.kind === 'rect') return { ...shape.rect }
+  if (shape.kind === 'mask') return { ...shape.bbox }
+  const xs: number[] = []
+  const ys: number[] = []
+  for (const st of shape.strokes) {
+    for (const p of st.points) {
+      xs.push(p.x)
+      ys.push(p.y)
+    }
+  }
+  if (!xs.length) return { x: 0, y: 0, width: 0, height: 0 }
+  const pad = 1
+  const x0 = Math.min(...xs) - pad
+  const y0 = Math.min(...ys) - pad
+  const x1 = Math.max(...xs) + pad
+  const y1 = Math.max(...ys) + pad
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+}
+
+export interface PixelMapper {
+  toPixelX(x: number): number
+  toPixelY(y: number): number
+}
+
+/**
+ * display → 原图像素线性映射（cover 变换的逆）。矩形走双角映射；
+ * 笔画逐点映射 + 半径按 scale 折算。
+ */
+export function coverDisplayMapper(
+  naturalW: number,
+  naturalH: number,
+  boxW: number,
+  boxH: number,
+): PixelMapper {
+  const scale = Math.max(naturalW > 0 && naturalH > 0 && boxW > 0 && boxH > 0
+    ? Math.max(boxW / naturalW, boxH / naturalH)
+    : 1, 1e-6)
+  const offsetX = (boxW - naturalW * scale) / 2
+  const offsetY = (boxH - naturalH * scale) / 2
+  return {
+    toPixelX: (x) => (x - offsetX) / scale,
+    toPixelY: (y) => (y - offsetY) / scale,
+  }
+}
+
+/**
+ * 把全部编辑项绘制为整图蒙版（原图像素坐标，白色不透明 = 编辑区）。
+ * 矩形映射双角；笔画逐点映射、lineWidth 按 display→pixel 缩放比折算。
+ * 纯 DOM canvas（调用方保证运行环境有 2d context；jsdom 测试不触达）。
+ */
+export function paintElementEditMask(
+  items: ElementEditItem[],
+  naturalW: number,
+  naturalH: number,
+  boxW: number,
+  boxH: number,
+  maskImages?: Map<string, HTMLImageElement>,
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(naturalW))
+  canvas.height = Math.max(1, Math.round(naturalH))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return canvas
+  const mapper = coverDisplayMapper(naturalW, naturalH, boxW, boxH)
+  const scale = Math.max(canvas.width / Math.max(1, boxW), canvas.height / Math.max(1, boxH))
+  ctx.fillStyle = '#ffffff'
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  for (const item of items) {
+    if (item.shape.kind === 'mask') {
+      const img = maskImages?.get(item.shape.maskUrl)
+      if (img) drawMaskImageOnto(ctx, img, canvas.width, canvas.height)
+      continue
+    }
+    if (item.shape.kind === 'rect') {
+      const r = item.shape.rect
+      const x0 = mapper.toPixelX(r.x)
+      const y0 = mapper.toPixelY(r.y)
+      const x1 = mapper.toPixelX(r.x + r.width)
+      const y1 = mapper.toPixelY(r.y + r.height)
+      ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0))
+    } else {
+      for (const stroke of item.shape.strokes) {
+        if (!stroke.points.length) continue
+        ctx.lineWidth = Math.max(1, stroke.size * scale)
+        ctx.beginPath()
+        const first = stroke.points[0]!
+        ctx.moveTo(mapper.toPixelX(first.x), mapper.toPixelY(first.y))
+        if (stroke.points.length === 1) {
+          ctx.arc(mapper.toPixelX(first.x), mapper.toPixelY(first.y), ctx.lineWidth / 2, 0, Math.PI * 2)
+          ctx.fill()
+          continue
+        }
+        for (const p of stroke.points.slice(1)) {
+          ctx.lineTo(mapper.toPixelX(p.x), mapper.toPixelY(p.y))
+        }
+        ctx.stroke()
+      }
+    }
+  }
+  return canvas
+}
+
+/**
+ * SAM 蒙版像素是否属于对象区：必须「不透明 **且** 亮」。
+ * MobileSAM 导出的是 L 模式（无 alpha 通道）黑底白形 PNG，canvas 会补成 alpha=255 全不透明；
+ * 若用 `alpha>127 || 亮度>127` 判定会整图命中 → 整张节点卡被主题色铺满。带真 alpha 的蒙版同样成立。
+ */
+export function isMaskPixelHit(r: number, g: number, b: number, a: number): boolean {
+  if (a <= 127) return false
+  return 0.299 * r + 0.587 * g + 0.114 * b > 127
+}
+
+/** 把 SAM 蒙版图（黑底白形）按亮度二值化后画到目标蒙版画布（白色不透明=编辑区，其余透明）。 */
+function drawMaskImageOnto(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  w: number,
+  h: number,
+): void {
+  const tmp = document.createElement('canvas')
+  tmp.width = w
+  tmp.height = h
+  const tctx = tmp.getContext('2d')
+  if (!tctx) return
+  tctx.drawImage(img, 0, 0, w, h)
+  const d = tctx.getImageData(0, 0, w, h)
+  const px = d.data
+  for (let i = 0; i < px.length; i += 4) {
+    const hit = isMaskPixelHit(px[i]!, px[i + 1]!, px[i + 2]!, px[i + 3]!)
+    if (hit) {
+      px[i] = 255
+      px[i + 1] = 255
+      px[i + 2] = 255
+      px[i + 3] = 255
+    } else {
+      px[i + 3] = 0
+    }
+  }
+  tctx.putImageData(d, 0, 0)
+  ctx.drawImage(tmp, 0, 0)
+}
+
+/** 预载全部 mask 类选区的蒙版图（生成前调用，失败项跳过）。 */
+export async function preloadElementMaskImages(
+  items: ElementEditItem[],
+): Promise<Map<string, HTMLImageElement>> {
+  const map = new Map<string, HTMLImageElement>()
+  const urls = [...new Set(
+    items.filter((it) => it.shape.kind === 'mask').map((it) => (it.shape as { maskUrl: string }).maskUrl),
+  )]
+  await Promise.all(
+    urls.map(
+      (url) =>
+        new Promise<void>((resolve) => {
+          const img = new Image()
+          img.crossOrigin = 'anonymous'
+          img.onload = () => {
+            map.set(url, img)
+            resolve()
+          }
+          img.onerror = () => resolve()
+          img.src = url
+        }),
+    ),
+  )
+  return map
+}
+
+/** 蒙版着色叠加（display 展示层）：白色区域渲染为主题色半透明，用于在节点卡上直观呈现精细选区。 */
+export async function maskTintDataUrl(maskUrl: string, rgb = '168,157,255'): Promise<string | null> {
+  const img = await new Promise<HTMLImageElement | null>((resolve) => {
+    const i = new Image()
+    i.crossOrigin = 'anonymous'
+    i.onload = () => resolve(i)
+    i.onerror = () => resolve(null)
+    i.src = maskUrl
+  })
+  if (!img || !(img.naturalWidth > 0)) return null
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth
+  canvas.height = img.naturalHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.drawImage(img, 0, 0)
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const px = d.data
+  for (let i = 0; i < px.length; i += 4) {
+    const hit = isMaskPixelHit(px[i]!, px[i + 1]!, px[i + 2]!, px[i + 3]!)
+    if (hit) {
+      px[i] = 255
+      px[i + 1] = 255
+      px[i + 2] = 255
+      px[i + 3] = 255
+    } else {
+      px[i + 3] = 0
+    }
+  }
+  ctx.putImageData(d, 0, 0)
+  // 二次上色：在已有 alpha 形状上叠主题色
+  const colored = document.createElement('canvas')
+  colored.width = canvas.width
+  colored.height = canvas.height
+  const cctx = colored.getContext('2d')
+  if (!cctx) return null
+  cctx.drawImage(canvas, 0, 0)
+  cctx.globalCompositeOperation = 'source-in'
+  cctx.fillStyle = `rgba(${rgb},0.47)`
+  cctx.fillRect(0, 0, colored.width, colored.height)
+  try {
+    return colored.toDataURL('image/png')
+  } catch {
+    return null
+  }
+}

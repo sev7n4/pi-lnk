@@ -34,6 +34,25 @@ describe('workbenchToolRegistry', () => {
   it('refineMode → 工具 id 映射', () => {
     expect(toolIdForRefineMode('select')).toBe('refine-select')
     expect(toolIdForRefineMode('outpaint')).toBe('refine-outpaint')
+    expect(toolIdForRefineMode('matting')).toBe('refine-matting')
+    expect(toolIdForRefineMode('crop')).toBe('refine-crop')
+    expect(toolIdForRefineMode('inpaint')).toBe('refine-inpaint')
+  })
+
+  it('refine-crop 已注册：确定性变换（dock: null）+ panel 落位', () => {
+    const tool = getWorkbenchTool('refine-crop')
+    expect(tool).not.toBeNull()
+    expect(tool!.panel).toBeTruthy()
+    expect(tool!.dock).toBeNull()
+    expect(tool!.dockPlacement).toBe('panel')
+  })
+
+  it('refine-inpaint 已注册：画笔优先 panel + RefineDock（prompt/生成与 select 共用）', () => {
+    const tool = getWorkbenchTool('refine-inpaint')
+    expect(tool).not.toBeNull()
+    expect(tool!.panel).toBeTruthy()
+    expect(tool!.dock).toBeTruthy()
+    expect(tool!.dockPlacement).toBe('panel')
   })
 
   it('注册表自身的完整性：每个注册项的 dockPlacement 取值合法', () => {
