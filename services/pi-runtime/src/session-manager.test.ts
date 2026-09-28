@@ -253,3 +253,57 @@ describe("SessionManager BYOK override 透传（K-1）", () => {
 		assert.equal(result.model, "deepseek-flash");
 	});
 });
+
+describe("SessionManager 用户取消 run（前端「停止」按钮）", () => {
+	/**
+	 * stub：prompt 一直挂起，直到传入 context 的 abortSignal 触发才 reject
+	 * ——模拟 vendored pi 的真实取消语义（中断入口是 context 而非 prompt 参数）。
+	 */
+	const hangingFactory = async () =>
+		({
+			harness: {
+				events: { on: () => () => {} },
+				lane: async () => ({
+					prompt: async (_text: string, _images: unknown, ctx: { abortSignal?: AbortSignal }) =>
+						new Promise((_resolve, reject) => {
+							ctx?.abortSignal?.addEventListener(
+								"abort",
+								() => reject(new Error("aborted")),
+								{ once: true },
+							);
+						}),
+				}),
+				close: async () => {},
+			},
+		}) as never;
+
+	it("无活跃 run 时 abort 返回 false（前端按 skipped 提示「已断开回复」）", async () => {
+		const sm = new SessionManager([], "", undefined, hangingFactory);
+		await sm.create("s-cancel-idle", {});
+		assert.equal(sm.abort("s-cancel-idle"), false);
+	});
+
+	it("abort 中断正在跑的 run，且会话保留（用户可接着发消息）", async () => {
+		const sm = new SessionManager([], "", undefined, hangingFactory);
+		await sm.create("s-cancel-run", {});
+		await sm.prompt("s-cancel-run", "hi");
+		assert.equal(sm.abort("s-cancel-run"), true);
+		assert.equal(sm.has("s-cancel-run"), true);
+	});
+
+	it("用户取消不派发 error 事件（否则重连补发 buffer 会显示「出错了」的假警报）", async () => {
+		const sm = new SessionManager([], "", undefined, hangingFactory);
+		await sm.create("s-cancel-noerr", {});
+		const seen: string[] = [];
+		sm.subscribe("s-cancel-noerr", (e) => seen.push(e.type));
+		await sm.prompt("s-cancel-noerr", "hi");
+		assert.equal(sm.abort("s-cancel-noerr"), true);
+		await new Promise((r) => setTimeout(r, 20)); // 等挂起的 promise reject 被 catch 处理
+		assert.deepEqual(seen.filter((t) => t === "error"), []);
+	});
+
+	it("未知 session abort 返回 false（不抛）", () => {
+		const sm = new SessionManager([], "", undefined, hangingFactory);
+		assert.equal(sm.abort("nope"), false);
+	});
+});

@@ -23,6 +23,7 @@ import {
 	type ThinkingLevel,
 	BACKGROUND_CONTEXT,
 	JsonlSessionRepo,
+	withCancel,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
@@ -78,6 +79,10 @@ interface SessionEntry {
 	buffer: NormalizedEvent[];
 	unsubscribes: Array<() => void>;
 	prompting: boolean;
+	/** 当前 run 的取消函数（withCancel 产出）；run 结束后清空。用户点「停止」时调用。 */
+	cancelRun?: (reason?: unknown) => void;
+	/** 本轮 run 是否被用户主动取消（用于抑制取消引发的 error 事件，避免重连补发假警报）。 */
+	userAborted?: boolean;
 }
 
 const BUFFER_LIMIT = 500;
@@ -248,10 +253,16 @@ export class SessionManager {
 			this.skills?.loadBody(name),
 		);
 		this.hooks?.onPrompt?.(id);
+		// 每个 run 一个可取消的子 context：用户点「停止」时 abort 这一条链路。
+		// vendored pi 的中断入口是 context（withCancel → { context, cancel }），
+		// 不是 lane.prompt 的参数（其第二参是 images，传不了 signal）。
+		const run = withCancel(this.context);
+		entry.cancelRun = run.cancel;
+		entry.userAborted = false;
 		const lane = await entry.harness.lane(laneName, this.context);
 		entry.prompting = true;
 		void lane
-			.prompt(effectiveText, undefined, this.context)
+			.prompt(effectiveText, undefined, run.context)
 			.then((result) => {
 				if (!result.ok) {
 					this.dispatch(entry, {
@@ -263,6 +274,11 @@ export class SessionManager {
 				}
 			})
 			.catch((err: unknown) => {
+				// 用户主动取消：不派发 error（否则重连补发 buffer 时会显示「出错了」的假警报）
+				if (entry.userAborted) {
+					console.log(`[pi-runtime] run aborted by user: ${id}`);
+					return;
+				}
 				this.dispatch(entry, {
 					type: "error",
 					lane: laneName,
@@ -272,8 +288,23 @@ export class SessionManager {
 			})
 			.finally(() => {
 				entry.prompting = false;
+				entry.cancelRun = undefined;
+				entry.userAborted = false;
 			});
 		return { accepted: true };
+	}
+
+	/**
+	 * 中断该会话当前正在跑的 run（用户点「停止」）。
+	 * 会话本身保留——用户可以接着发新消息；无活跃 run 时返回 false（前端按「已断开」提示）。
+	 */
+	abort(id: string): boolean {
+		const entry = this.sessions.get(id);
+		if (!entry?.cancelRun) return false;
+		entry.userAborted = true;
+		entry.cancelRun("user_cancel");
+		entry.cancelRun = undefined;
+		return true;
 	}
 
 	async remove(id: string): Promise<boolean> {

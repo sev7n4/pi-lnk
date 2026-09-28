@@ -126,6 +126,26 @@ class ClearProposeDto {
   nodeId!: string
 }
 
+/**
+ * 前端「停止」按钮（AgentSideRail.cancelActiveStream → POST /api/agent/runs/cancel）。
+ *
+ * 该端点随老 runtime 退役被删，但前端一直在调 → 404 → 只断开 SSE、服务端 run 照跑。
+ * 这里补回，语义改为转发 pi-runtime 的 abort（会话保留）。
+ * threadId / reason 前端都会传，当前实现只用 sessionId；保留字段以免前端改动。
+ */
+class CancelRunDto {
+  @IsString()
+  sessionId!: string
+
+  @IsOptional()
+  @IsString()
+  threadId?: string
+
+  @IsOptional()
+  @IsString()
+  reason?: string
+}
+
 class ListAgentThreadsQueryDto {
   @IsString()
   sessionId!: string
@@ -208,6 +228,19 @@ export class AgentController {
     @Query('threadId') threadId: string,
   ) {
     const data = await this.agentService.getThreadTimeline(threadId)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** 前端「停止」：中断 pi-runtime 当前 run（会话保留）。详见 CancelRunDto。 */
+  @Post('runs/cancel')
+  @UseGuards(AuthGuard)
+  async cancelRun(
+    @Body() dto: CancelRunDto,
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    // 与 clear-propose 一致：先校验会话归属，避免越权中断他人的 run
+    await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    const data = await this.agentService.cancelRun({ sessionId: dto.sessionId })
     return { code: 0, message: 'ok', data }
   }
 
