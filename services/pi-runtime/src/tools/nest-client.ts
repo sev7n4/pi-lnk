@@ -84,7 +84,7 @@ export class NestClient {
 		this.breaker.set(path, st);
 	}
 
-	async post(path: string, body: unknown): Promise<unknown> {
+	async post(path: string, body: unknown, opts?: { signal?: AbortSignal }): Promise<unknown> {
 		try {
 			this.checkCircuit(path);
 		} catch (err) {
@@ -97,7 +97,10 @@ export class NestClient {
 				method: "POST",
 				headers: { "content-type": "application/json", "x-lnkpi-service-token": this.opts.token },
 				body: JSON.stringify(body),
-				signal: AbortSignal.timeout(timeoutMs),
+				// 外部 signal（P0-② run abort 级联）与既有超时叠加：任一触发即中断
+				signal: opts?.signal
+					? AbortSignal.any([AbortSignal.timeout(timeoutMs), opts.signal])
+					: AbortSignal.timeout(timeoutMs),
 			});
 			const payload = (await res.json().catch(() => null)) as
 				| { code?: number; message?: string; data?: unknown }
