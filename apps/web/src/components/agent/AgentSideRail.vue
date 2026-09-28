@@ -1875,16 +1875,23 @@ async function reconnectStream() {
   }
 }
 
-const BUSY_TIP_SNIPPET = '上一轮仍在处理中'
-const EXEC_PROGRESS_SNIPPET = '出图成功'
-const COPY_WRITTEN_SNIPPET = '已将确认的主文案'
+/** P1#11：thread-state 安全拉取（reconcile 终态判定用）。 */
+async function fetchThreadStateSafe(): Promise<{ finished?: boolean | null } | null> {
+  try {
+    const token = localStorage.getItem('token')
+    const res = await fetch(
+      apiUrl(`/api/agent/thread-state?threadId=${encodeURIComponent(agentThreadId.value)}`),
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    const json = await res.json()
+    return (json?.data ?? null) as { finished?: boolean | null } | null
+  } catch {
+    return null
+  }
+}
 
-/** 流结束后用 DB 历史补齐（避免只看到 busy / 截断 / 被旧确认文案覆盖）。
- *  当检测到仍在生成中时，附加 runtime 健康轮询。 */
+/** 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。 */
 async function reconcileLatestAssistant() {
-  const localAssistantContent = () =>
-    [...agent.messages].reverse().find((m) => m.role === 'assistant')?.content?.trim() ?? ''
-
   const pull = async () => {
     const res = await fetch(
       apiUrl(
@@ -1906,51 +1913,14 @@ async function reconcileLatestAssistant() {
   }
 
   try {
-    let content = await pull()
-    const lastUser = [...agent.messages].reverse().find((m) => m.role === 'user')
-    const confirmTurn = lastUser ? looksLikeConfirmTurn(lastUser.content || '') : false
-    const effectiveContent = () => content ?? localAssistantContent()
-    // busy tip：首轮仍在写 DB；确认拆图：Nest 可能在 Vercel 断流后继续跑完
-    const shouldPoll =
-      effectiveContent().includes(BUSY_TIP_SNIPPET)
-      || (confirmTurn && !effectiveContent().includes(EXEC_PROGRESS_SNIPPET) && !effectiveContent().includes('自动出图'))
-    if (shouldPoll) {
-      let runtimeFailCount = 0
-      for (let i = 0; i < 36; i++) {
-        await new Promise((r) => setTimeout(r, 5_000))
-        content = await pull()
-        const active = effectiveContent()
-        if (
-          active
-          && !active.includes(BUSY_TIP_SNIPPET)
-          && (
-            active.includes(COPY_WRITTEN_SNIPPET)
-            || active.includes(EXEC_PROGRESS_SNIPPET)
-            || active.includes('自动出图')
-            || active.length > 80
-          )
-        ) {
-          scrollToBottom()
-          break
-        }
-        // Runtime health check (every 3rd poll, i.e. every 15s)
-        if (i > 0 && i % 3 === 0 && active && shouldPollRuntimeHealth(active)) {
-          const health = await checkRuntimeHealthViaNest()
-          if (!health || !health.ok) {
-            runtimeFailCount++
-            if (runtimeFailCount >= 2) {
-              const last = agent.messages[agent.messages.length - 1]
-              if (last?.role === 'assistant' && !last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
-                last.content += '\n\n⚠️ 生成服务暂时不可达，出图可能已中断。请稍后重试或新建对话。'
-              }
-              scrollToBottom()
-              break
-            }
-          } else {
-            runtimeFailCount = 0
-          }
-        }
-      }
+    await pull()
+    // 终态判定：finished → 停；未完成 → 每次拉取前先查 thread-state，上限 36×5s 兜底
+    for (let i = 0; i < RECONCILE_MAX_POLLS; i++) {
+      const st = await fetchThreadStateSafe()
+      if (!shouldKeepReconciling(st, i)) break
+      await new Promise((r) => setTimeout(r, 5_000))
+      await pull()
+      scrollToBottom()
     }
   } catch {
     // ignore

@@ -9,6 +9,7 @@ import {
   shouldPollRuntimeHealth,
   checkRuntimeHealthViaNest,
   isStreamStale,
+  shouldKeepReconciling,
   STREAM_STALE_MS,
 } from './streamRecovery'
 import { lastThreadStorageKey } from '@/utils/formatSessionTime'
@@ -171,3 +172,18 @@ describe('checkRuntimeHealthViaNest', () => {
     expect(result).toBeNull()
   })
 })
+
+describe("shouldKeepReconciling（P1#11 重连判定）", () => {
+  it("thread-state 终态立即停止", () => {
+    expect(shouldKeepReconciling({ finished: true }, 0)).toBe(false);
+  });
+
+  it("未完成且未达上限时继续轮询", () => {
+    expect(shouldKeepReconciling({ finished: false }, 3)).toBe(true);
+    expect(shouldKeepReconciling({ finished: false }, 36)).toBe(false);
+  });
+
+  it("thread-state 缺失按上限兜底", () => {
+    expect(shouldKeepReconciling(null, 10)).toBe(true);
+  });
+});

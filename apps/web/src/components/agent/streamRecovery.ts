@@ -19,6 +19,17 @@ export function isStreamStale(lastActivityAt: number, now = Date.now()): boolean
   return now - lastActivityAt > STREAM_STALE_MS
 }
 
+/** P1#11：reconcile 轮询续停判定——thread-state 回合终态优先，缺失时按上限兜底。 */
+export const RECONCILE_MAX_POLLS = 36
+
+export function shouldKeepReconciling(
+  threadState: { finished?: boolean | null } | null,
+  polls: number,
+): boolean {
+  if (threadState?.finished) return false
+  return polls < RECONCILE_MAX_POLLS
+}
+
 /**
  * Thread suffix for pi-runtime threads（老 LangGraph runtime 已退役，thread 语义保留）。
  * crypto.randomUUID requires a secure context (HTTPS/localhost); production CVM is HTTP.
