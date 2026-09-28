@@ -25,7 +25,7 @@ on:
         default: false
         type: boolean
       deploy_web_only:
-        description: "Emergency only: deploy THIS repo's web build to CVM. Web deploys are normally owned by the lnkpi repo — enabling this will overwrite /opt/lnkpi/web/dist with this repo's (older) frontend"
+        description: "Force-deploy THIS repo's web build to CVM (skip API build). Use when web changes were not auto-deployed by the push trigger."
         required: false
         default: false
         type: boolean
@@ -304,13 +304,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy-web:
-    name: Deploy web to CVM (emergency only)
+    name: Deploy web to CVM
     needs: changes
     if: >-
       ${{
-        github.event_name == 'workflow_dispatch'
-        && github.event.inputs.deploy_web_only == 'true'
-        && github.event.inputs.recover_only != 'true'
+        github.event.inputs.recover_only != 'true'
+        && (
+          (github.event_name == 'push' && needs.changes.outputs.web == 'true')
+          || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_web_only == 'true')
+        )
       }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -367,7 +369,7 @@ jobs:
           DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
           tar -czf /tmp/lnkpi-web-dist.tgz -C apps/web/dist .
           scp /tmp/lnkpi-web-dist.tgz deploy/nginx.conf deploy/deploy-web.sh deploy-cvm:/tmp/
-          ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR}/web/dist ${DEPLOY_DIR}/deploy && tar -xzf /tmp/lnkpi-web-dist.tgz -C ${DEPLOY_DIR}/web/dist && cp /tmp/nginx.conf ${DEPLOY_DIR}/deploy/nginx.conf && cp /tmp/deploy-web.sh ${DEPLOY_DIR}/deploy/deploy-web.sh && chmod +x ${DEPLOY_DIR}/deploy/deploy-web.sh && rm -f /tmp/lnkpi-web-dist.tgz /tmp/nginx.conf /tmp/deploy-web.sh'"
+          ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR}/web/dist ${DEPLOY_DIR}/deploy && rm -rf ${DEPLOY_DIR}/web/dist/assets && tar -xzf /tmp/lnkpi-web-dist.tgz -C ${DEPLOY_DIR}/web/dist && cp /tmp/nginx.conf ${DEPLOY_DIR}/deploy/nginx.conf && cp /tmp/deploy-web.sh ${DEPLOY_DIR}/deploy/deploy-web.sh && chmod +x ${DEPLOY_DIR}/deploy/deploy-web.sh && rm -f /tmp/lnkpi-web-dist.tgz /tmp/nginx.conf /tmp/deploy-web.sh'"
 
       - name: Configure nginx on CVM
         run: |

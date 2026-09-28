@@ -18,23 +18,24 @@
 
 **所有开发工作按本文件 + spec 执行**；改动落盘后必须逐项 Grep 复核（历史上有 Edit 报成功但未落盘的案例）。
 
-## 仓库归属红线（2026-09-27 拍板）
+## 仓库归属红线（2026-09-28 拍板：pi-lnk 唯一仓库）
 
-**pi-lnk 是唯一权威仓库（SSOT），与 lnkpi 已拆成两条独立产品线，同步流停止。**
+**pi-lnk = 唯一仓库 + 唯一发布门**：前后端 / runtime / CICD / agent 开发**全部**在 pi-lnk 做。
+lnkpi 仓库（`/Users/4seven/workspace/lnkpi`）降级为**只读历史归档**，不再用于开发。
 
-- **pi-lnk** = 无限画布 + pi-runtime（本仓库，唯一发布门）
-- **lnkpi** = 未来的智能体产品（以 pi-runtime 为核心，剥离画布前后端）—— 独立演进
+### 治理转向（覆盖 2026-09-27 旧的"双仓库并行"红线）
 
-**禁止动作**：
-1. **禁止 `git merge upstream/main` 整条合并** —— 会把 `services/agent-runtime` 和基于 LangGraph 的
-   `agent.service.ts` 带回来，直接覆盖 pi 链路。
-2. **agent 链路永不从 lnkpi 同步** —— 涉及 `apps/server/src/agent/**`、`services/pi-runtime/**`、
-   `charts/**`、`vendor/**` 的改动只在 pi-lnk 做。
-3. lnkpi 侧保留 `services/agent-runtime` 是**刚需**（它无 pi-runtime），不要去删它、也不要"同步后再删"。
+- 以前"日常功能开发在 lnkpi、发布以 pi-lnk 为准"作废；以后不维护 lnkpi↔pi-lnk 同步手册
+- **lnkpi 仓库 deploy.yml**：push 触发的 deploy-web job 已禁用（`if: false`），避免把 lnkpi 自己的 dist 推上去覆盖 pi-lnk 推的
+- **pi-lnk deploy.yml**：deploy-web job 已改为 push 触发 master（当 changes 检测到 web 改动）时自动跑，Upload step 加 `rm -rf dist/assets` 清旧 chunk 再解压，不再"emergency only"
 
-**允许**：分家完成前，lnkpi 上纯画布/编辑类的 bugfix 可**手工 cherry-pick**（不碰上面第 2 条路径）。
+### 保留红线
 
-详见 [`docs/ops/RUNBOOK-lnkpi-to-pi-lnk-sync.md` §10](./docs/ops/RUNBOOK-lnkpi-to-pi-lnk-sync.md)。
+1. **agent 链路独立演进** —— 涉及 `apps/server/src/agent/**`、`services/pi-runtime/**`、`charts/**`、`vendor/**` 的改动只在 pi-lnk 做（lnkpi 不再开发，"永不从 lnkpi 同步"自动达成）
+2. **老 runtime（LangGraph）已删永不回退** —— `services/agent-runtime` / `Dockerfile.agent-runtime` / `deploy-agent-runtime.yml` 已退役删除，`PI_RUNTIME_MODE=off` 是维护态关停不是切链路
+3. **lnkpi 仓库保留 `services/agent-runtime` 是其刚需**（它无 pi-runtime）—— 不要去删它、也不要"同步后再删"
+
+老同步手册 `docs/ops/RUNBOOK-lnkpi-to-pi-lnk-sync.md` §10 仅留历史参考。
 
 ## 核心规则（继承自 lnkpi）
 
