@@ -83,14 +83,32 @@ describe("canvas-write: body 形态与条件字段", () => {
 		});
 	});
 
-	it("set_node_prompt 不带 userId（对齐老 client）；set_node_content 带 userId", async () => {
+	it("set_node_text 只传 prompt → set-node-prompt（不带 userId，对齐老 client）", async () => {
 		const { client, calls } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		await run(findTool(tools, "set_node_prompt"), { node_id: "n1", prompt: "p" });
+		await run(findTool(tools, "set_node_text"), { node_id: "n1", prompt: "p" });
+		assert.equal(calls[0].path, "/agent/internal/set-node-prompt");
 		assert.deepEqual(calls[0].body, { sessionId: "s1", nodeId: "n1", prompt: "p" });
+	});
 
-		await run(findTool(tools, "set_node_content"), { node_id: "n1", content: "c" });
+	it("set_node_text 只传 content → set-node-content（带 userId）", async () => {
+		const { client, calls } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		await run(findTool(tools, "set_node_text"), { node_id: "n1", content: "c" });
+		assert.equal(calls[0].path, "/agent/internal/set-node-content");
+		assert.deepEqual(calls[0].body, { sessionId: "s1", userId: "u1", nodeId: "n1", content: "c" });
+	});
+
+	it("set_node_text 双传 → 先 prompt 后 content 两个端点；双空 → 抛错不打 Nest", async () => {
+		const { client, calls } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		await run(findTool(tools, "set_node_text"), { node_id: "n1", prompt: "p", content: "c" });
+		assert.equal(calls[0].path, "/agent/internal/set-node-prompt");
+		assert.equal(calls[1].path, "/agent/internal/set-node-content");
 		assert.deepEqual(calls[1].body, { sessionId: "s1", userId: "u1", nodeId: "n1", content: "c" });
+
+		await assert.rejects(run(findTool(tools, "set_node_text"), { node_id: "n1" }), /prompt or content/);
+		assert.equal(calls.length, 2);
 	});
 
 	it("attach_refs 发 refOrder 且不带 userId；propose_generation 带 userId", async () => {
@@ -219,17 +237,19 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.equal(calls.length, 1);
 	});
 
-	it("默认注册 13 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
+	it("默认注册 12 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		assert.equal(tools.length, 13);
+		assert.equal(tools.length, 12);
 		const tiers = Object.fromEntries(tools.map((t) => [t.name, t.tier]));
 		assert.equal(tiers.connect_nodes, "graph_batch");
 		assert.equal(tiers.upsert_media_node, "write_light");
 		assert.ok(!tools.some((t) => t.name === "introduce_nodes_to_agent"), "deferred 工具默认不暴露");
+		assert.ok(!tools.some((t) => t.name === "set_node_prompt"), "set_node_prompt 已并入 set_node_text");
+		assert.ok(!tools.some((t) => t.name === "set_node_content"), "set_node_content 已并入 set_node_text");
 
 		const withDeferred = createCanvasWriteTools(client, { includeDeferred: true });
-		assert.equal(withDeferred.length, 14);
+		assert.equal(withDeferred.length, 13);
 		assert.ok(withDeferred.some((t) => t.name === "introduce_nodes_to_agent"));
 	});
 });

@@ -88,42 +88,49 @@ export function createCanvasWriteTools(
 		},
 		{
 			...write,
-			name: "set_node_prompt",
-			label: "改节点提示词",
-			description: "Update the prompt text on an existing node",
+			name: "set_node_text",
+			label: "改节点文本",
+			description:
+				"Update prompt and/or content text on an EXISTING node (at least one of prompt/content; passing both updates both). For creating nodes use upsert_media_node / upsert_prompt_node instead.",
 			parameters: Type.Object({
 				node_id: Type.String({ description: "Canvas node id" }),
-				prompt: Type.String({ description: "Updated prompt text" }),
+				prompt: Type.Optional(
+					Type.String({ description: "New prompt text (generation prompt; doubles as prompt-node title)" }),
+				),
+				content: Type.Optional(Type.String({ description: "New node content text" })),
 			}),
-			execute: async (_id, p: { node_id: string; prompt: string }, _u, tc: LnkpiToolContext) => {
-				return textResult(
+			execute: async (
+				_id,
+				p: { node_id: string; prompt?: string; content?: string },
+				_u,
+				tc: LnkpiToolContext,
+			) => {
+				if (!p.prompt && !p.content) {
+					throw new Error("set_node_text requires prompt or content (at least one)");
+				}
+				// content 路径 Nest DTO 必填 userId，fail-closed：缺身份时提前抛错而非发 undefined。
+				if (p.content && !tc.userId) {
+					throw new Error("set_node_text with content requires userId in toolContext (session identity missing)");
+				}
+				// 各端点 body 形态对齐老 client：set-node-prompt 不带 userId；set-node-content 带 userId。
+				if (p.prompt) {
 					await client.post("/agent/internal/set-node-prompt", {
 						sessionId: tc.sessionId,
 						nodeId: p.node_id,
 						prompt: p.prompt,
-					}),
-				);
-			},
-		},
-		{
-			...write,
-			name: "set_node_content",
-			label: "改节点正文",
-			description: "Update the content text on an existing node",
-			parameters: Type.Object({
-				node_id: Type.String({ description: "Canvas node id" }),
-				content: Type.String({ description: "Updated node content text" }),
-			}),
-			execute: async (_id, p: { node_id: string; content: string }, _u, tc: LnkpiToolContext) => {
-				if (!tc.userId) throw new Error("set_node_content requires userId in toolContext");
-				return textResult(
-					await client.post("/agent/internal/set-node-content", {
-						sessionId: tc.sessionId,
-						userId: tc.userId,
-						nodeId: p.node_id,
-						content: p.content,
-					}),
-				);
+					});
+				}
+				if (p.content) {
+					return textResult(
+						await client.post("/agent/internal/set-node-content", {
+							sessionId: tc.sessionId,
+							userId: tc.userId,
+							nodeId: p.node_id,
+							content: p.content,
+						}),
+					);
+				}
+				return textResult({ ok: true });
 			},
 		},
 		{

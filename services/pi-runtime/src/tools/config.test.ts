@@ -15,14 +15,15 @@ test("env 缺失 → 返回空数组（纯文本模式不受影响）", () => {
 	}
 });
 
-test("env 齐全 → 返回 7 read + 13 write + 7 ui_command + 6 gen/lifecycle = 33 个工具", () => {
+test("env 齐全 → 返回 7 read + 12 write + 7 ui_command + 6 gen/lifecycle = 32 个工具", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 33);
+		assert.equal(tools.length, 32);
 		assert.ok(tools.some((t) => t.name === "upsert_media_node"));
 		assert.ok(tools.some((t) => t.name === "connect_nodes"));
+		assert.ok(tools.some((t) => t.name === "set_node_text"));
 		assert.ok(tools.some((t) => t.name === "focus_node" && t.tier === "ui_command"));
 		assert.ok(tools.some((t) => t.name === "ask_user" && t.tier === "ui_command"));
 		assert.ok(tools.some((t) => t.name === "arrange_nodes" && t.tier === "ui_command"));

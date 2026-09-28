@@ -4,6 +4,15 @@
  * per-path 熔断（5 次/60s）+ 按路径超时（默认 10s；image 210s / video 690s 预留）。
  * 零依赖：fetch + AbortSignal.timeout。
  */
+/** 错误分类（③）：upstream_* 按 HTTP 状态分层，envelope=200 但包络错误，timeout/network=传输层。 */
+export type NestErrorKind = "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network";
+
+/** 每次 Nest 调用的观测信息：结果体积（ok 时）与错误分类（error 时）。 */
+export interface NestCallInfo {
+	resultBytes?: number;
+	errorKind?: NestErrorKind;
+}
+
 export interface NestClientOptions {
 	baseUrl: string;
 	token: string;
@@ -13,7 +22,7 @@ export interface NestClientOptions {
 	timeoutOverrides?: Record<string, number>;
 	breakerThreshold?: number;
 	breakerCooldownMs?: number;
-	onCall?: (pathTail: string, outcome: "ok" | "error" | "circuit_open") => void;
+	onCall?: (pathTail: string, outcome: "ok" | "error" | "circuit_open", info?: NestCallInfo) => void;
 }
 
 export class NestToolError extends Error {
@@ -96,7 +105,9 @@ export class NestClient {
 			if (!res.ok) {
 				// 熔断只对"服务不可用"类失败计数（5xx/超时/网络），4xx 属业务错误不计（对齐老 runtime）
 				if (res.status >= 500) this.recordFailure(path);
-				this.opts.onCall?.(toolLabel(path), "error");
+				this.opts.onCall?.(toolLabel(path), "error", {
+					errorKind: res.status >= 500 ? "upstream_5xx" : "upstream_4xx",
+				});
 				throw new NestToolError(
 					`nest ${path} http ${res.status}: ${payload?.message ?? res.statusText}`,
 					"http",
@@ -104,20 +115,22 @@ export class NestClient {
 			}
 			if (!payload || payload.code !== 0) {
 				// HTTP 200 但包络错误 = 业务错误，不计熔断（避免模型连续用错参数把工具熔死）
-				this.opts.onCall?.(toolLabel(path), "error");
+				this.opts.onCall?.(toolLabel(path), "error", { errorKind: "envelope" });
 				throw new NestToolError(
 					`nest ${path} code=${payload?.code}: ${payload?.message ?? "empty envelope"}`,
 					"envelope",
 				);
 			}
 			this.recordSuccess(path);
-			this.opts.onCall?.(toolLabel(path), "ok");
+			this.opts.onCall?.(toolLabel(path), "ok", {
+				resultBytes: Buffer.byteLength(JSON.stringify(payload.data ?? null)),
+			});
 			return payload.data;
 		} catch (err) {
 			if (err instanceof NestToolError || err instanceof NestCircuitOpenError) throw err;
 			const isTimeout = err instanceof Error && err.name === "TimeoutError";
 			this.recordFailure(path);
-			this.opts.onCall?.(toolLabel(path), "error");
+			this.opts.onCall?.(toolLabel(path), "error", { errorKind: isTimeout ? "timeout" : "network" });
 			throw new NestToolError(
 				`nest ${path} ${isTimeout ? "timeout after " + timeoutMs + "ms" : "network error"}: ${err instanceof Error ? err.message : String(err)}`,
 				isTimeout ? "timeout" : "http",

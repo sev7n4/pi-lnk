@@ -5,6 +5,48 @@ import type { NestClient } from "./nest-client.js";
 
 const DIAG_REQUIRED = "pass generation_record_id or node_id (at least one)";
 
+/** 列表截断阈值：读工具结果数组超过此长度即截断（③ 结果瘦身，控制上下文占用）。 */
+const TRIM_MAX_ITEMS = 50;
+
+/**
+ * 读工具结果瘦身：顶层每个超过 TRIM_MAX_ITEMS 的数组字段截断，
+ * 附 `<key>_total` 与 `truncated:true` 标记（数组形态 data 映射为 {items,total,truncated}）。
+ * ≤阈值的数据逐字节原样返回，不附加任何键。
+ */
+export function trimData<T>(data: T): T {
+	if (Array.isArray(data)) {
+		if (data.length <= TRIM_MAX_ITEMS) return data;
+		return { items: data.slice(0, TRIM_MAX_ITEMS), total: data.length, truncated: true } as T;
+	}
+	if (typeof data !== "object" || data === null) return data;
+	const out: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+	let truncated = false;
+	for (const [k, v] of Object.entries(out)) {
+		if (Array.isArray(v) && v.length > TRIM_MAX_ITEMS) {
+			out[`${k}_total`] = v.length;
+			out[k] = v.slice(0, TRIM_MAX_ITEMS);
+			truncated = true;
+		}
+	}
+	if (truncated) out.truncated = true;
+	return out as T;
+}
+
+/**
+ * layout 专用瘦身：节点丢冗余 absolutePosition（恒等于 position，Nest 侧测试锁定该语义），
+ * 再走通用 trimData。形状异常时原样透传（fail-open，只降信息量不报错）。
+ */
+function slimLayout(data: unknown): unknown {
+	const d = data as { nodes?: unknown[] } | null;
+	if (typeof d !== "object" || d === null || !Array.isArray(d.nodes)) return trimData(data);
+	const nodes = d.nodes.map((n) => {
+		if (typeof n !== "object" || n === null) return n;
+		const { absolutePosition: _drop, ...rest } = n as Record<string, unknown>;
+		return rest;
+	});
+	return trimData({ ...d, nodes });
+}
+
 function textResult(data: unknown): { content: [{ type: "text"; text: string }]; details: undefined } {
 	return { content: [{ type: "text", text: JSON.stringify({ ok: true, data }) }], details: undefined };
 }
@@ -20,7 +62,7 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 				"Get a lightweight summary of the current canvas (node list with ids, types and counts). Call this first to understand the canvas.",
 			parameters: Type.Object({}),
 			execute: async (_id, _p, _u, tc: LnkpiToolContext) => {
-				return textResult(await client.post("/agent/internal/get-canvas-summary", { sessionId: tc.sessionId }));
+				return textResult(trimData(await client.post("/agent/internal/get-canvas-summary", { sessionId: tc.sessionId })));
 			},
 		},
 		{
@@ -83,7 +125,7 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 			description: "Get the current canvas layout (nodes and edges with positions and sizes).",
 			parameters: Type.Object({}),
 			execute: async (_id, _p, _u, tc: LnkpiToolContext) => {
-				return textResult(await client.post("/agent/internal/get-canvas-layout", { sessionId: tc.sessionId }));
+				return textResult(slimLayout(await client.post("/agent/internal/get-canvas-layout", { sessionId: tc.sessionId })));
 			},
 		},
 		{
@@ -97,7 +139,7 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 				if (!tc.userId) throw new Error("list_generation_tasks requires userId in toolContext");
 				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId };
 				if (p.type) body.type = p.type;
-				return textResult(await client.post("/agent/internal/list-generation-tasks", body));
+				return textResult(trimData(await client.post("/agent/internal/list-generation-tasks", body)));
 			},
 		},
 		{
@@ -108,7 +150,7 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 			parameters: Type.Object({}),
 			execute: async (_id, _p, _u, tc: LnkpiToolContext) => {
 				if (!tc.userId) throw new Error("list_user_assets requires userId in toolContext");
-				return textResult(await client.post("/agent/internal/list-user-assets", { userId: tc.userId }));
+				return textResult(trimData(await client.post("/agent/internal/list-user-assets", { userId: tc.userId })));
 			},
 		},
 	];
