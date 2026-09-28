@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { SidebarAttachmentSchema } from './sidebarAttachments'
+// type-only：CanvasData 定义在 barrel（index.ts），仅类型引用，编译后擦除，不产生运行时循环
+import type { CanvasData } from './index'
 
 // ============================================================
 // 基础类型定义
@@ -70,6 +72,20 @@ export const CanvasActionSchema = z.object({
 })
 
 export type CanvasAction = z.infer<typeof CanvasActionSchema>
+
+/**
+ * 画布动作落地接口（两产品线拆分 path A 的 seam）。
+ *
+ * **归属待定**：`applyCanvasActions` 是纯画布领域逻辑，却被 agent 侧用来落地动作。
+ * 在归属定下来之前，先把它抽象成接口——调用方依赖本接口而非具体函数，
+ * 将来无论归属判给画布侧还是 agent 侧各自实现，都只需换实现、不动调用点。
+ *
+ * 当前唯一实现仍是 `@lnkpi/agent` 的 `applyCanvasActions`（见 server 侧
+ * `canvas-action-applier.ts` 的默认实现）。
+ */
+export interface CanvasActionApplier {
+  apply(data: CanvasData, actions: CanvasAction[]): CanvasData
+}
 
 // ============================================================
 // upsert_prompt_node

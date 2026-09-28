@@ -40,7 +40,6 @@ describe('AgentCanvasToolsService parseCanvas', () => {
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
     )
     await svc.moveNodes({
       sessionId: 's1',
@@ -81,7 +80,6 @@ describe('AgentCanvasToolsService parseCanvas', () => {
         session: { findUnique: sessionFindUnique, update: sessionUpdate },
         $transaction,
       } as unknown as PrismaService,
-      {} as never,
       {} as never,
       {} as never,
       {} as never,

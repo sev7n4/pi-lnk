@@ -118,8 +118,11 @@
 
 ## 6. 开放问题（需你裁决）
 
-1. **`packages/agent` 里的 `applyCanvasActions` 到底算谁的？** 它是画布领域逻辑，但被 `agent.service.ts` 用来落地动作。
-   若 agent 产品线不需要画布，这块应搬到画布侧；若未来 agent 产品线也有自己的"执行结果落地"，则应抽象成接口。
+1. ✅ **已落地为 seam（2026-09-28）**：`applyCanvasActions` 抽象成接口 `CanvasActionApplier`（定义在 `@lnkpi/shared`），
+   server 侧做成 DI 注入点（`apps/server/src/agent/canvas-action-applier.ts`，token `CANVAS_ACTION_APPLIER`）。
+   **归属仍未定**——现在默认实现照旧指向 `@lnkpi/agent`；将来无论判给画布侧还是 agent 侧自研，
+   只需在 `AgentModule` 换掉 `useValue`，三个调用点零改动。
+   ⚠️ 注入参数是**可选**的（缺省回退默认实现），刻意设计——现有 10 处 `new AgentService(...)` 测试构造不受影响。
 2. **web 侧 dock 控件是否下沉为共享 UI 包？** `DockTypeIcon`/`DockGenerateButton`/`MentionInput`/`UniversalModelSelector`
    被 agent 复用。下沉 = 多一个共享包；不沉 = agent 产品线自己重写 UI。
 3. ~~**`shared` 劈开后 agent 产品线是否还需要 `NodeType`？**~~ → **已裁决并订正（2026-09-28）**：`NodeType` 补入 `audio`，
