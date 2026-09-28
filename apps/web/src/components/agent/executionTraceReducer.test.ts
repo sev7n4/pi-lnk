@@ -164,3 +164,40 @@ describe('applyTurnUsage + turnSummaryLine（P1 摘要行）', () => {
     expect(turnSummaryLine(source)).toContain('提议生成 1 张')
   })
 })
+
+describe('applyToolCall isError（P0 工具失败标红）', () => {
+  it('isError 结果将工具步标为 failed，detail 取错误信息', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'run_image', undefined, { toolCallId: 't1' })
+    applyToolCall(trace, 'run_image', { message: '生成超时' }, { toolCallId: 't1', isError: true })
+    const step = trace.steps.find((s) => s.meta?.toolCallId === 't1')
+    expect(step?.status).toBe('failed')
+    expect(step?.detail).toContain('生成超时')
+  })
+
+  it('正常结果仍为 done（不回归）', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'run_image', undefined, { toolCallId: 't2' })
+    applyToolCall(trace, 'run_image', { ok: 1 }, { toolCallId: 't2' })
+    const step = trace.steps.find((s) => s.meta?.toolCallId === 't2')
+    expect(step?.status).toBe('done')
+  })
+
+  it('replay 旧 metadata（无 isError 字段）不崩且为 done', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'tool_call', data: { name: 'get_canvas_summary' } },
+      { type: 'tool_result', data: { name: 'get_canvas_summary', result: { status: 'ok' } } },
+    ])
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('done')
+  })
+
+  it('replay 携带 isError 的 tool_result 标为 failed', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'tool_call', data: { name: 'run_image' } },
+      { type: 'tool_result', data: { name: 'run_image', result: { message: 'boom' }, isError: true } },
+    ])
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('failed')
+  })
+})

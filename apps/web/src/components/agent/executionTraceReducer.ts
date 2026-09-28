@@ -299,7 +299,7 @@ export function applyToolCall(
   trace: ExecutionTraceState,
   name: string,
   result?: unknown,
-  meta?: { toolCallId?: string; args?: string },
+  meta?: { toolCallId?: string; args?: string; isError?: boolean },
 ) {
   // toolCallId 优先精确匹配（支持同名并发）；无 id 时回退老语义：同 name 的 running 步
   const existing = meta?.toolCallId
@@ -310,7 +310,8 @@ export function applyToolCall(
   if (existing) {
     if (result === undefined) return // 重放/重复 start：幂等
     existing.detail = summarizeToolResult(result)
-    completeStep(existing)
+    // P0 错误链路：isError 结果标 failed（保留在时间线，红色 ✗ 由渲染层按 status 着色）
+    completeStep(existing, meta?.isError ? 'failed' : 'done')
     return
   }
   const now = Date.now()
@@ -318,7 +319,7 @@ export function applyToolCall(
     id: nextStepId('tool'),
     kind: 'tool',
     label: meta?.args ? `调用 ${name} · ${meta.args}` : `调用 ${name}`,
-    status: result !== undefined ? 'done' : 'running',
+    status: result !== undefined ? (meta?.isError ? 'failed' : 'done') : 'running',
     startedAt: now,
     endedAt: result !== undefined ? now : undefined,
     ms: result !== undefined ? 0 : undefined,
@@ -454,13 +455,16 @@ export function replayExecutionTraceEvents(
       case 'tool_call':
         applyToolCall(trace, String((event.data as { name?: string })?.name ?? 'tool'))
         break
-      case 'tool_result':
+      case 'tool_result': {
+        const d = event.data as { name?: string; result?: unknown; isError?: boolean }
         applyToolCall(
           trace,
-          String((event.data as { name?: string })?.name ?? 'tool'),
-          (event.data as { result?: unknown })?.result,
+          String(d.name ?? 'tool'),
+          d.result,
+          { isError: d.isError === true },
         )
         break
+      }
       case 'canvas_action':
         applyCanvasAction(trace, event.data as CanvasAction)
         break

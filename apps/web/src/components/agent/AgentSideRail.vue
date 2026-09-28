@@ -1937,8 +1937,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       break
     }
     case 'tool_result': {
-      const d = event.data as { name: string; toolCallId?: string; result: unknown }
-      agent.endToolCall(d.toolCallId, d.name, d.result)
+      const d = event.data as { name: string; toolCallId?: string; result: unknown; isError?: boolean }
+      agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)
       break
     }
     case 'canvas_action':
