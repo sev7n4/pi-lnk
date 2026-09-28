@@ -24,6 +24,7 @@ import {
   applyTaskEvent,
   applyPollRecordToTask,
   emptyTaskProgress,
+  seedTaskProgressFromEvents,
   type AgentTaskProgressState,
 } from '@/components/agent/agentTaskProgress'
 import { useGenerationPolling, type GenerationPollTask } from '@/composables/useGenerationPolling'
@@ -1413,6 +1414,16 @@ async function refreshThreadCheckpoint() {
   }
 }
 
+/** P1#5/#7：assistant message metadata JSON 安全解析（畸形返回 undefined）。 */
+function parseMessageMetadataSafe(raw?: string): { executionEvents?: Array<{ type: string; data: unknown }> } | undefined {
+  if (!raw) return undefined
+  try {
+    return JSON.parse(raw) as { executionEvents?: Array<{ type: string; data: unknown }> }
+  } catch {
+    return undefined
+  }
+}
+
 async function loadHistory() {
   agent.clear()
   taskProgress.value = emptyTaskProgress()
@@ -1429,6 +1440,12 @@ async function loadHistory() {
     const json = await res.json()
     if (json.data?.length) {
       agent.loadHistory(json.data)
+      // P1#5：最后一回合若有 task 事件（plan 标记派生），恢复任务卡进度
+      const msgs = json.data as Array<{ role: string; metadata?: string }>
+      const lastAssistantMsg = [...msgs].reverse().find((m) => m.role === 'assistant')
+      const meta = parseMessageMetadataSafe(lastAssistantMsg?.metadata)
+      const seeded = seedTaskProgressFromEvents(meta?.executionEvents ?? [])
+      if (seeded) taskProgress.value = seeded
     }
   } catch {
     ElMessage.warning('对话历史加载失败，请检查网络后刷新')
