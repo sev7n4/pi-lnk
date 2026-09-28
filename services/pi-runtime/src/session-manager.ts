@@ -47,6 +47,8 @@ export interface NormalizedEvent {
 	type: NormalizedEventType;
 	lane?: string;
 	ts: number;
+	/** 会话内单调递增（从 0 起），SSE id 帧与客户端增量重连的 offset（P0-③）。 */
+	seq: number;
 	data: unknown;
 }
 
@@ -83,6 +85,8 @@ interface SessionEntry {
 	cancelRun?: (reason?: unknown) => void;
 	/** 本轮 run 是否被用户主动取消（用于抑制取消引发的 error 事件，避免重连补发假警报）。 */
 	userAborted?: boolean;
+	/** 下一个待分配的事件 seq（会话内单调递增，P0-③）。 */
+	nextSeq: number;
 }
 
 const BUFFER_LIMIT = 500;
@@ -210,6 +214,7 @@ export class SessionManager {
 			buffer: [],
 			unsubscribes: [],
 			prompting: false,
+			nextSeq: 0,
 		};
 
 		this.hooks?.onSessionCreated?.(id, harness);
@@ -231,10 +236,12 @@ export class SessionManager {
 		return { provider: providerId, model: model.id };
 	}
 
-	subscribe(id: string, listener: EventListener): NormalizedEvent[] {
+	subscribe(id: string, listener: EventListener, afterSeq = -1): NormalizedEvent[] {
 		const entry = this.require(id);
 		entry.listeners.add(listener);
-		return [...entry.buffer];
+		// 增量重放（P0-③）：只回放 seq > afterSeq 的缓冲；afterSeq 早于 buffer 最旧条目时
+		// best-effort 返回全部 buffered（会话单轮生命周期下 buffer 溢出概率极低，不做全量重建）
+		return entry.buffer.filter((e) => e.seq > afterSeq);
 	}
 
 	unsubscribe(id: string, listener: EventListener): void {
@@ -325,11 +332,12 @@ export class SessionManager {
 	}
 
 	private dispatch(entry: SessionEntry, event: NormalizedEvent): void {
-		entry.buffer.push(event);
+		const withSeq = { ...event, seq: entry.nextSeq++ };
+		entry.buffer.push(withSeq);
 		if (entry.buffer.length > BUFFER_LIMIT) entry.buffer.shift();
 		for (const listener of entry.listeners) {
 			try {
-				listener(event);
+				listener(withSeq);
 			} catch {
 				// 单个订阅者异常不阻断其他订阅者（对齐 HarnessEventBus 的隔离语义）
 			}
