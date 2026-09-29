@@ -45,6 +45,7 @@ export type NormalizedEventType =
 	| "tool_execution_start"
 	| "tool_execution_update"
 	| "tool_execution_end"
+	| "compaction"
 	| "error";
 
 export interface NormalizedEvent {
@@ -70,6 +71,10 @@ const EVENT_MAP: ReadonlyArray<readonly [string, NormalizedEventType]> = [
 	["tool_start", "tool_execution_start"],
 	["tool_update", "tool_execution_update"],
 	["tool_end", "tool_execution_end"],
+	// P0-①：上下文压缩（vendor 事件名实测为 compaction_start / compaction_end，载荷带 status）。
+	// 两者都归一到 "compaction"，前端据此显示「正在压缩上下文」；成败计数只在 end 分支。
+	["compaction_start", "compaction"],
+	["compaction_end", "compaction"],
 	["fault", "error"],
 	["handler_error", "error"],
 ];
@@ -262,6 +267,8 @@ export class SessionManager {
 		private readonly hooks?: SessionHooks,
 		private readonly skills?: SkillRegistry,
 		private readonly config: RuntimeConfig = loadRuntimeConfig(process.env),
+		/** P0-① 观测：compaction 成败计数（只在 compaction_end 且 completed/failed 时回调）。 */
+		private readonly onCompaction?: (result: "ok" | "error") => void,
 	) {}
 
 	/** threadKey（Nest 的 threadId || sessionId）→ 是否已有内存驻留会话。 */
@@ -390,9 +397,18 @@ export class SessionManager {
 
 		this.hooks?.onSessionCreated?.(key, harness);
 
+		this.attachEvents(entry, harness);
+
+		this.sessions.set(key, entry);
+		return { provider: identity.provider, model: identity.model };
+	}
+
+	/** 事件归一订阅：EVENT_MAP 全量透传；compaction_end 顺带计数（同一监听内，避免重复订阅）。 */
+	private attachEvents(entry: SessionEntry, harness: AgentHarness<LnkpiToolContext>): void {
 		for (const [harnessType, sseType] of EVENT_MAP) {
 			entry.unsubscribes.push(
-				harness.events.on(harnessType as never, (evt: { lane?: string }) => {
+				harness.events.on(harnessType as never, (evt: { lane?: string; status?: string }) => {
+					if (harnessType === "compaction_end") this.observeCompactionOutcome(evt.status);
 					this.dispatch(entry, {
 						type: sseType,
 						lane: evt.lane,
@@ -402,9 +418,12 @@ export class SessionManager {
 				}),
 			);
 		}
+	}
 
-		this.sessions.set(key, entry);
-		return { provider: identity.provider, model: identity.model };
+	/** declined / aborted 不算失败（hook 拒绝或用户中断），不进错误率。 */
+	private observeCompactionOutcome(status?: string): void {
+		if (status === "completed") this.onCompaction?.("ok");
+		else if (status === "failed") this.onCompaction?.("error");
 	}
 
 	/** 关闭并删除：内存句柄 + 磁盘目录（身份变更 / 显式删除共用）。 */

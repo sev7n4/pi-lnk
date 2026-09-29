@@ -109,6 +109,10 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			if (llm.state === "ok") {
 				app.log.info({ threadKey, provider: result.provider, model: result.model }, "session created with BYOK override");
 			}
+			// P0-① 观测：created→new，rebuilt→rebuilt，resumed→memory|disk（区分内存快路径与磁盘 repo.open）。
+			metrics.observeSessionResume(
+				result.status === "created" ? "new" : result.status === "rebuilt" ? "rebuilt" : (result.resumedFrom ?? "memory"),
+			);
 			// 部署顺序保护（spec §11）：新 Nest 依赖 status/resumedFrom；旧 Nest 只读 provider/model。
 			return reply.code(result.status === "created" ? 201 : 200).send({ sessionId: threadKey, ...result });
 		} catch (err) {
@@ -131,7 +135,10 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			});
 			return reply.code(202).send({ accepted: true });
 		} catch (err) {
-			if (err instanceof BusyError) return reply.code(409).send({ error: "session busy" });
+			if (err instanceof BusyError) {
+				metrics.observePromptRejection("busy");
+				return reply.code(409).send({ error: "session busy" });
+			}
 			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
 			const msg = (err as Error).message ?? "";
 			const reason = /429|rate/i.test(msg) ? "upstream_rate_limited" : "upstream_error";

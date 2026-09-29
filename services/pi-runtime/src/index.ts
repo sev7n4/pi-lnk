@@ -62,6 +62,9 @@ const manager = new SessionManager(
 		},
 	},
 	skillRegistry,
+	undefined,
+	// P0-① 观测：compaction 成败计数（spec §5.7）
+	(result) => metrics.observeCompaction(result),
 );
 
 const app = buildApp(manager, { metrics, version: VERSION, logger: true });
