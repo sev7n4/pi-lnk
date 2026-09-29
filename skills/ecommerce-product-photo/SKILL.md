@@ -52,7 +52,7 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
    - **风格**：A 简约高级 / B 喜庆 / C 性冷淡 / D ins风 / E 国潮 / F 工业风 / 其他（请说明）
    - **用途(destination)**：A 电商listing / B 独立站landing / C 社交广告 / D 单图 / 其他（请说明）
    - **平台规范**：不问用户；由 destination 自动查"平台硬规格"表
-   - ⚠️ 当前为**文本选项**（agent 在回复里列选项，用户手打回复）；可点击选项卡体验需 pi-runtime `ask_user` 工具 + 前端渲染分支（见 `docs/superpowers/specs/2026-09-28-ask-user-tool-design.md`，已拍板待开发）
+   - ⚠️ 当前为**文本选项**（agent 在回复里列选项，用户手打回复）；可点击选项卡体验需 pi-runtime `ask_user` 工具（已实现并注册）+ 前端渲染分支（见 `docs/superpowers/specs/2026-09-28-ask-user-tool-design.md`）
 3. **按 destination 分流 shot 类型**：查"destination → shot 类型映射"，确定本次产出哪些图
 4. **建节点 + 写 prompt**：用 `upsert_media_node` 创建 image 节点；每条 prompt 顶部带 fidelity lock 段落（见"提示词写法"），正文按"主体 → 场景 → 光线 → 风格 → 质量词"结构展开；每类图可给 1–3 个变体方案供挑选，标推荐项
 5. **挂参考图（数据层）**：侧栏参考图用 `apply_sidebar_attachments`（mode=localRefs，@I* 芯片序）；画布已有图才用 `attach_refs`；ref 顺序为先身份/主体，后服装/产品。此步是**数据层**——影响生成时参考哪些图
@@ -60,13 +60,13 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
    - 维度区分：`attach_refs`（step5）是**数据层**（生成时参考哪些图，影响出图），`connect_nodes`（本步）是**视觉层**（画布画箭头 + 驱动沿边布局）——两者不同维度，都要做
    - 配合 `arrange_nodes(along_edges)` 可自动分层（主图居左，衍生图向右展开）；该工具待开发（见 `docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md`，已拍板待开发）
 7. **提议生成**：`propose_generation` 提议生成，等待用户确认；确认前不调用 `run_*`
-8. **出图后 QA 闸门 + 定位**：出图后先 `focus_node` 定位到刚生成的节点（让用户第一时间看到结果），再对照"出图后 QA 闸门"自检并报告 PASS/REVISE/REJECT。**自检前必须先看图**：若 `run_image_generation` 结果 `imageRefine="attached"`，图已作为附加图片块进入上下文，必须先查看该图再做逐 gate 自检，不得凭 prompt 想象画面下结论；`imageRefine="skipped"` 时如实向用户说明"未能获取图片用于自检"，不得假装已自检；`imageRefine="n/a"`（生成未完成）时走原 status 分支处理生成失败。
+8. **出图后 QA 闸门 + 定位**：出图后先 `focus_node` 定位到刚生成的节点（让用户第一时间看到结果），再对照"出图后 QA 闸门"自检并报告 PASS/REVISE/REJECT。**自检前必须先看图**，按 `imageRefine` 取值分四种情形：`imageRefine="attached"` 时图已作为附加图片块进入上下文，必须先查看该图再做逐 gate 自检，不得凭 prompt 想象画面下结论；`imageRefine="skipped"` 时如实向用户说明"未能获取图片用于自检"（可结合结果中的 `imageRefineReason` 说明原因），不得假装已自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理：如实说明本次无法取得图片用于自检，不得凭 prompt 想象下结论；`imageRefine="n/a"`（生成未完成）时走原 status 分支：`status=timeout` 稍后用 `get_generation_status` 查询，`status=fallback_pending` 提示用户在画布节点上确认平台兜底。
 
 ## 出图后 QA 闸门
 
 借鉴 aiskillstore/generating-product-photos 的四 gate。出图后、用户确认收图前，agent 逐图自检并给结论。
 
-**看图是自检的前提**：`imageRefine="attached"` 时生成图已作为附加图片块在上下文中，必须先实际查看图片，再逐 gate 判断；`imageRefine="skipped"` 时无法获取图片，如实说明"未能获取图片用于自检"，**不得把 skipped 当作 PASS 交付**，也不得凭 prompt 描述脑补画面自检；`imageRefine="n/a"` 表示生成未完成，不走本闸门，按生成结果的 status 分支处理。
+**看图是自检的前提**：`imageRefine="attached"` 时生成图已作为附加图片块在上下文中，必须先实际查看图片，再逐 gate 判断；`imageRefine="skipped"` 时无法获取图片（原因见结果中的 `imageRefineReason`），如实说明"未能获取图片用于自检"，**不得把 skipped 当作 PASS 交付**，也不得凭 prompt 描述脑补画面自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理，同样不得盲检交付；`imageRefine="n/a"` 表示生成未完成，不走本闸门，按生成结果的 status 分支处理（`timeout` 稍后 `get_generation_status` 查询；`fallback_pending` 提示用户在画布节点确认平台兜底）。
 
 四 gate 条目：
 
@@ -81,10 +81,10 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
 
 每个节点的生成闸门只允许一次未经用户再确认的重试，预算纪律如下：
 
-- **PASS** → 直接交付，并给出逐 gate 一句话自评结论（让用户知道每项检查的结果依据）
-- **REVISE** → 先归因到具体 gate 与具体项 → 用 `set_node_text` 修正 prompt（针对性修改，不是推倒重写）→ **再次调用 `run_image_generation`**（同节点第 2 次，系统自动放行，无需用户再确认）
+- **PASS** → 直接交付，并给出逐 gate 一句话自评结论；结论必须引用图中可见证据（如商品占框比例、背景纯净度、Logo/包装文字是否原样保留），不得只复述 gate 名称（让用户知道每项检查的结果依据）
+- **REVISE** → 先归因到具体 gate 与具体项 → 用 `set_node_text` 修正 prompt（针对性修改，不是推倒重写）→ **再次调用 `run_image_generation`**（同节点第 2 次，系统自动放行，无需用户再确认；这是"确认前不调用 `run_*`"规则的文档化例外——重试发生在用户对本次生成的原始确认之后）
 - **第二次仍不通过，或第 3 次调用被系统拦截** → **必须 `ask_user`**：给出两次自评的对比结论（哪一 gate、哪些项仍未达标）与可选修正方向（如"往冷调走 / 保留原图换构图 / 人工改图"），由用户决定下一步。**禁止继续无提示重试**
-- `imageRefine="skipped"` 不得当 PASS 交付；`imageRefine="n/a"` 走原 status 分支，不消耗重试预算
+- `imageRefine="skipped"` 或结果中无 `imageRefine` 字段（同 skipped 处理）不得当 PASS 交付；`imageRefine="n/a"` 走 status 分支（`timeout` 查询 / `fallback_pending` 用户确认兜底），不消耗重试预算
 
 ## 平台硬规格
 
@@ -145,3 +145,4 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
   - 明确 `run_image_generation` 结果 `imageRefine="attached"` 时图已在上下文，必须先看图再自检
   - 新增"自评与重试预算"小节：REVISE → 改 prompt 重跑一次（系统放行）；仍不过或第 3 次被拦截 → 必须 ask_user 给结论与选项
   - `imageRefine="skipped"` 不得当 PASS；`"n/a"` 走原 status 分支
+  - 复审加固：`imageRefine` 字段缺失（自评回流关闭）按 skipped 同款处理，杜绝盲检；`n/a` 明确 `timeout`（`get_generation_status` 查询）/ `fallback_pending`（用户确认平台兜底）两个 status 分支；PASS 自评必须引用图中可见证据而非复述 gate 名；skipped 时结合 `imageRefineReason` 说明原因；注明重试是"确认前不调用 `run_*`"的文档化例外；更正 step2 中 `ask_user` 已实现并注册的表述
