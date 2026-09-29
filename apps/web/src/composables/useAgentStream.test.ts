@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { formatPhaseLabel, useAgentStream } from '@/composables/useAgentStream'
+import { useAgentStream } from '@/composables/useAgentStream'
 import { STREAM_STALE_MS } from '@/components/agent/streamRecovery'
 
 describe('useAgentStream', () => {
@@ -31,19 +31,12 @@ describe('useAgentStream', () => {
     stream.stop()
   })
 
-  it('stop clears monitoring', () => {
+it('stop clears monitoring', () => {
     const onStale = vi.fn()
-    const stream = useAgentStream({ pollMs: 1000, onStale })
+   const stream = useAgentStream({ pollMs: 1000, onStale })
     stream.start()
     stream.stop()
     vi.advanceTimersByTime(STREAM_STALE_MS + 5000)
     expect(onStale).not.toHaveBeenCalled()
-  })
-})
-
-describe('formatPhaseLabel', () => {
-  it('maps known phases', () => {
-    expect(formatPhaseLabel('await_topo')).toBe('等待拓扑确认')
-    expect(formatPhaseLabel('unknown_phase')).toBe('unknown_phase')
   })
 })

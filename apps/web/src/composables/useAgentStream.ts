@@ -59,25 +59,5 @@ export function useAgentStream(options: UseAgentStreamOptions = {}) {
   return { unreachable, lastActivityAt, touch, start, stop, reset }
 }
 
-export const PHASE_LABELS: Record<string, string> = {
-  intake: '理解需求',
-  plan: '拟定方案',
-  await_confirm: '等待方案确认',
-  write_plan_node: '写入方案',
-  split: '拆解画布',
-  draft_copy: '起草文案',
-  await_copy_confirm: '等待文案确认',
-  write_copy_node: '写入文案',
-  await_topo: '等待拓扑确认',
-  await_atomic_confirm: '等待生成确认',
-  atomic_parse: '解析原子需求',
-  atomic_create: '创建画布节点',
-  orchestrate_gen: '出图进行中',
-  done: '已完成',
-  error: '出错',
-}
-
-export function formatPhaseLabel(phase: string | null | undefined): string {
-  if (!phase) return '未知'
-  return PHASE_LABELS[phase] ?? phase
-}
+// PHASE_LABELS + formatPhaseLabel 已退役（P2#10 死代码清理）：
+// pi 路径无 phase_hint 事件，前端无消费方。计划/进度叙事改由 phaseAggregator 承担。
