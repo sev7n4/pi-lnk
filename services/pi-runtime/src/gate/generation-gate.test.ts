@@ -209,3 +209,50 @@ test("V-γ 逃生口：非 GATED 工具在预算耗尽后也不得触发 clearRu
 	assert.deepEqual(read, { allowed: true });
 	assert.equal(store.runCount("s1", "n1"), 2, "非 GATED 调用零接触预算（不清零）");
 });
+
+// ── SSOT 查询的 sessionId 解耦（#74 后 gate 必须带画布会话 id）──────────────
+// 背景：gate 在 index.ts 的 onSessionCreated 闭包里只拿得到 pi 会话键；#74 之前
+// pi 键 == 画布 id 所以没事，解耦后拿键查 Nest get-node 必 404 → 全部 run_* 被
+// fail-closed 假阳性拦截（2026-09-29 生产冒烟实证）。SSOT 查询必须用画布会话 id。
+
+function bodyCapturingClient(response: unknown, opts: { throwOnPost?: boolean } = {}) {
+	const bodies: Array<Record<string, unknown>> = [];
+	return {
+		bodies,
+		post: async (_path: string, body: unknown) => {
+			bodies.push(body as Record<string, unknown>);
+			if (opts.throwOnPost) throw new Error("boom");
+			return response;
+		},
+	};
+}
+
+const PENDING_NODE = { data: { status: "pending_confirm" } };
+
+test("SSOT 查询带 opts.canvasSessionId 时必须用它（而非 pi 会话键）", async () => {
+	const c = bodyCapturingClient(PENDING_NODE);
+	const r = await checkGenerationGate(
+		new GenerationGateStore(), c, "pi-key-abc", GATED, { node_id: "n1" }, { canvasSessionId: "canvas-9" },
+	);
+	assert.equal(r.allowed, true);
+	assert.deepEqual(c.bodies[0], { sessionId: "canvas-9", nodeId: "n1" });
+});
+
+test("未传 opts.canvasSessionId 时回落 sessionId（兼容旧调用/单测）", async () => {
+	const c = bodyCapturingClient(PENDING_NODE);
+	const r = await checkGenerationGate(new GenerationGateStore(), c, "pi-key-abc", GATED, { node_id: "n1" });
+	assert.equal(r.allowed, true);
+	assert.deepEqual(c.bodies[0], { sessionId: "pi-key-abc", nodeId: "n1" });
+});
+
+test("V-γ 逃生口的 SSOT 查询同样必须用画布会话 id", async () => {
+	const store = new GenerationGateStore();
+	store.markRun("pi-key-abc", "n1");
+	store.markRun("pi-key-abc", "n1"); // runs = 2 → 进入逃生口分支
+	const c = bodyCapturingClient(PENDING_NODE);
+	const r = await checkGenerationGate(
+		store, c, "pi-key-abc", GATED, { node_id: "n1" }, { canvasSessionId: "canvas-9" },
+	);
+	assert.equal(r.allowed, true);
+	assert.deepEqual(c.bodies[0], { sessionId: "canvas-9", nodeId: "n1" });
+});

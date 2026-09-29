@@ -48,7 +48,11 @@ const manager = new SessionManager(
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
 			harness.hooks.on("before_tool", async (event) => {
-				const check = await checkGenerationGate(gateStore, gateClient, sessionId, event.toolName, event.args);
+				const check = await checkGenerationGate(gateStore, gateClient, sessionId, event.toolName, event.args, {
+					// #74 解耦语义：SSOT 查询必须带画布会话 id —— 本闭包只有 pi 会话键，
+					// 拿键查 Nest get-node 404 → 全部 run_* 被 fail-closed 假阳性拦截（2026-09-29 冒烟实证）。
+					canvasSessionId: manager.getCanvasSessionId(sessionId),
+				});
 				if (!check.allowed) {
 					metrics.observeToolCall(event.toolName, "error", "gate_blocked"); // ③：HITL 拦截归因观测
 					return { block: { reason: check.reason ?? "generation gated" } };
