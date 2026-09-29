@@ -1,6 +1,6 @@
 # P1 工具立项设计规格：read_document / save_memory / recall_memory（task_plan 移交 UX P0-P2）
 
-状态：已实现并通过独立终审（①A + ②-⑥ 按推荐默认；2026-09-29 终审后按 I-1/I-2 修订检索语义与 §10 用例数）
+状态：已实现并通过独立终审（①A + ②-⑥ 按推荐默认；2026-09-29 终审后按 I-1/I-2 修订检索语义与 §10 用例数）。**2026-09-29 补充**：登记 `read_document` 的文本格式边界与 PDF/docx 缺口（§2「不在范围」+ §12 升级路径），属文档性补登记，不改动任何已实现行为
 前置：pi-runtime 工具注册体系（已上线 0.0.13，PR #65/#66）；Nest `/agent/internal/*` 服务间鉴权通道（x-lnkpi-service-token，在用）；`toolContext.attachments` 注入链路（session-manager.ts:193，已存在）
 分支约定：实现走 feature 分支 + PR + squash merge；本 spec 落盘时主工作区被并行分支占用，文件随实现分支首 commit 带入 master。
 
@@ -33,6 +33,7 @@
 - 不做 memory 删除/更新工具——v1 只进不出，避免误删不可逆；清理由 DB 侧人工处理
 - 不做向量检索 / 嵌入调用——sqlite + 关键词 LIKE + 时间序，记忆量到数百条前无检索质量问题（YAGNI，§12 登记升级路径）
 - 不做 image/video/audio 素材的 read_document 化——图片已走视觉解析（`imageUrlsForParse`），音视频无文本可读，返回指引性错误
+- 不做 PDF/docx/xlsx 等二进制文档的解析——本包只读 `attachments[].text` 纯文本字段：前端 `useMediaUpload.ts:42` 用 `file.text()` 原样 UTF-8 解码（无编码探测、无内容抽取），分类层 `detectFileKind`（`useCanvasMedia.ts:36`）的文本白名单只有 `txt/md/markdown/json/csv/html/htm/xml/log` 9 类扩展名 + `text/*` MIME；未识别的 `'other'` 被 `useSidebarAttachments.ts:88-95` 的 mediaType 三目兜到最后一档 `image` → **PDF/docx 会被静默归为 image 素材**，用户与模型只看到「仅支持文本素材」，无从判断是格式不支持。本包有意不含解析器（升级路径见 §12）；两侧均无回归测试锁定该行为，属已登记缺口而非承诺行为
 - 不做 task_plan 工具——移交 UX P0-P2（§1.3 裁决，§12 登记）
 - 不改 vendored pi harness、不动 `SidebarAttachment` shared schema（Nest 侧验证已足够，pi-runtime 侧"不再清洗"契约不变）
 
@@ -172,6 +173,9 @@ model AgentMemory {
 - 检索升级（终审 I-2 登记）：记忆条数超过 `MEMORY_SCAN_MAX=200` 后，关键词检索只覆盖最近 200 条——届时改为 FTS5（sqlite 内置全文索引，支持转义与大小写选项）或向量检索（pgvector / 嵌入调用）
 - task_plan 工具化——UX P0-P2 落地后，若标记方案不够用，在 task_list/task_update 事件通道上加工具，不得另起契约
 - read_document 扩展 URL 素材正文抓取（url 有值且 mediaType=text 的网页类素材）——与 web_fetch 去重后评估
+- **read_document 支持真正的文档格式（PDF/docx/xlsx）**——本包只读纯文本（§2 不在范围），当前用户上传 PDF 会得到「image 素材」的误导提示。两条可分别评估，互不阻塞：
+  - ① **分类与提示修正（小，建议先做）**：`detectFileKind` 增 `'document'` 档（pdf/doc/docx/xls/xlsx/ppt/pptx），`useSidebarAttachments` 显式处理该档并给出「暂不支持该格式，请转存为 txt/md」的明确提示——消除静默错分类，不引入解析依赖
+  - ② **正文抽取（大）**：Nest 侧引入抽取（pdf-parse / mammoth）在附件入库或注入前转 `text`，pi-runtime 零改动即可读——立项前须先确认抽取保真度（表格/多栏排版）、体积与 20k 窗口的配合，以及是否要为抽取失败保留原文下载口
 
 ## 13. 配图规范自检
 
