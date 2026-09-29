@@ -12,9 +12,13 @@ import { buildWebTools } from "./web.js";
 import { buildDeleteNodesTools } from "./delete-nodes.js";
 import { buildReadDocumentTools } from "./read-document.js";
 import { buildMemoryTools } from "./memory.js";
+import { buildRemoveEdgesTools } from "./remove-edges.js";
 
 /** P0 批次：web_search/web_fetch（感知层）。TAVILY_API_KEY 未配置时由 config.ts 条件装配。 */
 export { buildWebTools };
+
+/** S4 批次：remove_edges（tier=write_light，复用 Nest remove-edges，id 来自 get_canvas_layout）。 */
+export { buildRemoveEdgesTools };
 
 /** P0 批次：delete_nodes（tier=destructive，复用 Nest remove-nodes）。 */
 export { buildDeleteNodesTools };

@@ -1500,6 +1500,16 @@ async function handleAgentActions(actions: unknown[]) {
   )
   nodes.value = result.nodes as unknown as EditableFlowNode[]
   edges.value = result.edges as unknown as CanvasEdge[]
+  // set_viewport action：把模型指定的视口落到位（与 panViewport 同款的防御式取用）
+  if (result.viewport) {
+    const flow = vueFlowRef.value as {
+      setViewport?: (
+        viewport: { x: number; y: number; zoom: number },
+        options?: { duration?: number },
+      ) => void
+    } | null
+    flow?.setViewport?.(result.viewport, { duration: 300 })
+  }
   startPollingForGeneratingShots()
   // Fix #3: also start generation polling so any record-id-bearing nodes
   // (status:generating now) get polled to terminal state.
@@ -4163,26 +4173,25 @@ async function loadSession() {
       compositionRunGroup.value = data.data.canvasData.compositionRunGroup ?? null
       lastKnownCompositionRunGroup.value = data.data.canvasData.compositionRunGroup ?? null
     } else {
-      nodes.value = [{
-        id: 'prompt-1',
-        type: 'prompt',
-        position: { x: 250, y: 100 },
-        data: { prompt: '描述你的创意场景...' },
-      }]
-      nodeCounter = 1
+      // 空画布就是空画布：不再伪造 prompt-1 占位节点（2026-09-29 拍板，spec 场景 A）。
+      // 伪造节点会让用户以为「画布上本来就有东西」，且一旦拖动就会触发 saveCanvas()
+      // 把假节点 PUT 覆盖掉服务端真画布（静默数据丢失）。
+      nodes.value = []
+      edges.value = []
+      nodeCounter = 0
       compositionRunGroup.value = null
       lastKnownCompositionRunGroup.value = null
     }
-  } catch (e) {
-    nodes.value = [{
-      id: 'prompt-1',
-      type: 'prompt',
-      position: { x: 250, y: 100 },
-      data: { prompt: '描述你的创意场景...' },
-    }]
-    nodeCounter = 1
+  } catch {
+    // 同样不再伪造 prompt-1 占位节点：那是本地假数据，用户一旦拖动就会触发
+    // saveCanvas() 把假节点 PUT 覆盖掉服务端真画布（静默数据丢失）。
+    // 改为空画布 + 明确报错，让「加载失败」这件事对用户可见。
+    nodes.value = []
+    edges.value = []
+    nodeCounter = 0
     compositionRunGroup.value = null
     lastKnownCompositionRunGroup.value = null
+    ElMessage.error('画布加载失败，请刷新重试')
   }
   generationFieldsCache.clear()
   for (const n of nodes.value) {

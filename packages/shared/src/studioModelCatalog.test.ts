@@ -4,7 +4,9 @@ import {
   resolveModelKey,
   defaultModelKey,
   getModelEntry,
+  normalizeModelRef,
 } from './studioModelCatalog'
+import { encodeChannelModel } from './providerChannels'
 
 describe('studioModelCatalog', () => {
   it('lists fixed product models per modality', () => {
@@ -65,5 +67,47 @@ describe('studioModelCatalog', () => {
   it('exposes voices for audio models', () => {
     const mini = getModelEntry('minimax-speech-2.8-hd')
     expect(mini?.voices?.length).toBeGreaterThan(0)
+  })
+})
+
+describe('normalizeModelRef', () => {
+  it('空值 → null', () => {
+    expect(normalizeModelRef('image', undefined)).toBeNull()
+    expect(normalizeModelRef('image', '')).toBeNull()
+    expect(normalizeModelRef('image', '   ')).toBeNull()
+  })
+
+  it('已编码 ref 原样通过（BYOK 渠道不被改写）', () => {
+    const out = normalizeModelRef('image', 'ch_byok_1::some-model')
+    expect(out).toEqual({
+      ref: 'ch_byok_1::some-model',
+      channelId: 'ch_byok_1',
+      modelName: 'some-model',
+      fallback: false,
+    })
+  })
+
+  it('裸名命中目录 → 归一为 platform::<modelKey>', () => {
+    // 用目录里真实存在的 key（'image2'），否则命中的是默认回落值、测不到「命中」路径
+    const known = resolveModelKey('image', 'image2').modelKey
+    expect(known).toBe('image2')
+    const out = normalizeModelRef('image', known)
+    expect(out).toEqual({
+      ref: encodeChannelModel('platform', known),
+      channelId: 'platform',
+      modelName: known,
+      fallback: false,
+    })
+  })
+
+  it('裸名未命中 → fallback:true（调用方据此拒绝，不静默采用）', () => {
+    const out = normalizeModelRef('image', '完全不存在的模型-xyz')
+    expect(out?.fallback).toBe(true)
+    expect(out?.ref).toBe(encodeChannelModel('platform', defaultModelKey('image')))
+  })
+
+  it('跨模态裸名（video 名传给 image）也判 fallback', () => {
+    const videoKey = resolveModelKey('video', defaultModelKey('video')).modelKey
+    expect(normalizeModelRef('image', videoKey)?.fallback).toBe(true)
   })
 })

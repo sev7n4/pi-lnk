@@ -9,6 +9,7 @@ import { StudioService } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
 import { MaterialService } from '../canvas/material.service'
+import { ProviderService } from '../provider/provider.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 
 const emptyCanvas = (): CanvasData => ({ nodes: [], edges: [] })
@@ -39,6 +40,7 @@ describe('AgentCanvasToolsService', () => {
   const persistRemote = vi.fn()
   const sliceImage = vi.fn()
   const userWorkflowRecipeCreate = vi.fn()
+  const providerBootstrap = vi.fn()
 
   const defaultPrefs = {
     userId: 'u1',
@@ -130,6 +132,16 @@ describe('AgentCanvasToolsService', () => {
     })
     cancelPlatformFallbackMaterial.mockResolvedValue({ id: 'mat-1', status: 'failed' })
     materialFindFirst.mockResolvedValue(null)
+    providerBootstrap.mockResolvedValue({
+      platformChannel: { id: 'platform', name: '平台', models: [] },
+      channels: [{ id: 'ch_byok_1', name: '我的渠道', models: [{ name: 'custom-image', capability: 'image' }] }],
+      preferences: {
+        selectableImageModels: ['platform::seedream-5.0-pro', 'ch_byok_1::custom-image'],
+        selectableVideoModels: ['platform::agnes-video-v2.0'],
+        selectableTextModels: ['platform::agnes-2.0-flash'],
+        selectableAudioModels: ['platform::minimax-speech-2.8-hd'],
+      },
+    })
     sliceImage.mockResolvedValue({
       urls: [
         'https://cdn.example/slice-1.png',
@@ -220,6 +232,10 @@ describe('AgentCanvasToolsService', () => {
         {
           provide: ImageSliceService,
           useValue: { slice: sliceImage },
+        },
+        {
+          provide: ProviderService,
+          useValue: { bootstrap: providerBootstrap },
         },
       ],
     }).compile()
@@ -2532,6 +2548,186 @@ describe('AgentCanvasToolsService', () => {
       expect(result.status).toBe('draft')
       expect(canvas.nodes[0].data.status).toBe('draft')
       expect(generateImage).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('updateNode（spec S2）', () => {
+    it('改标题：生成 update_node action 并落库', async () => {
+      canvas = { nodes: [{ id: 'i1', type: 'image', position: { x: 0, y: 0 }, data: { title: '旧名' } }], edges: [] }
+      const out = await svc.updateNode({ sessionId: 's1', userId: 'u1', nodeId: 'i1', patch: { title: '茶馆主视觉' } })
+      expect(out.actions).toEqual([{ type: 'update_node', payload: { id: 'i1', data: { title: '茶馆主视觉' } } }])
+      expect(canvas.nodes[0].data.title).toBe('茶馆主视觉')
+    })
+
+    it('换芯片：BYOK 渠道 ref 通过清单校验', async () => {
+      canvas = { nodes: [{ id: 'i1', type: 'image', position: { x: 0, y: 0 }, data: {} }], edges: [] }
+      const out = await svc.updateNode({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'i1',
+        patch: { imageModel: 'ch_byok_1::custom-image' },
+      })
+      expect(canvas.nodes[0].data.imageModel).toBe('ch_byok_1::custom-image')
+      expect(out.nodeId).toBe('i1')
+    })
+
+    it('裸名（目录内）也被归一成 platform:: ref 后落库', async () => {
+      canvas = { nodes: [{ id: 'i1', type: 'image', position: { x: 0, y: 0 }, data: {} }], edges: [] }
+      await svc.updateNode({ sessionId: 's1', userId: 'u1', nodeId: 'i1', patch: { imageModel: 'seedream-5.0-pro' } })
+      // 裸名 seedream-5.0-pro 归一为 platform::seedream-5.0-pro，在清单内 → 通过
+      expect(canvas.nodes[0].data.imageModel).toBe('platform::seedream-5.0-pro')
+    })
+
+    it('Review Focus 1：nodeId 不存在 → NotFoundException', async () => {
+      canvas = emptyCanvas()
+      await expect(
+        svc.updateNode({ sessionId: 's1', userId: 'u1', nodeId: 'nope', patch: { title: 'x' } }),
+      ).rejects.toBeInstanceOf(NotFoundException)
+    })
+
+    it('Review Focus 1：跨账号 → ForbiddenException', async () => {
+      canvas = emptyCanvas()
+      await expect(
+        svc.updateNode({ sessionId: 's1', userId: 'other', nodeId: 'i1', patch: { title: 'x' } }),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+    })
+
+    it('非法 patch → BadRequestException 且附合法清单', async () => {
+      canvas = { nodes: [{ id: 'i1', type: 'image', position: { x: 0, y: 0 }, data: {} }], edges: [] }
+      await expect(
+        svc.updateNode({ sessionId: 's1', userId: 'u1', nodeId: 'i1', patch: { status: 'completed' } }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+    })
+
+    it('清单外的模型 ref → BadRequestException（不落库）', async () => {
+      canvas = { nodes: [{ id: 'i1', type: 'image', position: { x: 0, y: 0 }, data: {} }], edges: [] }
+      await expect(
+        svc.updateNode({ sessionId: 's1', userId: 'u1', nodeId: 'i1', patch: { imageModel: 'platform::not-in-list' } }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      expect(canvas.nodes[0].data.imageModel).toBeUndefined()
+    })
+  })
+
+  describe('listNodeModelOptions（spec S3）', () => {
+    it('按模态列出 ref + 来源（platform / user）', async () => {
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      expect(out.modalities.image).toEqual([
+        { ref: 'platform::seedream-5.0-pro', model: 'seedream-5.0-pro', channelId: 'platform', channelName: '平台', source: 'platform' },
+        { ref: 'ch_byok_1::custom-image', model: 'custom-image', channelId: 'ch_byok_1', channelName: '我的渠道', source: 'user' },
+      ])
+      expect(out.modalities.video).toEqual([
+        { ref: 'platform::agnes-video-v2.0', model: 'agnes-video-v2.0', channelId: 'platform', channelName: '平台', source: 'platform' },
+      ])
+    })
+
+    it('Review Focus 5：无 BYOK 渠道时仍返回平台目录（不空不抛）', async () => {
+      providerBootstrap.mockResolvedValue({
+        platformChannel: { id: 'platform', name: '平台', models: [] },
+        channels: [],
+        preferences: {
+          selectableImageModels: ['platform::seedream-5.0-pro'],
+          selectableVideoModels: [],
+          selectableTextModels: [],
+          selectableAudioModels: [],
+        },
+      })
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      expect(out.modalities.image).toHaveLength(1)
+      expect(out.modalities.video).toEqual([])
+    })
+
+    it('Review Focus 1：缺 userId → BadRequestException（fail-closed，不打 provider）', async () => {
+      await expect(svc.listNodeModelOptions({ userId: '' })).rejects.toBeInstanceOf(BadRequestException)
+      expect(providerBootstrap).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('getNode 上下游（spec §5.5 / S7）', () => {
+    beforeEach(() => {
+      canvas = {
+        nodes: [
+          { id: 'p1', type: 'prompt', position: { x: 0, y: 0 }, data: { title: '文案' } },
+          { id: 'i1', type: 'image', position: { x: 1, y: 0 }, data: { title: '主图' } },
+        ],
+        edges: [{ id: 'e1', source: 'p1', target: 'i1' }],
+      }
+    })
+
+    it('返回 upstream/downstream 三元组，且保留节点原有字段', async () => {
+      const node = await svc.getNode({ sessionId: 's1', nodeId: 'i1' })
+      expect(node.upstream).toEqual([{ id: 'p1', type: 'prompt', title: '文案' }])
+      expect(node.downstream).toEqual([])
+      expect(node.id).toBe('i1')
+      expect(node.position).toEqual({ x: 1, y: 0 })
+    })
+
+    it('Review Focus 3：空画布下 get_node 抛 NotFound（不是崩）', async () => {
+      canvas = emptyCanvas()
+      await expect(svc.getNode({ sessionId: 's1', nodeId: 'nope' })).rejects.toBeInstanceOf(NotFoundException)
+    })
+  })
+
+  describe('getCanvasLayout 返回 edges（spec §5.5 / 目标 3）', () => {
+    it('edges 为 {id,source,target} 三元组；空画布回空数组', async () => {
+      canvas = {
+        nodes: [{ id: 'p1', type: 'prompt', position: { x: 0, y: 0 }, data: {} }],
+        edges: [{ id: 'e1', source: 'p1', target: 'i1' }],
+      }
+      const layout = await svc.getCanvasLayout({ sessionId: 's1' })
+      expect(layout.edges).toEqual([{ id: 'e1', source: 'p1', target: 'i1' }])
+
+      canvas = emptyCanvas()
+      const empty = await svc.getCanvasLayout({ sessionId: 's1' })
+      expect(empty.edges).toEqual([])
+      expect(empty.nodes).toEqual([])
+      expect(empty.groups).toEqual([])
+    })
+
+    it('edges 只回三元组（不泄漏边上的其它字段）', async () => {
+      canvas = {
+        nodes: [
+          { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'video', position: { x: 1, y: 0 }, data: {} },
+        ],
+        edges: [{ id: 'e1', source: 'a', target: 'b', animated: true, style: { stroke: 'red' } } as never],
+      }
+      const layout = await svc.getCanvasLayout({ sessionId: 's1' })
+      expect(Object.keys(layout.edges[0]).sort()).toEqual(['id', 'source', 'target'])
+    })
+  })
+
+  describe('removeEdges 归属与幂等（spec S8 / Review Focus 2）', () => {
+    beforeEach(() => {
+      canvas = {
+        nodes: [
+          { id: 'p1', type: 'prompt', position: { x: 0, y: 0 }, data: {} },
+          { id: 'i1', type: 'image', position: { x: 1, y: 0 }, data: {} },
+        ],
+        edges: [{ id: 'e1', source: 'p1', target: 'i1' }],
+      }
+    })
+
+    it('带 userId 时校验归属 → 跨账号 Forbidden', async () => {
+      await expect(
+        svc.removeEdges({ sessionId: 's1', userId: 'other', edgeIds: ['e1'] }),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+    })
+
+    it('不存在的 edgeId 被跳过（幂等成功，不报错、不落库）', async () => {
+      const out = await svc.removeEdges({ sessionId: 's1', userId: 'u1', edgeIds: ['nope'] })
+      expect(out.actions).toEqual([])
+      expect(canvas.edges).toHaveLength(1)
+    })
+
+    it('删除命中边并回 remove_edge action', async () => {
+      const out = await svc.removeEdges({ sessionId: 's1', userId: 'u1', edgeIds: ['e1'] })
+      expect(out.actions).toEqual([{ type: 'remove_edge', payload: { id: 'e1' } }])
+      expect(canvas.edges).toEqual([])
+    })
+
+    it('未传 userId 时保持旧行为（向后兼容既有调用）', async () => {
+      const out = await svc.removeEdges({ sessionId: 's1', edgeIds: ['e1'] })
+      expect(out.actions).toHaveLength(1)
     })
   })
 })

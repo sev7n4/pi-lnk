@@ -21,9 +21,10 @@ export function applyActionsToFlow(
   nodes: FlowNode[],
   edges: FlowEdge[],
   actions: CanvasAction[],
-): { nodes: FlowNode[]; edges: FlowEdge[] } {
+): { nodes: FlowNode[]; edges: FlowEdge[]; viewport?: { x: number; y: number; zoom: number } } {
   const newNodes = [...nodes]
   const newEdges = [...edges]
+  let viewport: { x: number; y: number; zoom: number } | undefined
 
   for (const action of actions) {
     switch (action.type) {
@@ -81,10 +82,22 @@ export function applyActionsToFlow(
           animated: true,
         })
         break
+      // 2026-09-29 补：此前 remove_edge / set_viewport 落入无 case 分支被静默丢弃，
+      // 与 packages/agent 的 applyCanvasActions 同源缺陷（那侧已同步补分支）。
+      case 'remove_edge': {
+        const edgeId = action.payload.id
+        if (!edgeId) break
+        const idx = newEdges.findIndex((e) => e.id === edgeId)
+        if (idx > -1) newEdges.splice(idx, 1)
+        break
+      }
+      case 'set_viewport':
+        if (action.payload.viewport) viewport = action.payload.viewport
+        break
     }
   }
 
-  return { nodes: newNodes, edges: newEdges }
+  return { nodes: newNodes, edges: newEdges, viewport }
 }
 
 export function canvasDataToFlow(data: CanvasData): { nodes: FlowNode[]; edges: FlowEdge[] } {

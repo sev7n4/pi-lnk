@@ -6,6 +6,7 @@ import {
   decodeChannelModel,
   encodeChannelModel,
   modelOptionName,
+  normalizeModelRef,
   supportsThinkingLevel,
   type StudioModality,
   type StudioModelEntry,
@@ -34,16 +35,16 @@ export function modelsAsSelectorOptions(modality: StudioModality) {
   }))
 }
 
-/** Normalize node/API model values to `channelId::modelName` for BYOK. */
+/**
+ * 节点级生成模型解析：有值时归一（委托 shared 的 SSOT），无值时回落到平台默认。
+ * ⚠️ 与 agent 侧 update_node 共用 normalizeModelRef，勿在组件里重写判定。
+ */
 export function resolveGenerationModel(
   modality: StudioModality,
   requested?: string | null,
 ): string {
-  const trimmed = requested?.trim()
-  if (trimmed) {
-    if (decodeChannelModel(trimmed)) return trimmed
-    return encodeChannelModel('platform', resolveModelKey(modality, trimmed).modelKey)
-  }
+  const normalized = normalizeModelRef(modality, requested)
+  if (normalized) return normalized.ref
   return encodeChannelModel('platform', defaultModelKey(modality))
 }
 

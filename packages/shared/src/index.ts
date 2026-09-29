@@ -123,7 +123,7 @@ export interface AuthToken {
 
 export interface CreateSessionRequest {
   title?: string
-  prompt?: string
+  // 2026-09-29 移除 `prompt`：新建画布不再种提示词节点，brief 走 initialPrompt query 预填侧栏。
 }
 
 export interface CanvasNode {

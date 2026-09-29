@@ -246,10 +246,10 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.equal(calls.length, 1);
 	});
 
-	it("默认注册 12 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
+	it("默认注册 13 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		assert.equal(tools.length, 12);
+		assert.equal(tools.length, 13);
 		const tiers = Object.fromEntries(tools.map((t) => [t.name, t.tier]));
 		assert.equal(tiers.connect_nodes, "graph_batch");
 		assert.equal(tiers.upsert_media_node, "write_light");
@@ -258,7 +258,127 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.ok(!tools.some((t) => t.name === "set_node_content"), "set_node_content 已并入 set_node_text");
 
 		const withDeferred = createCanvasWriteTools(client, { includeDeferred: true });
-		assert.equal(withDeferred.length, 13);
+		assert.equal(withDeferred.length, 14);
 		assert.ok(withDeferred.some((t) => t.name === "introduce_nodes_to_agent"));
+	});
+});
+
+describe("update_node（spec S2）", () => {
+	it("snake_case 入参 → camelCase patch；userId/sessionId 只来自 toolContext", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await run(tool, { node_id: "n1", title: "茶馆主视觉", image_model: "platform::seedream-4" });
+		assert.equal(calls[0].path, "/agent/internal/update-node");
+		assert.deepEqual(calls[0].body, {
+			sessionId: "s1",
+			userId: "u1",
+			nodeId: "n1",
+			patch: { title: "茶馆主视觉", imageModel: "platform::seedream-4" },
+		});
+	});
+
+	it("一个字段都不给 → fail-closed，不打 Nest", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await assert.rejects(() => run(tool, { node_id: "n1" }), /at least one/);
+		assert.equal(calls.length, 0);
+	});
+
+	it("禁止的字段不进 patch（模型无法借 update_node 改 prompt/content/status）", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await run(tool, { node_id: "n1", title: "X", status: "completed", prompt: "注入" } as never);
+		assert.deepEqual(Object.keys(calls[0].body.patch as object), ["title"]);
+	});
+
+	it("toolContext 缺 userId → fail-closed", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await assert.rejects(
+			() => run(tool, { node_id: "n1", title: "X" }, { sessionId: "s1" } as LnkpiToolContext),
+			/requires userId/,
+		);
+		assert.equal(calls.length, 0);
+	});
+
+	it("返回 details.actions（实时通道）", async () => {
+		const client = {
+			post: async () => ({ nodeId: "n1", actions: [{ type: "update_node", payload: { id: "n1", data: { title: "X" } } }] }),
+		} as never;
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		const out = (await run(tool, { node_id: "n1", title: "X" })) as { details?: { actions?: unknown[] } };
+		assert.equal(out.details?.actions?.length, 1);
+	});
+});
+
+/**
+ * 实时通道回归锁（Task 7 Step 6）。
+ *
+ * 这里只断言"形状存在性"而不是内容：makeClient 返回 `{ echoed: body }`，没有
+ * actions 字段，所以空数组也算通过。要锁的是"每个写工具都真的走了
+ * resultWithActions 而不是某天被改回 textResult（details:undefined）"——
+ * 那正是 PR #65 delete_nodes 踩过的坑（服务端已改、画布不动，要等回合末回拉）。
+ */
+describe("canvas-write: 全部写工具都推 details.actions（实时通道回归锁）", () => {
+	const WRITE_TOOLS = [
+		"upsert_prompt_node",
+		"upsert_media_node",
+		"set_node_text",
+		"attach_refs",
+		"propose_generation",
+		"apply_asset_to_node",
+		"save_node_to_asset_library",
+		"duplicate_node",
+		"upload_media_to_canvas",
+		"grid_slice_image",
+		"connect_nodes",
+		"update_node",
+	] as const;
+
+	it("每个写工具的返回都含 details.actions 数组", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const params: Record<string, unknown> = {
+			upsert_prompt_node: { prompt: "P", content: "C" },
+			upsert_media_node: { target_type: "image", prompt: "P" },
+			set_node_text: { node_id: "n1", prompt: "P" },
+			attach_refs: { node_id: "n1", ref_order: ["i1"] },
+			propose_generation: { node_id: "n1" },
+			apply_asset_to_node: { node_id: "n1", asset_id: "a1", source: "user" },
+			save_node_to_asset_library: { node_id: "n1" },
+			duplicate_node: { node_id: "n1" },
+			upload_media_to_canvas: { url: "https://x/a.png", media_type: "image" },
+			grid_slice_image: { cols: 2, rows: 2, source_url: "https://x/a.png" },
+			connect_nodes: { edges: [{ source: "n1", target: "n2" }] },
+			update_node: { node_id: "n1", title: "X" },
+		};
+		for (const name of WRITE_TOOLS) {
+			const out = (await run(findTool(tools, name), params[name])) as { details?: { actions?: unknown } };
+			assert.ok(Array.isArray(out.details?.actions), `${name} must expose details.actions`);
+		}
+	});
+
+	it("set_node_text 只传 prompt 时不吞掉该分支的 actions（此前 prompt 返回值被丢弃）", async () => {
+		const tools = createCanvasWriteTools({
+			post: async () => ({ actions: [{ type: "update_node", payload: { id: "n1" } }] }),
+		} as never);
+		const out = (await run(findTool(tools, "set_node_text"), { node_id: "n1", prompt: "P" })) as {
+			details?: { actions?: unknown[] };
+		};
+		assert.deepEqual(out.details?.actions, [{ type: "update_node", payload: { id: "n1" } }]);
+	});
+
+	it("set_node_text 双传时合并两个分支的 actions（顺序：prompt → content）", async () => {
+		let n = 0;
+		const tools = createCanvasWriteTools({
+			post: async () => ({ actions: [{ type: "update_node", payload: { seq: ++n } }] }),
+		} as never);
+		const out = (await run(findTool(tools, "set_node_text"), { node_id: "n1", prompt: "P", content: "C" })) as {
+			details?: { actions?: Array<{ payload: { seq: number } }> };
+		};
+		assert.deepEqual(
+			out.details?.actions?.map((a) => a.payload.seq),
+			[1, 2],
+		);
 	});
 });

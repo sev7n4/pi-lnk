@@ -7,10 +7,6 @@ class CreateSessionDto {
   @IsOptional()
   @IsString()
   title?: string
-
-  @IsOptional()
-  @IsString()
-  prompt?: string
 }
 
 class UpdateSessionDto {
@@ -35,7 +31,7 @@ export class SessionsController {
   @Post()
   @UseGuards(AuthGuard)
   async create(@Req() req: { user: { sub: string } }, @Body() dto: CreateSessionDto) {
-    const data = await this.sessionsService.create(req.user.sub, dto.title, dto.prompt)
+    const data = await this.sessionsService.create(req.user.sub, dto.title)
     return { code: 0, message: 'ok', data }
   }
 
