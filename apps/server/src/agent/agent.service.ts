@@ -637,6 +637,11 @@ export class AgentService {
       thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
       // K-1：BYOK 渠道覆盖（undefined → pi-runtime env 装配）
       llm,
+      // ⚠️ 必须显式传画布会话 id：sessionKey 可能是 `${画布id}:${后缀}` 的复合键，
+      // pi-runtime 会把它哈希成 toSessionKey() 作为持久化键，而工具要拿**画布** id
+      // 回查 Nest `/agent/internal/*`（prisma.session.findUnique({id})）。
+      // 不传 → agent 全部画布工具 404（2026-09-29 hotfix）。
+      canvasSessionId: sessionId,
     })
     if (created.status === 'rebuilt') {
       // 会话身份变更（如 BYOK 渠道切换）→ pi-runtime 重建了会话，历史已重置。
@@ -761,6 +766,8 @@ export class AgentService {
       thinkingLevel?: 'off' | 'medium' | 'high'
       /** K-1：BYOK 会话级模型覆盖（仅 source=user 的渠道；平台用户不传） */
       llm?: PiSessionLlmOverride
+      /** 画布会话 id（≠ sessionKey，见 createSession 处注释）；工具回查 Nest 用 */
+      canvasSessionId?: string
     },
   ): Promise<CreateSessionResult> {
     return client.createSession(sessionKey, {
@@ -769,6 +776,8 @@ export class AgentService {
       thinkingLevel: opts?.thinkingLevel,
       // K-1：BYOK 覆盖随会话创建注入（畸形由 pi-runtime 侧 400，此处不二次校验）
       llm: opts?.llm,
+      // 画布会话 id 随会话创建注入 → pi-runtime 存进 entry，toolContext 取它而非哈希键
+      canvasSessionId: opts?.canvasSessionId,
     })
   }
 

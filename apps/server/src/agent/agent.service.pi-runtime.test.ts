@@ -704,6 +704,9 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
 
     expect(pi.createSession.mock.calls[0][0]).toBe('s1:t9')
     expect(pi.prompt.mock.calls[0][0]).toBe('s1:t9')
+    // hotfix 回归锁（2026-09-29）：pi 会话键是复合键 `s1:t9`，但画布会话 id 必须是 `s1`。
+    // 漏传会让 pi-runtime 把哈希后的会话键当画布 id 发回 Nest /agent/internal/* → 全部画布工具 404。
+    expect(pi.createSession.mock.calls[0][1]).toMatchObject({ canvasSessionId: 's1' })
   })
 
   it('P0-①：不传 threadId 时回落到 sessionId（老客户端兼容）', async () => {
@@ -719,6 +722,8 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
 
     expect(pi.createSession.mock.calls[0][0]).toBe('s1')
     expect(pi.prompt.mock.calls[0][0]).toBe('s1')
+    // hotfix：回落路径同样要带画布会话 id（两种键相等时也不能漏传）
+    expect(pi.createSession.mock.calls[0][1]).toMatchObject({ canvasSessionId: 's1' })
   })
 
   it('P0-①：status=rebuilt 时打 warn（上下文已丢，需可观测）', async () => {

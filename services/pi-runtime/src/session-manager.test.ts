@@ -80,6 +80,79 @@ describe("SessionManager harnessFactory 注入缝", () => {
 	});
 });
 
+/**
+ * 2026-09-29 hotfix 回归锁：`toolContext.sessionId` 必须等于**画布会话 id**，
+ * 不能是 pi 会话键（`toSessionKey(threadKey)`）。
+ *
+ * 事故：Nest 的 `/agent/internal/*` 拿 `toolContext.sessionId` 去
+ * `prisma.session.findUnique({id})` 查画布会话；#70 把该字段的值换成了 pi 会话键
+ * （前端 threadId 恒为 `${sessionId}:${后缀}`，故键永远带后缀）→ 全部画布工具 404。
+ * 详见 docs/superpowers/specs/2026-09-29-agent-tool-canvas-sessionid-hotfix-design.md。
+ */
+describe("toolContext.sessionId = 画布会话 id（hotfix 回归锁）", () => {
+	/** 建一个只捕获 harness 配置的最小 Manager。 */
+	function makeManager(captured: { cfg?: unknown }) {
+		const fakeHarnessFactory = async (cfg: unknown) => {
+			captured.cfg = cfg;
+			return {
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			} as never;
+		};
+		return new SessionManager(
+			[{ name: "t_probe" } as never],
+			"",
+			undefined,
+			fakeHarnessFactory,
+			undefined,
+			undefined,
+			testConfig(),
+		);
+	}
+	const readTc = (captured: { cfg?: unknown }) => {
+		const cfg = captured.cfg as { toolContext: () => Record<string, unknown> };
+		return cfg.toolContext();
+	};
+
+	// 复合 threadId：前端 createAgentThreadId = `${sessionId}:${后缀}`
+	const THREAD_KEY = "canvas-A:0a7fea56-a015-4f16-a38f-1edd2c5bab1c";
+
+	it("传 canvasSessionId → toolContext.sessionId 用它；pi 会话键不被污染", async () => {
+		const captured: { cfg?: unknown } = {};
+		const sm = makeManager(captured);
+		await sm.create(THREAD_KEY, { userId: "u1", canvasSessionId: "canvas-A" });
+
+		assert.equal(readTc(captured).sessionId, "canvas-A");
+		// sessions map 键仍是 sanitize 后的 pi 会话键（会话身份与画布身份两分）
+		assert.deepEqual([...sm.activeKeys()], [toSessionKey(THREAD_KEY)]);
+		assert.notEqual(toSessionKey(THREAD_KEY), "canvas-A");
+	});
+
+	it("未传 canvasSessionId → 回落 pi 会话键（旧 Nest 兼容，不产生新失败形态）", async () => {
+		const captured: { cfg?: unknown } = {};
+		const sm = makeManager(captured);
+		await sm.create(THREAD_KEY, { userId: "u1" });
+
+		assert.equal(readTc(captured).sessionId, toSessionKey(THREAD_KEY));
+	});
+
+	it("内存 resume 时刷新 canvasSessionId（每轮自愈，消除滚动升级残留）", async () => {
+		const captured: { cfg?: unknown } = {};
+		const sm = makeManager(captured);
+		// 第 1 轮：旧 Nest 未传 → 残留错值
+		await sm.create(THREAD_KEY, { userId: "u1" });
+		assert.equal(readTc(captured).sessionId, toSessionKey(THREAD_KEY));
+		// 第 2 轮：新 Nest 传了 → 同一 harness 实例，但 toolContext 立即反映正确值
+		const again = await sm.create(THREAD_KEY, { userId: "u1", canvasSessionId: "canvas-A" });
+		assert.equal(again.status, "resumed");
+		assert.equal(again.resumedFrom, "memory");
+		assert.equal(readTc(captured).sessionId, "canvas-A");
+	});
+});
+
 describe("SessionManager SessionHooks（B-5 Gate 接线缝）", () => {
 	it("create 后调用 onSessionCreated（带 sessionId 与 harness）", async () => {
 		const seen: Array<{ id: string; hasHarness: boolean }> = [];

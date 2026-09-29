@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp } from "./app.js";
-import { SessionManager } from "./session-manager.js";
+import { SessionManager, toSessionKey } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
 
@@ -146,6 +146,51 @@ describe("POST /sessions 幂等契约", () => {
 				assert.deepEqual(tc.refOrder, ["n1"]);
 				assert.equal(tc.focusNodeId, "n1");
 				assert.deepEqual((tc.attachments as unknown[])[0], { url: "https://x/a.png", mediaType: "image" });
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	/**
+	 * 2026-09-29 hotfix：`/sessions` body 的 canvasSessionId 必须落到 toolContext.sessionId
+	 * （工具回打 Nest 画布端点用的就是它，不能是 pi 会话键）。
+	 */
+	it("canvasSessionId 透传：toolContext.sessionId = 画布会话 id，而非 pi 会话键", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const sink: { cfg?: unknown } = {};
+			const { app } = makeApp(root, captureFactory(sink));
+			try {
+				const res = await app.inject({
+					method: "POST",
+					url: "/sessions",
+					payload: { sessionId: "canvas-A:t1", userId: "u1", canvasSessionId: "canvas-A" },
+				});
+				assert.equal(res.statusCode, 201);
+				const cfg = sink.cfg as { toolContext: (t: unknown) => Record<string, unknown> };
+				const tc = cfg.toolContext(undefined);
+				assert.equal(tc.sessionId, "canvas-A");
+				// 反向锁：不得是 pi 会话键（sanitize + 哈希后缀）
+				assert.notEqual(tc.sessionId, toSessionKey("canvas-A:t1"));
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("旧 Nest 兼容：不传 canvasSessionId 时回落 pi 会话键（行为不新增失败形态）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const sink: { cfg?: unknown } = {};
+			const { app } = makeApp(root, captureFactory(sink));
+			try {
+				const res = await app.inject({
+					method: "POST",
+					url: "/sessions",
+					payload: { sessionId: "canvas-A:t1", userId: "u1" },
+				});
+				assert.equal(res.statusCode, 201);
+				const cfg = sink.cfg as { toolContext: (t: unknown) => Record<string, unknown> };
+				assert.equal(cfg.toolContext(undefined).sessionId, toSessionKey("canvas-A:t1"));
 			} finally {
 				await app.close();
 			}
