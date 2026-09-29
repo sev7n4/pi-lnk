@@ -27,6 +27,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
+import { stripImageBlocks } from "./sse-sanitize.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
 
@@ -226,7 +227,8 @@ export class SessionManager {
 						type: sseType,
 						lane: evt.lane,
 						ts: Date.now(),
-						data: evt,
+						// ⑦：图只进模型上下文，SSE/缓冲副本剥离（无图时原引用返回）
+						data: harnessType === "tool_end" ? stripImageBlocks(evt) : evt,
 					});
 				}),
 			);
