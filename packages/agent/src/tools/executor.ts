@@ -48,6 +48,19 @@ export function applyCanvasActions(data: CanvasData, actions: CanvasAction[]): C
         result.edges.push({ id, source, target })
         break
       }
+      // 2026-09-29 补：此前 remove_edge / set_viewport 被静默忽略，导致
+      // 「Nest 返回了 action、前端实时改了、但 canvasData 没落库」，
+      // 回合末 loadSession() 全量回拉时被删的边会复活。
+      case 'remove_edge': {
+        const edgeId = action.payload.id
+        if (!edgeId) break
+        result.edges = result.edges.filter((e) => e.id !== edgeId)
+        break
+      }
+      case 'set_viewport': {
+        if (action.payload.viewport) result.viewport = action.payload.viewport
+        break
+      }
       case 'remove_node':
         result.nodes = result.nodes.filter((n) => n.id !== action.payload.id)
         result.edges = result.edges.filter(
