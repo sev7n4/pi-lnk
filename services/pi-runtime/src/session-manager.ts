@@ -29,6 +29,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
+import { enforceRetention } from "./session-retention.js";
 import { loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
@@ -246,6 +247,7 @@ export function resolveThinkingLevel(level?: string): ThinkingLevel {
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
+	private sweeper?: NodeJS.Timeout;
 
 	constructor(
 		private readonly tools: AgentHarnessTool<LnkpiToolContext>[] = [],
@@ -399,13 +401,68 @@ export class SessionManager {
 	private async destroy(key: string): Promise<void> {
 		const entry = this.sessions.get(key);
 		if (!entry) return;
+		this.sessions.delete(key);
+		await this.releaseHandles(entry);
+		await rm(join(this.config.dataRoot, key), { recursive: true, force: true }).catch(() => {});
+	}
+
+	/** 只释放内存句柄（harness/repo/env close），**不删磁盘**（TTL 回收专用）。 */
+	private async destroyMemoryOnly(key: string): Promise<void> {
+		const entry = this.sessions.get(key);
+		if (!entry) return;
+		this.sessions.delete(key);
+		await this.releaseHandles(entry);
+	}
+
+	private async releaseHandles(entry: SessionEntry): Promise<void> {
 		for (const unsub of entry.unsubscribes) unsub();
 		entry.listeners.clear();
-		this.sessions.delete(key);
 		await entry.harness.close(this.context).catch(() => {});
 		await entry.repo.close(this.context).catch(() => {});
 		await entry.env.cleanup(this.context).catch(() => {});
-		await rm(join(this.config.dataRoot, key), { recursive: true, force: true }).catch(() => {});
+	}
+
+	/** 正在跑 run 的会话：TTL 与磁盘 LRU 双豁免（长任务期间不能把会话/工作目录抽走）。 */
+	private runningKeys(): Set<string> {
+		const running = new Set<string>();
+		for (const [key, entry] of this.sessions) if (entry.prompting) running.add(key);
+		return running;
+	}
+
+	/**
+	 * 一次回收：TTL 只关内存（磁盘保留）；磁盘 LRU 跳过「内存驻留 + 正在跑 run」。
+	 * `now` 可注入，便于测试。
+	 */
+	async sweepOnce(now = Date.now()): Promise<{ closed: string[]; removedFromDisk: string[] }> {
+		const closed: string[] = [];
+		for (const [key, entry] of [...this.sessions]) {
+			if (entry.prompting) continue;
+			if (now - entry.lastActivityAt < this.config.sessionTtlMs) continue;
+			await this.destroyMemoryOnly(key);
+			closed.push(key);
+		}
+		const protectedKeys = new Set<string>([...this.sessions.keys(), ...this.runningKeys()]);
+		const removedFromDisk = await enforceRetention(
+			this.config.dataRoot,
+			{ maxBytes: this.config.sessionsMaxBytes, maxCount: this.config.sessionsMaxCount },
+			protectedKeys,
+		);
+		return { closed, removedFromDisk };
+	}
+
+	startSweeper(): void {
+		if (this.sweeper) return;
+		this.sweeper = setInterval(() => {
+			void this.sweepOnce().catch(() => {});
+		}, this.config.sweepIntervalMs);
+		// 不让 sweeper 拖住进程退出
+		this.sweeper.unref?.();
+	}
+
+	stopSweeper(): void {
+		if (!this.sweeper) return;
+		clearInterval(this.sweeper);
+		this.sweeper = undefined;
 	}
 
 	subscribe(threadKey: string, listener: EventListener, afterSeq = -1): NormalizedEvent[] {
