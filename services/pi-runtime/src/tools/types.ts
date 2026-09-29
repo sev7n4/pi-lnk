@@ -27,6 +27,15 @@ export interface SidebarAttachment {
 
 /** 每会话注入 toolContext 的值；SessionManager.create 时构造。 */
 export interface LnkpiToolContext {
+	/**
+	 * **画布会话 id**（Nest `/agent/internal/*` 用它 `findUnique({id})` 查 `Session`）。
+	 *
+	 * ⚠️ 这**不是** pi 会话键（`toSessionKey(threadKey)`）。二者曾于 #70 被合并进本字段，
+	 * 导致全部画布工具 404「会话不存在」（2026-09-29 hotfix 复盘，见
+	 * `docs/superpowers/specs/2026-09-29-agent-tool-canvas-sessionid-hotfix-design.md`）。
+	 * 取值由 SessionManager 决定：`canvasSessionId ?? pi 会话键`。**不要**在本字段上做
+	 * 「会话键」语义的假设（例如与 `activeKeys()` 比对）。
+	 */
 	sessionId: string;
 	userId?: string;
 	/** 画布上下文（#12，B-2 写工具依赖）：由 /sessions body 原样透传。 */

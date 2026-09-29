@@ -65,6 +65,16 @@ export interface CreateSessionOptions {
 	thinkingLevel?: "off" | "medium" | "high";
 	/** K-1：BYOK 覆盖；不传则 pi-runtime 走 env 装配 */
 	llm?: PiSessionLlmOverride;
+	/**
+	 * 画布会话 id（= Nest `Session.id`，即 prisma 主键）。
+	 *
+	 * ⚠️ 与第一个参数 `sessionId`（pi 会话键）**不是**一回事：`sessionId` 是
+	 * `threadId || 画布id` 的复合键，pi-runtime 会把它哈希成 `toSessionKey()` 当持久化目录名；
+	 * 而 pi-runtime 侧的工具经 `toolContext.sessionId` 拿到的东西会被原样发回 Nest
+	 * `/api/agent/internal/*`，Nest 直接拿它 `prisma.session.findUnique({id})` 查**画布**会话。
+	 * 因此这里必须显式把画布 id 单独传过去，否则全部画布工具 404（2026-09-29 hotfix）。
+	 */
+	canvasSessionId?: string;
 }
 
 export class PiRuntimeError extends Error {
@@ -132,6 +142,8 @@ export class PiRuntimeClient {
 				...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
 				// K-1：BYOK 覆盖（不传则 pi-runtime 走 env 装配）
 				...(opts.llm ? { llm: opts.llm } : {}),
+				// 画布会话 id（与上面的 pi 会话键解耦，见 CreateSessionOptions.canvasSessionId）
+				...(opts.canvasSessionId ? { canvasSessionId: opts.canvasSessionId } : {}),
 			}),
 		});
 		if (status >= 400 || !body || body.error) {

@@ -104,6 +104,15 @@ interface SessionEntry {
 	identity: LlmIdentity;
 	/** 会话归属用户；resume 时不一致 → 409 fail-closed。 */
 	userId?: string;
+	/**
+	 * 画布会话 id（与 pi 会话键**解耦**）：工具经 `toolContext.sessionId` 拿到的就是它。
+	 *
+	 * ⚠️ 本字段存在的原因：`id`（= `toSessionKey(threadKey)`）是 pi 侧的持久化键，
+	 * 而 Nest 的 `/agent/internal/*` 拿 `sessionId` 去 `prisma.session.findUnique({id})`
+	 * 查**画布**会话。二者混用会让全部画布工具 404（2026-09-29 hotfix 复盘）。
+	 * 未提供时回落 `id`（见 `toolContext`），语义退化为旧行为而非崩溃。
+	 */
+	canvasSessionId?: string;
 	/** 每轮易变上下文（spec §5.3 T 层）。 */
 	turn: TurnContext;
 	/** 当前思考档位（常驻会话下换档走 lane setter，不重建会话；spec §5.5）。 */
@@ -193,6 +202,11 @@ export interface CreateOptions {
 	thinkingLevel?: string;
 	/** K-1：BYOK 会话级模型覆盖（仅来自 Nest create 注入，本进程不从其它来源读取）。 */
 	llm?: SessionLlmOverride;
+	/**
+	 * 画布会话 id（Nest 的 `/sessions` body 字段）。工具经 `toolContext.sessionId` 取用，
+	 * 用于回打 Nest 的画布端点；**不要**与 pi 会话键 `key` 混用。
+	 */
+	canvasSessionId?: string;
 }
 
 export interface CreateResult {
@@ -392,6 +406,9 @@ export class SessionManager {
 			// spec §5.5：身份一致时换档不重建会话，走 lane setter（失败降级为沿用旧档位）。
 			const level = resolveThinkingLevel(opts.thinkingLevel);
 			if (level !== existing.thinkingLevel) await this.applyThinkingLevel(existing, level);
+			// 画布会话 id 每轮自愈：Nest 每轮都调 create，若本会话是在「旧 Nest 未传该字段」
+			// 期间建的，这里补上即可消除残留错值（否则要等 TTL 回收才恢复）。
+			if (opts.canvasSessionId) existing.canvasSessionId = opts.canvasSessionId;
 			existing.lastActivityAt = Date.now();
 			return { provider: existing.identity.provider, model: existing.identity.model, status: "resumed", resumedFrom: "memory" };
 		}
@@ -462,6 +479,7 @@ export class SessionManager {
 			staticPrompt: this.composeSystemPrompt(opts.systemPrompt),
 			identity,
 			userId: opts.userId,
+			canvasSessionId: opts.canvasSessionId,
 			turn: normalizeTurnContext({
 				attachments: opts.attachments,
 				mentionedKeys: opts.mentionedKeys,
@@ -481,7 +499,14 @@ export class SessionManager {
 				model,
 				tools: [...this.tools, ...(this.skills?.tools ?? [])],
 				// 函数形态（spec §5.3/§5.4）：harness 在每次 LLM 调用前求值，读到的是最新 turn。
-				toolContext: () => ({ sessionId: key, userId: entry.userId, ...entry.turn }),
+				// ⚠️ `sessionId` 语义 = **画布会话 id**（Nest 用它查库），不是 pi 会话键 `key`。
+				// 取值优先级：本轮/建会话时传入的 canvasSessionId → 会话内已存值 → 回落 pi 会话键
+				// （旧 Nest 不传该字段时语义退化为 #70 行为，不产生新失败形态）。
+				toolContext: () => ({
+					sessionId: entry.canvasSessionId ?? key,
+					userId: entry.userId,
+					...entry.turn,
+				}),
 				systemPrompt: () => composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []),
 				thinkingLevel,
 				compaction: this.config.compaction,

@@ -77,6 +77,11 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			sessionId?: string;
 			systemPrompt?: string;
 			userId?: string;
+			/**
+			 * 画布会话 id（Nest 查库用），与 `sessionId`（pi 会话键）**解耦**。
+			 * 工具经 `toolContext.sessionId` 取用；缺省时回落 pi 会话键。
+			 */
+			canvasSessionId?: string;
 			attachments?: Array<{ url?: string; text?: string; mediaType?: string }>;
 			mentionedKeys?: string[];
 			refOrder?: string[];
@@ -101,6 +106,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			const result = await manager.create(threadKey, {
 				systemPrompt: request.body?.systemPrompt,
 				userId: request.body?.userId,
+				canvasSessionId: request.body?.canvasSessionId,
 				attachments: request.body?.attachments,
 				mentionedKeys: request.body?.mentionedKeys,
 				refOrder: request.body?.refOrder,

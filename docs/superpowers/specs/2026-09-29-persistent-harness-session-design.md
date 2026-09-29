@@ -309,6 +309,8 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 
 **零改动（显式声明，便于 review 核对）**：`vendor/**`、`apps/web/**`、`apps/server/prisma/**`、`services/pi-runtime/src/tools/**`（工具经 `toolContext` 函数拿到的仍是同一对象，工具侧无需感知）
 
+> ⚠️ **本条推断已被证伪**（2026-09-29 hotfix 复盘）：结论「工具代码不必改」成立，但**漏判了 `toolContext.sessionId` 的值语义被换**（由画布会话 id 变为 pi 会话键），导致 Nest 全部画布端点 `404 会话不存在`。详见 §14 勘误与 `2026-09-29-agent-tool-canvas-sessionid-hotfix-design.md`。
+
 ## 10. 测试策略与验收标准
 
 **单测（TDD，先红后绿）**
@@ -361,3 +363,22 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 - 每张图均有「说明这张图说明了什么」的图注，且正文均引用图号（§5.1 / §5.2 / §5.3）
 - 图号 1–3 连续、文档内唯一，§0 索引已登记
 - 提交前执行：`pnpm verify-spec-figures --file docs/superpowers/specs/2026-09-29-persistent-harness-session-design.md`
+
+## 14. 勘误（2026-09-29 hotfix 补记）
+
+**勘误对象**：§9「零改动（显式声明，便于 review 核对）」中对 `services/pi-runtime/src/tools/**` 的推断。
+
+**事实**：本包把 `toolContext.sessionId` 的**值**由「画布会话 id」换成了「pi 会话键」（`key = toSessionKey(threadKey)`），而 `apps/server/src/agent/agent-canvas-tools.service.ts` 的 `loadSession` 拿该值做 `prisma.session.findUnique({ where: { id } })`。两个语义不同的 id 共用一个字段且跨进程边界，结果是从 rev 27（镜像 0.0.16）起 agent 的**全部画布工具 404「会话不存在」**（`canvas-write.ts` 14 个 + `canvas-read.ts` 6 个 + `delete_nodes` + `remove_edges` + `run_*_generation` + `cancel_generation`）。
+
+**推断缺陷在哪**：本包只审到 pi-runtime 边界（「工具拿到的仍是同一对象」），**没有追到该字段的下游消费者**——即没有回答「Nest 拿 `sessionId` 做什么」。跨边界字段的**值语义**变更，仅核对「类型不变 / 对象不变」是不够的。
+
+**验收缺陷**：本包的线上验收脚本 `deploy/prod-agent-thread-verify.py` 只断言助手**文本回复**（跨轮记忆、线程隔离、并发 409），**从未调用任何画布工具**，故 16 项 PASS 与本次回归并不矛盾——测试面覆盖不到被改动的契约。
+
+**订正后的判据**（详见 `2026-09-29-agent-tool-canvas-sessionid-hotfix-design.md` §3）：
+
+1. **会话身份两分**：pi 会话键（持久化 / `sessions` map / URL key）与画布会话 id（Nest 查库用）不得共用同一字段；
+2. 跨边界字段改语义时，**必须同时列出其全部下游消费者**并在其中至少一处加回归锁；
+3. 涉及 agent 工具面的改动，验收**必须**包含至少一次真实的画布工具调用（读 + 写各一）。
+
+**本包其余结论不受影响**：`threadKey = threadId || sessionId`（D1）与 `toSessionKey` sanitize 的取舍本身正确，问题只在于它外溢到了工具上下文。
+
