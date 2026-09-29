@@ -11,20 +11,23 @@ const EXPECTED = new Set([
 	"get_canvas_layout",
 	"list_generation_tasks",
 	"list_user_assets",
+	"list_model_options",
 ]);
 
-function fakeClient() {
+/** @param data 每次 post 的返回值（缺省 {ok:true}，需要断言出参形状时传入）。 */
+function fakeClient(data: unknown = { ok: true }) {
 	const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
 	return {
 		calls,
 		post: async (path: string, body: unknown) => {
 			calls.push({ path, body: body as Record<string, unknown> });
-			return { ok: true };
+			return data;
 		},
 	};
 }
 
 const ctx = (sessionId: string, userId?: string): LnkpiToolContext => ({ sessionId, userId });
+const CTX = ctx("s1", "u1");
 
 // 与真实 execute 签名对齐的调用助手（AgentHarnessTool.execute 共 6 参）
 function call(
@@ -35,9 +38,9 @@ function call(
 	return tool.execute("call-1", params as never, () => {}, context, {} as never, undefined as never);
 }
 
-test("注册 7 个 read 工具且 tier 正确", () => {
+test("注册 8 个 read 工具且 tier 正确", () => {
 	const tools = buildCanvasReadTools(fakeClient() as never);
-	assert.equal(tools.length, 7);
+	assert.equal(tools.length, 8);
 	assert.deepEqual(new Set(tools.map((t) => t.name)), EXPECTED);
 	assert.ok(tools.every((t) => t.tier === "read"));
 });
@@ -103,6 +106,44 @@ test("get_generation_diagnostic：必带 userId 且两个可选 id 至少一个�
 	await assert.rejects(() => call(t!, {}, ctx("s1", "u1")), /generation_record_id|node_id/);
 	await assert.rejects(() => call(t!, { node_id: "n1" }, ctx("s1")), /userId/);
 	assert.equal(fake.calls.length, 1);
+});
+
+describe("list_model_options（spec S3）", () => {
+	const MODALITIES = { image: [{ ref: "platform::image2", source: "platform" }], video: [], text: [], audio: [] };
+
+	it("tier=read；body 只带 userId；不暴露 sessionId", async () => {
+		const fake = fakeClient({ modalities: MODALITIES });
+		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_model_options")!;
+		assert.equal(tool.tier, "read");
+		assert.ok(!JSON.stringify(tool.parameters).includes("sessionId"));
+		await call(tool!, {}, CTX);
+		assert.equal(fake.calls[0].path, "/agent/internal/list-model-options");
+		assert.deepEqual(fake.calls[0].body, { userId: "u1" });
+	});
+
+	it("modality 过滤在客户端做（不打第二次 Nest）", async () => {
+		const fake = fakeClient({ modalities: MODALITIES });
+		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_model_options")!;
+		const res = await call(tool!, { modality: "image" }, CTX);
+		assert.equal(fake.calls.length, 1);
+		const out = JSON.parse((res.content[0] as { text: string }).text).data;
+		assert.deepEqual(Object.keys(out), ["image"]);
+	});
+
+	it("未知 modality 不过滤成空（回落全量，避免模型写出幻觉模态时拿不到候选）", async () => {
+		const fake = fakeClient({ modalities: MODALITIES });
+		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_model_options")!;
+		const res = await call(tool!, { modality: "hologram" }, CTX);
+		const out = JSON.parse((res.content[0] as { text: string }).text).data;
+		assert.deepEqual(Object.keys(out).sort(), ["audio", "image", "text", "video"]);
+	});
+
+	it("缺 userId → fail-closed，不打 Nest", async () => {
+		const fake = fakeClient({ modalities: MODALITIES });
+		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_model_options")!;
+		await assert.rejects(() => call(tool!, {}, ctx("s1")), /requires userId/);
+		assert.equal(fake.calls.length, 0);
+	});
 });
 
 describe("读工具结果瘦身（③ trimData/slimLayout）", () => {

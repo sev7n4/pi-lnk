@@ -154,5 +154,29 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 				return textResult(trimData(await client.post("/agent/internal/list-user-assets", { userId: tc.userId })));
 			},
 		},
+		{
+			...base,
+			name: "list_model_options",
+			label: "可选模型",
+			description:
+				"List the model refs the user can assign to a canvas node, per modality, with their source (platform or the user's own BYOK channel). Pass one of these refs to update_node; do not invent model names. Optional modality filter narrows the result.",
+			parameters: Type.Object({
+				modality: Type.Optional(
+					Type.String({ description: "image | video | text | audio (omit for all)" }),
+				),
+			}),
+			execute: async (_id, p: { modality?: string }, _u, tc: LnkpiToolContext) => {
+				if (!tc.userId) throw new Error("list_model_options requires userId in toolContext");
+				const data = (await client.post("/agent/internal/list-model-options", {
+					userId: tc.userId,
+				})) as { modalities?: Record<string, unknown> };
+				const modalities = data?.modalities ?? {};
+				const key = p.modality?.trim();
+				// 客户端过滤：一次 Nest 调用服务所有模态，避免模型为每个模态各打一次。
+				// 未知模态（模型写错字）回落全量而非返回空——空会让模型以为"没有可用模型"。
+				const filtered = key && key in modalities ? { [key]: modalities[key] } : modalities;
+				return textResult(trimData(filtered));
+			},
+		},
 	];
 }
