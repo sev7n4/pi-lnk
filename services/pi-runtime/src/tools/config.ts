@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
 
@@ -53,6 +53,8 @@ export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; 
 		...buildGenerationTools(client),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),
+		...buildReadDocumentTools(),
+		...buildMemoryTools(client),
 	];
 	return { tools, client };
 }

@@ -6,6 +6,7 @@ import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentInternalGuard } from './agent-internal.guard'
 import { CompositionService, type PreviewCompositionInput } from './composition.service'
 import { WorkflowRecipeService } from './workflow-recipe.service'
+import { AgentMemoryService } from './agent-memory.service'
 
 class UpsertPromptNodeDto {
   @IsString()
@@ -210,6 +211,28 @@ class RemoveNodesDto {
   @IsOptional()
   @IsBoolean()
   stage?: boolean
+}
+
+// P1 memory（spec 2026-09-29）
+class SaveMemoryDto {
+  @IsString()
+  userId!: string
+
+  @IsString()
+  content!: string
+}
+
+class SearchMemoryDto {
+  @IsString()
+  userId!: string
+
+  @IsOptional()
+  @IsString()
+  query?: string
+
+  @IsOptional()
+  @IsNumber()
+  limit?: number
 }
 
 // W32: Remove edges DTO
@@ -928,6 +951,7 @@ export class AgentCanvasToolsController {
     @Inject(WorkflowRecipeService) private readonly recipes: WorkflowRecipeService,
     @Inject(CompositionService) private readonly composition: CompositionService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AgentMemoryService) private readonly memory: AgentMemoryService,
   ) {}
 
   @Post('upsert-prompt-node')
@@ -982,6 +1006,19 @@ export class AgentCanvasToolsController {
   @Post('remove-nodes')
   async removeNodes(@Body() dto: RemoveNodesDto) {
     const data = await this.tools.removeNodes(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  // P1 memory：跨会话记忆（spec 2026-09-29）
+  @Post('memory-save')
+  async saveMemory(@Body() dto: SaveMemoryDto) {
+    const data = await this.memory.saveMemory(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('memory-search')
+  async searchMemory(@Body() dto: SearchMemoryDto) {
+    const data = await this.memory.searchMemory(dto)
     return { code: 0, message: 'ok', data }
   }
 
