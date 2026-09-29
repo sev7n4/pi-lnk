@@ -47,6 +47,7 @@ const manager = new SessionManager(tools, undefined, undefined, undefined, {
 				metrics.observeToolCall(event.toolName, "error", "gate_blocked"); // ③：HITL 拦截归因观测
 				return { block: { reason: check.reason ?? "generation gated" } };
 			}
+			if (check.retry) metrics.observeToolCall(event.toolName, "ok", "retry"); // V-γ 重试放行打点
 			return undefined;
 		});
 		return undefined;
