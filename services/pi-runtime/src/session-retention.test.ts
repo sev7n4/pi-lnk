@@ -1,0 +1,117 @@
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { collectSessionDirs, enforceRetention, pickLruVictims, type RetentionEntry } from "./session-retention.js";
+
+const e = (key: string, bytes: number, mtimeMs: number): RetentionEntry => ({ key, bytes, mtimeMs });
+const LIMITS = { maxBytes: 1000, maxCount: 3 };
+
+describe("pickLruVictims", () => {
+	it("未超限返回空", () => {
+		assert.deepEqual(pickLruVictims([e("a", 10, 1), e("b", 10, 2)], LIMITS, new Set()), []);
+	});
+	it("空目录列表返回空", () => {
+		assert.deepEqual(pickLruVictims([], LIMITS, new Set()), []);
+	});
+	it("只超 count：按 mtime 最旧优先淘汰到限内", () => {
+		const out = pickLruVictims(
+			[e("new", 10, 300), e("old", 10, 100), e("mid", 10, 200), e("older", 10, 50)],
+			LIMITS,
+			new Set(),
+		);
+		assert.deepEqual(out.map((x) => x.key), ["older"]);
+	});
+	it("只超 bytes：淘汰到字节回到限内", () => {
+		const out = pickLruVictims([e("a", 600, 1), e("b", 600, 2), e("c", 600, 3)], LIMITS, new Set());
+		assert.deepEqual(out.map((x) => x.key), ["a", "b"]);
+	});
+	it("count 与 bytes 双超：一次淘汰满足两个约束", () => {
+		const out = pickLruVictims([e("a", 900, 1), e("b", 900, 2), e("c", 900, 3), e("d", 10, 4)], LIMITS, new Set());
+		assert.deepEqual(out.map((x) => x.key), ["a", "b"]);
+	});
+	it("active 集合被跳过（活跃会话不因 LRU 被删）", () => {
+		const out = pickLruVictims(
+			[e("active-old", 10, 1), e("b", 10, 2), e("c", 10, 3), e("d", 10, 4)],
+			LIMITS,
+			new Set(["active-old"]),
+		);
+		assert.deepEqual(out.map((x) => x.key), ["b"]);
+	});
+	it("全部 active 时返回空（宁可超限也不删活跃）", () => {
+		const out = pickLruVictims(
+			[e("a", 10, 1), e("b", 10, 2), e("c", 10, 3), e("d", 10, 4)],
+			LIMITS,
+			new Set(["a", "b", "c", "d"]),
+		);
+		assert.deepEqual(out, []);
+	});
+});
+
+describe("collectSessionDirs / enforceRetention", () => {
+	it("收集目录并累计字节；执行后最旧目录被物理删除", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-retention-"));
+		try {
+			for (const [name, age] of [
+				["old", 100],
+				["mid", 200],
+				["new", 300],
+			] as const) {
+				mkdirSync(join(root, name, "sessions"), { recursive: true });
+				writeFileSync(join(root, name, "sessions", "s.jsonl"), "x".repeat(50));
+				// 近期活跃判据在内层会话文件（追加历史处），顶层目录 mtime 只反映创建时刻
+				utimesSync(join(root, name, "sessions", "s.jsonl"), age, age);
+				// ⚠️ 顶层目录 mtime 也必须显式设定，不能只设内层文件：
+				// lastActivityMs() 取的是 max(顶层目录 mtime, 内层文件最大 mtime)，而在这里
+				// 内层文件被设到 1970 年（100/200/300 秒），恒小于「目录创建时刻 ≈ 现在」，
+				// 于是 max() 的结果由目录 mtime 决定。CI 的 Linux runner 上三次 mkdir 落在
+				// 同一个时间刻度里 → 三者 mtimeMs 完全相等 → 排序退化为 readdir 顺序
+				// （哈希序，实测 'mid' 排在 'old' 前）→ 稳定淘汰错目录（2026-09-29 连续两次复现）。
+				// 本机 APFS 目录 mtime 纳秒级递增，所以本地跑一直是绿的，纯属巧合。
+				utimesSync(join(root, name), age, age);
+			}
+			const entries = await collectSessionDirs(root);
+			assert.equal(entries.length, 3);
+			assert.ok(entries.every((x) => x.bytes > 0));
+			const removed = await enforceRetention(root, { maxBytes: 1_000_000, maxCount: 2 }, new Set());
+			assert.deepEqual(removed, ["old"]);
+			const after = await collectSessionDirs(root);
+			assert.deepEqual(after.map((x) => x.key).sort(), ["mid", "new"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("近期活跃以内层会话文件的 mtime 为准（顶层目录 mtime 会把常用会话误判成最旧）", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-retention-"));
+		try {
+			// a：创建得早（顶层目录 mtime 老）但刚追加过历史 → 应判为最近活跃
+			mkdirSync(join(root, "a", "sessions"), { recursive: true });
+			writeFileSync(join(root, "a", "sessions", "s.jsonl"), "x".repeat(50));
+			utimesSync(join(root, "a"), 100, 100);
+			utimesSync(join(root, "a", "sessions", "s.jsonl"), 500, 500);
+			// b：创建得晚但内层文件更老 → 应判为更久未用
+			mkdirSync(join(root, "b", "sessions"), { recursive: true });
+			writeFileSync(join(root, "b", "sessions", "s.jsonl"), "x".repeat(50));
+			utimesSync(join(root, "b"), 300, 300);
+			utimesSync(join(root, "b", "sessions", "s.jsonl"), 200, 200);
+
+			const entries = await collectSessionDirs(root);
+			const a = entries.find((x) => x.key === "a") as RetentionEntry;
+			const b = entries.find((x) => x.key === "b") as RetentionEntry;
+			assert.ok(a.mtimeMs > b.mtimeMs); // 修复前：a(100) < b(300)，LRU 退化成 FIFO
+
+			const removed = await enforceRetention(root, { maxBytes: 1_000_000, maxCount: 1 }, new Set());
+			assert.deepEqual(removed, ["b"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+	it("根目录不存在时返回空数组且不抛", async () => {
+		assert.deepEqual(await collectSessionDirs("/nonexistent/pi-runtime-x"), []);
+	});
+	it("enforceRetention 在根目录不存在时不抛且返回空", async () => {
+		assert.deepEqual(await enforceRetention("/nonexistent/pi-runtime-x", LIMITS, new Set()), []);
+	});
+});

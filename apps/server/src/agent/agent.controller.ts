@@ -240,7 +240,11 @@ export class AgentController {
   ) {
     // 与 clear-propose 一致：先校验会话归属，避免越权中断他人的 run
     await this.sessionsService.findOne(dto.sessionId, req.user.sub)
-    const data = await this.agentService.cancelRun({ sessionId: dto.sessionId })
+    // P0-①：中断目标是对话键（threadId）；只传 sessionId 会 abort 不到常驻会话
+    const data = await this.agentService.cancelRun({
+      sessionId: dto.sessionId,
+      threadId: dto.threadId,
+    })
     return { code: 0, message: 'ok', data }
   }
 

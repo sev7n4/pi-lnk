@@ -243,7 +243,6 @@ async function createCanvas() {
   try {
     const { data } = await sessionsApi.create({
       title: prompt.value || '未命名画布',
-      prompt: prompt.value,
     })
     router.push({
       path: `/workflow/${data.data.id}`,

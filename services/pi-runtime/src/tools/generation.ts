@@ -17,20 +17,16 @@ import type { Context } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
 import { fetchImageAsBlock, isImageRefineEnabled, type ImageBlock } from "./image-refine.js";
+// B-5：Nest 返回的 CanvasAction[] 进 details.actions，由 Nest pi-events 派生 canvas_action SSE。
+// helper 已抽到 result-with-actions.ts（canvas-write / delete-nodes / 本文件共用一份）。
+import { resultWithActions } from "./result-with-actions.js";
 
-function extractActions(data: unknown): Record<string, unknown>[] {
-	const actions = (data as { actions?: unknown } | null | undefined)?.actions;
-	if (!Array.isArray(actions)) return [];
-	return actions.filter((a): a is Record<string, unknown> => !!a && typeof a === "object");
-}
-
-function resultWithActions(data: unknown) {
-	return {
-		content: [{ type: "text" as const, text: JSON.stringify({ ok: true, data }) }],
-		// B-5：Nest 返回的 CanvasAction[] 进 details.actions，由 Nest pi-events 派生 canvas_action SSE
-		details: { actions: extractActions(data) },
-	};
-}
+/** 成功路径 content 可为「文本 + 图」两 block；details 契约与共享 helper 完全一致。 */
+type ToolResultContent = { type: "text"; text: string } | ImageBlock;
+type ToolResultWithActions = {
+	content: ToolResultContent[];
+	details: ReturnType<typeof resultWithActions>["details"];
+};
 
 /**
  * 视觉自评闭环（spec 2026-09-29 §4.2）：把 imageRefine 标记并入文本 JSON 的 data，
@@ -42,7 +38,7 @@ function withImageRefine(
 	data: Record<string, unknown>,
 	mark: "attached" | "skipped" | "n/a",
 	reason?: string,
-): ReturnType<typeof resultWithActions> {
+): ToolResultWithActions {
 	const nextData: Record<string, unknown> = { ...data, imageRefine: mark };
 	if (reason !== undefined) nextData.imageRefineReason = reason;
 	return { ...base, content: [{ type: "text" as const, text: JSON.stringify({ ok: true, data: nextData }) }] };

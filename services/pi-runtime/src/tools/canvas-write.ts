@@ -8,13 +8,15 @@ import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
 import type { SidebarAttachment } from "./types.js";
+import { extractActions, resultWithActions } from "./result-with-actions.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
 
-function textResult(data: unknown): { content: [{ type: "text"; text: string }]; details: undefined } {
-	return { content: [{ type: "text", text: JSON.stringify({ ok: true, data }) }], details: undefined };
-}
-
+/**
+ * 无 actions 语义的直出文本（仅用于短路分支，如 apply_sidebar_attachments 的
+ * 「没有侧栏附件」——那里根本不打 Nest，不存在 CanvasAction 可推）。
+ * 其余一律走 resultWithActions：Nest 的实时通道只认 details.actions。
+ */
 function textRaw(value: unknown): { content: [{ type: "text"; text: string }]; details: undefined } {
 	return { content: [{ type: "text", text: JSON.stringify(value) }], details: undefined };
 }
@@ -61,7 +63,7 @@ export function createCanvasWriteTools(
 					content: p.content,
 				};
 				setIfPresent(body, "nodeId", p.node_id);
-				return textResult(await client.post("/agent/internal/upsert-prompt-node", body));
+				return resultWithActions(await client.post("/agent/internal/upsert-prompt-node", body));
 			},
 		},
 		{
@@ -91,7 +93,7 @@ export function createCanvasWriteTools(
 				};
 				setIfPresent(body, "title", p.title);
 				setIfPresent(body, "nodeId", p.node_id);
-				return textResult(await client.post("/agent/internal/upsert-media-node", body));
+				return resultWithActions(await client.post("/agent/internal/upsert-media-node", body));
 			},
 		},
 		{
@@ -121,24 +123,77 @@ export function createCanvasWriteTools(
 					throw new Error("set_node_text with content requires userId in toolContext (session identity missing)");
 				}
 				// 各端点 body 形态对齐老 client：set-node-prompt 不带 userId；set-node-content 带 userId。
+				// ⚠️ prompt 分支此前丢弃了返回值 → 它返回的 canvas_action 被丢掉，
+				// 实时通道断掉（画布要等回合末全量回拉才更新）。两个分支的 actions 需合并回传。
+				const collected: Record<string, unknown>[] = [];
 				if (p.prompt) {
-					await client.post("/agent/internal/set-node-prompt", {
+					const done = await client.post("/agent/internal/set-node-prompt", {
 						sessionId: tc.sessionId,
 						nodeId: p.node_id,
 						prompt: p.prompt,
 					});
+					collected.push(...extractActions(done));
 				}
 				if (p.content) {
-					return textResult(
-						await client.post("/agent/internal/set-node-content", {
-							sessionId: tc.sessionId,
-							userId: tc.userId,
-							nodeId: p.node_id,
-							content: p.content,
-						}),
-					);
+					const done = await client.post("/agent/internal/set-node-content", {
+						sessionId: tc.sessionId,
+						userId: tc.userId,
+						nodeId: p.node_id,
+						content: p.content,
+					});
+					collected.push(...extractActions(done));
 				}
-				return textResult({ ok: true });
+				// 两个分支的 actions 合并后一次性回给 Nest（details.actions 是实时通道）
+				return resultWithActions({ actions: collected });
+			},
+		},
+		{
+			...write,
+			name: "update_node",
+			label: "改节点属性",
+			description:
+				"Update an existing canvas node's title and/or its model (the chip shown in the node dock). Accepts exactly one model field, matching the node type. Ref must come from list_model_options — invented names are rejected. Does NOT touch prompt/content; use set_node_text for text.",
+			parameters: Type.Object({
+				node_id: Type.String({ description: "Canvas node id" }),
+				title: Type.Optional(Type.String({ description: "New node title (non-empty)" })),
+				image_model: Type.Optional(Type.String({ description: "image node model ref from list_model_options" })),
+				video_model: Type.Optional(Type.String({ description: "video node model ref from list_model_options" })),
+				text_model: Type.Optional(Type.String({ description: "text or prompt node model ref from list_model_options" })),
+				audio_model: Type.Optional(Type.String({ description: "audio node model ref from list_model_options" })),
+			}),
+			execute: async (
+				_id,
+				p: {
+					node_id: string;
+					title?: string;
+					image_model?: string;
+					video_model?: string;
+					text_model?: string;
+					audio_model?: string;
+				},
+				_u,
+				tc: LnkpiToolContext,
+			) => {
+				if (!tc.userId) throw new Error("update_node requires userId in toolContext");
+				// 白名单在 pi 侧再夹一层：harness 不校验 schema，多余字段必须在此丢弃，
+				// 否则模型可以用 {status:...} 之类绕过（Nest 侧也会拒，但别让脏数据出网）
+				const patch: Record<string, unknown> = {};
+				setIfPresent(patch, "title", p.title);
+				setIfPresent(patch, "imageModel", p.image_model);
+				setIfPresent(patch, "videoModel", p.video_model);
+				setIfPresent(patch, "textModel", p.text_model);
+				setIfPresent(patch, "audioModel", p.audio_model);
+				if (Object.keys(patch).length === 0) {
+					throw new Error("update_node requires at least one of title/image_model/video_model/text_model/audio_model");
+				}
+				return resultWithActions(
+					await client.post("/agent/internal/update-node", {
+						sessionId: tc.sessionId,
+						userId: tc.userId,
+						nodeId: p.node_id,
+						patch,
+					}),
+				);
 			},
 		},
 		{
@@ -152,7 +207,7 @@ export function createCanvasWriteTools(
 				ref_order: Type.Array(Type.String(), { description: "Ordered reference node ids" }),
 			}),
 			execute: async (_id, p: { node_id: string; ref_order: string[] }, _u, tc: LnkpiToolContext) => {
-				return textResult(
+				return resultWithActions(
 					await client.post("/agent/internal/attach-refs", {
 						sessionId: tc.sessionId,
 						nodeId: p.node_id,
@@ -170,7 +225,7 @@ export function createCanvasWriteTools(
 			parameters: Type.Object({ node_id: Type.String({ description: "Canvas node id" }) }),
 			execute: async (_id, p: { node_id: string }, _u, tc: LnkpiToolContext) => {
 				if (!tc.userId) throw new Error("propose_generation requires userId in toolContext");
-				return textResult(
+				return resultWithActions(
 					await client.post("/agent/internal/propose-generation", {
 						sessionId: tc.sessionId,
 						userId: tc.userId,
@@ -228,7 +283,7 @@ export function createCanvasWriteTools(
 				};
 				const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
 				if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
-				return textResult(await client.post("/agent/internal/apply-sidebar-attachments", body));
+				return resultWithActions(await client.post("/agent/internal/apply-sidebar-attachments", body));
 			},
 		},
 		{
@@ -248,7 +303,7 @@ export function createCanvasWriteTools(
 				tc: LnkpiToolContext,
 			) => {
 				if (!tc.userId) throw new Error("apply_asset_to_node requires userId in toolContext");
-				return textResult(
+				return resultWithActions(
 					await client.post("/agent/internal/apply-asset-to-node", {
 						sessionId: tc.sessionId,
 						userId: tc.userId,
@@ -272,7 +327,7 @@ export function createCanvasWriteTools(
 				if (!tc.userId) throw new Error("save_node_to_asset_library requires userId in toolContext");
 				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id };
 				setIfPresent(body, "label", p.label);
-				return textResult(await client.post("/agent/internal/save-node-to-asset-library", body));
+				return resultWithActions(await client.post("/agent/internal/save-node-to-asset-library", body));
 			},
 		},
 		{
@@ -302,7 +357,7 @@ export function createCanvasWriteTools(
 				setIfPresent(body, "nodeId", p.node_id);
 				if (p.node_ids && p.node_ids.length > 0) body.nodeIds = p.node_ids;
 				if (p.include_upstream === true) body.includeUpstream = true;
-				return textResult(await client.post("/agent/internal/duplicate-node", body));
+				return resultWithActions(await client.post("/agent/internal/duplicate-node", body));
 			},
 		},
 		{
@@ -329,7 +384,7 @@ export function createCanvasWriteTools(
 					mediaType: p.media_type,
 				};
 				setIfPresent(body, "title", p.title);
-				return textResult(await client.post("/agent/internal/upload-media-to-canvas", body));
+				return resultWithActions(await client.post("/agent/internal/upload-media-to-canvas", body));
 			},
 		},
 		{
@@ -365,7 +420,7 @@ export function createCanvasWriteTools(
 				};
 				setIfPresent(body, "sourceUrl", p.source_url);
 				setIfPresent(body, "nodeId", p.node_id);
-				return textResult(await client.post("/agent/internal/grid-slice-image", body));
+				return resultWithActions(await client.post("/agent/internal/grid-slice-image", body));
 			},
 		},
 		{
@@ -388,7 +443,7 @@ export function createCanvasWriteTools(
 						`connect_nodes accepts at most ${CONNECT_NODES_MAX_EDGES} edges per call (got ${p.edges.length})`,
 					);
 				}
-				return textResult(await client.post("/agent/internal/connect-nodes", { sessionId: tc.sessionId, edges: p.edges }));
+				return resultWithActions(await client.post("/agent/internal/connect-nodes", { sessionId: tc.sessionId, edges: p.edges }));
 			},
 		},
 	];
@@ -404,7 +459,7 @@ export function createCanvasWriteTools(
 			}),
 			execute: async (_id, p: { node_ids: string[] }, _u, tc: LnkpiToolContext) => {
 				if (!tc.userId) throw new Error("introduce_nodes_to_agent requires userId in toolContext");
-				return textResult(
+				return resultWithActions(
 					await client.post("/agent/internal/introduce-nodes-to-agent", {
 						sessionId: tc.sessionId,
 						userId: tc.userId,

@@ -4,10 +4,12 @@ import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-acti
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
   computeImportTranslation,
+  decodeChannelModel,
   duplicateResultToCanvasActions,
   duplicateSubgraph,
   isProductFourPanelPrompt,
   isRootNode,
+  normalizeModelRef,
   remapWorkflowIds,
   resolveDuplicateSourceIds,
   resolveNodeRefs,
@@ -17,6 +19,7 @@ import {
   type CanvasAction,
   type CanvasActionApplier,
   type CanvasData,
+  type CanvasEdge,
   type CanvasNode,
   type DuplicateCanvasNode,
   type LocalRefBinding,
@@ -32,6 +35,7 @@ import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { StudioService, type StudioRefInput } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
+import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
 import {
   applyLayoutOps,
   createGroupFromNodes,
@@ -94,6 +98,116 @@ function nodeTitle(node: CanvasNode): string {
 
 function nodeStatus(node: CanvasNode): string {
   return String(node.data?.status ?? 'draft')
+}
+
+/** update_node 的唯一可写字段集（spec §4.1）。改动此表必须同步 spec 与图 1。 */
+export const UPDATE_NODE_WRITABLE_FIELDS = ['title', 'imageModel', 'videoModel', 'textModel', 'audioModel'] as const
+
+export type NodeModal = 'image' | 'video' | 'text' | 'audio'
+
+/**
+ * 节点类型 → 允许写的模型字段与模态。
+ * 非此表的类型（group/shot/sceneComposer）**无**模型字段可写；prompt 与 text 共用 textModel。
+ */
+export const NODE_TYPE_MODEL_FIELD: Record<string, { field: string; modality: NodeModal }> = {
+  image: { field: 'imageModel', modality: 'image' },
+  video: { field: 'videoModel', modality: 'video' },
+  text: { field: 'textModel', modality: 'text' },
+  prompt: { field: 'textModel', modality: 'text' },
+  audio: { field: 'audioModel', modality: 'audio' },
+}
+
+export type NodePatchValidation =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; reason: string; allowed?: string[] }
+
+/**
+ * `update_node` 的入参校验（spec §4.1 判据 R-1~R-4）。
+ *
+ * 刻意是**模块级纯函数**：本仓 agent 链路没有 schema 校验兜底（harness 不校验），
+ * 白名单是唯一防线，必须能被独立单测逐条打靶。
+ */
+export function validateNodePatch(input: {
+  patch: Record<string, unknown>
+  node: { type?: string; data?: Record<string, unknown> }
+  selectable: Record<NodeModal, string[]>
+}): NodePatchValidation {
+  const { patch, node, selectable } = input
+  const nodeType = String(node.type ?? '')
+  const modelRule = NODE_TYPE_MODEL_FIELD[nodeType]
+  const writableFields = ['title', ...(modelRule ? [modelRule.field] : [])]
+
+  const unknown = Object.keys(patch).filter((k) => !UPDATE_NODE_WRITABLE_FIELDS.includes(k as never))
+  if (unknown.length) {
+    return { ok: false, reason: `unsupported field(s): ${unknown.join(', ')}`, allowed: writableFields }
+  }
+  // R-1：一次只允许一个模型字段，且必须是该节点类型的模态字段
+  const modelFields = Object.keys(patch).filter((k) => k !== 'title')
+  if (modelFields.length > 1) {
+    return { ok: false, reason: 'at most one model field per call', allowed: writableFields }
+  }
+  if (modelFields.length === 1) {
+    if (!modelRule || modelFields[0] !== modelRule.field) {
+      return {
+        ok: false,
+        reason: `node type "${nodeType}" only accepts ${modelRule ? modelRule.field : 'no model field'}`,
+        allowed: writableFields,
+      }
+    }
+  }
+
+  const data: Record<string, unknown> = {}
+  if ('title' in patch) {
+    // Review Focus 4：空白 title 不得把标题清空
+    const title = typeof patch.title === 'string' ? patch.title.trim() : ''
+    if (!title) return { ok: false, reason: 'title must be a non-empty string', allowed: writableFields }
+    data.title = title
+  }
+  if (modelRule && modelRule.field in patch) {
+    const raw = patch[modelRule.field]
+    if (typeof raw !== 'string') {
+      return { ok: false, reason: `${modelRule.field} must be a string`, allowed: selectable[modelRule.modality] }
+    }
+    const normalized = normalizeModelRef(modelRule.modality, raw)
+    // R-2：fallback 说明裸名不在目录中——不得静默采用被回落出来的默认模型
+    if (!normalized || normalized.fallback) {
+      return { ok: false, reason: `unknown model "${raw}"`, allowed: selectable[modelRule.modality] }
+    }
+    // R-3：清单是唯一权威（BYOK ref 也可能已被用户从可选清单移除）
+    if (!selectable[modelRule.modality].includes(normalized.ref)) {
+      return { ok: false, reason: `model "${raw}" is not in the user's selectable list`, allowed: selectable[modelRule.modality] }
+    }
+    data[modelRule.field] = normalized.ref
+  }
+
+  if (Object.keys(data).length === 0) {
+    return { ok: false, reason: 'patch must contain at least one writable field', allowed: writableFields }
+  }
+  return { ok: true, data }
+}
+
+/** 由 canvas.edges 推导节点的上下游（只回 id+type+title，体积可控；悬空边跳过）。 */
+export function relationsForNode(
+  canvas: { nodes: CanvasNode[]; edges: CanvasEdge[] },
+  nodeId: string,
+): {
+  upstream: Array<{ id: string; type: string; title: string }>
+  downstream: Array<{ id: string; type: string; title: string }>
+} {
+  const brief = (id: string) => {
+    const node = canvas.nodes.find((n) => n.id === id)
+    if (!node) return null
+    return { id: node.id, type: String(node.type ?? ''), title: nodeTitle(node) }
+  }
+  const upstream = canvas.edges
+    .filter((e) => e.target === nodeId)
+    .map((e) => brief(e.source))
+    .filter((n): n is { id: string; type: string; title: string } => n !== null)
+  const downstream = canvas.edges
+    .filter((e) => e.source === nodeId)
+    .map((e) => brief(e.target))
+    .filter((n): n is { id: string; type: string; title: string } => n !== null)
+  return { upstream, downstream }
 }
 
 function nodeToAgentAttachment(node: CanvasNode): SidebarAttachment | null {
@@ -361,6 +475,8 @@ export class AgentCanvasToolsService {
     @Inject(VideoGenerationOrchestrator) private readonly videoOrchestrator: VideoGenerationOrchestrator,
     @Inject(PersistRemoteService) private readonly persistRemote: PersistRemoteService,
     @Inject(ImageSliceService) private readonly imageSliceService: ImageSliceService,
+    // update_node 的模型白名单校验需要按 userId 取 selectable 清单（ProviderModule 已在 AgentModule imports）
+    @Inject(ProviderService) private readonly provider: ProviderService,
     // 两产品线拆分 path A 的 seam：画布动作落地实现可替换（归属待定）。
     // 可选 —— 未提供时回退默认实现，保证现有调用/测试行为不变。
     @Optional()
@@ -446,11 +562,14 @@ export class AgentCanvasToolsService {
       return { nodeId, actions }
   }
 
-  async getNode(input: { sessionId: string; nodeId: string }): Promise<CanvasNode> {
+  async getNode(
+    input: { sessionId: string; nodeId: string },
+  ): Promise<CanvasNode & ReturnType<typeof relationsForNode>> {
     const { canvas } = await this.loadSession(input.sessionId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
-    return node
+    // 上下游是该节点的一等属性；拆第二个读工具只会迫使模型记住"读节点要调两次"
+    return { ...node, ...relationsForNode(canvas, node.id) }
   }
 
   async getCanvasSummary(input: { sessionId: string }): Promise<{
@@ -775,10 +894,14 @@ export class AgentCanvasToolsService {
    */
   async removeEdges(input: {
     sessionId: string
+    /** 有则校验归属（spec S8）；缺省保持旧行为以兼容既有调用方 */
+    userId?: string
     edgeIds: string[]
     stage?: boolean
   }): Promise<{ actions: CanvasAction[] }> {
-    const { canvas } = await this.loadSession(input.sessionId)
+    const { canvas } = input.userId
+      ? await this.loadOwnedSession(input.sessionId, input.userId)
+      : await this.loadSession(input.sessionId)
     const actions: CanvasAction[] = []
 
     for (const edgeId of input.edgeIds) {
@@ -844,6 +967,86 @@ export class AgentCanvasToolsService {
     ]
     await this.applyOrStage(input.sessionId, actions, input.stage)
     return { actions }
+  }
+
+  /**
+   * 改节点属性（spec §4.1 白名单）：title + 节点自身模态的模型字段。
+   * 刻意**不碰** prompt/content——那归 setNodeText，避免与本仓
+   * 「upsert_prompt_node 全量覆盖 vs set_node_text 部分更新」语义（PR #63）打架。
+   */
+  async updateNode(input: {
+    sessionId: string
+    userId: string
+    nodeId: string
+    patch: Record<string, unknown>
+  }): Promise<{ nodeId: string; actions: CanvasAction[] }> {
+    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+    const node = canvas.nodes.find((n) => n.id === input.nodeId)
+    if (!node) throw new NotFoundException('节点不存在')
+
+    const selectable = await this.selectableModels(input.userId)
+    const validated = validateNodePatch({ patch: input.patch, node, selectable })
+    if (!validated.ok) {
+      throw new BadRequestException({
+        message: validated.reason,
+        ...(validated.allowed ? { allowed: validated.allowed } : {}),
+      })
+    }
+
+    const actions: CanvasAction[] = [
+      { type: 'update_node', payload: { id: node.id, data: validated.data } },
+    ]
+    await this.persist(input.sessionId, actions)
+    return { nodeId: node.id, actions }
+  }
+
+  /**
+   * 按模态列出可写模型 ref（= update_node 的合法取值集）。
+   * `source` 直接来自 preferences 里的 channelId 前缀：`platform::*` → 平台，其余 → BYOK。
+   */
+  async listNodeModelOptions(input: { userId: string }): Promise<{
+    modalities: Record<
+      NodeModal,
+      Array<{ ref: string; model: string; channelId: string; channelName: string; source: ProviderSource }>
+    >
+  }> {
+    if (!input.userId) throw new BadRequestException('userId required')
+    const { platformChannel, channels, preferences } = await this.provider.bootstrap(input.userId)
+    const nameOf = new Map<string, string>([[platformChannel.id, platformChannel.name]])
+    for (const ch of channels) nameOf.set(ch.id, ch.name)
+
+    const build = (refs: string[]) =>
+      refs.map((ref) => {
+        const decoded = decodeChannelModel(ref)
+        const channelId = decoded?.channelId ?? PLATFORM_CHANNEL_ID
+        return {
+          ref,
+          model: decoded?.modelName ?? ref,
+          channelId,
+          channelName: nameOf.get(channelId) ?? channelId,
+          source: (channelId === PLATFORM_CHANNEL_ID ? 'platform' : 'user') as ProviderSource,
+        }
+      })
+
+    return {
+      modalities: {
+        image: build(preferences.selectableImageModels),
+        video: build(preferences.selectableVideoModels),
+        text: build(preferences.selectableTextModels),
+        audio: build(preferences.selectableAudioModels),
+      },
+    }
+  }
+
+  /** selectable 清单 → validateNodePatch 需要的形态（按模态分桶）。 */
+  private async selectableModels(userId: string): Promise<Record<NodeModal, string[]>> {
+    const { preferences } = await this.provider.bootstrap(userId)
+    return {
+      image: preferences.selectableImageModels,
+      video: preferences.selectableVideoModels,
+      text: preferences.selectableTextModels,
+      audio: preferences.selectableAudioModels,
+    }
   }
 
   async attachRefs(input: {
@@ -1921,6 +2124,7 @@ export class AgentCanvasToolsService {
       position: { x: number; y: number }
       size: { w: number; h: number }
     }>
+    edges: Array<{ id: string; source: string; target: string }>
   }> {
     const { canvas } = await this.loadSession(input.sessionId)
     const layoutNodes = canvas.nodes as LayoutNode[]
@@ -1937,7 +2141,11 @@ export class AgentCanvasToolsService {
         ...(node.parentNode ? { parentNode: node.parentNode } : {}),
       }
     })
-    return { nodes, groups: summarizeLayoutGroups(layoutNodes) }
+    return {
+      nodes,
+      groups: summarizeLayoutGroups(layoutNodes),
+      edges: canvas.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    }
   }
 
   async duplicateNode(input: {

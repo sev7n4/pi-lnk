@@ -40,6 +40,8 @@ describe('AgentCanvasToolsService parseCanvas', () => {
       {} as never,
       {} as never,
       {} as never,
+      // ProviderService（本用例不涉及 update_node / list_model_options）
+      {} as never,
     )
     await svc.moveNodes({
       sessionId: 's1',
@@ -84,6 +86,8 @@ describe('AgentCanvasToolsService parseCanvas', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
+      // ProviderService（本用例不涉及 update_node / list_model_options）
       {} as never,
     )
     await svc.upsertPromptNode({

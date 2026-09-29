@@ -5,26 +5,17 @@ import { PrismaService } from '../prisma/prisma.service'
 export class SessionsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async create(userId: string, title?: string, prompt?: string) {
-    const canvasData = prompt
-      ? JSON.stringify({
-          nodes: [
-            {
-              id: 'prompt-1',
-              type: 'prompt',
-              position: { x: 250, y: 100 },
-              data: { prompt },
-            },
-          ],
-          edges: [],
-        })
-      : null
-
+  /**
+   * 新建画布：**不种任何初始节点**（2026-09-29 拍板）。
+   * 历史上带 prompt 时会种一个 prompt-1 提示词节点；用户输入的内容改由
+   * `initialPrompt` query 预填到侧栏输入框（CanvasPage.consumeAgentLaunchQuery），
+   * 故此处删除该种子不丢内容。见 spec 场景 A/B。
+   */
+  async create(userId: string, title?: string) {
     const session = await this.prisma.session.create({
       data: {
         userId,
         title: title || '未命名画布',
-        canvasData,
       },
     })
 

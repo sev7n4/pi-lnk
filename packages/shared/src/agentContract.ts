@@ -129,7 +129,21 @@ export const CanvasNodeSchema = z.object({
 
 export type CanvasNode = z.infer<typeof CanvasNodeSchema>
 
-export const GetNodeResponseSchema = CanvasNodeSchema
+/** 关系三元组（get_node 的 upstream/downstream 元素）——只回必要字段，体积可控。 */
+export const CanvasNodeBriefSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  title: z.string(),
+})
+
+export type CanvasNodeBrief = z.infer<typeof CanvasNodeBriefSchema>
+
+// 2026-09-29：追加 optional upstream/downstream（agent 此前无任何途径读到边）。
+// optional 是刻意的——向后兼容既有消费方（pi-runtime 工具、verify-contract 的 Python 模型）。
+export const GetNodeResponseSchema = CanvasNodeSchema.extend({
+  upstream: z.array(CanvasNodeBriefSchema).optional(),
+  downstream: z.array(CanvasNodeBriefSchema).optional(),
+})
 
 export type GetNodeResponse = z.infer<typeof GetNodeResponseSchema>
 

@@ -201,8 +201,9 @@ describe('AgentService streamConversation', () => {
       events.push(event)
     }
 
+    // P0-①：会话键 = threadId（对话），画布上下文改由 prompt turnContext 携带
     expect(pi.createSession).toHaveBeenCalledWith(
-      's1',
+      's1:thread-a',
       expect.objectContaining({ userId: 'u1' }),
     )
     // tool_execution_end 同时派生 canvas_action（details.actions）与 tool_result（UI 执行过程）
@@ -280,13 +281,25 @@ describe('AgentService streamConversation', () => {
       // drain
     }
 
-    expect(pi.createSession).toHaveBeenCalledWith(
-      's1',
+    // P0-①：侧栏素材不再随会话创建注入（会话常驻），改为每轮 prompt 的 turnContext 透传
+    expect(pi.prompt).toHaveBeenCalledWith(
+      's1:thread-a',
+      '营销',
+      'main',
       expect.objectContaining({
-        attachments,
-        refOrder: ['a1'],
+        turnContext: expect.objectContaining({
+          attachments,
+          refOrder: ['a1'],
+        }),
       }),
     )
+    expect(pi.createSession).toHaveBeenCalledWith(
+      's1:thread-a',
+      expect.objectContaining({ userId: 'u1' }),
+    )
+    const createOpts = pi.createSession.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(createOpts).not.toHaveProperty('attachments')
+    expect(createOpts).not.toHaveProperty('refOrder')
     expect(agentMessageCreate).toHaveBeenCalledWith({
       data: {
         sessionId: 's1',

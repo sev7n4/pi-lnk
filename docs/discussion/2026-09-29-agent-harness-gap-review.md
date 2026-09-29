@@ -37,9 +37,11 @@
 
 **能力闲置**：vendored pi 的 compaction / branch-summarization（`harness/compaction/`）、`lane.compact()`（`runtime/lane.ts:1200`）**全链路 0 调用**。
 
-**补齐方案**：以 threadId 为键持久 harness 会话——每轮复用、历史进原生 context，超限走 vendored compaction。随之可退役三套为「每轮重建」而生的补丁机制：`createSessionReplacingStale`（pi-runtime.client.ts:132）、`acquirePiSessionLock`（agent.service.ts:611）、409 竞态处理。
+**补齐方案**：以 threadId 为键持久 harness 会话——每轮复用、历史进原生 context，超限走 vendored compaction。随之可退役三套为「每轮重建」而生的补丁机制：`createSessionReplacingStale`（pi-runtime.client.ts:132）、`acquirePiSessionLock`（agent.service.ts:611）、409 竞态处理。**另加退役两处同源补丁**：`compressRecentTurns`（历史进 context 后，「近 4 轮文本摘要」既是重复注入也是信息损失）与 Nest 侧 `AgentMessage` 历史查询链（每轮白查一次 DB）。
 
-**代价与对策**：pi-runtime 滚动更新丢内存会话 → vendor `runtime/restore.ts` + PVC 持久化 `sessionsRoot` 可恢复。thinkingLevel 仅 create 可设（session-manager.ts:127 注释）→ 持久会话换档需保留按需重建路径或确认 vendor 是否支持 per-prompt 设置。
+> 实施状态：已落地（见上）。实际退役 5 处：`createSessionReplacingStale` / `acquirePiSessionLock`(+`piSessionChains`) / 409 竞态容错 / `compress-recent-turns.ts` / `AgentMessage` 历史查询；新增 pi-runtime 侧会话 TTL + 磁盘 LRU（活跃会话双豁免）、同键并发 409 守卫、4 项会话指标、7 项 env。
+
+**代价与对策**：pi-runtime 滚动更新丢内存会话 → vendor `runtime/restore.ts` 已接（启动即 `restoreSession`），磁盘 `JsonlSessionRepo` 存活即自动恢复。thinkingLevel 换档：实测 `lane.setThinkingLevel(level, ctx)` 对存活会话可用，**不需要**保留按需重建路径。会话重建只在 **LLM 身份变更**时发生（BYOK 渠道/模型切换 → `status: "rebuilt"`，历史重置），Nest 侧对该状态打 warn 保持可观测。
 
 ### 3.2 run_* 长任务不可级联取消
 
@@ -80,10 +82,11 @@
 ## 6. 推进顺序
 
 1. **P0-②③（abort 级联 + SSE seq/重连）**：✅ 已实现（2026-09-29，实现计划 `docs/superpowers/plans/2026-09-29-p0-abort-cascade-sse-resume.md`，分支 `feat/p0-abort-cascade-sse-resume`），待 PR 部署验证
-2. **P0-①（持久会话 + compaction）**：动架构的大活，需 brainstorming 立项后 writing-plans
+2. **P0-①（持久会话 + compaction）**：✅ 已实现（2026-09-29，spec `docs/superpowers/specs/2026-09-29-persistent-harness-session-design.md`，计划 `docs/superpowers/plans/2026-09-29-persistent-harness-session.md`），待 PR 与部署验证
 3. **P0-④ / P1**：在 ① 落地后顺势接（④ 的异步化与持久会话的上下文预算联动）
 
 ## 变更记录
 
 - 2026-09-29：初版。基于同日全链路源码审视（pi-runtime / Nest agent / vendored pi 能力面），结论经用户确认。
 - 2026-09-29：P0-②③ 实现完成，§6 第 1 条回填状态。实现要点：事件单调 seq + `?lastEventId=` 增量重放；SSE 退避重连（250ms→5s 封顶、120s 预算、404/clean-end 终止、onEvent 异常终止不重试）；run_*/cancel_generation 经 `context?.abortSignal` 级联取消（`AbortSignal.any` 与既有超时叠加）。
+- 2026-09-29：P0-① 实现完成，§3.1 补齐方案/代价与对策与 §6 第 2 条回填实际结论。实现要点：会话键 = threadId（对话），pi-runtime 侧 `toSessionKey` 归一；`systemPrompt`/`toolContext` 改函数形态（每次 LLM 调用前求值，动态块不进对话历史）；身份比对下沉 pi-runtime（BYOK provider id 哈希仅 runtime 可算）；退役 5 处「每轮重建」补丁（见 §3.1）。

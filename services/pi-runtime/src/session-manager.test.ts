@@ -3,10 +3,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SessionManager } from "./session-manager.js";
+import { SessionManager, toSessionKey } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
+import type { RuntimeConfig } from "./runtime-config.js";
 import { SkillRegistry } from "./skills/registry.js";
+
+/**
+ * 每个用例独立的 dataRoot。
+ * Task 4 起 create 会从磁盘恢复：共用根目录会让后一个用例意外命中前一个用例写的会话文件，
+ * 走 resume 短路（不调 harnessFactory）→ 捕获为空而假失败。
+ */
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "pi-runtime-sm-"));
+after(() => rmSync(TEST_ROOT, { recursive: true, force: true }));
+let cfgSeq = 0;
+function testConfig(): RuntimeConfig {
+	return {
+		dataRoot: join(TEST_ROOT, `c${++cfgSeq}`),
+		sessionTtlMs: 10 ** 9,
+		sweepIntervalMs: 10 ** 9,
+		sessionsMaxBytes: 10 ** 12,
+		sessionsMaxCount: 1000,
+		compaction: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
+	};
+}
 
 /** 建一个含 1 个合法 skill 的临时目录，测试结束自动清理。 */
 function makeTempSkillDir(): string {
@@ -32,7 +52,7 @@ describe("SessionManager harnessFactory 注入缝", () => {
 				},
 			} as never;
 		};
-		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, fakeHarnessFactory);
+		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
 		await sm.create("s1", {
 			userId: "u1",
 			systemPrompt: "SYS",
@@ -41,14 +61,19 @@ describe("SessionManager harnessFactory 注入缝", () => {
 			refOrder: ["I1"],
 			focusNodeId: "node-1",
 		});
-		const cfg = captured as { systemPrompt: string; toolContext: Record<string, unknown>; thinkingLevel?: string };
-		assert.equal(cfg.systemPrompt, "SYS");
+		const cfg = captured as {
+			systemPrompt: (tc: unknown) => string;
+			toolContext: (tc: unknown) => Record<string, unknown>;
+			thinkingLevel?: string;
+		};
+		assert.equal(cfg.systemPrompt(undefined), "SYS");
 		assert.equal(cfg.thinkingLevel, "medium");
-		assert.equal(cfg.toolContext.userId, "u1");
-		assert.equal(cfg.toolContext.sessionId, "s1");
-		assert.deepEqual(cfg.toolContext.mentionedKeys, ["I1"]);
-		assert.equal(cfg.toolContext.focusNodeId, "node-1");
-		assert.deepEqual((cfg.toolContext.attachments as unknown[])[0], {
+		const tc = cfg.toolContext(undefined);
+		assert.equal(tc.userId, "u1");
+		assert.equal(tc.sessionId, toSessionKey("s1"));
+		assert.deepEqual(tc.mentionedKeys, ["I1"]);
+		assert.equal(tc.focusNodeId, "node-1");
+		assert.deepEqual((tc.attachments as unknown[])[0], {
 			url: "https://x/a.png",
 			mediaType: "image",
 		});
@@ -69,9 +94,9 @@ describe("SessionManager SessionHooks（B-5 Gate 接线缝）", () => {
 			onSessionCreated(id, harness) {
 				seen.push({ id, hasHarness: !!harness });
 			},
-		});
+		}, undefined, testConfig());
 		await sm.create("s1", {});
-		assert.deepEqual(seen, [{ id: "s1", hasHarness: true }]);
+		assert.deepEqual(seen, [{ id: toSessionKey("s1"), hasHarness: true }]);
 	});
 
 	it("prompt 入口调用 onPrompt", async () => {
@@ -87,11 +112,11 @@ describe("SessionManager SessionHooks（B-5 Gate 接线缝）", () => {
 			onPrompt(id) {
 				prompts.push(id);
 			},
-		});
+		}, undefined, testConfig());
 		await sm.create("s1", {});
 		await sm.prompt("s1", "hello");
 		await new Promise((r) => setTimeout(r, 10));
-		assert.deepEqual(prompts, ["s1"]);
+		assert.deepEqual(prompts, [toSessionKey("s1")]);
 	});
 });
 
@@ -108,10 +133,10 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 				},
 			} as never;
 		};
-		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, factory);
+		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, factory, undefined, undefined, testConfig());
 		await sm.create("s1", { systemPrompt: "SYS" });
-		const cfg = captured as { systemPrompt: string; tools: Array<{ name: string }> };
-		assert.equal(cfg.systemPrompt, "SYS");
+		const cfg = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
+		assert.equal(cfg.systemPrompt(undefined), "SYS");
 		assert.ok(!cfg.tools.some((t) => t.name === "load_skill"));
 	});
 
@@ -136,10 +161,11 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			},
 			undefined,
 			registry,
+			testConfig(),
 		);
 		await sm.create("s1", { systemPrompt: "SYS" });
-		const got = captured as { systemPrompt: string; tools: Array<{ name: string }> };
-		assert.equal(got.systemPrompt, `SYS\n\n${registry.indexBlock}`);
+		const got = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
+		assert.equal(got.systemPrompt(undefined), `SYS\n\n${registry.indexBlock}`);
 		const toolNames = got.tools.map((t) => t.name);
 		assert.ok(toolNames.includes("load_skill"));
 		assert.equal(toolNames.indexOf("load_skill"), toolNames.length - 1); // 尾部
@@ -166,10 +192,11 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			},
 			undefined,
 			registry,
+			testConfig(),
 		);
 		await sm.create("s1", {});
-		const cfg = captured as { systemPrompt: string };
-		assert.equal(cfg.systemPrompt, registry.indexBlock);
+		const cfg = captured as { systemPrompt: (tc: unknown) => string };
+		assert.equal(cfg.systemPrompt(undefined), registry.indexBlock);
 	});
 });
 
@@ -217,6 +244,9 @@ describe("SessionManager BYOK override 透传（K-1）", () => {
 				capturedOverride = o;
 			}),
 			fakeHarnessFactory(() => {}),
+			undefined,
+			undefined,
+			testConfig(),
 		);
 		await sm.create("s-byok", { llm: OVERRIDE });
 		assert.deepEqual(capturedOverride, OVERRIDE);
@@ -231,6 +261,9 @@ describe("SessionManager BYOK override 透传（K-1）", () => {
 				capturedOverride = o;
 			}),
 			fakeHarnessFactory(() => {}),
+			undefined,
+			undefined,
+			testConfig(),
 		);
 		await sm.create("s-env", {});
 		assert.equal(capturedOverride, undefined);
@@ -245,6 +278,9 @@ describe("SessionManager BYOK override 透传（K-1）", () => {
 			fakeHarnessFactory((cfg) => {
 				capturedCfg = cfg;
 			}),
+			undefined,
+			undefined,
+			testConfig(),
 		);
 		const result = await sm.create("s-byok-2", { llm: OVERRIDE });
 		const cfg = capturedCfg as { model: { id: string } };
@@ -278,21 +314,21 @@ describe("SessionManager 用户取消 run（前端「停止」按钮）", () => 
 		}) as never;
 
 	it("无活跃 run 时 abort 返回 false（前端按 skipped 提示「已断开回复」）", async () => {
-		const sm = new SessionManager([], "", undefined, hangingFactory);
+		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		await sm.create("s-cancel-idle", {});
 		assert.equal(sm.abort("s-cancel-idle"), false);
 	});
 
 	it("abort 中断正在跑的 run，且会话保留（用户可接着发消息）", async () => {
-		const sm = new SessionManager([], "", undefined, hangingFactory);
+		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		await sm.create("s-cancel-run", {});
 		await sm.prompt("s-cancel-run", "hi");
 		assert.equal(sm.abort("s-cancel-run"), true);
-		assert.equal(sm.has("s-cancel-run"), true);
+		assert.equal(sm.hasKey("s-cancel-run"), true);
 	});
 
 	it("用户取消不派发 error 事件（否则重连补发 buffer 会显示「出错了」的假警报）", async () => {
-		const sm = new SessionManager([], "", undefined, hangingFactory);
+		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		await sm.create("s-cancel-noerr", {});
 		const seen: string[] = [];
 		sm.subscribe("s-cancel-noerr", (e) => seen.push(e.type));
@@ -303,7 +339,7 @@ describe("SessionManager 用户取消 run（前端「停止」按钮）", () => 
 	});
 
 	it("未知 session abort 返回 false（不抛）", () => {
-		const sm = new SessionManager([], "", undefined, hangingFactory);
+		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		assert.equal(sm.abort("nope"), false);
 	});
 });
@@ -329,7 +365,7 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 
 	it("dispatch 为事件分配单调递增 seq", async () => {
 		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
-		const sm = new SessionManager([], "", undefined, fakeHarnessFactory);
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
 		await sm.create("s-seq", {});
 		const seen: number[] = [];
 		sm.subscribe("s-seq", (e) => seen.push(e.seq));
@@ -339,7 +375,7 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 
 	it("subscribe 带 afterSeq 时只重放更晚的缓冲事件", async () => {
 		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
-		const sm = new SessionManager([], "", undefined, fakeHarnessFactory);
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
 		await sm.create("s-replay", {});
 		handlers.get("run_start")?.({ lane: "main" }); // seq 0
 		handlers.get("run_end")?.({ lane: "main" }); // seq 1
@@ -353,7 +389,7 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 
 	it("afterSeq 早于 buffer 最旧 seq 时 best-effort 返回全部 buffered", async () => {
 		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
-		const sm = new SessionManager([], "", undefined, fakeHarnessFactory);
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
 		await sm.create("s-overflow", {});
 		// 灌满 buffer（BUFFER_LIMIT=500）再溢出 1 条 → 最旧 seq=0 被淘汰，buffer 最旧 seq=1
 		for (let i = 0; i < 501; i++) handlers.get("run_start")?.({ lane: "main" });

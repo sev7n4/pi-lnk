@@ -8,6 +8,7 @@ import { StudioService } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
 import { MaterialService } from '../canvas/material.service'
+import { ProviderService } from '../provider/provider.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 
 const emptyCanvas = (): CanvasData => ({ nodes: [], edges: [] })
@@ -83,6 +84,10 @@ describe('AgentCanvasToolsService.applySidebarAttachments', () => {
           useValue: { slice: vi.fn() },
         },
         VideoGenerationOrchestrator,
+        {
+          provide: ProviderService,
+          useValue: { bootstrap: vi.fn() },
+        },
       ],
     }).compile()
     svc = moduleRef.get(AgentCanvasToolsService)

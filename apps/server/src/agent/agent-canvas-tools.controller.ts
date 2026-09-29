@@ -6,6 +6,7 @@ import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentInternalGuard } from './agent-internal.guard'
 import { CompositionService, type PreviewCompositionInput } from './composition.service'
 import { WorkflowRecipeService } from './workflow-recipe.service'
+import { AgentMemoryService } from './agent-memory.service'
 
 class UpsertPromptNodeDto {
   @IsString()
@@ -212,10 +213,37 @@ class RemoveNodesDto {
   stage?: boolean
 }
 
+// P1 memory（spec 2026-09-29）
+class SaveMemoryDto {
+  @IsString()
+  userId!: string
+
+  @IsString()
+  content!: string
+}
+
+class SearchMemoryDto {
+  @IsString()
+  userId!: string
+
+  @IsOptional()
+  @IsString()
+  query?: string
+
+  @IsOptional()
+  @IsNumber()
+  limit?: number
+}
+
 // W32: Remove edges DTO
 class RemoveEdgesDto {
   @IsString()
   sessionId!: string
+
+  // spec S8：带 userId 时校验画布归属；缺省保持旧行为（既有调用方兼容）
+  @IsOptional()
+  @IsString()
+  userId?: string
 
   @IsArray()
   @IsString({ each: true })
@@ -262,6 +290,21 @@ class SetNodeContentDto {
   @IsOptional()
   @IsBoolean()
   stage?: boolean
+}
+
+export class UpdateNodeDto {
+  @IsString()
+  sessionId!: string
+
+  @IsString()
+  userId!: string
+
+  @IsString()
+  nodeId!: string
+
+  /** 白名单 patch（title / imageModel / videoModel / textModel / audioModel）；由 service 校验 */
+  @IsObject()
+  patch!: Record<string, unknown>
 }
 
 class AttachRefsDto {
@@ -928,6 +971,7 @@ export class AgentCanvasToolsController {
     @Inject(WorkflowRecipeService) private readonly recipes: WorkflowRecipeService,
     @Inject(CompositionService) private readonly composition: CompositionService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AgentMemoryService) private readonly memory: AgentMemoryService,
   ) {}
 
   @Post('upsert-prompt-node')
@@ -985,6 +1029,19 @@ export class AgentCanvasToolsController {
     return { code: 0, message: 'ok', data }
   }
 
+  // P1 memory：跨会话记忆（spec 2026-09-29）
+  @Post('memory-save')
+  async saveMemory(@Body() dto: SaveMemoryDto) {
+    const data = await this.memory.saveMemory(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('memory-search')
+  async searchMemory(@Body() dto: SearchMemoryDto) {
+    const data = await this.memory.searchMemory(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
   // W32: Remove edges endpoint
   @Post('remove-edges')
   async removeEdges(@Body() dto: RemoveEdgesDto) {
@@ -1001,6 +1058,18 @@ export class AgentCanvasToolsController {
   @Post('set-node-content')
   async setNodeContent(@Body() dto: SetNodeContentDto) {
     const data = await this.tools.setNodeContent(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('update-node')
+  async updateNode(@Body() dto: UpdateNodeDto) {
+    const data = await this.tools.updateNode(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('list-model-options')
+  async listModelOptions(@Body() dto: UserOnlyDto) {
+    const data = await this.tools.listNodeModelOptions(dto)
     return { code: 0, message: 'ok', data }
   }
 
