@@ -46,19 +46,18 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
 ## 执行步骤
 
 1. **锁商品身份**：按"商品身份锁"小节提取 identity lock，写进内部上下文
-2. **补全缺失信息**（文本结构化选项 + 其他可编辑，一次性问全）：按项给预设选项让用户选或补充其他，降低商家认知负载（"风格"等专业词用户未必答得出）；用户可单字回（"场景选 A"）或写其他；用户 waived 或信息已够后不再追问
+2. **补全缺失信息**（结构化选项 + 其他可编辑，一次性问全）：优先用 `ask_user` 工具给**可点击选项卡**（含"其他"自由输入），降低商家认知负载（"风格"等专业词用户未必答得出）；工具不可用时退回文本选项（agent 在回复里列选项、用户手打回复）。用户 waived 或信息已够后不再追问
    - **商品主体**：开放描述（每商品不同不预设）；用户已上传参考图则从图提取，跳过此问
    - **场景**：A 家居 / B 办公 / C 户外 / D 影棚白底 / E 纯色背景 / 其他（请说明）
    - **风格**：A 简约高级 / B 喜庆 / C 性冷淡 / D ins风 / E 国潮 / F 工业风 / 其他（请说明）
    - **用途(destination)**：A 电商listing / B 独立站landing / C 社交广告 / D 单图 / 其他（请说明）
    - **平台规范**：不问用户；由 destination 自动查"平台硬规格"表
-   - ⚠️ 当前为**文本选项**（agent 在回复里列选项，用户手打回复）；可点击选项卡体验需 pi-runtime `ask_user` 工具（已实现并注册）+ 前端渲染分支（见 `docs/superpowers/specs/2026-09-28-ask-user-tool-design.md`）
 3. **按 destination 分流 shot 类型**：查"destination → shot 类型映射"，确定本次产出哪些图
 4. **建节点 + 写 prompt**：用 `upsert_media_node` 创建 image 节点；每条 prompt 顶部带 fidelity lock 段落（见"提示词写法"），正文按"主体 → 场景 → 光线 → 风格 → 质量词"结构展开；每类图可给 1–3 个变体方案供挑选，标推荐项
 5. **挂参考图（数据层）**：侧栏参考图用 `apply_sidebar_attachments`（mode=localRefs，@I* 芯片序）；画布已有图才用 `attach_refs`；ref 顺序为先身份/主体，后服装/产品。此步是**数据层**——影响生成时参考哪些图
 6. **连视觉边（视觉层）**：用 `connect_nodes` 把白底主图作基准图，场景图/细节图/模特图/包装图各自有向边 `source=主图id target=该图id`，表达"从主图衍生、参考主图一致性"
    - 维度区分：`attach_refs`（step5）是**数据层**（生成时参考哪些图，影响出图），`connect_nodes`（本步）是**视觉层**（画布画箭头 + 驱动沿边布局）——两者不同维度，都要做
-   - 配合 `arrange_nodes(along_edges)` 可自动分层（主图居左，衍生图向右展开）；该工具待开发（见 `docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md`，已拍板待开发）
+   - 配合 `arrange_nodes(along_edges)` 可自动分层（主图居左，衍生图向右展开）
 7. **提议生成**：`propose_generation` 提议生成，等待用户确认；确认前不调用 `run_*`
 8. **出图后 QA 闸门 + 定位**：出图后先 `focus_node` 定位到刚生成的节点（让用户第一时间看到结果），再对照"出图后 QA 闸门"自检并报告 PASS/REVISE/REJECT。**自检前必须先看图**，按 `imageRefine` 取值分四种情形：`imageRefine="attached"` 时图已作为附加图片块进入上下文，必须先查看该图再做逐 gate 自检，不得凭 prompt 想象画面下结论；`imageRefine="skipped"` 时如实向用户说明"未能获取图片用于自检"（可结合结果中的 `imageRefineReason` 说明原因），不得假装已自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理：如实说明本次无法取得图片用于自检，不得凭 prompt 想象下结论；`imageRefine="n/a"`（生成未完成）时走原 status 分支：`status=timeout` 稍后用 `get_generation_status` 查询，`status=fallback_pending` 提示用户在画布节点上确认平台兜底。
 
@@ -137,6 +136,7 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
   - 商品主体保持开放（每商品不同不预设），有参考图则从图提取跳过此问
   - 平台规范从"问用户"改为 agent 自查"平台硬规格"表（用户是商家未必懂 RGB/sRGB）
   - 标注当前为文本选项；可点击选项卡体验需 pi-runtime `ask_user` 工具 + 前端渲染分支（见 spec 文档）
+- **0.4.1** (2026-09-29)：**订正过期注记**——`ask_user`（#53）与 `arrange_nodes`（#54）已上生产（`registry.ts` 已注册），故 step2 改为优先用 `ask_user` 出可点击选项卡（不可用时退回文本选项），step6 去掉"该工具待开发"。
 - **0.4.0** (2026-09-28, 连线策略 + 生成后 focus 定位)：新增"连视觉边"步骤 + QA 闸门扩展 focus 定位。
   - 新增 step6"连视觉边"（`connect_nodes`）：白底主图作基准，衍生图有向边指回主图表达参考链
   - 分清维度：`attach_refs`（step5 数据层影响生成）vs `connect_nodes`（step6 视觉层画布可见+布局依据）
