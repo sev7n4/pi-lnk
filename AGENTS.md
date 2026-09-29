@@ -45,6 +45,20 @@ lnkpi 仓库（`/Users/4seven/workspace/lnkpi`）降级为**只读历史归档**
 - 写实现计划 → `writing-plans` skill
 - 分支管理 → `using-git-worktrees` skill
 
+## 本地测试纪律（2026-09-29 定）
+
+背景：本机是 **4 核 Mac** 且多 agent 并存，曾实测多窗口并跑全量测试把 load 打到 **21+**（超载 5 倍，所有测试互相拖慢）。
+
+1. **默认跑变更相关测试，不跑全量**：
+   - server：`pnpm test:server:changed`（相对 origin/master 的变更用例）或 `pnpm test:server`（整个 server 套件）；改动聚焦时直接跑单文件——`pnpm --filter @lnkpi/server exec vitest run src/agent/<file>.test.ts`
+   - pi-runtime：`pnpm test:runtime`；单文件 `node --import tsx --test src/<file>.test.ts`（在 `services/pi-runtime/` 下）
+2. **全量 `pnpm test` 是 CI 的活**（PR 上自动跑全仓 757+265 用例，约 4 分钟）。本地确需全量时：
+   - 先 `uptime`——**load > 8 禁止起跑**（有并行会话在跑时几乎必然超）
+   - 同一时刻**全仓只允许一个全量**；server 全量必须带 `--hookTimeout=120000`（已知 flake）
+3. **不要本机同时跑 server 与 pi-runtime 两套全量**——资源竞争会 SIGKILL(137)，出现假失败
+4. vitest 本地已限 **2 fork**（`apps/server/vitest.config.ts`，CI 环境不限速）——这是给多 agent 并存留余量，不要调回去
+5. worktree 首次跑测试前：`pnpm install --frozen-lockfile` + `pnpm --filter @lnkpi/server exec prisma generate`（否则 vitest 报 `.prisma/client` 缺失）
+
 ## 已拍板决策（以 spec v1.0 为准）
 
 详细版见 spec 第 3 章决策表；与讨论文档 §10 的差异：**D-α' 替换 D-α（K3s Day-1 Minimal）、D-β' 替换 D-β（Fast-Ramp Atomic-First，8 周 → 5-6 周，marketing 移出 v1.0）**。

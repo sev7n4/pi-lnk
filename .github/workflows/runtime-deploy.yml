@@ -1,0 +1,186 @@
+name: Runtime Deploy (pi-runtime)
+
+# 把 pi-runtime 的手工发布流程（rsync → CVM --no-cache 构建 → push → helm）固化为 workflow。
+# 操作知识沉淀自 docs/ops/RUNBOOK-pi-runtime-deploy.md 与本仓 pi-lnk-runtime-release 技能。
+#
+# 铁律（违反即失败，见各 step）：
+#   1. tag 只能加不能复用（skip_build 重部署除外）
+#   2. 镜像真伪只认 imageID digest == pod imageID
+#   3. 数字型 env 一律 --set-string（防 toYaml 科学计数法 → parseInt 截断，2026-09-29 事故）
+#   4. 升级后 env 必须「逐项比对精确值」，不是 presence 检查
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'pi-runtime 镜像 tag（如 0.0.21；必须是递增新值）'
+        required: true
+      skip_build:
+        description: '跳过构建，直接重部署已存在的 tag（回滚/重启用）'
+        required: false
+        default: false
+        type: boolean
+      feature_grep:
+        description: '可选：构建后 grep 镜像 dist 的特征串（证明新代码真实进入镜像）'
+        required: false
+        default: ''
+      feature_file:
+        description: '特征串所在文件（相对 dist/）'
+        required: false
+        default: 'session-manager.js'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pi-runtime-deploy
+  cancel-in-progress: false
+
+env:
+  DEPLOY_DIR: /root/pi-lnk-build
+
+jobs:
+  deploy:
+    name: Build & deploy pi-runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      SSH_HOST: ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
+      SSH_USER: ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-cvm
+            HostName ${{ env.SSH_HOST }}
+            User ${{ env.SSH_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking accept-new
+            BatchMode yes
+            LogLevel ERROR
+            ServerAliveInterval 15
+            ServerAliveCountMax 30
+            ConnectTimeout 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Preflight — tag 只能加不能复用
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          EXISTS=$(ssh deploy-cvm "curl -s http://127.0.0.1:5000/v2/pi-runtime/tags/list" \
+            | tr ',' '\n' | grep -c "\"$TAG\"" || true)
+          if [[ "${{ inputs.skip_build }}" != "true" && "$EXISTS" != "0" ]]; then
+            echo "ERROR: tag ${TAG} 已存在于 registry——tag 只能加不能复用。换新 tag，或用 skip_build=true 重部署。"
+            exit 1
+          fi
+          echo "preflight ok: tag=${TAG} exists=${EXISTS} skip_build=${{ inputs.skip_build }}"
+
+      - name: Rsync source to CVM
+        run: |
+          set -euo pipefail
+          RSYNC_SSH="ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes"
+          rsync -az --delete --exclude node_modules --exclude .git --exclude '*.test.ts' \
+            -e "$RSYNC_SSH" \
+            package.json pnpm-lock.yaml pnpm-workspace.yaml skills vendor \
+            deploy-cvm:${DEPLOY_DIR}/
+          rsync -az --delete --exclude node_modules --exclude '*.test.ts' \
+            -e "$RSYNC_SSH" \
+            services/pi-runtime deploy-cvm:${DEPLOY_DIR}/services/
+          # rsync --delete 不删除「被 exclude 的已存在文件」→ 陈旧 *.test.ts 会让构建期 tsc 失败
+          ssh deploy-cvm "find ${DEPLOY_DIR} -name '*.test.ts' -type f -delete"
+
+      - name: Build image (--no-cache)
+        if: inputs.skip_build != true
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          ssh deploy-cvm "cd ${DEPLOY_DIR} && docker build --no-cache \
+            -f services/pi-runtime/Dockerfile . -t 127.0.0.1:5000/pi-runtime:${TAG}"
+
+      - name: Verify dist content in image
+        if: inputs.feature_grep != ''
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          COUNT=$(ssh deploy-cvm "docker run --rm --entrypoint sh 127.0.0.1:5000/pi-runtime:${TAG} \
+            -c 'grep -c \"${{ inputs.feature_grep }}\" /app/services/pi-runtime/dist/${{ inputs.feature_file }}'" )
+          echo "feature hits: ${COUNT}"
+          [[ "$COUNT" -gt 0 ]] || { echo "ERROR: 特征串未出现在镜像 dist 中"; exit 1; }
+
+      - name: Push + record imageID
+        id: push
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [[ "${{ inputs.skip_build }}" != "true" ]]; then
+            ssh deploy-cvm "docker push 127.0.0.1:5000/pi-runtime:${TAG}" | tail -2
+          fi
+          IMAGE_ID=$(ssh deploy-cvm "docker inspect 127.0.0.1:5000/pi-runtime:${TAG} --format '{{.Id}}'")
+          echo "image_id=${IMAGE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Helm upgrade (--reuse-values + --set-string)
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          ssh deploy-cvm "KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm upgrade pi-lnk-runtime-dev \
+            /opt/lnkpi/charts/pi-lnk-runtime -n pi-lnk-runtime --reuse-values \
+            --set-string image.tag=${TAG} \
+            --set-string env.PI_RUNTIME_VERSION=${TAG} \
+            --set-string env.PI_RUNTIME_SESSION_TTL_MS=1800000 \
+            --set-string env.PI_RUNTIME_SESSION_SWEEP_MS=300000 \
+            --set-string env.PI_RUNTIME_SESSIONS_MAX_BYTES=3221225472 \
+            --set-string env.PI_RUNTIME_SESSIONS_MAX_COUNT=200 \
+            --set-string env.PI_RUNTIME_COMPACTION_ENABLED=true \
+            --set-string env.PI_RUNTIME_COMPACTION_RESERVE_TOKENS=16384 \
+            --set-string env.PI_RUNTIME_COMPACTION_KEEP_RECENT_TOKENS=20000"
+
+      - name: Rollout + triple verify (digest / env / healthz)
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          IMAGE_ID="${{ steps.push.outputs.image_id }}"
+          ssh deploy-cvm "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n pi-lnk-runtime \
+            rollout status deploy/pi-lnk-runtime --timeout=180s"
+          sleep 10
+          POD_ID=$(ssh deploy-cvm "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n pi-lnk-runtime \
+            get pods -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'")
+          echo "pod imageID: ${POD_ID}"
+          [[ "$POD_ID" == *"$IMAGE_ID"* ]] || { echo "ERROR: pod imageID != push digest"; exit 1; }
+          ENV_OUT=$(ssh deploy-cvm "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n pi-lnk-runtime \
+            exec deploy/pi-lnk-runtime -- printenv")
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_VERSION=${TAG}" \
+            || { echo "ERROR: PI_RUNTIME_VERSION != ${TAG}"; exit 1; }
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_SESSION_TTL_MS=1800000" \
+            || { echo "ERROR: PI_RUNTIME_SESSION_TTL_MS 非期望精确值"; exit 1; }
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_SESSIONS_MAX_BYTES=3221225472" \
+            || { echo "ERROR: PI_RUNTIME_SESSIONS_MAX_BYTES 非期望精确值"; exit 1; }
+          HEALTH=$(ssh deploy-cvm "curl -s http://127.0.0.1:30100/healthz")
+          echo "$HEALTH" | grep -q "\"version\":\"${TAG}\"" \
+            || { echo "ERROR: healthz version != ${TAG}: ${HEALTH}"; exit 1; }
+          echo "ALL VERIFY OK: ${HEALTH}"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          {
+            echo "## pi-runtime Deploy"
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Tag | \`${{ inputs.tag }}\` |"
+            echo "| skip_build | \`${{ inputs.skip_build }}\` |"
+            echo "| Concurrency | 单组排队（cancel-in-progress: false） |"
+          } >> "$GITHUB_STEP_SUMMARY"
