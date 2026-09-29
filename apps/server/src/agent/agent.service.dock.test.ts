@@ -80,12 +80,16 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
 
     expect(resolveForGeneration).toHaveBeenCalledWith('u1', 'platform::gpt-4o-mini', 'text')
     // dock 短 id 经 mapUiSkillId 映射为 runtime 技能名 → forceSkills
-    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
-      forceSkills: ['ecommerce-product-photo'],
-    })
+    // P0-①：会话键 = threadId（对话），第 4 参另有 turnContext（画布/侧栏逐轮透传）
+    expect(pi.prompt).toHaveBeenCalledWith(
+      'thread-1',
+      'hello',
+      'main',
+      expect.objectContaining({ forceSkills: ['ecommerce-product-photo'] }),
+    )
     // 平台渠道（source=platform）不透传——生产上 Nest 平台通道与 pi env 不同源
     expect(pi.createSession).toHaveBeenCalledWith(
-      's1',
+      'thread-1',
       expect.objectContaining({ llm: undefined }),
     )
   })
@@ -138,9 +142,12 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
       }),
     )
     // storyboard 未接入 → fail-soft 原文发送、无 forceSkills
-    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
-      forceSkills: undefined,
-    })
+    expect(pi.prompt).toHaveBeenCalledWith(
+      's1',
+      'hello',
+      'main',
+      expect.objectContaining({ forceSkills: undefined }),
+    )
   })
 
   it('skips provider resolution when model and defaultTextModel are both omitted', async () => {
@@ -163,8 +170,11 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
       's1',
       expect.objectContaining({ llm: undefined }),
     )
-    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
-      forceSkills: undefined,
-    })
+    expect(pi.prompt).toHaveBeenCalledWith(
+      's1',
+      'hello',
+      'main',
+      expect.objectContaining({ forceSkills: undefined }),
+    )
   })
 })

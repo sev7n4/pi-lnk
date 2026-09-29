@@ -35,7 +35,11 @@ import {
 import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
-import { PiRuntimeClient, type PiSessionLlmOverride } from './pi-runtime/pi-runtime.client'
+import {
+  PiRuntimeClient,
+  type CreateSessionResult,
+  type PiSessionLlmOverride,
+} from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability } from '../provider/model-capability'
 import {
   formatParseContextBlock,
@@ -52,17 +56,12 @@ import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
-/** #12：pi 每轮的画布上下文（进 toolContext + system prompt 组装输入）。 */
+/** #12：pi 每轮的画布上下文（P0-① 起全部经 prompt 的 turnContext 逐轮透传，不再随会话创建注入）。 */
 export interface PiCanvasContext {
   attachments?: SidebarAttachment[]
   mentionedKeys?: string[]
   refOrder?: string[]
   focusNodeId?: string
-  priorMessages: Array<{
-    role: 'user' | 'assistant' | 'tool'
-    content: string
-    toolNames?: string[]
-  }>
 }
 
 const TRACE_PERSIST_EVENT_TYPES = new Set([
@@ -217,23 +216,12 @@ export class AgentService {
     }
 
     const persistedUserContent = sanitizeAgentMessageContent('user', userMessage)
-    // B4：pi-runtime 开关提前判定（F3：priorMessages 查询只在 pi 分支需要，老链路不再多付一次查询）
+    // B4：pi-runtime 开关提前判定
     const piMode = this.getPiRuntimeMode()
     const piUrl = this.getPiRuntimeUrl()
     const piEligible = piMode !== 'off' && piUrl && userId
-    // #12：在本轮 user 消息落库前取历史（保证近期摘要不含本轮内容）
-    const priorAgentMessages = piEligible
-      ? await this.prisma.agentMessage.findMany({
-          where: { threadId: effectiveThreadId },
-          orderBy: { createdAt: 'desc' },
-          take: 24,
-          select: { role: true, content: true },
-        })
-      : []
-    const priorMessages = priorAgentMessages
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content ?? '' }))
-      .reverse()
+    // P0-①：不再查 AgentMessage 历史喂 prompt —— 会话跨轮常驻，历史已在 pi 侧原生 context 里。
+    // DB 仍按 sessionId + threadId 归属落库（前端消息列表与清空语义不受影响）。
     if (persistedUserContent) {
       await this.prisma.agentMessage.create({
         data: {
@@ -258,7 +246,6 @@ export class AgentService {
         mentionedKeys: validatedMentionedKeys,
         refOrder,
         focusNodeId,
-        priorMessages,
       }
       if (!(await piClient.healthz())) {
         // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 维护态）。
@@ -271,31 +258,25 @@ export class AgentService {
         }
         return
       }
-      // pi 会话按 sessionId 串行化：上一轮的 DELETE 与本轮的 create/prompt 不得交错
-      // （2026-09-24 生产实测：迟到的 DELETE 会删掉本轮刚建的会话 → 本轮空响应）
-      const releasePiLock = await this.acquirePiSessionLock(sessionId)
-      try {
-        for await (const event of this.streamFromPiRuntime(
-          piClient,
-          sessionId,
-          userMessage,
-          userId,
-          threadId,
-          piContext,
-          { thinking, thinkingEffort },
-          // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
-          skillId,
-          // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
-          model,
-        )) {
-          if (event.type === 'text_delta') {
-            assistantText += (event.data as { text: string }).text
-          }
-          yield event
+      // P0-①：会话跨轮常驻，为「每轮重建 / 防迟到删除」而生的进程内串行锁一并退役
+      // （pi-runtime 侧已有 busy 409 守卫同键并发轮次）。
+      for await (const event of this.streamFromPiRuntime(
+        piClient,
+        sessionId,
+        userMessage,
+        userId,
+        threadId,
+        piContext,
+        { thinking, thinkingEffort },
+        // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
+        skillId,
+        // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
+        model,
+      )) {
+        if (event.type === 'text_delta') {
+          assistantText += (event.data as { text: string }).text
         }
-      } finally {
-        // streamFromPiRuntime 的 finally（DELETE 会话）已在其生成器结束时完成
-        releasePiLock()
+        yield event
       }
       if (idempotencyKey) {
         await this.completeIdempotencyKey(idempotencyKey, assistantText)
@@ -397,11 +378,18 @@ export class AgentService {
    *
    * ⚠️ 会话**保留不删除**——用户停止后可以接着发新消息。
    * pi-runtime 侧没有活跃 run 时返回 skipped=true（前端提示「已断开回复」）。
+   *
+   * P0-①：中断目标 = **对话键**（threadId，回落 sessionId），与 chat 的会话键推导完全一致；
+   * 传画布 sessionId 会 abort 不到常驻会话（键不同）。
    */
-  async cancelRun(input: { sessionId: string }): Promise<{ ok: boolean; skipped: boolean }> {
+  async cancelRun(input: {
+    sessionId: string
+    threadId?: string
+  }): Promise<{ ok: boolean; skipped: boolean }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { ok: false, skipped: true }
-    return this.createPiRuntimeClient(piUrl).abortRun(input.sessionId)
+    const sessionKey = input.threadId?.trim() || input.sessionId
+    return this.createPiRuntimeClient(piUrl).abortRun(sessionKey)
   }
 
   /**
@@ -598,32 +586,6 @@ export class AgentService {
     return new PiPromptAssembler(this.canvasTools as never)
   }
 
-  /** 确保会话存在：409 → 删陈旧重建（不复用，见 createSessionReplacingStale 注释）。 */
-  /** 每 sessionId 一条串行链（同会话的两轮不得交错；Nest 单实例，进程内锁足够）。 */
-  private readonly piSessionChains = new Map<string, Promise<void>>()
-
-  /**
-   * pi 会话串行化锁：保证「本轮 create/prompt/删除」整段互斥。
-   * 场景：用户连发两轮时，上一轮结束的 DELETE 与下一轮 create/prompt 竞态——
-   *  · 若 DELETE 先到：下一轮 create 撞 409（已由 createSessionReplacingStale 兜底）；
-   *  · 若 DELETE 后到：会删掉下一轮刚建的会话 → 本轮空响应（本锁解决这一侧）。
-   */
-  private async acquirePiSessionLock(sessionId: string): Promise<() => void> {
-    const prev = this.piSessionChains.get(sessionId) ?? Promise.resolve()
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const tail = prev.then(() => gate)
-    this.piSessionChains.set(sessionId, tail)
-    await prev.catch(() => {})
-    return () => {
-      release()
-      // 仅当自己仍是队尾时清理，避免删掉后来者的链
-      if (this.piSessionChains.get(sessionId) === tail) this.piSessionChains.delete(sessionId)
-    }
-  }
-
   /**
    * pi-runtime 事件流 → 现有 AgentStreamEvent（退役后唯一主路径）。
    * 累积 assistantText / canvasActions，回合结束走 finalizeTurn 持久化。
@@ -658,24 +620,32 @@ export class AgentService {
       // B-5：run_* 生成工具已注册，genTools 规则组启用（规则 3' + 11/12/13）
       ruleGroups: ['core', 'writeTools', 'genTools'],
     })
+    // P0-①：会话键 = 对话（threadId），不是画布会话（sessionId）——新对话即新键、新上下文。
+    // 与持久化键 / cancelRun 共用同一推导，三处必须一致。
+    const sessionKey = threadId?.trim() || sessionId
+    // 动态段（画布快照 + 侧栏素材 + 侧栏识图结果）：交给 pi-runtime 每轮追加到
+    // systemPrompt 尾部求值，不写入对话历史（spec §4 动态上下文判据）。
     const dynamicBlocks = await assembler.assembleDynamic({
       sessionId,
       attachments: piContext?.attachments,
     })
-    const systemPrompt = [staticPrompt, ...dynamicBlocks, visionBlock].filter(Boolean).join('\n')
-    await this.ensurePiSession(client, sessionId, {
-      systemPrompt,
+    if (visionBlock) dynamicBlocks.push(visionBlock)
+    const created = await this.ensurePiSession(client, sessionKey, {
+      systemPrompt: staticPrompt,
       userId,
-      attachments: piContext?.attachments,
-      mentionedKeys: piContext?.mentionedKeys,
-      refOrder: piContext?.refOrder,
-      focusNodeId: piContext?.focusNodeId,
       // D-T1：老 UI effort 两档映射为 pi 档位，逐请求透传
       thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
       // K-1：BYOK 渠道覆盖（undefined → pi-runtime env 装配）
       llm,
     })
-    const events = this.iteratePiEvents(client, sessionId)
+    if (created.status === 'rebuilt') {
+      // 会话身份变更（如 BYOK 渠道切换）→ pi-runtime 重建了会话，历史已重置。
+      // 用户侧不变天，但这轮上下文确实变薄了，必须可观测。
+      this.piLogger.warn(
+        `pi session rebuilt for key=${sessionKey} (会话身份变更，历史已重置)`,
+      )
+    }
+    const events = this.iteratePiEvents(client, sessionKey)
     // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
     const iterator = events[Symbol.asyncIterator]()
     // 可观测性专项 ④ + P1 skillId 转接：文本 /skill 命令优先，dock skillId 兜底；未知名 fail-soft 原文发送。
@@ -693,9 +663,21 @@ export class AgentService {
       userMessage,
       known?.skills ?? null,
     )
-    void client.prompt(sessionId, promptText, "main", { forceSkills }).catch(() => {
-      // prompt 失败会以 error 事件形式出现在事件流中，此处静默
-    })
+    void client
+      .prompt(sessionKey, promptText, "main", {
+        forceSkills,
+        // P0-①：每轮世界状态（画布/侧栏）随本轮 prompt 求值，不进对话历史
+        turnContext: {
+          dynamicBlocks,
+          attachments: piContext?.attachments,
+          mentionedKeys: piContext?.mentionedKeys,
+          refOrder: piContext?.refOrder,
+          focusNodeId: piContext?.focusNodeId,
+        },
+      })
+      .catch(() => {
+        // prompt 失败会以 error 事件形式出现在事件流中，此处静默
+      })
 
     let assistantText = ''
     const canvasActions: CanvasAction[] = []
@@ -750,8 +732,9 @@ export class AgentService {
         yield ui as AgentStreamEvent
       }
     } finally {
-      // 会话即时清理：历史已由 JsonlSessionRepo 落盘，内存句柄不留
-      await client.deleteSession(sessionId).catch(() => {})
+      // P0-①：会话跨轮保留（历史即上下文），回收由 pi-runtime 的 TTL / 磁盘 LRU 负责。
+      // 这里只退订本轮订阅（触发 iteratePiEvents 的 finally → client.cancel）。
+      await iterator.return(undefined).catch(() => {})
     }
 
     const effectiveThreadId = threadId?.trim() || sessionId
@@ -764,30 +747,25 @@ export class AgentService {
       metadata: buildTurnMetadata({ executionEvents }),
     })
   }
+  /**
+   * 确保 pi 会话存在。P0-① 起 create 是幂等的（同会话键复用），重建由 pi-runtime
+   * 内部按 LLM 身份判定 —— Nest 侧不再有「删了重建」路径（`createSessionReplacingStale` 已退役）。
+   * 返回 status 供调用方区分 created / resumed / rebuilt。
+   */
   private async ensurePiSession(
     client: PiRuntimeClient,
-    sessionId: string,
+    sessionKey: string,
     opts?: {
       systemPrompt?: string
       userId?: string
-      attachments?: SidebarAttachment[]
-      mentionedKeys?: string[]
-      refOrder?: string[]
-      focusNodeId?: string
       thinkingLevel?: 'off' | 'medium' | 'high'
       /** K-1：BYOK 会话级模型覆盖（仅 source=user 的渠道；平台用户不传） */
       llm?: PiSessionLlmOverride
     },
-  ): Promise<void> {
-    // P0-① 起 create 幂等（同 threadKey 复用，返回 status）；409 只剩「同键不同 userId」一种真冲突，
-    // 不容错、直接抛出（fail-closed）。完整接线（turnContext / 不再删会话）见 Task 11。
-    await client.createSession(sessionId, {
+  ): Promise<CreateSessionResult> {
+    return client.createSession(sessionKey, {
       systemPrompt: opts?.systemPrompt,
       userId: opts?.userId,
-      attachments: opts?.attachments,
-      mentionedKeys: opts?.mentionedKeys,
-      refOrder: opts?.refOrder,
-      focusNodeId: opts?.focusNodeId,
       thinkingLevel: opts?.thinkingLevel,
       // K-1：BYOK 覆盖随会话创建注入（畸形由 pi-runtime 侧 400，此处不二次校验）
       llm: opts?.llm,
