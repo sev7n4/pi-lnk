@@ -420,6 +420,22 @@ export class SessionManager {
 		this.sessions.get(toSessionKey(threadKey))?.listeners.delete(listener);
 	}
 
+	/** 每轮刷新易变上下文；返回是否真的变化（供 metrics/日志）。 */
+	setTurnContext(threadKey: string, turn: TurnContext): boolean {
+		const entry = this.require(threadKey);
+		const next = { ...entry.turn, ...turn };
+		const changed = !isTurnContextEqual(entry.turn, next);
+		if (changed) entry.turn = next;
+		entry.lastActivityAt = Date.now();
+		return changed;
+	}
+
+	/** 测试观测口：按会话当前 turn 求值 systemPrompt（与 harness 内部同一组合函数）。 */
+	resolveSystemPromptForTest(threadKey: string): string {
+		const entry = this.require(threadKey);
+		return composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []);
+	}
+
 	/** 触发一次 prompt。不 await 完成——事件经 events 总线流出；run 结束由 agent_end 表达。 */
 	async prompt(
 		threadKey: string,
@@ -428,6 +444,8 @@ export class SessionManager {
 		opts?: { forceSkills?: string[] },
 	): Promise<{ accepted: boolean }> {
 		const entry = this.require(threadKey);
+		// 会话常驻后同键并发会串台（同一 harness 上两个 run 交错），fail-closed 拒绝。
+		if (entry.prompting) throw new BusyError(entry.id);
 		const effectiveText = withForcedSkills(text, opts?.forceSkills, (name) =>
 			this.skills?.loadBody(name),
 		);
@@ -532,5 +550,12 @@ export class ConflictError extends Error {
 export class NotFoundError extends Error {
 	constructor(id: string) {
 		super(`session not found: ${id}`);
+	}
+}
+
+/** 同键并发 prompt：会话常驻后同一 harness 上两个 run 会交错，一律拒绝（路由层映射 409）。 */
+export class BusyError extends Error {
+	constructor(id: string) {
+		super(`session busy: ${id}`);
 	}
 }
