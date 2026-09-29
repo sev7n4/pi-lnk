@@ -175,6 +175,14 @@ jobs:
               --exclude='docs' \
               -czf - . | /tmp/lnkpi-ssh-retry.sh "sync-tar" ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR} && if [[ -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/.env /tmp/lnkpi.env.bak; fi && rm -rf ${DEPLOY_DIR}/packages ${DEPLOY_DIR}/apps/server && tar -xzf - -C ${DEPLOY_DIR} && if [[ -f /tmp/lnkpi.env.bak ]]; then mv /tmp/lnkpi.env.bak ${DEPLOY_DIR}/.env; elif [[ ! -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/deploy/.env.production.example ${DEPLOY_DIR}/.env; fi && chmod +x ${DEPLOY_DIR}/deploy/deploy-remote-build.sh ${DEPLOY_DIR}/deploy/deploy-remote.sh ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${DEPLOY_DIR}/deploy/cvm-recover.sh ${DEPLOY_DIR}/deploy/deploy-web.sh ${DEPLOY_DIR}/deploy/smoke-graph-phase-a.sh && rm -f /tmp/lnkpi-deploy-${IMAGE_TAG}.status /tmp/lnkpi-deploy-${IMAGE_TAG}.log'"
 
+      - name: Pre-build disk guard on CVM
+        run: |
+          set -euo pipefail
+          # 2026-09-30 爆盘事故加固：镜像构建 build cache 净增 1-2GB，累积把根盘
+          # 推过 kubelet 15% 驱逐线 → disk-pressure 驱逐 pi-runtime pod（宕机 80min）。
+          # 构建前先回收腾出空间；红线：禁 `docker image prune -a`（会删掉回退所需镜像）。
+          ssh deploy-cvm "docker builder prune -f | tail -1 || true; if [ -x /usr/local/sbin/disk-guard.sh ]; then /usr/local/sbin/disk-guard.sh; fi; df -h / | tail -1"
+
       - name: Launch background build on CVM
         run: |
           set -euo pipefail
@@ -228,6 +236,12 @@ jobs:
           fi
 
           echo "CVM build succeeded"
+
+      - name: Post-build cleanup on CVM
+        run: |
+          set -euo pipefail
+          # 构建完成后立即回收本次 build cache（净增 1-2GB），防累积逼近驱逐线
+          ssh deploy-cvm "docker builder prune -f | tail -1 || true; docker images -f dangling=true -q | xargs -r docker rmi | tail -1 || true; if [ -x /usr/local/sbin/disk-guard.sh ]; then /usr/local/sbin/disk-guard.sh; fi; df -h / | tail -1"
 
       - name: Verify API deployment
         run: |
