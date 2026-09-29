@@ -1500,6 +1500,16 @@ async function handleAgentActions(actions: unknown[]) {
   )
   nodes.value = result.nodes as unknown as EditableFlowNode[]
   edges.value = result.edges as unknown as CanvasEdge[]
+  // set_viewport action：把模型指定的视口落到位（与 panViewport 同款的防御式取用）
+  if (result.viewport) {
+    const flow = vueFlowRef.value as {
+      setViewport?: (
+        viewport: { x: number; y: number; zoom: number },
+        options?: { duration?: number },
+      ) => void
+    } | null
+    flow?.setViewport?.(result.viewport, { duration: 300 })
+  }
   startPollingForGeneratingShots()
   // Fix #3: also start generation polling so any record-id-bearing nodes
   // (status:generating now) get polled to terminal state.
