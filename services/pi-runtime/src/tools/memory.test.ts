@@ -44,6 +44,16 @@ test("save_memory：userId 缺失 → 抛错且不发请求（Review#4 fail-clos
 	assert.equal(capture.calls, 0);
 });
 
+test("recall_memory：userId 缺失 → 抛错且不发请求（spec §10 fail-closed 回归锁）", async () => {
+	const capture: Capture = { calls: 0 };
+	const tools = buildMemoryTools(fakeClient(capture));
+	await assert.rejects(
+		() => runTool(find(tools, "recall_memory"), { query: "品牌色" }, { sessionId: "s1" } as LnkpiToolContext),
+		/requires userId/,
+	);
+	assert.equal(capture.calls, 0);
+});
+
 test("save_memory：trim + 2000 截断 + 中文 note", async () => {
 	const capture: Capture = { calls: 0 };
 	const tools = buildMemoryTools(fakeClient(capture, { id: "m1", createdAt: "2026-09-29T01:00:00.000Z" }));

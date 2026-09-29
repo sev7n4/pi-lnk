@@ -38,7 +38,7 @@ flowchart LR
 - **本机必须加 `env -u NODE_OPTIONS` 前缀**（WorkBuddy node-language-shim 注入会 SIGKILL 高 IO node 进程）；跑测试前先确认
 - **每个 commit 步骤前必须 `git status --short` 复核目标文件出现**（本环境有 Edit 报成功但未落盘前科；可靠判据只有 git status 的 ` M`/`??`）；**复核 grep 一律用 `grep -E`**（macOS BSD grep 的 BRE 不支持 `\|` 交替，`grep "a\|b"` 恒返回 0）
 - 分支：`git fetch origin` 后用 worktree 新建 `feat/agent-tool-p1-read-document-memory`（**不得**在主工作区直接切分支——主工作区归用户并行会话）；本计划的 spec 文件在主仓是 untracked，实现分支首 commit 一并带入
-- sqlite 已知限制：`contains` 对 ASCII 大小写敏感（Prisma `mode: 'insensitive'` 不支持 sqlite）——中文记忆无影响，英文关键词需模型自行换措辞（已写进工具 description）
+- ~~sqlite 已知限制：`contains` 对 ASCII 大小写敏感~~ **（2026-09-29 终审 I-1/I-2 订正，实测写反）**：sqlite LIKE 对 ASCII **大小写不敏感**，且 `%`/`_` 是通配符、Prisma 无 ESCAPE 子句 → `searchMemory` 改为「取最近 `MEMORY_SCAN_MAX=200` 条 + JS 侧 `toLowerCase().includes()` 子串过滤」；工具 description 同步改为「case-insensitive substring」
 - 部署（Task 5）：pi-runtime 当前生产 tag **0.0.13** → 本次加一；构建上下文 = CVM monorepo 根 `/root/pi-lnk-build`；helm 必须带 `KUBECONFIG=/etc/rancher/k3s/k3s.yaml` + `--reuse-values -f /root/pi-lnk-charts/tavily.yaml` + `--set image.tag=<新tag> --set env.PI_RUNTIME_VERSION=<新tag>`；mysql/sqlite 表由 API 容器 entrypoint 的 `prisma migrate deploy` 自动应用，但**必须等 deploy-api job 绿**（memory 端点依赖新表）
 
 ## Review Focus

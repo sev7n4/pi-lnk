@@ -1,6 +1,6 @@
 # P1 工具立项设计规格：read_document / save_memory / recall_memory（task_plan 移交 UX P0-P2）
 
-状态：已拍板待开发（①A + ②-⑥ 按推荐默认，2026-09-29 用户确认「好」）
+状态：已实现并通过独立终审（①A + ②-⑥ 按推荐默认；2026-09-29 终审后按 I-1/I-2 修订检索语义与 §10 用例数）
 前置：pi-runtime 工具注册体系（已上线 0.0.13，PR #65/#66）；Nest `/agent/internal/*` 服务间鉴权通道（x-lnkpi-service-token，在用）；`toolContext.attachments` 注入链路（session-manager.ts:193，已存在）
 分支约定：实现走 feature 分支 + PR + squash merge；本 spec 落盘时主工作区被并行分支占用，文件随实现分支首 commit 带入 master。
 
@@ -50,7 +50,7 @@
 - **不猜判据（read_document）**：ref 匹配只认精确命中（refKey 或素材 id）；不命中时返回附件清单（refKey + mediaType + 文本预览 80 字）并要求模型重查——对标 Claude Code「精确 handle，不模糊猜测」；模糊 label 匹配在多附件同名时静默读错素材，危害大于「读不到」
 - **单一窗口判据**：全文超过 20k 字符时截断 + `next_start_index`，与 web_fetch 行为完全一致——agent 只需学一种「长文本续读」模式
 - **fail-closed 判据（memory）**：`tc.userId` 缺失 → execute 抛错（对齐「需 userId 的工具侧 fail-closed」既有红线）；`sessionId` 同样只取 `tc.sessionId`，schema 不暴露给模型
-- **检索简单化判据**：`recall_memory` 无 query = 按时间倒序取近期；有 query = 内容 `contains` 匹配后按时间倒序——对标 ChatGPT/Claude memory v1（结构化存储 + 简单检索）；⚠️ sqlite 的 `contains` 对 ASCII 大小写敏感（Prisma `mode:'insensitive'` 不支持 sqlite），中文场景无影响，英文关键词大小写不一致时召回失败属已知限制（写入工具 description 提示模型重试变体）
+- **检索简单化判据**：`recall_memory` 无 query = 按时间倒序取近期；有 query = **大小写不敏感的子串匹配**（终审 I-1/I-2 修订）——SQL `LIKE`/Prisma `contains` 已弃用，原因有二：① sqlite 的 LIKE 对 ASCII **大小写不敏感**（原规格记为「敏感」，实测写反）；② `%`/`_` 在 LIKE 中是通配符，用户说「折扣 50%」时查 `50%` 会退化成通配召回无关记忆，而 Prisma 不支持 ESCAPE 子句。改为拉取最近 `MEMORY_SCAN_MAX=200` 条后 JS 侧 `toLowerCase().includes()` 过滤；已知限制：记忆条数超过 200 时仅扫描最近 200 条（§12 登记升级路径）
 - **记忆写入无审批判据**：save_memory 免确认直接落库——v1 价值验证优先；工具返回文案带「已记住：{content 前 50 字}」供模型透传给用户，保持记忆写入对用户可见
 
 ## 5. 架构与契约
@@ -89,7 +89,7 @@ flowchart LR
   - Nest 端点：`POST /agent/internal/memory-save`，DTO `{ userId: string, content: string }`，返回 `{ id, createdAt }`
   - pi-runtime 返回：`{ ok, id, createdAt, note:"已记住：{content 前 50 字}（跨会话生效，用户可要求你随时回顾）" }`——textResult 形态
 - `recall_memory`：tier `read`；parameters：`{ query?: string, limit?: number }`（limit 1..50，缺省 10，execute 内夹取）
-  - Nest 端点：`POST /agent/internal/memory-search`，DTO `{ userId: string, query?: string, limit?: number }`，返回 `{ items: [{ id, content, createdAt }] }`（按 createdAt 倒序）
+  - Nest 端点：`POST /agent/internal/memory-search`，DTO `{ userId: string, query?: string, limit?: number }`，返回 `{ items: [{ id, content, createdAt }] }`（按 createdAt 倒序；有 query 时按**大小写不敏感子串**过滤，扫描窗口 `MEMORY_SCAN_MAX=200` 条）
   - pi-runtime 返回：`{ ok, count, items }`；count=0 时附 `note:"没有相关记忆"`（有 query 时追加提示「可尝试其他关键词或去掉 query 拉取最近记忆」）
 - 鉴权与安全：两端点挂在既有 internal guard 之后（服务间 token）；`userId` 由 pi-runtime 从 `tc.userId` 取（Nest 注入，模型入参不可覆盖），Nest 侧不再信任 body 之外的来源
 
@@ -114,8 +114,10 @@ model AgentMemory {
 1. 用户上传纯文本素材并说「参考 T1 全文改写这段文案」→ 模型调 `read_document {ref:"T1"}` → 拿到全文（≤20k 一次读完；>20k 时模型带 `start_index` 续读）→ 不再只见 200 字标签
 2. 模型调 `read_document {ref:"I1"}`（图片素材）→ 收到指引性错误，转而依赖既有视觉解析，不重试浪费轮次
 3. 用户说「记住：我的品牌色是 #0F4C81」→ 模型调 `save_memory` → 返回「已记住：…」→ **新开会话**后用户问「我的品牌色是什么」→ 模型调 `recall_memory {query:"品牌色"}` → 命中并回答
-4. `recall_memory {query:"brand color"}` 未命中（大小写/措辞差异）→ 模型收到「没有相关记忆」提示 → 改用中文关键词或去 query 拉最近记忆
-5. 工具总数断言：有 TAVILY env 时 38、无时 36（config.test.ts）
+4. 大小写不敏感子串匹配：存入「Brand Color Is #0F4C81」后 `recall_memory {query:"brand color"}` **命中**（终审 I-1 修订：sqlite LIKE 对 ASCII 大小写不敏感，原规格写反）
+5. `recall_memory {query:"折扣 50%"}` 只命中字面含「50%」的记忆，**不**退化成通配召回全部（终审 I-2 修订）
+6. `recall_memory {query:"无关词"}` 未命中 → 模型收到「没有相关记忆；可尝试其他关键词，或去掉 query 拉取最近记忆」
+7. 工具总数断言：有 TAVILY env 时 38、无时 36（config.test.ts）
 
 ## 7. 数据与状态变更
 
@@ -146,7 +148,7 @@ model AgentMemory {
 
 ## 10. 测试策略与验收标准
 
-- pi-runtime：node:test + tsx，read-document 10+ 用例、memory 10+ 用例；全量 `pnpm test` 绿；`tsc --noEmit` 过
+- pi-runtime：node:test + tsx，read-document 6 用例、memory 7 用例（含 recall fail-closed 回归锁，spec §10 契约红线）；全量 `pnpm test` 绿；`tsc --noEmit` 过
 - Nest：agent-canvas-tools.service 测试补 save/searchMemory 用例（含 query 空与缺失分支）；server 侧 vitest 绿
 - 契约红线测试：memory 工具在 `tc.userId` 缺失时抛错（fail-closed 回归锁）；read_document 未命中时绝不返回任何素材全文（不猜回归锁）
 - 生产验收（部署后）：① `curl localhost:30100/skills` 同法确认工具注册数；② 前端侧栏传 text 素材让 agent 读全文（场景 §6.1）；③ save → 新会话 → recall 闭环（场景 §6.3）；④ imageID digest 比对 + dist 特征串（read-document.js / memory.js）双验证
@@ -167,7 +169,7 @@ model AgentMemory {
 
 - memory 用户确认面板（save 前卡片确认/「已记住」toast）——等 v1 使用反馈
 - memory 删除/更新（forget_memory 或 recall 返回项带 id 的 delete）——与确认面板一起立项
-- 向量检索升级（pgvector / 嵌入调用）——记忆量显著增长后
+- 检索升级（终审 I-2 登记）：记忆条数超过 `MEMORY_SCAN_MAX=200` 后，关键词检索只覆盖最近 200 条——届时改为 FTS5（sqlite 内置全文索引，支持转义与大小写选项）或向量检索（pgvector / 嵌入调用）
 - task_plan 工具化——UX P0-P2 落地后，若标记方案不够用，在 task_list/task_update 事件通道上加工具，不得另起契约
 - read_document 扩展 URL 素材正文抓取（url 有值且 mediaType=text 的网页类素材）——与 web_fetch 去重后评估
 

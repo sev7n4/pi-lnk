@@ -5,6 +5,13 @@ import { PrismaService } from '../prisma/prisma.service'
 export const MEMORY_CONTENT_MAX = 2000
 export const MEMORY_RECALL_DEFAULT = 10
 export const MEMORY_RECALL_MAX = 50
+/**
+ * 关键词检索的扫描窗口（最近 N 条）。
+ * 不用 SQL LIKE：① sqlite LIKE 对 ASCII **大小写不敏感**且 `%`/`_` 是通配符（用户说「折扣 50%」时
+ * 查 `50%` 会退化成通配召回无关记忆，Prisma 又不支持 ESCAPE 子句）；② 语义要的是「子串」不是「模式」。
+ * 故改为拉取最近 N 条后 JS 侧过滤（终审 I-1/I-2）。
+ */
+export const MEMORY_SCAN_MAX = 200
 
 /**
  * P1 memory（spec docs/superpowers/specs/2026-09-29-agent-tool-p1-read-document-memory-design.md）：
@@ -32,11 +39,15 @@ export class AgentMemoryService {
     const rawLimit =
       typeof input.limit === 'number' && Number.isFinite(input.limit) ? Math.floor(input.limit) : MEMORY_RECALL_DEFAULT
     const limit = Math.min(Math.max(rawLimit, 1), MEMORY_RECALL_MAX)
-    const items = await this.prisma.agentMemory.findMany({
-      where: { userId: input.userId, ...(query ? { content: { contains: query } } : {}) },
+    const rows = await this.prisma.agentMemory.findMany({
+      where: { userId: input.userId },
       orderBy: { createdAt: 'desc' },
-      take: limit,
+      take: query ? MEMORY_SCAN_MAX : limit,
     })
+    // 大小写不敏感子串匹配（js 侧），截断到 limit——见 MEMORY_SCAN_MAX 注释
+    const needle = query.toLowerCase()
+    const matched = query ? rows.filter((m) => m.content.toLowerCase().includes(needle)) : rows
+    const items = matched.slice(0, limit)
     return {
       items: items.map((m) => ({ id: m.id, content: m.content, createdAt: m.createdAt.toISOString() })),
     }

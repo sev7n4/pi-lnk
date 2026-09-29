@@ -59,7 +59,7 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 			name: "recall_memory",
 			label: "回顾用户记忆",
 			description:
-				"Recall durable facts saved about the user. Omit query to list the most recent memories; pass a query to filter by keyword. Keyword search is case-sensitive for ASCII text, so if a query returns nothing try a different phrasing or omit query.",
+				"Recall durable facts saved about the user. Omit query to list the most recent memories; pass a query to match as a case-insensitive substring (only your most recent 200 memories are scanned).",
 			parameters: Type.Object({
 				query: Type.Optional(Type.String({ description: "Keyword filter; omit for most recent memories" })),
 				limit: Type.Optional(Type.Number({ description: "Max items (1-50, default 10)" })),
