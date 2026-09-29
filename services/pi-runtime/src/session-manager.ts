@@ -653,6 +653,20 @@ export class SessionManager {
 	}
 
 	/**
+	 * 订阅「只收未来事件」——**不重放缓冲**（P0-A 跨轮重放修复，2026-09-29）。
+	 *
+	 * 语义 = from now：挂上监听后，只有此后 `dispatch` 的事件会送达。
+	 * 供 Nest **每轮新订阅** 用。持久会话的 `buffer` 跨轮累积（`dispatch` 只 push 不清），
+	 * 若每轮都从 `afterSeq=-1` 全量重放，客户端会先收到上一轮的全部事件（含其 `agent_end`）
+	 * → Nest 命中即 emit `done` 关流 → 本轮回答被上一轮回答顶替（生产实证：S2–S6 每轮
+	 * ~100ms 内返回与 S1 逐字相同的回复）。
+	 * 断线重连仍走 `subscribe(afterSeq)`（P0-③），二者职责不同、互不替代。
+	 */
+	subscribeLive(threadKey: string, listener: EventListener): void {
+		this.require(threadKey).listeners.add(listener);
+	}
+
+	/**
 	 * 每轮刷新易变上下文；返回是否真的变化（供 metrics/日志）。
 	 * 复核 Important #1（spec §5.4「整体覆盖」）：**替换语义**——Nest 每轮发送完整
 	 * turnContext，缺省即清空；不做 `{ ...old, ...new }` 合并（undefined 会保留旧值，

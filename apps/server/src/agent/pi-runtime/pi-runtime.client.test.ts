@@ -608,3 +608,86 @@ describe("P0-③ 终审修复：重连预算按「连续失败窗口」计", () 
 		}
 	});
 });
+
+describe("P0-A streamEvents live 订阅（跨轮重放修复）", () => {
+	const enc = new TextEncoder();
+	function sseResponse(frames: string[], status = 200): Response {
+		return new Response(
+			new ReadableStream({
+				start(controller) {
+					for (const f of frames) controller.enqueue(enc.encode(f));
+					controller.close();
+				},
+			}),
+			{ status },
+		);
+	}
+	const mkFrame = (id: number, type: string) =>
+		`id: ${id}\nevent: ${type}\ndata: ${JSON.stringify({ type, ts: 1, seq: id, data: { seq: id } })}\n\n`;
+	function urlsOf(framesFor: (attempt: number) => Response, count = 2): Promise<string[]> {
+		return (async () => {
+			const calls: string[] = [];
+			let attempt = 0;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async (url: string) => {
+					calls.push(url);
+					return framesFor(++attempt);
+				}) as typeof fetch,
+			});
+			const cancel = client.streamEvents("s1", () => {}, () => {}, { live: true });
+			await new Promise((r) => setTimeout(r, 400));
+			cancel();
+			return calls.slice(0, count);
+		})();
+	}
+
+	it("live=true 首连带 ?from=now（只收未来事件，不重放上一轮缓冲）", async () => {
+		const calls = await urlsOf(() => sseResponse([]), 1);
+		expect(calls[0]).toBe("http://pi/sessions/s1/events?from=now");
+	});
+
+	it("live=true 断线重连改带 lastEventId，且不再叠加 from=now", async () => {
+		// 必须用「断流」触发重连：clean close 会被视为 turn 结束而不重连（P0-③ 语义）
+		const calls: string[] = [];
+		let attempt = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async (url: string) => {
+				calls.push(url);
+				if (++attempt === 1) {
+					return new Response(
+						new ReadableStream({
+							start(controller) {
+								controller.enqueue(enc.encode(mkFrame(0, "agent_start")));
+								setTimeout(() => controller.error(new TypeError("stream broken")), 10);
+							},
+						}),
+						{ status: 200 },
+					);
+				}
+				return sseResponse([mkFrame(1, "agent_end")]);
+			}) as typeof fetch,
+		});
+		const cancel = client.streamEvents("s1", () => {}, () => {}, { live: true });
+		await new Promise((r) => setTimeout(r, 400)); // 首次退避 250ms
+		cancel();
+		expect(calls[0]).toBe("http://pi/sessions/s1/events?from=now");
+		expect(calls[1]).toBe("http://pi/sessions/s1/events?lastEventId=0");
+	});
+
+	it("live 缺省（旧调用方）首连不带 query，行为不变", async () => {
+		const calls: string[] = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async (url: string) => {
+				calls.push(url);
+				return sseResponse([]);
+			}) as typeof fetch,
+		});
+		const cancel = client.streamEvents("s1", () => {});
+		await new Promise((r) => setTimeout(r, 80));
+		cancel();
+		expect(calls[0]).toBe("http://pi/sessions/s1/events");
+	});
+});

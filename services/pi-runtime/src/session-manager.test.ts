@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SessionManager, toSessionKey } from "./session-manager.js";
+import { SessionManager, NotFoundError, toSessionKey } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
@@ -470,5 +470,26 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 		const replay = sm.subscribe("s-overflow", () => {}, 0);
 		assert.equal(replay[0]?.seq, 1); // 首条是 seq 1 而非 seq 0
 		assert.equal(replay.length, 500);
+	});
+
+	it("subscribeLive 不重放缓冲、只收未来事件（P0-A 跨轮重放回归锁）", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-live", {});
+		// 模拟上一轮已产生的事件（buffer 跨轮残留）
+		handlers.get("run_start")?.({ lane: "main" }); // seq 0
+		handlers.get("run_end")?.({ lane: "main" }); // seq 1
+		const seen: number[] = [];
+		sm.subscribeLive("s-live", (e) => seen.push(e.seq));
+		// 关键断言：缓冲里的 seq 0/1 绝不重放（否则上一轮 agent_end 会顶替本轮回答）
+		assert.deepEqual(seen, []);
+		handlers.get("turn_start")?.({ lane: "main" }); // 本轮新事件 seq 2 照常送达
+		assert.deepEqual(seen, [2]);
+	});
+
+	it("subscribeLive 对未知键同样 fail-closed 抛 NotFoundError", async () => {
+		const { fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		assert.throws(() => sm.subscribeLive("ghost", () => {}), NotFoundError);
 	});
 });
