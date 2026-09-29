@@ -14,6 +14,7 @@
  *   message_* / turn_* 同名直传；fault / handler_error 归一为 error（spec 称 pi
  *   无独立 error 事件是指 AgentEvent 层——harness 层有，必须转发否则丢错）。
  */
+import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -120,6 +121,78 @@ export function withForcedSkills(
 		);
 	}
 	return `${parts.join("\n\n")}\n\n---\n用户请求：${text}`;
+}
+
+/** 每轮易变上下文（spec §5.3 T 层）：由 Nest 随 prompt 携带，不进对话历史。 */
+export interface TurnContext {
+	dynamicBlocks?: string[];
+	attachments?: SidebarAttachment[];
+	mentionedKeys?: string[];
+	refOrder?: string[];
+	focusNodeId?: string;
+}
+
+/** 会话身份：BYOK 时 provider 为 `byok-<12hex>`（providerRef 哈希），平台时为 `agnes`。 */
+export interface LlmIdentity {
+	provider: string;
+	model: string;
+}
+
+const SESSION_KEY_INVALID = /[^A-Za-z0-9._-]/g;
+
+/**
+ * threadKey → 磁盘安全且可寻回的会话键（spec §4 键 sanitize 判据）。
+ * `:`（threadId 的规范分隔符）等非法字符替换为 `_`，再追加原文 sha256 前 8 位保证无碰撞；
+ * 非幂等——调用方（路由入口）只应用一次。
+ */
+export function toSessionKey(threadKey: string): string {
+	const trimmed = threadKey.trim();
+	if (!trimmed) throw new Error("toSessionKey requires a non-empty threadKey");
+	const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 8);
+	return `${trimmed.replace(SESSION_KEY_INVALID, "_")}-${digest}`;
+}
+
+/** 静态段在前、动态段尾部追加（spec §4 动态上下文判据：稳定前缀不被易变内容推到后面）。 */
+export function composeSystemPrompt(staticPart: string, dynamicBlocks: readonly string[]): string {
+	const blocks = dynamicBlocks.map((b) => b.trim()).filter(Boolean);
+	if (blocks.length === 0) return staticPart;
+	if (!staticPart) return blocks.join("\n\n");
+	return `${staticPart}\n\n${blocks.join("\n\n")}`;
+}
+
+export function isSameLlmIdentity(a: LlmIdentity, b: LlmIdentity): boolean {
+	return a.provider === b.provider && a.model === b.model;
+}
+
+function sameStringArray(a?: readonly string[], b?: readonly string[]): boolean {
+	const left = a ?? [];
+	const right = b ?? [];
+	return left.length === right.length && left.every((v, i) => v === right[i]);
+}
+
+function sameAttachments(a?: readonly SidebarAttachment[], b?: readonly SidebarAttachment[]): boolean {
+	const left = a ?? [];
+	const right = b ?? [];
+	return (
+		left.length === right.length &&
+		left.every(
+			(v, i) =>
+				(v.url ?? "") === (right[i]?.url ?? "") &&
+				(v.text ?? "") === (right[i]?.text ?? "") &&
+				(v.mediaType ?? "") === (right[i]?.mediaType ?? ""),
+		)
+	);
+}
+
+/** 判断 turnContext 是否真的变了（避免每轮无谓替换导致 systemPrompt 缓存抖动）。 */
+export function isTurnContextEqual(a: TurnContext, b: TurnContext): boolean {
+	return (
+		sameStringArray(a.dynamicBlocks, b.dynamicBlocks) &&
+		sameStringArray(a.mentionedKeys, b.mentionedKeys) &&
+		sameStringArray(a.refOrder, b.refOrder) &&
+		(a.focusNodeId ?? "") === (b.focusNodeId ?? "") &&
+		sameAttachments(a.attachments, b.attachments)
+	);
 }
 
 /** 思考默认档位：vendored pi harness 默认 off（模型不产出 thinking_delta，前端「思考」步骤恒空）。
