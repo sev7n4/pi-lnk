@@ -287,6 +287,21 @@ class SetNodeContentDto {
   stage?: boolean
 }
 
+export class UpdateNodeDto {
+  @IsString()
+  sessionId!: string
+
+  @IsString()
+  userId!: string
+
+  @IsString()
+  nodeId!: string
+
+  /** 白名单 patch（title / imageModel / videoModel / textModel / audioModel）；由 service 校验 */
+  @IsObject()
+  patch!: Record<string, unknown>
+}
+
 class AttachRefsDto {
   @IsString()
   sessionId!: string
@@ -1038,6 +1053,18 @@ export class AgentCanvasToolsController {
   @Post('set-node-content')
   async setNodeContent(@Body() dto: SetNodeContentDto) {
     const data = await this.tools.setNodeContent(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('update-node')
+  async updateNode(@Body() dto: UpdateNodeDto) {
+    const data = await this.tools.updateNode(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('list-model-options')
+  async listModelOptions(@Body() dto: UserOnlyDto) {
+    const data = await this.tools.listNodeModelOptions(dto)
     return { code: 0, message: 'ok', data }
   }
 

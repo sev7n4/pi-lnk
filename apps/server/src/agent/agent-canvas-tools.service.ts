@@ -4,6 +4,7 @@ import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-acti
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
   computeImportTranslation,
+  decodeChannelModel,
   duplicateResultToCanvasActions,
   duplicateSubgraph,
   isProductFourPanelPrompt,
@@ -34,6 +35,7 @@ import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { StudioService, type StudioRefInput } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
+import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
 import {
   applyLayoutOps,
   createGroupFromNodes,
@@ -473,6 +475,8 @@ export class AgentCanvasToolsService {
     @Inject(VideoGenerationOrchestrator) private readonly videoOrchestrator: VideoGenerationOrchestrator,
     @Inject(PersistRemoteService) private readonly persistRemote: PersistRemoteService,
     @Inject(ImageSliceService) private readonly imageSliceService: ImageSliceService,
+    // update_node 的模型白名单校验需要按 userId 取 selectable 清单（ProviderModule 已在 AgentModule imports）
+    @Inject(ProviderService) private readonly provider: ProviderService,
     // 两产品线拆分 path A 的 seam：画布动作落地实现可替换（归属待定）。
     // 可选 —— 未提供时回退默认实现，保证现有调用/测试行为不变。
     @Optional()
@@ -956,6 +960,86 @@ export class AgentCanvasToolsService {
     ]
     await this.applyOrStage(input.sessionId, actions, input.stage)
     return { actions }
+  }
+
+  /**
+   * 改节点属性（spec §4.1 白名单）：title + 节点自身模态的模型字段。
+   * 刻意**不碰** prompt/content——那归 setNodeText，避免与本仓
+   * 「upsert_prompt_node 全量覆盖 vs set_node_text 部分更新」语义（PR #63）打架。
+   */
+  async updateNode(input: {
+    sessionId: string
+    userId: string
+    nodeId: string
+    patch: Record<string, unknown>
+  }): Promise<{ nodeId: string; actions: CanvasAction[] }> {
+    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+    const node = canvas.nodes.find((n) => n.id === input.nodeId)
+    if (!node) throw new NotFoundException('节点不存在')
+
+    const selectable = await this.selectableModels(input.userId)
+    const validated = validateNodePatch({ patch: input.patch, node, selectable })
+    if (!validated.ok) {
+      throw new BadRequestException({
+        message: validated.reason,
+        ...(validated.allowed ? { allowed: validated.allowed } : {}),
+      })
+    }
+
+    const actions: CanvasAction[] = [
+      { type: 'update_node', payload: { id: node.id, data: validated.data } },
+    ]
+    await this.persist(input.sessionId, actions)
+    return { nodeId: node.id, actions }
+  }
+
+  /**
+   * 按模态列出可写模型 ref（= update_node 的合法取值集）。
+   * `source` 直接来自 preferences 里的 channelId 前缀：`platform::*` → 平台，其余 → BYOK。
+   */
+  async listNodeModelOptions(input: { userId: string }): Promise<{
+    modalities: Record<
+      NodeModal,
+      Array<{ ref: string; model: string; channelId: string; channelName: string; source: ProviderSource }>
+    >
+  }> {
+    if (!input.userId) throw new BadRequestException('userId required')
+    const { platformChannel, channels, preferences } = await this.provider.bootstrap(input.userId)
+    const nameOf = new Map<string, string>([[platformChannel.id, platformChannel.name]])
+    for (const ch of channels) nameOf.set(ch.id, ch.name)
+
+    const build = (refs: string[]) =>
+      refs.map((ref) => {
+        const decoded = decodeChannelModel(ref)
+        const channelId = decoded?.channelId ?? PLATFORM_CHANNEL_ID
+        return {
+          ref,
+          model: decoded?.modelName ?? ref,
+          channelId,
+          channelName: nameOf.get(channelId) ?? channelId,
+          source: (channelId === PLATFORM_CHANNEL_ID ? 'platform' : 'user') as ProviderSource,
+        }
+      })
+
+    return {
+      modalities: {
+        image: build(preferences.selectableImageModels),
+        video: build(preferences.selectableVideoModels),
+        text: build(preferences.selectableTextModels),
+        audio: build(preferences.selectableAudioModels),
+      },
+    }
+  }
+
+  /** selectable 清单 → validateNodePatch 需要的形态（按模态分桶）。 */
+  private async selectableModels(userId: string): Promise<Record<NodeModal, string[]>> {
+    const { preferences } = await this.provider.bootstrap(userId)
+    return {
+      image: preferences.selectableImageModels,
+      video: preferences.selectableVideoModels,
+      text: preferences.selectableTextModels,
+      audio: preferences.selectableAudioModels,
+    }
   }
 
   async attachRefs(input: {
