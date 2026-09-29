@@ -46,4 +46,22 @@ describe('AgentService.cancelRun（前端「停止」→ pi-runtime abort）', (
 
     expect(await svc.cancelRun({ sessionId: 's1' })).toEqual({ ok: false, skipped: true })
   })
+
+  it('P0-①：中断目标 = 对话键（threadId），与 chat 的会话键一致', async () => {
+    const svc = createService()
+    const abortRun = vi.fn(async () => ({ ok: true, skipped: false }))
+    stubPi(svc, 'http://pi-runtime', { abortRun })
+
+    await svc.cancelRun({ sessionId: 's1', threadId: 's1:t9' })
+    expect(abortRun).toHaveBeenCalledWith('s1:t9')
+  })
+
+  it('P0-①：threadId 为空串/空白时回落到 sessionId', async () => {
+    const svc = createService()
+    const abortRun = vi.fn(async () => ({ ok: true, skipped: false }))
+    stubPi(svc, 'http://pi-runtime', { abortRun })
+
+    await svc.cancelRun({ sessionId: 's1', threadId: '   ' })
+    expect(abortRun).toHaveBeenCalledWith('s1')
+  })
 })

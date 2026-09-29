@@ -13,7 +13,7 @@ import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService } from './agent.service'
 import { piEvent, stubPiClient } from './agent.test-utils'
-import { PiRuntimeError, type PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { type PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 import type { SidebarAttachment } from '@lnkpi/shared'
 import { resetSidebarParseCache } from './sidebar-vision'
@@ -204,6 +204,10 @@ describe('AgentService pi-runtime switch (B4)', () => {
         .canvasTools.runVisionQa
     }
 
+    /**
+     * 跑一轮并返回本轮的动态上下文块（P0-①：侧栏识图结果随 turnContext.dynamicBlocks
+     * 逐轮透传，不再并入 create 的 systemPrompt）。
+     */
     async function runTurnWithAttachments(attachments?: SidebarAttachment[]) {
       process.env.PI_RUNTIME_MODE = 'active'
       process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
@@ -222,7 +226,10 @@ describe('AgentService pi-runtime switch (B4)', () => {
       )) {
         // drain
       }
-      return pi.createSession.mock.calls[0]?.[1] as { systemPrompt?: string } | undefined
+      const promptOpts = pi.prompt.mock.calls[0]?.[3] as
+        | { turnContext?: { dynamicBlocks?: string[] } }
+        | undefined
+      return (promptOpts?.turnContext?.dynamicBlocks ?? []).join('\n')
     }
 
     afterEach(() => {
@@ -230,28 +237,28 @@ describe('AgentService pi-runtime switch (B4)', () => {
       ;(service as unknown as { canvasTools?: unknown }).canvasTools = undefined
     })
 
-    it('贴图 + 视觉模型 → 调 runVisionQa，解析块并入 systemPrompt', async () => {
+    it('贴图 + 视觉模型 → 调 runVisionQa，解析块并入 dynamicBlocks', async () => {
       setResolver('deepseek-flash')
       const runVisionQa = setVisionTools(async () => VISION_OK)
-      const opts = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      const blocks = await runTurnWithAttachments(IMAGE_ATTACHMENT)
       expect(runVisionQa).toHaveBeenCalledTimes(1)
       const call = runVisionQa.mock.calls[0]?.[0] as { imageUrls: string[]; model: string }
       expect(call.imageUrls).toEqual(['https://cdn/1.png'])
       expect(call.model).toBe('deepseek-flash')
-      expect(opts?.systemPrompt).toContain(PARSE_BLOCK_MARKER)
-      expect(opts?.systemPrompt).toContain('摘要：一双白色运动鞋，侧拍')
+      expect(blocks).toContain(PARSE_BLOCK_MARKER)
+      expect(blocks).toContain('摘要：一双白色运动鞋，侧拍')
     })
 
     it('非视觉模型 → 不调 runVisionQa，但出「未能识别」块（对齐 VISION_UNSUPPORTED）', async () => {
       setResolver('deepseek-v4-pro')
       const runVisionQa = setVisionTools(async () => VISION_OK)
-      const opts = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      const blocks = await runTurnWithAttachments(IMAGE_ATTACHMENT)
       expect(runVisionQa).not.toHaveBeenCalled()
       // 老链路在 vision_used=false 时仍输出块（摘要=未知）+ 兜底话术，
       // 目的是不让模型拿着文件名去编一版空品类的上架方案。
-      expect(opts?.systemPrompt).toContain('【侧栏参考图解析】')
-      expect(opts?.systemPrompt).toContain('摘要：未知')
-      expect(opts?.systemPrompt).toContain('参考图未能识别')
+      expect(blocks).toContain('【侧栏参考图解析】')
+      expect(blocks).toContain('摘要：未知')
+      expect(blocks).toContain('参考图未能识别')
     })
 
     it('识图抛错 → fail-soft：出「未能识别」块，不阻断对话', async () => {
@@ -259,9 +266,9 @@ describe('AgentService pi-runtime switch (B4)', () => {
       setVisionTools(async () => {
         throw new Error('vision upstream 500')
       })
-      const opts = await runTurnWithAttachments(IMAGE_ATTACHMENT)
-      expect(opts?.systemPrompt).toContain('摘要：未知')
-      expect(opts?.systemPrompt).toContain('参考图未能识别')
+      const blocks = await runTurnWithAttachments(IMAGE_ATTACHMENT)
+      expect(blocks).toContain('摘要：未知')
+      expect(blocks).toContain('参考图未能识别')
     })
 
     it('无贴图 / 开关 off → 不调 runVisionQa，且不注入任何解析块', async () => {
@@ -269,12 +276,12 @@ describe('AgentService pi-runtime switch (B4)', () => {
       const runVisionQa = setVisionTools(async () => VISION_OK)
       const noAtt = await runTurnWithAttachments(undefined)
       expect(runVisionQa).not.toHaveBeenCalled()
-      expect(noAtt?.systemPrompt ?? '').not.toContain('【侧栏参考图解析】\n摘要')
+      expect(noAtt).not.toContain('【侧栏参考图解析】\n摘要')
 
       process.env.PI_SIDEBAR_VISION = 'off'
       const off = await runTurnWithAttachments(IMAGE_ATTACHMENT)
       expect(runVisionQa).not.toHaveBeenCalled()
-      expect(off?.systemPrompt ?? '').not.toContain('【侧栏参考图解析】\n摘要')
+      expect(off).not.toContain('【侧栏参考图解析】\n摘要')
     })
 
     it('跨轮复用：同 provider + 同图片集合，第二轮不再调 vision', async () => {
@@ -283,8 +290,8 @@ describe('AgentService pi-runtime switch (B4)', () => {
       const first = await runTurnWithAttachments(IMAGE_ATTACHMENT)
       const second = await runTurnWithAttachments(IMAGE_ATTACHMENT)
       expect(runVisionQa).toHaveBeenCalledTimes(1)
-      expect(first?.systemPrompt).toContain('摘要：一双白色运动鞋，侧拍')
-      expect(second?.systemPrompt).toContain('摘要：一双白色运动鞋，侧拍')
+      expect(first).toContain('摘要：一双白色运动鞋，侧拍')
+      expect(second).toContain('摘要：一双白色运动鞋，侧拍')
     })
   })
 
@@ -338,7 +345,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
     expect(events.map((e) => e.type)).toContain('text_delta')
   })
 
-  it('active + healthz 通过：chat 流路由到 pi-runtime 并正确映射/清理', async () => {
+  it('active + healthz 通过：chat 流路由到 pi-runtime 并正确映射（会话保留不清理）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([
@@ -354,13 +361,17 @@ describe('AgentService pi-runtime switch (B4)', () => {
       events.push(event)
     }
 
+    // P0-①：会话键 = threadId（对话）；画布上下文随 prompt turnContext 走
     expect(pi.createSession).toHaveBeenCalledWith(
-      's1',
+      't1',
       expect.objectContaining({ userId: 'u1' }),
     )
-    expect(pi.prompt).toHaveBeenCalledWith('s1', '你好', 'main', {
-      forceSkills: undefined,
-    })
+    expect(pi.prompt).toHaveBeenCalledWith(
+      't1',
+      '你好',
+      'main',
+      expect.objectContaining({ forceSkills: undefined }),
+    )
     expect(events.map((e) => e.type)).toEqual([
       'pi_agent_start',
       'text_delta',
@@ -369,8 +380,8 @@ describe('AgentService pi-runtime switch (B4)', () => {
     ])
     expect(events[1].data).toEqual({ text: 'pi-' })
     expect(events[2].data).toEqual({ text: 'hello' })
-    // 会话即时回收
-    expect(pi.deleteSession).toHaveBeenCalledWith('s1')
+    // P0-①：会话跨轮保留，一轮结束不再删会话（回收交给 pi-runtime 的 TTL / LRU）
+    expect(pi.deleteSession).not.toHaveBeenCalled()
     // 助手消息持久化（finalizeTurn 复用）
     expect(agentMessageCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -398,9 +409,12 @@ describe('AgentService pi-runtime switch (B4)', () => {
       // drain
     }
 
-    expect(pi.prompt).toHaveBeenCalledWith('s1', '做个营销方案', 'main', {
-      forceSkills: ['ecommerce-product-photo'],
-    })
+    expect(pi.prompt).toHaveBeenCalledWith(
+      't1',
+      '做个营销方案',
+      'main',
+      expect.objectContaining({ forceSkills: ['ecommerce-product-photo'] }),
+    )
   })
 
   it('T2-6：未接入占位 skillId（storyboard）→ fail-soft 原文发送、无 forceSkills', async () => {
@@ -423,9 +437,12 @@ describe('AgentService pi-runtime switch (B4)', () => {
       // drain
     }
 
-    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
-      forceSkills: undefined,
-    })
+    expect(pi.prompt).toHaveBeenCalledWith(
+      't1',
+      'hello',
+      'main',
+      expect.objectContaining({ forceSkills: undefined }),
+    )
   })
 
   it('T2-6b：未迁移的老 dock 技能（canvas → enterprise-marketing-campaign）→ fail-soft 无 forceSkills', async () => {
@@ -447,9 +464,12 @@ describe('AgentService pi-runtime switch (B4)', () => {
       // drain
     }
 
-    expect(pi.prompt).toHaveBeenCalledWith('s1', 'hello', 'main', {
-      forceSkills: undefined,
-    })
+    expect(pi.prompt).toHaveBeenCalledWith(
+      't1',
+      'hello',
+      'main',
+      expect.objectContaining({ forceSkills: undefined }),
+    )
   })
 
   it('pi 路径 canvas_action：extractCanvasActions 派生同步入 canvasActions 与 executionEvents（修死分支）', async () => {
@@ -582,6 +602,11 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
       { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
+      {
+        getCanvasSummary: vi.fn().mockResolvedValue({
+          nodes: [{ id: 'n1', type: 'image', title: 'T', status: 'ready' }],
+        }),
+      } as never,
     )
   })
 
@@ -591,12 +616,17 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
   })
 
   function stubAssembler(prompt: string) {
-    const assemble = vi.fn().mockResolvedValue(prompt)
-    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({ assemble } as never)
-    return assemble
+    // P0-① Task 10：装配器拆静态/动态两段；返回静态段 mock 以便断言 ruleGroups。
+    const assembleStatic = vi.fn().mockResolvedValue(prompt)
+    const assembleDynamic = vi.fn().mockResolvedValue([])
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic,
+      assembleDynamic,
+    } as never)
+    return assembleStatic
   }
 
-  it('active：createSession 收到组装后的 systemPrompt + userId + 画布上下文', async () => {
+  it('active：createSession 收到静态 systemPrompt + userId；画布上下文改由 prompt turnContext 携带', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
@@ -615,106 +645,154 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     }
 
     expect(pi.createSession).toHaveBeenCalledWith(
-      's1',
+      't1',
       expect.objectContaining({
         systemPrompt: 'PROMPT-s1',
         userId: 'u1',
-        focusNodeId: 'node-9',
-        mentionedKeys: ['I1'],
-        attachments: [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
       }),
     )
+    // P0-①：画布/侧栏上下文不再随会话创建注入（会话跨轮常驻，创建只发生一次）
+    const createOpts = pi.createSession.mock.calls[0][1] as Record<string, unknown>
+    expect(createOpts).not.toHaveProperty('attachments')
+    expect(createOpts).not.toHaveProperty('focusNodeId')
+    // …改为每轮 prompt 的 turnContext 透传
+    const [, , , promptOpts] = pi.prompt.mock.calls[0] as [
+      string,
+      string,
+      string,
+      { turnContext: Record<string, unknown> },
+    ]
+    expect(promptOpts.turnContext).toMatchObject({
+      focusNodeId: 'node-9',
+      mentionedKeys: ['I1'],
+      refOrder: ['I1'],
+      attachments: [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
+    })
     expect(events.map((e) => e.type)).toContain('done')
   })
 
-  it('priorMessages 取自 AgentMessage 历史且不含本轮 user 消息', async () => {
+  it('P0-①：prompt 携带 turnContext.dynamicBlocks（画布摘要层）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    agentMessageFindMany.mockResolvedValue([
-      { role: 'assistant', content: '第一答' },
-      { role: 'user', content: '第一问' },
-    ])
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    const assemble = stubAssembler('PROMPT-s1')
+    // 不桩装配器：走真实 assembler，画布摘要由 canvasTools 桩提供
 
-    for await (const _event of service.streamConversation('s1', '本轮新消息', 'u1', 't1')) {
+    for await (const _event of service.streamConversation('s1', '你好', 'u1')) {
       void _event
     }
 
-    expect(agentMessageFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { threadId: 't1' } }),
-    )
-    const input = assemble.mock.calls[0][0] as {
-      priorMessages: Array<{ role: string; content: string }>
+    const [, , , promptOpts] = pi.prompt.mock.calls[0] as [
+      string,
+      string,
+      string,
+      { turnContext: { dynamicBlocks: string[] } },
+    ]
+    expect(promptOpts.turnContext.dynamicBlocks.join('\n')).toContain('当前画布摘要')
+  })
+
+  it('P0-①：会话键 = threadId（新对话即新键）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT')
+
+    for await (const _event of service.streamConversation('s1', '你好', 'u1', 's1:t9')) {
+      void _event
     }
-    expect(input.priorMessages).toEqual([
-      { role: 'user', content: '第一问' },
-      { role: 'assistant', content: '第一答' },
-    ])
-    // 本轮消息单独持久化（不在 priorMessages 里）
+
+    expect(pi.createSession.mock.calls[0][0]).toBe('s1:t9')
+    expect(pi.prompt.mock.calls[0][0]).toBe('s1:t9')
+  })
+
+  it('P0-①：不传 threadId 时回落到 sessionId（老客户端兼容）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT')
+
+    for await (const _event of service.streamConversation('s1', '你好', 'u1')) {
+      void _event
+    }
+
+    expect(pi.createSession.mock.calls[0][0]).toBe('s1')
+    expect(pi.prompt.mock.calls[0][0]).toBe('s1')
+  })
+
+  it('P0-①：status=rebuilt 时打 warn（上下文已丢，需可观测）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    pi.createSession.mockResolvedValueOnce({
+      sessionId: 's1',
+      provider: 'byok-abc',
+      model: 'm',
+      status: 'rebuilt',
+    })
+    const warn = vi.spyOn(service['piLogger'] as never, 'warn' as never).mockImplementation(() => undefined)
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT')
+
+    for await (const _event of service.streamConversation('s1', '你好', 'u1')) {
+      void _event
+    }
+
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('P0-①：一轮结束后不再删除 pi 会话（负例锁）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT')
+
+    for await (const _event of service.streamConversation('s1', '你好', 'u1')) {
+      void _event
+    }
+
+    expect(pi.deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('P0-①：不再查询历史消息表（持久会话已含历史）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT')
+
+    for await (const _event of service.streamConversation('s1', '你好', 'u1', 't1')) {
+      void _event
+    }
+
+    expect(agentMessageFindMany).not.toHaveBeenCalled()
+    // 本轮消息仍照常落库（DB 侧归属不受影响）
     expect(agentMessageCreate).toHaveBeenCalled()
   })
 
-  it('createSession 409：删除陈旧会话后重建（不静默复用），本轮不阻塞', async () => {
+  it('P0-①：同一会话连发两轮——两轮各自 ensure 会话，且都不删会话', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
-    pi.createSession
-      .mockRejectedValueOnce(new PiRuntimeError('session exists: s1', 409))
-      .mockResolvedValue({ sessionId: 's1', provider: 'agnes', model: 'agnes-2.5-pro' })
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    stubAssembler('PROMPT-s1')
-
-    const events: Array<{ type: string }> = []
-    for await (const event of service.streamConversation('s1', '你好', 'u1')) {
-      events.push(event)
-    }
-    expect(events.map((e) => e.type)).toEqual(['done'])
-    // 409 → 删陈旧 + 重建（第二次 createSession 成功）；本轮结束的 finally 也会再删一次
-    expect(pi.createSession).toHaveBeenCalledTimes(2)
-    expect(pi.deleteSession).toHaveBeenCalledWith('s1')
-  })
-
-  it('同一会话连发两轮：本轮 create 必须晚于上一轮 DELETE 完成（防迟到删除误杀新会话）', async () => {
-    process.env.PI_RUNTIME_MODE = 'active'
-    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
-    // 记录关键事件的真实时序；DELETE 放大 40ms，制造「删除已调用未完成」的飞行窗口
-    const order: string[] = []
-    pi.deleteSession.mockImplementation(async () => {
-      order.push('delete-called')
-      await new Promise((r) => setTimeout(r, 40))
-      order.push('delete-resolved')
-      return true
-    })
-    pi.createSession.mockImplementation(async () => {
-      order.push('create-called')
-      return { sessionId: 'x', provider: 'agnes', model: 'agnes-2.5-pro' }
-    })
-    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    stubAssembler('PROMPT-s1')
+    stubAssembler('PROMPT')
 
     const drain = async () => {
       const out: string[] = []
       for await (const event of service.streamConversation('s1', 'hi', 'u1')) out.push(event.type)
       return out
     }
-
     const first = drain()
-    await new Promise((r) => setTimeout(r, 5))
     const second = drain()
     const [a, b] = await Promise.all([first, second])
 
     expect(a).toEqual(['done'])
     expect(b).toEqual(['done'])
-    // 不变量：第二次 create 必须在第一次 DELETE 真正完成之后
-    // （只看调用顺序抓不住竞态——生产事故里 DELETE 已调用、迟到解析时误删了新会话）
-    const firstDeleteResolved = order.indexOf('delete-resolved')
-    expect(firstDeleteResolved).toBeGreaterThanOrEqual(0)
-    const createIdxs = order.reduce<number[]>((acc, e, i) => (e === 'create-called' ? [...acc, i] : acc), [])
-    expect(createIdxs).toHaveLength(2)
-    expect(createIdxs[1]).toBeGreaterThan(firstDeleteResolved)
+    // 常驻会话：每轮都走一次幂等 create（resume），但没有任何删除
+    expect(pi.createSession).toHaveBeenCalledTimes(2)
+    expect(pi.deleteSession).not.toHaveBeenCalled()
   })
 
   it('退役后 getThreadState 恒 null——checkpoint 概念随老 LangGraph runtime 一起移除', async () => {
@@ -812,18 +890,21 @@ describe('AgentService B-2 ruleGroups + minors', () => {
       }),
     } as never
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    const assemble = vi.fn().mockResolvedValue('PROMPT')
-    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({ assemble } as never)
+    const assembleStatic = vi.fn().mockResolvedValue('PROMPT')
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic,
+      assembleDynamic: vi.fn().mockResolvedValue([]),
+    } as never)
 
     const events: Array<{ type: string }> = []
     for await (const event of service.streamConversation('s1', '你好', 'u1', 't1')) {
       events.push(event)
     }
     expect(events.map((e) => e.type)).toContain('done')
-    expect(assemble.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
+    expect(assembleStatic.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
   })
 
-  it('F3：链路不可用（未配 PI_RUNTIME_URL）时不触发 priorMessages 查询', async () => {
+  it('链路不可用（未配 PI_RUNTIME_URL）：直接 runtime_unavailable，且不产生任何 DB 查询', async () => {
     delete process.env.PI_RUNTIME_MODE
     delete process.env.PI_RUNTIME_URL
 
@@ -847,7 +928,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
       { resolveForGeneration: vi.fn() } as never,
       { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
     )
-    // 未配 PI_RUNTIME_URL → 无可用链路，直接 runtime_unavailable（不查历史消息）
+    // 未配 PI_RUNTIME_URL → 无可用链路，直接 runtime_unavailable
     // 退役前这里靠桩 LangGraph client 让流程走完；现在没有第二条链路可桩。
 
     const events: Array<{ type: string }> = []

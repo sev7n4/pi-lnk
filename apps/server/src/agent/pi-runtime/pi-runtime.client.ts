@@ -7,6 +7,7 @@
  * D-ζ' 回退语义：老 agent-runtime（:8000）与 pi-runtime（:8100）迁移期共存，
  * 本客户端不持有全局状态，调用方（B4 Nest L6 入口）按开关选择 runtime。
  */
+import type { SidebarAttachment } from "@lnkpi/shared";
 import type { PiRuntimeEvent } from "./pi-events";
 
 export interface PiRuntimeClientOptions {
@@ -16,10 +17,28 @@ export interface PiRuntimeClientOptions {
 	timeoutMs?: number;
 }
 
+/**
+ * P0-① 会话 create 三态：
+ *  - created：新建；resumed：复用（内存或磁盘，语义由 pi-runtime 内部判定）；rebuilt：身份变更后重建。
+ *  `resumedFrom` 仅 status=resumed 时存在（memory=内存快路径 / disk=repo.open 恢复），观测用。
+ */
+export type PiSessionCreateStatus = "created" | "resumed" | "rebuilt";
+
 export interface CreateSessionResult {
 	sessionId: string;
 	provider: string;
 	model: string;
+	status: PiSessionCreateStatus;
+	resumedFrom?: "memory" | "disk";
+}
+
+/** 每轮易变上下文（spec §5.3 T 层）：随 prompt 携带，不进对话历史、不参与静态段。 */
+export interface PiTurnContext {
+	dynamicBlocks?: string[];
+	attachments?: SidebarAttachment[];
+	mentionedKeys?: string[];
+	refOrder?: string[];
+	focusNodeId?: string;
 }
 
 /** K-1：会话级 LLM 覆盖（BYOK）。与 pi-runtime `SessionLlmOverride` 同构。
@@ -95,6 +114,10 @@ export class PiRuntimeClient {
 		}
 	}
 
+	/**
+	 * 幂等 create（P0-①）：同 threadKey 重复调用返回既有会话（200 `status=resumed`），
+	 * 不再需要「409 → 删了重建」。旧 runtime（无 status 字段）按 `created` 容错。
+	 */
 	async createSession(sessionId: string, opts: CreateSessionOptions = {}): Promise<CreateSessionResult> {
 		const { status, body } = await this.request<CreateSessionResult & { error?: string }>("/sessions", {
 			method: "POST",
@@ -107,56 +130,24 @@ export class PiRuntimeClient {
 				refOrder: opts.refOrder,
 				focusNodeId: opts.focusNodeId,
 				...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
-// K-1：BYOK 覆盖（不传则 pi-runtime 走 env 装配）
-...(opts.llm ? { llm: opts.llm } : {}),
+				// K-1：BYOK 覆盖（不传则 pi-runtime 走 env 装配）
+				...(opts.llm ? { llm: opts.llm } : {}),
 			}),
 		});
-		if (status !== 201 || !body || body.error) {
+		if (status >= 400 || !body || body.error) {
 			throw new PiRuntimeError(body?.error ?? `createSession failed: HTTP ${status}`, status);
 		}
-		return body;
-	}
-
-	/**
-	 * 创建会话；若已存在（409，通常是上一轮 DELETE 未生效的竞态）则
-	 * **删除陈旧会话后重建**，而非静默复用。
-	 *
-	 * 复用旧会话有两个实测危害（2026-09-24 生产 e2e 定位）：
-	 *  ① systemPrompt 陈旧（本轮画布上下文/规则不生效）；
-	 *  ② pi-runtime 订阅语义会把旧会话的**事件缓冲回放**给新订阅者 →
-	 *     本轮 SSE 收到上一轮的事件流（模型表现为"复述上一轮"）。
-	 *
-	 * 409 清理路径的 deleteSession 失败不直接抛——吞掉后重试 create，仍 409
-	 * 才抛明确冲突。非 409 错误直接抛出，不误删会话。
-	 */
-	async createSessionReplacingStale(
-		sessionId: string,
-		opts: CreateSessionOptions = {},
-	): Promise<CreateSessionResult> {
-		try {
-			return await this.createSession(sessionId, opts);
-		} catch (err) {
-			if (!(err instanceof PiRuntimeError) || err.status !== 409) throw err;
-			await this.deleteSession(sessionId).catch(() => {});
-			try {
-				return await this.createSession(sessionId, opts);
-			} catch (retryErr) {
-				if (retryErr instanceof PiRuntimeError && retryErr.status === 409) {
-					throw new PiRuntimeError(
-						`session ${sessionId} still conflicts after stale cleanup`,
-						409,
-					);
-				}
-				throw retryErr;
-			}
-		}
+		// 灰度期兼容：旧 runtime 只回 {sessionId, provider, model}，缺失 status 一律按 created。
+		const parsedStatus: PiSessionCreateStatus =
+			body.status === "resumed" || body.status === "rebuilt" ? body.status : "created";
+		return { ...body, status: parsedStatus };
 	}
 
 	async prompt(
 		sessionId: string,
 		text: string,
 		lane = "main",
-		opts?: { forceSkills?: string[] },
+		opts?: { forceSkills?: string[]; turnContext?: PiTurnContext },
 	): Promise<void> {
 		const { status, body } = await this.request<{ error?: string }>(
 			`/sessions/${encodeURIComponent(sessionId)}/prompt`,
@@ -166,10 +157,12 @@ export class PiRuntimeClient {
 					text,
 					lane,
 					...(opts?.forceSkills?.length ? { forceSkills: opts.forceSkills } : {}),
+					...(opts?.turnContext ? { turnContext: opts.turnContext } : {}),
 				}),
 			},
 		);
-		if (status !== 200 || body?.error) {
+		// pi-runtime ≥ P0-① 返回 202；旧 runtime 返回 200——两者都视为成功。
+		if (status >= 400 || body?.error) {
 			throw new PiRuntimeError(body?.error ?? `prompt failed: HTTP ${status}`, status);
 		}
 	}
@@ -219,8 +212,7 @@ export class PiRuntimeClient {
 	 *  - 网络错误 / 非 404 HTTP 错误：250ms 起指数退避（封顶 5s），总预算 120s；
 	 *  - 重连请求携带 ?lastEventId=<最后收到的 seq>，服务端增量重放（需 pi-runtime ≥ 对应版本）；
 	 *  - HTTP 404（会话已删除）：终止并回调 onError（本轮 turn 已结束，属预期）；
-	 *  - body clean end（服务端正常关闭，Nest 每轮 deleteSession 触发）：直接返回，
-	 *    不重连、不回调 onError——与「turn 结束」语义一致；
+	 *  - body clean end（服务端正常关闭）：直接返回，不重连、不回调 onError。
 	 *  - 返回的取消函数随时可调；取消后不再重连。
 	 */
 	streamEvents(

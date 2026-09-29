@@ -7,6 +7,10 @@
  *   - pi_runtime_http_request_duration_seconds{route}   响应耗时直方图（K3 p99）
  *   - pi_runtime_llm_prompt_errors_total{reason}        prompt 阶段错误（429/上游 5xx 等）
  *   - pi_runtime_sessions_active                        活跃会话数 gauge
+ *   - pi_runtime_sessions_live                         内存驻留会话数 gauge（P0-①：与 active 同源别名）
+ *   - pi_runtime_session_resumes_total{outcome}         会话 create 三态计数（new/memory/disk/rebuilt）
+ *   - pi_runtime_compactions_total{result}              上下文压缩结果计数（ok/error）
+ *   - pi_runtime_prompt_rejections_total{reason}        被拒 prompt 计数（busy）
  *   - pi_runtime_build_info / pi_runtime_uptime_seconds
  */
 
@@ -34,6 +38,9 @@ export class Metrics {
 	private promptErrors = new Map<string, number>(); // key: reason
 	private toolCalls = new Map<string, number>(); // key: tool|result[|kind]
 	private toolResultBytes = new Map<string, HistogramState>(); // key: tool
+	private sessionResumes = new Map<string, number>(); // key: outcome (new|memory|disk|rebuilt)
+	private compactions = new Map<string, number>(); // key: result (ok|error)
+	private promptRejections = new Map<string, number>(); // key: reason (busy)
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	private startedAt = Date.now();
@@ -76,10 +83,24 @@ export class Metrics {
 		}
 	}
 
+	/** P0-① 会话 create 结果：new（新建）/ memory（内存复用）/ disk（磁盘恢复）/ rebuilt（身份变更重建）。 */
+	observeSessionResume(outcome: "memory" | "disk" | "new" | "rebuilt"): void {
+		this.sessionResumes.set(outcome, (this.sessionResumes.get(outcome) ?? 0) + 1);
+	}
+
+	/** 上下文压缩结果（只在 compaction_end 且 status=completed/failed 时计入）。 */
+	observeCompaction(result: "ok" | "error"): void {
+		this.compactions.set(result, (this.compactions.get(result) ?? 0) + 1);
+	}
+
+	/** 被拒的 prompt（当前只有 busy 一种）。 */
+	observePromptRejection(reason: "busy"): void {
+		this.promptRejections.set(reason, (this.promptRejections.get(reason) ?? 0) + 1);
+	}
+
 	setSkillsLoaded(n: number): void {
 		this.skillsLoaded = n;
 	}
-
 	/** skills index 块的 approx token 数（进程内恒定，启动时设一次；未配置为 0）。 */
 	setSkillsPromptTokens(n: number): void {
 		this.skillsPromptTokens = n;
@@ -100,6 +121,29 @@ export class Metrics {
 		lines.push("# HELP pi_runtime_sessions_active Currently active sessions.");
 		lines.push("# TYPE pi_runtime_sessions_active gauge");
 		lines.push(`pi_runtime_sessions_active ${activeSessions}`);
+
+		// P0-①：显式区分「内存驻留」语义（TTL 回收只看内存；磁盘会话数另由 LRU 扫描决定）。
+		lines.push("# HELP pi_runtime_sessions_live Sessions resident in memory.");
+		lines.push("# TYPE pi_runtime_sessions_live gauge");
+		lines.push(`pi_runtime_sessions_live ${activeSessions}`);
+
+		lines.push("# HELP pi_runtime_session_resumes_total Session create outcomes.");
+		lines.push("# TYPE pi_runtime_session_resumes_total counter");
+		for (const [outcome, count] of [...this.sessionResumes.entries()].sort()) {
+			lines.push(`pi_runtime_session_resumes_total{outcome="${esc(outcome)}"} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_compactions_total Context compactions by result.");
+		lines.push("# TYPE pi_runtime_compactions_total counter");
+		for (const [result, count] of [...this.compactions.entries()].sort()) {
+			lines.push(`pi_runtime_compactions_total{result="${esc(result)}"} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_prompt_rejections_total Prompt rejections by reason.");
+		lines.push("# TYPE pi_runtime_prompt_rejections_total counter");
+		for (const [reason, count] of [...this.promptRejections.entries()].sort()) {
+			lines.push(`pi_runtime_prompt_rejections_total{reason="${esc(reason)}"} ${count}`);
+		}
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
 		lines.push("# TYPE pi_runtime_skills_loaded gauge");

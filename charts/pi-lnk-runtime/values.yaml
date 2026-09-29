@@ -59,6 +59,14 @@ env:
   PI_RUNTIME_SKILLS_DIR: "/app/skills"
   # build_info 版本标签（与镜像 tag 对齐，部署时 --set 覆盖）
   PI_RUNTIME_VERSION: "0.0.1"
+  # P0-① 持久会话（spec §5.6）：内存句柄 TTL + 磁盘会话保留 + 原生 compaction
+  PI_RUNTIME_SESSION_TTL_MS: "1800000"
+  PI_RUNTIME_SESSION_SWEEP_MS: "300000"
+  PI_RUNTIME_SESSIONS_MAX_BYTES: "3221225472"
+  PI_RUNTIME_SESSIONS_MAX_COUNT: "200"
+  PI_RUNTIME_COMPACTION_ENABLED: "true"
+  PI_RUNTIME_COMPACTION_RESERVE_TOKENS: "16384"
+  PI_RUNTIME_COMPACTION_KEEP_RECENT_TOKENS: "20000"
 
 # D-ζ' 双 runtime 开关（shadow/active 由部署侧控制，Day-1 默认 off）
 piRuntimeMode: "off"

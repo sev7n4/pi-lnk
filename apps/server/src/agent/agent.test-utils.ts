@@ -10,7 +10,6 @@
  * 因此不会被 vitest 的 `src/**\/*.test.ts` 收进测试集。
  */
 import { vi } from 'vitest'
-import { PiRuntimeError } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 
@@ -18,7 +17,6 @@ import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 export type PiClientStub = PiRuntimeClient & {
   healthz: ReturnType<typeof vi.fn>
   createSession: ReturnType<typeof vi.fn>
-  createSessionReplacingStale: ReturnType<typeof vi.fn>
   prompt: ReturnType<typeof vi.fn>
   deleteSession: ReturnType<typeof vi.fn>
   listSkills: ReturnType<typeof vi.fn>
@@ -28,8 +26,7 @@ export type PiClientStub = PiRuntimeClient & {
 /**
  * 脚本化 pi-runtime client：订阅 `streamEvents` 时同步回放给定事件后结束。
  *
- * 与真实 client 的 409 语义一致：`createSessionReplacingStale` 遇 409
- * 会删掉陈旧会话再重建（不复用，见 AgentService.ensurePiSession 注释）。
+ * P0-① 起 create 是幂等的（同 key 复用，返回 `status`），Nest 侧不再有「删了重建」路径。
  */
 export function stubPiClient(
   events: PiRuntimeEvent[],
@@ -41,21 +38,11 @@ export function stubPiClient(
     sessionId: 'x',
     provider: 'agnes',
     model: 'agnes-2.5-pro',
+    status: 'created',
   })
   return {
     healthz: vi.fn().mockResolvedValue(healthzOk ? { status: 'ok' } : null),
     createSession,
-    createSessionReplacingStale: vi.fn(async (sid: string, opts: never) => {
-      try {
-        return await createSession(sid, opts)
-      } catch (err) {
-        if (err instanceof PiRuntimeError && err.status === 409) {
-          await deleteSession(sid)
-          return await createSession(sid, opts)
-        }
-        throw err
-      }
-    }),
     prompt: vi.fn().mockResolvedValue(undefined),
     deleteSession,
     listSkills: vi.fn().mockResolvedValue({ skills: knownSkills }),

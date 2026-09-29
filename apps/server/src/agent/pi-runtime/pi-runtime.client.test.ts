@@ -212,81 +212,64 @@ describe("B8 PiRuntimeClient", () => {
 	});
 });
 
-describe("createSessionReplacingStale（409 竞态修复）", () => {
-	/** 上一轮 DELETE 与本轮 create 竞态会撞 409；静默复用旧会话会把上一轮的
-	 *  事件缓冲回放给本轮 SSE（2026-09-24 生产实测），必须删除后重建。 */
-	it("首次 409 → DELETE 陈旧会话 → 重建成功", async () => {
-		const calls: string[] = [];
-		let attempt = 0;
+describe("createSession 幂等契约（P0-①）", () => {
+	it("201 status=created 与 200 status=resumed 都原样返回", async () => {
+		const responses = [
+			new Response(JSON.stringify({ sessionId: "s1:t1", provider: "agnes", model: "m", status: "created" }), {
+				status: 201,
+			}),
+			new Response(
+				JSON.stringify({ sessionId: "s1:t1", provider: "agnes", model: "m", status: "resumed", resumedFrom: "disk" }),
+				{ status: 200 },
+			),
+		];
+		let i = 0;
 		const client = new PiRuntimeClient({
 			baseUrl: "http://x",
-			fetchImpl: (async (url: string, init?: RequestInit) => {
-				const method = init?.method ?? "GET";
-				calls.push(`${method} ${url}`);
-				if (method === "POST") {
-					attempt += 1;
-					if (attempt === 1) {
-						return new Response(JSON.stringify({ error: "session exists: s1" }), { status: 409 });
-					}
-					return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m" }), {
-						status: 201,
-					});
-				}
-				return new Response(null, { status: 204 });
-			}) as typeof fetch,
+			fetchImpl: (async () => responses[i++]) as typeof fetch,
 		});
-		await expect(client.createSessionReplacingStale("s1", { systemPrompt: "SYS" })).resolves.toMatchObject({
-			provider: "agnes",
-		});
-		expect(calls).toEqual(["POST http://x/sessions", "DELETE http://x/sessions/s1", "POST http://x/sessions"]);
+		expect((await client.createSession("s1:t1")).status).toBe("created");
+		expect((await client.createSession("s1:t1")).status).toBe("resumed");
 	});
 
-	it("非 409 错误直接抛出（不误删会话）", async () => {
-		const calls: string[] = [];
+	it("rebuilt 原样返回（BYOK 身份变更重建）", async () => {
 		const client = new PiRuntimeClient({
 			baseUrl: "http://x",
-			fetchImpl: (async (url: string, init?: RequestInit) => {
-				calls.push(`${init?.method ?? "GET"} ${url}`);
-				return new Response(JSON.stringify({ error: "missing credentials" }), { status: 503 });
-			}) as typeof fetch,
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ sessionId: "s1:t1", provider: "byok-abc", model: "m", status: "rebuilt" }), {
+					status: 200,
+				})) as typeof fetch,
 		});
-		await expect(client.createSessionReplacingStale("s1")).rejects.toThrow(/missing credentials/);
-		expect(calls).toEqual(["POST http://x/sessions"]);
+		expect((await client.createSession("s1:t1")).status).toBe("rebuilt");
 	});
 
-	it("409 清理路径 deleteSession 失败不抛：吞掉重试 create，仍 409 才抛冲突", async () => {
-		const calls: string[] = [];
-		let attempt = 0;
+	it("旧 runtime 响应缺 status 时按 created 容错（灰度期不抛）", async () => {
 		const client = new PiRuntimeClient({
 			baseUrl: "http://x",
-			fetchImpl: (async (url: string, init?: RequestInit) => {
-				const method = init?.method ?? "GET";
-				calls.push(`${method} ${url}`);
-				if (method === "DELETE") return new Response(null, { status: 400 });
-				attempt += 1;
-				if (attempt === 1) {
-					return new Response(JSON.stringify({ error: "session exists: s1" }), { status: 409 });
-				}
-				return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m" }), {
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ sessionId: "s1:t1", provider: "agnes", model: "m" }), {
 					status: 201,
-				});
-			}) as typeof fetch,
+				})) as typeof fetch,
 		});
-		await expect(client.createSessionReplacingStale("s1")).resolves.toMatchObject({ provider: "agnes" });
-		expect(calls).toEqual(["POST http://x/sessions", "DELETE http://x/sessions/s1", "POST http://x/sessions"]);
+		expect((await client.createSession("s1:t1")).status).toBe("created");
 	});
 
-	it("409 清理后 create 仍 409 → 抛明确冲突错误", async () => {
+	it("4xx/5xx 仍抛 PiRuntimeError（含 409）", async () => {
 		const client = new PiRuntimeClient({
 			baseUrl: "http://x",
-			fetchImpl: (async (url: string, init?: RequestInit) => {
-				if ((init?.method ?? "GET") === "DELETE") return new Response(null, { status: 204 });
-				return new Response(JSON.stringify({ error: "session exists: s1" }), { status: 409 });
-			}) as typeof fetch,
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "session exists: s1:t1" }), { status: 409 })) as typeof fetch,
 		});
-		await expect(client.createSessionReplacingStale("s1")).rejects.toThrow(/still conflicts/);
+		await expect(client.createSession("s1:t1")).rejects.toThrow(/session exists/);
 	});
 
+	it("已删除 createSessionReplacingStale（负例锁：不再有「删了重建」路径）", () => {
+		const client = new PiRuntimeClient({ baseUrl: "http://x", fetchImpl: (async () => new Response()) as typeof fetch });
+		expect((client as unknown as Record<string, unknown>).createSessionReplacingStale).toBeUndefined();
+	});
+});
+
+describe("B8 pi-runtime client 杂项", () => {
 	it("prompt 携带 forceSkills；listSkills 走 GET /skills", async () => {
 		const calls: Array<{ url: string; init: RequestInit }> = [];
 		const client = new PiRuntimeClient({
@@ -333,6 +316,55 @@ describe("createSessionReplacingStale（409 竞态修复）", () => {
 		await client.createSession("s2", { systemPrompt: "SYS" });
 		expect(seen[0]).toEqual({ method: "DELETE", contentType: undefined });
 		expect(seen[1]).toEqual({ method: "POST", contentType: "application/json" });
+	});
+});
+
+describe("prompt 透传 turnContext（P0-①）", () => {
+	it("body 带 turnContext；未传 forceSkills 时不发该字段", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ accepted: true }), { status: 202 });
+			}) as typeof fetch,
+		});
+		await client.prompt("s1:t1", "你好", "main", {
+			turnContext: { dynamicBlocks: ["CANVAS"], mentionedKeys: ["I1"] },
+		});
+		const body = JSON.parse(String(calls[0]!.init.body));
+		expect(body.turnContext.dynamicBlocks).toEqual(["CANVAS"]);
+		expect(body.forceSkills).toBeUndefined();
+	});
+
+	it("未传 turnContext 时不发该字段（旧调用方兼容）", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ accepted: true }), { status: 202 });
+			}) as typeof fetch,
+		});
+		await client.prompt("s1:t1", "你好");
+		const body = JSON.parse(String(calls[0]!.init.body));
+		expect(body.turnContext).toBeUndefined();
+		expect(body).toEqual({ text: "你好", lane: "main" });
+	});
+
+	it("202 视为成功；409 抛 PiRuntimeError（busy 可被上层识别）", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async () => new Response(JSON.stringify({ accepted: true }), { status: 202 })) as typeof fetch,
+		});
+		await expect(client.prompt("s1:t1", "你好")).resolves.toBeUndefined();
+
+		const busy = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "session busy" }), { status: 409 })) as typeof fetch,
+		});
+		await expect(busy.prompt("s1:t1", "你好")).rejects.toThrow(/session busy/);
 	});
 });
 

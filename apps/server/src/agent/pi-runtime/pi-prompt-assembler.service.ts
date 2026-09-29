@@ -1,5 +1,11 @@
 /**
- * PiPromptAssembler（#12）：Nest 每轮组装 pi-runtime 会话的完整 system prompt。
+ * PiPromptAssembler（#12）：组装 pi-runtime 会话的 system prompt。
+ *
+ * P0-① 起按 spec §5.3 拆两段（此前是「每轮重建会话」的单次 assemble）：
+ *   - assembleStatic：规则组文本（S 层）。会话期内不变 → 会话创建时作为 systemPrompt 注入一次。
+ *   - assembleDynamic：每轮变化的世界状态（G 层：画布快照 + 侧栏素材）。返回**数组**交给
+ *     pi-runtime 追加到 systemPrompt 尾部求值，不写入对话历史（spec §4 动态上下文判据；
+ *     写进历史会让每个旧轮的快照被反复计费并互相矛盾）。
  *
  * 规则文本出处：services/agent-runtime/app/graph/nodes/explore.py:87-132（_EXPLORE_SYSTEM）。 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
  * 规则分组（B-2 起）：
@@ -8,22 +14,22 @@
  *   - writeTools（B-2 随写工具注册启用）：规则 4/5 原文（explore.py:95-112 逐字）；
  *     规则 6/8/9 不拷贝（声明偏离，理由见 B-2 计划 §1.2）。
  *
- * 拼装顺序对齐 explore.py:393-408：规则 → 画布摘要 → 侧栏块 → 近期对话摘要。
+ * 拼装顺序对齐 explore.py:393-408：规则 → 画布摘要 → 侧栏块。
  * 摘要获取失败时省略该块并继续（ Review Focus：prompt 必须始终成立）；
  * 摘要 JSON 不截断（有意对齐老链路）。
+ * 早期「近期对话摘要」层随 compress-recent-turns 一起退役——历史现在进原生 context。
  */
 import { createHash } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
-import { compressRecentTurns, type TurnMessage } from "./compress-recent-turns";
 import { buildSidebarBlock, type SidebarBlockInput } from "./sidebar-block";
 
 export type RuleGroup = "core" | "writeTools" | "genTools";
 
 /**
- * 分层 kind：rules/canvas/sidebar/recent 为已启用层；
+ * 分层 kind：rules 属静态段（S 层），canvas/sidebar 属动态段（G 层）；
  * `skill` / `memory` 为 D-η' 与阶段二预留（Seam first —— 先留注入点，策略后定）。
  */
-export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "recent" | "skill" | "memory";
+export type PromptLayerKind = "rules" | "canvas" | "sidebar" | "skill" | "memory";
 
 export interface PromptLayer {
 	id: string;
@@ -33,7 +39,10 @@ export interface PromptLayer {
 	approxTokens: number;
 }
 
-/** 每轮注入 manifest（结构化，供 log/metrics 消费）。 */
+/**
+ * 分段注入 manifest（结构化，供 log/metrics 消费）。
+ * 静态段没有归属会话（一次装配多会话共用），其 manifest 的 sessionId 为空串。
+ */
 export interface PromptManifest {
 	sessionId: string;
 	layers: Array<{ id: string; kind: PromptLayerKind; tokens: number }>;
@@ -122,7 +131,7 @@ function composeRuleText(groups: RuleGroup[]): string {
 export class PiPromptAssembler {
 	private readonly logger = new Logger(PiPromptAssembler.name);
 
-	/** 测试观测口：最近一次 assemble 的 layers 与 manifest 行（non-production API）。 */
+	/** 测试观测口：最近一次分段装配的 layers 与 manifest 行（non-production API）。 */
 	lastLayers?: PromptLayer[];
 	/** 测试观测口（non-production API）：人类可读的一行 manifest（含 hash）。 */
 	lastManifest?: string;
@@ -131,16 +140,26 @@ export class PiPromptAssembler {
 
 	constructor(private readonly canvasTools: CanvasSummaryProvider) {}
 
-	async assemble(input: {
+	/**
+	 * 静态段（S 层）：规则组文本。会话期内不变，创建会话时注入一次。
+	 * 不触碰 canvasTools —— 静态段不依赖任何 world state。
+	 */
+	async assembleStatic(input: { ruleGroups?: RuleGroup[] }): Promise<string> {
+		const text = composeRuleText(input.ruleGroups ?? ["core"]);
+		this.recordLayers([layer("rules", "rules", text)], "");
+		return text;
+	}
+
+	/**
+	 * 动态段（G 层）：每轮变化的世界状态（画布快照 + 侧栏素材）。
+	 * 返回数组 —— 由 pi-runtime 追加到 systemPrompt 尾部求值，不写入对话历史（spec §4 动态上下文判据）。
+	 * 画布摘要获取失败时省略该块并继续；两者都不可用时返回空数组（调用方 handle 空数组为「无动态块」）。
+	 */
+	async assembleDynamic(input: {
 		sessionId: string;
 		attachments?: SidebarBlockInput[];
-		mentionedKeys?: string[];
-		priorMessages?: TurnMessage[];
-		ruleGroups?: RuleGroup[];
-		maxTurns?: number;
-	}): Promise<string> {
-		const groups = input.ruleGroups ?? ["core"];
-		const layers: PromptLayer[] = [layer("rules", "rules", composeRuleText(groups))];
+	}): Promise<string[]> {
+		const layers: PromptLayer[] = [];
 
 		try {
 			const summary = await this.canvasTools.getCanvasSummary({ sessionId: input.sessionId });
@@ -160,25 +179,25 @@ export class PiPromptAssembler {
 			if (block) layers.push(layer("sidebar", "sidebar", block));
 		}
 
-		const recent = compressRecentTurns(input.priorMessages ?? [], input.maxTurns ?? 4);
-		if (recent) layers.push(layer("recent-turns", "recent", `近期对话摘要：\n${recent}`));
+		this.recordLayers(layers, input.sessionId);
+		return layers.map((l) => l.content);
+	}
 
-		const prompt = layers.map((l) => l.content).join("\n");
-		const hash = promptHash(prompt);
+	/** 记录 layers 与 manifest 行（既有观测口语义不变；sessionId 为空串表示静态段）。 */
+	private recordLayers(layers: PromptLayer[], sessionId: string): void {
 		const totalTokens = layers.reduce((sum, l) => sum + l.approxTokens, 0);
+		const hash = promptHash(layers.map((l) => l.content).join("\n"));
 
 		this.lastLayers = layers;
 		this.lastManifestDetail = {
-			sessionId: input.sessionId,
+			sessionId,
 			layers: layers.map((l) => ({ id: l.id, kind: l.kind, tokens: l.approxTokens })),
 			totalTokens,
 			promptHash: hash,
 		};
-		this.lastManifest = `prompt manifest ${input.sessionId}: ${layers
+		this.lastManifest = `prompt manifest ${sessionId || "(static)"}: ${layers
 			.map((l) => `${l.id}:${l.kind}:${l.approxTokens}tok`)
 			.join(" ")} total=${totalTokens}tok hash=${hash}`;
 		this.logger.log(this.lastManifest);
-
-		return prompt;
 	}
 }
