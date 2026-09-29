@@ -591,9 +591,14 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
   })
 
   function stubAssembler(prompt: string) {
-    const assemble = vi.fn().mockResolvedValue(prompt)
-    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({ assemble } as never)
-    return assemble
+    // P0-① Task 10：装配器拆静态/动态两段；返回静态段 mock 以便断言 ruleGroups。
+    const assembleStatic = vi.fn().mockResolvedValue(prompt)
+    const assembleDynamic = vi.fn().mockResolvedValue([])
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic,
+      assembleDynamic,
+    } as never)
+    return assembleStatic
   }
 
   it('active：createSession 收到组装后的 systemPrompt + userId + 画布上下文', async () => {
@@ -627,7 +632,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(events.map((e) => e.type)).toContain('done')
   })
 
-  it('priorMessages 取自 AgentMessage 历史且不含本轮 user 消息', async () => {
+  it('priorMessages 查询仍在 pi 分支发生（持久会话接线前 DB 历史仍被读取）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     agentMessageFindMany.mockResolvedValue([
@@ -636,7 +641,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     ])
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    const assemble = stubAssembler('PROMPT-s1')
+    stubAssembler('PROMPT-s1')
 
     for await (const _event of service.streamConversation('s1', '本轮新消息', 'u1', 't1')) {
       void _event
@@ -645,14 +650,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(agentMessageFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { threadId: 't1' } }),
     )
-    const input = assemble.mock.calls[0][0] as {
-      priorMessages: Array<{ role: string; content: string }>
-    }
-    expect(input.priorMessages).toEqual([
-      { role: 'user', content: '第一问' },
-      { role: 'assistant', content: '第一答' },
-    ])
-    // 本轮消息单独持久化（不在 priorMessages 里）
+    // 本轮消息单独持久化（不依赖历史查询）
     expect(agentMessageCreate).toHaveBeenCalled()
   })
 
@@ -792,15 +790,18 @@ describe('AgentService B-2 ruleGroups + minors', () => {
       }),
     } as never
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    const assemble = vi.fn().mockResolvedValue('PROMPT')
-    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({ assemble } as never)
+    const assembleStatic = vi.fn().mockResolvedValue('PROMPT')
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic,
+      assembleDynamic: vi.fn().mockResolvedValue([]),
+    } as never)
 
     const events: Array<{ type: string }> = []
     for await (const event of service.streamConversation('s1', '你好', 'u1', 't1')) {
       events.push(event)
     }
     expect(events.map((e) => e.type)).toContain('done')
-    expect(assemble.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
+    expect(assembleStatic.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
   })
 
   it('F3：链路不可用（未配 PI_RUNTIME_URL）时不触发 priorMessages 查询', async () => {

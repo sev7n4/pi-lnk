@@ -651,16 +651,20 @@ export class AgentService {
       attachments: piContext?.attachments,
       model,
     })
-    const systemPrompt = await this.createPiPromptAssembler().assemble({
-      sessionId,
-      attachments: piContext?.attachments,
-      mentionedKeys: piContext?.mentionedKeys,
-      priorMessages: piContext?.priorMessages,
+    // P0-① Task 10：装配器拆静态/动态两段。此处暂按旧语义把两段拼成一个 systemPrompt
+    // （会话仍每轮重建，动态块不会被冻结）；Task 11 改为把动态段交给 pi-runtime 每轮求值。
+    const assembler = this.createPiPromptAssembler()
+    const staticPrompt = await assembler.assembleStatic({
       // B-5：run_* 生成工具已注册，genTools 规则组启用（规则 3' + 11/12/13）
       ruleGroups: ['core', 'writeTools', 'genTools'],
     })
+    const dynamicBlocks = await assembler.assembleDynamic({
+      sessionId,
+      attachments: piContext?.attachments,
+    })
+    const systemPrompt = [staticPrompt, ...dynamicBlocks, visionBlock].filter(Boolean).join('\n')
     await this.ensurePiSession(client, sessionId, {
-      systemPrompt: visionBlock ? `${systemPrompt}\n\n${visionBlock}` : systemPrompt,
+      systemPrompt,
       userId,
       attachments: piContext?.attachments,
       mentionedKeys: piContext?.mentionedKeys,
