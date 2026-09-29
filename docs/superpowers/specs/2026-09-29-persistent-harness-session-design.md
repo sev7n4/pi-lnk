@@ -207,13 +207,13 @@ flowchart LR
 | 场景 | 处理 | 依据 |
 |---|---|---|
 | thinkingLevel 变更 | `lane.setThinkingLevel()`，不重建会话 | `lane.ts:1674` |
-| 平台模型切换（env 装配同渠道） | `lane.setModel({provider, modelId})` | `lane.ts:1653` |
-| BYOK 渠道变更且模型已在注册表 | 同上 | 同上 |
+| 平台模型切换（env 装配同渠道） | ~~`lane.setModel({provider, modelId})`~~ → **实际走重建**（见下方说明） | `lane.ts:1653`（本包未接） |
+| BYOK 渠道变更且模型已在注册表 | ~~同上~~ → **实际走重建** | 同上 |
 | **会话身份变更**（BYOK 渠道建/换/撤，或 env 装配模型变化） | **重建**：pi-runtime 在 `create` 内比对「本次请求身份」与「会话存放身份」，不一致即关闭并删除磁盘目录后按新身份重建，返回 `status: "rebuilt"` | 模型注册表在 create 期由 `model-assembly.ts` 装配，无公开热更新 API |
 
 **身份的定义与比对为何放在 pi-runtime**：BYOK 渠道的 provider id 由 `providerIdFrom(providerRef)` 哈希生成（`byok-<12hex>`，`model-assembly.ts:132`），**该哈希只有 pi-runtime 能算**。因此身份比对必须由 pi-runtime 完成，Nest 侧不做「取回 provider/model 再自行推演」——那样只能比对 `model` 字段，漏判「同一模型但换渠道」这一最需要重建的情形。
 
-**未变更时的换档不重建**：thinkingLevel 与「同身份内的模型切换」走 lane setter。判定顺序为：身份一致 → `resumed`（后续按需 setter）；身份不一致 → `rebuilt`。
+**未变更时的换档不重建**：thinkingLevel 走 lane setter；**模型切换一律重建**——实现里 `isSameLlmIdentity`（`session-manager.ts:208`）比对的是 `provider` **与** `model` 两者，所以「换模型」必然落到身份不一致 → `rebuilt` 分支，`lane.setModel` 那条路径在本包设计中**不可达**（登记为 §12 后续包）。判定顺序为：身份一致 → `resumed`（后续按需 setter）；身份不一致 → `rebuilt`。
 
 ### 5.6 配置面（env）
 
@@ -341,7 +341,7 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 | PVC 写满 | Pod 异常 | LRU 上限（3GiB/200）+ 跳过活跃会话；PVC 调整需另立运维动作 |
 | 内存驻留增长 | OOM（limit 1.5Gi） | TTL 30min 回收 + `sessions_live` 观测；如实际偏高再下调 TTL |
 | 部署顺序搞反 | 动态上下文静默丢失（难发现） | §4 判据写明顺序；`ensurePiSession` 对缺 `status` 的响应容错并在日志标注 |
-| BYOK 身份变更触发重建 | 该对话上下文丢失 | 仅在身份真变时重建（同身份内换模型走 lane setter）；`status=rebuilt` 让 Nest 侧可观测并 warn |
+| BYOK 身份变更触发重建 | 该对话上下文丢失 | 身份 = (provider, model)，任一项变化即重建（含同 provider 内换模型）；`status=rebuilt` 让 Nest 侧可观测并 warn |
 
 ## 12. 后续包 / 路线图（本包外，登记避免隐性范围）
 
@@ -352,6 +352,7 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 5. **P0-④ run_* 异步化**：与本包的上下文预算联动（长任务期间上下文仍在增长）
 6. **P2 5.2 pi-runtime 鉴权**：`x-lnkpi-service-token` 与 nest-client 反向对称
 7. **P1 4.3 可观测性**：本包已补 4 项核心指标；OTel spans 与 token/cost 汇总另立
+8. **同 provider 内模型热切换（`lane.setModel`）**：本包未接——身份比对含 `model`，换模型一律重建会话（历史重置）。若「同一对话里换模型但保留上下文」成为产品需求，需要在 pi-runtime 侧把身份收窄为 provider 并在 change 时调 `lane.setModel({provider, modelId})`（`lane.ts:1653`），同时补回归测试锁住「换模型不丢历史」
 
 ## 13. 配图规范自检
 
