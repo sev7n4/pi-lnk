@@ -62,6 +62,14 @@ describe("collectSessionDirs / enforceRetention", () => {
 				writeFileSync(join(root, name, "sessions", "s.jsonl"), "x".repeat(50));
 				// 近期活跃判据在内层会话文件（追加历史处），顶层目录 mtime 只反映创建时刻
 				utimesSync(join(root, name, "sessions", "s.jsonl"), age, age);
+				// ⚠️ 顶层目录 mtime 也必须显式设定，不能只设内层文件：
+				// lastActivityMs() 取的是 max(顶层目录 mtime, 内层文件最大 mtime)，而在这里
+				// 内层文件被设到 1970 年（100/200/300 秒），恒小于「目录创建时刻 ≈ 现在」，
+				// 于是 max() 的结果由目录 mtime 决定。CI 的 Linux runner 上三次 mkdir 落在
+				// 同一个时间刻度里 → 三者 mtimeMs 完全相等 → 排序退化为 readdir 顺序
+				// （哈希序，实测 'mid' 排在 'old' 前）→ 稳定淘汰错目录（2026-09-29 连续两次复现）。
+				// 本机 APFS 目录 mtime 纳秒级递增，所以本地跑一直是绿的，纯属巧合。
+				utimesSync(join(root, name), age, age);
 			}
 			const entries = await collectSessionDirs(root);
 			assert.equal(entries.length, 3);
