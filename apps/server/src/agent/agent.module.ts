@@ -12,6 +12,7 @@ import { AgentInternalGuard } from './agent-internal.guard'
 import { AgentService } from './agent.service'
 import { CompositionService } from './composition.service'
 import { WorkflowRecipeService } from './workflow-recipe.service'
+import { AgentMemoryService } from './agent-memory.service'
 
 @Module({
   imports: [CanvasModule, ProviderModule, SessionsModule, StudioModule, AssetsModule],
@@ -22,9 +23,10 @@ import { WorkflowRecipeService } from './workflow-recipe.service'
     AgentInternalGuard,
     WorkflowRecipeService,
     CompositionService,
+    AgentMemoryService,
     // 画布动作落地实现（归属待定的 seam）：换实现只改这一行，调用点零改动
     { provide: CANVAS_ACTION_APPLIER, useValue: defaultCanvasActionApplier },
   ],
-  exports: [AgentService, AgentCanvasToolsService],
+  exports: [AgentService, AgentCanvasToolsService, AgentMemoryService],
 })
 export class AgentModule {}
