@@ -8,6 +8,7 @@ import {
   duplicateSubgraph,
   isProductFourPanelPrompt,
   isRootNode,
+  normalizeModelRef,
   remapWorkflowIds,
   resolveDuplicateSourceIds,
   resolveNodeRefs,
@@ -17,6 +18,7 @@ import {
   type CanvasAction,
   type CanvasActionApplier,
   type CanvasData,
+  type CanvasEdge,
   type CanvasNode,
   type DuplicateCanvasNode,
   type LocalRefBinding,
@@ -94,6 +96,116 @@ function nodeTitle(node: CanvasNode): string {
 
 function nodeStatus(node: CanvasNode): string {
   return String(node.data?.status ?? 'draft')
+}
+
+/** update_node 的唯一可写字段集（spec §4.1）。改动此表必须同步 spec 与图 1。 */
+export const UPDATE_NODE_WRITABLE_FIELDS = ['title', 'imageModel', 'videoModel', 'textModel', 'audioModel'] as const
+
+export type NodeModal = 'image' | 'video' | 'text' | 'audio'
+
+/**
+ * 节点类型 → 允许写的模型字段与模态。
+ * 非此表的类型（group/shot/sceneComposer）**无**模型字段可写；prompt 与 text 共用 textModel。
+ */
+export const NODE_TYPE_MODEL_FIELD: Record<string, { field: string; modality: NodeModal }> = {
+  image: { field: 'imageModel', modality: 'image' },
+  video: { field: 'videoModel', modality: 'video' },
+  text: { field: 'textModel', modality: 'text' },
+  prompt: { field: 'textModel', modality: 'text' },
+  audio: { field: 'audioModel', modality: 'audio' },
+}
+
+export type NodePatchValidation =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; reason: string; allowed?: string[] }
+
+/**
+ * `update_node` 的入参校验（spec §4.1 判据 R-1~R-4）。
+ *
+ * 刻意是**模块级纯函数**：本仓 agent 链路没有 schema 校验兜底（harness 不校验），
+ * 白名单是唯一防线，必须能被独立单测逐条打靶。
+ */
+export function validateNodePatch(input: {
+  patch: Record<string, unknown>
+  node: { type?: string; data?: Record<string, unknown> }
+  selectable: Record<NodeModal, string[]>
+}): NodePatchValidation {
+  const { patch, node, selectable } = input
+  const nodeType = String(node.type ?? '')
+  const modelRule = NODE_TYPE_MODEL_FIELD[nodeType]
+  const writableFields = ['title', ...(modelRule ? [modelRule.field] : [])]
+
+  const unknown = Object.keys(patch).filter((k) => !UPDATE_NODE_WRITABLE_FIELDS.includes(k as never))
+  if (unknown.length) {
+    return { ok: false, reason: `unsupported field(s): ${unknown.join(', ')}`, allowed: writableFields }
+  }
+  // R-1：一次只允许一个模型字段，且必须是该节点类型的模态字段
+  const modelFields = Object.keys(patch).filter((k) => k !== 'title')
+  if (modelFields.length > 1) {
+    return { ok: false, reason: 'at most one model field per call', allowed: writableFields }
+  }
+  if (modelFields.length === 1) {
+    if (!modelRule || modelFields[0] !== modelRule.field) {
+      return {
+        ok: false,
+        reason: `node type "${nodeType}" only accepts ${modelRule ? modelRule.field : 'no model field'}`,
+        allowed: writableFields,
+      }
+    }
+  }
+
+  const data: Record<string, unknown> = {}
+  if ('title' in patch) {
+    // Review Focus 4：空白 title 不得把标题清空
+    const title = typeof patch.title === 'string' ? patch.title.trim() : ''
+    if (!title) return { ok: false, reason: 'title must be a non-empty string', allowed: writableFields }
+    data.title = title
+  }
+  if (modelRule && modelRule.field in patch) {
+    const raw = patch[modelRule.field]
+    if (typeof raw !== 'string') {
+      return { ok: false, reason: `${modelRule.field} must be a string`, allowed: selectable[modelRule.modality] }
+    }
+    const normalized = normalizeModelRef(modelRule.modality, raw)
+    // R-2：fallback 说明裸名不在目录中——不得静默采用被回落出来的默认模型
+    if (!normalized || normalized.fallback) {
+      return { ok: false, reason: `unknown model "${raw}"`, allowed: selectable[modelRule.modality] }
+    }
+    // R-3：清单是唯一权威（BYOK ref 也可能已被用户从可选清单移除）
+    if (!selectable[modelRule.modality].includes(normalized.ref)) {
+      return { ok: false, reason: `model "${raw}" is not in the user's selectable list`, allowed: selectable[modelRule.modality] }
+    }
+    data[modelRule.field] = normalized.ref
+  }
+
+  if (Object.keys(data).length === 0) {
+    return { ok: false, reason: 'patch must contain at least one writable field', allowed: writableFields }
+  }
+  return { ok: true, data }
+}
+
+/** 由 canvas.edges 推导节点的上下游（只回 id+type+title，体积可控；悬空边跳过）。 */
+export function relationsForNode(
+  canvas: { nodes: CanvasNode[]; edges: CanvasEdge[] },
+  nodeId: string,
+): {
+  upstream: Array<{ id: string; type: string; title: string }>
+  downstream: Array<{ id: string; type: string; title: string }>
+} {
+  const brief = (id: string) => {
+    const node = canvas.nodes.find((n) => n.id === id)
+    if (!node) return null
+    return { id: node.id, type: String(node.type ?? ''), title: nodeTitle(node) }
+  }
+  const upstream = canvas.edges
+    .filter((e) => e.target === nodeId)
+    .map((e) => brief(e.source))
+    .filter((n): n is { id: string; type: string; title: string } => n !== null)
+  const downstream = canvas.edges
+    .filter((e) => e.source === nodeId)
+    .map((e) => brief(e.target))
+    .filter((n): n is { id: string; type: string; title: string } => n !== null)
+  return { upstream, downstream }
 }
 
 function nodeToAgentAttachment(node: CanvasNode): SidebarAttachment | null {
