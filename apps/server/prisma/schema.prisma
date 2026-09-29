@@ -350,3 +350,14 @@ model ContextSnapshot {
 
   @@index([threadId, stage, createdAt])
 }
+
+/// P1 memory（spec 2026-09-29）：agent 跨会话用户记忆。
+model AgentMemory {
+  id        String   @id @default(cuid())
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("agent_memories")
+}
