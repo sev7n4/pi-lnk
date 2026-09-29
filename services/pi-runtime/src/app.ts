@@ -87,6 +87,10 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		};
 	}>("/sessions", async (request, reply) => {
 		const threadKey = request.body?.sessionId ?? crypto.randomUUID();
+		// 空/空白 sessionId 是客户端错误：直接 400（放进去会被 toSessionKey 抛成 503，语义失真）
+		if (!threadKey.trim()) {
+			return reply.code(400).send({ error: "sessionId must be a non-empty string" });
+		}
 		// 畸形 llm 直接 400：宁可本轮失败，也不「以为用 BYOK 实际走平台 key」（错账）。
 		// 错误信息只描述结论，不回显请求体（apiKey 明文红线）。
 		const llm = parseLlmOverride(request.body?.llm);
@@ -128,10 +132,11 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	}>("/sessions/:sessionId/prompt", async (request, reply) => {
 		const { sessionId } = request.params;
 		try {
-			// 每轮易变上下文（spec §5.3 T 层）：先刷新再 prompt，本轮 LLM 调用即读到新值。
-			if (request.body?.turnContext) manager.setTurnContext(sessionId, request.body.turnContext);
+			// turnContext 随 prompt 一起提交：在 busy 校验之后应用（复核 Important #5）——
+			// 被 409 拒绝的请求不得改写在跑 run 下一轮 LLM 调用将读到的动态上下文。
 			await manager.prompt(sessionId, request.body.text, request.body.lane, {
 				forceSkills: request.body?.forceSkills,
+				turnContext: request.body?.turnContext,
 			});
 			return reply.code(202).send({ accepted: true });
 		} catch (err) {
@@ -170,19 +175,28 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			const parsed = Number(request.query?.lastEventId);
 			const afterSeq = Number.isInteger(parsed) && parsed >= 0 ? parsed : -1;
 
+			// id: 帧 = NormalizedEvent.seq，供客户端断点续传（P0-③）
+			const writeEvent = (event: NormalizedEvent) => {
+				reply.raw.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+			};
+
+			// 复核 Minor #10：先订阅再写响应头——hasKey 与 subscribe 之间的 sweeper 回收窗口
+			// 会以 NotFoundError 浮出，此时还能 404；写头之后再抛就只能 500。
+			let buffered: NormalizedEvent[];
+			try {
+				buffered = manager.subscribe(sessionId, writeEvent, afterSeq);
+			} catch (err) {
+				if (err instanceof NotFoundError) return reply.code(404).send({ error: "session not found" });
+				throw err;
+			}
+
 			reply.raw.writeHead(200, {
 				"content-type": "text/event-stream",
 				"cache-control": "no-cache",
 				"connection": "keep-alive",
 			});
 
-			// id: 帧 = NormalizedEvent.seq，供客户端断点续传（P0-③）
-			const writeEvent = (event: NormalizedEvent) => {
-				reply.raw.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-			};
-
-			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），再挂实时监听
-			const buffered = manager.subscribe(sessionId, writeEvent, afterSeq);
+			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），监听已在 subscribe 时挂上
 			for (const event of buffered) writeEvent(event);
 
 			const heartbeat = setInterval(() => {

@@ -37,7 +37,7 @@ export function pickLruVictims(
 	return victims;
 }
 
-/** 扫描 dataRoot 下的会话目录（一层子目录），累计字节与 mtime。根不存在返回空。 */
+/** 扫描 dataRoot 下的会话目录（一层子目录），累计字节与最近活跃时间。根不存在返回空。 */
 export async function collectSessionDirs(dataRoot: string): Promise<RetentionEntry[]> {
 	let names: string[];
 	try {
@@ -51,12 +51,36 @@ export async function collectSessionDirs(dataRoot: string): Promise<RetentionEnt
 		const dir = join(dataRoot, name);
 		try {
 			const st = await stat(dir);
-			entries.push({ key: name, bytes: await directoryBytes(dir), mtimeMs: st.mtimeMs });
+			entries.push({
+				key: name,
+				bytes: await directoryBytes(dir),
+				// 复核 Minor #7：LRU 判据必须是「最近使用」而非「创建时刻」。追加历史发生在
+				// <key>/sessions/ 内层文件，顶层目录 mtime 只反映目录条目变化（≈创建时刻）——
+				// 只看它会把用了几个月的活跃对话排进最旧队列，LRU 退化成 FIFO。
+				mtimeMs: await lastActivityMs(dir, st.mtimeMs),
+			});
 		} catch {
 			// 扫描竞态（目录刚被删）：跳过，不影响其余条目
 		}
 	}
 	return entries;
+}
+
+/** 内层会话文件的最大 mtime；内层不可读时回退顶层目录 mtime。 */
+async function lastActivityMs(dir: string, fallbackMs: number): Promise<number> {
+	const sessionsDir = join(dir, "sessions");
+	let names: string[];
+	try {
+		names = (await readdir(sessionsDir, { withFileTypes: true })).map((d) => d.name);
+	} catch {
+		return fallbackMs;
+	}
+	let newest = fallbackMs;
+	for (const name of names) {
+		const st = await stat(join(sessionsDir, name)).catch(() => null);
+		if (st && st.mtimeMs > newest) newest = st.mtimeMs;
+	}
+	return newest;
 }
 
 async function directoryBytes(dir: string): Promise<number> {

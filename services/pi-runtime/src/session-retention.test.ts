@@ -60,7 +60,8 @@ describe("collectSessionDirs / enforceRetention", () => {
 			] as const) {
 				mkdirSync(join(root, name, "sessions"), { recursive: true });
 				writeFileSync(join(root, name, "sessions", "s.jsonl"), "x".repeat(50));
-				utimesSync(join(root, name), age, age);
+				// 近期活跃判据在内层会话文件（追加历史处），顶层目录 mtime 只反映创建时刻
+				utimesSync(join(root, name, "sessions", "s.jsonl"), age, age);
 			}
 			const entries = await collectSessionDirs(root);
 			assert.equal(entries.length, 3);
@@ -69,6 +70,32 @@ describe("collectSessionDirs / enforceRetention", () => {
 			assert.deepEqual(removed, ["old"]);
 			const after = await collectSessionDirs(root);
 			assert.deepEqual(after.map((x) => x.key).sort(), ["mid", "new"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("近期活跃以内层会话文件的 mtime 为准（顶层目录 mtime 会把常用会话误判成最旧）", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-retention-"));
+		try {
+			// a：创建得早（顶层目录 mtime 老）但刚追加过历史 → 应判为最近活跃
+			mkdirSync(join(root, "a", "sessions"), { recursive: true });
+			writeFileSync(join(root, "a", "sessions", "s.jsonl"), "x".repeat(50));
+			utimesSync(join(root, "a"), 100, 100);
+			utimesSync(join(root, "a", "sessions", "s.jsonl"), 500, 500);
+			// b：创建得晚但内层文件更老 → 应判为更久未用
+			mkdirSync(join(root, "b", "sessions"), { recursive: true });
+			writeFileSync(join(root, "b", "sessions", "s.jsonl"), "x".repeat(50));
+			utimesSync(join(root, "b"), 300, 300);
+			utimesSync(join(root, "b", "sessions", "s.jsonl"), 200, 200);
+
+			const entries = await collectSessionDirs(root);
+			const a = entries.find((x) => x.key === "a") as RetentionEntry;
+			const b = entries.find((x) => x.key === "b") as RetentionEntry;
+			assert.ok(a.mtimeMs > b.mtimeMs); // 修复前：a(100) < b(300)，LRU 退化成 FIFO
+
+			const removed = await enforceRetention(root, { maxBytes: 1_000_000, maxCount: 1 }, new Set());
+			assert.deepEqual(removed, ["b"]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

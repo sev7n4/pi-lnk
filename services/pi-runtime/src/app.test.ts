@@ -94,6 +94,18 @@ describe("POST /sessions 幂等契约", () => {
 		});
 	});
 
+	it("空串 sessionId → 400（客户端错误，不该伪装成 503 下游故障）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			try {
+				const res = await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "", userId: "u1" } });
+				assert.equal(res.statusCode, 400);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
 	it("不同 userId 同键 → 409（不泄漏 provider/model）", async () => {
 		await withRoot("pi-runtime-app-", async (root) => {
 			const { app } = makeApp(root);

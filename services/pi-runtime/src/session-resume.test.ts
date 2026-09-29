@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -122,13 +123,123 @@ describe("SessionManager.create 幂等 resume-or-create", () => {
 			const branch = await session.createBranch("main", null, BACKGROUND_CONTEXT);
 			await branch.appendMessage({ role: "user", content: "上一轮说过的话" } as never, BACKGROUND_CONTEXT);
 			await repo.close(BACKGROUND_CONTEXT);
+			// 复核 Important #4：归属/身份的磁盘记录（真实 create 流程也会写它）。
+			// model 必须与 env 路径的默认身份一致（AGNES_MODEL_ID ?? "agnes-2.5-pro"），
+			// 否则身份校验判 rebuilt 正是 fail-closed 的预期行为。
+			await writeFile(
+				join(cwd, "meta.json"),
+				JSON.stringify({ userId: "u1", provider: "agnes", model: process.env.AGNES_MODEL_ID ?? "agnes-2.5-pro" }),
+				"utf8",
+			);
 
 			const { factory, seen } = makeHarnessFactory();
 			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, baseConfig(root));
 			const out = await sm.create("s1:t1", { userId: "u1" });
 			assert.equal(out.status, "resumed");
+			assert.equal(out.resumedFrom, "disk");
 			assert.equal(seen.length, 1);
 			assert.equal(seen[0].hadEntries, true);
+		});
+	});
+
+	it("create 落盘 meta.json（归属 + 身份，磁盘 resume 的 fail-closed 数据源）", async () => {
+		await withTempDataRoot(async (root) => {
+			const { factory } = makeHarnessFactory();
+			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, baseConfig(root));
+			await sm.create("s1:t1", { userId: "u1" });
+			const raw = await readFile(join(root, toSessionKey("s1:t1"), "meta.json"), "utf8");
+			const meta = JSON.parse(raw) as { userId: string | null; provider: string; model: string };
+			assert.equal(meta.userId, "u1");
+			assert.equal(meta.provider, "agnes");
+			assert.equal(typeof meta.model, "string");
+		});
+	});
+
+	it("TTL 回收内存后同身份同用户：磁盘 resume 成功（resumedFrom=disk）", async () => {
+		await withTempDataRoot(async (root) => {
+			const { factory, seen } = makeHarnessFactory();
+			const cfg = baseConfig(root);
+			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, cfg);
+			await sm.create("s1:t1", { userId: "u1", systemPrompt: "RULES" });
+			await sm.sweepOnce(Date.now() + cfg.sessionTtlMs + 1); // 只回收内存，磁盘保留
+			const out = await sm.create("s1:t1", { userId: "u1", systemPrompt: "RULES" });
+			assert.equal(out.status, "resumed");
+			assert.equal(out.resumedFrom, "disk");
+			assert.equal(seen.length, 2);
+		});
+	});
+
+	it("TTL 回收后另一用户持同键：磁盘路径同样 fail-closed（ConflictError）", async () => {
+		await withTempDataRoot(async (root) => {
+			const { factory } = makeHarnessFactory();
+			const cfg = baseConfig(root);
+			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, cfg);
+			await sm.create("s1:t1", { userId: "u1" });
+			await sm.sweepOnce(Date.now() + cfg.sessionTtlMs + 1);
+			// threadKey 来自客户端可伪造：磁盘 meta 是唯一归属凭证，缺这层校验等于跨用户读上下文
+			await assert.rejects(() => sm.create("s1:t1", { userId: "u2" }), /session exists/);
+		});
+	});
+
+	it("TTL 回收后身份变更（同渠道换模型）：磁盘路径走 rebuilt，旧目录被替换", async () => {
+		await withTempDataRoot(async (root) => {
+			const { factory, seen, closed } = makeHarnessFactory();
+			const cfg = baseConfig(root);
+			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, cfg);
+			await sm.create("s1:t1", { userId: "u1" });
+			await sm.sweepOnce(Date.now() + cfg.sessionTtlMs + 1);
+			const byok: SessionLlmOverride = {
+				model: "gpt-x",
+				apiKey: "k",
+				baseUrl: "https://example.invalid/v1",
+				providerRef: "ch1",
+				source: "user",
+			};
+			const out = await sm.create("s1:t1", { userId: "u1", llm: byok });
+			assert.equal(out.status, "rebuilt");
+			assert.equal(out.provider.startsWith("byok-"), true);
+			assert.deepEqual(closed, [1]); // TTL sweep 回收内存即释放旧 harness（destroyMemoryOnly 会 close）
+			assert.equal(seen.length, 2);
+			assert.equal(seen[1].hadEntries, false); // 旧历史不带入新身份
+			// meta 被改写为新身份
+			const meta = JSON.parse(
+				await readFile(join(root, toSessionKey("s1:t1"), "meta.json"), "utf8"),
+			) as { provider: string };
+			assert.equal(meta.provider.startsWith("byok-"), true);
+		});
+	});
+
+	it("遗留目录无 meta.json（部署前旧数据）：不恢复历史，按新建处理", async () => {
+		await withTempDataRoot(async (root) => {
+			const key = toSessionKey("s1:t1");
+			const cwd = join(root, key);
+			const env = new NodeExecutionEnv({ cwd });
+			const repo = new JsonlSessionRepo({ fileSystem: env, sessionsRoot: join(cwd, "sessions") });
+			const session = await repo.create({ cwd }, BACKGROUND_CONTEXT);
+			const branch = await session.createBranch("main", null, BACKGROUND_CONTEXT);
+			await branch.appendMessage({ role: "user", content: "旧构建的历史" } as never, BACKGROUND_CONTEXT);
+			await repo.close(BACKGROUND_CONTEXT);
+			// 刻意不写 meta.json
+
+			const { factory, seen } = makeHarnessFactory();
+			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, baseConfig(root));
+			const out = await sm.create("s1:t1", { userId: "u1" });
+			assert.equal(out.status, "created");
+			assert.equal(seen[0].hadEntries, false);
+		});
+	});
+
+	it("并发 create 同键：共享同一次 build（harnessFactory 只跑一次），无句柄泄漏", async () => {
+		await withTempDataRoot(async (root) => {
+			const { factory, seen } = makeHarnessFactory();
+			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, baseConfig(root));
+			const [a, b] = await Promise.all([
+				sm.create("s1:t1", { userId: "u1" }),
+				sm.create("s1:t1", { userId: "u1" }),
+			]);
+			assert.equal(seen.length, 1); // 旧实现：两次都 miss → 各自 build → 后者覆盖前者（句柄泄漏）
+			assert.equal(a.status, "created");
+			assert.equal(b.status, "created");
 		});
 	});
 

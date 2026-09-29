@@ -105,7 +105,184 @@ describe("setTurnContext", () => {
 	});
 });
 
-describe("prompt 并发守卫", () => {
+describe("轮次覆盖语义（复核 Important #1：spec §5.4「整体覆盖」）", () => {
+	it("第 2 轮缺省的字段被清空，不残留上一轮附件/焦点/mentionedKeys", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-turn-"));
+		try {
+			const { sm, captured } = makeManager(root);
+			await sm.create("s1:t1", {
+				attachments: [{ url: "https://x/a.png", mediaType: "image" }],
+				mentionedKeys: ["I1"],
+				focusNodeId: "n1",
+			});
+			const firstTurn = captured().toolContext() as Record<string, unknown>;
+			assert.equal((firstTurn.attachments as unknown[] | undefined)?.length, 1);
+			assert.deepEqual(firstTurn.mentionedKeys, ["I1"]);
+			// 第 2 轮：用户没带任何素材——合并语义会把第 1 轮的附件泄漏进本轮 toolContext
+			sm.setTurnContext("s1:t1", {});
+			const secondTurn = captured().toolContext() as Record<string, unknown>;
+			assert.deepEqual(secondTurn.attachments, []);
+			assert.deepEqual(secondTurn.mentionedKeys, []);
+			assert.deepEqual(secondTurn.refOrder, []);
+			assert.equal(secondTurn.focusNodeId, undefined);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("prompt 直接接收 turnContext（busy 检查之后应用）", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-turn-"));
+		try {
+			const { sm, captured } = makeManager(root);
+			await sm.create("s1:t1", {});
+			await sm.prompt("s1:t1", "你好", "main", { turnContext: { dynamicBlocks: ["画布摘要：A"] } });
+			assert.equal(captured().systemPrompt(), "STATIC\n\n画布摘要：A");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("busy 守卫（复核 Important #2/#5：TOCTOU 与被拒请求不污染在跑轮）", () => {
+	/** lane() 返回挂起 promise 的工厂：暴露「检查 prompting 与置位之间隔着 await」的窗口。 */
+	function makeGatedFactory(gate: Promise<unknown>) {
+		const factory = (async () => ({
+			harness: {
+				events: { on: () => () => {} },
+				lane: async () => ({
+					prompt: async () => {
+						await gate;
+						return { ok: true };
+					},
+				}),
+				close: async () => {},
+			},
+		})) as never;
+		return factory;
+	}
+
+	it("lane 解析挂起期间并发 prompt 必 409（置位先于 await，TOCTOU 消失）", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-busy-"));
+		try {
+			let release: (v: unknown) => void = () => {};
+			const gate = new Promise((r) => {
+				release = r;
+			});
+			const sm = new SessionManager([], "", undefined, makeGatedFactory(gate), undefined, undefined, {
+				...DEFAULT_RUNTIME_CONFIG,
+				dataRoot: root,
+			});
+			await sm.create("s1:t1", {});
+			// 关键：两个 prompt 同拍发起，都不 await——旧实现里第二个会在第一个置位前通过检查
+			const first = sm.prompt("s1:t1", "第一条");
+			await assert.rejects(() => sm.prompt("s1:t1", "第二条"), (err: Error) => err instanceof BusyError);
+			release(undefined);
+			await first;
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("被 409 拒绝的请求不污染在跑 run 的 turnContext", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-busy-"));
+		try {
+			let release: (v: unknown) => void = () => {};
+			const gate = new Promise((r) => {
+				release = r;
+			});
+			const { sm, captured } = (() => {
+				let cap: { systemPrompt: (tc?: unknown) => string } = { systemPrompt: () => "" };
+				const factory = (async (cfg: { systemPrompt: (tc?: unknown) => string }) => {
+					cap = cfg;
+					return {
+						harness: {
+							events: { on: () => () => {} },
+							lane: async () => ({
+								prompt: async () => {
+									await gate;
+									return { ok: true };
+								},
+							}),
+							close: async () => {},
+						},
+					};
+				}) as never;
+				const mgr = new SessionManager([], "STATIC", undefined, factory, undefined, undefined, {
+					...DEFAULT_RUNTIME_CONFIG,
+					dataRoot: root,
+				});
+				return { sm: mgr, captured: () => cap };
+			})();
+			await sm.create("s1:t1", {});
+			await sm.prompt("s1:t1", "第一条", "main", { turnContext: { dynamicBlocks: ["画布快照：第一轮"] } });
+			await assert.rejects(
+				() => sm.prompt("s1:t1", "第二条", "main", { turnContext: { dynamicBlocks: ["画布快照：第二轮"] } }),
+				(err: Error) => err instanceof BusyError,
+			);
+			// 在跑 run 的下一次 LLM 调用仍读第一轮的快照，绝不能看到被拒请求的
+			assert.equal(captured().systemPrompt(), "STATIC\n\n画布快照：第一轮");
+			release(undefined);
+			await new Promise((r) => setTimeout(r, 0));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("lane 解析失败时 prompting 复位，下一轮可正常 prompt（不永久卡死）", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-busy-"));
+		try {
+			const factory = (async () => ({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => {
+						throw new Error("lane unavailable");
+					},
+					close: async () => {},
+				},
+			})) as never;
+			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, {
+				...DEFAULT_RUNTIME_CONFIG,
+				dataRoot: root,
+			});
+			await sm.create("s1:t1", {});
+			await assert.rejects(() => sm.prompt("s1:t1", "第一条"), /lane unavailable/);
+			// 复位后可再 prompt（此处 lane 仍会抛，但错误必须是 lane 的，而不是 BusyError）
+			await assert.rejects(() => sm.prompt("s1:t1", "第二条"), (err: Error) => !(err instanceof BusyError));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("身份变更的 rebuilt 不抽走在跑 run 的 harness（改抛 BusyError）", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-busy-"));
+		try {
+			let release: (v: unknown) => void = () => {};
+			const gate = new Promise((r) => {
+				release = r;
+			});
+			const sm = new SessionManager([], "", undefined, makeGatedFactory(gate), undefined, undefined, {
+				...DEFAULT_RUNTIME_CONFIG,
+				dataRoot: root,
+			});
+			await sm.create("s1:t1", { userId: "u1" });
+			await sm.prompt("s1:t1", "第一条");
+			await assert.rejects(
+				() =>
+					sm.create("s1:t1", {
+						userId: "u1",
+						llm: { model: "gpt-x", apiKey: "k", baseUrl: "https://example.invalid/v1", providerRef: "ch1", source: "user" },
+					}),
+				(err: Error) => err instanceof BusyError,
+			);
+			release(undefined);
+			await new Promise((r) => setTimeout(r, 0));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("prompt 并发守卫（既有语义回归）", () => {
 	it("run 进行中再次 prompt 抛 BusyError；run 结束后可再 prompt", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-runtime-busy-"));
 		try {

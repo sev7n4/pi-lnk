@@ -15,7 +15,7 @@
  *   无独立 error 事件是指 AgentEvent 层——harness 层有，必须转发否则丢错）。
  */
 import { createHash } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	AgentHarness,
@@ -153,6 +153,22 @@ export interface TurnContext {
 	focusNodeId?: string;
 }
 
+/**
+ * TurnContext 写入归一（spec §5.4「整体覆盖」）：缺省字段一律归一为空值。
+ * 复核 Important #1——若只在写入时做 `{ ...old, ...new }` 合并，Nest 在「本轮无附件 /
+ * 无 @ 提及」时传 undefined，旧轮的侧栏附件/焦点节点会泄漏进本轮 toolContext（工具拿
+ * 到用户已不再指涉的素材）。Nest 侧契约是「每轮发送完整 turnContext，缺省即清空」。
+ */
+export function normalizeTurnContext(turn: TurnContext): TurnContext {
+	return {
+		dynamicBlocks: turn.dynamicBlocks ?? [],
+		attachments: turn.attachments ?? [],
+		mentionedKeys: turn.mentionedKeys ?? [],
+		refOrder: turn.refOrder ?? [],
+		focusNodeId: turn.focusNodeId,
+	};
+}
+
 /** 会话身份：BYOK 时 provider 为 `byok-<12hex>`（providerRef 哈希），平台时为 `agnes`。 */
 export interface LlmIdentity {
 	provider: string;
@@ -209,6 +225,41 @@ export function isSameLlmIdentity(a: LlmIdentity, b: LlmIdentity): boolean {
 	return a.provider === b.provider && a.model === b.model;
 }
 
+/** 会话目录里的归属/身份落盘记录（磁盘路径 fail-closed 的数据源，复核 Important #4）。 */
+export interface SessionMeta {
+	/** null = 匿名会话（未带 userId 创建）。 */
+	userId: string | null;
+	provider: string;
+	model: string;
+}
+
+const SESSION_META_FILE = "meta.json";
+
+async function readSessionMeta(cwd: string): Promise<SessionMeta | undefined> {
+	try {
+		const raw = await readFile(join(cwd, SESSION_META_FILE), "utf8");
+		const parsed = JSON.parse(raw) as Partial<SessionMeta>;
+		if (typeof parsed.provider !== "string" || typeof parsed.model !== "string") return undefined;
+		return {
+			userId: typeof parsed.userId === "string" ? parsed.userId : null,
+			provider: parsed.provider,
+			model: parsed.model,
+		};
+	} catch {
+		return undefined; // 不存在 / 半截写入 / 权限问题：按「无记录」处理（调用方走不恢复路径）
+	}
+}
+
+async function writeSessionMeta(cwd: string, meta: SessionMeta): Promise<void> {
+	// 写盘失败不阻断建会话（历史照常落 JSONL）；代价仅是下次磁盘 resume 按「无记录」新建。
+	// 这条 warn 是磁盘 resume 静默退化的唯一线索，不能吞。
+	await writeFile(join(cwd, SESSION_META_FILE), JSON.stringify(meta), "utf8").catch((err: unknown) => {
+		console.warn(
+			`[pi-runtime] write session meta failed for ${cwd}: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	});
+}
+
 function sameStringArray(a?: readonly string[], b?: readonly string[]): boolean {
 	const left = a ?? [];
 	const right = b ?? [];
@@ -247,8 +298,8 @@ export const DEFAULT_THINKING_LEVEL = (process.env.PI_RUNTIME_THINKING_LEVEL ?? 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 /** 会话级 thinking 档位：Nest 显式传入且合法时覆盖 env 默认。
- * 注意：harness 的 thinkingLevel 仅 create 时可设，prompt 阶段不可改——多轮同键换档
- * 由 Nest 走「身份变更」路径重建会话（spec §5.5 换档兜底）。 */
+ * 常驻会话下同键换档走 lane.setThinkingLevel（applyThinkingLevel，失败降级沿用旧档），
+ * 只有 LLM 身份（provider+model）变更才重建会话（isSameLlmIdentity，spec §5.5）。 */
 export function resolveThinkingLevel(level?: string): ThinkingLevel {
 	if (level && THINKING_LEVELS.has(level)) return level as ThinkingLevel;
 	return DEFAULT_THINKING_LEVEL;
@@ -256,6 +307,8 @@ export function resolveThinkingLevel(level?: string): ThinkingLevel {
 
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
+	/** 在途 create（按会话键）：并发同键共享同一次 build（防句柄泄漏，见 create 注释）。 */
+	private readonly creating = new Map<string, Promise<CreateResult>>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
 	private sweeper?: NodeJS.Timeout;
 
@@ -295,13 +348,30 @@ export class SessionManager {
 	 *   内存命中但身份变更 → rebuilt（关闭并删目录后按新身份重建）
 	 *   仅磁盘命中         → repo.open + harness.create（vendor 自动 restoreSession）→ resumed
 	 *   都没有             → created
-	 * userId 不一致一律 ConflictError（fail-closed，不返回任何会话内容）。
+	 * userId 不一致一律 ConflictError（fail-closed，不返回任何会话内容）——内存与磁盘两条路径都校验。
 	 */
-	async create(
-		threadKey: string,
-		opts: CreateOptions = {},
-	): Promise<CreateResult> {
+	async create(threadKey: string, opts: CreateOptions = {}): Promise<CreateResult> {
 		const key = toSessionKey(threadKey);
+		// 复核 Important #3：并发同键去重。两个 create 同时 miss 会各自 openExisting/build，
+		// 后写者覆盖前写者 → 前者的 harness/repo/env 永不 close（句柄泄漏 + 事件订阅悬空）。
+		// 共享同一在途 Promise 后，第二个调用方拿到的就是同一次 build 的结果。
+		const inflight = this.creating.get(key);
+		if (inflight) {
+			const shared = await inflight;
+			// 归属竞争兜底：若共享结果的归属者不是本次调用方，fail-closed。
+			// （返回体只含 provider/model/status，窗口内没有会话内容外泄；下一轮 create 亦会拦截。）
+			const entry = this.sessions.get(key);
+			if (entry?.userId && opts.userId !== undefined && entry.userId !== opts.userId) {
+				throw new ConflictError(key);
+			}
+			return shared;
+		}
+		const task = this.doCreate(key, opts).finally(() => this.creating.delete(key));
+		this.creating.set(key, task);
+		return task;
+	}
+
+	private async doCreate(key: string, opts: CreateOptions): Promise<CreateResult> {
 		const { models, model, providerId } = this.modelFactory(opts.llm);
 		const identity: LlmIdentity = { provider: providerId, model: model.id };
 
@@ -309,6 +379,8 @@ export class SessionManager {
 		if (existing) {
 			if (existing.userId && existing.userId !== opts.userId) throw new ConflictError(key);
 			if (!isSameLlmIdentity(existing.identity, identity)) {
+				// 复核 Minor #6：run 进行中不得抽走在跑的 harness（重建会话 = 换掉 harness 实例）。
+				if (existing.prompting) throw new BusyError(key);
 				await this.destroy(key);
 				const created = await this.build(key, opts, models, model, identity);
 				return { ...created, status: "rebuilt" };
@@ -323,7 +395,24 @@ export class SessionManager {
 		const cwd = opts.workingDir ?? join(this.config.dataRoot, key);
 		const env = new NodeExecutionEnv({ cwd });
 		const repo = new JsonlSessionRepo({ fileSystem: env, sessionsRoot: join(cwd, "sessions") });
-		const opened = await this.openExisting(repo, cwd);
+		// 复核 Important #4：磁盘路径同样 fail-closed。内存回收（TTL）不删磁盘，meta.json 是
+		// 归属与身份在磁盘上的唯一记录——threadKey 来自客户端可伪造，缺这层校验时，另一用户
+		// 持同键可在会话被回收后恢复他人对话上下文。
+		const meta = await readSessionMeta(cwd);
+		if (meta) {
+			if (meta.userId !== null && opts.userId !== undefined && meta.userId !== opts.userId) {
+				throw new ConflictError(key);
+			}
+			if (!isSameLlmIdentity({ provider: meta.provider, model: meta.model }, identity)) {
+				// 与内存路径同语义：身份变更 → 删目录重建（历史随旧身份一起作废）。
+				await rm(join(this.config.dataRoot, key), { recursive: true, force: true }).catch(() => {});
+				const built = await this.build(key, opts, models, model, identity);
+				return { ...built, status: "rebuilt" };
+			}
+		}
+		// 无 meta（部署前遗留目录 / meta 写盘失败）不恢复历史：fail-closed 于「未知归属」，
+		// 代价是遗留目录里的旧会话历史不接续（旧链路本就每轮删除会话，遗留目录无接续价值）。
+		const opened = meta ? await this.openExisting(repo, cwd) : undefined;
 		if (opened) {
 			const built = await this.build(key, opts, models, model, identity, { env, repo, session: opened });
 			return { ...built, status: "resumed", resumedFrom: "disk" };
@@ -369,15 +458,17 @@ export class SessionManager {
 			staticPrompt: this.composeSystemPrompt(opts.systemPrompt),
 			identity,
 			userId: opts.userId,
-			turn: {
+			turn: normalizeTurnContext({
 				attachments: opts.attachments,
 				mentionedKeys: opts.mentionedKeys,
 				refOrder: opts.refOrder,
 				focusNodeId: opts.focusNodeId,
-			},
+			}),
 			thinkingLevel,
 			lastActivityAt: Date.now(),
 		};
+		// 归属/身份落盘（磁盘 resume 的 fail-closed 数据源，复核 Important #4）。
+		await writeSessionMeta(cwd, { userId: opts.userId ?? null, provider: identity.provider, model: identity.model });
 
 		const { harness } = await this.harnessFactory<LnkpiToolContext>(
 			{
@@ -521,10 +612,15 @@ export class SessionManager {
 		this.sessions.get(toSessionKey(threadKey))?.listeners.delete(listener);
 	}
 
-	/** 每轮刷新易变上下文；返回是否真的变化（供 metrics/日志）。 */
+	/**
+	 * 每轮刷新易变上下文；返回是否真的变化（供 metrics/日志）。
+	 * 复核 Important #1（spec §5.4「整体覆盖」）：**替换语义**——Nest 每轮发送完整
+	 * turnContext，缺省即清空；不做 `{ ...old, ...new }` 合并（undefined 会保留旧值，
+	 * 上一轮的侧栏附件/焦点节点会泄漏进本轮 toolContext）。
+	 */
 	setTurnContext(threadKey: string, turn: TurnContext): boolean {
 		const entry = this.require(threadKey);
-		const next = { ...entry.turn, ...turn };
+		const next = normalizeTurnContext(turn);
 		const changed = !isTurnContextEqual(entry.turn, next);
 		if (changed) entry.turn = next;
 		entry.lastActivityAt = Date.now();
@@ -537,59 +633,74 @@ export class SessionManager {
 		return composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []);
 	}
 
-	/** 触发一次 prompt。不 await 完成——事件经 events 总线流出；run 结束由 agent_end 表达。 */
+	/**
+	 * 触发一次 prompt。不 await 完成——事件经 events 总线流出；run 结束由 agent_end 表达。
+	 * `opts.turnContext` 在 busy 校验**之后**同步应用（复核 Important #5）：被 409 拒绝的
+	 * 请求不得改写在跑 run 下一轮 LLM 调用将读到的动态上下文。
+	 */
 	async prompt(
 		threadKey: string,
 		text: string,
 		laneName = MAIN_LANE,
-		opts?: { forceSkills?: string[] },
+		opts?: { forceSkills?: string[]; turnContext?: TurnContext },
 	): Promise<{ accepted: boolean }> {
 		const entry = this.require(threadKey);
 		// 会话常驻后同键并发会串台（同一 harness 上两个 run 交错），fail-closed 拒绝。
+		// 复核 Important #2（TOCTOU）：置位必须在任何 await 之前同步完成——原先
+		// 「检查 → await harness.lane() → 置位」的窗口里，第二个并发请求能通过检查。
 		if (entry.prompting) throw new BusyError(entry.id);
-		const effectiveText = withForcedSkills(text, opts?.forceSkills, (name) =>
-			this.skills?.loadBody(name),
-		);
-		this.hooks?.onPrompt?.(entry.id);
-		entry.lastActivityAt = Date.now();
-		// 每个 run 一个可取消的子 context：用户点「停止」时 abort 这一条链路。
-		// vendored pi 的中断入口是 context（withCancel → { context, cancel }），
-		// 不是 lane.prompt 的参数（其第二参是 images，传不了 signal）。
-		const run = withCancel(this.context);
-		entry.cancelRun = run.cancel;
-		entry.userAborted = false;
-		const lane = await entry.harness.lane(laneName, this.context);
 		entry.prompting = true;
-		void lane
-			.prompt(effectiveText, undefined, run.context)
-			.then((result) => {
-				if (!result.ok) {
+		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
+		try {
+			const effectiveText = withForcedSkills(text, opts?.forceSkills, (name) =>
+				this.skills?.loadBody(name),
+			);
+			this.hooks?.onPrompt?.(entry.id);
+			entry.lastActivityAt = Date.now();
+			// 每个 run 一个可取消的子 context：用户点「停止」时 abort 这一条链路。
+			// vendored pi 的中断入口是 context（withCancel → { context, cancel }），
+			// 不是 lane.prompt 的参数（其第二参是 images，传不了 signal）。
+			const run = withCancel(this.context);
+			entry.cancelRun = run.cancel;
+			entry.userAborted = false;
+			const lane = await entry.harness.lane(laneName, this.context);
+			void lane
+				.prompt(effectiveText, undefined, run.context)
+				.then((result) => {
+					if (!result.ok) {
+						this.dispatch(entry, {
+							type: "error",
+							lane: laneName,
+							ts: Date.now(),
+							data: { source: "prompt", message: String(result.error) },
+						});
+					}
+				})
+				.catch((err: unknown) => {
+					// 用户主动取消：不派发 error（否则重连补发 buffer 时会显示「出错了」的假警报）
+					if (entry.userAborted) {
+						console.log(`[pi-runtime] run aborted by user: ${entry.id}`);
+						return;
+					}
 					this.dispatch(entry, {
 						type: "error",
 						lane: laneName,
 						ts: Date.now(),
-						data: { source: "prompt", message: String(result.error) },
+						data: { source: "prompt", message: err instanceof Error ? err.message : String(err) },
 					});
-				}
-			})
-			.catch((err: unknown) => {
-				// 用户主动取消：不派发 error（否则重连补发 buffer 时会显示「出错了」的假警报）
-				if (entry.userAborted) {
-					console.log(`[pi-runtime] run aborted by user: ${entry.id}`);
-					return;
-				}
-				this.dispatch(entry, {
-					type: "error",
-					lane: laneName,
-					ts: Date.now(),
-					data: { source: "prompt", message: err instanceof Error ? err.message : String(err) },
+				})
+				.finally(() => {
+					entry.prompting = false;
+					entry.cancelRun = undefined;
+					entry.userAborted = false;
 				});
-			})
-			.finally(() => {
-				entry.prompting = false;
-				entry.cancelRun = undefined;
-				entry.userAborted = false;
-			});
+		} catch (err) {
+			// lane 解析失败等同步段异常：复位守卫位，否则会话永久卡在 busy。
+			entry.prompting = false;
+			entry.cancelRun = undefined;
+			entry.userAborted = false;
+			throw err;
+		}
 		return { accepted: true };
 	}
 
