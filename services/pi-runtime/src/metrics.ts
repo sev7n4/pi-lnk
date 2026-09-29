@@ -19,8 +19,9 @@ const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
 /** 工具结果体积直方图桶（字节）（③：工具结果 token 观测的原始量）。 */
 const BYTES_BUCKETS = [256, 1024, 4096, 16384, 65536, 262144, 1_048_576];
 
-/** 工具调用错误分类（③：误用/故障归因的原始数据源，供混乱矩阵分析）。 */
-export type ToolErrorKind = "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network" | "gate_blocked";
+/** 工具调用错误分类（③）；`retry` 为 V-γ 重试放行打点（非错误）。 */
+export type ToolErrorKind =
+	| "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network" | "gate_blocked" | "retry";
 
 interface HistogramState {
 	count: number;
@@ -65,7 +66,7 @@ export class Metrics {
 	}
 
 	observeToolCall(tool: string, outcome: "ok" | "error" | "circuit_open", kind?: ToolErrorKind): void {
-		const key = kind && outcome === "error" ? `${tool}|${outcome}|${kind}` : `${tool}|${outcome}`;
+		const key = kind ? `${tool}|${outcome}|${kind}` : `${tool}|${outcome}`;
 		this.toolCalls.set(key, (this.toolCalls.get(key) ?? 0) + 1);
 	}
 

@@ -29,9 +29,10 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
-import { enforceRetention } from "./session-retention.js";
 import { loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
+import { enforceRetention } from "./session-retention.js";
 import type { SkillRegistry } from "./skills/registry.js";
+import { stripImageBlocks } from "./sse-sanitize.js";
 import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
 
 export type NormalizedEventType =
@@ -78,6 +79,9 @@ const EVENT_MAP: ReadonlyArray<readonly [string, NormalizedEventType]> = [
 	["fault", "error"],
 	["handler_error", "error"],
 ];
+
+/** 可携带 tool result（含 image block）的 harness 事件：SSE/缓冲副本必须剥离图数据。 */
+const TOOL_RESULT_EVENT_TYPES = new Set(["tool_end", "message_start", "message_end", "turn_end"]);
 
 interface SessionEntry {
 	id: string;
@@ -504,7 +508,8 @@ export class SessionManager {
 						type: sseType,
 						lane: evt.lane,
 						ts: Date.now(),
-						data: evt,
+						// ⑦：图只进模型上下文，SSE/缓冲副本剥离（无图时原引用返回）
+						data: TOOL_RESULT_EVENT_TYPES.has(harnessType) ? stripImageBlocks(evt) : evt,
 					});
 				}),
 			);

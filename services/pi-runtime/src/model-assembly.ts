@@ -70,7 +70,11 @@ function agnesProvider() {
 				baseUrl: AGNES_BASE_URL,
 				provider: "agnes",
 				reasoning: true,
-				input: ["text"],
+				// 声明 image 输入：spec §1.5 spike 实测生产同款模型经 api.agnes-ai.cn/v1 接受
+				// OpenAI image_url（data URI）视觉输入（返回正确识别结果，usage.prompt_tokens_details
+				// .image_tokens=64）——生产线认可视觉。不声明则 openai-completions 适配器会静默丢弃
+				// tool-result 里的 image block，自评闭环断在最后一步。
+				input: ["text", "image"],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow: 1_000_000,
 				maxTokens: 65_536,
@@ -154,6 +158,8 @@ function overrideProvider(override: SessionLlmOverride) {
 				// reasoning_effort → 网关 400；contextWindow 写死 1M 是禁止项：harness
 				// 压缩/截断永不触发 → 长对话超上游限制。
 				reasoning: override.reasoning ?? false,
+				// 刻意只声明 text：BYOK 渠道模型由用户自带，pi-runtime 无从得知其是否具备视觉能力；
+				// 误报 image 会让非视觉渠道对含图请求直接 400（比静默丢弃图更糟）。此处不随 agnes 改。
 				input: ["text"],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow: override.contextWindow ?? DEFAULT_CONTEXT_WINDOW,

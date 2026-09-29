@@ -40,6 +40,15 @@ test("③ 错误分类：带 kind 的 error 单独行渲染，无 kind 的保持
 	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="ok"\} 1/);
 });
 
+test("③ retry：ok 结果带 kind 单独一行渲染（V-γ 重试打点）", () => {
+	const m = new Metrics();
+	m.observeToolCall("run_image_generation", "ok", "retry");
+	m.observeToolCall("run_image_generation", "ok");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_tool_calls_total\{tool="run_image_generation",result="ok",kind="retry"\} 1/);
+	assert.match(out, /pi_runtime_tool_calls_total\{tool="run_image_generation",result="ok"\} 1/);
+});
+
 test("③ tool_result_bytes：按桶聚合并渲染 sum/count", () => {
 	const m = new Metrics();
 	m.observeToolResult("get_canvas_summary", 100); // ≤256

@@ -26,6 +26,16 @@ describe("assembleModel 会话级 override（K-1）", () => {
 		assert.equal(providerId, "agnes");
 	});
 
+	it("agnes provider 声明 image 输入（spike 实测生产链路接受视觉输入）", () => {
+		const { model } = assembleModel();
+		assert.deepEqual(model.input, ["text", "image"]);
+	});
+
+	it("BYOK override 保守只声明 text（pi-runtime 无从得知用户模型能力，误报 image 会 400）", () => {
+		const { model } = assembleModel(OVERRIDE);
+		assert.deepEqual(model.input, ["text"]);
+	});
+
 	it("有 override：model / baseUrl 取会话注入值，providerId 为哈希派生", () => {
 		const { providerId, model } = assembleModel(OVERRIDE);
 		assert.equal(model.id, "deepseek-flash");

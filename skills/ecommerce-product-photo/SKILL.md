@@ -1,6 +1,6 @@
 ---
 name: ecommerce-product-photo
-version: "0.4.1"
+version: "0.5.0"
 description: 电商商品图/产品视觉生成指导。当用户要求生成商品图、产品场景图、白底图、模特上身图、商品细节图，或提到商品摄影、场景搭配、营销视觉时使用。本 skill 只覆盖静态商品图；视频脚本不在范围。
 ---
 
@@ -59,18 +59,32 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
    - 维度区分：`attach_refs`（step5）是**数据层**（生成时参考哪些图，影响出图），`connect_nodes`（本步）是**视觉层**（画布画箭头 + 驱动沿边布局）——两者不同维度，都要做
    - 配合 `arrange_nodes(along_edges)` 可自动分层（主图居左，衍生图向右展开）
 7. **提议生成**：`propose_generation` 提议生成，等待用户确认；确认前不调用 `run_*`
-8. **出图后 QA 闸门 + 定位**：出图后先 `focus_node` 定位到刚生成的节点（让用户第一时间看到结果），再对照"出图后 QA 闸门"自检并报告 PASS/REVISE/REJECT
+8. **出图后 QA 闸门 + 定位**：出图后先 `focus_node` 定位到刚生成的节点（让用户第一时间看到结果），再对照"出图后 QA 闸门"自检并报告 PASS/REVISE/REJECT。**自检前必须先看图**，按 `imageRefine` 取值分四种情形：`imageRefine="attached"` 时图已作为附加图片块进入上下文，必须先查看该图再做逐 gate 自检，不得凭 prompt 想象画面下结论；`imageRefine="skipped"` 时如实向用户说明"未能获取图片用于自检"（可结合结果中的 `imageRefineReason` 说明原因），不得假装已自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理：如实说明本次无法取得图片用于自检，不得凭 prompt 想象下结论；`imageRefine="n/a"`（生成未完成）时走原 status 分支：`status=timeout` 稍后用 `get_generation_status` 查询，`status=fallback_pending` 提示用户在画布节点上确认平台兜底。
 
 ## 出图后 QA 闸门
 
-借鉴 aiskillstore/generating-product-photos 的四 gate。出图后、用户确认收图前，agent 逐图自检并给结论：
+借鉴 aiskillstore/generating-product-photos 的四 gate。出图后、用户确认收图前，agent 逐图自检并给结论。
+
+**看图是自检的前提**：`imageRefine="attached"` 时生成图已作为附加图片块在上下文中，必须先实际查看图片，再逐 gate 判断；`imageRefine="skipped"` 时无法获取图片（原因见结果中的 `imageRefineReason`），如实说明"未能获取图片用于自检"，**不得把 skipped 当作 PASS 交付**，也不得凭 prompt 描述脑补画面自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理，同样不得盲检交付；`imageRefine="n/a"` 表示生成未完成，不走本闸门，按生成结果的 status 分支处理（`timeout` 稍后 `get_generation_status` 查询；`fallback_pending` 提示用户在画布节点确认平台兜底）。
+
+四 gate 条目：
 
 - **Gate 1 商品身份一致性**：形状/颜色/材质/Logo/标签/接口/配件数量是否与 identity lock 一致；任何一项走样即 REVISE
 - **Gate 2 构图与镜头规范**：是否符该 shot 类型规范（白底图商品占框比例、场景图主体是否清晰、细节图对焦是否到位）
 - **Gate 3 文字与声明**：是否虚构认证/参数/材质/未提供的卖点文案；包装文字是否被改写
 - **Gate 4 套图一致性**：同一商品在不同图里是否同一视觉世界（光照/色调/风格统一）
 
-**评审结论**：PASS 直接交付 / REVISE 局部重画（指出哪一 gate 哪一项）/ REJECT 整体重做。REVISE/REJECT 时不虚构已修复，回到 step 4 重新写 prompt。
+**评审结论**：PASS 直接交付 / REVISE 局部重画（指出哪一 gate 哪一项）/ REJECT 整体重做。REVISE/REJECT 时不虚构已修复。
+
+### 自评与重试预算
+
+每个节点的生成闸门只允许一次未经用户再确认的重试，预算纪律如下：
+
+- **PASS** → 直接交付，并给出逐 gate 一句话自评结论；结论必须引用图中可见证据（如商品占框比例、背景纯净度、Logo/包装文字是否原样保留），不得只复述 gate 名称（让用户知道每项检查的结果依据）
+- **REVISE** → 先归因到具体 gate 与具体项 → 用 `set_node_text` 修正 prompt（针对性修改，不是推倒重写）→ **再次调用 `run_image_generation`**（同节点第 2 次，系统自动放行，无需用户再确认；这是"确认前不调用 `run_*`"规则的文档化例外——重试发生在用户对本次生成的原始确认之后）
+- **第二次仍不通过，或第 3 次调用被系统拦截** → **必须 `ask_user`**：给出两次自评的对比结论（哪一 gate、哪些项仍未达标）与可选修正方向（如"往冷调走 / 保留原图换构图 / 人工改图"），由用户决定下一步。**禁止继续无提示重试**
+- `imageRefine="skipped"` 或结果中无 `imageRefine` 字段（同 skipped 处理）不得当 PASS 交付；`imageRefine="n/a"` 走 status 分支（`timeout` 查询 / `fallback_pending` 用户确认兜底），不消耗重试预算
+- **诚实兜底**：若结果标注 `imageRefine="attached"` 但你实际无法在上下文中看到该图片（纯文本渠道等），必须如实说明"看不到图、无法自评"，不得凭空编造自评结论。
 
 ## 平台硬规格
 
@@ -128,3 +142,9 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
   - 分清维度：`attach_refs`（step5 数据层影响生成）vs `connect_nodes`（step6 视觉层画布可见+布局依据）
   - 配合 `arrange_nodes(along_edges)` 自动分层（工具待开发，见 spec 文档）
   - step8（原 step7）出图后 QA 闸门扩展：先 `focus_node` 定位到新节点再自检
+- **0.5.0** (2026-09-29, 视觉自评闭环 P0)：QA 闸门从盲检升级为看图自评。
+  - 明确 `run_image_generation` 结果 `imageRefine="attached"` 时图已在上下文，必须先看图再自检
+  - 新增"自评与重试预算"小节：REVISE → 改 prompt 重跑一次（系统放行）；仍不过或第 3 次被拦截 → 必须 ask_user 给结论与选项
+  - `imageRefine="skipped"` 不得当 PASS；`"n/a"` 走原 status 分支
+  - 复审加固：`imageRefine` 字段缺失（自评回流关闭）按 skipped 同款处理，杜绝盲检；`n/a` 明确 `timeout`（`get_generation_status` 查询）/ `fallback_pending`（用户确认平台兜底）两个 status 分支；PASS 自评必须引用图中可见证据而非复述 gate 名；skipped 时结合 `imageRefineReason` 说明原因；注明重试是"确认前不调用 `run_*`"的文档化例外；更正 step2 中 `ask_user` 已实现并注册的表述
+  - 诚实兜底：标注 `imageRefine="attached"` 但实际看不到图（纯文本渠道）时须如实说明、不得编造自评
