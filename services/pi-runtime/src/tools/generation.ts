@@ -16,6 +16,7 @@ import { Type } from "typebox";
 import type { Context } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
+import { fetchImageAsBlock, isImageRefineEnabled, type ImageBlock } from "./image-refine.js";
 
 function extractActions(data: unknown): Record<string, unknown>[] {
 	const actions = (data as { actions?: unknown } | null | undefined)?.actions;
@@ -31,7 +32,26 @@ function resultWithActions(data: unknown) {
 	};
 }
 
-export function createGenerationTools(client: NestClient): LnkpiTool[] {
+/**
+ * 视觉自评闭环（spec 2026-09-29 §4.2）：把 imageRefine 标记并入文本 JSON 的 data，
+ * 保持原有 key 顺序（`{ ...data, imageRefine }`），按 resultWithActions 的方式重建 content[0]，
+ * details 原样透传。
+ */
+function withImageRefine(
+	base: ReturnType<typeof resultWithActions>,
+	data: Record<string, unknown>,
+	mark: "attached" | "skipped" | "n/a",
+	reason?: string,
+): ReturnType<typeof resultWithActions> {
+	const nextData: Record<string, unknown> = { ...data, imageRefine: mark };
+	if (reason !== undefined) nextData.imageRefineReason = reason;
+	return { ...base, content: [{ type: "text" as const, text: JSON.stringify({ ok: true, data: nextData }) }] };
+}
+
+export function createGenerationTools(
+	client: NestClient,
+	deps: { fetchImpl?: typeof fetch } = {},
+): LnkpiTool[] {
 	const gen = { tier: "gen" as const };
 	const runTool = (
 		name: string,
@@ -59,13 +79,23 @@ export function createGenerationTools(client: NestClient): LnkpiTool[] {
 			if (!tc.userId) throw new Error(`${name} requires userId in toolContext`);
 			// P0-②：run abort 时 gate signal 触发 context.abortSignal → fetch 立即中断，
 			// 工具以 error result 收尾（用户取消的 error 事件由 SessionManager.userAborted 抑制）
-			return resultWithActions(
-				await client.post(
-					path,
-					{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
-					{ signal: context?.abortSignal ?? undefined },
-				),
-			);
+			const data = (await client.post(
+				path,
+				{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
+				{ signal: context?.abortSignal ?? undefined },
+			)) as { url?: string } & Record<string, unknown>;
+			const base = resultWithActions(data);
+			// 视觉自评闭环（spec 2026-09-29 §4.2）只回流 run_image_generation；其余 run_* 形态不变
+			if (name !== "run_image_generation") return base;
+			// Review Focus ④：开关 off → 逐字节等同旧行为（不加字段、不附加 block）
+			if (!isImageRefineEnabled()) return base;
+			const url = typeof data.url === "string" ? data.url : "";
+			// Review Focus ③：成功但无 url（timeout/fallback_pending）→ 不 fetch，仅标注 n/a
+			if (!url) return withImageRefine(base, data, "n/a");
+			const fetched = await fetchImageAsBlock(url, { fetchImpl: deps.fetchImpl });
+			if (!fetched.ok) return withImageRefine(base, data, "skipped", fetched.reason);
+			const attached = withImageRefine(base, data, "attached");
+			return { ...attached, content: [...attached.content, fetched.block satisfies ImageBlock] };
 		},
 	});
 
@@ -73,7 +103,7 @@ export function createGenerationTools(client: NestClient): LnkpiTool[] {
 		runTool(
 			"run_image_generation",
 			"执行图片生成",
-			"Run image generation for a canvas media node and wait for completion (up to ~3 min). Requires the node to be pending user confirmation. Returns url on success; status=timeout means unfinished (use get_generation_status later); status=fallback_pending means user must confirm platform fallback on the canvas node.",
+			"Run image generation for a canvas media node and wait for completion (up to ~3 min). Requires the node to be pending user confirmation. Returns url on success; status=timeout means unfinished (use get_generation_status later); status=fallback_pending means user must confirm platform fallback on the canvas node. When the result includes imageRefine=\"attached\", the generated image is attached — inspect it against the task checklist before reporting; if it fails, revise the prompt (set_node_text) and run once more, then report honestly.",
 			"/agent/internal/run-image-generation",
 		),
 		runTool(

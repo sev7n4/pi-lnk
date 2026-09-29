@@ -154,3 +154,73 @@ test("P0-②：context.abortSignal 缺省时（旧调用路径）不传 signal �
 	} as never);
 	assert.equal(posts[0]!.opts?.signal, undefined);
 });
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function imageFetch(): typeof fetch {
+	return (async (u: string | URL | Request) => {
+		if (String(u) !== "https://x/y.png") throw new Error("unexpected url");
+		return new Response(PNG, { headers: { "content-type": "image/png", "content-length": String(PNG.length) } });
+	}) as typeof fetch;
+}
+
+test("V-β：run_image_generation 成功 → 文本 + image block，imageRefine=attached", async () => {
+	const tools = createGenerationTools(fakeClient() as never, { fetchImpl: imageFetch() });
+	const tool = tools.find((t) => t.name === "run_image_generation")!;
+	const res = await run(tool, { node_id: "n_1" });
+	assert.equal(res.content.length, 2);
+	const text = JSON.parse((res.content[0] as { text: string }).text);
+	assert.equal(text.data.imageRefine, "attached");
+	assert.equal((res.content[1] as { type: string }).type, "image");
+	assert.deepEqual((res.details as { actions: unknown[] })?.actions, [{ type: "update_node", payload: { id: "n_1", data: { status: "completed" } } }]);
+});
+
+test("V-ζ：图片取不到 → 仅文本 + imageRefine=skipped:http（fail-open）", async () => {
+	const failFetch = (async () => new Response("nope", { status: 404 })) as typeof fetch;
+	const tools = createGenerationTools(fakeClient() as never, { fetchImpl: failFetch });
+	const tool = tools.find((t) => t.name === "run_image_generation")!;
+	const res = await run(tool, { node_id: "n_1" });
+	assert.equal(res.content.length, 1);
+	const text = JSON.parse((res.content[0] as { text: string }).text);
+	assert.equal(text.data.imageRefine, "skipped");
+	assert.equal(text.data.imageRefineReason, "http");
+});
+
+test("Review Focus ③：成功但无 url（timeout/fallback_pending）→ imageRefine=n/a 且不 fetch", async () => {
+	let fetched = false;
+	const spyFetch = (async () => {
+		fetched = true;
+		return new Response(PNG, { headers: { "content-type": "image/png" } });
+	}) as typeof fetch;
+	const clientNoUrl = {
+		post: async () => ({ status: "timeout", generationRecordId: "g1", actions: [] }),
+	};
+	const tools = createGenerationTools(clientNoUrl as never, { fetchImpl: spyFetch });
+	const tool = tools.find((t) => t.name === "run_image_generation")!;
+	const res = await run(tool, { node_id: "n_1" });
+	const text = JSON.parse((res.content[0] as { text: string }).text);
+	assert.equal(text.data.imageRefine, "n/a");
+	assert.equal(res.content.length, 1);
+	assert.equal(fetched, false, "无 url 时不得发起 fetch");
+});
+
+test("Review Focus ④：开关 off → 结果与旧版一致（无 imageRefine 字段、无 image block）", async () => {
+	const prev = process.env.PI_RUNTIME_IMAGE_REFINE;
+	process.env.PI_RUNTIME_IMAGE_REFINE = "off";
+	try {
+		const tools = createGenerationTools(fakeClient() as never, { fetchImpl: imageFetch() });
+		const res = await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n_1" });
+		assert.equal(res.content.length, 1);
+		const text = JSON.parse((res.content[0] as { text: string }).text);
+		assert.equal("imageRefine" in text.data, false);
+	} finally {
+		if (prev === undefined) delete process.env.PI_RUNTIME_IMAGE_REFINE;
+		else process.env.PI_RUNTIME_IMAGE_REFINE = prev;
+	}
+});
+
+test("其余 run_* 不回流（V-ε）：run_video_generation 结果无 image block", async () => {
+	const tools = createGenerationTools(fakeClient() as never, { fetchImpl: imageFetch() });
+	const res = await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n_1" });
+	assert.equal(res.content.length, 1);
+});
