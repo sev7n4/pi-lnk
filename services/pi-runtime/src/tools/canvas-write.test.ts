@@ -262,3 +262,73 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.ok(withDeferred.some((t) => t.name === "introduce_nodes_to_agent"));
 	});
 });
+
+/**
+ * 实时通道回归锁（Task 7 Step 6）。
+ *
+ * 这里只断言"形状存在性"而不是内容：makeClient 返回 `{ echoed: body }`，没有
+ * actions 字段，所以空数组也算通过。要锁的是"每个写工具都真的走了
+ * resultWithActions 而不是某天被改回 textResult（details:undefined）"——
+ * 那正是 PR #65 delete_nodes 踩过的坑（服务端已改、画布不动，要等回合末回拉）。
+ */
+describe("canvas-write: 全部写工具都推 details.actions（实时通道回归锁）", () => {
+	const WRITE_TOOLS = [
+		"upsert_prompt_node",
+		"upsert_media_node",
+		"set_node_text",
+		"attach_refs",
+		"propose_generation",
+		"apply_asset_to_node",
+		"save_node_to_asset_library",
+		"duplicate_node",
+		"upload_media_to_canvas",
+		"grid_slice_image",
+		"connect_nodes",
+	] as const;
+
+	it("每个写工具的返回都含 details.actions 数组", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const params: Record<string, unknown> = {
+			upsert_prompt_node: { prompt: "P", content: "C" },
+			upsert_media_node: { target_type: "image", prompt: "P" },
+			set_node_text: { node_id: "n1", prompt: "P" },
+			attach_refs: { node_id: "n1", ref_order: ["i1"] },
+			propose_generation: { node_id: "n1" },
+			apply_asset_to_node: { node_id: "n1", asset_id: "a1", source: "user" },
+			save_node_to_asset_library: { node_id: "n1" },
+			duplicate_node: { node_id: "n1" },
+			upload_media_to_canvas: { url: "https://x/a.png", media_type: "image" },
+			grid_slice_image: { cols: 2, rows: 2, source_url: "https://x/a.png" },
+			connect_nodes: { edges: [{ source: "n1", target: "n2" }] },
+		};
+		for (const name of WRITE_TOOLS) {
+			const out = (await run(findTool(tools, name), params[name])) as { details?: { actions?: unknown } };
+			assert.ok(Array.isArray(out.details?.actions), `${name} must expose details.actions`);
+		}
+	});
+
+	it("set_node_text 只传 prompt 时不吞掉该分支的 actions（此前 prompt 返回值被丢弃）", async () => {
+		const tools = createCanvasWriteTools({
+			post: async () => ({ actions: [{ type: "update_node", payload: { id: "n1" } }] }),
+		} as never);
+		const out = (await run(findTool(tools, "set_node_text"), { node_id: "n1", prompt: "P" })) as {
+			details?: { actions?: unknown[] };
+		};
+		assert.deepEqual(out.details?.actions, [{ type: "update_node", payload: { id: "n1" } }]);
+	});
+
+	it("set_node_text 双传时合并两个分支的 actions（顺序：prompt → content）", async () => {
+		let n = 0;
+		const tools = createCanvasWriteTools({
+			post: async () => ({ actions: [{ type: "update_node", payload: { seq: ++n } }] }),
+		} as never);
+		const out = (await run(findTool(tools, "set_node_text"), { node_id: "n1", prompt: "P", content: "C" })) as {
+			details?: { actions?: Array<{ payload: { seq: number } }> };
+		};
+		assert.deepEqual(
+			out.details?.actions?.map((a) => a.payload.seq),
+			[1, 2],
+		);
+	});
+});

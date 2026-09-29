@@ -16,20 +16,9 @@ import { Type } from "typebox";
 import type { Context } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
-
-function extractActions(data: unknown): Record<string, unknown>[] {
-	const actions = (data as { actions?: unknown } | null | undefined)?.actions;
-	if (!Array.isArray(actions)) return [];
-	return actions.filter((a): a is Record<string, unknown> => !!a && typeof a === "object");
-}
-
-function resultWithActions(data: unknown) {
-	return {
-		content: [{ type: "text" as const, text: JSON.stringify({ ok: true, data }) }],
-		// B-5：Nest 返回的 CanvasAction[] 进 details.actions，由 Nest pi-events 派生 canvas_action SSE
-		details: { actions: extractActions(data) },
-	};
-}
+// B-5：Nest 返回的 CanvasAction[] 进 details.actions，由 Nest pi-events 派生 canvas_action SSE。
+// helper 已抽到 result-with-actions.ts（canvas-write / delete-nodes / 本文件共用一份）。
+import { resultWithActions } from "./result-with-actions.js";
 
 export function createGenerationTools(client: NestClient): LnkpiTool[] {
 	const gen = { tier: "gen" as const };
