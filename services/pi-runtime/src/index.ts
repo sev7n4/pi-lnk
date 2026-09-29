@@ -176,26 +176,30 @@ app.post<{ Params: { sessionId: string } }>(
 	},
 );
 
-app.get<{ Params: { sessionId: string } }>(
+app.get<{ Params: { sessionId: string }; Querystring: { lastEventId?: string } }>(
 	"/sessions/:sessionId/events",
 	async (request, reply) => {
 		const { sessionId } = request.params;
 		if (!manager.has(sessionId)) {
 			return reply.code(404).send({ error: "session not found" });
 		}
+		// 增量重连 offset（P0-③）：非法值（畸形/负数）一律按「全量重放」处理，不 400
+		const parsed = Number(request.query?.lastEventId);
+		const afterSeq = Number.isInteger(parsed) && parsed >= 0 ? parsed : -1;
 
 		reply.raw.writeHead(200, {
 			"content-type": "text/event-stream",
 			"cache-control": "no-cache",
-			connection: "keep-alive",
+			"connection": "keep-alive",
 		});
 
+		// id: 帧 = NormalizedEvent.seq，供客户端断点续传（P0-③）
 		const writeEvent = (event: NormalizedEvent) => {
-			reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+			reply.raw.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 		};
 
-		// 重连/后订阅重放：先补发缓冲，再挂实时监听
-		const buffered = manager.subscribe(sessionId, writeEvent);
+		// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），再挂实时监听
+		const buffered = manager.subscribe(sessionId, writeEvent, afterSeq);
 		for (const event of buffered) writeEvent(event);
 
 		const heartbeat = setInterval(() => {

@@ -92,3 +92,65 @@ test("non-array actions degrade to empty details.actions", async () => {
 	const res = await run(tool, { node_id: "n_1" });
 	assert.deepEqual((res.details as { actions: unknown[] }).actions, []);
 });
+
+test("P0-②：runTool 把 context.abortSignal 透传给 client.post 第三参", async () => {
+	const posts: Array<{ opts?: { signal?: AbortSignal } }> = [];
+	const fakeClient = {
+		post: async (_path: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
+			posts.push({ opts });
+			return { actions: [] };
+		},
+	};
+	const tools = createGenerationTools(fakeClient as never);
+	const runTool = tools.find((t) => t.name === "run_image_generation")!;
+	const controller = new AbortController();
+	// 6 参签名：第 4 参 toolContext、第 6 参 context（P0-② abort 级联的数据源）
+	await runTool.execute!(
+		"call-1",
+		{ node_id: "image-1" } as never,
+		() => {},
+		tc as never,
+		{} as never,
+		{ abortSignal: controller.signal } as never,
+	);
+	assert.equal(posts.length, 1);
+	assert.equal(posts[0]!.opts?.signal, controller.signal);
+});
+
+test("P0-②：cancel_generation 同样透传 context.abortSignal", async () => {
+	const posts: Array<{ opts?: { signal?: AbortSignal } }> = [];
+	const fakeClient = {
+		post: async (_path: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
+			posts.push({ opts });
+			return { actions: [] };
+		},
+	};
+	const tools = createGenerationTools(fakeClient as never);
+	const cancelTool = tools.find((t) => t.name === "cancel_generation")!;
+	const controller = new AbortController();
+	await cancelTool.execute!(
+		"call-2",
+		{ node_id: "image-1" } as never,
+		() => {},
+		tc as never,
+		{} as never,
+		{ abortSignal: controller.signal } as never,
+	);
+	assert.equal(posts[0]!.opts?.signal, controller.signal);
+});
+
+test("P0-②：context.abortSignal 缺省时（旧调用路径）不传 signal 也不报错", async () => {
+	const posts: Array<{ opts?: { signal?: AbortSignal } }> = [];
+	const fakeClient = {
+		post: async (_path: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
+			posts.push({ opts });
+			return { actions: [] };
+		},
+	};
+	const tools = createGenerationTools(fakeClient as never);
+	const runTool = tools.find((t) => t.name === "run_image_generation")!;
+	await runTool.execute!("call-3", { node_id: "image-1" } as never, () => {}, tc as never, {} as never, {
+		abortSignal: undefined,
+	} as never);
+	assert.equal(posts[0]!.opts?.signal, undefined);
+});

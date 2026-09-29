@@ -230,3 +230,68 @@ test("loadNestConfig：env 齐全返回配置，缺任一返回 null", () => {
 		else process.env.NEST_SERVICE_TOKEN = prev.t;
 	}
 });
+
+test("P0-②：post 第三参 opts.signal 透传给 fetch——signal 已 aborted 时不发请求立即 reject", async () => {
+		let fetchCalls = 0;
+		const client = new NestClient({
+			baseUrl: "http://nest",
+			token: "tok",
+			fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+				if (init?.signal?.aborted) throw new Error("aborted before send");
+				fetchCalls++;
+				return new Response(JSON.stringify({ code: 0, message: "ok", data: {} }), { status: 200 });
+			}) as typeof fetch,
+		});
+		const controller = new AbortController();
+		controller.abort();
+		await assert.rejects(
+			() => client.post("/agent/internal/run-image-generation", {}, { signal: controller.signal }),
+		);
+		assert.equal(fetchCalls, 0);
+});
+
+test("P0-②：外部 abort 在超时之前生效（AbortSignal.any 叠加而非替换）", async () => {
+	const client = new NestClient({
+		baseUrl: "http://nest",
+		token: "tok",
+		defaultTimeoutMs: 60_000,
+		fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) =>
+			new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () =>
+					reject(new Error("external abort fired")),
+				);
+			})) as typeof fetch,
+	});
+	const controller = new AbortController();
+	const pending = client.post("/agent/internal/run-video-generation", {}, { signal: controller.signal });
+	setTimeout(() => controller.abort(), 10);
+		await assert.rejects(() => pending, /external abort fired/);
+});
+
+test("P0-② 终审修复：用户主动 abort 不计入熔断器（连续取消不熔死 run_*）", async () => {
+	let okCalls = 0;
+	const client = new NestClient({
+		baseUrl: "http://nest",
+		token: "tok",
+		breakerThreshold: 2,
+		breakerCooldownMs: 60_000,
+		fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+			if (init?.signal?.aborted) {
+				const e = new Error("This operation was aborted");
+				e.name = "AbortError";
+				throw e;
+			}
+			okCalls++;
+			return new Response(JSON.stringify({ code: 0, message: "ok", data: { ok: true } }), { status: 200 });
+		}) as typeof fetch,
+	});
+	// 连续 3 次用户主动取消（threshold=2：修复前第 2 次就熔断）
+	for (let i = 0; i < 3; i++) {
+		const c = new AbortController();
+		c.abort();
+		await assert.rejects(() => client.post("/agent/internal/run-image-generation", {}, { signal: c.signal }));
+	}
+	// 熔断未开启 → 正常请求可达上游
+	await client.post("/agent/internal/run-image-generation", {});
+	assert.equal(okCalls, 1);
+});

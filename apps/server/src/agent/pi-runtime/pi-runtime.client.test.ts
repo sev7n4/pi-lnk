@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	extractTextDelta,
 	mapPiEventToUiEvent,
@@ -333,5 +333,211 @@ describe("createSessionReplacingStale（409 竞态修复）", () => {
 		await client.createSession("s2", { systemPrompt: "SYS" });
 		expect(seen[0]).toEqual({ method: "DELETE", contentType: undefined });
 		expect(seen[1]).toEqual({ method: "POST", contentType: "application/json" });
+	});
+});
+
+describe("P0-③ streamEvents 断线重连", () => {
+	const enc = new TextEncoder();
+	/** 正常 SSE 响应：逐帧 enqueue 后正常关闭（clean end）。 */
+	function sseResponse(frames: string[], status = 200): Response {
+		return new Response(
+			new ReadableStream({
+				start(controller) {
+					for (const f of frames) controller.enqueue(enc.encode(f));
+					controller.close();
+				},
+			}),
+			{ status },
+		);
+	}
+	/** 中途断流的 SSE 响应：先发帧，10ms 后断流（模拟已投递帧随后网络中断；error 与 enqueue 同步时 undici 会丢弃缓冲帧）。 */
+	function brokenStreamResponse(frames: string[]): Response {
+		return new Response(
+			new ReadableStream({
+				start(controller) {
+					for (const f of frames) controller.enqueue(enc.encode(f));
+					setTimeout(() => controller.error(new TypeError("stream broken")), 10);
+				},
+			}),
+			{ status: 200 },
+		);
+	}
+	/** 对齐 pi-runtime /events 真实 wire format：NormalizedEvent = {type,lane,ts,seq,data}。 */
+	const mkFrame = (id: number, type: string) =>
+		`id: ${id}\nevent: ${type}\ndata: ${JSON.stringify({
+			type,
+			ts: 1,
+			seq: id,
+			data: { seq: id },
+		})}\n\n`;
+
+	it("断线后携带 lastEventId 重连，事件不丢不重", async () => {
+		const calls: string[] = [];
+		let attempt = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async (url: string) => {
+				calls.push(url);
+				attempt++;
+				if (attempt === 1) return brokenStreamResponse([mkFrame(0, "agent_start")]);
+				return sseResponse([mkFrame(1, "agent_end")]);
+			}) as typeof fetch,
+		});
+		const seen: Array<{ seq?: number; type: string }> = [];
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents(
+			"s1",
+			(e) => seen.push({ seq: e.seq, type: e.type }),
+			(e) => errors.push(e),
+		);
+		await new Promise((r) => setTimeout(r, 400)); // 首次退避 250ms
+		cancel();
+		expect(seen.map((s) => s.type)).toEqual(["agent_start", "agent_end"]);
+		expect(seen.map((s) => s.seq)).toEqual([0, 1]); // 顶层 seq（NormalizedEvent.seq）
+		expect(errors).toHaveLength(0);
+		expect(calls[1]).toMatch(/\/events\?lastEventId=0$/);
+	});
+
+	it("404 终止不重连（会话已删除属预期终态）", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return new Response("not found", { status: 404 });
+			}) as typeof fetch,
+		});
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
+		await new Promise((r) => setTimeout(r, 50));
+		cancel();
+		expect(calls).toBe(1);
+		expect(errors).toHaveLength(1);
+	});
+
+	it("body clean end 直接返回，不重连、不触发 onError（turn 结束语义）", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return sseResponse([mkFrame(0, "agent_start"), mkFrame(1, "agent_end")]);
+			}) as typeof fetch,
+		});
+		const seen: string[] = [];
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents(
+			"s1",
+			(e) => seen.push(e.type),
+			(e) => errors.push(e),
+		);
+		await new Promise((r) => setTimeout(r, 100));
+		cancel();
+		expect(seen).toEqual(["agent_start", "agent_end"]);
+		expect(errors).toHaveLength(0);
+		expect(calls).toBe(1);
+	});
+
+	it("onEvent 回调异常不重试（重连会重放已处理事件 → 状态重复累积），终止并上报", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return sseResponse([mkFrame(0, "agent_start"), mkFrame(1, "agent_end")]);
+			}) as typeof fetch,
+		});
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents(
+			"s1",
+			() => {
+				throw new Error("consumer bug");
+			},
+			(e) => errors.push(e),
+		);
+		await new Promise((r) => setTimeout(r, 100));
+		cancel();
+		expect(calls).toBe(1); // 不重连
+		expect(errors).toHaveLength(1); // 异常上报
+	});
+
+	it("parseSseFrames 捕获 id 字段（增量重连 offset 的数据源）", async () => {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(enc.encode(mkFrame(5, "agent_start")));
+				controller.close();
+			},
+		});
+		const out: Array<{ id?: string }> = [];
+		for await (const f of parseSseFrames(stream)) out.push(f as { id?: string });
+		expect(out).toHaveLength(1);
+		expect(out[0].id).toBe("5");
+	});
+});
+
+describe("P0-③ 终审修复：重连预算按「连续失败窗口」计", () => {
+	const enc = new TextEncoder();
+
+	it("健康运行 130s 后断流仍重连（预算不从订阅起点计时）", async () => {
+		vi.useFakeTimers();
+		try {
+			const calls: string[] = [];
+			const controllers: Array<ReadableStreamDefaultController<Uint8Array>> = [];
+			const enc2 = enc;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async () => {
+					calls.push("connect");
+					return new Response(
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controllers.push(controller);
+								controller.enqueue(enc2.encode('id: 0\nevent: agent_start\ndata: {"type":"agent_start","ts":1,"seq":0}\n\n'));
+								// 保持打开：模拟长任务期间连接一直健康
+							},
+						}),
+						{ status: 200 },
+					);
+				}) as typeof fetch,
+			});
+			const errors: unknown[] = [];
+			const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
+			// 健康运行 130s（超过 120s 预算）
+			await vi.advanceTimersByTimeAsync(130_000);
+			expect(calls.length).toBe(1);
+			// 断流 → 必须重连（修复前：deadline 已过 → 直接 504 终止）
+			controllers[0]!.error(new TypeError("stream broken"));
+			await vi.advanceTimersByTimeAsync(300); // 退避 250ms
+			expect(calls.length).toBe(2);
+			expect(errors).toHaveLength(0);
+			cancel();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("持续网络失败 120s → 预算耗尽 onError(504) 终止（Review Focus 3）", async () => {
+		vi.useFakeTimers();
+		try {
+			let calls = 0;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async () => {
+					calls++;
+					throw new TypeError("network down");
+				}) as typeof fetch,
+			});
+			const errors: unknown[] = [];
+			const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
+			// 连续失败 120s+：退避 250ms→5s 封顶，有限次重试后 504
+			await vi.advanceTimersByTimeAsync(130_000);
+			expect(errors).toHaveLength(1);
+			expect((errors[0] as { status?: number }).status).toBe(504);
+			expect(calls).toBeGreaterThan(1);
+			expect(calls).toBeLessThan(30); // 退避封顶保证有限次
+			cancel();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

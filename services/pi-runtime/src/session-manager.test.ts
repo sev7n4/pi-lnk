@@ -307,3 +307,59 @@ describe("SessionManager 用户取消 run（前端「停止」按钮）", () => 
 		assert.equal(sm.abort("nope"), false);
 	});
 });
+
+describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
+	/** 构造可手动派发 harness 事件的 fake harness。 */
+	function makeEmittableHarnessFactory() {
+		const handlers = new Map<string, (evt: { lane?: string }) => void>();
+		const fakeHarnessFactory = async () => ({
+			harness: {
+				events: {
+					on: (type: string, handler: (evt: { lane?: string }) => void) => {
+						handlers.set(String(type), handler);
+						return () => {};
+					},
+				},
+				lane: async () => ({ prompt: async () => ({ ok: true }) }),
+				close: async () => {},
+			},
+		}) as never;
+		return { handlers, fakeHarnessFactory };
+	}
+
+	it("dispatch 为事件分配单调递增 seq", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory);
+		await sm.create("s-seq", {});
+		const seen: number[] = [];
+		sm.subscribe("s-seq", (e) => seen.push(e.seq));
+		for (const t of ["run_start", "run_end"]) handlers.get(t)?.({ lane: "main" });
+		assert.deepEqual(seen, [0, 1]);
+	});
+
+	it("subscribe 带 afterSeq 时只重放更晚的缓冲事件", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory);
+		await sm.create("s-replay", {});
+		handlers.get("run_start")?.({ lane: "main" }); // seq 0
+		handlers.get("run_end")?.({ lane: "main" }); // seq 1
+		const live: number[] = [];
+		// 重放语义对齐 index.ts 用法：缓冲经返回值补发，listener 只收实时事件
+		const replay = sm.subscribe("s-replay", (e) => live.push(e.seq), 0);
+		assert.deepEqual(replay.map((e) => e.seq), [1]); // seq 0 被跳过
+		handlers.get("turn_start")?.({ lane: "main" }); // 实时事件 seq 2 照常送达
+		assert.deepEqual(live, [2]);
+	});
+
+	it("afterSeq 早于 buffer 最旧 seq 时 best-effort 返回全部 buffered", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory);
+		await sm.create("s-overflow", {});
+		// 灌满 buffer（BUFFER_LIMIT=500）再溢出 1 条 → 最旧 seq=0 被淘汰，buffer 最旧 seq=1
+		for (let i = 0; i < 501; i++) handlers.get("run_start")?.({ lane: "main" });
+		// 重放语义对齐 index.ts 用法：缓冲经返回值补发
+		const replay = sm.subscribe("s-overflow", () => {}, 0);
+		assert.equal(replay[0]?.seq, 1); // 首条是 seq 1 而非 seq 0
+		assert.equal(replay.length, 500);
+	});
+});

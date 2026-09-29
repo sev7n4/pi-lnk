@@ -212,28 +212,72 @@ export class PiRuntimeClient {
 	 * 订阅会话事件流（SSE）。
 	 * @returns 取消函数：断开 HTTP 连接但不影响服务端会话
 	 */
+	/**
+	 * 订阅会话事件流（SSE，内置断线重连）。
+	 *
+	 * 重连语义（P0-③）：
+	 *  - 网络错误 / 非 404 HTTP 错误：250ms 起指数退避（封顶 5s），总预算 120s；
+	 *  - 重连请求携带 ?lastEventId=<最后收到的 seq>，服务端增量重放（需 pi-runtime ≥ 对应版本）；
+	 *  - HTTP 404（会话已删除）：终止并回调 onError（本轮 turn 已结束，属预期）；
+	 *  - body clean end（服务端正常关闭，Nest 每轮 deleteSession 触发）：直接返回，
+	 *    不重连、不回调 onError——与「turn 结束」语义一致；
+	 *  - 返回的取消函数随时可调；取消后不再重连。
+	 */
 	streamEvents(
 		sessionId: string,
 		onEvent: (event: PiRuntimeEvent) => void,
 		onError?: (err: unknown) => void,
 	): () => void {
 		const controller = new AbortController();
+		const RECONNECT_BUDGET_MS = 120_000;
 		void (async () => {
-			try {
-				const res = await this.fetchImpl(
-					`${this.options.baseUrl}/sessions/${encodeURIComponent(sessionId)}/events`,
-					{ signal: controller.signal },
-				);
-				if (!res.ok || !res.body) {
-					throw new PiRuntimeError(`streamEvents failed: HTTP ${res.status}`, res.status);
-				}
-				for await (const frame of parseSseFrames(res.body)) {
-					if (frame.event && frame.data !== undefined) {
-						onEvent({ ...(frame.data as Omit<PiRuntimeEvent, never>) });
+			let lastEventId: string | undefined;
+			let backoff = 250;
+			// 预算按「连续失败窗口」计（终审修复）：连接成功即清零。若从订阅起点绝对计时，
+			// 健康运行 >120s 的长任务断线后将零次重连——恰是本特性最需要覆盖的场景。
+			let firstFailureAt: number | undefined;
+			while (!controller.signal.aborted) {
+				const url =
+					`${this.options.baseUrl}/sessions/${encodeURIComponent(sessionId)}/events` +
+					(lastEventId !== undefined ? `?lastEventId=${encodeURIComponent(lastEventId)}` : "");
+				try {
+					const res = await this.fetchImpl(url, { signal: controller.signal });
+					if (res.status === 404) {
+						throw new PiRuntimeError("streamEvents: session not found", 404);
 					}
+					if (!res.ok || !res.body) {
+						throw new PiRuntimeError(`streamEvents failed: HTTP ${res.status}`, res.status);
+					}
+					backoff = 250; // 连接成功即重置退避与失败窗口
+					firstFailureAt = undefined;
+					for await (const frame of parseSseFrames(res.body)) {
+						if (frame.id !== undefined) lastEventId = frame.id;
+						if (frame.event && frame.data !== undefined) {
+							try {
+								onEvent(frame.data as PiRuntimeEvent);
+							} catch (err) {
+								// 回调侧异常不可当网络错误重试——重连会重放已处理事件，
+								// 导致 Nest 侧 canvasActions/usage 重复累积。终止并上报。
+								onError?.(err);
+								return;
+							}
+						}
+					}
+					return; // body clean end = 会话删除/turn 结束：不重连
+				} catch (err) {
+					if (controller.signal.aborted) return;
+					if (err instanceof PiRuntimeError && err.status === 404) {
+						onError?.(err);
+						return;
+					}
+					if (firstFailureAt === undefined) firstFailureAt = Date.now();
+					else if (Date.now() - firstFailureAt >= RECONNECT_BUDGET_MS) {
+						onError?.(new PiRuntimeError("streamEvents: reconnect budget exhausted", 504));
+						return;
+					}
+					await new Promise((r) => setTimeout(r, backoff));
+					backoff = Math.min(backoff * 2, 5_000);
 				}
-			} catch (err) {
-				if (!controller.signal.aborted) onError?.(err);
 			}
 		})();
 		return () => controller.abort();
@@ -242,6 +286,7 @@ export class PiRuntimeClient {
 
 interface SseFrame {
 	event?: string;
+	id?: string;
 	data?: unknown;
 }
 
@@ -272,12 +317,14 @@ export async function* parseSseFrames(
 
 function parseFrame(raw: string): SseFrame | null {
 	let event: string | undefined;
+	let id: string | undefined;
 	let data: string | undefined;
 	for (const line of raw.split("\n")) {
 		if (line.startsWith(":")) continue; // heartbeat 注释帧
 		if (line.startsWith("event:")) event = line.slice(6).trim();
+		if (line.startsWith("id:")) id = line.slice(3).trim();
 		if (line.startsWith("data:")) data = line.slice(5).trim();
 	}
 	if (data === undefined) return null;
-	return { event, data: JSON.parse(data) as unknown };
+	return { event, id, data: JSON.parse(data) as unknown };
 }

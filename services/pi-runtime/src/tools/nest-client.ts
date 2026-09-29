@@ -84,7 +84,7 @@ export class NestClient {
 		this.breaker.set(path, st);
 	}
 
-	async post(path: string, body: unknown): Promise<unknown> {
+	async post(path: string, body: unknown, opts?: { signal?: AbortSignal }): Promise<unknown> {
 		try {
 			this.checkCircuit(path);
 		} catch (err) {
@@ -97,7 +97,10 @@ export class NestClient {
 				method: "POST",
 				headers: { "content-type": "application/json", "x-lnkpi-service-token": this.opts.token },
 				body: JSON.stringify(body),
-				signal: AbortSignal.timeout(timeoutMs),
+				// 外部 signal（P0-② run abort 级联）与既有超时叠加：任一触发即中断
+				signal: opts?.signal
+					? AbortSignal.any([AbortSignal.timeout(timeoutMs), opts.signal])
+					: AbortSignal.timeout(timeoutMs),
 			});
 			const payload = (await res.json().catch(() => null)) as
 				| { code?: number; message?: string; data?: unknown }
@@ -128,6 +131,9 @@ export class NestClient {
 			return payload.data;
 		} catch (err) {
 			if (err instanceof NestToolError || err instanceof NestCircuitOpenError) throw err;
+			// P0-② 终审修复：用户主动取消（外部 signal 已触发）不计熔断——
+			// 否则连续点 5 次「停止」会把 run_* 熔死 60s。原样上抛，工具以 error result 收尾。
+			if (opts?.signal?.aborted) throw err;
 			const isTimeout = err instanceof Error && err.name === "TimeoutError";
 			this.recordFailure(path);
 			this.opts.onCall?.(toolLabel(path), "error", { errorKind: isTimeout ? "timeout" : "network" });

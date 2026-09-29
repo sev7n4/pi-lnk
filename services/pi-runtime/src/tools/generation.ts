@@ -13,6 +13,7 @@
  * HITL：run_* 由 before_tool Gate 强制（src/gate/generation-gate.ts），此处不含门禁逻辑。
  */
 import { Type } from "typebox";
+import type { Context } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
 
@@ -47,10 +48,23 @@ export function createGenerationTools(client: NestClient): LnkpiTool[] {
 				description: "Media node id to generate for (from canvas summary, not title text)",
 			}),
 		}),
-		execute: async (_id, p: { node_id: string }, _u, tc: LnkpiToolContext) => {
+		execute: async (
+			_id,
+			p: { node_id: string },
+			_u,
+			tc: LnkpiToolContext,
+			_invocation,
+			context: Context,
+		) => {
 			if (!tc.userId) throw new Error(`${name} requires userId in toolContext`);
+			// P0-②：run abort 时 gate signal 触发 context.abortSignal → fetch 立即中断，
+			// 工具以 error result 收尾（用户取消的 error 事件由 SessionManager.userAborted 抑制）
 			return resultWithActions(
-				await client.post(path, { sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id }),
+				await client.post(
+					path,
+					{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
+					{ signal: context?.abortSignal ?? undefined },
+				),
 			);
 		},
 	});
@@ -101,6 +115,8 @@ export function createGenerationTools(client: NestClient): LnkpiTool[] {
 				p: { generation_record_id?: string; node_id?: string },
 				_u,
 				tc: LnkpiToolContext,
+				_invocation,
+				context: Context,
 			) => {
 				if (!tc.userId) throw new Error("cancel_generation requires userId in toolContext");
 				if (!p.generation_record_id && !p.node_id) {
@@ -109,7 +125,11 @@ export function createGenerationTools(client: NestClient): LnkpiTool[] {
 				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId };
 				if (p.generation_record_id) body.generationRecordId = p.generation_record_id;
 				if (p.node_id) body.nodeId = p.node_id;
-				return resultWithActions(await client.post("/agent/internal/cancel-generation", body));
+				return resultWithActions(
+					await client.post("/agent/internal/cancel-generation", body, {
+						signal: context?.abortSignal ?? undefined,
+					}),
+				);
 			},
 		},
 	];
