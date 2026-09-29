@@ -1,6 +1,6 @@
 # Agent 对话体验 P0-P2 优化实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 按差距分析报告补齐 agent 对话过程体验——P0 错误链路/思考面板、P1 工具卡/阶段徽章/todo/缩略图/ask_user 恢复/重连改造、P2 mermaid 渲染/死代码清理。
 
@@ -42,7 +42,7 @@
 - Produces: SSE `error` 事件 `{ type: 'error', data: { message?, error_type?, retry_hint?, tool_name? } }`——前端 `AgentSideRail.vue:2135` 已有完整 error 分支（markTurnError + trackStructuredError + appendText），本任务后自动点亮。
 - **错误呈现落点（spec §3.1 三段式由既有三处承载，无需新组件）**：发生了什么 = 时间线 failed 步（`applyStructuredError`，Task 2 后含工具失败）；可能原因 = `formatStructuredError`/`failureReason`（turnStatusBar.ts:41-49 人话映射表，兜底「生成失败，请重试」）；下一步 = 对话输入即重试入口（幂等链路已保证）+ `turnStatusBar` failed 行。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 it('maps pi error event to UI error event with human-consumable fields', () => {
@@ -58,12 +58,12 @@ it('maps pi error event to UI error event with human-consumable fields', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/pi-runtime/pi-events.test.ts`
 Expected: FAIL（现值 `pi_error` 透传，type 断言不匹配）
 
-- [ ] **Step 3: 实现——在 `mapPiEventToUiEvent` switch 中 `default:` 之前加 case**
+- [x] **Step 3: 实现——在 `mapPiEventToUiEvent` switch 中 `default:` 之前加 case**
 
 ```ts
 		case "error": {
@@ -87,12 +87,12 @@ Expected: FAIL（现值 `pi_error` 透传，type 断言不匹配）
 		}
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/pi-runtime/pi-events.test.ts`
 Expected: PASS（含既有用例全绿）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/server/src/agent/pi-runtime/pi-events.ts apps/server/src/agent/pi-runtime/pi-events.test.ts
@@ -111,7 +111,7 @@ git commit -m "fix(agent): pi error 事件映射为 UI error（修复错误静�
 - Consumes: SSE `tool_result` data 已含 `isError: boolean`（pi-events.ts:88 已透传，无需改）
 - Produces: `applyToolCall(trace, name, result, meta?: { toolCallId?, args?, isError? })`——第四个 meta 字段扩展；失败步 `status: 'failed'`，`AgentExecutionTrace.vue:120` 已有 `text-red-400/90` 样式自动生效
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 describe('applyToolCall isError', () => {
@@ -135,12 +135,12 @@ describe('applyToolCall isError', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/executionTraceReducer.test.ts`
 Expected: 第一条 FAIL（现状 status 'done'）
 
-- [ ] **Step 3: 实现 reducer**
+- [x] **Step 3: 实现 reducer**
 
 `applyToolCall` 签名 meta 扩为 `{ toolCallId?: string; args?: string; isError?: boolean }`；两处状态落点：
 
@@ -170,7 +170,7 @@ replay `tool_result` case 传 meta：
       }
 ```
 
-- [ ] **Step 4: 接通 store 与 SideRail**
+- [x] **Step 4: 接通 store 与 SideRail**
 
 `stores/agent.ts` `endToolCall` 增第四参 `isError?: boolean`，两处 `applyToolCall` 调用传 `{ toolCallId, isError }`（begin 处不传）；`AgentSideRail.vue:1939-1943`：
 
@@ -182,7 +182,7 @@ replay `tool_result` case 传 meta：
     }
 ```
 
-- [ ] **Step 5: 运行确认通过 + 提交**
+- [x] **Step 5: 运行确认通过 + 提交**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/executionTraceReducer.test.ts && pnpm exec tsc --noEmit`
 
@@ -201,7 +201,7 @@ git commit -m "fix(agent-web): 工具失败态标红——tool_result.isError �
 **Interfaces:**
 - Produces: `thinking` 事件 `{ status: 'done', summary: <全文，clamp 2000 字> }`——前端 `applyThinking` 已把 summary 写进 step.detail，无需前端 reducer 改动
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 it('emits full thinking text up to 2000 chars on end', () => {
@@ -216,21 +216,21 @@ it('emits full thinking text up to 2000 chars on end', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**（现状 limit=200，长度 200）
+- [x] **Step 2: 运行确认失败**（现状 limit=200，长度 200）
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/pi-runtime/pi-events.test.ts`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `createThinkingAccumulator(limit = 200)` → `createThinkingAccumulator(limit = 2000)`，注释更新：「P0 思考面板：全文透传（clamp 2000 字防超大 payload），前端折叠展示」。
 
-- [ ] **Step 4: 前端 thinking 步 detail 支持换行**（`AgentExecutionTrace.vue` detail `<p>` 行加 class）
+- [x] **Step 4: 前端 thinking 步 detail 支持换行**（`AgentExecutionTrace.vue` detail `<p>` 行加 class）
 
 ```html
 <p v-if="step.detail" class="mt-0.5 pl-3 opacity-75" :class="step.kind === 'thinking' ? 'whitespace-pre-wrap' : ''">{{ step.detail }}</p>
 ```
 
-- [ ] **Step 5: 运行确认通过 + 提交**
+- [x] **Step 5: 运行确认通过 + 提交**
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/pi-runtime/pi-events.test.ts && cd ../../ && pnpm exec tsc --noEmit`
 
@@ -253,7 +253,7 @@ git commit -m "feat(agent): 思考全文折叠面板——thinking 载荷升级�
 **Interfaces:**
 - Produces: `TOOL_PRESENTATION` 覆盖全部 28 个本地工具 + `run_` 前缀；`summarizeToolArgs` 覆盖全部有 args 的工具。Task 5 的 ToolCallCard 消费
 
-- [ ] **Step 1: 写失败测试**（toolPresentation.test.ts 追加）
+- [x] **Step 1: 写失败测试**（toolPresentation.test.ts 追加）
 
 ```ts
 const ALL_LOCAL_TOOLS = [
@@ -283,11 +283,11 @@ it('summarizes key write tools', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/toolPresentation.test.ts src/components/agent/toolArgSummary.test.ts`
 
-- [ ] **Step 3: 实现注册表**（`TOOL_PRESENTATION` 全量替换；图标用现有 emoji 风格，动词人话）
+- [x] **Step 3: 实现注册表**（`TOOL_PRESENTATION` 全量替换；图标用现有 emoji 风格，动词人话）
 
 ```ts
 export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
@@ -356,7 +356,7 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
 
 （其余 read 类 `get_*` / `list_*` 无关键人读字段，保持返回 undefined——卡上只显示动词。）
 
-- [ ] **Step 4: 运行确认通过 + 提交**
+- [x] **Step 4: 运行确认通过 + 提交**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/toolPresentation.test.ts src/components/agent/toolArgSummary.test.ts`
 
@@ -377,7 +377,7 @@ git commit -m "feat(agent-web): 工具展示注册表与参数摘要全量覆盖
 - Consumes: `AgentStreamMessage.toolCalls`（name/toolCallId/argsSummary/result）
 - Produces: `collapseToolCalls(calls, minRun = 3): CollapsedToolCall[]`，`CollapsedToolCall = { name, argsSummary?, result?, count }`；ToolCallCard props `{ call: CollapsedToolCall }`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 import { collapseToolCalls } from './collapseToolCalls';
@@ -401,11 +401,11 @@ it('keeps 2 consecutive calls unmerged', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/collapseToolCalls.test.ts`
 
-- [ ] **Step 3: 实现纯函数**
+- [x] **Step 3: 实现纯函数**
 
 ```ts
 export interface CollapsedToolCall {
@@ -440,7 +440,7 @@ export function collapseToolCalls(
 }
 ```
 
-- [ ] **Step 4: 实现 ToolCallCard.vue**
+- [x] **Step 4: 实现 ToolCallCard.vue**
 
 ```vue
 <script setup lang="ts">
@@ -484,7 +484,7 @@ const hasDetail = computed(() => props.call.result != null)
 </template>
 ```
 
-- [ ] **Step 5: 替换 SideRail 灰字行**（`:2487-2489` 原 `<div v-if="msg.toolCalls?.length">…⚙ {{ tc.name }}…</div>` 整块替换）
+- [x] **Step 5: 替换 SideRail 灰字行**（`:2487-2489` 原 `<div v-if="msg.toolCalls?.length">…⚙ {{ tc.name }}…</div>` 整块替换）
 
 ```html
 <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
@@ -498,7 +498,7 @@ const hasDetail = computed(() => props.call.result != null)
 
 script 区 import：`import ToolCallCard from '@/components/agent/ToolCallCard.vue'`、`import { collapseToolCalls } from '@/components/agent/collapseToolCalls'`。
 
-- [ ] **Step 6: 测试 + 快照更新 + 提交**
+- [x] **Step 6: 测试 + 快照更新 + 提交**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/ && pnpm exec tsc --noEmit`（快照测试若因灰字行→卡片 diff，逐条确认为新形态后 `-u` 更新）
 
@@ -518,7 +518,7 @@ git commit -m "feat(agent-web): 工具调用卡——可展开结果、计数合
 - Consumes: `ExecutionStep[]`（tool 步 meta.toolName）
 - Produces: `derivePhase(steps): AgentPhase | null`，`AgentPhase = 'exploring' | 'creating' | 'wrapping'`；`PHASE_BADGE: Record<AgentPhase, {icon,label,cls}>`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 import { derivePhase } from './phaseAggregator';
@@ -546,11 +546,11 @@ it('unknown tool falls back to exploring without throwing', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/phaseAggregator.test.ts`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 ```ts
 /** P1 阶段徽章：从 trace 步骤纯派生（不新增事件/状态；刷新后可从持久化 trace 恢复）。 */
@@ -589,7 +589,7 @@ export const PHASE_BADGE: Record<AgentPhase, { icon: string; label: string }> = 
 }
 ```
 
-- [ ] **Step 4: 徽章 UI**（AgentExecutionTrace.vue：headerLabel 按钮行内、`{{ headerLabel }}` 前插入）
+- [x] **Step 4: 徽章 UI**（AgentExecutionTrace.vue：headerLabel 按钮行内、`{{ headerLabel }}` 前插入）
 
 ```html
 <span
@@ -609,7 +609,7 @@ const phaseBadge = computed(() => {
 })
 ```
 
-- [ ] **Step 5: 运行确认通过 + 提交**
+- [x] **Step 5: 运行确认通过 + 提交**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/phaseAggregator.test.ts src/components/agent/ && pnpm exec tsc --noEmit`
 
@@ -629,7 +629,7 @@ git commit -m "feat(agent-web): 阶段徽章——trace 纯派生三态（探索
 - Consumes: text_delta 流
 - Produces: `stripPlanMarkers(text): { text, plan?, doneN? }`；Nest 在 strip 出 plan 时 yield 既有类型 `{ type: 'task_list', data: { items: [{ id: 'plan-<n>', title, status: 'running' }] } }`、doneN 时 yield `{ type: 'task_update', data: { id: 'plan-<n>', status: 'done' } }`——前端 `AgentSideRail.vue:2012-2047` 既有 case 自动消费并持久化进 executionEvents（恢复链路免费获得）。**deviation 说明**：spec §2.2 写「派生 metadata 字段」，实现改为复用既有 task_list/task_update 事件类型（零生产者 → 接通），metadata 经 executionEvents 持久化自动达成，且 live 流式同步获得——比 spec 方案少一条独立通道，行为超集。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 import { stripPlanMarkers } from './planMarkers';
@@ -659,11 +659,11 @@ it('malformed plan JSON: marker stripped, plan undefined, no throw', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/planMarkers.test.ts`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 ```ts
 /** P1#5 todo 面板：agent 文本内联计划标记（prompt 约定）解析。
@@ -698,7 +698,7 @@ export function stripPlanMarkers(text: string): {
 }
 ```
 
-- [ ] **Step 4: 接入 agent.service.ts**（text_delta 落点 `:737-739` 替换）
+- [x] **Step 4: 接入 agent.service.ts**（text_delta 落点 `:737-739` 替换）
 
 ```ts
         if (ui.type === 'text_delta') {
@@ -724,7 +724,7 @@ export function stripPlanMarkers(text: string): {
 
 import：`import { stripPlanMarkers } from './planMarkers'`。
 
-- [ ] **Step 5: system prompt 约定**（pi 路径 systemPrompt 组装处，`agent.service.ts` pi 分支的 prompt 文案尾部追加一段）
+- [x] **Step 5: system prompt 约定**（pi 路径 systemPrompt 组装处，`agent.service.ts` pi 分支的 prompt 文案尾部追加一段）
 
 ```
 ## 任务计划汇报（多步任务时启用）
@@ -734,7 +734,7 @@ import：`import { stripPlanMarkers } from './planMarkers'`。
 标记行之外不要解释标记本身；单步简单任务不要输出标记。
 ```
 
-- [ ] **Step 6: 运行确认通过 + 提交**
+- [x] **Step 6: 运行确认通过 + 提交**
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/planMarkers.test.ts src/agent/pi-runtime/ && pnpm exec tsc --noEmit`
 
@@ -753,7 +753,7 @@ git commit -m "feat(agent): plan 内联标记→既有 task_list/task_update 事
 - Consumes: assistant message metadata.executionEvents 中的 `task_list` / `task_update`
 - Produces: `seedTaskProgressFromEvents(events): TaskProgress | null`（SideRail script 抽出的纯函数，放 `agentTaskProgress.ts` 现有文件或新建）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 import { seedTaskProgressFromEvents } from './agentTaskProgress';
@@ -773,11 +773,11 @@ it('returns null when no task events present', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/agentTaskProgress.test.ts`
 
-- [ ] **Step 3: 实现**（`agentTaskProgress.ts` 追加；内部复用该文件既有 `applyTaskEvent` / `shouldFinishTaskCard`）
+- [x] **Step 3: 实现**（`agentTaskProgress.ts` 追加；内部复用该文件既有 `applyTaskEvent` / `shouldFinishTaskCard`）
 
 ```ts
 /** P1#5：从 assistant message metadata.executionEvents 播放 task 事件，恢复历史回合的任务卡。 */
@@ -796,7 +796,7 @@ export function seedTaskProgressFromEvents(
 
 （若 `emptyTaskProgress` 等在 SideRail 内联定义，先原样搬进 `agentTaskProgress.ts` 并在 SideRail 改 import——本任务唯一的搬移，不顺手改其它。）
 
-- [ ] **Step 4: SideRail loadHistory 接线**（`:1428-1430` 之后追加）
+- [x] **Step 4: SideRail loadHistory 接线**（`:1428-1430` 之后追加）
 
 ```ts
     if (json.data?.length) {
@@ -812,7 +812,7 @@ export function seedTaskProgressFromEvents(
 
 （`parseMessageMetadataSafe` = store 现有 `parseMessageMetadata` 逻辑的本地轻量复刻：`try { JSON.parse } catch { undefined }`；不导出 store 内部函数，避免改 store 公共面。）
 
-- [ ] **Step 5: 运行确认通过 + 提交**
+- [x] **Step 5: 运行确认通过 + 提交**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/agentTaskProgress.test.ts && pnpm exec tsc --noEmit`
 
@@ -831,7 +831,7 @@ git commit -m "feat(agent-web): 任务卡历史恢复——从 metadata.executio
 - Consumes: `LinkedCanvasOutput { nodeId, title, nodeType, status }`（**契约不动**）+ SideRail `props.canvasNodes`（`CanvasNodeLike`，`n.data?.url`）作 url 源
 - Produces: `AgentCanvasOutputs` 新 prop `resolveNodeUrl?: (nodeId: string) => string | undefined`
 
-- [ ] **Step 1: 实现 AgentCanvasOutputs 缩略图**（`<li>` 内 `DockTypeIcon` 前插入；script 增 prop 与 helper）
+- [x] **Step 1: 实现 AgentCanvasOutputs 缩略图**（`<li>` 内 `DockTypeIcon` 前插入；script 增 prop 与 helper）
 
 script 增：
 
@@ -877,7 +877,7 @@ template：`<DockTypeIcon …>` 之前加：
 </span>
 ```
 
-- [ ] **Step 2: SideRail 传入 resolver**（`:2467-2472`）
+- [x] **Step 2: SideRail 传入 resolver**（`:2467-2472`）
 
 ```html
 <AgentCanvasOutputs
@@ -899,7 +899,7 @@ function resolveCanvasNodeUrl(nodeId: string): string | undefined {
 }
 ```
 
-- [ ] **Step 3: 组件测试 + 提交**
+- [x] **Step 3: 组件测试 + 提交**
 
 `AgentCanvasOutputs` 相关快照/组件测试更新（thumb 仅在 `resolveNodeUrl` 提供且 status=done 时渲染——无 url 历史消息自动降级现状）。Run: `cd apps/web && pnpm exec vitest run src/components/agent/ && pnpm exec tsc --noEmit`
 
@@ -919,7 +919,7 @@ git commit -m "feat(agent-web): 画布产出缩略图——图片/视频首帧�
 - Consumes: `canvas_command { type: 'ask_user', questions }`（pi-events.ts:127 questions 已透传）
 - Produces: metadata.executionEvents 含 ask_user 的 canvas_command → loadHistory 重建 `pendingAskUser`
 
-- [ ] **Step 1: Nest 持久化**（agent.service.ts `:711-714` 替换）
+- [x] **Step 1: Nest 持久化**（agent.service.ts `:711-714` 替换）
 
 ```ts
         if (event.type === 'tool_execution_end') {
@@ -932,7 +932,7 @@ git commit -m "feat(agent-web): 画布产出缩略图——图片/视频首帧�
           }
 ```
 
-- [ ] **Step 2: SideRail loadHistory 恢复**（Task 8 Step 4 的同一段落内追加；直白实现）
+- [x] **Step 2: SideRail loadHistory 恢复**（Task 8 Step 4 的同一段落内追加；直白实现）
 
 ```ts
       // P1#7：最后一回合若有未答 ask_user，恢复待答卡。
@@ -954,11 +954,11 @@ git commit -m "feat(agent-web): 画布产出缩略图——图片/视频首帧�
 
 恢复后 `AskUserCard` 既有渲染条件 `pendingAskUser.length && lastMessageIsAssistant`（:2538）自动成立。
 
-- [ ] **Step 3: 回归验证**（ask_user 正常流不受影响：发送后 `sendMessage:1601` 清空逻辑不变）
+- [x] **Step 3: 回归验证**（ask_user 正常流不受影响：发送后 `sendMessage:1601` 清空逻辑不变）
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/ && cd ../../apps/web && pnpm exec vitest run src/components/agent/ && pnpm exec tsc --noEmit`
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add apps/server/src/agent/agent.service.ts apps/web/src/components/agent/AgentSideRail.vue
@@ -975,7 +975,7 @@ git commit -m "feat(agent): ask_user 刷新/重连恢复——questions 落 meta
 - Consumes: `GET /api/agent/thread-state` 的 `data.finished` / `data.phase`（reconnectStream :1761-1781 已消费同形状）
 - Produces: `shouldKeepReconciling(threadState, polls): boolean` 纯函数
 
-- [ ] **Step 1: 写失败测试**（streamRecovery.test.ts 追加）
+- [x] **Step 1: 写失败测试**（streamRecovery.test.ts 追加）
 
 ```ts
 import { shouldKeepReconciling } from './streamRecovery';
@@ -994,11 +994,11 @@ it('treats missing thread-state as keep-polling until cap', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/streamRecovery.test.ts`
 
-- [ ] **Step 3: 实现纯函数**（streamRecovery.ts 追加）
+- [x] **Step 3: 实现纯函数**（streamRecovery.ts 追加）
 
 ```ts
 /** P1#11：reconcile 轮询续停判定——thread-state 终态优先，缺失时按上限兜底。 */
@@ -1011,7 +1011,7 @@ export function shouldKeepReconciling(
 }
 ```
 
-- [ ] **Step 4: 重写 reconcileLatestAssistant**（保留 `pull()` 原样；轮询循环改为）
+- [x] **Step 4: 重写 reconcileLatestAssistant**（保留 `pull()` 原样；轮询循环改为）
 
 ```ts
   try {
@@ -1049,7 +1049,7 @@ async function fetchThreadStateSafe(): Promise<{ finished?: boolean | null } | n
 
 删除常量 `BUSY_TIP_SNIPPET` / `EXEC_PROGRESS_SNIPPET` / `COPY_WRITTEN_SNIPPET` 及 `shouldPollRuntimeHealth` 轮询内使用（`RUNTIME_UNREACHABLE_SNIPPET` 在 sendMessage finally 仍用，**保留**）。
 
-- [ ] **Step 5: 回归 + 提交**
+- [x] **Step 5: 回归 + 提交**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/streamRecovery.test.ts && pnpm exec tsc --noEmit`
 
@@ -1073,7 +1073,7 @@ git commit -m "refactor(agent-web): 重连 reconcile 改 thread-state 终态判�
 **Interfaces:**
 - Produces: `AgentMermaidBlock` props `{ source: string }`；渲染成功 → SVG；失败/加载失败 → `<pre>` 原文（现状降级形态）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 import { mount } from '@vue/test-utils';
@@ -1085,11 +1085,11 @@ it('renders fallback pre immediately before mermaid resolves', () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/AgentMermaidBlock.test.ts`
 
-- [ ] **Step 3: 安装依赖 + 实现组件**
+- [x] **Step 3: 安装依赖 + 实现组件**
 
 ```bash
 cd apps/web && pnpm add mermaid@^11
@@ -1126,7 +1126,7 @@ onMounted(async () => {
 
 （注：失败时两个降级 pre 二选一保留一个即可，实施时删冗余——保留 `v-if="failed"` 分支。）
 
-- [ ] **Step 4: 接入 AgentTopoCardList**（mermaid `<details>` 块替换为）
+- [x] **Step 4: 接入 AgentTopoCardList**（mermaid `<details>` 块替换为）
 
 ```html
 <AgentMermaidBlock v-if="item.mermaid" :source="item.mermaid" />
@@ -1134,7 +1134,7 @@ onMounted(async () => {
 
 （`details/pre` 原样保留在组件降级分支内，外层直接换用新组件；字段名以 `AgentTopoCardList.vue` 实际 mermaid 字段为准，实施时 grep `mermaid` 定位。）
 
-- [ ] **Step 5: 测试 + 提交**
+- [x] **Step 5: 测试 + 提交**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/AgentMermaidBlock.test.ts && pnpm exec tsc --noEmit`
 
@@ -1152,7 +1152,7 @@ git commit -m "feat(agent-web): mermaid 真渲染——懒加载 + 失败降级 
 - Modify: `apps/web/src/composables/useAgentStream.ts`（PHASE_LABELS 瘦身：仅保留重连恢复实际产出 phase 值的键）
 - Modify: `packages/shared/src/agentTrace.ts`（journeyTrace 死契约删）
 
-- [ ] **Step 1: 删前 grep 复核（铁律）**
+- [x] **Step 1: 删前 grep 复核（铁律）**
 
 ```bash
 grep -rn "AgentPanel\|AgentFloatingWindow" apps/web/src --include="*.vue" --include="*.ts" | grep -v "canOpenAgentPanel\|agent-panel\b" || echo "CLEAN"
@@ -1162,7 +1162,7 @@ grep -rn "journeyTrace" apps packages --include="*.ts" | grep -v node_modules
 
 Expected: AgentPanel/FloatingWindow 仅组件自身文件命中（CLEAN）；genProgress 命中限于 controller/service/contract/prisma schema（schema 保留）；journeyTrace 仅 agentTrace.ts 定义处。有额外消费方 → 停止该子项并在 PR 描述登记。
 
-- [ ] **Step 2: 执行删除**
+- [x] **Step 2: 执行删除**
 
 ```bash
 git rm apps/web/src/components/agent/AgentPanel.vue apps/web/src/components/agent/AgentFloatingWindow.vue
@@ -1170,13 +1170,13 @@ git rm apps/web/src/components/agent/AgentPanel.vue apps/web/src/components/agen
 
 controller/service/contract：删除 getGenProgress 端点、`GetGenProgressDto`、service 方法、contract schema/type export；`useAgentStream.ts` PHASE_LABELS 删除 pi 路径永不产出的键（`intake/plan/write_plan_node/split/draft_copy/await_copy_confirm/write_copy_node/await_topo/await_atomic_confirm/atomic_parse/atomic_create`——保留 `await_confirm/orchestrate_gen/done/error/await_*` 中 thread-state 实际回读的键；实施时以 `grep -rn "formatPhaseLabel\|PHASE_LABELS" apps/web/src` 的消费方反推白名单）；`agentTrace.ts` 删 journeyTrace 类型与导出。
 
-- [ ] **Step 3: 全量回归**
+- [x] **Step 3: 全量回归**
 
 Run: `pnpm exec tsc --noEmit && cd apps/server && pnpm exec vitest run src/agent/ && cd ../../apps/web && pnpm exec vitest run src/`
 
 Expected: 全绿；若快照/测试引用被删导出，属预期失败，随删随修（不改行为）。
 
-- [ ] **Step 4: spec 登记核对 + 提交**
+- [x] **Step 4: spec 登记核对 + 提交**
 
 核对 spec §9 表格与实际删除一致；更新 `docs/superpowers/specs/2026-09-28-agent-conversation-ux-p0-p2-design.md` §9 加「已执行」标记列。
 
@@ -1189,6 +1189,6 @@ git commit -m "chore(agent): 死代码清理——AgentPanel/FloatingWindow、ge
 
 ## 收尾（分支级）
 
-- [ ] **全量验证**：`pnpm exec tsc --noEmit` + `cd apps/web && pnpm exec vitest run src/` + `cd apps/server && pnpm exec vitest run src/agent/`
-- [ ] **落盘复核**：`git status` 确认全部改动已入库（` M`/`A`/`D`）
-- [ ] **PR**：单 PR，描述按 P0/P1/P2 三段列改动与测试证据；合并遵守部署串行纪律（deploy 队列未清空不合并）
+- [x] **全量验证**：`pnpm exec tsc --noEmit` + `cd apps/web && pnpm exec vitest run src/` + `cd apps/server && pnpm exec vitest run src/agent/`
+- [x] **落盘复核**：`git status` 确认全部改动已入库（` M`/`A`/`D`）
+- [x] **PR**：单 PR，描述按 P0/P1/P2 三段列改动与测试证据；合并遵守部署串行纪律（deploy 队列未清空不合并）
