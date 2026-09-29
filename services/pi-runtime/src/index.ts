@@ -180,7 +180,7 @@ app.get<{ Params: { sessionId: string }; Querystring: { lastEventId?: string } }
 	"/sessions/:sessionId/events",
 	async (request, reply) => {
 		const { sessionId } = request.params;
-		if (!manager.has(sessionId)) {
+		if (!manager.hasKey(sessionId)) {
 			return reply.code(404).send({ error: "session not found" });
 		}
 		// 增量重连 offset（P0-③）：非法值（畸形/负数）一律按「全量重放」处理，不 400
