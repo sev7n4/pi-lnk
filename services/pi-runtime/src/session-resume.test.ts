@@ -163,3 +163,54 @@ describe("SessionManager.create 幂等 resume-or-create", () => {
 		});
 	});
 });
+
+describe("会话复用路径的 thinkingLevel 换档（spec §5.5）", () => {
+	/** 假 harness：记录 setThinkingLevel 调用（常驻会话下换档不能再靠重建会话）。 */
+	function makeLevelHarness(setLevels: string[], fail = false) {
+		return (async () => ({
+			harness: {
+				events: { on: () => () => {} },
+				lane: async () => ({
+					prompt: async () => ({ ok: true }),
+					setThinkingLevel: async (level: string) => {
+						if (fail) throw new Error("lane setter unavailable");
+						setLevels.push(level);
+					},
+				}),
+				close: async () => {},
+			},
+		})) as never;
+	}
+
+	it("身份一致但档位变更：不重建会话，走 lane setter 换档", async () => {
+		await withTempDataRoot(async (root) => {
+			const setLevels: string[] = [];
+			const sm = new SessionManager([], "", undefined, makeLevelHarness(setLevels), undefined, undefined, baseConfig(root));
+			const first = await sm.create("s1:t1", { userId: "u1", thinkingLevel: "off" });
+			assert.equal(first.status, "created");
+			assert.deepEqual(setLevels, []);
+			const second = await sm.create("s1:t1", { userId: "u1", thinkingLevel: "high" });
+			assert.equal(second.status, "resumed");
+			assert.deepEqual(setLevels, ["high"]);
+		});
+	});
+
+	it("档位未变时不重复调用 setThinkingLevel", async () => {
+		await withTempDataRoot(async (root) => {
+			const setLevels: string[] = [];
+			const sm = new SessionManager([], "", undefined, makeLevelHarness(setLevels), undefined, undefined, baseConfig(root));
+			await sm.create("s1:t1", { userId: "u1", thinkingLevel: "high" });
+			await sm.create("s1:t1", { userId: "u1", thinkingLevel: "high" });
+			assert.deepEqual(setLevels, []);
+		});
+	});
+
+	it("setter 失败降级：返回 resumed 而非报错（本轮沿用旧档位）", async () => {
+		await withTempDataRoot(async (root) => {
+			const sm = new SessionManager([], "", undefined, makeLevelHarness([], true), undefined, undefined, baseConfig(root));
+			await sm.create("s1:t1", { userId: "u1", thinkingLevel: "off" });
+			const second = await sm.create("s1:t1", { userId: "u1", thinkingLevel: "high" });
+			assert.equal(second.status, "resumed");
+		});
+	});
+});

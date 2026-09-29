@@ -97,11 +97,16 @@ interface SessionEntry {
 	userId?: string;
 	/** 每轮易变上下文（spec §5.3 T 层）。 */
 	turn: TurnContext;
+	/** 当前思考档位（常驻会话下换档走 lane setter，不重建会话；spec §5.5）。 */
+	thinkingLevel: ThinkingLevel;
 	/** 最近一次活动时间，TTL 的唯一数据源。 */
 	lastActivityAt: number;
 }
 
 const BUFFER_LIMIT = 500;
+
+/** 默认（也是唯一）对话 lane 名；换档等 lane 级操作必须落在与 prompt 同一条 lane 上。 */
+const MAIN_LANE = "main";
 
 export type HarnessFactory = typeof AgentHarness.create;
 
@@ -301,6 +306,9 @@ export class SessionManager {
 				const created = await this.build(key, opts, models, model, identity);
 				return { ...created, status: "rebuilt" };
 			}
+			// spec §5.5：身份一致时换档不重建会话，走 lane setter（失败降级为沿用旧档位）。
+			const level = resolveThinkingLevel(opts.thinkingLevel);
+			if (level !== existing.thinkingLevel) await this.applyThinkingLevel(existing, level);
 			existing.lastActivityAt = Date.now();
 			return { provider: existing.identity.provider, model: existing.identity.model, status: "resumed", resumedFrom: "memory" };
 		}
@@ -340,6 +348,7 @@ export class SessionManager {
 		const repo = existingFs?.repo ?? new JsonlSessionRepo({ fileSystem: env, sessionsRoot: join(cwd, "sessions") });
 		const session = existingFs?.session ?? (await repo.create({ cwd }, this.context));
 
+		const thinkingLevel = resolveThinkingLevel(opts.thinkingLevel);
 		const entry: SessionEntry = {
 			id: key,
 			harness: undefined as never,
@@ -359,6 +368,7 @@ export class SessionManager {
 				refOrder: opts.refOrder,
 				focusNodeId: opts.focusNodeId,
 			},
+			thinkingLevel,
 			lastActivityAt: Date.now(),
 		};
 
@@ -371,7 +381,7 @@ export class SessionManager {
 				// 函数形态（spec §5.3/§5.4）：harness 在每次 LLM 调用前求值，读到的是最新 turn。
 				toolContext: () => ({ sessionId: key, userId: entry.userId, ...entry.turn }),
 				systemPrompt: () => composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []),
-				thinkingLevel: resolveThinkingLevel(opts.thinkingLevel),
+				thinkingLevel,
 				compaction: this.config.compaction,
 			},
 			this.context,
@@ -414,12 +424,27 @@ export class SessionManager {
 		await this.releaseHandles(entry);
 	}
 
-	private async releaseHandles(entry: SessionEntry): Promise<void> {
-		for (const unsub of entry.unsubscribes) unsub();
+	private async releaseHandles(entry: SessionEntry): Promise<void> {		for (const unsub of entry.unsubscribes) unsub();
 		entry.listeners.clear();
 		await entry.harness.close(this.context).catch(() => {});
 		await entry.repo.close(this.context).catch(() => {});
 		await entry.env.cleanup(this.context).catch(() => {});
+	}
+
+	/**
+	 * 常驻会话换档（spec §5.5）：harness 的 thinkingLevel 只在 create 时可设，但会话不再每轮重建，
+	 * 故复用路径必须走 lane setter。setter 不可用时降级为沿用旧档位（不阻断本轮对话）。
+	 */
+	private async applyThinkingLevel(entry: SessionEntry, level: ThinkingLevel): Promise<void> {
+		try {
+			const lane = await entry.harness.lane(MAIN_LANE, this.context);
+			await lane.setThinkingLevel(level, this.context);
+			entry.thinkingLevel = level;
+		} catch (err) {
+			console.warn(
+				`[pi-runtime] setThinkingLevel failed for ${entry.id}: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
 	}
 
 	/** 正在跑 run 的会话：TTL 与磁盘 LRU 双豁免（长任务期间不能把会话/工作目录抽走）。 */
@@ -497,7 +522,7 @@ export class SessionManager {
 	async prompt(
 		threadKey: string,
 		text: string,
-		laneName = "main",
+		laneName = MAIN_LANE,
 		opts?: { forceSkills?: string[] },
 	): Promise<{ accepted: boolean }> {
 		const entry = this.require(threadKey);
