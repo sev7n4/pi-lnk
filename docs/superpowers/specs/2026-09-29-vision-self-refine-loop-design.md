@@ -48,7 +48,7 @@
 
 ### 1.5 可行性证据（2026-09-29 spike，双确认）
 
-1. **harness 层**：vendored pi `AgentToolResult.content` 原生支持 `(TextContent | ImageContent)[]`（`vendor/earendil-works/pi/packages/agent/src/types.ts:364`），其自带 `read` 工具即返回 image block——pi-runtime 侧零 harness 改造
+1. **harness 层**：vendored pi `AgentToolResult.content` 原生支持 `(TextContent | ImageContent)[]`（`vendor/earendil-works/pi/packages/agent/src/types.ts:364`）；pi 自带的 `harness/tools/read.ts` 即返回 image block——**该工具仅作 harness 支持 image content 的存在性证据，pi-runtime 刻意不装配任何自带文件系统工具**（无合法 cwd、bash 为多租户 pod 的 RCE 面），pi-runtime 侧零 harness 改造
 2. **网关层**：生产同款 `agnes-2.5-flash` 经 `api.agnes-ai.cn/v1` 实测视觉输入放行——64×64 纯红 PNG 以 OpenAI `image_url`（data URI）格式请求，返回「红色」且 `usage.prompt_tokens_details.image_tokens=64`，图片真实入模
 
 ## 2. 目标与非目标
