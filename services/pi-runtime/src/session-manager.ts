@@ -630,6 +630,16 @@ export class SessionManager {
 		this.sweeper = undefined;
 	}
 
+	/**
+	 * B-5 gate 用：按 pi 会话键取画布会话 id（#74 解耦语义）。
+	 * gate 的 before_tool 钩子闭包里只有 pi 会话键，而 Nest `/agent/internal/get-node`
+	 * 拿 `sessionId` 查**画布**会话 —— 直接传键必 404 → run_* 全被 fail-closed 假阳性拦截。
+	 * 未提供建会话时的回落值 = 键本身（退化旧语义，不崩溃）。会话不存在时同样回落键。
+	 */
+	getCanvasSessionId(threadKey: string): string {
+		return this.sessions.get(threadKey)?.canvasSessionId ?? threadKey;
+	}
+
 	subscribe(threadKey: string, listener: EventListener, afterSeq = -1): NormalizedEvent[] {
 		const entry = this.require(threadKey);
 		entry.listeners.add(listener);

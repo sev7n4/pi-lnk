@@ -69,6 +69,16 @@ export interface GateCheckResult {
 	retry?: boolean;
 }
 
+export interface GateSsotOptions {
+	/**
+	 * 画布会话 id（#74 解耦语义）：SSOT（get-node）查询必须用它。
+	 * ⚠️ gate 在 index.ts 的 onSessionCreated 闭包里只拿得到 pi 会话键；解耦后拿键查
+	 * Nest 画布会话必 404 → fail-closed 假阳性（2026-09-29 生产冒烟实证：全部 run_* 被拦）。
+	 * 缺省回落 `sessionId`（兼容旧调用与单测，退化为解耦前语义）。
+	 */
+	canvasSessionId?: string;
+}
+
 interface GateNode {
 	data?: { status?: unknown } | undefined;
 }
@@ -94,8 +104,11 @@ export async function checkGenerationGate(
 	sessionId: string,
 	toolName: string,
 	args: Record<string, unknown>,
+	ssot: GateSsotOptions = {},
 ): Promise<GateCheckResult> {
 	if (!GATED_TOOLS.has(toolName)) return { allowed: true };
+	// SSOT 查询专用 id：必须传画布会话 id（见 GateSsotOptions 注释）；store 仍按 pi 会话键记账。
+	const ssotSessionId = ssot.canvasSessionId ?? sessionId;
 	const nodeId = typeof args.node_id === "string" ? args.node_id : "";
 	if (!nodeId) {
 		return { allowed: false, reason: "run_* 需要 node_id（从画布摘要解析，不要用标题文本猜 id）" };
@@ -106,7 +119,7 @@ export async function checkGenerationGate(
 		// 落到下方 runs===0 正常流程（重新走同轮自批 + SSOT 校验 + markRun 0→1）。
 		// SSOT 拉取失败 → fail-closed 拦截，预算零变更。
 		try {
-			const node = await client.post("/agent/internal/get-node", { sessionId, nodeId });
+			const node = await client.post("/agent/internal/get-node", { sessionId: ssotSessionId, nodeId });
 			if (extractNodeStatus(node) !== "pending_confirm") {
 				return {
 					allowed: false,
@@ -130,7 +143,7 @@ export async function checkGenerationGate(
 		};
 	}
 	try {
-		const node = await client.post("/agent/internal/get-node", { sessionId, nodeId });
+		const node = await client.post("/agent/internal/get-node", { sessionId: ssotSessionId, nodeId });
 		const status = extractNodeStatus(node);
 		if (status !== "pending_confirm") {
 			return {
