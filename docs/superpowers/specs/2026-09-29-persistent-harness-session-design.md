@@ -169,11 +169,12 @@ flowchart LR
   // attachments / mentionedKeys / refOrder / focusNodeId
 }
 // 响应
-{ "sessionId": "...", "provider": "agnes", "model": "...", "status": "created" | "resumed" }
+{ "sessionId": "...", "provider": "agnes", "model": "...", "status": "created" | "resumed" | "rebuilt" }
 ```
 
 - 请求体中的 `attachments` / `mentionedKeys` / `refOrder` / `focusNodeId` **仅作兼容保留**：新 Nest 不再用它们（每轮走 `turnContext`），pi-runtime 在 create 时把它们写入 `turnContext` 初值仅用于「旧 Nest + 新 runtime」过渡期；随后第一次 prompt 的 `turnContext` 会整体覆盖
-- 已存在且 `userId` 一致 → 200 `status=resumed`（**不重置历史、不重设静态段**）
+- **会话身份比对与 `rebuilt` 判定在 pi-runtime 内部完成**（见 §5.5）——Nest 不做身份比对，只按 `status` 打日志
+- 已存在且身份一致 → 200 `status=resumed`（**不重置历史、不重设静态段**）
 - 已存在但 `userId` 不一致 → 409
 - 新建 → 201 `status=created`
 - 静态段在同一 sessionKey 上**首次生效后不再变更**（换规则 = 新对话，这是刻意设计：规则属于对话身份而非每轮参数）
@@ -208,9 +209,11 @@ flowchart LR
 | thinkingLevel 变更 | `lane.setThinkingLevel()`，不重建会话 | `lane.ts:1674` |
 | 平台模型切换（env 装配同渠道） | `lane.setModel({provider, modelId})` | `lane.ts:1653` |
 | BYOK 渠道变更且模型已在注册表 | 同上 | 同上 |
-| BYOK 渠道变更且目标模型**不在**注册表 | **唯一兜底**：删除会话（含磁盘目录）后按新 llm 重建 | 模型注册表在 create 期由 `model-assembly.ts` 装配，无公开热更新 API |
+| **会话身份变更**（BYOK 渠道建/换/撤，或 env 装配模型变化） | **重建**：pi-runtime 在 `create` 内比对「本次请求身份」与「会话存放身份」，不一致即关闭并删除磁盘目录后按新身份重建，返回 `status: "rebuilt"` | 模型注册表在 create 期由 `model-assembly.ts` 装配，无公开热更新 API |
 
-判定「是否在注册表内」由 Nest 侧完成：会话返回的 `{provider, model}` 与本次 `resolvePiSessionLlm()` 解析结果比对，不一致才走兜底重建。
+**身份的定义与比对为何放在 pi-runtime**：BYOK 渠道的 provider id 由 `providerIdFrom(providerRef)` 哈希生成（`byok-<12hex>`，`model-assembly.ts:132`），**该哈希只有 pi-runtime 能算**。因此身份比对必须由 pi-runtime 完成，Nest 侧不做「取回 provider/model 再自行推演」——那样只能比对 `model` 字段，漏判「同一模型但换渠道」这一最需要重建的情形。
+
+**未变更时的换档不重建**：thinkingLevel 与「同身份内的模型切换」走 lane setter。判定顺序为：身份一致 → `resumed`（后续按需 setter）；身份不一致 → `rebuilt`。
 
 ### 5.6 配置面（env）
 
@@ -248,6 +251,7 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 | S7 | 画布状态在一条消息内被工具修改 | 同一轮内后续 LLM 调用看到新快照（日志可验 `canvas-summary` 层内容变化） |
 | S8 | 长对话触发 compaction | `pi_runtime_compactions_total{result="ok"}` 递增，会话继续可用 |
 | S9 | 磁盘目录数/体积超上限 | 最旧目录被淘汰；内存中活跃会话目录不被删 |
+| S10 | 同对话从平台模型切到 BYOK 渠道（或反向） | `status="rebuilt"`，磁盘目录被重建，Nest 日志 warn；不出现「以为换了渠道实际走旧渠道」的错账 |
 
 ## 7. 数据与状态变更
 
@@ -263,6 +267,7 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 | `composeSystemPrompt(static, dynamic)` | 同上 | 静态段在前、动态段尾部追加、空段过滤 | 空动态段 = 原样返回；顺序断言（稳定前缀必须在前） |
 | `pickLruVictims(entries, limits)` | `services/pi-runtime/src/session-retention.ts`（新文件） | 按 mtime 升序淘汰，直到 count/bytes 双双回到限内；**排除 active 集合** | 未超限返回空；只超 count / 只超 bytes / 双超；active 保护；空目录列表 |
 | `isTurnContextEqual(a, b)` | `services/pi-runtime/src/session-manager.ts` | 判断 `turnContext` 是否需要写入（浅比较 + 数组元素比较） | 相同 → true；数组顺序不同 → false；undefined 与空数组等价性明确定义 |
+| `isSameLlmIdentity(a, b)` | `services/pi-runtime/src/session-manager.ts` | 比对会话身份：`{provider, model}`（BYOK 时 `provider` 为 `byok-<12hex>`） | 同 provider 同 model → true；provider 同但 model 不同 → false；BYOK ↔ 平台 → false |
 | `resolveEffectiveThreadKey(sessionId, threadId)` | `apps/server/src/agent/agent.service.ts` | `threadId?.trim() || sessionId` | 与既有 `effectiveThreadId` 语义一致（复用同一实现，不新增第二处判定） |
 
 ## 9. 文件级改动清单
@@ -271,7 +276,7 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 
 | 文件 | 改动 |
 |---|---|
-| `src/session-manager.ts` | 核心：`create` → 幂等 resume-or-create；`systemPrompt`/`toolContext` 函数化；`setTurnContext` 方法；TTL sweeper 与磁盘 LRU 接入；`prompt` 增 busy 409；会话键 sanitize；`nextSeq`/buffer 语义不变 |
+| `src/session-manager.ts` | 核心：`create` → 幂等 resume-or-create-rebuild（含 `isSameLlmIdentity` 身份比对）；`systemPrompt`/`toolContext` 函数化；`setTurnContext` 方法；TTL sweeper 与磁盘 LRU 接入；`prompt` 增 busy 409；会话键 sanitize；`nextSeq`/buffer 语义不变 |
 | `src/session-retention.ts` | 新增：磁盘目录扫描 + LRU 淘汰纯函数与副作用封装 |
 | `src/index.ts` | 退化为 bootstrap：只 `buildApp(manager)` + listen；路由装配迁至 `src/app.ts` |
 | `src/app.ts` | 新增：`buildApp(manager)` 承载全部路由；`/sessions` 返回值加 `status`；`/prompt` body 加 `turnContext`；409 busy 响应；会话键参数命名 |
@@ -286,7 +291,7 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 
 | 文件 | 改动 |
 |---|---|
-| `src/agent/agent.service.ts` | `streamFromPiRuntime` finally 去掉 `deleteSession`；`ensurePiSession` 改 resume-or-create + 注册表比对兜底；组装并透传 `turnContext`；`cancelRun` 带 threadId；删除 `acquirePiSessionLock` 及其调用点 |
+| `src/agent/agent.service.ts` | `streamFromPiRuntime` finally 去掉 `deleteSession`；`ensurePiSession` 改 resume-or-create（按 `status` 打日志，`rebuilt` 时 warn）；组装并透传 `turnContext`；`cancelRun` 带 threadId；删除 `acquirePiSessionLock` 及其调用点 |
 | `src/agent/pi-runtime/pi-runtime.client.ts` | 删 `createSessionReplacingStale`；`createSession` 返回体加 `status`（缺省按 `created` 容错）；`prompt` 增 `turnContext`；`abortRun`/`streamEvents` 用 sessionKey |
 | `src/agent/pi-runtime/pi-prompt-assembler.service.ts` | 拆 `assembleStatic()` / `assembleDynamic()`；删 `recent-turns` 层 |
 | `src/agent/pi-runtime/compress-recent-turns.ts` + `.test.ts` | 删除 |
@@ -336,7 +341,7 @@ compaction 事件透传：harness 的 `compaction_start` / compaction 相关事�
 | PVC 写满 | Pod 异常 | LRU 上限（3GiB/200）+ 跳过活跃会话；PVC 调整需另立运维动作 |
 | 内存驻留增长 | OOM（limit 1.5Gi） | TTL 30min 回收 + `sessions_live` 观测；如实际偏高再下调 TTL |
 | 部署顺序搞反 | 动态上下文静默丢失（难发现） | §4 判据写明顺序；`ensurePiSession` 对缺 `status` 的响应容错并在日志标注 |
-| BYOK 换渠道频繁重建 | 上下文丢失 | 仅在目标模型不在注册表时重建；日志标注 `rebuild: model-not-registered` |
+| BYOK 身份变更触发重建 | 该对话上下文丢失 | 仅在身份真变时重建（同身份内换模型走 lane setter）；`status=rebuilt` 让 Nest 侧可观测并 warn |
 
 ## 12. 后续包 / 路线图（本包外，登记避免隐性范围）
 
