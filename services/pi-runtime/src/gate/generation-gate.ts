@@ -40,6 +40,12 @@ export class GenerationGateStore {
 		this.runs.set(sessionId, map);
 	}
 
+	/** V-γ 逃生口：用户重新确认后清零该节点预算（置 0，非递增）；仅 checkGenerationGate 调用。 */
+	clearRun(sessionId: string, nodeId: string): void {
+		const map = this.runs.get(sessionId);
+		if (map) map.set(nodeId, 0);
+	}
+
 	/** 会话重建（create）/删除（remove）时清空该会话状态。 */
 	resetSession(sessionId: string): void {
 		this.proposals.delete(sessionId);
@@ -77,7 +83,8 @@ function extractNodeStatus(node: unknown): string | undefined {
  * 双重校验：① 同轮 propose→run 内存拦截（GenerationGateStore）；② 画布 SSOT
  * （get-node → node.data.status，跨轮/跨会话重建均成立）。
  * V-γ 重试预算：用户确认后首次 run 走 ①②；第 2 次直接放行（retry=true，用户意图已表达）；
- * 第 3 次拦截转 ask_user / propose_generation。预算只在下方两个放行分支消费（markRun），
+ * 第 3 次拦截转 ask_user / propose_generation（若用户已重新确认、SSOT 回到 pending_confirm，
+ * 则预算清零重新走首跑路径 —— 逃生口真实可用）。预算只在下方两个放行分支消费（markRun），
  * 被拦/fail-closed 分支零消费；非 GATED 工具在最前早返回，永不触碰预算。
  * 任一校验失败/异常 → fail-closed（block），绝不放行。
  */
@@ -95,10 +102,21 @@ export async function checkGenerationGate(
 	}
 	const runs = store.runCount(sessionId, nodeId);
 	if (runs >= 2) {
-		return {
-			allowed: false,
-			reason: `节点 ${nodeId} 的重试预算已尽（已尝试 ${runs} 次）；请用 ask_user 向用户说明自评结论与可选方向，或先 propose_generation 重新征得确认`,
-		};
+		// V-γ 逃生口：用户重新确认（SSOT 回到 pending_confirm）= 新意图 → 预算清零，
+		// 落到下方 runs===0 正常流程（重新走同轮自批 + SSOT 校验 + markRun 0→1）。
+		// SSOT 拉取失败 → fail-closed 拦截，预算零变更。
+		try {
+			const node = await client.post("/agent/internal/get-node", { sessionId, nodeId });
+			if (extractNodeStatus(node) !== "pending_confirm") {
+				return {
+					allowed: false,
+					reason: `节点 ${nodeId} 的重试预算已尽（已尝试 ${runs} 次）；请用 ask_user 向用户说明自评结论与可选方向，或先 propose_generation 重新征得确认`,
+				};
+			}
+			store.clearRun(sessionId, nodeId); // 重新确认 = 新意图：清零（非消费）
+		} catch {
+			return { allowed: false, reason: "生成前置校验暂时不可用（fail-closed），请稍后重试" };
+		}
 	}
 	if (runs === 1) {
 		store.markRun(sessionId, nodeId); // 放行才消费：1 → 2

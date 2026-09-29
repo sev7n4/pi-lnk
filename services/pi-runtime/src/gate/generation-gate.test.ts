@@ -176,3 +176,36 @@ test("Review Focus ⑤：会话重置后预算清零（重新确认 = 新会话�
 	const after = await checkGenerationGate(store, gateClientReturning("pending_confirm"), "s1", "run_image_generation", { node_id: "n1" });
 	assert.deepEqual(after, { allowed: true });
 });
+
+// ── V-γ 逃生口：预算耗尽后用户重新确认（SSOT 回到 pending_confirm）→ 预算清零重跑 ──
+
+function driveToBudgetExhausted() {
+	const store = new GenerationGateStore();
+	// 第 1 次：SSOT=pending_confirm → 放行 0→1；第 2 次：completed → retry 放行 1→2
+	return checkGenerationGate(store, gateClientReturning("pending_confirm"), "s1", "run_image_generation", { node_id: "n1" })
+		.then(() => checkGenerationGate(store, gateClientReturning("completed"), "s1", "run_image_generation", { node_id: "n1" }))
+		.then(() => store);
+}
+
+test("V-γ 逃生口：预算耗尽后用户重新确认（SSOT=pending_confirm）→ 清零并放行且非 retry", async () => {
+	const store = await driveToBudgetExhausted();
+	assert.equal(store.runCount("s1", "n1"), 2);
+	const r = await checkGenerationGate(store, gateClientReturning("pending_confirm"), "s1", "run_image_generation", { node_id: "n1" });
+	assert.deepEqual(r, { allowed: true }, "重新确认 = 新意图，放行且不得打 retry 标记");
+	assert.equal(store.runCount("s1", "n1"), 1, "clearRun 清零后走正常首跑路径，markRun 消费 0→1");
+});
+
+test("V-γ 逃生口：预算耗尽且未重新确认（SSOT≠pending_confirm）→ 仍拦截且预算不变", async () => {
+	const store = await driveToBudgetExhausted();
+	const r = await checkGenerationGate(store, gateClientReturning("completed"), "s1", "run_image_generation", { node_id: "n1" });
+	assert.equal(r.allowed, false);
+	assert.match(r.reason ?? "", /ask_user|propose_generation/);
+	assert.equal(store.runCount("s1", "n1"), 2, "被拦不消费也不清零预算");
+});
+
+test("V-γ 逃生口：非 GATED 工具在预算耗尽后也不得触发 clearRun", async () => {
+	const store = await driveToBudgetExhausted();
+	const read = await checkGenerationGate(store, gateClientReturning("pending_confirm"), "s1", "get_node", { node_id: "n1" });
+	assert.deepEqual(read, { allowed: true });
+	assert.equal(store.runCount("s1", "n1"), 2, "非 GATED 调用零接触预算（不清零）");
+});
