@@ -10,12 +10,20 @@ import { createArrangeNodesTools } from "./arrange-nodes.js";
 import { createGenerationTools } from "./generation.js";
 import { buildWebTools } from "./web.js";
 import { buildDeleteNodesTools } from "./delete-nodes.js";
+import { buildReadDocumentTools } from "./read-document.js";
+import { buildMemoryTools } from "./memory.js";
 
 /** P0 批次：web_search/web_fetch（感知层）。TAVILY_API_KEY 未配置时由 config.ts 条件装配。 */
 export { buildWebTools };
 
 /** P0 批次：delete_nodes（tier=destructive，复用 Nest remove-nodes）。 */
 export { buildDeleteNodesTools };
+
+/** P1 批次：read_document（tier=read，读 toolContext.attachments，零 Nest 改动）。 */
+export { buildReadDocumentTools };
+
+/** P1 批次：save_memory / recall_memory（跨会话记忆，走 Nest internal 端点）。 */
+export { buildMemoryTools };
 
 export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
 	return createCanvasReadTools(client);

@@ -15,13 +15,13 @@ test("env 缺失 → 返回空数组（纯文本模式不受影响）", () => {
 	}
 });
 
-test("env 齐全（TAVILY 缺省）→ 7 read + 12 write + 7 ui_command + 6 gen/lifecycle + 1 destructive = 33", () => {
+test("env 齐全（TAVILY 缺省）→ 7 read + 12 write + 7 ui_command + 6 gen/lifecycle + 1 destructive + 1 read_document + 2 memory = 36", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	delete process.env.TAVILY_API_KEY;
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 33);
+		assert.equal(tools.length, 36);
 		assert.ok(tools.some((t) => t.name === "upsert_media_node"));
 		assert.ok(tools.some((t) => t.name === "connect_nodes"));
 		assert.ok(tools.some((t) => t.name === "set_node_text"));
@@ -31,6 +31,10 @@ test("env 齐全（TAVILY 缺省）→ 7 read + 12 write + 7 ui_command + 6 gen/
 		// 有意不支持（2026-09-28 拍板，spec D4）：老链路 DEFERRED 工具不暴露，此断言为回归锁
 		assert.ok(!tools.some((t) => t.name === "introduce_nodes_to_agent"));
 		assert.ok(tools.some((t) => t.name === "delete_nodes" && t.tier === "destructive"));
+		// P1（spec 2026-09-29）：read_document + memory 两工具无条件注册
+		assert.ok(tools.some((t) => t.name === "read_document" && t.tier === "read"));
+		assert.ok(tools.some((t) => t.name === "save_memory" && t.tier === "write_light"));
+		assert.ok(tools.some((t) => t.name === "recall_memory" && t.tier === "read"));
 	} finally {
 		delete process.env.NEST_BASE_URL;
 		delete process.env.NEST_SERVICE_TOKEN;
@@ -74,13 +78,13 @@ test("B-5：gen 工具超时档位对齐老链路（image/text/prompt/audio 210s
 	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/wait-video-generation"], 690_000);
 });
 
-test("P0：TAVILY_API_KEY 齐全 → 35 个工具（web_search/web_fetch 注册）", () => {
+test("P0：TAVILY_API_KEY 齐全 → 38 个工具（web_search/web_fetch 注册）", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	process.env.TAVILY_API_KEY = "test-key";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 35);
+		assert.equal(tools.length, 38);
 		assert.ok(tools.some((t) => t.name === "web_search" && t.tier === "read"));
 		assert.ok(tools.some((t) => t.name === "web_fetch" && t.tier === "read"));
 	} finally {
@@ -90,13 +94,13 @@ test("P0：TAVILY_API_KEY 齐全 → 35 个工具（web_search/web_fetch 注册�
 	}
 });
 
-test("P0：TAVILY_API_KEY=REPLACE_ME 占位 → 视同未配置（33 个）", () => {
+test("P0：TAVILY_API_KEY=REPLACE_ME 占位 → 视同未配置（36 个）", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	process.env.TAVILY_API_KEY = "REPLACE_ME";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 33);
+		assert.equal(tools.length, 36);
 		assert.ok(!tools.some((t) => t.name === "web_search"));
 	} finally {
 		delete process.env.NEST_BASE_URL;
