@@ -775,9 +775,9 @@ export class AgentService {
       llm?: PiSessionLlmOverride
     },
   ): Promise<void> {
-    // 409 竞态（上一轮 DELETE 未完成就来了本轮 create）：删除陈旧会话后重建，
-    // 不复用——旧会话 systemPrompt 陈旧且其事件缓冲会把上一轮事件回放给本轮 SSE
-    await client.createSessionReplacingStale(sessionId, {
+    // P0-① 起 create 幂等（同 threadKey 复用，返回 status）；409 只剩「同键不同 userId」一种真冲突，
+    // 不容错、直接抛出（fail-closed）。完整接线（turnContext / 不再删会话）见 Task 11。
+    await client.createSession(sessionId, {
       systemPrompt: opts?.systemPrompt,
       userId: opts?.userId,
       attachments: opts?.attachments,

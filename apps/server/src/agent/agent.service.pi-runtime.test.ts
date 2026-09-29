@@ -13,7 +13,7 @@ import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService } from './agent.service'
 import { piEvent, stubPiClient } from './agent.test-utils'
-import { PiRuntimeError, type PiRuntimeClient } from './pi-runtime/pi-runtime.client'
+import { type PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 import type { SidebarAttachment } from '@lnkpi/shared'
 import { resetSidebarParseCache } from './sidebar-vision'
@@ -654,26 +654,6 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     ])
     // 本轮消息单独持久化（不在 priorMessages 里）
     expect(agentMessageCreate).toHaveBeenCalled()
-  })
-
-  it('createSession 409：删除陈旧会话后重建（不静默复用），本轮不阻塞', async () => {
-    process.env.PI_RUNTIME_MODE = 'active'
-    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
-    pi.createSession
-      .mockRejectedValueOnce(new PiRuntimeError('session exists: s1', 409))
-      .mockResolvedValue({ sessionId: 's1', provider: 'agnes', model: 'agnes-2.5-pro' })
-    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
-    stubAssembler('PROMPT-s1')
-
-    const events: Array<{ type: string }> = []
-    for await (const event of service.streamConversation('s1', '你好', 'u1')) {
-      events.push(event)
-    }
-    expect(events.map((e) => e.type)).toEqual(['done'])
-    // 409 → 删陈旧 + 重建（第二次 createSession 成功）；本轮结束的 finally 也会再删一次
-    expect(pi.createSession).toHaveBeenCalledTimes(2)
-    expect(pi.deleteSession).toHaveBeenCalledWith('s1')
   })
 
   it('同一会话连发两轮：本轮 create 必须晚于上一轮 DELETE 完成（防迟到删除误杀新会话）', async () => {
