@@ -33,10 +33,17 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
 	compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 },
 };
 
-/** 正整数解析：非法（非数字 / 0 / 负数 / 空）一律回退，小数截断。 */
+/** 正整数解析：非法（非数字 / 0 / 负数 / 空）一律回退，小数截断。
+ *
+ * ⚠️ 必须用 `Number` 而非 `parseInt`（P0-B，2026-09-29）：helm 把 release values
+ * 反序列化成 float64，Go 模板 `%v` 会把大数渲染成**科学计数法**（实测
+ * `PI_RUNTIME_SESSION_TTL_MS=1.8e+06`、`SESSIONS_MAX_BYTES=3.221225472e+09`），
+ * `parseInt("1.8e+06")` 只取前导整数 → **1**（TTL 变 1ms）、`parseInt("3.22e+09")` → **3**。
+ * `Number` 能正确解析两种写法；非数字（含 `"12abc"`）返回 NaN → 走回退（比 parseInt 更严）。
+ */
 export function parsePositiveInt(raw: string | undefined, fallback: number): number {
 	if (raw === undefined) return fallback;
-	const n = Number.parseInt(raw, 10);
+	const n = Math.trunc(Number(raw));
 	if (!Number.isFinite(n) || n <= 0) return fallback;
 	return n;
 }

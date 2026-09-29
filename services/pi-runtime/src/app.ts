@@ -19,6 +19,31 @@ import {
 
 const HEARTBEAT_MS = 15_000;
 
+export type EventsSubscribeMode =
+	| { mode: "live" }
+	| { mode: "replay"; afterSeq: number };
+
+/**
+ * `GET /sessions/:id/events` 的订阅起点裁决（纯函数，P0-A 2026-09-29）。
+ *
+ * 优先级：
+ *  1. `lastEventId`（合法非负整数）→ 增量续传（P0-③，断线重连）
+ *  2. `from=now`                   → **live**：只收未来事件，不重放缓冲
+ *  3. 其余（含畸形 lastEventId）    → `afterSeq=-1` 全量重放（旧客户端兼容）
+ *
+ * 为什么需要 live：持久会话的事件缓冲**跨轮累积**（dispatch 只 push 不清）。每轮新订阅若
+ * 全量重放，Nest 会先收到上一轮全部事件（含其 `agent_end`）→ 命中即 emit `done` 关流
+ * → 本轮回答被上一轮回答顶替（生产六步 CRUD 实证，S2–S6 每轮 ~100ms 内重复 S1）。
+ */
+export function resolveEventsSubscribeMode(
+	query: { lastEventId?: string; from?: string } | undefined,
+): EventsSubscribeMode {
+	const parsed = Number(query?.lastEventId);
+	if (Number.isInteger(parsed) && parsed >= 0) return { mode: "replay", afterSeq: parsed };
+	if (query?.from === "now") return { mode: "live" };
+	return { mode: "replay", afterSeq: -1 };
+}
+
 export interface AppDeps {
 	metrics: Metrics;
 	version: string;
@@ -170,16 +195,15 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		return reply.send({ ok: aborted, skipped: !aborted });
 	});
 
-	app.get<{ Params: { sessionId: string }; Querystring: { lastEventId?: string } }>(
+	app.get<{ Params: { sessionId: string }; Querystring: { lastEventId?: string; from?: string } }>(
 		"/sessions/:sessionId/events",
 		async (request, reply) => {
 			const { sessionId } = request.params;
 			if (!manager.hasKey(sessionId)) {
 				return reply.code(404).send({ error: "session not found" });
 			}
-			// 增量重连 offset（P0-③）：非法值（畸形/负数）一律按「全量重放」处理，不 400
-			const parsed = Number(request.query?.lastEventId);
-			const afterSeq = Number.isInteger(parsed) && parsed >= 0 ? parsed : -1;
+			// 订阅起点优先级（P0-A，2026-09-29）见 resolveEventsSubscribeMode
+			const mode = resolveEventsSubscribeMode(request.query);
 
 			// id: 帧 = NormalizedEvent.seq，供客户端断点续传（P0-③）
 			const writeEvent = (event: NormalizedEvent) => {
@@ -188,9 +212,13 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 
 			// 复核 Minor #10：先订阅再写响应头——hasKey 与 subscribe 之间的 sweeper 回收窗口
 			// 会以 NotFoundError 浮出，此时还能 404；写头之后再抛就只能 500。
-			let buffered: NormalizedEvent[];
+			let buffered: NormalizedEvent[] = [];
 			try {
-				buffered = manager.subscribe(sessionId, writeEvent, afterSeq);
+				if (mode.mode === "live") {
+					manager.subscribeLive(sessionId, writeEvent);
+				} else {
+					buffered = manager.subscribe(sessionId, writeEvent, mode.afterSeq);
+				}
 			} catch (err) {
 				if (err instanceof NotFoundError) return reply.code(404).send({ error: "session not found" });
 				throw err;

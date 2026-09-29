@@ -17,6 +17,15 @@ describe("parsePositiveInt", () => {
 	it("小数截断为整数", () => {
 		assert.equal(parsePositiveInt("12.9", 7), 12);
 	});
+	it("科学计数法按数值解析（P0-B：helm float64 → Go %v 渲染出 1.8e+06）", () => {
+		// 修复前 parseInt("1.8e+06") = 1 → TTL 变 1ms；parseInt("3.221225472e+09") = 3 → maxBytes=3
+		assert.equal(parsePositiveInt("1.8e+06", 7), 1_800_000);
+		assert.equal(parsePositiveInt("3.221225472e+09", 7), 3_221_225_472);
+		assert.equal(parsePositiveInt("6e2", 7), 600);
+	});
+	it("数字后带杂质的串不再被 parseInt 截断（更严：整体必须是数）", () => {
+		assert.equal(parsePositiveInt("12abc", 7), 7);
+	});
 });
 
 describe("parseBool", () => {

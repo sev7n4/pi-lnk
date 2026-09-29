@@ -707,6 +707,9 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     // hotfix 回归锁（2026-09-29）：pi 会话键是复合键 `s1:t9`，但画布会话 id 必须是 `s1`。
     // 漏传会让 pi-runtime 把哈希后的会话键当画布 id 发回 Nest /agent/internal/* → 全部画布工具 404。
     expect(pi.createSession.mock.calls[0][1]).toMatchObject({ canvasSessionId: 's1' })
+    // P0-A 回归锁：订阅必须 live（from=now），否则每轮重放上一轮缓冲 → 本轮回答被上一轮顶替
+    // streamEvents(sessionId, onEvent, onError, opts) → opts 在第 4 参
+    expect(pi.streamEvents.mock.calls[0][3]).toEqual({ live: true })
   })
 
   it('P0-①：不传 threadId 时回落到 sessionId（老客户端兼容）', async () => {

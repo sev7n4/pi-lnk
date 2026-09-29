@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildApp } from "./app.js";
+import { buildApp, resolveEventsSubscribeMode } from "./app.js";
 import { SessionManager, toSessionKey } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
@@ -331,5 +331,43 @@ describe("既有端点保持", () => {
 				await app.close();
 			}
 		});
+	});
+
+	it("GET /sessions/:key/events?from=now 未知键 → 404（live 路径同样 fail-closed）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			try {
+				assert.equal(
+					(await app.inject({ method: "GET", url: "/sessions/nope/events?from=now" })).statusCode,
+					404,
+				);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+describe("resolveEventsSubscribeMode 订阅起点裁决（P0-A 跨轮重放回归锁）", () => {
+	it("lastEventId（合法非负整数）最高优先 → 增量续传（P0-③ 不变）", () => {
+		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "7" }), { mode: "replay", afterSeq: 7 });
+		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "7", from: "now" }), {
+			mode: "replay",
+			afterSeq: 7,
+		});
+	});
+
+	it("无 lastEventId 且 from=now → live（不重放缓冲）", () => {
+		assert.deepEqual(resolveEventsSubscribeMode({ from: "now" }), { mode: "live" });
+		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "abc", from: "now" }), { mode: "live" });
+		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "-1", from: "now" }), { mode: "live" });
+	});
+
+	it("无参 / 畸形参数 → 全量重放（旧客户端兼容，行为不变）", () => {
+		assert.deepEqual(resolveEventsSubscribeMode(undefined), { mode: "replay", afterSeq: -1 });
+		assert.deepEqual(resolveEventsSubscribeMode({}), { mode: "replay", afterSeq: -1 });
+		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "abc" }), { mode: "replay", afterSeq: -1 });
+		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "-3" }), { mode: "replay", afterSeq: -1 });
+		assert.deepEqual(resolveEventsSubscribeMode({ from: "earlier" }), { mode: "replay", afterSeq: -1 });
 	});
 });

@@ -214,11 +214,12 @@ export class PiRuntimeClient {
 	}
 
 	/**
-	 * 订阅会话事件流（SSE）。
-	 * @returns 取消函数：断开 HTTP 连接但不影响服务端会话
-	 */
-	/**
 	 * 订阅会话事件流（SSE，内置断线重连）。
+	 *
+	 * 首连语义（P0-A，2026-09-29）：`opts.live = true` → 首连带 `?from=now`，
+	 * 只收**未来**事件、不重放历史缓冲。持久会话的 buffer 跨轮累积，若首轮订阅全量重放，
+	 * 客户端会先收到上一轮全部事件（含其 `agent_end`）→ 本轮回答被上一轮顶替。
+	 * 断线重连仍走 `?lastEventId=`（P0-③），与 live 互不叠加（服务端 lastEventId 优先）。
 	 *
 	 * 重连语义（P0-③）：
 	 *  - 网络错误 / 非 404 HTTP 错误：250ms 起指数退避（封顶 5s），总预算 120s；
@@ -231,6 +232,7 @@ export class PiRuntimeClient {
 		sessionId: string,
 		onEvent: (event: PiRuntimeEvent) => void,
 		onError?: (err: unknown) => void,
+		opts?: { live?: boolean },
 	): () => void {
 		const controller = new AbortController();
 		const RECONNECT_BUDGET_MS = 120_000;
@@ -241,9 +243,17 @@ export class PiRuntimeClient {
 			// 健康运行 >120s 的长任务断线后将零次重连——恰是本特性最需要覆盖的场景。
 			let firstFailureAt: number | undefined;
 			while (!controller.signal.aborted) {
+				// 首连（P0-A）：live=true → `from=now`（只收未来事件，不重放上一轮缓冲）。
+				// 重连：带 lastEventId 断点续传（P0-③），不再叠加 from=now（服务端 lastEventId 优先）。
+				const query =
+					lastEventId !== undefined
+						? `lastEventId=${encodeURIComponent(lastEventId)}`
+						: opts?.live
+							? "from=now"
+							: "";
 				const url =
 					`${this.options.baseUrl}/sessions/${encodeURIComponent(sessionId)}/events` +
-					(lastEventId !== undefined ? `?lastEventId=${encodeURIComponent(lastEventId)}` : "");
+					(query ? `?${query}` : "");
 				try {
 					const res = await this.fetchImpl(url, { signal: controller.signal });
 					if (res.status === 404) {

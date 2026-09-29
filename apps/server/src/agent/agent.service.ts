@@ -801,6 +801,10 @@ export class AgentService {
         wake?.()
         wake = null
       },
+      // P0-A（2026-09-29）：每轮新订阅必须 `from=now`（只收未来事件）。
+      // 持久会话的缓冲跨轮累积，若全量重放会先收到上一轮事件（含其 agent_end）
+      // → 本轮在 ~100ms 内被上一轮回答顶替（生产六步 CRUD 实证）。
+      { live: true },
     )
     try {
       while (true) {
