@@ -85,6 +85,7 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
 - **REVISE** → 先归因到具体 gate 与具体项 → 用 `set_node_text` 修正 prompt（针对性修改，不是推倒重写）→ **再次调用 `run_image_generation`**（同节点第 2 次，系统自动放行，无需用户再确认；这是"确认前不调用 `run_*`"规则的文档化例外——重试发生在用户对本次生成的原始确认之后）
 - **第二次仍不通过，或第 3 次调用被系统拦截** → **必须 `ask_user`**：给出两次自评的对比结论（哪一 gate、哪些项仍未达标）与可选修正方向（如"往冷调走 / 保留原图换构图 / 人工改图"），由用户决定下一步。**禁止继续无提示重试**
 - `imageRefine="skipped"` 或结果中无 `imageRefine` 字段（同 skipped 处理）不得当 PASS 交付；`imageRefine="n/a"` 走 status 分支（`timeout` 查询 / `fallback_pending` 用户确认兜底），不消耗重试预算
+- **诚实兜底**：若结果标注 `imageRefine="attached"` 但你实际无法在上下文中看到该图片（纯文本渠道等），必须如实说明"看不到图、无法自评"，不得凭空编造自评结论。
 
 ## 平台硬规格
 
@@ -146,3 +147,4 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
   - 新增"自评与重试预算"小节：REVISE → 改 prompt 重跑一次（系统放行）；仍不过或第 3 次被拦截 → 必须 ask_user 给结论与选项
   - `imageRefine="skipped"` 不得当 PASS；`"n/a"` 走原 status 分支
   - 复审加固：`imageRefine` 字段缺失（自评回流关闭）按 skipped 同款处理，杜绝盲检；`n/a` 明确 `timeout`（`get_generation_status` 查询）/ `fallback_pending`（用户确认平台兜底）两个 status 分支；PASS 自评必须引用图中可见证据而非复述 gate 名；skipped 时结合 `imageRefineReason` 说明原因；注明重试是"确认前不调用 `run_*`"的文档化例外；更正 step2 中 `ask_user` 已实现并注册的表述
+  - 诚实兜底：标注 `imageRefine="attached"` 但实际看不到图（纯文本渠道）时须如实说明、不得编造自评

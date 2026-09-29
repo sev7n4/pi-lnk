@@ -73,6 +73,9 @@ const EVENT_MAP: ReadonlyArray<readonly [string, NormalizedEventType]> = [
 	["handler_error", "error"],
 ];
 
+/** 可携带 tool result（含 image block）的 harness 事件：SSE/缓冲副本必须剥离图数据。 */
+const TOOL_RESULT_EVENT_TYPES = new Set(["tool_end", "message_start", "message_end", "turn_end"]);
+
 interface SessionEntry {
 	id: string;
 	harness: AgentHarness<LnkpiToolContext>;
@@ -228,7 +231,7 @@ export class SessionManager {
 						lane: evt.lane,
 						ts: Date.now(),
 						// ⑦：图只进模型上下文，SSE/缓冲副本剥离（无图时原引用返回）
-						data: harnessType === "tool_end" ? stripImageBlocks(evt) : evt,
+						data: TOOL_RESULT_EVENT_TYPES.has(harnessType) ? stripImageBlocks(evt) : evt,
 					});
 				}),
 			);
