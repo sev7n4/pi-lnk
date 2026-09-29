@@ -246,10 +246,10 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.equal(calls.length, 1);
 	});
 
-	it("默认注册 12 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
+	it("默认注册 13 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		assert.equal(tools.length, 12);
+		assert.equal(tools.length, 13);
 		const tiers = Object.fromEntries(tools.map((t) => [t.name, t.tier]));
 		assert.equal(tiers.connect_nodes, "graph_batch");
 		assert.equal(tiers.upsert_media_node, "write_light");
@@ -258,8 +258,56 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.ok(!tools.some((t) => t.name === "set_node_content"), "set_node_content 已并入 set_node_text");
 
 		const withDeferred = createCanvasWriteTools(client, { includeDeferred: true });
-		assert.equal(withDeferred.length, 13);
+		assert.equal(withDeferred.length, 14);
 		assert.ok(withDeferred.some((t) => t.name === "introduce_nodes_to_agent"));
+	});
+});
+
+describe("update_node（spec S2）", () => {
+	it("snake_case 入参 → camelCase patch；userId/sessionId 只来自 toolContext", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await run(tool, { node_id: "n1", title: "茶馆主视觉", image_model: "platform::seedream-4" });
+		assert.equal(calls[0].path, "/agent/internal/update-node");
+		assert.deepEqual(calls[0].body, {
+			sessionId: "s1",
+			userId: "u1",
+			nodeId: "n1",
+			patch: { title: "茶馆主视觉", imageModel: "platform::seedream-4" },
+		});
+	});
+
+	it("一个字段都不给 → fail-closed，不打 Nest", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await assert.rejects(() => run(tool, { node_id: "n1" }), /at least one/);
+		assert.equal(calls.length, 0);
+	});
+
+	it("禁止的字段不进 patch（模型无法借 update_node 改 prompt/content/status）", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await run(tool, { node_id: "n1", title: "X", status: "completed", prompt: "注入" } as never);
+		assert.deepEqual(Object.keys(calls[0].body.patch as object), ["title"]);
+	});
+
+	it("toolContext 缺 userId → fail-closed", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		await assert.rejects(
+			() => run(tool, { node_id: "n1", title: "X" }, { sessionId: "s1" } as LnkpiToolContext),
+			/requires userId/,
+		);
+		assert.equal(calls.length, 0);
+	});
+
+	it("返回 details.actions（实时通道）", async () => {
+		const client = {
+			post: async () => ({ nodeId: "n1", actions: [{ type: "update_node", payload: { id: "n1", data: { title: "X" } } }] }),
+		} as never;
+		const tool = findTool(createCanvasWriteTools(client), "update_node");
+		const out = (await run(tool, { node_id: "n1", title: "X" })) as { details?: { actions?: unknown[] } };
+		assert.equal(out.details?.actions?.length, 1);
 	});
 });
 
@@ -284,6 +332,7 @@ describe("canvas-write: 全部写工具都推 details.actions（实时通道回�
 		"upload_media_to_canvas",
 		"grid_slice_image",
 		"connect_nodes",
+		"update_node",
 	] as const;
 
 	it("每个写工具的返回都含 details.actions 数组", async () => {
@@ -301,6 +350,7 @@ describe("canvas-write: 全部写工具都推 details.actions（实时通道回�
 			upload_media_to_canvas: { url: "https://x/a.png", media_type: "image" },
 			grid_slice_image: { cols: 2, rows: 2, source_url: "https://x/a.png" },
 			connect_nodes: { edges: [{ source: "n1", target: "n2" }] },
+			update_node: { node_id: "n1", title: "X" },
 		};
 		for (const name of WRITE_TOOLS) {
 			const out = (await run(findTool(tools, name), params[name])) as { details?: { actions?: unknown } };

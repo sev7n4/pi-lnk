@@ -149,6 +149,55 @@ export function createCanvasWriteTools(
 		},
 		{
 			...write,
+			name: "update_node",
+			label: "改节点属性",
+			description:
+				"Update an existing canvas node's title and/or its model (the chip shown in the node dock). Accepts exactly one model field, matching the node type. Ref must come from list_model_options — invented names are rejected. Does NOT touch prompt/content; use set_node_text for text.",
+			parameters: Type.Object({
+				node_id: Type.String({ description: "Canvas node id" }),
+				title: Type.Optional(Type.String({ description: "New node title (non-empty)" })),
+				image_model: Type.Optional(Type.String({ description: "image node model ref from list_model_options" })),
+				video_model: Type.Optional(Type.String({ description: "video node model ref from list_model_options" })),
+				text_model: Type.Optional(Type.String({ description: "text or prompt node model ref from list_model_options" })),
+				audio_model: Type.Optional(Type.String({ description: "audio node model ref from list_model_options" })),
+			}),
+			execute: async (
+				_id,
+				p: {
+					node_id: string;
+					title?: string;
+					image_model?: string;
+					video_model?: string;
+					text_model?: string;
+					audio_model?: string;
+				},
+				_u,
+				tc: LnkpiToolContext,
+			) => {
+				if (!tc.userId) throw new Error("update_node requires userId in toolContext");
+				// 白名单在 pi 侧再夹一层：harness 不校验 schema，多余字段必须在此丢弃，
+				// 否则模型可以用 {status:...} 之类绕过（Nest 侧也会拒，但别让脏数据出网）
+				const patch: Record<string, unknown> = {};
+				setIfPresent(patch, "title", p.title);
+				setIfPresent(patch, "imageModel", p.image_model);
+				setIfPresent(patch, "videoModel", p.video_model);
+				setIfPresent(patch, "textModel", p.text_model);
+				setIfPresent(patch, "audioModel", p.audio_model);
+				if (Object.keys(patch).length === 0) {
+					throw new Error("update_node requires at least one of title/image_model/video_model/text_model/audio_model");
+				}
+				return resultWithActions(
+					await client.post("/agent/internal/update-node", {
+						sessionId: tc.sessionId,
+						userId: tc.userId,
+						nodeId: p.node_id,
+						patch,
+					}),
+				);
+			},
+		},
+		{
+			...write,
 			name: "attach_refs",
 			label: "挂引用",
 			description:
