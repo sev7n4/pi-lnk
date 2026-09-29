@@ -240,6 +240,11 @@ class RemoveEdgesDto {
   @IsString()
   sessionId!: string
 
+  // spec S8：带 userId 时校验画布归属；缺省保持旧行为（既有调用方兼容）
+  @IsOptional()
+  @IsString()
+  userId?: string
+
   @IsArray()
   @IsString({ each: true })
   edgeIds!: string[]

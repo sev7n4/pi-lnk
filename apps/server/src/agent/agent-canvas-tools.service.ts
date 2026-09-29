@@ -562,11 +562,14 @@ export class AgentCanvasToolsService {
       return { nodeId, actions }
   }
 
-  async getNode(input: { sessionId: string; nodeId: string }): Promise<CanvasNode> {
+  async getNode(
+    input: { sessionId: string; nodeId: string },
+  ): Promise<CanvasNode & ReturnType<typeof relationsForNode>> {
     const { canvas } = await this.loadSession(input.sessionId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
-    return node
+    // 上下游是该节点的一等属性；拆第二个读工具只会迫使模型记住"读节点要调两次"
+    return { ...node, ...relationsForNode(canvas, node.id) }
   }
 
   async getCanvasSummary(input: { sessionId: string }): Promise<{
@@ -891,10 +894,14 @@ export class AgentCanvasToolsService {
    */
   async removeEdges(input: {
     sessionId: string
+    /** 有则校验归属（spec S8）；缺省保持旧行为以兼容既有调用方 */
+    userId?: string
     edgeIds: string[]
     stage?: boolean
   }): Promise<{ actions: CanvasAction[] }> {
-    const { canvas } = await this.loadSession(input.sessionId)
+    const { canvas } = input.userId
+      ? await this.loadOwnedSession(input.sessionId, input.userId)
+      : await this.loadSession(input.sessionId)
     const actions: CanvasAction[] = []
 
     for (const edgeId of input.edgeIds) {
@@ -2117,6 +2124,7 @@ export class AgentCanvasToolsService {
       position: { x: number; y: number }
       size: { w: number; h: number }
     }>
+    edges: Array<{ id: string; source: string; target: string }>
   }> {
     const { canvas } = await this.loadSession(input.sessionId)
     const layoutNodes = canvas.nodes as LayoutNode[]
@@ -2133,7 +2141,11 @@ export class AgentCanvasToolsService {
         ...(node.parentNode ? { parentNode: node.parentNode } : {}),
       }
     })
-    return { nodes, groups: summarizeLayoutGroups(layoutNodes) }
+    return {
+      nodes,
+      groups: summarizeLayoutGroups(layoutNodes),
+      edges: canvas.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    }
   }
 
   async duplicateNode(input: {

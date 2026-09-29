@@ -122,7 +122,8 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 			...base,
 			name: "get_canvas_layout",
 			label: "画布布局",
-			description: "Get the current canvas layout (nodes and edges with positions and sizes).",
+			description:
+				"Get the current canvas layout (nodes with positions and sizes, groups, and edges as source/target id pairs). Use edge ids from here for remove_edges.",
 			parameters: Type.Object({}),
 			execute: async (_id, _p, _u, tc: LnkpiToolContext) => {
 				return textResult(slimLayout(await client.post("/agent/internal/get-canvas-layout", { sessionId: tc.sessionId })));

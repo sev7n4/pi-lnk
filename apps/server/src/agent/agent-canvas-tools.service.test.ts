@@ -2641,4 +2641,93 @@ describe('AgentCanvasToolsService', () => {
       expect(providerBootstrap).not.toHaveBeenCalled()
     })
   })
+
+  describe('getNode 上下游（spec §5.5 / S7）', () => {
+    beforeEach(() => {
+      canvas = {
+        nodes: [
+          { id: 'p1', type: 'prompt', position: { x: 0, y: 0 }, data: { title: '文案' } },
+          { id: 'i1', type: 'image', position: { x: 1, y: 0 }, data: { title: '主图' } },
+        ],
+        edges: [{ id: 'e1', source: 'p1', target: 'i1' }],
+      }
+    })
+
+    it('返回 upstream/downstream 三元组，且保留节点原有字段', async () => {
+      const node = await svc.getNode({ sessionId: 's1', nodeId: 'i1' })
+      expect(node.upstream).toEqual([{ id: 'p1', type: 'prompt', title: '文案' }])
+      expect(node.downstream).toEqual([])
+      expect(node.id).toBe('i1')
+      expect(node.position).toEqual({ x: 1, y: 0 })
+    })
+
+    it('Review Focus 3：空画布下 get_node 抛 NotFound（不是崩）', async () => {
+      canvas = emptyCanvas()
+      await expect(svc.getNode({ sessionId: 's1', nodeId: 'nope' })).rejects.toBeInstanceOf(NotFoundException)
+    })
+  })
+
+  describe('getCanvasLayout 返回 edges（spec §5.5 / 目标 3）', () => {
+    it('edges 为 {id,source,target} 三元组；空画布回空数组', async () => {
+      canvas = {
+        nodes: [{ id: 'p1', type: 'prompt', position: { x: 0, y: 0 }, data: {} }],
+        edges: [{ id: 'e1', source: 'p1', target: 'i1' }],
+      }
+      const layout = await svc.getCanvasLayout({ sessionId: 's1' })
+      expect(layout.edges).toEqual([{ id: 'e1', source: 'p1', target: 'i1' }])
+
+      canvas = emptyCanvas()
+      const empty = await svc.getCanvasLayout({ sessionId: 's1' })
+      expect(empty.edges).toEqual([])
+      expect(empty.nodes).toEqual([])
+      expect(empty.groups).toEqual([])
+    })
+
+    it('edges 只回三元组（不泄漏边上的其它字段）', async () => {
+      canvas = {
+        nodes: [
+          { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'video', position: { x: 1, y: 0 }, data: {} },
+        ],
+        edges: [{ id: 'e1', source: 'a', target: 'b', animated: true, style: { stroke: 'red' } } as never],
+      }
+      const layout = await svc.getCanvasLayout({ sessionId: 's1' })
+      expect(Object.keys(layout.edges[0]).sort()).toEqual(['id', 'source', 'target'])
+    })
+  })
+
+  describe('removeEdges 归属与幂等（spec S8 / Review Focus 2）', () => {
+    beforeEach(() => {
+      canvas = {
+        nodes: [
+          { id: 'p1', type: 'prompt', position: { x: 0, y: 0 }, data: {} },
+          { id: 'i1', type: 'image', position: { x: 1, y: 0 }, data: {} },
+        ],
+        edges: [{ id: 'e1', source: 'p1', target: 'i1' }],
+      }
+    })
+
+    it('带 userId 时校验归属 → 跨账号 Forbidden', async () => {
+      await expect(
+        svc.removeEdges({ sessionId: 's1', userId: 'other', edgeIds: ['e1'] }),
+      ).rejects.toBeInstanceOf(ForbiddenException)
+    })
+
+    it('不存在的 edgeId 被跳过（幂等成功，不报错、不落库）', async () => {
+      const out = await svc.removeEdges({ sessionId: 's1', userId: 'u1', edgeIds: ['nope'] })
+      expect(out.actions).toEqual([])
+      expect(canvas.edges).toHaveLength(1)
+    })
+
+    it('删除命中边并回 remove_edge action', async () => {
+      const out = await svc.removeEdges({ sessionId: 's1', userId: 'u1', edgeIds: ['e1'] })
+      expect(out.actions).toEqual([{ type: 'remove_edge', payload: { id: 'e1' } }])
+      expect(canvas.edges).toEqual([])
+    })
+
+    it('未传 userId 时保持旧行为（向后兼容既有调用）', async () => {
+      const out = await svc.removeEdges({ sessionId: 's1', edgeIds: ['e1'] })
+      expect(out.actions).toHaveLength(1)
+    })
+  })
 })

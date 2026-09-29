@@ -42,6 +42,14 @@ test("注册 7 个 read 工具且 tier 正确", () => {
 	assert.ok(tools.every((t) => t.tier === "read"));
 });
 
+test("get_canvas_layout description 声明含 edges 并引导 remove_edges（Task 5 契约）", () => {
+	const tools = buildCanvasReadTools(fakeClient() as never);
+	const layout = tools.find((x) => x.name === "get_canvas_layout")!;
+	const desc = layout.description ?? "";
+	assert.match(desc, /edges/, "布局描述必须声明返回 edges");
+	assert.match(desc, /remove_edges/, "布局描述必须引导用 remove_edges 删除边");
+});
+
 test("get_node 映射 snake_case 入参到 camelCase body 并带 sessionId", async () => {
 	const fake = fakeClient();
 	const [tool] = buildCanvasReadTools(fake as never).filter((t) => t.name === "get_node");
