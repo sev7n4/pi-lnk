@@ -1,6 +1,8 @@
 export type StudioModality = 'text' | 'image' | 'video' | 'audio'
 export type ParamDisposition = 'native' | 'promptPrefix' | 'metadataOnly'
 
+import { decodeChannelModel, encodeChannelModel, PLATFORM_CHANNEL_ID } from './providerChannels'
+
 export interface StudioVoiceOption {
   id: string
   label: string
@@ -349,4 +351,35 @@ export function resolveModelKey(
     return { modelKey: requested, entry, fallback: false }
   }
   return { modelKey: fallbackKey, entry: fallbackEntry, fallback: true }
+}
+
+/**
+ * 模型 ref 归一（SSOT）：把「裸模型名 / 已编码 ref / 空值」统一成一种可比较的形态。
+ *
+ * 调用方（agent 的 update_node、web 的 resolveGenerationModel）**必须**检查 `fallback`：
+ * 它为 true 说明裸名不在目录中，此时返回的 ref 是**默认模型**而非用户要的那个——
+ * 静默采用会把「设错了模型」伪装成「设置成功」。
+ */
+export function normalizeModelRef(
+  modality: StudioModality,
+  raw?: string | null,
+): { ref: string; channelId: string; modelName: string; fallback: boolean } | null {
+  const trimmed = raw?.trim()
+  if (!trimmed) return null
+  const decoded = decodeChannelModel(trimmed)
+  if (decoded) {
+    return {
+      ref: trimmed,
+      channelId: decoded.channelId,
+      modelName: decoded.modelName,
+      fallback: false,
+    }
+  }
+  const { modelKey, fallback } = resolveModelKey(modality, trimmed)
+  return {
+    ref: encodeChannelModel(PLATFORM_CHANNEL_ID, modelKey),
+    channelId: PLATFORM_CHANNEL_ID,
+    modelName: modelKey,
+    fallback,
+  }
 }
