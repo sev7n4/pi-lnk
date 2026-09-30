@@ -100,6 +100,16 @@ interface SessionEntry {
 	cancelRun?: (reason?: unknown) => void;
 	/** 本轮 run 是否被用户主动取消（用于抑制取消引发的 error 事件，避免重连补发假警报）。 */
 	userAborted?: boolean;
+	/**
+	 * run 后的异步压缩是否在途（reviewer Critical #1）。
+	 *
+	 * vendor Lane 维持「同一时刻只允许一个 active operation」的不变式
+	 * （`lane.ts` 里 `state.operation !== null → LaneBusy`）。压缩是 fire-and-forget 的，
+	 * 若期间放行新 prompt，该 prompt 会撞上 LaneBusy：接口返回 200 accepted，
+	 * 用户最终只收到一个 error 事件、**拿不到任何回答**。故必须与 `prompting` 同等对待：
+	 * 在途期间一律 fail-closed 拒绝。
+	 */
+	compacting?: boolean;
 	/** 下一个待分配的事件 seq（会话内单调递增，P0-③）。 */
 	nextSeq: number;
 	/** create 时确定的静态段（规则 + skills index），会话期内不再变更。 */
@@ -426,6 +436,9 @@ export class SessionManager {
 			if (!isSameLlmIdentity(existing.identity, identity)) {
 				// 复核 Minor #6：run 进行中不得抽走在跑的 harness（重建会话 = 换掉 harness 实例）。
 				if (existing.prompting) throw new BusyError(key);
+				// 压缩在途同样是 active operation：此时 destroy 会让 lane.compact 以 Closed 收场，
+				// 且摘要写回的会话已被丢弃 —— 白跑一次 LLM 调用。
+				if (existing.compacting) throw new BusyError(key, "compacting");
 				await this.destroy(key);
 				const created = await this.build(key, opts, models, model, identity);
 				return { ...created, status: "rebuilt" };
@@ -747,7 +760,10 @@ export class SessionManager {
 		// 会话常驻后同键并发会串台（同一 harness 上两个 run 交错），fail-closed 拒绝。
 		// 复核 Important #2（TOCTOU）：置位必须在任何 await 之前同步完成——原先
 		// 「检查 → await harness.lane() → 置位」的窗口里，第二个并发请求能通过检查。
+		// 压缩在途同样属于「active operation」，必须与 prompting 一并拒绝（Critical #1）。
+		// 只判 prompting 的话，撞 LaneBusy 的那一轮会以 200 accepted 落空——用户拿不到回答。
 		if (entry.prompting) throw new BusyError(entry.id);
+		if (entry.compacting) throw new BusyError(entry.id, "compacting");
 		entry.prompting = true;
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
 		try {
@@ -816,6 +832,9 @@ export class SessionManager {
 	 * 刻意 fire-and-forget（不 await 完成）：不为一次摘要调用阻塞用户对下一条消息的响应。
 	 * 刻意不重试：每轮 run 至多走到这里一次，失败留给下一轮再判定（Review Focus #3）。
 	 * 「每轮至多一次」由调用位置本身保证——只有 run 的**正常完成**分支会走到这里。
+	 *
+	 * 压缩在途期间会话处于 busy（`entry.compacting`），新 prompt 会被 BusyError 挡掉——
+	 * 因为 vendor Lane 同一时刻只容一个 active operation，放行会让请求静默落空（Critical #1）。
 	 */
 	private async maybeCompact(entry: SessionEntry, lane: AgentLane): Promise<void> {
 		// 用户按了停止：不再追加一次摘要类 LLM 调用（Review Focus #2）
@@ -827,11 +846,19 @@ export class SessionManager {
 			this.metrics?.observeCompactionSkip(decision.skipReason ?? "unknown");
 			return;
 		}
-		const res = await lane.compact(undefined, this.context);
-		// ok 分支刻意不计数：harness 成功时会自行下发 compaction_end(status=completed)，
-		// 由 attachEvents 的回调计 ok/error；这里再计一次会让 ok 翻倍、掩盖真实失败率
-		// （Review Focus #4）。失败路径不存在该事件，故必须在此补计。
-		if (!res.ok) this.metrics?.observeCompactionSkip(classifyCompactionError(res.error));
+		// 置位必须在 await lane.compact 之前：这里的语义与 prompt 的 TOCTOU 一样，
+		// 晚置位会留出一个「已在总结摘要、但会话看起来空闲」的窗口。
+		entry.compacting = true;
+		try {
+			const res = await lane.compact(undefined, this.context);
+			// ok 分支刻意不计数：harness 成功时会自行下发 compaction_end(status=completed)，
+			// 由 attachEvents 的回调计 ok/error；这里再计一次会让 ok 翻倍、掩盖真实失败率
+			// （Review Focus #4）。失败路径不存在该事件，故必须在此补计。
+			if (!res.ok) this.metrics?.observeCompactionSkip(classifyCompactionError(res.error));
+		} finally {
+			// 会话可能已在压缩期间被回收；布尔位无所谓，清掉即可。
+			entry.compacting = false;
+		}
 	}
 
 	/**
@@ -868,6 +895,8 @@ export class SessionManager {
 		const source = this.require(threadKey);
 		// 正在跑 run 的会话不允许 fork（fork 会读 source 快照，串台风险 fail-closed）。
 		if (source.prompting) throw new BusyError(source.id);
+		// 压缩在途也不允许：压缩会改写会话条目（截断 + 写摘要），此刻 fork 可能拷到中间态。
+		if (source.compacting) throw new BusyError(source.id, "compacting");
 		if (!source.session || !source.sessionMeta) {
 			throw new Error(`session ${source.id} missing underlying session snapshot; cannot fork`);
 		}
@@ -954,8 +983,8 @@ export class NotFoundError extends Error {
 
 /** 同键并发 prompt：会话常驻后同一 harness 上两个 run 会交错，一律拒绝（路由层映射 409）。 */
 export class BusyError extends Error {
-	constructor(id: string) {
-		super(`session busy: ${id}`);
+	constructor(id: string, reason: "running" | "compacting" = "running") {
+		super(`session busy (${reason}): ${id}`);
 	}
 }
 

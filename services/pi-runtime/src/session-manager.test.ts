@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SessionManager, NotFoundError, toSessionKey } from "./session-manager.js";
+import { SessionManager, BusyError, NotFoundError, toSessionKey } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
@@ -697,5 +697,81 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 		await mgr.prompt("s-compact-closed", "hi");
 		await drain();
 		assert.match(metrics.render(0, "test"), /pi_runtime_compaction_skips_total\{reason="closed"\} 1/);
+	});
+});
+
+describe("SessionManager 压缩 × 后续请求的竞争（reviewer Critical #1）", () => {
+	/** 手写哨兵：断言点到为止，避免引入断言库之外的依赖。 */
+	function usageEntry(totalTokens: number) {
+		return {
+			type: "message",
+			message: { role: "assistant", stopReason: "stop", usage: { totalTokens } },
+		} as never;
+	}
+
+	/**
+	 * 忠实替身 lane：实现 vendor Lane 的「同一时刻只允许一个 active operation」不变式
+	 * （vendor lane.ts:575 `state.operation !== null → LaneBusy`）。
+	 *
+	 * 之前所有假 lane 都没有这条不变式（compact 立即 resolve），因此那个竞争窗口
+	 * 在测试里被构造掉了——这正是这类缺陷此前测试不到的原因。
+	 */
+	function busyAwareLane(release: Promise<void>) {
+		let operation: string | null = null;
+		return {
+			prompt: async () => {
+				if (operation !== null) return { ok: false, error: new Error("LaneBusy: active operation") };
+				return { ok: true, value: {} };
+			},
+			findEntries: async () => [usageEntry(120_000)],
+			compact: async () => {
+				operation = "compaction";
+				await release;
+				operation = null;
+				return { ok: true, value: {} };
+			},
+		};
+	}
+
+	function managerWithBusyLane(lane: unknown) {
+		return new SessionManager(
+			[],
+			"",
+			(() => ({
+				models: {},
+				model: { id: "probe-model", contextWindow: 128_000 },
+				providerId: "probe",
+			})) as never,
+			(async () => ({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => lane,
+					close: async () => {},
+				},
+			})) as never,
+			undefined,
+			undefined,
+			{ ...testConfig(), compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 } },
+		);
+	}
+
+	const drain = () => new Promise<void>((r) => setImmediate(r));
+
+	it("压缩在途时新的 prompt 走 BusyError，而不是跑进 run 里让用户收一个无回答的 error", async () => {
+		let _resolve!: () => void;
+		const release = new Promise<void>((r) => {
+			_resolve = r;
+		});
+		const mgr = managerWithBusyLane(busyAwareLane(release));
+		await mgr.create("s-busy-compact", {});
+		await mgr.prompt("s-busy-compact", "第一轮");
+		await drain(); // 压缩已发起且仍在途（release 未 resolve）
+
+		const events: string[] = [];
+		mgr.subscribe("s-busy-compact", (e) => events.push(e.type));
+		// 修复前：这里返回 {accepted:true}，用户随后只收到一个 error 事件、拿不到任何回答
+		await assert.rejects(() => mgr.prompt("s-busy-compact", "第二轮"), BusyError);
+		await drain();
+		assert.deepEqual(events.filter((t) => t === "error"), []);
 	});
 });
