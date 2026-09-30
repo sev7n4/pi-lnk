@@ -647,7 +647,8 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(pi.createSession).toHaveBeenCalledWith(
       't1',
       expect.objectContaining({
-        systemPrompt: 'PROMPT-s1',
+        // P1#5：组装后的 systemPrompt 尾部含任务计划汇报约定（plan 内联标记）
+        systemPrompt: expect.stringContaining('PROMPT-s1'),
         userId: 'u1',
       }),
     )
@@ -668,6 +669,9 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
       refOrder: ['I1'],
       attachments: [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
     })
+    // P1#5：静态 systemPrompt 尾部含任务计划汇报约定（⟦plan⟧/⟦task-done⟧ 内联标记）
+    expect(createOpts.systemPrompt).toContain('⟦plan⟧')
+    expect(createOpts.systemPrompt).toContain('⟦task-done⟧')
     expect(events.map((e) => e.type)).toContain('done')
   })
 

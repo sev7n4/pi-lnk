@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 import { describe, expect, it } from 'vitest'
 import {
+  seedTaskProgressFromEvents,
   applyPollRecordToTask,
   applyTaskEvent,
   emptyTaskProgress,
@@ -103,3 +104,19 @@ describe('mapRecordStatusToTaskStatus', () => {
     expect(mapRecordStatusToTaskStatus('generating')).toBe('running')
   })
 })
+
+describe("seedTaskProgressFromEvents（P1#5 历史恢复）", () => {
+  it("从持久化 task 事件播种进度并判定完成", () => {
+    const p = seedTaskProgressFromEvents([
+      { type: "task_list", data: { items: [{ id: "plan-1", title: "起稿" }] } },
+      { type: "task_update", data: { id: "plan-1", status: "done" } },
+    ]);
+    expect(p?.items).toHaveLength(1);
+    expect(p?.items[0]).toMatchObject({ id: "plan-1", status: "done" });
+    expect(p?.finished).toBe(true);
+  });
+
+  it("无 task 事件返回 null", () => {
+    expect(seedTaskProgressFromEvents([{ type: "text_delta", data: { text: "x" } }])).toBeNull();
+  });
+});

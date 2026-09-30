@@ -100,6 +100,25 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 		case "message_update":
 			// message_update 但取不到文本 delta（thinking/工具参数流）：Round 5 决定 UI 事件
 			return null;
+		case "error": {
+			// P0 错误链路修复：error 原先落 default → pi_error 透传 → 前端静默丢弃，
+			// 运行中报错用户只见「空回复兜底」。映射为前端已有完整分支的 error 事件。
+			const d = event.data as {
+				message?: string;
+				error_type?: string;
+				retry_hint?: string;
+				tool_name?: string;
+			};
+			return {
+				type: "error",
+				data: {
+					message: d.message,
+					error_type: d.error_type,
+					retry_hint: d.retry_hint,
+					tool_name: d.tool_name,
+				},
+			};
+		}
 		default:
 			return { type: `pi_${event.type}`, data: event.data, };
 	}
@@ -210,10 +229,11 @@ export function extractThinking(event: PiRuntimeEvent): ThinkingPhase | null {
 
 /**
  * thinking 累积器（可观测性专项 ③）：把 pi 的流式 thinking 子事件折叠为
- * 老 UI 契约的 `thinking` 事件（start→running，end→done+截断摘要）。
- * delta 只累积不透传（v1 不做逐字思考流），摘要取前 limit 字符。
+ * 老 UI 契约的 `thinking` 事件（start→running，end→done+全文）。
+ * delta 只累积不透传（v1 不做逐字思考流）；P0 思考面板：end 时全文透传，
+ * clamp 2000 字防超大 payload，前端折叠展示。
  */
-export function createThinkingAccumulator(limit = 200): {
+export function createThinkingAccumulator(limit = 2000): {
 	feed(event: PiRuntimeEvent): UiEvent | null;
 } {
 	let buffer = "";

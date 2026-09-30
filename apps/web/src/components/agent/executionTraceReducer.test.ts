@@ -164,3 +164,66 @@ describe('applyTurnUsage + turnSummaryLine（P1 摘要行）', () => {
     expect(turnSummaryLine(source)).toContain('提议生成 1 张')
   })
 })
+
+describe('applyToolCall isError（P0 工具失败标红）', () => {
+  it('isError 结果将工具步标为 failed，detail 取错误信息', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'run_image', undefined, { toolCallId: 't1' })
+    applyToolCall(trace, 'run_image', { message: '生成超时' }, { toolCallId: 't1', isError: true })
+    const step = trace.steps.find((s) => s.meta?.toolCallId === 't1')
+    expect(step?.status).toBe('failed')
+    expect(step?.detail).toContain('生成超时')
+  })
+
+  it('正常结果仍为 done（不回归）', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'run_image', undefined, { toolCallId: 't2' })
+    applyToolCall(trace, 'run_image', { ok: 1 }, { toolCallId: 't2' })
+    const step = trace.steps.find((s) => s.meta?.toolCallId === 't2')
+    expect(step?.status).toBe('done')
+  })
+
+  it('replay 旧 metadata（无 isError 字段）不崩且为 done', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'tool_call', data: { name: 'get_canvas_summary' } },
+      { type: 'tool_result', data: { name: 'get_canvas_summary', result: { status: 'ok' } } },
+    ])
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('done')
+  })
+
+  it('replay 携带 isError 的 tool_result 标为 failed', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'tool_call', data: { name: 'run_image' } },
+      { type: 'tool_result', data: { name: 'run_image', result: { message: 'boom' }, isError: true } },
+    ])
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('failed')
+  })
+})
+
+describe('replayExecutionTraceEvents · task_list replay', () => {
+  // I-1 修复：replay switch 缺 task_list case → task 步标题退化为「批量生成任务」兜底
+  it('从 task_list + task_update 重建 task 步并保留 title（不再退化兜底）', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'task_list', data: { items: [{ id: 'plan-1', title: '起稿', status: 'running' }] } },
+      { type: 'task_update', data: { id: 'plan-1', status: 'done' } },
+    ])
+    const step = trace.steps.find((s) => s.kind === 'task')
+    expect(step?.label).toBe('生成「起稿」')
+    expect(step?.status).toBe('done')
+  })
+
+  it('task_list 多项各自建步且 status 非空时落 running', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'task_list', data: { items: [
+        { id: 'plan-1', title: '起稿', status: 'running' },
+        { id: 'plan-2', title: '配图', status: 'running' },
+      ] } },
+    ])
+    const steps = trace.steps.filter((s) => s.kind === 'task')
+    expect(steps).toHaveLength(2)
+    expect(steps[0]?.label).toBe('生成「起稿」')
+    expect(steps[1]?.label).toBe('生成「配图」')
+  })
+})

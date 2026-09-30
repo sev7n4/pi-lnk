@@ -24,10 +24,11 @@ import {
   applyTaskEvent,
   applyPollRecordToTask,
   emptyTaskProgress,
+  seedTaskProgressFromEvents,
   type AgentTaskProgressState,
 } from '@/components/agent/agentTaskProgress'
 import { useGenerationPolling, type GenerationPollTask } from '@/composables/useGenerationPolling'
-import { useAgentStream, formatPhaseLabel } from '@/composables/useAgentStream'
+import { useAgentStream } from '@/composables/useAgentStream'
 import {
   reconcileTaskProgress,
   shouldFinishTaskCard,
@@ -35,12 +36,13 @@ import {
   type CanvasNodeLike,
 } from '@/components/agent/taskProgressReconcile'
 import {
-  looksLikeConfirmTurn,
   pickAssistantForLatestUserTurn,
   shouldApplyReconciledAssistant,
 } from '@/components/agent/assistantReconcile'
 import ProductVisualDeliveryCard from '@/components/agent/ProductVisualDeliveryCard.vue'
 import AskUserCard from '@/components/agent/AskUserCard.vue'
+import ToolCallCard from '@/components/agent/ToolCallCard.vue'
+import { collapseToolCalls } from '@/components/agent/collapseToolCalls'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
 import AgentMacroSchemeCards from '@/components/agent/presentation/AgentMacroSchemeCards.vue'
@@ -99,10 +101,15 @@ import {
   createAgentThreadId,
   persistActiveThreadId,
   resolveBootstrapThreadId,
-  shouldPollRuntimeHealth,
   checkRuntimeHealthViaNest,
   RUNTIME_UNREACHABLE_SNIPPET,
+  RECONCILE_MAX_POLLS,
+  shouldKeepReconciling,
+  shouldInjectUnreachableSnippet,
 } from '@/components/agent/streamRecovery'
+// 注：shouldPollRuntimeHealth（streamRecovery.ts）已无 SideRail 调用方——P1#11 重连改造后
+// 旧 reconcile 唯一消费点被 thread-state 终态判定替代。函数 + 测试保留以备未来手动重连或
+// 别处复用；本期只删 SideRail 死 import（I-3 fix）。
 import ForceChoiceDialog, { type ForceChoiceKind } from '@/components/agent/ForceChoiceDialog.vue'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
 import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
@@ -1411,6 +1418,23 @@ async function refreshThreadCheckpoint() {
   }
 }
 
+/** P1#5/#7：assistant message metadata JSON 安全解析（畸形返回 undefined）。 */
+function parseMessageMetadataSafe(raw?: string): { executionEvents?: Array<{ type: string; data: unknown }> } | undefined {
+  if (!raw) return undefined
+  try {
+    return JSON.parse(raw) as { executionEvents?: Array<{ type: string; data: unknown }> }
+  } catch {
+    return undefined
+  }
+}
+
+/** P1#6 缩略图 url 源：canvasNodes 按 nodeId 查 url。 */
+function resolveCanvasNodeUrl(nodeId: string): string | undefined {
+  const node = props.canvasNodes?.find((n) => n.id === nodeId)
+  const url = (node?.data as { url?: string } | undefined)?.url
+  return typeof url === 'string' && url ? url : undefined
+}
+
 async function loadHistory() {
   agent.clear()
   taskProgress.value = emptyTaskProgress()
@@ -1427,6 +1451,22 @@ async function loadHistory() {
     const json = await res.json()
     if (json.data?.length) {
       agent.loadHistory(json.data)
+      // P1#5：最后一回合若有 task 事件（plan 标记派生），恢复任务卡进度
+      const msgs = json.data as Array<{ role: string; metadata?: string }>
+      const lastAssistantMsg = [...msgs].reverse().find((m) => m.role === 'assistant')
+      const meta = parseMessageMetadataSafe(lastAssistantMsg?.metadata)
+      const seeded = seedTaskProgressFromEvents(meta?.executionEvents ?? [])
+      if (seeded) taskProgress.value = seeded
+      // P1#7：最后一回合若有未答 ask_user 且之后无用户消息，恢复待答卡
+      const lastAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+      const hasUserAfter = msgs.slice(lastAssistantIdx + 1).some((m) => m.role === 'user')
+      const askCmd = (meta?.executionEvents ?? [])
+        .filter((e) => e.type === 'canvas_command')
+        .map((e) => e.data as { type?: string; questions?: typeof pendingAskUser.value })
+        .find((c) => c.type === 'ask_user' && c.questions?.length)
+      if (askCmd && !hasUserAfter) {
+        pendingAskUser.value = askCmd.questions!
+      }
     }
   } catch {
     ElMessage.warning('对话历史加载失败，请检查网络后刷新')
@@ -1823,13 +1863,14 @@ async function reconnectStream() {
     await reconcileLatestAssistant()
     emit('turnComplete')
 
-    const label = formatPhaseLabel(phase)
+    // PHASE_LABELS 已随 P2#10 退役：pi 链路 thread-state 不携带 LangGraph phase，
+    // 恢复提示不再插值阶段名（pi 路径下 label 恒为「未知」）
     recoveredPhaseHint.value =
       cancelled
         ? '服务已恢复。上一轮已停止，可发起新任务。'
         : json.data?.finished
         ? '服务已恢复。上一轮已完成，可继续新的指令。'
-        : `服务已恢复。当前阶段：${label}。请继续操作。`
+        : '服务已恢复。上一轮尚未完成，请继续操作。'
     pollTasksFromProgress()
   } catch {
     recoveredPhaseHint.value = '重连失败，请稍后再试'
@@ -1839,16 +1880,23 @@ async function reconnectStream() {
   }
 }
 
-const BUSY_TIP_SNIPPET = '上一轮仍在处理中'
-const EXEC_PROGRESS_SNIPPET = '出图成功'
-const COPY_WRITTEN_SNIPPET = '已将确认的主文案'
+/** P1#11：thread-state 安全拉取（reconcile 终态判定用）。 */
+async function fetchThreadStateSafe(): Promise<{ finished?: boolean | null } | null> {
+  try {
+    const token = localStorage.getItem('token')
+    const res = await fetch(
+      apiUrl(`/api/agent/thread-state?threadId=${encodeURIComponent(agentThreadId.value)}`),
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    const json = await res.json()
+    return (json?.data ?? null) as { finished?: boolean | null } | null
+  } catch {
+    return null
+  }
+}
 
-/** 流结束后用 DB 历史补齐（避免只看到 busy / 截断 / 被旧确认文案覆盖）。
- *  当检测到仍在生成中时，附加 runtime 健康轮询。 */
+/** 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。 */
 async function reconcileLatestAssistant() {
-  const localAssistantContent = () =>
-    [...agent.messages].reverse().find((m) => m.role === 'assistant')?.content?.trim() ?? ''
-
   const pull = async () => {
     const res = await fetch(
       apiUrl(
@@ -1870,51 +1918,30 @@ async function reconcileLatestAssistant() {
   }
 
   try {
-    let content = await pull()
-    const lastUser = [...agent.messages].reverse().find((m) => m.role === 'user')
-    const confirmTurn = lastUser ? looksLikeConfirmTurn(lastUser.content || '') : false
-    const effectiveContent = () => content ?? localAssistantContent()
-    // busy tip：首轮仍在写 DB；确认拆图：Nest 可能在 Vercel 断流后继续跑完
-    const shouldPoll =
-      effectiveContent().includes(BUSY_TIP_SNIPPET)
-      || (confirmTurn && !effectiveContent().includes(EXEC_PROGRESS_SNIPPET) && !effectiveContent().includes('自动出图'))
-    if (shouldPoll) {
-      let runtimeFailCount = 0
-      for (let i = 0; i < 36; i++) {
-        await new Promise((r) => setTimeout(r, 5_000))
-        content = await pull()
-        const active = effectiveContent()
-        if (
-          active
-          && !active.includes(BUSY_TIP_SNIPPET)
-          && (
-            active.includes(COPY_WRITTEN_SNIPPET)
-            || active.includes(EXEC_PROGRESS_SNIPPET)
-            || active.includes('自动出图')
-            || active.length > 80
-          )
-        ) {
-          scrollToBottom()
-          break
-        }
-        // Runtime health check (every 3rd poll, i.e. every 15s)
-        if (i > 0 && i % 3 === 0 && active && shouldPollRuntimeHealth(active)) {
-          const health = await checkRuntimeHealthViaNest()
-          if (!health || !health.ok) {
-            runtimeFailCount++
-            if (runtimeFailCount >= 2) {
-              const last = agent.messages[agent.messages.length - 1]
-              if (last?.role === 'assistant' && !last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
-                last.content += '\n\n⚠️ 生成服务暂时不可达，出图可能已中断。请稍后重试或新建对话。'
-              }
-              scrollToBottom()
-              break
-            }
-          } else {
-            runtimeFailCount = 0
-          }
-        }
+    await pull()
+    // 终态判定：finished → 停；未完成 → 每次拉取前先查 thread-state，上限 36×5s 兜底
+    // I-2 修复：thread-state 连续 null 达阈值（≈15s）→ 注入不可达告警并 break，
+    // 避免旧 reconcile 删除后失去 pi-runtime 宕机的可见反馈。
+    let consecutiveNulls = 0
+    for (let i = 0; i < RECONCILE_MAX_POLLS; i++) {
+      const st = await fetchThreadStateSafe()
+      if (st === null) {
+        consecutiveNulls++
+      } else {
+        consecutiveNulls = 0
       }
+      if (shouldInjectUnreachableSnippet(consecutiveNulls)) {
+        const last = agent.messages[agent.messages.length - 1]
+        if (last?.role === 'assistant' && !last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
+          last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请点击下方「重连」继续。`
+          scrollToBottom()
+        }
+        break
+      }
+      if (!shouldKeepReconciling(st, i)) break
+      await new Promise((r) => setTimeout(r, 5_000))
+      await pull()
+      scrollToBottom()
     }
   } catch {
     // ignore
@@ -1937,8 +1964,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       break
     }
     case 'tool_result': {
-      const d = event.data as { name: string; toolCallId?: string; result: unknown }
-      agent.endToolCall(d.toolCallId, d.name, d.result)
+      const d = event.data as { name: string; toolCallId?: string; result: unknown; isError?: boolean }
+      agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)
       break
     }
     case 'canvas_action':
@@ -2467,6 +2494,7 @@ defineExpose({
                 <AgentCanvasOutputs
                   v-if="msg.role === 'assistant' && (assistantOutputsById.get(msg.id)?.length ?? 0) > 0"
                   :outputs="assistantOutputsById.get(msg.id) ?? []"
+                  :resolve-node-url="resolveCanvasNodeUrl"
                   @focus-node="onFocusNode($event)"
                   @focus-all="onFocusAll($event)"
                 />
@@ -2485,7 +2513,11 @@ defineExpose({
                   @focus-all="onFocusAll($event)"
                 />
                 <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
-                  <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[var(--neo-text-secondary)]">⚙ {{ tc.name }}<template v-if="tc.argsSummary"> · {{ tc.argsSummary }}</template></div>
+                  <ToolCallCard
+                    v-for="(cc, i) in collapseToolCalls(msg.toolCalls)"
+                    :key="i"
+                    :call="cc"
+                  />
                 </div>
                 <div
                   v-if="canShowMessageActions(msg)"

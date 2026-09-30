@@ -164,14 +164,16 @@ CI 通过且用户验收后合并；合并期间遵守部署串行纪律（队�
 
 ## 9. 有意不支持 / 已退役（本期登记）
 
-| 项 | 结论 | 依据 |
-|---|---|---|
-| pi-runtime 侧 phase/task 事件生产者 | 有意不支持，留 P3 立项 | runtime 构建部署重（no-cache >10min）；前端聚合已满足当前叙事需求 |
-| 绘图澄清工具（SVG/图表生成） | 有意不支持，留 P3 | 同上，需 runtime 新增工具 |
-| thinking 逐字流 | 有意不支持，待 runtime 事件打通后升级 | 本期 b 方案已覆盖「可审计」诉求 |
-| 产物弹层画廊 | 有意不支持 | 画布即画廊（focus 定位已可达） |
-| gen_progress 长任务进度行 | 已退役（删除） | 轮询链路已覆盖；双轨徒增维护面 |
-| prisma genProgress model | 保留但无消费方 | 迁移成本>收益，随下次 schema 变更再清理 |
+| 项 | 结论 | 依据 | 已执行 |
+|---|---|---|---|
+| pi-runtime 侧 phase/task 事件生产者 | 有意不支持，留 P3 立项 | runtime 构建部署重（no-cache >10min）；前端聚合已满足当前叙事需求 | — |
+| 绘图澄清工具（SVG/图表生成） | 有意不支持，留 P3 | 同上，需 runtime 新增工具 | — |
+| thinking 逐字流 | 有意不支持，待 runtime 事件打通后升级 | 本期 b 方案已覆盖「可审计」诉求 | — |
+| 产物弹层画廊 | 有意不支持 | 画布即画廊（focus 定位已可达） | — |
+| gen_progress 长任务进度行 | 已退役（删除） | 轮询链路已覆盖；双轨徒增维护面 | ✓ 实施前 grep 全仓 0 命中（端点/契约/reducer 全已不在） |
+| prisma genProgress model | 保留但无消费方 | 迁移成本>收益，随下次 schema 变更再清理 | — |
+| AgentPanel.vue / AgentFloatingWindow.vue | 已退役（删除） | 三入口漂移持续劣化源；全仓 0 引用 | ✓ git rm 完成 |
+| PHASE_LABELS + formatPhaseLabel | 已退役（删除） | pi 路径无 phase_hint 事件、消费方 0；进度叙事由 phaseAggregator 承担 | ✓ useAgentStream.ts 删除常量 + 测试块；76/76 测试绿 |
 
 ## 10. 风险
 
