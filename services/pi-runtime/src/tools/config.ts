@@ -3,6 +3,7 @@ import { NestClient, loadNestConfig } from "./nest-client.js";
 import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
+import type { PendingToolRegistry } from "../pending-registry.js";
 
 let warned = false;
 
@@ -22,8 +23,12 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
 	return resolveToolsWithClient(metrics).tools;
 }
 
-/** B-5：连同 client 一并返回——HITL Gate（checkGenerationGate）需要复用同一实例查画布 SSOT。 */
-export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; client: NestClient | null } {
+/** B-5：连同 client 一并返回——HITL Gate（checkGenerationGate）需要复用同一实例查画布 SSOT。
+ * deps.registry（2026-09-30-ask-user-blocking B-1）：阻塞式确认类工具的等待注册表，透传给 ask_user。 */
+export function resolveToolsWithClient(
+	metrics: Metrics,
+	deps: { registry?: PendingToolRegistry } = {},
+): { tools: LnkpiTool[]; client: NestClient | null; registry: PendingToolRegistry | null } {
 	const cfg = loadNestConfig();
 	if (!cfg) {
 		if (!warned) {
@@ -32,7 +37,7 @@ export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; 
 				"[pi-runtime] NEST_BASE_URL/NEST_SERVICE_TOKEN not set — canvas tools disabled (pure-text mode)",
 			);
 		}
-		return { tools: [], client: null };
+		return { tools: [], client: null, registry: deps.registry ?? null };
 	}
 	const client = new NestClient({
 		...cfg,
@@ -48,7 +53,7 @@ export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; 
 		...buildCanvasReadTools(client),
 		...buildCanvasWriteTools(client),
 		...buildUiCommandTools(metrics),
-		...buildAskUserTools(metrics),
+		...buildAskUserTools(metrics, deps.registry),
 		...buildArrangeNodesTools(metrics),
 		...buildGenerationTools(client),
 		...(hasTavily ? buildWebTools() : []),
@@ -57,5 +62,5 @@ export function resolveToolsWithClient(metrics: Metrics): { tools: LnkpiTool[]; 
 		...buildMemoryTools(client),
 		...buildRemoveEdgesTools(client),
 	];
-	return { tools, client };
+	return { tools, client, registry: deps.registry ?? null };
 }

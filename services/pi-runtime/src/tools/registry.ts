@@ -2,6 +2,7 @@
 import type { NestClient } from "./nest-client.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
+import type { PendingToolRegistry } from "../pending-registry.js";
 import { createCanvasReadTools } from "./canvas-read.js";
 import { createCanvasWriteTools } from "./canvas-write.js";
 import { createUiCommandTools } from "./ui-command.js";
@@ -46,9 +47,10 @@ export function buildUiCommandTools(metrics: Metrics): LnkpiTool[] {
 	return createUiCommandTools(metrics);
 }
 
-/** ask_user 批次：向用户提问/选项卡工具（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md，D1-D5 已拍板）。 */
-export function buildAskUserTools(metrics: Metrics): LnkpiTool[] {
-	return createAskUserTools(metrics);
+/** ask_user 批次：向用户提问/选项卡工具（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md，D1-D5 已拍板）。
+ * registry 可选注入（2026-09-30-ask-user-blocking B-1）：注入且开关开 → 阻塞分支。 */
+export function buildAskUserTools(metrics: Metrics, registry?: PendingToolRegistry): LnkpiTool[] {
+	return createAskUserTools(metrics, registry);
 }
 
 /** arrange_nodes 批次：自动排列节点工具（spec docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md，D1-D5 已拍板）。 */
