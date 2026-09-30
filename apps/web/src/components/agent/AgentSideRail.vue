@@ -779,19 +779,26 @@ async function onAskSubmit(payload: { answers: Record<string, string[]>; skipped
   pendingAskUser.value = [] // 先清卡防双击双发（幂等端点兜底，但 UI 及时收敛）
   if (!callId) {
     // blocking off 旧路径（Task 2 契约：无 callId 卡片回填为下一轮 user message）——
-    // 答案值拼回文本复用 sendMessage，零新建回流
+    // 答案值拼回文本复用 sendMessage，零新建回流；answers 为空（skip）= 用户放弃作答，
+    // v1 语义与 cancel 同义，补发「取消」防模型永远等不到信号（final fix I-2）
     const text = Object.values(payload.answers).flat().map((v) => v.trim()).filter(Boolean).join(' ')
-    if (text) await sendMessage(text)
+    await sendMessage(text || '取消')
     return
   }
   try {
-    await submitAnswers({
+    const result = await submitAnswers({
       threadId: agentThreadId.value,
       sessionId: props.sessionId,
       callId,
       answers: payload.answers,
       answerId: crypto.randomUUID(),
     })
+    if (result.deduped) {
+      // 迟到回答（callId 已 settle，如刷新恢复出的卡片）：spec §5.2 降级为普通
+      // user message 走新 turn，不得静默吞掉用户答案（final fix I-1）
+      const text = Object.values(payload.answers).flat().map((v) => v.trim()).filter(Boolean).join(' ')
+      if (text) await sendMessage(text)
+    }
   } catch {
     pendingAskUser.value = snapshot // 失败恢复卡（幂等端点保证重试安全）
     ElMessage.error('提交失败，请重试')
@@ -805,15 +812,20 @@ async function onAskCancel() {
   const snapshot = pendingAskUser.value
   const callId = snapshot[0]?.callId
   pendingAskUser.value = []
-  if (!callId) return // 无 callId 的 v1 卡：行为不变，仅收起
+  if (!callId) {
+    // 无 callId 的 v1 卡：对齐 base 行为清卡后发「取消」，模型才能收到放弃信号（final fix I-2）
+    void sendMessage('取消')
+    return
+  }
   try {
-    await submitAnswers({
+    const result = await submitAnswers({
       threadId: agentThreadId.value,
       sessionId: props.sessionId,
       callId,
       answers: {},
       answerId: crypto.randomUUID(),
     })
+    if (result.deduped) return // cancel 空 answers 迟到 = pending 已被别的路径收口，仅收起不发消息（final fix I-1）
   } catch {
     pendingAskUser.value = snapshot
     ElMessage.error('提交失败，请重试')
@@ -1711,13 +1723,18 @@ async function sendMessage(message: string) {
     pendingAskUser.value = []
     if (target.callId) {
       try {
-        await submitAnswers({
+        const result = await submitAnswers({
           threadId: agentThreadId.value,
           sessionId: props.sessionId,
           callId: target.callId,
           answers: { [target.id]: [message] },
           answerId: crypto.randomUUID(),
         })
+        if (result.deduped) {
+          // 迟到回答（callId 已 settle）：spec §5.2 降级为普通 user message 走新 turn
+          //（final fix I-1）；pending 已清，递归进入正常消息流程不再被拦截
+          await sendMessage(message)
+        }
       } catch {
         pendingAskUser.value = askSnapshot // 失败恢复卡（幂等端点保证重试安全）
         ElMessage.error('提交失败，请重试')
