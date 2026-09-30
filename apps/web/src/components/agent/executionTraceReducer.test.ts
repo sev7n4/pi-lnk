@@ -201,3 +201,29 @@ describe('applyToolCall isError（P0 工具失败标红）', () => {
     expect(step?.status).toBe('failed')
   })
 })
+
+describe('replayExecutionTraceEvents · task_list replay', () => {
+  // I-1 修复：replay switch 缺 task_list case → task 步标题退化为「批量生成任务」兜底
+  it('从 task_list + task_update 重建 task 步并保留 title（不再退化兜底）', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'task_list', data: { items: [{ id: 'plan-1', title: '起稿', status: 'running' }] } },
+      { type: 'task_update', data: { id: 'plan-1', status: 'done' } },
+    ])
+    const step = trace.steps.find((s) => s.kind === 'task')
+    expect(step?.label).toBe('生成「起稿」')
+    expect(step?.status).toBe('done')
+  })
+
+  it('task_list 多项各自建步且 status 非空时落 running', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'task_list', data: { items: [
+        { id: 'plan-1', title: '起稿', status: 'running' },
+        { id: 'plan-2', title: '配图', status: 'running' },
+      ] } },
+    ])
+    const steps = trace.steps.filter((s) => s.kind === 'task')
+    expect(steps).toHaveLength(2)
+    expect(steps[0]?.label).toBe('生成「起稿」')
+    expect(steps[1]?.label).toBe('生成「配图」')
+  })
+})

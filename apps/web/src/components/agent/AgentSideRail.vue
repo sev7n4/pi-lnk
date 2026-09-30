@@ -102,10 +102,15 @@ import {
   createAgentThreadId,
   persistActiveThreadId,
   resolveBootstrapThreadId,
-  shouldPollRuntimeHealth,
   checkRuntimeHealthViaNest,
   RUNTIME_UNREACHABLE_SNIPPET,
+  RECONCILE_MAX_POLLS,
+  shouldKeepReconciling,
+  shouldInjectUnreachableSnippet,
 } from '@/components/agent/streamRecovery'
+// 注：shouldPollRuntimeHealth（streamRecovery.ts）已无 SideRail 调用方——P1#11 重连改造后
+// 旧 reconcile 唯一消费点被 thread-state 终态判定替代。函数 + 测试保留以备未来手动重连或
+// 别处复用；本期只删 SideRail 死 import（I-3 fix）。
 import ForceChoiceDialog, { type ForceChoiceKind } from '@/components/agent/ForceChoiceDialog.vue'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
 import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
@@ -1915,8 +1920,24 @@ async function reconcileLatestAssistant() {
   try {
     await pull()
     // 终态判定：finished → 停；未完成 → 每次拉取前先查 thread-state，上限 36×5s 兜底
+    // I-2 修复：thread-state 连续 null 达阈值（≈15s）→ 注入不可达告警并 break，
+    // 避免旧 reconcile 删除后失去 pi-runtime 宕机的可见反馈。
+    let consecutiveNulls = 0
     for (let i = 0; i < RECONCILE_MAX_POLLS; i++) {
       const st = await fetchThreadStateSafe()
+      if (st === null) {
+        consecutiveNulls++
+      } else {
+        consecutiveNulls = 0
+      }
+      if (shouldInjectUnreachableSnippet(consecutiveNulls)) {
+        const last = agent.messages[agent.messages.length - 1]
+        if (last?.role === 'assistant' && !last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
+          last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请点击下方「重连」继续。`
+          scrollToBottom()
+        }
+        break
+      }
       if (!shouldKeepReconciling(st, i)) break
       await new Promise((r) => setTimeout(r, 5_000))
       await pull()

@@ -489,6 +489,19 @@ export function replayExecutionTraceEvents(
       case 'task_update':
         applyTaskUpdate(trace, event.data as Parameters<typeof applyTaskUpdate>[1])
         break
+      case 'task_list': {
+        // I-1 修复：replay switch 缺 task_list case → task 步标题退化为「批量生成任务」兜底。
+        // 遍历 items 用 applyTaskUpdate 建 running 步并传 title；后续 task_update 通过 id 合并状态。
+        const d = event.data as { items?: Array<{ id?: string; title?: string; status?: string }> }
+        for (const item of d.items ?? []) {
+          applyTaskUpdate(trace, {
+            id: item.id ?? '',
+            status: item.status ?? 'running',
+            title: item.title,
+          })
+        }
+        break
+      }
       case 'error':
         applyStructuredError(
           trace,

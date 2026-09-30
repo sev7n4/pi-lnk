@@ -31,6 +31,17 @@ export function shouldKeepReconciling(
 }
 
 /**
+ * I-2 修复：reconcile 循环内 fetchThreadStateSafe 连续返回 null 达阈值 → 判定 pi-runtime 不可达。
+ * 3 次 ≈ 15s（每次 fetch 失败约 5s timeout）。达阈值后由调用方注入 RUNTIME_UNREACHABLE_SNIPPET 并 break，
+ * 复刻 Task 11 前旧 reconcile 在 30s 后注入告警的行为，避免长时间静默轮询。
+ */
+export const RECONCILE_NULL_THRESHOLD = 3
+
+export function shouldInjectUnreachableSnippet(consecutiveNulls: number): boolean {
+  return consecutiveNulls >= RECONCILE_NULL_THRESHOLD
+}
+
+/**
  * Thread suffix for pi-runtime threads（老 LangGraph runtime 已退役，thread 语义保留）。
  * crypto.randomUUID requires a secure context (HTTPS/localhost); production CVM is HTTP.
  */

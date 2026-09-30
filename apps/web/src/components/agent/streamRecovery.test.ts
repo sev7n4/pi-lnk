@@ -10,6 +10,8 @@ import {
   checkRuntimeHealthViaNest,
   isStreamStale,
   shouldKeepReconciling,
+  shouldInjectUnreachableSnippet,
+  RECONCILE_NULL_THRESHOLD,
   STREAM_STALE_MS,
 } from './streamRecovery'
 import { lastThreadStorageKey } from '@/utils/formatSessionTime'
@@ -123,6 +125,19 @@ describe('shouldPollRuntimeHealth', () => {
 
   it('returns false when both busy and done indicators present', () => {
     expect(shouldPollRuntimeHealth('上一轮仍在处理中，但出图成功')).toBe(false)
+  })
+})
+
+describe('shouldInjectUnreachableSnippet', () => {
+  // I-2 修复：reconcile 循环 thread-state 连续 null 达阈值 → 注入 RUNTIME_UNREACHABLE_SNIPPET 并 break
+  it('阈值之下不注入（仍可恢复）', () => {
+    expect(shouldInjectUnreachableSnippet(0)).toBe(false)
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD - 1)).toBe(false)
+  })
+
+  it('达阈值或超过注入（pi-runtime 不可达）', () => {
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD)).toBe(true)
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD + 2)).toBe(true)
   })
 })
 
