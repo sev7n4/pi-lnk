@@ -1,6 +1,6 @@
 # ask_user / propose_generation 阻塞式改造 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** ask_user 与 propose_generation 改为阻塞式（agent 在工具内等待用户回答/画布确认，同 turn 续行），带 30min 超时降级、env 回退开关、多问题卡片点选与提交分离交互。
 
@@ -61,7 +61,7 @@ spec 隐含但无任务测试直接覆盖、最易咬到使用者的输入/条�
   ```
   runtime-config 新增：`askUserBlocking(env): boolean`（parseBool(env.ASK_USER_BLOCKING, true)）、`askUserTimeoutMs(env): number`（parsePositiveInt(env.ASK_USER_TIMEOUT_MS, 1_800_000)）
 
-- [ ] **Step 1: 写失败测试（node:test 风格，对齐 gate 测试惯例）**
+- [x] **Step 1: 写失败测试（node:test 风格，对齐 gate 测试惯例）**
 
 ```ts
 // services/pi-runtime/src/pending-registry.test.ts
@@ -147,12 +147,12 @@ describe("PendingToolRegistry", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/pending-registry.test.ts 2>&1 | tail -5`
 Expected: FAIL（Cannot find module './pending-registry.js'）
 
-- [ ] **Step 3: 实现 PendingToolRegistry**
+- [x] **Step 3: 实现 PendingToolRegistry**
 
 ```ts
 // services/pi-runtime/src/pending-registry.ts
@@ -256,12 +256,12 @@ export class PendingToolRegistry {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/pending-registry.test.ts 2>&1 | tail -5`
 Expected: 全部 pass
 
-- [ ] **Step 5: runtime-config.ts 追加配置（含测试）**
+- [x] **Step 5: runtime-config.ts 追加配置（含测试）**
 
 在 `runtime-config.ts` 末尾追加（不进 RuntimeConfig 接口——这两个配置由工具层消费，不归 SessionManager）：
 
@@ -293,7 +293,7 @@ it("askUserTimeoutMs: 缺省 30min，非法回退，小数截断", () => {
 });
 ```
 
-- [ ] **Step 6: 跑测试 + 提交**
+- [x] **Step 6: 跑测试 + 提交**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/pending-registry.test.ts src/runtime-config.test.ts 2>&1 | tail -4`
 Expected: 全部 pass（node --test 多文件无 137 问题）
@@ -319,7 +319,7 @@ git commit -m "feat(pi-runtime): PendingToolRegistry + ASK_USER_BLOCKING/TIMEOUT
   - ask_user 卡片 payload 升级：canvas_command `[{type:"ask_user", callId: <toolCallId>, questions}]`（**新增 callId 字段**，前端 Task 6 依赖）
   - config.ts：`resolveToolsWithClient(metrics, deps?: { registry?: PendingToolRegistry })` 返回值追加 `registry: PendingToolRegistry | null`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 // services/pi-runtime/src/tools/ask-user.test.ts（文件已存在则追加 describe；node:test 风格）
@@ -402,12 +402,12 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 
 实现说明（写测试时同步确认）：`createAskUserTools` 第三参 `{ timeoutMs?: number }` 供测试注入短超时；生产路径读 `askUserTimeoutMs()`。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/tools/ask-user.test.ts 2>&1 | tail -5`
 Expected: FAIL（createAskUserTools 不接受第二参 / 无 callId 字段）
 
-- [ ] **Step 3: 重写 ask-user.ts**
+- [x] **Step 3: 重写 ask-user.ts**
 
 ```ts
 // services/pi-runtime/src/tools/ask-user.ts —— execute 替换为：
@@ -484,7 +484,7 @@ export function createAskUserTools(
 
 ⚠️ 落地注意（实现者必读）：execute 真实签名是 `async (id, p, _u, tc: LnkpiToolContext, _invocation, context) => {...}`（参照 generation.ts:67-74）——registry 键必须用 **`tc.sessionId`**（画布 id），不是 id。上面代码块的 `waitForUser(id, id, ...)` 是占位示意，落地时改为 `waitForUser(tc.sessionId, id, "ask_user", timeoutMs)`，测试中相应以 `{ sessionId: "canvas-1" }` 作 tc。同时 canvas_command payload 改为 `[{ type: "ask_user", callId: id, questions: p.questions }]`。
 
-- [ ] **Step 4: 跑测试确认通过 + config.ts 接线**
+- [x] **Step 4: 跑测试确认通过 + config.ts 接线**
 
 `config.ts` 改动：
 
@@ -505,7 +505,7 @@ export function resolveToolsWithClient(
 Run: `cd services/pi-runtime && node --import tsx --test src/tools/ask-user.test.ts src/tools/config.test.ts 2>&1 | tail -5`
 Expected: 全部 pass（config.test.ts 的工具计数断言若因 registry 参数受影响，按「无 TAVILY=33/有=35」基线核对——本任务不增删工具数量，计数应不变）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add services/pi-runtime/src/tools/ask-user.ts services/pi-runtime/src/tools/ask-user.test.ts services/pi-runtime/src/tools/config.ts
@@ -531,7 +531,7 @@ git commit -m "feat(pi-runtime): ask_user 阻塞分支——等待用户作答�
   - `SessionManager.setPendingRegistry(registry: PendingToolRegistry): void`（index.ts 装配用，避免改长构造签名）
   - AppDeps 增 `registry?: PendingToolRegistry`
 
-- [ ] **Step 1: 写失败测试（app.test.ts 追加，fastify inject 风格对齐既有用例）**
+- [x] **Step 1: 写失败测试（app.test.ts 追加，fastify inject 风格对齐既有用例）**
 
 ```ts
 // 追加到 app.test.ts（node:test + app.inject；mock manager 模式对齐既有用例——
@@ -572,12 +572,12 @@ describe("GET /sessions/:id/pending", () => {
 
 （`mockManagerWithCanvasId` 若无现成 fixture 则在测试文件顶部新建：`{ getCanvasSessionId: (k: string) => k === "thread-1" ? "canvas-1" : k, count: () => 0, listSkills: () => [] } as unknown as SessionManager`。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/app.test.ts 2>&1 | tail -5`
 Expected: FAIL（404 路由不存在）
 
-- [ ] **Step 3: 实现端点**
+- [x] **Step 3: 实现端点**
 
 ```ts
 // app.ts —— AppDeps 增 registry?: PendingToolRegistry；在 /abort 路由后追加：
@@ -606,12 +606,12 @@ app.get<{ Params: { sessionId: string } }>("/sessions/:sessionId/pending", async
 });
 ```
 
-- [ ] **Step 4: 跑端点测试确认通过**
+- [x] **Step 4: 跑端点测试确认通过**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/app.test.ts 2>&1 | tail -4`
 Expected: 全部 pass
 
-- [ ] **Step 5: abort 联动 + sweeper 回归**
+- [x] **Step 5: abort 联动 + sweeper 回归**
 
 session-manager.ts 类内追加公开方法 + abort() 改造：
 
@@ -652,7 +652,7 @@ it("阻塞等待中的会话（prompting=true + registry pending）不被 TTL �
 Run: `cd services/pi-runtime && node --import tsx --test src/app.test.ts src/session-sweeper.test.ts 2>&1 | tail -4`
 Expected: 全部 pass
 
-- [ ] **Step 6: index.ts 装配 + 提交**
+- [x] **Step 6: index.ts 装配 + 提交**
 
 ```ts
 // index.ts：
@@ -688,7 +688,7 @@ git commit -m "feat(pi-runtime): /answers（幂等）+/pending 端点 + abort �
   - `GenerationGateStore.markProposed(sessionId, nodeId, opts?: {confirmed?: boolean})`；`wasProposedThisTurn` 对 confirmed 记录返回 **false**（放行同 turn run_*，SSOT pending_confirm 校验兜底）
   - `buildCanvasWriteTools(client: NestClient, registry?: PendingToolRegistry)`
 
-- [ ] **Step 1: 写 gate 失败测试（generation-gate.test.ts 追加）**
+- [x] **Step 1: 写 gate 失败测试（generation-gate.test.ts 追加）**
 
 ```ts
 test("confirmed 提议放行同 turn run_*（阻塞确认 = 视同跨轮，Review Focus 3）", async () => {
@@ -710,7 +710,7 @@ test("未 confirmed 提议（B-5 off 路径）仍拦同轮自批（现行为不�
 });
 ```
 
-- [ ] **Step 2: 跑 gate 测试确认失败 → 实现**
+- [x] **Step 2: 跑 gate 测试确认失败 → 实现**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/gate/generation-gate.test.ts 2>&1 | tail -4`（第一条 FAIL）
 
@@ -736,7 +736,7 @@ wasProposedThisTurn(sessionId: string, nodeId: string): boolean {
 
 Run: `cd services/pi-runtime && node --import tsx --test src/gate/generation-gate.test.ts 2>&1 | tail -4`（全 pass）
 
-- [ ] **Step 3: 写 propose 阻塞失败测试（canvas-write.test.ts 追加）**
+- [x] **Step 3: 写 propose 阻塞失败测试（canvas-write.test.ts 追加）**
 
 ```ts
 describe("propose_generation 阻塞确认（B-2）", () => {
@@ -780,7 +780,7 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 
 Run: `cd services/pi-runtime && node --import tsx --test src/tools/canvas-write.test.ts 2>&1 | tail -4`（新用例 FAIL）
 
-- [ ] **Step 4: 实现 propose 阻塞确认**
+- [x] **Step 4: 实现 propose 阻塞确认**
 
 canvas-write.ts 改动：
 
@@ -858,7 +858,7 @@ config.ts：`buildCanvasWriteTools(client)` → `buildCanvasWriteTools(client, d
 
 Run: `cd services/pi-runtime && node --import tsx --test src/tools/canvas-write.test.ts src/gate/generation-gate.test.ts 2>&1 | tail -4`（全 pass）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add services/pi-runtime/src/tools/canvas-write.ts services/pi-runtime/src/tools/canvas-write.test.ts services/pi-runtime/src/gate/generation-gate.ts services/pi-runtime/src/gate/generation-gate.test.ts services/pi-runtime/src/index.ts services/pi-runtime/src/tools/config.ts
@@ -884,7 +884,7 @@ git commit -m "feat(pi-runtime): propose_generation 阻塞确认（轮询画布 
   - `AgentService.answerPiPending(input: {sessionId: string; threadId?: string | null; callId: string; answers: Record<string, string[]>; answerId?: string})`
   - HTTP：`POST /agent/sessions/:sessionId/answers`（Nest 全局前缀按既有部署形态，body 同上 + `threadId`）
 
-- [ ] **Step 1: client 失败测试（pi-runtime.client.test.ts 追加，模式对齐 abortRun 用例）**
+- [x] **Step 1: client 失败测试（pi-runtime.client.test.ts 追加，模式对齐 abortRun 用例）**
 
 ```ts
 it("answer POST /sessions/:id/answers，200 返回 {ok,deduped}", async () => { /* fetch mock：POST body 断言含 callId/answers；响应 {ok:true,deduped:false} */ });
@@ -894,7 +894,7 @@ it("getPending GET /sessions/:id/pending → {pending} | null", async () => { /*
 
 （fetch mock 写法对齐文件内 abortRun 的既有 mock；测试断言 URL 含 encodeURIComponent(sessionId)。）
 
-- [ ] **Step 2: 实现 client 方法**
+- [x] **Step 2: 实现 client 方法**
 
 ```ts
 // pi-runtime.client.ts —— abortRun 后追加：
@@ -926,7 +926,7 @@ async getPending(sessionId: string): Promise<{ callId: string; toolName: string 
 
 Run: `cd apps/server && pnpm exec vitest run src/agent/pi-runtime/pi-runtime.client.test.ts 2>&1 | tail -3`（RED→GREEN 全程）
 
-- [ ] **Step 3: controller + service**
+- [x] **Step 3: controller + service**
 
 agent.controller.ts（runs/cancel 之后）：
 
@@ -970,7 +970,7 @@ async answerPiPending(input: {
 
 ⚠️ 实现者注意：`piRuntimeUrl()` / `createPiRuntimeClient` 的真实名称以 ：391-392 abort 方法现有写法为准，不要发明新依赖注入形态。
 
-- [ ] **Step 4: service 测试（agent.service.pi-runtime.test.ts 追加）**
+- [x] **Step 4: service 测试（agent.service.pi-runtime.test.ts 追加）**
 
 ```ts
 it("answerPiPending：threadId 优先推导 sessionKey 并透传 callId/answers", async () => {
@@ -982,7 +982,7 @@ it("answerPiPending：无 threadId 回落 sessionId", async () => { /* 首参 = 
 Run: `cd apps/server && pnpm exec vitest run src/agent/agent.service.pi-runtime.test.ts src/agent/pi-runtime/pi-runtime.client.test.ts 2>&1 | tail -3`（单文件串行亦可）
 Expected: 全部 pass
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/server/src/agent/pi-runtime/pi-runtime.client.ts apps/server/src/agent/pi-runtime/pi-runtime.client.test.ts apps/server/src/agent/agent.controller.ts apps/server/src/agent/agent.service.ts apps/server/src/agent/agent.service.pi-runtime.test.ts
@@ -1007,7 +1007,7 @@ git commit -m "feat(server): /agent/sessions/:id/answers 透传端点（sessionK
   - `agent.submitAnswers(threadId, sessionId, callId, answers, answerId?): Promise<{ok, deduped}>`
   - `AgentSideRail` 状态：`pendingAskUser` 元素升级为 `{ callId: string; id: string; question: string; options: ...; multiSelect?; allowOther? }[]`；`onAskSubmit(answers)`；输入框拦截（pending 时自由文本 → 首个未答问题）
 
-- [ ] **Step 1: 写 AskUserCard 失败测试（AskUserCard.test.ts）**
+- [x] **Step 1: 写 AskUserCard 失败测试（AskUserCard.test.ts）**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -1051,7 +1051,7 @@ describe('AskUserCard（B-6 点选与提交分离）', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败 → 重构 AskUserCard.vue**
+- [x] **Step 2: 跑测试确认失败 → 重构 AskUserCard.vue**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/AskUserCard.test.ts 2>&1 | tail -5`（FAIL）
 
@@ -1100,7 +1100,7 @@ function confirmMulti(q: AskUserQuestion) { // 多问题卡内 multiSelect 确�
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/AskUserCard.test.ts 2>&1 | tail -3`（GREEN）
 
-- [ ] **Step 3: AgentSideRail 接线 + agent store submitAnswers**
+- [x] **Step 3: AgentSideRail 接线 + agent store submitAnswers**
 
 stores/agent.ts（或请求层模块，以 sendMessage 的 fetch 封装所在为准）：
 
@@ -1168,12 +1168,12 @@ it("ask_user canvas_command 透传 callId（B-6 前端提交依据）", () => { 
 
 **刷新恢复**：P1-7 已把 questions 落 metadata.executionEvents——确认落盘点把 `callId` 一并写入（`agent.service.ts` ask_user 元数据组装处），恢复路径读出 callId 填回 `pendingAskUser`（测试：`agent.service.messages.test.ts` 或 pi-events.test.ts 按现有 P1-7 用例模式追加 callId 断言）。
 
-- [ ] **Step 4: 跑 web + server 相关测试**
+- [x] **Step 4: 跑 web + server 相关测试**
 
 Run: `cd apps/web && pnpm exec vitest run src/components/agent/AskUserCard.test.ts 2>&1 | tail -3 && cd ../../apps/server && pnpm exec vitest run src/agent/pi-runtime/pi-events.test.ts 2>&1 | tail -3`
 Expected: 全部 pass
 
-- [ ] **Step 5: vue-tsc 类型门 + 提交**
+- [x] **Step 5: vue-tsc 类型门 + 提交**
 
 Run: `cd apps/web && pnpm exec vue-tsc -b > /tmp/vue-tsc-blocking.log 2>&1; grep -c "error TS" /tmp/vue-tsc-blocking.log; grep "apps/web" /tmp/vue-tsc-blocking.log | head -5`
 Expected: apps/web 范围 0 错误（packages/agent 的 TS2307 是 worktree 环境噪声，与本任务无关）
@@ -1190,12 +1190,12 @@ git commit -m "feat(web+server): ask_user 卡片 B-6 点选与提交分离 + /an
 **Files:**
 - 无新代码；回归 + 文档状态收尾
 
-- [ ] **Step 1: pi-runtime 全量单测**
+- [x] **Step 1: pi-runtime 全量单测**
 
 Run: `cd services/pi-runtime && pnpm test > /tmp/pi-runtime-test.log 2>&1; grep -E "^# (pass|fail)" /tmp/pi-runtime-test.log`
 Expected: fail 0
 
-- [ ] **Step 2: server + web 相关文件回归（单文件串行）**
+- [x] **Step 2: server + web 相关文件回归（单文件串行）**
 
 ```bash
 cd apps/server && for f in src/agent/agent.service.pi-runtime.test.ts src/agent/pi-runtime/pi-events.test.ts src/agent/pi-runtime/pi-runtime.client.test.ts; do pnpm exec vitest run "$f" 2>&1 | grep -E "Tests +[0-9]+ (passed|failed)" | tail -1; done
@@ -1203,11 +1203,11 @@ cd ../../apps/web && for f in src/components/agent/AskUserCard.test.ts src/compo
 ```
 Expected: 全部 passed
 
-- [ ] **Step 3: spec figures 校验 + plan checkbox 回填 + 提交**
+- [x] **Step 3: spec figures 校验 + plan checkbox 回填 + 提交**
 
 ```bash
 cd /path/to/worktree && pnpm verify-spec-figures --file docs/superpowers/specs/2026-09-30-ask-user-blocking-design.md
-# 回填本 plan 全部 checkbox（Edit replace_all "- [ ]" → "- [x]"，git status 复核落盘）
+# 回填本 plan 全部 checkbox（Edit replace_all "- [x]" → "- [x]"，git status 复核落盘）
 git add docs/superpowers/plans/2026-09-30-ask-user-blocking.md && git commit -m "docs(plan): 回填阻塞式改造实现计划 checkbox"
 ```
 
