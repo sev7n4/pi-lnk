@@ -30,7 +30,11 @@ import {
 	withCancel,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { classifyCompactionError, decideCompaction } from "./compaction-check.js";
+import {
+	classifyCompactionError,
+	decideCompaction,
+	type CompactionOutcome,
+} from "./compaction-check.js";
 import type { Metrics } from "./metrics.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
@@ -156,6 +160,14 @@ const BUFFER_LIMIT = 500;
 
 /** 默认（也是唯一）对话 lane 名；换档等 lane 级操作必须落在与 prompt 同一条 lane 上。 */
 const MAIN_LANE = "main";
+
+/**
+ * run 后压缩（摘要 LLM 调用）的等待上限。
+ *
+ * 刻意不做成 env 旋钮：这是「防会话被永久卡死」的兜底值，调小会把正常长上下文摘要掐掉，
+ * 调大毫无收益；运维没有安全的取值区间，配错反而制造事故。
+ */
+const COMPACTION_MAX_WAIT_MS = 120_000;
 
 export type HarnessFactory = typeof AgentHarness.create;
 
@@ -659,7 +671,8 @@ export class SessionManager {
 	async sweepOnce(now = Date.now()): Promise<{ closed: string[]; removedFromDisk: string[] }> {
 		const closed: string[] = [];
 		for (const [key, entry] of [...this.sessions]) {
-			if (entry.prompting) continue;
+			// 压缩在途同样是 active operation：此刻回收会让摘要白跑一次（Closed）。
+			if (entry.prompting || entry.compacting) continue;
 			if (now - entry.lastActivityAt < this.config.sessionTtlMs) continue;
 			await this.destroyMemoryOnly(key);
 			closed.push(key);
@@ -792,7 +805,17 @@ export class SessionManager {
 					}
 					// 只有正常完成的那一轮才判定压缩：取消/出错的轮留到下一轮再说。
 					// 位置必须在 finally（会清 userAborted）之前，否则读不到用户的停止意愿。
-					if (result.ok) void this.maybeCompact(entry, lane).catch(() => {});
+					// fire-and-forget 的固有代价曾经咬过一次（漏 import 的 ReferenceError 被静默吞掉，
+					// 表现为「功能没生效」），故这里必须留痕，哪怕只是 console.warn。
+					if (result.ok) {
+						void this.maybeCompact(entry, lane).catch((err: unknown) => {
+							console.warn(
+								`[pi-runtime] post-run compaction hook failed: ${
+									err instanceof Error ? err.message : String(err)
+								}`,
+							);
+						});
+					}
 				})
 				.catch((err: unknown) => {
 					// 用户主动取消：不派发 error（否则重连补发 buffer 时会显示「出错了」的假警报）
@@ -837,27 +860,72 @@ export class SessionManager {
 	 * 因为 vendor Lane 同一时刻只容一个 active operation，放行会让请求静默落空（Critical #1）。
 	 */
 	private async maybeCompact(entry: SessionEntry, lane: AgentLane): Promise<void> {
-		// 用户按了停止：不再追加一次摘要类 LLM 调用（Review Focus #2）
-		if (entry.userAborted) return;
-		// 句柄可能已被 TTL 回收抢走；拿不到条目就当这一轮没到该压的时候，不报错。
-		const entries = await lane.findEntries(undefined, this.context).catch(() => []);
-		const decision = decideCompaction(entries, entry.contextWindow, this.config.compaction);
-		if (!decision.shouldRun) {
-			this.metrics?.observeCompactionSkip(decision.skipReason ?? "unknown");
-			return;
-		}
-		// 置位必须在 await lane.compact 之前：这里的语义与 prompt 的 TOCTOU 一样，
-		// 晚置位会留出一个「已在总结摘要、但会话看起来空闲」的窗口。
+		// 置位必须是第一条语句（Critical #2）：调用点在 `lane.prompt().then()` 内，同步段会在
+		// run 的 `.finally`（清 prompting）之前跑完；一旦把置位挪到某个 await 之后，就会出现
+		// 「run 已结束但压缩尚未接管」的空档，请求溜进去后撞 LaneBusy → 用户拿不到回答。
 		entry.compacting = true;
 		try {
-			const res = await lane.compact(undefined, this.context);
+			// 用户按了停止：不再追加一次摘要类 LLM 调用（Review Focus #2）
+			if (entry.userAborted) return;
+			// 顺序不可省略（Critical #3）：vendor 的 `getLastAssistantUsage` 把**末元素当最新**
+			// （compaction.ts:183），而 `lane.findEntries` 缺省 `newestFirst`（lane.ts:1906）——
+			// 两者方向相反。原样透传会让多轮会话取到**第一轮**的 usage，contextTokens 恒为几千，
+			// 压缩永不触发，而 skips_total{below_threshold} 照常累加（最危险的一类「假修好」）。
+			// `stopAtType: "compaction"` 与 vendor acceptCompaction 同构（lane.ts:703）：
+			// 只扫到上一个压缩点为止，避免长会话每轮全量读历史。
+			const entries = await lane
+				.findEntries({ order: "oldestFirst", stopAtType: "compaction" }, this.context)
+				.catch(() => []);
+			const decision = decideCompaction(entries, entry.contextWindow, this.config.compaction);
+			if (!decision.shouldRun) {
+				this.metrics?.observeCompactionSkip(decision.skipReason ?? "unknown");
+				return;
+			}
+			const res = await this.compactWithDeadline(lane, this.compactionMaxWaitMs);
 			// ok 分支刻意不计数：harness 成功时会自行下发 compaction_end(status=completed)，
 			// 由 attachEvents 的回调计 ok/error；这里再计一次会让 ok 翻倍、掩盖真实失败率
 			// （Review Focus #4）。失败路径不存在该事件，故必须在此补计。
-			if (!res.ok) this.metrics?.observeCompactionSkip(classifyCompactionError(res.error));
+			if (!res.ok) this.metrics?.observeCompactionSkip(res.reason);
 		} finally {
 			// 会话可能已在压缩期间被回收；布尔位无所谓，清掉即可。
+			// try/finally 覆盖整段（含跳过路径），保证不存在「永久 busy」的残留。
 			entry.compacting = false;
+		}
+	}
+
+	/**
+	 * 带 deadline 的 `lane.compact()`。
+	 *
+	 * 为什么必须有 deadline：摘要是一次真实 LLM 调用，且 vendor 侧会在失败时退避重试
+	 * （默认 3 次 + 指数退避），整体耗时不可控。若不设上限而它在途永不 settle，
+	 * `entry.compacting` 就永远不被 finally 清掉 —— 该会话此后 prompt/fork/create
+	 * **永久 409**，用户只能等进程重启。
+	 *
+	 * 用 `withCancel` 而非 `Promise.race`：race 只放开等待方，vendor 的 active operation
+	 * 仍在 lane 上占着（后续请求照样撞 LaneBusy）；取消 context 才能真正中断那次调用。
+	 */
+	/** 压缩 deadline 上限；**仅用于测试注入**（生产恒定 COMPACTION_MAX_WAIT_MS）。 */
+	compactionMaxWaitMs: number = COMPACTION_MAX_WAIT_MS;
+
+	private async compactWithDeadline(lane: AgentLane, maxWaitMs: number): Promise<
+		{ ok: true } | { ok: false; reason: CompactionOutcome }
+	> {
+		const bounded = withCancel(this.context);
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			bounded.cancel(new Error(`compaction exceeded ${maxWaitMs}ms`));
+		}, maxWaitMs);
+		try {
+			const res = await lane.compact(undefined, bounded.context);
+			if (res.ok) return { ok: true };
+			return { ok: false, reason: timedOut ? "timeout" : classifyCompactionError(res.error) };
+		} catch (err) {
+			// deadline 取消期外抛出（如 sweeper 抢走句柄）同样要归类；
+			// 超时取消则统一记为 timeout，避免被当成普通错误混入失败率。
+			return { ok: false, reason: timedOut ? "timeout" : classifyCompactionError(err) };
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 
@@ -983,8 +1051,11 @@ export class NotFoundError extends Error {
 
 /** 同键并发 prompt：会话常驻后同一 harness 上两个 run 会交错，一律拒绝（路由层映射 409）。 */
 export class BusyError extends Error {
+	readonly reason: "running" | "compacting";
+
 	constructor(id: string, reason: "running" | "compacting" = "running") {
 		super(`session busy (${reason}): ${id}`);
+		this.reason = reason;
 	}
 }
 

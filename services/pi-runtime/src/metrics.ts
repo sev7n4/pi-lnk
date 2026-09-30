@@ -112,8 +112,8 @@ export class Metrics {
 		this.compactionSkips.set(reason, (this.compactionSkips.get(reason) ?? 0) + 1);
 	}
 
-	/** 被拒的 prompt（当前只有 busy 一种）。 */
-	observePromptRejection(reason: "busy"): void {
+	/** 被拒的 prompt。busy_compacting = 压缩在途（短期可重试），与真并发 busy 分开观测。 */
+	observePromptRejection(reason: "busy" | "busy_compacting"): void {
 		this.promptRejections.set(reason, (this.promptRejections.get(reason) ?? 0) + 1);
 	}
 

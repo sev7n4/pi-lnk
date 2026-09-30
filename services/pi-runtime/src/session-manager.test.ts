@@ -763,6 +763,7 @@ describe("SessionManager 压缩 × 后续请求的竞争（reviewer Critical #1�
 			_resolve = r;
 		});
 		const mgr = managerWithBusyLane(busyAwareLane(release));
+		mgr.compactionMaxWaitMs = 50; // 本用例故意不让 compact 返回，缩短 deadline 以免拖长进程退出
 		await mgr.create("s-busy-compact", {});
 		await mgr.prompt("s-busy-compact", "第一轮");
 		await drain(); // 压缩已发起且仍在途（release 未 resolve）
@@ -773,5 +774,160 @@ describe("SessionManager 压缩 × 后续请求的竞争（reviewer Critical #1�
 		await assert.rejects(() => mgr.prompt("s-busy-compact", "第二轮"), BusyError);
 		await drain();
 		assert.deepEqual(events.filter((t) => t === "error"), []);
+	});
+
+	it("判定阶段（findEntries 尚未返回）也不放行新 prompt —— 置位必须早于第一个 await", async () => {
+		// Critical #2（C2）：置位若排在 await findEntries 之后，run 的 .finally 已经清了
+		// prompting，而 compressing 还没置上 —— 这中间会话对外完全空闲，请求会溜进去。
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const lane = {
+			prompt: async () => ({ ok: true, value: {} }),
+			findEntries: async () => {
+				await gate;
+				return [usageEntry(120_000)];
+			},
+			compact: async () => ({ ok: true, value: {} }),
+		};
+		const mgr = managerWithBusyLane(lane);
+		await mgr.create("s-busy-decide", {});
+		await mgr.prompt("s-busy-decide", "第一轮");
+		await drain(); // findEntries 仍挂起，压缩既未置位也未发起
+		await assert.rejects(() => mgr.prompt("s-busy-decide", "第二轮"), BusyError);
+		release();
+	});
+});
+
+describe("SessionManager 压缩 × 条目顺序（vendor findEntries 缺省倒序）", () => {
+	/**
+	 * vendor 的 `getLastAssistantUsage` 从 `entries[length-1]` 往前扫（**末元素视为最新**），
+	 * 而 `lane.findEntries` 的缺省 order 是 `newestFirst`（**首元素最新**，vendor lane.ts:1906）。
+	 * 两者方向相反 —— vendor 自己先 `.reverse()` 后才喂给 prepareCompaction（lane.ts:703-709）。原样透传会让多轮会话取到**第一轮**的 usage：contextTokens 恒为几千，
+	 * 压缩永不触发，而 skips_total{below_threshold} 照常累加（典型的「假修好」）。
+	 */
+	function usageEntry(totalTokens: number) {
+		return {
+			type: "message",
+			message: { role: "assistant", stopReason: "stop", usage: { totalTokens } },
+		} as never;
+	}
+
+	function managerWithBusyLane(lane: unknown) {
+		return new SessionManager(
+			[],
+			"",
+			(() => ({
+				models: {},
+				model: { id: "probe-model", contextWindow: 128_000 },
+				providerId: "probe",
+			})) as never,
+			(async () => ({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => lane,
+					close: async () => {},
+				},
+			})) as never,
+			undefined,
+			undefined,
+			{ ...testConfig(), compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 } },
+		);
+	}
+
+	it("多轮会话取到的是最近一轮的 usage（压缩确实触发）", async () => {
+		const calls: string[] = [];
+		// 按真实语义构造：oldestFirst → [旧, 新]；newestFirst → [新, 旧]。
+		// 若调用方忘了显式声明 order，这里就会返回倒序数组，等价于线上那个缺陷。
+		const chronological = [usageEntry(1_000), usageEntry(120_000)];
+		const mgr = managerWithBusyLane({
+			prompt: async () => ({ ok: true, value: {} }),
+			findEntries: async (q: { order?: string }) =>
+				q?.order === "oldestFirst" ? chronological : [...chronological].reverse(),
+			compact: async () => {
+				calls.push("compact");
+				return { ok: true, value: {} };
+			},
+		});
+		await mgr.create("s-order-multi", {});
+		await mgr.prompt("s-order-multi", "hi");
+		await new Promise<void>((r) => setImmediate(r));
+		// 修复前：取到的是倒序后的末元素 1_000 → below_threshold → 空数组
+		assert.deepEqual(calls, ["compact"]);
+	});
+
+	it("findEntries 查询形状：oldestFirst + stopAtType=compaction（与 vendor 同构）", async () => {
+		const queries: unknown[] = [];
+		const mgr = managerWithBusyLane({
+			prompt: async () => ({ ok: true, value: {} }),
+			findEntries: async (q: unknown) => {
+				queries.push(q);
+				return [usageEntry(1_000)];
+			},
+			compact: async () => ({ ok: true, value: {} }),
+		});
+		await mgr.create("s-order-query", {});
+		await mgr.prompt("s-order-query", "hi");
+		await new Promise<void>((r) => setImmediate(r));
+		assert.deepEqual(queries, [{ order: "oldestFirst", stopAtType: "compaction" }]);
+	});
+});
+
+describe("SessionManager 压缩 deadline（Important #2：会话不得被永久卡死）", () => {
+	function usageEntry(totalTokens: number) {
+		return {
+			type: "message",
+			message: { role: "assistant", stopReason: "stop", usage: { totalTokens } },
+		} as never;
+	}
+
+	function managerWithLane(lane: unknown, metrics?: Metrics) {
+		return new SessionManager(
+			[],
+			"",
+			(() => ({
+				models: {},
+				model: { id: "probe-model", contextWindow: 128_000 },
+				providerId: "probe",
+			})) as never,
+			(async () => ({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => lane,
+					close: async () => {},
+				},
+			})) as never,
+			undefined,
+			undefined,
+			{ ...testConfig(), compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 } },
+			undefined,
+			metrics,
+		);
+	}
+
+	it("摘要调用挂死时 deadline 兜底：compacting 归位 + 计 timeout skip", async () => {
+		const metrics = new Metrics();
+		// 忠实替身：只有 context 被 abort 才会 reject（模拟「上游连着但不返回」）
+		const lane = {
+			prompt: async () => ({ ok: true, value: {} }),
+			findEntries: async () => [usageEntry(120_000)],
+			compact: (_target: unknown, ctx: { abortSignal?: AbortSignal }) =>
+				new Promise<never>((_resolve, reject) => {
+					ctx?.abortSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+						once: true,
+					});
+				}),
+		};
+		const mgr = managerWithLane(lane, metrics);
+		mgr.compactionMaxWaitMs = 30; // 仅测试注入
+		await mgr.create("s-compact-hang", {});
+		await mgr.prompt("s-compact-hang", "hi");
+
+		await new Promise<void>((r) => setTimeout(r, 120));
+		// ① 指标：挂死的摘要被记为 timeout，而不是就此消失
+		assert.match(metrics.render(0, "test"), /pi_runtime_compaction_skips_total\{reason="timeout"\} 1/);
+		// ② 关键：会话没有被永久锁死，用户还能继续用
+		await assert.doesNotReject(() => mgr.prompt("s-compact-hang", "再来一轮"));
 	});
 });

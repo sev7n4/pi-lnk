@@ -17,7 +17,12 @@ import type { CompactionConfig } from "./runtime-config.js";
 /** 未触发压缩的理由；全部为「可容忍」，不进错误率。 */
 export type CompactionSkipReason = "disabled" | "no_window" | "no_usage" | "below_threshold";
 
-export type CompactionOutcome = "nothing_to_compact" | "lane_busy" | "closed" | "unknown";
+export type CompactionOutcome =
+	| "nothing_to_compact"
+	| "lane_busy"
+	| "closed"
+	| "timeout"
+	| "unknown";
 
 export interface CompactionDecision {
 	shouldRun: boolean;
