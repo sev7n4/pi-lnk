@@ -917,10 +917,16 @@ export class SessionManager {
 		// 压缩永不触发，而 skips_total{below_threshold} 照常累加（最危险的一类「假修好」）。
 		// `stopAtType: "compaction"` 与 vendor acceptCompaction 同构（lane.ts:703）：
 		// 只扫到上一个压缩点为止，避免长会话每轮全量读历史。
-		const entries = await lane
+		// 缺方法的守卫必须在**调用之前**：`lane.findEntries` 为 undefined 时同步抛 TypeError，
+		// 链式 `.catch` 接不住，异常会一路穿到调用点变成一行 console.warn —— 指标上什么都不留。
+		// 这与 F-01 同构：「看起来没报错、实际从未压缩」，是本次要根治的形态。
+		if (typeof lane.findEntries !== "function") return "lane_unavailable";
+		const scanned = await lane
 			.findEntries({ order: "oldestFirst", stopAtType: "compaction" }, context)
-			.catch(() => []);
-		const decision = decideCompaction(entries, entry.contextWindow, this.config.compaction);
+			.then((entries) => ({ ok: true as const, entries }), () => ({ ok: false as const }));
+		// 扫盘失败 ≠ 用量没超阈值：合并成一个 label 就等于放弃了「扫盘有没成功」这个信号。
+		if (!scanned.ok) return "entries_unavailable";
+		const decision = decideCompaction(scanned.entries, entry.contextWindow, this.config.compaction);
 		if (!decision.shouldRun) return decision.skipReason ?? "unknown";
 		try {
 			const res = await lane.compact(undefined, context);

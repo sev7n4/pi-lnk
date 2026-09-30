@@ -698,6 +698,52 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 		await drain();
 		assert.match(metrics.render(0, "test"), /pi_runtime_compaction_skips_total\{reason="closed"\} 1/);
 	});
+
+	it("lane 缺 findEntries 时计 lane_unavailable，而不是被静默吞成「一切正常」", async () => {
+		// 与 F-01 同构的「假修好」风险：`.catch(() => [])` 会把 TypeError（替身缺失 /
+		// 未来 vendor 改名）吞成空条目 → 判定 below_threshold，指标全绿而压缩从不触发。
+		// 缺方法时必须是**显式 skip 理由**，让运营能从指标上看出链路断了。
+		const metrics = new Metrics();
+		const calls: string[] = [];
+		const lane = {
+			prompt: async () => ({ ok: true, value: {} }),
+			compact: async () => {
+				calls.push("compact");
+				return { ok: true, value: {} };
+			},
+		};
+		const mgr = managerWithLane(lane, metrics);
+		await mgr.create("s-compact-nofind", {});
+		await mgr.prompt("s-compact-nofind", "hi");
+		await drain();
+		assert.deepEqual(calls, []);
+		assert.match(metrics.render(0, "test"), /pi_runtime_compaction_skips_total\{reason="lane_unavailable"\} 1/);
+	});
+
+	it("扫条目失败计 entries_unavailable，不得伪装成 below_threshold", async () => {
+		// IO 失败与「用了还没到阈值」是两件事：混成一个 label 会让低于阈值的那个
+		// label 永远不可信（无法判断到底有没有读到 usage）。
+		const metrics = new Metrics();
+		const calls: string[] = [];
+		const lane = {
+			prompt: async () => ({ ok: true, value: {} }),
+			findEntries: async () => {
+				throw new Error("disk read failed");
+			},
+			compact: async () => {
+				calls.push("compact");
+				return { ok: true, value: {} };
+			},
+		};
+		const mgr = managerWithLane(lane, metrics);
+		await mgr.create("s-compact-scanfail", {});
+		await mgr.prompt("s-compact-scanfail", "hi");
+		await drain();
+		assert.deepEqual(calls, []);
+		const text = metrics.render(0, "test");
+		assert.match(text, /pi_runtime_compaction_skips_total\{reason="entries_unavailable"\} 1/);
+		assert.ok(!text.includes('reason="below_threshold"'));
+	});
 });
 
 describe("SessionManager 压缩 × 后续请求的竞争（reviewer Critical #1）", () => {

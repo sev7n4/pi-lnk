@@ -15,7 +15,15 @@ import {
 import type { CompactionConfig } from "./runtime-config.js";
 
 /** 未触发压缩的理由；全部为「可容忍」，不进错误率。 */
-export type CompactionSkipReason = "disabled" | "no_window" | "no_usage" | "below_threshold";
+export type CompactionSkipReason =
+	| "disabled"
+	| "no_window"
+	| "no_usage"
+	| "below_threshold"
+	/** lane 不具备扫条目能力（vendor 改名 / 替身缺方法）：此刻压缩不可能发生，必须留痕。 */
+	| "lane_unavailable"
+	/** 扫条目本身失败（IO 等）：与「用量未达阈值」是两回事，混计会让 below_threshold 不可信。 */
+	| "entries_unavailable";
 
 export type CompactionOutcome =
 	| "nothing_to_compact"

@@ -102,7 +102,7 @@ export class Metrics {
 
 	/**
 	 * 未发生压缩的理由计数：disabled / no_window / no_usage / below_threshold /
-	 * nothing_to_compact / lane_busy / closed / unknown。
+	 * lane_unavailable / entries_unavailable / nothing_to_compact / lane_busy / closed / unknown。
 	 *
 	 * 刻意与 pi_runtime_compactions_total 分开：这些是「可容忍跳过」，混进压缩结果会稀释失败率。
 	 * reason 取值域用联合类型而非自由 string 锁在两个来源里（决策器的 skipReason 与错误归类器
