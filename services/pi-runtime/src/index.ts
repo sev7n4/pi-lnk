@@ -46,7 +46,10 @@ const manager = new SessionManager(
 			harness.hooks.on("after_tool", async (event) => {
 				if (event.toolName !== "propose_generation" || event.isError) return undefined;
 				const nodeId = (event.args as { node_id?: unknown } | undefined)?.node_id;
-				if (typeof nodeId === "string" && nodeId) gateStore.markProposed(sessionId, nodeId);
+				if (typeof nodeId !== "string" || !nodeId) return undefined;
+				// B-2：阻塞确认后 details.confirmed=true → gate 视同跨轮放行（spec §4.3）
+				const confirmed = (event.details as { confirmed?: unknown } | null | undefined)?.confirmed === true;
+				gateStore.markProposed(sessionId, nodeId, { confirmed });
 				return undefined;
 			});
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地

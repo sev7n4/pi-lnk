@@ -382,3 +382,73 @@ describe("canvas-write: 全部写工具都推 details.actions（实时通道回�
 		);
 	});
 });
+
+// ── propose_generation 阻塞确认（B-2，2026-09-30-ask-user-blocking）─────────
+// 阻塞开（registry 注入且 ASK_USER_BLOCKING≠off）→ 双臂 race：轮询画布 SSOT
+// （get-node，status 离开 pending_confirm = 用户已确认；节点消失 = 用户拒绝）
+// vs registry resolution（abort→aborted / timer→timeout）。off → 旧行为逐字节保留。
+
+import { PendingToolRegistry } from "../pending-registry.js";
+
+/** propose 专用 mock：propose-generation 恒成功；get-node 按序返回 status 序列（可注 throw）。 */
+function fakeNestClient(
+	getNodeStatuses: string[],
+	opts: { getNodeThrows?: boolean } = {},
+) {
+	let i = 0;
+	return {
+		post: async (path: string) => {
+			if (path === "/agent/internal/get-node") {
+				if (opts.getNodeThrows) throw new Error("404 not found");
+				const status = getNodeStatuses[Math.min(i++, getNodeStatuses.length - 1)];
+				return { id: "n1", data: { status } };
+			}
+			return { ok: true }; // propose-generation 等
+		},
+	} as never;
+}
+
+describe("propose_generation 阻塞确认（B-2）", () => {
+	it("画布确认（status 离开 pending_confirm）→ details.confirmed=true 返回", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient([
+			"pending_confirm", // get-node #1
+			"completed", // get-node #2 → confirmed
+		]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		assert.equal(reg.hasPending("s1"), false); // cancel 收尾
+	});
+
+	it("画布取消（节点消失/404）→ confirmed=false，同轮 run_* 仍被 gate 拦", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient([], { getNodeThrows: true }); // get-node 抛 404
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, false);
+		assert.equal(reg.hasPending("s1"), false);
+	});
+
+	it("B-5 off（env=off 且 registry 注入）→ 立即返回、details 无 confirmed（Review Focus 5）", async () => {
+		const prev = process.env.ASK_USER_BLOCKING;
+		process.env.ASK_USER_BLOCKING = "off";
+		try {
+			const reg = new PendingToolRegistry();
+			const client = fakeNestClient(["pending_confirm"]);
+			const [propose] = createCanvasWriteTools(client, { registry: reg }).filter(
+				(t) => t.name === "propose_generation",
+			);
+			const result = await run(propose, { node_id: "n1" });
+			assert.equal((result.details as { confirmed?: boolean }).confirmed, undefined);
+			assert.equal(reg.hasPending("s1"), false); // 从未挂 pending
+		} finally {
+			if (prev === undefined) delete process.env.ASK_USER_BLOCKING;
+			else process.env.ASK_USER_BLOCKING = prev;
+		}
+	});
+});

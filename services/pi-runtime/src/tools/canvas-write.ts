@@ -5,10 +5,13 @@
  * introduce_nodes_to_agent 属老链路 DEFERRED_TOOL_NAMES：默认不暴露（includeDeferred 显式开启）。
  */
 import { Type } from "typebox";
+import type { Context } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
 import type { SidebarAttachment } from "./types.js";
 import { extractActions, resultWithActions } from "./result-with-actions.js";
+import { askUserBlocking, askUserTimeoutMs } from "../runtime-config.js";
+import type { PendingToolRegistry } from "../pending-registry.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
 
@@ -26,11 +29,17 @@ function setIfPresent(body: Record<string, unknown>, key: string, value: unknown
 	if (value !== undefined && value !== null && value !== "") body[key] = value;
 }
 
+/**
+ * opts.registry（2026-09-30-ask-user-blocking B-2）：阻塞式确认注册表。
+ * 注入且 askUserBlocking() 开 → propose_generation 走阻塞确认分支；否则逐字节旧行为。
+ * opts.pollMs：画布 SSOT 轮询间隔（仅测试注入；缺省 2s，spec §4.2）。
+ */
 export function createCanvasWriteTools(
 	client: NestClient,
-	opts: { includeDeferred?: boolean } = {},
+	opts: { includeDeferred?: boolean; registry?: PendingToolRegistry; pollMs?: number } = {},
 ): LnkpiTool[] {
 	const write = { tier: "write_light" as const };
+	const registry = opts.registry;
 	const tools: LnkpiTool[] = [
 		{
 			...write,
@@ -223,15 +232,82 @@ export function createCanvasWriteTools(
 			description:
 				"Mark a media node pending user confirm for generation. Never calls run_*; wait for the user to confirm in the UI.",
 			parameters: Type.Object({ node_id: Type.String({ description: "Canvas node id" }) }),
-			execute: async (_id, p: { node_id: string }, _u, tc: LnkpiToolContext) => {
+			execute: async (
+				id,
+				p: { node_id: string },
+				_u,
+				tc: LnkpiToolContext,
+				_invocation,
+				context: Context,
+			) => {
 				if (!tc.userId) throw new Error("propose_generation requires userId in toolContext");
-				return resultWithActions(
-					await client.post("/agent/internal/propose-generation", {
-						sessionId: tc.sessionId,
-						userId: tc.userId,
-						nodeId: p.node_id,
-					}),
-				);
+				const base = await client.post("/agent/internal/propose-generation", {
+					sessionId: tc.sessionId,
+					userId: tc.userId,
+					nodeId: p.node_id,
+				});
+				// B-5 off（或无 registry）→ 旧行为逐字节保留（spec §8 回退纪律）
+				if (!registry || !askUserBlocking()) return resultWithActions(base);
+
+				// 阻塞确认：registry 挂 pending（供 /pending 查询与 abort 联动），双臂 race——
+				// ① 轮询画布 SSOT（缺省 2s 间隔，spec §4.2）；② registry resolution（abort→aborted / 30min timer→timeout）
+				const wait = registry.waitForUser(tc.sessionId, id, "propose_generation", askUserTimeoutMs());
+				const POLL_MS = opts.pollMs ?? 2_000;
+				let settled = false; // race 收尾后让落败的轮询臂退出，防 30min timeout 后仍在空转
+				const confirmResult = (async (): Promise<{ confirmed: boolean; reason?: string }> => {
+					for (;;) {
+						if (settled) return { confirmed: false, reason: "aborted" }; // 不会被消费
+						context?.abortSignal?.throwIfAborted();
+						await new Promise((r) => setTimeout(r, POLL_MS));
+						try {
+							const node = await client.post("/agent/internal/get-node", {
+								sessionId: tc.sessionId,
+								nodeId: p.node_id,
+							});
+							const status = (node as { data?: { status?: unknown } } | null)?.data?.status;
+							if (status === "pending_confirm") continue; // 仍在待确认（用户已确认/未动，语义见 spec §4.2）
+							return { confirmed: true, reason: String(status ?? "unknown") };
+						} catch {
+							return { confirmed: false, reason: "gone" }; // 节点消失/查询失败 → 视为用户拒绝（fail-closed 不出图）
+						}
+					}
+				})();
+				const outcome = await Promise.race([
+					confirmResult,
+					wait.then((r) =>
+						r.status === "aborted" ? { confirmed: false, reason: "aborted" } : { confirmed: false, reason: "timeout" },
+					),
+				]);
+				settled = true;
+				registry.cancel(tc.sessionId, id); // 收尾清理（另一臂未 settle 也无妨：cancel 即清）
+				if (!outcome.confirmed) {
+					return {
+						content: [{
+							type: "text",
+							text: JSON.stringify({
+								ok: false,
+								confirmed: false,
+								reason: outcome.reason,
+								message:
+									outcome.reason === "timeout"
+										? "用户未在时限内确认，请等待用户后续指示，不要自行执行 run_*。"
+										: outcome.reason === "aborted"
+											? "用户已中止。"
+											: "用户取消了该节点的生成确认，不要执行 run_*；可先了解原因。",
+							}),
+						}],
+						details: { ok: false, confirmed: false },
+					};
+				}
+				const withActions = resultWithActions(base);
+				return {
+					...withActions,
+					details: { ...withActions.details, confirmed: true },
+					content: [{
+						type: "text",
+						text: JSON.stringify({ ok: true, confirmed: true, message: "用户已在画布确认，可直接对该节点执行 run_* 生成。" }),
+					}],
+				};
 			},
 		},
 		{

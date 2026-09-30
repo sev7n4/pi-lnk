@@ -37,9 +37,10 @@ export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
 /**
  * B-2 批次：写工具 + connect_nodes（自 B-6 提前）。
  * introduce_nodes_to_agent 属老链路 DEFERRED，默认不暴露（includeDeferred 显式开启）。
+ * registry 可选注入（2026-09-30-ask-user-blocking B-2）：注入且开关开 → propose_generation 阻塞分支。
  */
-export function buildCanvasWriteTools(client: NestClient): LnkpiTool[] {
-	return createCanvasWriteTools(client);
+export function buildCanvasWriteTools(client: NestClient, registry?: PendingToolRegistry): LnkpiTool[] {
+	return createCanvasWriteTools(client, { registry });
 }
 
 /** UI_COMMAND 批次：5 个本地 UI 命令工具（不依赖 NestClient）。 */

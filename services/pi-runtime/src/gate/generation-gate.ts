@@ -5,22 +5,24 @@
  * B4 每轮 deleteSession 重建 → resetSession 清态，不影响跨轮放行逻辑。
  */
 export class GenerationGateStore {
-	private readonly proposals = new Map<string, Map<string, number>>();
+	private readonly proposals = new Map<string, Map<string, { turn: number; confirmed: boolean }>>();
 	private readonly turns = new Map<string, number>();
 	private readonly runs = new Map<string, Map<string, number>>(); // 会话 → 节点 → 已放行 run 次数（V-γ）
 
-	/** propose_generation 成功后由 after_tool hook 调用，记录 {turn}。 */
-	markProposed(sessionId: string, nodeId: string): void {
+	/** propose_generation 成功后由 after_tool hook 调用，记录 {turn, confirmed}。 */
+	markProposed(sessionId: string, nodeId: string, opts: { confirmed?: boolean } = {}): void {
 		const turn = this.turns.get(sessionId) ?? 0;
-		const map = this.proposals.get(sessionId) ?? new Map<string, number>();
-		map.set(nodeId, turn);
+		const map = this.proposals.get(sessionId) ?? new Map<string, { turn: number; confirmed: boolean }>();
+		map.set(nodeId, { turn, confirmed: opts.confirmed === true });
 		this.proposals.set(sessionId, map);
 	}
 
-	/** 仅当该节点的 propose 发生在「当前用户轮」内返回 true（跨轮后放行 → 交给画布 SSOT 校验）。 */
+	/** 仅当该节点的 propose 发生在「当前用户轮」**且未确认**时返回 true；
+	 *  confirmed（阻塞确认）视同跨轮，交由 SSOT pending_confirm 校验兜底（spec §4.3）。 */
 	wasProposedThisTurn(sessionId: string, nodeId: string): boolean {
 		const turn = this.turns.get(sessionId) ?? 0;
-		return this.proposals.get(sessionId)?.get(nodeId) === turn;
+		const rec = this.proposals.get(sessionId)?.get(nodeId);
+		return !!rec && rec.turn === turn && !rec.confirmed;
 	}
 
 	/** 每次用户 prompt 进入时 turn +1（SessionManager.prompt 调用）。 */

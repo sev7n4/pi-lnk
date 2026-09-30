@@ -51,7 +51,7 @@ export function resolveToolsWithClient(
 	const hasTavily = !!process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY !== "REPLACE_ME";
 	const tools: LnkpiTool[] = [
 		...buildCanvasReadTools(client),
-		...buildCanvasWriteTools(client),
+		...buildCanvasWriteTools(client, deps.registry),
 		...buildUiCommandTools(metrics),
 		...buildAskUserTools(metrics, deps.registry),
 		...buildArrangeNodesTools(metrics),
