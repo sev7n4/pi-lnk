@@ -70,11 +70,13 @@ describe("PendingToolRegistry", () => {
 		assert.equal(reg.pendingInfo("s"), null);
 		void reg.waitForUser("s", "c9", "ask_user", 60_000);
 		assert.deepEqual(reg.pendingInfo("s"), { callId: "c9", toolName: "ask_user" });
+		reg.abortAll("s"); // 收尾：settle 残留 timer，免拖住 node --test 进程 60s
 	});
 
 	it("同 callId 重复 waitForUser 抛错（串行 loop 下不该发生，fail loud）", () => {
 		const reg = new PendingToolRegistry();
 		void reg.waitForUser("s", "c", "ask_user", 60_000);
 		assert.throws(() => reg.waitForUser("s", "c", "ask_user", 60_000), /duplicate pending/i);
+		reg.abortAll("s"); // 收尾：settle 残留 timer，免拖住 node --test 进程 60s
 	});
 });
