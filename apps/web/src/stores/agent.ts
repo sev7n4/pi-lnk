@@ -34,6 +34,12 @@ export interface AgentStreamMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  /**
+   * pi 会话内该消息对应的 entry id（来自 `pi_message_end` 事件）。
+   * ③ 重跑用：作为 `branchFromEntryId` 让后端 fork 出「截断到本条之前」的新分支线程。
+   * 仅 user 消息会带（助手消息的 entryId 无重跑语义）。
+   */
+  entryId?: string
   toolCalls?: Array<{ name: string; result?: unknown; toolCallId?: string; argsSummary?: string }>
   streaming?: boolean
   textReplaceHistory?: string[]

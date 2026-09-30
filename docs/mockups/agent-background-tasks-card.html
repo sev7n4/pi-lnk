@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>后台任务卡 · 两态线框（composer 上沿）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #eef0f4; color: #1f2329; padding: 32px 24px 64px; }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 28px; }
+  .wrap { display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start; }
+  .stage { background: #fff; border: 1px solid #e2e5ea; border-radius: 16px; padding: 24px; width: 520px; box-shadow: 0 2px 10px rgba(15,23,42,.06); }
+  .stage h2 { font-size: 14px; color: #374151; margin-bottom: 18px; }
+  .tag { font-size: 11px; background: #eef2ff; color: #4f46e5; padding: 2px 8px; border-radius: 999px; margin-left: 8px; font-weight: 500; }
+
+  /* ===== 展开态：后台任务卡（复刻 WorkBuddy 截图） ===== */
+  .task-card { border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 4px 14px rgba(15,23,42,.08); padding: 14px 16px 10px; }
+  .tc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .tc-icon { font-size: 15px; }
+  .tc-title { font-size: 13.5px; font-weight: 600; color: #1f2329; }
+  .tc-hint { font-size: 12px; color: #9ca3af; font-weight: 400; }
+  .tc-close { margin-left: auto; width: 26px; height: 26px; border-radius: 8px; border: none; background: #f3f4f6; color: #6b7280; font-size: 13px; cursor: pointer; }
+  .tc-close:hover { background: #e5e7eb; color: #374151; }
+  .t-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13px; color: #374151; }
+  .t-row + .t-row { border-top: 1px dashed #f0f1f4; }
+  .t-ic { width: 18px; height: 18px; border-radius: 5px; background: #eef2ff; color: #4f46e5; font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .t-name { font-weight: 500; }
+  .t-st { color: #9ca3af; font-size: 12.5px; margin-left: auto; }
+  .t-st.run { color: #6b7280; }
+  .t-st.ok { color: #16a34a; }
+  .t-st.fail { color: #dc2626; }
+  .spin { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; border: 2px solid #d1d5db; border-top-color: #4f46e5; animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .ok-i { color: #16a34a; font-weight: 700; width: 14px; text-align: center; flex-shrink: 0; }
+  .fail-i { color: #dc2626; font-weight: 700; width: 14px; text-align: center; flex-shrink: 0; }
+
+  /* ===== 收缩态：小椭圆胶囊（自设计） ===== */
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px 6px 11px; border-radius: 999px; background: #f4f5f7; border: 1px solid #e5e7eb; font-size: 12.5px; color: #374151; cursor: pointer; }
+  .pill:hover { background: #eceef1; box-shadow: 0 2px 8px rgba(15,23,42,.1); }
+  .pill .pt { color: #9ca3af; }
+  .pill.done { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+  .pill.done .pt { color: #4ade80; }
+
+  /* ===== 堆叠：任务卡 → 排队气泡 → composer ===== */
+  .queued { align-self: flex-end; max-width: 85%; background: #eef2ff; border: 1px solid #dbe1ff; color: #4f46e5; border-radius: 12px 12px 4px 12px; padding: 7px 12px; font-size: 12.5px; margin-top: 10px; }
+  .composer { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fafafa; padding: 13px 16px; color: #b0b5bd; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
+  .send { width: 30px; height: 30px; border-radius: 50%; background: #4f46e5; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+
+  .legend { margin-top: 32px; background: #fff; border: 1px solid #e2e5ea; border-radius: 16px; padding: 22px 26px; max-width: 1080px; }
+  .legend h3 { font-size: 15px; margin-bottom: 10px; }
+  .legend li { font-size: 13px; color: #374151; line-height: 2; margin-left: 18px; }
+  .warn { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; color: #92400e; margin-top: 14px; }
+</style>
+</head>
+<body>
+<h1>后台任务卡 · 两态线框（composer 上沿）</h1>
+<p class="sub">展开态复刻 WorkBuddy 截图 · 收缩态为自设计小椭圆胶囊 · 堆叠顺序：任务卡 → 排队气泡 → composer</p>
+
+<div class="wrap">
+  <!-- 展开态 -->
+  <div class="stage">
+    <h2>状态 A · 展开态<span class="tag">复刻 WorkBuddy</span></h2>
+    <div class="task-card">
+      <div class="tc-head">
+        <span class="tc-icon">🕐</span>
+        <span class="tc-title">2 个后台任务运行中 <span class="tc-hint">后台任务不消耗积分</span></span>
+        <button class="tc-close">✕</button>
+      </div>
+      <div class="t-row">
+        <span class="spin"></span>
+        <span class="t-name">生成「小女孩三视图」</span>
+        <span class="t-st run">已运行 1m30s</span>
+      </div>
+      <div class="t-row">
+        <span class="spin"></span>
+        <span class="t-name">生成开场视频</span>
+        <span class="t-st run">已运行 6m12s</span>
+      </div>
+      <div class="t-row">
+        <span class="ok-i">✓</span>
+        <span class="t-name">生成主角立绘</span>
+        <span class="t-st ok">已完成 · 点击查看</span>
+      </div>
+      <div class="t-row">
+        <span class="fail-i">✕</span>
+        <span class="t-name">生成封面草图</span>
+        <span class="t-st fail">失败 · 渠道余额不足</span>
+      </div>
+    </div>
+    <div class="queued">待发：把背景换成黄昏色调（当前轮结束后自动发出）</div>
+    <div class="composer">输入消息… <div class="send">↑</div></div>
+  </div>
+
+  <!-- 收缩态 -->
+  <div class="stage">
+    <h2>状态 B · 收缩态<span class="tag">自设计小椭圆</span></h2>
+    <div class="pill">
+      <span class="spin"></span> 2 个后台任务运行中 <span class="pt">· 最长 6m12s</span>
+    </div>
+    <div style="height:10px"></div>
+    <div class="pill done">
+      ✓ 2 个任务已完成 <span class="pt">· 点击查看</span>
+    </div>
+    <div class="queued">待发气泡照旧挂在其下，互不影响</div>
+    <div class="composer">输入消息… <div class="send">↑</div></div>
+  </div>
+</div>
+
+<div class="legend">
+  <h3>设计规则</h3>
+  <ul>
+    <li><b>堆叠顺序</b>（composer 上沿，从上到下）：后台任务卡 → 排队气泡 → composer，与 WorkBuddy 一致。</li>
+    <li><b>展开态</b>：标题行「N 个后台任务运行中 + 不消耗积分」+ ✕ 收起；任务行 = 状态图标 + 任务名 + 灰字状态（运行中带计时 / 已完成 / 失败红色）。已完成行保留最近 5 条供回看。</li>
+    <li><b>收缩态</b>：小椭圆胶囊「spinner + N 个任务运行中 · 最长 Xm Ys」；hover 浮起、点击展开。全部完成且未查看 → 变绿「✓ N 个任务已完成 · 点击查看」，查看后自动消失。</li>
+    <li><b>自动收起</b>：新任务开始时展开弹出；开始 5s 后或用户点 ✕ 后收为胶囊，不打扰对话。</li>
+    <li><b>三件套不合并</b>：dock 通知卡（系统→你，弹完即走）、排队气泡（你→agent）、后台任务卡（工具运行状态）各管各的。</li>
+    <li><b>不加每行停止钮</b>：run_* 在对话轮内，停 = 停整轮，走底部统一停止按钮，避免第二套停止语义。</li>
+  </ul>
+  <div class="warn">⚠ 现实约束：pi-lnk 目前 run_*（出图 ~3min / 视频 ~11min）是同步阻塞在对话轮内的，没有独立后台任务机制。这张卡 v1 的数据源 = 对话轮内的长时工具调用状态（tool_call 开始/结束事件即可驱动）；未来若做真后台任务（detach），同款容器直接复用。</div>
+</div>
+</body>
+</html>

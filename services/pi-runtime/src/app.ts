@@ -11,6 +11,7 @@ import { parseLlmOverride } from "./llm-override.js";
 import {
 	BusyError,
 	ConflictError,
+	ForkTargetUnknownError,
 	type NormalizedEvent,
 	NotFoundError,
 	SessionManager,
@@ -168,6 +169,42 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		const aborted = manager.abort(sessionId);
 		app.log.info({ sessionId, aborted }, "abort requested");
 		return reply.send({ ok: aborted, skipped: !aborted });
+	});
+
+	/**
+	 * ③ 重跑：后端线程截断（与 WorkBuddy「编辑并重发」一致）。
+	 *
+	 * 以 `atEntryId` 为切点 fork 出一条新分支会话：目标消息及其之后全部丢弃，新 run 从
+	 * 切点父节点续写。来源会话不动。返回的 `newKey` 是**原始** threadKey，调用方（Nest）
+	 * 后续以它作为 threadId —— pi-runtime 内部 `toSessionKey` 会推导回同一内存键。
+	 */
+	app.post<{
+		Params: { sessionId: string };
+		Body: { atEntryId?: string };
+	}>("/sessions/:sessionId/fork", async (request, reply) => {
+		const { sessionId } = request.params;
+		const atEntryId = request.body?.atEntryId?.trim();
+		if (!atEntryId) {
+			return reply.code(400).send({ error: "atEntryId is required (fork cut point entry id)" });
+		}
+		try {
+			const result = await manager.fork(sessionId, atEntryId);
+			app.log.info(
+				{ sessionId, atEntryId, newKey: result.newKey, newSessionId: result.newSessionId },
+				"session forked",
+			);
+			// newKey 是后续所有调用（prompt/events/create）都要用的 **原始** threadKey
+			return reply.code(201).send({
+				sessionId: result.newKey,
+				newKey: result.newKey,
+				newSessionId: result.newSessionId,
+			});
+		} catch (err) {
+			if (err instanceof ForkTargetUnknownError) return reply.code(400).send({ error: err.message });
+			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			if (err instanceof BusyError) return reply.code(409).send({ error: "session busy" });
+			return reply.code(503).send({ error: (err as Error).message });
+		}
 	});
 
 	app.get<{ Params: { sessionId: string }; Querystring: { lastEventId?: string } }>(

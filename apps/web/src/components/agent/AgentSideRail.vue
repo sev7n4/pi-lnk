@@ -3,6 +3,7 @@ import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
+import { useDockNoticeStore } from '@/stores/dockNotice'
 import { useAuthStore } from '@/stores/auth'
 import type { SidebarAttachment } from '@lnkpi/shared'
 import { normalizeMentionedKeys, SIDEBAR_ATTACHMENT_MAX } from '@lnkpi/shared'
@@ -184,6 +185,14 @@ const agent = useAgentStore()
 const auth = useAuthStore()
 const router = useRouter()
 const input = ref('')
+/**
+ * 流式中的待发消息（排队，最多 1 条）。抄 WorkBuddy：流式中输入并回车 → 进入待发气泡，
+ * 不打断当前轮；当前轮结束（done）或用户点停止（中止即发）时自动发出。
+ */
+const queuedMessage = ref('')
+/** 已发送用户消息的就地二次编辑：正在编辑的消息 id */
+const editingMessageId = ref<string | null>(null)
+const editingDraft = ref('')
 const composerRef = ref<InstanceType<typeof MentionInput> | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const chatContainer = ref<HTMLElement>()
@@ -345,6 +354,64 @@ async function copyAssistantMessage(msg: AgentStreamMessage) {
   } catch {
     ElMessage.error('复制失败')
   }
+}
+
+/** 已发送用户消息是否展示操作（编辑/复制）。与 assistant 的反馈操作互斥。 */
+function canShowUserMessageActions(msg: AgentStreamMessage): boolean {
+  return msg.role === 'user' && !msg.streaming && !props.readOnly
+}
+
+async function copyUserMessage(msg: AgentStreamMessage) {
+  const text = visibleUserContent(msg).trim()
+  if (!text) return
+  try {
+    await copyTextToClipboard(text)
+    copiedMessageId.value = msg.id
+    if (copiedMessageTimer !== null) window.clearTimeout(copiedMessageTimer)
+    copiedMessageTimer = window.setTimeout(() => {
+      if (copiedMessageId.value === msg.id) copiedMessageId.value = null
+      copiedMessageTimer = null
+    }, 1600)
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
+function editUserMessage(msg: AgentStreamMessage) {
+  editingMessageId.value = msg.id
+  editingDraft.value = visibleUserContent(msg)
+}
+
+function cancelEditUserMessage() {
+  editingMessageId.value = null
+  editingDraft.value = ''
+}
+
+/**
+ * 已发送用户消息二次编辑 → 从此处重新开始对话（抄 WorkBuddy）。
+ * 本地丢弃该消息之后的所有消息，并把该消息内容更新为编辑稿后重新发送；已有产物保留。
+ *
+ * ③ 重跑：同时把该消息的 pi `entryId` 作为 `branchFromEntryId` 下发 —— 后端据此 fork
+ * 出「截断到该消息之前」的新分支线程（真实截断，旧尾不再进模型上下文），前端收到
+ * `thread_forked` 后切换到新 threadId，做到前后端一致。
+ *
+ * 兜底：若该消息还没拿到 entryId（例如刷新后恢复的历史消息，事件早已流走），
+ * 则退化为普通发送（不带 branchFromEntryId）—— 不静默伪造切点，后端照常 append。
+ */
+async function sendEditedUserMessage(msg: AgentStreamMessage) {
+  const draft = editingDraft.value.trim()
+  if (!draft) return
+  const idx = agent.messages.findIndex((m) => m.id === msg.id)
+  if (idx >= 0) {
+    const target = agent.messages[idx]
+    if (target && 'content' in target) target.content = draft
+    agent.messages.splice(idx + 1)
+  }
+  editingMessageId.value = null
+  editingDraft.value = ''
+  // 目标消息已被本地丢弃，但它的 entryId 要作为 fork 切点保留下来
+  const targetEntryId = msg.entryId
+  await sendMessage(draft, targetEntryId)
 }
 
 const threadHasReattachableHistory = computed(() =>
@@ -1481,6 +1548,7 @@ async function cancelActiveStream() {
 async function send() {
   if (isUploading.value) return
   if (agent.isStreaming) {
+    // 底部统一按钮在流式中 = 停止。停止后若有待发消息则自动发出（中止即发，抄 WorkBuddy）。
     await cancelActiveStream()
     return
   }
@@ -1494,6 +1562,47 @@ async function send() {
   const message = input.value.trim()
   input.value = ''
   await sendMessage(message)
+}
+
+/**
+ * 输入框回车提交。流式中不取消当前轮，而是把内容移入待发气泡（排队）；
+ * 非流式中走正常发送。底部「停止」按钮走 `send()`，二者分离以匹配 WorkBuddy 行为。
+ */
+async function onComposerSubmit() {
+  if (agent.isStreaming) {
+    const text = input.value
+    if (text.trim()) {
+      queuedMessage.value = text
+      input.value = ''
+      await nextTick()
+      scrollToBottom()
+    }
+    return
+  }
+  await send()
+}
+
+async function flushQueuedMessage() {
+  const text = queuedMessage.value.trim()
+  if (!text) return
+  queuedMessage.value = ''
+  await sendMessage(text)
+}
+
+/** ⚡ 打断并发送：立即中止当前轮，把待发消息作为新请求发出 */
+async function interruptAndSend() {
+  const text = queuedMessage.value.trim()
+  if (!text) return
+  queuedMessage.value = ''
+  await cancelActiveStream()
+  await sendMessage(text)
+}
+
+/** ✎ 编辑待发：把内容退回输入框（不另开卡片），清空排队 */
+function editQueuedMessage() {
+  input.value = queuedMessage.value
+  queuedMessage.value = ''
+  nextTick(() => composerRef.value?.focus())
 }
 
 async function onForceChoiceAction(message: string) {
@@ -1597,7 +1706,11 @@ async function createOwnCanvas() {
   }
 }
 
-async function sendMessage(message: string) {
+/**
+ * @param branchFromEntryId ③ 重跑：pi 会话内目标消息的 entryId。提供时后端先 fork 出
+ *   「截断到该消息之前」的新分支线程，再在新线程上跑本轮（真正的后端线程截断）。
+ */
+async function sendMessage(message: string, branchFromEntryId?: string) {
   pendingAskUser.value = []
   const selectableTextModels = preferences.value?.selectableTextModels ?? []
   if (planningModel.value && !selectableTextModels.includes(planningModel.value)) {
@@ -1677,6 +1790,8 @@ async function sendMessage(message: string) {
         attachments: attachments.length ? attachments : undefined,
         refOrder: refOrder.length ? refOrder : undefined,
         mentionedKeys,
+        // ③ 重跑：后端线程截断切点（缺省 = 普通发送，不 fork）
+        branchFromEntryId: branchFromEntryId || undefined,
       }),
     })
 
@@ -1720,14 +1835,14 @@ async function sendMessage(message: string) {
         agent.appendText('\n\n⚠️ 连接意外断开，请稍后重试。')
       } else if (last?.role === 'assistant' && agentStream.unreachable.value) {
         if (!last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
-          last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请点击下方「重连」继续。`
+          last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请使用弹出卡片的「重连」继续。`
         }
       }
     }
 
     const last = agent.messages[agent.messages.length - 1]
     if (!runCancelled.value && last?.role === 'assistant' && !last.content.trim()) {
-      agent.appendText('（本轮无文本回复。若在确认方案，可再发「确认」；或点「新建对话」后重试。）')
+      agent.appendText('（本轮无文本回复。若还需确认，可再发「确认」；或点「新建对话」后重试。）')
     }
     agent.finishStreaming()
     await reconcileLatestAssistant()
@@ -1921,6 +2036,75 @@ async function reconcileLatestAssistant() {
   }
 }
 
+const dockNotice = useDockNoticeStore()
+
+/**
+ * 不可达 / 重连提示 → dock 通知卡片（合并原 agent-stream-banner）。
+ * - 流卡死（unreachable）：常驻 warning 卡 + 「重连」按钮
+ * - 重连成功：success 卡（自动消失）
+ * - 重连失败：更新为 error 卡（常驻 + 「重连」按钮）
+ */
+const RUNTIME_NOTICE_ID = 'runtime-unreachable'
+function syncRuntimeNotice() {
+  const unreachable = agentStream.unreachable.value
+  const hint = recoveredPhaseHint.value
+  if (unreachable) {
+    // 不可达优先：清掉可能残留的重连结果提示，弹出常驻重连卡
+    recoveredPhaseHint.value = null
+    dockNotice.pushNotice({
+      id: RUNTIME_NOTICE_ID,
+      tone: 'warning',
+      title: '生成服务暂时不可达',
+      message: '已保存进度，出图状态仍可通过轮询更新。',
+      action: { label: '重连', onClick: () => void reconnectStream() },
+      ttl: 0,
+    })
+    return
+  }
+  if (hint) {
+    if (hint.includes('已恢复')) {
+      dockNotice.dismiss(RUNTIME_NOTICE_ID)
+      dockNotice.pushNotice({
+        tone: 'success',
+        title: '服务已恢复',
+        message: hint.replace('服务已恢复。', ''),
+        ttl: 5000,
+      })
+    } else {
+      dockNotice.pushNotice({
+        id: RUNTIME_NOTICE_ID,
+        tone: 'error',
+        title: '重连失败',
+        message: hint,
+        action: { label: '重连', onClick: () => void reconnectStream() },
+        ttl: 0,
+      })
+    }
+    return
+  }
+  dockNotice.dismiss(RUNTIME_NOTICE_ID)
+}
+
+watch(
+  [() => agentStream.unreachable.value, () => recoveredPhaseHint.value],
+  syncRuntimeNotice,
+  { immediate: true },
+)
+
+/**
+ * 当前轮正常结束（isStreaming 由 true → false）时，若有待发消息则自动发出。
+ * 这覆盖了「排队态」：流式中回车入队 → 当前轮 done 后自动续发（抄 WorkBuddy）。
+ * 中止（cancelActiveStream）也会把 isStreaming 置 false，同样触发此处，无需在 send() 内重复 flush。
+ */
+watch(
+  () => agent.isStreaming,
+  (now, prev) => {
+    if (prev && !now && queuedMessage.value.trim()) {
+      void flushQueuedMessage()
+    }
+  },
+)
+
 function handleEvent(event: { type: string; data: unknown }) {
   switch (event.type) {
     case 'text_replace':
@@ -1931,6 +2115,34 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.appendText((event.data as { text: string }).text)
       scrollToBottom()
       break
+    case 'pi_message_end': {
+      // ③ 重跑：捕获 pi 会话内消息的 entryId（pi 原始载荷 `{ message, entryId }`）。
+      // 只认 user 消息 —— 它才是「从这条重新生成」的合法 fork 切点。
+      const d = event.data as { entryId?: string; message?: { role?: string } } | null
+      const entryId = typeof d?.entryId === 'string' ? d.entryId : ''
+      if (entryId && d?.message?.role === 'user') {
+        // 落到最后一条 user 消息：本轮刚提交的用户消息即 fork 候选切点
+        for (let i = agent.messages.length - 1; i >= 0; i -= 1) {
+          const m = agent.messages[i]
+          if (m && m.role === 'user') {
+            m.entryId = entryId
+            break
+          }
+        }
+      }
+      break
+    }
+    case 'thread_forked': {
+      // ③ 重跑：后端已完成线程截断（新分支会话已建）。切换 agentThreadId ——
+      // 之后的发送 / 订阅 / 历史拉取都必须走新线程，否则又会落回被截断前的旧线程。
+      const d = event.data as { threadId?: string } | null
+      const nextThreadId = typeof d?.threadId === 'string' ? d.threadId : ''
+      if (nextThreadId && nextThreadId !== agentThreadId.value) {
+        agentThreadId.value = nextThreadId
+        persistActiveThreadId(props.sessionId, nextThreadId)
+      }
+      break
+    }
     case 'tool_call': {
       const d = event.data as { name: string; toolCallId?: string; args?: unknown }
       agent.beginToolCall({ toolCallId: d.toolCallId, name: d.name, args: d.args })
@@ -2046,6 +2258,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       break
     }
     case 'ping':
+    case 'heartbeat':
+      // 控制器每 15s 下发的保活帧；touch() 已在流读取循环中调用，此处无需额外处理
       break
     case 'run_cancelled': {
       runCancelled.value = true
@@ -2142,6 +2356,15 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.markTurnError(data)
       agent.trackStructuredError(data)
       agent.appendText(`\n\n⚠️ ${data.message || '发生错误'}`)
+      // dock 上沿窄卡片（失败提醒复用入口）：已分类的失败（如余额不足）弹充值/重试提醒
+      if (data.error_type) {
+        const retry = data.retry_hint ? ` ${data.retry_hint}` : '请稍后重试。'
+        dockNotice.pushNotice({
+          tone: 'error',
+          title: data.error_type === 'insufficient_balance' ? '生成失败 · 渠道余额不足' : '生成失败',
+          message: `${data.message || '本轮生成失败。'}${retry}`,
+        })
+      }
       break
     }
   }
@@ -2376,25 +2599,7 @@ defineExpose({
             </div>
           </div>
 
-          <div
-            v-if="agentStream.unreachable.value || recoveredPhaseHint"
-            class="agent-stream-banner mx-3 mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-100"
-          >
-            <p v-if="agentStream.unreachable.value && agent.isStreaming">
-              {{ RUNTIME_UNREACHABLE_SNIPPET }}，已保存进度。出图状态仍可通过轮询更新。
-            </p>
-            <p v-else-if="recoveredPhaseHint">{{ recoveredPhaseHint }}</p>
-            <div class="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                class="agent-readonly-btn agent-readonly-btn-primary"
-                :disabled="reconnecting"
-                @click="reconnectStream"
-              >
-                {{ reconnecting ? '重连中…' : '重连' }}
-              </button>
-            </div>
-          </div>
+          <!-- 不可达 / 重连提示已迁至 dockNotice（见 syncRuntimeNotice）；不再在面板内渲染横幅 -->
 
           <!-- 消息列表 -->
           <div ref="chatContainer" class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3">
@@ -2433,6 +2638,26 @@ defineExpose({
                   v-if="shouldRenderSchemeDraftProse(msg)"
                   :content="msg.content"
                 />
+                <!-- 已发送用户消息的就地二次编辑（抄 WorkBuddy：默认只显编辑/复制，点编辑才出发送/取消） -->
+                <p
+                  v-else-if="msg.role === 'user' && editingMessageId === msg.id"
+                  class="agent-edit-card whitespace-pre-wrap"
+                >
+                  <textarea
+                    v-model="editingDraft"
+                    class="agent-edit-textarea w-full resize-y rounded-md border border-[var(--neo-border)] bg-[var(--neo-input-bg)] p-2 text-[13px] leading-relaxed text-[var(--neo-text)] outline-none focus:border-[var(--neo-accent)]"
+                    rows="3"
+                    @keydown.meta.enter.prevent="sendEditedUserMessage(msg)"
+                    @keydown.ctrl.enter.prevent="sendEditedUserMessage(msg)"
+                  />
+                  <span class="mt-1 block text-[10px] text-[var(--neo-text-muted)]">
+                    ⓘ 编辑后将从此处重新开始对话，已有产物不会被删除
+                  </span>
+                  <span class="mt-1.5 flex justify-end gap-2">
+                    <button type="button" class="agent-edit-btn" @click="cancelEditUserMessage">取消</button>
+                    <button type="button" class="agent-edit-btn agent-edit-btn--primary" @click="sendEditedUserMessage(msg)">发送</button>
+                  </span>
+                </p>
                 <p v-else-if="shouldShowMessageBubbleText(msg)" class="whitespace-pre-wrap">
                   {{
                     msg.role === 'user'
@@ -2488,9 +2713,10 @@ defineExpose({
                   <div v-for="(tc, i) in msg.toolCalls" :key="i" class="text-[10px] text-[var(--neo-text-secondary)]">⚙ {{ tc.name }}<template v-if="tc.argsSummary"> · {{ tc.argsSummary }}</template></div>
                 </div>
                 <div
-                  v-if="canShowMessageActions(msg)"
+                  v-if="canShowMessageActions(msg) || canShowUserMessageActions(msg)"
                   class="agent-msg-actions"
                 >
+                  <template v-if="msg.role === 'assistant'">
                   <button
                     type="button"
                     class="agent-msg-action-btn"
@@ -2531,6 +2757,36 @@ defineExpose({
                       <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </button>
+                  </template>
+                  <template v-else>
+                    <button
+                      type="button"
+                      class="agent-msg-action-btn"
+                      title="编辑"
+                      aria-label="编辑"
+                      @click="editUserMessage(msg)"
+                    >
+                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="agent-msg-action-btn"
+                      :class="{ 'is-active': copiedMessageId === msg.id }"
+                      :title="copiedMessageId === msg.id ? '已复制' : '复制'"
+                      aria-label="复制"
+                      @click="copyUserMessage(msg)"
+                    >
+                      <svg v-if="copiedMessageId !== msg.id" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                        <rect x="9" y="9" width="11" height="11" rx="2" />
+                        <path stroke-linecap="round" d="M5 15V5a2 2 0 0 1 2-2h10" />
+                      </svg>
+                      <svg v-else viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </button>
+                  </template>
                 </div>
               </div>
             </div>
@@ -3067,6 +3323,21 @@ defineExpose({
                   知道了
                 </button>
               </div>
+              <!-- 流式中的待发消息气泡（排队，抄 WorkBuddy）：不打断当前轮，可打断并发送 / 编辑回输入框 / 删除 -->
+              <div
+                v-if="queuedMessage"
+                class="agent-queued-bubble mx-3 mb-2 rounded-lg border border-[var(--neo-accent)]/40 bg-[var(--neo-accent)]/10 px-3 py-2"
+              >
+                <div class="flex items-start gap-2">
+                  <span class="mt-0.5 shrink-0 rounded bg-[var(--neo-accent)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--neo-accent)]">待发</span>
+                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--neo-text)]">{{ queuedMessage }}</p>
+                </div>
+                <div class="mt-1.5 flex flex-wrap items-center gap-2">
+                  <button type="button" class="queued-act queued-act--primary" @click="interruptAndSend">⚡ 打断并发送</button>
+                  <button type="button" class="queued-act" @click="editQueuedMessage">✎ 编辑</button>
+                  <button type="button" class="queued-act" @click="queuedMessage = ''">🗑 删除</button>
+                </div>
+              </div>
               <div class="agent-composer">
                 <p
                   v-if="showComposerReattachHint"
@@ -3091,17 +3362,17 @@ defineExpose({
                   @reorder="sidebar.reorder"
                 />
                 <div class="agent-composer__input-wrap">
-                  <MentionInput
-                    ref="composerRef"
-                    v-model="input"
-                    class="agent-composer__mention w-full"
-                    :mentions="mentionOptions"
-                    :placeholder="inputPlaceholder"
-                    :disabled="agent.isStreaming"
-                    :leading-inset="readOnly ? 0 : COMPOSER_PICK_INSET"
-                    submit-on-enter
-                    @submit="send"
-                  />
+                <MentionInput
+                  ref="composerRef"
+                  v-model="input"
+                  class="agent-composer__mention w-full"
+                  :mentions="mentionOptions"
+                  :placeholder="agent.isStreaming ? '输入消息，回车加入待发队列…' : inputPlaceholder"
+                  :disabled="readOnly || isUploading"
+                  :leading-inset="readOnly ? 0 : COMPOSER_PICK_INSET"
+                  submit-on-enter
+                  @submit="onComposerSubmit"
+                />
                   <button
                     v-if="!readOnly"
                     type="button"
@@ -3677,6 +3948,84 @@ defineExpose({
 
 .agent-tools {
   border-top: 1px solid var(--neo-border);
+}
+
+/* ---- 流式中待发消息气泡（排队，抄 WorkBuddy） ---- */
+.agent-queued-bubble {
+  animation: agent-queued-in 0.18s ease;
+}
+
+@keyframes agent-queued-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.queued-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--neo-border);
+  border-radius: 999px;
+  background: var(--neo-hi-bg);
+  padding: 2px 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--neo-text);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.queued-act:hover {
+  background: var(--neo-hover-bg);
+  border-color: color-mix(in srgb, var(--neo-text) 28%, transparent);
+}
+
+.queued-act--primary {
+  border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
+  color: var(--neo-accent);
+  background: color-mix(in srgb, var(--neo-accent) 10%, transparent);
+}
+
+.queued-act--primary:hover {
+  background: color-mix(in srgb, var(--neo-accent) 18%, transparent);
+}
+
+/* ---- 已发送用户消息就地二次编辑卡（抄 WorkBuddy） ---- */
+.agent-edit-card {
+  display: block;
+}
+
+.agent-edit-textarea {
+  font-family: inherit;
+}
+
+.agent-edit-btn {
+  border: 1px solid var(--neo-border);
+  border-radius: 999px;
+  background: var(--neo-hi-bg);
+  padding: 2px 12px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--neo-text);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.agent-edit-btn:hover {
+  background: var(--neo-hover-bg);
+}
+
+.agent-edit-btn--primary {
+  border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
+  color: var(--neo-accent);
+  background: color-mix(in srgb, var(--neo-accent) 12%, transparent);
+}
+
+.agent-edit-btn--primary:hover {
+  background: color-mix(in srgb, var(--neo-accent) 20%, transparent);
+}
+
+.agent-turn--user:hover .agent-msg-actions,
+.agent-bubble-user:hover ~ .agent-msg-actions {
+  opacity: 1;
 }
 
 /* ---- 底部输入 dock（对齐 dock-studio 毛玻璃） ---- */
