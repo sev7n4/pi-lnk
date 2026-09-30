@@ -730,22 +730,30 @@ export class AgentService {
           done = true
         }
         // UI_COMMAND 批次：canvas_command 是 UI 命令（focus/undo/redo/open_image_editor），
-        // 直通前端 AgentSideRail canvas_command 分支；不得进 canvasActions（那是画布数据动作通道）
-        if (event.type === 'tool_execution_end') {
-          for (const cmd of extractCanvasCommands(event)) {
-            // P1#7：ask_user 进 executionEvents → metadata 落库，刷新/重连后可恢复待答卡
-            if (cmd.type === 'ask_user') {
-              executionEvents.push({ type: 'canvas_command', data: cmd })
+        // 直通前端 AgentSideRail canvas_command 分支；不得进 canvasActions（那是画布数据动作通道）。
+        // B-6：tool_execution_update 也参与提取——阻塞 ask_user 卡片只在 update 快照
+        // （onUpdate → partialResult.details.canvasCommands）里，end 事件只有答案文本
+        for (const cmd of extractCanvasCommands(event)) {
+          // P1#7：ask_user 进 executionEvents → metadata 落库，刷新/重连后可恢复待答卡。
+          // update 快照可能多次下发：同 callId 以最新为准（先移除旧条目再入列，防落库重复）；
+          // blocking off 旧路径卡片无 callId，不去重直接追加
+          if (cmd.type === 'ask_user') {
+            if (cmd.callId) {
+              const idx = executionEvents.findIndex(
+                (e) => e.type === 'canvas_command' && (e.data as { callId?: string }).callId === cmd.callId,
+              )
+              if (idx >= 0) executionEvents.splice(idx, 1)
             }
-            yield { type: 'canvas_command', data: cmd }
+            executionEvents.push({ type: 'canvas_command', data: cmd })
           }
-          // B-5：gen/lifecycle 工具 details.actions → canvas_action（画布数据动作通道；
-          // 对齐老链路 NestEventProxy 转发语义），节点状态经此实时到前端
-          for (const action of extractCanvasActions(event)) {
-            canvasActions.push(action)
-            executionEvents.push({ type: 'canvas_action', data: action })
-            yield { type: 'canvas_action', data: action }
-          }
+          yield { type: 'canvas_command', data: cmd }
+        }
+        // B-5：gen/lifecycle 工具 details.actions → canvas_action（画布数据动作通道；
+        // 对齐老链路 NestEventProxy 转发语义），节点状态经此实时到前端
+        for (const action of extractCanvasActions(event)) {
+          canvasActions.push(action)
+          executionEvents.push({ type: 'canvas_action', data: action })
+          yield { type: 'canvas_action', data: action }
         }
         // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件（delta 只累积）
         const thinkingUi = thinkingAccumulator.feed(event)

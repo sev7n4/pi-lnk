@@ -738,8 +738,9 @@ const effectiveUtterance = ref<string | null>(null)
 const schemeSelections = ref<Record<string, string[]>>({})
 const deliverySelections = ref<Record<string, string>>({})
 
-/** ask_user 选项卡待选问题（canvas_command type=ask_user 时填充，用户选完清空）。 */
-const pendingAskUser = ref<Array<{ id: string; question: string; options: { label: string; value: string }[]; multiSelect?: boolean; allowOther?: boolean }>>([])
+/** ask_user 阻塞卡（B-6）：生命周期绑定 pending 状态，不再随新 user message 清空（提交/取消才清）。
+ * callId 是卡片级提交依据（Task 2 payload），同卡多问题共享同一 callId，逐元素携带便于恢复/拦截取用。 */
+const pendingAskUser = ref<Array<{ callId: string; id: string; question: string; options: { label: string; value: string }[]; multiSelect?: boolean; allowOther?: boolean }>>([])
 /** 卡片只挂在最后一轮 assistant 回复之后（对话流内，不在消息列表顶部）；用户发新消息后自动隐藏。 */
 const lastMessageIsAssistant = computed(() => {
   const msgs = agent.messages
@@ -747,13 +748,57 @@ const lastMessageIsAssistant = computed(() => {
   return !!last && last.role === 'assistant'
 })
 
-async function onAskSelect(value: string) {
-  pendingAskUser.value = []
-  await sendMessage(value)
+/** B-6：POST /api/agent/sessions/:sessionId/answers（Task 5 契约，Nest 统一包装按 data 取值）。
+ * 401/403/网络异常会 throw——调用方必须 try/catch 失败时恢复 pendingAskUser（端点幂等，重试安全）。
+ * payload 只含 threadId/callId/answers/answerId；skipped 不进 payload——skipped 问题已从 answers 省略，「未答」语义由模型侧 sawtooth（answers 缺键）表达。 */
+async function submitAnswers(input: {
+  threadId: string
+  sessionId: string
+  callId: string
+  answers: Record<string, string[]>
+  answerId?: string
+}): Promise<{ ok: boolean; deduped: boolean }> {
+  const res = await fetch(apiUrl(`/api/agent/sessions/${encodeURIComponent(input.sessionId)}/answers`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      threadId: input.threadId,
+      callId: input.callId,
+      answers: input.answers,
+      ...(input.answerId ? { answerId: input.answerId } : {}),
+    }),
+  })
+  if (!res.ok) throw new Error(`submitAnswers failed: ${res.status}`)
+  const json = (await res.json()) as { data?: { ok?: boolean; deduped?: boolean } }
+  return { ok: json.data?.ok === true, deduped: json.data?.deduped === true }
+}
+
+async function onAskSubmit(payload: { answers: Record<string, string[]>; skipped?: string[] }) {
+  const callId = pendingAskUser.value[0]?.callId
+  const snapshot = pendingAskUser.value
+  pendingAskUser.value = [] // 先清卡防双击双发（幂等端点兜底，但 UI 及时收敛）
+  if (!callId) {
+    // blocking off 旧路径（Task 2 契约：无 callId 卡片回填为下一轮 user message）——
+    // 答案值拼回文本复用 sendMessage，零新建回流
+    const text = Object.values(payload.answers).flat().map((v) => v.trim()).filter(Boolean).join(' ')
+    if (text) await sendMessage(text)
+    return
+  }
+  try {
+    await submitAnswers({
+      threadId: agentThreadId.value,
+      sessionId: props.sessionId,
+      callId,
+      answers: payload.answers,
+      answerId: crypto.randomUUID(),
+    })
+  } catch {
+    pendingAskUser.value = snapshot // 失败恢复卡（幂等端点保证重试安全）
+    ElMessage.error('提交失败，请重试')
+  }
 }
 function onAskCancel() {
-  pendingAskUser.value = []
-  void sendMessage('取消')
+  pendingAskUser.value = [] // 阻塞卡取消 = 仅收起；「自行描述」语义由输入框自由文本承接（§5.3 路由：pending 已清，文本走正常消息）
 }
 const deliveryGenByKey = ref<Record<string, { node_id?: string | null; url?: string | null; title?: string | null }>>({})
 const deliveryRefineDraft = ref<Record<string, string>>({})
@@ -1458,14 +1503,15 @@ async function loadHistory() {
       const seeded = seedTaskProgressFromEvents(meta?.executionEvents ?? [])
       if (seeded) taskProgress.value = seeded
       // P1#7：最后一回合若有未答 ask_user 且之后无用户消息，恢复待答卡
+      // B-6：callId 随 metadata.executionEvents 落盘（agent.service 提取 cmd 整体入列），恢复时回填提交依据
       const lastAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
       const hasUserAfter = msgs.slice(lastAssistantIdx + 1).some((m) => m.role === 'user')
       const askCmd = (meta?.executionEvents ?? [])
         .filter((e) => e.type === 'canvas_command')
-        .map((e) => e.data as { type?: string; questions?: typeof pendingAskUser.value })
+        .map((e) => e.data as { type?: string; callId?: string; questions?: Array<Omit<(typeof pendingAskUser.value)[number], 'callId'>> })
         .find((c) => c.type === 'ask_user' && c.questions?.length)
       if (askCmd && !hasUserAfter) {
-        pendingAskUser.value = askCmd.questions!
+        pendingAskUser.value = askCmd.questions!.map((q) => ({ ...q, callId: askCmd.callId ?? '' }))
       }
     }
   } catch {
@@ -1638,6 +1684,29 @@ async function createOwnCanvas() {
 }
 
 async function sendMessage(message: string) {
+  // §5.3（③ 已确认）：pending 期间对话输入一律按 answer，自由文本填充首个未答问题。
+  // 简化：B-6 卡片在答满后已自动提交消失，pending 存在 = 至少一题未答 → 首个问题即目标
+  if (pendingAskUser.value.length > 0) {
+    const target = pendingAskUser.value[0]
+    const askSnapshot = pendingAskUser.value
+    pendingAskUser.value = []
+    if (target.callId) {
+      try {
+        await submitAnswers({
+          threadId: agentThreadId.value,
+          sessionId: props.sessionId,
+          callId: target.callId,
+          answers: { [target.id]: [message] },
+          answerId: crypto.randomUUID(),
+        })
+      } catch {
+        pendingAskUser.value = askSnapshot // 失败恢复卡（幂等端点保证重试安全）
+        ElMessage.error('提交失败，请重试')
+      }
+      return
+    }
+    // 无 callId（blocking off 旧路径）：pending 已清，落回下方正常 user message 流程
+  }
   pendingAskUser.value = []
   const selectableTextModels = preferences.value?.selectableTextModels ?? []
   if (planningModel.value && !selectableTextModels.includes(planningModel.value)) {
@@ -2031,8 +2100,11 @@ function handleEvent(event: { type: string; data: unknown }) {
           sidebar.addFromPayload(att)
         }
       } else if (cmd.type === 'ask_user') {
-        const questions = (cmd as { questions?: typeof pendingAskUser.value }).questions
-        if (questions?.length) pendingAskUser.value = questions
+        const card = cmd as { callId?: string; questions?: Array<Omit<(typeof pendingAskUser.value)[number], 'callId'>> }
+        if (card.questions?.length) {
+          // B-6：callId 是卡片级提交依据（update 快照 / end 旧路径透传），逐元素填充
+          pendingAskUser.value = card.questions.map((q) => ({ ...q, callId: card.callId ?? '' }))
+        }
       }
       break
     }
@@ -2570,7 +2642,7 @@ defineExpose({
               v-if="pendingAskUser.length && lastMessageIsAssistant"
               class="mx-3"
               :questions="pendingAskUser"
-              @select="onAskSelect"
+              @submit="onAskSubmit"
               @cancel="onAskCancel"
             />
             <AgentTaskProgressCard
