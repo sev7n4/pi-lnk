@@ -34,6 +34,7 @@ import {
 	classifyCompactionError,
 	decideCompaction,
 	type CompactionOutcome,
+	type CompactionSkipReason,
 } from "./compaction-check.js";
 import type { Metrics } from "./metrics.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
@@ -372,6 +373,12 @@ export class SessionManager {
 	private readonly creating = new Map<string, Promise<CreateResult>>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
 	private sweeper?: NodeJS.Timeout;
+
+	/**
+	 * run 后压缩（扫盘 + 摘要 LLM 调用）的整体等待上限；**仅用于测试注入**，
+	 * 生产恒为 COMPACTION_MAX_WAIT_MS。见 maybeCompact 的 deadline 注释。
+	 */
+	compactionMaxWaitMs: number = COMPACTION_MAX_WAIT_MS;
 
 	constructor(
 		private readonly tools: AgentHarnessTool<LnkpiToolContext>[] = [],
@@ -864,29 +871,28 @@ export class SessionManager {
 		// run 的 `.finally`（清 prompting）之前跑完；一旦把置位挪到某个 await 之后，就会出现
 		// 「run 已结束但压缩尚未接管」的空档，请求溜进去后撞 LaneBusy → 用户拿不到回答。
 		entry.compacting = true;
+		// 截止自上而下覆盖**整条**链路（扫盘 + 摘要），而不只是摘要那一段：任何一环 hanging
+		// 都会让本方法永不返回，`entry.compacting` 就永远不清 —— 该会话此后永久 409。
+		const bounded = withCancel(this.context);
+		const maxWaitMs = this.compactionMaxWaitMs;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<"timeout">((resolve) => {
+			timer = setTimeout(() => {
+				// 双保险：既取消 context（真正掐断摘要的 HTTP 流），也在 await 这一侧设逃生口。
+				// 后者不可或缺 —— lane 自身不读 abortSignal，全仓只有一处清理 operation
+				// （lane.ts:439），若 vendor 未能 settle，光靠 cancel 仍会把这里吊死。
+				bounded.cancel(new Error(`compaction exceeded ${maxWaitMs}ms`));
+				resolve("timeout");
+			}, maxWaitMs);
+		});
 		try {
-			// 用户按了停止：不再追加一次摘要类 LLM 调用（Review Focus #2）
-			if (entry.userAborted) return;
-			// 顺序不可省略（Critical #3）：vendor 的 `getLastAssistantUsage` 把**末元素当最新**
-			// （compaction.ts:183），而 `lane.findEntries` 缺省 `newestFirst`（lane.ts:1906）——
-			// 两者方向相反。原样透传会让多轮会话取到**第一轮**的 usage，contextTokens 恒为几千，
-			// 压缩永不触发，而 skips_total{below_threshold} 照常累加（最危险的一类「假修好」）。
-			// `stopAtType: "compaction"` 与 vendor acceptCompaction 同构（lane.ts:703）：
-			// 只扫到上一个压缩点为止，避免长会话每轮全量读历史。
-			const entries = await lane
-				.findEntries({ order: "oldestFirst", stopAtType: "compaction" }, this.context)
-				.catch(() => []);
-			const decision = decideCompaction(entries, entry.contextWindow, this.config.compaction);
-			if (!decision.shouldRun) {
-				this.metrics?.observeCompactionSkip(decision.skipReason ?? "unknown");
-				return;
-			}
-			const res = await this.compactWithDeadline(lane, this.compactionMaxWaitMs);
-			// ok 分支刻意不计数：harness 成功时会自行下发 compaction_end(status=completed)，
-			// 由 attachEvents 的回调计 ok/error；这里再计一次会让 ok 翻倍、掩盖真实失败率
-			// （Review Focus #4）。失败路径不存在该事件，故必须在此补计。
-			if (!res.ok) this.metrics?.observeCompactionSkip(res.reason);
+			const outcome = await Promise.race([this.runCompaction(entry, lane, bounded.context), deadline]);
+			// outcome 为 undefined 表示压缩已成功发起：ok 由 harness 自己下发的
+			// compaction_end(status=completed) 事件计数，这里再计一次会翻倍（Review Focus #4）。
+			if (outcome === "timeout") this.metrics?.observeCompactionSkip("timeout");
+			else if (outcome) this.metrics?.observeCompactionSkip(outcome);
 		} finally {
+			if (timer !== undefined) clearTimeout(timer);
 			// 会话可能已在压缩期间被回收；布尔位无所谓，清掉即可。
 			// try/finally 覆盖整段（含跳过路径），保证不存在「永久 busy」的残留。
 			entry.compacting = false;
@@ -894,38 +900,35 @@ export class SessionManager {
 	}
 
 	/**
-	 * 带 deadline 的 `lane.compact()`。
+	 * 压缩的决策 + 执行体；返回一个 skip 理由，或 `undefined` 表示已成功发起。
 	 *
-	 * 为什么必须有 deadline：摘要是一次真实 LLM 调用，且 vendor 侧会在失败时退避重试
-	 * （默认 3 次 + 指数退避），整体耗时不可控。若不设上限而它在途永不 settle，
-	 * `entry.compacting` 就永远不被 finally 清掉 —— 该会话此后 prompt/fork/create
-	 * **永久 409**，用户只能等进程重启。
-	 *
-	 * 用 `withCancel` 而非 `Promise.race`：race 只放开等待方，vendor 的 active operation
-	 * 仍在 lane 上占着（后续请求照样撞 LaneBusy）；取消 context 才能真正中断那次调用。
+	 * 刻意不重试：失败留给下一轮再判定（Review Focus #3）。
 	 */
-	/** 压缩 deadline 上限；**仅用于测试注入**（生产恒定 COMPACTION_MAX_WAIT_MS）。 */
-	compactionMaxWaitMs: number = COMPACTION_MAX_WAIT_MS;
-
-	private async compactWithDeadline(lane: AgentLane, maxWaitMs: number): Promise<
-		{ ok: true } | { ok: false; reason: CompactionOutcome }
-	> {
-		const bounded = withCancel(this.context);
-		let timedOut = false;
-		const timer = setTimeout(() => {
-			timedOut = true;
-			bounded.cancel(new Error(`compaction exceeded ${maxWaitMs}ms`));
-		}, maxWaitMs);
+	private async runCompaction(
+		entry: SessionEntry,
+		lane: AgentLane,
+		context: Context,
+	): Promise<CompactionSkipReason | CompactionOutcome | undefined> {
+		// 用户按了停止：不再追加一次摘要类 LLM 调用（Review Focus #2）
+		if (entry.userAborted) return undefined;
+		// 顺序不可省略（Critical #3）：vendor 的 `getLastAssistantUsage` 把**末元素当最新**
+		// （compaction.ts:183），而 `lane.findEntries` 缺省 `newestFirst`（lane.ts:1906）——
+		// 两者方向相反。原样透传会让多轮会话取到**第一轮**的 usage，contextTokens 恒为几千，
+		// 压缩永不触发，而 skips_total{below_threshold} 照常累加（最危险的一类「假修好」）。
+		// `stopAtType: "compaction"` 与 vendor acceptCompaction 同构（lane.ts:703）：
+		// 只扫到上一个压缩点为止，避免长会话每轮全量读历史。
+		const entries = await lane
+			.findEntries({ order: "oldestFirst", stopAtType: "compaction" }, context)
+			.catch(() => []);
+		const decision = decideCompaction(entries, entry.contextWindow, this.config.compaction);
+		if (!decision.shouldRun) return decision.skipReason ?? "unknown";
 		try {
-			const res = await lane.compact(undefined, bounded.context);
-			if (res.ok) return { ok: true };
-			return { ok: false, reason: timedOut ? "timeout" : classifyCompactionError(res.error) };
+			const res = await lane.compact(undefined, context);
+			if (res.ok) return undefined; // ok 由事件计，不得在此重复计数
+			return classifyCompactionError(res.error);
 		} catch (err) {
-			// deadline 取消期外抛出（如 sweeper 抢走句柄）同样要归类；
-			// 超时取消则统一记为 timeout，避免被当成普通错误混入失败率。
-			return { ok: false, reason: timedOut ? "timeout" : classifyCompactionError(err) };
-		} finally {
-			clearTimeout(timer);
+			// sweeper 抢走句柄等会以异常而非 Result 抛出，同样要归类而非静默。
+			return classifyCompactionError(err);
 		}
 	}
 
