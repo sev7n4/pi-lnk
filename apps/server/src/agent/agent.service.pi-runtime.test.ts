@@ -951,3 +951,62 @@ describe('AgentService B-2 ruleGroups + minors', () => {
     expect(events.map((e) => e.type)).toContain('done')
   })
 })
+
+describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
+  /** 最小构造（沿用 cancel-run.test.ts 惯例）。 */
+  function createService() {
+    return new AgentService(
+      {} as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+  }
+
+  /** 替换私有取址/工厂方法，避免依赖真实 env 与网络。 */
+  function stubPi(svc: AgentService, url: string | null, client: unknown) {
+    const anySvc = svc as unknown as {
+      getPiRuntimeUrl: () => string | null
+      createPiRuntimeClient: (_url: string) => unknown
+    }
+    anySvc.getPiRuntimeUrl = () => url
+    anySvc.createPiRuntimeClient = () => client
+  }
+
+  it('answerPiPending：threadId 优先推导 sessionKey 并透传 callId/answers', async () => {
+    const svc = createService()
+    const answer = vi.fn(async () => ({ ok: true, deduped: false }))
+    stubPi(svc, 'http://pi-runtime', { answer })
+
+    const result = await svc.answerPiPending({
+      sessionId: 's1',
+      threadId: 'tid-1',
+      callId: 'c1',
+      answers: { choice: ['a'] },
+      answerId: 'a1',
+    })
+    expect(result).toEqual({ ok: true, deduped: false })
+    expect(answer).toHaveBeenCalledWith('tid-1', {
+      callId: 'c1',
+      answers: { choice: ['a'] },
+      answerId: 'a1',
+    })
+  })
+
+  it('answerPiPending：无 threadId 回落 sessionId；未传 answerId 时不发该键', async () => {
+    const svc = createService()
+    const answer = vi.fn(async () => ({ ok: true, deduped: true }))
+    stubPi(svc, 'http://pi-runtime', { answer })
+
+    const result = await svc.answerPiPending({
+      sessionId: 's1',
+      threadId: '   ',
+      callId: 'c1',
+      answers: { choice: ['b'] },
+    })
+    expect(result).toEqual({ ok: true, deduped: true })
+    expect(answer).toHaveBeenCalledWith('s1', { callId: 'c1', answers: { choice: ['b'] } })
+    const body = answer.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(body).not.toHaveProperty('answerId')
+  })
+})

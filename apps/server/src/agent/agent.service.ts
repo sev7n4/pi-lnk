@@ -394,6 +394,28 @@ export class AgentService {
   }
 
   /**
+   * B-2：透传用户回答到 pi-runtime pending registry（ask_user/propose_generation 阻塞恢复）。
+   * sessionKey 推导与 cancelRun（:392）完全一致：threadId?.trim() || sessionId。
+   * 幂等：pi-runtime 侧未知/已清理 callId 返回 deduped=true，不抛错。
+   */
+  async answerPiPending(input: {
+    sessionId: string
+    threadId?: string | null
+    callId: string
+    answers: Record<string, string[]>
+    answerId?: string
+  }): Promise<{ ok: boolean; deduped: boolean }> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return { ok: false, deduped: false }
+    const sessionKey = input.threadId?.trim() || input.sessionId
+    return this.createPiRuntimeClient(piUrl).answer(sessionKey, {
+      callId: input.callId,
+      answers: input.answers,
+      ...(input.answerId ? { answerId: input.answerId } : {}),
+    })
+  }
+
+  /**
    * W12: 重连时的 checkpoint 相位。
    *
    * 老 LangGraph runtime 已退役，checkpoint 概念随它一起消失（pi-runtime 无此状态），

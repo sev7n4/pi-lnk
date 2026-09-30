@@ -204,6 +204,31 @@ export class PiRuntimeClient {
 		return { ok: body?.ok === true, skipped: body?.skipped === true };
 	}
 
+	/** B-2：向阻塞中的确认类工具提交用户回答（幂等；未知/已清理 callId 返回 deduped=true）。 */
+	async answer(
+		sessionId: string,
+		body: { callId: string; answers: Record<string, string[]>; answerId?: string },
+	): Promise<{ ok: boolean; deduped: boolean }> {
+		const { status, body: resp } = await this.request<{ ok?: boolean; deduped?: boolean; error?: string }>(
+			`/sessions/${encodeURIComponent(sessionId)}/answers`,
+			{ method: "POST", body: JSON.stringify(body) },
+		);
+		if (status >= 400 || resp?.error) {
+			throw new PiRuntimeError(resp?.error ?? `answer failed: HTTP ${status}`, status);
+		}
+		return { ok: resp?.ok === true, deduped: resp?.deduped === true };
+	}
+
+	/** B-2：查询会话是否有阻塞中的确认类工具（前端 409 降级恢复用）。 */
+	async getPending(sessionId: string): Promise<{ callId: string; toolName: string } | null> {
+		const { status, body } = await this.request<{ pending?: { callId: string; toolName: string } | null }>(
+			`/sessions/${encodeURIComponent(sessionId)}/pending`,
+			{ method: "GET" },
+		);
+		if (status >= 400) return null; // 查询失败按无 pending（降级路径，不抛错阻断对话）
+		return body?.pending ?? null;
+	}
+
 	async deleteSession(sessionId: string): Promise<void> {
 		const { status } = await this.request(`/sessions/${encodeURIComponent(sessionId)}`, {
 			method: "DELETE",
