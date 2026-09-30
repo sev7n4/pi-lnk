@@ -493,3 +493,71 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 		assert.throws(() => sm.subscribeLive("ghost", () => {}), NotFoundError);
 	});
 });
+
+describe("SessionManager contextWindow 入会话条目（压缩阈值基准 · 诊断 F-01）", () => {
+	/** 假 modelFactory：返回带指定 contextWindow 的 model（不依赖 env 凭据）。 */
+	function modelFactoryWithWindow(contextWindow: number) {
+		return (() => ({
+			models: {},
+			model: { id: "probe-model", contextWindow },
+			providerId: "probe",
+		})) as never;
+	}
+
+	const probeHarnessFactory = async () =>
+		({
+			harness: {
+				events: { on: () => () => {} },
+				lane: async () => ({ prompt: async () => ({ ok: true }) }),
+				close: async () => {},
+			},
+		}) as never;
+
+	const windowOf = (sm: SessionManager, key: string): number | undefined =>
+		(sm as unknown as { sessions: Map<string, { contextWindow?: number }> })
+			.sessions.get(toSessionKey(key))?.contextWindow;
+
+	it("create 时把 model.contextWindow 记入会话条目", async () => {
+		const sm = new SessionManager(
+			[],
+			"",
+			modelFactoryWithWindow(128_000),
+			probeHarnessFactory,
+			undefined,
+			undefined,
+			testConfig(),
+		);
+		await sm.create("s-win", {});
+		assert.equal(windowOf(sm, "s-win"), 128_000);
+	});
+
+	it("config.compactionContextWindow 优先于 model 声明值（绕过 agnes 的 100 万）", async () => {
+		// Review Focus #1：没有这条覆盖时，阈值 = 1_000_000 - reserveTokens 永不触及，
+		// 触发链路接好了也一次都不会压缩，且极易被误判为「已修好」。
+		const sm = new SessionManager(
+			[],
+			"",
+			modelFactoryWithWindow(1_000_000),
+			probeHarnessFactory,
+			undefined,
+			undefined,
+			{ ...testConfig(), compactionContextWindow: 128_000 },
+		);
+		await sm.create("s-win-override", {});
+		assert.equal(windowOf(sm, "s-win-override"), 128_000);
+	});
+
+	it("model 未声明 contextWindow 时为 undefined（fail-safe：判定走 no_window 不压缩）", async () => {
+		const sm = new SessionManager(
+			[],
+			"",
+			(() => ({ models: {}, model: { id: "probe-model" }, providerId: "probe" })) as never,
+			probeHarnessFactory,
+			undefined,
+			undefined,
+			testConfig(),
+		);
+		await sm.create("s-win-none", {});
+		assert.equal(windowOf(sm, "s-win-none"), undefined);
+	});
+});

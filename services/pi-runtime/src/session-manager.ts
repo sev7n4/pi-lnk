@@ -119,6 +119,13 @@ interface SessionEntry {
 	/** 当前思考档位（常驻会话下换档走 lane setter，不重建会话；spec §5.5）。 */
 	thinkingLevel: ThinkingLevel;
 	/**
+	 * 本会话实际使用的上下文窗口上限（来自 model.contextWindow，可被 env 覆盖）。
+	 *
+	 * run 后压缩判定的阈值基准：缺失时 `decideCompaction` 一律短路为 `no_window`、
+	 * 不压缩（fail-safe）。存在理由见下 build 处注释（agnes 的 100 万声明值）。
+	 */
+	contextWindow?: number;
+	/**
 	 * 底层 vendored Session 引用：fork 校验目标 entry 是否存在用（避免依赖 vendored 的
 	 * 英文报错文案来映射 400）。会话常驻时该句柄一直打开，可直接 `getEntry`。
 	 */
@@ -507,6 +514,10 @@ export class SessionManager {
 				focusNodeId: opts.focusNodeId,
 			}),
 			thinkingLevel,
+			// 压缩阈值基准。优先级刻意是「配置覆盖 → 模型声明值」：agnes provider 把
+			// contextWindow 声明为 1_000_000，直接用它算出的阈值 983,616 永不触及，
+			// 触发链路接好了也一次都不会压缩（2026-09-30 诊断 F-01 · Review Focus #1）。
+			contextWindow: this.config.compactionContextWindow ?? model.contextWindow,
 			// fork 复用需要：底层 Session / 元数据 / 模型对象（来源身份沿用，不重算）
 			session,
 			sessionMeta: session.metadata,
