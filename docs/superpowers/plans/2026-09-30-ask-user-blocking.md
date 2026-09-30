@@ -1,6 +1,6 @@
 # ask_user / propose_generation 阻塞式改造 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** ask_user 与 propose_generation 改为阻塞式（agent 在工具内等待用户回答/画布确认，同 turn 续行），带 30min 超时降级、env 回退开关、多问题卡片点选与提交分离交互。
 
@@ -1207,7 +1207,7 @@ Expected: 全部 passed
 
 ```bash
 cd /path/to/worktree && pnpm verify-spec-figures --file docs/superpowers/specs/2026-09-30-ask-user-blocking-design.md
-# 回填本 plan 全部 checkbox（Edit replace_all "- [x]" → "- [x]"，git status 复核落盘）
+# 回填本 plan 全部 checkbox（Edit replace_all "- [ ]" → "- [x]"，git status 复核落盘）
 git add docs/superpowers/plans/2026-09-30-ask-user-blocking.md && git commit -m "docs(plan): 回填阻塞式改造实现计划 checkbox"
 ```
 
