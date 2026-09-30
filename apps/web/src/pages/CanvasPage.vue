@@ -58,6 +58,7 @@ import CanvasNodeVideoComposition from '@/components/canvas/CanvasNodeVideoCompo
 import CanvasNodeWorldModel from '@/components/canvas/CanvasNodeWorldModel.vue'
 import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
+import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
 import CanvasFloatingChrome from '@/components/canvas/CanvasFloatingChrome.vue'
 import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
 import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
@@ -4699,6 +4700,8 @@ onUnmounted(() => {
           @close="onPaneClick"
           @refine="openRefineForSelected"
         />
+
+        <DockNoticeLayer />
 
         <NodePanelDock
           v-if="!canvasChromeHidden"

@@ -179,6 +179,40 @@ export class PiRuntimeClient {
 		}
 	}
 
+	/**
+	 * ③ 重跑：后端线程截断（与 WorkBuddy「编辑并重发」一致）。
+	 *
+	 * 以 `atEntryId` 为切点 fork 出一条新分支会话：目标消息及其之后全部丢弃（`position: "before"`），
+	 * 之后的新 run 从切点父节点续写。来源会话不动。
+	 *
+	 * @returns `newKey` = 新会话的**原始** threadKey —— 后续所有调用（prompt / events /
+	 * create / abort）都要用它作为 sessionId；pi-runtime 内部 `toSessionKey` 会推导回
+	 * 同一内存键（绝不可二次哈希）。
+	 */
+	async forkSession(
+		sessionId: string,
+		atEntryId: string,
+		opts?: { canvasSessionId?: string; thinkingLevel?: "off" | "medium" | "high" },
+	): Promise<{ newKey: string; newSessionId: string }> {
+		const { status, body } = await this.request<{
+			newKey: string;
+			newSessionId: string;
+			error?: string;
+		}>(`/sessions/${encodeURIComponent(sessionId)}/fork`, {
+			method: "POST",
+			body: JSON.stringify({
+				atEntryId,
+				// 分支会话仍属同一画布：工具回查 Nest 需要画布会话 id（2026-09-29 hotfix 语义）
+				...(opts?.canvasSessionId ? { canvasSessionId: opts.canvasSessionId } : {}),
+				...(opts?.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+			}),
+		});
+		if (status >= 400 || !body || body.error || !body.newKey) {
+			throw new PiRuntimeError(body?.error ?? `forkSession failed: HTTP ${status}`, status);
+		}
+		return { newKey: body.newKey, newSessionId: body.newSessionId };
+	}
+
 	async listSkills(): Promise<{ skills: Array<{ name: string; description: string }> }> {
 		const { status, body } = await this.request<{
 			skills?: Array<{ name: string; description: string }>;

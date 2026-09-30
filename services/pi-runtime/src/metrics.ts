@@ -10,9 +10,13 @@
  *   - pi_runtime_sessions_live                         内存驻留会话数 gauge（P0-①：与 active 同源别名）
  *   - pi_runtime_session_resumes_total{outcome}         会话 create 三态计数（new/memory/disk/rebuilt）
  *   - pi_runtime_compactions_total{result}              上下文压缩结果计数（ok/error）
+ *   - pi_runtime_compaction_skips_total{reason}         未触发压缩的理由计数（可容忍跳过）
  *   - pi_runtime_prompt_rejections_total{reason}        被拒 prompt 计数（busy）
  *   - pi_runtime_build_info / pi_runtime_uptime_seconds
  */
+
+// type-only：擦除后不留运行时依赖，只把 reason 的取值域锁到决策器的两个来源上。
+import type { CompactionOutcome, CompactionSkipReason } from "./compaction-check.js";
 
 const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
 
@@ -41,6 +45,8 @@ export class Metrics {
 	private toolResultBytes = new Map<string, HistogramState>(); // key: tool
 	private sessionResumes = new Map<string, number>(); // key: outcome (new|memory|disk|rebuilt)
 	private compactions = new Map<string, number>(); // key: result (ok|error)
+	/** key: 未触发压缩的理由（disabled|no_window|no_usage|below_threshold|nothing_to_compact|lane_busy|closed|unknown）。 */
+	private compactionSkips = new Map<string, number>();
 	private promptRejections = new Map<string, number>(); // key: reason (busy)
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
@@ -94,8 +100,20 @@ export class Metrics {
 		this.compactions.set(result, (this.compactions.get(result) ?? 0) + 1);
 	}
 
-	/** 被拒的 prompt（当前只有 busy 一种）。 */
-	observePromptRejection(reason: "busy"): void {
+	/**
+	 * 未发生压缩的理由计数：disabled / no_window / no_usage / below_threshold /
+	 * lane_unavailable / entries_unavailable / nothing_to_compact / lane_busy / closed / unknown。
+	 *
+	 * 刻意与 pi_runtime_compactions_total 分开：这些是「可容忍跳过」，混进压缩结果会稀释失败率。
+	 * reason 取值域用联合类型而非自由 string 锁在两个来源里（决策器的 skipReason 与错误归类器
+	 * 的 outcome），防止未来随手传值导致 Prometheus label 基数爆炸。
+	 */
+	observeCompactionSkip(reason: CompactionSkipReason | CompactionOutcome): void {
+		this.compactionSkips.set(reason, (this.compactionSkips.get(reason) ?? 0) + 1);
+	}
+
+	/** 被拒的 prompt。busy_compacting = 压缩在途（短期可重试），与真并发 busy 分开观测。 */
+	observePromptRejection(reason: "busy" | "busy_compacting"): void {
 		this.promptRejections.set(reason, (this.promptRejections.get(reason) ?? 0) + 1);
 	}
 
@@ -138,6 +156,12 @@ export class Metrics {
 		lines.push("# TYPE pi_runtime_compactions_total counter");
 		for (const [result, count] of [...this.compactions.entries()].sort()) {
 			lines.push(`pi_runtime_compactions_total{result="${esc(result)}"} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_compaction_skips_total Compactions skipped, by reason.");
+		lines.push("# TYPE pi_runtime_compaction_skips_total counter");
+		for (const [reason, count] of [...this.compactionSkips.entries()].sort()) {
+			lines.push(`pi_runtime_compaction_skips_total{reason="${esc(reason)}"} ${count}`);
 		}
 
 		lines.push("# HELP pi_runtime_prompt_rejections_total Prompt rejections by reason.");

@@ -20,7 +20,9 @@ import { join } from "node:path";
 import {
 	AgentHarness,
 	type AgentHarnessTool,
+	type AgentLane,
 	type Context,
+	type JsonlSessionMetadata,
 	type Session,
 	type ThinkingLevel,
 	BACKGROUND_CONTEXT,
@@ -28,6 +30,13 @@ import {
 	withCancel,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import {
+	classifyCompactionError,
+	decideCompaction,
+	type CompactionOutcome,
+	type CompactionSkipReason,
+} from "./compaction-check.js";
+import type { Metrics } from "./metrics.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { enforceRetention } from "./session-retention.js";
@@ -97,6 +106,16 @@ interface SessionEntry {
 	cancelRun?: (reason?: unknown) => void;
 	/** 本轮 run 是否被用户主动取消（用于抑制取消引发的 error 事件，避免重连补发假警报）。 */
 	userAborted?: boolean;
+	/**
+	 * run 后的异步压缩是否在途（reviewer Critical #1）。
+	 *
+	 * vendor Lane 维持「同一时刻只允许一个 active operation」的不变式
+	 * （`lane.ts` 里 `state.operation !== null → LaneBusy`）。压缩是 fire-and-forget 的，
+	 * 若期间放行新 prompt，该 prompt 会撞上 LaneBusy：接口返回 200 accepted，
+	 * 用户最终只收到一个 error 事件、**拿不到任何回答**。故必须与 `prompting` 同等对待：
+	 * 在途期间一律 fail-closed 拒绝。
+	 */
+	compacting?: boolean;
 	/** 下一个待分配的事件 seq（会话内单调递增，P0-③）。 */
 	nextSeq: number;
 	/** create 时确定的静态段（规则 + skills index），会话期内不再变更。 */
@@ -118,6 +137,23 @@ interface SessionEntry {
 	turn: TurnContext;
 	/** 当前思考档位（常驻会话下换档走 lane setter，不重建会话；spec §5.5）。 */
 	thinkingLevel: ThinkingLevel;
+	/**
+	 * 本会话实际使用的上下文窗口上限（来自 model.contextWindow，可被 env 覆盖）。
+	 *
+	 * run 后压缩判定的阈值基准：缺失时 `decideCompaction` 一律短路为 `no_window`、
+	 * 不压缩（fail-safe）。存在理由见下 build 处注释（agnes 的 100 万声明值）。
+	 */
+	contextWindow?: number;
+	/**
+	 * 底层 vendored Session 引用：fork 校验目标 entry 是否存在用（避免依赖 vendored 的
+	 * 英文报错文案来映射 400）。会话常驻时该句柄一直打开，可直接 `getEntry`。
+	 */
+	session: Session<JsonlSessionMetadata>;
+	/** 会话磁盘元数据快照（cwd + uuid id）：fork 时作为 `repo.fork` 的 source。 */
+	sessionMeta: JsonlSessionMetadata;
+	/** 解析后的模型集合/单模型描述：fork 须沿用来源 LLM 身份（BYOK/model），不重算。 */
+	models: ReturnType<typeof assembleModel>["models"];
+	model: ReturnType<typeof assembleModel>["model"];
 	/** 最近一次活动时间，TTL 的唯一数据源。 */
 	lastActivityAt: number;
 }
@@ -126,6 +162,14 @@ const BUFFER_LIMIT = 500;
 
 /** 默认（也是唯一）对话 lane 名；换档等 lane 级操作必须落在与 prompt 同一条 lane 上。 */
 const MAIN_LANE = "main";
+
+/**
+ * run 后压缩（摘要 LLM 调用）的等待上限。
+ *
+ * 刻意不做成 env 旋钮：这是「防会话被永久卡死」的兜底值，调小会把正常长上下文摘要掐掉，
+ * 调大毫无收益；运维没有安全的取值区间，配错反而制造事故。
+ */
+const COMPACTION_MAX_WAIT_MS = 120_000;
 
 export type HarnessFactory = typeof AgentHarness.create;
 
@@ -333,6 +377,12 @@ export class SessionManager {
 	/** 阻塞式确认类工具的等待注册表（index.ts 装配注入，abort 联动用）。 */
 	private pendingRegistry?: PendingToolRegistry;
 
+	/**
+	 * run 后压缩（扫盘 + 摘要 LLM 调用）的整体等待上限；**仅用于测试注入**，
+	 * 生产恒为 COMPACTION_MAX_WAIT_MS。见 maybeCompact 的 deadline 注释。
+	 */
+	compactionMaxWaitMs: number = COMPACTION_MAX_WAIT_MS;
+
 	constructor(
 		private readonly tools: AgentHarnessTool<LnkpiToolContext>[] = [],
 		private readonly systemPromptDefault = process.env.PI_RUNTIME_SYSTEM_PROMPT ?? "",
@@ -343,6 +393,12 @@ export class SessionManager {
 		private readonly config: RuntimeConfig = loadRuntimeConfig(process.env),
 		/** P0-① 观测：compaction 成败计数（只在 compaction_end 且 completed/failed 时回调）。 */
 		private readonly onCompaction?: (result: "ok" | "error") => void,
+		/**
+		 * 压缩「跳过理由」计数。刻意与 `onCompaction` 分开：后者由 harness 事件驱动
+		 * （ok/error 是**结果**），本度量则是**未发生的理由**（disabled/no_window/
+		 * below_threshold/lane_busy…）。二者混计会把真实失败率稀释掉。
+		 */
+		private readonly metrics?: Metrics,
 	) {}
 
 	/** threadKey（Nest 的 threadId || sessionId）→ 是否已有内存驻留会话。 */
@@ -402,6 +458,9 @@ export class SessionManager {
 			if (!isSameLlmIdentity(existing.identity, identity)) {
 				// 复核 Minor #6：run 进行中不得抽走在跑的 harness（重建会话 = 换掉 harness 实例）。
 				if (existing.prompting) throw new BusyError(key);
+				// 压缩在途同样是 active operation：此时 destroy 会让 lane.compact 以 Closed 收场，
+				// 且摘要写回的会话已被丢弃 —— 白跑一次 LLM 调用。
+				if (existing.compacting) throw new BusyError(key, "compacting");
 				await this.destroy(key);
 				const created = await this.build(key, opts, models, model, identity);
 				return { ...created, status: "rebuilt" };
@@ -446,7 +505,10 @@ export class SessionManager {
 	}
 
 	/** 磁盘上存在可恢复会话时返回它（repo.list 按 createdAt 降序，取最新一条）。 */
-	private async openExisting(repo: JsonlSessionRepo, cwd: string): Promise<Session | undefined> {
+	private async openExisting(
+		repo: JsonlSessionRepo,
+		cwd: string,
+	): Promise<Session<JsonlSessionMetadata> | undefined> {
 		const list = await repo.list({ cwd }, this.context).catch(() => []);
 		const newest = list[0];
 		if (!newest) return undefined;
@@ -460,7 +522,13 @@ export class SessionManager {
 		models: ReturnType<typeof assembleModel>["models"],
 		model: ReturnType<typeof assembleModel>["model"],
 		identity: LlmIdentity,
-		existingFs?: { env: NodeExecutionEnv; repo: JsonlSessionRepo; session?: Session },
+		existingFs?: {
+			env: NodeExecutionEnv;
+			repo: JsonlSessionRepo;
+			// 必须带 JsonlSessionMetadata 泛型：否则 session.metadata 退化为基类
+			// SessionMetadata（缺 path/modifiedAt），fork 拿不到合规的 source 元数据。
+			session?: Session<JsonlSessionMetadata>;
+		},
 	): Promise<{ provider: string; model: string }> {
 		const cwd = opts.workingDir ?? join(this.config.dataRoot, key);
 		await mkdir(cwd, { recursive: true });
@@ -490,6 +558,15 @@ export class SessionManager {
 				focusNodeId: opts.focusNodeId,
 			}),
 			thinkingLevel,
+			// 压缩阈值基准。优先级刻意是「配置覆盖 → 模型声明值」：agnes provider 把
+			// contextWindow 声明为 1_000_000，直接用它算出的阈值 983,616 永不触及，
+			// 触发链路接好了也一次都不会压缩（2026-09-30 诊断 F-01 · Review Focus #1）。
+			contextWindow: this.config.compactionContextWindow ?? model.contextWindow,
+			// fork 复用需要：底层 Session / 元数据 / 模型对象（来源身份沿用，不重算）
+			session,
+			sessionMeta: session.metadata,
+			models,
+			model,
 			lastActivityAt: Date.now(),
 		};
 		// 归属/身份落盘（磁盘 resume 的 fail-closed 数据源，复核 Important #4）。
@@ -604,7 +681,8 @@ export class SessionManager {
 	async sweepOnce(now = Date.now()): Promise<{ closed: string[]; removedFromDisk: string[] }> {
 		const closed: string[] = [];
 		for (const [key, entry] of [...this.sessions]) {
-			if (entry.prompting) continue;
+			// 压缩在途同样是 active operation：此刻回收会让摘要白跑一次（Closed）。
+			if (entry.prompting || entry.compacting) continue;
 			if (now - entry.lastActivityAt < this.config.sessionTtlMs) continue;
 			await this.destroyMemoryOnly(key);
 			closed.push(key);
@@ -705,7 +783,10 @@ export class SessionManager {
 		// 会话常驻后同键并发会串台（同一 harness 上两个 run 交错），fail-closed 拒绝。
 		// 复核 Important #2（TOCTOU）：置位必须在任何 await 之前同步完成——原先
 		// 「检查 → await harness.lane() → 置位」的窗口里，第二个并发请求能通过检查。
+		// 压缩在途同样属于「active operation」，必须与 prompting 一并拒绝（Critical #1）。
+		// 只判 prompting 的话，撞 LaneBusy 的那一轮会以 200 accepted 落空——用户拿不到回答。
 		if (entry.prompting) throw new BusyError(entry.id);
+		if (entry.compacting) throw new BusyError(entry.id, "compacting");
 		entry.prompting = true;
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
 		try {
@@ -730,6 +811,19 @@ export class SessionManager {
 							lane: laneName,
 							ts: Date.now(),
 							data: { source: "prompt", message: String(result.error) },
+						});
+					}
+					// 只有正常完成的那一轮才判定压缩：取消/出错的轮留到下一轮再说。
+					// 位置必须在 finally（会清 userAborted）之前，否则读不到用户的停止意愿。
+					// fire-and-forget 的固有代价曾经咬过一次（漏 import 的 ReferenceError 被静默吞掉，
+					// 表现为「功能没生效」），故这里必须留痕，哪怕只是 console.warn。
+					if (result.ok) {
+						void this.maybeCompact(entry, lane).catch((err: unknown) => {
+							console.warn(
+								`[pi-runtime] post-run compaction hook failed: ${
+									err instanceof Error ? err.message : String(err)
+								}`,
+							);
 						});
 					}
 				})
@@ -762,6 +856,92 @@ export class SessionManager {
 	}
 
 	/**
+	 * run 后压缩判定与触发（诊断 F-01：能力齐全、唯独缺失的那一环）。
+	 *
+	 * vendor 的决策原语（`shouldCompact`）与执行 API（`lane.compact`）都已写好，但 harness
+	 * 自己不调前者、pi-runtime 此前也不调后者，于是 `compaction.enabled` 什么都不控制。
+	 * 本方法就是那个「谁来问」的角色。
+	 *
+	 * 刻意 fire-and-forget（不 await 完成）：不为一次摘要调用阻塞用户对下一条消息的响应。
+	 * 刻意不重试：每轮 run 至多走到这里一次，失败留给下一轮再判定（Review Focus #3）。
+	 * 「每轮至多一次」由调用位置本身保证——只有 run 的**正常完成**分支会走到这里。
+	 *
+	 * 压缩在途期间会话处于 busy（`entry.compacting`），新 prompt 会被 BusyError 挡掉——
+	 * 因为 vendor Lane 同一时刻只容一个 active operation，放行会让请求静默落空（Critical #1）。
+	 */
+	private async maybeCompact(entry: SessionEntry, lane: AgentLane): Promise<void> {
+		// 置位必须是第一条语句（Critical #2）：调用点在 `lane.prompt().then()` 内，同步段会在
+		// run 的 `.finally`（清 prompting）之前跑完；一旦把置位挪到某个 await 之后，就会出现
+		// 「run 已结束但压缩尚未接管」的空档，请求溜进去后撞 LaneBusy → 用户拿不到回答。
+		entry.compacting = true;
+		// 截止自上而下覆盖**整条**链路（扫盘 + 摘要），而不只是摘要那一段：任何一环 hanging
+		// 都会让本方法永不返回，`entry.compacting` 就永远不清 —— 该会话此后永久 409。
+		const bounded = withCancel(this.context);
+		const maxWaitMs = this.compactionMaxWaitMs;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<"timeout">((resolve) => {
+			timer = setTimeout(() => {
+				// 双保险：既取消 context（真正掐断摘要的 HTTP 流），也在 await 这一侧设逃生口。
+				// 后者不可或缺 —— lane 自身不读 abortSignal，全仓只有一处清理 operation
+				// （lane.ts:439），若 vendor 未能 settle，光靠 cancel 仍会把这里吊死。
+				bounded.cancel(new Error(`compaction exceeded ${maxWaitMs}ms`));
+				resolve("timeout");
+			}, maxWaitMs);
+		});
+		try {
+			const outcome = await Promise.race([this.runCompaction(entry, lane, bounded.context), deadline]);
+			// outcome 为 undefined 表示压缩已成功发起：ok 由 harness 自己下发的
+			// compaction_end(status=completed) 事件计数，这里再计一次会翻倍（Review Focus #4）。
+			if (outcome === "timeout") this.metrics?.observeCompactionSkip("timeout");
+			else if (outcome) this.metrics?.observeCompactionSkip(outcome);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+			// 会话可能已在压缩期间被回收；布尔位无所谓，清掉即可。
+			// try/finally 覆盖整段（含跳过路径），保证不存在「永久 busy」的残留。
+			entry.compacting = false;
+		}
+	}
+
+	/**
+	 * 压缩的决策 + 执行体；返回一个 skip 理由，或 `undefined` 表示已成功发起。
+	 *
+	 * 刻意不重试：失败留给下一轮再判定（Review Focus #3）。
+	 */
+	private async runCompaction(
+		entry: SessionEntry,
+		lane: AgentLane,
+		context: Context,
+	): Promise<CompactionSkipReason | CompactionOutcome | undefined> {
+		// 用户按了停止：不再追加一次摘要类 LLM 调用（Review Focus #2）
+		if (entry.userAborted) return undefined;
+		// 顺序不可省略（Critical #3）：vendor 的 `getLastAssistantUsage` 把**末元素当最新**
+		// （compaction.ts:183），而 `lane.findEntries` 缺省 `newestFirst`（lane.ts:1906）——
+		// 两者方向相反。原样透传会让多轮会话取到**第一轮**的 usage，contextTokens 恒为几千，
+		// 压缩永不触发，而 skips_total{below_threshold} 照常累加（最危险的一类「假修好」）。
+		// `stopAtType: "compaction"` 与 vendor acceptCompaction 同构（lane.ts:703）：
+		// 只扫到上一个压缩点为止，避免长会话每轮全量读历史。
+		// 缺方法的守卫必须在**调用之前**：`lane.findEntries` 为 undefined 时同步抛 TypeError，
+		// 链式 `.catch` 接不住，异常会一路穿到调用点变成一行 console.warn —— 指标上什么都不留。
+		// 这与 F-01 同构：「看起来没报错、实际从未压缩」，是本次要根治的形态。
+		if (typeof lane.findEntries !== "function") return "lane_unavailable";
+		const scanned = await lane
+			.findEntries({ order: "oldestFirst", stopAtType: "compaction" }, context)
+			.then((entries) => ({ ok: true as const, entries }), () => ({ ok: false as const }));
+		// 扫盘失败 ≠ 用量没超阈值：合并成一个 label 就等于放弃了「扫盘有没成功」这个信号。
+		if (!scanned.ok) return "entries_unavailable";
+		const decision = decideCompaction(scanned.entries, entry.contextWindow, this.config.compaction);
+		if (!decision.shouldRun) return decision.skipReason ?? "unknown";
+		try {
+			const res = await lane.compact(undefined, context);
+			if (res.ok) return undefined; // ok 由事件计，不得在此重复计数
+			return classifyCompactionError(res.error);
+		} catch (err) {
+			// sweeper 抢走句柄等会以异常而非 Result 抛出，同样要归类而非静默。
+			return classifyCompactionError(err);
+		}
+	}
+
+	/**
 	 * 中断该会话当前正在跑的 run（用户点「停止」）。
 	 * 会话本身保留——用户可以接着发新消息；无活跃 run 时返回 false（前端按「已断开」提示）。
 	 *
@@ -783,6 +963,65 @@ export class SessionManager {
 	/** index.ts 装配用（构造签名长，避免位置参数漂移）。 */
 	setPendingRegistry(registry: PendingToolRegistry): void {
 		this.pendingRegistry = registry;
+	}
+
+	/**
+	 * ③ 重跑：后端线程截断（与 WorkBuddy「编辑并重发」一致）。
+	 *
+	 * 以 `atEntryId` 为切点，从来源会话 fork 出一条**新**分支会话：目标消息及其之后全部
+	 * 丢弃（`position: "before"`），新 run 从切点父节点续写。来源会话磁盘/内存均不动。
+	 *
+	 * 关键不变量（踩过双重哈希的坑）：
+	 *   - 返回给调用方的 `newKey` 是**原始** threadKey（`<来源>__fork_<uuid>`），Nest 后续
+	 *     以它作为 threadId → pi-runtime 内部 `toSessionKey(newKey)` 得到与本方法注册时
+	 *     完全一致的内存键。绝不可把已哈希的键回传，否则二次哈希后会话对不上。
+	 *   - forkedSession 已在 `source.repo` 内打开，故 `build` 走 `existingFs` 分支直接挂
+	 *     harness，不重建磁盘、不重复 open（避免 "Session is already open"）。
+	 *   - 沿用来源 `identity`/`staticPrompt`/`canvasSessionId`，保证分支与原对话同模型、同系统上下文。
+	 */
+	async fork(
+		threadKey: string,
+		atEntryId: string,
+	): Promise<{ newKey: string; newSessionId: string }> {
+		const source = this.require(threadKey);
+		// 正在跑 run 的会话不允许 fork（fork 会读 source 快照，串台风险 fail-closed）。
+		if (source.prompting) throw new BusyError(source.id);
+		// 压缩在途也不允许：压缩会改写会话条目（截断 + 写摘要），此刻 fork 可能拷到中间态。
+		if (source.compacting) throw new BusyError(source.id, "compacting");
+		if (!source.session || !source.sessionMeta) {
+			throw new Error(`session ${source.id} missing underlying session snapshot; cannot fork`);
+		}
+		// 先校验目标 entry 确实存在（main 分支上）。用底层句柄自查，不依赖 vendored 的
+		// 英文报错文案 —— 不存在统一映射 400（WorkBuddy「重跑」要求 branchFromEntryId 有效）。
+		const target = await source.session
+			.getEntry(atEntryId, this.context)
+			.catch(() => undefined);
+		if (!target) throw new ForkTargetUnknownError(source.id, atEntryId);
+
+		const forkedSession = await source.repo.fork(
+			source.sessionMeta,
+			{ scope: "branch", branch: MAIN_LANE, entryId: atEntryId, position: "before" },
+			this.context,
+		);
+		const newSessionId = forkedSession.metadata.id;
+		const rawNewKey = `${threadKey}__fork_${newSessionId}`;
+		const internalKey = toSessionKey(rawNewKey);
+		// 复用来源 env/repo（forkedSession 已在其中打开），直接挂 harness，不重建磁盘。
+		await this.build(
+			internalKey,
+			{
+				systemPrompt: source.staticPrompt,
+				workingDir: source.sessionMeta.cwd,
+				canvasSessionId: source.canvasSessionId,
+				userId: source.userId,
+				thinkingLevel: source.thinkingLevel,
+			},
+			source.models,
+			source.model,
+			source.identity,
+			{ env: source.env, repo: source.repo, session: forkedSession },
+		);
+		return { newKey: rawNewKey, newSessionId };
 	}
 
 	async remove(threadKey: string): Promise<boolean> {
@@ -835,7 +1074,17 @@ export class NotFoundError extends Error {
 
 /** 同键并发 prompt：会话常驻后同一 harness 上两个 run 会交错，一律拒绝（路由层映射 409）。 */
 export class BusyError extends Error {
-	constructor(id: string) {
-		super(`session busy: ${id}`);
+	readonly reason: "running" | "compacting";
+
+	constructor(id: string, reason: "running" | "compacting" = "running") {
+		super(`session busy (${reason}): ${id}`);
+		this.reason = reason;
+	}
+}
+
+/** ③ 重跑：fork 切点 entry 在来源会话 main 分支上不存在（路由层映射 400）。 */
+export class ForkTargetUnknownError extends Error {
+	constructor(sessionId: string, entryId: string) {
+		super(`fork target entry ${entryId} not found in session ${sessionId}`);
 	}
 }

@@ -96,3 +96,25 @@ describe("askUser 配置", () => {
 		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "1500.7" }), 1500);
 	});
 });
+
+describe("compactionContextWindow（诊断 F-01 · Review Focus #1）", () => {
+	it("缺省为 undefined —— 未配置时沿用 model.contextWindow 的声明值", () => {
+		assert.equal(loadRuntimeConfig({}).compactionContextWindow, undefined);
+	});
+	it("可被 env 覆盖；非法值回退为 undefined 而非塞一个真实数", () => {
+		const at = (raw: string) => loadRuntimeConfig({ PI_RUNTIME_COMPACTION_CONTEXT_WINDOW: raw }).compactionContextWindow;
+		assert.equal(at("128000"), 128000);
+		assert.equal(at("0"), undefined);
+		assert.equal(at("-1"), undefined);
+		assert.equal(at("abc"), undefined);
+		assert.equal(at(""), undefined);
+	});
+	it("科学计数法按数值解析（helm 数字型 env 的老坑在此同样适用）", () => {
+		// 部署若误用 --set 而非 --set-string，128000 会被渲染成 1.28e+05；
+		// 该字段必须与其他数字型 env 一样走 parsePositiveInt，不能被 parseInt 截成 1。
+		assert.equal(
+			loadRuntimeConfig({ PI_RUNTIME_COMPACTION_CONTEXT_WINDOW: "1.28e+05" }).compactionContextWindow,
+			128000,
+		);
+	});
+});

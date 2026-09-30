@@ -124,6 +124,87 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 	}
 }
 
+/**
+ * pi 运行失败分类（item 2：失败透传）。
+ *
+ * pi 的失败以两种形态到达 Nest：
+ *  - 顶层 `error` 事件（data 含 message / stopReason）
+ *  - `agent_end` 且 status==='error'（data.error / data.errorMessage / data.stopReason）
+ *
+ * 402 余额不足在会话 transcript 中记为
+ * `stopReason:"error"`, `errorMessage:"402: {\"message\":\"Insufficient Balance …\"}"`，
+ * 走 `agent_end` 分支。这里对多种字段形态做防御性提取，并按文案归类出
+ * `kind`，供前端决定提示文案（余额不足 → dock 充值提醒卡片）。
+ */
+export type PiRunErrorKind =
+	| 'insufficient_balance'
+	| 'rate_limit'
+	| 'auth'
+	| 'context_overflow'
+	| 'unknown'
+
+export interface PiRunErrorInfo {
+	kind: PiRunErrorKind
+	message: string
+	retry_hint?: string
+}
+
+function readErrorText(d: Record<string, unknown>): string {
+	const candidates: unknown[] = [
+		d.errorMessage,
+		d.message,
+		(d.error as Record<string, unknown> | undefined)?.message,
+		typeof d.error === 'string' ? d.error : undefined,
+		d.stopReason,
+	]
+	for (const c of candidates) {
+		if (typeof c === 'string' && c.trim()) return c.trim()
+	}
+	return ''
+}
+
+export function classifyPiRunError(event: PiRuntimeEvent): PiRunErrorInfo | null {
+	if (event.type !== 'error' && event.type !== 'agent_end') return null
+	const d = (event.data ?? {}) as Record<string, unknown>
+	const status = typeof d.status === 'string' ? d.status : ''
+	const errText = readErrorText(d)
+	const isErrTurn =
+		event.type === 'error' ||
+		status === 'error' ||
+		errText !== '' ||
+		d.error != null
+	if (!isErrTurn) return null
+
+	const text = (errText || status || 'unknown error').toString()
+	const lower = text.toLowerCase()
+
+	let kind: PiRunErrorKind = 'unknown'
+	if (lower.includes('insufficient') || lower.includes('402') || lower.includes('balance')) {
+		kind = 'insufficient_balance'
+	} else if (lower.includes('429') || lower.includes('rate') || lower.includes('too many requests')) {
+		kind = 'rate_limit'
+	} else if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('api key') || lower.includes('invalid key')) {
+		kind = 'auth'
+	} else if (
+		lower.includes('context length') ||
+		(lower.includes('token') && lower.includes('exceed')) ||
+		lower.includes('maximum context')
+	) {
+		kind = 'context_overflow'
+	}
+
+	let retry_hint: string | undefined
+	if (kind === 'insufficient_balance') {
+		retry_hint = '请到设置页为当前模型渠道充值，或切换其他有余额的渠道后重试。'
+	} else if (kind === 'rate_limit') {
+		retry_hint = '模型渠道限流，请稍后重试或切换渠道。'
+	} else if (kind === 'context_overflow') {
+		retry_hint = '本轮上下文超出模型窗口，请开启新对话或精简素材后重试。'
+	}
+
+	return { kind, message: text.slice(0, 400), retry_hint }
+}
+
 /** ask_user 工具产出的问题定义（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md）。 */
 export interface AskUserQuestion {
 	id: string;
