@@ -35,14 +35,14 @@ const showBanner = computed(
 </script>
 
 <template>
-  <div class="agent-task-card rounded-xl border border-[var(--neo-border)] bg-[var(--neo-panel)] p-3 text-xs">
+  <div class="agent-task-card rounded-xl border border-[var(--neo-border)] bg-[var(--neo-surface-card)] p-3 text-xs">
     <div
       v-if="showBanner"
       class="mb-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-sky-200"
     >
       {{ progress.banner }}
     </div>
-    <div class="mb-1 font-medium text-[var(--neo-fg)]">
+    <div class="mb-1 font-medium text-[var(--neo-text-primary)]">
       {{ cardTitle }}
     </div>
     <div
@@ -55,7 +55,7 @@ const showBanner = computed(
       <li
         v-for="item in progress.items"
         :key="item.id"
-        class="group flex cursor-pointer items-start gap-2 rounded-lg px-1.5 py-1 hover:bg-[var(--neo-hover)]"
+        class="group flex cursor-pointer items-start gap-2 rounded-lg px-1.5 py-1 hover:bg-[var(--neo-hover-bg)]"
         @click="item.nodeId && emit('focusNode', item.nodeId)"
       >
         <span class="mt-0.5 w-14 shrink-0 opacity-70">{{ statusLabel[item.status] || item.status }}</span>
