@@ -28,7 +28,7 @@ import {
   type AgentTaskProgressState,
 } from '@/components/agent/agentTaskProgress'
 import { useGenerationPolling, type GenerationPollTask } from '@/composables/useGenerationPolling'
-import { useAgentStream, formatPhaseLabel } from '@/composables/useAgentStream'
+import { useAgentStream } from '@/composables/useAgentStream'
 import {
   reconcileTaskProgress,
   shouldFinishTaskCard,
@@ -36,7 +36,6 @@ import {
   type CanvasNodeLike,
 } from '@/components/agent/taskProgressReconcile'
 import {
-  looksLikeConfirmTurn,
   pickAssistantForLatestUserTurn,
   shouldApplyReconciledAssistant,
 } from '@/components/agent/assistantReconcile'
@@ -1864,13 +1863,14 @@ async function reconnectStream() {
     await reconcileLatestAssistant()
     emit('turnComplete')
 
-    const label = formatPhaseLabel(phase)
+    // PHASE_LABELS 已随 P2#10 退役：pi 链路 thread-state 不携带 LangGraph phase，
+    // 恢复提示不再插值阶段名（pi 路径下 label 恒为「未知」）
     recoveredPhaseHint.value =
       cancelled
         ? '服务已恢复。上一轮已停止，可发起新任务。'
         : json.data?.finished
         ? '服务已恢复。上一轮已完成，可继续新的指令。'
-        : `服务已恢复。当前阶段：${label}。请继续操作。`
+        : '服务已恢复。上一轮尚未完成，请继续操作。'
     pollTasksFromProgress()
   } catch {
     recoveredPhaseHint.value = '重连失败，请稍后再试'

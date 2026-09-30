@@ -3,24 +3,6 @@ import type { ExecutionStep } from '@/components/agent/executionTraceReducer'
 
 export type AgentPhase = 'exploring' | 'creating' | 'wrapping'
 
-const READ_TOOLS = new Set([
-  'get_canvas_summary',
-  'get_node',
-  'get_generation_status',
-  'get_generation_diagnostic',
-  'get_canvas_layout',
-  'list_generation_tasks',
-  'list_user_assets',
-  'load_skill',
-  'ask_user',
-  'arrange_nodes',
-  'focus_node',
-  'focus_nodes',
-  'undo',
-  'redo',
-  'open_image_editor',
-])
-
 const WRITE_TOOLS = new Set([
   'upsert_prompt_node',
   'upsert_media_node',
