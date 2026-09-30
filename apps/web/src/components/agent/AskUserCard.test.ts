@@ -28,6 +28,17 @@ describe('AskUserCard（B-6 点选与提交分离）', () => {
 		await w.findAll('.ask-chip')[2].trigger('click') // count=1
 		expect(w.emitted('submit')![0][0]).toEqual({ answers: { count: ['1'] }, skipped: ['style'] })
 	})
+	it('单问题卡 skip 即 submit（全 skipped，防阻塞死锁）', async () => {
+		const w = mount(AskUserCard, { props: { questions: [Q2[0]] } })
+		await w.findAll('.ask-skip')[0].trigger('click')
+		expect(w.emitted('submit')![0][0]).toEqual({ answers: {}, skipped: ['style'] })
+	})
+	it('cancel：emit cancel 契约保留（AgentSideRail 据此路由）', async () => {
+		const w = mount(AskUserCard, { props: { questions: [Q2[0]] } })
+		await w.find('.ask-cancel').trigger('click')
+		expect(w.emitted('cancel')).toHaveLength(1)
+		expect(w.emitted('submit')).toBeUndefined()
+	})
 	it('multiSelect：点选后需显式确认钮（既有 D2 语义保留）', async () => {
 		const q = { id: 'm', question: '多选？', multiSelect: true, options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] }
 		const w = mount(AskUserCard, { props: { questions: [q] } })

@@ -86,6 +86,12 @@ function pick(q: AskUserQuestion, value: string) {
 }
 function skip(q: AskUserQuestion) {
 	skipped.value.add(q.id)
+	// 单问题卡 tryAutoSubmit 不适用（无「答满补齐」路径）→ 直接提交全 skipped，
+	// 否则 skip 后卡片挂死只能等超时（fix round 1 Finding 1）
+	if (props.questions.length === 1) {
+		doSubmit()
+		return
+	}
 	tryAutoSubmit()
 }
 function submitOther(q: AskUserQuestion) {

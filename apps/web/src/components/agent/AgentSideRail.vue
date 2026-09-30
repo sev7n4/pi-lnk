@@ -797,8 +797,27 @@ async function onAskSubmit(payload: { answers: Record<string, string[]>; skipped
     ElMessage.error('提交失败，请重试')
   }
 }
-function onAskCancel() {
-  pendingAskUser.value = [] // 阻塞卡取消 = 仅收起；「自行描述」语义由输入框自由文本承接（§5.3 路由：pending 已清，文本走正常消息）
+async function onAskCancel() {
+  // 阻塞卡 cancel = 以「全部跳过」语义 resolve 阻塞 pending（空 answers = 全部 skipped；
+  // registry answer 即 resolve，工具层 skipped 推导自然生效，模型看到「用户未作答」后续行）。
+  // 否则 pending 仍挂着：超时窗口内自由文本走正常消息会撞 409（fix round 1 Finding 2）。
+  // 与 onAskSubmit 同模式：先 snapshot 防双击双发，失败恢复卡（幂等端点重试安全）。
+  const snapshot = pendingAskUser.value
+  const callId = snapshot[0]?.callId
+  pendingAskUser.value = []
+  if (!callId) return // 无 callId 的 v1 卡：行为不变，仅收起
+  try {
+    await submitAnswers({
+      threadId: agentThreadId.value,
+      sessionId: props.sessionId,
+      callId,
+      answers: {},
+      answerId: crypto.randomUUID(),
+    })
+  } catch {
+    pendingAskUser.value = snapshot
+    ElMessage.error('提交失败，请重试')
+  }
 }
 const deliveryGenByKey = ref<Record<string, { node_id?: string | null; url?: string | null; title?: string | null }>>({})
 const deliveryRefineDraft = ref<Record<string, string>>({})
