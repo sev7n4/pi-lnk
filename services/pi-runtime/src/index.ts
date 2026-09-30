@@ -70,6 +70,9 @@ const manager = new SessionManager(
 	undefined,
 	// P0-① 观测：compaction 成败计数（spec §5.7）
 	(result) => metrics.observeCompaction(result),
+	// F-01：压缩「跳过理由」计数。不注入则 skips 指标恒为空，验收判据第 1 条
+	// （skips_total 有累加 = 判定链路在跑）无法成立——这条比触发本身更容易被漏掉。
+	metrics,
 );
 
 const app = buildApp(manager, { metrics, version: VERSION, logger: true });

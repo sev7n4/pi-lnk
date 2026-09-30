@@ -8,6 +8,7 @@ import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import { SkillRegistry } from "./skills/registry.js";
+import { Closed } from "@earendil-works/pi-agent-core";
 
 /**
  * 每个用例独立的 dataRoot。
@@ -559,5 +560,142 @@ describe("SessionManager contextWindow 入会话条目（压缩阈值基准 · �
 		);
 		await sm.create("s-win-none", {});
 		assert.equal(windowOf(sm, "s-win-none"), undefined);
+	});
+});
+
+describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触发者）", () => {
+	/** 带 usage 的 assistant message entry（vendor Entry 的最小形状）。 */
+	function usageEntry(totalTokens: number) {
+		return {
+			type: "message",
+			message: { role: "assistant", stopReason: "stop", usage: { totalTokens } },
+		} as never;
+	}
+
+	/**
+	 * 假 lane。`gate` 给定时 prompt 会挂起——用于构造「取消先于 then 回调执行」的时序，
+	 * 否则 then 会在 `await mgr.prompt()` 的让出中先跑完，abort 就追不上它了。
+	 */
+	function makeLane(calls: string[], totalTokens: number, gate?: Promise<unknown>) {
+		return {
+			prompt: async () => {
+				if (gate) await gate;
+				return { ok: true, value: {} };
+			},
+			findEntries: async () => [usageEntry(totalTokens)],
+			compact: async () => {
+				calls.push("compact");
+				return { ok: true, value: {} };
+			},
+		};
+	}
+
+	/** contextWindow=128_000 + reserveTokens=16_384 → 阈值 111_616。 */
+	function managerWithLane(lane: unknown, metrics?: Metrics) {
+		return new SessionManager(
+			[],
+			"",
+			(() => ({
+				models: {},
+				model: { id: "probe-model", contextWindow: 128_000 },
+				providerId: "probe",
+			})) as never,
+			(async () => ({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => lane,
+					close: async () => {},
+				},
+			})) as never,
+			undefined,
+			undefined,
+			{ ...testConfig(), compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 } },
+			undefined,
+			metrics,
+		);
+	}
+
+	// maybeCompact 内部有 await 链；setImmediate 排到下一个宏任务，其前的所有微任务已跑完。
+	const drain = () => new Promise<void>((r) => setImmediate(r));
+
+	it("超阈值时在 run 结束后触发一次压缩", async () => {
+		const calls: string[] = [];
+		const mgr = managerWithLane(makeLane(calls, 120_000));
+		await mgr.create("s-compact", {});
+		await mgr.prompt("s-compact", "hi");
+		await drain();
+		assert.deepEqual(calls, ["compact"]);
+	});
+
+	it("用户取消的那一轮不触发压缩（不偷偷发起摘要 LLM 调用）", async () => {
+		const calls: string[] = [];
+		let release!: (v: unknown) => void;
+		const gate = new Promise((r) => {
+			release = r;
+		});
+		const mgr = managerWithLane(makeLane(calls, 120_000, gate));
+		await mgr.create("s-compact-abort", {});
+		await mgr.prompt("s-compact-abort", "hi");
+		assert.equal(mgr.abort("s-compact-abort"), true);
+		release(undefined);
+		await drain();
+		assert.deepEqual(calls, []);
+	});
+
+	it("连续两轮都超阈值 → 每轮各触发一次，而非某一轮重复触发", async () => {
+		const calls: string[] = [];
+		const mgr = managerWithLane(makeLane(calls, 120_000));
+		await mgr.create("s-compact-twice", {});
+		await mgr.prompt("s-compact-twice", "一轮");
+		await drain();
+		await mgr.prompt("s-compact-twice", "二轮");
+		await drain();
+		assert.deepEqual(calls, ["compact", "compact"]);
+	});
+
+	it("低于阈值时不触发压缩", async () => {
+		const calls: string[] = [];
+		const mgr = managerWithLane(makeLane(calls, 1_000));
+		await mgr.create("s-compact-low", {});
+		await mgr.prompt("s-compact-low", "hi");
+		await drain();
+		assert.deepEqual(calls, []);
+	});
+
+	it("compact 成功时不计 skip（ok 由 compaction_end 事件计，钩子再计一次会翻倍）", async () => {
+		// Review Focus #4 的真正落地点：metrics 本身的测试证明不了「调用方有没有多计一次」。
+		const metrics = new Metrics();
+		const calls: string[] = [];
+		const mgr = managerWithLane(makeLane(calls, 120_000), metrics);
+		await mgr.create("s-compact-ok", {});
+		await mgr.prompt("s-compact-ok", "hi");
+		await drain();
+		assert.deepEqual(calls, ["compact"]);
+		assert.ok(!metrics.render(0, "test").includes("pi_runtime_compaction_skips_total{"));
+	});
+
+	it("低于阈值时计 below_threshold 而非静默（证明判定链路真的在跑）", async () => {
+		const metrics = new Metrics();
+		const mgr = managerWithLane(makeLane([], 1_000), metrics);
+		await mgr.create("s-compact-skip", {});
+		await mgr.prompt("s-compact-skip", "hi");
+		await drain();
+		assert.match(metrics.render(0, "test"), /pi_runtime_compaction_skips_total\{reason="below_threshold"\} 1/);
+	});
+
+	it("compact 失败时按错误类计 skip（Closed = TTL 争抢，可容忍跳过）", async () => {
+		// Review Focus #5：压缩是异步的，sweeper 在途释放句柄会以 Closed 失败；
+		// 这必须归为「可容忍跳过」，不能混进 compressions_total 的 error。
+		const metrics = new Metrics();
+		const lane = {
+			prompt: async () => ({ ok: true, value: {} }),
+			findEntries: async () => [usageEntry(120_000)],
+			compact: async () => ({ ok: false, error: new Closed({ message: "swept" }) }),
+		};
+		const mgr = managerWithLane(lane, metrics);
+		await mgr.create("s-compact-closed", {});
+		await mgr.prompt("s-compact-closed", "hi");
+		await drain();
+		assert.match(metrics.render(0, "test"), /pi_runtime_compaction_skips_total\{reason="closed"\} 1/);
 	});
 });

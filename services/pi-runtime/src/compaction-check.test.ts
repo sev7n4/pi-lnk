@@ -2,6 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { decideCompaction, classifyCompactionError } from "./compaction-check.js";
 import type { Entry } from "@earendil-works/pi-agent-core";
+// 真实 vendor 错误类（非测试替身）：反应该模块在生产里面对的究竟是什么对象。
+import { Closed, LaneBusy, NothingToCompact } from "@earendil-works/pi-agent-core";
 
 /** 构造带 usage 的 assistant message 条目；vendor 的 Entry 不变式较多，测试用最小形状铸造。 */
 function assistantEntry(totalTokens: number, stopReason = "stop"): Entry {
@@ -62,5 +64,22 @@ describe("classifyCompactionError", () => {
 		assert.equal(classifyCompactionError(new LaneBusy()), "lane_busy");
 		assert.equal(classifyCompactionError(new Closed()), "closed");
 		assert.equal(classifyCompactionError(new Error("boom")), "unknown");
+	});
+
+	it("认得 harness 真正抛出的那三个类（而非仅测试替身）", () => {
+		// 这条是不能省的回归锁：vendor 用 `TaggedError(tag)` 工厂批量生成这些类，
+		// 本模块靠类名判别。若将来工厂改成匿名类/Proxy，上面的替身用例仍全绿，
+		// 但生产里三个 branch 会静默全部落到 `unknown` —— 错误分类失效却不报错。
+		assert.equal(
+			classifyCompactionError(new NothingToCompact({ lane: "main", message: "m" })),
+			"nothing_to_compact",
+		);
+		assert.equal(
+			classifyCompactionError(
+				new LaneBusy({ lane: "main", operationId: "o", operationKind: "compaction", message: "m" }),
+			),
+			"lane_busy",
+		);
+		assert.equal(classifyCompactionError(new Closed({ message: "m" })), "closed");
 	});
 });

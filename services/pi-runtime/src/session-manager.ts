@@ -20,6 +20,7 @@ import { join } from "node:path";
 import {
 	AgentHarness,
 	type AgentHarnessTool,
+	type AgentLane,
 	type Context,
 	type JsonlSessionMetadata,
 	type Session,
@@ -29,6 +30,8 @@ import {
 	withCancel,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { classifyCompactionError, decideCompaction } from "./compaction-check.js";
+import type { Metrics } from "./metrics.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { enforceRetention } from "./session-retention.js";
@@ -358,6 +361,12 @@ export class SessionManager {
 		private readonly config: RuntimeConfig = loadRuntimeConfig(process.env),
 		/** P0-① 观测：compaction 成败计数（只在 compaction_end 且 completed/failed 时回调）。 */
 		private readonly onCompaction?: (result: "ok" | "error") => void,
+		/**
+		 * 压缩「跳过理由」计数。刻意与 `onCompaction` 分开：后者由 harness 事件驱动
+		 * （ok/error 是**结果**），本度量则是**未发生的理由**（disabled/no_window/
+		 * below_threshold/lane_busy…）。二者混计会把真实失败率稀释掉。
+		 */
+		private readonly metrics?: Metrics,
 	) {}
 
 	/** threadKey（Nest 的 threadId || sessionId）→ 是否已有内存驻留会话。 */
@@ -765,6 +774,9 @@ export class SessionManager {
 							data: { source: "prompt", message: String(result.error) },
 						});
 					}
+					// 只有正常完成的那一轮才判定压缩：取消/出错的轮留到下一轮再说。
+					// 位置必须在 finally（会清 userAborted）之前，否则读不到用户的停止意愿。
+					if (result.ok) void this.maybeCompact(entry, lane).catch(() => {});
 				})
 				.catch((err: unknown) => {
 					// 用户主动取消：不派发 error（否则重连补发 buffer 时会显示「出错了」的假警报）
@@ -792,6 +804,34 @@ export class SessionManager {
 			throw err;
 		}
 		return { accepted: true };
+	}
+
+	/**
+	 * run 后压缩判定与触发（诊断 F-01：能力齐全、唯独缺失的那一环）。
+	 *
+	 * vendor 的决策原语（`shouldCompact`）与执行 API（`lane.compact`）都已写好，但 harness
+	 * 自己不调前者、pi-runtime 此前也不调后者，于是 `compaction.enabled` 什么都不控制。
+	 * 本方法就是那个「谁来问」的角色。
+	 *
+	 * 刻意 fire-and-forget（不 await 完成）：不为一次摘要调用阻塞用户对下一条消息的响应。
+	 * 刻意不重试：每轮 run 至多走到这里一次，失败留给下一轮再判定（Review Focus #3）。
+	 * 「每轮至多一次」由调用位置本身保证——只有 run 的**正常完成**分支会走到这里。
+	 */
+	private async maybeCompact(entry: SessionEntry, lane: AgentLane): Promise<void> {
+		// 用户按了停止：不再追加一次摘要类 LLM 调用（Review Focus #2）
+		if (entry.userAborted) return;
+		// 句柄可能已被 TTL 回收抢走；拿不到条目就当这一轮没到该压的时候，不报错。
+		const entries = await lane.findEntries(undefined, this.context).catch(() => []);
+		const decision = decideCompaction(entries, entry.contextWindow, this.config.compaction);
+		if (!decision.shouldRun) {
+			this.metrics?.observeCompactionSkip(decision.skipReason ?? "unknown");
+			return;
+		}
+		const res = await lane.compact(undefined, this.context);
+		// ok 分支刻意不计数：harness 成功时会自行下发 compaction_end(status=completed)，
+		// 由 attachEvents 的回调计 ok/error；这里再计一次会让 ok 翻倍、掩盖真实失败率
+		// （Review Focus #4）。失败路径不存在该事件，故必须在此补计。
+		if (!res.ok) this.metrics?.observeCompactionSkip(classifyCompactionError(res.error));
 	}
 
 	/**
