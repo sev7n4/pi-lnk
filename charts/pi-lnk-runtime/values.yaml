@@ -67,6 +67,12 @@ env:
   PI_RUNTIME_COMPACTION_ENABLED: "true"
   PI_RUNTIME_COMPACTION_RESERVE_TOKENS: "16384"
   PI_RUNTIME_COMPACTION_KEEP_RECENT_TOKENS: "20000"
+  # F-01：压缩判定的上下文窗口覆盖值。
+  #   agnes provider 把 contextWindow 声明为 1_000_000，使默认阈值 1_000_000-16_384
+  #   = 983,616 永不触及 —— 留空即沿用模型声明值，也就是实际永不压缩。
+  #   启用（数字型 env 一律 --set-string，禁用 --set，否则会被渲染成科学计数法）：
+  #     --set-string env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW=128000
+  PI_RUNTIME_COMPACTION_CONTEXT_WINDOW: ""
 
 # D-ζ' 双 runtime 开关（shadow/active 由部署侧控制，Day-1 默认 off）
 piRuntimeMode: "off"

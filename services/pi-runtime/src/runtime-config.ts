@@ -21,6 +21,14 @@ export interface RuntimeConfig {
 	sessionsMaxBytes: number;
 	sessionsMaxCount: number;
 	compaction: CompactionConfig;
+	/**
+	 * 压缩判定用的上下文窗口覆盖值；缺省表示沿用 model.contextWindow 的声明值。
+	 *
+	 * 存在理由：agnes provider 把 contextWindow 声明为 1_000_000，使默认阈值
+	 * `1_000_000 - 16_384` 永不触及——接通触发而不过载此值时表现为「代码在跑但生产
+	 * 从不压缩」，极易被误判为已修好（2026-09-30 诊断 F-01 · Review Focus #1）。
+	 */
+	compactionContextWindow?: number;
 }
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
@@ -75,5 +83,8 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 				d.compaction.keepRecentTokens,
 			),
 		},
+		// 未配置 / 非法值一律 undefined（= 沿用 model 声明值）。刻意不给 fallback 一个真实数，
+		// 否则「没配」与「配了非法值」不可区分。
+		compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
 	};
 }
