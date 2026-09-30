@@ -255,6 +255,11 @@ export function createCanvasWriteTools(
 				const POLL_MS = opts.pollMs ?? 2_000;
 				let settled = false; // race 收尾后让落败的轮询臂退出，防 30min timeout 后仍在空转
 				const confirmResult = (async (): Promise<{ confirmed: boolean; reason?: string }> => {
+					// Finding 2：draft 稳定性启发式——前端取消（clear-propose）节点停在 draft，
+					// 确认则 draft→generating；连续 ≥2 次轮询仍 draft → 用户拒绝（fail-closed）。
+					let draftStreak = 0;
+					// Finding 3：瞬时错误容忍——连续 ≤3 次 get-node 失败继续轮询，成功查询重置。
+					let errorStreak = 0;
 					for (;;) {
 						if (settled) return { confirmed: false, reason: "aborted" }; // 不会被消费
 						context?.abortSignal?.throwIfAborted();
@@ -264,11 +269,24 @@ export function createCanvasWriteTools(
 								sessionId: tc.sessionId,
 								nodeId: p.node_id,
 							});
+							errorStreak = 0;
 							const status = (node as { data?: { status?: unknown } } | null)?.data?.status;
-							if (status === "pending_confirm") continue; // 仍在待确认（用户已确认/未动，语义见 spec §4.2）
-							return { confirmed: true, reason: String(status ?? "unknown") };
+							if (status === "pending_confirm") {
+								draftStreak = 0; // 仍在待确认（用户已确认/未动，语义见 spec §4.2）
+								continue;
+							}
+							if (status === "draft") {
+								draftStreak++;
+								if (draftStreak >= 2) return { confirmed: false, reason: "rejected" }; // 取消：clear-propose 停在 draft
+								continue;
+							}
+							draftStreak = 0;
+							return { confirmed: true, reason: String(status ?? "unknown") }; // generating/completed/error 等 = 已确认自起生成
 						} catch {
-							return { confirmed: false, reason: "gone" }; // 节点消失/查询失败 → 视为用户拒绝（fail-closed 不出图）
+							// 节点消失/查询失败 → 容忍瞬时错误；连续超过 3 次视为用户拒绝（fail-closed 不出图）
+							errorStreak++;
+							if (errorStreak <= 3) continue;
+							return { confirmed: false, reason: "gone" };
 						}
 					}
 				})();
@@ -305,7 +323,13 @@ export function createCanvasWriteTools(
 					details: { ...withActions.details, confirmed: true },
 					content: [{
 						type: "text",
-						text: JSON.stringify({ ok: true, confirmed: true, message: "用户已在画布确认，可直接对该节点执行 run_* 生成。" }),
+						// Finding 1：前端画布确认会清 pending_confirm 并自起生成 → 生成已在跑，
+						// 文案不得诱导模型调用 run_*（会被 gate runs===0 + SSOT 拦截）。
+						text: JSON.stringify({
+							ok: true,
+							confirmed: true,
+							message: "用户已在画布确认，生成已由画布启动；不要对该节点调用 run_*，可继续对话或处理其他任务。",
+						}),
 					}],
 				};
 			},
