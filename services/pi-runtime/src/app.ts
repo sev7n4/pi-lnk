@@ -14,8 +14,10 @@ import {
 	type NormalizedEvent,
 	NotFoundError,
 	SessionManager,
+	toSessionKey,
 	type TurnContext,
 } from "./session-manager.js";
+import type { PendingToolRegistry } from "./pending-registry.js";
 
 const HEARTBEAT_MS = 15_000;
 
@@ -49,6 +51,11 @@ export interface AppDeps {
 	version: string;
 	/** 生产传 true；测试缺省 false（避免 inject 用例被日志淹没）。 */
 	logger?: boolean;
+	/**
+	 * 阻塞式确认类工具的等待注册表（2026-09-30-ask-user-blocking）。
+	 * 缺省时 /answers 返回 503、/pending 返回 {pending:null}——纯降级，不影响既有端点。
+	 */
+	registry?: PendingToolRegistry;
 }
 
 export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstance {
@@ -193,6 +200,42 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		const aborted = manager.abort(sessionId);
 		app.log.info({ sessionId, aborted }, "abort requested");
 		return reply.send({ ok: aborted, skipped: !aborted });
+	});
+
+	/**
+	 * 用户作答回传（ask_user 阻塞链路，2026-09-30 spec §6.2）。
+	 *
+	 * 幂等铁律（Review Focus 1）：registry.answer 对未知 callId / 已 settle 一律
+	 * `{ok:true, deduped:true}` —— 业务路径**永不 404/500**。会话已被 sweeper 回收、
+	 * callId 从未注册、Nest 超时重试重放，都落到 deduped 分支，回答端点重试安全。
+	 */
+	app.post<{
+		Params: { sessionId: string };
+		Body: { callId?: string; answers?: Record<string, string[]>; answerId?: string };
+	}>("/sessions/:sessionId/answers", async (request, reply) => {
+		const { registry } = deps;
+		if (!registry) return reply.code(503).send({ error: "pending registry not configured" });
+		const callId = request.body?.callId;
+		const answers = request.body?.answers;
+		if (!callId || typeof answers !== "object" || answers === null) {
+			return reply.code(400).send({ error: "callId and answers are required" });
+		}
+		// registry 键 = 画布会话 id（工具域），路由参数 = threadKey → 先 sanitize 成 pi 会话键，
+		// 再经 getCanvasSessionId 换算（#74/#76 解耦语义的镜像：会话不存在回落键本身，
+		// registry 查不到 → 幂等 deduped，无副作用）。
+		const canvasId = manager.getCanvasSessionId(toSessionKey(request.params.sessionId));
+		return reply.send(registry.answer(canvasId, callId, answers));
+	});
+
+	/**
+	 * 当前阻塞等待状态查询（Nest 轮询用）。会话不存在 / 无 pending 一律 200
+	 * `{pending:null}` —— 不给探测面（枚举会话无意义），也不 404。
+	 */
+	app.get<{ Params: { sessionId: string } }>("/sessions/:sessionId/pending", async (request, reply) => {
+		const { registry } = deps;
+		if (!registry) return reply.send({ pending: null });
+		const canvasId = manager.getCanvasSessionId(toSessionKey(request.params.sessionId));
+		return reply.send({ pending: registry.pendingInfo(canvasId) });
 	});
 
 	app.get<{ Params: { sessionId: string }; Querystring: { lastEventId?: string; from?: string } }>(

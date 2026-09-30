@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { SessionManager, toSessionKey } from "./session-manager.js";
 import { DEFAULT_RUNTIME_CONFIG, type RuntimeConfig } from "./runtime-config.js";
+import { PendingToolRegistry } from "./pending-registry.js";
 
 function makeManager(root: string, overrides: Partial<RuntimeConfig> = {}) {
 	const closed: string[] = [];
@@ -58,7 +59,7 @@ describe("sweepOnce TTL", () => {
 		}
 	});
 
-	it("活跃（prompting）中的会话不被回收", async () => {
+	it("阻塞等待中的会话（prompting=true + registry pending）不被 TTL 回收", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-runtime-sweep-"));
 		try {
 			let release: (v: unknown) => void = () => {};
@@ -82,11 +83,22 @@ describe("sweepOnce TTL", () => {
 				dataRoot: root,
 				sessionTtlMs: 1000,
 			});
+			// ask_user 阻塞等待：waitForUser 挂起期间 prompting 仍为 true（工具在
+			// lane.prompt 执行栈内 await），故 sweeper 豁免走既有 entry.prompting 路径
+			// （session-manager.ts sweepOnce 的 `if (entry.prompting) continue`）——
+			// 无需为 registry pending 新增生产豁免代码，本用例钉住该回归。
+			const registry = new PendingToolRegistry();
+			sm.setPendingRegistry(registry);
 			await sm.create("s1:t1", {});
 			await sm.prompt("s1:t1", "长任务");
+			const wait = registry.waitForUser("canvas-1", "c1", "ask_user", 60_000);
+			assert.equal(registry.hasPending("canvas-1"), true);
 			const out = await sm.sweepOnce(Date.now() + 10_000);
 			assert.deepEqual(out.closed, []);
 			assert.equal(sm.hasKey("s1:t1"), true);
+			// 收尾：释放 gate + 结算 pending，防 node:test 白等
+			registry.abortAll("canvas-1");
+			await wait;
 			release(undefined);
 			await new Promise((r) => setTimeout(r, 0));
 		} finally {

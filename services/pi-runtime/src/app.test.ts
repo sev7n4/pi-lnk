@@ -7,6 +7,7 @@ import { buildApp, resolveEventsSubscribeMode } from "./app.js";
 import { SessionManager, toSessionKey } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
+import { PendingToolRegistry } from "./pending-registry.js";
 
 /** 默认 harness：prompt 立即成功。 */
 const okFactory = (async () => ({
@@ -48,12 +49,12 @@ function captureFactory(sink: { cfg?: unknown }) {
 	}) as never;
 }
 
-function makeApp(root: string, factory: unknown = okFactory) {
+function makeApp(root: string, factory: unknown = okFactory, registry?: PendingToolRegistry) {
 	const manager = new SessionManager([], "", undefined, factory as never, undefined, undefined, {
 		...DEFAULT_RUNTIME_CONFIG,
 		dataRoot: root,
 	});
-	const app = buildApp(manager, { metrics: new Metrics(), version: "test" });
+	const app = buildApp(manager, { metrics: new Metrics(), version: "test", registry });
 	return { app, manager };
 }
 
@@ -369,5 +370,128 @@ describe("resolveEventsSubscribeMode 订阅起点裁决（P0-A 跨轮重放回�
 		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "abc" }), { mode: "replay", afterSeq: -1 });
 		assert.deepEqual(resolveEventsSubscribeMode({ lastEventId: "-3" }), { mode: "replay", afterSeq: -1 });
 		assert.deepEqual(resolveEventsSubscribeMode({ from: "earlier" }), { mode: "replay", afterSeq: -1 });
+	});
+});
+
+/**
+ * ask_user 阻塞链路 HTTP 面（2026-09-30-ask-user-blocking Task 3）。
+ * registry 键 = 画布会话 id（工具域，toolContext.sessionId），路由参数 = threadKey；
+ * 端点内部经 getCanvasSessionId 换算——用真 SessionManager 走完整 create 链路验证。
+ */
+describe("POST /sessions/:key/answers（幂等 resolve，Review Focus 1）", () => {
+	it("正常 resolve → 200 {ok:true,deduped:false}，阻塞中的 waitForUser 以 answered 交还", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "canvas-1" } });
+				const wait = registry.waitForUser("canvas-1", "c1", "ask_user", 60_000);
+				// 请求 URL 是 pi 会话键（threadKey），registry 注册键是画布 id——覆盖键换算
+				const res = await app.inject({ method: "POST", url: "/sessions/s1:t1/answers", payload: { callId: "c1", answers: { q: ["a"] } } });
+				assert.equal(res.statusCode, 200);
+				assert.deepEqual(res.json(), { ok: true, deduped: false });
+				assert.deepEqual(await wait, { status: "answered", answers: { q: ["a"] } });
+			} finally {
+				registry.abortAll("canvas-1"); // 未 settle 收尾兜底，防 node:test 白等
+				await app.close();
+			}
+		});
+	});
+
+	it("未知 callId（已超时清理 / 从未注册）→ 仍 200 {ok:true,deduped:true}，业务路径不 404/500", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "canvas-1" } });
+				const res = await app.inject({ method: "POST", url: "/sessions/s1:t1/answers", payload: { callId: "ghost", answers: {} } });
+				assert.equal(res.statusCode, 200);
+				assert.deepEqual(res.json(), { ok: true, deduped: true });
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("会话不存在 → 仍 200 deduped:true（getCanvasSessionId 回落键本身，registry 查不到无副作用）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				const res = await app.inject({ method: "POST", url: "/sessions/nope/answers", payload: { callId: "c1", answers: {} } });
+				assert.equal(res.statusCode, 200);
+				assert.deepEqual(res.json(), { ok: true, deduped: true });
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("缺 callId 或 answers 非对象 → 400（客户端错误）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				const noCallId = await app.inject({ method: "POST", url: "/sessions/s1:t1/answers", payload: { answers: {} } });
+				assert.equal(noCallId.statusCode, 400);
+				const badAnswers = await app.inject({ method: "POST", url: "/sessions/s1:t1/answers", payload: { callId: "c1", answers: "x" } });
+				assert.equal(badAnswers.statusCode, 400);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("registry 未装配 → 503（配置缺失，非业务路径）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			try {
+				const res = await app.inject({ method: "POST", url: "/sessions/s1:t1/answers", payload: { callId: "c1", answers: {} } });
+				assert.equal(res.statusCode, 503);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+describe("GET /sessions/:key/pending", () => {
+	it("有 pending → {pending:{callId,toolName}}；resolve 后 → {pending:null}", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "canvas-1" } });
+				const wait = registry.waitForUser("canvas-1", "c1", "ask_user", 60_000);
+				assert.deepEqual((await app.inject({ method: "GET", url: "/sessions/s1:t1/pending" })).json(), {
+					pending: { callId: "c1", toolName: "ask_user" },
+				});
+				registry.answer("canvas-1", "c1", {});
+				await wait;
+				assert.deepEqual((await app.inject({ method: "GET", url: "/sessions/s1:t1/pending" })).json(), { pending: null });
+			} finally {
+				registry.abortAll("canvas-1");
+				await app.close();
+			}
+		});
+	});
+
+	it("会话不存在 → {pending:null}（不给探测面）；registry 未装配 → 同样 {pending:null}", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				assert.deepEqual((await app.inject({ method: "GET", url: "/sessions/thread-x/pending" })).json(), { pending: null });
+				const { app: bare } = makeApp(root);
+				try {
+					assert.deepEqual((await bare.inject({ method: "GET", url: "/sessions/s1:t1/pending" })).json(), { pending: null });
+				} finally {
+					await bare.close();
+				}
+			} finally {
+				registry.abortAll("canvas-1");
+				await app.close();
+			}
+		});
 	});
 });

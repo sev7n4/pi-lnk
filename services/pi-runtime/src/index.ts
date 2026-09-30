@@ -11,12 +11,16 @@ import { Metrics, VERSION } from "./metrics.js";
 import { SkillRegistry, approxTokens } from "./skills/registry.js";
 import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
+import { PendingToolRegistry } from "./pending-registry.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 const metrics = new Metrics();
-const { tools, client: nestClient } = resolveToolsWithClient(metrics);
+// 阻塞式确认类工具（ask_user）的等待注册表（2026-09-30-ask-user-blocking）：
+// 同一实例三处共享——工具域（ask_user waitForUser）、/answers + /pending 端点、abort 联动。
+const registry = new PendingToolRegistry();
+const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry });
 
 // D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。
 // 目录缺失/为空时 indexBlock=""、tools=[]，会话行为与未配置 skills 逐字节一致。
@@ -72,7 +76,9 @@ const manager = new SessionManager(
 	(result) => metrics.observeCompaction(result),
 );
 
-const app = buildApp(manager, { metrics, version: VERSION, logger: true });
+manager.setPendingRegistry(registry);
+
+const app = buildApp(manager, { metrics, version: VERSION, logger: true, registry });
 
 // 启动期自检（spec §11）：模型未声明 contextWindow 时阈值型 compaction 永不触发
 // （只剩 overflow 兜底）——必须留痕，否则表现为「长会话突然 400」。
