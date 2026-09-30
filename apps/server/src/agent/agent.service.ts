@@ -53,6 +53,7 @@ import { SIDEBAR_MEDIA_PARSE_PROMPT } from './sidebar-media-parse-prompt'
 import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
+import { stripPlanMarkers } from './planMarkers'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
@@ -620,6 +621,15 @@ export class AgentService {
       // B-5：run_* 生成工具已注册，genTools 规则组启用（规则 3' + 11/12/13）
       ruleGroups: ['core', 'writeTools', 'genTools'],
     })
+    // P1#5：尾部追加任务计划汇报约定（⟦plan⟧/⟦task-done⟧ 内联标记，Nest 剥离后派生 task 事件）。
+    // 静态指令进 staticPrompt（visionBlock 等动态段由 assembleDynamic 每轮追加，不冻结进历史）。
+    const systemPromptWithPlanConvention = `${staticPrompt}
+
+## 任务计划汇报（多步任务时启用）
+多步出图/改造任务开工前，先单独一行输出计划标记（会被界面渲染为任务清单，用户可见）：
+⟦plan⟧[{"n":1,"title":"起稿"},{"n":2,"title":"配图"}]
+每完成一项，单独一行输出：⟦task-done⟧<n>
+标记行之外不要解释标记本身；单步简单任务不要输出标记。`
     // P0-①：会话键 = 对话（threadId），不是画布会话（sessionId）——新对话即新键、新上下文。
     // 与持久化键 / cancelRun 共用同一推导，三处必须一致。
     const sessionKey = threadId?.trim() || sessionId
@@ -631,7 +641,7 @@ export class AgentService {
     })
     if (visionBlock) dynamicBlocks.push(visionBlock)
     const created = await this.ensurePiSession(client, sessionKey, {
-      systemPrompt: staticPrompt,
+      systemPrompt: systemPromptWithPlanConvention,
       userId,
       // D-T1：老 UI effort 两档映射为 pi 档位，逐请求透传
       thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
@@ -701,6 +711,10 @@ export class AgentService {
         // 直通前端 AgentSideRail canvas_command 分支；不得进 canvasActions（那是画布数据动作通道）
         if (event.type === 'tool_execution_end') {
           for (const cmd of extractCanvasCommands(event)) {
+            // P1#7：ask_user 进 executionEvents → metadata 落库，刷新/重连后可恢复待答卡
+            if (cmd.type === 'ask_user') {
+              executionEvents.push({ type: 'canvas_command', data: cmd })
+            }
             yield { type: 'canvas_command', data: cmd }
           }
           // B-5：gen/lifecycle 工具 details.actions → canvas_action（画布数据动作通道；
@@ -726,7 +740,30 @@ export class AgentService {
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue
         if (ui.type === 'text_delta') {
-          assistantText += (ui.data as { text: string }).text
+          // P1#5：plan 内联标记剥离 + 派生既有 task_list/task_update 事件（todo 面板数据源）
+          const rawText = (ui.data as { text: string }).text
+          const stripped = stripPlanMarkers(rawText)
+          assistantText += stripped.text
+          ;(ui.data as { text: string }).text = stripped.text
+          if (stripped.plan?.length) {
+            const planEv = {
+              type: 'task_list',
+              data: {
+                items: stripped.plan.map((it) => ({
+                  id: `plan-${it.n}`,
+                  title: it.title,
+                  status: 'running',
+                })),
+              },
+            }
+            executionEvents.push(planEv)
+            yield planEv as AgentStreamEvent
+          }
+          if (stripped.doneN != null) {
+            const doneEv = { type: 'task_update', data: { id: `plan-${stripped.doneN}`, status: 'done' } }
+            executionEvents.push(doneEv)
+            yield doneEv as AgentStreamEvent
+          }
         }
         // 执行事件持久化收集（刷新后前端可恢复执行过程）；canvas_action 已在
         // extractCanvasActions 循环内同步入 canvasActions/executionEvents，

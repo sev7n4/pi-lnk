@@ -149,7 +149,7 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function endToolCall(toolCallId: string | undefined, name: string, result?: unknown) {
+  function endToolCall(toolCallId: string | undefined, name: string, result?: unknown, isError?: boolean) {
     // tool_result 落点：propose_generation 返回 pending_confirm → waiting 一票通过信号
     if (
       name === 'propose_generation'
@@ -168,7 +168,7 @@ export const useAgentStore = defineStore('agent', () => {
     }
     ensureExecutionTrace()
     if (last.executionTrace) {
-      applyToolCall(last.executionTrace, name, result, { toolCallId })
+      applyToolCall(last.executionTrace, name, result, { toolCallId, isError: isError === true })
     }
   }
 

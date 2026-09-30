@@ -9,6 +9,9 @@ import {
   shouldPollRuntimeHealth,
   checkRuntimeHealthViaNest,
   isStreamStale,
+  shouldKeepReconciling,
+  shouldInjectUnreachableSnippet,
+  RECONCILE_NULL_THRESHOLD,
   STREAM_STALE_MS,
 } from './streamRecovery'
 import { lastThreadStorageKey } from '@/utils/formatSessionTime'
@@ -125,6 +128,19 @@ describe('shouldPollRuntimeHealth', () => {
   })
 })
 
+describe('shouldInjectUnreachableSnippet', () => {
+  // I-2 修复：reconcile 循环 thread-state 连续 null 达阈值 → 注入 RUNTIME_UNREACHABLE_SNIPPET 并 break
+  it('阈值之下不注入（仍可恢复）', () => {
+    expect(shouldInjectUnreachableSnippet(0)).toBe(false)
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD - 1)).toBe(false)
+  })
+
+  it('达阈值或超过注入（pi-runtime 不可达）', () => {
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD)).toBe(true)
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD + 2)).toBe(true)
+  })
+})
+
 describe('isStreamStale', () => {
   it('returns true after STREAM_STALE_MS without activity', () => {
     const now = 1_000_000
@@ -171,3 +187,18 @@ describe('checkRuntimeHealthViaNest', () => {
     expect(result).toBeNull()
   })
 })
+
+describe("shouldKeepReconciling（P1#11 重连判定）", () => {
+  it("thread-state 终态立即停止", () => {
+    expect(shouldKeepReconciling({ finished: true }, 0)).toBe(false);
+  });
+
+  it("未完成且未达上限时继续轮询", () => {
+    expect(shouldKeepReconciling({ finished: false }, 3)).toBe(true);
+    expect(shouldKeepReconciling({ finished: false }, 36)).toBe(false);
+  });
+
+  it("thread-state 缺失按上限兜底", () => {
+    expect(shouldKeepReconciling(null, 10)).toBe(true);
+  });
+});

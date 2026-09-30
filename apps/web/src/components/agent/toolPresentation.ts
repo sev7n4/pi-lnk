@@ -8,13 +8,40 @@ export interface ToolPresentation {
   verb: string
 }
 
-/** 注册表：精确名命中 > run_ 前缀 > 兜底（设计 §2 表格逐条落）。 */
+/** 注册表：精确名命中 > run_ 前缀 > 兜底（P1#3 全量覆盖 28 个本地工具）。 */
 export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
-  load_skill: { icon: '⚡', verb: '加载技能' },
+  // read（感知/检查）
   get_canvas_summary: { icon: '🔍', verb: '感知画布' },
+  get_node: { icon: '🔍', verb: '查看节点' },
+  get_generation_status: { icon: '⏱', verb: '查看生成状态' },
+  get_generation_diagnostic: { icon: '🩺', verb: '诊断生成问题' },
+  get_canvas_layout: { icon: '🗺', verb: '查看画布布局' },
+  list_generation_tasks: { icon: '📋', verb: '查看生成任务' },
+  list_user_assets: { icon: '📁', verb: '查看素材库' },
+  // write（创作/编辑）
+  upsert_prompt_node: { icon: '📝', verb: '写入节点' },
   upsert_media_node: { icon: '✏️', verb: '创建节点' },
+  set_node_text: { icon: '✏️', verb: '编辑文案' },
+  attach_refs: { icon: '📎', verb: '挂参考素材' },
   propose_generation: { icon: '🖼️', verb: '提议生成' },
+  apply_sidebar_attachments: { icon: '📥', verb: '应用引用素材' },
+  apply_asset_to_node: { icon: '🖼️', verb: '应用素材' },
+  save_node_to_asset_library: { icon: '💾', verb: '存入素材库' },
+  duplicate_node: { icon: '⧉', verb: '复制节点' },
+  upload_media_to_canvas: { icon: '📤', verb: '上传素材' },
+  grid_slice_image: { icon: '🔲', verb: '九宫格切图' },
+  connect_nodes: { icon: '🔗', verb: '连接节点' },
+  introduce_nodes_to_agent: { icon: '🧲', verb: '引入画布节点' },
   cancel_generation: { icon: '⏹', verb: '取消生成' },
+  // ui_command / skill
+  load_skill: { icon: '⚡', verb: '加载技能' },
+  ask_user: { icon: '❓', verb: '向你确认' },
+  arrange_nodes: { icon: '🪟', verb: '整理布局' },
+  focus_node: { icon: '🎯', verb: '定位节点' },
+  focus_nodes: { icon: '🎯', verb: '定位多个节点' },
+  undo: { icon: '↩', verb: '撤销' },
+  redo: { icon: '↪', verb: '重做' },
+  open_image_editor: { icon: '🎨', verb: '打开图片编辑' },
 }
 
 const RUN_PREFIX_ICON = '🎨'

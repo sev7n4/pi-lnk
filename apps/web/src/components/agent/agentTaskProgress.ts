@@ -154,3 +154,24 @@ export function applyPollRecordToTask(
   )
   return { ...state, items }
 }
+
+/** P1#5：从 assistant message metadata.executionEvents 播放 task 事件，恢复历史回合的任务卡。
+ * 无 task 事件返回 null；全部到达终态时置 finished。 */
+export function seedTaskProgressFromEvents(
+  events: Array<{ type: string; data: unknown }>,
+): AgentTaskProgressState | null {
+  const taskEvents = events.filter(
+    (e): e is TaskEvent => e.type === 'task_list' || e.type === 'task_update' || e.type === 'task_summary',
+  )
+  if (taskEvents.length === 0) return null
+  let progress = emptyTaskProgress()
+  for (const e of taskEvents) {
+    progress = applyTaskEvent(progress, e)
+  }
+  if (progress.items.length === 0) return null
+  const allTerminal = progress.items.every((it) => TERMINAL_STATUSES.includes(it.status))
+  if (allTerminal && !progress.finished) {
+    progress = { ...progress, finished: true }
+  }
+  return progress
+}

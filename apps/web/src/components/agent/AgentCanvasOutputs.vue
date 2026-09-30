@@ -12,6 +12,8 @@ import {
 
 const props = defineProps<{
   outputs: LinkedCanvasOutput[]
+  /** P1#6：画布节点 url 解析器（SideRail 由 canvasNodes 提供）；缺省=旧行为纯文本行 */
+  resolveNodeUrl?: (nodeId: string) => string | undefined
 }>()
 
 const emit = defineEmits<{
@@ -97,6 +99,19 @@ function onFocusAll() {
 function isPulsing(nodeId: string): boolean {
   return pulseNodeIds.value.has(nodeId)
 }
+
+/** P1#6 缩略图：图片直接 img；视频用 #t=0.1 首帧。无 url / 加载失败降级为类型 icon。 */
+const VIDEO_URL_RE = /\.(mp4|webm|mov)(\?|$)/i
+function nodeUrl(nodeId: string): string | undefined {
+  const url = props.resolveNodeUrl?.(nodeId)
+  return typeof url === 'string' && url ? url : undefined
+}
+function isVideoUrl(url: string): boolean {
+  return VIDEO_URL_RE.test(url)
+}
+function hideBrokenImg(e: Event) {
+  ;(e.target as HTMLImageElement).style.display = 'none'
+}
 </script>
 
 <template>
@@ -121,7 +136,32 @@ function isPulsing(nodeId: string): boolean {
           class="w-3 shrink-0 text-center"
           :class="item.status === 'failed' ? 'text-red-400/90' : 'text-[var(--neo-text-muted)]'"
         >{{ statusIcon(item.status) }}</span>
-        <DockTypeIcon :type="item.nodeType" :size="12" class="shrink-0 opacity-80" />
+        <span
+          v-if="item.status === 'done' && nodeUrl(item.nodeId)"
+          class="relative block h-7 w-7 shrink-0 overflow-hidden rounded border border-[var(--neo-border)]"
+          data-testid="output-thumb"
+        >
+          <video
+            v-if="isVideoUrl(nodeUrl(item.nodeId)!)"
+            :src="`${nodeUrl(item.nodeId)}#t=0.1`"
+            muted
+            preload="metadata"
+            class="h-full w-full object-cover"
+          />
+          <img
+            v-else
+            :src="nodeUrl(item.nodeId)"
+            :alt="item.title"
+            loading="lazy"
+            class="h-full w-full object-cover"
+            @error="hideBrokenImg"
+          />
+          <span
+            v-if="isVideoUrl(nodeUrl(item.nodeId)!)"
+            class="absolute inset-0 flex items-center justify-center text-[9px] text-white/90"
+          >▶</span>
+        </span>
+        <DockTypeIcon v-else :type="item.nodeType" :size="12" class="shrink-0 opacity-80" />
         <span
           class="min-w-0 flex-1 truncate"
           :class="item.status === 'failed' ? 'text-red-400/90' : 'text-[var(--neo-fg)]'"

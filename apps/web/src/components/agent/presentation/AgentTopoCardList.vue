@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
+import AgentMermaidBlock from '@/components/agent/AgentMermaidBlock.vue'
 import type { TopoCardNode } from './types'
 
 defineProps<{
@@ -86,11 +87,9 @@ function onRowClick(node: TopoCardNode) {
       <summary class="cursor-pointer px-2 py-1.5 text-[var(--neo-muted)] hover:text-[var(--neo-text)]">
         查看技术拓扑
       </summary>
-      <pre
-        v-if="mermaidExpanded"
-        class="overflow-x-auto border-t border-[var(--neo-border)] px-2 py-1.5 text-[10px] leading-relaxed text-[var(--neo-muted)]"
-        data-testid="topo-mermaid-source"
-      >{{ mermaid }}</pre>
+      <div v-if="mermaidExpanded" class="border-t border-[var(--neo-border)] p-2" data-testid="topo-mermaid-source">
+        <AgentMermaidBlock :source="mermaid" />
+      </div>
     </details>
   </div>
 </template>
