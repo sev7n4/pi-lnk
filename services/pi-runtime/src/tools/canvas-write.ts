@@ -12,6 +12,7 @@ import type { SidebarAttachment } from "./types.js";
 import { extractActions, resultWithActions } from "./result-with-actions.js";
 import { askUserBlocking, askUserTimeoutMs } from "../runtime-config.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
+import { NestToolError } from "./nest-client.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
 
@@ -282,8 +283,13 @@ export function createCanvasWriteTools(
 							}
 							draftStreak = 0;
 							return { confirmed: true, reason: String(status ?? "unknown") }; // generating/completed/error 等 = 已确认自起生成
-						} catch {
-							// 节点消失/查询失败 → 容忍瞬时错误；连续超过 3 次视为用户拒绝（fail-closed 不出图）
+						} catch (err) {
+							// 404 = 节点确定性消失（用户删除/取消）→ 立即 gone，不走容忍
+							// （404 再等多久都不会回来，fail-closed 时序恢复首轮即决）
+							if (err instanceof NestToolError && err.kind === "http" && err.status === 404) {
+								return { confirmed: false, reason: "gone" };
+							}
+							// 其余查询失败 → 容忍瞬时错误（网络抖动/5xx）；连续超过 3 次视为用户拒绝（fail-closed 不出图）
 							errorStreak++;
 							if (errorStreak <= 3) continue;
 							return { confirmed: false, reason: "gone" };
