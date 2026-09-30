@@ -173,7 +173,9 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			return reply.code(202).send({ accepted: true });
 		} catch (err) {
 			if (err instanceof BusyError) {
-				metrics.observePromptRejection("busy");
+				// 区分「在跑 run」与「在压缩」：后者是短期的、可重试的，
+				// 混在一个 busy 里会让容量类排查把两者混淆（body 保持 "session busy" 不变，避免破坏契约）。
+				metrics.observePromptRejection(err.reason === "compacting" ? "busy_compacting" : "busy");
 				return reply.code(409).send({ error: "session busy" });
 			}
 			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });

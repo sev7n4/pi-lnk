@@ -8,12 +8,19 @@ import { buildApp } from "./app.js";
 import { SessionManager } from "./session-manager.js";
 import { assembleModel } from "./model-assembly.js";
 import { Metrics, VERSION } from "./metrics.js";
+import { loadRuntimeConfig } from "./runtime-config.js";
 import { SkillRegistry, approxTokens } from "./skills/registry.js";
 import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
+
+/**
+ * 「大到不可能真实」的上下文窗口阈值（2026 年主流模型 ≤ 1M，且 1M 那档多为声明值而非可用值）。
+ * 超过它就要求运维显式声明真实窗口，否则告警。
+ */
+const SUSPICIOUS_CONTEXT_WINDOW = 400_000;
 
 const metrics = new Metrics();
 const { tools, client: nestClient } = resolveToolsWithClient(metrics);
@@ -70,6 +77,9 @@ const manager = new SessionManager(
 	undefined,
 	// P0-① 观测：compaction 成败计数（spec §5.7）
 	(result) => metrics.observeCompaction(result),
+	// F-01：压缩「跳过理由」计数。不注入则 skips 指标恒为空，验收判据第 1 条
+	// （skips_total 有累加 = 判定链路在跑）无法成立——这条比触发本身更容易被漏掉。
+	metrics,
 );
 
 const app = buildApp(manager, { metrics, version: VERSION, logger: true });
@@ -79,11 +89,23 @@ const app = buildApp(manager, { metrics, version: VERSION, logger: true });
 // 只探测 env 装配路径（BYOK 渠道的 contextWindow 由 Nest 覆盖时随会话带入）。
 try {
 	const { model, providerId } = assembleModel(undefined);
-	if (!model.contextWindow) {
+	const declared = model.contextWindow;
+	if (!declared) {
 		app.log.warn(
 			{ model: model.id, provider: providerId },
 			"model has no contextWindow declared; threshold-based auto-compaction may never trigger",
 		);
+	} else if (declared > SUSPICIOUS_CONTEXT_WINDOW) {
+		// Review Focus #1 的「假修好」防线：provider 可能把窗口声明得远大于真实值
+		// （agnes 侧实测 source of truth = 1_000_000），此时阈值高到永不触及，
+		// 而 skips_total{below_threshold} 照常累加 —— 从指标看一切正常，实际一次都没压缩。
+		const override = loadRuntimeConfig(process.env).compactionContextWindow;
+		if (override === undefined) {
+			app.log.warn(
+				{ model: model.id, provider: providerId, declared, threshold: declared - 16_384 },
+				"declared contextWindow is implausibly large and PI_RUNTIME_COMPACTION_CONTEXT_WINDOW is unset; compaction may never trigger (set the override to the model's real window)",
+			);
+		}
 	}
 } catch (err) {
 	// 凭据缺失等装配期错误：不影响启动（真正用到时会在 create 里报 503），只留痕。

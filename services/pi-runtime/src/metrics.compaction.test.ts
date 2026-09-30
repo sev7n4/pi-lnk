@@ -148,3 +148,26 @@ describe("路由层计数接线", () => {
 		}
 	});
 });
+
+describe("压缩跳过理由独立计数（诊断 F-01 · Review Focus #4）", () => {
+	// plan 原稿此处写的是 `m.render()`，但 `render(activeSessions, version)` 两个参数都
+	// 是必需的（metrics.ts:110）——无参调用会在 esc(undefined) 上 TypeError，必须给实参。
+	it("跳过理由单独计数，不污染 pi_runtime_compactions_total", () => {
+		const m = new Metrics();
+		m.observeCompactionSkip("below_threshold");
+		m.observeCompactionSkip("lane_busy");
+		m.observeCompaction("ok");
+		const text = m.render(0, "test");
+		assert.match(text, /pi_runtime_compaction_skips_total\{reason="below_threshold"\} 1/);
+		assert.match(text, /pi_runtime_compaction_skips_total\{reason="lane_busy"\} 1/);
+		assert.match(text, /pi_runtime_compactions_total\{result="ok"\} 1/);
+		assert.ok(!/compaction_skips_total\{reason="ok"\}/.test(text));
+	});
+
+	it("skips 无样本时不输出样本行（Prometheus 语义）", () => {
+		const m = new Metrics();
+		const text = m.render(0, "test");
+		assert.match(text, /# TYPE pi_runtime_compaction_skips_total counter/);
+		assert.ok(!text.includes("pi_runtime_compaction_skips_total{"));
+	});
+});
