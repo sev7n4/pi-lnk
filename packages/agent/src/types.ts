@@ -65,6 +65,12 @@ export interface AgentStreamEvent {
     | 'force_choice'
     | 'run_cancelled'
     | 'ping'
+    // SSE 保活帧（控制器每 15s 下发，浏览器 touch 重置 stale 计时，避免长任务误判不可达）
+    | 'heartbeat'
+    // ③ 重跑：后端线程截断完成，会话已 fork 出新分支。
+    // data: { threadId: string } —— 前端须把 agentThreadId 切换为该值（后续发送/订阅都用它），
+    // 否则下一次发送仍落在被截断前的旧线程上。
+    | 'thread_forked'
     | 'done'
     | 'error'
   data: unknown

@@ -55,7 +55,7 @@ import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（P0-① 起全部经 prompt 的 turnContext 逐轮透传，不再随会话创建注入）。 */
 export interface PiCanvasContext {
@@ -187,6 +187,11 @@ export class AgentService {
     mentionedKeys?: string[],
     thinking?: boolean,
     thinkingEffort?: 'high' | 'max',
+    /**
+     * ③ 重跑：pi 会话内目标消息的 entryId（前端从 `pi_message_end` 捕获）。
+     * 提供时 → 先 fork 出「截断到该消息之前」的新分支会话，本轮在新线程上跑。
+     */
+    branchFromEntryId?: string,
   ): AsyncGenerator<AgentStreamEvent> {
     // Register idempotency key (if provided) before starting
     if (idempotencyKey) {
@@ -198,7 +203,55 @@ export class AgentService {
     const validatedMentionedKeys =
       mentionedKeys?.length ? normalizeMentionedKeys(mentionedKeys) : undefined
 
-    const effectiveThreadId = threadId?.trim() || sessionId
+    // B4：pi-runtime 开关提前判定（fork 需先于落库确定最终 threadId，故上移）
+    const piMode = this.getPiRuntimeMode()
+    const piUrl = this.getPiRuntimeUrl()
+    const piEligible = piMode !== 'off' && piUrl && userId
+
+    // ---- ③ 重跑：后端线程截断（与 WorkBuddy「编辑并重发」一致）----
+    // fork 必须在落库之前：本轮的用户消息要落在**新**线程上，否则前端切到新 threadId 后
+    // 刷新会查不到这条消息（旧线程的历史保留不动，分支只往前走）。
+    let effectiveThreadId = threadId?.trim() || sessionId
+    let piClient: PiRuntimeClient | undefined
+    const branchId = branchFromEntryId?.trim()
+    if (piEligible && branchId) {
+      const forkClient = this.createPiRuntimeClient(piUrl)
+      if (await forkClient.healthz()) {
+        try {
+          const forked = await forkClient.forkSession(effectiveThreadId, branchId, {
+            // 分支仍属同一画布：工具回查 Nest 需要画布会话 id（2026-09-29 hotfix 语义）
+            canvasSessionId: sessionId,
+            thinkingLevel: mapThinkingLevel(thinking, thinkingEffort),
+          })
+          effectiveThreadId = forked.newKey
+          piClient = forkClient
+          // 通知前端切换 agentThreadId：后续发送/订阅都要用新线程
+          yield {
+            type: 'thread_forked',
+            data: { threadId: forked.newKey, newSessionId: forked.newSessionId },
+          }
+        } catch (err) {
+          // fork 失败（切点 entry 不存在 / 来源会话已回收）：如实报错，不污染旧链
+          this.piLogger.warn(
+            `fork failed (key=${effectiveThreadId}, entry=${branchId}): ${String(err)}`,
+          )
+          yield {
+            type: 'error',
+            data: {
+              message: '重跑失败：目标消息已不存在，请直接发送新消息。',
+              error_type: 'fork_failed',
+            },
+          }
+          yield { type: 'done', data: {} }
+          if (idempotencyKey) await this.completeIdempotencyKey(idempotencyKey, '')
+          return
+        }
+      } else {
+        // pi 不可达：不 fork，保持原线程（后续主块会再次 healthz 并走「不可用」路径）
+        this.piLogger.warn(`pi-runtime healthz failed, skip fork (session=${sessionId})`)
+      }
+    }
+
     const threadExists = await this.prisma.agentThread.findUnique({
       where: { id: effectiveThreadId },
       select: { id: true },
@@ -217,10 +270,6 @@ export class AgentService {
     }
 
     const persistedUserContent = sanitizeAgentMessageContent('user', userMessage)
-    // B4：pi-runtime 开关提前判定
-    const piMode = this.getPiRuntimeMode()
-    const piUrl = this.getPiRuntimeUrl()
-    const piEligible = piMode !== 'off' && piUrl && userId
     // P0-①：不再查 AgentMessage 历史喂 prompt —— 会话跨轮常驻，历史已在 pi 侧原生 context 里。
     // DB 仍按 sessionId + threadId 归属落库（前端消息列表与清空语义不受影响）。
     if (persistedUserContent) {
@@ -241,14 +290,15 @@ export class AgentService {
     // 老 runtime 退役后没有第二条链路：pi 不可用就如实报错，不再有任何回落。
     // `PI_RUNTIME_MODE=off` 是**维护态开关**（停用 agent 服务），不是切到另一条链路。
     if (piEligible) {
-      const piClient = this.createPiRuntimeClient(piUrl)
+      // 走 fork 分支时复用同一个 client（已探活 + 已 fork）；否则新建并探活。
+      const client = piClient ?? this.createPiRuntimeClient(piUrl)
       const piContext: PiCanvasContext = {
         attachments: validatedAttachments,
         mentionedKeys: validatedMentionedKeys,
         refOrder,
         focusNodeId,
       }
-      if (!(await piClient.healthz())) {
+      if (!piClient && !(await client.healthz())) {
         // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 维护态）。
         this.piLogger.warn(`pi-runtime healthz failed (session=${sessionId})`)
         for await (const event of this.streamRuntimeUnavailable()) {
@@ -262,11 +312,12 @@ export class AgentService {
       // P0-①：会话跨轮常驻，为「每轮重建 / 防迟到删除」而生的进程内串行锁一并退役
       // （pi-runtime 侧已有 busy 409 守卫同键并发轮次）。
       for await (const event of this.streamFromPiRuntime(
-        piClient,
+        client,
         sessionId,
         userMessage,
         userId,
-        threadId,
+        // ③ 重跑：fork 后这就是新分支 threadId（未 fork 时 = 原 threadId || sessionId）
+        effectiveThreadId,
         piContext,
         { thinking, thinkingEffort },
         // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
@@ -706,6 +757,26 @@ export class AgentService {
         if (streamClosed || !event) break
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true
+        }
+        // 失败透传（item 2）+ 可观测性（item 3）：本轮以错误结束 → 分类后下发结构化 error 事件，
+        // 前端接住后既在对话内追加 ⚠️，又在 dock 上沿弹「充值提醒」类窄卡片。
+        const turnErr = classifyPiRunError(event)
+        if (turnErr) {
+          const providerRef = (llm as { providerRef?: string } | undefined)?.providerRef
+          const modelName = (llm as { model?: string } | undefined)?.model
+          this.piLogger.warn(
+            `pi run failed (kind=${turnErr.kind}, provider=${providerRef ?? 'unknown'}, model=${modelName ?? 'unknown'}, key=${sessionKey}): ${turnErr.message}`,
+          )
+          yield {
+            type: 'error',
+            data: {
+              message: turnErr.message,
+              error_type: turnErr.kind,
+              retry_hint: turnErr.retry_hint,
+              provider: providerRef ?? null,
+              model: modelName ?? null,
+            },
+          } as AgentStreamEvent
         }
         // UI_COMMAND 批次：canvas_command 是 UI 命令（focus/undo/redo/open_image_editor），
         // 直通前端 AgentSideRail canvas_command 分支；不得进 canvasActions（那是画布数据动作通道）

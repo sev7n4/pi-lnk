@@ -21,6 +21,7 @@ import {
 	AgentHarness,
 	type AgentHarnessTool,
 	type Context,
+	type JsonlSessionMetadata,
 	type Session,
 	type ThinkingLevel,
 	BACKGROUND_CONTEXT,
@@ -117,6 +118,16 @@ interface SessionEntry {
 	turn: TurnContext;
 	/** 当前思考档位（常驻会话下换档走 lane setter，不重建会话；spec §5.5）。 */
 	thinkingLevel: ThinkingLevel;
+	/**
+	 * 底层 vendored Session 引用：fork 校验目标 entry 是否存在用（避免依赖 vendored 的
+	 * 英文报错文案来映射 400）。会话常驻时该句柄一直打开，可直接 `getEntry`。
+	 */
+	session: Session<JsonlSessionMetadata>;
+	/** 会话磁盘元数据快照（cwd + uuid id）：fork 时作为 `repo.fork` 的 source。 */
+	sessionMeta: JsonlSessionMetadata;
+	/** 解析后的模型集合/单模型描述：fork 须沿用来源 LLM 身份（BYOK/model），不重算。 */
+	models: ReturnType<typeof assembleModel>["models"];
+	model: ReturnType<typeof assembleModel>["model"];
 	/** 最近一次活动时间，TTL 的唯一数据源。 */
 	lastActivityAt: number;
 }
@@ -443,7 +454,10 @@ export class SessionManager {
 	}
 
 	/** 磁盘上存在可恢复会话时返回它（repo.list 按 createdAt 降序，取最新一条）。 */
-	private async openExisting(repo: JsonlSessionRepo, cwd: string): Promise<Session | undefined> {
+	private async openExisting(
+		repo: JsonlSessionRepo,
+		cwd: string,
+	): Promise<Session<JsonlSessionMetadata> | undefined> {
 		const list = await repo.list({ cwd }, this.context).catch(() => []);
 		const newest = list[0];
 		if (!newest) return undefined;
@@ -457,7 +471,13 @@ export class SessionManager {
 		models: ReturnType<typeof assembleModel>["models"],
 		model: ReturnType<typeof assembleModel>["model"],
 		identity: LlmIdentity,
-		existingFs?: { env: NodeExecutionEnv; repo: JsonlSessionRepo; session?: Session },
+		existingFs?: {
+			env: NodeExecutionEnv;
+			repo: JsonlSessionRepo;
+			// 必须带 JsonlSessionMetadata 泛型：否则 session.metadata 退化为基类
+			// SessionMetadata（缺 path/modifiedAt），fork 拿不到合规的 source 元数据。
+			session?: Session<JsonlSessionMetadata>;
+		},
 	): Promise<{ provider: string; model: string }> {
 		const cwd = opts.workingDir ?? join(this.config.dataRoot, key);
 		await mkdir(cwd, { recursive: true });
@@ -487,6 +507,11 @@ export class SessionManager {
 				focusNodeId: opts.focusNodeId,
 			}),
 			thinkingLevel,
+			// fork 复用需要：底层 Session / 元数据 / 模型对象（来源身份沿用，不重算）
+			session,
+			sessionMeta: session.metadata,
+			models,
+			model,
 			lastActivityAt: Date.now(),
 		};
 		// 归属/身份落盘（磁盘 resume 的 fail-closed 数据源，复核 Important #4）。
@@ -771,6 +796,63 @@ export class SessionManager {
 		return true;
 	}
 
+	/**
+	 * ③ 重跑：后端线程截断（与 WorkBuddy「编辑并重发」一致）。
+	 *
+	 * 以 `atEntryId` 为切点，从来源会话 fork 出一条**新**分支会话：目标消息及其之后全部
+	 * 丢弃（`position: "before"`），新 run 从切点父节点续写。来源会话磁盘/内存均不动。
+	 *
+	 * 关键不变量（踩过双重哈希的坑）：
+	 *   - 返回给调用方的 `newKey` 是**原始** threadKey（`<来源>__fork_<uuid>`），Nest 后续
+	 *     以它作为 threadId → pi-runtime 内部 `toSessionKey(newKey)` 得到与本方法注册时
+	 *     完全一致的内存键。绝不可把已哈希的键回传，否则二次哈希后会话对不上。
+	 *   - forkedSession 已在 `source.repo` 内打开，故 `build` 走 `existingFs` 分支直接挂
+	 *     harness，不重建磁盘、不重复 open（避免 "Session is already open"）。
+	 *   - 沿用来源 `identity`/`staticPrompt`/`canvasSessionId`，保证分支与原对话同模型、同系统上下文。
+	 */
+	async fork(
+		threadKey: string,
+		atEntryId: string,
+	): Promise<{ newKey: string; newSessionId: string }> {
+		const source = this.require(threadKey);
+		// 正在跑 run 的会话不允许 fork（fork 会读 source 快照，串台风险 fail-closed）。
+		if (source.prompting) throw new BusyError(source.id);
+		if (!source.session || !source.sessionMeta) {
+			throw new Error(`session ${source.id} missing underlying session snapshot; cannot fork`);
+		}
+		// 先校验目标 entry 确实存在（main 分支上）。用底层句柄自查，不依赖 vendored 的
+		// 英文报错文案 —— 不存在统一映射 400（WorkBuddy「重跑」要求 branchFromEntryId 有效）。
+		const target = await source.session
+			.getEntry(atEntryId, this.context)
+			.catch(() => undefined);
+		if (!target) throw new ForkTargetUnknownError(source.id, atEntryId);
+
+		const forkedSession = await source.repo.fork(
+			source.sessionMeta,
+			{ scope: "branch", branch: MAIN_LANE, entryId: atEntryId, position: "before" },
+			this.context,
+		);
+		const newSessionId = forkedSession.metadata.id;
+		const rawNewKey = `${threadKey}__fork_${newSessionId}`;
+		const internalKey = toSessionKey(rawNewKey);
+		// 复用来源 env/repo（forkedSession 已在其中打开），直接挂 harness，不重建磁盘。
+		await this.build(
+			internalKey,
+			{
+				systemPrompt: source.staticPrompt,
+				workingDir: source.sessionMeta.cwd,
+				canvasSessionId: source.canvasSessionId,
+				userId: source.userId,
+				thinkingLevel: source.thinkingLevel,
+			},
+			source.models,
+			source.model,
+			source.identity,
+			{ env: source.env, repo: source.repo, session: forkedSession },
+		);
+		return { newKey: rawNewKey, newSessionId };
+	}
+
 	async remove(threadKey: string): Promise<boolean> {
 		const key = toSessionKey(threadKey);
 		if (!this.sessions.has(key)) return false;
@@ -823,5 +905,12 @@ export class NotFoundError extends Error {
 export class BusyError extends Error {
 	constructor(id: string) {
 		super(`session busy: ${id}`);
+	}
+}
+
+/** ③ 重跑：fork 切点 entry 在来源会话 main 分支上不存在（路由层映射 400）。 */
+export class ForkTargetUnknownError extends Error {
+	constructor(sessionId: string, entryId: string) {
+		super(`fork target entry ${entryId} not found in session ${sessionId}`);
 	}
 }

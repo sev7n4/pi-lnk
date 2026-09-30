@@ -106,6 +106,15 @@ class ConversationDto {
   @IsOptional()
   @IsIn(['high', 'max'])
   thinkingEffort?: 'high' | 'max'
+
+  /**
+   * ③ 重跑：pi 会话内目标消息的 entryId（来自 `pi_message_end` 事件）。
+   * 提供时 Nest 先 fork 出「截断到该消息之前」的新分支会话，再在新线程上跑本轮 ——
+   * 后端线程真实截断（与 WorkBuddy「编辑并重发」一致），而非前端裁剪。
+   */
+  @IsOptional()
+  @IsString()
+  branchFromEntryId?: string
 }
 
 class OptimizePromptDto {
@@ -295,6 +304,17 @@ export class AgentController {
       throw err
     }
 
+    // SSE 保活（item 4）：pi 的 `: heartbeat` 注释帧被 Nest 客户端丢弃，且长任务（run_* 出图 ~3min /
+    // 视频 ~11min）两轮业务事件间可能 >30s 无 data 帧 → 浏览器误判「生成服务暂时不可达」并自断。
+    // 控制器每 15s 下发一个 data 帧，浏览器逐帧 touch() 重置 stale 计时（< STREAM_STALE_MS=30s）。
+    const heartbeatTimer = setInterval(() => {
+      try {
+        res.write('data: {"type":"heartbeat"}\n\n')
+      } catch {
+        // 客户端已断开，循环/关闭会清理
+      }
+    }, 15_000)
+
     try {
       for await (const event of this.agentService.streamConversation(
         dto.sessionId,
@@ -310,12 +330,15 @@ export class AgentController {
         dto.mentionedKeys,
         dto.thinking,
         dto.thinkingEffort,
+        dto.branchFromEntryId,
       )) {
         res.write(`data: ${JSON.stringify(event)}\n\n`)
       }
       res.write('data: [DONE]\n\n')
     } catch (err) {
       res.write(`data: ${JSON.stringify({ type: 'error', data: { message: String(err) } })}\n\n`)
+    } finally {
+      clearInterval(heartbeatTimer)
     }
 
     res.end()

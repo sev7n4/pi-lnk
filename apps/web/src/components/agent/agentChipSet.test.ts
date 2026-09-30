@@ -484,3 +484,19 @@ describe('resolveProposeChipNodeId: SSOT 优先、extract 兜底', () => {
     ).toBe(null)
   })
 })
+
+describe('detectAgentChipSet 兜底文案不误触发 plan（回归 #troubleshoot-2026-09-30）', () => {
+  it('旧兜底文案含「确认方案」→ 误触发 plan（记录历史缺陷）', () => {
+    const oldFallback = '（本轮无文本回复。若在确认方案，可再发「确认」；或点「新建对话」后重试。）'
+    expect(detectAgentChipSet(oldFallback)).toBe('plan')
+  })
+
+  it('新兜底文案去掉「确认方案」触发词 → 返回 null（修复后）', () => {
+    const newFallback = '（本轮无文本回复。若还需确认，可再发「确认」；或点「新建对话」后重试。）'
+    expect(detectAgentChipSet(newFallback)).toBe(null)
+  })
+
+  it('失败轮 assistantText 为空（余额不足 402 无文本）→ null', () => {
+    expect(detectAgentChipSet('')).toBe(null)
+  })
+})
