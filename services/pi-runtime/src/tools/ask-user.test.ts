@@ -52,7 +52,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 		const reg = new PendingToolRegistry();
 		const [tool] = createAskUserTools(metrics, reg);
 		const questions = [{ id: "q", question: "Q", options: [{ label: "A", value: "a" }] }];
-		const pending = tool.execute!("c", { questions }, undefined, { sessionId: "s" } as never, undefined as never, undefined as never);
+		const pending = tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never);
 		reg.abortAll("s");
 		const result = (await pending) as { content: Array<{ type: string; text: string }> };
 		assert.match(lastText(result), /中止/);
@@ -65,7 +65,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 			{ id: "style", question: "风格？", options: [{ label: "水墨", value: "ink" }] },
 			{ id: "count", question: "张数？", options: [{ label: "1", value: "1" }] },
 		];
-		const pending = tool.execute!("c", { questions }, undefined, { sessionId: "s" } as never, undefined as never, undefined as never);
+		const pending = tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never);
 		// 用户答了 style 但没提交（模拟逐题暂存）：工具层在 answer 前把已答写入 registry
 		// —— 通过 recordPartial 的公开路径；这里直接调（工具内部同样如此）
 		reg.recordPartial("s", "c", { style: ["ink"] });
@@ -83,7 +83,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 			const reg = new PendingToolRegistry();
 			const [tool] = createAskUserTools(metrics, reg);
 			const questions = [{ id: "q", question: "Q", options: [{ label: "A", value: "a" }] }];
-			const result = (await tool.execute!("c", { questions }, undefined, { sessionId: "s" } as never, undefined as never, undefined as never)) as { details: { canvasCommands: Array<Record<string, unknown>> } };
+			const result = (await tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never)) as { details: { canvasCommands: Array<Record<string, unknown>> } };
 			const cmd = result.details.canvasCommands[0];
 			assert.equal(cmd.type, "ask_user");
 			assert.equal(cmd.callId, undefined); // off 分支无 callId
