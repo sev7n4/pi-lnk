@@ -2,6 +2,7 @@
 import type { NestClient } from "./nest-client.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
+import type { PendingToolRegistry } from "../pending-registry.js";
 import { createCanvasReadTools } from "./canvas-read.js";
 import { createCanvasWriteTools } from "./canvas-write.js";
 import { createUiCommandTools } from "./ui-command.js";
@@ -36,9 +37,10 @@ export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
 /**
  * B-2 批次：写工具 + connect_nodes（自 B-6 提前）。
  * introduce_nodes_to_agent 属老链路 DEFERRED，默认不暴露（includeDeferred 显式开启）。
+ * registry 可选注入（2026-09-30-ask-user-blocking B-2）：注入且开关开 → propose_generation 阻塞分支。
  */
-export function buildCanvasWriteTools(client: NestClient): LnkpiTool[] {
-	return createCanvasWriteTools(client);
+export function buildCanvasWriteTools(client: NestClient, registry?: PendingToolRegistry): LnkpiTool[] {
+	return createCanvasWriteTools(client, { registry });
 }
 
 /** UI_COMMAND 批次：5 个本地 UI 命令工具（不依赖 NestClient）。 */
@@ -46,9 +48,10 @@ export function buildUiCommandTools(metrics: Metrics): LnkpiTool[] {
 	return createUiCommandTools(metrics);
 }
 
-/** ask_user 批次：向用户提问/选项卡工具（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md，D1-D5 已拍板）。 */
-export function buildAskUserTools(metrics: Metrics): LnkpiTool[] {
-	return createAskUserTools(metrics);
+/** ask_user 批次：向用户提问/选项卡工具（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md，D1-D5 已拍板）。
+ * registry 可选注入（2026-09-30-ask-user-blocking B-1）：注入且开关开 → 阻塞分支。 */
+export function buildAskUserTools(metrics: Metrics, registry?: PendingToolRegistry): LnkpiTool[] {
+	return createAskUserTools(metrics, registry);
 }
 
 /** arrange_nodes 批次：自动排列节点工具（spec docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md，D1-D5 已拍板）。 */

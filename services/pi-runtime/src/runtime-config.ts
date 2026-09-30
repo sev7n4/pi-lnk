@@ -88,3 +88,13 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
 	};
 }
+
+/** B-1/B-5：阻塞式确认类工具开关（ask_user / propose_generation）。off = 退回非阻塞 v1 行为。 */
+export function askUserBlocking(env: Record<string, string | undefined> = process.env): boolean {
+	return parseBool(env.ASK_USER_BLOCKING, true);
+}
+
+/** B-1：阻塞等待上限，缺省 30min。⚠️ helm 部署必须 --set-string（科学计数法事故）。 */
+export function askUserTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+	return parsePositiveInt(env.ASK_USER_TIMEOUT_MS, 1_800_000);
+}

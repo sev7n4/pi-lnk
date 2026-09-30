@@ -609,6 +609,82 @@ describe("P0-③ 终审修复：重连预算按「连续失败窗口」计", () 
 	});
 });
 
+describe("B-2 answer/getPending（ask_user 阻塞透传）", () => {
+	it("answer POST /sessions/:id/answers，200 返回 {ok,deduped}", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ ok: true, deduped: false }), { status: 200 });
+			}) as typeof fetch,
+		});
+		await expect(
+			client.answer("s1:t9", { callId: "c1", answers: { choice: ["a"] }, answerId: "a1" }),
+		).resolves.toEqual({ ok: true, deduped: false });
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.url).toContain(`/sessions/${encodeURIComponent("s1:t9")}/answers`);
+		expect(calls[0]!.init.method).toBe("POST");
+		const body = JSON.parse(String(calls[0]!.init.body));
+		expect(body.callId).toBe("c1");
+		expect(body.answers).toEqual({ choice: ["a"] });
+		expect(body.answerId).toBe("a1");
+	});
+
+	it("answer 幂等响应（deduped:true）不抛错", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ ok: true, deduped: true }), { status: 200 })) as typeof fetch,
+		});
+		await expect(
+			client.answer("s1", { callId: "c1", answers: { choice: ["a"] } }),
+		).resolves.toEqual({ ok: true, deduped: true });
+	});
+
+	it("answer 非 2xx 抛 PiRuntimeError", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "boom" }), { status: 500 })) as typeof fetch,
+		});
+		await expect(client.answer("s1", { callId: "c1", answers: {} })).rejects.toThrow(/boom/);
+	});
+
+	it("getPending GET /sessions/:id/pending → {pending} | null", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				if (calls.length === 1) {
+					return new Response(
+						JSON.stringify({ pending: { callId: "c1", toolName: "ask_user" } }),
+						{ status: 200 },
+					);
+				}
+				return new Response(JSON.stringify({ pending: null }), { status: 200 });
+			}) as typeof fetch,
+		});
+		await expect(client.getPending("s1:t9")).resolves.toEqual({
+			callId: "c1",
+			toolName: "ask_user",
+		});
+		expect(calls[0]!.url).toContain(`/sessions/${encodeURIComponent("s1:t9")}/pending`);
+		expect(calls[0]!.init.method).toBe("GET");
+		await expect(client.getPending("s1")).resolves.toBeNull();
+	});
+
+	it("getPending 非 2xx 按 null（降级路径，不抛错阻断对话）", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "boom" }), { status: 500 })) as typeof fetch,
+		});
+		await expect(client.getPending("s1")).resolves.toBeNull();
+	});
+});
+
 describe("P0-A streamEvents live 订阅（跨轮重放修复）", () => {
 	const enc = new TextEncoder();
 	function sseResponse(frames: string[], status = 200): Response {

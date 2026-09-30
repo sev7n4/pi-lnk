@@ -40,6 +40,7 @@ import type { Metrics } from "./metrics.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { enforceRetention } from "./session-retention.js";
+import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import { stripImageBlocks } from "./sse-sanitize.js";
 import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
@@ -373,6 +374,8 @@ export class SessionManager {
 	private readonly creating = new Map<string, Promise<CreateResult>>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
 	private sweeper?: NodeJS.Timeout;
+	/** 阻塞式确认类工具的等待注册表（index.ts 装配注入，abort 联动用）。 */
+	private pendingRegistry?: PendingToolRegistry;
 
 	/**
 	 * run 后压缩（扫盘 + 摘要 LLM 调用）的整体等待上限；**仅用于测试注入**，
@@ -941,14 +944,25 @@ export class SessionManager {
 	/**
 	 * 中断该会话当前正在跑的 run（用户点「停止」）。
 	 * 会话本身保留——用户可以接着发新消息；无活跃 run 时返回 false（前端按「已断开」提示）。
+	 *
+	 * abort 联动（2026-09-30-ask-user-blocking）：entry 找到即清理该会话的全部阻塞等待
+	 * （防御性——即使 cancelRun 已空，ask_user 挂起的 waitForUser 也要以 aborted 交还，
+	 * 否则模型侧永久悬挂）。键 = entry.canvasSessionId（工具域），未提供时回落 entry.id，
+	 * 与 toolContext.sessionId 的回落语义一致。
 	 */
 	abort(threadKey: string): boolean {
 		const entry = this.sessions.get(toSessionKey(threadKey));
+		if (entry) this.pendingRegistry?.abortAll(entry.canvasSessionId ?? entry.id);
 		if (!entry?.cancelRun) return false;
 		entry.userAborted = true;
 		entry.cancelRun("user_cancel");
 		entry.cancelRun = undefined;
 		return true;
+	}
+
+	/** index.ts 装配用（构造签名长，避免位置参数漂移）。 */
+	setPendingRegistry(registry: PendingToolRegistry): void {
+		this.pendingRegistry = registry;
 	}
 
 	/**

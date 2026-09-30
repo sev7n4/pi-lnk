@@ -382,3 +382,130 @@ describe("canvas-write: 全部写工具都推 details.actions（实时通道回�
 		);
 	});
 });
+
+// ── propose_generation 阻塞确认（B-2，2026-09-30-ask-user-blocking）─────────
+// 阻塞开（registry 注入且 ASK_USER_BLOCKING≠off）→ 双臂 race：轮询画布 SSOT
+// （get-node，status 离开 pending_confirm = 用户已确认；节点消失 = 用户拒绝）
+// vs registry resolution（abort→aborted / timer→timeout）。off → 旧行为逐字节保留。
+
+import { PendingToolRegistry } from "../pending-registry.js";
+import { NestToolError } from "./nest-client.js";
+
+/** propose 专用 mock：propose-generation 恒成功；get-node 按序返回 status 序列（可注 throw）。 */
+function fakeNestClient(
+	getNodeStatuses: string[],
+	opts: { getNodeThrows?: boolean; failFirst?: number } = {},
+) {
+	let i = 0;
+	let called = 0;
+	const stats = { getNodeCalls: 0 };
+	return {
+		stats,
+		post: async (path: string) => {
+			if (path === "/agent/internal/get-node") {
+				stats.getNodeCalls++;
+				// 404 用 NestClient 真实错误形态（NestToolError kind=http + status=404），锁定「立即 gone」判定不靠 message 字符串
+				if (opts.getNodeThrows) throw new NestToolError("nest /agent/internal/get-node http 404: not found", "http", 404);
+				if (opts.failFirst && called++ < opts.failFirst) throw new Error("503 transient");
+				const status = getNodeStatuses[Math.min(i++, getNodeStatuses.length - 1)];
+				return { id: "n1", data: { status } };
+			}
+			return { ok: true }; // propose-generation 等
+		},
+	} as never;
+}
+
+describe("propose_generation 阻塞确认（B-2）", () => {
+	it("画布确认（status 离开 pending_confirm）→ details.confirmed=true 返回", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient([
+			"pending_confirm", // get-node #1
+			"completed", // get-node #2 → confirmed
+		]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		assert.equal(reg.hasPending("s1"), false); // cancel 收尾
+	});
+
+	it("确认路径 pending_confirm→generating（前端确认会清 pending_confirm 并自起生成）→ confirmed=true 且文案不诱导 run_*", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm", "generating"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /生成已由画布启动/);
+		assert.match(text, /不要对该节点调用 run_\*/);
+	});
+
+	it("取消路径：连续两次轮询停 draft（用户 clear-propose）→ confirmed=false reason=rejected", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["draft", "draft"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, false);
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /rejected/);
+		assert.equal(reg.hasPending("s1"), false);
+	});
+
+	it("draft 翻转边界：单次 draft 后转 generating（draftStreak 重置）→ confirmed=true", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["draft", "generating"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true, "单次 draft 是确认翻转的中间态，不得误判 rejected");
+	});
+
+	it("瞬时错误容忍：get-node 首次 throw、次次返回 generating → confirmed=true（Finding 3）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["generating"], { failFirst: 1 });
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		assert.equal(reg.hasPending("s1"), false);
+	});
+
+	it("节点 404（确定性消失）→ 第 1 拍立即 gone，不走错误容忍（Important-1 fail-closed 时序）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient([], { getNodeThrows: true }); // get-node 抛 NestToolError 404
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, false);
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /gone/);
+		assert.equal((client as { stats: { getNodeCalls: number } }).stats.getNodeCalls, 1, "404 再等多久都不会回来：首轮即 fail-closed，不得消耗容忍额度");
+		assert.equal(reg.hasPending("s1"), false);
+	});
+
+	it("B-5 off（env=off 且 registry 注入）→ 立即返回、details 无 confirmed（Review Focus 5）", async () => {
+		const prev = process.env.ASK_USER_BLOCKING;
+		process.env.ASK_USER_BLOCKING = "off";
+		try {
+			const reg = new PendingToolRegistry();
+			const client = fakeNestClient(["pending_confirm"]);
+			const [propose] = createCanvasWriteTools(client, { registry: reg }).filter(
+				(t) => t.name === "propose_generation",
+			);
+			const result = await run(propose, { node_id: "n1" });
+			assert.equal((result.details as { confirmed?: boolean }).confirmed, undefined);
+			assert.equal(reg.hasPending("s1"), false); // 从未挂 pending
+		} finally {
+			if (prev === undefined) delete process.env.ASK_USER_BLOCKING;
+			else process.env.ASK_USER_BLOCKING = prev;
+		}
+	});
+});

@@ -4,13 +4,14 @@ import {
   ForbiddenException,
   Get,
   Inject,
+  Param,
   Post,
   Query,
   Req,
   Res,
   UseGuards,
 } from '@nestjs/common'
-import { IsArray, IsBoolean, IsIn, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 import type { Request, Response } from 'express'
 import { AuthGuard } from '../auth/auth.guard'
@@ -155,6 +156,24 @@ class CancelRunDto {
   reason?: string
 }
 
+/** B-2：向阻塞中的确认类工具提交回答（sessionId 走路径参数，其余在 body）。 */
+class AnswerPendingDto {
+  @IsOptional()
+  @IsString()
+  threadId?: string
+
+  @IsString()
+  callId!: string
+
+  /** 纯对象（key → string[]）；@IsArray 会误拒 Record 形态，@IsObject 保证 whitelist 不剥离 */
+  @IsObject()
+  answers!: Record<string, string[]>
+
+  @IsOptional()
+  @IsString()
+  answerId?: string
+}
+
 class ListAgentThreadsQueryDto {
   @IsString()
   sessionId!: string
@@ -253,6 +272,26 @@ export class AgentController {
     const data = await this.agentService.cancelRun({
       sessionId: dto.sessionId,
       threadId: dto.threadId,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** B-2：向阻塞中的 ask_user/propose_generation 提交回答（透传 pi-runtime /answers，幂等）。 */
+  @Post('sessions/:sessionId/answers')
+  @UseGuards(AuthGuard)
+  async answerPending(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: AnswerPendingDto,
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    // 与 runs/cancel 一致：先校验会话归属，避免越权回答他人的 pending
+    await this.sessionsService.findOne(sessionId, req.user.sub)
+    const data = await this.agentService.answerPiPending({
+      sessionId,
+      threadId: dto.threadId,
+      callId: dto.callId,
+      answers: dto.answers,
+      answerId: dto.answerId,
     })
     return { code: 0, message: 'ok', data }
   }

@@ -29,6 +29,8 @@ export class NestToolError extends Error {
 	constructor(
 		message: string,
 		readonly kind: "http" | "envelope" | "timeout",
+		/** HTTP 状态码（仅 kind="http" 且来自 HTTP 层时携带；envelope/timeout/network 不带）。 */
+		readonly status?: number,
 	) {
 		super(message);
 	}
@@ -114,6 +116,7 @@ export class NestClient {
 				throw new NestToolError(
 					`nest ${path} http ${res.status}: ${payload?.message ?? res.statusText}`,
 					"http",
+					res.status,
 				);
 			}
 			if (!payload || payload.code !== 0) {

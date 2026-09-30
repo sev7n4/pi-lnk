@@ -210,6 +210,41 @@ test("V-γ 逃生口：非 GATED 工具在预算耗尽后也不得触发 clearRu
 	assert.equal(store.runCount("s1", "n1"), 2, "非 GATED 调用零接触预算（不清零）");
 });
 
+// ── B-2 阻塞确认联动：markProposed({confirmed}) ───────────────────────────
+// 阻塞确认（propose_generation 阻塞分支等到用户在画布确认）后，after_tool 带
+// confirmed=true 记录提议 → wasProposedThisTurn 对 confirmed 记录返回 false
+// （视同跨轮放行同 turn run_*，SSOT pending_confirm 校验兜底，spec §4.3）。
+
+test("confirmed 提议放行同 turn run_*（阻塞确认 = 视同跨轮，Review Focus 3）", async () => {
+	const store = new GenerationGateStore();
+	store.bumpUserTurn("s1"); // turn=1
+	store.markProposed("s1", "n1", { confirmed: true }); // 阻塞确认后的 after_tool 记录
+	// runs===0：wasProposedThisTurn 必须返回 false（不再拦「同轮自批」），落到 SSOT 检查
+	const r = await checkGenerationGate(
+		store,
+		fakeClient({ id: "n_1", data: { status: "pending_confirm" } }),
+		"s1",
+		GATED,
+		{ node_id: "n1" },
+	);
+	assert.deepEqual(r, { allowed: true });
+});
+
+test("未 confirmed 提议（B-5 off 路径）仍拦同轮自批（现行为不变）", async () => {
+	const store = new GenerationGateStore();
+	store.bumpUserTurn("s1");
+	store.markProposed("s1", "n1"); // 无 confirmed
+	const r = await checkGenerationGate(
+		store,
+		fakeClient({ id: "n_1", data: { status: "pending_confirm" } }),
+		"s1",
+		GATED,
+		{ node_id: "n1" },
+	);
+	assert.equal(r.allowed, false);
+	assert.match(r.reason ?? "", /propose_generation/);
+});
+
 // ── SSOT 查询的 sessionId 解耦（#74 后 gate 必须带画布会话 id）──────────────
 // 背景：gate 在 index.ts 的 onSessionCreated 闭包里只拿得到 pi 会话键；#74 之前
 // pi 键 == 画布 id 所以没事，解耦后拿键查 Nest get-node 必 404 → 全部 run_* 被

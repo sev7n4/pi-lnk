@@ -15,6 +15,13 @@ const toolEnd = (result: unknown, isError = false): PiRuntimeEvent =>
 		data: { toolCallId: "c1", toolName: "focus_node", result, isError },
 	}) as never;
 
+const toolUpdate = (partialResult: unknown): PiRuntimeEvent =>
+	({
+		type: "tool_execution_update",
+		ts: Date.now(),
+		data: { toolCallId: "c1", toolName: "ask_user", partialResult },
+	}) as never;
+
 describe("extractCanvasCommands（UI_COMMAND → canvas_command 派生）", () => {
 	it("从 result.details.canvasCommands 提取命令", () => {
 		const cmds = extractCanvasCommands(
@@ -47,6 +54,42 @@ describe("extractCanvasCommands（UI_COMMAND → canvas_command 派生）", () =
 
 	it("非 tool_execution_end 事件返回空", () => {
 		expect(extractCanvasCommands({ type: "agent_end", ts: 1, data: {} } as never)).toEqual([]);
+	});
+
+	it("ask_user canvas_command 从 tool_execution_update 提取并透传 callId（B-6 阻塞卡唯一可见路径）", () => {
+		const questions = [{ id: "scene", question: "？", options: [{ label: "a", value: "a" }] }];
+		const cmds = extractCanvasCommands(
+			toolUpdate({
+				content: [{ type: "text", text: "{}" }],
+				details: { ok: true, canvasCommands: [{ type: "ask_user", callId: "c1", questions }] },
+			}),
+		);
+		expect(cmds).toEqual([{ type: "ask_user", callId: "c1", questions }]);
+	});
+
+	it("update 快照缺 callId 时回落 toolCallId（前端 POST /answers 提交依据不可缺）", () => {
+		const cmds = extractCanvasCommands(
+			toolUpdate({
+				details: { ok: true, canvasCommands: [{ type: "ask_user", questions: [{ id: "q", question: "？", options: [{ label: "a", value: "a" }] }] }] },
+			}),
+		);
+		expect(cmds[0]?.callId).toBe("c1");
+	});
+
+	it("update 路径非 ask_user 命令不注入 callId；无 canvasCommands 返回空", () => {
+		expect(
+			extractCanvasCommands(toolUpdate({ details: { ok: true, canvasCommands: [{ type: "focus_node", nodeId: "n1" }] } })),
+		).toEqual([{ type: "focus_node", nodeId: "n1" }]);
+		expect(extractCanvasCommands(toolUpdate({ details: { ok: true } }))).toEqual([]);
+	});
+
+	it("end 事件 ask_user（blocking off 旧路径）callId 原样透传", () => {
+		const cmds = extractCanvasCommands(
+			toolEnd({
+				details: { ok: true, canvasCommands: [{ type: "ask_user", callId: "c9", questions: [{ id: "q", question: "？", options: [{ label: "a", value: "a" }] }] }] },
+			}),
+		);
+		expect(cmds[0]?.callId).toBe("c9");
 	});
 
 	it("既有映射不受影响：tool_execution_end 仍产出 tool_result", () => {

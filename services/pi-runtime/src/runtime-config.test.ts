@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { loadRuntimeConfig, parseBool, parsePositiveInt, DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
+import { loadRuntimeConfig, parseBool, parsePositiveInt, DEFAULT_RUNTIME_CONFIG, askUserBlocking, askUserTimeoutMs } from "./runtime-config.js";
 
 describe("parsePositiveInt", () => {
 	it("合法正整数原样返回", () => {
@@ -80,6 +80,20 @@ describe("loadRuntimeConfig", () => {
 			reserveTokens: 16384,
 			keepRecentTokens: 20000,
 		});
+	});
+});
+
+describe("askUser 配置", () => {
+	it("askUserBlocking: 缺省 true，off/false/0 关闭", () => {
+		assert.equal(askUserBlocking({}), true);
+		assert.equal(askUserBlocking({ ASK_USER_BLOCKING: "off" }), false);
+		assert.equal(askUserBlocking({ ASK_USER_BLOCKING: "1" }), true);
+	});
+	it("askUserTimeoutMs: 缺省 30min，非法回退，小数截断", () => {
+		assert.equal(askUserTimeoutMs({}), 1_800_000);
+		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "60000" }), 60_000);
+		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "abc" }), 1_800_000);
+		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "1500.7" }), 1500);
 	});
 });
 
