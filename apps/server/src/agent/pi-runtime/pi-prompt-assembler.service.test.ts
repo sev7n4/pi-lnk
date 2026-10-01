@@ -235,3 +235,21 @@ describe("注入 manifest 观测（WorkBuddy 对齐 §4-2）", () => {
 		expect(asm.lastManifestDetail!.layers[0]).toMatchObject({ id: "rules", kind: "rules" });
 	});
 });
+
+describe("approxTokens（CJK-aware，审计 P0-②）", () => {
+	it("CJK 每字约 1 token（旧口径低估 3 倍）", () => {
+		expect(approxTokens("四个中文字符")).toBe(6);
+	});
+	it("纯 ASCII 维持 1/4 口径", () => {
+		expect(approxTokens("abcdefgh")).toBe(2);
+	});
+	it("混合文本（4 CJK + 8 ASCII → 4 + 2）", () => {
+		expect(approxTokens("两个汉字abcdefgh")).toBe(6);
+	});
+	it("CJK 标点/全角也按 1 计", () => {
+		expect(approxTokens("，。！")).toBe(3);
+	});
+	it("空串为 0", () => {
+		expect(approxTokens("")).toBe(0);
+	});
+});

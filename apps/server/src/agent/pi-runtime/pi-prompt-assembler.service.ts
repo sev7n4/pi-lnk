@@ -51,8 +51,18 @@ export interface PromptManifest {
 	promptHash: string;
 }
 
+/** CJK ≈1 token/字 + 其余 ≈1/4 token/字符（审计 P0-②：len/4 对中文低估 3~4 倍）。
+ *  与 services/pi-runtime/src/skills/registry.ts 同口径，改必须同步。 */
+const CJK_CHAR_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\u3000-\u303F\uFF00-\uFFEF]/;
+
 export function approxTokens(s: string): number {
-	return Math.ceil(s.length / 4);
+	let cjk = 0;
+	let other = 0;
+	for (const ch of s) {
+		if (CJK_CHAR_RE.test(ch)) cjk += 1;
+		else other += 1;
+	}
+	return Math.ceil(cjk + other / 4);
 }
 
 /** 构造层并顺带算出 token 估算（避免调用点漏算）。 */

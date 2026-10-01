@@ -29,7 +29,16 @@ export class SkillRegistry {
 	}
 }
 
-/** 与 Nest 侧 PiPromptAssembler 一致的 token 估算口径（follow-up-1）。 */
+/** CJK ≈1 token/字 + 其余 ≈1/4 token/字符（审计 P0-②：len/4 对中文低估 3~4 倍）。
+ *  与 apps/server/src/agent/pi-runtime/pi-prompt-assembler.service.ts 同口径，改必须同步。 */
+const CJK_CHAR_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\u3000-\u303F\uFF00-\uFFEF]/;
+
 export function approxTokens(s: string): number {
-	return Math.ceil(s.length / 4);
+	let cjk = 0;
+	let other = 0;
+	for (const ch of s) {
+		if (CJK_CHAR_RE.test(ch)) cjk += 1;
+		else other += 1;
+	}
+	return Math.ceil(cjk + other / 4);
 }
