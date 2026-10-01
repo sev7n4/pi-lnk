@@ -137,7 +137,10 @@ import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
 import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
 import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
-import { describeActivity } from '@/components/agent/activityLine'
+import {
+  describeActivity,
+  describeRuntimeActivity,
+} from '@/components/agent/activityLine'
 import { nextChips, type NextChipAction } from '@/components/agent/nextChips'
 import { ElMessage } from 'element-plus'
 
@@ -671,7 +674,10 @@ const turnStatus = computed(() => {
   const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
   // 「正在做什么」：优先 runtime 下发的 activity（P1 决策 8）；当前轮没有则拿 trace 最新一步人话；
   // 都拿不到时 turnStatusLine 内部降级为「处理中」，绝不把内部工具名吐给用户（决策 3 / 5）。
-  const traceActivity = describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
+  // runtime activity 更实时（工具起手即到），拿不到才回落到 trace 最新一步的人话
+  const traceActivity =
+    describeRuntimeActivity(agent.activity) ??
+    describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
   return turnStatusLine({
     isStreaming: agent.isStreaming,
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
@@ -2367,6 +2373,13 @@ function handleEvent(event: { type: string; data: unknown }) {
         })
       }
       break
+    }
+    case 'activity': {
+      // 「正在做什么」（决策 8）：runtime 在工具起手时下发，比 tool_call 更早到。
+      // 中文在组件层查 TOOL_PRESENTATION 出（决策 7：runtime 只声明意图、不塞文案）。
+      const d = event.data as { toolName?: string; done?: number; total?: number };
+      agent.setActivity({ toolName: d.toolName, done: d.done, total: d.total });
+      break;
     }
     case 'tool_result': {
       const d = event.data as { name: string; toolCallId?: string; result: unknown; isError?: boolean }

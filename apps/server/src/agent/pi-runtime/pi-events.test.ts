@@ -300,3 +300,40 @@ describe("waiting_user 透传（2026-10-01 阻塞等待可见化）", () => {
 		expect((out!.data as { status: string }).status).toBe("waiting");
 	});
 });
+
+describe("activity 透传（决策 8 · 正在做什么）", () => {
+	it("tool_start 的 activity → 同名 UI 事件，不带 pi_ 前缀", () => {
+		const out = mapPiEventToUiEvent({
+			type: "activity",
+			ts: 11,
+			data: { toolName: "upsert_media_node", done: 1 },
+		} as never);
+		expect(out).toEqual({ type: "activity", data: { toolName: "upsert_media_node", done: 1, total: undefined } });
+	});
+
+	it("载荷只有英文工具名：中文翻译是客户端目录的责任（决策 7）", () => {
+		const out = mapPiEventToUiEvent({
+			type: "activity",
+			ts: 12,
+			data: { toolName: "web_search", done: 2 },
+		} as never);
+		const data = out!.data as { toolName?: string; done?: number };
+		expect(data.toolName).toBe("web_search");
+		expect(data.done).toBe(2);
+		expect(JSON.stringify(out!.data)).not.toContain("搜索");
+	});
+
+	it("runtime 不伪造 total：缺省就是 undefined（前端别渲染假分母）", () => {
+		const out = mapPiEventToUiEvent({
+			type: "activity",
+			ts: 13,
+			data: { toolName: "arrange_nodes", done: 3 },
+		} as never);
+		expect((out!.data as { total?: number }).total).toBeUndefined();
+	});
+
+	it("未在 switch 显式列出的类型继续走 pi_ 前缀（透传回归）", () => {
+		const out = mapPiEventToUiEvent({ type: "compaction", ts: 14, data: { status: "completed" } } as never);
+		expect(out!.type).toBe("pi_compaction");
+	});
+});
