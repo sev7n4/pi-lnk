@@ -90,8 +90,30 @@ describe('resolveWaiting（P1 waiting 收紧）', () => {
   })
 })
 
+describe('turnStatusLine（P0 两行状态行）', () => {
+  const t0 = 2_000_000
+  it('running：有 activity 时替换「生成回复中」为主语', () => {
+    expect(turnStatusLine({ isStreaming: true, turnStartedAt: t0, now: t0 + 3400, waiting: false, activity: '创建节点' }))
+      .toEqual({ text: '创建节点 · 3s', mode: 'running' })
+  })
+  it('running：无 activity → 保持原「生成回复中」文案（回归防线）', () => {
+    expect(turnStatusLine({ isStreaming: true, turnStartedAt: t0, now: t0 + 3400, waiting: false }))
+      .toEqual({ text: '生成回复中 · 3s', mode: 'running' })
+  })
+  it('waiting：带截止时刻 → hint 倒计时；无截止 → 无 hint', () => {
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 5000, waiting: true,
+      waitingTool: 'propose_generation', waitingDeadline: t0 + 305_000,
+    })).toEqual({ text: '等待你在画布上确认生成', hint: '还剩 5 分钟自动取消', mode: 'waiting' })
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 5000, waiting: true,
+    })).toEqual({ text: '等待你确认', mode: 'waiting' })
+  })
+})
+
 describe('failureReason（P1 失败人话）', () => {
   it('状态码与超时映射；未知兜底', () => {
+    expect(failureReason({ status: 402 })).toBe('渠道余额不足')
     expect(failureReason({ status: 401 })).toBe('渠道密钥无效')
     expect(failureReason({ status: 429 })).toBe('额度或频率受限')
     expect(failureReason(new Error('request timeout'))).toBe('上游响应超时')
