@@ -61,3 +61,38 @@ test("③ tool_result_bytes：按桶聚合并渲染 sum/count", () => {
 	assert.match(out, /pi_runtime_tool_result_bytes_count\{tool="get_canvas_summary"\} 3/);
 	assert.match(out, /pi_runtime_tool_result_bytes_sum\{tool="get_canvas_summary"\} 2002148/);
 });
+
+test("usage tokens/cost 按 kind 累计并渲染（审计 P0-③）", () => {
+	const m = new Metrics();
+	const usage = {
+		input: 100,
+		output: 50,
+		cacheRead: 10,
+		cacheWrite: 5,
+		totalTokens: 165,
+		cost: { input: 0.25, output: 0.5, cacheRead: 0.01, cacheWrite: 0.02 },
+	};
+	m.observeUsage(usage);
+	m.observeUsage(usage);
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_usage_tokens_total\{kind="input"\} 200/);
+	assert.match(out, /pi_runtime_usage_tokens_total\{kind="output"\} 100/);
+	assert.match(out, /pi_runtime_usage_tokens_total\{kind="cache_read"\} 20/);
+	assert.match(out, /pi_runtime_usage_tokens_total\{kind="cache_write"\} 10/);
+	assert.match(out, /pi_runtime_usage_cost_total\{kind="input"\} 0\.5/);
+	assert.match(out, /pi_runtime_usage_cost_total\{kind="output"\} 1/);
+});
+
+test("cost 全 0（未配费率）时指标存在且为 0，不缺行不报错", () => {
+	const m = new Metrics();
+	m.observeUsage({
+		input: 1,
+		output: 1,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 2,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	});
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_usage_cost_total\{kind="input"\} 0/);
+});

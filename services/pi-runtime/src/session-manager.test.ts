@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SessionManager, BusyError, NotFoundError, toSessionKey } from "./session-manager.js";
+import { SessionManager, BusyError, NotFoundError, toSessionKey, appendPromptBlocks } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
@@ -25,6 +25,9 @@ function testConfig(): RuntimeConfig {
 		sweepIntervalMs: 10 ** 9,
 		sessionsMaxBytes: 10 ** 12,
 		sessionsMaxCount: 1000,
+		// 既有断言按「全量常驻」legacy 语义书写；tiering-on 的接线行为在下方
+		// 「tiering-on 接线（评审 finding 3）」专组覆盖。
+		toolTiering: false,
 		compaction: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
 	};
 }
@@ -1140,5 +1143,140 @@ describe("SessionManager activity 广播（决策 8 · 正在做什么）", () =
 		const reconnected = sm.subscribe("a-4", () => {}, -1);
 		const types = reconnected.map((e) => e.type);
 		assert.deepEqual(types, ["activity", "tool_execution_start"]); // 补发含 activity，重连后状态行不会空着
+	});
+});
+
+describe("usage 事件 → metrics（审计 P0-③）", () => {
+	/** 本地可派发 fake（与上方 seq 组的实现同构，作用域独立）。 */
+	function makeEmittableHarnessFactory() {
+		const handlers = new Map<string, (evt: { lane?: string }) => void>();
+		const fakeHarnessFactory = async () => ({
+			harness: {
+				events: {
+					on: (type: string, handler: (evt: { lane?: string }) => void) => {
+						handlers.set(String(type), handler);
+						return () => {};
+					},
+				},
+				lane: async () => ({ prompt: async () => ({ ok: true }) }),
+				close: async () => {},
+			},
+		}) as never;
+		return { handlers, fakeHarnessFactory };
+	}
+
+	const USAGE = {
+		input: 100,
+		output: 50,
+		cacheRead: 10,
+		cacheWrite: 5,
+		totalTokens: 165,
+		cost: { input: 0.25, output: 0.5, cacheRead: 0, cacheWrite: 0 },
+	};
+
+	it("harness 发 usage 事件时进 metrics 累计", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const metrics = new Metrics();
+		const sm = new SessionManager(
+			[],
+			"",
+			undefined,
+			fakeHarnessFactory,
+			undefined,
+			undefined,
+			testConfig(),
+			undefined,
+			metrics,
+		);
+		await sm.create("s-usage-metrics", {});
+		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } } as never);
+		const out = metrics.render(0, "test");
+		assert.match(out, /pi_runtime_usage_tokens_total\{kind="input"\} 100/);
+		assert.match(out, /pi_runtime_usage_cost_total\{kind="output"\} 0\.5/);
+	});
+
+	it("usage 事件不进 SSE/事件缓冲（Nest 未知事件类型防御）", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-usage-sse", {});
+		const seen: string[] = [];
+		sm.subscribe("s-usage-sse", (e) => seen.push(e.type));
+		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } } as never);
+		assert.deepEqual(seen, []);
+	});
+});
+
+describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () => {
+	function makeEmittableHarnessFactory2() {
+		let captured: Record<string, unknown> | undefined;
+		const fakeHarnessFactory = async (cfg: unknown) => {
+			captured = cfg as Record<string, unknown>;
+			return {
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			} as never;
+		};
+		return {
+			get captured() {
+				return captured;
+			},
+			fakeHarnessFactory,
+		};
+	}
+	const tieringConfig = () => ({ ...testConfig(), toolTiering: true });
+
+	it("tiering-on：tools 收窄为常驻集 + load_tools，activeToolNames 同步", async () => {
+		const h = makeEmittableHarnessFactory2();
+		const sm = new SessionManager(
+			[{ name: "t_probe" } as never, { name: "get_canvas_summary" } as never],
+			"",
+			undefined,
+			h.fakeHarnessFactory as never,
+			undefined,
+			undefined,
+			tieringConfig(),
+		);
+		await sm.create("s-tiering", { systemPrompt: "BASE" });
+		const toolNames = (h.captured!.tools as Array<{ name: string }>).map((t) => t.name);
+		assert.deepEqual(toolNames.sort(), ["get_canvas_summary", "load_tools"]);
+		const active = (h.captured!.activeToolNames as string[]).slice().sort();
+		assert.deepEqual(active, ["get_canvas_summary", "load_tools"]);
+	});
+
+	it("tiering-on：staticPrompt 索引块恰好出现一次", async () => {
+		const h = makeEmittableHarnessFactory2();
+		const sm = new SessionManager(
+			[{ name: "t_probe" } as never],
+			"",
+			undefined,
+			h.fakeHarnessFactory as never,
+			undefined,
+			undefined,
+			tieringConfig(),
+		);
+		await sm.create("s-tiering-once", { systemPrompt: "BASE" });
+		const prompt = await (h.captured!.systemPrompt as (tc: unknown) => Promise<string> | string)({});
+		const count = (String(prompt).match(/以下工具未加载完整定义/g) ?? []).length;
+		assert.equal(count, 1);
+		assert.match(String(prompt), /t_probe/);
+	});
+});
+
+describe("appendPromptBlocks 幂等（评审 finding 1：fork 重复拼块）", () => {
+	it("base 已含块时不重复追加", () => {
+		const block = "以下工具未加载完整定义（省上下文）";
+		const base = `BASE\n\n${block}\n- t_probe：x`;
+		const out = appendPromptBlocks(base, [block]);
+		assert.equal((out.match(/以下工具未加载完整定义/g) ?? []).length, 1);
+	});
+	it("base 未含块时正常追加（\\n\\n 连接，空块跳过）", () => {
+		const out = appendPromptBlocks("BASE", ["B1", "", "B2"]);
+		assert.equal(out, "BASE\n\nB1\n\nB2");
+	});
+	it("base 为空时只返回非空块", () => {
+		assert.equal(appendPromptBlocks("", ["B1"]), "B1");
 	});
 });

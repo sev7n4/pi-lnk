@@ -29,6 +29,25 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 
 const AGNES_BASE_URL = process.env.AGNES_BASE_URL ?? "https://apihub.agnes-ai.cn/v1";
 
+/**
+ * 每百万 token 费率（USD）。审计 P0-③：vendor 的 calculateCost 只认 model.cost，
+ * 此前两处硬写 0 把整条 cost 链抹平（BYOK 超支无法归因）。未配置 = 0（行为不变），
+ * 配置即全链生效：usage.cost 由 openai-completions 适配器在响应时自动算好。
+ */
+function costRatesFromEnv() {
+	const num = (raw: string | undefined): number => {
+		if (raw === undefined || raw.trim() === "") return 0;
+		const n = Number(raw);
+		return Number.isFinite(n) && n >= 0 ? n : 0;
+	};
+	return {
+		input: num(process.env.AGNES_COST_INPUT_PER_M),
+		output: num(process.env.AGNES_COST_OUTPUT_PER_M),
+		cacheRead: num(process.env.AGNES_COST_CACHE_READ_PER_M),
+		cacheWrite: num(process.env.AGNES_COST_CACHE_WRITE_PER_M),
+	};
+}
+
 function envCredentialStore(): CredentialStore {
 	return {
 		async read(providerId): Promise<Credential | undefined> {
@@ -75,7 +94,7 @@ function agnesProvider() {
 				// .image_tokens=64）——生产线认可视觉。不声明则 openai-completions 适配器会静默丢弃
 				// tool-result 里的 image block，自评闭环断在最后一步。
 				input: ["text", "image"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				cost: costRatesFromEnv(),
 				contextWindow: 1_000_000,
 				maxTokens: 65_536,
 			},
@@ -99,6 +118,12 @@ export interface SessionLlmOverride {
 	reasoning?: boolean;
 	contextWindow?: number;
 	maxTokens?: number;
+	/**
+	 * 渠道费率（USD / 百万 token）。seam：Nest 今日无渠道费率目录、不填此字段
+	 * （cost 全 0 = 现状）；将来接费率目录时在这里透传即可，vendor calculateCost
+	 * 会自动消费。key 只进 Model 对象（pi 内部消费），不出现在日志。
+	 */
+	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 /** 保守能力默认：非 reasoning、128k 上下文、8k 输出（spec §3.2 三层解析第 3 层）。 */
@@ -161,7 +186,7 @@ function overrideProvider(override: SessionLlmOverride) {
 				// 刻意只声明 text：BYOK 渠道模型由用户自带，pi-runtime 无从得知其是否具备视觉能力；
 				// 误报 image 会让非视觉渠道对含图请求直接 400（比静默丢弃图更糟）。此处不随 agnes 改。
 				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				cost: override.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow: override.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 				maxTokens: override.maxTokens ?? DEFAULT_MAX_TOKENS,
 			},

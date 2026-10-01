@@ -572,18 +572,35 @@ export class AgentCanvasToolsService {
     return { ...node, ...relationsForNode(canvas, node.id) }
   }
 
-  async getCanvasSummary(input: { sessionId: string }): Promise<{
+  /** 焦点过滤阈值（审计 P0-①）：≤ 此数全量返回，避免小画布反而丢信息。 */
+  private static readonly CANVAS_SUMMARY_FULL_LIMIT = 30
+
+  async getCanvasSummary(input: {
+    sessionId: string
+    focusNodeId?: string
+  }): Promise<{
     nodes: Array<{ id: string; type: string; title: string; status: string }>
+    omittedCount?: number
+    focusNodeId?: string
   }> {
     const { canvas } = await this.loadSession(input.sessionId)
-    return {
-      nodes: canvas.nodes.map((n) => ({
-        id: n.id,
-        type: n.type,
-        title: nodeTitle(n),
-        status: nodeStatus(n),
-      })),
+    const all = canvas.nodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      title: nodeTitle(n),
+      status: nodeStatus(n),
+    }))
+    // 焦点过滤 fail-open 三闸：无焦点 / 小画布 / 焦点不存在 → 全量（任何一类都不丢信息）。
+    const focus = input.focusNodeId
+    if (!focus || all.length <= AgentCanvasToolsService.CANVAS_SUMMARY_FULL_LIMIT) return { nodes: all }
+    if (!canvas.nodes.some((n) => n.id === focus)) return { nodes: all }
+    const keep = new Set<string>([focus])
+    for (const e of canvas.edges) {
+      if (e.source === focus) keep.add(e.target)
+      if (e.target === focus) keep.add(e.source)
     }
+    const nodes = all.filter((n) => keep.has(n.id))
+    return { nodes, omittedCount: all.length - nodes.length, focusNodeId: focus }
   }
 
   async addNodesBatch(input: {

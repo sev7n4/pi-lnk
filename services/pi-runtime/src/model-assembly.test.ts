@@ -80,3 +80,73 @@ describe("assembleModel 会话级 override（K-1）", () => {
 		assert.ok(!serialized.includes("sk-SECRET-DO-NOT-LEAK"), "apiKey 不得出现在可序列化面");
 	});
 });
+
+describe("cost 费率（审计 P0-③：vendor calculateCost 只认 model.cost，此前被硬写 0 抹平）", () => {
+	const COST_KEYS = [
+		"AGNES_COST_INPUT_PER_M",
+		"AGNES_COST_OUTPUT_PER_M",
+		"AGNES_COST_CACHE_READ_PER_M",
+		"AGNES_COST_CACHE_WRITE_PER_M",
+	] as const;
+	function clearCostEnv() {
+		for (const k of COST_KEYS) delete process.env[k];
+	}
+
+	it("env 未配置：agnes 四项全 0（现状不变）", () => {
+		clearCostEnv();
+		const { model } = assembleModel();
+		assert.equal(model.cost.input, 0);
+		assert.equal(model.cost.output, 0);
+		assert.equal(model.cost.cacheRead, 0);
+		assert.equal(model.cost.cacheWrite, 0);
+	});
+
+	it("agnes 费率从 env 读取（每百万 token，USD）", () => {
+		clearCostEnv();
+		process.env.AGNES_COST_INPUT_PER_M = "2.5";
+		process.env.AGNES_COST_OUTPUT_PER_M = "10";
+		process.env.AGNES_COST_CACHE_READ_PER_M = "0.25";
+		process.env.AGNES_COST_CACHE_WRITE_PER_M = "1.25";
+		try {
+			const { model } = assembleModel();
+			assert.equal(model.cost.input, 2.5);
+			assert.equal(model.cost.output, 10);
+			assert.equal(model.cost.cacheRead, 0.25);
+			assert.equal(model.cost.cacheWrite, 1.25);
+		} finally {
+			clearCostEnv();
+		}
+	});
+
+	it("非法费率字符串回退 0（NaN / 负数）", () => {
+		clearCostEnv();
+		process.env.AGNES_COST_INPUT_PER_M = "abc";
+		process.env.AGNES_COST_OUTPUT_PER_M = "-1";
+		try {
+			const { model } = assembleModel();
+			assert.equal(model.cost.input, 0);
+			assert.equal(model.cost.output, 0);
+		} finally {
+			clearCostEnv();
+		}
+	});
+
+	it("BYOK override.cost 透传到 model.cost（seam：Nest 今日不填，留渠道费率目录接入点）", () => {
+		clearCostEnv();
+		const { model } = assembleModel({
+			...OVERRIDE,
+			cost: { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 0.25 },
+		});
+		assert.equal(model.cost.input, 1);
+		assert.equal(model.cost.output, 2);
+		assert.equal(model.cost.cacheRead, 0.5);
+		assert.equal(model.cost.cacheWrite, 0.25);
+	});
+
+	it("BYOK 无 cost 字段：全 0（与现状一致）", () => {
+		clearCostEnv();
+		const { model } = assembleModel(OVERRIDE);
+		assert.equal(model.cost.input, 0);
+		assert.equal(model.cost.output, 0);
+	});
+});

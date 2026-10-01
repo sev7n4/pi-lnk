@@ -51,8 +51,18 @@ export interface PromptManifest {
 	promptHash: string;
 }
 
+/** CJK ≈1 token/字 + 其余 ≈1/4 token/字符（审计 P0-②：len/4 对中文低估 3~4 倍）。
+ *  与 services/pi-runtime/src/skills/registry.ts 同口径，改必须同步。 */
+const CJK_CHAR_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\u3000-\u303F\uFF00-\uFFEF]/;
+
 export function approxTokens(s: string): number {
-	return Math.ceil(s.length / 4);
+	let cjk = 0;
+	let other = 0;
+	for (const ch of s) {
+		if (CJK_CHAR_RE.test(ch)) cjk += 1;
+		else other += 1;
+	}
+	return Math.ceil(cjk + other / 4);
 }
 
 /** 构造层并顺带算出 token 估算（避免调用点漏算）。 */
@@ -65,13 +75,15 @@ export function promptHash(prompt: string): string {
 	return createHash("sha256").update(prompt, "utf8").digest("hex").slice(0, 12);
 }
 
-/** 与老链路 1:1 的最小结构（getCanvasSummary.data）。 */
+/** 与老链路 1:1 的最小结构（getCanvasSummary.data）；焦点过滤命中时附 omittedCount/focusNodeId。 */
 export interface CanvasSummaryData {
 	nodes: Array<{ id: string; type: string; title: string; status: string }>;
+	omittedCount?: number;
+	focusNodeId?: string;
 }
 
 export interface CanvasSummaryProvider {
-	getCanvasSummary(input: { sessionId: string }): Promise<CanvasSummaryData>;
+	getCanvasSummary(input: { sessionId: string; focusNodeId?: string }): Promise<CanvasSummaryData>;
 }
 
 const CORE_RULES_PREFIX = `你是 lnkpi 无限画布助手。用简洁中文回答。
@@ -154,18 +166,28 @@ export class PiPromptAssembler {
 	 * 动态段（G 层）：每轮变化的世界状态（画布快照 + 侧栏素材）。
 	 * 返回数组 —— 由 pi-runtime 追加到 systemPrompt 尾部求值，不写入对话历史（spec §4 动态上下文判据）。
 	 * 画布摘要获取失败时省略该块并继续；两者都不可用时返回空数组（调用方 handle 空数组为「无动态块」）。
+	 * focusNodeId（审计 P0-①）：传给 getCanvasSummary 做焦点过滤（>30 节点时只回
+	 * 焦点 + 1 跳邻居，fail-open）；被裁剪时附提示行，模型可调 get_canvas_layout 取全量。
 	 */
 	async assembleDynamic(input: {
 		sessionId: string;
 		attachments?: SidebarBlockInput[];
+		focusNodeId?: string;
 	}): Promise<string[]> {
 		const layers: PromptLayer[] = [];
 
 		try {
-			const summary = await this.canvasTools.getCanvasSummary({ sessionId: input.sessionId });
+			const summary = await this.canvasTools.getCanvasSummary({
+				sessionId: input.sessionId,
+				focusNodeId: input.focusNodeId,
+			});
 			if (summary?.nodes) {
+				const note =
+					summary.omittedCount && summary.focusNodeId
+						? `\n（画布共 ${summary.omittedCount + summary.nodes.length} 个节点，当前聚焦 ${summary.focusNodeId}，其余 ${summary.omittedCount} 个未列出；需要全量时调用 get_canvas_layout）`
+						: "";
 				layers.push(
-					layer("canvas-summary", "canvas", `当前画布摘要：\n${JSON.stringify(summary)}`),
+					layer("canvas-summary", "canvas", `当前画布摘要：\n${JSON.stringify(summary)}${note}`),
 				);
 			}
 		} catch (err) {

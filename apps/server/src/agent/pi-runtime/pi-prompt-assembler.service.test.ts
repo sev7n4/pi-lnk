@@ -235,3 +235,63 @@ describe("注入 manifest 观测（WorkBuddy 对齐 §4-2）", () => {
 		expect(asm.lastManifestDetail!.layers[0]).toMatchObject({ id: "rules", kind: "rules" });
 	});
 });
+
+describe("approxTokens（CJK-aware，审计 P0-②）", () => {
+	it("CJK 每字约 1 token（旧口径低估 3 倍）", () => {
+		expect(approxTokens("四个中文字符")).toBe(6);
+	});
+	it("纯 ASCII 维持 1/4 口径", () => {
+		expect(approxTokens("abcdefgh")).toBe(2);
+	});
+	it("混合文本（4 CJK + 8 ASCII → 4 + 2）", () => {
+		expect(approxTokens("两个汉字abcdefgh")).toBe(6);
+	});
+	it("CJK 标点/全角也按 1 计", () => {
+		expect(approxTokens("，。！")).toBe(3);
+	});
+	it("空串为 0", () => {
+		expect(approxTokens("")).toBe(0);
+	});
+});
+
+describe("assembleDynamic 焦点过滤透传（审计 P0-①）", () => {
+	const makeFocusAssembler = (result: unknown, spy: (input: unknown) => void) =>
+		new PiPromptAssembler({
+			getCanvasSummary: async (input: never) => {
+				spy(input);
+				return result;
+			},
+		} as never);
+
+	it("有 focusNodeId 时透传给 getCanvasSummary", async () => {
+		let received: unknown;
+		const assembler = makeFocusAssembler({ nodes: [{ id: "a", type: "prompt", title: "A", status: "draft" }] }, (i) => (received = i));
+		await assembler.assembleDynamic({ sessionId: "s1", focusNodeId: "image-1" });
+		expect((received as { focusNodeId?: string }).focusNodeId).toBe("image-1");
+	});
+
+	it("omittedCount > 0 时摘要带提示行（告知模型可 get_canvas_layout 取全量）", async () => {
+		const assembler = makeFocusAssembler(
+			{
+				nodes: [{ id: "a", type: "prompt", title: "A", status: "draft" }],
+				omittedCount: 40,
+				focusNodeId: "image-1",
+			},
+			() => {},
+		);
+		const blocks = await assembler.assembleDynamic({ sessionId: "s1", focusNodeId: "image-1" });
+		expect(blocks[0]).toContain("40");
+		expect(blocks[0]).toContain("get_canvas_layout");
+		expect(blocks[0]).toContain("image-1");
+	});
+
+	it("无 focusNodeId / omittedCount → 行为与现状一致（纯 JSON 摘要）", async () => {
+		const assembler = makeFocusAssembler(
+			{ nodes: [{ id: "a", type: "prompt", title: "A", status: "draft" }] },
+			() => {},
+		);
+		const blocks = await assembler.assembleDynamic({ sessionId: "s1" });
+		expect(blocks[0]).toContain('"id":"a"');
+		expect(blocks[0]).not.toContain("get_canvas_layout");
+	});
+});

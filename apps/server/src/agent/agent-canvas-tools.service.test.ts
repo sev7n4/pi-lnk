@@ -2729,5 +2729,46 @@ describe('AgentCanvasToolsService', () => {
       const out = await svc.removeEdges({ sessionId: 's1', edgeIds: ['e1'] })
       expect(out.actions).toHaveLength(1)
     })
+
+  describe('getCanvasSummary 焦点过滤（审计 P0-①：换话题污染）', () => {
+  const mkNode = (id: string, title: string) =>
+    ({ id, type: 'prompt', position: { x: 0, y: 0 }, data: { title, status: 'draft' } }) as never
+
+  const bigCanvas = () => {
+    const nodes = Array.from({ length: 32 }, (_, i) => mkNode(`n-${i}`, `节点${i}`))
+    return { nodes, edges: [{ id: 'e1', source: 'n-0', target: 'n-1' }] } as never
+  }
+
+  it('小画布（≤30 节点）+ 有焦点 → 全量返回（fail-open，不丢信息）', async () => {
+    canvas = { nodes: [mkNode('a', 'A'), mkNode('b', 'B')], edges: [] } as never
+    const summary = await svc.getCanvasSummary({ sessionId: 's1', focusNodeId: 'a' })
+    expect(summary.nodes.map((n) => n.id)).toEqual(['a', 'b'])
+    expect(summary.omittedCount).toBeUndefined()
   })
+
+  it('大画布 + 焦点存在 → 焦点 + 1 跳邻居 + omittedCount', async () => {
+    canvas = bigCanvas()
+    const summary = await svc.getCanvasSummary({ sessionId: 's1', focusNodeId: 'n-0' })
+    const ids = summary.nodes.map((n) => n.id)
+    expect(ids).toContain('n-0')
+    expect(ids).toContain('n-1') // 下游邻居（e1: n-0→n-1）
+    expect(ids).not.toContain('n-5')
+    expect(summary.omittedCount).toBe(32 - 2)
+    expect(summary.focusNodeId).toBe('n-0')
+  })
+
+  it('大画布 + 焦点不存在 → 全量回退（fail-open）', async () => {
+    canvas = bigCanvas()
+    const summary = await svc.getCanvasSummary({ sessionId: 's1', focusNodeId: 'nope' })
+    expect(summary.nodes.length).toBe(32)
+    expect(summary.omittedCount).toBeUndefined()
+  })
+
+  it('无 focusNodeId → 现状行为（controller 内部端点路径不变）', async () => {
+    canvas = bigCanvas()
+    const summary = await svc.getCanvasSummary({ sessionId: 's1' })
+    expect(summary.nodes.length).toBe(32)
+  })
+})
+})
 })
