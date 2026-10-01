@@ -1,13 +1,10 @@
 /** @vitest-environment node */
 import { describe, expect, it, vi } from 'vitest'
+import * as agentChipSetModule from './agentChipSet'
 import {
-  resolveProposeChipNodeId,
-  applyAtomicProposeChipPriority,
   confirmAtomicGeneration,
-  confirmProposeGeneration,
   canvasHasRecipeParent,
   detectAgentChipSet,
-  extractProposeGenerationNodeId,
   resolveAtomicConfirmNodeId,
   resolvePendingConfirmNodeId,
 } from './agentChipSet'
@@ -22,70 +19,16 @@ type CanvasNodeLike = {
   }
 }
 
-describe('extractProposeGenerationNodeId', () => {
-  it('extracts nodeId from last successful propose_generation dict result', () => {
-    expect(
-      extractProposeGenerationNodeId([
-        { name: 'upsert_media_node', result: { nodeId: 'other' } },
-        {
-          name: 'propose_generation',
-          result: { nodeId: 'img-1', status: 'pending_confirm' },
-        },
-      ]),
-    ).toBe('img-1')
-  })
-
-  it('parses JSON string results and accepts node_id', () => {
-    expect(
-      extractProposeGenerationNodeId([
-        {
-          name: 'propose_generation',
-          result: JSON.stringify({ node_id: 'vid-9', status: 'pending_confirm' }),
-        },
-      ]),
-    ).toBe('vid-9')
-  })
-
-  it('ignores propose results that are not pending_confirm', () => {
-    expect(
-      extractProposeGenerationNodeId([
-        { name: 'propose_generation', result: { nodeId: 'img-1', status: 'draft' } },
-        { name: 'propose_generation' },
-      ]),
-    ).toBe(null)
-  })
-
-  it('prefers the last successful propose_generation', () => {
-    expect(
-      extractProposeGenerationNodeId([
-        {
-          name: 'propose_generation',
-          result: { nodeId: 'old', status: 'pending_confirm' },
-        },
-        {
-          name: 'propose_generation',
-          result: { nodeId: 'new', status: 'pending_confirm' },
-        },
-      ]),
-    ).toBe('new')
-  })
-})
-
 describe('detectAgentChipSet', () => {
-  it('detects generation_propose from toolCalls even without atomic text', () => {
-    expect(
-      detectAgentChipSet('已为你准备好节点，请确认后开始生成。', {
-        toolCalls: [
-          {
-            name: 'propose_generation',
-            result: { nodeId: 'img-1', status: 'pending_confirm' },
-          },
-        ],
-      }),
-    ).toBe('generation_propose')
+  it('propose 专用导出已下线（2026-10-01 决策：画布节点生成按钮是唯一确认入口）', () => {
+    const mod = agentChipSetModule as unknown as Record<string, unknown>
+    expect(mod.extractProposeGenerationNodeId).toBeUndefined()
+    expect(mod.confirmProposeGeneration).toBeUndefined()
+    expect(mod.applyAtomicProposeChipPriority).toBeUndefined()
+    expect(mod.resolveProposeChipNodeId).toBeUndefined()
   })
 
-  it('prefers generation_propose over atomic text snippets', () => {
+  it('atomic gate 不再被 pending propose 掩盖（chips 下线后 propose 走画布）', () => {
     expect(
       detectAgentChipSet('视频/音频生成将消耗积分。回复「确认生成」开始，或「取消」放弃。', {
         toolCalls: [
@@ -95,7 +38,7 @@ describe('detectAgentChipSet', () => {
           },
         ],
       }),
-    ).toBe('generation_propose')
+    ).toBe('atomic')
   })
 
   it('detects recipe confirm chips from planner preview copy', () => {
@@ -276,7 +219,7 @@ describe('detectAgentChipSet', () => {
       expect(resolvePendingConfirmNodeId([], null)).toBe(null)
     })
 
-    it('detectAgentChipSet: generation_propose from canvas nodes alone (empty toolCalls)', () => {
+    it('detectAgentChipSet: 画布 pending_confirm 不再产出 generation_propose（chips 下线）', () => {
       expect(
         detectAgentChipSet('刷新后仍可确认生成。', {
           toolCalls: [],
@@ -291,33 +234,12 @@ describe('detectAgentChipSet', () => {
           ],
           selectedNodeId: 'img-recover',
         }),
-      ).toBe('generation_propose')
-    })
-  })
-
-  // Phase 2c.1 C2: confirm must call generateForNode, never sendPreset
-  describe('Phase 2c.1 C2: confirmProposeGeneration uses dock generate', () => {
-    it('calls generateForNode(nodeId) and never sendPreset', async () => {
-      const generateForNode = vi.fn(async () => undefined)
-      const sendPreset = vi.fn()
-
-      await confirmProposeGeneration('img-1', { generateForNode, sendPreset })
-
-      expect(generateForNode).toHaveBeenCalledTimes(1)
-      expect(generateForNode).toHaveBeenCalledWith('img-1')
-      expect(sendPreset).not.toHaveBeenCalled()
+      ).toBe(null)
     })
   })
 
   // Phase 2c.3 E1–E3: weaken atomic confirm UX
-  describe('Phase 2c.3: atomic confirm → dock + propose priority', () => {
-    it('E1: pending beats atomic interrupt chip', () => {
-      expect(applyAtomicProposeChipPriority('atomic', 'img-pending')).toBe('generation_propose')
-      expect(applyAtomicProposeChipPriority('atomic', null)).toBe('atomic')
-      expect(applyAtomicProposeChipPriority('plan', 'img-pending')).toBe('plan')
-      expect(applyAtomicProposeChipPriority('image_qa', 'img-pending')).toBe('image_qa')
-    })
-
+  describe('Phase 2c.3: atomic confirm → dock', () => {
     it('resolveAtomicConfirmNodeId: pending → atomicNodeId → selected media', () => {
       const nodes = [
         { id: 'img-pending', data: { status: 'pending_confirm' } },
@@ -435,55 +357,9 @@ describe('detectAgentChipSet', () => {
   })
 })
 
-// 回归：多节点 propose 场景下确认卡片出卡时序不稳定。
-// 旧行为 chipSet 优先取「最后一条 assistant 消息的 propose toolCalls」，
-// 仅当其为 null 才兜底画布 pending_confirm SSOT：
-// - 最后一轮消息含 toolCalls 时，确认该节点后 extract 仍返回同一 nodeId，
-//   latch 命中且 ?? 短路使 SSOT 永不被咨询 → 下一张卡片死等 agent 下一轮 turn。
-// 修复：SSOT（画布 pending_confirm 真相源）优先，extract 仅作画布未落节点的竞态兜底。
-describe('resolveProposeChipNodeId: SSOT 优先、extract 兜底', () => {
-  const nodes = (ids: string[]) =>
-    ids.map((id) => ({ id, data: { status: 'pending_confirm', updatedAt: 1000 } }))
-
-  it('画布有 pending_confirm → 直接返回（即使最后消息的 toolCalls 指向另一节点）', () => {
-    const toolCalls = [
-      { name: 'propose_generation', result: { status: 'pending_confirm', nodeId: 'stale' } },
-    ]
-    expect(
-      resolveProposeChipNodeId({
-        toolCalls,
-        canvasNodes: nodes(['fresh-1', 'fresh-2']),
-        selectedNodeId: null,
-      }),
-    ).toBe('fresh-2') // newest updatedAt wins
-  })
-
-  it('确认后该节点离开 pending → 下一张立即由 SSOT 给出（不再被旧 toolCalls 钉死）', () => {
-    const toolCalls = [
-      { name: 'propose_generation', result: { status: 'pending_confirm', nodeId: 'a' } },
-    ]
-    // a 已确认（状态离开 pending），画布只剩 b
-    const canvas = [{ id: 'a', data: { status: 'generating' } }, { id: 'b', data: { status: 'pending_confirm', updatedAt: 900 } }]
-    expect(
-      resolveProposeChipNodeId({ toolCalls, canvasNodes: canvas, selectedNodeId: null }),
-    ).toBe('b')
-  })
-
-  it('画布尚未落节点（竞态窗口）→ 回退 extract 的 toolCalls 结果', () => {
-    const toolCalls = [
-      { name: 'propose_generation', result: { status: 'pending_confirm', nodeId: 'race-node' } },
-    ]
-    expect(
-      resolveProposeChipNodeId({ toolCalls, canvasNodes: [], selectedNodeId: null }),
-    ).toBe('race-node')
-  })
-
-  it('两处都没有 → null', () => {
-    expect(
-      resolveProposeChipNodeId({ toolCalls: [], canvasNodes: [], selectedNodeId: null }),
-    ).toBe(null)
-  })
-})
+// 2026-10-01：resolveProposeChipNodeId / extractProposeGenerationNodeId / confirmProposeGeneration /
+// applyAtomicProposeChipPriority 已随「确认入口收敛到画布节点」一并删除（absence 断言见文件头）。
+// resolvePendingConfirmNodeId 保留：confirmAtomicGeneration 的 pending 优先级仍依赖它。
 
 describe('detectAgentChipSet 兜底文案不误触发 plan（回归 #troubleshoot-2026-09-30）', () => {
   it('旧兜底文案含「确认方案」→ 误触发 plan（记录历史缺陷）', () => {
