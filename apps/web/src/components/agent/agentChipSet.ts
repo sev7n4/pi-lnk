@@ -17,11 +17,6 @@ export type AgentChipSet =
   | 'delivery_confirm'
   | null
 
-export type AgentToolCallLike = {
-  name?: string | null
-  result?: unknown
-}
-
 /** Minimal canvas node shape for pending_confirm SSOT recover (Phase 2c.1). */
 export type CanvasNodeLike = {
   id: string
@@ -50,12 +45,7 @@ const RECIPE_PROMOTE_VARIANT_SNIPPETS = ['请确认是否保存为改版'] as co
 export interface ChipSetContext {
   /** 最近一条用户消息（用于判断用户是否在表达 modify intent） */
   latestUserText?: string
-  /** 最近一条 assistant 的 toolCalls（用于 Phase 2b propose_generation） */
-  toolCalls?: AgentToolCallLike[] | null
-  /** Phase 2c.1: canvas nodes for pending_confirm SSOT recover */
-  canvasNodes?: CanvasNodeLike[] | null
-  /** Phase 2c.1: selected node id (selected pending wins) */
-  selectedNodeId?: string | null
+}
 }
 
 function userJustRequestedModify(latestUserText: string | undefined): boolean {

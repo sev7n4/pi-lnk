@@ -28,16 +28,9 @@ describe('detectAgentChipSet', () => {
     expect(mod.resolveProposeChipNodeId).toBeUndefined()
   })
 
-  it('atomic gate 不再被 pending propose 掩盖（chips 下线后 propose 走画布）', () => {
+  it('atomic 文案照常检出（propose 检测下线后无抢占）', () => {
     expect(
-      detectAgentChipSet('视频/音频生成将消耗积分。回复「确认生成」开始，或「取消」放弃。', {
-        toolCalls: [
-          {
-            name: 'propose_generation',
-            result: { nodeId: 'img-2', status: 'pending_confirm' },
-          },
-        ],
-      }),
+      detectAgentChipSet('视频/音频生成将消耗积分。回复「确认生成」开始，或「取消」放弃。'),
     ).toBe('atomic')
   })
 
@@ -220,21 +213,7 @@ describe('detectAgentChipSet', () => {
     })
 
     it('detectAgentChipSet: 画布 pending_confirm 不再产出 generation_propose（chips 下线）', () => {
-      expect(
-        detectAgentChipSet('刷新后仍可确认生成。', {
-          toolCalls: [],
-          canvasNodes: [
-            {
-              id: 'img-recover',
-              data: {
-                status: 'pending_confirm',
-                createdAt: '2026-09-14T12:00:00.000Z',
-              },
-            },
-          ],
-          selectedNodeId: 'img-recover',
-        }),
-      ).toBe(null)
+      expect(detectAgentChipSet('刷新后仍可确认生成。')).toBe(null)
     })
   })
 
