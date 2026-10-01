@@ -46,7 +46,6 @@ export interface ChipSetContext {
   /** 最近一条用户消息（用于判断用户是否在表达 modify intent） */
   latestUserText?: string
 }
-}
 
 function userJustRequestedModify(latestUserText: string | undefined): boolean {
   return hasModifyIntent(latestUserText)
