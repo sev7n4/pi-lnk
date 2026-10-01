@@ -711,6 +711,8 @@ export class AgentService {
     const dynamicBlocks = await assembler.assembleDynamic({
       sessionId,
       attachments: piContext?.attachments,
+      // 审计 P0-①：焦点过滤（>30 节点画布只注入焦点 + 1 跳邻居），换话题污染收口。
+      focusNodeId: piContext?.focusNodeId,
     })
     if (visionBlock) dynamicBlocks.push(visionBlock)
     const created = await this.ensurePiSession(client, sessionKey, {

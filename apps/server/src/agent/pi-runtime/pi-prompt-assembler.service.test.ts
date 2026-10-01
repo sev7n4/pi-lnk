@@ -253,3 +253,45 @@ describe("approxTokens（CJK-aware，审计 P0-②）", () => {
 		expect(approxTokens("")).toBe(0);
 	});
 });
+
+describe("assembleDynamic 焦点过滤透传（审计 P0-①）", () => {
+	const makeFocusAssembler = (result: unknown, spy: (input: unknown) => void) =>
+		new PiPromptAssembler({
+			getCanvasSummary: async (input: never) => {
+				spy(input);
+				return result;
+			},
+		} as never);
+
+	it("有 focusNodeId 时透传给 getCanvasSummary", async () => {
+		let received: unknown;
+		const assembler = makeFocusAssembler({ nodes: [{ id: "a", type: "prompt", title: "A", status: "draft" }] }, (i) => (received = i));
+		await assembler.assembleDynamic({ sessionId: "s1", focusNodeId: "image-1" });
+		expect((received as { focusNodeId?: string }).focusNodeId).toBe("image-1");
+	});
+
+	it("omittedCount > 0 时摘要带提示行（告知模型可 get_canvas_layout 取全量）", async () => {
+		const assembler = makeFocusAssembler(
+			{
+				nodes: [{ id: "a", type: "prompt", title: "A", status: "draft" }],
+				omittedCount: 40,
+				focusNodeId: "image-1",
+			},
+			() => {},
+		);
+		const blocks = await assembler.assembleDynamic({ sessionId: "s1", focusNodeId: "image-1" });
+		expect(blocks[0]).toContain("40");
+		expect(blocks[0]).toContain("get_canvas_layout");
+		expect(blocks[0]).toContain("image-1");
+	});
+
+	it("无 focusNodeId / omittedCount → 行为与现状一致（纯 JSON 摘要）", async () => {
+		const assembler = makeFocusAssembler(
+			{ nodes: [{ id: "a", type: "prompt", title: "A", status: "draft" }] },
+			() => {},
+		);
+		const blocks = await assembler.assembleDynamic({ sessionId: "s1" });
+		expect(blocks[0]).toContain('"id":"a"');
+		expect(blocks[0]).not.toContain("get_canvas_layout");
+	});
+});
