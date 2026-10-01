@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-lnk 上下文工程审计 vs Codex / Claude Code / WorkBuddy 实践</title>
+<style>
+:root{
+  --bg:#ffffff; --surface:#f7f6f3; --line:#e3e1da; --line2:#cfcdc4;
+  --tx:#1f1f1d; --tx2:#5f5e5a; --tx3:#8b8a82;
+  --teal:#0f6e56; --teal-bg:#e1f5ee;
+  --red:#a32d2d; --red-bg:#fcebeb;
+  --amber:#854f0b; --amber-bg:#faeeda;
+  --blue:#185fa5; --blue-bg:#e6f1fb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI","Noto Sans CJK SC",sans-serif;
+  font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:56px 40px 96px}
+h1{font-size:34px;line-height:1.3;font-weight:600;margin:0 0 12px;letter-spacing:-.3px}
+h2{font-size:23px;font-weight:600;margin:60px 0 18px;padding-top:8px;letter-spacing:-.2px}
+h3{font-size:17px;font-weight:600;margin:34px 0 10px}
+h4{font-size:15px;font-weight:600;margin:22px 0 6px}
+p{margin:0 0 14px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+  background:var(--surface);padding:1px 5px;border-radius:4px;color:#333}
+pre{background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.65;margin:14px 0}
+pre code{background:none;padding:0;color:var(--tx)}
+.lead{font-size:18px;line-height:1.7;color:var(--tx2)}
+.meta{color:var(--tx3);font-size:13px;margin:0 0 8px}
+.hr{height:1px;background:var(--line);margin:34px 0 0}
+/* cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:24px 0 8px}
+.card{background:var(--surface);border-radius:12px;padding:16px 18px}
+.card .n{font-size:27px;font-weight:600;line-height:1.2;letter-spacing:-.5px}
+.card .l{font-size:13px;color:var(--tx2);margin-top:4px}
+.card .s{font-size:12px;color:var(--tx3);margin-top:6px}
+/* tables */
+table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14px}
+th{text-align:left;font-weight:600;padding:10px 12px;border-bottom:1.5px solid var(--line2);font-size:13px;color:var(--tx2)}
+td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td code{font-size:12px}
+/* badges */
+.b{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.b-p0{background:var(--red-bg);color:var(--red)}
+.b-p1{background:var(--amber-bg);color:var(--amber)}
+.b-p2{background:var(--blue-bg);color:var(--blue)}
+.b-ok{background:var(--teal-bg);color:var(--teal)}
+/* finding */
+.f{border:1px solid var(--line);border-radius:14px;padding:22px 26px;margin:20px 0;background:#fff}
+.f.p0{border-left:4px solid var(--red)}
+.f.p1{border-left:4px solid var(--amber)}
+.f.p2{border-left:4px solid var(--blue)}
+.ft{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.ft h3{margin:0;font-size:17px}
+.f dl{margin:14px 0 0;display:grid;grid-template-columns:78px 1fr;gap:8px 16px}
+.f dt{font-size:13px;color:var(--tx3);padding-top:2px}
+.f dd{margin:0;font-size:14.5px}
+ul,ol{margin:0 0 14px;padding-left:22px}
+li{margin:5px 0}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin:18px 0}
+.kv>div{background:var(--surface);border-radius:10px;padding:14px 16px}
+.kv .t{font-size:13px;color:var(--tx3);margin-bottom:6px}
+.note{background:var(--amber-bg);border-radius:10px;padding:14px 18px;margin:18px 0;font-size:14px}
+.note b{color:var(--amber)}
+.good{background:var(--teal-bg);border-radius:10px;padding:14px 18px;margin:18px 0;font-size:14px}
+.good b{color:var(--teal)}
+footer{margin-top:70px;padding-top:20px;border-top:1px solid var(--line);color:var(--tx3);font-size:13px}
+@media(max-width:700px){.wrap{padding:32px 18px 64px}h1{font-size:26px}.f dl{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>上下文工程现状审计</h1>
+<p class="meta">pi-lnk · 2026-10-01 · 对标 Codex CLI / Claude Code / WorkBuddy 的上下文实践 · 证据取自仓库主干源码（含 vendored pi-agent-core）</p>
+
+<p class="lead">一句话结论：<b>压缩这一环比装配这一环做得好得多。</b>系统有成熟的 LLM 摘要、双触发、文件操作保留清单，但进上下文的东西从来没被"筛选"过——只有"超了才砍"。43 个工具 schema、全画布摘要、全侧栏块无条件每轮注入，没有预算、没有相关门（relevance gate）、没有按需加载。</p>
+
+<div class="cards">
+  <div class="card"><div class="n">43</div><div class="l">工具 schema 每轮全量进 context</div><div class="s">harness 默认全量；setActiveTools 零调用</div></div>
+  <div class="card"><div class="n">327</div><div class="l">skills 索引常驻 token</div><div class="s">渐进披露做得对，正文 11k 按需</div></div>
+  <div class="card"><div class="n">98.4%</div><div class="l">压缩触发点占窗口比</div><div class="s">1M − 16384，行业建议 60–70%</div></div>
+  <div class="card"><div class="n">0</div><div class="l">cost 计数（费率被硬写为 0）</div><div class="s">vendor 算好了，两处覆盖成 0</div></div>
+</div>
+
+<h2>1. 现状链路：一段 prompt 是怎么长出来的</h2>
+
+<pre><code>Nest assembleStatic()          ── 规则组：core / writeTools / genTools（会话期不变）
+        │
+pi-runtime session-manager     ── composeSystemPrompt(static + skills index)   ← 常驻，压缩不碰
+        │                        + dynamicBlocks: canvas-summary / sidebar    ← 每轮求值，不进 history
+harness generation             ── tools = [...this.tools, ...skills.tools]    ← 43 个，全量
+        │
+lane / buildContextEntries     ── 历史 + compaction 摘要 + retainedTail
+        │
+provider                       ── contextWindow 1,000,000（agnes）/ 128,000（BYOK 默认）</code></pre>
+
+<p>三处关键事实（决定了后面的所有判断）：</p>
+<ul>
+<li>静态段与动态段分离、动态块不进对话历史——<b>这个设计是对的</b>，比多数同类项目干净。</li>
+<li><code>toolContext</code> / <code>tier</code> 字段已定义，但 harness 不感知、未用于裁剪；<code>getCanvasSummary(input: { sessionId })</code> 连 <code>focusNodeId</code> 都不收。</li>
+<li>spec <code>2026-08-06-agent-context-engineering-design.md</code> 的 Phase 1 九个小节（ContextPacket / 预算 / relevance gate / 优先级丢弃 / dropped_sections）一节未落地，连配套的 <code>ContextSnapshot</code> 表都建好躺在 Prisma 里没人写。</li>
+</ul>
+
+<h2>2. 四原语对标</h2>
+
+<table>
+<tr><th style="width:15%">原语</th><th style="width:29%">pi-lnk 现状</th><th style="width:29%">行业做法</th><th style="width:13%">状态</th><th style="width:14%">对标来源</th></tr>
+<tr><td><b>Select</b><br>选什么进上下文</td>
+<td>43 工具 schema 全量；全画布摘要 + 全侧栏无条件注入；换话题不清</td>
+<td>工具名索引常驻、schema 按需取（ToolSearch）；目录级规则按工作区路由；任务切分走 named profile</td>
+<td><span class="b b-p0">缺失</span></td><td>Claude Code ToolSearch / Codex readable_roots</td></tr>
+<tr><td><b>Compress</b><br>压缩历史</td>
+<td>阈值 + overflow 双触发；8 段摘要模板；增量摘要；文件操作保留</td>
+<td>阈值设 60–70% 窗口留摘要空间；compact_prompt 显式指定保留项；verbatim 强制校验</td>
+<td><span class="b b-ok">已有未校准</span></td><td>Codex model_auto_compact_token_limit / compact_prompt</td></tr>
+<tr><td><b>Isolate</b><br>拆到独立窗口</td>
+<td>单 lane（<code>MAIN_LANE = "main"</code>）；subagent 只在 <code>packages/pi-poc</code> 的 PoC 里</td>
+<td>子窗口跑探索，主窗口只收结论；子代理 tools allowlist 3–8 个 + maxTurns 封顶</td>
+<td><span class="b b-p0">缺失</span></td><td>Codex spawn_agent / Claude subagent</td></tr>
+<tr><td><b>Write</b><br>写外部记忆</td>
+<td><code>save_memory</code>/<code>recall_memory</code> 可用，但 <code>PromptLayerKind</code> 的 memory 是空壳；召回是 <code>toLowerCase().includes()</code></td>
+<td>memory 作索引（每行 ≤200 字符）不做档案；语义召回；按阶段自动注入</td>
+<td><span class="b b-p1">半成品</span></td><td>Claude Code MEMORY.md index 模式</td></tr>
+<tr><td><b>Observe</b><br>看住上下文</td>
+<td>只有工具结果字节直方图（<code>observeToolResult</code>）；无 token / cost 指标；无上下文快照测试</td>
+<td>状态栏常显剩余额度；压缩有 PreCompact/PostCompact hook 与 UI 反馈</td>
+<td><span class="b b-p1">半成品</span></td><td>Codex /status、statusline context stats</td></tr>
+</table>
+
+<h2>3. 两个硬伤：口径打架，压缩经常不触发</h2>
+
+<p>这两条是本次审计里最该立刻看的一眼，因为它们是<b>乘法叠加</b>的偏差。</p>
+
+<h3>硬伤 A · 触发点算在窗口的 98.4%</h3>
+<pre><code>// vendor/.../harness/runtime/drive/structural.ts:1144
+if (prepared.value === undefined || !shouldCompact(prepared.value.tokensBefore, model.contextWindow, settings))
+
+// vendor/.../compaction/compaction.ts:246
+return contextTokens > contextWindow - settings.reserveTokens;</code></pre>
+<p>分母取 <code>model.contextWindow</code>。agnes 渠道写死 1,000,000，减去 <code>reserveTokens = 16,384</code>（<code>runtime-config.ts:29</code>）→ 触发点 <b>983,616</b>，也就是<b>窗口快满才动手，只留 1.6% 给压缩回包</b>。BYOK 渠道默认 128,000 → 111,616（87%），两个渠道口径还不一致。</p>
+<p>Codex 的口径是反过来的：<code>model_auto_compact_token_limit</code> 建议设在有效窗口的 <b>60–70%</b>（另一个来源写 70–80%），留出摘要生成 + 若干新 turn 的余量，同时最大化两次压缩之间的缓存命中轮数。</p>
+
+<h3>硬伤 B · 中文场景下 token 估算系统性低估约 3 倍</h3>
+<pre><code>// services/pi-runtime/src/skills/registry.ts:33
+export function approxTokens(s: string): number { return Math.ceil(s.length / 4); }</code></pre>
+<p>4 字符 = 1 token 是 ASCII 的口径。中文 1 字 ≈ 1–1.5 token，等于把中文按 1/4 计价。画布 prompt、侧栏文案、用户自然语言指令几乎全是中文，估算值会比真实值低 3–4 倍。</p>
+
+<div class="note"><b>叠加后果（待生产验证，但高度可疑）：</b>估算低报 3–4 倍 + 触发线卡在 98.4% → 阈值路径在中文长会话里<b>大概率从不命中</b>，实际全靠 overflow 兜底路径强制压缩。这恰好解释了一个长期困惑："压缩链路上线了、事件也在发，但没观察到压缩生效"。<br><br>
+<b>验证方法（两坐标互证，别只看一个）：</b>① 抓一turn的请求体，真实 <code>usage.totalTokens</code> vs <code>approxTokens</code> 的差值；② 查 agnes 网关是否回传 <code>usage</code>——<code>compaction.ts:215-243</code> 有 usage 时用真值、无 usage 时才退回字符估算。<b>如果网关始终回传 usage，这条降级为"阈值偏晚"；如果不回传，就是"阈值从不触发"。</b></div>
+
+<h2>4. 差距清单</h2>
+
+<div class="f p0">
+  <div class="ft"><span class="b b-p0">P0</span><h3>无 relevance gate：换话题 = 旧任务永久占尾部</h3></div>
+  <dl>
+    <dt>证据</dt><dd><code>pi-prompt-assembler.service.ts:164-170</code> 无条件注入全画布摘要 + 全侧栏；<code>getCanvasSummary</code> 不收 <code>focusNodeId</code>；spec §4.2「焦点优先 / 类型过滤 / Campaign 隔离」一列未落地；<code>dropped_sections</code> 零记录。</dd>
+    <dt>风险</dt><dd>用户从"蓝牙耳机"切到"山海经"后，旧任务节点、标题、素材仍留在 system prompt 尾部，<b>且每轮重复计费</b>。spec §0 已把这个列为污染 parse 的根因，至今未修。</dd>
+    <dt>行业做</dt><dd>Codex：一个 chat 只做一段连贯工作，切任务默认 <code>/clear</code> 而非 <code>/compact</code>；目录级 AGENTS.md 做 context routing，只把当前工作区相关的约束递给模型（项目级总长还受 <code>project_doc_max_bytes</code> 32 KiB 封顶）。</dd>
+    <dt>改法</dt><dd>① <code>getCanvasSummary</code> 加 <code>focusNodeId</code>，只回相关节点的 id/type/title/status，content 与 url 走指针；② <code>dropped_sections</code> 落日志 + 上指标；③ 话题切换（intent 分类变化）时清空动态块而非追加。</dd>
+  </dl>
+</div>
+
+<div class="f p0">
+  <div class="ft"><span class="b b-p0">P0</span><h3>43 个工具 schema 全量进 context，vendor 的按需加载能力没用上</h3></div>
+  <dl>
+    <dt>证据</dt><dd><code>harness.ts:386</code> 默认 <code>activeToolNames = tools.map(t =&gt; t.name)</code>；pi-runtime 建 harness 时从不传该字段；<code>lane.ts:1692 setActiveTools</code> 全仓<b>零调用</b>。</dd>
+    <dt>风险</dt><dd>每轮固定膨胀；且这部分是 system prompt 尾部，<b>压缩永远砍不掉它</b>——长会话里纯浪费且随工具增长单调上升。另外工具越多，模型选错工具的概率越高。</dd>
+    <dt>行业做</dt><dd>Claude Code 的 ToolSearch："name index upfront, schema on demand"——系统提示里只有工具名，参数 schema 调之前才取。Codex 靠 MCP 配置把工具集按 profile 收窄。</dd>
+    <dt>改法</dt><dd>分层：<code>run_*</code> / generation 类、画布写入类、读取检索类按当前 turn 的意图与动态块分层注册（先只切到 3 组，别一步改成全按需）；<code>tools/types.ts</code> 已有的 <code>tier</code> 字段正好做这个开关。</dd>
+  </dl>
+</div>
+
+<div class="f p0">
+  <div class="ft"><span class="b b-p0">P0</span><h3>cost 恒为 0，token 治理没有底座</h3></div>
+  <dl>
+    <dt>证据</dt><dd><code>model-assembly.ts:78</code> 与 <code>:164</code> 两处 <code>cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }</code>。vendor 的 <code>calculateCost</code> 是存在的（<code>packages/ai/src/models.ts:891-911</code>），openai-completions 也在调，<b>只是费率被自己抹成 0</b>。全仓 lnkpi 代码零 cost 读取。</dd>
+    <dt>风险</dt><dd>BYOK 超支完全无法归因，只能等上游 402（<code>pi-events.ts</code> 的 <code>insufficient_balance</code> 是事后诸葛）。平台侧也无法对 BYOK 用户做配额与限流。这是本次审计里唯一一处"能力在那儿、数据被自己抹成 0"的硬伤。</dd>
+    <dt>行业做</dt><dd>Codex <code>/usage</code> 看账户 token 活动；Claude Code 有 MAX_THINKING_TOKENS、reasoning spend 上限。核心是让花费可见、可归因、可设上限。</dd>
+    <dt>改法</dt><dd>① 把费率表从 <code>model-assembly</code> 提出来（成本约几行），<code>cost</code> 从 0 改成真值；② <code>metrics.ts</code> 增加 session 级累计 input/output/cost；③ 前端 execution trace 现有 <code>turn_usage</code> 已经能挂，扩展即可。</dd>
+  </dl>
+</div>
+
+<div class="f p1">
+  <div class="ft"><span class="b b-p1">P1</span><h3>压缩没有 verbatim / preserve 强制校验</h3></div>
+  <dl>
+    <dt>证据</dt><dd>唯一的保留机制是 <code>compaction.ts:455</code> 一句软提示「Preserve exact file paths, function names, and error messages」；<code>prepareCompaction</code>（634-707）不校验任何必需段；压缩后重拼（<code>session/context.ts:35-39</code>）也不校验。</dd>
+    <dt>风险</dt><dd>长会话里 plan / 待办 / 报错原文被摘要吃掉后<b>无法恢复</b>，模型会"自信地重述"一个不存在的约束或路径——在 canvas 生成场景（spec 规则 11/12/13 都是具体编号约束）是硬伤。再叠加 <code>compaction_end{status:"failed"}</code> 时历史完全不变，会出现"越压越占、满了直接 400"的死锁。</dd>
+    <dt>行业做</dt><dd>Codex 在 <code>AGENTS.md</code> 里写死压缩优先级：保留改过的文件路径与行号、测试名与通过失败、架构决策与理由、报错原文；丢弃已落盘的文件全文、被放弃的探索代码、成功操作的冗长输出。<code>compact_prompt</code> 是显式开关项。</dd>
+    <dt>改法</dt><dd>给 <code>prepareCompaction</code> 加必需段白名单校验（plan / 待办 / blocker / 报错原文），缺段则补抽一次；失败时降级为保留原文而非静默。</dd>
+  </dl>
+</div>
+
+<div class="f p1">
+  <div class="ft"><span class="b b-p1">P1</span><h3>压缩对用户不可见，UI 承诺未兑现</h3></div>
+  <dl>
+    <dt>证据</dt><dd><code>session-manager.ts:77</code> 注释写"前端据此显示『正在压缩上下文』"——但 Nest 的 <code>PiEventType</code> 不含 compaction，<code>mapPiEventToUiEvent</code> 走默认分支原样透传，<code>apps/web/src</code> 搜 compaction 零命中。</dd>
+    <dt>风险</dt><dd>压缩发生时用户完全无感：上下文被改写、历史细节丢失，用户却看到"正常继续"。这类不可见的上下文改写正是"模型突然忘了刚才的约定"的用户体感来源。</dd>
+    <dt>行业做</dt><dd>Codex 有 PreCompact / PostCompact hook（trigger = manual / auto）可用于记日志或反应；压缩本身在 <code>/status</code> 与状态栏可见。</dd>
+    <dt>改法</dt><dd>把 <code>pi_compaction</code> 映射进 <code>PiEventType</code>，前端 trace 里加一条"上下文已压缩"提示。顺带把 <code>session-manager.ts:77</code> 的注释对齐实现。</dd>
+  </dl>
+</div>
+
+<div class="f p1">
+  <div class="ft"><span class="b b-p1">P1</span><h3>长期记忆是孤儿：无自动注入、无语义召回、摘要随会话销毁</h3></div>
+  <dl>
+    <dt>证据</dt><dd><code>PromptLayerKind</code> 里有 <code>"memory"</code> 但 <code>assembleStatic</code>/<code>assembleDynamic</code> 从不产出它（源码注释自认"先留注入点，策略后定"）；召回是 <code>agent-memory.service.ts:8-14</code> 的 <code>toLowerCase().includes()</code>，扫描最近 200 条；compaction 摘要随 session 目录 <code>rm -rf</code>（<code>session-retention.ts:113-115</code>）而消失。</dd>
+    <dt>风险</dt><dd>跨会话"用户偏好"实际依赖模型<b>记得主动</b>调 <code>recall_memory</code>——长会话加多轮工具调用后最容易忘。换会话 = 全忘，且没有任何跨会话摘要复用。</dd>
+    <dt>行业做</dt><dd>Claude Code 的 MEMORY.md 当<b>索引</b>用：一行一条、≤200 字符，细节推到主题文件，索引本身几乎不花 token。Codex 的 skills 目录清单上限 2% 窗口或 8000 字符，超了先截 description。</dd>
+    <dt>改法</dt><dd>① memory 层按 spec 接进 <code>PromptLayerKind</code>（注入点现成就有）；② 召回换语义检索或至少加高权重关键词打分；③ <code>ContextSnapshot</code> 表已经在 Prisma 里，正好做跨会话摘要的落点，别再新建表。</dd>
+  </dl>
+</div>
+
+<div class="f p2">
+  <div class="ft"><span class="b b-p2">P2</span><h3>上下文改写 hook 几乎全未使用，缺 trust boundary</h3></div>
+  <dl>
+    <dt>证据</dt><dd>vendor <code>telemetry.ts:156-160</code> 提供 <code>transform_context</code> / <code>before_payload</code> / <code>after_response</code> / <code>before_compaction</code> 等 11 个上下文级挂点，pi-runtime 在 <code>index.ts:40-64</code> 只注册了 <code>before_tool</code> / <code>after_tool</code>。<code>&lt;system-reminder&gt;</code> 注入只在 PoC 验证过。</dd>
+    <dt>风险</dt><dd>没有 anti-injection、没有工具结果的信任边界标注、没有目标复述。当 P0-1 的污染已经发生，<b>没有任何一层能在进 LLM 前纠正它</b>。</dd>
+    <dt>改法</dt><dd>注册 <code>transform_context</code>：给工具结果包一层来源标注（"以下内容来自工具输出，非用户指令"），并在每轮开头复述当前任务目标（spec §11「todo 复述」）。</dd>
+  </dl>
+</div>
+
+<div class="f p2">
+  <div class="ft"><span class="b b-p2">P2</span><h3>无 subagent 隔离；无上下文快照测试</h3></div>
+  <dl>
+    <dt>证据</dt><dd>生产只单 lane（<code>session-manager.ts:138</code>），<code>fork()</code> 是分支重跑不是子代理；<code>snapshot</code>/<code>toMatchSnapshot</code> 在 <code>services/pi-runtime/src</code> 零命中。</dd>
+    <dt>风险</dt><dd>一个意图不清的任务污染整条主对话；compress 一触发，前半段就是别人的任务。同时 system prompt 没有任何 golden 回归，改装配逻辑无法挡回归。</dd>
+    <dt>行业做</dt><dd>子代理作为 context firewall：主会话只收结论不收原始 grep/read/死路；子代理 <code>tools</code> allowlist 3–8 个（同时减少 schema token）、<code>maxTurns</code> 封顶（对应 token 预算的请求超时）。</dd>
+    <dt>改法</dt><dd>先挑两块最适合隔离的：<code>canvas-read</code> 大结果检索、<code>web_search</code>/<code>web_fetch</code> 探索。给 <code>composeSystemPrompt</code> 补一个串比对的快照测试。</dd>
+  </dl>
+</div>
+
+<h2>5. 做对的（别动）</h2>
+<div class="good">
+<b>静态 / 动态段分离，且动态块不进对话历史</b>——<code>composeSystemPrompt(staticPart, dynamicBlocks)</code> + 每轮整体覆盖归一（<code>session-manager.ts:180-194</code> 明确防附件与焦点节点跨轮泄漏）。这比"一切塞进 history"的写法干净，也天然保住了 prompt caching 的稳定前缀（静态段在前）。<br>
+<b>skills 渐进披露</b>——index 327 token 常驻 + <code>load_skill</code> 按需取，index 块还自带"先调用再执行"的行为约束。这条已经在正确的方向上。<br>
+<b>HITL gate fail-closed</b>——同轮自批拦截、SSOT <code>pending_confirm</code> 校验、V-γ 重试预算；不是 gate 的工具最前早返回不碰预算。<br>
+<b>工具结果已有分层瘦身</b>——<code>canvas-read</code> 50 项截断 + <code>_total</code> + <code>truncated</code>、web 20k/8k 字符预算、memory 2000 字符；<b>问题不在有没有截断，而在没有统一上限</b>。<br>
+<b>SSRF 逐跳校验</b>——<code>web.ts:56-70</code> private IP 拒绝 + 重定向期间逐跳重校验。<br>
+<b>安全侧的 SSE 净化与 turnContext 覆盖</b>：这两条防污染的方向是对的，缺的是进模型前的那道。
+</div>
+
+<h2>6. 落地路线（按 ROI 排序）</h2>
+<table>
+<tr><th style="width:6%">#</th><th style="width:30%">动作</th><th style="width:20%">改哪</th><th style="width:22%">为什么排这个位置</th><th style="width:22%">成本</th></tr>
+<tr><td>1</td><td>校准压缩阈值口径：触发点降到窗口 60–70%</td><td><code>runtime-config.ts</code> + 显式 <code>compaction.contextWindow</code></td><td>一行参数级别的收益，顺带解决两渠道口径不一致</td><td>极小</td></tr>
+<tr><td>2</td><td>换掉中文场景的 token 估算（分语言加权，或用 provider 真值优先）</td><td><code>skills/registry.ts:33</code> + <code>compaction.ts</code> 估算路径</td><td>第 1 条的前置：口径不校准，改阈值就是拍脑袋</td><td>小</td></tr>
+<tr><td>3</td><td>恢复 cost 计数：费率表从 model-assembly 提出来</td><td><code>model-assembly.ts:78/:164</code></td><td>唯一"能力在那、数据自己抹成 0"的硬伤；BYOK 归因必需</td><td>小</td></tr>
+<tr><td>4</td><td><code>getCanvasSummary</code> 加 focus 优先 + <code>dropped_sections</code></td><td><code>pi-prompt-assembler.service.ts</code></td><td>命中 spec 自己点名的根因（换话题污染），且是 P0 里唯一改语义但风险可控的</td><td>中</td></tr>
+<tr><td>5</td><td>工具 schema 分层注册（先 3 组，用现成 <code>tier</code> 字段）</td><td><code>session-manager.ts:525</code> 建 harness 处</td><td>每轮固定成本大头，且压缩砍不掉，收益长期累积</td><td>中</td></tr>
+<tr><td>6</td><td>压缩 UI 提示 + 必需段白名单校验</td><td><code>pi-events.ts</code> + <code>compaction.ts</code></td><td>把不可见的上下文改写变可见，避免"模型突然忘了约定"的体感</td><td>中</td></tr>
+<tr><td>7</td><td>接 memory 注入层 + 语义召回，摘要落 <code>ContextSnapshot</code></td><td><code>pi-prompt-assembler.service.ts</code> + <code>agent-memory.service.ts</code></td><td>让现成的表和现成的注入点活起来，不新增表</td><td>中</td></tr>
+<tr><td>8</td><td>注册 <code>transform_context</code> 做 trust boundary + 目标复述</td><td><code>index.ts:40-64</code></td><td>给 4/5 装上最后一道闸</td><td>中</td></tr>
+<tr><td>9</td><td>两块探索类工具隔离到子窗口</td><td>新子代理通道</td><td>收益真实但依赖 4/5 先稳；可做可不做</td><td>大</td></tr>
+</table>
+<p style="color:var(--tx2)">建议顺序：<b>1 → 2</b> 同一个 PR 一起上（只改一个等于半修），<b>3</b> 紧跟，之后按 4/5 并行。<b>1–3 全是"口径修复"，不涉及语义变更，风险最低、验证最快。</b></p>
+
+<h2>7. 一条别踩的坑：别上加"后台自动改写历史"</h2>
+<p>Codex 在 0.151 引入过自动背景 recap（3 轮后或 3 分钟静默即起后台结构化摘要），社区两天内 41 个 upvote，0.153 赶紧加 <code>auto_recap = false</code> 开关。Codex 0.150.1 修的是"压缩后仍计图片载荷"、0.152.0 修的是"history 溢出与文档摘录的输出 token 上限"——这些修的都是<b>隐式、后台、用户看不见的上下文改写</b>。</p>
+<p>pi-lnk 现在的 <code>auto_recap</code> 等价物是"没有"——压缩只在超窗口时发生，反而更安全。<b>别为了对标而加自动摘要后台任务</b>；要加就必须带开关、带 UI 提示、带开关默认关。</p>
+
+<h2>8. 附录：关键证据索引</h2>
+<table>
+<tr><th style="width:34%">文件</th><th>在上下文工程里的角色</th></tr>
+<tr><td><code>services/pi-runtime/src/session-manager.ts</code></td><td>组装核心：composeSystemPrompt（520-540）、动态块覆盖（180-194）、强制 skill 注入（153-169）、事件归一</td></tr>
+<tr><td><code>services/pi-runtime/src/runtime-config.ts</code></td><td>compaction/reserveTokens、TTL、磁盘 LRU 参数（<b>注意 LRU 与压缩无关，它会连摘要一起删</b>）</td></tr>
+<tr><td><code>services/pi-runtime/src/model-assembly.ts</code></td><td>provider/BYOK 装配；<b>cost 两处写 0（78/164）、contextWindow 1M（79）/128k（165）</b></td></tr>
+<tr><td><code>services/pi-runtime/src/skills/loader.ts</code></td><td>skill 发现 + index block 生成（渐进披露 L1）</td></tr>
+<tr><td><code>services/pi-runtime/src/tools/</code></td><td>43 个工具；截断与 SSRF 分散在各工具内，缺统一上限层</td></tr>
+<tr><td><code>services/pi-runtime/src/metrics.ts</code></td><td>唯一上下文尺寸指标 <code>observeToolResult</code>（73-85）；无 token/cost 指标</td></tr>
+<tr><td><code>vendor/.../harness/compaction/compaction.ts</code></td><td>阈值（246-249）、切点、8 段摘要、增量摘要、prepareCompaction（634-707）</td></tr>
+<tr><td><code>vendor/.../harness/runtime/drive/structural.ts</code></td><td>shouldCompact 调用点（1144，分母 = model.contextWindow）、overflow 兜底（1153-1169）</td></tr>
+<tr><td><code>vendor/.../harness/runtime/lane.ts</code></td><td><code>setActiveTools</code>（1692）——存在但零调用</td></tr>
+<tr><td><code>vendor/.../harness/telemetry.ts</code></td><td>11 个上下文级 hook 枚举（156-160），只用了 before_tool/after_tool</td></tr>
+<tr><td><code>apps/server/.../pi-prompt-assembler.service.ts</code></td><td>静态/动态段装配；<code>PromptLayerKind</code> 的 memory/skill 为空壳（30/32）</td></tr>
+<tr><td><code>apps/server/prisma/schema.prisma</code></td><td><code>ContextSnapshot</code>（339-352，死代码）、<code>AgentMemory</code>（355-364）</td></tr>
+<tr><td><code>docs/superpowers/specs/2026-08-06-agent-context-engineering-design.md</code></td><td>自评基准：Phase 1 九节全部未落地</td></tr>
+</table>
+
+<footer>审计基于 2026-10-01 仓库主干源码。硬伤 A/B 的叠加结论标注为"待生产验证"，给出了两个互证坐标的验证方法。所有 file:line 取自仓库实际内容。</footer>
+
+</div>
+</body>
+</html>
