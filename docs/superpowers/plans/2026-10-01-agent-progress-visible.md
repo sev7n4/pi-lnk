@@ -50,7 +50,7 @@
 - Consumes: `@/components/agent/agentInterruptGate` 的 `filterAssistantVisibleText` / `filterUserVisibleText` / `isMachineOnlyVisibleText`
 - Produces: `hasBubbleContent(msg: AgentStreamMessage): boolean`、`hasBubbleText(msg): boolean` —— AgentSideRail 模板用 `hasBubbleContent` 决定是否渲染 `.agent-bubble` 容器
 
-- [ ] **Step 1: 写失败测试** —— `bubbleVisibility.test.ts`
+- [x] **Step 1: 写失败测试** —— `bubbleVisibility.test.ts`
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -84,11 +84,11 @@ describe('hasBubbleContent', () => {
 ```
 > ⚠️ 跑之前先确认 `AgentStreamMessage` 的字段与 `filterAssistantVisibleText` 的过滤前缀， Step 3 实现时以真实过滤结果对齐（先跑一次测试看 `content='[[tool_result]]'` 是否真被过滤）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 Run: `cd apps/web && ./node_modules/.bin/vitest run src/components/agent/bubbleVisibility.test.ts`
 Expected: FAIL —— `hasBubbleContent` is not defined
 
-- [ ] **Step 3: 实现纯函数**
+- [x] **Step 3: 实现纯函数**
 
 `apps/web/src/components/agent/bubbleVisibility.ts`：
 
@@ -121,10 +121,10 @@ export function hasBubbleContent(msg: AgentStreamMessage): boolean {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 Expected: PASS（6/6）
 
-- [ ] **Step 5: AgentSideRail 接线**
+- [x] **Step 5: AgentSideRail 接线**
 
 `AgentSideRail.vue:278-283` 删除 `shouldShowMessageBubbleText`，改为从模块导入：
 ```ts
@@ -140,11 +140,12 @@ import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibi
 ```
 `:2812` 的 `<p v-else-if="shouldShowMessageBubbleText(msg)">` 改为 `v-if="hasBubbleText(msg)"`，并把 `:2817` 的光标条件从 `msg.streaming` 改为 `msg.streaming && hasBubbleText(msg)`（零内容时不闪光标）。
 
-- [ ] **Step 6: 类型判据**
+- [x] **Step 6: 类型判据**
 Run: `cd apps/web && ./node_modules/.bin/vue-tsc -b`
 Expected: 仅既有 `mermaid` TS2307 噪音
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
+  - ✅ 已合入 master `1b90044`（P0 PR）：bubbleVisibility 单测绿，vue-tsc 仅剩既有 mermaid 噪音。
 ```bash
 git -C .worktrees/feat/agent-progress-visible add apps/web/src/components/agent/bubbleVisibility.ts apps/web/src/components/agent/bubbleVisibility.test.ts apps/web/src/components/agent/AgentSideRail.vue
 git -C .worktrees/feat/agent-progress-visible commit -m "fix(web): 零内容不渲染助手气泡（消除阻塞等待期白块）"
@@ -168,7 +169,7 @@ git -C .worktrees/feat/agent-progress-visible commit -m "fix(web): 零内容不�
   - `turnStatusLine` 现返回 `{ text, hint?, mode } | null`（`hint` 为 undefined 时模板不渲染次行）
   - `waitHint(deadline: number | null | undefined, now: number): string | null`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `activityLine.test.ts`：
 ```ts
@@ -217,11 +218,11 @@ it('402：渠道余额不足（区别于泛化「生成失败，请重试」）'
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 Run: `cd apps/web && ./node_modules/.bin/vitest run src/components/agent/activityLine.test.ts src/components/agent/turnStatusBar.test.ts`
 Expected: FAIL —— `describeActivity` / `hint` / 402 分支均不存在
 
-- [ ] **Step 3: 实现 activityLine.ts**
+- [x] **Step 3: 实现 activityLine.ts**
 
 ```ts
 /**
@@ -245,7 +246,7 @@ export function describeActivity(steps?: ExecutionStep[]): string | null {
 }
 ```
 
-- [ ] **Step 4: 改 turnStatusBar.ts**
+- [x] **Step 4: 改 turnStatusBar.ts**
 
 ```ts
 /** 缺省活动主语：注册表与 trace 都拿不到人话时的兜底，禁止吐内部工具名（决策 5）。 */
@@ -278,10 +279,10 @@ export function turnStatusLine(input: TurnStatusLineInput): TurnStatusLine {
 `TurnStatusLineInput` 增两个可选字段：`activity?: string | null`、`waitingDeadline?: number | null`；`TurnStatusLine` 增 `hint?: string`（`text` / `mode` 保持同名，既有测试不破）。
 `failureReason` 在 401 前插入：`if (status === 402) return '渠道余额不足'`。
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 Expected: PASS
 
-- [ ] **Step 6: AgentSideRail 接线**
+- [x] **Step 6: AgentSideRail 接线**
 
 `:644-665` 的 `turnStatus` computed 补参数：
 ```ts
@@ -298,7 +299,8 @@ waitingDeadline: agent.blockingWait?.deadlineAt ?? null,
 </p>
 ```
 
-- [ ] **Step 7: 类型判据 + 提交**
+- [x] **Step 7: 类型判据 + 提交**
+  - ✅ 已合入 master `1b90044`：activityLine / turnStatusBar 单测绿；未登记工具兜底「处理中」，不吐内部名。
 Run: `vue-tsc -b` → 仅 `mermaid` 噪音；`git status` 复核 4 个文件为 ` M`
 ```bash
 git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 状态行两行——‘正在做什么’人话 + 402 渠道余额不足"
@@ -315,7 +317,7 @@ git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 状态行两
 **Interfaces:**
 - Produces: `isPinnedTrace(msg: AgentStreamMessage): boolean`（AgentSideRail 内部 computed + 函数）；`AgentExecutionTrace` 新增 `dense?: boolean`
 
-- [ ] **Step 1: 写待办清单（TDD 前置的类型回归）**
+- [x] **Step 1: 写待办清单（TDD 前置的类型回归）**
 改 `AgentExecutionTrace.vue` 的 props：
 ```ts
 const props = defineProps<{
@@ -327,11 +329,11 @@ const props = defineProps<{
 ```
 `showTrace` 计算属性里加 `props.dense` 分支：dense 时头行文案改为 `正在：<icon> <最新人话> · N 步`，`toggle()` 仅在不 dense 时生效。
 
-- [ ] **Step 2: 跑构建确认类型错误**
+- [x] **Step 2: 跑构建确认类型错误**
 Run: `cd apps/web && ./node_modules/.bin/vue-tsc -b`
 Expected: 成功（仅噪音）
 
-- [ ] **Step 3: 钉底接线（`AgentSideRail.vue`）**
+- [x] **Step 3: 钉底接线（`AgentSideRail.vue`）**
 ```ts
 /**
  * 活体过程归属（P0 决策 1）：本轮活跃时过程卡钉在 composer 上方，
@@ -367,17 +369,19 @@ const pinnedTraceOwned = computed(() => liveTrace.value !== null)
 />
 ```
 
-- [ ] **Step 4: 类型判据**
+- [x] **Step 4: 类型判据**
 Run: `vue-tsc -b`；Expected: 仅 `mermaid` 噪音
 
 - [ ] **Step 5: 手工冒烟（无组件测试，靠人工核对）**
+  - ⚠️ **未完成**：Plan 要求人眼在浏览器逐条核对 4 个时点（首 token 前 / 工具调用中 / 回合结束 / 阻塞等待），本轮没有做；代码与构建已实证（已合入 master `1b90044`）。线上验证解锁后再补。
 起 `pnpm --filter @lnkpi/web dev`，在任意画布发一句「画一只卡通小狗」：
 1. 首 token 前：无气泡、钉底出现单行过程卡、状态行「处理中 · 1s」；
 2. 工具调用中：钉底头行变成「正在 创建节点 · 3 步」，气泡仍未出现（若本轮无文本）；
 3. 回合结束：钉底消失，气泡末尾出现折叠的「执行过程（N 步）」。
 4. 阻塞等待（propose）：钉底过程卡 + 状态行「等待你在画布上确认生成」。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
+  - ✅ 已合入 master `1b90044`：AgentExecutionTrace 新增 `dense` prop + `liveTrace` 钉底/沉降接线（Step 5 手工冒烟见上）。
 ```bash
 git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 活体过程钉底到 composer 上方，回合收束后沉降回气泡"
 ```
@@ -394,7 +398,7 @@ git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 活体过程
 **Interfaces:**
 - Produces: store `blockingWait: { toolName, callId?, nodeId?, deadlineAt?: number } | null`；`presentToolStep` 未知名 → `{ icon: '⚙', label: '处理中' }`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 ```ts
 // toolPresentation.test.ts 追加
 it('未知工具名 → 降级「处理中」（不得吐内部名）', () => {
@@ -403,11 +407,11 @@ it('未知工具名 → 降级「处理中」（不得吐内部名）', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 Run: `cd apps/web && ./node_modules/.bin/vitest run src/components/agent/toolPresentation.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 `toolPresentation.ts:72-76` 的兜底分支改为 `return { icon: FALLBACK_ICON, label: '处理中' }`。
 store：`waiting_user` 事件落点（现有 `:283` 附近）改为
 ```ts
@@ -417,10 +421,11 @@ blockingWait.value = wait && wait.toolName
 ```
 （`timeoutMs` 缺省 300000 = 与线上 `ASK_USER_TIMEOUT_MS=300000` 一致；本 PR 不改 runtime。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
+  - ✅ 已合入 master `1b90044`：turnStatusBar「自动取消」文案 + stores/agent.ts `deadlineAt` 就位（决策 6）。
 ```bash
 git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 等待态显示剩余取消时间 + 未知工具降级为‘处理中’"
 ```
@@ -437,7 +442,7 @@ git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 等待态显
 **Interfaces:**
 - Produces: `nextChips(input: { chipSet: string | null; canPromoteVariant: boolean; proposeWait: boolean }): NextChip[]`，`NEXT_CHIP_MAX = 2`，`runNextChip(action)` 在 AgentSideRail 内按 `action.kind` 分发到既有 handler
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `nextChips.test.ts`：
 ```ts
@@ -464,10 +469,10 @@ describe('nextChips（决策 4：白名单 + 最多 2 个）', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 Expected: FAIL
 
-- [ ] **Step 3: 实现 nextChips.ts（白名单逐条对应现有 7 组手势）**
+- [x] **Step 3: 实现 nextChips.ts（白名单逐条对应现有 7 组手势）**
 
 ```ts
 /** P1 决策 4：下一步动作收敛为白名单 —— agent 只声明意图，按钮由客户端目录决定，且恒 ≤2 个。 */
@@ -535,10 +540,10 @@ export function nextChips(input: {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 Expected: PASS
 
-- [ ] **Step 5: 模板替换**
+- [x] **Step 5: 模板替换**
 `AgentSideRail.vue` 里 `:3032-3184` 的 7 个 `v-if / v-else-if ... 按钮块` 替换为：
 ```html
 <div v-if="dockChips.length" class="mb-2 flex flex-wrap gap-2 px-0.5" data-testid="next-chips">
@@ -577,7 +582,8 @@ function runNextChip(action: NextChipAction) {
 ```
 ⚠️ 删除前逐条确认每个 `data-testid`（`generation-propose-confirm` / `-cancel`、`atomic-confirm-dock` / `atomic-confirm-cancel`、`recipe-promote-variant`、`recipe-promote-new`、`recipe-promote-seed-confirm`、`recipe-promote-seed-back`、`recipe-promote-variant-confirm`、`recipe-promote-variant-back`、`new-task-chip`）都被合并进新块，并用 `git grep -n` 复核无残留引用。
 
-- [ ] **Step 6: 类型判据 + 提交**
+- [x] **Step 6: 类型判据 + 提交**
+  - ✅ 已合入 master `747a77a`（PR #93）：nextChips 白名单 + 10 个既有 data-testid 锚点全部保留。
 `vue-tsc -b` 通过后 `git status` 复核，再 commit：
 ```bash
 git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 下一步动作收敛为白名单 chips（最多 2 个）"
@@ -593,12 +599,12 @@ git -C .worktrees/feat/agent-progress-visible commit -m "feat(web): 下一步动
 **Interfaces:**
 - Produces: `TOOL_PRESENTATION` 覆盖运行时注册的全部工具名（权威清单：`services/pi-runtime/src/tools/*.ts` 里 `name: "..."` 的 40 个）
 
-- [ ] **Step 1: 拉权威清单**
+- [x] **Step 1: 拉权威清单**
 Run: `grep -rhoE 'name: "[a-z_]+"' services/pi-runtime/src/tools/*.ts | sort -u`
 与 `TOOL_PRESENTATION` 的 key 做差集，逐个补动词（建议：`delete_nodes` 删除节点、`remove_edges` 删除连线、`read_document` 读文档、`save_memory` 记入记忆、`recall_memory` 回忆记忆、`update_node` 更新节点、`list_model_options` 查看可用模型、`web_search` 联网搜索、`web_fetch` 抓取网页）。
 
-- [ ] **Step 2: 补注册表**
-- [ ] **Step 3: 写覆盖性断言**（防未来批次漏补）
+- [x] **Step 2: 补注册表**
+- [x] **Step 3: 写覆盖性断言**（防未来批次漏补）
 ```ts
 // toolPresentation.test.ts
 it('权威清单里的每个工具名都能映射到人话（不含 run_ 前缀的生成类）', () => {
@@ -608,9 +614,10 @@ it('权威清单里的每个工具名都能映射到人话（不含 run_ 前缀�
   }
 })
 ```
-- [ ] **Step 4: 跑测试 + 类型判据**
+- [x] **Step 4: 跑测试 + 类型判据**
 Expected: PASS / 仅 `mermaid` 噪音
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
+  - ✅ 已合入 master `747a77a`：toolPresentation 覆盖性断言就位（Step 3 防未来批次漏补）。
 
 ---
 
@@ -648,7 +655,8 @@ Expected: PASS / 仅 `mermaid` 噪音
 
 - [x] **Step 1:** 确认 `AgentCanvasOutputs` 仍在助手气泡内渲染（`.agent-bubble` 内，`:2871` 附近），本计划不改其位置。
   - 交叉核对：`git show 7d57132 -- AgentSideRail.vue | grep -c AgentCanvasOutputs` = **0**（chips 收敛那 −267 行没碰到它）；样式 `.agent-bubble-assistant :deep(.agent-canvas-outputs)` 仍在。
-- [x] **Step 2:** 手工跑一轮完整生成 → 结论：**产物卡保留在聊天流助手气泡内，无漂移**（决策 10 成立）。
+- [ ] **Step 2:** 手工跑一轮完整生成 → 结论：**产物卡保留在聊天流助手气泡内，无漂移**（决策 10 成立）。
+  - ⚠️ **上一版错勾为 [x]，此处撤回**：实际只做了静态代码核对（`git show 7d57132 … | grep -c AgentCanvasOutputs` = 0 + 样式选择器仍在），**并没有真的跑一轮完整生成**；生成链路人工验收未执行（用户侧线上验证暂缓）。
   - 本轮 Task 7 的改动只碰状态行人话与 chips 渲染点，不碰气泡结构；图片产物渲染走 `AgentCanvasOutputs`，未改动。
 - [x] **Step 3:** 无代码改动，仅记录结论（如上）。
 
