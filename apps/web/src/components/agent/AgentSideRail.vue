@@ -2071,8 +2071,7 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
     agent.finishStreaming()
     await reconcileLatestAssistant()
     await refreshThreadCheckpoint()
-    const actions = agent.flushActions()
-    if (actions.length) emit('canvasActions', actions)
+    // canvas_action 已流内实时 emit（2026-10-01），无积压可 flush
     // 始终回拉：Runtime 已写 Session.canvasData；本地 save 不得用旧节点覆盖
     emit('turnComplete')
     scrollToBottom()
@@ -2386,9 +2385,14 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)
       break
     }
-    case 'canvas_action':
-      agent.addCanvasAction(event.data as Parameters<typeof agent.addCanvasAction>[0])
+    case 'canvas_action': {
+      // 流内实时上屏（2026-10-01 修）：不等流结束 flush —— 阻塞 propose 等待期
+      // 节点必须立即可见/可确认。add_node 已按 id upsert（#91），重复投递幂等。
+      const action = event.data as Parameters<typeof agent.addCanvasAction>[0]
+      agent.addCanvasAction(action)
+      emit('canvasActions', [action])
       break
+    }
     case 'node_status': {
       const data = event.data as { nodeId: string; status: string; url?: string }
       agent.trackNodeStatus(data)

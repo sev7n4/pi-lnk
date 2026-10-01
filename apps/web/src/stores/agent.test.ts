@@ -126,3 +126,27 @@ describe('useAgentStore', () => {
     )
   })
 })
+
+describe('canvas_action 流内实时上屏（2026-10-01）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('addCanvasAction 只记录 trace，不再积压 pendingActions / flushActions 通道', () => {
+    const store = useAgentStore()
+    store.startAssistantMessage()
+    const action = {
+      type: 'add_node',
+      payload: { id: 'prompt-1', nodeType: 'prompt', position: { x: 0, y: 0 }, data: {} },
+    } as unknown as Parameters<typeof store.addCanvasAction>[0]
+
+    store.addCanvasAction(action)
+
+    // trace 照记（执行过程可见性不回退）
+    const last = store.messages[store.messages.length - 1]
+    expect(last?.executionTrace).toBeTruthy()
+    // 积压通道废除：flushActions / pendingActions 不再暴露（上屏责任移交流内 emit）
+    expect((store as unknown as Record<string, unknown>).flushActions).toBeUndefined()
+    expect((store as unknown as Record<string, unknown>).pendingActions).toBeUndefined()
+  })
+})
