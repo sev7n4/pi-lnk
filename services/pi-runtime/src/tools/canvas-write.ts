@@ -306,7 +306,14 @@ export function createCanvasWriteTools(
 					),
 				]);
 				settled = true;
-				registry.cancel(tc.sessionId, id); // 收尾清理（另一臂未 settle 也无妨：cancel 即清）
+				// 收尾清理（另一臂未 settle 也无妨：cancel 即清）。
+				// ⚠️ 语义：确认成功必须按 answered 上报，否则 waiting_user 的 resolved 会误报 aborted
+				// （生产实证 2026-10-01：画布确认成功却广播 reason=aborted，与 tool_result confirmed:true 矛盾）。
+				registry.cancel(
+					tc.sessionId,
+					id,
+					outcome.confirmed ? { status: "answered", answers: {} } : { status: "aborted" },
+				);
 				if (!outcome.confirmed) {
 					return {
 						content: [{

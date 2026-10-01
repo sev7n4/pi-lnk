@@ -124,6 +124,20 @@ describe("PendingToolRegistry 等待生命周期回调", () => {
 		assert.deepEqual(seen, ["timeout"]);
 	});
 
+	it("cancel 默认 aborted；确认成功须显式传 answered（否则前端收到「已中止」误报）", async () => {
+		const seen: string[] = [];
+		const reg = new PendingToolRegistry({ onSettled: (i) => seen.push(i.status) });
+		const p1 = reg.waitForUser("s1", "c1", "propose_generation", 60_000);
+		reg.cancel("s1", "c1", { status: "answered", answers: {} }); // propose 确认成功收尾
+		assert.deepEqual(await p1, { status: "answered", answers: {} });
+
+		const p2 = reg.waitForUser("s2", "c2", "propose_generation", 60_000);
+		reg.cancel("s2", "c2"); // 取消/中止收尾 → 默认 aborted（旧行为逐字节保留）
+		assert.deepEqual(await p2, { status: "aborted" });
+
+		assert.deepEqual(seen, ["answered", "aborted"]);
+	});
+
 	it("无回调时（缺省构造）行为逐字节不变——既有调用点零改动", async () => {
 		const reg = new PendingToolRegistry();
 		const p = reg.waitForUser("s", "c", "ask_user", 60_000);
