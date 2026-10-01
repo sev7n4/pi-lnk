@@ -19,18 +19,28 @@ export function applyCanvasActions(data: CanvasData, actions: CanvasAction[]): C
           ? { x: parentShot.position.x + 280, y: parentShot.position.y }
           : (p.position ?? { x: 0, y: 0 })
         if (!p.id) break
-        result.nodes.push({
-          id: p.id,
-          type: (p.nodeType ?? 'prompt') as CanvasData['nodes'][0]['type'],
-          position: pos,
-          data: p.data ?? {},
-        })
-        if (parentShot && p.id) {
-          result.edges.push({
-            id: `e-${parentShot.id}-${p.id}`,
-            source: parentShot.id,
-            target: p.id,
+        // 2026-10-01 修：add_node 必须幂等。同一条 action 被 apply 两次（SSE 重放 /
+        // 前端整份覆盖保存）时，旧实现会 push 出第二条同 id 节点，且 update_node
+        // 只命中首条 → 两条内容分化（生产 30/253 画布命中）。
+        const existingIndex = result.nodes.findIndex((n) => n.id === p.id)
+        if (existingIndex >= 0) {
+          const existing = result.nodes[existingIndex]!
+          existing.position = pos
+          existing.data = { ...existing.data, ...(p.data ?? {}) }
+          if (p.nodeType) existing.type = p.nodeType as CanvasData['nodes'][0]['type']
+        } else {
+          result.nodes.push({
+            id: p.id,
+            type: (p.nodeType ?? 'prompt') as CanvasData['nodes'][0]['type'],
+            position: pos,
+            data: p.data ?? {},
           })
+        }
+        if (parentShot) {
+          const edgeId = `e-${parentShot.id}-${p.id}`
+          if (!result.edges.some((e) => e.id === edgeId)) {
+            result.edges.push({ id: edgeId, source: parentShot.id, target: p.id })
+          }
         }
         break
       }

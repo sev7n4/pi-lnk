@@ -170,7 +170,7 @@ import {
 import StoryboardDialog, { type StoryboardShot } from '@/components/canvas/StoryboardDialog.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
-import { mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
+import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
 import { buildPollingFailurePatch } from '@/utils/generationDiagnostic'
@@ -345,7 +345,8 @@ function getCanvasHistorySnapshot(): CanvasSnapshot {
 
 function applyCanvasHistorySnapshot(snapshot: CanvasSnapshot) {
   const liveById = new Map(nodes.value.map((n) => [n.id, n]))
-  nodes.value = snapshot.nodes.map((n) => {
+  // 2026-10-01 修：历史快照可能录自重放前的含重复状态，恢复时同样按 id 收敛。
+  nodes.value = dedupeNodesById(snapshot.nodes).map((n) => {
     const live = liveById.get(n.id)
     const gen = resolveGenerationFieldsForApply(
       generationFieldsCache,
@@ -4160,7 +4161,11 @@ async function loadSession() {
       ElMessage.warning('此画布属于其他账号，Agent 无法写入画布')
     }
     if (data.data.canvasData?.nodes?.length) {
-      const serverNodes = data.data.canvasData.nodes as EditableFlowNode[]
+      // 2026-10-01 修：服务端 canvasData 里可能存在同 id 重复节点（存量数据），
+      // 进入前端前先按 id 收敛，避免重复被「原样加载 → saveCanvas 覆盖」再次固化。
+      const serverNodes = dedupeNodesById(
+        data.data.canvasData.nodes as EditableFlowNode[],
+      )
       nodes.value = (
         nodes.value.length
           ? mergeCanvasNodesFromServer(nodes.value, serverNodes)

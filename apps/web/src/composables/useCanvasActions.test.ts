@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { CanvasAction } from '@lnkpi/shared'
-import { applyActionsToFlow, type FlowEdge, type FlowNode } from './useCanvasActions'
+import type { CanvasAction, CanvasData } from '@lnkpi/shared'
+import {
+  applyActionsToFlow,
+  canvasDataToFlow,
+  type FlowEdge,
+  type FlowNode,
+} from './useCanvasActions'
 
 const node = (id: string, data: Record<string, unknown> = {}): FlowNode => ({
   id,
@@ -69,5 +74,64 @@ describe('applyActionsToFlow —— 6 种 action 全路由（spec 图 4）', () 
     expect(() =>
       applyActionsToFlow([node('a')], [], [{ type: 'nope', payload: {} } as unknown as CanvasAction]),
     ).not.toThrow()
+  })
+
+  // 2026-10-01 生产事故：画布 SSOT 在前端，SSE 重放把同一条 add_node 再投一次
+  // → 前端 push 出第二条同 id → 下次 saveCanvas 整份覆盖回 DB，重复固化。
+  it('add_node 同 id 重复下发 → upsert 不产生重复节点', () => {
+    const out = applyActionsToFlow([], [], [
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', position: { x: 5, y: 6 }, data: { title: 'A' } } } as CanvasAction,
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', position: { x: 5, y: 6 }, data: { title: 'A' } } } as CanvasAction,
+    ])
+    expect(out.nodes).toHaveLength(1)
+    expect(out.nodes[0].id).toBe('n1')
+  })
+
+  it('add_node 命中已存在节点 → 覆盖 position 并合并 data（不新建）', () => {
+    const out = applyActionsToFlow([node('n1', { title: '旧', keep: 1 })], [], [
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', position: { x: 9, y: 9 }, data: { title: '新' } } } as CanvasAction,
+    ])
+    expect(out.nodes).toHaveLength(1)
+    expect(out.nodes[0].position).toEqual({ x: 9, y: 9 })
+    expect(out.nodes[0].data).toEqual({ title: '新', keep: 1 })
+  })
+})
+
+describe('canvasDataToFlow —— 存量重复节点自愈', () => {
+  const dupData: CanvasData = {
+    nodes: [
+      { id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { title: '首条' } },
+      { id: 'n2', type: 'image', position: { x: 1, y: 0 }, data: { title: 'B' } },
+      { id: 'n1', type: 'image', position: { x: 2, y: 0 }, data: { title: '重放副本' } },
+    ],
+    edges: [],
+  }
+
+  // 保留「首条」与 update_node 的 find-first 语义一致：
+  // 重复产生后 update 只落在首条，首条才是内容最新的那条。
+  it('加载画布时按 id 去重，保留首条', () => {
+    const out = canvasDataToFlow(dupData)
+    expect(out.nodes.map((n) => n.id)).toEqual(['n1', 'n2'])
+    expect(out.nodes[0].data).toEqual({ title: '首条' })
+  })
+
+  it('去重后指向被丢弃副本的边仍然成立（源/目标是保留节点）', () => {
+    const out = canvasDataToFlow({
+      nodes: dupData.nodes,
+      edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
+    })
+    expect(out.edges).toHaveLength(1)
+    expect(out.nodes.filter((n) => n.id === 'n1')).toHaveLength(1)
+  })
+
+  it('无重复时行为不变（回归）', () => {
+    const out = canvasDataToFlow({
+      nodes: [
+        { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'image', position: { x: 1, y: 0 }, data: {} },
+      ],
+      edges: [],
+    })
+    expect(out.nodes.map((n) => n.id)).toEqual(['a', 'b'])
   })
 })
