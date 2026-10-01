@@ -460,6 +460,16 @@ const agentThreadId = ref(createAgentThreadId(props.sessionId))
 const taskProgress = ref<AgentTaskProgressState>(emptyTaskProgress())
 const showTaskCard = computed(() => taskProgress.value.items.length > 0)
 
+/**
+ * composer 上沿同一时刻只允许挂一层：有待发气泡时任务卡让位，排队发出后自动回来。
+ * ⚠️ 这里只管「卡片是否渲染」；`showTaskCard`（本轮是否有任务）仍被 isLiveTurnMessage /
+ * canShowMessageActions 用来判定「本轮是否活跃」，不能被排队状态带偏，否则会在排队期间
+ * 把本轮消息的操作按钮提前放出来。
+ */
+const showTaskCardAtComposer = computed(
+  () => showTaskCard.value && !queuedMessage.value.trim(),
+)
+
 const lastAssistantMessageId = computed(() =>
   [...agent.messages].reverse().find((m) => m.role === 'assistant')?.id,
 )
@@ -2645,7 +2655,7 @@ defineExpose({
                 >
                   <textarea
                     v-model="editingDraft"
-                    class="agent-edit-textarea w-full resize-y rounded-md border border-[var(--neo-border)] bg-[var(--neo-input-bg)] p-2 text-[13px] leading-relaxed text-[var(--neo-text)] outline-none focus:border-[var(--neo-accent)]"
+                    class="agent-edit-textarea w-full resize-y rounded-md border border-[var(--neo-border)] bg-[var(--neo-surface-card)] p-2 text-[13px] leading-relaxed text-[var(--neo-text)] outline-none focus:border-[var(--neo-accent)]"
                     rows="3"
                     @keydown.meta.enter.prevent="sendEditedUserMessage(msg)"
                     @keydown.ctrl.enter.prevent="sendEditedUserMessage(msg)"
@@ -2798,7 +2808,7 @@ defineExpose({
               @cancel="onAskCancel"
             />
             <AgentTaskProgressCard
-              v-if="showTaskCard"
+              v-if="showTaskCardAtComposer"
               class="mx-3"
               :progress="taskProgress"
               @focus-node="onFocusNode($event)"
@@ -3960,28 +3970,33 @@ defineExpose({
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ⚠️ 别用 --neo-hi-bg 配 --neo-text：--neo-hi-bg 深主题是纯白 #ffffff、浅主题是深色 #17181d，
+   而 --neo-text 深主题近白、浅主题近黑 —— 「底色与字色同向」，两个主题都会把字吞掉。
+   中性高亮控件的正确配对是 --neo-hi-bg 配 --neo-hi-text；这里次级动作不用高亮块，
+   改用 surface 底 + 主文字色（两个主题都保证对比度）。 */
 .queued-act {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  border: 1px solid var(--neo-border);
+  border: 1px solid var(--neo-border-strong);
   border-radius: 999px;
-  background: var(--neo-hi-bg);
+  background: var(--neo-surface-elevated);
   padding: 2px 9px;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--neo-text);
+  color: var(--neo-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .queued-act:hover {
-  background: var(--neo-hover-bg);
-  border-color: color-mix(in srgb, var(--neo-text) 28%, transparent);
+  background: color-mix(in srgb, var(--neo-text-primary) 12%, var(--neo-surface-elevated));
+  border-color: color-mix(in srgb, var(--neo-text-primary) 28%, transparent);
 }
 
 .queued-act--primary {
   border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
-  color: var(--neo-accent);
+  /* --neo-accent 是固定紫 #6d5dfc，深底上对比度不够；--neo-accent-text 深底亮紫 / 浅底深紫 */
+  color: var(--neo-accent-text);
   background: color-mix(in srgb, var(--neo-accent) 10%, transparent);
 }
 
@@ -3998,24 +4013,25 @@ defineExpose({
   font-family: inherit;
 }
 
+/* 同上：次级按钮不能用 --neo-hi-bg + --neo-text 的同向配色（白底白字 / 深底深字） */
 .agent-edit-btn {
-  border: 1px solid var(--neo-border);
+  border: 1px solid var(--neo-border-strong);
   border-radius: 999px;
-  background: var(--neo-hi-bg);
+  background: var(--neo-surface-elevated);
   padding: 2px 12px;
   font-size: 11px;
   line-height: 1.6;
-  color: var(--neo-text);
+  color: var(--neo-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .agent-edit-btn:hover {
-  background: var(--neo-hover-bg);
+  background: color-mix(in srgb, var(--neo-text-primary) 12%, var(--neo-surface-elevated));
 }
 
 .agent-edit-btn--primary {
   border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
-  color: var(--neo-accent);
+  color: var(--neo-accent-text);
   background: color-mix(in srgb, var(--neo-accent) 12%, transparent);
 }
 
