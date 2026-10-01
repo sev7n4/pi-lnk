@@ -45,3 +45,20 @@ export function mergeCanvasNodesFromServer<T extends MergeNode>(
   }
   return merged
 }
+
+/**
+ * 2026-10-01 修：按 id 收敛节点数组，用于让**存量**重复节点自愈。
+ *
+ * 保留「首条」而非末条：重复产生后 update_node 只命中首条（applier 用 find 取首个
+ * 匹配），因此首条才带着最新的 url/content/prompt，末条是无更新的原始副本。
+ */
+export function dedupeNodesById<T extends MergeNode>(nodes: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const n of nodes) {
+    if (seen.has(n.id)) continue
+    seen.add(n.id)
+    out.push(n)
+  }
+  return out
+}

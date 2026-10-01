@@ -64,4 +64,46 @@ describe('applyCanvasActions', () => {
     expect(result.nodes.map((n) => n.id)).toEqual(['b'])
     expect(result.edges).toEqual([])
   })
+
+  // 2026-10-01 生产事故：253 个画布会话中 30 个存在同 id 重复节点（最早样本 2026-07-25）。
+  // 根因 = add_node 无条件 push，同一条 action 被 apply 两次（SSE 重放 / 前端覆盖保存）
+  // 就直接产出两条同 id 节点；且 update_node 只命中首条 → 两条内容分化。
+  it('add_node 同 id 重复下发 → upsert 不产生重复节点', () => {
+    const data: CanvasData = { nodes: [], edges: [] }
+    const action = {
+      type: 'add_node',
+      payload: { id: 'n1', nodeType: 'image', position: { x: 5, y: 6 }, data: { title: 'A' } },
+    } as const
+    const result = applyCanvasActions(data, [action, action])
+    expect(result.nodes).toHaveLength(1)
+    expect(result.nodes[0]?.id).toBe('n1')
+  })
+
+  it('add_node 命中已存在节点 → 覆盖 position 并合并 data（不新建）', () => {
+    const data: CanvasData = {
+      nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { title: '旧', keep: 1 } }],
+      edges: [],
+    }
+    const result = applyCanvasActions(data, [
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', position: { x: 9, y: 9 }, data: { title: '新' } } },
+    ])
+    expect(result.nodes).toHaveLength(1)
+    expect(result.nodes[0]?.position).toEqual({ x: 9, y: 9 })
+    expect(result.nodes[0]?.data).toEqual({ title: '新', keep: 1 })
+  })
+
+  it('add_node 命中已存在节点 → parentShot 边不重复追加', () => {
+    const data: CanvasData = {
+      nodes: [
+        { id: 'shot-1', type: 'shot', position: { x: 0, y: 0 }, data: {} },
+        { id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: {} },
+      ],
+      edges: [{ id: 'e-shot-1-n1', source: 'shot-1', target: 'n1' }],
+    }
+    const result = applyCanvasActions(data, [
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', parentShotId: 'shot-1' } },
+    ])
+    expect(result.nodes).toHaveLength(2)
+    expect(result.edges).toHaveLength(1)
+  })
 })

@@ -1,4 +1,5 @@
 import type { CanvasAction, CanvasData } from '@lnkpi/shared'
+import { dedupeNodesById } from '@/pages/canvas/canvasNodeMerge'
 
 export interface FlowNode {
   id: string
@@ -38,20 +39,34 @@ export function applyActionsToFlow(
           : p.position ?? { x: 200, y: 200 }
 
         const nodeId = p.id ?? `node-${++nodeCounter}`
-        newNodes.push({
-          id: nodeId,
-          type: p.nodeType ?? 'prompt',
-          position: pos,
-          data: p.data ?? {},
-        })
+        // 2026-10-01 修：add_node 必须幂等。画布 SSOT 在前端，SSE 重放把同一条
+        // action 再投一次就会 push 出第二条同 id 节点，下一次 saveCanvas 整份
+        // 覆盖回 DB 后重复被固化（生产 30/253 画布命中）。
+        const existingIndex = newNodes.findIndex((n) => n.id === nodeId)
+        if (existingIndex >= 0) {
+          const existing = newNodes[existingIndex]!
+          existing.position = pos
+          existing.data = { ...existing.data, ...(p.data ?? {}) }
+          if (p.nodeType) existing.type = p.nodeType
+        } else {
+          newNodes.push({
+            id: nodeId,
+            type: p.nodeType ?? 'prompt',
+            position: pos,
+            data: p.data ?? {},
+          })
+        }
 
         if (parentNode) {
-          newEdges.push({
-            id: `e-${parentNode.id}-${nodeId}`,
-            source: parentNode.id,
-            target: nodeId,
-            animated: true,
-          })
+          const edgeId = `e-${parentNode.id}-${nodeId}`
+          if (!newEdges.some((e) => e.id === edgeId)) {
+            newEdges.push({
+              id: edgeId,
+              source: parentNode.id,
+              target: nodeId,
+              animated: true,
+            })
+          }
         }
         break
       }
@@ -100,14 +115,19 @@ export function applyActionsToFlow(
   return { nodes: newNodes, edges: newEdges, viewport }
 }
 
+/**
+ * 2026-10-01 修：加载画布时按 id 去重，让**存量**重复节点在用户下次打开画布时自愈。
+ * 去重策略复用 `dedupeNodesById`（保留首条），避免两处各写一份。
+ */
 export function canvasDataToFlow(data: CanvasData): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const nodes = dedupeNodesById(data.nodes).map((n) => ({
+    id: n.id,
+    type: n.type,
+    position: n.position,
+    data: n.data,
+  }))
   return {
-    nodes: data.nodes.map((n) => ({
-      id: n.id,
-      type: n.type,
-      position: n.position,
-      data: n.data,
-    })),
+    nodes,
     edges: data.edges.map((e) => ({
       id: e.id,
       source: e.source,
