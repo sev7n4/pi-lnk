@@ -134,6 +134,7 @@ import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
 import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
+import { submitAnswers } from '@/components/agent/agentAnswers'
 import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
 import { ElMessage } from 'element-plus'
 
@@ -825,29 +826,12 @@ const lastMessageIsAssistant = computed(() => {
   return !!last && last.role === 'assistant'
 })
 
-/** B-6：POST /api/agent/sessions/:sessionId/answers（Task 5 契约，Nest 统一包装按 data 取值）。
- * 401/403/网络异常会 throw——调用方必须 try/catch 失败时恢复 pendingAskUser（端点幂等，重试安全）。
- * payload 只含 threadId/callId/answers/answerId；skipped 不进 payload——skipped 问题已从 answers 省略，「未答」语义由模型侧 sawtooth（answers 缺键）表达。 */
-async function submitAnswers(input: {
-  threadId: string
-  sessionId: string
-  callId: string
-  answers: Record<string, string[]>
-  answerId?: string
-}): Promise<{ ok: boolean; deduped: boolean }> {
-  const res = await fetch(apiUrl(`/api/agent/sessions/${encodeURIComponent(input.sessionId)}/answers`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({
-      threadId: input.threadId,
-      callId: input.callId,
-      answers: input.answers,
-      ...(input.answerId ? { answerId: input.answerId } : {}),
-    }),
-  })
-  if (!res.ok) throw new Error(`submitAnswers failed: ${res.status}`)
-  const json = (await res.json()) as { data?: { ok?: boolean; deduped?: boolean } }
-  return { ok: json.data?.ok === true, deduped: json.data?.deduped === true }
+/** 组件侧回答回传：answerId / payload 组装收敛在 agentAnswers 模块（含明文 HTTP 降级）。 */
+function answersPost(
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string },
+): Promise<{ ok: boolean; json: () => Promise<unknown> }> {
+  return fetch(apiUrl(url), { ...init, headers: { ...init.headers, ...authHeaders() } })
 }
 
 async function onAskSubmit(payload: { answers: Record<string, string[]>; skipped?: string[] }) {
@@ -868,8 +852,7 @@ async function onAskSubmit(payload: { answers: Record<string, string[]>; skipped
       sessionId: props.sessionId,
       callId,
       answers: payload.answers,
-      answerId: crypto.randomUUID(),
-    })
+    }, answersPost)
     if (result.deduped) {
       // 迟到回答（callId 已 settle，如刷新恢复出的卡片）：spec §5.2 降级为普通
       // user message 走新 turn，不得静默吞掉用户答案（final fix I-1）
@@ -900,8 +883,7 @@ async function onAskCancel() {
       sessionId: props.sessionId,
       callId,
       answers: {},
-      answerId: crypto.randomUUID(),
-    })
+    }, answersPost)
     if (result.deduped) return // cancel 空 answers 迟到 = pending 已被别的路径收口，仅收起不发消息（final fix I-1）
   } catch {
     pendingAskUser.value = snapshot
@@ -1851,8 +1833,7 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
           sessionId: props.sessionId,
           callId: target.callId,
           answers: { [target.id]: [message] },
-          answerId: crypto.randomUUID(),
-        })
+        }, answersPost)
         if (result.deduped) {
           // 迟到回答（callId 已 settle）：spec §5.2 降级为普通 user message 走新 turn
           //（final fix I-1）；pending 已清，递归进入正常消息流程不再被拦截
