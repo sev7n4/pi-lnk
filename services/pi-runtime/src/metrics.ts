@@ -50,6 +50,8 @@ export class Metrics {
 	private promptRejections = new Map<string, number>(); // key: reason (busy)
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
+	private usageTokens = new Map<string, number>(); // key: kind (input|output|cache_read|cache_write)
+	private usageCost = new Map<string, number>(); // key: kind 同上
 	private startedAt = Date.now();
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
@@ -117,6 +119,32 @@ export class Metrics {
 		this.promptRejections.set(reason, (this.promptRejections.get(reason) ?? 0) + 1);
 	}
 
+	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
+	 *  费率未配置时 cost 恒 0（vendor calculateCost 产物），指标存在但为 0。 */
+	observeUsage(usage: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		totalTokens?: number;
+		cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	}): void {
+		const bump = (map: Map<string, number>, key: string, delta: number) => {
+			if (!Number.isFinite(delta) || delta < 0) return;
+			map.set(key, (map.get(key) ?? 0) + delta);
+		};
+		bump(this.usageTokens, "input", usage.input);
+		bump(this.usageTokens, "output", usage.output);
+		bump(this.usageTokens, "cache_read", usage.cacheRead);
+		bump(this.usageTokens, "cache_write", usage.cacheWrite);
+		const c = usage.cost;
+		if (!c) return;
+		bump(this.usageCost, "input", c.input);
+		bump(this.usageCost, "output", c.output);
+		bump(this.usageCost, "cache_read", c.cacheRead);
+		bump(this.usageCost, "cache_write", c.cacheWrite);
+	}
+
 	setSkillsLoaded(n: number): void {
 		this.skillsLoaded = n;
 	}
@@ -174,9 +202,21 @@ export class Metrics {
 		lines.push("# TYPE pi_runtime_skills_loaded gauge");
 		lines.push(`pi_runtime_skills_loaded ${this.skillsLoaded}`);
 
-		lines.push("# HELP pi_runtime_prompt_skills_tokens Approx tokens of the resident skills index block.");
-		lines.push("# TYPE pi_runtime_prompt_skills_tokens gauge");
-		lines.push(`pi_runtime_prompt_skills_tokens ${this.skillsPromptTokens}`);
+	lines.push("# HELP pi_runtime_prompt_skills_tokens Approx tokens of the resident skills index block.");
+	lines.push("# TYPE pi_runtime_prompt_skills_tokens gauge");
+	lines.push(`pi_runtime_prompt_skills_tokens ${this.skillsPromptTokens}`);
+
+	lines.push("# HELP pi_runtime_usage_tokens_total LLM usage tokens by kind (from harness usage events).");
+	lines.push("# TYPE pi_runtime_usage_tokens_total counter");
+	for (const [kind, v] of [...this.usageTokens.entries()].sort()) {
+		lines.push(`pi_runtime_usage_tokens_total{kind="${kind}"} ${v}`);
+	}
+
+	lines.push("# HELP pi_runtime_usage_cost_total LLM usage cost (USD) by kind; 0 until cost rates configured.");
+	lines.push("# TYPE pi_runtime_usage_cost_total counter");
+	for (const [kind, v] of [...this.usageCost.entries()].sort()) {
+		lines.push(`pi_runtime_usage_cost_total{kind="${kind}"} ${v.toFixed(6)}`);
+	}
 
 		lines.push("# HELP pi_runtime_http_requests_total HTTP requests processed.");
 		lines.push("# TYPE pi_runtime_http_requests_total counter");

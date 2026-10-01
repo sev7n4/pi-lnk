@@ -665,6 +665,17 @@ export class SessionManager {
 				}),
 			);
 		}
+		// 审计 P0-③：usage 事件只进 metrics，**不进** EVENT_MAP / SSE —— Nest 侧
+		// PiRuntimeEvent 是封闭联合，未知类型有被静默丢弃或误解析的风险；tokens/cost
+		// 的 UI 呈现走 Nest 既有的 message_end.usage 路径，不靠这条。
+		if (this.metrics) {
+			const metrics = this.metrics;
+			entry.unsubscribes.push(
+				harness.events.on("usage" as never, (evt: { row?: { usage?: Parameters<Metrics["observeUsage"]>[0] } }) => {
+					if (evt.row?.usage) metrics.observeUsage(evt.row.usage);
+				}),
+			);
+		}
 	}
 
 	/**

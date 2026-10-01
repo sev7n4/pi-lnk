@@ -337,3 +337,30 @@ describe("activity 透传（决策 8 · 正在做什么）", () => {
 		expect(out!.type).toBe("pi_compaction");
 	});
 });
+
+describe("turn_usage cost（审计 P0-③）", () => {
+	const msgEnd = (usage?: Record<string, unknown>) =>
+		({
+			type: "message_end",
+			ts: 1,
+			data: { message: usage ? { usage } : {} },
+		}) as never;
+
+	it("T3-4: usage.cost 存在时按四字段求和累积，agent_end 的 turn_usage 附带 cost", () => {
+		const acc = createUsageAccumulator();
+		acc.feed(msgEnd({ input: 100, output: 20, cost: { input: 0.25, output: 0.1, cacheRead: 0, cacheWrite: 0 } }));
+		acc.feed(msgEnd({ input: 50, output: 30, cost: { input: 0.5, output: 0.15, cacheRead: 0, cacheWrite: 0 } }));
+		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
+		expect(done).toEqual({
+			type: "turn_usage",
+			data: { inputTokens: 150, outputTokens: 50, cost: 1 },
+		});
+	});
+
+	it("T3-5: 无 cost 字段（未配费率）→ turn_usage 不带 cost 字段（向后兼容）", () => {
+		const acc = createUsageAccumulator();
+		acc.feed(msgEnd({ input: 100, output: 20 }));
+		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
+		expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 100, outputTokens: 20 } });
+	});
+});

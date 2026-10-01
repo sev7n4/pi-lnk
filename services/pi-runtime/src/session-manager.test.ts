@@ -1142,3 +1142,63 @@ describe("SessionManager activity 广播（决策 8 · 正在做什么）", () =
 		assert.deepEqual(types, ["activity", "tool_execution_start"]); // 补发含 activity，重连后状态行不会空着
 	});
 });
+
+describe("usage 事件 → metrics（审计 P0-③）", () => {
+	/** 本地可派发 fake（与上方 seq 组的实现同构，作用域独立）。 */
+	function makeEmittableHarnessFactory() {
+		const handlers = new Map<string, (evt: { lane?: string }) => void>();
+		const fakeHarnessFactory = async () => ({
+			harness: {
+				events: {
+					on: (type: string, handler: (evt: { lane?: string }) => void) => {
+						handlers.set(String(type), handler);
+						return () => {};
+					},
+				},
+				lane: async () => ({ prompt: async () => ({ ok: true }) }),
+				close: async () => {},
+			},
+		}) as never;
+		return { handlers, fakeHarnessFactory };
+	}
+
+	const USAGE = {
+		input: 100,
+		output: 50,
+		cacheRead: 10,
+		cacheWrite: 5,
+		totalTokens: 165,
+		cost: { input: 0.25, output: 0.5, cacheRead: 0, cacheWrite: 0 },
+	};
+
+	it("harness 发 usage 事件时进 metrics 累计", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const metrics = new Metrics();
+		const sm = new SessionManager(
+			[],
+			"",
+			undefined,
+			fakeHarnessFactory,
+			undefined,
+			undefined,
+			testConfig(),
+			undefined,
+			metrics,
+		);
+		await sm.create("s-usage-metrics", {});
+		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } });
+		const out = metrics.render(0, "test");
+		assert.match(out, /pi_runtime_usage_tokens_total\{kind="input"\} 100/);
+		assert.match(out, /pi_runtime_usage_cost_total\{kind="output"\} 0\.5/);
+	});
+
+	it("usage 事件不进 SSE/事件缓冲（Nest 未知事件类型防御）", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-usage-sse", {});
+		const seen: string[] = [];
+		sm.subscribe("s-usage-sse", (e) => seen.push(e.type));
+		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } });
+		assert.deepEqual(seen, []);
+	});
+});

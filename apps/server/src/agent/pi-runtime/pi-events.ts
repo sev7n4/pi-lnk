@@ -405,27 +405,46 @@ export function createThinkingAccumulator(limit = 2000): {
 export interface TurnUsage {
 	inputTokens: number;
 	outputTokens: number;
+	/** 本回合 cost 总额（USD，vendor calculateCost 产物四字段求和）。> 0 才携带——
+	 *  费率未配置时上游给 0，不带字段以与「未配费率」区分（审计 P0-③）。 */
+	cost?: number;
 }
 
 function extractUsageDelta(event: PiRuntimeEvent): TurnUsage | null {
 	if (event.type !== "message_end") return null;
-	const usage = (event.data as { message?: { usage?: { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown } } })
-		.message?.usage;
+	const usage = (event.data as {
+		message?: {
+			usage?: {
+				input?: unknown;
+				output?: unknown;
+				cacheRead?: unknown;
+				cacheWrite?: unknown;
+				cost?: { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown };
+			};
+		};
+	}).message?.usage;
 	if (!usage || typeof usage !== "object") return null;
 	const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
 	// 口径对齐 vendor models.ts:892 calculateCost：inputTokens = input + cacheRead + cacheWrite
 	const inputTokens = num(usage.input) + num(usage.cacheRead) + num(usage.cacheWrite);
-	return { inputTokens, outputTokens: num(usage.output) };
+	const c = usage.cost;
+	const cost =
+		c && typeof c === "object"
+			? num(c.input) + num(c.output) + num(c.cacheRead) + num(c.cacheWrite)
+			: undefined;
+	return { inputTokens, outputTokens: num(usage.output), ...(cost !== undefined ? { cost } : {}) };
 }
 
 /** P1 状态行：message_end.usage 逐条累积，agent_end 前折叠为一次 turn_usage 事件。
  * 仅当本回合出现过至少一条带 usage 的 message_end 才发（seenUsage 门）——区分
- * 「上游没回 usage」（不显示 tokens 段）与「usage 真为 0」（显示 0），杜绝误导。 */
+ * 「上游没回 usage」（不显示 tokens 段）与「usage 真为 0」（显示 0），杜绝误导。
+ * cost 仅在累计 > 0 时附带（未配费率 = 0 = 不带字段，向后兼容）。 */
 export function createUsageAccumulator(): {
 	feed(event: PiRuntimeEvent): UiEvent | null;
 } {
 	let input = 0;
 	let output = 0;
+	let cost: number | undefined;
 	let seenUsage = false;
 	return {
 		feed(event: PiRuntimeEvent): UiEvent | null {
@@ -434,11 +453,17 @@ export function createUsageAccumulator(): {
 				seenUsage = true;
 				input += delta.inputTokens;
 				output += delta.outputTokens;
+				if (delta.cost !== undefined) {
+					cost = (cost ?? 0) + delta.cost;
+				}
 				return null;
 			}
 			if (event.type === "agent_end") {
 				if (!seenUsage) return null;
-				return { type: "turn_usage", data: { inputTokens: input, outputTokens: output } };
+				return {
+					type: "turn_usage",
+					data: { inputTokens: input, outputTokens: output, ...(cost && cost > 0 ? { cost } : {}) },
+				};
 			}
 			return null;
 		},
