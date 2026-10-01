@@ -57,7 +57,23 @@ export type NormalizedEventType =
 	| "tool_execution_update"
 	| "tool_execution_end"
 	| "compaction"
-	| "error";
+	| "error"
+	/** 阻塞式确认工具（ask_user / propose_generation）进入/退出等待（2026-10-01）。
+	 *  等待**开始**即发：tool_result 在等待结束后才到，靠它反推「等待中」永远不成立。 */
+	| "waiting_user";
+
+/** `waiting_user` 事件载荷。status: waiting = 刚挂起等用户；resolved = 已作答/超时/中止。 */
+export interface WaitingUserData {
+	status: "waiting" | "resolved";
+	toolName: string;
+	callId: string;
+	/** 等待上限（ms）；resolved 时也带上，便于前端算倒计时。 */
+	timeoutMs?: number;
+	/** 工具透传上下文（propose → nodeId，供前端「定位节点」）。 */
+	nodeId?: string;
+	/** resolved 的原因（answered / timeout / aborted）；waiting 时省略。 */
+	reason?: "answered" | "timeout" | "aborted";
+}
 
 export interface NormalizedEvent {
 	type: NormalizedEventType;
@@ -719,6 +735,27 @@ export class SessionManager {
 	 */
 	getCanvasSessionId(threadKey: string): string {
 		return this.sessions.get(threadKey)?.canvasSessionId ?? threadKey;
+	}
+
+	/**
+	 * 阻塞等待可见化（2026-10-01）：按**画布会话 id** 广播 `waiting_user` 事件。
+	 *
+	 * registry 侧只有画布会话 id（工具域语义），而事件派发需要 pi 会话键的 entry ——
+	 * 这里做一次反向查找（`canvasSessionId` 相等，或未提供时回落 `entry.id` 与之相等，
+	 * 与 abort 联动 `abortAll(entry.canvasSessionId ?? entry.id)` 同键语义）。
+	 * 命中 0 个会话不是错误（sweeper 已回收 / 会话在别的实例）→ 静默返回 0。
+	 *
+	 * @returns 命中的会话数（诊断用；调用方不据此判成败）
+	 */
+	dispatchWaitingUser(canvasSessionId: string, data: WaitingUserData): number {
+		let hits = 0;
+		for (const entry of this.sessions.values()) {
+			const key = entry.canvasSessionId ?? entry.id;
+			if (key !== canvasSessionId) continue;
+			this.dispatch(entry, { type: "waiting_user", ts: Date.now(), data });
+			hits += 1;
+		}
+		return hits;
 	}
 
 	subscribe(threadKey: string, listener: EventListener, afterSeq = -1): NormalizedEvent[] {

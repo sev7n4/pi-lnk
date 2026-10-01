@@ -31,7 +31,9 @@ export type PiEventType =
 	| "tool_execution_start"
 	| "tool_execution_update"
 	| "tool_execution_end"
-	| "error";
+	| "error"
+	/** 阻塞式确认工具（ask_user / propose_generation）等待生命周期（2026-10-01）。 */
+	| "waiting_user";
 
 /** 现有 UI 事件（消费端实测子集；其余事件类型保持 passthrough） */
 export interface UiEvent<T = unknown> {
@@ -116,6 +118,29 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 					error_type: d.error_type,
 					retry_hint: d.retry_hint,
 					tool_name: d.tool_name,
+				},
+			};
+		}
+		case "waiting_user": {
+			// 阻塞等待可见化（2026-10-01）：透传给前端做状态行/确认提示。
+			// 不走 default 的 `pi_` 前缀——前端按 type 分支消费，加前缀会被静默丢弃。
+			const d = event.data as {
+				status?: string;
+				toolName?: string;
+				callId?: string;
+				timeoutMs?: number;
+				nodeId?: string;
+				reason?: string;
+			};
+			return {
+				type: "waiting_user",
+				data: {
+					status: d.status === "resolved" ? "resolved" : "waiting",
+					toolName: d.toolName,
+					callId: d.callId,
+					timeoutMs: d.timeoutMs,
+					nodeId: d.nodeId,
+					reason: d.reason,
 				},
 			};
 		}

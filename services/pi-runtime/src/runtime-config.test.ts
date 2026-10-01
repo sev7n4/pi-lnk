@@ -89,10 +89,10 @@ describe("askUser 配置", () => {
 		assert.equal(askUserBlocking({ ASK_USER_BLOCKING: "off" }), false);
 		assert.equal(askUserBlocking({ ASK_USER_BLOCKING: "1" }), true);
 	});
-	it("askUserTimeoutMs: 缺省 30min，非法回退，小数截断", () => {
-		assert.equal(askUserTimeoutMs({}), 1_800_000);
+	it("askUserTimeoutMs: 缺省 5min（2026-10-01 由 30min 下调），非法回退，小数截断", () => {
+		assert.equal(askUserTimeoutMs({}), 300_000);
 		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "60000" }), 60_000);
-		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "abc" }), 1_800_000);
+		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "abc" }), 300_000);
 		assert.equal(askUserTimeoutMs({ ASK_USER_TIMEOUT_MS: "1500.7" }), 1500);
 	});
 });

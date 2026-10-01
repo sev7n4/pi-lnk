@@ -26,7 +26,20 @@ const SUSPICIOUS_CONTEXT_WINDOW = 400_000;
 const metrics = new Metrics();
 // 阻塞式确认类工具（ask_user）的等待注册表（2026-09-30-ask-user-blocking）：
 // 同一实例三处共享——工具域（ask_user waitForUser）、/answers + /pending 端点、abort 联动。
-const registry = new PendingToolRegistry();
+//
+// 等待生命周期广播（2026-10-01）：等待**开始**就发 `waiting_user{status:"waiting"}`，
+// 结束发 `{status:"resolved"}`。原因：阻塞工具的 tool_result 在等待结束后才到，前端
+// 拿它反推「等待中」在本语义下恒不成立 → 整段等待期显示「生成回复中 · Ns」= 用户看到的卡死。
+// 派发按画布会话 id 定位会话（registry 键同域）；命中 0 个会话静默（会话可能在别的实例）。
+const registry = new PendingToolRegistry({
+	onWaitStart: ({ sessionId, callId, toolName, timeoutMs, meta }) => {
+		const nodeId = typeof meta?.nodeId === "string" ? meta.nodeId : undefined;
+		manager.dispatchWaitingUser(sessionId, { status: "waiting", toolName, callId, timeoutMs, nodeId });
+	},
+	onSettled: ({ sessionId, callId, toolName, status }) => {
+		manager.dispatchWaitingUser(sessionId, { status: "resolved", toolName, callId, reason: status });
+	},
+});
 const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry });
 
 // D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。

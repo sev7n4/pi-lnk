@@ -80,3 +80,54 @@ describe("PendingToolRegistry", () => {
 		reg.abortAll("s"); // 收尾：settle 残留 timer，免拖住 node --test 进程 60s
 	});
 });
+
+/**
+ * 等待可见化（2026-10-01 生产事故修复）：等待**开始**必须广播，不能靠 tool_result 反推。
+ * 阻塞工具的 tool_result 在等待结束才发 → 前端「等待中」状态恒不成立 → 整段等待期
+ * 显示「生成回复中 · Ns」，用户判定卡死。
+ */
+describe("PendingToolRegistry 等待生命周期回调", () => {
+	it("waitForUser 同步触发 onWaitStart（含 meta），不会等到 resolve", () => {
+		const seen: unknown[] = [];
+		const reg = new PendingToolRegistry({
+			onWaitStart: (info) => seen.push({ phase: "start", ...info }),
+		});
+		void reg.waitForUser("s1", "c1", "propose_generation", 60_000, { nodeId: "node-7" });
+		// 关键：还没 answer/超时，start 回调已经到了
+		assert.deepEqual(seen, [
+			{ phase: "start", sessionId: "s1", callId: "c1", toolName: "propose_generation", timeoutMs: 60_000, meta: { nodeId: "node-7" } },
+		]);
+		reg.abortAll("s1");
+	});
+
+	it("settled 回调在 resolve 之前触发，且带结束原因", async () => {
+		const seen: string[] = [];
+		const reg = new PendingToolRegistry({
+			onSettled: (info) => seen.push(info.status),
+		});
+		let settledBeforePromise = false;
+		const p = reg.waitForUser("s", "c", "ask_user", 60_000).then((r) => {
+			settledBeforePromise = seen.length === 1;
+			return r;
+		});
+		reg.answer("s", "c", { style: ["ink"] });
+		await p;
+		assert.deepEqual(seen, ["answered"]);
+		assert.equal(settledBeforePromise, true); // 广播先于工具续行，前端不闪帧
+	});
+
+	it("超时路径同样走 settled（status=timeout）", async () => {
+		const seen: string[] = [];
+		const reg = new PendingToolRegistry({ onSettled: (i) => seen.push(i.status) });
+		void reg.waitForUser("s", "c", "propose_generation", 5);
+		await new Promise((r) => setTimeout(r, 30));
+		assert.deepEqual(seen, ["timeout"]);
+	});
+
+	it("无回调时（缺省构造）行为逐字节不变——既有调用点零改动", async () => {
+		const reg = new PendingToolRegistry();
+		const p = reg.waitForUser("s", "c", "ask_user", 60_000);
+		reg.answer("s", "c", { a: ["1"] });
+		assert.deepEqual(await p, { status: "answered", answers: { a: ["1"] } });
+	});
+});

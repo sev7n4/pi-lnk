@@ -73,6 +73,13 @@ env:
   #   启用（数字型 env 一律 --set-string，禁用 --set，否则会被渲染成科学计数法）：
   #     --set-string env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW=128000
   PI_RUNTIME_COMPACTION_CONTEXT_WINDOW: ""
+  # B-1 阻塞式确认工具（ask_user / propose_generation）的等待上限。
+  #   代码缺省 300000（5min，2026-10-01 由 30min 下调：30min 在 UI 上就是「生成回复中」
+  #   无限转圈，用户判定卡死）。超时不是失败——工具以带 status 的正常值交还，模型自主续行。
+  #   ⚠️ 数字型 env 一律 --set-string，禁用 --set（科学计数法事故）。
+  ASK_USER_TIMEOUT_MS: "300000"
+  # 阻塞开关缺省即 true（代码默认），显式声明只为部署面可见可调；off = 退回非阻塞 v1 行为。
+  ASK_USER_BLOCKING: "true"
 
 # D-ζ' 双 runtime 开关（shadow/active 由部署侧控制，Day-1 默认 off）
 piRuntimeMode: "off"

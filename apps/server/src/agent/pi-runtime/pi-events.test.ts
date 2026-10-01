@@ -265,3 +265,38 @@ describe("thinking 全文透传（P0 思考面板）", () => {
 		expect(summary.length).toBe(2000);
 	});
 });
+
+describe("waiting_user 透传（2026-10-01 阻塞等待可见化）", () => {
+	it("waiting（含 nodeId/timeoutMs）→ 同名 UI 事件，不带 pi_ 前缀", () => {
+		const out = mapPiEventToUiEvent({
+			type: "waiting_user",
+			ts: 1,
+			data: { status: "waiting", toolName: "propose_generation", callId: "c1", nodeId: "node-9", timeoutMs: 300000 },
+		} as never);
+		expect(out).toEqual({
+			type: "waiting_user",
+			data: { status: "waiting", toolName: "propose_generation", callId: "c1", timeoutMs: 300000, nodeId: "node-9", reason: undefined },
+		});
+	});
+
+	it("resolved → 携带 reason，前端据此清等待态", () => {
+		const out = mapPiEventToUiEvent({
+			type: "waiting_user",
+			ts: 2,
+			data: { status: "resolved", toolName: "ask_user", callId: "c1", reason: "answered" },
+		} as never);
+		expect(out).toEqual({
+			type: "waiting_user",
+			data: { status: "resolved", toolName: "ask_user", callId: "c1", timeoutMs: undefined, nodeId: undefined, reason: "answered" },
+		});
+	});
+
+	it("status 缺失/非法一律按 waiting 处理（前端宁可多提示，也不要漏）", () => {
+		const out = mapPiEventToUiEvent({
+			type: "waiting_user",
+			ts: 3,
+			data: { toolName: "propose_generation", callId: "c2" },
+		} as never);
+		expect((out!.data as { status: string }).status).toBe("waiting");
+	});
+});

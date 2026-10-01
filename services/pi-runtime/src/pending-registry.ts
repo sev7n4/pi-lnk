@@ -26,10 +26,51 @@ interface PendingEntry {
 	settled: boolean;
 }
 
+/**
+ * 等待生命周期回调（2026-10-01 阻塞等待可见化）。
+ *
+ * 存在理由：阻塞式工具（ask_user / propose_generation）的 tool_result 要等**等待结束**
+ * 才发出，前端据此推导「等待中」在本语义下永远不成立 —— 等待期间状态行会一直显示
+ * 「生成回复中 · Ns」，用户看到的就是「卡死」（生产实证：cmuog0ye90005pp01t1mn1bk9
+ * 12:23 轮，被用户判定为卡住）。因此等待**开始**必须由 registry 主动广播，
+ * 而不是等 tool_result 反推。
+ *
+ * 回调是可选的：缺省 no-op，registry 保持纯数据结构（既有单测零改动仍通过）。
+ */
+export interface PendingHooks {
+	/** 等待开始（条目已注册、timer 已武装）→ 广播 status="waiting"。 */
+	onWaitStart?: (info: {
+		sessionId: string;
+		callId: string;
+		toolName: string;
+		timeoutMs: number;
+		meta?: Record<string, unknown>;
+	}) => void;
+	/** 等待结束（answered / timeout / aborted 任一）→ 广播 status="resolved"。 */
+	onSettled?: (info: {
+		sessionId: string;
+		callId: string;
+		toolName: string;
+		status: PendingResolution["status"];
+	}) => void;
+}
+
 export class PendingToolRegistry {
 	private readonly entries = new Map<string, Map<string, PendingEntry>>();
 
-	waitForUser(sessionId: string, callId: string, toolName: string, timeoutMs: number): Promise<PendingResolution> {
+	constructor(private readonly hooks: PendingHooks = {}) {}
+
+	/**
+	 * @param meta 透传给前端的上下文（如 propose 的 nodeId，供「定位节点」按钮）；
+	 *             不进 registry 内部语义，只原样随 waiting 事件下发。
+	 */
+	waitForUser(
+		sessionId: string,
+		callId: string,
+		toolName: string,
+		timeoutMs: number,
+		meta?: Record<string, unknown>,
+	): Promise<PendingResolution> {
 		const byCall = this.entries.get(sessionId);
 		if (byCall?.has(callId)) {
 			throw new Error(`duplicate pending callId: ${callId} (session ${sessionId})`);
@@ -42,6 +83,9 @@ export class PendingToolRegistry {
 					entry.settled = true;
 					clearTimeout(entry.timer);
 					this.entries.get(sessionId)?.delete(callId);
+					// 广播必须在 resolve **之前**：等待方（工具 execute）紧接着会继续跑
+					// 并可能立刻发下一批事件，晚一步前端就会多闪一帧「等待你确认」。
+					this.hooks.onSettled?.({ sessionId, callId, toolName, status: r.status });
 					resolve(r);
 				},
 				timer: undefined as never,
@@ -56,6 +100,7 @@ export class PendingToolRegistry {
 			// 泄漏防护已由 settle 路径 clearTimeout + session 关闭 abortAll 覆盖。
 			if (!byCall) this.entries.set(sessionId, new Map([[callId, entry]]));
 			else byCall.set(callId, entry);
+			this.hooks.onWaitStart?.({ sessionId, callId, toolName, timeoutMs, meta });
 		});
 	}
 
