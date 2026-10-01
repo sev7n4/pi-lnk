@@ -25,6 +25,8 @@ function testConfig(): RuntimeConfig {
 		sweepIntervalMs: 10 ** 9,
 		sessionsMaxBytes: 10 ** 12,
 		sessionsMaxCount: 1000,
+		// 既有断言按「全量常驻」legacy 语义书写；tiering-on 的接线行为在专组覆盖。
+		toolTiering: false,
 		compaction: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
 	};
 }
@@ -1186,7 +1188,7 @@ describe("usage 事件 → metrics（审计 P0-③）", () => {
 			metrics,
 		);
 		await sm.create("s-usage-metrics", {});
-		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } });
+		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } } as never);
 		const out = metrics.render(0, "test");
 		assert.match(out, /pi_runtime_usage_tokens_total\{kind="input"\} 100/);
 		assert.match(out, /pi_runtime_usage_cost_total\{kind="output"\} 0\.5/);
@@ -1198,7 +1200,7 @@ describe("usage 事件 → metrics（审计 P0-③）", () => {
 		await sm.create("s-usage-sse", {});
 		const seen: string[] = [];
 		sm.subscribe("s-usage-sse", (e) => seen.push(e.type));
-		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } });
+		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } } as never);
 		assert.deepEqual(seen, []);
 	});
 });

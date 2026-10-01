@@ -28,6 +28,11 @@ export interface RuntimeConfig {
 	sessionsMaxCount: number;
 	compaction: CompactionConfig;
 	/**
+	 * 工具渐进加载开关（审计 P0-④）。off = 全量常驻、无 load_tools、无延迟索引块
+	 * （行为与本开关引入前逐字节一致）。缺省 true。
+	 */
+	toolTiering?: boolean;
+	/**
 	 * 压缩判定用的上下文窗口覆盖值；缺省表示沿用 model.contextWindow 的声明值。
 	 *
 	 * 存在理由：agnes provider 把 contextWindow 声明为 1_000_000，使默认阈值
@@ -104,6 +109,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		// 未配置 / 非法值一律 undefined（= 沿用 model 声明值）。刻意不给 fallback 一个真实数，
 		// 否则「没配」与「配了非法值」不可区分。
 		compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
+		toolTiering: parseBool(env.PI_RUNTIME_TOOL_TIERING, true),
 	};
 }
 

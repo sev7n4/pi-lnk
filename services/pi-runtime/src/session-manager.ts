@@ -40,10 +40,11 @@ import type { Metrics } from "./metrics.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { enforceRetention } from "./session-retention.js";
+import { splitTools } from "./tools/tiering.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import { stripImageBlocks } from "./sse-sanitize.js";
-import type { LnkpiToolContext, SidebarAttachment } from "./tools/types.js";
+import type { LnkpiToolContext, SidebarAttachment, LnkpiTool } from "./tools/types.js";
 
 export type NormalizedEventType =
 	| "agent_start"
@@ -612,12 +613,22 @@ export class SessionManager {
 		// 归属/身份落盘（磁盘 resume 的 fail-closed 数据源，复核 Important #4）。
 		await writeSessionMeta(cwd, { userId: opts.userId ?? null, provider: identity.provider, model: identity.model });
 
+		const toolSplit = this.getToolSplit();
 		const { harness } = await this.harnessFactory<LnkpiToolContext>(
 			{
 				session,
 				models,
 				model,
-				tools: [...this.tools, ...(this.skills?.tools ?? [])],
+				// 审计 P0-④：tiering on → 常驻集 + load_tools（schema 面收窄）；off → 全量（现状）。
+				tools: toolSplit.loadToolsTool ? [...toolSplit.alwaysActive, toolSplit.loadToolsTool] : toolSplit.alwaysActive,
+				...(toolSplit.loadToolsTool
+					? {
+							activeToolNames: [
+								...toolSplit.alwaysActive.map((t) => t.name),
+								toolSplit.loadToolsTool.name,
+							],
+						}
+					: {}),
 				// 函数形态（spec §5.3/§5.4）：harness 在每次 LLM 调用前求值，读到的是最新 turn。
 				// ⚠️ `sessionId` 语义 = **画布会话 id**（Nest 用它查库），不是 pi 会话键 `key`。
 				// 取值优先级：本轮/建会话时传入的 canvasSessionId → 会话内已存值 → 回落 pi 会话键
@@ -1158,8 +1169,25 @@ export class SessionManager {
 	private composeSystemPrompt(base?: string): string {
 		const prompt = base || this.systemPromptDefault;
 		const index = this.skills?.indexBlock ?? "";
-		if (!index) return prompt;
-		return prompt ? `${prompt}\n\n${index}` : index;
+		// 审计 P0-④：延迟工具只有「名字 + 一句话摘要」的索引块进静态段，schema 不占位。
+		const deferredIndex = this.getToolSplit().deferredIndexBlock;
+		const blocks = [index, deferredIndex].filter((b) => b.length > 0);
+		if (blocks.length === 0) return prompt;
+		return prompt ? [prompt, ...blocks].join("\n\n") : blocks.join("\n\n");
+	}
+
+	/** 工具分层（审计 P0-④，懒计算一次）：常驻集 / 延迟集 / load_tools / 索引块。 */
+	private toolSplit?: ReturnType<typeof splitTools>;
+	private getToolSplit(): ReturnType<typeof splitTools> {
+		if (!this.toolSplit) {
+			// 构造入参类型是 AgentHarnessTool（无 tier 字段），生产链路传入的全部是
+			// LnkpiTool（tools/config.ts 组装）；此处按 name 分档，字段消费只到 name/description。
+			this.toolSplit = splitTools(
+				[...this.tools, ...(this.skills?.tools ?? [])] as LnkpiTool[],
+				this.config.toolTiering ?? true,
+			);
+		}
+		return this.toolSplit;
 	}
 }
 
