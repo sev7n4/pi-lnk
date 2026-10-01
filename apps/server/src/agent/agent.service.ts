@@ -26,6 +26,7 @@ import {
 import { MaterialService } from '../canvas/material.service'
 import { ShotService } from '../canvas/shot.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+import { AgentMemoryService } from './agent-memory.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { isObjectStorageConfigured } from '../storage/object-storage-env'
 import {
@@ -118,6 +119,10 @@ export class AgentService {
     @Optional()
     @Inject(CANVAS_ACTION_APPLIER)
     private readonly canvasActionApplier?: CanvasActionApplier,
+    // 审计 #7：长期记忆动态注入。@Optional 保证既有测试/装配路径零破坏。
+    @Optional()
+    @Inject(AgentMemoryService)
+    private readonly agentMemory?: AgentMemoryService,
   ) {}
 
   /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
@@ -708,11 +713,24 @@ export class AgentService {
     const sessionKey = threadId?.trim() || sessionId
     // 动态段（画布快照 + 侧栏素材 + 侧栏识图结果）：交给 pi-runtime 每轮追加到
     // systemPrompt 尾部求值，不写入对话历史（spec §4 动态上下文判据）。
+    // 审计 #7：长期记忆动态注入——每轮最近 5 条拼块（fail-soft，memory 挂了会话照常）。
+    // 安全红线：只拼 content 摘要行，绝不带 id/userId（与 tools/memory.ts 同一红线）。
+    let memoryBlock: string | undefined
+    if (this.agentMemory && userId) {
+      try {
+        const mem = await this.agentMemory.searchMemory({ userId, limit: 5 })
+        const lines = mem.items.map((m) => `- ${m.content}`)
+        if (lines.length) memoryBlock = '## 长期记忆（用户历史偏好，供参考）\n' + lines.join('\n')
+      } catch (err) {
+        this.piLogger?.warn?.(`memory injection skipped (fail-soft): ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
     const dynamicBlocks = await assembler.assembleDynamic({
       sessionId,
       attachments: piContext?.attachments,
       // 审计 P0-①：焦点过滤（>30 节点画布只注入焦点 + 1 跳邻居），换话题污染收口。
       focusNodeId: piContext?.focusNodeId,
+      memoryBlock,
     })
     if (visionBlock) dynamicBlocks.push(visionBlock)
     const created = await this.ensurePiSession(client, sessionKey, {

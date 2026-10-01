@@ -733,6 +733,59 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(pi.createSession.mock.calls[0][1]).toMatchObject({ canvasSessionId: 's1' })
   })
 
+  it('审计 #7：长期记忆注入——最近 5 条进 memoryBlock，只含 content 行', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const assembleDynamic = vi.fn().mockResolvedValue([])
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic: vi.fn().mockResolvedValue('PROMPT'),
+      assembleDynamic,
+    } as never)
+    const fakeMemory = {
+      searchMemory: vi
+        .fn()
+        .mockResolvedValue({ items: [{ id: 'm1', content: '用户偏好深色主题', createdAt: '2026-01-01' }] }),
+    }
+    ;(service as unknown as { agentMemory?: unknown }).agentMemory = fakeMemory
+
+    for await (const _event of service.streamConversation('s1', '你好', 'u1', 's1:t-mem')) {
+      void _event
+    }
+
+    expect(fakeMemory.searchMemory).toHaveBeenCalledWith({ userId: 'u1', limit: 5 })
+    const block = assembleDynamic.mock.calls[0][0].memoryBlock as string
+    expect(block).toContain('长期记忆')
+    expect(block).toContain('用户偏好深色主题')
+    // 安全红线：绝不投影 id/userId 等元数据
+    expect(block).not.toContain('m1')
+    expect(block).not.toContain('u1')
+  })
+
+  it('审计 #7：memory 服务抛错 → 注入缺席但流照常完成（fail-soft）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const assembleDynamic = vi.fn().mockResolvedValue([])
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic: vi.fn().mockResolvedValue('PROMPT'),
+      assembleDynamic,
+    } as never)
+    ;(service as unknown as { agentMemory?: unknown }).agentMemory = {
+      searchMemory: vi.fn().mockRejectedValue(new Error('db down')),
+    }
+
+    const events: string[] = []
+    for await (const event of service.streamConversation('s1', '你好', 'u1', 's1:t-mem2')) {
+      events.push(event.type)
+    }
+    expect(assembleDynamic.mock.calls[0][0].memoryBlock).toBeUndefined()
+    // UI 流以 done 收口（agent_end 经映射），证明 memory 挂掉没有打断会话
+    expect(events).toContain('done')
+  })
+
   it('P0-①：status=rebuilt 时打 warn（上下文已丢，需可观测）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
