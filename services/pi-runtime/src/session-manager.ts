@@ -38,7 +38,7 @@ import {
 } from "./compaction-check.js";
 import type { Metrics } from "./metrics.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
-import { loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
+import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { enforceRetention } from "./session-retention.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
@@ -629,7 +629,10 @@ export class SessionManager {
 				}),
 				systemPrompt: () => composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []),
 				thinkingLevel,
-				compaction: this.config.compaction,
+				compaction: effectiveCompactionSettings(
+					this.config.compaction,
+					this.config.compactionContextWindow ?? model.contextWindow,
+				),
 			},
 			this.context,
 		);
@@ -1011,7 +1014,14 @@ export class SessionManager {
 			.then((entries) => ({ ok: true as const, entries }), () => ({ ok: false as const }));
 		// 扫盘失败 ≠ 用量没超阈值：合并成一个 label 就等于放弃了「扫盘有没成功」这个信号。
 		if (!scanned.ok) return "entries_unavailable";
-		const decision = decideCompaction(scanned.entries, entry.contextWindow, this.config.compaction);
+		// 阈值口径与 harness options 同源（effectiveCompactionSettings，审计 P0-①）：
+		// targetRatio 生效时 reserveTokens 由 entry.contextWindow 反推，两条触发路径一个分母。
+		// entry.contextWindow 理论上必有值（create 时必算）；undefined 走原始配置，fail-soft。
+		const settings =
+			entry.contextWindow === undefined
+				? this.config.compaction
+				: effectiveCompactionSettings(this.config.compaction, entry.contextWindow);
+		const decision = decideCompaction(scanned.entries, entry.contextWindow, settings);
 		if (!decision.shouldRun) return decision.skipReason ?? "unknown";
 		try {
 			const res = await lane.compact(undefined, context);

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { loadRuntimeConfig, parseBool, parsePositiveInt, DEFAULT_RUNTIME_CONFIG, askUserBlocking, askUserTimeoutMs } from "./runtime-config.js";
+import { loadRuntimeConfig, parseBool, parsePositiveInt, DEFAULT_RUNTIME_CONFIG, askUserBlocking, askUserTimeoutMs, effectiveCompactionSettings } from "./runtime-config.js";
 
 describe("parsePositiveInt", () => {
 	it("合法正整数原样返回", () => {
@@ -74,12 +74,19 @@ describe("loadRuntimeConfig", () => {
 		assert.equal(cfg.compaction.reserveTokens, 1024);
 		assert.equal(cfg.compaction.keepRecentTokens, DEFAULT_RUNTIME_CONFIG.compaction.keepRecentTokens);
 	});
-	it("compaction 默认值与 vendor DEFAULT_COMPACTION_SETTINGS 同值", () => {
-		assert.deepEqual(DEFAULT_RUNTIME_CONFIG.compaction, {
-			enabled: true,
-			reserveTokens: 16384,
-			keepRecentTokens: 20000,
-		});
+	it("compaction 三个旧字段与 vendor DEFAULT_COMPACTION_SETTINGS 同值（targetRatio 为 host 侧新增，单测于下方专组）", () => {
+		assert.deepEqual(
+			{
+				enabled: DEFAULT_RUNTIME_CONFIG.compaction.enabled,
+				reserveTokens: DEFAULT_RUNTIME_CONFIG.compaction.reserveTokens,
+				keepRecentTokens: DEFAULT_RUNTIME_CONFIG.compaction.keepRecentTokens,
+			},
+			{
+				enabled: true,
+				reserveTokens: 16384,
+				keepRecentTokens: 20000,
+			},
+		);
 	});
 });
 
@@ -116,5 +123,60 @@ describe("compactionContextWindow（诊断 F-01 · Review Focus #1）", () => {
 			loadRuntimeConfig({ PI_RUNTIME_COMPACTION_CONTEXT_WINDOW: "1.28e+05" }).compactionContextWindow,
 			128000,
 		);
+	});
+});
+
+describe("PI_RUNTIME_COMPACTION_TARGET_RATIO（审计 P0-①：触发点 = 窗口比例口径）", () => {
+	it("默认 0.7", () => {
+		assert.equal(loadRuntimeConfig({}).compaction.targetRatio, 0.7);
+	});
+	it("显式 RESERVE_TOKENS 存在时 ratio 失效（旧口径优先）", () => {
+		const cfg = loadRuntimeConfig({
+			PI_RUNTIME_COMPACTION_RESERVE_TOKENS: "16384",
+			PI_RUNTIME_COMPACTION_TARGET_RATIO: "0.7",
+		});
+		assert.equal(cfg.compaction.targetRatio, undefined);
+		assert.equal(cfg.compaction.reserveTokens, 16384);
+	});
+	it("非法 ratio（0 / 1 / 负数 / 非数字）回退 undefined（= 旧口径）；空串 = 未配置 → 默认 0.7", () => {
+		const at = (raw: string) => loadRuntimeConfig({ PI_RUNTIME_COMPACTION_TARGET_RATIO: raw }).compaction.targetRatio;
+		assert.equal(at("0"), undefined);
+		assert.equal(at("1"), undefined);
+		assert.equal(at("-0.5"), undefined);
+		assert.equal(at("abc"), undefined);
+		assert.equal(at(""), 0.7);
+	});
+	it("合法 ratio（0.6）生效", () => {
+		assert.equal(loadRuntimeConfig({ PI_RUNTIME_COMPACTION_TARGET_RATIO: "0.6" }).compaction.targetRatio, 0.6);
+	});
+});
+
+describe("effectiveCompactionSettings（审计 P0-①）", () => {
+	const BASE = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000, targetRatio: 0.7 };
+	it("1M 窗口：触发点 = 70%（reserve=300k）", () => {
+		const s = effectiveCompactionSettings(BASE, 1_000_000);
+		assert.equal(s.reserveTokens, 300_000);
+		assert.equal(s.keepRecentTokens, 20_000);
+		assert.equal(s.enabled, true);
+	});
+	it("128k 窗口（生产 compactionContextWindow 覆盖值）：reserve=38.4k，两渠道口径拉齐", () => {
+		assert.equal(effectiveCompactionSettings(BASE, 128_000).reserveTokens, 38_400);
+	});
+	it("targetRatio undefined：走旧 reserveTokens（16_384）", () => {
+		const s = effectiveCompactionSettings({ ...BASE, targetRatio: undefined }, 1_000_000);
+		assert.equal(s.reserveTokens, 16_384);
+	});
+	it("极小窗口：clamp 到 window − keepRecent − 1，不产生负数 / 永不触发", () => {
+		const s = effectiveCompactionSettings(BASE, 8_192);
+		assert.ok(s.reserveTokens < 8_192, `reserve=${s.reserveTokens} 必须 < window`);
+		assert.ok(s.reserveTokens >= 0);
+	});
+	it("keepRecent 大于窗口一半时先缩 keepRecent 再算 cap", () => {
+		const s = effectiveCompactionSettings({ ...BASE, keepRecentTokens: 20_000 }, 30_000);
+		assert.ok(s.keepRecentTokens <= 15_000);
+	});
+	it("enabled=false：透传关闭，不掺和窗口计算", () => {
+		const s = effectiveCompactionSettings({ ...BASE, enabled: false }, 1_000_000);
+		assert.equal(s.enabled, false);
 	});
 });

@@ -5,11 +5,17 @@
  * session-manager / model-assembly / index 三处），新增参数无处可放。
  */
 import { join } from "node:path";
+import type { CompactionSettings } from "@earendil-works/pi-agent-core";
 
 export interface CompactionConfig {
 	enabled: boolean;
 	reserveTokens: number;
 	keepRecentTokens: number;
+	/**
+	 * 触发点 = 有效窗口 × targetRatio（审计 P0-①，行业口径 0.6~0.7）。
+	 * 显式设置 PI_RUNTIME_COMPACTION_RESERVE_TOKENS 时本字段失效（旧口径优先）。
+	 */
+	targetRatio?: number;
 }
 
 export interface RuntimeConfig {
@@ -37,8 +43,9 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
 	sweepIntervalMs: 300_000,
 	sessionsMaxBytes: 3_221_225_472,
 	sessionsMaxCount: 200,
-	// 与 vendor DEFAULT_COMPACTION_SETTINGS 同值：显式化以便配置面可见可调
-	compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 },
+	// 与 vendor DEFAULT_COMPACTION_SETTINGS 同值：显式化以便配置面可见可调。
+	// targetRatio 0.7：触发点 = 有效窗口 70%（agnes 与 BYOK 两渠道口径拉齐，审计 P0-①）。
+	compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000, targetRatio: 0.7 },
 };
 
 /** 正整数解析：非法（非数字 / 0 / 负数 / 空）一律回退，小数截断。
@@ -75,18 +82,61 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		sweepIntervalMs: parsePositiveInt(env.PI_RUNTIME_SESSION_SWEEP_MS, d.sweepIntervalMs),
 		sessionsMaxBytes: parsePositiveInt(env.PI_RUNTIME_SESSIONS_MAX_BYTES, d.sessionsMaxBytes),
 		sessionsMaxCount: parsePositiveInt(env.PI_RUNTIME_SESSIONS_MAX_COUNT, d.sessionsMaxCount),
-		compaction: {
-			enabled: parseBool(env.PI_RUNTIME_COMPACTION_ENABLED, d.compaction.enabled),
-			reserveTokens: parsePositiveInt(env.PI_RUNTIME_COMPACTION_RESERVE_TOKENS, d.compaction.reserveTokens),
-			keepRecentTokens: parsePositiveInt(
+		compaction: (() => {
+			const enabled = parseBool(env.PI_RUNTIME_COMPACTION_ENABLED, d.compaction.enabled);
+			const reserveTokens = parsePositiveInt(env.PI_RUNTIME_COMPACTION_RESERVE_TOKENS, d.compaction.reserveTokens);
+			const keepRecentTokens = parsePositiveInt(
 				env.PI_RUNTIME_COMPACTION_KEEP_RECENT_TOKENS,
 				d.compaction.keepRecentTokens,
-			),
-		},
+			);
+			// 显式 RESERVE_TOKENS = 旧口径（审计前行为），targetRatio 失效——两者只留一个权威。
+			if (env.PI_RUNTIME_COMPACTION_RESERVE_TOKENS !== undefined && env.PI_RUNTIME_COMPACTION_RESERVE_TOKENS.trim() !== "") {
+				return { enabled, reserveTokens, keepRecentTokens, targetRatio: undefined };
+			}
+			const raw = env.PI_RUNTIME_COMPACTION_TARGET_RATIO;
+			let targetRatio = d.compaction.targetRatio;
+			if (raw !== undefined && raw.trim() !== "") {
+				const n = Number(raw);
+				targetRatio = Number.isFinite(n) && n > 0 && n < 1 ? n : undefined;
+			}
+			return { enabled, reserveTokens, keepRecentTokens, targetRatio };
+		})(),
 		// 未配置 / 非法值一律 undefined（= 沿用 model 声明值）。刻意不给 fallback 一个真实数，
 		// 否则「没配」与「配了非法值」不可区分。
 		compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
 	};
+}
+
+/**
+ * 压缩触发的有效设置（审计 P0-①）：触发点 = 有效窗口 × targetRatio。
+ *
+ * reserveTokens 由窗口反推（= window × (1 − ratio)），floor 16384 保住「摘要 prompt +
+ * 输出」的头寸语义，cap = window − keepRecent − 1 防极小窗口出现负数 / 永不触发。
+ * window 必须传**有效窗口**（compactionContextWindow ?? model.contextWindow）——与
+ * post-run hook 的 decideCompaction 同一分母，两条触发路径口径才一致。
+ * targetRatio 缺失/非法时走旧口径（显式 reserveTokens），行为与审计前逐字节一致。
+ */
+export function effectiveCompactionSettings(
+	compaction: CompactionConfig,
+	contextWindow: number,
+): CompactionSettings {
+	if (!compaction.enabled) {
+		return { enabled: false, reserveTokens: 0, keepRecentTokens: compaction.keepRecentTokens };
+	}
+	if (compaction.targetRatio === undefined || compaction.targetRatio <= 0 || compaction.targetRatio >= 1) {
+		return {
+			enabled: true,
+			reserveTokens: compaction.reserveTokens,
+			keepRecentTokens: compaction.keepRecentTokens,
+		};
+	}
+	const keepRecentTokens = Math.min(compaction.keepRecentTokens, Math.floor(contextWindow / 2));
+	// round 而非 ceil：1M×0.3 在浮点下是 300000.00000000006，ceil 会多出 1（可观测性断言会咬）。
+	const byRatio = Math.round(contextWindow * (1 - compaction.targetRatio));
+	// cap 在 floor 之内收敛：极小窗口（如 BYOK 自报 8k）下 floor 会让 reserve ≥ window（永不触发），
+	// 此时取 cap 本身——压缩几乎立即触发是 8k 窗口下唯一安全的行为，但绝不产生负数。
+	const reserveTokens = Math.min(Math.max(byRatio, 16_384), contextWindow - keepRecentTokens - 1);
+	return { enabled: true, reserveTokens, keepRecentTokens };
 }
 
 /** B-1/B-5：阻塞式确认类工具开关（ask_user / propose_generation）。off = 退回非阻塞 v1 行为。 */
