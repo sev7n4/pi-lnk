@@ -1059,12 +1059,18 @@ describe("SessionManager 压缩 deadline（Important #2：会话不得被永久�
 describe("SessionManager activity 广播（决策 8 · 正在做什么）", () => {
 	/** 可 emit 的替换 harness（与 seq 用例同款，作用域内自持，不依赖其它 describe 的局部 helper）。 */
 	function activityHarness() {
-		const handlers = new Map<string, (evt: { lane?: string; toolName?: string }) => void>();
+		const handlers = new Map<
+			string,
+			(evt: { lane?: string; toolName?: string; toolCallId?: string; status?: string }) => void
+		>();
 		const fakeHarnessFactory = async () =>
 			({
 				harness: {
 					events: {
-						on: (type: string, handler: (evt: { lane?: string; toolName?: string }) => void) => {
+						on: (
+							type: string,
+							handler: (evt: { lane?: string; toolName?: string; toolCallId?: string; status?: string }) => void,
+						) => {
 							handlers.set(String(type), handler);
 							return () => {};
 						},
