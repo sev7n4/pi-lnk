@@ -19,10 +19,12 @@ describe('toolPresentation（P1 注册表）', () => {
     expect(presentToolStep(step({ label: '', status: 'running', meta: { toolName: 'propose_generation', args: '2 个节点' } })))
       .toEqual({ icon: '🖼️', label: '提议生成 · 2 个节点' })
   })
-  it('run_ 前缀与未知工具兜底', () => {
+  it('run_ 前缀与未知工具兜底（P0 决策 5：未知一律降级「处理中」，不吐内部名）', () => {
     expect(presentToolStep(step({ status: 'done', meta: { toolName: 'run_image_generation' } })).icon).toBe('🎨')
+    expect(presentToolStep(step({ status: 'done', meta: { toolName: 'run_image_generation' } })).label)
+      .toBe('生成 · image_generation')
     expect(presentToolStep(step({ status: 'done', meta: { toolName: 'mystery_tool' } })))
-      .toEqual({ icon: '⚙', label: '调用 mystery_tool' })
+      .toEqual({ icon: '⚙', label: '处理中' })
   })
   it('meta.args 缺失时从 label 后缀解析（reducer 只把 args 写进 label）', () => {
     expect(presentToolStep(step({ label: '调用 get_canvas_summary · 3 个节点', meta: { toolName: 'get_canvas_summary' } })))
@@ -77,6 +79,9 @@ describe('TOOL_PRESENTATION 全量覆盖（P1#3）', () => {
     'upload_media_to_canvas', 'grid_slice_image', 'connect_nodes', 'introduce_nodes_to_agent',
     'cancel_generation', 'load_skill', 'ask_user', 'arrange_nodes',
     'focus_node', 'focus_nodes', 'undo', 'redo', 'open_image_editor',
+    // P0 决策 5 补齐：B-N 批次后注册的运行时工具（权威清单见 services/pi-runtime/src/tools/*.ts）
+    'delete_nodes', 'remove_edges', 'read_document', 'save_memory', 'recall_memory',
+    'update_node', 'list_model_options', 'web_search', 'web_fetch',
   ] as const
 
   it('每个本地 runtime 工具都有展示条目', () => {

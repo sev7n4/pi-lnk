@@ -10,6 +10,8 @@ import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 const props = defineProps<{
   trace: ExecutionTraceState
   streaming?: boolean
+  /** 钉底模式（本轮活体过程）：只渲染一行「N 步 · 最新人话」摘要，点开展开，不渲染底部分隔线。 */
+  dense?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -94,6 +96,16 @@ function stepDisplay(step: ExecutionStep): string {
 
 const summaryLine = computed(() => turnSummaryLine(props.trace))
 
+/** dense（钉底）头行：`N 步 · 最新：<icon> <人话>`，不重复「执行过程」四个字——状态行已承载。 */
+const denseHeadline = computed(() => {
+  const visible = props.trace.steps.filter((s) => s.kind !== 'phase')
+  const last = visible[visible.length - 1]
+  if (!last) return props.streaming ? '正在准备…' : '执行过程'
+  const shown = presentToolStep(last)
+  const prefix = visible.length > 1 ? `${visible.length} 步 · ` : ''
+  return `${prefix}正在${shown.label}`
+})
+
 /** P1#4 阶段徽章：从 trace 步骤纯派生（仅流式期间显示）。 */
 const phaseBadge = computed(() => {
   const p = derivePhase(props.trace.steps)
@@ -102,7 +114,11 @@ const phaseBadge = computed(() => {
 </script>
 
 <template>
-  <div v-if="showTrace" class="agent-trace mt-1.5 border-t border-white/10 pt-1.5">
+  <div
+    v-if="showTrace"
+    class="agent-trace"
+    :class="dense ? 'mb-1' : 'mt-1.5 border-t border-white/10 pt-1.5'"
+  >
     <button
       type="button"
       class="agent-trace-toggle flex w-full items-center gap-1 text-left text-[11px] text-[var(--neo-text-muted)] hover:text-[var(--neo-text-primary)]"
@@ -114,8 +130,8 @@ const phaseBadge = computed(() => {
         class="mr-1 inline-flex items-center gap-0.5 rounded-full bg-[var(--neo-panel)] px-1.5 py-0.5"
         data-testid="phase-badge"
       >{{ phaseBadge.icon }} {{ phaseBadge.label }}</span>
-      <span>{{ headerLabel }}</span>
-      <span v-if="durationLabel && !expanded" class="opacity-70">{{ durationLabel }}</span>
+      <span :data-testid="dense ? 'trace-headline-dense' : 'trace-headline'">{{ dense ? denseHeadline : headerLabel }}</span>
+      <span v-if="durationLabel && !expanded && !dense" class="opacity-70">{{ durationLabel }}</span>
     </button>
     <div v-if="expanded" class="mt-1 space-y-2 pl-4">
       <section v-if="stepCount > 0" data-testid="operation-section">

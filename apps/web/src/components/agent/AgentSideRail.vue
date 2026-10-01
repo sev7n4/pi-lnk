@@ -87,7 +87,6 @@ import {
   selectableImageTypes,
   filterAssistantVisibleText,
   filterUserVisibleText,
-  isMachineOnlyVisibleText,
   buildClientDeliveryGroups,
   resolveGatePrimaryActionLabel,
   type AgentInterruptPayload,
@@ -137,6 +136,8 @@ import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTi
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
 import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
+import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
+import { describeActivity } from '@/components/agent/activityLine'
 import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
@@ -275,11 +276,12 @@ function visibleUserContent(msg: AgentStreamMessage): string {
   return filterUserVisibleText(msg.content ?? '')
 }
 
+/**
+ * P0 决策 2：零内容不渲染气泡（判定在 bubbleVisibility.ts，纯函数可单测）。
+ * 阻塞等待期不产生 token，旧实现「流式恒 true」会留下一个空白气泡 + 闪烁光标 = 白块。
+ */
 function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
-  if (msg.streaming) return true
-  if (msg.role === 'assistant') return Boolean(visibleAssistantContent(msg).trim())
-  if (msg.role === 'user') return !isMachineOnlyVisibleText(msg.content ?? '')
-  return Boolean((msg.content ?? '').trim())
+  return hasBubbleContent(msg)
 }
 
 function shouldRenderSchemeDraftProse(msg: AgentStreamMessage): boolean {
@@ -489,6 +491,19 @@ function isLiveTurnMessage(msg: AgentStreamMessage): boolean {
   return Boolean(msg.streaming) || Boolean(msg.executionTrace) || showTaskCard.value
 }
 
+/**
+ * P0 决策 1：活体过程的归属 —— 本轮活跃时钉在 composer 上方（R2），
+ * 回合收束（无流式 + 无任务卡）后沉降回气泡末尾（R1 折叠区）。
+ * ⚠️ 同一个判定必须同时用在「钉底渲染」和「气泡内渲染」两处：
+ * 否则收束那一瞬间过程卡会在两处各渲染一份。
+ */
+const liveTrace = computed(() => {
+  const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
+  if (!last?.executionTrace) return null
+  const active = agent.isStreaming || showTaskCard.value || Boolean(last.streaming)
+  return active ? last.executionTrace : null
+})
+
 function canvasOutputsForMessage(msg: AgentStreamMessage) {
   return resolveMessageOutputs({
     linkedOutputs: msg.linkedOutputs,
@@ -654,12 +669,17 @@ const turnStatus = computed(() => {
     textIdleMs: nowSec.value - agent.lastTextDeltaAt,
   })
   const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
+  // 「正在做什么」：优先 runtime 下发的 activity（P1 决策 8）；当前轮没有则拿 trace 最新一步人话；
+  // 都拿不到时 turnStatusLine 内部降级为「处理中」，绝不把内部工具名吐给用户（决策 3 / 5）。
+  const traceActivity = describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
   return turnStatusLine({
     isStreaming: agent.isStreaming,
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
     now: nowSec.value,
     waiting,
     waitingTool: agent.blockingWait?.toolName ?? null,
+    waitingDeadline: agent.blockingWait?.deadlineAt ?? null,
+    activity: traceActivity,
     lastFailed,
   })
 })
@@ -2288,11 +2308,18 @@ function handleEvent(event: { type: string; data: unknown }) {
         toolName?: string
         callId?: string
         nodeId?: string
+        timeoutMs?: number
       }
       if (d.status === 'resolved' || !d.toolName) {
         agent.setBlockingWait(null)
       } else {
-        agent.setBlockingWait({ toolName: d.toolName, callId: d.callId, nodeId: d.nodeId })
+        // timeoutMs 是等待总时长（线上 300000）：以收到事件的时刻为起点算取消时刻，前端倒计时才有可比性
+        agent.setBlockingWait({
+          toolName: d.toolName,
+          callId: d.callId,
+          nodeId: d.nodeId,
+          timeoutMs: d.timeoutMs,
+        })
       }
       break
     }
@@ -2782,6 +2809,7 @@ defineExpose({
               :class="msg.role === 'user' ? 'agent-turn--user' : 'agent-turn--assistant'"
             >
               <div
+                v-if="shouldShowMessageBubbleText(msg)"
                 class="agent-bubble text-[13px] leading-relaxed"
                 :class="msg.role === 'user' ? 'agent-bubble-user' : 'agent-bubble-assistant'"
               >
@@ -2809,12 +2837,12 @@ defineExpose({
                     <button type="button" class="agent-edit-btn agent-edit-btn--primary" @click="sendEditedUserMessage(msg)">发送</button>
                   </span>
                 </p>
-                <p v-else-if="shouldShowMessageBubbleText(msg)" class="whitespace-pre-wrap">
+                <p v-if="hasBubbleText(msg)" class="whitespace-pre-wrap">
                   {{
                     msg.role === 'user'
                       ? visibleUserContent(msg)
                       : visibleAssistantContent(msg)
-                  }}<span v-if="msg.streaming" class="animate-pulse">▊</span>
+                  }}<span v-if="msg.streaming && hasBubbleText(msg)" class="animate-pulse">▊</span>
                   <span
                     v-if="msg.role === 'assistant' && msg.executionTrace?.totalMs != null && !msg.streaming"
                     class="ml-1 text-[11px] opacity-60"
@@ -2848,7 +2876,7 @@ defineExpose({
                   @focus-all="onFocusAll($event)"
                 />
                 <AgentExecutionTrace
-                  v-if="msg.role === 'assistant' && msg.executionTrace"
+                  v-if="msg.role === 'assistant' && msg.executionTrace && !liveTrace"
                   :trace="msg.executionTrace"
                   :streaming="Boolean(msg.streaming)"
                   @focus-node="onFocusNode($event)"
@@ -3001,6 +3029,15 @@ defineExpose({
             class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1"
             :class="{ 'agent-input-area--scrollable': hasDockPresentation }"
           >
+            <!-- 活体过程卡：钉在 composer 上方（P0 决策 1）；回合收束后由上面的气泡内 trace 接管 -->
+            <AgentExecutionTrace
+              v-if="liveTrace"
+              class="agent-live-trace mb-1"
+              :trace="liveTrace"
+              :streaming="agent.isStreaming"
+              dense
+              @focus-node="onFocusNode($event)"
+            />
             <p
               v-if="turnStatus"
               class="agent-turn-status mx-0.5 mb-1 text-[11px]"
@@ -3008,6 +3045,7 @@ defineExpose({
               data-testid="turn-status-line"
             >
               {{ turnStatus.text }}
+              <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
             </p>
             <div
               v-if="showCancelledCallout"

@@ -64,7 +64,16 @@ export const useAgentStore = defineStore('agent', () => {
    * 与 proposePendingConfirm 的分工：后者靠 tool_result 反推（阻塞模式下太晚），
    * 本字段由后端在**等待开始**即下发 —— 等待期状态行收口的唯一可靠信号。
    */
-  const blockingWait = ref<{ toolName: string; callId?: string; nodeId?: string } | null>(null)
+  /**
+   * `deadlineAt` = 自动取消时刻（waiting_user 的 timeoutMs 起点）。
+   * 状态行进二阶（决策 6）：显示「还剩 N 分钟自动取消」，让用户判断要不要先处理。
+   */
+  const blockingWait = ref<{
+    toolName: string
+    callId?: string
+    nodeId?: string
+    deadlineAt?: number
+  } | null>(null)
   /** P1 状态行：最近一次 text_delta 时间戳（waiting 文本静默 ≥2s 判定用） */
   const lastTextDeltaAt = ref(0)
   /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
@@ -279,8 +288,20 @@ export const useAgentStore = defineStore('agent', () => {
    * 阻塞等待置位/清位（`waiting_user` 事件，2026-10-01）。
    * `status:"resolved"` 或空工具名一律清位——宁可少显示等待，也不要卡在「等待你确认」。
    */
-  function setBlockingWait(wait: { toolName: string; callId?: string; nodeId?: string } | null) {
-    blockingWait.value = wait && wait.toolName ? wait : null
+  /** 缺省 300000ms 与线上 `ASK_USER_TIMEOUT_MS` 对齐（runtime 未下发 timeoutMs 时的兜底）。 */
+  const BLOCKING_WAIT_DEFAULT_TIMEOUT_MS = 300_000
+
+  function setBlockingWait(
+    wait: { toolName: string; callId?: string; nodeId?: string; timeoutMs?: number } | null,
+  ) {
+    if (!wait?.toolName) {
+      blockingWait.value = null
+      return
+    }
+    blockingWait.value = {
+      ...wait,
+      deadlineAt: Date.now() + (wait.timeoutMs ?? BLOCKING_WAIT_DEFAULT_TIMEOUT_MS),
+    }
   }
 
   function parseAttachments(raw: string | undefined): SidebarAttachment[] | undefined {

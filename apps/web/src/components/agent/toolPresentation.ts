@@ -31,8 +31,18 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   upload_media_to_canvas: { icon: '📤', verb: '上传素材' },
   grid_slice_image: { icon: '🔲', verb: '九宫格切图' },
   connect_nodes: { icon: '🔗', verb: '连接节点' },
+  remove_edges: { icon: '🔌', verb: '删除连线' },
   introduce_nodes_to_agent: { icon: '🧲', verb: '引入画布节点' },
   cancel_generation: { icon: '⏹', verb: '取消生成' },
+  delete_nodes: { icon: '🗑', verb: '删除节点' },
+  update_node: { icon: '✏️', verb: '更新节点' },
+  // 感知 / 记忆 / 文档（B-N 批次）
+  web_search: { icon: '🌐', verb: '联网搜索' },
+  web_fetch: { icon: '🧾', verb: '抓取网页' },
+  read_document: { icon: '📄', verb: '读取文档' },
+  save_memory: { icon: '🧷', verb: '记入记忆' },
+  recall_memory: { icon: '🔎', verb: '回忆记忆' },
+  list_model_options: { icon: '🎛', verb: '查看可用模型' },
   // ui_command / skill
   load_skill: { icon: '⚡', verb: '加载技能' },
   ask_user: { icon: '❓', verb: '向你确认' },
@@ -70,9 +80,10 @@ export function presentToolStep(step: {
   if (!name) return { icon: FALLBACK_ICON, label: step.label || '执行步骤' }
   const hit = TOOL_PRESENTATION[name]
   if (!hit) {
-    // run_ 前缀（生成类）→ 🎨；其余兜底 ⚙ 调用 {name}
+    // run_ 前缀（生成类）→ 🎨；其余未登记工具降级「处理中」——
+    // 把 `upsert_media_node` 这类内部名吐给用户等于没说（决策 5），细节留在线索里。
     if (name.startsWith('run_')) return { icon: RUN_PREFIX_ICON, label: `生成 · ${name.slice(4)}` }
-    return { icon: FALLBACK_ICON, label: `调用 ${name}` }
+    return { icon: FALLBACK_ICON, label: '处理中' }
   }
   const args = step.meta?.args ?? argsFromLabel(name, step.label)
   return { icon: hit.icon, label: args ? `${hit.verb} · ${args}` : hit.verb }
