@@ -56,6 +56,7 @@ import {
   resolveAtomicConfirmNodeId,
   resolvePendingConfirmNodeId,
 } from '@/components/agent/agentChipSet'
+import { resolveProposeCancelNodeId } from '@/components/agent/proposeWaitActions'
 import {
   chipSetFromInterrupt,
   interruptPayloadFromThreadState,
@@ -656,6 +657,17 @@ const proposeWait = computed(() =>
 function locateProposeNode() {
   const nodeId = proposeWait.value?.nodeId
   if (nodeId) onFocusNode(nodeId)
+}
+
+/**
+ * 琥珀卡取消（2026-10-01）：只拒绝该节点的生成提议（clear-propose → 节点回 draft，
+ * runtime 轮询判 rejected → run 恢复继续对话）；绝不是中止整个 run —— 那是
+ * composer「停止」的语义。等待期流式守卫刻意不设（与 locateProposeNode 一致）。
+ */
+function cancelBlockingPropose() {
+  const nodeId = resolveProposeCancelNodeId(agent.blockingWait)
+  if (!nodeId) return
+  emit('clearProposeGeneration', nodeId)
 }
 
 /**
@@ -2965,15 +2977,26 @@ defineExpose({
                   已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
                 </p>
               </div>
-              <button
-                v-if="proposeWait.nodeId"
-                type="button"
-                class="mt-1.5 rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
-                data-testid="propose-wait-locate"
-                @click="locateProposeNode"
-              >
-                定位该节点
-              </button>
+              <div class="mt-1.5 flex items-center gap-1.5">
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                  data-testid="propose-wait-locate"
+                  @click="locateProposeNode"
+                >
+                  定位该节点
+                </button>
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                  data-testid="propose-wait-cancel"
+                  @click="cancelBlockingPropose"
+                >
+                  取消
+                </button>
+              </div>
             </div>
             <AgentTaskProgressCard
               v-if="showTaskCardAtComposer"
