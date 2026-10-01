@@ -1228,7 +1228,7 @@ describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () =
 	}
 	const tieringConfig = () => ({ ...testConfig(), toolTiering: true });
 
-	it("tiering-on：tools 收窄为常驻集 + load_tools，activeToolNames 同步", async () => {
+	it("tiering-on：全量注册（含延迟工具），activeToolNames 收窄为常驻 + tool_search", async () => {
 		const h = makeEmittableHarnessFactory2();
 		const sm = new SessionManager(
 			[{ name: "t_probe" } as never, { name: "get_canvas_summary" } as never],
@@ -1241,12 +1241,14 @@ describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () =
 		);
 		await sm.create("s-tiering", { systemPrompt: "BASE" });
 		const toolNames = (h.captured!.tools as Array<{ name: string }>).map((t) => t.name);
-		assert.deepEqual(toolNames.sort(), ["get_canvas_summary", "load_tools"]);
+		// 官方模式：延迟工具也注册进 config.tools（generation 只下发 active 的 schema）
+		assert.deepEqual(toolNames.sort(), ["get_canvas_summary", "t_probe", "tool_search"]);
 		const active = (h.captured!.activeToolNames as string[]).slice().sort();
-		assert.deepEqual(active, ["get_canvas_summary", "load_tools"]);
+		// 初始激活只含常驻 + loader；t_probe 要靠 tool_search 的 addedToolNames 激活
+		assert.deepEqual(active, ["get_canvas_summary", "tool_search"]);
 	});
 
-	it("tiering-on：staticPrompt 索引块恰好出现一次", async () => {
+	it("tiering-on：staticPrompt 不含延迟工具索引块（官方模式不给名单，发现靠 tool_search 搜索）", async () => {
 		const h = makeEmittableHarnessFactory2();
 		const sm = new SessionManager(
 			[{ name: "t_probe" } as never],
@@ -1259,9 +1261,7 @@ describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () =
 		);
 		await sm.create("s-tiering-once", { systemPrompt: "BASE" });
 		const prompt = await (h.captured!.systemPrompt as (tc: unknown) => Promise<string> | string)({});
-		const count = (String(prompt).match(/以下工具未加载完整定义/g) ?? []).length;
-		assert.equal(count, 1);
-		assert.match(String(prompt), /t_probe/);
+		assert.equal(String(prompt).match(/以下工具未加载完整定义/g)?.length ?? 0, 0);
 	});
 });
 

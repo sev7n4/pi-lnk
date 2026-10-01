@@ -1,16 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Type } from "typebox";
-import { splitTools, buildDeferredIndexBlock, ALWAYS_ON_TOOL_NAMES } from "./tiering.js";
+import { buildToolEnsemble, createLoadToolsTool, ALWAYS_ON_TOOL_NAMES } from "./tiering.js";
 import type { LnkpiTool } from "./types.js";
 
-/** 最小 LnkpiTool 替身（只补 splitTools/load_tools 消费的字段）。 */
-function fakeTool(name: string): LnkpiTool {
+/** 最小 LnkpiTool 替身（只补 buildToolEnsemble/tool_search 消费的字段）。 */
+function fakeTool(name: string, summary?: string): LnkpiTool {
 	return {
 		tier: "read",
 		name,
 		label: name,
-		description: `desc of ${name}`,
+		description: summary ?? `desc of ${name}`,
 		parameters: Type.Object({}),
 		execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }),
 	} as never;
@@ -66,19 +66,26 @@ const ALL_NAMES = [
 	"remove_edges",
 	"save_memory",
 ];
-const fakeTools = () => ALL_NAMES.map(fakeTool);
+const fakeTools = () =>
+	ALL_NAMES.map((n) => fakeTool(n, n === "arrange_nodes" ? "整理画布节点布局" : undefined));
 
-describe("splitTools（审计 P0-④：常驻/延迟分层）", () => {
-	it("常驻 + 延迟 = 全集，无交集", () => {
-		const { alwaysActive, deferred } = splitTools(fakeTools(), true);
-		assert.equal(alwaysActive.length + deferred.length, ALL_NAMES.length);
-		const active = new Set(alwaysActive.map((t) => t.name));
-		for (const d of deferred) assert.ok(!active.has(d.name));
+describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始激活集）", () => {
+	it("enabled：延迟工具必须留在 registered（vendor ai 层 deferred 机制的前提），activeToolNames 只含常驻 + tool_search", () => {
+		const e = buildToolEnsemble(fakeTools(), true);
+		const registered = new Set(e.registered.map((t) => t.name));
+		for (const n of ALL_NAMES) assert.ok(registered.has(n), `${n} 必须注册进 config.tools`);
+		const active = new Set(e.activeToolNames);
+		for (const d of ["duplicate_node", "save_memory", "undo", "arrange_nodes", "delete_nodes"]) {
+			assert.ok(!active.has(d), `${d} 初始不得激活`);
+		}
+		assert.ok(active.has("tool_search"));
+		assert.equal(e.registered.length, ALL_NAMES.length + 1);
+		assert.equal(e.activeToolNames.length, ALL_NAMES.filter((n) => ALWAYS_ON_TOOL_NAMES.has(n)).length + 1);
 	});
 
 	it("核心链路工具必须常驻（prompt 规则 4/5 引用的不可延迟）", () => {
-		const { alwaysActive } = splitTools(fakeTools(), true);
-		const names = new Set(alwaysActive.map((t) => t.name));
+		const e = buildToolEnsemble(fakeTools(), true);
+		const names = new Set(e.activeToolNames);
 		for (const n of [
 			"upsert_media_node",
 			"set_node_text",
@@ -95,73 +102,80 @@ describe("splitTools（审计 P0-④：常驻/延迟分层）", () => {
 		}
 	});
 
-	it("enabled=false：全部常驻、无 load_tools、无索引块（逐字节现状）", () => {
-		const r = splitTools(fakeTools(), false);
-		assert.equal(r.alwaysActive.length, ALL_NAMES.length);
-		assert.equal(r.deferred.length, 0);
-		assert.equal(r.loadToolsTool, undefined);
-		assert.equal(r.deferredIndexBlock, "");
-	});
-
-	it("有延迟工具时返回 load_tools（tier=skill，常驻名单收录其名）", () => {
-		const { loadToolsTool } = splitTools(fakeTools(), true);
-		assert.ok(loadToolsTool);
-		assert.equal(loadToolsTool!.name, "load_tools");
-		assert.equal(loadToolsTool!.tier, "skill");
-		assert.ok(ALWAYS_ON_TOOL_NAMES.has("load_tools"));
+	it("enabled=false：全量注册且全量激活、无 tool_search（kill switch 逐字节现状）", () => {
+		const e = buildToolEnsemble(fakeTools(), false);
+		assert.equal(e.registered.length, ALL_NAMES.length);
+		assert.deepEqual(e.activeToolNames.slice().sort(), ALL_NAMES.slice().sort());
+		assert.ok(!e.registered.some((t) => t.name === "tool_search"));
 	});
 });
 
-describe("load_tools（vendor addedToolNames 原生激活）", () => {
-	it("合法名单 → addedToolNames 原样返回，content 为确认文本", async () => {
-		const { loadToolsTool, deferred } = splitTools(fakeTools(), true);
-		const target = deferred[0].name;
-		const res = await loadToolsTool!.execute("call-1", { tools: [target] } as never, () => {}, undefined as never, {} as never, undefined as never);
-		assert.deepEqual(res.addedToolNames, [target]);
-		const text = res.content[0].type === "text" ? res.content[0].text : "";
-		assert.match(text, new RegExp(target));
+describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames 原生激活）", () => {
+	const setup = () => {
+		const e = buildToolEnsemble(fakeTools(), true);
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		const deferredNames = ALL_NAMES.filter((n) => !ALWAYS_ON_TOOL_NAMES.has(n));
+		return { loader, deferredNames };
+	};
+	const run = (loader: LnkpiTool, p: unknown) =>
+		loader.execute("call-1", p as never, () => {}, undefined as never, {} as never, undefined as never);
+	const textOf = (res: { content: Array<{ type: string; text?: string }> }) =>
+		res.content[0].type === "text" ? (res.content[0].text ?? "") : "";
+
+	it("关键词命中 → addedToolNames 只含延迟集命中项，content 确认", async () => {
+		const { loader, deferredNames } = setup();
+		const res = await run(loader, { query: "memory" });
+		assert.ok(res.addedToolNames && res.addedToolNames.length > 0);
+		for (const n of res.addedToolNames!) {
+			assert.ok(deferredNames.includes(n), `${n} 必须来自延迟集（常驻工具不该被 loader 激活）`);
+		}
+		assert.ok(res.addedToolNames!.includes("save_memory"));
+		const text = textOf(res);
+		assert.match(text, /已加载/);
+		assert.match(text, /save_memory/);
 	});
 
-	it("未知名 → 文本报错列出可加载清单，addedToolNames 为空（不激活）", async () => {
-		const { loadToolsTool, deferred } = splitTools(fakeTools(), true);
-		const res = await loadToolsTool!.execute("call-2", { tools: ["no_such_tool"] } as never, () => {}, undefined as never, {} as never, undefined as never);
-		const text = res.content[0].type === "text" ? res.content[0].text : "";
-		assert.match(text, /no_such_tool/);
-		for (const d of deferred.slice(0, 3)) assert.match(text, new RegExp(d.name));
+	it("中文关键词命中（按摘要/描述匹配）：「整理」→ arrange_nodes", async () => {
+		const { loader } = setup();
+		const res = await run(loader, { query: "整理" });
+		assert.ok(res.addedToolNames!.includes("arrange_nodes"));
+	});
+
+	it("未命中 → 文本给完整目录（可点名再试），不激活", async () => {
+		const { loader, deferredNames } = setup();
+		const res = await run(loader, { query: "no_such_capability_xyz" });
 		assert.ok(!res.addedToolNames || res.addedToolNames.length === 0);
+		const text = textOf(res);
+		assert.match(text, /没有匹配/);
+		for (const n of deferredNames.slice(0, 5)) assert.match(text, new RegExp(n));
 	});
 
-	it("混合合法 + 未知名 → 保守：只报错不激活（模型重试即可）", async () => {
-		const { loadToolsTool, deferred } = splitTools(fakeTools(), true);
-		const target = deferred[0].name;
-		const res = await loadToolsTool!.execute("call-3", { tools: [target, "bogus"] } as never, () => {}, undefined as never, {} as never, undefined as never);
+	it("空 query → 文本给目录，不激活", async () => {
+		const { loader } = setup();
+		const res = await run(loader, { query: "  " });
 		assert.ok(!res.addedToolNames || res.addedToolNames.length === 0);
+		assert.match(textOf(res), /可选工具目录/);
 	});
 
-	it("重复调用幂等：已加载名再次加载照常返回（激活集合由 vendor 去重）", async () => {
-		const { loadToolsTool, deferred } = splitTools(fakeTools(), true);
-		const target = deferred[0].name;
-		const again = await loadToolsTool!.execute("call-4", { tools: [target] } as never, () => {}, undefined as never, {} as never, undefined as never);
-		assert.deepEqual(again.addedToolNames, [target]);
-	});
-});
-
-describe("buildDeferredIndexBlock", () => {
-	it("每行 name — summary，块内含 load_tools 指引，体积可控", () => {
-		const { deferred } = splitTools(fakeTools(), true);
-		const block = buildDeferredIndexBlock(deferred);
-		assert.match(block, /load_tools/);
-		for (const d of deferred) assert.match(block, new RegExp(`- ${d.name}：`));
-		assert.ok(block.length < 2000, `block length=${block.length}`);
+	it("重复调用幂等：命中再次搜索照常返回（激活集合由 vendor 去重）", async () => {
+		const { loader } = setup();
+		const again = await run(loader, { query: "memory" });
+		assert.ok(again.addedToolNames!.includes("save_memory"));
 	});
 
-	it("空延迟集 → 空串", () => {
-		assert.equal(buildDeferredIndexBlock([]), "");
+	it("多关键词 OR 匹配：「memory undo」同时命中两者", async () => {
+		const { loader } = setup();
+		const res = await run(loader, { query: "memory undo" });
+		assert.ok(res.addedToolNames!.includes("save_memory"));
+		assert.ok(res.addedToolNames!.includes("undo"));
 	});
 });
 
-it("索引块是强指令：明示必须先 load_tools、直调会 unavailable（0.0.29 生产实证：模型会无视引导直调延迟工具）", () => {
-	const { deferredIndexBlock } = splitTools(fakeTools(), true);
-	assert.match(deferredIndexBlock, /必须先调用 load_tools/);
-	assert.match(deferredIndexBlock, /unavailable/);
+describe("loader 描述（官方模式：description 承担发现能力，无 system prompt 名单）", () => {
+	it("loader 描述说明搜索语义，提及未加载/搜索", () => {
+		const e = buildToolEnsemble(fakeTools(), true);
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		assert.match(loader.description, /搜索/);
+		assert.match(loader.description, /未加载/);
+	});
 });
