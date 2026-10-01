@@ -103,6 +103,7 @@ import {
   persistActiveThreadId,
   resolveBootstrapThreadId,
   checkRuntimeHealthViaNest,
+  fetchThreadStateSafe,
   RUNTIME_UNREACHABLE_SNIPPET,
   RECONCILE_MAX_POLLS,
   shouldKeepReconciling,
@@ -2107,21 +2108,6 @@ async function reconnectStream() {
   }
 }
 
-/** P1#11：thread-state 安全拉取（reconcile 终态判定用）。 */
-async function fetchThreadStateSafe(): Promise<{ finished?: boolean | null } | null> {
-  try {
-    const token = localStorage.getItem('token')
-    const res = await fetch(
-      apiUrl(`/api/agent/thread-state?threadId=${encodeURIComponent(agentThreadId.value)}`),
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-    const json = await res.json()
-    return (json?.data ?? null) as { finished?: boolean | null } | null
-  } catch {
-    return null
-  }
-}
-
 /** 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。 */
 async function reconcileLatestAssistant() {
   const pull = async () => {
@@ -2129,6 +2115,8 @@ async function reconcileLatestAssistant() {
       apiUrl(
         `/api/agent/chat/user/messages?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
       ),
+      // 同 thread-state：禁缓存，避免 304 空体让 res.json() 抛错、静默中断回查
+      { cache: 'no-store' },
     )
     const json = await res.json()
     const rows = (json.data || []) as Array<{ role: string; content: string }>
@@ -2147,25 +2135,30 @@ async function reconcileLatestAssistant() {
   try {
     await pull()
     // 终态判定：finished → 停；未完成 → 每次拉取前先查 thread-state，上限 36×5s 兜底
-    // I-2 修复：thread-state 连续 null 达阈值（≈15s）→ 注入不可达告警并 break，
+    // I-2 修复：thread-state 连续读取失败达阈值（≈15s）→ 注入不可达告警并 break，
     // 避免旧 reconcile 删除后失去 pi-runtime 宕机的可见反馈。
+    // 2026-10-01 修正：达阈值后**先做一次真实健康探测**再决定是否告警——
+    // 状态读取失败（304/抖动/单次 5xx）不等于 runtime 不可达，探测健康就必须闭嘴。
     let consecutiveNulls = 0
     for (let i = 0; i < RECONCILE_MAX_POLLS; i++) {
-      const st = await fetchThreadStateSafe()
-      if (st === null) {
-        consecutiveNulls++
-      } else {
+      const read = await fetchThreadStateSafe(agentThreadId.value)
+      if (read.ok) {
         consecutiveNulls = 0
+      } else {
+        consecutiveNulls++
       }
       if (shouldInjectUnreachableSnippet(consecutiveNulls)) {
-        const last = agent.messages[agent.messages.length - 1]
-        if (last?.role === 'assistant' && !last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
-          last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请点击下方「重连」继续。`
-          scrollToBottom()
+        const health = await checkRuntimeHealthViaNest()
+        if (shouldInjectUnreachableSnippet(consecutiveNulls, health)) {
+          const last = agent.messages[agent.messages.length - 1]
+          if (last?.role === 'assistant' && !last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
+            last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请点击下方「重连」继续。`
+            scrollToBottom()
+          }
         }
         break
       }
-      if (!shouldKeepReconciling(st, i)) break
+      if (!shouldKeepReconciling(read.ok ? read.state : null, i)) break
       await new Promise((r) => setTimeout(r, 5_000))
       await pull()
       scrollToBottom()
