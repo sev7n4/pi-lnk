@@ -1,15 +1,23 @@
 /**
- * 工具渐进加载（审计 P0-④，docs/2026-10-01-context-engineering-audit.html）。
+ * 工具渐进加载（审计 P0-④）——0.0.31 起对齐 pi 官方 Dynamic Tool Loading 模式
+ * （vendor coding-agent docs/extensions.md:2365-2402）。
  *
- * 38 个工具 schema 全量每轮进 system prompt 尾部，压缩砍不掉、随工具数单调增长。
- * 本模块把工具拆「常驻 / 延迟」两档，激活机制 100% 用 vendor 原生能力：
- *   1) AgentHarnessOptions.activeToolNames —— 建会话时只激活常驻集，
- *      vendor drive/generation.ts:90 只把 active 工具的 schema 发给 provider；
- *   2) AgentToolResult.addedToolNames —— load_tools 的结果携带名单，
- *      vendor tool-placement.ts:204 自动并入 activeToolNames 并广播 config_update，
- *      自该转录点起持续可用（host 不碰运行态）。
+ * 0.0.29/0.0.30 的教训（生产 E2E 实证）：把「延迟工具名单 + 索引块」塞进 system prompt，
+ * 弱模型会无视引导直调延迟工具（名字就摆在面前），吃 vendor 硬编码的
+ * "Tool X is unavailable"（无恢复路径，host 无法拦截：drive/tools.ts:686 只把 active
+ * 工具传 prepareToolCall，before_tool hook 在其后）后放弃。
  *
- * kill switch：PI_RUNTIME_TOOL_TIERING=off → 全量常驻、无 load_tools、无索引块，
+ * 官方模式的两个关键差异：
+ *   1) **全部工具注册进 config.tools**——延迟工具存在但不在 activeToolNames。
+ *      vendor generation.ts:90 仍只下发 active 工具的 schema（省上下文的目标不变），
+ *      同时 packages/ai 的 provider 级 deferred loading（tool_reference / tool_search_call）
+ *      从此有了生效前提；「配置里存在但未激活」也是官方文档定义的合法形态。
+ *   2) **不给模型名单，给搜索**——loader 语义从「按精确名字加载」改为「按关键词搜索并加载」。
+ *      模型看不到延迟工具的名字 → 没有直调的诱因；需要某能力时先搜再调，
+ *      命中即经 AgentToolResult.addedToolNames 激活（tool-placement.ts:204 原生合并，
+ *      与官方 wrapper 的 setActiveTools 差集通道等价）。
+ *
+ * kill switch：PI_RUNTIME_TOOL_TIERING=off → 全部工具注册且全量激活、无 tool_search，
  * 行为与本模块引入前逐字节一致（Review Focus #4）。
  *
  * 常驻名单的硬约束：prompt 规则 4/5 逐字引用的写链路工具（upsert_media_node /
@@ -52,70 +60,86 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 交互与元
 	"ask_user",
 	"load_skill",
-	"load_tools",
+	"tool_search",
 ]);
 
-export function splitTools(
-	tools: LnkpiTool[],
-	enabled: boolean,
-): {
-	alwaysActive: LnkpiTool[];
-	deferred: LnkpiTool[];
-	loadToolsTool?: LnkpiTool;
-	deferredIndexBlock: string;
-} {
+/** 工具装配结果（对齐 vendor 官方 Dynamic Tool Loading 的两件套）。 */
+export interface ToolEnsemble {
+	/** 注册进 harness config.tools 的全集。enabled 时 = 原工具 + tool_search（延迟工具在内）。 */
+	registered: LnkpiTool[];
+	/** 初始 activeToolNames。enabled 时 = 常驻集 + tool_search；off 时 = 全量（现状语义）。 */
+	activeToolNames: string[];
+}
+
+/**
+ * 装配工具分层。注意与 0.0.30 前的 splitTools 的本质区别：
+ * 延迟工具**留在 registered 里**（generation.ts 只发 active 的 schema，
+ * 注册不等于下发；而 vendor ai 层的 deferred 机制要求工具在 config.tools 里才可能生效）。
+ */
+export function buildToolEnsemble(tools: LnkpiTool[], enabled: boolean): ToolEnsemble {
 	if (!enabled) {
-		return { alwaysActive: tools, deferred: [], deferredIndexBlock: "" };
+		return { registered: tools, activeToolNames: tools.map((t) => t.name) };
 	}
 	const deferred = tools.filter((t) => !ALWAYS_ON_TOOL_NAMES.has(t.name));
-	const alwaysActive = tools.filter((t) => ALWAYS_ON_TOOL_NAMES.has(t.name));
-	const loadToolsTool = deferred.length > 0 ? createLoadToolsTool(deferred) : undefined;
-	return { alwaysActive, deferred, loadToolsTool, deferredIndexBlock: buildDeferredIndexBlock(deferred) };
+	const alwaysNames = tools.filter((t) => ALWAYS_ON_TOOL_NAMES.has(t.name)).map((t) => t.name);
+	if (deferred.length === 0) {
+		return { registered: tools, activeToolNames: alwaysNames };
+	}
+	const loader = createLoadToolsTool(deferred);
+	return {
+		registered: [...tools, loader],
+		activeToolNames: [...alwaysNames, loader.name],
+	};
 }
 
-/** 延迟工具索引块（追加到静态 system prompt）：只有名字 + 一句话摘要，schema 不占位。 */
-export function buildDeferredIndexBlock(deferred: LnkpiTool[]): string {
-	if (deferred.length === 0) return "";
-	const lines = deferred.map((t) => `- ${t.name}：${toolSummary(t)}`);
-		// 强指令（0.0.29 生产实证）：弱引导「需要时调用」会被模型无视、直接硬调延迟工具并吃
-	// unavailable 错误后放弃。明示后果 + 先加载，才能把 load_tools 触发率拉起来。
-	return `\n以下工具未加载完整定义（省上下文）。使用其中任何工具前，必须先调用 load_tools（可一次传多个名字）；跳过 load_tools 直接调用会返回 "unavailable" 错误，届时也请先 load_tools 再重试：\n${lines.join("\n")}`;
-}
-
-/** load_tools 元工具：校验名单 → 结果携带 addedToolNames，vendor 自动激活。 */
+/**
+ * tool_search 元工具（官方 search_tools 语义，对齐 Anthropic tool_search_tool / Claude Code ToolSearch）：关键词搜索延迟目录 → 命中即激活。
+ * 激活 100% 走 vendor 原生：结果携带 addedToolNames，tool-placement 自动并入
+ * activeToolNames 并广播 config_update，自该转录点起持续可用（host 不碰运行态）。
+ */
 export function createLoadToolsTool(deferred: LnkpiTool[]): LnkpiTool {
-	const byName = new Map(deferred.map((t) => [t.name, t] as const));
-	const catalog = deferred.map((t) => t.name).join("、");
+	const catalog = deferred.map((t) => `- ${t.name}：${toolSummary(t)}`).join("\n");
 	return {
 		tier: "skill",
-		name: "load_tools",
-		label: "加载延迟工具",
+		name: "tool_search",
+		label: "搜索并加载工具",
 		description:
-			"按名单加载未激活工具的完整定义。仅接受「未加载工具清单」中列出的名字；加载成功后即可直接调用。传入未知名会整体失败并返回可加载清单。",
+			"按关键词搜索当前未加载（schema 不可见）的工具，并把命中的工具加载为可直接调用。" +
+			"当用户需要的能力不在你现有工具列表里时，先用本工具搜索再行动；" +
+			"query 支持工具名片段或用途关键词（中英文均可，如 memory、grid、整理、undo）。",
 		parameters: Type.Object({
-			tools: Type.Array(Type.String(), { min: 1, description: "要加载的工具名数组" }),
+			query: Type.String({ minLength: 1, description: "关键词（工具名片段或用途描述）" }),
 		}),
-		execute: async (_id, p: { tools: string[] }) => {
-			const requested = Array.isArray(p?.tools) ? p.tools : [];
-			const valid = requested.filter((n) => byName.has(n));
-			const unknown = requested.filter((n) => !byName.has(n));
-			// 保守策略：名单里混入未知名时整体不激活——模型读报错里的清单重试一次即可，
-			// 避免「部分激活」让调用方误以为全部可用（Review Focus #3）。
-			if (unknown.length > 0 || valid.length === 0) {
+		execute: async (_id, p: { query: string }) => {
+			const q = (p?.query ?? "").trim().toLowerCase();
+			// 空查询：不给激活，只给目录——模型据此换关键词或点名加载。
+			if (!q) {
 				return {
-					content: [
-						{
-							type: "text",
-							text: `未知的工具名：${unknown.join("、") || "（空名单）"}。可加载：${catalog}。`,
-						},
-					],
-					details: { loaded: [], unknown },
+					content: [{ type: "text", text: `query 不能为空。可选工具目录：\n${catalog}` }],
+					details: { loaded: [] as string[] },
 				};
 			}
-			const loaded = [...new Set(valid)];
+			const keywords = q.split(/\s+/).filter(Boolean);
+			const matches = deferred.filter((t) => {
+				const hay = `${t.name} ${t.label ?? ""} ${toolSummary(t)} ${t.description ?? ""}`.toLowerCase();
+				return keywords.some((kw) => hay.includes(kw));
+			});
+			// 未命中：返回完整目录（名字+摘要）但不激活——模型下一步可以点名再搜或换词。
+			if (matches.length === 0) {
+				return {
+					content: [{ type: "text", text: `没有匹配「${p.query.trim()}」的工具。完整目录：\n${catalog}` }],
+					details: { loaded: [] as string[] },
+				};
+			}
+			const loaded = matches.map((t) => t.name);
 			return {
 				content: [
-					{ type: "text", text: `已加载 ${loaded.length} 个工具，现在可直接调用：${loaded.join("、")}。` },
+					{
+						type: "text",
+						text:
+							`已加载 ${loaded.length} 个工具，本轮起可直接调用：` +
+							matches.map((t) => `${t.name}（${toolSummary(t)}）`).join("；"),
+					},
 				],
 				details: { loaded, unknown: [] },
 				addedToolNames: loaded,
