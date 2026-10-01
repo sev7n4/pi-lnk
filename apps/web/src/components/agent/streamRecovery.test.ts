@@ -11,6 +11,7 @@ import {
   isStreamStale,
   shouldKeepReconciling,
   shouldInjectUnreachableSnippet,
+  fetchThreadStateSafe,
   RECONCILE_NULL_THRESHOLD,
   STREAM_STALE_MS,
 } from './streamRecovery'
@@ -135,9 +136,80 @@ describe('shouldInjectUnreachableSnippet', () => {
     expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD - 1)).toBe(false)
   })
 
-  it('达阈值或超过注入（pi-runtime 不可达）', () => {
+  it('达阈值或超过注入（未做健康探测 / 探测本身失败 → 无法确认健康）', () => {
     expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD)).toBe(true)
     expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD + 2)).toBe(true)
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD, null)).toBe(true)
+  })
+
+  // 2026-10-01 生产误报：thread-state 连续 3 次 304 空体 → 读取失败，但 runtime 其实健康、出图也成功了。
+  it('健康探测 ok → 即使连续读取失败也不注入（状态读取失败 ≠ 服务不可达）', () => {
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD, { ok: true })).toBe(false)
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD + 5, { ok: true })).toBe(false)
+  })
+
+  it('健康探测明确 not ok → 注入（pi-runtime 真宕机）', () => {
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD, { ok: false })).toBe(true)
+  })
+
+  it('阈值之下即便探测失败也不注入', () => {
+    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD - 1, { ok: false })).toBe(false)
+  })
+})
+
+describe('fetchThreadStateSafe', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  const stubToken = () => vi.stubGlobal('localStorage', { getItem: () => 'tok' })
+
+  it('200 → ok:true 并回传终态', async () => {
+    stubToken()
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ code: 0, data: { finished: true } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const res = await fetchThreadStateSafe('sess:t1')
+    expect(res).toEqual({ ok: true, state: { finished: true } })
+  })
+
+  it('304 空体 → ok:false（不算成功，也不冒充宕机）', async () => {
+    stubToken()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 304,
+        json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')),
+      }),
+    )
+
+    expect(await fetchThreadStateSafe('sess:t1')).toEqual({ ok: false })
+  })
+
+  it('网络异常 → ok:false', async () => {
+    stubToken()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')))
+    expect(await fetchThreadStateSafe('sess:t1')).toEqual({ ok: false })
+  })
+
+  it('请求带 cache:no-store（否则浏览器发 If-None-Match → 304 空体）', async () => {
+    stubToken()
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ code: 0, data: null }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await fetchThreadStateSafe('sess:t1')
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/agent/thread-state?threadId=sess%3At1'),
+      expect.objectContaining({ cache: 'no-store' }),
+    )
   })
 })
 

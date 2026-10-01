@@ -31,14 +31,57 @@ export function shouldKeepReconciling(
 }
 
 /**
- * I-2 修复：reconcile 循环内 fetchThreadStateSafe 连续返回 null 达阈值 → 判定 pi-runtime 不可达。
+ * I-2 修复：reconcile 循环内 thread-state 连续读取失败达阈值 → 判定 pi-runtime 不可达。
  * 3 次 ≈ 15s（每次 fetch 失败约 5s timeout）。达阈值后由调用方注入 RUNTIME_UNREACHABLE_SNIPPET 并 break，
  * 复刻 Task 11 前旧 reconcile 在 30s 后注入告警的行为，避免长时间静默轮询。
  */
 export const RECONCILE_NULL_THRESHOLD = 3
 
-export function shouldInjectUnreachableSnippet(consecutiveNulls: number): boolean {
-  return consecutiveNulls >= RECONCILE_NULL_THRESHOLD
+/**
+ * 线程终态读取结果。`ok:false` 仅代表「这次状态读取失败」，**不等价于 runtime 宕机**（见下）。
+ */
+export type ThreadStateRead =
+  | { ok: true; state: { finished?: boolean | null } | null }
+  | { ok: false }
+
+/**
+ * thread-state 安全拉取（reconcile 终态判定用）。
+ *
+ * `cache:'no-store'` 是硬要求：默认缓存策略下浏览器会带 If-None-Match，Nest 回 304 空体，
+ * `res.json()` 抛错 → 被读成「读取失败」（2026-10-01 生产误报事故根因之一）。
+ */
+export async function fetchThreadStateSafe(threadId: string): Promise<ThreadStateRead> {
+  try {
+    const token = localStorage.getItem('token')
+    const res = await fetch(
+      apiUrl(`/api/agent/thread-state?threadId=${encodeURIComponent(threadId)}`),
+      { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' },
+    )
+    if (!res.ok) return { ok: false }
+    const json = (await res.json()) as { data?: { finished?: boolean | null } | null }
+    return { ok: true, state: json?.data ?? null }
+  } catch {
+    return { ok: false }
+  }
+}
+
+/**
+ * 是否注入「生成服务暂时不可达」告警。
+ *
+ * 判据必须是**真实健康探测结果**，不能只看状态读取失败次数：
+ * 状态读取失败可能来自 304 / 网络抖动 / 单次 5xx，与服务可达无关
+ * （2026-10-01：thread-state 连续 3 次 304 空体 → 误报「生成服务暂时不可达」，而出图其实成功了）。
+ *
+ * @param consecutiveNulls 连续读取失败次数
+ * @param health 真实健康探测结果（checkRuntimeHealthViaNest）；缺省 null = 未探测/探测本身失败
+ *               → 无法确认健康，按不可达处理（保留 I-2 想要的宕机可见性）
+ */
+export function shouldInjectUnreachableSnippet(
+  consecutiveNulls: number,
+  health: { ok: boolean } | null = null,
+): boolean {
+  if (consecutiveNulls < RECONCILE_NULL_THRESHOLD) return false
+  return health?.ok !== true
 }
 
 /**
