@@ -495,6 +495,79 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 	});
 });
 
+/**
+ * 阻塞等待可见化（2026-10-01 生产事故修复）：等待**开始**就要把 `waiting_user` 送到前端。
+ * 反例：等 tool_result 再反推「等待中」——阻塞模式下 result 要等等待结束才发，
+ * 前端整段等待期只能显示「生成回复中 · Ns」（= 用户看到的卡死）。
+ */
+describe("SessionManager.dispatchWaitingUser（阻塞等待广播）", () => {
+	/** 建会话用的最小 fake harness（沿用 P0-③ 用例的同款替身）。 */
+	function smWithSession(canvasSessionId?: string) {
+		const fakeHarnessFactory = async () =>
+			({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			}) as never;
+		return new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+	}
+
+	it("按画布会话 id 命中会话并派发 waiting 事件（含 nodeId/timeoutMs）", async () => {
+		const sm = smWithSession();
+		await sm.create("thread-1", { canvasSessionId: "canvas-9" });
+		const seen: Array<{ type: string; data: unknown }> = [];
+		sm.subscribe("thread-1", (e) => seen.push({ type: e.type, data: e.data }));
+		const hits = sm.dispatchWaitingUser("canvas-9", {
+			status: "waiting",
+			toolName: "propose_generation",
+			callId: "c1",
+			timeoutMs: 300_000,
+			nodeId: "node-7",
+		});
+		assert.equal(hits, 1);
+		assert.equal(seen.length, 1);
+		assert.equal(seen[0]?.type, "waiting_user");
+		assert.deepEqual(seen[0]?.data, {
+			status: "waiting",
+			toolName: "propose_generation",
+			callId: "c1",
+			timeoutMs: 300_000,
+			nodeId: "node-7",
+		});
+	});
+
+	it("resolved 同样广播（前端据此收口等待态）", async () => {
+		const sm = smWithSession();
+		await sm.create("thread-2", { canvasSessionId: "canvas-9" });
+		const seen: string[] = [];
+		sm.subscribe("thread-2", (e) => seen.push(e.type));
+		sm.dispatchWaitingUser("canvas-9", {
+			status: "resolved",
+			toolName: "ask_user",
+			callId: "c2",
+			reason: "answered",
+		});
+		assert.deepEqual(seen, ["waiting_user"]);
+	});
+
+	it("未建 canvasSessionId 时回落 pi 会话键；无匹配会话静默返回 0（不抛错）", async () => {
+		const sm = smWithSession();
+		await sm.create("thread-3", {}); // 无 canvasSessionId → 键回落 pi 会话键（= entry.id，哈希后的键）
+		// 与工具域 / abort 联动同一条取键路径：sessions 的键是 toSessionKey 后的值，不是原始 threadKey
+		const fallbackKey = sm.getCanvasSessionId(toSessionKey("thread-3"));
+		assert.equal(
+			sm.dispatchWaitingUser(fallbackKey, { status: "waiting", toolName: "ask_user", callId: "c3" }),
+			1,
+		);
+		assert.equal(
+			sm.dispatchWaitingUser("ghost-session", { status: "waiting", toolName: "ask_user", callId: "c4" }),
+			0,
+		); // 会话在别的实例 / 已被 sweeper 回收：不是错误
+	});
+});
+
 describe("SessionManager contextWindow 入会话条目（压缩阈值基准 · 诊断 F-01）", () => {
 	/** 假 modelFactory：返回带指定 contextWindow 的 model（不依赖 env 凭据）。 */
 	function modelFactoryWithWindow(contextWindow: number) {

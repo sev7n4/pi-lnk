@@ -646,6 +646,9 @@ const turnStatus = computed(() => {
   const waiting = resolveWaiting({
     isStreaming: agent.isStreaming,
     proposePendingConfirm: agent.proposePendingConfirm,
+    // 阻塞等待一票通过：等待开始的信号由后端 waiting_user 事件下发
+    // （tool_result 要等等待结束才到，靠它反推「等待中」在本语义下恒不成立）
+    blockingWait: agent.blockingWait,
     chipSet: chipSet.value,
     textIdleMs: nowSec.value - agent.lastTextDeltaAt,
   })
@@ -655,9 +658,22 @@ const turnStatus = computed(() => {
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
     now: nowSec.value,
     waiting,
+    waitingTool: agent.blockingWait?.toolName ?? null,
     lastFailed,
   })
 })
+/**
+ * 阻塞等待 propose_generation（2026-10-01）：确认动作只存在于画布节点，
+ * 聊天侧必须明示「去哪确认 + 一键定位」，否则用户只看到转圈无从下手。
+ */
+const proposeWait = computed(() =>
+  agent.blockingWait?.toolName === 'propose_generation' ? agent.blockingWait : null,
+)
+function locateProposeNode() {
+  const nodeId = proposeWait.value?.nodeId
+  if (nodeId) onFocusNode(nodeId)
+}
+
 const awaitingCopyConfirm = computed(() => chipSet.value === 'copy')
 const awaitingTopoConfirm = computed(() => chipSet.value === 'topo')
 const awaitingAtomicConfirm = computed(() => chipSet.value === 'atomic')
@@ -2271,6 +2287,22 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.beginToolCall({ toolCallId: d.toolCallId, name: d.name, args: d.args })
       break
     }
+    case 'waiting_user': {
+      // 阻塞等待可见化（2026-10-01）：后端在等待**开始**/结束各发一次。
+      // waiting → 状态行收口为「等待你在画布上确认生成 / 等待你确认」；resolved → 清位。
+      const d = event.data as {
+        status?: string
+        toolName?: string
+        callId?: string
+        nodeId?: string
+      }
+      if (d.status === 'resolved' || !d.toolName) {
+        agent.setBlockingWait(null)
+      } else {
+        agent.setBlockingWait({ toolName: d.toolName, callId: d.callId, nodeId: d.nodeId })
+      }
+      break
+    }
     case 'tool_result': {
       const d = event.data as { name: string; toolCallId?: string; result: unknown; isError?: boolean }
       agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)
@@ -2928,6 +2960,28 @@ defineExpose({
               @submit="onAskSubmit"
               @cancel="onAskCancel"
             />
+            <!-- 阻塞等待 propose_generation：确认入口在画布节点上，聊天侧明示去哪点（2026-10-01） -->
+            <div
+              v-if="proposeWait"
+              class="mx-3 mb-1 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-[12px] text-amber-900"
+              data-testid="propose-wait-hint"
+            >
+              <div class="flex items-start gap-2">
+                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span>
+                <p class="flex-1 leading-relaxed">
+                  已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
+                </p>
+              </div>
+              <button
+                v-if="proposeWait.nodeId"
+                type="button"
+                class="mt-1.5 rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                data-testid="propose-wait-locate"
+                @click="locateProposeNode"
+              >
+                定位该节点
+              </button>
+            </div>
             <AgentTaskProgressCard
               v-if="showTaskCardAtComposer"
               class="mx-3"

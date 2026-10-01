@@ -250,9 +250,12 @@ export function createCanvasWriteTools(
 				// B-5 off（或无 registry）→ 旧行为逐字节保留（spec §8 回退纪律）
 				if (!registry || !askUserBlocking()) return resultWithActions(base);
 
-				// 阻塞确认：registry 挂 pending（供 /pending 查询与 abort 联动），双臂 race——
-				// ① 轮询画布 SSOT（缺省 2s 间隔，spec §4.2）；② registry resolution（abort→aborted / 30min timer→timeout）
-				const wait = registry.waitForUser(tc.sessionId, id, "propose_generation", askUserTimeoutMs());
+			// 阻塞确认：registry 挂 pending（供 /pending 查询与 abort 联动），双臂 race——
+			// ① 轮询画布 SSOT（缺省 2s 间隔，spec §4.2）；② registry resolution（abort→aborted / timer→timeout）
+			// meta.nodeId：随 waiting_user 事件下发，前端据此渲染「定位节点」入口（等待可见化，2026-10-01）
+			const wait = registry.waitForUser(tc.sessionId, id, "propose_generation", askUserTimeoutMs(), {
+				nodeId: p.node_id,
+			});
 				const POLL_MS = opts.pollMs ?? 2_000;
 				let settled = false; // race 收尾后让落败的轮询臂退出，防 30min timeout 后仍在空转
 				const confirmResult = (async (): Promise<{ confirmed: boolean; reason?: string }> => {

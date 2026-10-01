@@ -59,6 +59,12 @@ export const useAgentStore = defineStore('agent', () => {
   const pendingActions = ref<CanvasAction[]>([])
   /** P1 状态行：本回合 propose_generation 已返回 pending_confirm（waiting 一票通过） */
   const proposePendingConfirm = ref(false)
+  /**
+   * 阻塞等待中的确认类工具（`waiting_user{status:"waiting"}`，2026-10-01）。
+   * 与 proposePendingConfirm 的分工：后者靠 tool_result 反推（阻塞模式下太晚），
+   * 本字段由后端在**等待开始**即下发 —— 等待期状态行收口的唯一可靠信号。
+   */
+  const blockingWait = ref<{ toolName: string; callId?: string; nodeId?: string } | null>(null)
   /** P1 状态行：最近一次 text_delta 时间戳（waiting 文本静默 ≥2s 判定用） */
   const lastTextDeltaAt = ref(0)
   /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
@@ -80,8 +86,9 @@ export const useAgentStore = defineStore('agent', () => {
     content: string,
     extras?: { attachments?: SidebarAttachment[]; attachmentRefKeys?: string[] },
   ) {
-    // 新回合开始：重置回合级状态行信号（propose 置位 / 文本时间戳 / 失败态）
+    // 新回合开始：重置回合级状态行信号（propose 置位 / 阻塞等待 / 文本时间戳 / 失败态）
     proposePendingConfirm.value = false
+    blockingWait.value = null
     lastTextDeltaAt.value = 0
     turnError.value = null
     messages.value.push({
@@ -264,6 +271,16 @@ export const useAgentStore = defineStore('agent', () => {
     }
     if (last) last.streaming = false
     isStreaming.value = false
+    // 回合结束即无等待（后端 resolved 事件可能因断流迟到，这里再兜一次）
+    blockingWait.value = null
+  }
+
+  /**
+   * 阻塞等待置位/清位（`waiting_user` 事件，2026-10-01）。
+   * `status:"resolved"` 或空工具名一律清位——宁可少显示等待，也不要卡在「等待你确认」。
+   */
+  function setBlockingWait(wait: { toolName: string; callId?: string; nodeId?: string } | null) {
+    blockingWait.value = wait && wait.toolName ? wait : null
   }
 
   function parseAttachments(raw: string | undefined): SidebarAttachment[] | undefined {
@@ -348,6 +365,7 @@ export const useAgentStore = defineStore('agent', () => {
     messages.value = []
     pendingActions.value = []
     proposePendingConfirm.value = false
+    blockingWait.value = null
     lastTextDeltaAt.value = 0
     turnError.value = null
   }
@@ -357,8 +375,10 @@ export const useAgentStore = defineStore('agent', () => {
     isStreaming,
     pendingActions,
     proposePendingConfirm,
+    blockingWait,
     lastTextDeltaAt,
     turnError,
+    setBlockingWait,
     addUserMessage,
     startAssistantMessage,
     appendText,

@@ -141,7 +141,9 @@ jobs:
             --set-string env.PI_RUNTIME_SESSIONS_MAX_COUNT=200 \
             --set-string env.PI_RUNTIME_COMPACTION_ENABLED=true \
             --set-string env.PI_RUNTIME_COMPACTION_RESERVE_TOKENS=16384 \
-            --set-string env.PI_RUNTIME_COMPACTION_KEEP_RECENT_TOKENS=20000"
+            --set-string env.PI_RUNTIME_COMPACTION_KEEP_RECENT_TOKENS=20000 \
+            --set-string env.ASK_USER_BLOCKING=true \
+            --set-string env.ASK_USER_TIMEOUT_MS=300000"
 
       - name: Rollout + triple verify (digest / env / healthz)
         run: |
@@ -163,6 +165,11 @@ jobs:
             || { echo "ERROR: PI_RUNTIME_SESSION_TTL_MS 非期望精确值"; exit 1; }
           echo "$ENV_OUT" | grep -qx "PI_RUNTIME_SESSIONS_MAX_BYTES=3221225472" \
             || { echo "ERROR: PI_RUNTIME_SESSIONS_MAX_BYTES 非期望精确值"; exit 1; }
+          # B-1 阻塞等待：必须精确落地（科学计数法防线同数字型 env）
+          echo "$ENV_OUT" | grep -qx "ASK_USER_BLOCKING=true" \
+            || { echo "ERROR: ASK_USER_BLOCKING 非期望精确值"; exit 1; }
+          echo "$ENV_OUT" | grep -qx "ASK_USER_TIMEOUT_MS=300000" \
+            || { echo "ERROR: ASK_USER_TIMEOUT_MS 非期望精确值"; exit 1; }
           HEALTH=$(ssh deploy-cvm "curl -s http://127.0.0.1:30100/healthz")
           echo "$HEALTH" | grep -q "\"version\":\"${TAG}\"" \
             || { echo "ERROR: healthz version != ${TAG}: ${HEALTH}"; exit 1; }

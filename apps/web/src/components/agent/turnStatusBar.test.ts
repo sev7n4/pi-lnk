@@ -18,6 +18,22 @@ describe('turnStatusLine（P1 状态行）', () => {
   it('非流式无失败 → null（不渲染状态行）', () => {
     expect(turnStatusLine({ isStreaming: false, turnStartedAt: t0, now: t0, waiting: false })).toBeNull()
   })
+  it('waiting + propose_generation → 文案点明去画布确认（2026-10-01 卡死修复）', () => {
+    expect(
+      turnStatusLine({
+        isStreaming: true,
+        turnStartedAt: t0,
+        now: t0 + 931_000,
+        waiting: true,
+        waitingTool: 'propose_generation',
+      }),
+    ).toEqual({ text: '等待你在画布上确认生成', mode: 'waiting' })
+  })
+  it('waiting + ask_user → 通用「等待你确认」（选项卡已在聊天内）', () => {
+    expect(
+      turnStatusLine({ isStreaming: true, turnStartedAt: t0, now: t0 + 5000, waiting: true, waitingTool: 'ask_user' }),
+    ).toEqual({ text: '等待你确认', mode: 'waiting' })
+  })
 })
 
 describe('resolveWaiting（P1 waiting 收紧）', () => {
@@ -31,6 +47,46 @@ describe('resolveWaiting（P1 waiting 收紧）', () => {
   it('非流式恒 false；无 chip 且无 propose 恒 false', () => {
     expect(resolveWaiting({ isStreaming: false, proposePendingConfirm: true, chipSet: 'plan', textIdleMs: 9999 })).toBe(false)
     expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false, chipSet: null, textIdleMs: 9999 })).toBe(false)
+  })
+  it('阻塞等待一票通过：等待开始即收口，不等 tool_result / 文本静默（2026-10-01）', () => {
+    expect(
+      resolveWaiting({
+        isStreaming: true,
+        proposePendingConfirm: false, // 阻塞模式下等待期恒 false —— 正是旧判据失效的场景
+        chipSet: null,
+        textIdleMs: 0,
+        blockingWait: { toolName: 'propose_generation' },
+      }),
+    ).toBe(true)
+    expect(
+      resolveWaiting({
+        isStreaming: true,
+        proposePendingConfirm: false,
+        chipSet: null,
+        textIdleMs: 0,
+        blockingWait: { toolName: 'ask_user' },
+      }),
+    ).toBe(true)
+  })
+  it('blockingWait 为空 / 非流式 → 不误判（回归旧语义）', () => {
+    expect(
+      resolveWaiting({
+        isStreaming: true,
+        proposePendingConfirm: false,
+        chipSet: null,
+        textIdleMs: 0,
+        blockingWait: null,
+      }),
+    ).toBe(false)
+    expect(
+      resolveWaiting({
+        isStreaming: false,
+        proposePendingConfirm: false,
+        chipSet: null,
+        textIdleMs: 9999,
+        blockingWait: { toolName: 'propose_generation' },
+      }),
+    ).toBe(false)
   })
 })
 

@@ -94,7 +94,15 @@ export function askUserBlocking(env: Record<string, string | undefined> = proces
 	return parseBool(env.ASK_USER_BLOCKING, true);
 }
 
-/** B-1：阻塞等待上限，缺省 30min。⚠️ helm 部署必须 --set-string（科学计数法事故）。 */
+/**
+ * B-1：阻塞等待上限，缺省 **5min**（2026-10-01 由 30min 下调）。
+ *
+ * 下调理由（生产实证）：30min 的等待在 UI 上就是「生成回复中 · 1800s」——用户判定卡死、
+ * 反复点停止/重发（同一会话两次实证：10:18 轮 38min 无果、12:23 轮 931s 即被举报）。
+ * 超时不是失败：工具以带 status 的正常值交还，模型拿到「用户未响应」后自主续行，
+ * 用户之后仍可作答/确认。5min 足以完成「看一眼画布 → 点确认」，又不会把一轮对话冻住。
+ * ⚠️ helm 部署必须 --set-string（科学计数法事故）。
+ */
 export function askUserTimeoutMs(env: Record<string, string | undefined> = process.env): number {
-	return parsePositiveInt(env.ASK_USER_TIMEOUT_MS, 1_800_000);
+	return parsePositiveInt(env.ASK_USER_TIMEOUT_MS, 300_000);
 }
