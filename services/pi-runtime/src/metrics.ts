@@ -12,6 +12,8 @@
  *   - pi_runtime_compactions_total{result}              上下文压缩结果计数（ok/error）
  *   - pi_runtime_compaction_skips_total{reason}         未触发压缩的理由计数（可容忍跳过）
  *   - pi_runtime_prompt_rejections_total{reason}        被拒 prompt 计数（busy）
+ *   - pi_runtime_tool_search_calls_total{outcome}       tool_search 搜索结果计数（hit/miss/empty）
+ *   - pi_runtime_tool_search_activated_total            经 tool_search 激活的延迟工具数累计
  *   - pi_runtime_build_info / pi_runtime_uptime_seconds
  */
 
@@ -52,6 +54,8 @@ export class Metrics {
 	private skillsPromptTokens = 0;
 	private usageTokens = new Map<string, number>(); // key: kind (input|output|cache_read|cache_write)
 	private usageCost = new Map<string, number>(); // key: kind 同上
+	private toolSearchCalls = new Map<string, number>(); // key: outcome (hit|miss|empty)
+	private toolSearchActivated = 0; // 命中激活的工具个数累计（配合 calls 可算平均激活数）
 	private startedAt = Date.now();
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
@@ -145,6 +149,13 @@ export class Metrics {
 		bump(this.usageCost, "cache_write", c.cacheWrite);
 	}
 
+	/** tool_search 搜索语义观测（官方模式健康度）：hit=命中并激活 / miss=未命中只回目录 /
+	 *  empty=空 query。activated = 本次激活的工具个数（仅 hit 非零）。 */
+	observeToolSearch(outcome: "hit" | "miss" | "empty", activated: number): void {
+		this.toolSearchCalls.set(outcome, (this.toolSearchCalls.get(outcome) ?? 0) + 1);
+		if (activated > 0) this.toolSearchActivated += activated;
+	}
+
 	setSkillsLoaded(n: number): void {
 		this.skillsLoaded = n;
 	}
@@ -217,6 +228,16 @@ export class Metrics {
 	for (const [kind, v] of [...this.usageCost.entries()].sort()) {
 		lines.push(`pi_runtime_usage_cost_total{kind="${kind}"} ${v.toFixed(6)}`);
 	}
+
+	lines.push("# HELP pi_runtime_tool_search_calls_total tool_search invocations by search outcome.");
+	lines.push("# TYPE pi_runtime_tool_search_calls_total counter");
+	for (const [outcome, count] of [...this.toolSearchCalls.entries()].sort()) {
+		lines.push(`pi_runtime_tool_search_calls_total{outcome="${esc(outcome)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_tool_search_activated_total Deferred tools activated via tool_search (cumulative count).");
+	lines.push("# TYPE pi_runtime_tool_search_activated_total counter");
+	lines.push(`pi_runtime_tool_search_activated_total ${this.toolSearchActivated}`);
 
 		lines.push("# HELP pi_runtime_http_requests_total HTTP requests processed.");
 		lines.push("# TYPE pi_runtime_http_requests_total counter");

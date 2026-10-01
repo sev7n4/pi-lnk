@@ -75,8 +75,15 @@ export interface ToolEnsemble {
  * 装配工具分层。注意与 0.0.30 前的 splitTools 的本质区别：
  * 延迟工具**留在 registered 里**（generation.ts 只发 active 的 schema，
  * 注册不等于下发；而 vendor ai 层的 deferred 机制要求工具在 config.tools 里才可能生效）。
+ *
+ * `onSearch`：搜索语义观测回调（hit/miss/empty + 激活数），host 用来喂 metrics；
+ * 不传则不打点（纯函数行为不变）。
  */
-export function buildToolEnsemble(tools: LnkpiTool[], enabled: boolean): ToolEnsemble {
+export function buildToolEnsemble(
+	tools: LnkpiTool[],
+	enabled: boolean,
+	onSearch?: (outcome: "hit" | "miss" | "empty", activated: number) => void,
+): ToolEnsemble {
 	if (!enabled) {
 		return { registered: tools, activeToolNames: tools.map((t) => t.name) };
 	}
@@ -85,7 +92,7 @@ export function buildToolEnsemble(tools: LnkpiTool[], enabled: boolean): ToolEns
 	if (deferred.length === 0) {
 		return { registered: tools, activeToolNames: alwaysNames };
 	}
-	const loader = createLoadToolsTool(deferred);
+	const loader = createLoadToolsTool(deferred, onSearch);
 	return {
 		registered: [...tools, loader],
 		activeToolNames: [...alwaysNames, loader.name],
@@ -96,8 +103,12 @@ export function buildToolEnsemble(tools: LnkpiTool[], enabled: boolean): ToolEns
  * tool_search 元工具（官方 search_tools 语义，对齐 Anthropic tool_search_tool / Claude Code ToolSearch）：关键词搜索延迟目录 → 命中即激活。
  * 激活 100% 走 vendor 原生：结果携带 addedToolNames，tool-placement 自动并入
  * activeToolNames 并广播 config_update，自该转录点起持续可用（host 不碰运行态）。
+ * `onSearch`：可选观测回调（hit/miss/empty + 激活数），host 喂 metrics 用。
  */
-export function createLoadToolsTool(deferred: LnkpiTool[]): LnkpiTool {
+export function createLoadToolsTool(
+	deferred: LnkpiTool[],
+	onSearch?: (outcome: "hit" | "miss" | "empty", activated: number) => void,
+): LnkpiTool {
 	const catalog = deferred.map((t) => `- ${t.name}：${toolSummary(t)}`).join("\n");
 	return {
 		tier: "skill",
@@ -114,6 +125,7 @@ export function createLoadToolsTool(deferred: LnkpiTool[]): LnkpiTool {
 			const q = (p?.query ?? "").trim().toLowerCase();
 			// 空查询：不给激活，只给目录——模型据此换关键词或点名加载。
 			if (!q) {
+				onSearch?.("empty", 0);
 				return {
 					content: [{ type: "text", text: `query 不能为空。可选工具目录：\n${catalog}` }],
 					details: { loaded: [] as string[] },
@@ -126,12 +138,14 @@ export function createLoadToolsTool(deferred: LnkpiTool[]): LnkpiTool {
 			});
 			// 未命中：返回完整目录（名字+摘要）但不激活——模型下一步可以点名再搜或换词。
 			if (matches.length === 0) {
+				onSearch?.("miss", 0);
 				return {
 					content: [{ type: "text", text: `没有匹配「${p.query.trim()}」的工具。完整目录：\n${catalog}` }],
 					details: { loaded: [] as string[] },
 				};
 			}
 			const loaded = matches.map((t) => t.name);
+			onSearch?.("hit", loaded.length);
 			return {
 				content: [
 					{

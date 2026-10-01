@@ -1194,9 +1194,11 @@ export class SessionManager {
 		if (!this.toolEnsemble) {
 			// 构造入参类型是 AgentHarnessTool（无 tier 字段），生产链路传入的全部是
 			// LnkpiTool（tools/config.ts 组装）；此处按 name 分档，字段消费只到 name/description。
+			// 搜索语义观测（hit/miss/empty + 激活数）→ metrics；无 metrics 实例则不打点。
 			this.toolEnsemble = buildToolEnsemble(
 				[...this.tools, ...(this.skills?.tools ?? [])] as LnkpiTool[],
 				this.config.toolTiering ?? true,
+				this.metrics ? (outcome, activated) => this.metrics!.observeToolSearch(outcome, activated) : undefined,
 			);
 		}
 		return this.toolEnsemble;
