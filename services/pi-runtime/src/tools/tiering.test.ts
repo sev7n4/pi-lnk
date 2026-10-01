@@ -159,3 +159,9 @@ describe("buildDeferredIndexBlock", () => {
 		assert.equal(buildDeferredIndexBlock([]), "");
 	});
 });
+
+it("索引块是强指令：明示必须先 load_tools、直调会 unavailable（0.0.29 生产实证：模型会无视引导直调延迟工具）", () => {
+	const { deferredIndexBlock } = splitTools(fakeTools(), true);
+	assert.match(deferredIndexBlock, /必须先调用 load_tools/);
+	assert.match(deferredIndexBlock, /unavailable/);
+});

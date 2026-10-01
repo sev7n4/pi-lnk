@@ -77,7 +77,9 @@ export function splitTools(
 export function buildDeferredIndexBlock(deferred: LnkpiTool[]): string {
 	if (deferred.length === 0) return "";
 	const lines = deferred.map((t) => `- ${t.name}：${toolSummary(t)}`);
-	return `\n以下工具未加载完整定义（省上下文），需要时调用 load_tools 按名加载：\n${lines.join("\n")}`;
+		// 强指令（0.0.29 生产实证）：弱引导「需要时调用」会被模型无视、直接硬调延迟工具并吃
+	// unavailable 错误后放弃。明示后果 + 先加载，才能把 load_tools 触发率拉起来。
+	return `\n以下工具未加载完整定义（省上下文）。使用其中任何工具前，必须先调用 load_tools（可一次传多个名字）；跳过 load_tools 直接调用会返回 "unavailable" 错误，届时也请先 load_tools 再重试：\n${lines.join("\n")}`;
 }
 
 /** load_tools 元工具：校验名单 → 结果携带 addedToolNames，vendor 自动激活。 */

@@ -65,7 +65,9 @@ env:
   PI_RUNTIME_SESSIONS_MAX_BYTES: "3221225472"
   PI_RUNTIME_SESSIONS_MAX_COUNT: "200"
   PI_RUNTIME_COMPACTION_ENABLED: "true"
-  PI_RUNTIME_COMPACTION_RESERVE_TOKENS: "16384"
+  # 触发口径见 PI_RUNTIME_COMPACTION_TARGET_RATIO（runtime-deploy.yml --set-string）。
+  # 刻意不设 RESERVE_TOKENS 默认：显式值会让 ratio 失效（旧口径优先），且
+  # --reuse-values + --set null 删不掉 chart 默认值（0.0.29 实证残留）。
   PI_RUNTIME_COMPACTION_KEEP_RECENT_TOKENS: "20000"
   # F-01：压缩判定的上下文窗口覆盖值。
   #   agnes provider 把 contextWindow 声明为 1_000_000，使默认阈值 1_000_000-16_384
