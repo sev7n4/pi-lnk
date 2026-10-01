@@ -35,7 +35,9 @@ export type PiEventType =
 	/** 阻塞式确认工具（ask_user / propose_generation）等待生命周期（2026-10-01）。 */
 	| "waiting_user"
 	/** 「正在做什么」（决策 8）：工具起手即发，人话由客户端目录翻译，runtime 只给工具名。 */
-	| "activity";
+	| "activity"
+	/** 上下文压缩起止（审计 #6）：vendor compaction_start/end 归一，payload 由 Nest 归一为 phase。 */
+	| "compaction";
 
 /** 现有 UI 事件（消费端实测子集；其余事件类型保持 passthrough） */
 export interface UiEvent<T = unknown> {
@@ -165,6 +167,13 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 					total: d.total,
 				},
 			};
+		}
+		case 'compaction': {
+			// 审计 #6 压缩可见性：vendor compaction_start{reason} / compaction_end{status,...}
+			// 共用 SSE 类型 `compaction`；以 status 有无区分 phase，供前端状态行起止收口。
+			const d = (event.data ?? {}) as { status?: string; reason?: string };
+			const phase = d.status ? 'end' : 'start';
+			return { type: 'pi_compaction', data: { phase, status: d.status, reason: d.reason } };
 		}
 		default:
 			return { type: `pi_${event.type}`, data: event.data, };

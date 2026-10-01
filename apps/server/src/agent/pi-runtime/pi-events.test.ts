@@ -332,9 +332,22 @@ describe("activity 透传（决策 8 · 正在做什么）", () => {
 		expect((out!.data as { total?: number }).total).toBeUndefined();
 	});
 
-	it("未在 switch 显式列出的类型继续走 pi_ 前缀（透传回归）", () => {
-		const out = mapPiEventToUiEvent({ type: "compaction", ts: 14, data: { status: "completed" } } as never);
-		expect(out!.type).toBe("pi_compaction");
+	it("compaction 显式映射：start 带 phase=start+reason，end 带 phase=end+status", () => {
+		const start = mapPiEventToUiEvent({
+			type: "compaction",
+			ts: 14,
+			data: { reason: "threshold", startedAt: 1 },
+		} as never);
+		expect(start!.type).toBe("pi_compaction");
+		expect(start!.data).toMatchObject({ phase: "start", reason: "threshold" });
+
+		const end = mapPiEventToUiEvent({
+			type: "compaction",
+			ts: 15,
+			data: { status: "completed", entryId: "e1", endedAt: 2 },
+		} as never);
+		expect(end!.type).toBe("pi_compaction");
+		expect(end!.data).toMatchObject({ phase: "end", status: "completed" });
 	});
 });
 
