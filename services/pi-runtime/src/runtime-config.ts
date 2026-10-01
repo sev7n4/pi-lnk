@@ -118,8 +118,11 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
  *
  * reserveTokens 由窗口反推（= window × (1 − ratio)），floor 16384 保住「摘要 prompt +
  * 输出」的头寸语义，cap = window − keepRecent − 1 防极小窗口出现负数 / 永不触发。
- * window 必须传**有效窗口**（compactionContextWindow ?? model.contextWindow）——与
- * post-run hook 的 decideCompaction 同一分母，两条触发路径口径才一致。
+ * window 必须传**有效窗口**（compactionContextWindow ?? model.contextWindow）。
+ * ⚠️ 阈值口径只由 post-run hook（decideCompaction）遵循本函数；vendor 的中途自动
+ * 压缩路径（drive/structural.ts:1144）固定用 model.contextWindow 作分母，只读 vendor
+ * 无法对齐——**不要**因「reserveTokens 同源」就认为两条路径等价而删掉 post-run hook，
+ * 那会让中途压缩退回 ~96% 才触发（正是 F-01 诊断的病灶形态）。
  * targetRatio 缺失/非法时走旧口径（显式 reserveTokens），行为与审计前逐字节一致。
  */
 export function effectiveCompactionSettings(

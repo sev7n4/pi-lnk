@@ -160,6 +160,9 @@ interface SessionEntry {
 	activityStep: number;
 	/** create 时确定的静态段（规则 + skills index），会话期内不再变更。 */
 	staticPrompt: string;
+	/** 未装饰的 base prompt（不含 skills index / 延迟工具索引块）。fork 复用必须传它
+	 *  而非 staticPrompt，否则 composeSystemPrompt 会把装饰块拼两份（评审 finding 1）。 */
+	basePrompt: string;
 	/** 会话身份（BYOK provider 哈希），用于 create 时判定是否需重建。 */
 	identity: LlmIdentity;
 	/** 会话归属用户；resume 时不一致 → 409 fail-closed。 */
@@ -265,6 +268,19 @@ export function normalizeTurnContext(turn: TurnContext): TurnContext {
 		refOrder: turn.refOrder ?? [],
 		focusNodeId: turn.focusNodeId,
 	};
+}
+
+/**
+ * 静态段块追加（幂等，评审 finding 1）：base 已含某块时跳过。
+ * 存在理由：fork 曾把已装饰的 staticPrompt 当 base 再喂 build → composeSystemPrompt，
+ * skills index（既有）与延迟工具索引块（本评审发现）都会拼两份、每轮白烧 token。
+ * 幂等守卫让「传错已装饰串」不再放大成重复块；fork 侧同时改为传未装饰的 basePrompt。
+ */
+export function appendPromptBlocks(base: string, blocks: readonly string[]): string {
+	const parts = [base, ...blocks.filter((b) => b.length > 0 && !base.includes(b))].filter(
+		(p) => p.length > 0,
+	);
+	return parts.join("\n\n");
 }
 
 /** 会话身份：BYOK 时 provider 为 `byok-<12hex>`（providerRef 哈希），平台时为 `agnes`。 */
@@ -589,6 +605,7 @@ export class SessionManager {
 			nextSeq: 0,
 			activityStep: 0,
 			staticPrompt: this.composeSystemPrompt(opts.systemPrompt),
+			basePrompt: opts.systemPrompt ?? "",
 			identity,
 			userId: opts.userId,
 			canvasSessionId: opts.canvasSessionId,
@@ -1037,7 +1054,9 @@ export class SessionManager {
 		// 扫盘失败 ≠ 用量没超阈值：合并成一个 label 就等于放弃了「扫盘有没成功」这个信号。
 		if (!scanned.ok) return "entries_unavailable";
 		// 阈值口径与 harness options 同源（effectiveCompactionSettings，审计 P0-①）：
-		// targetRatio 生效时 reserveTokens 由 entry.contextWindow 反推，两条触发路径一个分母。
+		// targetRatio 生效时 reserveTokens 由 entry.contextWindow 反推。
+		// ⚠️ 有效窗口口径只约束本 hook 路径；vendor 中途自动压缩仍用 model.contextWindow
+		// （vendor 只读），删掉本 hook 会让压缩退回 ~96% 才触发（详见 runtime-config 注释）。
 		// entry.contextWindow 理论上必有值（create 时必算）；undefined 走原始配置，fail-soft。
 		const settings =
 			entry.contextWindow === undefined
@@ -1124,7 +1143,7 @@ export class SessionManager {
 		await this.build(
 			internalKey,
 			{
-				systemPrompt: source.staticPrompt,
+				systemPrompt: source.basePrompt,
 				workingDir: source.sessionMeta.cwd,
 				canvasSessionId: source.canvasSessionId,
 				userId: source.userId,
@@ -1164,19 +1183,16 @@ export class SessionManager {
 		if (!entry) throw new NotFoundError(threadKey);
 		return entry;
 	}
-
-	/** D-η'：base 为空回退默认 prompt；skills index 块常驻尾部（无 skills 时原样返回）。 */
+/** D-η'：base 为空回退默认 prompt；skills index 块常驻尾部（无 skills 时原样返回）。 */
 	private composeSystemPrompt(base?: string): string {
 		const prompt = base || this.systemPromptDefault;
 		const index = this.skills?.indexBlock ?? "";
 		// 审计 P0-④：延迟工具只有「名字 + 一句话摘要」的索引块进静态段，schema 不占位。
 		const deferredIndex = this.getToolSplit().deferredIndexBlock;
-		const blocks = [index, deferredIndex].filter((b) => b.length > 0);
-		if (blocks.length === 0) return prompt;
-		return prompt ? [prompt, ...blocks].join("\n\n") : blocks.join("\n\n");
+		return appendPromptBlocks(prompt, [index, deferredIndex]);
 	}
 
-	/** 工具分层（审计 P0-④，懒计算一次）：常驻集 / 延迟集 / load_tools / 索引块。 */
+/** 工具分层（审计 P0-④，懒计算一次）：常驻集 / 延迟集 / load_tools / 索引块。 */
 	private toolSplit?: ReturnType<typeof splitTools>;
 	private getToolSplit(): ReturnType<typeof splitTools> {
 		if (!this.toolSplit) {

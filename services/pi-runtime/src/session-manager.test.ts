@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SessionManager, BusyError, NotFoundError, toSessionKey } from "./session-manager.js";
+import { SessionManager, BusyError, NotFoundError, toSessionKey, appendPromptBlocks } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
@@ -25,7 +25,8 @@ function testConfig(): RuntimeConfig {
 		sweepIntervalMs: 10 ** 9,
 		sessionsMaxBytes: 10 ** 12,
 		sessionsMaxCount: 1000,
-		// 既有断言按「全量常驻」legacy 语义书写；tiering-on 的接线行为在专组覆盖。
+		// 既有断言按「全量常驻」legacy 语义书写；tiering-on 的接线行为在下方
+		// 「tiering-on 接线（评审 finding 3）」专组覆盖。
 		toolTiering: false,
 		compaction: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
 	};
@@ -1202,5 +1203,80 @@ describe("usage 事件 → metrics（审计 P0-③）", () => {
 		sm.subscribe("s-usage-sse", (e) => seen.push(e.type));
 		handlers.get("usage")?.({ lane: "main", row: { usage: USAGE } } as never);
 		assert.deepEqual(seen, []);
+	});
+});
+
+describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () => {
+	function makeEmittableHarnessFactory2() {
+		let captured: Record<string, unknown> | undefined;
+		const fakeHarnessFactory = async (cfg: unknown) => {
+			captured = cfg as Record<string, unknown>;
+			return {
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			} as never;
+		};
+		return {
+			get captured() {
+				return captured;
+			},
+			fakeHarnessFactory,
+		};
+	}
+	const tieringConfig = () => ({ ...testConfig(), toolTiering: true });
+
+	it("tiering-on：tools 收窄为常驻集 + load_tools，activeToolNames 同步", async () => {
+		const h = makeEmittableHarnessFactory2();
+		const sm = new SessionManager(
+			[{ name: "t_probe" } as never, { name: "get_canvas_summary" } as never],
+			"",
+			undefined,
+			h.fakeHarnessFactory as never,
+			undefined,
+			undefined,
+			tieringConfig(),
+		);
+		await sm.create("s-tiering", { systemPrompt: "BASE" });
+		const toolNames = (h.captured!.tools as Array<{ name: string }>).map((t) => t.name);
+		assert.deepEqual(toolNames.sort(), ["get_canvas_summary", "load_tools"]);
+		const active = (h.captured!.activeToolNames as string[]).slice().sort();
+		assert.deepEqual(active, ["get_canvas_summary", "load_tools"]);
+	});
+
+	it("tiering-on：staticPrompt 索引块恰好出现一次", async () => {
+		const h = makeEmittableHarnessFactory2();
+		const sm = new SessionManager(
+			[{ name: "t_probe" } as never],
+			"",
+			undefined,
+			h.fakeHarnessFactory as never,
+			undefined,
+			undefined,
+			tieringConfig(),
+		);
+		await sm.create("s-tiering-once", { systemPrompt: "BASE" });
+		const prompt = await (h.captured!.systemPrompt as (tc: unknown) => Promise<string> | string)({});
+		const count = (String(prompt).match(/以下工具未加载完整定义/g) ?? []).length;
+		assert.equal(count, 1);
+		assert.match(String(prompt), /t_probe/);
+	});
+});
+
+describe("appendPromptBlocks 幂等（评审 finding 1：fork 重复拼块）", () => {
+	it("base 已含块时不重复追加", () => {
+		const block = "以下工具未加载完整定义（省上下文）";
+		const base = `BASE\n\n${block}\n- t_probe：x`;
+		const out = appendPromptBlocks(base, [block]);
+		assert.equal((out.match(/以下工具未加载完整定义/g) ?? []).length, 1);
+	});
+	it("base 未含块时正常追加（\\n\\n 连接，空块跳过）", () => {
+		const out = appendPromptBlocks("BASE", ["B1", "", "B2"]);
+		assert.equal(out, "BASE\n\nB1\n\nB2");
+	});
+	it("base 为空时只返回非空块", () => {
+		assert.equal(appendPromptBlocks("", ["B1"]), "B1");
 	});
 });
