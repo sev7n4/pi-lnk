@@ -171,6 +171,44 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 	});
 });
 
+describe("tool_search 观测回调（host 喂 metrics 的钩子）", () => {
+	it("hit：outcome=hit + activated=激活个数", async () => {
+		const seen: Array<[string, number]> = [];
+		const e = buildToolEnsemble(fakeTools(), true, (o, a) => seen.push([o, a]));
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		await loader.execute("c1", { query: "memory" } as never, () => {}, undefined as never, {} as never, undefined as never);
+		assert.equal(seen.length, 1);
+		assert.equal(seen[0][0], "hit");
+		assert.ok(seen[0][1] >= 1);
+	});
+
+	it("miss / empty：activated=0", async () => {
+		const seen: Array<[string, number]> = [];
+		const e = buildToolEnsemble(fakeTools(), true, (o, a) => seen.push([o, a]));
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		await loader.execute("c1", { query: "no_such_xyz" } as never, () => {}, undefined as never, {} as never, undefined as never);
+		await loader.execute("c2", { query: "  " } as never, () => {}, undefined as never, {} as never, undefined as never);
+		assert.deepEqual(seen, [
+			["miss", 0],
+			["empty", 0],
+		]);
+	});
+
+	it("不传回调：execute 正常工作（向后兼容）", async () => {
+		const e = buildToolEnsemble(fakeTools(), true);
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		const res = await loader.execute(
+			"c3",
+			{ query: "memory" } as never,
+			() => {},
+			undefined as never,
+			{} as never,
+			undefined as never,
+		);
+		assert.ok(res.addedToolNames!.includes("save_memory"));
+	});
+});
+
 describe("loader 描述（官方模式：description 承担发现能力，无 system prompt 名单）", () => {
 	it("loader 描述说明搜索语义，提及未加载/搜索", () => {
 		const e = buildToolEnsemble(fakeTools(), true);

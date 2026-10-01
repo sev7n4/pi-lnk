@@ -96,3 +96,23 @@ test("cost 全 0（未配费率）时指标存在且为 0，不缺行不报错",
 	const out = m.render(0, "test");
 	assert.match(out, /pi_runtime_usage_cost_total\{kind="input"\} 0/);
 });
+
+test("tool_search：hit/miss/empty 分组计数 + 激活数累计（官方模式观测）", () => {
+	const m = new Metrics();
+	m.observeToolSearch("hit", 2);
+	m.observeToolSearch("hit", 1);
+	m.observeToolSearch("miss", 0);
+	m.observeToolSearch("empty", 0);
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_tool_search_calls_total\{outcome="hit"\} 2/);
+	assert.match(out, /pi_runtime_tool_search_calls_total\{outcome="miss"\} 1/);
+	assert.match(out, /pi_runtime_tool_search_calls_total\{outcome="empty"\} 1/);
+	assert.match(out, /pi_runtime_tool_search_activated_total 3/);
+});
+
+test("tool_search 未打点时不缺行报错：activated_total 恒渲染为 0", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_tool_search_activated_total 0/);
+	assert.doesNotMatch(out, /pi_runtime_tool_search_calls_total\{/);
+});
