@@ -89,4 +89,8 @@ describe('TOOL_PRESENTATION 全量覆盖（P1#3）', () => {
       expect(TOOL_PRESENTATION[name], `missing presentation for ${name}`).toBeDefined()
     }
   })
+
+  it('运行时探针 t_probe 不进展示注册表（内部探针，禁止吐给用户）', () => {
+    expect(TOOL_PRESENTATION.t_probe).toBeUndefined()
+  })
 })
