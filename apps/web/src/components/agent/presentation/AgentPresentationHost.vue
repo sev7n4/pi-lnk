@@ -45,8 +45,6 @@ const isTopoCards = computed(
 )
 const isDeliveryCards = computed(() => props.presentation.kind === 'delivery_cards')
 const isDeliverySummary = computed(() => props.presentation.kind === 'delivery_summary_table')
-/** Phase 2c.2: propose summary card (node SSOT; chips owned by SideRail). */
-const isGenerationPropose = computed(() => props.presentation.kind === 'generation_propose')
 const hasGateLayout = computed(() => Boolean(props.presentation.primary_action))
 const proseContent = computed(() => String(props.presentation.body?.prose ?? ''))
 const macroSchemes = computed(() => props.presentation.body?.schemes ?? [])
@@ -103,7 +101,6 @@ function onSecondaryAction(action: AgentPresentationPrimaryAction) {
   >
     <div class="agent-presentation-host__recap space-y-2">
       <AgentStepper
-        v-if="!isGenerationPropose"
         :current="stepperCurrent"
         :completed="stepperCompleted"
       />
@@ -131,40 +128,6 @@ function onSecondaryAction(action: AgentPresentationPrimaryAction) {
     </div>
 
     <div class="agent-presentation-host__body space-y-2">
-      <div
-        v-if="isGenerationPropose"
-        class="rounded-lg border border-[var(--neo-border)] bg-[var(--neo-panel)] px-2.5 py-2 space-y-1.5"
-        data-testid="generation-propose-card"
-      >
-        <p
-          v-if="presentation.title"
-          class="text-xs font-medium text-[var(--neo-text)]"
-          data-testid="generation-propose-title"
-        >
-          {{ presentation.title }}
-        </p>
-        <p
-          v-if="presentation.body?.text"
-          class="text-xs leading-relaxed text-[var(--neo-muted)]"
-          data-testid="generation-propose-prompt"
-        >
-          {{ presentation.body.text }}
-        </p>
-        <p
-          v-if="presentation.body?.hint"
-          class="text-[10px] text-[var(--neo-text-secondary)]"
-          data-testid="generation-propose-params"
-        >
-          {{ presentation.body.hint }}
-        </p>
-        <p
-          v-if="presentation.body?.credits_hint"
-          class="text-[10px] text-[var(--neo-muted)]"
-          data-testid="generation-propose-credits"
-        >
-          {{ presentation.body.credits_hint }}
-        </p>
-      </div>
       <AgentProseBlock
         v-if="isProseBlock && proseContent"
         :content="proseContent"
@@ -223,14 +186,14 @@ function onSecondaryAction(action: AgentPresentationPrimaryAction) {
         @switch-variant="(shotId, variantKey) => emit('deliverySwitch', shotId, variantKey)"
       />
       <p
-        v-if="presentation.body?.text && !(isTopoCards && topoNodes.length) && !isDeliveryCards && !isDeliverySummary && !isGenerationPropose"
+        v-if="presentation.body?.text && !(isTopoCards && topoNodes.length) && !isDeliveryCards && !isDeliverySummary"
         class="text-xs leading-relaxed text-[var(--neo-muted)]"
         data-testid="presentation-hint"
       >
         {{ presentation.body.text }}
       </p>
       <p
-        v-if="presentation.body?.footer_hint && !isGenerationPropose"
+        v-if="presentation.body?.footer_hint"
         class="text-xs text-[var(--neo-muted)]"
         data-testid="presentation-footer-hint"
       >

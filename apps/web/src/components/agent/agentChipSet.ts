@@ -7,7 +7,6 @@ export type AgentChipSet =
   | 'copy'
   | 'topo'
   | 'atomic'
-  | 'generation_propose'
   | 'recipe_confirm'
   | 'recipe_promote'
   | 'recipe_promote_seed'
@@ -17,11 +16,6 @@ export type AgentChipSet =
   | 'macro_scheme_select'
   | 'delivery_confirm'
   | null
-
-export type AgentToolCallLike = {
-  name?: string | null
-  result?: unknown
-}
 
 /** Minimal canvas node shape for pending_confirm SSOT recover (Phase 2c.1). */
 export type CanvasNodeLike = {
@@ -51,64 +45,10 @@ const RECIPE_PROMOTE_VARIANT_SNIPPETS = ['请确认是否保存为改版'] as co
 export interface ChipSetContext {
   /** 最近一条用户消息（用于判断用户是否在表达 modify intent） */
   latestUserText?: string
-  /** 最近一条 assistant 的 toolCalls（用于 Phase 2b propose_generation） */
-  toolCalls?: AgentToolCallLike[] | null
-  /** Phase 2c.1: canvas nodes for pending_confirm SSOT recover */
-  canvasNodes?: CanvasNodeLike[] | null
-  /** Phase 2c.1: selected node id (selected pending wins) */
-  selectedNodeId?: string | null
 }
 
 function userJustRequestedModify(latestUserText: string | undefined): boolean {
   return hasModifyIntent(latestUserText)
-}
-
-function parseToolResult(result: unknown): Record<string, unknown> | null {
-  if (result == null) return null
-  if (typeof result === 'object' && !Array.isArray(result)) {
-    return result as Record<string, unknown>
-  }
-  if (typeof result === 'string') {
-    const trimmed = result.trim()
-    if (!trimmed) return null
-    try {
-      const parsed = JSON.parse(trimmed) as unknown
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>
-      }
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
-function nodeIdFromProposePayload(payload: Record<string, unknown>): string | null {
-  const status = payload.status
-  if (status !== 'pending_confirm') return null
-  const raw = payload.nodeId ?? payload.node_id
-  if (typeof raw !== 'string') return null
-  const nodeId = raw.trim()
-  return nodeId || null
-}
-
-/**
- * Last successful `propose_generation` with `status: pending_confirm` → nodeId.
- * Accepts dict or JSON-string tool results; prefers camelCase `nodeId`, falls back to `node_id`.
- */
-export function extractProposeGenerationNodeId(
-  toolCalls: AgentToolCallLike[] | null | undefined,
-): string | null {
-  if (!toolCalls?.length) return null
-  for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
-    const tc = toolCalls[i]
-    if (String(tc?.name ?? '').trim() !== 'propose_generation') continue
-    const payload = parseToolResult(tc.result)
-    if (!payload) continue
-    const nodeId = nodeIdFromProposePayload(payload)
-    if (nodeId) return nodeId
-  }
-  return null
 }
 
 function timestampMs(value: unknown): number {
@@ -148,37 +88,6 @@ export function resolvePendingConfirmNodeId(
     return String(b.id).localeCompare(String(a.id))
   })
   return pending[0]?.id ?? null
-}
-
-export type ConfirmProposeDeps = {
-  generateForNode: (nodeId: string) => void | Promise<void>
-  sendPreset?: (text: string) => void | Promise<void>
-}
-
-/**
- * Phase 2c.1 C2: confirm propose → dock generateForNode only (never sendPreset / atomic).
- */
-export async function confirmProposeGeneration(
-  nodeId: string,
-  deps: ConfirmProposeDeps,
-): Promise<void> {
-  const id = String(nodeId ?? '').trim()
-  if (!id) return
-  await deps.generateForNode(id)
-}
-
-/**
- * Phase 2c.3 E1: pending_confirm beats await_atomic_confirm interrupt chips.
- * Other interrupt chip sets are unchanged.
- */
-export function applyAtomicProposeChipPriority(
-  interruptChip: AgentChipSet,
-  pendingNodeId: string | null | undefined,
-): AgentChipSet {
-  if (interruptChip === 'atomic' && String(pendingNodeId ?? '').trim()) {
-    return 'generation_propose'
-  }
-  return interruptChip
 }
 
 const MEDIA_NODE_TYPES = new Set(['image', 'video', 'text', 'audio'])
@@ -256,16 +165,8 @@ export function detectAgentChipSet(
   assistantText: string,
   ctx?: ChipSetContext,
 ): AgentChipSet {
-  // Phase 2b: dock-equivalent confirm (never atomic_create resume)
-  if (extractProposeGenerationNodeId(ctx?.toolCalls)) {
-    return 'generation_propose'
-  }
-
-  // Phase 2c.1 C1: recover generation_propose from canvas pending_confirm SSOT
-  if (resolvePendingConfirmNodeId(ctx?.canvasNodes, ctx?.selectedNodeId)) {
-    return 'generation_propose'
-  }
-
+  // generation_propose 检测已下线（2026-10-01 决策）：propose 确认入口唯一 =
+  // 画布节点「生成」按钮，聊天侧不再出确认/取消 chips（含 pending_confirm SSOT 恢复）。
   const t = (assistantText || '').trim()
   if (!t) return null
 
@@ -292,25 +193,4 @@ export function detectAgentChipSet(
   }
 
   return null
-}
-
-/**
- * propose 卡片节点解析：画布 pending_confirm SSOT 优先，toolCalls 提取兜底。
- *
- * 回归背景（2026-09-21）：多节点 propose 场景下确认卡片出卡时序不稳定——
- * 旧优先级（extract ?? SSOT）在最后一轮消息含 propose toolCalls 时，
- * 确认该节点后 extract 仍返回同一 nodeId，latch 命中且 ?? 短路使 SSOT
- * 永不被咨询 → 下一张卡片死等 agent 下一轮 turn（几十秒到几分钟）。
- * 现改为 SSOT 优先：确认一张后节点状态离开 pending_confirm，computed
- * 立即重算出下一张；extract 仅覆盖「toolCalls 已返回、画布节点尚未落库」
- * 的竞态窗口。
- */
-export function resolveProposeChipNodeId(input: {
-  toolCalls?: AgentToolCallLike[] | null
-  canvasNodes?: CanvasNodeLike[] | null
-  selectedNodeId?: string | null
-}): string | null {
-  const fromCanvas = resolvePendingConfirmNodeId(input.canvasNodes, input.selectedNodeId)
-  if (fromCanvas) return fromCanvas
-  return extractProposeGenerationNodeId(input.toolCalls)
 }

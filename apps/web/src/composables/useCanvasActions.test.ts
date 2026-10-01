@@ -135,3 +135,54 @@ describe('canvasDataToFlow —— 存量重复节点自愈', () => {
     expect(out.nodes.map((n) => n.id)).toEqual(['a', 'b'])
   })
 })
+
+describe('状态降级守卫（2026-10-01：阻塞 propose 的 stale update_node 不得回退在途状态）', () => {
+  it('update_node 把 generating 节点改成 pending_confirm → 状态被丢弃（其他字段照常合并）', () => {
+    const out = applyActionsToFlow(
+      [node('img-1', { status: 'generating', prompt: '旧提示词' })],
+      [],
+      [
+        {
+          type: 'update_node',
+          payload: { id: 'img-1', data: { status: 'pending_confirm', prompt: '新提示词' } },
+        } as unknown as CanvasAction,
+      ],
+    )
+    expect(out.nodes[0]?.data.status).toBe('generating')
+    expect(out.nodes[0]?.data.prompt).toBe('新提示词')
+  })
+
+  it('add_node 同 id upsert 携带 stale pending_confirm → 同样不回退', () => {
+    const out = applyActionsToFlow(
+      [node('img-1', { status: 'completed', url: 'a.png' })],
+      [],
+      [
+        {
+          type: 'add_node',
+          payload: { id: 'img-1', nodeType: 'image', data: { status: 'pending_confirm' } },
+        } as unknown as CanvasAction,
+      ],
+    )
+    expect(out.nodes[0]?.data.status).toBe('completed')
+    expect(out.nodes[0]?.data.url).toBe('a.png')
+  })
+
+  it('正向流转不受影响：draft→pending_confirm、pending_confirm→generating 照常合并', () => {
+    const out = applyActionsToFlow(
+      [node('a', { status: 'draft' }), node('b', { status: 'pending_confirm' })],
+      [],
+      [
+        {
+          type: 'update_node',
+          payload: { id: 'a', data: { status: 'pending_confirm' } },
+        } as unknown as CanvasAction,
+        {
+          type: 'update_node',
+          payload: { id: 'b', data: { status: 'generating' } },
+        } as unknown as CanvasAction,
+      ],
+    )
+    expect(out.nodes[0]?.data.status).toBe('pending_confirm')
+    expect(out.nodes[1]?.data.status).toBe('generating')
+  })
+})

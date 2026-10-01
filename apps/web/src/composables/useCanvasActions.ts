@@ -18,6 +18,32 @@ export interface FlowEdge {
 
 let nodeCounter = 0
 
+/**
+ * 节点状态降级守卫（2026-10-01）：阻塞 propose 模式下，propose_generation 的
+ * tool result（内含 update_node{status:'pending_confirm'}）在等待结束后才随
+ * tool_execution_end 下发——此时节点可能已被用户确认进入 generating/completed。
+ * stale 的 pending_confirm 一旦覆盖，节点整个剩余回合回退成「待确认」，用户再点
+ * 「生成」会误触 cancelGeneration 取消在途生成。规则：本地已处于在途/终态时，
+ * 丢弃 stale 的 pending_confirm，其余字段照常合并。
+ */
+const STALE_BLOCKED_STATUSES = new Set(['generating', 'completed', 'error', 'failed'])
+
+export function mergeNodeData(
+  existingData: Record<string, unknown> | undefined,
+  incomingData: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const merged = { ...existingData, ...incomingData }
+  const existingStatus = String(existingData?.status ?? '')
+  if (
+    String(incomingData?.status ?? '') === 'pending_confirm'
+    && STALE_BLOCKED_STATUSES.has(existingStatus)
+  ) {
+    if (existingData && 'status' in existingData) merged.status = existingStatus
+    else delete merged.status
+  }
+  return merged
+}
+
 export function applyActionsToFlow(
   nodes: FlowNode[],
   edges: FlowEdge[],
@@ -46,7 +72,7 @@ export function applyActionsToFlow(
         if (existingIndex >= 0) {
           const existing = newNodes[existingIndex]!
           existing.position = pos
-          existing.data = { ...existing.data, ...(p.data ?? {}) }
+          existing.data = mergeNodeData(existing.data, p.data)
           if (p.nodeType) existing.type = p.nodeType
         } else {
           newNodes.push({
@@ -74,7 +100,7 @@ export function applyActionsToFlow(
         const node = newNodes.find((n) => n.id === action.payload.id)
         if (node) {
           if (action.payload.position) node.position = action.payload.position
-          if (action.payload.data) node.data = { ...node.data, ...action.payload.data }
+          if (action.payload.data) node.data = mergeNodeData(node.data, action.payload.data)
         }
         break
       }

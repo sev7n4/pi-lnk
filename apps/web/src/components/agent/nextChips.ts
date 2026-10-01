@@ -13,8 +13,6 @@ export const NEXT_CHIP_MAX = 2
 
 export type NextChipAction =
   | { kind: 'preset'; text: string }
-  | { kind: 'confirm_propose' }
-  | { kind: 'cancel_propose' }
   | { kind: 'confirm_atomic' }
   | { kind: 'cancel_atomic' }
   | { kind: 'scheme_confirm' }
@@ -91,22 +89,8 @@ export function nextChips(input: NextChipInput): NextChip[] {
           action: { kind: 'cancel_atomic' },
         },
       ]
-    case 'generation_propose':
-      return [
-        {
-          key: 'prop-1',
-          label: '确认生成',
-          primary: true,
-          testId: 'generation-propose-confirm',
-          action: { kind: 'confirm_propose' },
-        },
-        {
-          key: 'prop-2',
-          label: '取消',
-          testId: 'generation-propose-cancel',
-          action: { kind: 'cancel_propose' },
-        },
-      ]
+    // generation_propose 已下线（2026-10-01 决策）：propose 确认入口唯一 = 画布节点
+    // 「生成」按钮（阻塞等待由琥珀卡指引），聊天侧不再出确认/取消 chips。
     case 'recipe_confirm':
       return [
         {

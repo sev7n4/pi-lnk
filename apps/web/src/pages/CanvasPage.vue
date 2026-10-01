@@ -1594,6 +1594,12 @@ function triggerLocateFlash(ids: string[]) {
 }
 
 async function focusNodeById(id: string) {
+  // 2026-10-01 修：节点尚未上屏（或已被删除）时点击定位是静默 no-op，
+  // 必须给出与 focusNodesByIds 一致的提示，让定位失败可感知。
+  if (!nodes.value.some((n) => n.id === id)) {
+    ElMessage.warning('当前画布中没有找到对应节点')
+    return
+  }
   selectOnlyNode(id)
   await nextTick()
   await vueFlowRef.value?.fitView({ nodes: [id], padding: 0.45, duration: 320, maxZoom: 1.05 })

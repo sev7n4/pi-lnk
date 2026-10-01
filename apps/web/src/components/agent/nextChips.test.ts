@@ -7,7 +7,6 @@ const CHIP_SETS = [
   'copy',
   'topo',
   'atomic',
-  'generation_propose',
   'recipe_confirm',
   'recipe_promote',
   'recipe_promote_seed',
@@ -18,12 +17,11 @@ const CHIP_SETS = [
   'delivery_confirm',
 ] as const
 
-/** 收敛前既有手势的回归锚点，任何一条从白名单里掉出去 = 交互手势消失。 */
+/** 收敛前既有手势的回归锚点，任何一条从白名单里掉出去 = 交互手势消失。
+ *  2026-10-01：generation_propose-confirm/cancel 锚点随 chips 下线一并移除。 */
 const PRESERVED_TESTIDS = [
   'atomic-confirm-dock',
   'atomic-confirm-cancel',
-  'generation-propose-confirm',
-  'generation-propose-cancel',
   'recipe-promote-variant',
   'recipe-promote-new',
   'recipe-promote-seed-confirm',
@@ -40,14 +38,8 @@ function allChips(): NextChip[] {
 }
 
 describe('nextChips（决策 4：白名单 + 最多 2 个）', () => {
-  it('generation_propose → 确认生成 / 取消，锚点不丢', () => {
-    const chips = nextChips({ chipSet: 'generation_propose' })
-    expect(chips.map((c) => c.label)).toEqual(['确认生成', '取消'])
-    expect(chips.map((c) => c.testId)).toEqual([
-      'generation-propose-confirm',
-      'generation-propose-cancel',
-    ])
-    expect(chips.filter((c) => c.primary)).toHaveLength(1)
+  it('generation_propose chips 已下线（2026-10-01 决策：画布节点生成按钮是唯一确认入口）', () => {
+    expect(nextChips({ chipSet: 'generation_propose' })).toEqual([])
   })
 
   it('atomic → 确认生成 / 取消，锚点不丢', () => {

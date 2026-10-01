@@ -50,16 +50,13 @@ import AgentMacroSchemeCards from '@/components/agent/presentation/AgentMacroSch
 import { hasSchemeDraftSections, splitAssistantDraftMessage } from '@/components/agent/presentation/schemeDraftProse'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 import {
-  applyAtomicProposeChipPriority,
   confirmAtomicGeneration as runConfirmAtomicGeneration,
-  confirmProposeGeneration as runConfirmProposeGeneration,
   detectAgentChipSet,
   canvasHasRecipeParent,
   resolveAtomicConfirmNodeId,
   resolvePendingConfirmNodeId,
-  resolveProposeChipNodeId,
 } from '@/components/agent/agentChipSet'
-import { buildGenerationProposePresentation } from '@/components/agent/generationProposePresentation'
+import { resolveProposeCancelNodeId } from '@/components/agent/proposeWaitActions'
 import {
   chipSetFromInterrupt,
   interruptPayloadFromThreadState,
@@ -577,58 +574,19 @@ const agentStream = useAgentStream({
 })
 
 /** 方案确认门 / 主文案确认门：侧栏快捷钮 */
-/** Dismissed propose chip key (`msgId:nodeId`) so confirm/cancel hide chips without sendPreset */
-const clearedProposeKey = ref<string | null>(null)
-
 const lastAssistantMessage = computed(() =>
   [...agent.messages].reverse().find((m) => m.role === 'assistant'),
 )
 
-const proposeGenerationNodeId = computed(() =>
-  resolveProposeChipNodeId({
-    toolCalls: lastAssistantMessage.value?.toolCalls,
-    canvasNodes: props.canvasNodes,
-    selectedNodeId: props.selectedNodeId,
-  }),
-)
-
-function proposeChipKey(msgId: string, nodeId: string): string {
-  return `${msgId}:${nodeId}`
-}
-
-function proposeLatchKey(nodeId: string): string {
-  const last = lastAssistantMessage.value
-  return last ? proposeChipKey(last.id, nodeId) : `node:${nodeId}`
-}
-
 const chipSet = computed(() => {
-  // SSOT 优先：画布 pending_confirm 是真相源，确认一张后下一张立即顶上；
-  // toolCalls 提取仅覆盖「提案已返回、画布节点尚未落库」的竞态窗口。
-  // （旧写法 extract ?? SSOT 会在最后一轮消息含 propose toolCalls 时把卡片
-  // 钉死在已确认节点上，latch + ?? 短路使下一张卡死等 agent 下一轮 turn。）
-  const proposeId = resolveProposeChipNodeId({
-    toolCalls: lastAssistantMessage.value?.toolCalls,
-    canvasNodes: props.canvasNodes,
-    selectedNodeId: props.selectedNodeId,
-  })
-
-  // Interrupt overrides propose — except Phase 2c.3: pending beats await_atomic_confirm.
+  // generation_propose chips 已下线（2026-10-01 决策）：propose 确认入口唯一 =
+  // 画布节点「生成」按钮（阻塞等待期由琥珀卡指引 + 定位/取消），聊天侧不再出确认卡。
   const fromInterrupt = chipSetFromInterrupt(interruptGate.value)
-  const interruptChip = applyAtomicProposeChipPriority(fromInterrupt, proposeId)
-  if (interruptChip === 'generation_propose' && proposeId) {
-    const key = proposeLatchKey(proposeId)
-    if (clearedProposeKey.value !== key) return 'generation_propose'
-  }
-  if (interruptChip && interruptChip !== 'generation_propose') return interruptChip
+  if (fromInterrupt) return fromInterrupt
 
   if (agent.isStreaming) return null
   const last = lastAssistantMessage.value
-  if (proposeId) {
-    const key = proposeLatchKey(proposeId)
-    if (clearedProposeKey.value !== key) return 'generation_propose'
-  }
   // 修复 P1-4：把"最近用户消息"传入 detectAgentChipSet，避免 modify 阶段误显示 plan 按钮
-  // Propose path is handled above (with dismiss latch); omit toolCalls/canvas here so latch sticks.
   const lastUser = [...agent.messages].reverse().find((m) => m.role === 'user')
   return detectAgentChipSet(last?.content || '', {
     latestUserText: lastUser?.content,
@@ -702,6 +660,17 @@ function locateProposeNode() {
 }
 
 /**
+ * 琥珀卡取消（2026-10-01）：只拒绝该节点的生成提议（clear-propose → 节点回 draft，
+ * runtime 轮询判 rejected → run 恢复继续对话）；绝不是中止整个 run —— 那是
+ * composer「停止」的语义。等待期流式守卫刻意不设（与 locateProposeNode 一致）。
+ */
+function cancelBlockingPropose() {
+  const nodeId = resolveProposeCancelNodeId(agent.blockingWait)
+  if (!nodeId) return
+  emit('clearProposeGeneration', nodeId)
+}
+
+/**
  * 下一步动作（决策 4）：唯一一处 chips 渲染源。
  * 白名单在 nextChips.ts，这里只负责喂输入 —— 未知 chipSet 直接产出空数组 = 不渲染任何按钮。
  */
@@ -718,12 +687,6 @@ function runNextChip(action: NextChipAction) {
   switch (action.kind) {
     case 'preset':
       void sendPreset(action.text)
-      break
-    case 'confirm_propose':
-      confirmProposeGeneration()
-      break
-    case 'cancel_propose':
-      cancelProposeGeneration()
       break
     case 'confirm_atomic':
       confirmAtomicChip()
@@ -754,22 +717,6 @@ function runNextChip(action: NextChipAction) {
 const awaitingCopyConfirm = computed(() => chipSet.value === 'copy')
 const awaitingTopoConfirm = computed(() => chipSet.value === 'topo')
 const canPromoteVariant = computed(() => canvasHasRecipeParent(props.canvasNodes))
-const awaitingGenerationPropose = computed(() => chipSet.value === 'generation_propose')
-const generationProposePresentation = computed(() => {
-  if (!awaitingGenerationPropose.value) return null
-  const nodeId = proposeGenerationNodeId.value
-  if (!nodeId) return null
-  const fromCanvas = props.canvasNodes?.find((n) => n.id === nodeId)
-  const node =
-    fromCanvas ??
-    (props.selectedNode?.id === nodeId ? props.selectedNode : null)
-  if (!node) return null
-  return buildGenerationProposePresentation({
-    id: node.id,
-    type: 'type' in node ? (node as { type?: string | null }).type : undefined,
-    data: node.data ?? null,
-  })
-})
 const awaitingImageQa = computed(() => chipSet.value === 'image_qa' && !isRetakePending.value)
 const isRetakePending = computed(() =>
   isRetakePendingPhase({
@@ -887,8 +834,7 @@ const hasDockPresentation = computed(
     || awaitingShotConfirm.value
     || (awaitingTopoConfirm.value && !awaitingShotConfirm.value)
     || isRetakePending.value
-    || showCancelledCallout.value
-    || (awaitingGenerationPropose.value && Boolean(generationProposePresentation.value)),
+    || showCancelledCallout.value,
 )
 const awaitingDeliveryConfirm = computed(() => chipSet.value === 'delivery_confirm')
 const userRequestLabels = ref<string[]>([])
@@ -1812,29 +1758,6 @@ function fillExampleUtterance(text: string) {
   nextTick(() => composerRef.value?.focus())
 }
 
-function latchProposeChip(nodeId: string) {
-  clearedProposeKey.value = proposeLatchKey(nodeId)
-}
-
-/** Phase 2b/2c.1: confirm → CanvasPage generateForNode (never atomic sendPreset). */
-function confirmProposeGeneration() {
-  const nodeId = proposeGenerationNodeId.value
-  if (!nodeId || agent.isStreaming) return
-  latchProposeChip(nodeId)
-  void runConfirmProposeGeneration(nodeId, {
-    generateForNode: (id) => emit('generateNode', id),
-    sendPreset,
-  })
-}
-
-/** Phase 2b/2c.1: cancel → Nest clear via CanvasPage. */
-function cancelProposeGeneration() {
-  const nodeId = proposeGenerationNodeId.value
-  if (!nodeId || agent.isStreaming) return
-  latchProposeChip(nodeId)
-  emit('clearProposeGeneration', nodeId)
-}
-
 /** Phase 2c.3: unwind await_atomic_confirm without running atomic gen. */
 async function unwindAtomicInterrupt() {
   interruptGate.value = null
@@ -1863,7 +1786,6 @@ function cancelAtomicChip() {
   if (agent.isStreaming) return
   const pendingId = resolvePendingConfirmNodeId(props.canvasNodes, props.selectedNodeId)
   if (pendingId) {
-    latchProposeChip(pendingId)
     emit('clearProposeGeneration', pendingId)
     interruptGate.value = null
     return
@@ -2071,8 +1993,7 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
     agent.finishStreaming()
     await reconcileLatestAssistant()
     await refreshThreadCheckpoint()
-    const actions = agent.flushActions()
-    if (actions.length) emit('canvasActions', actions)
+    // canvas_action 已流内实时 emit（2026-10-01），无积压可 flush
     // 始终回拉：Runtime 已写 Session.canvasData；本地 save 不得用旧节点覆盖
     emit('turnComplete')
     scrollToBottom()
@@ -2386,9 +2307,14 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)
       break
     }
-    case 'canvas_action':
-      agent.addCanvasAction(event.data as Parameters<typeof agent.addCanvasAction>[0])
+    case 'canvas_action': {
+      // 流内实时上屏（2026-10-01 修）：不等流结束 flush —— 阻塞 propose 等待期
+      // 节点必须立即可见/可确认。add_node 已按 id upsert（#91），重复投递幂等。
+      const action = event.data as Parameters<typeof agent.addCanvasAction>[0]
+      agent.addCanvasAction(action)
+      emit('canvasActions', [action])
       break
+    }
     case 'node_status': {
       const data = event.data as { nodeId: string; status: string; url?: string }
       agent.trackNodeStatus(data)
@@ -3051,15 +2977,26 @@ defineExpose({
                   已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
                 </p>
               </div>
-              <button
-                v-if="proposeWait.nodeId"
-                type="button"
-                class="mt-1.5 rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
-                data-testid="propose-wait-locate"
-                @click="locateProposeNode"
-              >
-                定位该节点
-              </button>
+              <div class="mt-1.5 flex items-center gap-1.5">
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                  data-testid="propose-wait-locate"
+                  @click="locateProposeNode"
+                >
+                  定位该节点
+                </button>
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                  data-testid="propose-wait-cancel"
+                  @click="cancelBlockingPropose"
+                >
+                  取消
+                </button>
+              </div>
             </div>
             <AgentTaskProgressCard
               v-if="showTaskCardAtComposer"
@@ -3124,15 +3061,6 @@ defineExpose({
               >
                 发起新任务
               </button>
-            </div>
-            <div v-else-if="awaitingGenerationPropose" class="mb-2 px-0.5">
-              <AgentPresentationHost
-                v-if="generationProposePresentation"
-                class="mb-2"
-                :presentation="generationProposePresentation"
-                :disabled="agent.isStreaming"
-                @focus-node="onFocusNode($event)"
-              />
             </div>
             <div v-else-if="isRetakePending" class="mb-2 px-0.5" data-testid="retake-pending-callout">
               <p

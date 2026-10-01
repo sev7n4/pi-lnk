@@ -56,7 +56,6 @@ type PersistedAgentMessage = AgentChatMessage & { linkedOutputs?: string | null;
 export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
   const isStreaming = ref(false)
-  const pendingActions = ref<CanvasAction[]>([])
   /** P1 状态行：本回合 propose_generation 已返回 pending_confirm（waiting 一票通过） */
   const proposePendingConfirm = ref(false)
   /**
@@ -271,15 +270,14 @@ export const useAgentStore = defineStore('agent', () => {
     if (last?.executionTrace) applyExplore(last.executionTrace, data)
   }
 
+  /**
+   * canvas_action 事件落点（2026-10-01 修）：只记 trace；上屏改为 SideRail 流内
+   * 即时 emit('canvasActions') 直达 CanvasPage —— 旧 pendingActions 积压到流结束
+   * 才 flush，阻塞 propose 等待期节点永不上屏（PR #87 伴生回归的根因之一）。
+   * 重复投递由 #91 的 add_node 按 id upsert 幂等保底。
+   */
   function addCanvasAction(action: CanvasAction) {
     trackCanvasAction(action)
-    pendingActions.value.push(action)
-  }
-
-  function flushActions(): CanvasAction[] {
-    const actions = [...pendingActions.value]
-    pendingActions.value = []
-    return actions
   }
 
   function finishStreaming() {
@@ -403,7 +401,6 @@ export const useAgentStore = defineStore('agent', () => {
 
   function clear() {
     messages.value = []
-    pendingActions.value = []
     proposePendingConfirm.value = false
     blockingWait.value = null
     activity.value = null
@@ -414,7 +411,6 @@ export const useAgentStore = defineStore('agent', () => {
   return {
     messages,
     isStreaming,
-    pendingActions,
     proposePendingConfirm,
     blockingWait,
     activity,
@@ -437,7 +433,6 @@ export const useAgentStore = defineStore('agent', () => {
     trackThinking,
     trackExplore,
     addCanvasAction,
-    flushActions,
     markTurnError,
     trackTurnUsage,
     finishStreaming,
