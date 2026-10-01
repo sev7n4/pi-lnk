@@ -30,6 +30,24 @@ export class AgentMemoryService {
     return { id: record.id, createdAt: record.createdAt.toISOString() }
   }
 
+  /**
+   * 分词：空白/标点切分；CJK 串按 bigram（单字串回退整字）——中英混合 query 的子串召回。
+   * bigram 让「整理」能命中「整理画布」，也天然兼容多字中文词的部分匹配。
+   */
+  private tokenize(query: string): string[] {
+    const tokens: string[] = []
+    for (const raw of query.toLowerCase().split(/[\s,，。;；、!！?？]+/)) {
+      if (!raw) continue
+      if (/[\u4e00-\u9fff]/.test(raw)) {
+        if (raw.length === 1) tokens.push(raw)
+        for (let i = 0; i < raw.length - 1; i++) tokens.push(raw.slice(i, i + 2))
+      } else {
+        tokens.push(raw)
+      }
+    }
+    return tokens
+  }
+
   async searchMemory(input: {
     userId: string
     query?: string
@@ -44,9 +62,24 @@ export class AgentMemoryService {
       orderBy: { createdAt: 'desc' },
       take: query ? MEMORY_SCAN_MAX : limit,
     })
-    // 大小写不敏感子串匹配（js 侧），截断到 limit——见 MEMORY_SCAN_MAX 注释
-    const needle = query.toLowerCase()
-    const matched = query ? rows.filter((m) => m.content.toLowerCase().includes(needle)) : rows
+    // 分词打分召回（审计 #7）：OR 命中 + 计分（全 token 命中的排前），零分过滤。
+    // % / _ 天然按普通子串处理（不是 LIKE，Review I-2 语义保持）；同分保持
+    // findMany 的 createdAt 倒序（Array.prototype.sort 稳定排序）。
+    let matched: typeof rows
+    if (!query) {
+      matched = rows
+    } else {
+      const tokens = this.tokenize(query)
+      const scored = rows
+        .map((m) => {
+          const content = m.content.toLowerCase()
+          const score = tokens.reduce((acc, t) => acc + (content.includes(t) ? 1 : 0), 0)
+          return { m, score }
+        })
+        .filter((x) => x.score > 0)
+      scored.sort((a, b) => b.score - a.score)
+      matched = scored.map((x) => x.m)
+    }
     const items = matched.slice(0, limit)
     return {
       items: items.map((m) => ({ id: m.id, content: m.content, createdAt: m.createdAt.toISOString() })),
