@@ -33,7 +33,9 @@ export type PiEventType =
 	| "tool_execution_end"
 	| "error"
 	/** 阻塞式确认工具（ask_user / propose_generation）等待生命周期（2026-10-01）。 */
-	| "waiting_user";
+	| "waiting_user"
+	/** 「正在做什么」（决策 8）：工具起手即发，人话由客户端目录翻译，runtime 只给工具名。 */
+	| "activity";
 
 /** 现有 UI 事件（消费端实测子集；其余事件类型保持 passthrough） */
 export interface UiEvent<T = unknown> {
@@ -141,6 +143,26 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 					timeoutMs: d.timeoutMs,
 					nodeId: d.nodeId,
 					reason: d.reason,
+				},
+			};
+		}
+		case "activity": {
+			// 「正在做什么」（决策 8）：同样不走 default 的 `pi_` 前缀——加了前缀前端按 type
+			// 分支消费时会静默丢弃，状态行就退回「处理中」，等于这三层白接了。
+			// 载荷原样透传：toolName 给客户端查中文目录，done 给进度措辞。
+			const d = event.data as {
+				toolName?: string;
+				done?: number;
+				total?: number;
+			};
+			return {
+				type: "activity",
+				data: {
+					toolName: d.toolName,
+					done: d.done,
+					// total 在 vendor harness 侧无源（turn_start 不带计划步数）→ runtime 不产生，
+					// 这里也不伪造；前端据此只说「第 N 步」，不渲染假分母。
+					total: d.total,
 				},
 			};
 		}

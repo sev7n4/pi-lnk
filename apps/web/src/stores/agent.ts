@@ -74,6 +74,14 @@ export const useAgentStore = defineStore('agent', () => {
     nodeId?: string
     deadlineAt?: number
   } | null>(null)
+  /**
+   * P1「正在做什么」（决策 8）：runtime 在每个工具**起手**时下发的 `activity` 事件载荷。
+   *
+   * 与 trace 最新一步的分工：trace 走 SSE 的 tool_call/tool_result 反推，长工具期间会停在
+   * 上一步的措辞；activity 由 runtime 在起手瞬间下发，状态行能立刻换词。
+   * 两者取其一即可，前端「有 activity 就用 activity」—— activity 更实时。
+   */
+  const activity = ref<{ toolName?: string; done?: number; total?: number } | null>(null)
   /** P1 状态行：最近一次 text_delta 时间戳（waiting 文本静默 ≥2s 判定用） */
   const lastTextDeltaAt = ref(0)
   /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
@@ -98,6 +106,7 @@ export const useAgentStore = defineStore('agent', () => {
     // 新回合开始：重置回合级状态行信号（propose 置位 / 阻塞等待 / 文本时间戳 / 失败态）
     proposePendingConfirm.value = false
     blockingWait.value = null
+    activity.value = null
     lastTextDeltaAt.value = 0
     turnError.value = null
     messages.value.push({
@@ -304,6 +313,16 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  /**
+   * `activity` 事件落点（决策 8）：只收中文翻译需要的原始数据，**不在这里翻中文**。
+   * 中文由组件层 `describeRuntimeActivity` 查 `TOOL_PRESENTATION` 目录出（决策 7：
+   * agent 只声明意图、措辞归客户端），避免 store 里塞文案。
+   * 空工具名一律清位——宁可回落 trace 旧措辞，也不要在状态行吐出空字。
+   */
+  function setActivity(next: { toolName?: string; done?: number; total?: number } | null) {
+    activity.value = next?.toolName ? { ...next } : null
+  }
+
   function parseAttachments(raw: string | undefined): SidebarAttachment[] | undefined {
     if (!raw) return undefined
     try {
@@ -387,6 +406,7 @@ export const useAgentStore = defineStore('agent', () => {
     pendingActions.value = []
     proposePendingConfirm.value = false
     blockingWait.value = null
+    activity.value = null
     lastTextDeltaAt.value = 0
     turnError.value = null
   }
@@ -397,9 +417,11 @@ export const useAgentStore = defineStore('agent', () => {
     pendingActions,
     proposePendingConfirm,
     blockingWait,
+    activity,
     lastTextDeltaAt,
     turnError,
     setBlockingWait,
+    setActivity,
     addUserMessage,
     startAssistantMessage,
     appendText,

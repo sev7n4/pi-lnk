@@ -617,18 +617,22 @@ Expected: PASS / 仅 `mermaid` 噪音
 ### Task 7: `activity` 事件三层贯通（决策 8，P1）
 
 **Files:**
-- Modify: `services/pi-runtime/src/session-manager.ts`（`NormalizedEventType` 增 `"activity"`；`dispatchActivity` 在 dispatch `step` 时一并广播 `{ label, done, total }`）
+- Modify: `services/pi-runtime/src/session-manager.ts`（`NormalizedEventType` 增 `"activity"`；`dispatchActivity` 在 `tool_start` 同帧广播 `{ toolName, done }`）
 - Modify: `apps/server/src/agent/pi-runtime/pi-events.ts`（显式 case，禁止走 `pi_` 前缀透传）
 - Modify: `apps/web/src/stores/agent.ts`（`activity` ref + 事件落点）
 - Modify: `apps/web/src/components/agent/AgentSideRail.vue`（status 行优先读 store.activity，缺省回落 `describeActivity`）
 
 **Interfaces:**
-- Produces: `activity` 事件 → `{ label: string; done?: number; total?: number }`；Web `activityLabel` 计算属性
+- Produces: `activity` 事件 → `{ toolName?: string; done?: number }`；Web `describeRuntimeActivity(activity)`
+- ⚠️ **修订（实测）**：原稿的 `label` / `total` 都**不实现**。
+  - `label`：中文是客户端目录（`TOOL_PRESENTATION`）的责任（决策 7），runtime 侧再来一份必然漂移 → runtime 只给 `toolName`。
+  - `total`：vendor harness 的 `turn_start` 载荷只有 `{ lane, runId, turnId }`，**全仓 grep 不到任何计划步数**；`tool_start` 也是逐条发射、不带“本批共几个”→ 无源可造。前端据此只说「第 N 步」，不渲染「3/8」假分母。
+  - Web 侧类型为 `describeRuntimeActivity({ toolName?, done? })`，无 `activityLabel` 计算属性（就地合进 `traceActivity` computed）。
 
-- [ ] **Step 1: runtime 事件 + 单测**（pi-runtime 侧 `session-manager` 已有 `dispatchWaitingUser` 范式可照抄，`waiting_user` 在 pod 内已实证）
-- [ ] **Step 2: Nest 显式映射**（`pi-events.ts` 仿 `case "waiting_user"` 写法）
-- [ ] **Step 3: Web store 落点 + 模板优先读 activity**
-- [ ] **Step 4: pi-runtime 单测 + Nest 单测全绿**
+- [x] **Step 1: runtime 事件 + 单测**（pi-runtime 侧 `session-manager` 已有 `dispatchWaitingUser` 范式可照抄，`waiting_user` 在 pod 内已实证）
+- [x] **Step 2: Nest 显式映射**（`pi-events.ts` 仿 `case "waiting_user"` 写法）
+- [x] **Step 3: Web store 落点 + 模板优先读 activity**
+- [x] **Step 4: pi-runtime 单测 + Nest 单测全绿**
 - [ ] **Step 5: 提 pi-runtime PR → 等 CI 绿 → 合并 → 盯部署（API→pi-runtime→web 串行，队列必须空）**
   Run（部署后自检，留空 `feature_grep` / `feature_file` 让校验步骤跳过——昨晚填错文件名导致镜像白构建一次）：
   `docker run --rm --entrypoint sh 127.0.0.1:5000/pi-runtime:<tag> -c 'ls /app/services/pi-runtime/dist/'`

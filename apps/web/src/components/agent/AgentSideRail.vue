@@ -137,7 +137,11 @@ import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
 import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
 import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
-import { describeActivity } from '@/components/agent/activityLine'
+import {
+  describeActivity,
+  describeRuntimeActivity,
+} from '@/components/agent/activityLine'
+import { nextChips, type NextChipAction } from '@/components/agent/nextChips'
 import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
@@ -630,7 +634,6 @@ const chipSet = computed(() => {
     latestUserText: lastUser?.content,
   })
 })
-const awaitingConfirm = computed(() => chipSet.value === 'plan')
 
 /* ---- P1 回合状态行：实时秒数 ticker + waiting 收口 + 失败态 ---- */
 const nowSec = ref(Date.now())
@@ -671,7 +674,10 @@ const turnStatus = computed(() => {
   const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
   // 「正在做什么」：优先 runtime 下发的 activity（P1 决策 8）；当前轮没有则拿 trace 最新一步人话；
   // 都拿不到时 turnStatusLine 内部降级为「处理中」，绝不把内部工具名吐给用户（决策 3 / 5）。
-  const traceActivity = describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
+  // runtime activity 更实时（工具起手即到），拿不到才回落到 trace 最新一步的人话
+  const traceActivity =
+    describeRuntimeActivity(agent.activity) ??
+    describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
   return turnStatusLine({
     isStreaming: agent.isStreaming,
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
@@ -695,13 +701,58 @@ function locateProposeNode() {
   if (nodeId) onFocusNode(nodeId)
 }
 
+/**
+ * 下一步动作（决策 4）：唯一一处 chips 渲染源。
+ * 白名单在 nextChips.ts，这里只负责喂输入 —— 未知 chipSet 直接产出空数组 = 不渲染任何按钮。
+ */
+const dockChips = computed(() =>
+  nextChips({
+    chipSet: chipSet.value,
+    canPromoteVariant: canPromoteVariant.value,
+    qaOptions: awaitingImageQa.value
+      ? imageQaOptions.value.map((o) => ({ id: o.id, label: o.label, message: o.message }))
+      : null,
+  }),
+)
+function runNextChip(action: NextChipAction) {
+  switch (action.kind) {
+    case 'preset':
+      void sendPreset(action.text)
+      break
+    case 'confirm_propose':
+      confirmProposeGeneration()
+      break
+    case 'cancel_propose':
+      cancelProposeGeneration()
+      break
+    case 'confirm_atomic':
+      confirmAtomicChip()
+      break
+    case 'cancel_atomic':
+      cancelAtomicChip()
+      break
+    case 'scheme_confirm':
+      void sendSchemeConfirm()
+      break
+    case 'scheme_revise':
+      void sendSchemeRevisePreset()
+      break
+    case 'macro_confirm':
+      void sendMacroSchemeConfirm()
+      break
+    case 'macro_revise':
+      void sendMacroSchemeRevise()
+      break
+    case 'qa_option':
+      void sendPreset(action.message)
+      break
+    default:
+      break
+  }
+}
+
 const awaitingCopyConfirm = computed(() => chipSet.value === 'copy')
 const awaitingTopoConfirm = computed(() => chipSet.value === 'topo')
-const awaitingAtomicConfirm = computed(() => chipSet.value === 'atomic')
-const awaitingRecipeConfirm = computed(() => chipSet.value === 'recipe_confirm')
-const awaitingRecipePromote = computed(() => chipSet.value === 'recipe_promote')
-const awaitingRecipePromoteSeed = computed(() => chipSet.value === 'recipe_promote_seed')
-const awaitingRecipePromoteVariant = computed(() => chipSet.value === 'recipe_promote_variant')
 const canPromoteVariant = computed(() => canvasHasRecipeParent(props.canvasNodes))
 const awaitingGenerationPropose = computed(() => chipSet.value === 'generation_propose')
 const generationProposePresentation = computed(() => {
@@ -2323,6 +2374,13 @@ function handleEvent(event: { type: string; data: unknown }) {
       }
       break
     }
+    case 'activity': {
+      // 「正在做什么」（决策 8）：runtime 在工具起手时下发，比 tool_call 更早到。
+      // 中文在组件层查 TOOL_PRESENTATION 出（决策 7：runtime 只声明意图、不塞文案）。
+      const d = event.data as { toolName?: string; done?: number; total?: number };
+      agent.setActivity({ toolName: d.toolName, done: d.done, total: d.total });
+      break;
+    }
     case 'tool_result': {
       const d = event.data as { name: string; toolCallId?: string; result: unknown; isError?: boolean }
       agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)
@@ -3067,32 +3125,6 @@ defineExpose({
                 发起新任务
               </button>
             </div>
-            <div v-if="awaitingConfirm" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('1')"
-              >
-                确认方案
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('2')"
-              >
-                换方向
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('3')"
-              >
-                自己说明修改
-              </button>
-            </div>
             <div v-else-if="awaitingGenerationPropose" class="mb-2 px-0.5">
               <AgentPresentationHost
                 v-if="generationProposePresentation"
@@ -3101,126 +3133,6 @@ defineExpose({
                 :disabled="agent.isStreaming"
                 @focus-node="onFocusNode($event)"
               />
-              <div class="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                  data-testid="generation-propose-confirm"
-                  :disabled="agent.isStreaming"
-                  @click="confirmProposeGeneration()"
-                >
-                  确认生成
-                </button>
-                <button
-                  type="button"
-                  class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                  data-testid="generation-propose-cancel"
-                  :disabled="agent.isStreaming"
-                  @click="cancelProposeGeneration()"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-            <div v-else-if="awaitingAtomicConfirm" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                data-testid="atomic-confirm-dock"
-                :disabled="agent.isStreaming"
-                @click="confirmAtomicChip()"
-              >
-                确认生成
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                data-testid="atomic-confirm-cancel"
-                :disabled="agent.isStreaming"
-                @click="cancelAtomicChip()"
-              >
-                取消
-              </button>
-            </div>
-            <div v-else-if="awaitingRecipeConfirm" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('确认落到画布')"
-              >
-                确认落到画布
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('先不改')"
-              >
-                先不改
-              </button>
-            </div>
-            <div v-else-if="awaitingRecipePromote" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                v-if="canPromoteVariant"
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                data-testid="recipe-promote-variant"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('保存为当前模板的改版')"
-              >
-                保存为当前模板的改版
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :class="canPromoteVariant ? '' : 'agent-preset-primary font-medium'"
-                data-testid="recipe-promote-new"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('存成一套新模板')"
-              >
-                存成一套新模板
-              </button>
-            </div>
-            <div v-else-if="awaitingRecipePromoteSeed" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                data-testid="recipe-promote-seed-confirm"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('确认锁定这些核心步骤')"
-              >
-                确认锁定这些核心步骤
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                data-testid="recipe-promote-seed-back"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('返回上一步，这份工作流更像哪一种？')"
-              >
-                返回
-              </button>
-            </div>
-            <div v-else-if="awaitingRecipePromoteVariant" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                data-testid="recipe-promote-variant-confirm"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('确认保存为改版')"
-              >
-                确认保存为改版
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                data-testid="recipe-promote-variant-back"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('返回上一步，这份工作流更像哪一种？')"
-              >
-                返回
-              </button>
             </div>
             <div v-else-if="isRetakePending" class="mb-2 px-0.5" data-testid="retake-pending-callout">
               <p
@@ -3256,19 +3168,6 @@ defineExpose({
                   </li>
                 </ul>
               </div>
-              <div class="flex flex-wrap gap-2">
-              <button
-                v-for="opt in imageQaOptions"
-                :key="opt.id"
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :class="{ 'agent-preset-primary font-medium': opt.id === 'confirm_pass' }"
-                :disabled="agent.isStreaming"
-                @click="sendPreset(opt.message)"
-              >
-                {{ opt.label }}
-              </button>
-              </div>
             </div>
             <div v-else-if="awaitingMacroSchemeSelect && macroSchemes.length" class="mb-2 px-0.5">
               <p
@@ -3298,24 +3197,6 @@ defineExpose({
               >
                 {{ macroFooterHint }}
               </p>
-              <div class="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                  :disabled="agent.isStreaming || !macroSelections.length"
-                  @click="sendMacroSchemeConfirm()"
-                >
-                  确认宏观方案
-                </button>
-                <button
-                  type="button"
-                  class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                  :disabled="agent.isStreaming"
-                  @click="sendMacroSchemeRevise()"
-                >
-                  需要调整方案
-                </button>
-              </div>
             </div>
             <div v-else-if="awaitingSchemeSelect && productVisualPlan" class="mb-2 px-0.5">
               <p v-if="visualIntentSummary" class="mb-2 text-xs text-[var(--neo-muted)]">
@@ -3349,24 +3230,6 @@ defineExpose({
                     </label>
                   </div>
                 </div>
-              </div>
-              <div class="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                  :disabled="agent.isStreaming"
-                  @click="sendSchemeConfirm()"
-                >
-                  确认所选变体
-                </button>
-                <button
-                  type="button"
-                  class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                  :disabled="agent.isStreaming"
-                  @click="sendSchemeRevisePreset()"
-                >
-                  需要调整方案
-                </button>
               </div>
             </div>
             <ProductVisualDeliveryCard
@@ -3510,6 +3373,21 @@ defineExpose({
                 @click="sendPreset('文案要修改：')"
               >
                 要修改
+              </button>
+            </div>
+            <!-- 下一步动作（决策 4）：白名单单点定义，恒 ≤2；未知 chipSet 不渲染任何按钮 -->
+            <div v-if="dockChips.length" class="mb-2 flex flex-wrap gap-2 px-0.5" data-testid="next-chips">
+              <button
+                v-for="chip in dockChips"
+                :key="chip.key"
+                type="button"
+                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
+                :class="chip.primary ? 'agent-preset-primary font-medium' : ''"
+                :data-testid="chip.testId ?? `next-chip-${chip.key}`"
+                :disabled="agent.isStreaming || Boolean(chip.disabled)"
+                @click="runNextChip(chip.action)"
+              >
+                {{ chip.label }}
               </button>
             </div>
             <div
