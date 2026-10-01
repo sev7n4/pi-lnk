@@ -60,7 +60,22 @@ export type NormalizedEventType =
 	| "error"
 	/** 阻塞式确认工具（ask_user / propose_generation）进入/退出等待（2026-10-01）。
 	 *  等待**开始**即发：tool_result 在等待结束后才到，靠它反推「等待中」永远不成立。 */
-	| "waiting_user";
+	| "waiting_user"
+	/** 「正在做什么 / 做到第几步」（P1 决策 8）。与 tool_start 同源，紧跟 tool_execution_start 之后一条。 */
+	| "activity";
+
+/** `activity` 事件载荷。
+ *
+ * 刻意只带英文工具名 + 步号，**不含中文文案**：人话翻译由客户端目录决定
+ * （决策 7：agent 只声明意图，按钮与措辞由客户端渲染层出），避免 runtime 与 Web 两份文案漂移。
+ * `total` 在 vendor harness 侧无源（`turn_start` 不带计划步数）→ 不广播，
+ * 客户端按「第 N 步」措辞，不要渲染「3/8」这种假分母。
+ */
+export interface ActivityData {
+	toolName?: string;
+	/** 本轮第几个工具（1-based，turn_start 归零）；前端据此出进度语义。 */
+	done?: number;
+}
 
 /** `waiting_user` 事件载荷。status: waiting = 刚挂起等用户；resolved = 已作答/超时/中止。 */
 export interface WaitingUserData {
@@ -109,6 +124,12 @@ const EVENT_MAP: ReadonlyArray<readonly [string, NormalizedEventType]> = [
 /** 可携带 tool result（含 image block）的 harness 事件：SSE/缓冲副本必须剥离图数据。 */
 const TOOL_RESULT_EVENT_TYPES = new Set(["tool_end", "message_start", "message_end", "turn_end"]);
 
+/** attachEvents 里要读的 tool 类载荷字段（vendor 侧 tool_start 全 camelCase）。 */
+type ToolLikeEvent = {
+	toolName?: string;
+	toolCallId?: string;
+};
+
 interface SessionEntry {
 	id: string;
 	harness: AgentHarness<LnkpiToolContext>;
@@ -134,6 +155,8 @@ interface SessionEntry {
 	compacting?: boolean;
 	/** 下一个待分配的事件 seq（会话内单调递增，P0-③）。 */
 	nextSeq: number;
+	/** 本轮已广播的 activity 步数（turn_start 归零），供 `activity.done` 使用。 */
+	activityStep: number;
 	/** create 时确定的静态段（规则 + skills index），会话期内不再变更。 */
 	staticPrompt: string;
 	/** 会话身份（BYOK provider 哈希），用于 create 时判定是否需重建。 */
@@ -563,6 +586,7 @@ export class SessionManager {
 			unsubscribes: [],
 			prompting: false,
 			nextSeq: 0,
+			activityStep: 0,
 			staticPrompt: this.composeSystemPrompt(opts.systemPrompt),
 			identity,
 			userId: opts.userId,
@@ -619,12 +643,15 @@ export class SessionManager {
 		return { provider: identity.provider, model: identity.model };
 	}
 
-	/** 事件归一订阅：EVENT_MAP 全量透传；compaction_end 顺带计数（同一监听内，避免重复订阅）。 */
+	/** 事件归一订阅：EVENT_MAP 全量透传；compaction_end 顺带计数（同一监听内，避免重复订阅）。
+	 *  tool_start 额外发一条 `activity`（决策 8），同样在同一监听内，保证与 tool_execution_start 同帧。 */
 	private attachEvents(entry: SessionEntry, harness: AgentHarness<LnkpiToolContext>): void {
 		for (const [harnessType, sseType] of EVENT_MAP) {
 			entry.unsubscribes.push(
-				harness.events.on(harnessType as never, (evt: { lane?: string; status?: string }) => {
+				harness.events.on(harnessType as never, (evt: { lane?: string; status?: string } & ToolLikeEvent) => {
 					if (harnessType === "compaction_end") this.observeCompactionOutcome(evt.status);
+					if (harnessType === "tool_start") this.dispatchActivity(entry, evt);
+					if (harnessType === "turn_start") entry.activityStep = 0;
 					this.dispatch(entry, {
 						type: sseType,
 						lane: evt.lane,
@@ -635,6 +662,24 @@ export class SessionManager {
 				}),
 			);
 		}
+	}
+
+	/**
+	 * 「正在做什么」广播（P1 决策 8）：每个工具**开始**执行时紧跟一条 `activity`。
+	 *
+	 * 为什么不让前端从 tool_execution_start 自己攒：长工具（生成 / 压缩 / 联网）期间状态行会
+	 * 停在上一句，用户看到的是「正在做 X」而 X 早就结束了 —— activity 让状态行在工具**起手**
+	 * 那一刻就换词。载荷只给英文工具名，中文由客户端目录翻译（决策 7）。
+	 *
+	 * @param evt tool_start 载荷（lane/status 之外只取 toolName）
+	 */
+	private dispatchActivity(entry: SessionEntry, evt: ToolLikeEvent): void {
+		entry.activityStep += 1;
+		this.dispatch(entry, {
+			type: "activity",
+			ts: Date.now(),
+			data: { toolName: evt.toolName, done: entry.activityStep } satisfies ActivityData,
+		});
 	}
 
 	/** declined / aborted 不算失败（hook 拒绝或用户中断），不进错误率。 */

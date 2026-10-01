@@ -1050,3 +1050,95 @@ describe("SessionManager 压缩 deadline（Important #2：会话不得被永久�
 		await assert.doesNotReject(() => mgr.prompt("s-compact-hang", "再来一轮"));
 	});
 });
+
+/**
+ * 「正在做什么」可见化（决策 8）：工具**起手**那一刻就广播 `activity`，
+ * 状态行不必等 tool_end 落地才换词 —— 长工具期间停在上一句正是用户说的「卡住」。
+ * 载荷只给英文工具名 + 步号，中文由客户端目录翻译（决策 7：agent 只声明意图）。
+ */
+describe("SessionManager activity 广播（决策 8 · 正在做什么）", () => {
+	/** 可 emit 的替换 harness（与 seq 用例同款，作用域内自持，不依赖其它 describe 的局部 helper）。 */
+	function activityHarness() {
+		const handlers = new Map<
+			string,
+			(evt: { lane?: string; toolName?: string; toolCallId?: string; status?: string }) => void
+		>();
+		const fakeHarnessFactory = async () =>
+			({
+				harness: {
+					events: {
+						on: (
+							type: string,
+							handler: (evt: { lane?: string; toolName?: string; toolCallId?: string; status?: string }) => void,
+						) => {
+							handlers.set(String(type), handler);
+							return () => {};
+						},
+					},
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			}) as never;
+		return { handlers, fakeHarnessFactory };
+	}
+
+	function smWithActivitySession() {
+		const { handlers, fakeHarnessFactory } = activityHarness();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		return { sm, handlers };
+	}
+
+	it("tool_start 紧跟一条 activity，排在 tool_execution_start 之前（同帧）", async () => {
+		const { sm, handlers } = smWithActivitySession();
+		await sm.create("a-1", {});
+		const seen: Array<{ type: string; data: unknown }> = [];
+		sm.subscribe("a-1", (e) => seen.push({ type: e.type, data: e.data }));
+
+		handlers.get("tool_start")?.({ lane: "main", toolName: "upsert_media_node", toolCallId: "c1" });
+
+		assert.deepEqual(seen.map((e) => e.type), ["activity", "tool_execution_start"]);
+		assert.deepEqual(seen[0]?.data, { toolName: "upsert_media_node", done: 1 });
+	});
+
+	it("连续工具 done 递增；turn_start 归零（跨轮不累计成假进度）", async () => {
+		const { sm, handlers } = smWithActivitySession();
+		await sm.create("a-2", {});
+		const seen: Array<{ type: string; data: unknown }> = [];
+		sm.subscribe("a-2", (e) => seen.push({ type: e.type, data: e.data }));
+
+		handlers.get("tool_start")?.({ lane: "main", toolName: "get_canvas_summary" }); // done 1
+		handlers.get("tool_start")?.({ lane: "main", toolName: "web_search" }); // done 2
+		handlers.get("turn_start")?.({ lane: "main" }); // 步数归零，但本身不发 activity
+		handlers.get("tool_start")?.({ lane: "main", toolName: "propose_generation" }); // done 1
+
+		assert.deepEqual(
+			seen.filter((e) => e.type === "activity").map((e) => e.data),
+			[
+				{ toolName: "get_canvas_summary", done: 1 },
+				{ toolName: "web_search", done: 2 },
+				{ toolName: "propose_generation", done: 1 },
+			],
+		);
+	});
+
+	it("activity 载荷不含中文 label：翻译责任在客户端目录（决策 7）", async () => {
+		const { sm, handlers } = smWithActivitySession();
+		await sm.create("a-3", {});
+		const seen: Array<{ type: string; data: unknown }> = [];
+		sm.subscribe("a-3", (e) => seen.push({ type: e.type, data: e.data }));
+
+		handlers.get("tool_start")?.({ lane: "main", toolName: "upsert_media_node" });
+
+		assert.deepEqual(Object.keys((seen[0]?.data ?? {}) as object).sort(), ["done", "toolName"]);
+	});
+
+	it("activity 进 buffer：重连回放能补回等待期的「正在做什么」（P0-③ 增量重放语义）", async () => {
+		const { sm, handlers } = smWithActivitySession();
+		await sm.create("a-4", {});
+		handlers.get("tool_start")?.({ lane: "main", toolName: "arrange_nodes" });
+		// 重连补发 = 用 afterSeq=-1（无历史 seq）取全部 buffer，activity 应已在补发列表里
+		const reconnected = sm.subscribe("a-4", () => {}, -1);
+		const types = reconnected.map((e) => e.type);
+		assert.deepEqual(types, ["activity", "tool_execution_start"]); // 补发含 activity，重连后状态行不会空着
+	});
+});
