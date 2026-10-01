@@ -173,6 +173,8 @@ export class PiPromptAssembler {
 		sessionId: string;
 		attachments?: SidebarBlockInput[];
 		focusNodeId?: string;
+		/** 审计 #7：长期记忆块（调用方拼好文本；assembler 只透传 + manifest 观测，不碰 prisma）。 */
+		memoryBlock?: string;
 	}): Promise<string[]> {
 		const layers: PromptLayer[] = [];
 
@@ -199,6 +201,11 @@ export class PiPromptAssembler {
 		if (input.attachments?.length) {
 			const block = buildSidebarBlock(input.attachments);
 			if (block) layers.push(layer("sidebar", "sidebar", block));
+		}
+
+		// 审计 #7：memory 层放最后（世界状态之后、模型近期关注），fail-soft 语义由调用方保证。
+		if (input.memoryBlock?.trim()) {
+			layers.push(layer("memory", "memory", input.memoryBlock));
 		}
 
 		this.recordLayers(layers, input.sessionId);

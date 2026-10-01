@@ -178,6 +178,32 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 	});
 });
 
+describe("长期记忆动态注入（审计 #7：PromptLayerKind.memory 空壳落地）", () => {
+	const NODES = { nodes: [{ id: "n1", type: "image", title: "T", status: "ready" }] };
+
+	it("memoryBlock 非空 → 追加为动态块，manifest 记 memory kind", async () => {
+		const asm = makeAssembler(NODES);
+		const blocks = await asm.assembleDynamic({
+			sessionId: "s1",
+			memoryBlock: "## 长期记忆（用户历史偏好，供参考）\n- 喜欢深色主题",
+		});
+		expect(blocks.at(-1)).toContain("长期记忆");
+		expect(blocks.at(-1)).toContain("喜欢深色主题");
+		expect(asm.lastManifestDetail.layers.some((l) => l.kind === "memory")).toBe(true);
+	});
+
+	it("memoryBlock 缺省/空串 → 不产生 memory 层（向后兼容）", async () => {
+		const asm = makeAssembler(NODES);
+		const blocks = await asm.assembleDynamic({ sessionId: "s1" });
+		expect(blocks.join("\n")).not.toContain("长期记忆");
+		expect(asm.lastManifestDetail.layers.some((l) => l.kind === "memory")).toBe(false);
+
+		const asm2 = makeAssembler(NODES);
+		const blocks2 = await asm2.assembleDynamic({ sessionId: "s1", memoryBlock: "   " });
+		expect(blocks2.join("\n")).not.toContain("长期记忆");
+	});
+});
+
 describe("注入 manifest 观测（WorkBuddy 对齐 §4-2）", () => {
 	it("每层自带 approxTokens，且等于 approxTokens(content)", async () => {
 		const asm = makeAssembler({ nodes: [{ id: "n1", type: "image", title: "T", status: "ready" }] });

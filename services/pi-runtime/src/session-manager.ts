@@ -37,6 +37,7 @@ import {
 	type CompactionSkipReason,
 } from "./compaction-check.js";
 import type { Metrics } from "./metrics.js";
+import { missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { enforceRetention } from "./session-retention.js";
@@ -449,13 +450,26 @@ export class SessionManager {
 		private readonly config: RuntimeConfig = loadRuntimeConfig(process.env),
 		/** P0-① 观测：compaction 成败计数（只在 compaction_end 且 completed/failed 时回调）。 */
 		private readonly onCompaction?: (result: "ok" | "error") => void,
-		/**
-		 * 压缩「跳过理由」计数。刻意与 `onCompaction` 分开：后者由 harness 事件驱动
-		 * （ok/error 是**结果**），本度量则是**未发生的理由**（disabled/no_window/
-		 * below_threshold/lane_busy…）。二者混计会把真实失败率稀释掉。
-		 */
-		private readonly metrics?: Metrics,
-	) {}
+	/**
+	 * 压缩「跳过理由」计数。刻意与 `onCompaction` 分开：后者由 harness 事件驱动
+	 * （ok/error 是**结果**），本度量则是**未发生的理由**（disabled/no_window/
+	 * below_threshold/lane_busy…）。二者混计会把真实失败率稀释掉。
+	 */
+	private readonly metrics?: Metrics,
+	/**
+	 * 审计 #6/#7：压缩完成后的摘要上报钩子（宿主把摘要落 Nest ContextSnapshot）。
+	 * 刻意由构造器注入而非直接 fetch：SessionManager 不依赖传输层，测试可捕获。
+	 */
+	private readonly compactionAudit?: {
+		onSnapshot: (payload: {
+			threadId: string;
+			sessionId: string;
+			stage: string;
+			planSummary: string;
+			messageCount: number | null;
+		}) => void;
+	},
+) {}
 
 	/** threadKey（Nest 的 threadId || sessionId）→ 是否已有内存驻留会话。 */
 	hasKey(threadKey: string): boolean {
@@ -676,7 +690,12 @@ export class SessionManager {
 		for (const [harnessType, sseType] of EVENT_MAP) {
 			entry.unsubscribes.push(
 				harness.events.on(harnessType as never, (evt: { lane?: string; status?: string } & ToolLikeEvent) => {
-					if (harnessType === "compaction_end") this.observeCompactionOutcome(evt.status);
+					if (harnessType === "compaction_end") {
+						this.observeCompactionOutcome(evt.status);
+						// 审计 #6/#7：压缩成功后异步审计摘要（缺段计 metrics + 摘要上报）。
+						// fire-and-forget：审计失败不影响事件分发与会话主链路。
+						if (evt.status === "completed") void this.auditCompactionSummary(entry);
+					}
 					if (harnessType === "tool_start") this.dispatchActivity(entry, evt);
 					if (harnessType === "turn_start") entry.activityStep = 0;
 					this.dispatch(entry, {
@@ -724,6 +743,37 @@ export class SessionManager {
 	private observeCompactionOutcome(status?: string): void {
 		if (status === "completed") this.onCompaction?.("ok");
 		else if (status === "failed") this.onCompaction?.("error");
+	}
+
+	/**
+	 * 审计 #6/#7：压缩完成后读最新 compaction entry——摘要缺段计 metrics（观测告警，
+	 * 不阻断），摘要全文经 compactionAudit.onSnapshot 上报（宿主落 Nest ContextSnapshot）。
+	 *
+	 * findEntries 用 newestFirst + stopAtType:"compaction"：返回数组第一条即最新压缩点
+	 * （与 runCompaction 的 oldestFirst 方向相反，这里只要最新一条）。fail-soft 全包：
+	 * lane 缺失/扫盘失败只 warn，绝不影响事件分发与会话主链路。
+	 */
+	private async auditCompactionSummary(entry: SessionEntry): Promise<void> {
+		try {
+			const lane = await entry.harness.lane(MAIN_LANE, this.context);
+			const entries = (await lane.findEntries(
+				{ order: "newestFirst", stopAtType: "compaction" },
+				this.context,
+			)) as Array<{ type: string; summary?: string; tokensBefore?: number }>;
+			const comp = Array.isArray(entries) ? entries.find((e) => e?.type === "compaction") : undefined;
+			if (!comp?.summary) return;
+			const missing = missingSummarySections(comp.summary);
+			if (missing.length) this.metrics?.observeCompactionSummaryGap(missing);
+			this.compactionAudit?.onSnapshot({
+				threadId: entry.id,
+				sessionId: entry.canvasSessionId ?? entry.id,
+				stage: "compaction",
+				planSummary: comp.summary,
+				messageCount: typeof comp.tokensBefore === "number" ? comp.tokensBefore : null,
+			});
+		} catch (err) {
+			console.warn("[compaction-summary] audit failed (fail-soft):", err);
+		}
 	}
 
 	/** 关闭并删除：内存句柄 + 磁盘目录（身份变更 / 显式删除共用）。 */

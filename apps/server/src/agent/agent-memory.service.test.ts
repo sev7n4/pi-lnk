@@ -93,4 +93,26 @@ describe('AgentMemoryService', () => {
     const wildcardLike = await svc.searchMemory({ userId: 'u1', query: 'b_and' })
     expect(wildcardLike.items).toEqual([])
   })
+
+  it('searchMemory：分词 OR 命中 + 计分排序（双词全中排前，零分过滤）（审计 #7）', async () => {
+    findMany.mockResolvedValue([
+      { id: 'm1', content: '用户偏好深色主题', createdAt: new Date('2026-01-03T00:00:00.000Z') },
+      { id: 'm2', content: '深色主题与圆形节点', createdAt: new Date('2026-01-02T00:00:00.000Z') },
+      { id: 'm3', content: '喜欢圆形节点', createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { id: 'm4', content: '无关记忆', createdAt: new Date('2026-01-04T00:00:00.000Z') },
+    ])
+    const out = await svc.searchMemory({ userId: 'u1', query: '深色 圆形', limit: 10 })
+    // '深色 圆形' 分词 → ['深色', '圆形']；m2 两词全中排第一；m4 零分被过滤
+    expect(out.items[0].id).toBe('m2')
+    expect(out.items.map((i) => i.id)).toEqual(['m2', 'm1', 'm3'])
+  })
+
+  it('searchMemory：中文查询按 bigram 匹配（「整理」命中「整理画布」）（审计 #7）', async () => {
+    findMany.mockResolvedValue([
+      { id: 'm9', content: '自动整理画布节点', createdAt: new Date('2026-01-01T00:00:00.000Z') },
+    ])
+    const out = await svc.searchMemory({ userId: 'u1', query: '整理', limit: 10 })
+    expect(out.items).toHaveLength(1)
+    expect(out.items[0].id).toBe('m9')
+  })
 })

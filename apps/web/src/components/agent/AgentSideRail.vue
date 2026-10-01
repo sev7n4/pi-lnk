@@ -2302,6 +2302,13 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.setActivity({ toolName: d.toolName, done: d.done, total: d.total });
       break;
     }
+    case 'pi_compaction': {
+      // 审计 #6：压缩对用户可见。开始→状态行「压缩上下文」；结束（completed/
+      // declined/aborted/failed 一律）→清除。成败不在此处报错（metrics 观测口径）。
+      const d = event.data as { phase?: string } | undefined;
+      agent.setActivity(d?.phase === 'start' ? { toolName: 'compaction' } : null);
+      break;
+    }
     case 'tool_result': {
       const d = event.data as { name: string; toolCallId?: string; result: unknown; isError?: boolean }
       agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)

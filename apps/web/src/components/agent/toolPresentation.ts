@@ -46,6 +46,8 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   // ui_command / skill
   load_skill: { icon: '⚡', verb: '加载技能' },
   ask_user: { icon: '❓', verb: '向你确认' },
+  // 系统级（非工具）：上下文压缩（审计 #6，pi_compaction 事件驱动）
+  compaction: { icon: '🗜️', verb: '压缩上下文' },
   arrange_nodes: { icon: '🪟', verb: '整理布局' },
   focus_node: { icon: '🎯', verb: '定位节点' },
   focus_nodes: { icon: '🎯', verb: '定位多个节点' },

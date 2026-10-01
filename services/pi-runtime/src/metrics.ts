@@ -56,6 +56,7 @@ export class Metrics {
 	private usageCost = new Map<string, number>(); // key: kind 同上
 	private toolSearchCalls = new Map<string, number>(); // key: outcome (hit|miss|empty)
 	private toolSearchActivated = 0; // 命中激活的工具个数累计（配合 calls 可算平均激活数）
+	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
@@ -156,6 +157,13 @@ export class Metrics {
 		if (activated > 0) this.toolSearchActivated += activated;
 	}
 
+	/** 压缩摘要必需段缺失观测（审计 #6）：section 取 REQUIRED_SECTIONS 原文；纯告警不阻断。 */
+	observeCompactionSummaryGap(sections: string[]): void {
+		for (const s of sections) {
+			this.compactionGaps.set(s, (this.compactionGaps.get(s) ?? 0) + 1);
+		}
+	}
+
 	setSkillsLoaded(n: number): void {
 		this.skillsLoaded = n;
 	}
@@ -197,11 +205,17 @@ export class Metrics {
 			lines.push(`pi_runtime_compactions_total{result="${esc(result)}"} ${count}`);
 		}
 
-		lines.push("# HELP pi_runtime_compaction_skips_total Compactions skipped, by reason.");
-		lines.push("# TYPE pi_runtime_compaction_skips_total counter");
-		for (const [reason, count] of [...this.compactionSkips.entries()].sort()) {
-			lines.push(`pi_runtime_compaction_skips_total{reason="${esc(reason)}"} ${count}`);
-		}
+	lines.push("# HELP pi_runtime_compaction_skips_total Compactions skipped, by reason.");
+	lines.push("# TYPE pi_runtime_compaction_skips_total counter");
+	for (const [reason, count] of [...this.compactionSkips.entries()].sort()) {
+		lines.push(`pi_runtime_compaction_skips_total{reason="${esc(reason)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_compaction_summary_missing_total Compaction summaries missing required sections, by section title.");
+	lines.push("# TYPE pi_runtime_compaction_summary_missing_total counter");
+	for (const [section, count] of [...this.compactionGaps.entries()].sort()) {
+		lines.push(`pi_runtime_compaction_summary_missing_total{section="${esc(section)}"} ${count}`);
+	}
 
 		lines.push("# HELP pi_runtime_prompt_rejections_total Prompt rejections by reason.");
 		lines.push("# TYPE pi_runtime_prompt_rejections_total counter");
