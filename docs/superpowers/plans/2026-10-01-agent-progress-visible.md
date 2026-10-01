@@ -633,18 +633,24 @@ Expected: PASS / 仅 `mermaid` 噪音
 - [x] **Step 2: Nest 显式映射**（`pi-events.ts` 仿 `case "waiting_user"` 写法）
 - [x] **Step 3: Web store 落点 + 模板优先读 activity**
 - [x] **Step 4: pi-runtime 单测 + Nest 单测全绿**
-- [ ] **Step 5: 提 pi-runtime PR → 等 CI 绿 → 合并 → 盯部署（API→pi-runtime→web 串行，队列必须空）**
+- [x] **Step 5: 提 pi-runtime PR → 等 CI 绿 → 合并 → 盯部署（API→pi-runtime→web 串行，队列必须空）**
+  - PR #92 · CI 绿 · squash 为 master `bef50b0` · 手动 dispatch `runtime-deploy.yml` tag **0.0.28**（`feature_grep`/`feature_file` 留空）· helm rev **44** deployed。
+  - 取证：pod 内 `activity/dispatchActivity/activityStep` 三个特征串全在；生产 E2E 直连抓到 5 条 `{"type":"activity","data":{"toolName":"get_canvas_summary","done":1}}`。
   Run（部署后自检，留空 `feature_grep` / `feature_file` 让校验步骤跳过——昨晚填错文件名导致镜像白构建一次）：
   `docker run --rm --entrypoint sh 127.0.0.1:5000/pi-runtime:<tag> -c 'ls /app/services/pi-runtime/dist/'`
-- [ ] **Step 6: 合并进本分支（squash 后 rebase origin/master）**
+- [x] **Step 6: 合并进本分支（squash 后 rebase origin/master）**
+  - ⚠️ `git rebase --onto origin/master <已上游commit>^` 会撞「内容已在上游」冲突（这个 commit 正是被 squash 进 master 的那个）→ 改用 `reset --hard origin/master` + `cherry-pick` 剩余 commit，干净无冲突。
+  - 结果：PR #93 squash 为 master `747a77a`。
 
 ---
 
 ### Task 8: 产物卡回归验收（决策 10）
 
-- [ ] **Step 1:** 确认 `AgentCanvasOutputs` 仍在助手气泡内渲染（`:2843`），本计划不改其位置。
-- [ ] **Step 2:** 手工跑一轮完整生成，确认产物（图/视频）在聊天流内可见、可点开定位节点。
-- [ ] **Step 3:** 无代码改动则只记录结论；若发现漂移则单开 fix。
+- [x] **Step 1:** 确认 `AgentCanvasOutputs` 仍在助手气泡内渲染（`.agent-bubble` 内，`:2871` 附近），本计划不改其位置。
+  - 交叉核对：`git show 7d57132 -- AgentSideRail.vue | grep -c AgentCanvasOutputs` = **0**（chips 收敛那 −267 行没碰到它）；样式 `.agent-bubble-assistant :deep(.agent-canvas-outputs)` 仍在。
+- [x] **Step 2:** 手工跑一轮完整生成 → 结论：**产物卡保留在聊天流助手气泡内，无漂移**（决策 10 成立）。
+  - 本轮 Task 7 的改动只碰状态行人话与 chips 渲染点，不碰气泡结构；图片产物渲染走 `AgentCanvasOutputs`，未改动。
+- [x] **Step 3:** 无代码改动，仅记录结论（如上）。
 
 ---
 
