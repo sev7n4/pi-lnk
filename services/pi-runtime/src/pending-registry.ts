@@ -119,9 +119,17 @@ export class PendingToolRegistry {
 		entry.partial = { ...entry.partial, ...answers };
 	}
 
-	/** propose 确认轮询收尾：清条目清 timer，等待方（Promise.race 另一臂）不消费此 resolve。 */
-	cancel(sessionId: string, callId: string): void {
-		this.entries.get(sessionId)?.get(callId)?.resolve({ status: "aborted" });
+	/**
+	 * propose 确认轮询收尾：清条目清 timer，等待方（Promise.race 另一臂）不消费此 resolve。
+	 *
+	 * @param resolution 缺省 `aborted`（用户中止/取消）。
+	 *        ⚠️ **用户确认成功时必须显式传 `answered`** —— 收尾 cancel 也会触发
+	 *        `onSettled` 广播，若一律按 aborted 上报，前端/排障会看到「用户已中止」
+	 *        而 tool_result 明明是 confirmed:true（生产实证 2026-10-01：确认成功却
+	 *        广播 `waiting_user resolved reason=aborted`）。
+	 */
+	cancel(sessionId: string, callId: string, resolution: PendingResolution = { status: "aborted" }): void {
+		this.entries.get(sessionId)?.get(callId)?.resolve(resolution);
 	}
 
 	abortAll(sessionId: string): number {
