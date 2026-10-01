@@ -1055,6 +1055,86 @@ describe("SessionManager 压缩 deadline（Important #2：会话不得被永久�
 });
 
 /**
+ * 审计 #6/#7：compaction_end(completed) 后读最新 compaction entry——
+ * 摘要缺段计 metrics（观测告警），摘要全文经回调上报（Nest 落 ContextSnapshot）。
+ * fail-soft：lane 缺失/扫盘失败绝不影响会话主链路。
+ */
+describe("SessionManager 压缩摘要审计（compaction-summary）", () => {
+	const drain = () => new Promise<void>((r) => setImmediate(r));
+	/** 只含 Goal 一段（缺 7 段）的假 compaction entry。 */
+	const gapEntry = {
+		type: "compaction",
+		summary: "## Goal\n做成画布\n\n## Next Steps\nn\n",
+		tokensBefore: 12345,
+	};
+
+	function auditManager(metrics: Metrics, onSnapshot?: (p: unknown) => void) {
+		const handlers = new Map<string, (evt: { status?: string }) => void>();
+		const factory = (async () =>
+			({
+				harness: {
+					events: {
+						on: (type: string, cb: (evt: { status?: string }) => void) => {
+							handlers.set(type, cb);
+							return () => {};
+						},
+					},
+					lane: async () => ({
+						prompt: async () => ({ ok: true }),
+						findEntries: async () => [gapEntry],
+					}),
+					close: async () => {},
+				},
+			})) as never;
+		const sm = new SessionManager(
+			[],
+			"",
+			undefined,
+			factory,
+			undefined,
+			undefined,
+			testConfig(),
+			undefined,
+			metrics,
+			onSnapshot ? { onSnapshot } : undefined,
+		);
+		return { sm, handlers };
+	}
+
+	it("compaction_end(completed)：缺段计 metrics + snapshot 回调收到全文与 token 数", async () => {
+		const metrics = new Metrics();
+		const snapshots: Array<Record<string, unknown>> = [];
+		const { sm, handlers } = auditManager(metrics, (p) => snapshots.push(p as Record<string, unknown>));
+		await sm.create("s-csum:t1", {});
+		handlers.get("compaction_end")?.({ status: "completed" });
+		await drain();
+		await drain();
+		// Goal / Next Steps 在位，其余 6 段缺失（含 Progress 的 3 个 H3）
+		const text = metrics.render(0, "test");
+		assert.match(text, /pi_runtime_compaction_summary_missing_total\{section="### In Progress"\} 1/);
+		assert.match(text, /pi_runtime_compaction_summary_missing_total\{section="## Critical Context"\} 1/);
+		assert.ok(!text.includes('section="## Goal"'));
+		assert.equal(snapshots.length, 1);
+		assert.equal(snapshots[0].stage, "compaction");
+		assert.equal(snapshots[0].planSummary, gapEntry.summary);
+		assert.equal(snapshots[0].messageCount, 12345);
+		assert.equal(snapshots[0].threadId, toSessionKey("s-csum:t1"));
+	});
+
+	it("declined/failed 不触发审计；lane 扫盘失败静默（fail-soft）", async () => {
+		const metrics = new Metrics();
+		const snapshots: unknown[] = [];
+		const { sm, handlers } = auditManager(metrics, (p) => snapshots.push(p));
+		await sm.create("s-csum2:t1", {});
+		handlers.get("compaction_end")?.({ status: "declined" });
+		await drain();
+		await drain();
+		assert.equal(snapshots.length, 0);
+		assert.ok(!metrics.render(0, "test").includes("pi_runtime_compaction_summary_missing_total{"));
+	});
+});
+
+/**
  * 「正在做什么」可见化（决策 8）：工具**起手**那一刻就广播 `activity`，
  * 状态行不必等 tool_end 落地才换词 —— 长工具期间停在上一句正是用户说的「卡住」。
  * 载荷只给英文工具名 + 步号，中文由客户端目录翻译（决策 7：agent 只声明意图）。

@@ -100,6 +100,18 @@ const manager = new SessionManager(
 	// F-01：压缩「跳过理由」计数。不注入则 skips 指标恒为空，验收判据第 1 条
 	// （skips_total 有累加 = 判定链路在跑）无法成立——这条比触发本身更容易被漏掉。
 	metrics,
+	// 审计 #6/#7：压缩完成 → 摘要落 Nest ContextSnapshot（W18 表激活）。
+	// fail-soft：上报失败只留痕，不影响会话；纯文本模式（无 Nest client）跳过。
+	{
+		onSnapshot: (payload) => {
+			if (!nestClient) return;
+			nestClient
+				.post("/agent/internal/save-context-snapshot", payload)
+				.catch((err) => {
+					console.warn("[compaction-summary] snapshot persist failed (fail-soft):", err);
+				});
+		},
+	},
 );
 
 manager.setPendingRegistry(registry);

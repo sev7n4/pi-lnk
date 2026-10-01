@@ -171,3 +171,20 @@ describe("压缩跳过理由独立计数（诊断 F-01 · Review Focus #4）", (
 		assert.ok(!text.includes("pi_runtime_compaction_skips_total{"));
 	});
 });
+
+describe("压缩摘要缺段计数（审计 #6 白名单校验）", () => {
+	it("按 section 分行渲染，累计计数", () => {
+		const m = new Metrics();
+		m.observeCompactionSummaryGap(["### Blocked", "## Key Decisions"]);
+		m.observeCompactionSummaryGap(["### Blocked"]);
+		const text = m.render(0, "test");
+		assert.match(text, /pi_runtime_compaction_summary_missing_total\{section="### Blocked"\} 2/);
+		assert.match(text, /pi_runtime_compaction_summary_missing_total\{section="## Key Decisions"\} 1/);
+	});
+
+	it("齐段时无样本行（Prometheus 语义）", () => {
+		const m = new Metrics();
+		const text = m.render(0, "test");
+		assert.ok(!text.includes("pi_runtime_compaction_summary_missing_total{"));
+	});
+});
