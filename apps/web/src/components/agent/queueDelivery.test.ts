@@ -7,7 +7,7 @@
  *   ③ `data` 缺失 → 按成功放行（保守，避免解析抖动判丢）。
  */
 import { describe, expect, it } from 'vitest'
-import { parseQueueDelivery } from './queueDelivery'
+import { acceptedHint, parseQueueDelivery } from './queueDelivery'
 
 describe('parseQueueDelivery（插话/尾随指令的入队判定）', () => {
   it('HTTP 200 + data.queued=true → 成功', () => {
@@ -44,5 +44,24 @@ describe('parseQueueDelivery（插话/尾随指令的入队判定）', () => {
 
   it('扁平结构（非 Nest 包层）的 queued=false 同样判失败', () => {
     expect(parseQueueDelivery({ ok: true, body: { queued: false } }).delivered).toBe(false)
+  })
+})
+
+describe('acceptedHint（入队后的气泡文案，2026-10-02 组合漏洞）', () => {
+  // 组合漏洞：agent 卡在 registry.waitForUser 里等答案时，prompting 恒为 true →
+  // 端点一律 202 + queued:true，消息只能排在那份答案之后。此时文案若还写
+  // 「已并入当前回答」就是假承诺（那一轮根本没在回答）。
+  it('无未作答卡片：steer / followUp 各自保留原时序描述', () => {
+    expect(acceptedHint('steer', false)).toContain('已并入当前回答')
+    expect(acceptedHint('followup', false)).toContain('本轮收尾')
+  })
+
+  it('有未作答卡片：两条通道都改说「会排在你答完这张卡之后」', () => {
+    for (const intent of ['steer', 'followup'] as const) {
+      const hint = acceptedHint(intent, true)
+      expect(hint).toContain('答完这张卡')
+      expect(hint).not.toContain('已并入当前回答')
+      expect(hint).not.toContain('本轮收尾')
+    }
   })
 })

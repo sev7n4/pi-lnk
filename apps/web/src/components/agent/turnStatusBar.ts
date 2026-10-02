@@ -12,6 +12,12 @@ export interface TurnStatusLineInput {
    * 否则用户只看到「等待你确认」也不知道要做什么。
    */
   waitingTool?: string | null
+  /**
+   * 阻塞题干（ask_user 经 waiting_user 事件的 meta.questionTitle 下发，2026-10-02）。
+   * 与 waitingTool 的分工：propose_generation 的确认动作在画布上（去哪确认靠节点），
+   * ask_user 卡在聊天侧、题面就是全部信息 —— 空着只会显示一句无信息量的「等待你确认」。
+   */
+  waitingQuestion?: string | null
   /** 阻塞等待的自动取消时刻（epoch ms）；到点前显示「还剩 N 分钟自动取消」（决策 6）。 */
   waitingDeadline?: number | null
   /** 「正在做什么」人话（来自最新执行步骤）；缺失时退化为 GENERIC_ACTIVITY（决策 3 / 5）。 */
@@ -41,7 +47,13 @@ export function waitHint(deadline: number | null | undefined, now: number): stri
 export function turnStatusLine(input: TurnStatusLineInput): TurnStatusLine {
   if (input.isStreaming) {
     if (input.waiting) {
-      const text = input.waitingTool === 'propose_generation' ? '等待你在画布上确认生成' : '等待你确认'
+      // 题面过长只留前 24 字 + 省略号：状态行是一行，塞进整段题目会把倒计时挤掉
+      const question = input.waitingQuestion?.trim()
+      const text = input.waitingTool === 'propose_generation'
+        ? '等待你在画布上确认生成'
+        : question
+          ? `等待你作答：${question.length > 24 ? `${question.slice(0, 24)}…` : question}`
+          : '等待你确认'
       // hint 为 undefined 时让 key 消失（模板 `v-if` 与既有 toEqual 断言都按「缺 key」理解）
       return {
         text,

@@ -11,30 +11,19 @@ describe("PendingToolRegistry", () => {
 		assert.deepEqual(await p, { status: "answered", answers: { style: ["watercolor"] } });
 	});
 
-	it("timeout resolves with partial answers (not reject)", async () => {
+	it("timeout resolves with empty answers, never rejects（无部分作答语义）", async () => {
 		const reg = new PendingToolRegistry();
 		const p = reg.waitForUser("s1", "c1", "ask_user", 60_000);
 		reg.answer("s1", "c1", { style: ["ink"] }).ok; // 答了一题但 callId 仍 pending？否——answer 即 resolve。
-		// 部分作答的正确模拟：waitForUser 期间不 answer，timer 到点 → 已答为空。
-		// 部分作答路径由 ask_user 工具层组装（Task 2），registry 只保证 timeout 携带 answered-so-far。
+		// 无 partial 通道（2026-10-02 删除 recordPartial）：waitForUser 期间不 answer，timer 到点交还空答案。
 		const partialReg = new PendingToolRegistry();
 		const pp = partialReg.waitForUser("s2", "c2", "ask_user", 10);
 		const res = await pp;
 		assert.equal(res.status, "timeout");
 		assert.deepEqual((res as { answers: Record<string, string[]> }).answers, {});
-		assert.equal((res as { partial: boolean }).partial, false);
+		// registry 侧不再有「暂存已答」的入口，工具层只能全标 skipped
+		assert.equal((res as { partial?: boolean }).partial, undefined);
 		await p; // 上面已 resolve，防 unhandled
-	});
-
-	it("部分作答后超时：timeout 携带已答内容且 partial=true", async () => {
-		const reg = new PendingToolRegistry();
-		const p = reg.waitForUser("s3", "c3", "ask_user", 30);
-		// 模拟「记下第一题答案但不提交」：registry 暴露 recordPartial（见实现）供工具层暂存
-		reg.recordPartial("s3", "c3", { style: ["ink"] });
-		const res = await p;
-		assert.equal(res.status, "timeout");
-		assert.deepEqual((res as { answers: Record<string, string[]> }).answers, { style: ["ink"] });
-		assert.equal((res as { partial: boolean }).partial, true);
 	});
 
 	it("幂等：未知 callId / 重复 answer 返回 deduped=true，不抛错", () => {

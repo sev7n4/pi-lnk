@@ -1127,17 +1127,15 @@ describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
       threadId: 'tid-1',
       callId: 'c1',
       answers: { choice: ['a'] },
-      answerId: 'a1',
     })
     expect(result).toEqual({ ok: true, deduped: false })
     expect(answer).toHaveBeenCalledWith('tid-1', {
       callId: 'c1',
       answers: { choice: ['a'] },
-      answerId: 'a1',
     })
   })
 
-  it('answerPiPending：无 threadId 回落 sessionId；未传 answerId 时不发该键', async () => {
+  it('answerPiPending：无 threadId 回落 sessionId', async () => {
     const svc = createService()
     const answer = vi.fn(async () => ({ ok: true, deduped: true }))
     stubPi(svc, 'http://pi-runtime', { answer })
@@ -1151,6 +1149,7 @@ describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
     expect(result).toEqual({ ok: true, deduped: true })
     expect(answer).toHaveBeenCalledWith('s1', { callId: 'c1', answers: { choice: ['b'] } })
     const body = answer.mock.calls[0]?.[1] as Record<string, unknown>
+    // 锁死：answerId 已从链路删除（registry.answer 从不读它），任何形态都不该再冒出来
     expect(body).not.toHaveProperty('answerId')
   })
 })

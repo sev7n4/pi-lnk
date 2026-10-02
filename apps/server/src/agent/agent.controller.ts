@@ -169,10 +169,6 @@ class AnswerPendingDto {
   /** 纯对象（key → string[]）；@IsArray 会误拒 Record 形态，@IsObject 保证 whitelist 不剥离 */
   @IsObject()
   answers!: Record<string, string[]>
-
-  @IsOptional()
-  @IsString()
-  answerId?: string
 }
 
 class ListAgentThreadsQueryDto {
@@ -389,7 +385,6 @@ export class AgentController {
       threadId: dto.threadId,
       callId: dto.callId,
       answers: dto.answers,
-      answerId: dto.answerId,
     })
     return { code: 0, message: 'ok', data }
   }

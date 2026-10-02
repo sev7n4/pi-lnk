@@ -274,7 +274,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	 */
 	app.post<{
 		Params: { sessionId: string };
-		Body: { callId?: string; answers?: Record<string, string[]>; answerId?: string };
+		Body: { callId?: string; answers?: Record<string, string[]> };
 	}>("/sessions/:sessionId/answers", async (request, reply) => {
 		const { registry } = deps;
 		if (!registry) return reply.code(503).send({ error: "pending registry not configured" });

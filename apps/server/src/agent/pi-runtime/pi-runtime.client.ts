@@ -313,7 +313,7 @@ export class PiRuntimeClient {
 	/** B-2：向阻塞中的确认类工具提交用户回答（幂等；未知/已清理 callId 返回 deduped=true）。 */
 	async answer(
 		sessionId: string,
-		body: { callId: string; answers: Record<string, string[]>; answerId?: string },
+		body: { callId: string; answers: Record<string, string[]> },
 	): Promise<{ ok: boolean; deduped: boolean }> {
 		const { status, body: resp } = await this.request<{ ok?: boolean; deduped?: boolean; error?: string }>(
 			`/sessions/${encodeURIComponent(sessionId)}/answers`,

@@ -7,7 +7,8 @@
  * off（开关 off 或纯文本模式无 registry）→ 逐字节 v1 旧行为：立即返回无 callId 卡片，
  * 用户点选回填为下一轮 user message（复用前端 sendMessage，零新建回流）。
  * 铁律（B-4）：registry resolve 不 reject——超时/中止一律以带 status 的正常值交还，
- * 模型看到的是工具结果而非异常；超时携带 answered-so-far（partial 语义）。
+ * 模型看到的是工具结果而非异常；**超时一律交还空 answers + 全题 skipped**（无「带回半个答案」
+ * 这一语义，2026-10-02 删除 `recordPartial` API 后不再有部分作答的暂存通道）。
  * D1-D5 已拍板按推荐（单次问全 / 空格分隔 / allowOther 默认 true / 带取消 / 不限触发）。
  */
 import { Type } from "typebox";
@@ -75,7 +76,11 @@ export function createAskUserTools(
 			const timeoutMs = opts.timeoutMs ?? askUserTimeoutMs();
 			onUpdate?.(uiResult([{ type: "ask_user", callId: id, questions: p.questions }]));
 			// registry 键 = tc.sessionId（画布会话 id）；超时兜底由 registry timer 驱动（resolve 不 reject，B-4）
-			const resolution = await registry.waitForUser(tc.sessionId, id, "ask_user", timeoutMs);
+			// meta 随 waiting_user 事件下发：题面让前端状态行能显示「等待你作答：…」，而不是一句
+			// 无信息量的「等待你确认」（propose_generation 同样走 meta 带 nodeId，两类卡能力对齐）
+			const resolution = await registry.waitForUser(tc.sessionId, id, "ask_user", timeoutMs, {
+				questionTitle: p.questions.map((q) => q.question).join(" / "),
+			});
 			if (resolution.status === "aborted") {
 				return {
 					content: [{ type: "text", text: JSON.stringify({ ok: false, aborted: true, message: "用户已中止本轮对话。" }) }],
@@ -83,20 +88,21 @@ export function createAskUserTools(
 				};
 			}
 			if (resolution.status === "timeout") {
-				const answered = resolution.answers;
-				const skipped = p.questions.filter((q) => !answered[q.id]).map((q) => ({ id: q.id, skipped: true }));
+				// 超时即**全部未答**：没有 partial 通道，逐题标 skipped 让模型明确「这轮什么都没拿到」，
+				// 而不是拿着半个答案去推进（旧实现承诺带回 answered-so-far，但那条通道从未接通）
+				const skipped = p.questions.map((q) => ({ id: q.id, skipped: true }));
 				return {
 					content: [{
 						type: "text",
 						text: JSON.stringify({
-							ok: true, answered: true, partial: resolution.partial,
-							answers: answered, skipped,
-							message: "用户未响应，请基于现有信息自主决策继续；用户之后补充回答时会作为新消息到达。",
+							ok: true, answered: true, answers: {}, skipped,
+							message: "用户未作答（超时），所有题目都按跳过处理；请基于现有信息自主决策继续，不要假设任何一题的答案。用户之后补充回答时会作为新消息到达。",
 						}),
 					}],
-					details: { ok: true, answered: true, partial: resolution.partial },
+					details: { ok: true, answered: true, skippedCount: skipped.length },
 				};
 			}
+			// 结算指标统一在 index.ts 的 registry hook（onSettled）里记，避免工具层重复计数
 			return {
 				content: [{ type: "text", text: JSON.stringify({ ok: true, answered: true, answers: resolution.answers }) }],
 				details: { ok: true, answered: true },

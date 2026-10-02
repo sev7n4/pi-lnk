@@ -71,6 +71,12 @@ export const useAgentStore = defineStore('agent', () => {
     toolName: string
     callId?: string
     nodeId?: string
+    /**
+     * 阻塞题干（ask_user 经 `waiting_user` 事件的 meta.questionTitle 下发，2026-10-02）。
+     * 状态行据此显示「等待你作答：<题面>」，而不是无信息量的「等待你确认」——
+     * 用户至少知道在等他答什么。
+     */
+    question?: string
     deadlineAt?: number
   } | null>(null)
   /**
@@ -299,7 +305,7 @@ export const useAgentStore = defineStore('agent', () => {
   const BLOCKING_WAIT_DEFAULT_TIMEOUT_MS = 300_000
 
   function setBlockingWait(
-    wait: { toolName: string; callId?: string; nodeId?: string; timeoutMs?: number } | null,
+    wait: { toolName: string; callId?: string; nodeId?: string; question?: string; timeoutMs?: number } | null,
   ) {
     if (!wait?.toolName) {
       blockingWait.value = null
