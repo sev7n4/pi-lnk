@@ -731,8 +731,7 @@ export class SessionManager {
 					userId: entry.userId,
 					...entry.turn,
 				}),
-				systemPrompt: () =>
-					composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption()),
+				systemPrompt: () => this.composeEntryAndObserve(entry),
 				thinkingLevel,
 				// steering / followUp 队列模式（2026-10-02）：此前这两个值只在 configmap 里
 				// 写过、没人读（死配置），harness 实际吃的是 vendor 默认 "all"。
@@ -1022,7 +1021,9 @@ export class SessionManager {
 	/** 测试观测口：按会话当前 turn 求值 systemPrompt（与 harness 内部同一组合函数）。 */
 	resolveSystemPromptForTest(threadKey: string): string {
 		const entry = this.require(threadKey);
-		return composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
+		const sp = composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
+		this.metrics?.observeSystemPromptBytes(sp.length);
+		return sp;
 	}
 
 	/** T3 预算选项：off（或未配）返回 undefined = 逐字节回退旧行为；on 时挂 metrics 回调。 */
@@ -1036,6 +1037,14 @@ export class SessionManager {
 			onDrop: m ? (kind) => m.observeDynamicBudgetDrop(kind) : undefined,
 			onUnknownKind: m ? () => m.observeUnknownBlockKind() : undefined,
 		};
+	}
+
+	/** 组装 systemPrompt 并上报 bytes 水位（T3 观测）。闭包捕获 entry 而非 require(threadKey)：
+	 * harness 可能在会话注册进 this.sessions 之前就调用此闭包（create/fork 时序），require 会炸。 */
+	private composeEntryAndObserve(entry: SessionEntry): string {
+		const sp = composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
+		this.metrics?.observeSystemPromptBytes(sp.length);
+		return sp;
 	}
 
 	/**
