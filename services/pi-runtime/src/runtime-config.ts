@@ -54,6 +54,11 @@ export interface RuntimeConfig {
 	 */
 	toolTiering?: boolean;
 	/**
+	 * 信任边界开关（审计 #8）。off = 不注册 transform_context hook，进 LLM 前不做
+	 * 目标复述与工具结果来源标注（行为与本开关引入前逐字节一致）。缺省 true。
+	 */
+	trustBoundary?: boolean;
+	/**
 	 * steering 队列消费模式（vendor `AgentHarnessOptions.steeringMode`）。
 	 *
 	 * "all" = 每个 turn 边界把队列里**全部** steer 一次性注入；"one-at-a-time" = 每轮只注入
@@ -143,6 +148,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		// 否则「没配」与「配了非法值」不可区分。
 	compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
 	toolTiering: parseBool(env.PI_RUNTIME_TOOL_TIERING, true),
+	trustBoundary: parseBool(env.PI_RUNTIME_TRUST_BOUNDARY, true),
 		// steering/followUp 队列模式（2026-10-02 由 configmap 化石收编为 env 口径）
 		steeringMode: parseQueueMode(env.PI_RUNTIME_STEERING_MODE, d.steeringMode),
 		followUpMode: parseQueueMode(env.PI_RUNTIME_FOLLOW_UP_MODE, d.followUpMode),

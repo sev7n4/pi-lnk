@@ -116,3 +116,21 @@ test("tool_search 未打点时不缺行报错：activated_total 恒渲染为 0",
 	assert.match(out, /pi_runtime_tool_search_activated_total 0/);
 	assert.doesNotMatch(out, /pi_runtime_tool_search_calls_total\{/);
 });
+
+test("transform_context：复述分组计数 + 标注条数累计（审计 #8 观测）", () => {
+	const m = new Metrics();
+	m.observeTransformContext(true, 2);
+	m.observeTransformContext(true, 0);
+	m.observeTransformContext(false, 1);
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_transform_context_runs_total\{goal="on"\} 2/);
+	assert.match(out, /pi_runtime_transform_context_runs_total\{goal="off"\} 1/);
+	assert.match(out, /pi_runtime_transform_context_annotated_total 3/);
+});
+
+test("transform_context 未打点时不缺行报错", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_transform_context_annotated_total 0/);
+	assert.doesNotMatch(out, /pi_runtime_transform_context_runs_total\{/);
+});
