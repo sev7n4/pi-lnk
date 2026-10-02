@@ -669,7 +669,14 @@ export class SessionManager {
 			queued: new Set(),
 			nextSeq: 0,
 			activityStep: 0,
-			staticPrompt: this.composeSystemPrompt(withQueueGuidance(opts.systemPrompt)),
+			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
+			// 字段（app.ts:113），不传时若直接 `withQueueGuidance(undefined)`，它会返回**裸 guidance**
+			// 而不是「空 + guidance」—— 结果是默认系统提示被整段顶替掉（生产上表现为 agent 没有
+			// 任何基础人设，只剩一段插话约定）。只有 default 也是空时才退化为裸 guidance（见
+			// withQueueGuidance 注释）。
+			staticPrompt: this.composeSystemPrompt(
+				withQueueGuidance(opts.systemPrompt || this.systemPromptDefault),
+			),
 			basePrompt: opts.systemPrompt ?? "",
 			identity,
 			userId: opts.userId,

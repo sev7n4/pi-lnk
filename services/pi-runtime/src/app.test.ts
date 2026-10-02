@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp, resolveEventsSubscribeMode } from "./app.js";
-import { SessionManager, toSessionKey } from "./session-manager.js";
+import { QUEUE_GUIDANCE, SessionManager, toSessionKey } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
 import { PendingToolRegistry } from "./pending-registry.js";
@@ -141,7 +141,9 @@ describe("POST /sessions 幂等契约", () => {
 				});
 				assert.equal(res.statusCode, 201);
 				const cfg = sink.cfg as { systemPrompt: (t: unknown) => string; toolContext: (t: unknown) => Record<string, unknown> };
-				assert.equal(cfg.systemPrompt(undefined), "RULES");
+				// RULES 段尾部固定挂着 QUEUE_GUIDANCE（运行中插话须先复述再动工具，2026-10-02 起），
+				// 故按显式比对而非逐字节相等 —— 与 session-manager.test.ts / session-turn-context.test.ts 同口径。
+				assert.equal(cfg.systemPrompt(undefined), `RULES\n\n${QUEUE_GUIDANCE}`);
 				const tc = cfg.toolContext(undefined);
 				assert.deepEqual(tc.mentionedKeys, ["I1"]);
 				assert.deepEqual(tc.refOrder, ["n1"]);
@@ -232,7 +234,8 @@ describe("POST /sessions/:key/prompt 契约", () => {
 				});
 				assert.equal(res.statusCode, 202);
 				assert.equal(res.json().accepted, true);
-				assert.equal(manager.resolveSystemPromptForTest("s1:t1"), "RULES\n\n当前画布摘要：{}");
+				// 同 146 行口径：RULES 段尾部固定挂着 QUEUE_GUIDANCE，故按显式比对而非逐字节相等。
+				assert.equal(manager.resolveSystemPromptForTest("s1:t1"), `RULES\n\n${QUEUE_GUIDANCE}\n\n当前画布摘要：{}`);
 			} finally {
 				await app.close();
 			}
