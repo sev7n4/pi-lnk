@@ -64,6 +64,12 @@ env:
   PI_RUNTIME_SESSION_SWEEP_MS: "300000"
   PI_RUNTIME_SESSIONS_MAX_BYTES: "3221225472"
   PI_RUNTIME_SESSIONS_MAX_COUNT: "200"
+  # steering / followUp 队列消费模式（2026-10-02 接入，此前是 configmap 里的死配置）。
+  #   all             = 每个 turn 边界把队列里全部 steer/followUp 一次性注入
+  #   one-at-a-time   = 每轮只注入一条，其余留到下一轮（vendor 称 silent deferral）
+  # 本项目取 one-at-a-time：用户连发多条时逐轮消化，不一轮灌满整条上下文。
+  PI_RUNTIME_STEERING_MODE: "one-at-a-time"
+  PI_RUNTIME_FOLLOW_UP_MODE: "one-at-a-time"
   PI_RUNTIME_COMPACTION_ENABLED: "true"
   # 触发口径见 PI_RUNTIME_COMPACTION_TARGET_RATIO（runtime-deploy.yml --set-string）。
   # 刻意不设 RESERVE_TOKENS 默认：显式值会让 ratio 失效（旧口径优先），且

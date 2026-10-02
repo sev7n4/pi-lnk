@@ -16,6 +16,7 @@ import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import { resolveMessageOutputs } from '@/components/agent/agentCanvasOutputs'
+import { parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
 import {
   cancelAgentRun,
@@ -197,10 +198,31 @@ const auth = useAuthStore()
 const router = useRouter()
 const input = ref('')
 /**
- * 流式中的待发消息（排队，最多 1 条）。抄 WorkBuddy：流式中输入并回车 → 进入待发气泡，
- * 不打断当前轮；当前轮结束（done）或用户点停止（中止即发）时自动发出。
+ * 流式中的插话槽位（2026-10-02 重写：从「单槽字符串 + 流结束补发」改成**三态意图槽**）。
+ *
+ * 老实现的两个动作名不符实：「⚡ 打断并发送」实际是 `abort`+新开一轮，「等流结束再发」实际是
+ * 延迟新开一轮 —— 都不是 pi-agent 的 steering / followUp。现在两者分别是 vendor 队列里
+ * **同一条消息的两个送达时机**（`lane.ts:1456-1460` 两者构造的消息完全一致）：
+ *   - `steer`    → run 内下一个 turn 边界接住（`drive/boundary.ts:85-89`）：不中断、事件流不断
+ *   - `followup` → 本轮收尾边界接住（`boundary.ts:106`）：不打扰，人可以先走开
+ * ⚠️ 二者**互斥**——同一次边界里已有 steer 时 followUp 会被跳过（消息留 inbox 等下一次
+ * accept），所以 UI 上是二选一、不是可叠加的两勾。
+ *
+ * 槽位默认**挂着等用户点**（不做自动派发）：steer 与 followUp 是两种截然不同的送达时机，
+ * 替用户默认选一次就可能把「想走开」的消息插进正在跑的那轮。
  */
-const queuedMessage = ref('')
+type QueueIntent = 'steer' | 'followup'
+type QueueState = 'pending' | 'accepted' | 'failed'
+interface QueuedSlot {
+  text: string
+  intent: QueueIntent | null // pending 态尚未决定走哪条通道
+  state: QueueState
+  /** 成功/失败原因，直接显示在气泡上，不做 toast（流式中弹窗会打断阅读） */
+  hint: string
+}
+const queued = ref<QueuedSlot | null>(null)
+/** accepted 提示自动收起，避免一个常驻绿条占住输入框上方 */
+let queueDismissTimer: ReturnType<typeof setTimeout> | null = null
 /** 已发送用户消息的就地二次编辑：正在编辑的消息 id */
 const editingMessageId = ref<string | null>(null)
 const editingDraft = ref('')
@@ -478,9 +500,7 @@ const showTaskCard = computed(() => taskProgress.value.items.length > 0)
  * canShowMessageActions 用来判定「本轮是否活跃」，不能被排队状态带偏，否则会在排队期间
  * 把本轮消息的操作按钮提前放出来。
  */
-const showTaskCardAtComposer = computed(
-  () => showTaskCard.value && !queuedMessage.value.trim(),
-)
+const showTaskCardAtComposer = computed(() => showTaskCard.value && !queued.value)
 
 const lastAssistantMessageId = computed(() =>
   [...agent.messages].reverse().find((m) => m.role === 'assistant')?.id,
@@ -1708,43 +1728,100 @@ async function send() {
 }
 
 /**
- * 输入框回车提交。流式中不取消当前轮，而是把内容移入待发气泡（排队）；
- * 非流式中走正常发送。底部「停止」按钮走 `send()`，二者分离以匹配 WorkBuddy 行为。
+ * 流式中发送 = 插话（steering 队列，2026-10-02）。
+ *
+ * 此前的行为是把文本塞进 `queuedMessage`（注释自写「最多 1 条，抄 WorkBuddy」），
+ * 等 `isStreaming` 转 false 才作为**一条全新 prompt** 补发 —— 刷新即丢、断网即丢，
+ * 服务端还在一路拿 409 硬拒。现在直接 `POST /api/agent/runs/steer`：消息由 pi-runtime
+ * **durable 落盘**进 vendor steering 队列，当前 run 的下一个 turn 边界就接住，
+ * 事件流不断、上下文不断，插话立刻生效。
+ *
+ * @returns 是否成功入队。失败（runtime 未接管 / 会话已回收）由调用方回退兜底，
+ *          绝不能把用户打的字吞掉。
+ */
+/**
+ * 把槽位里的消息投递到 vendor 队列（steering 或 followUp 通道）。
+ *
+ * 「算不算真的入队」这一判定抽到 `queueDelivery.ts` 单独单测：这里只管状态迁移与文案，
+ * 判定规则（HTTP 200 + `queued:false` 算失败、`code!==0` 算失败）在那一侧有注释与测试。
+ * 失败时消息不从用户眼皮底下蒸发 —— 槽位留在 failed 态，动作区给出「取回内容」。
+ */
+async function deliverQueued(intent: QueueIntent): Promise<boolean> {
+  const slot = queued.value
+  if (!slot || slot.text.trim() === '' || slot.state !== 'pending') return false
+  slot.state = 'pending'
+  slot.hint = ''
+  const endpoint = intent === 'steer' ? '/api/agent/runs/steer' : '/api/agent/runs/followup'
+  try {
+    const res = await fetch(apiUrl(endpoint), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        sessionId: props.sessionId,
+        threadId: agentThreadId.value,
+        text: slot.text,
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+    const body: unknown = await res.json().catch(() => null)
+    const verdict = parseQueueDelivery({ ok: res.ok, status: res.status, body })
+    if (!verdict.delivered) {
+      throw new Error(verdict.reason)
+    }
+    slot.state = 'accepted'
+    slot.hint =
+      intent === 'steer'
+        ? '已并入当前回答，紧接着往下写（当前这轮不会中断）'
+        : '会在本轮收尾时接住，你现在可以先走开'
+    scheduleQueueDismiss()
+    return true
+  } catch (err) {
+    slot.state = 'failed'
+    slot.hint = err instanceof Error ? err.message : '投递失败'
+    return false
+  }
+}
+
+function scheduleQueueDismiss() {
+  if (queueDismissTimer) clearTimeout(queueDismissTimer)
+  queueDismissTimer = setTimeout(() => {
+    queueDismissTimer = null
+    queued.value = null
+  }, 2600)
+}
+
+/**
+ * 输入框回车提交。流式中**不自动投递**，只把消息挂进待选气泡，动作权留给用户：
+ * steer（立刻接住）与 followUp（收尾接住）是两种送达时机，不能替他默认选一个。
+ * 非流式中走正常发送。底部「停止」按钮走 `send()`，二者分离。
  */
 async function onComposerSubmit() {
   if (agent.isStreaming) {
     const text = input.value
-    if (text.trim()) {
-      queuedMessage.value = text
-      input.value = ''
-      await nextTick()
-      scrollToBottom()
-    }
+    if (!text.trim()) return
+    input.value = ''
+    queued.value = { text, intent: null, state: 'pending', hint: '' }
+    await nextTick()
+    scrollToBottom()
     return
   }
   await send()
 }
 
-async function flushQueuedMessage() {
-  const text = queuedMessage.value.trim()
-  if (!text) return
-  queuedMessage.value = ''
-  await sendMessage(text)
+function dismissQueued() {
+  if (queueDismissTimer) {
+    clearTimeout(queueDismissTimer)
+    queueDismissTimer = null
+  }
+  queued.value = null
 }
 
-/** ⚡ 打断并发送：立即中止当前轮，把待发消息作为新请求发出 */
-async function interruptAndSend() {
-  const text = queuedMessage.value.trim()
-  if (!text) return
-  queuedMessage.value = ''
-  await cancelActiveStream()
-  await sendMessage(text)
-}
-
-/** ✎ 编辑待发：把内容退回输入框（不另开卡片），清空排队 */
-function editQueuedMessage() {
-  input.value = queuedMessage.value
-  queuedMessage.value = ''
+/** ✎ 取回内容：把消息退回输入框（不另开卡片），投递未成功时这是唯一的挽回入口 */
+function requeueQueued() {
+  const slot = queued.value
+  if (!slot) return
+  input.value = slot.text
+  dismissQueued()
   nextTick(() => composerRef.value?.focus())
 }
 
@@ -1997,6 +2074,79 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
     // 始终回拉：Runtime 已写 Session.canvasData；本地 save 不得用旧节点覆盖
     emit('turnComplete')
     scrollToBottom()
+    // 本轮收尾后才开旁听：followUp 是**收尾边界之后**才接住、由 pi-runtime drain 派生的新一代，
+    // 不在主流里（主流已 close）。挂上旁听流，人切回来才看得见「接着往下写」的那一段。
+    void listenFollowUpTail()
+  }
+}
+
+/**
+ * 旁听「本轮之后」的事件（纯订阅，不发 prompt）。
+ *
+ * 只在主流收尾后启动一次，且有硬上限（默认重挂 3 轮 + 每轮 20s）：旁听流本身不是产品主路径，
+ * 无限重挂会让每个静默会话都白占一条长连接。收到 `agent_end` **不做收尾**（续跑可能还在路上），
+ * 由 idle 计时器自行退出。
+ */
+const FOLLOWUP_TAIL_MAX_ROUNDS = 3
+const FOLLOWUP_TAIL_IDLE_MS = 20_000
+let followUpTailRounds = 0
+let followUpTailAbort: AbortController | null = null
+
+async function listenFollowUpTail(): Promise<void> {
+  followUpTailRounds += 1
+  if (followUpTailRounds > FOLLOWUP_TAIL_MAX_ROUNDS) return
+  followUpTailAbort?.abort()
+  const controller = new AbortController()
+  followUpTailAbort = controller
+  // 手动造 idle 闸门而不用 `AbortSignal.any`：后者要 Chrome 116+/Safari 17.4+，
+  // 本项目其余地方只用到 `AbortSignal.timeout`，别为一个旁听流引入新的兼容面。
+  const idleTimer = setTimeout(() => controller.abort(), FOLLOWUP_TAIL_IDLE_MS)
+  try {
+    const res = await fetch(
+      apiUrl(
+        `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
+      ),
+      {
+        headers: authHeaders(),
+        signal: controller.signal,
+      },
+    )
+    if (!res.ok || !res.body) return
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const raw = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        const line = raw.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+        let payload: { type: string; data?: unknown } | null = null
+        try {
+          payload = JSON.parse(line.slice(5).trim())
+        } catch {
+          continue
+        }
+        if (!payload) continue
+        // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent），
+        // 所以 text_delta 增量直接追加到最后一条 assistant 下面 —— 正是「同一段接着写」。
+        if (payload.type === 'text_delta') {
+          agent.appendText((payload.data as { text?: string } | undefined)?.text ?? '')
+          scrollToBottom()
+        } else if (payload.type === 'canvas_action') {
+          emit('canvasActions', [payload.data as never])
+        }
+      }
+    }
+  } catch {
+    /* 旁听流断开是常态，不做提示；下一轮 idle 结束或用户主动发送时自愈 */
+  } finally {
+    clearTimeout(idleTimer)
+    followUpTailAbort = null
   }
 }
 
@@ -2213,20 +2363,6 @@ watch(
   [() => agentStream.unreachable.value, () => recoveredPhaseHint.value],
   syncRuntimeNotice,
   { immediate: true },
-)
-
-/**
- * 当前轮正常结束（isStreaming 由 true → false）时，若有待发消息则自动发出。
- * 这覆盖了「排队态」：流式中回车入队 → 当前轮 done 后自动续发（抄 WorkBuddy）。
- * 中止（cancelActiveStream）也会把 isStreaming 置 false，同样触发此处，无需在 send() 内重复 flush。
- */
-watch(
-  () => agent.isStreaming,
-  (now, prev) => {
-    if (prev && !now && queuedMessage.value.trim()) {
-      void flushQueuedMessage()
-    }
-  },
 )
 
 function handleEvent(event: { type: string; data: unknown }) {
@@ -3352,19 +3488,62 @@ defineExpose({
                   知道了
                 </button>
               </div>
-              <!-- 流式中的待发消息气泡（排队，抄 WorkBuddy）：不打断当前轮，可打断并发送 / 编辑回输入框 / 删除 -->
+              <!--
+                流式中的插话槽位（2026-10-02 重写）：不打断当前轮，两个动作分别是 vendor 队列的
+                两种送达时机 —— 立即插话(steer) / 等跑完再说(followUp)，互斥二选一。
+                pending = 等你点（不自动派发）；accepted = 已入队，降级为一行状态条 2.6s 后自动收起；
+                failed = 入队失败，文字保留在槽位里，只能「取回输入框」或「放弃」。
+              -->
               <div
-                v-if="queuedMessage"
-                class="agent-queued-bubble mx-3 mb-2 rounded-lg border border-[var(--neo-accent)]/40 bg-[var(--neo-accent)]/10 px-3 py-2"
+                v-if="queued"
+                class="agent-queued-bubble mx-3 mb-2 rounded-lg border px-3 py-2"
+                :class="queued.state === 'accepted'
+                  ? 'border-[var(--neo-success)]/40 bg-[var(--neo-success)]/10'
+                  : queued.state === 'failed'
+                    ? 'border-[var(--neo-danger)]/40 bg-[var(--neo-danger)]/10'
+                    : 'border-[var(--neo-accent)]/40 bg-[var(--neo-accent)]/10'"
+                :data-queue-state="queued.state"
+                :data-queue-intent="queued.intent ?? ''"
               >
                 <div class="flex items-start gap-2">
-                  <span class="mt-0.5 shrink-0 rounded bg-[var(--neo-accent)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--neo-accent)]">待发</span>
-                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--neo-text)]">{{ queuedMessage }}</p>
+                  <span
+                    class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
+                    :class="queued.state === 'accepted'
+                      ? 'bg-[var(--neo-success)]/20 text-[var(--neo-success)]'
+                      : queued.state === 'failed'
+                        ? 'bg-[var(--neo-danger)]/20 text-[var(--neo-danger)]'
+                        : 'bg-[var(--neo-accent)]/20 text-[var(--neo-accent)]'"
+                  >
+                    {{ queued.state === 'accepted' ? '已入队' : queued.state === 'failed' ? '未送达' : '待发' }}
+                  </span>
+                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--neo-text)]">{{ queued.text }}</p>
                 </div>
+                <p
+                  v-if="queued.hint"
+                  class="mt-1 text-[11px] leading-snug text-[var(--neo-text-muted)]"
+                  data-testid="queued-hint"
+                >
+                  {{ queued.hint }}
+                </p>
                 <div class="mt-1.5 flex flex-wrap items-center gap-2">
-                  <button type="button" class="queued-act queued-act--primary" @click="interruptAndSend">⚡ 打断并发送</button>
-                  <button type="button" class="queued-act" @click="editQueuedMessage">✎ 编辑</button>
-                  <button type="button" class="queued-act" @click="queuedMessage = ''">🗑 删除</button>
+                  <template v-if="queued.state === 'pending'">
+                    <button type="button" class="queued-act queued-act--primary" @click="deliverQueued('steer')">
+                      ⏵ 立即插话
+                    </button>
+                    <button type="button" class="queued-act" @click="deliverQueued('followup')">
+                      🕒 等它跑完再说
+                    </button>
+                    <button type="button" class="queued-act" @click="requeueQueued">✎ 取回内容</button>
+                    <button type="button" class="queued-act" @click="dismissQueued">🗑 放弃</button>
+                  </template>
+                  <template v-else>
+                    <button v-if="queued.state === 'failed'" type="button" class="queued-act queued-act--primary" @click="requeueQueued">
+                      ✎ 取回内容
+                    </button>
+                    <button type="button" class="queued-act" @click="dismissQueued">
+                      {{ queued.state === 'accepted' ? '知道了' : '放弃' }}
+                    </button>
+                  </template>
                 </div>
               </div>
               <div class="agent-composer">

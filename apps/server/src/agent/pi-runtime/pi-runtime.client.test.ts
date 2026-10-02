@@ -4,7 +4,7 @@ import {
 	mapPiEventToUiEvent,
 	type PiRuntimeEvent,
 } from "./pi-events";
-import { parseSseFrames, PiRuntimeClient } from "./pi-runtime.client";
+import { parseSseFrames, PiRuntimeError, PiRuntimeClient } from "./pi-runtime.client";
 
 const baseEvent = (type: PiRuntimeEvent["type"], data: unknown): PiRuntimeEvent => ({
 	type,
@@ -400,6 +400,73 @@ describe("prompt 透传 turnContext（P0-①）", () => {
 				new Response(JSON.stringify({ error: "session busy" }), { status: 409 })) as typeof fetch,
 		});
 		await expect(busy.prompt("s1:t1", "你好")).rejects.toThrow(/session busy/);
+	});
+});
+
+describe("steer / followUp 队列客户端（2026-10-02 吃满 pi-agent 双模式）", () => {
+	function harness(res: () => Response = () => new Response(JSON.stringify({ queued: true }), { status: 202 })) {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return res();
+			}) as typeof fetch,
+		});
+		return { calls, client };
+	}
+
+	it("steer → /sessions/<key>/steer；followUp → /followup（路径不分叉）", async () => {
+		const a = harness();
+		await a.client.steer("s1:t1", "插话");
+		const sa = JSON.parse(String(a.calls[0]!.init.body));
+		expect(a.calls[0]!.url).toBe("http://x/sessions/s1%3At1/steer");
+		expect(a.calls[0]!.init.method).toBe("POST");
+		expect(sa).toEqual({ text: "插话", lane: "main" });
+
+		const b = harness();
+		await b.client.followUp("s1:t1", "尾随");
+		expect(b.calls[0]!.url).toBe("http://x/sessions/s1%3At1/followup");
+		const sb = JSON.parse(String(b.calls[0]!.init.body));
+		expect(sb).toEqual({ text: "尾随", lane: "main" });
+	});
+
+	it("自定义 lane 透传（vendor lane name，非硬编码 main）", async () => {
+		const h = harness();
+		await h.client.steer("s1:t1", "插话", "lane-b");
+		expect(JSON.parse(String(h.calls[0]!.init.body)).lane).toBe("lane-b");
+	});
+
+	it("turnContext 仅在传入时携带（与 prompt 的透传口径一致）", async () => {
+		const h = harness();
+		await h.client.followUp("s1:t1", "尾随", "main", {
+			turnContext: { focusNodeId: "n1", mentionedKeys: ["I1"] },
+		});
+		const body = JSON.parse(String(h.calls[0]!.init.body));
+		expect(body.turnContext).toEqual({ focusNodeId: "n1", mentionedKeys: ["I1"] });
+
+		const h2 = harness();
+		await h2.client.followUp("s1:t1", "尾随");
+		expect(JSON.parse(String(h2.calls[0]!.init.body)).turnContext).toBeUndefined();
+	});
+
+	it("202 {queued:true} → 返回 queued:true；缺字段仍视为成功（旧 runtime 容错）", async () => {
+		const h = harness(() => new Response(JSON.stringify({ queued: true }), { status: 202 }));
+		await expect(h.client.steer("s1:t1", "插话")).resolves.toEqual({ queued: true });
+
+		const h2 = harness(() => new Response(JSON.stringify({ accepted: true }), { status: 202 }));
+		await expect(h2.client.followUp("s1:t1", "尾随")).resolves.toEqual({ queued: true });
+	});
+
+	it(">=400 或 body.error → 抛 PiRuntimeError（带 status，上层可区分：steer 失败不该伪造成功）", async () => {
+		const h = harness(() => new Response(JSON.stringify({ error: "queue rejected" }), { status: 500 }));
+		const err = await h.client.steer("s1:t1", "插话").catch((e) => e);
+		expect(err).toBeInstanceOf(PiRuntimeError);
+		expect(err.message).toBe("queue rejected");
+		expect((err as PiRuntimeError).status).toBe(500);
+
+		const h2 = harness(() => new Response(JSON.stringify({ error: "bad lane" }), { status: 400 }));
+		await expect(h2.client.followUp("s1:t1", "尾随")).rejects.toThrow(/bad lane/);
 	});
 });
 

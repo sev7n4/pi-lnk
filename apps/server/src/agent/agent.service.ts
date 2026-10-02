@@ -450,6 +450,115 @@ export class AgentService {
   }
 
   /**
+   * 用户插话（steering 队列，2026-10-02）：把消息交给 vendor steer 队列，由当前 run 的
+   * 下一个 turn 边界（`runtime/drive/boundary.ts:85-89`）接住并续跑同一次 run。
+   *
+   * 会话键推导与 cancelRun / answerPiPending 完全一致（threadId?.trim() || sessionId）。
+   *
+   * 这个「轻端点」存在的理由：流式进行中发言走完整 prompt 流必然撞 409（上一轮还在跑），
+   * 而此前 `iteratePiEvents` 里的 409 是 `void ... .catch(() => {})` **静默吞掉**的 ——
+   * 前端只剩浏览器内一个「最多 1 条」的单槽队列，刷新即丢、断网即丢。插话不该是前端内存的事。
+   */
+  /**
+   * 纯旁听众管（**不发 prompt、不开启新 run**）：转发当前会话 pi-runtime 之后的事件。
+   *
+   * 存在的唯一理由：followUp 队列在**收尾边界**被接住后，pi-runtime 的 `drainAfterRun`
+   * 会派生出新的一代 run（`vendor` 自己没有 terminal drain，是本项目补的排空）。那条 SSE
+   * 既不是用户发起的、也不经过 `chat/conversation` —— 主流此时已 close、Nest 已退订，
+   * 前端收不到任何东西，「点了等跑完就走开」的人切回来只会看到空白。
+   *
+   * 与 `iteratePiEvents` 的区别：本方法**不驱动 run**，只旁听；消费端（Nest SSE / 前端）自己
+   * 定什么时候断，服务端不因收到 `agent_end` 就收尾（否则续跑那一代恰好被切掉）。
+   *
+   * ⚠️ 首连必须走 `live: true`（pi-runtime `/events?from=now`）。pi-runtime 的订阅有三档参数：
+   * 不传 = **全量重放 buffer**、`?lastEventId=n` = 增量续传、`from=now` = 只收未来。这里过去那个
+   * 缺口（主流 buffer 里本轮的事件）恰恰必须跳过 —— 主流已经把这些事件推给前端过了，再重放一遍
+   * 就是文本重复。漏一两个字符不如重复一段话。
+   *
+   * 漏窗是真实存在但极窄的：drain 派生出的新一代要再走一轮网络 + 模型首字才出第一个事件，
+   * 而前端在主流 `finally` 里就已发起旁听请求（毫秒级），赶在它前面的概率可忽略。
+   */
+  async *runEventStream(sessionKey: string): AsyncGenerator<AgentStreamEvent> {
+    const piUrl = this.getPiRuntimeUrl()
+    // 维护态（PI_RUNTIME_MODE=off / 未配 URL）：旁听无处可挂，直接空流。
+    // 刻意不抛错 —— 消费端是「人走开之后切回来才看」的旁路，不该让它在挂载时就炸。
+    if (!piUrl) return
+    const client = this.createPiRuntimeClient(piUrl)
+    const queue: AgentStreamEvent[] = []
+    let notify: (() => void) | null = null
+    let finished = false
+    const unsubscribe = client.streamEvents(
+      sessionKey,
+      (event) => {
+        // 与主 `streamConversation` 走同一个归一函数，保证两端事件契约一致
+        // （前端 handleEvent 只需认 AgentStreamEvent，不必懂 pi 原始名）。
+        const ui = mapPiEventToUiEvent(event)
+        if (!ui) return
+        // 与主 `streamConversation`（:912）一样：归一产物是 `UiEvent`，末端收口成
+        // `AgentStreamEvent` 时统一 cast，保证两端契约一致。
+        queue.push(ui as AgentStreamEvent)
+        notify?.()
+      },
+      () => {
+        finished = true
+        notify?.()
+      },
+      { live: true },
+    )
+    try {
+      while (true) {
+        while (queue.length > 0) {
+          yield queue.shift() as AgentStreamEvent
+        }
+        if (finished) return
+        await new Promise<void>((resolve) => {
+          notify = resolve
+        })
+      }
+    } finally {
+      unsubscribe()
+    }
+  }
+
+  async steerPiRun(input: {
+    sessionId: string
+    threadId?: string
+    text: string
+  }): Promise<{ queued: boolean }> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return { queued: false }
+    const sessionKey = input.threadId?.trim() || input.sessionId
+    return this.createPiRuntimeClient(piUrl).steer(sessionKey, input.text)
+  }
+
+  /**
+   * 尾随指令（followUp 队列）：「这条我先不发，等本轮跑完再说」。
+   *
+   * 与 steer 的区别**不在消息形态**（`lane.ts:1456-1460` 两者在 `enqueue` 里构造的是同一个
+   * `{role:"user",content:[{type:"text",text}]}`），而在**消费时机**：
+   * - steer → run 内任意 checkpoint / finish 边界（`drive/boundary.ts:85-89`）
+   * - followUp → 只在本轮收尾、且该边界上没有任何「会 project 的条目」时才拉
+   *   （`boundary.ts:106` `followUpWhenNoTrigger && !pending.some(projects)`）
+   *
+   * ⚠️ 由此产生一条必须让调用方知道的规则：**同一次边界里已有 steer 时 followUp 会被跳过**，
+   * 消息留在 inbox 等下一次 accept（pi-runtime 的 `drainAfterRun` 会兜，不丢但延后）。
+   * 所以 UI 上 steer 与 followUp 是「二选一」而非「可叠加」，别做成可同时勾选。
+   *
+   * 入队成功即返回：真正接住发生在当前 run 的收尾边界，本方法不等待、不开新流
+   * （开新流会撞 409，且用户此刻要的是「人走开」而不是「盯着看」）。
+   */
+  async followUpPiRun(input: {
+    sessionId: string
+    threadId?: string
+    text: string
+  }): Promise<{ queued: boolean }> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return { queued: false }
+    const sessionKey = input.threadId?.trim() || input.sessionId
+    return this.createPiRuntimeClient(piUrl).followUp(sessionKey, input.text)
+  }
+
+  /**
    * B-2：透传用户回答到 pi-runtime pending registry（ask_user/propose_generation 阻塞恢复）。
    * sessionKey 推导与 cancelRun（:392）完全一致：threadId?.trim() || sessionId。
    * 幂等：pi-runtime 侧未知/已清理 callId 返回 deduped=true，不抛错。
@@ -771,20 +880,41 @@ export class AgentService {
       userMessage,
       known?.skills ?? null,
     )
+    // P0-①：每轮世界状态（画布/侧栏）随本轮 prompt 求值，不进对话历史
+    const turnContext = {
+      dynamicBlocks,
+      attachments: piContext?.attachments,
+      mentionedKeys: piContext?.mentionedKeys,
+      refOrder: piContext?.refOrder,
+      focusNodeId: piContext?.focusNodeId,
+    }
     void client
-      .prompt(sessionKey, promptText, "main", {
-        forceSkills,
-        // P0-①：每轮世界状态（画布/侧栏）随本轮 prompt 求值，不进对话历史
-        turnContext: {
-          dynamicBlocks,
-          attachments: piContext?.attachments,
-          mentionedKeys: piContext?.mentionedKeys,
-          refOrder: piContext?.refOrder,
-          focusNodeId: piContext?.focusNodeId,
-        },
-      })
-      .catch(() => {
-        // prompt 失败会以 error 事件形式出现在事件流中，此处静默
+      .prompt(sessionKey, promptText, "main", { forceSkills, turnContext })
+      .catch(async (err: unknown) => {
+        // 原本这里是一个空 catch（注释写「prompt 失败会以 error 事件形式出现」）——
+        // 那只对 503/上游错误成立：pi-runtime 会把 error 写进 SSE，前端看得见。
+        // 但对 **409 不成立**：prompt 根本没进去，会话在跑，SSE 里不会有任何东西，
+        // 于是「用户发了、世界没反应」是彻底静默的，而它恰恰是这条链路最常见的失败。
+        const message = err instanceof Error ? err.message : String(err)
+        const status = (err as { status?: number } | undefined)?.status
+        if (status !== 409) {
+          // 上游错误：照旧交给 SSE 的 error 事件，此处不另起一轮
+          this.piLogger.warn(`pi prompt failed (key=${sessionKey}): ${message}`)
+          return
+        }
+        // 409 = 上一轮还在跑。用户这次发言不该蒸发 → 改走 steer 队列（durable 落盘），
+        // 由当前 run 的下一个 turn 边界接住。此前这条分支是 `catch(() => {})`，静默丢消息。
+        try {
+          await client.steer(sessionKey, promptText, "main", { turnContext })
+        } catch (steerErr: unknown) {
+          // 队列也塞不进去（会话已被回收 / runtime 侧异常）：必须留痕，
+          // 否则「消息既不回答也不报错」会成为查不掉的黑洞。
+          this.piLogger.warn(
+            `pi steer fallback failed (key=${sessionKey}): ${
+              steerErr instanceof Error ? steerErr.message : String(steerErr)
+            }`,
+          )
+        }
       })
 
     let assistantText = ''

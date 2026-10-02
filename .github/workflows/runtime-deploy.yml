@@ -142,6 +142,8 @@ jobs:
             --set-string env.PI_RUNTIME_SESSION_SWEEP_MS=300000 \
             --set-string env.PI_RUNTIME_SESSIONS_MAX_BYTES=3221225472 \
             --set-string env.PI_RUNTIME_SESSIONS_MAX_COUNT=200 \
+            --set-string env.PI_RUNTIME_STEERING_MODE=one-at-a-time \
+            --set-string env.PI_RUNTIME_FOLLOW_UP_MODE=one-at-a-time \
             --set-string env.PI_RUNTIME_COMPACTION_ENABLED=true \
             --set-string env.PI_RUNTIME_COMPACTION_TARGET_RATIO=0.7 \
             --set env.PI_RUNTIME_COMPACTION_RESERVE_TOKENS=null \

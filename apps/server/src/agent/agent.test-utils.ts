@@ -18,6 +18,10 @@ export type PiClientStub = PiRuntimeClient & {
   healthz: ReturnType<typeof vi.fn>
   createSession: ReturnType<typeof vi.fn>
   prompt: ReturnType<typeof vi.fn>
+  /** steering 队列插话（2026-10-02）：run 进行中发言走这条，不复用 prompt 的 409 语义。 */
+  steer: ReturnType<typeof vi.fn>
+  /** followUp 队列（2026-10-02）：run 收尾续跑一代。 */
+  followUp: ReturnType<typeof vi.fn>
   deleteSession: ReturnType<typeof vi.fn>
   listSkills: ReturnType<typeof vi.fn>
   streamEvents: ReturnType<typeof vi.fn>
@@ -44,6 +48,8 @@ export function stubPiClient(
     healthz: vi.fn().mockResolvedValue(healthzOk ? { status: 'ok' } : null),
     createSession,
     prompt: vi.fn().mockResolvedValue(undefined),
+    steer: vi.fn().mockResolvedValue({ queued: true }),
+    followUp: vi.fn().mockResolvedValue({ queued: true }),
     deleteSession,
     listSkills: vi.fn().mockResolvedValue({ skills: knownSkills }),
     streamEvents: vi.fn((_sessionId: string, onEvent: (event: PiRuntimeEvent) => void) => {
