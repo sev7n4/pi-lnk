@@ -50,6 +50,10 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"attach_refs",
 	"apply_sidebar_attachments",
 	"propose_generation",
+	// 画布编排（2026-10-02 L1）：arrange_nodes 是 skill 链路里被点名的一步
+	// （drama-* / ecommerce-product-photo 都写死 arrange_nodes(along_edges)），
+	// 放进延迟集 = 要靠 tool_search 才能拿到 schema，而工具搜索触发率实测为 0 ⇒ 延迟即不可达。
+	"arrange_nodes",
 	// gen（用户确认后当轮即用）
 	"run_image_generation",
 	"run_video_generation",

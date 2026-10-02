@@ -39,6 +39,8 @@ const ALL_NAMES = [
 	"attach_refs",
 	"apply_sidebar_attachments",
 	"propose_generation",
+	// 画布编排（2026-10-02 L1）：skill 点名的一步，延迟即不可达
+	"arrange_nodes",
 	// gen
 	"run_image_generation",
 	"run_video_generation",
@@ -61,13 +63,12 @@ const ALL_NAMES = [
 	"undo",
 	"redo",
 	"open_image_editor",
-	"arrange_nodes",
 	"delete_nodes",
 	"remove_edges",
 	"save_memory",
 ];
 const fakeTools = () =>
-	ALL_NAMES.map((n) => fakeTool(n, n === "arrange_nodes" ? "整理画布节点布局" : undefined));
+	ALL_NAMES.map((n) => fakeTool(n, n === "undo" ? "撤销上一步画布操作" : undefined));
 
 describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始激活集）", () => {
 	it("enabled：延迟工具必须留在 registered（vendor ai 层 deferred 机制的前提），activeToolNames 只含常驻 + tool_search", () => {
@@ -75,7 +76,7 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 		const registered = new Set(e.registered.map((t) => t.name));
 		for (const n of ALL_NAMES) assert.ok(registered.has(n), `${n} 必须注册进 config.tools`);
 		const active = new Set(e.activeToolNames);
-		for (const d of ["duplicate_node", "save_memory", "undo", "arrange_nodes", "delete_nodes"]) {
+		for (const d of ["duplicate_node", "save_memory", "undo", "delete_nodes"]) {
 			assert.ok(!active.has(d), `${d} 初始不得激活`);
 		}
 		assert.ok(active.has("tool_search"));
@@ -92,6 +93,7 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 			"connect_nodes",
 			"apply_sidebar_attachments",
 			"propose_generation",
+			"arrange_nodes",
 			"run_image_generation",
 			"cancel_generation",
 			"ask_user",
@@ -135,10 +137,11 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 		assert.match(text, /save_memory/);
 	});
 
-	it("中文关键词命中（按摘要/描述匹配）：「整理」→ arrange_nodes", async () => {
-		const { loader } = setup();
-		const res = await run(loader, { query: "整理" });
-		assert.ok(res.addedToolNames!.includes("arrange_nodes"));
+	it("中文关键词命中（按摘要/描述匹配）：「撤销」→ undo", async () => {
+		const { loader, deferredNames } = setup();
+		const res = await run(loader, { query: "撤销" });
+		assert.ok(deferredNames.includes("undo"), "undo 必须仍在延迟集，否则本用例失去意义");
+		assert.ok(res.addedToolNames!.includes("undo"));
 	});
 
 	it("未命中 → 文本给完整目录（可点名再试），不激活", async () => {

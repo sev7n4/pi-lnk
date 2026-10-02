@@ -54,9 +54,11 @@ export function buildAskUserTools(metrics: Metrics, registry?: PendingToolRegist
 	return createAskUserTools(metrics, registry);
 }
 
-/** arrange_nodes 批次：自动排列节点工具（spec docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md，D1-D5 已拍板）。 */
-export function buildArrangeNodesTools(metrics: Metrics): LnkpiTool[] {
-	return createArrangeNodesTools(metrics);
+/** arrange_nodes 批次：自动排列节点工具（spec docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md，D1-D5 已拍板）。
+ * client 可选注入（2026-10-02 L2）：有则 execute 内只读校验 node_ids/edges 并富化工具结果。
+ * 与 buildCanvasReadTools 同款 NestClient 实例，纯读不写。 */
+export function buildArrangeNodesTools(metrics: Metrics, client?: NestClient): LnkpiTool[] {
+	return createArrangeNodesTools(metrics, client);
 }
 
 /**

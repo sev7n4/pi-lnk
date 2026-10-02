@@ -229,3 +229,19 @@ pnpm verify-spec-figures --file docs/superpowers/specs/2026-09-28-arrange-nodes-
 ```
 
 预期：通过（图 1 为内嵌 Mermaid flowchart，§0 索引已登记，图注已写用途，正文 §5 已引用图 1）。本规格无视觉稿附件。
+
+## 14. 2026-10-02 增补（L1–L4，前端断链修复 + 编排对齐）
+
+背景：本包只落了 emit 端，`CanvasPage.vue` 未绑 `@arrangeNodes`，agent 调用无效果；同时工具被归进延迟集而 `load_tools` 触发率实测为 0，实际不可达。本次一并修：
+
+| 编号 | 改动 | 落点 |
+|---|---|---|
+| L0 | 前端补消费端：`@arrange-nodes` → `applyArrangeLayout` → setNodes → `persistUserEdit`（落 undo 栈 + 存库） | `CanvasPage.vue`、`useCanvasGrouping.ts`（新纯函数 `applyArrangeLayout`，零新建算法） |
+| L1 | `arrange_nodes` 进 `ALWAYS_ON_TOOL_NAMES`：它是 `drama-*` / `ecommerce-product-photo` skill 点名的一步，延迟 = 依赖 `load_tools` = 不可达 | `tiering.ts` |
+| L2 | 注入**只读** NestClient，execute 内 `get_canvas_layout` 校验并富化结果（arranged / missing / degraded / verified）；显式 edges 优先，缺失时用画布已有边兜底并标注，**不再静默变网格**；校验失败不阻断（verified=false） | `arrange-nodes.ts`、`registry.ts`、`config.ts` |
+| L3 | by-mode 观测：`observeToolCall("arrange_nodes_<mode>")` | `arrange-nodes.ts` |
+| L4 | 排完自动聚焦视口（覆盖 §11 D3）：排完不聚焦 = 用户看不到变化，`focus_node` 工具保留独立供其他场景 | `CanvasPage.vue`（复用 `focusNodesByIds`） |
+
+- **D3 修订理由**：D3「不与 focus 联动」把「命令是单条」这一内部实现约束当成了产品约束。arrange 的语义是「整理给用户看」，视口跟随是该语义的一部分，故改为前端排完即聚焦；`focus_node` / `focus_nodes` 工具本身不动。
+- 单向语义不变：execute 仍立即 resolve，无用户回填；L2 的读校验是尽力而为，读失败照常下发。
+- 未加 `focus:false` 开关（保持契约最小）。若将来需要「排布但不抢视口」：DTO 加 `focus?` + `AgentSideRail` 透传 + `CanvasPage` 判断，共 3 处。
