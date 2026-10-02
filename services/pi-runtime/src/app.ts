@@ -19,7 +19,8 @@ import {
 	type TurnContext,
 	InvalidInputError,
 	QueueRejectedError,
-} from "./session-manager.js";
+} from "./session-manager.js"
+import type { DirectImage } from "./direct-images.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 
 const HEARTBEAT_MS = 15_000;
@@ -169,7 +170,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 
 	app.post<{
 		Params: { sessionId: string };
-		Body: { text: string; lane?: string; forceSkills?: string[]; turnContext?: TurnContext };
+		Body: { text: string; lane?: string; forceSkills?: string[]; turnContext?: TurnContext; images?: DirectImage[] };
 	}>("/sessions/:sessionId/prompt", async (request, reply) => {
 		const { sessionId } = request.params;
 		try {
@@ -178,6 +179,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			await manager.prompt(sessionId, request.body.text, request.body.lane, {
 				forceSkills: request.body?.forceSkills,
 				turnContext: request.body?.turnContext,
+				images: request.body?.images,
 			});
 			return reply.code(202).send({ accepted: true });
 		} catch (err) {

@@ -191,3 +191,9 @@ describe("effectiveCompactionSettings（审计 P0-①）", () => {
 		assert.equal(s.enabled, false);
 	});
 });
+	it("directImages：缺省 true；PI_RUNTIME_DIRECT_IMAGES=off → false", () => {
+		const def = loadRuntimeConfig({});
+		assert.equal(def.directImages, true);
+		const off = loadRuntimeConfig({ PI_RUNTIME_DIRECT_IMAGES: "off" });
+		assert.equal(off.directImages, false);
+	});

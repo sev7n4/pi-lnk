@@ -71,6 +71,8 @@ export class Metrics {
 	private dynamicBudgetDrops = new Map<string, number>(); // key: kind (canvas|vision|sidebar|general)——发生截断的块数
 	private unknownBlockKind = 0; // 块首标记未识别（约定漂移告警）
 	private systemPromptBytes = 0; // 最近一次 systemPrompt 总长（gauge，水位观测）
+	private directImages = new Map<string, number>(); // key: outcome (sent|downscaled|fallback)
+	private directImageTokens = 0; // 直通图片 token 估算累计（成本闸门观测）
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
 
@@ -209,6 +211,12 @@ export class Metrics {
 		this.unknownBlockKind += 1;
 	}
 
+	/** 直通图片观测（T1）：outcome 计数 + token 估算累计。 */
+	observeDirectImage(outcome: "sent" | "downscaled" | "fallback", tokensEst: number): void {
+		this.directImages.set(outcome, (this.directImages.get(outcome) ?? 0) + 1);
+		this.directImageTokens += tokensEst;
+	}
+
 	/** systemPrompt 总长水位（static+dynamic），每次组装后刷新（gauge 语义：取最新值）。 */
 	observeSystemPromptBytes(n: number): void {
 		this.systemPromptBytes = n;
@@ -344,6 +352,15 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_system_prompt_bytes Last composed systemPrompt total length (static+dynamic).");
 	lines.push("# TYPE pi_runtime_system_prompt_bytes gauge");
 	lines.push(`pi_runtime_system_prompt_bytes ${this.systemPromptBytes}`);
+
+	lines.push("# HELP pi_runtime_direct_images_total Direct-prompt images by outcome (sent = forwarded to lane.prompt).");
+	lines.push("# TYPE pi_runtime_direct_images_total counter");
+	for (const [outcome, count] of [...this.directImages.entries()].sort()) {
+		lines.push(`pi_runtime_direct_images_total{outcome="${esc(outcome)}"} ${count}`);
+	}
+	lines.push("# HELP pi_runtime_direct_image_tokens_estimated Cumulative estimated token cost of direct images.");
+	lines.push("# TYPE pi_runtime_direct_image_tokens_estimated counter");
+	lines.push(`pi_runtime_direct_image_tokens_estimated ${this.directImageTokens}`);
 
 	lines.push("# HELP pi_runtime_transform_context_runs_total transform_context hook runs, by whether the goal was restated.");
 	lines.push("# TYPE pi_runtime_transform_context_runs_total counter");

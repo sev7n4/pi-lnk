@@ -497,3 +497,65 @@ describe("GET /sessions/:key/pending", () => {
 		});
 	});
 });
+
+describe("POST /sessions/:key/prompt 直通 images（T1）", () => {
+	// 记录每次 lane.prompt 调用（run 后的 drain/compaction 会以 ("", undefined, ctx) 再调，
+	// 单槽覆盖会误判——以「存在一次目标调用」为准。
+	function imageCaptureFactory(sink: { calls: { text: string; images: unknown }[] }) {
+		return (async () => ({
+			harness: {
+				events: { on: () => () => {} },
+				lane: async () => ({
+					prompt: async (text: string, images: unknown) => {
+						sink.calls.push({ text, images });
+						return { ok: true };
+					},
+					setThinkingLevel: async () => {},
+				}),
+				close: async () => {},
+			},
+		})) as never;
+	}
+
+	it("body.images 透传为 lane.prompt 第二参 ImageContent[]", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const sink: { calls: { text: string; images: unknown }[] } = { calls: [] };
+			const { app } = makeApp(root, imageCaptureFactory(sink));
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				const res = await app.inject({
+					method: "POST",
+					url: "/sessions/s1:t1/prompt",
+					payload: { text: "描述这张图", images: [{ name: "a.png", mimeType: "image/png", data: "QUJD" }] },
+				});
+				assert.equal(res.statusCode, 202);
+				const withImages = sink.calls.filter((c) => c.images !== undefined);
+				assert.equal(withImages.length, 1);
+				assert.deepEqual(withImages[0].images, [{ type: "image", data: "QUJD", mimeType: "image/png" }]);
+				assert.equal(withImages[0].text, "描述这张图");
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("无 images / 空 data → 第二参 undefined（不发空数组，Review Focus 1）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const sink: { calls: { text: string; images: unknown }[] } = { calls: [] };
+			const { app } = makeApp(root, imageCaptureFactory(sink));
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "纯文本" } });
+				await app.inject({
+					method: "POST",
+					url: "/sessions/s1:t1/prompt",
+					payload: { text: "空图", images: [{ name: "a.png", mimeType: "image/png", data: "" }] },
+				});
+				// 允许事件循环里 drain/compaction 的补充调用，但绝不允许任何一次携带 images。
+				assert.equal(sink.calls.filter((c) => c.images !== undefined).length, 0);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});

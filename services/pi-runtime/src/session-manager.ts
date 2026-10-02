@@ -41,7 +41,8 @@ import type { Metrics } from "./metrics.js";
 import { missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
-import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js";
+import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js"
+import { estimateImageTokens, toImageContents, type DirectImage } from "./direct-images.js";
 import { enforceRetention } from "./session-retention.js";
 import { buildToolEnsemble } from "./tools/tiering.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
@@ -1056,7 +1057,7 @@ export class SessionManager {
 		threadKey: string,
 		text: string,
 		laneName = MAIN_LANE,
-		opts?: { forceSkills?: string[]; turnContext?: TurnContext },
+		opts?: { forceSkills?: string[]; turnContext?: TurnContext; images?: DirectImage[] },
 	): Promise<{ accepted: boolean }> {
 		const entry = this.require(threadKey);
 		// 会话常驻后同键并发会串台（同一 harness 上两个 run 交错），fail-closed 拒绝。
@@ -1081,8 +1082,15 @@ export class SessionManager {
 			entry.cancelRun = run.cancel;
 			entry.userAborted = false;
 			const lane = await entry.harness.lane(laneName, this.context);
+			// 多模态直通（T1）：payload 顶层 images → lane.prompt 第二参（ImageContent[]）。
+			// 门控 off / 载荷为空 → undefined（纯文本发送，绝不发空数组，Review Focus 1）。
+			const directImages = this.config.directImages === false ? undefined : toImageContents(opts?.images);
+			if (directImages) {
+				const tokensEst = (opts?.images ?? []).reduce((acc, img) => acc + estimateImageTokens(img.data ?? ""), 0);
+				this.metrics?.observeDirectImage("sent", tokensEst);
+			}
 			void lane
-				.prompt(effectiveText, undefined, run.context)
+				.prompt(effectiveText, directImages, run.context)
 				.then((result) => {
 					if (!result.ok) {
 						this.dispatch(entry, {
