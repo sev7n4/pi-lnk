@@ -16,7 +16,7 @@ import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import { resolveMessageOutputs } from '@/components/agent/agentCanvasOutputs'
-import { parseQueueDelivery } from '@/components/agent/queueDelivery'
+import { acceptedHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
 import {
   cancelAgentRun,
@@ -684,6 +684,7 @@ const turnStatus = computed(() => {
     now: nowSec.value,
     waiting,
     waitingTool: agent.blockingWait?.toolName ?? null,
+    waitingQuestion: agent.blockingWait?.question ?? null,
     waitingDeadline: agent.blockingWait?.deadlineAt ?? null,
     activity: traceActivity,
     lastFailed,
@@ -902,7 +903,7 @@ const lastMessageIsAssistant = computed(() => {
   return !!last && last.role === 'assistant'
 })
 
-/** 组件侧回答回传：answerId / payload 组装收敛在 agentAnswers 模块（含明文 HTTP 降级）。 */
+/** 组件侧回答回传：payload 组装收敛在 agentAnswers 模块（含明文 HTTP 降级）。 */
 function answersPost(
   url: string,
   init: { method: string; headers: Record<string, string>; body: string },
@@ -1768,6 +1769,18 @@ async function send() {
  * 判定规则（HTTP 200 + `queued:false` 算失败、`code!==0` 算失败）在那一侧有注释与测试。
  * 失败时消息不从用户眼皮底下蒸发 —— 槽位留在 failed 态，动作区给出「取回内容」。
  */
+/**
+ * 当前有**未作答**的阻塞式卡（ask_user / propose_generation pending）。
+ *
+ * 存在理由（2026-10-02 组合漏洞）：agent 卡在 `registry.waitForUser` 里时，pi-runtime 的
+ * `prompting` 标志**恒为 true**（它只在 prompt 包住的一轮结束后才清位），所以
+ * `POST /sessions/:id/steer|followup` 一律 202 + `queued:true`。消息于是躺进 lane inbox，
+ * 要等 ask 落定 → tool_result → 模型跑到某个边界才可能被选中。也就是说：这一轮**根本没有
+ * 在回答**，气泡却按「已并入当前回答」回话，用户据此以为自己改成了刚要选的那项。
+ * 这里把那条假文案降成诚实的时序说明，并把按钮文案带上「答完这张卡后接」。
+ */
+const pendingAskBlocking = computed(() => pendingAskUser.value.length > 0)
+
 async function deliverQueued(intent: QueueIntent): Promise<boolean> {
   const slot = queued.value
   if (!slot || slot.text.trim() === '' || slot.state !== 'pending') return false
@@ -1791,10 +1804,9 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
       throw new Error(verdict.reason)
     }
     slot.state = 'accepted'
-    slot.hint =
-      intent === 'steer'
-        ? '已并入当前回答，紧接着往下写（当前这轮不会中断）'
-        : '会在本轮收尾时接住，你现在可以先走开'
+    // 有未作答的卡时不能说「已并入当前回答」——本轮此刻正在等用户选一个答案，
+    // 没有「当前回答」可言（见 pendingAskBlocking 注释）
+    slot.hint = acceptedHint(intent, pendingAskUser.value.length > 0)
     // ⚠️ 刻意不再自动收起（原来 2.6s 后自己消失）：agent 从入队到首字常 20~40s，
     // 期间气泡若消失，用户会误以为消息丢了。这里常驻，收到 QUEUE_APPLIED_EVENTS 再推进到
     // 「已接住」，最终由用户点「知道了」收起。
@@ -2424,12 +2436,15 @@ function handleEvent(event: { type: string; data: unknown }) {
     }
     case 'waiting_user': {
       // 阻塞等待可见化（2026-10-01）：后端在等待**开始**/结束各发一次。
-      // waiting → 状态行收口为「等待你在画布上确认生成 / 等待你确认」；resolved → 清位。
+      // waiting → 状态行收口为「等待你在画布上确认生成 / 等待你作答：<题面> / 等待你确认」；
+      // resolved → 清位。question 来自 ask_user 的 meta.questionTitle。
       const d = event.data as {
         status?: string
         toolName?: string
         callId?: string
         nodeId?: string
+        /** ask_user 经 meta.questionTitle 下发的题面（2026-10-02） */
+        question?: string
         timeoutMs?: number
       }
       if (d.status === 'resolved' || !d.toolName) {
@@ -2440,6 +2455,7 @@ function handleEvent(event: { type: string; data: unknown }) {
           toolName: d.toolName,
           callId: d.callId,
           nodeId: d.nodeId,
+          question: d.question,
           timeoutMs: d.timeoutMs,
         })
       }
@@ -3550,8 +3566,20 @@ defineExpose({
                 </p>
                 <div class="mt-1.5 flex flex-wrap items-center gap-2">
                   <template v-if="queued.state === 'pending'">
+                    <!--
+                      有未作答的卡时，两条动作都还是能点的（用户可能就是想在选之前补一句），
+                      但必须把「会排在你的答案之后」说在前面 —— 否则点下去得到的是
+                      「已并入当前回答」，而那一轮根本没在回答（2026-10-02 组合漏洞）。
+                    -->
+                    <p
+                      v-if="pendingAskBlocking"
+                      class="w-full text-[11px] leading-snug text-[var(--neo-text-muted)]"
+                      data-testid="queued-ask-blocked-hint"
+                    >
+                      agent 正在等你作答 · 下面这两条都会排在你答完这张卡之后（建议先答这张卡）
+                    </p>
                     <button type="button" class="queued-act queued-act--primary" @click="deliverQueued('steer')">
-                      ⏵ 立即插话
+                      ⏵ 立即插话{{ pendingAskBlocking ? '（答完这张卡后接）' : '' }}
                     </button>
                     <button type="button" class="queued-act" @click="deliverQueued('followup')">
                       🕒 等它跑完再说

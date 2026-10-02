@@ -120,7 +120,13 @@ gate 的「同轮自批拦截」依据 = after_tool 记录的提议 turn 号 vs 
 
 ### 5.2 超时流
 
-`30min timer 到 → resolve {__sentinel:"timeout", partial?} → 工具返回「用户未响应…自主决策」+ 已答部分（未答标 `skipped:true`）→ 模型继续 → 前端卡片置「已超时」（answer 端点对已清理 callId 幂等）→ 用户迟到点击 → Nest 发现无 pending → **降级为普通 user message 走新 turn**（复用既有链路，前端 sendMessage 逻辑不变）
+`30min timer 到 → resolve {status:"timeout", answers:{}} → 工具返回「用户未作答（超时），所有题目都按跳过处理…不要假设任何一题的答案」且**每道题都标 `skipped:true`** → 模型继续 → 前端卡片置「已超时」（answer 端点对已清理 callId 幂等）→ 用户迟到点击 → Nest 发现无 pending → **降级为普通 user message 走新 turn**（复用既有链路，前端 sendMessage 逻辑不变）
+
+> **2026-10-02 修订（原设计含部分作答）**：初版这里写的是「超时交还 answered-so-far（`partial`）」，
+> 但实际从没有过 `partial` 的写入通道 —— `PendingToolRegistry.recordPartial` 只有测试在调，
+> 生产里这条路径恒空，于是超时看到的永远是「全部跳过」。既然如此，直接把承诺删掉更诚实：
+> 主交互是**单题即提交 / 多题答满即提交**，「答了几题又发呆到超时」本就是发呆态，
+> 带回半个答案只会让模型基于不完整输入推进。`recordPartial` API 已删除，超时语义即「一分没拿到」。
 
 ### 5.3 用户输入路由规则（Nest，ask_user pending 期间）
 

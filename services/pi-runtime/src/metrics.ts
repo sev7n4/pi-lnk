@@ -13,6 +13,8 @@
  *   - pi_runtime_compaction_skips_total{reason}         未触发压缩的理由计数（可容忍跳过）
  *   - pi_runtime_prompt_rejections_total{reason}        被拒 prompt 计数（busy）
  *   - pi_runtime_tool_search_calls_total{outcome}       tool_search 搜索结果计数（hit/miss/empty）
+ *   - pi_runtime_queue_ops_total{op,kind,outcome}       steer/followUp 队列操作计数
+ *   - pi_runtime_pending_ops_total{tool,status}         阻塞等待结算（answered/timeout/aborted）
  *   - pi_runtime_tool_search_activated_total            经 tool_search 激活的延迟工具数累计
  *   - pi_runtime_build_info / pi_runtime_uptime_seconds
  */
@@ -57,6 +59,7 @@ export class Metrics {
 	 * 把它计进「被拒的 prompt」会把队列功能的成功率稀释成噪声，真出问题时反而看不见。
 	 */
 	private queueOps = new Map<string, number>();
+	private pendingOps = new Map<string, number>(); // key: tool|status
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	private usageTokens = new Map<string, number>(); // key: kind (input|output|cache_read|cache_write)
@@ -148,6 +151,17 @@ export class Metrics {
 	): void {
 		const key = `${op}|${kind}|${outcome}`;
 		this.queueOps.set(key, (this.queueOps.get(key) ?? 0) + 1);
+	}
+
+	/**
+	 * 阻塞等待结算观测（2026-10-02 补：此前 ask_user / propose_generation 一块完全无指标）。
+	 *
+	 * 这是用户肉眼可见最多的一块（卡片超时、反复被问同一题），此前排障答不出「卡片超时率多少」。
+	 * 刻意与 queue_ops 分开：一个在 agent 跑动时的消息通道，一个在等用户输入，超时口径完全不同。
+	 */
+	observePendingOp(tool: string, status: "answered" | "timeout" | "aborted"): void {
+		const key = `${tool}|${status}`;
+		this.pendingOps.set(key, (this.pendingOps.get(key) ?? 0) + 1);
 	}
 
 	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
@@ -261,6 +275,13 @@ export class Metrics {
 		for (const [key, count] of [...this.queueOps.entries()].sort()) {
 			const [op, kind, outcome] = key.split("|");
 			lines.push(`pi_runtime_queue_ops_total{op="${esc(op)}",kind="${esc(kind)}",outcome="${esc(outcome)}"} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_pending_ops_total Blocking-wait settlements (user answered / timeout / aborted).");
+		lines.push("# TYPE pi_runtime_pending_ops_total counter");
+		for (const [key, count] of [...this.pendingOps.entries()].sort()) {
+			const [tool, status] = key.split("|");
+			lines.push(`pi_runtime_pending_ops_total{tool="${esc(tool)}",status="${esc(status)}"} ${count}`);
 		}
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");

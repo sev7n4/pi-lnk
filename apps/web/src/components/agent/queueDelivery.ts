@@ -39,6 +39,25 @@ function extractQueued(body: unknown): unknown {
   return undefined
 }
 
+/**
+ * 入队成功后的气泡文案（2026-10-02 组合漏洞修复）。
+ *
+ * ⚠️ `blockedByAsk = true` 时**禁止**出现「已并入当前回答」：agent 此刻正卡在
+ * `registry.waitForUser` 里等用户选一个答案，pi-runtime 的 `prompting` 恒为 true，
+ * 端点一律 202 + `queued:true`，消息只能排在这份答案之后。旧文案会让用户以为
+ * 「我刚要选的那项已经改成新说的了」，实际排在他已经提交的那份答案之后。
+ *
+ * 抽成纯函数是为了让这句话有单测兜底 —— 文案回归看不出来，但它是当时唯一的诚实性保证。
+ */
+export function acceptedHint(intent: "steer" | "followup", blockedByAsk: boolean): string {
+  if (blockedByAsk) {
+    return '已入队 · 会排在你答完这张卡之后才接上（本轮还在等你的选择）'
+  }
+  return intent === 'steer'
+    ? '已并入当前回答，紧接着往下写（当前这轮不会中断）'
+    : '会在本轮收尾时接住，你现在可以先走开'
+}
+
 export function parseQueueDelivery(input: QueueDeliveryInput): QueueDeliveryResult {
   const { ok, status, body } = input
   if (!ok) {

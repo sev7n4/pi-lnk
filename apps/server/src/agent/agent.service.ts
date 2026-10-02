@@ -568,7 +568,6 @@ export class AgentService {
     threadId?: string | null
     callId: string
     answers: Record<string, string[]>
-    answerId?: string
   }): Promise<{ ok: boolean; deduped: boolean }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { ok: false, deduped: false }
@@ -576,7 +575,6 @@ export class AgentService {
     return this.createPiRuntimeClient(piUrl).answer(sessionKey, {
       callId: input.callId,
       answers: input.answers,
-      ...(input.answerId ? { answerId: input.answerId } : {}),
     })
   }
 

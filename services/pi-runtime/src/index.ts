@@ -39,6 +39,10 @@ const registry = new PendingToolRegistry({
 	},
 	onSettled: ({ sessionId, callId, toolName, status }) => {
 		manager.dispatchWaitingUser(sessionId, { status: "resolved", toolName, callId, reason: status });
+		// 阻塞等待结算指标（2026-10-02 补：此前 ask_user / propose_generation 一块零指标，
+		// 排障答不出「卡片超时率多少」）。挂在这里而不是工具层：一处覆盖所有 pending 工具，
+		// 也免去给每个工具改签名 ; toolName/status 本来就是 hook 的既有入参。
+		metrics.observePendingOp(toolName, status);
 	},
 });
 const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry });

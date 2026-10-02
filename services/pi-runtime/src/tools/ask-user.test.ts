@@ -58,7 +58,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 		assert.match(lastText(result), /中止/);
 	});
 
-	it("部分作答 + 超时 → 已答交还 + 未答标 skipped（Review Focus 2）", async () => {
+	it("超时 → 全部题目标 skipped，且不交还任何部分答案（2026-10-02 删 recordPartial）", async () => {
 		const reg = new PendingToolRegistry();
 		const [tool] = createAskUserTools(metrics, reg, { timeoutMs: 20 });
 		const questions = [
@@ -66,14 +66,30 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 			{ id: "count", question: "张数？", options: [{ label: "1", value: "1" }] },
 		];
 		const pending = tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never);
-		// 用户答了 style 但没提交（模拟逐题暂存）：工具层在 answer 前把已答写入 registry
-		// —— 通过 recordPartial 的公开路径；这里直接调（工具内部同样如此）
-		reg.recordPartial("s", "c", { style: ["ink"] });
 		const result = (await pending) as { content: Array<{ type: string; text: string }> };
 		const text = lastText(result);
-		assert.match(text, /未响应/);
-		assert.match(text, /ink/);
+		// 没有 partial 通道：超时就是「一分没拿到」，模型不该基于半个答案推进
+		assert.match(text, /未作答/);
 		assert.match(text, /skipped/);
+		assert.doesNotMatch(text, /ink/);
+		assert.doesNotMatch(text, /partial/);
+		// 两题都在 skipped 里（不是只标没答的那几题）
+		assert.match(text, /"id":"style","skipped":true/);
+		assert.match(text, /"id":"count","skipped":true/);
+	});
+
+	it("waiting 事件带题面（meta.questionTitle）——前端状态行能显示「等待你作答：…」", async () => {
+		let seen: { meta?: { questionTitle?: string } } | undefined;
+		const reg = new PendingToolRegistry({
+			onWaitStart: (info) => { seen = info; },
+		});
+		const [tool] = createAskUserTools(metrics, reg, { timeoutMs: 20 });
+		const questions = [{ id: "style", question: "风格？", options: [{ label: "水墨", value: "ink" }] }];
+		void tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never);
+		// 事件在 waitForUser 注册当拍下发，不等超时也要能看到
+		assert.equal(seen!.meta?.questionTitle, "风格？");
+		// 不悬着：放它超时 settle，避免定时器泄漏进后续用例
+		await new Promise((r) => setTimeout(r, 40));
 	});
 
 	it("开关 off（env ASK_USER_BLOCKING=off）→ 逐字节旧行为：立即返回无 callId 等待", async () => {

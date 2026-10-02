@@ -5,11 +5,16 @@
  * abort 联动（session-manager）与 /answers 端点（index 侧）经 entry.canvasSessionId /
  * getCanvasSessionId 换算到本键，pi-runtime 内不做二次解析。
  * 语义铁律（B-4）：**resolve 不 reject** —— 超时/中止一律以带 status 的正常值交还，
- * 模型看到的是工具结果而非异常；超时携带 answered-so-far（partial 语义）。
+ * 模型看到的是工具结果而非异常。
+ *
+ * ⚠️ 刻意不提供「部分答案」语义（2026-10-02 删除旧的 `recordPartial` API）：
+ * 交互主路径是**单题即提交 / 多题答满即提交**，「答了几题就发呆到超时」本就是发呆态，
+ * 带回半个答案只会让模型基于不完整输入继续推进。超时一律交还空 answers + 逐题 skipped，
+ * 让模型明确知道「这轮没拿到任何答案」。
  */
 export type PendingResolution =
 	| { status: "answered"; answers: Record<string, string[]> }
-	| { status: "timeout"; answers: Record<string, string[]>; partial: boolean }
+	| { status: "timeout"; answers: Record<string, string[]> }
 	| { status: "aborted" };
 
 export interface PendingInfo {
@@ -21,8 +26,6 @@ interface PendingEntry {
 	toolName: string;
 	resolve: (r: PendingResolution) => void;
 	timer: NodeJS.Timeout;
-	/** 工具层在用户逐题作答（未提交）期间暂存的答案；超时时作为 partial 交还。 */
-	partial: Record<string, string[]>;
 	settled: boolean;
 }
 
@@ -88,13 +91,13 @@ export class PendingToolRegistry {
 					this.hooks.onSettled?.({ sessionId, callId, toolName, status: r.status });
 					resolve(r);
 				},
-				timer: undefined as never,
-				partial: {},
-				settled: false,
-			};
-			entry.timer = setTimeout(() => {
-				entry.resolve({ status: "timeout", answers: { ...entry.partial }, partial: Object.keys(entry.partial).length > 0 });
-			}, timeoutMs);
+			timer: undefined as never,
+			settled: false,
+		};
+		entry.timer = setTimeout(() => {
+			// 一律空 answers（无部分作答语义，见文件头）：工具层据此把每道题都标 skipped
+			entry.resolve({ status: "timeout", answers: {} });
+		}, timeoutMs);
 			// 不 unref：unref 后唯一 pending 工作是该 timer 时事件循环直接 resolve，
 			// waitForUser 的 promise 永不 settle（node:test 实测 ERR_TEST_FAILURE）。
 			// 泄漏防护已由 settle 路径 clearTimeout + session 关闭 abortAll 覆盖。
@@ -110,13 +113,6 @@ export class PendingToolRegistry {
 		if (!entry) return { ok: true, deduped: true };
 		entry.resolve({ status: "answered", answers });
 		return { ok: true, deduped: false };
-	}
-
-	/** 工具层逐题暂存（未提交）；超时时随 timeout resolution 交还（Review Focus 2）。 */
-	recordPartial(sessionId: string, callId: string, answers: Record<string, string[]>): void {
-		const entry = this.entries.get(sessionId)?.get(callId);
-		if (!entry) return;
-		entry.partial = { ...entry.partial, ...answers };
 	}
 
 	/**
