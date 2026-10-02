@@ -54,7 +54,7 @@ export function resolveToolsWithClient(
 		...buildCanvasWriteTools(client, deps.registry),
 		...buildUiCommandTools(metrics),
 		...buildAskUserTools(metrics, deps.registry),
-		...buildArrangeNodesTools(metrics),
+		...buildArrangeNodesTools(metrics, client),
 		...buildGenerationTools(client),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),

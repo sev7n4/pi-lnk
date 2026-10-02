@@ -84,6 +84,7 @@ import ConnectPickerLine from '@/components/canvas/ConnectPickerLine.vue'
 import { CONNECT_OUT_TARGET_TYPES } from '@/components/canvas/canvasDockMenu'
 import { computeNewNodePosition, snapToGrid } from '@/composables/useCanvasNodePlacement'
 import {
+  applyArrangeLayout,
   createGroupFromNodes,
   getNodeSize,
   getSelectionBounds,
@@ -1893,6 +1894,32 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
       : layoutNodesInGrid(current, selected)
   nodes.value = next as EditableFlowNode[]
   persistUserEdit()
+}
+
+/**
+ * agent 工具 `arrange_nodes`（SSE canvas_command → AgentSideRail emit）的消费端。
+ * 坐标类变更必须在前端执行（画布活动态 nodes.value 是真相源，走 Nest 改库会被下一次
+ * saveCanvas 整份覆盖），故这里算完 setNodes 后 persistUserEdit（落 undo 栈 + 存库）。
+ * 排完自动聚焦：不聚焦的话节点可能落在视口外，用户看不到变化（focus_node 工具保留独立）。
+ */
+async function handleArrangeNodes(payload: {
+  nodeIds: string[]
+  mode: 'along_edges' | 'grid'
+  gap?: number
+  edges?: { source: string; target: string }[]
+}) {
+  const ids = (payload?.nodeIds ?? []).filter((id) => typeof id === 'string' && id)
+  if (ids.length < 2) return
+  if (agentReadOnly.value) {
+    ElMessage.warning('此画布属于其他账号，Agent 无法整理画布')
+    return
+  }
+  const current = nodes.value as unknown as FlowNode[]
+  const next = applyArrangeLayout(current, payload, edges.value.map((e) => ({ source: e.source, target: e.target })))
+  nodes.value = next as EditableFlowNode[]
+  persistUserEdit()
+  await nextTick()
+  await focusNodesByIds(ids)
 }
 
 function findSelectedNodes() {
@@ -4819,6 +4846,7 @@ onUnmounted(() => {
         @undo="handleAgentUndo"
         @redo="handleAgentRedo"
         @open-image-editor="handleAgentOpenImageEditor"
+        @arrange-nodes="handleArrangeNodes"
         @canvas-ref-pick-toggle="handleCanvasRefPickToggle"
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"

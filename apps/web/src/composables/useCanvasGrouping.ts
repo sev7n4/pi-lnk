@@ -462,6 +462,36 @@ export function layoutNodesAlongEdges(
   return next
 }
 
+export type ArrangeMode = 'grid' | 'along_edges'
+
+/** arrange_nodes（agent 工具）与多选工具栏共用的派发参数。 */
+export interface ArrangeRequest {
+  nodeIds: string[]
+  mode: ArrangeMode
+  gap?: number
+  /** along_edges 的有向边；缺省时退回画布全量边（同手动「顺着连线」）。 */
+  edges?: LayoutEdge[]
+}
+
+/**
+ * 按 mode 派发到两个既有布局函数，零新建算法。
+ * 抽成纯函数是为了可测：CanvasPage 只负责 setNodes + persist + 聚焦。
+ */
+export function applyArrangeLayout(
+  nodes: FlowNode[],
+  req: ArrangeRequest,
+  canvasEdges: LayoutEdge[] = [],
+): FlowNode[] {
+  const ids = (req?.nodeIds ?? []).filter((id) => typeof id === 'string' && id)
+  if (ids.length < 2) return nodes
+  const gap = typeof req.gap === 'number' && Number.isFinite(req.gap) ? req.gap : 40
+  if (req.mode === 'along_edges') {
+    const edges = req.edges?.length ? req.edges : canvasEdges
+    return layoutNodesAlongEdges(nodes, edges, ids, gap)
+  }
+  return layoutNodesInGrid(nodes, ids, gap)
+}
+
 export function getSelectionBounds(nodes: FlowNode[], selectedIds: string[]) {
   const frame = getSelectionFrame(nodes, selectedIds)
   if (!frame) return null
