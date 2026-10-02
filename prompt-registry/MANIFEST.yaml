@@ -1,0 +1,31 @@
+version: 0.1.0
+
+entries:
+  - id: identity.opening
+    version: 1.0.0
+    order: 10
+    contentHash: cda839c9ee9c
+  - id: no_gen_claim.nogen
+    version: 1.0.0
+    order: 20
+    contentHash: a2254c1ddb62
+  - id: no_gen_claim.gen
+    version: 1.0.0
+    order: 20
+    contentHash: dd398b076f7f
+  - id: sidebar_vision.tail
+    version: 1.0.0
+    order: 30
+    contentHash: 68377de0dbdd
+  - id: media_tool_policy
+    version: 1.0.0
+    order: 40
+    contentHash: cb012680d766
+  - id: gen_tool_policy
+    version: 1.0.0
+    order: 50
+    contentHash: e95372982e62
+  - id: write_guard
+    version: 1.0.0
+    order: 60
+    contentHash: e0f6673a9974

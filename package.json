@@ -16,7 +16,8 @@
     "test:runtime": "pnpm --filter @pi-lnk/pi-runtime test",
     "verify-contract": "npx tsx scripts/verify-contract.ts",
     "verify-u-i2v-phase3": "npx tsx scripts/verify-u-i2v-phase3.ts",
-    "verify-spec-figures": "npx tsx scripts/verify-spec-figures.ts"
+    "verify-spec-figures": "npx tsx scripts/verify-spec-figures.ts",
+    "prompt:lint": "npx tsx scripts/prompt-lint.ts"
   },
   "devDependencies": {
     "tsx": "^4.7.0",

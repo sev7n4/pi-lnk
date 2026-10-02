@@ -24,6 +24,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 COPY apps/server ./apps/server
 COPY deploy/docker ./deploy/docker
+# W1a：提示词注册中心。rules/*.md 被 .dockerignore 的 *.md 挡过，靠白名单放行。
+COPY prompt-registry ./prompt-registry
 
 # workspace 包以 CommonJS 编译，便于 Nest 运行时 require
 RUN node -e "\
@@ -75,6 +77,8 @@ COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml ./
 COPY --from=build /app/packages /app/packages
 COPY --from=build /app/apps/server/dist ./apps/server/dist
+# W1a：Registry 必须在 runner 阶段落地，否则 /app/prompt-registry 不存在 → degraded 兜底。
+COPY --from=build /app/prompt-registry /app/prompt-registry
 COPY --from=build /app/apps/server/node_modules ./apps/server/node_modules
 COPY --from=build /app/apps/server/prisma ./apps/server/prisma
 COPY --from=build /app/apps/server/assets ./apps/server/assets

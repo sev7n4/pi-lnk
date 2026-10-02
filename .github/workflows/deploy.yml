@@ -8,6 +8,8 @@ on:
       - "apps/web/**"
       - "packages/**"
       - "deploy/**"
+      # W1a：提示词规则文件进 api 镜像，必须能单独触发发布。
+      - "prompt-registry/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -63,6 +65,8 @@ jobs:
               - 'apps/server/**'
               - 'packages/**'
               - 'deploy/**'
+              # W1a：与 push paths 同步加，否则命中 web-only 变更时会跳过 build-api。
+              - 'prompt-registry/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
