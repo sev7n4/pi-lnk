@@ -356,7 +356,7 @@ describe("prompt 并发守卫（既有语义回归）", () => {
 });
 
 describe("dynamicBlocks 预算（T3 接线）", () => {
-	it("超长未知标记块被截断：metrics 记 drop(general) + unknown", async () => {
+	it("超长真实标记块（canvas）被截断：metrics 记 drop(canvas)，不计 unknown", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-runtime-budget-"));
 		try {
 			const metrics = new Metrics();
@@ -373,14 +373,14 @@ describe("dynamicBlocks 预算（T3 接线）", () => {
 				undefined, metrics,
 			);
 			await sm.create("s1:t1", {});
-			const big = "[自定义标记]" + "长".repeat(1000);
+			const big = "当前画布摘要：\n" + "长".repeat(1000);
 			sm.setTurnContext("s1:t1", { dynamicBlocks: [big] });
 			const sp = sm.resolveSystemPromptForTest("s1:t1");
-			assert.ok(sp.includes("可用 read_document 取回全文"), "截断尾注必须出现");
+			assert.ok(sp.includes("已截断"), "截断尾注必须出现");
 			assert.ok(sp.length < big.length, "超长块被截短");
 			const out = metrics.render(0, "t");
-			assert.match(out, /pi_runtime_dynamic_budget_drops_total\{kind="general"\} 1/);
-			assert.match(out, /pi_runtime_dynamic_budget_unknown_kind_total 1/);
+			assert.match(out, /pi_runtime_dynamic_budget_drops_total\{kind="canvas"\} 1/);
+			assert.doesNotMatch(out, /pi_runtime_dynamic_budget_unknown_kind_total [1-9]/);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -413,11 +413,13 @@ describe("dynamicBlocks 预算（T3 接线）", () => {
 });
 
 describe("systemPromptBytes gauge（T3 观测）", () => {
-	it("真实生成路径每次组装后刷新 system_prompt_bytes", async () => {
+	it("真实生成闭包（harness cfg.systemPrompt）每次调用后刷新 gauge（I3：覆盖 ff99f3f 挂点）", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-runtime-spbytes-"));
 		try {
 			const metrics = new Metrics();
+			let captured: { systemPrompt: (tc?: unknown) => string } = { systemPrompt: () => "" };
 			const factory = (async (cfg: { systemPrompt: (tc?: unknown) => string }) => {
+				captured = cfg;
 				return {
 					harness: {
 						events: { on: () => () => {} },
@@ -433,11 +435,10 @@ describe("systemPromptBytes gauge（T3 观测）", () => {
 			);
 			await sm.create("s1:t1", {});
 			sm.setTurnContext("s1:t1", { dynamicBlocks: ["当前画布摘要：{}"] });
-			// captured().systemPrompt 即 :711 的真实生成闭包
-			const capturedObj = (sm as unknown as { require: (k: string) => { harness: { systemPrompt: () => string } } });
-			void capturedObj; // 闭包经 harness cfg 捕获，直接断言 gauge
 			assert.match(metrics.render(0, "t"), /pi_runtime_system_prompt_bytes 0/); // 未生成前为 0
-			sm.resolveSystemPromptForTest("s1:t1");
+			// captured.systemPrompt 即 session-manager.ts:734 挂进 harness 的真实生成闭包
+			const sp = captured.systemPrompt();
+			assert.ok(sp.length > 0);
 			const m = /pi_runtime_system_prompt_bytes (\d+)/.exec(metrics.render(0, "t"));
 			assert.ok(m && Number(m[1]) > 0, `bytes 应 >0，实际: ${m?.[1]}`);
 		} finally {
