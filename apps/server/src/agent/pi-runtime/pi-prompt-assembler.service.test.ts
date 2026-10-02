@@ -4,6 +4,22 @@ import {
 	approxTokens,
 	promptHash,
 } from "./pi-prompt-assembler.service";
+import {
+	loadRegistry,
+	renderStatic,
+	renderStaticFallback,
+	resolveRegistryRoot,
+} from "./prompt-registry.loader";
+import {
+	CORE_RULES_PREFIX,
+	RULE_3_NO_GEN,
+	RULE_3_GEN,
+	CORE_RULES_TAIL,
+	WRITE_TOOLS_RULES,
+	GEN_TOOLS_RULES,
+	RULE_10_WRITE_GUARD,
+} from "./prompt-registry.fallback";
+
 
 const makeAssembler = (summary: { nodes: unknown[] }) =>
 	new PiPromptAssembler({
@@ -319,5 +335,53 @@ describe("assembleDynamic 焦点过滤透传（审计 P0-①）", () => {
 		const blocks = await assembler.assembleDynamic({ sessionId: "s1" });
 		expect(blocks[0]).toContain('"id":"a"');
 		expect(blocks[0]).not.toContain("get_canvas_layout");
+	});
+});
+
+// W1a 字节等价护栏：期望串按「搬家前的 composeRuleText」逐段拼出来
+// （core = 前缀 + 规则 3 + 尾部；writeTools 开 → 规则 4/5；否则补第 10 条守卫；genTools 开 → 追加 11/12/13）
+const CORE = `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}`;
+const CORE_GEN = `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}`;
+
+const GROUPS: Record<string, Array<"core" | "writeTools" | "genTools">> = {
+	core: ["core"],
+	"core+writeTools": ["core", "writeTools"],
+	"core+genTools": ["core", "genTools"],
+	"core+writeTools+genTools": ["core", "writeTools", "genTools"],
+};
+
+const EXPECTED: Record<string, string> = {
+	core: `${CORE}\n${RULE_10_WRITE_GUARD}`,
+	"core+writeTools": `${CORE}\n${WRITE_TOOLS_RULES}`,
+	// 守卫排在 11/12/13 之后（push 顺序 core → GEN → GUARD；按 order 排 guard 也落在最后）
+	"core+genTools": `${CORE_GEN}\n${GEN_TOOLS_RULES}\n${RULE_10_WRITE_GUARD}`,
+	// genTools 开 → core 内部用规则 3'（否则会与「genTools 未启用」那版同时出现）
+	"core+writeTools+genTools": `${CORE_GEN}\n${WRITE_TOOLS_RULES}\n${GEN_TOOLS_RULES}`,
+};
+
+describe("W1a 字节等价：Registry 渲染 == 搬家前的 composeRuleText", () => {
+	for (const [name, groups] of Object.entries(GROUPS)) {
+		it(`组合 ${name} 逐字符相等`, async () => {
+			const asm = makeAssembler({ nodes: [] });
+			const text = await asm.assembleStatic({ ruleGroups: groups });
+			expect(text).toBe(EXPECTED[name]);
+			// 第二重保险：与内嵌常量兜底路径渲染结果一致
+			expect(text).toBe(renderStaticFallback(groups));
+			// 第三重保险：与磁盘 Registry 渲染一致
+			expect(text).toBe(renderStatic(loadRegistry(resolveRegistryRoot()), groups));
+		});
+	}
+
+	it("renderStaticFallback 在 !writeTools 时补写守卫", () => {
+		expect(renderStaticFallback(["core"]).includes(RULE_10_WRITE_GUARD)).toBe(true);
+		expect(renderStaticFallback(["core", "writeTools"]).includes(RULE_10_WRITE_GUARD)).toBe(false);
+	});
+
+	it("manifest 行带 Registry 版本身份", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		await asm.assembleStatic({ ruleGroups: ["core"] });
+		expect(asm.lastManifest).toContain("registry=");
+		expect(asm.lastManifest).toContain("registryHash=");
+		expect(asm.lastManifestDetail?.registryHash).toBeTruthy();
 	});
 });

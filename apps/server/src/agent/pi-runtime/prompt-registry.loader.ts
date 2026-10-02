@@ -155,6 +155,8 @@ export function loadRegistry(root: string): PromptRegistrySnapshot {
         body: body.trimEnd(), contentHash: contentHash(body.trimEnd()),
       });
     }
+    // 目录在但一条规则都没有 ⇒ 与「读不到」同判据：空静态段比降级更危险（system prompt 会变空）。
+    if (entries.length === 0) return empty(`${rulesDir} 下没有任何 .md 规则文件`);
     const manifestPath = join(root, "MANIFEST.yaml");
     const registryVersion = existsSync(manifestPath)
       ? (parseFlatYaml(readFileSync(manifestPath, "utf8")).version ?? "")

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,8 +106,8 @@ describe("resolveRegistryRoot", () => {
     delete process.env.PI_PROMPT_REGISTRY_DIR;
   });
 
-  it("仓库根存在时返回 <root>/prompt-registry", () => {
-    expect(resolveRegistryRoot()).toBe(join(process.cwd(), "prompt-registry"));
+  it("从 cwd 向上找到仓库根的 prompt-registry", () => {
+    expect(existsSync(join(resolveRegistryRoot(), "rules"))).toBe(true);
   });
 });
 

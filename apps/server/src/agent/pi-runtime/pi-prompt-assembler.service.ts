@@ -31,6 +31,13 @@ import {
   GEN_TOOLS_RULES,
   RULE_10_WRITE_GUARD,
 } from "./prompt-registry.fallback";
+import {
+	describeRegistry,
+	loadRegistry,
+	renderStatic,
+	renderStaticFallback,
+	resolveRegistryRoot,
+} from "./prompt-registry.loader";
 
 export type RuleGroup = "core" | "writeTools" | "genTools";
 
@@ -52,12 +59,19 @@ export interface PromptLayer {
  * 分段注入 manifest（结构化，供 log/metrics 消费）。
  * 静态段没有归属会话（一次装配多会话共用），其 manifest 的 sessionId 为空串。
  */
+/** 进程内只打一次：进程启动后第一个会话创建时能看到当前跑的是哪版提示词。 */
+let staticRegistryLogged = false;
+
 export interface PromptManifest {
 	sessionId: string;
 	layers: Array<{ id: string; kind: PromptLayerKind; tokens: number }>;
 	totalTokens: number;
 	/** 最终 prompt 的稳定哈希，用于跨轮 diff / 回归比对。 */
 	promptHash: string;
+	/** Registry 版本（读不到目录时为空串，观测上记为 n/a）。 */
+	registryVersion: string;
+	/** Registry 内容哈希：判「规则文件被谁改过」用，与 promptHash（本轮拼装结果）区分。 */
+	registryHash: string;
 }
 
 /** CJK ≈1 token/字 + 其余 ≈1/4 token/字符（审计 P0-②：len/4 对中文低估 3~4 倍）。
@@ -95,24 +109,6 @@ export interface CanvasSummaryProvider {
 	getCanvasSummary(input: { sessionId: string; focusNodeId?: string }): Promise<CanvasSummaryData>;
 }
 
-
-/**
- * 规则组拼装：genTools 启用 → 规则 3' 替换规则 3 并追加 11/12/13；
- * writeTools 启用 → 规则 4/5，否则第 10 条写守卫。
- * 声明偏离（M-2）：注入顺序为 1,2,3,7,4,5,11,12,13（explore.py 为 1..9 顺序）——规则带编号，
- * 顺序差异对模型语义无影响，不追求顺序对齐。
- */
-function composeRuleText(groups: RuleGroup[]): string {
-	const core = groups.includes("genTools")
-		? `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}`
-		: `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}`;
-	const parts: string[] = [core];
-	if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES);
-	if (groups.includes("genTools")) parts.push(GEN_TOOLS_RULES);
-	if (!groups.includes("writeTools")) parts.push(RULE_10_WRITE_GUARD);
-	return parts.filter(Boolean).join("\n");
-}
-
 @Injectable()
 export class PiPromptAssembler {
 	private readonly logger = new Logger(PiPromptAssembler.name);
@@ -131,9 +127,20 @@ export class PiPromptAssembler {
 	 * 不触碰 canvasTools —— 静态段不依赖任何 world state。
 	 */
 	async assembleStatic(input: { ruleGroups?: RuleGroup[] }): Promise<string> {
-		const text = composeRuleText(input.ruleGroups ?? ["core"]);
+		// 有意每次重读目录（会话创建不是热路径）：Registry 文件变了重启即生效，不引入缓存失效的复杂度。
+		const groups = input.ruleGroups ?? ["core"];
+		const snapshot = loadRegistry(resolveRegistryRoot());
+		const text = snapshot.degraded ? renderStaticFallback(groups) : renderStatic(snapshot, groups);
+		this.logRegistryOnce();
 		this.recordLayers([layer("rules", "rules", text)], "");
 		return text;
+	}
+
+	/** 首次静态段装配时打印一行 Registry 身份（模块级只打一次）。 */
+	private logRegistryOnce(): void {
+		if (staticRegistryLogged) return;
+		staticRegistryLogged = true;
+		this.logger.log(describeRegistry(loadRegistry(resolveRegistryRoot())));
 	}
 
 	/**
@@ -192,15 +199,18 @@ export class PiPromptAssembler {
 		const hash = promptHash(layers.map((l) => l.content).join("\n"));
 
 		this.lastLayers = layers;
+		const snap = loadRegistry(resolveRegistryRoot());
 		this.lastManifestDetail = {
 			sessionId,
 			layers: layers.map((l) => ({ id: l.id, kind: l.kind, tokens: l.approxTokens })),
 			totalTokens,
 			promptHash: hash,
+			registryVersion: snap.registryVersion,
+			registryHash: snap.registryHash,
 		};
 		this.lastManifest = `prompt manifest ${sessionId || "(static)"}: ${layers
 			.map((l) => `${l.id}:${l.kind}:${l.approxTokens}tok`)
-			.join(" ")} total=${totalTokens}tok hash=${hash}`;
+			.join(" ")} total=${totalTokens}tok hash=${hash} registry=${snap.registryVersion || "n/a"} registryHash=${snap.registryHash}`;
 		this.logger.log(this.lastManifest);
 	}
 }
