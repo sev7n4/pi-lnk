@@ -197,3 +197,11 @@ describe("effectiveCompactionSettings（审计 P0-①）", () => {
 		const off = loadRuntimeConfig({ PI_RUNTIME_DIRECT_IMAGES: "off" });
 		assert.equal(off.directImages, false);
 	});
+	it("directImageHistoryRounds：缺省 2；非法值回退；显式值生效", () => {
+		const def = loadRuntimeConfig({});
+		assert.equal(def.directImageHistoryRounds, 2);
+		const bad = loadRuntimeConfig({ PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS: "abc" });
+		assert.equal(bad.directImageHistoryRounds, 2);
+		const ok = loadRuntimeConfig({ PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS: "4" });
+		assert.equal(ok.directImageHistoryRounds, 4);
+	});

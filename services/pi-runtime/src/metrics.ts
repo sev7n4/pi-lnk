@@ -73,6 +73,7 @@ export class Metrics {
 	private systemPromptBytes = 0; // 最近一次 systemPrompt 总长（gauge，水位观测）
 	private directImages = new Map<string, number>(); // key: outcome (sent|downscaled|fallback)
 	private directImageTokens = 0; // 直通图片 token 估算累计（成本闸门观测）
+	private payloadTrims = new Map<string, number>(); // key: reason (history_image|overflow|text_overflow)
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
 
@@ -215,6 +216,11 @@ export class Metrics {
 	observeDirectImage(outcome: "sent" | "downscaled" | "fallback", tokensEst: number): void {
 		this.directImages.set(outcome, (this.directImages.get(outcome) ?? 0) + 1);
 		this.directImageTokens += tokensEst;
+	}
+
+	/** before_payload 治理观测（T2）：被降级/截断的 part 计数。 */
+	observeBeforePayloadTrim(reason: string): void {
+		this.payloadTrims.set(reason, (this.payloadTrims.get(reason) ?? 0) + 1);
 	}
 
 	/** systemPrompt 总长水位（static+dynamic），每次组装后刷新（gauge 语义：取最新值）。 */
@@ -361,6 +367,12 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_direct_image_tokens_estimated Cumulative estimated token cost of direct images.");
 	lines.push("# TYPE pi_runtime_direct_image_tokens_estimated counter");
 	lines.push(`pi_runtime_direct_image_tokens_estimated ${this.directImageTokens}`);
+
+	lines.push("# HELP pi_runtime_before_payload_trims_total Parts degraded/truncated by before_payload governance, by reason.");
+	lines.push("# TYPE pi_runtime_before_payload_trims_total counter");
+	for (const [reason, count] of [...this.payloadTrims.entries()].sort()) {
+		lines.push(`pi_runtime_before_payload_trims_total{reason="${esc(reason)}"} ${count}`);
+	}
 
 	lines.push("# HELP pi_runtime_transform_context_runs_total transform_context hook runs, by whether the goal was restated.");
 	lines.push("# TYPE pi_runtime_transform_context_runs_total counter");

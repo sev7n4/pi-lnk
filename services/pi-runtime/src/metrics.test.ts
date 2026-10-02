@@ -164,3 +164,13 @@ test("direct_images：sent 计数 + tokens 估算累计（gauge 缺省 0）", ()
 	assert.match(out, /pi_runtime_direct_images_total\{outcome="sent"\} 2/);
 	assert.match(out, /pi_runtime_direct_image_tokens_estimated 1695/);
 });
+
+test("before_payload trims 按 reason 计数渲染", () => {
+	const m = new Metrics();
+	m.observeBeforePayloadTrim("history_image");
+	m.observeBeforePayloadTrim("history_image");
+	m.observeBeforePayloadTrim("text_overflow");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_before_payload_trims_total\{reason="history_image"\} 2/);
+	assert.match(out, /pi_runtime_before_payload_trims_total\{reason="text_overflow"\} 1/);
+});
