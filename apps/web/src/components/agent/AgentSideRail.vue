@@ -212,7 +212,17 @@ const input = ref('')
  * 替用户默认选一次就可能把「想走开」的消息插进正在跑的那轮。
  */
 type QueueIntent = 'steer' | 'followup'
-type QueueState = 'pending' | 'accepted' | 'failed'
+/**
+ * pending = 等你点（不自动派发）；accepted = 已入队、agent 还没开口；
+ * applied = agent **已经开口/动手**了（确定性事件触发，见 QUEUE_APPLIED_EVENTS）；
+ * failed = 入队失败，文字保留在槽位里。
+ *
+ * ⚠️ accepted / applied 都不再自动收起（原「accepted 2.6s 后自动收」是错的）：
+ * agent 从入队到第一次吐字常是 20~40s（中间还在跑工具），这期间 UI 若是空的，
+ * 用户会以为消息丢了。「agent 正在解读我的补充」这句话本来就不需要模型复述 ——
+ * 一个事件就够，比赌模型自觉可靠得多。收起交给用户（气泡上有「知道了」）。
+ */
+type QueueState = 'pending' | 'accepted' | 'applied' | 'failed'
 interface QueuedSlot {
   text: string
   intent: QueueIntent | null // pending 态尚未决定走哪条通道
@@ -221,8 +231,20 @@ interface QueuedSlot {
   hint: string
 }
 const queued = ref<QueuedSlot | null>(null)
-/** accepted 提示自动收起，避免一个常驻绿条占住输入框上方 */
-let queueDismissTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * 「agent 已经接住」的确定性事件（2026-10-02）。
+ *
+ * 作用是替掉原先那段 system prompt 约定（"你必须先复述…再动工具"）——那段每轮常驻、是概率行为、
+ * 而且模型照样可能一声不吭直接跳工具。这里只要这四种事件任一到达，就说明 agent 已经在这条消息上
+ * 产出内容了，气泡从「已入队」推进到「已接住」。收到第一个 text_delta 之前那段空白期（20~40s，
+ * 中间还在跑工具）正是用户最需要「它没丢」的时候。
+ */
+const QUEUE_APPLIED_EVENTS = new Set(['thinking', 'text_delta', 'tool_call', 'activity'])
+function markQueueApplied() {
+  if (!queued.value || queued.value.state !== 'accepted') return
+  queued.value.state = 'applied'
+  queued.value.hint = '已接住 · agent 正在处理你的补充'
+}
 /** 已发送用户消息的就地二次编辑：正在编辑的消息 id */
 const editingMessageId = ref<string | null>(null)
 const editingDraft = ref('')
@@ -1773,21 +1795,15 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
       intent === 'steer'
         ? '已并入当前回答，紧接着往下写（当前这轮不会中断）'
         : '会在本轮收尾时接住，你现在可以先走开'
-    scheduleQueueDismiss()
+    // ⚠️ 刻意不再自动收起（原来 2.6s 后自己消失）：agent 从入队到首字常 20~40s，
+    // 期间气泡若消失，用户会误以为消息丢了。这里常驻，收到 QUEUE_APPLIED_EVENTS 再推进到
+    // 「已接住」，最终由用户点「知道了」收起。
     return true
   } catch (err) {
     slot.state = 'failed'
     slot.hint = err instanceof Error ? err.message : '投递失败'
     return false
   }
-}
-
-function scheduleQueueDismiss() {
-  if (queueDismissTimer) clearTimeout(queueDismissTimer)
-  queueDismissTimer = setTimeout(() => {
-    queueDismissTimer = null
-    queued.value = null
-  }, 2600)
 }
 
 /**
@@ -1809,10 +1825,6 @@ async function onComposerSubmit() {
 }
 
 function dismissQueued() {
-  if (queueDismissTimer) {
-    clearTimeout(queueDismissTimer)
-    queueDismissTimer = null
-  }
   queued.value = null
 }
 
@@ -2366,6 +2378,8 @@ watch(
 )
 
 function handleEvent(event: { type: string; data: unknown }) {
+  // 任一「agent 已在这条补充上产出内容」的事件到达 → 气泡推进到「已接住」（不用等模型复述）
+  if (QUEUE_APPLIED_EVENTS.has(event.type)) markQueueApplied()
   switch (event.type) {
     case 'text_replace':
       agent.replaceAssistantText((event.data as { text: string }).text)
@@ -3488,33 +3502,42 @@ defineExpose({
                   知道了
                 </button>
               </div>
-              <!--
+                <!--
                 流式中的插话槽位（2026-10-02 重写）：不打断当前轮，两个动作分别是 vendor 队列的
                 两种送达时机 —— 立即插话(steer) / 等跑完再说(followUp)，互斥二选一。
-                pending = 等你点（不自动派发）；accepted = 已入队，降级为一行状态条 2.6s 后自动收起；
+                pending = 等你点（不自动派发）；accepted = 已入队（常驻，不自动收）；
+                applied = agent 已开口/动手（由 QUEUE_APPLIED_EVENTS 推进，替代原先让模型复述一句的做法）；
                 failed = 入队失败，文字保留在槽位里，只能「取回输入框」或「放弃」。
               -->
               <div
                 v-if="queued"
                 class="agent-queued-bubble mx-3 mb-2 rounded-lg border px-3 py-2"
-                :class="queued.state === 'accepted'
-                  ? 'border-[var(--neo-success)]/40 bg-[var(--neo-success)]/10'
-                  : queued.state === 'failed'
-                    ? 'border-[var(--neo-danger)]/40 bg-[var(--neo-danger)]/10'
-                    : 'border-[var(--neo-accent)]/40 bg-[var(--neo-accent)]/10'"
+                :class="queued.state === 'failed'
+                  ? 'border-[var(--neo-danger)]/40 bg-[var(--neo-danger)]/10'
+                  : queued.state === 'pending'
+                    ? 'border-[var(--neo-accent)]/40 bg-[var(--neo-accent)]/10'
+                    : 'border-[var(--neo-success)]/40 bg-[var(--neo-success)]/10'"
                 :data-queue-state="queued.state"
                 :data-queue-intent="queued.intent ?? ''"
               >
                 <div class="flex items-start gap-2">
                   <span
                     class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                    :class="queued.state === 'accepted'
-                      ? 'bg-[var(--neo-success)]/20 text-[var(--neo-success)]'
-                      : queued.state === 'failed'
-                        ? 'bg-[var(--neo-danger)]/20 text-[var(--neo-danger)]'
-                        : 'bg-[var(--neo-accent)]/20 text-[var(--neo-accent)]'"
+                    :class="queued.state === 'failed'
+                      ? 'bg-[var(--neo-danger)]/20 text-[var(--neo-danger)]'
+                      : queued.state === 'pending'
+                        ? 'bg-[var(--neo-accent)]/20 text-[var(--neo-accent)]'
+                        : 'bg-[var(--neo-success)]/20 text-[var(--neo-success)]'"
                   >
-                    {{ queued.state === 'accepted' ? '已入队' : queued.state === 'failed' ? '未送达' : '待发' }}
+                    {{
+                      queued.state === 'pending'
+                        ? '待发'
+                        : queued.state === 'failed'
+                          ? '未送达'
+                          : queued.state === 'applied'
+                            ? '已接住'
+                            : '已入队'
+                    }}
                   </span>
                   <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--neo-text)]">{{ queued.text }}</p>
                 </div>
@@ -3541,7 +3564,7 @@ defineExpose({
                       ✎ 取回内容
                     </button>
                     <button type="button" class="queued-act" @click="dismissQueued">
-                      {{ queued.state === 'accepted' ? '知道了' : '放弃' }}
+                      {{ queued.state === 'accepted' || queued.state === 'applied' ? '知道了' : '放弃' }}
                     </button>
                   </template>
                 </div>

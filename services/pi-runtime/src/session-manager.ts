@@ -353,35 +353,21 @@ export function toSessionKey(threadKey: string): string {
 }
 
 /**
- * 运行中插话的处理约定（2026-10-02）。
+ * ⚠️ 这里**不再**给 system prompt 挂「运行中插话须先复述再动工具」这类约定段（原 `QUEUE_GUIDANCE`，2026-10-02 取消）。
  *
- * 为什么必须写在 instruction 而不是靠队列保证：steer / followUp 落到 lane 的是**普通 user 消息**
- * （`lane.ts:1456-1460` 两者在 `enqueue` 里构造的是同一个 `{role:"user",content:[{type:"text",text}]}`），
- * 模型完全可以选择「一个字不说、直接调下一个工具」。那在 UI 上就是工具列表凭空跳变 ——
- * 用户完全无法判断「它到底听懂我这句插话没有」。队列语义只保证**送达时机**，保证不了**接到之后先说什么**，
- * 所以这一条只能落在 instruction 上。
+ * 取消的不是需求，是**杠杆**：
+ *  1. system prompt 在会话**创建时**拼一次、此后整轮对话每轮都带；而「有 steer/followUp 积压」是几秒级的
+ *     窗口 ⇒ 绝大多数轮次在为一个瞬态付常驻 context 税，还顺手稀释了原本稳定的人设/工作流；
+ *  2. 它换回来的是**概率行为**：模型照样可以一个字不说直接跳工具，而且这种退化没有任何事件可观测
+ *     （当年 load_tools 强指令化也是同一形状 —— 模型能逐字复述指令，就是不执行）；
+ *  3. 「用户看得到它接住了」本来就有一半是**确定性**可解的问题（前端状态 + 事件），不该摊给模型即兴发挥；
+ *     至于「它怎么改计划」，那是模型 reasoning 的自然产物，用 instruction 逼它"复述"只会产出空洞的复述体。
  *
- * 刻意不改消息形态（不往 steer 文本前塞指令前缀）：那会污染用户自己写的原话，
- * 事后回看会话历史时那串前缀就是噪音。放在 system prompt 里则每轮一致、不进用户消息。
+ * 替代做法见 `apps/server/src/agent/pi-runtime/pi-runtime.client.ts` 的 `queue()`：
+ * 在 steer / followUp 这**一条**消息上加一行 kind 标签（"用户补充 · 插在本轮进行中"），
+ * 告诉模型这条消息**是什么来头**（这是「先重新规划」的真实触发条件），而不是命令它「你该说什么」。
+ * 常态 context 零增加，且行为确定性由消息结构保证，不靠模型记性。
  */
-export const QUEUE_GUIDANCE = [
-	`当你在任务执行过程中收到一条追加的用户消息（可能是插话，也可能是等本轮跑完才送达的尾随指令）时，`,
-	`必须先在同一个回复里输出一句话：复述这条新要求，并说明它对你本轮已确定的执行计划的影响`,
-	`（是否需要调整接下来的工具调用；若与新要求无关或当前无法执行，也要明说）。`,
-	`只有把这一句说出去之后，才允许调用下一个工具或推进本轮的下一步动作。`,
-	`即：**先确认收到了、再动手**；不要默默忽略这类消息，也不要在未表态的情况下直接切到工具调用。`,
-].join("");
-
-/**
- * 把插话处理约定挂到系统提示上。
- *
- * 即使会话没传 systemPrompt（维护态 / 冒烟用例）也要挂：这条约定的缺失不会让链路报错，
- * 只会让「用户插了话、模型直接跳到工具」成为常态，且这种退化没有任何事件可观测。
- */
-function withQueueGuidance(base?: string): string {
-	if (!QUEUE_GUIDANCE) return base ?? "";
-	return base ? `${base}\n\n${QUEUE_GUIDANCE}` : QUEUE_GUIDANCE;
-}
 
 /** 静态段在前、动态段尾部追加（spec §4 动态上下文判据：稳定前缀不被易变内容推到后面）。 */
 export function composeSystemPrompt(staticPart: string, dynamicBlocks: readonly string[]): string {
@@ -670,12 +656,11 @@ export class SessionManager {
 			nextSeq: 0,
 			activityStep: 0,
 			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
-			// 字段（app.ts:113），不传时若直接 `withQueueGuidance(undefined)`，它会返回**裸 guidance**
-			// 而不是「空 + guidance」—— 结果是默认系统提示被整段顶替掉（生产上表现为 agent 没有
-			// 任何基础人设，只剩一段插话约定）。只有 default 也是空时才退化为裸 guidance（见
-			// withQueueGuidance 注释）。
+			// 字段（app.ts:113），传空串 / 不传时这里**不能**退化成「没有 base prompt」——
+			// 否则默认系统提示被整段顶替掉（生产上表现为 agent 没有任何基础人设，只剩裸动态段）。
+			// 插话显化不再靠 system prompt（见文件顶部的取消说明），故这里是纯 base，无 guidance 段。
 			staticPrompt: this.composeSystemPrompt(
-				withQueueGuidance(opts.systemPrompt || this.systemPromptDefault),
+				opts.systemPrompt || this.systemPromptDefault,
 			),
 			basePrompt: opts.systemPrompt ?? "",
 			identity,

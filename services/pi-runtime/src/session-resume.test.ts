@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { BACKGROUND_CONTEXT, JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { SessionManager, toSessionKey, QUEUE_GUIDANCE } from "./session-manager.js";
+import { SessionManager, toSessionKey } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 
@@ -261,8 +261,8 @@ describe("SessionManager.create 幂等 resume-or-create", () => {
 			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, baseConfig(root));
 			await sm.create("s1:t1", { userId: "u1", systemPrompt: "RULES" });
 			await sm.create("s1:t1", { userId: "u1", systemPrompt: "TAMPERED" });
-			// resume 沿用磁盘里的静态段：guidance 是每次拼接的固定尾部，不随 base 变化
-			assert.equal(captured?.systemPrompt(undefined), `RULES\n\n${QUEUE_GUIDANCE}`);
+			// resume 沿用磁盘里的静态段：就是 RULES 本身（2026-10-02 起不再挂插话约定段）
+			assert.equal(captured?.systemPrompt(undefined), "RULES");
 		});
 	});
 
