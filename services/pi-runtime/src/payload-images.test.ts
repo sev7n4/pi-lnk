@@ -69,7 +69,7 @@ test("6 张图 > maxImages：本轮优先、新→旧回填，不得取前 4", (
 		],
 	};
 	const messages = governImagePayload(payload, 2, 4).messages as Array<{ content: unknown[] }>;
-	const keptOld = (messages[0].content as Array<{ image_url?: { url: string } }>)
+	const keptOld = (messages[0].content as Array<{ type?: string; image_url?: { url: string } }>)
 		.filter((p) => p.type === "image_url")
 		.map((p) => p.image_url?.url);
 	// 上一轮 4 张按新→旧回填 2 张（old4、old3），最旧两张降级

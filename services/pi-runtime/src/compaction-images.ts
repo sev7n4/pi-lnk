@@ -39,9 +39,10 @@ export function annotateImagesForSummary(
 		const hasImage = msg.content.some((p) => p?.type === "image");
 		if (!hasImage) return msg;
 		changed = true;
-		const sideNotes = msg.content
+		const content = msg.content;
+		const sideNotes = content
 			.filter((p) => p?.type === "image")
-			.map((p) => annotateText(textOf(msg.content), typeof p.mimeType === "string" ? p.mimeType : "image/png"));
+			.map((p) => annotateText(textOf(content), typeof p.mimeType === "string" ? p.mimeType : "image/png"));
 		const nextContent = [...msg.content];
 		for (const note of sideNotes) nextContent.push({ type: "text", text: note });
 		return { ...msg, content: nextContent };
@@ -50,7 +51,8 @@ export function annotateImagesForSummary(
 }
 
 /** 消息文本主体（多个 text part 拼接），用于恢复 [I{n}=文件名] 标记。 */
-function textOf(content: Array<Record<string, unknown>>): string {
+function textOf(content: string | Array<Record<string, unknown>>): string {
+	if (typeof content === "string") return content;
 	return content
 		.filter((p) => p?.type === "text" && typeof p.text === "string")
 		.map((p) => p.text as string)

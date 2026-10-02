@@ -758,7 +758,7 @@ export class SessionManager {
 			const compactionContext = this.context;
 			harness.hooks?.on?.("before_compaction", async (event) => {
 				try {
-					const prep = event.preparation as Record<string, unknown>;
+					const prep = event.preparation as unknown as Record<string, unknown>;
 					const annotated: Record<string, unknown> = { ...prep };
 					let changed = false;
 					for (const field of ["messagesToSummarize", "turnPrefixMessages"] as const) {
