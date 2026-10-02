@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { BusyError, SessionManager, toSessionKey } from "./session-manager.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
+import { Metrics } from "./metrics.js";
 
 /** 2026-10-02 起 system prompt 里不再挂插话约定段（QUEUE_GUIDANCE 已取消，见 session-manager.ts 顶部）。 */
 const STATIC_BASE = "STATIC";
@@ -348,6 +349,63 @@ describe("prompt 并发守卫（既有语义回归）", () => {
 			assert.equal(prompts.length, 1);
 			release(undefined);
 			await new Promise((r) => setTimeout(r, 0));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("dynamicBlocks 预算（T3 接线）", () => {
+	it("超长未知标记块被截断：metrics 记 drop(general) + unknown", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-budget-"));
+		try {
+			const metrics = new Metrics();
+			const factory = (async () => ({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			})) as never;
+			const sm = new SessionManager(
+				[], "STATIC", undefined, factory, undefined, undefined,
+				{ ...DEFAULT_RUNTIME_CONFIG, dataRoot: root, dynamicBudget: true, dynamicBudgetTotalChars: 300 },
+				undefined, metrics,
+			);
+			await sm.create("s1:t1", {});
+			const big = "[自定义标记]" + "长".repeat(1000);
+			sm.setTurnContext("s1:t1", { dynamicBlocks: [big] });
+			const sp = sm.resolveSystemPromptForTest("s1:t1");
+			assert.ok(sp.includes("可用 read_document 取回全文"), "截断尾注必须出现");
+			assert.ok(sp.length < big.length, "超长块被截短");
+			const out = metrics.render(0, "t");
+			assert.match(out, /pi_runtime_dynamic_budget_drops_total\{kind="general"\} 1/);
+			assert.match(out, /pi_runtime_dynamic_budget_unknown_kind_total 1/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("off 门控：同输入逐字节回退旧行为", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-budgetoff-"));
+		try {
+			const factory = (async (cfg: { systemPrompt: (tc?: unknown) => string }) => {
+				return {
+					harness: {
+						events: { on: () => () => {} },
+						lane: async () => ({ prompt: async () => ({ ok: true }) }),
+						close: async () => {},
+					},
+				};
+			}) as never;
+			const sm = new SessionManager(
+				[], "STATIC", undefined, factory, undefined, undefined,
+				{ ...DEFAULT_RUNTIME_CONFIG, dataRoot: root, dynamicBudget: false },
+			);
+			await sm.create("s1:t1", {});
+			const big = "[自定义标记]" + "长".repeat(1000);
+			sm.setTurnContext("s1:t1", { dynamicBlocks: [big] });
+			assert.equal(sm.resolveSystemPromptForTest("s1:t1"), `STATIC\n\n${big}`);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

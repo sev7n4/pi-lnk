@@ -134,3 +134,23 @@ test("transform_context 未打点时不缺行报错", () => {
 	assert.match(out, /pi_runtime_transform_context_annotated_total 0/);
 	assert.doesNotMatch(out, /pi_runtime_transform_context_runs_total\{/);
 });
+
+test("dynamic_budget drops 按 kind 计数渲染", () => {
+	const m = new Metrics();
+	m.observeDynamicBudgetDrop("canvas");
+	m.observeDynamicBudgetDrop("canvas");
+	m.observeDynamicBudgetDrop("vision");
+	m.observeUnknownBlockKind();
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_dynamic_budget_drops_total\{kind="canvas"\} 2/);
+	assert.match(out, /pi_runtime_dynamic_budget_drops_total\{kind="vision"\} 1/);
+	assert.match(out, /pi_runtime_dynamic_budget_unknown_kind_total 1/);
+});
+
+test("system_prompt_bytes gauge：未打点渲染 0，打点后取最新值", () => {
+	const m = new Metrics();
+	assert.match(m.render(0, "test"), /pi_runtime_system_prompt_bytes 0/);
+	m.observeSystemPromptBytes(1234);
+	m.observeSystemPromptBytes(5678);
+	assert.match(m.render(0, "test"), /pi_runtime_system_prompt_bytes 5678/);
+});
