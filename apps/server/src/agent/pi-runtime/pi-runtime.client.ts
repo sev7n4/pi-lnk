@@ -180,6 +180,57 @@ export class PiRuntimeClient {
 	}
 
 	/**
+	 * 用户插话（steering 队列）：run 进行中发言的正道（2026-10-02）。
+	 *
+	 * 与 `prompt()` 的差别是**失败语义**：`prompt()` 撞 busy 会 409 抛错，而插话恰恰是在
+	 * 「上一轮还在跑」这个前提下才需要它 —— 所以这里入队失败就抛，由调用方决定怎么收。
+	 *
+	 * @returns `queued: true`（已进 vendor 队列，durable 落盘）
+	 */
+	async steer(
+		sessionId: string,
+		text: string,
+		lane = "main",
+		opts?: { turnContext?: PiTurnContext },
+	): Promise<{ queued: boolean }> {
+		return this.queue(sessionId, text, "steer", lane, opts);
+	}
+
+	/** 尾随指令（followUp 队列）：run 收尾时再接一句，由 vendor 同一次 run 续跑一代。 */
+	async followUp(
+		sessionId: string,
+		text: string,
+		lane = "main",
+		opts?: { turnContext?: PiTurnContext },
+	): Promise<{ queued: boolean }> {
+		return this.queue(sessionId, text, "followup", lane, opts);
+	}
+
+	private async queue(
+		sessionId: string,
+		text: string,
+		path: "steer" | "followup",
+		lane: string,
+		opts?: { turnContext?: PiTurnContext },
+	): Promise<{ queued: boolean }> {
+		const { status, body } = await this.request<{ queued?: boolean; error?: string }>(
+			`/sessions/${encodeURIComponent(sessionId)}/${path}`,
+			{
+				method: "POST",
+				body: JSON.stringify({
+					text,
+					lane,
+					...(opts?.turnContext ? { turnContext: opts.turnContext } : {}),
+				}),
+			},
+		);
+		if (status >= 400 || body?.error) {
+			throw new PiRuntimeError(body?.error ?? `${path} failed: HTTP ${status}`, status);
+		}
+		return { queued: body?.queued !== false };
+	}
+
+	/**
 	 * ③ 重跑：后端线程截断（与 WorkBuddy「编辑并重发」一致）。
 	 *
 	 * 以 `atEntryId` 为切点 fork 出一条新分支会话：目标消息及其之后全部丢弃（`position: "before"`），

@@ -3,8 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BusyError, SessionManager, toSessionKey } from "./session-manager.js";
+import { BusyError, QUEUE_GUIDANCE, SessionManager, toSessionKey } from "./session-manager.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
+
+/**
+ * systemPrompt 尾部固定挂着一段「运行中插话的处理约定」（`QUEUE_GUIDANCE`），所以本文件这些
+ * 「base 段逐字节相等」的断言统一改成 **base + guidance 的显式比对**（与 session-manager.test.ts 同口径）。
+ *
+ * 这不是偷偷拼块 —— 是 2026-10-02 起的显式产品行为：steer / followUp 落到 lane 的是普通 user
+ * 消息，模型可以一声不吭直接调工具，而队列语义只保证送达时机、保证不了接到之后先说什么。
+ * 改 guidance 文案这里就会碎，这正是它该有的可见度。
+ */
+const STATIC_WITH_GUIDANCE = `STATIC\n\n${QUEUE_GUIDANCE}`;
 
 function makeManager(root: string) {
 	let captured: {
@@ -34,10 +44,10 @@ describe("setTurnContext", () => {
 		try {
 			const { sm, captured } = makeManager(root);
 			await sm.create("s1:t1", {});
-			assert.equal(captured().systemPrompt(), "STATIC");
+			assert.equal(captured().systemPrompt(), STATIC_WITH_GUIDANCE);
 			const changed = sm.setTurnContext("s1:t1", { dynamicBlocks: ["当前画布摘要：{}"], mentionedKeys: ["I1"] });
 			assert.equal(changed, true);
-			assert.equal(captured().systemPrompt(), "STATIC\n\n当前画布摘要：{}");
+			assert.equal(captured().systemPrompt(), `${STATIC_WITH_GUIDANCE}\n\n当前画布摘要：{}`);
 			assert.deepEqual(captured().toolContext().mentionedKeys, ["I1"]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
@@ -63,9 +73,9 @@ describe("setTurnContext", () => {
 			const { sm, captured } = makeManager(root);
 			await sm.create("s1:t1", {});
 			sm.setTurnContext("s1:t1", { dynamicBlocks: ["A"] });
-			assert.equal(captured().systemPrompt(), "STATIC\n\nA");
+			assert.equal(captured().systemPrompt(), `${STATIC_WITH_GUIDANCE}\n\nA`);
 			assert.equal(sm.setTurnContext("s1:t1", { dynamicBlocks: [] }), true);
-			assert.equal(captured().systemPrompt(), "STATIC");
+			assert.equal(captured().systemPrompt(), STATIC_WITH_GUIDANCE);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -85,7 +95,7 @@ describe("setTurnContext", () => {
 			await sm.create("s1:t1", {});
 			sm.setTurnContext("s1:t1", { dynamicBlocks: ["A", "B"] });
 			assert.equal(sm.resolveSystemPromptForTest("s1:t1"), captured().systemPrompt());
-			assert.equal(sm.resolveSystemPromptForTest("s1:t1"), `STATIC\n\nA\n\nB`);
+			assert.equal(sm.resolveSystemPromptForTest("s1:t1"), `${STATIC_WITH_GUIDANCE}\n\nA\n\nB`);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -136,7 +146,7 @@ describe("轮次覆盖语义（复核 Important #1：spec §5.4「整体覆盖�
 			const { sm, captured } = makeManager(root);
 			await sm.create("s1:t1", {});
 			await sm.prompt("s1:t1", "你好", "main", { turnContext: { dynamicBlocks: ["画布摘要：A"] } });
-			assert.equal(captured().systemPrompt(), "STATIC\n\n画布摘要：A");
+			assert.equal(captured().systemPrompt(), `${STATIC_WITH_GUIDANCE}\n\n画布摘要：A`);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -220,7 +230,7 @@ describe("busy 守卫（复核 Important #2/#5：TOCTOU 与被拒请求不污染
 				(err: Error) => err instanceof BusyError,
 			);
 			// 在跑 run 的下一次 LLM 调用仍读第一轮的快照，绝不能看到被拒请求的
-			assert.equal(captured().systemPrompt(), "STATIC\n\n画布快照：第一轮");
+			assert.equal(captured().systemPrompt(), `${STATIC_WITH_GUIDANCE}\n\n画布快照：第一轮`);
 			release(undefined);
 			await new Promise((r) => setTimeout(r, 0));
 		} finally {

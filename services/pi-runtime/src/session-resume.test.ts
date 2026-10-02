@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { BACKGROUND_CONTEXT, JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { SessionManager, toSessionKey } from "./session-manager.js";
+import { SessionManager, toSessionKey, QUEUE_GUIDANCE } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 
@@ -19,6 +19,8 @@ function baseConfig(root: string): RuntimeConfig {
 		sessionsMaxBytes: 10 ** 12,
 		sessionsMaxCount: 1000,
 		compaction: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
+		steeringMode: "one-at-a-time",
+		followUpMode: "one-at-a-time",
 	};
 }
 
@@ -259,7 +261,8 @@ describe("SessionManager.create 幂等 resume-or-create", () => {
 			const sm = new SessionManager([], "", undefined, factory, undefined, undefined, baseConfig(root));
 			await sm.create("s1:t1", { userId: "u1", systemPrompt: "RULES" });
 			await sm.create("s1:t1", { userId: "u1", systemPrompt: "TAMPERED" });
-			assert.equal(captured?.systemPrompt(undefined), "RULES");
+			// resume 沿用磁盘里的静态段：guidance 是每次拼接的固定尾部，不随 base 变化
+			assert.equal(captured?.systemPrompt(undefined), `RULES\n\n${QUEUE_GUIDANCE}`);
 		});
 	});
 

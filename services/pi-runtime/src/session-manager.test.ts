@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SessionManager, BusyError, NotFoundError, toSessionKey, appendPromptBlocks } from "./session-manager.js";
+import {
+	SessionManager,
+	BusyError,
+	NotFoundError,
+	toSessionKey,
+	appendPromptBlocks,
+	QUEUE_GUIDANCE,
+} from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
@@ -29,6 +36,8 @@ function testConfig(): RuntimeConfig {
 		// 「tiering-on 接线（评审 finding 3）」专组覆盖。
 		toolTiering: false,
 		compaction: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
+		steeringMode: "one-at-a-time",
+		followUpMode: "one-at-a-time",
 	};
 }
 
@@ -42,6 +51,17 @@ function makeTempSkillDir(): string {
 	);
 	return root;
 }
+
+/**
+ * systemPrompt 尾部固定挂着一段「运行中插话的处理约定」（`QUEUE_GUIDANCE`）。
+ *
+ * 这不是偷偷拼块 —— 是 2026-10-02 起的显式产品行为：steer / followUp 落到 lane 的是普通 user
+ * 消息，模型可以一声不吭直接调工具，而队列语义只保证送达时机、保证不了接到之后先说什么。
+ * 于是下面若干「base 段逐字节相等」的断言统一改成 **base + guidance 的显式比对**：
+ * 既继续锁住「无 skills 时不额外拼块 / base 段原样保留」，又让新增这一段在测试里可见
+ * （改文案会碎，这正是它该有的可见度）。
+ */
+const SYS_WITH_GUIDANCE = `SYS\n\n${QUEUE_GUIDANCE}`;
 
 describe("SessionManager harnessFactory 注入缝", () => {
 	it("create() 把 tools/toolContext/systemPrompt 原样传给 harnessFactory", async () => {
@@ -70,7 +90,7 @@ describe("SessionManager harnessFactory 注入缝", () => {
 			toolContext: (tc: unknown) => Record<string, unknown>;
 			thinkingLevel?: string;
 		};
-		assert.equal(cfg.systemPrompt(undefined), "SYS");
+		assert.equal(cfg.systemPrompt(undefined), SYS_WITH_GUIDANCE);
 		assert.equal(cfg.thinkingLevel, "medium");
 		const tc = cfg.toolContext(undefined);
 		assert.equal(tc.userId, "u1");
@@ -213,7 +233,7 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, factory, undefined, undefined, testConfig());
 		await sm.create("s1", { systemPrompt: "SYS" });
 		const cfg = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
-		assert.equal(cfg.systemPrompt(undefined), "SYS");
+		assert.equal(cfg.systemPrompt(undefined), SYS_WITH_GUIDANCE);
 		assert.ok(!cfg.tools.some((t) => t.name === "load_skill"));
 	});
 
@@ -242,7 +262,7 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 		);
 		await sm.create("s1", { systemPrompt: "SYS" });
 		const got = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
-		assert.equal(got.systemPrompt(undefined), `SYS\n\n${registry.indexBlock}`);
+		assert.equal(got.systemPrompt(undefined), `SYS\n\n${QUEUE_GUIDANCE}\n\n${registry.indexBlock}`);
 		const toolNames = got.tools.map((t) => t.name);
 		assert.ok(toolNames.includes("load_skill"));
 		assert.equal(toolNames.indexOf("load_skill"), toolNames.length - 1); // 尾部
@@ -273,7 +293,7 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 		);
 		await sm.create("s1", {});
 		const cfg = captured as { systemPrompt: (tc: unknown) => string };
-		assert.equal(cfg.systemPrompt(undefined), registry.indexBlock);
+		assert.equal(cfg.systemPrompt(undefined), `${QUEUE_GUIDANCE}\n\n${registry.indexBlock}`);
 	});
 });
 

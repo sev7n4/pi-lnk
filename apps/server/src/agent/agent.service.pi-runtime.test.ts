@@ -165,6 +165,97 @@ describe('AgentService pi-runtime switch (B4)', () => {
     })
   })
 
+  describe('409 → steer 回退（原先 `catch(() => {})` 静默吞消息，2026-10-02 修）', () => {
+    /**
+     * 跑一轮 active 对话，可调 prompt / steer 的行为。
+     *
+     * 为什么这条值得单独立一个用例：409 表示「上一轮还在跑，这次发言没进去」，
+     * 此时 SSE 里**不会有任何东西**（没有 error 事件，因为压根没进 run），
+     * 所以老代码的空 catch 让「用户发了、世界没反应」彻底不可观测。
+     */
+    async function runTurnWith(
+      promptImpl: () => Promise<unknown>,
+      steerImpl: () => Promise<unknown>,
+      opts: { expectSteer?: boolean } = {},
+    ) {
+      process.env.PI_RUNTIME_MODE = 'active'
+      process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+      const prompt = vi.fn(promptImpl)
+      const steer = vi.fn(steerImpl)
+      const client = {
+        healthz: vi.fn().mockResolvedValue({ status: 'ok' }),
+        createSession: vi.fn().mockResolvedValue({
+          sessionId: 'x',
+          provider: 'agnes',
+          model: 'agnes-2.5-pro',
+          status: 'created',
+        }),
+        prompt,
+        steer,
+        listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+        streamEvents: vi.fn((_id: string, onEvent: (event: PiRuntimeEvent) => void) => {
+          onEvent(piEvent('agent_end', { status: 'completed' }))
+          return () => {}
+        }),
+      }
+      vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(client as never)
+      for await (const _e of service.streamConversation('s1', 'hello', 'u1')) {
+        /* drain */
+      }
+      // prompt 的 catch 挂在 `void` 上异步收尾：本轮流结束≠回退跑完，
+      // 因此这里显式等一次，避免断言跑在回退之前（flaky 而非失败）。
+      // 只等 prompt —— 「steer 该不该被调」由各用例自己断言（503 用例就该是 false）。
+      await vi.waitFor(() => expect(prompt).toHaveBeenCalled())
+      if (opts.expectSteer) await vi.waitFor(() => expect(steer).toHaveBeenCalled())
+      return { prompt, steer }
+    }
+
+    it('prompt 409 → 自动改走 steer 队列（消息不蒸发，且能被 vendor 下一 turn 边界接住）', async () => {
+      const busy = Object.assign(new Error('session busy'), { status: 409 })
+      const { steer } = await runTurnWith(
+        () => Promise.reject(busy),
+        () => Promise.resolve({ queued: true }),
+        { expectSteer: true },
+      )
+      expect(steer).toHaveBeenCalledTimes(1)
+      expect(steer.mock.calls[0]?.[1]).toBe('hello') // 原文透传，不多轮一次组装
+    })
+
+    it('prompt 409 且 steer 也失败 → 留 warn 痕迹（不留黑洞）', async () => {
+      const warn = vi.spyOn(
+        (service as unknown as { piLogger: { warn: (m: string) => void } }).piLogger,
+        'warn',
+      )
+      const busy = Object.assign(new Error('session busy'), { status: 409 })
+      const { steer } = await runTurnWith(
+        () => Promise.reject(busy),
+        () => Promise.reject(new Error('queue rejected')),
+        { expectSteer: true },
+      )
+      expect(steer).toHaveBeenCalledTimes(1)
+      // 用真实字符串断言而非 /regex/：stderr 里的 Nest 前缀会干扰正则匹配
+      const logged = warn.mock.calls.map((c) => String(c[0])).join('\n')
+      expect(logged).toContain('pi steer fallback failed')
+      expect(logged).toContain('queue rejected')
+      warn.mockRestore()
+    })
+
+    it('非 409 的 prompt 失败（503/上游）→ 不劫持成 steer，只留 warn', async () => {
+      const warn = vi.spyOn(
+        (service as unknown as { piLogger: { warn: (m: string) => void } }).piLogger,
+        'warn',
+      )
+      const { steer } = await runTurnWith(
+        () => Promise.reject(Object.assign(new Error('upstream 503'), { status: 503 })),
+        () => Promise.resolve({ queued: true }),
+      )
+      expect(steer).not.toHaveBeenCalled()
+      const logged = warn.mock.calls.map((c) => String(c[0])).join('\n')
+      expect(logged).toContain('pi prompt failed')
+      warn.mockRestore()
+    })
+  })
+
   describe('③ 侧栏识图进 pi（老 runtime parse_sidebar_media 等价物）', () => {
     const IMAGE_ATTACHMENT: SidebarAttachment[] = [
       { id: 'a1', mediaType: 'image', sourceKind: 'upload', label: '参考图 1', url: 'https://cdn/1.png' },
@@ -1061,5 +1152,63 @@ describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
     expect(answer).toHaveBeenCalledWith('s1', { callId: 'c1', answers: { choice: ['b'] } })
     const body = answer.mock.calls[0]?.[1] as Record<string, unknown>
     expect(body).not.toHaveProperty('answerId')
+  })
+})
+
+describe('AgentService.steerPiRun（2026-10-02 steering/followUp 双模式闭环）', () => {
+  function createService() {
+    return new AgentService(
+      {} as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+  }
+
+  function stubPi(svc: AgentService, url: string | null, client: unknown) {
+    const anySvc = svc as unknown as {
+      getPiRuntimeUrl: () => string | null
+      createPiRuntimeClient: (_url: string) => unknown
+    }
+    anySvc.getPiRuntimeUrl = () => url
+    anySvc.createPiRuntimeClient = () => client
+  }
+
+  it('steer：threadId 优先推导 sessionKey（与 cancelRun/answerPiPending 同一口径）', async () => {
+    const svc = createService()
+    const steer = vi.fn(async () => ({ queued: true }))
+    stubPi(svc, 'http://pi-runtime', { steer })
+
+    const result = await svc.steerPiRun({ sessionId: 's1', threadId: 'tid-1', text: '插话' })
+    expect(result).toEqual({ queued: true })
+    expect(steer).toHaveBeenCalledWith('tid-1', '插话')
+  })
+
+  it('steer：threadId 空白 / 未传时回落 sessionId（常驻会话必须打中）', async () => {
+    const svc = createService()
+    const steer = vi.fn(async () => ({ queued: true }))
+    stubPi(svc, 'http://pi-runtime', { steer })
+
+    await svc.steerPiRun({ sessionId: 's1', threadId: '   ', text: '插话' })
+    expect(steer).toHaveBeenCalledWith('s1', '插话')
+  })
+
+  it('steer：PI_RUNTIME_MODE=off（无 url）返回 queued:false 且不打网络', async () => {
+    const svc = createService()
+    const steer = vi.fn(async () => ({ queued: true }))
+    stubPi(svc, null, { steer })
+
+    await expect(svc.steerPiRun({ sessionId: 's1', text: '插话' })).resolves.toEqual({ queued: false })
+    expect(steer).not.toHaveBeenCalled()
+  })
+
+  it('steer：vendor 拒收（QueueRejectedError）向上冒泡——插话失败必须可观测，不可静默', async () => {
+    const svc = createService()
+    const steer = vi.fn(async () => {
+      throw new Error('queue rejected')
+    })
+    stubPi(svc, 'http://pi-runtime', { steer })
+
+    await expect(svc.steerPiRun({ sessionId: 's1', text: '插话' })).rejects.toThrow(/queue rejected/)
   })
 })

@@ -38,6 +38,8 @@ function testConfig(): RuntimeConfig {
 		sessionsMaxBytes: 10 ** 12,
 		sessionsMaxCount: 1000,
 		compaction: { enabled: true, reserveTokens: 1, keepRecentTokens: 1 },
+		steeringMode: "one-at-a-time",
+		followUpMode: "one-at-a-time",
 	};
 }
 

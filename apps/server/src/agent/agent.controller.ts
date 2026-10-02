@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Get,
   Inject,
+  Logger,
   Param,
   Post,
   Query,
@@ -189,6 +190,8 @@ class GetAgentMessagesQueryDto {
 
 @Controller('agent')
 export class AgentController {
+  private readonly logger = new Logger(AgentController.name)
+
   constructor(
     @Inject(AgentService) private readonly agentService: AgentService,
     @Inject(SessionsService) private readonly sessionsService: SessionsService,
@@ -274,6 +277,101 @@ export class AgentController {
       threadId: dto.threadId,
     })
     return { code: 0, message: 'ok', data }
+  }
+
+  /**
+   * 用户插话（steering 队列）：上一轮还在跑时的发言走这里（2026-10-02）。
+   *
+   * 刻意做成「轻量 JSON 端点」而非新的 SSE 流：插话要并入**当前这一轮**，开新流反而会
+   * 抢跑 / 撞 409。消息由 pi-runtime 落进 vendor 队列，当前 run 的下一个 turn 边界接住。
+   *
+   * 与 `runs/followup` 是同一份消息的两种「送达时机」，互斥二选一（见 `followUpPiRun` 注释
+   * 里 `boundary.ts:106` 的那条跳过规则），不是两条可叠加的通道。
+   */
+  @Post('runs/steer')
+  @UseGuards(AuthGuard)
+  async steerRun(
+    @Body() dto: { sessionId: string; threadId?: string; text: string },
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    if (!dto?.text?.trim()) {
+      return { code: 400, message: 'text is required', data: null }
+    }
+    // 与 runs/cancel 一致：先校验会话归属，避免往他人的会话队列里塞消息
+    await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    const data = await this.agentService.steerPiRun({
+      sessionId: dto.sessionId,
+      threadId: dto.threadId,
+      text: dto.text,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  /**
+   * 尾随指令（followUp 队列）：用户不想打断当前轮，要等它跑完再接住（2026-10-02）。
+   *
+   * 场景是「人走开」——入队即返回，不开流、不等 run 结束。接住发生在当前 run 的收尾边界，
+   * 之后由 pi-runtime 的 `drainAfterRun` 兜底派生排空（`vendor` 没有 terminal drain）。
+   */
+  @Post('runs/followup')
+  @UseGuards(AuthGuard)
+  async followUpRun(
+    @Body() dto: { sessionId: string; threadId?: string; text: string },
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    if (!dto?.text?.trim()) {
+      return { code: 400, message: 'text is required', data: null }
+    }
+    await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    const data = await this.agentService.followUpPiRun({
+      sessionId: dto.sessionId,
+      threadId: dto.threadId,
+      text: dto.text,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  /**
+   * 旁听众管（纯订阅、不触发 run）：给「点了 followUp 就走开」的人一个切回来还能看见的通道。
+   *
+   * 主 `chat/conversation` 在 `agent_end` 就收尾了，而 followUp 是在**收尾边界之后**才接住、
+   * 由 pi-runtime `drainAfterRun` 派生出的新一代 —— 那一段不在主流里。本端点只旁听、不驱动，
+   * 且**收到 `agent_end` 不自动收尾**（否则恰好把续跑那一代切掉）。
+   *
+   * ⚠️ SSE 在本链路永不 EOF（pi-runtime 靠 idle 判定存活），所以必须有空闲闸门：
+   * 30s 无任何事件就主动 end，避免每个静默会话都白占一条长连接。
+   */
+  @Get('runs/events')
+  @UseGuards(AuthGuard)
+  async runEvents(
+    @Query('sessionId') sessionId: string,
+    @Query('threadId') threadId: string | undefined,
+    @Req() req: Request & { user: { sub: string } },
+    @Res() res: Response,
+  ) {
+    await this.sessionsService.findOne(sessionId, req.user.sub)
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+
+    const idleTimer = setTimeout(() => {
+      res.end()
+    }, 30_000)
+    try {
+      for await (const event of this.agentService.runEventStream(threadId?.trim() || sessionId)) {
+        res.write(`data: ${JSON.stringify(event)}\n\n`)
+        idleTimer.refresh()
+      }
+    } catch (err) {
+      // 旁听流断开是常态（30s idle / 前端卸载），但也可能是 runtime 不可达——
+      // 只吞不算故障，靠 metrics 与下一轮主流自愈，不刷 debug 以下的噪音。
+      this.logger.warn(
+        `run events stream failed (session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+    } finally {
+      clearTimeout(idleTimer)
+      res.end()
+    }
   }
 
   /** B-2：向阻塞中的 ask_user/propose_generation 提交回答（透传 pi-runtime /answers，幂等）。 */

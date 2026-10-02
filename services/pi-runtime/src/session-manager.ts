@@ -23,6 +23,7 @@ import {
 	type AgentLane,
 	type Context,
 	type JsonlSessionMetadata,
+	type QueueMode,
 	type Session,
 	type ThinkingLevel,
 	BACKGROUND_CONTEXT,
@@ -132,6 +133,14 @@ type ToolLikeEvent = {
 	toolCallId?: string;
 };
 
+/**
+ * 入队标签（vendor inbox item kind，见 `agent-harness.ts:219` LaneQueuedItem）。
+ *
+ * 只关心 steer / followUp / nextRun：三者是「插话 / 尾随 / 下一段」三类用户意图，
+ * `write` 是 vendor 内部写入，不进用户队列口径。
+ */
+export type QueuedKind = "steer" | "followUp" | "nextRun";
+
 interface SessionEntry {
 	id: string;
 	harness: AgentHarness<LnkpiToolContext>;
@@ -141,6 +150,16 @@ interface SessionEntry {
 	buffer: NormalizedEvent[];
 	unsubscribes: Array<() => void>;
 	prompting: boolean;
+	/**
+	 * 当前滞留在 vendor lane inbox 里的队列标签（由 `queue_update` 事件维护全量快照）。
+	 *
+	 * 存在理由：vendor **不会**自动排空 idle 队列（`docs/work-packages/05-direct-durable-drive.md:69`
+	 * 原话 "There is no terminal drain"）。用户在 run 结束后插话，消息会一直睡到下一次
+	 * `accept()`；本字段就是「要不要替用户开一轮去接住它」的判据。
+	 */
+	queued: Set<QueuedKind>;
+	/** 排空 in-flight 守卫：防止 run 收尾 drain 与新 prompt 撞车时重复 accept。 */
+	draining?: boolean;
 	/** 当前 run 的取消函数（withCancel 产出）；run 结束后清空。用户点「停止」时调用。 */
 	cancelRun?: (reason?: unknown) => void;
 	/** 本轮 run 是否被用户主动取消（用于抑制取消引发的 error 事件，避免重连补发假警报）。 */
@@ -331,6 +350,37 @@ export function toSessionKey(threadKey: string): string {
 	if (!trimmed) throw new Error("toSessionKey requires a non-empty threadKey");
 	const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 8);
 	return `${trimmed.replace(SESSION_KEY_INVALID, "_")}-${digest}`;
+}
+
+/**
+ * 运行中插话的处理约定（2026-10-02）。
+ *
+ * 为什么必须写在 instruction 而不是靠队列保证：steer / followUp 落到 lane 的是**普通 user 消息**
+ * （`lane.ts:1456-1460` 两者在 `enqueue` 里构造的是同一个 `{role:"user",content:[{type:"text",text}]}`），
+ * 模型完全可以选择「一个字不说、直接调下一个工具」。那在 UI 上就是工具列表凭空跳变 ——
+ * 用户完全无法判断「它到底听懂我这句插话没有」。队列语义只保证**送达时机**，保证不了**接到之后先说什么**，
+ * 所以这一条只能落在 instruction 上。
+ *
+ * 刻意不改消息形态（不往 steer 文本前塞指令前缀）：那会污染用户自己写的原话，
+ * 事后回看会话历史时那串前缀就是噪音。放在 system prompt 里则每轮一致、不进用户消息。
+ */
+export const QUEUE_GUIDANCE = [
+	`当你在任务执行过程中收到一条追加的用户消息（可能是插话，也可能是等本轮跑完才送达的尾随指令）时，`,
+	`必须先在同一个回复里输出一句话：复述这条新要求，并说明它对你本轮已确定的执行计划的影响`,
+	`（是否需要调整接下来的工具调用；若与新要求无关或当前无法执行，也要明说）。`,
+	`只有把这一句说出去之后，才允许调用下一个工具或推进本轮的下一步动作。`,
+	`即：**先确认收到了、再动手**；不要默默忽略这类消息，也不要在未表态的情况下直接切到工具调用。`,
+].join("");
+
+/**
+ * 把插话处理约定挂到系统提示上。
+ *
+ * 即使会话没传 systemPrompt（维护态 / 冒烟用例）也要挂：这条约定的缺失不会让链路报错，
+ * 只会让「用户插了话、模型直接跳到工具」成为常态，且这种退化没有任何事件可观测。
+ */
+function withQueueGuidance(base?: string): string {
+	if (!QUEUE_GUIDANCE) return base ?? "";
+	return base ? `${base}\n\n${QUEUE_GUIDANCE}` : QUEUE_GUIDANCE;
 }
 
 /** 静态段在前、动态段尾部追加（spec §4 动态上下文判据：稳定前缀不被易变内容推到后面）。 */
@@ -616,9 +666,17 @@ export class SessionManager {
 			buffer: [],
 			unsubscribes: [],
 			prompting: false,
+			queued: new Set(),
 			nextSeq: 0,
 			activityStep: 0,
-			staticPrompt: this.composeSystemPrompt(opts.systemPrompt),
+			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
+			// 字段（app.ts:113），不传时若直接 `withQueueGuidance(undefined)`，它会返回**裸 guidance**
+			// 而不是「空 + guidance」—— 结果是默认系统提示被整段顶替掉（生产上表现为 agent 没有
+			// 任何基础人设，只剩一段插话约定）。只有 default 也是空时才退化为裸 guidance（见
+			// withQueueGuidance 注释）。
+			staticPrompt: this.composeSystemPrompt(
+				withQueueGuidance(opts.systemPrompt || this.systemPromptDefault),
+			),
 			basePrompt: opts.systemPrompt ?? "",
 			identity,
 			userId: opts.userId,
@@ -667,6 +725,10 @@ export class SessionManager {
 				}),
 				systemPrompt: () => composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []),
 				thinkingLevel,
+				// steering / followUp 队列模式（2026-10-02）：此前这两个值只在 configmap 里
+				// 写过、没人读（死配置），harness 实际吃的是 vendor 默认 "all"。
+				steeringMode: this.config.steeringMode,
+				followUpMode: this.config.followUpMode,
 				compaction: effectiveCompactionSettings(
 					this.config.compaction,
 					this.config.compactionContextWindow ?? model.contextWindow,
@@ -711,6 +773,22 @@ export class SessionManager {
 		// 审计 P0-③：usage 事件只进 metrics，**不进** EVENT_MAP / SSE —— Nest 侧
 		// PiRuntimeEvent 是封闭联合，未知类型有被静默丢弃或误解析的风险；tokens/cost
 		// 的 UI 呈现走 Nest 既有的 message_end.usage 路径，不靠这条。
+		// 队列积压追踪（2026-10-02 steering/followUp 接入）：`queue_update` 的 `queues` 是 vendor
+		// 的**全量** inbox 快照（`enqueue` 用含新条目的 `state.inbox` 求 readLaneQueues，lane.ts:1499），
+		// 故直接整体重建 entry.queued，不增量增删。
+		// 刻意**不**派发进 SSE：队列是内部状态，暴露给前端只会让客户端再去画一层「待发队列」。
+		entry.unsubscribes.push(
+			harness.events.on("queue_update" as never, (evt: { queues?: Array<{ kind?: string }> }) => {
+				const kinds = new Set<QueuedKind>();
+				for (const item of evt.queues ?? []) {
+					if (item.kind === "steer" || item.kind === "followUp" || item.kind === "nextRun") {
+						kinds.add(item.kind);
+					}
+				}
+				entry.queued = kinds;
+			}),
+		);
+
 		if (this.metrics) {
 			const metrics = this.metrics;
 			entry.unsubscribes.push(
@@ -988,6 +1066,15 @@ export class SessionManager {
 					// fire-and-forget 的固有代价曾经咬过一次（漏 import 的 ReferenceError 被静默吞掉，
 					// 表现为「功能没生效」），故这里必须留痕，哪怕只是 console.warn。
 					if (result.ok) {
+						// 排空与压缩互不依赖：压缩动历史摘要，排空动 lane inbox；
+						// 若压缩已经接管（entry.compacting），drainQueued 会自己让位。
+						void this.drainAfterRun(entry, lane).catch((err: unknown) => {
+							console.warn(
+								`[pi-runtime] drain-after-run hook failed: ${
+									err instanceof Error ? err.message : String(err)
+								}`,
+							);
+						});
 						void this.maybeCompact(entry, lane).catch((err: unknown) => {
 							console.warn(
 								`[pi-runtime] post-run compaction hook failed: ${
@@ -1023,6 +1110,119 @@ export class SessionManager {
 			throw err;
 		}
 		return { accepted: true };
+	}
+
+	/**
+	 * 用户插话（steering 队列）——「run 进行中发言」的唯一正道。
+	 *
+	 * ⚠️ 消费点（durable lane 的真实位置，**不是** `agent-loop.ts:168/195/257` 那三处，
+	 * 那是 legacy `Agent` 的消费点，durable `AgentHarness` 走 `Lane` 运行时、根本不进 agent-loop）：
+	 *   1. run 内边界 `runtime/drive/boundary.ts:85-89` —— 每个 checkpoint / 收尾边界把 steer
+	 *      选中并让**同一次 run** 再生成一代。这就是「run 进行中插话立刻接上」的落点；
+	 *   2. idle 接受 `lane.ts:588-592`（`selectAcceptedInbox`）—— run 不在跑时入的队，
+	 *      由本文件的 `drainQueued` 兜底开一轮把它接住。
+	 *
+	 * 刻意**不**用 followUp 做这条路径：followUp 只在「本轮已无任何 trigger 条目」时才被拉
+	 * （boundary.ts:106），且语义是「run 收尾时追加」；工具阻塞（ask_user / propose_generation）
+	 * 期间连 checkpoint 边界都不会有，followUp 必睡，steer 才是唯一能等到边界的标签。
+	 *
+	 * @returns `queued: true`（入队成功）。消息经 `pi.pending.entry` 落盘，进程重启不丢。
+	 */
+	async steer(
+		threadKey: string,
+		text: string,
+		laneName = MAIN_LANE,
+		opts?: { turnContext?: TurnContext },
+	): Promise<{ queued: true }> {
+		const entry = this.require(threadKey);
+		const trimmed = text.trim();
+		if (!trimmed) throw new InvalidInputError("steer requires a non-empty text");
+		const lane = await entry.harness.lane(laneName, this.context);
+		const res = await lane.steer(trimmed, undefined, this.context);
+		if (!res.ok) throw new QueueRejectedError(entry.id, `steer: ${describeQueueError(res.error)}`);
+		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
+		entry.lastActivityAt = Date.now();
+		// idle 时入队 vendor 不会自己跑（没有 terminal drain），这里当场兜底开一轮。
+		// run 在跑时不排空：该轮自己的 checkpoint/finish 边界会消费，抢 accept 只会撞 busy。
+		// 入队成功本身就是「有积压」的证据，故不必再看 queue_update 快照。
+		if (!entry.prompting) void this.drainQueued(entry, lane);
+		return { queued: true };
+	}
+
+	/**
+	 * 尾随指令（followUp 队列）——「run 收尾时再补一句」的正道。
+	 *
+	 * 与 steer 的区别不是「谁先谁后」，而是**消费时机**：followUp 只在收尾边界
+	 * （`finishRunBoundary`，boundary.ts:187 的 `followUpWhenNoTrigger` 硬编码 true）且本轮
+	 * 无 trigger 条目时被选中，作用是把**同一次 run** 续跑一代（同 operationId，不是新 run）。
+	 * 所以 run 进行中入 followUp，效果要等到那轮快结束时才出现；想立刻接话请用 `steer`。
+	 *
+	 * @returns `queued: true`
+	 */
+	async followUp(
+		threadKey: string,
+		text: string,
+		laneName = MAIN_LANE,
+		opts?: { turnContext?: TurnContext },
+	): Promise<{ queued: true }> {
+		const entry = this.require(threadKey);
+		const trimmed = text.trim();
+		if (!trimmed) throw new InvalidInputError("followUp requires a non-empty text");
+		const lane = await entry.harness.lane(laneName, this.context);
+		const res = await lane.followUp(trimmed, undefined, this.context);
+		if (!res.ok) throw new QueueRejectedError(entry.id, `followUp: ${describeQueueError(res.error)}`);
+		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
+		entry.lastActivityAt = Date.now();
+		if (!entry.prompting) void this.drainQueued(entry, lane);
+		return { queued: true };
+	}
+
+	/**
+	 * idle 排空兜底（vendor 明确没有 terminal drain）。
+	 *
+	 * `docs/work-packages/05-direct-durable-drive.md:69` 原话 "There is no terminal drain"：
+	 * run 结束后入队的 steer/followUp 会一直睡到下一次 `accept()`。用户视角就是「我明明发了，
+	 * 但它不理我」—— 这正是本项目此前只有前端单槽队列（刷新即丢）且服务端一律 409 的老毛病。
+	 *
+	 * 这里替用户在 lane idle 时开一轮空 prompt：accept 会走 `selectAcceptedInbox` 把积压
+	 * 全部取走（空 prompt + 有积压是合法组合，`lane.ts:614-626`）。
+	 *
+	 * 失败不重试：积压留在 vendor inbox 里，下一条 prompt 到来时自然会再被消费一次。
+	 */
+	private async drainQueued(entry: SessionEntry, lane: AgentLane): Promise<void> {
+		if (entry.draining) return;
+		// 压缩在途时 lane 判 busy（Critical #1 同构）：排空必失败，保留积压等下一次时机，
+		// 不在此处刷 warn——那是正常状态而非故障，刷了只会淹没真错误。
+		if (entry.compacting) return;
+		entry.draining = true;
+		try {
+			const res = await lane.prompt("", undefined, this.context);
+			if (res.ok) {
+				entry.queued.clear();
+				return;
+			}
+			// 仍忙（压缩在途 / 别的 operation）：保留积压，只留痕。
+			const msg = describeQueueError(res.error);
+			if (/empty|must contain/i.test(msg)) {
+				// 我们的快照领先于 vendor 实际 inbox（空 prompt 无内容可排）→ 视为已排空。
+				entry.queued.clear();
+				return;
+			}
+			console.warn(`[pi-runtime] drain queued messages failed for ${entry.id}: ${msg}`);
+		} finally {
+			entry.draining = false;
+		}
+	}
+
+	/**
+	 * run 正常结束后的排空检查：用户在跑这段期间插了话，就该接着跑，而不是等用户再发一次。
+	 *
+	 * 此时 `entry.prompting` 仍为 true（`.finally` 还没跑），所以**不能**在这里把 prompting
+	 * 当守卫——那条守卫只配挂在「消息到达的那一刻」（见 `steer`/`followUp` 调用点）。
+	 * 撞 busy 的代价仅是本轮没排上：积压留在 vendor inbox，下一次机会接着试。
+	 */
+	private async drainAfterRun(entry: SessionEntry, lane: AgentLane): Promise<void> {
+		await this.drainQueued(entry, lane);
 	}
 
 	/**
@@ -1265,6 +1465,36 @@ export class NotFoundError extends Error {
 	constructor(id: string) {
 		super(`session not found: ${id}`);
 	}
+}
+
+/** 队列入参非法（空文本等）：路由层映射 400，不进 503 混淆「下游不可用」。 */
+export class InvalidInputError extends Error {
+	constructor(message: string) {
+		super(message);
+	}
+}
+
+/** vendor 拒绝入队（Closed / InvalidMessage 等）：路由层按上游错误映射 503。 */
+export class QueueRejectedError extends Error {
+	constructor(id: string, detail: string) {
+		super(`queue rejected (${detail}): ${id}`);
+	}
+}
+
+/**
+ * vendor `Result` 的 err 侧宽松取值。
+ *
+ * `lane.steer()` / `lane.followUp()` 返回的是 Result 而非抛异常，错误既可能是
+ * `{_tag:"err", error: Error}`，也可能是裸字符串文案。这里逐个兜住，避免只处理一种形态
+ * 导致另 50% 的情况退化成 "[object Object]" 的可观测性黑洞（历史教训：静默吞异常会让
+ * 「插话没生效」这种事永远查不到）。
+ */
+function describeQueueError(err: unknown): string {
+	const shaped = err as { message?: string; error?: unknown } | undefined;
+	const inner = shaped?.error;
+	if (inner instanceof Error) return inner.message;
+	if (typeof inner === "string" && inner) return inner;
+	return shaped?.message ?? String(err);
 }
 
 /** 同键并发 prompt：会话常驻后同一 harness 上两个 run 会交错，一律拒绝（路由层映射 409）。 */

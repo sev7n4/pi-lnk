@@ -17,6 +17,8 @@ import {
 	SessionManager,
 	toSessionKey,
 	type TurnContext,
+	InvalidInputError,
+	QueueRejectedError,
 } from "./session-manager.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 
@@ -190,6 +192,64 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			const reason = /429|rate/i.test(msg) ? "upstream_rate_limited" : "upstream_error";
 			metrics.observePromptError(reason);
 			return reply.code(503).send({ error: msg });
+		}
+	});
+
+	/**
+	 * 用户插话（steering 队列）——「run 进行中发言」的正道（2026-10-02 接入）。
+	 *
+	 * 此前这条路径是坏的：Nest 的 prompt 撞 409 后 `void ... .catch(() => {})` 静默吞掉，
+	 * 前端只有浏览器内一个「最多 1 条」的单槽队列，刷新即丢。现在服务端有了真正的队列：
+	 * 消息经 `pi.pending.entry` 落盘，下一个 turn 边界（`runtime/drive/boundary.ts:85-89`）选中并
+	 * 让同一次 run 接着生成，事件流不断、UI 不断。
+	 *
+	 * 返回 202 而非 409/200-new-run：语义是「已入队，稍后会并入本轮」，不是新开一轮。
+	 */
+	app.post<{
+		Params: { sessionId: string };
+		Body: { text: string; lane?: string; turnContext?: TurnContext };
+	}>("/sessions/:sessionId/steer", async (request, reply) => {
+		const { sessionId } = request.params;
+		const text = typeof request.body?.text === "string" ? request.body.text : "";
+		if (!text.trim()) return reply.code(400).send({ error: "text is required (non-empty)" });
+		try {
+			const result = await manager.steer(sessionId, text, request.body?.lane, {
+				turnContext: request.body?.turnContext,
+			});
+			metrics.observeQueueOp("enqueue", "steer", "ok");
+			return reply.code(202).send(result);
+		} catch (err) {
+			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			if (err instanceof InvalidInputError) return reply.code(400).send({ error: err.message });
+			// 拒收要计数：队列功能「看起来接住了」但实际没落盘是最难查的一类静默失败。
+			metrics.observeQueueOp("enqueue", "steer", "rejected");
+			return reply.code(503).send({ error: (err as Error).message });
+		}
+	});
+
+	/**
+	 * 尾随指令（followUp 队列）。语义 =「run 收尾时再接一句」：只在收尾边界
+	 * （`finishRunBoundary`，boundary.ts:187）且本轮无 trigger 时被选中，把**同一次 run**
+	 * 续跑一代。想立刻插话请用 `/steer`（followUp 在工具阻塞期连边界都没有，必睡）。
+	 */
+	app.post<{
+		Params: { sessionId: string };
+		Body: { text: string; lane?: string; turnContext?: TurnContext };
+	}>("/sessions/:sessionId/followup", async (request, reply) => {
+		const { sessionId } = request.params;
+		const text = typeof request.body?.text === "string" ? request.body.text : "";
+		if (!text.trim()) return reply.code(400).send({ error: "text is required (non-empty)" });
+		try {
+			const result = await manager.followUp(sessionId, text, request.body?.lane, {
+				turnContext: request.body?.turnContext,
+			});
+			metrics.observeQueueOp("enqueue", "followUp", "ok");
+			return reply.code(202).send(result);
+		} catch (err) {
+			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			if (err instanceof InvalidInputError) return reply.code(400).send({ error: err.message });
+			metrics.observeQueueOp("enqueue", "followUp", "rejected");
+			return reply.code(503).send({ error: (err as Error).message });
 		}
 	});
 

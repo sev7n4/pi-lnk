@@ -5,7 +5,28 @@
  * session-manager / model-assembly / index 三处），新增参数无处可放。
  */
 import { join } from "node:path";
-import type { CompactionSettings } from "@earendil-works/pi-agent-core";
+import type { CompactionSettings, QueueMode } from "@earendil-works/pi-agent-core";
+
+/**
+ * 队列模式解析（2026-10-02 steering/followUp 接入口）。
+ *
+ * ⚠️ 历史化石：charts/pi-lnk-runtime/templates/configmap.yaml 曾写
+ * `"steeringMode":"one-at-a-time"` / `"followUpMode":"one-at-a-time"`，但 `RuntimeConfig`
+ * 无这两个字段、建 harness 时也不传、deployment 还没挂载这个 configmap —— 是一处**死配置**，
+ * 实际生效值统统是 vendor 的 durable 默认 `"all"`（harness.ts:66-67），与配置字面**方向相反**。
+ * 本次把它收进 env 口径（与其余 PI_RUNTIME_* 同构，helm `--set-string` 可管），
+ * configmap 里那两行随之删除，不再留下"写了没人读"的化石。
+ */
+const QUEUE_MODES = new Set(["all", "one-at-a-time"]);
+
+export function parseQueueMode(raw: string | undefined, fallback: QueueMode): QueueMode {
+	if (raw === undefined) return fallback;
+	const v = raw.trim().toLowerCase();
+	return (QUEUE_MODES.has(v) ? v : fallback) as QueueMode;
+}
+
+/** 默认队列模式：`one-at-a-time`（每轮至多注入一条 steer/followUp，避免用户连发时灌爆上下文）。 */
+export const DEFAULT_QUEUE_MODE: QueueMode = "one-at-a-time";
 
 export interface CompactionConfig {
 	enabled: boolean;
@@ -33,6 +54,16 @@ export interface RuntimeConfig {
 	 */
 	toolTiering?: boolean;
 	/**
+	 * steering 队列消费模式（vendor `AgentHarnessOptions.steeringMode`）。
+	 *
+	 * "all" = 每个 turn 边界把队列里**全部** steer 一次性注入；"one-at-a-time" = 每轮只注入
+	 * 第一条、其余留到下一轮（vendor 称 "silent deferral of late steer"，boundary.ts:86）。
+	 * 本项目默认 one-at-a-time：用户连发多条时逐轮消化，而不是一轮灌满整条上下文。
+	 */
+	steeringMode: QueueMode;
+	/** followUp 队列消费模式（vendor `AgentHarnessOptions.followUpMode`）。缺省同 steeringMode 口径。 */
+	followUpMode: QueueMode;
+	/**
 	 * 压缩判定用的上下文窗口覆盖值；缺省表示沿用 model.contextWindow 的声明值。
 	 *
 	 * 存在理由：agnes provider 把 contextWindow 声明为 1_000_000，使默认阈值
@@ -51,6 +82,8 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
 	// 与 vendor DEFAULT_COMPACTION_SETTINGS 同值：显式化以便配置面可见可调。
 	// targetRatio 0.7：触发点 = 有效窗口 70%（agnes 与 BYOK 两渠道口径拉齐，审计 P0-①）。
 	compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000, targetRatio: 0.7 },
+	steeringMode: DEFAULT_QUEUE_MODE,
+	followUpMode: DEFAULT_QUEUE_MODE,
 };
 
 /** 正整数解析：非法（非数字 / 0 / 负数 / 空）一律回退，小数截断。
@@ -108,8 +141,11 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		})(),
 		// 未配置 / 非法值一律 undefined（= 沿用 model 声明值）。刻意不给 fallback 一个真实数，
 		// 否则「没配」与「配了非法值」不可区分。
-		compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
-		toolTiering: parseBool(env.PI_RUNTIME_TOOL_TIERING, true),
+	compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
+	toolTiering: parseBool(env.PI_RUNTIME_TOOL_TIERING, true),
+		// steering/followUp 队列模式（2026-10-02 由 configmap 化石收编为 env 口径）
+		steeringMode: parseQueueMode(env.PI_RUNTIME_STEERING_MODE, d.steeringMode),
+		followUpMode: parseQueueMode(env.PI_RUNTIME_FOLLOW_UP_MODE, d.followUpMode),
 	};
 }
 

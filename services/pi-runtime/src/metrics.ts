@@ -50,6 +50,13 @@ export class Metrics {
 	/** key: 未触发压缩的理由（disabled|no_window|no_usage|below_threshold|nothing_to_compact|lane_busy|closed|unknown）。 */
 	private compactionSkips = new Map<string, number>();
 	private promptRejections = new Map<string, number>(); // key: reason (busy)
+	/**
+	 * steering / followUp 队列操作计数（2026-10-02 接入），key 形如 `enqueue|steer|ok`。
+	 *
+	 * 刻意与 promptRejections 分开：用户插话入队**本身就是这条链路的目标行为**，
+	 * 把它计进「被拒的 prompt」会把队列功能的成功率稀释成噪声，真出问题时反而看不见。
+	 */
+	private queueOps = new Map<string, number>();
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	private usageTokens = new Map<string, number>(); // key: kind (input|output|cache_read|cache_write)
@@ -122,6 +129,23 @@ export class Metrics {
 	/** 被拒的 prompt。busy_compacting = 压缩在途（短期可重试），与真并发 busy 分开观测。 */
 	observePromptRejection(reason: "busy" | "busy_compacting"): void {
 		this.promptRejections.set(reason, (this.promptRejections.get(reason) ?? 0) + 1);
+	}
+
+	/**
+	 * 队列操作观测（steering / followUp）。
+	 *
+	 * - `enqueue` + ok       = 用户插话进了 vendor 队列（durable 落盘），链路成立
+	 * - `enqueue` + rejected = vendor 拒收（Closed / 空消息等），需要回溯为什么队列没接住
+	 * - `drain`   + ok       = idle 排空成功接住积压（此前是「发了不理你」的静默丢消息）
+	 * - `drain`   + busy     = 撞上其它 operation（压缩在途），积压保留、等下一次时机
+	 */
+	observeQueueOp(
+		op: "enqueue" | "drain",
+		kind: "steer" | "followUp",
+		outcome: "ok" | "rejected" | "busy" | "empty",
+	): void {
+		const key = `${op}|${kind}|${outcome}`;
+		this.queueOps.set(key, (this.queueOps.get(key) ?? 0) + 1);
 	}
 
 	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
@@ -221,6 +245,13 @@ export class Metrics {
 		lines.push("# TYPE pi_runtime_prompt_rejections_total counter");
 		for (const [reason, count] of [...this.promptRejections.entries()].sort()) {
 			lines.push(`pi_runtime_prompt_rejections_total{reason="${esc(reason)}"} ${count}`);
+		}
+
+		lines.push("# HELP pi_runtime_queue_ops_total Queue operations (enqueue/drain) by kind and result.");
+		lines.push("# TYPE pi_runtime_queue_ops_total counter");
+		for (const [key, count] of [...this.queueOps.entries()].sort()) {
+			const [op, kind, outcome] = key.split("|");
+			lines.push(`pi_runtime_queue_ops_total{op="${esc(op)}",kind="${esc(kind)}",outcome="${esc(outcome)}"} ${count}`);
 		}
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
