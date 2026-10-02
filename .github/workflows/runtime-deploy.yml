@@ -181,6 +181,12 @@ jobs:
             || { echo "ERROR: ASK_USER_BLOCKING 非期望精确值"; exit 1; }
           echo "$ENV_OUT" | grep -qx "ASK_USER_TIMEOUT_MS=300000" \
             || { echo "ERROR: ASK_USER_TIMEOUT_MS 非期望精确值"; exit 1; }
+          # 队列模式（2026-10-02 新增）：--reuse-values 沿用历史 env，本仓历史里没有这两个键，
+          # 一旦漏写就静默回落到 vendor 默认 all —— 与「配置写 A 实际跑 B」的旧病同形，必须精确比对。
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_STEERING_MODE=one-at-a-time" \
+            || { echo "ERROR: PI_RUNTIME_STEERING_MODE 非期望精确值"; exit 1; }
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_FOLLOW_UP_MODE=one-at-a-time" \
+            || { echo "ERROR: PI_RUNTIME_FOLLOW_UP_MODE 非期望精确值"; exit 1; }
           HEALTH=$(ssh deploy-cvm "curl -s http://127.0.0.1:30100/healthz")
           echo "$HEALTH" | grep -q "\"version\":\"${TAG}\"" \
             || { echo "ERROR: healthz version != ${TAG}: ${HEALTH}"; exit 1; }
