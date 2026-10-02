@@ -1022,7 +1022,7 @@ export class SessionManager {
 	resolveSystemPromptForTest(threadKey: string): string {
 		const entry = this.require(threadKey);
 		const sp = composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
-		this.metrics?.observeSystemPromptBytes(sp.length);
+		this.metrics?.observeSystemPromptBytes(Buffer.byteLength(sp, "utf8")); // M2：utf8 字节（名字是 bytes，UTF-16 length 会低估 CJK 2~3x）
 		return sp;
 	}
 
@@ -1043,7 +1043,7 @@ export class SessionManager {
 	 * harness 可能在会话注册进 this.sessions 之前就调用此闭包（create/fork 时序），require 会炸。 */
 	private composeEntryAndObserve(entry: SessionEntry): string {
 		const sp = composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
-		this.metrics?.observeSystemPromptBytes(sp.length);
+		this.metrics?.observeSystemPromptBytes(Buffer.byteLength(sp, "utf8")); // M2：utf8 字节（名字是 bytes，UTF-16 length 会低估 CJK 2~3x）
 		return sp;
 	}
 
