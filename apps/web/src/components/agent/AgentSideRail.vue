@@ -1396,7 +1396,7 @@ async function bootstrapThread() {
   persistActiveThreadId(props.sessionId, agentThreadId.value)
   await loadHistory()
   void refreshThreadCheckpoint()
-  scrollToBottom()
+  scrollToBottom(true)
 }
 
 onMounted(() => {
@@ -1431,7 +1431,7 @@ function openPanel() {
   if (isMobileLayout.value) floating.value = false
   open.value = true
   emit('expandedChange', true)
-  scrollToBottom()
+  scrollToBottom(true)
 }
 
 function closePanel() {
@@ -1533,6 +1533,9 @@ function newAgentSession() {
   agentThreadId.value = createAgentThreadId(props.sessionId)
   persistActiveThreadId(props.sessionId, agentThreadId.value)
   ElMessage.info('已新建对话')
+  // 新会话：列表清空，跟随状态一并复位（否则会卡在「回看历史」态）
+  followLatest.value = true
+  hasNewBelow.value = false
 }
 
 function syncCancelledFromThreadState(
@@ -1683,7 +1686,7 @@ async function loadHistory() {
   } catch {
     ElMessage.warning('对话历史加载失败，请检查网络后刷新')
   }
-  scrollToBottom()
+  scrollToBottom(true)
 }
 
 function toggleVoice() {
@@ -1818,7 +1821,7 @@ async function onComposerSubmit() {
     input.value = ''
     queued.value = { text, intent: null, state: 'pending', hint: '' }
     await nextTick()
-    scrollToBottom()
+    scrollToBottom(true)
     return
   }
   await send()
@@ -1974,7 +1977,7 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
     )
     agent.finishStreaming()
     await nextTick()
-    scrollToBottom()
+    scrollToBottom(true)
     return
   }
   agent.addUserMessage(message, userMessageExtras)
@@ -1982,7 +1985,7 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
   agent.isStreaming = true
   agent.startAssistantMessage()
   await nextTick()
-  scrollToBottom()
+  scrollToBottom(true)
 
   // Generate idempotency key for this request
   const idempotencyKey = buildIdempotencyKey(agentThreadId.value)
@@ -2258,7 +2261,7 @@ async function reconnectStream() {
     recoveredPhaseHint.value = '重连失败，请稍后再试'
   } finally {
     reconnecting.value = false
-    scrollToBottom()
+    scrollToBottom(true)
   }
 }
 
@@ -2689,12 +2692,48 @@ function handleEvent(event: { type: string; data: unknown }) {
   }
 }
 
-function scrollToBottom() {
+/** 距底部多少像素内仍算「贴底」：超过即认定用户在回看历史，停止自动跟随。 */
+const NEAR_BOTTOM_PX = 48
+/** 是否跟随最新。false = 用户正在回看历史，禁止任何自动拉回底部。 */
+const followLatest = ref(true)
+/** 脱离底部期间，下方有新内容进来 */
+const hasNewBelow = ref(false)
+
+function isNearBottom(el: HTMLElement) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+}
+
+/** 用户滚动：贴底 → 恢复跟随；离开底部 → 暂停跟随（此后不再打断阅读）。 */
+function onChatScroll() {
+  const el = chatContainer.value
+  if (!el) return
+  const near = isNearBottom(el)
+  followLatest.value = near
+  if (near) hasNewBelow.value = false
+}
+
+/**
+ * 滚到底部。
+ * force=true 用于「用户明确想看最新」的场景（发消息 / 打开面板 / 载入历史 / 重连），
+ * 会连跟随状态一起恢复；默认 false = 受跟随状态约束，用户回看历史时静默跳过。
+ */
+function scrollToBottom(force = false) {
+  if (!force && !followLatest.value) {
+    hasNewBelow.value = true
+    return
+  }
+  followLatest.value = true
+  hasNewBelow.value = false
   nextTick(() => {
     if (chatContainer.value) {
       chatContainer.value.scrollTop = chatContainer.value.scrollHeight
     }
   })
+}
+
+/** 点「回到底部」：恢复跟随并跳到最新。 */
+function jumpToLatest() {
+  scrollToBottom(true)
 }
 
 function reconcileFromNodes(rawNodes: CanvasNodeLike[]) {
@@ -2920,8 +2959,13 @@ defineExpose({
 
           <!-- 不可达 / 重连提示已迁至 dockNotice（见 syncRuntimeNotice）；不再在面板内渲染横幅 -->
 
-          <!-- 消息列表 -->
-          <div ref="chatContainer" class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3">
+          <!-- 消息列表（外层 wrap 只用于定位「回到底部」浮标，不改变原滚动容器结构） -->
+          <div class="agent-chat-wrap relative flex min-h-0 flex-1 flex-col">
+            <div
+              ref="chatContainer"
+              class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3"
+              @scroll.passive="onChatScroll"
+            >
             <div v-if="showProductVisualEmptyState" class="agent-empty agent-pv-empty px-3 py-10 text-center">
               <p class="text-sm">描述你的产品视觉需求</p>
               <p class="mt-1 text-[11px] opacity-70">上传产品图后说明用途；风格在方案卡片中选择</p>
@@ -3174,6 +3218,22 @@ defineExpose({
                 @export-pack="onExportPack($event)"
               />
             </div>
+          </div>
+            <!-- 回看历史时的回到底部入口：仅在未跟随底部时出现 -->
+            <button
+              v-if="!followLatest"
+              type="button"
+              class="agent-jump-latest"
+              data-testid="jump-to-latest"
+              :title="hasNewBelow ? '下方有新消息，回到底部' : '回到底部'"
+              @click="jumpToLatest"
+            >
+              <span v-if="hasNewBelow" class="agent-jump-dot" aria-hidden="true"></span>
+              <span>{{ hasNewBelow ? '有新消息' : '回到底部' }}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m0 0-5-5m5 5 5-5" />
+              </svg>
+            </button>
           </div>
 
           <!-- 底部输入 dock：与节点 dock-studio 同款毛玻璃 -->
@@ -4005,6 +4065,56 @@ defineExpose({
   gap: 12px;
   flex: 1 1 45%;
   min-height: min(360px, 52%);
+}
+
+/* ---- 回到底部浮标（回看历史时出现） ---- */
+.agent-jump-latest {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--neo-hi-text);
+  background: color-mix(in srgb, var(--neo-hi-bg) 88%, transparent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  transition: background 0.15s ease, transform 0.15s ease;
+  animation: agent-jump-in 0.16s ease-out;
+}
+
+.agent-jump-latest:hover {
+  background: var(--neo-hi-bg);
+  transform: translateY(-1px);
+}
+
+.agent-jump-latest svg {
+  width: 12px;
+  height: 12px;
+}
+
+.agent-jump-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #f87171;
+}
+
+@keyframes agent-jump-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .agent-input-area--scrollable {
