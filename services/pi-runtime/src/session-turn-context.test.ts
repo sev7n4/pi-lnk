@@ -411,3 +411,37 @@ describe("dynamicBlocks 预算（T3 接线）", () => {
 		}
 	});
 });
+
+describe("systemPromptBytes gauge（T3 观测）", () => {
+	it("真实生成路径每次组装后刷新 system_prompt_bytes", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-runtime-spbytes-"));
+		try {
+			const metrics = new Metrics();
+			const factory = (async (cfg: { systemPrompt: (tc?: unknown) => string }) => {
+				return {
+					harness: {
+						events: { on: () => () => {} },
+						lane: async () => ({ prompt: async () => ({ ok: true }) }),
+						close: async () => {},
+					},
+				};
+			}) as never;
+			const sm = new SessionManager(
+				[], "STATIC", undefined, factory, undefined, undefined,
+				{ ...DEFAULT_RUNTIME_CONFIG, dataRoot: root, dynamicBudget: true },
+				undefined, metrics,
+			);
+			await sm.create("s1:t1", {});
+			sm.setTurnContext("s1:t1", { dynamicBlocks: ["当前画布摘要：{}"] });
+			// captured().systemPrompt 即 :711 的真实生成闭包
+			const capturedObj = (sm as unknown as { require: (k: string) => { harness: { systemPrompt: () => string } } });
+			void capturedObj; // 闭包经 harness cfg 捕获，直接断言 gauge
+			assert.match(metrics.render(0, "t"), /pi_runtime_system_prompt_bytes 0/); // 未生成前为 0
+			sm.resolveSystemPromptForTest("s1:t1");
+			const m = /pi_runtime_system_prompt_bytes (\d+)/.exec(metrics.render(0, "t"));
+			assert.ok(m && Number(m[1]) > 0, `bytes 应 >0，实际: ${m?.[1]}`);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
