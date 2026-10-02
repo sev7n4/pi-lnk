@@ -63,6 +63,8 @@ export class Metrics {
 	private usageCost = new Map<string, number>(); // key: kind 同上
 	private toolSearchCalls = new Map<string, number>(); // key: outcome (hit|miss|empty)
 	private toolSearchActivated = 0; // 命中激活的工具个数累计（配合 calls 可算平均激活数）
+	private transformContextRuns = new Map<string, number>(); // key: goal (on|off)——是否注入了目标复述
+	private transformAnnotated = 0; // 信任标注覆盖的 toolResult 条数累计
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
 
@@ -181,6 +183,13 @@ export class Metrics {
 		if (activated > 0) this.toolSearchActivated += activated;
 	}
 
+	/** transform_context 观测（审计 #8）：goalReinjected=本轮是否注入目标复述；annotated=信任标注条数。 */
+	observeTransformContext(goalReinjected: boolean, annotated: number): void {
+		const key = goalReinjected ? "on" : "off";
+		this.transformContextRuns.set(key, (this.transformContextRuns.get(key) ?? 0) + 1);
+		if (annotated > 0) this.transformAnnotated += annotated;
+	}
+
 	/** 压缩摘要必需段缺失观测（审计 #6）：section 取 REQUIRED_SECTIONS 原文；纯告警不阻断。 */
 	observeCompactionSummaryGap(sections: string[]): void {
 		for (const s of sections) {
@@ -283,6 +292,16 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_tool_search_activated_total Deferred tools activated via tool_search (cumulative count).");
 	lines.push("# TYPE pi_runtime_tool_search_activated_total counter");
 	lines.push(`pi_runtime_tool_search_activated_total ${this.toolSearchActivated}`);
+
+	lines.push("# HELP pi_runtime_transform_context_runs_total transform_context hook runs, by whether the goal was restated.");
+	lines.push("# TYPE pi_runtime_transform_context_runs_total counter");
+	for (const [goal, count] of [...this.transformContextRuns.entries()].sort()) {
+		lines.push(`pi_runtime_transform_context_runs_total{goal="${esc(goal)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_transform_context_annotated_total Tool results wrapped with a trust-boundary source header (cumulative count).");
+	lines.push("# TYPE pi_runtime_transform_context_annotated_total counter");
+	lines.push(`pi_runtime_transform_context_annotated_total ${this.transformAnnotated}`);
 
 		lines.push("# HELP pi_runtime_http_requests_total HTTP requests processed.");
 		lines.push("# TYPE pi_runtime_http_requests_total counter");

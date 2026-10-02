@@ -13,6 +13,7 @@ import { SkillRegistry, approxTokens } from "./skills/registry.js";
 import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 import { PendingToolRegistry } from "./pending-registry.js";
+import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -52,6 +53,7 @@ metrics.setSkillsPromptTokens(approxTokens(skillRegistry.indexBlock)); // follow
 // ① before_tool：run_* 双重校验（同轮自批拦截 + 画布 SSOT pending_confirm），fail-closed；
 // ② after_tool：propose_generation 成功 → 记录本轮提议（① 的数据源）；
 // ③ onPrompt：用户轮计数（区分「同轮自批」与「跨轮确认后执行」）。
+// ④ transform_context（审计 #8）：进 LLM 前的信任边界——本轮工具结果来源标注 + 目标复述。
 // P0-① 会话常驻后：onSessionCreated 只在新建/重建时触发，onPrompt 每轮触发——
 // 「同轮」判定因此从「每轮重建恒为 0」变成真实递增的轮号，语义反而更准。
 const gateStore = new GenerationGateStore();
@@ -72,6 +74,18 @@ const manager = new SessionManager(
 				gateStore.markProposed(sessionId, nodeId, { confirmed });
 				return undefined;
 			});
+			// 审计 #8：trust boundary（目标复述 + 工具结果来源标注）。
+			// 纯文本模式也注册（无 toolResult 时复述仍有价值）；off = 逐字节旧行为。
+			// fail-soft：纯函数不 throw；压缩摘要走 generateSummary 独立请求路径，不经本 hook。
+			if (loadRuntimeConfig(process.env).trustBoundary !== false) {
+				harness.hooks.on("transform_context", async (event) => {
+					const out = applyTrustBoundary(event.messages);
+					if (!out) return undefined;
+					const stats = countTrustBoundaryActions(event.messages);
+					metrics.observeTransformContext(stats.goalReinjected, stats.annotatedToolResults);
+					return { messages: out };
+				});
+			}
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
 			harness.hooks.on("before_tool", async (event) => {
