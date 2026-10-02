@@ -29,6 +29,7 @@ import {
 	BACKGROUND_CONTEXT,
 	JsonlSessionRepo,
 	withCancel,
+	compact,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
@@ -43,6 +44,7 @@ import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js"
 import { estimateImageTokens, toImageContents, type DirectImage } from "./direct-images.js";
+import { annotateImagesForSummary } from "./compaction-images.js";
 import { enforceRetention } from "./session-retention.js";
 import { buildToolEnsemble } from "./tools/tiering.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
@@ -746,6 +748,46 @@ export class SessionManager {
 			this.context,
 		);
 		entry.harness = harness;
+
+		// T4 压缩图片占位（spec §3.3 / B1 取证 Ruling）：before_compaction hook 只能整体替代
+		// 压缩结果、宿主又没有 compaction 触发路径，因此在此对 preparation 的消息**副本**做
+		// 图片侧注（annotateImagesForSummary）后调 vendor 导出的 compact() 自产摘要并整体返回。
+		// fail-soft：无图消息零变换 → 返回 undefined 走 vendor 原生路径；compact 失败同样让路。
+		// 已知代价（B1 Ruling）：fromHook 路径 vendor 不记 summary usage 行（观测缺口）。
+		{
+			const compactionContext = this.context;
+			harness.hooks?.on?.("before_compaction", async (event) => {
+				try {
+					const prep = event.preparation as Record<string, unknown>;
+					const annotated: Record<string, unknown> = { ...prep };
+					let changed = false;
+					for (const field of ["messagesToSummarize", "turnPrefixMessages"] as const) {
+						const list = prep[field];
+						if (!Array.isArray(list)) continue;
+						const next = annotateImagesForSummary(list as never);
+						if (next) {
+							annotated[field] = next;
+							changed = true;
+						}
+					}
+					if (!changed) return undefined; // 纯文本会话：逐字节原生路径
+					const result = await compact(
+						annotated as never,
+						entry.models,
+						entry.model,
+						event.customInstructions,
+						entry.thinkingLevel,
+						undefined,
+						undefined,
+						compactionContext,
+					);
+					return result.ok ? { compaction: result.value } : undefined;
+				} catch (err) {
+					console.warn("[pi-runtime] before_compaction image annotation failed (fail-soft):", err);
+					return undefined;
+				}
+			});
+		}
 
 		this.hooks?.onSessionCreated?.(key, harness);
 
