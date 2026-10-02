@@ -59,6 +59,13 @@ export interface RuntimeConfig {
 	 */
 	trustBoundary?: boolean;
 	/**
+	 * dynamicBlocks 预算开关（T3）。off = composeSystemPrompt 不做预算截断
+	 * （行为与本开关引入前逐字节一致）。缺省 true。
+	 */
+	dynamicBudget?: boolean;
+	/** dynamicBlocks 总预算（chars，≈CJK token/4 口径）。缺省 48000。 */
+	dynamicBudgetTotalChars?: number;
+	/**
 	 * steering 队列消费模式（vendor `AgentHarnessOptions.steeringMode`）。
 	 *
 	 * "all" = 每个 turn 边界把队列里**全部** steer 一次性注入；"one-at-a-time" = 每轮只注入
@@ -149,6 +156,8 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 	compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
 	toolTiering: parseBool(env.PI_RUNTIME_TOOL_TIERING, true),
 	trustBoundary: parseBool(env.PI_RUNTIME_TRUST_BOUNDARY, true),
+	dynamicBudget: parseBool(env.PI_RUNTIME_DYNAMIC_BUDGET, true),
+	dynamicBudgetTotalChars: parsePositiveInt(env.PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS, 48_000),
 		// steering/followUp 队列模式（2026-10-02 由 configmap 化石收编为 env 口径）
 		steeringMode: parseQueueMode(env.PI_RUNTIME_STEERING_MODE, d.steeringMode),
 		followUpMode: parseQueueMode(env.PI_RUNTIME_FOLLOW_UP_MODE, d.followUpMode),

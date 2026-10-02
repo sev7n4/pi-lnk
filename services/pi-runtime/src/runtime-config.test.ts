@@ -44,6 +44,17 @@ describe("parseBool", () => {
 });
 
 describe("loadRuntimeConfig", () => {
+	it("dynamicBudget：缺省 on/48000；off 与非法数值回退", () => {
+		const def = loadRuntimeConfig({});
+		assert.equal(def.dynamicBudget, true);
+		assert.equal(def.dynamicBudgetTotalChars, 48000);
+		const off = loadRuntimeConfig({ PI_RUNTIME_DYNAMIC_BUDGET: "off" });
+		assert.equal(off.dynamicBudget, false);
+		const bad = loadRuntimeConfig({ PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS: "abc" });
+		assert.equal(bad.dynamicBudgetTotalChars, 48000);
+		const ok = loadRuntimeConfig({ PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS: "24000" });
+		assert.equal(ok.dynamicBudgetTotalChars, 24000);
+	});
 	it("空 env 返回默认值", () => {
 		const cfg = loadRuntimeConfig({});
 		assert.equal(cfg.sessionTtlMs, DEFAULT_RUNTIME_CONFIG.sessionTtlMs);

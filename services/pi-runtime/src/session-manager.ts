@@ -41,6 +41,7 @@ import type { Metrics } from "./metrics.js";
 import { missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
+import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js";
 import { enforceRetention } from "./session-retention.js";
 import { buildToolEnsemble } from "./tools/tiering.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
@@ -370,11 +371,33 @@ export function toSessionKey(threadKey: string): string {
  */
 
 /** 静态段在前、动态段尾部追加（spec §4 动态上下文判据：稳定前缀不被易变内容推到后面）。 */
-export function composeSystemPrompt(staticPart: string, dynamicBlocks: readonly string[]): string {
+export function composeSystemPrompt(
+	staticPart: string,
+	dynamicBlocks: readonly string[],
+	budget?: {
+		totalChars: number;
+		onDrop?: (kind: string) => void;
+		onUnknownKind?: () => void;
+	},
+): string {
 	const blocks = dynamicBlocks.map((b) => b.trim()).filter(Boolean);
 	if (blocks.length === 0) return staticPart;
-	if (!staticPart) return blocks.join("\n\n");
-	return `${staticPart}\n\n${blocks.join("\n\n")}`;
+	let joined: string;
+	if (budget) {
+		// T3：预算截断（byte-stable——判定只依赖块内容；off/未传时走原路径逐字节不变）。
+		const r = applyDynamicBudget(blocks, { totalChars: budget.totalChars });
+		for (const [kind, n] of Object.entries(r.dropped)) {
+			for (let i = 0; i < n; i++) budget.onDrop?.(kind);
+		}
+		for (const b of blocks) {
+			if (classifyBlock(b) === "general") budget.onUnknownKind?.();
+		}
+		joined = r.blocks.join("\n\n");
+	} else {
+		joined = blocks.join("\n\n");
+	}
+	if (!staticPart) return joined;
+	return `${staticPart}\n\n${joined}`;
 }
 
 export function isSameLlmIdentity(a: LlmIdentity, b: LlmIdentity): boolean {
@@ -708,7 +731,8 @@ export class SessionManager {
 					userId: entry.userId,
 					...entry.turn,
 				}),
-				systemPrompt: () => composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []),
+				systemPrompt: () =>
+					composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption()),
 				thinkingLevel,
 				// steering / followUp 队列模式（2026-10-02）：此前这两个值只在 configmap 里
 				// 写过、没人读（死配置），harness 实际吃的是 vendor 默认 "all"。
@@ -998,7 +1022,20 @@ export class SessionManager {
 	/** 测试观测口：按会话当前 turn 求值 systemPrompt（与 harness 内部同一组合函数）。 */
 	resolveSystemPromptForTest(threadKey: string): string {
 		const entry = this.require(threadKey);
-		return composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? []);
+		return composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
+	}
+
+	/** T3 预算选项：off（或未配）返回 undefined = 逐字节回退旧行为；on 时挂 metrics 回调。 */
+	private dynamicBudgetOption():
+		| { totalChars: number; onDrop?: (kind: string) => void; onUnknownKind?: () => void }
+		| undefined {
+		if (!(this.config.dynamicBudget ?? true)) return undefined;
+		const m = this.metrics;
+		return {
+			totalChars: this.config.dynamicBudgetTotalChars ?? 48_000,
+			onDrop: m ? (kind) => m.observeDynamicBudgetDrop(kind) : undefined,
+			onUnknownKind: m ? () => m.observeUnknownBlockKind() : undefined,
+		};
 	}
 
 	/**

@@ -65,6 +65,9 @@ export class Metrics {
 	private toolSearchActivated = 0; // 命中激活的工具个数累计（配合 calls 可算平均激活数）
 	private transformContextRuns = new Map<string, number>(); // key: goal (on|off)——是否注入了目标复述
 	private transformAnnotated = 0; // 信任标注覆盖的 toolResult 条数累计
+	private dynamicBudgetDrops = new Map<string, number>(); // key: kind (canvas|vision|sidebar|general)——发生截断的块数
+	private unknownBlockKind = 0; // 块首标记未识别（约定漂移告警）
+	private systemPromptBytes = 0; // 最近一次 systemPrompt 总长（gauge，水位观测）
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
 
@@ -183,6 +186,20 @@ export class Metrics {
 		if (activated > 0) this.toolSearchActivated += activated;
 	}
 
+	/** dynamicBlocks 预算观测（T3）：kind=发生截断的块类别；unknownKind=块首标记未识别（约定漂移）。 */
+	observeDynamicBudgetDrop(kind: string): void {
+		this.dynamicBudgetDrops.set(kind, (this.dynamicBudgetDrops.get(kind) ?? 0) + 1);
+	}
+
+	observeUnknownBlockKind(): void {
+		this.unknownBlockKind += 1;
+	}
+
+	/** systemPrompt 总长水位（static+dynamic），每次组装后刷新（gauge 语义：取最新值）。 */
+	observeSystemPromptBytes(n: number): void {
+		this.systemPromptBytes = n;
+	}
+
 	/** transform_context 观测（审计 #8）：goalReinjected=本轮是否注入目标复述；annotated=信任标注条数。 */
 	observeTransformContext(goalReinjected: boolean, annotated: number): void {
 		const key = goalReinjected ? "on" : "off";
@@ -292,6 +309,20 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_tool_search_activated_total Deferred tools activated via tool_search (cumulative count).");
 	lines.push("# TYPE pi_runtime_tool_search_activated_total counter");
 	lines.push(`pi_runtime_tool_search_activated_total ${this.toolSearchActivated}`);
+
+	lines.push("# HELP pi_runtime_dynamic_budget_drops_total dynamicBlocks truncated by kind budget (cumulative count).");
+	lines.push("# TYPE pi_runtime_dynamic_budget_drops_total counter");
+	for (const [kind, count] of [...this.dynamicBudgetDrops.entries()].sort()) {
+		lines.push(`pi_runtime_dynamic_budget_drops_total{kind="${esc(kind)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_dynamic_budget_unknown_kind_total dynamicBlocks with unrecognized header marker (convention drift warning).");
+	lines.push("# TYPE pi_runtime_dynamic_budget_unknown_kind_total counter");
+	lines.push(`pi_runtime_dynamic_budget_unknown_kind_total ${this.unknownBlockKind}`);
+
+	lines.push("# HELP pi_runtime_system_prompt_bytes Last composed systemPrompt total length (static+dynamic).");
+	lines.push("# TYPE pi_runtime_system_prompt_bytes gauge");
+	lines.push(`pi_runtime_system_prompt_bytes ${this.systemPromptBytes}`);
 
 	lines.push("# HELP pi_runtime_transform_context_runs_total transform_context hook runs, by whether the goal was restated.");
 	lines.push("# TYPE pi_runtime_transform_context_runs_total counter");
