@@ -3218,6 +3218,7 @@ defineExpose({
                 @export-pack="onExportPack($event)"
               />
             </div>
+          </div>
             <!-- 回看历史时的回到底部入口：仅在未跟随底部时出现 -->
             <button
               v-if="!followLatest"
