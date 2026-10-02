@@ -180,7 +180,12 @@ export class PiRuntimeClient {
 		sessionId: string,
 		text: string,
 		lane = "main",
-		opts?: { forceSkills?: string[]; turnContext?: PiTurnContext },
+		opts?: {
+			forceSkills?: string[]
+			turnContext?: PiTurnContext
+			/** T1 多模态直通：顶层 images（不进 turnContext，spec §4）。 */
+			images?: Array<{ name: string; mimeType: string; data: string }>
+		},
 	): Promise<void> {
 		const { status, body } = await this.request<{ error?: string }>(
 			`/sessions/${encodeURIComponent(sessionId)}/prompt`,
@@ -191,6 +196,7 @@ export class PiRuntimeClient {
 					lane,
 					...(opts?.forceSkills?.length ? { forceSkills: opts.forceSkills } : {}),
 					...(opts?.turnContext ? { turnContext: opts.turnContext } : {}),
+					...(opts?.images?.length ? { images: opts.images } : {}),
 				}),
 			},
 		);

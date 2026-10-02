@@ -44,9 +44,23 @@ const NON_VISION =
  * 注意：`ch_x::` 前缀的渠道 ref 也要能判——正则以 `[/:]` 作为分隔符，
  * `ch_x::deepseek-flash` 会被 `[/:]` 命中后匹配到模型名。
  */
+/**
+ * env 名单（T1）：非空时按逗号分隔解析为正则并**优先**判定——命中 → true，
+ * 未命中 → false（名单即运维覆盖面：置一个不命中清单就能让指定模型回落识图兜底，
+ * spec §3.4 E2E-2 的回退手段）；空/未设置 → 回落缺省三正则（缺省行为不变）。
+ */
+function customVisionPatterns(): RegExp[] | null {
+  const raw = (process.env.SIDEBAR_VISION_MODELS ?? '').trim()
+  if (!raw) return null
+  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean)
+  return parts.length ? parts.map((p) => new RegExp(p)) : null
+}
+
 export function supportsVisionModel(model?: string | null): boolean {
   const m = (model ?? '').trim()
   if (!m) return false
+  const custom = customVisionPatterns()
+  if (custom) return custom.some((re) => re.test(m))
   if (DEEPSEEK_FLASH.test(m)) return true
   if (NON_VISION.test(m)) return false
   return VISION_MODEL.test(m)

@@ -51,6 +51,7 @@ import {
   supportsVisionModel,
 } from './sidebar-vision'
 import { SIDEBAR_MEDIA_PARSE_PROMPT } from './sidebar-media-parse-prompt'
+import { buildDirectImagePayload, type DirectImageBuild } from './direct-image-payload'
 import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
@@ -772,6 +773,11 @@ export class AgentService {
     return new PiPromptAssembler(this.canvasTools as never)
   }
 
+  /** Overridable in unit tests（T1：多模态直通图片组装器） */
+  createDirectImagePayloadBuilder(): typeof buildDirectImagePayload {
+    return buildDirectImagePayload
+  }
+
   /**
    * pi-runtime 事件流 → 现有 AgentStreamEvent（退役后唯一主路径）。
    * 累积 assistantText / canvasActions，回合结束走 finalizeTurn 持久化。
@@ -791,8 +797,24 @@ export class AgentService {
   ): AsyncGenerator<AgentStreamEvent> {
     // K-1：BYOK 覆盖必须在 create 之前解析（会话创建即装配模型，中途不可换）
     const llm = await this.resolvePiSessionLlm(userId, model)
+    // T1 多模态直通（spec §3.1）：视觉模型 + 图片附件 → base64 images + [In=] 标记。
+    // 直通成功则跳过识图前置（省一次 vision QA）；失败/非视觉 → undefined 走识图兜底。
+    const directImageModel = model?.trim() || (await this.loadDefaultTextModel(userId).catch(() => undefined))
+    let directImages: DirectImageBuild | undefined
+    try {
+      directImages = await this.createDirectImagePayloadBuilder()({
+        attachments: piContext?.attachments,
+        model: directImageModel,
+      })
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `direct image payload build skipped (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
     // ③ 侧栏识图前置：结果作为文本上下文并入 systemPrompt（失败返回 ''，不阻断）
-    const visionBlock = await this.buildSidebarVisionBlock({
+    const visionBlock = directImages
+      ? ''
+      : await this.buildSidebarVisionBlock({
       sessionId,
       userId,
       userMessage,
@@ -886,8 +908,16 @@ export class AgentService {
       refOrder: piContext?.refOrder,
       focusNodeId: piContext?.focusNodeId,
     }
+    // T1：直通生效时把 [In=文件名] 标记并入发送文本尾部（pi-runtime T4 摘要占位从该标记恢复编号）
+    const promptTextWithMarkers = directImages
+      ? `${promptText}\n${directImages.markers.join(' ')}`
+      : promptText
     void client
-      .prompt(sessionKey, promptText, "main", { forceSkills, turnContext })
+      .prompt(sessionKey, promptTextWithMarkers, "main", {
+        forceSkills,
+        turnContext,
+        images: directImages?.images,
+      })
       .catch(async (err: unknown) => {
         // 原本这里是一个空 catch（注释写「prompt 失败会以 error 事件形式出现」）——
         // 那只对 503/上游错误成立：pi-runtime 会把 error 写进 SSE，前端看得见。

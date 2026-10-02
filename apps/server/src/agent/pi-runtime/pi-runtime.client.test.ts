@@ -852,3 +852,36 @@ describe("P0-A streamEvents live 订阅（跨轮重放修复）", () => {
 		expect(calls[0]).toBe("http://pi/sessions/s1/events");
 	});
 });
+
+describe("T1 prompt 顶层 images 直通", () => {
+	it("opts.images → body 顶层 images（不进 turnContext）", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ accepted: true }), { status: 202 });
+			}) as typeof fetch,
+		});
+		await client.prompt("s1", "描述这张图", "main", {
+			images: [{ name: "a.png", mimeType: "image/png", data: "QUJD" }],
+		});
+		const body = JSON.parse(String(calls[0].init.body));
+		expect(body.images).toEqual([{ name: "a.png", mimeType: "image/png", data: "QUJD" }]);
+		expect(body.turnContext).toBeUndefined();
+	});
+
+	it("不带 images 的旧调用 → body 无 images 键", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ accepted: true }), { status: 202 });
+			}) as typeof fetch,
+		});
+		await client.prompt("s1", "你好");
+		const body = JSON.parse(String(calls[0].init.body));
+		expect(body.images).toBeUndefined();
+	});
+});

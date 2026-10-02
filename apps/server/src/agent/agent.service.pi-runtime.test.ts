@@ -1211,3 +1211,113 @@ describe('AgentService.steerPiRun（2026-10-02 steering/followUp 双模式闭环
     await expect(svc.steerPiRun({ sessionId: 's1', text: '插话' })).rejects.toThrow(/queue rejected/)
   })
 })
+
+describe('T1 多模态直通组装（Nest → pi-runtime prompt 顶层 images）', () => {
+  // 顶部 describe 内的 service 不在本作用域：自建最小 AgentService（prisma mock 与 :34 同款）
+  const agentMessageCreate = vi.fn().mockResolvedValue({})
+  const agentMessageFindMany = vi.fn().mockResolvedValue([])
+  const agentThreadFindUnique = vi.fn().mockResolvedValue(null)
+  const agentThreadUpsert = vi.fn().mockResolvedValue({})
+  const agentThreadUpdate = vi.fn().mockResolvedValue({})
+  const sessionFindUnique = vi.fn().mockResolvedValue({ id: 's1', canvasData: null })
+  const sessionUpdate = vi.fn().mockResolvedValue({})
+  let service: AgentService
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+    agentMessageCreate.mockResolvedValue({})
+    agentMessageFindMany.mockResolvedValue([])
+    agentThreadFindUnique.mockResolvedValue(null)
+    agentThreadUpsert.mockResolvedValue({})
+    agentThreadUpdate.mockResolvedValue({})
+    sessionFindUnique.mockResolvedValue({ id: 's1', canvasData: null })
+    sessionUpdate.mockResolvedValue({})
+    service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentThread: { findUnique: agentThreadFindUnique, upsert: agentThreadUpsert, update: agentThreadUpdate },
+        session: { findUnique: sessionFindUnique, update: sessionUpdate },
+        idempotencyRecord: {
+          create: vi.fn().mockResolvedValue({}),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+  })
+
+  async function runPromptCapture(
+    model: string | undefined,
+    opts: { mockBuilder?: boolean } = {},
+  ) {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const prompt = vi.fn(async () => undefined)
+    const client = {
+      healthz: vi.fn().mockResolvedValue({ status: 'ok' }),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'x',
+        provider: 'agnes',
+        model: 'm',
+        status: 'created',
+      }),
+      prompt,
+      steer: vi.fn(),
+      listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+      streamEvents: vi.fn((_id: string, onEvent: (event: PiRuntimeEvent) => void) => {
+        onEvent(piEvent('agent_end', { status: 'completed' }))
+        return () => {}
+      }),
+    }
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(client as never)
+    if (opts.mockBuilder) {
+      vi.spyOn(service, 'createDirectImagePayloadBuilder').mockReturnValue(
+        (async () => ({
+          images: [{ name: 'a.png', mimeType: 'image/png', data: 'QUJD' }],
+          markers: ['[I1=a.png]'],
+        })) as never,
+      )
+    }
+    for await (const _e of service.streamConversation(
+      's1',
+      '描述这张图',
+      'u1',
+      undefined,
+      undefined,
+      undefined,
+      model,
+      undefined,
+      [{ id: 'att1', mediaType: 'image', sourceKind: 'upload', label: 'a', url: '/uploads/u1/a.png' } as SidebarAttachment],
+    )) {
+      /* drain */
+    }
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalled())
+    const call = prompt.mock.calls[0] as unknown as
+      | [string, string, string, Record<string, unknown> | undefined]
+      | undefined
+    return { text: call?.[1] as string, opts: call?.[3] as Record<string, unknown> | undefined }
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('视觉模型 + 图片 → prompt opts.images 且 text 尾带 [I1=] 标记', async () => {
+    const { text, opts } = await runPromptCapture('gemini-2.5-flash', { mockBuilder: true })
+    expect(opts?.images).toEqual([{ name: 'a.png', mimeType: 'image/png', data: 'QUJD' }])
+    expect(text).toContain('[I1=a.png]')
+  })
+
+  it('非视觉模型 → 无 images、text 无标记（识图兜底路径，缺省行为不变）', async () => {
+    const { text, opts } = await runPromptCapture('deepseek-v4-pro')
+    expect(opts?.images).toBeUndefined()
+    expect(text).not.toContain('[I1=')
+  })
+})

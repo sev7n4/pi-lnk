@@ -29,6 +29,7 @@ import {
 	BACKGROUND_CONTEXT,
 	JsonlSessionRepo,
 	withCancel,
+	compact,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
@@ -41,7 +42,9 @@ import type { Metrics } from "./metrics.js";
 import { missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
-import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js";
+import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js"
+import { estimateImageTokens, toImageContents, type DirectImage } from "./direct-images.js";
+import { annotateImagesForSummary } from "./compaction-images.js";
 import { enforceRetention } from "./session-retention.js";
 import { buildToolEnsemble } from "./tools/tiering.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
@@ -746,6 +749,46 @@ export class SessionManager {
 		);
 		entry.harness = harness;
 
+		// T4 压缩图片占位（spec §3.3 / B1 取证 Ruling）：before_compaction hook 只能整体替代
+		// 压缩结果、宿主又没有 compaction 触发路径，因此在此对 preparation 的消息**副本**做
+		// 图片侧注（annotateImagesForSummary）后调 vendor 导出的 compact() 自产摘要并整体返回。
+		// fail-soft：无图消息零变换 → 返回 undefined 走 vendor 原生路径；compact 失败同样让路。
+		// 已知代价（B1 Ruling）：fromHook 路径 vendor 不记 summary usage 行（观测缺口）。
+		{
+			const compactionContext = this.context;
+			harness.hooks?.on?.("before_compaction", async (event) => {
+				try {
+					const prep = event.preparation as unknown as Record<string, unknown>;
+					const annotated: Record<string, unknown> = { ...prep };
+					let changed = false;
+					for (const field of ["messagesToSummarize", "turnPrefixMessages"] as const) {
+						const list = prep[field];
+						if (!Array.isArray(list)) continue;
+						const next = annotateImagesForSummary(list as never);
+						if (next) {
+							annotated[field] = next;
+							changed = true;
+						}
+					}
+					if (!changed) return undefined; // 纯文本会话：逐字节原生路径
+					const result = await compact(
+						annotated as never,
+						entry.models,
+						entry.model,
+						event.customInstructions,
+						entry.thinkingLevel,
+						undefined,
+						undefined,
+						compactionContext,
+					);
+					return result.ok ? { compaction: result.value } : undefined;
+				} catch (err) {
+					console.warn("[pi-runtime] before_compaction image annotation failed (fail-soft):", err);
+					return undefined;
+				}
+			});
+		}
+
 		this.hooks?.onSessionCreated?.(key, harness);
 
 		this.attachEvents(entry, harness);
@@ -1056,7 +1099,7 @@ export class SessionManager {
 		threadKey: string,
 		text: string,
 		laneName = MAIN_LANE,
-		opts?: { forceSkills?: string[]; turnContext?: TurnContext },
+		opts?: { forceSkills?: string[]; turnContext?: TurnContext; images?: DirectImage[] },
 	): Promise<{ accepted: boolean }> {
 		const entry = this.require(threadKey);
 		// 会话常驻后同键并发会串台（同一 harness 上两个 run 交错），fail-closed 拒绝。
@@ -1081,8 +1124,15 @@ export class SessionManager {
 			entry.cancelRun = run.cancel;
 			entry.userAborted = false;
 			const lane = await entry.harness.lane(laneName, this.context);
+			// 多模态直通（T1）：payload 顶层 images → lane.prompt 第二参（ImageContent[]）。
+			// 门控 off / 载荷为空 → undefined（纯文本发送，绝不发空数组，Review Focus 1）。
+			const directImages = this.config.directImages === false ? undefined : toImageContents(opts?.images);
+			if (directImages) {
+				const tokensEst = (opts?.images ?? []).reduce((acc, img) => acc + estimateImageTokens(img.data ?? ""), 0);
+				this.metrics?.observeDirectImage("sent", tokensEst);
+			}
 			void lane
-				.prompt(effectiveText, undefined, run.context)
+				.prompt(effectiveText, directImages, run.context)
 				.then((result) => {
 					if (!result.ok) {
 						this.dispatch(entry, {

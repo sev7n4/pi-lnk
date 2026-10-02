@@ -14,6 +14,7 @@ import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
+import { governImagePayload } from "./payload-images.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -90,6 +91,21 @@ const manager = new SessionManager(
 					return { messages: out };
 				});
 			}
+			// T2 图片治理（spec §3.2）：历史图片渐进降级 + 本轮优先裁剪 + 超限剔除。
+			// 常开（低风险只减不增）；vendor 的 before_payload 分发本身对 handler 异常 fail-soft，
+			// 这里再包一层 try/catch 双保险：治理炸了就 payload 原样放行。
+			const runtimeCfg = loadRuntimeConfig(process.env);
+			harness.hooks.on("before_payload", async (event) => {
+				try {
+					const result = governImagePayload(event.payload, runtimeCfg.directImageHistoryRounds ?? 2, 4);
+					if (result.trims.length === 0) return undefined; // 零变更零拷贝
+					for (const t of result.trims) metrics.observeBeforePayloadTrim(t.reason);
+					return { payload: { ...(event.payload as Record<string, unknown>), messages: result.messages } };
+				} catch (err) {
+					console.warn("[pi-runtime] before_payload image governance failed (fail-soft):", err);
+					return undefined;
+				}
+			});
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
 			harness.hooks.on("before_tool", async (event) => {

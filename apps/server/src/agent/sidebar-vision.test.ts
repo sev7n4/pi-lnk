@@ -3,7 +3,7 @@
  *   services/agent-runtime/tests/test_supports_vision_model.py
  *   services/agent-runtime/app/graph/sidebar_media_parse.py: format_parse_context_block
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   formatParseContextBlock,
   getCachedParseBlock,
@@ -140,5 +140,29 @@ describe('formatParseContextBlock', () => {
   it('parseBlockAsksUnknown 标记判定', () => {
     expect(parseBlockAsksUnknown('写个营销方案')).toBe(true)
     expect(parseBlockAsksUnknown('换个角度')).toBe(false)
+  })
+})
+
+describe('supportsVisionModel env 名单（T1：SIDEBAR_VISION_MODELS）', () => {
+  afterEach(() => {
+    delete process.env.SIDEBAR_VISION_MODELS
+  })
+
+  it('名单非空：命中 → true（优先于缺省正则）', () => {
+    process.env.SIDEBAR_VISION_MODELS = 'qwen-vl(?:-.+)?,glm-4v'
+    expect(supportsVisionModel('qwen-vl-max')).toBe(true)
+    expect(supportsVisionModel('glm-4v-flash')).toBe(true)
+  })
+
+  it('名单非空且未命中 → false（名单即运维覆盖面，识图兜底路径生效）', () => {
+    process.env.SIDEBAR_VISION_MODELS = 'glm-4v'
+    expect(supportsVisionModel('gemini-2.5-flash')).toBe(false)
+  })
+
+  it('名单为空/未设置 → 回落缺省三正则（缺省行为不变）', () => {
+    expect(supportsVisionModel('gemini-2.5-flash')).toBe(true)
+    expect(supportsVisionModel('deepseek-v4-pro')).toBe(false)
+    process.env.SIDEBAR_VISION_MODELS = '  '
+    expect(supportsVisionModel('gemini-2.5-flash')).toBe(true)
   })
 })

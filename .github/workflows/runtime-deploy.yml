@@ -154,7 +154,11 @@ jobs:
             --set-string env.AGNES_COST_CACHE_READ_PER_M=0.075 \
             --set-string env.AGNES_COST_CACHE_WRITE_PER_M=0 \
             --set-string env.ASK_USER_BLOCKING=true \
-            --set-string env.ASK_USER_TIMEOUT_MS=300000"
+            --set-string env.ASK_USER_TIMEOUT_MS=300000 \
+            --set-string env.PI_RUNTIME_DYNAMIC_BUDGET=true \
+            --set-string env.PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS=48000 \
+            --set-string env.PI_RUNTIME_DIRECT_IMAGES=true \
+            --set-string env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2"
 
       - name: Rollout + triple verify (digest / env / healthz)
         run: |
@@ -187,6 +191,15 @@ jobs:
             || { echo "ERROR: PI_RUNTIME_STEERING_MODE 非期望精确值"; exit 1; }
           echo "$ENV_OUT" | grep -qx "PI_RUNTIME_FOLLOW_UP_MODE=one-at-a-time" \
             || { echo "ERROR: PI_RUNTIME_FOLLOW_UP_MODE 非期望精确值"; exit 1; }
+          # T3/T1/T2/T4（2026-10-02 B 批补录 A 批欠账）：dynamicBudget + directImages 精确落地
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_DYNAMIC_BUDGET=true" \
+            || { echo "ERROR: PI_RUNTIME_DYNAMIC_BUDGET 非期望精确值"; exit 1; }
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS=48000" \
+            || { echo "ERROR: PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS 非期望精确值"; exit 1; }
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_DIRECT_IMAGES=true" \
+            || { echo "ERROR: PI_RUNTIME_DIRECT_IMAGES 非期望精确值"; exit 1; }
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2" \
+            || { echo "ERROR: PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS 非期望精确值"; exit 1; }
           HEALTH=$(ssh deploy-cvm "curl -s http://127.0.0.1:30100/healthz")
           echo "$HEALTH" | grep -q "\"version\":\"${TAG}\"" \
             || { echo "ERROR: healthz version != ${TAG}: ${HEALTH}"; exit 1; }

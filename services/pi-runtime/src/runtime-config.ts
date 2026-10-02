@@ -66,6 +66,13 @@ export interface RuntimeConfig {
 	/** dynamicBlocks 总预算（chars，≈CJK token/4 口径）。缺省 48000。 */
 	dynamicBudgetTotalChars?: number;
 	/**
+	 * 多模态直通开关（T1）。off = prompt 载荷里的 images 字段被忽略
+	 * （lane.prompt 第二参恒 undefined，行为与本开关引入前一致）。缺省 true。
+	 */
+	directImages?: boolean;
+	/** before_payload 历史图片保留轮数（T2）。缺省 2，调大=少裁剪。 */
+	directImageHistoryRounds?: number;
+	/**
 	 * steering 队列消费模式（vendor `AgentHarnessOptions.steeringMode`）。
 	 *
 	 * "all" = 每个 turn 边界把队列里**全部** steer 一次性注入；"one-at-a-time" = 每轮只注入
@@ -157,6 +164,8 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 	toolTiering: parseBool(env.PI_RUNTIME_TOOL_TIERING, true),
 	trustBoundary: parseBool(env.PI_RUNTIME_TRUST_BOUNDARY, true),
 	dynamicBudget: parseBool(env.PI_RUNTIME_DYNAMIC_BUDGET, true),
+	directImages: parseBool(env.PI_RUNTIME_DIRECT_IMAGES, true),
+	directImageHistoryRounds: parsePositiveInt(env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS, 2),
 	dynamicBudgetTotalChars: parsePositiveInt(env.PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS, 48_000),
 		// steering/followUp 队列模式（2026-10-02 由 configmap 化石收编为 env 口径）
 		steeringMode: parseQueueMode(env.PI_RUNTIME_STEERING_MODE, d.steeringMode),
