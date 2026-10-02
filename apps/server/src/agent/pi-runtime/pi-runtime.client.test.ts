@@ -4,7 +4,7 @@ import {
 	mapPiEventToUiEvent,
 	type PiRuntimeEvent,
 } from "./pi-events";
-import { parseSseFrames, PiRuntimeError, PiRuntimeClient } from "./pi-runtime.client";
+import { parseSseFrames, PiRuntimeError, PiRuntimeClient, QUEUE_MARK } from "./pi-runtime.client";
 
 const baseEvent = (type: PiRuntimeEvent["type"], data: unknown): PiRuntimeEvent => ({
 	type,
@@ -422,13 +422,31 @@ describe("steer / followUp 队列客户端（2026-10-02 吃满 pi-agent 双模�
 		const sa = JSON.parse(String(a.calls[0]!.init.body));
 		expect(a.calls[0]!.url).toBe("http://x/sessions/s1%3At1/steer");
 		expect(a.calls[0]!.init.method).toBe("POST");
-		expect(sa).toEqual({ text: "插话", lane: "main" });
+		expect(sa).toEqual({ text: QUEUE_MARK.steer + "\n" + "插话", lane: "main" });
 
 		const b = harness();
 		await b.client.followUp("s1:t1", "尾随");
 		expect(b.calls[0]!.url).toBe("http://x/sessions/s1%3At1/followup");
 		const sb = JSON.parse(String(b.calls[0]!.init.body));
-		expect(sb).toEqual({ text: "尾随", lane: "main" });
+		expect(sb).toEqual({ text: QUEUE_MARK.followup + "\n" + "尾随", lane: "main" });
+	});
+
+	it("两条通道的事实标记必须不同（模型才知道这条是插进来的还是收尾接上的）", async () => {
+		const a = harness();
+		await a.client.steer("s1:t1", "插话");
+		const sa = JSON.parse(String(a.calls[0]!.init.body)).text as string;
+		const b = harness();
+		await b.client.followUp("s1:t1", "尾随");
+		const sb = JSON.parse(String(b.calls[0]!.init.body)).text as string;
+
+		expect(sa.startsWith(QUEUE_MARK.steer)).toBe(true);
+		expect(sb.startsWith(QUEUE_MARK.followup)).toBe(true);
+		expect(sa).not.toBe(sb);
+		// 用户原话必须完整保留在标记之后（标记是加在前面的，不是替换）
+		expect(sa).toBe(`${QUEUE_MARK.steer}\n插话`);
+		expect(sb).toBe(`${QUEUE_MARK.followup}\n尾随`);
+		// 刻意是"标签"而不是长指令前缀：会话历史里不该出现大段提示词
+		expect(QUEUE_MARK.steer.length).toBeLessThan(24);
 	});
 
 	it("自定义 lane 透传（vendor lane name，非硬编码 main）", async () => {

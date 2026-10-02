@@ -161,9 +161,9 @@ describe("followUp：尾随指令走 vendor followUp 队列", () => {
 describe("队列模式透传", () => {
 	it("steeringMode / followUpMode 随 harness options 交出（此前是 configmap 死配置）", async () => {
 		let captured: unknown;
-		// ⚠️ 参数必须是 unknown 而非 Record<string, unknown>：基线 harnessFactory 的类型是
-		// `typeof AgentHarness.create`（泛型 <TContext, Context>），逆变下只有 unknown 能吃下
-		// AgentHarnessOptions。窄类型这里报 TS2345。
+		// ⚠️ 参数必须是 unknown 而不是 Record<string, unknown>：PR #103 把 HarnessFactory
+		// 收成泛型 `typeof AgentHarness.create`，逆变下 Record 版本过不了 tsc（本地 tsx 不查类型，
+		// 只跑这个文件会一路绿 —— CI 跑全量 tsc 才红）。
 		const factory = async (cfg: unknown) => {
 			captured = cfg;
 			return {
@@ -180,8 +180,8 @@ describe("队列模式透传", () => {
 			followUpMode: "one-at-a-time",
 		});
 		await sm.create("sq-mode", { userId: "u1" });
-		const opts = captured as { steeringMode?: string; followUpMode?: string };
-		assert.equal(opts?.steeringMode, "all");
-		assert.equal(opts?.followUpMode, "one-at-a-time");
+		const modes = captured as { steeringMode: string; followUpMode: string };
+		assert.equal(modes.steeringMode, "all");
+		assert.equal(modes.followUpMode, "one-at-a-time");
 	});
 });

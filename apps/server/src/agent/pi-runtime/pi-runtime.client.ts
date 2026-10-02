@@ -77,6 +77,27 @@ export interface CreateSessionOptions {
 	canvasSessionId?: string;
 }
 
+/**
+ * 队列消息的**事实标记**（2026-10-02）：steer / followUp 落到 vendor lane 的都是普通 user 消息
+ * （`lane.ts:1456-1460` 两者在 `enqueue` 里构造的是同一个载荷），而它们的送达时机差着好几秒到几十秒
+ * —— steer 插在本轮回答进行中、followUp 等到收尾边界。模型看不出区别，自然也就不会重新规划。
+ *
+ * 所以在这里给**这一条**消息加一行 kind 标签：**信息，不是命令**。
+ *  - 信息（这里）：告诉模型「这条消息是什么来头 / 什么时候到的」→ 它才会真的重新评估执行计划；
+ *  - 命令（原先走 system prompt 的做法）：「你必须先复述…再调工具」→ 概率行为、每轮常驻、
+ *    而且只会逼出空洞的复述体。2026-10-02 已把那段 `QUEUE_GUIDANCE` 从 system prompt 里删掉。
+ *
+ * 加在 Nest 这一层（而不是 pi-runtime 的 `session-manager.steer/followUp`）是有意的：
+ * 只影响这一条消息，常态 context 零增加，且 **pi-runtime 无需重新部署**。
+ *
+ * ⚠️ 刻意保持"标签"而非"长指令前缀"：vendor 侧的原话顾虑是污染用户自己写的原话——
+ * 回看会话历史时那串东西是噪音。一行方括号标签不是这个问题，别再加长。
+ */
+export const QUEUE_MARK: Record<"steer" | "followup", string> = {
+	steer: "[用户补充 · 插在本轮回答进行中]",
+	followup: "[用户补充 · 将在本轮收尾后接上]",
+};
+
 export class PiRuntimeError extends Error {
 	constructor(
 		message: string,
@@ -218,7 +239,7 @@ export class PiRuntimeClient {
 			{
 				method: "POST",
 				body: JSON.stringify({
-					text,
+					text: QUEUE_MARK[path] + "\n" + text,
 					lane,
 					...(opts?.turnContext ? { turnContext: opts.turnContext } : {}),
 				}),
