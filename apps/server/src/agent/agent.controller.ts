@@ -19,9 +19,23 @@ import { AuthGuard } from '../auth/auth.guard'
 import { SessionsService } from '../sessions/sessions.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentService } from './agent.service'
+import {
+  loadRegistry,
+  renderStatic,
+  renderStaticFallback,
+  resolveRegistryRoot,
+} from './pi-runtime/prompt-registry.loader'
 
 const SESSION_FORBIDDEN_HINT =
   '⚠️ 此画布不属于当前账号，无法写入。请返回工作台新建画布，或使用画布所有者账号登录。'
+
+/** 诊断端点要展示的 4 种规则组组合——与 assembler 实际会遇到的一致。 */
+const DIAG_GROUP_SETS: Array<Array<'core' | 'writeTools' | 'genTools'>> = [
+  ['core'],
+  ['core', 'writeTools'],
+  ['core', 'genTools'],
+  ['core', 'writeTools', 'genTools'],
+]
 
 class SidebarAttachmentDto {
   @IsString()
@@ -217,6 +231,49 @@ export class AgentController {
   async runtimeHealth() {
     const data = await this.agentService.checkRuntimeHealth()
     return { code: 0, message: 'ok', data }
+  }
+
+  /**
+   * W1b：提示词注册中心诊断（免鉴权，与 capabilities/list / runtime-health 同级）。
+   *
+   * 回答「线上现在跑的提示词是哪一版」——W1a 之后这本账只落在 Nest stdout，日志不落库、
+   * 无其他对外端点，于是排查必须登机器看 docker logs。本端点把它变成一条 curl。
+   *
+   * ⚠️ **免鉴权的安全边界就是响应字段本身**：只出构建元信息（version/hash/entries/degraded），
+   * 绝不出提示词正文、title、owner。这些 hash 都已随仓库与镜像公开，不构成新增泄露。
+   * 加字段前先问一句「这是元信息还是内容」，是内容就得改成 AuthGuard。
+   * 该白名单由 prompt-registry-diag.test.ts 锁死。
+   */
+  @Get('prompt-registry')
+  async promptRegistry() {
+    const snap = loadRegistry(resolveRegistryRoot())
+    // 读盘真值而非启动快照：磁盘被换过要能立刻看出来。degraded 时改用 fallback 渲染，
+    // 让 groupChars 如实反映「兜底确实在出文本」，而不是把降级误报成空静态段。
+    const groupChars: Record<string, number> = {}
+    for (const groups of DIAG_GROUP_SETS) {
+      const text = snap.degraded
+        ? renderStaticFallback(groups)
+        : renderStatic(snap, groups)
+      groupChars[groups.join('+')] = text.length
+    }
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        registryVersion: snap.registryVersion,
+        registryHash: snap.registryHash,
+        degraded: snap.degraded,
+        degradedReason: snap.degradedReason ?? null,
+        entryCount: snap.entries.length,
+        entries: snap.entries.map((e) => ({
+          id: e.id,
+          version: e.version,
+          order: e.order,
+          contentHash: e.contentHash,
+        })),
+        groupChars,
+      },
+    }
   }
 
   /**
