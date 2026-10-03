@@ -449,7 +449,7 @@ describe('AgentSvgCard CSS 语法白名单（review Critical）', () => {
       '.a{background:url(https://evil.example/x)}', // 非白名单属性
       '.a{fill:red;background:#000}', // 混入非白名单属性
       '.a{width:expression(alert(1))}', // 非白名单属性 + 函数值
-      'div{color:red}', // 标签选择器
+      'div{color:red}', // type 选择器（且 color 非白名单属性）
       '.a{position:fixed}', // 非白名单属性
       '.a{fill:#abc;position:fixed}', // 合法属性里夹带非白名单属性
       '.a{fill:red} .b{stroke:#000} extra{}', // 末尾有游离文本
@@ -495,8 +495,8 @@ describe('AgentSvgCard CSS 语法白名单（review Critical）', () => {
   it('匹配块必须覆盖全文：规则之间/两端的游离文本一律丢弃', () => {
     // 这条专测「全文覆盖」防线本身：payload 全部使用**白名单内的** hex/属性，
     // 所以它被拒的唯一原因就是有游离文本（否则会误判成「只是因为值不合法」）。
-    // 注意 `x{fill:#def}` 这种**裸 type 选择器**是合法规则（匹配不到真实元素，无害），
-    // 不属于游离文本，故不在此列。
+    // 注意 `x{fill:#def}` 这种**裸 type 选择器**会被选择器白名单拒掉（要求前导 `.`），
+    // 故不在此列。
     for (const css of [
       '.a{fill:#abc}extra', // 末尾游离文本
       'extra.a{fill:#abc}', // 开头游离文本
@@ -512,6 +512,51 @@ describe('AgentSvgCard CSS 语法白名单（review Critical）', () => {
     }
   })
 
+  /**
+   * 页面级劫持（re-review Important）：`<style>` 经 v-html 注入是**文档全局**的，
+   * 所以一条「白名单属性 + 页面级选择器」就能改写整个 app 的观感 ——
+   * 不需要 `position`/`z-index`/`display`，`body{opacity:0}` 就够了。
+   *
+   * 修法：选择器**必须带前导 `.`**（只允许 class 选择器）。`build*` 产出的
+   * 9 个类名（.bar/.over/.lbl/.n/.t/.e/.row0/.sev-error/.sev-warn）全是 class，
+   * 故此约束零成本。
+   */
+  it('拒绝页面级 type / ID 选择器（class 选择器之外的全局选择器一律丢弃）', () => {
+    for (const css of [
+      'body{opacity:0}',
+      'html{opacity:0}',
+      '#app{opacity:0}',
+      'div{font-size:0}',
+      'text{font-size:0}',
+      'body{font-size:99999px}',
+      'a{opacity:0.5}',
+      'p{font-size:0}',
+      'span{opacity:0}',
+      'svg{opacity:0}',
+      'rect{opacity:0}',
+      '*{opacity:0}',
+      ':root{opacity:0}',
+      'x{fill:#def}', // 裸 type 选择器（此前被当作「合法且无害」，实则依赖「匹配不到元素」）
+    ]) {
+      const r = sanitizeSvg(
+        `<svg xmlns="http://www.w3.org/2000/svg"><style>${css}</style><rect width="4" height="4"/></svg>`,
+      )
+      // rect 存活 ⇒ 卡片仍渲染；被丢的必须是 style 整块
+      expect(r.ok).toBe(true)
+      expect(r.svg).not.toContain(css)
+    }
+  })
+
+  it('class 选择器仍放行（不误伤：白名单只要求前导 `.`，不限制类名本身）', () => {
+    for (const css of ['.foo{opacity:0}', '.a{opacity:0.5}', '.x{font-size:12px}', '.bar{fill:#dbe4ee}']) {
+      const r = sanitizeSvg(
+        `<svg xmlns="http://www.w3.org/2000/svg"><style>${css}</style><rect width="4" height="4"/></svg>`,
+      )
+      expect(r.ok).toBe(true)
+      expect(r.svg).toContain(css)
+    }
+  })
+
   it('命名色值不在白名单内（build* 只产 hex；放开命名色是独立决策，不在本次范围）', () => {
     const r = sanitizeSvg(
       '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:red}</style><rect width="4" height="4"/></svg>',
@@ -519,6 +564,61 @@ describe('AgentSvgCard CSS 语法白名单（review Critical）', () => {
     // 卡片仍渲染（rect 存活），只是 style 被丢
     expect(r.ok).toBe(true)
     expect(r.svg).not.toContain('fill:red')
+  })
+})
+
+/**
+ * `isSafeCssDeclarations` 的**放行方向**回归（re-review Minor）。
+ *
+ * 该函数此前只有「拒绝侧」测试，若它变成「拒绝一切」测试不会红。而我在本次修复中
+ * 恰好先写成了这样（把 `style` 属性错送进规则表校验器，导致合法 `style="fill:red"`
+ * 因缺少 `{}` 被整条剥掉）——这个 bug 必须有正向测试钉住。
+ */
+describe('AgentSvgCard style 属性放行方向（re-review Minor）', () => {
+  const VALID_STYLE_ATTRS = [
+    'fill:#abc',
+    'font:12px sans-serif',
+    'fill:#dbe4ee;stroke:#8aa',
+    'opacity:0.5',
+    'stroke-width:1.5',
+    'font-size:12px',
+    'text-anchor:middle',
+    'fill:#abc;',
+  ]
+
+  it.each(VALID_STYLE_ATTRS)('合法 style 属性 %s 被保留（净化器输出层）', (style) => {
+    const r = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" style="${style}"><rect width="4" height="4"/></svg>`,
+    )
+    expect(r.ok).toBe(true)
+    expect(r.svg).toContain(`style="${style}"`)
+  })
+
+  it.each(VALID_STYLE_ATTRS)('合法 style 属性 %s 被保留（挂载 DOM 层）', (style) => {
+    const w = mount(AgentSvgCard, {
+      props: {
+        svg: `<svg xmlns="http://www.w3.org/2000/svg" style="${style}"><rect width="4" height="4"/></svg>`,
+      },
+    })
+    const svg = w.find('[data-testid="svg-card"]').element.querySelector('svg')!
+    expect(svg.getAttribute('style')).toBe(style)
+  })
+
+  it('非法 style 属性仍被剥离（放行方向收紧不放宽）', () => {
+    for (const style of [
+      'position:fixed',
+      'background:url(https://evil.example/x)',
+      'fill:url(#g)', // CSS 值白名单不含 url()（含片段）
+      'fill:red', // 命名色不在值白名单
+    ]) {
+      const w = mount(AgentSvgCard, {
+        props: {
+          svg: `<svg xmlns="http://www.w3.org/2000/svg" style="${style.replace(/&/g, '&amp;')}"><rect width="4" height="4"/></svg>`,
+        },
+      })
+      const svg = w.find('[data-testid="svg-card"]').element.querySelector('svg')!
+      expect(svg.getAttribute('style')).toBeNull()
+    }
   })
 })
 

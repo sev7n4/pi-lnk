@@ -135,7 +135,19 @@ const ALLOWED_ATTR_PREFIXES = ['data-', 'aria-']
  * 命中 `@` 即拒（杀尽一切 at-rule，含转义形态），选择器/属性/值逐项走白名单，
  * 且**匹配块必须覆盖输入全文**（末尾游标须正好走完），否则有游离文本可藏。
  */
-const CSS_SELECTOR = /^[.#]?[A-Za-z][\w-]*$/
+
+/**
+ * 选择器**必须带前导 `.`**（只允许 class 选择器）。
+ *
+ * `<style>` 经 v-html 注入是文档全局的，所以 `body{opacity:0}` / `#app{font-size:0}` 这类
+ * 页面级选择器配一个白名单属性就能改写整个 app 的观感——不需要 `position`/`z-index`。
+ * `build*` 产出的 9 个类名全是 class 选择器，故此约束零成本（render-canvas-view.ts:209/249/274）。
+ *
+ * ⚠️ 仍然残留：任意 class 选择器（`.foo{opacity:0}`）是允许的。它匹配不到卡片外的元素，
+ * 除非 app 自身有同名 class——这属**作用域**问题，彻底修需改 Task 2 产物形状（不出 `<style>`），
+ * controller 已裁定超出本分支范围。
+ */
+const CSS_SELECTOR = /^\.[A-Za-z][\w-]*$/
 const CSS_PROPERTY = new Set([
   'fill',
   'stroke',
