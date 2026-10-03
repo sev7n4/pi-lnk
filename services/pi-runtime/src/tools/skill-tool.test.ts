@@ -49,6 +49,22 @@ test("load_skill returns full body without truncation", async () => {
 	}
 });
 
+test("load_skill 观测：成功与未知分别按技能名打卡（Round2 W2② · P1-6 路由判据）", async () => {
+	const root = mkdtempSync(join(tmpdir(), "skills-"));
+	try {
+		setup(root, "real-skill", "body");
+		const metrics = new Metrics();
+		const [tool] = createSkillTools(discoverSkills(root), metrics);
+		await run(tool, { name: "real-skill" });
+		await run(tool, { name: "no-such-skill" });
+		const out = metrics.render(0, "test");
+		assert.match(out, /pi_runtime_skill_loads_total\{skill="real-skill",outcome="ok"\} 1/);
+		assert.match(out, /pi_runtime_skill_loads_total\{skill="no-such-skill",outcome="unknown"\} 1/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("load_skill returns error content for unknown name (no throw)", async () => {
 	const root = mkdtempSync(join(tmpdir(), "skills-"));
 	try {

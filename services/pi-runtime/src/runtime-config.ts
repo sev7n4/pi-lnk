@@ -73,6 +73,11 @@ export interface RuntimeConfig {
 	/** before_payload 历史图片保留轮数（T2）。缺省 2，调大=少裁剪。 */
 	directImageHistoryRounds?: number;
 	/**
+	 * 压缩保留段开关（Round2 判断 4 / 首轮 P2-1）。off = `lane.compact` 传 `undefined`
+	 * （摘要 prompt 与本开关引入前逐字节一致）。缺省 true。
+	 */
+	compactionRetention?: boolean;
+	/**
 	 * steering 队列消费模式（vendor `AgentHarnessOptions.steeringMode`）。
 	 *
 	 * "all" = 每个 turn 边界把队列里**全部** steer 一次性注入；"one-at-a-time" = 每轮只注入
@@ -167,6 +172,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 	directImages: parseBool(env.PI_RUNTIME_DIRECT_IMAGES, true),
 	directImageHistoryRounds: parsePositiveInt(env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS, 2),
 	dynamicBudgetTotalChars: parsePositiveInt(env.PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS, 48_000),
+		compactionRetention: parseBool(env.PI_RUNTIME_COMPACTION_RETENTION, true),
 		// steering/followUp 队列模式（2026-10-02 由 configmap 化石收编为 env 口径）
 		steeringMode: parseQueueMode(env.PI_RUNTIME_STEERING_MODE, d.steeringMode),
 		followUpMode: parseQueueMode(env.PI_RUNTIME_FOLLOW_UP_MODE, d.followUpMode),

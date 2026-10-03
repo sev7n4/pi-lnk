@@ -13,6 +13,7 @@
  *   - pi_runtime_compaction_skips_total{reason}         未触发压缩的理由计数（可容忍跳过）
  *   - pi_runtime_prompt_rejections_total{reason}        被拒 prompt 计数（busy）
  *   - pi_runtime_tool_search_calls_total{outcome}       tool_search 搜索结果计数（hit/miss/empty）
+ *   - pi_runtime_skill_loads_total{skill,outcome}       load_skill 按技能名的路由计数（ok/unknown/read_error）
  *   - pi_runtime_queue_ops_total{op,kind,outcome}       steer/followUp 队列操作计数
  *   - pi_runtime_pending_ops_total{tool,status}         阻塞等待结算（answered/timeout/aborted）
  *   - pi_runtime_tool_search_activated_total            经 tool_search 激活的延迟工具数累计
@@ -66,6 +67,7 @@ export class Metrics {
 	private usageCost = new Map<string, number>(); // key: kind 同上
 	private toolSearchCalls = new Map<string, number>(); // key: outcome (hit|miss|empty)
 	private toolSearchActivated = 0; // 命中激活的工具个数累计（配合 calls 可算平均激活数）
+	private skillLoads = new Map<string, number>(); // key: `${skill}|${outcome}`（ok|unknown|read_error）
 	private transformContextRuns = new Map<string, number>(); // key: goal (on|off)——是否注入了目标复述
 	private transformAnnotated = 0; // 信任标注覆盖的 toolResult 条数累计
 	private dynamicBudgetDrops = new Map<string, number>(); // key: kind (canvas|vision|sidebar|general)——发生截断的块数
@@ -201,6 +203,20 @@ export class Metrics {
 	observeToolSearch(outcome: "hit" | "miss" | "empty", activated: number): void {
 		this.toolSearchCalls.set(outcome, (this.toolSearchCalls.get(outcome) ?? 0) + 1);
 		if (activated > 0) this.toolSearchActivated += activated;
+	}
+
+	/**
+	 * load_skill 路由观测（Round2 W2② / 首轮 P1-6 前置判据）：按**技能名**分组，而非只计调用次数。
+	 *
+	 * 为什么不能只看 `tool_calls_total{tool="load_skill"}`：那只回答"调了几次"，
+	 * 而 P1-6 要回答"**路由对不对**"——unknown 占比高说明模型在猜名字，
+	 * ok 的分布则说明哪些 skill 是真实热点（决定该给谁补触发 fixture）。
+	 *
+	 * outcome：ok=正文读取成功 / unknown=索引里没这个名字 / read_error=条目存在但正文读失败。
+	 */
+	observeSkillLoad(skill: string, outcome: "ok" | "unknown" | "read_error"): void {
+		const key = `${skill}|${outcome}`;
+		this.skillLoads.set(key, (this.skillLoads.get(key) ?? 0) + 1);
 	}
 
 	/** dynamicBlocks 预算观测（T3）：kind=发生截断的块类别；unknownKind=块首标记未识别（约定漂移）。 */
@@ -344,6 +360,14 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_tool_search_activated_total Deferred tools activated via tool_search (cumulative count).");
 	lines.push("# TYPE pi_runtime_tool_search_activated_total counter");
 	lines.push(`pi_runtime_tool_search_activated_total ${this.toolSearchActivated}`);
+
+	// 与 tool_search 同形态：counter 型 Map 为空时不渲染数据行，使「从未触发」与「触发过但 0」可区分。
+	lines.push("# HELP pi_runtime_skill_loads_total load_skill invocations by requested skill name and outcome.");
+	lines.push("# TYPE pi_runtime_skill_loads_total counter");
+	for (const [key, count] of [...this.skillLoads.entries()].sort()) {
+		const [skill, outcome] = key.split("|");
+		lines.push(`pi_runtime_skill_loads_total{skill="${esc(skill ?? "")}",outcome="${esc(outcome ?? "")}"} ${count}`);
+	}
 
 	lines.push("# HELP pi_runtime_dynamic_budget_drops_total dynamicBlocks truncated by kind budget (cumulative count).");
 	lines.push("# TYPE pi_runtime_dynamic_budget_drops_total counter");
