@@ -279,6 +279,36 @@ jobs:
             exit 1
           fi
 
+      - name: Prompt registry self-check
+        if: >-
+          ${{
+            github.event.inputs.recover_only != 'true'
+            && github.event.inputs.deploy_web_only != 'true'
+          }}
+        run: |
+          set -euo pipefail
+          API_PORT="${{ env.API_PORT }}"
+          # W1a 事故的同类防线：.dockerignore 的 *.md 曾排除全部 7 条规则，
+          # 而 COPY 照样成功、MANIFEST 也还在——只有 Registry 自己知道真相（degraded=true）。
+          # 这条 curl 把「容器里到底有没有带规则」从 CI 的猜测变成线上自证。
+          # 判据与 prompt:lint 同源（registryHash / entryCount / degraded），但视角不同：
+          # lint 看仓库自洽，这个看镜像里落地。
+          BODY="$(curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:${API_PORT}/api/agent/prompt-registry")"
+          echo "$BODY" | head -c 600
+          echo ""
+          DEGRADED="$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["degraded"])')"
+          ENTRIES="$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["entryCount"])')"
+          if [ "$DEGRADED" = "True" ]; then
+            echo "::error::提示词 Registry 降级了（容器内规则缺失或不可读），线上正在走内嵌 fallback。"
+            echo "查 .dockerignore 的 !prompt-registry/**/*.md 白名单与 Dockerfile.api 的两条 COPY。"
+            exit 1
+          fi
+          if [ "$ENTRIES" -lt 1 ]; then
+            echo "::error::提示词 Registry 为空（entryCount=$ENTRIES），系统 prompt 会被清空。"
+            exit 1
+          fi
+          echo "Prompt registry OK (entries=$ENTRIES, degraded=$DEGRADED)"
+
       - name: Layout workflow smoke (on CVM)
         if: >-
           ${{
