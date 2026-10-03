@@ -52,7 +52,22 @@ export interface AgentStreamMessage {
   canvasActions?: CanvasAction[]
 }
 
-type PersistedAgentMessage = AgentChatMessage & { linkedOutputs?: string | null; metadata?: string | null }
+/**
+ * 持久化行（后端 AgentMessage 行 → 前端）的真实形状。
+ *
+ * ⚠️ **不能用交叉类型 `AgentChatMessage & { metadata?: string | null }`**：
+ * shared 的 `AgentChatMessage` 已声明 `metadata?: string` 与 `linkedOutputs?: string`，
+ * 交叉后再改写这两个属性 ⇒ TS 判定冲突、**整个交叉类型失效**，
+ * 于是任何对象都传不进 `loadHistory`（表现为测试里报 TS2322「不兼容」，
+ * 但字面量字段其实逐个都对）。
+ *
+ * 真相是「后端 JSON 字段可能为 null」——这是比shared 声明更宽的运行时事实。
+ * 用 Omit 先摘掉原声明再重写，冲突消失，类型恢复可用。
+ */
+type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'> & {
+  linkedOutputs?: string | null
+  metadata?: string | null
+}
 
 export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
