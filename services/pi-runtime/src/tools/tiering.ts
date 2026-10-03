@@ -23,6 +23,14 @@
  * 常驻名单的硬约束：prompt 规则 4/5 逐字引用的写链路工具（upsert_media_node /
  * set_node_text / connect_nodes / apply_sidebar_attachments / propose_generation）
  * 不可延迟；run_* / cancel_generation 保留常驻（用户确认后当轮即用，双保险）。
+ *
+ * ⭐ 判定「某工具能否进延迟集」的唯一准绳 = **有没有资产（prompt 规则 / skills）按名字点名它**。
+ * 点名 ⇒ 模型会直调 ⇒ 必须常驻；未点名 ⇒ 可延迟（靠 tool_search 发现）。
+ * 依据 2026-10-03 生产取证（uptime 6.87h 窗口）：40 次工具调用全部落在常驻集，
+ * `pi_runtime_tool_search_calls_total` **零个 outcome 标签**（即一次都没被调用）、
+ * `tool_search_activated_total 0`。官方模式上线后 foldSearch2search 的**触发率仍为 0**，
+ * 所以「进延迟集」对被子资产点名的工具等同于「不可达」——这是 arrange_nodes /
+ * set_node_generation_params / save_memory / focus_node / remove_edges 留在常驻集的理由。
  */
 import { Type } from "typebox";
 import { toolSummary, type LnkpiTool } from "./types.js";
@@ -42,6 +50,11 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"web_fetch",
 	"read_document",
 	"recall_memory",
+	// 记忆写（2026-10-03 生产取证）：save_memory 是 prompt-registry 规则
+	// memory_scope.tail.md 直接约束行为的工具（「默认仅本画布，只有偏好/品牌/暗号才用
+	// scope:'user'」），并被 6 个 drama-* skill 写成编号步骤（「QA 通过后用 save_memory
+	// 存角色 bible」等）。模型读完规则直接按名字调用 ⇒ 进延迟集会吃 immediateError。
+	"save_memory",
 	// write 核心链路（prompt 规则 4/5 逐字引用，不可延迟）
 	"upsert_media_node",
 	"upsert_prompt_node",
@@ -59,6 +72,14 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 「建节点后落参数才叫完成」，若进延迟集，模型在需要它时看不见 schema，
 	// 而 tool_search 触发率实测 0 ⇒ 延迟即不可达。
 	"set_node_generation_params",
+	// 出图后定位（2026-10-03 生产取证）：focus_node 是 8 个 drama-* / ecommerce-* skill
+	// 共用的「出图后 QA 闸门」第一步（「出图后先 focus_node 定位到刚生成的节点」），
+	// 与 arrange_nodes 同性质 ⇒ 延迟即不可达。
+	// ⚠️ 与 focus_nodes（复数，批量定位）是两个不同工具；后者未被 skill 点名，保持延迟。
+	"focus_node",
+	// 错连修正（2026-10-03 生产取证）：drama-qc-review 的引用关系审计步骤点名
+	// （「错连还能用 edge id 走 remove_edges」），同 arrange_nodes 性质。
+	"remove_edges",
 	// gen（用户确认后当轮即用）
 	"run_image_generation",
 	"run_video_generation",

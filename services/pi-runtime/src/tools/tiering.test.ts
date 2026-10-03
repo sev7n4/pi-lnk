@@ -30,6 +30,8 @@ const ALL_NAMES = [
 	"web_fetch",
 	"read_document",
 	"recall_memory",
+	// 记忆写（2026-10-03）：被 memory_scope.tail.md 直接约束，常驻
+	"save_memory",
 	// write 核心链路
 	"upsert_media_node",
 	"upsert_prompt_node",
@@ -39,8 +41,15 @@ const ALL_NAMES = [
 	"attach_refs",
 	"apply_sidebar_attachments",
 	"propose_generation",
-	// 画布编排（2026-10-02 L1）：skill 点名的一步，延迟即不可达
+	// 以下为「资产点名」而常驻的工具（2026-10-03 生产取证：tool_search 触发率 0 ⇒ 延迟即不可达）
+	// 画布编排：drama-* / ecommerce-product-photo 写死 arrange_nodes(along_edges)
 	"arrange_nodes",
+	// 生成参数预填：规则要求「建节点后落参数才叫完成」
+	"set_node_generation_params",
+	// 出图后定位：8 个 skill 的「出图后 QA 闸门」第一步
+	"focus_node",
+	// 错连修正：drama-qc-review 引用审计步骤点名
+	"remove_edges",
 	// gen
 	"run_image_generation",
 	"run_video_generation",
@@ -58,14 +67,11 @@ const ALL_NAMES = [
 	"apply_asset_to_node",
 	"grid_slice_image",
 	"introduce_nodes_to_agent",
-	"focus_node",
-	"focus_nodes",
+	"focus_nodes", // ⚠️ 复数版未被 skill 点名，仍在延迟集（与常驻的 focus_node 是两个工具）
 	"undo",
 	"redo",
 	"open_image_editor",
 	"delete_nodes",
-	"remove_edges",
-	"save_memory",
 ];
 const fakeTools = () =>
 	ALL_NAMES.map((n) => fakeTool(n, n === "undo" ? "撤销上一步画布操作" : undefined));
@@ -76,7 +82,7 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 		const registered = new Set(e.registered.map((t) => t.name));
 		for (const n of ALL_NAMES) assert.ok(registered.has(n), `${n} 必须注册进 config.tools`);
 		const active = new Set(e.activeToolNames);
-		for (const d of ["duplicate_node", "save_memory", "undo", "delete_nodes"]) {
+		for (const d of ["duplicate_node", "undo", "delete_nodes", "focus_nodes"]) {
 			assert.ok(!active.has(d), `${d} 初始不得激活`);
 		}
 		assert.ok(active.has("tool_search"));
@@ -112,6 +118,56 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 	});
 });
 
+/**
+ * 回归锁：被「资产点名」的工具必须常驻。
+ *
+ * 依据 2026-10-03 生产取证（uptime 6.87h 窗口）：40 次工具调用全部落在常驻集，
+ * `pi_runtime_tool_search_calls_total` 零 outcome 标签、`tool_search_activated_total 0`
+ * ⇒ 官方 Dynamic Tool Loading 上线后 search 触发率仍为 0。
+ * 凡 prompt 规则 / skills 按名字写成步骤的工具，进延迟集 = 模型直调即吃
+ * immediateError "Tool X is unavailable" 且无恢复路径（见文件头注释与 PR #100 教训）。
+ */
+describe("被资产点名的工具必须常驻（延迟即不可达，回归锁）", () => {
+	const NAMED_BY_ASSETS = [
+		"arrange_nodes", // 8 个 skill 写死 arrange_nodes(along_edges)
+		"set_node_generation_params", // 规则「建节点后落参数才叫完成」
+		"save_memory", // memory_scope.tail.md 约束 scope；6 个 drama-* skill 编号步骤
+		"focus_node", // 8 个 skill「出图后 QA 闸门」第一步
+		"remove_edges", // drama-qc-review 引用审计的错连修正
+	];
+
+	it("全部进 ALWAYS_ON 且初始即激活", () => {
+		const e = buildToolEnsemble(fakeTools(), true);
+		const active = new Set(e.activeToolNames);
+		for (const n of NAMED_BY_ASSETS) {
+			assert.ok(ALWAYS_ON_TOOL_NAMES.has(n), `${n} 必须在 ALWAYS_ON_TOOL_NAMES`);
+			assert.ok(active.has(n), `${n} 必须初始激活`);
+		}
+	});
+
+	it("它们不得出现在 tool_search 的延迟目录里（常驻工具不参与搜索）", async () => {
+		const e = buildToolEnsemble(fakeTools(), true);
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		const res = await loader.execute(
+			"c1",
+			{ query: " " } as never,
+			() => {},
+			undefined as never,
+			{} as never,
+			undefined as never,
+		);
+		const text = res.content[0].type === "text" ? (res.content[0].text ?? "") : "";
+		for (const n of NAMED_BY_ASSETS) {
+			assert.ok(!text.includes(`${n}：`), `${n} 不该出现在延迟目录`);
+		}
+	});
+
+	it("focus_nodes（复数，未被点名）仍在延迟集——防止顺手一起改成常驻", () => {
+		assert.ok(!ALWAYS_ON_TOOL_NAMES.has("focus_nodes"), "focus_nodes 应保持延迟");
+		assert.ok(ALWAYS_ON_TOOL_NAMES.has("focus_node"), "focus_node 应常驻");
+	});
+});
+
 describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames 原生激活）", () => {
 	const setup = () => {
 		const e = buildToolEnsemble(fakeTools(), true);
@@ -124,17 +180,25 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 	const textOf = (res: { content: Array<{ type: string; text?: string }> }) =>
 		res.content[0].type === "text" ? (res.content[0].text ?? "") : "";
 
+	// 用 delete_nodes 做替身：save_memory 已于 2026-10-03 改为常驻，不再属于延迟集。
 	it("关键词命中 → addedToolNames 只含延迟集命中项，content 确认", async () => {
 		const { loader, deferredNames } = setup();
-		const res = await run(loader, { query: "memory" });
+		const res = await run(loader, { query: "delete" });
 		assert.ok(res.addedToolNames && res.addedToolNames.length > 0);
 		for (const n of res.addedToolNames!) {
 			assert.ok(deferredNames.includes(n), `${n} 必须来自延迟集（常驻工具不该被 loader 激活）`);
 		}
-		assert.ok(res.addedToolNames!.includes("save_memory"));
+		assert.ok(res.addedToolNames!.includes("delete_nodes"));
 		const text = textOf(res);
 		assert.match(text, /已加载/);
-		assert.match(text, /save_memory/);
+		assert.match(text, /delete_nodes/);
+	});
+
+	it("常驻工具不参与搜索（query 命中常驻名字也不得被再次激活）", async () => {
+		const { loader, deferredNames } = setup();
+		assert.ok(!deferredNames.includes("save_memory"), "前提：save_memory 不在延迟集");
+		const res = await run(loader, { query: "save_memory" });
+		assert.ok(!res.addedToolNames || res.addedToolNames.length === 0, "常驻工具不该被 loader 激活");
 	});
 
 	it("中文关键词命中（按摘要/描述匹配）：「撤销」→ undo", async () => {
@@ -162,14 +226,14 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 
 	it("重复调用幂等：命中再次搜索照常返回（激活集合由 vendor 去重）", async () => {
 		const { loader } = setup();
-		const again = await run(loader, { query: "memory" });
-		assert.ok(again.addedToolNames!.includes("save_memory"));
+		const again = await run(loader, { query: "delete" });
+		assert.ok(again.addedToolNames!.includes("delete_nodes"));
 	});
 
-	it("多关键词 OR 匹配：「memory undo」同时命中两者", async () => {
+	it("多关键词 OR 匹配：「duplicate undo」同时命中两者", async () => {
 		const { loader } = setup();
-		const res = await run(loader, { query: "memory undo" });
-		assert.ok(res.addedToolNames!.includes("save_memory"));
+		const res = await run(loader, { query: "duplicate undo" });
+		assert.ok(res.addedToolNames!.includes("duplicate_node"));
 		assert.ok(res.addedToolNames!.includes("undo"));
 	});
 });
@@ -179,7 +243,7 @@ describe("tool_search 观测回调（host 喂 metrics 的钩子）", () => {
 		const seen: Array<[string, number]> = [];
 		const e = buildToolEnsemble(fakeTools(), true, (o, a) => seen.push([o, a]));
 		const loader = e.registered.find((t) => t.name === "tool_search")!;
-		await loader.execute("c1", { query: "memory" } as never, () => {}, undefined as never, {} as never, undefined as never);
+		await loader.execute("c1", { query: "delete" } as never, () => {}, undefined as never, {} as never, undefined as never);
 		assert.equal(seen.length, 1);
 		assert.equal(seen[0][0], "hit");
 		assert.ok(seen[0][1] >= 1);
@@ -202,13 +266,13 @@ describe("tool_search 观测回调（host 喂 metrics 的钩子）", () => {
 		const loader = e.registered.find((t) => t.name === "tool_search")!;
 		const res = await loader.execute(
 			"c3",
-			{ query: "memory" } as never,
+			{ query: "delete" } as never,
 			() => {},
 			undefined as never,
 			{} as never,
 			undefined as never,
 		);
-		assert.ok(res.addedToolNames!.includes("save_memory"));
+		assert.ok(res.addedToolNames!.includes("delete_nodes"));
 	});
 });
 
