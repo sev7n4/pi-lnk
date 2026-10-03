@@ -30,9 +30,13 @@ import {
   isTurnaroundLikePrompt,
   resolveImageModelProfile,
 } from '@lnkpi/shared'
-import { applyGuideSceneToPrompt, clearGuideScene } from './guideSceneApply'
+import {
+  applyGuideSceneToPrompt,
+  clearGuideScene,
+  guideSceneParamsPatch,
+  nearestImageCount,
+} from './guideSceneApply'
 import { isImageDockReadonly } from './imageDockRefineEntry'
-import { mapPreferredSizeToAspect } from './mapPreferredSizeToAspect'
 import { useDockLocalImageUpload } from '@/components/canvas/dock-studio/shared/useDockLocalImageUpload'
 
 const { getConfig } = useModelProviderSettings()
@@ -119,13 +123,16 @@ function onSelectGuideScene(sceneId: string) {
     prompt: result.prompt,
     guideSceneId: result.guideSceneId,
   }
-  // preferredParams.size → aspect when unambiguous; resolution/quality deferred (Image 2.5 specialty).
-  const preferredSize = getGenerationScene(sceneId)?.preferredParams?.size
-  const mappedAspect = mapPreferredSizeToAspect(preferredSize)
-  if (mappedAspect) {
-    imageAspect.value = mappedAspect
-    patch.imageAspect = mappedAspect
+  // 2026-10-03：完整应用场景的 preferredParams（比例 + 分辨率 + 数量）。
+  // 旧实现只从 size 反解 aspect，且resolution/count 从不落地 —— 分辨率档无处安放。
+  // 视觉标记 = 场景按钮自身的 active 态（零新增控件，用户改任一参数即改值即最终值）。
+  const { patch: paramPatch } = guideSceneParamsPatch({ sceneId, modality: 'image' })
+  Object.assign(patch, paramPatch)
+  if (typeof paramPatch.imageAspect === 'string') imageAspect.value = paramPatch.imageAspect as ImageAspectRatio
+  if (typeof paramPatch.imageResolution === 'string') {
+    imageResolution.value = paramPatch.imageResolution as ImageResolution
   }
+  if (typeof paramPatch.imageCount === 'number') imageCount.value = paramPatch.imageCount as ImageCount
   emit('patch', patch)
   if (!result.didPrefill) {
     ElMessage.info(`已套用「${result.label}」场景约束（未改写现有提示词）`)
@@ -203,10 +210,9 @@ function syncFromNode() {
   imageAspect.value = (data.imageAspect as ImageAspectRatio | undefined) ?? '16:9'
   imageResolution.value = (data.imageResolution as ImageResolution | undefined) ?? '1K'
   const count = Number(data.imageCount ?? 1)
-  imageCount.value = 1
-  if (count !== 1) {
-    syncField('imageCount', 1)
-  }
+  // 归一到selector 的合法档位（1|2|4）。旧实现把任何非1 的值强制改回 1，
+  // 会连带清掉 agent 按平台惯例预填的 quantity（如小红书种草 x2）——改为就近吸附。
+  imageCount.value = nearestImageCount(count)
   referenceImageUrl.value = String(data.referenceImageUrl ?? '')
 }
 
@@ -287,6 +293,7 @@ function toggleVoice() {
         </button>
         <GuidePickerPopover
           mode="generation_scene"
+          modality="image"
           :active-id="activeGuideSceneId || null"
           :capabilities="guideCapabilities"
           :open="guidePickerOpen"

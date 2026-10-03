@@ -307,6 +307,39 @@ export class UpdateNodeDto {
   patch!: Record<string, unknown>
 }
 
+export class SetNodeGenerationParamsDto {
+  @IsString()
+  sessionId!: string
+
+  @IsString()
+  userId!: string
+
+  @IsString()
+  nodeId!: string
+
+  /**
+   * 生成参数（按节点模态白名单 + 枚举/区间校验，全部在 service 的纯函数里）。
+   * 刻意用 `@IsObject()` 而非逐字段 DTO：模态不同字段集不同，
+   * 逐字段 class-validator 只会把「合法但不属于当前模态」提前打成 400，
+   * 而 service 需要拿到它才能回 `allowed` 清单让模型自纠。
+   */
+  @IsObject()
+  params!: Record<string, unknown>
+}
+
+export class ListGenerationScenesDto {
+  @IsString()
+  userId!: string
+
+  @IsOptional()
+  @IsString()
+  modality?: string
+
+  @IsOptional()
+  @IsString()
+  sceneId?: string
+}
+
 class AttachRefsDto {
   @IsString()
   sessionId!: string
@@ -1061,9 +1094,21 @@ export class AgentCanvasToolsController {
     return { code: 0, message: 'ok', data }
   }
 
+  @Post('list-generation-scenes')
+  async listGenerationScenes(@Body() dto: ListGenerationScenesDto) {
+    const data = await this.tools.listGenerationScenes(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
   @Post('update-node')
   async updateNode(@Body() dto: UpdateNodeDto) {
     const data = await this.tools.updateNode(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('set-node-generation-params')
+  async setNodeGenerationParams(@Body() dto: SetNodeGenerationParamsDto) {
+    const data = await this.tools.setNodeGenerationParams(dto)
     return { code: 0, message: 'ok', data }
   }
 

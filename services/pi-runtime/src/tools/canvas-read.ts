@@ -178,5 +178,34 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 				return textResult(trimData(filtered));
 			},
 		},
+		{
+			...base,
+			name: "list_generation_scenes",
+			label: "生成场景",
+			description:
+				"List registered generation scenes with their vetted default parameters (aspect ratio / resolution / count / duration intent) and the reasoning behind each. Call this before set_node_generation_params when the request mentions a platform, a template or a specific投放位; pass the matching id as guide_scene_id instead of inventing numbers. Optional modality filter narrows the result.",
+			parameters: Type.Object({
+				modality: Type.Optional(
+					Type.String({ description: "image | video | audio (omit for all)" }),
+				),
+				scene_id: Type.Optional(
+					Type.String({ description: "Fetch one scene in full (includes promptScaffold) instead of the list" }),
+				),
+			}),
+			execute: async (_id, p: { modality?: string; scene_id?: string }, _u, tc: LnkpiToolContext) => {
+				if (!tc.userId) throw new Error("list_generation_scenes requires userId in toolContext");
+				// 场景注册表在@lnkpi/shared，而 pi-runtime 无该依赖（不能加：会改镜像构建链），
+				// 故由 Nest 侧读注册表后返回——单一权威仍在 shared，pi 侧只是传输方。
+				return textResult(
+					trimData(
+						await client.post("/agent/internal/list-generation-scenes", {
+							userId: tc.userId,
+							...(p.modality?.trim() ? { modality: p.modality.trim() } : {}),
+							...(p.scene_id?.trim() ? { sceneId: p.scene_id.trim() } : {}),
+						}),
+					),
+				);
+			},
+		},
 	];
 }

@@ -37,6 +37,7 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"list_generation_tasks",
 	"list_user_assets",
 	"list_model_options",
+	"list_generation_scenes",
 	"web_search",
 	"web_fetch",
 	"read_document",
@@ -54,6 +55,10 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// （drama-* / ecommerce-product-photo 都写死 arrange_nodes(along_edges)），
 	// 放进延迟集 = 要靠 tool_search 才能拿到 schema，而工具搜索触发率实测为 0 ⇒ 延迟即不可达。
 	"arrange_nodes",
+	// 生成参数预填（2026-10-03）：与 arrange_nodes 同理 —— prompt 规则要求
+	// 「建节点后落参数才叫完成」，若进延迟集，模型在需要它时看不见 schema，
+	// 而 tool_search 触发率实测 0 ⇒ 延迟即不可达。
+	"set_node_generation_params",
 	// gen（用户确认后当轮即用）
 	"run_image_generation",
 	"run_video_generation",

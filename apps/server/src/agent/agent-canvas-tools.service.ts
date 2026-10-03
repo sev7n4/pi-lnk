@@ -7,7 +7,10 @@ import {
   decodeChannelModel,
   duplicateResultToCanvasActions,
   duplicateSubgraph,
+  getGenerationScene,
+  getModelEntry,
   isProductFourPanelPrompt,
+  SUPPORTED_ASPECT_RATIOS,
   isRootNode,
   normalizeModelRef,
   remapWorkflowIds,
@@ -184,6 +187,254 @@ export function validateNodePatch(input: {
     return { ok: false, reason: 'patch must contain at least one writable field', allowed: writableFields }
   }
   return { ok: true, data }
+}
+
+/**
+ * 生成参数可写字段（按节点模态分组）。agent 只影响「预填什么」，用户仍可否决（HITL 不变）。
+ * 视频/音频参数整体收在嵌套对象里，避免与image 的扁平字段撞名。
+ */
+export const GENERATION_PARAM_FIELDS = {
+  image: ['imageAspect', 'imageResolution', 'imageCount', 'imageModel', 'guideSceneId'],
+  video: [
+    'videoSettings',
+    'videoMode',
+    'videoModel',
+    'seed',
+    'negativePrompt',
+    'guideSceneId',
+  ],
+  audio: [
+    // 前端 AudioDockPanel 消费的是**扁平**字段（audioVoice/audioEmotion/audioSpeed/...），不是嵌套对象
+    'audioVoice',
+    'audioEmotion',
+    'audioLanguage',
+    'audioSpeed',
+    'audioVolume',
+    'audioPitch',
+    'audioModel',
+    'guideSceneId',
+  ],
+} as const
+
+const IMAGE_RESOLUTIONS = ['1K', '2K', '4K'] as const
+const VIDEO_RESOLUTIONS = ['480p', '720p', '768p', '1080p', '2k', '4k'] as const
+/** 区间取自 AudioVoiceSettingsSelector.vue（前端唯一权威）：speed 0.5~2 / volume 0.1~2 / pitch -12~12。 */
+const AUDIO_RANGES = { speed: [0.5, 2], volume: [0.1, 2], pitch: [-12, 12] } as const
+
+export type GenerationParamValidation =
+  | { ok: true; data: Record<string, unknown>; applied: string[] }
+  | { ok: false; reason: string; allowed?: string[] }
+
+function inRange(v: unknown, min: number, max: number): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
+}
+
+/**
+ * `set_node_generation_params` 的入参校验。
+ *
+ * 与 `validateNodePatch` 同款纪律：模块级纯函数、白名单是唯一防线、**失败绝不静默回落默认值**
+ * （静默兜底会让模型以为设成功了），一律带 `allowed` 清单让模型自纠。
+ */
+export function validateGenerationParams(input: {
+  params: Record<string, unknown>
+  node: { type?: string; data?: Record<string, unknown> }
+}): GenerationParamValidation {
+  const { params, node } = input
+  const nodeType = String(node.type ?? '')
+  const nodeData = node.data ?? {}
+  const modality = nodeType === 'video' ? 'video' : nodeType === 'audio' ? 'audio' : 'image'
+  const allowed = [...GENERATION_PARAM_FIELDS[modality]]
+
+  const unknown = Object.keys(params).filter((k) => !allowed.includes(k))
+  if (unknown.length) {
+    return {
+      ok: false,
+      reason: `unsupported field(s) for ${nodeType || 'unknown'} node: ${unknown.join(', ')}`,
+      allowed,
+    }
+  }
+
+  const data: Record<string, unknown> = {}
+  const applied: string[] = []
+
+  for (const key of Object.keys(params)) {
+    const value = params[key]
+    if (value === undefined || value === null) continue
+
+    // guideSceneId：三模态通用，且必须是注册表里真实存在的 id（不接受模型编造）
+    if (key === 'guideSceneId') {
+      if (typeof value !== 'string' || !getGenerationScene(value.trim())) {
+        return { ok: false, reason: `unknown guideSceneId "${String(value)}"`, allowed }
+      }
+      data.guideSceneId = value.trim()
+      applied.push(key)
+      continue
+    }
+
+    // seed / negativePrompt：视频通用裸字段
+    if (key === 'seed') {
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        return { ok: false, reason: 'seed must be an integer', allowed }
+      }
+      data.seed = value
+      applied.push(key)
+      continue
+    }
+    if (key === 'negativePrompt') {
+      if (typeof value !== 'string') {
+        return { ok: false, reason: 'negativePrompt must be a string', allowed }
+      }
+      data.negativePrompt = value
+      applied.push(key)
+      continue
+    }
+    if (key === 'videoMode') {
+      if (value !== 'text_to_video' && value !== 'image_to_video') {
+        return { ok: false, reason: 'videoMode must be text_to_video|image_to_video', allowed }
+      }
+      data.videoMode = value
+      applied.push(key)
+      continue
+    }
+
+    // 模型字段交给既有的 normalizeModelRef 链路（R-3：清单是唯一权威）
+    if (key === 'imageModel' || key === 'videoModel' || key === 'audioModel') {
+      if (typeof value !== 'string') {
+        return { ok: false, reason: `${key} must be a string`, allowed }
+      }
+      const normalized = normalizeModelRef(modality as NodeModal, value)
+      if (!normalized || normalized.fallback) {
+        return { ok: false, reason: `unknown model "${value}"`, allowed }
+      }
+      data[key] = normalized.ref
+      applied.push(key)
+      continue
+    }
+
+    // image 扁平字段
+    if (key === 'imageAspect') {
+      if (typeof value !== 'string' || !SUPPORTED_ASPECT_RATIOS.has(value)) {
+        return {
+          ok: false,
+          reason: `unsupported imageAspect "${String(value)}"`,
+          allowed: [...SUPPORTED_ASPECT_RATIOS],
+        }
+      }
+      data.imageAspect = value
+      applied.push(key)
+      continue
+    }
+    if (key === 'imageResolution') {
+      if (typeof value !== 'string' || !IMAGE_RESOLUTIONS.includes(value as never)) {
+        return { ok: false, reason: `unsupported imageResolution "${String(value)}"`, allowed: [...IMAGE_RESOLUTIONS] }
+      }
+      data.imageResolution = value
+      applied.push(key)
+      continue
+    }
+    if (key === 'imageCount') {
+      if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 4) {
+        return { ok: false, reason: 'imageCount must be an integer within 1..4', allowed }
+      }
+      data.imageCount = value
+      applied.push(key)
+      continue
+    }
+
+    // audio 扁平字段（与 AudioDockPanel 消费的 node.data 键一一对应）
+    if (key === 'audioVoice') {
+      if (typeof value !== 'string' || !value.trim()) {
+        return { ok: false, reason: 'audioVoice must be a non-empty string', allowed }
+      }
+      // 音色号跨模型不通用 —— 必须按当前 audioModel 校验
+      const modelRef = typeof nodeData.audioModel === 'string' ? nodeData.audioModel : ''
+      const modelKey = decodeChannelModel(modelRef)?.modelName ?? modelRef
+      const voices = modelKey ? getModelEntry(modelKey)?.voices : undefined
+      if (voices?.length && !voices.includes(value)) {
+        return { ok: false, reason: `voice "${value}" is not available for model "${modelKey}"`, allowed: voices }
+      }
+      data.audioVoice = value
+      applied.push(key)
+      continue
+    }
+    if (key === 'audioEmotion' || key === 'audioLanguage') {
+      if (typeof value !== 'string' || !value.trim()) {
+        return { ok: false, reason: `${key} must be a non-empty string`, allowed }
+      }
+      data[key] = value
+      applied.push(key)
+      continue
+    }
+    if (key === 'audioSpeed' || key === 'audioVolume' || key === 'audioPitch') {
+      const field = key.slice('audio'.length).toLowerCase() as 'speed' | 'volume' | 'pitch'
+      const [min, max] = AUDIO_RANGES[field]
+      if (!inRange(value, min, max)) {
+        return { ok: false, reason: `${key} must be a number within ${min}..${max}`, allowed }
+      }
+      data[key] = value
+      applied.push(key)
+      continue
+    }
+
+    // video 嵌套设置
+    if (key === 'videoSettings') {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return { ok: false, reason: 'videoSettings must be an object', allowed }
+      }
+      const v = value as Record<string, unknown>
+      const settings: Record<string, unknown> = {}
+      if (v.aspectRatio !== undefined) {
+        if (typeof v.aspectRatio !== 'string' || !SUPPORTED_ASPECT_RATIOS.has(v.aspectRatio)) {
+          return {
+            ok: false,
+            reason: `unsupported videoSettings.aspectRatio "${String(v.aspectRatio)}"`,
+            allowed: [...SUPPORTED_ASPECT_RATIOS],
+          }
+        }
+        settings.aspectRatio = v.aspectRatio
+      }
+      if (v.resolution !== undefined) {
+        if (typeof v.resolution !== 'string' || !VIDEO_RESOLUTIONS.includes(v.resolution as never)) {
+          return {
+            ok: false,
+            reason: `unsupported videoSettings.resolution "${String(v.resolution)}"`,
+            allowed: [...VIDEO_RESOLUTIONS],
+          }
+        }
+        settings.resolution = v.resolution
+      }
+      if (v.duration !== undefined) {
+        // 上界按模型能力 clamp（各模型 4~15s 不一）；下界固定 1s
+        if (!inRange(v.duration, 1, 60)) {
+          return { ok: false, reason: 'videoSettings.duration must be a number within 1..60', allowed }
+        }
+        settings.duration = Math.round(v.duration)
+      }
+      if (v.crop !== undefined) {
+        if (typeof v.crop !== 'boolean') {
+          return { ok: false, reason: 'videoSettings.crop must be a boolean', allowed }
+        }
+        settings.crop = v.crop
+      }
+      if (v.generateAudio !== undefined) {
+        if (typeof v.generateAudio !== 'boolean') {
+          return { ok: false, reason: 'videoSettings.generateAudio must be a boolean', allowed }
+        }
+        settings.generateAudio = v.generateAudio
+      }
+      if (Object.keys(settings).length === 0) {
+        return { ok: false, reason: 'videoSettings has no recognized field', allowed }
+      }
+      data.videoSettings = settings
+      applied.push(key)
+      continue
+    }
+  }
+
+  if (applied.length === 0) {
+    return { ok: false, reason: 'params must contain at least one writable field', allowed }
+  }
+  return { ok: true, data, applied }
 }
 
 /** 由 canvas.edges 推导节点的上下游（只回 id+type+title，体积可控；悬空边跳过）。 */
@@ -1015,6 +1266,106 @@ export class AgentCanvasToolsService {
     ]
     await this.persist(input.sessionId, actions)
     return { nodeId: node.id, actions }
+  }
+
+  /**
+   * 生成场景清单（pi-runtime `list_generation_scenes` 的数据源）。
+   *
+   * 为何由 Nest 读而不在 pi 侧直接 import：pi-runtime 的 package.json 没有 @lnkpi/shared 依赖
+   * （加它要改镜像构建链），而注册表 SSOT 在 shared。故 Nest 读、pi 只做传输。
+   */
+  async listGenerationScenes(input: { userId: string; modality?: string; sceneId?: string }): Promise<{
+    scenes: Array<{
+      id: string
+      label: string
+      modality: string
+      group?: string
+      description: string
+      preferredParams: Record<string, unknown>
+    }>
+  }> {
+    if (!input.userId) throw new BadRequestException('userId required')
+    const { listGenerationScenes: list, guideModality } = await import('@lnkpi/shared')
+
+    const one = input.sceneId?.trim()
+    if (one) {
+      const scene = list().find((s) => s.id === one)
+      if (!scene) throw new NotFoundException(`unknown sceneId "${one}"`)
+      return {
+        scenes: [
+          {
+            id: scene.id,
+            label: scene.label,
+            modality: guideModality(scene),
+            group: scene.groupId,
+            description: scene.description,
+            preferredParams: scene.preferredParams as Record<string, unknown>,
+          },
+        ],
+      }
+    }
+
+    const key = input.modality?.trim()
+    // 未知模态回落全量而非返回空——空会让模型以为「没有可用场景」
+    const scenes = list()
+      .filter((s) => (key && key !== 'all' ? guideModality(s) === key : true))
+      .map((s) => ({
+        id: s.id,
+        label: s.label,
+        modality: guideModality(s),
+        group: s.groupId,
+        description: s.description,
+        preferredParams: s.preferredParams as Record<string, unknown>,
+      }))
+    return { scenes }
+  }
+
+  /**
+   * set_node_generation_params：agent 按领域推理预填 dock 底部参数。
+   *
+   * 与 update_node 分开的原因：后者「一次只允许一个模型字段」（R-1）且白名单只有 title+模型字段，
+   * 生成参数是多字段批量场景，语义也不同（这是「配生成参数」不是「改属性」）。
+   * 走同一条 update_node action 通道 ⇒ 与 saveCanvas 同一 SSOT，不会被前端覆盖。
+   */
+  async setNodeGenerationParams(input: {
+    sessionId: string
+    userId: string
+    nodeId: string
+    params: Record<string, unknown>
+  }): Promise<{ nodeId: string; applied: string[]; actions: CanvasAction[] }> {
+    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+    const node = canvas.nodes.find((n) => n.id === input.nodeId)
+    if (!node) throw new NotFoundException('节点不存在')
+
+    const selectable = await this.selectableModels(input.userId)
+    const validated = validateGenerationParams({ params: input.params, node })
+    if (!validated.ok) {
+      throw new BadRequestException({
+        message: validated.reason,
+        ...(validated.allowed ? { allowed: validated.allowed } : {}),
+      })
+    }
+
+    // R-3 同款纪律：模型字段必须落在用户可选清单内
+    const modelField = (['imageModel', 'videoModel', 'audioModel'] as const).find(
+      (k) => k in validated.data,
+    )
+    if (modelField) {
+      const modal: NodeModal = modelField === 'imageModel' ? 'image' : modelField === 'videoModel' ? 'video' : 'audio'
+      const ref = validated.data[modelField] as string
+      if (!selectable[modal].includes(ref)) {
+        throw new BadRequestException({
+          message: `model "${ref}" is not in the user's selectable list`,
+          allowed: selectable[modal],
+        })
+      }
+    }
+
+    const actions: CanvasAction[] = [
+      { type: 'update_node', payload: { id: node.id, data: validated.data } },
+    ]
+    await this.persist(input.sessionId, actions)
+    return { nodeId: node.id, applied: validated.applied, actions }
   }
 
   /**

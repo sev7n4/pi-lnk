@@ -2,6 +2,7 @@ import type {
   EditIntent,
   GenerationScene,
   GuideCapabilities,
+  GuideModality,
   ParamContract,
 } from './types'
 
@@ -27,7 +28,23 @@ export function defaultGuideCapabilities(): GuideCapabilities {
   }
 }
 
-const PARAM_KEYS: (keyof ParamContract)[] = ['size', 'quality', 'background', 'outputFormat']
+const BASE_PARAM_KEYS: (keyof ParamContract)[] = ['size', 'quality', 'background', 'outputFormat']
+
+/** 各模态在基类之外额外生效的字段。 */
+const MODALITY_PARAM_KEYS: Record<GuideModality, (keyof ParamContract)[]> = {
+  image: ['aspectRatio', 'resolution', 'count'],
+  video: ['aspectRatio', 'resolution', 'durationHint', 'duration', 'crop', 'generateAudio'],
+  audio: ['voice', 'emotion', 'language', 'speed', 'volume', 'pitch'],
+}
+
+export function guideModality(guide: GenerationScene | EditIntent): GuideModality {
+  return guide.modality ?? 'image'
+}
+
+/** 该 guide 实际会消费的参数 key 集合（基类 + 模态专属）。 */
+export function paramKeysForModality(modality: GuideModality): (keyof ParamContract)[] {
+  return [...BASE_PARAM_KEYS, ...MODALITY_PARAM_KEYS[modality]]
+}
 
 function isParamSupported(
   key: keyof ParamContract,
@@ -71,7 +88,7 @@ export function resolveGuideRequest(input: GuideResolveInput): GuideResolveResul
   const applied: string[] = []
   const skipped: string[] = []
 
-  for (const key of PARAM_KEYS) {
+  for (const key of paramKeysForModality(guideModality(guide))) {
     const preferred = guide.preferredParams[key]
     const override = userOverrides?.[key]
     const value = override !== undefined ? override : preferred

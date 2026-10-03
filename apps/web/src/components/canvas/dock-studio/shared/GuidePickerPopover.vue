@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import {
   GUIDE_GROUP_ORDER,
+  guideModality,
   listEditIntents,
   listGenerationScenes,
   type EditIntent,
   type GenerationScene,
   type GuideCapabilities,
   type GuideKind,
+  type GuideModality,
 } from '@lnkpi/shared'
 import { computed, nextTick, onUnmounted, ref, watch, type CSSProperties } from 'vue'
 import { guidePickerDisabledReason } from './guidePickerDisable'
@@ -22,6 +24,12 @@ const props = withDefaults(
     open: boolean
     refImageCount?: number
     placement?: 'below-start' | 'below-end' | 'above-end'
+    /**
+     * 面板所在节点模态。只列同模态场景 —— 否则 image 面板里会出现 video 场景
+     * （如「抖音带货」），用户点了却把 videoSettings 写进 image 节点（静默失效）。
+     * 缺省不过滤（向后兼容既有 9 个 image 场景）。
+     */
+    modality?: GuideModality
     /** Escape overflow:auto ancestors (e.g. Refine side panel body). */
     portal?: boolean
     /** Required when portal=true — position relative to this element. */
@@ -46,11 +54,13 @@ const searchInput = ref<HTMLInputElement | null>(null)
 const panelRef = ref<HTMLElement | null>(null)
 const portalStyle = ref<CSSProperties>({})
 
-const items = computed<GuideItem[]>(() =>
-  props.mode === 'generation_scene'
-    ? listGenerationScenes()
-    : listEditIntents(),
-)
+const items = computed<GuideItem[]>(() => {
+  const all =
+    props.mode === 'generation_scene' ? listGenerationScenes() : listEditIntents()
+  const want = props.modality
+  if (!want) return all
+  return all.filter((it) => guideModality(it) === want)
+})
 
 const groups = computed(() =>
   groupGuideItems(
