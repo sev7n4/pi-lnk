@@ -293,7 +293,11 @@ jobs:
           # 这条 curl 把「容器里到底有没有带规则」从 CI 的猜测变成线上自证。
           # 判据与 prompt:lint 同源（registryHash / entryCount / degraded），但视角不同：
           # lint 看仓库自洽，这个看镜像里落地。
-          BODY="$(curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:${API_PORT}/api/agent/prompt-registry")"
+          #
+          # ⚠️ 必须经 `ssh deploy-cvm` 跑：API 在 CVM 上，本 step 跑在 GH runner，
+          # runner 的 127.0.0.1:5100 上什么都没有（直接 curl 会 exit 7）。
+          # 与上面 Verify API deployment 同理。
+          BODY="$(ssh deploy-cvm "curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:${API_PORT}/api/agent/prompt-registry")"
           echo "$BODY" | head -c 600
           echo ""
           DEGRADED="$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["degraded"])')"
