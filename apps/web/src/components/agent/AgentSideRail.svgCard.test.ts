@@ -18,6 +18,30 @@ vi.mock('@/services/api-base', async (importOriginal) => ({
   apiUrl: (p: string) => p,
 }))
 
+/**
+ * 拦掉 provider bootstrap 的真实网络请求。
+ *
+ * `AgentSideRail.vue:1302` 调 `useProviderBootstrap()`，它 onMounted 就发
+ * `providerApi.bootstrap()`。jsdom 里没有网络 ⇒ 必然 reject。
+ *
+ * ⚠️ 而 `useProviderBootstrap.load()` 的 `.catch()` 里**又`throw err` 重新抛出**
+ * （既存实现，不是本PR 引入）⇒ 变成 unhandled promise rejection，vitest 记入
+ * `Errors N errors` 并返回非零退出码 —— 即使全部Test Files / Tests 都 passed。
+ *
+ * 本用例组只关心 svg_card 的挂载与净化，不需要provider 配置，
+ * 在此 mock 掉是正确粒度（不该为了跑通 A 的测试去改 B 的生产代码）。
+ */
+vi.mock('@/services/provider-api', () => ({
+  providerApi: {
+    bootstrap: vi.fn().mockResolvedValue({
+      platformChannel: null,
+      channels: [],
+      preferences: null,
+      webdav: null,
+    }),
+  },
+}))
+
 async function mountRail() {
   // jsdom 无 matchMedia，useAgentMobileLayout 在 setup 里就调它
   vi.stubGlobal('matchMedia', (query: string) => ({
