@@ -375,6 +375,8 @@ flowchart TD
 | `trimEnd` 约定与未来某条规则的尾随换行冲突 | 低 | lint L5 禁尾随空白，把歧义挡在 CI |
 | 与并行窗口改动冲突 | 中 | 复工前 `git fetch` + `origin/master` worktree；**不整文件 cp 工作区改动**（仓库既有纪律，历史上有 `tiering.ts` 被回退、改动混入他人口味的先例） |
 | lint 规则过严拖慢日常 | 低 | 规则只覆盖格式与一致性，不审核文案质量；文案质量归 W4–W5 的 eval |
+| **CI step 跑错机器**（已发生，#116→hotfix #118） | 中 | deploy.yml 的 step 跑在 GH runner，API 在 CVM 上 ⇒ 打 `127.0.0.1:5100` 必 `curl: (7) exit 7`。**同一 job 内相邻 step 不代表同一台机器**。缓解：远程调用一律抄同 job 里 `Verify API deployment` 的 `ssh deploy-cvm` 写法；验收必须 SSH 到真 CVM 按 step 完整路径跑正例+负例（本机模拟只能验逻辑，验不了执行位置） |
+| **判据跨语言字面量耦合**（已发生，随 #117 修复） | 中 | self-check 曾比对 python `print` 出的 `True` 字面量（JSON 里是 `true`）——当前侥幸成立，但解析代码一改就静默变成**永假的空判据**（看起来在守、实际从不触发，比没护栏更坏）。缓解：跨语言边界一律归一成 `0/1` 再判；判据变更必须同时跑负例证明「它真会红」 |
 
 ---
 
@@ -388,9 +390,35 @@ flowchart TD
 | W4–W5 | 规则原子化重写、版本注入正文 | W1b 的 L1 判据可信 |
 | W6 | `⟦plan⟧` → custom entry + EntryProjector | W1b |
 | W7 | 调度守卫 / Model 分两条 | W4–W5 |
-| §12-a（取决于本包上线后需求） | K3s configmap 挂载 `prompt-registry`；诊断端点；`pi_runtime_prompt_version_info` 指标（pi-runtime 侧，走手搓 runtime-deploy） | 本包 |
+| §12-a（取决于本包上线后需求） | K3s configmap 挂载 `prompt-registry`；`pi_runtime_prompt_version_info` 指标（pi-runtime 侧，走手搓 runtime-deploy） | 本包 |
 
 configmap 那条之所以可选项：§5.2 的 `PI_PROMPT_REGISTRY_DIR` 环境变量已经留好了口子，将来换挂载方式**不需要改 loader 代码**。
+
+> **§12-a 的「诊断端点」已于 2026-10-03 落地**（PR #115 → master `bb78058`）：
+> `GET /api/agent/prompt-registry`，免鉴权，返回 `registryVersion/registryHash/entryCount/
+> degraded/degradedReason/entries(id,version,order,contentHash)/groupChars`。
+> 生产实况：`entryCount=7 / degraded=false / hash fdf2c1fd5ccf`，
+> `groupChars` 四组 547·1379·1019·1851 与本地实算逐一相等 ⇒ 线上渲染字节等价已被生产证实。
+> 配套的 deploy 收尾自检见 PR #116（+ hotfix #118）。
+
+### 12.1 遗留登记（2026-10-03 决策：**本轮不做，进技术栈清单**）
+
+| 项 | 内容 | 为什么不现在做 | 将来怎么做 |
+|---|---|---|---|
+| **L-1 镜像落地一致性 lint** | 校验 `Dockerfile.api` 确有两条 `COPY prompt-registry`、`.dockerignore` 确有 `!prompt-registry/**/*.md` 白名单 | ①**已有兜底**：`deploy.yml` 收尾的 `Prompt registry self-check` 每次发 API 版都跑，`degraded=true` 或 `entryCount<1` 即让 deploy 变红、人工介入——「静默降级」已不可能无声通过，剩下的只是「早发现 vs 晚发现」。②**触发条件低频**：要触发这个缺口，得有人主动改 Dockerfile 或 .dockerignore。③**成本是负的**：会让 `prompt:lint` 第一次跨出 `prompt-registry/` 去读部署文件，判据失败时报错横跨两个领域 | **做成独立门禁 `image-content-lint`**，不要塞进 `prompt-lint.yml`。理由见下 |
+| L-2 pi-runtime 侧 `pi_runtime_prompt_version_info` 指标 | 见 §12-a | 需手搓 `runtime-deploy`，与 W3 同批做更省事 | 随 W3 |
+
+**为什么 L-1 不塞进 `prompt:lint`（避免将来接手的人误改它的 paths）**：
+
+`prompt:lint` 的判据 L0–L9 全部是「Registry 资产 + fallback 常量 + MANIFEST 三者自洽」，判据变化会改变「Registry 怎么渲染」。而 L-1 问的是「镜像里有没有带上这些文件」——**判据变化不影响渲染，只影响打包**。两件事的生命周期不同，混在一个门禁里会出现：为了修 L-1 去给 `prompt-lint.yml` 加 `deploy/**` paths，于是「改 Dockerfile」也触发「Registry 资产自洽」检查，语义不对齐。
+
+**当前三道护栏的分工（维持不变，不要互相替代）**：
+
+| 护栏 | 视角 | 触发条件 |
+|---|---|---|
+| `prompt:lint` | 仓库里 Registry 资产与 fallback 是否**自洽** | 改 Registry 资产 / loader / 判据 |
+| `pnpm test`（CI 内） | 渲染逻辑与字节等价是否正确 | 任何代码改动 |
+| deploy `Prompt registry self-check` | **镜像里**是否真带上了规则 | 每次发 API 版 |
 
 ---
 
