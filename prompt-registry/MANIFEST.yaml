@@ -17,6 +17,10 @@ entries:
     version: 1.0.0
     order: 30
     contentHash: 68377de0dbdd
+  - id: memory_scope.tail
+    version: 1.0.0
+    order: 35
+    contentHash: 8bc581f97646
   - id: media_tool_policy
     version: 1.1.0
     order: 40

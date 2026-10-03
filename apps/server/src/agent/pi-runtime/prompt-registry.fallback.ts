@@ -24,6 +24,13 @@ export const CORE_RULES_TAIL = `7. 若已提供【侧栏参考图解析】，不
 export const RULE_10_WRITE_GUARD = `10. 当前会话仅开放只读查询工具（画布摘要/节点/生成状态/素材列表等）；创建、修改、连线、生成执行等写操作尚未开放——用户要求时如实说明，禁止虚构已执行。`;
 
 /**
+ * 记忆归属（spec 2026-10-03-agent-memory-scope-isolation-design.md）。
+ * 排在 sidebar_vision.tail 之后（order 35）：「记忆 ≠ 当前观察」是侧栏识图规则的延伸。
+ * 正文刻意压到 ~180 字符——core 段每轮进 context，registry lint 的预算是硬门禁。
+ */
+export const MEMORY_SCOPE_RULES = `记忆条目带 scope/sessionId/crossCanvas。\`crossCanvas:true\` = 另一个画布的记忆，仅作背景，禁止当作当前图片/截图/画布的观察结果；无【侧栏参考图解析】而用户问「这图是什么」时，只答无法查看并请其描述，禁止编画面细节。\`save_memory\` 默认仅本画布，只有偏好/品牌/暗号才用 \`scope:'user'\`。`;
+
+/**
  * writeTools 组（B-2 启用）：explore.py:95-112 规则 4/5 逐字拷贝（含无空格拼接点）。
  * 声明偏离（计划 §1.2）：规则 6（tool_search）/8（B-4/B-6 工具）/9（upscale_image 断头）
  * 不拷贝——pi 侧对应工具/功能未上线，随所在批次补。

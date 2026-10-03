@@ -18,6 +18,7 @@ import {
 	WRITE_TOOLS_RULES,
 	GEN_TOOLS_RULES,
 	RULE_10_WRITE_GUARD,
+	MEMORY_SCOPE_RULES,
 } from "./prompt-registry.fallback";
 
 
@@ -340,8 +341,9 @@ describe("assembleDynamic 焦点过滤透传（审计 P0-①）", () => {
 
 // W1a 字节等价护栏：期望串按「搬家前的 composeRuleText」逐段拼出来
 // （core = 前缀 + 规则 3 + 尾部；writeTools 开 → 规则 4/5；否则补第 10 条守卫；genTools 开 → 追加 11/12/13）
-const CORE = `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}`;
-const CORE_GEN = `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}`;
+// 记忆归属规则（order 35）排在 sidebar_vision.tail 之后，与磁盘 Registry 的 order 排序一致
+const CORE = `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`;
+const CORE_GEN = `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`;
 
 const GROUPS: Record<string, Array<"core" | "writeTools" | "genTools">> = {
 	core: ["core"],

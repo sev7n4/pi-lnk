@@ -15,6 +15,7 @@ import {
   RULE_3_NO_GEN,
   RULE_10_WRITE_GUARD,
   CORE_RULES_TAIL,
+  MEMORY_SCOPE_RULES,
   WRITE_TOOLS_RULES,
 } from "./prompt-registry.fallback";
 
@@ -42,7 +43,7 @@ export interface PromptRegistrySnapshot {
 /** L9：代码侧声明的、必须由 Registry 提供的 id 清单。 */
 export const COMPOSED_IDS = [
   "identity.opening", "no_gen_claim.nogen", "no_gen_claim.gen", "sidebar_vision.tail",
-  "media_tool_policy", "gen_tool_policy", "write_guard",
+  "memory_scope.tail", "media_tool_policy", "gen_tool_policy", "write_guard",
 ] as const;
 
 /** L7：Registry id → fallback 常量的映射。 */
@@ -51,6 +52,7 @@ export const FALLBACK_BY_ID: Record<string, string> = {
   "no_gen_claim.nogen": RULE_3_NO_GEN,
   "no_gen_claim.gen": RULE_3_GEN,
   "sidebar_vision.tail": CORE_RULES_TAIL,
+  "memory_scope.tail": MEMORY_SCOPE_RULES,
   "media_tool_policy": WRITE_TOOLS_RULES,
   "gen_tool_policy": GEN_TOOLS_RULES,
   "write_guard": RULE_10_WRITE_GUARD,
@@ -188,8 +190,8 @@ export function renderStaticFallback(groups: readonly string[]): string {
   const parts: string[] = [];
   if (coreOn) {
     parts.push(groups.includes("genTools")
-      ? `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}`
-      : `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}`);
+      ? `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`
+      : `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`);
   }
   if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES);
   if (groups.includes("genTools")) parts.push(GEN_TOOLS_RULES);
