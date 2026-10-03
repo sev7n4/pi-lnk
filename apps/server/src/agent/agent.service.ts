@@ -41,7 +41,7 @@ import {
   type CreateSessionResult,
   type PiSessionLlmOverride,
 } from './pi-runtime/pi-runtime.client'
-import { resolveModelCapability } from '../provider/model-capability'
+import { resolveModelCapability, resolveVisionInputSupport } from '../provider/model-capability'
 import {
   formatParseContextBlock,
   getCachedParseBlock,
@@ -761,7 +761,49 @@ export class AgentService {
       reasoning: cap.reasoning,
       contextWindow: cap.contextWindow,
       maxTokens: cap.maxTokens,
+      // 视觉输入能力必须**显式**传下去，且永远是 boolean（见下方注释）。
+      supportsVision: this.resolveOverrideSupportsVision(ctx),
     }
+  }
+
+  /**
+   * BYOK override 的视觉输入能力（接线 #123/#124）。
+   *
+   * **为什么必须显式传**：Nest 是唯一知道「用户那个模型能不能看图」的地方——
+   * 它持有渠道元数据、也能跑探针；pi-runtime 只拿到一个 providerRef，无从得知。
+   * 若这里不传，pi-runtime 的 `overrideProvider()` 会回落到硬编码
+   * `input:["text"]`，于是 vendor `downgradeUnsupportedImages` 把每张图换成
+   * `(image omitted: model does not support images)`。
+   * 那是一次**完全成功**的请求：上游200、assistant 正常落库、无 error 事件、
+   * 无 5xx、无日志——UI 上只能表现为「模型说看不见图」（生产事故根因）。
+   *
+   * **当前没有可用的显式声明，所以走启发式兜底**：
+   * `resolveVisionInputSupport` 需要「渠道显式声明该模型接收图片输入」或「实测探针」
+   * 才有结论。但 `ProviderChannel.models[]` 里**只有 `capability`（输出模态）**，
+   * 没有输入能力字段；探针也还没实现。所以现在必然落到 `unknown` 分支。
+   *
+   *⚠️ 刻意**不**把 `capability` 当输入声明：生产实测 `agnes-2.5-flash` 声明
+   * `capability:"text"` 却能识图（`image_tokens:1024`），拿输出去推输入会把
+   * 能看图的模型判成不能——与本次事故同形、方向相反。TS 也拦得住这个写法：
+   * `ModelCapability` 与 `'vision'` 无交集，`declared === 'vision'` 是死代码。
+   *
+   * 这样写的收益是：一旦有人给渠道加`inputModalities` 字段或实现探针，
+   * 这里立刻自动生效，无需再改接线。
+   *
+   * **为什么折叠成 boolean 而不是省略字段**：省略字段等于让 pi-runtime 回落
+   * 硬编码，正是上面那个故障形状。显式 false 的后果是「识图走兜底块并给用户
+   * 失败提示」，可查得多。
+   */
+  private resolveOverrideSupportsVision(ctx: ProviderContext): boolean {
+    const support = resolveVisionInputSupport(ctx.providerRef, {
+      // 无输入能力声明 ⇒ 留空 ⇒ unknown（传 undefined 会与「显式声明不支持」混淆）
+      declared: undefined,
+    })
+    if (support === 'supported') return true
+    if (support === 'unsupported') return false
+    // unknown：回落现役启发式（agent.service:670 / direct-image-payload:86 同一判据），
+    // 保证本 PR 不改变「哪些模型走直通」的既有行为，只把它显式化。
+    return supportsVisionModel(ctx.model)
   }
 
   /** Overridable in unit tests */
