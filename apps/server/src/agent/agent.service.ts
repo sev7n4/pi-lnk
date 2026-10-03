@@ -1165,7 +1165,14 @@ export class AgentService {
     if (shouldPersistAssistant) {
       // 首尾空行归一化：上游 harness / agnes 网关常在下水前补一串 \n（生产 1.4% 消息命中），
       // 只在落库这一跳清理——逐帧 normalize delta 会把跨 delta 的段落换行吃掉。
-      const content = normalizeAssistantText(assistantText) || ' '
+      //
+      // 归一化后允许为空串：模型只吐 thinking / toolCalls 而没吐正文时（生产实测占
+      // 纯空白行的 100%，全部带 executionEvents）content 本就该是空的。此前这里写的是
+      // `|| ' '`兜底，会把「无正文」伪装成「有一个空格」——生产库确实留下了
+      // len=1 / codepoint=32 的行，前端还可能因此渲染出一个空气泡。
+      // 空 content 不影响 `shouldPersistAssistant` 的判定：那条走的是原始 assistantText
+      // 与 metadata，presentation / executionEvents 才是这些行必须落库的原因。
+      const content = normalizeAssistantText(assistantText)
       await this.prisma.agentMessage.create({
         data: {
           sessionId,

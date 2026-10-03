@@ -17,7 +17,7 @@ const TRAILING_BLANK = /[ \t\u3000]*(\r?\n[ \t\u3000]*)*$/
 
 /**
  * 归一化助手文本：剥离开头连续空行、去掉结尾空行/行尾空白，正文逐字节保留。
- * 空串与纯空白原样返回空串（调用方 finalizeTurn 已有 `|| ' '` 兜底）。
+ * 空串与纯空白一律归一化为空串——调用方 finalizeTurn 直接落这个值，**不做兜底**。
  */
 export function normalizeAssistantText(raw: string): string {
   if (!raw) return raw
