@@ -300,9 +300,12 @@ jobs:
           BODY="$(ssh deploy-cvm "curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:${API_PORT}/api/agent/prompt-registry")"
           echo "$BODY" | head -c 600
           echo ""
-          DEGRADED="$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["degraded"])')"
+          # degraded 归一成 0/1 再判：原写法比对的是 python print 出的 **Python 字面量**
+          # True，而 JSON 里是 true —— 跨语言字面量耦合。当前侥幸成立，但只要把解析改成
+          # print(str(...).lower()) 就静默失效，护栏变成永假的空判据。
+          DEGRADED="$(echo "$BODY" | python3 -c 'import json,sys; print(int(bool(json.load(sys.stdin)["data"]["degraded"])))')"
           ENTRIES="$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["entryCount"])')"
-          if [ "$DEGRADED" = "True" ]; then
+          if [ "$DEGRADED" != "0" ]; then
             echo "::error::提示词 Registry 降级了（容器内规则缺失或不可读），线上正在走内嵌 fallback。"
             echo "查 .dockerignore 的 !prompt-registry/**/*.md 白名单与 Dockerfile.api 的两条 COPY。"
             exit 1
