@@ -1,0 +1,2581 @@
+{
+ "total": 283,
+ "by_status": {
+  "living": 92,
+  "frozen": 186,
+  "superseded": 5
+ },
+ "by_topic": {
+  "canvas-tool": 41,
+  "generation-pipeline": 36,
+  "canvas-product": 34,
+  "image-editor": 30,
+  "agent-ux": 26,
+  "tool-runtime": 19,
+  "account-auth": 18,
+  "workflow-exchange": 18,
+  "planning": 16,
+  "ui-interaction": 15,
+  "other": 10,
+  "vision": 7,
+  "deploy-infra": 4,
+  "memory": 4,
+  "context-engineering": 3,
+  "prompt-registry": 2
+ },
+ "by_month": {
+  "2026-07": 41,
+  "2026-08": 79,
+  "2026-09": 155,
+  "2026-10": 8
+ },
+ "items": [
+  {
+   "path": "docs/superpowers/specs/2026-07-09-neowow-workflow-design.md",
+   "name": "2026-07-09-neowow-workflow-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-17-prompt-node-intent-templates-design.md",
+   "name": "2026-07-17-prompt-node-intent-templates-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-18-node-data-flow-refs-design.md",
+   "name": "2026-07-18-node-data-flow-refs-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-19-byok-provider-channels-design.md",
+   "name": "2026-07-19-byok-provider-channels-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-19-c2-canvas-generation-adapter-design.md",
+   "name": "2026-07-19-c2-canvas-generation-adapter-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-19-c21-canvas-refs-design.md",
+   "name": "2026-07-19-c21-canvas-refs-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-19-dock-studio-model-adapter-design.md",
+   "name": "2026-07-19-dock-studio-model-adapter-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-19-test-infrastructure-design.md",
+   "name": "2026-07-19-test-infrastructure-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "deploy-infra"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-20-node-task-status-feedback-design.md",
+   "name": "2026-07-20-node-task-status-feedback-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-20-points-dock-node-ux-design.md",
+   "name": "2026-07-20-points-dock-node-ux-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-20-text-image-timeout-thinking-design.md",
+   "name": "2026-07-20-text-image-timeout-thinking-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-21-node-generation-failure-diagnostics-design.md",
+   "name": "2026-07-21-node-generation-failure-diagnostics-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-22-canvas-upload-history-works-design.md",
+   "name": "2026-07-22-canvas-upload-history-works-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-23-agent-runtime-langgraph-design.md",
+   "name": "2026-07-23-agent-runtime-langgraph-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-23-canvas-task-undo-video-ux-design.md",
+   "name": "2026-07-23-canvas-task-undo-video-ux-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-24-agent-chat-ux-phase1-design.md",
+   "name": "2026-07-24-agent-chat-ux-phase1-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-25-agent-confirm-loop-hardening-design.md",
+   "name": "2026-07-25-agent-confirm-loop-hardening-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-25-agent-consistency-chains-design.md",
+   "name": "2026-07-25-agent-consistency-chains-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-25-agent-task-progress-card-design.md",
+   "name": "2026-07-25-agent-task-progress-card-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-25-agent-topology-preview-hitl-design.md",
+   "name": "2026-07-25-agent-topology-preview-hitl-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-07-26-graph-engineering-design.md",
+   "name": "2026-07-26-graph-engineering-design.md",
+   "month": "2026-07",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-03-agent-phase-c-canvas-sync-gen-design.md",
+   "name": "2026-08-03-agent-phase-c-canvas-sync-gen-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-03-agent-phase-c2-dock-model-skillid-design.md",
+   "name": "2026-08-03-agent-phase-c2-dock-model-skillid-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-03-atomic-studio-intent-design.md",
+   "name": "2026-08-03-atomic-studio-intent-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-04-atomic-intent-hybrid-design.md",
+   "name": "2026-08-04-atomic-intent-hybrid-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-04-loop-engineering-design.md",
+   "name": "2026-08-04-loop-engineering-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-05-commercial-storyboard-design.md",
+   "name": "2026-08-05-commercial-storyboard-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-05-intent-llm-structured-parse-design.md",
+   "name": "2026-08-05-intent-llm-structured-parse-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-05-intent-planning-guard-design.md",
+   "name": "2026-08-05-intent-planning-guard-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-05-turnaround-image-pipeline-design.md",
+   "name": "2026-08-05-turnaround-image-pipeline-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-06-agent-context-engineering-design.md",
+   "name": "2026-08-06-agent-context-engineering-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "context-engineering"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-06-agent-execution-trace-design.md",
+   "name": "2026-08-06-agent-execution-trace-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-06-agent-sidebar-copy-design.md",
+   "name": "2026-08-06-agent-sidebar-copy-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-06-seedream-gpt-image2-apimart-design.md",
+   "name": "2026-08-06-seedream-gpt-image2-apimart-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-07-agent-conversation-isolation-design.md",
+   "name": "2026-08-07-agent-conversation-isolation-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-07-agent-sidebar-m3-explicit-refs-design.md",
+   "name": "2026-08-07-agent-sidebar-m3-explicit-refs-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-07-agent-sidebar-material-entry-design.md",
+   "name": "2026-08-07-agent-sidebar-material-entry-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-07-platform-route-skill-boundary-design.md",
+   "name": "2026-08-07-platform-route-skill-boundary-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-08-agent-canvas-control-surface-design.md",
+   "name": "2026-08-08-agent-canvas-control-surface-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-08-media-storage-download-deferred-design.md",
+   "name": "2026-08-08-media-storage-download-deferred-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-08-seedance-agnes-video-adapter-design.md",
+   "name": "2026-08-08-seedance-agnes-video-adapter-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-09-atomic-intent-ir-design.md",
+   "name": "2026-08-09-atomic-intent-ir-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-09-explore-tool-reliability-phase2-design.md",
+   "name": "2026-08-09-explore-tool-reliability-phase2-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-09-sidebar-ref-image-routing-design.md",
+   "name": "2026-08-09-sidebar-ref-image-routing-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-10-agent-canvas-ref-pick-design.md",
+   "name": "2026-08-10-agent-canvas-ref-pick-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-10-ecommerce-product-visual-design.md",
+   "name": "2026-08-10-ecommerce-product-visual-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-10-ui-p0-interactions-design.md",
+   "name": "2026-08-10-ui-p0-interactions-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-10-ui-p1-p2-interactions-design.md",
+   "name": "2026-08-10-ui-p1-p2-interactions-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-11-agent-conversation-ux-product-visual-design.md",
+   "name": "2026-08-11-agent-conversation-ux-product-visual-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-11-product-visual-phase2-scheme-ssot-design.md",
+   "name": "2026-08-11-product-visual-phase2-scheme-ssot-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-11-product-visual-phase2-scheme-ssot-test-cases.md",
+   "name": "2026-08-11-product-visual-phase2-scheme-ssot-test-cases.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-11-product-visual-phase2-scheme-ssot-uat.md",
+   "name": "2026-08-11-product-visual-phase2-scheme-ssot-uat.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-12-agent-mid-run-interrupt-design.md",
+   "name": "2026-08-12-agent-mid-run-interrupt-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-13-product-visual-journey-trace-design.md",
+   "name": "2026-08-13-product-visual-journey-trace-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-14-unified-image-to-video-pipeline-design.md",
+   "name": "2026-08-14-unified-image-to-video-pipeline-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-15-i2v-upstream-capability-audit-design.md",
+   "name": "2026-08-15-i2v-upstream-capability-audit-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-15-media-inspector-design.md",
+   "name": "2026-08-15-media-inspector-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-17-canvas-node-duplicate-design.md",
+   "name": "2026-08-17-canvas-node-duplicate-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-18-cx-image-edit-design.md",
+   "name": "2026-08-18-cx-image-edit-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-19-cx-image-edit-sidepanel-design.md",
+   "name": "2026-08-19-cx-image-edit-sidepanel-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-19-cx-image-edit-toolchain-design.md",
+   "name": "2026-08-19-cx-image-edit-toolchain-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-21-canvas-media-info-footer-design.md",
+   "name": "2026-08-21-canvas-media-info-footer-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-21-cx-image-edit-selection-tools-design.md",
+   "name": "2026-08-21-cx-image-edit-selection-tools-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-31-cx-image-edit-sam-mediapipe-fallback-design.md",
+   "name": "2026-08-31-cx-image-edit-sam-mediapipe-fallback-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-08-31-cx-image-edit-sam-point-select-design.md",
+   "name": "2026-08-31-cx-image-edit-sam-point-select-design.md",
+   "month": "2026-08",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-01-points-stats-neowow-adoption-design.md",
+   "name": "2026-09-01-points-stats-neowow-adoption-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-01-points-stats-personal-center-design.md",
+   "name": "2026-09-01-points-stats-personal-center-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-06-chat-sink-sidebar-l1-design.md",
+   "name": "2026-09-06-chat-sink-sidebar-l1-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-10-wave-a-a3-media-persist-design.md",
+   "name": "2026-09-10-wave-a-a3-media-persist-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-10-wave-a-delivery-program-design.md",
+   "name": "2026-09-10-wave-a-delivery-program-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-11-image-prompting-guide-catalog-design.md",
+   "name": "2026-09-11-image-prompting-guide-catalog-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-11-image-prompting-guide-catalog-fill-design.md",
+   "name": "2026-09-11-image-prompting-guide-catalog-fill-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-11-wave-a-a2-export-pack-design.md",
+   "name": "2026-09-11-wave-a-a2-export-pack-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-12-agent-import-workflow-design.md",
+   "name": "2026-09-12-agent-import-workflow-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-12-canvas-workflow-exchange-design.md",
+   "name": "2026-09-12-canvas-workflow-exchange-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-12-dock-guide-scene-label-design.md",
+   "name": "2026-09-12-dock-guide-scene-label-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-12-fallback-pending-dock-cancel-design.md",
+   "name": "2026-09-12-fallback-pending-dock-cancel-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-12-wave-a-a1-sts-upscale-design.md",
+   "name": "2026-09-12-wave-a-a1-sts-upscale-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-12-workflow-import-placement-design.md",
+   "name": "2026-09-12-workflow-import-placement-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-13-explore-import-workflow-placement-design.md",
+   "name": "2026-09-13-explore-import-workflow-placement-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-13-fal-h3-max-video-min-design.md",
+   "name": "2026-09-13-fal-h3-max-video-min-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-13-login-fullscreen-block-captcha-design.md",
+   "name": "2026-09-13-login-fullscreen-block-captcha-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-13-login-neotv-polish-captcha-pool-design.md",
+   "name": "2026-09-13-login-neotv-polish-captcha-pool-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-13-login-slider-captcha-video-carousel-design.md",
+   "name": "2026-09-13-login-slider-captcha-video-carousel-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-13-minimax-h3-full-video-design.md",
+   "name": "2026-09-13-minimax-h3-full-video-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-14-agent-atomic-as-tools-design.md",
+   "name": "2026-09-14-agent-atomic-as-tools-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-14-agent-atomic-phase-2c-design.md",
+   "name": "2026-09-14-agent-atomic-phase-2c-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-14-codex-style-tool-plan-harness-design.md",
+   "name": "2026-09-14-codex-style-tool-plan-harness-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-14-login-register-invite-legal-design.md",
+   "name": "2026-09-14-login-register-invite-legal-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-account-chrome-profile-ia-design.md",
+   "name": "2026-09-15-account-chrome-profile-ia-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-agent-arrange-along-edges-design.md",
+   "name": "2026-09-15-agent-arrange-along-edges-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-agent-atomic-phase-2d-design.md",
+   "name": "2026-09-15-agent-atomic-phase-2d-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-agent-atomic-phase-2d2-design.md",
+   "name": "2026-09-15-agent-atomic-phase-2d2-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-agent-sidebar-media-parse-design.md",
+   "name": "2026-09-15-agent-sidebar-media-parse-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "2026-09 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-image-grid-slice-design.md",
+   "name": "2026-09-15-image-grid-slice-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-image-grid-slice-p1-design.md",
+   "name": "2026-09-15-image-grid-slice-p1-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-prompt-node-image-refs-design.md",
+   "name": "2026-09-15-prompt-node-image-refs-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-turnaround-deai-product-four-panel-design.md",
+   "name": "2026-09-15-turnaround-deai-product-four-panel-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-15-workflow-recipe-planner-design.md",
+   "name": "2026-09-15-workflow-recipe-planner-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-agent-atomic-phase-2d3-design.md",
+   "name": "2026-09-16-agent-atomic-phase-2d3-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-agent-bare-gen-propose-bind-design.md",
+   "name": "2026-09-16-agent-bare-gen-propose-bind-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-agent-sidebar-media-propose-bind-design.md",
+   "name": "2026-09-16-agent-sidebar-media-propose-bind-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-agent-sidebar-vision-provider-context-design.md",
+   "name": "2026-09-16-agent-sidebar-vision-provider-context-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "vision"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-canvas-operator-2e-design.md",
+   "name": "2026-09-16-canvas-operator-2e-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-generic-canvas-compose-design.md",
+   "name": "2026-09-16-generic-canvas-compose-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-planner-confirm-instantiate-gate-design.md",
+   "name": "2026-09-16-planner-confirm-instantiate-gate-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-sse-tool-call-emit-design.md",
+   "name": "2026-09-16-sse-tool-call-emit-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-16-usage-overview-agnes-design.md",
+   "name": "2026-09-16-usage-overview-agnes-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-17-composition-land-production-gaps.md",
+   "name": "2026-09-17-composition-land-production-gaps.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-17-composition-source-bind-design.md",
+   "name": "2026-09-17-composition-source-bind-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-17-selection-batch-generate-design.md",
+   "name": "2026-09-17-selection-batch-generate-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-17-usage-page-polish-design.md",
+   "name": "2026-09-17-usage-page-polish-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md",
+   "name": "2026-09-19-pi-lnk-fast-ramp-k3s-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "deploy-infra"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-21-agent-batch-confirm-and-auto-mode-design.md",
+   "name": "2026-09-21-agent-batch-confirm-and-auto-mode-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-21-image-editor-unified-design.md",
+   "name": "2026-09-21-image-editor-unified-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-21-refine-studio-layout-rework-design.md",
+   "name": "2026-09-21-refine-studio-layout-rework-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-22-refine-m2-capability-pack-design.md",
+   "name": "2026-09-22-refine-m2-capability-pack-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-22-refine-matting-unified-apply-design.md",
+   "name": "2026-09-22-refine-matting-unified-apply-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-22-workbench-shell-and-outpaint-pilot-design.md",
+   "name": "2026-09-22-workbench-shell-and-outpaint-pilot-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-23-refine-selection-unified-design.md",
+   "name": "2026-09-23-refine-selection-unified-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-26-byok-into-pi-runtime-design.md",
+   "name": "2026-09-26-byok-into-pi-runtime-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-27-sidebar-vision-into-pi-design.md",
+   "name": "2026-09-27-sidebar-vision-into-pi-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "2026-09 活跃主题（vision）",
+   "topic": "vision"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-28-agent-conversation-ux-p0-p2-design.md",
+   "name": "2026-09-28-agent-conversation-ux-p0-p2-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-28-agent-tool-p0-web-and-delete-design.md",
+   "name": "2026-09-28-agent-tool-p0-web-and-delete-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md",
+   "name": "2026-09-28-arrange-nodes-tool-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-28-ask-user-tool-design.md",
+   "name": "2026-09-28-ask-user-tool-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-28-two-product-line-boundary-mapping.md",
+   "name": "2026-09-28-two-product-line-boundary-mapping.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-29-agent-tool-canvas-sessionid-hotfix-design.md",
+   "name": "2026-09-29-agent-tool-canvas-sessionid-hotfix-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-29-agent-tool-p1-read-document-memory-design.md",
+   "name": "2026-09-29-agent-tool-p1-read-document-memory-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-29-canvas-node-crud-completeness-design.md",
+   "name": "2026-09-29-canvas-node-crud-completeness-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-29-persistent-harness-session-design.md",
+   "name": "2026-09-29-persistent-harness-session-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-29-pi-events-live-subscribe-design.md",
+   "name": "2026-09-29-pi-events-live-subscribe-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-29-vision-self-refine-loop-design.md",
+   "name": "2026-09-29-vision-self-refine-loop-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "vision"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-09-30-ask-user-blocking-design.md",
+   "name": "2026-09-30-ask-user-blocking-design.md",
+   "month": "2026-09",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-02-pi-runtime-capability-fullfillment-design.md",
+   "name": "2026-10-02-pi-runtime-capability-fullfillment-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-02-w1a-prompt-registry-design.md",
+   "name": "2026-10-02-w1a-prompt-registry-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "prompt-registry"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-03-agent-memory-scope-isolation-design.md",
+   "name": "2026-10-03-agent-memory-scope-isolation-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "2026-10 活跃主题（memory）",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
+   "name": "2026-07-09-neowow-workflow.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-17-prompt-node-intent-templates.md",
+   "name": "2026-07-17-prompt-node-intent-templates.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-18-node-data-flow-refs.md",
+   "name": "2026-07-18-node-data-flow-refs.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-19-byok-provider-channels.md",
+   "name": "2026-07-19-byok-provider-channels.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-19-c2-canvas-generation-adapter.md",
+   "name": "2026-07-19-c2-canvas-generation-adapter.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-19-c21-canvas-refs.md",
+   "name": "2026-07-19-c21-canvas-refs.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-19-dock-studio-model-adapter.md",
+   "name": "2026-07-19-dock-studio-model-adapter.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-19-test-infrastructure.md",
+   "name": "2026-07-19-test-infrastructure.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "deploy-infra"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-20-node-task-status-feedback.md",
+   "name": "2026-07-20-node-task-status-feedback.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-20-points-dock-node-ux.md",
+   "name": "2026-07-20-points-dock-node-ux.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-20-text-image-timeout-thinking.md",
+   "name": "2026-07-20-text-image-timeout-thinking.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-21-node-generation-failure-diagnostics.md",
+   "name": "2026-07-21-node-generation-failure-diagnostics.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-22-canvas-upload-history-works.md",
+   "name": "2026-07-22-canvas-upload-history-works.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-23-canvas-task-undo-video-ux.md",
+   "name": "2026-07-23-canvas-task-undo-video-ux.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-24-agent-chat-ux-phase1.md",
+   "name": "2026-07-24-agent-chat-ux-phase1.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-24-agent-runtime-langgraph.md",
+   "name": "2026-07-24-agent-runtime-langgraph.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-25-agent-confirm-loop-hardening.md",
+   "name": "2026-07-25-agent-confirm-loop-hardening.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-07 迁移期文档，功能已随代码落地",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-25-agent-consistency-chains.md",
+   "name": "2026-07-25-agent-consistency-chains.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-25-agent-task-progress-card.md",
+   "name": "2026-07-25-agent-task-progress-card.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-07-25-agent-topology-preview-hitl.md",
+   "name": "2026-07-25-agent-topology-preview-hitl.md",
+   "month": "2026-07",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-03-agent-phase-c-canvas-sync-gen.md",
+   "name": "2026-08-03-agent-phase-c-canvas-sync-gen.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-03-agent-phase-c2-dock-model-skillid.md",
+   "name": "2026-08-03-agent-phase-c2-dock-model-skillid.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-04-atomic-intent-hybrid-phases.md",
+   "name": "2026-08-04-atomic-intent-hybrid-phases.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-04-atomic-regenerate.md",
+   "name": "2026-08-04-atomic-regenerate.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-05-intent-llm-structured-parse.md",
+   "name": "2026-08-05-intent-llm-structured-parse.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-05-intent-planning-guard.md",
+   "name": "2026-08-05-intent-planning-guard.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-05-turnaround-image-pipeline.md",
+   "name": "2026-08-05-turnaround-image-pipeline.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-06-agent-execution-trace-p1-p2.md",
+   "name": "2026-08-06-agent-execution-trace-p1-p2.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-06-seedream-gpt-image2-apimart.md",
+   "name": "2026-08-06-seedream-gpt-image2-apimart.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-07-agent-conversation-isolation.md",
+   "name": "2026-08-07-agent-conversation-isolation.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-07-agent-sidebar-m3-explicit-refs.md",
+   "name": "2026-08-07-agent-sidebar-m3-explicit-refs.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-07-agent-sidebar-material-entry.md",
+   "name": "2026-08-07-agent-sidebar-material-entry.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-07-platform-route-skill-boundary.md",
+   "name": "2026-08-07-platform-route-skill-boundary.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-08-agent-canvas-control-surface.md",
+   "name": "2026-08-08-agent-canvas-control-surface.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-08-media-stream-download-p0.md",
+   "name": "2026-08-08-media-stream-download-p0.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-08-seedance-agnes-video-adapter.md",
+   "name": "2026-08-08-seedance-agnes-video-adapter.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-09-atomic-intent-ir.md",
+   "name": "2026-08-09-atomic-intent-ir.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-09-sidebar-ref-image-routing-full.md",
+   "name": "2026-08-09-sidebar-ref-image-routing-full.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-09-sidebar-ref-image-routing.md",
+   "name": "2026-08-09-sidebar-ref-image-routing.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-10-ecommerce-product-visual.md",
+   "name": "2026-08-10-ecommerce-product-visual.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-11-agent-conversation-ux-product-visual.md",
+   "name": "2026-08-11-agent-conversation-ux-product-visual.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-11-product-visual-scheme-v2.md",
+   "name": "2026-08-11-product-visual-scheme-v2.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-13-product-visual-journey-trace.md",
+   "name": "2026-08-13-product-visual-journey-trace.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-14-unified-image-to-video-pipeline.md",
+   "name": "2026-08-14-unified-image-to-video-pipeline.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-15-i2v-capability-productization.md",
+   "name": "2026-08-15-i2v-capability-productization.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-15-media-inspector.md",
+   "name": "2026-08-15-media-inspector.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-17-canvas-node-duplicate.md",
+   "name": "2026-08-17-canvas-node-duplicate.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-18-canvas-duplicate-agent-p2.md",
+   "name": "2026-08-18-canvas-duplicate-agent-p2.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-18-cx-image-edit.md",
+   "name": "2026-08-18-cx-image-edit.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-19-cx-image-edit-sidepanel.md",
+   "name": "2026-08-19-cx-image-edit-sidepanel.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-19-cx-image-edit-toolchain.md",
+   "name": "2026-08-19-cx-image-edit-toolchain.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-21-canvas-media-info-footer.md",
+   "name": "2026-08-21-canvas-media-info-footer.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-21-cx-image-edit-selection-tools.md",
+   "name": "2026-08-21-cx-image-edit-selection-tools.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-31-cx-image-edit-sam-mediapipe-fallback.md",
+   "name": "2026-08-31-cx-image-edit-sam-mediapipe-fallback.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-08-31-cx-image-edit-sam-point-select.md",
+   "name": "2026-08-31-cx-image-edit-sam-point-select.md",
+   "month": "2026-08",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-08 迁移期文档，功能已随代码落地",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-01-points-stats-neowow-adoption.md",
+   "name": "2026-09-01-points-stats-neowow-adoption.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-01-points-stats-personal-center.md",
+   "name": "2026-09-01-points-stats-personal-center.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-06-agent-mid-run-interrupt-pv.md",
+   "name": "2026-09-06-agent-mid-run-interrupt-pv.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-06-chat-sink-sidebar-l1.md",
+   "name": "2026-09-06-chat-sink-sidebar-l1.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-10-wave-a-a3-media-persist.md",
+   "name": "2026-09-10-wave-a-a3-media-persist.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-11-image-prompting-guide-catalog-fill.md",
+   "name": "2026-09-11-image-prompting-guide-catalog-fill.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-11-image-prompting-guide-catalog.md",
+   "name": "2026-09-11-image-prompting-guide-catalog.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-11-wave-a-a2-export-pack.md",
+   "name": "2026-09-11-wave-a-a2-export-pack.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-12-agent-import-workflow.md",
+   "name": "2026-09-12-agent-import-workflow.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-12-canvas-workflow-exchange.md",
+   "name": "2026-09-12-canvas-workflow-exchange.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-12-dock-guide-scene-label.md",
+   "name": "2026-09-12-dock-guide-scene-label.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-12-fallback-pending-dock-cancel.md",
+   "name": "2026-09-12-fallback-pending-dock-cancel.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-12-wave-a-a1-sts-direct-upload.md",
+   "name": "2026-09-12-wave-a-a1-sts-direct-upload.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-12-wave-a-a1-upscale.md",
+   "name": "2026-09-12-wave-a-a1-upscale.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-12-workflow-import-placement.md",
+   "name": "2026-09-12-workflow-import-placement.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-13-explore-import-workflow-placement.md",
+   "name": "2026-09-13-explore-import-workflow-placement.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-13-fal-h3-max-video-min.md",
+   "name": "2026-09-13-fal-h3-max-video-min.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-13-login-fullscreen-block-captcha.md",
+   "name": "2026-09-13-login-fullscreen-block-captcha.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-13-login-neotv-polish-captcha-pool.md",
+   "name": "2026-09-13-login-neotv-polish-captcha-pool.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-13-login-slider-captcha-video-carousel.md",
+   "name": "2026-09-13-login-slider-captcha-video-carousel.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-agent-atomic-phase-2a.md",
+   "name": "2026-09-14-agent-atomic-phase-2a.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-agent-atomic-phase-2b.md",
+   "name": "2026-09-14-agent-atomic-phase-2b.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c1.md",
+   "name": "2026-09-14-agent-atomic-phase-2c1.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c2.md",
+   "name": "2026-09-14-agent-atomic-phase-2c2.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c3.md",
+   "name": "2026-09-14-agent-atomic-phase-2c3.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-codex-style-tool-plan-harness.md",
+   "name": "2026-09-14-codex-style-tool-plan-harness.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-login-register-invite-legal.md",
+   "name": "2026-09-14-login-register-invite-legal.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-minimax-h3-p0-video.md",
+   "name": "2026-09-14-minimax-h3-p0-video.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-14-minimax-h3-p1-reference.md",
+   "name": "2026-09-14-minimax-h3-p1-reference.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-account-chrome-profile-ia.md",
+   "name": "2026-09-15-account-chrome-profile-ia.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-agent-arrange-along-edges.md",
+   "name": "2026-09-15-agent-arrange-along-edges.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "canvas-product"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-agent-atomic-phase-2d.md",
+   "name": "2026-09-15-agent-atomic-phase-2d.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-agent-atomic-phase-2d2.md",
+   "name": "2026-09-15-agent-atomic-phase-2d2.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-agent-sidebar-media-parse.md",
+   "name": "2026-09-15-agent-sidebar-media-parse.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-image-grid-slice-p1.md",
+   "name": "2026-09-15-image-grid-slice-p1.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-image-grid-slice.md",
+   "name": "2026-09-15-image-grid-slice.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-prompt-node-image-refs.md",
+   "name": "2026-09-15-prompt-node-image-refs.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-turnaround-deai-product-four-panel.md",
+   "name": "2026-09-15-turnaround-deai-product-four-panel.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-15-workflow-recipe-planner.md",
+   "name": "2026-09-15-workflow-recipe-planner.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-agent-atomic-phase-2d3.md",
+   "name": "2026-09-16-agent-atomic-phase-2d3.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-agent-bare-gen-propose-bind.md",
+   "name": "2026-09-16-agent-bare-gen-propose-bind.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-agent-sidebar-media-propose-bind.md",
+   "name": "2026-09-16-agent-sidebar-media-propose-bind.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-agent-sidebar-vision-provider-context.md",
+   "name": "2026-09-16-agent-sidebar-vision-provider-context.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（vision）",
+   "topic": "vision"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-agent-sidebar-vision-retry-budget-p05.md",
+   "name": "2026-09-16-agent-sidebar-vision-retry-budget-p05.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（vision）",
+   "topic": "vision"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-canvas-operator-2e1-hitl.md",
+   "name": "2026-09-16-canvas-operator-2e1-hitl.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-canvas-operator-2e2-operator-set.md",
+   "name": "2026-09-16-canvas-operator-2e2-operator-set.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-canvas-operator-2e3-v1-skeleton.md",
+   "name": "2026-09-16-canvas-operator-2e3-v1-skeleton.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-generic-canvas-compose.md",
+   "name": "2026-09-16-generic-canvas-compose.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-import-default-along-edges.md",
+   "name": "2026-09-16-import-default-along-edges.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-planner-confirm-instantiate-gate.md",
+   "name": "2026-09-16-planner-confirm-instantiate-gate.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-sse-tool-call-emit.md",
+   "name": "2026-09-16-sse-tool-call-emit.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-16-usage-overview.md",
+   "name": "2026-09-16-usage-overview.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-17-composition-source-bind.md",
+   "name": "2026-09-17-composition-source-bind.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "workflow-exchange"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-17-selection-batch-generate.md",
+   "name": "2026-09-17-selection-batch-generate.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-17-usage-page-polish.md",
+   "name": "2026-09-17-usage-page-polish.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-18-production-gold-test-guide.md",
+   "name": "2026-09-18-production-gold-test-guide.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-21-image-editor-m1-entry-unification.md",
+   "name": "2026-09-21-image-editor-m1-entry-unification.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-21-refine-studio-layout-rework.md",
+   "name": "2026-09-21-refine-studio-layout-rework.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-22-refine-m2-capability-pack.md",
+   "name": "2026-09-22-refine-m2-capability-pack.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-22-refine-matting-unified-apply.md",
+   "name": "2026-09-22-refine-matting-unified-apply.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-22-workbench-shell-and-outpaint-pilot.md",
+   "name": "2026-09-22-workbench-shell-and-outpaint-pilot.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "image-editor"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-23-p1-canvas-tool-inventory.md",
+   "name": "2026-09-23-p1-canvas-tool-inventory.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-23-p1-nest-http-contract-audit.md",
+   "name": "2026-09-23-p1-nest-http-contract-audit.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-23-p1-prompt-context-audit.md",
+   "name": "2026-09-23-p1-prompt-context-audit.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-23-p1-tool-registry-skeleton.md",
+   "name": "2026-09-23-p1-tool-registry-skeleton.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "deploy-infra"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-23-p1-tool-usage-evidence.md",
+   "name": "2026-09-23-p1-tool-usage-evidence.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-24-b2-write-tools.md",
+   "name": "2026-09-24-b2-write-tools.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-24-b5-b3-gen-lifecycle-tools.md",
+   "name": "2026-09-24-b5-b3-gen-lifecycle-tools.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-24-p1-canvas-context-injection.md",
+   "name": "2026-09-24-p1-canvas-context-injection.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-24-p1-roadmap-revision.md",
+   "name": "2026-09-24-p1-roadmap-revision.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "vision"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-24-ui-command-canvas-action-design.md",
+   "name": "2026-09-24-ui-command-canvas-action-design.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-24-ui-command-tools-impl.md",
+   "name": "2026-09-24-ui-command-tools-impl.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-25-d-eta-skill-framework.md",
+   "name": "2026-09-25-d-eta-skill-framework.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-25-execution-trace-observability.md",
+   "name": "2026-09-25-execution-trace-observability.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-26-p1-turn-presentation.md",
+   "name": "2026-09-26-p1-turn-presentation.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-28-agent-conversation-ux-p0-p2.md",
+   "name": "2026-09-28-agent-conversation-ux-p0-p2.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "ui-interaction"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-28-agent-tool-p0-web-and-delete.md",
+   "name": "2026-09-28-agent-tool-p0-web-and-delete.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-29-agent-tool-canvas-sessionid-hotfix.md",
+   "name": "2026-09-29-agent-tool-canvas-sessionid-hotfix.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-29-agent-tool-p1-read-document-memory.md",
+   "name": "2026-09-29-agent-tool-p1-read-document-memory.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（memory）",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-29-canvas-node-crud-completeness.md",
+   "name": "2026-09-29-canvas-node-crud-completeness.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-29-p0-abort-cascade-sse-resume.md",
+   "name": "2026-09-29-p0-abort-cascade-sse-resume.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-09 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-29-persistent-harness-session.md",
+   "name": "2026-09-29-persistent-harness-session.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-29-pi-events-live-subscribe.md",
+   "name": "2026-09-29-pi-events-live-subscribe.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-29-vision-self-refine-loop.md",
+   "name": "2026-09-29-vision-self-refine-loop.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "vision"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-30-ask-user-blocking.md",
+   "name": "2026-09-30-ask-user-blocking.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-30-compaction-wiring.md",
+   "name": "2026-09-30-compaction-wiring.md",
+   "month": "2026-09",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-09 活跃主题（context-engineering）",
+   "topic": "context-engineering"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-01-agent-progress-visible.md",
+   "name": "2026-10-01-agent-progress-visible.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-01-context-engineering-p0-fixes.md",
+   "name": "2026-10-01-context-engineering-p0-fixes.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（context-engineering）",
+   "topic": "context-engineering"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-02-pi-runtime-capability-fullfillment.md",
+   "name": "2026-10-02-pi-runtime-capability-fullfillment.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-02-w1a-prompt-registry.md",
+   "name": "2026-10-02-w1a-prompt-registry.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（prompt-registry）",
+   "topic": "prompt-registry"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-03-agent-memory-scope-isolation.md",
+   "name": "2026-10-03-agent-memory-scope-isolation.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（memory）",
+   "topic": "memory"
+  }
+ ]
+}

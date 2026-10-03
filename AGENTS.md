@@ -124,7 +124,7 @@ git grep -l "<路径>" -- apps packages services charts deploy   # 顺带确认�
 ### 归档 vs 删除
 
 - **已完成的文档不删，移不改** —— 历史决策有追溯价值（"当初为什么这么定"）。
-  真要清理，优先**归档**（挪进 `docs/archive/`）而非删除。
+  真要清理，优先**归档**（挪进 `docs/adr/` 下的 ADR 快照，或集中到 `docs/superpowers/INDEX.md` 标注 frozen）而非删除。
 - **删除的判据是"内容已完成使命且无追溯价值"**，典型三类：① 对应功能已实现的设计稿
   （先核实实现确实在代码里）；② 一次性报告/诊断；③ 已被后续决策取代且被明确标注 superseded。
 - **有 active 依赖的一律不删**：代码引用、对外接口、被现存文档当spec 依赖的。
@@ -290,12 +290,13 @@ pi-lnk/
 | 目录 | 性质 |
 |---|---|
 | `workflow/` | ⚠️ **活跃对外契约，别删** —— 外部 Agent（WorkBuddy/Codex）靠它生成可导入画布的 JSON；校验函数 `validateWorkflow` 由 `useWorkflowExchange.ts`、`compositionLint.ts` 消费 |
-| `superpowers/` | 历史 spec 与 plan（284 份、5.7M、无索引平铺）。⚠️ 规模最大，是否按时间线归档待决策 |
+| `adr/` | **架构决策记录**（0001-0008）—— 回答"为什么这么定"，Accepted 后不删不改，被取代则标 Superseded |
+| `superpowers/` | 历史 spec 与 plan（283 份）。**从 `INDEX.md` 进**（按主题 + living/frozen/superseded 分类），不要直接翻目录 |
 | `discussion/` | 讨论文档（第一资产） |
 | `ops/` | 部署 runbook |
 
->2026-10-03 已删除 `adr/`、`mockups/`、`diagnostics/`、`archive/`（代码引用均为 0，
-> 内容为已完成的阶段性产物 —— 详见 `docs/README.md` 的删除原因与断链记录）。
+>2026-10-03 清理：删除 `mockups/`、`diagnostics/`、`archive/`（代码引用均为 0，内容为
+> 已完成的阶段性产物）；**`adr/` 当天删除、同日恢复**并补录 8 份 ADR —— 详见 `docs/README.md`。
 
 **`skills/` 现有清单**：`drama-audio-design`、`drama-character-design`、`drama-motion-video`、`drama-qc-review`、`drama-scene-worldview`、`drama-script-writing`、`drama-storyboard`、`ecommerce-product-photo`
 —— 新增 skill 时同步更新此清单，并注意 `prompt-lint.ts` 会对 skill 做格式门禁。

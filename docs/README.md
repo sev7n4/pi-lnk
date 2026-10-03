@@ -6,8 +6,9 @@
 
 | 目录 | 内容 | 性质 |
 |---|---|---|
+| `adr/` | **架构决策记录**（0001-0008 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
 | `workflow/` | Agent 工作流交换契约（`README.md` + `examples/*.json`） | **活跃资产** —— 外部 Agent（WorkBuddy / Codex 等）靠它生成可导入画布的 JSON。校验函数是 `@lnkpi/shared` 的 `validateWorkflow`，代码里由 `useWorkflowExchange.ts`、`compositionLint.ts` 等消费。**不要删。** |
-| `superpowers/` | 历史 spec 与 plan（`plans/` 284 份中的两部分：specs 138 / plans 146，5.7M） | 历史决策与实施记录。⚠️ **无索引平铺**，查特定主题需按文件名日期定位。 |
+| `superpowers/` | 历史 spec 与 plan（283 份：specs 137 / plans 146） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 +状态（🟢living / 🔒frozen / ⛔superseded）分组。索引可重跑：`python3 gen_index.py && python3 gen_index_md.py` |
 | `discussion/` | 讨论文档（第一资产） | 项目方向与决策来源 |
 | `ops/` | 部署 runbook | 生产运维 |
 
@@ -17,7 +18,7 @@
 
 | 已删目录 | 删除原因 |
 |---|---|
-| `adr/` | 3 份 ADR 全是 **LangGraph 时代产物**（"Subgraph vs LangGraph Subgraphs"、"Atomic Studio vs Campaign Orchestration Boundary" 等），而老 LangGraph Runtime 已彻底退役（`services/agent-runtime` 已删除，pi-runtime 是唯一链路）。决策本身已完成使命。 |
+| ~~`adr/`~~ | ❗**已恢复**（2026-10-03 同日）。原3 份是 LangGraph 时代的 ADR，但**ADR 这个目录形态本身是对的** —— 补录了 8 份已上线决策的 ADR（0001-0008），见 `adr/README.md`。 |
 | `mockups/` | 3 份 UX 线框稿，对应实现均已在代码里：<br>· `agent-progress-ux-system.html` → `apps/web/src/components/agent/turnStatusBar.ts`、`activityLine.ts`<br>· `agent-background-tasks-card.html` → `AgentTaskProgressCard.vue`<br>· `agent-queued-message-card.html` → `queueDelivery.ts` |
 | `diagnostics/` | `2026-09-30-agent-architecture-diagnosis.html` —— 一次性架构诊断报告（对照 Codex / Claude Code / WorkBuddy），无后续演进价值。 |
 | `archive/` | `2026-09-20-branch-cleanup.md` —— 2026-09-20 的一次性分支清理留痕（99 → 18 个分支）。**同类信息现由 `AGENTS.md` 的「分支纪律」与 `branch-first-dev-workflow` skill 承载**，留旧文档反而会让人以为还有第二套规则。 |
@@ -41,16 +42,15 @@
 > `git show <commit>:docs/adr/p5-atomic-orchestration-boundary-adr.md`
 > （删除前的最后一个 commit 即删除前状态）
 
-## 待决策：`superpowers/` 规模
+## `superpowers/` 索引（2026-10-03 已补）
 
-`superpowers/` 下有 **284 份文档、5.7M、无索引平铺**：
+283 份文档**正文未改动**，新增 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 做导航：
+按 16 个主题分组，每份标 living / frozen / superseded，判定规则写在索引文末。
 
-| 月份 | 份数 |
-|---|---|
-| 2026-07 | 41 |
-| 2026-08 | 79 |
-| 2026-09 | 155 |
-| 2026-10 | 8 |
+- 状态分布：🟢 living 92 · 🔒frozen 186 · ⛔ superseded 5
+- 判定优先读文档开头的 `状态：` 字段，其次按月份 + 主题推断
+- **判定错了的修法**：改文档开头的状态字段，然后重跑脚本（不要手工涂改索引）
+- 重新生成：`python3 gen_index.py > index_data.json && python3 gen_index_md.py`
 
-这是 docs 里体量最大、最难维护的部分。**是否要按时间线归档/精简，需要单独决策**（如"保留 discussion + 近两月，其余移入 archive 或删除"），
-涉及取舍偏好，不宜由 agent 自行决定。
+> 决策依据见 [ADR-0008](./adr/0008-docs-index-over-doc-edits.md)——
+> 为什么不批量改正文（283 文件 diff 失控），以及为什么不用"按月份删/归档"（丢决策追溯价值）。
