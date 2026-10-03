@@ -200,11 +200,15 @@ export function buildTimelineSvg(rows: TimelineRow[], overlay?: Overlay): string
 	const bodyBottom = 30 + rows.length * ROW_H + 10;
 	const trackTop = bodyBottom;
 	const h = hasTrack ? trackTop + TRACK_H + 8 : bodyBottom;
+	// 超预算与severity 是**两条正交的轴**：前者改描边、后者改填充，故可同时生效而不互相抹除。
+	// severity 的配色规则仅在真要用到时才写进<style> —— 类名含 "warn" 字面量，常驻会让
+	// 契约测试「未超预算时图上不得出现任何超预算标记」的 /warn/ 断言失去意义。
+	const sev = overlay?.kind === "severity";
 	const parts: string[] = [
 		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" width="${W}" height="${h}" role="img">`,
-		// 类名刻意避开 "warn" 字面量：契约测试用 /warn/ 断言「未超预算时图上不得出现任何超预算标记」，
-		// 常驻样式表里若含该字面量会让该断言恒真/恒假。标记走行上的 data-warn 属性。
-		`<style>.bar{fill:#dbe4ee}.bar.over{fill:#f2b8b5}.lbl{font:12px sans-serif;fill:#334}</style>`,
+		`<style>.bar{fill:#dbe4ee}.over{stroke:#c0392b;stroke-width:2}.lbl{font:12px sans-serif;fill:#334}${
+			sev ? ".sev-error{fill:#fdecea}.sev-warn{fill:#fff6e5}" : ""
+		}</style>`,
 	];
 	rows.forEach((r, i) => {
 		const y = 30 + i * ROW_H;
@@ -213,7 +217,9 @@ export function buildTimelineSvg(rows: TimelineRow[], overlay?: Overlay): string
 		// 无真实时长 → 等宽刻度；超预算判定需要时长与字数同时存在，缺一即不判（不编造）。
 		const over = dur !== undefined && chars !== undefined && chars > dur * CHARS_PER_SEC;
 		const w = dur === undefined || maxDur <= 0 ? TICK_W : Math.max(4, Math.round((dur / maxDur) * PLOT_W));
-		const cls = overlay?.kind === "severity" ? severityClass(items[i]?.level) : over ? "over" : "";
+		// 两个class 累加而非互斥：`over` 与 severity 级别同时成立时都写上，
+		// 不会出现「属性说超预算、填充说没超」的矛盾行。
+		const cls = [over ? "over" : "", sev ? severityClass(items[i]?.level) : ""].filter(Boolean).join(" ");
 		parts.push(
 			`<text x="8" y="${y + 14}" class="lbl">${esc(r.label)}</text>`,
 			`<rect class="bar${cls ? ` ${cls}` : ""}" x="${PLOT_X}" y="${y}" width="${w}" height="20"${over ? ' data-warn="1"' : ""}/>`,
@@ -303,22 +309,25 @@ export function createRenderCanvasViewTools(deps: {
 			tier: "present",
 			name: "render_canvas_view",
 			label: "渲染画布视图卡片",
+			// 长度受 spec 硬约束 [80,400]（Task 8 的 lint-tool-descriptions 会拒 >400）：
+			// 参数文档写进 Type.*({ description })，description 只留「做什么 + 前提 + 边界」。
 			description:
-				"Render a read-only SVG card visualizing existing canvas data (shot timeline, asset-to-shot topology, or a structured table), optionally with an overlay track carrying business semantics (emotion curve, budget overrun, or severity color scale). Requires the source nodes to already exist; returns an error listing what is missing instead of inventing rows. The canvas layout carries no per-shot duration/timing fields, so timeline rows get equal-width ticks unless you pass the real numbers in overlay.data as {node_id?, label?, duration_sec?, dialogue_chars?, emotion?, level?} (node_id omitted means positional); without them no duration and no budget marking is drawn. Read-only projection: does NOT edit any node, does NOT create nodes, does NOT trigger generation — user edits go through set_node_text on the source node, then re-render. overlay=kind is rejected on view=topology rather than silently ignored. Pick the kind that matches the question: budget flags rows whose dialogue_chars exceed duration_sec x 4.5 (Chinese speech at 4-5 chars/sec); severity only recolors rows by the level you pass; emotion only draws the curve.",
+				"Render a read-only SVG card of existing canvas data: timeline (time axis), topology (directed deps), or table (2D grid), with an optional overlay. Source nodes must already exist; missing ones error out instead of inventing rows. Read-only: does NOT edit or create nodes, does NOT trigger generation — edit the source then re-render. Overlays unsupported on a view are rejected, not ignored.",
 			parameters: Type.Object({
 				view: Type.Optional(
-					Type.Union([Type.Literal("timeline"), Type.Literal("topology"), Type.Literal("table")], {
+					Type.Union(VIEWS.map((v) => Type.Literal(v)), {
 						description: "View shape: timeline (horizontal time axis), topology (directed dependencies), table (2D grid). Defaults to timeline.",
 					}),
 				),
 				overlay: Type.Optional(
 					Type.Object({
-						kind: Type.Union([Type.Literal("emotion"), Type.Literal("budget"), Type.Literal("severity")], {
-							description: "Business-semantics overlay: emotion (intensity curve), budget (overrun highlight), severity (row color scale).",
-						}),
-						data: Type.Array(Type.Unknown(), {
+						kind: Type.Union(OVERLAYS.map((k) => Type.Literal(k)), {
 							description:
-								"Per-row overlay payload: {node_id?, label?, duration_sec?, dialogue_chars?, emotion?, level?}. node_id omitted means positional against the canvas nodes. Pass {} to declare there is no row-level data.",
+								"Business-semantics overlay: emotion (intensity curve, timeline only), budget (flags rows whose dialogue_chars exceed duration_sec x 4.5, Chinese speech at 4-5 chars/sec, timeline only), severity (recolors rows by the level you pass, timeline or table). Match the kind to the question — the others are rejected on that view rather than ignored.",
+						}),
+						data: Type.Union([Type.Array(Type.Unknown()), Type.Object({}, { description: "Empty object: declare there is no row-level data." })], {
+							description:
+								"Per-row overlay payload: {node_id?, label?, duration_sec?, dialogue_chars?, emotion?, level?}. node_id omitted means positional against the canvas nodes. The canvas layout carries no duration/timing fields, so timeline rows render as equal-width ticks and gain no duration text or budget marking unless these numbers are supplied here.",
 						}),
 					}),
 				),
@@ -353,6 +362,11 @@ export function createRenderCanvasViewTools(deps: {
 				if (!VIEWS.includes(view)) return fail(`view 非法：${String(p.view)}，可选 ${VIEWS.join(" | ")}`);
 				if (p.overlay && view === "topology") {
 					return fail(`overlay not supported on view=topology（收到 kind=${String(p.overlay.kind)}）`);
+				}
+				// table 只实现了 severity 行底色；收下 emotion/budget 却什么都不画，与 topology
+				// 同属「静默忽略叠加」——agent 会以为叠加生效了而图上少一条轨道，比报错更难查。
+				if (p.overlay && view === "table" && p.overlay.kind !== "severity") {
+					return fail(`overlay.kind=${String(p.overlay.kind)} not supported on view=table（仅支持 severity）`);
 				}
 				let items: OverlayItem[] = [];
 				if (p.overlay) {

@@ -80,6 +80,78 @@ describe("render_canvas_view 参数契约", () => {
 		await run(tool, { view: "topology" });
 		assert.deepEqual(calls, ["fetchLayout"]);
 	});
+
+	// finding 1：table 只实现 severity；收下 budget/emotion 却不画 = 静默忽略叠加。
+	it("view=table 传budget overlay 时返回 ok:false 而非静默忽略", async () => {
+		const { tool } = makeTool();
+		const r = await run(tool, { view: "table", overlay: { kind: "budget", data: [{ node_id: "n1", duration_sec: 2, dialogue_chars: 20 }] } });
+		const d = r.details as Details;
+		assert.equal(d.ok, false);
+		assert.match(d.error!, /budget/);
+		assert.match(d.error!, /table/);
+	});
+
+	it("view=table 传 emotion overlay 时返回 ok:false", async () => {
+		const { tool } = makeTool();
+		const r = await run(tool, { view: "table", overlay: { kind: "emotion", data: [{ node_id: "n1", emotion: 5 }] } });
+		assert.equal((r.details as Details).ok, false);
+	});
+
+	it("view=table 传 severity overlay 仍然允许", async () => {
+		const { tool } = makeTool();
+		const r = await run(tool, { view: "table", overlay: { kind: "severity", data: [{ node_id: "n1", level: "error" }] } });
+		assert.equal((r.details as Details).ok, true);
+	});
+});
+
+// finding 2：description 长度是 spec 硬约束 [80,400]，Task 8 的 lint 会拒 >400。
+describe("工具元数据契约", () => {
+	const tool = makeTool().tool;
+
+	it("description 落在 [80,400] 字符内", () => {
+		assert.ok(tool.description.length >= 80, `过短：${tool.description.length}`);
+		assert.ok(tool.description.length <= 400, `过长：${tool.description.length}`);
+	});
+
+	it("description 保留 R1–R4：动词开头 / 前提 / 显式否定边界 / 枚举语义", () => {
+		const d = tool.description;
+		assert.match(d, /^Render /);
+		assert.match(d, /must already exist/);
+		assert.match(d, /does NOT edit or create nodes/);
+		assert.match(d, /does NOT trigger generation/);
+		assert.match(d, /timeline \(time axis\)/);
+		assert.match(d, /topology \(directed deps\)/);
+		assert.match(d, /table \(2D grid\)/);
+	});
+
+	// finding 3：声明的 schema 必须与 assertOverlay 的可接受集合一致（array | {}）。
+	it("overlay.data 声明为 array | object，与运行时接受集一致", () => {
+		const data = (tool.parameters as { properties: { overlay: { properties: { data: { anyOf: Array<{ type?: string }> } } } } }).properties.overlay
+			.properties.data;
+		const types = data.anyOf.map((s) => s.type).sort();
+		assert.deepEqual(types, ["array", "object"]);
+	});
+
+	// finding 5：schema 的枚举字面量由 VIEWS / OVERLAYS 经 .map 派生。
+	// ⚠️ 本测试只能钉住**字面量取值**（防误写/改名），无法证明「是派生的而非硬编码的」——
+	// 二者产出的 schema 完全相同。防漂移靠的是源码里的 `VIEWS.map(...)` / `OVERLAYS.map(...)`
+	// 这一事实本身（code review 判据），不是这条断言；变异验证也确认了它对硬编码不敏感。
+	it("view / overlay.kind 的字面量取值与冻结枚举一致", () => {
+		const props = (tool.parameters as {
+			properties: {
+				view: { anyOf: Array<{ const: string }> };
+				overlay: { properties: { kind: { anyOf: Array<{ const: string }> } } };
+			};
+		}).properties;
+		assert.deepEqual(
+			props.view.anyOf.map((s) => s.const),
+			["timeline", "topology", "table"],
+		);
+		assert.deepEqual(
+			props.overlay.properties.kind.anyOf.map((s) => s.const),
+			["emotion", "budget", "severity"],
+		);
+	});
 });
 
 describe("buildTimelineSvg", () => {
@@ -154,6 +226,42 @@ describe("buildTimelineSvg", () => {
 		const widths = barWidths(svg);
 		assert.equal(widths.length, 2);
 		assert.equal(widths[0], widths[1]);
+	});
+});
+
+// finding 7：over-budget 的 data-warn 属性与行填充曾会互相矛盾（severity 覆盖掉 .over 类）。
+describe("超预算标记与行底色必须一致", () => {
+	/** 取每行 rect 的完整属性串。 */
+	function rowRects(svg: string): string[] {
+		return [...svg.matchAll(/<rect class="bar[^"]*"[^>]*\/>/g)].map((m) => m[0]);
+	}
+
+	it("severity 与超预算同时成立时，两个class 都写上（不互相抹除）", () => {
+		const svg = buildTimelineSvg(
+			[
+				{ shotId: "S1", label: "超", durationSec: 2, dialogueChars: 20 },
+				{ shotId: "S2", label: "好", durationSec: 10, dialogueChars: 20 },
+			],
+			{ kind: "severity", data: [{ node_id: "S1", level: "error" }, { node_id: "S2", level: "warn" }] },
+		);
+		const [over, ok] = rowRects(svg);
+		// 超预算行：既标 data-warn（属性），也带 over（视觉），二者不矛盾
+		assert.match(over, /data-warn="1"/);
+		assert.match(over, /class="bar over sev-error"/);
+		// 未超预算行：没有 data-warn 也没有 over
+		assert.doesNotMatch(ok, /data-warn/);
+		assert.doesNotMatch(ok, /over/);
+	});
+
+	it("不存在「有 data-warn 却无 over 视觉」的行", () => {
+		const svg = buildTimelineSvg(
+			[{ shotId: "S1", label: "超", durationSec: 2, dialogueChars: 20 }],
+			{ kind: "severity", data: [{ node_id: "S1", level: "warn" }] },
+		);
+		for (const rect of rowRects(svg)) {
+			// 属性与视觉同进同出：这是本finding 的核心不变量
+			assert.equal(/data-warn="1"/.test(rect), /class="[^"]*\bover\b/.test(rect));
+		}
 	});
 });
 
