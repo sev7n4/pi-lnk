@@ -2591,9 +2591,12 @@ function handleEvent(event: { type: string; data: unknown }) {
         // ⚠️ 刻意不塞 AgentPresentationHost：svg_card 是独立挂载（无 stepper 布局），
         // 因为落库重放路径不恢复 stepper。
         // ⚠️ 净化器（svg-sanitize.ts 的 ALLOWED_ELEMENTS / ALLOWED_ATTRS）兜住的是
-        // **可表达范围**，管不了**选择器作用域** —— AgentSvgCard 的 <style> 是
-        // document-global。产出方（tools 的 build* 系列）新增图元时，必须同步过净化器
-        // 白名单，否则整块被剥；净化器不报错，静默降级成空卡片。
+        // **可表达范围**，管不了**选择器作用域** —— AgentSvgCard 组件自身**没有 <style> 块**，
+        // 真正 document-global 的是**净化后 SVG 内部的 <style>**（ALLOWED_ELEMENTS 收了
+        // 'style'），经 AgentSvgCard 模板里的 v-html 注入直接落进本文档，无 shadow root、
+        // 无 scoped。故净化器拦不住「选择器命中卡片以外的元素」。
+        // 产出方（services/pi-runtime/src/tools/render-canvas-view.ts 的 build* 系列）
+        // 新增图元时，必须同步过净化器白名单，否则整块被剥；净化器不报错，静默降级成空卡片。
         agent.setPresentation({
           kind: 'svg_card',
           stepper: { current: '', completed: [] },
@@ -3146,6 +3149,16 @@ defineExpose({
                   该函数用 `!== undefined` 而非真值 —— 服务端超 SVG_MAX_CHARS 时下发
                   `svg: ""`（字段在、值为空），AgentSvgCard 靠这个区分「过大被丢弃」与
                   「解析失败」并给出可见文案。真值门禁会把该降级分支整条吞掉。
+
+                  ⚠️ 同 switch 分支处的 Ruling-3 约束：净化器（svg-sanitize.ts 的
+                  ALLOWED_ELEMENTS / ALLOWED_ATTRS）兜住的是**可表达范围**，管不了
+                  **选择器作用域** —— AgentSvgCard 组件自身**没有 <style> 块**，真正
+                  document-global 的是**净化后 SVG 内部的 <style>**（ALLOWED_ELEMENTS 收了
+                  'style'），经 AgentSvgCard 模板里的 v-html 注入直接落进本文档，无 shadow root、
+                  无 scoped。故净化器拦不住「选择器命中卡片以外的元素」。产出方
+                  （services/pi-runtime/src/tools/render-canvas-view.ts 的 build* 系列）
+                  新增图元时，必须同步过净化器白名单，否则整块被剥；净化器不报错，
+                  静默降级成空卡片。
                 -->
                 <AgentSvgCard
                   v-if="hasRenderableSvgCard(msg)"
