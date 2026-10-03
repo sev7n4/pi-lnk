@@ -197,6 +197,15 @@ describe("effectiveCompactionSettings（审计 P0-①）", () => {
 		const off = loadRuntimeConfig({ PI_RUNTIME_DIRECT_IMAGES: "off" });
 		assert.equal(off.directImages, false);
 	});
+
+	it("compactionRetention：缺省 true；PI_RUNTIME_COMPACTION_RETENTION=off → false", () => {
+		const def = loadRuntimeConfig({});
+		assert.equal(def.compactionRetention, true);
+		const off = loadRuntimeConfig({ PI_RUNTIME_COMPACTION_RETENTION: "off" });
+		assert.equal(off.compactionRetention, false);
+		const on = loadRuntimeConfig({ PI_RUNTIME_COMPACTION_RETENTION: "true" });
+		assert.equal(on.compactionRetention, true);
+	});
 	it("directImageHistoryRounds：缺省 2；非法值回退；显式值生效", () => {
 		const def = loadRuntimeConfig({});
 		assert.equal(def.directImageHistoryRounds, 2);

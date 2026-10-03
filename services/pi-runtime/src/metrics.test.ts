@@ -117,6 +117,26 @@ test("tool_search 未打点时不缺行报错：activated_total 恒渲染为 0",
 	assert.doesNotMatch(out, /pi_runtime_tool_search_calls_total\{/);
 });
 
+test("load_skill：按技能名 + 结局分组计数（Round2 W2② · P1-6 skill 路由判据）", () => {
+	const m = new Metrics();
+	m.observeSkillLoad("drama-character-design", "ok");
+	m.observeSkillLoad("drama-character-design", "ok");
+	m.observeSkillLoad("ecommerce-scene", "ok");
+	m.observeSkillLoad("no-such-skill", "unknown");
+	m.observeSkillLoad("broken-skill", "read_error");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_skill_loads_total\{skill="drama-character-design",outcome="ok"\} 2/);
+	assert.match(out, /pi_runtime_skill_loads_total\{skill="ecommerce-scene",outcome="ok"\} 1/);
+	assert.match(out, /pi_runtime_skill_loads_total\{skill="no-such-skill",outcome="unknown"\} 1/);
+	assert.match(out, /pi_runtime_skill_loads_total\{skill="broken-skill",outcome="read_error"\} 1/);
+});
+
+test("skill_loads 未打点时不渲染任何数据行（与「调用过但计数为 0」可区分）", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.doesNotMatch(out, /pi_runtime_skill_loads_total\{/);
+});
+
 test("transform_context：复述分组计数 + 标注条数累计（审计 #8 观测）", () => {
 	const m = new Metrics();
 	m.observeTransformContext(true, 2);

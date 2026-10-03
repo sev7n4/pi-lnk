@@ -13,6 +13,7 @@ import {
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
+import { COMPACTION_RETENTION_INSTRUCTIONS } from "./compaction-summary.js";
 import { SkillRegistry } from "./skills/registry.js";
 import { Closed } from "@earendil-works/pi-agent-core";
 
@@ -671,22 +672,23 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 	 * 假 lane。`gate` 给定时 prompt 会挂起——用于构造「取消先于 then 回调执行」的时序，
 	 * 否则 then 会在 `await mgr.prompt()` 的让出中先跑完，abort 就追不上它了。
 	 */
-	function makeLane(calls: string[], totalTokens: number, gate?: Promise<unknown>) {
+	function makeLane(calls: string[], totalTokens: number, gate?: Promise<unknown>, opts?: unknown[]) {
 		return {
 			prompt: async () => {
 				if (gate) await gate;
 				return { ok: true, value: {} };
 			},
 			findEntries: async () => [usageEntry(totalTokens)],
-			compact: async () => {
+			compact: async (options: unknown) => {
 				calls.push("compact");
+				opts?.push(options);
 				return { ok: true, value: {} };
 			},
 		};
 	}
 
 	/** contextWindow=128_000 + reserveTokens=16_384 → 阈值 111_616。 */
-	function managerWithLane(lane: unknown, metrics?: Metrics) {
+	function managerWithLane(lane: unknown, metrics?: Metrics, extra?: Partial<RuntimeConfig>) {
 		return new SessionManager(
 			[],
 			"",
@@ -704,7 +706,11 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 			})) as never,
 			undefined,
 			undefined,
-			{ ...testConfig(), compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 } },
+			{
+				...testConfig(),
+				compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 },
+				...extra,
+			},
 			undefined,
 			metrics,
 		);
@@ -720,6 +726,32 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 		await mgr.prompt("s-compact", "hi");
 		await drain();
 		assert.deepEqual(calls, ["compact"]);
+	});
+
+	it("压缩时把中文保留段传给 lane.compact（Round2 W2① / 首轮 P2-1）", async () => {
+		const calls: string[] = [];
+		const opts: unknown[] = [];
+		const mgr = managerWithLane(makeLane(calls, 120_000, undefined, opts));
+		await mgr.create("s-retention", {});
+		await mgr.prompt("s-retention", "hi");
+		await drain();
+		assert.deepEqual(calls, ["compact"]);
+		// vendor `lane.ts:1204` 只在 options?.customInstructions !== undefined 时透传，
+		// compaction.ts:567 拼成 "\n\nAdditional focus: <段>" 追加进摘要 prompt。
+		assert.deepEqual(opts[0], { customInstructions: COMPACTION_RETENTION_INSTRUCTIONS });
+	});
+
+	it("compactionRetention=false：lane.compact 收到 undefined（与本改动前逐字节一致）", async () => {
+		const calls: string[] = [];
+		const opts: unknown[] = [];
+		const mgr = managerWithLane(makeLane(calls, 120_000, undefined, opts), undefined, {
+			compactionRetention: false,
+		});
+		await mgr.create("s-retention-off", {});
+		await mgr.prompt("s-retention-off", "hi");
+		await drain();
+		assert.deepEqual(calls, ["compact"]);
+		assert.equal(opts[0], undefined);
 	});
 
 	it("用户取消的那一轮不触发压缩（不偷偷发起摘要 LLM 调用）", async () => {

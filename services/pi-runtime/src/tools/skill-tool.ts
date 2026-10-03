@@ -25,6 +25,7 @@ export function createSkillTools(entries: SkillIndexEntry[], metrics: Metrics): 
 				const entry = byName.get(p.name);
 				if (!entry) {
 					metrics.observeToolCall("load_skill", "error");
+					metrics.observeSkillLoad(p.name, "unknown");
 					return {
 						content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `unknown skill: ${p.name}` }) }],
 						details: { ok: false as const, error: `unknown skill: ${p.name}` },
@@ -33,12 +34,14 @@ export function createSkillTools(entries: SkillIndexEntry[], metrics: Metrics): 
 				try {
 					const loaded = loadSkill(entry);
 					metrics.observeToolCall("load_skill", "ok");
+					metrics.observeSkillLoad(entry.name, "ok");
 					return {
 						content: [{ type: "text" as const, text: JSON.stringify({ ok: true, body: loaded.body }) }],
 						details: { ok: true as const, body: loaded.body },
 					};
 				} catch (err) {
 					metrics.observeToolCall("load_skill", "error");
+					metrics.observeSkillLoad(entry.name, "read_error");
 					const msg = err instanceof Error ? err.message : String(err);
 					return {
 						content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: msg }) }],

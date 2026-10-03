@@ -39,7 +39,7 @@ import {
 	type CompactionSkipReason,
 } from "./compaction-check.js";
 import type { Metrics } from "./metrics.js";
-import { missingSummarySections } from "./compaction-summary.js";
+import { COMPACTION_RETENTION_INSTRUCTIONS, missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js"
@@ -1395,7 +1395,16 @@ export class SessionManager {
 		const decision = decideCompaction(scanned.entries, entry.contextWindow, settings);
 		if (!decision.shouldRun) return decision.skipReason ?? "unknown";
 		try {
-			const res = await lane.compact(undefined, context);
+			// 压缩保留段（Round2 W2① / 首轮 P2-1）：把画布领域的「必须跨压缩保留」清单喂给
+			// vendor 摘要 prompt（compaction.ts:567 拼成 "\n\nAdditional focus: …"）。
+			// vendor 模板是为编码助手写的（只要求保留文件路径/函数名/报错），节点 id、待确认态、
+			// 用户偏好、工具结论四类在这条默认指令里一个都没有 ⇒ 压完就漂移。
+			// 开关语义与 directImages / toolTiering 同构：显式 false 才回退到改动前的 `undefined`。
+			const retention =
+				this.config.compactionRetention === false
+					? undefined
+					: { customInstructions: COMPACTION_RETENTION_INSTRUCTIONS };
+			const res = await lane.compact(retention, context);
 			if (res.ok) return undefined; // ok 由事件计，不得在此重复计数
 			return classifyCompactionError(res.error);
 		} catch (err) {
