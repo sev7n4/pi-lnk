@@ -148,4 +148,41 @@ describe('validateGenerationParams', () => {
     if (r.ok) return
     expect(r.reason).toMatch(/unsupported field/)
   })
+
+  it('audioVoice 按当前 audioModel 的音色 id 校验（音色号跨模型不通）', () => {
+    // 目录里 seed-audio-1.0 有 voices: seed-female-1 / seed-male-1 / seed-neutral-1
+    const withModel = { type: 'audio', data: { audioModel: 'seed-audio-1.0' } }
+    expect(validateGenerationParams({ params: { audioVoice: 'seed-female-1' }, node: withModel }).ok).toBe(true)
+
+    // female-shaonv 是 minimax-speech-2.8-hd 的音色，跨模型不通即拒
+    const bad = validateGenerationParams({ params: { audioVoice: 'female-shaonv' }, node: withModel })
+    expect(bad.ok).toBe(false)
+    if (bad.ok) return
+    expect(bad.allowed).toContain('seed-female-1')
+  })
+
+  it('audioVoice 收 label 也拒（node.data 存的是 id，模型爱写「女声 1」）', () => {
+    const withModel = { type: 'audio', data: { audioModel: 'seed-audio-1.0' } }
+    const r = validateGenerationParams({ params: { audioVoice: '女声 1' }, node: withModel })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    // allowed 回的是 id 清单（可枚举的合法值），不是 label
+    expect(r.allowed).toContain('seed-female-1')
+    expect(r.allowed).not.toContain('女声 1')
+  })
+
+  it('audioModel 不在目录时不得静默放行音色（查不到清单 = 无法校验）', () => {
+    const badModel = { type: 'audio', data: { audioModel: 'no-such-audio-model' } }
+    const r = validateGenerationParams({ params: { audioVoice: 'whatever' }, node: badModel })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.reason).toMatch(/no voice list/)
+  })
+
+  it('节点没有 audioModel 时不得静默放行音色（须先定模型）', () => {
+    const r = validateGenerationParams({ params: { audioVoice: 'seed-female-1' }, node: audioNode })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.reason).toMatch(/no audioModel/)
+  })
 })

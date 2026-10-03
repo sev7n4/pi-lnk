@@ -243,7 +243,9 @@ export function validateGenerationParams(input: {
   const nodeType = String(node.type ?? '')
   const nodeData = node.data ?? {}
   const modality = nodeType === 'video' ? 'video' : nodeType === 'audio' ? 'audio' : 'image'
-  const allowed = [...GENERATION_PARAM_FIELDS[modality]]
+  // 显式标注 string[]：GENERATION_PARAM_FIELDS 是 `as const` 的 readonly 字面量元组，
+  // 展开后仍是 readonly 联合元素数组，`includes(k: string)` 收窄不了。
+  const allowed: string[] = [...GENERATION_PARAM_FIELDS[modality]]
 
   const unknown = Object.keys(params).filter((k) => !allowed.includes(k))
   if (unknown.length) {
@@ -348,10 +350,24 @@ export function validateGenerationParams(input: {
       }
       // 音色号跨模型不通用 —— 必须按当前 audioModel 校验
       const modelRef = typeof nodeData.audioModel === 'string' ? nodeData.audioModel : ''
+      // 与前端 catalogModelKeyFromValue 同源：ref 可能是编码过的 channelModel
       const modelKey = decodeChannelModel(modelRef)?.modelName ?? modelRef
-      const voices = modelKey ? getModelEntry(modelKey)?.voices : undefined
-      if (voices?.length && !voices.includes(value)) {
-        return { ok: false, reason: `voice "${value}" is not available for model "${modelKey}"`, allowed: voices }
+      const entry = modelKey ? getModelEntry(modelKey) : undefined
+      // ⚠️ 查不到音色清单时**不能放行**：那会让任意音色号静默落库，
+      // 而 dock 面板读不出/读错都无提示。与「失败绝不静默回落」同款纪律。
+      if (!entry?.voices?.length) {
+        return {
+          ok: false,
+          reason: modelKey
+            ? `cannot verify audioVoice: model "${modelKey}" has no voice list — set audioModel first`
+            : 'cannot verify audioVoice: node has no audioModel — set audioModel first',
+          allowed,
+        }
+      }
+      // voices 是 {id,label}[]，而 node.data.audioVoice 存的是 id（见 AudioDockPanel.syncFromNode）
+      const voiceIds = entry.voices.map((v) => v.id)
+      if (!voiceIds.includes(value)) {
+        return { ok: false, reason: `voice "${value}" is not available for model "${modelKey}"`, allowed: voiceIds }
       }
       data.audioVoice = value
       applied.push(key)
