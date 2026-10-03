@@ -46,7 +46,7 @@ const isDiscarded = computed(() => props.svg.trim() === '')
     <p
       v-else-if="isDiscarded"
       class="text-[10px] leading-relaxed text-[var(--neo-text-muted)]"
-      data-testid="svg-card-fallback"
+      data-testid="svg-card-discarded"
     >
       画布视图卡片过大已被丢弃（超出可渲染体积上限），请缩小节点范围后重试。
     </p>
