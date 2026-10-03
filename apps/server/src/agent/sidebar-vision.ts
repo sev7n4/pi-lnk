@@ -56,6 +56,20 @@ function customVisionPatterns(): RegExp[] | null {
   return parts.length ? parts.map((p) => new RegExp(p)) : null
 }
 
+/**
+ * 模型是否支持侧栏识图（**启发式**，非权威）。
+ *
+ * ⚠️ 2026-10-03 事故后语义收紧：这三条正则只能当**兜底启发式**，不得当判据。
+ * 判错不会报错，只会让 pi-runtime 少声明一个 `input:"image"`，图片随后被
+ * vendor `transform-messages` 静默替换成 `(image omitted: ...)`——上游照常 200，
+ * UI 上表现为「模型说看不见图」。两个方向都危险：
+ *   - 误判 true  → 给非视觉渠道发图，上游 400
+ *   - 误判 false → 视觉渠道静默失效（本事故）
+ *
+ * 有真实证据（探针/渠道显式声明）时，调用方应走
+ * `resolveVisionInputSupport`（`provider/model-capability.ts`）而不是本函数。
+ * 保留本函数是为了给「无证据时总得给个答案」的存量调用点用。
+ */
 export function supportsVisionModel(model?: string | null): boolean {
   const m = (model ?? '').trim()
   if (!m) return false
