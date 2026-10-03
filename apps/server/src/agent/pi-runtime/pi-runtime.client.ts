@@ -52,6 +52,18 @@ export interface PiSessionLlmOverride {
 	reasoning?: boolean;
 	contextWindow?: number;
 	maxTokens?: number;
+	/**
+	 * BYOK 模型能否**接收图片输入**（#123）。
+	 *
+	 * 必须由 Nest 显式声明：pi-runtime 只拿到 providerRef，无从得知用户模型能力。
+	 * 缺省时 `overrideProvider()` 会写死 `input:["text"]`，图片随后被 vendor
+	 * `downgradeUnsupportedImages` 静默替换成 `(image omitted: ...)`，而上游照常
+	 * 200 —— 无error、无 5xx、无日志，只能表现为「模型说看不见图」。
+	 *
+	 * 语义：`false` /缺省都表示「不接收图片」，故调用方**永远要显式赋值**
+	 * （省略字段等于把判断交回pi-runtime 的硬编码，即故障形状）。
+	 */
+	supportsVision?: boolean;
 }
 
 /** #12：/sessions 全量可选字段（pi-runtime 侧原样透传进 toolContext）。 */
