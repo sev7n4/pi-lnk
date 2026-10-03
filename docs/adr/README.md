@@ -22,6 +22,7 @@
 | [0006-single-socket-transport-for-queue.md](./0006-single-socket-transport-for-queue.md) | Accepted | SSE 单连接 + lastEventId 续传，拒绝轮询/双通道 |
 | [0007-deploy-tag-equals-commit-sha.md](./0007-deploy-tag-equals-commit-sha.md) | Accepted | 镜像 tag = master commit 短 sha，停用语义版号 |
 | [0008-docs-index-over-doc-edits.md](./0008-docs-index-over-doc-edits.md) | Accepted | 283 份历史文档只建索引不改正文 |
+| [0009-vendor-capability-first.md](./0009-vendor-capability-first.md) | Accepted | pi-runtime 开发必须先查 vendor 能力面，禁止自研等价物 |
 
 ## 模板
 

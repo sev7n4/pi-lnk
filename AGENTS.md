@@ -191,6 +191,76 @@ git grep -l "<路径>" -- apps packages services charts deploy   # 顺带确认�
 > pi v0.85.1 **无 subagent 支持**（全仓 0 命中）。subagent 需 L2 自建（嵌套 Agent 实例或复用 Lane）；
 > HITL 挂点用 `before_tool` hook，上下文注入用 `transform_context`。
 
+## ⭐ pi-runtime 开发纪律（吃满内核能力）
+
+**核心原则：动手前先查 vendor 能力面；vendor 有的，必须用 vendor 的，不许自研等价物。**
+
+依据：[ADR-0009](./docs/adr/0009-vendor-capability-first.md)。
+现状清单：[`services/pi-runtime/DEPENDENCIES.md`](./services/pi-runtime/DEPENDENCIES.md)。
+
+### 为什么这条是硬纪律
+
+"选了 vendor"不等于"用上了 vendor"。2026-10-03 实测：vendor 有 **11 个子包**，
+pi-runtime 只import 了 **2 个**。而"没吃满"已经付出过真实代价：
+
+| PR | 教训 |
+|---|---|
+| #100 | 自研"索引块 + load_tools"**在生产失败**（0.0.29/0.0.30 E2E：弱模型无视引导直调延迟工具，吃vendor 硬编码的 `Tool X is unavailable` 且无恢复路径）⇒ 改为对齐官方 Dynamic Tool Loading |
+| #104 | steering / followUp 两种队列模式没接，是"吃满"的一部分 |
+| #29 | dock 技能与 pi-runtime **真实安装列表不对齐** —— 技能资产与内核能力脱节 |
+
+还有隐性代价：host侧自研的绕行逻辑会在 vendor 升级时变成技术债
+（要么继续维护，要么推倒重来，而官方可能已解决）。
+
+### 动手前的三步检查（不可省）
+
+```bash
+# 1. 查扩展面全景（Events / ExtensionContext / ExtensionAPI）
+#    vendor/earendil-works/pi/packages/coding-agent/docs/extensions.md
+
+# 2. 查你要的能力在 vendor 里有没有（别凭包名猜）
+git grep -n "<能力关键词>" -- vendor/earendil-works/pi/packages/
+
+# 3. 查 pi-runtime 是否已经在用
+git grep -n "<能力关键词>" -- services/pi-runtime/src/
+```
+
+### 决策规则
+
+| 情况 | 处置 |
+|---|---|
+| vendor **有**这个能力 | **必须用 vendor 的**。自研前在 PR 里说明「vendor 有什么 / 为什么不能用」 |
+| vendor **没有** | 才自研，且要① 隔离在 host 侧（**不patch vendor**，见 ADR-0001）② 记为技术债，注明"若 vendor 后续提供则应替换" |
+| 用到了 `pi.on` / `registerTool` 等扩展机制 | 优先切到 vendor 机制，别维护平行实现 |
+
+> ⚠️ `extensions.md` 是 **coding-agent** 的文档，我们跑在自定义 host 上——
+> **不能假设文档里每样东西在 host 里都能直接用**，要验证后再用。
+
+### 吃满的判定标准（可核对，不是口号）
+
+`vendor/earendil-works/pi/packages/` 下逐个子包确认"用得上且已用"或"用不上且写了理由"。
+**说不清的就是欠账**，写进 PR 描述或 `DEPENDENCIES.md`。
+
+当前待确认的子包（见 `DEPENDENCIES.md` 第四节）：`telemetry`、`evals`、
+`session-backends` —— 这三个是**疑似欠账**（我们自建了 metrics / 有 pi-poc 但没接 eval）。
+而 `tui`（终端UI）**大概率不需要**（我们是 Web 画布）—— **待确认 ≠ 吃不满**。
+
+### 升级 vendor 时的回归重点
+
+升级流程见「pi 内核版本」节。回归按此顺序：
+
+1. **`DEPENDENCIES.md` 第三节的"自研物"** —— 最可能被官方能力取代的地方
+2. **工具分层**（ADR-0005）—— 已知易碎，0.0.29/0.0.30 就是在这崩的
+3. **事件流 / SSE**（ADR-0006）—— `lastEventId` 与 `from=now` 不能叠加
+4. **hook 顺序** —— `before_tool` 在 `prepareToolCall` **之后**，别指望它拦"调了不该调的工具"
+5. **视觉能力三态**（ADR-0004）—— 端到端验证，别只改一端
+
+### 已知的最大缺口
+
+**pi 0.85.1 无 subagent 支持**（全仓 0 命中）。需要 subagent 时只能 L2 自建：
+嵌套 Agent 实例，或复用现有 Lane。HITL 挂点用 `before_tool` hook，
+上下文注入用 `transform_context`。
+
 ## 仓库结构（2026-10-03 核实）
 
 ```
