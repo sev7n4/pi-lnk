@@ -15,6 +15,11 @@ import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
 import { governImagePayload } from "./payload-images.js";
+import {
+	DEFAULT_TOOL_RESULT_MAX_CHARS,
+	capToolResult,
+	measureToolResult,
+} from "./tool-result-budget.js";
 
 const PORT = Number(process.env.PORT ?? 8100);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -70,19 +75,32 @@ const manager = new SessionManager(
 	{
 		onSessionCreated(sessionId, harness) {
 			gateStore.resetSession(sessionId);
+			// hook 层共用的运行时开关：一次解析，避免每个 hook / 每次工具调用重复读 env。
+			const hookCfg = loadRuntimeConfig(process.env);
 			harness.hooks.on("after_tool", async (event) => {
-				if (event.toolName !== "propose_generation" || event.isError) return undefined;
-				const nodeId = (event.args as { node_id?: unknown } | undefined)?.node_id;
-				if (typeof nodeId !== "string" || !nodeId) return undefined;
-				// B-2：阻塞确认后 details.confirmed=true → gate 视同跨轮放行（spec §4.3）
-				const confirmed = (event.details as { confirmed?: unknown } | null | undefined)?.confirmed === true;
-				gateStore.markProposed(sessionId, nodeId, { confirmed });
-				return undefined;
+				if (event.toolName === "propose_generation" && !event.isError) {
+					const nodeId = (event.args as { node_id?: unknown } | undefined)?.node_id;
+					if (typeof nodeId === "string" && nodeId) {
+						// B-2：阻塞确认后 details.confirmed=true → gate 视同跨轮放行（spec §4.3）
+						const confirmed =
+							(event.details as { confirmed?: unknown } | null | undefined)?.confirmed === true;
+						gateStore.markProposed(sessionId, nodeId, { confirmed });
+					}
+				}
+				// 统一上限（审计「缺统一上限」）：体积观测全量接线 + 越界兜底截断。
+				// 观测放在开关之前——即使治理关掉，也要能回答「一条结果占了多少上下文」。
+				const size = measureToolResult(event.content);
+				if (size.bytes > 0) metrics.observeToolResult(event.toolName, size.bytes);
+				if (hookCfg.toolResultBudget === false) return undefined;
+				const capped = capToolResult(event.content, hookCfg.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS);
+				if (!capped.trimmed) return undefined;
+				metrics.observeToolResultTrim(event.toolName);
+				return { content: capped.content };
 			});
 			// 审计 #8：trust boundary（目标复述 + 工具结果来源标注）。
 			// 纯文本模式也注册（无 toolResult 时复述仍有价值）；off = 逐字节旧行为。
 			// fail-soft：纯函数不 throw；压缩摘要走 generateSummary 独立请求路径，不经本 hook。
-			if (loadRuntimeConfig(process.env).trustBoundary !== false) {
+			if (hookCfg.trustBoundary !== false) {
 				harness.hooks.on("transform_context", async (event) => {
 					const out = applyTrustBoundary(event.messages);
 					if (!out) return undefined;
@@ -94,10 +112,9 @@ const manager = new SessionManager(
 			// T2 图片治理（spec §3.2）：历史图片渐进降级 + 本轮优先裁剪 + 超限剔除。
 			// 常开（低风险只减不增）；vendor 的 before_payload 分发本身对 handler 异常 fail-soft，
 			// 这里再包一层 try/catch 双保险：治理炸了就 payload 原样放行。
-			const runtimeCfg = loadRuntimeConfig(process.env);
 			harness.hooks.on("before_payload", async (event) => {
 				try {
-					const result = governImagePayload(event.payload, runtimeCfg.directImageHistoryRounds ?? 2, 4);
+					const result = governImagePayload(event.payload, hookCfg.directImageHistoryRounds ?? 2, 4);
 					if (result.trims.length === 0) return undefined; // 零变更零拷贝
 					for (const t of result.trims) metrics.observeBeforePayloadTrim(t.reason);
 					return { payload: { ...(event.payload as Record<string, unknown>), messages: result.messages } };
