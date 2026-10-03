@@ -124,11 +124,51 @@ export interface SessionLlmOverride {
 	 * 会自动消费。key 只进 Model 对象（pi 内部消费），不出现在日志。
 	 */
 	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	/**
+	 * 该渠道模型是否接受视觉输入。**缺省 = false（不猜）**。
+	 *
+	 * 2026-10-03 事故：此前本字段根本不存在，BYOK 一律 `input:["text"]`，
+	 * 于是 vendor `transform-messages.ts:36` 的 `downgradeUnsupportedImages`
+	 * 把每张图静默替换成 `(image omitted: model does not support images)`，
+	 * 上游照常 200、assistant 照常落库——用户只看到「模型说看不见图」。
+	 * 「不猜」是对的，但必须**可声明**：声明不了就等于永久静默失效。
+	 *
+	 * 由 Nest 侧的能力解析填入（渠道 models[].capability + 探针）。
+	 * 运维兜底见 `VISION_CAPABLE_MODELS`。
+	 */
+	supportsVision?: boolean;
 }
 
 /** 保守能力默认：非 reasoning、128k 上下文、8k 输出（spec §3.2 三层解析第 3 层）。 */
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 8_192;
+
+/**
+ * 运维兜底：强制声明视觉能力的模型名白名单（逗号分隔，**精确匹配**模型名）。
+ * 用于渠道声明缺失/错的场景，不必等发版。留空 = 不覆盖。
+ * 精确匹配而非子串：子串会让 "flash" 误伤 "flash-vision" 之外的模型。
+ */
+function visionCapableModels(): ReadonlySet<string> {
+	const raw = process.env.VISION_CAPABLE_MODELS;
+	if (!raw || raw.trim() === "") return new Set();
+	return new Set(
+		raw
+			.split(",")
+			.map((s) => s.trim().toLowerCase())
+			.filter((s) => s.length > 0),
+	);
+}
+
+/**
+ * 该 override 是否声明视觉输入。三层（后覆盖前）：
+ *   1. `VISION_CAPABLE_MODELS` env 白名单（运维兜底，最高优先）
+ *   2. Nest 传入的 `supportsVision`（渠道能力解析结果）
+ *   3. 都无 → false（不猜，避免让非视觉渠道 400）
+ */
+function resolveSupportsVision(override: SessionLlmOverride): boolean {
+	if (visionCapableModels().has(override.model.trim().toLowerCase())) return true;
+	return override.supportsVision === true;
+}
 
 /** providerRef → 12 位十六进制，用于 providerId（避免多渠道在 Models 里键冲突）。 */
 function providerIdFrom(ref: string): string {
@@ -183,9 +223,12 @@ function overrideProvider(override: SessionLlmOverride) {
 				// reasoning_effort → 网关 400；contextWindow 写死 1M 是禁止项：harness
 				// 压缩/截断永不触发 → 长对话超上游限制。
 				reasoning: override.reasoning ?? false,
-				// 刻意只声明 text：BYOK 渠道模型由用户自带，pi-runtime 无从得知其是否具备视觉能力；
-				// 误报 image 会让非视觉渠道对含图请求直接 400（比静默丢弃图更糟）。此处不随 agnes 改。
-				input: ["text"],
+				// 视觉输入声明：见 SessionLlmOverride.supportsVision 的事故说明。
+				// 声明 image ⇒ vendor transform-messages 放行图片；不声明 ⇒ 图片被静默
+				// 替换成占位符（这正是 2026-10-03「模型说看不见图」的根因）。
+				// 旧注释「误报 image 会让非视觉渠道 400，比静默丢弃更糟」的前提是「无法
+				// 得知用户模型能力」——该前提已不成立：Nest 现在会把能力解析结果传进来。
+				input: resolveSupportsVision(override) ? ["text", "image"] : ["text"],
 				cost: override.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow: override.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
 				maxTokens: override.maxTokens ?? DEFAULT_MAX_TOKENS,
