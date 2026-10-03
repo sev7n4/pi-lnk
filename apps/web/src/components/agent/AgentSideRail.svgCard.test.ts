@@ -45,15 +45,26 @@ async function mountRail() {
 /**
  * seed 一轮「用户提问 + 助手回文」并返回 store。
  *
- * `content` 必须非空：整个卡片区（含 AgentSvgCard）挂在 `shouldShowMessageBubbleText`
- * 门禁内 —— 这是既成设计（AgentCanvasOutputs / AgentExecutionTrace / Host / toolCalls
- * 同样在门禁内），不是本次接线引入的。零文本轮次不渲染任何卡片。
+ * `content` 非空时，助手有可见文本，走 `hasBubbleContent` 既有路径。
+ * 零文本 + svg_card 的组合由下面的「气泡门禁」describe 单独覆盖。
  */
 function seedTurn(): ReturnType<typeof useAgentStore> {
   const agent = useAgentStore()
   agent.addUserMessage('给我看看画布')
   const msg = agent.startAssistantMessage()
   msg.content = '这是当前画布视图'
+  return agent
+}
+
+/**
+ * seed 一轮「只有卡片、没有助手文本」的轮次：svg_card 就是该轮的**全部**产出。
+ * 若气泡门禁不放行，这条轮次在界面上什么都不渲染（PR #65 同类静默失效）。
+ */
+function seedCardOnlyTurn(): ReturnType<typeof useAgentStore> {
+  const agent = useAgentStore()
+  agent.addUserMessage('给我看看画布')
+  const msg = agent.startAssistantMessage()
+  msg.content = ''
   return agent
 }
 
@@ -126,5 +137,56 @@ describe('AgentSideRail：canvas_command svg_card 上屏', () => {
 
     expect(w.findComponent(AgentSvgCard).exists()).toBe(true)
     expect(w.find('[data-testid="svg-card-discarded"]').exists()).toBe(true)
+  })
+})
+
+/**
+ * 气泡门禁（`shouldShowMessageBubbleText`）放行规则。
+ *
+ * 整块卡片区（含 AgentSvgCard）都挂在该门禁的 `v-if` 内（`AgentSideRail.vue:3033` 开、
+ * `:3134` 闭）。门禁判据是「有可见文本」，所以**只有卡片、没有助手文本**的轮次，
+ * 若门禁不放行 ⇒ 卡片是那一轮的全部产出却什么都不渲染（PR #65 同类静默失效）。
+ *
+ * 边界：既放行卡片，又必须保住 P0 决策 2「零内容不渲染气泡」——
+ * 无文本且无卡片的轮次（典型是 waiting_user 阻塞期）仍不得产生空白气泡。
+ */
+describe('AgentSideRail：svg_card 轮次的气泡门禁', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('有 svg_card 但零助手文本：卡片仍上屏（不放行就等于卡片不可见）', async () => {
+    const w = await mountRail()
+    seedCardOnlyTurn()
+
+    fire(w, { type: 'svg_card', svg: '<svg viewBox="0 0 10 10"><rect/></svg>' })
+    await flushPromises()
+
+    const card = w.findComponent(AgentSvgCard)
+    expect(card.exists()).toBe(true)
+    expect(w.find('[data-testid="svg-card"]').exists()).toBe(true)
+  })
+
+  it('零文本 + svg: ""（超限丢弃）：降级文案也必须可见', async () => {
+    const w = await mountRail()
+    seedCardOnlyTurn()
+
+    fire(w, { type: 'svg_card', svg: '' })
+    await flushPromises()
+
+    expect(w.find('[data-testid="svg-card-discarded"]').exists()).toBe(true)
+  })
+
+  it('P0 回归：零文本且无卡片仍不渲染气泡（waiting_user 白块修复不得回退）', async () => {
+    const w = await mountRail()
+    const agent = seedCardOnlyTurn()
+
+    expect(agent.messages[agent.messages.length - 1].presentation).toBeUndefined()
+    await flushPromises()
+
+    // 只看助手轮次（用户轮次的 `.agent-bubble` 与本断言无关）：
+    // 助手轮不出现气泡容器 ⇒ 不存在空白气泡 + 闪烁光标。
+    const assistantTurns = w.findAll('.agent-turn--assistant')
+    expect(assistantTurns).toHaveLength(1)
+    expect(assistantTurns[0].find('.agent-bubble').exists()).toBe(false)
+    expect(w.findComponent(AgentSvgCard).exists()).toBe(false)
   })
 })

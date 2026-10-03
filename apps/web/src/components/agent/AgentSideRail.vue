@@ -322,12 +322,40 @@ function visibleUserContent(msg: AgentStreamMessage): string {
   return filterUserVisibleText(msg.content ?? '')
 }
 
+/** 带着可渲染 svg_card 的消息：`body.svg` 收窄为 `string`（非 `string | undefined`）。 */
+type SvgCardMessage = AgentStreamMessage & {
+  presentation: AgentPresentationEnvelope & { body: { svg: string } }
+}
+
+/**
+ * 该轮是否带着一张可渲染的 svg_card（spec §4.6）。
+ *
+ * **门禁与挂载点共用的唯一判据**：气泡放行（`shouldShowMessageBubbleText`）与模板
+ * `v-if` 都调它，两处因此不可能漂移。改条件只改这一处。
+ *
+ * 写成类型谓词（`msg is SvgCardMessage`）而非 `boolean`：挂载点的 `:svg` 绑定需要
+ * `body.svg` 已收窄为 `string`，判据一旦抽成函数，模板内的自动收窄就不会再生效。
+ *
+ * ⚠️ 判据用 `!== undefined` 而非真值，与 switch 分支同因：服务端超 SVG_MAX_CHARS 时
+ * 下发 `svg: ""`（字段在、值为空），那张卡有专属的「已丢弃」可见文案，必须照样上屏。
+ */
+function hasRenderableSvgCard(msg: AgentStreamMessage): msg is SvgCardMessage {
+  return msg.role === 'assistant'
+    && msg.presentation?.kind === 'svg_card'
+    && msg.presentation.body?.svg !== undefined
+}
+
 /**
  * P0 决策 2：零内容不渲染气泡（判定在 bubbleVisibility.ts，纯函数可单测）。
  * 阻塞等待期不产生 token，旧实现「流式恒 true」会留下一个空白气泡 + 闪烁光标 = 白块。
+ *
+ * ⚠️ 例外仅一处：带着可渲染 svg_card 的助手轮次。卡片区（含 AgentSvgCard）整体位于本
+ * 门禁的 `v-if` 内，而 svg_card 可能是那一轮的**全部**产出（agent 只调 render_canvas_view
+ * 而不说话）——不放行就等于卡片静默不可见（PR #65 同类失效）。
+ * 例外只认「有卡片」，无卡片仍走 hasBubbleContent ⇒ P0 白块修复不受影响。
  */
 function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
-  return hasBubbleContent(msg)
+  return hasBubbleContent(msg) || hasRenderableSvgCard(msg)
 }
 
 function shouldRenderSchemeDraftProse(msg: AgentStreamMessage): boolean {
@@ -3114,12 +3142,13 @@ defineExpose({
                 />
                 <!--
                   svg_card 独立挂载（spec §4.6）：不进 AgentPresentationHost 的 stepper 布局。
-                  ⚠️ 门禁用 `!== undefined` 而非真值：服务端超 SVG_MAX_CHARS 时下发
+                  门禁复用 hasRenderableSvgCard()（与气泡放行同一判据，不会漂移）：
+                  该函数用 `!== undefined` 而非真值 —— 服务端超 SVG_MAX_CHARS 时下发
                   `svg: ""`（字段在、值为空），AgentSvgCard 靠这个区分「过大被丢弃」与
                   「解析失败」并给出可见文案。真值门禁会把该降级分支整条吞掉。
                 -->
                 <AgentSvgCard
-                  v-if="msg.role === 'assistant' && msg.presentation?.kind === 'svg_card' && msg.presentation.body?.svg !== undefined"
+                  v-if="hasRenderableSvgCard(msg)"
                   class="mt-2"
                   :svg="msg.presentation.body.svg"
                   :title="msg.presentation.title"
