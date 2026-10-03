@@ -1,6 +1,22 @@
 # docs 目录说明
 
-整理于 2026-10-03。
+整理于 2026-10-03，2026-10-04 补提示词审计报告登记。
+
+## 根目录的两份提示词工程审计报告
+
+| 文件 | 内容 | 性质 |
+|---|---|---|
+| `2026-10-02-prompt-engineering-audit.html` | **Round 1 · 现状审视**：16 条缺口（P0×4 / P1×6 / P2×6）+ 五窗口路线图。基线 `0593c3d` | 活资产 —— 缺口清单仍是唯一一份完整 P0/P1/P2 分级 |
+| `2026-10-02-prompt-engineering-audit-round2.html` | **Round 2 · 重构路线**：Round 1 每条建议 × vendor 能力对照（现成/半/未用三档）+方案 A/B/C + W1–W8 路线图。基线 `d574b8b` | 活资产 —— 唯一一份「哪条能吃 vendor、哪条要自建」的取证 |
+
+配套的**进展对账**见
+[`superpowers/plans/2026-10-04-prompt-audit-gap-status.md`](./superpowers/plans/2026-10-04-prompt-audit-gap-status.md)
+—— 16 条缺口逐条对到 `origin/master 006af0a` 的代码事实。
+
+⚠️ **这两份 HTML 曾一度丢失**：它们原本是未跟踪文件，一次 `git stash -u` 把它打进
+`d31f739`（stash commit）后该 stash 被 drop，文件从工作区与 master 双双消失，
+只存在于悬空对象里，靠 `git fsck --lost-found` 才捞回。2026-10-04 已恢复为 tracked。
+**教训：审计报告这类"结论资产"必须入库，不能只放工作区。**
 
 ## 保留的目录
 
