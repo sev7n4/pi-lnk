@@ -89,7 +89,12 @@ patch-id 对不上，已合分支会被误报成「未合并」。权威判据�
 1. **默认跑变更相关测试，不跑全量**：
    - server：`pnpm test:server:changed`（相对 origin/master 的变更用例）或 `pnpm test:server`（整个 server 套件）；改动聚焦时直接跑单文件——`pnpm --filter @lnkpi/server exec vitest run src/agent/<file>.test.ts`
    - pi-runtime：`pnpm test:runtime`；单文件 `node --import tsx --test src/<file>.test.ts`（在 `services/pi-runtime/` 下）
-2. **全量 `pnpm test` 是 CI 的活**（PR 上自动跑全仓 757+265 用例，约 4 分钟）。本地确需全量时：
+2. **全量 `pnpm test` 是 CI 的活**。位置：`ci.yml` 的 **`Build monorepo`** job → step `Unit and integration tests`（`ci.yml:74` 的 `pnpm test`）——**不是**独立 test job。`gh pr checks` 只列 3 个 job（Verify spec figures / Build monorepo / Build API Docker image），看不到测试但它确实跑在里面，核实要下钻 step：
+   ```
+   gh run view <id> --json jobs --jq '.jobs[] | .name as $n | .steps[] | "\($n) :: \(.name) :: \(.conclusion)"'
+   gh run view <id> --log | grep -E 'Test Files.*passed|# (tests|pass|fail) '
+   ```
+   规模（2026-10-03 实测）：`services/pi-runtime` 555 用例 + `apps/server` 96 / `apps/web` 176 / `packages/shared` 43 / `packages/agent` 25 个测试文件，约 3 分钟。本地确需全量时：
    - 先 `uptime`——**load > 8 禁止起跑**（有并行会话在跑时几乎必然超）
    - 同一时刻**全仓只允许一个全量**；server 全量必须带 `--hookTimeout=120000`（已知 flake）
 3. **不要本机同时跑 server 与 pi-runtime 两套全量**——资源竞争会 SIGKILL(137)，出现假失败
