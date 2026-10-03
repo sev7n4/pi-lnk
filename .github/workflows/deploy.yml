@@ -293,12 +293,18 @@ jobs:
           # 这条 curl 把「容器里到底有没有带规则」从 CI 的猜测变成线上自证。
           # 判据与 prompt:lint 同源（registryHash / entryCount / degraded），但视角不同：
           # lint 看仓库自洽，这个看镜像里落地。
-          BODY="$(curl -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:${API_PORT}/api/agent/prompt-registry")"
+          #
+          # ⚠️ 必须经ssh 到 CVM 上打：API 跑在 CVM，GitHub runner 上没有这个端口。
+          # 同job 的 "Verify API deployment" 也是 ssh 包装的（见其 curl 127.0.0.1:${API_PORT}）。
+          # 裸 curl 会恒定 exit 7（Connection refused），把每次发版都判成失败。
+          BODY="$(ssh deploy-cvm "curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:${API_PORT}/api/agent/prompt-registry")"
           echo "$BODY" | head -c 600
           echo ""
-          DEGRADED="$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["degraded"])')"
+          # degraded 归一成 0/1 再判：JSON 的 true/false 与 shell 字符串比对易踩
+          # （python print 出的是 Python 字面量 True，不是 JSON 的 true）。
+          DEGRADED="$(echo "$BODY" | python3 -c 'import json,sys; print(int(bool(json.load(sys.stdin)["data"]["degraded"])))')"
           ENTRIES="$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["entryCount"])')"
-          if [ "$DEGRADED" = "True" ]; then
+          if [ "$DEGRADED" != "0" ]; then
             echo "::error::提示词 Registry 降级了（容器内规则缺失或不可读），线上正在走内嵌 fallback。"
             echo "查 .dockerignore 的 !prompt-registry/**/*.md 白名单与 Dockerfile.api 的两条 COPY。"
             exit 1
