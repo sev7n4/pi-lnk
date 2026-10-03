@@ -738,7 +738,22 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 		assert.deepEqual(calls, ["compact"]);
 		// vendor `lane.ts:1204` 只在 options?.customInstructions !== undefined 时透传，
 		// compaction.ts:567 拼成 "\n\nAdditional focus: <段>" 追加进摘要 prompt。
-		assert.deepEqual(opts[0], { customInstructions: COMPACTION_RETENTION_INSTRUCTIONS });
+		//
+		// ⚠️ 2026-10-04：这里从「逐字节等于静态常量」放宽为「以静态常量开头 + 含动态段」。
+		// 起因是 PR #142 补了 Nest 侧真实状态（画布里`pending_confirm` 的节点 id），
+		// 保留段变成**两层**：静态清单（说「要保留哪几类」）+ 动态状态（说「是哪个节点」）。
+		// 静态清单单独存在时说不出具体节点 id，动态状态单独存在时说不出还应保留哪几类，
+		// 少任何一层都不完整。逐字节断言在两层合并后必然失败，故改为语义断言。
+		const first = opts[0] as { customInstructions?: string };
+		assert.equal(typeof first.customInstructions, "string");
+		assert.ok(
+			first.customInstructions?.startsWith(COMPACTION_RETENTION_INSTRUCTIONS),
+			"必须以静态清单开头（#141 的内容不能在合并中丢掉）",
+		);
+		assert.ok(
+			first.customInstructions?.includes("必须跨压缩保留"),
+			"必须含动态保留段（#142 的buildRetentionInstructions 输出）",
+		);
 	});
 
 	it("compactionRetention=false：lane.compact 收到 undefined（与本改动前逐字节一致）", async () => {

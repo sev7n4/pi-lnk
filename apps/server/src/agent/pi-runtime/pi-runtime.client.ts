@@ -39,6 +39,23 @@ export interface PiTurnContext {
 	mentionedKeys?: string[];
 	refOrder?: string[];
 	focusNodeId?: string;
+	/**
+	 * 跨压缩必须保留的领域状态（Round 2 W2①）。
+	 *
+	 * ⭐ 由 Nest 侧填，pi-runtime 不自行推断 ——「哪些节点正等用户确认」的真实状态在
+	 * Nest 的生成记录里（`propose_generation` 已调用但用户未点确认）。
+	 * pi-runtime 若自己猜，会产生第二套与画布不一致的真相。
+	 */
+	retention?: PiRetentionState;
+}
+
+export interface PiRetentionState {
+	/** 正等待用户确认的画布节点 id。 */
+	pendingConfirmNodeIds?: string[];
+	/** 用户已明确确认过的偏好（下一轮不该重复追问）。 */
+	confirmedPreferences?: string[];
+	/** 本轮已得出的关键工具结论（压缩后不应重复调用或谎称已执行）。 */
+	keyToolConclusions?: string[];
 }
 
 /** K-1：会话级 LLM 覆盖（BYOK）。与 pi-runtime `SessionLlmOverride` 同构。

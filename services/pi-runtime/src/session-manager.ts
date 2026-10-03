@@ -38,6 +38,10 @@ import {
 	type CompactionOutcome,
 	type CompactionSkipReason,
 } from "./compaction-check.js";
+import {
+	buildRetentionInstructions,
+	type RetentionState,
+} from "./compaction-retention.js";
 import type { Metrics } from "./metrics.js";
 import { COMPACTION_RETENTION_INSTRUCTIONS, missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
@@ -276,6 +280,15 @@ export interface TurnContext {
 	mentionedKeys?: string[];
 	refOrder?: string[];
 	focusNodeId?: string;
+	/**
+	 * 跨压缩必须保留的领域状态（审计 Round 2 W2①）。
+	 *
+	 * ⭐ **由 Nest 侧提供，宿主不自行推断** —— 「哪些节点正等用户确认」的真实状态在
+	 * Nest 的生成记录里（`propose_generation` 已调用但用户未点确认）。
+	 * pi-runtime 若自己猜，会得到第二套与画布不一致的真相，
+	 * 那正是「假装已执行」类问题的温床。缺省即为空⇒ 保留段退化为通用兜底要求。
+	 */
+	retention?: RetentionState;
 }
 
 /**
@@ -291,6 +304,7 @@ export function normalizeTurnContext(turn: TurnContext): TurnContext {
 		mentionedKeys: turn.mentionedKeys ?? [],
 		refOrder: turn.refOrder ?? [],
 		focusNodeId: turn.focusNodeId,
+		retention: turn.retention,
 	};
 }
 
@@ -462,6 +476,15 @@ function sameAttachments(a?: readonly SidebarAttachment[], b?: readonly SidebarA
 	);
 }
 
+/** RetentionState 的结构化相等（三个字段全是 string[]，逐项比）。 */
+function sameRetention(a?: RetentionState, b?: RetentionState): boolean {
+	return (
+		sameStringArray(a?.pendingConfirmNodeIds, b?.pendingConfirmNodeIds) &&
+		sameStringArray(a?.confirmedPreferences, b?.confirmedPreferences) &&
+		sameStringArray(a?.keyToolConclusions, b?.keyToolConclusions)
+	);
+}
+
 /** 判断 turnContext 是否真的变了（避免每轮无谓替换导致 systemPrompt 缓存抖动）。 */
 export function isTurnContextEqual(a: TurnContext, b: TurnContext): boolean {
 	return (
@@ -469,7 +492,12 @@ export function isTurnContextEqual(a: TurnContext, b: TurnContext): boolean {
 		sameStringArray(a.mentionedKeys, b.mentionedKeys) &&
 		sameStringArray(a.refOrder, b.refOrder) &&
 		(a.focusNodeId ?? "") === (b.focusNodeId ?? "") &&
-		sameAttachments(a.attachments, b.attachments)
+		sameAttachments(a.attachments, b.attachments) &&
+		// ⚠️ retention 必须参与比较：漏掉它会让 setTurnContext 判定「没变」而整轮跳过，
+		// 保留段永远是上一轮的值 —— 且系统提示词不抖动、指标全绿，看不出任何异常。
+		// 这类「加字段忘了加进相等判定」是缓存优化的经典副作用，纯函数测试抓不到，
+		// 由 compaction-retention-wiring.test.ts 的接线断言兜住。
+		sameRetention(a.retention, b.retention)
 	);
 }
 
@@ -774,11 +802,19 @@ export class SessionManager {
 						}
 					}
 					if (!changed) return undefined; // 纯文本会话：逐字节原生路径
+					// ⚠️ 这里**不能**用 `event.customInstructions`：宿主从不注册 vendor 侧的
+					// 填充路径，它恒为 undefined ⇒ 有图会话（走本 hook 自产摘要）会拿不到保留段。
+					// 与 sweeper 路径同源生成（静态清单 + 动态状态），两条压缩路径才一致。
+					// kill switch 语义同样对齐：显式 false 才回退到`undefined`。
+					const customInstructions =
+						this.config.compactionRetention === false
+							? undefined
+							: `${COMPACTION_RETENTION_INSTRUCTIONS}\n\n${buildRetentionInstructions(entry.turn.retention)}`;
 					const result = await compact(
 						annotated as never,
 						entry.models,
 						entry.model,
-						event.customInstructions,
+						customInstructions,
 						entry.thinkingLevel,
 						undefined,
 						undefined,
@@ -1395,15 +1431,25 @@ export class SessionManager {
 		const decision = decideCompaction(scanned.entries, entry.contextWindow, settings);
 		if (!decision.shouldRun) return decision.skipReason ?? "unknown";
 		try {
-			// 压缩保留段（Round2 W2① / 首轮 P2-1）：把画布领域的「必须跨压缩保留」清单喂给
+			// 压缩保留段（Round 2 W2① / 首轮 P2-1）：把画布领域的「必须跨压缩保留」清单喂给
 			// vendor 摘要 prompt（compaction.ts:567 拼成 "\n\nAdditional focus: …"）。
 			// vendor 模板是为编码助手写的（只要求保留文件路径/函数名/报错），节点 id、待确认态、
 			// 用户偏好、工具结论四类在这条默认指令里一个都没有 ⇒ 压完就漂移。
 			// 开关语义与 directImages / toolTiering 同构：显式 false 才回退到改动前的 `undefined`。
+			//
+			// 两层内容（#141 的静态清单 + 本分支的动态状态）：
+			// - 动态部分来自 Nest 逐轮填的 `turn.retention`（画布里真正`pending_confirm` 的节点 id），
+			//   这是静态清单给不出的真实状态；
+			// - `buildRetentionInstructions()` 无状态时返回通用兜底要求，恒非空
+			//   （空串会被 vendor 判falsy走原生路径 ⇒ 保留段静默失效而一切看起来正常）。
+			// ⚠️ 这里是 run 后的 sweeper 路径；before_compaction hook 路径见 createSession，
+			// 两处都要传，否则「有图的会话」走了 hook 分支就漏了保留段。
 			const retention =
 				this.config.compactionRetention === false
 					? undefined
-					: { customInstructions: COMPACTION_RETENTION_INSTRUCTIONS };
+					: {
+							customInstructions: `${COMPACTION_RETENTION_INSTRUCTIONS}\n\n${buildRetentionInstructions(entry.turn.retention)}`,
+						};
 			const res = await lane.compact(retention, context);
 			if (res.ok) return undefined; // ok 由事件计，不得在此重复计数
 			return classifyCompactionError(res.error);

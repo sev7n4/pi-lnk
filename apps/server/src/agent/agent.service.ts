@@ -39,6 +39,7 @@ import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import {
   PiRuntimeClient,
   type CreateSessionResult,
+  type PiRetentionState,
   type PiSessionLlmOverride,
 } from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability, resolveVisionInputSupport } from '../provider/model-capability'
@@ -822,6 +823,55 @@ export class AgentService {
   }
 
   /**
+   * 收集「跨压缩必须保留」的领域状态（Round 2 W2①）。
+   *
+   * ## 为什么 Nest 侧填而 pi-runtime 不猜
+   *
+   * 「哪些节点正等用户确认」的 SSOT 是画布节点上的 `data.status === 'pending_confirm'`
+   * —— `proposeGeneration()` 在返回propose 卡片**之前**就已把它 persist 进
+   * `Session.canvasData`（agent-canvas-tools.service.ts:1080-1087），
+   * 且pi-runtime 的 generation-gate 跨轮/跨会话重建后**仍然回查这个字段**
+   * （gate/generation-gate.ts:147-155），它是唯一真相。
+   * pi-runtime 若自己推断，会产生第二套与画布不一致的真相。
+   *
+   * ## 为什么不用 getCanvasSummary
+   *
+   * `getCanvasSummary({ focusNodeId })` 在 >30 节点画布上会做焦点过滤
+   * （CANVAS_SUMMARY_FULL_LIMIT=30），**待确认节点可能被过滤掉 ⇒ 保留段漏报**。
+   * 保留段是「宁可多报不可漏报」的场景（漏报 = 压缩后重复建节点 + 谎称已生成）。
+   *
+   * ## fail-soft
+   *
+   * DB 读失败返回 `{}`：保留段退化为通用兜底要求，压缩照常发生。
+   * 反向选择（抛错阻断 prompt）会把一个纯增强功能变成主链路故障点。
+   */
+  private async collectRetentionState(sessionId: string): Promise<PiRetentionState> {
+    try {
+      const session = await this.prisma.session.findUnique({
+        where: { id: sessionId },
+        select: { canvasData: true },
+      })
+      if (!session?.canvasData) return {}
+      const parsed = JSON.parse(session.canvasData) as {
+        nodes?: Array<{ id?: unknown; data?: { status?: unknown } }>
+      }
+      const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : []
+      const pendingConfirmNodeIds = nodes
+        .filter((n) => String(n?.data?.status ?? '') === 'pending_confirm')
+        .map((n) => String(n?.id ?? ''))
+        .filter((id) => id.length > 0)
+      return pendingConfirmNodeIds.length > 0 ? { pendingConfirmNodeIds } : {}
+    } catch (err) {
+      this.piLogger?.warn(
+        `collectRetentionState failed (fail-soft, 保留段退化为通用兜底): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+      return {}
+    }
+  }
+
+  /**
    * pi-runtime 事件流 → 现有 AgentStreamEvent（退役后唯一主路径）。
    * 累积 assistantText / canvasActions，回合结束走 finalizeTurn 持久化。
    */
@@ -962,6 +1012,9 @@ export class AgentService {
       mentionedKeys: piContext?.mentionedKeys,
       refOrder: piContext?.refOrder,
       focusNodeId: piContext?.focusNodeId,
+      // W2①压缩保留段：把「待用户确认的节点」交给 pi-runtime，让它活过上下文压缩。
+      // 压缩后模型看不到自己已经propose 过，最典型的后果是重复建节点 + 谎称已生成。
+      retention: await this.collectRetentionState(sessionId),
     }
     // T1：直通生效时把 [In=文件名] 标记并入发送文本尾部（pi-runtime T4 摘要占位从该标记恢复编号）
     const promptTextWithMarkers = directImages
