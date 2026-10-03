@@ -30,6 +30,33 @@ describe("parseLlmOverride", () => {
 		assert.equal(r.state === "ok" && r.value.maxTokens, 4_096);
 	});
 
+	// 2026-10-03 识图事故第二段根因：#123 在 model-assembly 消费 supportsVision、
+	// #127 在 Nest 侧发送，但本 parse 层从未透传该字段 —— 生产实测
+	// parseLlmOverride({...,supportsVision:true}).value.supportsVision === undefined，
+	// 于是 resolveSupportsVision 恒 false → input:["text"] → 图片仍被降级占位。
+	// 本组测试把 parse 层钉死，防止「定义了字段但解析层丢弃」再次静默发生。
+	it("supportsVision=true → 透传（识图链路硬判据）", () => {
+		const r = parseLlmOverride({ ...VALID, supportsVision: true });
+		assert.equal(r.state, "ok");
+		assert.equal(r.state === "ok" && r.value.supportsVision, true);
+	});
+
+	it("supportsVision=false → 显式透传 false（不得静默丢成 undefined）", () => {
+		const r = parseLlmOverride({ ...VALID, supportsVision: false });
+		assert.equal(r.state, "ok");
+		assert.equal(r.state === "ok" && r.value.supportsVision, false);
+	});
+
+	it("supportsVision 缺省 → 字段不出现（交回 model-assembly 的「不猜」默认）", () => {
+		const r = parseLlmOverride({ ...VALID });
+		assert.equal(r.state, "ok");
+		assert.equal(r.state === "ok" && "supportsVision" in r.value, false);
+	});
+
+	it("supportsVision 类型错 → invalid", () => {
+		assert.equal(parseLlmOverride({ ...VALID, supportsVision: "yes" }).state, "invalid");
+	});
+
 	it("source=platform 也接受", () => {
 		const r = parseLlmOverride({ ...VALID, source: "platform" });
 		assert.equal(r.state, "ok");
