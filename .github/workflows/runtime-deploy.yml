@@ -4,7 +4,7 @@ name: Runtime Deploy (pi-runtime)
 # 操作知识沉淀自 docs/ops/RUNBOOK-pi-runtime-deploy.md 与本仓 pi-lnk-runtime-release 技能。
 #
 # 铁律（违反即失败，见各 step）：
-#   1. tag 只能加不能复用（skip_build 重部署除外）
+#   1. tag 只能加不能复用（skip_build 重部署除外）；tag 取 master 的 commit 短 sha，不用语义版号
 #   2. 镜像真伪只认 imageID digest == pod imageID
 #   3. 数字型 env 一律 --set-string（防 toYaml 科学计数法 → parseInt 截断，2026-09-29 事故）
 #   4. 升级后 env 必须「逐项比对精确值」，不是 presence 检查
@@ -13,7 +13,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'pi-runtime 镜像 tag（如 0.0.21；必须是递增新值）'
+        # 现行约定：tag = master 的 commit 短 sha（与 merge commit 同 sha，天然可对账）。
+        # 数字语义版号（0.0.x）已于 2026-10-03 停用 —— 并行窗口需抢号，且无法反查对应 PR。
+        # 唯一硬约束是「tag 不能复用」（见下方 Preflight step），本workflow 不做任何自动递增。
+        description: 'pi-runtime 镜像 tag。用 master 的 commit 短 sha（如 e7a742a8），非语义版号；必须未被占用'
         required: true
       skip_build:
         description: '跳过构建，直接重部署已存在的 tag（回滚/重启用）'
