@@ -121,7 +121,17 @@ pi-lnk/
 └── uploads/             # 上传产物（本地，一般不入库）
 ```
 
-**`docs/` 子目录**：`adr/`（决策记录）、`archive/`、`diagnostics/`、`discussion/`、`mockups/`、`ops/`（runbook）、`superpowers/`（spec 与 plan）、`workflow/`
+**`docs/` 子目录**（说明见 `docs/README.md`）：
+
+| 目录 | 性质 |
+|---|---|
+| `workflow/` | ⚠️ **活跃对外契约，别删** —— 外部 Agent（WorkBuddy/Codex）靠它生成可导入画布的 JSON；校验函数 `validateWorkflow` 由 `useWorkflowExchange.ts`、`compositionLint.ts` 消费 |
+| `superpowers/` | 历史 spec 与 plan（284 份、5.7M、无索引平铺）。⚠️ 规模最大，是否按时间线归档待决策 |
+| `discussion/` | 讨论文档（第一资产） |
+| `ops/` | 部署 runbook |
+
+>2026-10-03 已删除 `adr/`、`mockups/`、`diagnostics/`、`archive/`（代码引用均为 0，
+> 内容为已完成的阶段性产物 —— 详见 `docs/README.md` 的删除原因与断链记录）。
 
 **`skills/` 现有清单**：`drama-audio-design`、`drama-character-design`、`drama-motion-video`、`drama-qc-review`、`drama-scene-worldview`、`drama-script-writing`、`drama-storyboard`、`ecommerce-product-photo`
 —— 新增 skill 时同步更新此清单，并注意 `prompt-lint.ts` 会对 skill 做格式门禁。
