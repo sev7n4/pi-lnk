@@ -136,13 +136,59 @@ describe('AgentService pi-runtime switch (B4)', () => {
         reasoning: false,
         contextWindow: 128_000,
         maxTokens: 8_192,
+        // #123 接线：视觉输入能力必须显式传下去，否则 pi-runtime 侧
+        // overrideProvider 仍写死input:["text"] → 图片被静默降级为占位符。
+        //
+        // 值是 true 而非 false：`deepseek-flash` 命中 `supportsVisionModel` 的
+        // DEEPSEEK_FLASH 特判（现状即如此，direct-image-payload.ts:86 早就放它走直通）。
+        // 本 PR 的契约是「显式化既有判断」，**不改变哪些模型走直通**——
+        // 该特判本身对 BYOK 官方 DeepSeek 是误判（那是给平台侧 vision-exp 视觉版准备的），
+        // 已由 #124 标注为启发式兜底，行为迁移另开 PR。
+        supportsVision: true,
       })
+    })
+
+    /**
+     * 接线契约（#123 让pi-runtime 能声明、#124 让 Nest 能判断、本 PR 连线）：
+     * Nest 是唯一知道「用户模型能不能看图」的地方（它持有渠道元数据 + 探针），
+     * pi-runtime 无从得知。所以 Nest 必须把结论显式传下去。
+     *
+     * 本条锁的是**字段存在性**：无论结论是 true 还是 false，字段都必须在。
+     * 省略字段等于让 pi-runtime 回落硬编码 `input:["text"]`，
+     * 那正是本次事故的形状（图片被静默换成占位符，上游照常 200）。
+     */
+    it('BYOK 模型 → llm 必带 supportsVision（不留空让 pi-runtime 猜）', async () => {
+      setResolver(BYOK_RESOLVED)
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      const llm = opts?.llm as Record<string, unknown> | undefined
+      expect(llm).toBeDefined()
+      expect('supportsVision' in (llm as object)).toBe(true)
+      expect(typeof llm?.supportsVision).toBe('boolean')
     })
 
     it('平台模型 → 不带 llm（决策 A：平台用户保持 pi env 装配，零变化）', async () => {
       setResolver(PLATFORM_RESOLVED)
       const opts = await runTurn('platform::agnes-2.0-flash')
       expect(opts?.llm).toBeUndefined()
+    })
+
+    /**
+     * 生产实测回归锁（真实事故模型）：
+     * `agnes-2.5-flash` 渠道元数据声明 capability:"text"（输出模态），
+     * 但直连上游实测 image_tokens:1024，能识图。
+     *
+     * 所以这里必须传 true —— 若某天有人把「渠道声明」当权威塞进这里，
+     * 会退回 false，图片又被静默降级，正是本次事故的形状。
+     */
+    it('视觉模型（生产实测 agnes-2.5-flash）→ supportsVision 显式 true', async () => {
+      setResolver({
+        modelName: 'agnes-2.5-flash',
+        credentials: { apiKey: 'sk-BYOK', baseUrl: 'https://apihub.agnes-ai.cn/v1' },
+        source: 'user' as const,
+      })
+      const opts = await runTurn('ch_byok::agnes-2.5-flash')
+      const llm = opts?.llm as Record<string, unknown> | undefined
+      expect(llm?.supportsVision).toBe(true)
     })
 
     it('PI_LLM_PASSTHROUGH=off → 不发 llm（回滚开关）', async () => {
