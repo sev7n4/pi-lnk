@@ -46,6 +46,7 @@ import AskUserCard from '@/components/agent/AskUserCard.vue'
 import ToolCallCard from '@/components/agent/ToolCallCard.vue'
 import { collapseToolCalls } from '@/components/agent/collapseToolCalls'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
+import AgentSvgCard from '@/components/agent/presentation/AgentSvgCard.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
 import AgentMacroSchemeCards from '@/components/agent/presentation/AgentMacroSchemeCards.vue'
 import { hasSchemeDraftSections, splitAssistantDraftMessage } from '@/components/agent/presentation/schemeDraftProse'
@@ -1028,6 +1029,9 @@ function syncCompletionPresentation(
 
 function historyPresentation(msg: AgentStreamMessage): AgentPresentationEnvelope | null {
   if (msg.role !== 'assistant' || msg.streaming || !msg.presentation) return null
+  // svg_card 走独立挂载（紧邻本函数调用点的 AgentSvgCard），不进 Host 的 stepper 布局：
+  // 落库重放路径不恢复 stepper，进了只会渲染一条空进度条。spec §4.6。
+  if (msg.presentation.kind === 'svg_card') return null
   return msg.presentation
 }
 
@@ -2521,6 +2525,10 @@ function handleEvent(event: { type: string; data: unknown }) {
         mode?: 'grid' | 'along_edges'
         gap?: number
         edges?: { source: string; target: string }[]
+        /** render_canvas_view 产物（spec §4.6 第 2 跳）。净化在 AgentSvgCard 内做（§4.5）。 */
+        svg?: string
+        title?: string
+        annotations?: Array<{ nodeId: string; text: string; severity: 'info' | 'warn' }>
       }
       if (cmd.type === 'focus_node' && cmd.nodeId) {
         onFocusNode(cmd.nodeId)
@@ -2550,6 +2558,20 @@ function handleEvent(event: { type: string; data: unknown }) {
           if (sidebar.pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) break
           sidebar.addFromPayload(att)
         }
+      } else if (cmd.type === 'svg_card' && cmd.svg !== undefined) {
+        // render_canvas_view 产物：净化在 AgentSvgCard 内做（spec §4.5）。
+        // ⚠️ 刻意不塞 AgentPresentationHost：svg_card 是独立挂载（无 stepper 布局），
+        // 因为落库重放路径不恢复 stepper。
+        // ⚠️ 净化器（svg-sanitize.ts 的 ALLOWED_ELEMENTS / ALLOWED_ATTRS）兜住的是
+        // **可表达范围**，管不了**选择器作用域** —— AgentSvgCard 的 <style> 是
+        // document-global。产出方（tools 的 build* 系列）新增图元时，必须同步过净化器
+        // 白名单，否则整块被剥；净化器不报错，静默降级成空卡片。
+        agent.setPresentation({
+          kind: 'svg_card',
+          stepper: { current: '', completed: [] },
+          title: cmd.title,
+          body: { svg: cmd.svg, annotations: cmd.annotations },
+        })
       } else if (cmd.type === 'ask_user') {
         const card = cmd as { callId?: string; questions?: Array<Omit<(typeof pendingAskUser.value)[number], 'callId'>> }
         if (card.questions?.length) {
@@ -3089,6 +3111,19 @@ defineExpose({
                   :macro-selected-ids="historyMacroSelectedIds(historyPresentation(msg)!)"
                   @focus-node="onFocusNode($event)"
                   @focus-all="onFocusAll($event)"
+                />
+                <!--
+                  svg_card 独立挂载（spec §4.6）：不进 AgentPresentationHost 的 stepper 布局。
+                  ⚠️ 门禁用 `!== undefined` 而非真值：服务端超 SVG_MAX_CHARS 时下发
+                  `svg: ""`（字段在、值为空），AgentSvgCard 靠这个区分「过大被丢弃」与
+                  「解析失败」并给出可见文案。真值门禁会把该降级分支整条吞掉。
+                -->
+                <AgentSvgCard
+                  v-if="msg.role === 'assistant' && msg.presentation?.kind === 'svg_card' && msg.presentation.body?.svg !== undefined"
+                  class="mt-2"
+                  :svg="msg.presentation.body.svg"
+                  :title="msg.presentation.title"
+                  :annotations="msg.presentation.body.annotations"
                 />
                 <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
                   <ToolCallCard

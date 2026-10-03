@@ -137,6 +137,23 @@ export const useAgentStore = defineStore('agent', () => {
     return msg
   }
 
+  /**
+   * 写当前 assistant 消息的 presentation（spec §4.6 第 2 跳）。
+   *
+   * ⚠️ `presentation` 是**单值**字段：同一轮 agent 产出两张 svg_card 时**后者覆盖前者**。
+   * 这是刻意选择而非疏漏 —— spec §4.6 已定；不引入卡片数组是因为刷新恢复路径
+   * （Task 6）只恢复最后一张，落库侧同样没有多卡槽位。
+   * 回归锁：`agent.setPresentation.test.ts` 的「同轮第二张卡覆盖第一张」。
+   *
+   * 无 assistant 消息时静默忽略：与 `appendText` / `addToolCall` 同款兜底，
+   * 避免事件竞态（流早于 startAssistantMessage 到达）打断整条流。
+   */
+  function setPresentation(presentation: AgentPresentationEnvelope) {
+    const last = lastAssistant()
+    if (!last) return
+    last.presentation = presentation
+  }
+
   function appendText(text: string) {
     // text_delta 落点：刷新最近文本时间戳（waiting 的文本静默判定依赖它）
     lastTextDeltaAt.value = Date.now()
@@ -426,6 +443,7 @@ export const useAgentStore = defineStore('agent', () => {
     setActivity,
     addUserMessage,
     startAssistantMessage,
+    setPresentation,
     appendText,
     replaceAssistantText,
     addToolCall,
