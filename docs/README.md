@@ -6,7 +6,7 @@
 
 | 目录 | 内容 | 性质 |
 |---|---|---|
-| `adr/` | **架构决策记录**（0001-0008 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
+| `adr/` | **架构决策记录**（0001-0009 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
 | `workflow/` | Agent 工作流交换契约（`README.md` + `examples/*.json`） | **活跃资产** —— 外部 Agent（WorkBuddy / Codex 等）靠它生成可导入画布的 JSON。校验函数是 `@lnkpi/shared` 的 `validateWorkflow`，代码里由 `useWorkflowExchange.ts`、`compositionLint.ts` 等消费。**不要删。** |
 | `superpowers/` | 历史 spec 与 plan（283 份：specs 137 / plans 146） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 +状态（🟢living / 🔒frozen / ⛔superseded）分组。索引可重跑：`python3 gen_index.py && python3 gen_index_md.py` |
 | `discussion/` | 讨论文档（第一资产） | 项目方向与决策来源 |
@@ -24,6 +24,13 @@
 | `archive/` | `2026-09-20-branch-cleanup.md` —— 2026-09-20 的一次性分支清理留痕（99 → 18 个分支）。**同类信息现由 `AGENTS.md` 的「分支纪律」与 `branch-first-dev-workflow` skill 承载**，留旧文档反而会让人以为还有第二套规则。 |
 
 **删除前已核实**：这 4 个目录在 `apps/` `packages/` `services/` `charts/` `deploy/` 里的引用数均为 **0**。
+
+## 内核能力清单（不在 docs/ 下）
+
+`@earendil-works/pi-*-` 各子包的使用情况与理由记录在
+**[`services/pi-runtime/DEPENDENCIES.md`](../services/pi-runtime/DEPENDENCIES.md)** ——
+让"是否吃满内核能力"变成可核对的事实，而不是靠印象。依据见
+[ADR-0009](./adr/0009-vendor-capability-first.md)。
 
 ## 已知的历史文档断链
 
