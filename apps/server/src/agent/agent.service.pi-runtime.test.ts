@@ -1490,3 +1490,206 @@ describe('Q2 落库 content 归一化（finalizeTurn 实际写库值）', () => 
     expect(await persistedContent(['第一段', '\n\n第二段'])).toBe('第一段\n\n第二段')
   })
 })
+
+
+// ── svg_card 落库（spec §4.6 第 3 跳：刷新后前端从 executionEvents 重放恢复）──
+//
+// 三个用例的判据全部落在**实际写库值**上（agentMessageCreate 的 metadata 字符串
+// JSON.parse 之后），不是「mock 被调用了几次」——后者对「落的是空数组」也恒真。
+describe('svg_card 落库 executionEvents（刷新恢复通道）', () => {
+  const agentMessageCreate = vi.fn()
+  const agentMessageFindMany = vi.fn()
+  let service: AgentService
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+
+    agentMessageCreate.mockResolvedValue({})
+    agentMessageFindMany.mockResolvedValue([])
+
+    service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentThread: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({}),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        session: {
+          findUnique: vi.fn().mockResolvedValue({ id: 's1', canvasData: null }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        idempotencyRecord: {
+          create: vi.fn().mockResolvedValue({}),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+  })
+
+  afterEach(() => {
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+  })
+
+  /** 跑一轮并返回实际落库的 executionEvents（未落库则返回 null）。 */
+  async function persistedExecutionEvents(
+    events: PiRuntimeEvent[],
+  ): Promise<Array<{ type: string; data: unknown }> | null> {
+    agentMessageCreate.mockClear()
+    const pi = stubPiClient([...events, piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    for await (const _ of service.streamConversation('s1', '给我看看画布', 'u1', 't1')) {
+      // drain
+    }
+    const call = agentMessageCreate.mock.calls.find((c) => c[0]?.data?.role === 'assistant')
+    const raw = call?.[0]?.data?.metadata
+    if (typeof raw !== 'string') return null
+    return (JSON.parse(raw) as { executionEvents?: Array<{ type: string; data: unknown }> })
+      .executionEvents ?? null
+  }
+
+  /** 一条 render_canvas_view 的 tool_execution_end（svg_card 产在 end 事件的 details）。 */
+  function svgCardEnd(svg: string, title?: string): PiRuntimeEvent {
+    return piEvent('tool_execution_end', {
+      toolCallId: 'c-card',
+      toolName: 'render_canvas_view',
+      result: {
+        content: [],
+        details: {
+          ok: true,
+          canvasCommands: [
+            { type: 'svg_card', svg, ...(title ? { title } : {}) },
+          ],
+        },
+      },
+    })
+  }
+
+  /**
+   * 只取落库里的 `canvas_command` 条目。
+   *
+   * 同一批 executionEvents 里还有 tool_result / thinking 等其它类型（mapPiEventToUiEvent
+   * 派生），本组用例验的是 **canvas_command 这条通道的进出**，混在一起断言会把
+   * 「svg_card 通道对不对」淹没在无关事件的形状里。
+   */
+  function canvasCommands(
+    events: Array<{ type: string; data: unknown }> | null,
+  ): Array<{ type: string; data: unknown }> {
+    return (events ?? []).filter((e) => e.type === 'canvas_command')
+  }
+
+  it('svg_card 进 executionEvents（刷新后前端可从 metadata 重放恢复）', async () => {
+    const svg = '<svg viewBox="0 0 10 10"><rect width="4" height="4"/></svg>'
+    const events = await persistedExecutionEvents([
+      piEvent('agent_start', {}),
+      svgCardEnd(svg, '画布视图'),
+    ])
+
+    // 落库非空（否则下面这条恒真），且 canvas_command 通道里就是那张卡
+    expect(events).not.toBeNull()
+    expect(canvasCommands(events)).toEqual([
+      { type: 'canvas_command', data: { type: 'svg_card', svg, title: '画布视图' } },
+    ])
+  })
+
+  /**
+   * Review Focus #2：同轮 ask_user + svg_card 共存，不互相挤掉。
+   *
+   * ⚠️ 这条同时锁住去重逻辑的边界（`:1002` 的按 callId splice）：
+   * ask_user 经 tool_execution_update 的 partialResult 快照下发（callId 由
+   * extractCanvasCommands 从事件 toolCallId 回填），svg_card 无 callId。
+   * 若 splice 改成无差别删条目，本例的 svg_card 会被后到的 ask_user 挤掉。
+   */
+  it('Review Focus #2：同轮 ask_user + svg_card 都进 executionEvents，不互相挤掉', async () => {
+    const svg = '<svg viewBox="0 0 10 10"><circle r="3"/></svg>'
+    const questions = [{ id: 'q1', question: '走哪种风格？', options: [{ label: 'A', value: 'a' }] }]
+    const events = await persistedExecutionEvents([
+      piEvent('tool_execution_update', {
+        toolCallId: 'c-ask',
+        toolName: 'ask_user',
+        partialResult: { details: { ok: true, canvasCommands: [{ type: 'ask_user', questions }] } },
+      }),
+      svgCardEnd(svg, '画布视图'),
+    ])
+
+    // 两条都在，且 ask_user 的 callId 回填未被 svg_card 影响
+    expect(canvasCommands(events)).toEqual([
+      { type: 'canvas_command', data: { type: 'ask_user', callId: 'c-ask', questions } },
+      { type: 'canvas_command', data: { type: 'svg_card', svg, title: '画布视图' } },
+    ])
+  })
+
+  it('Review Focus #2b：ask_user 快照多次下发仍按 callId 去重，svg_card 不受影响', async () => {
+    const svg = '<svg viewBox="0 0 10 10"><rect/></svg>'
+    const first = [{ id: 'q1', question: '第一版题面？', options: [{ label: 'A', value: 'a' }] }]
+    const second = [{ id: 'q1', question: '第二版题面？', options: [{ label: 'B', value: 'b' }] }]
+    const askUpdate = (toolCallId: string, qs: typeof first): PiRuntimeEvent =>
+      piEvent('tool_execution_update', {
+        toolCallId,
+        toolName: 'ask_user',
+        partialResult: { details: { ok: true, canvasCommands: [{ type: 'ask_user', questions: qs }] } },
+      })
+
+    const events = await persistedExecutionEvents([
+      askUpdate('c-ask', first),
+      svgCardEnd(svg),
+      askUpdate('c-ask', second),
+    ])
+
+    // 同 callId 只留最新一条 ask_user；svg_card 既没被删也没被去重成多条。
+    // 顺序不锁：splice 删掉旧条目后新条目追加到尾部，svg_card 会前移——那是实现细节，
+    // 真正要锁的是「两条都在 + ask_user 只剩最新版」这两条不变量。
+    const cmds = canvasCommands(events)
+    expect(cmds).toHaveLength(2)
+    expect(cmds).toEqual(
+      expect.arrayContaining([
+        { type: 'canvas_command', data: { type: 'ask_user', callId: 'c-ask', questions: second } },
+        { type: 'canvas_command', data: { type: 'svg_card', svg } },
+      ]),
+    )
+    // 旧题面（first）必须已被去重掉，否则落库会随快照次数膨胀
+    expect(JSON.stringify(cmds)).not.toContain('第一版题面')
+  })
+
+  it('Ruling 3（范围不扩大）：非 ask_user / svg_card 的 canvas_command 仍不落库', async () => {
+    const events = await persistedExecutionEvents([
+      piEvent('tool_execution_end', {
+        toolCallId: 'c-focus',
+        toolName: 'focus_node',
+        result: {
+          content: [],
+          details: { ok: true, canvasCommands: [{ type: 'focus_node', nodeId: 'n1' }] },
+        },
+      }),
+      piEvent('message_update', { event: { type: 'text_delta', delta: '已聚焦' } }),
+    ])
+
+    // 精确判据：canvas_command 通道一条都没有（focus_node 只以 tool_result 形态落库）
+    expect(events).not.toBeNull()
+    expect(canvasCommands(events)).toEqual([])
+  })
+
+  it('svg_card 的 SSE 实时事件不受落库扩展影响（仍原样 yield）', async () => {
+    const svg = '<svg viewBox="0 0 10 10"><rect/></svg>'
+    const pi = stubPiClient([piEvent('agent_start', {}), svgCardEnd(svg), piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const yielded: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hi', 'u1', 't1')) {
+      yielded.push(event)
+    }
+
+    expect(yielded.filter((e) => e.type === 'canvas_command')).toEqual([
+      { type: 'canvas_command', data: { type: 'svg_card', svg } },
+    ])
+  })
+})

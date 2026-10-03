@@ -141,6 +141,95 @@ describe('AgentSideRail：canvas_command svg_card 上屏', () => {
 })
 
 /**
+ * 刷新恢复（spec §4.6 第 3 跳）：本文件上面几组走 SSE 实时路径；
+ * 这一组走 `loadHistory` —— 卡片只存在于 `metadata.executionEvents` 里
+ * （服务端落库通道），前端必须从事件序列重放出 `presentation` 才能上屏。
+ *
+ * 不断言 store 内部状态（`agent.svgCardReplay.test.ts` 已锁那一跳），
+ * 这里只锁「重放出来的卡片真的走到 DOM」。
+ */
+describe('AgentSideRail：svg_card 刷新恢复（executionEvents 重放）', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  /** 一条只带 executionEvents 的历史 assistant 消息（服务端落库后的真实形状）。 */
+  function historyAssistant(content: string, cmd: Record<string, unknown>) {
+    return {
+      id: 'm1',
+      sessionId: 's1',
+      role: 'assistant' as const,
+      content,
+      createdAt: '2026-10-03T00:00:00.000Z',
+      metadata: JSON.stringify({
+        executionEvents: [
+          { type: 'tool_call', data: { name: 'render_canvas_view' } },
+          { type: 'canvas_command', data: { type: 'svg_card', ...cmd } },
+        ],
+      }),
+    }
+  }
+
+  it('重放出的卡片上屏（刷新后仍可见）', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    agent.loadHistory([
+      historyAssistant('这是当前画布视图', {
+        svg: '<svg viewBox="0 0 10 10"><rect width="4" height="4"/></svg>',
+        title: '画布视图',
+      }),
+    ])
+    await flushPromises()
+
+    const card = w.findComponent(AgentSvgCard)
+    expect(card.exists()).toBe(true)
+    expect(card.props('svg')).toContain('<rect')
+    expect(card.props('title')).toBe('画布视图')
+    expect(w.find('[data-testid="svg-card"]').exists()).toBe(true)
+  })
+
+  it('零助手文本 + 重放卡片：气泡门禁仍放行（否则刷新后卡片静默不可见）', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    agent.loadHistory([historyAssistant('', { svg: '<svg viewBox="0 0 10 10"><rect/></svg>' })])
+    await flushPromises()
+
+    expect(w.findComponent(AgentSvgCard).exists()).toBe(true)
+    expect(w.find('[data-testid="svg-card"]').exists()).toBe(true)
+  })
+
+  it('svg: "" 的降级文案也必须恢复（真值门禁会把它吞掉）', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    agent.loadHistory([historyAssistant('看图', { svg: '' })])
+    await flushPromises()
+
+    expect(w.find('[data-testid="svg-card-discarded"]').exists()).toBe(true)
+  })
+
+  it('无 svg_card 的历史消息不上屏（重放不凭空造卡）', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    agent.loadHistory([
+      {
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant' as const,
+        content: '已生成主图',
+        createdAt: '2026-10-03T00:00:00.000Z',
+        metadata: JSON.stringify({
+          executionEvents: [
+            { type: 'canvas_command', data: { type: 'focus_node', nodeId: 'n1' } },
+          ],
+        }),
+      },
+    ])
+    await flushPromises()
+
+    expect(w.findComponent(AgentSvgCard).exists()).toBe(false)
+    expect(agent.messages[0].presentation).toBeUndefined()
+  })
+})
+
+/**
  * 气泡门禁（`shouldShowMessageBubbleText`）放行规则。
  *
  * 整块卡片区（含 AgentSvgCard）都挂在该门禁的 `v-if` 内（`AgentSideRail.vue:3033` 开、

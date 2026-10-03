@@ -26,6 +26,7 @@ import {
   createExecutionTrace,
   finalizeExecutionTrace,
   replayExecutionTraceEvents,
+  replaySvgCardPresentation,
   type ExecutionTraceState,
 } from '@/components/agent/executionTraceReducer'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
@@ -400,10 +401,25 @@ export const useAgentStore = defineStore('agent', () => {
       if (!executionTrace && meta?.executionEvents?.length) {
         executionTrace = replayExecutionTraceEvents(meta.executionEvents)
       }
+      // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在
+      // metadata.executionEvents 里（服务端 buildTurnMetadata 不写 metadata.presentation），
+      // 刷新后从这里重放出与实时路径同形的 envelope，交给与 setPresentation 同一个挂载点。
+      //
+      // ⚠️ 与 trace 分支的 `!executionTrace &&` 门不同：这里**无条件**重放。
+      // 那道门是「executionTrace 快照优先、事件序列兜底」，而 presentation 只有
+      // 事件序列这一条来源（无快照可优先）；加门会让「带 trace 快照的老消息丢卡片」。
+      // 重放是纯函数、不碰 store，同 tick 内完成，无时序竞态。
+      //
+      // role 门与 `setPresentation` 对齐（那条只写最后一条 assistant 消息）：
+      // 卡片是助手轮次的产出，挂在 user 消息上没有对应语义。
+      const replayedCard =
+        persisted.role === 'assistant' && meta?.executionEvents?.length
+          ? replaySvgCardPresentation(meta.executionEvents)
+          : undefined
       const presentation =
         meta?.presentation && typeof meta.presentation === 'object'
           ? (meta.presentation as unknown as AgentPresentationEnvelope)
-          : undefined
+          : replayedCard
       return {
         id: persisted.id,
         role: persisted.role as 'user' | 'assistant',

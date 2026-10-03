@@ -6,6 +6,7 @@ import {
   labelFromTextReplace,
   nodeStatusLabel,
 } from '@/components/agent/executionStepLabels'
+import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 
 export type ExecutionStepStatus =
   | 'pending'
@@ -519,4 +520,48 @@ export function replayExecutionTraceEvents(
   }
   finalizeExecutionTrace(trace)
   return trace
+}
+
+/**
+ * 从落库的 `executionEvents` 里重放 svg_card 卡片（spec §4.6 第 3 跳：刷新恢复）。
+ *
+ * **为什么单独一个函数、而不是给 `replayExecutionTraceEvents` 加 case**：
+ * 卡片要写的是 `msg.presentation`，而 reducer 的契约是「只返回 `ExecutionTraceState`、
+ * 不碰 store」（既有调用点 `stores/agent.ts` 的 `executionTrace` 赋值形状不能变）。
+ * 让 reducer 顺手产出 presentation 会把两个字段的产出混在一个返回值里，
+ * 破坏纯函数边界。故此处保持同样的纯函数形态：入参事件数组，出参 envelope，
+ * 由 store 侧决定写到哪条消息上。
+ *
+ * **单值语义**：`presentation` 是单值字段，同轮多张卡**后者胜出**（与实时路径
+ * `setPresentation` 逐张覆盖一致）。因此倒序遍历返回首个命中即「最后一张」。
+ * 回归锁：`stores/agent.setPresentation.test.ts` 的「同轮第二张卡覆盖第一张」+
+ * 本函数 describe 的「同轮多卡取最后一张」。
+ *
+ * **判据用 `svg !== undefined` 而非真值**，与服务端 `presentResult` 和
+ * `AgentSideRail.hasRenderableSvgCard` 同因：超 `SVG_MAX_CHARS` 时下发 `svg: ""`
+ * （字段在、值为空），那张卡有专属的「已丢弃」可见文案，必须照样恢复。
+ */
+export function replaySvgCardPresentation(
+  events: Array<{ type: string; data: unknown }>,
+): AgentPresentationEnvelope | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (event.type !== 'canvas_command') continue
+    const cmd = event.data as {
+      type?: string
+      svg?: string
+      title?: string
+      annotations?: Array<{ nodeId: string; text: string; severity: 'info' | 'warn' }>
+    }
+    if (cmd?.type !== 'svg_card' || cmd.svg === undefined) continue
+    return {
+      kind: 'svg_card',
+      // 落库通道不记 stepper（服务端只存 cmd 本身），与实时路径同款空 stepper：
+      // svg_card 走独立挂载不进 AgentPresentationHost，stepper 不会被渲染。
+      stepper: { current: '', completed: [] },
+      title: cmd.title,
+      body: { svg: cmd.svg, annotations: cmd.annotations },
+    }
+  }
+  return undefined
 }
