@@ -55,6 +55,9 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// （drama-* / ecommerce-product-photo 都写死 arrange_nodes(along_edges)），
 	// 放进延迟集 = 要靠 tool_search 才能拿到 schema，而工具搜索触发率实测为 0 ⇒ 延迟即不可达。
 	"arrange_nodes",
+	// present（2026-10-03 spec §5.2）：解释/澄清类高频场景要出图，
+	// 放进延迟集 = 依赖 load_tools 激活，而 load_tools 触发率实测为 0 ⇒ 延迟即不可达。
+	"render_canvas_view",
 	// 生成参数预填（2026-10-03）：与 arrange_nodes 同理 —— prompt 规则要求
 	// 「建节点后落参数才叫完成」，若进延迟集，模型在需要它时看不见 schema，
 	// 而 tool_search 触发率实测 0 ⇒ 延迟即不可达。
@@ -168,5 +171,8 @@ export function createLoadToolsTool(
 				addedToolNames: loaded,
 			};
 		},
+		// ⚠️ 这处 `as LnkpiTool` 是全仓唯一的类型逃逸口（spec §4.8 A3）。
+		// scripts/verify-tool-contract.ts 的 A3 断言会统计逃逸口数量：新增逃逸口即红。
+		// 清理它要改 createLoadToolsTool 的返回类型推导（属存量整改，spec §2 明确不做）。
 	} as LnkpiTool;
 }

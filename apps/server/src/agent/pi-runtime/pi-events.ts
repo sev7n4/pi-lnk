@@ -289,6 +289,10 @@ export interface PiCanvasCommand {
 	mode?: "grid" | "along_edges";
 	gap?: number;
 	edges?: ArrangeEdge[];
+	/** render_canvas_view 工具产出；仅 type="svg_card" 时有。extractCanvasCommands filter 不变（只校验 type:string），新字段透传。 */
+	svg?: string;
+	title?: string;
+	annotations?: Array<{ nodeId: string; text: string; severity: 'info' | 'warn' }>;
 }
 
 /**

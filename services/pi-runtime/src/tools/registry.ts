@@ -14,6 +14,7 @@ import { buildDeleteNodesTools } from "./delete-nodes.js";
 import { buildReadDocumentTools } from "./read-document.js";
 import { buildMemoryTools } from "./memory.js";
 import { buildRemoveEdgesTools } from "./remove-edges.js";
+import { createRenderCanvasViewTools } from "./render-canvas-view.js";
 
 /** P0 批次：web_search/web_fetch（感知层）。TAVILY_API_KEY 未配置时由 config.ts 条件装配。 */
 export { buildWebTools };
@@ -67,4 +68,15 @@ export function buildArrangeNodesTools(metrics: Metrics, client?: NestClient): L
  */
 export function buildGenerationTools(client: NestClient): LnkpiTool[] {
 	return createGenerationTools(client);
+}
+
+/**
+ * present 批次：render_canvas_view（tier=present，spec 2026-10-03 §5.1）。
+ * 纯只读：只走 client.post /agent/internal/get-canvas-layout（Nest 转发层只有 post 方法，
+ * 只读端点同样是 POST 语义），不 POST 任何写端点。
+ */
+export function buildRenderCanvasViewTools(client: NestClient): LnkpiTool[] {
+	return createRenderCanvasViewTools({
+		fetchLayout: async (sessionId) => client.post("/agent/internal/get-canvas-layout", { sessionId }),
+	});
 }
