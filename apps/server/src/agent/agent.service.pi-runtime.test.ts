@@ -1359,3 +1359,88 @@ describe('T1 多模态直通组装（Nest → pi-runtime prompt 顶层 images）
     expect(text).not.toContain('[I1=')
   })
 })
+
+
+// ── Q2 终审补锁：2026-10-03 生产取证发现的落库 content 缺陷 ──────────────
+//
+// 纯函数层（text-normalize.test.ts）测不出 `|| ' '` 兜底 —— 缺陷在**调用方**。
+// 生产实测：AgentMessage.content 存在 len=1 / codepoint=32（单个半角空格）的行，
+// 那是 `normalizeAssistantText(x) || ' '` 把「无正文」伪装成「有一个空格」。
+// 空 content 是合法状态（模型只吐 thinking/toolCalls 时），不该用空格顶替。
+describe('Q2 落库 content 归一化（finalizeTurn 实际写库值）', () => {
+  const agentMessageCreate = vi.fn()
+  const agentMessageFindMany = vi.fn()
+  let service: AgentService
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+
+    agentMessageCreate.mockResolvedValue({})
+    agentMessageFindMany.mockResolvedValue([])
+
+    service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentThread: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({}),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        session: {
+          findUnique: vi.fn().mockResolvedValue({ id: 's1', canvasData: null }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        idempotencyRecord: {
+          create: vi.fn().mockResolvedValue({}),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+  })
+
+  afterEach(() => {
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+  })
+
+  /** 跑一轮并返回 assistant 消息落库时的 content（未落库则 undefined） */
+  async function persistedContent(deltas: string[]): Promise<string | undefined> {
+    agentMessageCreate.mockClear()
+    const events = deltas.map((delta) =>
+      piEvent('message_update', { event: { type: 'text_delta', delta } }),
+    )
+    const pi = stubPiClient([...events, piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    for await (const _ of service.streamConversation('s1', 'hi', 'u1', 't1')) {
+      // drain
+    }
+    const call = agentMessageCreate.mock.calls.find((c) => c[0]?.data?.role === 'assistant')
+    return call?.[0]?.data?.content
+  }
+
+  it('剥离开头空行：落库 content 无前导 \\n（生产 205 条那类）', async () => {
+    expect(await persistedContent(['\n\n\n', '实际回答'])).toBe('实际回答')
+  })
+
+  it('去掉结尾空行', async () => {
+    expect(await persistedContent(['正文', '\n\n\n'])).toBe('正文')
+  })
+
+  it('【R-1】只有空白无正文时落库空串，不是单空格', async () => {
+    const content = await persistedContent([' ', '\n'])
+    expect(content).not.toBe(' ')
+    expect(content).toBe('')
+  })
+
+  it('【R-1b】跨 delta 的段落换行不被吃掉（delta2 以 \\n\\n 开头必须保留）', async () => {
+    expect(await persistedContent(['第一段', '\n\n第二段'])).toBe('第一段\n\n第二段')
+  })
+})
