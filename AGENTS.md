@@ -44,6 +44,43 @@ lnkpi 仓库（`/Users/4seven/workspace/lnkpi`）降级为**只读历史归档**
 - 提交前 → `verification-before-completion` skill
 - 写实现计划 → `writing-plans` skill
 - 分支管理 → `using-git-worktrees` skill
+- **开发流程 → `branch-first-dev-workflow` skill（铁律见下）**
+
+## 分支纪律（2026-10-03 定，最高优先级）
+
+**铁律：master 永远等于 origin/master，任何情况下不得直接向本地 master 提交。**
+（2026-10-03 反面教材：同步文档时直接 commit 到master，导致本地 master 领先 1 提交、
+本地与远程分叉，后续任何 rebase/pull 都得先处理这个游离提交。）
+
+**七步流程，一步都不能省：**
+
+| # | 步骤 | 命令 / 判据 |
+|---|---|---|
+| 1 | **开分支**（发现要改的第一刻就开，别写完代码才开） | `git fetch origin && git worktree add .worktrees/<slug> -b <type>/<slug> origin/master` |
+| 2 | 开发 | 在 worktree 里改；首次跑测试前 `pnpm install --frozen-lockfile` + `pnpm --filter @lnkpi/server exec prisma generate` |
+| 3 | 提交 | 分支内 `git add` + `git commit`，message 用 `feat/fix/docs/ci(scope): 描述` |
+| 4 | 推 + 开 PR | `git push -u origin <branch>` → `gh pr create` |
+| 5 | **盯 CI 到全绿** | `gh pr checks <n>` 全 pass；合并前先查有无在跑的 workflow（会互相挤掉） |
+| 6 | **squash 合并** | `gh pr merge <n> --squash`（不加 `--delete-branch`，master 被主仓 worktree 占用会报错） |
+| 7 | **盯部署 + 上线生产验证** | 见 `prod-deploy-verify` skill（两条流水线 + 生产取证全套） |
+
+**任何类型的改动都走这个流程，包括 `docs/`。** 不例外。
+
+**自检判据**（任何时候都应成立）：
+
+```bash
+git rev-list --count origin/master..master   # 必须 0
+git rev-list --count master..origin/master   # 必须 0
+```
+
+非 0 就是有人直接往 master 提交了，立刻挪到分支上。
+
+**主仓（master 工作区）只做拉取/查看/开分支起点，不改代码不提交。**
+同步时若主仓有未提交改动，先查来源：算改动文件与 `HEAD..origin/master` 的重叠，
+100% 重叠大概率是远程已合内容的旧副本，逐行 diff 确认后再 stash + reset，别直接 discard。
+
+**判定分支是否已合并禁用 `git cherry` / `git rev-list --count`** —— squash 会重写commit、
+patch-id 对不上，已合分支会被误报成「未合并」。权威判据见 `prod-deploy-verify`。
 
 ## 本地测试纪律（2026-09-29 定）
 
