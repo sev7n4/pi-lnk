@@ -56,6 +56,7 @@ import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
+import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
@@ -1150,12 +1151,15 @@ export class AgentService {
       assistantText || opts.metadata?.presentation || opts.metadata?.executionEvents?.length,
     )
     if (shouldPersistAssistant) {
+      // 首尾空行归一化：上游 harness / agnes 网关常在下水前补一串 \n（生产 1.4% 消息命中），
+      // 只在落库这一跳清理——逐帧 normalize delta 会把跨 delta 的段落换行吃掉。
+      const content = normalizeAssistantText(assistantText) || ' '
       await this.prisma.agentMessage.create({
         data: {
           sessionId,
           threadId,
           role: 'assistant',
-          content: assistantText || ' ',
+          content,
           toolCalls: canvasActions.length ? JSON.stringify(canvasActions) : null,
           linkedOutputs: opts.linkedOutputs?.length ? JSON.stringify(opts.linkedOutputs) : null,
           metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
