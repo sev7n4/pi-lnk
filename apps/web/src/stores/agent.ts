@@ -393,9 +393,17 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function loadHistory(history: AgentChatMessage[]) {
-    messages.value = history.map((m) => {
-      const persisted = m as PersistedAgentMessage
+  /**
+   * 入参类型是 `PersistedAgentMessage` 而非 `AgentChatMessage`：
+   * 函数体第一行就 `m as PersistedAgentMessage` 解构 `metadata`，而 persisted 行
+   * 的 `metadata` 来自后端 JSON 字段，**可能为 null**（shared 的 `AgentChatMessage`
+   * 声明的是 `metadata?: string`，两者对不上）。
+   * ⚠️ 声明窄类型会让调用方（svgCardReplay 测试等）被迫绕开 shared 另写局部结构，
+   * 却在传参处仍报 TS2322（vitest 走 esbuild 不查类型 ⇒ 本地绿、CI `vue-tsc` 红）。
+   * 签名对齐真实契约，函数体那句断言才可以删。
+   */
+  function loadHistory(history: PersistedAgentMessage[]) {
+    messages.value = history.map((persisted) => {
       const meta = parseMessageMetadata(persisted.metadata)
       let executionTrace = restoreExecutionTrace(meta)
       if (!executionTrace && meta?.executionEvents?.length) {
