@@ -7,6 +7,8 @@ import { e5TransparentCutout } from './intents/e5-transparent-cutout'
 import { e6DrawingToRealistic } from './intents/e6-drawing-to-realistic'
 import { e7RemoveObject } from './intents/e7-remove-object'
 import { e8InsertPerson } from './intents/e8-insert-person'
+import { ecomDouyin } from './scenes/ecom/x2-douyin'
+import { ecomXiaohongshu } from './scenes/ecom/x1-xiaohongshu'
 import { g1StyleLighting } from './scenes/g1-style-lighting'
 import { g2ProcessInfographic } from './scenes/g2-process-infographic'
 import { g3ExactText } from './scenes/g3-exact-text'
@@ -28,6 +30,8 @@ const GENERATION_SCENES: GenerationScene[] = [
   g7InterfacePreview,
   g8ScientificVisual,
   g9SlidesCharts,
+  ecomXiaohongshu,
+  ecomDouyin,
 ]
 const EDIT_INTENTS: EditIntent[] = [
   e1TranslateLayout,

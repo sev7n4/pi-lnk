@@ -16,6 +16,8 @@ describe('imagePromptingGuide catalog scaffold', () => {
 
   it('registers all generation scenes', () => {
     expect(listGenerationScenes().map((s) => s.id).sort()).toEqual([
+      'ecom_douyin',
+      'ecom_xiaohongshu',
       'g1_style_lighting',
       'g2_process_infographic',
       'g3_exact_text',

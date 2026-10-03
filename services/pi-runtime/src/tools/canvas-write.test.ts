@@ -246,19 +246,20 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.equal(calls.length, 1);
 	});
 
-	it("默认注册 13 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
+	it("默认注册 14 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		assert.equal(tools.length, 13);
+		assert.equal(tools.length, 14);
 		const tiers = Object.fromEntries(tools.map((t) => [t.name, t.tier]));
 		assert.equal(tiers.connect_nodes, "graph_batch");
 		assert.equal(tiers.upsert_media_node, "write_light");
+		assert.equal(tiers.set_node_generation_params, "write_light");
 		assert.ok(!tools.some((t) => t.name === "introduce_nodes_to_agent"), "deferred 工具默认不暴露");
 		assert.ok(!tools.some((t) => t.name === "set_node_prompt"), "set_node_prompt 已并入 set_node_text");
 		assert.ok(!tools.some((t) => t.name === "set_node_content"), "set_node_content 已并入 set_node_text");
 
 		const withDeferred = createCanvasWriteTools(client, { includeDeferred: true });
-		assert.equal(withDeferred.length, 14);
+		assert.equal(withDeferred.length, 15);
 		assert.ok(withDeferred.some((t) => t.name === "introduce_nodes_to_agent"));
 	});
 });
@@ -308,6 +309,94 @@ describe("update_node（spec S2）", () => {
 		const tool = findTool(createCanvasWriteTools(client), "update_node");
 		const out = (await run(tool, { node_id: "n1", title: "X" })) as { details?: { actions?: unknown[] } };
 		assert.equal(out.details?.actions?.length, 1);
+	});
+});
+
+describe("set_node_generation_params（2026-10-03 生成参数预填）", () => {
+	it("snake_case 入参 → Nest camelCase；image 扁平 / video 嵌套 / audio 扁平", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_generation_params");
+		await run(tool, {
+			node_id: "n1",
+			guide_scene_id: "ecom_xiaohongshu",
+			image_aspect: "3:4",
+			image_resolution: "1K",
+			image_count: 2,
+		});
+		assert.equal(calls[0].path, "/agent/internal/set-node-generation-params");
+		assert.deepEqual(calls[0].body, {
+			sessionId: "s1",
+			userId: "u1",
+			nodeId: "n1",
+			params: {
+				guideSceneId: "ecom_xiaohongshu",
+				imageAspect: "3:4",
+				imageResolution: "1K",
+				imageCount: 2,
+			},
+		});
+	});
+
+	it("视频参数收进嵌套 videoSettings（与 VideoDockPanel 消费的 node.data 形状一致）", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_generation_params");
+		await run(tool, {
+			node_id: "n2",
+			video_aspect: "9:16",
+			video_duration: 6,
+			video_generate_audio: true,
+		});
+		assert.deepEqual((calls[0].body.params as { videoSettings: object }).videoSettings, {
+			aspectRatio: "9:16",
+			duration: 6,
+			generateAudio: true,
+		});
+	});
+
+	it("音频参数是**扁平**字段（AudioDockPanel 读audioSpeed/audioVolume，不是嵌套对象）", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_generation_params");
+		await run(tool, { node_id: "n3", audio_voice: "female-1", audio_speed: 1.2, audio_pitch: -3 });
+		const params = calls[0].body.params as Record<string, unknown>;
+		assert.equal(params.audioVoice, "female-1");
+		assert.equal(params.audioSpeed, 1.2);
+		assert.equal(params.audioPitch, -3);
+		assert.ok(!("audioSettings" in params), "不得产出嵌套 audioSettings（前端读不到）");
+	});
+
+	it("一个参数都不给 → fail-closed，不打 Nest", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_generation_params");
+		await assert.rejects(() => run(tool, { node_id: "n1" }), /at least one parameter/);
+		assert.equal(calls.length, 0);
+	});
+
+	it("未声明的字段不进 params（模型无法借它塞 prompt/status）", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_generation_params");
+		await run(tool, {
+			node_id: "n1",
+			image_aspect: "3:4",
+			status: "completed",
+			prompt: "注入",
+		} as never);
+		assert.deepEqual(Object.keys(calls[0].body.params as object), ["imageAspect"]);
+	});
+
+	it("toolContext 缺 userId → fail-closed", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_generation_params");
+		await assert.rejects(
+			() => run(tool, { node_id: "n1", image_aspect: "3:4" }, { sessionId: "s1" } as LnkpiToolContext),
+			/requires userId/,
+		);
+		assert.equal(calls.length, 0);
+	});
+
+	it("description 不含任何具体比例数值（数值归注册表/skill 管，description 只写推理规则）", () => {
+		const tool = findTool(createCanvasWriteTools(makeClient().client), "set_node_generation_params");
+		// 允许「举例格式」里的 1:1 / 3:4 这类格式示范，禁止「小红书→3:4」这类平台映射断言
+		assert.ok(!/小红书|抖音|淘宝|Amazon|SHEIN/.test(tool.description), "description 不得内嵌平台映射表");
 	});
 });
 

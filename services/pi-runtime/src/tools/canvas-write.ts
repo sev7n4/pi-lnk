@@ -208,6 +208,93 @@ export function createCanvasWriteTools(
 		},
 		{
 			...write,
+			name: "set_node_generation_params",
+			label: "配生成参数",
+			description:
+				"Prefill the generation parameters shown at the bottom of a node's dock (aspect ratio, resolution, count, video duration, audio voice/speed...) so the user does not have to pick them. Call this AFTER upsert_media_node and BEFORE propose_generation. " +
+				"How to choose values: infer from the stated purpose, target platform and template conventions, and load the matching skill first when one covers this domain. " +
+				"Pass guide_scene_id when a registered scene matches (it carries vetted defaults and makes the dock show the scene as active) — prefer this over inventing numbers. " +
+				"State your reasoning in one short sentence in your reply. Invalid values are rejected with an allowed list; never fall back to a default silently. " +
+				"Accepts only fields matching the node's own modality — image params on an image node, video params on a video node, audio params on an audio node.",
+			parameters: Type.Object({
+				node_id: Type.String({ description: "Canvas node id" }),
+				guide_scene_id: Type.Optional(
+					Type.String({
+						description:
+							"Registered generation scene id (e.g. from the scene list). Carries vetted aspect/resolution/count defaults; the dock marks it active.",
+					}),
+				),
+				// image
+				image_aspect: Type.Optional(
+					Type.String({ description: "image node: aspect ratio, e.g. 1:1 / 3:4 / 9:16 / 16:9 / 4:5 / 21:9" }),
+				),
+				image_resolution: Type.Optional(Type.String({ description: "image node: 1K / 2K / 4K" })),
+				image_count: Type.Optional(Type.Number({ description: "image node: how many images, 1..4" })),
+				image_model: Type.Optional(Type.String({ description: "image node model ref from list_model_options" })),
+				// video
+				video_aspect: Type.Optional(Type.String({ description: "video node: aspect ratio" })),
+				video_resolution: Type.Optional(Type.String({ description: "video node: 480p / 720p / 768p / 1080p / 2k / 4k" })),
+				video_duration: Type.Optional(Type.Number({ description: "video node: seconds (clamped to the model capability range)" })),
+				video_generate_audio: Type.Optional(Type.Boolean({ description: "video node: generate an audio track" })),
+				video_mode: Type.Optional(
+					Type.String({ description: "video node: text_to_video | image_to_video (derive from whether refs exist)" }),
+				),
+				seed: Type.Optional(Type.Number({ description: "video node: integer seed for reproducibility" })),
+				negative_prompt: Type.Optional(Type.String({ description: "video node: what to avoid" })),
+				video_model: Type.Optional(Type.String({ description: "video node model ref from list_model_options" })),
+				// audio
+				audio_voice: Type.Optional(Type.String({ description: "audio node: voice id available for the current audio model" })),
+				audio_emotion: Type.Optional(Type.String({ description: "audio node: emotion, e.g. neutral / happy / serious" })),
+				audio_language: Type.Optional(Type.String({ description: "audio node: language, e.g. zh / en / ja" })),
+				audio_speed: Type.Optional(Type.Number({ description: "audio node: speed 0.5..2" })),
+				audio_volume: Type.Optional(Type.Number({ description: "audio node: volume 0.1..2" })),
+				audio_pitch: Type.Optional(Type.Number({ description: "audio node: pitch -12..12" })),
+				audio_model: Type.Optional(Type.String({ description: "audio node model ref from list_model_options" })),
+			}),
+			execute: async (_id, p: Record<string, unknown>, _u, tc: LnkpiToolContext) => {
+				if (!tc.userId) throw new Error("set_node_generation_params requires userId in toolContext");
+				// 与 update_node 同款纪律：harness 不校验 schema，未注册字段必须在此丢弃，
+				// 脏字段不得出网（Nest 侧也会拒，但别让模型以为已生效）
+				const params: Record<string, unknown> = {};
+				setIfPresent(params, "guideSceneId", p.guide_scene_id);
+				setIfPresent(params, "imageAspect", p.image_aspect);
+				setIfPresent(params, "imageResolution", p.image_resolution);
+				setIfPresent(params, "imageCount", p.image_count);
+				setIfPresent(params, "imageModel", p.image_model);
+				setIfPresent(params, "videoMode", p.video_mode);
+				setIfPresent(params, "seed", p.seed);
+				setIfPresent(params, "negativePrompt", p.negative_prompt);
+				if (p.video_aspect !== undefined || p.video_resolution !== undefined || p.video_duration !== undefined || p.video_generate_audio !== undefined) {
+					const videoSettings: Record<string, unknown> = {};
+					setIfPresent(videoSettings, "aspectRatio", p.video_aspect);
+					setIfPresent(videoSettings, "resolution", p.video_resolution);
+					setIfPresent(videoSettings, "duration", p.video_duration);
+					setIfPresent(videoSettings, "generateAudio", p.video_generate_audio);
+					params.videoSettings = videoSettings;
+				}
+				// audio 是**扁平**字段（与 AudioDockPanel 消费的 node.data 键一一对应）
+				setIfPresent(params, "audioVoice", p.audio_voice);
+				setIfPresent(params, "audioEmotion", p.audio_emotion);
+				setIfPresent(params, "audioLanguage", p.audio_language);
+				setIfPresent(params, "audioSpeed", p.audio_speed);
+				setIfPresent(params, "audioVolume", p.audio_volume);
+				setIfPresent(params, "audioPitch", p.audio_pitch);
+				setIfPresent(params, "audioModel", p.audio_model);
+				if (Object.keys(params).length === 0) {
+					throw new Error("set_node_generation_params requires at least one parameter");
+				}
+				return resultWithActions(
+					await client.post("/agent/internal/set-node-generation-params", {
+						sessionId: tc.sessionId,
+						userId: tc.userId,
+						nodeId: p.node_id,
+						params,
+					}),
+				);
+			},
+		},
+		{
+			...write,
 			name: "attach_refs",
 			label: "挂引用",
 			description:

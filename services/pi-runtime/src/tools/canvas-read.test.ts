@@ -12,6 +12,7 @@ const EXPECTED = new Set([
 	"list_generation_tasks",
 	"list_user_assets",
 	"list_model_options",
+	"list_generation_scenes",
 ]);
 
 /** @param data 每次 post 的返回值（缺省 {ok:true}，需要断言出参形状时传入）。 */
@@ -38,9 +39,9 @@ function call(
 	return tool.execute("call-1", params as never, () => {}, context, {} as never, undefined as never);
 }
 
-test("注册 8 个 read 工具且 tier 正确", () => {
+test("注册 9 个 read 工具且 tier 正确", () => {
 	const tools = buildCanvasReadTools(fakeClient() as never);
-	assert.equal(tools.length, 8);
+	assert.equal(tools.length, 9);
 	assert.deepEqual(new Set(tools.map((t) => t.name)), EXPECTED);
 	assert.ok(tools.every((t) => t.tier === "read"));
 });
@@ -142,6 +143,47 @@ describe("list_model_options（spec S3）", () => {
 		const fake = fakeClient({ modalities: MODALITIES });
 		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_model_options")!;
 		await assert.rejects(() => call(tool!, {}, ctx("s1")), /requires userId/);
+		assert.equal(fake.calls.length, 0);
+	});
+});
+
+describe("list_generation_scenes（2026-10-03 场景清单）", () => {
+	const SCENES = {
+		scenes: [
+			{
+				id: "ecom_xiaohongshu",
+				label: "小红书种草",
+				modality: "image",
+				group: "ecom_platform",
+				description: "竖版 3:4 · 1K · x2",
+				preferredParams: { aspectRatio: "3:4", resolution: "1K", count: 2 },
+			},
+		],
+	};
+
+	it("tier=read；body 只带 userId；不暴露 sessionId", async () => {
+		const fake = fakeClient(SCENES);
+		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_generation_scenes")!;
+		assert.equal(tool.tier, "read");
+		assert.ok(!JSON.stringify(tool.parameters).includes("sessionId"));
+		await call(tool, {}, CTX);
+		assert.equal(fake.calls[0].path, "/agent/internal/list-generation-scenes");
+		assert.deepEqual(fake.calls[0].body, { userId: "u1" });
+	});
+
+	it("modality / scene_id 透传给 Nest（过滤在 Nest 侧做，SSOT 在 shared）", async () => {
+		const fake = fakeClient(SCENES);
+		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_generation_scenes")!;
+		await call(tool, { modality: "image" }, CTX);
+		assert.deepEqual(fake.calls[0].body, { userId: "u1", modality: "image" });
+		await call(tool, { scene_id: " ecom_xiaohongshu " }, CTX);
+		assert.deepEqual(fake.calls[1].body, { userId: "u1", sceneId: "ecom_xiaohongshu" });
+	});
+
+	it("缺 userId → fail-closed，不打 Nest", async () => {
+		const fake = fakeClient(SCENES);
+		const tool = buildCanvasReadTools(fake as never).find((t) => t.name === "list_generation_scenes")!;
+		await assert.rejects(() => call(tool, {}, ctx("s1")), /requires userId/);
 		assert.equal(fake.calls.length, 0);
 	});
 });
