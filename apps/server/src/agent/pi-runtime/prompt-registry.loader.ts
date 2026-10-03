@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  CANVAS_VIEW_POLICY,
   CORE_RULES_PREFIX,
   GEN_TOOLS_RULES,
   RULE_3_GEN,
@@ -21,6 +22,25 @@ import {
 
 /** L4 白名单：group / unlessGroup 出现未知值即报错。 */
 const GROUP_VALUES = new Set<string>(["writeTools", "genTools"]);
+
+/**
+ * L6 静态段字符预算：硬上限，超过即 lint 失败。
+ *
+ * 2400 是 2026-10-02 定下的（design doc §L6：定限时全组合实测 1925，故意留 475 余量）。
+ * 此后 memory_scope.tail / gen_tool_policy 等规则陆续加入，基线全组合被推到 2333（只剩 67 余量），
+ * 2026-10-03 加 canvas_view_policy（546字符）后全组合 2880 ⇒ 旧上限已无法容纳任何新规则。
+ * 上调到 3200：距当前 2880 留约 320 字符（约 4 条中等规则），并配STATIC_BUDGET_WARN_CHARS
+ * 预警线，让「快满了」在撞死线之前就先被看见。
+ */
+export const STATIC_BUDGET_CHARS = 3200;
+
+/** L6 预警线：预算的 85%（design doc §L6「≥ N 报错前先警告并登记」——该分支直到2026-10-03 才补上实现）。 */
+export const STATIC_BUDGET_WARN_CHARS = Math.floor(STATIC_BUDGET_CHARS * 0.85); // 2720
+
+/** L6 预算校验的常见组合：预警与硬报错共用同一份，避免两处漂移。 */
+const BUDGET_COMBOS: readonly (readonly string[])[] = [
+  ["core"], ["core", "writeTools"], ["core", "genTools"], ["core", "writeTools", "genTools"],
+];
 
 const REQUIRED_FIELDS = ["id", "version", "title", "order", "owner", "updated"] as const;
 
@@ -38,12 +58,20 @@ export interface PromptRegistrySnapshot {
   entries: PromptRegistryEntry[];
   degraded: boolean;
   degradedReason?: string;
+  /**
+   * 非致命信号（当前只有 L6 预算预警）。与 degraded 同级：只登记、不阻断——
+   * errors 为空即视为通过，warnings 不进数组，故不会让 lint/测试变红。
+   * 通道= describeRegistry() 的一行摘要（启动日志），由 loadRegistry() 填充。
+   * ⚠️ **不要往外端点透出**：免鉴端点 /api/agent/prompt-registry 的安全边界是响应字段本身，
+   * 其字段白名单被 prompt-registry-diag.test.ts 锁死。
+   */
+  warnings?: string[];
 }
 
 /** L9：代码侧声明的、必须由 Registry 提供的 id 清单。 */
 export const COMPOSED_IDS = [
   "identity.opening", "no_gen_claim.nogen", "no_gen_claim.gen", "sidebar_vision.tail",
-  "memory_scope.tail", "media_tool_policy", "gen_tool_policy", "write_guard",
+  "memory_scope.tail", "media_tool_policy", "canvas_view_policy", "gen_tool_policy", "write_guard",
 ] as const;
 
 /** L7：Registry id → fallback 常量的映射。 */
@@ -54,6 +82,7 @@ export const FALLBACK_BY_ID: Record<string, string> = {
   "sidebar_vision.tail": CORE_RULES_TAIL,
   "memory_scope.tail": MEMORY_SCOPE_RULES,
   "media_tool_policy": WRITE_TOOLS_RULES,
+  "canvas_view_policy": CANVAS_VIEW_POLICY,
   "gen_tool_policy": GEN_TOOLS_RULES,
   "write_guard": RULE_10_WRITE_GUARD,
 };
@@ -142,7 +171,7 @@ export function resolveRegistryRoot(): string {
 /** 读盘 + 校验 + 算版本；失败不抛，走 degraded 语义（运行时 fail-soft）。 */
 export function loadRegistry(root: string): PromptRegistrySnapshot {
   const empty = (reason: string): PromptRegistrySnapshot => ({
-    registryVersion: "", registryHash: contentHash(""), entries: [], degraded: true, degradedReason: reason,
+    registryVersion: "", registryHash: contentHash(""), entries: [], degraded: true, degradedReason: reason, warnings: [],
   });
   try {
     const rulesDir = join(root, "rules");
@@ -163,7 +192,10 @@ export function loadRegistry(root: string): PromptRegistrySnapshot {
     const registryVersion = existsSync(manifestPath)
       ? (parseFlatYaml(readFileSync(manifestPath, "utf8")).version ?? "")
       : "";
-    return { registryVersion, registryHash: registryHashOf(entries), entries, degraded: false };
+    // 预算预警走 warnings（只登记不阻断）：静态段超预警线不影响正确性，
+    // 但余量耗尽前值得被看见——这是它唯一该出现的地方。
+    const { warnings } = checkRegistryIntegrity(root);
+    return { registryVersion, registryHash: registryHashOf(entries), entries, degraded: false, warnings };
   } catch (err) {
     return empty(err instanceof Error ? err.message : String(err));
   }
@@ -193,7 +225,11 @@ export function renderStaticFallback(groups: readonly string[]): string {
       ? `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`
       : `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`);
   }
-  if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES);
+  // ⚠️ 拼装顺序必须与磁盘 order 一致：canvas_view_policy(order 45) 夹在
+  // media_tool_policy(40) 与 gen_tool_policy(50) 之间。漏推任何一条 ⇒ 容器读不到
+  // registry 走此退路时该规则**整段消失且无任何报错**（degraded 本身是静默降级），
+  // 且长度差恰好等于漏掉规则的 body 字符数，是唯一可测的信号。
+  if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES, CANVAS_VIEW_POLICY);
   if (groups.includes("genTools")) parts.push(GEN_TOOLS_RULES);
   if (!groups.includes("writeTools") && coreOn) parts.push(RULE_10_WRITE_GUARD);
   return parts.filter(Boolean).join("\n");
@@ -201,7 +237,19 @@ export function renderStaticFallback(groups: readonly string[]): string {
 
 /** L1-L9 全量校验；返回错误数组，空数组 = 通过（CI 与运行时共用同一份判据）。 */
 export function assertRegistryIntegrity(root: string): string[] {
+  return checkRegistryIntegrity(root).errors;
+}
+
+/**
+ * L1-L9 全量校验 + 非致命预警（当前只有 L6 预算预警）。
+ *
+ * 拆成两个函数而不是给 assertRegistryIntegrity 加返回类型：后者有 11 处调用方
+ * （prompt-lint.ts + loader.test.ts 十处），全在按 `string[]` 用，改签名会连带一片。
+ * errors 保持"空数组 = 通过"的语义不变，warnings 只登记不阻断。
+ */
+export function checkRegistryIntegrity(root: string): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
+  const budgetWarnings: string[] = [];
   const add = (code: string, msg: string) => errors.push(`${code} ${msg}`);
   try {
     const rulesDir = join(root, "rules");
@@ -269,19 +317,26 @@ export function assertRegistryIntegrity(root: string): string[] {
     }
     // L9：代码声明的 id 必须都在 Registry 里
     for (const id of COMPOSED_IDS) if (!seen.has(id)) add("L9", `代码声明引用的 id ${id} 不在 Registry 中`);
-    // L6：预算（恒注入 + 常见组合 ≤ 2400 字符）
+    // L6：预算（恒注入 + 常见组合 ≤ STATIC_BUDGET_CHARS）。
+    // ⚠️ 判据处必须用常量 + BUDGET_COMBOS：写死数字会让「上调预算」变成纯注释，
+    // 常量零消费点而 lint 照红（2026-10-03 实测）。超预警线但未超硬线 ⇒ 登记 warnings 不阻断。
     const snap = { registryVersion: "", registryHash: "", entries: [...seen.values()], degraded: false };
-    for (const combo of [["core"], ["core", "writeTools"], ["core", "genTools"], ["core", "writeTools", "genTools"]]) {
+    for (const combo of BUDGET_COMBOS) {
       const n = renderStatic(snap, combo).length;
-      if (n > 2400) add("L6", `组合 ${combo.join("+")} 静态段 ${n} 字符，超过预算 2400`);
+      if (n > STATIC_BUDGET_CHARS) {
+        add("L6", `组合 ${combo.join("+")} 静态段 ${n} 字符，超过预算 ${STATIC_BUDGET_CHARS}`);
+      } else if (n >= STATIC_BUDGET_WARN_CHARS) {
+        budgetWarnings.push(`L6 组合 ${combo.join("+")} 静态段 ${n} 字符，已过预警线 ${STATIC_BUDGET_WARN_CHARS}（硬线 ${STATIC_BUDGET_CHARS}，余量 ${STATIC_BUDGET_CHARS - n}）`);
+      }
     }
-    return errors;
+    return { errors, warnings: budgetWarnings };
   } catch (err) {
-    return [`L0 无法读取 Registry：${err instanceof Error ? err.message : String(err)}`];
+    return { errors: [`L0 无法读取 Registry：${err instanceof Error ? err.message : String(err)}`], warnings: [] };
   }
 }
 
 /** 人类可读的一行版本摘要，供启动日志与 manifest 行使用。 */
 export function describeRegistry(snapshot: PromptRegistrySnapshot): string {
-  return `prompt registry version=${snapshot.registryVersion} hash=${snapshot.registryHash} entries=${snapshot.entries.length} degraded=${snapshot.degraded}${snapshot.degradedReason ? ` reason=${snapshot.degradedReason}` : ""}`;
+  const warn = snapshot.warnings?.length ? ` warnings=${snapshot.warnings.length}[${snapshot.warnings.join(" | ")}]` : "";
+  return `prompt registry version=${snapshot.registryVersion} hash=${snapshot.registryHash} entries=${snapshot.entries.length} degraded=${snapshot.degraded}${snapshot.degradedReason ? ` reason=${snapshot.degradedReason}` : ""}${warn}`;
 }

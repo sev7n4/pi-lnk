@@ -16,6 +16,7 @@ import {
 	RULE_3_GEN,
 	CORE_RULES_TAIL,
 	WRITE_TOOLS_RULES,
+	CANVAS_VIEW_POLICY,
 	GEN_TOOLS_RULES,
 	RULE_10_WRITE_GUARD,
 	MEMORY_SCOPE_RULES,
@@ -354,11 +355,12 @@ const GROUPS: Record<string, Array<"core" | "writeTools" | "genTools">> = {
 
 const EXPECTED: Record<string, string> = {
 	core: `${CORE}\n${RULE_10_WRITE_GUARD}`,
-	"core+writeTools": `${CORE}\n${WRITE_TOOLS_RULES}`,
+	// canvas_view_policy（order 45）夹在 writeTools(40) 与 genTools(50) 之间，与磁盘 order 一致
+	"core+writeTools": `${CORE}\n${WRITE_TOOLS_RULES}\n${CANVAS_VIEW_POLICY}`,
 	// 守卫排在 11/12/13 之后（push 顺序 core → GEN → GUARD；按 order 排 guard 也落在最后）
 	"core+genTools": `${CORE_GEN}\n${GEN_TOOLS_RULES}\n${RULE_10_WRITE_GUARD}`,
 	// genTools 开 → core 内部用规则 3'（否则会与「genTools 未启用」那版同时出现）
-	"core+writeTools+genTools": `${CORE_GEN}\n${WRITE_TOOLS_RULES}\n${GEN_TOOLS_RULES}`,
+	"core+writeTools+genTools": `${CORE_GEN}\n${WRITE_TOOLS_RULES}\n${CANVAS_VIEW_POLICY}\n${GEN_TOOLS_RULES}`,
 };
 
 describe("W1a 字节等价：Registry 渲染 == 搬家前的 composeRuleText", () => {
