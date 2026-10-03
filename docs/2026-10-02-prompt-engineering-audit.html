@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-lnk Agent 提示词工程审计 · 2026-10-02</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --surface:#ffffff; --ink:#15181d; --ink-2:#4a5260; --ink-3:#6b7480;
+    --line:#e3e6ea; --line-2:#eef0f3;
+    --accent:#2b5cff; --accent-soft:#eef2ff;
+    --p0:#c62f38; --p0-bg:#fdecec; --p1:#b26a00; --p1-bg:#fff6e6; --p2:#3a6b8a; --p2-bg:#eaf3f8;
+    --ok:#1f7a4d; --ok-bg:#e9f6ef;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 100px}
+
+  /* cover */
+  header.cover{background:linear-gradient(180deg,#fff 0%,#fbfcfe 100%);border-bottom:1px solid var(--line);
+    padding:56px 0 40px;margin-bottom:36px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700}
+  h1{font-size:34px;line-height:1.3;margin:14px 0 12px;letter-spacing:-.01em}
+  .sub{color:var(--ink-2);font-size:16px;max-width:760px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+  .chip{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:5px 13px;
+    font-size:12.5px;color:var(--ink-2)}
+  .chip b{color:var(--ink);font-weight:600}
+
+  h2{font-size:22px;margin:52px 0 6px;letter-spacing:-.01em;scroll-margin-top:70px}
+  h2 .n{color:var(--accent);font-family:var(--mono);font-size:15px;margin-right:10px}
+  h3{font-size:16.5px;margin:30px 0 8px}
+  p.lead{color:var(--ink-2);margin:0 0 18px;max-width:820px}
+  p{margin:10px 0}
+
+  /* nav */
+  nav.toc{position:sticky;top:0;z-index:20;background:rgba(246,247,249,.92);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);padding:10px 0;margin-bottom:8px}
+  nav.toc .inner{max-width:1080px;margin:0 auto;padding:0 28px;display:flex;gap:18px;overflow-x:auto}
+  nav.toc a{color:var(--ink-2);text-decoration:none;font-size:13px;white-space:nowrap;padding:3px 0}
+  nav.toc a:hover{color:var(--accent)}
+
+  /* cards */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:14px 0}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:860px){.g2,.g3{grid-template-columns:1fr}}
+
+  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);
+    border-radius:12px;overflow:hidden;font-size:14px;margin:14px 0}
+  th{background:#fafbfc;text-align:left;padding:11px 14px;font-weight:600;color:var(--ink-2);
+    border-bottom:1px solid var(--line);font-size:13px}
+  td{padding:11px 14px;border-bottom:1px solid var(--line-2);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  code{font-family:var(--mono);font-size:12.5px;background:#f2f4f7;border:1px solid var(--line-2);
+    border-radius:5px;padding:1px 5px;color:#2b3240;word-break:break-all}
+  pre{background:#1b1f27;color:#e6e9ef;border-radius:10px;padding:16px 18px;overflow-x:auto;
+    font-family:var(--mono);font-size:12.5px;line-height:1.7;margin:12px 0}
+  pre .c{color:#8b95a7}
+  pre .k{color:#8ec7ff}
+  pre .s{color:#c3e88d}
+
+  /* severity */
+  .sev{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:700;
+    padding:2px 8px;border-radius:5px;letter-spacing:.04em;vertical-align:2px}
+  .sev.p0{background:var(--p0-bg);color:var(--p0);border:1px solid #f5c9cb}
+  .sev.p1{background:var(--p1-bg);color:var(--p1);border:1px solid #f0dcb4}
+  .sev.p2{background:var(--p2-bg);color:var(--p2);border:1px solid #c9e0ec}
+
+  .gap{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--line);
+    border-radius:10px;padding:18px 20px;margin:14px 0}
+  .gap.p0{border-left-color:var(--p0)}
+  .gap.p1{border-left-color:var(--p1)}
+  .gap.p2{border-left-color:var(--p2)}
+  .gap .t{font-size:16px;font-weight:650;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .gap dl{margin:0;display:grid;grid-template-columns:88px 1fr;gap:6px 14px;font-size:14px}
+  .gap dt{color:var(--ink-3);font-size:12.5px;font-weight:600;padding-top:3px}
+  .gap dd{margin:0;color:var(--ink-2)}
+  .gap dd strong{color:var(--ink);font-weight:600}
+
+  .good{border-left-color:var(--ok)!important}
+  ul.tight{margin:8px 0 0;padding-left:20px;color:var(--ink-2)}
+  ul.tight li{margin:5px 0}
+  .ev{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+  .num{font-family:var(--mono);font-weight:700}
+
+  /* score bar */
+  .score{display:flex;align-items:center;gap:10px;margin:9px 0}
+  .score .label{width:150px;font-size:13px;color:var(--ink-2);flex:none}
+  .score .bar{flex:1;height:8px;background:#eceff3;border-radius:99px;overflow:hidden}
+  .score .bar i{display:block;height:100%;border-radius:99px}
+  .score .v{width:44px;text-align:right;font-family:var(--mono);font-size:12.5px;color:var(--ink-2);flex:none}
+
+  footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13px}
+  .note{background:var(--accent-soft);border:1px solid #d6defe;border-radius:10px;padding:14px 16px;
+    font-size:13.5px;color:#2a3550;margin:14px 0}
+</style>
+</head>
+<body>
+
+<nav class="toc"><div class="inner">
+  <a href="#summary">结论摘要</a>
+  <a href="#map">现状地图</a>
+  <a href="#scorecard">成熟度评分</a>
+  <a href="#p0">P0 缺口</a>
+  <a href="#p1">P1 缺口</a>
+  <a href="#p2">P2 缺口</a>
+  <a href="#target">目标形态</a>
+  <a href="#roadmap">路线图</a>
+</div></nav>
+
+<header class="cover"><div class="wrap">
+  <div class="kicker">Prompt Engineering Audit · pi-lnk / pi-runtime</div>
+  <h1>Agent 提示词工程现状审视<br>与缺口清单</h1>
+  <p class="sub">
+    以「提示词是产品的一等公民、是唯一可被观测与回归的行为契约」为前提，对本仓库
+    agent 链路的全部提示词资产做一次静态盘点 + 结构性诊断。所有结论均落到
+    <code>文件:行号</code> 级证据，不含推测性评判。
+  </p>
+  <div class="meta">
+    <span class="chip"><b>审计对象</b>　Nest agent 层 + pi-runtime + skills + 43 个工具</span>
+    <span class="chip"><b>基线</b>　origin/master <code>0593c3d</code>（pi-runtime 0.0.39 / helm rev 55）</span>
+    <span class="chip"><b>日期</b>　2026-10-02</span>
+    <span class="chip"><b>方法</b>　源码走查 + 装配链路还原 + 体系对标</span>
+  </div>
+</div></header>
+
+<div class="wrap">
+
+<!-- ============ 摘要 ============ -->
+<h2 id="summary"><span class="n">01</span>结论摘要</h2>
+<p class="lead">
+  先说结论：<b>这个项目的提示词工程处于「能跑、有意识、但没体系」的阶段。</b>
+  上下文-engineering 层面做得比大多数团队好（静态/动态分治、不污染历史、CJK 感知的 token 估算、
+  byte-stable 截断、信任边界标注），但「提示词本身作为产品资产」的管理维度基本空白——
+  没有单一权威源、没有版本、没有回归集、没有一个-pass 的 eval。这直接解释了一个反复出现的现象：
+  <b>你们已经两次证明了「模型能逐字复述指令，但不会照做」（load_tools 触发率 0）</b>。
+  那不是模型问题，是提示词工程的结构性问题。
+</p>
+
+<div class="grid g3">
+  <div class="card"><div style="font-size:12px;color:var(--ink-3)">提示词源头（分散）</div>
+    <div class="num" style="font-size:30px">6</div>
+    <div style="font-size:13px;color:var(--ink-2)">Nest 装配器 / Nest 内联拼接 / vision 子提示词 / pi-runtime 运行时注入 / SKILL.md / 工具 description</div></div>
+  <div class="card"><div style="font-size:12px;color:var(--ink-3)">提示词回归用例</div>
+    <div class="num" style="font-size:30px;color:var(--p0)">0</div>
+    <div style="font-size:13px;color:var(--ink-2)">全仓无 eval harness，改一个字不知道线上变好还是变差</div></div>
+  <div class="card"><div style="font-size:12px;color:var(--ink-3)">生产可见的提示词版本</div>
+    <div class="num" style="font-size:30px;color:var(--p0)">0</div>
+    <div style="font-size:13px;color:var(--ink-2)"><code>promptHash</code> 算了、打了日志，但没进 metrics、没进会话 meta</div></div>
+</div>
+
+<div class="note">
+  <b>一句话建议：</b>别急着改提示词文案。先补三件「让改文案变成工程行为」的地基——
+  ① 提示词单一权威源 + 版本号；② ≥30 条的黄金回归集 + CI 里的 LLM-judge；③ 生产侧的 prompt variant 可观测。
+  没有这三条，后面所有文案优化都是不可验证的。
+</div>
+
+<!-- ============ 现状地图 ============ -->
+<h2 id="map"><span class="n">02</span>现状地图：提示词到底在哪、怎么进上下文</h2>
+<p class="lead">先把事实摆清楚。一次对话请求的 system prompt 由 <b>5 段来源、跨 2 个进程</b>拼成。</p>
+
+<h3>2.1 装配流水线</h3>
+<svg viewBox="0 0 1040 470" width="100%" style="background:#fff;border:1px solid var(--line);border-radius:12px;margin:12px 0">
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3.2" orient="auto">
+      <path d="M0,0 L7,3.2 L0,6.4 z" fill="#98a1b0"/>
+    </marker>
+  </defs>
+  <style>
+    .bx{fill:#fbfcfe;stroke:#dfe3e9;stroke-width:1}
+    .bxa{fill:#eef2ff;stroke:#c3cffe;stroke-width:1}
+    .bxb{fill:#e9f6ef;stroke:#bfe3cf;stroke-width:1}
+    .bxw{fill:#fdecec;stroke:#f5c9cb;stroke-width:1}
+    .t1{font:600 13px -apple-system,"PingFang SC",sans-serif;fill:#15181d}
+    .t2{font:11.5px -apple-system,"PingFang SC",sans-serif;fill:#5c6573}
+    .tm{font:11px ui-monospace,Menlo,monospace;fill:#8b95a7}
+    .ln{stroke:#b9c0cb;stroke-width:1.2;fill:none;marker-end:url(#ar)}
+  </style>
+
+  <rect x="20" y="18" width="300" height="248" rx="10" class="bxa"/>
+  <text x="38" y="44" class="t1">Nest · apps/server（进程 A）</text>
+  <rect x="36" y="58" width="266" height="52" rx="7" class="bx"/>
+  <text x="50" y="80" class="t1">① 静态规则段 S 层</text>
+  <text x="50" y="98" class="tm">pi-prompt-assembler.ts:89-123</text>
+  <rect x="36" y="118" width="266" height="52" rx="7" class="bx"/>
+  <text x="50" y="140" class="t1">② plan 标记约定（内联拼接）</text>
+  <text x="50" y="158" class="tm">agent.service.ts:808-814</text>
+  <rect x="36" y="178" width="266" height="52" rx="7" class="bx"/>
+  <text x="50" y="200" class="t1">③ 动态段 G 层（每轮重算）</text>
+  <text x="50" y="218" class="tm">画布摘要 / 侧栏 / 识图 / 长期记忆</text>
+  <rect x="36" y="238" width="266" height="20" rx="5" class="bxw"/>
+  <text x="50" y="253" class="tm" style="fill:#c62f38">④ vision 子提示词 · sidebar-media-parse-prompt.ts:8</text>
+
+  <path d="M320,84 C360,84 360,140 400,140" class="ln"/>
+  <path d="M320,144 C360,144 360,150 400,150" class="ln"/>
+  <path d="M320,204 C360,204 360,160 400,160" class="ln"/>
+
+  <rect x="400" y="18" width="300" height="248" rx="10" class="bxb"/>
+  <text x="418" y="44" class="t1">pi-runtime · services/pi-runtime（进程 B）</text>
+  <rect x="416" y="58" width="266" height="46" rx="7" class="bx"/>
+  <text x="430" y="78" class="t1">⑤ 技能索引块</text>
+  <text x="430" y="96" class="tm">skills/loader.ts:55-63 → 8 个 SKILL.md</text>
+  <rect x="416" y="112" width="266" height="46" rx="7" class="bx"/>
+  <text x="430" y="132" class="t1">⑥ 延迟工具索引块</text>
+  <text x="430" y="150" class="tm">tools/tiering.ts:81-85 → 13 个工具名</text>
+  <rect x="416" y="166" width="266" height="46" rx="7" class="bx"/>
+  <text x="430" y="186" class="t1">⑦ QUEUE_GUIDANCE 插话约定</text>
+  <text x="430" y="204" class="tm">session-manager.ts:366-372</text>
+  <rect x="416" y="220" width="266" height="38" rx="7" class="bx"/>
+  <text x="430" y="238" class="t1">⑧ 预算截断 + ⑨ 工具 JSON Schema</text>
+  <text x="430" y="252" class="tm">dynamic-budget.ts · 30 个 ALWAYS_ON 工具全量 schema</text>
+
+  <path d="M700,140 C740,140 740,140 770,140" class="ln"/>
+  <rect x="770" y="96" width="250" height="88" rx="10" class="bxb"/>
+  <text x="788" y="126" class="t1">composeSystemPrompt</text>
+  <text x="788" y="146" class="t2">静态段在前 · 尾部追加动态段</text>
+  <text x="788" y="166" class="tm">session-manager.ts:386-391</text>
+
+  <path d="M895,184 L895,226" class="ln"/>
+  <rect x="770" y="226" width="250" height="76" rx="10" class="bx"/>
+  <text x="788" y="252" class="t1">transform_context hook</text>
+  <text x="788" y="270" class="t2">目标复述 + 工具结果来源标注</text>
+  <text x="788" y="288" class="tm">trust-boundary.ts:88-105</text>
+
+  <path d="M770,264 C720,264 720,330 690,330" class="ln"/>
+  <rect x="360" y="304" width="330" height="76" rx="10" class="bxb"/>
+  <text x="378" y="330" class="t1">LLM 请求（agnes 2.5-pro / BYOK）</text>
+  <text x="378" y="350" class="t2">thinkingLevel 可透传；temperature / stop / output-format 均未配置</text>
+  <text x="378" y="368" class="tm">model-assembly.ts:84-101 / 175-192</text>
+
+  <text x="20" y="300" class="t2" >静态段 ≈ 1.9k 字（规则）+ 0.2k（plan）</text>
+  <text x="20" y="322" class="t2" >索引块 ≈ 3k 字（8 skills + 13 工具名）</text>
+  <text x="20" y="344" class="t2" >工具 schema ≈ 30 个工具的完整 JSON</text>
+  <text x="20" y="366" class="t2" >动态块：canvas 55% / vision 25% / sidebar 10% / memory 10%，总量 48k 字封顶</text>
+  <text x="20" y="404" class="tm" style="fill:#c62f38">注：工具 schema 是上下文最大的单一消费者，但不在任何预算口径内</text>
+  <text x="20" y="424" class="tm" style="fill:#c62f38">注：6 处提示词源头，没有一处带版本号</text>
+</svg>
+
+<h3>2.2 规则文本的实际情况（引自生产origin/master）</h3>
+<p>静态段的主体是这七段常量。注意编号——<b>生产实际注入顺序是 1,2,3,7,14,4,5,11,12,13</b>，
+<code>composeRuleText()</code> 的注释自己也承认「顺序差异」。<span class="ev">pi-prompt-assembler.service.ts:131-140</span></p>
+
+<pre><span class="c">// pi-prompt-assembler.service.ts:89-92 —— 全部的人格/语气/风格定义就这一句</span>
+<span class="s">"你是 lnkpi 无限画布助手。用简洁中文回答。
+规则：
+1. 必须通过工具完成读写操作，禁止假装已执行。
+2. 平台支持在画布上生成图片/视频等媒体；不得否认平台的图片生成能力…"</span>
+
+<span class="c">// :113 —— 规则 4。单条承载 ≥9 个约束、3 个反例、2 个例外</span>
+<span class="s">"4. 用户要创建图片/视频/文本/音频节点或明确「生成一张…」时：用 upsert_media_node创建或更新节点
+（可带 prompt），按需再用 set_node_text 填参、用 connect_nodes 连线，然后调用 propose_generation，
+并等待用户确认；不要假装已出图。有侧栏参考图要出结果图时：用 upsert_media_node 新建一张图节点…
+此路径不要 connect_nodes、不要 attach_refs。挂参分工：…禁止 attach_refs 吃芯片 key；
+禁止 connect_nodes 连芯片。闲聊、谢谢、纯识图问句、「重新生成一张」即使工具可见也不得…"</span>
+
+<span class="c">// agent.service.ts:810-814 —— plan 标记约定，唯一的"输出格式"契约</span>
+<span class="s">"多步出图/改造任务开工前，先单独一行输出计划标记（会被界面渲染为任务清单，用户可见）：
+⟦plan⟧[{"n":1,"title":"起稿"},{"n":2,"title":"配图"}]
+每完成一项，单独一行输出：⟦task-done⟧<n>"</span></pre>
+
+<h3>2.3 工具侧：43 个工具，41 个没有 <code>summary</code></h3>
+<p><code>LnkpiTool.summary</code> 字段定义了栖位、<code>toolSummary()</code> 也写了回退逻辑
+<span class="ev">tools/types.ts:56-76</span>，但全仓只有 <code>web_search</code> / <code>web_fetch</code> 两个工具填了它
+<span class="ev">tools/web.ts:143,201</span>。结果是延迟索引块把<b>完整英文 description</b> 一行铺进去：</p>
+<pre><span class="c">// tools/tiering.ts:81-85 —— 索引块的真实形态</span>
+- open_image_editor：Open the image refine editor for a node (UI command)
+- undo：Undo the last local canvas edit (client undo stack)
+- remove_edges：<span class="k">Remove edges from canvas (all or specific edge ids; destructive: this permanently deletes on the canvas)</span>
+<span class="c">// ↑ "思想上该是 12 字摘要"，实际塞的是完整 description（有的长达 100+ 字符）；且全英文，而规则段全中文</span></pre>
+
+<div class="card" style="border-color:#f5c9cb;background:var(--p0-bg)">
+  <b>顺带提醒一处口径漂移（非提示词问题，但影响判断）：</b>
+  <code>.env.example</code> 写「23 个常驻 / 15 个延迟」、<code>tiering.ts</code> 头注释写「38 个工具」、
+  实际 <code>ALWAYS_ON_TOOL_NAMES</code> 是 <b>30</b> 个、总工具 <b>43</b> 个。
+  三份文档三个数。渐进加载上线后每次加工具都要同步这三处，已经不同步了。
+</div>
+
+<!-- ============ 评分卡 ============ -->
+<h2 id="scorecard"><span class="n">03</span>成熟度评分卡</h2>
+<p class="lead">按业界通行的八个维度打分（5 分制）。分数不是重点，重点是两个 0 分。</p>
+
+<div class="card">
+  <div class="score"><div class="label">表达力（Expression）</div><div class="bar"><i style="width:40%;background:#e0a33c"></i></div><div class="v">2.0</div></div>
+  <div class="score"><div class="label">结构（Structure）</div><div class="bar"><i style="width:30%;background:#dd6b4b"></i></div><div class="v">1.5</div></div>
+  <div class="score"><div class="label">示例与轨迹（Few-shot）</div><div class="bar"><i style="width:10%;background:#c62f38"></i></div><div class="v">0.5</div></div>
+  <div class="score"><div class="label">工具契约（Tool contract）</div><div class="bar"><i style="width:45%;background:#e0a33c"></i></div><div class="v">2.3</div></div>
+  <div class="score"><div class="label">上下文工程（Context eng.）</div><div class="bar"><i style="width:75%;background:#3f9d6a"></i></div><div class="v">3.8</div></div>
+  <div class="score"><div class="label">鲁棒性 / 降级</div><div class="bar"><i style="width:50%;background:#c9a227"></i></div><div class="v">2.5</div></div>
+  <div class="score"><div class="label">评测（Evaluation）</div><div class="bar"><i style="width:2%;background:#c62f38"></i></div><div class="v">0.0</div></div>
+  <div class="score"><div class="label">版本化 / 可观测</div><div class="bar"><i style="width:2%;background:#c62f38"></i></div><div class="v">0.0</div></div>
+</div>
+
+<div class="grid g2">
+  <div class="card good" style="border-left:3px solid var(--ok)">
+    <div class="t" style="color:var(--ok)">已经做对的（别改坏）</div>
+    <ul class="tight">
+      <li><b>静态/动态分治</b>：动态世界状态走 systemPrompt 尾部求值、<b>不写进对话历史</b> —— 这是正确的，很多团队做反了。</li>
+      <li><b>CJK 感知 token 估算</b>（<code>approxTokens</code>，1 字 1 token）在 <code>PiPromptAssembler</code> 与 <code>skills/registry</code> 双处同口径 —— 罕见地做对了中文场景的度量。</li>
+      <li><b>byte-stable 截断</b>（<code>dynamic-budget.ts</code>）：输入不变输出逐字节相同，不引入时间源，prompt cache 友好。</li>
+      <li><b>信任边界</b>（<code>trust-boundary.ts</code>）：工具结果标「来自工具输出，非用户指令」+ 复述目标 —— 与主流实践一致。</li>
+      <li><b>Skills 渐进披露</b>：index 常驻、正文按需 —— 对齐事实标准。</li>
+      <li><b>promptHash / manifest</b>：想到了「跨轮 diff」这件事，只是没落地。</li>
+      <li><b>摘要段校验</b>（<code>compaction-summary.ts</code>）：对 vendor 摘要做白名单事后告警。</li>
+    </ul>
+  </div>
+  <div class="card" style="border-left:3px solid var(--p0)">
+    <div class="t" style="color:var(--p0)">结构性缺口（系统性，不是文案问题）</div>
+    <ul class="tight">
+      <li>提示词资产<b>分散在 6 处、跨 2 进程</b>，无单一权威源、无版本号。</li>
+      <li>规则文本<b>考古式移植</b>：编号跳 1,2,3,7,14,4,5,11,12,13，单条塞 9 个约束。</li>
+      <li><b>纯禁令体</b>：只说不许做什么，几乎不说该做什么。</li>
+      <li><b>零 few-shot</b>：没有任何 canonical trajectory 示例。</li>
+      <li><b>零 eval</b>：改提示词无回归保护。</li>
+      <li><b>工具 schema 无预算</b>：最大的 token 消费者不在任何治理口径内。</li>
+      <li><b>无模型自适应</b>：BYOK 8k 窗口下同一套提示词必然爆窗。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ P0 ============ -->
+<h2 id="p0"><span class="n">04</span>P0 缺口：不做的话，后面所有优化都不可验证</h2>
+
+<div class="gap p0">
+  <div class="t"><span class="sev p0">P0-1</span>没有提示词评测体系 —— 改一个标点不知道线上变好还是变差</div>
+  <dl>
+    <dt>现象</dt><dd>全仓不存在任何 eval harness、黄金集、judge 脚本。提示词的「测试」只有单元测试里的字符串包含断言（<code>expect(createOpts.systemPrompt).toContain('⟦plan⟧')</code>）——它只证明<b>文本拼进去了</b>，完全不证明<b>模型会不会照做</b>。</dd>
+    <dt>后果</dt><dd>这直接解释了 <code>load_tools</code> 触发率 0 这个现象：你们已经两次观测到「模型能逐字复述指令却不调用」，但<b>没有任何机制能定量回答「改了文案之后触发率有没有上升」</b>。于是每次改动都是拍脑袋 + 线上猜。</dd>
+    <dt>建议</dt><dd><strong>先建两层的 eval：</strong>
+      <ul class="tight">
+        <li><b>L1 行为回归集（离线，CI 可跑）</b>：≥30 条 case，每条 = { 用户话术, 画布初始态, 期望：调用了哪些工具 / 没调用哪些 / 是否先复述 / 是否问澄清 }。用 LLM-judge 打 <code>pass@1</code>，阈值门作成 CI 硬闸。</li>
+        <li><b>L2 在线指标</b>：<code>load_tools</code>/<code>load_skill</code> 触发率、澄清率、每个 turn 的工具调用步数分布、规则违反计数器（见 P0-3）。</li>
+      </ul>
+      首批 case 应<b>直接来自线上真实失败样本</b>（"只看到文件名"、"挡 Repo 蝴蝶文件内容 RW"、假称已出图），不要自造。</dd>
+  </dl>
+</div>
+
+<div class="gap p0">
+  <div class="t"><span class="sev p0">P0-2</span>规则文本是「逐字考古」而非「为模型重写」</div>
+  <dl>
+    <dt>证据</dt><dd>规则 4 原文 911 字符，内含 <b>≥9 个动作 + 3 个反例 + 2 个例外分支</b>；规则 5 同理。注释明写「<code>explore.py:95-112 逐字拷贝（含无空格拼接点）</code>」<span class="ev">pi-prompt-assembler.service.ts:108-114</span>。注入顺序是 <code>1,2,3,7,14,4,5,11,12,13</code>，而编号上限已经到 14 <span class="ev">:131-140</span>。</dd>
+    <dt>后果</dt><dd>① 编号跳跃会削弱模型对「规则清单」的整体遵从先验；② 一条规则里的 9 个约束互相竞争注意力，最靠后的（往往是例外/反例）最先被丢，而<b>反例恰恰是最贵的那条</b>；③ 注释里那句「含无空格拼接点」是逐字考古留下的痕迹——CJK 与拉丁字符之间不加空格，会让 tokenizer 切分质量下降，进而影响规则文本的语义完整性。</dd>
+    <dt>建议</dt><dd><strong>做一次规则原子化重写：</strong>
+      <ul class="tight">
+        <li>每条规则 = <b>一个动词 + 一个条件</b>，中文 ≤ 30 字；一条不够就拆两条，编号连续。</li>
+        <li>用 XML 分区承载语义：<code>&lt;identity&gt;</code> / <code>&lt;capability&gt;</code> / <code>&lt;rules&gt;</code> / <code>&lt;negative_examples&gt;</code> / <code>&lt;output_format&gt;</code> / <code>&lt;workflow&gt;</code>。</li>
+        <li>把散落在规则 4/5/7 里的反例抽到统一的 <code>&lt;negative_examples&gt;</code> 段并配正向替代（"不要 X → 改为 Y"）。</li>
+        <li>重写必须锁版本 <code>v1</code>，并与 P0-1 的回归集同时上线（<b>没有 eval 就不要重写</b>）。</li>
+      </ul></dd>
+  </dl>
+</div>
+
+<div class="gap p0">
+  <div class="t"><span class="sev p0">P0-3</span>提示词没有版本号，没有一处能被生产回答「这一轮用的是哪版提示词」</div>
+  <dl>
+    <dt>证据</dt><dd><code>PromptManifest</code> 算了 <code>promptHash</code>（sha256 前 12 位）与分层 token，
+      但只喂给了 Nest 的 Logger（<code>this.logger.log(this.lastManifest)</code>）
+      <span class="ev">pi-prompt-assembler.service.ts:209-224</span>。<br>
+      production 侧 <code>metrics.ts</code> 有 <code>system_prompt_bytes</code> / <code>dynamic_budget_*</code> /
+      <code>transform_context_*</code>，<b>唯独没有 prompt version / hash 指标</b>，也没写进会话 <code>meta.json</code>。</dd>
+    <dt>后果</dt><dd>线上出一次「假称已出图」事故，事后无法回答「那批请求用的是不是同一版提示词」，回溯链条断在最关键一环。这也让 A/B 完全不可行。</dd>
+    <dt>建议</dt><dd><strong>三件事，都很小：</strong>
+      <ul class="tight">
+        <li>静态段常量加 <code>PROMPT_VERSION = "2026.10.02-1"</code>，随 <code>createSession</code> 一起传下去。</li>
+        <li>pi-runtime 暴露 gauge <code>pi_runtime_prompt_info{version,hash} 1</code>（BuildInfo 同款写法）。</li>
+        <li><code>writeSessionMeta</code> 里落 <code>promptVersion</code> + <code>promptHash</code>，磁盘 resume 时校验不一致要 warn。</li>
+      </ul></dd>
+  </dl>
+</div>
+
+<div class="gap p0">
+  <div class="t"><span class="sev p0">P0-4</span>工具 schema 是上下文最大的消费者，却不在任何一个预算口径里</div>
+  <dl>
+    <dt>证据</dt><dd>常驻工具 <b>30 个</b>通通送 full JSON Schema <span class="ev">tiering.ts:22-60</span>；
+      <code>dynamic-budget.ts</code> 的预算只作用于 dynamicBlocks（48k 字）与 mentions etc，<b>对工具 schema 完全无感</b>；
+      <code>metrics</code> 里也没任何 tool-schema 相关的 token 度量。</dd>
+    <dt>后果</dt><dd>① 每轮固定成本居高不下、prompt cache 的前缀稳定性被拖累；
+      ② <b>BYOK 场景致命</b>：<code>DEFAULT_CONTEXT_WINDOW = 128_000</code>、用户可以自带 8k 窗口模型
+      <span class="ev">model-assembly.ts:129-131</span>，8k 窗口下「1.9k 字规则 + 3k 字索引 + 30 个 schema + 动态块」必然爆窗，
+      而<b>系统对此没有任何降级策略</b>。</dd>
+    <dt>建议</dt><dd>
+      <ul class="tight">
+        <li>先把 tool schema token 纳入审计口径（估算值 each turn → gauge），别急着优化都不知道优化了多少。</li>
+        <li>按 <code>contextWindow</code> 分档的<b>提示词分级降级</b>：≥64k 全量 / 16–64k 去 skills 索引+去 genTools 规则组 / &lt;16k 只留 ≤10 个最小工具集。</li>
+        <li>ALWAYS_ON 再做一轮「真高频」裁剪：<code>arrange_nodes</code> 等被 skill 点名的工具进常驻理由充分，但 6 个 <code>run_*</code> 是否都需要常驻，拿工具调用频次数据说话（目前没有任何频次指标）。</li>
+      </ul></dd>
+  </dl>
+</div>
+
+<!-- ============ P1 ============ -->
+<h2 id="p1"><span class="n">05</span>P1 缺口：直接决定 agent 的可用性与一致性</h2>
+
+<div class="gap p1">
+  <div class="t"><span class="sev p1">P1-1</span>人格与语气层缺失 —— 全系统只有一句「用简洁中文回答」</div>
+  <dl>
+    <dt>证据</dt><dd><code>CORE_RULES_PREFIX</code> <span class="ev">pi-prompt-assembler.service.ts:89-92</span> 是唯一的身份/风格定义。</dd>
+    <dt>后果</dt><dd>没有定义：回复长度、是否复述用户意图、是否汇报进度、Markdown 用法、进度时怎么说话、
+      失败时怎么说话、是否用称谓/表情、中文还是中英混排。结果就是<b>同一个用户的两轮对话，agent 的"人格"可能完全不同</b>。
+      尤其「多步任务」场景下（你们已经有 ⟦plan⟧ 机制），缺了 "plan 之外我也简短地告诉你在干嘛" 的约定，用户体验全靠模型随机发挥。</dd>
+    <dt>建议</dt><dd>补三段固定总字数的 <code>&lt;identity&gt;</code> / <code>&lt;style&gt;</code> / <code>&lt;output_format&gt;</code>，
+      并明确 <b>「先一句话交代要做什么 → 调工具 → 一句话汇报结果」</b> 的默认节奏（与 QUEUE_GUIDANCE 呼应，形成统一语态）。</dd>
+  </dl>
+</div>
+
+<div class="gap p1">
+  <div class="t"><span class="sev p1">P1-2</span>纯禁令体 —— 只说不许做什么，几乎不说该做什么</div>
+  <dl>
+    <dt>证据</dt><dd>规则文本里「禁止 / 不得 / 不要 / 别」高频出现，缺少对应的正向替代动作。典型案例是规则 7 的
+      「禁止问『I1 对应画布哪张图』」，但没有告诉模型<b>那遇到这种情况到底应该说什么</b>。</dd>
+    <dt>后果</dt><dd>禁令型指令只能学到「回避」，模型在遇到未覆盖情形时会自由发挥而不是做保守的事。
+      这也是「我只看到文件名」那类线上问题的根源：它知道不许说 X，但不知道<b>那该说 Y</b>。</dd>
+    <dt>建议</dt><dd>规则改写一半位的原则：<b>每条禁令必须配一条「改为做 」</b>，形成 <code>don't → do instead</code> 配对。
+      同时补一条兜底：<b>「不确定时，先用 <code>ask_user</code> 问，而不是猜会不会做」</b>—— 这条比任何具体禁令都值钱。</dd>
+  </dl>
+</div>
+
+<div class="gap p1">
+  <div class="t"><span class="sev p1">P1-3</span>零 few-shot —— 没有一条端到端的 canonical trajectory</div>
+  <dl>
+    <dt>证据</dt><dd>唯一的示例是 ⟦plan⟧ 的那一行 JSON <span class="ev">agent.service.ts:812</span>。
+      没有任何「用户话术 → 工具调用序列 → 回复」的完整示例。</dd>
+    <dt>后果</dt><dd>规则 4/5 描述的是一条 <b>5 步以上的工具编排链</b>（upsert → set_text → connect → apply_sidebar → propose），
+      纯靠自然语言描述这种序列，遵从率是结构性地低。<b>主流实践里，多步工具编排靠 few-shot，不靠描述。</b></dd>
+    <dt>建议</dt><dd>写 3 条 canonical trajectory 放进静态段（约 600 字，可控）：
+      ① 「画一张 XX」单图；② 「参考 @I1 出三视图」带侧栏；③ 「闲聊/谢谢」应<b>不调任何工具</b>的负例。
+      第③条最关键——负例 trajectory 的成本远低于负例文字描述。</dd>
+  </dl>
+</div>
+
+<div class="gap p1">
+  <div class="t"><span class="sev p1">P1-4</span>load_tools 触发率 0 —— discoverability 从未被设计</div>
+  <dl>
+    <dt>证据</dt><dd>延迟索引块只有一句触发语「<code>需要时调用 load_tools 按名加载</code>」<span class="ev">tiering.ts:84</span>，
+      位于 system prompt 的尾部区块。项目侧已做过「强指令化」实验，同样失败（模型能逐字复述指令却不调用），
+      根因另有嫌疑：<code>harness/execution/tools.ts:84</code> 的 immediateError 会把工具返回吞掉。</dd>
+    <dt>建议</dt><dd>两手都要做：① 在 <code>&lt;tool_policy&gt;</code> 段写<b>条件式触发规则</b>
+      （“若你要完成某动作但当前没有对应工具 → 先调 load_tools(['...']) 而不是放弃或假装”），
+      并补一句正向兜底：<b>不要把「手上没这个工具」当成「这件事做不成”</b>；
+      ② 按 vendor 侧的 immediateError 走一遍，<b>确认工具返回不会因为 provider 层原因被吞掉</b>。
+      两者都用 P0-1 的 eval case 量化，别再靠肉眼观测。</dd>
+  </dl>
+</div>
+
+<div class="gap p1">
+  <div class="t"><span class="sev p1">P1-5</span>工具没有编写规范：description 混语言、「what/when/how」混在一坨、summary 缺失</div>
+  <dl>
+    <dt>证据</dt><dd>
+      · 41/43 工具无 <code>summary</code> → 索引块退化为长 description 铺板 <span class="ev">tools/types.ts:56-76</span><br>
+      · 中英混排：同一个工具里 <code>description</code> 用英文、<code>parameters</code> 用中文的混搭现象普遍
+        （例：<code>canvas-write.ts:49-52</code>：description 英文、"用户短需求原文，作 prompt 节点标题" 中文）<br>
+      · description 同时承担 what / when / how / 反例（例：<code>upsert_media_node</code> 的 description 里塞了 "Does not start generation — use propose_generation after"）</dd>
+    <dt>后果</dt><dd><b>工具的 description 本身就是给模型的提示词</b>。混语言拉低小模型/弱模型的遵从；what+when+how 混写让 description 长度失控，
+      最终吃掉的就是 prompt cache 与 BYOK 小窗口。</dd>
+    <dt>建议</dt><dd>立一份工具元信息契约并<b>写进 CI 校验</b>（不是文档）：
+      <ul class="tight">
+        <li><code>description</code> ≤ 2 句，只答 <b>what + when</b>；<code>how / 反例</code> 移到系统提示的 tool policy 段或 body 注释。</li>
+        <li><code>summary</code> 必填，≤ 12 字；索引块消费 summary，缺 summary 就 CI 失败。</li>
+        <li>单一语言：工具元信息统一<b>跟随模型语言（中文）</b>，英文只在必要的技术名词保留。</li>
+        <li>每个工具加 <code>examples</code>（1 条最小正例），作为工具级 few-shot 的素材库。</li>
+      </ul></dd>
+  </dl>
+</div>
+
+<div class="gap p1">
+  <div class="t"><span class="sev p1">P1-6</span>8 个 SKILL.md 是「没人管的第二套提示词」</div>
+  <dl>
+    <dt>证据</dt><dd><code>skills/</code> 下 8 个 SKILL.md（107–156 行/个，总量约 1,100 行），版本手工维护
+      （0.1.0–0.5.0），frontmatter 只有 <code>name / version / description</code>；
+      loader 明确「<code>lnkpi.* 扩展元数据与 prompt_version 机制不迁</code>」<span class="ev">skills/loader.ts:1-5</span>；
+      <code>load_skill</code> 的 <code>description</code> 是<b>英文</b>，而它指向的索引块是中文
+      <span class="ev">tools/skill-tool.ts:19-22</span>。</dd>
+    <dt>后果</dt><dd>Skill 的正文是<b>注入上下文最长的一段提示词</b>，但它没有 owner、没有触发测试、
+      没有 changelog，也没有任何机制回答「改了一个 skill 会不会连带影响别的 skill」。</dd>
+    <dt>建议</dt><dd>
+      <ul class="tight">
+        <li>frontmatter 增加 <code>owner</code> / <code>changelog</code> / <code>eval_cases[]</code>。</li>
+        <li>每个 skill 至少 3 条<b>触发语句 fixture</b>（"帮我做角色三视图" → 应命中 drama-character-design），
+          CI 断言路由准确率；同时包含 ≥1 条<b>不该命中</b>的近似语句。</li>
+        <li>统一 <code>load_skill</code> 的 description 语言；把 SKILL.md 也纳入 P0-3 的版本体系。</li>
+      </ul></dd>
+  </dl>
+</div>
+
+<!-- ============ P2 ============ -->
+<h2 id="p2"><span class="n">06</span>P2 缺口：健壮性与长期演进</h2>
+
+<div class="gap p2">
+  <div class="t"><span class="sev p2">P2-1</span>压缩摘要 100% 依赖 vendor，宿主只有事后告警权</div>
+  <dl>
+    <dt>证据</dt><dd><code>compaction-summary.ts</code> 只做必需段白名单的事后告警；宿主侧没有
+      <b>「必须跨压缩保留的状态」清单</b>（pending confirm 的节点 id、用户已确认的偏好、本会话已跑过的关键工具结论）。</dd>
+    <dt>建议</dt><dd>在 vendor 摘要产出之后，由宿主<b>追加一段结构化的「保留段」</b> —— 把上述状态以 <code>&lt;retention&gt;</code>
+      XML 块强制 append。这是唯一能把「压缩后信息丢失」变成可控的手段。</dd>
+  </dl>
+</div>
+
+<div class="gap p2">
+  <div class="t"><span class="sev p2">P2-2</span>trust-boundary 是安全补丁，不是 prompt 设计；且缺少 revision 语义</div>
+  <dl>
+    <dt>证据</dt><dd><code>trust-boundary.ts</code> 用 <code>≤500 字符硬截断</code> 提取目标
+      <span class="ev">trust-boundary.ts:52-56</span>：会从句子中间切断，复述出半句话；
+      且缺失「<b>用户在新一轮里推翻了前一轮要求</b>」的处理约定 —— 复述总是最新 user 消息，多轮修订场景下模型会同时看到互斥的两个"目标"。</dd>
+    <dt>建议</dt><dd>① 截断按句边界并加省略提示（保留语义完整性的成本极低）；
+      ② 增修订语义：复述带上「这是<b>最新</b>指令，取代同主题的前序要求」。这两条都能用单测钉死。</dd>
+  </dl>
+</div>
+
+<div class="gap p2">
+  <div class="t"><span class="sev p2">P2-3</span>thinkingLevel 只透传标量，没有 per-task 推理预算策略</div>
+  <dl><dt>证据</dt><dd><code>thinkingLevel</code> 由 UI 两档映射 <span class="ev">agent.service.ts:831</span>，与任务类型无关。
+    <code>temperature / top_p / stop / max_output_tokens</code> 全链路<b>零配置</b>。</dd>
+    <dt>建议</dt><dd>至少做「闲聊 / 单步 / 多步编排」三档 effort 路由；对确定性强的输出（⟦plan⟧ JSON、vision QA JSON）
+      单开低温度路径。别一次做完，先补 query 复杂度分类器 + 三档。</dd>
+  <span class="ev"></span></dl>
+</div>
+
+<div class="gap p2">
+  <div class="t"><span class="sev p2">P2-4</span>vision 子提示词是「外挂孤岛」，与主体无契约</div>
+  <dl><dt>证据</dt><dd><code>sidebar-media-parse-prompt.ts</code> 是一份完整的独立视觉提示词（含 JSON schema），
+    注释自己写「<b>两边改任一处都要同步</b>」<span class="ev">sidebar-media-parse-prompt.ts:1-7</span>——这句话就是孤岛的认罪书。</dd>
+    <dt>建议</dt><dd>纳入统一 Prompt Registry 并标 <code>kind: sub-prompt</code>、<code>owner</code>、
+      <code>output_schema</code>；对输出做运行时校验（现在是 JSON.parse 后信任），
+      缺失字段要 structured error 而不是静默。</dd>
+  </dl>
+</div>
+
+<div class="gap p2">
+  <div class="t"><span class="sev p2">P2-5</span>没有任何 A/B 或灰度能力</div>
+  <dl><dt>证据</dt><dd><code>PI_RUNTIME_SYSTEM_PROMPT</code> 这个 env 存在但<b>从未使用</b>
+    <span class="ev">session-manager.ts:494</span>，注释写着「覆盖默认系统提示词」——实际是维护态兜底，不是实验开关。</dd>
+    <dt>建议</dt><dd>会话级 prompt variant 注入（<code>variant: "v1" | "v2"</code>）+ 按 userId 哈希分流 +
+      以 P0-1 的在线指标做对比。<b>在 eval 和版本化落地之前不要做 A/B</b>，否则你拿到指标也不知道读的是哪一版。</dd>
+  </dl>
+</div>
+
+<!-- ============ 目标形态 ============ -->
+<h2 id="target"><span class="n">07</span>目标形态：重排后的 system prompt 骨架</h2>
+<p class="lead">
+  不是让你们照抄这份文案，而是给出<b>分区契约</b>：每个区干一件事、可被单独版本化、可被单独 eval。
+  建议把这份骨架作为 Prompt Registry 的 <code>v1</code> schema。
+</p>
+
+<pre><span class="c">&lt;!-- PROMPT_VERSION: 2026.10.02-1 — 全部区段的这种 XML 分区 + 连续编号，便于 token 度量与回归 diff --&gt;</span>
+
+<span class="k">&lt;identity&gt;</span>
+你是 lnkpi 无限画布助手，帮用户在画布上完成创意生产。
+用简洁中文回答；专业术语保留原文。
+<span class="k">&lt;/identity&gt;</span>
+
+<span class="k">&lt;style&gt;</span>
+<span class="s">默认节奏：一句话交代要做什么 → 调工具 → 一句话汇报结果。</span>
+用户追加插话时：先复述这条新要求及其对当前计划的影响，再继续动工具。
+不确定该做什么时：先用 ask_user 问，不要猜，也不要说「我做不到」就停下。
+<span class="k">&lt;/style&gt;</span>
+
+<span class="k">&lt;capability&gt;</span>
+<span class="s">可以做：画布读写、意义在本台;quot;生成图片/视频/音频/文本、Web 搜索与抓取、保存与回忆用户偏好。</span>
+当前不可做：工作流模板（用户要模板时用「节点 + 连线」搭骨架并如实说明）。
+<span class="k">&lt;/capability&gt;</span>
+
+<span class="k">&lt;rules&gt;</span>
+<span class="c">&lt;!-- 每条一个动词、≤30 字、编号连续；原来是 1,2,3,7,14,4,5,11,12,13 --&gt;</span>
+1. 一切画布读写都必须通过工具，不要口播「已完成」。
+2. 不要否认平台的图片/视频生成能力，也不要引导用户去第三方工具。
+3. 用户明确确认前不要调用 run_*_generation，也不要说「正在生成」。
+4. 出图前先把节点建好并 propose_generation，等用户确认。
+5. 侧栏 @I* 芯片只用 apply_sidebar_attachments 挂载，不要用 connect_nodes 连。
+6. 闲聊、致谢、纯提问不要创建任何节点，也不要 propose_generation。
+7. 造 ≥2 个媒体节点的请求要拆成多个节点 + 连线，不要压成单个节点。
+8. 用户要取消生成时调用 cancel_generation，如实转述结果。
+<span class="k">&lt;/rules&gt;</span>
+
+<span class="k">&lt;tool_policy&gt;</span>
+<span class="s">需要某个动作但手上没有对应工具时 → 先调 load_tools(["..."])，不要放弃，也不要说做不了。</span>
+你的意图匹配「可用技能」里某项的描述时 → 先调 load_skill 加载完整说明再执行。
+<span class="k">&lt;/tool_policy&gt;</span>
+
+<span class="k">&lt;negative_examples&gt;</span>
+<span class="c">&lt;!-- 每条禁令配一条正向替代 --&gt;</span>
+× 「我只能看到文件名 I1.png」      → ✓ 「这是一张白色背景的商品图，主体是…，需要我用它做什么？」
+× 「我已经帮你生成好了」          → ✓ 建好节点 → propose_generation → 等确认
+× 「这是 XX 模板的标准流程」      → ✓ 「平台还没有模板能力，我用节点 + 连线搭一个骨架」
+<span class="k">&lt;/negative_examples&gt;</span>
+
+<span class="k">&lt;examples&gt;</span>
+<span class="c">&lt;!-- 3 条 canonical trajectory: ① 单图 ② 带侧栏参考 ③ 闲聊不调工具 --&gt;</span>
+用户：「画一张赛博朋克风格的城市夜景」       → upsert_media_node(image) → propose_generation → 等确认
+用户：「参考 @I1 做三视图」                  → upsert_media_node ×3 → apply_sidebar_attachments(I1) → propose_generation ×3
+用户：「谢谢」                               → <span class="s">不调用任何工具，直接简短回应</span>
+<span class="k">&lt;/examples&gt;</span>
+
+<span class="k">&lt;output_format&gt;</span>
+多步任务开工前单独一行：⟦plan⟧[{...},{...}]；每完成一项单独一行：⟦task-done⟧&lt;n&gt;
+单步简单任务不输出标记；标记行之外不解释标记本身。
+<span class="k">&lt;/output_format&gt;</span></pre>
+
+<!-- ============ 路线图 ============ -->
+<h2 id="roadmap"><span class="n">08</span>建议路线图</h2>
+<table>
+  <tr><th style="width:120px">窗口</th><th>动作</th><th style="width:190px">验收判据</th></tr>
+  <tr>
+    <td><b>第 1–2 周</b><br><span class="ev">地基</span></td>
+    <td>
+      ① 抽 Prompt Registry：把 Nest 两处 + pi-runtime 一处的提示词文本收进单一源，打 <code>version</code>；<br>
+      ② 建 ≥30 条黄金回归集（首批直接取线上失败样本）+ LLM-judge；<br>
+      ③ 落地 <code>promptVersion</code> / <code>promptHash</code> 到 metrics 与会话 meta
+    </td>
+    <td>回归集在 CI 跑绿；Grafana 能看到当前 prompt version；任一提示词变更必须动版本号否则 CI 拒绝</td>
+  </tr>
+  <tr>
+    <td><b>第 3–4 周</b><br><span class="ev">重写</span></td>
+    <td>
+      规则原子化重写（1 动词/条、编号连续、XML 分区）；补 identity/style/output_format；
+      3 条 canonical trajectory；禁令全部配正向替代
+    </td>
+    <td>回归集 <code>pass@1</code> 相对 baseline 提升 ≥15%；在线违规率指标可查且下降</td>
+  </tr>
+  <tr>
+    <td><b>第 5–6 周</b><br><span class="ev">工具与技能</span></td>
+    <td>
+      工具元信息契约（summary 必填 / 语言统一 / what-when-only + CI 校验）；
+      load_tools 触发条件写入 tool_policy；8 个 Skill 补 owner + 触发 fixture 测试
+    </td>
+    <td><code>load_tools</code> 触发率从 0 起算并纳入看板；skill 路由断言 ≥90%</td>
+  </tr>
+  <tr>
+    <td><b>第 7–8 周</b><br><span class="ev">健壮性</span></td>
+    <td>
+      工具 schema token 纳入预算；按 contextWindow 分级降级；摘要 retention 段；
+      trust-boundary 句边界截断 + revision 语义
+    </td>
+    <td>BYOK 8k 窗口模型实测不爆窗；压缩后关键信息留存率可被手动 case 验证</td>
+  </tr>
+  <tr>
+    <td><b>第 9 周起</b><br><span class="ev">实验</span></td>
+    <td>会话级 variant 注入 + 按 user 哈希分流 + 指标对比</td>
+    <td>能在一周内跑完一次双臂实验并给出置信结论</td>
+  </tr>
+</table>
+
+<div class="note" style="background:var(--ok-bg);border-color:#bfe3cf;color:#1b3b28">
+  <b>最后一句提醒：</b>这份报告里最容易做、也最容易被跳过的是 P0-1（eval）和 P0-3（版本号）。
+  它们不产生任何用户可见的功能，所以在排期会上最容易被压后。但跳过它们，
+  第 3–4 周的「规则重写」就会变成一次无法回滚、无法归因的冒险——
+  <b>而规则重写恰好是全项目风险最高的一次提示词变更。</b>
+</div>
+
+<footer>
+  pi-lnk · Agent 提示词工程审计 · 2026-10-02<br>
+  证据基线 <code>origin/master 0593c3d</code>（pi-runtime 0.0.39 / helm rev 55）。
+  本报告所有 <code>文件:行号</code> 引用均已在该基线核对；唯一例外是本地 <code>master</code>（<code>03b1b74</code>）
+  落后于远端，缺 trust-boundary / dynamic-budget / compaction-summary 三个文件，已在文中改用远端内容。
+</footer>
+
+</div>
+</body>
+</html>
