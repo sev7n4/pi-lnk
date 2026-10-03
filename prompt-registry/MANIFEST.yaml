@@ -22,9 +22,9 @@ entries:
     order: 35
     contentHash: 8bc581f97646
   - id: media_tool_policy
-    version: 1.1.0
+    version: 1.2.0
     order: 40
-    contentHash: ee926bc2b541
+    contentHash: 7d7928afbcd2
   - id: gen_tool_policy
     version: 1.0.0
     order: 50

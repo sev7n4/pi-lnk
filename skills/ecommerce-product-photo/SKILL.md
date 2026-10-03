@@ -1,7 +1,7 @@
 ---
 name: ecommerce-product-photo
-version: "0.5.0"
-description: 电商商品图/产品视觉生成指导。当用户要求生成商品图、产品场景图、白底图、模特上身图、商品细节图，或提到商品摄影、场景搭配、营销视觉时使用。本 skill 只覆盖静态商品图；视频脚本不在范围。
+version: "0.5.1"
+description: 电商商品图/产品视觉生成指导。当用户要求生成商品图、产品场景图、白底图、模特上身图、商品细节图、服装穿搭图，或提到小红书种草、种草图文封面、商品摄影、场景搭配、营销视觉时使用。本 skill 只覆盖静态商品图；视频脚本不在范围。
 ---
 
 # 电商商品图生成
@@ -148,3 +148,4 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
   - `imageRefine="skipped"` 不得当 PASS；`"n/a"` 走原 status 分支
   - 复审加固：`imageRefine` 字段缺失（自评回流关闭）按 skipped 同款处理，杜绝盲检；`n/a` 明确 `timeout`（`get_generation_status` 查询）/ `fallback_pending`（用户确认平台兜底）两个 status 分支；PASS 自评必须引用图中可见证据而非复述 gate 名；skipped 时结合 `imageRefineReason` 说明原因；注明重试是"确认前不调用 `run_*`"的文档化例外；更正 step2 中 `ask_user` 已实现并注册的表述
   - 诚实兜底：标注 `imageRefine="attached"` 但实际看不到图（纯文本渠道）时须如实说明、不得编造自评
+- **0.5.1** (2026-10-03)：**提升 `load_skill` 命中率**。2026-10-03 生产实证（画布 `cmur1im5y0002lk01vukfb949`）：用户说「帮我生成一张服装图片，用于小红书种草」，因本 skill 的 `description` 只有「商品图/模特上身图」、没有「服装/穿搭/小红书种草」这类词，`load_skill` 全程 0 次调用 ⇒ step 2「优先用 `ask_user`」的指引根本没进上下文，模型改用纯文本列问题。据此在 `description` 补入「服装穿搭图 / 小红书种草 / 种草图文封面」三个触发词（仍远低于 1024 字符上限）。
