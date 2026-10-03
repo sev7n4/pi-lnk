@@ -15,13 +15,13 @@ test("env 缺失 → 返回空数组（纯文本模式不受影响）", () => {
 	}
 });
 
-test("env 齐全（TAVILY 缺省）→ 9 read + 14 write + 7 ui_command + 6 gen/lifecycle + 1 destructive + 1 read_document + 2 memory + 1 remove_edges = 41", () => {
+test("env 齐全（TAVILY 缺省）→ 9 read + 14 write + 7 ui_command + 6 gen/lifecycle + 1 destructive + 1 read_document + 2 memory + 1 remove_edges + 1 present = 42", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	delete process.env.TAVILY_API_KEY;
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 41);
+		assert.equal(tools.length, 42);
 		assert.ok(tools.some((t) => t.name === "upsert_media_node"));
 		assert.ok(tools.some((t) => t.name === "connect_nodes"));
 		assert.ok(tools.some((t) => t.name === "set_node_text"));
@@ -87,13 +87,13 @@ test("B-5：gen 工具超时档位对齐老链路（image/text/prompt/audio 210s
 	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/wait-video-generation"], 690_000);
 });
 
-test("P0：TAVILY_API_KEY 齐全 → 43 个工具（web_search/web_fetch 注册）", () => {
+test("P0：TAVILY_API_KEY 齐全 → 44 个工具（web_search/web_fetch 注册）", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	process.env.TAVILY_API_KEY = "test-key";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 43);
+		assert.equal(tools.length, 44);
 		assert.ok(tools.some((t) => t.name === "web_search" && t.tier === "read"));
 		assert.ok(tools.some((t) => t.name === "web_fetch" && t.tier === "read"));
 	} finally {
@@ -103,13 +103,13 @@ test("P0：TAVILY_API_KEY 齐全 → 43 个工具（web_search/web_fetch 注册�
 	}
 });
 
-test("P0：TAVILY_API_KEY=REPLACE_ME 占位 → 视同未配置（41 个）", () => {
+test("P0：TAVILY_API_KEY=REPLACE_ME 占位 → 视同未配置（42 个）", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	process.env.TAVILY_API_KEY = "REPLACE_ME";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 41);
+		assert.equal(tools.length, 42);
 		assert.ok(!tools.some((t) => t.name === "web_search"));
 	} finally {
 		delete process.env.NEST_BASE_URL;
@@ -123,4 +123,19 @@ test("P0：ToolTier 枚举无 workflow_io/export（死 tier 已清理，spec D5�
 	const src = fs.readFileSync(new URL("./types.ts", import.meta.url), "utf8");
 	assert.ok(!src.includes('"workflow_io"'), "workflow_io tier must be removed");
 	assert.ok(!src.includes('"export"'), "export tier must be removed");
+});
+
+test("2026-10-03：render_canvas_view 必须在 config.ts 装配（registry 只导出未挂载 = 整功能死代码）", () => {
+	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
+	process.env.NEST_SERVICE_TOKEN = "tok";
+	try {
+		const tools = resolveTools(new Metrics());
+		// tier 一并断言：present tier 若被改回 read/write，装配位置就错了（spec §5.1 固定 present）
+		const t = tools.find((x) => x.name === "render_canvas_view");
+		assert.ok(t, "render_canvas_view 未注册——config.ts 的 tools 数组缺 ...buildRenderCanvasViewTools(client)");
+		assert.equal(t.tier, "present");
+	} finally {
+		delete process.env.NEST_BASE_URL;
+		delete process.env.NEST_SERVICE_TOKEN;
+	}
 });

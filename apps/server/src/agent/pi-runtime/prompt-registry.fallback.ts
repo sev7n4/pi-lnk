@@ -48,3 +48,8 @@ export const WRITE_TOOLS_RULES = `4. 用户要创建图片/视频/文本/音频�
 export const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation 只能对「已 propose_generation 且用户在后续消息中明确同意」的节点调用（系统强制校验 pending_confirm；同轮提议后直接调用会被拦截）。禁止用 run_* 或文生图提示词冒充放大/超分。
 12. run_* 返回 status=timeout：如实告知生成未完成，可用 get_generation_status 稍后再查；status=fallback_pending：说明该节点需用户在画布上确认平台兜底，不要声称成功或失败，不要自行重试，也不要调用不存在的确认工具；status=failed/error：简要说明并给下一步建议，禁止虚构 url。
 13. 用户要求取消进行中的生成：调用 cancel_generation（有 generation_record_id 用之，否则用 node_id，从画布摘要解析而非标题文本），结果如实转述；仅 generating 状态可取消，其余状态如实说明。`;
+
+/** canvas_view_policy（spec 2026-10-03§5.3）：render_canvas_view 的三层 when + 负向黑名单。 */
+export const CANVAS_VIEW_POLICY = `16. 用户问「为什么/怎么/关系/结构/流程」且答案涉及 3 个以上节点或 2 层以上关系时：用 render_canvas_view 把画布上已有的数据渲成只读卡片（view=timeline 横轴时序 / topology 有向依赖 / table 二维表），overlay 选业务语义轨道（emotion 情绪曲线 / budget 超时长标红 / severity 严重度色阶）。卡片是数据源的投影，不改任何节点；用户要改就走 set_node_text 改数据源后重新渲染。
+17. 触达时长或节奏校验需要心算时（台词字数对照镜头时长格、配音语速上限 4.5 字每秒），用 render_canvas_view 带 overlay=budget，让超限项在图上标红，不要口算后只给文字。
+18. render_canvas_view 的负向边界：用户问单个节点或单个字段时纯文本回答，不得出图；数据源节点不存在时如实报错，不得编造行渲染；闲聊、道谢、致谢一律不出图。overlay=kind 不得与 view=topology 同用（会报错）。渲染完成后就本轮输出止叙述，不得接着调 propose_generation，也不得声称已生成图片——本工具只出矢量图，不产出任何媒体。`;

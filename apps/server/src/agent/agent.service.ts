@@ -1039,9 +1039,17 @@ export class AgentService {
         // （onUpdate → partialResult.details.canvasCommands）里，end 事件只有答案文本
         for (const cmd of extractCanvasCommands(event)) {
           // P1#7：ask_user 进 executionEvents → metadata 落库，刷新/重连后可恢复待答卡。
+          // svg_card 与 ask_user 同走这条落库通道（spec §4.6 第 3 跳）：卡片只经 SSE
+          // 实时上屏，刷新即失；落库后前端从 metadata.executionEvents 重放恢复。
           // update 快照可能多次下发：同 callId 以最新为准（先移除旧条目再入列，防落库重复）；
-          // blocking off 旧路径卡片无 callId，不去重直接追加
-          if (cmd.type === 'ask_user') {
+          // blocking off 旧路径卡片无 callId，不去重直接追加。
+          //
+          // ⚠️ 去重按 callId 精确匹配（`e.data.callId === cmd.callId`）且外层有
+          // `if (cmd.callId)` 门 —— svg_card 无 callId，既不会被这里的 splice 删掉，
+          // 也不会让别的条目被误删。回归锁：本文件测试的「Review Focus #2 / #2b」。
+          // 其余 canvas_command（focus_node / undo / arrange_nodes…）刻意不落库：
+          // 它们是瞬时 UI 副作用或画布数据动作，落库只会在重放时变成无源指令。
+          if (cmd.type === 'ask_user' || cmd.type === 'svg_card') {
             if (cmd.callId) {
               const idx = executionEvents.findIndex(
                 (e) => e.type === 'canvas_command' && (e.data as { callId?: string }).callId === cmd.callId,

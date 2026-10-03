@@ -46,6 +46,7 @@ import AskUserCard from '@/components/agent/AskUserCard.vue'
 import ToolCallCard from '@/components/agent/ToolCallCard.vue'
 import { collapseToolCalls } from '@/components/agent/collapseToolCalls'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
+import AgentSvgCard from '@/components/agent/presentation/AgentSvgCard.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
 import AgentMacroSchemeCards from '@/components/agent/presentation/AgentMacroSchemeCards.vue'
 import { hasSchemeDraftSections, splitAssistantDraftMessage } from '@/components/agent/presentation/schemeDraftProse'
@@ -321,12 +322,40 @@ function visibleUserContent(msg: AgentStreamMessage): string {
   return filterUserVisibleText(msg.content ?? '')
 }
 
+/** 带着可渲染 svg_card 的消息：`body.svg` 收窄为 `string`（非 `string | undefined`）。 */
+type SvgCardMessage = AgentStreamMessage & {
+  presentation: AgentPresentationEnvelope & { body: { svg: string } }
+}
+
+/**
+ * 该轮是否带着一张可渲染的 svg_card（spec §4.6）。
+ *
+ * **门禁与挂载点共用的唯一判据**：气泡放行（`shouldShowMessageBubbleText`）与模板
+ * `v-if` 都调它，两处因此不可能漂移。改条件只改这一处。
+ *
+ * 写成类型谓词（`msg is SvgCardMessage`）而非 `boolean`：挂载点的 `:svg` 绑定需要
+ * `body.svg` 已收窄为 `string`，判据一旦抽成函数，模板内的自动收窄就不会再生效。
+ *
+ * ⚠️ 判据用 `!== undefined` 而非真值，与 switch 分支同因：服务端超 SVG_MAX_CHARS 时
+ * 下发 `svg: ""`（字段在、值为空），那张卡有专属的「已丢弃」可见文案，必须照样上屏。
+ */
+function hasRenderableSvgCard(msg: AgentStreamMessage): msg is SvgCardMessage {
+  return msg.role === 'assistant'
+    && msg.presentation?.kind === 'svg_card'
+    && msg.presentation.body?.svg !== undefined
+}
+
 /**
  * P0 决策 2：零内容不渲染气泡（判定在 bubbleVisibility.ts，纯函数可单测）。
  * 阻塞等待期不产生 token，旧实现「流式恒 true」会留下一个空白气泡 + 闪烁光标 = 白块。
+ *
+ * ⚠️ 例外仅一处：带着可渲染 svg_card 的助手轮次。卡片区（含 AgentSvgCard）整体位于本
+ * 门禁的 `v-if` 内，而 svg_card 可能是那一轮的**全部**产出（agent 只调 render_canvas_view
+ * 而不说话）——不放行就等于卡片静默不可见（PR #65 同类失效）。
+ * 例外只认「有卡片」，无卡片仍走 hasBubbleContent ⇒ P0 白块修复不受影响。
  */
 function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
-  return hasBubbleContent(msg)
+  return hasBubbleContent(msg) || hasRenderableSvgCard(msg)
 }
 
 function shouldRenderSchemeDraftProse(msg: AgentStreamMessage): boolean {
@@ -1028,6 +1057,9 @@ function syncCompletionPresentation(
 
 function historyPresentation(msg: AgentStreamMessage): AgentPresentationEnvelope | null {
   if (msg.role !== 'assistant' || msg.streaming || !msg.presentation) return null
+  // svg_card 走独立挂载（紧邻本函数调用点的 AgentSvgCard），不进 Host 的 stepper 布局：
+  // 落库重放路径不恢复 stepper，进了只会渲染一条空进度条。spec §4.6。
+  if (msg.presentation.kind === 'svg_card') return null
   return msg.presentation
 }
 
@@ -2521,6 +2553,10 @@ function handleEvent(event: { type: string; data: unknown }) {
         mode?: 'grid' | 'along_edges'
         gap?: number
         edges?: { source: string; target: string }[]
+        /** render_canvas_view 产物（spec §4.6 第 2 跳）。净化在 AgentSvgCard 内做（§4.5）。 */
+        svg?: string
+        title?: string
+        annotations?: Array<{ nodeId: string; text: string; severity: 'info' | 'warn' }>
       }
       if (cmd.type === 'focus_node' && cmd.nodeId) {
         onFocusNode(cmd.nodeId)
@@ -2550,6 +2586,23 @@ function handleEvent(event: { type: string; data: unknown }) {
           if (sidebar.pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) break
           sidebar.addFromPayload(att)
         }
+      } else if (cmd.type === 'svg_card' && cmd.svg !== undefined) {
+        // render_canvas_view 产物：净化在 AgentSvgCard 内做（spec §4.5）。
+        // ⚠️ 刻意不塞 AgentPresentationHost：svg_card 是独立挂载（无 stepper 布局），
+        // 因为落库重放路径不恢复 stepper。
+        // ⚠️ 净化器（svg-sanitize.ts 的 ALLOWED_ELEMENTS / ALLOWED_ATTRS）兜住的是
+        // **可表达范围**，管不了**选择器作用域** —— AgentSvgCard 组件自身**没有 <style> 块**，
+        // 真正 document-global 的是**净化后 SVG 内部的 <style>**（ALLOWED_ELEMENTS 收了
+        // 'style'），经 AgentSvgCard 模板里的 v-html 注入直接落进本文档，无 shadow root、
+        // 无 scoped。故净化器拦不住「选择器命中卡片以外的元素」。
+        // 产出方（services/pi-runtime/src/tools/render-canvas-view.ts 的 build* 系列）
+        // 新增图元时，必须同步过净化器白名单，否则整块被剥；净化器不报错，静默降级成空卡片。
+        agent.setPresentation({
+          kind: 'svg_card',
+          stepper: { current: '', completed: [] },
+          title: cmd.title,
+          body: { svg: cmd.svg, annotations: cmd.annotations },
+        })
       } else if (cmd.type === 'ask_user') {
         const card = cmd as { callId?: string; questions?: Array<Omit<(typeof pendingAskUser.value)[number], 'callId'>> }
         if (card.questions?.length) {
@@ -3089,6 +3142,30 @@ defineExpose({
                   :macro-selected-ids="historyMacroSelectedIds(historyPresentation(msg)!)"
                   @focus-node="onFocusNode($event)"
                   @focus-all="onFocusAll($event)"
+                />
+                <!--
+                  svg_card 独立挂载（spec §4.6）：不进 AgentPresentationHost 的 stepper 布局。
+                  门禁复用 hasRenderableSvgCard()（与气泡放行同一判据，不会漂移）：
+                  该函数用 `!== undefined` 而非真值 —— 服务端超 SVG_MAX_CHARS 时下发
+                  `svg: ""`（字段在、值为空），AgentSvgCard 靠这个区分「过大被丢弃」与
+                  「解析失败」并给出可见文案。真值门禁会把该降级分支整条吞掉。
+
+                  ⚠️ 同 switch 分支处的 Ruling-3 约束：净化器（svg-sanitize.ts 的
+                  ALLOWED_ELEMENTS / ALLOWED_ATTRS）兜住的是**可表达范围**，管不了
+                  **选择器作用域** —— AgentSvgCard 组件自身**没有 <style> 块**，真正
+                  document-global 的是**净化后 SVG 内部的 <style>**（ALLOWED_ELEMENTS 收了
+                  'style'），经 AgentSvgCard 模板里的 v-html 注入直接落进本文档，无 shadow root、
+                  无 scoped。故净化器拦不住「选择器命中卡片以外的元素」。产出方
+                  （services/pi-runtime/src/tools/render-canvas-view.ts 的 build* 系列）
+                  新增图元时，必须同步过净化器白名单，否则整块被剥；净化器不报错，
+                  静默降级成空卡片。
+                -->
+                <AgentSvgCard
+                  v-if="hasRenderableSvgCard(msg)"
+                  class="mt-2"
+                  :svg="msg.presentation.body.svg"
+                  :title="msg.presentation.title"
+                  :annotations="msg.presentation.body.annotations"
                 />
                 <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
                   <ToolCallCard

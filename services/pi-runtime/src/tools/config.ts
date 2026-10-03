@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import type { Metrics } from "../metrics.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
@@ -61,6 +61,8 @@ export function resolveToolsWithClient(
 		...buildReadDocumentTools(),
 		...buildMemoryTools(client),
 		...buildRemoveEdgesTools(client),
+		// present 批次（2026-10-03 spec §5.1）：只读 SVG 卡片渲染，无条件注册。
+		...buildRenderCanvasViewTools(client),
 	];
 	return { tools, client, registry: deps.registry ?? null };
 }

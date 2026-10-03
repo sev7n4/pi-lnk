@@ -85,6 +85,10 @@ export interface AgentPresentationBody {
   scene_count?: number
   credits_hint?: string
   mermaid?: string
+  /** render_canvas_view 产出：净化前 SVG（spec §4.5）。空串 = 服务端超界整块丢弃，
+   *  前端须走有可见文案的 `<pre>` 占位，不可与「解析失败」混为一谈。 */
+  svg?: string
+  annotations?: Array<{ nodeId: string; text: string; severity: 'info' | 'warn' }>
   shots?: ShotTableRow[]
   headline?: string
   finalized?: DeliverySummaryFinalizedRow[]

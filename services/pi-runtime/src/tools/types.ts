@@ -16,7 +16,13 @@ export type ToolTier =
 	| "graph_batch"
 	| "destructive"
 	| "ui_command"
-	| "skill";
+	| "skill"
+	/**
+	 * 只读可视投影：产出**给用户看**的卡片，不写库、不改节点、不参与编排。
+	 * 与 `ui_command` 的区别：ui_command 是"命令前端做事"（focus/undo），
+	 * 本值是"agent 产出一份只读投影数据"。
+	 */
+	| "present";
 
 /** 侧栏参考素材（Nest validateSidebarAttachments 之后的形态，此处不再清洗）。 */
 export interface SidebarAttachment {

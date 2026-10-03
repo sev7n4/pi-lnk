@@ -284,3 +284,9 @@ describe("loader 描述（官方模式：description 承担发现能力，无 sy
 		assert.match(loader.description, /未加载/);
 	});
 });
+
+describe("render_canvas_view 常驻", () => {
+	it("必须在 ALWAYS_ON_TOOL_NAMES 内（延迟工具触发率为 0，延迟即不可达）", () => {
+		assert.equal(ALWAYS_ON_TOOL_NAMES.has("render_canvas_view"), true);
+	});
+});

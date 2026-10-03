@@ -26,6 +26,7 @@ import {
   createExecutionTrace,
   finalizeExecutionTrace,
   replayExecutionTraceEvents,
+  replaySvgCardPresentation,
   type ExecutionTraceState,
 } from '@/components/agent/executionTraceReducer'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
@@ -51,7 +52,22 @@ export interface AgentStreamMessage {
   canvasActions?: CanvasAction[]
 }
 
-type PersistedAgentMessage = AgentChatMessage & { linkedOutputs?: string | null; metadata?: string | null }
+/**
+ * 持久化行（后端 AgentMessage 行 → 前端）的真实形状。
+ *
+ * ⚠️ **不能用交叉类型 `AgentChatMessage & { metadata?: string | null }`**：
+ * shared 的 `AgentChatMessage` 已声明 `metadata?: string` 与 `linkedOutputs?: string`，
+ * 交叉后再改写这两个属性 ⇒ TS 判定冲突、**整个交叉类型失效**，
+ * 于是任何对象都传不进 `loadHistory`（表现为测试里报 TS2322「不兼容」，
+ * 但字面量字段其实逐个都对）。
+ *
+ * 真相是「后端 JSON 字段可能为 null」——这是比shared 声明更宽的运行时事实。
+ * 用 Omit 先摘掉原声明再重写，冲突消失，类型恢复可用。
+ */
+type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'> & {
+  linkedOutputs?: string | null
+  metadata?: string | null
+}
 
 export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
@@ -135,6 +151,23 @@ export const useAgentStore = defineStore('agent', () => {
     }
     messages.value.push(msg)
     return msg
+  }
+
+  /**
+   * 写当前 assistant 消息的 presentation（spec §4.6 第 2 跳）。
+   *
+   * ⚠️ `presentation` 是**单值**字段：同一轮 agent 产出两张 svg_card 时**后者覆盖前者**。
+   * 这是刻意选择而非疏漏 —— spec §4.6 已定；不引入卡片数组是因为刷新恢复路径
+   * （Task 6）只恢复最后一张，落库侧同样没有多卡槽位。
+   * 回归锁：`agent.setPresentation.test.ts` 的「同轮第二张卡覆盖第一张」。
+   *
+   * 无 assistant 消息时静默忽略：与 `appendText` / `addToolCall` 同款兜底，
+   * 避免事件竞态（流早于 startAssistantMessage 到达）打断整条流。
+   */
+  function setPresentation(presentation: AgentPresentationEnvelope) {
+    const last = lastAssistant()
+    if (!last) return
+    last.presentation = presentation
   }
 
   function appendText(text: string) {
@@ -327,7 +360,8 @@ export const useAgentStore = defineStore('agent', () => {
     activity.value = next?.toolName ? { ...next } : null
   }
 
-  function parseAttachments(raw: string | undefined): SidebarAttachment[] | undefined {
+  /** 入参放宽到 `string | null`，理由同 parseMessageMetadata：函数体 `if (!raw)` 早就能处理。 */
+  function parseAttachments(raw: string | null | undefined): SidebarAttachment[] | undefined {
     if (!raw) return undefined
     try {
       const parsed = JSON.parse(raw)
@@ -353,7 +387,15 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function parseMessageMetadata(raw: string | undefined): AgentMessageMetadata | undefined {
+  /**
+   * 入参放宽到 `string | null`。
+   *
+   * 函数体首行是 `if (!raw) return undefined`，运行时**早就正确处理 null**
+   * （`!null === true`），只是签名没跟上 persisted 行的真实形状。
+   * 声明窄类型 ⇒ Omit 修好调用侧之后立刻在这里报TS2345，
+   * 等于「类型终于说对话了，把藏着的第二处脱节顶出来」。
+   */
+  function parseMessageMetadata(raw: string | null | undefined): AgentMessageMetadata | undefined {
     if (!raw) return undefined
     try {
       return JSON.parse(raw) as AgentMessageMetadata
@@ -375,18 +417,41 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function loadHistory(history: AgentChatMessage[]) {
-    messages.value = history.map((m) => {
-      const persisted = m as PersistedAgentMessage
+  /**
+   * 入参类型是 `PersistedAgentMessage` 而非 `AgentChatMessage`：
+   * 函数体第一行就 `m as PersistedAgentMessage` 解构 `metadata`，而 persisted 行
+   * 的 `metadata` 来自后端 JSON 字段，**可能为 null**（shared 的 `AgentChatMessage`
+   * 声明的是 `metadata?: string`，两者对不上）。
+   * ⚠️ 声明窄类型会让调用方（svgCardReplay 测试等）被迫绕开 shared 另写局部结构，
+   * 却在传参处仍报 TS2322（vitest 走 esbuild 不查类型 ⇒ 本地绿、CI `vue-tsc` 红）。
+   * 签名对齐真实契约，函数体那句断言才可以删。
+   */
+  function loadHistory(history: PersistedAgentMessage[]) {
+    messages.value = history.map((persisted) => {
       const meta = parseMessageMetadata(persisted.metadata)
       let executionTrace = restoreExecutionTrace(meta)
       if (!executionTrace && meta?.executionEvents?.length) {
         executionTrace = replayExecutionTraceEvents(meta.executionEvents)
       }
+      // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在
+      // metadata.executionEvents 里（服务端 buildTurnMetadata 不写 metadata.presentation），
+      // 刷新后从这里重放出与实时路径同形的 envelope，交给与 setPresentation 同一个挂载点。
+      //
+      // ⚠️ 与 trace 分支的 `!executionTrace &&` 门不同：这里**无条件**重放。
+      // 那道门是「executionTrace 快照优先、事件序列兜底」，而 presentation 只有
+      // 事件序列这一条来源（无快照可优先）；加门会让「带 trace 快照的老消息丢卡片」。
+      // 重放是纯函数、不碰 store，同 tick 内完成，无时序竞态。
+      //
+      // role 门与 `setPresentation` 对齐（那条只写最后一条 assistant 消息）：
+      // 卡片是助手轮次的产出，挂在 user 消息上没有对应语义。
+      const replayedCard =
+        persisted.role === 'assistant' && meta?.executionEvents?.length
+          ? replaySvgCardPresentation(meta.executionEvents)
+          : undefined
       const presentation =
         meta?.presentation && typeof meta.presentation === 'object'
           ? (meta.presentation as unknown as AgentPresentationEnvelope)
-          : undefined
+          : replayedCard
       return {
         id: persisted.id,
         role: persisted.role as 'user' | 'assistant',
@@ -426,6 +491,7 @@ export const useAgentStore = defineStore('agent', () => {
     setActivity,
     addUserMessage,
     startAssistantMessage,
+    setPresentation,
     appendText,
     replaceAssistantText,
     addToolCall,
