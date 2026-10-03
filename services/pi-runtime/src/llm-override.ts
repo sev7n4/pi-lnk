@@ -56,6 +56,12 @@ export function parseLlmOverride(raw: unknown): LlmOverrideParseResult {
 	if (contextWindow === null) return { state: "invalid" };
 	const maxTokens = optionalPositiveInt(r.maxTokens);
 	if (maxTokens === null) return { state: "invalid" };
+	// supportsVision：#123 在 model-assembly 消费、#127 在 Nest 发送，但本层此前
+	// 从未透传 —— 生产实测 Nest 发 true 到这里被剥成 undefined，识图继续降级
+	// （「image omitted: model does not support images」，请求照常 200 无日志）。
+	// 教训与 #126 同形：加了字段没接线。此处缺省 = 字段不出现，交回「不猜」默认。
+	const supportsVision = optionalBoolean(r.supportsVision);
+	if (supportsVision === null) return { state: "invalid" };
 
 	return {
 		state: "ok",
@@ -68,6 +74,7 @@ export function parseLlmOverride(raw: unknown): LlmOverrideParseResult {
 			...(reasoning === undefined ? {} : { reasoning }),
 			...(contextWindow === undefined ? {} : { contextWindow }),
 			...(maxTokens === undefined ? {} : { maxTokens }),
+			...(supportsVision === undefined ? {} : { supportsVision }),
 		},
 	};
 }
