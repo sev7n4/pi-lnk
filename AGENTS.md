@@ -43,6 +43,100 @@ git rev-list --count master..origin/master   # 必须 0
 - **查 check-run 数量用 `--jq '.total_count'`，不能用 `length`** —— 后者把 JSON 对象的 key 当数组元素数，`{"total_count":0,...}` 会返回 2，把「CI 从未触发」误判成「在跑」。
 - **push 到 master 没有新 run，先查 workflow 的 paths 过滤** —— `ci.yml` 有 `paths-ignore: ["**/*.md","docs/**"]`，`deploy.yml` 是 paths 白名单。**纯文档改动不触发 CI、不触发部署，零 workflow 是正确行为。**
 
+### 收尾清理（第7 步之后，别拖到下次）
+
+合并完成后**当场清掉** worktree 与分支。累积起来会导致主仓状态混乱、`gh pr create` 在主仓执行报错、
+worktree 抢占分支等问题（2026-10-03清理前累积到 26 个本地分支 / 21 个 worktree）。
+
+**顺序：worktree → 本地分支 → 远程分支。**
+
+```bash
+# 0. 先体检：有未提交改动就别急着删
+git -C .worktrees/<slug> status --porcelain
+```
+
+| 体检结果 | 判断与处置 |
+|---|---|
+| 有正在开发的改动 | **绝不删** —— 这是真活儿，保留 worktree |
+| 有「PR 已合但文档没进 master」的未跟踪文件 | **备份后再删**（`cp` 到仓外目录），这是唯一副本 |
+| 输出为空 | 可以删 |
+
+```bash
+# 1. 删 worktree（路径要用【绝对路径】，相对路径会报 not a working tree）
+git worktree remove --force /abs/path/to/.worktrees/<slug>
+git worktree prune
+
+# 2. ⚠️ worktree 移除后磁盘目录仍在（每个 50M+，含 node_modules）
+ls .worktrees/<slug> && rm -rf .worktrees/<slug>
+
+# 3. 删本地 + 远程分支
+git branch -D <slug>
+git push origin --delete <slug>
+```
+
+**同步 master 后的两个必查项**（用 `git update-ref` 移动 HEAD 时尤其容易漏）：
+
+```bash
+git status --short              # 若出现 AD 状态（已add 删除但工作区又出现），说明 index 停在旧状态
+git reset --mixed HEAD          # 修index（--mixed 不触发 unlink，比 --hard 安全）
+rmdir docs/<已删目录>           # 清空后残留的空目录
+```
+
+> 合并后主仓的 index 不会自动跟随 `origin/master`，需显式 `git reset --mixed HEAD`。
+> 若 `git reset --hard` 报 `unable to unlink old 'X': Operation not permitted`（本机对某些文件的
+> unlink 有限制），改用逐文件 `git show origin/master:<path> > <path>` 覆写 +
+> `git update-ref refs/heads/master <sha>`。
+
+## 文档管理规范
+
+### 去哪写
+
+| 文档类型 | 位置 | 命名 |
+|---|---|---|
+| 实现 spec（设计方案） | `docs/superpowers/specs/` | `YYYY-MM-DD-<主题>-design.md` |
+| 实施计划 | `docs/superpowers/plans/` | `YYYY-MM-DD-<主题>.md` |
+| 方向 / 决策来源 | `docs/discussion/` | `YYYY-MM-DD-<主题>-discussion.md` |
+| 部署运维 | `docs/ops/` | — |
+| 对外契约 | `docs/workflow/` | ⚠️ 活跃资产，改动前先确认是否影响外部 Agent |
+| 提示词规则 | `prompt-registry/rules/` | `<主题>.md` / `<主题>.tail.md`，改完要更新 `MANIFEST.yaml` |
+
+各目录性质与删除判据见 `docs/README.md`。
+
+### 硬约束
+
+- **spec 放 `superpowers/specs/`，plan 放 `superpowers/plans/`** —— 别混。spec 是"设计为什么"，
+  plan是"怎么做"，两者生命周期不同。
+- **新增文档必须在 `docs/README.md` 登记**（哪个目录、是什么、为什么放这里），
+  否则半年后没人知道它是死是活。
+- **删除文档前必查引用**，且区分引用性质：
+
+```bash
+git grep -l "<文件名或路径>" -- '*.md'      # ⚠️ 用 git grep，别用 grep -r（会超时 SIGTERM）
+git grep -l "<路径>" -- apps packages services charts deploy   # 顺带确认代码没引用
+```
+
+| 引用性质 | 处置 |
+|---|---|
+| 代码 import / 对外契约 | **绝对不能删** |
+| 活跃文档里的链接 | 删目标，同时把链接改成指向新位置或标注"已移除" |
+| 历史 plan/spec 里的"创建/修改某文件"任务描述、模板参考 | **刻意不改** —— 篡改历史记录比留死链更糟。在 `docs/README.md` 记断链清单 + 给出取回方法（`git show <commit>:<path>`） |
+
+### 归档 vs 删除
+
+- **已完成的文档不删，移不改** —— 历史决策有追溯价值（"当初为什么这么定"）。
+  真要清理，优先**归档**（挪进 `docs/archive/`）而非删除。
+- **删除的判据是"内容已完成使命且无追溯价值"**，典型三类：① 对应功能已实现的设计稿
+  （先核实实现确实在代码里）；② 一次性报告/诊断；③ 已被后续决策取代且被明确标注 superseded。
+- **有 active 依赖的一律不删**：代码引用、对外接口、被现存文档当spec 依赖的。
+
+### 提交前自查
+
+- [ ] 新增/删除的文档在 `docs/README.md` 登记了
+- [ ] 删掉的文档查过引用，且性质判断过了
+- [ ] 纯文档 PR 确认了 CI/部署是否真的需要触发（看 workflow 的 paths 过滤，别被"零 workflow"吓到）
+- [ ] 分支/worktree 已按上面的顺序清理干净
+
+
 ## 本地测试纪律（2026-09-29 定）
 
 背景：本机是 **4 核 Mac** 且多 agent 并存，曾实测多窗口并跑全量测试把 load 打到 **21+**（超载 5 倍）。
