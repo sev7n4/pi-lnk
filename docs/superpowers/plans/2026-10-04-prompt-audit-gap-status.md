@@ -1,6 +1,6 @@
 ---
 status: 事实对账（2026-10-04）
-baseline: origin/master 006af0a（PR #138 合并后）
+baseline: origin/master 69a9f35ad（PR #142 合并后）
 sources:
   - docs/2026-10-02-prompt-engineering-audit.html（Round 1，基线 0593c3d）
   - docs/2026-10-02-prompt-engineering-audit-round2.html（Round 2，基线 d574b8b）
@@ -71,8 +71,8 @@ W1a 自己的遗留登记（spec §12.1）：
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| ① `lane.compact({customInstructions})` 传中文保留策略 | ⬜ | `session-manager.ts:1398` 仍是 `lane.compact(undefined, context)` —— **恒 undefined** |
-| ② load_tools/load_skill 触发率 + 工具 schema token + 频次指标 | 🟡 | 触发率有（#102 `onSearch` hit/miss/empty 回调）；**schema token 与频次无** |
+| ① `lane.compact({customInstructions})` 传中文保留策略 | ✅ | **PR #141（静态清单）+ PR #142（动态状态 + hook 路径）已上线**，生产 `image.tag=69a9f35ad` |
+| ② load_tools/load_skill 触发率 + 工具 schema token + 频次指标 | 🟡 | 触发率有（#102 `onSearch`）；**load_skill 路由指标已由 PR #141 补上**；schema token 与工具频次仍无 |
 | ③ 索引块改写为"条目 + 触发条件" | ⬜ | `tiering.ts` 的 catalog 仍是 `- \${name}：\${toolSummary(t)}`，无一条自然语言触发条件 |
 
 ① 是全表最便宜的改动：一个常量 + 一个参数，vendor 侧通道已验证端到端
@@ -161,16 +161,22 @@ skill frontmatter 仍是 `name / version / description` 三字段
 
 ### 第一梯队（阻塞项，建议立刻做）
 
-**① W1b：eval harness（唯一硬阻塞）**
+**① W1b：eval harness（唯一硬阻塞）—— ✅ 依赖阻塞已排除（2026-10-04 取证修正）**
 
 Round 2 已把成本降到"写一层 adapter"：vendor `packages/evals` 有 `vitest-evals` +
 `evalHarnessTable`（pass-rate lift + token/延迟/成本配对差值），
 只缺 `createPiRuntimeHarness`——参照 `packages/evals/src/pi-harness.ts:246` 的形态，
 但走 pi-runtime 的 `/sessions` + `/prompt` HTTP，而非 coding-agent 的临时工程目录。
 
-⚠️ **前置阻塞**：报告已指出 `vitest-evals@0.15.0` 是私有包 `@earendil-works/pi-evals` 的
-devDependency，vendored 树里没装 node_modules。**这个依赖不通，adapter 写了也跑不起来。
-第一步应先验证依赖能否安装**，而不是直接写 adapter。
+> **✅ 原「私有依赖」判断是错的，本节已修正**（2026-10-04 取证）：
+> `@earendil-works/pi-evals` 自身是 `private: true`，那是 **vendor 树内自研框架**，不是 npm 包。
+> `vitest-evals@0.15.0` 是 **npm 公开包**（Apache-2.0），vendor 的 lock 里已锁它及其
+> `@vitest-evals/core` / `@vitest-evals/report-ui` 依赖。
+> 真实摩擦点是 peerDeps 形态：`vitest-evals` 要 `ai`（Vercel AI SDK）而项目用
+> `@earendil-works/pi-ai`；但要用的 `harness-table.ts` 只 import `vitest-evals/harness`，
+> **不碰 `ai` peer** ⇒ 影响面很小。
+>
+> **结论：W1b 无依赖阻塞，可直接开写 adapter，无需退化为自建 L1 套件。**
 
 首批 case 按报告要求取**线上真实失败样本**（"只看到文件名" / "假称已出图" / 模糊工具名），
 不自造。这三类在 `docs/` 的历史记录里都有痕迹，可直接提取。
@@ -203,10 +209,8 @@ vendor 通道已验证端到端、风险极低、回滚等于传回 `undefined`�
 
 ## 5. 三个需要拍板的点
 
-1. **`vitest-evals` 依赖是否可解？**
-   私有包 + vendor 只读树是硬约束。若不通，eval 需退化为自建 L1 套件
-   （硬断言 + 人工抽样），工作量从"2 人日"回到"1–2 周"，W4 的排期要整体后移。
-   **建议在 W1b 开工前先花半天验证这条。**
+1. ~~**`vitest-evals` 依赖是否可解？**~~ ✅ **已取证：可解，npm 公开包。**
+   详见 §4 第一梯队 ① 的修正说明。W1b 可直接开工，无需退化为自建 L1 套件。
 
 2. **W4–W5 是否接受继续挂起？**
    规则文本的编号跳跃与 911 字单条是真实缺陷，但按报告自己的排序，
@@ -221,3 +225,53 @@ vendor 通道已验证端到端、风险极低、回滚等于传回 `undefined`�
    （`arrange_nodes` / `save_memory` / `focus_node` 等已因此回归常驻）。
    建议：先按 W2③ 改索引块，然后**用 `tool_search_activated_total` 观测一个周期**，
    拿数据决定是否继续押注渐进披露，而不是直接做。
+
+---
+
+## 5. 执行记录（2026-10-04）
+
+| 项 | 状态 | 交付 |
+|---|---|---|
+| `vitest-evals` 依赖取证 | ✅ 完成 | npm 公开包，原判断有误；W1b 无阻塞 |
+| **W2① 压缩保留段** | ✅ **已上线生产** | PR #141（静态清单）+ PR #142（动态状态 + hook 路径），`image.tag=69a9f35ad` |
+| W2② `load_skill` 触发率 | ✅ 已完成 | PR #141「按技能名路由指标」 |
+
+### W2① 最终形态：两层保留段
+
+```
+customInstructions = COMPACTION_RETENTION_INSTRUCTIONS   ← #141：通用四类清单（说"要保留哪几类"）
+                  + "\n\n"
+                  + buildRetentionInstructions(state)     ← #142：真实状态（说"是哪个节点"）
+```
+
+少任何一层都不完整：静态清单说不出具体节点 id，动态状态说不出还应保留哪几类。
+
+**#142 补的、#141 缺的三块**：
+
+1. ⭐ `before_compaction` hook 路径完全没接 —— 那是**有图会话**走的那条
+   （`annotateImagesForSummary` 命中才自产摘要），原本透传恒 `undefined` 的
+   `event.customInstructions` ⇒ 这类会话拿不到任何保留段
+2. ⭐ 没有真实状态 —— 新增 `TurnContext.retention`，Nest 从 `Session.canvasData` 读
+   `status === 'pending_confirm'` 的节点（该字段是 SSOT：`proposeGeneration` persist 后才
+   返回卡片，且 pi-runtime 的 generation-gate 跨轮重建后仍回查它）
+3. kill switch 没覆盖 hook 路径
+
+### 顺带修掉的真实缺陷
+
+`isTurnContextEqual()` 漏比较新增的 `retention` ⇒ `setTurnContext` 判定"没变"而整轮跳过，
+保留段永远是上一轮的值。因为 retention 不进 system prompt，
+**系统提示词不抖动、指标全绿，看不出任何异常**。
+由 wiring 层断言抓出（纯函数测试 100% 通过照样漏）。
+
+### 生产取证
+
+`helm image.tag = 69a9f35ad`；容器内 import **真实 dist 产物**（非重实现）跑 6 项断言全 true
+（版本标记 / 节点 id 透传 / 恒非空 / 注入阻断 / 截断 / 两层合并）；
+api 容器 `grep -c collectRetentionState` = 3。
+
+### W2① 之后的剩余缺口
+
+- **W2③** 索引块补自然语言触发条件（Round 2 判断 3）—— 建议先用 `tool_search_activated_total`
+  观测一个周期再决定是否继续押注渐进披露
+- **P0-3 收尾（L-2）** pi-runtime 侧 `pi_runtime_prompt_version_info` + session meta 落 `promptVersion`
+- **W1b / W3 / W4–W8** 见 §4 第三梯队
