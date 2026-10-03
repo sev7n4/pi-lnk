@@ -360,7 +360,8 @@ export const useAgentStore = defineStore('agent', () => {
     activity.value = next?.toolName ? { ...next } : null
   }
 
-  function parseAttachments(raw: string | undefined): SidebarAttachment[] | undefined {
+  /** 入参放宽到 `string | null`，理由同 parseMessageMetadata：函数体 `if (!raw)` 早就能处理。 */
+  function parseAttachments(raw: string | null | undefined): SidebarAttachment[] | undefined {
     if (!raw) return undefined
     try {
       const parsed = JSON.parse(raw)
@@ -386,7 +387,15 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function parseMessageMetadata(raw: string | undefined): AgentMessageMetadata | undefined {
+  /**
+   * 入参放宽到 `string | null`。
+   *
+   * 函数体首行是 `if (!raw) return undefined`，运行时**早就正确处理 null**
+   * （`!null === true`），只是签名没跟上 persisted 行的真实形状。
+   * 声明窄类型 ⇒ Omit 修好调用侧之后立刻在这里报TS2345，
+   * 等于「类型终于说对话了，把藏着的第二处脱节顶出来」。
+   */
+  function parseMessageMetadata(raw: string | null | undefined): AgentMessageMetadata | undefined {
     if (!raw) return undefined
     try {
       return JSON.parse(raw) as AgentMessageMetadata
