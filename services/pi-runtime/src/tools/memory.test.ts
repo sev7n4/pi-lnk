@@ -25,7 +25,9 @@ function fakeClient(capture: Capture = { calls: 0 }, reply: unknown = {}): NestC
 	} as unknown as NestClient;
 }
 
-const tc = { sessionId: "s1", userId: "u1" } as LnkpiToolContext;
+// 正常态：Nest 传了 canvasSessionId ⇒ trustedCanvasSessionId 有值，sessionId 与它一致。
+// 只给 sessionId 而不给 trustedCanvasSessionId = pi 会话键回落态（见终审 I-3 用例）。
+const tc = { sessionId: "s1", trustedCanvasSessionId: "s1", userId: "u1" } as LnkpiToolContext;
 const find = (tools: LnkpiTool[], name: string) => tools.find((t) => t.name === name)!;
 
 test("memory：schema 不暴露 userId/sessionId（toolContext 安全模型锁）", () => {
@@ -187,6 +189,24 @@ test("recall_memory：无跨画布条目时不出警示（不制造噪音）", a
 	const hit = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as { notice?: string; crossCanvasCount?: number };
 	assert.equal(hit.notice, undefined);
 	assert.equal(hit.crossCanvasCount, undefined);
+});
+
+test("终审 I-3：sessionId 是 pi 会话键回落时（无 trustedCanvasSessionId）不写 sessionId", async () => {
+	const capture: Capture = { calls: 0 };
+	const tools = buildMemoryTools(fakeClient(capture, { id: "m9", createdAt: "c", scope: "user", sessionId: null }));
+	// sessionId 形如 "s1:abc-def78"（toSessionKey 的 `<key>-<8位hash>` 形状），不是 Session.id
+	const polluted = { sessionId: "s1:thread-9f2b1c4d", userId: "u1" } as LnkpiToolContext;
+	const p = payload(await runTool(find(tools, "save_memory"), { content: "本画布项目知识" }, polluted)) as { note: string };
+	assert.ok(!Object.prototype.hasOwnProperty.call(capture.body as object, "sessionId"), "body 不该带 sessionId");
+	assert.match(p.note, /未确定归属/);
+});
+
+test("终审 I-3：有 trustedCanvasSessionId 时用它，而不是回落用的 sessionId", async () => {
+	const capture: Capture = { calls: 0 };
+	const tools = buildMemoryTools(fakeClient(capture, { id: "m10", createdAt: "c" }));
+	const mixed = { sessionId: "s1:thread-9f2b1c4d", trustedCanvasSessionId: "cmur1im5y0002lk01vukfb949", userId: "u1" } as LnkpiToolContext;
+	await runTool(find(tools, "save_memory"), { content: "本画布项目知识" }, mixed);
+	assert.equal((capture.body as { sessionId?: string }).sessionId, "cmur1im5y0002lk01vukfb949");
 });
 
 test("recall_memory：旧版 Nest（item 无归属字段）也能跑，crossCanvas 缺失按 false 处理", async () => {

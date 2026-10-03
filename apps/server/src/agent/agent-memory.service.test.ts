@@ -3,7 +3,7 @@ import { BadRequestException } from '@nestjs/common'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { PrismaService } from '../prisma/prisma.service'
-import { AgentMemoryService } from './agent-memory.service'
+import { AgentMemoryService, MEMORY_SCAN_MAX } from './agent-memory.service'
 
 describe('AgentMemoryService', () => {
   let svc: AgentMemoryService
@@ -32,8 +32,10 @@ describe('AgentMemoryService', () => {
     }))
     findMany.mockImplementation(async (args: any) => {
       const w = args?.where ?? {}
+      // 终审 M-1：桩要比真实 Prisma **严格**。原先 `r.userId === undefined 也放行`，
+      // 让「用户隔离」这条锁在桩层面弱于真实库（真实 userId 是 TEXT NOT NULL，不会有undefined 行）。
       return db
-        .filter((r) => (w.userId === undefined || r.userId === undefined || r.userId === w.userId)
+        .filter((r) => (w.userId === undefined || r.userId === w.userId)
           && (w.scope === undefined || r.scope === w.scope)
           && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId))
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
@@ -202,7 +204,8 @@ describe('AgentMemoryService', () => {
     expect(findMany).toHaveBeenCalledWith({
       where: { userId: 'u1', scope: 'canvas', sessionId: 'S1' },
       orderBy: { createdAt: 'desc' },
-      take: 10,
+      // 有当前画布 ⇒ 扫满窗口再排 tier（终审 I-1）
+      take: MEMORY_SCAN_MAX,
     })
   })
 
@@ -238,6 +241,45 @@ describe('AgentMemoryService', () => {
     db = [{ id: 'o1', userId: 'u1', scope: 'canvas', sessionId: 'S2', content: '别的画布', createdAt: new Date() }]
     const r = await svc.searchMemory({ userId: 'u1' })
     expect(r.items[0].crossCanvas).toBe(false)
+  })
+
+  /**
+   * 终审 I-1回归锁：`take` 是 SQL LIMIT、tier 排序在 JS 侧。
+   * 无 query 时 take=limit，若本画布记忆比 limit 更旧，它会在SQL 截断阶段就被切掉，
+   * JS 再怎么排也救不回来——本画布上下文一条都拿不到，反而全是别画布的。
+   */
+  it('searchMemory：本画布记忆更旧但仍在窗口内时不被 take=limit 截掉（终审 I-1）', async () => {
+    db = [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        id: `other${i}`,
+        userId: 'u1',
+        scope: 'canvas',
+        sessionId: 'S2',
+        content: `别画布知识 ${i}`,
+        createdAt: new Date(`2026-03-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`),
+      })),
+      { id: 'mine', userId: 'u1', scope: 'canvas', sessionId: 'S1', content: '本画布老记忆', createdAt: new Date('2026-01-01T00:00:00.000Z') },
+    ]
+    const r = await svc.searchMemory({ userId: 'u1', sessionId: 'S1', limit: 10 })
+    expect(r.items[0].id).toBe('mine')
+    expect(r.items).toHaveLength(10)
+    // 扫描窗口必须放大到 MEMORY_SCAN_MAX，否则 SQL 阶段就切掉了本画布那条
+    expect((findMany.mock.calls[0][0] as { take: number }).take).toBe(MEMORY_SCAN_MAX)
+  })
+
+  it('searchMemory：无当前画布时仍用 limit 取（不为不存在的排序付出全表扫）', async () => {
+    db = [{ id: 'x', userId: 'u1', scope: 'user', sessionId: null, content: '偏好', createdAt: new Date() }]
+    await svc.searchMemory({ userId: 'u1', limit: 5 })
+    expect((findMany.mock.calls[0][0] as { take: number }).take).toBe(5)
+  })
+
+  it('searchMemory：userId 缺失的脏行也不该被捞上来（终审 M-1：桩须strict）', async () => {
+    db = [
+      { id: 'dirty', scope: 'canvas', sessionId: 'S1', content: '无 owner 的脏行', createdAt: new Date() },
+      { id: 'mine', userId: 'u1', scope: 'canvas', sessionId: 'S1', content: '正常行', createdAt: new Date() },
+    ]
+    const r = await svc.searchMemory({ userId: 'u1', sessionId: 'S1', scope: 'canvas' })
+    expect(r.items.map((i) => i.id)).toEqual(['mine'])
   })
 
   it('searchMemory：别的 userId 的记忆永远进不来（作用域过滤不替代用户隔离）', async () => {

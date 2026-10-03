@@ -123,7 +123,11 @@ export class AgentMemoryService {
     const rows = await this.prisma.agentMemory.findMany({
       where: { userId: input.userId, ...scopeWhere },
       orderBy: { createdAt: 'desc' },
-      take: query ? MEMORY_SCAN_MAX : limit,
+      // 终审 I-1：`take` 是 SQL LIMIT，tier 排序在其后的 JS 侧。若这里就按 limit 截断，
+      // 「本画布但更旧」的记忆会在 SQL 阶段被切掉，JS 再排也救不回来 ⇒ 本画布上下文全丢、
+      // 反而只剩别画布的。所以只要存在「本画布优先」这个排序目标（有当前画布且非仅 user 档），
+      // 就必须扫满窗口再排。
+      take: query || (currentSession && want !== 'user') ? MEMORY_SCAN_MAX : limit,
     })
     // 分词打分召回（审计 #7）：OR 命中 + 计分（全 token 命中的排前），零分过滤。
     // % / _ 天然按普通子串处理（不是 LIKE，Review I-2 语义保持）；同分保持

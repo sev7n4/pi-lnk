@@ -17,37 +17,73 @@ export interface ClassifyResult {
   reason: string
 }
 
-/** 规则表刻意写成显式常量而非模糊匹配：回填结果要能人工复核。 */
-export const USER_RULES: ReadonlyArray<{ re: RegExp; reason: string }> = [
-  { re: /暗号|密码|口令|凭据|账号|密钥|token|secret|api[\s_-]?key/i, reason: '凭据级内容，必须留user 层' },
+/**
+ * 规则表刻意写成显式常量而非模糊匹配：回填结果要能人工复核。
+ *
+ * 分三档（终审 I-2 修正）：
+ * - CREDENTIAL_RULES：凭据级，**最高优先级**，同句含项目词也仍判 user（安全侧不可让步）
+ * - CANVAS_RULES：项目知识判定
+ * - PREFERENCE_RULES：偏好/交付规格，**仅在不含项目词时**才判 user
+ *   （原实现把偏好词排在项目词之前，导致「小柚以后都用齐刘海低马尾」这类**项目知识**
+ *    被降级成跨画布可见 —— 那正是 G1 要禁止的方向）
+ */
+export const CREDENTIAL_RULES: ReadonlyArray<{ re: RegExp; reason: string }> = [
+  { re: /暗号|密码|口令|凭据|账号|密钥|token|secret|api[\s_-]?key|门禁码|\bpin\b/i, reason: '凭据级内容，必须留 user 层' },
+]
+
+export const CANVAS_RULES: ReadonlyArray<{ re: RegExp; reason: string }> = [
+  { re: /项目信息|项目设定|项目资料|本项目|本剧/, reason: '项目知识' },
+  // 剧名（《…》/「…」/书名号）是最强的项目信号——它出现即说明说的是某个具体项目
+  { re: /《[^》]{2,}》/, reason: '具体项目名' },
+  { re: /角色设定|角色档案|角色\s*bible|主角|配角|人物/, reason: '角色设定' },
+  // 「集」单字会命中「合集 / 集合 / 素材集」这类泛化词，收窄为集数表述
+  { re: /剧本|分镜|台词|第\s*\d+\s*集|全集|\d+\s*集|ep\d+/i, reason: '剧本/分镜' },
+]
+
+export const PREFERENCE_RULES: ReadonlyArray<{ re: RegExp; reason: string }> = [
   { re: /品牌色|配色|字体|偏好|喜欢|习惯|以后|永远|默认用|风格偏/, reason: '用户偏好，跨画布有效' },
   { re: /\d{3,4}\s*[x×*]\s*\d{3,4}|分辨率|尺寸|画幅|比例/, reason: '交付规格偏好，跨画布有效' },
 ]
 
-export const CANVAS_RULES: ReadonlyArray<{ re: RegExp; reason: string }> = [
-  { re: /项目信息|项目设定|项目资料/, reason: '项目知识' },
-  { re: /角色设定|角色|主角|配角|人物/, reason: '角色设定' },
-  { re: /剧本|分镜|台词|场景|集/, reason: '剧本/分镜' },
-]
+/** 旧名（凭据 + 偏好的合集），保留供文档/调试引用；判定逻辑请用 classifyMemory。 */
+export const USER_RULES: ReadonlyArray<{ re: RegExp; reason: string }> = [...CREDENTIAL_RULES, ...PREFERENCE_RULES]
 
 export function classifyMemory(content: string): ClassifyResult {
   const text = content ?? ''
-  for (const rule of USER_RULES) {
+  // 1) 凭据最高优先：同句含项目词也仍留 user（凭据跨画布可达是 spec 明确要的 G3）
+  for (const rule of CREDENTIAL_RULES) {
     if (rule.re.test(text)) return { scope: 'user', reason: rule.reason }
   }
+  // 2) 项目词命中即判 canvas（含「项目里的偏好」——它描述的是这个项目，不是用户本人）
   for (const rule of CANVAS_RULES) {
     if (rule.re.test(text)) return { scope: 'canvas', reason: rule.reason }
+  }
+  // 3) 无项目词时，偏好 / 交付规格判 user
+  for (const rule of PREFERENCE_RULES) {
+    if (rule.re.test(text)) return { scope: 'user', reason: rule.reason }
   }
   return { scope: 'user', reason: '判不出归属，保守留 user' }
 }
 
-export interface BackfillInputRow {
+/**
+ * 回填的一行：DB 真实值与目标值必须**分开**传。
+ *
+ * 终审 C-2：原实现只有一个 `scope`，语义是「DB 旧值」；调用方（scripts/backfill-memory-scope.ts）
+ * 却把 `classifyMemory` 的**判定值**当入参传⇒ `changed` 恒为 false（两边看起来都没变），
+ * `--apply` 一行都不写，目标态只存在于打印输出里。
+ */
+export interface BackfillTargetRow {
   id: string
-  scope: string
-  sessionId: string | null
+  /** DB 里的真实当前值（来自 agent_memories.scope）。 */
+  dbScope: string
+  dbSessionId: string | null
+  /** 目标值（classifyMemory 判定 + 人工映射的结果）。 */
+  targetScope: 'canvas' | 'user'
+  targetSessionId: string | null
 }
 
-export interface BackfillPlanRow extends BackfillInputRow {
+export interface BackfillPlanRow {
+  id: string
   /** 回填后的目标作用域。 */
   scope: 'canvas' | 'user'
   sessionId: string | null
@@ -60,31 +96,28 @@ export interface BackfillPlanRow extends BackfillInputRow {
  * 计算回填计划。`liveSessions` 是仍存在的画布 id 集合（从 Session 表读）。
  * 纯函数：不碰 DB，便于在测试里穷举边界。
  */
-export function planBackfill(rows: BackfillInputRow[], liveSessions: Set<string>): BackfillPlanRow[] {
+export function planBackfill(rows: BackfillTargetRow[], liveSessions: Set<string>): BackfillPlanRow[] {
   return rows.map((row) => {
-    // 已是 user 层：目标态，什么都不改
-    if (row.scope !== 'canvas') {
-      return { ...row, scope: 'user', sessionId: null, reason: '已是用户级，保持', changed: false }
+    const target: BackfillPlanRow = { id: row.id, scope: 'user', sessionId: null, reason: '', changed: false }
+    if (row.targetScope === 'canvas') {
+      if (!row.targetSessionId) {
+        target.reason = '归属为空，回退 user（悬空 canvas 召回时会被 fail-closed）'
+      } else if (!liveSessions.has(row.targetSessionId)) {
+        // Review Focus #5：画布已被删 ⇒ 回退 user，不留指向不存在 Session 的归属
+        target.reason = `画布已不存在（${row.targetSessionId}），回退 user`
+      } else {
+        target.scope = 'canvas'
+        target.sessionId = row.targetSessionId
+        target.reason = '归属有效，落画布级'
+      }
+    } else {
+      target.reason = '判为跨会话内容，留 user'
     }
-    if (!row.sessionId) {
-      return { ...row, scope: 'user', sessionId: null, reason: '归属为空，回退 user（悬空 canvas 召回时会被fail-closed）', changed: true }
-    }
-    if (!liveSessions.has(row.sessionId)) {
-      // Review Focus #5：画布已被删 ⇒ 回退 user，不留指向不存在 Session 的归属
-      return { ...row, scope: 'user', sessionId: null, reason: `画布已不存在（${row.sessionId}），回退 user`, changed: true }
-    }
-    return { ...row, scope: 'canvas', sessionId: row.sessionId, reason: '归属有效，保持画布级', changed: false }
+    // changed = 目标与 DB **真实值**有差异（这才是「需要写库」）
+    target.changed = target.scope !== row.dbScope || target.sessionId !== (row.dbSessionId ?? null)
+    if (!target.changed) target.reason += '（已是目标态）'
+    return target
   })
-}
-
-/** 供 CLI 打印的分类明细（不含写库动作）。 */
-export function formatPlan(
-  rows: Array<BackfillInputRow & { content: string }>,
-  liveSessions: Set<string>,
-): BackfillPlanRow[] {
-  const plan = planBackfill(rows, liveSessions)
-  const byId = new Map(rows.map((r) => [r.id, r.content]))
-  return plan.map((p) => ({ ...p, reason: `${p.reason}｜${(byId.get(p.id) ?? '').slice(0, 40)}` }))
 }
 
 /**

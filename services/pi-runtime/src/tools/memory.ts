@@ -69,9 +69,12 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 				if (!raw) throw new Error("save_memory requires non-empty content");
 				const content = raw.slice(0, MEMORY_CONTENT_MAX);
 				const scope = p.scope === "user" ? "user" : "canvas";
-				// 画布 id 取自 toolContext（types.ts:39 注释：这是画布会话 id，不是 pi 会话键）。
-				// scope='user' 时**不带** sessionId：跨会话记忆不该挂任何画布。
-				const sessionId = scope === "user" ? undefined : tc.sessionId;
+				// 画布 id **只认 trustedCanvasSessionId**（终审 I-3）：
+				// `tc.sessionId` 在 canvasSessionId 缺失时会回落成 pi 会话键（`entry.canvasSessionId ?? key`），
+				// 拿它写入会把记忆挂到一个不存在的 Session 上——召回时 where永远匹配不到，
+				// 记忆静默消失（比写成跨会话更难发现）。宁可降级成 user（可见）也不挂空归属。
+				// scope='user' 时同样不带 sessionId：跨会话记忆不该挂任何画布。
+				const sessionId = scope === "user" ? undefined : tc.trustedCanvasSessionId;
 				const data = (await client.post("/agent/internal/memory-save", {
 					userId: tc.userId,
 					content,
@@ -133,10 +136,10 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 					userId: tc.userId,
 					...(query ? { query } : {}),
 					limit,
-					// 画布 id 让 Nest 侧算 crossCanvas；scope 缺省 'any'：
-					// 跨画布条目**不静默丢弃**（模型有时确实需要知道用户另有项目），
+					// 同save：只用可信画布 id，否则 Nest 算出来的 crossCanvas 是拿pi 键比出来的假值。
+					// scope 缺省 'any'：跨画布条目**不静默丢弃**（模型有时确实需要知道用户另有项目），
 					// 但必须带 crossCanvas 标记自曝归属。
-					...(tc.sessionId ? { sessionId: tc.sessionId } : {}),
+					...(tc.trustedCanvasSessionId ? { sessionId: tc.trustedCanvasSessionId } : {}),
 					scope: p.scope ?? "any",
 				})) as { items?: MemoryItem[] } | null | undefined;
 				const items = Array.isArray(data?.items) ? data.items : [];

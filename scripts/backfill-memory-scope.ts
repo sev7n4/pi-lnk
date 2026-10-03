@@ -29,7 +29,7 @@ import {
   applyManualMap,
   classifyMemory,
   planBackfill,
-  type BackfillInputRow,
+  type BackfillTargetRow,
 } from '../apps/server/src/agent/memory-scope-classify.js'
 
 const APPLY = process.argv.includes('--apply')
@@ -63,11 +63,16 @@ async function main() {
       readManualMap(),
       liveSessions,
     )
-    // 3) 归属有效性校验（画布还在吗）——两者取交集：项目知识 且 画布确定 且 画布存在 ⇒ canvas
-    const input: BackfillInputRow[] = classified.map((r) => ({
+    // 3) 归属有效性校验（画布还在吗）——项目知识 且 画布确定 且 画布存在 ⇒ canvas。
+    //    ⚠️ dbScope/dbSessionId 必须是 **DB 真实值**（r.scope / r.sessionId），
+    //    targetScope/targetSessionId 才是判定+映射结果。终审 C-2：两者混用会让
+    //    `changed`恒为 false，`--apply` 一行都不写，目标态只存在于打印输出。
+    const input: BackfillTargetRow[] = classified.map((r) => ({
       id: r.id,
-      scope: r.judged.scope,
-      sessionId: manual.get(r.id) ?? null,
+      dbScope: r.scope,
+      dbSessionId: r.sessionId,
+      targetScope: r.judged.scope,
+      targetSessionId: manual.get(r.id) ?? null,
     }))
     const plan = planBackfill(input, liveSessions)
     const byId = new Map(plan.map((p) => [p.id, p]))

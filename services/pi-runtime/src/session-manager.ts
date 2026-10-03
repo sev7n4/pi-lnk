@@ -731,6 +731,9 @@ export class SessionManager {
 				// （旧 Nest 不传该字段时语义退化为 #70 行为，不产生新失败形态）。
 				toolContext: () => ({
 					sessionId: entry.canvasSessionId ?? key,
+					// 终审 I-3：只有真canvasSessionId 才给可信字段；回落 pi 键时留undefined，
+					// 让记忆写入方选择「不挂画布」而不是挂一个不存在的 Session。
+					trustedCanvasSessionId: entry.canvasSessionId,
 					userId: entry.userId,
 					...entry.turn,
 				}),
