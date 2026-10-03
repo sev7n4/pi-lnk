@@ -45,7 +45,9 @@ export function createAskUserTools(
 		name: "ask_user",
 		label: "向用户提问",
 		// 阻塞语义（B-1）：等待用户作答同 turn 续行，有界（超时自动降级为自主决策）
-		description: "Present clickable option chips plus free-text other to the user and WAIT for the answer within this turn (bounded, auto-degrades on timeout). Multi-question cards: the user answers all questions before submitting.",
+		// ⚠️ 2026-10-03：description 必须带「何时用」与「不得怎样」，否则弱模型把「问用户」
+		// 当成写正文（生产实证：agnes-2.5-flash 全程 0 次调用，改用纯文本列选项）。
+		description: "向用户展示可点击选项卡（含「其他」自由输入）并在本回合内等待作答（有界，超时自动降级）。何时必用：继续干活前必须确认的关键信息缺失、或需要用户在有限候选里择一。禁止把候选写成普通正文让用户手打回复。多题卡片：用户答完全部题目才提交。",
 		parameters: Type.Object({
 			questions: Type.Array(Type.Object({
 				id: Type.String({ description: "stable question id, e.g. scene" }),
