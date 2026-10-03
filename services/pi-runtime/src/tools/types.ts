@@ -37,6 +37,16 @@ export interface LnkpiToolContext {
 	 * 「会话键」语义的假设（例如与 `activeKeys()` 比对）。
 	 */
 	sessionId: string;
+	/**
+	 * **可信的画布会话 id**：`canvasSessionId` 存在时才有值，pi 会话键回落时为 undefined。
+	 *
+	 * 与 `sessionId` 的区别（终审 I-3）：`sessionId` 在 `canvasSessionId` 缺失时会**回落成
+	 * pi 会话键**（`entry.canvasSessionId ?? key`），而 pi 会话键不是 `Session.id`。
+	 * 画布工具用它查库是对的（#70 语义），但**记忆作用域**用它会把记忆挂到一个不存在的
+	 * Session 上——召回时 `where:{sessionId:'<pi键>'}` 永远匹配不到，记忆静默丢。
+	 * 所以需要「必须落画布」的写入方（记忆）只认本字段，缺失就不传 sessionId。
+	 */
+	trustedCanvasSessionId?: string;
 	userId?: string;
 	/** 画布上下文（#12，B-2 写工具依赖）：由 /sessions body 原样透传。 */
 	attachments?: SidebarAttachment[];

@@ -56,6 +56,7 @@ import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
 import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
+import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
@@ -844,12 +845,24 @@ export class AgentService {
     // systemPrompt 尾部求值，不写入对话历史（spec §4 动态上下文判据）。
     // 审计 #7：长期记忆动态注入——每轮最近 5 条拼块（fail-soft，memory 挂了会话照常）。
     // 安全红线：只拼 content 摘要行，绝不带 id/userId（与 tools/memory.ts 同一红线）。
+    //
+    // 终审 C-1：这条注入通道**必须**带画布归属并限定作用域。
+    // 事故链里「有记忆可捞」主要走的就是这条每轮注入，而不是模型主动调的 recall_memory；
+    // 原实现不传 sessionId/scope ⇒ where退化成 {userId}，把别的画布的项目知识
+    // 以「用户历史偏好」的名义塞进 system prompt，完整绕过作用域隔离。
     let memoryBlock: string | undefined
     if (this.agentMemory && userId) {
       try {
-        const mem = await this.agentMemory.searchMemory({ userId, limit: 5 })
-        const lines = mem.items.map((m) => `- ${m.content}`)
-        if (lines.length) memoryBlock = '## 长期记忆（用户历史偏好，供参考）\n' + lines.join('\n')
+        const mem = await this.agentMemory.searchMemory({ userId, sessionId, limit: 5, scope: 'any' })
+        const lines = mem.items.map((m) => `- ${m.crossCanvas ? '[其他画布] ' : ''}${m.content}`)
+        if (lines.length) {
+          const header = '## 长期记忆（用户历史偏好，供参考）'
+          // 跨画布条目必须自带归属说明——不能只靠提示词规则，事故证明模型会违反它们。
+          const crossNote = mem.items.some((m) => m.crossCanvas)
+            ? '\n注：带前缀的条目来自别的画布/项目，仅作背景参考，不能当作当前画布、当前截图或当前图片的观察结果。'
+            : ''
+          memoryBlock = `${header}\n${lines.join('\n')}${crossNote}`
+        }
       } catch (err) {
         this.piLogger?.warn?.(`memory injection skipped (fail-soft): ${err instanceof Error ? err.message : String(err)}`)
       }
@@ -1150,12 +1163,15 @@ export class AgentService {
       assistantText || opts.metadata?.presentation || opts.metadata?.executionEvents?.length,
     )
     if (shouldPersistAssistant) {
+      // 首尾空行归一化：上游 harness / agnes 网关常在下水前补一串 \n（生产 1.4% 消息命中），
+      // 只在落库这一跳清理——逐帧 normalize delta 会把跨 delta 的段落换行吃掉。
+      const content = normalizeAssistantText(assistantText) || ' '
       await this.prisma.agentMessage.create({
         data: {
           sessionId,
           threadId,
           role: 'assistant',
-          content: assistantText || ' ',
+          content,
           toolCalls: canvasActions.length ? JSON.stringify(canvasActions) : null,
           linkedOutputs: opts.linkedOutputs?.length ? JSON.stringify(opts.linkedOutputs) : null,
           metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,

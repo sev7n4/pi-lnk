@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   AgentCanvasToolsController,
   InstantiateRecipeDto,
+  SaveMemoryDto,
+  SearchMemoryDto,
   UpdateNodeDto,
 } from './agent-canvas-tools.controller'
 
@@ -81,5 +83,106 @@ describe('AgentCanvasToolsController 新端点透传', () => {
     const out = await controller.listModelOptions({ userId: 'u1' })
     expect(listNodeModelOptions).toHaveBeenCalledWith({ userId: 'u1' })
     expect(out).toEqual({ code: 0, message: 'ok', data: { modalities: { image: [] } } })
+  })
+})
+
+// ── 记忆作用域透传（spec 2026-10-03-agent-memory-scope-isolation-design.md）──
+// 风险点：全局ValidationPipe 带 whitelist:true，DTO 没声明的字段会被**静默剥离**——
+// sessionId/scope 被吞掉的话，pi-runtime 侧一切作用域隔离都失效且不报错。
+
+describe('SaveMemoryDto（作用域透传）', () => {
+  const pipe = new ValidationPipe({ transform: true, whitelist: true })
+  const meta = { type: 'body' as const, metatype: SaveMemoryDto }
+
+  it('DTO 类真实存在（否则 ValidationPipe 跳过校验，下面全是假通过）', () => {
+    expect(typeof SaveMemoryDto).toBe('function')
+  })
+
+  it('sessionId 不被 whitelist 剥离', async () => {
+    const result = await pipe.transform({ userId: 'u1', content: '本画布项目知识', sessionId: 'S1' }, meta)
+    expect(result.sessionId).toBe('S1')
+  })
+
+  it('scope 不被剥离，且保留 user 取值', async () => {
+    const result = await pipe.transform({ userId: 'u1', content: '暗号', scope: 'user' }, meta)
+    expect(result.scope).toBe('user')
+  })
+
+  it('scope 非法值 →拒绝（不静默当canvas 写入）', async () => {
+    await expect(pipe.transform({ userId: 'u1', content: 'x', scope: 'thread' }, meta)).rejects.toBeInstanceOf(
+      BadRequestException,
+    )
+  })
+})
+
+describe('SearchMemoryDto（作用域透传）', () => {
+  const pipe = new ValidationPipe({ transform: true, whitelist: true })
+  const meta = { type: 'body' as const, metatype: SearchMemoryDto }
+
+  it('DTO 类真实存在（否则 ValidationPipe 跳过校验）', () => {
+    expect(typeof SearchMemoryDto).toBe('function')
+  })
+
+  it('sessionId 与 scope 均不被剥离', async () => {
+    const result = await pipe.transform({ userId: 'u1', query: '小熊', sessionId: 'S1', scope: 'canvas' }, meta)
+    expect(result.sessionId).toBe('S1')
+    expect(result.scope).toBe('canvas')
+  })
+
+  it('scope=any 也放行（召回默认档）', async () => {
+    const result = await pipe.transform({ userId: 'u1', scope: 'any' }, meta)
+    expect(result.scope).toBe('any')
+  })
+
+  it('scope 非法值 → 拒绝', async () => {
+    await expect(pipe.transform({ userId: 'u1', scope: 'everything' }, meta)).rejects.toBeInstanceOf(
+      BadRequestException,
+    )
+  })
+
+  it('缺 sessionId 时不补默认值（fail-closed 交给 service，DTO 不臆造）', async () => {
+    const result = await pipe.transform({ userId: 'u1' }, meta)
+    expect(result.sessionId).toBeUndefined()
+    expect(result.scope).toBeUndefined()
+  })
+})
+
+describe('AgentCanvasToolsController memory 端点透传', () => {
+  const makeController = () => {
+    const saveMemory = vi.fn(async () => ({ id: 'm1', createdAt: 'c', scope: 'canvas', sessionId: 'S1' }))
+    const searchMemory = vi.fn(async () => ({ items: [] }))
+    const controller = new AgentCanvasToolsController(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { saveMemory, searchMemory } as never,
+    )
+    return { controller, saveMemory, searchMemory }
+  }
+
+  it('memory-save 把含sessionId 的 dto 整个透传给 service', async () => {
+    const { controller, saveMemory } = makeController()
+    const dto = { userId: 'u1', content: '《小熊和小爸爸》设定', sessionId: 'S1' }
+    const out = await controller.saveMemory(dto)
+    expect(saveMemory).toHaveBeenCalledWith(dto)
+    expect(out).toEqual({
+      code: 0,
+      message: 'ok',
+      data: { id: 'm1', createdAt: 'c', scope: 'canvas', sessionId: 'S1' },
+    })
+  })
+
+  it('memory-search 把含 scope 的 dto 整个透传给 service', async () => {
+    const { controller, searchMemory } = makeController()
+    const dto = { userId: 'u1', query: '小熊', sessionId: 'S1', scope: 'any' as const }
+    await controller.searchMemory(dto)
+    expect(searchMemory).toHaveBeenCalledWith(dto)
+  })
+
+  it('memory-search 无 sessionId 时不补undefined 键以外的东西（service 负责 fail-closed）', async () => {
+    const { controller, searchMemory } = makeController()
+    await controller.searchMemory({ userId: 'u1' })
+    expect(searchMemory).toHaveBeenCalledWith({ userId: 'u1' })
   })
 })

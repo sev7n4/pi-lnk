@@ -30,15 +30,20 @@ const ONE = (over = "") => `---\nid: a.one\nversion: 1.0.0\ntitle: 规则一\nor
 const MANIFEST_OF = (id: string, version: string, contentHash: string) =>
   `version: 0.1.0\nentries:\n  - id: ${id}\n    version: ${version}\n    order: 10\n    contentHash: ${contentHash}\n`;
 
-/** 一份「合法」的合成 Registry：7 个 id 齐备、body 逐字等于 fallback 常量。 */
-const VALID: Array<[string, [string | undefined, number]]> = [
+/**
+ * 一份「合法」的合成 Registry：id 齐备、body 逐字等于 fallback 常量、group/unlessGroup 与磁盘一致。
+ * 第三元是 unlessGroup——必须建模，否则 no_gen_claim.nogen 与 write_guard 会被多算进
+ * core+writeTools+genTools 组合，把 L6 预算门禁在「干净目录」这条用例上炸掉（假失败）。
+ */
+const VALID: Array<[string, [string | undefined, number], string | undefined?]> = [
   ["identity.opening", [undefined, 10]],
-  ["no_gen_claim.nogen", [undefined, 20]],
-  ["no_gen_claim.gen", [undefined, 20]],
+  ["no_gen_claim.nogen", [undefined, 20], "genTools"],
+  ["no_gen_claim.gen", [undefined, 20], undefined],
   ["sidebar_vision.tail", [undefined, 30]],
+  ["memory_scope.tail", [undefined, 35]],
   ["media_tool_policy", ["writeTools", 40]],
   ["gen_tool_policy", ["genTools", 50]],
-  ["write_guard", [undefined, 60]],
+  ["write_guard", [undefined, 60], "writeTools"],
 ];
 
 describe("parseFrontmatter", () => {
@@ -173,10 +178,11 @@ describe("assertRegistryIntegrity（L1-L9 负例各一条）", () => {
   it("干净目录返回空数组", () => {
     const root = base();
     const manifest = ["version: 0.1.0", "", "entries:"];
-    for (const [id, meta] of VALID) {
+    for (const [id, meta, unlessGroup] of VALID) {
       const body = FALLBACK_BY_ID[id];
       const fm = ["---", `id: ${id}`, "version: 1.0.0", `title: ${id}`, `order: ${meta[1]}`,
-        "owner: agent-platform", "updated: 2026-10-02", ...(meta[0] ? [`group: ${meta[0]}`] : []), "---"];
+        "owner: agent-platform", "updated: 2026-10-02", ...(meta[0] ? [`group: ${meta[0]}`] : []),
+        ...(unlessGroup ? [`unlessGroup: ${unlessGroup}`] : []), "---"];
       write(root, `rules/${id}.md`, `${fm.join("\n")}\n${body}\n`);
       manifest.push(`  - id: ${id}`, "    version: 1.0.0", `    order: ${meta[1]}`, `    contentHash: ${contentHash(body)}`);
     }

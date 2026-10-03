@@ -824,7 +824,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(pi.createSession.mock.calls[0][1]).toMatchObject({ canvasSessionId: 's1' })
   })
 
-  it('审计 #7：长期记忆注入——最近 5 条进 memoryBlock，只含 content 行', async () => {
+  it('审计 #7：长期记忆注入——按画布作用域取，只含 content 行', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
@@ -837,7 +837,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     const fakeMemory = {
       searchMemory: vi
         .fn()
-        .mockResolvedValue({ items: [{ id: 'm1', content: '用户偏好深色主题', createdAt: '2026-01-01' }] }),
+        .mockResolvedValue({ items: [{ id: 'm1', content: '用户偏好深色主题', createdAt: '2026-01-01', scope: 'user', sessionId: null, crossCanvas: false }] }),
     }
     ;(service as unknown as { agentMemory?: unknown }).agentMemory = fakeMemory
 
@@ -845,13 +845,51 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
       void _event
     }
 
-    expect(fakeMemory.searchMemory).toHaveBeenCalledWith({ userId: 'u1', limit: 5 })
+    // 终审 C-1 回归锁：注入通道**必须**带画布归属并限定作用域，
+    // 否则它绕过全部作用域隔离——事故链里「有记忆可捞」主要走的就是这条通道，
+    // 而不是模型主动调的 recall_memory。
+    expect(fakeMemory.searchMemory).toHaveBeenCalledWith({ userId: 'u1', sessionId: 's1', limit: 5, scope: 'any' })
     const block = assembleDynamic.mock.calls[0][0].memoryBlock as string
     expect(block).toContain('长期记忆')
     expect(block).toContain('用户偏好深色主题')
     // 安全红线：绝不投影 id/userId 等元数据
     expect(block).not.toContain('m1')
     expect(block).not.toContain('u1')
+  })
+
+  it('终审 C-1：注入块里的跨画布条目必须自曝归属（模型据此知道那不是当前画布的观察）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const assembleDynamic = vi.fn().mockResolvedValue([])
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic: vi.fn().mockResolvedValue('PROMPT'),
+      assembleDynamic,
+    } as never)
+    const fakeMemory = {
+      searchMemory: vi.fn().mockResolvedValue({
+        items: [
+          { id: 'm1', content: '本画布的角色设定：小柚', createdAt: '2026-01-02', scope: 'canvas', sessionId: 's1', crossCanvas: false },
+          { id: 'm2', content: '《小熊和小爸爸》项目信息：主角小柚', createdAt: '2026-01-01', scope: 'canvas', sessionId: 'other', crossCanvas: true },
+          { id: 'm3', content: '用户偏好深色主题', createdAt: '2026-01-03', scope: 'user', sessionId: null, crossCanvas: false },
+        ],
+      }),
+    }
+    ;(service as unknown as { agentMemory?: unknown }).agentMemory = fakeMemory
+
+    for await (const _event of service.streamConversation('s1', '你好', 'u1', 's1:t-mem-cross')) {
+      void _event
+    }
+
+    const block = assembleDynamic.mock.calls[0][0].memoryBlock as string
+    // 跨画布那条必须带可见标记，且块里要有一句「不能当成本画布观察结果」
+    expect(block).toContain('其他画布')
+    expect(block).toMatch(/不能当作|不可当作/)
+    // 本画布与用户级不该被误标：「[其他画布]」前缀只出现 1 次（另 1 次是块尾注释里的说明）
+    expect(block.match(/\[其他画布\]/g)).toHaveLength(1)
+    // 仍然不投影元数据
+    expect(block).not.toContain('other')
   })
 
   it('审计 #7：memory 服务抛错 → 注入缺席但流照常完成（fail-soft）', async () => {

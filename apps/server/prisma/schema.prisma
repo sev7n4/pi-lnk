@@ -351,13 +351,21 @@ model ContextSnapshot {
   @@index([threadId, stage, createdAt])
 }
 
-/// P1 memory（spec 2026-09-29）：agent 跨会话用户记忆。
+/// P1 memory（spec 2026-09-29）：agent 记忆。
+/// 作用域隔离（2026-10-03）：默认 canvas，只有显式 scope='user' 才跨画布。
+/// 背景：生产事故——同画布会话读到另一画布的《小熊和小爸爸》项目记忆并被当成图片内容输出。
 model AgentMemory {
   id        String   @id @default(cuid())
   userId    String
+  /// 'canvas'（本画布，需 sessionId）| 'user'（跨画布）。迁移默认 'user' 保旧行为可秒级回滚。
+  scope     String   @default("user")
+  /// scope='canvas' 时的画布会话 id（Session.id，非 pi 会话键）
+  sessionId String?
+  /// 来源：agent_auto / user_explicit / promoted（审计用，不做行为分支）
+  source    String   @default("agent_auto")
   content   String
   createdAt DateTime @default(now())
 
-  @@index([userId])
+  @@index([userId, scope, sessionId])
   @@map("agent_memories")
 }

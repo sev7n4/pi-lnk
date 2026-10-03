@@ -6,7 +6,7 @@ import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentInternalGuard } from './agent-internal.guard'
 import { CompositionService, type PreviewCompositionInput } from './composition.service'
 import { WorkflowRecipeService } from './workflow-recipe.service'
-import { AgentMemoryService } from './agent-memory.service'
+import { AgentMemoryService, type AgentMemoryScope, type AgentMemoryScopeFilter } from './agent-memory.service'
 
 class UpsertPromptNodeDto {
   @IsString()
@@ -213,16 +213,28 @@ class RemoveNodesDto {
   stage?: boolean
 }
 
-// P1 memory（spec 2026-09-29）
-class SaveMemoryDto {
+// P1 memory（spec2026-09-29）；作用域隔离见 spec 2026-10-03-agent-memory-scope-isolation-design.md。
+// ⚠️全局 ValidationPipe 带 whitelist:true——**这里没声明的字段会被静默剥离**。
+// sessionId / scope 必须显式声明，否则 pi-runtime 传了也到不了 service，且不报错。
+export class SaveMemoryDto {
   @IsString()
   userId!: string
 
   @IsString()
   content!: string
+
+  /** 画布会话 id（Session.id，非 pi 会话键）。缺省时 service 降级为 user 作用域。 */
+  @IsOptional()
+  @IsString()
+  sessionId?: string
+
+  /** 缺省= canvas（本画布）；显式 'user' 才跨画布。 */
+  @IsOptional()
+  @IsIn(['canvas', 'user'])
+  scope?: AgentMemoryScope
 }
 
-class SearchMemoryDto {
+export class SearchMemoryDto {
   @IsString()
   userId!: string
 
@@ -233,6 +245,16 @@ class SearchMemoryDto {
   @IsOptional()
   @IsNumber()
   limit?: number
+
+  /** 当前画布会话 id，用于 scope='canvas' 过滤与 crossCanvas 判定。 */
+  @IsOptional()
+  @IsString()
+  sessionId?: string
+
+  /** 缺省= 'any'（不限，但跨画布条目带 crossCanvas 标记）。 */
+  @IsOptional()
+  @IsIn(['canvas', 'user', 'any'])
+  scope?: AgentMemoryScopeFilter
 }
 
 // W32: Remove edges DTO
