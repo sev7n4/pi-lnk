@@ -171,8 +171,11 @@ export function createLoadToolsTool(
 				addedToolNames: loaded,
 			};
 		},
-		// ⚠️ 这处 `as LnkpiTool` 是全仓唯一的类型逃逸口（spec §4.8 A3）。
-		// scripts/verify-tool-contract.ts 的 A3 断言会统计逃逸口数量：新增逃逸口即红。
-		// 清理它要改 createLoadToolsTool 的返回类型推导（属存量整改，spec §2 明确不做）。
+		// ⚠️ 工具对象构造点上的类型逃逸口共 **2** 处：本行 + `session-manager.ts:1533`
+		// （后者把 AgentHarnessTool[] 收敛成 LnkpiTool[]，是有意 coerce，见该处既有注释）。
+		// scripts/verify-tool-contract.ts 的 A3 断言以 **2** 为基线计数，新增即红。
+		// 清理属存量整改，spec §2 明确不做。
+		// ⚠️ 本注释刻意不写出 cast 的类型字面量：按该字面量grep 会把注释一起命中，
+		// 写出来会让 Task 9 的机检数出第 3 处。
 	} as LnkpiTool;
 }
