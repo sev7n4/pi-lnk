@@ -31,9 +31,43 @@ describe("assembleModel 会话级 override（K-1）", () => {
 		assert.deepEqual(model.input, ["text", "image"]);
 	});
 
-	it("BYOK override 保守只声明 text（pi-runtime 无从得知用户模型能力，误报 image 会 400）", () => {
+	it("BYOK override 未声明视觉能力时仍只声明 text（不猜 = 不让上游 400）", () => {
 		const { model } = assembleModel(OVERRIDE);
 		assert.deepEqual(model.input, ["text"]);
+	});
+
+	// ↓ 2026-10-03 识图失效事故回归锁（生产实测，见 PR 描述）
+	// 旧行为「BYOK 一律 input:["text"]」让 vendor transform-messages.ts:36 把图片
+	// 静默替换成 "(image omitted: model does not support images)"，请求照样 200，
+	// 表现为「模型说看不见图」。声明能力必须可由上游传入。
+	it("override 声明 supportsVision=true ⇒ 声明 image 输入（图片不再被降级为占位符）", () => {
+		const { model } = assembleModel({ ...OVERRIDE, supportsVision: true });
+		assert.deepEqual(model.input, ["text", "image"]);
+	});
+
+	it("override 显式 supportsVision=false ⇒ 不声明 image（负例，不得被真值蒙混过关）", () => {
+		const { model } = assembleModel({ ...OVERRIDE, supportsVision: false });
+		assert.deepEqual(model.input, ["text"]);
+	});
+
+	it("env VISION_CAPABLE_MODELS 可强制声明视觉（运维覆盖，逗号分隔模型名）", () => {
+		process.env.VISION_CAPABLE_MODELS = "deepseek-flash";
+		try {
+			const { model } = assembleModel(OVERRIDE);
+			assert.deepEqual(model.input, ["text", "image"], "env 名单应覆盖「未声明」");
+		} finally {
+			delete process.env.VISION_CAPABLE_MODELS;
+		}
+	});
+
+	it("env 名单是精确匹配，不是子串包含（防 'flash' 误伤 'flash-vision'）", () => {
+		process.env.VISION_CAPABLE_MODELS = "deepseek-v4-pro";
+		try {
+			const { model } = assembleModel({ ...OVERRIDE, model: "deepseek-flash" });
+			assert.deepEqual(model.input, ["text"], "deepseek-flash 不在该名单里");
+		} finally {
+			delete process.env.VISION_CAPABLE_MODELS;
+		}
 	});
 
 	it("有 override：model / baseUrl 取会话注入值，providerId 为哈希派生", () => {
