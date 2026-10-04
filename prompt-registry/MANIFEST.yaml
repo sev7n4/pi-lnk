@@ -26,9 +26,9 @@ entries:
     order: 40
     contentHash: 7d7928afbcd2
   - id: canvas_view_policy
-    version: 1.0.0
+    version: 1.1.0
     order: 45
-    contentHash: b221cb0a91e9
+    contentHash: b98b888580b3
   - id: gen_tool_policy
     version: 1.0.0
     order: 50
