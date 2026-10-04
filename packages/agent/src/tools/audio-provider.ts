@@ -16,14 +16,6 @@ function resolveAudioOptions(voiceOrOpts?: string | AudioGenerateOptions): Audio
   return voiceOrOpts ?? {}
 }
 
-const PLACEHOLDER_MP3 = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
-
-export class PlaceholderAudioProvider implements AudioProvider {
-  async generate(): Promise<{ url: string }> {
-    return { url: PLACEHOLDER_MP3 }
-  }
-}
-
 export class OpenAITTSProvider implements AudioProvider {
   constructor(
     private apiKey: string,
@@ -56,46 +48,29 @@ export class OpenAITTSProvider implements AudioProvider {
   }
 }
 
-/** Agnes 暂无独立 TTS：先尝试 OpenAI 兼容 /audio/speech，失败则占位 MP3 */
-export class FallbackAudioProvider implements AudioProvider {
-  constructor(
-    private primary: AudioProvider,
-    private fallback: AudioProvider = new PlaceholderAudioProvider(),
-  ) {}
-
-  async generate(text: string, voiceOrOpts?: string | AudioGenerateOptions): Promise<{ url: string }> {
-    try {
-      return await this.primary.generate(text, voiceOrOpts)
-    } catch (err) {
-      console.warn('[AudioProvider] primary TTS failed, using fallback:', err)
-      return this.fallback.generate(text, voiceOrOpts)
-    }
-  }
-}
-
-function isAgnesBaseUrl(baseUrl?: string) {
-  return Boolean(baseUrl?.includes('agnes-ai.com') || baseUrl?.includes('agnes-ai.cn'))
-}
-
 export type ProviderCredentialOpts = { apiKey?: string; baseUrl?: string; model?: string }
 
+/**
+ * 构造音频 provider。**契约（2026-10-04 起）**：无凭据时抛错，上游失败时 `generate()` reject。
+ *
+ * ⚠️ 不要在此处重新引入「失败后返回占位音频」的兜底。生产曾因此产生 18/18 条
+ * `soundhelix.com` 示例曲的假成功记录：`hasTtsData` 全false、扣费 18 笔退款 0 笔，
+ * 而 Agnes 网关的 `/v1/audio/speech` 实测四个候选模型全 503 `model_not_found`。
+ * 失败必须冒泡到 `studio.service` 的 catch，由它退款并写failed 状态。
+ */
 export function createAudioProvider(opts?: ProviderCredentialOpts): AudioProvider {
   if (opts?.apiKey) {
-    const baseUrl = opts.baseUrl ?? 'https://api.openai.com/v1'
-    const model = opts.model ?? 'tts-1'
-    const tts = new OpenAITTSProvider(opts.apiKey, baseUrl, model)
-    if (isAgnesBaseUrl(baseUrl)) {
-      return new FallbackAudioProvider(tts)
-    }
-    return tts
+    return new OpenAITTSProvider(
+      opts.apiKey,
+      opts.baseUrl ?? 'https://api.openai.com/v1',
+      opts.model ?? 'tts-1',
+    )
   }
   const key = process.env.OPENAI_API_KEY
-  const baseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'
-  const model = process.env.OPENAI_TTS_MODEL ?? 'tts-1'
-  if (!key) return new PlaceholderAudioProvider()
-  const tts = new OpenAITTSProvider(key, baseUrl, model)
-  if (isAgnesBaseUrl(baseUrl)) {
-    return new FallbackAudioProvider(tts)
-  }
-  return tts
+  if (!key) throw new Error('音频通道未配置 API Key（OPENAI_API_KEY）')
+  return new OpenAITTSProvider(
+    key,
+    process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+    process.env.OPENAI_TTS_MODEL ?? 'tts-1',
+  )
 }
