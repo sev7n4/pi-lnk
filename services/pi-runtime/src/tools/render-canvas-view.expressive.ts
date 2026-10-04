@@ -432,17 +432,40 @@ export const MAX_NODES_PER_VIEW = 80;
 /**
  * 建议的收窄节点数：从超大画布里挑「最能代表关系」的一批。
  *
- * 不随机取 —— 随机抽会丢掉结构信息。取法：先按业务序号（有序的排前面），
- * 再按画布 y，且**优先保留有子节点的层级根**（它们是关系的骨架）。
+ * ## 取样规则（三段，顺序即优先级）
+ *
+ * 1. **层级根**（`parentNode ?? 出边> 0`）—— 关系的骨架，丢了图就退化成孤岛列表
+ * 2. **有业务序号的节点**（EP04在 EP05 前）—— 业务逻辑顺序
+ * 3. **其余**按画布位置 —— 兜底
+ *
+ * ## ⚠️ 为什么必须认「出边」而不是只看 `parentNode`
+ *
+ * 生产画布 `cmuptk4wz001bkz01gca02mv8` 实测 **63 个节点里 `parentNode` 全为空**，
+ * 层级完全靠 `edges` 的入边表达（大纲 → 6 个 EP → 各集素材）。
+ * 只看 `parentNode` 的版本在这些画布上**一个根都认不出** ⇒ 收窄后边从123 掉到 25，
+ * 图变成「一堆没有连线的框」—— 比不收窄更糟。
+ *
+ * `buildTreeSvg` 早就用「显式 parentNode 优先，否则用入边推断」，
+ * 这里必须**同一套判据**，否则「建议的 node_ids」与「渲染出的层级」会不一致。
  */
-export function suggestNodeIds(nodesIn: readonly GvNode[], limit = MAX_NODES_PER_VIEW): string[] {
+export function suggestNodeIds(
+	nodesIn: readonly GvNode[],
+	limit = MAX_NODES_PER_VIEW,
+	edgesIn: readonly GvEdge[] = [],
+): string[] {
+	const hasOut = new Set<string>();
+	for (const e of edgesIn) hasOut.add(e.source);
+	const known = new Set(nodesIn.map((n) => n.id));
+	const isRoot = (n: GvNode) =>
+		Boolean(n.parentNode && known.has(n.parentNode)) === false && hasOut.has(n.id);
+
 	const withOrd = nodesIn.filter((n) => businessOrder(n.title) !== undefined);
 	const without = nodesIn.filter((n) => businessOrder(n.title) === undefined);
 	const ordered = [...orderNodes(withOrd), ...orderNodes(without)];
-	// 层级根优先（它们是关系的骨架），再按业务序
-	const roots = ordered.filter((n) => nodesIn.some((m) => m.parentNode === n.id));
-	const rest = ordered.filter((n) => !roots.includes(n));
-	return [...roots, ...rest].slice(0, limit).map((n) => n.id);
+
+	const roots = ordered.filter(isRoot);
+	const rest = ordered.filter((n) => !isRoot(n));
+	return [...roots, ...rest].slice(0, Math.max(0, limit)).map((n) => n.id);
 }
 
 /** 体积诊断：供测试与错误信息复用，避免各处重算。 */

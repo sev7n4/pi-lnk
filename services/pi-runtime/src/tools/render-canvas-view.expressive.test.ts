@@ -16,6 +16,7 @@ import {
 	sortNodes,
 	auditOrder,
 	SVG_MAX_CHARS,
+	suggestNodeIds,
 } from "./render-canvas-view.expressive.js";
 import {
 	buildLayoutSvg,
@@ -657,5 +658,81 @@ describe("尺寸预算：63 节点的真实画布必须能出图", () => {
 
 	it("阈值来自单一常量（改一处即可，不是散落各处的魔法数）", () => {
 		assert.equal(SVG_MAX_CHARS, 20000, "须与 present-result.ts 的 SVG_MAX_CHARS 一致");
+	});
+});
+
+// ══════════════════════════════════════════════════════════
+// 11. suggestNodeIds 必须保住层级骨架（真实画布 parentNode 全空）
+// ══════════════════════════════════════════════════════════
+describe("suggestNodeIds：收窄时保住层级骨架", () => {
+	/**
+	 * 生产真实形状（2026-10-05 取自画布 `cmuptk4wz001bkz01gca02mv8`）：
+	 * **63 节点 / 123 边 / `parentNode` 全部为空** —— 层级只能靠 edges 的入边推。
+	 * 26 个节点有出边（即真实的层级根），出度最高 18。
+	 */
+	const REAL = (() => {
+		const nodes = [];
+		const edges = [];
+		// 2 个剧本层根+ 6 个 EP + 1 个资产表 + 1 个分镜脚本
+		const promptIds = ["pos", "out", "ep1", "ep2", "ep3", "ep4", "ep5", "ep6", "assets", "storyboard"];
+		promptIds.forEach((id, i) =>
+			nodes.push({ id: `p-${id}`, type: "prompt", title: i === 0 ? "原創定位" : i === 1 ? "全劇大綱" : `EP0${i - 1}《标题》`, position: { x: 0, y: i * 100 } }),
+		);
+		edges.push({ source: "p-pos", target: "p-out" });
+		for (const ep of ["ep1", "ep2", "ep3", "ep4", "ep5", "ep6"]) edges.push({ source: "p-out", target: `p-${ep}` });
+		edges.push({ source: "p-out", target: "p-assets" });
+		edges.push({ source: "p-ep1", target: "p-storyboard" });
+		// 46 个 image + 7 个 video：挂在各EP 下面（形成 123 条边的星型）
+		for (let i = 0; i < 46; i++) {
+			const id = `i-${i}`;
+			nodes.push({ id, type: "image", title: `角色三视图 ${i}`, position: { x: 300, y: i * 30 }, status: "completed" });
+			edges.push({ source: `p-ep${(i % 6) + 1}`, target: id });
+			if (i > 0) edges.push({ source: `i-${i - 1}`, target: id });
+		}
+		for (let i = 0; i < 7; i++) {
+			const id = `v-${i}`;
+			nodes.push({ id, type: "video", title: `EP01 正片 ${i}`, position: { x: 600, y: i * 40 } });
+			edges.push({ source: "p-ep1", target: id });
+		}
+		return { nodes, edges };
+	})();
+
+	/** 真实层级根 = 有出边的节点（parentNode 空时的唯一线索）。 */
+	function rootsOf(nodes: { id: string }[], edges: Array<{ source: string; target: string }>): Set<string> {
+		const s = new Set<string>();
+		for (const e of edges) s.add(e.source);
+		return s;
+	}
+
+	it("parentNode 全空时，靠 edges 出边认层级根（真实画布形状）", () => {
+		const roots = rootsOf(REAL.nodes, REAL.edges);
+		const got = new Set(suggestNodeIds(REAL.nodes, REAL.nodes.length, REAL.edges));
+		for (const r of roots) {
+			assert.ok(got.has(r), `层级根 ${r} 不应被丢掉`);
+		}
+	});
+
+	it("收窄到一半时层级根仍全部保留", () => {
+		const half = Math.floor(REAL.nodes.length / 2);
+		const got = new Set(suggestNodeIds(REAL.nodes, half, REAL.edges));
+		const roots = rootsOf(REAL.nodes, REAL.edges);
+		const kept = [...roots].filter((r) => got.has(r)).length;
+		assert.ok(
+			kept >= Math.min(roots.size, half),
+			`层级根应优先保留：${kept}/${roots.size}（half=${half}）`,
+		);
+	});
+
+	it("收窄后仍保留可观的边（否则图会退化成孤岛列表）", () => {
+		const ids = new Set(suggestNodeIds(REAL.nodes, 40, REAL.edges));
+		const kept = REAL.edges.filter((e) => ids.has(e.source) && ids.has(e.target)).length;
+		assert.ok(kept >= 30, `收窄到 40 后应保留 ≥30 条边，实际 ${kept}/123 —— 太少说明取样策略错了`);
+	});
+
+	it("业务序仍然优先（EP01 在 EP02 前），不能因为「保根」而打乱", () => {
+		const ids = suggestNodeIds(REAL.nodes, REAL.nodes.length, REAL.edges);
+		const i1 = ids.indexOf("p-ep1");
+		const i2 = ids.indexOf("p-ep2");
+		assert.ok(i1 < i2, "EP01 应在 EP02 之前");
 	});
 });

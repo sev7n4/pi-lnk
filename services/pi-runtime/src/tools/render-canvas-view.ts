@@ -586,7 +586,8 @@ export function createRenderCanvasViewTools(deps: {
 				// 这里提前拦住并给出可执行的补救（收窄到哪些节点）。
 				const budget = svgBudgetReport(svg);
 				if (budget.over) {
-					const suggested = suggestNodeIds(gvNodes);
+					// ⚠️ 必须传 gvEdges：真实画布 parentNode 全空，层级只能靠出边认（见 suggestNodeIds 注释）
+					const suggested = suggestNodeIds(gvNodes, MAX_NODES_PER_VIEW, gvEdges);
 					return fail(
 						`画布规模超出单张卡片上限：${nodes.length} 个节点会产出约 ${budget.bytes} 字节，` +
 							`超过 ${20000} 字节上限（超出会被整块丢弃，用户看不到图）。` +
