@@ -6,7 +6,7 @@ import { ToolMetrics } from "./tool-metrics.js";
 test("tool_calls_total 按 tool|result 聚合并渲染", () => {
 	// 2026-10-04：计数改由事件层结算（ToolMetrics），本用例改为经公开 API 投喂事件。
 	const m = new Metrics();
-	const tm = m.toolMetricsForTest();
+	const tm = m.toolMetrics();
 	const feed = (id: string, tool: string, isError: boolean, resultText = "ok") => {
 		tm.observeStart({ toolCallId: id });
 		tm.observeEnd({
@@ -255,8 +255,8 @@ test("render 追加工具指标族，且既有指标输出不变", () => {
 
 test("tool_calls_total 全局只渲染一次（新旧渲染方不共存）", () => {
 	const m = new Metrics();
-	m.toolMetricsForTest().observeStart({ toolCallId: "d1" });
-	m.toolMetricsForTest().observeEnd({
+	m.toolMetrics().observeStart({ toolCallId: "d1" });
+	m.toolMetrics().observeEnd({
 		toolName: "save_memory", toolCallId: "d1", isError: false, terminate: false,
 		resultText: "ok", channel: "agnes", model: "agnes-2.5-flash",
 	});

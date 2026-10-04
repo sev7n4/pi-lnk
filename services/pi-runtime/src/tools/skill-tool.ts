@@ -40,8 +40,8 @@ export function createSkillTools(entries: SkillIndexEntry[], metrics: Metrics): 
 						content: [{ type: "text" as const, text: JSON.stringify({ ok: true, body: loaded.body }) }],
 						details: { ok: true as const, body: loaded.body },
 					};
-			} catch (err) {
-				metrics.observeSkillLoad(entry.name, "read_error");
+				} catch (err) {
+					metrics.observeSkillLoad(entry.name, "read_error");
 					const msg = err instanceof Error ? err.message : String(err);
 					return {
 						content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: msg }) }],

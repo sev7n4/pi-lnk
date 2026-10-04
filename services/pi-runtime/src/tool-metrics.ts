@@ -48,8 +48,21 @@ function newHist(): Hist {
 	return { count: 0, sum: 0, buckets: DURATION_BUCKETS.map(() => 0) };
 }
 
-/** LLM 调用阶段闭集（spec §4.2）。 */
-export type LlmStage = "main_turn" | "compaction" | "tool_result_summarize" | "deferred";
+/**
+ * LLM 调用阶段闭集（spec §4.2）。
+ *
+ * ⚠️ `"unknown"` **不是真实阶段**，而是「vendor 事件不足以判定阶段」的显式占位。
+ * 见 `session-manager.ts` 里 `retry_scheduled` 订阅处的完整说明：vendor 有三处
+ * 发这个事件（主轮 / compaction / branch_summary），但载荷里没有任何字段能区分它们
+ * （`step` 两侧都是 uuid7，`maxAttempts`/`delayMs` 两侧都取同一个 retryPolicy，
+ * in-run compaction 的 `runId` 与主轮同一个 operation）。**宁可挂 `unknown` 让
+ * 缺口在看板上可见，也不要写一个猜测的映射**——后者会把错误映射成看似精确的数据，
+ * 比现在这个硬编码更糟。
+ *
+ * 消掉它的办法在 vendor 侧：给事件加一个判别字段（如 `stage` 或 `kind`）。
+ * 该字段落地后把本行改成调用方传入即可，无需改动结算器与渲染。
+ */
+export type LlmStage = "main_turn" | "compaction" | "tool_result_summarize" | "deferred" | "unknown";
 
 export interface ToolLifecycleEvent {
 	toolName: string;

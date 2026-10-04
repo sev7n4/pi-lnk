@@ -29,16 +29,16 @@ const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
 /** 工具结果体积直方图桶（字节）（③：工具结果 token 观测的原始量）。 */
 const BYTES_BUCKETS = [256, 1024, 4096, 16384, 65536, 262144, 1_048_576];
 
-	/**
-	 * 工具调用的结果与错误分类（③）；`retry` 为 V-γ 重试放行打点（非错误）。
-	 *
-	 * ⚠️ 本类型现在只是 `pi_runtime_tool_error_kinds_total` 的**label 取值域**。
-	 * 计数职责已移交事件层的 `ToolMetrics`（见 `tool-metrics.ts`），
-	 * `observeToolCall` / `tool_calls_total` 的旧渲染方已于 2026-10-04 删除
-	 * （两者同时渲染会让 Prometheus 报 `second HELP line for metric name` 并丢弃整个指标）。
-	 * `gate_blocked` / `retry` 暂无写入方：HITL 拦截与重试放行的归因改由
-	 * `retry_scheduled` 事件驱动 `pi_runtime_llm_retries_total` 承担。
-	 */
+/**
+ * 工具调用的结果与错误分类（③）；`retry` 为 V-γ 重试放行打点（非错误）。
+ *
+ * ⚠️ 本类型现在只是 `pi_runtime_tool_error_kinds_total` 的**label 取值域**。
+ * 计数职责已移交事件层的 `ToolMetrics`（见 `tool-metrics.ts`），
+ * `observeToolCall` / `tool_calls_total` 的旧渲染方已于 2026-10-04 删除
+ * （两者同时渲染会让 Prometheus 报 `second HELP line for metric name` 并丢弃整个指标）。
+ * `gate_blocked` / `retry` 暂无写入方：HITL 拦截与重试放行的归因改由
+ * `retry_scheduled` 事件驱动 `pi_runtime_llm_retries_total` 承担。
+ */
 export type ToolErrorKind =
 	| "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network" | "gate_blocked" | "retry";
 
@@ -98,11 +98,22 @@ export class Metrics {
 	 * 它是 `pi_runtime_tool_calls_total` 的**唯一渲染方**（旧的 `kind` label 渲染块已删，
 	 * 否则同名指标出现两行 HELP 会让 Prometheus 丢弃整个指标）。
 	 */
-	private readonly toolMetrics = new ToolMetrics();
+	// 字段名刻意带 `Settler` 后缀：不能叫 `toolMetrics`——那会与下面的
+	// `toolMetrics()` 方法同名，类字段定义会覆盖原型方法（实测 `metrics.toolMetrics
+	// is not a function`，7/9 用例红）。
+	private readonly toolMetricsSettler = new ToolMetrics();
 
-	/** 事件层结算器。session-manager 在 attachEvents 里喂事件；测试直接驱动。 */
-	toolMetricsForTest(): ToolMetrics {
-		return this.toolMetrics;
+	/**
+	 * 事件层结算器。**生产代码也调它**（`session-manager.ts` 的 `attachEvents` 喂事件），
+	 * 测试则直接驱动同一实例。
+	 *
+	 * 刻意**不叫** `toolMetricsForTest()`：本仓 `ForTest` 后缀的既有语义是
+	 * 「仅供测试的只读窥视」（见 `tool-metrics.ts` 的 `inflightSizeForTest()`、
+	 * `session-manager.ts` 的 `resolveSystemPromptForTest()`），本仓没有任何
+	 * 「生产代码调用 `ForTest` 方法」的先例。沿用那个后缀会让后来读者误判可见性边界。
+	 */
+	toolMetrics(): ToolMetrics {
+		return this.toolMetricsSettler;
 	}
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
@@ -504,7 +515,7 @@ export class Metrics {
 		}
 
 		// 事件层结算器在**尾部追加**：既有指标族的输出顺序与内容逐字不变，只在末尾多出工具/LLM 族。
-		this.toolMetrics.renderInto(lines);
+		this.toolMetricsSettler.renderInto(lines);
 
 		return `${lines.join("\n")}\n`;
 	}

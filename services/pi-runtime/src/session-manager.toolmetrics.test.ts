@@ -1,12 +1,17 @@
 /**
  * 事件层结算的**端到端接线**测试（spec §3.2）。
  *
- * 为什么必须派发真事件、不能只驱动 `toolMetricsForTest()`：
+ * 为什么必须派发真事件、不能只驱动 `toolMetrics()`：
  * 后者只证明 ToolMetrics 能渲染，证明不了 `attachEvents` 真的订阅了
  * `tool_start`/`tool_end`。**变异验证实测**：把 `attachEvents` 里 `tool_end`
- * 分支的 `observeEnd(...)` 整段注释掉后，只驱动 `toolMetricsForTest()` 的用例
+ * 分支的 `observeEnd(...)` 整段注释掉后，只驱动 `toolMetrics()` 的用例
  * **依然全绿**（2/2 pass）——它对接线完全不可证伪。
  * 本文件用真事件派发堵上这个洞：注释掉接线 ⇒ 用例必红。
+ *
+ * label 断言一律**写死具体值**，不用 `[^"]+` 通配：通配能匹配任意字符串，
+ * 把 `channel: entry.identity.provider` 误写成 `channel: "x"` 照样绿，
+ * 等于没锁住「channel/model 只能取 LlmIdentity」这条硬约束。
+ * （本测试环境实测 `identity` 恒为 `{provider:"agnes", model:"agnes-2.5-pro"}`。）
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -164,7 +169,7 @@ test("只有 tool_end 没有 tool_start：只计数不记时长（孤儿保护�
 		false,
 		"孤儿事件污染了时长直方图",
 	);
-	assert.equal(metrics.toolMetricsForTest().stats().orphaned, 1);
+	assert.equal(metrics.toolMetrics().stats().orphaned, 1);
 });
 
 test("重放同一 toolCallId 的 end：幂等，不双计（接线层不绕过幂等）", async () => {
@@ -185,7 +190,7 @@ test("重放同一 toolCallId 的 end：幂等，不双计（接线层不绕过�
 
 	const out = metrics.render(0, "test");
 	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="ok"\} 1/, "重放被双计");
-	assert.equal(metrics.toolMetricsForTest().stats().duplicates, 1);
+	assert.equal(metrics.toolMetrics().stats().duplicates, 1);
 });
 
 test("retry_scheduled 事件驱动 llm_retries（不进 SSE，只进指标）", async () => {
@@ -194,9 +199,25 @@ test("retry_scheduled 事件驱动 llm_retries（不进 SSE，只进指标）", 
 
 	events.emit("retry_scheduled", { attempt: 1, errorMessage: "rate limited" });
 
+	// `stage` 写死 `"unknown"` 而非通配：vendor 三处 retry_scheduled（主轮/compaction/
+	// branch_summary）载荷无法区分，本仓诚实报 unknown（理由见 session-manager 该订阅处注释）。
+	// 断言写死具体值，才能杀死「stage 被改成任何别的值」的变异。
 	assert.match(
 		metrics.render(0, "test"),
-		/pi_runtime_llm_retries_total\{stage="main_turn",channel="[^"]+",model="[^"]+"\} 1/,
+		/pi_runtime_llm_retries_total\{stage="unknown",channel="agnes",model="agnes-2\.5-pro"\} 1/,
+	);
+});
+
+test("retry_scheduled 不得被误标成 main_turn（压缩重试混进主轮即视为回归）", async () => {
+	const metrics = new Metrics();
+	const { events } = await makeManager(metrics);
+
+	events.emit("retry_scheduled", { attempt: 1, errorMessage: "rate limited" });
+
+	assert.equal(
+		/pi_runtime_llm_retries_total\{stage="main_turn"/.test(metrics.render(0, "test")),
+		false,
+		"vendor 三处 retry_scheduled 语义不同，载荷无法判定阶段；标 main_turn 是在撒谎",
 	);
 });
 
