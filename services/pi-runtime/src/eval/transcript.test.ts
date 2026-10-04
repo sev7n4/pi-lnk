@@ -226,3 +226,76 @@ describe("⭐ foldRuntimeEvents：生产实测载荷（2026-10-04 校正）", ()
 		assert.equal(t.completed, true);
 	});
 });
+
+
+describe("⭐⭐ foldRuntimeEvents：生产实测的流式累积快照（2026-10-04）", () => {
+	/**
+	 * ⭐⭐ 这是评测里**最隐蔽**的一类假绿：折叠出来的 `assistantText`
+	 * 是阶梯状重复，而**基于文本的判据（forbidText/expectTextIncludes）
+	 * 仍然「通过」** ⇒ 基线看起来正常，实际文本完全失真。
+	 *
+	 * 实测数据（话术「先别画了，我改主意了」，真实画布 + 真实规则集）：
+	 * 132 个 `message_update`，而 transcript 里的 assistantText 是
+	 * `"好的，\n好的，当前\n好的，当前画\n好的，当前画布\n…"`
+	 *（同一句话被追加了 17 次）—— 而模型实际只说了一句。
+	 *
+	 * 根因：`message_update` 带的是**累积快照**（当前全文），
+	 * 而 `mergeText` 的「真增量」分支把每次都**追加**了。
+	 */
+	function snapshot(text: string) {
+		return {
+			type: "message_update",
+			data: { type: "message_update", message: { role: "assistant", content: [{ type: "text", text }] } },
+		};
+	}
+	const FINAL = {
+		type: "message_end",
+		data: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "好的，当前画布上只有两个提示词节点。" }] } },
+	} as const;
+
+	it("⭐ 累积快照序列不得产生阶梯重复", () => {
+		// 复刻实测形态：每步都是「到目前为止的全文」
+		const growing = ["好", "好的", "好的，", "好的，当前", "好的，当前画布", "好的，当前画布上只有两个提示词节点。"];
+		const t = foldRuntimeEvents([...growing.map(snapshot), FINAL]);
+		assert.equal(
+			t.assistantText,
+			"好的，当前画布上只有两个提示词节点。",
+			`assistantText 必须是最终全文，实际="${t.assistantText}"`,
+		);
+		assert.equal(
+			t.assistantText.indexOf("好的，当前画布上"),
+			t.assistantText.lastIndexOf("好的，当前画布上"),
+			"同一段不得出现两次",
+		);
+	});
+
+	it("⭐ message_end 权威替换：即使与快照不一致也不留残留", () => {
+		// 场景：最后一块 message_end 只含尾部（与累积快照不一致）
+		const t = foldRuntimeEvents([snapshot("前面一段残留。"), FINAL]);
+		assert.equal(
+			t.assistantText,
+			"好的，当前画布上只有两个提示词节点。",
+			`message_end 应替换掉之前的残留，实际="${t.assistantText}"`,
+		);
+		assert.equal(t.assistantText.includes("前面一段残留"), false, "不该保留旧块的文本");
+	});
+
+	it("⭐ 多轮对话：最后一条 message_end 胜出", () => {
+		const t = foldRuntimeEvents([
+			snapshot("第一轮回答"),
+			FINAL,
+			snapshot("第二轮回答草稿"),
+			{
+				type: "message_end",
+				data: { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "第二轮最终回答" }] } },
+			},
+		]);
+		assert.equal(t.assistantText, "第二轮最终回答", "应取最后一条 message_end");
+	});
+
+	it("⚠️ 连续两次相同快照不应重复（幂等）", () => {
+		const one = snapshot("一样的文本");
+		const t = foldRuntimeEvents([one, one, one]);
+		assert.equal(t.assistantText, "一样的文本");
+	});
+});
