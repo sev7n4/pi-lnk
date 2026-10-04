@@ -228,6 +228,7 @@ export function svgHeader(height: number, extraCss = ""): string {
 		`<path d="M2 1L8 5L2 9" fill="none" stroke="#534AB7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` +
 		`</marker></defs>` +
 		`<style>.gv-t{font:12px sans-serif;fill:#334}.gv-s{font:11px sans-serif;fill:#5F5E5A}` +
+		`.gv-warn{font:11px sans-serif;fill:#A32D2D}` +
 		`.gv-e{stroke:#8aa;stroke-width:1.5;fill:none}.gvl{font:11px sans-serif;fill:#888780}</style>` +
 		extraCss
 	);
@@ -258,4 +259,111 @@ export function usedTypes(nodes: readonly GvNode[]): Array<{ label: string; pale
 		if (!seen.includes(t)) seen.push(t);
 	}
 	return seen.map((t) => ({ label: t, palette: NODE_PALETTE[t] ?? NODE_PALETTE.default }));
+}
+
+// ══════════════════════════════════════════════════════════
+// 带圈序号：表达「这是第几个」
+// ══════════════════════════════════════════════════════════
+
+/** ①..⑳ �� ㉑（带圈数字）。超出范围返回 undefined（不编造字符）。 */
+const CIRCLED = [
+	"①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩",
+	"⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳",
+	"㉑","㉒","㉓","㉔","㉕","㉖","㉗","㉘","㉙","㉚",
+];
+
+/** 第 n 个（1-based）的带圈序号；超出 30 降级为普通数字「31.」而不是编造字符。 */
+export function ordinal(n: number): string {
+	return CIRCLED[n - 1] ?? `${n}.`;
+}
+
+// ══════════════════════════════════════════════════════════
+// 顺序校验：画布上摆错的节点要能被指出来
+// ══════════════════════════════════════════════════════════
+
+export interface MisplacedNode {
+	id: string;
+	title: string;
+	/** 业务序（1-based，按 `orderNodes`）。 */
+	businessIndex: number;
+	/** 画布序（1-based，按 `position.y`）。 */
+	canvasIndex: number;
+}
+
+/**
+ * 校验「画布上的摆放顺序」是否与「业务顺序」一致。
+ *
+ * ## 为什么需要（2026-10-05 用户明确要求）
+ *
+ * > 必须是实际的业务序，画布上画的可能是 AI 或人工搭建的，是错的，
+ * > 需要通过这个来指导 AI 正确地自主搭建工作流。
+ *
+ * 卡片**按业务序渲染**（纠正错位），但光纠正不够 —— 用户还得知道**画布本身错了**，
+ * 否则下次 AI 再按同样的错位搭一遍。⇒ 错位节点要打标记并在卡片上说明。
+ *
+ * ⚠️ 只在「两侧都存在业务序号」时才有意义：一个都没有（纯无序节点）⇒ 无法判定错位。
+ * 部分有（混合）⇒ 只在有业务序号的子集内比较，不牵连无序节点。
+ */
+export function auditOrder(nodesIn: readonly GvNode[]): {
+	misplaced: MisplacedNode[];
+	/** 参与比较的节点数（有业务序号的）。 */
+	compared: number;
+} {
+	const withOrd = nodesIn
+		.map((n) => ({ n, ord: businessOrder(n.title) }))
+		.filter((x) => x.ord !== undefined);
+	if (withOrd.length < 2) return { misplaced: [], compared: withOrd.length };
+
+	// 业务序：按 `orderNodes` 的规则（序号 → 画布 y → x → 原序）
+	const business = orderNodes(withOrd.map((x) => x.n));
+	// 画布序：只按画布位置（这才是「用户摆成什么样」）
+	const byCanvas = [...withOrd]
+		.map((x, i) => ({ n: x.n, i }))
+		.sort(
+			(a, b) =>
+				(a.n.position?.y ?? 0) - (b.n.position?.y ?? 0) ||
+				(a.n.position?.x ?? 0) - (b.n.position?.x ?? 0) ||
+				a.i - b.i,
+		)
+		.map((x) => x.n);
+
+	const businessIndex = new Map(business.map((n, i) => [n.id, i + 1]));
+	const canvasIndex = new Map(byCanvas.map((n, i) => [n.id, i + 1]));
+	const misplaced: MisplacedNode[] = [];
+	for (const n of byCanvas) {
+		const b = businessIndex.get(n.id)!;
+		const c = canvasIndex.get(n.id)!;
+		if (b !== c) {
+			misplaced.push({ id: n.id, title: n.title ?? n.id, businessIndex: b, canvasIndex: c });
+		}
+	}
+	return { misplaced, compared: withOrd.length };
+}
+
+/** 取一组节点的「共同群组后缀」（`标题· 群组` 里的群组），出现 ≥2 次才算「重复」。 */
+export function commonSuffixes(nodesIn: readonly GvNode[]): Map<string, string> {
+	const counts = new Map<string, number>();
+	for (const n of nodesIn) {
+		const parts = String(n.title ?? "").split("·");
+		if (parts.length < 2) continue;
+		const suf = parts.slice(1).join("·").trim();
+		if (suf) counts.set(suf, (counts.get(suf) ?? 0) + 1);
+	}
+	const out = new Map<string, string>();
+	for (const [suf, c] of counts) if (c >= 2) out.set(suf, String(c));
+	return out;
+}
+
+/** 剥掉重复的群组后缀：把 6 个「…· 森林偵探社」压成6 个「…」+ 图例里 1 行群组名。 */
+export function shortLabels(nodesIn: readonly GvNode[]): Array<{ n: GvNode; label: string }> {
+	const common = commonSuffixes(nodesIn);
+	return nodesIn.map((n) => {
+		const full = String(n.title ?? n.id);
+		if (common.size === 0) return { n, label: full };
+		const parts = full.split("·");
+		if (parts.length < 2) return { n, label: full };
+		const head = parts[0].trim();
+		const tail = parts.slice(1).join("·").trim();
+		return { n, label: common.has(tail) ? head || full : full };
+	});
 }

@@ -16,10 +16,12 @@ import {
 	sortNodes,
 } from "./render-canvas-view.expressive.js";
 import {
+	buildLayoutSvg,
 	buildMatrixSvg,
 	buildSwimlaneSvg,
 	buildTreeSvg,
 } from "./render-canvas-view.views.js";
+import { auditOrder } from "./render-canvas-view.expressive.js";
 
 /** 真实场景形状：大纲 → EP01..EP06（画布 y 坐标把 EP05 放在 EP04 前面）。 */
 const LAYOUT = {
@@ -54,8 +56,8 @@ async function run(tool: ReturnType<typeof makeTool>, params: unknown) {
 }
 type Details = { ok: boolean; error?: string; missing?: string[]; canvasCommands?: Array<{ svg: string; title?: string }> };
 
-async function svgOf(params: unknown): Promise<string> {
-	const r = await run(makeTool(), params);
+async function svgOf(params: unknown, layout: unknown = LAYOUT): Promise<string> {
+	const r = await run(makeTool(layout), params);
 	const d = r.details as Details;
 	assert.equal(d.ok, true, `期望成功，实际 error=${d.error}`);
 	return d.canvasCommands![0].svg;
@@ -396,5 +398,169 @@ describe("三维正交：view / relation / groupBy 独立", () => {
 			const svg = await svgOf({ view });
 			assert.match(svg, /data-legend/, `${view} 缺少图例`);
 		}
+	});
+});
+
+// ══════════════════════════════════════════════════════════
+// 8. 标签简洁性（评审要求：一眼看懂这个节点是什么）
+// ══════════════════════════════════════════════════════════
+describe("节点标签：简洁且能表达清楚这个节点", () => {
+	it("剥离重复的群组后缀（6 个节点都叫「· 森林侦探社」⇒ 噪声）", () => {
+		const nodes = [
+			{ id: "a", type: "prompt", title: "EP01《長老之死》· 森林偵探社" },
+			{ id: "b", type: "prompt", title: "EP02《七道密碼》· 森林偵探社" },
+			{ id: "c", type: "prompt", title: "EP03《記憶碎片》· 森林偵探社" },
+		];
+		const svg = buildTreeSvg(nodes as never, [] as never);
+		// ⚠️ 判据是「**节点标签里**没有群组后缀」，不是「全图没有」——
+		// 折叠掉的后缀会补进图例（折叠 ≠ 丢信息）。
+		// 取节点标签：data-node 的 <g> 里紧跟的第一个 <text>（非贪婪，别跨到别的节点）
+		const nodeLabels = [...svg.matchAll(/<g data-node="[^"]*"[^>]*>\s*<rect[^>]*\/>\s*<text[^>]*>([^<]*)<\/text>/g)].map(
+			(m) => m[1],
+		);
+		assert.ok(nodeLabels.length >= 3, `应取到 3 个节点标签，实际 ${nodeLabels.length}`);
+		assert.equal(
+			nodeLabels.some((t) => t.includes("森林偵探社")),
+			false,
+			`节点标签里不该有重复群组后缀，实际：${JSON.stringify(nodeLabels)}`,
+		);
+		// 主体名称必须保留（可能被宽度截断成「EP01《長老之…」⇒ 断到EP 编号即可）
+		assert.ok(
+			nodeLabels.some((t) => t.includes("EP01")),
+			`主体名称必须保留，实际：${JSON.stringify(nodeLabels)}`,
+		);
+		assert.equal(
+			nodeLabels.some((t) => t.includes("《") && !t.includes("…") && t.includes("《") && t.split("《")[1].length < 4),
+			false,
+			`书名号内不应被截断（宁可少画不断字）：${JSON.stringify(nodeLabels)}`,
+		);
+	});
+
+	it("群组名进图例（折叠掉≠丢信息）", () => {
+		const nodes = [
+			{ id: "a", type: "prompt", title: "EP01《長老之死》· 森林偵探社" },
+			{ id: "b", type: "prompt", title: "EP02《七道密碼》· 森林偵探社" },
+		];
+		const svg = buildTreeSvg(nodes as never, [] as never);
+		assert.match(svg, /森林偵探社/, "被折叠的群组名必须在图例里出现");
+	});
+
+	it("标签叠加业务序号 ①②③（用户明确要求）", () => {
+		const nodes = [
+			{ id: "a", type: "prompt", title: "原創定位" },
+			{ id: "b", type: "prompt", title: "EP01《長老之死》" },
+			{ id: "c", type: "prompt", title: "EP02《七道密碼》" },
+			{ id: "d", type: "prompt", title: "EP03《記憶碎片》" },
+			{ id: "e", type: "prompt", title: "EP04《血契真相》" },
+			{ id: "f", type: "prompt", title: "EP05《暗影現身》" },
+			{ id: "g", type: "prompt", title: "EP06《最終密碼》" },
+			{ id: "h", type: "prompt", title: "EP07" },
+			{ id: "i", type: "prompt", title: "EP08" },
+			{ id: "j", type: "prompt", title: "EP09" },
+			{ id: "k", type: "prompt", title: "EP10" },
+			{ id: "l", type: "prompt", title: "EP11" },
+		];
+		const svg = buildTreeSvg(nodes as never, [] as never);
+		// ①..⑫ —— 业务序号用带圈数字，表达"这是第几个"
+		assert.match(svg, /①/, "第 1 个节点应带 ①");
+		assert.match(svg, /②/, "第 2 个节点应带 ②");
+		assert.match(svg, /③/, "第 3 个节点应带 ③");
+		// 超过 ⑩ 之后要降级（不能编造不存在的字符）
+		assert.ok(svg.includes("⑪") || svg.includes("11") || svg.includes("⑩"), "第 11 个应有降级表示");
+		// 序号必须在**同一个 text 元素内**（不是另起一行）
+		// ⭐ 序号 = **渲染位置序**（图上第几个），不是业务序号。
+		// 「原創定位」无业务序号 ⇒ 排在EP01..EP11 之后 ⇒ 拿 ⑫。这是正确的：
+		// 序号回答「这是图上第几个」，业务顺序由排布本身表达。
+		const firstText = /<text[^>]*>([^<]*原創定位[^<]*)<\/text>/.exec(svg);
+		assert.ok(firstText, "找不到含「原創定位」的 text");
+		assert.match(firstText![1], /\S+\s*原創定位/, `序号应与名称同一标签内，实际 ${JSON.stringify(firstText![1])}`);
+	});
+
+	it("序号反映**业务序**不是画布序（画布乱序时序号仍连续）", () => {
+		const nodes = [
+			{ id: "a", type: "prompt", title: "EP01", position: { x: 0, y: 500 } },
+			{ id: "b", type: "prompt", title: "EP02", position: { x: 0, y: 100 } },
+			{ id: "c", type: "prompt", title: "EP03", position: { x: 0, y: 300 } },
+		];
+		const svg = buildTreeSvg(nodes as never, [] as never);
+		// 标签形如 `<text ...>① EP01</text>`，用正则直接抓「序号 + 名称」的配对关系
+		const pairs = [...svg.matchAll(/<text[^>]*>([①②③]) ?(EP0\d)/g)].map((m) => [m[1], m[2]]);
+		assert.deepEqual(
+			pairs.slice(0, 3),
+			[["①", "EP01"], ["②", "EP02"], ["③", "EP03"]],
+			"序号应与业务序对应（画布y乱序时序号仍连续）",
+		);
+	});
+
+	it("类型标签可开关（默认不显示 —— 颜色 + 图例已表达，写出来只是噪音）", () => {
+		const nodes = [
+			{ id: "a", type: "prompt", title: "EP01" },
+			{ id: "b", type: "image", title: "EP02" },
+		];
+		const without = buildLayoutSvg(nodes as never, [] as never, { drawEdges: false });
+		const withType = buildLayoutSvg(nodes as never, [] as never, { drawEdges: false, showType: true });
+		assert.ok(
+			withType.length > without.length,
+			`showType=true 应输出更多：${without.length} → ${withType.length}`,
+		);
+		assert.equal(/>① EP01 prompt</.test(withType), true, "开启后类型应出现在标签内");
+		assert.equal(/>① EP01 prompt</.test(without), false, "默认不应显示类型");
+	});
+});
+
+// ══════════════════════════════════════════════════════════
+// 9. 顺序校验：画布序vs 业务序不一致要能被发现
+// ══════════════════════════════════════════════════════════
+describe("顺序校验：发现画布上的顺序错误", () => {
+	it("auditOrder 报出「画布上放错位」的节点", () => {
+		const nodes = [
+			{ id: "a", title: "EP01", position: { x: 0, y: 0 } },
+			{ id: "b", title: "EP02", position: { x: 0, y: 100 } },
+			{ id: "c", title: "EP03", position: { x: 0, y: 300 } },
+			{ id: "d", title: "EP04", position: { x: 0, y: 200 } },
+		];
+		const audit = auditOrder(nodes);
+		// EP03(y=300) 与 EP04(y=200) 互换⇒ 两者都错位
+		assert.equal(audit.misplaced.length, 2, `应报出 2 个错位，实际 ${JSON.stringify(audit.misplaced)}`);
+		assert.ok(
+			audit.misplaced.some((m) => m.title.includes("EP03")),
+			"EP03 应被报为错位",
+		);
+	});
+
+	it("画布序正确时无错位", () => {
+		const nodes = [
+			{ id: "a", title: "EP01", position: { x: 0, y: 0 } },
+			{ id: "b", title: "EP02", position: { x: 0, y: 100 } },
+			{ id: "c", title: "EP03", position: { x: 0, y: 200 } },
+		];
+		assert.equal(auditOrder(nodes).misplaced.length, 0);
+	});
+
+	it("错位信息能渲到卡片上（data-misplaced 标记 + 说明行）", async () => {
+		const layout = {
+			nodes: [
+				{ id: "a", type: "prompt", title: "EP01", position: { x: 0, y: 0 } },
+				{ id: "b", type: "prompt", title: "EP02", position: { x: 0, y: 300 } },
+				{ id: "c", type: "prompt", title: "EP03", position: { x: 0, y: 100 } },
+			],
+			edges: [],
+		};
+		const svg = await svgOf({ view: "tree" }, layout);
+		assert.match(svg, /data-misplaced=/, "错位节点应带 data-misplaced 标记");
+		assert.match(svg, /画布顺序/, "卡片上要说明这是画布顺序问题");
+	});
+
+	it("无错位时不输出错位说明（不制造噪音）", async () => {
+		const layout = {
+			nodes: [
+				{ id: "a", type: "prompt", title: "EP01", position: { x: 0, y: 0 } },
+				{ id: "b", type: "prompt", title: "EP02", position: { x: 0, y: 100 } },
+			],
+			edges: [],
+		};
+		const svg = await svgOf({ view: "tree" }, layout);
+		assert.equal(svg.includes("data-misplaced="), false);
+		assert.equal(svg.includes("画布顺序"), false);
 	});
 });

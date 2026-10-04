@@ -377,6 +377,12 @@ export function createRenderCanvasViewTools(deps: {
 							"Coloring / grouping dimension: 'type' (node type from the canvas), 'status' (node status), 'parentNode' (which group / episode the node belongs to). Affects color, lane and group assignment — NOT the shape. Defaults to type.",
 					}),
 				),
+				show_type: Type.Optional(
+					Type.Boolean({
+						description:
+							"Show the node type inside each label (e.g. '①EP01 prompt'). Off by default — color plus the legend already convey type, and writing it out is noise.",
+					}),
+				),
 				rowBy: Type.Optional(
 					Type.Union(GROUP_BYS.map((g) => Type.Literal(g)), {
 						description: "matrix only: row dimension. Defaults to type.",
@@ -436,6 +442,8 @@ export function createRenderCanvasViewTools(deps: {
 					relation?: RelationKind;
 					/** 按什么分组（与 view / relation 正交）。 */
 					groupBy?: GroupByKind;
+					/** 标签里是否显示类型。 */
+					show_type?: boolean;
 					/** matrix 行维度。 */
 					rowBy?: GroupByKind;
 					/** matrix 列维度。 */
@@ -567,6 +575,7 @@ export function createRenderCanvasViewTools(deps: {
 											drawEdges: relation === "dependency",
 											colors: colorOverrides,
 											groupBy,
+											showType: p.show_type === true,
 										});
 				return presentResult({
 					type: "svg_card",

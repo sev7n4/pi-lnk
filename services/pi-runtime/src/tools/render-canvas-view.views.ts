@@ -15,10 +15,15 @@ import {
 	type GvEdge,
 	type GvNode,
 	type Palette,
+	auditOrder,
+	businessOrder,
+	commonSuffixes,
 	esc,
 	legendSvg,
 	orderNodes,
+	ordinal,
 	paletteOf,
+	shortLabels,
 	svgHeader,
 	statusShade,
 	usedTypes,
@@ -66,19 +71,67 @@ function edgePath(from: Box, to: Box, siblingIndex = 0, siblingCount = 1): strin
 	return `M${sx},${Math.round(sy)} C${Math.round(midX)},${Math.round(sy)} ${Math.round(midX)},${Math.round(ty)} ${tx},${Math.round(ty)}`;
 }
 
-function nodeRect(n: GvNode, box: Box, colorOverride?: string, emphasized = false): string {
-	const p = paletteOf(n, colorOverride);
+/**
+ * 节点矩形 + 标签。
+ *
+ * ⭐ 标签构成（2026-10-05 用户要求「非常简洁且能表达清楚这个节点」）：
+ *   `{带圈序号} {精简名称} {类型}`
+ * - 序号用 ①②③ 表达「业务上的第几个」，**同一标签内**而不是另起一行
+ * - 名称剥掉重复群组后缀（6 个「…· 森林偵探社」⇒ 群组名进图例，只出现一次）
+ * - 类型默认不显示（颜色 + 图例已表达），`showType` 打开
+ * - 错位节点（画布摆放与业务序不一致）描边加宽 + 角标，让「画布本身错了」可见
+ */
+function nodeRect(
+	n: GvNode,
+	box: Box,
+	opts: {
+		color?: string;
+		emphasized?: boolean;
+		/** 业务序号（1-based）；0/undefined = 不显示。 */
+		seq?: number;
+		label?: string;
+		showType?: boolean;
+		misplaced?: boolean;
+	} = {},
+): string {
+	const p = paletteOf(n, opts.color);
 	const st = statusShade(n, p);
+	const mis = opts.misplaced === true;
 	const parts: string[] = [];
 	parts.push(
-		`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="5" fill="${st.fill}" stroke="${st.stroke}" stroke-width="${emphasized ? 2 : 1}"/>`,
+		`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="5" fill="${st.fill}" stroke="${mis ? "#A32D2D" : st.stroke}" stroke-width="${mis ? 2 : opts.emphasized ? 2 : 1}"/>`,
 	);
-	const label = n.title ?? n.id;
-	const maxChars = Math.max(4, Math.floor((box.w - 12) / 12));
+	const seq = opts.seq && opts.seq > 0 ? `${ordinal(opts.seq)} ` : "";
+	const body = opts.label ?? n.title ?? n.id;
+	const typeTxt = opts.showType ? ` ${n.type ?? ""}` : "";
+	const maxChars = Math.max(4, Math.floor((box.w - 14) / 12));
 	parts.push(
-		`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="gv-t" dominant-baseline="central">${esc(clip(label, maxChars))}</text>`,
+		`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="gv-t" dominant-baseline="central">${esc(seq + clip(body, Math.max(2, maxChars - seq.length)) + typeTxt)}</text>`,
 	);
+	if (mis) {
+		// 错位角标：明确指出「画布上放错位了」，而不是让用户自己比
+		parts.push(
+			`<text x="${box.x + box.w - 4}" y="${box.y + box.h / 2}" class="gv-warn" text-anchor="end" dominant-baseline="central">画布顺序</text>`,
+		);
+	}
 	return parts.join("");
+}
+
+/** 错位说明行（只在真的有错位时输出 —— 不制造噪音）。 */
+function auditNoteSvg(
+	misplaced: readonly { title: string; businessIndex: number; canvasIndex: number }[],
+	compared: number,
+): string {
+	if (misplaced.length === 0) return "";
+	const names = misplaced
+		.slice(0, 4)
+		.map((m) => `${clip(m.title, 14)}（应第${m.businessIndex}，画布第${m.canvasIndex}）`)
+		.join("；");
+	const more = misplaced.length > 4 ? ` 等 ${misplaced.length} 处` : "";
+	return (
+		`<g data-audit="misplaced"><rect x="8" y="8" width="${W - 16}" height="20" rx="4" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>` +
+		`<text x="14" y="18" class="gv-warn" dominant-baseline="central">⚠ 有 ${misplaced.length} 个节点在画布上放错位（已按业务序重排）：${esc(names + more)}</text></g>`
+	);
 }
 
 /** 超长标题截断（SVG 不换行，超宽会溢出 viewBox）。 */
@@ -101,6 +154,8 @@ export interface LayoutOpts {
 	 * 不改变「形状」—— 形状只由`view` 决定（正交性要求）。
 	 */
 	groupBy?: "type" | "status" | "parentNode";
+	/** 标签里是否显示节点类型（默认否—— 颜色 + 图例已表达，写出来只是噪音）。 */
+	showType?: boolean;
 }
 
 export function buildLayoutSvg(
@@ -151,6 +206,12 @@ export function buildLayoutSvg(
 	}
 
 	const emph = new Set(opts.emphasize ?? []);
+	// ⭐ 与 tree 同一套：业务序号 + 精简标签 + 错位标记
+	const audit = auditOrder(nodes);
+	const misIds = new Set(audit.misplaced.map((m) => m.id));
+	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
+	const note = auditNoteSvg(audit.misplaced, audit.compared);
+	if (note) parts.push(note);
 	let lastGroup: string | undefined;
 	for (const n of nodes) {
 		const g = groupKey(n);
@@ -160,8 +221,21 @@ export function buildLayoutSvg(
 			parts.push(`<line x1="8" y1="${y}" x2="${W - 16}" y2="${y}" stroke="#D3D1C7" stroke-width="1" stroke-dasharray="2 3"/>`);
 		}
 		lastGroup = g;
-		parts.push(`<g data-node="${esc(n.id)}" data-type="${esc(n.type ?? "default")}" data-group="${esc(g)}">`);
-		parts.push(nodeRect(n, boxes.get(n.id)!, opts.colors?.[n.id], emph.has(n.id)));
+		const mis = misIds.has(n.id);
+		parts.push(
+			`<g data-node="${esc(n.id)}" data-type="${esc(n.type ?? "default")}" data-group="${esc(g)}"` +
+				`${mis ? ' data-misplaced="1"' : ""}>`,
+		);
+		parts.push(
+			nodeRect(n, boxes.get(n.id)!, {
+				color: opts.colors?.[n.id],
+				emphasized: emph.has(n.id),
+				seq: nodes.indexOf(n) + 1,
+				label: labels.get(n.id),
+				showType: opts.showType,
+				misplaced: mis,
+			}),
+		);
 		if (emph.has(n.id)) {
 			parts.push(
 				`<text x="${boxes.get(n.id)!.x + boxes.get(n.id)!.w - 6}" y="${boxes.get(n.id)!.y + boxes.get(n.id)!.h / 2}" class="gv-s" text-anchor="end" dominant-baseline="central">关键</text>`,
@@ -175,7 +249,14 @@ export function buildLayoutSvg(
 			: groupBy === "status"
 				? statusLegend(nodes)
 				: groupLegend(nodes, groupBy);
-	parts.push(legendSvg(lg, 8, H - 14 - lg.length * 16));
+	const sufs = [...commonSuffixes(nodes).keys()];
+	parts.push(legendSvg(lg, 8, H - 14 - (lg.length + sufs.length) * 16));
+	sufs.forEach((suf, i) => {
+		parts.push(
+			`<g data-group="${esc(suf)}"><rect x="8" y="${H - 14 - sufs.length * 16 + i * 16}" width="11" height="11" rx="2" fill="#F1EFE8" stroke="#888780" stroke-width="1"/>` +
+				`<text x="24" y="${H - 14 - sufs.length * 16 + i * 16 + 9}" class="gvl">${esc(clip(suf, 16))}（全部节点共有）</text></g>`,
+		);
+	});
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -297,20 +378,42 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 			return 0;
 		})
 		.map((x) => x.n);
-	// ⚠️ **不能再套 orderNodes**：它会按业务序号重排，把「层级根优先」的成果推翻
-	// （实测 bug：rootsOrdered 已把「全劇大綱」提到首位，orderNodes 又因它无编号
-	// 把它甩到末尾）。根层之间不存在「谁是谁的下一集」的问题，用画布位置即可。
-	const rootsByCanvas = [...rootsOrdered].sort(
-		(a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0) || (a.position?.x ?? 0) - (b.position?.x ?? 0),
+	// ⭐ 根层排序三段（每段一个不可妥协的约束，按优先级）：
+	//   ① 层级根（有子节点）— 无论有无业务序号，都排在所有叶子之前。
+	//      理由：「全劇大綱」标题无编号，若按「有序号在前」会被甩到 EP01..EP06 后面，
+	//      读起来像它属于最后一集 —— 这正是第一版实测到的 bug。
+	//   ② 有业务序号的叶子 —— 按序号升序（EP04 在EP05 前，即使画布 y 相反）。
+	//   ③ 无业务序号的叶子 —— 回落画布位置。
+	const hasKids = (n: GvNode) => (childrenOf.get(n.id)?.length ?? 0) > 0;
+	const kids = rootsOrdered.filter(hasKids);
+	const leavesWithOrd = rootsOrdered.filter(
+		(n) => !hasKids(n) && businessOrder(n.title) !== undefined,
 	);
-	walk(rootsByCanvas, 0);
+	const leavesNoOrd = rootsOrdered.filter((n) => !hasKids(n) && businessOrder(n.title) === undefined);
+	const rootsFinal = [
+		...kids.sort((a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0)),
+		...leavesWithOrd.sort((a, b) => (businessOrder(a.title) ?? 0) - (businessOrder(b.title) ?? 0)),
+		...leavesNoOrd.sort(
+			(a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0) || (a.position?.x ?? 0) - (b.position?.x ?? 0),
+		),
+	];
+	walk(rootsFinal, 0);
 	const orphans = nodes.filter((n) => !seen.has(n.id));
 	const ORPHAN = orphans.length > 0;
 	if (ORPHAN) for (const n of orphans) rowsAll.push({ n, depth: 0 });
 
 	const legendRows = usedTypes(nodes);
+	// ⭐ 顺序校验 + 标签精简（用户要求：按业务序渲染，并指出画布上放错的）
+	const audit = auditOrder(nodes);
+	const misIds = new Set(audit.misplaced.map((m) => m.id));
+	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
 	const H = 40 + rowsAll.length * ROW_H + (ORPHAN ? 24 : 0) + 24;
 	const parts: string[] = [svgHeader(H)];
+	const note = auditNoteSvg(audit.misplaced, audit.compared);
+	if (note) {
+		parts.push(note);
+		// 有说明行时整体下移20px，避免与首行节点重叠
+	}
 	// 纵线（父子连线）
 	for (let i = 0; i < rowsAll.length; i++) {
 		const r = rowsAll[i];
@@ -330,11 +433,23 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 		const x = PLOT_X + depth * TREE_INDENT;
 		const box: Box = { id: n.id, x, y: 30 + i * ROW_H, w: TREE_DEPTH_W, h: 20, row: i };
 		const isOrphan = ORPHAN && i >= rowsAll.length - orphans.length;
-		parts.push(`<g data-node="${esc(n.id)}" data-depth="${depth}" data-type="${esc(n.type ?? "default")}"${isOrphan ? ' data-orphan="1"' : ""}>`);
-		parts.push(nodeRect(n, box));
+		const mis = misIds.has(n.id);
+		parts.push(
+			`<g data-node="${esc(n.id)}" data-depth="${depth}" data-type="${esc(n.type ?? "default")}"` +
+				`${isOrphan ? ' data-orphan="1"' : ""}${mis ? ' data-misplaced="1"' : ""}>`,
+		);
+		parts.push(nodeRect(n, box, { seq: i + 1, label: labels.get(n.id), misplaced: mis }));
 		parts.push("</g>");
 	}
-	parts.push(legendSvg(legendRows, 8, H - 14 - legendRows.length * 16));
+	const sufs = [...commonSuffixes(nodes).keys()];
+	parts.push(legendSvg(legendRows, 8, H - 14 - (legendRows.length + sufs.length) * 16));
+	// 被折叠的群组后缀在这里补回来 —— 标签里省掉了，信息不能丢
+	sufs.forEach((suf, i) => {
+		parts.push(
+			`<g data-group="${esc(suf)}"><rect x="8" y="${H - 14 - sufs.length * 16 + i * 16}" width="11" height="11" rx="2" fill="#F1EFE8" stroke="#888780" stroke-width="1"/>` +
+				`<text x="24" y="${H - 14 - sufs.length * 16 + i * 16 + 9}" class="gvl">${esc(clip(suf, 16))}（全部节点共有）</text></g>`,
+		);
+	});
 	parts.push("</svg>");
 	return parts.join("");
 }
