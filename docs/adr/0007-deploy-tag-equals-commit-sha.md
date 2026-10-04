@@ -86,8 +86,27 @@ pi-runtime 镜像发布需要一个 tag。原先用语义版号（`0.0.1` ~ `0.0
 （实测 `2eb19c4` → `status=ahead` 但 `behind_by=0`，是合法祖先），
 按 `status in (identical|behind)` 放行会误杀绝大多数正常旧提交。
 
+## 2026-10-04 补强：人工闸门从「等于零」变成「有审批记录」
+
+本 ADR 第 3 条把「人工闸门」当作顺序保险，但复核发现它**当时强度等于零**：
+
+| environment | protection_rules | 含义 |
+|---|---|---|
+| `production` | `[]` | 无任何保护规则，dispatch 这个动作本身就是全部闸门 |
+| `production-runtime` | `required_reviewers: [sev7n4]` | 上线前必须人工批准，留审计记录 |
+
+`runtime-deploy.yml` 的 job 已从 `environment: production` 切到 **`production-runtime`**。
+
+⚠️ **为什么必须拆成两个 environment**（而不是直接给 `production` 加审批）：
+`deploy.yml` 的 **3 个 job**（`deploy-api` / `deploy-web` / `recover-only`）也都绑 `production`。
+共用会让**pi-lnk 的 api/web 自动部署一起变成手动卡点** —— 那是纯负担，不是闸门。
+拆分后职责清晰：
+
+- `production-runtime`（有闸门）= **pi-runtime 上线**，需要人批准
+- `production`（无闸门）= **api/web 部署**，保持合并即自动
+
 ## 关联
 
-- PR：#128（校正 tag 描述）、#145（并发组 + Preflight 校验）
-- workflow：`.github/workflows/runtime-deploy.yml`（tag 为手填入参 + 祖先校验）
+- PR：#128（校正 tag 描述）、#145（并发组 + Preflight 校验）、#149（独立 environment + 审批闸门）
+- workflow：`.github/workflows/runtime-deploy.yml`（tag 为手填入参 + 祖先校验 + `production-runtime` 闸门）
 - 相关：ADR-0003（Registry 自检必须经 ssh 到 CVM，见 PR #118）
