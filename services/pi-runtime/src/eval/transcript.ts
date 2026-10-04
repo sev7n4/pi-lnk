@@ -145,6 +145,30 @@ export function foldRuntimeEvents(events: readonly RuntimeEvent[]): EvalTranscri
 					const status = String(data.status ?? "completed");
 					// aborted / deferred / failed 都不是「正常完成」
 					if (status !== "completed" && status !== "success") agentEndClean = false;
+					// ⭐⭐ 把 `agent_end.error` 收进 errors —— 否则「运行失败」会被
+					// 误判成「行为不符」。
+					//
+					// 生产实测（2026-10-04）：agnes 免费额度被打限流 ⇒
+					// `agent_end: {status:"failed", error:{code:"assistant_error",
+					// message:"429: 您已达到免费用户的 API 速率限制…"}}`，
+					// 且 pi-runtime 会**指数退避重试 4 次**（4 个空 message_end）。
+					// 而原实现只置 `agentEndClean=false`、**errors 保持为空**
+					// ⇒ `verdictOf` 看不到任何 error ⇒ 判成 **fail（行为不符）**
+					// ⇒ 报告会引导人「去改提示词」，而真因是**额度用完**。
+					//这与`error` / `fail` 分离的设计初衷完全相反。
+					const endErr = data.error as
+						| { code?: unknown; message?: unknown }
+						| undefined;
+					if (endErr && typeof endErr === "object") {
+						const code = typeof endErr.code === "string" ? endErr.code : "unknown";
+						const msg =
+							typeof endErr.message === "string" ? endErr.message : safeStringify(endErr);
+						errors.push(`agent_end ${status}/${code}: ${msg}`);
+					} else if (status !== "completed" && status !== "success") {
+						// 有 failed 状态但没带 error 对象 ⇒ 至少记状态，
+						// 否则这次失败在报告里完全不可见。
+						errors.push(`agent_end status=${status}（无 error 详情）`);
+					}
 				}
 				break;
 			}
