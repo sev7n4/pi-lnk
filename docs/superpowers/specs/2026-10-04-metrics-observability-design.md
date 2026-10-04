@@ -86,6 +86,8 @@ flowchart TB
     PROM --> GRAF
 ```
 
+**图 1 · 三层埋点位置与事件收口** —— 验收「工具指标零改动全覆盖」
+
 **关键事实**：vendor 的 `tool_start` / `tool_end` 是**全工具统一事件**，载荷已含 `toolCallId`、`isError`、`terminate`。我们已在 `session-manager.ts:841 attachEvents` 里订阅了它们（用于 SSE 归一）。因此只要在该订阅层加一个结算器，**39 个工具零改动全覆盖**，且不碰 vendor。
 
 ### 3.1 三种埋点方案对比与选型
@@ -252,6 +254,8 @@ flowchart LR
     PROM -->|scrape :5100 /metrics| NE["apps/server"]
     PROM --> GRAF["Grafana<br/>看板 + 告警"]
 ```
+
+**图 2 · 采集与部署拓扑** —— 验收「两个 target 都被 scrape」
 
 ### 7.1硬约束
 
