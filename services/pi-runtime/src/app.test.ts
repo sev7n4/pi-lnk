@@ -600,8 +600,9 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 	it("afterSeq 早于丢弃水位 → 409 + droppedFromSeq（不建 SSE 流）", async () => {
 		await withRoot("pi-runtime-t1-", async (root) => {
 			const { app, manager } = makeApp(root);
-			// abort 兜底：若前置条件失效导致「本该409」变成「走 SSE 长连接」，
-			// inject 永不 resolve；abort 让它以rejected 结束，测试**失败**而不是**卡死整个文件**。
+			// 这条路径**正常情况下立即返回 409**，不需要 abort。
+			// 但abort 是**防御性兜底**：若 409 判定哪天失效退回长连接，
+			// 它能把「卡死整个测试文件」降级为「本用例失败并给出可读信息」。
 			const ac = new AbortController();
 			try {
 				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
@@ -639,46 +640,21 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 		});
 	});
 
-	it("afterSeq 不早于丢弃水位 → 不报 409（正常建流，行为不变）", async () => {
-		await withRoot("pi-runtime-t1-", async (root) => {
-			const { app, manager } = makeApp(root);
-			// ⚠️ 完整重放路径会升级成 **SSE 长连接**，`app.inject()` 永不 resolve。
-			//    若放任它挂住，`app.close()` 会等这个请求 ⇒ 整个测试文件卡死
-			//    （2026-10-04 实测：CI 跑了 13 分钟未结束，master 基线只要 3-5 分钟）。
-			//    正确收尾：**主动 abort 掉请求**再close，让 inject 以 aborted 结束。
-			const ac = new AbortController();
-			try {
-				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
-				await app.inject({
-					method: "POST",
-					url: "/sessions",
-					payload: { sessionId: "s1:t2", userId: "u1", canvasSessionId: "s1:t2" },
-				});
-				await overflowBuffer(manager, "s1:t2");
-
-				// 前置条件：本次确实发生了溢出
-				const probe = manager.subscribe("s1:t2", () => {}, 1);
-				assert.ok(probe.droppedFromSeq > 0);
-
-				// afterSeq=水位 ⇒ 重放完整 ⇒ 不该被 409 拦。
-				// 断言方式：**只看是否 reject**——被 409 拦下时 inject 立即返回 409，
-				// 不会被 abort；走完整路径时它会挂住直到我们 abort ⇒ 两种结果都「没有拿到 409」。
-				const settled = await Promise.race([
-					app
-						.inject({
-							method: "GET",
-							url: `/sessions/s1:t2/events?lastEventId=${probe.droppedFromSeq}`,
-							signal: ac.signal,
-						})
-						.then((r) => r.statusCode)
-						.catch(() => -1), // abort / 连接关闭 ⇒ 同样视为「没被 409 拦掉」
-					new Promise<number>((resolve) => setTimeout(() => resolve(-2), 300)),
-				]);
-				assert.notEqual(settled, 409, "完整重放不应被 409 拦掉");
-			} finally {
-				ac.abort();
-				await app.close();
-			}
-		});
-	});
+	/**
+	 * 为什么本组**只测 409 分支**，不测「afterSeq 充足 ⇒ 正常建流 200」？
+	 *
+	 * 完整重放路径会升级成**SSE 长连接**，`app.inject()` 永不 resolve。
+	 * 2026-10-04 实测：加 `AbortController` 后虽然不再卡死整个文件，
+	 * 但 handler 会在测试结束后继续跑，node --test 报
+	 * `generated asynchronous activity after the test ended` +
+	 * `ERR_HTTP_HEADERS_SENT`，仍判文件失败。
+	 *
+	 * 治它需要一套SSE 生命周期管理（等handler 真正退出再断言），
+	 * 而本文件既有的 events 用例**一律只测 404 分支**（立即返回），
+	 * 正是刻意避开了这个坑。⇒ 不在本 PR 里开这个口子。
+	 *
+	 * 「afterSeq 充足时不误报 409」这条判据由
+	 * `session-manager.test.ts` 的「afterSeq 不早于丢弃水位时不算不完整（T1 边界）」
+	 * 覆盖——`isReplayComplete` 是两处共用的同一函数，纯函数层测它更稳。
+	 */
 });
