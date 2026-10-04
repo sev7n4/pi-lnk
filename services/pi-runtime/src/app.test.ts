@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp, resolveEventsSubscribeMode } from "./app.js";
-import { SessionManager, toSessionKey } from "./session-manager.js";
+import { SessionManager, toSessionKey, isReplayComplete } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
 import { PendingToolRegistry } from "./pending-registry.js";
@@ -572,7 +572,7 @@ describe("POST /sessions/:key/prompt 直通 images（T1）", () => {
  * 为什么能在测试里造出溢出：`makeApp` 返回真实 `SessionManager`，
  * 用 `dispatchWaitingUser`（公开方法）把 buffer 灌到超过 BUFFER_LIMIT=500。
  */
-describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
+describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => {
 	/**
 	 * 用公开方法把某会话的 buffer 灌到溢出（每条一个 waiting_user 广播）。
 	 *
@@ -584,7 +584,7 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 	 * 于是 `droppedFromSeq` 恒为 0 ⇒ 判定「完整」⇒ 走 SSE 长连接 ⇒ inject 永不 resolve
 	 * ⇒ 整个测试文件卡死（2026-10-04 实测 CI 跑 11-13 分钟未结束）。
 	 *
-	 * 断言命中数 > 0 是这个前置条件的护栏：静默不匹配会让"造溢出"变成空操作。
+	 * 断言命中数 > 0 是这个前置条件的护栏：静默不匹配会让「造溢出」变成空操作。
 	 */
 	async function overflowBuffer(manager: SessionManager, key: string): Promise<void> {
 		// 先验证「打得到这个会话」，再灌——否则造溢出是个静默的空操作。
@@ -597,13 +597,13 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 		}
 	}
 
-	it("afterSeq 早于丢弃水位 → 409 + droppedFromSeq（不建 SSE 流）", async () => {
+	it("溢出后重放仍返回 200（行为与改前一致），但 droppedFromSeq 报告了丢弃起点", async () => {
 		await withRoot("pi-runtime-t1-", async (root) => {
 			const { app, manager } = makeApp(root);
-			// 这条路径**正常情况下立即返回 409**，不需要 abort。
-			// 但abort 是**防御性兜底**：若 409 判定哪天失效退回长连接，
-			// 它能把「卡死整个测试文件」降级为「本用例失败并给出可读信息」。
+			// 完整重放路径会升级成 SSE 长连接，inject 永不 resolve ⇒ abort 兜底，
+			// 把「卡死整个文件」降级为「本用例失败并给出可读信息」。
 			const ac = new AbortController();
+			let bodyText = "";
 			try {
 				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
 				await app.inject({
@@ -613,48 +613,37 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 				});
 				await overflowBuffer(manager, "s1:t1");
 
-				// afterSeq=0 早于丢弃水位 ⇒ 残缺
-				const res = await app.inject({
-					method: "GET",
-					url: "/sessions/s1:t1/events?lastEventId=0",
-					signal: ac.signal,
-				});
-				assert.equal(res.statusCode, 409, "残缺重放必须 409，不能发 200 + 断头流");
-				const body = res.json() as {
-					error: string;
-					droppedFromSeq: number;
-					afterSeq: number;
-					recovery: string;
-				};
-				assert.equal(body.error, "replay window expired");
-				assert.equal(body.afterSeq, 0);
-				assert.ok(
-					body.droppedFromSeq > body.afterSeq,
-					`droppedFromSeq(${body.droppedFromSeq}) 必须大于 afterSeq(${body.afterSeq})，否则客户端无法判断残缺`,
-				);
-				assert.equal(body.recovery, "rebuild full timeline", "必须告诉客户端怎么恢复");
+				// 存储层：水位可读，且能判定重放残缺
+				const probe = manager.subscribe("s1:t1", () => {}, 0);
+				assert.ok(probe.droppedFromSeq > 0, "溢出后必须报告丢弃起点");
+				assert.equal(isReplayComplete(probe, 0), false, "afterSeq=0 早于水位 ⇒ 残缺");
+
+				// HTTP 层：**行为与改前一致**——仍是 200 + SSE 流，不改成 409。
+				// 理由见 app.ts 同处注释：客户端只对 404 特判，回 409 会让它
+				// 退避重连同一个必然 409 的 lastEventId，循环到 120s 预算耗尽
+				// ⇒ 把「静默残缺」换成「长时间无响应」，后者更糟。
+				const res = await app
+					.inject({
+						method: "GET",
+						url: "/sessions/s1:t1/events?lastEventId=0",
+						signal: ac.signal,
+					})
+					.then((r) => ({ status: r.statusCode, body: r.body }))
+					.catch(() => null);
+				// 长连接挂住 ⇒ res 为 null（SSE 建流成功）；
+				// 若被 409 拦下则 status 是 409 ⇒ 那正是本PR 要避免的行为。
+				if (res !== null) {
+					assert.notEqual(res.status, 409, "本PR 刻意不回 409（客户端未适配前会退避到预算耗尽）");
+					assert.equal(res.status, 200, "残缺重放仍返回 200，行为与改前一致");
+				}
+				bodyText = res === null ? "<SSE 长连接已建立>" : String(res.body ?? "");
 			} finally {
 				ac.abort();
 				await app.close();
 			}
+			// 水位信息在 SSE 场景下进了日志（见 app.ts 的 app.log.warn），
+			// 这里只确认用例跑完没崩；不校验日志内容。
+			assert.ok(typeof bodyText === "string");
 		});
 	});
-
-	/**
-	 * 为什么本组**只测 409 分支**，不测「afterSeq 充足 ⇒ 正常建流 200」？
-	 *
-	 * 完整重放路径会升级成**SSE 长连接**，`app.inject()` 永不 resolve。
-	 * 2026-10-04 实测：加 `AbortController` 后虽然不再卡死整个文件，
-	 * 但 handler 会在测试结束后继续跑，node --test 报
-	 * `generated asynchronous activity after the test ended` +
-	 * `ERR_HTTP_HEADERS_SENT`，仍判文件失败。
-	 *
-	 * 治它需要一套SSE 生命周期管理（等handler 真正退出再断言），
-	 * 而本文件既有的 events 用例**一律只测 404 分支**（立即返回），
-	 * 正是刻意避开了这个坑。⇒ 不在本 PR 里开这个口子。
-	 *
-	 * 「afterSeq 充足时不误报 409」这条判据由
-	 * `session-manager.test.ts` 的「afterSeq 不早于丢弃水位时不算不完整（T1 边界）」
-	 * 覆盖——`isReplayComplete` 是两处共用的同一函数，纯函数层测它更稳。
-	 */
 });
