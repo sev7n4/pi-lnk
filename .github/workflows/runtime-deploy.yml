@@ -115,14 +115,28 @@ jobs:
           # 而 X 恰恰是 master 的合法祖先。若按 status in (identical|behind) 放行，
           # 会把绝大多数正常的旧提交全部误杀。
           # 正确判据 =「master 不领先 X」= behind_by == 0（等价于 merge-base --is-ancestor X master）。
-          COMPARE=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${TAG}...master" --jq '.behind_by' 2>&1 || true)
-          if [[ "$COMPARE" == "0" ]]; then
-            echo "ok: tag ${TAG} 是 master 的祖先提交（behind_by=0）"
+          #
+          # ⚠️ 必须显式给 gh 传 token（2026-10-04 事故）：Actions runner 上 `gh` 不自动
+          # 读 GITHUB_TOKEN，无 token 时 gh 打印「To use GitHub CLI in a GitHub Actions
+          # workflow, set the GH_TOKEN environment variable」并 exit 1。
+          # 下面用 `|| true` 兜住退出码，于是**错误信息被当成 behind_by 的值**（非空字符串）
+          # ⇒ 走进 else 分支报「不是 master 的祖先」——把「API 调用失败」误报成
+          #「tag 不合法」，且日志极具误导性。首次上线（run 37170109050）就撞上了。
+          # 两处修：① 显式 GH_TOKEN ② 失败原因分开判，别混成一个 else。
+          COMPARE=$(GH_TOKEN="${GITHUB_TOKEN}" gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${TAG}...master" --jq '.behind_by' 2>/tmp/compare.err || true)
+          if [[ "$COMPARE" =~ ^[0-9]+$ ]]; then
+            if [[ "$COMPARE" == "0" ]]; then
+              echo "ok: tag ${TAG} 是 master 的祖先提交（behind_by=0）"
+            else
+              echo "ERROR: tag ${TAG} 不是 master 的祖先提交（behind_by=${COMPARE}）。"
+              echo "  tag 必须是已进 master 的 commit 短 sha；未合并分支上的 sha 会被这条挡住。"
+              echo "  取正确值：git fetch origin && git rev-parse --short origin/master"
+              exit 1
+            fi
           else
-            echo "ERROR: tag ${TAG} 不是 master 的祖先提交，或在本仓不存在。"
-            echo "  compare API 返回：$(echo "$COMPARE" | head -c 200)"
-            echo "  tag 必须是已进 master 的 commit 短 sha；未合并分支上的 sha 会被这条挡住。"
-            echo "  取正确值：git fetch origin && git rev-parse --short origin/master"
+            echo "ERROR: compare API 调用失败，无法判定 tag 是否为 master 祖先（不是 tag 本身有问题）。"
+            echo "  底层错误：$(head -c 300 /tmp/compare.err)"
             exit 1
           fi
 
