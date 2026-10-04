@@ -8,7 +8,7 @@
 
 **打造以 `pi-agent-core` 为内核的 canvas agent，驱动画布的超创平台 lnk π。**
 
--内核：`@earendil-works/pi-agent-core`（版本见下节）
+- 内核：`@earendil-works/pi-agent-core`（版本见下节）
 - 载体：画布（canvas）—— agent 的产出物是可交互的图，而非纯文本流
 - 方向：视觉内容的生产与迭代（分镜 / 电商素材 / 角色与场景等），skills 资产在 `skills/`
 
@@ -41,7 +41,7 @@ git rev-list --count master..origin/master   # 必须 0
 
 - **判定分支是否已合并禁用 `git cherry` / `git rev-list --count`** —— squash 会重写 commit、patch-id 对不上，已合分支会被误报成「未合并」。权威判据：`gh pr list --head <b>` 拿 mergeCommit，再 `git merge-base --is-ancestor <sha> origin/master`。
 - **查 check-run 数量用 `--jq '.total_count'`，不能用 `length`** —— 后者把 JSON 对象的 key 当数组元素数，`{"total_count":0,...}` 会返回 2，把「CI 从未触发」误判成「在跑」。
-- **push 到 master 没有新 run，先查 workflow 的 paths 过滤** —— `ci.yml` 有 `paths-ignore: ["**/*.md","docs/**"]`，`deploy.yml` 是 paths 白名单。**纯文档改动不触发 CI、不触发部署，零 workflow 是正确行为。**
+- ⚠️ **CI 触发面分两个事件，别混** —— `ci.yml` 的 `paths-ignore: ["**/*.md","docs/**"]` **只挂在 `push` 事件上**；`pull_request:` 分支**没有任何 paths 过滤**。所以：push 到 master 时纯文档改动零 workflow（正确行为）；但**开 PR 时一律触发三个 required check**，纯文档 PR 也不例外。`deploy.yml` 是独立的 paths 白名单（server / web / packages / deploy / prompt-registry 等）。
 
 ### 收尾清理（第7 步之后，别拖到下次）
 
@@ -157,7 +157,7 @@ git grep -l "<路径>" -- apps packages services charts deploy   # 顺带确认�
 5. worktree 首次跑测试前：`pnpm install --frozen-lockfile` + `pnpm --filter @lnkpi/server exec prisma generate`（否则 vitest 报 `.prisma/client` 缺失）
 
 > 测试文件规模会变，**要数字时实测 `find <dir> -name '*.test.ts' | wc -l`，别抄本文档的旧数字**。
-> 2026-10-03 实测：server 97 / web 176 / pi-runtime 顶层 26 个测试文件。
+> 本文档正文不写会漂移的计数（测试文件数、文档份数、清单长度）——需要规模感时给获取命令。
 
 ## pi 内核版本
 
@@ -290,12 +290,12 @@ pi-lnk/
 | 目录 | 性质 |
 |---|---|
 | `workflow/` | ⚠️ **活跃对外契约，别删** —— 外部 Agent（WorkBuddy/Codex）靠它生成可导入画布的 JSON；校验函数 `validateWorkflow` 由 `useWorkflowExchange.ts`、`compositionLint.ts` 消费 |
-| `adr/` | **架构决策记录**（0001-0008）—— 回答"为什么这么定"，Accepted 后不删不改，被取代则标 Superseded |
-| `superpowers/` | 历史 spec 与 plan（283 份）。**从 `INDEX.md` 进**（按主题 + living/frozen/superseded 分类），不要直接翻目录 |
+| `adr/` | **架构决策记录**（0001 起，最新编号见 `docs/adr/`）—— 回答"为什么这么定"，Accepted 后不删不改，被取代则标 Superseded |
+| `superpowers/` | 历史 spec 与 plan（数量以 `INDEX.md` 为准）。**从 `INDEX.md` 进**（按主题 + living/frozen/superseded 分类），不要直接翻目录 |
 | `discussion/` | 讨论文档（第一资产） |
 | `ops/` | 部署 runbook |
 
->2026-10-03 清理：删除 `mockups/`、`diagnostics/`、`archive/`（代码引用均为 0，内容为
+> 2026-10-03 清理：删除 `mockups/`、`diagnostics/`、`archive/`（代码引用均为 0，内容为
 > 已完成的阶段性产物）；**`adr/` 当天删除、同日恢复**并补录 8 份 ADR —— 详见 `docs/README.md`。
 
 **`skills/` 现有清单**：`drama-audio-design`、`drama-character-design`、`drama-motion-video`、`drama-qc-review`、`drama-scene-worldview`、`drama-script-writing`、`drama-storyboard`、`ecommerce-product-photo`
@@ -305,6 +305,60 @@ pi-lnk/
 > 实测这两个包名**只出现在各自的 `package.json` 里，无其他文件 import**（Nest 侧走 HTTP + `PI_RUNTIME_URL`
 > 通信，不作为 npm 依赖引入），因此不构成障碍。
 > **写代码前先看目标目录的 `package.json` 实际 name**，不要按目录名或历史推断。
+
+## 变更影响面矩阵
+
+**改什么会静默坏掉。** 下表是踩过的坑，每一行都在生产或 PR 里付出过代价。
+
+### 改提示词规则 ⇒ 同步 6 处，漏一处就静默
+
+| # | 位置 | 漏掉的后果 |
+|---|---|---|
+| 1 | `prompt-registry/rules/<id>.md` | 规则不存在 |
+| 2 | `prompt-registry/MANIFEST.yaml`（`contentHash` = `sha256(body.trimEnd())` 前 12 位；`version` 两处一致） | 完整性校验失败 |
+| 3 | `prompt-registry.loader.ts` 的 `COMPOSED_IDS` | 不参与组合 |
+| 4 | `prompt-registry.loader.ts` 的 `FALLBACK_BY_ID` 映射（仅此一处定义） | 降级路径与实际规则不一致 |
+| 5 | 🔴 `pi-prompt-assembler.service.ts` 的 `renderStaticFallback()` **拼装顺序** | **整段提示词静默消失，且无任何报错** |
+| 6 | 🟡 `pi-prompt-assembler.service.test.ts` 的 `EXPECTED` 硬编码串 | 测试假绿 |
+
+**同步判据**：「磁盘 renderStatic == 内嵌 renderStaticFallback」四组合**逐字符相等**。
+
+⚠️ `renderStaticFallback` 在三个文件都出现（assembler / loader / agent.controller），
+第 5 处指的是**内嵌 fallback 的那一处**。
+⚠️ `FALLBACK_BY_ID` 只在 loader 定义，`prompt-registry.fallback.ts` 里没有同名符号 ——
+它靠**内容逐字相等**被约束，不是靠常量名对齐。
+⚠️ 本仓 `git grep` 对上述符号**会返 0 命中**（已知假阴性）。核实位置用 python 直读。
+
+改完跑 `pnpm prompt:lint`（独立成 `prompt-lint.yml` 流水线，`ci.yml` 不覆盖它）。
+
+⚠️ **L6 预算上限 3200 字符**，当前余量约 320 ≈ 还能加 4 条中等规则。加规则前先想清楚值不值。
+
+### 改工具分层 ⇒ 必答「哪个资产点名了它」
+
+**新增工具默认进延迟集前，必须回答：`prompt-registry` 规则或 `skills/*.md` 里，哪个资产按名字点名了它？**
+答不上来按「未点名」处理 ⇒ 必须常驻。
+
+机理：`drive/tools.ts:686` 只把 `activeToolNames` 传给 `prepareToolCall`，
+未激活的工具吃 vendor 硬编码的 `Tool X is unavailable`，**没有恢复路径**。
+
+生产证据（PR #100）：40 次工具调用全落常驻集，`tool_search_activated_total` 为 0
+⇒ 官方 Dynamic Tool Loading 触发率至今为 0。
+
+⚠️ 已因此回归常驻：`arrange_nodes` / `set_node_generation_params` / `save_memory` / `focus_node` / `remove_edges`。
+**`focus_node`（单数，常驻）≠ `focus_nodes`（复数，延迟）** —— 只差一个字母，极易踩错。
+
+新增或变更工具须在 `services/pi-runtime/src/tools/tiering.test.ts` 显式声明归属。
+
+### 改 vendor 消费 ⇒ 认清层次边界
+
+`pi.on` / `pi.registerTool` / `registerCommand` / `ui.*` **全属 `pi-coding-agent`**
+（交互式终端宿主，本项目**未依赖**）。`interface ExtensionAPI` 唯一实现在
+`coding-agent/src/core/extensions/types.ts`。
+
+⇒ `docs/extensions.md` 是扩展面**全景**，**不是 agent-core 能力清单**。
+我们的事件源本来就是 vendor 的 `harness.events.on`（`session-manager.ts` 的 `attachEvents`）。
+
+`vendor/` 目录**禁止业务 patch**（只允许记录版本与来源），否则 upmerge 时无法与上游对齐。
 
 ## 端口约定
 
@@ -324,6 +378,66 @@ pi-lnk/
 
 > `PI_RUNTIME_MODE=off` 是**维护态关停**（chat 与心跳都报不可用），不是「切回另一条链路」——
 > 老 LangGraph 链路（`services/agent-runtime`）已彻底删除，没有第二条可切。
+
+## 系统地图
+
+改之前先知道东西在哪、改哪层会走哪条流水线。**这一节的所有事实都经实测核实，改动时先复核。**
+
+### 请求链路
+
+```
+浏览器 → nginx(:8888) → Nest apps/server(:5100) → pi-runtime(K3s NodePort 30100，外网不可达)
+        → vendor pi(services/pi-runtime) → 上游模型
+```
+
+- `AGNES_MODEL_ID` 线上是**空串**（`??` 不兜底）⇒ LLM 实际靠 BYOK 注入
+- 生产库是 **SQLite**；`/opt/lnkpi/.env` 是维护态止血开关（改 `PI_RUNTIME_MODE` + `compose up -d --force-recreate api`）
+- **画布 SSOT 在前端**（`saveCanvas` 整份覆盖）；`add_node` 有**两份 applier 必须同步**
+- 前端**无 CSP**（`nginx.conf` 无该头）⇒ iframe sandbox 配错没有第二道防线
+
+### 四条流水线的触发面（改哪层走哪条）
+
+| workflow | 触发条件 | 覆盖 |
+|---|---|---|
+| `ci.yml` | `push`(master) 走 paths-ignore；**`pull_request` 无任何 paths 过滤** | 全仓构建 + 测试 |
+| `deploy.yml` | `push`(master) + paths 白名单：server / web / packages / deploy / prompt-registry / package.json / pnpm-lock / pnpm-workspace / .dockerignore / 自身 | api + web |
+| `runtime-deploy.yml` | **纯 `workflow_dispatch`，无 push 触发** | pi-runtime |
+| `prompt-lint.yml` | paths 触发：`prompt-registry/**`、`prompt-registry.*`、`prompt-lint.ts` | 提示词门禁 |
+
+⚠️ **最容易踩的静默失败**：改 `services/pi-runtime/**`、`skills/**`、`vendor/**` 后 push 到 master，
+`runtime-deploy.yml` **不会自动跑** —— CI 全绿但线上没有任何变化。
+这三类改动合并后必须手工发一次，且 **tag = master 的 commit 短 SHA**（非语义版号）。
+
+## 你的角色与边界
+
+**关于「身份」的一句说明**：本文件不定义人格（沟通语气、主动性偏好）——那属于宿主层配置，
+换模型/换宿主即失效且无法验证。这里只定义**你能做什么、什么必须先问人**，因为这部分与仓库强绑定。
+
+### 必须先问人的红线
+
+以下操作**一律先向人确认**，不要自行执行：
+
+1. 动 `apps/server/prisma/schema.prisma` 或任何数据迁移
+2. 动积分 / 扣分 / 退款逻辑
+3. 改 `prompt-registry` 预算（L6 上限 3200 字符，当前余量约 320）
+4. 任何生产止血操作：改 `PI_RUNTIME_MODE`、改 helm values、重发镜像 tag
+5. 向 master 直接提交
+
+### 可自主决定的范围
+
+以下可以自己决定，不必打断人：单文件改动、加测试、写文档、跑只读命令、
+修 typo、改注释与格式化。前提是改动不触及上面的红线，且落在 DoD 的自检范围内。
+
+### 越界信号
+
+**「我不确定这条规则是否适用」⇒ 停下问，不要猜。**
+
+这一条是本节最重要的。以下情形都适用它：
+- 引用文档里的事实性数字前**先实测**（本文档不写会漂移的计数）
+- 改动跨越了本文档没覆盖的层
+- 需要绕过某条规则才能往下做
+
+猜错的代价远高于问一句的代价。核实成本也就一条命令。
 
 ## 必须先做的事
 
@@ -351,6 +465,48 @@ pi-lnk/
 
 > `using-superpowers` 管**"该不该用 skill、按什么顺序用"**；
 > `branch-first-dev-workflow` 管**"git 操作怎么走"**。两者不冲突，是不同维度。
+
+## 完成定义（提交前自检）
+
+**全部是可执行命令，不是原则性表述。**
+
+### 提交前必跑
+
+| # | 命令 | 为什么 |
+|---|---|---|
+| 1 | `pnpm -r build` | **vitest 绿 ≠ tsc 绿**（esbuild 只转译）；web 走 `vue-tsc -b` |
+| 2 | `pnpm test:server:changed` / `pnpm test:runtime` | 默认只跑变更相关；全量是 CI 的活 |
+| 3 | 引用了文档里的事实性数字 ⇒ **先实测再写** | 见「越界信号」 |
+| 4 | 改 `prompt-registry/**` ⇒ `pnpm prompt:lint` | 门禁独立于 `ci.yml` |
+| 5 | 改 `vendor/` ⇒ 确认**零业务 patch** | 否则 upmerge 无法与上游对齐 |
+
+### 合并前必看
+
+- `gh pr view <n> --json mergeStateStatus` —— `BLOCKED` = required check 未过，**GitHub 不允许绕过**
+- required checks = `["Verify spec figures", "Build monorepo", "Build API Docker image"]`
+- ⚠️ **`Test Files N passed` ≠ CI 会绿**：必须同看 `Errors N errors` 与末尾 `Exit status`。
+  实测 180 files / 1449 tests 全 passed 但 `Errors 11` ⇒ exit 1
+- ⚠️ **CI 全量测试不在独立 job**：`pnpm test` 是 `Build monorepo` 内的一个 step，
+  `gh pr checks` 看不到它，须下钻：
+  `gh run view <id> --json jobs --jq '.jobs[].steps[]|"\(.name) :: \(.conclusion)"'`
+
+### 合并后（上线验证）
+
+- 改 pi-runtime / skills / vendor ⇒ **必须手工发 `runtime-deploy.yml`**（见「系统地图」）
+- pi-runtime tag = master 的 commit 短 SHA
+- 生产取证：curl 免鉴端点比数量/字符数，或容器内 `require(dist/...)` 读真值
+- ⚠️ **别只看 workflow 绿了就assume 已上线**
+
+## PR 规范
+
+四个**必填项**，缺任一项评审人有权打回。模板见 `.github/pull_request_template.md`。
+
+| 项 | 要求 | 拦的是什么 |
+|---|---|---|
+| **变更动机** | 解决什么问题，一两句 | 防止「顺手改」混入 |
+| **影响面** | 哪几层 / 哪几个端点 / 是否改提示词或工具分层 | 评审人不知道该看哪 |
+| **验证证据** | 跑了什么命令、看到什么输出 | 防止「跑过了」当证据 |
+| **是否需手工发 runtime 流水线** | 是 / 否 + tag | 防止「CI 绿了但没上线」的静默失败 |
 
 ## 本机环境
 

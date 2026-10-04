@@ -84,6 +84,6 @@ ExtensionAPI（`registerTool`/`sendMessage`/`appendEntry` 等）。
 
 - [ADR-0001](./0001-vendor-pi-as-kernel.md) —— vendor + pin + 禁业务 patch 的路线选择
 - [ADR-0005](./0005-tool-tiering-official-dynamic-loading.md) —— 本决策的**第一个实证案例**
-- 规范落地：`AGENTS.md`「pi 内核开发纪律」节
+- 规范落地：`AGENTS.md`「pi-runtime 开发纪律」节
 - 扩展面全景：`vendor/earendil-works/pi/packages/coding-agent/docs/extensions.md`
 - 吃满设计：`docs/superpowers/specs/2026-10-02-pi-runtime-capability-fullfillment-design.md`（T1-T4）

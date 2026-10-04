@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGENTS.md 评审报告 · pi-lnk</title>
+<style>
+  :root{
+    --bg:#FBFAF8; --surface:#FFFFFF; --line:#E8E4DC; --line-strong:#D3D1C7;
+    --ink:#23231F; --ink-2:#5F5E5A; --ink-3:#8A8980;
+    --red:#A32D2D; --red-bg:#FCF2F1; --red-line:#F0C4C0;
+    --amber:#854F0B; --amber-bg:#FDF6EA; --amber-line:#F0DCB4;
+    --green:#0F6E56; --green-bg:#EDF7F3; --green-line:#B9E3D5;
+    --blue:#185FA5; --blue-bg:#EFF5FC; --blue-line:#C6DDF5;
+    --purple:#534AB7; --purple-bg:#F2F1FE; --purple-line:#D8D4F7;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  .wrap{max-width:1000px;margin:0 auto;padding:56px 32px 96px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:28px;margin-bottom:40px}
+  .kicker{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 12px}
+  h1{font-size:30px;line-height:1.3;font-weight:600;margin:0 0 14px;letter-spacing:-.01em}
+  .lede{font-size:17px;color:var(--ink-2);margin:0;max-width:72ch}
+  .meta{margin-top:20px;font-size:13px;color:var(--ink-3)}
+  h2{font-size:21px;font-weight:600;margin:56px 0 6px;letter-spacing:-.005em;padding-top:8px}
+  h2 .num{color:var(--ink-3);font-weight:400;margin-right:10px;font-variant-numeric:tabular-nums}
+  h3{font-size:16px;font-weight:600;margin:30px 0 8px}
+  .sub{color:var(--ink-2);margin:0 0 18px;max-width:74ch}
+  .verdict{
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:24px 28px;margin:28px 0 8px;
+  }
+  .verdict p{margin:0 0 12px}
+  .verdict p:last-child{margin:0}
+  table{width:100%;border-collapse:collapse;margin:20px 0;font-size:14px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-weight:600;font-size:13px;color:var(--ink-2);background:var(--bg)}
+  td.dim{color:var(--ink-2)}
+  .score{font-variant-numeric:tabular-nums;font-weight:600}
+  .tag{
+    display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;
+    padding:2px 8px;border-radius:20px;margin-right:8px;vertical-align:2px;
+  }
+  .t-red{background:var(--red-bg);color:var(--red);border:1px solid var(--red-line)}
+  .t-amber{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-line)}
+  .t-green{background:var(--green-bg);color:var(--green);border:1px solid var(--green-line)}
+  .t-blue{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-line)}
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    padding:20px 24px;margin:18px 0;
+  }
+  .card.sev-p0{border-left:3px solid var(--red)}
+  .card.sev-p1{border-left:3px solid var(--amber)}
+  .card.sev-p2{border-left:3px solid var(--blue)}
+  .card h3{margin:0 0 10px}
+  .card p{margin:0 0 10px}
+  .card p:last-child{margin:0}
+  code{
+    font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background:#F4F2ED;border:1px solid var(--line);border-radius:5px;padding:1px 5px;
+    color:#3A3A34;
+  }
+  .fix{
+    background:var(--green-bg);border:1px solid var(--green-line);border-radius:9px;
+    padding:12px 16px;margin:12px 0 0;font-size:14px;
+  }
+  .fix strong{color:var(--green)}
+  .quote{
+    border-left:3px solid var(--line-strong);padding:2px 0 2px 16px;
+    margin:12px 0;color:var(--ink-2);font-size:14px;
+  }
+  ul{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  .tree{
+    background:#F4F2ED;border:1px solid var(--line);border-radius:10px;
+    padding:18px 22px;font:13px/1.85 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    color:#3A3A34;overflow-x:auto;white-space:pre;margin:16px 0;
+  }
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:18px 0}
+  .mini{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .mini h4{margin:0 0 6px;font-size:14px;font-weight:600}
+  .mini p{margin:0;font-size:13px;color:var(--ink-2);line-height:1.65}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="kicker">工程规范评审 · Architecture Review</p>
+  <h1>AGENTS.md 评审报告</h1>
+  <p class="lede">pi-lnk 仓库 · 362 行 / 21KB · 评审日期 2026-10-04 · 全部结论经仓库实况核实</p>
+  <p class="meta">核实方式：读取 AGENTS.md 全文、四条 workflow 定义、values.yaml、包脚本、文件计数实测，未凭印象判断</p>
+</header>
+
+<div class="verdict">
+  <p><strong>一句话结论：</strong>这是一份高质量的「Git 操作手册 + 踩坑备忘录」，但还不是一份合格的「agent 工程规范」。它的强项是把踩过的坑固化下来（这部分做得比多数团队好），弱项是<strong>只约束了「怎么提交」，没有约束「做得对不对」</strong>。</p>
+  <p>最关键的一个问题：<strong>41% 的篇幅（约 148 行）在讲 git 流程，而项目里最容易造成事故的架构事实（画布 SSOT 在前端、prompt-registry 六处同步、工具 tiering 归属、跨层字段三段对账）一条都没进文档</strong>。这些知识目前只活在 agent 的私有记忆里 —— 换个人、换个模型、清一次上下文，就永久丢失。</p>
+</div>
+
+<h2><span class="num">01</span>分维度评分</h2>
+<p class="sub">按 agent 工程规范的核心维度打分。分低的不代表写得差，代表「作为规范」有缺口。</p>
+
+<table>
+<thead><tr><th style="width:20%">维度</th><th style="width:12%">评分</th><th>判断</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>事实准确性</strong></td>
+  <td><span class="score" style="color:var(--red)">5 / 10</span></td>
+  <td class="dim">存在<strong>方向性错误</strong>：关于 CI paths-ignore 的描述与 ci.yml 实际语义相反，会导致 agent 误判「纯文档 PR 不跑 CI」而跳过验证。另有 3 处已漂移的计数。</td>
+</tr>
+<tr>
+  <td><strong>可执行性</strong></td>
+  <td><span class="score" style="color:var(--green)">9 / 10</span></td>
+  <td class="dim">最强项。给命令、给判据、给反例，几乎每条都能直接照做。这是这份文档真正值得保留的核心资产。</td>
+</tr>
+<tr>
+  <td><strong>信息架构</strong></td>
+  <td><span class="score" style="color:var(--amber)">4 / 10</span></td>
+  <td class="dim">单文件承载 12 个主题，硬规则 / 踩坑笔记 / 现状快照三种性质的内容混在一起，无法按需加载。</td>
+</tr>
+<tr>
+  <td><strong>覆盖完整性</strong></td>
+  <td><span class="score" style="color:var(--red)">3 / 10</span></td>
+  <td class="dim">缺架构地图、缺完成定义（DoD）、缺「何时该停下来问人」、缺安全与生产数据纪律、缺 review 规范。</td>
+</tr>
+<tr>
+  <td><strong>可维护性</strong></td>
+  <td><span class="score" style="color:var(--amber)">4 / 10</span></td>
+  <td class="dim">易腐事实硬编码在正文，文档自己写着「别抄旧数字」却仍在抄。无任何机器校验机制。</td>
+</tr>
+<tr>
+  <td><strong>工具链兜底</strong></td>
+  <td><span class="score" style="color:var(--red)">3 / 10</span></td>
+  <td class="dim">实测全仓无 eslint / prettier / biome，无 husky / lint-staged。代码风格 100% 靠人，与文档里大量「必须」形成落差。</td>
+</tr>
+<tr>
+  <td><strong>决策可追溯性</strong></td>
+  <td><span class="score" style="color:var(--green)">8 / 10</span></td>
+  <td class="dim">ADR 机制 + 引用性质三分表（代码/活链/历史记录）+ 归档优先于删除，这套文档治理规则比多数团队都严谨。</td>
+</tr>
+</tbody>
+</table>
+
+<h2><span class="num">02</span>P0 · 会直接导致事故的实证错误</h2>
+<p class="sub">以下每一条都是今天实测核实的，不是推测。</p>
+
+<div class="card sev-p0">
+  <h3><span class="tag t-red">P0-1</span>CI paths-ignore 描述与实际语义相反</h3>
+  <p>第 44 行与第 159 行都断言「纯文档改动不触发 CI、不触发部署，零 workflow 是正确行为」。</p>
+  <p>实测 <code>ci.yml</code> 的结构是：</p>
+  <div class="tree">on:
+  push:
+    branches: [master]
+    paths-ignore:        # ← 只挂在 push 上
+      - "**/*.md"
+      - "docs/**"
+  pull_request:
+    branches: [master]  # ← 没有任何 paths 过滤</div>
+  <p><code>paths-ignore</code> 在 GitHub Actions 里<strong>只作用于它所挂载的那个事件</strong>。这份 workflow 里它只挂在 <code>push</code> 上，而 <code>pull_request</code> 分支下没有任何过滤 —— 所以<strong>纯文档 PR 会照跑三个 required check</strong>。项目私有记忆里已经记着「纯文档 PR 照样触发 CI（实测三 check 全 pass）」，说明这个认知是对的，只是<strong>文档没同步</strong>。</p>
+  <div class="fix"><strong>修法：</strong>区分两个事件分别陈述。push 到 master 时纯文档改动确实零 workflow；开 PR 时一律触发，必须盯到全绿。</div>
+</div>
+
+<div class="card sev-p0">
+  <h3><span class="tag t-red">P0-2</span>高频事故源完全缺席：prompt-registry 与工具 tiering</h3>
+  <p>仓库实测有 <strong>4 个 workflow</strong>：<code>ci.yml</code> / <code>deploy.yml</code> / <code>prompt-lint.yml</code> / <code>runtime-deploy.yml</code>。AGENTS.md 只提到「两条流水线」，<code>prompt-lint.yml</code> 零提及。</p>
+  <p>后果是：项目里最脆弱的两个资产，在规范里没有任何位置——</p>
+  <ul>
+    <li><strong>加一条提示词规则要同步 6 处</strong>（规则文件 / MANIFEST.yaml / loader 的 COMPOSED_IDS / FALLBACK_BY_ID + fallback.ts / renderStaticFallback 拼装顺序 / 测试里的 EXPECTED 硬编码串）。漏第 5 处会导致<strong>整段提示词静默消失且无任何报错</strong>。</li>
+    <li><strong>新工具默认进延迟集前必须回答「哪个资产按名字点名了它」</strong>。答不上来就必须常驻 —— 因为未激活的工具吃的是 vendor 硬编码的 <code>Tool X is unavailable</code>，<strong>没有恢复路径</strong>。这是 PR #100 的生产实证：40 次调用全落常驻集，官方 Dynamic Tool Loading 触发率至今为 0。</li>
+  </ul>
+  <div class="fix"><strong>修法：</strong>新增「变更影响面矩阵」一节，列出每类改动必须同步哪些位置、必须跑哪些门禁。这是 AGENTS.md 最缺、价值最高的一节。</div>
+</div>
+
+<h2><span class="num">03</span>P1 · 结构性缺失</h2>
+<p class="sub">这些不是「写得不够细」，而是整类维度没有覆盖。</p>
+
+<div class="card sev-p1">
+  <h3><span class="tag t-amber">P1-1</span>没有架构地图 —— 新 agent 读完仍不知道系统怎么跑</h3>
+  <p>文档开头只有一句「打造以 pi-agent-core 为内核的 canvas agent」，然后直接跳进分支纪律。全程没有一张数据流图、没有一句关键状态描述。</p>
+  <p>而这些是最容易踩、且踩了代价最大的架构事实，现在只存在于私有记忆里：</p>
+  <ul>
+    <li>请求链路：浏览器 → nginx(:8888) → Nest(:5100) → pi-runtime(K3s NodePort 30100，外网不可达) → vendor pi → 上游模型</li>
+    <li><strong>画布 SSOT 在前端</strong>（<code>saveCanvas</code> 整份覆盖）；<code>add_node</code> 有<strong>两份 applier 必须同步</strong></li>
+    <li>两条部署流水线的触发面完全不同：改 <code>services/pi-runtime/**</code>、<code>skills/**</code>、<code>vendor/**</code> <strong>必须手工发 workflow</strong>，不会自动上线</li>
+    <li>pi-runtime 部署 tag = master 的 commit 短 SHA（不是语义版号）</li>
+    <li><code>AGNES_MODEL_ID</code> 线上是空串 ⇒ LLM 靠 BYOK 注入</li>
+  </ul>
+  <div class="fix"><strong>修法：</strong>在文档前部加一节 15 行以内的「系统地图」：一张 ASCII 数据流 + 一张「改哪层 ⇒ 走哪条流水线 ⇒ 怎么验证上线」表。这是最能防事故的一节，也是当前完全缺失的一节。</div>
+</div>
+
+<div class="card sev-p1">
+  <h3><span class="tag t-amber">P1-2</span>没有完成定义（DoD）—— 只管提交，不管正确性</h3>
+  <p>全文的强制力都指向流程：开分支 → 提交 → 开 PR → 盯 CI → 合并 → 清 worktree。但<strong>「这个改动是对的」没有任何判据</strong>。缺的这几条都是已付出过代价的：</p>
+  <ul>
+    <li><strong>vitest 绿 ≠ tsc 绿</strong>（esbuild 只转译）⇒ 提交前必须 <code>pnpm -r build</code>，web 走 vue-tsc</li>
+    <li><strong>「Test Files N passed」≠ CI 会绿</strong> ⇒ 必须同看 <code>Errors N errors</code> 与末尾 Exit status（实测 180 files/1449 tests 全 passed 但 Errors 11 ⇒ exit 1）</li>
+    <li><strong>合并前必读 mergeState</strong>，<code>BLOCKED</code> 意味着 GitHub 不允许绕过</li>
+    <li>改 vendor 消费后必须<strong>生产取证</strong>，不能只看 workflow 绿了就 assume 已上线</li>
+    <li>新增工具必须回答 tiering 归属；新增规则必须同步 6 处（见 P0-2）</li>
+  </ul>
+  <div class="fix"><strong>修法：</strong>新增一节「提交前的 5 项自检」，每项都是可执行命令而非原则性表述。理想形态是一个 <code>scripts/preflight.sh</code>，一条命令跑完全部。</div>
+</div>
+
+<div class="card sev-p1">
+  <h3><span class="tag t-amber">P1-3</span>没有「何时该停下来问人」的判据</h3>
+  <p>文档通篇是「必须做 X」「禁止做 Y」，<strong>但没有一条说明什么情况下 agent 不该自己决定</strong>。这是一个多 agent 并存、连着生产、且有真实扣分逻辑的项目 —— 这是最危险的一种缺口。</p>
+  <p>至少应明确划出这四类必须先问：</p>
+  <ul>
+    <li>动 <code>schema.prisma</code> / 动数据迁移（生产库是 SQLite，10 个迁移目录）</li>
+    <li>动积分 / 扣分 / 退款逻辑（记忆里已有「扣分退款 0」的事故）</li>
+    <li>动 prompt-registry 预算（L6 已到 2880 / 上限 3200，余量约 320 字符）</li>
+    <li>任何生产止血操作（改 <code>PI_RUNTIME_MODE</code>、改 helm values、重发镜像 tag）</li>
+  </ul>
+  <div class="fix"><strong>修法：</strong>加一节「红线清单」：以下操作先向人确认，不要自行执行。这是让 agent 从「能干」变成「可信」的关键一节。</div>
+</div>
+
+<div class="card sev-p1">
+  <h3><span class="tag t-amber">P1-4</span>零安全与生产数据纪律</h3>
+  <p>文档没有任何篇幅讲密钥、凭据、生产数据边界。但项目里这些操作是真实存在的：SSH 私钥路径、生产 SQLite 直连、生产 DB 容器内直查、免鉴内部端点。<strong>没有纪律 = 每个 agent 都在自己发明边界</strong>。</p>
+  <div class="fix"><strong>修法：</strong>补 5 条：① 生产数据可否落到本机（建议只落聚合统计与脱敏样本）② 日志里禁止出现的字段 ③ 免鉴端点的安全边界就是响应字段本身，加内容字段须同改 AuthGuard ④ 凭据不进代码不进文档 ⑤ 生产取证优先只读（http / printenv），不改状态。</div>
+</div>
+
+<div class="card sev-p1">
+  <h3><span class="tag t-amber">P1-5</span>没有 PR 规范 —— 只讲怎么合，没讲怎么写才 review 得动</h3>
+  <p>现有内容只到「盯 CI 到全绿」，没有 PR 该长什么样。建议固化为模板：<strong>变更动机 / 影响面（哪几层、哪几个端点）/ 验证证据（跑了什么、看到什么）/ 回滚方式 / 是否需要手工发 runtime 流水线</strong>。最后一项尤其重要 —— 改 pi-runtime 代码但没手工发 workflow，合并后线上不会有变化，这是个静默失败。</p>
+</div>
+
+<h2><span class="num">04</span>P2 · 可维护性与体例</h2>
+
+<div class="grid2">
+  <div class="mini">
+    <h4>易腐事实硬编码</h4>
+    <p>测试文件数写 97/176/26，实测 98/180/28；ADR 列「0001-0008」，实际已有 0009；superpowers 写「283 份」，实测 288。文档第 159 行自己写着「别抄本文档的旧数字，要数字时实测」—— 却仍在抄。<strong>自相矛盾。</strong></p>
+  </div>
+  <div class="mini">
+    <h4>单文件已到体量上限</h4>
+    <p>21KB / 362 行，一次性全量注入对任何模型的注意力都是消耗。且三种性质内容混在一起：硬规则（该长期稳定）、踩坑笔记（可下沉到 skill）、现状快照（该机器生成）。</p>
+  </div>
+  <div class="mini">
+    <h4>工具链零兜底</h4>
+    <p>实测：全仓无 eslint / prettier / biome，无 husky / lint-staged。<code>pnpm lint</code> 存在，但 <code>services/pi-runtime</code> 只有 <code>typecheck</code> 没有 <code>lint</code>。文档里几十条「必须」全靠人自觉执行。</p>
+  </div>
+  <div class="mini">
+    <h4>Markdown 体例瑕疵</h4>
+    <p>第 11 行 <code>-内核：</code> 缺空格，列表项不渲染；第 12 行 <code>- 载体</code> 多余空格；第 298 行 <code>&gt;2026-10-03</code> 缺空格导致引用块不生效。小问题，但影响文档可信度。</p>
+  </div>
+</div>
+
+<div class="card sev-p2">
+  <h3><span class="tag t-blue">P2-1</span>建议的目标结构（薄主文件 + 按需加载）</h3>
+  <p>把 21KB 单文件改成「薄主文件 + 专题文件」两层。主文件只放路由与不可协商的硬规则，目标 120 行以内：</p>
+  <div class="tree">AGENTS.md                    ← 路由 + 硬规则（≤120 行，每次全量读）
+docs/agent/
+  architecture.md            ← 系统地图 / 数据流 / SSOT / 流水线触发面对照表
+  delivery.md                ← 七步流程 + 收尾清理 + DoD 自检（现分支纪律下沉）
+  conventions.md             ← 提交规范 / PR 模板 / 代码风格 / 红线清单
+  assets.md                  ← prompt-registry 六处同步 / skills / tiering 归属
+  incident-notes.md          ← 踩坑备忘（症状→根因→判据），可增长不稀释主文件
+docs/adr/                    ← 不变</div>
+  <p>关键设计：<strong>「架构地图」和「红线清单」留在主文件</strong>（这两块必须在任何上下文下都可见），其余下沉并留指针。同时把 <code>incident-notes.md</code> 明确标为可增长文档 —— 踩坑记录应该有地方沉淀，而不是挤占规范本身。</p>
+</div>
+
+<div class="card sev-p2">
+  <h3><span class="tag t-blue">P2-2</span>把文档里的「命令」升级为「脚本」</h3>
+  <p>文档里最有价值的判据都是命令，但要求 agent 每次手工敲一遍 —— 既慢又容易漏。三个可以直接产品化：</p>
+  <ul>
+    <li><code>scripts/preflight.sh</code>：提交前自检（tsc build / 变更相关测试 / prompt-lint / 格式）一条命令跑完</li>
+    <li><code>scripts/verify-claims.sh</code>：核验文档里的计数（测试文件数 / ADR 数 / skills 清单 / pi 版本）与仓库实况是否一致，漂移就报错 —— 这条直接解决 P2-1 的自相矛盾</li>
+    <li><code>scripts/deploy-checklist.md</code>：由 <code>runtime-deploy.yml</code> 的输入项反向生成，避免文档与 workflow 脱节</li>
+  </ul>
+</div>
+
+<h2><span class="num">05</span>值得原样保留的部分</h2>
+<p class="sub">评审不是重写。以下几条是这份文档真正优秀的地方，改版时不要丢。</p>
+
+<div class="grid2">
+  <div class="mini">
+    <h4>「每条陈述都要回代码核实，不要凭印象写」</h4>
+    <p>全文最有价值的一句元纪律。它同时解释了为什么文档要定期重审、也给了判断某条内容是否可信的标准。这句话本身比它约束的内容更重要。</p>
+  </div>
+  <div class="mini">
+    <h4>落盘判据：只信 git status</h4>
+    <p>「Edit/Write 报成功不等于落盘，Grep 命中可能是缓存假象」—— 这是本环境真实踩过的坑，被写成了可操作判据。这类「环境级陷阱」写进规范，价值远超通用最佳实践。</p>
+  </div>
+  <div class="mini">
+    <h4>vendor 能力优先 + 挂 ADR</h4>
+    <p>「vendor 有的必须用 vendor 的，不许自研等价物」，并配上 ADR-0009 和 PR #100 的生产失败作为代价证据。<strong>有真实失败案例支撑的硬纪律，才不会被当成口号。</strong>这是全文最值得学的一条写法。</p>
+  </div>
+  <div class="mini">
+    <h4>文档引用的性质三分法</h4>
+    <p>区分「代码契约 / 活链 / 历史记录任务描述」，并明确历史 plan 里的死链刻意不改、只登记清单 + 给取回方法。这套治理规则比多数团队的文档规范都成熟。</p>
+  </div>
+  <div class="mini">
+    <h4>分层测试 + 资源纪律</h4>
+    <p>「全量是 CI 的活」+「load &gt; 8 禁止起跑」+「4 核 Mac 多 agent 并存」。把环境约束写进规范并给出量化阈值，而不是笼统说「注意性能」，这是很成熟的写法。</p>
+  </div>
+  <div class="mini">
+    <h4>对照表优于叙述</h4>
+    <p>「三个版本号别混」「想查什么 → 去哪查 → 不要去哪」「体检结果 → 判断与处置」。可查表比散文高效得多，且不容易产生歧义。这是全文应该继续扩展的写法。</p>
+  </div>
+</div>
+
+<h2><span class="num">06</span>整改优先级建议</h2>
+<p class="sub">按「修掉会不会出事」排序，不按改动难度排序。</p>
+
+<table>
+<thead><tr><th style="width:8%">顺序</th><th style="width:34%">动作</th><th style="width:14%">对应问题</th><th>为什么这个顺序</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>1</strong></td>
+  <td>修正 CI paths-ignore 的错误描述，区分 push 与 pull_request</td>
+  <td><span class="tag t-red">P0</span></td>
+  <td class="dim">方向性错误，会让 agent 主动跳过验证。改 6 个字，收益最高。</td>
+</tr>
+<tr>
+  <td><strong>2</strong></td>
+  <td>补「变更影响面矩阵」：prompt-registry 六处同步、工具 tiering 归属、vendor 层次边界</td>
+  <td><span class="tag t-red">P0</span></td>
+  <td class="dim">项目最脆弱的两类资产当前零覆盖，且后果是静默失败。</td>
+</tr>
+<tr>
+  <td><strong>3</strong></td>
+  <td>补「系统地图」一节：数据流 + 改哪层走哪条流水线 + 怎么验证上线</td>
+  <td><span class="tag t-amber">P1</span></td>
+  <td class="dim">让新 agent 第一次就读懂整个系统，同时把「没手工发 runtime 流水线」这个静默失败堵住。</td>
+</tr>
+<tr>
+  <td><strong>4</strong></td>
+  <td>补「提交前自检」与「红线清单（何时该问人）」</td>
+  <td><span class="tag t-amber">P1</span></td>
+  <td class="dim">前者补上「做得对不对」的判据，后者把 agent 的自主权关进笼子。多 agent 并存下这是安全底线。</td>
+</tr>
+<tr>
+  <td><strong>5</strong></td>
+  <td>补安全与生产数据纪律 5 条</td>
+  <td><span class="tag t-amber">P1</span></td>
+  <td class="dim">当前完全空白，每个 agent 都在自己发明边界。</td>
+</tr>
+<tr>
+  <td><strong>6</strong></td>
+  <td>写 <code>scripts/verify-claims.sh</code> 自动核验文档里的易腐数字</td>
+  <td><span class="tag t-blue">P2</span></td>
+  <td class="dim">从机制上消灭「文档自己写着别抄数字却仍在抄」的自相矛盾。</td>
+</tr>
+<tr>
+  <td><strong>7</strong></td>
+  <td>拆分文件：AGENTS.md 瘦身到 ≤120 行，专题下沉到 docs/agent/</td>
+  <td><span class="tag t-blue">P2</span></td>
+  <td class="dim">前 5 项都做完后这一步才有意义，否则只是搬家。架构地图与红线清单留在主文件。</td>
+</tr>
+<tr>
+  <td><strong>8</strong></td>
+  <td>接入 lint / pre-commit（至少给 pi-runtime 补 lint 脚本）</td>
+  <td><span class="tag t-blue">P2</span></td>
+  <td class="dim">把文档里的「必须」从道德约束变成机器约束。但需要先确认是否愿意为此引入构建依赖。</td>
+</tr>
+</tbody>
+</table>
+
+<h2><span class="num">07</span>最后一个判断</h2>
+<p class="sub">这份文档的形态很像「把三年踩坑压缩成一份文件」—— 它的价值恰恰来自这些具体的、血迹斑斑的判据。这是它最大的优点，也是它最大的隐患：</p>
+<div class="quote">
+  <p><strong>它记录的是「过去发生了什么」，但规范应该回答「现在该怎么做」。</strong></p>
+  <p>当一份文档 41% 是历史踩坑时，新 agent 读到的是「这个项目曾经被这些坑绊过」—— 有用，但它无法回答「我这次的改动会踩到哪个坑」。而后者才是规范存在的意义。</p>
+  <p>所以真正该补的不是更多踩坑记录（那些应该下沉到 incident-notes.md 沉淀），而是<strong>把私有记忆里的架构事实显性化</strong>：画布 SSOT 在前端、prompt-registry 六处同步、工具 tiering 的「谁点名它」准绳、四条流水线的触发面差异、跨层字段三段对账。这些知识目前只存在于 agent 的私有上下文里，是这个仓库最脆弱的单点。</p>
+</div>
+
+<footer>
+  评审依据：AGENTS.md 全文（362 行）· .github/workflows/ 四份 workflow 定义 · charts/pi-lnk-runtime/values.yaml · 各包 package.json scripts · 文件计数实测（server 98 / web 180 / pi-runtime 顶层 28）· docs/adr/ 目录 · prompt-registry/rules/ 与 skills/ 清单<br>
+  所有实证结论均以实测为准，未采信文档自述。
+</footer>
+
+</div>
+</body>
+</html>
