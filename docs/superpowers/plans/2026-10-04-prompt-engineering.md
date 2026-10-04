@@ -37,7 +37,7 @@
 | 2 | 规则 body 末尾多了一个空行 | `contentHash` 基于 `trimEnd()`，尾随空行必须**报错**而非静默改变哈希 | Task 2 |
 | 3 | 新增规则时忘记同步 `renderStaticFallback` 拼装顺序 | 容器读不到目录走fallback 时该规则**整段消失且无任何报错** | Task 2 |
 | 4 | `unlessGroup` 规则在组已启用时被注入 | 只读守卫文案**不得**出现在有写工具的会话里 | Task 4 |
-| 5 | 记忆条目内容里本身含 `## 长期记忆` 字样 | `classifyBlock` 会误判块类型 → 份额分配错误 → 截断方向错 | Task 7 |
+| 5 | 记忆条目内容里本身含 `## 长期记忆` 字样 | `classifyBlock` 会误判块类型 → 份额分配错误 → 截断方向错 | Task 4 case4b |
 
 ---
 
@@ -48,13 +48,40 @@
 | `prompt-registry/PROMPT_SPEC.md` | 规则总纲：坐标系声明、图元类型、规则地图、预算纪律、变更流程 | Task 1 创建 |
 | `scripts/gen-prompt-spec-map.ts` | 从 registry 生成规则地图 Markdown 片段 | Task 2 创建 |
 | `scripts/prompt-lint.ts` | 门禁 CLI 外壳（已有，**不改**） | — |
-| `apps/server/src/agent/pi-runtime/prompt-registry.loader.ts` | 组装 + L0–L10 判据 | Task 2 / Task 3 修改 |
-| `apps/server/src/agent/pi-runtime/prompt-registry.loader.test.ts` | 门禁判据测试 | Task 2 / 3 修改 |
-| `prompt-registry/rules/*.md` | 规则正文 | Task 3 改2 处引用 |
+| `.github/workflows/prompt-lint.yml` | 加规则地图一致性校验 | Task 2 改 |
+| `apps/server/src/agent/pi-runtime/prompt-registry.loader.ts` | 组装 + L0–L11 判据 | Task 2 / Task 3 修改 |
+| `apps/server/src/agent/pi-runtime/prompt-registry.loader.test.ts` | 门禁判据 + case3/6 | Task 2 / 3 / 4 修改 |
+| `apps/server/src/agent/pi-runtime/prompt-registry.fallback.ts` | 内嵌兜底常量（Task 3 改 body 时须同步） | Task 3 条件性修改 |
+| `apps/server/src/agent/pi-runtime/pi-prompt-assembler.service.test.ts` | 组装契约 case1/2/5 | Task 4 修改 |
+| `prompt-registry/MANIFEST.yaml` | `contentHash` + `version` 登记处 | Task 3 修改 |
+| `prompt-registry/rules/*.md` | 规则正文 + `anchor` frontmatter | Task 1 / 2 / 3 修改 |
+| `services/pi-runtime/src/dynamic-budget.test.ts` | 预算契约 case4/4b + Review Focus #5 | Task 4 修改 |
+| `services/pi-runtime/src/evals/prompt-ab-scenarios.ts` | 真模型 A/B 场景集 | Task 5 创建 |
 | `services/pi-runtime/src/tools/memory.ts` | 记忆读写 + 反哺剔除 | Task 7 修改 |
-| `services/pi-runtime/src/tools/memory.test.ts` | 记忆工具测试 | Task 7 修改 |
+| `services/pi-runtime/src/tools/memory.test.ts` | 反哺剔除测试 | Task 7 修改 |
+| `services/pi-runtime/src/metrics.ts` | `pi_runtime_memory_suppressed_total` | Task 7 修改 |
+| `apps/server/src/agent/agent.service.ts` | 注入侧过滤抑制项 | Task 7 修改 |
+| `docs/ops/prompt-ab-runbook.md` | A/B 运行手册 | Task 5 创建 |
 
-**职责边界**：生成器只**读** registry 产出 Markdown；校验生成物是否最新由 `prompt-lint` 负责。两者不互相 import，避免循环依赖。
+**职责边界**：生成器只**读** registry 产出 Markdown；校验生成物是否最新由 `prompt-lint` 负责。两者不互相import，避免循环依赖。
+
+---
+
+## ⚠️ 写计划时的硬纪律（本计划自身的教训）
+
+**每一个 API 符号都必须先grep 核实再写进计划。** 本计划初稿引用了 3 个**看起来存在、实际不存在**的 helper，核实后全部返工：
+
+| 初稿凭印象写的 | 实际（已核实） |
+|---|---|
+| `fixtureRoot({...})` | loader.test.ts **无此 helper**，用既有 `VALID` 全量元组数组 + `write(dir, file, text)` |
+| `callTool(tools, name, args)` | `runTool(tool, params, tc)` + `find(tools, name)` + 常量 `tc` |
+| `applyBudget(blocks, opts)` | `applyDynamicBudget(blocks, opts)`，返回 **`{blocks, dropped}`**（不是数组） |
+
+**两个测试风格不一致，混用即编译失败**：
+- `apps/server/**` → vitest（`it` / `expect`）
+- `services/pi-runtime/**` → **`node:test`**（`test` / `assert/strict`）
+
+⚠️ 另注意本仓 `git grep` 存在静默失败（见 spec 附录 A），核实符号时若grep 返 0 命中，改用 python `os.walk` 复核再下结论。
 
 ---
 
