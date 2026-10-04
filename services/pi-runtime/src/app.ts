@@ -12,6 +12,7 @@ import {
 	BusyError,
 	ConflictError,
 	ForkTargetUnknownError,
+	isReplayComplete,
 	type NormalizedEvent,
 	NotFoundError,
 	SessionManager,
@@ -357,7 +358,26 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 
 			// 复核 Minor #10：先订阅再写响应头——hasKey 与 subscribe 之间的 sweeper 回收窗口
 			// 会以 NotFoundError 浮出，此时还能 404；写头之后再抛就只能 500。
-			let buffered: NormalizedEvent[] = [];
+			//
+			// T1：`subscribe` 现在额外报告 `droppedFromSeq`（buffer 溢出时被淘汰的最早 seq）。
+			// `afterSeq` 早于它 ⇒ 客户端要的重放段已被 `shift()` 丢掉，拿到的是**断头的**流。
+			//
+			// ⚠️ **本PR 刻意不回 409**，行为与改前**逐字节一致**（200 + 原有补发逻辑）。
+			// 理由（2026-10-04 影响面取证）：
+			//  1. 客户端 `pi-runtime.client.ts:424-428` 只对 404 特判，
+			//     其余非 2xx 一律 `throw` →进指数退避重连；而重连**仍带同一个 lastEventId**
+			//     ⇒ 服务端必然再次 409 ⇒ 循环到 120 秒预算耗尽才报 exhausted。
+			//     即：**在客户端适配之前，回 409 会把「静默残缺」换成「长时间无响应」**，
+			//     后者更糟（连部分内容都没有）。
+			//  2. `agent.service.ts` 的两处生产调用**都传 `{ live: true }`** ⇒ 首连走
+			//     `from=now`，`lastEventId` 只在**同一订阅内断线重连**时才有值。
+			//     而断线重连发生在事件仍在推送的窗口内 ⇒ 真实触发条件苛刻。
+			//  3. 线上 `PI_RUNTIME_MODE=off` + `replicas=1` + 零流量 ⇒ 当前根本触发不了。
+			//
+			// 本 PR 的价值是**把缺陷变成可判读**（`droppedFromSeq` 落到返回值上），
+			// 客户端据此判读后，改 409 只需动服务端一行、客户端零改。
+			// 判读函数 `isReplayComplete` 已在下面用于**日志观测**。
+			let buffered: (NormalizedEvent[] & { droppedFromSeq: number }) | undefined;
 			try {
 				if (mode.mode === "live") {
 					manager.subscribeLive(sessionId, writeEvent);
@@ -369,14 +389,30 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				throw err;
 			}
 
+			// 残缺只**记日志**不改状态：让运维能从日志看到「发生过丢弃 + 丢了多少」，
+			// 而不改变任何客户端可见行为。
+			if (buffered && mode.mode === "replay" && !isReplayComplete(buffered, mode.afterSeq)) {
+				app.log.warn(
+					{
+						sessionId,
+						afterSeq: mode.afterSeq,
+						droppedFromSeq: buffered.droppedFromSeq,
+						lostCount: buffered.droppedFromSeq - mode.afterSeq,
+					},
+					"replay window expired: requested events were evicted; client received a truncated stream",
+				);
+			}
+
 			reply.raw.writeHead(200, {
 				"content-type": "text/event-stream",
 				"cache-control": "no-cache",
 				"connection": "keep-alive",
 			});
 
-			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），监听已在 subscribe 时挂上
-			for (const event of buffered) writeEvent(event);
+			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），监听已在 subscribe 时挂上。
+			// ⚠️ 残缺时**照样发**（本 PR 不改客户端可见行为）：`droppedFromSeq` 已在上面记了日志，
+			// 客户端将来适配 `isReplayComplete` 后再改回 409，届时这里不动。
+			for (const event of buffered ?? []) writeEvent(event);
 
 			const heartbeat = setInterval(() => {
 				reply.raw.write(`: heartbeat\n\n`);
