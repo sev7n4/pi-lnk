@@ -6,6 +6,7 @@ import {
   isMiniMaxBaseUrl,
   isMiniMaxH3Model,
 } from './minimax-h3-video-provider'
+import { withVideoRetry } from './video-retry'
 
 export interface VideoGenerateOptions {
   model?: string
@@ -32,21 +33,15 @@ export interface VideoProvider {
   generate(prompt: string, options?: VideoGenerateOptions): Promise<{ url: string; lastFrameUrl?: string }>
 }
 
-export class PlaceholderVideoProvider implements VideoProvider {
-  private urls = [
-    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1024&q=80',
-    'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=1024&q=80',
-  ]
-
-  async generate(_prompt: string): Promise<{ url: string }> {
-    await new Promise((r) => setTimeout(r, 1500))
-    return { url: this.urls[Math.floor(Math.random() * this.urls.length)] }
-  }
-}
-
-/** OpenAI 暂无公开 video API，此处预留兼容层：有 Key 时仍走 placeholder 并标注 */
+/**
+ * 兼容层：OpenAI 无公开 video API，构造时必须显式传入真实 provider。
+ *
+ * ⚠️ 2026-10-04：原默认参数是 `new PlaceholderVideoProvider()`，那会让无凭据场景
+ * 返回 Unsplash **JPEG 静态图**冒充视频（生产已有 1 条这样的记录）。已改必填，
+ * 不再自带任何占位实现。
+ */
 export class OpenAIVideoProvider implements VideoProvider {
-  constructor(private fallback: VideoProvider = new PlaceholderVideoProvider()) {}
+  constructor(private fallback: VideoProvider) {}
 
   async generate(prompt: string, options?: VideoGenerateOptions): Promise<{ url: string }> {
     console.log(`[VideoProvider] model=${options?.model} duration=${options?.duration} prompt=${prompt.slice(0, 50)}`)
@@ -84,6 +79,8 @@ export class AgnesVideoProvider implements VideoProvider {
     private defaultModel = 'agnes-video-v2.0',
     private pollIntervalMs = 5000,
     private maxPollAttempts = 120,
+    /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
+    private createRetryBaseDelayMs = 1500,
   ) {}
 
   async generate(prompt: string, options?: VideoGenerateOptions): Promise<{ url: string }> {
@@ -93,17 +90,41 @@ export class AgnesVideoProvider implements VideoProvider {
       ? buildAgnes25VideoBody(prompt, model, refs, options)
       : buildAgnesV20VideoBody(prompt, model, refs, options)
 
-    const createRes = await fetch(`${this.baseUrl}/videos`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
+    // ⚠️ 2026-10-04：创建阶段加退避重试。生产 374 条 video 失败样本里 171 条（46%）
+    // 是可重试的（99 条 429 + 72 条 503 video_queue_full + 11 条 fetch failed），
+    // 此前零重试。**只包创建，不包轮询**（轮询的 continue 已是「等下一轮」语义）。
+    // 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.4
+    //
+    // ⚠️ 关键：`fetch` 对 429/503 **正常返回**（`ok: false`），不抛异常 ⇒ 必须在此
+    // 显式 throw，让 `withVideoRetry` 有机会介入。只包 fetch 的话重试永远不会发生。
+    const createRes = await withVideoRetry(
+      async () => {
+        const res = await fetch(`${this.baseUrl}/videos`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          // 可重重试与否由 withVideoRetry 判定；这里统一抛出。
+          // 上游文案形如 `429 rate limit for free users` / `503 video_queue_full`，
+          // 会被 `isRetryableVideoError` 识别；而 `400 invalid_request` 不会。
+          throw new Error(`Agnes video create ${res.status}: ${await res.text()}`)
+        }
+        return res
       },
-      body: JSON.stringify(body),
-    })
-    if (!createRes.ok) {
-      throw new Error(`Agnes video create ${createRes.status}: ${await createRes.text()}`)
-    }
+      {
+        baseDelayMs: this.createRetryBaseDelayMs,
+        onRetry: ({ attempt, delayMs, error }) => {
+          console.warn(
+            `[AgnesVideoProvider] create failed (attempt ${attempt}), retrying in ${delayMs}ms:`,
+            error,
+          )
+        },
+      },
+    )
 
     const created = (await createRes.json()) as AgnesVideoCreateResponse
     const videoId = created.video_id
@@ -446,5 +467,9 @@ export function createVideoProvider(opts?: ProviderCredentialOpts): VideoProvide
   if (key) {
     return new UnsupportedVideoGatewayProvider(baseUrl)
   }
-  return new PlaceholderVideoProvider()
+  // 2026-10-04：此前返PlaceholderVideoProvider（Unsplash 静态图冒充视频）。
+  // 2026-08-08 的设计文档已要求「不得 PlaceholderVideoProvider；返回明确错误」。
+  throw new Error(
+    '视频通道未配置：缺少 OPENAI_API_KEY / VIDEO_API_KEY，且当前 baseUrl 不是已支持的视频网关',
+  )
 }

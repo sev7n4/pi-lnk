@@ -26,6 +26,23 @@ import { ToolMetrics } from "./tool-metrics.js";
 
 const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
 
+/**
+ * prompt 版本指纹（Nest 侧 `PromptManifest` 的可观测子集）。
+ *
+ *⚠️ 字段全是「可能缺失」：旧 Nest 不传（灰度期）、直连 runtime 的测试不传。
+ * 故消费方一律按 `n/a` 兜底，不做必填假设。
+ */
+export interface PromptInfo {
+	/** 提示词内容版本（规则/Registry 内容变更时由 Nest bump）。 */
+	promptVersion?: string;
+	/** 本轮拼装结果的稳定哈希（判「同一批请求是否同一版」）。 */
+	promptHash?: string;
+	/** Registry 自身版本（规则资产的版本，与拼装结果区分）。 */
+	registryVersion?: string;
+	/** Registry 内容哈希（判「规则文件被谁改过」）。 */
+	registryHash?: string;
+}
+
 /** 工具结果体积直方图桶（字节）（③：工具结果 token 观测的原始量）。 */
 const BYTES_BUCKETS = [256, 1024, 4096, 16384, 65536, 262144, 1_048_576];
 
@@ -74,6 +91,19 @@ export class Metrics {
 	private pendingOps = new Map<string, number>(); // key: tool|status
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
+	/**
+	 * 当前生效的 prompt 版本指纹（P0-3 收尾 / 审计 L-2）。
+	 *
+	 * ⭐ 为什么 Nest 侧算了 manifest 还不够：Nest 只打 `logger.log`，
+	 * 生产侧**无法按版本区间聚合查询**「09:00–09:30 那批请求用的哪版提示词」。
+	 * 首轮审计原话：「出一次『假称已出图』事故，事后无法回答那批请求用的是不是
+	 * 同一版提示词，回溯链条断在最关键一环」—— 指标才能回答。
+	 *
+	 * 刻意用 **gauge 而非 counter**（与 `build_info` 同款）：语义是「现在跑的是哪版」，
+	 * 不是「历史上一共出现过几版」。历史版本查 git / Nest 日志。
+	 * 未设置时**不输出样本行**（与其他 gauge 一致），避免零流量时谎报「版本为空」。
+	 */
+	private promptInfo: PromptInfo | undefined;
 	private usageTokens = new Map<string, number>(); // key: kind (input|output|cache_read|cache_write)
 	private usageCost = new Map<string, number>(); // key: kind 同上
 	private toolSearchCalls = new Map<string, number>(); // key: outcome (hit|miss|empty)
@@ -324,6 +354,17 @@ export class Metrics {
 		this.skillsPromptTokens = n;
 	}
 
+	/**
+	 * 记录当前 prompt 版本指纹（Nest 侧每轮随 turnContext 送来）。
+	 *
+	 * 后写覆盖先写（gauge 语义）。缺字段由 render 补 `n/a`——
+	 * ⭐ **不能省略标签**：标签集随字段有无而变会让同名指标有时 4 标签、有时 2 标签，
+	 * Prometheus 侧就查不出来了。
+	 */
+	setPromptInfo(info: PromptInfo): void {
+		this.promptInfo = info;
+	}
+
 	render(activeSessions: number, version: string): string {
 		const lines: string[] = [];
 		const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -331,6 +372,18 @@ export class Metrics {
 		lines.push("# HELP pi_runtime_build_info Build metadata.");
 		lines.push("# TYPE pi_runtime_build_info gauge");
 		lines.push(`pi_runtime_build_info{version="${esc(version)}"} 1`);
+
+		// prompt 版本指纹（P0-3 / L-2）。未设置时只出 HELP/TYPE，不出样本行——
+		// 与其他 gauge 同口径：零流量时不谎报「当前是空版本」（否则告警会永远 firing）。
+		lines.push("# HELP pi_runtime_prompt_info Current prompt version fingerprint (labels are stable; missing values are n/a).");
+		lines.push("# TYPE pi_runtime_prompt_info gauge");
+		if (this.promptInfo) {
+			const info = this.promptInfo;
+			// ⭐ 标签集恒定四项，缺失填 n/a —— 缺一个就换标签集会让指标查不出来。
+			lines.push(
+				`pi_runtime_prompt_info{promptVersion="${esc(info.promptVersion || "n/a")}",promptHash="${esc(info.promptHash || "n/a")}",registryVersion="${esc(info.registryVersion || "n/a")}",registryHash="${esc(info.registryHash || "n/a")}"} 1`,
+			);
+		}
 
 		lines.push("# HELP pi_runtime_uptime_seconds Process uptime in seconds.");
 		lines.push("# TYPE pi_runtime_uptime_seconds gauge");

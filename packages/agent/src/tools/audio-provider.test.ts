@@ -37,6 +37,50 @@ describe('createAudioProvider', () => {
     expect(init.headers).toMatchObject({ Authorization: 'Bearer opts-key' })
     expect(JSON.parse(String(init.body))).toMatchObject({ model: 'opts-tts' })
   })
+
+  // 回归锁：生产 18/18 条 audio 记录落库的是 soundhelix 示例曲、hasTtsData 全 false、
+  // 扣费 18 笔退款 0 笔。根因是 FallbackAudioProvider catch 后返回占位 MP3 且不抛错，
+  // 于是不进 service 的 catch、不退款、status 写 completed。见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.2
+  it('does NOT fall back to a placeholder when the primary TTS fails', async () => {
+    const provider = createAudioProvider({
+      apiKey: 'k',
+      baseUrl: 'https://apihub.agnes-ai.cn/v1',
+      model: 'speech-2.8-hd',
+    })
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: async () => 'model_not_found: No available channel',
+    })
+
+    await expect(provider.generate('hello')).rejects.toThrow(/TTS API 503/)
+    // 关键：不得有第二次调用去取占位音频
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('throws when no API key is configured instead of returning a placeholder', () => {
+    delete process.env.OPENAI_API_KEY
+    expect(() => createAudioProvider(undefined)).toThrow(/音频通道未配置/)
+  })
+
+  it('does not return the soundhelix placeholder for an Agnes base url', async () => {
+    process.env.OPENAI_BASE_URL = 'https://apihub.agnes-ai.cn/v1'
+    const provider = createAudioProvider(undefined)
+    expect(provider).toBeInstanceOf(OpenAITTSProvider)
+
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: async () => 'model_not_found',
+    })
+    const outcome = provider.generate('hello').then(
+      (r) => ({ resolved: r }),
+      (e) => ({ rejected: e }),
+    )
+    const settled = await outcome
+    expect('rejected' in settled).toBe(true)
+    expect(JSON.stringify(settled)).not.toContain('soundhelix')
+  })
 })
 
 describe('OpenAITTSProvider', () => {

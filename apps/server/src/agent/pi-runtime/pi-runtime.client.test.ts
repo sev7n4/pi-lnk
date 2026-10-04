@@ -567,6 +567,71 @@ describe("P0-③ streamEvents 断线重连", () => {
 		expect(errors).toHaveLength(1);
 	});
 
+	/**
+	 * T1 客户端适配：服务端报 409「重放窗口已过期」时**立即终止**，不���避重连。
+	 *
+	 * 背景（PR #156 留下的闭环）：服务端 `buffer` 溢出后 `shift()` 丢最旧事件，
+	 * 客户端要的 `lastEventId` 若早于丢弃水位，重放必然残缺。服务端对此回
+	 * `409 replay window expired`（而不是给一个断头的 200 流）。
+	 *
+	 * ⛔ **为什么必须特判，不能让它落进 `if (!res.ok)`**：
+	 * 那条分支 `throw` 后进指数退避重连，而重连请求**仍带同一个 `lastEventId`**
+	 * ⇒ 服务端**必然再次 409** ⇒ 空转到 `RECONNECT_BUDGET_MS`(120s) 耗尽。
+	 * 即「重试一个必然失败的请求」——比直接失败更糟。
+	 *
+	 * 本例的断言要点：`calls === 1`（只请求一次，没进退避循环）+ `errors` 恰好 1 条。
+	 */
+	it("409 立即终止不重连（重放窗口已过期，重试必然再 409）", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return new Response(
+					JSON.stringify({
+						error: "replay window expired",
+						reason: "requested events were evicted from the replay buffer",
+						droppedFromSeq: 100,
+						afterSeq: 0,
+						recovery: "rebuild full timeline",
+					}),
+					{ status: 409, headers: { "content-type": "application/json" } },
+				);
+			}) as typeof fetch,
+		});
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
+		await new Promise((r) => setTimeout(r, 50));
+		cancel();
+		// ⭐ 核心断言：只请求了**一次** —— 若落进退避重连，50ms 内 calls 会 ≥ 2
+		expect(calls).toBe(1);
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(PiRuntimeError);
+		expect((errors[0] as PiRuntimeError).status).toBe(409);
+	});
+
+	/**
+	 * 回归锁：409 **不重连**，但**也不能把错误吞掉**——
+	 * 必须以 `onError` 上报，让上层有机会走全量重建。
+	 * （与 `body clean end` 的语义区别：那条是正常终态、不报错。）
+	 */
+	it("409 上报的 error 带 status=409（上层据此决定是否重建）", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "replay window expired" }), {
+					status: 409,
+				})) as typeof fetch,
+		});
+		const errors: PiRuntimeError[] = [];
+		const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e as PiRuntimeError));
+		await new Promise((r) => setTimeout(r, 50));
+		cancel();
+		expect(errors).toHaveLength(1);
+		expect(errors[0].status).toBe(409);
+		expect(errors[0].message).toContain("replay window expired");
+	});
+
 	it("body clean end 直接返回，不重连、不触发 onError（turn 结束语义）", async () => {
 		let calls = 0;
 		const client = new PiRuntimeClient({

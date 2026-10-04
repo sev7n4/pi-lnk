@@ -1,6 +1,6 @@
 ---
 status: 事实对账（2026-10-04）
-baseline: origin/master 69a9f35ad（PR #142 合并后）
+baseline: origin/master 10e1e82c（PR #149 合并后）
 sources:
   - docs/2026-10-02-prompt-engineering-audit.html（Round 1，基线 0593c3d）
   - docs/2026-10-02-prompt-engineering-audit-round2.html（Round 2，基线 d574b8b）
@@ -23,7 +23,7 @@ sources:
 | ⬜ 未开始 | 14 | 含**全部 P0-1（eval 体系）** |
 
 **最要紧的一条**：Round 2 反复强调"规则重写必须压在有 eval 之后"，而 **eval 一行都没写**——
-`createPiRuntimeHarness` 在 `origin/master` 上零命中，`vitest-evals` 只存在于 `vendor/`（vendored 只读树，没装 node_modules）。
+~~`createPiRuntimeHarness` 在 `origin/master` 上零命中~~ **已由 PR #149 交付**（形态为 `eval/driver.ts` + `eval/transcript.ts`，不走 coding-agent）。
 所以 **W4–W5（规则原子化重写）当前不具备开工条件**，谁先动谁就是在无判据状态下改最高风险的资产。
 
 **次要紧**：Round 2 判定"全场性价比最高"的两项 —— W2 的 `lane.compact({customInstructions})` 传保留段、
@@ -54,8 +54,8 @@ Round 1 说 P0-1 的 eval「全仓 0」，这个结论仍然成立（见 §3）�
 |---|---|---|
 | ① `prompt-registry/` 骨架 + MANIFEST + schema | ✅ | 8 个 `.md` + `MANIFEST.yaml`；`apps/server/src/agent/pi-runtime/prompt-registry.loader.ts` |
 | ② PROMPT_VERSION 落 metrics 与 session meta | ⬜ | `git grep PROMPT_VERSION origin/master -- services apps` → **零命中** |
-| ③ `createPiRuntimeHarness` adapter + L0 CI | 🟡 | L0 有了（`scripts/prompt-lint.ts` + 独立 workflow），adapter 无 |
-| ④ ≥30 条 golden case | ⬜ | `llm-judge` / `llmJudge` / `golden case` 全零命中 |
+| ③ `createPiRuntimeHarness` adapter + L0 CI | 🟡 | **adapter 已有**（PR #149 的 `eval/driver.ts` 走 pi-runtime HTTP）；L1 runner（接 vitest-evals + evalHarnessTable）未做 |
+| ④ golden case | 🟡 **12 条（全部真实失败来源）** | PR #149。刻意少于建议的 30 条 —— 本仓纪律是**不自造**；后续每次线上事故增量补一条 |
 
 已超出 Round 2 预期的是 ①：Registry 不只存规则文本，还带了
 `assertRegistryIntegrity`（L0–L9）+ 独立 `prompt-lint.yml` workflow +
@@ -111,7 +111,8 @@ W1a 自己的遗留登记（spec §12.1）：
   （Registry 的 `group: writeTools|genTools` 是**装配分组**，不是 Round 1 §07 提的 XML 语义分区）；
 - 3 条 canonical trajectory 仍为 0。
 
-**阻塞点**：Round 2 §08 明确"W4–W5 前置 = W1b 的 L1 判据可信"。L1 不存在 ⇒ 不开工。
+**阻塞点（2026-10-04 更新）**：Round 2 §08 明确「W4–W5 前置 = W1b 的 L1 判据可信」。
+PR #149 已建判据层（L0 + 12 条 case + driver），**L1 行为回归仍未跑** ⇒ W4–W5 继续挂起。
 
 ### W6 结构化协议 — ⬜ 未开始
 
@@ -135,7 +136,7 @@ skill frontmatter 仍是 `name / version / description` 三字段
 
 | # | 缺口 | 判定 | 关键证据 |
 |---|---|---|---|
-| P0-1 | 无 eval 体系 | ⬜ **仍为 0** | `createPiRuntimeHarness` 零命中；`packages/evals` 仅存在于 vendor 只读树 |
+| P0-1 | 无 eval 体系 | 🟡 **判据层已建** | PR #149 交付 L0 契约层（16 条）+ 12 条真实失败 case + HTTP driver。**L1 行为回归（真跑模型）仍未做** |
 | P0-2 | 规则文本考古式移植 | 🟡 资产化✅ / 重写⬜ | Registry + lint + 三道护栏已落地；编号跳跃与 911 字单条未动 |
 | P0-3 | 无版本号 | 🟡 部分 | Registry 有 `version`+`contentHash`，诊断端点可查；**pi-runtime 侧无 version 指标、session meta 无 promptVersion** |
 | P0-4 | 工具 schema 无预算口径 | ⬜ | 无 schema token 度量、无分档降级 |
@@ -275,3 +276,91 @@ api 容器 `grep -c collectRetentionState` = 3。
   观测一个周期再决定是否继续押注渐进披露
 - **P0-3 收尾（L-2）** pi-runtime 侧 `pi_runtime_prompt_version_info` + session meta 落 `promptVersion`
 - **W1b / W3 / W4–W8** 见 §4 第三梯队
+
+---
+
+## 6. 执行记录（第二轮，2026-10-04 上午）
+
+| 项 | 状态 | 交付 |
+|---|---|---|
+| **撤回**「W2③ 先观测再动手」 | 🔴 **建议作废** | 实测生产**零流量**（见下），观测类建议在有流量前全部失效 |
+| **W1b eval harness** | 🟡 判据层已建 | PR #149：`eval/{transcript,driver,golden-cases}.ts` + L0 契约层 16 条 + 12 条真实失败 case |
+
+### 🔴 为什么撤回上一轮的建议
+
+我上轮建议「W2③ 先观测 `tool_search_activated_total` 一个周期再决定」。实测：
+
+| 指标 | 值 |
+|---|---|
+| `pi_runtime_sessions_active` | **0** |
+| `pi_runtime_sessions_live` | **0** |
+| `pi_runtime_tool_search_activated_total` | **0** |
+| `pi_runtime_uptime_seconds` | 1648 |
+| 有数据行的 counter 指标 | **0 个**（全部 Map 为空） |
+| `readyz` HTTP 请求 | 331次（健康检查） |
+| `sessions/:id/events` HTTP 请求 | **恰好 1 次** |
+| Nest 侧 pi-runtime 相关日志 | **0 条** |
+
+`PI_RUNTIME_MODE=active` + `PI_RUNTIME_URL` 配置正确 ⇒ **不是接线问题，是纯零流量**。
+
+⇒ **「先观测」这个动作本身也要先查流量**，否则给的是一个永远等不到的判据。
+⭐ 这条已写进长期记忆：**任何「靠观测决定要不要做」的建议，都要先确认有流量。**
+
+### W1b 交付内容（PR #149，mergeCommit `10e1e82c`）
+
+```
+services/pi-runtime/src/eval/
+├── transcript.ts       流式事件 → 归一化 transcript 的折叠（纯函数）
+├── transcript.test.ts  14 条
+├── driver.ts           走 pi-runtime HTTP 驱动一轮
+├── driver.test.ts       5 条
+├── golden-cases.ts    12 条 case + evaluateCase()
+└── golden-cases.test.ts 16 条（L0 契约层）
+```
+
+### ⭐ 一处架构判断要修正 Round 2
+
+Round 2 说「照 `packages/evals/src/pi-harness.ts:246` 的形态写 adapter」——
+**vendor 那个 harness 的 `run` 深度依赖 `@earendil-works/pi-coding-agent`**
+（`createAgentSessionFromServices` / coding-agent 的 `SessionManager` / `SettingsManager`），
+而本项目**刻意不依赖那个包**（ADR-0001/0009）⇒ 直接抄会把整个 CLI 宿主拉进依赖面。
+
+**但不需要重写框架**：`createHarness` / `evalHarnessTable` / judge 全部来自
+`vitest-evals/harness`（npm 公开包，与 coding-agent 无关）。
+⇒ **只需实现 `run` 回调**，框架不动。这不违反 ADR-0009「vendor 有的必须用」——
+`createHarness` 就是 vendor 提供的、我们已用的部分。
+
+### 三个关键设计决策
+
+1. **eval 走 HTTP 而非进程内调 `SessionManager`** —— 后者绕过 HTTP 契约 / SSE 归一 /
+   `from=now` 订阅裁决，而那三处恰是真实链路出问题的地方。
+   **eval 要测「上线后那个」，不是「源码里那个」。**
+2. **首批 12 条而非 30 条** —— 30 条的前提是「能自造 case」，本仓纪律是**不自造**。
+   宁可 12 条真实的。后续每次线上事故增量补一条。
+3. **L0 契约层（零 token）先于 L1** —— L0 抓「评测集自己的错」，能在无凭据环境先挡掉。
+
+### L0 契约层当场抓到两个真实问题
+
+1. ⭐ **`expectTools: []` 语义缺口**：原实现按「必须包含全部期望工具」解，
+   空数组**恒通过** ⇒ 闲聊/致谢 case 变成永远绿的僵尸判据。
+   已补：`[]` = **不得调任何工具**。⚠️ 判据存在性检查要用
+   `c.expectTools ?? undefined === undefined`，**不能用 `!c.expectTools`**。
+2. **`write-guard-003` 零判据**（我留注释说「首批不做 judge」）⇒ 被 L0 抓出。
+
+### transcript 折叠：最易错处会让评测基线假绿
+
+`message_end` 常带**全量文本**（非增量），无条件 append ⇒ 同一段话出现两遍
+⇒ 基于文本的断言永远失败。`mergeText` 规则：新文本**以旧文本为前缀 ⇒ 替换**。
+⇒ **一个「看起来在跑、实际判据全错」的评测基线，比没有 eval 更危险。**
+
+### 剩余缺口
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| **W1b L1 runner** | ⬜ 未做 | 接 `vitest-evals` + `evalHarnessTable` 做 baseline vs candidate 对比。**需 LLM 凭据** |
+| **W2③ 索引块触发条件** | ⏸ **挂起** | 原计划「先观测」已作废（零流量）。Round 2 判断 3 的假设**至今未被任何数据验证** |
+| **P0-3 收尾（L-2）** | ⬜ 未做 | `pi_runtime_prompt_version_info` + session meta 落 `promptVersion` |
+| **W4–W5 规则重写** | ⏸挂起 | 前置是 L1 判据可信，L1 未跑 ⇒ 继续不开工 |
+
+⚠️ **W4–W5 的前置条件目前只完成了一半**：判据（case + `evaluateCase`）有了，
+但**从未真正跑过模型**。在没有一次真实 L1 跑之前，「回归集」只是纸面。

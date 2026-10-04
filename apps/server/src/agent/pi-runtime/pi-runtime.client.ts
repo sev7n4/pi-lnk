@@ -47,6 +47,22 @@ export interface PiTurnContext {
 	 * pi-runtime 若自己猜，会产生第二套与画布不一致的真相。
 	 */
 	retention?: PiRetentionState;
+	/** prompt 版本指纹（每轮带；Nest 的 manifest 是本轮拼装结果的哈希）。 */
+	promptInfo?: PiPromptInfo;
+}
+
+/**
+ * prompt 版本指纹（P0-3 收尾 / 审计 L-2）。
+ *
+ * Nest 侧 `PromptManifest` 已经算出这些值，但此前**只喂给了 logger**
+ * ⇒ 生产无法回答「那批请求用的是不是同一版提示词」。
+ * 送进 runtime 后落gauge + `meta.json`，事故回溯才有链条。
+ */
+export interface PiPromptInfo {
+	promptVersion?: string;
+	promptHash?: string;
+	registryVersion?: string;
+	registryHash?: string;
 }
 
 export interface PiRetentionState {
@@ -104,6 +120,8 @@ export interface CreateSessionOptions {
 	 * 因此这里必须显式把画布 id 单独传过去，否则全部画布工具 404（2026-09-29 hotfix）。
 	 */
 	canvasSessionId?: string;
+	/** P0-3 / L-2：建会话时的 prompt 版本指纹，落 meta.json 供 resume 比对。 */
+	promptInfo?: PiPromptInfo;
 }
 
 /**
@@ -194,6 +212,8 @@ export class PiRuntimeClient {
 				...(opts.llm ? { llm: opts.llm } : {}),
 				// 画布会话 id（与上面的 pi 会话键解耦，见 CreateSessionOptions.canvasSessionId）
 				...(opts.canvasSessionId ? { canvasSessionId: opts.canvasSessionId } : {}),
+				// P0-3 / L-2：prompt 版本指纹（runtime 落meta.json，磁盘 resume 时比对）
+				...(opts.promptInfo ? { promptInfo: opts.promptInfo } : {}),
 			}),
 		});
 		if (status >= 400 || !body || body.error) {
@@ -425,6 +445,19 @@ export class PiRuntimeClient {
 					if (res.status === 404) {
 						throw new PiRuntimeError("streamEvents: session not found", 404);
 					}
+					// T1：重放窗口已过期（服务端 buffer 溢出后淘汰了我们要的事件）⇒ **终止，不重连**。
+					//
+					// ⛔ 为什么不能落进下面的 `!res.ok`：那会 throw 进指数退避，而重连请求
+					// **仍带同一个 lastEventId** ⇒ 服务端**必然再次 409** ⇒ 空转到
+					// `RECONNECT_BUDGET_MS`(120s) 耗尽。即「重试一个必然失败的请求」，
+					// 期间本轮内容完全拿不到——比直接失败更糟。
+					//
+					// 语义上它与 404 同属「重连无意义」：404 是会话没了，409 是事件没了。
+					// 上层收到 `status=409` 可据此改走全量重建（当前 `agent.service.ts`
+					// 两处 onError 都只关闭流，重建通路待定）。
+					if (res.status === 409) {
+						throw new PiRuntimeError("streamEvents: replay window expired", 409);
+					}
 					if (!res.ok || !res.body) {
 						throw new PiRuntimeError(`streamEvents failed: HTTP ${res.status}`, res.status);
 					}
@@ -446,7 +479,9 @@ export class PiRuntimeClient {
 					return; // body clean end = 会话删除/turn 结束：不重连
 				} catch (err) {
 					if (controller.signal.aborted) return;
-					if (err instanceof PiRuntimeError && err.status === 404) {
+					// 404 会话没了/ 409 重放窗口已过期：**两者重连都无意义**，立即终止并上报。
+					// 404 是既有行为；409 是 T1 新增（见上方 throw 处注释）。
+					if (err instanceof PiRuntimeError && (err.status === 404 || err.status === 409)) {
 						onError?.(err);
 						return;
 					}

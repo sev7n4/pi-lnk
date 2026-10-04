@@ -9,6 +9,7 @@ import {
 	NotFoundError,
 	toSessionKey,
 	appendPromptBlocks,
+	isReplayComplete,
 } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
@@ -16,6 +17,12 @@ import type { RuntimeConfig } from "./runtime-config.js";
 import { COMPACTION_RETENTION_INSTRUCTIONS } from "./compaction-summary.js";
 import { SkillRegistry } from "./skills/registry.js";
 import { Closed } from "@earendil-works/pi-agent-core";
+
+/**
+ * T1 的重放完整性判据 `isReplayComplete` **定义在生产代码**（`session-manager.ts`），
+ * 因为 `app.ts` 的 SSE 路径要判同一件事 —— 两处各写一遍必然漂移。
+ * 这里只import，不本地复制。
+ */
 
 /**
  * 每个用例独立的 dataRoot。
@@ -494,6 +501,73 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 		const replay = sm.subscribe("s-overflow", () => {}, 0);
 		assert.equal(replay[0]?.seq, 1); // 首条是 seq 1 而非 seq 0
 		assert.equal(replay.length, 500);
+	});
+
+	/**
+	 * T1 红灯：溢出后重连**必须能知道丢了**，不能静默拿残缺集当完整。
+	 *
+	 * 上一个用例锁的是「返回值内容」（best-effort 全给），本用例锁的是**「有没有告知」**。
+	 * 两者不矛盾：内容保持 best-effort 以免改动 #67 已验证的补发路径，
+	 * 但返回值要额外携带「你 afterSeq 之前的事件已被淘汰」的信号，
+	 * 让 `app.ts` 的 SSE 路径能改走全量重建，而不是把残缺集当完整交付给前端。
+	 *
+	 * 为什么必须显式告知而不是继续静默：
+	 * - `message_update` 每 token 一个事件，一段几百字回答单轮就能破 500（生产形态）
+	 * - 静默丢弃 ⇒ 客户端拿残缺 transcript 渲染出「答了一半」的界面，且**无任何报错**
+	 *   （这与 degraded 静默降级同型：失败被降级成成功）
+	 */
+	it("溢出后 subscribe 暴露「已丢弃起点」水位（T1 红灯）", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-dropped", {});
+
+		// 溢出**之前**水位必须是 0（一切都在 buffer 里）——先断言这条，
+		// 否则「未溢出」与「已溢出」两个状态被混在一起，测不出 report 的意义。
+		const beforeOverflow = sm.subscribe("s-dropped", () => {});
+		assert.equal(beforeOverflow.droppedFromSeq, 0, "未溢出时不应报告丢弃");
+
+		for (let i = 0; i < 501; i++) handlers.get("run_start")?.({ lane: "main" });
+
+		// afterSeq=0 早于丢弃水位 1 ⇒ 必须在返回值里说清楚「0 这条已被淘汰」
+		const afterOverflow = sm.subscribe("s-dropped", () => {}, 0);
+		assert.equal(
+			afterOverflow.droppedFromSeq,
+			1,
+			"溢出后必须报告被淘汰的最早 seq，否则调用方无法判断重放是否完整",
+		);
+		assert.ok(
+			0 < afterOverflow.droppedFromSeq,
+			"droppedFromSeq 必须大于调用方的 afterSeq，才能判定「不完整」",
+		);
+	});
+
+	it("afterSeq 不早于丢弃水位时不算不完整（T1 边界）", async () => {
+		const { handlers, fakeHarnessFactory } = makeEmittableHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-edge", {});
+		for (let i = 0; i < 501; i++) handlers.get("run_start")?.({ lane: "main" }); // 丢弃水位=1
+
+		// afterSeq=1 恰好等于水位 ⇒ 要的事件都还在（buffer 里是 1..500）⇒ 重放完整。
+		// ⚠️ 重放过滤条件是 `seq > afterSeq`，所以 afterSeq=1 的首条是 seq=2
+		// （seq=1 已被 afterSeq 排除，不是被丢弃）——两者都算「要的事件都拿到了」。
+		// 注意返回的是**数组本身**（`replay[0]` / `.map()` 照旧可用），
+		// `droppedFromSeq` 只是挂在上面的附加信息——这是刻意的兼容设计。
+		const atBoundary = sm.subscribe("s-edge", () => {}, 1);
+		assert.equal(atBoundary.droppedFromSeq, 1);
+		assert.equal(atBoundary[0]?.seq, 2, "边界值下重放从 afterSeq 的下一条开始");
+		assert.equal(
+			isReplayComplete(atBoundary, 1),
+			true,
+			"afterSeq 等于水位时不该被判为残缺（否则每次重连都误报要全量重建）",
+		);
+
+		// 对照：afterSeq=0 早于水位 ⇒ 残缺，必须报出来
+		const before = sm.subscribe("s-edge", () => {}, 0);
+		assert.equal(
+			isReplayComplete(before, 0),
+			false,
+			"afterSeq 早于丢弃水位时必须判定为残缺，否则调用方会把断头重放当完整",
+		);
 	});
 
 	it("subscribeLive 不重放缓冲、只收未来事件（P0-A 跨轮重放回归锁）", async () => {

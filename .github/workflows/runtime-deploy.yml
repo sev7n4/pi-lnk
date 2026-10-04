@@ -10,6 +10,12 @@ name: Runtime Deploy (pi-runtime)
 #   4. 升级后 env 必须「逐项比对精确值」，不是 presence 检查
 #   5. tag 必须是 master 的祖先提交（behind_by == 0）——挡「打错字的 sha」，与第1 条互补
 #
+# ⭐ 发布闸门（2026-10-04）：本job 的 environment 是 `production-runtime`，
+# 不是 `production` —— 前者配了 required reviewers ⇒ pi-runtime 上线会卡一次
+# 人工批准并留下审计记录；后者留空（protection_rules: []）⇒ 没有闸门。
+# 刻意不共用：deploy.yml 的 3 个 job 也绑 production，共用会把 api/web 的
+# 自动部署一起变成手动卡点。
+#
 # 为什么是手动触发（2026-10-04 复核，勿轻易改成自动）：
 #   实测 9-30 以来改构建输入的提交 32 次 vs 本workflow 运行 34 次，线上 version 与
 #   master HEAD 完全一致 ⇒ 「解决遗忘部署」这个自动化立项理由**不成立**，人工闸门
@@ -61,16 +67,43 @@ jobs:
     name: Build & deploy pi-runtime
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: production
+    # ⭐ 独立 environment（不是 production）—— 该 environment 配了 required reviewers
+    # (sev7n4)，所以 pi-runtime 上线会**卡一次人工批准**，且带审计记录。
+    # 为什么不用 production：deploy.yml 的 3 个 job 也绑 production，共用会让
+    # **api/web 的自动部署也变成手动卡点**（实测 4 个 job 都绑 production）。
+    # 拆分后：pi-runtime 上线受闸门约束，api/web 合并即自动上线，互不影响。
+    environment: production-runtime
     env:
       SSH_HOST: ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
       SSH_USER: ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+      # ⚠️ 必须显式注入（2026-10-04 第二次踩坑）：`gh` 在 runner 上**不自动读 token**，
+      # 而 Actions 也**不会**把 `GITHUB_TOKEN` 写成环境变量（只有 `GITHUB_REPOSITORY` 等
+      # 是默认注入的）。写成 `GH_TOKEN="${GITHUB_TOKEN}"` 会在 `set -u` 下报
+      # `GITHUB_TOKEN: unbound variable` —— 那是上一个修复引入的新失败。
+      # 在 job 级 env 注入后，`gh` 会自动读取，无需在命令行重复传。
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Prepare SSH
         run: |
           set -euo pipefail
+          # ⚠️ 前置断言：secret 缺失时**立刻报「secret 未配置」**（2026-10-04 实测事故）。
+          # 没有这道断言时，空的 SSH_HOST 会被原样写进 ~/.ssh/config 的 HostName，
+          # ssh 随后报 `config line 2: no argument after keyword "hostname"`
+          # —— 把「配置缺失」伪装成「ssh 配置语法错」，排查方向被带偏。
+          # 本workflow 绑 environment `production-runtime`，而 secret 原先只在
+          # `production` 上（#153 拆分 environment 时漏迁）⇒ 两个都不报，值就是空。
+          [[ -n "${{ env.SSH_HOST }}" ]] || {
+            echo "ERROR: SSH_HOST 为空 —— TENCENT_CLOUD_IP / DEPLOY_HOST secret 未配置。"
+            echo "  本 job 绑 environment: production-runtime，secret 需在该 environment"
+            echo "  或仓库级（Settings → Secrets and variables → Actions）可见。"
+            exit 1
+          }
+          [[ -n "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" ]] || {
+            echo "ERROR: SSH key secret（TENCENT_CLOUD_SSH_KEY / DEPLOY_SSH_KEY）未配置。"
+            exit 1
+          }
           mkdir -p ~/.ssh
           echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
@@ -104,14 +137,29 @@ jobs:
           # 而 X 恰恰是 master 的合法祖先。若按 status in (identical|behind) 放行，
           # 会把绝大多数正常的旧提交全部误杀。
           # 正确判据 =「master 不领先 X」= behind_by == 0（等价于 merge-base --is-ancestor X master）。
-          COMPARE=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${TAG}...master" --jq '.behind_by' 2>&1 || true)
-          if [[ "$COMPARE" == "0" ]]; then
-            echo "ok: tag ${TAG} 是 master 的祖先提交（behind_by=0）"
+          #
+          # ⚠️ token 由 job 级 `env: GH_TOKEN` 提供（见上），`gh` 会自动读取。
+          # **不要**在这里写 `GH_TOKEN="${GITHUB_TOKEN}"` —— Actions 只默认注入
+          # GITHUB_REPOSITORY / GITHUB_SHA 等，**不注入 GITHUB_TOKEN**，
+          # 在 `set -u` 下会直接报 `GITHUB_TOKEN: unbound variable`（run 37172045084 实测）。
+          #
+          # ⚠️ `|| true` 只用来兜退出码，**不能**让失败文本被当成判定值：
+          # 下面用「是否纯数字」把「API 调用失败」与「tag 不合法」分成两个分支
+          # （首次上线 run 37170109050 就因这条误报，排查方向被带偏）。
+          COMPARE=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${TAG}...master" --jq '.behind_by' 2>/tmp/compare.err || true)
+          if [[ "$COMPARE" =~ ^[0-9]+$ ]]; then
+            if [[ "$COMPARE" == "0" ]]; then
+              echo "ok: tag ${TAG} 是 master 的祖先提交（behind_by=0）"
+            else
+              echo "ERROR: tag ${TAG} 不是 master 的祖先提交（behind_by=${COMPARE}）。"
+              echo "  tag 必须是已进 master 的 commit 短 sha；未合并分支上的 sha 会被这条挡住。"
+              echo "  取正确值：git fetch origin && git rev-parse --short origin/master"
+              exit 1
+            fi
           else
-            echo "ERROR: tag ${TAG} 不是 master 的祖先提交，或在本仓不存在。"
-            echo "  compare API 返回：$(echo "$COMPARE" | head -c 200)"
-            echo "  tag 必须是已进 master 的 commit 短 sha；未合并分支上的 sha 会被这条挡住。"
-            echo "  取正确值：git fetch origin && git rev-parse --short origin/master"
+            echo "ERROR: compare API 调用失败，无法判定 tag 是否为 master 祖先（不是 tag 本身有问题）。"
+            echo "  底层错误：$(head -c 300 /tmp/compare.err)"
             exit 1
           fi
 
@@ -202,7 +250,8 @@ jobs:
             --set-string env.PI_RUNTIME_DIRECT_IMAGES=true \
             --set-string env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2 \
             --set-string env.PI_RUNTIME_TOOL_RESULT_BUDGET=true \
-            --set-string env.PI_RUNTIME_TOOL_RESULT_MAX_CHARS=24000"
+            --set-string env.PI_RUNTIME_TOOL_RESULT_MAX_CHARS=24000 \
+            --set-string piRuntimeMode=active"
 
       - name: Rollout + triple verify (digest / env / healthz)
         run: |
@@ -244,6 +293,13 @@ jobs:
             || { echo "ERROR: PI_RUNTIME_DIRECT_IMAGES 非期望精确值"; exit 1; }
           echo "$ENV_OUT" | grep -qx "PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2" \
             || { echo "ERROR: PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS 非期望精确值"; exit 1; }
+          # piRuntimeMode（2026-10-04 补录）：chart 的 `values.yaml:93` 默认是 `off`（维护态），
+          # 而 `.env.production.example:60` 是 `active` —— 两者矛盾，且**部署流程从未覆盖该字段**。
+          # 后果：每次 helm upgrade 都落回chart 默认 `off`，pod 与 api 容器
+          # （`/opt/lnkpi/.env` = active）**取值不一致** ⇒ 排查时极易误判成「链路关闭」。
+          # 这里显式 `--set piRuntimeMode=active`（生产该开着），并按本仓纪律精确断言落地。
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_MODE=active" \
+            || { echo "ERROR: PI_RUNTIME_MODE 非期望精确值（当前应为 active，不能是 chart 默认的 off）"; exit 1; }
           HEALTH=$(ssh deploy-cvm "curl -s http://127.0.0.1:30100/healthz")
           echo "$HEALTH" | grep -q "\"version\":\"${TAG}\"" \
             || { echo "ERROR: healthz version != ${TAG}: ${HEALTH}"; exit 1; }

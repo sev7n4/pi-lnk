@@ -697,3 +697,53 @@ describe('buildImageProviderOptions', () => {
     })
   })
 })
+
+// 回归锁：生产 GenerationRecord.model 存的是 gatewayModelId
+// （`doubao-seedance-2.0-mini`），getModelEntry 只按 modelKey 匹配 ⇒ 静默回退到
+// agnes-video-v2.0 条目 ⇒ Seedance 声明的 generateAudio:'native' 被判不支持而丢弃
+// （生产 16 次）。见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.1
+// ⚠️ 必须走 buildVideoProviderOptions 这条完整路径，不能手写 entry ——
+// 手写 entry 跳过了 resolveModelKey，正是本缺陷的所在。
+describe('buildVideoProviderOptions 对 gatewayModelId 的能力判定', () => {
+  it('keeps generateAudio for a Seedance gateway id (no droppedFields)', () => {
+    const out = buildVideoProviderOptions({
+      modelKey: 'doubao-seedance-2.0-mini',
+      generateAudio: true,
+      duration: 5,
+    })
+    expect(out.meta.droppedFields.map((d) => d.field)).not.toContain('generateAudio')
+    expect((out.meta.nativeParams as Record<string, unknown>).generate_audio).toBe(true)
+    expect(out.providerOptions.generateAudio).toBe(true)
+  })
+
+  it('resolves the canonical modelKey while accepting the gateway id', () => {
+    const out = buildVideoProviderOptions({ modelKey: 'doubao-seedance-2.0-mini', duration: 5 })
+    expect(out.meta.modelKey).toBe('seedance-2.0-min')
+    expect(out.meta.modelFallback).toBeUndefined()
+  })
+
+  it('still drops generateAudio for a model that genuinely lacks it (Agnes)', () => {
+    const out = buildVideoProviderOptions({
+      modelKey: 'agnes-video-v2.0',
+      generateAudio: true,
+      duration: 5,
+    })
+    expect(out.meta.droppedFields.map((d) => d.field)).toContain('generateAudio')
+    expect(out.meta.droppedFields[0]?.reason).toMatch(/agnes-video-v2\.0/)
+  })
+
+  it('agrees whether the id is modelKey or gatewayModelId', () => {
+    const viaKey = buildVideoProviderOptions({
+      modelKey: 'seedance-2.0-min',
+      generateAudio: true,
+      duration: 5,
+    })
+    const viaGateway = buildVideoProviderOptions({
+      modelKey: 'doubao-seedance-2.0-mini',
+      generateAudio: true,
+      duration: 5,
+    })
+    expect(viaGateway.meta.droppedFields).toEqual(viaKey.meta.droppedFields)
+    expect(viaGateway.meta.nativeParams).toMatchObject(viaKey.meta.nativeParams)
+  })
+})

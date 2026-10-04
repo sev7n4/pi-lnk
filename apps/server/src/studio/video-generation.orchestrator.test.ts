@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import type { CanonicalVideoGenerationRequest } from '@lnkpi/shared'
 import { StudioService } from './studio.service'
-import { VideoGenerationOrchestrator } from './video-generation.orchestrator'
+import { VideoGenerationOrchestrator, VIDEO_POLL_TIMEOUT_MS } from './video-generation.orchestrator'
 
 const canonicalRequest = (): CanonicalVideoGenerationRequest => ({
   prompt: '产品展示视频',
@@ -101,5 +101,37 @@ describe('VideoGenerationOrchestrator', () => {
     expect(result.status).toBe('completed')
     expect(result.url).toBe('https://cdn.example/out.mp4')
     expect(persist).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 回归锁：orchestrator 的 VIDEO_POLL_TIMEOUT_MS 原为 660_000，而
+// `videoModelProfiles.ts` 里 minimax H3 的 `maxPollMs = 1_200_000`
+// ⇒ **该模型必然先被 orchestrator 判timeout，而后台任务仍在跑**，
+// 状态自相矛盾（生产有 3 条 `Agnes video timed out after 120 polls`）。
+// 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.4
+describe('VIDEO_POLL_TIMEOUT_MS 与模型 profile 对齐', () => {
+  it('exceeds the largest maxPollMs in the model profiles', async () => {
+    const { listModels } = await import('@lnkpi/shared')
+    const { resolveVideoModelProfile } = await import('@lnkpi/shared')
+    const maxProfile = Math.max(
+      ...listModels('video').map((m) => {
+        const p = resolveVideoModelProfile(m.modelKey, m.gatewayModelId, {})
+        return p?.maxPollMs ?? 0
+      }),
+    )
+    expect(maxProfile).toBeGreaterThan(0)
+    expect(VIDEO_POLL_TIMEOUT_MS).toBeGreaterThanOrEqual(maxProfile)
+  })
+
+  it('leaves headroom over the largest profile so transport latency is not misjudged', async () => {
+    const { listModels, resolveVideoModelProfile } = await import('@lnkpi/shared')
+    const maxProfile = Math.max(
+      ...listModels('video').map((m) => {
+        const p = resolveVideoModelProfile(m.modelKey, m.gatewayModelId, {})
+        return p?.maxPollMs ?? 0
+      }),
+    )
+    // 至少 60s 余量：poll 还要走 HTTP 往返 + 序列化，抖动是必然的
+    expect(VIDEO_POLL_TIMEOUT_MS - maxProfile).toBeGreaterThanOrEqual(60_000)
   })
 })

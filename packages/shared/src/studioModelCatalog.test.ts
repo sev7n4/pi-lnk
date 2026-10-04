@@ -111,3 +111,78 @@ describe('normalizeModelRef', () => {
     expect(normalizeModelRef('image', videoKey)?.fallback).toBe(true)
   })
 })
+
+// 回归锁：生产 GenerationRecord.model 字段存的是 gatewayModelId
+// （如 `doubao-seedance-2.0-mini`），而 getModelEntry 只按 modelKey 精确匹配
+// ⇒ 查不到 ⇒ resolveModelKey 静默回退到默认条目 `agnes-video-v2.0`
+// ⇒ Seedance 明明声明 generateAudio:'native' 却被判不支持而丢弃（16 次）。
+// 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.1
+describe('getModelEntry 双id 空间', () => {
+  it('resolves a gateway model id to its catalog entry', () => {
+    const entry = getModelEntry('doubao-seedance-2.0-mini')
+    expect(entry?.modelKey).toBe('seedance-2.0-min')
+    expect(entry?.params.generateAudio).toBe('native')
+  })
+
+  it('still resolves the canonical modelKey', () => {
+    expect(getModelEntry('seedance-2.0-min')?.modelKey).toBe('seedance-2.0-min')
+  })
+
+  it('prefers an exact modelKey match over a gatewayModelId match', () => {
+    const entry = getModelEntry('agnes-video-v2.0')
+    expect(entry?.modelKey).toBe('agnes-video-v2.0')
+  })
+
+  it('returns undefined for an id in neither space', () => {
+    expect(getModelEntry('totally-unknown-model')).toBeUndefined()
+  })
+})
+
+describe('resolveModelKey 对 gateway id 不再回退', () => {
+  it('does not fall back when a gateway id was passed', () => {
+    const r = resolveModelKey('video', 'doubao-seedance-2.0-mini')
+    expect(r.fallback).toBe(false)
+    expect(r.entry.modelKey).toBe('seedance-2.0-min')
+    expect(r.entry.params.generateAudio).toBe('native')
+  })
+
+  it('仍对真正未知的 id 回退并置fallback flag', () => {
+    const r = resolveModelKey('video', 'no-such-video-model')
+    expect(r.fallback).toBe(true)
+  })
+
+  it('跨模态的 gateway id 仍判回退（模态闸门不被绕过）', () => {
+    const r = resolveModelKey('video', 'gemini-3.1-flash')
+    expect(r.fallback).toBe(true)
+  })
+})
+
+describe('id 空间一致性（改动 getModelEntry 的前置条件）', () => {
+  it('video 目录内无重复 gatewayModelId', () => {
+    const seen = new Set<string>()
+    for (const entry of listModels('video')) {
+      expect(seen.has(entry.gatewayModelId), `gatewayModelId 冲突: ${entry.gatewayModelId}`).toBe(false)
+      seen.add(entry.gatewayModelId)
+    }
+  })
+
+  it('全目录 modelKey 与 gatewayModelId 集合无交集歧义', () => {
+    // 若某modelKey 同时是另一条目的 gatewayModelId，必须靠「modelKey 优先」消歧；
+    // 这里锁住当前目录不存在该歧义，出现即说明目录数据变了需重新审视查找顺序
+    const all = [
+      ...listModels('text'),
+      ...listModels('image'),
+      ...listModels('video'),
+      ...listModels('audio'),
+    ]
+    const modelKeys = new Set(all.map((e) => e.modelKey))
+    for (const entry of all) {
+      if (modelKeys.has(entry.gatewayModelId)) {
+        expect(
+          entry.modelKey,
+          `存在歧义: ${entry.gatewayModelId} 既是 modelKey 又是 ${entry.modelKey} 的 gatewayModelId`,
+        ).toBe(entry.gatewayModelId)
+      }
+    }
+  })
+})

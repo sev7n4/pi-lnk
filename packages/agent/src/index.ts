@@ -12,7 +12,6 @@ export {
 
 export {
   createVideoProvider,
-  PlaceholderVideoProvider,
   AgnesVideoProvider,
   resolveVideoParams,
   isFalVideoModel,
@@ -25,7 +24,7 @@ export {
   isMiniMaxBaseUrl,
   normalizeMiniMaxBaseUrl,
 } from './tools/minimax-h3-video-provider'
-export { createAudioProvider, PlaceholderAudioProvider, OpenAITTSProvider, FallbackAudioProvider } from './tools/audio-provider'
+export { createAudioProvider, OpenAITTSProvider } from './tools/audio-provider'
 export type { ImageProvider, ProviderCredentialOpts, ImageGenerateOptions } from './tools/image-provider'
 export type { ImageEditProvider, ImageEditInput } from './tools/image-edit-provider'
 export type { SegmentProvider, SegmentPointInput } from './tools/segment-provider'

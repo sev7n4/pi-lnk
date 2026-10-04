@@ -649,6 +649,24 @@ export class StudioController {
     const started = await this.videoOrchestrator.start(
       req.user.sub,
       request,
+      // ⚠️ `persist` 是给「无头/ 服务端渲染」场景预留的写回钩子，本期**刻意 no-op**。
+      //
+      // 为什么不让后端写画布（2026-10-04 复核后的决策，勿"顺手实现"）：
+      //  1. **前端已经在做**：拿到本响应后 3 行内就自己 patch 了
+      //     （`useNodeGeneration.ts:1097` → `patchNodeData({ generationRecordId })`），
+      //     用户体验完全正常 —— 这也是该缺陷至今未被用户报出的原因。
+      //  2. **会被覆盖**：画布 SSOT 在前端（`saveCanvas` 整份覆盖，AGENTS.md）。
+      //     后端刚写完，前端下一次 saveCanvas 就整份盖掉 ⇒ 白写，且引入双写竞态。
+      //  3. **本仓后端零画布写入能力**：`stageCanvasActions` 的测试名即
+      //     `accumulates without changing canvasData`（只累积 stagedActions）。
+      //  4. **`add_node` 有两份 applier 必须同步**（AGENTS.md 红线）；
+      //     再加一份 = 第三份 ⇒ 违反既有设计。
+      //  5. **无法验收**：写测试证明「画布被更新」会被前端覆盖 ⇒ 必然假绿。
+      //
+      // 若将来引入服务端渲染 / 无头生成（无前端可patch），再在此处接 applier，
+      // 并同时处理 `VideoGenerationStartResult.actions` —— 该字段目前前端
+      // 类型声明里根本没有（只声明了 `GenerationRecord & { generationStartedAt }`），
+      // 是一条纯冗余通道。
       async () => {},
       legacyReferenceImageUrl,
     )

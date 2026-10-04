@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp, resolveEventsSubscribeMode } from "./app.js";
-import { SessionManager, toSessionKey } from "./session-manager.js";
+import { SessionManager, toSessionKey, isReplayComplete } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
 import { PendingToolRegistry } from "./pending-registry.js";
@@ -372,8 +372,7 @@ describe("既有端点保持", () => {
 				);
 			} finally {
 				await app.close();
-			}
-		});
+			}		});
 	});
 });
 
@@ -775,6 +774,108 @@ describe("LLM 上游错误：error_class 闭集分类（真实 HTTP 接线）", 
 				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
 				assert.deepEqual(metricLines(body, "pi_runtime_llm_errors_total"), [], "404/409 被误记成 LLM 错误");
 				assert.deepEqual(metricLines(body, "pi_runtime_llm_prompt_errors_total"), []);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+/**
+ * T1：SSE 重连遇「重放窗口已过期」必须显式报 409，不能装作正常。
+ *
+ * 缺陷背景：`dispatch` 溢出时 `buffer.shift()` 丢最旧事件，而 `message_update`
+ * 是每 token 一个事件 ⇒ 一段几百字回答单轮就能破 500，溢出是**常规路径**。
+ * 改前客户端带 `lastEventId=0` 重连会拿到 200 + 断头流，前端渲染出「答了一半」
+ * 的界面且**无任何报错**（与 degraded 静默降级同型：失败被降级成成功）。
+ *
+ * 改后：残缺时在**写响应头之前**回 409 + 结构化原因，客户端据此改走全量重建。
+ *
+ * 为什么能在测试里造出溢出：`makeApp` 返回真实 `SessionManager`，
+ * 用 `dispatchWaitingUser`（公开方法）把 buffer 灌到超过 BUFFER_LIMIT=500。
+ */
+describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => {
+	/**
+	 * 用公开方法把某会话的 buffer 灌到溢出（每条一个 waiting_user 广播）。
+	 *
+	 * ⚠️ **必须传 `canvasSessionId`**：`dispatchWaitingUser` 的匹配键是
+	 * `entry.canvasSessionId ?? entry.id`，而 `entry.id` 是 `toSessionKey(...)`
+	 * 的结果（`:` → `_` + 8 位 hash，如 `s1_t1-a1b2c3d4`）。
+	 * 只传 `sessionId` 而不传 `canvasSessionId` ⇒ `entry.canvasSessionId` 为 undefined
+	 * ⇒ 拿 `s1_t1-<hash>` 去比 `"s1:t1"` ⇒ **永远不匹配、hits=0、buffer 根本没灌满**。
+	 * 于是 `droppedFromSeq` 恒为 0 ⇒ 判定「完整」⇒ 走 SSE 长连接 ⇒ inject 永不 resolve
+	 * ⇒ 整个测试文件卡死（2026-10-04 实测 CI 跑 11-13 分钟未结束）。
+	 *
+	 * 断言命中数 > 0 是这个前置条件的护栏：静默不匹配会让「造溢出」变成空操作。
+	 */
+	async function overflowBuffer(manager: SessionManager, key: string): Promise<void> {
+		// 先验证「打得到这个会话」，再灌——否则造溢出是个静默的空操作。
+		assert.ok(
+			manager.dispatchWaitingUser(key, { toolName: "probe", status: "waiting" } as never) > 0,
+			`前置条件：dispatchWaitingUser 必须命中会话 ${key}（检查 canvasSessionId 是否传入）`,
+		);
+		for (let i = 0; i < 501; i++) {
+			manager.dispatchWaitingUser(key, { toolName: `t${i}`, status: "waiting" } as never);
+		}
+	}
+
+	/**
+	 * 本组**不测「200 + SSE 流」**。
+	 *
+	 * ⚠️ 2026-10-04 实测两次：一旦真的 inject `/events` 走建流成功路径，
+	 * handler 会活到连接关闭，node --test 报
+	 * `generated asynchronous activity after the test ended` + `ERR_HTTP_HEADERS_SENT`，
+	 * 拖死整个文件（CI 跑 14 分钟未结束）。
+	 * ⇒ 「客户端可见行为不变」用**源码层证据**断言（`git grep` 确认无 409 分支），
+	 * app 层只测**能立即返回的分支**。
+	 *
+	 * 本组要钉的判据是**存储层**：`droppedFromSeq` 可读 + `isReplayComplete` 能判残缺。
+	 * 那是本 PR 的实际交付物（可观测），不碰 I/O 最稳。
+	 */
+	it("溢出后 droppedFromSeq 可读，且能判定重放残缺", async () => {
+		await withRoot("pi-runtime-t1-", async (root) => {
+			const { app, manager } = makeApp(root);
+			try {
+				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
+				await app.inject({
+					method: "POST",
+					url: "/sessions",
+					payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "s1:t1" },
+				});
+				await overflowBuffer(manager, "s1:t1");
+
+				// 溢出后重放 ⇒ 报告丢弃起点
+				const probe = manager.subscribe("s1:t1", () => {}, 0);
+				assert.ok(probe.droppedFromSeq > 0, "溢出后必须报告丢弃起点");
+				assert.equal(isReplayComplete(probe, 0), false, "afterSeq=0 早于水位 ⇒ 判为残缺");
+
+				// HTTP 层：残缺 ⇒ 409（**立即返回**，可测；不同于「建流成功」那条会挂死）
+			const res = await app.inject({
+				method: "GET",
+				url: "/sessions/s1:t1/events?lastEventId=0",
+			});
+			assert.equal(res.statusCode, 409, "残缺重放必须 409，不能发200 + 断头流");
+			const body = res.json() as {
+				error: string;
+				droppedFromSeq: number;
+				afterSeq: number;
+				recovery: string;
+			};
+			assert.equal(body.error, "replay window expired");
+			assert.equal(body.afterSeq, 0);
+			assert.ok(
+				body.droppedFromSeq > body.afterSeq,
+				`droppedFromSeq(${body.droppedFromSeq}) 必须大于 afterSeq(${body.afterSeq})，否则客户端无法判断残缺`,
+			);
+			assert.equal(body.recovery, "rebuild full timeline", "必须告诉客户端怎么恢复");
+
+			// afterSeq 恰好等于水位 ⇒ 判为完整（防「每次重连都误报残缺」）
+				const atBoundary = manager.subscribe("s1:t1", () => {}, probe.droppedFromSeq);
+				assert.equal(
+					isReplayComplete(atBoundary, probe.droppedFromSeq),
+					true,
+					"afterSeq 等于水位时不该判残缺",
+				);
 			} finally {
 				await app.close();
 			}
