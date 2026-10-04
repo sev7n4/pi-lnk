@@ -365,7 +365,9 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			// （与 degraded 静默降级同型：失败被降级成成功）。
 			// 故在写头**之前**判掉：回 409 + 明确 `error`，让客户端改走全量重建
 			// （Nest 侧 `/thread-timeline`，或退避后重新拉）。
-			let buffered: (NormalizedEvent & { droppedFromSeq?: number }) | undefined;
+			// T1：`subscribe` 返回的是**数组本身 + 附加属性**（不是 `{ events }` 对象），
+			// 故类型是交叉类型而不是「元素带属性」。
+			let buffered: (NormalizedEvent[] & { droppedFromSeq: number }) | undefined;
 			try {
 				if (mode.mode === "live") {
 					manager.subscribeLive(sessionId, writeEvent);
@@ -377,9 +379,11 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				throw err;
 			}
 
-			if (buffered && !isReplayComplete(buffered, mode.afterSeq)) {
-				// 与注释里 #67 的「先订阅再写头」顺序保持一致：此刻listener 已挂上，
-				// 但连接马上要以409 结束 ⇒ 必须在写头前摘掉，否则监听泄漏。
+			// ⚠️ 409 判定必须留在 `mode.mode === "replay"` 分支内：
+			// `afterSeq` 只存在于该联合成员的 replay 分支上，在合并类型上直接访问会TS2339。
+			if (buffered && mode.mode === "replay" && !isReplayComplete(buffered, mode.afterSeq)) {
+				// 与注释里 #67 的「先订阅再写头」顺序保持一致：此刻 listener 已挂上，
+				// 但连接马上要以 409 结束 ⇒ 必须在写头前摘掉，否则监听泄漏。
 				manager.unsubscribe(sessionId, writeEvent);
 				return reply.code(409).send({
 					error: "replay window expired",
