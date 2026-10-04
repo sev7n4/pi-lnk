@@ -268,6 +268,9 @@ describe("L1 runner · 端到端（假 pi-runtime，零 LLM 调用）", () => {
 					// 显式给 staticPrompt：本文件验 driver/判定/汇总，
 					// 不该依赖磁盘 registry（跑测试时可能没挂载 prompt-registry）。
 					staticPrompt: "test-static-prompt",
+					// ⭐ 画布参数：非 requiresConfirm 的 case 必须给，否则 runL1 fail-fast
+					userId: "test-user",
+					canvasSessionId: "test-canvas",
 				});
 				assert.equal(summary.total, 3);
 				const byId = new Map(summary.results.map((r) => [r.caseId, r]));
@@ -352,5 +355,60 @@ describe("L1 runner · skipped 态（requiresConfirm）", () => {
 		assert.match(summary.report, /\[fail\] bad/);
 		assert.match(summary.report, /\[error\] env/);
 		assert.match(summary.report, /- skip：需确认/);
+	});
+});
+
+
+describe("L1 runner · ⭐ 缺画布上下文时 fail-fast（不跑一遍拿超时）", () => {
+	/**
+	 * 判据来自 2026-10-04 的真实踩坑：缺 `canvasSessionId` 时 driver 回落到
+	 * pi 会话键（`eval-xxx`，不存在的 id）⇒ 画布工具全 4xx ⇒ 模型反复重试
+	 * ⇒ **每条 case 跑满超时**（实测 7/7 全超时，`get_canvas_summary` 22 次 4xx）。
+	 *
+	 * ⭐ 为什么必须 fail-fast 而不是「跑完看结果」：
+	 * 跑完得到的是「本轮未正常结束」，看起来像**行为不符**（fail），
+	 * 而正确处置是「传对参数重跑」。⇒ 两者必须严格区分。
+	 */
+	it("非 requiresConfirm 的 case 缺 canvasSessionId ⇒ 直接抛错", async () => {
+		const { runL1 } = await import("./runner.js");
+		await assert.rejects(
+			() =>
+				runL1({
+					baseUrl: "http://127.0.0.1:1",
+					only: ["tool-discovery-003"],
+					staticPrompt: "x",
+					userId: "u",
+					// canvasSessionId 故意不给
+				}),
+			/需要真实画布上下文/,
+		);
+	});
+
+	it("缺 userId 同样抛错（画布工具要它做归属校验）", async () => {
+		const { runL1 } = await import("./runner.js");
+		await assert.rejects(
+			() =>
+				runL1({
+					baseUrl: "http://127.0.0.1:1",
+					only: ["tool-discovery-003"],
+					staticPrompt: "x",
+					canvasSessionId: "c",
+					// userId 故意不给
+				}),
+			/需要真实画布上下文/,
+		);
+	});
+
+	it("⭐ 全是 requiresConfirm 的 case 时不要求画布（它们本来就不跑）", async () => {
+		const { runL1 } = await import("./runner.js");
+		const { GOLDEN_CASES } = await import("./golden-cases.js");
+		const blocking = GOLDEN_CASES.filter((c) => c.requiresConfirm).map((c) => c.id);
+		const summary = await runL1({
+			baseUrl: "http://127.0.0.1:1", // 不可达，但不该被用到
+			only: blocking,
+			staticPrompt: "x",
+			// 不给画布：合法，因为这些 case 会被skip
+		});
+		assert.equal(summary.skipped, blocking.length);
 	});
 });

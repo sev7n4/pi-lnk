@@ -57,9 +57,15 @@ export async function runEvalCase(
 	// ① 建会话。⚠️ 订阅必须先于 prompt（见函数注释）。
 	const created = await postJson(`${base}/sessions`, {
 		sessionId,
-		userId: "eval",
+		// ⚠️ `userId` 必须是**真实**的 Nest userId：pi-runtime 的画布工具会用它做
+		// 归属校验（`propose_generation` 甚至直接要求 `tc.userId`），填假值会让
+		// 所有 `/agent/internal/*` 调用 4xx ⇒ 模型反复重试工具、评测只能拿到超时。
+		// 实证：首跑 7 条全 120s 超时，根因正是这里（get_canvas_summary 22 次 4xx）。
+		userId: input.userId ?? "eval",
 		systemPrompt: input.systemPrompt,
-		canvasSessionId: input.canvasSessionId ?? sessionId,
+		// ⭐ `canvasSessionId` 缺省**不能**回落到 pi 会话键：那是个不存在的 id，
+		// 查画布必然 404/401。缺省时留空并由调用方显式传。
+		...(input.canvasSessionId ? { canvasSessionId: input.canvasSessionId } : {}),
 	});
 	if (created.status >= 400) {
 		return failure(`createSession failed: HTTP ${created.status} ${created.body}`);
