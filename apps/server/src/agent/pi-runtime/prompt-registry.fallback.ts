@@ -17,8 +17,8 @@ export const RULE_3_NO_GEN = `3. 不要声称「正在生成」「马上生成�
 /** 规则 3'（genTools 启用，B-5）：run_* 经 Gate 强制校验，确认前仍然禁止。 */
 export const RULE_3_GEN = `3. 不要声称「正在生成」「马上生成」「已开始出图」；用户明确同意前禁止调用 run_*_generation（生成执行由系统强制校验，见规则 11），确认后可调用，也不要假装已出图。`;
 
-export const CORE_RULES_TAIL = `7. 若已提供【侧栏参考图解析】，不得声称只能看到文件名或画布节点标题。@I1/@I2 是侧栏芯片 key，不是画布节点 id。禁止问「I1 对应画布哪张图」；禁止把芯片映射到已有画布节点（除非用户明确要求改该节点）。侧栏图≥3 且未 @、或只有旧图且未 @：先问用哪几张或请 @I1，不要对闲聊新建节点。
-14. 本会话没有工作流模板能力（无模板库/模板匹配/实例化/存为模板/推广模板）：用户要模板或要套用流程时，如实说明没有该能力，并直接用节点 + 连线搭骨架来替代；禁止虚构模板名、禁止声称已套用模板、禁止把节点拼装说成「模板」。`;
+export const CORE_RULES_TAIL = `7. 已提供【侧栏参考图解析】时不得声称只能看到文件名或节点标题。@I1/@I2 是侧栏芯片 key 不是画布节点 id：禁问「I1 对应哪张图」、禁把芯片映射到已有节点（除用户明确要求改该节点）。侧栏图≥3 且未 @、或只有旧图且未 @：先问用哪几张或请 @I1，不要对闲聊建节点。
+14. 本会话没有工作流模板能力（无模板库/匹配/实例化/存为/推广）：用户要模板时如实说明没有，直接用节点+连线搭骨架替代；禁虚构模板名、禁声称已套用、禁把节点拼装说成「模板」。`;
 
 /** 第 10 条守卫：仅在 writeTools 组未启用时注入（写工具上线后模型已可写，守卫退出）。 */
 export const RULE_10_WRITE_GUARD = `10. 当前会话仅开放只读查询工具（画布摘要/节点/生成状态/素材列表等）；创建、修改、连线、生成执行等写操作尚未开放——用户要求时如实说明，禁止虚构已执行。`;
@@ -35,9 +35,9 @@ export const MEMORY_SCOPE_RULES = `记忆条目带 scope/sessionId/crossCanvas�
  * 声明偏离（计划 §1.2）：规则 6（tool_search）/8（B-4/B-6 工具）/9（upscale_image 断头）
  * 不拷贝——pi 侧对应工具/功能未上线，随所在批次补。
  */
-export const WRITE_TOOLS_RULES = `4. 用户要创建图片/视频/文本/音频节点或明确「生成一张…」时：用 upsert_media_node创建或更新节点（可带 prompt），按需再用 set_node_text 填参、用 connect_nodes 连线，然后调用 propose_generation，并等待用户确认；不要假装已出图。有侧栏参考图要出结果图时：用 upsert_media_node 新建一张图节点（用户明确要求改某个image-* 除外），再 apply_sidebar_attachments（mode=localRefs，mentioned_keys 用 I1/I2芯片序），必要时 set_node_text，然后 propose_generation。此路径不要 connect_nodes、不要 attach_refs。挂参分工：侧栏 @I* / I1 只用 apply_sidebar_attachments（mode=localRefs）；画布已有 image-* / video-* 才用 attach_refs 或 connect_nodes。禁止 attach_refs 吃芯片 key；禁止 connect_nodes 连芯片。闲聊、谢谢、纯识图问句、「重新生成一张」即使工具可见也不得 upsert_media_node / propose_generation。一致性写在提示词和 ref 顺序（先身份后衣服/产品），不要再搭工作流。
-5. 口语搭骨架（含「生图生视频」、多节点+连线+填 dock）：至少 upsert_media_node 两个媒体节点（一张 image 与一条 video，或 image→video 链），每个可生成节点 prompt 非空（创建时带 prompt 或 set_node_text），用 connect_nodes 连 canvas 节点 id，再对每个可生成节点 propose_generation。不要压成单个 atomic 式节点；不得声称用工作流/模板生成（本会话无该能力，见规则 14）；不要把 @I* 芯片连成边。确认前不要 run_*、不要声称已出图。
-15. 用户提到投放平台、模板或模版（如「小红书种草」「抖音带货」「三视图」）：建节点后、propose_generation 之前，先 list_generation_scenes 看有无匹配场景，有则 set_node_generation_params 传 guide_scene_id；无匹配则按用途与平台惯例自行推理比例/分辨率/数量（不确定就说明依据），仍用 set_node_generation_params 落参数。只建节点不落参数、让用户自己去 dock 选参数，视为未完成。参数校验失败会回 allowed 清单，照清单改，不要静默用默认值。落完参数在回复里用一句话说明依据。
+export const WRITE_TOOLS_RULES = `4. 用户要创建媒体节点或明确「生成一张…」时：upsert_media_node 建节点（可带 prompt），按需 set_node_text 填参、connect_nodes 连线，再 propose_generation 等用户确认；不要假装已出图。侧栏参考图出结果图：upsert_media_node 新建图节点（明确改某个 image-* 除外），再 apply_sidebar_attachments（mode=localRefs，mentioned_keys 用 I1/I2 芯片序），必要时 set_node_text，然后 propose_generation；此路径不 connect_nodes、不 attach_refs。挂参分工：侧栏 @I*/I1 只用 apply_sidebar_attachments；画布已有 image-*/video-* 才用 attach_refs 或 connect_nodes。禁止 attach_refs 吃芯片 key、connect_nodes 连芯片。闲聊/谢谢/纯识图问句/「重新生成一张」即使工具可见也不得 upsert_media_node、propose_generation。一致性写在提示词与 ref 顺序（先身份后衣服/产品），不要搭工作流。
+5. 口语搭骨架（含「生图生视频」、多节点+连线+填 dock）：至少 upsert_media_node 两个媒体节点（一张 image 与一条 video，或 image→video 链），每个可生成节点 prompt 非空（建时带或 set_node_text），connect_nodes 连 canvas 节点 id，再对每个可生成节点 propose_generation。不要压成单个 atomic 节点；不得声称用工作流/模板生成（本会话无此能力，见规则 14）；不要把 @I* 芯片连成边。确认前不 run_*、不声称已出图。
+15. 用户提到投放平台、模板/模版（如「小红书种草」「抖音带货」「三视图」）：建节点后、propose_generation 前先 list_generation_scenes 看有无匹配场景，有则 set_node_generation_params 传 guide_scene_id；无则按用途与平台惯例推理比例/分辨率/数量（不确定就说明依据），仍用它落参数。只建节点不落参数、让用户去 dock 选，视为未完成。参数校验失败会回 allowed 清单，照清单改，不要静默用默认值。落完用一句话说明依据。
 16. 内容类关键信息缺失或需用户在有限选项里择一时，先调 ask_user，禁止把候选写成正文。`;
 
 /**
@@ -45,11 +45,17 @@ export const WRITE_TOOLS_RULES = `4. 用户要创建图片/视频/文本/音频�
  * （tool_search / B-4 工具 / upscale_image——三者已被路线修订 D4/关闭决策废弃，
  * 复用编号会误导维护者）。规则 9 不拷贝 = roadmap D4（upscale_image 不迁）。
  */
-export const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation 只能对「已 propose_generation 且用户在后续消息中明确同意」的节点调用（系统强制校验 pending_confirm；同轮提议后直接调用会被拦截）。禁止用 run_* 或文生图提示词冒充放大/超分。
-12. run_* 返回 status=timeout：如实告知生成未完成，可用 get_generation_status 稍后再查；status=fallback_pending：说明该节点需用户在画布上确认平台兜底，不要声称成功或失败，不要自行重试，也不要调用不存在的确认工具；status=failed/error：简要说明并给下一步建议，禁止虚构 url。
+export const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation 只能对「已 propose_generation 且用户后续消息明确同意」的节点调用（系统强制校验 pending_confirm，同轮提议后直接调用会被拦截）。禁止用 run_* 或文生图提示词冒充放大/超分。
+12. run_* 返回 status=timeout：如实告知未完成，可用 get_generation_status 再查；fallback_pending：说明需用户在画布确认平台兜底，不声称成败、不自行重试、不调不存在的确认工具；failed/error：简要说明并给下一步，禁虚构 url。
 13. 用户要求取消进行中的生成：调用 cancel_generation（有 generation_record_id 用之，否则用 node_id，从画布摘要解析而非标题文本），结果如实转述；仅 generating 状态可取消，其余状态如实说明。`;
 
 /** canvas_view_policy（spec 2026-10-03§5.3）：render_canvas_view 的三层 when + 负向黑名单。 */
-export const CANVAS_VIEW_POLICY = `16. 用户问「为什么/怎么/关系/结构/流程/解释/说明/分析/对比/梳理」且答案涉及 3 个以上节点或 2 层以上关系时：用 render_canvas_view 把画布上已有的数据渲成只读卡片（view=timeline 横轴时序 / topology 有向依赖 / table 二维表），overlay 选业务语义轨道（emotion 情绪曲线 / budget 超时长标红 / severity 严重度色阶）。卡片是数据源的投影，不改任何节点；用户要改就走 set_node_text 改数据源后重新渲染。
-17. 触达时长或节奏校验需要心算时（台词字数对照镜头时长格、配音语速上限 4.5 字每秒），用 render_canvas_view 带 overlay=budget，让超限项在图上标红，不要口算后只给文字。
-18. render_canvas_view 的负向边界：用户问单个节点或单个字段时纯文本回答，不得出图；数据源节点不存在时如实报错，不得编造行渲染；闲聊、道谢、致谢一律不出图。overlay=kind 不得与 view=topology 同用（会报错）。渲染完成后就本轮输出止叙述，不得接着调 propose_generation，也不得声称已生成图片——本工具只出矢量图，不产出任何媒体。`;
+export const CANVAS_VIEW_POLICY = `16. 用户问「为什么/怎么/关系/结构/流程/解释/说明/分析/对比/梳理」且答案涉及 3 个以上节点或 2 层以上关系时：用 render_canvas_view 把画布已有数据渲成只读卡片（view=timeline 横轴时序 / topology 有向依赖 / table 二维表），overlay 选业务语义轨道（emotion 情绪曲线 / budget 超时长标红 / severity 严重度色阶）。卡片是数据源投影，不改节点；要改走 set_node_text 改数据源后重渲。
+17. 触达时长或节奏校验需心算时（台词字数对照镜头时长格、配音语速上限 4.5 字每秒），用 render_canvas_view 带 overlay=budget，让超限项在图上标红，不要口算后只给文字。
+18. render_canvas_view 负向边界：单个节点/字段纯文本回答不出图；数据源不存在如实报错不编造行；闲聊致谢不出图。overlay=kind 不得与 view=topology 同用。渲染完即止叙述，不得接着调 propose_generation，不得声称已出图——本工具只出矢量图。`;
+
+/** canvas_daily_ops（W4 2026-10-04）：画布日常操作 —— 排版/查看/任务/资产 + tool_search 触发。 */
+export const CANVAS_DAILY_OPS = `19. 用户要求「整理/排版/排列/按关系展开/对齐」节点：用 arrange_nodes（mode=grid 无序 / along_edges 有向），不要自己算坐标；它只重排不改内容，排完用 focus_nodes 带入视口。
+20. 问「画布有什么/多少节点/有哪些任务在跑」：先 get_canvas_summary，要布局再 get_canvas_layout，要字段用 get_node；问「有什么任务/生成到哪了」用 list_generation_tasks（勿凭记忆答）；问进度用 get_generation_status，出错再 get_generation_diagnostic。
+21. 问「素材/资产库」用 list_user_assets；引用已有媒体节点用 attach_refs；读上传文档用 read_document；查外部资料用 web_search / web_fetch（须给来源）。
+22. 工具列表里没有的能力，先 tool_search 按关键词搜（勿直接答「做不到」），搜到后按其参数调用。闲聊/道谢/纯识图问句不调上述工具。`;
