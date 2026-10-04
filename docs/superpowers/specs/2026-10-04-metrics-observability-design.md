@@ -136,7 +136,18 @@ pi_runtime_llm_tokens_total{stage, kind, channel, model}              counter
 pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram
 ```
 
-`stage` 为 4 值闭集：`main_turn` | `compaction` | `tool_result_summarize` | `deferred`
+`stage` 为闭集：`main_turn` | `compaction` | `tool_result_summarize` | `deferred` | `unknown`
+
+> ⚠️ **`unknown` 的来由（2026-10-04 实现期修订）**：`retry_scheduled` 事件在 vendor 有**三处**发射
+> （`drive/response.ts:392` 主轮、`drive/structural.ts:989` compaction、`:1098` branch_summary），
+> 但三处载荷**在运行时不可区分** —— `step` 是同一个 `idGenerator` 的 uuid7、`maxAttempts`/`delayMs`
+> 都取 `normalizedRetryPolicy(lane)`、in-run 压缩的 `runId` 与主轮同一 `operationId`、
+> `recovery` 只覆盖三处中一处、`entry.compacting` 恰好漏掉 in-run 压缩。
+> 故 `retry_scheduled` 一律报 `stage="unknown"`。
+>
+> **为什么不用 `main_turn`**：那会让压缩重试永久伪装成主轮重试，看板上无法区分，
+> 且**错误映射比「诚实的未知」更危险**。宁可「可见的不可知」。
+> **待vendor 配合**：给该事件加判别字段后，只需改 `session-manager.ts` 一行透传，结算器与渲染无需改。
 
 **取代**既有的 `pi_runtime_llm_prompt_errors_total{reason}`（2 值正则判定）。旧指标保留一个发布周期后移除，避免告警断档。
 
