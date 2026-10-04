@@ -8,6 +8,14 @@ name: Runtime Deploy (pi-runtime)
 #   2. 镜像真伪只认 imageID digest == pod imageID
 #   3. 数字型 env 一律 --set-string（防 toYaml 科学计数法 → parseInt 截断，2026-09-29 事故）
 #   4. 升级后 env 必须「逐项比对精确值」，不是 presence 检查
+#   5. tag 必须是 master 的祖先提交（behind_by == 0）——挡「打错字的 sha」，与第1 条互补
+#
+# 为什么是手动触发（2026-10-04 复核，勿轻易改成自动）：
+#   实测 9-30 以来改构建输入的提交 32 次 vs 本workflow 运行 34 次，线上 version 与
+#   master HEAD 完全一致 ⇒ 「解决遗忘部署」这个自动化立项理由**不成立**，人工闸门
+#   遵守率约 100%。而pi-runtime 是 replicaCount:1 + k3s 单节点 + 根盘 82%，
+#   自动上线失败即整个 agent 链路断，无高可用兜底 ⇒ 收益趋零、风险不为零。
+#   真正要补的是**顺序约束**（见 concurrency）与**输入校验**（见 Preflight），不是触发方式。
 
 on:
   workflow_dispatch:
@@ -36,7 +44,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: pi-runtime-deploy
+  # ⭐ 与 deploy.yml 共用同一组（不是原来的 pi-runtime-deploy）。
+  # 理由：pi-runtime 与 api 是同一产品的两个组件，完成顺序无约束会产出「新api + 旧 runtime」
+  # 或「旧 api + 新 runtime」的错配窗口（实测两条流水线时长 4.8~17.6 min，窗口可达 ~18 min）。
+  # 共用组 ⇒ GitHub 层物理上不可能并行，只有一个在跑时另一个排队。
+  # ⚠️ 排队语义提醒：cancel-in-progress: false 下**只保留最新 1 个 pending**，
+  # 更早的 pending 会被静默取消 ⇒ 派发后必须 gh run list 确认自己的 run 还在。
+  group: lnkpi-release
   cancel-in-progress: false
 
 env:
@@ -74,10 +88,34 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
-      - name: Preflight — tag 只能加不能复用
+      - name: Preflight — tag 不可复用 + 必须是 master 祖先提交
         run: |
           set -euo pipefail
           TAG="${{ inputs.tag }}"
+
+          # 校验一：tag 必须是 master 的**祖先**提交，否则拒绝。
+          # 为什么必须有这条：下面那条「tag 已存在」校验只能挡住已占用的 tag，
+          # 挡不住**打错字的不存在 sha** —— 而那会 rsync 出一份对不上的源码树、
+          # 建出错误镜像并 helm 上去（ADR-0007 §后果「填错就部署到错误的 sha」）。
+          #
+          # ⚠️ 判据必须是 behind_by == 0，**不能用 .status**。
+          # compare(X...master) 的 status 是「站在 master 视角」描述 X 的关系：
+          # master 比 X 新时 status="ahead"（实测 2eb19c4 → ahead_by=63 但 status=ahead），
+          # 而 X 恰恰是 master 的合法祖先。若按 status in (identical|behind) 放行，
+          # 会把绝大多数正常的旧提交全部误杀。
+          # 正确判据 =「master 不领先 X」= behind_by == 0（等价于 merge-base --is-ancestor X master）。
+          COMPARE=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${TAG}...master" --jq '.behind_by' 2>&1 || true)
+          if [[ "$COMPARE" == "0" ]]; then
+            echo "ok: tag ${TAG} 是 master 的祖先提交（behind_by=0）"
+          else
+            echo "ERROR: tag ${TAG} 不是 master 的祖先提交，或在本仓不存在。"
+            echo "  compare API 返回：$(echo "$COMPARE" | head -c 200)"
+            echo "  tag 必须是已进 master 的 commit 短 sha；未合并分支上的 sha 会被这条挡住。"
+            echo "  取正确值：git fetch origin && git rev-parse --short origin/master"
+            exit 1
+          fi
+
+          # 校验二：tag 不能复用（skip_build 重部署除外）。
           EXISTS=$(ssh deploy-cvm "curl -s http://127.0.0.1:5000/v2/pi-runtime/tags/list" \
             | tr ',' '\n' | grep -c "\"$TAG\"" || true)
           if [[ "${{ inputs.skip_build }}" != "true" && "$EXISTS" != "0" ]]; then

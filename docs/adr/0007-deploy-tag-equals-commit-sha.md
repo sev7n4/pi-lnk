@@ -54,8 +54,40 @@ pi-runtime 镜像发布需要一个 tag。原先用语义版号（`0.0.1` ~ `0.0
 - ⚠️ **推 master 会立刻触发 deploy.yml** —— 若还没准备好部署，要先确认是不是想触发
 - 别照 workflow 的 description 推断递增逻辑（那句已过时）
 
+## 2026-10-04 复核：自动化的立项理由已被数据证伪
+
+本 ADR 第 3 条曾写「合并会立刻触发 deploy.yml ⇒ **顺序无法规避**」，
+据此有人提出给本 workflow 加 `push` 触发做自动化。复核后**结论是不改自动化**：
+
+| 观测 | 值 |
+|---|---|
+| 9-30 以来改构建输入（`services/pi-runtime`/`skills`/`vendor`）的提交 | **32** 次 |
+| 同期 `runtime-deploy.yml` 运行 | **34** 次 |
+| 线上 `/healthz` version vs `master` HEAD | **完全一致，零积压** |
+| 触发方式 | 纯 `workflow_dispatch`（抽样全部如此） |
+
+⇒ 人工闸门的实际遵守率约 100%，「解决遗忘部署」解决的是一个**已不存在的问题**。
+
+**为什么仍不加 push 触发**（决策记录）：
+
+1. `charts/pi-lnk-runtime/values.yaml` 的 `replicaCount: 1` + k3s **单节点** ⇒
+   自动上线一旦失败，**整个 agent 链路直接断**，无高可用兜底。
+2. 根盘已用 **82%**（40G 用 33G）⇒ 构建失败概率不可忽略。
+3. 真正的风险不是「忘部署」，而是**两条流水线独立部署同一产品的两个组件、完成顺序无约束**。
+   已用共用 concurrency group `lnkpi-release` 消除错配窗口，**不需要用自动化解决**。
+4. 顺序约束落到了 `concurrency`，输入校验落到了 `Preflight`（`behind_by == 0`），
+   **闸门的强度与正确性被补强，触发方式保持不变**。
+
+⚠️ **本 ADR 遗留的「tag 仍需手填」已被 Preflight 补强**（2026-10-04）：
+原先只校验「tag 未被 registry 占用」，挡不住**打错字的不存在 sha**；
+现增加「tag 必须是 master 祖先提交」校验。
+⚠️ 判据必须是 `compare(X...master).behind_by == 0`，**不能用 `.status`** ——
+`status` 是站在 master 视角描述 X，master 更新时旧提交会返回 `ahead`
+（实测 `2eb19c4` → `status=ahead` 但 `behind_by=0`，是合法祖先），
+按 `status in (identical|behind)` 放行会误杀绝大多数正常旧提交。
+
 ## 关联
 
-- PR：#128（校正 tag 描述）
-- workflow：`.github/workflows/runtime-deploy.yml`（tag 为手填入参）
+- PR：#128（校正 tag 描述）、#145（并发组 + Preflight 校验）
+- workflow：`.github/workflows/runtime-deploy.yml`（tag 为手填入参 + 祖先校验）
 - 相关：ADR-0003（Registry 自检必须经 ssh 到 CVM，见 PR #118）
