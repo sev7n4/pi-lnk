@@ -12,10 +12,11 @@
  * - 校验是**尽力而为**：Nest 读失败（超时/熔断/包络错）一律按原样发命令并标 verified=false，
  *   绝不因校验把单向 UI 命令拖成阻塞或失败。
  * - edges 仍以显式传入为准（D5）；显式缺失时用画布上已有的边兜底并标注，避免「静默变网格」。
+ *
+ * 2026-10-04：移除 `metrics` 形参与 L3 by-mode 自计埋点（观测移交事件层，见 spec §3.2）。
  */
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
-import type { Metrics } from "../metrics.js";
 import type { NestClient } from "./nest-client.js";
 
 export interface ArrangeEdge {
@@ -54,7 +55,7 @@ function usableEdges(
 	);
 }
 
-export function createArrangeNodesTools(metrics: Metrics, client?: NestClient): LnkpiTool[] {
+export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 	return [{
 		tier: "ui_command" as const,
 		name: "arrange_nodes",
@@ -137,8 +138,9 @@ export function createArrangeNodesTools(metrics: Metrics, client?: NestClient): 
 				degraded = "no_edges_fallback_grid";
 			}
 
-			// L3：by-mode 观测（tool 名带 mode 后缀，零改 metrics 标签体系）
-			metrics.observeToolCall(`arrange_nodes_${mode}`, "ok");
+			// L3：by-mode 观测已于 2026-10-04 移交事件层——`arrange_nodes_grid` 这类
+		// 动态 tool label 是 spec §3.2 点名要消除的基数风险（mode 取值会随前端加模式增长），
+		// 事件层只出 `tool="arrange_nodes"`。mode 分布改由工具结果里的 `details.mode` 观测。
 
 			return uiResult(
 				{ mode, gap, arranged: nodeIds.length - missing.length, missing, degraded, verified },

@@ -43,20 +43,22 @@ export function resolveToolsWithClient(
 		...cfg,
 		// M-3：超时覆盖表导出为常量以便测试断言
 		timeoutOverrides: TOOL_TIMEOUT_OVERRIDES,
-		onCall: (tool, outcome, info) => {
-			metrics.observeToolCall(tool, outcome, info?.errorKind);
-			// 体积观测（observeToolResult）已于 2026-10-04 统一移到 after_tool hook：
-			// 那里量的是**真正进上下文**的 content 字节，且覆盖本地工具（此前只有 Nest 客户端这一半）。
-			// 两处都打会让同一条结果被计两次，故此处不再打点。
+		onCall: (tool, _outcome, info) => {
+			// tool_calls_total 的计数与耗时由事件层统一结算（见 spec §3.2）：本次调用同样会触发
+			// harness 的 tool_start/tool_end，此处再计一次就是双计，故删掉计数调用。
+			// 但 errorKind 必须留：它是 Nest 侧返回的结构化分类，比事件层拿 resultText 正则猜精确。
+			// 体积观测（observeToolResult）**不**在此打：它已于 2026-10-04 统一移到 after_tool hook
+			// （那里量的是真正进上下文的 content 字节，且覆盖本地工具），两处都打会双计。
+			if (info?.errorKind) metrics.observeToolErrorKind(tool, info.errorKind);
 		},
 	});
 	const hasTavily = !!process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY !== "REPLACE_ME";
 	const tools: LnkpiTool[] = [
 		...buildCanvasReadTools(client),
 		...buildCanvasWriteTools(client, deps.registry),
-		...buildUiCommandTools(metrics),
-		...buildAskUserTools(metrics, deps.registry),
-		...buildArrangeNodesTools(metrics, client),
+		...buildUiCommandTools(),
+		...buildAskUserTools(deps.registry),
+		...buildArrangeNodesTools(client),
 		...buildGenerationTools(client),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),

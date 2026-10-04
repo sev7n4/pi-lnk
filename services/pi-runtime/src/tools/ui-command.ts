@@ -3,10 +3,13 @@
  * 由 Nest pi-events.extractCanvasCommands 派生 canvas_command SSE 事件，
  * 前端 AgentSideRail.vue canvas_command 分支消费。
  * 输出契约对齐老链路 definitions.py:472-489（camelCase，前端免转换）。
+ *
+ * ⚠️ 2026-10-04：不再自计 `pi_runtime_tool_calls_total`。这 5 个工具同样在 harness 的
+ * `tool_start`/`tool_end` 覆盖范围内，事件层统一结算（39 工具全覆盖），
+ * 工具内自埋会与事件层**双计**（见 spec §3.2）。
  */
 import { Type } from "typebox";
 import type { LnkpiTool } from "./types.js";
-import type { Metrics } from "../metrics.js";
 
 export interface CanvasCommand {
 	type: string;
@@ -24,7 +27,7 @@ function uiResult(commands: CanvasCommand[]): {
 	};
 }
 
-export function createUiCommandTools(metrics: Metrics): LnkpiTool[] {
+export function createUiCommandTools(): LnkpiTool[] {
 	const tier = { tier: "ui_command" as const };
 	const tools: LnkpiTool[] = [
 		{
@@ -34,7 +37,6 @@ export function createUiCommandTools(metrics: Metrics): LnkpiTool[] {
 			description: "Pan/zoom the canvas viewport to a node (UI command)",
 			parameters: Type.Object({ node_id: Type.String({ description: "Canvas node id" }) }),
 			execute: async (_id, p: { node_id: string }) => {
-				metrics.observeToolCall("focus_node", "ok");
 				return uiResult([{ type: "focus_node", nodeId: p.node_id }]);
 			},
 		},
@@ -45,7 +47,6 @@ export function createUiCommandTools(metrics: Metrics): LnkpiTool[] {
 			description: "Pan/zoom the canvas viewport to multiple nodes (UI command)",
 			parameters: Type.Object({ node_ids: Type.Array(Type.String(), { description: "Canvas node ids" }) }),
 			execute: async (_id, p: { node_ids: string[] }) => {
-				metrics.observeToolCall("focus_nodes", "ok");
 				return uiResult([{ type: "focus_nodes", nodeIds: p.node_ids }]);
 			},
 		},
@@ -56,7 +57,6 @@ export function createUiCommandTools(metrics: Metrics): LnkpiTool[] {
 			description: "Undo the last local canvas edit (client undo stack)",
 			parameters: Type.Object({}),
 			execute: async () => {
-				metrics.observeToolCall("undo", "ok");
 				return uiResult([{ type: "undo" }]);
 			},
 		},
@@ -67,7 +67,6 @@ export function createUiCommandTools(metrics: Metrics): LnkpiTool[] {
 			description: "Redo the last undone canvas edit (client undo stack)",
 			parameters: Type.Object({}),
 			execute: async () => {
-				metrics.observeToolCall("redo", "ok");
 				return uiResult([{ type: "redo" }]);
 			},
 		},
@@ -78,7 +77,6 @@ export function createUiCommandTools(metrics: Metrics): LnkpiTool[] {
 			description: "Open the image refine editor for a node (UI command)",
 			parameters: Type.Object({ node_id: Type.String({ description: "Image node id" }) }),
 			execute: async (_id, p: { node_id: string }) => {
-				metrics.observeToolCall("open_image_editor", "ok");
 				return uiResult([{ type: "open_image_editor", nodeId: p.node_id }]);
 			},
 		},

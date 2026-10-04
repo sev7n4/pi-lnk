@@ -139,6 +139,12 @@ const TOOL_RESULT_EVENT_TYPES = new Set(["tool_end", "message_start", "message_e
 type ToolLikeEvent = {
 	toolName?: string;
 	toolCallId?: string;
+	/** tool_end 专用：错误标记（vendor `AgentHarnessEvent` 的 tool_end 分支）。 */
+	isError?: boolean;
+	/** tool_end 专用：模型主动终止（归 blocked，不污染错误率）。 */
+	terminate?: boolean;
+	/** tool_end 专用：工具结果（`AgentToolResult`，含 content 文本块）。 */
+	result?: unknown;
 };
 
 /**
@@ -454,6 +460,29 @@ async function writeSessionMeta(cwd: string, meta: SessionMeta): Promise<void> {
 			`[pi-runtime] write session meta failed for ${cwd}: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	});
+}
+
+/**
+ * 从 tool_end.result 提取用于错误分类的短文本。上限 500 字，够正则判定且不撑大内存。
+ *
+ * 为什么限长：工具结果可以是整篇网页/大段 JSON，全量留在内存里只为跑几条正则不划算；
+ * 而分类正则（429/5xx/timeout/abort…）只看开头特征，500 字足够。
+ * **提取出的文本绝不进 label**（会变基数爆炸），只作 `resultText` 传入分类器。
+ */
+function extractResultText(result: unknown): string {
+	try {
+		const content = (result as { content?: unknown })?.content;
+		if (typeof content === "string") return content.slice(0, 500);
+		if (Array.isArray(content)) {
+			return content
+				.map((c) => (typeof (c as { text?: unknown })?.text === "string" ? (c as { text: string }).text : ""))
+				.join(" ")
+				.slice(0, 500);
+		}
+		return "";
+	} catch {
+		return "";
+	}
 }
 
 function sameStringArray(a?: readonly string[], b?: readonly string[]): boolean {
@@ -839,6 +868,7 @@ export class SessionManager {
 	/** 事件归一订阅：EVENT_MAP 全量透传；compaction_end 顺带计数（同一监听内，避免重复订阅）。
 	 *  tool_start 额外发一条 `activity`（决策 8），同样在同一监听内，保证与 tool_execution_start 同帧。 */
 	private attachEvents(entry: SessionEntry, harness: AgentHarness<LnkpiToolContext>): void {
+		const metrics = this.metrics;
 		for (const [harnessType, sseType] of EVENT_MAP) {
 			entry.unsubscribes.push(
 				harness.events.on(harnessType as never, (evt: { lane?: string; status?: string } & ToolLikeEvent) => {
@@ -848,7 +878,23 @@ export class SessionManager {
 						// fire-and-forget：审计失败不影响事件分发与会话主链路。
 						if (evt.status === "completed") void this.auditCompactionSummary(entry);
 					}
-					if (harnessType === "tool_start") this.dispatchActivity(entry, evt);
+					if (harnessType === "tool_start") {
+						this.dispatchActivity(entry, evt);
+						// spec §3.2：工具计数/耗时在**事件层**统一结算，39 个工具零改动全覆盖
+						// （各工具内部自埋会与这里双计，故已全部删除）。
+						if (metrics && evt.toolCallId) metrics.toolMetricsForTest().observeStart({ toolCallId: evt.toolCallId });
+					}
+				if (harnessType === "tool_end" && metrics && evt.toolCallId) {
+					metrics.toolMetricsForTest().observeEnd({
+						toolName: evt.toolName ?? "unknown",
+						toolCallId: evt.toolCallId,
+						isError: evt.isError === true,
+						terminate: evt.terminate === true,
+						resultText: extractResultText(evt.result),
+						channel: entry.identity.provider,
+						model: entry.identity.model,
+					});
+				}
 					if (harnessType === "turn_start") entry.activityStep = 0;
 					this.dispatch(entry, {
 						type: sseType,
@@ -879,11 +925,22 @@ export class SessionManager {
 			}),
 		);
 
-		if (this.metrics) {
-			const metrics = this.metrics;
+		if (metrics) {
 			entry.unsubscribes.push(
 				harness.events.on("usage" as never, (evt: { row?: { usage?: Parameters<Metrics["observeUsage"]>[0] } }) => {
 					if (evt.row?.usage) metrics.observeUsage(evt.row.usage);
+				}),
+			);
+
+			// retry_scheduled 只进指标，不进 EVENT_MAP/SSE：它是 lane 内部事件，
+			// Nest 侧 PiRuntimeEvent 是封闭联合，未知类型可能被静默丢弃。
+			entry.unsubscribes.push(
+				harness.events.on("retry_scheduled" as never, (_evt: { attempt?: number; errorMessage?: string }) => {
+					metrics.toolMetricsForTest().observeLlmRetry({
+						stage: "main_turn",
+						channel: entry.identity.provider,
+						model: entry.identity.model,
+					});
 				}),
 			);
 		}

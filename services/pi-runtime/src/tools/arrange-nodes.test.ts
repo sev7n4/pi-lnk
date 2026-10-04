@@ -1,8 +1,10 @@
-/** arrange_nodes 契约测试：单向 canvasCommands 形态 + L2 只读校验富化 + L3 by-mode 观测。 */
+/** arrange_nodes 契约测试：单向 canvasCommands 形态 + L2 只读校验富化。
+ *  2026-10-04：L3 by-mode 观测用例已删——计数移交事件层后本文件直调 execute
+ *  不经过 harness，事件层不产生事件；`arrange_nodes_<mode>` 动态 label 的
+ *  消失正是要消除的基数风险（mode 会随前端加模式增长）。 */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createArrangeNodesTools } from "./arrange-nodes.js";
-import { Metrics } from "../metrics.js";
 import { NestClient } from "./nest-client.js";
 import type { LnkpiTool } from "./types.js";
 
@@ -21,11 +23,10 @@ async function run(tool: LnkpiTool, params: unknown, ctx: unknown = CTX) {
 }
 
 function setup(client?: NestClient) {
-	const metrics = new Metrics();
-	const tools = createArrangeNodesTools(metrics, client);
+	const tools = createArrangeNodesTools(client);
 	const tool = tools.find((t) => t.name === "arrange_nodes");
 	assert.ok(tool, "arrange_nodes not registered");
-	return { metrics, tool };
+	return { tool };
 }
 
 /** 只读 NestClient 替身：把 get-canvas-layout 的响应固定为给定 layout。 */
@@ -163,17 +164,5 @@ describe("arrange_nodes L2 只读校验（有 client）", () => {
 		const r = await run(tool!, { node_ids: ["a", "b"], mode: "along_edges" }, {});
 		assert.equal(payloadOf(r)["verified"], false);
 		assert.equal(commandOf(r)["mode"], "grid");
-	});
-});
-
-describe("arrange_nodes L3 by-mode 观测", () => {
-	it("grid / along_edges 分别计数 tool=\"arrange_nodes_<mode>\"", async () => {
-		const client = fakeClient({ nodes: [{ id: "a" }, { id: "b" }], edges: [{ source: "a", target: "b" }] });
-		const { metrics, tool } = setup(client);
-		await run(tool!, { node_ids: ["a", "b"], mode: "grid" });
-		await run(tool!, { node_ids: ["a", "b"], mode: "along_edges" });
-		const rendered = metrics.render(0, "test");
-		assert.match(rendered, /pi_runtime_tool_calls_total\{tool="arrange_nodes_grid",result="ok"\} 1/);
-		assert.match(rendered, /pi_runtime_tool_calls_total\{tool="arrange_nodes_along_edges",result="ok"\} 1/);
 	});
 });

@@ -1,7 +1,6 @@
 /** 注册工厂：按批次组合工具集。后续批次（B-3+）在此追加，不改调用方。 */
 import type { NestClient } from "./nest-client.js";
 import type { LnkpiTool } from "./types.js";
-import type { Metrics } from "../metrics.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 import { createCanvasReadTools } from "./canvas-read.js";
 import { createCanvasWriteTools } from "./canvas-write.js";
@@ -44,22 +43,26 @@ export function buildCanvasWriteTools(client: NestClient, registry?: PendingTool
 	return createCanvasWriteTools(client, { registry });
 }
 
-/** UI_COMMAND 批次：5 个本地 UI 命令工具（不依赖 NestClient）。 */
-export function buildUiCommandTools(metrics: Metrics): LnkpiTool[] {
-	return createUiCommandTools(metrics);
+/** UI_COMMAND 批次：5 个本地 UI 命令工具（不依赖 NestClient）。
+ *  2026-10-04：去掉 `metrics` 形参——工具计数已由事件层统一结算（spec §3.2）。 */
+export function buildUiCommandTools(): LnkpiTool[] {
+	return createUiCommandTools();
 }
 
 /** ask_user 批次：向用户提问/选项卡工具（spec docs/superpowers/specs/2026-09-28-ask-user-tool-design.md，D1-D5 已拍板）。
- * registry 可选注入（2026-09-30-ask-user-blocking B-1）：注入且开关开 → 阻塞分支。 */
-export function buildAskUserTools(metrics: Metrics, registry?: PendingToolRegistry): LnkpiTool[] {
-	return createAskUserTools(metrics, registry);
+ * registry 可选注入（2026-09-30-ask-user-blocking B-1）：注入且开关开 → 阻塞分支。
+ * 2026-10-04：去掉 `metrics` 形参（计数移交事件层，见 spec §3.2）。 */
+export function buildAskUserTools(registry?: PendingToolRegistry): LnkpiTool[] {
+	return createAskUserTools(registry);
 }
 
 /** arrange_nodes 批次：自动排列节点工具（spec docs/superpowers/specs/2026-09-28-arrange-nodes-tool-design.md，D1-D5 已拍板）。
  * client 可选注入（2026-10-02 L2）：有则 execute 内只读校验 node_ids/edges 并富化工具结果。
- * 与 buildCanvasReadTools 同款 NestClient 实例，纯读不写。 */
-export function buildArrangeNodesTools(metrics: Metrics, client?: NestClient): LnkpiTool[] {
-	return createArrangeNodesTools(metrics, client);
+ * 与 buildCanvasReadTools 同款 NestClient 实例，纯读不写。
+ * 2026-10-04：去掉 `metrics` 形参——L3 by-mode 计数移交事件层，动态
+ * `arrange_nodes_<mode>` label 正是 spec §3.2 要消除的基数风险。 */
+export function buildArrangeNodesTools(client?: NestClient): LnkpiTool[] {
+	return createArrangeNodesTools(client);
 }
 
 /**
