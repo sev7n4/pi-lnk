@@ -2,7 +2,12 @@ import { ref, type Ref } from 'vue'
 import { resolveCompositionVideoPrompt, type VideoSettings } from '@lnkpi/shared'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating } from '@/constants/dockStudio'
-import { shouldApplyGenerationPoll } from '@/utils/generationPollGate'
+import {
+  shouldApplyGenerationPoll,
+  settleDeadlineExceeded,
+  describeCompletedWithoutOutput,
+  DEFAULT_SETTLE_TIMEOUT_MS,
+} from '@/utils/generationPollGate'
 import { DEFAULT_AUDIO_VOICE } from '@/constants/dockAudio'
 import {
   mergeReferenceImageUrl,
@@ -599,6 +604,18 @@ async function cancelRemoteGeneration(
     if (record.status === NODE_GENERATION_STATUS.completed) {
       const wasGenerating = current?.data?.status === NODE_GENERATION_STATUS.generating
       const urls = parseRecordUrls(record)
+      // ⚠️ 2026-10-04（U6）：原先无论有没有产物都写 `status: completed`。
+      // 音频存 COS / metadata 无 url 时 `parseRecordUrl` 返回 `''`
+      // ⇒ 节点永远停在「生成中」却没有任何产物，也没有错误提示。
+      const noOutputNotice = describeCompletedWithoutOutput(record)
+      if (noOutputNotice) {
+        deps.patchNodeData(nodeId, {
+          status: NODE_GENERATION_STATUS.error,
+          errorMessage: noOutputNotice,
+          generationRecordId: record.id,
+        })
+        return true
+      }
       const patch: Record<string, unknown> = {
         status: NODE_GENERATION_STATUS.completed,
         errorMessage: null,
@@ -741,8 +758,37 @@ async function cancelRemoteGeneration(
     return true
   }
 
-  async function waitForRunGroupMemberSettled(nodeId: string): Promise<'ok' | 'failed'> {
+  /**
+   * @param timeoutMsOverride 仅供测试注入短墙钟。生产不传⇒ 用 DEFAULT_SETTLE_TIMEOUT_MS。
+   *   （22 分钟的墙钟无法在单测里等待，故必须可注入。）
+   */
+  async function waitForRunGroupMemberSettled(
+    nodeId: string,
+    timeoutMsOverride?: number,
+  ): Promise<'ok' | 'failed'> {
+    const settleTimeoutMs = timeoutMsOverride ?? DEFAULT_SETTLE_TIMEOUT_MS
+    // ⚠️ 2026-10-04（U6）：此前是 `for (;;)` **无墙钟** —— 若 `getGeneration`
+    // 持续失败且节点状态始终停在 `generating`/`pending`，循环永不退出，
+    // 单次生成可永久挂住 UI（`CanvasPage.vue` 以 `waitForNodeSettled` 消费它）。
+    // 墙钟取 DEFAULT_SETTLE_TIMEOUT_MS，**必须 > 服务端 VIDEO_POLL_TIMEOUT_MS**，
+    // 否则服务端刚判超时、客户端已放弃 ⇒ 用户拿不到最后的错误信息。
+    const startedAt = Date.now()
     for (;;) {
+      if (
+        settleDeadlineExceeded({
+          startedAt,
+          timeoutMs: settleTimeoutMs,
+        })
+      ) {
+        deps.patchNodeData(nodeId, {
+          status: NODE_GENERATION_STATUS.error,
+          errorMessage: '等待生成结果超时，请刷新后查看任务历史',
+        })
+        console.warn(
+          `[useNodeGeneration] waitForRunGroupMemberSettled(${nodeId}) exceeded wall clock ${settleTimeoutMs}ms`,
+        )
+        return 'failed'
+      }
       const node = findNodeById(deps.nodes.value, nodeId)
       const status = node?.data?.status
       if (isRunGroupFailureStatus(status)) return 'failed'
@@ -1444,6 +1490,9 @@ async function cancelRemoteGeneration(
     cancelGeneration,
     generateForNode,
     waitForRunGroupMemberSettled,
+    // ⚠️ 仅供测试断言 U6 接线点②（「completed 但无产物」应判 error）。
+    // 生产代码不消费它—— 与 `waitForRunGroupMemberSettled` 一样是既有导出。
+    applyStudioRecordForTest: applyStudioRecord,
     saveSceneComposer,
     expandSceneComposer,
     batchGenerateSceneComposer,
