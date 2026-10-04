@@ -47,6 +47,22 @@ export interface PiTurnContext {
 	 * pi-runtime 若自己猜，会产生第二套与画布不一致的真相。
 	 */
 	retention?: PiRetentionState;
+	/** prompt 版本指纹（每轮带；Nest 的 manifest 是本轮拼装结果的哈希）。 */
+	promptInfo?: PiPromptInfo;
+}
+
+/**
+ * prompt 版本指纹（P0-3 收尾 / 审计 L-2）。
+ *
+ * Nest 侧 `PromptManifest` 已经算出这些值，但此前**只喂给了 logger**
+ * ⇒ 生产无法回答「那批请求用的是不是同一版提示词」。
+ * 送进 runtime 后落gauge + `meta.json`，事故回溯才有链条。
+ */
+export interface PiPromptInfo {
+	promptVersion?: string;
+	promptHash?: string;
+	registryVersion?: string;
+	registryHash?: string;
 }
 
 export interface PiRetentionState {
@@ -104,6 +120,8 @@ export interface CreateSessionOptions {
 	 * 因此这里必须显式把画布 id 单独传过去，否则全部画布工具 404（2026-09-29 hotfix）。
 	 */
 	canvasSessionId?: string;
+	/** P0-3 / L-2：建会话时的 prompt 版本指纹，落 meta.json 供 resume 比对。 */
+	promptInfo?: PiPromptInfo;
 }
 
 /**
@@ -194,6 +212,8 @@ export class PiRuntimeClient {
 				...(opts.llm ? { llm: opts.llm } : {}),
 				// 画布会话 id（与上面的 pi 会话键解耦，见 CreateSessionOptions.canvasSessionId）
 				...(opts.canvasSessionId ? { canvasSessionId: opts.canvasSessionId } : {}),
+				// P0-3 / L-2：prompt 版本指纹（runtime 落meta.json，磁盘 resume 时比对）
+				...(opts.promptInfo ? { promptInfo: opts.promptInfo } : {}),
 			}),
 		});
 		if (status >= 400 || !body || body.error) {

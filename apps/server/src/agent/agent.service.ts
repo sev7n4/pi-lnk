@@ -39,6 +39,7 @@ import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import {
   PiRuntimeClient,
   type CreateSessionResult,
+  type PiPromptInfo,
   type PiRetentionState,
   type PiSessionLlmOverride,
 } from './pi-runtime/pi-runtime.client'
@@ -845,6 +846,28 @@ export class AgentService {
    * DB 读失败返回 `{}`：保留段退化为通用兜底要求，压缩照常发生。
    * 反向选择（抛错阻断 prompt）会把一个纯增强功能变成主链路故障点。
    */
+  /**
+   * 从装配器取 prompt 版本指纹（P0-3 / L-2）。
+   *
+   * 刻意**每次现取**而不是缓存：`lastManifestDetail` 会被下一次装配覆盖，
+   * 缓存会把「某个会话用的哪版」与「进程当前装配出的哪版」混起来 ——
+   * 而前者才是回溯时真正要回答的问题（同一 manifest 对象在每轮都被覆写）。
+   */
+  private promptInfoFrom(assembler: PiPromptAssembler): PiPromptInfo {
+    const m = assembler.lastManifestDetail
+    if (!m) return {}
+    return {
+      // ⭐ promptVersion 由 registryVersion + registryHash 派生，不另设人工版本号。
+      // 理由：人工版本号会**忘记 bump**（改了 .md 忘了改常量 ⇒ 指标显示「同一版」，
+      // 而实际内容已变，这正是审计要根治的问题）。派生式永远与内容一致。
+      // 形如 `1.0.0@9e8e28f11bc7`：前者是人读的前端版本，后者是机器比对的内容哈希。
+      promptVersion: `${m.registryVersion || "n/a"}@${m.registryHash || "n/a"}`,
+      promptHash: m.promptHash,
+      registryVersion: m.registryVersion,
+      registryHash: m.registryHash,
+    }
+  }
+
   private async collectRetentionState(sessionId: string): Promise<PiRetentionState> {
     try {
       const session = await this.prisma.session.findUnique({
@@ -979,6 +1002,10 @@ export class AgentService {
       // 回查 Nest `/agent/internal/*`（prisma.session.findUnique({id})）。
       // 不传 → agent 全部画布工具 404（2026-09-29 hotfix）。
       canvasSessionId: sessionId,
+      // P0-3 / L-2：把 prompt 版本指纹交给 runtime（落 meta.json，磁盘 resume 时比对）。
+      // ⚠️ 取的是 assembleStatic 刚写下的 lastManifestDetail —— 它此前标着「供 metrics 消费」
+      // 却没有任何消费方，manifest 只进了 logger，导致事故无法回溯「那批请求用的哪版」。
+      promptInfo: this.promptInfoFrom(assembler),
     })
     if (created.status === 'rebuilt') {
       // 会话身份变更（如 BYOK 渠道切换）→ pi-runtime 重建了会话，历史已重置。
@@ -1015,6 +1042,8 @@ export class AgentService {
       // W2①压缩保留段：把「待用户确认的节点」交给 pi-runtime，让它活过上下文压缩。
       // 压缩后模型看不到自己已经propose 过，最典型的后果是重复建节点 + 谎称已生成。
       retention: await this.collectRetentionState(sessionId),
+      // P0-3 / L-2：每轮带指纹（manifest 的 hash 是本轮拼装结果，跨轮才反映真实在用哪版）。
+      promptInfo: this.promptInfoFrom(assembler),
     }
     // T1：直通生效时把 [In=文件名] 标记并入发送文本尾部（pi-runtime T4 摘要占位从该标记恢复编号）
     const promptTextWithMarkers = directImages
@@ -1200,6 +1229,8 @@ export class AgentService {
       llm?: PiSessionLlmOverride
       /** 画布会话 id（≠ sessionKey，见 createSession 处注释）；工具回查 Nest 用 */
       canvasSessionId?: string
+      /** P0-3 / L-2：prompt 版本指纹，落 meta.json 供磁盘 resume 比对 */
+      promptInfo?: PiPromptInfo
     },
   ): Promise<CreateSessionResult> {
     return client.createSession(sessionKey, {
