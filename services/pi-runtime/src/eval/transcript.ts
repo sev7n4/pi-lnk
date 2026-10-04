@@ -48,6 +48,15 @@ export interface EvalCaseInput {
 	systemPrompt?: string;
 	/** 画布会话 id（工具经 `toolContext.sessionId` 回查 Nest）。 */
 	canvasSessionId?: string;
+	/**
+	 * ⭐ 真实 Nest userId。
+	 *
+	 * 画布工具（`get_canvas_summary` / `propose_generation` 等）都要它做归属校验，
+	 * 填假值（如 `"eval"`）⇒ 全部 `/agent/internal/*` 返 4xx
+	 * ⇒ 模型反复重试工具、评测只能拿到超时。**实测踩过**（首跑 7 条全 120s 超时，
+	 * `get_canvas_summary` 22 次 4xx）。
+	 */
+	userId?: string;
 	/** 画布初始态的 JSON 串。⚠️ 仅作为 artifact 记录，不自动写库。 */
 	canvasData?: string;
 }

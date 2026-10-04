@@ -68,8 +68,14 @@ async function main(): Promise<void> {
 		return;
 	}
 
+	//⭐ 画布上下文从环境变量读（不硬编码进仓库）：这些是**环境事实**，
+	// 不是代码配置。缺了 runL1 会 fail-fast 并说清怎么补。
+	const canvasSessionId = process.env.PI_EVAL_CANVAS_SESSION_ID;
+	const userId = process.env.PI_EVAL_USER_ID;
 	const summary = await runL1({
 		baseUrl,
+		...(canvasSessionId ? { canvasSessionId } : {}),
+		...(userId ? { userId } : {}),
 		...(args.only ? { only: args.only } : {}),
 		...(args.timeoutMs !== undefined ? { caseTimeoutMs: args.timeoutMs } : {}),
 		...(args.intervalMs !== undefined ? { intervalMs: args.intervalMs } : {}),
@@ -90,6 +96,16 @@ async function main(): Promise<void> {
 					passRate: summary.passRate,
 					degraded: summary.degraded,
 					totalTokens: summary.totalTokens,
+					...(summary.canvasSessionId ? { canvasSessionId: summary.canvasSessionId } : {}),
+					...(summary.staticPrompt
+						? {
+								registryHash: summary.staticPrompt.registryHash,
+								registryVersion: summary.staticPrompt.registryVersion,
+								chars: summary.staticPrompt.chars,
+								appliedIds: summary.staticPrompt.appliedIds,
+								degraded: summary.staticPrompt.degraded,
+							}
+						: {}),
 					results: summary.results,
 				},
 				null,

@@ -100,6 +100,8 @@ export interface RunSummary {
 	 * 否则会有人拿「方案 A 跑通了」论证「装配层没问题」。
 	 */
 	coverageNote?: string;
+	/** 本轮用的真实画布 id（方案 B）。 */
+	canvasSessionId?: string;
 }
 
 /**
@@ -143,7 +145,7 @@ function isDegraded(pass: number, fail: number, error: number): boolean {
 /** 汇总一份报告。纯函数（可单测）。 */
 export function summarize(
 	results: CaseResult[],
-	meta?: { staticPrompt?: StaticPromptResult; coverageNote?: string },
+	meta?: { staticPrompt?: StaticPromptResult; coverageNote?: string; canvasSessionId?: string },
 ): RunSummary {
 	const pass = results.filter((r) => r.verdict === "pass").length;
 	const fail = results.filter((r) => r.verdict === "fail").length;
@@ -186,6 +188,9 @@ export function summarize(
 						` | 生效规则：${meta.staticPrompt.appliedIds.join(", ")}`,
 				]
 			: []),
+			...(meta?.canvasSessionId
+			? [`画布：canvasSessionId=${meta.canvasSessionId}（真实 Nest 画布，工具可回查）`]
+			: []),
 		...(meta?.coverageNote ? [`⚠️ 覆盖盲区：${meta.coverageNote}`] : []),
 		...skipSection,
 		...results
@@ -210,6 +215,7 @@ export function summarize(
 		failures,
 		...(meta?.staticPrompt ? { staticPrompt: meta.staticPrompt } : {}),
 		...(meta?.coverageNote ? { coverageNote: meta.coverageNote } : {}),
+		...(meta?.canvasSessionId ? { canvasSessionId: meta.canvasSessionId } : {}),
 	};
 }
 
@@ -235,6 +241,22 @@ export interface L1RunOptions extends RuntimeDriverOptions {
 	skipBlocking?: boolean;
 	/** 规则集装配信息，仅用于报告（由 runL1 内部填）。 */
 	registryInfo?: StaticPromptResult;
+	/**
+	 * ⭐ 真实 Nest userId（画布工具做归属校验）。
+	 * **不传 = 每条 case 都会 4xx 超时**（见 `EvalCaseInput.userId` 的说明）。
+	 */
+	userId?: string;
+	/**
+	 * ⭐ 真实画布会话 id。
+	 *
+	 * ⚠️⚠️ **不传就不该跑**：`canvasSessionId` 缺省会回落到 pi 会话键
+	 * （`eval-xxx`），而那是**不存在的 id** ⇒ 查画布必然 4xx ⇒ 模型反复重试、
+	 * 评测只能拿到超时。首跑 7 条全超时就是这个原因。
+	 *
+	 * ⇒ 未传时 `runL1` **直接抛错**而不是跑一遍拿超时 ——
+	 * 「拿不到数据」和「数据说明行为不符」必须区分，否则会误判成行为问题。
+	 */
+	canvasSessionId?: string;
 }
 
 /**
@@ -250,6 +272,23 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		: GOLDEN_CASES;
 	if (cases.length === 0) {
 		throw new Error(`no golden cases matched: only=${JSON.stringify(options.only ?? null)}`);
+	}
+	// ⭐⭐ 没有真实画布就**直接抛**，不跑一遍拿超时。
+	// 为什么：缺 `canvasSessionId` 时 driver 会回落到 pi 会话键（`eval-xxx`），
+	// 那是**不存在的 id** ⇒ 模型每次查画布都 4xx ⇒ 反复重试直到超时。
+	// 实测 7 条全 120s 超时、`get_canvas_summary` 22 次 4xx。
+	// ⇒ 「拿不到数据」必须与「数据说明行为不符」严格区分，否则会误判成
+	// 「模型行为退化」—— 而正确处置是传对参数重跑。
+	const needsCanvas = cases.some((c) => !c.requiresConfirm);
+	if (needsCanvas && (!options.canvasSessionId || !options.userId)) {
+		throw new Error(
+			`L1 需要真实画布上下文才能跑（非 requiresConfirm 的 case 会调画布工具）：\n` +
+				`  canvasSessionId = ${options.canvasSessionId ?? "（未传）"}\n` +
+				`  userId          = ${options.userId ?? "（未传）"}\n` +
+				`不传会怎样：driver 回落到 pi 会话键（不存在的 id）⇒ 画布工具全 4xx ` +
+				`⇒ 模型反复重试 ⇒ 每条 case 跑满超时。\n` +
+				`怎么拿：见 docs 里 L1 评测说明（用测试账号登录 Nest 换一个已有画布 / 新建画布）。`,
+		);
 	}
 	const intervalMs = options.intervalMs ?? 500;
 	const results: CaseResult[] = [];
@@ -301,7 +340,12 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 						? { timeoutMs: options.caseTimeoutMs }
 						: {}),
 				},
-				{ text: testCase.text, systemPrompt: staticPrompt },
+				{
+					text: testCase.text,
+					systemPrompt: staticPrompt,
+					...(options.userId ? { userId: options.userId } : {}),
+					...(options.canvasSessionId ? { canvasSessionId: options.canvasSessionId } : {}),
+				},
 			);
 			const v = verdictOf(testCase, run.transcript);
 			result = {
@@ -328,7 +372,11 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		if (i < cases.length - 1 && intervalMs > 0) await sleep(intervalMs);
 	}
 
-	return summarize(results, { staticPrompt: registryInfo, coverageNote });
+	return summarize(results, {
+		staticPrompt: registryInfo,
+		coverageNote,
+		...(options.canvasSessionId ? { canvasSessionId: options.canvasSessionId } : {}),
+	});
 }
 
 function sleep(ms: number): Promise<void> {
