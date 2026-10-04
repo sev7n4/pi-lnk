@@ -18,12 +18,45 @@
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import { presentResult } from "./present-result.js";
+import {
+	ALLOWED_COLOR_NAMES,
+	isAllowedColorName,
+	type GvNode,
+} from "./render-canvas-view.expressive.js";
+import {
+	buildLayoutSvg,
+	buildMatrixSvg,
+	buildSwimlaneSvg,
+	buildTimelineFlowSvg,
+	buildTreeSvg,
+} from "./render-canvas-view.views.js";
 
-const VIEWS = ["timeline", "topology", "table"] as const;
+/**
+ * view × relation × groupBy**三维正交**。
+ *
+ * - `view` —— 形状（布局），回答"画成什么样"
+ * - `relation` —— 关系（意图），回答"看什么关系"
+ * - `groupBy` —— 分组依据，回答"按什么分组"
+ *
+ * 旧名`topology` 保留为 `layout` + `relation=dependency` 的别名（向后兼容，见
+ * `resolveView`）。`table` 保留给"逐行列出 + 行级overlay"的旧场景。
+ */
+const VIEWS = ["layout", "tree", "timeline", "swimlane", "matrix", "topology", "table"] as const;
+const RELATIONS = ["dependency", "category"] as const;
+const GROUP_BYS = ["type", "status", "parentNode"] as const;
+/** 行级指标 overlay（时长/台词/情绪/级别）—— 与 `relation` 正交，用于 timeline/table。 */
 const OVERLAYS = ["emotion", "budget", "severity"] as const;
 
 export type ViewKind = (typeof VIEWS)[number];
+export type RelationKind = (typeof RELATIONS)[number];
+export type GroupByKind = (typeof GROUP_BYS)[number];
 export type OverlayKind = (typeof OVERLAYS)[number];
+
+/** `topology` 是 `layout` 的旧名；`table` 走旧渲染路径。 */
+function isLegacyView(v: ViewKind): boolean {
+	return v === "topology" || v === "table";
+}
+
 
 export interface TimelineRow {
 	shotId: string;
@@ -299,6 +332,14 @@ interface CanvasNode {
 	id: string;
 	title?: string;
 	type?: string;
+	/**
+	 * 以下字段 `get-canvas-layout` **本来就返回**，过去被本interface 挡在门外
+	 * （只声明了 id/title/type）⇒ 关系视图拿不到，颜色/层级/分类全画不出来。
+	 * 2026-10-05 补齐：多颜色按 `type`、状态深浅按 `status`、层级按 `parentNode`。
+	 */
+	status?: string;
+	parentNode?: string | null;
+	position?: { x?: number; y?: number };
 }
 
 export function createRenderCanvasViewTools(deps: {
@@ -312,18 +353,65 @@ export function createRenderCanvasViewTools(deps: {
 			// 长度受 spec 硬约束 [80,400]（Task 8 的 lint-tool-descriptions 会拒 >400）：
 			// 参数文档写进 Type.*({ description })，description 只留「做什么 + 前提 + 边界」。
 			description:
-				"Render a read-only SVG card of existing canvas data: timeline (time axis), topology (directed deps), or table (2D grid), with an optional overlay. Source nodes must already exist; missing ones error out instead of inventing rows. Read-only: does NOT edit or create nodes, does NOT trigger generation — edit the source then re-render. Overlays unsupported on a view are rejected, not ignored.",
+				"Render a read-only SVG card of canvas data. Pick the SHAPE with `view`, the RELATION " +
+				"with `relation`, the GROUPING with `groupBy` — independent. Source nodes must already " +
+				"exist; missing ones error out instead of inventing rows. Ordered by business sequence, " +
+				"not canvas position. Read-only: does NOT edit or create nodes, does NOT trigger " +
+				"generation. Unsupported overlays are rejected, not ignored.",
 			parameters: Type.Object({
 				view: Type.Optional(
 					Type.Union(VIEWS.map((v) => Type.Literal(v)), {
-						description: "View shape: timeline (horizontal time axis), topology (directed dependencies), table (2D grid). Defaults to timeline.",
+						description:
+							"Shape only, independent of relation and groupBy: 'layout' (bipartite graph, use with relation=dependency), 'tree' (hierarchy from parentNode), 'timeline' (one-dimensional order), 'swimlane' (stage columns x groupBy rows), 'matrix' (rowBy x colBy cross-tab). 'topology' is the legacy alias of layout+dependency; 'table' is the legacy per-row list. Defaults to layout.",
 					}),
+				),
+				relation: Type.Optional(
+					Type.Union(RELATIONS.map((r) => Type.Literal(r)), {
+						description:
+							"What relation to draw. 'dependency' draws directed arrows (who depends on whom / what breaks if I change this). 'category' draws no dependency edges — use it when the user asks about grouping or ownership, so the picture does not imply causal links. Defaults to dependency.",
+					}),
+				),
+				groupBy: Type.Optional(
+					Type.Union(GROUP_BYS.map((g) => Type.Literal(g)), {
+						description:
+							"Coloring / grouping dimension: 'type' (node type from the canvas), 'status' (node status), 'parentNode' (which group / episode the node belongs to). Affects color, lane and group assignment — NOT the shape. Defaults to type.",
+					}),
+				),
+				show_type: Type.Optional(
+					Type.Boolean({
+						description:
+							"Show the node type inside each label (e.g. '①EP01 prompt'). Off by default — color plus the legend already convey type, and writing it out is noise.",
+					}),
+				),
+				rowBy: Type.Optional(
+					Type.Union(GROUP_BYS.map((g) => Type.Literal(g)), {
+						description: "matrix only: row dimension. Defaults to type.",
+					}),
+				),
+				colBy: Type.Optional(
+					Type.Union(GROUP_BYS.map((g) => Type.Literal(g)), {
+						description: "matrix only: column dimension. Defaults to status.",
+					}),
+				),
+				nodes: Type.Optional(
+					Type.Array(
+						Type.Object({
+							node_id: Type.String({ description: "Canvas node id this styling applies to" }),
+							color: Type.Optional(
+								Type.Union(ALLOWED_COLOR_NAMES.map((c) => Type.Literal(c)), {
+									description:
+										"Semantic color NAME, not a hex value. Use only to highlight or override a few nodes; omitting it assigns the type color automatically. Hex values are rejected.",
+								}),
+							),
+						}),
+						{ description: "Per-node style overrides. Keep it small — the default coloring already covers type and status." },
+					),
 				),
 				overlay: Type.Optional(
 					Type.Object({
 						kind: Type.Union(OVERLAYS.map((k) => Type.Literal(k)), {
 							description:
-								"Business-semantics overlay: emotion (intensity curve, timeline only), budget (flags rows whose dialogue_chars exceed duration_sec x 4.5, Chinese speech at 4-5 chars/sec, timeline only), severity (recolors rows by the level you pass, timeline or table). Match the kind to the question — the others are rejected on that view rather than ignored.",
+								"Row-level metrics overlay (timeline / table only): emotion (intensity curve), budget (flags rows whose dialogue_chars exceed duration_sec x 4.5, Chinese speech at 4-5 chars/sec), severity (recolors rows by the level you pass). Match the kind to the question — the others are rejected on that view rather than ignored.",
 						}),
 						data: Type.Union([Type.Array(Type.Unknown()), Type.Object({}, { description: "Empty object: declare there is no row-level data." })], {
 							description:
@@ -350,6 +438,18 @@ export function createRenderCanvasViewTools(deps: {
 				_id,
 				p: {
 					view?: ViewKind;
+					/** 看什么关系（与 view 正交）。 */
+					relation?: RelationKind;
+					/** 按什么分组（与 view / relation 正交）。 */
+					groupBy?: GroupByKind;
+					/** 标签里是否显示类型。 */
+					show_type?: boolean;
+					/** matrix 行维度。 */
+					rowBy?: GroupByKind;
+					/** matrix 列维度。 */
+					colBy?: GroupByKind;
+					/** 逐节点样式覆盖（`color` 只接受语义色名）。 */
+					nodes?: Array<{ node_id: string; color?: string }>;
 					overlay?: Overlay;
 					node_ids?: string[];
 					title?: string;
@@ -358,15 +458,47 @@ export function createRenderCanvasViewTools(deps: {
 				_u,
 				tc: LnkpiToolContext,
 			) => {
-				const view: ViewKind = p.view ?? "timeline";
+				const view: ViewKind = p.view ?? "layout";
 				if (!VIEWS.includes(view)) return fail(`view 非法：${String(p.view)}，可选 ${VIEWS.join(" | ")}`);
-				if (p.overlay && view === "topology") {
-					return fail(`overlay not supported on view=topology（收到 kind=${String(p.overlay.kind)}）`);
+				const relation: RelationKind = p.relation ?? "dependency";
+				if (!RELATIONS.includes(relation)) {
+					return fail(`relation 非法：${String(p.relation)}，可选 ${RELATIONS.join(" | ")}`);
+				}
+				const groupBy: GroupByKind = p.groupBy ?? "type";
+				if (!GROUP_BYS.includes(groupBy)) {
+					return fail(`groupBy 非法：${String(p.groupBy)}，可选 ${GROUP_BYS.join(" | ")}`);
+				}
+				const rowBy: GroupByKind = p.rowBy ?? "type";
+				const colBy: GroupByKind = p.colBy ?? "status";
+				if (!GROUP_BYS.includes(rowBy) || !GROUP_BYS.includes(colBy)) {
+					return fail(`rowBy/colBy 非法，可选 ${GROUP_BYS.join(" | ")}`);
+				}
+				if (p.overlay && (view === "topology" || view === "layout" || view === "tree" || view === "swimlane" || view === "matrix")) {
+					return fail(
+						`overlay（行级指标）not supported on view=${view}（它只用于 timeline / table 的行级轨道）。` +
+							`关系表达请改用 view + relation + groupBy —— overlay 不表达逻辑关系。`,
+					);
 				}
 				// table 只实现了 severity 行底色；收下 emotion/budget 却什么都不画，与 topology
 				// 同属「静默忽略叠加」——agent 会以为叠加生效了而图上少一条轨道，比报错更难查。
 				if (p.overlay && view === "table" && p.overlay.kind !== "severity") {
 					return fail(`overlay.kind=${String(p.overlay.kind)} not supported on view=table（仅支持 severity）`);
+				}
+				// 节点颜色只接受白名单**色名**，原始色值（#hex / rgb()）一律拒绝 ——
+				// 颜色通道由类型自动分配；让模型传任意色值会绕过「一色一义」并引入注入面。
+				const colorOverrides: Record<string, string | undefined> = {};
+				if (Array.isArray(p.nodes)) {
+					for (const n of p.nodes) {
+						if (!n || typeof n.node_id !== "string") continue;
+						if (n.color === undefined) continue;
+						if (!isAllowedColorName(n.color)) {
+							return fail(
+								`nodes[].color 只接受语义色名（${ALLOWED_COLOR_NAMES.join(" | ")}），收到 ${JSON.stringify(n.color)}。` +
+									`不要传十六进制或 rgb()：颜色通道由 node.type 自动分配，语义色名已足够。`,
+							);
+						}
+						colorOverrides[n.node_id] = n.color;
+					}
 				}
 				let items: OverlayItem[] = [];
 				if (p.overlay) {
@@ -399,30 +531,52 @@ export function createRenderCanvasViewTools(deps: {
 				 */
 				const aligned = alignByKey(items, nodes.map((n) => n.id));
 
-				const svg =
-					view === "topology"
-						? buildTopologySvg(
-								nodes.map((n) => ({ id: n.id, title: n.title || n.id })),
-								(raw?.edges ?? []).filter((e) => wantedSet.has(e.source) && wantedSet.has(e.target)),
+				// 关系视图需要**完整节点字段**（type/status/parentNode/position）——
+				// 这正是过去被丢弃、导致「多颜色 / 层级 / 分类」画不出来的那部分。
+				const gvNodes: GvNode[] = nodes.map((n) => ({
+					id: n.id,
+					...(n.type !== undefined ? { type: String(n.type) } : {}),
+					...(n.title !== undefined ? { title: String(n.title) } : {}),
+					...(n.status !== undefined ? { status: String(n.status) } : {}),
+					...(n.parentNode !== undefined && n.parentNode !== null ? { parentNode: String(n.parentNode) } : {}),
+					position: { x: n.position?.x ?? 0, y: n.position?.y ?? 0 },
+				}));
+				const gvEdges = (raw?.edges ?? []).filter((e) => wantedSet.has(e.source) && wantedSet.has(e.target));
+
+				// `topology` 是 `layout` 的旧名：等价于 layout + relation=dependency。
+				// `table` 与 `timeline` 走既有行级渲染（overlay 轨道只在这两个上有效）。
+				const effView: ViewKind = view === "topology" ? "layout" : view;
+				const svg = isLegacyView(view) && view === "table"
+					? buildTableSvg(
+							nodes.map((n) => ({ id: n.id, cells: [n.id, n.title || ""] })),
+							p.overlay,
+						)
+					: effView === "timeline"
+						? buildTimelineSvg(
+								nodes.map((n, i) => {
+									const it = aligned[i];
+									return {
+										shotId: n.id,
+										label: it?.label ?? n.title ?? n.id,
+										...(it?.duration_sec !== undefined ? { durationSec: it.duration_sec } : {}),
+										...(it?.dialogue_chars !== undefined ? { dialogueChars: it.dialogue_chars } : {}),
+										...(it?.emotion !== undefined ? { emotion: it.emotion } : {}),
+									};
+								}),
+								p.overlay,
 							)
-						: view === "table"
-							? buildTableSvg(
-									nodes.map((n) => ({ id: n.id, cells: [n.id, n.title || ""] })),
-									p.overlay,
-								)
-							: buildTimelineSvg(
-									nodes.map((n, i) => {
-										const it = aligned[i];
-										return {
-											shotId: n.id,
-											label: it?.label ?? n.title ?? n.id,
-											...(it?.duration_sec !== undefined ? { durationSec: it.duration_sec } : {}),
-											...(it?.dialogue_chars !== undefined ? { dialogueChars: it.dialogue_chars } : {}),
-											...(it?.emotion !== undefined ? { emotion: it.emotion } : {}),
-										};
-									}),
-									p.overlay,
-								);
+						: effView === "tree"
+							? buildTreeSvg(gvNodes, gvEdges)
+							: effView === "swimlane"
+								? buildSwimlaneSvg(gvNodes, gvEdges, groupBy === "parentNode" ? "status" : groupBy)
+								: effView === "matrix"
+									? buildMatrixSvg(gvNodes, rowBy, colBy)
+									: buildLayoutSvg(gvNodes, gvEdges, {
+											drawEdges: relation === "dependency",
+											colors: colorOverrides,
+											groupBy,
+											showType: p.show_type === true,
+										});
 				return presentResult({
 					type: "svg_card",
 					svg,

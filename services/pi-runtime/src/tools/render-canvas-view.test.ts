@@ -119,9 +119,21 @@ describe("工具元数据契约", () => {
 		assert.match(d, /must already exist/);
 		assert.match(d, /does NOT edit or create nodes/);
 		assert.match(d, /does NOT trigger generation/);
-		assert.match(d, /timeline \(time axis\)/);
-		assert.match(d, /topology \(directed deps\)/);
-		assert.match(d, /table \(2D grid\)/);
+		// 三维正交必须写进顶层 description —— 模型靠它知道有三个独立维度可调。
+		assert.match(d, /SHAPE with `view`/);
+		assert.match(d, /RELATION with `relation`/);
+		assert.match(d, /GROUPING with `groupBy`/);
+		// 排序契约要写明（业务序号优先），否则模型不知道可以不传 node_ids
+		assert.match(d, /business sequence/);
+		// ⚠️ 形状清单（layout/tree/timeline/swimlane/matrix + 旧别名）刻意**不在**顶层：
+		// 顶层 description 有 [80,400] 硬上限（spec 约束），清单塞进来会挤掉契约。
+		// 它在 `parameters.properties.view.description` 里 —— 那是模型读细节时真正会看的位置。
+		const viewDesc = (
+			tool.parameters as { properties: { view: { description: string } } }
+		).properties.view.description;
+		for (const name of ["layout", "tree", "timeline", "swimlane", "matrix", "topology", "table"]) {
+			assert.ok(viewDesc.includes(name), `view 的参数说明里必须列出 ${name}`);
+		}
 	});
 
 	// finding 3：声明的 schema 必须与 assertOverlay 的可接受集合一致（array | {}）。
@@ -143,13 +155,41 @@ describe("工具元数据契约", () => {
 				overlay: { properties: { kind: { anyOf: Array<{ const: string }> } } };
 			};
 		}).properties;
+		// 2026-10-05 扩枚举：新增 layout / tree / swimlane / matrix（表达层），
+		// `topology` / `table` 作为**别名**保留 —— 删掉会让老 prompt 与老调用直接失效。
 		assert.deepEqual(
 			props.view.anyOf.map((s) => s.const),
-			["timeline", "topology", "table"],
+			["layout", "tree", "timeline", "swimlane", "matrix", "topology", "table"],
 		);
+		// 旧名必须仍在（向后兼容是硬要求，不是可选）
+		for (const legacy of ["topology", "table", "timeline"]) {
+			assert.ok(
+				props.view.anyOf.some((s) => s.const === legacy),
+				`旧 view ${legacy} 被删了 —— 老 prompt/调用会直接失效`,
+			);
+		}
 		assert.deepEqual(
 			props.overlay.properties.kind.anyOf.map((s) => s.const),
 			["emotion", "budget", "severity"],
+			"overlay.kind 是行级指标通道，2026-10-05 的 relation 扩展刻意**不动**它（两者正交）",
+		);
+		// relation / groupBy 枚举
+		const props2 = (tool.parameters as {
+			properties: {
+				relation: { anyOf: Array<{ const: string }> };
+				groupBy: { anyOf: Array<{ const: string }> };
+				nodes: { items: { properties: { color: { anyOf: Array<{ const: string }> } } } };
+			};
+		}).properties;
+		assert.deepEqual(props2.relation.anyOf.map((s) => s.const), ["dependency", "category"]);
+		assert.deepEqual(props2.groupBy.anyOf.map((s) => s.const), ["type", "status", "parentNode"]);
+		// 颜色只给语义色名，绝不放色值进 schema（色值通道由 type 自动分配）
+		const colors = props2.nodes.items.properties.color.anyOf.map((s) => s.const);
+		assert.equal(colors.length > 0, true, "color 应是语义色名枚举");
+		assert.equal(
+			colors.some((c) => c.startsWith("#") || c.includes("rgb")),
+			false,
+			`色值不得进schema：${JSON.stringify(colors)}`,
 		);
 	});
 });
