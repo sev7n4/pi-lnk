@@ -573,8 +573,25 @@ describe("POST /sessions/:key/prompt 直通 images（T1）", () => {
  * 用 `dispatchWaitingUser`（公开方法）把 buffer 灌到超过 BUFFER_LIMIT=500。
  */
 describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
-	/** 用公开方法把某会话的 buffer 灌到溢出（每条一个 waiting_user 广播）。 */
+	/**
+	 * 用公开方法把某会话的 buffer 灌到溢出（每条一个 waiting_user 广播）。
+	 *
+	 * ⚠️ **必须传 `canvasSessionId`**：`dispatchWaitingUser` 的匹配键是
+	 * `entry.canvasSessionId ?? entry.id`，而 `entry.id` 是 `toSessionKey(...)`
+	 * 的结果（`:` → `_` + 8 位 hash，如 `s1_t1-a1b2c3d4`）。
+	 * 只传 `sessionId` 而不传 `canvasSessionId` ⇒ `entry.canvasSessionId` 为 undefined
+	 * ⇒ 拿 `s1_t1-<hash>` 去比 `"s1:t1"` ⇒ **永远不匹配、hits=0、buffer 根本没灌满**。
+	 * 于是 `droppedFromSeq` 恒为 0 ⇒ 判定「完整」⇒ 走 SSE 长连接 ⇒ inject 永不 resolve
+	 * ⇒ 整个测试文件卡死（2026-10-04 实测 CI 跑 11-13 分钟未结束）。
+	 *
+	 * 断言命中数 > 0 是这个前置条件的护栏：静默不匹配会让"造溢出"变成空操作。
+	 */
 	async function overflowBuffer(manager: SessionManager, key: string): Promise<void> {
+		// 先验证「打得到这个会话」，再灌——否则造溢出是个静默的空操作。
+		assert.ok(
+			manager.dispatchWaitingUser(key, { toolName: "probe", status: "waiting" } as never) > 0,
+			`前置条件：dispatchWaitingUser 必须命中会话 ${key}（检查 canvasSessionId 是否传入）`,
+		);
 		for (let i = 0; i < 501; i++) {
 			manager.dispatchWaitingUser(key, { toolName: `t${i}`, status: "waiting" } as never);
 		}
@@ -583,12 +600,24 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 	it("afterSeq 早于丢弃水位 → 409 + droppedFromSeq（不建 SSE 流）", async () => {
 		await withRoot("pi-runtime-t1-", async (root) => {
 			const { app, manager } = makeApp(root);
+			// abort 兜底：若前置条件失效导致「本该409」变成「走 SSE 长连接」，
+			// inject 永不 resolve；abort 让它以rejected 结束，测试**失败**而不是**卡死整个文件**。
+			const ac = new AbortController();
 			try {
-				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
+				await app.inject({
+					method: "POST",
+					url: "/sessions",
+					payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "s1:t1" },
+				});
 				await overflowBuffer(manager, "s1:t1");
 
 				// afterSeq=0 早于丢弃水位 ⇒ 残缺
-				const res = await app.inject({ method: "GET", url: "/sessions/s1:t1/events?lastEventId=0" });
+				const res = await app.inject({
+					method: "GET",
+					url: "/sessions/s1:t1/events?lastEventId=0",
+					signal: ac.signal,
+				});
 				assert.equal(res.statusCode, 409, "残缺重放必须 409，不能发 200 + 断头流");
 				const body = res.json() as {
 					error: string;
@@ -604,6 +633,7 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 				);
 				assert.equal(body.recovery, "rebuild full timeline", "必须告诉客户端怎么恢复");
 			} finally {
+				ac.abort();
 				await app.close();
 			}
 		});
@@ -618,7 +648,12 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 			//    正确收尾：**主动 abort 掉请求**再close，让 inject 以 aborted 结束。
 			const ac = new AbortController();
 			try {
-				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t2", userId: "u1" } });
+				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
+				await app.inject({
+					method: "POST",
+					url: "/sessions",
+					payload: { sessionId: "s1:t2", userId: "u1", canvasSessionId: "s1:t2" },
+				});
 				await overflowBuffer(manager, "s1:t2");
 
 				// 前置条件：本次确实发生了溢出
