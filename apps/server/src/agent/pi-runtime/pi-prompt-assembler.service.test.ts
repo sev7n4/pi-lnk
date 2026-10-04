@@ -17,6 +17,7 @@ import {
 	CORE_RULES_TAIL,
 	WRITE_TOOLS_RULES,
 	CANVAS_VIEW_POLICY,
+	CANVAS_DAILY_OPS,
 	GEN_TOOLS_RULES,
 	RULE_10_WRITE_GUARD,
 	MEMORY_SCOPE_RULES,
@@ -64,17 +65,24 @@ describe("PiPromptAssembler 静态段（assembleStatic：规则组文本，会�
 	it("ruleGroups 含 writeTools 时注入规则 4/5 原文，且不再注入第 10 条守卫（B-2）", async () => {
 		const asm = makeAssembler({ nodes: [] });
 		const prompt = await asm.assembleStatic({ ruleGroups: ["core", "writeTools"] });
-		// 规则 4 原文特征句（explore.py:95 逐字，含无空格拼接点）
-		expect(prompt.includes("用 upsert_media_node创建或更新节点（可带 prompt）")).toBe(true);
-		expect(prompt.includes("mentioned_keys 用 I1/I2芯片序")).toBe(true);
+		// 规则 4 原文特征句（2026-10-04 W4 压缩措辞：「建/更新节点」→「建节点」、
+		// 「并等待用户确认」→「等用户确认」，约束未变）
+		expect(prompt.includes("upsert_media_node 建节点（可带 prompt）")).toBe(true);
+		expect(prompt.includes("mentioned_keys 用 I1/I2 芯片序")).toBe(true);
 		// 规则 5 原文特征句
 		expect(prompt.includes("口语搭骨架")).toBe(true);
 		expect(prompt.includes("不要把 @I* 芯片连成边")).toBe(true);
 		// 第 10 条守卫退出
 		expect(prompt.includes("写操作尚未开放")).toBe(false);
-		// 规则 6（tool_search）与 8/9 不注入（见计划 §1.2 声明偏离）
-		expect(prompt.includes("tool_search")).toBe(false);
+		// 规则 6（tool_search 旧路径）与 8/9 不注入（见计划 §1.2 声明偏离）
+		// ⚠️ 但W4 新增的 canvas_daily_ops 规则 22 **确实**提到 tool_search
+		//（那是「用 tool_search 搜」的行为约定，不是渐进披露的规则 6 原条）
 		expect(prompt.includes("upscale_image")).toBe(false);
+		// ⭐ W4（2026-10-04）：画布日常操作规则必须进 writeTools 组
+		// —— L1 实测 `tool-discovery-001`（话术「把 30 个节点按左右关系重新排一下」
+		// 期望 arrange_nodes，实际只调 get_canvas_summary/layout）的根因就是它缺位。
+		expect(prompt.includes("arrange_nodes")).toBe(true);
+		expect(prompt.includes("list_generation_tasks")).toBe(true);
 	});
 
 	it("规则 14：无工作流模板能力——如实说明，禁止虚构模板（B 决策：workflow 不迁 pi）", async () => {
@@ -85,7 +93,8 @@ describe("PiPromptAssembler 静态段（assembleStatic：规则组文本，会�
 				ruleGroups: groups as Array<"core" | "writeTools" | "genTools">,
 			});
 			expect(prompt.includes("本会话没有工作流模板能力")).toBe(true);
-			expect(prompt.includes("直接用节点 + 连线搭骨架来替代")).toBe(true);
+			// 2026-10-04 W4 压缩：「直接用节点 + 连线搭骨架来替代」→「直接用节点+连线搭骨架替代」
+			expect(prompt.includes("直接用节点+连线搭骨架替代")).toBe(true);
 			// 规则正文不得再引用 pi 侧不存在的 workflow 工具名
 			expect(prompt.includes("instantiate_workflow_template")).toBe(false);
 			expect(prompt.includes("import_workflow")).toBe(false);
@@ -179,7 +188,8 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 		expect(prompt.includes("禁止调用任何 run_*")).toBe(false);
 		expect(prompt.includes("用户明确同意前禁止调用 run_*_generation")).toBe(true);
 		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
-		expect(prompt.includes("status=fallback_pending")).toBe(true);
+		expect(prompt.includes("status=timeout")).toBe(true);
+		expect(prompt.includes("fallback_pending")).toBe(true);
 		expect(prompt.includes("cancel_generation")).toBe(true);
 		// 规则 4/5（writeTools）与第 10 条守卫（writeTools 已启用 → 退出）不受影响
 		expect(prompt.includes("口语搭骨架")).toBe(true);
@@ -355,12 +365,13 @@ const GROUPS: Record<string, Array<"core" | "writeTools" | "genTools">> = {
 
 const EXPECTED: Record<string, string> = {
 	core: `${CORE}\n${RULE_10_WRITE_GUARD}`,
-	// canvas_view_policy（order 45）夹在 writeTools(40) 与 genTools(50) 之间，与磁盘 order 一致
-	"core+writeTools": `${CORE}\n${WRITE_TOOLS_RULES}\n${CANVAS_VIEW_POLICY}`,
+	// canvas_view_policy（order 45）与 canvas_daily_ops（order 46）夹在
+	// writeTools(40) 与 genTools(50) 之间，与磁盘 order 一致
+	"core+writeTools": `${CORE}\n${WRITE_TOOLS_RULES}\n${CANVAS_VIEW_POLICY}\n${CANVAS_DAILY_OPS}`,
 	// 守卫排在 11/12/13 之后（push 顺序 core → GEN → GUARD；按 order 排 guard 也落在最后）
 	"core+genTools": `${CORE_GEN}\n${GEN_TOOLS_RULES}\n${RULE_10_WRITE_GUARD}`,
 	// genTools 开 → core 内部用规则 3'（否则会与「genTools 未启用」那版同时出现）
-	"core+writeTools+genTools": `${CORE_GEN}\n${WRITE_TOOLS_RULES}\n${CANVAS_VIEW_POLICY}\n${GEN_TOOLS_RULES}`,
+	"core+writeTools+genTools": `${CORE_GEN}\n${WRITE_TOOLS_RULES}\n${CANVAS_VIEW_POLICY}\n${CANVAS_DAILY_OPS}\n${GEN_TOOLS_RULES}`,
 };
 
 describe("W1a 字节等价：Registry 渲染 == 搬家前的 composeRuleText", () => {

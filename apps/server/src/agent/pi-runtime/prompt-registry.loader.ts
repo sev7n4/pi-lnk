@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   CANVAS_VIEW_POLICY,
+  CANVAS_DAILY_OPS,
   CORE_RULES_PREFIX,
   GEN_TOOLS_RULES,
   RULE_3_GEN,
@@ -71,7 +72,8 @@ export interface PromptRegistrySnapshot {
 /** L9：代码侧声明的、必须由 Registry 提供的 id 清单。 */
 export const COMPOSED_IDS = [
   "identity.opening", "no_gen_claim.nogen", "no_gen_claim.gen", "sidebar_vision.tail",
-  "memory_scope.tail", "media_tool_policy", "canvas_view_policy", "gen_tool_policy", "write_guard",
+  "memory_scope.tail", "media_tool_policy", "canvas_view_policy", "canvas_daily_ops",
+  "gen_tool_policy", "write_guard",
 ] as const;
 
 /** L7：Registry id → fallback 常量的映射。 */
@@ -83,6 +85,7 @@ export const FALLBACK_BY_ID: Record<string, string> = {
   "memory_scope.tail": MEMORY_SCOPE_RULES,
   "media_tool_policy": WRITE_TOOLS_RULES,
   "canvas_view_policy": CANVAS_VIEW_POLICY,
+  "canvas_daily_ops": CANVAS_DAILY_OPS,
   "gen_tool_policy": GEN_TOOLS_RULES,
   "write_guard": RULE_10_WRITE_GUARD,
 };
@@ -229,7 +232,7 @@ export function renderStaticFallback(groups: readonly string[]): string {
   // media_tool_policy(40) 与 gen_tool_policy(50) 之间。漏推任何一条 ⇒ 容器读不到
   // registry 走此退路时该规则**整段消失且无任何报错**（degraded 本身是静默降级），
   // 且长度差恰好等于漏掉规则的 body 字符数，是唯一可测的信号。
-  if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES, CANVAS_VIEW_POLICY);
+  if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES, CANVAS_VIEW_POLICY, CANVAS_DAILY_OPS);
   if (groups.includes("genTools")) parts.push(GEN_TOOLS_RULES);
   if (!groups.includes("writeTools") && coreOn) parts.push(RULE_10_WRITE_GUARD);
   return parts.filter(Boolean).join("\n");

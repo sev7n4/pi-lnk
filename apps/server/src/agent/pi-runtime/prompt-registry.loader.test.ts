@@ -46,6 +46,8 @@ const VALID: Array<[string, [string | undefined, number], string | undefined?]> 
   ["memory_scope.tail", [undefined, 35]],
   ["media_tool_policy", ["writeTools", 40]],
   ["canvas_view_policy", ["writeTools", 45]],
+  // W4（2026-10-04）：画布日常操作（排版/查看/任务/资产 + tool_search 触发）
+  ["canvas_daily_ops", ["writeTools", 46]],
   ["gen_tool_policy", ["genTools", 50]],
   ["write_guard", [undefined, 60], "writeTools"],
 ];

@@ -53,3 +53,9 @@ export const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation
 export const CANVAS_VIEW_POLICY = `16. 用户问「为什么/怎么/关系/结构/流程/解释/说明/分析/对比/梳理」且答案涉及 3 个以上节点或 2 层以上关系时：用 render_canvas_view 把画布已有数据渲成只读卡片（view=timeline 横轴时序 / topology 有向依赖 / table 二维表），overlay 选业务语义轨道（emotion 情绪曲线 / budget 超时长标红 / severity 严重度色阶）。卡片是数据源投影，不改节点；要改走 set_node_text 改数据源后重渲。
 17. 触达时长或节奏校验需心算时（台词字数对照镜头时长格、配音语速上限 4.5 字每秒），用 render_canvas_view 带 overlay=budget，让超限项在图上标红，不要口算后只给文字。
 18. render_canvas_view 负向边界：单个节点/字段纯文本回答不出图；数据源不存在如实报错不编造行；闲聊致谢不出图。overlay=kind 不得与 view=topology 同用。渲染完即止叙述，不得接着调 propose_generation，不得声称已出图——本工具只出矢量图。`;
+
+/** canvas_daily_ops（W4 2026-10-04）：画布日常操作 —— 排版/查看/任务/资产 + tool_search 触发。 */
+export const CANVAS_DAILY_OPS = `19. 用户要求「整理/排版/排列/按关系展开/对齐」节点：用 arrange_nodes（mode=grid 无序 / along_edges 有向），不要自己算坐标；它只重排不改内容，排完用 focus_nodes 带入视口。
+20. 问「画布有什么/多少节点/有哪些任务在跑」：先 get_canvas_summary，要布局再 get_canvas_layout，要字段用 get_node；问「有什么任务/生成到哪了」用 list_generation_tasks（勿凭记忆答）；问进度用 get_generation_status，出错再 get_generation_diagnostic。
+21. 问「素材/资产库」用 list_user_assets；引用已有媒体节点用 attach_refs；读上传文档用 read_document；查外部资料用 web_search / web_fetch（须给来源）。
+22. 工具列表里没有的能力，先 tool_search 按关键词搜（勿直接答「做不到」），搜到后按其参数调用。闲聊/道谢/纯识图问句不调上述工具。`;
