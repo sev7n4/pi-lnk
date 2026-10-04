@@ -39,7 +39,9 @@ const CASES: Array<[string, ToolErrorClass]> = [
 
 for (const [text, expected] of CASES) {
 	test(`分类：${JSON.stringify(text)} → ${expected}`, () => {
-		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, expected);
+		const r = classifyToolOutcome({ isError: true, terminate: false, resultText: text });
+		assert.equal(r.errorClass, expected);
+		assert.equal(r.outcome, "error", "error 分支的 outcome 必须是 error");
 	});
 }
 
@@ -63,4 +65,37 @@ test("分类优先级：429 优先于 timeout（先命中先定）", () => {
 		classifyToolOutcome({ isError: true, terminate: false, resultText: "timeout waiting, then 429" }).errorClass,
 		"upstream_4xx",
 	);
+});
+
+test("分类优先级：aborted 优先于 4xx/5xx（brief 核心要求）", () => {
+	assert.equal(
+		classifyToolOutcome({ isError: true, terminate: false, resultText: "request aborted: 429 rate limit" }).errorClass,
+		"aborted",
+	);
+	assert.equal(
+		classifyToolOutcome({ isError: true, terminate: false, resultText: "aborted, upstream 503 unavailable" }).errorClass,
+		"aborted",
+	);
+});
+
+test("internal 兜底不得泄漏错误原文", () => {
+	const secret = "sk-live-abcdef123456";
+	const r = classifyToolOutcome({ isError: true, terminate: false, resultText: `玄学失败 ${secret}` });
+	assert.equal(r.errorClass, "internal");
+	assert.equal(JSON.stringify(r).includes(secret), false, "internal 兜底泄漏了错误原文");
+});
+
+// 回归：gate 关键词必须带词边界，否则内含 "gate" 子串的常用英文词会被误判。
+test("gate 误判回归：内含 gate 子串的普通词不得判为 gate_blocked", () => {
+	for (const text of [
+		"investigate the canvas",
+		"aggregate the results",
+		"mitigate the risk",
+		"navigate to node 3",
+		"delegated to subagent",
+	]) {
+		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, "internal", text);
+	}
+	// 反向：真正的 gate 信号仍须命中。
+	assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: "blocked by HITL gate" }).errorClass, "gate_blocked");
 });

@@ -51,7 +51,9 @@ export function classifyToolOutcome(input: {
 	if (/econnrefused|econnreset|enotfound|fetch failed|network/.test(text)) {
 		return { outcome: "error", errorClass: "network" };
 	}
-	if (/gate|hitl|未授权|unauthorized|forbidden/.test(text)) {
+	// `gate` 必须带词边界：否则 investigate/aggregate/mitigate/navigate/delegated
+	// 都会因内含 "gate" 子串被误判成 gate_blocked。
+	if (/\bgate\b|hitl|未授权|unauthorized|forbidden/.test(text)) {
 		return { outcome: "error", errorClass: "gate_blocked" };
 	}
 	if (/invalid|validation|参数|校验|expected/.test(text)) {
