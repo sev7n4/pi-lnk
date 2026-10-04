@@ -299,3 +299,88 @@ describe("⭐⭐ foldRuntimeEvents：生产实测的流式累积快照（2026-10
 		assert.equal(t.assistantText, "一样的文本");
 	});
 });
+
+
+describe("⭐⭐⭐ agent_end.status=failed 必须落进 errors（429 限流实测）", () => {
+	/**
+	 * ⭐⭐⭐ 这是**评测 harness 最危险的一类误判**，2026-10-04 生产实测踩到。
+	 *
+	 * 现象：agnes 免费额度被打限流 ⇒
+	 *   `agent_end: {status:"failed", error:{code:"assistant_error",
+	 *    message:"429: 您已达到免费用户的 API 速率限制…"}}`
+	 * 而 pi-runtime 会**指数退避重试 4 次**（4 个空的 `message_end`，
+	 * 间隔约 1s / 2s / 4s）后放弃。
+	 *
+	 * 原实现的 bug：只置 `agentEndClean = false`、**`errors` 保持为空**
+	 * ⇒ `verdictOf` 看不到任何 error ⇒ 判成 **fail（行为不符）**
+	 * ⇒ 报告引导人「去改提示词」，而真因是**额度用完**。
+	 * ⇒ 与本项目 `error` / `fail` 分离的设计初衷**完全相反**。
+	 */
+	// ⭐ 生产实测的原始载荷（截取）
+	const RATE_LIMITED = {
+		type: "agent_end",
+		data: {
+			type: "run_end",
+			lane: "main",
+			runId: "01a1073e-42a6-75c6-9ea0-df90c67fbdbc",
+			status: "failed",
+			error: {
+				code: "assistant_error",
+				message:
+					'429: {"code":"","message":"您已达到免费用户的 API 速率限制。升级 Token Plan 即可解锁更高限额，继续不间断使用 API。"',
+			},
+		},
+	} as const;
+
+	it("⭐ 429 限流 ⇒ errors 非空（能被判成 error 而非 fail）", () => {
+		const t = foldRuntimeEvents([
+			{ type: "agent_start", data: { type: "run_start" } },
+			{ type: "message_end", data: { message: { role: "user", content: [{ type: "text", text: "画布里一共有多少个节点？" }] } } },
+			{ type: "turn_start", data: {} },
+			// pi-runtime 的 4 次退避重试：4 个空 assistant message_end
+			...Array.from({ length: 4 }, () => ({
+				type: "message_end",
+				data: { message: { role: "assistant", content: [] } },
+			})),
+			RATE_LIMITED,
+		]);
+		assert.equal(t.completed, false);
+		assert.equal(t.errors.length, 1, `errors 应有 1 条（限流详情），实际 ${t.errors.length}：${JSON.stringify(t.errors)}`);
+		assert.match(t.errors[0] ?? "", /429/, "必须含 429");
+		assert.match(t.errors[0] ?? "", /速率限制/, "必须含限流原因原文");
+		assert.match(t.errors[0] ?? "", /assistant_error/, "应带 error.code");
+	});
+
+	it("⭐⭐ verdictOf 遇到限流 ⇒ error 态（不是 fail）", async () => {
+		// 这条是本测试的意义所在：error / fail 分离的设计初衷在此兑现
+		const { verdictOf } = await import("./runner.js");
+		const { GOLDEN_CASES } = await import("./golden-cases.js");
+		const probe = GOLDEN_CASES.find((c) => !c.requiresConfirm);
+		assert.ok(probe, "需要一个非阻塞 case");
+		const t = foldRuntimeEvents([RATE_LIMITED]);
+		const v = verdictOf(probe, t);
+		assert.equal(
+			v.verdict,
+			"error",
+			`限流必须判error（处置=重跑/充额度），实际 ${v.verdict}：${v.failures.join("; ")}`,
+		);
+		assert.match(v.failures.join("; "), /速率限制/, "error 原因应保留原文，便于判断是额度问题");
+	});
+
+	it("failed 但无 error 对象 ⇒ 至少记状态（不让失败隐形）", () => {
+		const t = foldRuntimeEvents([
+			{ type: "agent_end", data: { type: "run_end", status: "aborted" } },
+		]);
+		assert.equal(t.completed, false);
+		assert.equal(t.errors.length, 1, "无 error 详情时也要留痕");
+		assert.match(t.errors[0] ?? "", /aborted/);
+	});
+
+	it("⚠️ completed 状态不受影响（不回归）", () => {
+		const t = foldRuntimeEvents([
+			{ type: "agent_end", data: { type: "run_end", status: "completed" } },
+		]);
+		assert.equal(t.completed, true);
+		assert.deepEqual(t.errors, [], "正常完成不该有 error");
+	});
+});
