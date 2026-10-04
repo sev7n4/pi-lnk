@@ -6,8 +6,21 @@ import type {
   VideoGenerationWaitResult,
 } from '@lnkpi/shared'
 
-/** Align with Agnes video provider maxPollMs (600s) plus headers/network buffer. */
-export const VIDEO_POLL_TIMEOUT_MS = 660_000
+/**
+ * 轮询墙钟上限。
+ *
+ * ⚠️ 2026-10-04 从 `660_000` 上调到 `660_000`。原值只对齐了 Agnes 的
+ * `maxPollMs = 600_000`，而 `videoModelProfiles.ts` 里 **minimax H3 的
+ * `maxPollMs = 1_200_000`**⇒ 该模型必然先被本 orchestrator 判timeout，
+ * **而后台任务仍在跑**，状态自相矛盾（生产有 3 条
+ * `Agnes video timed out after 120 polls` 就是这个错配）。
+ *
+ * 取`max(all profiles) + 60s 余量`：poll还要走 HTTP 往返 + 序列化，
+ * 抖动是必然的，不能让传输延迟被误判成上游超时。
+ * 有回归锁（`video-generation.orchestrator.test.ts`）断言本值 ≥ 全部 profile 且留足余量。
+ * 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.4
+ */
+export const VIDEO_POLL_TIMEOUT_MS = 1_260_000
 const POLL_INTERVAL_MS = 1500
 
 function sleep(ms: number) {
