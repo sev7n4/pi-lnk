@@ -112,6 +112,23 @@ export interface NormalizedEvent {
 
 export type EventListener = (event: NormalizedEvent) => void;
 
+/**
+ * T1：`subscribe` 返回值上「断点重放是否完整」的**唯一判读规则**。
+ *
+ * `droppedFromSeq` 是「buffer 里已被淘汰的最早 seq」，0 = 没丢过任何事件。
+ * 调用方要的起点 `afterSeq` 若**小于**它，中间那段已被 `dispatch` 的 `shift()` 丢掉，
+ * 拿到的重放是**断头的残缺集**，调用方应改走全量重建而非当完整交付。
+ *
+ * 放在生产代码而非测试里，是因为 `app.ts` 的 SSE 路径要用同一份判据——
+ * 两处各写一遍 `a < b` 必然漂移（测试绿了、线上判错）。
+ */
+export function isReplayComplete(
+	replay: { droppedFromSeq: number },
+	afterSeq: number,
+): boolean {
+	return afterSeq >= replay.droppedFromSeq;
+}
+
 /** harness 事件类型 → SSE 归一事件类型（同名直传的映射也显式列出，便于审计）。 */
 const EVENT_MAP: ReadonlyArray<readonly [string, NormalizedEventType]> = [
 	["run_start", "agent_start"],
@@ -184,6 +201,24 @@ interface SessionEntry {
 	compacting?: boolean;
 	/** 下一个待分配的事件 seq（会话内单调递增，P0-③）。 */
 	nextSeq: number;
+	/**
+	 * buffer 里**已被淘汰**的最早 seq；0 = 什么都没丢（T1）。
+	 *
+	 * `buffer` 上限 `BUFFER_LIMIT`（500），溢出时 `dispatch` 会 `shift()` 丢最旧事件。
+	 * 而 `message_update` 是**每 token 一个事件**（见 `extractTextDelta`），
+	 * 一段几百字的中文回答单轮就能破 500 ⇒ 溢出是**常规路径**，不是边缘情况。
+	 *
+	 * 丢掉的 seq **永久不可恢复**（内存态，重启即全失；`replicas=1` 时无其他实例可兜）。
+	 * 本字段的作用是让 `subscribe` 能对调用方**说真话**：
+	 * `afterSeq < droppedFromSeq` 意味着「你要的重放段已经残缺」，
+	 * 调用方据此改走全量重建，而不是把残缺集当完整交付。
+	 *
+	 * ⚠️ 2026-10-03 复核：此处曾判为「未登记的状态可能永久错位」（PR #139 欠账 T1）。
+	 * 修正认知——**错位早已发生，本字段不制造它、只让它可见**。
+	 * 真正的根治（`lane.watch()` 快照机制）另立项目：它的快照是**对话状态**，
+	 * 重建不出 `text_delta` 增量，与 SSE 重放不同源，不能直接替换。
+	 */
+	droppedFromSeq: number;
 	/** 本轮已广播的 activity 步数（turn_start 归零），供 `activity.done` 使用。 */
 	activityStep: number;
 	/** create 时确定的静态段（规则 + skills index），会话期内不再变更。 */
@@ -708,6 +743,7 @@ export class SessionManager {
 			prompting: false,
 			queued: new Set(),
 			nextSeq: 0,
+			droppedFromSeq: 0,
 			activityStep: 0,
 			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
 			// 字段（app.ts:113），传空串 / 不传时这里**不能**退化成「没有 base prompt」——
@@ -1059,16 +1095,40 @@ export class SessionManager {
 		return hits;
 	}
 
-	subscribe(threadKey: string, listener: EventListener, afterSeq = -1): NormalizedEvent[] {
+	/**
+	 * 订阅 + 断点重放（P0-③）。
+	 *
+	 * 返回值是**数组本身**（保持既有调用形态：`replay.map(...)` / `replay[0]` /
+	 * `replay.length` 全部照旧可用），额外挂一个只读属性 `droppedFromSeq`
+	 * 说明「本次重放是否残缺」。这是刻意的兼容设计：把返回类型换成
+	 * `{ events, droppedFromSeq }` 会一次改掉三处既有断言与全部调用方，
+	 * 收益却仅是多带一个数字。
+	 *
+	 * ## `droppedFromSeq` 的判读（T1）
+	 *
+	 * - `0` ⇒ 什么都没丢，重放**完整**
+	 * - `> afterSeq` ⇒ 调用方要的区间**已被淘汰**，当前返回的是残缺集，
+	 *   应当改走全量重建（`/thread-timeline`）而不是当完整交付
+	 * - `<= afterSeq` ⇒ 调用方要的事件都还在，重放**完整**
+	 *
+	 * ⚠️ 内容语义仍是 #67 锁定的 best-effort 全给（`afterSeq` 早于 buffer 最旧时
+	 * 返回全部 buffered）——本次**不动内容、只增加可观测性**。
+	 * 让 `afterSeq` 真的补不回缺口的修复留给上游事件源（见 `droppedFromSeq` 字段注释）。
+	 */
+	subscribe(
+		threadKey: string,
+		listener: EventListener,
+		afterSeq = -1,
+	): NormalizedEvent[] & { droppedFromSeq: number } {
 		const entry = this.require(threadKey);
 		entry.listeners.add(listener);
 		// 增量重放（P0-③）：只回放 seq > afterSeq 的缓冲；afterSeq 早于 buffer 最旧条目时
-		// best-effort 返回全部 buffered（会话单轮生命周期下 buffer 溢出概率极低，不做全量重建）
-		return entry.buffer.filter((e) => e.seq > afterSeq);
+		// best-effort 返回全部 buffered（内容语义见上方注释，保持 #67 锁定行为不变）。
+		const events = entry.buffer.filter((e) => e.seq > afterSeq);
+		return Object.assign(events, { droppedFromSeq: entry.droppedFromSeq });
 	}
 
-	unsubscribe(threadKey: string, listener: EventListener): void {
-		this.sessions.get(toSessionKey(threadKey))?.listeners.delete(listener);
+	unsubscribe(threadKey: string, listener: EventListener): void {		this.sessions.get(toSessionKey(threadKey))?.listeners.delete(listener);
 	}
 
 	/**
@@ -1553,7 +1613,12 @@ export class SessionManager {
 	private dispatch(entry: SessionEntry, event: Omit<NormalizedEvent, "seq">): void {
 		const withSeq = { ...event, seq: entry.nextSeq++ };
 		entry.buffer.push(withSeq);
-		if (entry.buffer.length > BUFFER_LIMIT) entry.buffer.shift();
+		if (entry.buffer.length > BUFFER_LIMIT) {
+			const dropped = entry.buffer.shift();
+			// 记下被淘汰的最早 seq（T1）：不记的话，subscribe 无法区分
+			// 「afterSeq 早于 buffer 起点」与「只是没有更早事件」这两种情况。
+			if (dropped) entry.droppedFromSeq = dropped.seq + 1;
+		}
 		for (const listener of entry.listeners) {
 			try {
 				listener(withSeq);
