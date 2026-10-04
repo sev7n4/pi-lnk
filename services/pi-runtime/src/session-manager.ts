@@ -42,7 +42,7 @@ import {
 	buildRetentionInstructions,
 	type RetentionState,
 } from "./compaction-retention.js";
-import type { Metrics } from "./metrics.js";
+import type { Metrics, PromptInfo } from "./metrics.js";
 import { COMPACTION_RETENTION_INSTRUCTIONS, missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
@@ -289,6 +289,13 @@ export interface TurnContext {
 	 * 那正是「假装已执行」类问题的温床。缺省即为空⇒ 保留段退化为通用兜底要求。
 	 */
 	retention?: RetentionState;
+	/**
+	 * 本轮生效的 prompt 版本指纹（P0-3 收尾 / L-2），由 Nest 随每轮 prompt 送来。
+	 *
+	 * ⭐ 每轮送而不是只在 create 送：动态段（画布摘要/侧栏/记忆）每轮都在变，
+	 * 而 Nest 侧的 `promptHash` 是**本轮拼装结果**的哈希 ⇒ 跨轮送才能反映真实在用哪版。
+	 */
+	promptInfo?: PromptInfo;
 }
 
 /**
@@ -305,6 +312,7 @@ export function normalizeTurnContext(turn: TurnContext): TurnContext {
 		refOrder: turn.refOrder ?? [],
 		focusNodeId: turn.focusNodeId,
 		retention: turn.retention,
+		promptInfo: turn.promptInfo,
 	};
 }
 
@@ -346,6 +354,14 @@ export interface CreateOptions {
 	 * 用于回打 Nest 的画布端点；**不要**与 pi 会话键 `key` 混用。
 	 */
 	canvasSessionId?: string;
+	/**
+	 * 建会话时生效的 prompt 版本指纹（P0-3 / L-2）。
+	 *
+	 * ⭐ 与 turnContext.promptInfo 的分工：这个是**建会话那一刻**的版本，
+	 * 落进 `meta.json` 供 resume 侧比对；那个是每轮的，供metrics gauge。
+	 * 两者都要：前者回答「这个会话目录是哪版规则建的」，后者回答「现在跑的是哪版」。
+	 */
+	promptInfo?: PromptInfo;
 }
 
 export interface CreateResult {
@@ -427,6 +443,18 @@ export interface SessionMeta {
 	userId: string | null;
 	provider: string;
 	model: string;
+	/**
+	 * 建会话时生效的 prompt 版本指纹（P0-3 收尾 / L-2）。
+	 *
+	 * ⭐ 存在的理由：磁盘 resume 时**身份一致（provider+model）不代表提示词一致**。
+	 * 规则改了但模型没换 ⇒ 旧会话被复用，历史上下文带着旧规则继续跑，
+	 * 而外部**看不出来**（日志里也只有建会话那一条）。落盘后resume 侧能warn。
+	 *
+	 * 刻意 optional：旧会话目录没有这个字段，读时当「未知」而不是「不匹配」——
+	 * 否则每次升级 pi-runtime 都会让全部存量会话变成不可resume。
+	 */
+	promptVersion?: string;
+	promptHash?: string;
 }
 
 const SESSION_META_FILE = "meta.json";
@@ -440,6 +468,10 @@ async function readSessionMeta(cwd: string): Promise<SessionMeta | undefined> {
 			userId: typeof parsed.userId === "string" ? parsed.userId : null,
 			provider: parsed.provider,
 			model: parsed.model,
+			// ⚠️ 缺字段当「未知」而非「不匹配」：存量会话目录没有这两个key，
+			// 若当成不匹配会让升级后全部会话不可 resume。
+			promptVersion: typeof parsed.promptVersion === "string" ? parsed.promptVersion : undefined,
+			promptHash: typeof parsed.promptHash === "string" ? parsed.promptHash : undefined,
 		};
 	} catch {
 		return undefined; // 不存在 / 半截写入 / 权限问题：按「无记录」处理（调用方走不恢复路径）
@@ -497,7 +529,21 @@ export function isTurnContextEqual(a: TurnContext, b: TurnContext): boolean {
 		// 保留段永远是上一轮的值 —— 且系统提示词不抖动、指标全绿，看不出任何异常。
 		// 这类「加字段忘了加进相等判定」是缓存优化的经典副作用，纯函数测试抓不到，
 		// 由 compaction-retention-wiring.test.ts 的接线断言兜住。
-		sameRetention(a.retention, b.retention)
+		sameRetention(a.retention, b.retention) &&
+		// ⚠️ promptInfo 必须参与比较：它不进 system prompt，
+		// 漏掉 ⇒ turnContext 判定「没变」而整轮跳过 ⇒ 指标停在旧版本，
+		// 而系统提示词不抖动、日志也只在建会话时有一条 ⇒ 外部完全看不出来。
+		samePromptInfo(a.promptInfo, b.promptInfo)
+	);
+}
+
+/** PromptInfo 的结构化相等（四个字段都可空，逐项比）。 */
+function samePromptInfo(a?: PromptInfo, b?: PromptInfo): boolean {
+	return (
+		(a?.promptVersion ?? "") === (b?.promptVersion ?? "") &&
+		(a?.promptHash ?? "") === (b?.promptHash ?? "") &&
+		(a?.registryVersion ?? "") === (b?.registryVersion ?? "") &&
+		(a?.registryHash ?? "") === (b?.registryHash ?? "")
 	);
 }
 
@@ -656,7 +702,25 @@ export class SessionManager {
 		// 无 meta（部署前遗留目录 / meta 写盘失败）不恢复历史：fail-closed 于「未知归属」，
 		// 代价是遗留目录里的旧会话历史不接续（旧链路本就每轮删除会话，遗留目录无接续价值）。
 		const opened = meta ? await this.openExisting(repo, cwd) : undefined;
-		if (opened) {
+		if (opened && meta) {
+			// P0-3 / L-2：规则版本与建会话时不一致 ⇒ 只 warn，**不阻断 resume**。
+			// ⚠️ 阻断是错的取舍：会话历史已经在这条磁盘上，拒 resume 只会把用户
+			// 刚接上的对话打断，且下次 create 依然会撞同一份历史 —— 问题不会消失，
+			// 只是从「规则不一致」变成「对话莫名重开」。warn 才是可处置的信号。
+			// 两侧都 undefined（存量会话 / 旧 Nest 不传）时静默，不刷无意义日志。
+			// ⭐ 判断放在 `opened && meta` 之内：`opened` 有值时 `meta` 仍可能是
+			// undefined（两者来自不同来源），在 if 外读 meta 会拿到「可能为 undefined」。
+			if (
+				meta.promptVersion !== undefined &&
+				opts.promptInfo?.promptVersion !== undefined &&
+				meta.promptVersion !== opts.promptInfo.promptVersion
+			) {
+				console.warn(
+					`[pi-runtime] resumed session built with a different prompt version: ` +
+						`session=${key} meta=${meta.promptVersion} current=${opts.promptInfo.promptVersion} ` +
+						`(历史上下文带着旧规则继续跑；如需干净状态请让用户新建会话)`,
+				);
+			}
 			const built = await this.build(key, opts, models, model, identity, { env, repo, session: opened });
 			return { ...built, status: "resumed", resumedFrom: "disk" };
 		}
@@ -739,7 +803,14 @@ export class SessionManager {
 			lastActivityAt: Date.now(),
 		};
 		// 归属/身份落盘（磁盘 resume 的 fail-closed 数据源，复核 Important #4）。
-		await writeSessionMeta(cwd, { userId: opts.userId ?? null, provider: identity.provider, model: identity.model });
+		await writeSessionMeta(cwd, {
+			userId: opts.userId ?? null,
+			provider: identity.provider,
+			model: identity.model,
+			// P0-3 / L-2：落盘建会话时的 prompt 指纹，供下次磁盘 resume 比对。
+			promptVersion: opts.promptInfo?.promptVersion,
+			promptHash: opts.promptInfo?.promptHash,
+		});
 
 		const toolEnsemble = this.getToolEnsemble();
 		const { harness } = await this.harnessFactory<LnkpiToolContext>(
@@ -1096,6 +1167,11 @@ export class SessionManager {
 		const next = normalizeTurnContext(turn);
 		const changed = !isTurnContextEqual(entry.turn, next);
 		if (changed) entry.turn = next;
+		// P0-3 / L-2：每轮把 prompt 版本指纹喂给 metrics（gauge 语义：现在跑的是哪版）。
+		// ⚠️ 放在 `if (changed)` **之外**：promptInfo 变了但其他字段没变时
+		// `changed` 为 false，若随之跳过指标就会漏掉「规则刚改完」的那一刻——
+		// 而那恰恰是唯一需要被观测到的时刻。
+		if (next.promptInfo) this.metrics?.setPromptInfo(next.promptInfo);
 		entry.lastActivityAt = Date.now();
 		return changed;
 	}
