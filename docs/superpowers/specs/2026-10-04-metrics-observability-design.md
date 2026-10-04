@@ -120,7 +120,13 @@ flowchart TB
 pi_runtime_tool_calls_total{tool, result, error_class}    counter
 pi_runtime_tool_duration_seconds{tool}                    histogram
 pi_runtime_tool_result_bytes{tool}                        histogram（既有，保留）
+pi_runtime_tool_error_kinds_total{tool, kind}             counter（实现期新增，见注）
 ```
+
+> 注：`tool_error_kinds_total` 是实现期新增的第 4 个族。`config.ts` 的 `onCall` 回调保留了
+> `errorKind` 精确分类通道（Nest 侧返回的结构化分类，比事件层拿错误文本正则猜更准），
+> 单独成族以免与事件层的 `error_class` 混淆。
+> 已知：`ToolErrorKind` 的 `gate_blocked` / `retry` 两值目前**无写入方**。
 
 - `tool`：`tool_end.toolName`，39 个闭集
 - `result`：`ok` | `error` | `blocked`（三值，由`isError`/`terminate` 派生）
@@ -132,11 +138,27 @@ pi_runtime_tool_result_bytes{tool}                        histogram（既有，�
 ```
 pi_runtime_llm_errors_total{stage, error_class, channel, model}       counter
 pi_runtime_llm_retries_total{stage, channel, model}                   counter
-pi_runtime_llm_tokens_total{stage, kind, channel, model}              counter
-pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram
+pi_runtime_llm_tokens_total{stage, kind, channel, model}              counter   ⚠️ 本阶段未实现
+pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram  ⚠️ 本阶段未实现
 ```
 
-`stage` 为 4 值闭集：`main_turn` | `compaction` | `tool_result_summarize` | `deferred`
+> ⚠️ **本阶段未实现**：`llm_tokens_total` 与 `llm_stage_duration_seconds`。
+> 现有 `pi_runtime_usage_tokens_total{kind}` 是**既有族**（无 stage/channel/model 维度），
+> 由 `usage` 事件驱动。stage/channel 维度的归因需要按调用阶段拆开 token 归属，
+> 属独立 Task（见 §4.5 已知缺口清单）。**不要以为 token 已按阶段归因。**
+
+`stage` 为闭集：`main_turn` | `compaction` | `tool_result_summarize` | `deferred` | `unknown`
+
+> ⚠️ **`unknown` 的来由（2026-10-04 实现期修订）**：`retry_scheduled` 事件在 vendor 有**三处**发射
+> （`drive/response.ts:392` 主轮、`drive/structural.ts:989` compaction、`:1098` branch_summary），
+> 但三处载荷**在运行时不可区分** —— `step` 是同一个 `idGenerator` 的 uuid7、`maxAttempts`/`delayMs`
+> 都取 `normalizedRetryPolicy(lane)`、in-run 压缩的 `runId` 与主轮同一 `operationId`、
+> `recovery` 只覆盖三处中一处、`entry.compacting` 恰好漏掉 in-run 压缩。
+> 故 `retry_scheduled` 一律报 `stage="unknown"`。
+>
+> **为什么不用 `main_turn`**：那会让压缩重试永久伪装成主轮重试，看板上无法区分，
+> 且**错误映射比「诚实的未知」更危险**。宁可「可见的不可知」。
+> **待vendor 配合**：给该事件加判别字段后，只需改 `session-manager.ts` 一行透传，结算器与渲染无需改。
 
 **取代**既有的 `pi_runtime_llm_prompt_errors_total{reason}`（2 值正则判定）。旧指标保留一个发布周期后移除，避免告警断档。
 
@@ -210,6 +232,32 @@ nest_upstream_errors_total{error_class}               counter
 - `media`：`video` | `audio` | `image`
 - `outcome`：与生成记录终态一致（`completed` / `failed` / `fallback_pending` / `generating`）
 - `kind`（静默降级）：`placeholder_audio` | `placeholder_image` | `omitted_param` | `downscale` | `unsupported_fallback`
+
+### 4.5 🔴 已知缺口：LLM 错误指标尚未覆盖主路径（2026-10-04 实现期发现）
+
+**阶段一交付后，LLM 错误指标只覆盖了入口早拒路径，生产里绝大多数 LLM 错误仍无埋点。**
+
+已核实事实：`session-manager.ts:1274-1284` 是 LLM 调用的**主路径**：
+
+```
+lane.prompt(...).then((result) => {
+    if (!result.ok) {
+        this.dispatch(entry, { type: "error", ... });// ← 只发 SSE，零指标
+    }
+```
+
+`observeLlmError` 全仓**仅 1 处调用**（`app.ts` 的入口早拒 catch）⇒
+`pi_runtime_llm_errors_total` 反映的是「请求进不来」，**不是「模型调用失败」**。
+
+**为什么阶段一不做完**：主路径的错误对象来自 vendor lane 的 `Result`（`result.error`），
+分类需要判断它是超时、上游 5xx、还是上下文溢出 —— 涉及读vendor 的 `OperationError` 语义，
+比「给已有 catch 换分类器」大一圈，且需要独立的错误路径测试。
+
+**后续 Task（独立立项）**：在主路径 `!result.ok` 处补 `observeLlmError`，
+`stage` 按运行上下文判定（主轮/ 压缩），并区分 `abort`（用户取消）不算错误。
+
+> ⚠️ **读这份spec 的人请注意**：不要以为「上游模型错误监控」已完成。
+> 当前能回答的是「多少请求被入口拒绝」，**不能**回答「多少模型调用失败了、失败在哪一阶段」。
 
 ### 5.1 静默降级必须独立计数
 

@@ -156,6 +156,12 @@ const TOOL_RESULT_EVENT_TYPES = new Set(["tool_end", "message_start", "message_e
 type ToolLikeEvent = {
 	toolName?: string;
 	toolCallId?: string;
+	/** tool_end 专用：错误标记（vendor `AgentHarnessEvent` 的 tool_end 分支）。 */
+	isError?: boolean;
+	/** tool_end 专用：模型主动终止（归 blocked，不污染错误率）。 */
+	terminate?: boolean;
+	/** tool_end 专用：工具结果（`AgentToolResult`，含 content 文本块）。 */
+	result?: unknown;
 };
 
 /**
@@ -521,6 +527,29 @@ async function writeSessionMeta(cwd: string, meta: SessionMeta): Promise<void> {
 			`[pi-runtime] write session meta failed for ${cwd}: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	});
+}
+
+/**
+ * 从 tool_end.result 提取用于错误分类的短文本。上限 500 字，够正则判定且不撑大内存。
+ *
+ * 为什么限长：工具结果可以是整篇网页/大段 JSON，全量留在内存里只为跑几条正则不划算；
+ * 而分类正则（429/5xx/timeout/abort…）只看开头特征，500 字足够。
+ * **提取出的文本绝不进 label**（会变基数爆炸），只作 `resultText` 传入分类器。
+ */
+function extractResultText(result: unknown): string {
+	try {
+		const content = (result as { content?: unknown })?.content;
+		if (typeof content === "string") return content.slice(0, 500);
+		if (Array.isArray(content)) {
+			return content
+				.map((c) => (typeof (c as { text?: unknown })?.text === "string" ? (c as { text: string }).text : ""))
+				.join(" ")
+				.slice(0, 500);
+		}
+		return "";
+	} catch {
+		return "";
+	}
 }
 
 function sameStringArray(a?: readonly string[], b?: readonly string[]): boolean {
@@ -946,6 +975,7 @@ export class SessionManager {
 	/** 事件归一订阅：EVENT_MAP 全量透传；compaction_end 顺带计数（同一监听内，避免重复订阅）。
 	 *  tool_start 额外发一条 `activity`（决策 8），同样在同一监听内，保证与 tool_execution_start 同帧。 */
 	private attachEvents(entry: SessionEntry, harness: AgentHarness<LnkpiToolContext>): void {
+		const metrics = this.metrics;
 		for (const [harnessType, sseType] of EVENT_MAP) {
 			entry.unsubscribes.push(
 				harness.events.on(harnessType as never, (evt: { lane?: string; status?: string } & ToolLikeEvent) => {
@@ -955,7 +985,25 @@ export class SessionManager {
 						// fire-and-forget：审计失败不影响事件分发与会话主链路。
 						if (evt.status === "completed") void this.auditCompactionSummary(entry);
 					}
-					if (harnessType === "tool_start") this.dispatchActivity(entry, evt);
+					if (harnessType === "tool_start") {
+						this.dispatchActivity(entry, evt);
+						// spec §3.2：工具计数/耗时在**事件层**统一结算，39 个工具零改动全覆盖
+						// （各工具内部自埋会与这里双计，故已全部删除）。
+					if (metrics && evt.toolCallId) {
+						metrics.toolMetrics().observeStart({ toolCallId: evt.toolCallId });
+					}
+					}
+					if (harnessType === "tool_end" && metrics && evt.toolCallId) {
+						metrics.toolMetrics().observeEnd({
+						toolName: evt.toolName ?? "unknown",
+						toolCallId: evt.toolCallId,
+						isError: evt.isError === true,
+						terminate: evt.terminate === true,
+						resultText: extractResultText(evt.result),
+						channel: entry.identity.provider,
+						model: entry.identity.model,
+					});
+					}
 					if (harnessType === "turn_start") entry.activityStep = 0;
 					this.dispatch(entry, {
 						type: sseType,
@@ -986,11 +1034,44 @@ export class SessionManager {
 			}),
 		);
 
-		if (this.metrics) {
-			const metrics = this.metrics;
+		if (metrics) {
 			entry.unsubscribes.push(
 				harness.events.on("usage" as never, (evt: { row?: { usage?: Parameters<Metrics["observeUsage"]>[0] } }) => {
 					if (evt.row?.usage) metrics.observeUsage(evt.row.usage);
+				}),
+			);
+
+			// retry_scheduled 只进指标，不进 EVENT_MAP/SSE：它是 lane 内部事件，
+			// Nest 侧 PiRuntimeEvent 是封闭联合，未知类型可能被静默丢弃。
+			//
+			// ⚠️ `stage` 只能是 `"unknown"`，**不是** `"main_turn"`。vendor 有三处发这个事件：
+			//   - drive/response.ts:392    step=turnId            → assistant 主轮重试
+			//   - drive/structural.ts:989  step=task.taskId       → compaction 重试（同函数 958-970 处理 kind==="compaction"）
+			//   - drive/structural.ts:1098 step=task.taskId       → branch_summary 重试（summaryContext 的重试）
+			// 三者语义不同，但载荷里**没有任何字段能区分**（逐字段核实）：
+			//   - `step`：主轮是 `generationContext.stepId`，结构化是 `task.taskId`，
+			//     两者都来自 `lane.session.idGenerator.next()`（uuid7）⇒ opaque id，不可映射。
+			//     （唯一带信息的是 deferred 分支的 `${stepId}:poll:${poll}` 后缀，但那也只区分 poll。）
+			//   - `maxAttempts`/`delayMs`/`notBefore`：两侧的 retryPolicy 都来自
+			//     `normalizedRetryPolicy(lane)`（boundary.ts:43）⇒ 数值恒等。
+			//   - `runId`：in-run compaction 走 checkpoint.ts:152，operationId 就是**主轮那个**
+			//     ⇒ 同 runId。（只有手动 `lane.compact()` 才换 operationId。）
+			//   - `recovery`：仅 structural.ts:1098 带 `recovery: true`，只覆盖三处里的一处。
+			// 本仓能额外拿到的 `entry.compacting` 也**不可靠**：它只覆盖 pi-runtime 自己发起的
+			// `maybeCompact`，而 in-run threshold/overflow 压缩期间它是 false。
+			//
+			// 故本轮报 `unknown`：让「阶段不可判定」在看板上可见，而不是把压缩重试
+			// 静默混进主轮（那会让看板无法区分「模型主轮在重试」和「压缩在重试」，
+			// 且错误映射比现状更危险——现状至少是诚实的「全算主轮」）。
+			// **待 vendor 配合**：给 `retry_scheduled` 事件加判别字段（`stage`/`kind`），
+			// 落地后这里直接透传，`ToolMetrics` 与渲染逻辑无需改动。
+			entry.unsubscribes.push(
+				harness.events.on("retry_scheduled" as never, (_evt: { attempt?: number; errorMessage?: string }) => {
+					metrics.toolMetrics().observeLlmRetry({
+						stage: "unknown",
+						channel: entry.identity.provider,
+						model: entry.identity.model,
+					});
 				}),
 			);
 		}
@@ -1143,6 +1224,26 @@ export class SessionManager {
 	 */
 	getCanvasSessionId(threadKey: string): string {
 		return this.sessions.get(threadKey)?.canvasSessionId ?? threadKey;
+	}
+
+	/**
+	 * 按 pi 会话键取该会话的 **LLM 身份**（`channel`/`model` 两个 label 的唯一来源）。
+	 *
+	 * 为什么需要它：`identity` 是 `SessionEntry` 的私有字段，路由层拿不到。而
+	 * `POST /sessions/:key/prompt` 的 503兜底分支要按 channel/model 维度记 LLM 错误
+	 * （`pi_runtime_llm_errors_total`），否则那条链路的错误全部堆在 `channel="unknown"`，
+	 * 维度等于没加。取值**只能**来自这里——`LlmIdentity.provider/model` 由 `create` 的
+	 * `modelFactory` 解析并定型（`llm-override.ts` 已做白名单校验），而请求体里的
+	 * 任意字符串不可信且会让 label 基数无界。
+	 *
+	 * 语义同 `getCanvasSessionId`：**取不到返回 null，绝不抛**——观测口不得把业务
+	 * 请求变成失败（调用方回落到字面量 `"unknown"`）。
+	 *
+	 * ⚠️ 返回值只作 Prometheus label 用，**不得**回显进 HTTP 响应体
+	 * （同 `POST /sessions` 的 409 分支：身份信息不外泄）。
+	 */
+	llmIdentityFor(threadKey: string): LlmIdentity | null {
+		return this.sessions.get(toSessionKey(threadKey))?.identity ?? null;
 	}
 
 	/**

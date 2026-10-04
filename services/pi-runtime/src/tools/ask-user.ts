@@ -13,7 +13,6 @@
  */
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
-import type { Metrics } from "../metrics.js";
 import { askUserBlocking, askUserTimeoutMs } from "../runtime-config.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 
@@ -36,7 +35,6 @@ function uiResult(commands: unknown[]): {
 }
 
 export function createAskUserTools(
-	metrics: Metrics,
 	registry?: PendingToolRegistry,
 	opts: { timeoutMs?: number } = {},
 ): LnkpiTool[] {
@@ -68,7 +66,8 @@ export function createAskUserTools(
 			_invocation,
 			_context,
 		) => {
-			metrics.observeToolCall("ask_user", "ok");
+			// 2026-10-04：不再自计 tool_calls_total（移交事件层，避免与 harness 的
+			// tool_start/tool_end 双计）。阻塞结算指标仍走 index.ts 的 registry hook。
 			// B-5 off（或无 registry，如纯文本模式）→ 旧行为逐字节保留：立即返回，无 callId
 			if (!registry || !askUserBlocking()) {
 				return uiResult([{ type: "ask_user", questions: p.questions }]);

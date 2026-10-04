@@ -7,9 +7,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createAskUserTools } from "./ask-user.js";
 import { PendingToolRegistry } from "../pending-registry.js";
-import type { Metrics } from "../metrics.js";
-
-const metrics = { observeToolCall: () => {} } as unknown as Metrics;
 
 function lastText(result: { content: Array<{ type: string; text?: string }> }): string {
 	const block = result.content[0];
@@ -20,7 +17,7 @@ function lastText(result: { content: Array<{ type: string; text?: string }> }): 
 describe("ask_user 阻塞分支（B-1/B-5）", () => {
 	it("开关缺省开 + registry 注入 → 等待 answer 后同 promise 返回答案", async () => {
 		const reg = new PendingToolRegistry();
-		const [tool] = createAskUserTools(metrics, reg);
+		const [tool] = createAskUserTools(reg);
 		const questions = [{ id: "style", question: "风格？", options: [{ label: "水墨", value: "ink" }] }];
 		const updates: unknown[] = [];
 		const pending = tool.execute!(
@@ -50,7 +47,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 
 	it("registry.cancel（abort 联动）→ 返回「用户已中止」文本，不抛错", async () => {
 		const reg = new PendingToolRegistry();
-		const [tool] = createAskUserTools(metrics, reg);
+		const [tool] = createAskUserTools(reg);
 		const questions = [{ id: "q", question: "Q", options: [{ label: "A", value: "a" }] }];
 		const pending = tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never);
 		reg.abortAll("s");
@@ -60,7 +57,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 
 	it("超时 → 全部题目标 skipped，且不交还任何部分答案（2026-10-02 删 recordPartial）", async () => {
 		const reg = new PendingToolRegistry();
-		const [tool] = createAskUserTools(metrics, reg, { timeoutMs: 20 });
+		const [tool] = createAskUserTools(reg, { timeoutMs: 20 });
 		const questions = [
 			{ id: "style", question: "风格？", options: [{ label: "水墨", value: "ink" }] },
 			{ id: "count", question: "张数？", options: [{ label: "1", value: "1" }] },
@@ -83,7 +80,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 		const reg = new PendingToolRegistry({
 			onWaitStart: (info) => { seen = info; },
 		});
-		const [tool] = createAskUserTools(metrics, reg, { timeoutMs: 20 });
+		const [tool] = createAskUserTools(reg, { timeoutMs: 20 });
 		const questions = [{ id: "style", question: "风格？", options: [{ label: "水墨", value: "ink" }] }];
 		void tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never);
 		// 事件在 waitForUser 注册当拍下发，不等超时也要能看到
@@ -97,7 +94,7 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 		process.env.ASK_USER_BLOCKING = "off";
 		try {
 			const reg = new PendingToolRegistry();
-			const [tool] = createAskUserTools(metrics, reg);
+			const [tool] = createAskUserTools(reg);
 			const questions = [{ id: "q", question: "Q", options: [{ label: "A", value: "a" }] }];
 			const result = (await tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never)) as { details: { canvasCommands: Array<Record<string, unknown>> } };
 			const cmd = result.details.canvasCommands[0];

@@ -58,6 +58,32 @@ function makeApp(root: string, factory: unknown = okFactory, registry?: PendingT
 	return { app, manager };
 }
 
+/**
+ * `lane()` 直接抛指定错误的工厂：驱动 `POST /sessions/:key/prompt` 的
+ * **入口早拒路径**（`session-manager.prompt` 的 try段内抛 ⇒ 复位守卫位后 rethrow
+ * ⇒路由 catch 的兜底分支⇒ 503）。
+ *
+ * 为什么用 `lane()` 而不是 `lane.prompt()`：`lane.prompt` 的失败被 `.catch()` 吞成
+ * SSE `error` 事件，**不会**冒泡到路由 catch —— 只有 `lane()` 解析失败（凭据缺失 /
+ * 上游不可达，即真实的「上游错误」语义）才走得到本任务的埋点。
+ */
+function failingLaneFactory(message: string) {
+	return (async () => ({
+		harness: {
+			events: { on: () => () => {} },
+			lane: async () => {
+				throw new Error(message);
+			},
+			close: async () => {},
+		},
+	})) as never;
+}
+
+/** 从 /metrics 正文里取某个指标的全部样本行（找不到返回空数组）。 */
+function metricLines(body: string, metric: string): string[] {
+	return body.split("\n").filter((l) => l.startsWith(`${metric}{`) || l.startsWith(`${metric} `));
+}
+
 function withRoot<T>(prefix: string, fn: (root: string) => Promise<T>): Promise<T> {
 	const root = mkdtempSync(join(tmpdir(), prefix));
 	return fn(root).finally(() => rmSync(root, { recursive: true, force: true }));
@@ -560,6 +586,202 @@ describe("POST /sessions/:key/prompt 直通 images（T1）", () => {
 });
 
 /**
+ * 上游错误改走 `error_class` 闭集分类（spec §4.4）。
+ *
+ * ⚠️ **本组用例全部走 `app.inject()` 真实 HTTP 入口**，不直接调 `observeLlmError`。
+ * 前几轮踩过的坑：测试直接调被测方法 ⇒ 绕过接线 ⇒ 把 `app.ts` 里的埋点整段注释掉
+ * 测试依然全绿（假绿）。断言的对象是 `/metrics` **渲染出的文本行**，即
+ * 「HTTP 503 → 分类 → 结算 → 渲染」整条链路的终点，中间任何一环断掉都会红。
+ */
+describe("LLM 上游错误：error_class 闭集分类（真实 HTTP 接线）", () => {
+	it("入口早拒仍返 503，且按 error_class/channel/model 上报（不止 2 值）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root, failingLaneFactory("upstream returned 503 service unavailable"));
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				const res = await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "你好" } });
+				// 契约不变：入口早拒仍 503。
+				assert.equal(res.statusCode, 503);
+
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				const lines = metricLines(body, "pi_runtime_llm_errors_total");
+				assert.equal(lines.length, 1, `期望恰好 1 条llm_errors_total样本，实际：${JSON.stringify(lines)}`);
+				// stage=main_turn（入口早拒路径）；channel/model 取会话定型身份。
+				// 断言 error_class=upstream_5xx —— 这是旧2 值正则给不出的结论
+				// （`/429|rate/i`不匹配该文本，旧指标只会记upstream_error）。
+				assert.match(lines[0], /stage="main_turn"/);
+				assert.match(lines[0], /error_class="upstream_5xx"/);
+				assert.match(lines[0], /channel="agnes"/);
+				assert.match(lines[0], /model="agnes-2\.5-pro"/);
+				assert.match(lines[0], / 1$/);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("旧指标 pi_runtime_llm_prompt_errors_total 仍上报（保留一个发布周期，不断告警档）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root, failingLaneFactory("HTTP 429 rate limit exceeded"));
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				assert.equal(
+					(await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "你好" } })).statusCode,
+					503,
+				);
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				// 旧指标仍在，且 429 仍落它自己的 2 值域（不因新分类而改口径）。
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_prompt_errors_total"), [
+					'pi_runtime_llm_prompt_errors_total{reason="upstream_rate_limited"} 1',
+				]);
+				// 新指标同一次错误也上报，且分类是闭集里的 upstream_4xx。
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_errors_total"), [
+					'pi_runtime_llm_errors_total{stage="main_turn",error_class="upstream_4xx",channel="agnes",model="agnes-2.5-pro"} 1',
+				]);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("新指标结论 ≠ 旧 2 值正则（证明分类真下沉，而非旧正则换皮）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			// 同一文本 "HTTP 429 Too Many Requests"：旧 2 值正则判 upstream_rate_limited（碰巧一致），
+			// 故另取一条旧正则判 upstream_error、闭集分类器判 upstream_4xx 的文本，才能证明两者不同。
+			const { app } = makeApp(root, failingLaneFactory("Too Many Requests: 429"));
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "你好" } });
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				// 旧正则：文本含 "429" ⇒upstream_rate_limited。
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_prompt_errors_total"), [
+					'pi_runtime_llm_prompt_errors_total{reason="upstream_rate_limited"} 1',
+				]);
+				// 新分类器：同一文本落闭集里的 upstream_4xx。若新指标只是旧正则换皮，
+				// 这里会是 upstream_rate_limited / upstream_error 之一 ⇒ 本断言红。
+				assert.match(metricLines(body, "pi_runtime_llm_errors_total")[0], /error_class="upstream_4xx"/);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("旧 2 值正则塌成 upstream_error 的错误，新指标能区分出network（排障可归因）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			// "fetch failed" 不含 429/rate ⇒ 旧正则判 upstream_error（网络不可达与上游 5xx 混成一类）；
+			// 闭集分类器判 network。这条差异是本任务的核心价值。
+			const { app } = makeApp(root, failingLaneFactory("fetch failed"));
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "你好" } });
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_prompt_errors_total"), [
+					'pi_runtime_llm_prompt_errors_total{reason="upstream_error"} 1',
+				]);
+				assert.match(metricLines(body, "pi_runtime_llm_errors_total")[0], /error_class="network"/);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("无法判定的错误落internal（绝不静默丢弃，也不把原文当 label）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const secret = "sk-live-abcdef123456";
+			const { app } = makeApp(root, failingLaneFactory(`玄妙失败 ${secret}`));
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				assert.equal(
+					(await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "你好" } })).statusCode,
+					503,
+				);
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_errors_total"), [
+					'pi_runtime_llm_errors_total{stage="main_turn",error_class="internal",channel="agnes",model="agnes-2.5-pro"} 1',
+				]);
+				// label 基数红线：错误原文（含密钥）不得出现在任何 label 里。
+				assert.equal(body.includes(secret), false, "错误原文泄漏进了指标 label");
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("BYOK 会话按 byok-* 渠道上报（channel 取 LlmIdentity，不透传请求体）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root, failingLaneFactory("fetch failed"));
+			try {
+				const created = await app.inject({
+					method: "POST",
+					url: "/sessions",
+					payload: {
+						sessionId: "s1:t1",
+						userId: "u1",
+						llm: {
+							model: "my-model-x",
+							apiKey: "sk-test-byok",
+							baseUrl: "https://example.invalid/v1",
+							providerRef: "ref-1",
+							source: "user",
+						},
+					},
+				});
+				assert.equal(created.statusCode, 201);
+				//渠道 id 是 `byok-<12位hex>`（providerRef 哈希），不是请求体里的 providerRef 原文。
+				assert.match(created.json().provider, /^byok-[0-9a-f]{12}$/);
+				assert.equal(created.json().provider.includes("ref-1"), false, "providerRef 原文泄漏进了 channel");
+
+				assert.equal(
+					(await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "你好" } })).statusCode,
+					503,
+				);
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_errors_total"), [
+					`pi_runtime_llm_errors_total{stage="main_turn",error_class="network",channel="${created.json().provider}",model="my-model-x"} 1`,
+				]);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("非上游错误路径不污染 llm_errors_total：404 / 409 均不记账", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			let release: (v: unknown) => void = () => {};
+			const gate = new Promise((r) => {
+				release = r;
+			});
+			const { app } = makeApp(root, hangingFactory(gate));
+			try {
+				// 404：会话不存在。
+				assert.equal(
+					(await app.inject({ method: "POST", url: "/sessions/nope/prompt", payload: { text: "x" } })).statusCode,
+					404,
+				);
+				// 409：run 在跑。
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				assert.equal(
+					(await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "一" } })).statusCode,
+					202,
+				);
+				assert.equal(
+					(await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "二" } })).statusCode,
+					409,
+				);
+				release(undefined);
+				await new Promise((r) => setTimeout(r, 0));
+
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_errors_total"), [], "404/409 被误记成 LLM 错误");
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_prompt_errors_total"), []);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+/**
  * T1：SSE 重连遇「重放窗口已过期」必须显式报 409，不能装作正常。
  *
  * 缺陷背景：`dispatch` 溢出时 `buffer.shift()` 丢最旧事件，而 `message_update`
@@ -660,4 +882,20 @@ describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => 
 		});
 	});
 
+	it("正常 prompt 不产生任何 llm_errors_total 样本", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				assert.equal(
+					(await app.inject({ method: "POST", url: "/sessions/s1:t1/prompt", payload: { text: "你好" } })).statusCode,
+					202,
+				);
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				assert.deepEqual(metricLines(body, "pi_runtime_llm_errors_total"), []);
+			} finally {
+				await app.close();
+			}
+		});
+	});
 });

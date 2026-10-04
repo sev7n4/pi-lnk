@@ -132,10 +132,12 @@ const manager = new SessionManager(
 					canvasSessionId: manager.getCanvasSessionId(sessionId),
 				});
 				if (!check.allowed) {
-					metrics.observeToolCall(event.toolName, "error", "gate_blocked"); // ③：HITL 拦截归因观测
+					// 2026-10-04：不再手写 tool_calls_total（`error,kind="gate_blocked"` /
+					// `ok,kind="retry"`）。HITL 拦截**自带 tool_end 事件**（block 走工具结果返回），
+					// 由事件层统一结算，此处再计一次就是双计。gate_blocked 归因改由
+					// 事件层的 resultText 正则分类与 retry_scheduled 事件承担。
 					return { block: { reason: check.reason ?? "generation gated" } };
 				}
-				if (check.retry) metrics.observeToolCall(event.toolName, "ok", "retry"); // V-γ 重试放行打点
 				return undefined;
 			});
 			return undefined;

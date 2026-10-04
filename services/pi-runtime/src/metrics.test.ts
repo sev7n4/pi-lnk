@@ -1,15 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Metrics } from "./metrics.js";
+import { ToolMetrics } from "./tool-metrics.js";
 
 test("tool_calls_total 按 tool|result 聚合并渲染", () => {
+	// 2026-10-04：计数改由事件层结算（ToolMetrics），本用例改为经公开 API 投喂事件。
 	const m = new Metrics();
-	m.observeToolCall("get_node", "ok");
-	m.observeToolCall("get_node", "ok");
-	m.observeToolCall("get_node", "error");
+	const tm = m.toolMetrics();
+	const feed = (id: string, tool: string, isError: boolean, resultText = "ok") => {
+		tm.observeStart({ toolCallId: id });
+		tm.observeEnd({
+			toolName: tool, toolCallId: id, isError, terminate: false, resultText,
+			channel: "agnes", model: "agnes-2.5-flash",
+		});
+	};
+	feed("c1", "get_node", false);
+	feed("c2", "get_node", false);
+	feed("c3", "get_node", true, "boom");
 	const out = m.render(0, "test");
 	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="ok"\} 2/);
-	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="error"\} 1/);
+	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="error",error_class="internal"\} 1/);
 	assert.doesNotMatch(out, /result="circuit_open"/);
 });
 
@@ -27,26 +37,50 @@ test("renders pi_runtime_prompt_skills_tokens gauge（follow-up-1）", () => {
 	assert.ok(out.indexOf("pi_runtime_prompt_skills_tokens") > out.indexOf("pi_runtime_skills_loaded"));
 });
 
-test("③ 错误分类：带 kind 的 error 单独行渲染，无 kind 的保持原标签", () => {
+test("③ 错误分类：Nest 结构化 errorKind 走 tool_error_kinds 通道（精确，不靠正则猜）", () => {
+	// 2026-10-04：原用例断言 tool_calls_total{kind="gate_blocked"/"upstream_4xx"}，
+	// 该渲染方已删。归因改由 observeToolErrorKind 通道承担——它拿的是 NestClient
+	// 直接从 HTTP 状态码/包络判定的结构化分类，比事件层拿 resultText 正则猜精确。
 	const m = new Metrics();
-	m.observeToolCall("run_video_generation", "error", "gate_blocked");
-	m.observeToolCall("get_node", "error", "upstream_4xx");
-	m.observeToolCall("get_node", "error");
-	m.observeToolCall("get_node", "ok");
+	m.observeToolErrorKind("run_video_generation", "gate_blocked");
+	m.observeToolErrorKind("get_node", "upstream_4xx");
+	m.observeToolErrorKind("get_node", "upstream_4xx");
 	const out = m.render(0, "test");
-	assert.match(out, /pi_runtime_tool_calls_total\{tool="run_video_generation",result="error",kind="gate_blocked"\} 1/);
-	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="error",kind="upstream_4xx"\} 1/);
-	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="error"\} 1/);
-	assert.match(out, /pi_runtime_tool_calls_total\{tool="get_node",result="ok"\} 1/);
+	assert.match(out, /pi_runtime_tool_error_kinds_total\{tool="run_video_generation",kind="gate_blocked"\} 1/);
+	assert.match(out, /pi_runtime_tool_error_kinds_total\{tool="get_node",kind="upstream_4xx"\} 2/);
 });
 
-test("③ retry：ok 结果带 kind 单独一行渲染（V-γ 重试打点）", () => {
+test("tool_error_kinds 未打点时不渲染数据行（与「调用过但 0」可区分）", () => {
 	const m = new Metrics();
-	m.observeToolCall("run_image_generation", "ok", "retry");
-	m.observeToolCall("run_image_generation", "ok");
+	assert.equal(/^pi_runtime_tool_error_kinds_total\{/m.test(m.render(0, "test")), false);
+});
+
+test("tool_calls_total 用 error_class 标签（不再用 kind）", () => {
+	const tm = new ToolMetrics();
+	tm.observeStart({ toolCallId: "x1" });
+	tm.observeEnd({
+		toolName: "get_node",
+		toolCallId: "x1",
+		isError: true,
+		terminate: false,
+		resultText: "HTTP 429 rate limit",
+		channel: "agnes",
+		model: "agnes-2.5-flash",
+	});
+	const lines: string[] = [];
+	tm.renderInto(lines);
+	const out = lines.join("\n");
+	assert.match(out, /result="error",error_class="upstream_4xx"/);
+	assert.equal(out.includes('kind="'), false, "旧 kind 标签残留");
+});
+
+test("改名未误伤无关指标族的 kind 标签", () => {
+	const m = new Metrics();
+	m.observeDynamicBudgetDrop("canvas");
+	m.observeDynamicBudgetDrop("canvas");
 	const out = m.render(0, "test");
-	assert.match(out, /pi_runtime_tool_calls_total\{tool="run_image_generation",result="ok",kind="retry"\} 1/);
-	assert.match(out, /pi_runtime_tool_calls_total\{tool="run_image_generation",result="ok"\} 1/);
+	assert.match(out, /pi_runtime_dynamic_budget_drops_total\{kind="canvas"\} 2/);
+	assert.equal(out.includes("dynamic_budget_drops_total{error_class="), false);
 });
 
 test("③ tool_result_bytes：按桶聚合并渲染 sum/count", () => {
@@ -206,4 +240,28 @@ test("统一上限：tool_result_trims 按工具名计数，未打点则不渲�
 	const out = m.render(0, "test");
 	assert.match(out, /pi_runtime_tool_result_trims_total\{tool="get_canvas_summary"\} 2/);
 	assert.match(out, /pi_runtime_tool_result_trims_total\{tool="web_fetch"\} 1/);
+});
+
+test("render 追加工具指标族，且既有指标输出不变", () => {
+	const m = new Metrics();
+	m.setSkillsLoaded(3);
+	const out = m.render(0, "test");
+	// 新增族
+	assert.match(out, /# TYPE pi_runtime_tool_duration_seconds histogram/);
+	// 既有族仍在（签名 render(activeSessions, version) 未变）
+	assert.match(out, /# TYPE pi_runtime_skills_loaded gauge/);
+	assert.match(out, /pi_runtime_skills_loaded 3/);
+});
+
+test("tool_calls_total 全局只渲染一次（新旧渲染方不共存）", () => {
+	const m = new Metrics();
+	m.toolMetrics().observeStart({ toolCallId: "d1" });
+	m.toolMetrics().observeEnd({
+		toolName: "save_memory", toolCallId: "d1", isError: false, terminate: false,
+		resultText: "ok", channel: "agnes", model: "agnes-2.5-flash",
+	});
+	const out = m.render(0, "test");
+	assert.equal(out.split("\n").filter((l) => l.startsWith("# HELP pi_runtime_tool_calls_total")).length, 1,
+		"HELP 行出现多次 ⇒ Prometheus 会丢弃该指标");
+	assert.equal(out.includes('kind="'), false, "旧 kind 标签仍在渲染");
 });

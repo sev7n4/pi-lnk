@@ -22,6 +22,7 @@
 
 // type-only：擦除后不留运行时依赖，只把 reason 的取值域锁到决策器的两个来源上。
 import type { CompactionOutcome, CompactionSkipReason } from "./compaction-check.js";
+import { ToolMetrics } from "./tool-metrics.js";
 
 const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
 
@@ -45,7 +46,16 @@ export interface PromptInfo {
 /** 工具结果体积直方图桶（字节）（③：工具结果 token 观测的原始量）。 */
 const BYTES_BUCKETS = [256, 1024, 4096, 16384, 65536, 262144, 1_048_576];
 
-/** 工具调用错误分类（③）；`retry` 为 V-γ 重试放行打点（非错误）。 */
+/**
+ * 工具调用的结果与错误分类（③）；`retry` 为 V-γ 重试放行打点（非错误）。
+ *
+ * ⚠️ 本类型现在只是 `pi_runtime_tool_error_kinds_total` 的**label 取值域**。
+ * 计数职责已移交事件层的 `ToolMetrics`（见 `tool-metrics.ts`），
+ * `observeToolCall` / `tool_calls_total` 的旧渲染方已于 2026-10-04 删除
+ * （两者同时渲染会让 Prometheus 报 `second HELP line for metric name` 并丢弃整个指标）。
+ * `gate_blocked` / `retry` 暂无写入方：HITL 拦截与重试放行的归因改由
+ * `retry_scheduled` 事件驱动 `pi_runtime_llm_retries_total` 承担。
+ */
 export type ToolErrorKind =
 	| "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network" | "gate_blocked" | "retry";
 
@@ -63,8 +73,9 @@ export class Metrics {
 	private httpTotal = new Map<string, number>(); // key: route|method|status
 	private httpHist = new Map<string, HistogramState>(); // key: route
 	private promptErrors = new Map<string, number>(); // key: reason
-	private toolCalls = new Map<string, number>(); // key: tool|result[|kind]
 	private toolResultBytes = new Map<string, HistogramState>(); // key: tool
+	/** key: tool|kind —— Nest 侧结构化错误分类（计数职责在事件层，这里只留精确分类通道）。 */
+	private toolErrorKinds = new Map<string, number>();
 	private sessionResumes = new Map<string, number>(); // key: outcome (new|memory|disk|rebuilt)
 	private compactions = new Map<string, number>(); // key: result (ok|error)
 	/** key: 未触发压缩的理由（disabled|no_window|no_usage|below_threshold|nothing_to_compact|lane_busy|closed|unknown）。 */
@@ -109,6 +120,31 @@ export class Metrics {
 	private toolResultTrims = new Map<string, number>(); // key: tool（统一上限触发的截断次数）
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
+	/**
+	 * 工具/LLM 指标的事件层结算器（spec §4.1/§4.2）。
+	 *
+	 * 为什么放在这里而不是各工具内部：harness 的 `tool_start`/`tool_end` 是全工具统一
+	 * 事件，载荷自带 toolCallId / isError / terminate ⇒ 39 个工具零改动全覆盖。
+	 * 它是 `pi_runtime_tool_calls_total` 的**唯一渲染方**（旧的 `kind` label 渲染块已删，
+	 * 否则同名指标出现两行 HELP 会让 Prometheus 丢弃整个指标）。
+	 */
+	// 字段名刻意带 `Settler` 后缀：不能叫 `toolMetrics`——那会与下面的
+	// `toolMetrics()` 方法同名，类字段定义会覆盖原型方法（实测 `metrics.toolMetrics
+	// is not a function`，7/9 用例红）。
+	private readonly toolMetricsSettler = new ToolMetrics();
+
+	/**
+	 * 事件层结算器。**生产代码也调它**（`session-manager.ts` 的 `attachEvents` 喂事件），
+	 * 测试则直接驱动同一实例。
+	 *
+	 * 刻意**不叫** `toolMetricsForTest()`：本仓 `ForTest` 后缀的既有语义是
+	 * 「仅供测试的只读窥视」（见 `tool-metrics.ts` 的 `inflightSizeForTest()`、
+	 * `session-manager.ts` 的 `resolveSystemPromptForTest()`），本仓没有任何
+	 * 「生产代码调用 `ForTest` 方法」的先例。沿用那个后缀会让后来读者误判可见性边界。
+	 */
+	toolMetrics(): ToolMetrics {
+		return this.toolMetricsSettler;
+	}
 
 	observeHttp(route: string, method: string, status: number, durationSec: number): void {
 		const totalKey = `${route}|${method}|${status}`;
@@ -129,9 +165,22 @@ export class Metrics {
 		this.promptErrors.set(reason, (this.promptErrors.get(reason) ?? 0) + 1);
 	}
 
-	observeToolCall(tool: string, outcome: "ok" | "error" | "circuit_open", kind?: ToolErrorKind): void {
-		const key = kind ? `${tool}|${outcome}|${kind}` : `${tool}|${outcome}`;
-		this.toolCalls.set(key, (this.toolCalls.get(key) ?? 0) + 1);
+	/**
+	 * Nest 侧返回的**结构化**错误分类（`pi_runtime_tool_error_kinds_total{tool,kind}`）。
+	 *
+	 * 刻意与事件层的 `ToolMetrics` 分开：工具调用的**计数**与**耗时**由事件层统一结算
+	 * （`tool_start`/`tool_end` 覆盖全部 39 个工具，见 spec §3.2），但事件层只能靠
+	 * `resultText` 正则猜错误类；这里拿到的是 `NestClient` 直接从 HTTP 状态码 /
+	 * 包络判定出的 `errorKind`，**更精确**。若一并删掉，Nest 侧的
+	 * `gate_blocked`/`upstream_4xx` 归因会退化成正则猜测，错误率分子失真。
+	 *
+	 * ⚠️ 方法名**不得**改回 `observeToolCall`：那个方法连同 `tool_calls_total`
+	 * 的旧渲染方一起删掉了（同名会造成「已删除」判断失效），且它只写本指标，
+	 * 不碰 `tool_calls_total`。
+	 */
+	observeToolErrorKind(tool: string, kind: ToolErrorKind): void {
+		const key = `${tool}|${kind}`;
+		this.toolErrorKinds.set(key, (this.toolErrorKinds.get(key) ?? 0) + 1);
 	}
 
 	/** 工具结果体积观测（字节）：返回给模型的内容序列化后大小，用于上下文预算回归。 */
@@ -500,17 +549,6 @@ export class Metrics {
 			lines.push(`pi_runtime_llm_prompt_errors_total{reason="${esc(reason)}"} ${count}`);
 		}
 
-		lines.push("# HELP pi_runtime_tool_calls_total Tool invocations by tool and result.");
-		lines.push("# TYPE pi_runtime_tool_calls_total counter");
-		for (const [key, count] of [...this.toolCalls.entries()].sort()) {
-			const [tool, result, kind] = key.split("|");
-			const labels =
-				kind !== undefined
-					? `tool="${esc(tool)}",result="${esc(result)}",kind="${esc(kind)}"`
-					: `tool="${esc(tool)}",result="${esc(result)}"`;
-			lines.push(`pi_runtime_tool_calls_total{${labels}} ${count}`);
-		}
-
 		lines.push("# HELP pi_runtime_tool_result_bytes Tool result size returned to the model (serialized bytes).");
 		lines.push("# TYPE pi_runtime_tool_result_bytes histogram");
 		for (const [tool, h] of [...this.toolResultBytes.entries()].sort()) {
@@ -521,6 +559,16 @@ export class Metrics {
 			lines.push(`pi_runtime_tool_result_bytes_sum{tool="${esc(tool)}"} ${h.sum.toFixed(0)}`);
 			lines.push(`pi_runtime_tool_result_bytes_count{tool="${esc(tool)}"} ${h.count}`);
 		}
+
+		lines.push("# HELP pi_runtime_tool_error_kinds_total Tool call error kinds as classified by the Nest client (structured, more precise than the event layer's regex).");
+		lines.push("# TYPE pi_runtime_tool_error_kinds_total counter");
+		for (const [key, count] of [...this.toolErrorKinds.entries()].sort()) {
+			const [tool, kind] = key.split("|");
+			lines.push(`pi_runtime_tool_error_kinds_total{tool="${esc(tool ?? "")}",kind="${esc(kind ?? "")}"} ${count}`);
+		}
+
+		// 事件层结算器在**尾部追加**：既有指标族的输出顺序与内容逐字不变，只在末尾多出工具/LLM 族。
+		this.toolMetricsSettler.renderInto(lines);
 
 		return `${lines.join("\n")}\n`;
 	}

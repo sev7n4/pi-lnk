@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyToolOutcome, type ToolErrorClass } from "./tool-error-class.js";
+import { classifyLlmErrorText, classifyToolOutcome, type ToolErrorClass } from "./tool-error-class.js";
 
 test("terminate 优先于 isError，归blocked_terminate", () => {
 	assert.deepEqual(classifyToolOutcome({ isError: true, terminate: true, resultText: "429 rate limit" }), {
@@ -39,7 +39,9 @@ const CASES: Array<[string, ToolErrorClass]> = [
 
 for (const [text, expected] of CASES) {
 	test(`分类：${JSON.stringify(text)} → ${expected}`, () => {
-		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, expected);
+		const r = classifyToolOutcome({ isError: true, terminate: false, resultText: text });
+		assert.equal(r.errorClass, expected);
+		assert.equal(r.outcome, "error", "error 分支的 outcome 必须是 error");
 	});
 }
 
@@ -63,4 +65,86 @@ test("分类优先级：429 优先于 timeout（先命中先定）", () => {
 		classifyToolOutcome({ isError: true, terminate: false, resultText: "timeout waiting, then 429" }).errorClass,
 		"upstream_4xx",
 	);
+});
+
+test("分类优先级：aborted 优先于 4xx/5xx（brief 核心要求）", () => {
+	assert.equal(
+		classifyToolOutcome({ isError: true, terminate: false, resultText: "request aborted: 429 rate limit" }).errorClass,
+		"aborted",
+	);
+	assert.equal(
+		classifyToolOutcome({ isError: true, terminate: false, resultText: "aborted, upstream 503 unavailable" }).errorClass,
+		"aborted",
+	);
+});
+
+test("internal 兜底不得泄漏错误原文", () => {
+	const secret = "sk-live-abcdef123456";
+	const r = classifyToolOutcome({ isError: true, terminate: false, resultText: `玄学失败 ${secret}` });
+	assert.equal(r.errorClass, "internal");
+	assert.equal(JSON.stringify(r).includes(secret), false, "internal 兜底泄漏了错误原文");
+});
+
+// 回归：gate 关键词必须带词边界，否则内含 "gate" 子串的常用英文词会被误判。
+test("gate 误判回归：内含 gate 子串的普通词不得判为 gate_blocked", () => {
+	for (const text of [
+		"investigate the canvas",
+		"aggregate the results",
+		"mitigate the risk",
+		"navigate to node 3",
+		"delegated to subagent",
+	]) {
+		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, "internal", text);
+	}
+	// 反向：真正的 gate 信号仍须命中。
+	assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: "blocked by HITL gate" }).errorClass, "gate_blocked");
+});
+
+/**
+ * `classifyLlmErrorText`：LLM 侧错误文本分类。
+ *
+ * 核心断言是**与 `classifyToolOutcome` 逐字同构**——这是本函数存在的全部理由
+ * （两处正则各自演化会让同一错误在 tool_calls_total 与 llm_errors_total 里落不同类）。
+ * 故断言写成「对同一文本，两个入口必须给出同一个 errorClass」，而不是把期望值抄一遍：
+ * 抄一遍的话，将来有人只改其中一个函数，本测试仍会全绿（假绿）。
+ */
+const LLM_CASES: Array<[string, ToolErrorClass]> = [
+	["HTTP 429 Too Many Requests", "upstream_4xx"],
+	["rate limit exceeded, please retry", "upstream_4xx"],
+	["upstream returned 503 service unavailable", "upstream_5xx"],
+	["bad gateway", "upstream_5xx"],
+	["ETIMEDOUT", "timeout"],
+	["请求超时", "timeout"],
+	["fetch failed", "network"],
+	["ECONNREFUSED 127.0.0.1:443", "network"],
+	["request aborted", "aborted"],
+	["unauthorized: invalid api key", "gate_blocked"],
+	["invalid arguments: expected string", "validation"],
+	["玄学失败", "internal"],
+	["", "internal"],
+];
+
+for (const [text, expected] of LLM_CASES) {
+	test(`classifyLlmErrorText：${JSON.stringify(text)} → ${expected}`, () => {
+		assert.equal(classifyLlmErrorText(text), expected);
+		// 同构锁：与工具侧分类器对同一文本必须一致。
+		assert.equal(
+			classifyLlmErrorText(text),
+			classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass,
+			"LLM 侧与工具侧分类结论漂移了",
+		);
+	});
+}
+
+test("classifyLlmErrorText 恒返回闭集值，永不返回 null", () => {
+	for (const [text] of LLM_CASES) {
+		assert.notEqual(classifyLlmErrorText(text), null);
+		assert.notEqual(classifyLlmErrorText(text), undefined);
+	}
+});
+
+test("classifyLlmErrorText 不得返回错误原文（label 基数红线）", () => {
+	const secret = "sk-live-abcdef123456";
+	assert.equal(classifyLlmErrorText(`玄学失败 ${secret}`), "internal");
+	assert.equal(classifyLlmErrorText(`invalid token ${secret}`), "validation");
 });

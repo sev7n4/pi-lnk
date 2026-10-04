@@ -1,19 +1,19 @@
-/** UI_COMMAND×5 契约测试：本地无 IO、输出 camelCase canvasCommands、tier=ui_command、metrics 计数。 */
+/** UI_COMMAND×5 契约测试：本地无 IO、输出 camelCase canvasCommands、tier=ui_command。
+ *  2026-10-04：原「每次调用计 tool_calls_total」用例已删——计数移交事件层后，
+ *  本文件直调 execute 不经过 harness，事件层不产生事件，计数恒为空。 */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createUiCommandTools } from "./ui-command.js";
-import { Metrics } from "../metrics.js";
 import type { LnkpiTool } from "./types.js";
 
 function setup() {
-	const metrics = new Metrics();
-	const tools = createUiCommandTools(metrics);
+	const tools = createUiCommandTools();
 	const find = (name: string) => {
 		const tool = tools.find((t) => t.name === name);
 		assert.ok(tool, `tool ${name} not registered`);
 		return tool;
 	};
-	return { metrics, tools, find };
+	return { tools, find };
 }
 
 /** 对齐 harness execute 六参签名（同 canvas-write.test.ts 的调用方式）。 */
@@ -68,12 +68,5 @@ describe("UI_COMMAND 本地工具", () => {
 		const { find } = setup();
 		const r = await run(find("open_image_editor")!, { node_id: "img-9" });
 		assert.deepEqual(r.details, { ok: true, canvasCommands: [{ type: "open_image_editor", nodeId: "img-9" }] });
-	});
-
-	it("每次调用计 pi_runtime_tool_calls_total（本地工具不走 NestClient，须自计）", async () => {
-		const { find, metrics } = setup();
-		await run(find("focus_node")!, { node_id: "n1" });
-		const rendered = metrics.render(0, "test");
-		assert.match(rendered, /pi_runtime_tool_calls_total\{tool="focus_node",result="ok"\} 1/);
 	});
 });
