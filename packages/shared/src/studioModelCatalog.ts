@@ -329,8 +329,22 @@ export function listModels(modality: StudioModality): StudioModelEntry[] {
   return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === modality)
 }
 
-export function getModelEntry(modelKey: string): StudioModelEntry | undefined {
-  return STUDIO_MODEL_CATALOG.find((entry) => entry.modelKey === modelKey)
+/**
+ * 按 id 查目录条目。**同时接受 `modelKey` 与 `gatewayModelId` 两种形态**。
+ *
+ * ⚠️ 2026-10-04：此前只比较 `entry.modelKey`，而生产 `GenerationRecord.model`
+ * 存的是 gatewayModelId（如 `doubao-seedance-2.0-mini`）⇒ 查不到 ⇒
+ * `resolveModelKey` 静默回退到默认条目 `agnes-video-v2.0` ⇒ Seedance 明明声明
+ * `generateAudio:'native'` 却被判不支持而丢弃（16 次）。
+ * 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.1
+ *
+ * 顺序：**modelKey 优先**。目录里`agnes-video-v2.0` 这类 id 同时出现在两个空间，
+ * 必须靠优先级消歧（`studioModelCatalog.test.ts` 有对应回归锁）。
+ */
+export function getModelEntry(id: string): StudioModelEntry | undefined {
+  const byModelKey = STUDIO_MODEL_CATALOG.find((entry) => entry.modelKey === id)
+  if (byModelKey) return byModelKey
+  return STUDIO_MODEL_CATALOG.find((entry) => entry.gatewayModelId === id)
 }
 
 export function defaultModelKey(modality: StudioModality): string {
@@ -348,7 +362,9 @@ export function resolveModelKey(
   }
   const entry = getModelEntry(requested)
   if (entry?.modality === modality) {
-    return { modelKey: requested, entry, fallback: false }
+    // ⚠️ 返回目录里的规范 modelKey，而不是 `requested` 原文：
+    // 调用方可能传的是 gatewayModelId，原样返回会让下游拿到非规范 id。
+    return { modelKey: entry.modelKey, entry, fallback: false }
   }
   return { modelKey: fallbackKey, entry: fallbackEntry, fallback: true }
 }
