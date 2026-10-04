@@ -216,3 +216,58 @@ describe("runEvalCase（pi-runtime HTTP 驱动）", () => {
 		}
 	});
 });
+
+
+describe("⭐ streamEvents：见 agent_end 立即收手（不等流结束）", () => {
+	/**
+	 * ⭐⭐ 这是 2026-10-04 生产实测定位到的根因，锁死它不许退化。
+	 *
+	 * 现象：真实画布 + 真实规则集下，模型**正确**调了 `get_canvas_summary`
+	 * 并**正确作答**，`agent_end` 也到了，但 runner 报「本轮未正常结束」。
+	 *
+	 * 根因：`/events` 是**长连接**，`agent_end` 之后服务端**不关闭**
+	 *（前端要靠它接下一轮）。而 `streamEvents` 只在「流结束」或 abort 时返回
+	 * ⇒ 永远等不到 ⇒ 只能等 `timeoutMs` 兜底 ⇒ **每条 case 都超时**。
+	 *
+	 * ⚠️ 这类缺陷在「假 server 直接 `res.end()`」的单测里**测不出来** ——
+	 * 必须模拟真实行为：**发完 agent_end 后保持连接打开**。
+	 */
+	it("服务端发完 agent_end 但不关流 ⇒ 仍要返回（不挂到超时）", async () => {
+		const { createServer } = await import("node:http");
+		let releaseStream: (() => void) | undefined;
+		const streamHeld = new Promise<void>((r) => {
+			releaseStream = r;
+		});
+		const server = createServer((req, res) => {
+			const path = req.url ?? "";
+			if (path.includes("/events")) {
+				res.writeHead(200, { "content-type": "text/event-stream" });
+				res.write(`data: ${JSON.stringify({ type: "agent_start", data: {} })}\n\n`);
+				res.write(`data: ${JSON.stringify({ type: "agent_end", data: { type: "run_end", status: "completed" } })}\n\n`);
+				// ⭐ 关键：**不调 res.end()**，模拟真实长连接（等下一轮）。
+				void streamHeld;
+				return;
+			}
+			res.writeHead(201, { "content-type": "application/json" });
+			res.end(JSON.stringify({ sessionId: "s", provider: "p", model: "m", status: "created" }));
+		});
+		await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+		const addr = server.address();
+		const port = typeof addr === "object" && addr ? addr.port : 0;
+		const t0 = Date.now();
+		try {
+			const { runEvalCase } = await import("./driver.js");
+			const r = await runEvalCase(
+				{ baseUrl: `http://127.0.0.1:${port}`, timeoutMs: 30_000 },
+				{ text: "hi", systemPrompt: "sp", userId: "u", canvasSessionId: "c" },
+			);
+			const elapsed = Date.now() - t0;
+			assert.equal(r.transcript.completed, true, `应判completed（实际 ${elapsed}ms）`);
+			assert.ok(elapsed < 10_000, `应在 agent_end 到达后立刻返回，实际耗时 ${elapsed}ms（接近 30s 说明在等流结束）`);
+		} finally {
+			releaseStream?.();
+			server.closeAllConnections();
+			await new Promise<void>((r) => server.close(() => r()));
+		}
+	});
+});

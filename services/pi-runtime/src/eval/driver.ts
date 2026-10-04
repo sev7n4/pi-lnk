@@ -192,11 +192,24 @@ async function streamEvents(url: string, signal: AbortSignal): Promise<RuntimeEv
 					.map((l) => l.slice(5).trim());
 				if (dataLines.length === 0) continue; // 注释帧 / 心跳
 				for (const line of dataLines) {
+					let event: RuntimeEvent;
 					try {
-						events.push(JSON.parse(line) as RuntimeEvent);
+						event = JSON.parse(line) as RuntimeEvent;
 					} catch {
 						// 非 JSON 数据帧：跳过而不是崩（评测不该因日志行失败）
+						continue;
 					}
+					events.push(event);
+					// ⭐⭐ **见 agent_end 立即收手**。
+					//
+					// 为什么：`/events` 是**长连接**，`agent_end` 之后服务端**不关闭**
+					//（前端还要靠它接下一轮）。所以「等流结束」永远不会来
+					//⇒ 只能等 `timeoutMs`兜底 ⇒ **每条 case 都超时**，
+					// 而模型其实早已完成（生产实测：模型正确调了
+					// `get_canvas_summary` 并正确作答，`agent_end` 也到了，
+					// 但 driver 收不到 ⇒ 报「本轮未正常结束」）。
+					// ⇒ 判据是**收到即完成**，不是**流结束才完成**。
+					if (event.type === "agent_end") return events;
 				}
 			}
 		}
