@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **283 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **285 份** spec/plan 的索引。生成于 2026-10-04，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,7 +13,7 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 92 | 仍在演进，改动前先看这份 |
+| 🟢 living | 94 | 仍在演进，改动前先看这份 |
 | 🔒 frozen | 186 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 5 | 已被后续决策取代，勿再参考 |
 
@@ -33,7 +33,7 @@
 | UI 交互细节 | 15 | 8 |
 | 其他 | 10 | 1 |
 | 视觉输入（识图） | 7 | 6 |
-| 部署与基础设施 | 4 | 2 |
+| 部署与基础设施 | 6 | 4 |
 | 长期记忆 | 4 | 3 |
 | 上下文工程 | 3 | 3 |
 | 提示词注册表 | 3 | 3 |
@@ -476,12 +476,14 @@
 
 </details>
 
-### 部署与基础设施（4 份）
+### 部署与基础设施（6 份）
 
-<details><summary>🟢 living · 2 份</summary>
+<details><summary>🟢 living · 4 份</summary>
 
 - `docs/superpowers/plans/2026-09-23-p1-tool-registry-skeleton.md`
 - `docs/superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md` ★design
+- `docs/superpowers/specs/2026-10-04-metrics-observability-design.md` ★design — 指标可观测性（工具全覆盖 / 上游模型错误 / 静默降级 / Prometheus+Grafana）
+- `docs/superpowers/plans/2026-10-04-metrics-observability.md` — 阶段一实施计划（pi-runtime 工具与 LLM 指标，4 个 task）
 
 </details>
 
@@ -494,7 +496,7 @@
 
 ### 长期记忆（4 份）
 
-<details><summary>🟢 living · 3 份</summary>
+<details><summary>🟢 living · 4 份</summary>
 
 - `docs/superpowers/plans/2026-10-03-agent-memory-scope-isolation.md`
 - `docs/superpowers/specs/2026-10-03-agent-memory-scope-isolation-design.md` ★design
@@ -510,7 +512,7 @@
 
 ### 上下文工程（3 份）
 
-<details><summary>🟢 living · 3 份</summary>
+<details><summary>🟢 living · 4 份</summary>
 
 - `docs/superpowers/plans/2026-10-01-context-engineering-p0-fixes.md`
 - `docs/superpowers/plans/2026-09-30-compaction-wiring.md`
@@ -558,6 +560,6 @@ python3 gen_index_md.py                  # 重新生成本文件
 
 ## 维护约定
 
-- 本索引**不改正文**，只做导航 —— 避免 283 份文件大改导致 diff 失控。
+- 本索引**不改正文**，只做导航 —— 避免 285 份文件大改导致 diff 失控。
 - 文档自身的状态写在**开头**（推荐 `**状态：** 已实现（YYYY-MM-DD）`），下次重跑即可被自动识别。
 - 发现某份文档的状态判断错了，直接改它的开头状态字段，然后重跑生成脚本。
