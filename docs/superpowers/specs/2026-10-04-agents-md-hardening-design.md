@@ -123,7 +123,7 @@
 
 同步判据：**「磁盘 renderStatic == 内嵌 renderStaticFallback」四组合逐字符相等**。
 
-⚠️ `git grep` 对上述符号（`COMPOSED_IDS` / `FALLBACK_BY_ID` / `renderStaticFallback` / `contentHash`）在本仓**会返 0 命中**（已知假阴性）；**核实这类符号位置必须用 python 直读**，不要据此判断符号不存在。
+⚠️ 核实符号位置用 `git grep -n -- <符号> -- <目录>`（实测可用）。注意本机 `grep` 被 shim 包装，**大范围扫描**（如全仓 python 遍历）会超时 exit 137 —— 此时缩小目录范围，不要据此判断符号不存在。
 
 ⚠️ 预算约束：**L6 上限 3200字符**，实测当前 2880（core+writeTools 2408），预警线 2720 已过，余量约 320 字符 ≈ 4 条中等规则。
 

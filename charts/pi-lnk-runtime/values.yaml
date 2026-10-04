@@ -1,5 +1,5 @@
 # 默认 values（dev 单节点，spec §5.2.1）
-# 与 spec 的差异点（端口定案后更新，见 AGENTS.md 端口表）：
+# 与 spec 的差异点（端口定案后更新，见 AGENTS.md「端口约定」）：
 #   - 容器端口 8100（spec 写作时为 8080 旧值）
 #   - dev 用 NodePort 暴露给 K8s 外的 Nest（本机 docker）；Traefik/servicelb 在 CVM 上禁用（内存约束）
 

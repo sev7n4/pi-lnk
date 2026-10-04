@@ -26,7 +26,7 @@
 | 4 | 推 + 开 PR | `git push -u origin <branch>` → `gh pr create --body-file <file>` |
 | 5 | **盯 CI 到全绿** | `gh pr checks <n>` 全 pass；合并前先查有无在跑的 workflow（会互相挤掉） |
 | 6 | **squash 合并** | `gh pr merge <n> --squash`（不加 `--delete-branch`，master 被主仓 worktree 占用会报错） |
-| 7 | **盯部署 + 上线生产验证** | 见 `prod-deploy-verify` skill（两条流水线 + 生产取证全套） |
+| 7 | **盯部署 + 上线生产验证** | 见 `prod-deploy-verify` skill（**四条流水线** + 生产取证全套，触发面见「系统地图」） |
 
 **自检判据**（任何时候都应成立）：
 
@@ -323,11 +323,13 @@ pi-lnk/
 
 **同步判据**：「磁盘 renderStatic == 内嵌 renderStaticFallback」四组合**逐字符相等**。
 
-⚠️ `renderStaticFallback` 在三个文件都出现（assembler / loader / agent.controller），
-第 5 处指的是**内嵌 fallback 的那一处**。
+⚠️ `renderStaticFallback` 在 3 个源文件 + 2 个测试文件出现（共 5 处），
+第 5 处指的是**内嵌 fallback 的那一处**；「四组合逐字符相等」判据的实现在
+`prompt-registry.loader.test.ts`。
 ⚠️ `FALLBACK_BY_ID` 只在 loader 定义，`prompt-registry.fallback.ts` 里没有同名符号 ——
 它靠**内容逐字相等**被约束，不是靠常量名对齐。
-⚠️ 本仓 `git grep` 对上述符号**会返 0 命中**（已知假阴性）。核实位置用 python 直读。
+⚠️ 本仓 `grep` / `git grep` 可正常使用；大范围扫描（如全仓 python 遍历）会超时
+（exit 137），此时缩小到具体目录或改用 `git grep -n -- <符号> -- <目录>`。
 
 改完跑 `pnpm prompt:lint`（独立成 `prompt-lint.yml` 流水线，`ci.yml` 不覆盖它）。
 
@@ -419,7 +421,7 @@ pi-lnk/
 
 1. 动 `apps/server/prisma/schema.prisma` 或任何数据迁移
 2. 动积分 / 扣分 / 退款逻辑
-3. 改 `prompt-registry` 预算（L6 上限 3200 字符，当前余量约 320）
+3. 改 `prompt-registry` 预算（L6 上限与当前余量见「变更影响面矩阵」）
 4. 任何生产止血操作：改 `PI_RUNTIME_MODE`、改 helm values、重发镜像 tag
 5. 向 master 直接提交
 
@@ -485,7 +487,8 @@ pi-lnk/
 - `gh pr view <n> --json mergeStateStatus` —— `BLOCKED` = required check 未过，**GitHub 不允许绕过**
 - required checks = `["Verify spec figures", "Build monorepo", "Build API Docker image"]`
 - ⚠️ **`Test Files N passed` ≠ CI 会绿**：必须同看 `Errors N errors` 与末尾 `Exit status`。
-  实测 180 files / 1449 tests 全 passed 但 `Errors 11` ⇒ exit 1
+  实测出现过全量测试「文件数/用例数全 passed」但 `Errors` 非零、最终 exit 1 的情况
+  （未处理 rejection 会被 vitest 单独计入 `Errors`）
 - ⚠️ **CI 全量测试不在独立 job**：`pnpm test` 是 `Build monorepo` 内的一个 step，
   `gh pr checks` 看不到它，须下钻：
   `gh run view <id> --json jobs --jq '.jobs[].steps[]|"\(.name) :: \(.conclusion)"'`
@@ -516,4 +519,4 @@ export PATH="/usr/local/bin:$PATH"   # gh 在 /usr/local/bin，不在默认 PATH
 
 - **本机是 4 核 Mac，多 agent 并存** —— 跑全量测试前先看 `uptime`，别互相拖慢
 - `ps` 在沙箱环境 `operation not permitted`，查进程用 `lsof`
-- 主仓`/Users/4seven/workspace/pi-lnk`；worktree 在 `.worktrees/<slug>/`
+- 主仓 `/Users/4seven/workspace/pi-lnk`；worktree 在 `.worktrees/<slug>/`
