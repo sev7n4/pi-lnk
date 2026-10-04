@@ -35,7 +35,7 @@
    否则按月份 + 主题推断。规则写在索引文末。
 4. **判定错了的修法**：改文档开头的状态字段，重跑脚本 —— 不在索引里手工涂改。
 5. **可重跑**：新增文档后重跑 `gen_index.py && gen_index_md.py`。
-6. **文档状态字段的推荐写法**（写进 `AGENTS.md`「文档管理规范」）：
+6. **文档状态字段的推荐写法**（写进 [`docs/agent/docs.md`](../agent/docs.md)「文档管理规范」）：
    `**状态：** 已实现（YYYY-MM-DD）` —— 机器可识别，下次重跑自动采信。
 
 ## 后果
@@ -61,5 +61,5 @@
 
 - 索引：`docs/superpowers/INDEX.md`
 - 脚本：`gen_index.py`（判定）、`gen_index_md.py`（生成）
-- 规范：`AGENTS.md`「文档管理规范」、`docs/README.md`
+- 规范：[`docs/agent/docs.md`](../agent/docs.md)「文档管理规范」、`docs/README.md`
 - 配套：ADR-0002（哪些资产不能删）
