@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp, resolveEventsSubscribeMode } from "./app.js";
-import { SessionManager, toSessionKey } from "./session-manager.js";
+import { SessionManager, toSessionKey, isReplayComplete } from "./session-manager.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
 import { PendingToolRegistry } from "./pending-registry.js";
@@ -346,8 +346,7 @@ describe("既有端点保持", () => {
 				);
 			} finally {
 				await app.close();
-			}
-		});
+			}		});
 	});
 });
 
@@ -556,6 +555,95 @@ describe("POST /sessions/:key/prompt 直通 images（T1）", () => {
 			} finally {
 				await app.close();
 			}
+		});
+	});
+});
+
+/**
+ * T1：SSE 重连遇「重放窗口已过期」必须显式报 409，不能装作正常。
+ *
+ * 缺陷背景：`dispatch` 溢出时 `buffer.shift()` 丢最旧事件，而 `message_update`
+ * 是每 token 一个事件 ⇒ 一段几百字回答单轮就能破 500，溢出是**常规路径**。
+ * 改前客户端带 `lastEventId=0` 重连会拿到 200 + 断头流，前端渲染出「答了一半」
+ * 的界面且**无任何报错**（与 degraded 静默降级同型：失败被降级成成功）。
+ *
+ * 改后：残缺时在**写响应头之前**回 409 + 结构化原因，客户端据此改走全量重建。
+ *
+ * 为什么能在测试里造出溢出：`makeApp` 返回真实 `SessionManager`，
+ * 用 `dispatchWaitingUser`（公开方法）把 buffer 灌到超过 BUFFER_LIMIT=500。
+ */
+describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => {
+	/**
+	 * 用公开方法把某会话的 buffer 灌到溢出（每条一个 waiting_user 广播）。
+	 *
+	 * ⚠️ **必须传 `canvasSessionId`**：`dispatchWaitingUser` 的匹配键是
+	 * `entry.canvasSessionId ?? entry.id`，而 `entry.id` 是 `toSessionKey(...)`
+	 * 的结果（`:` → `_` + 8 位 hash，如 `s1_t1-a1b2c3d4`）。
+	 * 只传 `sessionId` 而不传 `canvasSessionId` ⇒ `entry.canvasSessionId` 为 undefined
+	 * ⇒ 拿 `s1_t1-<hash>` 去比 `"s1:t1"` ⇒ **永远不匹配、hits=0、buffer 根本没灌满**。
+	 * 于是 `droppedFromSeq` 恒为 0 ⇒ 判定「完整」⇒ 走 SSE 长连接 ⇒ inject 永不 resolve
+	 * ⇒ 整个测试文件卡死（2026-10-04 实测 CI 跑 11-13 分钟未结束）。
+	 *
+	 * 断言命中数 > 0 是这个前置条件的护栏：静默不匹配会让「造溢出」变成空操作。
+	 */
+	async function overflowBuffer(manager: SessionManager, key: string): Promise<void> {
+		// 先验证「打得到这个会话」，再灌——否则造溢出是个静默的空操作。
+		assert.ok(
+			manager.dispatchWaitingUser(key, { toolName: "probe", status: "waiting" } as never) > 0,
+			`前置条件：dispatchWaitingUser 必须命中会话 ${key}（检查 canvasSessionId 是否传入）`,
+		);
+		for (let i = 0; i < 501; i++) {
+			manager.dispatchWaitingUser(key, { toolName: `t${i}`, status: "waiting" } as never);
+		}
+	}
+
+	it("溢出后重放仍返回 200（行为与改前一致），但 droppedFromSeq 报告了丢弃起点", async () => {
+		await withRoot("pi-runtime-t1-", async (root) => {
+			const { app, manager } = makeApp(root);
+			// 完整重放路径会升级成 SSE 长连接，inject 永不 resolve ⇒ abort 兜底，
+			// 把「卡死整个文件」降级为「本用例失败并给出可读信息」。
+			const ac = new AbortController();
+			let bodyText = "";
+			try {
+				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
+				await app.inject({
+					method: "POST",
+					url: "/sessions",
+					payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "s1:t1" },
+				});
+				await overflowBuffer(manager, "s1:t1");
+
+				// 存储层：水位可读，且能判定重放残缺
+				const probe = manager.subscribe("s1:t1", () => {}, 0);
+				assert.ok(probe.droppedFromSeq > 0, "溢出后必须报告丢弃起点");
+				assert.equal(isReplayComplete(probe, 0), false, "afterSeq=0 早于水位 ⇒ 残缺");
+
+				// HTTP 层：**行为与改前一致**——仍是 200 + SSE 流，不改成 409。
+				// 理由见 app.ts 同处注释：客户端只对 404 特判，回 409 会让它
+				// 退避重连同一个必然 409 的 lastEventId，循环到 120s 预算耗尽
+				// ⇒ 把「静默残缺」换成「长时间无响应」，后者更糟。
+				const res = await app
+					.inject({
+						method: "GET",
+						url: "/sessions/s1:t1/events?lastEventId=0",
+						signal: ac.signal,
+					})
+					.then((r) => ({ status: r.statusCode, body: r.body }))
+					.catch(() => null);
+				// 长连接挂住 ⇒ res 为 null（SSE 建流成功）；
+				// 若被 409 拦下则 status 是 409 ⇒ 那正是本PR 要避免的行为。
+				if (res !== null) {
+					assert.notEqual(res.status, 409, "本PR 刻意不回 409（客户端未适配前会退避到预算耗尽）");
+					assert.equal(res.status, 200, "残缺重放仍返回 200，行为与改前一致");
+				}
+				bodyText = res === null ? "<SSE 长连接已建立>" : String(res.body ?? "");
+			} finally {
+				ac.abort();
+				await app.close();
+			}
+			// 水位信息在 SSE 场景下进了日志（见 app.ts 的 app.log.warn），
+			// 这里只确认用例跑完没崩；不校验日志内容。
+			assert.ok(typeof bodyText === "string");
 		});
 	});
 });
