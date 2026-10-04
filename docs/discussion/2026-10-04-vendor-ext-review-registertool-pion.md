@@ -4,7 +4,7 @@
 |---|---|
 | 日期 | 2026-10-04 |
 | 触发 | 用户提问：「vendor 的 registerTool 和 pi.on 完全没用（工具注册和事件流都是自研），是合理架构选择还是没吃满？」 |
-| 依据 | [ADR-0009](./0009-vendor-capability-first.md) · [ADR-0006](./0006-single-socket-transport-for-queue.md) · [ADR-0005](./0005-tool-tiering-official-dynamic-loading.md) |
+| 依据 | [ADR-0009](../adr/0009-vendor-capability-first.md) · [ADR-0006](../adr/0006-single-socket-transport-for-queue.md) · [ADR-0005](../adr/0005-tool-tiering-official-dynamic-loading.md) |
 | 核实方式 | 逐条回vendor 源码 + pi-runtime 源码对账（`grep` 在本环境有假阴性，全部用 python 直读复核） |
 | 结论 | **一半是误判，一半是真欠账。** `pi.on` 我们其实**早就在用**（记错了）；`registerTool` 是真欠账但优先级低；另有一处**未登记的真欠账**（`watch`/`resnapshot` 断线重连） |
 
