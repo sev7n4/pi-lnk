@@ -36,7 +36,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: lnkpi-deploy-cvm
+  # ⭐ 与 runtime-deploy.yml 共用同一组（不是原来的 lnkpi-deploy-cvm）。
+  # 理由：api 与 pi-runtime 是同一产品的两个组件，各自独立排队会出现完成顺序无约束的
+  # 错配窗口。共用组 ⇒ 物理上无法并行，只有一个在跑时另一个排队。
+  # ⚠️ 排队语义提醒：cancel-in-progress: false 下**只保留最新 1 个 pending**，
+  # 更早的 pending 会被静默取消 ⇒ 派发后必须 gh run list 确认自己的 run 还在。
+  group: lnkpi-release
   cancel-in-progress: false
 
 env:
