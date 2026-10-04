@@ -76,6 +76,12 @@ jobs:
     env:
       SSH_HOST: ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
       SSH_USER: ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+      # ⚠️ 必须显式注入（2026-10-04 第二次踩坑）：`gh` 在 runner 上**不自动读 token**，
+      # 而 Actions 也**不会**把 `GITHUB_TOKEN` 写成环境变量（只有 `GITHUB_REPOSITORY` 等
+      # 是默认注入的）。写成 `GH_TOKEN="${GITHUB_TOKEN}"` 会在 `set -u` 下报
+      # `GITHUB_TOKEN: unbound variable` —— 那是上一个修复引入的新失败。
+      # 在 job 级 env 注入后，`gh` 会自动读取，无需在命令行重复传。
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
@@ -116,14 +122,15 @@ jobs:
           # 会把绝大多数正常的旧提交全部误杀。
           # 正确判据 =「master 不领先 X」= behind_by == 0（等价于 merge-base --is-ancestor X master）。
           #
-          # ⚠️ 必须显式给 gh 传 token（2026-10-04 事故）：Actions runner 上 `gh` 不自动
-          # 读 GITHUB_TOKEN，无 token 时 gh 打印「To use GitHub CLI in a GitHub Actions
-          # workflow, set the GH_TOKEN environment variable」并 exit 1。
-          # 下面用 `|| true` 兜住退出码，于是**错误信息被当成 behind_by 的值**（非空字符串）
-          # ⇒ 走进 else 分支报「不是 master 的祖先」——把「API 调用失败」误报成
-          #「tag 不合法」，且日志极具误导性。首次上线（run 37170109050）就撞上了。
-          # 两处修：① 显式 GH_TOKEN ② 失败原因分开判，别混成一个 else。
-          COMPARE=$(GH_TOKEN="${GITHUB_TOKEN}" gh api \
+          # ⚠️ token 由 job 级 `env: GH_TOKEN` 提供（见上），`gh` 会自动读取。
+          # **不要**在这里写 `GH_TOKEN="${GITHUB_TOKEN}"` —— Actions 只默认注入
+          # GITHUB_REPOSITORY / GITHUB_SHA 等，**不注入 GITHUB_TOKEN**，
+          # 在 `set -u` 下会直接报 `GITHUB_TOKEN: unbound variable`（run 37172045084 实测）。
+          #
+          # ⚠️ `|| true` 只用来兜退出码，**不能**让失败文本被当成判定值：
+          # 下面用「是否纯数字」把「API 调用失败」与「tag 不合法」分成两个分支
+          # （首次上线 run 37170109050 就因这条误报，排查方向被带偏）。
+          COMPARE=$(gh api \
             "repos/${GITHUB_REPOSITORY}/compare/${TAG}...master" --jq '.behind_by' 2>/tmp/compare.err || true)
           if [[ "$COMPARE" =~ ^[0-9]+$ ]]; then
             if [[ "$COMPARE" == "0" ]]; then
