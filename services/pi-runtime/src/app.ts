@@ -22,6 +22,7 @@ import {
 } from "./session-manager.js"
 import type { DirectImage } from "./direct-images.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
+import { classifyLlmErrorText } from "./tool-error-class.js";
 
 const HEARTBEAT_MS = 15_000;
 
@@ -191,8 +192,31 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			}
 			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
 			const msg = (err as Error).message ?? "";
+			/**
+			 * 旧指标 `pi_runtime_llm_prompt_errors_total{reason}` **保留一个发布周期**，
+			 * 避免既有告警/看板断档；但它不再是唯一手段，也不再承担分类职责——
+			 * 2 值的 `/429|rate/` 正则把「上游 5xx」「网络不可达」「凭据失效」全塌成
+			 * `upstream_error`，排障时看不出该找谁。下面这条才是分类事实源。
+			 */
 			const reason = /429|rate/i.test(msg) ? "upstream_rate_limited" : "upstream_error";
 			metrics.observePromptError(reason);
+			/**
+			 * 分类下沉到 `error_class` 闭集分类器（spec §4.4）。
+			 *
+			 * - `stage`：本路径是 prompt **入口早拒**（lane 解析/凭据装配失败，run 尚未起），
+			 *   恒为主轮入口 ⇒ `main_turn`。
+			 * - `channel`/`model`：**只**取 `LlmIdentity.provider/model`（会话定型值），
+			 *   绝不透传请求体里任意字符串（那会让 label 基数无界）。会话不存在时
+			 *   用字面量 `"unknown"`——闭集内的合法值，比透传安全；此路径能走到
+			 *   503 说明会话已存在（404/409 在上面已分流），故实际恒有值。
+			 */
+			const identity = manager.llmIdentityFor(sessionId);
+			metrics.toolMetrics().observeLlmError({
+				stage: "main_turn",
+				errorClass: classifyLlmErrorText(msg),
+				channel: identity?.provider ?? "unknown",
+				model: identity?.model ?? "unknown",
+			});
 			return reply.code(503).send({ error: msg });
 		}
 	});

@@ -61,3 +61,21 @@ export function classifyToolOutcome(input: {
 	}
 	return { outcome: "error", errorClass: "internal" };
 }
+
+/**
+ * LLM 上游错误文本分类（spec §4.4）。
+ *
+ * **为什么复用 `classifyToolOutcome` 而不是另写一套正则**：本仓已有两处判「上游报了什么」——
+ * 工具结果侧与 LLM 调用侧。若各自维护正则，两者会各自演化，最终同一个错误在
+ * `pi_runtime_tool_calls_total` 与 `pi_runtime_llm_errors_total` 里落到不同 error_class，
+ * 跨指标对账时看起来像数据 bug，实则是规则漂移。故此处只做**参数化**：
+ * 强制 `isError: true, terminate: false`（LLM 错误恒为错误、且不存在工具那套 terminate 语义），
+ * 判定规则完全交给同一个函数。
+ *
+ * @param text 上游错误原文。**仅作判定输入，绝不可作为 label 渲染出去**（同文件头警告）。
+ * @returns闭集内的 errorClass；无法判定时由`classifyToolOutcome` 兜底为 `"internal"`
+ *   （恒有值，不会返回 null——`isError: true` 分支不产出 null）。
+ */
+export function classifyLlmErrorText(text: string): ToolErrorClass {
+	return classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass ?? "internal";
+}

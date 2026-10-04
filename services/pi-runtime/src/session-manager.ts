@@ -1120,6 +1120,26 @@ export class SessionManager {
 	}
 
 	/**
+	 * 按 pi 会话键取该会话的 **LLM 身份**（`channel`/`model` 两个 label 的唯一来源）。
+	 *
+	 * 为什么需要它：`identity` 是 `SessionEntry` 的私有字段，路由层拿不到。而
+	 * `POST /sessions/:key/prompt` 的 503兜底分支要按 channel/model 维度记 LLM 错误
+	 * （`pi_runtime_llm_errors_total`），否则那条链路的错误全部堆在 `channel="unknown"`，
+	 * 维度等于没加。取值**只能**来自这里——`LlmIdentity.provider/model` 由 `create` 的
+	 * `modelFactory` 解析并定型（`llm-override.ts` 已做白名单校验），而请求体里的
+	 * 任意字符串不可信且会让 label 基数无界。
+	 *
+	 * 语义同 `getCanvasSessionId`：**取不到返回 null，绝不抛**——观测口不得把业务
+	 * 请求变成失败（调用方回落到字面量 `"unknown"`）。
+	 *
+	 * ⚠️ 返回值只作 Prometheus label 用，**不得**回显进 HTTP 响应体
+	 * （同 `POST /sessions` 的 409 分支：身份信息不外泄）。
+	 */
+	llmIdentityFor(threadKey: string): LlmIdentity | null {
+		return this.sessions.get(toSessionKey(threadKey))?.identity ?? null;
+	}
+
+	/**
 	 * 阻塞等待可见化（2026-10-01）：按**画布会话 id** 广播 `waiting_user` 事件。
 	 *
 	 * registry 侧只有画布会话 id（工具域语义），而事件派发需要 pi 会话键的 entry ——
