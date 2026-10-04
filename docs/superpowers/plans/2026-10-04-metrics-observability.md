@@ -775,11 +775,30 @@ function extractResultText(result: unknown): string {
 | `src/metrics.test.ts:48` | 1 | 删（`kind="retry"`；重试放行归因见 Step 3 末尾说明） |
 | `src/metrics.test.ts:78-83,97,165,166` | 9 | **保留不动**。这 9 处 `kind=` 属上表3 个无关指标族（实测 `metrics.test.ts` 共 12 处 `kind=`，其中仅 3 处属 `tool_calls_total`） |
 
-> 📌 改名前 plan 写「`metrics.test.ts` 18 处」「`ask-user.test.ts` 1 处」「`arrange-nodes.test.ts` 2 处」
-> 「`ui-command.test.ts` 2 处」—— **实测均不符**：`metrics.test.ts` 是 12 处（3 处需删+ 9 处需留），
-> 另三个 tools 测试文件里 `observeToolCall`/`tool_calls_total` 出现次数均为 **0**
-> （`ask-user.test.ts:12` 只是一个 `const metrics = { observeToolCall: () => {} }` 桩，无需删改）。
-> 照原表机械改会误伤无关断言。
+> 📌 **改名只影响 `tool_calls_total` 一个指标族**。实测逐处清单（2026-10-04复核）：
+>
+> | 文件 | 需改的处数 | 位置 |
+> |---|---|---|
+> | `src/metrics.test.ts` | **3** | 行 37/ 38 / 48（其余 `kind=` 分属 `usage_tokens_total` / `usage_cost_total` / `dynamic_budget_drops_total` / `queue_ops_total` **四个无关指标族，不许动**） |
+> | `src/tools/arrange-nodes.test.ts` | **2** | 行 176、177（`tool_calls_total` 断言） |
+> | `src/tools/ui-command.test.ts` | **1** | 行 77（行 73 是测试标题，可不动） |
+> | `src/tools/ask-user.test.ts` | **0** | 行 12 只是 `const metrics = { observeToolCall: () => {} }` 桩，无需改 |
+>
+> ⚠️ **后三个文件必须同步改断言**：它们直接 `new Metrics()` 然后`await run(tool, args)`调用工具，
+> **不经过 harness 事件层** ⇒ 事件层接管后不会产生 `tool_start`/`tool_end` ⇒ 计数恒为空。
+> 实测：删掉 `ui-command.ts` / `arrange-nodes.ts` 的手写埋点后，`arrange_nodes L3 by-mode 观测` 与
+> `UI_COMMAND 本地工具` 两个 describe **必红**（17 tests 中 2 fail）。
+> 改法见 Step 7。
+
+**同步改后三个 tools 测试的断言**（因事件层不覆盖它们，见上表⚠️）：
+
+- `tools/ui-command.test.ts`：删除整个 `it("每次调用计 pi_runtime_tool_calls_total…")` 用例（行 73-78）。
+  该 describe 里其余用例已覆盖 `focus_node` / `open_image_editor` 的业务行为，删这一条不丢业务覆盖。
+- `tools/arrange-nodes.test.ts`：删除整个 `describe("arrange_nodes L3 by-mode 观测")` 块（行 169-179）。
+  **注意**：`arrange_nodes_grid` 这个动态 label 消失是**预期结果** —— 它正是 spec §3.2 点名要消除的基数风险
+  （事件层只出`tool="arrange_nodes"`，mode 不再进 label）。该 describe 只测埋点、不测业务，故可整块删。
+- `tools/ask-user.test.ts`：行 12 的 `{ observeToolCall: () => {} }` 桩**保留**（`observeToolCall` 方法本轮被删，
+  桩里多余一个属性无害TS 结构类型允许多余属性；执行者若报 TS 错误则改为 `{} as unknown as Metrics`）。
 
 改完后在 `metrics.test.ts` 追加渲染断言：
 
