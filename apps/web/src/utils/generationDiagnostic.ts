@@ -146,21 +146,77 @@ export function isFailedGenerationStatus(status: string): boolean {
   )
 }
 
+/** 后端 droppedFields 的字段名 → 用户可读标签。未登记的字段直接透出原名，不静默吞掉。 */
+export const DROPPED_FIELD_LABEL: Record<string, string> = {
+  generateAudio: '音轨',
+  seed: '随机种子',
+  negativePrompt: '负面提示词',
+  crop: '裁切',
+  referenceVideos: '参考视频',
+  referenceAudios: '参考音频',
+  referenceImages: '参考图',
+  duration: '时长',
+  aspectRatio: '画面比例',
+  resolution: '分辨率',
+}
+
+/**
+ * 把后端 metadata 里的 `droppedFields` 变成一句用户能读的话。
+ *
+ * ⚠️ 2026-10-04 新增。生产上`droppedFields` 只写进 metadata、前端零渲染 ⇒
+ * 用户点了「生成带音轨视频」，模型不支持时**既没报错也没反馈**，只是安静地
+ * 少了一个能力（Agnes 335 次诚实丢弃 + Seedance 16 次误丢，用户全都看不见）。
+ * 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.3
+ */
+export function describeDroppedFields(
+  dropped: ReadonlyArray<{ field?: unknown }> | null | undefined,
+): string | null {
+  if (!Array.isArray(dropped) || dropped.length === 0) return null
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (const item of dropped) {
+    const field = typeof item?.field === 'string' ? item.field.trim() : ''
+    if (!field || seen.has(field)) continue
+    seen.add(field)
+    names.push(DROPPED_FIELD_LABEL[field] ?? field)
+  }
+  if (names.length === 0) return null
+  return `以下参数当前模型不支持，已忽略：${names.join('、')}`
+}
+
+/** 从 record.metadata 里读出被丢弃的参数说明（成功态也可能有）。 */
+export function getDroppedFieldsNotice(metadata?: string | null): string | null {
+  const meta = parseGenerationRecordMeta(metadata)
+  return describeDroppedFields(
+    meta.droppedFields as ReadonlyArray<{ field?: unknown }> | undefined,
+  )
+}
+
 export function getRecordFailureMessage(
   record: Pick<GenerationRecord, 'status' | 'metadata'>,
 ): string | null {
-  if (!isFailedGenerationStatus(record.status)) return null
   const meta = parseGenerationRecordMeta(record.metadata)
+  const droppedNotice = describeDroppedFields(
+    meta.droppedFields as ReadonlyArray<{ field?: unknown }> | undefined,
+  )
+  if (!isFailedGenerationStatus(record.status)) {
+    // 成功态也返回提示：能力被丢弃不是错误，但用户必须看得见
+    return droppedNotice
+  }
   if (typeof meta.userMessage === 'string' && meta.userMessage) return meta.userMessage
   const byok =
     (typeof meta.byokErrorRaw === 'string' && meta.byokErrorRaw) ||
     (typeof meta.errorRaw === 'string' && meta.errorRaw) ||
     ''
   if (record.status === NODE_GENERATION_STATUS.fallback_pending) {
-    return byok ? `平台回退待确认：${byok.slice(0, 240)}` : '平台回退待确认'
+    const base = byok ? `平台回退待确认：${byok.slice(0, 240)}` : '平台回退待确认'
+    return droppedNotice ? `${base}；${droppedNotice}` : base
   }
-  if (byok) return byok.slice(0, 240)
-  return '生成失败'
+  if (byok) {
+    const raw = byok.slice(0, 240)
+    return droppedNotice ? `${raw}；${droppedNotice}` : raw
+  }
+  return droppedNotice ?? '生成失败'
 }
 
 export function buildFallbackDiagnostic(record: GenerationRecord): GenerationDiagnostic {
