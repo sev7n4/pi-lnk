@@ -10,6 +10,12 @@ name: Runtime Deploy (pi-runtime)
 #   4. 升级后 env 必须「逐项比对精确值」，不是 presence 检查
 #   5. tag 必须是 master 的祖先提交（behind_by == 0）——挡「打错字的 sha」，与第1 条互补
 #
+# ⭐ 发布闸门（2026-10-04）：本job 的 environment 是 `production-runtime`，
+# 不是 `production` —— 前者配了 required reviewers ⇒ pi-runtime 上线会卡一次
+# 人工批准并留下审计记录；后者留空（protection_rules: []）⇒ 没有闸门。
+# 刻意不共用：deploy.yml 的 3 个 job 也绑 production，共用会把 api/web 的
+# 自动部署一起变成手动卡点。
+#
 # 为什么是手动触发（2026-10-04 复核，勿轻易改成自动）：
 #   实测 9-30 以来改构建输入的提交 32 次 vs 本workflow 运行 34 次，线上 version 与
 #   master HEAD 完全一致 ⇒ 「解决遗忘部署」这个自动化立项理由**不成立**，人工闸门
@@ -61,7 +67,12 @@ jobs:
     name: Build & deploy pi-runtime
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: production
+    # ⭐ 独立 environment（不是 production）—— 该 environment 配了 required reviewers
+    # (sev7n4)，所以 pi-runtime 上线会**卡一次人工批准**，且带审计记录。
+    # 为什么不用 production：deploy.yml 的 3 个 job 也绑 production，共用会让
+    # **api/web 的自动部署也变成手动卡点**（实测 4 个 job 都绑 production）。
+    # 拆分后：pi-runtime 上线受闸门约束，api/web 合并即自动上线，互不影响。
+    environment: production-runtime
     env:
       SSH_HOST: ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
       SSH_USER: ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
