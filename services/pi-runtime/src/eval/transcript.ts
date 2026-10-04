@@ -102,9 +102,23 @@ export function foldRuntimeEvents(events: readonly RuntimeEvent[]): EvalTranscri
 	for (const ev of events) {
 		const data = (ev.data ?? {}) as Record<string, unknown>;
 		switch (ev.type) {
-			case "message_update":
-			case "message_end": {
+			case "message_update": {
+				// ⭐ 生产实测：`message_update` 带的是**累积快照**（当前已生成的全文），
+				// 不是增量片段。实测一条消息有 132 个 update，
+				// 而 `mergeText` 的「真增量」分支会把它们**全部追加**
+				// ⇒ assistantText 变成阶梯状重复（"好的，" / "好的，当前" / … 各一份）
+				// ⇒ 必须走 mergeText 的「全量重发则替换」分支。
 				assistantText = mergeText(assistantText, extractText(data));
+				break;
+			}
+			case "message_end": {
+				// ⭐ `message_end` 是**该条消息的权威全文** ⇒ 直接**替换**，
+				// 不 merge。
+				// 为什么不能 merge：`mergeText` 只能识别「incoming 是 previous 的扩展」，
+				// 而多轮/多块时 `message_end` 的文本可能与累积快照**不一致**
+				//（例如最后一块只含尾部）⇒ merge 会留下前一块的残留。
+				const full = extractText(data);
+				if (full) assistantText = full;
 				break;
 			}
 			case "tool_execution_start": {
