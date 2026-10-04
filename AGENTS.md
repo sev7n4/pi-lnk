@@ -8,7 +8,7 @@
 
 **打造以 `pi-agent-core` 为内核的 canvas agent，驱动画布的超创平台 lnk π。**
 
--内核：`@earendil-works/pi-agent-core`（版本见下节）
+- 内核：`@earendil-works/pi-agent-core`（版本见下节）
 - 载体：画布（canvas）—— agent 的产出物是可交互的图，而非纯文本流
 - 方向：视觉内容的生产与迭代（分镜 / 电商素材 / 角色与场景等），skills 资产在 `skills/`
 
@@ -41,7 +41,7 @@ git rev-list --count master..origin/master   # 必须 0
 
 - **判定分支是否已合并禁用 `git cherry` / `git rev-list --count`** —— squash 会重写 commit、patch-id 对不上，已合分支会被误报成「未合并」。权威判据：`gh pr list --head <b>` 拿 mergeCommit，再 `git merge-base --is-ancestor <sha> origin/master`。
 - **查 check-run 数量用 `--jq '.total_count'`，不能用 `length`** —— 后者把 JSON 对象的 key 当数组元素数，`{"total_count":0,...}` 会返回 2，把「CI 从未触发」误判成「在跑」。
-- **push 到 master 没有新 run，先查 workflow 的 paths 过滤** —— `ci.yml` 有 `paths-ignore: ["**/*.md","docs/**"]`，`deploy.yml` 是 paths 白名单。**纯文档改动不触发 CI、不触发部署，零 workflow 是正确行为。**
+- ⚠️ **CI 触发面分两个事件，别混** —— `ci.yml` 的 `paths-ignore: ["**/*.md","docs/**"]` **只挂在 `push` 事件上**；`pull_request:` 分支**没有任何 paths 过滤**。所以：push 到 master 时纯文档改动零 workflow（正确行为）；但**开 PR 时一律触发三个 required check**，纯文档 PR 也不例外。`deploy.yml` 是独立的 paths 白名单（server / web / packages / deploy / prompt-registry 等）。
 
 ### 收尾清理（第7 步之后，别拖到下次）
 
@@ -157,7 +157,7 @@ git grep -l "<路径>" -- apps packages services charts deploy   # 顺带确认�
 5. worktree 首次跑测试前：`pnpm install --frozen-lockfile` + `pnpm --filter @lnkpi/server exec prisma generate`（否则 vitest 报 `.prisma/client` 缺失）
 
 > 测试文件规模会变，**要数字时实测 `find <dir> -name '*.test.ts' | wc -l`，别抄本文档的旧数字**。
-> 2026-10-03 实测：server 97 / web 176 / pi-runtime 顶层 26 个测试文件。
+> 本文档正文不写会漂移的计数（测试文件数、文档份数、清单长度）——需要规模感时给获取命令。
 
 ## pi 内核版本
 
@@ -290,12 +290,12 @@ pi-lnk/
 | 目录 | 性质 |
 |---|---|
 | `workflow/` | ⚠️ **活跃对外契约，别删** —— 外部 Agent（WorkBuddy/Codex）靠它生成可导入画布的 JSON；校验函数 `validateWorkflow` 由 `useWorkflowExchange.ts`、`compositionLint.ts` 消费 |
-| `adr/` | **架构决策记录**（0001-0008）—— 回答"为什么这么定"，Accepted 后不删不改，被取代则标 Superseded |
-| `superpowers/` | 历史 spec 与 plan（283 份）。**从 `INDEX.md` 进**（按主题 + living/frozen/superseded 分类），不要直接翻目录 |
+| `adr/` | **架构决策记录**（0001 起，最新编号见 `docs/adr/`）—— 回答"为什么这么定"，Accepted 后不删不改，被取代则标 Superseded |
+| `superpowers/` | 历史 spec 与 plan（数量以 `INDEX.md` 为准）。**从 `INDEX.md` 进**（按主题 + living/frozen/superseded 分类），不要直接翻目录 |
 | `discussion/` | 讨论文档（第一资产） |
 | `ops/` | 部署 runbook |
 
->2026-10-03 清理：删除 `mockups/`、`diagnostics/`、`archive/`（代码引用均为 0，内容为
+> 2026-10-03 清理：删除 `mockups/`、`diagnostics/`、`archive/`（代码引用均为 0，内容为
 > 已完成的阶段性产物）；**`adr/` 当天删除、同日恢复**并补录 8 份 ADR —— 详见 `docs/README.md`。
 
 **`skills/` 现有清单**：`drama-audio-design`、`drama-character-design`、`drama-motion-video`、`drama-qc-review`、`drama-scene-worldview`、`drama-script-writing`、`drama-storyboard`、`ecommerce-product-photo`
