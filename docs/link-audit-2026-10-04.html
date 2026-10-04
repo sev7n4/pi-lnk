@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown 断链审计报告 · pi-lnk</title>
+<style>
+  :root{
+    --bg:#FBFAF8; --surface:#FFF; --line:#E8E4DC; --line2:#D3D1C7;
+    --ink:#23231F; --ink2:#5F5E5A; --ink3:#8A8980;
+    --red:#A32D2D; --redBg:#FCF2F1; --redLn:#F0C4C0;
+    --amber:#854F0B; --amberBg:#FDF6EA; --amberLn:#F0DCB4;
+    --green:#0F6E56; --greenBg:#EDF7F3; --greenLn:#B9E3D5;
+    --blue:#185FA5; --blueBg:#EFF5FC; --blueLn:#C6DDF5;
+    --gray:#5F5E5A; --grayBg:#F4F2ED;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:56px 32px 96px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:26px;margin-bottom:38px}
+  .kicker{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin:0 0 12px}
+  h1{font-size:30px;line-height:1.3;font-weight:600;margin:0 0 12px;letter-spacing:-.01em}
+  .lede{font-size:17px;color:var(--ink2);margin:0 0 16px}
+  .meta{font-size:13px;color:var(--ink3);margin:0}
+  h2{font-size:20px;font-weight:600;margin:52px 0 8px;padding-top:6px}
+  h2 .n{color:var(--ink3);font-weight:400;margin-right:10px;font-variant-numeric:tabular-nums}
+  h3{font-size:16px;font-weight:600;margin:26px 0 8px}
+  p{margin:0 0 12px}
+  table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14px}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-weight:600;font-size:13px;color:var(--ink2);background:var(--bg)}
+  code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--grayBg);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin:16px 0}
+  .card.p0{border-left:3px solid var(--red)}
+  .card.p1{border-left:3px solid var(--amber)}
+  .card.ok{border-left:3px solid var(--green)}
+  .card.info{border-left:3px solid var(--blue)}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;margin-right:8px;vertical-align:2px}
+  .t-red{background:var(--redBg);color:var(--red);border:1px solid var(--redLn)}
+  .t-amber{background:var(--amberBg);color:var(--amber);border:1px solid var(--amberLn)}
+  .t-green{background:var(--greenBg);color:var(--green);border:1px solid var(--greenLn)}
+  .t-blue{background:var(--blueBg);color:var(--blue);border:1px solid var(--blueLn)}
+  .big{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:24px 0}
+  .metric{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .metric .v{font-size:30px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
+  .metric .l{font-size:12px;color:var(--ink2);margin-top:4px}
+  .metric.bad .v{color:var(--ink3)}
+  .metric.good .v{color:var(--green)}
+  .metric.warn .v{color:var(--amber)}
+  .fix{background:var(--greenBg);border:1px solid var(--greenLn);border-radius:9px;padding:12px 16px;margin:12px 0 0;font-size:14px}
+  .fix strong{color:var(--green)}
+  .quote{border-left:3px solid var(--line2);padding:2px 0 2px 16px;margin:14px 0;color:var(--ink2)}
+  ul{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);font-size:13px;color:var(--ink3)}
+  .mono-sm{font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="kicker">技术审计报告 · Link Integrity Audit</p>
+  <h1>Markdown 断链审计报告</h1>
+  <p class="lede">全仓 583 个 Markdown 文档，原始命中 604 条⇒收敛到<b>真断链 14 条</b>，已修 4 条，登记 19 条，加机器门禁防复发。</p>
+  <p class="meta">审计日期 2026-10-04 · 基线 <code>426ad16a</code> · 数据来源 <code>scripts/verify-links.ts</code> 实跑输出，非人工估算</p>
+</header>
+
+<div class="big">
+  <div class="metric bad"><div class="v">604</div><div class="l">原始命中（含噪音）</div></div>
+  <div class="metric warn"><div class="v">14</div><div class="l">真断链</div></div>
+  <div class="metric good"><div class="v">4</div><div class="l">已修</div></div>
+  <div class="metric warn"><div class="v">19</div><div class="l">已登记不改</div></div>
+  <div class="metric good"><div class="v">0</div><div class="l">修复后活跃区断链</div></div>
+</div>
+
+<h2><span class="n">01</span>为什么要做这件事</h2>
+
+<p>起因是一次手工审计：<b>扫583 个 Markdown 文件找断链，两次都跑不完（超时）</b>。这说明人工审计不可持续 —— 断链在持续产生，但没人能定期查。</p>
+
+<p>更直接的证据：<code>docs/discussion/2026-10-04-vendor-ext-review-registertool-pion.md</code>是 <b>当天新增</b>的文件，里面就有 3 条点不开的链接。这不是陈年旧账，是正在发生的。</p>
+
+<div class="card ok">
+  <h3>结论：机器化门禁，而不是一次性大扫除</h3>
+  <p>手工修 4 条路径只解决当下。真正的价值是「以后不再攒」—— 所以本次交付的核心是 <code>scripts/verify-links.ts</code>，已接进 CI。</p>
+  <div class="fix"><strong>门禁设计要点：</strong>只扫<strong>活跃资产 66 个 md</strong>，噪音从 604 降到 19。相对链接断链 ⇒ 阻断；路径引用失效 ⇒ 只报告不阻断（可能是刻意保留的历史记录）。</div>
+</div>
+
+<h2><span class="n">02</span>噪音从604 收敛到 14：四条排除规则</h2>
+
+<p>断链审计的成本几乎全是噪音。604 条里<b>只有 14 条是真的</b>。收敛靠四条排除规则，每条都有明确理由：</p>
+
+<table>
+<thead><tr><th style="width:26%">排除项</th><th style="width:12%">约条数</th><th>为什么不该算断链</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>vendor/</code></td><td class="mono-sm">~500</td>
+  <td>第三方<b>只读镜像</b>。文档里写的 <code>packages/agent/src/…</code> 是指他们自己的仓库结构，不是我们的目录。<b>禁止业务 patch</b>（ADR-0001，否则无法与上游合并）</td>
+</tr>
+<tr>
+  <td><code>docs/superpowers/</code></td><td class="mono-sm">~260</td>
+  <td>历史 plan/spec 里的「要创建 XXX 文件」是<b>当初的任务描述</b>，文件不在了很正常。按 ADR-0008<b>刻意保留</b>（篡改历史记录比留死链更糟）</td>
+</tr>
+<tr>
+  <td>裸文件名引用</td><td class="mono-sm">大量</td>
+  <td>如 <code>prompt-registry.loader.ts</code> 省略了子目录，文件<b>真实存在</b>于 <code>apps/server/src/agent/pi-runtime/</code>，上下文完全合法</td>
+</tr>
+<tr>
+  <td><code>.workbuddy/</code> <code>.superpowers/</code></td><td class="mono-sm">—</td>
+  <td>私有记忆与 SDD 临时产物，<b>非仓库资产</b>，不该进版本控制</td>
+</tr>
+</tbody>
+</table>
+
+<div class="card info">
+  <h3>一个重要的判据教训</h3>
+  <p>第一版判据把裸文件名也当路径解析，产出 <b>410 条</b>「断链」—— 其中绝大多数是误报。判据必须<b>只查 markdown 链接语法 <code>](…)</code></b>，因为那才是读者真正会点的东西。</p>
+  <p>这条已写进 <code>verify-claims</code> 与 skill：<b>判据要卡真正会失效的东西</b>，不是卡所有看起来可疑的东西。</p>
+</div>
+
+<h2><span class="n">03</span>已修的 4 条（真 bug，读者点不开）</h2>
+
+<p>根因单一：<b>ADR 统一放在 <code>docs/adr/</code>，但引用方分布在别的目录，少写了目录前缀。</b></p>
+
+<table>
+<thead><tr><th style="width:38%">文件</th><th style="width:26%">原引用</th><th>修正为</th></tr></thead>
+<tbody>
+<tr><td><code>docs/discussion/2026-10-04-vendor-ext-review-registertool-pion.md</code></td><td class="mono-sm">./0009-…md<br>./0006-…md<br>./0005-…md</td><td class="mono-sm">../adr/…（3 条）</td></tr>
+<tr><td><code>services/pi-runtime/DEPENDENCIES.md</code></td><td class="mono-sm">./0009-…md</td><td class="mono-sm">../../docs/adr/…</td></tr>
+</tbody>
+</table>
+
+<div class="quote">
+  <p><b>影响：</b>读那份 vendor 扩展评审的人，想确认「这个结论对应哪份架构决策」时点不开；<code>DEPENDENCIES.md</code> 是内核能力清单，读者查 ADR 时点不开。</p>
+  <p><b>修复成本：</b>加 2-3 个目录前缀。相对路径的层级要根据引用方所在目录算：<code>docs/discussion/</code> 是 <code>../adr/</code>（一级），<code>services/pi-runtime/</code> 是 <code>../../docs/adr/</code>（两级）—— 我第一次就在这里错了一次，被自己的验证脚本抓出来。</p>
+</div>
+
+<h2><span class="n">04</span>登记不改的 19 条（历史事实，改了更糟）</h2>
+
+<p>按 <a href="https://github.com/sev7n4/pi-lnk/blob/master/docs/adr/0008-docs-index-over-doc-edits.md">ADR-0008</a>：<b>篡改历史记录比留死链更糟</b>。以下只登记，不改。</p>
+
+<table>
+<thead><tr><th style="width:44%">文件</th><th style="width:8%">条数</th><th>性质</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>docs/discussion/2026-09-19-pi-lnk-migration-discussion.md</code></td>
+  <td class="mono-sm">12</td>
+  <td>迁移期的目标文件（<code>packages/agent/src/*</code>、<code>packages/protocol/*</code> 等），是讨论纪要里的<b>当时计划</b></td>
+</tr>
+<tr>
+  <td><code>docs/README.md</code></td><td class="mono-sm">2</td>
+  <td>本节表格里登记的历史断链（<code>docs/extensions.md</code>、<code>deploy/AGENT_RUNTIME_PRODUCTION.md</code>）</td>
+</tr>
+<tr>
+  <td><code>docs/discussion/2026-10-04-work-task-guidance.md</code></td>
+  <td class="mono-sm">2</td>
+  <td>引用两份进度 HTML（<code>2026-10-03-prompt-audit-progress.html</code> 等）—— 那两份是<b>未跟踪文件</b>，不在库里</td>
+</tr>
+<tr>
+  <td><code>AGENTS.md</code> · <code>DEPENDENCIES.md</code></td>
+  <td class="mono-sm">2</td>
+  <td>都写 <code>docs/extensions.md</code>，实际在 <code>vendor/earendil-works/pi/packages/coding-agent/docs/</code>。裸文件名省略路径，上下文可读</td>
+</tr>
+<tr>
+  <td><code>docs/ops/RUNBOOK-old-runtime-retirement.md</code></td>
+  <td class="mono-sm">1</td>
+  <td>老 runtime 退役 runbook，引用已删的 <code>deploy/AGENT_RUNTIME_PRODUCTION.md</code></td>
+</tr>
+</tbody>
+</table>
+
+<div class="card p1">
+  <h3><span class="tag t-amber">另一类</span>5 条指向 <code>deploy-agent-runtime.yml</code></h3>
+  <p>分布在 <code>adr/0001</code> + <code>ops/</code> 下 3 份 runbook/postmortem。</p>
+  <p>该 workflow <b>随 LangGraph 链路删除而消失</b> —— 它记录的是「当时我们有过这条流水线」。修它= 篡改历史。</p>
+</div>
+
+<h2><span class="n">05</span>门禁怎么用</h2>
+
+<h3>接入位置</h3>
+<p>加进 <code>ci.yml</code> 已有的 <code>Verify spec figures</code> job ——<b>不新建 job</b>。新 job 不会自动成为 required check（需另配 branch protection），会「跑过了但没人拦」。</p>
+
+<h3>判定规则</h3>
+<table>
+<thead><tr><th style="width:20%">类型</th><th style="width:24%">范围</th><th style="width:16%">是否阻断</th><th>理由</th></tr></thead>
+<tbody>
+<tr><td><b>相对链接</b><br><code>](./x.md)</code></td><td>活跃资产 66 个 md</td><td>✅ <b>阻断</b>（exit 1）</td><td>读者点得开的东西，点不开就是 bug</td></tr>
+<tr><td><b>路径引用</b><br><code>`x/y.ts`</code></td><td>活跃资产</td><td>⚠️ 报告不阻断</td><td>可能是历史记录，也可能是裸文件名省略子目录 —— 机器判不准，人来看</td></tr>
+<tr><td>历史区<br><code>docs/superpowers/</code></td><td>—</td><td>排除（<code>--all</code> 可扫）</td><td>历史任务描述，刻意保留</td></tr>
+<tr><td><code>vendor/</code></td><td>—</td><td>排除</td><td>第三方镜像，禁止改</td></tr>
+</tbody>
+</table>
+
+<h3>命令</h3>
+<div class="card" style="font-size:14px">
+  <div class="mono-sm">pnpm verify-links&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 校验（CI 用这个）<br>
+  pnpm verify-links -- --all&nbsp;&nbsp;# 含历史区，全量排查时用<br>
+  pnpm verify-links -- --json&nbsp;&nbsp;# 机器可读输出</div>
+</div>
+
+<h3>注入测试（证明它真能抓到）</h3>
+<table>
+<thead><tr><th style="width:50%">注入</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>往 <code>docs/README.md</code> 加 <code>[坏链](./nonexistent-file-xyz.md)</code></td><td>✅ 抓到，exit=1，指到行号</td></tr>
+<tr><td>把 <code>DEPENDENCIES.md</code> 的 ADR 路径改回错的</td><td>✅ 抓到</td></tr>
+</tbody>
+</table>
+<p style="font-size:14px;color:var(--ink2)">开发过程中脚本自己撞出两个 bug：① 递归函数没传子目录 ⇒ <b>无限递归栈溢出</b>；② 第一次验证时字符串切片取错字符，把 <code>../</code> 截成 <code>./</code>，导致「修好了却报 BROKEN」。两者都是「第一次跑就红」抓到的。</p>
+
+<h2><span class="n">06</span>顺带修正：README 的断链表原本是错的</h2>
+
+<p>旧的「已知的历史文档断链」表列了 4 条，<b>但那 4 条后来被修好了</b>（#152 评审时顺手清的），而真正还断着的条目一个都没列。</p>
+
+<p>后果：以后照着这张表去查「还有哪些断链」会得到错误答案 —— 以为都清完了，实际没有，且没人知道是哪几条。</p>
+
+<p>已重写为当前的「<b>断链现状与处置</b>」：已修 4 条 / 已登记 19+5 条 / 审计范围与噪音控制说明，机器可重跑核对。</p>
+
+<h2><span class="n">07</span>留给后续的两件事</h2>
+
+<div class="card p0">
+  <h3><span class="tag t-red">待办</span>两份进度 HTML 是未跟踪文件</h3>
+  <p><code>docs/2026-10-03-prompt-audit-progress.html</code> 与 <code>docs/2026-10-04-prompt-engineering-progress.html</code> 被 <code>work-task-guidance.md</code> 引用，但它们<b>不在版本控制里</b>。</p>
+  <p>同类事故已发生过一次：<code>docs/README.md</code> 记载，两份提示词审计 HTML 曾因未跟踪，被 <code>git stash -u</code> 打进 stash 后该 stash 被 drop，从工作区与 master 双双消失，靠 <code>git fsck --lost-found</code> 才捞回。</p>
+  <p><b>建议：</b>要么提交入库，要么从引用处移除。这属另一次决策，本次不动（别人的文件）。</p>
+</div>
+
+<div class="card info">
+  <h3><span class="tag t-blue">建议</span>把审计结论接进 verify-claims</h3>
+  <p>现在 <code>verify-links</code> 是独立脚本。后续可考虑在 <code>docs/README.md</code> 里维护一份「已登记断链」清单，让脚本自动核对那张表是否与实况一致 —— 避免重演「表已过期但没人知道」。</p>
+</div>
+
+<footer>
+  报告由 <code>scripts/verify-links.ts</code> 实跑输出生成 · 数据基线 <code>426ad16a</code> · 审计范围 583 个 md（门禁实际扫 66 个活跃资产）<br>
+  全部数字可重跑核对：<code>pnpm verify-links</code> / <code>pnpm verify-links -- --json</code>
+</footer>
+
+</div>
+</body>
+</html>

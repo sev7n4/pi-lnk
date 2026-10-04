@@ -3,7 +3,7 @@
 > 记录 `services/pi-runtime` 对 `@earendil-works/pi-*` 各子包的**使用情况与理由**。
 > 目的：让"是否吃满内核能力"变成**可核对的事实**，而不是靠印象。
 >
-> 依据：[ADR-0009](./0009-vendor-capability-first.md)。最近核对：2026-10-03。
+> 依据：[ADR-0009](../../docs/adr/0009-vendor-capability-first.md)。最近核对：2026-10-03。
 
 ## 一、子包使用现状
 

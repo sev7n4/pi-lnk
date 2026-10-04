@@ -42,6 +42,9 @@ jobs:
       - name: Verify AGENTS.md factual claims
         run: pnpm verify-claims
 
+      - name: Verify markdown links (no broken relative links)
+        run: pnpm verify-links
+
       - name: Spec figures summary
         if: always()
         run: |
@@ -49,6 +52,7 @@ jobs:
           echo "- Rules: docs/superpowers/SPEC-CONVENTIONS.md §4 (R1–R8)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Scope: documents dated on/after 2026-09-22 (use --all for a full sweep)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Also: \`pnpm verify-claims\` checks AGENTS.md factual claims (counts / section names / workflow names / pinned versions)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Also: \`pnpm verify-links\` checks markdown relative links in active docs (vendor / historical plans excluded by design)" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build monorepo

@@ -25,6 +25,7 @@
 | [`../AGENTS.md`](../AGENTS.md) | **agent 在本仓库工作的唯一权威规范** —— 新增系统地图、角色边界、变更影响面矩阵、完成定义（DoD）、PR 规范 5 节；纠正 CI 触发面描述错误；计数改为可实测获取 | 活资产 —— **每次改动需回代码核实** |
 | [`superpowers/specs/2026-10-04-agents-md-hardening-design.md`](./superpowers/specs/2026-10-04-agents-md-hardening-design.md) | 本次整改的设计规格（含身份三层归属的决策依据） | 活资产 |
 | [`superpowers/plans/2026-10-04-agents-md-hardening.md`](./superpowers/plans/2026-10-04-agents-md-hardening.md) | 实施计划 | 活资产 |
+| [`link-audit-2026-10-04.html`](./link-audit-2026-10-04.html) | **Markdown 断链审计报告** —— 全仓 583 个 md，原始命中 604 条 ⇒ 真断链 14 条（已修 4 / 登记 19），含噪音收敛规则与门禁设计 | 活资产 —— 数字可用 `pnpm verify-links` 重跑核对 |
 | [`agents-md-review-2026-10-04.html`](./agents-md-review-2026-10-04.html) | AGENTS.md 评审报告（7 维度评分 + P0/P1/P2 问题清单），基线 `352b44f` | 活资产 —— **结论资产，已入库** |
 
 ⚠️ **本节的存在理由**：同目录的两份提示词审计 HTML 曾一度丢失（未跟踪文件被 `git stash -u`
@@ -79,22 +80,52 @@
 让"是否吃满内核能力"变成可核对的事实，而不是靠印象。依据见
 [ADR-0009](./adr/0009-vendor-capability-first.md)。
 
-## 已知的历史文档断链
+## 断链现状与处置（2026-10-04 审计）
 
-`superpowers/` 下的历史 plan/spec 有 4 处指向已删文件。这些引用本身是**历史任务描述或模板参考**，不是需要保持可用的活跃链接，因此**未做修改**（改历史记录比留死链更糟）：
+**机器校验**：`pnpm verify-links`（已接进 `ci.yml` 的 `Verify spec figures` step）。
+只校验**活跃资产**的 markdown 相对链接 —— 断链会让 PR 直接红。
 
-| 引用方 | 原引用 |
-|---|---|
-| `superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md:973` | 参考 `docs/adr/p4-atomic-create-adr.md` 等 ADR 模板 |
-| `superpowers/plans/2026-08-04-atomic-intent-hybrid-phases.md:346` | Create `docs/adr/p5-atomic-orchestration-boundary-adr.md` |
-| `superpowers/plans/2026-08-07-platform-route-skill-boundary.md:70,581` | Modify `docs/adr/p5-atomic-orchestration-boundary-adr.md` |
-| `superpowers/specs/2026-08-07-platform-route-skill-boundary-design.md:6` | supersede `docs/adr/p5-...` 规则 3 |
-| `superpowers/plans/2026-10-01-agent-progress-visible.md:15` | Spec 来源 `docs/mockups/agent-progress-ux-system.html`（线框稿，四张图与「待决项 1-10」即该计划任务来源） |
-| `superpowers/plans/2026-09-30-compaction-wiring.md:11` | Spec 来源 `docs/diagnostics/2026-09-30-...html` §06 F-01 |
+### 已修（4 条）
 
-> 若日后需要追溯这些内容，从 git 历史取回：
-> `git show <commit>:docs/adr/p5-atomic-orchestration-boundary-adr.md`
-> （删除前的最后一个 commit 即删除前状态）
+| 文件 | 原引用 | 修正为 |
+|---|---|---|
+| `discussion/2026-10-04-vendor-ext-review-registertool-pion.md` | `./0009-…md` `./0006-…md` `./0005-…md` | `../adr/…` |
+| `../services/pi-runtime/DEPENDENCIES.md` | `./0009-…md` | `../../docs/adr/…` |
+
+ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `services/pi-runtime/`，
+少了目录前缀就点不开。
+
+### 已登记不改（21 条「路径引用」）
+
+**按 ADR-0008「篡改历史记录比留死链更糟」，以下刻意保留，只登记。**
+
+| 文件 | 条数 | 性质 |
+|---|---|---|
+| `discussion/2026-09-19-pi-lnk-migration-discussion.md` | 12 | 迁移期的目标文件（`packages/agent/src/*` 等），讨论纪要里的**当时计划** |
+| `README.md`（本文件） | 4 | 下表登记的历史断链 |
+| `discussion/2026-10-04-work-task-guidance.md` | 2 | 引用已删的 spec |
+| `AGENTS.md` | 1 | `docs/extensions.md` 实际在 `vendor/` 下（裸文件名省略路径，上下文合法） |
+| `ops/RUNBOOK-old-runtime-retirement.md` | 1 | 老 runtime 退役runbook，引用已删的 `deploy/AGENT_RUNTIME_PRODUCTION.md` |
+| `../services/pi-runtime/DEPENDENCIES.md` | 1 | 同上，`docs/extensions.md` 在 vendor 下 |
+
+**另有 5 条指向 `deploy-agent-runtime.yml`**（`adr/0001` + `ops/` 下 3 份 runbook/postmortem）：
+该 workflow 随 LangGraph 链路删除而消失，是**历史事实**，不修。
+
+### 审计范围与噪音控制
+
+全仓 583 个 md，原始命中 **604 条** ⇒ 真断链 14 条。收敛靠四条排除规则：
+
+| 排除项 | 条数 | 理由 |
+|---|---|---|
+| `vendor/` | ~500 | 第三方只读镜像，文档写的是他们自己的仓库结构。**禁止业务 patch**，改了无法与上游合并 |
+| `docs/superpowers/` | ~260 | 历史 plan/spec 的「要创建 XXX 文件」是**当初的任务描述**，文件不在了正常 |
+| 裸文件名引用 | 大量 | 如 `prompt-registry.loader.ts` 省略子目录，文件真实存在，上下文合法 |
+| `.workbuddy/` `.superpowers/` | — | 私有记忆与临时产物，非仓库资产 |
+
+⇒ 门禁实际只扫 **66 个活跃资产 md**，噪音从 604 降到 21（且这 21 条只报告不阻断）。
+
+> **为什么人工审计不可持续**：这次手工扫 583 个 md **两次都超时**。
+> 所以要做的是机器化门禁，而不是一次性大扫除。
 
 ## `superpowers/` 索引（2026-10-03 已补）
 
