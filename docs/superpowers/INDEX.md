@@ -36,7 +36,7 @@
 | 部署与基础设施 | 4 | 2 |
 | 长期记忆 | 4 | 3 |
 | 上下文工程 | 3 | 3 |
-| 提示词注册表 | 2 | 2 |
+| 提示词注册表 | 3 | 3 |
 
 ---
 
@@ -518,12 +518,13 @@
 
 </details>
 
-### 提示词注册表（2 份）
+### 提示词注册表（3 份）
 
-<details><summary>🟢 living · 2 份</summary>
+<details><summary>🟢 living · 3 份</summary>
 
 - `docs/superpowers/plans/2026-10-02-w1a-prompt-registry.md`
 - `docs/superpowers/specs/2026-10-02-w1a-prompt-registry-design.md` ★design
+- `docs/superpowers/specs/2026-10-04-prompt-engineering-design.md` ★design —— 提示词工程规格 + 外部建议稿否决清单
 
 </details>
 
@@ -549,6 +550,11 @@ python3 gen_index_md.py                  # 重新生成本文件
 ```
 
 新增文档后需重跑，并把新文档登记到 `docs/README.md`。
+
+> ⚠️ **2026-10-04 实测：上面两个脚本在仓库里不存在**（`docs/superpowers/*.py` 为空）。
+> 本索引最后更新时手工维护，新增条目需**手工补到对应主题分组 + 同步两处计数**。
+> 同批发现的失效指针：`docs/README.md` 的 `superpowers/` 行也写了「索引可重跑」，
+> 同样已失效。**恢复生成器是独立待办，不在本规格范围内。**
 
 ## 维护约定
 
