@@ -44,7 +44,7 @@
 - **vendor 同步是人工活**：上游发版要评估（规则：≥3 个 minor 版本触发季度评审）
 - **两套包名并存**：`@lnkpi/*`（多数）与 `@pi-lnk/*`（pi-runtime / pi-poc），D-ε 统一决策至今未完成
 - **版本号易混**：上游 tag `0.85.1` / vendor 内部号 `0.0.3` / 历史镜像 tag `0.0.1~0.0.41` 三套并存，
-  需专门写查询规范（见 `AGENTS.md`「pi 内核版本」节）
+  需专门写查询规范（见 [`docs/agent/architecture.md`](../agent/architecture.md)「pi 内核版本」节）
 
 **将来要注意**
 - 若上游 API 出现破坏性变更，评估「换内核」的成本，**不要**在 vendor 里打业务 patch 硬扛

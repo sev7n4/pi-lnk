@@ -105,6 +105,20 @@ check('判据1 · AGENTS.md 正文无会漂移的规模计数', () => {
 // 这些名字被 ADR 与 charts README 按名引用，改标题会静默断链。
 // ⚠️ 校验用「标题行包含关键词」而非「## + 裸名」——实际标题含 emoji 与副标题
 //    （真实例：`## ⭐ 分支纪律（最高优先级）`）。
+// ── 判据 2：受保护的章节名必须存在（防外部引用断链）─────────────────────
+// ⚠️ 校验范围是「规范体系」而非单一文件：AGENTS.md 拆分后章节下沉到 docs/agent/*.md，
+//    引用方指向的是「哪个文件里有个叫这个名字的章节」，不是「AGENTS.md 里有」。
+//    只扫 AGENTS.md 会让拆分必然红 —— 那就成了拦路石而非护栏。
+// 这些名字被 ADR 与 charts README 按名引用，改标题会静默断链。
+// ⚠️ 校验用「标题行包含关键词」而非「## + 裸名」——实际标题含 emoji 与副标题
+//    （真实例：`## ⭐ 分支纪律（最高优先级）`）。
+const SPEC_FILES = [
+	join(ROOT, 'AGENTS.md'),
+	...['delivery.md', 'architecture.md', 'docs.md', 'environment.md'].map((f) =>
+		join(ROOT, 'docs/agent', f)
+	),
+];
+
 const PROTECTED_HEADINGS = [
 	'分支纪律',
 	'文档管理规范',
@@ -121,15 +135,31 @@ const PROTECTED_HEADINGS = [
 	'PR 规范',
 ];
 
-check('判据2 · 受保护章节名全部在位（防 ADR/charts 引用断链）', () => {
-	const text = readFileSync(AGENTS, 'utf8');
-	const heads = text.split('\n').filter((l) => l.startsWith('## '));
-	const missing = PROTECTED_HEADINGS.filter((k) => !heads.some((h) => h.includes(k)));
+check('判据2 · 受保护章节名在规范体系内全部在位（防 ADR/charts 引用断链）', () => {
+	const allHeads: string[] = [];
+	const foundIn = new Map<string, string>();
+	for (const f of SPEC_FILES) {
+		if (!existsSync(f)) continue;
+		const heads = readFileSync(f, 'utf8')
+			.split('\n')
+			.filter((l) => l.startsWith('## '));
+		for (const h of heads) {
+			allHeads.push(h);
+			for (const k of PROTECTED_HEADINGS) {
+				if (h.includes(k) && !foundIn.has(k)) foundIn.set(k, f.replace(ROOT + '/', ''));
+			}
+		}
+	}
+	const missing = PROTECTED_HEADINGS.filter((k) => !foundIn.has(k));
 	if (missing.length > 0) {
+		const scanned = SPEC_FILES.filter((f) => existsSync(f))
+			.map((f) => f.replace(ROOT + '/', ''))
+			.join('、');
 		return {
 			ok: false,
 			msg:
 				`缺失章节：${missing.join('、')}\n` +
+				`  ⇒ 已扫描：${scanned}\n` +
 				`  ⇒ 这些章节名被 ADR-0001/0008/0009 与 charts/pi-lnk-runtime/README.md 按名引用。\n` +
 				`  ⇒ 若确实要改标题，必须同步改引用方，并更新 docs/README.md 的「外部引用契约」。`,
 		};
@@ -188,10 +218,24 @@ check('判据3 · 四条 workflow 名与 .github/workflows/ 实际文件一致',
 
 check('判据4 · pi 内核版本与 services/pi-runtime/package.json 一致', () => {
 	const pkgPath = join(ROOT, 'services/pi-runtime/package.json');
-	const text = readFileSync(AGENTS, 'utf8');
-	const claimed = text.match(/当前唯一版本：`([\d.]+)`/);
+	// 版本声明随「pi 内核版本」节搬到了 docs/agent/architecture.md，
+	// 所以在整个规范体系里找，而不是只找 AGENTS.md。
+	let claimed: RegExpMatchArray | null = null;
+	let where = '';
+	for (const f of SPEC_FILES) {
+		if (!existsSync(f)) continue;
+		const m = readFileSync(f, 'utf8').match(/当前唯一版本：`([\d.]+)`/);
+		if (m) {
+			claimed = m;
+			where = f.replace(ROOT + '/', '');
+			break;
+		}
+	}
 	if (!claimed) {
-		return { ok: false, msg: '未找到「当前唯一版本」声明，无法校验' };
+		return {
+			ok: false,
+			msg: `规范体系内未找到「当前唯一版本」声明（扫了 ${SPEC_FILES.length} 个文件），无法校验`,
+		};
 	}
 	const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 	const actual = (pkg.dependencies ?? {})['@earendil-works/pi-agent-core'];
@@ -201,7 +245,9 @@ check('判据4 · pi 内核版本与 services/pi-runtime/package.json 一致', (
 	if (actual !== claimed[1]) {
 		return {
 			ok: false,
-			msg: `AGENTS.md 声称 ${claimed[1]}，package.json 实际 ${actual}\n  ⇒ 改 package.json 时必须同步改 AGENTS.md 的「pi 内核版本」节。`,
+			msg:
+				`${where} 声称 ${claimed[1]}，package.json 实际 ${actual}\n` +
+				`  ⇒ 改 package.json 时必须同步改该文件「pi 内核版本」节。`,
 		};
 	}
 	return { ok: true };

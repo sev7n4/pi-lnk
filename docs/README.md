@@ -31,18 +31,28 @@
 打进 stash 后该 stash 被 drop），只存在于悬空对象里，靠 `git fsck --lost-found` 捞回。
 **审计/评审报告这类"结论资产"必须入库，不能只放工作区。** 本次评审报告从创建起即为tracked。
 
-⚠️ **外部引用契约**：`AGENTS.md` 的以下章节名被 ADR 与 charts README 按名引用，
-**改动时必须保持标题文本不变**（注意部分标题含 emoji 与副标题，如`## ⭐ 分支纪律（最高优先级）`）：
-`分支纪律` / `文档管理规范` / `pi 内核版本` / `端口约定` / `仓库结构` /
-`必须先做的事` / `核心 skill 路由` / `本机环境`
+⚠️ **外部引用契约**：规范体系（`AGENTS.md` + `docs/agent/*.md`）里的以下章节名
+被 ADR 与 charts README 按名引用，**改动时必须保持标题文本不变**
+（注意部分标题含 emoji 与副标题，如 `## ⭐ 分支纪律（最高优先级）`）：
 
-引用方：`adr/0001`（pi 内核版本）、`adr/0008`（文档管理规范）、
-`adr/0009`（pi-runtime 开发纪律）、`charts/pi-lnk-runtime/README.md`（端口表）。
+| 章节名 | 所在文件 | 引用方 |
+|---|---|---|
+| `pi 内核版本` / `pi-runtime 开发纪律` / `端口约定` | `docs/agent/architecture.md` | `adr/0001`、`adr/0009`、`charts/pi-lnk-runtime/README.md` |
+| `文档管理规范` | `docs/agent/docs.md` | `adr/0008`（2 处） |
+| `分支纪律` / `仓库结构` / `必须先做的事` / `核心 skill 路由` / `本机环境` | `docs/agent/*.md` | `docs/adr/README.md` 等 |
+| `系统地图` / `你的角色与边界` / `变更影响面矩阵` / `完成定义` / `PR 规范` | `AGENTS.md` | — |
+
+`pnpm verify-claims` 的判据 2 校验这一点，**扫的是整个规范体系**（主文件 +
+`docs/agent/*.md`），所以章节下沉后仍算在位 —— 这是拆分后刻意保持的护栏。
+
+> 2026-10-04 拆分前，这些章节全部在 `AGENTS.md` 单文件里（526 行）。
+> 拆分是为了让主文件只留「任何上下文都要看得见」的内容。
 
 ## 保留的目录
 
 | 目录 | 内容 | 性质 |
 |---|---|---|
+| `agent/` | **agent 规范专题文件**（2026-10-04 从 `AGENTS.md` 拆出）—— `delivery.md` 交付流程 / `architecture.md` 架构与内核 / `docs.md` 文档管理 / `environment.md` 本机环境。主文件 `../AGENTS.md` 保留「任何上下文都要看得见」的 5 节并给出导航 | 活资产 —— 章节名受上方「外部引用契约」约束 |
 | `adr/` | **架构决策记录**（0001-0009 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
 | `workflow/` | Agent 工作流交换契约（`README.md` + `examples/*.json`） | **活跃资产** —— 外部 Agent（WorkBuddy / Codex 等）靠它生成可导入画布的 JSON。校验函数是 `@lnkpi/shared` 的 `validateWorkflow`，代码里由 `useWorkflowExchange.ts`、`compositionLint.ts` 等消费。**不要删。** |
 | `superpowers/` | 历史 spec 与 plan（283 份：specs 137 / plans 146） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 +状态（🟢living / 🔒frozen / ⛔superseded）分组。索引可重跑：`python3 gen_index.py && python3 gen_index_md.py` |
