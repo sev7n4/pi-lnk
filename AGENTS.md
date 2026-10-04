@@ -325,6 +325,66 @@ pi-lnk/
 > `PI_RUNTIME_MODE=off` 是**维护态关停**（chat 与心跳都报不可用），不是「切回另一条链路」——
 > 老 LangGraph 链路（`services/agent-runtime`）已彻底删除，没有第二条可切。
 
+## 系统地图
+
+改之前先知道东西在哪、改哪层会走哪条流水线。**这一节的所有事实都经实测核实，改动时先复核。**
+
+### 请求链路
+
+```
+浏览器 → nginx(:8888) → Nest apps/server(:5100) → pi-runtime(K3s NodePort 30100，外网不可达)
+        → vendor pi(services/pi-runtime) → 上游模型
+```
+
+- `AGNES_MODEL_ID` 线上是**空串**（`??` 不兜底）⇒ LLM 实际靠 BYOK 注入
+- 生产库是 **SQLite**；`/opt/lnkpi/.env` 是维护态止血开关（改 `PI_RUNTIME_MODE` + `compose up -d --force-recreate api`）
+- **画布 SSOT 在前端**（`saveCanvas` 整份覆盖）；`add_node` 有**两份 applier 必须同步**
+- 前端**无 CSP**（`nginx.conf` 无该头）⇒ iframe sandbox 配错没有第二道防线
+
+### 四条流水线的触发面（改哪层走哪条）
+
+| workflow | 触发条件 | 覆盖 |
+|---|---|---|
+| `ci.yml` | `push`(master) 走 paths-ignore；**`pull_request` 无任何 paths 过滤** | 全仓构建 + 测试 |
+| `deploy.yml` | `push`(master) + paths 白名单：server / web / packages / deploy / prompt-registry / package.json / pnpm-lock / pnpm-workspace / .dockerignore / 自身 | api + web |
+| `runtime-deploy.yml` | **纯 `workflow_dispatch`，无 push 触发** | pi-runtime |
+| `prompt-lint.yml` | paths 触发：`prompt-registry/**`、`prompt-registry.*`、`prompt-lint.ts` | 提示词门禁 |
+
+⚠️ **最容易踩的静默失败**：改 `services/pi-runtime/**`、`skills/**`、`vendor/**` 后 push 到 master，
+`runtime-deploy.yml` **不会自动跑** —— CI 全绿但线上没有任何变化。
+这三类改动合并后必须手工发一次，且 **tag = master 的 commit 短 SHA**（非语义版号）。
+
+## 你的角色与边界
+
+**关于「身份」的一句说明**：本文件不定义人格（沟通语气、主动性偏好）——那属于宿主层配置，
+换模型/换宿主即失效且无法验证。这里只定义**你能做什么、什么必须先问人**，因为这部分与仓库强绑定。
+
+### 必须先问人的红线
+
+以下操作**一律先向人确认**，不要自行执行：
+
+1. 动 `apps/server/prisma/schema.prisma` 或任何数据迁移
+2. 动积分 / 扣分 / 退款逻辑
+3. 改 `prompt-registry` 预算（L6 上限 3200 字符，当前余量约 320）
+4. 任何生产止血操作：改 `PI_RUNTIME_MODE`、改 helm values、重发镜像 tag
+5. 向 master 直接提交
+
+### 可自主决定的范围
+
+以下可以自己决定，不必打断人：单文件改动、加测试、写文档、跑只读命令、
+修 typo、改注释与格式化。前提是改动不触及上面的红线，且落在 DoD 的自检范围内。
+
+### 越界信号
+
+**「我不确定这条规则是否适用」⇒ 停下问，不要猜。**
+
+这一条是本节最重要的。以下情形都适用它：
+- 引用文档里的事实性数字前**先实测**（本文档不写会漂移的计数）
+- 改动跨越了本文档没覆盖的层
+- 需要绕过某条规则才能往下做
+
+猜错的代价远高于问一句的代价。核实成本也就一条命令。
+
 ## 必须先做的事
 
 - **动手前先读相关代码，不凭印象改。** 本仓库历史上多次因"凭印象画/写"被退回：
