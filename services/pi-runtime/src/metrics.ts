@@ -76,6 +76,7 @@ export class Metrics {
 	private directImages = new Map<string, number>(); // key: outcome (sent|downscaled|fallback)
 	private directImageTokens = 0; // 直通图片 token 估算累计（成本闸门观测）
 	private payloadTrims = new Map<string, number>(); // key: reason (history_image|overflow|text_overflow)
+	private toolResultTrims = new Map<string, number>(); // key: tool（统一上限触发的截断次数）
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
 
@@ -239,6 +240,14 @@ export class Metrics {
 		this.payloadTrims.set(reason, (this.payloadTrims.get(reason) ?? 0) + 1);
 	}
 
+	/**
+	 * 工具结果统一上限触发的截断（审计「缺统一上限」）。
+	 * 未打点时 Map 为空 ⇒ 不渲染数据行，使「从未超预算」与「超了但计数为 0」可区分。
+	 */
+	observeToolResultTrim(tool: string): void {
+		this.toolResultTrims.set(tool, (this.toolResultTrims.get(tool) ?? 0) + 1);
+	}
+
 	/** systemPrompt 总长水位（static+dynamic），每次组装后刷新（gauge 语义：取最新值）。 */
 	observeSystemPromptBytes(n: number): void {
 		this.systemPromptBytes = n;
@@ -396,6 +405,12 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_before_payload_trims_total counter");
 	for (const [reason, count] of [...this.payloadTrims.entries()].sort()) {
 		lines.push(`pi_runtime_before_payload_trims_total{reason="${esc(reason)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_tool_result_trims_total Tool results capped by the unified tool-result budget, by tool.");
+	lines.push("# TYPE pi_runtime_tool_result_trims_total counter");
+	for (const [tool, count] of [...this.toolResultTrims.entries()].sort()) {
+		lines.push(`pi_runtime_tool_result_trims_total{tool="${esc(tool)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_transform_context_runs_total transform_context hook runs, by whether the goal was restated.");

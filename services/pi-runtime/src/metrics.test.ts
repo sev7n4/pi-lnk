@@ -194,3 +194,16 @@ test("before_payload trims 按 reason 计数渲染", () => {
 	assert.match(out, /pi_runtime_before_payload_trims_total\{reason="history_image"\} 2/);
 	assert.match(out, /pi_runtime_before_payload_trims_total\{reason="text_overflow"\} 1/);
 });
+
+test("统一上限：tool_result_trims 按工具名计数，未打点则不渲染（区分「从未超预算」与「超了但 0」）", () => {
+	const m = new Metrics();
+	const clean = m.render(0, "test");
+	assert.ok(!/pi_runtime_tool_result_trims_total\{/.test(clean), "未打点时不应出现数据行");
+
+	m.observeToolResultTrim("get_canvas_summary");
+	m.observeToolResultTrim("get_canvas_summary");
+	m.observeToolResultTrim("web_fetch");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_tool_result_trims_total\{tool="get_canvas_summary"\} 2/);
+	assert.match(out, /pi_runtime_tool_result_trims_total\{tool="web_fetch"\} 1/);
+});

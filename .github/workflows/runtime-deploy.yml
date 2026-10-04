@@ -162,7 +162,9 @@ jobs:
             --set-string env.PI_RUNTIME_DYNAMIC_BUDGET=true \
             --set-string env.PI_RUNTIME_DYNAMIC_BUDGET_TOTAL_CHARS=48000 \
             --set-string env.PI_RUNTIME_DIRECT_IMAGES=true \
-            --set-string env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2"
+            --set-string env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2 \
+            --set-string env.PI_RUNTIME_TOOL_RESULT_BUDGET=true \
+            --set-string env.PI_RUNTIME_TOOL_RESULT_MAX_CHARS=24000"
 
       - name: Rollout + triple verify (digest / env / healthz)
         run: |

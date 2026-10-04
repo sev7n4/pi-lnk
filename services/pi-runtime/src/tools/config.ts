@@ -45,7 +45,9 @@ export function resolveToolsWithClient(
 		timeoutOverrides: TOOL_TIMEOUT_OVERRIDES,
 		onCall: (tool, outcome, info) => {
 			metrics.observeToolCall(tool, outcome, info?.errorKind);
-			if (info?.resultBytes !== undefined) metrics.observeToolResult(tool, info.resultBytes);
+			// 体积观测（observeToolResult）已于 2026-10-04 统一移到 after_tool hook：
+			// 那里量的是**真正进上下文**的 content 字节，且覆盖本地工具（此前只有 Nest 客户端这一半）。
+			// 两处都打会让同一条结果被计两次，故此处不再打点。
 		},
 	});
 	const hasTavily = !!process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY !== "REPLACE_ME";

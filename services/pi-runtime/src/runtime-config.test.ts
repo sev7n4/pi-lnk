@@ -198,6 +198,18 @@ describe("effectiveCompactionSettings（审计 P0-①）", () => {
 		assert.equal(off.directImages, false);
 	});
 
+	it("工具结果统一上限：缺省开启 24000；可整体关闭、可改上限", () => {
+		const def = loadRuntimeConfig({});
+		assert.equal(def.toolResultBudget, true);
+		assert.equal(def.toolResultMaxChars, 24_000);
+		const off = loadRuntimeConfig({ PI_RUNTIME_TOOL_RESULT_BUDGET: "off" });
+		assert.equal(off.toolResultBudget, false);
+		const sized = loadRuntimeConfig({ PI_RUNTIME_TOOL_RESULT_MAX_CHARS: "8000" });
+		assert.equal(sized.toolResultMaxChars, 8_000);
+		const bad = loadRuntimeConfig({ PI_RUNTIME_TOOL_RESULT_MAX_CHARS: "0" });
+		assert.equal(bad.toolResultMaxChars, 24_000, "非正数回落缺省，绝不静默变成 0 上限");
+	});
+
 	it("compactionRetention：缺省 true；PI_RUNTIME_COMPACTION_RETENTION=off → false", () => {
 		const def = loadRuntimeConfig({});
 		assert.equal(def.compactionRetention, true);
