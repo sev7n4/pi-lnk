@@ -548,6 +548,65 @@ describe('StudioService integration (provider params)', () => {
     })
   })
 
+  // 回归锁：生产 18/18 条 audio 记录落库 soundhelix 示例曲、hasTtsData 全 false、
+  // 扣费 18 笔退款 0 笔。根因是provider 层吞异常返占位 ⇒ 不进 catch ⇒ 不退款。
+  // 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.2
+  it('refunds and writes no completed record when the audio provider throws', async () => {
+    const prisma = (svc as unknown as { prisma: Record<string, unknown> }).prisma
+    const created: Record<string, unknown>[] = []
+    const genCreate = (prisma.generationRecord as { create: (a: unknown) => Promise<unknown> }).create
+    ;(prisma.generationRecord as { create: unknown }).create = async (args: unknown) => {
+      const a = args as { data: Record<string, unknown> }
+      // 只记录终态成功记录；失败路径不应产生 completed
+      if (a.data.status === 'completed') created.push(a.data)
+      return { id: 'g1', createdAt: new Date(), ...a.data }
+    }
+    const refund = vi.fn(async () => undefined)
+    ;(svc as unknown as { points: { refund: unknown } }).points.refund = refund
+
+    vi.mocked(createAudioProvider).mockReturnValueOnce({
+      generate: async () => {
+        throw new Error('TTS API 503: model_not_found')
+      },
+    } as never)
+
+    await expect(svc.generateAudio('u1', '你好')).rejects.toThrow(/503/)
+
+    expect(refund).toHaveBeenCalled()
+    expect(created).toHaveLength(0)
+    expect(genCreate).toBeDefined()
+  })
+
+  // 回归锁：`url.startsWith('data:') ? AUDIO_PLACEHOLDER : url` 曾把真实 TTS 产物
+  // 替换成示例曲。data: URL 现在必须落盘，且 hasTtsData 为 true。
+  it('persists a data: audio url to storage instead of a placeholder', async () => {
+    const prisma = (svc as unknown as { prisma: Record<string, unknown> }).prisma
+    let createdData: Record<string, unknown> | null = null
+    ;(prisma.generationRecord as { create: unknown }).create = async (args: unknown) => {
+      createdData = (args as { data: Record<string, unknown> }).data
+      return { id: 'g1', createdAt: new Date(), ...createdData }
+    }
+    const upload = (svc as unknown as { upload: { saveUserFile: ReturnType<typeof vi.fn> } }).upload
+    upload.saveUserFile.mockResolvedValueOnce({ url: 'https://cdn.example.com/u1/tts.mp3' } as never)
+    upload.saveUserFile.mockClear()
+
+    vi.mocked(createAudioProvider).mockReturnValueOnce({
+      generate: async () => ({ url: 'data:audio/mpeg;base64,QUJD' }),
+    } as never)
+
+    await svc.generateAudio('u1', '你好')
+
+    expect(upload.saveUserFile).toHaveBeenCalledOnce()
+    const [, buffer] = upload.saveUserFile.mock.calls[0]
+    expect(Buffer.isBuffer(buffer)).toBe(true)
+    expect((buffer as Buffer).toString('utf8')).toBe('ABC')
+
+    const data = createdData as unknown as Record<string, unknown>
+    expect(data.url).toBe('https://cdn.example.com/u1/tts.mp3')
+    expect(String(data.url)).not.toContain('soundhelix')
+    expect(JSON.parse(String(data.metadata)).hasTtsData).toBe(true)
+  })
+
   it('resolves text model via catalog gateway id when no image refs', async () => {
     await svc.generateText('u1', 'hello world', 'gemini-3.1-flash')
 

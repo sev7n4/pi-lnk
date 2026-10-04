@@ -123,11 +123,32 @@ import { UploadService } from '../upload/upload.service'
 import sharp from 'sharp'
 import { hasCompositionPBlock } from './video-generation-request.util'
 
-const AUDIO_PLACEHOLDER = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
-
 // Grace window before returning the async `generating` record: fast image
 // providers usually finish within this, sparing the client a polling round.
 const IMAGE_FAST_PATH_MS = 3000
+
+/**
+ * 把 TTS provider 返回的 `data:audio/mpeg;base64,...` 落成真实文件，返回可持久化的 URL。
+ *
+ * ⚠️ 历史包袱（2026-10-04 修）：此前这里写的是
+ * `const storeUrl = url.startsWith('data:') ? AUDIO_PLACEHOLDER : url`
+ * ——即**真实 TTS 产物被替换成 soundhelix 示例曲**，而失败兜底返回的 https
+ * soundhelix 却原样落库。两条路都指向同一个假 URL，于是生产 18/18 条audio
+ * 记录都是示例曲、`hasTtsData` 全false、扣费 18 笔退款 0 笔。
+ *
+ * 现在没有占位可替换了，`data:` 必须落盘（否则整段 base64 会被写进 SQLite）。
+ */
+function decodeAudioDataUrl(dataUrl: string): { buffer: Buffer; mimeType: string } {
+  const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(dataUrl)
+  if (!match) throw new Error('音频 provider 返回了无法解析的 data URL')
+  const mimeType = match[1]
+  const payload = match[3] ?? ''
+  const buffer = match[2]
+    ? Buffer.from(payload, 'base64')
+    : Buffer.from(decodeURIComponent(payload), 'utf8')
+  if (buffer.length === 0) throw new Error('音频 provider 返回了空音频数据')
+  return { buffer, mimeType }
+}
 
 const segmentTimestamps = new Map<string, number[]>()
 
@@ -2279,7 +2300,17 @@ export class StudioService {
         built.text,
         audioOpts,
       )
-      const storeUrl = url.startsWith('data:') ? AUDIO_PLACEHOLDER : url
+      const hasTtsData = url.startsWith('data:')
+      const storeUrl = hasTtsData
+        ? (
+            await this.upload.saveUserFile(
+              userId,
+              decodeAudioDataUrl(url).buffer,
+              'tts.mp3',
+              'audio/mpeg',
+            )
+          ).url
+        : url
       if (cancel?.isCancelled()) {
         await this.points.refund(
           userId,
@@ -2311,7 +2342,7 @@ export class StudioService {
                 speed: options.speed ?? 1,
                 volume: options.volume,
                 pitch: options.pitch,
-                hasTtsData: url.startsWith('data:'),
+                hasTtsData,
                 channelId: resolved.channelId,
               },
               cost,
@@ -2585,7 +2616,17 @@ export class StudioService {
           record.prompt,
           audioOptions as { model?: string; voice?: string; speed?: number; volume?: number; pitch?: number },
         )
-        const storeUrl = url.startsWith('data:') ? AUDIO_PLACEHOLDER : url
+        const hasTtsData = url.startsWith('data:')
+        const storeUrl = hasTtsData
+          ? (
+              await this.upload.saveUserFile(
+                record.userId,
+                decodeAudioDataUrl(url).buffer,
+                'tts.mp3',
+                'audio/mpeg',
+              )
+            ).url
+          : url
         if (cancel?.isCancelled()) {
           await this.points.refund(
             userId,
@@ -2604,7 +2645,7 @@ export class StudioService {
               ...chargedMeta,
               audioOptions,
               gatewayModelId: platformModel,
-              hasTtsData: url.startsWith('data:'),
+              hasTtsData,
               providerFallback: true,
               channelId: 'platform',
             }),
