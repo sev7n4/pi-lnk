@@ -466,6 +466,48 @@ pi-lnk/
 > `using-superpowers` 管**"该不该用 skill、按什么顺序用"**；
 > `branch-first-dev-workflow` 管**"git 操作怎么走"**。两者不冲突，是不同维度。
 
+## 完成定义（提交前自检）
+
+**全部是可执行命令，不是原则性表述。**
+
+### 提交前必跑
+
+| # | 命令 | 为什么 |
+|---|---|---|
+| 1 | `pnpm -r build` | **vitest 绿 ≠ tsc 绿**（esbuild 只转译）；web 走 `vue-tsc -b` |
+| 2 | `pnpm test:server:changed` / `pnpm test:runtime` | 默认只跑变更相关；全量是 CI 的活 |
+| 3 | 引用了文档里的事实性数字 ⇒ **先实测再写** | 见「越界信号」 |
+| 4 | 改 `prompt-registry/**` ⇒ `pnpm prompt:lint` | 门禁独立于 `ci.yml` |
+| 5 | 改 `vendor/` ⇒ 确认**零业务 patch** | 否则 upmerge 无法与上游对齐 |
+
+### 合并前必看
+
+- `gh pr view <n> --json mergeStateStatus` —— `BLOCKED` = required check 未过，**GitHub 不允许绕过**
+- required checks = `["Verify spec figures", "Build monorepo", "Build API Docker image"]`
+- ⚠️ **`Test Files N passed` ≠ CI 会绿**：必须同看 `Errors N errors` 与末尾 `Exit status`。
+  实测 180 files / 1449 tests 全 passed 但 `Errors 11` ⇒ exit 1
+- ⚠️ **CI 全量测试不在独立 job**：`pnpm test` 是 `Build monorepo` 内的一个 step，
+  `gh pr checks` 看不到它，须下钻：
+  `gh run view <id> --json jobs --jq '.jobs[].steps[]|"\(.name) :: \(.conclusion)"'`
+
+### 合并后（上线验证）
+
+- 改 pi-runtime / skills / vendor ⇒ **必须手工发 `runtime-deploy.yml`**（见「系统地图」）
+- pi-runtime tag = master 的 commit 短 SHA
+- 生产取证：curl 免鉴端点比数量/字符数，或容器内 `require(dist/...)` 读真值
+- ⚠️ **别只看 workflow 绿了就assume 已上线**
+
+## PR 规范
+
+四个**必填项**，缺任一项评审人有权打回。模板见 `.github/pull_request_template.md`。
+
+| 项 | 要求 | 拦的是什么 |
+|---|---|---|
+| **变更动机** | 解决什么问题，一两句 | 防止「顺手改」混入 |
+| **影响面** | 哪几层 / 哪几个端点 / 是否改提示词或工具分层 | 评审人不知道该看哪 |
+| **验证证据** | 跑了什么命令、看到什么输出 | 防止「跑过了」当证据 |
+| **是否需手工发 runtime 流水线** | 是 / 否 + tag | 防止「CI 绿了但没上线」的静默失败 |
+
 ## 本机环境
 
 ```bash
