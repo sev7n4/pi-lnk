@@ -543,3 +543,57 @@ describe('AgnesVideoProvider', () => {
     expect(body).not.toHaveProperty('image')
   })
 })
+
+// 回归锁：生产 374 条 video 失败样本里 171 条（46%）是可重试的
+//（99 条 `429 rate limit` + 72 条 `503 video_queue_full` + 11 条 `fetch failed`），
+// 而改前**零重试**。见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.4
+// ⚠️ 只包「创建」阶段，轮询阶段的 `continue` 已是「等下一轮」语义，不重复包。
+describe('AgnesVideoProvider 创建阶段退避重试', () => {
+  const env = { ...process.env }
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    process.env = { ...env }
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    process.env = env
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('retries the create call on 429 and eventually succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limit for free users' })
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'video_queue_full' })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ video_id: 'vid-9' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', url: 'https://e/v.mp4' }) })
+
+    const p = new AgnesVideoProvider('k', 'https://apihub.agnes-ai.com/v1', 'https://apihub.agnes-ai.com', 'agnes-video-v2.0', 1, 2, 1)
+    const out = await p.generate('animate')
+
+    expect(out.url).toBe('https://e/v.mp4')
+    // 3 次 create + 1 次 poll
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('does NOT retry a 400 invalid_request (params are wrong, retry is futile)', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 400, text: async () => 'invalid_request: num_frames exceeds max' })
+
+    const p = new AgnesVideoProvider('k', 'https://apihub.agnes-ai.com/v1', 'https://apihub.agnes-ai.com', 'agnes-video-v2.0', 1, 2, 1)
+    await expect(p.generate('animate')).rejects.toThrow(/400/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up after 3 attempts and surfaces the last error', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, text: async () => 'video_queue_full' })
+
+    const p = new AgnesVideoProvider('k', 'https://apihub.agnes-ai.com/v1', 'https://apihub.agnes-ai.com', 'agnes-video-v2.0', 1, 2, 1)
+    await expect(p.generate('animate')).rejects.toThrow(/video_queue_full/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
