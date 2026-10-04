@@ -195,7 +195,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			/**
 			 * 旧指标 `pi_runtime_llm_prompt_errors_total{reason}` **保留一个发布周期**，
 			 * 避免既有告警/看板断档；但它不再是唯一手段，也不再承担分类职责——
-			 * 2 值的 `/429|rate/` 正则把「上游 5xx」「网络不可达」「凭据失效」全塌成
+			 * 2 值的 `/429|rate/i` 正则把「上游 5xx」「网络不可达」「凭据失效」全塌成
 			 * `upstream_error`，排障时看不出该找谁。下面这条才是分类事实源。
 			 */
 			const reason = /429|rate/i.test(msg) ? "upstream_rate_limited" : "upstream_error";

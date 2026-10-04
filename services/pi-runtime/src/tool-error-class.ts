@@ -77,5 +77,9 @@ export function classifyToolOutcome(input: {
  *   （恒有值，不会返回 null——`isError: true` 分支不产出 null）。
  */
 export function classifyLlmErrorText(text: string): ToolErrorClass {
-	return classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass ?? "internal";
+	// 恒有值：`isError: true` 走过所有正则后必有 `return`，最后一次兜底为 "internal"，
+	// 该分支不产出 null。故此处不需要 `?? "internal"`（那会把不存在的 null 路径写成看似可选）。
+	const { errorClass } = classifyToolOutcome({ isError: true, terminate: false, resultText: text });
+	if (errorClass === null) throw new Error("classifyToolOutcome 在 isError:true 下返回了 null，分类器契约被破坏");
+	return errorClass;
 }

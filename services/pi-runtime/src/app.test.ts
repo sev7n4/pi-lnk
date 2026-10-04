@@ -578,10 +578,11 @@ describe("POST /sessions/:key/prompt 直通 images（T1）", () => {
 					payload: { text: "空图", images: [{ name: "a.png", mimeType: "image/png", data: "" }] },
 				});
 				// 允许事件循环里 drain/compaction 的补充调用，但绝不允许任何一次携带 images。
-			assert.equal(sink.calls.filter((c) => c.images !== undefined).length, 0);
-		} finally {
-			await app.close();
-		}
+				assert.equal(sink.calls.filter((c) => c.images !== undefined).length, 0);
+			} finally {
+				await app.close();
+			}
+		});
 	});
 });
 
@@ -796,5 +797,4 @@ describe("LLM 上游错误：error_class 闭集分类（真实 HTTP 接线）", 
 			}
 		});
 	});
-});
 });
