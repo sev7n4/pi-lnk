@@ -18,6 +18,27 @@
 只存在于悬空对象里，靠 `git fsck --lost-found` 才捞回。2026-10-04 已恢复为 tracked。
 **教训：审计报告这类"结论资产"必须入库，不能只放工作区。**
 
+## Agent 工程规范（2026-10-04 整改）
+
+| 文件 | 内容 | 性质 |
+|---|---|---|
+| [`../AGENTS.md`](../AGENTS.md) | **agent 在本仓库工作的唯一权威规范** —— 新增系统地图、角色边界、变更影响面矩阵、完成定义（DoD）、PR 规范 5 节；纠正 CI 触发面描述错误；计数改为可实测获取 | 活资产 —— **每次改动需回代码核实** |
+| [`superpowers/specs/2026-10-04-agents-md-hardening-design.md`](./superpowers/specs/2026-10-04-agents-md-hardening-design.md) | 本次整改的设计规格（含身份三层归属的决策依据） | 活资产 |
+| [`superpowers/plans/2026-10-04-agents-md-hardening.md`](./superpowers/plans/2026-10-04-agents-md-hardening.md) | 实施计划 | 活资产 |
+| [`agents-md-review-2026-10-04.html`](./agents-md-review-2026-10-04.html) | AGENTS.md 评审报告（7 维度评分 + P0/P1/P2 问题清单），基线 `352b44f` | 活资产 —— **结论资产，已入库** |
+
+⚠️ **本节的存在理由**：同目录的两份提示词审计 HTML 曾一度丢失（未跟踪文件被 `git stash -u`
+打进 stash 后该 stash 被 drop），只存在于悬空对象里，靠 `git fsck --lost-found` 捞回。
+**审计/评审报告这类"结论资产"必须入库，不能只放工作区。** 本次评审报告从创建起即为tracked。
+
+⚠️ **外部引用契约**：`AGENTS.md` 的以下章节名被 ADR 与 charts README 按名引用，
+**改动时必须保持标题文本不变**（注意部分标题含 emoji 与副标题，如`## ⭐ 分支纪律（最高优先级）`）：
+`分支纪律` / `文档管理规范` / `pi 内核版本` / `端口约定` / `仓库结构` /
+`必须先做的事` / `核心 skill 路由` / `本机环境`
+
+引用方：`adr/0001`（pi 内核版本）、`adr/0008`（文档管理规范）、
+`adr/0009`（pi-runtime 开发纪律）、`charts/pi-lnk-runtime/README.md`（端口表）。
+
 ## 保留的目录
 
 | 目录 | 内容 | 性质 |
