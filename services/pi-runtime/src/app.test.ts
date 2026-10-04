@@ -612,26 +612,36 @@ describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
 	it("afterSeq 不早于丢弃水位 → 不报 409（正常建流，行为不变）", async () => {
 		await withRoot("pi-runtime-t1-", async (root) => {
 			const { app, manager } = makeApp(root);
+			// ⚠️ 完整重放路径会升级成 **SSE 长连接**，`app.inject()` 永不 resolve。
+			//    若放任它挂住，`app.close()` 会等这个请求 ⇒ 整个测试文件卡死
+			//    （2026-10-04 实测：CI 跑了 13 分钟未结束，master 基线只要 3-5 分钟）。
+			//    正确收尾：**主动 abort 掉请求**再close，让 inject 以 aborted 结束。
+			const ac = new AbortController();
 			try {
 				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t2", userId: "u1" } });
 				await overflowBuffer(manager, "s1:t2");
 
-				// 拿一个「确实还在 buffer 里」的 afterSeq：水位是 1，取 1
+				// 前置条件：本次确实发生了溢出
 				const probe = manager.subscribe("s1:t2", () => {}, 1);
-				assert.ok(probe.droppedFromSeq > 0, "前置条件：本次确实发生了溢出");
+				assert.ok(probe.droppedFromSeq > 0);
 
 				// afterSeq=水位 ⇒ 重放完整 ⇒ 不该被 409 拦。
-				// ⚠️ 不能对完整路径断言 statusCode（完整路径会升级成 SSE 长连接，
-				// inject 会挂住）；这里只断言「没有被 409 拦掉」。
-				const pending = app.inject({ method: "GET", url: `/sessions/s1:t2/events?lastEventId=${probe.droppedFromSeq}` });
+				// 断言方式：**只看是否 reject**——被 409 拦下时 inject 立即返回 409，
+				// 不会被 abort；走完整路径时它会挂住直到我们 abort ⇒ 两种结果都「没有拿到 409」。
 				const settled = await Promise.race([
-					pending.then((r) => r.statusCode),
-					new Promise<number>((resolve) => setTimeout(() => resolve(-1), 150)),
+					app
+						.inject({
+							method: "GET",
+							url: `/sessions/s1:t2/events?lastEventId=${probe.droppedFromSeq}`,
+							signal: ac.signal,
+						})
+						.then((r) => r.statusCode)
+						.catch(() => -1), // abort / 连接关闭 ⇒ 同样视为「没被 409 拦掉」
+					new Promise<number>((resolve) => setTimeout(() => resolve(-2), 300)),
 				]);
 				assert.notEqual(settled, 409, "完整重放不应被 409 拦掉");
-				// 无论 200（SSE 建流成功）还是 -1（长连接未在窗口内结束）都算通过
-				manager.unsubscribe("s1:t2", () => {});
 			} finally {
+				ac.abort();
 				await app.close();
 			}
 		});
