@@ -2060,3 +2060,109 @@ describe('useNodeGeneration', () => {
     expect(node.data?.generationRecordId).toBe('rec-1')
   })
 })
+
+// 回归锁：U6 接线点①②。审计 §2.6 记「三处 while(true) 轮询无墙钟上限」，
+// 实测只有 1 处 `for (;;)`（waitForRunGroupMemberSettled）—— 但它**不是死代码**：
+// `CanvasPage.vue:1122` 以 `waitForNodeSettled` 真实消费。
+// 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.6
+describe('waitForRunGroupMemberSettled 墙钟上限', () => {
+  it('getGeneration 持续失败 + 节点永远 generating ⇒ 墙钟到点返回 failed（不再死循环）', async () => {
+    const node = createNode('video', { prompt: 'x' })
+    node.data = { ...(node.data ?? {}), status: NODE_GENERATION_STATUS.generating, generationRecordId: 'rec-stuck' }
+    const { api } = createDeps([node])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // 永远返回 generating（节点状态不变）⇒ 循环只能靠墙钟退出
+    vi.mocked(studioApi.getGeneration).mockImplementation(async () => {
+      return {
+        data: { code: 0, message: 'ok', data: { id: 'rec-stuck', status: 'generating' } },
+      } as never
+    })
+
+    // 注入 600ms 短墙钟：生产的 1_320_000 无法在单测里等
+    const t0 = Date.now()
+    const settled = await api.waitForRunGroupMemberSettled('video-1', 600)
+    const elapsed = Date.now() - t0
+
+    expect(settled).toBe('failed')
+    // 必须真的等到了墙钟，而不是「碰巧」因为别的分支返回
+    expect(elapsed).toBeGreaterThanOrEqual(550)
+    warn.mockRestore()
+  }, 60_000)
+
+  it('节点在墙钟内落定 ⇒ 返回 ok（墙钟不误杀正常路径）', async () => {
+    const node = createNode('video', { prompt: 'x' })
+    node.data = { ...(node.data ?? {}), status: NODE_GENERATION_STATUS.generating, generationRecordId: 'rec-ok' }
+    const { api, deps } = createDeps([node])
+
+    // 第一次轮询就落定 completed + 有 url
+    vi.mocked(studioApi.getGeneration).mockImplementation(async () => {
+      deps.patchNodeData('video-1', {
+        status: NODE_GENERATION_STATUS.completed,
+        url: 'https://cdn/out.mp4',
+      })
+      return {
+        data: { code: 0, message: 'ok', data: { id: 'rec-ok', status: 'completed', type: 'video', url: 'https://cdn/out.mp4' } },
+      } as never
+    })
+
+    await expect(api.waitForRunGroupMemberSettled('video-1', 30_000)).resolves.toBe('ok')
+  }, 30_000)
+})
+
+// 回归锁：U6 接线点②。`applyStudioRecord` 对 `completed` **无条件**写
+// `status: completed`，而 `parseRecordUrl` 在音频存 COS / metadata 无 url 时返回 `''`
+// ⇒ 节点永远停在「生成中」却无产物、无提示。
+// 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.6
+describe('applyStudioRecord 对「completed 但无产物」的处理', () => {
+  it('音频 completed 且 url 为空 ⇒ 判error并给出可读原因（不是永久生成中）', async () => {
+    const node = createNode('audio', { prompt: '台词' })
+    node.data = { ...(node.data ?? {}), status: NODE_GENERATION_STATUS.generating }
+    const { api, deps } = createDeps([node])
+
+    vi.mocked(studioApi.getGeneration).mockImplementation(async () => {
+      return {
+        data: {
+          code: 0,
+          message: 'ok',
+          data: { id: 'rec-a', type: 'audio', status: 'completed', url: '', metadata: JSON.stringify({ url: '' }) },
+        },
+      } as never
+    })
+
+    await api.applyStudioRecordForTest('audio-1', {
+      id: 'rec-a',
+      type: 'audio',
+      prompt: '台词',
+      status: 'completed',
+      url: '',
+      metadata: JSON.stringify({ url: '' }),
+      createdAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    const last = deps.patchNodeData.mock.calls.at(-1)?.[1] as Record<string, unknown>
+    expect(last.status).not.toBe(NODE_GENERATION_STATUS.completed)
+    expect(last.status).toBe(NODE_GENERATION_STATUS.error)
+    expect(String(last.errorMessage)).toMatch(/音频/)
+  })
+
+  it('音频 completed 且有 url ⇒ 仍正常 completed（不误报）', async () => {
+    const node = createNode('audio', { prompt: '台词' })
+    node.data = { ...(node.data ?? {}), status: NODE_GENERATION_STATUS.generating }
+    const { api, deps } = createDeps([node])
+
+    await api.applyStudioRecordForTest('audio-1', {
+      id: 'rec-a',
+      type: 'audio',
+      prompt: '台词',
+      status: 'completed',
+      url: 'https://cdn/a.mp3',
+      metadata: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    const last = deps.patchNodeData.mock.calls.at(-1)?.[1] as Record<string, unknown>
+    expect(last.status).toBe(NODE_GENERATION_STATUS.completed)
+    expect(last.url).toBe('https://cdn/a.mp3')
+  })
+})
