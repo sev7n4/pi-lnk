@@ -389,8 +389,15 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				throw err;
 			}
 
-			// 残缺只**记日志**不改状态：让运维能从日志看到「发生过丢弃 + 丢了多少」，
-			// 而不改变任何客户端可见行为。
+			// 残缺 ⇒ 在**写头之前**回 409（沿用既有 Minor #10 的顺序纪律：写头后再抛就只能 500）。
+			// 此刻 listener 已挂上但连接马上要以 409 结束 ⇒ 必须先摘掉，否则监听泄漏。
+			//
+			// ⛔ 早期版本刻意「只记 log.warn 不改行为」，因为客户端当时没有消费该信号的代码：
+			// `pi-runtime.client.ts` 里`if (!res.ok) throw` 会让 409 落进指数退避，
+			// 而重连仍带同一个 lastEventId ⇒ 必然再 409 ⇒ 空转到 120s 预算耗尽。
+			// ⇒「静默残缺」被换成「120 秒无响应」，后者更糟。
+			// **客户端已适配**（`streamEvents` 对 409 与 404 同等对待：立即终止、不重连），
+			// 故现在可以安全地回 409。
 			if (buffered && mode.mode === "replay" && !isReplayComplete(buffered, mode.afterSeq)) {
 				app.log.warn(
 					{
@@ -399,8 +406,16 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 						droppedFromSeq: buffered.droppedFromSeq,
 						lostCount: buffered.droppedFromSeq - mode.afterSeq,
 					},
-					"replay window expired: requested events were evicted; client received a truncated stream",
+					"replay window expired: requested events were evicted; client will not be retried",
 				);
+				manager.unsubscribe(sessionId, writeEvent);
+				return reply.code(409).send({
+					error: "replay window expired",
+					reason: "requested events were evicted from the replay buffer",
+					droppedFromSeq: buffered.droppedFromSeq,
+					afterSeq: mode.afterSeq,
+					recovery: "rebuild full timeline",
+				});
 			}
 
 			reply.raw.writeHead(200, {
@@ -410,8 +425,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			});
 
 			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），监听已在 subscribe 时挂上。
-			// ⚠️ 残缺时**照样发**（本 PR 不改客户端可见行为）：`droppedFromSeq` 已在上面记了日志，
-			// 客户端将来适配 `isReplayComplete` 后再改回 409，届时这里不动。
+			// 走到这里说明重放**完整**（残缺已在写头前回 409），补发的一定完整。
 			for (const event of buffered ?? []) writeEvent(event);
 
 			const heartbeat = setInterval(() => {

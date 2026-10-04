@@ -627,7 +627,27 @@ describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => 
 				assert.ok(probe.droppedFromSeq > 0, "溢出后必须报告丢弃起点");
 				assert.equal(isReplayComplete(probe, 0), false, "afterSeq=0 早于水位 ⇒ 判为残缺");
 
-				// afterSeq 恰好等于水位 ⇒ 判为完整（防「每次重连都误报残缺」）
+				// HTTP 层：残缺 ⇒ 409（**立即返回**，可测；不同于「建流成功」那条会挂死）
+			const res = await app.inject({
+				method: "GET",
+				url: "/sessions/s1:t1/events?lastEventId=0",
+			});
+			assert.equal(res.statusCode, 409, "残缺重放必须 409，不能发200 + 断头流");
+			const body = res.json() as {
+				error: string;
+				droppedFromSeq: number;
+				afterSeq: number;
+				recovery: string;
+			};
+			assert.equal(body.error, "replay window expired");
+			assert.equal(body.afterSeq, 0);
+			assert.ok(
+				body.droppedFromSeq > body.afterSeq,
+				`droppedFromSeq(${body.droppedFromSeq}) 必须大于 afterSeq(${body.afterSeq})，否则客户端无法判断残缺`,
+			);
+			assert.equal(body.recovery, "rebuild full timeline", "必须告诉客户端怎么恢复");
+
+			// afterSeq 恰好等于水位 ⇒ 判为完整（防「每次重连都误报残缺」）
 				const atBoundary = manager.subscribe("s1:t1", () => {}, probe.droppedFromSeq);
 				assert.equal(
 					isReplayComplete(atBoundary, probe.droppedFromSeq),
