@@ -14,6 +14,8 @@ import {
 	NODE_PALETTE,
 	orderNodes,
 	sortNodes,
+	auditOrder,
+	SVG_MAX_CHARS,
 } from "./render-canvas-view.expressive.js";
 import {
 	buildLayoutSvg,
@@ -21,7 +23,7 @@ import {
 	buildSwimlaneSvg,
 	buildTreeSvg,
 } from "./render-canvas-view.views.js";
-import { auditOrder } from "./render-canvas-view.expressive.js";
+
 
 /** 真实场景形状：大纲 → EP01..EP06（画布 y 坐标把 EP05 放在 EP04 前面）。 */
 const LAYOUT = {
@@ -547,7 +549,8 @@ describe("顺序校验：发现画布上的顺序错误", () => {
 			edges: [],
 		};
 		const svg = await svgOf({ view: "tree" }, layout);
-		assert.match(svg, /data-misplaced=/, "错位节点应带 data-misplaced 标记");
+		// 标记名是瘦身后的短形式 `data-x`（`data-misplaced` 每节点多 12 字节 × N 节点）
+		assert.match(svg, /data-x/, "错位节点应带 data-x 标记");
 		assert.match(svg, /画布顺序/, "卡片上要说明这是画布顺序问题");
 	});
 
@@ -560,7 +563,99 @@ describe("顺序校验：发现画布上的顺序错误", () => {
 			edges: [],
 		};
 		const svg = await svgOf({ view: "tree" }, layout);
-		assert.equal(svg.includes("data-misplaced="), false);
+		assert.equal(svg.includes("data-x"), false);
 		assert.equal(svg.includes("画布顺序"), false);
+	});
+});
+
+// ══════════════════════════════════════════════════════════
+// 10. 尺寸预算（2026-10-05 生产复测发现的 P0）
+// ══════════════════════════════════════════════════════════
+describe("尺寸预算：63 节点的真实画布必须能出图", () => {
+	/** 生产真实形状：63 节点 / 123 边（森林侦探社）。 */
+	const BIG = {
+		nodes: Array.from({ length: 46 }, (_, i) => ({
+			id: `i${i}`,
+			type: "image",
+			title: `角色三视图 ${i}`,
+			position: { x: 300, y: i * 30 },
+			status: "completed",
+		})).concat(
+			Array.from({ length: 10 }, (_, i) => ({
+				id: `p${i}`,
+				type: "prompt",
+				title: i === 0 ? "全劇大綱" : `EP0${i}《标题》· 森林偵探社`,
+				position: { x: 0, y: i * 100 },
+				status: "draft",
+				parentNode: i === 0 ? undefined : "p0",
+			})),
+			Array.from({ length: 7 }, (_, i) => ({
+				id: `v${i}`,
+				type: "video",
+				title: `EP01 正片 ${i}`,
+				position: { x: 600, y: i * 40 },
+				status: "completed",
+				parentNode: "p1",
+			})),
+		),
+		edges: [
+			{ source: "p0", target: "p1" },
+			...Array.from({ length: 9 }, (_, i) => ({ source: "p0", target: `p${i + 1}` })),
+			...Array.from({ length: 40 }, (_, i) => ({ source: `i${i}`, target: `i${i + 1}` })),
+			...Array.from({ length: 6 }, (_, i) => ({ source: "p1", target: `v${i}` })),
+		],
+	};
+
+	// ⚠️ 与线上 `present-result.ts` 的 SVG_MAX_CHARS 保持一致（超界整块丢弃）
+	const MAX_CHARS = 20000;
+
+	it("layout+dependency 在 63 节点下不超界（加依赖边会让原本不超的也超）", () => {
+		const svg = buildLayoutSvg(BIG.nodes as never, BIG.edges as never, { drawEdges: true, groupBy: "type" });
+		assert.ok(
+			svg.length <= MAX_CHARS,
+			`产出 ${svg.length}B 超上限 ${MAX_CHARS}B ⇒ 生产会整块丢弃（用户看到 <pre> 占位）。` +
+				`修法：节点数超阈值时应告知调用方「请用 node_ids 收窄」而不是画一张丢掉的图`,
+		);
+	});
+
+	it("tree 在 63 节点下不超界", () => {
+		const svg = buildTreeSvg(BIG.nodes as never, BIG.edges as never);
+		assert.ok(svg.length <= MAX_CHARS, `tree 产出 ${svg.length}B 超上限`);
+	});
+
+	it("swimlane 在 63 节点下不超界", () => {
+		const svg = buildSwimlaneSvg(BIG.nodes as never, BIG.edges as never, "type");
+		assert.ok(svg.length <= MAX_CHARS, `swimlane 产出 ${svg.length}B 超上限`);
+	});
+
+	it("matrix 在 63 节点下不超界", () => {
+		const svg = buildMatrixSvg(BIG.nodes as never, "type", "status");
+		assert.ok(svg.length <= MAX_CHARS, `matrix 产出 ${svg.length}B 超上限`);
+	});
+
+	it("超预算时给出显式信号（data-too-large + 原因），不是静默画一张注定被丢的图", async () => {
+		const HUGE = {
+			nodes: Array.from({ length: 400 }, (_, i) => ({
+				id: `n${i}`,
+				type: "image",
+				title: `节点 ${i}`,
+				position: { x: 0, y: i * 30 },
+			})),
+			edges: [],
+		};
+		const r = await run(makeTool(HUGE), { view: "tree" });
+		const d = r.details as Details;
+		assert.equal(d.ok, false, "400 节点不可能画进 20000B ⇒ 应报错而非产出注定被丢的图");
+		assert.match(d.error!, /节点|超|too many|收窄|node_ids/);
+		assert.deepEqual(d.missing, undefined, "这不是「数据源缺节点」，不要混用 missing 通道");
+	});
+
+	it("刚好在预算内不报错（边界不误伤）", async () => {
+		const r = await run(makeTool(LAYOUT), { view: "tree" });
+		assert.equal((r.details as Details).ok, true);
+	});
+
+	it("阈值来自单一常量（改一处即可，不是散落各处的魔法数）", () => {
+		assert.equal(SVG_MAX_CHARS, 20000, "须与 present-result.ts 的 SVG_MAX_CHARS 一致");
 	});
 });

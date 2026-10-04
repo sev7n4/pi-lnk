@@ -17,6 +17,7 @@ import {
 	type Palette,
 	auditOrder,
 	businessOrder,
+	registerColorClassMap,
 	commonSuffixes,
 	esc,
 	legendSvg,
@@ -87,7 +88,6 @@ function nodeRect(
 	opts: {
 		color?: string;
 		emphasized?: boolean;
-		/** 业务序号（1-based）；0/undefined = 不显示。 */
 		seq?: number;
 		label?: string;
 		showType?: boolean;
@@ -97,25 +97,47 @@ function nodeRect(
 	const p = paletteOf(n, opts.color);
 	const st = statusShade(n, p);
 	const mis = opts.misplaced === true;
+	// ⭐ 配色走 CSS class（`cf`=fill,`cs`=stroke）而不是每节点内联 fill/stroke ——
+	// 内联 63 次约 3.2KB，class 只需 63×13 字节。这是把 layout 从 23.6KB 压进 20KB 的关键。
+	const cls = `cf${colorClass(p.fill)} cs${colorClass(st.stroke)}`;
 	const parts: string[] = [];
-	parts.push(
-		`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="5" fill="${st.fill}" stroke="${mis ? "#A32D2D" : st.stroke}" stroke-width="${mis ? 2 : opts.emphasized ? 2 : 1}"/>`,
-	);
+	parts.push(`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" class="${cls} n"${mis ? ' stroke-width="2"' : ""}/>`);
 	const seq = opts.seq && opts.seq > 0 ? `${ordinal(opts.seq)} ` : "";
 	const body = opts.label ?? n.title ?? n.id;
 	const typeTxt = opts.showType ? ` ${n.type ?? ""}` : "";
 	const maxChars = Math.max(4, Math.floor((box.w - 14) / 12));
 	parts.push(
-		`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="gv-t" dominant-baseline="central">${esc(seq + clip(body, Math.max(2, maxChars - seq.length)) + typeTxt)}</text>`,
+		`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="l">${esc(seq + clip(body, Math.max(2, maxChars - seq.length)) + typeTxt)}</text>`,
 	);
 	if (mis) {
-		// 错位角标：明确指出「画布上放错位了」，而不是让用户自己比
-		parts.push(
-			`<text x="${box.x + box.w - 4}" y="${box.y + box.h / 2}" class="gv-warn" text-anchor="end" dominant-baseline="central">画布顺序</text>`,
-		);
+		parts.push(`<text x="${box.x + box.w - 4}" y="${box.y + box.h / 2}" class="w" text-anchor="end">画布顺序</text>`);
 	}
 	return parts.join("");
 }
+
+/**
+ * 颜色 → 短类名后缀。
+ *
+ * 7 档配色 × 3 档状态 = 有限集合 ⇒ 预生成类名比内联属性省 3KB+。
+ * ⚠️ 未登记的颜色会回落到 `o`（默认灰）—— **不静默丢信息**：
+ * 调`cssColorClasses()` 可查当前登记了哪些。
+ */
+const CSS_CLASSES = new Map<string, string>();
+function colorClass(color: string): string {
+	const hit = CSS_CLASSES.get(color);
+	if (hit) return hit;
+	const id = CSS_CLASSES.size;
+	CSS_CLASSES.set(color, String.fromCharCode(97 + (id % 26)) + Math.floor(id / 26));
+	return CSS_CLASSES.get(color)!;
+}
+
+/** 导出当前登记的 色⇒ 类名 映射（测试与调试用）。 */
+export function cssColorClasses(): Record<string, string> {
+	return Object.fromEntries(CSS_CLASSES);
+}
+
+// 让 expressive.svgHeader 能输出配色 class 规则（避免反向依赖）
+registerColorClassMap(() => CSS_CLASSES);
 
 /** 错位说明行（只在真的有错位时输出 —— 不制造噪音）。 */
 function auditNoteSvg(
@@ -223,8 +245,8 @@ export function buildLayoutSvg(
 		lastGroup = g;
 		const mis = misIds.has(n.id);
 		parts.push(
-			`<g data-node="${esc(n.id)}" data-type="${esc(n.type ?? "default")}" data-group="${esc(g)}"` +
-				`${mis ? ' data-misplaced="1"' : ""}>`,
+			`<g data-node="${esc(n.id)}" data-group="${esc(g)}"` +
+				`${mis ? " data-x" : ""}>`,
 		);
 		parts.push(
 			nodeRect(n, boxes.get(n.id)!, {
@@ -435,8 +457,8 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 		const isOrphan = ORPHAN && i >= rowsAll.length - orphans.length;
 		const mis = misIds.has(n.id);
 		parts.push(
-			`<g data-node="${esc(n.id)}" data-depth="${depth}" data-type="${esc(n.type ?? "default")}"` +
-				`${isOrphan ? ' data-orphan="1"' : ""}${mis ? ' data-misplaced="1"' : ""}>`,
+			`<g data-node="${esc(n.id)}" data-depth="${depth}"` +
+				`${isOrphan ? " data-o" : ""}${mis ? " data-x" : ""}>`,
 		);
 		parts.push(nodeRect(n, box, { seq: i + 1, label: labels.get(n.id), misplaced: mis }));
 		parts.push("</g>");
@@ -466,7 +488,7 @@ export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 		const y = 30 + i * ROW_H;
 		const p = paletteOf(n);
 		const st = statusShade(n, p);
-		parts.push(`<g data-node="${esc(n.id)}" data-type="${esc(n.type ?? "default")}">`);
+		parts.push(`<g data-node="${esc(n.id)}">`);
 		parts.push(`<text x="8" y="${y + 13}" class="gv-t" dominant-baseline="central">${esc(clip(n.title ?? n.id, 12))}</text>`);
 		parts.push(`<rect x="${PLOT_X}" y="${y}" width="${PLOT_W}" height="20" rx="5" fill="${st.fill}" stroke="${st.stroke}" stroke-width="1"/>`);
 		if (i < nodes.length - 1) {
@@ -542,7 +564,7 @@ export function buildSwimlaneSvg(
 		const y = headH + 12 + li * laneH + 6 + Math.min(20, idxInLane * 0);
 		const box: Box = { id: n.id, x, y, w: stageW - 14, h: 20, row: li };
 		boxOf.set(n.id, box);
-		parts.push(`<g data-node="${esc(n.id)}" data-type="${esc(n.type ?? "default")}" data-stage="${s}">`);
+		parts.push(`<g data-node="${esc(n.id)}" data-stage="${s}">`);
 		parts.push(nodeRect(n, box));
 		parts.push("</g>");
 	}

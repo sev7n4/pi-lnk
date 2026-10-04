@@ -21,7 +21,10 @@ import { presentResult } from "./present-result.js";
 import {
 	ALLOWED_COLOR_NAMES,
 	isAllowedColorName,
+	MAX_NODES_PER_VIEW,
 	type GvNode,
+	svgBudgetReport,
+	suggestNodeIds,
 } from "./render-canvas-view.expressive.js";
 import {
 	buildLayoutSvg,
@@ -577,6 +580,21 @@ export function createRenderCanvasViewTools(deps: {
 											groupBy,
 											showType: p.show_type === true,
 										});
+				// ⛔ 超界**显式报错**，而不是产出注定被丢的图。
+				// 线上 `present-result` 超 20000B 会整块丢弃（svg:""+ truncated:true），
+				// 前端只显示 <pre> 占位 ⇒ 用户看到「agent 说画了但没卡片」，极难排查。
+				// 这里提前拦住并给出可执行的补救（收窄到哪些节点）。
+				const budget = svgBudgetReport(svg);
+				if (budget.over) {
+					const suggested = suggestNodeIds(gvNodes);
+					return fail(
+						`画布规模超出单张卡片上限：${nodes.length} 个节点会产出约 ${budget.bytes} 字节，` +
+							`超过 ${20000} 字节上限（超出会被整块丢弃，用户看不到图）。` +
+							`请用 node_ids 收窄 —— 建议取这 ${suggested.length} 个（保留层级骨架与业务序）：` +
+							`${suggested.slice(0, 8).join("、")}${suggested.length > 8 ? " …" : ""}。` +
+							`或改用 view=matrix（交叉表，体积与节点数无关）。`,
+					);
+				}
 				return presentResult({
 					type: "svg_card",
 					svg,

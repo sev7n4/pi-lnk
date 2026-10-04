@@ -218,6 +218,33 @@ export function esc(s: string): string {
 
 const W = 720;
 
+/**
+ * 由 `cssColorClassMap` 生成配色 class 的 CSS 规则。
+ *
+ * 与 `views.ts` 的 `colorClass()` 配对：那边登记「颜色⇒短类名」，这边输出规则。
+ * 顺序由 Map 插入序决定 ⇒ 同一输入必得同一输出（可测试）。
+ */
+export function buildCssRules(): string {
+	const rules: string[] = [];
+	for (const [color, cls] of cssColorClassMap()) {
+		rules.push(`.cf${cls}{fill:${color}}`);
+	}
+	// 第二遍写 stroke：stroke 颜色与 fill 可能不同（status 失败时是 #A32D2D）
+	for (const [color, cls] of cssColorClassMap()) {
+		rules.push(`.cs${cls}{stroke:${color}}`);
+	}
+	return rules.join("");
+}
+
+/** 由 views 层注入（避免循环依赖：views 依赖 expressive，这里只消费它给的 Map）。 */
+let classMapProvider: (() => Map<string, string>) | null = null;
+export function registerColorClassMap(fn: () => Map<string, string>): void {
+	classMapProvider = fn;
+}
+function cssColorClassMap(): Map<string, string> {
+	return classMapProvider ? classMapProvider() : new Map();
+}
+
 /** 箭头 marker + 图例的公共前缀。marker id 固定，全图唯一。 */
 export function svgHeader(height: number, extraCss = ""): string {
 	return (
@@ -227,8 +254,15 @@ export function svgHeader(height: number, extraCss = ""): string {
 		`</marker><marker id="gv-arrow-hi" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
 		`<path d="M2 1L8 5L2 9" fill="none" stroke="#534AB7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` +
 		`</marker></defs>` +
-		`<style>.gv-t{font:12px sans-serif;fill:#334}.gv-s{font:11px sans-serif;fill:#5F5E5A}` +
-		`.gv-warn{font:11px sans-serif;fill:#A32D2D}` +
+		`<style>${buildCssRules()}</style>` +
+		// ⚠️ `dominant-baseline` 写进 class 而不是每个 <text> 重复 63 次
+		// （实测单这一项就占 1764B；SVG 里 class 与内联等价，但 class 只写一次）
+		`<style>.gv-t{font:12px sans-serif;fill:#334;dominant-baseline:central}` +
+		`.gv-s{font:11px sans-serif;fill:#5F5E5A;dominant-baseline:central}` +
+		`.gv-warn{font:11px sans-serif;fill:#A32D2D;dominant-baseline:central}` +
+		`.n{stroke-width:1;rx:5}` +
+		`.l{font:12px sans-serif;fill:#334;dominant-baseline:central}` +
+		`.w{font:11px sans-serif;fill:#A32D2D;dominant-baseline:central;text-anchor:end}` +
 		`.gv-e{stroke:#8aa;stroke-width:1.5;fill:none}.gvl{font:11px sans-serif;fill:#888780}</style>` +
 		extraCss
 	);
@@ -366,4 +400,57 @@ export function shortLabels(nodesIn: readonly GvNode[]): Array<{ n: GvNode; labe
 		const tail = parts.slice(1).join("·").trim();
 		return { n, label: common.has(tail) ? head || full : full };
 	});
+}
+
+// ══════════════════════════════════════════════════════════
+// 尺寸预算（2026-10-05 生产复测发现的 P0）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * SVG 字符数上界，**必须与 `present-result.ts` 的 `SVG_MAX_CHARS` 一致**。
+ *
+ * 线上现状：超界 ⇒ `svg: ""` + `details.truncated = true`，前端降级成 `<pre>` 占位。
+ * ⛔ 不是「截断显示」而是**整块丢弃** —— 用户看到的是「agent 说画了但没卡片」。
+ *
+ * 生产复测（63 节点 / 123 边真实画布）实测：
+ *   layout+dependency  ❌ 超界被丢
+ *   tree               ❌ 超界被丢
+ *   swimlane           ❌ 超界被丢
+ *   layout+category    �� 19784B（不画边才勉强过）
+ *   timeline           ✅ 7154B
+ *   matrix             ✅ 3744B
+ *
+ * ⇒ 关系类视图在真实规模下**必然超界**。两条修法（都要）：
+ *   1. **瘦 SVG**（省体积）：共用 style 类、去掉每行重复的 `class="n"`、缩短属性
+ *   2. **超限显式报错**（不静默丢）：告诉调用方「请用 node_ids 收窄」，并给出建议节点数
+ */
+export const SVG_MAX_CHARS = 20000;
+
+/** 单个视图能安全渲染的节点数上限（按瘦身后的实测字节反推，取保守值）。 */
+export const MAX_NODES_PER_VIEW = 80;
+
+/**
+ * 建议的收窄节点数：从超大画布里挑「最能代表关系」的一批。
+ *
+ * 不随机取 —— 随机抽会丢掉结构信息。取法：先按业务序号（有序的排前面），
+ * 再按画布 y，且**优先保留有子节点的层级根**（它们是关系的骨架）。
+ */
+export function suggestNodeIds(nodesIn: readonly GvNode[], limit = MAX_NODES_PER_VIEW): string[] {
+	const withOrd = nodesIn.filter((n) => businessOrder(n.title) !== undefined);
+	const without = nodesIn.filter((n) => businessOrder(n.title) === undefined);
+	const ordered = [...orderNodes(withOrd), ...orderNodes(without)];
+	// 层级根优先（它们是关系的骨架），再按业务序
+	const roots = ordered.filter((n) => nodesIn.some((m) => m.parentNode === n.id));
+	const rest = ordered.filter((n) => !roots.includes(n));
+	return [...roots, ...rest].slice(0, limit).map((n) => n.id);
+}
+
+/** 体积诊断：供测试与错误信息复用，避免各处重算。 */
+export function svgBudgetReport(svg: string): {
+	bytes: number;
+	ratio: number;
+	over: boolean;
+} {
+	const bytes = svg.length;
+	return { bytes, ratio: bytes / SVG_MAX_CHARS, over: bytes > SVG_MAX_CHARS };
 }
