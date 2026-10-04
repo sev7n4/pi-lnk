@@ -35,6 +35,7 @@
  */
 import { runEvalCase, type RuntimeDriverOptions } from "./driver.js";
 import { GOLDEN_CASES, evaluateCase, type GoldenCase } from "./golden-cases.js";
+import { loadStaticPromptForEval, PLAN_CONVENTION_TAIL, type StaticPromptResult } from "./registry.js";
 import type { EvalTranscript } from "./transcript.js";
 
 /**
@@ -87,6 +88,18 @@ export interface RunSummary {
 	results: CaseResult[];
 	/** 所有失败明细（每行带 caseId，便于直接贴 issue）。 */
 	failures: string[];
+	/**
+	 * ⭐ 本轮用的静态段来源信息（方案 A）。
+	 *
+	 * **必须记进 baseline**：只存通过率而不存「测的是哪版权限」，
+	 * 三天后没人说得清这份数据对应的是哪个规则集。
+	 */
+	staticPrompt?: StaticPromptResult;
+	/**
+	 * ⭐ 方案 A 的**已知盲区**，写进报告而不只是注释 ——
+	 * 否则会有人拿「方案 A 跑通了」论证「装配层没问题」。
+	 */
+	coverageNote?: string;
 }
 
 /**
@@ -128,7 +141,10 @@ function isDegraded(pass: number, fail: number, error: number): boolean {
 }
 
 /** 汇总一份报告。纯函数（可单测）。 */
-export function summarize(results: CaseResult[]): RunSummary {
+export function summarize(
+	results: CaseResult[],
+	meta?: { staticPrompt?: StaticPromptResult; coverageNote?: string },
+): RunSummary {
 	const pass = results.filter((r) => r.verdict === "pass").length;
 	const fail = results.filter((r) => r.verdict === "fail").length;
 	const error = results.filter((r) => r.verdict === "error").length;
@@ -162,6 +178,15 @@ export function summarize(results: CaseResult[]): RunSummary {
 		header,
 		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error} · skip ${skipped}`,
 		`token：total ${totalTokens}（output ${totalOutputTokens}）`,
+		...(meta?.staticPrompt
+			? [
+					`规则集：registry ${meta.staticPrompt.registryVersion} hash=${meta.staticPrompt.registryHash} ` +
+						`chars=${meta.staticPrompt.chars}` +
+						(meta.staticPrompt.degraded ? " ⚠️**degraded（读不到磁盘，用了内嵌回退常量）**" : "") +
+						` | 生效规则：${meta.staticPrompt.appliedIds.join(", ")}`,
+				]
+			: []),
+		...(meta?.coverageNote ? [`⚠️ 覆盖盲区：${meta.coverageNote}`] : []),
 		...skipSection,
 		...results
 			.filter((r) => r.verdict === "fail" || r.verdict === "error")
@@ -183,6 +208,8 @@ export function summarize(results: CaseResult[]): RunSummary {
 		report: lines.join("\n"),
 		results,
 		failures,
+		...(meta?.staticPrompt ? { staticPrompt: meta.staticPrompt } : {}),
+		...(meta?.coverageNote ? { coverageNote: meta.coverageNote } : {}),
 	};
 }
 
@@ -196,6 +223,18 @@ export interface L1RunOptions extends RuntimeDriverOptions {
 	onProgress?: (done: number, total: number, result: CaseResult) => void;
 	/** 单条 case 的超时（覆盖 driver 默认）。 */
 	caseTimeoutMs?: number;
+	/**
+	 * ⭐ 静态段（systemPrompt）。**不给就用真实规则集现装配**（方案 A）。
+	 *
+	 * 为什么不给默认值是错的：首跑时driver 传的是一句极简提示词，
+	 * 模型在无规则环境里对每条 case 都反复探索工具、跑满超时
+	 * ⇒ **测到的是「另一个 prompt 的行为」**，不是生产行为。
+	 */
+	staticPrompt?: string;
+	/** 跳过 requiresConfirm 的 case（缺省 true）。置 false 可用来验证「跳过是否合理」。 */
+	skipBlocking?: boolean;
+	/** 规则集装配信息，仅用于报告（由 runL1 内部填）。 */
+	registryInfo?: StaticPromptResult;
 }
 
 /**
@@ -214,6 +253,23 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 	}
 	const intervalMs = options.intervalMs ?? 500;
 	const results: CaseResult[] = [];
+
+	// ⭐ 方案 A：用**真实规则集**装配静态段。给显式 staticPrompt 才用之，
+	// 否则现装（读prompt-registry + renderStatic，见 registry.ts）。
+	// 装配失败**直接抛**不降级：拿不到规则集就跑出来的行为数据
+	// 对应的是「不知道是哪个 prompt」⇒ 不该产出 baseline。
+	// 只装一次，两个用途（给 driver 的 prompt + 报告里的元信息）。
+	// ⚠️ 显式给了 staticPrompt 就**不装** registry：装配要读磁盘 + import 生产 loader，
+	// 那是「跑真实回归」才需要的；测试传prompt 是为了**隔离**这两件事。
+	const registryInfo = options.staticPrompt
+		? undefined
+		: await loadStaticPromptForEval({ extraTail: PLAN_CONVENTION_TAIL });
+	const staticPrompt = options.staticPrompt ?? registryInfo!.prompt;
+	// ⚠️ 覆盖盲区：方案 A 绕过了 Nest 的 PiPromptAssembler。
+	// 这句会进baseline 报告 —— 不写的话会有人拿「A 跑通了」论证装配层没问题。
+	const coverageNote =
+		"方案 A 直调 loadRegistry+renderStatic，**未覆盖 Nest 装配层**" +
+		"（动态段拼装 / STATIC_BUDGET 截断 / 静态段-动态段分工）。补齐需方案 B（runner 经 Nest 跑）。";
 
 	for (const [i, testCase] of cases.entries()) {
 		const started = Date.now();
@@ -245,7 +301,7 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 						? { timeoutMs: options.caseTimeoutMs }
 						: {}),
 				},
-				{ text: testCase.text },
+				{ text: testCase.text, systemPrompt: staticPrompt },
 			);
 			const v = verdictOf(testCase, run.transcript);
 			result = {
@@ -272,7 +328,7 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		if (i < cases.length - 1 && intervalMs > 0) await sleep(intervalMs);
 	}
 
-	return summarize(results);
+	return summarize(results, { staticPrompt: registryInfo, coverageNote });
 }
 
 function sleep(ms: number): Promise<void> {

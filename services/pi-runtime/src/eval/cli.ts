@@ -107,4 +107,10 @@ async function main(): Promise<void> {
 	process.exit(0);
 }
 
-await main();
+// ⭐ 不用 top-level await：CJS 产物下它非法（TS1378）。
+// 同时 catch uncaught rejection —— 否则退出码是 1（像fail）而不是 2（环境问题），
+// CI 会把「环境挂了」误判成「行为退化」。
+main().catch((err: unknown) => {
+	process.stderr.write(`L1 runner 自身异常：${err instanceof Error ? err.message : String(err)}\n`);
+	process.exit(2);
+});

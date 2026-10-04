@@ -265,6 +265,9 @@ describe("L1 runner · 端到端（假 pi-runtime，零 LLM 调用）", () => {
 					only: ["tool-discovery-002", "vision-002", "vision-001"],
 					intervalMs: 0,
 					caseTimeoutMs: 5000,
+					// 显式给 staticPrompt：本文件验 driver/判定/汇总，
+					// 不该依赖磁盘 registry（跑测试时可能没挂载 prompt-registry）。
+					staticPrompt: "test-static-prompt",
 				});
 				assert.equal(summary.total, 3);
 				const byId = new Map(summary.results.map((r) => [r.caseId, r]));
@@ -301,6 +304,9 @@ describe("L1 runner · skipped 态（requiresConfirm）", () => {
 			only: blocking.map((c) => c.id),
 			intervalMs: 0,
 			caseTimeoutMs: 3000,
+			// 显式给 staticPrompt：本文件验 driver/判定/汇总，
+			// 不该依赖磁盘 registry（跑测试时可能没挂载 prompt-registry）。
+			staticPrompt: "test-static-prompt",
 		});
 		assert.equal(summary.skipped, blocking.length, "应全部 skipped");
 		for (const r of summary.results) {

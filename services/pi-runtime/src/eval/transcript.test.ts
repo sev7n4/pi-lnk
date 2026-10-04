@@ -135,3 +135,94 @@ describe("foldRuntimeEvents（流式事件折叠）", () => {
 		assert.equal(t.completed, true);
 	});
 });
+
+
+describe("⭐ foldRuntimeEvents：生产实测载荷（2026-10-04 校正）", () => {
+	/**
+	 * ⭐⭐ 这组是用**生产真实事件**写的回归测试。
+	 *
+	 * 起因：首次真跑 L1 时发现 `assistantText`恒为空 —— 原`extractText`读
+	 * `data.text` / `data.content`，而生产载荷是 `data.message.content[].text`。
+	 * ⇒ 所有 `forbidText` 判据**永远假绿**。
+	 *
+	 * 这类缺陷单测抓不到：原测试用的 `data: { text: "..." }` 是**我们自己臆造的形态**，
+	 * 与生产不符。⇒ **判据层的事件形态必须来自生产取证，不能自造。**
+	 */
+
+	const REAL_ASSISTANT_END = {
+		type: "message_end",
+		seq: 62,
+		ts: 1791097911000,
+		data: {
+			type: "message_end",
+			lane: "main",
+			runId: "01a105c1-3484-77cf-b575-3717c22b0f2a",
+			message: {
+				role: "assistant",
+				content: [
+					{
+						type: "thinking",
+						thinking: 'The user is saying "谢谢，辛苦了" (Thank you). This is a simple expression of gratitude, not a task request. I should reply briefly.',
+					},
+					{ type: "text", text: "\n\n不客气！如有其他需要，随时找我。😊" },
+				],
+				timestamp: 1791097911000,
+			},
+		},
+	} as const;
+
+	it("⭐ 从 data.message.content[].text 取助手文本（原实现恒返回空）", () => {
+		const t = foldRuntimeEvents([REAL_ASSISTANT_END]);
+		assert.match(t.assistantText, /不客气/, `应取到助手文本，实际="${t.assistantText}"`);
+		assert.notEqual(t.assistantText, "", "assistantText 不得为空（原缺陷：恒空 ⇒ 文本判据全假绿）");
+	});
+
+	it("⭐⭐ 过滤 thinking 块：模型内心戏不得当成交付文本", () => {
+		const t = foldRuntimeEvents([REAL_ASSISTANT_END]);
+		assert.equal(
+			t.assistantText.includes("gratitude"),
+			false,
+			`thinking 内容不得混入 assistantText（否则 forbidText 判据误判）：${t.assistantText}`,
+		);
+		assert.equal(t.assistantText.includes("simple expression"), false);
+	});
+
+	it("user 角色的 message_end 不污染助手文本", () => {
+		// 实测事件流里第一个 message_end 是 user 的回显
+		const userEnd = {
+			type: "message_end",
+			data: { type: "message_end", lane: "main", message: { role: "user", content: [{ type: "text", text: "谢谢，辛苦了" }] } },
+		} as const;
+		const t = foldRuntimeEvents([userEnd, REAL_ASSISTANT_END]);
+		assert.equal(t.assistantText.includes("谢谢，辛苦了"), false, "user 文本不应算成助手输出");
+		assert.match(t.assistantText, /不客气/);
+	});
+
+	it("⭐ 真实完整事件流：fold 到底能拿到完整助手文本", () => {
+		// 实测序列（2026-10-04 生产）：agent_start → message_end(user) →
+		// turn_start → 50× message_update → message_end(assistant) → turn_end → agent_end
+		const flow = [
+			{ type: "agent_start", data: { type: "run_start", runId: "r1", lane: "main" } },
+			{ type: "message_end", data: { message: { role: "user", content: [{ type: "text", text: "谢谢，辛苦了" }] } } },
+			{ type: "turn_start", data: { type: "turn_start", turnId: "t1" } },
+			...Array.from({ length: 50 }, () => ({
+				type: "message_update",
+				data: { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "不" }] } },
+			})),
+			REAL_ASSISTANT_END,
+			{ type: "turn_end", data: { type: "turn_end" } },
+			{ type: "agent_end", data: { type: "run_end", status: "completed" } },
+		];
+		const t = foldRuntimeEvents(flow);
+		assert.match(t.assistantText, /不客气/, "应拿到最终完整文本");
+		assert.equal(t.completed, true, "agent_end(completed) 且无 error ⇒ completed");
+		assert.deepEqual(t.errors, []);
+	});
+
+	it("completed 判定容忍 run_end 的数据形态（实测 status 在 data.status）", () => {
+		// 实测：agent_end 的 data 是 `{type:"run_end", status:"completed", ...}`
+		// —— 若只看 data.type 会误判成非 completed
+		const t = foldRuntimeEvents([{ type: "agent_end", data: { type: "run_end", status: "completed" } }]);
+		assert.equal(t.completed, true);
+	});
+});
