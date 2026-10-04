@@ -270,7 +270,10 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 			}
 		}
 	}
-	for (const arr of childrenOf.values()) arr.sort((a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0));
+	// ⚠️ 子树内**必须按业务序号排**，不能按画布y：同一父节点下
+	// 「EP05(y=500) 在 EP04(y=600) 之前」是画布的摆放问题，不是剧情顺序。
+	// 根层已在下面单独处理（按画布位置 + 层级根优先）；子树直接用 orderNodes。
+	for (const [k, arr] of childrenOf) childrenOf.set(k, orderNodes(arr));
 
 	// 深度优先展开
 	const rowsAll: Array<{ n: GvNode; depth: number }> = [];
