@@ -878,15 +878,15 @@ export class SessionManager {
 						// fire-and-forget：审计失败不影响事件分发与会话主链路。
 						if (evt.status === "completed") void this.auditCompactionSummary(entry);
 					}
-				if (harnessType === "tool_start") {
+					if (harnessType === "tool_start") {
 					this.dispatchActivity(entry, evt);
 					// spec §3.2：工具计数/耗时在**事件层**统一结算，39 个工具零改动全覆盖
 					// （各工具内部自埋会与这里双计，故已全部删除）。
 					if (metrics && evt.toolCallId) {
 						metrics.toolMetrics().observeStart({ toolCallId: evt.toolCallId });
 					}
-				}
-				if (harnessType === "tool_end" && metrics && evt.toolCallId) {
+					}
+					if (harnessType === "tool_end" && metrics && evt.toolCallId) {
 					metrics.toolMetrics().observeEnd({
 						toolName: evt.toolName ?? "unknown",
 						toolCallId: evt.toolCallId,
@@ -896,7 +896,7 @@ export class SessionManager {
 						channel: entry.identity.provider,
 						model: entry.identity.model,
 					});
-				}
+					}
 					if (harnessType === "turn_start") entry.activityStep = 0;
 					this.dispatch(entry, {
 						type: sseType,
