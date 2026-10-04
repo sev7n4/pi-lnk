@@ -37,14 +37,31 @@ import { runEvalCase, type RuntimeDriverOptions } from "./driver.js";
 import { GOLDEN_CASES, evaluateCase, type GoldenCase } from "./golden-cases.js";
 import type { EvalTranscript } from "./transcript.js";
 
-/** 单条 case 的判定。⭐ `error` 与 `fail` 分离是本模块的核心红线。 */
-export type Verdict = "pass" | "fail" | "error";
+/**
+ * 单条 case 的判定。
+ *
+ * ⭐ `error` / `fail` / `skipped` **三态分离**，每一态都对应完全不同的处置：
+ *
+ * | 态 | 含义 | 处置 |
+ * |---|---|---|
+ * | `pass` | 行为符合预期 | 无 |
+ * | `fail` | 行为不符（真问题） | 改提示词 / 修工具 |
+ * | `error` | 环境问题（上游/凭据/网络） | 重跑或修环境，**别改提示词** |
+ * | `skipped` | **本 runner 跑不了这条**（需外部动作） | 补环境后单跑，**不计入通过率** |
+ *
+ * `skipped` 与 `error` 必须分开：前者是「主动不跑」（harness 能力边界），
+ * 后者是「跑了但挂了」（环境故障）。混为一谈会让「4 条跑不了」看起来像
+ * 「4 条环境坏了」—— 而正确处置完全不同。
+ */
+export type Verdict = "pass" | "fail" | "error" | "skipped";
 
 export interface CaseResult {
 	caseId: string;
 	verdict: Verdict;
-	/** 失败明细（verdict=fail 时是行为问题；=error 时是运行错误）。 */
+	/** 失败明细（verdict=fail 时是行为问题；=error 时是运行错误；=skipped 时是跳过原因）。 */
 	failures: string[];
+	/** verdict=skipped 时的原因（人话，能直接贴进报告）。 */
+	skipReason?: string;
 	durationMs: number;
 	/** 实际调用的工具名序列（供人工核对，也便于报告 diff）。 */
 	toolNames: string[];
@@ -56,6 +73,8 @@ export interface RunSummary {
 	pass: number;
 	fail: number;
 	error: number;
+	/** ⭐ 本runner 跑不了的case 数（需外部动作，如「用户点确认」）。 */
+	skipped: number;
 	/** pass / (pass + fail)。⭐ error 不进分母；空集为 0（不是 NaN）。 */
 	passRate: number;
 	/** ⭐ error 占比过半 ⇒ 标记「这轮环境不对」，报告需自报避免误读。 */
@@ -113,6 +132,8 @@ export function summarize(results: CaseResult[]): RunSummary {
 	const pass = results.filter((r) => r.verdict === "pass").length;
 	const fail = results.filter((r) => r.verdict === "fail").length;
 	const error = results.filter((r) => r.verdict === "error").length;
+	// ⭐ skipped 不进passRate 分母，也不算 error —— 它是「没跑」，不是「跑坏了」。
+	const skipped = results.filter((r) => r.verdict === "skipped").length;
 	const judged = pass + fail;
 	// ⭐ 分母只取 judged：error 是环境问题，混进分母会把网络抖动
 	// 呈现成「模型行为变坏」⇒ 诱导改提示词。
@@ -127,12 +148,23 @@ export function summarize(results: CaseResult[]): RunSummary {
 	const header = degraded
 		? `⚠️ **degraded**：${error}/${results.length} 条因运行错误未参与判定，本轮通过率不代表模型行为（先查上游/凭据）`
 		: "";
+	// ⭐ skipped 单列一节：让「这轮没覆盖什么」显式可见，而不是悄悄从分母里消失。
+	const skipSection =
+		skipped > 0
+			? [
+					`skip ${skipped} 条（本 harness 跑不了，需外部动作；未计入通过率）：`,
+					...results
+						.filter((r) => r.verdict === "skipped")
+						.map((r) => `  - ${r.caseId}：${r.skipReason ?? r.failures.join("; ")}`),
+				]
+			: [];
 	const lines = [
 		header,
-		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error}`,
+		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error} · skip ${skipped}`,
 		`token：total ${totalTokens}（output ${totalOutputTokens}）`,
+		...skipSection,
 		...results
-			.filter((r) => r.verdict !== "pass")
+			.filter((r) => r.verdict === "fail" || r.verdict === "error")
 			.map((r) => `  [${r.verdict}] ${r.caseId} (${r.durationMs}ms)：${r.failures.join("; ")}`),
 	]
 		.filter(Boolean)
@@ -143,6 +175,7 @@ export function summarize(results: CaseResult[]): RunSummary {
 		pass,
 		fail,
 		error,
+		skipped,
 		passRate,
 		degraded,
 		totalTokens,
@@ -185,6 +218,25 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 	for (const [i, testCase] of cases.entries()) {
 		const started = Date.now();
 		let result: CaseResult;
+		// ⭐ requiresConfirm 的 case 直接跳过，**不发起任何模型调用**。
+		// 为什么不能「跑一下看看」：propose_generation 一旦被调用就挂在
+		// waitForUser 上直到 ASK_USER_TIMEOUT_MS（生产 5 分钟），
+		// 而 harness 无法完成「用户点确认」⇒ 每跳一条就白等 5 分钟 + 烧一轮token，
+		// 最后还会因收不到 agent_end 而被误判成 error（环境问题）。
+		// ⇒ 主动跳过 + 显式记录，代价是零、且报告里可见。
+		if (testCase.requiresConfirm) {
+			result = {
+				caseId: testCase.id,
+				verdict: "skipped",
+				failures: [],
+				skipReason: "需要「用户点确认」动作（propose_generation 阻塞等 DockStudio 生成触发）",
+				durationMs: 0,
+				toolNames: [],
+			};
+			results.push(result);
+			options.onProgress?.(i + 1, cases.length, result);
+			continue;
+		}
 		try {
 			const run = await runEvalCase(
 				{

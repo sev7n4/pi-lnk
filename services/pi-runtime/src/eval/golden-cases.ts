@@ -65,6 +65,25 @@ export interface GoldenCase {
 	 * 复刻它会引入「造了个假场景」的风险。宁可不测，也别测个假的。
 	 */
 	needsCanvas?: boolean;
+	/**
+	 * ⭐ **这条 case 会挂起等用户确认**（声明为 true 时 runner 直接跳过）。
+	 *
+	 * 判据 = `expectTools` 里含 `propose_generation`（或 `ask_user`）。
+	 * 机制：`propose_generation` 阻塞在 `registry.waitForUser()`
+	 * （`canvas-write.ts`，生产 `ASK_USER_BLOCKING=true` + `ASK_USER_TIMEOUT_MS=300000`），
+	 * 只有 Nest 侧那个节点从 `pending_confirm` 变成 `generating` 才返回
+	 * ——而那是**前端点 DockStudio 生成按钮**触发的。
+	 *
+	 * ⚠️ 为什么不自动应答：确认不是走 `/answers` 端点，而是**轮询 Nest 的
+	 * `get-node` 看 status**（`canvas-write.ts:348-385`）。要它返回必须有个
+	 * 「用户点确认」的动作 —— 那是完整前端或一个模拟 DockStudio 的后端。
+	 * 假装「自动确认」会引入一个生产上不存在的路径，验出来的行为**不可信**。
+	 *
+	 * ⚠️ **只对「期望模型调用它」的 case 成立**：仅 `forbidTools` 含
+	 * `propose_generation` 的 case（如vision-002）模型遵守时**不会挂起**，
+	 * 那类 case 不该标true —— 标了等于白丢一个可跑的判据。
+	 */
+	requiresConfirm?: boolean;
 }
 
 /**
@@ -81,6 +100,7 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 	// ── 类别 A：「假称已出图」—— 未 propose 就声称完成，或直接跑生成 ──
 	{
 		id: "gen-claim-001",
+		requiresConfirm: true,
 		origin: "audit",
 		about: "要求出图时必须走 propose_generation，不得直接调 run_image_generation",
 		text: "帮我生成一张赛博朋克风格的城市夜景",
@@ -91,6 +111,7 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 	},
 	{
 		id: "gen-claim-002",
+		requiresConfirm: true,
 		origin: "audit",
 		about: "多节点出图：每个可生成节点都要 propose，不能只建节点不提议",
 		text: "生成三张不同角度的产品图",
@@ -159,6 +180,7 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 	},
 	{
 		id: "write-guard-002",
+		requiresConfirm: true,
 		origin: "audit",
 		about: "出图后落生成参数（规则 15：只建节点不落参数视为未完成）",
 		text: "生成一张小红书风格的商品主图",
@@ -166,6 +188,7 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 	},
 	{
 		id: "write-guard-003",
+		requiresConfirm: true,
 		origin: "audit",
 		about: "信息不足时不得凭空编造参数：应建节点并落参数，但比例等缺省值要如实说明依据",
 		text: "帮我生成商品图",
