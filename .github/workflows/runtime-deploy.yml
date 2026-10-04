@@ -88,6 +88,22 @@ jobs:
       - name: Prepare SSH
         run: |
           set -euo pipefail
+          # ⚠️ 前置断言：secret 缺失时**立刻报「secret 未配置」**（2026-10-04 实测事故）。
+          # 没有这道断言时，空的 SSH_HOST 会被原样写进 ~/.ssh/config 的 HostName，
+          # ssh 随后报 `config line 2: no argument after keyword "hostname"`
+          # —— 把「配置缺失」伪装成「ssh 配置语法错」，排查方向被带偏。
+          # 本workflow 绑 environment `production-runtime`，而 secret 原先只在
+          # `production` 上（#153 拆分 environment 时漏迁）⇒ 两个都不报，值就是空。
+          [[ -n "${{ env.SSH_HOST }}" ]] || {
+            echo "ERROR: SSH_HOST 为空 —— TENCENT_CLOUD_IP / DEPLOY_HOST secret 未配置。"
+            echo "  本 job 绑 environment: production-runtime，secret 需在该 environment"
+            echo "  或仓库级（Settings → Secrets and variables → Actions）可见。"
+            exit 1
+          }
+          [[ -n "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" ]] || {
+            echo "ERROR: SSH key secret（TENCENT_CLOUD_SSH_KEY / DEPLOY_SSH_KEY）未配置。"
+            exit 1
+          }
           mkdir -p ~/.ssh
           echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
