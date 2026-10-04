@@ -250,7 +250,8 @@ jobs:
             --set-string env.PI_RUNTIME_DIRECT_IMAGES=true \
             --set-string env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2 \
             --set-string env.PI_RUNTIME_TOOL_RESULT_BUDGET=true \
-            --set-string env.PI_RUNTIME_TOOL_RESULT_MAX_CHARS=24000"
+            --set-string env.PI_RUNTIME_TOOL_RESULT_MAX_CHARS=24000 \
+            --set-string piRuntimeMode=active"
 
       - name: Rollout + triple verify (digest / env / healthz)
         run: |
@@ -292,6 +293,13 @@ jobs:
             || { echo "ERROR: PI_RUNTIME_DIRECT_IMAGES 非期望精确值"; exit 1; }
           echo "$ENV_OUT" | grep -qx "PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS=2" \
             || { echo "ERROR: PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS 非期望精确值"; exit 1; }
+          # piRuntimeMode（2026-10-04 补录）：chart 的 `values.yaml:93` 默认是 `off`（维护态），
+          # 而 `.env.production.example:60` 是 `active` —— 两者矛盾，且**部署流程从未覆盖该字段**。
+          # 后果：每次 helm upgrade 都落回chart 默认 `off`，pod 与 api 容器
+          # （`/opt/lnkpi/.env` = active）**取值不一致** ⇒ 排查时极易误判成「链路关闭」。
+          # 这里显式 `--set piRuntimeMode=active`（生产该开着），并按本仓纪律精确断言落地。
+          echo "$ENV_OUT" | grep -qx "PI_RUNTIME_MODE=active" \
+            || { echo "ERROR: PI_RUNTIME_MODE 非期望精确值（当前应为 active，不能是 chart 默认的 off）"; exit 1; }
           HEALTH=$(ssh deploy-cvm "curl -s http://127.0.0.1:30100/healthz")
           echo "$HEALTH" | grep -q "\"version\":\"${TAG}\"" \
             || { echo "ERROR: healthz version != ${TAG}: ${HEALTH}"; exit 1; }
