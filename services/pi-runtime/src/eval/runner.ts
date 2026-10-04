@@ -35,16 +35,34 @@
  */
 import { runEvalCase, type RuntimeDriverOptions } from "./driver.js";
 import { GOLDEN_CASES, evaluateCase, type GoldenCase } from "./golden-cases.js";
+import { loadStaticPromptForEval, PLAN_CONVENTION_TAIL, type StaticPromptResult } from "./registry.js";
 import type { EvalTranscript } from "./transcript.js";
 
-/** 单条 case 的判定。⭐ `error` 与 `fail` 分离是本模块的核心红线。 */
-export type Verdict = "pass" | "fail" | "error";
+/**
+ * 单条 case 的判定。
+ *
+ * ⭐ `error` / `fail` / `skipped` **三态分离**，每一态都对应完全不同的处置：
+ *
+ * | 态 | 含义 | 处置 |
+ * |---|---|---|
+ * | `pass` | 行为符合预期 | 无 |
+ * | `fail` | 行为不符（真问题） | 改提示词 / 修工具 |
+ * | `error` | 环境问题（上游/凭据/网络） | 重跑或修环境，**别改提示词** |
+ * | `skipped` | **本 runner 跑不了这条**（需外部动作） | 补环境后单跑，**不计入通过率** |
+ *
+ * `skipped` 与 `error` 必须分开：前者是「主动不跑」（harness 能力边界），
+ * 后者是「跑了但挂了」（环境故障）。混为一谈会让「4 条跑不了」看起来像
+ * 「4 条环境坏了」—— 而正确处置完全不同。
+ */
+export type Verdict = "pass" | "fail" | "error" | "skipped";
 
 export interface CaseResult {
 	caseId: string;
 	verdict: Verdict;
-	/** 失败明细（verdict=fail 时是行为问题；=error 时是运行错误）。 */
+	/** 失败明细（verdict=fail 时是行为问题；=error 时是运行错误；=skipped 时是跳过原因）。 */
 	failures: string[];
+	/** verdict=skipped 时的原因（人话，能直接贴进报告）。 */
+	skipReason?: string;
 	durationMs: number;
 	/** 实际调用的工具名序列（供人工核对，也便于报告 diff）。 */
 	toolNames: string[];
@@ -56,6 +74,8 @@ export interface RunSummary {
 	pass: number;
 	fail: number;
 	error: number;
+	/** ⭐ 本runner 跑不了的case 数（需外部动作，如「用户点确认」）。 */
+	skipped: number;
 	/** pass / (pass + fail)。⭐ error 不进分母；空集为 0（不是 NaN）。 */
 	passRate: number;
 	/** ⭐ error 占比过半 ⇒ 标记「这轮环境不对」，报告需自报避免误读。 */
@@ -68,6 +88,18 @@ export interface RunSummary {
 	results: CaseResult[];
 	/** 所有失败明细（每行带 caseId，便于直接贴 issue）。 */
 	failures: string[];
+	/**
+	 * ⭐ 本轮用的静态段来源信息（方案 A）。
+	 *
+	 * **必须记进 baseline**：只存通过率而不存「测的是哪版权限」，
+	 * 三天后没人说得清这份数据对应的是哪个规则集。
+	 */
+	staticPrompt?: StaticPromptResult;
+	/**
+	 * ⭐ 方案 A 的**已知盲区**，写进报告而不只是注释 ——
+	 * 否则会有人拿「方案 A 跑通了」论证「装配层没问题」。
+	 */
+	coverageNote?: string;
 }
 
 /**
@@ -109,10 +141,15 @@ function isDegraded(pass: number, fail: number, error: number): boolean {
 }
 
 /** 汇总一份报告。纯函数（可单测）。 */
-export function summarize(results: CaseResult[]): RunSummary {
+export function summarize(
+	results: CaseResult[],
+	meta?: { staticPrompt?: StaticPromptResult; coverageNote?: string },
+): RunSummary {
 	const pass = results.filter((r) => r.verdict === "pass").length;
 	const fail = results.filter((r) => r.verdict === "fail").length;
 	const error = results.filter((r) => r.verdict === "error").length;
+	// ⭐ skipped 不进passRate 分母，也不算 error —— 它是「没跑」，不是「跑坏了」。
+	const skipped = results.filter((r) => r.verdict === "skipped").length;
 	const judged = pass + fail;
 	// ⭐ 分母只取 judged：error 是环境问题，混进分母会把网络抖动
 	// 呈现成「模型行为变坏」⇒ 诱导改提示词。
@@ -127,12 +164,32 @@ export function summarize(results: CaseResult[]): RunSummary {
 	const header = degraded
 		? `⚠️ **degraded**：${error}/${results.length} 条因运行错误未参与判定，本轮通过率不代表模型行为（先查上游/凭据）`
 		: "";
+	// ⭐ skipped 单列一节：让「这轮没覆盖什么」显式可见，而不是悄悄从分母里消失。
+	const skipSection =
+		skipped > 0
+			? [
+					`skip ${skipped} 条（本 harness 跑不了，需外部动作；未计入通过率）：`,
+					...results
+						.filter((r) => r.verdict === "skipped")
+						.map((r) => `  - ${r.caseId}：${r.skipReason ?? r.failures.join("; ")}`),
+				]
+			: [];
 	const lines = [
 		header,
-		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error}`,
+		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error} · skip ${skipped}`,
 		`token：total ${totalTokens}（output ${totalOutputTokens}）`,
+		...(meta?.staticPrompt
+			? [
+					`规则集：registry ${meta.staticPrompt.registryVersion} hash=${meta.staticPrompt.registryHash} ` +
+						`chars=${meta.staticPrompt.chars}` +
+						(meta.staticPrompt.degraded ? " ⚠️**degraded（读不到磁盘，用了内嵌回退常量）**" : "") +
+						` | 生效规则：${meta.staticPrompt.appliedIds.join(", ")}`,
+				]
+			: []),
+		...(meta?.coverageNote ? [`⚠️ 覆盖盲区：${meta.coverageNote}`] : []),
+		...skipSection,
 		...results
-			.filter((r) => r.verdict !== "pass")
+			.filter((r) => r.verdict === "fail" || r.verdict === "error")
 			.map((r) => `  [${r.verdict}] ${r.caseId} (${r.durationMs}ms)：${r.failures.join("; ")}`),
 	]
 		.filter(Boolean)
@@ -143,6 +200,7 @@ export function summarize(results: CaseResult[]): RunSummary {
 		pass,
 		fail,
 		error,
+		skipped,
 		passRate,
 		degraded,
 		totalTokens,
@@ -150,6 +208,8 @@ export function summarize(results: CaseResult[]): RunSummary {
 		report: lines.join("\n"),
 		results,
 		failures,
+		...(meta?.staticPrompt ? { staticPrompt: meta.staticPrompt } : {}),
+		...(meta?.coverageNote ? { coverageNote: meta.coverageNote } : {}),
 	};
 }
 
@@ -163,6 +223,18 @@ export interface L1RunOptions extends RuntimeDriverOptions {
 	onProgress?: (done: number, total: number, result: CaseResult) => void;
 	/** 单条 case 的超时（覆盖 driver 默认）。 */
 	caseTimeoutMs?: number;
+	/**
+	 * ⭐ 静态段（systemPrompt）。**不给就用真实规则集现装配**（方案 A）。
+	 *
+	 * 为什么不给默认值是错的：首跑时driver 传的是一句极简提示词，
+	 * 模型在无规则环境里对每条 case 都反复探索工具、跑满超时
+	 * ⇒ **测到的是「另一个 prompt 的行为」**，不是生产行为。
+	 */
+	staticPrompt?: string;
+	/** 跳过 requiresConfirm 的 case（缺省 true）。置 false 可用来验证「跳过是否合理」。 */
+	skipBlocking?: boolean;
+	/** 规则集装配信息，仅用于报告（由 runL1 内部填）。 */
+	registryInfo?: StaticPromptResult;
 }
 
 /**
@@ -182,9 +254,45 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 	const intervalMs = options.intervalMs ?? 500;
 	const results: CaseResult[] = [];
 
+	// ⭐ 方案 A：用**真实规则集**装配静态段。给显式 staticPrompt 才用之，
+	// 否则现装（读prompt-registry + renderStatic，见 registry.ts）。
+	// 装配失败**直接抛**不降级：拿不到规则集就跑出来的行为数据
+	// 对应的是「不知道是哪个 prompt」⇒ 不该产出 baseline。
+	// 只装一次，两个用途（给 driver 的 prompt + 报告里的元信息）。
+	// ⚠️ 显式给了 staticPrompt 就**不装** registry：装配要读磁盘 + import 生产 loader，
+	// 那是「跑真实回归」才需要的；测试传prompt 是为了**隔离**这两件事。
+	const registryInfo = options.staticPrompt
+		? undefined
+		: await loadStaticPromptForEval({ extraTail: PLAN_CONVENTION_TAIL });
+	const staticPrompt = options.staticPrompt ?? registryInfo!.prompt;
+	// ⚠️ 覆盖盲区：方案 A 绕过了 Nest 的 PiPromptAssembler。
+	// 这句会进baseline 报告 —— 不写的话会有人拿「A 跑通了」论证装配层没问题。
+	const coverageNote =
+		"方案 A 直调 loadRegistry+renderStatic，**未覆盖 Nest 装配层**" +
+		"（动态段拼装 / STATIC_BUDGET 截断 / 静态段-动态段分工）。补齐需方案 B（runner 经 Nest 跑）。";
+
 	for (const [i, testCase] of cases.entries()) {
 		const started = Date.now();
 		let result: CaseResult;
+		// ⭐ requiresConfirm 的 case 直接跳过，**不发起任何模型调用**。
+		// 为什么不能「跑一下看看」：propose_generation 一旦被调用就挂在
+		// waitForUser 上直到 ASK_USER_TIMEOUT_MS（生产 5 分钟），
+		// 而 harness 无法完成「用户点确认」⇒ 每跳一条就白等 5 分钟 + 烧一轮token，
+		// 最后还会因收不到 agent_end 而被误判成 error（环境问题）。
+		// ⇒ 主动跳过 + 显式记录，代价是零、且报告里可见。
+		if (testCase.requiresConfirm) {
+			result = {
+				caseId: testCase.id,
+				verdict: "skipped",
+				failures: [],
+				skipReason: "需要「用户点确认」动作（propose_generation 阻塞等 DockStudio 生成触发）",
+				durationMs: 0,
+				toolNames: [],
+			};
+			results.push(result);
+			options.onProgress?.(i + 1, cases.length, result);
+			continue;
+		}
 		try {
 			const run = await runEvalCase(
 				{
@@ -193,7 +301,7 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 						? { timeoutMs: options.caseTimeoutMs }
 						: {}),
 				},
-				{ text: testCase.text },
+				{ text: testCase.text, systemPrompt: staticPrompt },
 			);
 			const v = verdictOf(testCase, run.transcript);
 			result = {
@@ -220,7 +328,7 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		if (i < cases.length - 1 && intervalMs > 0) await sleep(intervalMs);
 	}
 
-	return summarize(results);
+	return summarize(results, { staticPrompt: registryInfo, coverageNote });
 }
 
 function sleep(ms: number): Promise<void> {

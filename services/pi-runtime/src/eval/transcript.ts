@@ -162,24 +162,60 @@ function mergeText(previous: string, incoming: string): string {
 	return previous + incoming; // 真增量
 }
 
-/** 从 message 载荷里抽文本（兼容字符串 content 与 block 数组两种形态）。 */
+/**
+ * 从 message 载荷里抽**助手文本**。
+ *
+ * ⭐ **生产实测校正（2026-10-04，真实事件流）**：pi-runtime 的
+ * `message_end` / `message_update` 载荷是
+ * `{ type, lane, runId, message: { role, content: [...] } }`，
+ * 助手文本在 **`data.message.content[].text`** —— 不是 `data.text`，
+ * 也不是 `data.content`。
+ *
+ * ⚠️⚠️ 这不是笔误级别的问题：原实现只读 `data.text` / `data.content`，
+ * 在真实事件流上**恒返回空串** ⇒ `assistantText` 永远是 "" ⇒
+ * **所有 `forbidText` / `expectTextIncludes` 判据永远「通过」**
+ * ⇒ 「模型说了不该说的话」这类最关键的判据**全部假绿**。
+ * 假绿的评测基线比没有评测更危险（它会让人根据错误的基线改提示词）。
+ *
+ * 两个必须处理的细节：
+ * 1. ⭐ `content` 里**混着 `thinking` 块**（实测 `["thinking","text"]`）
+ *    —— 只取 `type === "text"` 的块，**否则会把模型内心戏当成交付文本**，
+ *    让 forbidText 判据误判。
+ * 2. 保留对 `data.text` / `data.content` 的兼容（测试与未来形态变化）。
+ */
 function extractText(data: Record<string, unknown>): string {
+	// 真实形态：data.message.content[]
+	const message = data.message as { role?: unknown; content?: unknown } | undefined;
+	if (message && typeof message === "object" && message.role === "assistant") {
+		const fromMessage = textFromBlocks(message.content);
+		if (fromMessage) return fromMessage;
+	}
 	const direct = typeof data.text === "string" ? data.text : "";
 	if (direct) return direct;
-	const content = data.content ?? data.message;
+	return textFromBlocks(data.content);
+}
+
+/**
+ * 从 block 数组里拼文本。
+ *
+ * ⭐ 只收 `type === "text"` 的块（`thinking` / `toolCall` 等一律跳过）：
+ * 实测助手 content 形如 `["thinking","text"]`，不过滤会把内心戏混进交付文本。
+ */
+function textFromBlocks(content: unknown): string {
 	if (typeof content === "string") return content;
-	if (Array.isArray(content)) {
-		return content
-			.map((block) =>
-				typeof block === "string"
-					? block
-					: typeof (block as { text?: unknown })?.text === "string"
-						? ((block as { text: string }).text)
-						: "",
-			)
-			.join("");
-	}
-	return "";
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) => {
+			if (typeof block === "string") return block;
+			if (block && typeof block === "object") {
+				const t = block as { type?: unknown; text?: unknown };
+				// 无 type 的裸字符串块按文本算（兼容简化形态）
+				if (t.type === undefined && typeof t.text === "string") return t.text;
+				return t.type === "text" && typeof t.text === "string" ? t.text : "";
+			}
+			return "";
+		})
+		.join("");
 }
 
 function safeStringify(value: unknown): string {

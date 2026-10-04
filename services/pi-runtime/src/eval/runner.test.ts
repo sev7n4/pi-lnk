@@ -236,6 +236,8 @@ describe("L1 runner · 端到端（假 pi-runtime，零 LLM 调用）", () => {
 
 	it("工具被正确调用 ⇒ pass；被禁工具被调用 ⇒ fail；errors ⇒ error", async () => {
 		// 同一批 case 走三种结局，验证端到端链路 + verdict 分离都成立。
+		// ⚠️ 只用**非 requiresConfirm** 的 case：阻塞型会被 runner 跳过（durationMs=0），
+		// 端到端就验不到「真跑一轮」这条路径了。
 		const { runL1 } = await import("./runner.js");
 		await withFakeRuntime(
 			(text) => {
@@ -243,15 +245,15 @@ describe("L1 runner · 端到端（假 pi-runtime，零 LLM 调用）", () => {
 					// 闲聊 case：期望不调任何工具 ⇒ pass
 					return [{ type: "agent_end", data: { status: "completed" } }];
 				}
-				if (text.includes("夜景")) {
-					// gen-claim-001：直接调了被禁的 run_image_generation ⇒ fail
+				if (text.includes("构图")) {
+					// vision-002：纯识图问句却建了节点 ⇒ fail（forbid upsert_media_node）
 					return [
-						{ type: "tool_execution_start", data: { toolName: "run_image_generation", toolCallId: "c1" } },
-						{ type: "message_end", data: { text: "正在生成" } },
+						{ type: "tool_execution_start", data: { toolName: "upsert_media_node", toolCallId: "c1" } },
+						{ type: "message_end", data: { text: "这是一张海报" } },
 						{ type: "agent_end", data: { status: "completed" } },
 					];
 				}
-				// 其余：模拟上游报错⇒ error
+				// 其余（vision-001）：模拟上游报错 ⇒ error
 				return [
 					{ type: "error", data: { message: "upstream 503" } },
 					{ type: "agent_end", data: { status: "completed" } },
@@ -260,17 +262,20 @@ describe("L1 runner · 端到端（假 pi-runtime，零 LLM 调用）", () => {
 			async (baseUrl) => {
 				const summary = await runL1({
 					baseUrl,
-					only: ["tool-discovery-002", "gen-claim-001", "vision-001"],
+					only: ["tool-discovery-002", "vision-002", "vision-001"],
 					intervalMs: 0,
 					caseTimeoutMs: 5000,
+					// 显式给 staticPrompt：本文件验 driver/判定/汇总，
+					// 不该依赖磁盘 registry（跑测试时可能没挂载 prompt-registry）。
+					staticPrompt: "test-static-prompt",
 				});
 				assert.equal(summary.total, 3);
 				const byId = new Map(summary.results.map((r) => [r.caseId, r]));
 				assert.equal(byId.get("tool-discovery-002")?.verdict, "pass", "闲聊 case 应 pass");
-				assert.equal(byId.get("gen-claim-001")?.verdict, "fail", "调了被禁工具应 fail");
+				assert.equal(byId.get("vision-002")?.verdict, "fail", "纯识图却建节点应 fail");
 				assert.match(
-					byId.get("gen-claim-001")?.failures.join("; ") ?? "",
-					/run_image_generation/,
+					byId.get("vision-002")?.failures.join("; ") ?? "",
+					/upsert_media_node/,
 					"失败信息应含实际调用的被禁工具",
 				);
 				assert.equal(byId.get("vision-001")?.verdict, "error", "上游报错应 error 而非 fail");
@@ -278,5 +283,74 @@ describe("L1 runner · 端到端（假 pi-runtime，零 LLM 调用）", () => {
 				assert.equal(summary.passRate, 0.5);
 			},
 		);
+	});
+});
+
+
+describe("L1 runner · skipped 态（requiresConfirm）", () => {
+	/**
+	 * ⭐ 这组测试锁的是「主动不跑」与「跑了但挂了」的分离。
+	 * 混为一谈会让「4 条跑不了」看起来像「4 条环境坏了」——
+	 * 而处置完全相反（补 harness vs 查凭据）。
+	 */
+	it("requiresConfirm 的 case 被跳过，不发起模型调用（durationMs=0）", async () => {
+		const { runL1 } = await import("./runner.js");
+		const { GOLDEN_CASES } = await import("./golden-cases.js");
+		const blocking = GOLDEN_CASES.filter((c) => c.requiresConfirm);
+		assert.ok(blocking.length > 0, "预置case 里应有 requiresConfirm 的");
+		// 指向一个不存在的端口：若真发起了调用，会得到 error（连接失败）而不是 skipped
+		const summary = await runL1({
+			baseUrl: "http://127.0.0.1:1",
+			only: blocking.map((c) => c.id),
+			intervalMs: 0,
+			caseTimeoutMs: 3000,
+			// 显式给 staticPrompt：本文件验 driver/判定/汇总，
+			// 不该依赖磁盘 registry（跑测试时可能没挂载 prompt-registry）。
+			staticPrompt: "test-static-prompt",
+		});
+		assert.equal(summary.skipped, blocking.length, "应全部 skipped");
+		for (const r of summary.results) {
+			assert.equal(r.verdict, "skipped", `${r.caseId} 应 skipped`);
+			assert.equal(r.durationMs, 0, `${r.caseId} 不该真发起调用（durationMs 必须为 0）`);
+			assert.match(r.skipReason ?? "", /用户点确认/);
+		}
+		assert.equal(summary.error, 0, "skipped 不该被算成 error（环境问题）");
+	});
+
+	it("⭐ skipped 不进 passRate 分母", () => {
+		const summary = summarize([
+			{ caseId: "a", verdict: "pass", failures: [], durationMs: 1, toolNames: [] },
+			{ caseId: "b", verdict: "pass", failures: [], durationMs: 1, toolNames: [] },
+			{ caseId: "c", verdict: "skipped", failures: [], skipReason: "需确认", durationMs: 0, toolNames: [] },
+			{ caseId: "d", verdict: "skipped", failures: [], skipReason: "需确认", durationMs: 0, toolNames: [] },
+		]);
+		// 分母 = pass+fail = 2（不是 4），通过率 1.0
+		assert.equal(summary.passRate, 1);
+		assert.equal(summary.skipped, 2);
+		assert.equal(summary.total, 4);
+	});
+
+	it("⭐ skipped 不让报告看起来 degraded（那是环境问题的信号）", () => {
+		const summary = summarize([
+			{ caseId: "a", verdict: "pass", failures: [], durationMs: 1, toolNames: [] },
+			{ caseId: "b", verdict: "skipped", failures: [], skipReason: "需确认", durationMs: 0, toolNames: [] },
+			{ caseId: "c", verdict: "skipped", failures: [], skipReason: "需确认", durationMs: 0, toolNames: [] },
+		]);
+		//error=0 ⇒ 不 degraded：skip 多不代表环境坏
+		assert.equal(summary.degraded, false);
+		assert.match(summary.report, /skip 2 条/, "报告应单列 skip 节");
+		assert.match(summary.report, /需确认/, "应列出每条跳过原因");
+	});
+
+	it("报告里 skipped 与 fail/error 混排时仍可区分", () => {
+		const summary = summarize([
+			{ caseId: "ok", verdict: "pass", failures: [], durationMs: 1, toolNames: [] },
+			{ caseId: "bad", verdict: "fail", failures: ["调了被禁工具 X"], durationMs: 1, toolNames: ["X"] },
+			{ caseId: "env", verdict: "error", failures: ["upstream 503"], durationMs: 1, toolNames: [] },
+			{ caseId: "skip", verdict: "skipped", failures: [], skipReason: "需确认", durationMs: 0, toolNames: [] },
+		]);
+		assert.match(summary.report, /\[fail\] bad/);
+		assert.match(summary.report, /\[error\] env/);
+		assert.match(summary.report, /- skip：需确认/);
 	});
 });
