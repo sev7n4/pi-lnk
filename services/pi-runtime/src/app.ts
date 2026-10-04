@@ -12,6 +12,7 @@ import {
 	BusyError,
 	ConflictError,
 	ForkTargetUnknownError,
+	isReplayComplete,
 	type NormalizedEvent,
 	NotFoundError,
 	SessionManager,
@@ -357,7 +358,14 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 
 			// 复核 Minor #10：先订阅再写响应头——hasKey 与 subscribe 之间的 sweeper 回收窗口
 			// 会以 NotFoundError 浮出，此时还能 404；写头之后再抛就只能 500。
-			let buffered: NormalizedEvent[] = [];
+			//
+			// T1：subscribe 现在额外报告 `droppedFromSeq`（buffer 溢出时被淘汰的最早 seq）。
+			// `afterSeq` 早于它 ⇒ 客户端要的重放段已被 `shift()` 丢掉，拿到的 SSE 流是**断头的**。
+			// 此时**不能装作正常**：发 200 + 残缺流会让前端渲染出「答了一半」的界面且无任何报错
+			// （与 degraded 静默降级同型：失败被降级成成功）。
+			// 故在写头**之前**判掉：回 409 + 明确 `error`，让客户端改走全量重建
+			// （Nest 侧 `/thread-timeline`，或退避后重新拉）。
+			let buffered: (NormalizedEvent & { droppedFromSeq?: number }) | undefined;
 			try {
 				if (mode.mode === "live") {
 					manager.subscribeLive(sessionId, writeEvent);
@@ -369,14 +377,28 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				throw err;
 			}
 
+			if (buffered && !isReplayComplete(buffered, mode.afterSeq)) {
+				// 与注释里 #67 的「先订阅再写头」顺序保持一致：此刻listener 已挂上，
+				// 但连接马上要以409 结束 ⇒ 必须在写头前摘掉，否则监听泄漏。
+				manager.unsubscribe(sessionId, writeEvent);
+				return reply.code(409).send({
+					error: "replay window expired",
+					reason: "requested events were evicted from the replay buffer",
+					droppedFromSeq: buffered.droppedFromSeq,
+					afterSeq: mode.afterSeq,
+					recovery: "rebuild full timeline",
+				});
+			}
+
 			reply.raw.writeHead(200, {
 				"content-type": "text/event-stream",
 				"cache-control": "no-cache",
 				"connection": "keep-alive",
 			});
 
-			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），监听已在 subscribe 时挂上
-			for (const event of buffered) writeEvent(event);
+			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），监听已在 subscribe 时挂上。
+			// 走到这里说明 isReplayComplete 为真（残缺已在写头前回 409），补发的一定完整。
+			for (const event of buffered ?? []) writeEvent(event);
 
 			const heartbeat = setInterval(() => {
 				reply.raw.write(`: heartbeat\n\n`);

@@ -346,8 +346,7 @@ describe("既有端点保持", () => {
 				);
 			} finally {
 				await app.close();
-			}
-		});
+			}		});
 	});
 });
 
@@ -553,6 +552,85 @@ describe("POST /sessions/:key/prompt 直通 images（T1）", () => {
 				});
 				// 允许事件循环里 drain/compaction 的补充调用，但绝不允许任何一次携带 images。
 				assert.equal(sink.calls.filter((c) => c.images !== undefined).length, 0);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+/**
+ * T1：SSE 重连遇「重放窗口已过期」必须显式报 409，不能装作正常。
+ *
+ * 缺陷背景：`dispatch` 溢出时 `buffer.shift()` 丢最旧事件，而 `message_update`
+ * 是每 token 一个事件 ⇒ 一段几百字回答单轮就能破 500，溢出是**常规路径**。
+ * 改前客户端带 `lastEventId=0` 重连会拿到 200 + 断头流，前端渲染出「答了一半」
+ * 的界面且**无任何报错**（与 degraded 静默降级同型：失败被降级成成功）。
+ *
+ * 改后：残缺时在**写响应头之前**回 409 + 结构化原因，客户端据此改走全量重建。
+ *
+ * 为什么能在测试里造出溢出：`makeApp` 返回真实 `SessionManager`，
+ * 用 `dispatchWaitingUser`（公开方法）把 buffer 灌到超过 BUFFER_LIMIT=500。
+ */
+describe("T1 SSE 重连：重放窗口过期 → 409 而非残缺 200", () => {
+	/** 用公开方法把某会话的 buffer 灌到溢出（每条一个 waiting_user 广播）。 */
+	async function overflowBuffer(manager: SessionManager, key: string): Promise<void> {
+		for (let i = 0; i < 501; i++) {
+			manager.dispatchWaitingUser(key, { toolName: `t${i}`, status: "waiting" } as never);
+		}
+	}
+
+	it("afterSeq 早于丢弃水位 → 409 + droppedFromSeq（不建 SSE 流）", async () => {
+		await withRoot("pi-runtime-t1-", async (root) => {
+			const { app, manager } = makeApp(root);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				await overflowBuffer(manager, "s1:t1");
+
+				// afterSeq=0 早于丢弃水位 ⇒ 残缺
+				const res = await app.inject({ method: "GET", url: "/sessions/s1:t1/events?lastEventId=0" });
+				assert.equal(res.statusCode, 409, "残缺重放必须 409，不能发 200 + 断头流");
+				const body = res.json() as {
+					error: string;
+					droppedFromSeq: number;
+					afterSeq: number;
+					recovery: string;
+				};
+				assert.equal(body.error, "replay window expired");
+				assert.equal(body.afterSeq, 0);
+				assert.ok(
+					body.droppedFromSeq > body.afterSeq,
+					`droppedFromSeq(${body.droppedFromSeq}) 必须大于 afterSeq(${body.afterSeq})，否则客户端无法判断残缺`,
+				);
+				assert.equal(body.recovery, "rebuild full timeline", "必须告诉客户端怎么恢复");
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("afterSeq 不早于丢弃水位 → 不报 409（正常建流，行为不变）", async () => {
+		await withRoot("pi-runtime-t1-", async (root) => {
+			const { app, manager } = makeApp(root);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t2", userId: "u1" } });
+				await overflowBuffer(manager, "s1:t2");
+
+				// 拿一个「确实还在 buffer 里」的 afterSeq：水位是 1，取 1
+				const probe = manager.subscribe("s1:t2", () => {}, 1);
+				assert.ok(probe.droppedFromSeq > 0, "前置条件：本次确实发生了溢出");
+
+				// afterSeq=水位 ⇒ 重放完整 ⇒ 不该被 409 拦。
+				// ⚠️ 不能对完整路径断言 statusCode（完整路径会升级成 SSE 长连接，
+				// inject 会挂住）；这里只断言「没有被 409 拦掉」。
+				const pending = app.inject({ method: "GET", url: `/sessions/s1:t2/events?lastEventId=${probe.droppedFromSeq}` });
+				const settled = await Promise.race([
+					pending.then((r) => r.statusCode),
+					new Promise<number>((resolve) => setTimeout(() => resolve(-1), 150)),
+				]);
+				assert.notEqual(settled, 409, "完整重放不应被 409 拦掉");
+				// 无论 200（SSE 建流成功）还是 -1（长连接未在窗口内结束）都算通过
+				manager.unsubscribe("s1:t2", () => {});
 			} finally {
 				await app.close();
 			}
