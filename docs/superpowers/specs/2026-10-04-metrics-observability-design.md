@@ -222,6 +222,32 @@ nest_upstream_errors_total{error_class}               counter
 - `outcome`：与生成记录终态一致（`completed` / `failed` / `fallback_pending` / `generating`）
 - `kind`（静默降级）：`placeholder_audio` | `placeholder_image` | `omitted_param` | `downscale` | `unsupported_fallback`
 
+### 4.5 🔴 已知缺口：LLM 错误指标尚未覆盖主路径（2026-10-04 实现期发现）
+
+**阶段一交付后，LLM 错误指标只覆盖了入口早拒路径，生产里绝大多数 LLM 错误仍无埋点。**
+
+已核实事实：`session-manager.ts:1274-1284` 是 LLM 调用的**主路径**：
+
+```
+lane.prompt(...).then((result) => {
+    if (!result.ok) {
+        this.dispatch(entry, { type: "error", ... });// ← 只发 SSE，零指标
+    }
+```
+
+`observeLlmError` 全仓**仅 1 处调用**（`app.ts` 的入口早拒 catch）⇒
+`pi_runtime_llm_errors_total` 反映的是「请求进不来」，**不是「模型调用失败」**。
+
+**为什么阶段一不做完**：主路径的错误对象来自 vendor lane 的 `Result`（`result.error`），
+分类需要判断它是超时、上游 5xx、还是上下文溢出 —— 涉及读vendor 的 `OperationError` 语义，
+比「给已有 catch 换分类器」大一圈，且需要独立的错误路径测试。
+
+**后续 Task（独立立项）**：在主路径 `!result.ok` 处补 `observeLlmError`，
+`stage` 按运行上下文判定（主轮/ 压缩），并区分 `abort`（用户取消）不算错误。
+
+> ⚠️ **读这份spec 的人请注意**：不要以为「上游模型错误监控」已完成。
+> 当前能回答的是「多少请求被入口拒绝」，**不能**回答「多少模型调用失败了、失败在哪一阶段」。
+
 ### 5.1 静默降级必须独立计数
 
 > ⚠️ **归属澄清**：音频/视频 provider **不在 `apps/server`，而在 `packages/agent/src/tools/`**。
