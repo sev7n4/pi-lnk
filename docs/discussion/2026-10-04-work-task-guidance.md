@@ -58,6 +58,26 @@ gh pr merge <n> --squash
 - 还要做 → 直接在原worktree 里接着干（省一次重建）
 - 不做了 → 体检 `status --porcelain` 为空后按序清理：`git worktree remove --force <绝对路径>` → `git worktree prune` → `rm -rf` 残留目录 → `git branch -D` → `git push origin --delete`
 
+### 阻塞 D ⭐：`tool-error-class` + 2 个 prompt HTML 是**唯一副本**
+
+实测 `git status --porcelain` 出 5 个未跟踪文件，逐个核实后分成两类：
+
+| 文件 | 大小 | 判定 |
+|---|---|---|
+| `docs/agents-md-review-2026-10-04.html` | 25.7 KB | ⚠️ **重复副本** —— 已提交在 `docs/agents-md-hardening` 分支 |
+| `docs/superpowers/plans/2026-10-04-agents-md-hardening.md` | 37.9 KB | ⚠️ **重复副本** —— 同上 |
+| `docs/superpowers/specs/2026-10-04-agents-md-hardening-design.md` | 16.2 KB | ⚠️ **重复副本** —— 同上 |
+| `services/pi-runtime/src/tool-error-class.ts` + `.test.ts`（在 `metrics-observability` worktree） | — | 🔴 **唯一副本**，未提交 |
+| `docs/2026-10-03-prompt-audit-progress.html` | 18.0 KB | 🔴 **唯一副本**（不在 master、不在任何分支） |
+| `docs/2026-10-04-prompt-engineering-progress.html` | 12.9 KB | 🔴 **唯一副本**（同上） |
+
+⚠️ **worktree 共享主仓工作区**机制导致「重复副本」看起来像 `??` —— 实为分支已有提交，**删掉安全**。
+但标🔴 的三个是**真·唯一副本**，`git clean` 或 `worktree remove` 即永久丢失。
+
+**动作**：先备份再做任何清理（`cp` 到仓外目录），或直接补进对应分支提交。
+两个 prompt HTML 实测**无任何 `.md` 引用** ⇒ 判定为一次性进度报告，
+按 `docs/README.md` 判据归「可归档/可删」，但**先备份再决定**。
+
 ## 二、然后推进真正的新活（按优先级）
 
 ### P1 ⭐ T1：断线重连换vendor 快照机制（**唯一有已知正确性缺陷的**）
