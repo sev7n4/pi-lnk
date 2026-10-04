@@ -306,6 +306,60 @@ pi-lnk/
 > 通信，不作为 npm 依赖引入），因此不构成障碍。
 > **写代码前先看目标目录的 `package.json` 实际 name**，不要按目录名或历史推断。
 
+## 变更影响面矩阵
+
+**改什么会静默坏掉。** 下表是踩过的坑，每一行都在生产或 PR 里付出过代价。
+
+### 改提示词规则 ⇒ 同步 6 处，漏一处就静默
+
+| # | 位置 | 漏掉的后果 |
+|---|---|---|
+| 1 | `prompt-registry/rules/<id>.md` | 规则不存在 |
+| 2 | `prompt-registry/MANIFEST.yaml`（`contentHash` = `sha256(body.trimEnd())` 前 12 位；`version` 两处一致） | 完整性校验失败 |
+| 3 | `prompt-registry.loader.ts` 的 `COMPOSED_IDS` | 不参与组合 |
+| 4 | `prompt-registry.loader.ts` 的 `FALLBACK_BY_ID` 映射（仅此一处定义） | 降级路径与实际规则不一致 |
+| 5 | 🔴 `pi-prompt-assembler.service.ts` 的 `renderStaticFallback()` **拼装顺序** | **整段提示词静默消失，且无任何报错** |
+| 6 | 🟡 `pi-prompt-assembler.service.test.ts` 的 `EXPECTED` 硬编码串 | 测试假绿 |
+
+**同步判据**：「磁盘 renderStatic == 内嵌 renderStaticFallback」四组合**逐字符相等**。
+
+⚠️ `renderStaticFallback` 在三个文件都出现（assembler / loader / agent.controller），
+第 5 处指的是**内嵌 fallback 的那一处**。
+⚠️ `FALLBACK_BY_ID` 只在 loader 定义，`prompt-registry.fallback.ts` 里没有同名符号 ——
+它靠**内容逐字相等**被约束，不是靠常量名对齐。
+⚠️ 本仓 `git grep` 对上述符号**会返 0 命中**（已知假阴性）。核实位置用 python 直读。
+
+改完跑 `pnpm prompt:lint`（独立成 `prompt-lint.yml` 流水线，`ci.yml` 不覆盖它）。
+
+⚠️ **L6 预算上限 3200 字符**，当前余量约 320 ≈ 还能加 4 条中等规则。加规则前先想清楚值不值。
+
+### 改工具分层 ⇒ 必答「哪个资产点名了它」
+
+**新增工具默认进延迟集前，必须回答：`prompt-registry` 规则或 `skills/*.md` 里，哪个资产按名字点名了它？**
+答不上来按「未点名」处理 ⇒ 必须常驻。
+
+机理：`drive/tools.ts:686` 只把 `activeToolNames` 传给 `prepareToolCall`，
+未激活的工具吃 vendor 硬编码的 `Tool X is unavailable`，**没有恢复路径**。
+
+生产证据（PR #100）：40 次工具调用全落常驻集，`tool_search_activated_total` 为 0
+⇒ 官方 Dynamic Tool Loading 触发率至今为 0。
+
+⚠️ 已因此回归常驻：`arrange_nodes` / `set_node_generation_params` / `save_memory` / `focus_node` / `remove_edges`。
+**`focus_node`（单数，常驻）≠ `focus_nodes`（复数，延迟）** —— 只差一个字母，极易踩错。
+
+新增或变更工具须在 `services/pi-runtime/src/tools/tiering.test.ts` 显式声明归属。
+
+### 改 vendor 消费 ⇒ 认清层次边界
+
+`pi.on` / `pi.registerTool` / `registerCommand` / `ui.*` **全属 `pi-coding-agent`**
+（交互式终端宿主，本项目**未依赖**）。`interface ExtensionAPI` 唯一实现在
+`coding-agent/src/core/extensions/types.ts`。
+
+⇒ `docs/extensions.md` 是扩展面**全景**，**不是 agent-core 能力清单**。
+我们的事件源本来就是 vendor 的 `harness.events.on`（`session-manager.ts` 的 `attachEvents`）。
+
+`vendor/` 目录**禁止业务 patch**（只允许记录版本与来源），否则 upmerge 时无法与上游对齐。
+
 ## 端口约定
 
 | 服务 | 端口 | 来源 | 说明 |
