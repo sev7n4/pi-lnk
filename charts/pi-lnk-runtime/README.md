@@ -6,7 +6,7 @@ pi-runtime（vendored pi-agent-core 0.85.1）在 K3s 上的部署单元 —— s
 
 | spec 原文 | 实际 | 原因 |
 |---|---|---|
-| 容器端口 8080 | **8100** | 端口定案晚于 spec 写作（AGENTS.md 端口表：避让 CVM 8080/8000） |
+| 容器端口 8080 | **8100** | 端口定案晚于 spec 写作（AGENTS.md「端口约定」：避让 CVM 8080/8000） |
 | chart fork 自 bitnami/common | 自包含 helpers | 单服务零子 chart 依赖，自写 ~20 行 helpers 少一层供应链与 fetch |
 | dev 也用 Traefik Ingress | **NodePort 30100** + Traefik/servicelb 禁用 | CVM 生产机内存余量 ~1GB；Nest（同机 docker）走 node IP:30100，Day-1 够用 |
 | dev PVC 10Gi | dev 5Gi | 磁盘余 8.5G，P0 shadow 阶段会话量小 |
