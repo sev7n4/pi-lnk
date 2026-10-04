@@ -12,7 +12,6 @@ export {
 
 export {
   createVideoProvider,
-  PlaceholderVideoProvider,
   AgnesVideoProvider,
   resolveVideoParams,
   isFalVideoModel,

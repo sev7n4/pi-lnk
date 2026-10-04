@@ -50,6 +50,33 @@ describe('createVideoProvider', () => {
     expect(init.headers).toMatchObject({ Authorization: 'Bearer opts-key' })
     expect(JSON.parse(String(init.body))).toMatchObject({ model: 'opts-video' })
   })
+
+  // 回归锁：生产有 1 条 video 记录的 url 是 unsplash 静态图（JPEG）冒充视频，
+  // 即 PlaceholderVideoProvider 线上确已触发。2026-08-08 的设计文档
+  // （docs/superpowers/specs/2026-08-08-seedance-agnes-video-adapter-design.md:549）
+  // 已写明「不得 PlaceholderVideoProvider；返回明确错误」，但无凭据分支一直没落实。
+  it('throws instead of returning an Unsplash still image when unconfigured', () => {
+    delete process.env.OPENAI_API_KEY
+    delete process.env.VIDEO_API_KEY
+    expect(() => createVideoProvider(undefined)).toThrow(/视频通道未配置/)
+  })
+
+  it('never returns a non-video URL for a failed upstream create', async () => {
+    const p = createVideoProvider({
+      apiKey: 'k',
+      baseUrl: 'https://apihub.agnes-ai.com/v1',
+      model: 'agnes-video-v2.0',
+    })
+    // 清掉 beforeEach 预置的「创建成功 + 轮询完成」两次响应，改为只让创建失败
+    fetchMock.mockReset()
+    fetchMock.mockResolvedValue({ ok: false, status: 400, text: async () => 'bad' })
+    const outcome = await p.generate('x').then(
+      (r) => ({ resolved: r }),
+      (e) => ({ rejected: e }),
+    )
+    expect('rejected' in outcome).toBe(true)
+    expect(JSON.stringify(outcome)).not.toContain('unsplash')
+  })
 })
 
 
