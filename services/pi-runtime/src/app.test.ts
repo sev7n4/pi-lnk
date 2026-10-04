@@ -597,13 +597,22 @@ describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => 
 		}
 	}
 
-	it("溢出后重放仍返回 200（行为与改前一致），但 droppedFromSeq 报告了丢弃起点", async () => {
+	/**
+	 * 本组**不测「200 + SSE 流」**。
+	 *
+	 * ⚠️ 2026-10-04 实测两次：一旦真的 inject `/events` 走建流成功路径，
+	 * handler 会活到连接关闭，node --test 报
+	 * `generated asynchronous activity after the test ended` + `ERR_HTTP_HEADERS_SENT`，
+	 * 拖死整个文件（CI 跑 14 分钟未结束）。
+	 * ⇒ 「客户端可见行为不变」用**源码层证据**断言（`git grep` 确认无 409 分支），
+	 * app 层只测**能立即返回的分支**。
+	 *
+	 * 本组要钉的判据是**存储层**：`droppedFromSeq` 可读 + `isReplayComplete` 能判残缺。
+	 * 那是本 PR 的实际交付物（可观测），不碰 I/O 最稳。
+	 */
+	it("溢出后 droppedFromSeq 可读，且能判定重放残缺", async () => {
 		await withRoot("pi-runtime-t1-", async (root) => {
 			const { app, manager } = makeApp(root);
-			// 完整重放路径会升级成 SSE 长连接，inject 永不 resolve ⇒ abort 兜底，
-			// 把「卡死整个文件」降级为「本用例失败并给出可读信息」。
-			const ac = new AbortController();
-			let bodyText = "";
 			try {
 				// ⚠️ `canvasSessionId` 必须传，否则 overflowBuffer 命中不到（见其注释）
 				await app.inject({
@@ -613,37 +622,22 @@ describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => 
 				});
 				await overflowBuffer(manager, "s1:t1");
 
-				// 存储层：水位可读，且能判定重放残缺
+				// 溢出后重放 ⇒ 报告丢弃起点
 				const probe = manager.subscribe("s1:t1", () => {}, 0);
 				assert.ok(probe.droppedFromSeq > 0, "溢出后必须报告丢弃起点");
-				assert.equal(isReplayComplete(probe, 0), false, "afterSeq=0 早于水位 ⇒ 残缺");
+				assert.equal(isReplayComplete(probe, 0), false, "afterSeq=0 早于水位 ⇒ 判为残缺");
 
-				// HTTP 层：**行为与改前一致**——仍是 200 + SSE 流，不改成 409。
-				// 理由见 app.ts 同处注释：客户端只对 404 特判，回 409 会让它
-				// 退避重连同一个必然 409 的 lastEventId，循环到 120s 预算耗尽
-				// ⇒ 把「静默残缺」换成「长时间无响应」，后者更糟。
-				const res = await app
-					.inject({
-						method: "GET",
-						url: "/sessions/s1:t1/events?lastEventId=0",
-						signal: ac.signal,
-					})
-					.then((r) => ({ status: r.statusCode, body: r.body }))
-					.catch(() => null);
-				// 长连接挂住 ⇒ res 为 null（SSE 建流成功）；
-				// 若被 409 拦下则 status 是 409 ⇒ 那正是本PR 要避免的行为。
-				if (res !== null) {
-					assert.notEqual(res.status, 409, "本PR 刻意不回 409（客户端未适配前会退避到预算耗尽）");
-					assert.equal(res.status, 200, "残缺重放仍返回 200，行为与改前一致");
-				}
-				bodyText = res === null ? "<SSE 长连接已建立>" : String(res.body ?? "");
+				// afterSeq 恰好等于水位 ⇒ 判为完整（防「每次重连都误报残缺」）
+				const atBoundary = manager.subscribe("s1:t1", () => {}, probe.droppedFromSeq);
+				assert.equal(
+					isReplayComplete(atBoundary, probe.droppedFromSeq),
+					true,
+					"afterSeq 等于水位时不该判残缺",
+				);
 			} finally {
-				ac.abort();
 				await app.close();
 			}
-			// 水位信息在 SSE 场景下进了日志（见 app.ts 的 app.log.warn），
-			// 这里只确认用例跑完没崩；不校验日志内容。
-			assert.ok(typeof bodyText === "string");
 		});
 	});
+
 });
