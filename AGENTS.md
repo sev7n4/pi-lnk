@@ -158,6 +158,9 @@ git grep -l "<路径>" -- apps packages services charts deploy   # 顺带确认�
 
 > 测试文件规模会变，**要数字时实测 `find <dir> -name '*.test.ts' | wc -l`，别抄本文档的旧数字**。
 > 本文档正文不写会漂移的计数（测试文件数、文档份数、清单长度）——需要规模感时给获取命令。
+> 这条规则由 `pnpm verify-claims` 机器校验（接在 `ci.yml` 的 `Verify spec figures` step）。
+> ⚠️ 判据卡的是**类别**而非具体值 —— 早先的判据只检查几个已知旧值，
+> 于是同一批任务里新写的 DoD 又引入了新的测试规模数字，判据照样通过。
 
 ## pi 内核版本
 
@@ -480,7 +483,8 @@ pi-lnk/
 | 2 | `pnpm test:server:changed` / `pnpm test:runtime` | 默认只跑变更相关；全量是 CI 的活 |
 | 3 | 引用了文档里的事实性数字 ⇒ **先实测再写** | 见「越界信号」 |
 | 4 | 改 `prompt-registry/**` ⇒ `pnpm prompt:lint` | 门禁独立于 `ci.yml` |
-| 5 | 改 `vendor/` ⇒ 确认**零业务 patch** | 否则 upmerge 无法与上游对齐 |
+| 5 | 改 `AGENTS.md` ⇒ `pnpm verify-claims` | 机器校验本文档的事实性断言（计数 / 章节名 / workflow 名 / pin 版本），已接进 `ci.yml` 的 `Verify spec figures` step |
+| 6 | 改 `vendor/` ⇒ 确认**零业务 patch** | 否则 upmerge 无法与上游对齐 |
 
 ### 合并前必看
 
