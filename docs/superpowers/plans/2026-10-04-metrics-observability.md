@@ -944,3 +944,17 @@ git commit -m "feat(metrics): LLM 错误改error_class 分类，旧 2 值指标�
 | 阶段四 | Prometheus + Grafana chart、告警规则、webhook 通知 | 依赖前三个阶段产出真实指标，否则看板是空的 |
 
 **阶段四的前置**：必须先有≥1 个发布周期的真实指标，才能校准 spec §7.2 的初值阈值（5% / 2% / 30s / 660s）。阈值未校准就接通知会制造噪音。
+
+## 阶段一遗留的独立 Task（终审 2026-10-04 登记，均不阻塞阶段一合并）
+
+| # | 内容 | 依据 | 风险 |
+|---|---|---|---|
+| **1.5-a** | 🔴 **LLM 主路径补埋点** —— `session-manager.ts:1277-1284` 的 `!result.ok` 与 `:1308-1320` 的 `.catch()` 都只发 SSE、零指标。`observeLlmError` 全仓仅 1 处非测试调用 ⇒ **当前 `llm_errors_total` 反映的是「请求进不来」不是「模型调用失败」**，占比会远低于真实错误率 | spec §4.5 / Ruling 17 | **最高** —— 这是「上游模型错误监控」的核心承诺，阶段一只兑现了一小部分 |
+| 1.5-b | `llm_tokens_total` / `llm_stage_duration_seconds` 按 stage/channel 归因 | spec §4.2（已标「本阶段未实现」） | 中 —— 现有 `usage_tokens_total` 是全局总量，无法定位阶段 |
+| 1.5-c | `tool_end` 路径的 `channel`/`model` 是**死数据**（`tool_calls_total` 不渲染这两个 label），该路径无测试保护 | Ruling 12 / 终审 M1 | 中 —— 需给 `tool_calls_total` 加 label，会改指标输出形状，宜与阶段四的基数闸门一起做 |
+| 1.5-d | BYOK `model` **无白名单校验**（`llm-override.ts:44` 只校验 `nonEmptyString`）⇒ 任意用户字符串可成为 label。`esc()` 防得住伪造行，防不住基数膨胀 | Ruling 20 /终审 M5 | 中 —— 建议对 `model` 做长度/字符集收敛 |
+| 1.5-e | `metrics.ts` 既有 `esc()` 换行注入未修（注入面比新代码更大，`tool` label 来自用户可控路径） | Ruling 9 / 终审 M4 | 中 —— 建议尽快单独整改 |
+| 1.5-f | `metrics.ts` 既有 `observePromptError` 用的 2 值正则仍在 | spec §4.2 | 低 —— 已计划保留一个发布周期后移除 |
+
+> **1.5-a 为什么单独列为最高风险**：它不是「少一个指标」，而是**「上游模型错误监控」这个目标本身没兑现**——
+> 当前能看到的是「多少请求被入口拒绝」，**看不到**「多少模型调用失败了、失败在哪一阶段」。
