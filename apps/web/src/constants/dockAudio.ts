@@ -1,15 +1,23 @@
-/** 音频 Dock 音色列表（与 AudioStudioPage 对齐，Sprint B） */
+import { defaultModelKey, getModelEntry, listModels } from '@lnkpi/shared'
 
 export interface VoiceOption {
   id: string
   label: string
 }
 
-export const AUDIO_VOICE_OPTIONS: VoiceOption[] = [
-  { id: 'female-1', label: '女声 · 温柔' },
-  { id: 'male-1', label: '男声 · 沉稳' },
-  { id: 'narrator', label: '旁白 · 磁性' },
-]
+/**
+ * 音频 Dock 音色列表。
+ *
+ * ⚠️ 2026-10-04 对齐：此前这里列的是 `female-1` / `male-1` / `narrator`，
+ * 而 `DEFAULT_AUDIO_VOICE = 'female-shaonv'` 且 catalog
+ * `studioModelCatalog.ts` 的 `minimax-speech-2.8-hd.voices` 也是
+ * `female-shaonv` / `male-qingnian` / `presenter_female`
+ * ⇒ **两套完全重叠为零**，用户在面板上看到的音色后端根本不认。
+ * 现直接以 catalog 为 SSOT（`dockAudio.test.ts` 有对齐回归锁）。
+ */
+export const AUDIO_VOICE_OPTIONS: VoiceOption[] = listModels('audio')
+  .flatMap((m) => m.voices ?? [])
+  .map((v) => ({ id: v.id, label: v.label }))
 
 export type AudioEmotion = 'neutral' | 'happy' | 'sad' | 'serious'
 
@@ -28,7 +36,17 @@ export const AUDIO_LANGUAGE_OPTIONS: Array<{ value: AudioLanguage; label: string
   { value: 'ja', label: '日本語' },
 ]
 
-export const DEFAULT_AUDIO_VOICE = 'female-shaonv'
+/**
+ * 默认音色。**从 catalog 的 `minimax-speech-2.8-hd.defaults.voice` 派生**，
+ * 不再硬编码字面量——否则 catalog 改音色时这里会静默变成悬空值
+ * （`dockAudio.test.ts` 有「默认值必须在选项里」的回归锁）。
+ * ⚠️ `defaults` 是 `Record<string, string | number>`，故要断言成 string。
+ */
+const catalogDefaultVoice = getModelEntry(defaultModelKey('audio'))?.defaults?.voice
+export const DEFAULT_AUDIO_VOICE: string =
+  (typeof catalogDefaultVoice === 'string' ? catalogDefaultVoice : undefined) ??
+  AUDIO_VOICE_OPTIONS[0]?.id ??
+  'female-shaonv'
 export const DEFAULT_AUDIO_EMOTION: AudioEmotion = 'neutral'
 export const DEFAULT_AUDIO_LANGUAGE: AudioLanguage = 'zh'
 export const DEFAULT_AUDIO_SPEED = 1

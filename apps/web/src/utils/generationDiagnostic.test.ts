@@ -4,6 +4,8 @@ import {
   buildCopyForNode,
   buildPollingFailurePatch,
   createDiagnosticCache,
+  describeDroppedFields,
+  getRecordFailureMessage,
   parseErrorCodeFromMetadata,
   parseShortGenerationError,
 } from './generationDiagnostic'
@@ -155,5 +157,90 @@ describe('createDiagnosticCache', () => {
     cache.clear('g1')
     await cache.get('generation', 'g1', fetcher)
     expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+})
+
+// 回归锁：droppedFields 只写进 metadata，前端零渲染 —— 用户在 UI 上点了
+// 「生成带音轨视频」，模型不支持时毫无反馈也没报错（生产 Agnes 335 次诚实丢弃
+// + Seedance 16 次误丢，用户全都看不见）。
+// 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.3
+describe('getRecordFailureMessage 暴露被丢弃的参数', () => {
+  it('surfaces dropped params on a SUCCESSFUL record', () => {
+    const msg = getRecordFailureMessage({ status: 'completed',
+      metadata: JSON.stringify({
+        droppedFields: [
+          { field: 'generateAudio', reason: 'generateAudio not supported natively by agnes-video-v2.0' },
+        ],
+      }),
+    })
+    expect(msg).toContain('音轨')
+    expect(msg).toContain('当前模型不支持')
+  })
+
+  it('dedupes and localises multiple dropped fields, keeping unknown field names', () => {
+    const msg = getRecordFailureMessage({ status: 'completed',
+      metadata: JSON.stringify({
+        droppedFields: [
+          { field: 'generateAudio', reason: 'x' },
+          { field: 'generateAudio', reason: 'y' },
+          { field: 'seed', reason: 'z' },
+          { field: 'someBrandNewField', reason: 'w' },
+        ],
+      }),
+    })
+    // generateAudio 出现两次只算一次
+    expect(msg?.match(/音轨/g)).toHaveLength(1)
+    expect(msg).toContain('随机种子')
+    // 未登记的字段名直接透出，不被吞掉
+    expect(msg).toContain('someBrandNewField')
+  })
+
+  it('returns null on success when nothing was dropped', () => {
+    expect(
+      getRecordFailureMessage({ status: 'completed',
+        metadata: JSON.stringify({ droppedFields: [] }),
+      }),
+    ).toBeNull()
+  })
+
+  it('still prefers the real failure message on a FAILED record', () => {
+    const msg = getRecordFailureMessage({ status: 'failed',
+      metadata: JSON.stringify({
+        userMessage: '上游 503',
+        droppedFields: [{ field: 'generateAudio', reason: 'x' }],
+      }),
+    })
+    expect(msg).toBe('上游 503')
+  })
+
+  it('tolerates malformed metadata and non-array droppedFields', () => {
+    expect(
+      getRecordFailureMessage({ status: 'completed', metadata: '{',
+      }),
+    ).toBeNull()
+    expect(
+      getRecordFailureMessage({ status: 'completed',
+        metadata: JSON.stringify({ droppedFields: 'not-an-array' }),
+      }),
+    ).toBeNull()
+    expect(
+      getRecordFailureMessage({ status: 'completed',
+        metadata: JSON.stringify({ droppedFields: [{ reason: 'no field key' }] }),
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('describeDroppedFields', () => {
+  it('returns null for empty / non-array input', () => {
+    expect(describeDroppedFields(undefined)).toBeNull()
+    expect(describeDroppedFields([])).toBeNull()
+    expect(describeDroppedFields('x' as never)).toBeNull()
+  })
+
+  it('lists labels joined by 、 in first-seen order', () => {
+    expect(
+      describeDroppedFields([{ field: 'seed' }, { field: 'generateAudio' }]),
+    ).toBe('以下参数当前模型不支持，已忽略：随机种子、音轨')
   })
 })
