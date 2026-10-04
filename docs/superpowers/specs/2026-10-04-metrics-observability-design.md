@@ -120,7 +120,13 @@ flowchart TB
 pi_runtime_tool_calls_total{tool, result, error_class}    counter
 pi_runtime_tool_duration_seconds{tool}                    histogram
 pi_runtime_tool_result_bytes{tool}                        histogram（既有，保留）
+pi_runtime_tool_error_kinds_total{tool, kind}             counter（实现期新增，见注）
 ```
+
+> 注：`tool_error_kinds_total` 是实现期新增的第 4 个族。`config.ts` 的 `onCall` 回调保留了
+> `errorKind` 精确分类通道（Nest 侧返回的结构化分类，比事件层拿错误文本正则猜更准），
+> 单独成族以免与事件层的 `error_class` 混淆。
+> 已知：`ToolErrorKind` 的 `gate_blocked` / `retry` 两值目前**无写入方**。
 
 - `tool`：`tool_end.toolName`，39 个闭集
 - `result`：`ok` | `error` | `blocked`（三值，由`isError`/`terminate` 派生）
@@ -132,9 +138,14 @@ pi_runtime_tool_result_bytes{tool}                        histogram（既有，�
 ```
 pi_runtime_llm_errors_total{stage, error_class, channel, model}       counter
 pi_runtime_llm_retries_total{stage, channel, model}                   counter
-pi_runtime_llm_tokens_total{stage, kind, channel, model}              counter
-pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram
+pi_runtime_llm_tokens_total{stage, kind, channel, model}              counter   ⚠️ 本阶段未实现
+pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram  ⚠️ 本阶段未实现
 ```
+
+> ⚠️ **本阶段未实现**：`llm_tokens_total` 与 `llm_stage_duration_seconds`。
+> 现有 `pi_runtime_usage_tokens_total{kind}` 是**既有族**（无 stage/channel/model 维度），
+> 由 `usage` 事件驱动。stage/channel 维度的归因需要按调用阶段拆开 token 归属，
+> 属独立 Task（见 §4.5 已知缺口清单）。**不要以为 token 已按阶段归因。**
 
 `stage` 为闭集：`main_turn` | `compaction` | `tool_result_summarize` | `deferred` | `unknown`
 
