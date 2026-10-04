@@ -879,15 +879,15 @@ export class SessionManager {
 						if (evt.status === "completed") void this.auditCompactionSummary(entry);
 					}
 					if (harnessType === "tool_start") {
-					this.dispatchActivity(entry, evt);
-					// spec §3.2：工具计数/耗时在**事件层**统一结算，39 个工具零改动全覆盖
-					// （各工具内部自埋会与这里双计，故已全部删除）。
+						this.dispatchActivity(entry, evt);
+						// spec §3.2：工具计数/耗时在**事件层**统一结算，39 个工具零改动全覆盖
+						// （各工具内部自埋会与这里双计，故已全部删除）。
 					if (metrics && evt.toolCallId) {
 						metrics.toolMetrics().observeStart({ toolCallId: evt.toolCallId });
 					}
 					}
 					if (harnessType === "tool_end" && metrics && evt.toolCallId) {
-					metrics.toolMetrics().observeEnd({
+						metrics.toolMetrics().observeEnd({
 						toolName: evt.toolName ?? "unknown",
 						toolCallId: evt.toolCallId,
 						isError: evt.isError === true,

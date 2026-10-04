@@ -139,8 +139,8 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 			}
 
 			// L3：by-mode 观测已于 2026-10-04 移交事件层——`arrange_nodes_grid` 这类
-		// 动态 tool label 是 spec §3.2 点名要消除的基数风险（mode 取值会随前端加模式增长），
-		// 事件层只出 `tool="arrange_nodes"`。mode 分布改由工具结果里的 `details.mode` 观测。
+			// 动态 tool label 是 spec §3.2 点名要消除的基数风险（mode 取值会随前端加模式增长），
+			// 事件层只出 `tool="arrange_nodes"`。mode 分布改由工具结果里的 `details.mode` 观测。
 
 			return uiResult(
 				{ mode, gap, arranged: nodeIds.length - missing.length, missing, degraded, verified },
