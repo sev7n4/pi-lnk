@@ -445,6 +445,19 @@ export class PiRuntimeClient {
 					if (res.status === 404) {
 						throw new PiRuntimeError("streamEvents: session not found", 404);
 					}
+					// T1：重放窗口已过期（服务端 buffer 溢出后淘汰了我们要的事件）⇒ **终止，不重连**。
+					//
+					// ⛔ 为什么不能落进下面的 `!res.ok`：那会 throw 进指数退避，而重连请求
+					// **仍带同一个 lastEventId** ⇒ 服务端**必然再次 409** ⇒ 空转到
+					// `RECONNECT_BUDGET_MS`(120s) 耗尽。即「重试一个必然失败的请求」，
+					// 期间本轮内容完全拿不到——比直接失败更糟。
+					//
+					// 语义上它与 404 同属「重连无意义」：404 是会话没了，409 是事件没了。
+					// 上层收到 `status=409` 可据此改走全量重建（当前 `agent.service.ts`
+					// 两处 onError 都只关闭流，重建通路待定）。
+					if (res.status === 409) {
+						throw new PiRuntimeError("streamEvents: replay window expired", 409);
+					}
 					if (!res.ok || !res.body) {
 						throw new PiRuntimeError(`streamEvents failed: HTTP ${res.status}`, res.status);
 					}
@@ -466,7 +479,9 @@ export class PiRuntimeClient {
 					return; // body clean end = 会话删除/turn 结束：不重连
 				} catch (err) {
 					if (controller.signal.aborted) return;
-					if (err instanceof PiRuntimeError && err.status === 404) {
+					// 404 会话没了/ 409 重放窗口已过期：**两者重连都无意义**，立即终止并上报。
+					// 404 是既有行为；409 是 T1 新增（见上方 throw 处注释）。
+					if (err instanceof PiRuntimeError && (err.status === 404 || err.status === 409)) {
 						onError?.(err);
 						return;
 					}
