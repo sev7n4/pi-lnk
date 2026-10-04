@@ -43,12 +43,14 @@
 
 **必须同步修改的既有测试**（否则 Task 3 的 `pnpm test:runtime` 必红）：
 
+> 下表处数已按 `e3b4faa4` 实测校正（原表 18/1/2/2 与实际不符，见 Task 3 Step 8 的说明）。
+
 | 文件 | 处数 | 改法 |
 |---|---|---|
-| `services/pi-runtime/src/metrics.test.ts` | 18 | `kind="..."` → `error_class="..."`；其中 `kind="retry"` 的 2 处改为断言 `result="retry"` |
-| `services/pi-runtime/src/tools/ask-user.test.ts` | 1 | 删（手写埋点已删） |
-| `services/pi-runtime/src/tools/arrange-nodes.test.ts` | 2 | 同上 |
-| `services/pi-runtime/src/tools/ui-command.test.ts` | 2 | 同上 |
+| `services/pi-runtime/src/metrics.test.ts` | 3（不是 18） | 删第 37/38/48 行 —— 旧 `tool_calls_total` 渲染方已在 Step 3 删除，这 3 处 `kind=` 断言必失效。**同文件另外 9 处 `kind=` 属 3 个无关指标族（usage_tokens/usage_cost/dynamic_budget_drops），一律勿动** |
+| `services/pi-runtime/src/tools/ask-user.test.ts` | 0（不是 1） | 无需改。`observeToolCall` 出现 0 次，仅第 12 行有个 `const metrics = { observeToolCall: () => {} }` 桩 |
+| `services/pi-runtime/src/tools/arrange-nodes.test.ts` | 0（不是 2） | 无需改 |
+| `services/pi-runtime/src/tools/ui-command.test.ts` | 0（不是 2） | 无需改 |
 
 > ⚠️ `metrics.ts:31` 的 `ToolErrorKind` 类型已含 `"retry"`，Task 2 的 `ToolErrorClass` 需与之对齐 —— `ToolErrorClass` 不含 `retry`，它走 `result` 通道。
 
@@ -517,13 +519,14 @@ git commit -m "feat(metrics): ToolMetrics 事件层结算器（幂等 + 孤儿�
 
 ---
 
-### Task 3: 接入 `attachEvents` 并删除 5 处手写埋点
+### Task 3: 接入 `attachEvents`、删除 `metrics.ts` 旧渲染块与 5 处手写埋点
 
 **Files:**
 - Modify: `services/pi-runtime/src/session-manager.ts:841`（`attachEvents` 内）
-- Modify: `services/pi-runtime/src/metrics.ts`（`Metrics` 类持有 `ToolMetrics` 并在 `render` 末尾追加）
+- Modify: `services/pi-runtime/src/metrics.ts`（`Metrics` 类持有 `ToolMetrics` 并在 `render` 末尾追加；**并删除既有 `tool_calls_total` 渲染路径**，见 Step 3）
 - Modify: `services/pi-runtime/src/app.ts:97`（`/metrics` 路由传 `manager` 的 metrics）
 - Delete埋点: `services/pi-runtime/src/tools/ui-command.ts:37,48,59,70,81`、`arrange-nodes.ts:141`、`skill-tool.ts:27,36,43`、`ask-user.ts:71`
+- Delete埋点: `services/pi-runtime/src/index.ts:135,138`（HITL 拦截/重试放行打点，随`observeToolCall` 一并移除）
 - Modify: `services/pi-runtime/src/tools/registry.ts`（去掉不再需要的 `metrics` 形参）
 - Test: `services/pi-runtime/src/session-manager.fork.test.ts`（既有文件，追加用例）、`services/pi-runtime/src/metrics.test.ts`
 
@@ -548,7 +551,7 @@ test("render 追加工具指标族，且既有指标输出不变", () => {
 });
 ```
 
-> ⚠️ **不要在本步断言 `pi_runtime_tool_calls_total` 的数据行** —— 该label正从 `kind` 改为 `error_class`，Task 2/3 交界处签名仍在变。`tool_calls_total` 的渲染断言统一放在 Task 3 Step 6 改名完成后做。
+> ⚠️ **不要在本步断言 `pi_runtime_tool_calls_total` 的数据行** —— 该label正从 `kind` 改为 `error_class`，Task 2/3 交界处签名仍在变。`tool_calls_total` 的渲染断言统一放在 Task 3 Step 8 改名完成后做。
 
 新建 `services/pi-runtime/src/session-manager.toolmetrics.test.ts`：
 
@@ -587,7 +590,47 @@ test("删除手写埋点后总量不变：ui-command 不再自行计数", () => 
 Run: `cd services/pi-runtime && node --import tsx --test src/session-manager.toolmetrics.test.ts src/metrics.test.ts`
 Expected: FAIL —— `toolMetricsForTest` 不存在
 
-- [ ] **Step 3: `Metrics` 类接入 `ToolMetrics`**
+- [ ] **Step 3: 删除 `metrics.ts` 既有 `tool_calls_total` 渲染路径（解指标重名）**
+
+> **为什么这一步必须在 Step 4 接线之前、且不可省**：`metrics.ts:450-459` 已经渲染同名的
+> `pi_runtime_tool_calls_total`（用 `kind` label）。Task 2 的 `ToolMetrics.renderInto` 也渲染同名
+> 指标（用 `error_class` label）。两者同时存在时，`/metrics` 输出会出现 **2 行 `# HELP`（文本不同）
+> 和 2 行 `# TYPE`**，Prometheus 抓取时报 `second HELP line for metric name` 并**丢弃整个指标** ——
+> 这是生产可见故障（该指标彻底消失），不是洁癖问题。故必须先删旧渲染方，再接新渲染方。
+
+删除 `services/pi-runtime/src/metrics.ts` 中 4 处（行号基于 `e3b4faa4`，改前用 Edit 上下文定位，勿整文件覆盖）：
+
+| # | 位置 | 删除内容 | 理由 |
+|---|---|---|---|
+| 1 | `metrics.ts:450-459` | 整个 `tool_calls_total` 渲染块（`# HELP` + `# TYPE` + `for (const [key, count] of [...this.toolCalls.entries()].sort())` 整个循环） | 消除重名。计数职责移交 `ToolMetrics` |
+| 2 | `metrics.ts:49` | `private toolCalls = new Map<string, number>(); // key: tool\|result[\|kind]` | 唯一写入方是 `observeToolCall`，删渲染块后成死字段 |
+| 3 | `metrics.ts:102-105` | 整个 `observeToolCall(tool, outcome, kind?)` 方法 | 删埋点后无调用方（见下方 Step 7） |
+| 4 | `index.ts:135` | `metrics.observeToolCall(event.toolName, "error", "gate_blocked"); // ③：HITL 拦截归因观测` | HITL 拦截事件**自带 `tool_end`**，由事件层统一结算；手写这行会与事件层**双计** |
+| 5 | `index.ts:138` | `if (check.retry) metrics.observeToolCall(event.toolName, "ok", "retry"); // V-γ 重试放行打点` | 同上 |
+
+`kind="retry"` 语义随之失去唯一写入方：改名前 plan 说「把它改挂到 `result="retry"`」，但改名的对象
+（`metrics.ts:456` 那个 `kind` label）本身就是 Step 3 删掉的块，改无可改。重试放行因此不再有任何
+`tool_calls_total` 数据行。若该归因仍需保留，应改由 `retry_scheduled` 事件驱动新指标族
+（`pi_runtime_tool_retry_allowed_total`），而**不是**保留 `observeToolCall`。
+
+删除后必须补一条**防重名回归**断言（否则将来有人再加回渲染块，无人发现）：
+
+```ts
+test("tool_calls_total 全局只渲染一次（新旧渲染方不共存）", () => {
+	const m = new Metrics();
+	m.toolMetricsForTest().observeStart({ toolCallId: "d1" });
+	m.toolMetricsForTest().observeEnd({
+		toolName: "save_memory", toolCallId: "d1", isError: false, terminate: false,
+		resultText: "ok", channel: "agnes", model: "agnes-2.5-flash",
+	});
+	const out = m.render(0, "test");
+	assert.equal(out.split("\n").filter((l) => l.startsWith("# HELP pi_runtime_tool_calls_total")).length, 1,
+		"HELP 行出现多次 ⇒ Prometheus 会丢弃该指标");
+	assert.equal(out.includes('kind="'), false, "旧 kind 标签仍在渲染");
+});
+```
+
+- [ ] **Step 4: `Metrics` 类接入 `ToolMetrics`**
 
 修改 `services/pi-runtime/src/metrics.ts`：
 
@@ -604,7 +647,7 @@ Expected: FAIL —— `toolMetricsForTest` 不存在
 
 > ⚠️ 必须插在 `return` 之前、既有指标 push 之后 —— 这样既有 25 族的输出顺序与内容逐字不变，只在尾部追加。
 
-- [ ] **Step 4: `attachEvents` 喂事件**
+- [ ] **Step 5: `attachEvents` 喂事件**
 
 修改 `services/pi-runtime/src/session-manager.ts` 的 `attachEvents`：在现有 `for` 循环的监听回调里，`harnessType === "tool_start"` 分支加 start 结算，`"tool_end"` 分支加 end 结算。需要从 `entry.identity` 取 channel/model（`LlmIdentity` 已有 `provider`/`model` 字段）。
 
@@ -649,7 +692,7 @@ function extractResultText(result: unknown): string {
 
 > `ToolLikeEvent` 类型需扩出 `isError`/`terminate`/`result`/`toolName` 字段（该类型在 `session-manager.ts:134` 附近）。
 
-- [ ] **Step 5: 订阅 `retry_scheduled`**
+- [ ] **Step 6: 订阅 `retry_scheduled`**
 
 在 `EVENT_MAP` 之外单独订阅（它只进指标，不进 SSE 归一）：
 
@@ -667,7 +710,7 @@ function extractResultText(result: unknown): string {
 		);
 ```
 
-- [ ] **Step 6: 删除 5 处手写埋点**
+- [ ] **Step 7: 删除 5 处手写埋点**
 
 逐个删除（用 Edit 精确移除行，勿整文件覆盖）：
 
@@ -677,29 +720,66 @@ function extractResultText(result: unknown): string {
 | `tools/arrange-nodes.ts:141` | `metrics.observeToolCall(\`arrange_nodes_${mode}\`, "ok");` |
 | `tools/skill-tool.ts` | 3 行 `metrics.observeToolCall("load_skill", ...)` |
 | `tools/ask-user.ts:71` | `metrics.observeToolCall("ask_user", "ok");` |
+| `index.ts:135,138` | 2 行 HITL 拦截/重试放行打点（已并入 Step 3 表格，此处只作交叉提醒） |
 
-`tools/config.ts:47` 改为**只保留 `errorKind` 补充通道**，不重复计`tool_calls_total`：
+> 上表 5 类工具有个共同点：**它们都同时在 harness 的 `tool_start`/`tool_end` 覆盖范围内**。
+> 手写埋点与事件层同时计数 ⇒ 同一次调用被计两次（`tool_calls_total` 翻倍）。这正是要删它们的原因，
+> 不是代码风格问题。删除后这5 行的观测能力由事件层无损接管（39 工具全覆盖）。
+
+#### `tools/config.ts:47` 的处置：**删除计数调用，保留 `errorKind` 补充通道**
+
+`config.ts:47` 现为`metrics.observeToolCall(tool, outcome, info?.errorKind);`，处在 `NestClient` 的
+`onCall` 回调里。处置分两半，**不可只做一半**：
+
+| 动作 | 决定 | 理由 |
+|---|---|---|
+| 删 `tool_calls_total` **计数** | **删**（连同 `observeToolCall` 调用实参里的 `tool`/`outcome`） | `NestClient` 调的是远端 Nest 工具，这些调用**同样会触发 harness 的 `tool_start`/`tool_end`** ⇒ 保留即与事件层双计。这是 `config.ts` 与上表 5 类的**唯一区别**：它的`errorKind` 比事件层的正则分类**更精确**（`onCall` 直接拿到 Nest 返回的结构化 `errorKind`，事件层只能靠 `resultText` 正则猜，见 Task 2 `classifyToolOutcome`） |
+| 留 `errorKind` **分类通道** | **留**（换方法名 `observeToolErrorKind`） | 精确分类不可丢。若一并删掉，Nest 侧 `gate_blocked`/`upstream_4xx` 等归因会退化成事件层的正则猜测，错误率分子失真 |
+
+替换为：
 
 ```ts
-		// 计数与耗时由事件层统一结算（见 spec §3.2），此处只补充精确 errorKind。
+		// tool_calls_total 的计数与耗时由事件层统一结算（见 spec §3.2）：本次调用同样会触发
+		// harness 的 tool_start/tool_end，此处再计一次就是双计，故删掉计数调用。
+		// 但 errorKind 必须留：它是 Nest 侧返回的结构化分类，比事件层拿 resultText 正则猜精确。
 		if (info?.errorKind) metrics.observeToolErrorKind(tool, info.errorKind);
 		if (info?.resultBytes !== undefined) metrics.observeToolResult(tool, info.resultBytes);
 ```
 
 > 若 `observeToolErrorKind` 尚不存在，在 `Metrics` 类补一个最小实现（写进 `toolErrorKinds` Map，在 render 尾部渲染 `pi_runtime_tool_error_kinds_total{tool,kind}`）。
+>
+> ⚠️ 该方法名（`observeToolErrorKind`）**不得**叫回 `observeToolCall` —— Step 3 已删掉那个方法，
+> 若这里复用同名会造成「已删除」判断失效。且新方法只写`toolErrorKinds`，不碰 `tool_calls_total`。
 
-- [ ] **Step 7: 改名 `kind` → `error_class`（含 22 处既有断言同步）**
+- [ ] **Step 8: 核销 `kind` → `error_class` 改名（Step 3 后已大部分作废，只剩测试同步）**
 
-`metrics.ts` 的 `renderInto`/既有渲染里把 `kind="${...}"` 改为 `error_class="${...}"`。
+> ⚠️ **本步在Step 3 之后已大幅缩小。** 改名前 plan 说「`metrics.ts` 里把 `kind="${...}"` 改为
+> `error_class="${...}"`」—— 但Step 3 已删掉 `metrics.ts:450-459` 那个唯一渲染 `tool_calls_total`
+> 并带 `kind` label 的块（`metrics.ts:456` 是最后一处）。**改名的对象已经不存在了。**
+>
+> 更要紧的是：**`kind` 在 `metrics.ts` 里还有3 个无关指标族在用**，它们与工具错误分类毫无关系，
+> 机械替换会改坏对外指标契约，使既有告警/看板的 label 失效：
 
-**同一批必须改的既有测试**（否则下一步 `pnpm test:runtime` 必红）：
+| 行 | 指标 | label 语义 | 与 `error_class` 关系 |
+|---|---|---|---|
+| `metrics.ts:333` | `pi_runtime_queue_ops_total` | 队列操作类型（`op` + `kind` + `outcome`） | **无关**，勿动 |
+| `metrics.ts:354`、`:360` | `pi_runtime_usage_tokens_total`、`pi_runtime_usage_cost_total` | token 类别（`input`/`output`/`cache_read`/`cache_write`） | **无关**，勿动 |
+| `metrics.ts:384` | `pi_runtime_dynamic_budget_drops_total` | 丢弃原因（`canvas`/`vision`） | **无关**，勿动 |
+
+所以本步剩下的实际工作只有**删旧断言**（旧渲染方没了，这些断言必然失败）：
 
 | 文件 | 处数 | 改法 |
 |---|---|---|
-| `src/metrics.test.ts` | 18 | 机械替换 `kind="` → `error_class="`；**但 `kind="retry"` 的 2 处例外**，改为断言 `result="retry"` |
-| `src/tools/ask-user.test.ts` | 1 | 删断言（埋点已删） |
-| `src/tools/arrange-nodes.test.ts` | 2 | 同上 |
-| `src/tools/ui-command.test.ts` | 2 | 同上 |
+| `src/metrics.test.ts:37` | 1 | 删（`tool_calls_total{...kind="gate_blocked"}`；该归因改由 Step 7 的 `observeToolErrorKind` 通道承担） |
+| `src/metrics.test.ts:38` | 1 | 删（同上，`kind="upstream_4xx"`） |
+| `src/metrics.test.ts:48` | 1 | 删（`kind="retry"`；重试放行归因见 Step 3 末尾说明） |
+| `src/metrics.test.ts:78-83,97,165,166` | 9 | **保留不动**。这 9 处 `kind=` 属上表3 个无关指标族（实测 `metrics.test.ts` 共 12 处 `kind=`，其中仅 3 处属 `tool_calls_total`） |
+
+> 📌 改名前 plan 写「`metrics.test.ts` 18 处」「`ask-user.test.ts` 1 处」「`arrange-nodes.test.ts` 2 处」
+> 「`ui-command.test.ts` 2 处」—— **实测均不符**：`metrics.test.ts` 是 12 处（3 处需删+ 9 处需留），
+> 另三个 tools 测试文件里 `observeToolCall`/`tool_calls_total` 出现次数均为 **0**
+> （`ask-user.test.ts:12` 只是一个 `const metrics = { observeToolCall: () => {} }` 桩，无需删改）。
+> 照原表机械改会误伤无关断言。
 
 改完后在 `metrics.test.ts` 追加渲染断言：
 
@@ -724,25 +804,38 @@ test("tool_calls_total 用 error_class 标签（不再用 kind）", () => {
 });
 ```
 
-- [ ] **Step 8: 清理 `registry.ts` 形参**
+并补一条**反向断言**（防止上表 3 个无关指标族被误改）：
+
+```ts
+test("改名未误伤无关指标族的 kind 标签", () => {
+	const m = new Metrics();
+	m.observeDynamicBudgetDrop("canvas");
+	m.observeDynamicBudgetDrop("canvas");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_dynamic_budget_drops_total\{kind="canvas"\} 2/);
+	assert.equal(out.includes("dynamic_budget_drops_total{error_class="), false);
+});
+```
+
+- [ ] **Step 9: 清理 `registry.ts` 形参**
 
 `buildUiCommandTools(metrics)`、`buildAskUserTools(metrics, ...)`、`buildArrangeNodesTools(metrics, ...)` 里的 `metrics` 形参若已无用则移除，并同步改 `index.ts` 调用处。用 TypeScript 编译器找出未使用形参。
 
-- [ ] **Step 9: 跑测试**
+- [ ] **Step 10: 跑测试**
 
 Run: `cd services/pi-runtime && node --import tsx --test src/metrics.test.ts src/session-manager.toolmetrics.test.ts src/tools/*.test.ts`
 Expected: 全部 PASS
 
-- [ ] **Step 10: 类型检查 + 既有测试不回归**
+- [ ] **Step 11: 类型检查 + 既有测试不回归**
 
 Run: `pnpm --filter @pi-lnk/pi-runtime exec tsc --noEmit && pnpm test:runtime`
 Expected: tsc 无错；pi-runtime 全部既有测试通过（重点看 `session-manager.test.ts` 与 `tiering.test.ts`）
 
-- [ ] **Step 11: 提交**
+- [ ] **Step 12: 提交**
 
 ```bash
-git add services/pi-runtime/src/session-manager.ts services/pi-runtime/src/metrics.ts services/pi-runtime/src/app.ts services/pi-runtime/src/tools/
-git commit -m "feat(metrics): attachEvents 接入工具结算 + 删5 处手写埋点 + kind→error_class 改名"
+git add services/pi-runtime/src/session-manager.ts services/pi-runtime/src/metrics.ts services/pi-runtime/src/app.ts services/pi-runtime/src/index.ts services/pi-runtime/src/tools/
+git commit -m "feat(metrics): attachEvents 接入工具结算 + 删 metrics.ts 旧 tool_calls_total 渲染块与 observeToolCall + 删 5 处手写埋点"
 ```
 
 
