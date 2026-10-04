@@ -36,12 +36,24 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const json = process.argv.includes('--json');
 const includeHistory = process.argv.includes('--all');
 
-/** 不扫描的目录：第三方镜像 / 私有记忆 / 临时产物 / 依赖 */
+/**
+ * 不扫描的目录：第三方镜像 / 私有记忆 / 临时产物 / 依赖
+ *
+ * ⚠️ `.worktrees` 必须在列表里 —— 本机并行开发时 git worktree 会在仓库内建
+ * `.worktrees/<slug>/`，里面是**另一个 checkout 的完整副本**。漏掉它会：
+ *   ① 扫出 3000+ 个重复 md（实测 66 → 3006）
+ *   ② 报一堆假断链（副本里的链接指向副本自己的相对路径）
+ *   ③ 本机跑直接 SIGTERM（exit 137）—— 就是这么发现的
+ * CI 上是干净 checkout 所以不会触发，但本机跑会误导人。
+ */
 const EXCLUDE_DIRS = new Set([
 	'node_modules', '.git', 'dist', '.next', 'out', 'coverage',
 	'.workbuddy',     // 私有记忆，非仓库资产
 	'.superpowers',    // SDD 临时产物
+	'.worktrees',      // git worktree 副本（内容重复 + 相对路径失真 + 拖慢扫描）
 	'uploads', 'assets',
+	// 常见构建/工具缓存，顺手排除避免以后踩同类坑
+	'__pycache__', '.venv', 'venv', '.pytest_cache', '.turbo', '.cache',
 ]);
 
 /** 历史区：断链刻意保留（ADR-0008：篡改历史记录比留死链更糟） */
