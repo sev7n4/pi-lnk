@@ -486,6 +486,16 @@ export interface SessionMeta {
 	provider: string;
 	model: string;
 	/**
+	 * 画布会话 id（Nest 的 `/sessions` body 字段）。
+	 *
+	 * ⚠️ 落盘它**不是**为了 resume 时回填（`entry.canvasSessionId` 取自 `opts`，见 `build()`），
+	 * 而是因为 `meta.json` 是归属与身份在磁盘上的唯一 record（见 `create` 里的 fail-closed 校验）——
+	 * 一个「写进去却读不出来」的字段是残缺的，将来拿它做兜底会成隐藏坑。
+	 *
+	 * 缺失时读作 `undefined`（旧会话目录没有这个键），**不得**因此让 resume 失败。
+	 */
+	canvasSessionId?: string;
+	/**
 	 * 建会话时生效的 prompt 版本指纹（P0-3 收尾 / L-2）。
 	 *
 	 * ⭐ 存在的理由：磁盘 resume 时**身份一致（provider+model）不代表提示词一致**。

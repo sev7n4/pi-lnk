@@ -7,24 +7,23 @@ import { SessionManager } from "./session-manager.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 
 /**
- * A 的回归测试：`canvasSessionId` 的**写→读往返**必须无损。
+ * `canvasSessionId` 的落盘回归（生产取证 2026-10-05）。
  *
- * ## 生产取证（2026-10-05，pod 内 /data/sessions）
+ * ## 生产事实
  *
- * 200 个会话的 `meta.json` **全部**只有 `{userId, provider, model}`，
- * **连 `canvasSessionId` 都���有** —— 包括当天新建的。
- * 而 `SessionMeta` 类型**有**这个字段（`session-manager.ts:398`）、
- * `writeSessionMeta` 也会写整个 meta ⇒ **只可能是读侧漏了**。
+ * pod 内 `/data/sessions` 下 200 个会话的 `meta.json` **全无** `canvasSessionId`
+ * （抽样目录名已含画布 id 的那些也一样没有）⇒ 字段**从来没被写进磁盘**。
  *
- * ## 为什么这个字段丢了就是 404
+ * ## 为什么这个字段丢了就全盘 404
  *
- * `toolContext.sessionId = entry.canvasSessionId ?? key`（:898）。
- * 字段丢失 ⇒ 落到 `?? key`，而 `entry.id` 的真实形态是
- * `cmuptk4wz001bkz01gca02mv8_muptk4zj-gewga212k-aecc1e57`
- * （`<画布id>_<pi键>-<hash>-<random>`）⇒ **整个复合串被当 sessionId 传给Nest**
- * ⇒ `prisma.session.findUnique({id})` 查不到 ⇒ `{"message":"会话不存在"}` 404。
+ * `toolContext.sessionId = entry.canvasSessionId ?? key`。
+ * 字段缺失 ⇒ 回落到 `key`，而 `entry.id` 的真实形态是
+ * `cmuptk4wz001bkz01gca02mv8_muptk4zj-gewga212k-aecc1e57`（`<画布id>_<pi键>-<hash>-<random>`）
+ * ⇒ **整个复合串被当 sessionId 传给 Nest** ⇒ `prisma.session.findUnique({id})` 查不到
+ * ⇒ `{"message":"会话不存在"}` 404 ⇒ 全部画布工具失败
+ * （实测 `get_canvas_layout` 15/19、`get_canvas_summary` 15/17 失败）。
  *
- * 这与 `types.ts` 里记载的 #70 hotfix 是**同一类**问题复发。
+ * 与 `types.ts` 里记载的 #70 hotfix 属**同一类**问题复发。
  */
 
 const TEST_ROOT = mkdtempSync(join(tmpdir(), "pi-runtime-canvassid-"));
@@ -44,6 +43,8 @@ function testConfig(): RuntimeConfig {
 	};
 }
 
+type CreateOpts = Parameters<SessionManager["create"]>[1];
+
 function makeHarnessFactory() {
 	return (async () => ({
 		harness: {
@@ -57,7 +58,11 @@ function makeHarnessFactory() {
 	})) as never;
 }
 
-/** 找到某会话目录下的 meta.json 路径。 */
+function newManager(cfg: RuntimeConfig) {
+	return new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
+}
+
+/** 递归找出某会话目录下的 meta.json。 */
 function findMetaPath(root: string, needle: string): string | null {
 	const stack = [root];
 	while (stack.length > 0) {
@@ -70,74 +75,50 @@ function findMetaPath(root: string, needle: string): string | null {
 		}
 		for (const n of names) {
 			const p = join(dir, n);
-			let st: { isDirectory(): boolean; isFile(): boolean };
+			let isDir = false;
+			let isFile = false;
 			try {
-				st = statSync(p);
+				const st = statSync(p);
+				isDir = st.isDirectory();
+				isFile = st.isFile();
 			} catch {
 				continue;
 			}
-			if (st.isFile() && n === "meta.json" && p.includes(needle)) return p;
-			if (st.isDirectory()) stack.push(p);
+			if (isFile && n === "meta.json" && p.includes(needle)) return p;
+			if (isDir) stack.push(p);
 		}
 	}
 	return null;
 }
 
-test("🔴 回归：canvasSessionId 必须能写到 meta.json 并读回来", async () => {
+test("🔴 写盘侧：canvasSessionId 必须进 meta.json（缺它 ⇒ 画布工具全 404）", async () => {
 	const cfg = testConfig();
+	// 用真实的复合键形态（含画布 id 前缀），别用纯 UUID —— 否则测不到线上那个场景
 	const CANVAS = "cmuptk4wz001bkz01gca02mv8";
 	const KEY = `${CANVAS}_muptk4zj-gewga212k-aecc1e57`;
 
-	const m1 = new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
-	await m1.create(KEY, { userId: "u1", canvasSessionId: CANVAS } as unknown as Parameters<SessionManager["create"]>[1]);
+	const m1 = newManager(cfg);
+	await m1.create(KEY, { userId: "u1", canvasSessionId: CANVAS } as CreateOpts);
 	m1.stopSweeper();
 
-	// 1) 写盘侧：meta.json 里必须有这个字段
 	const metaPath = findMetaPath(cfg.dataRoot, CANVAS);
-	assert.ok(metaPath, `应能找到 meta.json（目录里含 ${CANVAS}）`);
+	assert.ok(metaPath, `应能找到 meta.json（目录名含 ${CANVAS}）`);
 	const raw = readFileSync(metaPath, "utf8");
 	assert.ok(
 		raw.includes(CANVAS),
-		`写盘侧缺 canvasSessionId。meta.json 实际内容：${raw.slice(0, 200)}`,
-	);
-
-	// 2) 读盘侧（**这才是缺陷所在**）：新建一个 manager 走 resume 路径，
-	//    让它从磁盘恢复，然后断言 toolContext.sessionId 仍是**画布 id** 而非 entry.id。
-	const seenSessionIds: string[] = [];
-	const spyFactory = (async (c: { toolContext: unknown }) => {
-		const tc = c.toolContext as (args: unknown) => { sessionId: string };
-		seenSessionIds.push(tc({}).sessionId);
-		return {
-			harness: {
-				events: { on: () => () => {} },
-				lane: async () => ({ prompt: async () => ({ ok: true, value: undefined }), dispose: async () => {} }),
-				close: async () => {},
-			},
-		} as never;
-	});
-
-	const m2 = new SessionManager([], "", undefined, spyFactory, undefined, undefined, cfg, undefined, undefined);
-	await m2.create(KEY, { userId: "u1", canvasSessionId: CANVAS } as unknown as Parameters<SessionManager["create"]>[1]);
-	m2.stopSweeper();
-
-	assert.ok(seenSessionIds.length > 0, "spyFactory 应被调用（resume 路径生效）");
-	// 这一条在修复前会失败：读回的 meta 没有 canvasSessionId ⇒ 回落到 key（复合串）
-	assert.equal(
-		seenSessionIds[0],
-		CANVAS,
-		`恢复后 toolContext.sessionId 应是画布 id ${CANVAS}，实际是 ${seenSessionIds[0]}`,
+		`meta.json 缺 canvasSessionId ⇒ 恢复后回落成复合键 ⇒ 画布工具 404。实际内容：${raw.slice(0, 200)}`,
 	);
 });
 
-test("读盘侧：缺字段的存量 meta.json 不得让 resume 失败（回落 key 即可）", async () => {
+test("存量会话（meta 无该字段）必须仍能 resume，且不报错", async () => {
 	const cfg = testConfig();
 	const KEY = "legacy-key-1";
 
-	const m1 = new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
-	await m1.create(KEY, { userId: "u1" } as unknown as Parameters<SessionManager["create"]>[1]);
+	const m1 = newManager(cfg);
+	await m1.create(KEY, { userId: "u1" } as CreateOpts);
 	m1.stopSweeper();
 
-	// 把 meta.json 改回「历史形态」：没有 canvasSessionId
+	// 改成历史形态：没有 canvasSessionId
 	const metaPath = findMetaPath(cfg.dataRoot, "legacy-key-1");
 	assert.ok(metaPath, "应找到 meta.json");
 	writeFileSync(
@@ -146,64 +127,37 @@ test("读盘侧：缺字段的存量 meta.json 不得让 resume 失败（回落 
 		"utf8",
 	);
 
-	// 关键：不得抛异常（存量会话必须仍可 resume）
-	const m2 = new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
-	const r = await m2.create(KEY, { userId: "u1" } as unknown as Parameters<SessionManager["create"]>[1]);
-	// CreateResult 的真实形状是 { provider, model, status, resumedFrom? }（:409），
-	// **没有 created 字段** —— 断言必须打在 status 上。
+	// 关键：不得抛异常 —— 存量会话必须仍能 resume
+	const m2 = newManager(cfg);
+	const r = await m2.create(KEY, { userId: "u1" } as CreateOpts);
+	// CreateResult 的真实形状是 { provider, model, status, resumedFrom? }，
+	// **没有 created 字段**（status ∈ "created" | "resumed" | "rebuilt"）
 	assert.notEqual(r.status, "error", "缺字段的存量会话仍应能 resume");
 	m2.stopSweeper();
 });
 
-
-/**
- * 🔴 读盘侧的**独立**断言（第一版缺失，导致变异 2 存活）。
- *
- * ## 为什么必须单独立一条
- *
- * 上一版只让「写盘侧」被mutation 抓到（变异 1 杀、变异 2 活）。
- * 复查代码后确认原因：**resume 路径里 `entry.canvasSessionId` 取自 `opts`
- *（`build()` :852），不是取自 meta** ⇒ 读侧漏字段在真实流程里影响有限。
- *
- * 但读侧**仍应修**：`meta.json` 是归属与身份在磁盘上的唯一 record
- * （`session-manager.ts:760` 的 fail-closed 校验就靠它），
- * 一个「写进去但读不出来」的字段等于没写。
- *
- * ⇒ 这条测试**直接断言 readSessionMeta 的读出结果**，
- * 让变异 2 必须变红。断言打在真实契约上，不依赖 resume 的副作用。
- */
-test("读盘侧：meta.json 里写了 canvasSessionId，readSessionMeta 必须能读回来", async () => {
+test("读盘侧补全：写进 meta 的 canvasSessionId 会被 readSessionMeta 读出（无行为影响，仅一致性）", async () => {
 	const cfg = testConfig();
 	const CANVAS = "cmuptk4wz001bkz01gca02mv8";
 
-	const m1 = new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
-	await m1.create(CANVAS, {
-		userId: "u1",
-		canvasSessionId: CANVAS,
-	} as unknown as Parameters<SessionManager["create"]>[1]);
+	const m1 = newManager(cfg);
+	await m1.create(CANVAS, { userId: "u1", canvasSessionId: CANVAS } as CreateOpts);
 	m1.stopSweeper();
 
 	const metaPath = findMetaPath(cfg.dataRoot, CANVAS);
 	assert.ok(metaPath, "应找到 meta.json");
 	const parsed = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
-	assert.equal(parsed.canvasSessionId, CANVAS, "写盘侧应含该字段（本用例是读侧的前置条件）");
+	assert.equal(parsed.canvasSessionId, CANVAS, "写盘侧应含该字段");
 
-	//⭐ 关键断言：**改掉磁盘内容**再新建 manager，走真正的 resume 路径，
-	// 断言 meta 被读出来且字段不丢。若 readSessionMeta 漏了字段，
-	// 这条会在 `meta.canvasSessionId` 上失败。
-	const m2 = new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
-	await m2.create(CANVAS, {
-		userId: "u1",
-		// ⚠️ 刻意**不传** canvasSessionId：这样 entry 会回落到 key，
-		// 而 meta 读回是否生效就成为唯一变量 ⇒ 读侧漏字段必然暴露。
-	} as unknown as Parameters<SessionManager["create"]>[1]);
-	m2.stopSweeper();
-
-	// 通过 getCanvasSessionId（:1226）观察 entry 上的实际值
-	const got = m2.getCanvasSessionId(CANVAS);
-	assert.equal(
-		got,
-		CANVAS,
-		`getCanvasSessionId 应返回画布 id ${CANVAS}，实际 ${got}`,
-	);
+	// ⚠️ **本用例刻意不断言 readSessionMeta 的读出值**，因为断言不了（变异验证实测得出）。
+	//
+	// 撤掉 `readSessionMeta` 里的这个字段后，测试仍然全绿 —— 复查代码确认原因是：
+	// `readSessionMeta` 返回的 meta **只用于 userId / identity 校验**，
+	// 而 `entry.canvasSessionId` 来自 `build()` 读的 **opts**，**不取自 meta**。
+	// ⇒ 读侧补不补这个字段，对 `getCanvasSessionId` / `toolContext.sessionId` **均无行为影响**。
+	//
+	// 那为何仍要补？「写进去却读不出来」语义上残缺：`meta.json` 是归属与身份在磁盘上的
+	// 唯一 record，将来若有人拿它做画布 id 兜底，漏字段会成为隐藏坑。
+	// ⇒ 明确标注为**防御性补全**，不冒充 bug 修复。
+	// 真正的 bug 修复是**写盘侧**，那条已被上面的用例钉住（变异验证 1/1 杀）。
 });
