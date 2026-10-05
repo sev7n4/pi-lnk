@@ -636,18 +636,36 @@ export function createRenderCanvasViewTools(deps: {
 					const head =
 						`画布规模超出单张卡片上限：${nodes.length} 个节点会产出约 ${budget.bytes} 字节，` +
 						`超过 ${SVG_MAX_CHARS} 字节上限（超出会被整块丢弃，用户看不到图）。`;
+					// ⚠️ 建议必须**对当前 view 可行**。
+					// `scope` / `focus` 只作用于 layout/topology（依赖图）；
+					// 给 swimlane/tree/timeline 建议「改用 scope」是**指一条不存在的路**
+					// （2026-10-05 截图评审发现：泳道超预算时仍推 scope，用户照做无效）。
+					// 注：旧名 topology 在上面已归一为 layout（:590），故只需判 layout。
+					const SCOPE_AWARE = effView === "layout";
+					const canFocus = SCOPE_AWARE;
+					const focusLine = canFocus
+						? `要精确到某一集/某张图，用 focus=<该节点 id> 拆局部（配 hops=2 看两跳）。`
+						: `（${effView} 视图不支持 focus 拆局部，只能用 node_ids 收窄。）`;
+					const scopeLine = SCOPE_AWARE
+						? `请改用 scope 收窄观察尺度：scope=structure 只画骨架（讲原理）、` +
+							`scope=ownership 加归属（看素材属于哪一集）、scope=detail 才是全量。`
+						: "";
+					const idsLine =
+						`请用 node_ids 收窄 —— 建议取这 ${suggested.length} 个（保留层级骨架与业务序）：` +
+						`${suggested.slice(0, 6).join("、")}${suggested.length > 6 ? " …" : ""}。`;
 					const advice =
 						p.focus !== undefined
 							? `当前已聚焦「${p.focus}」（hops=${p.hops ?? 1}），请把 hops 调小，` +
 								`或换一个出度更小的中心节点（如某张分镜脚本）。`
-							: effView === "layout"
-								? `请改用 scope 收窄观察尺度：scope=structure 只画骨架（讲原理）、` +
-									`scope=ownership 加归属（看素材属于哪一集）、scope=detail 才是全量。` +
-									`要精确到某一集/某张图，用 focus=<该节点 id> 拆局部（配 hops=2 看两跳）。` +
-									`若都不需要，改用 view=matrix（交叉表，体积与节点数无关）。`
-								: `请用 node_ids 收窄 —— 建议取这 ${suggested.length} 个（保留层级骨架与业务序）：` +
-									`${suggested.slice(0, 8).join("、")}${suggested.length > 8 ? " …" : ""}。` +
-									`或改用 view=matrix（交叉表，体积与节点数无关）。`;
+							: [
+									scopeLine,
+									focusLine,
+									`若都不需要，改用 view=matrix（交叉表，体积与节点数无关）。`,
+									// scope/focus 都不可用时，node_ids 是唯一出路，必须明确给出
+									canFocus ? "" : idsLine,
+								]
+									.filter(Boolean)
+									.join("");
 					return fail(`${head}${advice}`);
 				}
 				return presentResult({

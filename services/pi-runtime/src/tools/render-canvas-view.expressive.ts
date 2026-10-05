@@ -223,6 +223,14 @@ const W = 720;
  *
  * 与 `views.ts` 的 `colorClass()` 配对：那边登记「颜色⇒短类名」，这边输出规则。
  * 顺序由 Map 插入序决定 ⇒ 同一输入必得同一输出（可测试）。
+ *
+ * ## ⛔ 时序约束：只能在**所有节点渲染完之后**调用
+ *
+ * `CSS_CLASSES` 由 `colorClass()` 在**渲染每个节点时**填充。若在渲染开头调用本函数，
+ * Map 还是空的 ⇒ 返回空串 ⇒ `<style>` 无配色规则 ⇒ `rect` 走 SVG 默认 fill（黑）
+ * ⇒ **整张卡片黑条、文字不可见**。
+ *
+ * 2026-10-05 真的发生过：且当时的 14/14 生产复测只查了字节数与边数，**没查颜色**。
  */
 export function buildCssRules(): string {
 	const rules: string[] = [];
@@ -246,9 +254,27 @@ function cssColorClassMap(): Map<string, string> {
 }
 
 /** 箭头 marker + 图例的公共前缀。marker id 固定，全图唯一。 */
-export function svgHeader(height: number, extraCss = ""): string {
+export function svgOpen(height: number): string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" role="img">`;
+}
+
+/**
+ * SVG 的收尾部分：`<defs>`（箭头 marker）+ `<style>`（含**配色规则**）。
+ *
+ * ## ⛔ 必须在**所有节点渲染完之后**调用
+ *
+ * 配色规则由 `buildCssRules()` 从 `CSS_CLASSES` 生成，而该 Map 是`colorClass()`
+ * 在**渲染每个节点时**填充的。若在渲染开头就输出 `<style>`，Map 还是空的
+ * ⇒ 一条 `.cf` 规则都没有 ⇒ `rect` 走 SVG 默认 fill（**黑**）
+ * ⇒ **整张卡片黑条、文字不可见**。
+ *
+ * 2026-10-05真的发生过，且当时的 14/14 生产复测只查字节数与边数、**没查颜色**。
+ *
+ * @param height 必须与 `svgOpen` 传入的一致
+ * @param extraCss 追加的 CSS（调用方自定义）
+ */
+export function svgTail(height: number, extraCss = ""): string {
 	return (
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" role="img">` +
 		`<defs><marker id="gv-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">` +
 		`<path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
 		`</marker><marker id="gv-arrow-hi" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +

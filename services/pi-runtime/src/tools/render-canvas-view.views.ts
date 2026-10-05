@@ -29,7 +29,8 @@ import {
 	ordinal,
 	paletteOf,
 	shortLabels,
-	svgHeader,
+	svgOpen,
+	svgTail,
 	statusShade,
 	usedTypes,
 	NODE_PALETTE,
@@ -226,7 +227,7 @@ export function buildLayoutSvg(
 		(_, i) => 30 + i * ROW_H,
 		() => 20,
 	);
-	const parts: string[] = [svgHeader(H)];
+	const parts: string[] = [svgOpen(H)];
 
 	if (opts.drawEdges) {
 		// ⭐ 同源多出边起点沿源节点高度分散 —— 修「全部从同一点射出」的扫帚
@@ -312,6 +313,15 @@ export function buildLayoutSvg(
 				`<text x="24" y="${H - 14 - sufs.length * 16 + i * 16 + 9}" class="gvl">${esc(clip(suf, 16))}（全部节点共有）</text></g>`,
 		);
 	});
+	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
+	// 配色 class 走 `colorClass()`，它在**渲染每个节点时**才把「颜色⇒短类名」登记进
+	// 模块级 `CSS_CLASSES`；而 `svgHeader()` 内的 `buildCssRules()` 只读那个 Map。
+	// ⇒ 若在开头调用，Map 还是空的，`<style>` 里**一条 .cf 规则都没有**，
+	//   `rect` 拿不到 fill ⇒ SVG 默认 fill 是黑 ⇒ **整张卡片黑条、文字不可见**。
+	//   2026-10-05 截图评审发现；躲过了 14/14 生产复测（当时只查字节数与边数，没查颜色）。
+	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
+	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
+	parts.push(svgTail(H));
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -463,7 +473,7 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
 	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
 	const H = 40 + rowsAll.length * ROW_H + (ORPHAN ? 24 : 0) + 24;
-	const parts: string[] = [svgHeader(H)];
+	const parts: string[] = [svgOpen(H)];
 	const note = auditNoteSvg(audit.misplaced, audit.compared);
 	if (note) {
 		parts.push(note);
@@ -505,6 +515,15 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 				`<text x="24" y="${H - 14 - sufs.length * 16 + i * 16 + 9}" class="gvl">${esc(clip(suf, 16))}（全部节点共有）</text></g>`,
 		);
 	});
+	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
+	// 配色 class 走 `colorClass()`，它在**渲染每个节点时**才把「颜色⇒短类名」登记进
+	// 模块级 `CSS_CLASSES`；而 `svgHeader()` 内的 `buildCssRules()` 只读那个 Map。
+	// ⇒ 若在开头调用，Map 还是空的，`<style>` 里**一条 .cf 规则都没有**，
+	//   `rect` 拿不到 fill ⇒ SVG 默认 fill 是黑 ⇒ **整张卡片黑条、文字不可见**。
+	//   2026-10-05 截图评审发现；躲过了 14/14 生产复测（当时只查字节数与边数，没查颜色）。
+	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
+	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
+	parts.push(svgTail(H));
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -516,7 +535,7 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 	const nodes = orderNodes(nodesIn);
 	const H = 40 + nodes.length * ROW_H + 34;
-	const parts: string[] = [svgHeader(H)];
+	const parts: string[] = [svgOpen(H)];
 	nodes.forEach((n, i) => {
 		const y = 30 + i * ROW_H;
 		const p = paletteOf(n);
@@ -531,6 +550,15 @@ export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 	});
 	const lg = usedTypes(nodes);
 	parts.push(legendSvg(lg, 8, H - 14 - lg.length * 16));
+	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
+	// 配色 class 走 `colorClass()`，它在**渲染每个节点时**才把「颜色⇒短类名」登记进
+	// 模块级 `CSS_CLASSES`；而 `svgHeader()` 内的 `buildCssRules()` 只读那个 Map。
+	// ⇒ 若在开头调用，Map 还是空的，`<style>` 里**一条 .cf 规则都没有**，
+	//   `rect` 拿不到 fill ⇒ SVG 默认 fill 是黑 ⇒ **整张卡片黑条、文字不可见**。
+	//   2026-10-05 截图评审发现；躲过了 14/14 生产复测（当时只查字节数与边数，没查颜色）。
+	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
+	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
+	parts.push(svgTail(H));
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -564,7 +592,7 @@ export function buildSwimlaneSvg(
 	const laneH = 46;
 	const headH = 26;
 	const H = headH + 24 + laneRows.length * laneH + 30;
-	const parts: string[] = [svgHeader(H)];
+	const parts: string[] = [svgOpen(H)];
 
 	// 阶段列头
 	for (let s = 0; s < STAGE_COUNT; s++) {
@@ -623,6 +651,15 @@ export function buildSwimlaneSvg(
 
 	const lg = groupBy === "type" ? usedTypes(nodes) : laneRows.slice(0, 4).map((k) => ({ label: k, palette: NODE_PALETTE.default }));
 	parts.push(legendSvg(lg, 8, H - 14 - lg.length * 16));
+	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
+	// 配色 class 走 `colorClass()`，它在**渲染每个节点时**才把「颜色⇒短类名」登记进
+	// 模块级 `CSS_CLASSES`；而 `svgHeader()` 内的 `buildCssRules()` 只读那个 Map。
+	// ⇒ 若在开头调用，Map 还是空的，`<style>` 里**一条 .cf 规则都没有**，
+	//   `rect` 拿不到 fill ⇒ SVG 默认 fill 是黑 ⇒ **整张卡片黑条、文字不可见**。
+	//   2026-10-05 截图评审发现；躲过了 14/14 生产复测（当时只查字节数与边数，没查颜色）。
+	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
+	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
+	parts.push(svgTail(H));
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -649,7 +686,7 @@ export function buildMatrixSvg(
 	const cw = Math.floor((W - 150) / Math.max(1, cols.length));
 	const ch = 30;
 	const H = 50 + rows.length * ch + 30;
-	const parts: string[] = [svgHeader(H)];
+	const parts: string[] = [svgOpen(H)];
 	// 列头
 	cols.forEach((c, ci) => {
 		parts.push(`<g data-col="${esc(c)}">`);
@@ -675,6 +712,15 @@ export function buildMatrixSvg(
 		});
 	});
 	parts.push(legendSvg([{ label: "非空格 = 有内容", palette: NODE_PALETTE.prompt }], 8, H - 26));
+	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
+	// 配色 class 走 `colorClass()`，它在**渲染每个节点时**才把「颜色⇒短类名」登记进
+	// 模块级 `CSS_CLASSES`；而 `svgHeader()` 内的 `buildCssRules()` 只读那个 Map。
+	// ⇒ 若在开头调用，Map 还是空的，`<style>` 里**一条 .cf 规则都没有**，
+	//   `rect` 拿不到 fill ⇒ SVG 默认 fill 是黑 ⇒ **整张卡片黑条、文字不可见**。
+	//   2026-10-05 截图评审发现；躲过了 14/14 生产复测（当时只查字节数与边数，没查颜色）。
+	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
+	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
+	parts.push(svgTail(H));
 	parts.push("</svg>");
 	return parts.join("");
 }
