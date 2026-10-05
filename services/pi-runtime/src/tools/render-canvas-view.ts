@@ -53,6 +53,15 @@ const RELATIONS = ["dependency", "category"] as const;
  * 把 `image→image` 的镜头顺序画成依赖箭头是主动误导。
  */
 const SCOPES = ["structure", "ownership", "detail"] as const;
+/**
+ * 局部视图的出线策略（默认 `spread`）。
+ * - `spread`：焦点节点高度按下游数拉伸，每条边真正错开 —— 想看清「谁连到谁」
+ * - `bus`：高度不变，右侧加垂直汇流条 —— 想看「一个焦点连出一片」的整体感
+ * - `aggregate`：边数超阈值时聚合成单箭头 +「→ N 个下游」—— 只关心数量
+ *
+ * 三种都保留是因为它们诉求不同：硬编码一种会让「看清关系」与「看规模」互相冲突。
+ */
+const FOCUS_ANCHORS = ["spread", "bus", "aggregate"] as const;
 const GROUP_BYS = ["type", "status", "parentNode"] as const;
 /** 行级指标 overlay（时长/台词/情绪/级别）—— 与 `relation` 正交，用于 timeline/table。 */
 const OVERLAYS = ["emotion", "budget", "severity"] as const;
@@ -411,6 +420,18 @@ export function createRenderCanvasViewTools(deps: {
 						description: "Neighbourhood depth for `focus` (1-3, default 1). 1 = direct relations, 2 = one level further. Clamped, not rejected.",
 					}),
 				),
+				focus_anchor: Type.Optional(
+					Type.Union(FOCUS_ANCHORS.map((a) => Type.Literal(a)), {
+						description:
+							"How to draw edges leaving the focus node in a local (focus) view. Default 'spread'. "
+							+ "'spread' stretches the focus node vertically so each outgoing edge starts at a different y — "
+							+ "use it when the user needs to see exactly who connects to what. "
+							+ "'bus' keeps the node height and adds a vertical trunk on its right — "
+							+ "use it when the user wants the overall 'this node feeds a whole set' impression. "
+							+ "'aggregate' collapses more than 8 outgoing edges into one arrow labelled '-> N downstream' — "
+							+ "use it when the user only cares how many, not which.",
+					}),
+				),
 				rowBy: Type.Optional(
 					Type.Union(GROUP_BYS.map((g) => Type.Literal(g)), {
 						description: "matrix only: row dimension. Defaults to type.",
@@ -478,6 +499,8 @@ export function createRenderCanvasViewTools(deps: {
 					focus?: string;
 					/** 邻域跳数（夹取 1..3）。 */
 					hops?: number;
+					/** 局部视图出线策略（对外是 focus_anchor）。 */
+					focus_anchor?: (typeof FOCUS_ANCHORS)[number];
 					/** matrix 行维度。 */
 					rowBy?: GroupByKind;
 					/** matrix 列维度。 */
@@ -501,6 +524,10 @@ export function createRenderCanvasViewTools(deps: {
 				const groupBy: GroupByKind = p.groupBy ?? "type";
 				if (!GROUP_BYS.includes(groupBy)) {
 					return fail(`groupBy 非法：${String(p.groupBy)}，可选 ${GROUP_BYS.join(" | ")}`);
+				}
+				const focusAnchor = p.focus_anchor ?? "spread";
+				if (!FOCUS_ANCHORS.includes(focusAnchor)) {
+					return fail(`focus_anchor 非法：${String(p.focus_anchor)}，可选 ${FOCUS_ANCHORS.join(" | ")}`);
 				}
 				const scope: ScopeKind = p.scope ?? "structure";
 				if (!SCOPES.includes(scope)) {
@@ -619,7 +646,9 @@ export function createRenderCanvasViewTools(deps: {
 											groupBy,
 											showType: p.show_type === true,
 											scope,
-											...(p.focus !== undefined ? { focus: p.focus, hops: p.hops } : {}),
+											...(p.focus !== undefined
+											? { focus: p.focus, hops: p.hops, focusAnchor }
+											: {}),
 										});
 				// ⛔ 超界**显式报错**，而不是产出注定被丢的图。
 				// 线上 `present-result` 超 20000B 会整块丢弃（svg:""+ truncated:true），
@@ -636,18 +665,36 @@ export function createRenderCanvasViewTools(deps: {
 					const head =
 						`画布规模超出单张卡片上限：${nodes.length} 个节点会产出约 ${budget.bytes} 字节，` +
 						`超过 ${SVG_MAX_CHARS} 字节上限（超出会被整块丢弃，用户看不到图）。`;
+					// ⚠️ 建议必须**对当前 view 可行**。
+					// `scope` / `focus` 只作用于 layout/topology（依赖图）；
+					// 给 swimlane/tree/timeline 建议「改用 scope」是**指一条不存在的路**
+					// （2026-10-05 截图评审发现：泳道超预算时仍推 scope，用户照做无效）。
+					// 注：旧名 topology 在上面已归一为 layout（:590），故只需判 layout。
+					const SCOPE_AWARE = effView === "layout";
+					const canFocus = SCOPE_AWARE;
+					const focusLine = canFocus
+						? `要精确到某一集/某张图，用 focus=<该节点 id> 拆局部（配 hops=2 看两跳）。`
+						: `（${effView} 视图不支持 focus 拆局部，只能用 node_ids 收窄。）`;
+					const scopeLine = SCOPE_AWARE
+						? `请改用 scope 收窄观察尺度：scope=structure 只画骨架（讲原理）、` +
+							`scope=ownership 加归属（看素材属于哪一集）、scope=detail 才是全量。`
+						: "";
+					const idsLine =
+						`请用 node_ids 收窄 —— 建议取这 ${suggested.length} 个（保留层级骨架与业务序）：` +
+						`${suggested.slice(0, 6).join("、")}${suggested.length > 6 ? " …" : ""}。`;
 					const advice =
 						p.focus !== undefined
 							? `当前已聚焦「${p.focus}」（hops=${p.hops ?? 1}），请把 hops 调小，` +
 								`或换一个出度更小的中心节点（如某张分镜脚本）。`
-							: effView === "layout"
-								? `请改用 scope 收窄观察尺度：scope=structure 只画骨架（讲原理）、` +
-									`scope=ownership 加归属（看素材属于哪一集）、scope=detail 才是全量。` +
-									`要精确到某一集/某张图，用 focus=<该节点 id> 拆局部（配 hops=2 看两跳）。` +
-									`若都不需要，改用 view=matrix（交叉表，体积与节点数无关）。`
-								: `请用 node_ids 收窄 —— 建议取这 ${suggested.length} 个（保留层级骨架与业务序）：` +
-									`${suggested.slice(0, 8).join("、")}${suggested.length > 8 ? " …" : ""}。` +
-									`或改用 view=matrix（交叉表，体积与节点数无关）。`;
+							: [
+									scopeLine,
+									focusLine,
+									`若都不需要，改用 view=matrix（交叉表，体积与节点数无关）。`,
+									// scope/focus 都不可用时，node_ids 是唯一出路，必须明确给出
+									canFocus ? "" : idsLine,
+								]
+									.filter(Boolean)
+									.join("");
 					return fail(`${head}${advice}`);
 				}
 				return presentResult({

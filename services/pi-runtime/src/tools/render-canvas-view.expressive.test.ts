@@ -271,7 +271,8 @@ describe("tree：层级与归属", () => {
 			] as never,
 			[] as never,
 		);
-		assert.match(svg, /^<svg/);
+		// header 现在在**结尾**（配色 class 必须等节点渲染完才登记）⇒ 断言改为「结构完整」
+		assert.match(svg, /^<svg[\s\S]*<\/svg>$/);
 		assert.ok(svg.includes("A") && svg.includes("B"));
 	});
 });
@@ -828,7 +829,8 @@ describe("三层视图：宏观讲原理 / 微观求精确", () => {
 		const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, {
 			drawEdges: true, scope: "detail", focus: "p-out", hops: 99,
 		});
-		assert.match(svg, /^<svg/);
+		// header 现在在**结尾**（配色 class 必须等节点渲染完才登记）⇒ 断言改为「结构完整」
+		assert.match(svg, /^<svg[\s\S]*<\/svg>$/);
 	});
 
 	// ── 关键契约：宏观/中观必须能出图，微观靠 focus 才有出路 ──
