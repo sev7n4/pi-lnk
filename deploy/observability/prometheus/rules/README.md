@@ -41,4 +41,12 @@
 #    `pi_runtime_tool_calls_total` 只有 6 条序列且**全为 `result="ok"`**
 #    ⇒ **「没有错误」当前只是「没有流量」的另一种写法，不能据此判定已修好**
 #    （正是 spec §7.2 说的窗口校正原则）。
-#    判据：在有真实流量的窗口里 `increase(pi_runtime_tool_calls_total{result="error"}[1d])` 稳定为 0。
+#    判据：在一个**分母非零**的窗口里 `sum(increase(pi_runtime_tool_calls_total{result="error"}[1h]))
+#    or vector(0)` 稳定为 0。
+#    ⚠️ 原文写的是 `[1d]` 且没带 `or vector(0)` —— **那是一条执行不了的判据**：
+#    - 族为空时 `increase(...)` 返回**空向量**而不是 0，「稳定为 0」与「查不到」无法区分；
+#    - `[1d]` 会跨越 pod 重启（counter 归零），`increase` 在跨重启窗口上的取值不可信。
+#    正确写法必须同时满足三条：① 带 `or vector(0)`；② 窗口时长 < 典型重启间隔；
+#    ③ **先确认同一窗口的分母 `sum(increase(pi_runtime_tool_calls_total[1h]))` 非零**，
+#    否则「错误为 0」只是「没有事件」的另一种写法。
+#    判据与脚本：见同目录 `read-decisions.sh`（把上面这些判据做成了可执行的一次性自检）。
