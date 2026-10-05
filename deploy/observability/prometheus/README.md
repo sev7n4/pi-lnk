@@ -45,20 +45,48 @@
 
 ```promql
 # 工具错误按分类分布（#192 修复后应能看到 upstream_4xx / gate_blocked）
-sum by (tool, error_class) (pi_runtime_tool_calls_total{result="error"})
+# ⚠️ 空族时返回空向量而非 0 —— 加 `or vector(0)` 才能区分「零错误」与「查不到」
+sum by (tool, error_class) (pi_runtime_tool_calls_total{result="error"}) or vector(0)
 
 # 工具调用总览
-sum by (tool, result) (pi_runtime_tool_calls_total)
+sum by (tool, result) (pi_runtime_tool_calls_total) or vector(0)
 
 # LLM 上游错误（1.5-a 新增，stage 区分主轮/压缩）
-sum by (stage, error_class, channel, model) (pi_runtime_llm_errors_total)
+# ⚠️ 语义在 2026-10-06 变过一次：此前 LLM 失败被 vendor 物化成正常结算的 run，
+# 该族恒空；#214 起挂在 run_end(status=failed) 上，只记**失败的 run 数**（重试不重复计）
+sum by (stage, error_class, channel, model) (pi_runtime_llm_errors_total) or vector(0)
 
-# 工具耗时 p99
+# 工具耗时 p99（样本量 < 100 时无意义，别当基线）
 histogram_quantile(0.99, sum by (le, tool) (rate(pi_runtime_tool_duration_seconds_bucket[5m])))
 
 # 静默降级（阶段三未实现，当前无数据）
 sum(increase(nest_gen_silent_degrade_total[5m]))
 ```
+
+## 读数判据：查不到 ≠ 出错了（`read-decisions.sh`）
+
+pi-runtime 的 counter 型指标是**按需渲染**的：`Map` 为空时不渲染数据行（`metrics.ts`
+的刻意约定，为了区分「从未触发」与「触发过但 0」），而 Prometheus 会**整族丢弃**没有
+样本行的族。⇒ 查不到某个族，既可能是「真没事件」，也可能是「采集断了」，**两者在
+查询侧长得一模一样**。
+
+```bash
+# 路径以**仓库根**为基准。若你不在仓库里（如在 CVM 上直接查），先 scp 过去再跑：
+#   scp deploy/observability/prometheus/read-decisions.sh <host>:/tmp/ && ssh <host> 'bash /tmp/read-decisions.sh'
+bash deploy/observability/prometheus/read-decisions.sh [PROM_URL]
+# 回看历史窗口（复现一次判读）：
+HISTORY_TS=$(date -u -d '2026-10-05 07:15:00' +%s) SHOW_HISTORY=1 bash deploy/observability/prometheus/read-decisions.sh
+```
+
+脚本一次性给出五条判据，每条都对应一个**已实测踩过的坑**：
+
+| 判据 | 为什么不能省 |
+|---|---|
+| `up{job="pi-runtime"}` 是否为 1 | 这是「族空」与「采集断」的唯一分界。不是 1 时下面所有结论都无效 |
+| 数据起点（`query_range` 的**实际首样本**） | 配置里的 `retention.time=7d` 不等于有 7 天数据（实测 PVC 当天创建）。`headStats.minTime` 实测偏 14 分钟，`timestamp(min_over_time(x[7d]))` 返回的是求值时刻 |
+| 近 1h counter 是否回落 | counter 只会单调增，**回落即 pod 重启**；跨重启的 `rate()` 会被低估。比翻 helm history 直接 |
+| **分母**（`increase(工具调用)`）是否非零 | 「错误为 0」只在**分母非零**的窗口里才是证据。⚠️ 不要挂 `sessions_active` —— 实测「会话峰值 2 但工具调用增量 0」，此时「错误为 0」仍只是「没有事件」的另一种写法 |
+| 空族的正确读法 | 需要「空即 0」时在**查询侧**加 `or vector(0)`（已验证）。⛔ 不要改 producer 去补 0 值样本：那会把「从未触发」与「触发过但 0」抹成同一个 0，反而丢掉这条判读能力（且已有测试锁定该约定） |
 
 ## 为什么不用 Ingress
 
