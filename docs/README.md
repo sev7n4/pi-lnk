@@ -53,7 +53,7 @@
 
 | 目录 | 内容 | 性质 |
 |---|---|---|
-| `agent/` | **agent 规范专题文件**（2026-10-04 从 `AGENTS.md` 拆出）—— `delivery.md` 交付流程 / `architecture.md` 架构与内核 / `docs.md` 文档管理 / `environment.md` 本机环境。主文件 `../AGENTS.md` 保留「任何上下文都要看得见」的 5 节并给出导航 | 活资产 —— 章节名受上方「外部引用契约」约束 |
+| `agent/` | **agent 规范专题文件**（2026-10-04 从 `AGENTS.md` 拆出）—— `delivery.md` 交付流程 / `architecture.md` 架构与内核 / `docs.md` 文档管理 / `environment.md` 本机环境。主文件 `../AGENTS.md` 保留「任何上下文都要看得见」的 5 节并给出导航。<br>另有**工具框架结论资产**：`tool-framework-audit.md`（诊断）/ `tool-framework-roadmap.html`（路线，§3 主线 A/B/C）/ `tool-capability-catalog.md`（**能力目录** = 主线 A 落地：47 工具 × 点名资产 × 归属 × 触发话术，含可重跑的扫描命令） | 活资产 —— 章节名受上方「外部引用契约」约束 |
 | `adr/` | **架构决策记录**（0001-0009 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
 | `workflow/` | Agent 工作流交换契约（`README.md` + `examples/*.json`） | **活跃资产** —— 外部 Agent（WorkBuddy / Codex 等）靠它生成可导入画布的 JSON。校验函数是 `@lnkpi/shared` 的 `validateWorkflow`，代码里由 `useWorkflowExchange.ts`、`compositionLint.ts` 等消费。**不要删。** |
 | `superpowers/` | 历史 spec 与 plan（283 份：specs 137 / plans 146） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 +状态（🟢living / 🔒frozen / ⛔superseded）分组。索引可重跑：`python3 gen_index.py && python3 gen_index_md.py` |
