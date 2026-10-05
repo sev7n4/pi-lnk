@@ -60,7 +60,17 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 		tier: "ui_command" as const,
 		name: "arrange_nodes",
 		label: "排列节点",
-		description: "Auto-arrange a set of canvas nodes into a grid or a layered layout along directed edges, then pan the viewport to them. Non-blocking UI command; reuses the existing useCanvasGrouping layout functions on the frontend. Use grid for unordered sets, along_edges when nodes are connected (e.g. an ecommerce image set linked by reference edges) to lay out as a left-to-right reference chain. The result reports how many of the given ids exist (arranged), which ones were not found (missing), and whether along_edges had to fall back to grid (degraded).",
+		description:
+			"自动重排画布节点的位置（只改坐标，不改节点内容）。" +
+			"【何时该用】用户想整理 / 排列 / 对齐 / 铺开节点，或想按连线关系把节点排成层级时，" +
+			"例如「把节点排一下」「按左右关系重新排」「整理画布」「按引用链铺开」「这些节点太乱了」——" +
+			"只要用户的意图是调整布局或顺序，就用本工具，不要只读画布就作答。" +
+			"mode=grid 用于无顺序关系的集合；mode=along_edges 用于有向关系（如分镜引用链、大纲→分集）。" +
+			"完成后视口自动平移到这些节点，并返回已排列数、未找到的 id、along_edges 是否降级为 grid（degraded）。" +
+			"【何时不该用】要改节点文字用 set_node_text；要新建节点用 upsert_prompt_node / upsert_media_node；" +
+			"只想查看有多少节点或当前布局用 get_canvas_summary / get_canvas_layout——" +
+			"「看一眼」不要触发重排，除非用户明确要求整理或排列。",
+
 		parameters: Type.Object({
 			node_ids: Type.Array(Type.String(), {
 				description: "Canvas node ids to arrange; at least 2 to have effect",
