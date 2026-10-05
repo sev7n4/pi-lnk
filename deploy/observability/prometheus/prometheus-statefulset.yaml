@@ -1,0 +1,147 @@
+# pi-lnk 自建 Prometheus（阶段四·采集层）
+#
+# ## 为什么是 StatefulSet 而不是 Deployment+emptyDir
+#
+# **这是本设计最关键的一条**：指标只存在 pi-runtime 进程的内存里，pod 一重启就归零。
+# Prometheus 若也用 Deployment + emptyDir，**它自己一重启就把历史全丢了**——
+# 那样「让指标活过重启」的目标就落空了。
+# StatefulSet + PVC ⇒ 采集历史与 Prometheus 生命周期解耦。
+#
+# ## 资源约束（部署前实测，2026-10-05）
+#
+# 宿主机：内存 3.6G，**已用 3.0G，可用仅 656M**；磁盘 40G，**已用 81%，剩 7.8G**。
+# 占用大头：`lnkpi-matting` 937MiB、生产现有 Prometheus 157MiB、Grafana 74MiB。
+#
+# ⇒ 下面是**紧配额**，刻意压低：
+# - requests 200m/512Mi、limits 1CPU/1Gi
+# - 保留期 7 天（与生产现有栈一致）
+# - **不做 Grafana**（本阶段只要「指标活下来」；看板用生产已有的那台，见 README）
+#
+# ⚠️ 若这台上再装别的东西，先砍本组件的保留期，不要动别的容器。
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-lnk-prometheus
+  namespace: pi-lnk-observability
+  labels:
+    app.kubernetes.io/name: pi-lnk-prometheus
+    app.kubernetes.io/part-of: pi-lnk-observability
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pi-lnk-prometheus
+  ports:
+    # **刻意不暴露 NodePort**（与 pi-runtime 不同）。
+    # 理由：采集端是「Prometheus 主动拉 pi-runtime」，不需要任何人从外面访问 Prometheus；
+    # 而一旦暴露 NodePort，就要为它做鉴权与网络边界，而本阶段并不需要对外查询。
+    - name: web
+      port: 9090
+      targetPort: web
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pi-lnk-prometheus
+  namespace: pi-lnk-observability
+  labels:
+    app.kubernetes.io/name: pi-lnk-prometheus
+    app.kubernetes.io/part-of: pi-lnk-observability
+spec:
+  serviceName: pi-lnk-prometheus
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pi-lnk-prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pi-lnk-prometheus
+        app.kubernetes.io/part-of: pi-lnk-observability
+    spec:
+      securityContext:
+        # Prometheus 官方镜像的 uid 是 nobody(65534)，但 local-path 卷的属主由 fsGroup 决定
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # 7 天，与生产现有栈一致；磁盘只剩 7.8G，这是最该收的旋钮
+            - --storage.tsdb.retention.time=7d
+            - --storage.tsdb.retention.size=2GB
+            # 压缩 WAL，减少磁盘写放大（本机磁盘已 81%）
+            - --storage.tsdb.wal-compression
+            # 允许热重载：改 scrape 配置不必重启 pod
+            - --web.enable-lifecycle
+          ports:
+            - name: web
+              containerPort: 9090
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          # 探针用 /-/healthy 而非 /metrics：后者会拉全量指标正文做正则匹配，开销大且会超时
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: web
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: pi-lnk-prometheus-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+        # 生产已实测 local-path 是 default StorageClass 且存在（WaitForFirstConsumer）
+        storageClassName: local-path
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-lnk-prometheus-config
+  namespace: pi-lnk-observability
+  labels:
+    app.kubernetes.io/part-of: pi-lnk-observability
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        stack: pi-lnk
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["127.0.0.1:9090"]
+      - job_name: pi-runtime
+        metrics_path: /metrics
+        scrape_interval: 15s
+        static_configs:
+          - targets: ["172.17.0.1:30100"]
+            labels:
+              component: pi-runtime
+              namespace: pi-lnk-runtime

@@ -1,0 +1,43 @@
+# Prometheus 采集配置（pi-lnk 自建栈）
+#
+# 为什么自建而不是复用生产上那台 `pintuotuo-prometheus`：
+# 那台属**另一个项目**（docker compose 部署于 /opt/pintuotuo/），改它的配置会越界到别人的资产。
+# 已在生产实测：它能访问 `172.17.0.1:30100`（说明网络通、只是没配 job），
+# 但「能抓」不等于「该由我们改」—— 保持栈隔离。
+#
+# 抓取目标：NodePort 30100（pi-runtime 的唯一对外入口，对外网不可达、集群内可达）。
+# 实测 `http://172.17.0.1:30100/metrics` 返回 200 与完整指标正文。
+#
+# ⚠️ 保留期 7天：与生产现有 Prometheus 一致。理由是磁盘只剩 7.8G（已用 81%），
+# 不宜开更长的保留。**若磁盘告急，这是第一个该收的旋钮**。
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: pi-lnk
+
+rule_files:
+  # 本阶段**刻意不启用**告警规则。理由见 rules/README.md。
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # Prometheus 自身（必须有，否则 `up{job="prometheus"}` 无意义）
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  # pi-runtime（阶段一 + 1.5-a + 4xx 修复的全部指标）
+  - job_name: pi-runtime
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["172.17.0.1:30100"]
+        labels:
+          component: pi-runtime
+          namespace: pi-lnk-runtime
+
+  # pi-runtime 自身是 NodePort，唯一入口就是上面那个地址。
+  # **不额外抓 k3s 组件**（coredns / metrics-server 等）——
+  # 那属于集群基础设施，不在「pi-lnk 可观测」这条线的范围内；
+  # 真需要时用 kube-prometheus-stack 的 ServiceMonitor 单独加，不要混进这个 job。
