@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工具框架吃满度 → 产品路线规划（2026-10-05）</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --border: #e4e7ec;
+    --text: #1a1f36;
+    --text-soft: #4a5266;
+    --text-muted: #7a8499;
+    --accent: #2b5fff;
+    --green-bg: #ecfdf3; --green-text: #067647; --green-border: #abefc6;
+    --amber-bg: #fff8eb; --amber-text: #b54708; --amber-border: #fedf89;
+    --purple-bg: #f4f3ff; --purple-text: #5925dc; --purple-border: #d9d6fe;
+    --red-bg: #fef3f2; --red-text: #b42318; --red-border: #fecdca;
+    --blue-bg: #eff4ff; --blue-text: #175cd3; --blue-border: #b2ccff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.65;
+    padding: 32px 20px; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  .header { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 28px 32px; margin-bottom: 20px; }
+  .header-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+  .header h1 { font-size: 25px; font-weight: 700; letter-spacing: -0.01em; }
+  .meta-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .meta { font-size: 12px; padding: 4px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text-soft); font-variant-numeric: tabular-nums; }
+  .meta strong { color: var(--text); font-weight: 600; }
+
+  .verdict { padding: 16px 18px; background: linear-gradient(90deg, #eff4ff 0%, #f4f3ff 100%); border-left: 4px solid var(--accent); border-radius: 8px; font-size: 15px; color: var(--text); }
+  .verdict-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 6px; }
+
+  .scorecard { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 26px; }
+  .score-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .score-num { font-size: 27px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .score-label { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .score-note { font-size: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); color: var(--text-soft); }
+
+  .section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px 28px; margin-bottom: 20px; }
+  .section h2 { font-size: 18px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 9px; }
+  .sec-num { font-size: 11px; font-weight: 700; color: var(--accent); background: var(--blue-bg); border: 1px solid var(--blue-border); border-radius: 5px; padding: 2px 8px; letter-spacing: 0.04em; }
+  .section .lead { color: var(--text-soft); font-size: 14px; margin-bottom: 18px; }
+  h3 { font-size: 15px; font-weight: 650; margin: 22px 0 10px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 6px 0 4px; }
+  th { text-align: left; font-weight: 650; font-size: 12.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); padding: 8px 10px; }
+  td { padding: 9px 10px; border-bottom: 1px solid #f0f2f5; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #f3f4f8; border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+
+  .tag { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 5px; border: 1px solid; white-space: nowrap; }
+  .t-do { background: var(--green-bg); color: var(--green-text); border-color: var(--green-border); }
+  .t-mid { background: var(--amber-bg); color: var(--amber-text); border-color: var(--amber-border); }
+  .t-no { background: var(--red-bg); color: var(--red-text); border-color: var(--red-border); }
+  .t-info { background: var(--blue-bg); color: var(--blue-text); border-color: var(--blue-border); }
+  .t-pu { background: var(--purple-bg); color: var(--purple-text); border-color: var(--purple-border); }
+
+  .callout { padding: 14px 16px; border-radius: 8px; font-size: 14px; margin: 14px 0; border: 1px solid; }
+  .callout .ct { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 5px; }
+  .c-red { background: var(--red-bg); border-color: var(--red-border); color: var(--red-text); }
+  .c-amber { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber-text); }
+  .c-blue { background: var(--blue-bg); border-color: var(--blue-border); color: var(--blue-text); }
+  .c-green { background: var(--green-bg); border-color: var(--green-border); color: var(--green-text); }
+
+  .lines { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .line-card { border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; background: #fcfcfd; }
+  .line-card .lname { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+  .line-card .lsub { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+  .line-card ul { list-style: none; font-size: 13px; }
+  .line-card li { padding-left: 14px; position: relative; margin-bottom: 6px; color: var(--text-soft); }
+  .line-card li::before { content: "·"; position: absolute; left: 3px; font-weight: 700; color: var(--accent); }
+  .line-card .eat { margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border); font-size: 12.5px; }
+  .line-card .eat b { color: var(--purple-text); }
+
+  .timeline { border-left: 2px solid var(--border); margin-left: 8px; padding-left: 20px; }
+  .tl-item { position: relative; padding-bottom: 18px; }
+  .tl-item::before { content: ""; position: absolute; left: -27px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; box-shadow: 0 0 0 2px var(--border); }
+  .tl-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .tl-head .ph { font-size: 12px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 5px; padding: 2px 9px; }
+  .tl-head .ph-done { font-size: 11.5px; font-weight: 700; color: #0a6b3d; background: #e6f6ec; border: 1px solid #b7e3c6; border-radius: 5px; padding: 1px 8px; }
+  .tl-head .t { font-size: 14.5px; font-weight: 650; }
+  .tl-item .d { font-size: 13px; color: var(--text-soft); }
+  .tl-note { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+
+  .metric { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: #fcfcfd; }
+  .metric .mn { font-size: 13.5px; font-weight: 650; margin-bottom: 4px; }
+  .metric .mv { font-size: 13px; color: var(--text-soft); }
+  .metric .mv b { color: var(--red-text); }
+
+  ul.clean { list-style: none; font-size: 13.5px; }
+  ul.clean li { padding-left: 20px; position: relative; margin-bottom: 7px; color: var(--text-soft); }
+  ul.clean li::before { content: "—"; position: absolute; left: 0; color: var(--text-muted); }
+  ul.clean li b { color: var(--text); }
+
+  footer { text-align: center; font-size: 12px; color: var(--text-muted); padding: 8px 0 24px; }
+  @media (max-width: 900px) { .scorecard, .lines { grid-template-columns: 1fr 1fr; } .wrap { padding: 0 4px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="header">
+    <div class="header-top">
+      <h1>工具框架吃满度 → 产品路线规划</h1>
+      <div class="meta-row">
+        <span class="meta">日期 <strong>2026-10-05</strong></span>
+        <span class="meta">基线 <strong>tool-framework-audit.md</strong></span>
+        <span class="meta">上游 <strong>pi-agent-core v0.85.1</strong></span>
+        <span class="meta">范围 <strong>产品规划，非代码评审</strong></span>
+      </div>
+    </div>
+    <div class="verdict">
+      <div class="verdict-label">核心判断</div>
+      吃满上游工具框架的<strong>瓶颈不在钩子，在工具层没有承载产品形态</strong>。上游 ~14 个能力位本项目消费 6 个，但那 6 个全部集中在「审批 / 安全 / 截断」这一侧；真正的调度红利——动态激活、热装卸、可重放——在生产上复用了 <b>0</b> 次（<code>tool_search</code> 触发率 0，激活路径 100% 走常驻）。<br>
+      ⇒ 下一步不该是「再接几个钩子」，而是<strong>先把产品撑到需要这些钩子</strong>，否则吃进来就是死代码。真正的入口是<b>把工具集变成产品单元</b>（技能包化）。
+    </div>
+  </div>
+
+  <div class="scorecard">
+    <div class="score-card">
+      <div class="score-num" style="color:var(--accent)">6 / ~14</div>
+      <div class="score-label">上游能力位消费比</div>
+      <div class="score-note">6 项吃满（4 hook + addedToolNames + onUpdate）；8 项零消费</div>
+    </div>
+    <div class="score-card">
+      <div class="score-num" style="color:var(--amber-text)">36 + 10</div>
+      <div class="score-label">工具 41：常驻 / 延迟</div>
+      <div class="score-note">常驻 36 / 47（77%），延迟集仅 11 个</div>
+    </div>
+    <div class="score-card">
+      <div class="score-num" style="color:var(--red-text)">0</div>
+      <div class="score-label">tool_search 生产激活数</div>
+      <div class="score-note">渐进披露机制建成但从未生效，自锁在「无货可搜」</div>
+    </div>
+    <div class="score-card">
+      <div class="score-num" style="color:var(--purple-text)">10 / 8 / 12</div>
+      <div class="score-label">规则 / 技能 / 验收用例</div>
+      <div class="score-note">资产量尚可，但「工具 → 资产」的连接是断的</div>
+    </div>
+  </div>
+
+  <!-- ============ §1 ============ -->
+  <div class="section">
+    <h2><span class="sec-num">§ 1</span> 现状：审计结论与生产事实的落差</h2>
+    <p class="lead">审计写的是「调度主干吃满了」，这句话对，但只说了一半——主干的<strong>尽头没接通货</strong>。</p>
+
+    <table>
+      <tr><th style="width:30%">审计结论</th><th style="width:36%">实际情况（本次核实）</th><th>判读</th></tr>
+      <tr>
+        <td>「<code>addedToolNames</code> + <code>tool-placement</code> 100% 走原生 ⇒ 动态激活是吃满典范」</td>
+        <td>机制确实 100% 原生，无 host 侵入；但生产 <code>tool_search_activated_total = 0</code>，该通道<strong>从未被走过</strong></td>
+        <td><span class="tag t-do">机制对</span> <span class="tag t-no">无流量</span> 典型「接了线没接负载」</td>
+      </tr>
+      <tr>
+        <td>延迟集已建成（<code>buildToolEnsemble</code> + <code>tool_search</code>）</td>
+        <td><strong>47</strong> 工具（<code>tools/*.ts</code> 实测）：常驻 <strong>36</strong>（含 <code>load_skill</code> + <code>tool_search</code>），延迟集 <strong>11</strong> 个（apply_asset_to_node / delete_nodes / duplicate_node / focus_nodes / grid_slice_image / introduce_nodes_to_agent / open_image_editor / redo / save_node_to_asset_library / undo / upload_media_to_canvas）</td>
+        <td><span class="tag t-mid">货太少</span> 77% 常驻 ⇒ 模型几乎不需要搜，渐进披露无收益</td>
+      </tr>
+      <tr>
+        <td>C 类工具「无任何资产点名 ⇒ 只能靠 description 猜」</td>
+        <td>2026-10-05 复核修正：<code>tool_search</code> <strong>在常驻集里、每轮都下发</strong>（非「不可达」）。真正的死锁是<strong>「77% 常驻 ⇒ 没什么可搜」+「没有任何资产告诉模型什么时候该搜」</strong>——是动机问题，不是可达性问题</td>
+        <td><span class="tag t-no">自锁</span> #184 补了触发条件，但载体文件正在暂存删除态（见 §6）</td>
+      </tr>
+      <tr>
+        <td>「护城河 = 只走包公共入口，零内部路径穿透」</td>
+        <td>成立，仍是本项目最值钱的结构优势</td>
+        <td><span class="tag t-do">守住</span> 别为了方便去 import 内部路径</td>
+      </tr>
+      <tr>
+        <td>「风险点：vendor 升级零门禁」</td>
+        <td>成立。<code>verify-contract.ts</code> 比的是<strong>模型 API schema</strong>，工具框架契约 0 覆盖；4 个 hook 的 event 靠运行时读字段，无类型约束 ⇒ 上游改字段会<strong>静默 fail-soft</strong></td>
+        <td><span class="tag t-no">最高优先级</span> 0.x 无 semver 兜底</td>
+      </tr>
+    </table>
+
+    <div class="callout c-amber">
+      <div class="ct">一句话</div>
+      审计的「吃满」是<strong>能力接线条数</strong>的口径；产品要的是<strong>这些能力被真实业务用到</strong>的口径。两者目前差着 0 次真实调用。
+    </div>
+  </div>
+
+  <!-- ============ §2 ============ -->
+  <div class="section">
+    <h2><span class="sec-num">§ 2</span> 重新分类：8 个零消费钩子，按「有没有对应产品需求」</h2>
+    <p class="lead">审计按「不吃的代价」排序，那份排序对代码成立、对产品不成立。这里按<strong>产品是否长出了承载它的业务</strong>重分四档。</p>
+
+    <h3><span class="tag t-do">A 档 · 值得吃</span> &nbsp;有明确产品载体，吃进来立刻有业务</h3>
+    <table>
+      <tr><th style="width:24%">上游钩子</th><th style="width:30%">对应产品能力</th><th style="width:26%">前置条件（必须先产品的部分）</th><th>产品价值</th></tr>
+      <tr>
+        <td><code>setTools</code> / <code>setActiveTools</code></td>
+        <td><b>工具集 = 产品单元</b>：技能包 / 会员套餐 / 权限边界 / 一个会话只配一套工具</td>
+        <td>① 技能声明式声明自己的工具清单 ② 会话装配层（现在 <code>config.tools</code> 是编译期常量）</td>
+        <td>垂类上架从「改代码+发镜像」变为「装包」；也是唯一能让 <code>tool_search</code> 有货可搜的路线</td>
+      </tr>
+      <tr>
+        <td><code>replay:"safe"</code><br><code>onUpdate{checkpoint}</code></td>
+        <td><b>agent 层崩溃恢复</b>：进程/容器挂掉后，已完成的工具结果不重算（<b>不是</b>传输层断线重连）</td>
+        <td>① 工具幂等分级（读类标 safe）② 产物落盘可重放</td>
+        <td>与 T1 <b>互补不互斥</b>：checkpoint 只替换 <code>entry.buffer</code> 的<b>存储层</b>（内存环形缓冲 → 持久化快照），<code>seq</code> + <code>isReplayComplete</code> 的<b>契约保留</b>。</td>
+      </tr>
+      <tr>
+        <td><code>terminate</code>（result 字段）</td>
+        <td><b>工具结果驱动早停</b>：批量出图中途收手、QC 判不通过立刻停</td>
+        <td>生成队列产品化（批次概念先有）</td>
+        <td>省钱 + 可控。没有批次概念前吃了也是空字段</td>
+      </tr>
+    </table>
+
+    <h3><span class="tag t-info">B 档 · 可吃点</span> &nbsp;有间接价值，等 A 档顺带做</h3>
+    <table>
+      <tr><th style="width:24%">钩子</th><th style="width:34%">对应产品能力</th><th>说明</th></tr>
+      <tr>
+        <td><code>getMemo</code> / <code>setMemo</code></td>
+        <td>一次任务内跨工具传态（如「用户选中的区域」在 N 个工具间传递）</td>
+        <td>现在靠塞进 tool result 文本。有<strong>多步骤复合流程</strong>时才回本，建议放到 A 档之后</td>
+      </tr>
+      <tr>
+        <td><code>usage</code>（result 字段）</td>
+        <td>工具级成本计量</td>
+        <td>现在走 <code>harness.events.on("usage")</code>，路径合法且已上线；这条是<strong>通道等价</strong>，不是缺口</td>
+      </tr>
+    </table>
+
+    <h3><span class="tag t-no">C 档 · 明确别碰</span></h3>
+    <ul class="clean">
+      <li><b><code>executionMode</code></b> —— 单工具串/并行覆盖，但并发策略已由 run 级 <code>toolExecution</code> 配置承担，再吃一层是负债。</li>
+      <li><b><code>constrainedSampling</code></b> —— provider 约束采样，当前无产品场景（无结构化输出落库需求）。</li>
+    </ul>
+
+    <h3><span class="tag t-pu">上游缺口</span> &nbsp;等不来，只能当自研资产规划</h3>
+    <table>
+      <tr><th style="width:22%">缺失能力</th><th style="width:32%">v0.85.1 现状</th><th>产品决策建议</th></tr>
+      <tr><td>MCP client</td><td>完全没有</td><td>接外部数据源（电商后台商品、素材库）⇒ 自造 adapter 工具。<b>别排进「等上游」的 Todo</b></td></tr>
+      <tr><td>subagent / subLane</td><td>只有平级 <code>lane(name)</code></td><td>「一线多任务并行创作」产品上先走<b>一任务一会话</b>；真要做就在 host 层复制会话，不要等</td></tr>
+      <tr><td><code>tier</code> / <code>uiResult</code> / <code>actions</code></td><td>上游 result 只有 <code>content</code>/<code>details</code></td><td><b>自创层是必需资产不是技术债</b>。但 <code>actions</code> 必须在 <code>details.actions</code>，这条要锁进测试</td></tr>
+    </table>
+  </div>
+
+  <!-- ============ §3 ============ -->
+  <div class="section">
+    <h2><span class="sec-num">§ 3</span> 三条产品主线（按必须做的顺序）</h2>
+    <p class="lead">A 必须先于 B；C 可以插在中间。三条线不是并列关系，是<strong>递进</strong>关系。</p>
+
+    <div class="lines">
+      <div class="line-card">
+        <div class="lname">主线 A · 能力目录先行</div>
+        <div class="lsub">不是钩子，是所有「吃满」的前置</div>
+        <ul>
+          <li>现在「用户这句话 → 哪个 skill → 调哪些工具」散在<strong>三张互不相通的清单</strong>里：prompt 规则、<code>skills/*</code>、<code>tiering.ts</code> 常量</li>
+          <li>产出一张 <code>capability-map</code>：工具 × 技能 × 规则 × 触发话术</li>
+          <li>它是渐进披露的输入、toolset 化的依据、新垂类上架的清单</li>
+        </ul>
+        <div class="eat"><b>不吃钩子</b>，但决定 B/C 能不能落地</div>
+      </div>
+      <div class="line-card">
+        <div class="lname">主线 B · 技能包化</div>
+        <div class="lsub">让工具集成为产品单元</div>
+        <ul>
+          <li>一个技能包 = 一组 <code>activeToolNames</code> + 一份 prompt 规则 + 一组验收入口</li>
+          <li>吃 <code>setTools</code>/<code>setActiveTools</code>（会话中装/卸）+ 已吃的 <code>addedToolNames</code></li>
+          <li><code>tool_search</code> 从「搜工具」升级成「搜技能包」</li>
+        </ul>
+        <div class="eat"><b>吃 2 个钩子</b>：setActiveTools、addedToolNames</div>
+      </div>
+      <div class="line-card">
+        <div class="lname">主线 C · 长任务可重放</div>
+        <div class="lsub">两层分开做：存储层换持久化快照，重连契约原样保留</div>
+        <ul>
+          <li>工具幂等分级（读类标 <code>replay:"safe"</code>）+ 产物落盘可重放</li>
+          <li>吃 <code>replay:"safe"</code> + <code>onUpdate{checkpoint}</code> ⇒ <b>agent 层崩溃恢复</b></li>
+          <li>checkpoint 落地后：<code>entry.buffer</code> 由内存环形缓冲（<code>BUFFER_LIMIT=500</code> 溢出丢事件）换成持久化快照</li>
+          <li><code>seq</code> / <code>isReplayComplete</code> / <code>droppedFromSeq</code>：属<b>传输层</b>，归 T1，<b>不动</b></li>
+        </ul>
+        <div class="eat"><b>吃 2 个钩子</b>：replay、onUpdate.checkpoint</div>
+      </div>
+    </div>
+
+    <div class="callout c-blue">
+      <div class="ct">为什么 B 排在「再接 4 个钩子」前面</div>
+      在能力目录成型前吃 <code>setActiveTools</code>，只是把 36 个硬编码白名单搬进 API 调用——<strong>换皮，不是能力</strong>。先有目录，才有「该给这个会话哪套工具」的答案。
+    </div>
+
+    <div class="callout c-amber">
+      <div class="ct">两处表述已按 R4 窗口的实测反馈修正（2026-10-05）</div>
+      <b>① 重放是两层，不是一层。</b>原稿把「上游 <code>replay</code> + checkpoint」写成「替掉 T1 的 <code>entry.buffer</code>+<code>seq</code>」，混淆了：
+      <code>seq</code> / <code>isReplayComplete</code> / <code>droppedFromSeq</code> 是<b>传输层</b>断线重连契约（T1），
+      <code>entry.buffer</code> 是<b>存储层</b>。上游 checkpoint 能替换的<b>只有存储层</b>；契约要保留，否则客户端断点续传失去判据。
+      <br><b>② 不能拿「迁上游 replay」当关掉 T1 的理由。</b>上游 replay 的定位是 <b>agent 层崩溃恢复</b>（进程挂了不重算已完成的工具），
+      与 T1 的断线重连<b>互补而非互斥</b>。它值得做，但立项依据要写对 —— 依据写错会导致 T1 的 3 个文件被误判为沉没成本。
+    </div>
+  </div>
+
+  <!-- ============ §4 ============ -->
+  <div class="section">
+    <h2><span class="sec-num">§ 4</span> 90 天排期（P0 防守 / P1 解锁 / P2 兑现）</h2>
+    <p class="lead">每项都要先开分支（仓库纪律），改 <code>services/pi-runtime/**</code> 的合并<strong>不会自动上线</strong>。</p>
+
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P0</span><span class="ph-done">已完成 #202</span><span class="t">升级门禁（最高优先，纯防守）</span></div>
+        <div class="d">把 4 个 hook event 形状做成结构断言（<code>scripts/verify-tool-contract.ts</code>），已接 <code>ci.yml</code> 的 <code>Verify spec figures</code>；变异验证过：字段改名 exit 1，上游新增字段只提示。</div>
+        <div class="tl-note">理由：0.x 无 semver 兜底，hook event 靠运行时读字段 ⇒ 改字段名会静默 fail-soft。没有门禁的「吃满」是一次性的。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P0</span><span class="ph-done">已完成</span><span class="t">修活雷：暂存区 43 文件回退</span></div>
+        <div class="d">已 <code>reset --hard origin/master</code> + 清理 12 个分支 / 8 个 worktree（磁盘 46%→44%）。唯一真实改动（orchestrator 注释笔误）存档待补。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P0</span><span class="ph-done">已完成 #202</span><span class="t">hook 自由形态字段读取守卫</span></div>
+        <div class="d"><code>hook-contract.ts</code>：<code>details</code>/<code>args</code>/<code>payload</code> 从 <code>as</code> 强转改显式解析，顺带修掉 <code>before_payload</code> 的真实静默截断。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P0</span><span class="t">tool_search 触发闭环（唯一还欠的 P0）</span></div>
+        <div class="d">不是「让它可达」——它<strong>已在常驻集里、每轮都下发</strong>（<code>ALWAYS_ON_TOOL_NAMES</code> 含 <code>tool_search</code>，<code>toolTiering</code> 默认 true）。欠的是<strong>「什么时候该搜」的线索</strong>，且线索走 <b>skills 通道、不占 L6</b>。</div>
+        <div class="tl-note">验收：<code>pi_runtime_tool_search_calls_total{outcome}</code> 首条 <code>hit</code> 出现（当前生产 0）。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P1</span><span class="t">能力目录 + 延迟集首批</span></div>
+        <div class="d"><code>capability-map</code> 落地；常驻 36 → 目标 <b>≤ 28</b>，延迟集 ≥ 12。首批下沉 C 类 6 个 + B 类长尾。</div>
+        <div class="tl-note">准绳不变：<b>「有没有资产按名字点名它」</b>——点名就必须常驻，否则模型吃 <code>Tool X is unavailable</code> 且无恢复路径。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P1</span><span class="t">技能包 schema + 会话装配层</span></div>
+        <div class="d">技能声明式声明工具清单；会话启动按技能装配 activeToolNames ⇒ 吃 <code>setActiveTools</code>。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P1</span><span class="t">工具幂等分级 → 吃 replay</span></div>
+        <div class="d">读类工具标 <code>replay:"safe"</code>，配合产物落盘验证「原地重放」路径。<b>定位是 agent 层崩溃恢复</b>（进程挂了不重算已完成的工具），<b>不是</b>传输层断线重连。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P2</span><span class="t">长任务 durable 重放 + checkpoint</span></div>
+        <div class="d">checkpoint 落地后<strong>只换存储层</strong>：<code>entry.buffer</code> 的内存环形缓冲 → 持久化快照（治 <code>BUFFER_LIMIT=500</code> 溢出丢事件）。<code>seq</code> + <code>isReplayComplete</code> 契约<strong>保留</strong>，<code>droppedFromSeq</code> 继续作为「丢过」的可判读信号 —— 它属于 T1 传输层，不随 checkpoint 删除。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-head"><span class="ph">P2</span><span class="t"><code>terminate</code> 早停 + 门禁常态化</span></div>
+        <div class="d">生成批次中途收手；升级前跑门禁，eval 从 12 case 扩到 20+ 并覆盖工具激活路径。</div>
+      </div>
+    </div>
+
+    <div class="callout c-blue">
+      <div class="ct">预算死结已解开：skills 是不占 L6 的独立通道（2026-10-05 实测）</div>
+      此前把「<code>tool_search</code> 触发线索写进 prompt 规则」判为<b>预算上不可行</b>（L6 硬线 3200，最紧组合
+      <code>core+writeTools+genTools</code> = 3192 ⇒ 余量仅 <b>8 字符</b>）。实测核对后该判断<b>不成立</b>：
+      <ul>
+        <li>L6 量的是 <code>renderStatic(snap, combo).length</code> —— <b>只算 <code>prompt-registry</code> 规则，不算 skills</b></li>
+        <li>skills 是<b>独立通道</b>：index（name+description）常驻 systemPrompt，正文经 <code>load_skill</code> 按需加载，<code>COPY skills ./skills</code> 已进镜像，且有独立指标 <code>pi_runtime_prompt_skills_tokens</code></li>
+        <li>⇒ 「什么时候该用 tool_search」的线索可以写在 <b>skill 正文 / index 描述</b>里，<b>零 L6 成本</b></li>
+      </ul>
+      <b>但要注意边界</b>：<code>load_skill</code> 的返回值<b>不带 <code>addedToolNames</code></b> ⇒ skill <b>只能做「点名/线索」，不能做激活</b>。
+      激活只有一条路：<code>tool_search</code> 的 <code>addedToolNames</code>（vendor <code>tool-placement</code> 原生合并）。
+      所以正确组合是：<b>skill 里点名 + 引导调 tool_search，由 tool_search 完成激活</b>。
+    </div>
+  </div>
+
+  <!-- ============ §5 ============ -->
+  <div class="section">
+    <h2><span class="sec-num">§ 5</span> 度量：把「吃满」变成可验证</h2>
+    <p class="lead">不要用一个综合百分比糊弄——「吃到 6/14」是今天的代码现状，不是产品目标。</p>
+
+    <div class="lines">
+      <div class="metric">
+        <div class="mn">① 激活路径占比</div>
+        <div class="mv">常驻 / <code>tool_search</code> / <code>addedToolNames</code> 三条路的工具调用占比。<br><br>现在 <b>100% 常驻</b>。目标：新增能力走后两条 ≥ 30%（<b>不是 100%</b>——全走动态会伤弱模型，这正是 0.0.29/0.0.30 的教训）。</div>
+      </div>
+      <div class="metric">
+        <div class="mn">② 钩子消费矩阵</div>
+        <div class="mv">14 个能力位逐个标 consumed / unconsumed，进 eval 或 <code>tiering.test.ts</code> 断言；vendor 升版后自动 diff 出「掉了哪个」。</div>
+      </div>
+      <div class="metric">
+        <div class="mn">③ 升级门禁通过率</div>
+        <div class="mv">工具契约断言失败数（目标恒 0）+ eval 用例通过率。这是「能不能持续吃满」的唯一硬指标。</div>
+      </div>
+    </div>
+
+    <div class="callout c-red">
+      <div class="ct">反模式</div>
+      拿「hook 消费 6/14」当 KPI 写进周报 —— 那会诱导团队去<strong>为吃而吃</strong>，产出 <code>executionMode</code> 这类零场景的死代码。
+    </div>
+  </div>
+
+  <!-- ============ §6 ============ -->
+  <div class="section">
+    <h2><span class="sec-num">§ 6</span> 两个必须现在处理的活雷（本次核实时发现）</h2>
+
+    <div class="callout c-red">
+      <div class="ct">雷 1 · 暂存区躺着 8 个删除，commit 会回滚已上线功能</div>
+      <code>git diff --cached --stat</code> = <b>+232 / −4209</b>。被删的暂存项：<br>
+      <code>tool-metrics.ts</code>(272) · <code>tool-metrics.test.ts</code> · <code>session-manager.toolmetrics.test.ts</code> · <code>tool-error-class.ts</code> · <code>render-canvas-view.views.ts</code>(647) · <code>render-canvas-view.expressive.ts</code>(456) · 同名测试 · <b><code>prompt-registry/rules/canvas_daily_ops.md</code></b><br>
+      ⇒ 一次性回滚 #180（SVG 表达层）、#181（工具指标全覆盖）、#184（画布日常操作规则）三个已上线改动。<br>
+      <b>我没动它们</b>——暂存区可能藏着别的并行窗口的工作，擅自 <code>git restore</code> 会毁掉别人的成果。请你或那个窗口确认是「有意回退」还是「误操作」。
+    </div>
+
+    <div class="callout c-amber">
+      <div class="ct">雷 2 · tool_search 的「何时该搜」这半边不在基线里</div>
+      <code>canvas_daily_ops.md</code> 正是 #184 刚补的 tool_search 触发条件载体，但它当前处于<b>暂存删除态</b>。若这条删除被提交，§5 指标 ① 的解锁条件就不存在了。<br>
+      ⇒ 建议：先确认该文件的去留，再决定 #184 的规则补写要不要重做一遍（规则改动要同步 6 处，含 <code>renderStaticFallback()</code> 拼装顺序）。
+    </div>
+  </div>
+
+  <!-- ============ §7 ============ -->
+  <div class="section">
+    <h2><span class="sec-num">§ 7</span> 一句话版的下一步</h2>
+    <ul class="clean">
+      <li><b>先防守</b>：升级门禁 + 修暂存区回退（这两件不做，其余都是空中楼阁）。</li>
+      <li><b>再撑产品</b>：能力目录 → 技能包化（工具集 = 产品单元）→ 长任务可重放。顺序不能反。</li>
+      <li><b>只吃有业务的钩子</b>：A 档 3 个（<code>setActiveTools</code>、<code>replay</code>、<code>terminate</code>）＋ B 档 2 个（<code>getMemo</code>、<code>usage</code>）；<code>executionMode</code>/<code>constrainedSampling</code> 明确不吃。</li>
+      <li><b>把「吃满」换成三个可证伪指标</b>（激活路径占比 / 钩子消费矩阵 / 门禁通过率），而不是一个百分比。</li>
+      <li><b>守住护城河</b>：继续只走包公共入口、零内部路径穿透；<code>as LnkpiTool</code> 的 2 处逃逸口不要新增。</li>
+    </ul>
+  </div>
+
+  <footer>基于 <code>docs/agent/tool-framework-audit.md</code>（2026-10-05）+ 本次对 <code>services/pi-runtime/src/tools/**</code>、<code>prompt-registry/rules/</code>、<code>skills/</code> 与 git 状态的实测核实 · 规划稿，尚未开分支</footer>
+
+</div>
+</body>
+</html>
