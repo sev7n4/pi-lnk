@@ -16,6 +16,12 @@ function fakeTool(name: string, summary?: string): LnkpiTool {
 	} as never;
 }
 
+/** 自定义 description 的替身（用于验证「只撞上 description 不算命中」）。 */
+function fakeToolWithDesc(name: string, description: string): LnkpiTool {
+	const base = fakeTool(name);
+	return { ...base, description } as never;
+}
+
 const ALL_NAMES = [
 	// read
 	"get_canvas_summary",
@@ -206,6 +212,33 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 		const res = await run(loader, { query: "撤销" });
 		assert.ok(deferredNames.includes("undo"), "undo 必须仍在延迟集，否则本用例失去意义");
 		assert.ok(res.addedToolNames!.includes("undo"));
+	});
+
+	// 2026-10-06 修复（capability-map 发现 C）：中文查询没有空格，整句 includes 必然 miss
+	// ⇒ 中文 token 再切 2-gram。以下三条在修复前都会 miss。
+	it("中文长句不再 miss：「撤销操作」→ undo", async () => {
+		const { loader } = setup();
+		const res = await run(loader, { query: "撤销操作" });
+		assert.ok(res.addedToolNames!.includes("undo"), "「撤销操作」应命中 undo（2-gram 含「撤销」）");
+	});
+
+	it("中文整句不再 miss：「把刚才的编辑撤销掉」→ undo", async () => {
+		const { loader } = setup();
+		const res = await run(loader, { query: "把刚才的编辑撤销掉" });
+		assert.ok(res.addedToolNames!.includes("undo"));
+	});
+
+	// 反向护栏：2-gram 让召回变宽，必须有阈值兜住「只撞上英文 description」的误激活。
+	// 真实 redo 的 description 含 "undo stack"（query "undo" 曾把它一起激活）。
+	it("只命中 description 不算数：权重 1 < 阈值 2 ⇒ 不激活", async () => {
+		const loader = createLoadToolsTool([
+			fakeToolWithDesc("undo_like", "Undo the last edit (client undo stack)"),
+			fakeToolWithDesc("redo_like", "Redo the last edit (client undo stack)"),
+		]);
+		const res = await run(loader, { query: "undo" });
+		const names = res.addedToolNames ?? [];
+		assert.ok(names.includes("undo_like"), "name 命中（权重 3）应激活");
+		assert.ok(!names.includes("redo_like"), "仅 description 命中（权重 1）不该激活");
 	});
 
 	it("未命中 → 文本给完整目录（可点名再试），不激活", async () => {

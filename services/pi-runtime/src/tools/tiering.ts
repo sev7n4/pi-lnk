@@ -138,6 +138,67 @@ export function buildToolEnsemble(
  * activeToolNames 并广播 config_update，自该转录点起持续可用（host 不碰运行态）。
  * `onSearch`：可选观测回调（hit/miss/empty + 激活数），host 喂 metrics 用。
  */
+/**
+ * 命中阈值：**只有 name/label/summary 级命中才算数**（权重 ≥ 2）。
+ * 目的：防止「英文 description 里恰好有这个词」造成的误激活——实测 query "undo" 会撞上
+ * redo 描述里的 "undo stack"（`tool-capability-catalog.md` 发现 C）。
+ * description 只作弱信号：权重 1，单独命中不足以激活。
+ */
+const MATCH_MIN_SCORE = 2;
+
+/** 字段权重（英文 token）：工具名最可信，label/summary 次之，description 最弱。 */
+const FIELD_WEIGHTS = { name: 3, label: 2, summary: 2, description: 1 };
+
+/**
+ * **中文 gram 命中任意字段都记 2 分**（不看字段权重）。
+ * 理由：中文本往往只写在 label 或 summary 里，但老工具/替身可能只有 description 带中文 ——
+ * 按 description 的英文权重（1）算会低于阈值 2，把原本能搜到的中文查询打回 miss。
+ * 而误激活风险只来自**英文**短词撞 description（"undo" vs redo 描述里的 "undo stack"），
+ * 那条由 FIELD_WEIGHTS.description=1 + 阈值兜住。
+ */
+const CJK_GRAM_SCORE = 2;
+
+/**
+ * query → 匹配单元（grams）。
+ * ① 空格分词保留（"duplicate undo" 的多关键词 OR 语义）；
+ * ② **中文 token 再切 2-gram** —— 中文查询通常没有空格，整句直接 `includes` 必然 miss。
+ *    实测（2026-10-06）：「撤销」hit，而「撤销操作」「把刚才的编辑撤销掉」全 miss ⇒
+ *    用户话术稍长就搜不到，miss 后虽返回完整目录但已白白消耗一轮。
+ */
+function toSearchGrams(q: string): string[] {
+	const grams = new Set<string>();
+	for (const token of q.split(/\s+/).filter(Boolean)) {
+		grams.add(token);
+		for (const seg of token.match(/[\u4e00-\u9fff]+/g) ?? []) {
+			if (seg.length === 1) {
+				grams.add(seg);
+				continue;
+			}
+			for (let i = 0; i + 2 <= seg.length; i++) grams.add(seg.slice(i, i + 2));
+		}
+	}
+	return [...grams];
+}
+
+/** 加权打分：命中的 gram 数 × 所在字段权重，累加（同一 gram 在同一字段只算一次）。 */
+function scoreTool(tool: LnkpiTool, grams: string[]): number {
+	const fields: Array<[string, number]> = [
+		[tool.name, FIELD_WEIGHTS.name],
+		[tool.label ?? "", FIELD_WEIGHTS.label],
+		[tool.summary ?? "", FIELD_WEIGHTS.summary],
+		[tool.description ?? "", FIELD_WEIGHTS.description],
+	];
+	let score = 0;
+	for (const [text, weight] of fields) {
+		const hay = text.toLowerCase();
+		for (const g of grams) {
+			if (!hay.includes(g)) continue;
+			score += /[\u4e00-\u9fff]/.test(g) ? CJK_GRAM_SCORE : weight;
+		}
+	}
+	return score;
+}
+
 export function createLoadToolsTool(
 	deferred: LnkpiTool[],
 	onSearch?: (outcome: "hit" | "miss" | "empty", activated: number) => void,
@@ -150,7 +211,8 @@ export function createLoadToolsTool(
 		description:
 			"按关键词搜索当前未加载（schema 不可见）的工具，并把命中的工具加载为可直接调用。" +
 			"当用户需要的能力不在你现有工具列表里时，先用本工具搜索再行动；" +
-			"query 支持工具名片段或用途关键词（中英文均可，如 memory、grid、整理、undo）。",
+			"query 支持工具名片段或用途关键词（中英文均可，如 memory、grid、整理、undo）；" +
+			"可以直接写中文整句（如「把刚才的操作撤销掉」），不必拆成单词。",
 		parameters: Type.Object({
 			query: Type.String({ minLength: 1, description: "关键词（工具名片段或用途描述）" }),
 		}),
@@ -164,11 +226,12 @@ export function createLoadToolsTool(
 					details: { loaded: [] as string[] },
 				};
 			}
-			const keywords = q.split(/\s+/).filter(Boolean);
-			const matches = deferred.filter((t) => {
-				const hay = `${t.name} ${t.label ?? ""} ${toolSummary(t)} ${t.description ?? ""}`.toLowerCase();
-				return keywords.some((kw) => hay.includes(kw));
-			});
+			const grams = toSearchGrams(q);
+			const matches = deferred
+				.map((t) => ({ tool: t, score: scoreTool(t, grams) }))
+				.filter((r) => r.score >= MATCH_MIN_SCORE)
+				.sort((a, b) => b.score - a.score)
+				.map((r) => r.tool);
 			// 未命中：返回完整目录（名字+摘要）但不激活——模型下一步可以点名再搜或换词。
 			if (matches.length === 0) {
 				onSearch?.("miss", 0);
