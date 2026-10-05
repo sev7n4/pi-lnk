@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildMemoryTools, MEMORY_CONTENT_MAX, MEMORY_RECALL_DEFAULT, MEMORY_RECALL_MAX } from "./memory.js";
+import { buildMemoryTools, dropSuppressedForTest, isSuppressed, markSuppressed, MEMORY_CONTENT_MAX, MEMORY_RECALL_DEFAULT, MEMORY_RECALL_MAX } from "./memory.js";
 import type { NestClient } from "./nest-client.js";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 
@@ -223,4 +223,101 @@ test("memory schema：暴露 scope 但绝不暴露 userId/sessionId（安全模�
 	assert.ok(!schema.includes("userId"));
 	assert.ok(!schema.includes("sessionId"));
 	assert.ok(schema.includes("scope"));
+});
+
+// ── 反哺剔除（spec 2026-10-04-prompt-engineering §13.3 第 3 条，M6a）──
+//
+// 抑制表是**模块级进程内态**，本文件内所有用例共享同一份。
+// 故每条用例必须用**独立 id**，否则后写的 markSuppressed 会污染前面的断言。
+// 用 id 前缀区分用途，读报错的人一眼能看出是哪条用例埋的雷。
+
+test("反哺：被标记抑制的记忆不进 recall 结果（剔除本体判据）", async () => {
+	markSuppressed("mem-suppressed-a", "反复导致模型把跨画布记忆当当前画布观察");
+	// 前置：抑制表确实登记了（否则下面「不出现」可能是因为根本没标记成功而假绿）
+	assert.equal(isSuppressed("mem-suppressed-a"), true);
+	const tools = buildMemoryTools(
+		fakeClient({ calls: 0 }, { items: [{ id: "mem-suppressed-a", content: "主角叫林晚", createdAt: "2026-10-04" }] }),
+	);
+	const p = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as { count: number; items: unknown[] };
+	// 断言落在 count/items 而非「JSON 里没有这个字符串」：
+	// 后者会被「字段被改名」「整体结构变了」骗过，前者才是「条目真的没进结果」。
+	assert.equal(p.count, 0);
+	assert.deepEqual(p.items, []);
+});
+
+test("反哺：未标记的记忆照常返回（fail-open 不得误杀好记忆）", async () => {
+	markSuppressed("mem-suppressed-b", "另一条污染记忆");
+	assert.equal(isSuppressed("mem-kept-b"), false);
+	const items = [
+		{ id: "mem-kept-b", content: "偏好暖色调", createdAt: "2026-10-04", scope: "user", sessionId: null, crossCanvas: false },
+	];
+	const tools = buildMemoryTools(fakeClient({ calls: 0 }, { items }));
+	const p = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as { count: number; items: typeof items };
+	assert.equal(p.count, 1);
+	assert.deepEqual(p.items, items);
+});
+
+test("反哺：id 缺失时保留条目（无法判定就不删，fail-open 硬要求）", () => {
+	// 判据设计说明（此处踩过两次假绿，最终锁成两层）：
+	// 只测「无 id 条目被保留」**测不出** fail-open——`!it.id ||` 短路与 `Map.has(undefined)===false`
+	// 是两道**冗余**防线，去掉任一道，剩下一道仍会保留该条目，测试恒绿。
+	// 故下面两条分别锁住每一层：第二条锁 Map 语义，第一条锁剔除层短路。
+	//
+	// 第1 层：isSuppressed 对「无法判定」的 id 必须返回 false。
+	// 这条是**直接断言判据本身**，因此能证伪「把空 id 当成已抑制」这种 fail-closed 硬化
+	// （去掉剔除层短路后，那类硬化会真的开始误删无 id 条目——而只测端到端时它被掩盖）。
+	assert.equal(isSuppressed(undefined as unknown as string), false, "空 id 必须视为「未抑制」");
+	assert.equal(isSuppressed("" as unknown as string), false, "空串必须视为「未抑制」");
+
+	// 第 2 层：剔除层对无 id 条目短路保留，且同批里真被抑制的条目确实被剔（对照组）。
+	// 用「与被抑制记忆同文」的内容，确保判据是 id 而非内容——按内容剔除是跨画布污染的真实风险形态。
+	const suppressedText = "反复致错的记忆正文";
+	markSuppressed("mem-suppressed-by-text", suppressedText);
+	const items = [
+		{ content: suppressedText, createdAt: "2026-10-04" },
+		{ id: "mem-suppressed-by-text", content: "另一条", createdAt: "2026-10-04" },
+	];
+	const kept = dropSuppressedForTest(items as never);
+	assert.equal(kept.length, 1);
+	assert.equal((kept[0] as { content: string }).content, suppressedText);
+});
+
+test("反哺：剔除发生在 crossCanvas 统计之前（不得出现「剔了但仍报 crossCanvasCount:1」）", async () => {
+	// 这条锁的是「剔除点位置」而非剔除行为本身：
+	// 若把 filter 写到 crossCanvas 计算之后，payload 里条目没了但 crossCanvasCount 仍是 1，
+	// 而 notice 仍在替一条**已经不给模型看**的条目做跨画布警示——错位且无从察觉。
+	markSuppressed("mem-suppressed-x", "唯一一条跨画布条目，剔除后不该再触发警示");
+	const tools = buildMemoryTools(
+		fakeClient({
+			calls: 0,
+		}, {
+			items: [{ id: "mem-suppressed-x", content: "别的项目的角色设定", createdAt: "c", scope: "canvas", sessionId: "other", crossCanvas: true }],
+		}),
+	);
+	const p = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as {
+		count: number; crossCanvasCount?: number; notice?: string;
+	};
+	assert.equal(p.count, 0);
+	assert.equal(p.crossCanvasCount, undefined);
+	assert.equal(p.notice, undefined);
+});
+
+test("反哺：抑制动作通知可观测钩子，且同一条幂等（不重复计数）", () => {
+	// 计数器在 metrics.ts（归指标治理窗口），抑制动作在本模块——这条锁的是本模块的**边界契约**：
+	// 「新标记一条 ⇒ 通知一次；重复标记同一条 ⇒ 不再通知」。契约一旦断，指标会永远是 0，
+	// 看着像「从未污染」，实际是接线断了（静默降级）。
+	const notified: number[] = [];
+	const observer = { observeMemorySuppressed: () => { notified.push(1); } };
+	markSuppressed("mem-suppressed-observer", "钩子接线取证", observer);
+	assert.equal(notified.length, 1);
+	// 幂等：同一条重复标记不得重复通知（钩子语义是「被抑制的记忆条数」，不是「标记调用次数」）
+	markSuppressed("mem-suppressed-observer", "重复标记", observer);
+	assert.equal(notified.length, 1);
+	// 反例对照：换一条新 id 必须再通知一次——否则「通知了」这条断言恒真（钩子压根没接）。
+	markSuppressed("mem-suppressed-observer-2", "另一条污染", observer);
+	assert.equal(notified.length, 2);
+	// 不传 observer 也必须能标记（纯进程内记账，不因拿不到指标实例而失效）
+	markSuppressed("mem-suppressed-observer-3", "无钩子");
+	assert.equal(notified.length, 2);
+	assert.equal(isSuppressed("mem-suppressed-observer-3"), true);
 });

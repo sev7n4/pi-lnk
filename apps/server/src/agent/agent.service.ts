@@ -27,6 +27,7 @@ import { MaterialService } from '../canvas/material.service'
 import { ShotService } from '../canvas/shot.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentMemoryService } from './agent-memory.service'
+import { isSuppressed } from './memory-suppression'
 import { PrismaService } from '../prisma/prisma.service'
 import { isObjectStorageConfigured } from '../storage/object-storage-env'
 import {
@@ -969,11 +970,21 @@ export class AgentService {
     if (this.agentMemory && userId) {
       try {
         const mem = await this.agentMemory.searchMemory({ userId, sessionId, limit: 5, scope: 'any' })
-        const lines = mem.items.map((m) => `- ${m.crossCanvas ? '[其他画布] ' : ''}${m.content}`)
+        // M6a 反哺剔除（spec 2026-10-04-prompt-engineering §13.3 第3 条）：
+        // 这条通道**不经模型调用**、每轮自动注入 5 条，是污染记忆进prompt 的主路
+        // （同段注释里的终审 C-1 已论证过「有记忆可捞」主要走这里，而不是模型主动 recall_memory）。
+        // 所以抑制必须在这里也生效，否则「剔除」只堵住了次要通道。
+        //
+        // ⚠️ kept 必须同时喂给 lines 与 crossNote：若 lines 用过滤后、crossNote 用过滤前，
+        // 会出现「注入内容里没有跨画布条目，但尾部仍挂着一句『注：带前缀的条目来自别的画布』」的
+        // 无主注释——模型被告知去核对一个它看不到的前缀，是纯粹的噪音与误导。
+        // 两处同源于kept，才保证「注入什么」与「声明什么」始终一致。
+        const kept = mem.items.filter((m) => !isSuppressed(m.id))
+        const lines = kept.map((m) => `- ${m.crossCanvas ? '[其他画布] ' : ''}${m.content}`)
         if (lines.length) {
           const header = '## 长期记忆（用户历史偏好，供参考）'
           // 跨画布条目必须自带归属说明——不能只靠提示词规则，事故证明模型会违反它们。
-          const crossNote = mem.items.some((m) => m.crossCanvas)
+          const crossNote = kept.some((m) => m.crossCanvas)
             ? '\n注：带前缀的条目来自别的画布/项目，仅作背景参考，不能当作当前画布、当前截图或当前图片的观察结果。'
             : ''
           memoryBlock = `${header}\n${lines.join('\n')}${crossNote}`

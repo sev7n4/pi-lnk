@@ -10,6 +10,19 @@ import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
 
+/**
+ * 反哺抑制的**可观测钩子**（spec §9：污染记忆数此前完全不可观测）。
+ *
+ * 刻意在此声明**结构接口**而不是 `import type { Metrics } from "../metrics.js"`：
+ * 具体指标（`pi_runtime_memory_suppressed_total`）定义在
+ * `services/pi-runtime/src/metrics.ts`，那条线归指标治理窗口——本模块只声明
+ * 「标记一条记忆时要通知谁」。`Metrics` 实例结构性满足它：metrics 侧补一个
+ * `observeMemorySuppressed(): void` 即可，**本模块不需要为接通它改一行**。
+ */
+export interface SuppressionObserver {
+	observeMemorySuppressed(): void;
+}
+
 export const MEMORY_CONTENT_MAX = 2000;
 export const MEMORY_RECALL_DEFAULT = 10;
 export const MEMORY_RECALL_MAX = 50;
@@ -23,6 +36,83 @@ interface MemoryItem {
 	scope?: string;
 	sessionId?: string | null;
 	crossCanvas?: boolean;
+}
+
+/**
+ * 反哺抑制表（spec 2026-10-04-prompt-engineering §13.3 第3 条，M6a）：记忆 id → 抑制原因。
+ *
+ * 为什么需要它：记忆层是**每轮自动注入**（`agent.service.ts` 拼 memoryBlock，scope:'any'，
+ * 不经模型调用），且**没有 TTL、没有去重、没有删除**——即记忆池只增不减。
+ * 一条反复把模型带偏的记忆（最典型：别的项目的角色设定被当成本画布的当前观察结果）
+ * 会**每轮**重新污染 system prompt，而模型看不见「这条已经被证明有害」。
+ * 抑制是当前唯一能在不删库的前提下止血的手段：污染仍在池里，但不再进上下文。
+ *
+ * 为什么是**进程内态**而不是落DB：
+ *   - 抑制是**临时止血**不是永久删除。落库意味着「判过一次就永远判死」，
+ *     而抑制判据（模型是否又被带偏）会随提示词/模型升级而变化，落库的旧判据会变成陈年误伤。
+ *   - 重启后重新观察再决定要不要再抑制，符合「反复致错才算污染」的判据——
+ *     一次性失误不该被永久记账。
+ * 代价是重启后抑制失效（首轮会重新注入一次）。这个代价比「误删一条好记忆」小得多，故刻意接受。
+ *
+ * 刻意**不做**的：不给recall_memory 加「删除记忆」能力。删除是持久化操作、
+ * 不可逆，且需要用户确认语义；抑制是进程内、可自动失效的，两者的风险量级不同。
+ * 晋升（把反复出现的记忆升级成全局规则）是 M6b，排在本次之后——见规格 §13.3 的顺序论证。
+ */
+const SUPPRESSED_MEMORY_IDS = new Map<string, string>();
+
+/** 该记忆是否已被反哺抑制。`id` 缺失时**调用方必须 fail-open 保留条目**，不要传空串进来。 */
+export function isSuppressed(memoryId: string): boolean {
+	return SUPPRESSED_MEMORY_IDS.has(memoryId);
+}
+
+/**
+ * 标记一条记忆为「反复致错」，后续召回/注入时剔除。
+ *
+ * @param observer 可选。传了就顺带打点，让「污染记忆数」可观测（spec §9 指出该指标此前完全不可观测）。
+ *   刻意做成可选而非必填：本函数是纯进程内记账，不该因为「拿不到指标实例」而无法调用。
+ *   重复标记**幂等**（不重复计数）——指标语义是「被抑制的记忆条数」，不是「标记调用次数」，
+ *   否则一次误重试就会把污染数刷大，排障时反而看不出真实条数。
+ *
+ * ⚠️ **当前状态：有代码、无效果。** 本函数**没有任何生产调用方**（已全仓 python os.walk 复核，
+ *   非 git grep——本仓 git grep 会静默失败）。所以：
+ *   - `SUPPRESSED_MEMORY_IDS` 在生产里恒为空 ⇒ `recall_memory` 的剔除**永不生效**；
+ *   - 指标 `pi_runtime_memory_suppressed_total` 在生产里**恒为 0**，**这是预期状态**，不是故障。
+ *   过滤逻辑本身经测试验证正确（见 memory.test.ts），缺的只是「谁来标记」。
+ *   标记入口归M6b：它要决定抑制决策归谁持有、以及怎么广播到本进程
+ *   （本表是进程内态，与 Nest 侧那份**不自动同步**）。
+ *   ⚠️ 因此看到指标恒 0 时**不要**误判为「没有污染」——它只说明标记链路尚未接通。
+ *   本仓不为此加临时标记入口（挂个测试专用 API 到运行时路径上），
+ *   那是给生产加一个没人用的开关，比留空更糟。
+ */
+export function markSuppressed(memoryId: string, reason: string, observer?: SuppressionObserver): void {
+	if (SUPPRESSED_MEMORY_IDS.has(memoryId)) return;
+	SUPPRESSED_MEMORY_IDS.set(memoryId, reason);
+	observer?.observeMemorySuppressed();
+}
+
+/**
+ * 剔除被抑制的记忆。**id 缺失时保留条目**（fail-open）。
+ *
+ * 为什么 id 缺失就不删：抑制判据是「这条记忆的 id 被证明有害」，没有 id 就无法证明
+ * 「这条」就是那条。此时删它等于凭内容猜——而记忆内容恰恰是不可信输入（可能来自跨画布污染）。
+ * 误删一条好记忆的代价（用户丢失真实偏好/项目事实，且**无自愈**：无 TTL、无删除、无提示）
+ * 明显高于漏删一条坏记忆的代价（多污染一轮，下次抑制判据仍会命中它）。
+ * 代价不对称，所以方向必须倒向保留。
+ */
+function dropSuppressed(items: MemoryItem[]): MemoryItem[] {
+	return items.filter((it) => !it.id || !isSuppressed(it.id));
+}
+
+/**
+ * 仅供测试：把剔除判据单独暴露出来，使「fail-open」这条不变量能被**真正证伪**。
+ *
+ * 为什么需要它（一次假绿的教训）：经recall_memory 的端到端断言无法区分
+ * 「`!it.id ||`短路生效」与「短路被写掉」——无 id 条目在任何 id 键的 Map 里都匹配不上，
+ * 两种实现都会保留它，测试恒绿。直接对判据函数做断言，才能让「按内容误剔除」这类
+ * 真实退化转红。生产代码**不调用**它，保留导出仅供 tools/memory.test.ts。
+ */
+export function dropSuppressedForTest(items: MemoryItem[]): MemoryItem[] {
+	return dropSuppressed(items);
 }
 
 /**
@@ -143,16 +233,23 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 					scope: p.scope ?? "any",
 				})) as { items?: MemoryItem[] } | null | undefined;
 				const items = Array.isArray(data?.items) ? data.items : [];
-				const crossCanvas = items.filter((i) => i?.crossCanvas === true);
-				const note = items.length
+				// 剔除**必须**发生在下面 crossCanvas / note 计算之前：
+				// 这两个都基于 items 派生。若先算crossCanvas 再剔，payload 会出现
+				// 「items 里没有那条了，但 crossCanvasCount 仍算它、notice 仍在替它警示」的错位——
+				// 模型收到一条指向不存在条目的警示，且这种错位在数据上完全看不出来。
+				const kept = dropSuppressed(items);
+				const crossCanvas = kept.filter((i) => i?.crossCanvas === true);
+				const note = kept.length
 					? undefined
 					: query
 						? "没有相关记忆；可尝试其他关键词，或去掉 query 拉取最近记忆"
 						: "没有相关记忆";
 				return memoryResult({
 					ok: true,
-					count: items.length,
-					items,
+					// count 与 items 同源（kept），不是剔除前的原始条数：
+					// 否则模型会看到 count=3 但 items 只有 2 条，自己都解释不清。
+					count: kept.length,
+					items: kept,
 					...(crossCanvas.length ? { crossCanvasCount: crossCanvas.length, notice: CROSS_CANVAS_NOTICE } : {}),
 					...(note ? { note } : {}),
 				});

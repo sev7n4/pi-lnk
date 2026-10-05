@@ -9,6 +9,7 @@ import {
 	renderStatic,
 	renderStaticFallback,
 	resolveRegistryRoot,
+	STATIC_BUDGET_CHARS,
 } from "./prompt-registry.loader";
 import {
 	CORE_RULES_PREFIX,
@@ -400,3 +401,153 @@ describe("W1a 字节等价：Registry 渲染 == 搬家前的 composeRuleText", (
 		expect(asm.lastManifestDetail?.registryHash).toBeTruthy();
 	});
 });
+
+/**
+ * §8.1 组装管线契约测试（进 PR 门禁，M3）。
+ *
+ * 用 `renderStaticFallback`（内嵌常量）而非 `renderStatic`：门禁判据逐字可查、
+ * 不依赖磁盘，环境差异为零；两路等价由上方 W1a 的「四组合逐字符等于磁盘渲染」保证。
+ *
+ *⚠️ **防假绿纪律**（本任务前三个任务在同一坑上踩了三次：判据看似存在、实则永不匹配）：
+ * - 每条判据都成对：正例（该报的报）+ 反例（不该报的不报），见各 case 注释里的「反例对照」标记；
+ * - 长度表把「规则正文被改动」变成红灯（预算基线锁），避免 `not.toContain` 靠「两路都空」蒙混过关；
+ * - 互斥类断言前置「两版文本都非空且长度不同」守卫，否则 `""` 也能满足 not.toContain。
+ *
+ * ⚠️ **基线锁自己也踩过一次假绿**（2026-10-05，PR #182 CI 红灯）：
+ * 本表的 `core+writeTools` 曾写成 2478，实际是 2493——写表时用的是「上一轮的数字」而非
+ * 在目标 commit 上实测。**基线锁能挡住"规则被改"，但挡不住"基线本身抄错"**。
+ * ⇒ 填表纪律：先 `git worktree add /tmp/x <commit>`拿到目标代码，`npx tsx` 实测四个组合，再填。
+ */
+describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
+	/**
+	 * 长度基线。**改动规则正文后必须同步更新这张表**——这是本测试存在的意义：
+	 * 让「规则正文被改了但基线没更新」变成红灯，而不是静默放过。
+	 *
+	 * 数字来源（2026-10-05 用 `npx tsx` 在本 worktree 上实测，不是推算）。
+	 * 相对当前 master `0e82cac1` 的逐组增量（`renderStaticFallback` 逐组合实跑）：
+	 * - core：693 → 693（Δ=0，未动 core 段）
+	 * - core+genTools：1130 → 1131（**Δ=+1**，`no_gen_claim.gen`「规则 11」→「见 `gen-gate`」）
+	 * - core+writeTools：2755 → 2756（**Δ=+1**，`media_tool_policy`「规则 14」→「见 `no-template`」）
+	 * - 全组合：3192 → 3194（**Δ=+2** = 1 + 1，两笔互不重叠）
+	 * ⇒ 余量 3200 − 3194 = **6（仍在硬线内）**
+	 *
+	 * ⚠️ **这 +2 是怎么从 +34 压回来的（别照抄旧算法）**：
+	 * 初版把「规则 11」换成「见 `gen-confirm-gate`」「见 `no-template-capability`」，两处共 **+34**
+	 * ⇒ 全组合 3226，**超硬线 26**（master 起点只剩 8 余量，本 PR 未新增任何规则，只是把
+	 * 硬编码数字引用改成语义 anchor）。收紧手法有三条，全部**不改任何语义**：
+	 *   ① anchor 名压短：`gen-confirm-gate`→`gen-gate`（-8）、`no-template-capability`→`no-template`（-11）；
+	 *   ② 去掉与「被指向的那条规则」重复的解释性前缀（`生成执行由系统强制校验，`→`系统强制校验，`；
+	 *      `本会话无此能力，`整句删——它的全文就在被指向的 `no-template` 规则里）。
+	 *      **这正是 M4 的前提**：语义在短名里，不要在引用处重复解释一遍。
+	 *   ③ 保留「`见 <anchor>`」的反引号写法（L10 判据里反引号可选，但磁盘真实写法就是带反引号，
+	 *      去掉会与门禁注释里的「真实写法」约定脱节）。
+	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
+	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
+	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
+	 */
+	const BASELINE: Record<string, number> = {
+		core: 693,
+		"core+writeTools": 2756,
+		"core+genTools": 1131,
+		"core+writeTools+genTools": 3194,
+	};
+
+	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
+		for (const [name, groups] of Object.entries(GROUPS)) {
+			expect({ [name]: renderStaticFallback(groups).length }).toEqual({ [name]: BASELINE[name] });
+		}
+		// 预算余量可见：全组合距硬线还剩多少（spec §L6 门禁数字的单一事实源）
+		// 当前为 6（硬线内，但已贴线）。**本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
+		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(6);
+	});
+
+	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
+	it("case1a：genTools 启用时含「已 propose_generation 且用户明确同意」", () => {
+		const on = renderStaticFallback(["core", "writeTools", "genTools"]);
+		expect(on).toContain("已 propose_generation 且用户后续消息明确同意");
+		// 同组必须注入规则 11/12/13（否则上面那句可能来自别处）
+		expect(on).toContain("11. run_image/video/text/prompt/audio_generation");
+	});
+
+	it("case1b：genTools 未启用时改为「禁止调用任何 run_*」", () => {
+		const off = renderStaticFallback(["core", "writeTools"]);
+		expect(off).toContain("禁止调用任何 run_*");
+		// 未启用 ⇒ 生成闭环规则 11/12/13 不该出现
+		expect(off).not.toContain("11. run_image/video/text/prompt/audio_generation");
+	});
+
+	it("case1c：两版互斥——不会同时出现（反例对照：正例证明判据会命中，反例证明不是恒真）", () => {
+		const on = renderStaticFallback(["core", "writeTools", "genTools"]);
+		const off = renderStaticFallback(["core", "writeTools"]);
+		// 反例对照：on 里不得有 nogen 版措辞，off 里不得有 gen 版措辞
+		expect(on).not.toContain("禁止调用任何 run_*");
+		expect(off).not.toContain("已 propose_generation 且用户后续消息明确同意");
+		//⚠️ 防「两版都空 ⇒ not.toContain 恒真」：两版都必须非空、且长度不同
+		expect(on.length).toBeGreaterThan(0);
+		expect(off.length).toBeGreaterThan(0);
+		expect(on).not.toBe(off);
+		// 且两版都真的带规则 3（互斥发生在规则 3 内部，不是靠整条规则缺席）
+		expect(on).toContain("用户明确同意前禁止调用 run_*_generation");
+		expect(off).toContain("不要调用 run_*_generation");
+	});
+
+	// ── case 2：write_guard 的 unlessGroup（§8.1 表格 #2）────────────────────
+	it("case2a：只读会话注入只读守卫", () => {
+		expect(renderStaticFallback(["core"])).toContain("当前会话仅开放只读查询工具");
+		// 整段常量在（不只是碰巧含那几个字）
+		expect(renderStaticFallback(["core"])).toContain(RULE_10_WRITE_GUARD);
+	});
+
+	it("case2b：有写工具时绝不注入只读守卫", () => {
+		const withWrite = renderStaticFallback(["core", "writeTools"]);
+		expect(withWrite).not.toContain("仅开放只读查询工具");
+		expect(withWrite).not.toContain(RULE_10_WRITE_GUARD);
+		// 守卫确实退场了、且不是靠整段 core 消失（core 恒注入）
+		expect(withWrite).toContain("你是 lnkpi 无限画布助手");
+	});
+
+	it("case2c：genTools 不影响守卫的注入判据（反例对照：两组只差 writeTools，守卫结论相反）", () => {
+		// 反例对照的核心：同样开着 genTools，只切writeTools ⇒ 守卫结论必须翻转。
+		// 若守卫判据被错写成 groups.includes("genTools")，这两条会同时成立并红。
+		expect(renderStaticFallback(["core", "genTools"])).toContain("当前会话仅开放只读查询工具");
+		expect(renderStaticFallback(["core", "writeTools", "genTools"])).not.toContain("仅开放只读查询工具");
+		// 且守卫位置在生成规则之后（core → GEN → GUARD 的push 顺序）
+		const t = renderStaticFallback(["core", "genTools"]);
+		expect(t.indexOf("11. run_image/video/text/prompt/audio_generation")).toBeLessThan(
+			t.indexOf(RULE_10_WRITE_GUARD),
+		);
+	});
+
+	// ── case 5：组装幂等（§8.1 表格 #5）────────────────────────────────────
+	// ⚠️ 这里**不再**写 `promptHash(renderStaticFallback(g)) === promptHash(renderStaticFallback(g))`
+	// 那条自比较是恒真断言：两侧是同一个表达式，`renderStaticFallback` 对同一组恒返回同一常量，
+	// `promptHash` 又是纯 sha256（无随机源）⇒ 它在任何实现下都不会红。
+	// RED 取证：把它换成返回空串 / 漏拼全部规则 / 截断乱序 / 恒返回无关常量 4种坏实现，
+	// 该断言**全部仍绿**；唯一能让它转红的是「函数非确定性」，而那不是本条要守的性质。
+	// 幂等性由下面case5b（跨组装路径 hash 相等 + 换组必换 hash）与 case5c（端到端两次装配）覆盖。
+
+	it("case5b：跨组装路径（内嵌常量 vs 磁盘Registry）同一 hash（反例对照：换组必换hash）", () => {
+		const groups = ["core", "writeTools", "genTools"] as const;
+		const fromConstants = renderStaticFallback(groups);
+		const fromDisk = renderStatic(loadRegistry(resolveRegistryRoot()), groups);
+		expect(promptHash(fromConstants)).toBe(promptHash(fromDisk));
+		// 反例对照：hash 不是常量，组变化必须改变它（否则上一条是恒真的"同一个字符串算两次"）
+		expect(promptHash(fromConstants)).not.toBe(promptHash(renderStaticFallback(["core"])));
+		expect(promptHash(renderStaticFallback(["core"]))).toMatch(/^[0-9a-f]{12}$/);
+	});
+
+	it("case5c：assembleStatic 端到端逐字节稳定（同一 ruleGroups 两次装配 hash 相同）", async () => {
+		const a = makeAssembler({ nodes: [] });
+		const b = makeAssembler({ nodes: [] });
+		const groups = ["core", "writeTools", "genTools"] as const;
+		const p1 = await a.assembleStatic({ ruleGroups: [...groups] });
+		const p2 = await b.assembleStatic({ ruleGroups: [...groups] });
+		expect(p1).toBe(p2);
+		expect(promptHash(p1)).toBe(promptHash(p2));
+		// 反例对照：不同组必须换 hash
+		const c = makeAssembler({ nodes: [] });
+		expect(promptHash(await c.assembleStatic({ ruleGroups: ["core"] }))).not.toBe(promptHash(p1));
+	});
+});
+

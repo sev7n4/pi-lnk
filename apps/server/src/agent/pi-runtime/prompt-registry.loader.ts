@@ -43,12 +43,44 @@ const BUDGET_COMBOS: readonly (readonly string[])[] = [
   ["core"], ["core", "writeTools"], ["core", "genTools"], ["core", "writeTools", "genTools"],
 ];
 
-const REQUIRED_FIELDS = ["id", "version", "title", "order", "owner", "updated"] as const;
+const REQUIRED_FIELDS = ["id", "version", "title", "order", "owner", "updated", "anchor"] as const;
+
+/**
+ * anchor 的**唯一字符集契约**：L11 校验它、L10 按它扫描引用。
+ *
+ * 为什么要共用一个常量（而不是两处各写一套正则）：两者是**同一条契约的两端**。
+ * L10 只扫「小写字母开头 + 小写字母数字连字符 + 至少 4 字符」，若 L11 放行别的形态，
+ * 就会出现「anchor 存在但引用扫不到」⇒ L10 静默绿、断链无告警（本任务要消灭的那类失效）。
+ * 派生式写法让「改了一处忘了另一处」这个失效模式在结构上不成立。
+ *
+ * ⚠️ 反方向（放宽 L10 去匹配任意字符）是错的：会让 L10 去扫工具名（`upsert_media_node`）重新误报，
+ *违反 spec §7.3「零误报」。**收紧 L11 是唯一正确方向。**
+ */
+export const ANCHOR_CHARSET = /^[a-z][a-z0-9-]{3,}$/;
+
+/**
+ * ANCHOR_CHARSET 的**句中形态**：剥掉 `^`/`$` 行锚点，只留字符集本体，供 L10 嵌进扫描正则。
+ *
+ * ⚠️ 这层剥离不是洁癖：把 `^[a-z][a-z0-9-]{3,}$` 直接嵌进「见 \`…\`」的句中模式，
+ * 捕获组里会带 `^…$` 行锚点，**在句中永不匹配** ⇒ 实测 L10 对真实文案 `false`（判据静默空转）。
+ * 保留行锚点版给 L11 做整串校验、剥锚点版给 L10 做句中扫描，两者共用同一份字符集定义。
+ *
+ * ⚠️ 导出是为了让测试能直接断言「生产两侧派生一致」（同源契约的**唯一真实防线**）。
+ * 此前这条契约没有任何测试覆盖——测试里另写了一份副本，副本与生产是否一致无人把关。
+ */
+export const ANCHOR_CHARSET_IN_TEXT = ANCHOR_CHARSET.source.replace(/^\^/, "").replace(/\$$/, "");
 
 export interface PromptRegistryEntry {
   id: string; version: string; title: string; order: number;
   group?: string; unlessGroup?: string;
   owner: string; updated: string;
+  /**
+   * L10/L11 语义短名（规则自己的稳定标识，非它引用的目标）。
+   *
+   * **刻意可选**：本接口被测试与调用方大量手工构造（字面量），设为必填会连带一片编译失败。
+   * 缺失只影响规则地图的「语义 id」列显示为空串，不影响 L0–L11任何判据。
+   */
+  anchor?: string;
   body: string;
   contentHash: string;
 }
@@ -185,7 +217,7 @@ export function loadRegistry(root: string): PromptRegistrySnapshot {
       entries.push({
         id: fields.id, version: fields.version, title: fields.title, order: Number(fields.order),
         group: fields.group, unlessGroup: fields.unlessGroup,
-        owner: fields.owner, updated: fields.updated,
+        owner: fields.owner, updated: fields.updated, anchor: fields.anchor,
         body: body.trimEnd(), contentHash: contentHash(body.trimEnd()),
       });
     }
@@ -238,13 +270,56 @@ export function renderStaticFallback(groups: readonly string[]): string {
   return parts.filter(Boolean).join("\n");
 }
 
-/** L1-L9 全量校验；返回错误数组，空数组 = 通过（CI 与运行时共用同一份判据）。 */
+/** §3 规则地图「管什么」列的显示宽度上限（超出部分在语义边界收尾并补省略号）。 */
+const SUMMARY_MAX = 60;
+
+/**
+ * 首句摘要：截断到语义边界而不是硬切。
+ *
+ * 硬切（`slice(0, 60)`）会留下「用 upsert_media_node创建或更新节点（「这种悬空括号残句——
+ * 它读起来像规则本身写错了，而不是摘要被截断。收尾策略：优先退到 60 字内最后一个
+ * 标点/右括号，再回退掉悬空的左括号，最后补 `…` 明示截断。
+ */
+export function summarize(body: string): string {
+  const sentence = body.replace(/\n+/g, " ").trim().split("。")[0]!;
+  if (sentence.length <= SUMMARY_MAX) return sentence;
+  const head = sentence.slice(0, SUMMARY_MAX);
+  const boundary = Math.max(..."，、；：）】》」".split("").map((c) => head.lastIndexOf(c)));
+  let cut = boundary > SUMMARY_MAX / 2 ? head.slice(0, boundary) : head;
+  // 悬空左括号：左括号数多于右括号，且最后一个左括号在最后一个右括号之后 ⇒ 回退到它之前
+  while (cut.includes("（") && cut.split("（").length > cut.split("）").length && cut.lastIndexOf("（") > cut.lastIndexOf("）")) {
+    cut = cut.slice(0, cut.lastIndexOf("（"));
+  }
+  return `${cut.replace(/[\s（(【]+$/, "")}…`;
+}
+
+/**
+ * PromptRegistryEntry[] → 规则地图生成器的输入形态。
+ *
+ * 为什么需要它：`renderRuleMap` 要的是「anchor + 首句摘要」，而 PromptRegistryEntry
+ * 的 body 里没有摘要字段。Task 4的组装管线契约测试手上只有 loadRegistry() 的产物
+ * （PromptRegistryEntry[]），走这个转换即可复用同一个 renderRuleMap，不必重读磁盘。
+ */
+export function toRuleMeta(entries: readonly PromptRegistryEntry[]): RuleMeta[] {
+  return entries
+    .map((e) => ({
+      id: e.id, title: e.title, order: e.order,
+      group: e.group, unlessGroup: e.unlessGroup,
+      anchor: e.anchor ?? "", firstSentence: summarize(e.body),
+    }))
+    .sort((a, b) => a.order - b.order);
+}
+
+/** 规则地图生成器的输入形态；与 toRuleMeta 的输出同构。 */
+export interface RuleMeta { id: string; title: string; order: number; group?: string; unlessGroup?: string; anchor: string; firstSentence: string; }
+
+/** L0-L11 全量校验；返回错误数组，空数组 = 通过（CI 与运行时共用同一份判据）。 */
 export function assertRegistryIntegrity(root: string): string[] {
   return checkRegistryIntegrity(root).errors;
 }
 
 /**
- * L1-L9 全量校验 + 非致命预警（当前只有 L6 预算预警）。
+ * L0-L11 全量校验 + 非致命预警（当前只有 L6 预算预警）。
  *
  * 拆成两个函数而不是给 assertRegistryIntegrity 加返回类型：后者有 11 处调用方
  * （prompt-lint.ts + loader.test.ts 十处），全在按 `string[]` 用，改签名会连带一片。
@@ -259,6 +334,7 @@ export function checkRegistryIntegrity(root: string): { errors: string[]; warnin
     const files = readdirSync(rulesDir).filter((f) => f.endsWith(".md")).sort();
     if (files.length === 0) add("L0", `${rulesDir} 下没有 .md`);
     const seen = new Map<string, PromptRegistryEntry>();
+    const anchorSeen = new Map<string, string>();
     for (const file of files) {
       const path = join(rulesDir, file);
       let fields: Record<string, string>;
@@ -274,6 +350,17 @@ export function checkRegistryIntegrity(root: string): { errors: string[]; warnin
       }
       if (fields.id !== file.replace(/\.md$/, "")) add("L2", `${file} 的 id(${fields.id}) 与文件名不一致`);
       if (seen.has(fields.id)) add("L2", `id ${fields.id} 重复（${seen.get(fields.id)?.id ?? file} 与 ${file}）`);
+      // L11：anchor 是 L10 语义引用的目标标识，必须存在、唯一、且字符集合规。
+      // 缺了 ⇒ 引用扫不到目标、无人报错；重了 ⇒ 引用指向哪条产生歧义。
+      // ⚠️ 字符集这条堵的是**假绿通道**：L10 的扫描正则只认「小写字母+连字符」，若 L11 不校验字符集，
+      // anchor 写成 `Gen_Confirm` / `gen_confirm` / `gen.confirm` / 中文时，正文里 `见 \`Gen_Confirm\``
+      // 扫不到 ⇒ L10 静默绿、断链无告警（恰是 L10 要消灭的那类失效）。收紧 L11 让它在**写入时** fail fast。
+      // ⚠️ 不要改成「放宽 L10 去匹配任意字符」——那会让 L10 去扫工具名（upsert_media_node）重新误报。
+      if (!fields.anchor) add("L11", `${file} 缺 anchor 字段（L10 语义引用靠它定位）`);
+      else if (!ANCHOR_CHARSET.test(fields.anchor)) {
+        add("L11", `${file} 的 anchor「${fields.anchor}」不合规：必须是 /^[a-z][a-z0-9-]{3,}$/（L10 只扫「见 \`<anchor>\`」，不合规的 anchor 会让引用扫不到、断链无告警）`);
+      } else if (anchorSeen.has(fields.anchor)) add("L11", `anchor ${fields.anchor} 重复（${anchorSeen.get(fields.anchor)} 与 ${file}）`);
+      else anchorSeen.set(fields.anchor, file);
       for (const key of ["group", "unlessGroup"] as const) {
         const v = fields[key];
         if (v && !GROUP_VALUES.has(v)) add("L4", `${file} 的 ${key}=${v} 不在白名单 [${[...GROUP_VALUES].join(",")}]`);
@@ -291,7 +378,25 @@ export function checkRegistryIntegrity(root: string): { errors: string[]; warnin
       }
       seen.set(fields.id, { id: fields.id, version: fields.version, title: fields.title,
         order: Number(fields.order), group: fields.group, unlessGroup: fields.unlessGroup,
-        owner: fields.owner, updated: fields.updated, body: trimmed, contentHash: contentHash(trimmed) });
+        owner: fields.owner, updated: fields.updated, anchor: fields.anchor,
+        body: trimmed, contentHash: contentHash(trimmed) });
+    }
+    // L10：规则正文里的「见 `<anchor>`」引用必须指向真实存在的 anchor。
+    // 语义在短名里而不在编号里 ⇒ 编号重排/插入不再静默断链（spec §7.3）。
+    // ⚠️ 正则三处细节都是被真实文本逼出来的，改任一条都会让判据失效：
+    //   ① `?` 反引号可选：磁盘上真实引用写作「见 `anchor`」，写成必选会把它们全扫漏 ⇒ L10 永远绿。
+    //   ② 右边界否定断言：否则「禁止见 upsert_media_node」会截出 'upsert' 误报（spec §7.3 要求零误报）。
+    //   ③ 捕获组字符集**由 ANCHOR_CHARSET 派生**（不各写一套）：L11 用它校验 anchor 合法性，
+    //      L10 用它扫描引用 ⇒ 两者契约闭合，不存在「anchor 合规但 L10 扫不到」的组合。
+    //      [a-z0-9-] 不含下划线且首字符必须字母：「见规则 14」「见生成确认门」不匹配（中文天然被排除）。
+    // 数字引用（「见规则 14」）的迁移已随 Task 3 改 body 完成；本判据只认语义 anchor。
+    const ANCHOR_REF = new RegExp(String.raw`见\s*` + "`" + String.raw`?(${ANCHOR_CHARSET_IN_TEXT})(?![A-Za-z0-9_-])`, "g");
+    // seen 的键是 id（不是文件名）；L2 已保证 id === 文件名去 .md，故报错信息与其它判据同形。
+    for (const [id, entry] of seen) {
+      for (const m of entry.body.matchAll(ANCHOR_REF)) {
+        const ref = m[1]!;
+        if (!anchorSeen.has(ref)) add("L10", `${id} 引用了不存在的 anchor「${ref}」`);
+      }
     }
     // L8 / L3：MANIFEST 是登记处，同时充当 L3「内容相对基线是否变了」的基线快照
     const manifestPath = join(root, "MANIFEST.yaml");
