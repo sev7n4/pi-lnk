@@ -260,6 +260,7 @@ export function svgHeader(height: number, extraCss = ""): string {
 		`<style>.gv-t{font:12px sans-serif;fill:#334;dominant-baseline:central}` +
 		`.gv-s{font:11px sans-serif;fill:#5F5E5A;dominant-baseline:central}` +
 		`.gv-warn{font:11px sans-serif;fill:#A32D2D;dominant-baseline:central}` +
+		`.gv-info{font:11px sans-serif;fill:#1A4E7A;dominant-baseline:central}` +
 		`.n{stroke-width:1;rx:5}` +
 		`.l{font:12px sans-serif;fill:#334;dominant-baseline:central}` +
 		`.w{font:11px sans-serif;fill:#A32D2D;dominant-baseline:central;text-anchor:end}` +
@@ -476,4 +477,86 @@ export function svgBudgetReport(svg: string): {
 } {
 	const bytes = svg.length;
 	return { bytes, ratio: bytes / SVG_MAX_CHARS, over: bytes > SVG_MAX_CHARS };
+}
+
+
+// ══════════════════════════════════════════════════════════
+// 宏观 / 中观 / 微观（2026-08-05 产品决策）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 三层观察尺度 —— 由**产品需求**定义，不是技术开关。
+ *
+ * > 用户想弄清楚原理性的时候更多是从宏观上讲清楚，图是示意，不应该关注细节。
+ * > 微观是细节表达，要准确的时候全量表达；数据太多，通过拆分某个局部来表达。
+ *
+ * ## 为什么需要它（生产取证，画布 `cmuptk4wz001bkz01gca02mv8`）
+ *
+ * 同一个画布的边有**三种完全不同的语义**：
+ *
+ * | 边 | 条数 | 真实含义 | 用户问它时想知道的 |
+ * |---|---|---|---|
+ * | `prompt→prompt` | 7 | **骨架**（定位→大纲→6 集） | 整体结构 / 原理 |
+ * | `prompt→image` | 32 | **归属**（资产表/分镜→镜头） | 素材属于哪一集 |
+ * | `image→image` | 84 | **细节**（S01A→S01B 镜头顺序、生成链路） | 精确到每一格 |
+ *
+ * ⚠️ **把它们画进同一张「依赖图」是语义错误**：
+ * 看到 `S01A → S01B` 会误以为 B 依赖 A，实际那是**剧情先后**。
+ * 依赖（改这个影响谁）只存在于 prompt 层。
+ *
+ * 三层的价值：
+ * - 宏观 = 讲原理，8 条骨架边，卡片很小
+ * - 中观 = 看归属，61 条，卡片可容纳
+ * - 微观 = 求精确，123 条全量 —— 但真实规模会超预算 ⇒ 用 `focus` 拆局部
+ */
+export type Scope = "structure" | "ownership" | "detail";
+
+/** 按 scope 过滤边。** 判据只看**两端节点类型** —— 边的语义由端点类型决定。 */
+export function filterEdgesByScope(
+	nodes: readonly GvNode[],
+	edges: readonly GvEdge[],
+	scope: Scope,
+): GvEdge[] {
+	const typeOf = new Map(nodes.map((n) => [n.id, n.type ?? ""]));
+	const kept = edges.filter((e) => {
+		const st = typeOf.get(e.source) ?? "";
+		const tt = typeOf.get(e.target) ?? "";
+		const structural = st === "prompt" && tt === "prompt";
+		const ownership = st === "prompt" && tt !== "prompt";
+		if (scope === "structure") return structural;
+		if (scope === "ownership") return structural || ownership;
+		return true; // detail：全量
+	});
+	return kept;
+}
+
+/**
+ * 取 `focus` 节点的 `hops` 跳邻域（无向，因为「谁依赖它」和「它依赖谁」用户都要看）。
+ *
+ * 夹取到 [1,3]：0 跳=只看自己（没意义），>3 跳=几乎全量（失去「局部」意义）。
+ */
+export function focusNeighborhood(
+	nodes: readonly GvNode[],
+	edges: readonly GvEdge[],
+	focus: string,
+	hops = 1,
+): Set<string> {
+	const keep = new Set<string>([focus]);
+	const depth = Math.max(1, Math.min(3, Math.floor(hops)));
+	for (let h = 0; h < depth; h++) {
+		const next = new Set(keep);
+		for (const e of edges) {
+			if (keep.has(e.source) && !keep.has(e.target)) next.add(e.target);
+			if (keep.has(e.target) && !keep.has(e.source)) next.add(e.source);
+		}
+		if (next.size === keep.size) break; // 不再扩张
+		keep.clear();
+		for (const id of next) keep.add(id);
+	}
+	return keep;
+}
+
+/** 局部视图时只保留邻域内的节点。 */
+export function nodesInNeighborhood(nodes: readonly GvNode[], keep: ReadonlySet<string>): GvNode[] {
+	return nodes.filter((n) => keep.has(n.id));
 }
