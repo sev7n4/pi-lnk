@@ -27,16 +27,27 @@ metadata:
     app.kubernetes.io/name: pi-lnk-prometheus
     app.kubernetes.io/part-of: pi-lnk-observability
 spec:
-  type: ClusterIP
+  # ⚠️ 暴露 NodePort 以便**从本机直接查指标**（用户 2026-10-05 明确要求）。
+  #
+  # 为什么是 NodePort 而不是 Ingress：Ingress 需要域名 + 证书 + 路由规则，
+  # 而「本机查看指标」这个需求只需要一条直连路径。
+  #
+  # ⚠️ 端口选择：宿主 **9090 已被 `pintuotuo-prometheus` 占用**（另一项目，docker compose，
+  # 已对外暴露），k3s 的 NodePort 段（30000-32767）不冲突，但为可读性与避免与
+  # 将来可能加的 service 冲突，选** 30909**。
+  #
+  # 🔴 安全提醒（部署后必须处理，见 README「访问控制」）：
+  # NodePort 一旦暴露，**任何人都能读写本栈的指标**，而指标里含 channel/model label。
+  # 本项目的安全底线是「不外泄身份信息」⇒ 生产上**必须**配腾讯云安全组白名单
+  # （只放行办公 IP）或加 basic auth。当前未配，属**已知的临时状态**。
+  type: NodePort
   selector:
     app.kubernetes.io/name: pi-lnk-prometheus
   ports:
-    # **刻意不暴露 NodePort**（与 pi-runtime 不同）。
-    # 理由：采集端是「Prometheus 主动拉 pi-runtime」，不需要任何人从外面访问 Prometheus；
-    # 而一旦暴露 NodePort，就要为它做鉴权与网络边界，而本阶段并不需要对外查询。
     - name: web
       port: 9090
       targetPort: web
+      nodePort: 30909
 ---
 apiVersion: apps/v1
 kind: StatefulSet
