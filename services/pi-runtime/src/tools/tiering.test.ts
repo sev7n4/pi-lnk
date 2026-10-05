@@ -22,6 +22,23 @@ function fakeToolWithDesc(name: string, description: string): LnkpiTool {
 	return { ...base, description } as never;
 }
 
+/**
+ * **生产真实 label/description 替身**（2026-10-06）。
+ * ⚠️ 检索类测试必须用它而不是 `fakeTool`：`fakeTool` 的 label = name（英文），
+ * 会掩盖「通用中文词命中另一个工具的中文 label」这类过召回 ——
+ * 生产断言就是这么抓到 `query="把刚才的编辑撤销掉"` 误带出 `redo` 的。
+ * 真实值取自 `ui-command.ts`（undo/redo）。
+ */
+function fakeToolReal(name: string, label: string, description: string): LnkpiTool {
+	const base = fakeTool(name);
+	return { ...base, label, description } as never;
+}
+
+const REAL_UNDO_REDO = () => [
+	fakeToolReal("undo", "撤销上次画布编辑", "Undo the last local canvas edit (client undo stack)"),
+	fakeToolReal("redo", "重做画布编辑", "Redo the last local canvas edit (client undo stack)"),
+];
+
 const ALL_NAMES = [
 	// read
 	"get_canvas_summary",
@@ -226,10 +243,13 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 		assert.ok(res.addedToolNames!.includes("undo"), "「撤销操作」应命中 undo（2-gram 含「撤销」）");
 	});
 
+	// ⚠️ 此用例已从 setup()（替身 label = name，英文）换成**生产真实中文 label**：
+	// 相对阈值按「命中 gram 数」判定证据量，英文 label 的替身会低估中文查询的命中质量，
+	// 造成假绿/假红。真实 label 下 undo 命中「撤销」+「编辑」= 4 分 ≥ 阈值 3。
 	it("中文整句不再 miss：「把刚才的编辑撤销掉」→ undo", async () => {
-		const { loader } = setup();
+		const loader = createLoadToolsTool(REAL_UNDO_REDO());
 		const res = await run(loader, { query: "把刚才的编辑撤销掉" });
-		assert.ok(res.addedToolNames!.includes("undo"));
+		assert.ok(res.addedToolNames!.includes("undo"), "整句应命中 undo（真实 label 下证据量充足）");
 	});
 
 	// 反向护栏：2-gram 让召回变宽，必须有阈值兜住「只撞上英文 description」的误激活。
@@ -243,6 +263,28 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 		const names = res.addedToolNames ?? [];
 		assert.ok(names.includes("undo_like"), "name 命中（权重 3）应激活");
 		assert.ok(!names.includes("redo_like"), "仅 description 命中（权重 1）不该激活");
+	});
+
+	// 生产取证（2026-10-06，真实 dist 断言）暴露的过召回，单测用真实 label 复现并锁住。
+	// 绝对阈值下「编辑」命中 redo 的中文 label「重做画布编辑」⇒ 多激活一个无关工具。
+	it("长查询不得过召回（生产取证回归）：「把刚才的编辑撤销掉」只命中 undo", async () => {
+		const loader = createLoadToolsTool(REAL_UNDO_REDO());
+		const res = await run(loader, { query: "把刚才的编辑撤销掉" });
+		assert.deepEqual(res.addedToolNames, ["undo"], "只命中 1 个通用词的 redo 应被相对阈值排除");
+	});
+
+	it("短中文查询不受相对阈值影响：「撤销操作」「撤销」都命中 undo", async () => {
+		const loader = createLoadToolsTool(REAL_UNDO_REDO());
+		for (const q of ["撤销操作", "撤销"]) {
+			const res = await run(loader, { query: q });
+			assert.ok(res.addedToolNames!.includes("undo"), `「${q}」应命中 undo`);
+		}
+	});
+
+	it("英文短词仍不得带出同类工具：'undo' 只命中 undo", async () => {
+		const loader = createLoadToolsTool(REAL_UNDO_REDO());
+		const res = await run(loader, { query: "undo" });
+		assert.deepEqual(res.addedToolNames, ["undo"]);
 	});
 
 	it("未命中 → 文本给完整目录（可点名再试），不激活", async () => {

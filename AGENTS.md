@@ -69,9 +69,34 @@
 ⇒ 官方 Dynamic Tool Loading 触发率至今为 0。
 
 ⚠️ 已因此回归常驻：`arrange_nodes` / `set_node_generation_params` / `save_memory` / `focus_node` / `remove_edges`。
-**`focus_node`（单数，常驻）≠ `focus_nodes`（复数，延迟）** —— 只差一个字母，极易踩错。
+**`focus_node`（单数）≠ `focus_nodes`（复数）** —— 只差一个字母，极易踩错；
+⚠️ **2026-10-06 起两者都常驻**（#216）：`canvas_daily_ops` 第 19 条点名的是**复数版**，
+此前按「未被 skill 点名」把它留在延迟集 —— **判据漏了 prompt 规则这一侧**。
 
 新增或变更工具须在 `services/pi-runtime/src/tools/tiering.test.ts` 显式声明归属。
+完整四列登记（47 工具 × 点名资产 × 归属 × 触发话术）与可重跑扫描命令见
+[`docs/agent/tool-capability-catalog.md`](./docs/agent/tool-capability-catalog.md)。
+
+#### ⛔ 下沉常驻集的前置条件（2026-10-06 拍板）
+
+`tool_search` 触发率至今为 0 ⇒ **现在下沉任何工具 = 功能直接不可达**
+（尤其 `run_*`：用户点了确认却出不了图，是严重回归）。**顺序不能反**：
+
+1. 在 skill 里补「工具不在你的列表里 ⇒ 先 `tool_search` 关键词」的线索；
+2. 生产验证 `pi_runtime_tool_search_calls_total{outcome="hit"}` **首条出现**；
+3. 才批量下沉（常驻 36→≤28 的目标记在 `tool-framework-roadmap.html` §4 P1）。
+
+⚠️ 数据现状：常驻集里**零下发点名的只有 2 个**（`run_text_generation` / `run_prompt_generation`，
+属 `tiering.ts` 的有意豁免）⇒ **只靠下沉到不了 28**，必须先减点名或把 skill 点名降级为中风险。
+
+#### `skills/*.md` 的归属：段落级（2026-10-06 拍板）
+
+| 层 | 归谁 | 约束 |
+|---|---|---|
+| 正文（垂类流程 / 步骤 / 话术） | **R1**（提示词工程线） | — |
+| 尾部固定小节 `## 工具可用性`（「工具不在列表里先 `tool_search`」线索） | **R5**（工具框架线） | R1 改正文时**保留该小节**；R5 只追加/更新该小节 |
+
+同文件不同段落 ⇒ git 冲突面小。⚠️ 改 `skills/**` 同样要手工 dispatch `runtime-deploy`（tag = master 短 SHA）。
 
 ### 改 vendor 消费 ⇒ 认清层次边界
 

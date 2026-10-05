@@ -153,6 +153,19 @@ export function buildToolEnsemble(
  */
 const MATCH_MIN_SCORE = 2;
 
+/**
+ * **相对阈值**：查询越长，要求的证据量越高（`max(2, ceil(gram数 × 0.3))`）。
+ *
+ * 起因（2026-10-06 生产取证，非单测）：用镜像里的真实 dist 跑断言，`query="把刚才的编辑撤销掉"`
+ * 返回 `[undo, redo]` —— 通用词「编辑」命中了 `redo` 的**中文 label**「重做画布编辑」。
+ * 单测没抓到是因为替身 `label = name`（英文），**这是假绿**。
+ *
+ * 为什么按长度缩放：绝对阈值下，查询越长、2-gram 偶然命中的工具越多（每个命中都够 2 分）。
+ * 相对阈值让「长查询必须命中更多片段」，把只靠一个通用词命中的工具排除。
+ * 阈值抬高只会退化为 miss（返回完整目录、不激活），不会造成新的误激活 ⇒ 方向安全。
+ */
+const MATCH_RELATIVE_RATIO = 0.3;
+
 /** 字段权重（英文 token）：工具名最可信，label/summary 次之，description 最弱。 */
 const FIELD_WEIGHTS = { name: 3, label: 2, summary: 2, description: 1 };
 
@@ -234,9 +247,13 @@ export function createLoadToolsTool(
 				};
 			}
 			const grams = toSearchGrams(q);
+			const threshold = Math.max(
+				MATCH_MIN_SCORE,
+				Math.ceil(grams.length * MATCH_RELATIVE_RATIO),
+			);
 			const matches = deferred
 				.map((t) => ({ tool: t, score: scoreTool(t, grams) }))
-				.filter((r) => r.score >= MATCH_MIN_SCORE)
+				.filter((r) => r.score >= threshold)
 				.sort((a, b) => b.score - a.score)
 				.map((r) => r.tool);
 			// 未命中：返回完整目录（名字+摘要）但不激活——模型下一步可以点名再搜或换词。

@@ -77,23 +77,35 @@
 
 - 📌 附带解除 roadmap §6 的「雷 2」：roadmap 曾警示 `canvas_daily_ops.md` 处于**暂存删除态**、若被删则 tool_search 触发条件不复存在。**实测该文件现已在 master 上**（`rules/canvas_daily_ops.md`，且在 `COMPOSED_IDS` 内）⇒ 雷 2 已解除，不必重做 #184 的规则补写。
 
-### 发现 C（缺陷，中风险）：`tool_search` 的中文查询会整串比对导致 miss
+### 发现 C（缺陷，中风险，**已修**）：`tool_search` 的中文查询会整串比对导致 miss
 
-`tiering.ts:167-171` 的匹配是 `q.split(/\s+/).filter(Boolean)` 后 `keywords.some(kw => hay.includes(kw))`。中文查询通常**没有空格** ⇒ 整句变成一个 keyword，必须是 haystack 的**连续子串**才命中：
+> **状态**：`#212` 修了「整串比对」（中文 2-gram + 字段加权 + 绝对阈值）；
+> 生产取证又发现**过召回**，已用**相对阈值**修掉（见下）。
 
-**实测**（假工具 `undo`/`redo`/`focus_nodes`，调 `tool_search` 的 execute）：
+**原缺陷**：`tiering.ts` 的匹配是 `q.split(/\s+/)` 后 `keywords.some(kw => hay.includes(kw))`。中文查询通常**没有空格** ⇒ 整句变成一个 keyword，必须是 haystack 的**连续子串**才命中：
 
-| query | 实测结果 | 原因 |
+| query | 结果 | 原因 |
 |---|---|---|
-| `撤销` | ✅ `loaded=[undo]` | 命中 label「撤销上次画布编辑」 |
-| `撤销操作` | ❌ `loaded=[]` | haystack 里没有「撤销操作」这个连续串 |
-| `把刚才的编辑撤销掉` | ❌ `loaded=[]` | 同上 |
-| `定位` | ✅ `loaded=[focus_nodes]` | 命中中文 label |
-| `undo` | ⚠️ `loaded=[undo, redo]` | `redo` 的英文 description 里含 "undo stack" ⇒ **误命中** |
+| `撤销` | ✅ hit | 命中 label「撤销上次画布编辑」 |
+| `撤销操作` | ❌ miss | haystack 里没有「撤销操作」这个连续串 |
+| `把刚才的编辑撤销掉` | ❌ miss | 同上 |
 
-haystack = `name + label + (summary ?? description) + description`，**中文只落在 label 一处**（`description` 多为英文）。⇒ 两个方向的错：中文长句 miss、英文短词误命中。miss 后模型拿到完整目录（这一步是对的）但已消耗一轮。
+**#212 的修法**：空格分词保留 + 中文 token 切 2-gram；字段加权 `name 3 / label 2 / summary 2 / description 1` + 绝对阈值 2；中文 gram 命中任意字段记 2 分。
 
-修法（T2 范围）：给延迟工具补中文 `summary` 关键词字段，或按字符 n-gram / 逐字包含匹配。**零 L6 成本**（不进 prompt）。
+**生产取证发现的过召回**（用镜像里真实 dist 跑断言，单测没抓到 —— 替身 `label = name` 是英文）：
+
+| query | #212 之后 | 原因 |
+|---|---|---|
+| `undo` | ✅ 只命中 undo | redo 只撞 description（权重 1）< 阈值 2 |
+| `把刚才的编辑撤销掉` | ⚠️ `[undo, redo]` | 通用词「编辑」命中 `redo` 的**中文 label**「重做画布编辑」= 2 分，达阈值 |
+
+**相对阈值修法**：`threshold = max(2, ceil(gram数 × 0.3))` —— 查询越长要求的证据量越高。
+验算：`撤销操作`（4 gram）⇒ 阈值 2，命中保留；`把刚才的编辑撤销掉`（8 gram）⇒ 阈值 3，
+只命中 1 个 gram 的 `redo`（2 分）被排除，`undo`（4 分）保留。
+⚠️ 阈值抬高只会退化为 miss（返回完整目录、不激活），**不会造成新的误激活** ⇒ 方向安全。
+
+⚠️ **教训（检索类测试通用）**：写匹配/检索测试时，替身必须复制**生产真实的 `label`/`description`** ——
+`fakeTool` 的 `label = name`（英文）会同时造成**假绿**（漏掉过召回）与**假红**（相对阈值下低估中文查询的证据量）。
 
 ### 附带：常驻集中「零下发点名」的 2 个工具
 
@@ -185,11 +197,13 @@ done
 
 ⚠️ 三个会被踩的坑：① **必须用 `-E`**（BSD grep 的 BRE 不支持 `\|`）；② **必须加 `\b`**，否则 `focus_node` 会把 `focus_nodes` 一起命中；③ `PROMPT_SPEC.md` 的命中要按 §1 排除（不下发）。
 
-## 7. 待拍板
+## 7. 决策台账
 
-| 项 | 需要谁定 | 说明 |
+| 项 | 状态 | 说明 |
 |---|---|---|
-| ~~发现 A 的修法~~ | ✅ **已决：A1** | 采纳 A1（提常驻）：零提示词成本、零规则改动、可逆；A2/A3 要动 prompt 规则（6 处同步 + L6 余 6 字符）属红线。<br>⚠️ 代价：常驻 36→37，与 roadmap P1「≤28」反向 —— 但按 §4 硬边界，≤28 本来就只能靠「减点名」达成，多 1 个不是主要矛盾 |
-| 是否把「延迟 ∩ 点名 = ∅」接成 CI 门禁 | R5 + R6 | 现状命中 1 项 ⇒ 接门禁即红，需先修 A 或先带 allowlist |
-| `run_text_generation` / `run_prompt_generation` 是否移出常驻 | R5 | 与「常驻 36→≤28」目标同向，但违反 `tiering.ts:56` 的双保险设计 |
-| `skills/` 归属 | R1 + R5 | drama-* 是 R1 的「点名来源」，R5-T2 要往里写 tool_search 线索 ⇒ 需先锁归属 |
+| 发现 A（`focus_nodes` 被规则点名却在延迟集） | ✅ **已决并落地：A1** | 采纳 A1（提常驻）：零提示词成本、零规则改动、删一行即回退；A2/A3 要动 prompt 规则（6 处同步 + L6 余 6 字符）属红线。<br>⚠️ 代价：常驻 36→37，与 roadmap P1「≤28」反向 —— 但按 §4 硬边界，≤28 本来就只能靠「减点名」达成，多 1 个不是主要矛盾。已落 #216 |
+| 发现 C（中文查询整串比对） | ✅ **已决并落地：2-gram + 加权 + 相对阈值** | #212（2-gram + 字段加权 + 绝对阈值）+ 后续 PR（相对阈值修过召回）。零 L6 成本 |
+| 常驻瘦身（36 → ≤28） | ⏸️ **暂不执行**（2026-10-06 拍板） | 阻塞在前置：`tool_search` 触发率 0 ⇒ 现在下沉 = 功能不可达（`run_*` 尤其严重：用户确认后出不了图）。<br>顺序：① skill 补线索 → ② 生产验证 `tool_search_calls_total{outcome="hit"}` 首条 → ③ 才批量下沉 |
+| `skills/` 归属 | ✅ **已决：段落级** | 正文归 R1；尾部固定小节 `## 工具可用性` 归 R5。已写进 `AGENTS.md`「改工具分层」节 |
+| 「延迟 ∩ 点名 = ∅」接 CI 门禁 | 🔜 **可接**（发现 A 修后命中 0 项） | 建议 R5 出脚本、R6 接进 `ci.yml`；这是防止再次漂移的唯一自动化手段 |
+| ⚠️ 与 R1 的并行冲突 | 🚧 **需协调** | 另一窗口已在本地分支 `feat/tool-tiering-demotion-r1`（worktree `pi-lnk-wt-tiering`）推进「工具下沉」，**尚未推远端/开 PR**。<br>方向与本表「暂不下沉」相左，且大概率同改 `tiering.ts` + `tiering.test.ts` ⇒ 合并必冲突。<br>建议：R5 先合（算法层，已在 PR 中），R1 侧 rebase 后只改 `ALWAYS_ON_TOOL_NAMES` 与 `NAMED_BY_ASSETS`；并按上面「暂不执行」的前置条件重新排期 |
