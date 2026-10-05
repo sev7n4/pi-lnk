@@ -15,7 +15,7 @@
 # ⇒ 下面是**紧配额**，刻意压低：
 # - requests 200m/512Mi、limits 1CPU/1Gi
 # - 保留期 7 天（与生产现有栈一致）
-# - **不做 Grafana**（本阶段只要「指标活下来」；看板用生产已有的那台，见 README）
+# - **不做 Grafana**（本阶段只要「指标活下来」；查数走原生 UI + PromQL，见 README）
 #
 # ⚠️ 若这台上再装别的东西，先砍本组件的保留期，不要动别的容器。
 apiVersion: v1
@@ -27,16 +27,23 @@ metadata:
     app.kubernetes.io/name: pi-lnk-prometheus
     app.kubernetes.io/part-of: pi-lnk-observability
 spec:
-  type: ClusterIP
+  # ⭐ NodePort —— **刻意对外**，供团队直接查（原生 UI / API）。
+  # 访问方式、PromQL 手册、端口选择理由、安全边界与收紧选项：**见本目录 README.md**。
+  #
+  # 历史：本文件初版是 `ClusterIP`，但部署时按「团队要能查」改成了 NodePort，
+  # **没有回写仓库** ⇒ 造成「仓库声明 ClusterIP / 线上是 NodePort」的漂移。
+  # 此处以**线上为准**对齐（2026-10-05）。
+  #
+  # ⚠️ 它同时也依赖**云侧配置**：安全组未放行时端口实际不可达 —— 该待办写在 README。
+  type: NodePort
   selector:
     app.kubernetes.io/name: pi-lnk-prometheus
   ports:
-    # **刻意不暴露 NodePort**（与 pi-runtime 不同）。
-    # 理由：采集端是「Prometheus 主动拉 pi-runtime」，不需要任何人从外面访问 Prometheus；
-    # 而一旦暴露 NodePort，就要为它做鉴权与网络边界，而本阶段并不需要对外查询。
+    # **必须钉住 30909**：不钉就由 kubelet 随机分配，README 里写死的访问地址会失效。
     - name: web
       port: 9090
       targetPort: web
+      nodePort: 30909
 ---
 apiVersion: apps/v1
 kind: StatefulSet
