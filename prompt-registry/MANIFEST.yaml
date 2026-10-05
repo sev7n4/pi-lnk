@@ -10,9 +10,9 @@ entries:
     order: 20
     contentHash: a2254c1ddb62
   - id: no_gen_claim.gen
-    version: 1.0.0
+    version: 1.0.2
     order: 20
-    contentHash: dd398b076f7f
+    contentHash: fdb53d21a342
   - id: sidebar_vision.tail
     version: 1.2.0
     order: 30
@@ -22,9 +22,9 @@ entries:
     order: 35
     contentHash: 8bc581f97646
   - id: media_tool_policy
-    version: 1.4.0
+    version: 1.4.2
     order: 40
-    contentHash: ec1e6644fdc8
+    contentHash: ca9c170c7ae0
   - id: canvas_view_policy
     version: 1.3.0
     order: 45

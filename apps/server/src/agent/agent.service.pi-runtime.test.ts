@@ -17,6 +17,7 @@ import { type PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 import type { SidebarAttachment } from '@lnkpi/shared'
 import { resetSidebarParseCache } from './sidebar-vision'
+import { isSuppressed, markSuppressed } from './memory-suppression'
 
 describe('AgentService pi-runtime switch (B4)', () => {
   const agentMessageCreate = vi.fn()
@@ -936,6 +937,119 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     expect(block.match(/\[其他画布\]/g)).toHaveLength(1)
     // 仍然不投影元数据
     expect(block).not.toContain('other')
+  })
+
+  // ── M6a 反哺剔除（spec 2026-10-04-prompt-engineering §13.3 第 3 条）──
+//
+// 抑制表是**模块级进程内态**且**不跨进程同步**（见 memory-suppression.ts 顶部注释），
+// 故用例必须用**独立 id**，并在断言前先确认该id 初始未被标记——否则可能因
+// 上一个用例遗留状态而「因为错误的原因通过」（假绿）。
+const runMemoryInjection = async (items: unknown[], tag: string): Promise<string | undefined> => {
+    // ⚠️ 运行时守卫（不是装饰性的）：本仓测试文件**永不做类型检查**——
+    //   apps/server/tsconfig.json 的 exclude 含 src/**/*.test.ts，故 `pnpm build`(tsc) 看不到本文件，
+    //   而 vitest 只转译不类型检查 ⇒ 「首参传成裸对象」这类错误**没有任何编译期防线**。
+    //   实测：签名写成 `unknown[]` 时tsc本可报 TS2353，但因上述排除而从不执行。
+    //   而漏传数组的后果被fail-soft 放大：agent.service.ts 的 `mem.items.filter` 抛 TypeError
+    //   → 被该段 try/catch 吞掉 → memoryBlock 为 undefined → 断言以「剔除过度」的面貌失败，
+    //   错误信息把人指向错的代码方向（实测复现过，见报告 Critical 2）。
+    //   故这里显式断言形状：让入参错误**当场炸在helper 里**，而不是变成下游的误导性红。
+    if (!Array.isArray(items)) {
+      throw new TypeError(
+        `runMemoryInjection(items, tag): items 必须是数组（searchMemory 返回 { items: MemoryItem[] }），收到 ${typeof items}。` +
+          `tag=${tag}。裸对象会在 agent.service.ts 的 mem.items.filter 抛错并被 fail-soft 吞掉，` +
+          `使断言以「记忆被剔除过度」的面貌失败。`,
+      )
+    }
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const assembleDynamic = vi.fn().mockResolvedValue([])
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic: vi.fn().mockResolvedValue('PROMPT'),
+      assembleDynamic,
+    } as never)
+    ;(service as unknown as { agentMemory?: unknown }).agentMemory = {
+      searchMemory: vi.fn().mockResolvedValue({ items }),
+    }
+    for await (const _event of service.streamConversation('s1', '你好', 'u1', tag)) {
+      void _event
+    }
+    return assembleDynamic.mock.calls[0][0].memoryBlock as string | undefined
+  }
+
+  it('M6a：被抑制的记忆不进注入块（剔除本体判据）', async () => {
+    expect(isSuppressed('m6a-bad')).toBe(false) // 前置：确认初始未标记
+    markSuppressed('m6a-bad', '反复导致模型把别的项目的角色设定当成本画布观察')
+    const block = await runMemoryInjection(
+      [
+        { id: 'm6a-bad', content: '污染记忆：主角叫林晚', createdAt: 'c', scope: 'canvas', sessionId: 'other', crossCanvas: true },
+        { id: 'm6a-ok', content: '本画布的角色设定：小柚', createdAt: 'c', scope: 'canvas', sessionId: 's1', crossCanvas: false },
+      ],
+      's1:t-m6a-drop',
+    )
+    expect(block).toContain('本画布的角色设定：小柚')
+    expect(block).not.toContain('污染记忆：主角叫林晚')
+  })
+
+  it('M6a：未抑制的记忆照常注入（fail-open 不得误杀）', async () => {
+    expect(isSuppressed('m6a-untouched')).toBe(false)
+    markSuppressed('m6a-other', '另一条污染记忆')
+    const block = await runMemoryInjection(
+      [{ id: 'm6a-untouched', content: '用户偏好深色主题', createdAt: 'c', scope: 'user', sessionId: null, crossCanvas: false }],
+      's1:t-m6a-keep',
+    )
+    expect(block).toContain('用户偏好深色主题')
+  })
+
+  it('M6a：条目无 id 时照常注入（无法判定就不删）', async () => {
+    const block = await runMemoryInjection(
+      // 刻意不带 id：抑制判据是 id，没 id 就无法证明「这条」是「那条」
+      [{ content: '一条没有 id 的记忆', createdAt: 'c', scope: 'user', sessionId: null, crossCanvas: false }],
+      // ⚠️ 必须是**数组**：searchMemory 约定返回 `{ items: MemoryItem[] }`，
+      // agent.service.ts 里执行 `mem.items.filter(...)` —— 传裸对象会在那里抛 TypeError，
+      // 而该段被 fail-soft 的 try/catch 吞掉 ⇒ memoryBlock 变 undefined ⇒
+      // 本条断言以「剔除过度」的面貌失败（已实测确认，见报告 Critical 2）。
+      's1:t-m6a-noid',
+    )
+    expect(block).toContain('一条没有 id 的记忆')
+  })
+
+  it('M6a：抑制的跨画布条目被剔后不得残留跨画布注记（注记须与实际注入内容一致）', async () => {
+    // 锁「lines 与 crossNote 同源于 kept」。判据设计踩过一次坑：
+    // 「全被抑制 ⇒ 整个块为 undefined」这条**区分不了** crossNote 取 kept 还是 mem.items
+    // （两种实现下块都是 undefined，测试恒绿）。所以必须留一条**非跨画布**条目让块不缺席，
+    // 再断言「块内没有跨画布前缀 ⇒ 也不该有跨画布注记」——这才真正区分得开。
+    expect(isSuppressed('m6a-x1')).toBe(false)
+    expect(isSuppressed('m6a-x2')).toBe(false)
+    markSuppressed('m6a-x1', '跨画布污染甲')
+    markSuppressed('m6a-x2', '跨画布污染乙')
+    const block = await runMemoryInjection(
+      [
+        { id: 'm6a-x1', content: '别的项目角色设定甲', createdAt: 'c', scope: 'canvas', sessionId: 'other', crossCanvas: true },
+        { id: 'm6a-x2', content: '别的项目角色设定乙', createdAt: 'c', scope: 'canvas', sessionId: 'other', crossCanvas: true },
+        { id: 'm6a-local-ok', content: '本画布的正常记忆', createdAt: 'c', scope: 'canvas', sessionId: 's1', crossCanvas: false },
+      ],
+      's1:t-m6a-cross',
+    )
+    // 块仍在（证明不是靠「块缺席」蒙对）
+    expect(block).toContain('本画布的正常记忆')
+    // 跨画布条目已剔干净 ⇒ 不能留下 [其他画布] 前缀，
+    // 更不能留下一句指向不存在前缀的「注：带前缀的条目来自别的画布」
+    expect(block).not.toContain('[其他画布]')
+    expect(block).not.toContain('来自别的画布')
+  })
+
+  it('M6a：全被抑制时整个块缺席而非留下空壳（沿用既有 fail-soft 语义）', async () => {
+    expect(isSuppressed('m6a-all')).toBe(false)
+    markSuppressed('m6a-all', '唯一一条')
+    const block = await runMemoryInjection(
+      [{ id: 'm6a-all', content: '别的项目角色设定', createdAt: 'c', scope: 'canvas', sessionId: 'other', crossCanvas: true }],
+      's1:t-m6a-allgone',
+    )
+    // 与本文件既有「memory 服务抛错 → 块缺席」同一处理：给下游 assembleDynamic undefined，
+    // 而不是给一个只有标题的空壳块。
+    expect(block).toBeUndefined()
   })
 
   it('审计 #7：memory 服务抛错 → 注入缺席但流照常完成（fail-soft）', async () => {

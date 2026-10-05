@@ -1,5 +1,5 @@
 /**
- * 提示词注册中心门禁（spec §4.5 的 L1-L9）。
+ * 提示词注册中心门禁（spec §4.5 的 L0-L11）。
  *
  * 刻意只做 CLI 外壳：全部判据在 loader 的 checkRegistryIntegrity 里，
  * 运行时与 CI 共用同一份，避免"本地过、线上炸"。

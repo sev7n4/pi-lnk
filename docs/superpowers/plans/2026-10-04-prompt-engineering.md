@@ -16,7 +16,7 @@
 
 **所有任务共同遵守**（逐字来自 spec，违反即PR 会被打回）：
 
-- **预算硬线3200 / 预警线 2720**（`STATIC_BUDGET_CHARS` / `STATIC_BUDGET_WARN_CHARS`），当前全组合实测 **2930**，余量 **270 字符**
+- **预算硬线3200 / 预警线 2720**（`STATIC_BUDGET_CHARS` / `STATIC_BUDGET_WARN_CHARS`），当前全组合实测 **3194**，余量 **6 字符**（已贴线）
 - **本计划 M1–M5 零预算消耗**：不得新增任何进入 `renderStatic` 的提示词字符。新增内容只能进 PROMPT_SPEC.md（不参与组装）、测试、门禁判据
 - **加规则必同步 6 处**：`rules/<id>.md` · `MANIFEST.yaml`（`contentHash` = `sha256(body.trimEnd())` 前 12 位+ `version` 两处一致）· loader `COMPOSED_IDS` · `FALLBACK_BY_ID` + `prompt-registry.fallback.ts` 逐字相等 · 🔴 `renderStaticFallback()` 拼装顺序（`loader.ts:232`，漏了 ⇒ 整段消失且无报错）· 🟡 `pi-prompt-assembler.service.test.ts` 的 `EXPECTED` 硬编码串
 - **禁用模式**：不得引入 Mermaid 序列化、坐标系契约、强制裸 JSON 输出规范（spec §5 已否决，附复现判据）
@@ -131,18 +131,18 @@ PY
 `prompt-registry/rules/media_tool_policy.md` frontmatter 增加一行：
 
 ```yaml
-anchor: no-template-capability
+anchor: no-template
 ```
 
 `prompt-registry/rules/no_gen_claim.gen.md` frontmatter 增加一行：
 
 ```yaml
-anchor: gen-confirm-gate
+anchor: gen-gate
 ```
 
 ⚠️ **同时给 `sidebar_vision.tail.md` 和 `gen_tool_policy.md` 也加 anchor**（它们是被引用的目标）：
 
-`prompt-registry/rules/sidebar_vision.tail.md` 加 `anchor: no-template-capability`；`prompt-registry/rules/gen_tool_policy.md` 加 `anchor: gen-confirm-gate`。
+`prompt-registry/rules/sidebar_vision.tail.md` 加 `anchor: no-template`；`prompt-registry/rules/gen_tool_policy.md` 加 `anchor: gen-gate`。
 
 - [ ] **Step 3: 写 PROMPT_SPEC.md**
 
@@ -203,8 +203,8 @@ Create `prompt-registry/PROMPT_SPEC.md`，内容如下（**必须逐字写入，
 |---|---|
 | 硬线 `STATIC_BUDGET_CHARS` | 3200 |
 | 预警线 `STATIC_BUDGET_WARN_CHARS` | 2720（= 3200 × 0.85） |
-| 全组合当前实测 | **2930**（已过预警线） |
-| **余量** | **270 字符 ≈ 3 条短规则** |
+| 全组合当前实测 | **3194**（硬线内，余量 6） |
+| **余量** | **6 字符（已贴线，加规则前必须先腾空间）** |
 
 **余量是硬事实，不是估计。** 加新规则前先跑 `pnpm prompt:lint` 看余量。
 超预警线不阻断但会打印 warning——**看到 warning 就该停下评估，不要装看不见**。
@@ -486,9 +486,9 @@ git commit -o scripts/gen-prompt-spec-map.ts -o apps/server/src/agent/pi-runtime
 ```typescript
 it("L10：规则引用了不存在的 anchor 时报错", () => {
 	const errors = checkRegistryIntegrity(
-		rootOf([{ file: "a.one", body: "见 no-template-capability 说的那样。\n", fields: { title: "A", anchor: "real-anchor" } }]),
+		rootOf([{ file: "a.one", body: "见 no-template 说的那样。\n", fields: { title: "A", anchor: "real-anchor" } }]),
 	);
-	expect(errors.some((e) => e.startsWith("L10") && e.includes("no-template-capability"))).toBe(true);
+	expect(errors.some((e) => e.startsWith("L10") && e.includes("no-template"))).toBe(true);
 });
 
 it("L10：引用真实存在的 anchor 时不报错", () => {
@@ -549,7 +549,7 @@ for (const [file, entry] of seen) {
 其中「见规则 14」所在句改为（**只改引用，不改语义**）：
 
 ```
-不要声称已用工作流/模板生成（本会话无该能力，见 `no-template-capability`）
+不要声称已用工作流/模板生成（见 `no-template`）
 ```
 
 `prompt-registry/rules/no_gen_claim.gen.md` 规则 3 原文：
@@ -561,7 +561,7 @@ for (const [file, entry] of seen) {
 改为：
 
 ```
-3. 不要声称「正在生成」「马上生成」「已开始出图」；用户明确同意前禁止调用 run_*_generation（生成执行由系统强制校验，见 `gen-confirm-gate`），确认后可调用，也不要假装已出图。
+3. 不要声称「正在生成」「马上生成」「已开始出图」；用户明确同意前禁止调用 run_*_generation（系统强制校验，见 `gen-gate`），确认后可调用，也不要假装已出图。
 ```
 
 - [ ] **Step 5: 同步 6 处 + 跑门禁**
@@ -653,9 +653,9 @@ describe("组装管线契约（spec §8.1）", () => {
 | groups | 长度 | `write_guard` 注入 |
 |---|---|---|
 | `["core"]` | 729 | ✅ |
-| `["core","writeTools"]` | 2458 | ❌ |
-| `["core","genTools"]` | 1201 | ✅ |
-| `["core","writeTools","genTools"]` | 2930 | ❌ |
+| `["core","writeTools"]` | 2493 | ❌ |
+| `["core","genTools"]` | 1215 | ✅ |
+| `["core","writeTools","genTools"]` | 3194 | ❌ |
 
 ```typescript
 	it("case2a：只读会话注入只读守卫", () => {
@@ -805,7 +805,7 @@ export interface AbScenario {
 export const PROMPT_AB_SCENARIOS: readonly AbScenario[] = [
 	{
 		id: "gen-need-confirm",
-		anchors: ["gen-confirm-gate", "gen-tool-policy"],
+		anchors: ["gen-gate", "gen-tool-policy"],
 		userMessage: "帮我生成三张赛博朋克风格的城市海报",
 		expectTools: ["propose_generation"],
 		forbidTools: ["run_image_generation", "run_video_generation", "run_text_generation"],
@@ -836,7 +836,7 @@ export const PROMPT_AB_SCENARIOS: readonly AbScenario[] = [
 	},
 	{
 		id: "no-template-claim",
-		anchors: ["no-template-capability"],
+		anchors: ["no-template"],
 		userMessage: "帮我套用一下分镜生成模板",
 		expectTools: [],
 		manualJudge: "如实说明没有模板能力，**不虚构模板名**；可用节点+连线搭骨架替代",

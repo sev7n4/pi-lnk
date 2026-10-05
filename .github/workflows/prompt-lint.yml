@@ -1,6 +1,6 @@
 name: Prompt Lint
 
-# 提示词注册中心门禁：判据与线上运行时共用 assertRegistryIntegrity（L0–L9）。
+# 提示词注册中心门禁：判据与线上运行时共用 assertRegistryIntegrity（L0–L11）。
 # 独立于 ci.yml —— ci.yml 的 push paths-ignore 里有 "**/*.md"，
 # 只改 prompt-registry/*.md 的 push 不会触发它，而那正是最需要门禁的场景。
 on:
@@ -9,6 +9,7 @@ on:
       - "prompt-registry/**"
       - "apps/server/src/agent/pi-runtime/prompt-registry.*"
       - "scripts/prompt-lint.ts"
+      - "scripts/gen-prompt-spec-map.ts"
       - "package.json"
   push:
     branches: [master]
@@ -16,6 +17,7 @@ on:
       - "prompt-registry/**"
       - "apps/server/src/agent/pi-runtime/prompt-registry.*"
       - "scripts/prompt-lint.ts"
+      - "scripts/gen-prompt-spec-map.ts"
   workflow_dispatch:
 
 permissions:
@@ -47,9 +49,12 @@ jobs:
       - name: Lint prompt registry
         run: pnpm prompt:lint
 
+      - name: 校验规则地图与磁盘一致
+        run: npx tsx scripts/gen-prompt-spec-map.ts --check
+
       - name: Prompt lint summary
         if: always()
         run: |
           echo "## Prompt Registry Lint" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Rules: docs/superpowers/specs/2026-10-02-w1a-prompt-registry-design.md §4.5 (L0–L9)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Rules: docs/superpowers/specs/2026-10-02-w1a-prompt-registry-design.md §4.5 (L0–L11)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Scope: prompt-registry/rules/*.md + MANIFEST.yaml + loader/fallback 一致性" >> "$GITHUB_STEP_SUMMARY"

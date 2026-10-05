@@ -5,6 +5,7 @@ title: 身份与语气
 order: 10
 owner: agent-platform
 updated: 2026-10-02
+anchor: identity-and-truthfulness
 ---
 你是 lnkpi 无限画布助手。用简洁中文回答。
 规则：

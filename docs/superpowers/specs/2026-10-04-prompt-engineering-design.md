@@ -39,11 +39,11 @@
 | 坐标数据位置 | **不在摘要里**，仅在 `get_canvas_layout` 工具返回值中，按需拉取 | `tools/canvas-read.ts:123-130` |
 | zoom/viewport 语义 | 212 处命中**全在 `apps/web/src`**；`services/pi-runtime` 侧 0 命中 | python `os.walk` 直读全树 |
 | 工具实现数 | 22 个 `.ts`（含 44 个含测试文件） | `ls services/pi-runtime/src/tools/*.ts` |
-| 静态段预算占用 | `core+writeTools+genTools = 2930` 字符 | `pnpm prompt:lint` 实跑 |
+| 静态段预算占用 | `core+writeTools+genTools = 3194` 字符（余量 6，已贴线） | `pnpm prompt:lint` 实跑 |
 | 预算硬线 / 预警线 | 3200 / 2720（=3200×0.85） | `loader.ts:35,38` |
-| **预算余量** | **270 字符** ≈ 3 条短规则 | 3200 − 2930 |
-| 门禁判据 | L0–L9 共 10 条（errors阻断 / warnings 不阻断） | `loader.ts:250-335` |
-| 规则文件数 | 9 个 `.md` + `MANIFEST.yaml` | `ls prompt-registry/rules/` |
+| **预算余量** | **6 字符（仍在硬线内，但已贴线）** | 3200 − 3194 |
+| 门禁判据 | L0–L11 共 12 条（errors阻断 / warnings 不阻断） | `loader.ts:250-335` |
+| 规则文件数 | 10 个 `.md` + `MANIFEST.yaml` | `ls prompt-registry/rules/` |
 | **记忆注入方式** | **每轮自动注入最近 5 条**，`scope:'any'`，**不经模型调用** | `agent.service.ts:938-951` |
 | 记忆层淘汰机制 | **无 TTL、无去重、无删除**（记忆池只增不减） | python 全树扫 `ttl\|evict\|dedup\|deleteMemory` |
 | 记忆预算档 | `dynamic-budget` memory 档占 **10%** 份额 | `dynamic-budget.ts:23` |
@@ -59,7 +59,7 @@
 
 | 能力 | 实际实现 | 建议稿对应 |
 |---|---|---|
-| **L0–L9 门禁** | 10 条判据：内容哈希基线快照（L3）、内嵌兜底与磁盘**逐字**比对（L7）、裸尖括号防 CDATA 吞内容（L5）、id 与文件名一致（L2） | 仅有"contentHash + lint"一句 |
+| **L0–L11 门禁** | 12 条判据：内容哈希基线快照（L3）、内嵌兜底与磁盘**逐字**比对（L7）、裸尖括号防 CDATA 吞内容（L5）、id 与文件名一致（L2） | 仅有"contentHash + lint"一句 |
 | **预算用常量不用字面量** | `STATIC_BUDGET_CHARS` 常量 + `BUDGET_COMBOS` 枚举，注释明确记"写死数字会让上调预算变成纯注释" | 未提及 |
 | **动态预算分 kind 封顶** | `dynamic-budget.ts`：canvas 55% / vision 25% / sidebar 10% / memory 10%，byte-stable、从不整块丢弃、尾注按 kind 定制（sidebar承诺 `read_document` 取回，canvas 承诺刷新摘要） | 仅说"视口摘要注入" |
 | **信任边界 hook** | `transform_context` 已注册（`index.ts:86`），实现于 `trust-boundary.ts`，有配套指标 `pi_runtime_transform_context_runs_total{goal}` | **误判为空位** |
@@ -84,10 +84,10 @@
 ### 3.4 预算硬约束
 
 ```
-core+writeTools+genTools = 2930字符
-预警线 2720（已越过）───────┤███████████████░░░░│
+core+writeTools+genTools = 3194字符（余量 6，已贴线）
+预警线 2720（已越过）───────┤█████████████████│
 硬线 3200            ──────┤████████████████████│
-余量 = 270 字符 ≈ 3 条短规则
+余量 = 6 字符 ⇒ 加任何新规则前必须先压缩正文或人工抬线
 ```
 
 **这是否决"把坐标系写进提示词"的决定性依据**——不是主观判断，是算术。
@@ -116,7 +116,7 @@ core+writeTools+genTools = 2930字符
 |---|---|
 | 建议要求 | 在提示词中定义原点、缩放级别（zoom 1 = 1 CSS px）、视口语义，并规定坐标输出精度 |
 | 本仓事实 | 模型**不产出坐标**。摘要层 4 字段无 x/y；坐标仅在 `get_canvas_layout` 按需拉取；zoom 语义 212 处全在前端 |
-| 否决理由 | 写进提示词是纯 token 消耗（余量仅 270 字符），且无对象可对齐。`arrange_nodes` 做定式排布、坐标由后端算 |
+| 否决理由 | 写进提示词是纯 token 消耗（余量已为负），且无对象可对齐。`arrange_nodes` 做定式排布、坐标由后端算 |
 | 复现判据 | `grep -n "CanvasSummaryData" apps/server/src/agent/pi-runtime/pi-prompt-assembler.service.ts` |
 
 ### 5.2 否决：黄灯"视口图元密度超阈值"
@@ -158,7 +158,7 @@ core+writeTools+genTools = 2930字符
 | 2 图元类型 | `image`/`video`/`audio`/`text` 媒体节点 + 连线语义 | 与 `CanvasSummaryData` 同步 |
 | 3 规则地图 | 每条规则的**语义 id**、管什么、触发时机、所属分组 | **由脚本生成**，见 §6.3 |
 | 4 分组机制 | `group` / `unlessGroup` 的互斥语义与切换时机 | 手工 |
-| 5 预算纪律 | 硬线 3200 / 预警 2720 / **余量 270**、超了怎么办 | 手工，改动需评审 |
+| 5 预算纪律 | 硬线 3200 / 预警 2720 / **余量 −26（已超线）**、超了怎么办 | 手工，改动需评审 |
 | 6 变更流程 | 见 §6.4 | 手工 |
 
 ### 6.3 规则地图必须生成而非手写
@@ -188,22 +188,25 @@ core+writeTools+genTools = 2930字符
 
 ### 7.1 问题
 
-当前引用形如「见规则 11」「本会话无该能力，见规则 14」——**语义在编号里，编号在顺序里**。任何重排、插入、删除都会让引用指向错误内容，而 L0–L9 无判据捕获。
+当前引用形如「见规则 11」「本会话无该能力，见规则 14」——**语义在编号里，编号在顺序里**。任何重排、插入、删除都会让引用指向错误内容，而当时的门禁（L0–L9）无判据捕获。
 
 ### 7.2 改造
 
 引用改为**语义 id + 短名**：
 
 - 现状：`禁止调用 run_*_generation（生成执行由系统强制校验，见规则 11）`
-- 改后：`禁止调用 run_*_generation（生成执行由系统强制校验，见 gen-confirm-gate）`
+- 改后：`禁止调用 run_*_generation（系统强制校验，见 gen-gate）`
 
-每个编号条目获得一个稳定语义短名（如 `gen-confirm-gate`），短名映射表由 §6.3 的生成器一并产出。
+每个编号条目获得一个稳定语义短名（如 `gen-gate`），短名映射表由 §6.3 的生成器一并产出。
+⚠️ 收口实测：初版短名太长（`gen-confirm-gate` / `no-template-capability`），两处引用共 +34 字符
+⇒ 全组合 3226，**超硬线 26**。最终把短名压到 `gen-gate` / `no-template` 并删去与被指向规则
+重复的解释性前缀，净 **+2**（3194，余量 6）——**这是语义引用的实际预算代价**。
 
 ### 7.3 L10 判据
 
 新增门禁：扫描所有规则 body 中的 `见 <语义短名>` 引用，验证短名存在于映射表。
 
-**这是纯增量、零误报**——引用写法收敛为单一模式后，扫描判据可精确匹配，不影响既有 L0–L9。
+**这是纯增量、零误报**——引用写法收敛为单一模式后，扫描判据可精确匹配，不影响既有门禁判据。
 
 ---
 
@@ -243,7 +246,7 @@ core+writeTools+genTools = 2930字符
 
 | 场景 | 检验的规则 | 通过判据 |
 |---|---|---|
-| 用户说"帮我生成三张图"但未确认 | `gen-confirm-gate` | **不**调 `run_*`；调 `propose_generation` |
+| 用户说"帮我生成三张图"但未确认 | `gen-gate` | **不**调 `run_*`；调 `propose_generation` |
 | 信息不全的分镜请求 | 规则 16 | 调 `ask_user` 而非自行编造 |
 | 用户问"为什么这个角色要穿红衣服" | `canvas_view_policy` | 出`render_canvas_view` 卡片而非纯文本 |
 | 单节点字段询问 | `canvas_view_policy` 负向边界 | **不出图**，纯文本回答 |
@@ -274,7 +277,7 @@ core+writeTools+genTools = 2930字符
 
 | 门禁 | 触发时机 | 阻断 | 判据 |
 |---|---|---|---|
-| `prompt:lint`（L0–L9） | push / PR | errors 阻断 | 现有 |
+| `prompt:lint`（L0–L11） | push / PR | errors 阻断 | 现有 |
 | **L10 语义引用** | push / PR | errors 阻断 | §7.3 新增 |
 | **规则地图一致性** | push / PR | errors 阻断 | §6.3 生成物比对 |
 | **组装管线契约测试** | push / PR | 阻断 | §8.1 六case |
@@ -342,7 +345,7 @@ core+writeTools+genTools = 2930字符
 |污染点 | 影响范围 | 撤回成本 |
 |---|---|---|
 | 记忆行错误 | 1 个用户 × 1 个画布 | `recall_memory` 不召回即止 |
-| 规则被污染 | **全量用户 × 每轮 2930 字符** | 需改 6 处 + 过 L0–L9 门禁 + 走 PR |
+| 规则被污染 | **全量用户 × 每轮 3194 字符** | 需改 6 处 + 过 L0–L11 门禁 + 走 PR |
 
 **依据二（审核频率与风险敞口错配）**：`save_memory` 每轮可能被调用（高频），而晋升是低频事件。在高频点设闸既杀掉复利，又解决不了真问题。
 
