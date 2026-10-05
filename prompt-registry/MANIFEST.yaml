@@ -30,9 +30,9 @@ entries:
     order: 45
     contentHash: 8715971800d8
   - id: gen_tool_policy
-    version: 1.1.0
+    version: 1.2.0
     order: 50
-    contentHash: 59f798bbcd2a
+    contentHash: 90e08bce1596
   - id: write_guard
     version: 1.0.0
     order: 60
