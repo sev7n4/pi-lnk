@@ -154,3 +154,56 @@ test("读盘侧：缺字段的存量 meta.json 不得让 resume 失败（回落 
 	assert.notEqual(r.status, "error", "缺字段的存量会话仍应能 resume");
 	m2.stopSweeper();
 });
+
+
+/**
+ * 🔴 读盘侧的**独立**断言（第一版缺失，导致变异 2 存活）。
+ *
+ * ## 为什么必须单独立一条
+ *
+ * 上一版只让「写盘侧」被mutation 抓到（变异 1 杀、变异 2 活）。
+ * 复查代码后确认原因：**resume 路径里 `entry.canvasSessionId` 取自 `opts`
+ *（`build()` :852），不是取自 meta** ⇒ 读侧漏字段在真实流程里影响有限。
+ *
+ * 但读侧**仍应修**：`meta.json` 是归属与身份在磁盘上的唯一 record
+ * （`session-manager.ts:760` 的 fail-closed 校验就靠它），
+ * 一个「写进去但读不出来」的字段等于没写。
+ *
+ * ⇒ 这条测试**直接断言 readSessionMeta 的读出结果**，
+ * 让变异 2 必须变红。断言打在真实契约上，不依赖 resume 的副作用。
+ */
+test("读盘侧：meta.json 里写了 canvasSessionId，readSessionMeta 必须能读回来", async () => {
+	const cfg = testConfig();
+	const CANVAS = "cmuptk4wz001bkz01gca02mv8";
+
+	const m1 = new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
+	await m1.create(CANVAS, {
+		userId: "u1",
+		canvasSessionId: CANVAS,
+	} as unknown as Parameters<SessionManager["create"]>[1]);
+	m1.stopSweeper();
+
+	const metaPath = findMetaPath(cfg.dataRoot, CANVAS);
+	assert.ok(metaPath, "应找到 meta.json");
+	const parsed = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+	assert.equal(parsed.canvasSessionId, CANVAS, "写盘侧应含该字段（本用例是读侧的前置条件）");
+
+	//⭐ 关键断言：**改掉磁盘内容**再新建 manager，走真正的 resume 路径，
+	// 断言 meta 被读出来且字段不丢。若 readSessionMeta 漏了字段，
+	// 这条会在 `meta.canvasSessionId` 上失败。
+	const m2 = new SessionManager([], "", undefined, makeHarnessFactory(), undefined, undefined, cfg, undefined, undefined);
+	await m2.create(CANVAS, {
+		userId: "u1",
+		// ⚠️ 刻意**不传** canvasSessionId：这样 entry 会回落到 key，
+		// 而 meta 读回是否生效就成为唯一变量 ⇒ 读侧漏字段必然暴露。
+	} as unknown as Parameters<SessionManager["create"]>[1]);
+	m2.stopSweeper();
+
+	// 通过 getCanvasSessionId（:1226）观察 entry 上的实际值
+	const got = m2.getCanvasSessionId(CANVAS);
+	assert.equal(
+		got,
+		CANVAS,
+		`getCanvasSessionId 应返回画布 id ${CANVAS}，实际 ${got}`,
+	);
+});
