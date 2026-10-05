@@ -69,7 +69,9 @@ function metricLines(body: string, metric: string): string[] {
 async function renderAfterFailingPrompt(behavior: LaneBehavior, key: string): Promise<string> {
 	const metrics = new Metrics();
 	const sm = await makeManager(metrics, behavior, key);
-	await sm.prompt(key, { text: "你好" });
+	// ⚠️ prompt 的第 2 参是 **string**，不是 { text } —— 传对象运行时也不报错
+	//（会被当text 传给 lane.prompt），但只有 tsc 拦得住。跑单文件测试时它照样绿。
+	await sm.prompt(key, "你好");
 	// `lane.prompt` 的失败走 `.then` / `.catch`（微任务 + 一层 promise），给它落地时间
 	await new Promise((r) => setTimeout(r, 40));
 	return metrics.render(0, "test");
