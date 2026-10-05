@@ -73,7 +73,7 @@ const ALL_NAMES = [
 	"apply_asset_to_node",
 	"grid_slice_image",
 	"introduce_nodes_to_agent",
-	"focus_nodes", // ⚠️ 复数版未被 skill 点名，仍在延迟集（与常驻的 focus_node 是两个工具）
+	"focus_nodes", // ⚠️ 复数版与常驻的 focus_node 是两个工具（2026-10-06 起它自己也常驻）
 	"undo",
 	"redo",
 	"open_image_editor",
@@ -88,7 +88,7 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 		const registered = new Set(e.registered.map((t) => t.name));
 		for (const n of ALL_NAMES) assert.ok(registered.has(n), `${n} 必须注册进 config.tools`);
 		const active = new Set(e.activeToolNames);
-		for (const d of ["duplicate_node", "undo", "delete_nodes", "focus_nodes"]) {
+		for (const d of ["duplicate_node", "undo", "delete_nodes", "redo"]) {
 			assert.ok(!active.has(d), `${d} 初始不得激活`);
 		}
 		assert.ok(active.has("tool_search"));
@@ -139,6 +139,7 @@ describe("被资产点名的工具必须常驻（延迟即不可达，回归锁�
 		"set_node_generation_params", // 规则「建节点后落参数才叫完成」
 		"save_memory", // memory_scope.tail.md 约束 scope；6 个 drama-* skill 编号步骤
 		"focus_node", // 8 个 skill「出图后 QA 闸门」第一步
+		"focus_nodes", // ⚠️ 复数版：规则 canvas_daily_ops 第 19 条点名（2026-10-06 从延迟集提上来）
 		"remove_edges", // drama-qc-review 引用审计的错连修正
 	];
 
@@ -168,9 +169,12 @@ describe("被资产点名的工具必须常驻（延迟即不可达，回归锁�
 		}
 	});
 
-	it("focus_nodes（复数，未被点名）仍在延迟集——防止顺手一起改成常驻", () => {
-		assert.ok(!ALWAYS_ON_TOOL_NAMES.has("focus_nodes"), "focus_nodes 应保持延迟");
-		assert.ok(ALWAYS_ON_TOOL_NAMES.has("focus_node"), "focus_node 应常驻");
+	// 2026-10-06 反转：原断言「focus_nodes 保持延迟」的前提是「未被 skill 点名」，
+	// 但它漏了 prompt 规则 —— canvas_daily_ops 第 19 条点名了它 ⇒ 按准绳必须常驻。
+	// 保留本用例是为了锁「两者是不同工具」，防止后人合并成 focus_node。
+	it("focus_node / focus_nodes 是两个工具，且都常驻（规则第 19 条点名的是复数版）", () => {
+		assert.ok(ALWAYS_ON_TOOL_NAMES.has("focus_nodes"), "focus_nodes 被规则第 19 条点名 ⇒ 必须常驻");
+		assert.ok(ALWAYS_ON_TOOL_NAMES.has("focus_node"), "focus_node 被 6 个 skill 点名 ⇒ 常驻");
 	});
 });
 

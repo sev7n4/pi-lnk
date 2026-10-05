@@ -78,8 +78,15 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 出图后定位（2026-10-03 生产取证）：focus_node 是 8 个 drama-* / ecommerce-* skill
 	// 共用的「出图后 QA 闸门」第一步（「出图后先 focus_node 定位到刚生成的节点」），
 	// 与 arrange_nodes 同性质 ⇒ 延迟即不可达。
-	// ⚠️ 与 focus_nodes（复数，批量定位）是两个不同工具；后者未被 skill 点名，保持延迟。
+	// ⚠️ 与 focus_nodes（复数，批量定位）是两个不同工具，别顺手合并。
 	"focus_node",
+	// 2026-10-06 修正（原判据漏了一侧）：本模块此前按「未被 skill 点名」把复数版留在延迟集，
+	// 但**漏了 prompt 规则这一侧** —— `canvas_daily_ops` 第 19 条（在 COMPOSED_IDS 内、每轮下发）
+	// 写死「排完用 focus_nodes 带入视口」。按本文件自己的准绳（**被点名 ⇒ 必须常驻**），
+	// 它必须常驻：否则「整理/排版」场景模型读完规则直调，吃 vendor 硬编码的
+	// "Tool focus_nodes is unavailable" 且无恢复路径（drive/tools.ts:686）。
+	// 依据：docs/agent/tool-capability-catalog.md 发现 A。
+	"focus_nodes",
 	// 错连修正（2026-10-03 生产取证）：drama-qc-review 的引用关系审计步骤点名
 	// （「错连还能用 edge id 走 remove_edges」），同 arrange_nodes 性质。
 	"remove_edges",
