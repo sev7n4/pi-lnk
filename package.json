@@ -15,6 +15,7 @@
     "test:server:changed": "pnpm --filter @lnkpi/server exec vitest run --changed origin/master",
     "test:runtime": "pnpm --filter @pi-lnk/pi-runtime test",
     "verify-contract": "npx tsx scripts/verify-contract.ts",
+    "verify-tool-contract": "npx tsx scripts/verify-tool-contract.ts",
     "verify-u-i2v-phase3": "npx tsx scripts/verify-u-i2v-phase3.ts",
     "verify-spec-figures": "npx tsx scripts/verify-spec-figures.ts",
     "verify-claims": "npx tsx scripts/verify-claims.ts",
