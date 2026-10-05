@@ -1,5 +1,6 @@
 import type { ImageRefWire, ImageResponseMode } from '@lnkpi/shared'
 import { extractApimartTaskId, pollApimartImageTask } from './apimart-image-task'
+import { withUpstreamRetry } from './upstream-retry'
 
 export interface ImageGenerateOptions {
   modelId?: string
@@ -73,7 +74,21 @@ export class OpenAIImageProvider implements ImageProvider {
     private apiKey: string,
     private baseUrl = 'https://api.openai.com/v1',
     private model = 'dall-e-3',
+    /**
+     * 创建阶段退避基数（ms）。生产默认 1500；测试注入 1 保持快速。
+     * ⚠️ U9 新增 —— 此前 image 侧**零重试**（生产 image_edit 66 条失败里
+     * 31 条 `fetch failed`，全部直接判失败）。见 upstream-retry.ts 的分类说明。
+     */
+    private createRetryBaseDelayMs = 1500,
   ) {}
+
+  /** 退避重试的 onRetry钩子：让重试在日志里可见（排查「为何变慢」时需要）。 */
+  private retryHook(attempt: number, delayMs: number, error: unknown) {
+    console.warn(
+      `[OpenAIImageProvider] create failed (attempt ${attempt}), retrying in ${delayMs}ms:`,
+      error,
+    )
+  }
 
   buildRequestBody(prompt: string, options?: ImageGenerateOptions): Record<string, unknown> {
     const model = options?.modelId || this.model
@@ -111,15 +126,24 @@ export class OpenAIImageProvider implements ImageProvider {
     const n = Math.max(1, Math.min(4, options?.n ?? 1))
 
     if (responseMode === 'async_task') {
-      const res = await fetch(`${this.baseUrl}/images/generations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
+      // ⚠️ U9：`fetch` 对 4xx/5xx 是**正常返回**（`ok: false`）不抛异常 ⇒
+      // 必须在 `!res.ok` 分支显式 throw，`withUpstreamRetry` 才有介入机会。
+      // 只包 fetch 的话重试永远不会触发（这是 U5 踩过的坑）。
+      const res = await withUpstreamRetry(
+        async () => {
+          const r = await fetch(`${this.baseUrl}/images/generations`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify(this.buildRequestBody(prompt, options)),
+          })
+          if (!r.ok) throw new Error(`Image API ${r.status}: ${await r.text()}`)
+          return r
         },
-        body: JSON.stringify(this.buildRequestBody(prompt, options)),
-      })
-      if (!res.ok) throw new Error(`Image API ${res.status}: ${await res.text()}`)
+        { baseDelayMs: this.createRetryBaseDelayMs, onRetry: (i) => this.retryHook(i.attempt, i.delayMs, i.error) },
+      )
       const json = await res.json()
       const taskId = extractApimartTaskId(json)
       if (!taskId) {
@@ -137,15 +161,22 @@ export class OpenAIImageProvider implements ImageProvider {
 
     const urls: string[] = []
     for (let i = 0; i < n; i += 1) {
-      const res = await fetch(`${this.baseUrl}/images/generations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
+      // ⚠️ U9：同 async 分支——`!res.ok` 必须显式 throw，否则重试不触发。
+      const res = await withUpstreamRetry(
+        async () => {
+          const r = await fetch(`${this.baseUrl}/images/generations`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify(this.buildRequestBody(prompt, options)),
+          })
+          if (!r.ok) throw new Error(`Image API ${r.status}: ${await r.text()}`)
+          return r
         },
-        body: JSON.stringify(this.buildRequestBody(prompt, options)),
-      })
-      if (!res.ok) throw new Error(`Image API ${res.status}: ${await res.text()}`)
+        { baseDelayMs: this.createRetryBaseDelayMs, onRetry: (i) => this.retryHook(i.attempt, i.delayMs, i.error) },
+      )
       const json = await res.json()
       urls.push(...extractSyncImageUrls(json))
       if (!model.includes('dall-e-3')) break

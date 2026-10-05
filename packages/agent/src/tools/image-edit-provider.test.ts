@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApimartImageEditProvider,
   createImageEditProvider,
@@ -189,5 +189,91 @@ describe('SyncImageEditProvider (openai_sync wire)', () => {
     await expect(
       provider.edit({ userPrompt: 'p', imageUrl: 'https://a.png', maskUrl: 'https://b.png' }),
     ).rejects.toThrow('Image edit API 500')
+  })
+})
+
+// U9 回归锁：image_edit 接入退避重试。
+// 生产实测（2026-10-05）：image_edit 77 条成功率仅 11.7%，66 条失败里
+//   - 31 条 `fetch failed`            ← 纯网络抖动，**最该重试**
+//   - 11 条 `402 insufficient balance`← 重试只会继续扣钱
+//   -  2 条 `Mask dimensions do not match` ← 参数错
+// ⇒ 接入重试前，这 31 条全部直接判失败。见 upstream-retry.ts。
+describe('ImageEditProvider 创建阶段退避重试（U9）', () => {
+  const env = { ...process.env }
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    process.env = { ...env }
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    process.env = env
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  // ⚠️ pollIntervalMs 必须给 1：否则轮询走真实间隔（数秒）导致测试超时
+  const input = {
+    userPrompt: '把裙子改长',
+    imageUrl: 'https://cdn/base.png',
+    maskUrl: 'https://cdn/mask.png',
+    pollIntervalMs: 1,
+  }
+
+  it('retries on `fetch failed` (the 31-case) then succeeds', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error('fetch failed'))
+      // task_id 必须包在 data 里（extractApimartTaskId 的约定）
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { task_id: 't1' } }),
+      })
+      // 轮询响应形状（pollApimartImageTask）：data.status + data.result.images
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: { status: 'completed', result: { images: [{ url: 'https://cdn/out.png' }] } },
+        }),
+      })
+
+    const p = new ApimartImageEditProvider('k', 'https://api.apimart.ai/v1', 'm', 1)
+    const out = await p.edit(input)
+
+    expect(out.url).toBe('https://cdn/out.png')
+    expect(fetchMock).toHaveBeenCalledTimes(3) // 1 失败 + 1 重试成功 + 1 次轮询
+  })
+
+  it('does NOT retry 402 insufficient balance', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 402,
+      text: async () => '[token_id=90701] insufficient balance',
+    })
+
+    const p = new ApimartImageEditProvider('k', 'https://api.apimart.ai/v1', 'm', 1)
+    await expect(p.edit(input)).rejects.toThrow(/402/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT retry mask dimension mismatch (params are wrong)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => 'Mask dimensions do not match base image',
+    })
+
+    const p = new ApimartImageEditProvider('k', 'https://api.apimart.ai/v1', 'm', 1)
+    await expect(p.edit(input)).rejects.toThrow(/Mask dimensions/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up after 3 attempts and surfaces the last error', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, text: async () => 'overloaded' })
+
+    const p = new ApimartImageEditProvider('k', 'https://api.apimart.ai/v1', 'm', 1)
+    await expect(p.edit(input)).rejects.toThrow(/503/)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 })
