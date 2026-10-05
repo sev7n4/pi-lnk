@@ -173,3 +173,103 @@ describe('OpenAIImageProvider', () => {
     })
   })
 })
+
+// U9 回归锁：image 侧接入退避重试。
+// 生产实测（2026-10-05，容器内 SQLite 直查）：
+//   image  3373 条成功率 83.0%← `image-provider.ts` 里 retry 零命中
+//   image_edit 77 条成功率 11.7%   ← 66 条失败里 31 条 `fetch failed`（可重试）
+//   video 796 条成功率 52.4%      ← U5 加了重试后才改善
+// ⇒ 重试是通用上游韧性手段，此前被错当成了视频专属。
+// 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.4
+describe('OpenAIImageProvider 创建阶段退避重试（U9）', () => {
+  const env = { ...process.env }
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    process.env = { ...env }
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    process.env = env
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('retries the create call on `fetch failed` then succeeds', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error('fetch failed'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ url: 'https://cdn/a.png' }] }),
+      })
+
+    // 第 4 参注入短退避，生产的 1500ms 在单测里等不起
+    const p = new OpenAIImageProvider('k', 'https://api.example.com/v1', 'dall-e-3', 1)
+    const out = await p.generate('a cat')
+
+    expect(out.url).toBe('https://cdn/a.png')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries on 5xx (upstream overloaded) then succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'service unavailable' })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ url: 'https://cdn/b.png' }] }),
+      })
+
+    const p = new OpenAIImageProvider('k', 'https://api.example.com/v1', 'dall-e-3', 1)
+    const out = await p.generate('a dog')
+    expect(out.url).toBe('https://cdn/b.png')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does NOT retry 402 insufficient balance (retrying only burns more money)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 402,
+      text: async () => 'insufficient balance',
+    })
+
+    const p = new OpenAIImageProvider('k', 'https://api.example.com/v1', 'dall-e-3', 1)
+    await expect(p.generate('x')).rejects.toThrow(/402/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT retry 400 invalid_request (params are wrong)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => 'invalid_request',
+    })
+
+    const p = new OpenAIImageProvider('k', 'https://api.example.com/v1', 'dall-e-3', 1)
+    await expect(p.generate('x')).rejects.toThrow(/400/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT retry 429 is WRONG — 429 must be retried (video side has 99 of them)', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limit' })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ url: 'https://cdn/c.png' }] }),
+      })
+
+    const p = new OpenAIImageProvider('k', 'https://api.example.com/v1', 'dall-e-3', 1)
+    const out = await p.generate('x')
+    expect(out.url).toBe('https://cdn/c.png')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up after 3 attempts and surfaces the last error', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, text: async () => 'video_queue_full' })
+
+    const p = new OpenAIImageProvider('k', 'https://api.example.com/v1', 'dall-e-3', 1)
+    await expect(p.generate('x')).rejects.toThrow(/503/)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})

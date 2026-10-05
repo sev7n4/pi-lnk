@@ -1,5 +1,6 @@
 import { buildImageEditRequest, buildSyncImageEditRequestBody } from '../studio/edit-adapter'
 import { extractApimartTaskId, pollApimartImageTask } from './apimart-image-task'
+import { withUpstreamRetry } from './upstream-retry'
 
 export interface ImageEditInput {
   userPrompt: string
@@ -23,7 +24,20 @@ export class ApimartImageEditProvider implements ImageEditProvider {
     private apiKey: string,
     private baseUrl = 'https://api.apimart.ai/v1',
     private model?: string,
+    /**
+     * 创建阶段退避基数（ms）。生产默认 1500；测试注入 1。
+     * ⚠️ U9 新增 —— 生产 image_edit 77 条成功率仅 11.7%，其中 31 条是
+     * `fetch failed`（纯网络抖动），此前**零重试**全部直接判失败。
+     */
+    private createRetryBaseDelayMs = 1500,
   ) {}
+
+  private retryHook(tag: string, attempt: number, delayMs: number, error: unknown) {
+    console.warn(
+      `[${tag}] edit failed (attempt ${attempt}), retrying in ${delayMs}ms:`,
+      error,
+    )
+  }
 
   async edit(input: ImageEditInput): Promise<{ url: string }> {
     const built = buildImageEditRequest({
@@ -37,15 +51,27 @@ export class ApimartImageEditProvider implements ImageEditProvider {
     else if (this.model) body.model = this.model
 
     const root = this.baseUrl.replace(/\/$/, '')
-    const res = await fetch(`${root}/images/generations`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
+    // ⚠️ U9：`fetch` 对 4xx/5xx 是**正常返回**（`ok: false`）不抛异常 ⇒
+    // 必须在 `!res.ok` 显式 throw，`withUpstreamRetry` 才有介入机会。
+    const res = await withUpstreamRetry(
+      async () => {
+        const r = await fetch(`${root}/images/generations`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(body),
+        })
+        if (!r.ok) throw new Error(`Image edit API ${r.status}: ${await r.text()}`)
+        return r
       },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) throw new Error(`Image edit API ${res.status}: ${await res.text()}`)
+      {
+        baseDelayMs: this.createRetryBaseDelayMs,
+        onRetry: ({ attempt, delayMs, error }) =>
+          this.retryHook('ApimartImageEditProvider', attempt, delayMs, error),
+      },
+    )
     const json = await res.json()
     const taskId = extractApimartTaskId(json)
     if (!taskId) {
@@ -72,7 +98,16 @@ export class SyncImageEditProvider implements ImageEditProvider {
     private apiKey: string,
     private baseUrl = 'https://api.openai.com/v1',
     private model?: string,
+    /** 创建阶段退避基数（ms）。生产 1500；测试注入 1。⚠️ U9 新增。 */
+    private createRetryBaseDelayMs = 1500,
   ) {}
+
+  private retryHook(tag: string, attempt: number, delayMs: number, error: unknown) {
+    console.warn(
+      `[${tag}] edit failed (attempt ${attempt}), retrying in ${delayMs}ms:`,
+      error,
+    )
+  }
 
   async edit(input: ImageEditInput): Promise<{ url: string }> {
     const body = buildSyncImageEditRequestBody({
@@ -84,15 +119,26 @@ export class SyncImageEditProvider implements ImageEditProvider {
       size: input.size,
     })
     const root = this.baseUrl.replace(/\/$/, '')
-    const res = await fetch(`${root}/images/generations`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
+    // ⚠️ U9：同 Apimart —— `!res.ok` 必须显式 throw，否则重试永不触发。
+    const res = await withUpstreamRetry(
+      async () => {
+        const r = await fetch(`${root}/images/generations`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(body),
+        })
+        if (!r.ok) throw new Error(`Image edit API ${r.status}: ${await r.text()}`)
+        return r
       },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) throw new Error(`Image edit API ${res.status}: ${await res.text()}`)
+      {
+        baseDelayMs: this.createRetryBaseDelayMs,
+        onRetry: ({ attempt, delayMs, error }) =>
+          this.retryHook('SyncImageEditProvider', attempt, delayMs, error),
+      },
+    )
     const json = (await res.json()) as {
       data?: Array<{ url?: string }>
       task_id?: string
