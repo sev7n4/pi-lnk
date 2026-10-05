@@ -71,6 +71,36 @@ k3s 的 NodePort 段（30000-32767）不冲突，选 30909 为可读性。
 
 ## 已知取舍
 
-- **保留期 7 天 / size 上限 2GB**：磁盘只剩 7.8G（已用 81%），这是最该收的旋钮
+- **保留期**：`--storage.tsdb.retention.time=7d` / `size` 上限 2GB（磁盘只剩 7.8G、已用 81%，这是最该收的旋钮）。
+  ⚠️ **`7d` 只是配置值，不等于「有 7 天数据」** —— 实测 PVC 是当天创建的，TSDB 真实覆盖只有**当天约 8 小时**。
+  任何跨天的 PromQL 结论都要先用 `query_range` 取首样本确认数据起点，**别信配置值**。
 - **不装 Grafana**：本阶段只要「指标活下来」；用原生 UI + PromQL
 - **告警规则留空**：见 `rules/README.md`（阈值需 ≥1 个发布周期真实数据校准）
+
+## 改动如何生效（2026-10-05 实测）
+
+**没有任何 CI 会 apply 这里的 k8s 清单**（全仓 grep `kubectl` / `k3s` / `KUBECONFIG` 零命中）。
+⇒ 改完本目录的文件并合并进 master 之后，**线上不会自动变**，必须手工执行：
+
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl -n pi-lnk-observability apply -f deploy/observability/prometheus/prometheus-statefulset.yaml
+kubectl -n pi-lnk-observability rollout status statefulset/pi-lnk-prometheus
+```
+
+**触发面**：`deploy.yml`（api+web 生产发布）的 `on.push.paths` 已排除
+`deploy/observability/**` 与 `deploy/docker-compose.observability.yml`
+（排除项必须排在 `deploy/**` **之后** —— GitHub 是「后写覆盖先写」；
+顶层那个 compose 不被 `observability/**` 覆盖，所以要单独列一条）。
+⇒ 只改本目录**不再触发生产发布**。
+
+**`--web.enable-lifecycle` 刻意不开（2026-10-05 移除）**：该开关按 Prometheus 官方语义
+等价于「HTTP 即可 shutdown / reload」，而本 Service 是 NodePort 30909 ——
+端口可达即可无鉴权 `POST /-/quit` 把 Prometheus 打停。
+代价：改 scrape 配置不能用 `POST /-/reload`，改用上面那条 `rollout restart`。
+⚠️ 探测该开关是否启用**不要看 `GET /-/reload` 的 405**（「启用但方法不对」与「未启用」都会 405），
+权威判据是容器 `args`：
+
+```bash
+kubectl -n pi-lnk-observability get pod pi-lnk-prometheus-0 -o jsonpath='{.spec.containers[0].args}'
+```
