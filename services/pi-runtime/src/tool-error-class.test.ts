@@ -148,3 +148,76 @@ test("classifyLlmErrorText 不得返回错误原文（label 基数红线）", ()
 	assert.equal(classifyLlmErrorText(`玄学失败 ${secret}`), "internal");
 	assert.equal(classifyLlmErrorText(`invalid token ${secret}`), "validation");
 });
+
+
+// ============================================================================
+// 🔴 生产取证驱动的回归（2026-10-05）
+//
+// 生产实测：`get_canvas_layout` 15/19、`get_canvas_summary` 15/17、
+// `list_generation_tasks` 5、`render_canvas_view` 6 次错误**全部落 `internal`**。
+// 逐环核实根因：`tools/nest-client.ts:117` 抛的是
+// `nest ${path} http ${res.status}: ${message}`，而原正则只认 `429`，
+// 于是 404/400 这类最常见的 4xx 一个都匹配不上。
+//
+// 后果不是「分类不准」而是**告警失真**：spec §7.2 的规则 2（上游 5xx 占比）
+// 与规则 4（工具错误率）都建立在这个分类上。
+// ============================================================================
+
+/** 生产真实错误文本（逐字取自 `nest-client.ts:117` 的抛错格式）。 */
+const NEST_ERRORS: Array<[string, string]> = [
+	["nest /agent/internal/get-canvas-layout http 404: Not Found", "upstream_4xx"],
+	["nest /agent/internal/get-canvas-summary http 400: Bad Request", "upstream_4xx"],
+	["nest /agent/internal/render-canvas-view http 404: Not Found", "upstream_4xx"],
+	["nest /agent/internal/get-node http 401: Unauthorized", "gate_blocked"],
+	["nest /agent/internal/get-node http 403: Forbidden", "gate_blocked"],
+	["nest /agent/internal/list-generation-tasks http 500: Internal Server Error", "upstream_5xx"],
+	["nest /agent/internal/list-generation-tasks http 502: Bad Gateway", "upstream_5xx"],
+	["nest /agent/internal/get-node http 429: Too Many Requests", "upstream_4xx"],
+];
+
+for (const [text, expected] of NEST_ERRORS) {
+	test(`Nest 客户端错误：${text.slice(0, 58)} → ${expected}`, () => {
+		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, expected);
+	});
+}
+
+test("通用 4xx：任意 4xx 状态码都归 upstream_4xx（不只 429）", () => {
+	for (const code of [400, 401, 402, 404, 405, 409, 418, 422, 429, 430, 499]) {
+		const text = `nest /agent/internal/x http ${code}: Something`;
+		const got = classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass;
+		// 401/403 语义上属「未授权」⇒ gate_blocked 优先，其余归 4xx
+		const want = code === 401 || code === 403 ? "gate_blocked" : "upstream_4xx";
+		assert.equal(got, want, `http ${code} 分类错误`);
+	}
+});
+
+test("401/403 优先归 gate_blocked（授权语义比状态码更具体）", () => {
+	for (const code of [401, 403]) {
+		const text = `nest /agent/internal/x http ${code}: Unauthorized`;
+		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, "gate_blocked");
+	}
+});
+
+test("5xx 仍然归 upstream_5xx（不能被新增的通用 4xx 规则抢走）", () => {
+	for (const code of [500, 502, 503, 504]) {
+		const text = `nest /agent/internal/x http ${code}: Server Error`;
+		assert.equal(
+			classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass,
+			"upstream_5xx",
+			`http ${code} 被误分类`,
+		);
+	}
+});
+
+test("非 HTTP 状态码文本不受影响（回归：原先的关键词判定不能被破坏）", () => {
+	const kept: Array<[string, string]> = [
+		["request aborted", "aborted"],
+		["ETIMEDOUT after 30s", "timeout"],
+		["ECONNRESET", "network"],
+		["invalid arguments", "validation"],
+		["玄学失败", "internal"],
+	];
+	for (const [text, expected] of kept) {
+		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, expected);
+	}
+});

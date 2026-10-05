@@ -41,10 +41,31 @@ export function classifyToolOutcome(input: {
 
 	// aborted 要先于 4xx/5xx：「request aborted」里可能同时含错误码字样。
 	if (/\babort(ed)?\b|取消|中断/.test(text)) return { outcome: "error", errorClass: "aborted" };
-	if (/\b429\b|rate.?limit|too many requests/.test(text)) {
+
+	// 授权语义先于状态码：401/403 既是 4xx 又是「未授权」，
+	// 而 `gate_blocked` 比 `upstream_4xx` 更能指明该查什么（凭证/权限 vs 上游）。
+	// ⚠️ 必须排在通用 4xx 之前，否则 401/403 会被 4xx 规则抢走、退化成一堆无信息的 4xx。
+	if (/\b40[13]\b|unauthoriz|forbidden|未授权/.test(text)) {
+		return { outcome: "error", errorClass: "gate_blocked" };
+	}
+
+	// 4xx：**必须用通用 4xx 码，不能只认 429**。
+	// 生产取证（2026-10-05）：`tools/nest-client.ts:117` 抛的是
+	// `nest ${path} http ${res.status}: ${message}`，而原实现只匹配 `429`，
+	// 于是 `http 404: Not Found` / `http 400: Bad Request` 这类**最常见的 4xx 全落 internal**
+	//（实测 get_canvas_layout 15/19、get_canvas_summary 15/17 的错误全落 internal）。
+	// 后果不是「分类不准」而是**告警失真**：spec §7.2 的规则 2（上游 5xx 占比）
+	// 与规则 4（工具错误率）都建立在这个分类上。
+	//
+	// ⚠️ 裸 `\b4\d\d\b` 会误吃端口号（实测 `ECONNREFUSED 127.0.0.1:443` 的 `443`
+	// 被当成 4xx，把 network 错分成 upstream_4xx）⇒ 通用码要求 `http ` 前缀。
+	// **429 例外**：它是最常见的限流码，且真实文本里常单独出现（如「timeout waiting, then 429」），
+	// 必须裸匹配，否则会掉进 `timeout` 规则（既有优先级测试就是钉这一条的）。
+	if (/\bhttp 4\d\d\b|\b4xx\b|\b429\b|rate.?limit|too many requests/.test(text)) {
 		return { outcome: "error", errorClass: "upstream_4xx" };
 	}
-	if (/\b5\d\d\b|upstream|bad gateway|service unavailable/.test(text)) {
+	// 5xx 同样收紧为 `http 5xx` / `5xx`，避免 `5000ms` 之类误命中。
+	if (/\bhttp 5\d\d\b|\b5xx\b|\bupstream\b|bad gateway|service unavailable/.test(text)) {
 		return { outcome: "error", errorClass: "upstream_5xx" };
 	}
 	if (/timeout|超时|etimedout/.test(text)) return { outcome: "error", errorClass: "timeout" };
@@ -53,7 +74,7 @@ export function classifyToolOutcome(input: {
 	}
 	// `gate` 必须带词边界：否则 investigate/aggregate/mitigate/navigate/delegated
 	// 都会因内含 "gate" 子串被误判成 gate_blocked。
-	if (/\bgate\b|hitl|未授权|unauthorized|forbidden/.test(text)) {
+	if (/\bgate\b|hitl/.test(text)) {
 		return { outcome: "error", errorClass: "gate_blocked" };
 	}
 	if (/invalid|validation|参数|校验|expected/.test(text)) {
