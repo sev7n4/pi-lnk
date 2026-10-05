@@ -54,6 +54,7 @@ import { buildToolEnsemble } from "./tools/tiering.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import { stripImageBlocks } from "./sse-sanitize.js";
+import { classifyLlmFailure, shouldCountLlmFailure } from "./llm-error-class.js";
 import type { LnkpiToolContext, SidebarAttachment, LnkpiTool } from "./tools/types.js";
 
 export type NormalizedEventType =
@@ -1247,6 +1248,44 @@ export class SessionManager {
 	}
 
 	/**
+	 * 记录一条 LLM 主路径的失败（1.5-a · spec §4.5）。
+	 *
+	 * 补这个口的理由：`lane.prompt(...)` 的失败分支此前**只派发 SSE error 事件、零指标**，
+	 * 于是 `pi_runtime_llm_errors_total` 只能反映「入口早拒」（`app.ts` 的 catch），
+	 * **看不到「模型调用失败」** —— 那才是我们真正想知道的。
+	 *
+	 * 三条硬约束：
+	 * 1. **观测口绝不抛**：任何异常都吞掉。理由同 `llmIdentityFor` ——
+	 *    观测代码把业务请求变成失败是不可接受的（本仓栽过：漏 import 的 ReferenceError
+	 *    被 `fire-and-forget` 静默吞掉，表现为「功能没生效」，排查了很久）。
+	 * 2. **错误原文只喂分类器，不进 label**：分类器内部已保证返回值不含原文。
+	 * 3. **用户主动取消不计数**：取消不是错误，计进去会污染错误率分子。
+	 */
+	private observeLlmFailure(entry: SessionEntry, err: unknown, opts?: { aborted?: boolean }): void {
+		try {
+			// ⚠️ `entry.userAborted` 在类型上是可选 boolean，兜底成 false
+			// （undefined = 没标记过取消 = 按真错误处理，与既有 `.catch` 的早退判断同义）。
+			const aborted = opts?.aborted ?? entry.userAborted ?? false;
+			if (!shouldCountLlmFailure({ aborted, text: "" })) return;
+
+			const { errorClass, stage } = classifyLlmFailure({
+				aborted,
+				text: err instanceof Error ? err.message : String(err),
+				compacting: entry.compacting,
+			});
+			this.metrics?.toolMetrics().observeLlmError({
+				stage,
+				errorClass,
+				// 拿不到身份时用闭集内的字面量，绝不透传任意字符串（label 基数会无界）。
+				channel: entry.identity?.provider ?? "unknown",
+				model: entry.identity?.model ?? "unknown",
+			});
+		} catch {
+			// 观测口永不抛（见上方约束 1）
+		}
+	}
+
+	/**
 	 * 阻塞等待可见化（2026-10-01）：按**画布会话 id** 广播 `waiting_user` 事件。
 	 *
 	 * registry 侧只有画布会话 id（工具域语义），而事件派发需要 pi 会话键的 entry ——
@@ -1411,6 +1450,9 @@ export class SessionManager {
 				.prompt(effectiveText, directImages, run.context)
 				.then((result) => {
 					if (!result.ok) {
+						// 1.5-a：主路径失败也进指标（此前只发 SSE、零指标）。
+						// ⚠️ 必须先记指标再 dispatch —— dispatch 之后代码还会继续跑收尾逻辑。
+						this.observeLlmFailure(entry, result.error);
 						this.dispatch(entry, {
 							type: "error",
 							lane: laneName,
@@ -1447,6 +1489,8 @@ export class SessionManager {
 						console.log(`[pi-runtime] run aborted by user: ${entry.id}`);
 						return;
 					}
+					// 1.5-a：真错误进指标（用户取消在上面已早退，故到这里一定是真错误）。
+					this.observeLlmFailure(entry, err, { aborted: false });
 					this.dispatch(entry, {
 						type: "error",
 						lane: laneName,
