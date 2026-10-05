@@ -21,7 +21,7 @@
 |---|---|---|
 | 工具总数 | **47** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具） |
 | 实际注册 | **46** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
-| 常驻 / 延迟 | **36 / 11** | `ALWAYS_ON_TOOL_NAMES` 36 个；其余 11 个延迟（含默认不注册的那 1 个） |
+| 常驻 / 延迟 | **37 / 10**（2026-10-06 起） | `ALWAYS_ON_TOOL_NAMES` 37 个；其余 10 个延迟（含默认不注册的那 1 个）<br>发现 A 按 A1 修复后 `focus_nodes` 由延迟提为常驻（原 36 / 11） |
 
 ⚠️ 计数的两个坑（已踩过）：① 5 个 `run_*_generation` 由 `generation.ts:99-128` 的 `runTool(...)` 工厂以**位置参数**构造（`runTool(name, label, description, path)`），`grep 'name: "'` 扫不到 ⇒ 早期漏计成 41；② `focus_node`（单数）与 `focus_nodes`（复数）是两个工具，只差一个字母。
 
@@ -43,11 +43,11 @@
 > 吃 vendor 硬编码的 `Tool X is unavailable`（`drive/tools.ts:686` 只把 active 工具传给 `prepareToolCall`，
 > `before_tool` hook 在其后 ⇒ host 拦不住），且**没有恢复路径**。
 
-当前扫描结果：**命中 1 项**（见 §3 发现 A）。
+扫描结果：**曾命中 1 项**（`focus_nodes`，见发现 A），**已按 A1 修复并回归锁进测试** ⇒ 当前命中 **0 项**。
 
 ## 3. 三条硬发现
 
-### 发现 A（缺陷，高风险，已实测）：`focus_nodes` 被规则点名却在延迟集
+### 发现 A（缺陷，高风险，已实测，**已按 A1 修复**）：`focus_nodes` 被规则点名却在延迟集
 
 - 规则 `canvas_daily_ops.md:11`（第 19 条，已下发）：
   > 用户要求「整理/排版/排列/按关系展开/对齐」节点：用 arrange_nodes（mode=grid 无序 / along_edges 有向）……**排完用 focus_nodes 带入视口**。
@@ -60,7 +60,7 @@
 
 | 方案 | 动作 | 代价 |
 |---|---|---|
-| A1 提常驻 | 把 `focus_nodes` 加入 `ALWAYS_ON_TOOL_NAMES` | 常驻 36→37，与「常驻瘦身」方向相反，但**零提示词成本** |
+| **A1 提常驻 ✅ 已采纳** | 把 `focus_nodes` 加入 `ALWAYS_ON_TOOL_NAMES` | 常驻 36→37，与「常驻瘦身」方向相反，但**零提示词成本、零规则改动、可逆** |
 | A2 改规则 | 第 19 条改为「排完用 focus_node 定位关键节点」 | 语义退化（只能定位一个），且动 prompt 规则 ⇒ **触发 6 处同步 + L6 预算已贴线**（余 6 字符） |
 | A3 工具侧闭环 ⭐ | `arrange_nodes` 的 execute 结果直接附带 UI focus 命令，规则不再点名 `focus_nodes` | 不占 L6、不占常驻名额、语义不退化；改 `tools/arrange-nodes.ts` + 规则删半句（仍需 6 处同步） |
 
@@ -101,7 +101,7 @@ haystack = `name + label + (summary ?? description) + description`，**中文只
 
 ---
 
-## 4. 目录 — 常驻集（36）
+## 4. 目录 — 常驻集（37）
 
 「点名」列只列**会下发**的来源；`PR:` = prompt-registry 规则，`SK:` = skill（括号内为文件:行）。
 
@@ -133,34 +133,35 @@ haystack = `name + label + (summary ?? description) + description`，**中文只
 | 24 | `render_canvas_view` | PR:canvas_view_policy:11-13 | 解释、澄清、汇报类场景要**出一张卡片给用户看**（非仅文本回答） |
 | 25 | `set_node_generation_params` | PR:media_tool_policy:13 | 建节点后**补生成参数**（模型、尺寸、场景）——规则要求「落参数才叫完成」 |
 | 26 | `focus_node`（单数） | SK:drama-audio-design, drama-character-design, drama-motion-video, drama-scene-worldview, drama-storyboard, ecommerce | 出图后定位到**刚生成的那一个**节点做 QA |
-| 27 | `remove_edges` | SK:drama-qc-review | 发现**连错**的引用关系时删边（edge id 来自 `get_canvas_layout`） |
-| 28 | `run_image_generation` | SK:ecommerce-product-photo | 用户已确认提议后**真正跑图**；`status=timeout` 未完，稍后查 status |
-| 29 | `run_video_generation` | SK:drama-motion-video | 跑视频（最长约 11 min），确认语义同 image |
-| 30 | `run_text_generation` | （无）⚠️ 有意豁免 | 跑文案生成，结果写入节点内容 |
-| 31 | `run_prompt_generation` | （无）⚠️ 有意豁免 | 跑提示词生成，结果写入节点 |
-| 32 | `run_audio_generation` | SK:drama-audio-design, drama-storyboard | 跑 TTS/音频生成，用节点上的音频参数 |
-| 33 | `cancel_generation` | PR:gen_tool_policy:13 | 用户要中止进行中的生成（按 record_id 或 node_id） |
-| 34 | `ask_user` | PR:media_tool_policy:14；SK:drama-*, ecommerce（4 个） | 需要用户拍板/补信息时出选项卡，别替用户猜 |
-| 35 | `load_skill` | SK:ecommerce-product-photo | 进入某垂类任务（剧集、电商图…）时加载该 skill 的详细步骤 |
-| 36 | `tool_search` | PR:canvas_daily_ops:14 | **现有工具里没有用户要的能力时先搜它**（勿直接答「做不到」） |
+| 27 | `focus_nodes`（复数）⚠️ | **PR:canvas_daily_ops:11**（规则 19） | 把**一批**节点带进视口（「整理/排版」刚排完的场景）。2026-10-06 由延迟集提为常驻，见发现 A |
+| 28 | `remove_edges` | SK:drama-qc-review | 发现**连错**的引用关系时删边（edge id 来自 `get_canvas_layout`） |
+| 29 | `run_image_generation` | SK:ecommerce-product-photo | 用户已确认提议后**真正跑图**；`status=timeout` 未完，稍后查 status |
+| 30 | `run_video_generation` | SK:drama-motion-video | 跑视频（最长约 11 min），确认语义同 image |
+| 31 | `run_text_generation` | （无）⚠️ 有意豁免 | 跑文案生成，结果写入节点内容 |
+| 32 | `run_prompt_generation` | （无）⚠️ 有意豁免 | 跑提示词生成，结果写入节点 |
+| 33 | `run_audio_generation` | SK:drama-audio-design, drama-storyboard | 跑 TTS/音频生成，用节点上的音频参数 |
+| 34 | `cancel_generation` | PR:gen_tool_policy:13 | 用户要中止进行中的生成（按 record_id 或 node_id） |
+| 35 | `ask_user` | PR:media_tool_policy:14；SK:drama-*, ecommerce（4 个） | 需要用户拍板/补信息时出选项卡，别替用户猜 |
+| 36 | `load_skill` | SK:ecommerce-product-photo | 进入某垂类任务（剧集、电商图…）时加载该 skill 的详细步骤 |
+| 37 | `tool_search` | PR:canvas_daily_ops:14 | **现有工具里没有用户要的能力时先搜它**（勿直接答「做不到」） |
 
-## 5. 目录 — 延迟集（11）
+## 5. 目录 — 延迟集（10）
 
-这 11 个的 schema 默认不下发，需要 `tool_search` 命中后才可调用。除第 1 项外**均无资产点名**，符合判据。
+这 10 个的 schema 默认不下发，需要 `tool_search` 命中后才可调用。**全部无资产点名**，符合判据
+（原第 1 项 `focus_nodes` 因被规则第 19 条点名，已于 2026-10-06 按发现 A 的 A1 方案提为常驻）。
 
 | # | 工具名 | label | 点名资产 | 触发话术（什么时候该搜它） |
 |---|---|---|---|---|
-| 1 | `focus_nodes`（复数）⚠️ | 定位到多个节点 | **PR:canvas_daily_ops:11**（违规，见发现 A） | 要把**一批**节点带进视口（整理/排版刚排完的场景） |
-| 2 | `delete_nodes` | 删除节点 | 无 | 用户明确要删节点（tier=destructive，需确认） |
-| 3 | `duplicate_node` | 复制节点 | 无 | 复制节点/子图做变体（可带上游连线） |
-| 4 | `undo` | 撤销上次画布编辑 | 无 | 用户说「撤销 / 撤回刚才那步」 |
-| 5 | `redo` | 重做画布编辑 | 无 | 撤销后又想恢复 |
-| 6 | `open_image_editor` | 打开图片精修 | 无 | 用户要**手动精修**某张图（打开编辑器 UI） |
-| 7 | `apply_asset_to_node` | 落资产到节点 | 无 | 把资产库里某个 asset 直接套到兼容节点上 |
-| 8 | `save_node_to_asset_library` | 存入资产库 | 无 | 把某个节点的结果**存成资产**供以后复用 |
-| 9 | `upload_media_to_canvas` | 上传媒体 | 无 | 从公网 URL 加一个媒体节点进画布 |
-| 10 | `grid_slice_image` | 切图 | 无 | 把一张图等分切成 cols×rows（只返 URL，不写画布） |
-| 11 | `introduce_nodes_to_agent` | 引入节点到侧栏 | 无 | 老链路；**默认不注册**（`includeDeferred` 未开） |
+| 1 | `delete_nodes` | 删除节点 | 无 | 用户明确要删节点（tier=destructive，需确认） |
+| 2 | `duplicate_node` | 复制节点 | 无 | 复制节点/子图做变体（可带上游连线） |
+| 3 | `undo` | 撤销上次画布编辑 | 无 | 用户说「撤销 / 撤回刚才那步」 |
+| 4 | `redo` | 重做画布编辑 | 无 | 撤销后又想恢复 |
+| 5 | `open_image_editor` | 打开图片精修 | 无 | 用户要**手动精修**某张图（打开编辑器 UI） |
+| 6 | `apply_asset_to_node` | 落资产到节点 | 无 | 把资产库里某个 asset 直接套到兼容节点上 |
+| 7 | `save_node_to_asset_library` | 存入资产库 | 无 | 把某个节点的结果**存成资产**供以后复用 |
+| 8 | `upload_media_to_canvas` | 上传媒体 | 无 | 从公网 URL 加一个媒体节点进画布 |
+| 9 | `grid_slice_image` | 切图 | 无 | 把一张图等分切成 cols×rows（只返 URL，不写画布） |
+| 10 | `introduce_nodes_to_agent` | 引入节点到侧栏 | 无 | 老链路；**默认不注册**（`includeDeferred` 未开） |
 
 ## 6. 复现命令
 
@@ -188,7 +189,7 @@ done
 
 | 项 | 需要谁定 | 说明 |
 |---|---|---|
-| 发现 A 的修法 A1 / A2 / A3 | R5 + R1（A2/A3 动 prompt 规则） | A2/A3 触 AGENTS.md「改规则同步 6 处」，且 **L6 余量仅 6 字符** ⇒ 属红线，需人批。<br>⚠️ A1（提常驻）会让常驻 36→37，与 roadmap P1「常驻 36 → ≤28」**反向** ⇒ 推荐 A3 |
+| ~~发现 A 的修法~~ | ✅ **已决：A1** | 采纳 A1（提常驻）：零提示词成本、零规则改动、可逆；A2/A3 要动 prompt 规则（6 处同步 + L6 余 6 字符）属红线。<br>⚠️ 代价：常驻 36→37，与 roadmap P1「≤28」反向 —— 但按 §4 硬边界，≤28 本来就只能靠「减点名」达成，多 1 个不是主要矛盾 |
 | 是否把「延迟 ∩ 点名 = ∅」接成 CI 门禁 | R5 + R6 | 现状命中 1 项 ⇒ 接门禁即红，需先修 A 或先带 allowlist |
 | `run_text_generation` / `run_prompt_generation` 是否移出常驻 | R5 | 与「常驻 36→≤28」目标同向，但违反 `tiering.ts:56` 的双保险设计 |
 | `skills/` 归属 | R1 + R5 | drama-* 是 R1 的「点名来源」，R5-T2 要往里写 tool_search 线索 ⇒ 需先锁归属 |
