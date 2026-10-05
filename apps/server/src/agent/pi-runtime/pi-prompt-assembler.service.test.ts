@@ -189,9 +189,11 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 		expect(prompt.includes("禁止调用任何 run_*")).toBe(false);
 		expect(prompt.includes("用户明确同意前禁止调用 run_*_generation")).toBe(true);
 		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
-		expect(prompt.includes("status=timeout")).toBe(true);
+		expect(prompt.includes("12. run_* 返回 timeout")).toBe(true);
 		expect(prompt.includes("fallback_pending")).toBe(true);
 		expect(prompt.includes("cancel_generation")).toBe(true);
+		// U8 TTS 边界（2026-10-06）：规则 23 随 genTools 注入
+		expect(prompt.includes("23. run_audio_generation 只做配音/朗读")).toBe(true);
 		// 规则 4/5（writeTools）与第 10 条守卫（writeTools 已启用 → 退出）不受影响
 		expect(prompt.includes("口语搭骨架")).toBe(true);
 		expect(prompt.includes("写操作尚未开放")).toBe(false);
@@ -448,8 +450,8 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	const BASELINE: Record<string, number> = {
 		core: 693,
 		"core+writeTools": 2756,
-		"core+genTools": 1131,
-		"core+writeTools+genTools": 3194,
+		"core+genTools": 1132,
+		"core+writeTools+genTools": 3195,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -457,15 +459,15 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 			expect({ [name]: renderStaticFallback(groups).length }).toEqual({ [name]: BASELINE[name] });
 		}
 		// 预算余量可见：全组合距硬线还剩多少（spec §L6 门禁数字的单一事实源）
-		// 当前为 6（硬线内，但已贴线）。**本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
+		// U8 加规则 23 时压缩了 11/12/13 措辞：3194→3195（余量 6→5，仍贴线）。**本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(6);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(5);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
 	it("case1a：genTools 启用时含「已 propose_generation 且用户明确同意」", () => {
 		const on = renderStaticFallback(["core", "writeTools", "genTools"]);
-		expect(on).toContain("已 propose_generation 且用户后续消息明确同意");
+		expect(on).toContain("已 propose_generation 且用户明确同意");
 		// 同组必须注入规则 11/12/13（否则上面那句可能来自别处）
 		expect(on).toContain("11. run_image/video/text/prompt/audio_generation");
 	});
@@ -482,7 +484,7 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		const off = renderStaticFallback(["core", "writeTools"]);
 		// 反例对照：on 里不得有 nogen 版措辞，off 里不得有 gen 版措辞
 		expect(on).not.toContain("禁止调用任何 run_*");
-		expect(off).not.toContain("已 propose_generation 且用户后续消息明确同意");
+		expect(off).not.toContain("已 propose_generation 且用户明确同意");
 		//⚠️ 防「两版都空 ⇒ not.toContain 恒真」：两版都必须非空、且长度不同
 		expect(on.length).toBeGreaterThan(0);
 		expect(off.length).toBeGreaterThan(0);
