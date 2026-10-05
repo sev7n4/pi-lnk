@@ -1000,12 +1000,25 @@ export class SessionManager {
 		const metrics = this.metrics;
 		for (const [harnessType, sseType] of EVENT_MAP) {
 			entry.unsubscribes.push(
-				harness.events.on(harnessType as never, (evt: { lane?: string; status?: string } & ToolLikeEvent) => {
+				harness.events.on(
+					harnessType as never,
+					(evt: {
+						lane?: string;
+						status?: string;
+						runId?: string;
+						error?: { code?: string; message?: string };
+						message?: { role?: string; stopReason?: string; errorMessage?: string };
+					} & ToolLikeEvent) => {
 					if (harnessType === "compaction_end") {
 						this.observeCompactionOutcome(evt.status);
 						// 审计 #6/#7：压缩成功后异步审计摘要（缺段计 metrics + 摘要上报）。
 						// fire-and-forget：审计失败不影响事件分发与会话主链路。
 						if (evt.status === "completed") void this.auditCompactionSummary(entry);
+					}
+					if (harnessType === "run_end") {
+						// P0.5：vendor 把 LLM 上游失败物化成正常结算的 run（见
+						// observeLlmRunOutcome 注释）——这是 lane.prompt 结算层看不到的失败形态。
+						this.observeLlmRunOutcome(entry, evt);
 					}
 					if (harnessType === "tool_start") {
 						this.dispatchActivity(entry, evt);
@@ -1303,6 +1316,51 @@ export class SessionManager {
 			});
 		} catch {
 			// 观测口永不抛（见上方约束 1）
+		}
+	}
+
+	/**
+	 * P0.5（2026-10-06）：LLM 错误维度的**结构性盲区**补口（挂 `run_end` 终态事件）。
+	 *
+	 * 盲区机理（线上受控注入 + 真 harness 探针双实证）：vendor 把 LLM 上游失败物化成
+	 * `stopReason:"error"` 的 assistant 消息并**正常结算** run —— `lane.prompt` 以 ok
+	 * 结算 ⇒ 下方 `.then(!result.ok)` 与 `.catch` 的 observeLlmFailure 都不触发 ⇒
+	 * `llm_errors_total` 恒空（retries 正常计数），且用户侧只收到一条空 assistant 消息。
+	 *
+	 * 为什么挂 `run_end` 而不是 `message_end`：重试的**每次**失败尝试都各提交一条
+	 * error 消息（探针实证 4 次尝试 = 4 条 message_end、同一 runId），挂在 message_end
+	 * 上必须再做 runId 去重，且「首次失败即计数」会把**经重试恢复成功的 run**误计为失败。
+	 * `run_end` 每 run 恰一条且自带终态：`status:"failed"` + 结构化 `error{code,message}`
+	 * （物化失败的实测 code = "assistant_error"）⇒ 语义就是「失败的 run 数」，零去重、
+	 * 不误计恢复成功的 run。
+	 *
+	 * - `status:"aborted"` 是用户取消 ⇒ 不算错误（与 shouldCountLlmFailure 同判）；
+	 * - stage 归因沿用 classifyLlmFailure（entry.compacting ⇒ "compaction"）；
+	 * - 与 `.then`/`.catch` 分支不双计的边界：RunResult 的错误联合只有 LaneBusy /
+	 *   InvalidMessage / UnknownSkill / UnknownTemplate / Closed —— 全是 run 接受期的
+	 *   harness 级拒绝，operation 未启动、没有 run_end；唯一理论重叠是 harness 关闭
+	 *   （Closed）中途，概率极低且方向是多计一次，可接受。
+	 */
+	private observeLlmRunOutcome(
+		entry: SessionEntry,
+		evt: { status?: string; error?: { code?: string; message?: string } },
+	): void {
+		try {
+			if (evt.status !== "failed") return;
+			const { errorClass, stage } = classifyLlmFailure({
+				aborted: false,
+				text: evt.error?.message ?? `run failed (code: ${evt.error?.code ?? "unknown"})`,
+				compacting: entry.compacting,
+			});
+			this.metrics?.toolMetrics().observeLlmError({
+				stage,
+				errorClass,
+				// 拿不到身份时用闭集内的字面量，绝不透传任意字符串（label 基数会无界）。
+				channel: entry.identity?.provider ?? "unknown",
+				model: entry.identity?.model ?? "unknown",
+			});
+		} catch {
+			// 观测口永不抛（与 observeLlmFailure 同约束）
 		}
 	}
 
