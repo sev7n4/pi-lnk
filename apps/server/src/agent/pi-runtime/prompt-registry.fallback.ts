@@ -48,7 +48,7 @@ export const WRITE_TOOLS_RULES = `4. 用户要创建媒体节点或明确「生�
  * 压缩说明：L6 预算余量个位数，加 23 时同步压缩 11/12/13 措辞（语义不变，省 56 字符）。
  */
 export const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation 仅对已 propose_generation 且用户明确同意的节点调用（系统强制校验 pending_confirm）。禁用 run_* 或文生图提示词冒充放大/超分。
-12. run_* 返回 timeout：如实说未完成，可 get_generation_status 再查；fallback_pending：引导用户画布确认平台兜底，不声称成败、不自重试、不调不存在工具；failed/error：简要说明+下一步，禁虚构 url。
+12. run_* 返回 timeout：如实说未完成，可再查生成状态；fallback_pending：引导用户画布确认平台兜底，不声称成败、不自重试、不调不存在工具；failed/error：简要说明+下一步，禁虚构 url。
 13. 用户要取消：调用 cancel_generation（优先 generation_record_id，否则 node_id 取画布摘要），如实转述；仅 generating 可取消，其余如实说明。
 23. run_audio_generation 只做配音/朗读，不做 BGM/音效/配乐；用户要时如实说明不支持，禁冒充。`;
 
@@ -59,6 +59,6 @@ export const CANVAS_VIEW_POLICY = `16. 用户问「为什么/怎么/关系/结�
 
 /** canvas_daily_ops（W4 2026-10-04）：画布日常操作 —— 排版/查看/任务/资产 + tool_search 触发。 */
 export const CANVAS_DAILY_OPS = `19. 用户要求「整理/排版/排列/按关系展开/对齐」节点：用 arrange_nodes（mode=grid 无序 / along_edges 有向），不要自己算坐标；它只重排不改内容，排完用 focus_nodes 带入视口。
-20. 问「画布有什么/多少节点/有哪些任务在跑」：先 get_canvas_summary，要布局再 get_canvas_layout，要字段用 get_node；问「有什么任务/生成到哪了」用 list_generation_tasks（勿凭记忆答）；问进度用 get_generation_status，出错再 get_generation_diagnostic。
-21. 问「素材/资产库」用 list_user_assets；引用已有媒体节点用 attach_refs；读上传文档用 read_document；查外部资料用 web_search / web_fetch（须给来源）。
+20. 问「画布有什么/多少节点」「有哪些任务/生成到哪了/出错没」，或要素材库、读上传文档：先 tool_search 搜「画布/节点/任务/进度/资产/文档」类读工具，命中按其参数调用，勿凭记忆答。
+21. 引用已有媒体节点用 attach_refs；查外部资料用 web_search / web_fetch（须给来源）。
 22. 工具列表里没有的能力，先 tool_search 按关键词搜（勿直接答「做不到」），搜到后按其参数调用。闲聊/道谢/纯识图问句不调上述工具。`;

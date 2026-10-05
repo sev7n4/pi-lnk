@@ -1,6 +1,6 @@
 ---
 name: ecommerce-product-photo
-version: "0.5.1"
+version: "0.5.2"
 description: 电商商品图/产品视觉生成指导。当用户要求生成商品图、产品场景图、白底图、模特上身图、商品细节图、服装穿搭图，或提到小红书种草、种草图文封面、商品摄影、场景搭配、营销视觉时使用。本 skill 只覆盖静态商品图；视频脚本不在范围。
 ---
 
@@ -59,13 +59,13 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
    - 维度区分：`attach_refs`（step5）是**数据层**（生成时参考哪些图，影响出图），`connect_nodes`（本步）是**视觉层**（画布画箭头 + 驱动沿边布局）——两者不同维度，都要做
    - 配合 `arrange_nodes(along_edges)` 可自动分层（主图居左，衍生图向右展开）
 7. **提议生成**：`propose_generation` 提议生成，等待用户确认；确认前不调用 `run_*`
-8. **出图后 QA 闸门 + 定位**：出图后先 `focus_node` 定位到刚生成的节点（让用户第一时间看到结果），再对照"出图后 QA 闸门"自检并报告 PASS/REVISE/REJECT。**自检前必须先看图**，按 `imageRefine` 取值分四种情形：`imageRefine="attached"` 时图已作为附加图片块进入上下文，必须先查看该图再做逐 gate 自检，不得凭 prompt 想象画面下结论；`imageRefine="skipped"` 时如实向用户说明"未能获取图片用于自检"（可结合结果中的 `imageRefineReason` 说明原因），不得假装已自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理：如实说明本次无法取得图片用于自检，不得凭 prompt 想象下结论；`imageRefine="n/a"`（生成未完成）时走原 status 分支：`status=timeout` 稍后用 `get_generation_status` 查询，`status=fallback_pending` 提示用户在画布节点上确认平台兜底。
+8. **出图后 QA 闸门 + 定位**：出图后先 `focus_node` 定位到刚生成的节点（让用户第一时间看到结果），再对照"出图后 QA 闸门"自检并报告 PASS/REVISE/REJECT。**自检前必须先看图**，按 `imageRefine` 取值分四种情形：`imageRefine="attached"` 时图已作为附加图片块进入上下文，必须先查看该图再做逐 gate 自检，不得凭 prompt 想象画面下结论；`imageRefine="skipped"` 时如实向用户说明"未能获取图片用于自检"（可结合结果中的 `imageRefineReason` 说明原因），不得假装已自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理：如实说明本次无法取得图片用于自检，不得凭 prompt 想象下结论；`imageRefine="n/a"`（生成未完成）时走原 status 分支：`status=timeout` 稍后用生成状态查询工具（先 tool_search 搜「进度」加载）再查，`status=fallback_pending` 提示用户在画布节点上确认平台兜底。
 
 ## 出图后 QA 闸门
 
 借鉴 aiskillstore/generating-product-photos 的四 gate。出图后、用户确认收图前，agent 逐图自检并给结论。
 
-**看图是自检的前提**：`imageRefine="attached"` 时生成图已作为附加图片块在上下文中，必须先实际查看图片，再逐 gate 判断；`imageRefine="skipped"` 时无法获取图片（原因见结果中的 `imageRefineReason`），如实说明"未能获取图片用于自检"，**不得把 skipped 当作 PASS 交付**，也不得凭 prompt 描述脑补画面自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理，同样不得盲检交付；`imageRefine="n/a"` 表示生成未完成，不走本闸门，按生成结果的 status 分支处理（`timeout` 稍后 `get_generation_status` 查询；`fallback_pending` 提示用户在画布节点确认平台兜底）。
+**看图是自检的前提**：`imageRefine="attached"` 时生成图已作为附加图片块在上下文中，必须先实际查看图片，再逐 gate 判断；`imageRefine="skipped"` 时无法获取图片（原因见结果中的 `imageRefineReason`），如实说明"未能获取图片用于自检"，**不得把 skipped 当作 PASS 交付**，也不得凭 prompt 描述脑补画面自检；结果中**不存在 `imageRefine` 字段**（自评回流被关闭）时按 `skipped` 同款处理，同样不得盲检交付；`imageRefine="n/a"` 表示生成未完成，不走本闸门，按生成结果的 status 分支处理（`timeout` 稍后用生成状态查询工具（先 tool_search 搜「进度」加载）再查；`fallback_pending` 提示用户在画布节点确认平台兜底）。
 
 四 gate 条目：
 
@@ -146,6 +146,7 @@ identity lock 不可省略；无参考图时先向用户索取，不要凭商品
   - 明确 `run_image_generation` 结果 `imageRefine="attached"` 时图已在上下文，必须先看图再自检
   - 新增"自评与重试预算"小节：REVISE → 改 prompt 重跑一次（系统放行）；仍不过或第 3 次被拦截 → 必须 ask_user 给结论与选项
   - `imageRefine="skipped"` 不得当 PASS；`"n/a"` 走原 status 分支
-  - 复审加固：`imageRefine` 字段缺失（自评回流关闭）按 skipped 同款处理，杜绝盲检；`n/a` 明确 `timeout`（`get_generation_status` 查询）/ `fallback_pending`（用户确认平台兜底）两个 status 分支；PASS 自评必须引用图中可见证据而非复述 gate 名；skipped 时结合 `imageRefineReason` 说明原因；注明重试是"确认前不调用 `run_*`"的文档化例外；更正 step2 中 `ask_user` 已实现并注册的表述
+  - 复审加固：`imageRefine` 字段缺失（自评回流关闭）按 skipped 同款处理，杜绝盲检；`n/a` 明确 `timeout`（生成状态查询工具再查，先 tool_search 搜「进度」）/ `fallback_pending`（用户确认平台兜底）两个 status 分支；PASS 自评必须引用图中可见证据而非复述 gate 名；skipped 时结合 `imageRefineReason` 说明原因；注明重试是"确认前不调用 `run_*`"的文档化例外；更正 step2 中 `ask_user` 已实现并注册的表述
   - 诚实兜底：标注 `imageRefine="attached"` 但实际看不到图（纯文本渠道）时须如实说明、不得编造自评
+- **0.5.2** (2026-10-06)：**点名撤改**（配套读类工具下沉延迟集）——status 分支里不再写生成状态查询工具名，改为「先 tool_search 搜『进度』加载再查」，防止直调未加载工具。
 - **0.5.1** (2026-10-03)：**提升 `load_skill` 命中率**。2026-10-03 生产实证（画布 `cmur1im5y0002lk01vukfb949`）：用户说「帮我生成一张服装图片，用于小红书种草」，因本 skill 的 `description` 只有「商品图/模特上身图」、没有「服装/穿搭/小红书种草」这类词，`load_skill` 全程 0 次调用 ⇒ step 2「优先用 `ask_user`」的指引根本没进上下文，模型改用纯文本列问题。据此在 `description` 补入「服装穿搭图 / 小红书种草 / 种草图文封面」三个触发词（仍远低于 1024 字符上限）。

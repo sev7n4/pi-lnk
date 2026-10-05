@@ -83,7 +83,11 @@ describe("PiPromptAssembler 静态段（assembleStatic：规则组文本，会�
 		// —— L1 实测 `tool-discovery-001`（话术「把 30 个节点按左右关系重新排一下」
 		// 期望 arrange_nodes，实际只调 get_canvas_summary/layout）的根因就是它缺位。
 		expect(prompt.includes("arrange_nodes")).toBe(true);
-		expect(prompt.includes("list_generation_tasks")).toBe(true);
+		// ⭐ 2026-10-06 减点名第一批：规则 20/21 改写为能力描述 + tool_search 指引，
+		// 读类诊断工具名不再出现在下发静态段（对应 tiering.ts 的下沉）。
+		expect(prompt.includes("tool_search 搜「画布/节点/任务/进度/资产/文档」")).toBe(true);
+		expect(prompt.includes("list_generation_tasks")).toBe(false);
+		expect(prompt.includes("get_canvas_summary")).toBe(false);
 	});
 
 	it("规则 14：无工作流模板能力——如实说明，禁止虚构模板（B 决策：workflow 不迁 pi）", async () => {
@@ -425,33 +429,24 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * 长度基线。**改动规则正文后必须同步更新这张表**——这是本测试存在的意义：
 	 * 让「规则正文被改了但基线没更新」变成红灯，而不是静默放过。
 	 *
-	 * 数字来源（2026-10-05 用 `npx tsx` 在本 worktree 上实测，不是推算）。
-	 * 相对当前 master `0e82cac1` 的逐组增量（`renderStaticFallback` 逐组合实跑）：
+	 * 数字来源（2026-10-06 用 `npx tsx` 在本 worktree 上实测，不是推算）。
+	 * 相对 #215 合并点的逐组增量（`renderStaticFallback` 逐组合实跑）：
 	 * - core：693 → 693（Δ=0，未动 core 段）
-	 * - core+genTools：1130 → 1131（**Δ=+1**，`no_gen_claim.gen`「规则 11」→「见 `gen-gate`」）
-	 * - core+writeTools：2755 → 2756（**Δ=+1**，`media_tool_policy`「规则 14」→「见 `no-template`」）
-	 * - 全组合：3192 → 3194（**Δ=+2** = 1 + 1，两笔互不重叠）
-	 * ⇒ 余量 3200 − 3194 = **6（仍在硬线内）**
+	 * - core+genTools：1132 → 1113（**Δ=−19**，`gen_tool_policy` 规则 12 删工具名「可 get_generation_status 再查」→「可再查生成状态」）
+	 * - core+writeTools：2756 → 2622（**Δ=−134**，`canvas_daily_ops` 规则 20/21 删 7 个读工具名、改写为能力描述 + tool_search 指引）
+	 * - 全组合：3195 → 3042（**Δ=−153**）
+	 * ⇒ 余量 3200 − 3042 = **158（大幅缓解 #208 以来的贴线状态）**
+	 * 同一笔改动把读类诊断 9 工具下沉延迟集（tiering.ts），点名撤除是下沉前提——见该文件头注释。
 	 *
-	 * ⚠️ **这 +2 是怎么从 +34 压回来的（别照抄旧算法）**：
-	 * 初版把「规则 11」换成「见 `gen-confirm-gate`」「见 `no-template-capability`」，两处共 **+34**
-	 * ⇒ 全组合 3226，**超硬线 26**（master 起点只剩 8 余量，本 PR 未新增任何规则，只是把
-	 * 硬编码数字引用改成语义 anchor）。收紧手法有三条，全部**不改任何语义**：
-	 *   ① anchor 名压短：`gen-confirm-gate`→`gen-gate`（-8）、`no-template-capability`→`no-template`（-11）；
-	 *   ② 去掉与「被指向的那条规则」重复的解释性前缀（`生成执行由系统强制校验，`→`系统强制校验，`；
-	 *      `本会话无此能力，`整句删——它的全文就在被指向的 `no-template` 规则里）。
-	 *      **这正是 M4 的前提**：语义在短名里，不要在引用处重复解释一遍。
-	 *   ③ 保留「`见 <anchor>`」的反引号写法（L10 判据里反引号可选，但磁盘真实写法就是带反引号，
-	 *      去掉会与门禁注释里的「真实写法」约定脱节）。
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
 	 */
 	const BASELINE: Record<string, number> = {
 		core: 693,
-		"core+writeTools": 2756,
-		"core+genTools": 1132,
-		"core+writeTools+genTools": 3195,
+		"core+writeTools": 2622,
+		"core+genTools": 1113,
+		"core+writeTools+genTools": 3042,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -459,9 +454,9 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 			expect({ [name]: renderStaticFallback(groups).length }).toEqual({ [name]: BASELINE[name] });
 		}
 		// 预算余量可见：全组合距硬线还剩多少（spec §L6 门禁数字的单一事实源）
-		// U8 加规则 23 时压缩了 11/12/13 措辞：3194→3195（余量 6→5，仍贴线）。**本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
+		// 2026-10-06 减点名第一批：规则 20/21/12 删读工具名改能力描述，3195→3042（余量 5→158，贴线状态解除）。**本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(5);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(158);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────

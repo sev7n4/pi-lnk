@@ -1,6 +1,6 @@
 ---
 name: drama-qc-review
-version: "0.1.1"
+version: "0.1.2"
 description: 短剧/漫剧审片与一致性审计。当用户要求审片、质检、检查角色或风格漂移、跨集一致性核对、交付前复核、找哪几镜要重做，或提到审片、QC、质检报告、一致性、漂移、返工时使用。只做审查与派发修复；不重新生成、不改剧本。
 ---
 
@@ -35,7 +35,7 @@ description: 短剧/漫剧审片与一致性审计。当用户要求审片、质
 | L3 集内 | 情绪曲线是否按剧本落点、钩子强度、反转类型是否连着同类、镜号覆盖是否齐（有无漏镜） | 剧本分集梗概、镜头表 |
 | L4 跨集 | 角色是否逐集漂移、风格是否从 A 滑到 B、世界观规则是否被破坏、资产是否被重复生成成多份 | IP bible、各集基准图对比 |
 
-**平台读能力**（回代码核实，PR #71 后）：`get_canvas_summary` 给节点清单；`get_node` 给单节点 data（含 prompt / status / 模型）；`get_canvas_layout` 给 **nodes + groups + edges（source/target 节点 id 对）** → **引用关系（哪个分镜挂了哪张资产图）可直接审计**，错连还能用 edge id 走 `remove_edges` 修正；`update_node` 可改标题与模型芯片。
+**平台读能力**（2026-10-06 起读类工具默认不在工具列表，**开工前先 tool_search 搜「画布」加载**）：概览工具给节点清单；节点详情工具给单节点 data（含 prompt / status / 模型）；布局工具给 **nodes + groups + edges（source/target 节点 id 对）** → **引用关系（哪个分镜挂了哪张资产图）可直接审计**，错连还能用 edge id 走 `remove_edges` 修正；`update_node` 可改标题与模型芯片。
 
 ## 审计方法：应有 vs 实有
 
@@ -99,9 +99,10 @@ description: 短剧/漫剧审片与一致性审计。当用户要求审片、质
 
 **版本号语义**：`0.MAJOR.MINOR` —— MAJOR 表示流程性变更，MINOR 表示文案微调。
 
-- **0.1.1** (2026-09-29)：**读能力订正**（回 origin/master 核实，PR #71 已合并）——`get_canvas_layout` 现返回 **edges（source/target id 对）**，引用关系可直接审计、错连可用 `remove_edges` 修正；`update_node` 可改标题与模型芯片。
+- **0.1.2** (2026-10-06)：**点名撤改**（配套 pi-runtime 工具分层：读类诊断工具下沉延迟集）——「平台读能力」段不再写读工具名，改为「先 tool_search 搜『画布』加载」；changelog 里的旧工具名一并改为能力描述，防止模型直调未加载工具。
+- **0.1.1** (2026-09-29)：**读能力订正**（回 origin/master 核实，PR #71 已合并）——布局读工具现返回 **edges（source/target id 对）**，引用关系可直接审计、错连可用 `remove_edges` 修正；`update_node` 可改标题与模型芯片。
 - **0.1.0** (2026-09-29)：初版。综合社区审片实践，为短剧/漫剧调优：
   - 审片人原则（一致性不可协商 / 每张必过审 / 判据落到锚点 / 不虚构已修）与失败模式清单借鉴 omer-metin/skills-for-antigravity 的 art-consistency
   - 一致性失败模式（发色漂移、瞳色变化、服装不一致、年龄漂移、脸型变化、比例漂移）与对应缓解借鉴 inference-sh/character-design-sheet
   - 分阶段审查（beat breakdown / board / sequence 各阶段 QC）与 Director 复核环节借鉴 rainlib/ai-storyboard 的 storyboard-review-skill
-  - 平台读能力边界回代码核实：`get_canvas_layout` 当前只返回 nodes/groups（不返回 edges，属已立项后续包）→ 引用关系审计以 prompt 锚点文本为准；成片剪辑/合成/导出无工具（spec D5 已删 export 系列）
+  - 平台读能力边界回代码核实：布局读工具当前只返回 nodes/groups（不返回 edges，属已立项后续包）→ 引用关系审计以 prompt 锚点文本为准；成片剪辑/合成/导出无工具（spec D5 已删 export 系列）

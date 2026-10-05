@@ -31,24 +31,28 @@
  * `tool_search_activated_total 0`。官方模式上线后 foldSearch2search 的**触发率仍为 0**，
  * 所以「进延迟集」对被子资产点名的工具等同于「不可达」——这是 arrange_nodes /
  * set_node_generation_params / save_memory / focus_node / remove_edges 留在常驻集的理由。
+ *
+ * 2026-10-06 减点名下沉（R1，roadmap P1「常驻 ≤28」第一批）：读类诊断 9 工具
+ * （get_canvas_summary / get_canvas_layout / get_node / list_generation_tasks /
+ * get_generation_status / get_generation_diagnostic / list_user_assets /
+ * read_document / list_model_options）下沉 —— 前提是**点名已同步撤掉**：
+ * prompt 规则 20/21/12 改写为能力描述 + tool_search 指引（canvas_daily_ops、
+ * gen_tool_policy），4 个 skill 中的点名改为「先 tool_search 搜读工具」
+ * （drama-qc-review / drama-storyboard / ecommerce-product-photo / drama-audio-design）。
+ * ⚠️ web_search / web_fetch / recall_memory / list_generation_scenes 虽在候选之列但保留常驻：
+ * 前两者是闲聊问答的通用能力（模型自发调用），recall_memory 被 5 个 skill 写成编号步骤，
+ * list_generation_scenes 被规则 15 直接约束「建节点后先查场景」。
  */
 import { Type } from "typebox";
 import { toolSummary, type LnkpiTool } from "./types.js";
 
 export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// read（画布 / 生成 / 资产 / 模型 / web / 文档 / 记忆读）
-	"get_canvas_summary",
-	"get_canvas_layout",
-	"get_node",
-	"get_generation_status",
-	"get_generation_diagnostic",
-	"list_generation_tasks",
-	"list_user_assets",
-	"list_model_options",
-	"list_generation_scenes",
+	// —— 2026-10-06 起 9 个读类诊断工具下沉（见文件头「减点名下沉」），此处只留
+	// 「有资产点名或通用自发调用」的读工具：
+	"list_generation_scenes", // 规则 15「建节点后、propose 前先查场景」逐字约束
 	"web_search",
 	"web_fetch",
-	"read_document",
 	"recall_memory",
 	// 记忆写（2026-10-03 生产取证）：save_memory 是 prompt-registry 规则
 	// memory_scope.tail.md 直接约束行为的工具（「默认仅本画布，只有偏好/品牌/暗号才用
