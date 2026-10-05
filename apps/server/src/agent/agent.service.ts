@@ -28,6 +28,7 @@ import { ShotService } from '../canvas/shot.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
+import { resolveRuleGroups } from './pi-runtime/rule-groups'
 import { PrismaService } from '../prisma/prisma.service'
 import { isObjectStorageConfigured } from '../storage/object-storage-env'
 import {
@@ -941,10 +942,16 @@ export class AgentService {
     // P0-① Task 10：装配器拆静态/动态两段。此处暂按旧语义把两段拼成一个 systemPrompt
     // （会话仍每轮重建，动态块不会被冻结）；Task 11 改为把动态段交给 pi-runtime 每轮求值。
     const assembler = this.createPiPromptAssembler()
-    const staticPrompt = await assembler.assembleStatic({
-      // B-5：run_* 生成工具已注册，genTools 规则组启用（规则 3' + 11/12/13）
-      ruleGroups: ['core', 'writeTools', 'genTools'],
-    })
+    // B-5：run_* 生成工具已注册，genTools 规则组启用（规则 3' + 11/12/13）。
+    // AGENT_RULE_GROUPS 仅供 A/B 评测切组（fail-closed，见 rule-groups.ts）；
+    // 生产部署不得设置——覆盖态下 unlessGroup 守卫规则不注入，而工具注册不受 groups 约束。
+    const ruleGroups = resolveRuleGroups(process.env.AGENT_RULE_GROUPS)
+    if (process.env.AGENT_RULE_GROUPS?.trim()) {
+      this.piLogger.warn(
+        `AGENT_RULE_GROUPS 覆盖生效: [${ruleGroups.join(',')}] —— 仅限 A/B 评测，生产发版不得携带该变量`,
+      )
+    }
+    const staticPrompt = await assembler.assembleStatic({ ruleGroups })
     // P1#5：尾部追加任务计划汇报约定（⟦plan⟧/⟦task-done⟧ 内联标记，Nest 剥离后派生 task 事件）。
     // 静态指令进 staticPrompt（visionBlock 等动态段由 assembleDynamic 每轮追加，不冻结进历史）。
     const systemPromptWithPlanConvention = `${staticPrompt}
