@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>并行开发路线划分 · pi-lnk（2026-10-05）</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1d21; --ink2:#4a5058; --ink3:#7a828c;
+    --line:#e3e6ea; --accent:#2b5cd9; --accent-soft:#eef3ff;
+    --red:#c0392b; --red-soft:#fdeceb; --amber:#a86400; --amber-soft:#fff5e0;
+    --green:#1e7a45; --green-soft:#e8f6ee; --purple:#6b3fa0; --purple-soft:#f2ecfa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 28px 80px}
+  h1{font-size:27px;margin:0 0 6px;letter-spacing:-.2px}
+  .sub{color:var(--ink3);font-size:13px;margin-bottom:30px}
+  h2{font-size:19px;margin:38px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--line)}
+  h3{font-size:15px;margin:22px 0 10px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin:14px 0}
+  .kicker{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.6px;
+    padding:3px 9px;border-radius:5px;margin-right:8px;vertical-align:2px}
+  .k-red{background:var(--red-soft);color:var(--red)}
+  .k-amber{background:var(--amber-soft);color:var(--amber)}
+  .k-green{background:var(--green-soft);color:var(--green)}
+  .k-blue{background:var(--accent-soft);color:var(--accent)}
+  .k-purple{background:var(--purple-soft);color:var(--purple)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f0f2f5;font-weight:600;white-space:nowrap}
+  td code,li code,p code{background:#f0f2f5;padding:1px 5px;border-radius:4px;font-size:12.5px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  .note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:12px 16px;margin:14px 0;border-radius:0 8px 8px 0}
+  .warn{border-left:3px solid var(--red);background:var(--red-soft);padding:12px 16px;margin:14px 0;border-radius:0 8px 8px 0}
+  .ok{border-left:3px solid var(--green);background:var(--green-soft);padding:12px 16px;margin:14px 0;border-radius:0 8px 8px 0}
+  .route{border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:10px;
+    background:var(--card);padding:18px 22px;margin:16px 0}
+  .route.r1{border-left-color:var(--purple)} .route.r2{border-left-color:var(--accent)}
+  .route.r3{border-left-color:var(--green)} .route.r4{border-left-color:var(--amber)}
+  .route.r5{border-left-color:#0f8b8d} .route.r6{border-left-color:#8a6d3b}
+  .rt{font-size:16px;font-weight:700;margin:0 0 4px}
+  .rmeta{font-size:12px;color:var(--ink3);margin-bottom:10px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:860px){.grid{grid-template-columns:1fr}}
+  ul{margin:8px 0;padding-left:20px} li{margin:3px 0}
+  .files{background:#fafbfc;border:1px dashed var(--line);border-radius:7px;padding:10px 14px;
+    font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink2);line-height:1.75}
+  .hot{font-weight:700;color:var(--red)}
+  .dag{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:6px 14px;font-size:12.5px}
+  .chip b{color:var(--accent)}
+  footer{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);color:var(--ink3);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>并行开发路线划分 · pi-lnk</h1>
+<div class="sub">2026-10-05 · 基于 PR #202 上线验证 + 暂存区/分支全量取证 · 用于开独立 agent 窗口前的边界约定</div>
+
+<div class="ok">
+<span class="kicker k-green">已上线</span><b>PR #202（工具框架升级门禁 + hook 自由形态字段读取守卫）已走完上线验证。</b><br>
+线上 pi-runtime <code class="mono">image.tag</code> 由 <code class="mono">99a7440ec</code> → <code class="mono">468aba26</code>；
+容器内 <code class="mono">/app/services/pi-runtime/dist/hook-contract.js</code> 已存在；
+<code class="mono">healthz</code> 返回 <code class="mono">{"status":"ok","version":"468aba26","pi":"0.85.1"}</code>。
+Runtime Deploy <code class="mono">37293164014</code> 全 step success（含 <code class="mono">Verify dist content in image</code>、<code class="mono">Rollout + triple verify</code>）。
+</div>
+
+<h2>一、暂存区真相：不是「遗留任务」，是一次被放弃的回退残留</h2>
+
+<div class="warn">
+<span class="kicker k-red">活雷</span>你的判断需要修正：暂存区里<b>没有任何新工作</b>，它的内容<b>全部是历史状态的回退</b>。
+</div>
+
+<h3>取证链（每一步都可复现）</h3>
+<table>
+<tr><th>步骤</th><th>命令 / 判据</th><th>结果</th></tr>
+<tr><td>① 规模</td><td><code class="mono">git diff --cached --stat</code></td><td>43 文件，+232 / −4209 —— 删除量是新增的 18 倍</td></tr>
+<tr><td>② 基线定位</td><td><code class="mono">git diff --cached 02d9d462 --stat</code></td><td><b>仅 4 文件差异</b> ⇒ 索引 ≈ 提交 <code class="mono">02d9d462</code>（PR #179）</td></tr>
+<tr><td>③ 删除项溯源</td><td><code class="mono">git log --diff-filter=A</code></td><td>8 个删除精确对应 PR #180 / #181 / #184 / #185</td></tr>
+<tr><td>④ 4 个例外文件溯源</td><td>逐提交 blob 比对</td><td>被钉在更老的 <b>#112 / #156 / #162</b>（比 #179 还早）</td></tr>
+<tr><td>⑤ 磁盘实况</td><td><code class="mono">git hash-object</code> vs origin/master</td><td><code class="mono">metrics.ts</code>、<code class="mono">registry.ts</code> 等在磁盘上就是 #179 旧内容；3 个文件<b>已被物理删除</b></td></tr>
+<tr><td>⑥ 反悔痕迹</td><td>工作区 vs 索引 vs master 三方比对</td><td>7 个 prompt 文件<b>工作区已恢复到 master</b>，但索引没同步 ⇒ 回退已被放弃</td></tr>
+</table>
+
+<div class="note">
+<b>结论：</b>索引 = 「#179 的树 + 4 个文件被钉到更老提交」。一旦执行 <code class="mono">git commit</code>，
+会一次性回滚 <b>#180 / #181 / #183 / #185 / #184</b>，并连带覆盖 <b>#186–#202</b> 在这批文件上的所有改动
+（含我今天刚上线的 #202）。<br>
+<b>真正的新工作只有 1 处</b>：<code class="mono">apps/server/src/studio/video-generation.orchestrator.ts</code> 的一行注释笔误修正
+（<code class="mono">660_000</code> → <code class="mono">1_260_000</code>，常量本身在 master 已是对的，只错在注释）。
+</div>
+
+<h3>处置建议（我没动手，需你确认）</h3>
+<ul>
+<li><b>不要 <code class="mono">git commit</code></b>，也不要在主仓直接 <code class="mono">git restore</code> —— 索引可能属于另一个窗口。</li>
+<li>备份已存在于 <code class="mono">/tmp/pilnk-p0-backup/</code>（<code class="mono">index.patch</code> 290K + <code class="mono">worktree.patch</code> 28K + <code class="mono">index-tree.txt</code>）。</li>
+<li>若确认是废弃残留：<code class="mono">git reset</code>（mixed，保留工作区）清空索引 → 再 <code class="mono">git checkout -- .</code> 让磁盘回到 master。</li>
+<li><b>在此之前，主仓不可用作任何新窗口的起点</b> —— 磁盘上有 35 个文件是旧内容、3 个文件已物理消失。</li>
+</ul>
+
+<h2>二、真正的遗留任务：12 个远端分支（按「未合入内容」排序）</h2>
+
+<div class="note">
+判据说明：<code class="mono">git log origin/master..branch</code> 的 ahead 计数<b>会骗人</b>（squash 合并重写提交）。
+下表用的是 <b>blob 级比对</b>——只在分支自己改过的文件里，比对分支 tip 与 master 的内容，不同才算「未合入」。
+</div>
+
+<table>
+<tr><th>分支</th><th>PR</th><th>状态</th><th>未合入</th><th>归属路线</th></tr>
+<tr><td class="mono">docs/prompt-engineering-spec</td><td>#145</td><td>MERGED</td><td class="hot">33 文件</td><td>R1 提示词工程</td></tr>
+<tr><td class="mono">feat/prompt-governance</td><td>#182</td><td><b>OPEN</b></td><td class="hot">33 文件</td><td>R1 提示词工程</td></tr>
+<tr><td class="mono">feat/metrics-observability-v2</td><td>#181</td><td>MERGED</td><td>6 文件</td><td>R2 指标可观测</td></tr>
+<tr><td class="mono">fix/svg-css-classes-timing</td><td>—</td><td><b>无 PR</b></td><td>5 文件</td><td>R3 画布渲染卡片</td></tr>
+<tr><td class="mono">feat/render-canvas-view-expressive</td><td>#180</td><td>MERGED</td><td>4 文件</td><td>R3 画布渲染卡片</td></tr>
+<tr><td class="mono">fix/t1-lane-watch</td><td>#156</td><td>MERGED</td><td>3 文件</td><td>R4 SSE 契约</td></tr>
+<tr><td class="mono">feat/observability-stack</td><td>#194 / #199</td><td>MERGED / CLOSED</td><td>2 文件</td><td>R2 指标可观测</td></tr>
+<tr><td class="mono">feat/llm-error-metrics</td><td>#188</td><td>MERGED</td><td>1 文件</td><td>R2 指标可观测</td></tr>
+<tr><td class="mono">fix/canvas-sessionid-persist</td><td>#197</td><td>MERGED</td><td>0</td><td>— 可清理</td></tr>
+<tr><td class="mono">fix/frontend-poll-wallclock</td><td>#185</td><td>MERGED</td><td>0</td><td>— 可清理</td></tr>
+<tr><td class="mono">feat/relation-dependency-semantics</td><td>#187</td><td>MERGED</td><td>0</td><td>— 可清理</td></tr>
+<tr><td class="mono">feat/upstream-retry-image</td><td>#190</td><td>MERGED</td><td>0</td><td>— 可清理</td></tr>
+</table>
+
+<div class="warn">
+<span class="kicker k-red">先解这一个结</span>
+<b>R1 内部两条分支已经分叉、互不为祖先</b>：<code class="mono">docs/prompt-engineering-spec</code> 与
+<code class="mono">feat/prompt-governance</code> 各自 33 个未合入文件、文件清单几乎完全重叠，
+两者内容差达 <b>106 文件 / +14297</b>。在选定唯一的 R1 主线之前，<b>R1 不能开并行窗口</b>——开就是两个窗口改同一批文件。
+</div>
+
+<h2>三、六条路线定义</h2>
+
+<div class="route r1">
+<div class="rt">R1 · 提示词工程与治理</div>
+<div class="rmeta">你记得的「提示词工程优化」这条线 · 当前 <b>内部冲突，暂不可并行</b></div>
+<div class="files">
+prompt-registry/**（MANIFEST.yaml、PROMPT_SPEC.md、rules/*.md）
+apps/server/src/agent/pi-runtime/prompt-registry.{loader,fallback}.ts、pi-prompt-assembler.service.ts
+apps/server/src/agent/{agent.service.ts,memory-suppression.ts}
+scripts/{prompt-lint.ts,gen-prompt-spec-map.ts,verify-ab-scenarios.ts}
+.github/workflows/prompt-lint.yml · services/pi-runtime/src/evals/prompt-ab-scenarios.ts
+services/pi-runtime/src/{dynamic-budget.ts,tools/memory.ts}
+docs/ops/prompt-ab-runbook.md
+</div>
+<ul>
+<li><b>规格源头</b>：<code class="mono">docs/superpowers/specs/2026-10-04-prompt-engineering-design.md</code> + 同名 plan</li>
+<li><b>硬约束</b>：L6 预算 3200 字符，<code class="mono">pnpm prompt:lint</code> 实测最紧组合 <code class="mono">core+writeTools+genTools</code> = <b>3192</b>（余量 8）。改规则必须同步 6 处（含 <code class="mono">renderStaticFallback()</code> 拼装顺序）。</li>
+<li><b>前置动作</b>：在两条分支中二选一作为主线，另一条的独有内容以 cherry-pick/重做方式并入。</li>
+</ul>
+</div>
+
+<div class="route r2">
+<div class="rt">R2 · 指标与可观测性</div>
+<div class="rmeta">采集层已上线（#194），告警规则结构性阻塞</div>
+<div class="files">
+services/pi-runtime/src/{metrics.ts,tool-error-class.ts}、deploy/observability/**、ops/dashboard/**
+（争用）services/pi-runtime/src/{session-manager.ts,index.ts}
+</div>
+<ul>
+<li><b>规格源头</b>：<code class="mono">docs/superpowers/specs/2026-10-04-metrics-observability-design.md</code> + 同名 plan</li>
+<li><b>未合入</b>：metrics-observability-v2（6）、observability-stack（2）、llm-error-metrics（1）</li>
+<li><b>开放 PR</b>：#201（Prometheus NodePort 30909）、#200（告警 README 404 误判）</li>
+<li><b>已知阻塞</b>：告警规则写进 <code class="mono">rule_files:</code> 但线上无 Grafana/Alertmanager ⇒ 启用前须先定「谁算 + 发给谁 + 在哪看」。</li>
+</ul>
+</div>
+
+<div class="route r3">
+<div class="rt">R3 · 画布渲染卡片（render_canvas_view / SVG 表达层）</div>
+<div class="rmeta">你记得的「工具契约」这条线的一部分 · 两个分支互撞</div>
+<div class="files">
+services/pi-runtime/src/tools/render-canvas-view{,.views,.expressive,.color}.ts（含同名测试）
+</div>
+<ul>
+<li><b>规格源头</b>：<code class="mono">docs/superpowers/specs/2026-10-03-tool-contract-and-canvas-render-card-design.md</code></li>
+<li><b>未合入</b>：<code class="mono">feat/render-canvas-view-expressive</code>（4）+ <code class="mono">fix/svg-css-classes-timing</code>（5，<b>无 PR</b>）—— 两者在同样 4 个文件上重叠。</li>
+<li><b>前置动作</b>：先给 <code class="mono">fix/svg-css-classes-timing</code> 补开 PR 或明确废弃，二选一后再动。</li>
+</ul>
+</div>
+
+<div class="route r4">
+<div class="rt">R4 · SSE 契约与断线重放（T1）</div>
+<div class="rmeta">⚠️ 与工具框架路线是「替代关系」，先定方向再动手</div>
+<div class="files">
+services/pi-runtime/src/{app.ts,app.test.ts}
+apps/server/src/agent/pi-runtime/pi-runtime.client{,.test}.ts
+（争用）services/pi-runtime/src/session-manager.ts
+</div>
+<ul>
+<li><b>规格源头</b>：<code class="mono">docs/superpowers/specs/2026-09-29-persistent-harness-session-design.md</code>、
+<code class="mono">2026-09-29-pi-events-live-subscribe-design.md</code>、<code class="mono">plans/2026-10-01-compaction-wiring.md</code></li>
+<li><b>未合入</b>：<code class="mono">fix/t1-lane-watch</code>（3：app.ts、app.test.ts、session-manager.ts）</li>
+<li><b>方向冲突</b>：工具框架路线建议用上游 <code class="mono">replay:"safe"</code> + checkpoint <b>替掉</b> T1 自研断线 buffer。若采纳，R4 现存的 3 文件改动即为沉没成本 —— <b>这条要先拍板，否则白做</b>。</li>
+</ul>
+</div>
+
+<div class="route r5">
+<div class="rt">R5 · 工具框架能力吃满（新）</div>
+<div class="rmeta">本次新增 · 已落地 P0 防守（#202 已上线），P1/P2 待排</div>
+<div class="files">
+services/pi-runtime/src/tools/{tiering.ts,registry.ts,config.ts,skill-tool.ts}
+services/pi-runtime/src/hook-contract.ts · scripts/verify-tool-contract.ts
+（争用）services/pi-runtime/src/index.ts
+</div>
+<ul>
+<li><b>规格源头</b>：<code class="mono">docs/agent/tool-framework-roadmap.html</code>（今日产出，<b>尚未提交</b>）+ <code class="mono">docs/agent/tool-framework-audit.md</code></li>
+<li><b>递进关系</b>：① 能力目录（tools × skills × rules × 触发话术）→ ② 技能包化 → ③ 长任务可重放。<b>目录没成型前吃 <code class="mono">setActiveTools</code> 只是换皮。</b></li>
+<li><b>跨路线依赖</b>：<code class="mono">tool_search</code> 可达性要把触发条件写进 prompt 规则 ⇒ 占用 R1 的 <b>L6 预算</b>，而余量只剩 8 字符 ⇒ <b>必须等 R1 腾出空间，或改走 <code class="mono">skills/*.md</code> 路径</b>。</li>
+</ul>
+</div>
+
+<div class="route r6">
+<div class="rt">R6 · 规范与文档治理</div>
+<div class="rmeta">你记得的「规范标准化」这条线 · 容易被人顺手改，需要明确定 owner</div>
+<div class="files">
+AGENTS.md · docs/agent/*.md · scripts/verify-claims.ts · scripts/verify-spec-figures.ts
+</div>
+<ul>
+<li><b>规格源头</b>：<code class="mono">docs/superpowers/specs/2026-10-04-agents-md-hardening-design.md</code></li>
+<li><b>待修事实</b>：AGENTS.md 里「L6 余量约 320 ≈ 还能加 4 条中等规则」<b>是错的</b>（实测余量 8），该句会误导 R1/R5 决策，建议并入 R6 首批。</li>
+<li><b>纪律</b>：改规范文件后必须跑 <code class="mono">pnpm verify-claims</code>（本次 6/6 通过）。</li>
+</ul>
+</div>
+
+<h2>四、冲突矩阵：热点文件归谁</h2>
+
+<table>
+<tr><th>热点文件</th><th>争用路线</th><th>仲裁（建议唯一 owner）</th></tr>
+<tr><td class="mono">services/pi-runtime/src/session-manager.ts</td><td>R2 × R4</td><td>归 <b>R2</b>；R4 要改须 rebase 到 R2 之后</td></tr>
+<tr><td class="mono">services/pi-runtime/src/index.ts</td><td>R2 × R5</td><td>归 <b>R5</b>（#202 已在此落地 hook wiring）</td></tr>
+<tr><td class="mono">services/pi-runtime/src/metrics.ts</td><td>R1 × R2</td><td>归 <b>R2</b>；R1 分支里的 metrics.ts 改动需单独评审</td></tr>
+<tr><td class="mono">AGENTS.md</td><td>R1 × R6</td><td>归 <b>R6</b>；R1 不得夹带 AGENTS.md</td></tr>
+<tr><td class="mono">tools/render-canvas-view*.ts</td><td>R3 内部分叉</td><td>R3 单窗口，先解决两分支互斥</td></tr>
+<tr><td class="mono">prompt-registry/**</td><td>R1 内部分叉</td><td>R1 单窗口，先选定主线分支</td></tr>
+</table>
+
+<h2>五、开窗口的编排建议</h2>
+
+<div class="dag">
+<span class="chip">批次一（可立即并行）<b>R6</b> · <b>R3</b>（先定主线分支）· <b>R2</b></span>
+<span class="chip">批次二（等 R1 主线选定）<b>R1</b></span>
+<span class="chip">批次三（等 R1 腾出 L6 预算）<b>R5</b></span>
+<span class="chip">待拍板<b>R4</b>（与 R5 的 replay 方案二选一）</span>
+</div>
+
+<div class="note">
+<b>为什么这样排：</b>R5 的 <code class="mono">tool_search</code> 可达性依赖 R1 的 prompt 预算（余量 8 字符），
+R4 与 R5 的 replay 方案互斥。这三个依赖决定了不能六条线同时开。
+批次一的三条线文件所有权互不重叠，是真正安全的并行组合。
+</div>
+
+<h3>每个窗口开工前必做（四项）</h3>
+<ul>
+<li><b>从 <code class="mono">origin/master</code> 开独立 worktree</b>，<span class="kicker k-red">禁止</span>在主仓改代码 —— 主仓磁盘当前有 35 个旧文件、3 个已删除。</li>
+<li>开工先跑 <code class="mono">git diff --cached --name-status</code> 与 <code class="mono">git status --porcelain</code>，确认本窗口起点干净。</li>
+<li>在 PR body 里<b>显式声明本窗口的 owner 文件清单</b>，与上面矩阵逐条对齐。</li>
+<li>pi-runtime 改动合并后<b>不会自动上线</b>（<code class="mono">runtime-deploy.yml</code> 纯手工 dispatch，tag = master 短 SHA），需单独派人盯。</li>
+</ul>
+
+<h3>顺带可清理（0 未合入，已全量进 master）</h3>
+<p><code class="mono">fix/canvas-sessionid-persist</code>、<code class="mono">fix/frontend-poll-wallclock</code>、
+<code class="mono">feat/relation-dependency-semantics</code>、<code class="mono">feat/upstream-retry-image</code>
+—— 这四个分支内容已完全合入，可删分支（删前逐个确认 <code class="mono">git status --porcelain</code>）。</p>
+
+<footer>
+本报告基于 2026-10-05 实测取证：PR #202 部署记录、线上 helm values、容器内 dist 与 healthz、
+主仓 index/worktree blob 级比对、25 个远端分支的 blob 级未合入分析。<br>
+暂存区部分为<b>只读诊断</b>，未做任何 <code class="mono">restore</code> / <code class="mono">reset</code> / <code class="mono">commit</code>。
+</footer>
+
+</div>
+</body>
+</html>
