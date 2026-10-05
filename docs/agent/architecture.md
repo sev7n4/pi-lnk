@@ -151,6 +151,77 @@ pi-lnk/
 > 通信，不作为 npm 依赖引入），因此不构成障碍。
 > **写代码前先看目标目录的 `package.json` 实际 name**，不要按目录名或历史推断。
 
+## ⭐ 直连pi-runtime 复测：SSE 契约（2026-10-05 实测）
+
+要在生产 pod 里直接驱动 pi-runtime 做端到端复测，**必须按下面五条建立会话**。
+每一条都是踩过的坑 —— 踩任意一条都会得到「事件数 0」或「工具全部 404」，
+而这两种现象**看起来完全一样**（都是「模型什么都没做」），极难区分。
+
+| # | 契约 |踩坑后的现象 |
+|---|---|---|
+| 1 | `POST /sessions` 的 body **必须带 `canvasSessionId=<画布 id>`** | 工具全返 404，模型看不到画布 ⇒答「画布会话已断开」 |
+| 2 | 响应字段是 **`sessionId`**，不是 `key` | 拿到 `undefined` ⇒ 后续请求全404 |
+| 3 | `POST /sessions/:id/prompt` 的 body 字段是 **`text`**，不是 `prompt` | 202 但**一个事件都没有** |
+| 4 | `GET /sessions/:id/events` **必须带 `?from=now`** | **HTTP 409**，订阅被直接拒 |
+| 5 | ⛔ **SSE 的工具事件里没有工具参数** | 想验「模型选了什么」会得到空对象 |
+
+### 逐条的代码依据
+
+1. `app.ts:131` `manager.create(threadKey, { systemPrompt, userId: canvasSessionId, ... })`
+   —— `sessionId` 是**pi 会话 id**（缺省随机 UUID），`canvasSessionId` 才是画布 id。
+   两者不同：`render_canvas_view` / `get_canvas_layout` 用**画布 id** 取数。
+2. `app.ts:134` 响应体含 `sessionId`。
+3. `app.ts:181` `manager.prompt(sessionId, request.body.text, request.body.lane, {...})`。
+4. `app.ts:46` `resolveEventsSubscribeMode`：
+   ```ts
+   if (Number.isInteger(parsed) && parsed >= 0) return { mode: "replay", afterSeq: parsed };
+   if (query?.from === "now") return { mode: "live" };
+   return { mode: "replay", afterSeq: -1 };   // ⛔ 不带 from=now 落这里
+   ```
+   落到 `replay(afterSeq=-1)` 后，若事件 buffer 已被淘汰，
+   `app.ts:425` 的 `isReplayComplete` 检查失败 ⇒ **回 409**（客户端已适配，不重连）。
+   ⇒ **首次订阅必须 `?from=now`**；只有「同一订阅内断线重连」才用 `?lastEventId=`。
+5. `session-manager.ts:157` `ToolLikeEvent` 只有
+   `toolName` / `toolCallId` / `isError` / `terminate` / `result` ——
+   **vendor 的 `tool_start` 载荷里就没有参数字段**，`attachEvents` 也不转发。
+   ⇒ SSE 侧只能看到「调了哪个工具、调了几次」（`ActivityData` 仅 `toolName` + `done`），
+   **拿不到 `view` / `scope` / `focus` 等参数**。
+
+### ⭐ 想验「模型选了什么参数」，只能读会话 jsonl
+
+```bash
+# pod 内
+ls -t /data/sessions/*/sessions/*/*.jsonl | head
+grep -oE '"(view|scope|focus|hops|relation)":"?[^,}]*' <上面那个 .jsonl> | sort | uniq -c | sort -rn
+```
+
+2026-10-05 用这个方法量到真实统计（真实画布 63 节点 / 123 边，问了 3 类问题）：
+`scope=ownership 41` / `scope=detail 34` / `scope=structure 18` / `focus=<节点id> 21` / `hops=2 25`
+⇒ 三层都会被模型用到，`focus` 也会用。
+
+### 其他两条实测约束
+
+- **pod 内用 `127.0.0.1:8100`**：`30100` 是 K3s **NodePort**，pod 内不可达（`fetch failed`）。
+- **必须自己传 `systemPrompt`**：生产是 Nest 用 `ruleGroups:['core','writeTools','genTools']`
+  组装后传入（`agent.service.ts:945`）。不传 ⇒ 模型拿不到 prompt 规则 ⇒ **必然不调工具**，
+  伪装成「功能失效」，实为测试方法错。
+- **容器内连不到宿主 `5100`** ⇒ 画布 layout 必须在**宿主**取好写文件，再 `kubectl cp` 进 pod。
+  （`getCanvasLayout` 的 Nest 端点 token 变量名是 `LNKPI_NEST_SERVICE_TOKEN`）
+
+### 复测脚本
+
+`scripts/verify-render-canvas-view/`：两个脚本，都接受画布 id 作参数，
+**不含任何生产 id / 内网地址**，可直接在 pod 内跑：
+
+```bash
+# ① 工具产出（14 个 case：三层 + focus + 负向）
+node verify-scope-tool.mjs <canvasId>
+# ② 走模型链路（验模型选对 scope；参数统计需另读 jsonl）
+node verify-model-scope.mjs <canvasId>
+```
+
+⚠️ 首次订阅 `?from=now`、先订阅后 POST prompt —— 见上表第3、4 条。
+
 ## 端口约定
 
 | 服务 | 端口 | 来源 | 说明 |
