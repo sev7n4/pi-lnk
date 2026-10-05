@@ -167,7 +167,7 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 	{
 		id: "gen-claim-003",
 		origin: "audit",
-		about: "取消生成时调cancel_generation 并如实转述结果",
+		about: "取消生成意图应调 cancel_generation，并如实转述取消结果",
 		text: "算了，别生成这张了",
 		/** ⭐ 行为有随机性（A/B 实测同配置触发率 27%~70%）⇒ 3 次取多数。 */
 		repeat: 3,
@@ -201,8 +201,11 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 		// 而判据是「期望调 arrange_nodes」⇒ **说明与判据不一致**，会误导排查。
 		// 排版类能力已在常驻集（不必 tool_search），这里同时登记环境前提。
 		about:
-			"排版类话术应触发 arrange_nodes（它已回归常驻集，不必走 tool_search）。" +
-			"⚠️ 环境前提：画布须有 ≥10 个节点（话术说「30 个」）。",
+			"排版类话术应直接触发 arrange_nodes。" +
+			"⚠️ 环境前提：画布须有 ≥10 个节点（话术说「30 个」）—— " +
+			"实测 2 节点 ⇒ 1/3 通过（模型合理地先确认数量），63 节点 ⇒ 3/3 通过。" +
+			"（历史：`origin` 写的是「应先 tool_search」，但 arrange_nodes 已回归常驻集，" +
+			"再要求绕 tool_search 会与判据矛盾，故 2026-10-05 改正。）",
 		text: "把这 30 个节点按左右关系重新排一下",
 		/** ⭐ 行为有随机性（A/B 实测同配置触发率 27%~70%）⇒ 3 次取多数。 */
 		repeat: 3,
@@ -221,10 +224,17 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 	{
 		id: "tool-discovery-003",
 		origin: "audit",
-		about: "纯提问（不涉及画布操作）不应触发画布写工具",
+		// ⭐ `about` 原写「不应触发画布**写**工具」，而 forbidTools 里有
+		// `connect_nodes`（建连线，属**改结构**而非写内容）⇒ 措辞与判据不严格对齐，
+		// 照字面读会以为 connect_nodes 不在禁止之列。
+		about:
+			"纯提问（只求信息、不涉及任何画布修改）不应触发任何写操作：" +
+			"既不该建节点/提议生成（写内容），也不该连线（改结构）。",
 		text: "画布里一共有多少个节点？",
 		/** ⭐ 行为有随机性（A/B 实测同配置触发率 27%~70%）⇒ 3 次取多数。 */
 		repeat: 3,
+		// ⚠️ 只读类工具（get_canvas_summary / get_canvas_layout）**不在此列** ——
+		// 纯提问本就该用它们查完再答，禁掉会把正确行为判成失败。
 		forbidTools: ["upsert_media_node", "propose_generation", "connect_nodes"],
 	},
 
