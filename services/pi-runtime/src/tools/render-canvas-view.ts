@@ -22,6 +22,7 @@ import {
 	ALLOWED_COLOR_NAMES,
 	isAllowedColorName,
 	MAX_NODES_PER_VIEW,
+	SVG_MAX_CHARS,
 	type GvNode,
 	svgBudgetReport,
 	suggestNodeIds,
@@ -46,12 +47,19 @@ import {
  */
 const VIEWS = ["layout", "tree", "timeline", "swimlane", "matrix", "topology", "table"] as const;
 const RELATIONS = ["dependency", "category"] as const;
+/**
+ * 观察尺度：宏观讲原理 / 中观看归属 / 微观求精确（2026-08-05 产品决策）。
+ * ⚠️ `relation=dependency` 时**默认 structure**：依赖在用户嘴里就排除了「顺序」，
+ * 把 `image→image` 的镜头顺序画成依赖箭头是主动误导。
+ */
+const SCOPES = ["structure", "ownership", "detail"] as const;
 const GROUP_BYS = ["type", "status", "parentNode"] as const;
 /** 行级指标 overlay（时长/台词/情绪/级别）—— 与 `relation` 正交，用于 timeline/table。 */
 const OVERLAYS = ["emotion", "budget", "severity"] as const;
 
 export type ViewKind = (typeof VIEWS)[number];
 export type RelationKind = (typeof RELATIONS)[number];
+export type ScopeKind = (typeof SCOPES)[number];
 export type GroupByKind = (typeof GROUP_BYS)[number];
 export type OverlayKind = (typeof OVERLAYS)[number];
 
@@ -386,6 +394,23 @@ export function createRenderCanvasViewTools(deps: {
 							"Show the node type inside each label (e.g. '①EP01 prompt'). Off by default — color plus the legend already convey type, and writing it out is noise.",
 					}),
 				),
+				scope: Type.Optional(
+					Type.Union(SCOPES.map((s) => Type.Literal(s)), {
+						description:
+							"How much detail to show. 'structure' (DEFAULT) = only the skeleton —prompt-to-prompt edges like 「大纲 → 各集」, i.e. the shape of the whole thing, not its details. Use it when the user asks why it is built this way or what the overall structure is. 'ownership' = skeleton plus which asset belongs to which episode. 'detail' = every edge, for when the user needs exactness. 'detail' on a large canvas overflows the card budget — then pass `focus` to zoom into one part instead of showing everything.",
+					}),
+				),
+				focus: Type.Optional(
+					Type.String({
+						description:
+							"Zoom into one node: draw only its `hops`-deep neighbourhood instead of the whole canvas. This is how you answer a precise question about one episode or one asset without overflowing the card. Must be an existing node id — an unknown id is rejected, never silently ignored.",
+					}),
+				),
+				hops: Type.Optional(
+					Type.Integer({
+						description: "Neighbourhood depth for `focus` (1-3, default 1). 1 = direct relations, 2 = one level further. Clamped, not rejected.",
+					}),
+				),
 				rowBy: Type.Optional(
 					Type.Union(GROUP_BYS.map((g) => Type.Literal(g)), {
 						description: "matrix only: row dimension. Defaults to type.",
@@ -447,6 +472,12 @@ export function createRenderCanvasViewTools(deps: {
 					groupBy?: GroupByKind;
 					/** 标签里是否显示类型。 */
 					show_type?: boolean;
+					/** 观察尺度（宏观/中观/微观）。 */
+					scope?: ScopeKind;
+					/** 拆分局部的中心节点。 */
+					focus?: string;
+					/** 邻域跳数（夹取 1..3）。 */
+					hops?: number;
 					/** matrix 行维度。 */
 					rowBy?: GroupByKind;
 					/** matrix 列维度。 */
@@ -470,6 +501,10 @@ export function createRenderCanvasViewTools(deps: {
 				const groupBy: GroupByKind = p.groupBy ?? "type";
 				if (!GROUP_BYS.includes(groupBy)) {
 					return fail(`groupBy 非法：${String(p.groupBy)}，可选 ${GROUP_BYS.join(" | ")}`);
+				}
+				const scope: ScopeKind = p.scope ?? "structure";
+				if (!SCOPES.includes(scope)) {
+					return fail(`scope 非法：${String(p.scope)}，可选 ${SCOPES.join(" | ")}`);
 				}
 				const rowBy: GroupByKind = p.rowBy ?? "type";
 				const colBy: GroupByKind = p.colBy ?? "status";
@@ -524,6 +559,10 @@ export function createRenderCanvasViewTools(deps: {
 				if (missing.length > 0) return fail(`数据源节点不存在：${missing.join("、")}`, missing);
 				const wantedSet = new Set(wanted);
 				const nodes = allNodes.filter((n) => wantedSet.has(n.id));
+				// focus 必须是已存在的节点 —— 不静默忽略（静默退化成全量图= 答非所问）
+				if (p.focus !== undefined && !known.has(p.focus)) {
+					return fail(`focus 节点不存在：${p.focus}（不静默退化为全量图 —— 请给一个真实的 node id）`);
+				}
 				if (nodes.length === 0) {
 					return fail("数据源为空：画布上没有可渲染的节点（不编造行）");
 				}
@@ -579,6 +618,8 @@ export function createRenderCanvasViewTools(deps: {
 											colors: colorOverrides,
 											groupBy,
 											showType: p.show_type === true,
+											scope,
+											...(p.focus !== undefined ? { focus: p.focus, hops: p.hops } : {}),
 										});
 				// ⛔ 超界**显式报错**，而不是产出注定被丢的图。
 				// 线上 `present-result` 超 20000B 会整块丢弃（svg:""+ truncated:true），
@@ -586,15 +627,28 @@ export function createRenderCanvasViewTools(deps: {
 				// 这里提前拦住并给出可执行的补救（收窄到哪些节点）。
 				const budget = svgBudgetReport(svg);
 				if (budget.over) {
-					// ⚠️ 必须传 gvEdges：真实画布 parentNode 全空，层级只能靠出边认（见 suggestNodeIds 注释）
+					// ⭐ 补救建议必须**指向真能解决问题的参数**（#186 的教训：给错参数= 把人送去更糟的结果）
+					//   · 已用 focus 但局部仍太大 ⇒ 降 hops 或换出度更小的中心
+					//   · 未用 focus 且是 layout/topology ⇒ 先劝宏观/中观（用户多半只想看原理），
+					//     再劝 focus 拆局部，最后才 node_ids
+					//   · 其它 view ⇒ node_ids / matrix
 					const suggested = suggestNodeIds(gvNodes, MAX_NODES_PER_VIEW, gvEdges);
-					return fail(
+					const head =
 						`画布规模超出单张卡片上限：${nodes.length} 个节点会产出约 ${budget.bytes} 字节，` +
-							`超过 ${20000} 字节上限（超出会被整块丢弃，用户看不到图）。` +
-							`请用 node_ids 收窄 —— 建议取这 ${suggested.length} 个（保留层级骨架与业务序）：` +
-							`${suggested.slice(0, 8).join("、")}${suggested.length > 8 ? " …" : ""}。` +
-							`或改用 view=matrix（交叉表，体积与节点数无关）。`,
-					);
+						`超过 ${SVG_MAX_CHARS} 字节上限（超出会被整块丢弃，用户看不到图）。`;
+					const advice =
+						p.focus !== undefined
+							? `当前已聚焦「${p.focus}」（hops=${p.hops ?? 1}），请把 hops 调小，` +
+								`或换一个出度更小的中心节点（如某张分镜脚本）。`
+							: effView === "layout"
+								? `请改用 scope 收窄观察尺度：scope=structure 只画骨架（讲原理）、` +
+									`scope=ownership 加归属（看素材属于哪一集）、scope=detail 才是全量。` +
+									`要精确到某一集/某张图，用 focus=<该节点 id> 拆局部（配 hops=2 看两跳）。` +
+									`若都不需要，改用 view=matrix（交叉表，体积与节点数无关）。`
+								: `请用 node_ids 收窄 —— 建议取这 ${suggested.length} 个（保留层级骨架与业务序）：` +
+									`${suggested.slice(0, 8).join("、")}${suggested.length > 8 ? " …" : ""}。` +
+									`或改用 view=matrix（交叉表，体积与节点数无关）。`;
+					return fail(`${head}${advice}`);
 				}
 				return presentResult({
 					type: "svg_card",

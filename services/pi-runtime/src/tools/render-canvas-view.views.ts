@@ -17,6 +17,10 @@ import {
 	type Palette,
 	auditOrder,
 	businessOrder,
+	filterEdgesByScope,
+	focusNeighborhood,
+	nodesInNeighborhood,
+	type Scope,
 	registerColorClassMap,
 	commonSuffixes,
 	esc,
@@ -178,6 +182,16 @@ export interface LayoutOpts {
 	groupBy?: "type" | "status" | "parentNode";
 	/** 标签里是否显示节点类型（默认否—— 颜色 + 图例已表达，写出来只是噪音）。 */
 	showType?: boolean;
+	/**
+	 * 观察尺度：宏观（只画骨架）/ 中观（骨架+归属）/ 微观（全量）。
+	 * ⚠️ 默认 `structure`（宏观）—— 「依赖」在用户嘴里就排除了「顺序」，
+	 * 把image→image 的镜头顺序画成依赖箭头是主动误导。
+	 */
+	scope?: Scope;
+	/** 拆分局部：只画该节点 `hops` 跳邻域（微观数据太多时的出口）。 */
+	focus?: string;
+	/** 邻域跳数，夹取到 [1,3]。 */
+	hops?: number;
 }
 
 export function buildLayoutSvg(
@@ -185,13 +199,24 @@ export function buildLayoutSvg(
 	edgesIn: readonly GvEdge[],
 	opts: LayoutOpts,
 ): string {
+	// ⭐ 先按 scope 裁边，再按 focus 裁节点（顺序不可颠倒：先裁边才知道邻域里有哪些边）
+	const scope: Scope = opts.scope ?? "structure";
+	const scopedEdges = opts.drawEdges ? filterEdgesByScope(nodesIn, edgesIn, scope) : [];
+	let nodes = orderNodes(nodesIn);
+	let edges = scopedEdges;
+	let focusKeep: Set<string> | undefined;
+	if (opts.focus !== undefined) {
+		focusKeep = focusNeighborhood(nodes, edges, opts.focus, opts.hops ?? 1);
+		nodes = nodesInNeighborhood(nodes, focusKeep);
+		edges = edges.filter((e) => focusKeep!.has(e.source) && focusKeep!.has(e.target));
+	}
 	const groupBy = opts.groupBy ?? "type";
 	// ⭐ groupBy 影响**行序**（同组相邻 ⇒ 一眼看出分组边界），
 	// 但**先按业务序号排**再稳分组合并 —— 否则同组内的业务顺序会被打乱。
-	const ordered = orderNodes(nodesIn);
+	// nodes/edges 已在函数开头按 scope + focus 处理完毕；这里只做 groupBy 的稳分组合并
 	const groupKey = (n: GvNode) =>
 		groupBy === "status" ? (n.status ?? "未标状态") : groupBy === "parentNode" ? (n.parentNode ?? "未归类") : (n.type ?? "default");
-	const nodes = groupBy === "type" ? ordered : groupAdjacent(ordered, groupKey);
+	if (groupBy !== "type") nodes = groupAdjacent(nodes, groupKey);
 
 	const H = 40 + nodes.length * ROW_H + 24;
 	const boxes = boxesFrom(
@@ -206,7 +231,7 @@ export function buildLayoutSvg(
 	if (opts.drawEdges) {
 		// ⭐ 同源多出边起点沿源节点高度分散 —— 修「全部从同一点射出」的扫帚
 		const bySource = new Map<string, string[]>();
-		for (const e of edgesIn) {
+		for (const e of edges) {
 			if (!boxes.has(e.source) || !boxes.has(e.target)) continue; // 端点不在图内→丢弃（不编造）
 			const arr = bySource.get(e.source) ?? [];
 			arr.push(e.target);
@@ -232,6 +257,14 @@ export function buildLayoutSvg(
 	const audit = auditOrder(nodes);
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
 	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
+	if (focusKeep) {
+		// 局部视图必须自报家门，否则用户会误以为这就是全部
+		parts.push(
+			`<g data-focus="${esc(opts.focus ?? "")}" data-hops="${Math.max(1, Math.min(3, Math.floor(opts.hops ?? 1)))}">` +
+				`<rect x="8" y="8" width="${W - 16}" height="20" rx="4" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>` +
+				`<text x="14" y="18" class="gv-info" dominant-baseline="central">局部视图：只看「${esc(clip(String(opts.focus), 20))}」的 ${Math.max(1, Math.min(3, Math.floor(opts.hops ?? 1)))} 跳邻域（${nodes.length} 个节点 / ${edges.length} 条边）· 用 focus 换节点可看别处</text></g>`,
+		);
+	}
 	const note = auditNoteSvg(audit.misplaced, audit.compared);
 	if (note) parts.push(note);
 	let lastGroup: string | undefined;

@@ -736,3 +736,120 @@ describe("suggestNodeIds：收窄时保住层级骨架", () => {
 		assert.ok(i1 < i2, "EP01 应在 EP02 之前");
 	});
 });
+
+// ══════════════════════════════════════════════════════════
+// 12. 宏观 / 中观 / 微观 三层（2026-08-05 用户产品决策）
+// ══════════════════════════════════════════════════════════
+describe("三层视图：宏观讲原理 / 微观求精确", () => {
+	/**
+	 * 生产真实画布形状（`cmuptk4wz001bkz01gca02mv8`，63 节点 / 123 边）。
+	 * 三种边实测语义完全不同：
+	 *   prompt→prompt (7)    = **骨架**（定位→大纲→6集）—— 讲原理
+	 *   prompt→image  (32)   = **归属**（资产表/分镜→镜头）—— 看归属
+	 *   image→image (84 含 video) = **细节**（S01A→S01B 镜头顺序 / 生成链路）—— 求精确
+	 */
+	const REAL = (() => {
+		const nodes = [];
+		const edges = [];
+		const P = ["pos", "out", "ep1", "ep2", "ep3", "ep4", "ep5", "ep6", "assets", "board"];
+		P.forEach((id, i) =>
+			nodes.push({ id: `p-${id}`, type: "prompt", title: i === 0 ? "原創定位" : i === 1 ? "全劇大綱" : `EP0${i - 1}《标题》`, position: { x: 0, y: i * 100 } }),
+		);
+		edges.push({ source: "p-pos", target: "p-out" });
+		for (const ep of ["ep1", "ep2", "ep3", "ep4", "ep5", "ep6"]) edges.push({ source: "p-out", target: `p-${ep}` });
+		edges.push({ source: "p-out", target: "p-assets" });
+		edges.push({ source: "p-ep1", target: "p-board" });
+		for (let i = 0; i < 46; i++) {
+			const id = `i-${i}`;
+			nodes.push({ id, type: "image", title: `S${String(i + 1).padStart(2, "0")}${String.fromCharCode(65 + (i % 6))} 镜头 ${i}`, position: { x: 300, y: i * 30 } });
+			edges.push({ source: `p-ep${(i % 6) + 1}`, target: id });
+			if (i > 0) edges.push({ source: `i-${i - 1}`, target: id });
+		}
+		for (let i = 0; i < 7; i++) {
+			const id = `v-${i}`;
+			nodes.push({ id, type: "video", title: `EP01 正片 ${i}`, position: { x: 600, y: i * 40 } });
+			edges.push({ source: "p-ep1", target: id });
+		}
+		return { nodes, edges };
+	})();
+
+	// ── 宏观 ──
+	it("scope=structure 只画骨架（prompt→prompt），细节边一条不出", () => {
+		const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, { drawEdges: true, scope: "structure" });
+		// 9 = pos→out + out→6EP + out→assets + ep1→board
+		assert.equal((svg.match(/data-edge=/g) || []).length, 9, "宏观只该有9 条骨架边");
+	});
+
+	it("宏观卡片显著小于全量（示意而非细节）", () => {
+		const macro = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, { drawEdges: true, scope: "structure" });
+		const full = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, { drawEdges: true, scope: "detail" });
+		assert.ok(macro.length < full.length * 0.6, `宏观应显著更小：${macro.length} vs ${full.length}`);
+	});
+
+	// ── 中观 ──
+	it("scope=ownership 画骨架+归属，不含素材之间的细节边", () => {
+		const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, { drawEdges: true, scope: "ownership" });
+		// 9 骨架 + 53 归属 + 7 视频归属
+		assert.equal((svg.match(/data-edge=/g) || []).length, 62, "中观应为骨架+归属");
+	});
+
+	// ── 微观：全量表达 ──
+	it("scope=detail 全量表达（一条不少）", () => {
+		const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, { drawEdges: true, scope: "detail" });
+		assert.equal((svg.match(/data-edge=/g) || []).length, REAL.edges.length);
+		assert.ok(REAL.edges.length > 100, "夹具边数应与生产同量级，否则测不到预算问题");
+	});
+
+	// ── 微观：拆分局部 ──
+	it("focus 指定节点后只画它的邻域（拆分局部而非全量）", () => {
+		const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, {
+			drawEdges: true, scope: "detail", focus: "p-ep1",
+		});
+		const edges = (svg.match(/data-edge=/g) || []).length;
+		assert.ok(edges > 0 && edges < 40, `局部视图应只画邻域，实际 ${edges} 条`);
+		assert.equal(svg.includes("data-focus="), true, "卡片须标明这是局部视图");
+	});
+
+	it("focus 的邻域包含二跳（直接下游的 downstream 也要能看到）", () => {
+		const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, {
+			drawEdges: true, scope: "detail", focus: "p-out", hops: 2,
+		});
+		assert.equal(svg.includes('data-node="i-0"'), true, "二跳内的节点应出现");
+	});
+
+	it("focus 不存在时报错（不静默画全量）", async () => {
+		const r = await run(makeTool(REAL), { view: "layout", focus: "nope" });
+		const d = r.details as Details;
+		assert.equal(d.ok, false, "不存在的 focus 应报错，而不是退化成全量图");
+		assert.match(d.error!, /focus|节点/);
+	});
+
+	it("hops 越界被夹取（不抛异常）", () => {
+		const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, {
+			drawEdges: true, scope: "detail", focus: "p-out", hops: 99,
+		});
+		assert.match(svg, /^<svg/);
+	});
+
+	// ── 关键契约：宏观/中观必须能出图，微观靠 focus 才有出路 ──
+	it("宏观 + 中观都能进 20000B 预算（细节进不去是设计使然）", () => {
+		for (const sc of ["structure", "ownership"] as const) {
+			const svg = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, { drawEdges: true, scope: sc });
+			assert.ok(svg.length <= SVG_MAX_CHARS, `${sc} 产出 ${svg.length}B 超预算`);
+		}
+	});
+
+	it("微观全量会超预算 ⇒ focus 拆分后必须能进预算（微观的唯一出口）", () => {
+		const full = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, { drawEdges: true, scope: "detail" });
+		assert.ok(full.length > SVG_MAX_CHARS, `全量应超预算（实测 ${full.length}B）`);
+		const focused = buildLayoutSvg(REAL.nodes as never, REAL.edges as never, {
+			drawEdges: true, scope: "detail", focus: "p-ep1",
+		});
+		assert.ok(focused.length <= SVG_MAX_CHARS, `focus 局部应能进预算，实际 ${focused.length}B`);
+	});
+
+	it("scope 非法值被拒（非静默回落）", async () => {
+		const r = await run(makeTool(REAL), { view: "layout", scope: "nonsense" });
+		assert.equal((r.details as Details).ok, false);
+	});
+});
