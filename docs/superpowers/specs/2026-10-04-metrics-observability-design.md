@@ -233,31 +233,28 @@ nest_upstream_errors_total{error_class}               counter
 - `outcome`：与生成记录终态一致（`completed` / `failed` / `fallback_pending` / `generating`）
 - `kind`（静默降级）：`placeholder_audio` | `placeholder_image` | `omitted_param` | `downscale` | `unsupported_fallback`
 
-### 4.5 🔴 已知缺口：LLM 错误指标尚未覆盖主路径（2026-10-04 实现期发现）
+**原缺口（2026-10-04 发现，2026-10-05 已补）**：`session-manager.ts` 里 `lane.prompt(...)` 的
+`!result.ok` 与 `.catch()` 分支**只派发 SSE error 事件、零指标**，
+于是 `pi_runtime_llm_errors_total` 只能反映 `app.ts` 的**入口早拒**，
+**看不到「模型调用失败」** —— 而那才是真正要监控的。
 
-**阶段一交付后，LLM 错误指标只覆盖了入口早拒路径，生产里绝大多数 LLM 错误仍无埋点。**
+**补法**（commit `2377ea90`）：
+- 新增 `llm-error-class.ts`：复用 `classifyToolOutcome` 的闭集分类器，只额外区分
+  `stage`（`main_turn` / `compaction`，按 `entry.compacting` 判）与「该不该计数」。
+- `SessionManager.observeLlmFailure()` 私有辅助 + 两处接线（`!result.ok`、`.catch`）。
+- **观测口绝不抛**（try/catch 兜底），错误原文只喂分类器不进 label，
+  拿不到身份时用闭集内字面量 `"unknown"`。
 
-已核实事实：`session-manager.ts:1274-1284` 是 LLM 调用的**主路径**：
+**⚠️ 精度上限（重要，别误读指标）**：vendor 的 `toError(error)`（`harness/result.ts`）把错误压成
+`unknown`/`Error`，**拿不到 status / retryable 等结构化字段** ⇒ 主路径只能拿文本做正则分类，
+比入口早拒粗糙。**若要更高精度，需 vendor 侧暴露结构化错误码**（未做，见 backlog）。
 
-```
-lane.prompt(...).then((result) => {
-    if (!result.ok) {
-        this.dispatch(entry, { type: "error", ... });// ← 只发 SSE，零指标
-    }
-```
+**⚠️ 用户主动取消刻意不计数**：`llm_errors_total` 只有 stage/error_class/channel/model 四个维度、
+**没有 outcome**，混进取消会让 `sum(rate(llm_errors_total))` 这个最直观的错误率**偏高**，
+而取消是用户的正常操作、不是故障。若要观测取消趋势，需另立 `llm_aborts_total` 族（本次未做）。
 
-`observeLlmError` 全仓**仅 1 处调用**（`app.ts` 的入口早拒 catch）⇒
-`pi_runtime_llm_errors_total` 反映的是「请求进不来」，**不是「模型调用失败」**。
-
-**为什么阶段一不做完**：主路径的错误对象来自 vendor lane 的 `Result`（`result.error`），
-分类需要判断它是超时、上游 5xx、还是上下文溢出 —— 涉及读vendor 的 `OperationError` 语义，
-比「给已有 catch 换分类器」大一圈，且需要独立的错误路径测试。
-
-**后续 Task（独立立项）**：在主路径 `!result.ok` 处补 `observeLlmError`，
-`stage` 按运行上下文判定（主轮/ 压缩），并区分 `abort`（用户取消）不算错误。
-
-> ⚠️ **读这份spec 的人请注意**：不要以为「上游模型错误监控」已完成。
-> 当前能回答的是「多少请求被入口拒绝」，**不能**回答「多少模型调用失败了、失败在哪一阶段」。
+**验收判据**：接线可证伪 —— 注释掉任一`observeLlmFailure(...)` 调用，`session-manager.llm-error.test.ts`
+必须变红。实测 3/3 变异被杀（断 `!result.ok` 埋点、断 `.catch` 埋点、让取消也计数）。
 
 ### 5.1 静默降级必须独立计数
 
