@@ -60,6 +60,27 @@ export interface GoldenCase {
 	/** 期望本轮正常结束。默认 true。 */
 	expectCompleted?: boolean;
 	/**
+	 * ⭐ 本 case 隐含的**画布规模前提**（节点数下限），由 `runL1` 在跑之前检查。
+	 *
+	 * ## 为什么需要它（2026-10-05 实测）
+	 *
+	 * `tool-discovery-001` 话术是「把这 **30 个**节点按左右关系重新排一下」。实测：
+	 *
+	 * | 画布节点数 | 3 次判定 | 模型实际行为 |
+	 * |---|---|---|
+	 * | 2 | `fail / pass / fail` ⇒ 1/3 | 先 `get_canvas_summary` 查数量，发现对不上就问用户 |
+	 * | 63 | `pass / pass / pass` ⇒ 3/3 | 正常触发 `arrange_nodes` |
+	 *
+	 * ⚠️ 2 节点时模型的「先查再确认」是**合理行为**（用户说 30、实际只有 2）。
+	 * ⇒ 同一条 case、同一模型、同一份 prompt，**仅换画布就 1/3 → 3/3**。
+	 * ⇒「模型做不到」与「环境不对」在结果里长得一模一样。
+	 *
+	 * 所以这是**声明式**的（代码会检查），不是注释：
+	 * 换错画布时会直接抛错并说明「这是环境问题」，而不是静默产出误导数据。
+	 * 未声明 = 不检查。
+	 */
+	requiresCanvasNodes?: number;
+	/**
 	 * 是否需要写画布初始态。
 	 * ⚠️ 首批 case 全部为 false：真实失败样本的画布态在生产库里，
 	 * 复刻它会引入「造了个假场景」的风险。宁可不测，也别测个假的。
@@ -176,10 +197,16 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 	{
 		id: "tool-discovery-001",
 		origin: "audit",
-		about: "需要的能力不在手上时应先 tool_search，而不是直接说做不了",
+		// ⭐ `about` 原文写的是「需要的能力不在手上时应先 tool_search」，
+		// 而判据是「期望调 arrange_nodes」⇒ **说明与判据不一致**，会误导排查。
+		// 排版类能力已在常驻集（不必 tool_search），这里同时登记环境前提。
+		about:
+			"排版类话术应触发 arrange_nodes（它已回归常驻集，不必走 tool_search）。" +
+			"⚠️ 环境前提：画布须有 ≥10 个节点（话术说「30 个」）。",
 		text: "把这 30 个节点按左右关系重新排一下",
 		/** ⭐ 行为有随机性（A/B 实测同配置触发率 27%~70%）⇒ 3 次取多数。 */
 		repeat: 3,
+		requiresCanvasNodes: 10,
 		// arrange_nodes 已回归常驻集（延迟即不可达），故这里期望直接调；
 		// 若将来它重新进延迟集，本case 需改为期望 tool_search。
 		expectTools: ["arrange_nodes"],

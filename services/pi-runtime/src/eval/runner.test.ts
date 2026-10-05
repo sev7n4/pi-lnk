@@ -480,4 +480,53 @@ describe("L1 runner · ⭐ 缺画布上下文时 fail-fast（不跑一遍拿超�
 		});
 		assert.equal(summary.skipped, blocking.length);
 	});
+
+	// ========== 画布规模预检（requiresCanvasNodes）==========
+	// ⭐ 背景（2026-10-05 实测）：`tool-discovery-001` 话术说「30 个节点」，
+	// 在 2 节点画布上 3 次只过 1 次（模型「先查数量、发现对不上就问用户」——
+	// 此环境下是**合理行为**）；63 节点画布则 3/3 通过。
+	// ⇒ 仅换画布就 1/3 → 3/3 ⇒「模型不行」与「环境不对」在结果里长得一模一样。
+	// ⇒ 预检必须在跑之前拦住，否则会误导人去改本来正确的 prompt/工具。
+
+	it("⭐ 没传 nest 但 case 声明了 requiresCanvasNodes ⇒ fail-fast并说清怎么补", async () => {
+		// 与本文件其他 runL1 用例一致：用动态 import
+		const { runL1 } = await import("./runner.js");
+		await assert.rejects(
+			() =>
+				runL1({
+					baseUrl: "http://127.0.0.1:1", // 不该被用到：预检应先抛
+					only: ["tool-discovery-001"],
+					staticPrompt: "x",
+					canvasSessionId: "cs-1",
+					userId: "u-1",
+				}),
+			// ⭐ 报错必须**明确说这是环境问题**，否则人还是会去改提示词
+			(err: Error) => {
+				assert.match(err.message, /环境问题|画布规模/);
+				assert.match(err.message, /NEST_BASE_URL|NEST_SERVICE_TOKEN/);
+				return true;
+			},
+		);
+	});
+
+	it("⭐ 探针报 error（如画布不存在）⇒ fail-fast，且区分「环境问题」", async () => {
+		const { runL1 } = await import("./runner.js");
+		await assert.rejects(
+			() =>
+				runL1({
+					baseUrl: "http://127.0.0.1:1",
+					only: ["tool-discovery-001"],
+					staticPrompt: "x",
+					canvasSessionId: "cs-1",
+					userId: "u-1",
+					// 地址不可达 ⇒ 探针必然失败
+					nest: { baseUrl: "http://127.0.0.1:1/api", token: "t" },
+				}),
+			(err: Error) => {
+				assert.match(err.message, /画布规模预检失败/);
+				assert.match(err.message, /不要据此改提示词/);
+				return true;
+			},
+		);
+	});
 });

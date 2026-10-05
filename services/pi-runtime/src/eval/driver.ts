@@ -148,13 +148,87 @@ function failure(message: string): RuntimeRunResult {
 	};
 }
 
+/**
+ * 查画布当前节点数（**环境前置检查用**，不发模型请求、不烧 token）。
+ *
+ * ## 为什么需要它（2026-10-05 实测踩出来的）
+ *
+ * `tool-discovery-001` 话术是「把这 **30 个**节点按左右关系重新排一下」。实测对照：
+ *
+ * | 画布节点数 | 3 次判定 | 结论 |
+ * |---|---|---|
+ * | 2 | `fail / pass / fail` ⇒ 1/3 | ❌ 模型「先查数量、发现对不上就问用户」——**此环境下是合理行为** |
+ * | 63 | `pass / pass / pass` ⇒ 3/3 | ✅ 正常触发 `arrange_nodes` |
+ *
+ * ⇒ 同一条 case、同一模型、同一份 prompt，**仅换画布就 1/3 → 3/3**。
+ * ⇒ 「模型做不到」与「环境不对」在单次判据下**无法区分**——
+ *不预检就会把环境问题误读成模型问题，然后去改本来正确的 prompt/工具。
+ *
+ * ## 契约（⚠️ 已对生产实测校验，勿凭直觉改）
+ *
+ * - 端点：`POST {NEST_BASE_URL}/agent/internal/get-canvas-summary`
+ * - 鉴权头：**`x-lnkpi-service-token`**（不是 `x-service-token`）
+ * - body：**`{ sessionId }`**（⚠️ **不是** `canvasSessionId`——pi-runtime 侧的
+ *   `canvasSessionId` 到 Nest 这一层已改名为 `sessionId`；传错会得 400）
+ * - 成功返回：**信封格式** `{ code, message, data: { nodes: [...] } }`（实测 HTTP 201）
+ *   —— ⚠️ **不是**裸 `{ nodes }`（我第一版按裸对象解析，预检直接报「探针失效」）
+ * - Nest 地址来自 `NEST_BASE_URL`（如 `http://10.1.0.12:5100/api`），
+ *   **不是** `127.0.0.1:5100`——那在本 pod 内拒绝连接
+ *
+ * 三条都踩过 ⇒ 改之前先跑一次探针核对，别照抄记忆。
+ */
+export async function fetchCanvasNodeCount(
+	nest: { baseUrl: string; token: string },
+	input: { canvasSessionId: string },
+): Promise<{ nodeCount: number } | { error: string }> {
+	// ⭐⭐ 必须把 fetch 自身的异常也兜住：`fetch` 在连不上时会**抛**
+	//（`TypeError: fetch failed`），而不是返回 4xx/5xx。
+	// 漏了这层 ⇒ 「Nest 不可达」会以裸 `fetch failed` 冒到调用方，
+	// 丢掉「这是环境问题、不是模型问题」这个关键信息 ——
+	// 而这正是本预检存在的意义（实测踩过：改前就是这条）。
+	let res: { status: number; body: string };
+	try {
+		res = await postJson(`${nest.baseUrl}/agent/internal/get-canvas-summary`, {
+			sessionId: input.canvasSessionId,
+		}, { "x-lnkpi-service-token": nest.token });
+	} catch (err) {
+		// 网络层失败（Nest 不可达 / DNS / 超时）⇒ 同样是「环境问题」
+		return { error: `Nest 不可达（${nest.baseUrl}）：${err instanceof Error ? err.message : String(err)}` };
+	}
+	if (res.status >= 400) {
+		// ⭐ 4xx 与 5xx 必须分开：前者是「画布不存在/参数错（换画布或改参数能解）」，
+		// 后者是「服务端故障（重试能解）」—— 合并成一句会让排查无从下手。
+		const kind = res.status >= 500 ? "Nest 服务端故障" : "画布不存在或参数错";
+		return { error: `${kind}（HTTP ${res.status}）：${res.body.slice(0, 200)}` };
+	}
+	try {
+		// ⚠️ Nest 的成功响应是**信封格式** `{ code, message, data: {...} }`
+		// （实测：`{"code":0,"message":"ok","data":{"nodes":[...]}}`），
+		// **不是**裸 `{ nodes }`。两种都兼容——工具层未来若改成裸对象也不至于失效。
+		const parsed = JSON.parse(res.body) as {
+			data?: { nodes?: unknown[] };
+			nodes?: unknown[];
+		};
+		const nodes = parsed.data?.nodes ?? parsed.nodes;
+		if (!Array.isArray(nodes)) {
+			// ⚠️ 探针失效（响应结构变了）⇒ 报 error，**绝不谎报 0**——
+			// 谎报 0 会让所有 requiresCanvasNodes 检查误判成「环境不足」。
+			return { error: `探针失效：响应里没有 nodes 数组（${res.body.slice(0, 200)}）` };
+		}
+		return { nodeCount: nodes.length };
+	} catch (err) {
+		return { error: `探针响应不是 JSON：${err instanceof Error ? err.message : String(err)}` };
+	}
+}
+
 async function postJson(
 	url: string,
 	body: unknown,
+	extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: string }> {
 	const res = await fetch(url, {
 		method: "POST",
-		headers: { "content-type": "application/json" },
+		headers: { "content-type": "application/json", ...extraHeaders },
 		body: JSON.stringify(body),
 	});
 	return { status: res.status, body: await res.text() };

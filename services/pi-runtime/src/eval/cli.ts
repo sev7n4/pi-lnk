@@ -72,10 +72,18 @@ async function main(): Promise<void> {
 	// 不是代码配置。缺了 runL1 会 fail-fast 并说清怎么补。
 	const canvasSessionId = process.env.PI_EVAL_CANVAS_SESSION_ID;
 	const userId = process.env.PI_EVAL_USER_ID;
+	// ⭐ Nest 连接信息**仅用于画布规模预检**（见 GoldenCase.requiresCanvasNodes）。
+	// 缺了不会静默—— runL1 会 fail-fast 并说清怎么补，
+	// 因为「静默跳过预检」正是把环境问题伪装成模型问题的路径。
+	// pi-runtime pod 内这两个变量本来就有（NEST_BASE_URL / NEST_SERVICE_TOKEN），
+	// 用不同前缀是为了不与pi-runtime 自身的运行时配置混淆。
+	const nestBaseUrl = process.env.PI_EVAL_NEST_BASE_URL ?? process.env.NEST_BASE_URL;
+	const nestToken = process.env.PI_EVAL_NEST_TOKEN ?? process.env.NEST_SERVICE_TOKEN;
 	const summary = await runL1({
 		baseUrl,
 		...(canvasSessionId ? { canvasSessionId } : {}),
 		...(userId ? { userId } : {}),
+		...(nestBaseUrl && nestToken ? { nest: { baseUrl: nestBaseUrl, token: nestToken } } : {}),
 		...(args.only ? { only: args.only } : {}),
 		...(args.timeoutMs !== undefined ? { caseTimeoutMs: args.timeoutMs } : {}),
 		...(args.intervalMs !== undefined ? { intervalMs: args.intervalMs } : {}),
