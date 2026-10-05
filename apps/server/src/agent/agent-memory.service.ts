@@ -1,5 +1,6 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common'
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { markSuppressed } from './memory-suppression'
 
 /** 与 pi-runtime tools/memory.ts 的常量保持一致（两侧纵深夹取，改一处必须同步另一处）。 */
 export const MEMORY_CONTENT_MAX = 2000
@@ -23,6 +24,46 @@ export type AgentMemoryScope = 'canvas' | 'user'
 
 /** 召回时的作用域过滤；'any' = 不限（跨画布条目靠 crossCanvas 标记自曝，不静默丢弃）。 */
 export type AgentMemoryScopeFilter = AgentMemoryScope | 'any'
+
+// ── M6b：晋升候选队列（spec docs/superpowers/specs/2026-10-06-memory-promotion-m6b-design.md §2.1） ──
+
+/** 进候选池的重复次数阈值（§13.3 拍板：同一画布内重复出现 ≥3 次）。 */
+export const PROMOTION_REPEAT_THRESHOLD = 3
+/** 候选扫描窗口：canvas 行的 SQL LIMIT。记忆表增速低（agent_auto 每轮至多几条），
+ * 5000 行窗口 + JS 聚合在 SQLite 上足够；超限在响应标注 truncated，不静默。 */
+export const PROMOTION_SCAN_MAX = 5000
+/** 候选默认返回条数（count 降序取最热）。 */
+export const PROMOTION_CANDIDATES_LIMIT = 20
+/** 原文样本截断长度（响应给人工判读用，不是给模型——长内容没必要全量出）。 */
+const SAMPLE_CONTENT_MAX = 120
+
+/**
+ * 归一化：只做**无损**的字面归一（trim → 折叠空白 → 小写 → 反复剥离尾部标点），
+ * 不做任何语义处理。判据是「字面重复」——§13.3 拒绝了关键词判据（一次性项目名会被误提），
+ * 同理近义改写也不许合并：误晋升的成本是全量用户 × 每轮静态段，宁漏勿错。
+ */
+export function normalizeMemoryContent(content: string): string {
+  const tailPunct = /[。.！!？?；;，,、]+$/
+  return content
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(tailPunct, '')
+}
+
+/** 晋升候选：聚合后的一条（只出事实，不做 §13.3 的三级分级——分级需要人读内容）。 */
+export interface PromotionCandidate {
+  sessionId: string
+  /** 归一化后的聚合键（判读原文看 sampleContents）。 */
+  normalizedContent: string
+  count: number
+  firstSeenAt: string
+  lastSeenAt: string
+  /** 全部成员行 id——抑制标记 / 核对用。 */
+  memoryIds: string[]
+  /** 原文样本（按 createdAt 新→旧取 ≤3 条，截断到 120 字）。 */
+  sampleContents: string[]
+}
 
 /** 召回条目：归属三字段随行返回，模型据此判断「这是记忆，不是当前观察」。 */
 export interface AgentMemoryItem {
@@ -165,5 +206,114 @@ export class AgentMemoryService {
         crossCanvas: m.scope === 'canvas' && !!currentSession && (m.sessionId ?? null) !== currentSession,
       }))
     return { items }
+  }
+
+  /**
+   * M6b 晋升候选队列（spec §2.1）：canvas 行按 (sessionId, 归一化内容) 聚合，重复 ≥3 进候选。
+   *
+   * - 只扫 `scope='canvas'`（§13.3：用户偏好不晋升；项目事实/行为纠正类默认落 canvas），
+   *   且排除 `source='promoted'`——晋升落库的审计行不得再次进候选（否则队列永远显示已处理条目）。
+   * - **只出事实不做分级**：§13.3 的三级分级（偏好不升 / 事实进 user 档 / 纠正进 core 组）
+   *   需要人读内容才能判，端点做不了也不该做。
+   * - 扫描窗口封顶 PROMOTION_SCAN_MAX，超限在响应标注 truncated（不静默截断——
+   *   静默丢窗口会让人误以为「没有更多重复」）。
+   * - 队列是只读视图；晋升动作本身走 PR（6 处同步 + prompt:lint），见 docs/ops/memory-m6b-runbook.md。
+   */
+  async promotionCandidates(input: {
+    userId: string
+    minCount?: number
+    limit?: number
+  }): Promise<{ candidates: PromotionCandidate[]; scannedRows: number; threshold: number; truncated: boolean }> {
+    const threshold = input.minCount && input.minCount >= 1 ? Math.floor(input.minCount) : PROMOTION_REPEAT_THRESHOLD
+    const limit = input.limit && input.limit >= 1 ? Math.min(Math.floor(input.limit), 100) : PROMOTION_CANDIDATES_LIMIT
+    const rows = await this.prisma.agentMemory.findMany({
+      where: { userId: input.userId, scope: 'canvas', source: { not: 'promoted' } },
+      orderBy: { createdAt: 'desc' },
+      take: PROMOTION_SCAN_MAX,
+    })
+    const truncated = rows.length >= PROMOTION_SCAN_MAX
+    const groups = new Map<string, {
+      sessionId: string
+      normalizedContent: string
+      members: { id: string; at: string }[]
+      firstSeenAt: string
+      lastSeenAt: string
+      samples: string[]
+    }>()
+    for (const r of rows) {
+      const key = `${r.sessionId ?? ''}\u0000${normalizeMemoryContent(r.content)}`
+      let g = groups.get(key)
+      if (!g) {
+        g = { sessionId: r.sessionId ?? '', normalizedContent: normalizeMemoryContent(r.content), members: [], firstSeenAt: '', lastSeenAt: '', samples: [] }
+        groups.set(key, g)
+      }
+      const at = r.createdAt.toISOString()
+      g.members.push({ id: r.id, at })
+      if (!g.firstSeenAt || at < g.firstSeenAt) g.firstSeenAt = at
+      if (at > g.lastSeenAt) g.lastSeenAt = at
+      // 样本按原文去重：字面重复的成员出 N 条同文没有判读价值
+      if (g.samples.length < 3 && !g.samples.includes(r.content.slice(0, SAMPLE_CONTENT_MAX))) {
+        g.samples.push(r.content.slice(0, SAMPLE_CONTENT_MAX))
+      }
+    }
+    const candidates = [...groups.values()]
+      .filter((g) => g.members.length >= threshold)
+      .sort((a, b) => b.members.length - a.members.length || (a.lastSeenAt < b.lastSeenAt ? 1 : a.lastSeenAt > b.lastSeenAt ? -1 : 0))
+      .slice(0, limit)
+      .map((g) => ({
+        sessionId: g.sessionId,
+        normalizedContent: g.normalizedContent,
+        count: g.members.length,
+        firstSeenAt: g.firstSeenAt,
+        lastSeenAt: g.lastSeenAt,
+        // 稳定契约：成员按 createdAt 升序（首见在前）——SQL 返回是 desc，直接透传顺序不稳定
+        memoryIds: [...g.members].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).map((m) => m.id),
+        sampleContents: g.samples,
+      }))
+    return { candidates, scannedRows: rows.length, threshold, truncated }
+  }
+
+  /**
+   * M6b 抑制标记入口（spec §2.2）：人工确认后经由本方法下发抑制。
+   *
+   * 链路：归属校验 → Nest 侧进程内表（注入通道**立即生效**）→ fail-soft 转发
+   * pi-runtime `/internal/memory-suppress`（recall_memory 通道）。
+   *
+   * 为什么归属校验是 404 而不是 403：暴露「这条 id 存在但不属于你」本身就是信息泄露，
+   * 与 sessions 的既有处理一致（不存在与不属于同态）。
+   * 为什么转发失败不报错：主污染通道是每轮自动注入（Nest 侧），Nest 标记已生效；
+   * recall_memory 通道缺失是可接受降级，如实回报 forwarded 供调用方判断。
+   */
+  async suppressMemory(input: { userId: string; memoryId: string; reason: string }): Promise<{ forwarded: boolean }> {
+    const memoryId = (input.memoryId ?? '').trim()
+    if (!memoryId) throw new BadRequestException('memoryId required')
+    const row = await this.prisma.agentMemory.findUnique({ where: { id: memoryId } })
+    if (!row || row.userId !== input.userId) throw new NotFoundException('memory not found')
+    markSuppressed(memoryId, (input.reason ?? '').trim() || 'unspecified')
+    return { forwarded: await this.forwardSuppression(memoryId, (input.reason ?? '').trim()) }
+  }
+
+  /** 转发到 pi-runtime 内部端点；任何失败（未配置/超时/非 2xx）都只降级为 forwarded:false。 */
+  private async forwardSuppression(memoryId: string, reason: string): Promise<boolean> {
+    // 与 agent.service.ts 的 runtimeUrl 同源（PI_RUNTIME_URL，运行时读取而非启动快照）
+    const runtimeUrl = process.env.PI_RUNTIME_URL?.trim() || undefined
+    if (!runtimeUrl) return false
+    try {
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), 3000)
+      try {
+        const res = await fetch(`${runtimeUrl.replace(/\/$/, '')}/internal/memory-suppress`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ memoryId, reason }),
+          signal: ac.signal,
+        })
+        return res.ok
+      } finally {
+        clearTimeout(timer)
+      }
+    } catch {
+      return false
+    }
   }
 }
