@@ -318,13 +318,15 @@
         <div class="d"><code>hook-contract.ts</code>：<code>details</code>/<code>args</code>/<code>payload</code> 从 <code>as</code> 强转改显式解析，顺带修掉 <code>before_payload</code> 的真实静默截断。</div>
       </div>
       <div class="tl-item">
-        <div class="tl-head"><span class="ph">P0</span><span class="t">tool_search 触发闭环（唯一还欠的 P0）</span></div>
+        <div class="tl-head"><span class="ph">P0</span><span class="t">tool_search 触发闭环（唯一还欠的 P0）</span> <span class="ph" style="background:#dcfce7;color:#166534;border-color:#86efac">可达性已修 #212</span></div>
         <div class="d">不是「让它可达」——它<strong>已在常驻集里、每轮都下发</strong>（<code>ALWAYS_ON_TOOL_NAMES</code> 含 <code>tool_search</code>，<code>toolTiering</code> 默认 true）。欠的是<strong>「什么时候该搜」的线索</strong>，且线索走 <b>skills 通道、不占 L6</b>。</div>
-        <div class="tl-note">验收：<code>pi_runtime_tool_search_calls_total{outcome}</code> 首条 <code>hit</code> 出现（当前生产 0）。</div>
+        <div class="d" style="border-left:3px solid #16a34a;padding-left:8px"><b>2026-10-06 进度（两处事实更正）</b>：① <b>可达性</b>——<code>#212</code> 修掉中文查询整句比对必 miss（中文 token 切 2-gram + 字段加权阈值 2，顺带修掉 "undo" 误激活 redo）。② <b>「何时搜」其实已写进规则</b>——<code>canvas_daily_ops.md</code> 第 22 条「工具列表里没有的能力，先 <code>tool_search</code> 搜」，本条原文「没有资产告知何时搜」的说法<b>不成立</b>；roadmap §6 雷 2（该文件暂存删除态）同步解除，文件仍在 master 且仍在 <code>COMPOSED_IDS</code>。<br>⇒ 触发率为 0 的真因剩两条：<b>常驻 36/47 导致"没得可搜"</b>（动机问题）＋ 弱模型对 L6 尾部规则的遵从度。都属 P1 的动机侧，不再是可达性问题。</div>
+        <div class="tl-note">验收：<code>pi_runtime_tool_search_calls_total{outcome}</code> 首条 <code>hit</code> 出现（当前生产 0）。⚠️ <code>#212</code> 合入 master 但<b>未上线</b>——pi-runtime 需手工 dispatch <code>runtime-deploy.yml</code>（tag=短 SHA），生产指标在派发前不会变。</div>
       </div>
       <div class="tl-item">
-        <div class="tl-head"><span class="ph">P1</span><span class="t">能力目录 + 延迟集首批</span></div>
+        <div class="tl-head"><span class="ph">P1</span><span class="t">能力目录 + 延迟集首批</span> <span class="ph" style="background:#dcfce7;color:#166534;border-color:#86efac">目录已落地 #211</span></div>
         <div class="d"><code>capability-map</code> 落地；常驻 36 → 目标 <b>≤ 28</b>，延迟集 ≥ 12。首批下沉 C 类 6 个 + B 类长尾。</div>
+        <div class="d" style="border-left:3px solid #16a34a;padding-left:8px">目录已产出：<a href="./tool-capability-catalog.md"><b>tool-capability-catalog.md</b></a>（47 工具 × 点名资产 × 归属 × 触发话术 + 可重跑扫描命令）。<br>⚠️ 它同时给出一条<b>下沉的硬边界</b>：按「点名就必须常驻」的准绳，常驻 36 里<b>零下发点名的只有 2 个</b>（<code>run_text_generation</code> / <code>run_prompt_generation</code>，属 <code>tiering.ts:25</code> 的有意豁免）⇒ 只靠下沉到不了 28，必须先<b>减点名</b>（改 skill/规则措辞）或接受「skill 点名 = 中风险、可下沉 + 在 skill 内补 <code>tool_search</code> 线索」。<b>这条待拍板。</b><br>另有 1 项<b>反向违规</b>：规则第 19 条点名 <code>focus_nodes</code> 而它在延迟集 ⇒ 见 catalog 发现 A，推荐修法 A3（<code>arrange_nodes</code> 结果自带 focus），A1 与本条「≤28」反向。</div>
         <div class="tl-note">准绳不变：<b>「有没有资产按名字点名它」</b>——点名就必须常驻，否则模型吃 <code>Tool X is unavailable</code> 且无恢复路径。</div>
       </div>
       <div class="tl-item">
