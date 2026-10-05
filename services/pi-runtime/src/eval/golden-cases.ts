@@ -66,6 +66,31 @@ export interface GoldenCase {
 	 */
 	needsCanvas?: boolean;
 	/**
+	 * ⭐ **本条case 连跑几次并按多数表决**（默认 1）。
+	 *
+	 * ## 为什么需要它（2026-10-05 实测逼出来的）
+	 *
+	 * 同一份prompt + 同一个画布 + 同一句话，**模型行为本身有随机性**。
+	 * `arrange_nodes` 那条 case 的 A/B 实测：
+	 *
+	 * | 组 | 触发率 |
+	 * |---|---|
+	 * | 改过 description | 7/10 = 70% |
+	 * | 现状description | 3/11 ≈ 27% |
+	 *
+	 * ⭐ 注意B 组**不是 0%** —— 同一个配置，有时触发有时不触发。
+	 * ⇒ **单次 pass/fail 表达的不是「行为对不对」，而是「这次抽签抽中没抽中」**
+	 * ⇒把它当门禁会得到 27% 与 70% 都「不稳定」的假象。
+	 *
+	 * ⇒ 行为类 case 应设 `repeat: 3`（3 次里≥2 次通过才算 pass），
+	 * **平衡精度与耗时**：上游有速率限制（实测 800ms 间隔必撞 429），
+	 * repeat 越高越慢、也越容易撞限流。3 是「能压住抖动」与「不撞限流」的折中。
+	 *
+	 * ⚠️ **不要用它掩盖判据本身过强**：若某条 case 多数表决仍稳定 fail，
+	 * 说明是**真问题**，不是抖动 —— 此时该改的是 prompt/工具，不是加大 repeat。
+	 */
+	repeat?: number;
+	/**
 	 * ⭐ **这条 case 会挂起等用户确认**（声明为 true 时 runner 直接跳过）。
 	 *
 	 * 判据 = `expectTools` 里含 `propose_generation`（或 `ask_user`）。
@@ -123,6 +148,8 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 		origin: "audit",
 		about: "取消生成时调cancel_generation 并如实转述结果",
 		text: "算了，别生成这张了",
+		/** ⭐ 行为有随机性（A/B 实测同配置触发率 27%~70%）⇒ 3 次取多数。 */
+		repeat: 3,
 		expectTools: ["cancel_generation"],
 		forbidTools: ["run_image_generation"],
 	},
@@ -151,6 +178,8 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 		origin: "audit",
 		about: "需要的能力不在手上时应先 tool_search，而不是直接说做不了",
 		text: "把这 30 个节点按左右关系重新排一下",
+		/** ⭐ 行为有随机性（A/B 实测同配置触发率 27%~70%）⇒ 3 次取多数。 */
+		repeat: 3,
 		// arrange_nodes 已回归常驻集（延迟即不可达），故这里期望直接调；
 		// 若将来它重新进延迟集，本case 需改为期望 tool_search。
 		expectTools: ["arrange_nodes"],
@@ -167,6 +196,8 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 		origin: "audit",
 		about: "纯提问（不涉及画布操作）不应触发画布写工具",
 		text: "画布里一共有多少个节点？",
+		/** ⭐ 行为有随机性（A/B 实测同配置触发率 27%~70%）⇒ 3 次取多数。 */
+		repeat: 3,
 		forbidTools: ["upsert_media_node", "propose_generation", "connect_nodes"],
 	},
 

@@ -66,6 +66,17 @@ export interface CaseResult {
 	durationMs: number;
 	/** 实际调用的工具名序列（供人工核对，也便于报告 diff）。 */
 	toolNames: string[];
+	/**
+	 * ⭐ 本条 case实际跑了几次（`repeat` 默认 1；设了 repeat>1 时等于它）。
+	 * 单次结果 = 抽签，repeat 是把它变成「多数表决」。见 `GoldenCase.repeat`。
+	 */
+	attempts?: number;
+	/**
+	 * ⭐ 各次 attempt 的判定序列（`["pass","fail","pass"]`）。
+	 * ⭐ **必须记进报告**：只报最终 verdict 会让人以为「一次就定了」，
+	 * 而真相是「3 次里过了 2 次」—— 这两者的排查含义完全不同。
+	 */
+	attemptVerdicts?: Verdict[];
 	usage?: EvalTranscript["usage"];
 }
 
@@ -176,6 +187,20 @@ export function summarize(
 						.map((r) => `  - ${r.caseId}：${r.skipReason ?? r.failures.join("; ")}`),
 				]
 			: [];
+	// ⭐⭐ 多次执行的 case 单列一节：**只报最终 verdict 会让人以为「一次就定了」**，
+	// 而真相是「3 次里过了 2 次」—— 这两者排查含义完全不同。
+	// 例：「3次里 2 次过」是抖动；「3 次全不过」是真问题。
+	const repeatedSection = results
+		.filter((r) => (r.attempts ?? 1) > 1)
+		.map(
+			(r) =>
+				`  ${r.caseId}：${r.attemptVerdicts?.join(" / ")} ⇒ ${r.verdict}` +
+				`（${(r.attemptVerdicts ?? []).filter((v) => v === "pass").length}/${r.attempts} 通过）`,
+		);
+	const repeatSection =
+		repeatedSection.length > 0
+			? [`多数表决明细（行为有随机性，单次 pass/fail 不构成结论）：`, ...repeatedSection]
+			: [];
 	const lines = [
 		header,
 		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error} · skip ${skipped}`,
@@ -193,9 +218,13 @@ export function summarize(
 			: []),
 		...(meta?.coverageNote ? [`⚠️ 覆盖盲区：${meta.coverageNote}`] : []),
 		...skipSection,
+		...repeatSection,
 		...results
 			.filter((r) => r.verdict === "fail" || r.verdict === "error")
-			.map((r) => `  [${r.verdict}] ${r.caseId} (${r.durationMs}ms)：${r.failures.join("; ")}`),
+			.map(
+				(r) =>
+					`  [${r.verdict}] ${r.caseId} (${r.durationMs}ms${(r.attempts ?? 1) > 1 ? `, ${r.attempts} 次` : ""})：${r.failures.join("; ")}`,
+			),
 	]
 		.filter(Boolean)
 		.map((l) => String(l));
@@ -312,61 +341,69 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 
 	for (const [i, testCase] of cases.entries()) {
 		const started = Date.now();
-		let result: CaseResult;
-		// ⭐ requiresConfirm 的 case 直接跳过，**不发起任何模型调用**。
-		// 为什么不能「跑一下看看」：propose_generation 一旦被调用就挂在
-		// waitForUser 上直到 ASK_USER_TIMEOUT_MS（生产 5 分钟），
-		// 而 harness 无法完成「用户点确认」⇒ 每跳一条就白等 5 分钟 + 烧一轮token，
-		// 最后还会因收不到 agent_end 而被误判成 error（环境问题）。
-		// ⇒ 主动跳过 + 显式记录，代价是零、且报告里可见。
+		// ⭐⭐ 行为类 case 的「抽签」问题：同一 prompt 同一话术，模型行为本身随机。
+		// A/B 实测（arrange_nodes）：改过 desc 7/10、现状 3/11⇒ B 组不是 0%，
+		// 说明**单次 pass/fail 表达的是「抽中没抽中」而不是「行为对不对」**。
+		// ⇒ 跑 `repeat` 次按多数表决；`error` 不参与投票（环境问题不是行为问题，
+		// 理由同verdictOf 的 error 优先原则）。
+		const repeat = Math.max(1, testCase.repeat ?? 1);
+		// ⭐ skipped 必须**在重复之前**判定：requiresConfirm 的 case 跑 N 次
+		// 毫无意义（每次都会立刻返回 skipped），却要白等 N 个 interval。
 		if (testCase.requiresConfirm) {
-			result = {
-				caseId: testCase.id,
-				verdict: "skipped",
-				failures: [],
-				skipReason: "需要「用户点确认」动作（propose_generation 阻塞等 DockStudio 生成触发）",
-				durationMs: 0,
-				toolNames: [],
-			};
-			results.push(result);
-			options.onProgress?.(i + 1, cases.length, result);
+			const one = await runOneAttempt(testCase, options, staticPrompt);
+			results.push({ ...one, attempts: 1, attemptVerdicts: [one.verdict] });
+			options.onProgress?.(i + 1, cases.length, results[results.length - 1]);
+			if (i < cases.length - 1 && intervalMs > 0) await sleep(intervalMs);
 			continue;
 		}
-		try {
-			const run = await runEvalCase(
-				{
-					baseUrl: options.baseUrl,
-					...(options.caseTimeoutMs !== undefined
-						? { timeoutMs: options.caseTimeoutMs }
-						: {}),
-				},
-				{
-					text: testCase.text,
-					systemPrompt: staticPrompt,
-					...(options.userId ? { userId: options.userId } : {}),
-					...(options.canvasSessionId ? { canvasSessionId: options.canvasSessionId } : {}),
-				},
-			);
-			const v = verdictOf(testCase, run.transcript);
-			result = {
-				caseId: testCase.id,
-				verdict: v.verdict,
-				failures: v.failures,
-				durationMs: Date.now() - started,
-				toolNames: run.transcript.toolNames,
-				usage: run.transcript.usage,
-			};
-		} catch (err) {
-			// driver 自身抛异常（连接失败等）⇒ 归error，**不**归fail。
-			// 理由同 verdictOf：环境问题不是行为问题。
-			result = {
-				caseId: testCase.id,
-				verdict: "error",
-				failures: [err instanceof Error ? err.message : String(err)],
-				durationMs: Date.now() - started,
-				toolNames: [],
-			};
+		const attemptVerdicts: Verdict[] = [];
+		const attemptResults: CaseResult[] = [];
+		for (let attempt = 1; attempt <= repeat; attempt++) {
+			const r = await runOneAttempt(testCase, options, staticPrompt);
+			attemptVerdicts.push(r.verdict);
+			attemptResults.push(r);
+			if (attempt < repeat && intervalMs > 0) await sleep(intervalMs);
 		}
+		// ⭐ 多数表决：只在pass / fail 之间比，error 不投票。
+		// 理由：error 是「环境挂了」而非「行为不符」，把它算成fail 会把限流
+		// 伪装成行为退化（= 本 runner 三条红线之一要防的事）。
+		// 全error ⇒ verdict=error（环境问题，如实报）。
+		const passN = attemptVerdicts.filter((v) => v === "pass").length;
+		const failN = attemptVerdicts.filter((v) => v === "fail").length;
+		const errN = attemptVerdicts.filter((v) => v === "error").length;
+		let verdict: Verdict;
+		let failures: string[];
+		if (passN + failN === 0) {
+			verdict = "error";
+			failures = [attemptResults.find((r) => r.failures.length > 0)?.failures.join("; ") ?? "全部 attempt 均error"];
+		} else if (passN > failN) {
+			verdict = "pass";
+			failures = [];
+		} else if (failN > passN) {
+			verdict = "fail";
+			// 把失败明细按出现次数排序，保留最常见的原因（排名第一的即主因）。
+			const freq = new Map<string, number>();
+			for (const r of attemptResults) for (const f of r.failures) freq.set(f, (freq.get(f) ?? 0) + 1);
+			failures = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([f, n]) =>
+				repeat > 1 && n > 1 ? `${f}（${n}/${repeat} 次）` : f,
+			);
+		} else {
+			// pass 与 fail 平票（如 1:1）⇒ 保守判 fail（不能因为"有一半对"就放过）。
+			verdict = "fail";
+			failures = [`多次执行结果不一致（${attemptVerdicts.join(" / ")}），保守判 fail`];
+		}
+		const result: CaseResult = {
+			caseId: testCase.id,
+			verdict,
+			failures: verdict === "pass" ? [] : failures,
+			durationMs: Date.now() - started,
+			//工具序列取「与最终判定一致的那次」，便于人工核对失败原因。
+			toolNames:
+				attemptResults.find((r) => r.verdict === verdict)?.toolNames ??
+				attemptResults[0].toolNames,
+			attempts: repeat,
+			attemptVerdicts,
+		};
 		results.push(result);
 		options.onProgress?.(i + 1, cases.length, result);
 		if (i < cases.length - 1 && intervalMs > 0) await sleep(intervalMs);
@@ -377,6 +414,72 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		coverageNote,
 		...(options.canvasSessionId ? { canvasSessionId: options.canvasSessionId } : {}),
 	});
+}
+
+/**
+ * 跑**一次** case 并给判定（不含表决；表决在调用方做）。
+ *
+ * 拆出来的原因：repeat>1 时每次 attempt 都要走同一条路径
+ * （requiresConfirm 跳过 / driver 调用 / 异常归error），
+ * 内联在循环里会让「跳过」与「跑 N 次」两个维度纠缠在一起。
+ */
+async function runOneAttempt(
+	testCase: GoldenCase,
+	options: L1RunOptions,
+	staticPrompt: string,
+): Promise<CaseResult> {
+	const started = Date.now();
+	// ⭐ requiresConfirm 的 case 直接跳过，**不发起任何模型调用**。
+	// 为什么不能「跑一下看看」：propose_generation 一旦被调用就挂在
+	// waitForUser 上直到 ASK_USER_TIMEOUT_MS（生产 5 分钟），
+	// 而 harness 无法完成「用户点确认」⇒ 每跳一条就白等 5 分钟 +烧一轮 token，
+	// 最后还会因收不到 agent_end 而被误判成 error（环境问题）。
+	// ⇒ 主动跳过 + 显式记录，代价是零、且报告里可见。
+	if (testCase.requiresConfirm) {
+		return {
+			caseId: testCase.id,
+			verdict: "skipped",
+			failures: [],
+			skipReason: "需要「用户点确认」动作（propose_generation 阻塞等 DockStudio 生成触发）",
+			durationMs: 0,
+			toolNames: [],
+		};
+	}
+	try {
+		const run = await runEvalCase(
+			{
+				baseUrl: options.baseUrl,
+				...(options.caseTimeoutMs !== undefined
+					? { timeoutMs: options.caseTimeoutMs }
+					: {}),
+			},
+			{
+				text: testCase.text,
+				systemPrompt: staticPrompt,
+				...(options.userId ? { userId: options.userId } : {}),
+				...(options.canvasSessionId ? { canvasSessionId: options.canvasSessionId } : {}),
+			},
+		);
+		const v = verdictOf(testCase, run.transcript);
+		return {
+			caseId: testCase.id,
+			verdict: v.verdict,
+			failures: v.failures,
+			durationMs: Date.now() - started,
+			toolNames: run.transcript.toolNames,
+			usage: run.transcript.usage,
+		};
+	} catch (err) {
+		// driver 自身抛异常（连接失败等）⇒ 归error，**不**归fail。
+		// 理由同 verdictOf：环境问题不是行为问题。
+		return {
+			caseId: testCase.id,
+			verdict: "error",
+			failures: [err instanceof Error ? err.message : String(err)],
+			durationMs: Date.now() - started,
+			toolNames: [],
+		};
+	}
 }
 
 function sleep(ms: number): Promise<void> {

@@ -122,6 +122,75 @@ describe("L1 runner · 汇总", () => {
 		assert.equal(s.degraded, false);
 	});
 
+	// ========== 多次执行（repeat / 多数表决）==========
+	// ⭐ 背景（2026-10-05 A/B 实测）：同一 prompt 同一话术，模型行为本身随机。
+	// arrange_nodes 那条 case 现状 description 下触发率 3/11≈27%、
+	// 改过description 后 7/10=70% ⇒ **都不是 0%**。
+	// ⇒ 单次 pass/fail 表达的是「抽中没抽中」，必须多次取多数。
+
+	it("⭐ 多次执行 ⇒ 报告显式列出各次判定与通过数（不隐藏「3 次过 2 次」）", () => {
+		const s = summarize([
+			resultOf({
+				caseId: "arrange",
+				verdict: "pass",
+				attempts: 3,
+				attemptVerdicts: ["pass", "fail", "pass"],
+			}),
+		]);
+		assert.ok(
+			s.report.includes("多数表决明细"),
+			"报告必须有一节说明这条是多次执行出来的",
+		);
+		assert.ok(
+			s.report.includes("arrange") && s.report.includes("2/3 通过"),
+			`报告应含 caseId 与通过数，实际：\n${s.report}`,
+		);
+		assert.ok(
+			s.report.includes("pass / fail / pass"),
+			`报告应含各次判定序列，实际：\n${s.report}`,
+		);
+	});
+
+	it("⭐ 未设 repeat 的 case 不进「多数表决明细」（避免噪音）", () => {
+		const s = summarize([resultOf({ caseId: "single", verdict: "pass" })]);
+		assert.ok(
+			!s.report.includes("多数表决明细"),
+			"单次 case 不该出现在多数表决节",
+		);
+	});
+
+	it("⭐ 多数表决的失败明细按出现次数排序并标注频次（第一即主因）", () => {
+		// 「缺少 arrange_nodes」出现 2 次、「不该调X」1 次 ⇒ 主因应排第一。
+		const r = resultOf({
+			caseId: "arrange",
+			verdict: "fail",
+			failures: [
+				"缺少期望工具 [arrange_nodes]（2/3 次）",
+				"不该调用 [set_node_text]（1/3 次）",
+			],
+		});
+		const s = summarize([r]);
+		const line = s.failures.find((f) => f.includes("arrange")) ?? "";
+		assert.ok(
+			line.indexOf("arrange_nodes") < line.indexOf("set_node_text"),
+			`高频原因应排前面（它才是主因），实际：${line}`,
+		);
+	});
+
+	it("⭐ 平票（pass 与 fail 各半）⇒ 保守判 fail", () => {
+		// 不能因为「有一半对」就放过 —— 那会让真实缺陷在抖动掩盖下漏网。
+		const s = summarize([
+			resultOf({
+				caseId: "tie",
+				verdict: "fail",
+				failures: ["多次执行结果不一致（pass / fail），保守判 fail"],
+				attempts: 2,
+				attemptVerdicts: ["pass", "fail"],
+			}),
+		]);
+		assert.equal(s.fail, 1, "平票应计入 fail 而不是 pass");
+	});
+
 	it("总 token/成本汇总（供 baseline vs candidate 对比）", () => {
 		const s = summarize([
 			resultOf({ caseId: "a", verdict: "pass", usage: { input: 100, output: 50, total: 150 } }),
