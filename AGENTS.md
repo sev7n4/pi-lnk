@@ -83,6 +83,15 @@
 
 `vendor/` 目录**禁止业务 patch**（只允许记录版本与来源），否则 upmerge 时无法与上游对齐。
 
+**升版前必跑 `pnpm verify-tool-contract`**（已接进 `ci.yml` 的 `Verify spec figures`）。
+上游是 0.x、**没有 semver 兜底**，而 4 个 hook（`before_tool` / `after_tool` /
+`transform_context` / `before_payload`）是靠**运行时读字段**消费的：上游把
+`event.toolName` 之类的字段改名或删掉，消费方不会报错，只会静默 fail-soft
+（功能悄悄没了，指标也看不出来）。该脚本比对 vendored HookMap 与我们实际依赖的
+字段集合，漂移即 exit 1。自由形态字段（`details` / `args` / `payload`）的形态守卫
+在 `services/pi-runtime/src/hook-contract.ts`——**不要用 `as` 强转后直接取属性**，
+`{ ...payload }` 在 payload 为 null / 字符串时会静默产出残缺对象。
+
 ## 系统地图
 
 改之前先知道东西在哪、改哪层会走哪条流水线。**这一节的所有事实都经实测核实，改动时先复核。**

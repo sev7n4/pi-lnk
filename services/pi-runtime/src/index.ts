@@ -15,6 +15,7 @@ import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
 import { governImagePayload } from "./payload-images.js";
+import { readRecord, readStringField, readBooleanField } from "./hook-contract.js";
 import {
 	DEFAULT_TOOL_RESULT_MAX_CHARS,
 	capToolResult,
@@ -79,12 +80,20 @@ const manager = new SessionManager(
 			const hookCfg = loadRuntimeConfig(process.env);
 			harness.hooks.on("after_tool", async (event) => {
 				if (event.toolName === "propose_generation" && !event.isError) {
-					const nodeId = (event.args as { node_id?: unknown } | undefined)?.node_id;
-					if (typeof nodeId === "string" && nodeId) {
+					// args / details 是 JsonValue，上游不保证结构。不再 as 强转：形态不符时
+					// 给出可判读的 reason 并留痕（此前静默 undefined ⇒ 本轮提议没被记录、
+					// gate 跨轮放行悄悄失效，且没有任何日志）。
+					const nodeId = readStringField(event.args, "node_id", "after_tool.args");
+					if (!nodeId.ok) {
+						console.warn(
+							`[pi-runtime] after_tool args 与契约不符（fail-soft，跳过本轮提议记录）：${nodeId.reason}`,
+						);
+					} else {
 						// B-2：阻塞确认后 details.confirmed=true → gate 视同跨轮放行（spec §4.3）
-						const confirmed =
-							(event.details as { confirmed?: unknown } | null | undefined)?.confirmed === true;
-						gateStore.markProposed(sessionId, nodeId, { confirmed });
+						const confirmed = readBooleanField(event.details, "confirmed", "after_tool.details");
+						gateStore.markProposed(sessionId, nodeId.value, {
+							confirmed: confirmed.ok && confirmed.value,
+						});
 					}
 				}
 				// 统一上限（审计「缺统一上限」）：体积观测全量接线 + 越界兜底截断。
@@ -114,10 +123,20 @@ const manager = new SessionManager(
 			// 这里再包一层 try/catch 双保险：治理炸了就 payload 原样放行。
 			harness.hooks.on("before_payload", async (event) => {
 				try {
-					const result = governImagePayload(event.payload, hookCfg.directImageHistoryRounds ?? 2, 4);
+					// payload 是 unknown：`{...payload}` 在 null / 字符串 / 数组时会静默产出
+					// 残缺对象（除 messages 外的字段全丢）且看起来仍是个正常对象 —— 先判形态，
+					// 坏就原样放行（不治理），而不是交付一份缺字段的 payload。
+					const shaped = readRecord(event.payload, "before_payload.payload");
+					if (!shaped.ok) {
+						console.warn(
+							`[pi-runtime] before_payload payload 与契约不符（fail-soft，原样放行）：${shaped.reason}`,
+						);
+						return undefined;
+					}
+					const result = governImagePayload(shaped.value, hookCfg.directImageHistoryRounds ?? 2, 4);
 					if (result.trims.length === 0) return undefined; // 零变更零拷贝
 					for (const t of result.trims) metrics.observeBeforePayloadTrim(t.reason);
-					return { payload: { ...(event.payload as Record<string, unknown>), messages: result.messages } };
+					return { payload: { ...shaped.value, messages: result.messages } };
 				} catch (err) {
 					console.warn("[pi-runtime] before_payload image governance failed (fail-soft):", err);
 					return undefined;

@@ -39,6 +39,9 @@ jobs:
       - name: Verify spec figures (R1–R8)
         run: pnpm verify-spec-figures
 
+      - name: Verify tool framework contract (pi-runtime ↔ vendored pi-agent-core)
+        run: pnpm verify-tool-contract
+
       - name: Verify AGENTS.md factual claims
         run: pnpm verify-claims
 
