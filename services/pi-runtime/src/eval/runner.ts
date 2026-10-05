@@ -33,7 +33,7 @@
  * 首批更重要的是「先能跑出可信的单次结果」，故本模块只产出结构化报告，
  * baseline/candidate 的对比留给下一层（判据与报告形态已为此预留：`usage` 汇总 + 可 diff 报告）。
  */
-import { runEvalCase, type RuntimeDriverOptions } from "./driver.js";
+import { runEvalCase, fetchCanvasNodeCount, type RuntimeDriverOptions } from "./driver.js";
 import { GOLDEN_CASES, evaluateCase, type GoldenCase } from "./golden-cases.js";
 import { loadStaticPromptForEval, PLAN_CONVENTION_TAIL, type StaticPromptResult } from "./registry.js";
 import type { EvalTranscript } from "./transcript.js";
@@ -286,6 +286,18 @@ export interface L1RunOptions extends RuntimeDriverOptions {
 	 * 「拿不到数据」和「数据说明行为不符」必须区分，否则会误判成行为问题。
 	 */
 	canvasSessionId?: string;
+
+	/**
+	 * ⭐ Nest 侧连接信息，**仅用于跑之前的画布规模预检**（见 `requiresCanvasNodes`）。
+	 *
+	 * 为什么要预检：2026-10-05 实测发现同一条 case 换个画布就 1/3 → 3/3
+	 * ⇒ 「模型不行」与「环境不对」在结果里长得一模一样。
+	 *
+	 * 典型来源（pi-runtime pod 内）：
+	 * - `baseUrl`: `process.env.NEST_BASE_URL`（如 `http://10.1.0.12:5100/api`）
+	 * - `token`:   `process.env.NEST_SERVICE_TOKEN`
+	 */
+	nest?: { baseUrl: string; token: string };
 }
 
 /**
@@ -309,6 +321,49 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 	// ⇒ 「拿不到数据」必须与「数据说明行为不符」严格区分，否则会误判成
 	// 「模型行为退化」—— 而正确处置是传对参数重跑。
 	const needsCanvas = cases.some((c) => !c.requiresConfirm);
+	// ⭐⭐ 环境预检：画布规模不够就**直接抛**，不跑一遍产出误导数据。
+	// 判据来自各 case 的 `requiresCanvasNodes`（未声明 = 不检查）。
+	//
+	// 为什么必须前置：2026-10-05 实测 `tool-discovery-001` 在 2 节点画布上
+	// 3 次只过 1 次（模型「先查数量、发现对不上就问用户」——此环境下是**合理行为**），
+	// 换 63 节点画布则 3/3 通过。**仅换画布就 1/3 → 3/3**。
+	// ⇒ 不预检就会把「环境不对」读成「模型不行」，进而改本来正确的 prompt。
+	const needNodes = cases
+		.filter((c) => typeof c.requiresCanvasNodes === "number")
+		.map((c) => ({ id: c.id, min: c.requiresCanvasNodes as number }));
+	if (needNodes.length > 0) {
+		if (!options.nest) {
+			throw new Error(
+				`以下 case 声明了画布规模前提，但没传 nest 连接信息：\n` +
+					needNodes.map((n) => `  ${n.id}：需要 ≥ ${n.min} 个节点`).join("\n") +
+					`\n怎么传：{ nest: { baseUrl: process.env.NEST_BASE_URL, ` +
+					`token: process.env.NEST_SERVICE_TOKEN } }（pi-runtime pod 内可直接取到）。\n` +
+					`不传会怎样：跑出来的通过率会因「画布太小、模型合理地先确认」而虚低，` +
+					`看起来像模型行为有问题—— 实测 2 节点画布 1/3、63 节点画布 3/3。`,
+			);
+		}
+		const probe = await fetchCanvasNodeCount(options.nest, {
+			canvasSessionId: options.canvasSessionId ?? "",
+		});
+		if ("error" in probe) {
+			throw new Error(
+				`画布规模预检失败（无法判断环境是否满足前提）：\n  ${probe.error}\n` +
+					`受影响 case：${needNodes.map((n) => `${n.id}(需≥${n.min})`).join("、")}\n` +
+					`⚠️ 这属于**环境问题**，不是模型问题 —— 不要据此改提示词。`,
+			);
+		}
+		const tooSmall = needNodes.filter((n) => probe.nodeCount < n.min);
+		if (tooSmall.length > 0) {
+			throw new Error(
+				`画布节点数不满足 case 前提：实际 ${probe.nodeCount} 个\n` +
+					tooSmall.map((n) => `  ${n.id}：需要 ≥ ${n.min} 个`).join("\n") +
+					`\n⚠️ 这是**环境问题**，不是模型问题。\n` +
+					`实测对照（同一份prompt、同一模型）：2 节点 ⇒ 1/3 通过；63 节点 ⇒ 3/3 通过。\n` +
+					`怎么修：换一个节点数达标的画布重跑（别放宽判据 —— 那是把环境问题` +
+					`伪装成模型不行）。`,
+			);
+		}
+	}
 	if (needsCanvas && (!options.canvasSessionId || !options.userId)) {
 		throw new Error(
 			`L1 需要真实画布上下文才能跑（非 requiresConfirm 的 case 会调画布工具）：\n` +
