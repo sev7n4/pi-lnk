@@ -79,8 +79,13 @@ spec:
             - --storage.tsdb.retention.size=2GB
             # 压缩 WAL，减少磁盘写放大（本机磁盘已 81%）
             - --storage.tsdb.wal-compression
-            # 允许热重载：改 scrape 配置不必重启 pod
-            - --web.enable-lifecycle
+            # ⛔ 刻意不开 --web.enable-lifecycle。
+            # 该开关按官方语义等价于「HTTP 即可 shutdown/reload」：NodePort 30909 是**刻意对外**的，
+            # 端口可达就能 `POST /-/quit` 把 Prometheus 打停（无鉴权）。
+            # 代价：改 scrape 配置须用 `kubectl -n pi-lnk-observability rollout restart statefulset/pi-lnk-prometheus`
+            # 或手工删 pod，不能用 `POST /-/reload`。
+            # ⚠️ 探测开关是否启用不能看 `GET /-/reload` 的 405（启用但方法不对 / 未启用都会 405），
+            #    权威判据是容器 args。
           ports:
             - name: web
               containerPort: 9090

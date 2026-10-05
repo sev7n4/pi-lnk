@@ -8,6 +8,12 @@ on:
       - "apps/web/**"
       - "packages/**"
       - "deploy/**"
+      # R2：可观测性清单既不进 api/web 镜像、也不由 CI 应用（全仓零 kubectl），
+      # 改它们没有任何理由触发生产发布。exclude 必须排在 include 之后（GitHub 后写覆盖先写）；
+      # 两条都要排除：顶层 compose 不在 deploy/observability/** 之下。
+      # 注意 exclude 只影响「何时触发」，不影响「同步什么」——deploy.yml 仍整仓 tar 同步 + chmod deploy/*.sh。
+      - "!deploy/observability/**"
+      - "!deploy/docker-compose.observability.yml"
       # W1a：提示词规则文件进 api 镜像，必须能单独触发发布。
       - "prompt-registry/**"
       - "package.json"
