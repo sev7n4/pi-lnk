@@ -21,6 +21,9 @@ import {
 	focusNeighborhood,
 	nodesInNeighborhood,
 	type Scope,
+	type FocusAnchor,
+	AGGREGATE_THRESHOLD,
+	SPREAD_PER_EDGE,
 	registerColorClassMap,
 	commonSuffixes,
 	esc,
@@ -193,6 +196,11 @@ export interface LayoutOpts {
 	focus?: string;
 	/** 邻域跳数，夹取到 [1,3]。 */
 	hops?: number;
+	/**
+	 * 局部视图的出线策略（默认 `spread`）。
+	 * 见 `FocusAnchor` 文档：只硬编码一种会让「看清谁连谁」与「看整体规模」互相冲突。
+	 */
+	focusAnchor?: FocusAnchor;
 }
 
 export function buildLayoutSvg(
@@ -219,13 +227,57 @@ export function buildLayoutSvg(
 		groupBy === "status" ? (n.status ?? "未标状态") : groupBy === "parentNode" ? (n.parentNode ?? "未归类") : (n.type ?? "default");
 	if (groupBy !== "type") nodes = groupAdjacent(nodes, groupKey);
 
-	const H = 40 + nodes.length * ROW_H + 24;
+	// ⭐ 局部视图的出线策略（2026-10-05 UX 评审）
+	//
+	// 起因：`edgePath()` 已把同源多出边起点沿源节点高度分散，但**分散范围被源节点
+	// 20px 高度限死** ⇒ 18 条边塞进 20px、每条只隔 1px，视觉上仍是一条实线。
+	// 真实画布（63 节点/123 边）上实测：focus=資產表 的 31 条边全部视觉重叠。
+	//
+	// 三种策略（`FocusAnchor`）：
+	//   spread   — 焦点节点高度按下游数拉伸，每条边真正错开（默认）
+	//   bus      — 高度不变，右侧加一条垂直汇流条
+	//   aggregate— 边数超阈值时聚合成单箭头 +「→ N 个下游」
+	const anchor: FocusAnchor = opts.focusAnchor ?? "spread";
+	// ⚠️出度要**所有策略都算**（不是只有 aggregate）——
+	// spread 也要靠它决定焦点行该拉多高。之前只在 aggregate 分支里填，
+	// 导致 spread 拿到空Map ⇒ 焦点行保持 20px ⇒ 18 条边又挤回一起（实测焦点高=26≈20）。
+	const outDeg = new Map<string, number>();
+	for (const e of edges) outDeg.set(e.source, (outDeg.get(e.source) ?? 0) + 1);
+	// 被聚合的边：只在「某源节点出边超阈值」时发生
+	const aggSources = new Set(
+		[...outDeg.entries()].filter(([, c]) => c > AGGREGATE_THRESHOLD).map(([k]) => k),
+	);
+	// 拉伸后的行高：焦点节点（或聚合源）需要 SPREAD_PER_EDGE × 出边数的高度
+	const rowHeight = (n: GvNode, idx: number): number => {
+		if (anchor !== "spread" || !focusKeep) return ROW_H;
+		if (!focusKeep.has(n.id)) return ROW_H;
+		const d = (outDeg.get(n.id) ?? 0) + 1;
+		return Math.max(ROW_H, d * SPREAD_PER_EDGE);
+	};
+	// 先算每行高度，再累加出y —— 变高行会把后续行整体下移
+	const rowHs: number[] = [];
+	{
+		let acc = 0;
+		for (let i = 0; i < nodes.length; i++) {
+			rowHs.push(rowHeight(nodes[i], i));
+			acc += rowHs[i];
+		}
+	}
+	const H = 40 + rowHs.reduce((a, b) => a + b, 0) + 24;
+	const rowY = new Array<number>(nodes.length);
+	{
+		let acc = 0;
+		for (let i = 0; i < nodes.length; i++) {
+			rowY[i] = 30 + acc;
+			acc += rowHs[i];
+		}
+	}
 	const boxes = boxesFrom(
 		nodes,
 		() => PLOT_X,
 		() => PLOT_W,
-		(_, i) => 30 + i * ROW_H,
-		() => 20,
+		(_, i) => rowY[i],
+		(_, i) => rowHs[i],
 	);
 	const parts: string[] = [svgOpen(H)];
 
@@ -243,11 +295,42 @@ export function buildLayoutSvg(
 			const ordered2 = orderNodes(
 				targets.map((id) => nodes.find((n) => n.id === id)).filter((x): x is GvNode => Boolean(x)),
 			);
+			// ⭐ `aggregate`：出边超阈值时聚合成单箭头 + 计数（其余边**不画**，不静默丢弃——
+			// 计数与阈值都写在图上，用户知道还有多少条没画）
+			if (anchor === "aggregate" && aggSources.has(src) && ordered2.length > AGGREGATE_THRESHOLD) {
+				const midY = from.y + from.h / 2;
+				const toX = PLOT_X;
+				// ⚠️ 聚合说明画在**节点左侧的空白带**（PLOT_X 左边那一列）。
+				// 之前画在 `from.x + from.w + 8`（节点右侧），而那里已经是绘图区右边界
+				// （实测 x=712 > 画布宽 720）⇒ 文字被裁掉，用户只看到「个下游（已聚合…）」。
+				const label = `→ ${ordered2.length} 个下游`;
+				const labelX = Math.max(4, toX - 8 - label.length * 6);
+				parts.push(
+					`<path d="M${from.x + from.w},${Math.round(midY)} L${toX},${Math.round(midY)}" class="gv-e" marker-end="url(#gv-arrow)"/>` +
+						`<text x="${labelX}" y="${Math.round(midY)}" class="gv-s" text-anchor="end" dominant-baseline="central">${esc(label)}</text>`,
+				);
+				continue;
+			}
+			// ⭐ `bus`：出边超阈值时，节点右侧加一条垂直汇流条，每条边从条上不同 y 出发
+			const useBus = anchor === "bus" && ordered2.length > AGGREGATE_THRESHOLD;
+			if (useBus) {
+				const busX = from.x + from.w + 10;
+				const y0 = from.y + 4;
+				const y1 = from.y + from.h - 4;
+				parts.push(
+					`<path d="M${from.x + from.w},${Math.round(from.y + from.h / 2)} L${busX},${Math.round(from.y + from.h / 2)}" class="gv-e"/>` +
+						`<path d="M${busX},${Math.round(y0)} L${busX},${Math.round(y1)}" class="gv-e"/>`,
+				);
+			}
 			ordered2.forEach((target, i) => {
 				const to = boxes.get(target.id)!;
 				const isHi = (opts.emphasize ?? []).includes(src) || (opts.emphasize ?? []).includes(target.id);
+				// bus 策略：起点改到汇流条上按序错开（否则仍从同一点射出）
+				const d = useBus
+					? edgePath({ ...from, x: from.x + from.w + 10, w: 0, y: from.y + 4, h: from.h - 8 }, to, i, ordered2.length)
+					: edgePath(from, to, i, ordered2.length);
 				parts.push(
-					`<path data-edge="1" d="${edgePath(from, to, i, ordered2.length)}" class="gv-e" marker-end="url(#gv-arrow${isHi ? "-hi" : ""})"${isHi ? ' stroke="#534AB7" stroke-width="2"' : ""}/>`,
+					`<path data-edge="1" d="${d}" class="gv-e" marker-end="url(#gv-arrow${isHi ? "-hi" : ""})"${isHi ? ' stroke="#534AB7" stroke-width="2"' : ""}/>`,
 				);
 			});
 		}
@@ -260,10 +343,25 @@ export function buildLayoutSvg(
 	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
 	if (focusKeep) {
 		// 局部视图必须自报家门，否则用户会误以为这就是全部
+		//
+		// ⭐ **用节点标题而不是 id**（2026-10-05 UX 评审）：
+		// 原来显示 `prompt-179091292046…` —— 卡片里每个节点都写着
+		// 「《森林偵探社》EP01《長老之死》· 資產表」，唯独说明行给一串无意义字符。
+		// 用户读卡片第一眼认的是标题，说明行就该与卡片**用同一个名字**。
+		//
+		// 标题过长时裁剪并**保留 id 尾部**（`…· 資產表（…-46）`）：
+		// 用户要换 focus 中心时需要能报出 id，尾部 6 位足够定位且不干扰阅读。
+		const focusId = String(opts.focus ?? "");
+		const titleRaw = labels.get(focusId) ?? focusId;
+		const hopsShown = Math.max(1, Math.min(3, Math.floor(opts.hops ?? 1)));
+		const isTitle = titleRaw !== focusId;
+		const name = isTitle
+			? clip(titleRaw, 26) + (titleRaw.length > 26 ? `（…${focusId.slice(-6)}）` : "")
+			: `${focusId}（该节点没有标题）`;
 		parts.push(
-			`<g data-focus="${esc(opts.focus ?? "")}" data-hops="${Math.max(1, Math.min(3, Math.floor(opts.hops ?? 1)))}">` +
+			`<g data-focus="${esc(focusId)}" data-hops="${hopsShown}">` +
 				`<rect x="8" y="8" width="${W - 16}" height="20" rx="4" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>` +
-				`<text x="14" y="18" class="gv-info" dominant-baseline="central">局部视图：只看「${esc(clip(String(opts.focus), 20))}」的 ${Math.max(1, Math.min(3, Math.floor(opts.hops ?? 1)))} 跳邻域（${nodes.length} 个节点 / ${edges.length} 条边）· 用 focus 换节点可看别处</text></g>`,
+				`<text x="14" y="18" class="gv-info" dominant-baseline="central">局部视图：只看「${esc(name)}」的 ${hopsShown} 跳邻域（${nodes.length} 个节点 / ${edges.length} 条边）· 换 focus 看别处</text></g>`,
 		);
 	}
 	const note = auditNoteSvg(audit.misplaced, audit.compared);

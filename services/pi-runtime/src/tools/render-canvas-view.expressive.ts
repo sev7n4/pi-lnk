@@ -586,3 +586,38 @@ export function focusNeighborhood(
 export function nodesInNeighborhood(nodes: readonly GvNode[], keep: ReadonlySet<string>): GvNode[] {
 	return nodes.filter((n) => keep.has(n.id));
 }
+
+
+// ══════════════════════════════════════════════════════════
+// 局部视图的出线策略（2026-10-05 UX 评审）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 焦点节点往外的**出线策略** —— 做成可选而非硬编码一种。
+ *
+ * ## 为什么需要它
+ *
+ * `edgePath()` 早就把同源多出边的起点沿源节点高度分散了，但**分散范围被源节点的
+ * 20px 高度限死**：18 条边塞进 20px，每条只隔1px ⇒ **视觉上仍是��条实线**，
+ * 用户看到的是「一堆线从一点射出」（真实画布 31 条边实测如此）。
+ *
+ * 三种策略对应不同的信息诉求，让调用方按场景选：
+ *
+ * |策略 | 做法 | 体积 | 适合 |
+ * |---|---|---|---|
+ * | `spread`（默认） | 焦点节点高度按下游数拉伸，每条边真正错开 | 不变（只改坐标） | 要看清「谁连到谁」 |
+ * | `bus` | 节点高度不变，右侧加一条垂直汇流条 | +约 60B | 想看「一个焦点连出一片」的整体感 |
+ * | `aggregate` | 边数超阈值时聚合成单箭头 + 「→ N 个下游」 | **减少** | 边太多、只关心数量 |
+ */
+export type FocusAnchor = "spread" | "bus" | "aggregate";
+
+/** `aggregate` 策略的阈值：超过这么多条边就聚合。 */
+export const AGGREGATE_THRESHOLD = 8;
+
+/** 焦点节点每条出边需要的高度（px）—— spread 策略按此拉伸。 */
+export const SPREAD_PER_EDGE = 12;
+
+export function focusAnchorOpt(v: unknown): FocusAnchor | undefined {
+	if (v === "spread" || v === "bus" || v === "aggregate") return v;
+	return undefined;
+}

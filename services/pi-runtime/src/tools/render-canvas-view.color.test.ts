@@ -162,3 +162,127 @@ describe("超预算建议：scope/focus 只对 layout/topology 有效", () => {
 		assert.ok(!/改用 scope/.test(d.error!), `tree 不受 scope 约束：${d.error}`);
 	});
 });
+
+// ══════════════════════════════════════════════════════════
+// 15. 局部视图出线策略（2026-10-05 UX 评审：不能硬编码一种）
+// ══════════════════════════════════════════════════════════
+describe("focus_anchor：出线策略可切换，且默认真正错开", () => {
+	/**
+	 * 真实场景：焦点（资产表）有 **18 个下游**，远超聚合阈值 8。
+	 *
+	 * 起因：`edgePath()` 早就把同源多出边起点沿源节点高度分散，但**分散范围被源节点
+	 * 20px 高度限死** ⇒ 18 条边塞进 20px、每条只隔 1px，**视觉上仍是一条实线**。
+	 * 实测：真实画布 focus=資產表 的 31 条边全部视觉重叠。
+	 *
+	 * 三种策略对应不同诉求（不硬定一种）：
+	 * - `spread`（默认）拉高焦点节点 ⇒ 真正错开
+	 * - `bus` 高度不变 + 右侧垂直汇流条 ⇒ 保留"连出一片"的整体感
+	 * - `aggregate` 超阈值聚合成单箭头 ⇒ 只关心数量时最省
+	 */
+	const FANOUT = (() => {
+		const nodes = [
+			{ id: "c", type: "prompt", title: "EP01《長老之死》· 資產表", position: { x: 0, y: 0 } },
+		];
+		const edges: Array<{ source: string; target: string }> = [];
+		for (let i = 0; i < 18; i++) {
+			nodes.push({
+				id: `d${i}`,
+				type: "image",
+				title: "S01" + String.fromCharCode(65 + i) + " 镜头 " + i,
+				position: { x: 300, y: i * 30 },
+			} as never);
+			edges.push({ source: "c", target: `d${i}` });
+		}
+		return { nodes, edges };
+	})();
+
+	function svgOf(anchor?: string) {
+		return buildLayoutSvg(FANOUT.nodes as never, FANOUT.edges as never, {
+			drawEdges: true,
+			scope: "detail",
+			focus: "c",
+			focusAnchor: anchor as never,
+		});
+	}
+
+	function startYs(svg: string): string[] {
+		return [...svg.matchAll(/<path data-edge="1" d="M\d+,(\d+)/g)].map((m) => m[1]);
+	}
+
+	it("默认 spread：焦点被拉高，18 条边起点真正错开", () => {
+		const ys = startYs(svgOf(undefined));
+		assert.equal(ys.length, 18, `应画 18 条边，实际 ${ys.length}`);
+		assert.equal(new Set(ys).size, 18, `18 条边起点应各不相同，实际只有 ${new Set(ys).size} 个不同 y`);
+	});
+
+	it("bus：节点高度**不变**（这是它与 spread 的区别），边画在汇流条上", () => {
+		const spread = svgOf("spread");
+		const bus = svgOf("bus");
+		// ⚠️ 判据是**焦点行自身的高度**，不是整图高度 ——
+		// spread 只拉伸焦点那一行（本例19 行里 18 行不变）⇒ 整图高度几乎相同。
+		const focusH = (svg: string) => {
+			const m = /<rect x="150" y="30" width="554" height="(\d+)"/.exec(svg)
+				?? /<rect x="\d+" y="30" width="\d+" height="(\d+)"/.exec(svg);
+			return m ? Number(m[1]) : 0;
+		};
+		assert.ok(
+			focusH(spread) > focusH(bus),
+			`spread 应拉高焦点行：spread 焦点高=${focusH(spread)} bus=${focusH(bus)}`,
+		);
+		// 一行高是 26（含2px 边框余量），spread 应远大于它
+		assert.ok(focusH(bus) <= 30, `bus 刻意不拉高焦点行，实测 ${focusH(bus)}`);
+		// ⭐ bus 的代价要说清楚：高度不拉 ⇒ 18 条边挤在 20px 内，起点必然有重合
+		// （这不是 bug，是「保留整体感、放弃逐条可辨」的取舍）
+		const ys = startYs(bus);
+		assert.ok(
+			new Set(ys).size < ys.length,
+			`bus 刻意不拉高 ⇒ 起点会有重合（取舍），实际 ${new Set(ys).size}/${ys.length}`,
+		);
+		// 但边**一条不少**（不丢信息，这是与 aggregate 的关键区别）
+		assert.equal(ys.length, 18, "bus 必须保留全部 18 条边");
+	});
+
+	it("aggregate：超阈值时聚合成单箭头并标明总数（不静默丢弃）", () => {
+		const svg = svgOf("aggregate");
+		const drawn = (svg.match(/data-edge="1"/g) || []).length;
+		assert.ok(drawn < 18, `aggregate 应减少边数，实际仍画了 ${drawn} 条`);
+		assert.match(svg, /18 个下游/, "必须标明聚合了多少条，否则用户不知道有信息被省掉");
+		// ⭐ 标签必须**完整落在画布内**（之前画在 x=712 > 宽 720 ⇒ 被裁成「个下游」）。
+		const m = /<text x="(\d+)"[^>]*>→ 18 个下游</.exec(svg);
+		assert.ok(m, "聚合标签应带完整文案");
+		assert.ok(Number(m![1]) + "→ 18 个下游".length * 6 <= 720, `标签起点 ${m![1]} 超出画布宽 720，会被裁掉`);
+	});
+
+	it("出边少时不聚合（阈值 8 以下保持逐条画）", () => {
+		const small = {
+			nodes: [
+				{ id: "c", type: "prompt", title: "小焦点", position: { x: 0, y: 0 } },
+				...Array.from({ length: 3 }, (_, i) => ({
+					id: `s${i}`, type: "image", title: `x${i}`, position: { x: 300, y: i * 30 },
+				})),
+			],
+			edges: [0, 1, 2].map((i) => ({ source: "c", target: `s${i}` })),
+		};
+		const svg = buildLayoutSvg(small.nodes as never, small.edges as never, {
+			drawEdges: true, scope: "detail", focus: "c", focusAnchor: "aggregate",
+		});
+		assert.equal((svg.match(/data-edge="1"/g) || []).length, 3, "3 条出边不该被聚合");
+	});
+
+	it("focus_anchor 非法值被拒（不静默回落）", async () => {
+		const nodes = [{ id: "x", type: "prompt", title: "n", position: { x: 0, y: 0 } }];
+		const t = makeTool({ nodes, edges: [] });
+		const r = await run(t, { view: "layout", scope: "structure", focus_anchor: "nonsense" });
+		assert.equal((r.details as { ok: boolean }).ok, false);
+	});
+
+	it("策略只影响局部视图（非 focus 时输出完全不变）", () => {
+		const plain = buildLayoutSvg(FANOUT.nodes as never, FANOUT.edges as never, { drawEdges: true });
+		for (const a of ["spread", "bus", "aggregate"]) {
+			const withAnchor = buildLayoutSvg(FANOUT.nodes as never, FANOUT.edges as never, {
+				drawEdges: true, focusAnchor: a as never,
+			});
+			assert.equal(withAnchor, plain, `非 focus 视图下 focus_anchor=${a} 不应改变输出`);
+		}
+	});
+});
