@@ -9,7 +9,7 @@ import type {
 /**
  * 轮询墙钟上限。
  *
- * ⚠️ 2026-10-04 从 `660_000` 上调到 `660_000`。原值只对齐了 Agnes 的
+ * ⚠️ 2026-10-04 从 `660_000` 上调到 `1_260_000`。原值只对齐了 Agnes 的
  * `maxPollMs = 600_000`，而 `videoModelProfiles.ts` 里 **minimax H3 的
  * `maxPollMs = 1_200_000`**⇒ 该模型必然先被本 orchestrator 判timeout，
  * **而后台任务仍在跑**，状态自相矛盾（生产有 3 条
