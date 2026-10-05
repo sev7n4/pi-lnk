@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildApp, resolveEventsSubscribeMode } from "./app.js";
 import { SessionManager, toSessionKey, isReplayComplete } from "./session-manager.js";
+import { isSuppressed } from "./tools/memory.js";
 import { Metrics } from "./metrics.js";
 import { DEFAULT_RUNTIME_CONFIG } from "./runtime-config.js";
 import { PendingToolRegistry } from "./pending-registry.js";
@@ -54,8 +55,9 @@ function makeApp(root: string, factory: unknown = okFactory, registry?: PendingT
 		...DEFAULT_RUNTIME_CONFIG,
 		dataRoot: root,
 	});
-	const app = buildApp(manager, { metrics: new Metrics(), version: "test", registry });
-	return { app, manager };
+	const metrics = new Metrics();
+	const app = buildApp(manager, { metrics, version: "test", registry });
+	return { app, manager, metrics };
 }
 
 /**
@@ -893,6 +895,61 @@ describe("T1 SSE 重连：溢出可判读，且客户端行为零变更", () => 
 				);
 				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
 				assert.deepEqual(metricLines(body, "pi_runtime_llm_errors_total"), []);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+// ── M6b：POST /internal/memory-suppress（spec 2026-10-06-memory-promotion-m6b-design.md §2.2）──
+
+describe("POST /internal/memory-suppress", () => {
+	/** 模块级抑制表不复位（与 memory.test.ts 同约定）：每条用例独立 id。 */
+	const uid = () => "mem-rt-" + Math.random().toString(36).slice(2, 10);
+
+	it("标记后 isSuppressed 命中（recall_memory 剔除的数据源就绪）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			const id = uid();
+			try {
+				const res = await app.inject({
+					method: "POST",
+					url: "/internal/memory-suppress",
+					payload: { memoryId: id, reason: "反复把跨画布记忆当当前画布观察" },
+				});
+				assert.equal(res.statusCode, 200);
+				assert.equal(isSuppressed(id), true);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("缺 memoryId / 空 memoryId → 400，不写入", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			try {
+				assert.equal((await app.inject({ method: "POST", url: "/internal/memory-suppress", payload: { reason: "x" } })).statusCode, 400);
+				assert.equal((await app.inject({ method: "POST", url: "/internal/memory-suppress", payload: { memoryId: "  " } })).statusCode, 400);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("指标：首次标记 +1、重复标记幂等不重复计数", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			const id = uid();
+			try {
+				await app.inject({ method: "POST", url: "/internal/memory-suppress", payload: { memoryId: id, reason: "a" } });
+				await app.inject({ method: "POST", url: "/internal/memory-suppress", payload: { memoryId: id, reason: "a" } });
+				const body = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				assert.match(body, /pi_runtime_memory_suppressed_total 1\n/);
+				await app.inject({ method: "POST", url: "/internal/memory-suppress", payload: { memoryId: uid(), reason: "b" } });
+				const body2 = (await app.inject({ method: "GET", url: "/metrics" })).body;
+				assert.match(body2, /pi_runtime_memory_suppressed_total 2\n/);
 			} finally {
 				await app.close();
 			}

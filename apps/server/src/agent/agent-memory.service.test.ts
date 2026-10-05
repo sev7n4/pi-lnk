@@ -1,14 +1,16 @@
 import 'reflect-metadata'
-import { BadRequestException } from '@nestjs/common'
+import { BadRequestException, NotFoundException } from '@nestjs/common'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { PrismaService } from '../prisma/prisma.service'
-import { AgentMemoryService, MEMORY_SCAN_MAX } from './agent-memory.service'
+import { AgentMemoryService, MEMORY_SCAN_MAX, normalizeMemoryContent } from './agent-memory.service'
+import { isSuppressed } from './memory-suppression'
 
 describe('AgentMemoryService', () => {
   let svc: AgentMemoryService
   const create = vi.fn()
   const findMany = vi.fn()
+  const findUnique = vi.fn()
   /** findMany 桩的假库：mock 按 where 真过滤（作用域过滤下沉到 SQL，桩必须忠实执行）。 */
   let db: {
     id: string
@@ -37,7 +39,10 @@ describe('AgentMemoryService', () => {
       return db
         .filter((r) => (w.userId === undefined || r.userId === w.userId)
           && (w.scope === undefined || r.scope === w.scope)
-          && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId))
+          && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId)
+          // M6b：source 过滤桩也要忠实执行（`{ not: 'promoted' }` 形态）——
+          // 桩若放行 promoted 行，「晋升回灌不复活」这条判据就锁不住。
+          && (w.source === undefined || (w.source?.not !== undefined ? r.source !== w.source.not : r.source === w.source)))
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
         .slice(0, args?.take ?? db.length)
         .map((r) => ({ ...r }))
@@ -45,7 +50,7 @@ describe('AgentMemoryService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentMemoryService,
-        { provide: PrismaService, useValue: { agentMemory: { create, findMany } } },
+        { provide: PrismaService, useValue: { agentMemory: { create, findMany, findUnique } } },
       ],
     }).compile()
     svc = moduleRef.get(AgentMemoryService)
@@ -289,5 +294,239 @@ describe('AgentMemoryService', () => {
     ]
     const r = await svc.searchMemory({ userId: 'u1', sessionId: 'S1', scope: 'canvas' })
     expect(r.items.map((i) => i.id)).toEqual(['mine'])
+  })
+
+  // ── M6b：晋升候选队列（spec 2026-10-06-memory-promotion-m6b-design.md §2.1） ──
+
+  describe('normalizeMemoryContent', () => {
+    it('trim + 折叠空白 + 小写 + 去尾部标点（无损归一，不做语义）', () => {
+      expect(normalizeMemoryContent('  主角叫林晚。 ')).toBe('主角叫林晚')
+      expect(normalizeMemoryContent('A  B')).toBe('a b')
+      expect(normalizeMemoryContent('你好！！')).toBe('你好')
+      expect(normalizeMemoryContent('林晚。。.')).toBe('林晚')
+      expect(normalizeMemoryContent('主角叫林晚')).toBe('主角叫林晚')
+    })
+
+    it('中间标点不动（只有尾部是噪音）', () => {
+      expect(normalizeMemoryContent('林晚，女，14岁')).toBe('林晚，女，14岁')
+    })
+  })
+
+  describe('promotionCandidates', () => {
+    const row = (id: string, sessionId: string, content: string, at: string, extra?: Partial<{ source: string; userId: string }>) => ({
+      id,
+      userId: 'u1',
+      scope: 'canvas',
+      sessionId,
+      content,
+      source: 'agent_auto',
+      createdAt: new Date(at),
+      ...extra,
+    })
+
+    it('同 sessionId 同内容 3 行 → 1 候选 count=3，memoryIds 全量、firstSeen/lastSeen 两端', async () => {
+      db = [
+        row('m1', 'S1', '主角叫林晚', '2026-10-01T00:00:00.000Z'),
+        row('m2', 'S1', '主角叫林晚', '2026-10-02T00:00:00.000Z'),
+        row('m3', 'S1', '主角叫林晚', '2026-10-03T00:00:00.000Z'),
+      ]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.scannedRows).toBe(3)
+      expect(r.threshold).toBe(3)
+      expect(r.candidates).toHaveLength(1)
+      const c = r.candidates[0]
+      expect(c.count).toBe(3)
+      expect(c.sessionId).toBe('S1')
+      expect(c.memoryIds).toEqual(['m1', 'm2', 'm3'])
+      expect(c.firstSeenAt).toBe('2026-10-01T00:00:00.000Z')
+      expect(c.lastSeenAt).toBe('2026-10-03T00:00:00.000Z')
+      expect(c.sampleContents).toEqual(['主角叫林晚'])
+    })
+
+    it('2 行不进候选（阈值 3 是判据，不是拍的——§13.3）', async () => {
+      db = [row('m1', 'S1', '重复两次的内容', '2026-10-01T00:00:00.000Z'), row('m2', 'S1', '重复两次的内容', '2026-10-02T00:00:00.000Z')]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.candidates).toHaveLength(0)
+    })
+
+    it('跨 sessionId 同内容不合并（「同一画布内」是判据的一半）', async () => {
+      db = [
+        row('m1', 'S1', '同一句', '2026-10-01T00:00:00.000Z'),
+        row('m2', 'S1', '同一句', '2026-10-02T00:00:00.000Z'),
+        row('m3', 'S1', '同一句', '2026-10-03T00:00:00.000Z'),
+        row('m4', 'S2', '同一句', '2026-10-04T00:00:00.000Z'),
+        row('m5', 'S2', '同一句', '2026-10-05T00:00:00.000Z'),
+      ]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.candidates).toHaveLength(1)
+      expect(r.candidates[0].sessionId).toBe('S1')
+      expect(r.candidates[0].count).toBe(3)
+    })
+
+    it('归一化命中：尾部标点/空白/大小写差不分裂（近似改写也不许合并——字面判据宁漏勿错）', async () => {
+      db = [
+        row('m1', 'S1', '主角叫林晚', '2026-10-01T00:00:00.000Z'),
+        row('m2', 'S1', '主角叫林晚。', '2026-10-02T00:00:00.000Z'),
+        row('m3', 'S1', ' 主角叫林晚 ', '2026-10-03T00:00:00.000Z'),
+        // 近义改写：不是重复（normalize 后仍不同），不进
+        row('m4', 'S1', '主角叫做林晚', '2026-10-04T00:00:00.000Z'),
+      ]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.candidates).toHaveLength(1)
+      expect(r.candidates[0].count).toBe(3)
+    })
+
+    it("source='promoted' 的行不计入（晋升回灌不得复活候选）", async () => {
+      db = [
+        row('m1', 'S1', '已是规则', '2026-10-01T00:00:00.000Z'),
+        row('m2', 'S1', '已是规则', '2026-10-02T00:00:00.000Z'),
+        row('m3', 'S1', '已是规则', '2026-10-03T00:00:00.000Z', { source: 'promoted' }),
+      ]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.candidates).toHaveLength(0)
+    })
+
+    it('count 降序、同级按 lastSeenAt 降序', async () => {
+      db = [
+        // A 组：3 次（旧）
+        row('a1', 'S1', '甲', '2026-09-01T00:00:00.000Z'), row('a2', 'S1', '甲', '2026-09-02T00:00:00.000Z'), row('a3', 'S1', '甲', '2026-09-03T00:00:00.000Z'),
+        // B 组：5 次
+        ...Array.from({ length: 5 }, (_, i) => row(`b${i + 1}`, 'S2', '乙', `2026-09-1${i}T00:00:00.000Z`)),
+        // C 组：3 次（更新）
+        row('c1', 'S3', '丙', '2026-10-01T00:00:00.000Z'), row('c2', 'S3', '丙', '2026-10-02T00:00:00.000Z'), row('c3', 'S3', '丙', '2026-10-03T00:00:00.000Z'),
+      ]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.candidates.map((c) => c.count)).toEqual([5, 3, 3])
+      // 同级 lastSeenAt 降序：丙（10-03）比甲（09-03）新，排前
+      expect(r.candidates[1].normalizedContent).toBe('丙')
+      expect(r.candidates[2].normalizedContent).toBe('甲')
+    })
+
+    it('sampleContents：原文去重、≤3 条、单条截断 120 字', async () => {
+      // 差异后缀必须完整落在 120 字窗口内（最长原文 = 116+4 = 120），否则切片同文被去重
+      const long = '长'.repeat(116)
+      // 原文各不相同但归一化同键（大小写/尾部标点差），凑满去重后的 3 条样本上限
+      db = [
+        row('m1', 'S1', long + 'ONE', '2026-10-01T00:00:00.000Z'),
+        row('m2', 'S1', long + 'one。', '2026-10-02T00:00:00.000Z'),
+        row('m3', 'S1', long + 'one', '2026-10-03T00:00:00.000Z'),
+        row('m4', 'S1', long + 'one，', '2026-10-04T00:00:00.000Z'),
+      ]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.candidates).toHaveLength(1)
+      expect(r.candidates[0].sampleContents).toHaveLength(3)
+      for (const s of r.candidates[0].sampleContents) expect(s.length).toBeLessThanOrEqual(120)
+    })
+
+    it('limit 参数收口返回条数（默认 20），但 count 排序后取最热', async () => {
+      db = Array.from({ length: 25 }, (_, i) => [
+        row(`x${i}a`, `S${i}`, `内容${i}`, '2026-10-01T00:00:00.000Z'),
+        row(`x${i}b`, `S${i}`, `内容${i}`, '2026-10-02T00:00:00.000Z'),
+        row(`x${i}c`, `S${i}`, `内容${i}`, '2026-10-03T00:00:00.000Z'),
+      ]).flat()
+      const r = await svc.promotionCandidates({ userId: 'u1', limit: 10 })
+      expect(r.candidates).toHaveLength(10)
+    })
+
+    it('空库 → 空数组不抛', async () => {
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r).toEqual({ candidates: [], scannedRows: 0, threshold: 3, truncated: false })
+    })
+
+    it('user 作用域的行不进候选（§13.3：用户偏好不晋升）', async () => {
+      db = [
+        { id: 'p1', userId: 'u1', scope: 'user', sessionId: null, content: '喜欢暖色调', source: 'user_explicit', createdAt: new Date('2026-10-01T00:00:00.000Z') },
+        { id: 'p2', userId: 'u1', scope: 'user', sessionId: null, content: '喜欢暖色调', source: 'user_explicit', createdAt: new Date('2026-10-02T00:00:00.000Z') },
+        { id: 'p3', userId: 'u1', scope: 'user', sessionId: null, content: '喜欢暖色调', source: 'user_explicit', createdAt: new Date('2026-10-03T00:00:00.000Z') },
+      ]
+      const r = await svc.promotionCandidates({ userId: 'u1' })
+      expect(r.candidates).toHaveLength(0)
+      expect(r.scannedRows).toBe(0)
+    })
+  })
+
+  // ── M6b：抑制标记入口（spec §2.2）——人工确认后的唯一标记链路 ──
+
+  describe('suppressMemory', () => {
+    /** 每条用例独立 id（模块级表不复位，与 memory-suppression.test.ts 同约定）。 */
+    const uid = () => `mem-sup-${Math.random().toString(36).slice(2, 10)}`
+
+    function stubFetch(impl: (...a: any[]) => Promise<any>) {
+      vi.stubGlobal('fetch', vi.fn(impl))
+    }
+
+    it('标记后 Nest 侧 isSuppressed 命中 + 转发成功返回 forwarded:true', async () => {
+      const id = uid()
+      findUnique.mockResolvedValue({ id, userId: 'u1', scope: 'canvas', sessionId: 'S1', content: '污染记忆', createdAt: new Date() })
+      stubFetch(async () => ({ ok: true, status: 200 }))
+      const prev = process.env.PI_RUNTIME_URL
+      process.env.PI_RUNTIME_URL = 'http://127.0.0.1:30100'
+      try {
+        const r = await svc.suppressMemory({ userId: 'u1', memoryId: id, reason: '反复致错' })
+        expect(isSuppressed(id)).toBe(true)
+        expect(r.forwarded).toBe(true)
+        // 转发体只带 memoryId + reason，不带别的
+        const [url, init] = (fetch as any).mock.calls[0]
+        expect(String(url)).toContain('/internal/memory-suppress')
+        expect(JSON.parse(init.body)).toEqual({ memoryId: id, reason: '反复致错' })
+      } finally {
+        if (prev === undefined) delete process.env.PI_RUNTIME_URL
+        else process.env.PI_RUNTIME_URL = prev
+      }
+    })
+
+    it('id 不存在 → NotFoundException，且不标记不转发', async () => {
+      findUnique.mockResolvedValue(null)
+      stubFetch(async () => { throw new Error('不应被调用') })
+      await expect(svc.suppressMemory({ userId: 'u1', memoryId: 'mem-nope', reason: 'x' })).rejects.toBeInstanceOf(NotFoundException)
+      expect(isSuppressed('mem-nope')).toBe(false)
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('别人的记忆不能标记（归属校验——最小权限）', async () => {
+      const id = uid()
+      findUnique.mockResolvedValue({ id, userId: 'u2', scope: 'canvas', sessionId: 'S1', content: '别人的', createdAt: new Date() })
+      stubFetch(async () => ({ ok: true }))
+      await expect(svc.suppressMemory({ userId: 'u1', memoryId: id, reason: 'x' })).rejects.toBeInstanceOf(NotFoundException)
+      expect(isSuppressed(id)).toBe(false)
+    })
+
+    it('memoryId 空白 → BadRequest，不查库不标记', async () => {
+      stubFetch(async () => ({ ok: true }))
+      await expect(svc.suppressMemory({ userId: 'u1', memoryId: '  ', reason: 'x' })).rejects.toBeInstanceOf(BadRequestException)
+      expect(findUnique).not.toHaveBeenCalled()
+    })
+
+    it('pi-runtime 不可达/抛错 → 仍成功（Nest 侧已生效），forwarded:false（fail-soft）', async () => {
+      const id = uid()
+      findUnique.mockResolvedValue({ id, userId: 'u1', scope: 'canvas', sessionId: 'S1', content: '污染', createdAt: new Date() })
+      stubFetch(async () => { throw new Error('ECONNREFUSED') })
+      const r = await svc.suppressMemory({ userId: 'u1', memoryId: id, reason: 'x' })
+      expect(isSuppressed(id)).toBe(true)
+      expect(r.forwarded).toBe(false)
+    })
+
+    it('转发响应非 2xx → forwarded:false（但 Nest 侧标记仍生效）', async () => {
+      const id = uid()
+      findUnique.mockResolvedValue({ id, userId: 'u1', scope: 'canvas', sessionId: 'S1', content: '污染', createdAt: new Date() })
+      stubFetch(async () => ({ ok: false, status: 500 }))
+      const r = await svc.suppressMemory({ userId: 'u1', memoryId: id, reason: 'x' })
+      expect(isSuppressed(id)).toBe(true)
+      expect(r.forwarded).toBe(false)
+    })
+
+    it('PI_RUNTIME_URL 未配置（维护态/未接）→ 不转发，forwarded:false，不抛', async () => {
+      const id = uid()
+      findUnique.mockResolvedValue({ id, userId: 'u1', scope: 'canvas', sessionId: 'S1', content: '污染', createdAt: new Date() })
+      const prev = process.env.PI_RUNTIME_URL
+      delete process.env.PI_RUNTIME_URL
+      try {
+        const r = await svc.suppressMemory({ userId: 'u1', memoryId: id, reason: 'x' })
+        expect(r.forwarded).toBe(false)
+        expect(fetch).not.toHaveBeenCalled()
+      } finally {
+        if (prev !== undefined) process.env.PI_RUNTIME_URL = prev
+      }
+    })
   })
 })

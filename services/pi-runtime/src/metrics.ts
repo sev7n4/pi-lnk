@@ -108,6 +108,7 @@ export class Metrics {
 	private usageCost = new Map<string, number>(); // key: kind 同上
 	private toolSearchCalls = new Map<string, number>(); // key: outcome (hit|miss|empty)
 	private toolSearchActivated = 0; // 命中激活的工具个数累计（配合 calls 可算平均激活数）
+	private memorySuppressed = 0; // M6b：被反哺抑制的记忆条数累计（幂等计数）
 	private skillLoads = new Map<string, number>(); // key: `${skill}|${outcome}`（ok|unknown|read_error）
 	private transformContextRuns = new Map<string, number>(); // key: goal (on|off)——是否注入了目标复述
 	private transformAnnotated = 0; // 信任标注覆盖的 toolResult 条数累计
@@ -200,6 +201,15 @@ export class Metrics {
 	/** P0-① 会话 create 结果：new（新建）/ memory（内存复用）/ disk（磁盘恢复）/ rebuilt（身份变更重建）。 */
 	observeSessionResume(outcome: "memory" | "disk" | "new" | "rebuilt"): void {
 		this.sessionResumes.set(outcome, (this.sessionResumes.get(outcome) ?? 0) + 1);
+	}
+
+	/**
+	 * M6b：反哺抑制的记忆数（累计）。结构性满足 tools/memory.ts 的 `SuppressionObserver` 接口
+	 * （#182 解耦时约定的对接点）。调用方 markSuppressed 已做幂等（同 id 只在首标时通知），
+	 * 这里只管累加。⚠️ 恒 0 = 标记链路未触发，**不是**「没有污染记忆」。
+	 */
+	observeMemorySuppressed(): void {
+		this.memorySuppressed += 1;
 	}
 
 	/** 上下文压缩结果（只在 compaction_end 且 status=completed/failed 时计入）。 */
@@ -403,6 +413,11 @@ export class Metrics {
 		for (const [outcome, count] of [...this.sessionResumes.entries()].sort()) {
 			lines.push(`pi_runtime_session_resumes_total{outcome="${esc(outcome)}"} ${count}`);
 		}
+
+		// M6b：恒渲染（0 也出样本），让「链路从未触发」与「指标缺失」可区分。
+		lines.push("# HELP pi_runtime_memory_suppressed_total Memories suppressed by feedback loop.");
+		lines.push("# TYPE pi_runtime_memory_suppressed_total counter");
+		lines.push(`pi_runtime_memory_suppressed_total ${this.memorySuppressed}`);
 
 		lines.push("# HELP pi_runtime_compactions_total Context compactions by result.");
 		lines.push("# TYPE pi_runtime_compactions_total counter");

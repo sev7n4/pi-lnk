@@ -18,6 +18,7 @@ import type { Request, Response } from 'express'
 import { AuthGuard } from '../auth/auth.guard'
 import { SessionsService } from '../sessions/sessions.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+import { AgentMemoryService } from './agent-memory.service'
 import { AgentService } from './agent.service'
 import {
   loadRegistry,
@@ -198,6 +199,16 @@ class GetAgentMessagesQueryDto {
   threadId!: string
 }
 
+/** M6b：抑制标记请求体。reason 选填（缺省 'unspecified'，仅供排障追溯）。 */
+class MemorySuppressDto {
+  @IsString()
+  memoryId!: string
+
+  @IsOptional()
+  @IsString()
+  reason?: string
+}
+
 @Controller('agent')
 export class AgentController {
   private readonly logger = new Logger(AgentController.name)
@@ -206,6 +217,7 @@ export class AgentController {
     @Inject(AgentService) private readonly agentService: AgentService,
     @Inject(SessionsService) private readonly sessionsService: SessionsService,
     @Inject(AgentCanvasToolsService) private readonly canvasTools: AgentCanvasToolsService,
+    @Inject(AgentMemoryService) private readonly memory: AgentMemoryService,
   ) {}
 
   @Get('capabilities/list')
@@ -274,6 +286,49 @@ export class AgentController {
         groupChars,
       },
     }
+  }
+
+  /**
+   * M6b：晋升候选队列（spec docs/superpowers/specs/2026-10-06-memory-promotion-m6b-design.md §2.1）。
+   *
+   * 只读视图：本账号 scope='canvas' 记忆里同画布重复 ≥3 次的归一化内容。晋升动作不在此做——
+   * 人工确认后改 rules/*.md + 同步 6 处 + prompt:lint + PR（docs/ops/memory-m6b-runbook.md）。
+   *
+   * ⚠️ 与上面 prompt-registry 端点相反：**必须鉴权**。按本仓判据「免鉴权的安全边界是响应字段本身」，
+   * 这里的字段含**用户记忆内容**（sampleContents），不是构建元信息 ⇒ AuthGuard，且只出本人数据。
+   */
+  @Get('memory/promotion-candidates')
+  @UseGuards(AuthGuard)
+  async promotionCandidates(
+    @Req() req: Request & { user: { sub: string } },
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined
+    const data = await this.memory.promotionCandidates({
+      userId: req.user.sub,
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  /**
+   * M6b：反哺抑制标记入口（spec §2.2）——M6a 剔除机制缺的「谁来标记」在这里闭环。
+   *
+   * 链路：归属校验 → Nest 侧进程内表（注入通道立即生效）→ fail-soft 转发 pi-runtime
+   * （recall_memory 通道）。幂等；memoryId 必须存在且属于当前账号（否则 404）。
+   */
+  @Post('memory/suppressions')
+  @UseGuards(AuthGuard)
+  async suppressMemory(
+    @Req() req: Request & { user: { sub: string } },
+    @Body() dto: MemorySuppressDto,
+  ) {
+    const data = await this.memory.suppressMemory({
+      userId: req.user.sub,
+      memoryId: dto.memoryId,
+      reason: dto.reason ?? '',
+    })
+    return { code: 0, message: 'ok', data }
   }
 
   /**

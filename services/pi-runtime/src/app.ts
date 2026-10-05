@@ -24,6 +24,7 @@ import {
 import type { DirectImage } from "./direct-images.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import { classifyLlmErrorText } from "./tool-error-class.js";
+import { markSuppressed } from "./tools/memory.js";
 
 const HEARTBEAT_MS = 15_000;
 
@@ -102,6 +103,22 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	});
 
 	app.get("/skills", async () => ({ skills: manager.listSkills() }));
+
+	/**
+	 * M6b：抑制标记入口（Nest 转发，spec 2026-10-06-memory-promotion-m6b-design.md §2.2）。
+	 *
+	 * 标记进 tools/memory.ts 的进程内抑制表 → recall_memory 召回剔除生效。
+	 * 无鉴权：与 /metrics /skills 同一信任边界（K3s 内网，NodePort 外网不可达）。
+	 * 幂等由 markSuppressed 保证（集合语义，重复标记不重复计数）。
+	 * reason 仅排障追溯，不入任何外露接口。
+	 */
+	app.post<{ Body: { memoryId?: string; reason?: string } }>("/internal/memory-suppress", async (request, reply) => {
+		const memoryId = typeof request.body?.memoryId === "string" ? request.body.memoryId.trim() : "";
+		if (!memoryId) return reply.code(400).send({ error: "memoryId is required (non-empty)" });
+		const reason = typeof request.body?.reason === "string" && request.body.reason.trim() ? request.body.reason.trim() : "unspecified";
+		markSuppressed(memoryId, reason, metrics);
+		return { ok: true };
+	});
 
 	/**
 	 * 幂等 upsert（spec §5.4）：
