@@ -39,7 +39,10 @@ import {
 	resolveRegistryRoot,
 } from "./prompt-registry.loader";
 
-export type RuleGroup = "core" | "writeTools" | "genTools";
+// RuleGroup 定义收敛到 rule-groups.ts（零依赖，verify-ab-scenarios 脚本可安全 import）；
+// 此处 re-export 保持既有对外形状。
+import type { RuleGroup } from "./rule-groups";
+export type { RuleGroup };
 
 /**
  * 分层 kind：rules 属静态段（S 层），canvas/sidebar 属动态段（G 层）；

@@ -106,29 +106,37 @@ pnpm prompt:lint
    为什么这条最要紧：管线不等价时，A/B 的差异可能来自组装链路的任何一环，
    **你测的是随机性 + 管线抖动，不是提示词**。管线没验就开跑，跑出来的数字不能用来做决策。
 
-## groups 怎么切（8 个场景里 6 个需要改代码）
+## groups 怎么切（env 覆盖，不用改代码）
 
-生产 `ruleGroups` 是**硬编码**的，只有一个赋值点：
+生产默认 = 三组全开，真值源在 `apps/server/src/agent/pi-runtime/rule-groups.ts` 的
+`PRODUCTION_RULE_GROUPS`（agent.service.ts 从这里 import）。切组用环境变量：
 
+```bash
+AGENT_RULE_GROUPS=core,writeTools   # 例：写组场景
+AGENT_RULE_GROUPS=core              # 例：readonly-session-refuse
 ```
-apps/server/src/agent/agent.service.ts:922
-ruleGroups: ['core', 'writeTools', 'genTools'],
-```
 
-**无 env 开关、无配置项。** 所以任何非三组全开的场景，跑之前都得改这一行：
+解析规则（`resolveRuleGroups`，fail-closed）：
 
-| 场景 | 需要的 ruleGroups |
+- 未设 / 空串 → 生产默认三组全开；
+- 未知组名或大小写不符 → **启动即抛错**（不静默回落默认——否则「以为在测 `['core']`，实际三组全开」= 假绿）；
+- 逗号分隔、容忍空白、自动去重，输出按规范序（core → writeTools → genTools）排列；
+- 覆盖生效时 agent.service 会打一条 **warn 日志**（`AGENT_RULE_GROUPS 覆盖生效: [...]`）。
+
+| 场景 | 需要的 AGENT_RULE_GROUPS |
 |---|---|
-| `gen-need-confirm` / `missing-info-ask` | `['core','writeTools','genTools']`（= 生产，**不用改**） |
-| `multi-node-view` / `single-node-no-view` / `no-template-claim` / `cross-canvas-memory` / `chat-no-node` | `['core','writeTools']` |
-| `readonly-session-refuse` | `['core']` |
+| `gen-need-confirm` / `missing-info-ask` | 不设（= 生产默认） |
+| `multi-node-view` / `single-node-no-view` / `no-template-claim` / `cross-canvas-memory` / `chat-no-node` | `core,writeTools` |
+| `readonly-session-refuse` | `core` |
 
-**为什么这些场景值得为它改代码**：它们检验的正是「某组缺席时才生效」的负向守卫——
+**为什么这些场景值得专门切组**：它们检验的正是「某组缺席时才生效」的负向守卫——
 `write_guard`（`unlessGroup: writeTools`）与 `no_gen_claim.nogen`（`unlessGroup: genTools`）。
-生产三组全开 ⇒ 这两条规则**在生产永不注入** ⇒ 只有手动构造子集才能验它们。
+生产三组全开 ⇒ 这两条规则**在生产永不注入** ⇒ 只有构造子集才能验它们。
 
-⚠️ **改完记得改回去**，否则会把非生产提示词带进发版。
-`verify-ab-scenarios.ts` 会把这些场景标成 `⚠ 已知例外`——那是设计，不是错误。
+⚠️ **只在评测环境设置该变量，生产发版不得携带**：覆盖态下 unlessGroup 守卫规则不注入，
+而工具注册（`tools/config.ts` 的 `resolveToolsWithClient`）不接 groups、照样全量下发
+schema ⇒ 覆盖态是提示词构成开关，**不是安全边界**。
+`verify-ab-scenarios.ts` 会把非生产 groups 的场景标成 `⚠ 已知例外`——那是设计，不是错误。
 
 ### 只读会话场景（`readonly-session-refuse`）的特殊约定
 
@@ -143,7 +151,7 @@ ruleGroups: ['core', 'writeTools', 'genTools'],
 
 ## 怎么跑一个场景
 
-1. **按场景的 `groups` 切好规则组**（见上节；6 个场景需要改 `agent.service.ts:922`）。
+1. **按场景的 `groups` 设好 `AGENT_RULE_GROUPS`**（见上节；6 个场景需要设 env）。
    `groups` 是**规则组**不是工具组，取值只有 `core` / `writeTools` / `genTools`。
 2. **有 `setup` 的先做 setup。**凡 `userMessage` 引用了画布既有内容
    （「这三个镜头」「第二个节点」）或需要预置记忆，缺setup 就会在空环境上跑出**假红灯**
@@ -177,7 +185,7 @@ ruleGroups: ['core', 'writeTools', 'genTools'],
 **首跑范围：`gen-need-confirm` + `single-node-no-view`**（各 ≥3 次采样，约 6 轮真模型会话）。
 
 理由（成本）：8 个场景 × ≥3 次 = 至少 24 轮会话，而单轮耗时**尚无基线**——
-取决于会话长度、要不要先做 setup、以及 `readonly-session-refuse` 那种还得改代码重起的额外开销。
+取决于会话长度、要不要先做 setup、以及 `readonly-session-refuse` 那种还得改 env 重起的额外开销。
 §13.2 说「频率极低（按周计）成本敞口有界」，这个前提**未经实测确认**，先跑一对把
 「单轮多贵、记录格式好不好用」摸出来，再决定要不要跑满。**别在没基线时承诺 24 轮的预算。**
 

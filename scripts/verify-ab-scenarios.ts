@@ -18,40 +18,12 @@
  *   (a) anchor 在其 groups 下可达        —— 防「规则没进 prompt，场景空跑」
  *   (b) groups 是生产链路实际能产出的取值 —— 防「场景在生产不可达，跑不起来」
  */
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadRegistry, resolveRegistryRoot } from "../apps/server/src/agent/pi-runtime/prompt-registry.loader.js";
+import { PRODUCTION_RULE_GROUPS } from "../apps/server/src/agent/pi-runtime/rule-groups.js";
 import { PROMPT_AB_SCENARIOS } from "../services/pi-runtime/src/evals/prompt-ab-scenarios.js";
 
 const ROOT = resolve(import.meta.dirname ?? process.cwd(), "..");
-
-/** 生产 ruleGroups 的唯一赋值点。改这里 = 改全部会话的提示词构成，必须同步本文件。 */
-const PRODUCTION_RULE_GROUPS_SOURCE = "apps/server/src/agent/agent.service.ts";
-
-/**
- * 从生产源码里**读出**实际生效的 ruleGroups 字面量，而不是在这里复写一份。
- * 复写会形成第二个真值源：改了生产忘了改这里，(b) 就会对着过期值放绿灯。
- */
-function readProductionRuleGroups(): { groups: string[]; line: number } {
-	const abs = resolve(ROOT, PRODUCTION_RULE_GROUPS_SOURCE);
-	const src = readFileSync(abs, "utf8");
-	const lines = src.split("\n");
-	for (let i = 0; i < lines.length; i++) {
-		const m = lines[i]!.match(/ruleGroups:\s*\[([^\]]*)\]/);
-		if (!m) continue;
-		const groups = m[1]!
-			.split(",")
-			.map((s) => s.trim().replace(/^['"]|['"]$/g, ""))
-			.filter(Boolean);
-		return { groups, line: i + 1 };
-	}
-	// 找不到赋值点≠ 放行。生产改成别的形状时，这里必须显式失败，
-	// 否则 (b) 会因为「没解析到就算通过」而变成永真。
-	throw new Error(
-		`未在 ${PRODUCTION_RULE_GROUPS_SOURCE} 解析到 ruleGroups 字面量。\n` +
-			`生产赋值形状变了 ⇒ 请同步更新 readProductionRuleGroups()，不要跳过 (b) 判据。`,
-	);
-}
 
 /** anchor → 该规则的注入条件（复刻 loader.renderStatic 的过滤语义，只读不改）。 */
 function isReachable(
@@ -92,19 +64,19 @@ const KNOWN_UNREACHABLE_EXCEPTIONS: Record<string, string> = {
 	"cross-canvas-memory": "需 ruleGroups=['core','writeTools']。测 memory-scope-isolation（core 组即可）。",
 	"chat-no-node": "需 ruleGroups=['core','writeTools']。测 media-tool-policy 的闲聊负向边界。",
 };
-/** 上面每条都需要改同一个地方，故统一给出改法，避免 6 份重复文案各自漂移。 */
+/** 上面每条都需要切同一个开关，故统一给出改法，避免 6 份重复文案各自漂移。 */
 const HOW_TO_SWITCH_GROUPS =
-	`改 apps/server/src/agent/agent.service.ts 的 ruleGroups 字面量（无 env 开关），` +
-	`见 docs/ops/prompt-ab-runbook.md「groups 怎么切」小节。改完跑完记得改回去。`;
+	`设 AGENT_RULE_GROUPS env（如 AGENT_RULE_GROUPS=core,writeTools；fail-closed，未知值拒绝启动），` +
+	`见 docs/ops/prompt-ab-runbook.md「groups 怎么切」小节。仅限评测环境设置，生产发版不得携带。`;
 
 const errors: string[] = [];
 const warnings: string[] = [];
 
 const snapshot = loadRegistry(resolveRegistryRoot());
 const byAnchor = new Map(snapshot.entries.map((e) => [e.anchor!, e]));
-const prod = readProductionRuleGroups();
+const prod: { groups: readonly string[] } = { groups: PRODUCTION_RULE_GROUPS };
 
-console.log(`生产 ruleGroups（读自 ${PRODUCTION_RULE_GROUPS_SOURCE}:${prod.line}）: [${prod.groups.join(", ")}]`);
+console.log(`生产 ruleGroups（import 自 rule-groups.ts 单一真值源）: [${prod.groups.join(", ")}]`);
 console.log(`场景数: ${PROMPT_AB_SCENARIOS.length}｜ 规则数: ${snapshot.entries.length}\n`);
 
 // ── (0) anchor 必须真实存在于 registry ──────────────────────────
