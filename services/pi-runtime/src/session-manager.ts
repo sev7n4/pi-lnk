@@ -510,6 +510,11 @@ async function readSessionMeta(cwd: string): Promise<SessionMeta | undefined> {
 			userId: typeof parsed.userId === "string" ? parsed.userId : null,
 			provider: parsed.provider,
 			model: parsed.model,
+			// 🔴 同写盘侧：读回时必须带上画布会话 id，否则恢复后 `entry.canvasSessionId`
+			// 恒为 undefined ⇒ `toolContext.sessionId` 回落成 `key`（复合串）⇒ 画布工具全 404。
+			// 存量 meta.json 没有这个 key 时回落 undefined（不报错）——
+			// 那类会话本来就是「拿不到画布 id」的历史数据，不该因此 resume 失败。
+			canvasSessionId: typeof parsed.canvasSessionId === "string" ? parsed.canvasSessionId : undefined,
 			// ⚠️ 缺字段当「未知」而非「不匹配」：存量会话目录没有这两个key，
 			// 若当成不匹配会让升级后全部会话不可 resume。
 			promptVersion: typeof parsed.promptVersion === "string" ? parsed.promptVersion : undefined,
@@ -873,6 +878,12 @@ export class SessionManager {
 			userId: opts.userId ?? null,
 			provider: identity.provider,
 			model: identity.model,
+			// 🔴 必须落盘画布会话 id：`toolContext.sessionId = entry.canvasSessionId ?? key`
+			// （:898）。丢了它就会回落到 `key`，而 key 的真实形态是
+			// `<画布id>_<pi键>-<hash>-<random>` ⇒ **整个复合串被当 sessionId 传给 Nest**
+			// ⇒ `prisma.session.findUnique({id})` 查不到 ⇒ 全���画布工具 404「会话不存在」。
+			// 生产取证（2026-10-05，pod 内 /data/sessions）：200 个 meta.json **全无**此字段。
+			canvasSessionId: opts.canvasSessionId,
 			// P0-3 / L-2：落盘建会话时的 prompt 指纹，供下次磁盘 resume 比对。
 			promptVersion: opts.promptInfo?.promptVersion,
 			promptHash: opts.promptInfo?.promptHash,
