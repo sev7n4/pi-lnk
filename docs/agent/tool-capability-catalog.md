@@ -45,7 +45,7 @@
 
 扫描结果：**曾命中 1 项**（`focus_nodes`，见发现 A），**已按 A1 修复并回归锁进测试** ⇒ 当前命中 **0 项**。
 
-## 3. 三条硬发现
+## 3. 硬发现（A–F）
 
 ### 发现 A（缺陷，高风险，已实测，**已按 A1 修复**）：`focus_nodes` 被规则点名却在延迟集
 
@@ -106,6 +106,55 @@
 
 ⚠️ **教训（检索类测试通用）**：写匹配/检索测试时，替身必须复制**生产真实的 `label`/`description`** ——
 `fakeTool` 的 `label = name`（英文）会同时造成**假绿**（漏掉过召回）与**假红**（相对阈值下低估中文查询的证据量）。
+
+### 发现 D（2026-10-07 实测，**推翻本文件此前的核心前提**）：模型自带延迟工具名的先验，`tool_search` 拦不住
+
+**判据链（三条都成立，证据在 `/data/sessions` 的 eval 会话 jsonl）**：
+最干净的一个会话（80KB）里 —— **加载序列为「无」**（`tool_search` 从未成功过），
+但模型直接点名并调用了 `get_canvas_summary` / `get_canvas_layout`（共 4 次）⇒ 全部 `is unavailable`。
+而系统提示词**零延迟工具名**（逐会话前 4KB 校验）⇒ 名字既不来自搜索结果、也不来自提示词
+⇒ **只能来自模型自身的训练先验**。
+
+⇒ **「把工具藏起来 ⇒ 模型不知道它」这个前提在有先验的模型上为假。**
+这统一解释了此前的全部观察：A2/A4/A7 的幻觉点名、接近 100% 的命中率，
+以及 `get_canvas_nodes` / `get_sidebar_state` / `read` 等**根本不存在**的名字。
+
+⚠️ **对手段落地的直接影响**：想让模型「先搜再调」，**提示词层是低杠杆的**（已两次实证：
+#246 的 52 样本 A/B 两臂均 0/52；本轮强指令化实验同样失败）。可行抓手只剩两条：
+① 让「先搜」比「直接点名」**成本更低**（⚠️ 已知 `Tool X is unavailable` 写在 **vendor**
+`harness/execution/tools.ts:84`，`vendor/` 禁业务 patch ⇒ **改不了**，需另找落点）；
+② 承认先验存在，把分层收益按「省 schema token」算，不指望「模型不知道」。
+
+### 发现 E（2026-10-07 读 vendor 源码定性）：激活是**持久**的，且**按 lane 存**
+
+权威实现 `vendor/earendil-works/pi/packages/agent/src/harness/runtime/drive/tool-placement.ts`：
+
+```ts
+if (addedNames.length !== 0) {
+  nextConfiguration = { ...nextConfiguration, activeToolNames: [...nextConfiguration.activeToolNames, ...addedNames] };
+  writes.push(setValue(laneConfig(lane.name), nextConfiguration));   // ← 写进 lane 持久配置
+}
+```
+
+⇒ **不是「当轮有效」**（此前工作笔记里的「跨轮失效」推论**作废**）。
+⚠️ 但写的是 `laneConfig(lane.name)` ⇒ 若 `tool_search` 发生在 lane A、调用发生在 lane B，则 B 的 active 不含该工具。
+**实测排除**：`session-manager.ts` 的 `prompt/steer/followUp` 默认 `MAIN_LANE`，
+`git grep 'lane: "'` 在 `apps/server/src` 与非测试代码里**零命中** ⇒ 生产与 eval 都只用 main lane，该风险不成立。
+
+### 发现 F（2026-10-07）：`is unavailable` 有**两条来源**，此前被混成一条
+
+| 消息 | 出处 | 查的是 |
+|---|---|---|
+| `Tool "X" is unavailable` | `harness/execution/tools.ts:84`（`tools.find` 未命中） | **当轮可见工具集** |
+| `Tool X not found` | `agent-loop.ts:617`（`currentContext.tools?.find` 未命中） | 上下文工具集 |
+
+生产观测到的是**前者**。
+⚠️ **同轮加载的工具当轮仍可能不可见**（发给模型的 schema 快照在 prompt 之前已定型）
+⇒ 「同一轮 `tool_search` 加载完、紧接着调它 → 仍 unavailable」**是这套机制的必然结果，不是 bug**；
+下一轮才进 schema。这与观测吻合：`grid_slice_image` 在更早一轮加载后被成功调用 11 次。
+
+⚠️ **方法论教训（本轮踩了三次）**：比对「加载了什么 vs 调用了什么」**必须按行号/时间序切成两段**，
+不能对全序列做名字匹配 —— 否则会把「加载前的调用」误读成「加载无效」。
 
 ### 附带：常驻集中「零下发点名」的 2 个工具
 
