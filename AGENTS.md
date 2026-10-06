@@ -55,15 +55,32 @@
 `pi-prompt-assembler.service.ts:136` 在 `snapshot.degraded` 时才调它（`agent.controller.ts:267` 同）。
 ⇒ 改规则正文要同时改**磁盘 .md** 和**内嵌常量**；只改一边 ⇒ 降级路径与正常路径给出不同提示词。
 
-🔴 **本节曾被"符号已不存在"的假阴性结论带偏过一次（2026-10-06，已修正）**：
-当时的判据是 `git show <rev>:<path> | grep -c "<符号>"` 返回 0，于是把第 5 处判成"失效指针"并写进了本文件。
-真相是该符号一直存在，**管道里的 `grep -c` 会假阴性**（同一输出落盘后再 grep 就有命中）。
-⇒ **判「某符号不存在」必须落盘复核**：`git show <rev>:<path> > /tmp/f && grep -c … /tmp/f`，
-或 `git grep <pat> <rev> -- <精确文件路径>`。**「查不到」永远不等于「不存在」。**
+🔴 **本节曾被一个错误的"符号已不存在"结论带偏过一次（2026-10-06 当天修正）**：
+当时的取证写法是 `git show $R:apps/…/loader.ts | grep -c <符号>`，返回 0，于是把第 5 处判成"失效指针"并写进了本文件。
+
+**真因不是 grep，是 zsh 的参数修饰符**（已复现 33/33 次，可稳定重现）：
+
+```zsh
+R=c69d3fa4
+echo $R:apps     # → /Users/…/c69d3fa4pps   ← `:a` 被当成「绝对路径」修饰符，apps 的 a 被吃掉
+echo ${R}:apps   # → c69d3fa4:apps        ✅ 正确
+```
+
+⇒ git 收到的是一个不存在的路径 → `fatal: ambiguous argument …` → **stderr 被 `2>/dev/null` 吞掉** →
+stdout 为空 → `grep -c` 输出 0 ⇒ 看起来"符号不存在"，实际是**命令拼错了**。
+**正确写法：`git show ${REV}:<path>`（变量必须加花括号）。**
+
+⇒ 该符号（`renderStaticFallback`）从 #114 起**从未消失**，用 pickaxe 可验：
+`git log -S "renderStaticFallback" -- …/prompt-registry.loader.ts` 只有一条（引入）记录。
+
+**留给自己的三条判据**：
+1. 判「不存在」时，**先看命令有没有报 fatal**（别用 `2>/dev/null` 吞掉），再落盘复核一次；
+2. **凡写进规范的工具故障断言，必须同处给出可复现命令**（由 `verify-claims` 判据 6 守）；
+3. zsh 里**变量紧跟冒号**一律加花括号（`${R}:…`）—— 这是本仓最容易复发的静默失败形态。
 ⚠️ `FALLBACK_BY_ID` 只在 loader 定义（`:112`），`prompt-registry.fallback.ts` 里没有同名符号 ——
 它靠**内容逐字相等**被约束，不是靠常量名对齐。
-⚠️ 搜索工具的**假阴性**是本仓反复踩到的坑（BSD `grep` 不支持 `\|`；管道里 `grep -c` 可返回 0 而文件里确实有）。
-**判「不存在」一律落盘复核**（`git show <rev>:<path> > /tmp/f && grep -c … /tmp/f`）；
+⚠️ 搜索时**别让命令错误伪装成"查不到"**：`2>/dev/null` 会把 `fatal:` 一起吞掉，
+于是一个拼错的路径和一个真实缺失长得一模一样。历史教训见上面第 5 处的红框。
 大范围扫描（如全仓 python 遍历）会超时（exit 137），此时缩小范围或用 `git grep -n -- <符号> -- <目录>`。
 
 改完跑 `pnpm prompt:lint`（独立成 `prompt-lint.yml` 流水线，`ci.yml` 不覆盖它）。

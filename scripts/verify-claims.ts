@@ -286,24 +286,54 @@ check('判据5 · prompt-registry 六处同步点符号仍存在于仓库', () =
 	return { ok: true };
 });
 
-// ── 判据 6：不得把「工具故障」写成「仓库事实」 ─────────────────────────
-check('判据6 · 无「已知假阴性」类工具故障断言', () => {
+// ── 判据 6：工具故障类断言必须给出可复现依据 ─────────────────────────
+/**
+ * WHY THIS EXISTS
+ * ---------------
+ * 本判据最初只有一份**黑名单**（禁掉几句已知的误导句式）。2026-10-06 出了一个它拦不住的：
+ * 我把一次**命令拼错**（zsh 把 `$R:apps` 当成 `${R:a}` 绝对路径修饰符 + `2>/dev/null` 吞掉 fatal）
+ * 误判成「grep 会假阴性」，并把这句**未经验证的归因**写进了 AGENTS.md。
+ * 措辞绕过了黑名单（写的是「会假阴性」而不是「已知假阴性」）⇒ 说明靠**列句式**兜不住。
+ *
+ * ⇒ 改成**举证要求**：任何「某个工具/命令会返回 0 / 不可信」类断言，
+ * 同一段落内必须给出可复现依据（复现命令 / 交叉验证 / 已复现…）。
+ * 这样既允许写事实，又强制事实带证据。
+ */
+const FAULT_WORD = /(假阴性|返\s*0\s*命中|零命中|不可信|不能信|别信)/;
+const PROOF_WORD = /(复现|交叉验证|两种(?:工具|方式|写法)|已复现|已验证|已修正)/;
+
+check('判据6 · 工具故障类断言必须同段给出可复现依据', () => {
 	const text = readFileSync(AGENTS, 'utf8');
 	// 一次真实事故：把 grep shim 大范围扫描超时（exit 137）写成了
 	// 「git grep 对这些符号返 0 命中（已知假阴性）」，并推荐了一个本身会崩的替代方案。
-	const banned = [
-		/已知假阴性/,
-		/会返\s*0\s*命中/,
-		/必须用\s*python\s*直读/,
-		/git grep.*(不可用|不能信|别信)/,
-	];
-	const hits = banned.filter((re) => re.test(text)).map((re) => re.source);
-	if (hits.length > 0) {
+	const banned = [/必须用\s*python\s*直读/, /git grep.*(不可用|不能信|别信)/];
+	const bannedHits = banned.filter((re) => re.test(text)).map((re) => re.source);
+	if (bannedHits.length > 0) {
 		return {
 			ok: false,
 			msg:
-				`发现工具故障类断言：${hits.join('、')}\n` +
+				`发现工具故障类断言：${bannedHits.join('、')}\n` +
 				`  ⇒ 工具报错 ≠ 仓库事实。写进规范前必须用两种不同方式验证同一结论。`,
+		};
+	}
+
+	// 以空行分段：故障断言与它的复现依据必须在同一段里，否则读者无法照着验
+	const paragraphs = text.split(/\n\s*\n/);
+	const unproven = paragraphs
+		.map((p, i) => ({ p, i }))
+		.filter(({ p }) => FAULT_WORD.test(p) && !PROOF_WORD.test(p))
+		.map(({ p, i }) => {
+			const line = text.slice(0, text.indexOf(p)).split('\n').length;
+			const snippet = p.replace(/\s+/g, ' ').trim().slice(0, 80);
+			return `  第 ${i + 1} 段（≈ L${line}）：${snippet}…`;
+		});
+	if (unproven.length > 0) {
+		return {
+			ok: false,
+			msg:
+				`发现 ${unproven.length} 处工具故障类断言但同段没有可复现依据：\n${unproven.join('\n')}\n` +
+				`  ⇒ 「某工具会返回 0 / 不可信」这类结论，必须在**同一段**里附上复现命令或交叉验证方式。\n` +
+				`  ⇒ 判据只管「有没有证据」，不管结论本身是什么。`,
 		};
 	}
 	return { ok: true };
