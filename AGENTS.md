@@ -143,6 +143,7 @@
 | `deploy.yml` | `push`(master) + paths 白名单：server / web / packages / deploy / prompt-registry / package.json / pnpm-lock / pnpm-workspace / .dockerignore / 自身 | api + web |
 | `runtime-deploy.yml` | **纯 `workflow_dispatch`，无 push 触发** | pi-runtime |
 | `prompt-lint.yml` | paths 触发：`prompt-registry/**`、`prompt-registry.*`、`prompt-lint.ts` | 提示词门禁 |
+| `observability-watchdog.yml` | **`schedule`（每 30 分钟）+ `workflow_dispatch`，无 push 触发** | 观测巡检断言（须 SSH 进 CVM 跑，Prometheus 只在 NodePort 内网可达） |
 
 ⚠️ **最容易踩的静默失败**：改 `services/pi-runtime/**`、`skills/**`、`vendor/**` 后 push 到 master，
 `runtime-deploy.yml` **不会自动跑** —— CI 全绿但线上没有任何变化。

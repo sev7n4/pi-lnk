@@ -11,6 +11,7 @@
 | `prometheus/prometheus.yml` | 抓取配置（内嵌进上面的 ConfigMap） | ✅ 已生效 |
 | `prometheus/rules/README.md` | 说明文档 | ✅ 生效（**规则刻意为空**，见该文件） |
 | `prometheus/read-decisions.sh` | 诊断脚本（不改动任何状态） | ✅ 需手工执行，见该文件头 |
+| `prometheus/observability-watchdog.sh` | 巡检断言脚本（**给 CI 判成败**） | ✅ 需手工执行；由 `.github/workflows/observability-watchdog.yml` 每 30 分钟自动跑 |
 | `grafana/provisioning/datasources/datasources.yaml` | Grafana provisioning 片段 | ❌ **未部署**（全集群零 Grafana） |
 | `otel-collector.yaml` | **不是 k8s 清单**（无 `apiVersion`）= compose 片段 | ❌ 未部署 |
 | `tempo.yaml` | **不是 k8s 清单**（无 `apiVersion`）= compose 片段 | ❌ 未部署 |
