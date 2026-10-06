@@ -338,8 +338,13 @@ export function createCanvasWriteTools(
 				if (!registry || !askUserBlocking()) return resultWithActions(base);
 
 			// 阻塞确认：registry 挂 pending（供 /pending 查询与 abort 联动），双臂 race——
-			// ① 轮询画布 SSOT（缺省 2s 间隔，spec §4.2）；② registry resolution（abort→aborted / timer→timeout）
+			// ① 轮询画布 SSOT（缺省 2s 间隔，spec §4.2）；
+			// ② registry resolution：**answered = 前端显式确认**（/answers，2026-10-06 接上）/
+			//    aborted = 中止 / timer→timeout。
 			// meta.nodeId：随 waiting_user 事件下发，前端据此渲染「定位节点」入口（等待可见化，2026-10-01）
+			// ⚠️ answered 必须映射成 confirmed，不能再落到 timeout 分支（修 2026-10-06 生产事故：
+			//    用户点画布生成 → 前端 /answers 已 resolve，却被回「未在时限内确认」）。
+			//    它是**唯一不依赖 SSOT 时序**的确认路径；轮询退化为兜底（画布侧直接生成、无 /answers 时）。
 			const wait = registry.waitForUser(tc.sessionId, id, "propose_generation", askUserTimeoutMs(), {
 				nodeId: p.node_id,
 			});
@@ -389,7 +394,11 @@ export function createCanvasWriteTools(
 				const outcome = await Promise.race([
 					confirmResult,
 					wait.then((r) =>
-						r.status === "aborted" ? { confirmed: false, reason: "aborted" } : { confirmed: false, reason: "timeout" },
+						r.status === "answered"
+							? { confirmed: true, reason: "answered" }
+							: r.status === "aborted"
+								? { confirmed: false, reason: "aborted" }
+								: { confirmed: false, reason: "timeout" },
 					),
 				]);
 				settled = true;
@@ -414,7 +423,9 @@ export function createCanvasWriteTools(
 										? "用户未在时限内确认，请等待用户后续指示，不要自行执行 run_*。"
 										: outcome.reason === "aborted"
 											? "用户已中止。"
-											: "用户取消了该节点的生成确认，不要执行 run_*；可先了解原因。",
+											// rejected 是**推断**（SSOT 连续两次停 draft）而非事实，文案不得替用户
+											// 下定论：2026-10-06 生产事故里用户点了生成，模型却照此复述「用户取消了生成确认」。
+											: "未检测到该节点的生成确认（节点已回到草稿状态），不要执行 run_*；请先向用户确认是继续生成还是调整参数，不要断定用户已取消。",
 							}),
 						}],
 						details: { ok: false, confirmed: false },
