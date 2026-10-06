@@ -77,7 +77,11 @@ AudioKind      = 'voice' | 'design' | 'music'              // 新增，audio 之
 3. 新增 `resolveStepFunPlatformCredentials(modelName, env)`：以 `/^step/i` 匹配（`step-tts-mini` / `stepaudio-3-*` 均命中，与 `/h3-max/i`、`/^minimax-h3$/i` 无重叠）
 4. `provider-resolver.service.ts` 的 `else if` 链挂载（置于 fal / minimax 之后，不影响既有分支）
 
-密钥落点：`/opt/lnkpi/.env` + helm values ⇒ **属「必须先问人」红线（AGENTS.md 角色边界 #4）**，由用户/运维注入，规格只描述变量名与校验方式。
+密钥落点：`/opt/lnkpi/.env` + helm values ⇒ **属「必须先问人」红线（AGENTS.md 角色边界 #4）**。
+✅ 已于 2026-10-06 由用户提供并授权注入（PR #239）：单一来源 = GitHub Secret `STEPFUN_API_KEY`，
+由 `deploy.yml` 的 `Inject platform provider keys into CVM .env` 步骤幂等 upsert 进 `/opt/lnkpi/.env`。
+⚠️ 因此本项**不要再按「手工在 CVM 上改一次」处理**——Sync 步骤会备份并还原 `.env`，
+只手工改会在换机/首次部署时静默丢失，且无任何报错。
 
 ### 4.2 模型登记
 
@@ -165,4 +169,4 @@ AudioKind      = 'voice' | 'design' | 'music'              // 新增，audio 之
 | C1 | 平台侧登记哪些 step 模型 | 仅本期三类所需的 3 条（`stepaudio-3-tts` / `-gen-preview` / `-music-preview`）。realtime、ASR **不登记** |
 | C2 | 平台 key 与用户 BYOK 同名模型冲突时的优先级 | **以用户选择为准**（`modelValue` 里编了 `channelId`，天然分离；不做隐式覆盖） |
 | C3 | per-user 限额粒度 | 只靠积分闸门 + 单会话并发 1，不做独立日额度（后续按用量再定） |
-| C4 | CVM 上注入 `STEPFUN_API_KEY` 的时机 | 阶段 0 代码合并后、验收前；由用户/运维执行（属红线 #4，不自行操作） |
+| C4 | CVM 上注入 `STEPFUN_API_KEY` 的时机 | ✅ **已执行（2026-10-06，PR #239）**：GitHub Secret + `deploy.yml` 注入步骤（非手工）。生产 `/opt/lnkpi/.env` 已注入并核验（1 行、600、变量名集合只多出该项）；合并 #239 触发的部署会再幂等写一次 |
