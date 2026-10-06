@@ -56,6 +56,7 @@
 | **收手条件错** | `agent_end` 到了但没被消费 ⇒ 每条都打满 `timeoutMs` | `/events` 是**长连接**，`agent_end` 后服务端**不关闭** ⇒ 必须「**收到即完成**」 |
 | **折叠丢信息** | `assistantText` 恒空或阶梯重复 ⇒ 文本判据全假绿 | 核对原始载荷字段位置；注意 `content[]` 混 `thinking` 块；流式是**累积快照**不是增量 |
 | **错误被吞** | 429/5xx 被判成 `fail` ⇒ 引导去改提示词，实际是额度 | `status!=="completed"` 时必须把 `data.error` 收进 `errors`（保留原文） |
+| **订阅未就绪就发 prompt** | 模型**确实调了**工具，客户端却**零工具事件** ⇒ 工具类判据全假阴性 | 见 §2.4：必须「**订阅就绪（响应头到达）**」后再 prompt，且等要有界 |
 
 ### 2.3 单测抓不到这类缺陷 ⇒ 造数据必须用**生产实测形态**
 
@@ -64,6 +65,44 @@
 - **错误载荷** ⇒ 直接抄生产原文（含 429 的 `request id`）
 
 **每次修复都要做红→绿验证**：回退修复 ⇒ 目标测试必须变红。不变红 = 测试没抓住 bug。
+
+### 2.4 ⭐⭐⭐ 「先订阅」不够，必须「**订阅就绪**」再发 prompt（2026-10-06）
+
+**症状**：同构客户端 + 容器内真模型，12 轮里 **3 轮**出现「模型确实调了 `tool_search`，
+客户端一个 `tool_execution_start` 都没收到」。
+**反证**：pod 内该 session 的 jsonl 里这次调用的 `toolResult` **确实存在**
+⇒ 不是「模型没调」，是「**客户端没收到**」。
+
+**根因**：`from=now` 的水位线在**服务端登记订阅者**那一刻生效。
+`void streamEvents(...)` 只保证 GET 请求**已发出**，不保证**已登记**。
+两者之间的窗口里产生的事件（往往正是**首个工具调用**）会被当成「订阅前的旧事件」而**永不投递**。
+
+**后果定性**：它把「搜了」记成「没搜」⇒ 是个**假阳性发生器**，
+正好污染「叙述代替调用」这类行为判据（见 §7 的规则 22 观测）。
+
+**修法（两处，缺一不可）**：
+
+1. `services/pi-runtime/src/eval/driver.ts`
+   - 等 `subscribed`（**响应头到达**）**且带超时**再 `postJson(prompt)`；
+   - 订阅失败也必须放行 `subscribed`，否则 `await` 永挂；
+   - `streamDone` 建好就挂空 `catch`：reject 可能早于 `await streamDone`
+     （中间隔着订阅 + prompt 两个 IO 点），而 Node 默认
+     `--unhandled-rejections=throw` ⇒ **评测进程直接崩**（单测里表现为随机红）。
+2. `services/pi-runtime/src/app.ts` `/events`：`writeHead` 后必须 `reply.raw.flushHeaders()`。
+   ⚠️ 实测（真实 socket 探针，非 `inject`）：
+   - 不 flush ⇒ 拿到响应头要 **15022ms**（`HEARTBEAT_MS = 15s`，只有心跳才把响应头带上线）
+   - flush 后 ⇒ **17ms**
+   ⇒ 不修这条，**每轮评测白等一个心跳周期**，且等待时长随心跳抖动。
+
+**红→绿判据**：`driver.test.ts` 的 `startRaceRuntime` 让假 server **延迟登记订阅者**
+（登记前 `produce` 的事件记进 `dropped`）。
+回退 driver 修复 ⇒ 「订阅未就绪 ⇒ 首个工具调用被吞」必红（实测：5s 打满 ⇒ `dropped` 非空、`toolNames` 为空）。
+
+⚠️ **只断言「`/events` 请求早于 `/prompt` 请求」测不出该缺陷** —— 请求顺序本来就是对的，
+晚的是**服务端登记**。这正是旧用例 `订阅必须早于 prompt` 一直绿着、却漏掉真缺陷的原因。
+
+⚠️ 假 server 造数据时，SSE 端点**必须先 flush 响应头**（真实 SSE 都如此）；
+`writeHead` 之后不写任何字节就等于「服务端不吐头」，会让新契约下的 driver 空等到超时。
 
 ---
 
