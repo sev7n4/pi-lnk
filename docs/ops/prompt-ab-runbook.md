@@ -321,6 +321,39 @@ DONE T|s4-capability|4 … end= nEv=0 240002ms ERR=This operation was aborted
 ⚠️ 配套：断点续跑的 SKIP 集必须用「**已有有效样本**的 key」，不能用「有 DONE 行的 key」——
 后者会让一次环境失败**永久钉死**该 key，后续轮次再也不补。
 
+### ⑤ 判「手上这份数据是哪一版脚本产的」——看内容，别看文件名
+
+**日志文件名会骗人**（实测：`ab-run-v3.log` 里装的其实是 v4 脚本产的数据，
+而真正跑着 v3 共享画布脚本的那个 worker 恰好也往同一文件里写）。
+三条判据，按可靠性从低到高：
+
+1. **会话目录命名形态**：每样本独立会话的版本，目录名形如
+   `<RUN_ID>-<臂>-<场景>-<样本>`（重试版还带 `-a<attempt>`）。
+   若目录名里**没有样本序号**（只有 `<臂>-<场景>`）⇒ 是共享画布那一版，**数据作废**。
+
+   ```bash
+   ssh deploy-cvm 'ls <sessions-dir>/ | grep "^ab-rule22" \
+     | sed "s/^ab-rule22-[^-]*-//" | sort | uniq -c | sort -rn | head'
+   ```
+
+2. **Nest 会话计数（最硬）**：每样本新画布 = 每个样本在 Nest 里建一条会话。
+   按 RUN_ID 计数 ⇒ **条数 ≈ 跑过的 key 数**（重试会更多）；**为 0 就是共享画布版**。
+
+   ```bash
+   # 在 lnkpi-api 容器内执行（prisma 与生产库同源）
+   node -e 'const{PrismaClient}=require("@prisma/client");(async()=>{const p=new PrismaClient();
+   console.log(await p.session.count({where:{title:{startsWith:"ab-rule22-<RUN_ID>"}}}));
+   await p.$disconnect();})()'
+   ```
+
+3. **跨臂指纹（人工一眼可辨）**：在「画布上现在有几个节点」这类场景上，
+   共享画布版会出现 **C 臂全答「12 个节点」、T 臂全答「14 个节点」** ——
+   因为 C 臂先跑、它的 `s4-capability` 真的建了 2 个节点（`upsert_media_node` +
+   `apply_sidebar_attachments`），T 臂看到的是被改脏的**同一块**画布。
+
+⚠️ 「跑完了」≠「数据能用」。**第 2 条应该在开跑前就做一次**（确认自己起的是新版），
+而不是等跑完再回头怀疑自己。
+
 ## 结果归档
 
 每次跑完追加一行。**首版这些数字是基线，不是判定依据**（见上）。
