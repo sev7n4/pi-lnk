@@ -309,6 +309,69 @@ check('判据6 · 无「已知假阴性」类工具故障断言', () => {
 	return { ok: true };
 });
 
+// ── 判据 7：规范里引用的文件路径必须真实存在（防「失效指针」）──────────
+/**
+ * WHY
+ * ----
+ * 规范里的「路径」也是代码资产：2026-10-06 出现过两次真实漂移——
+ *  ① AGENTS.md「同步 6 处」把降级函数写成 `pi-prompt-assembler.service.ts` 的
+ *     `renderStaticFallback()`（真实定义在 `prompt-registry.loader.ts:255`）；
+ *  ② `coding-agent/src/core/extensions/types.ts` 是包内简路径，在仓库根定位不到
+ *     （真实路径 `vendor/earendil-works/pi/packages/coding-agent/...`）。
+ * 章节名有判据 2 守着，但**章节内的路径没有** ⇒ 补这条。
+ *
+ * 只判「含 `/` 的反引号路径」：裸文件名（`tiering.ts` / `runtime-deploy.yml`）在本仓
+ * 是约定俗成的简写，目录由上下文给出，强行解析会误报一片。
+ *
+ * allowlist 单一事实源 = `docs/README.md` 的「路径引用失效 / 已登记不改」登记表，
+ * 那里登记的断链是**刻意保留**的（ADR-0008：篡改历史记录比留死链更糟）。
+ */
+const CODE_EXT_RE = /`([A-Za-z0-9_./@-]+\.[a-z]+)`/g;
+
+check('判据7 · 规范里引用的文件路径真实存在（只判含目录的）', () => {
+	const readmePath = join(ROOT, 'docs/README.md');
+	const allow = new Set<string>();
+	if (existsSync(readmePath)) {
+		const reg = readFileSync(readmePath, 'utf8').match(
+			/###[^\n]*(?:路径引用失效|已登记不改)[^\n]*\n([\s\S]*?)(?=\n## )/,
+		);
+		if (reg) for (const m of reg[1].matchAll(CODE_EXT_RE)) allow.add(m[1]);
+	}
+
+	const missing: string[] = [];
+	let checked = 0;
+	for (const f of SPEC_FILES) {
+		if (!existsSync(f)) continue;
+		const rel = f.replace(ROOT + '/', '');
+		readFileSync(f, 'utf8')
+			.split('\n')
+			.forEach((line, i) => {
+				for (const m of line.matchAll(CODE_EXT_RE)) {
+					const p = m[1];
+					if (!p.includes('/')) continue; // 裸名：目录靠上下文，跳过
+					if (p.startsWith('/')) continue; // 绝对路径（生产机上的 /opt/… 、/api/…），不在仓库内
+					if (p.includes('*')) continue; // 通配：无法判定，跳过
+					if (allow.has(p)) continue; // docs/README.md 已登记不改
+					checked++;
+					if (!existsSync(join(ROOT, p))) {
+						missing.push(`  ${rel}:${i + 1}  \`${p}\`\n      ${line.trim().slice(0, 90)}`);
+					}
+				}
+			});
+	}
+	if (missing.length > 0) {
+		return {
+			ok: false,
+			msg:
+				`规范里有 ${missing.length} 处路径定位不到：\n${missing.join('\n')}\n` +
+				`  ⇒ 路径写错 = 读者按它找不到文件（比"漏写"更隐蔽，因为看起来是完整的）。\n` +
+				`  ⇒ 改法：改成仓库根起算的完整路径；确实是刻意保留的断链，\n` +
+				`     登记到 docs/README.md 的「已登记不改」表里（本判据会自动豁免）。`,
+		};
+	}
+	return { ok: true, note: `检查了 ${checked} 处含目录的路径引用` };
+});
+
 // ── helpers ────────────────────────────────────────────────────────────
 function* walk(dir: string): Generator<string> {
 	for (const e of require('node:fs').readdirSync(dir, { withFileTypes: true })) {

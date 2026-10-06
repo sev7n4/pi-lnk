@@ -40,7 +40,7 @@
 | 2 | `prompt-registry/MANIFEST.yaml`（`contentHash` = `sha256(body.trimEnd())` 前 12 位；`version` 两处一致） | 完整性校验失败 |
 | 3 | `prompt-registry.loader.ts` 的 `COMPOSED_IDS` | 不参与组合 |
 | 4 | `prompt-registry.loader.ts` 的 `FALLBACK_BY_ID` 映射（仅此一处定义） | 降级路径与实际规则不一致 |
-| 5 | 🔴 `prompt-registry.fallback.ts` 的**内嵌规则常量**（`CORE_RULES_PREFIX` / `MEMORY_SCOPE_RULES` / `WRITE_TOOLS_RULES` / `GEN_TOOLS_RULES` / `CANVAS_VIEW_POLICY` / `CANVAS_DAILY_OPS` …） | registry 加载失败时走降级路径，**提示词与磁盘规则不一致，且无任何报错** |
+| 5 | 🔴 `prompt-registry.fallback.ts` 的**内嵌规则常量**（`CORE_RULES_PREFIX` / `MEMORY_SCOPE_RULES` / `WRITE_TOOLS_RULES` / `GEN_TOOLS_RULES` / `CANVAS_VIEW_POLICY` / `CANVAS_DAILY_OPS` …） | registry 加载失败时走降级路径（`renderStaticFallback`），**提示词与磁盘规则不一致，且无任何报错** |
 | 6 | 🟡 `pi-prompt-assembler.service.test.ts` 的 `EXPECTED` 硬编码串 | 测试假绿 |
 
 **同步判据**：`prompt-registry.loader.ts` 的 `renderStatic()`（读磁盘）== 内嵌 fallback 常量按 `FALLBACK_BY_ID` 组合的结果，**逐字符相等**。
@@ -49,13 +49,22 @@
 变异实测：把 `prompt-registry.fallback.ts` 里一个字改掉（`focus_nodes`→`focus_node`）⇒ 报
 「canvas_daily_ops.md 的 body 与常量不一致」+ 退出码 1。**所以第 5 处不是"靠自觉"，别再当它没人管。**
 
-⚠️ **同步点不在 `pi-prompt-assembler.service.ts`** —— 那里只是同时 import 磁盘渲染器与 fallback 常量再调用 `renderStatic`。
-本节早期写的 `renderStaticFallback()` 符号**已不存在**（2026-10-06 全仓 `git grep` 零命中，仓库里只有 `renderStatic`），
-按旧文字去「同步 5 处」会找不到目标 —— 这是 2026-10-06 由 R5/R1 交叉核实修正的失效指针。
+⚠️ **降级路径的函数与常量是两回事，别只改一半**：
+`renderStaticFallback()` **定义在 `prompt-registry.loader.ts:255`**（不是 assembler），
+它**组合的是 `prompt-registry.fallback.ts` 里的内嵌常量**；
+`pi-prompt-assembler.service.ts:136` 在 `snapshot.degraded` 时才调它（`agent.controller.ts:267` 同）。
+⇒ 改规则正文要同时改**磁盘 .md** 和**内嵌常量**；只改一边 ⇒ 降级路径与正常路径给出不同提示词。
+
+🔴 **本节曾被"符号已不存在"的假阴性结论带偏过一次（2026-10-06，已修正）**：
+当时的判据是 `git show <rev>:<path> | grep -c "<符号>"` 返回 0，于是把第 5 处判成"失效指针"并写进了本文件。
+真相是该符号一直存在，**管道里的 `grep -c` 会假阴性**（同一输出落盘后再 grep 就有命中）。
+⇒ **判「某符号不存在」必须落盘复核**：`git show <rev>:<path> > /tmp/f && grep -c … /tmp/f`，
+或 `git grep <pat> <rev> -- <精确文件路径>`。**「查不到」永远不等于「不存在」。**
 ⚠️ `FALLBACK_BY_ID` 只在 loader 定义（`:112`），`prompt-registry.fallback.ts` 里没有同名符号 ——
 它靠**内容逐字相等**被约束，不是靠常量名对齐。
-⚠️ 本仓 `grep` / `git grep` 可正常使用；大范围扫描（如全仓 python 遍历）会超时
-（exit 137），此时缩小到具体目录或改用 `git grep -n -- <符号> -- <目录>`。
+⚠️ 搜索工具的**假阴性**是本仓反复踩到的坑（BSD `grep` 不支持 `\|`；管道里 `grep -c` 可返回 0 而文件里确实有）。
+**判「不存在」一律落盘复核**（`git show <rev>:<path> > /tmp/f && grep -c … /tmp/f`）；
+大范围扫描（如全仓 python 遍历）会超时（exit 137），此时缩小范围或用 `git grep -n -- <符号> -- <目录>`。
 
 改完跑 `pnpm prompt:lint`（独立成 `prompt-lint.yml` 流水线，`ci.yml` 不覆盖它）。
 
@@ -108,7 +117,9 @@
 
 `pi.on` / `pi.registerTool` / `registerCommand` / `ui.*` **全属 `pi-coding-agent`**
 （交互式终端宿主，本项目**未依赖**）。`interface ExtensionAPI` 唯一实现在
-`coding-agent/src/core/extensions/types.ts`。
+`vendor/earendil-works/pi/packages/coding-agent/src/core/extensions/types.ts`
+（原先此处只写了包内简路径「coding-agent / src / core / extensions / types.ts」—— 那种写法在仓库根定位不到，
+2026-10-06 由新增的判据 7 抓出并改为上面的完整路径）。
 
 ⇒ `docs/extensions.md` 是扩展面**全景**，**不是 agent-core 能力清单**。
 我们的事件源本来就是 vendor 的 `harness.events.on`（`session-manager.ts` 的 `attachEvents`）。
