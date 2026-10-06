@@ -38,6 +38,7 @@ export function truncationNote(kind: BlockKind, n: number): string {
  * 块首标记识别 kind。
  * ⚠️ 标记 = 真实生产约定（C1 hotfix，勿改回占位标记）：
  * - canvas: pi-prompt-assembler.service.ts `当前画布摘要：\n{JSON}`
+ *         + agent.service.ts `【用户当前选中】`（SEL-REF digest 块，R-S6）
  * - vision: sidebar-vision.ts `【侧栏参考图解析】`（全角括号）
  * - sidebar: sidebar-block.ts `侧栏参考素材：`（I1=... 是块内行格式，不是块首）
  * - memory: agent.service.ts `## 长期记忆（用户历史偏好，供参考）`
@@ -46,6 +47,7 @@ export function truncationNote(kind: BlockKind, n: number): string {
 export function classifyBlock(block: string): BlockKind {
 	const t = block.trimStart();
 	if (t.startsWith("当前画布摘要")) return "canvas";
+	if (t.startsWith("【用户当前选中】")) return "canvas";
 	if (t.startsWith("【侧栏参考图解析】")) return "vision";
 	if (t.startsWith("侧栏参考素材")) return "sidebar";
 	if (t.startsWith("## 长期记忆")) return "memory";
