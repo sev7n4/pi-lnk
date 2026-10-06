@@ -203,6 +203,13 @@ export class AgentService {
      * 提供时 → 先 fork 出「截断到该消息之前」的新分支会话，本轮在新线程上跑。
      */
     branchFromEntryId?: string,
+    /**
+     * SEL-REF：指代信号（本轮画布选中的节点 id 集合）。
+     * ⛔ 追加在参数表**末尾**：本方法有 ~40 处按位置调用的测试，中间插入会移位，
+     * 且 `refOrder` / `mentionedKeys` 同为 `string[]` ⇒ 错位不会报错、只会静默错值。
+     * `focusNodeId` 由它派生（见调用方），不再由前端单独给。
+     */
+    selectedNodeIds?: string[],
   ): AsyncGenerator<AgentStreamEvent> {
     // Register idempotency key (if provided) before starting
     if (idempotencyKey) {
