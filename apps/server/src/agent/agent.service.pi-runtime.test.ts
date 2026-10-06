@@ -1814,3 +1814,211 @@ describe('svg_card 落库 executionEvents（刷新恢复通道）', () => {
     ])
   })
 })
+
+// ── 评审 C2：旧客户端 `focusNodeId` 被静默丢弃 ────────────────────────────
+// 版本错配期（CDN 旧 web / 灰度 / 旧标签页）前端只发 focusNodeId、不发
+// selectedNodeIds。若服务端直接丢弃 ⇒ getCanvasSummary 命中「无焦点 → 全量返回」
+// 的 fail-open 第一闸 ⇒ 大画布注入成本上升 + 换话题污染，且**无任何日志**。
+describe('SEL-REF · C2：旧客户端 focusNodeId 的迁移期回落', () => {
+  let service: AgentService
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    service = new AgentService(
+      {
+        agentMessage: {
+          create: vi.fn().mockResolvedValue({}),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        agentThread: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({}),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        session: {
+          findUnique: vi.fn().mockResolvedValue({ id: 's1', canvasData: null }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        idempotencyRecord: {
+          create: vi.fn().mockResolvedValue({}),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+  })
+
+  afterEach(() => {
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+  })
+
+  function stubAssembler(prompt: string) {
+    const assembleStatic = vi.fn().mockResolvedValue(prompt)
+    const assembleDynamic = vi.fn().mockResolvedValue([])
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic,
+      assembleDynamic,
+    } as never)
+  }
+
+  async function captureTurnContext(extra: { legacyFocus?: string; selected?: string[] }) {
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    stubAssembler('PROMPT-s1')
+    for await (const _e of service.streamConversation(
+      's1', '你好', 'u1', 't1',
+      undefined, undefined, undefined,
+      extra.legacyFocus,
+      undefined, undefined, undefined,
+      undefined, undefined, undefined,
+      extra.selected,
+    )) {
+      /* 只需跑完一轮 */
+    }
+    const [, , , promptOpts] = pi.prompt.mock.calls[0] as [string, string, string, { turnContext: Record<string, unknown> }]
+    return promptOpts.turnContext
+  }
+
+  it('只发旧 focusNodeId 时回落为焦点（不再退化为全量注入）', async () => {
+    const tc = await captureTurnContext({ legacyFocus: 'legacy-node-1' })
+    expect(tc.focusNodeId).toBe('legacy-node-1')
+  })
+
+  it('两个字段同时给时派生值胜出（旧字段不得覆盖）', async () => {
+    const tc = await captureTurnContext({ legacyFocus: 'legacy-node-1', selected: ['node-9'] })
+    expect(tc.focusNodeId).toBe('node-9')
+  })
+
+  it('新字段给了 2 个时不派生焦点（多选不构成焦点），旧字段也不回落', async () => {
+    const tc = await captureTurnContext({ legacyFocus: 'legacy-node-1', selected: ['a', 'b'] })
+    expect(tc.focusNodeId).toBeUndefined()
+  })
+
+  it('回落路径留痕：旧客户端命中回落时写 warn（静默丢弃 = 查不掉的坑）', async () => {
+    const warn = vi.spyOn(service['piLogger'], 'warn').mockImplementation(() => undefined)
+    await captureTurnContext({ legacyFocus: 'legacy-node-1' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('legacy'))
+  })
+
+  it('走新字段时**不**写回落 warn（避免噪声）', async () => {
+    const warn = vi.spyOn(service['piLogger'], 'warn').mockImplementation(() => undefined)
+    await captureTurnContext({ selected: ['node-9'] })
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('legacy'))
+  })
+})
+
+// ── 评审 C1：回执必须由服务端确认驱动（否则开关关着也在说谎）───────────────
+// 前端读不到 Nest 的 `SEL_REF_ENABLED`，若 chip 只按「本地冻结的 id 非空」渲染，
+// 则 V1 默认态（off）下用户照样看到「已绑定 N 个选中节点」，而提示词里 0 字节注入。
+// 正解：服务端**实际注入成功**后才下发 selection_binding 事件；前端只在收到该事件
+// 时才显示 chip（见 AgentSideRail.handleEvent）。
+describe('SEL-REF · C1：selection_binding 事件只在真注入时下发', () => {
+  let service: AgentService
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    delete process.env.SEL_REF_ENABLED
+    service = new AgentService(
+      {
+        agentMessage: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
+        agentThread: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({}),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        session: {
+          findUnique: vi.fn().mockResolvedValue({ id: 's1', canvasData: null }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        idempotencyRecord: {
+          create: vi.fn().mockResolvedValue({}),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+      {
+        getCanvasLayout: vi.fn().mockResolvedValue({
+          nodes: [
+            { id: 'node-9', type: 'image', title: '小柚定妆照', absolutePosition: { x: 0, y: 0 } },
+          ],
+        }),
+      } as never,
+    )
+  })
+
+  afterEach(() => {
+    delete process.env.PI_RUNTIME_MODE
+    delete process.env.PI_RUNTIME_URL
+    delete process.env.SEL_REF_ENABLED
+  })
+
+  async function bindingEvents(selected?: string[]): Promise<Array<{ type: string; data: unknown }>> {
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    // 不桩装配器：走真实 assembler，digest 由 canvasLayout 桩提供素材
+    const out: Array<{ type: string; data: unknown }> = []
+    for await (const e of service.streamConversation(
+      's1', '这个是什么', 'u1', 't1',
+      undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined,
+      selected,
+    )) {
+      out.push(e as { type: string; data: unknown })
+    }
+    return out.filter((e) => e.type === 'selection_binding')
+  }
+
+  it('SEL_REF_ENABLED=on 且节点有效 → 下发 selection_binding（含 id 与标题）', async () => {
+    process.env.SEL_REF_ENABLED = 'on'
+    const evs = await bindingEvents(['node-9'])
+    expect(evs).toHaveLength(1)
+    expect(evs[0].data).toMatchObject({ nodes: [{ id: 'node-9', title: '小柚定妆照' }] })
+  })
+
+  it('SEL_REF_ENABLED=off（V1 默认）→ **不下发**：前端因此不显示 chip', async () => {
+    const evs = await bindingEvents(['node-9'])
+    expect(evs).toHaveLength(0)
+  })
+
+  it('env 归一化：true/1/yes/on-off 等非 on 值视为 off；大小写与空格归一为 on', async () => {
+    for (const v of ['true', '1', 'yes', 'off', 'onn', 'ON']) {
+      process.env.SEL_REF_ENABLED = v
+      const expectOn = v === 'ON'
+      expect(await bindingEvents(['node-9'])).toHaveLength(expectOn ? 1 : 0)
+    }
+  })
+
+  it('节点全部查不到（已删/跨会话）→ 不下发，绝不下发半截列表', async () => {
+    process.env.SEL_REF_ENABLED = 'on'
+    expect(await bindingEvents(['ghost-1', 'ghost-2'])).toHaveLength(0)
+  })
+
+  it('未选中任何节点 → 不下发', async () => {
+    process.env.SEL_REF_ENABLED = 'on'
+    expect(await bindingEvents([])).toHaveLength(0)
+    expect(await bindingEvents(undefined)).toHaveLength(0)
+  })
+
+  it('部分有效时只报有效的那几个（与 digest 的剔除规则一致）', async () => {
+    process.env.SEL_REF_ENABLED = 'on'
+    const evs = await bindingEvents(['node-9', 'ghost-1'])
+    expect(evs).toHaveLength(1)
+    expect((evs[0].data as { nodes: Array<{ id: string }> }).nodes.map((n) => n.id)).toEqual(['node-9'])
+  })
+})

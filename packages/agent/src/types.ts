@@ -71,6 +71,10 @@ export interface AgentStreamEvent {
     // data: { threadId: string } —— 前端须把 agentThreadId 切换为该值（后续发送/订阅都用它），
     // 否则下一次发送仍落在被截断前的旧线程上。
     | 'thread_forked'
+    // SEL-REF：服务端确认本轮**实际注入**了哪些选中节点（评审 C1）。
+    // data: { nodes: Array<{ id, type, title }> } —— 只有收到它，前端才显示指代回执；
+    // 缺省即代表服务端没注入（开关关闭 / 节点全失效），此时**不得**显示「已绑定」。
+    | 'selection_binding'
     | 'done'
     | 'error'
   data: unknown

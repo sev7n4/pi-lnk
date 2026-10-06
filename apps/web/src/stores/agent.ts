@@ -50,10 +50,17 @@ export interface AgentStreamMessage {
   attachmentRefKeys?: string[]
   /**
    * SEL-REF：本条消息发出时随请求上行的画布选中节点 id 集合（**发送瞬间的快照**）。
-   * 回执 chip 按它渲染（逐消息），不用发送后的实时选中态 —— 否则用户改选后
-   * 回执会与实际发出的内容不符。空/缺省 ⇒ 该条无回执。
+   * 仅作**本地留档**（审计/降级文案）——回执 chip 的数据源是下面的
+   * `selectionBindingConfirmed`，因为前端读不到服务端的开关状态。
+   * 空/缺省 ⇒ 该条无回执。
    */
   selectionNodeIds?: string[]
+  /**
+   * SEL-REF：**服务端确认**本轮实际注入了哪些节点（`selection_binding` 事件）。
+   * 这是回执的**唯一**数据源 —— 缺省即代表服务端没注入，chip 不渲染
+   * （评审 C1：按本地快照渲染会让回执在开关关闭时仍在说谎）。
+   */
+  selectionBindingConfirmed?: Array<{ id: string; type: string; title: string }>
   linkedOutputs?: LinkedCanvasOutput[]
   canvasActions?: CanvasAction[]
 }
@@ -149,6 +156,29 @@ export const useAgentStore = defineStore('agent', () => {
       // SEL-REF：复制一份，避免外部数组后续被改（选中态是 reactive 的）
       selectionNodeIds: extras?.selectionNodeIds?.length ? [...extras.selectionNodeIds] : undefined,
     })
+  }
+
+  /**
+   * SEL-REF：接收服务端 `selection_binding` 确认，挂到**最近一条 user 消息**。
+   *
+   * 为什么不用本地 id 快照当数据源（评审 C1）：前端读不到 Nest 的
+   * `SEL_REF_ENABLED`。若按本地快照渲染，V1 默认态（off）下用户照样看到
+   * 「已绑定 N 个选中节点」，而提示词里 0 字节注入 —— 回执是信任担保，
+   * 担保说谎会引导用户去问无关问题。
+   *
+   * 空数组 ⇒ **不写**字段（区分「服务端明确没注入」与「事件还没到」：
+   * 前者 chip 不渲染，后者 chip 暂不显示，都不该显示成「已绑定」）。
+   */
+  function confirmSelectionBinding(nodes: Array<{ id: string; type: string; title: string }>) {
+    if (!nodes.length) return
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (m.role === 'user') {
+        messages.value[i] = { ...m, selectionBindingConfirmed: nodes.map((n) => ({ ...n })) }
+        return
+      }
+    }
+    // 没有 user 消息可挂 ⇒ 忽略（不得凭空造消息）
   }
 
   function startAssistantMessage() {
@@ -502,6 +532,7 @@ export const useAgentStore = defineStore('agent', () => {
     setBlockingWait,
     setActivity,
     addUserMessage,
+    confirmSelectionBinding,
     startAssistantMessage,
     setPresentation,
     appendText,
