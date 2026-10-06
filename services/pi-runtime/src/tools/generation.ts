@@ -120,12 +120,92 @@ export function createGenerationTools(
 			"Run prompt generation for a canvas media node (writes generation prompt into node). Requires pending confirmation.",
 			"/agent/internal/run-prompt-generation",
 		),
-		runTool(
-			"run_audio_generation",
-			"执行音频生成",
-			"Run audio (TTS) generation for a canvas media node using node audio params. Requires pending confirmation.",
-			"/agent/internal/run-audio-generation",
-		),
+		{
+			...gen,
+			name: "run_audio_generation",
+			label: "执行音频生成",
+			description:
+				"Run audio generation for a canvas media node using node audio params. Requires pending confirmation. `kind` selects the audio sub-type: voice (default, TTS 配音) | design (综合音频：多角色台词+音效+氛围) | music (音乐/BGM). Sub-type-specific params may be passed inline and take precedence over node params: voice uses voice/emotion; design uses roles/scripts/instruction; music uses caption/lyrics/instrumental. Pick the kind that matches the request instead of defaulting to voice; if the requested kind's model is unavailable the tool returns an explicit error — report it, do not silently fall back.",
+			parameters: Type.Object({
+				node_id: Type.String({
+					description: "Media node id to generate for (from canvas summary, not title text)",
+				}),
+				// ⚠️ 以下参数一律追加在 node_id 之后 —— 本工具的调用按位置对齐，
+				// 中间插入会让同型参数错位（不报错、只静默错值）。
+				kind: Type.Optional(
+					Type.String({ description: "voice | design | music (default: voice)" }),
+				),
+				voice: Type.Optional(Type.String({ description: "voice: 音色 id" })),
+				emotion: Type.Optional(Type.String({ description: "voice: 情绪" })),
+				roles: Type.Optional(
+					Type.Array(
+						Type.Object({ role: Type.String(), voice: Type.String() }),
+						{ description: "design: 角色→音色表" },
+					),
+				),
+				scripts: Type.Optional(
+					Type.Array(
+						Type.Object({
+							role: Type.Optional(Type.String()),
+							text: Type.String({ description: "台词；() 内为语气、[] 内为音效" }),
+						}),
+						{ description: "design: 脚本段" },
+					),
+				),
+				instruction: Type.Optional(
+					Type.String({ description: "design: 整体演绎指导（≤500 字）" }),
+				),
+				caption: Type.Optional(Type.String({ description: "music: 风格描述" })),
+				lyrics: Type.Optional(Type.String({ description: "music: 歌词（可空）" })),
+				instrumental: Type.Optional(
+					Type.Boolean({ description: "music: 纯音乐（无歌词）" }),
+				),
+			}),
+			execute: async (
+				_id,
+				p: {
+					node_id: string
+					kind?: string
+					voice?: string
+					emotion?: string
+					roles?: Array<{ role: string; voice: string }>
+					scripts?: Array<{ role?: string; text: string }>
+					instruction?: string
+					caption?: string
+					lyrics?: string
+					instrumental?: boolean
+				},
+				_u,
+				tc: LnkpiToolContext,
+				_invocation,
+				context: Context,
+			) => {
+				if (!tc.userId) throw new Error("run_audio_generation requires userId in toolContext");
+				// 只把调用方真的给了的字段发出去：缺省 = 沿用节点上的参数（存量语义逐字节不变）。
+				const body: Record<string, unknown> = {
+					sessionId: tc.sessionId,
+					userId: tc.userId,
+					nodeId: p.node_id,
+				};
+				for (const key of [
+					"kind",
+					"voice",
+					"emotion",
+					"roles",
+					"scripts",
+					"instruction",
+					"caption",
+					"lyrics",
+					"instrumental",
+				] as const) {
+					if (p[key] !== undefined) body[key] = p[key];
+				}
+				const data = (await client.post("/agent/internal/run-audio-generation", body, {
+					signal: context?.abortSignal ?? undefined,
+				})) as { url?: string } & Record<string, unknown>;
+				return resultWithActions(data);
+			},
+		},
 		{
 			tier: "lifecycle" as const,
 			name: "cancel_generation",

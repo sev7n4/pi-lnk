@@ -2054,10 +2054,34 @@ export class AgentCanvasToolsService {
     }
   }
 
+  /**
+   * 音频生成（voice / design / music 三分类）。
+   *
+   * 🔴 **新字段一律追加在末尾**，既有三字段顺序不动 —— 本方法按位置/具名传参给
+   * `studio.generateAudio`，错位不报错、只静默错值。
+   *
+   * 工具内联参数（`kind` / `voice` / `emotion` / `roles` / `scripts` /
+   * `instruction` / `caption` / `lyrics` / `instrumental`）**优先于节点/账号默认值**：
+   * 缺省才沿用节点上的参数 ⇒ 存量调用的 options 形状与取值逐字节不变。
+   *
+   * ⚠️ `kind` 当前只是**调用方声明的透传**：`studio.generateAudio` 的分支由**解析后的
+   * 模型**派发（`audioKindOf(getModelEntry(resolved.modelName))`），不读 `options.kind`。
+   * 即：分类真正生效靠节点上的 `audioModel` 是该分类的模型（`listNodeModelOptions`
+   * 会把每个模型的 `audioKind` 报给模型），`kind` 不参与选模型。
+   */
   async runAudioGeneration(input: {
     sessionId: string
     userId: string
     nodeId: string
+    kind?: string
+    voice?: string
+    emotion?: string
+    roles?: Array<{ role: string; voice: string }>
+    scripts?: Array<{ role?: string; text: string }>
+    instruction?: string
+    caption?: string
+    lyrics?: string
+    instrumental?: boolean
   }): Promise<{ url?: string; status: string; generationRecordId?: string; actions: CanvasAction[] }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
@@ -2090,12 +2114,20 @@ export class AgentCanvasToolsService {
         text,
         {
           model: pickString(node.data?.audioModel, prefs.defaultAudioModel) || undefined,
-          voice: pickString(node.data?.audioVoice, prefs.audioVoice || 'female-shaonv'),
-          emotion: pickString(node.data?.audioEmotion, 'neutral'),
+          // 工具内联优先：给了就用给的，没给才沿用节点/账号默认（存量取值不变）
+          voice: input.voice ?? pickString(node.data?.audioVoice, prefs.audioVoice || 'female-shaonv'),
+          emotion: input.emotion ?? pickString(node.data?.audioEmotion, 'neutral'),
           language: pickString(node.data?.audioLanguage, 'zh'),
           speed: typeof node.data?.audioSpeed === 'number' ? node.data.audioSpeed : prefs.audioSpeed ?? 1,
           volume: typeof node.data?.audioVolume === 'number' ? node.data.audioVolume : 1,
           pitch: typeof node.data?.audioPitch === 'number' ? node.data.audioPitch : 0,
+          kind: input.kind,
+          roles: input.roles,
+          scripts: input.scripts,
+          instruction: input.instruction,
+          caption: input.caption,
+          lyrics: input.lyrics,
+          instrumental: input.instrumental,
         },
         refs,
         undefined,

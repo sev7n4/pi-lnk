@@ -747,6 +747,76 @@ describe('AgentCanvasToolsService', () => {
     expect(canvas.nodes[0].data.url).toBe('https://cdn.example/audio.mp3')
   })
 
+  it('runAudioGeneration 把工具内联的 kind 与分类参数透传给 studio（内联优先于节点值）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-2',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          // 节点上已有 voice/emotion：内联给了就必须盖掉节点值
+          data: {
+            prompt: '给这条分镜配 BGM',
+            status: 'draft',
+            audioVoice: 'node-voice',
+            audioEmotion: 'node-emotion',
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-2',
+      kind: 'music',
+      voice: 'inline-voice',
+      emotion: 'inline-emotion',
+      roles: [{ role: '旁白', voice: 'v1' }],
+      scripts: [{ role: '旁白', text: '开场' }],
+      instruction: '克制一些',
+      caption: '紧张感的弦乐',
+      lyrics: '歌词',
+      instrumental: true,
+    })
+    const options = generateAudio.mock.calls.at(-1)![2] as Record<string, unknown>
+    expect(options.kind).toBe('music')
+    expect(options.voice).toBe('inline-voice')
+    expect(options.emotion).toBe('inline-emotion')
+    expect(options.roles).toEqual([{ role: '旁白', voice: 'v1' }])
+    expect(options.scripts).toEqual([{ role: '旁白', text: '开场' }])
+    expect(options.instruction).toBe('克制一些')
+    expect(options.caption).toBe('紧张感的弦乐')
+    expect(options.lyrics).toBe('歌词')
+    expect(options.instrumental).toBe(true)
+  })
+
+  it('runAudioGeneration 不传内联参数时沿用节点 audioVoice/audioEmotion（存量取值不变）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-3',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '给这段文案配旁白',
+            status: 'draft',
+            audioVoice: 'node-voice',
+            audioEmotion: 'node-emotion',
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runAudioGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'aud-3' })
+    const options = generateAudio.mock.calls.at(-1)![2] as Record<string, unknown>
+    expect(options.voice).toBe('node-voice')
+    expect(options.emotion).toBe('node-emotion')
+    expect(options.kind).toBeUndefined()
+    expect(options.caption).toBeUndefined()
+    expect(options.instrumental).toBeUndefined()
+  })
+
   it('startImageGeneration passes node.data.mentionedKeys to studio', async () => {
     canvas = {
       nodes: [
