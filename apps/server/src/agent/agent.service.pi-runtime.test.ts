@@ -775,9 +775,13 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     for await (const event of service.streamConversation(
       's1', '你好', 'u1', 't1',
       undefined, undefined, undefined,
-      'node-9',
+      // SEL-REF 起 focusNodeId 已废弃；这里**故意同时给旧字段**，断言派生值胜出
+      // （规格 §5.3：焦点由 selectedNodeIds 派生，双字段不得独立写）。
+      'legacy-node-ignored',
       [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
       ['I1'], ['I1'],
+      undefined, undefined, undefined,
+      ['node-9'],
     )) {
       events.push(event)
     }
@@ -802,11 +806,14 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
       { turnContext: Record<string, unknown> },
     ]
     expect(promptOpts.turnContext).toMatchObject({
+      // 派生值胜出：selectedNodeIds 只有一个 ⇒ 焦点 = 'node-9'；旧 focusNodeId 被忽略
       focusNodeId: 'node-9',
       mentionedKeys: ['I1'],
       refOrder: ['I1'],
       attachments: [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png', role: 'product' }],
     })
+    // SEL-REF：runtime 侧**不下发** selectedNodeIds（无消费方 ⇒ 死字段，规格 §5.2 已修正）
+    expect(promptOpts.turnContext).not.toHaveProperty('selectedNodeIds')
     // P1#5：静态 systemPrompt 尾部含任务计划汇报约定（⟦plan⟧/⟦task-done⟧ 内联标记）
     expect(createOpts.systemPrompt).toContain('⟦plan⟧')
     expect(createOpts.systemPrompt).toContain('⟦task-done⟧')

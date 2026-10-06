@@ -69,8 +69,10 @@ export interface PiCanvasContext {
   attachments?: SidebarAttachment[]
   mentionedKeys?: string[]
   refOrder?: string[]
-  focusNodeId?: string
-  /** SEL-REF：指代信号（本轮画布选中的节点 id 集合）。`focusNodeId` 由它派生。 */
+  /**
+   * SEL-REF：指代信号（本轮画布选中的节点 id 集合）—— **唯一真源**。
+   * ⛔ 不再有 `focusNodeId` 字段：它由本字段派生（§5.3），放进来就是只写死字段。
+   */
   selectedNodeIds?: string[]
 }
 
@@ -194,6 +196,11 @@ export class AgentService {
     idempotencyKey?: string,
     skillId?: string,
     model?: string,
+    /**
+     * @deprecated SEL-REF 起不再使用（前端停止下发；焦点由 `selectedNodeIds` 派生）。
+     * 保留仅为位置参数兼容——**删除它会移位后续 7 个参数**，而 `attachments` 等
+     * 同型参数错位不会报错。勿读此字段。
+     */
     focusNodeId?: string,
     attachments?: SidebarAttachment[],
     refOrder?: string[],
@@ -316,9 +323,9 @@ export class AgentService {
         attachments: validatedAttachments,
         mentionedKeys: validatedMentionedKeys,
         refOrder,
-        focusNodeId,
-        // SEL-REF：指代信号。开关关闭时**不下发**，避免无消费方地占用每轮载荷。
-        selectedNodeIds: this.selectionRefEnabled() ? selectedNodeIds : undefined,
+        // SEL-REF：指代信号（选区本身，开关**不**闸这里）——焦点要由它派生，
+        // 闸掉就等于把 P0-① 的焦点过滤一起关掉。开关只作用于 digest 块（见调用方 digestIds）。
+        selectedNodeIds: selectedNodeIds?.length ? [...selectedNodeIds] : undefined,
       }
       if (!piClient && !(await client.healthz())) {
         // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 维护态）。
@@ -1053,20 +1060,25 @@ export class AgentService {
         this.piLogger?.warn?.(`memory injection skipped (fail-soft): ${err instanceof Error ? err.message : String(err)}`)
       }
     }
-    // SEL-REF：指代信号（R-S9 开关关时为空数组 ⇒ 既不拼 digest 也不改焦点过滤）。
+    // SEL-REF 指代信号。**开关只闸新能力，不闸既有行为**：
+    //   · selRefIds  —— 焦点派生的输入，**始终**用它 ⇒ `SEL_REF_ENABLED=off` 时
+    //     焦点过滤仍与上线前一致（回归测试「active：…画布上下文改由 turnContext 携带」就靠这条）；
+    //   · digestIds  —— 只喂 digest 块，开关关时为空 ⇒ 既不拼块也不回执（R-S9）。
+    // 若把开关套在 selRefIds 上，一关就把 P0-① 的焦点过滤一起关掉 —— 那是回归，不是关停。
     const selRefIds = piContext?.selectedNodeIds ?? []
+    const digestIds = this.selectionRefEnabled() ? selRefIds : []
     // 派生（R-S1/S2）：恰好 1 个选中时才派生焦点；0 个或多个都留 undefined ⇒
     // 命中 getCanvasSummary 的「无焦点 → 全量返回」fail-open 第一闸。
-    // `?? piContext?.focusNodeId` 是**迁移期回落**：Task 3 已把新字段追加到参数表末尾，
-    // 前端尚未切到只发 selectedNodeIds 之前，旧字段仍需生效；前端切换后此回落自然失效。
+    // 纯派生，**无迁移期回落**：前端已在 Task 5 停止发送 `focusNodeId`，
+    // 留回落就等于给「双字段各自独立写」留后门（规格 §5.3 要求结构上不可能漂移）。
     const derivedFocusNodeId = selRefIds.length === 1 ? selRefIds[0] : undefined
-    const selRefLookup = selRefIds.length ? await this.buildSelectionLookup(sessionId) : undefined
+    const selRefLookup = digestIds.length ? await this.buildSelectionLookup(sessionId) : undefined
     const dynamicBlocks = await assembler.assembleDynamic({
       sessionId,
       attachments: piContext?.attachments,
       // 审计 P0-①：焦点过滤（>30 节点画布只注入焦点 + 1 跳邻居），换话题污染收口。
-      focusNodeId: derivedFocusNodeId ?? piContext?.focusNodeId,
-      selectedNodeIds: selRefIds,
+      focusNodeId: derivedFocusNodeId,
+      selectedNodeIds: digestIds,
       selectedNodeLookup: selRefLookup ? (id) => selRefLookup.get(id) : undefined,
       memoryBlock,
     })
@@ -1120,7 +1132,7 @@ export class AgentService {
       mentionedKeys: piContext?.mentionedKeys,
       refOrder: piContext?.refOrder,
       // SEL-REF：与 assembleDynamic 用同一个派生值，避免两处各算一遍而分叉。
-      focusNodeId: derivedFocusNodeId ?? piContext?.focusNodeId,
+      focusNodeId: derivedFocusNodeId,
       // W2①压缩保留段：把「待用户确认的节点」交给 pi-runtime，让它活过上下文压缩。
       // 压缩后模型看不到自己已经propose 过，最典型的后果是重复建节点 + 谎称已生成。
       retention: await this.collectRetentionState(sessionId),

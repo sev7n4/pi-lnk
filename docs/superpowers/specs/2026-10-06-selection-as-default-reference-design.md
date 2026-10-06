@@ -103,7 +103,7 @@
 | **R-S6** | **信号轻量**：动态块只放 id + 类型 + 标题；**不放**节点正文、URL、图片字节。详情由模型按需调 `get_node`（S-5）。 |
 | **R-S7** | **不遮蔽失败**：动态块生成失败或 S 的节点已被删除时，**降级为不注入**（fail-open），**不得**注入半截列表让模型误判。 |
 | **R-S8** | **指代必须回执，回执不得由模型自述**：绑定生效由**系统侧确定性 UI** 呈现——用户消息气泡旁渲染「已绑定 N 个选中节点」chip，可展开核对 id/标题。模型**可在**回答中提及对象（表达），但**不得充当回执**。<br>理由：回执是**担保**，只能由客观事实源（本轮请求确实携带的 `selectedNodeIds`）渲染；模型自述等于让生成方兼任被验证方。本仓已两次实测「模型能逐字复述指令但不会照做」（`docs/2026-10-02-prompt-engineering-audit.html:141`、`:438`），且原先的「先复述再动工具」system prompt 约定已被移除（`AgentSideRail.vue:238-240`）。<br>判据句（本仓原话，`AgentSideRail.vue:223-225`）：「**一个事件就够，比赌模型自觉可靠得多**」。 |
-| **R-S9** | **服务端开关，默认关**：本能力由服务端 env `SEL_REF_ENABLED` 控制，**V1 默认 `off`**，灰度开启。⛔ 不用前端 `useFeatureFlag`——它是**前端进程内 Map**（`apps/web/src/composables/useFeatureFlag.ts:10-12`），覆盖不到 Nest/runtime 注入点，且其文件头自述「远程 kill switch 通道（V2 远程 config 落地前，紧急关停 = 改此处一行 + 发版）」⇒ 远程通道不存在。参照既有的 `PI_RUNTIME_TOOL_TIERING=off` kill switch 形态。 |
+| **R-S9** | **服务端开关，默认关**：本能力由服务端 env `SEL_REF_ENABLED` 控制，**V1 默认 `off`**，灰度开启。⛔ 不用前端 `useFeatureFlag`——它是**前端进程内 Map**（`apps/web/src/composables/useFeatureFlag.ts:10-12`），覆盖不到 Nest/runtime 注入点，且其文件头自述「远程 kill switch 通道（V2 远程 config 落地前，紧急关停 = 改此处一行 + 发版）」⇒ 远程通道不存在。参照既有的 `PI_RUNTIME_TOOL_TIERING=off` kill switch 形态。<br>⚠️ **开关只闸新能力，不闸既有行为**：`off` 时**不拼 digest 块、不渲染回执**，但 `selectedNodeIds` 仍照常下发 ⇒ **P0-① 的摘要焦点过滤与上线前逐字一致**。把开关套在选区本身上 ⇒ 一关连焦点过滤一起关掉，那是**回归**而不是关停（实现期由既有回归用例 `agent.service.pi-runtime.test.ts`「画布上下文改由 prompt turnContext 携带」抓出）。 |
 
 ### 4.3 判据（决策树）
 
@@ -185,8 +185,7 @@ flowchart TD
 | Nest 服务 | `apps/server/src/agent/agent.service.ts`（`assembleDynamic`） | **在此拼装 digest 块**（§5.5） |
 | Nest 服务 | `apps/server/src/agent/agent.service.ts` | 读 env `SEL_REF_ENABLED`（R-S9）；`off` 时不拼装、不回执 |
 | 客户端 | `apps/server/src/agent/pi-runtime/pi-runtime.client.ts` | 透传 `selectedNodeIds` + 派生出的 `focusNodeId` |
-| runtime 入参 | `services/pi-runtime/src/app.ts` | 接收 `selectedNodeIds` 并写入 session turn state（`focusNodeId` 沿用现有兼容分支） |
-| runtime 状态 | `services/pi-runtime/src/session-manager.ts` | `turn.selectedNodeIds` |
+| runtime 侧 | — | **不需要**：`focusNodeId` 由 Nest 派生并经既有 `turnContext.focusNodeId` 通道下发；digest 文本走 `dynamicBlocks`。V1 不在 runtime 侧加 `selectedNodeIds`（**无消费方 ⇒ 死字段**，与 §5.2 末行 + §11「死字段」行自相矛盾） |
 | 工具上下文 | `services/pi-runtime/src/tools/types.ts` | **V1 不追加**（当前无消费方，避免死字段） |
 
 ### 5.3 `focusNodeId` 与新字段的关系
@@ -226,7 +225,7 @@ flowchart TD
 
 | 维度 | Nest 侧拼装 | runtime 侧拼装 |
 |---|---|---|
-| 节点 `type` / `title` 来源 | **复用已有 `getCanvasSummary({sessionId})`**（`agent-canvas-tools.service.ts:845-856`）一次拿到全画布节点的 `id/type/title` | 需新增一次回查 Nest 内部接口 |
+| 节点 `type` / `title` / 坐标来源 | **复用已有 `getCanvasLayout({sessionId})`**（`agent-canvas-tools.service.ts:2493`）——它一次返回本会话全部节点的 `id/type/title/position/absolutePosition`。⛔ 不用 `getCanvasSummary`：其返回只有 `{id,type,title,status}`（`:845-852`），**没有坐标**，而 S-8 要求按画布位置稳定排序。坐标取 **`absolutePosition`**（`position` 是相对父 group 的，节点被打组后会漂） | 需新增一次回查 Nest 内部接口 |
 | 会话内归属校验 | **天然具备**：该方法只返回本会话画布的节点（`getNode` 走 `loadSession(sessionId)` + `canvas.nodes.find`，`:835-837`），不在 `S` 里的 id 一律查不到 ⇒ 天然被剔除 | 需显式实现归属校验，否则可注入**别的画布**的节点 id/标题 |
 | 可测性 | 归属校验可在上层直接单测 | 需跨进程测试 |
 
@@ -320,8 +319,6 @@ export function buildSelectionDigest(input: SelectionDigestInput): string | null
 | `apps/server/src/agent/agent.controller.ts` | DTO 接收 `selectedNodeIds` | `focusNodeId` 保留兼容 |
 | `apps/server/src/agent/agent.service.ts` | 派生 `focusNodeId`；**在此拼装 digest 块**；读 env 开关 | §5.3 / §5.5 / R-S9 |
 | `apps/server/src/agent/pi-runtime/pi-runtime.client.ts` | 透传 | |
-| `services/pi-runtime/src/app.ts` | 接收新字段 | |
-| `services/pi-runtime/src/session-manager.ts` | turn state | |
 | `services/pi-runtime/src/dynamic-budget.ts` + `.test.ts` | **补 `classifyBlock` 映射**：本块块首标记 → `canvas` | ⚠️ 见 §5.4，接线前必做 |
 | 部署配置 | 新增 env `SEL_REF_ENABLED`（默认 `off`） | 参照 `PI_RUNTIME_TOOL_TIERING` 的既有 kill switch |
 
