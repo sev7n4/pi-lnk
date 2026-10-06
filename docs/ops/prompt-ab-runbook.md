@@ -354,6 +354,104 @@ DONE T|s4-capability|4 … end= nEv=0 240002ms ERR=This operation was aborted
 ⚠️ 「跑完了」≠「数据能用」。**第 2 条应该在开跑前就做一次**（确认自己起的是新版），
 而不是等跑完再回头怀疑自己。
 
+### ⑥ 评测流量会污染生产工具错误率指标（`Observability Watchdog` 会因此报红）
+
+**实测（2026-10-06）**：`Observability Watchdog` 在 19:29 失败，判据原文 ——
+
+```
+tool_calls_increase=461.59  tool_errors_increase=66.47  error_rate=0.144001
+FAIL: 工具错误率 0.144001 超过阈值 0.02（分子=66.47 分母=461.59，窗口 1h）
+```
+
+**取证结论：这 14.4% 不是用户面故障，是评测流量自己打出来的。** 三条证据：
+
+1. **错误构成极度集中**：`sum by (tool,error_class)` 里
+   `get_canvas_summary[internal]=34.1` + `get_canvas_layout[internal]=23.1` = **86%**，
+   其余零散工具合计 <10。这两个正是评测用例里的「读画布」工具。
+2. **时间上只出现在评测开跑之后**：全天按小时看，10-05 与 10-06 的 03:00–08:00（本地 11:00–16:00）
+   调用量 16–56/h、错误率 **0–6.7%**；评测一开始（本地 17:00 起）调用量跳到 **190–410/h**，
+   错误率同步升到 13.8% / 14.1% / 15.7%。
+3. **分钟级对齐**：错误桶与「评测 worker 正在发 prompt」的分钟一一对应，停跑即归零。
+
+复现命令：
+
+```bash
+# 逐小时错误率（有分母才算数）
+ssh deploy-cvm 'python3 -' <<'PY'
+import json,subprocess
+def q(e,s,t,st):
+    o=subprocess.run(["curl","-sS","--get","--data-urlencode",f"query={e}",
+      "--data-urlencode",f"start={s}","--data-urlencode",f"end={t}",
+      "--data-urlencode",f"step={st}","http://127.0.0.1:30909/api/v1/query_range"],
+      capture_output=True,text=True).stdout
+    d=json.loads(o); return d["data"]["result"]
+# ⛔ 别用瞬时 count()；counter 必须 increase + 窗口
+print(q('sum by (tool,error_class)(increase(pi_runtime_tool_calls_total{result="error"}[1h]))',
+        "2026-10-06T09:00:00Z","2026-10-06T13:10:00Z","3600"))
+PY
+```
+
+**这条纪律的实际后果**：评测跑在同一条 `pi_runtime_tool_calls_total` 上 ⇒
+**只要开评测，看门狗就会可能报红**，而红的原因与用户体验无关。
+`error_rate_threshold=0.02` 是给**用户流量**定的阈值，评测流量把它当分母用是错配。
+
+⚠️ 所以：看到这条告警先按本节取证（先看 `error_class` 构成 + 同日评测时间轴），
+**别直接去查产品代码**。反之，评测结论也**不能**用「工具错误率没涨」来背书 ——
+指标分不开评测与用户。
+（待办：给评测流量打标，或让 watchdog 侧排除评测来源。未做之前，本节就是判读口径。）
+
+### ⑦ 跨窗口并发：比同窗口并发更隐蔽
+
+纪律 ① 只管得住**同一窗口自己**。2026-10-06 实测到第二种情况：
+我的 A/B 在跑，**另一个来源**（`eval-*` 会话，来自 pod 内 `127.0.0.1:8100`）也在跑，
+两者**逐分钟交替**发 prompt：
+
+```
+20:52:42 POST /sessions/eval-muwoib8h-helct9/prompt
+20:52:43 POST /sessions/ab-rule22-muwoi3qh-C-s3-models-2-a1/prompt
+20:52:55 POST /sessions/eval-muwoikvx-jyy3lc/prompt
+20:53:48 POST /sessions/ab-rule22-muwoi3qh-C-s3-models-4-a1/prompt
+```
+
+开跑前**先看 pod 请求日志**确认没有第二股流量（同一条命令也顺带能看出谁在用哪个会话名）：
+
+```bash
+ssh deploy-cvm 'kubectl -n pi-lnk-runtime logs deploy/pi-lnk-runtime --since=10m \
+  | grep -oE "POST /sessions/[^\"]+/prompt" | tail -20'
+```
+
+判读要点：
+
+- `"host":"127.0.0.1:8100"` ⇒ 调用来自 **pod 内部**（评测 harness 就装在 pod 的 `/tmp/evalrun-l1`）；
+  来自容器（`lnkpi-api`）或外网时 host 不同 ⇒ **能据此区分评测与真实用户**。
+- 只有 `node services/pi-runtime/dist/index.js` 一个进程 ≠ 没有其他评测：
+  harness 是**短命进程**，跑完即退，但它的 prompt 会留在日志里。
+- 两条 A/B 并行 ⇒ 429 出现率翻倍，且**共享免费额度**（同一条 BYOK 渠道）。
+
+### ⑧ `s3-models` 场景当前不能作判据（两次实测，含一次被污染）
+
+「现在有哪些模型可以选？」这个场景**同一份脚本、同一批画布**两次跑出完全相反的结果：
+
+| 次 | C 臂（无分句） | T 臂（有分句） |
+|---|---|---|
+| v5（19:50–20:42） | 5/5 调 `list_model_options` | 2/5 |
+| 加大 n 复核（20:52 起，**被污染作废**） | 3/5 不调工具 | 未跑完 |
+
+作废证据（**这类样本必须整批丢掉，别只丢那一两条**）：
+
+- `C|s3-models|5` 收到 **8088 个事件**、耗时 138s，最终文本是
+  **「【侧栏参考图解析（3张）】图 I1（image-gen-10002.png）：图内文字：…」** ——
+  与 prompt 完全无关的**另一路内容**。
+- `C|s3-models|1/2/4` 在 **4.8–7.5s 内零工具作答**（正常一轮 30–56s），
+  其中一条给出了**画布上并不存在的模型名**（编造型幻觉）。
+
+⇒ 判读纪律：**样本耗时异常短 + 事件数异常大 + 文本与 prompt 无关**，三者任一出现，
+这一批数据就不可作判据（第 ⑦ 条给了根因方向：另一股流量在并发）。
+
+⚠️ **同时这也修正了对 `s3-models` 的读法**：C 5/5 vs T 2/5 的「方向相反」在 n=5 下
+**不可归因给分句**（两臂 systemPrompt 只差 34 字符）。加大 n 复核若要重做，
+必须先满足第 ⑦ 条（确认无第二股流量）。
+
 ## 规则 22 A/B 观测结果（2026-10-06，v5 干净跑）
 
 **问题**：规则 22 的分句「宣告要搜的同一轮必须真调 `tool_search`，禁止只叙述不调用」
@@ -402,6 +500,13 @@ DONE T|s4-capability|4 … end= nEv=0 240002ms ERR=This operation was aborted
 （pi-runtime pod 重建 + api 容器重建）。它只影响**时延**（新镜像含 #240 的 `/events` flushHeaders），
 **不改被测行为**（systemPrompt 由观测脚本自带、不经运行时 registry）⇒ 结论可用，
 但必须记下来，否则「同一 run 的数据是单条件」这个假设会被后人当成事实。
+
+⚠️ **并发复核（2026-10-06 21:10 补）**：本次 v5 跑（19:50–20:42）期间，pod 请求日志显示
+**另有一股 `eval-*` 评测流量**（20:27 前后，来自 pod 内 `127.0.0.1:8100`，见纪律 ⑦）。
+现有复核：52 条 `TEXT` 行逐条抽查，**未发现与 prompt 无关的外来内容**
+（关键词：`侧栏/参考图/图内文字/image-gen-/.png` 命中 5 条，逐条核对均为正常回答）；
+两臂 `s1-canvas-count` 各自 5/5 自洽、negative 场景两臂 0 误搜，与污染批次的表现形态不同。
+⇒ **暂判 v5 数据可用**，但这一条**必须在下次重做前复核一遍**（纪律 ⑦ 的前置检查已经把它变成可执行动作）。
 
 ## 结果归档
 
