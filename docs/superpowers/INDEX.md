@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **285 份** spec/plan 的索引。生成于 2026-10-04，判定依据见文末「状态判定规则」。
+> 全部 **286 份** spec/plan 的索引。生成于 2026-10-04，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,7 +13,7 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 94 | 仍在演进，改动前先看这份 |
+| 🟢 living | 95 | 仍在演进，改动前先看这份 |
 | 🔒 frozen | 186 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 5 | 已被后续决策取代，勿再参考 |
 
@@ -25,7 +25,7 @@
 | 生成管线（图像/视频/3D） | 36 | 8 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | 图片编辑器与精修台 | 30 | 5 |
-| Agent 交互与可见性 | 26 | 13 |
+| Agent 交互与可见性 | 27 | 14 |
 | 工具与运行时内核 | 19 | 6 |
 | 账号/登录/会员 | 18 | 4 |
 | 工作流导入导出 | 18 | 4 |
@@ -236,10 +236,11 @@
 
 </details>
 
-### Agent 交互与可见性（26 份）
+### Agent 交互与可见性（27 份）
 
-<details><summary>🟢 living · 13 份</summary>
+<details><summary>🟢 living · 14 份</summary>
 
+- `docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md` ★design —— 画布选中 = Agent 默认指代（产品定义 + 落地规格，承接 M3 D-B）
 - `docs/superpowers/plans/2026-09-30-ask-user-blocking.md`
 - `docs/superpowers/specs/2026-09-30-ask-user-blocking-design.md` ★design
 - `docs/superpowers/plans/2026-09-26-p1-turn-presentation.md`

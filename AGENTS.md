@@ -26,6 +26,7 @@
 - 内核：`@earendil-works/pi-agent-core`（版本见 [`docs/agent/architecture.md`](./docs/agent/architecture.md)）
 - 载体：画布（canvas）—— agent 的产出物是可交互的图，而非纯文本流
 - 方向：视觉内容的生产与迭代（分镜 / 电商素材 / 角色与场景等），skills 资产在 `skills/`
+- **交互契约**：画布**选中 = agent 的默认指代** —— 用户说「这个 / 这几个」时默认指当前选中对象；**指代 ≠ 授权**（写操作仍走确认门），**指代 ≠ 素材注入**（不自动进芯片，M3 D-A 保持）。规格见 [`docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md`](./docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md)（已拍板，实现待排期）
 
 ## 变更影响面矩阵
 

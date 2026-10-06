@@ -49,6 +49,17 @@
 > 2026-10-04 拆分前，这些章节全部在 `AGENTS.md` 单文件里（526 行）。
 > 拆分是为了让主文件只留「任何上下文都要看得见」的内容。
 
+## 产品交互契约（2026-10-06 起）
+
+产品级交互契约的权威来源。与 `docs/agent/*.md`（**工程**规范）分工不同：那里管"agent 在本仓库怎么干活"，这里管"**产品里的 agent 怎么跟用户交互**"。
+
+| 文件 | 内容 | 性质 |
+|---|---|---|
+| [`superpowers/specs/2026-10-06-selection-as-default-reference-design.md`](./superpowers/specs/2026-10-06-selection-as-default-reference-design.md) | **画布选中 = Agent 默认指代**（代号 SEL-REF）—— 产品定义 + 落地规格。承接 M3 的 D-B，并显式划清「指代 ≠ 素材注入」「指代 ≠ 授权」 | 活资产 —— 产品级交互契约 |
+
+> 该规格**不新增 agent 工具**（走每轮动态上下文），因此不阻塞
+> `agent/tool-framework-roadmap.html` §4 P1 的常驻集下沉。
+
 ## 保留的目录
 
 | 目录 | 内容 | 性质 |
