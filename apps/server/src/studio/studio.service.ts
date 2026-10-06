@@ -32,9 +32,11 @@ import {
   resolvePromptGenerateText,
   Seedance1xUnsupportedError,
   StepFunDesignProvider,
+  StepFunMusicProvider,
   stripRefImagePromptTags,
   supportsVisionTextModel,
   type MergeTextSource,
+  type StepFunMusicInput,
 } from '@lnkpi/agent'
 import {
   BYOK_FALLBACK_CONFIRM_MESSAGE,
@@ -2274,15 +2276,19 @@ export class StudioService {
     cancel?: CancelFlag,
     scope?: CanvasGenerationScope,
   ) {
-    const cost = 5
-    const chargeReason = '音频生成'
+    // ⚠️ 先resolve 再定 cost：`music` 15 分、`voice`/`design` 5 分（见 plan §全局约束）。
+    // kind 只能从 resolve 后的 modelName 判（用户可能传 `ch_xxx::model`），所以扣分点
+    // 必须后移；扣分金额/文案与既有 voice 路径逐字节相同（cost=5、reason=音频生成）。
+    const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
+    const kind: AudioKind = audioKindOf(getModelEntry(resolved.modelName) ?? { modality: 'audio' })
+    const cost = kind === 'music' ? 15 : 5
+    const chargeReason = kind === 'music' ? '音频生成-音乐' : '音频生成'
     await this.points.consume(
       userId,
       cost,
       chargeReason,
       consumeMeta('audio', { model: options.model ?? null, generationId: null }),
     )
-    const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
     const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
       text,
       refs,
@@ -2307,7 +2313,6 @@ export class StudioService {
         : built.options
     const storeModel =
       resolved.source === 'user' ? options.model ?? built.meta.modelKey : built.meta.modelKey
-    const kind: AudioKind = audioKindOf(getModelEntry(resolved.modelName) ?? { modality: 'audio' })
 
     try {
       assertStepFunAudioModel(kind, resolved.modelName)
@@ -2367,6 +2372,55 @@ export class StudioService {
           },
         })
         return { ...designRecord, url: stored.url }
+      }
+      if (kind === 'music') {
+        // 音乐是**异步任务**：submit + 轮询 query，官方 1–3 分钟，远超一次 HTTP 请求的耐心。
+        // 故乐观扣分 → 建 `status:'generating'` 记录 → 立即返回，让前端既有轮询器接管
+        // （`useGenerationPolling` 每 2s 查 `getGeneration`），**不新增轮询端点**。
+        // 终态失败（含上游 HTTP 200 但 status=FAILED）在 completeMusic 里退款 + 写可判读文案。
+        const apiKey = resolved.credentials.apiKey
+        if (!apiKey) throw new Error('missing api key')
+        // 未显式给 caption 时回落正文：music 的 caption 就是「要生成什么曲子」的描述，
+        // 与 voice 用 mergedText 同理，避免空 caption 打上游拿不到可判读的错误。
+        const caption = options.caption ?? mergedText
+        const musicRecord = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'audio',
+            prompt: mergedText,
+            model: storeModel,
+            status: 'generating',
+            metadata: JSON.stringify(
+              applyChargeMeta(
+                {
+                  ...built.meta,
+                  skippedMerge,
+                  audioKind: kind,
+                  channelId: resolved.channelId,
+                  caption,
+                  lyrics: options.lyrics,
+                  instrumental: options.instrumental,
+                },
+                cost,
+              ),
+            ),
+            ...withCanvasScope(scope),
+          },
+        })
+        this.completeMusic(
+          musicRecord.id,
+          userId,
+          cost,
+          chargeReason,
+          {
+            caption,
+            lyrics: options.lyrics,
+            instrumental: options.instrumental,
+            responseFormat: 'mp3',
+          },
+          resolved,
+        ).catch(console.error)
+        return { ...musicRecord, generationStartedAt: new Date().toISOString() }
       }
       const { url } = await createAudioProvider(providerOpts(resolved)).generate(
         built.text,
@@ -2990,6 +3044,77 @@ export class StudioService {
       const failedMeta = applyFailureDiagnosticMeta(
         applyRefundMeta(meta, cost, 'platform_failed'),
         err,
+      )
+      await this.prisma.generationRecord.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          metadata: JSON.stringify(failedMeta),
+        },
+      })
+    }
+  }
+
+  /**
+   * 音乐异步任务的终态收敛（2026-10-06 audio-node-unified-capability Task 7）。
+   *
+   * 🔴 上游终态 `FAILED` 时 HTTP 仍是 200 ⇒ provider 层按 `status` 字段判失败并抛错，
+   * 这里据此退款 + 把可判读文案（`audioFailureMessage('music', ...)`）写进 metadata，
+   * 前端轮询到 `failed` 后由 `buildPollingFailurePatch` 展示。**绝不静默当成功。**
+   *
+   * ⚠️ 失败一律进 `failed`，**不进 `fallback_pending`**：`confirmPlatformFallback` 的 audio
+   * 分支固定走 `createAudioProvider`（TTS），音乐若挂上fallback_pending，用户点「用平台重试」
+   * 会被静默重放成一段 TTS 语音 —— 比直接失败更坏。平台重放要支持 music 属Task 8+ 的范围。
+   */
+  private async completeMusic(
+    id: string,
+    userId: string,
+    cost: number,
+    chargeReason: string,
+    input: StepFunMusicInput,
+    resolved: ResolvedGenerationProvider,
+  ) {
+    try {
+      const apiKey = resolved.credentials.apiKey
+      if (!apiKey) throw new Error('missing api key')
+      const { buffer } = await new StepFunMusicProvider(
+        apiKey,
+        resolved.credentials.baseUrl,
+      ).generate(input)
+      const stored = await this.upload.saveUserFile(userId, buffer, 'music.mp3', 'audio/mpeg')
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      // 用户在生成期间取消过 ⇒ 退款已由 cancelGeneration 结算，勿重复写/重复退。
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      const updated = await this.prisma.generationRecord.updateMany({
+        where: { id, status: 'generating' },
+        data: {
+          url: stored.url,
+          status: 'completed',
+          metadata: JSON.stringify(meta),
+        },
+      })
+      if (updated.count === 0) return
+    } catch (err) {
+      console.error('Music generation failed:', err)
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-失败退款`,
+        refundMeta('audio', 'failed_refund', {
+          model: resolved.modelName,
+          generationId: id,
+        }),
+      )
+      const failedMeta = applyFailureDiagnosticMeta(
+        applyRefundMeta(meta, cost, 'platform_failed'),
+        err,
+        { userMessage: audioFailureMessage('music', err, resolved.channelId) },
       )
       await this.prisma.generationRecord.update({
         where: { id },
