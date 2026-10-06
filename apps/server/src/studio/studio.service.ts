@@ -130,6 +130,7 @@ import sharp from 'sharp'
 import { hasCompositionPBlock } from './video-generation-request.util'
 import {
   assertStepFunAudioModel,
+  assertAudioKindMatchesModel,
   audioFailureMessage,
   resolvePlatformAudioFallback,
 } from './audio-kind'
@@ -2316,6 +2317,11 @@ export class StudioService {
 
     try {
       assertStepFunAudioModel(kind, resolved.modelName)
+      // R12：调用方声明的 kind 与模型分类必须一致。不一致时**显式拒绝** ——
+      // 上面那行守卫只管「design/music 必须是阶跃模型」，管不了「声明 music 却拿着
+      // TTS 模型」这种错配（那会让 voice 分支静默产出 TTS 并标 completed）。
+      // 放在 try 内首两条 ⇒ 异常走既有 catch 的退款 + failed 记录链路，不吞积分。
+      assertAudioKindMatchesModel(options.kind, resolved.modelName)
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
       }

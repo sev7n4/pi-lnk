@@ -1,5 +1,7 @@
 import { BadRequestException } from '@nestjs/common'
 import {
+  audioKindOf,
+  getModelEntry,
   isStepFunPlatformModel,
   readPlatformCredentialEnv,
   resolveStepFunPlatformCredentials,
@@ -19,6 +21,32 @@ export function assertStepFunAudioModel(kind: AudioKind, modelName: string): voi
   if (isStepFunPlatformModel(modelName)) return
   throw new BadRequestException(
     `${KIND_LABEL[kind]}分类仅支持阶跃（StepFun）模型，当前模型为 ${modelName || '(空)'}`,
+  )
+}
+
+/**
+ * 调用方声明的 `kind` 必须与**模型目录里的分类**一致，否则显式拒绝（Ruling R12）。
+ *
+ * 🔴 为什么必须有这条守卫：`generateAudio` 的分支由 `audioKindOf(resolved.modelName)` 驱动，
+ * **不读** `options.kind`。所以 agent 传 `kind:'music'` 而节点 `audioModel` 仍是 TTS 时，
+ * 旧行为是静默出一段 TTS 并把记录标 completed —— 调用方拿到「成功」，却不是要的东西
+ * （违反计划全局约束「禁止静默回退：不可用必须显式可判读」）。
+ *
+ * - `kind` 缺省（undefined）⇒ 放行。存量调用（web 存量、agent 未声明分类）行为逐字节不变。
+ * - `voice` **也参与校验**：否则「拿 design 模型当 TTS 用」这条错配仍然静默。
+ * - 非法值（`'MUSIC'` / 空串 / 非三分类）天然与目录 kind 不一致 ⇒ 在此一并被拒，
+ *   不需要另一套枚举校验（`audioKindOf` 是缺省值唯一判据处，判定只走它）。
+ * - 目录外模型按 `audioKindOf` 的缺省（voice）判定 —— 与 `generateAudio` 的 kind 派生同源，
+ *   不会出现「守卫说 voice、实际分支按 music」的分叉。
+ */
+export function assertAudioKindMatchesModel(kind: string | undefined, modelName: string): void {
+  if (kind === undefined) return
+  const modelKind: AudioKind = audioKindOf(getModelEntry(modelName) ?? { modality: 'audio' })
+  if (kind === modelKind) return
+  throw new BadRequestException(
+    `音频分类与当前模型不匹配：请求 ${KIND_LABEL[kind as AudioKind] ?? kind}（kind=${kind}），` +
+      `但模型 ${modelName || '(空)'} 属于 ${KIND_LABEL[modelKind]}分类。` +
+      `请把节点的音频模型改成${KIND_LABEL[kind as AudioKind] ?? kind}分类的模型，或把 kind 改成 ${modelKind}。`,
   )
 }
 

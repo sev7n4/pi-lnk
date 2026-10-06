@@ -2064,10 +2064,13 @@ export class AgentCanvasToolsService {
    * `instruction` / `caption` / `lyrics` / `instrumental`）**优先于节点/账号默认值**：
    * 缺省才沿用节点上的参数 ⇒ 存量调用的 options 形状与取值逐字节不变。
    *
-   * ⚠️ `kind` 当前只是**调用方声明的透传**：`studio.generateAudio` 的分支由**解析后的
-   * 模型**派发（`audioKindOf(getModelEntry(resolved.modelName))`），不读 `options.kind`。
-   * 即：分类真正生效靠节点上的 `audioModel` 是该分类的模型（`listNodeModelOptions`
-   * 会把每个模型的 `audioKind` 报给模型），`kind` 不参与选模型。
+   * ⚠️ `kind` **不参与选模型**：`studio.generateAudio` 的分支由**解析后的模型**派发
+   * （`audioKindOf(getModelEntry(resolved.modelName))`），不读 `options.kind`。
+   * ⇒ 分类真正生效靠节点上的 `audioModel` 是该分类的模型（`listNodeModelOptions`
+   * 会把每个模型的 `audioKind` 报给模型）。
+   * 但声明与模型不一致时**不会静默跑出错的分类**：`generateAudio` 内有
+   * `assertAudioKindMatchesModel` 守卫（Ruling R12），不匹配 ⇒ 显式失败 + 退款 +
+   * failed 记录（错误文案带 kind 与模型名），本方法把它落进节点的 `errorMessage`。
    */
   async runAudioGeneration(input: {
     sessionId: string

@@ -5,6 +5,7 @@ import { BadRequestException } from '@nestjs/common'
 import { describe, expect, it } from 'vitest'
 import {
   assertStepFunAudioModel,
+  assertAudioKindMatchesModel,
   audioFailureMessage,
   resolvePlatformAudioFallback,
 } from './audio-kind'
@@ -20,6 +21,62 @@ describe('assertStepFunAudioModel', () => {
 
   it('voice 不受限（现网模型照旧可用）', () => {
     expect(() => assertStepFunAudioModel('voice', 'seed-audio-1.0')).not.toThrow()
+  })
+})
+
+// 目录里的三个代表模型：voice / design / music 各取一个（studioModelCatalog.ts 的 audio 段）。
+const TTS_MODEL = 'minimax-speech-2.8-hd' // audioKind: 'voice'
+const DESIGN_MODEL = 'stepaudio-3-gen-preview' // audioKind: 'design'
+const MUSIC_MODEL = 'stepaudio-3-music-preview' // audioKind: 'music'
+
+describe('assertAudioKindMatchesModel（声明的 kind 必须与模型分类一致）', () => {
+  it('music ↔ TTS 模型 ⇒ 显式拒绝，文案同时带 kind 与模型名', () => {
+    let msg = ''
+    try {
+      assertAudioKindMatchesModel('music', TTS_MODEL)
+    } catch (err) {
+      expect(err).toBeInstanceOf(BadRequestException)
+      msg = (err as Error).message
+    }
+    // 报错必须让人一眼看出「要什么」和「手上是什么」，否则调用方无法自纠。
+    expect(msg).toContain('music')
+    expect(msg).toContain(TTS_MODEL)
+    expect(msg).toContain('voice')
+  })
+
+  it('design ↔ TTS 模型 ⇒ 显式拒绝', () => {
+    expect(() => assertAudioKindMatchesModel('design', TTS_MODEL)).toThrow(BadRequestException)
+    expect(() => assertAudioKindMatchesModel('design', TTS_MODEL)).toThrow(/design/)
+  })
+
+  it('🔴 voice ↔ design 模型同样拒绝（voice 也参与校验，不能只对 design/music 生效）', () => {
+    expect(() => assertAudioKindMatchesModel('voice', DESIGN_MODEL)).toThrow(BadRequestException)
+    expect(() => assertAudioKindMatchesModel('voice', DESIGN_MODEL)).toThrow(/voice/)
+    expect(() => assertAudioKindMatchesModel('voice', MUSIC_MODEL)).toThrow(BadRequestException)
+  })
+
+  it('一致 ⇒ 放行（三类各自）', () => {
+    expect(() => assertAudioKindMatchesModel('voice', TTS_MODEL)).not.toThrow()
+    expect(() => assertAudioKindMatchesModel('design', DESIGN_MODEL)).not.toThrow()
+    expect(() => assertAudioKindMatchesModel('music', MUSIC_MODEL)).not.toThrow()
+  })
+
+  it('未声明 kind ⇒ 放行（存量调用逐字节不变，缺省仍按模型走）', () => {
+    expect(() => assertAudioKindMatchesModel(undefined, TTS_MODEL)).not.toThrow()
+    expect(() => assertAudioKindMatchesModel(undefined, MUSIC_MODEL)).not.toThrow()
+  })
+
+  it('非法 kind（大小写错/空串/非三分类）⇒ 显式拒绝，不静默当 voice', () => {
+    expect(() => assertAudioKindMatchesModel('MUSIC', MUSIC_MODEL)).toThrow(BadRequestException)
+    expect(() => assertAudioKindMatchesModel('', MUSIC_MODEL)).toThrow(BadRequestException)
+    expect(() => assertAudioKindMatchesModel('tts', TTS_MODEL)).toThrow(BadRequestException)
+  })
+
+  it('目录外模型按缺省 voice 判（audioKindOf 是缺省唯一判据处）⇒ 请求 music 仍被拒', () => {
+    expect(() => assertAudioKindMatchesModel('voice', 'some-unknown-audio-model')).not.toThrow()
+    expect(() => assertAudioKindMatchesModel('music', 'some-unknown-audio-model')).toThrow(
+      BadRequestException,
+    )
   })
 })
 
