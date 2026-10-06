@@ -48,6 +48,12 @@ export interface AgentStreamMessage {
   presentation?: AgentPresentationEnvelope
   attachments?: SidebarAttachment[]
   attachmentRefKeys?: string[]
+  /**
+   * SEL-REF：本条消息发出时随请求上行的画布选中节点 id 集合（**发送瞬间的快照**）。
+   * 回执 chip 按它渲染（逐消息），不用发送后的实时选中态 —— 否则用户改选后
+   * 回执会与实际发出的内容不符。空/缺省 ⇒ 该条无回执。
+   */
+  selectionNodeIds?: string[]
   linkedOutputs?: LinkedCanvasOutput[]
   canvasActions?: CanvasAction[]
 }
@@ -122,7 +128,11 @@ export const useAgentStore = defineStore('agent', () => {
 
   function addUserMessage(
     content: string,
-    extras?: { attachments?: SidebarAttachment[]; attachmentRefKeys?: string[] },
+    extras?: {
+      attachments?: SidebarAttachment[]
+      attachmentRefKeys?: string[]
+      selectionNodeIds?: string[]
+    },
   ) {
     // 新回合开始：重置回合级状态行信号（propose 置位 / 阻塞等待 / 文本时间戳 / 失败态）
     proposePendingConfirm.value = false
@@ -136,6 +146,8 @@ export const useAgentStore = defineStore('agent', () => {
       content,
       attachments: extras?.attachments?.map((attachment) => ({ ...attachment })),
       attachmentRefKeys: extras?.attachmentRefKeys ? [...extras.attachmentRefKeys] : undefined,
+      // SEL-REF：复制一份，避免外部数组后续被改（选中态是 reactive 的）
+      selectionNodeIds: extras?.selectionNodeIds?.length ? [...extras.selectionNodeIds] : undefined,
     })
   }
 
