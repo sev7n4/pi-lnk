@@ -18,8 +18,8 @@
 | 🔒 frozen | 186 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 5 | 已被后续决策取代，勿再参考 |
 
-> ⚠️ 上表是**手工维护**的统计，基线 2026-10-04；此后新增文档只补进主题分组、**未回填本表** ⇒ 三项之和会小于实测总份数。
-> **要份数就跑 `ls docs/superpowers/{specs,plans}/*.md | wc -l`，别读这张表。**（生成器不存在，见文末「重新生成」。）
+> ⚠️ 上表与下方「主题分布」的各主题份数都是**手工维护**的统计，基线 2026-10-04；此后新增文档只补进主题分组、**未回填这两张表** ⇒ 数字会小于实测。
+> **要份数就跑 `ls docs/superpowers/{specs,plans}/*.md | wc -l`，别读这两张表。**（生成器不存在，见文末「重新生成」。）
 
 ## 主题分布
 
@@ -244,6 +244,7 @@
 
 <details><summary>🟢 living · 14 份</summary>
 
+- `docs/superpowers/plans/2026-10-06-selection-as-default-reference.md` —— SEL-REF 实施计划（6 task，逐 task 带 TDD 步骤 + 上线验收）
 - `docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md` ★design —— 画布选中 = Agent 默认指代（产品定义 + 落地规格，承接 M3 D-B）
 - `docs/superpowers/plans/2026-09-30-ask-user-blocking.md`
 - `docs/superpowers/specs/2026-09-30-ask-user-blocking-design.md` ★design
