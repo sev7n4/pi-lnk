@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { runEvalCase } from "./driver.js";
 
 /**
@@ -266,6 +266,149 @@ describe("⭐ streamEvents：见 agent_end 立即收手（不等流结束）", (
 			assert.ok(elapsed < 10_000, `应在 agent_end 到达后立刻返回，实际耗时 ${elapsed}ms（接近 30s 说明在等流结束）`);
 		} finally {
 			releaseStream?.();
+			server.closeAllConnections();
+			await new Promise<void>((r) => server.close(() => r()));
+		}
+	});
+});
+
+describe("⭐⭐ 订阅『就绪』竞态：`from=now` 会吞掉登记前的所有事件", () => {
+	/**
+	 * 2026-10-06 生产实测：同构客户端 + 容器内真模型，12 轮里 **3 轮**出现
+	 * 「模型确实调了 `tool_search`，但客户端一个 `tool_execution_start` 都没收到」。
+	 * 反证：pod 内该 session 的 jsonl 里这次调用的 `toolResult` **确实存在**。
+	 *
+	 * 根因不是模型：`void streamEvents(...)` 只代表「GET 请求已发出」，
+	 * 而服务端要**自己把这条连接挂上事件流**之后，水位线（`from=now`）才生效。
+	 * 水位线落在「prompt 已触发本轮」之后就意味着：首批事件（往往是**第一个工具调用**）
+	 * 被当成「订阅发生前的旧事件」而**永不投递**。
+	 *
+	 * 最重的后果在「叙述代替调用」这类行为判据上 —— 会把「搜了」记成「没搜」，
+	 * 即**假阳性发生器**（记忆：假绿比没有更危险）。
+	 *
+	 * ⇒ 契约从「先订阅、后 prompt」收紧为「**订阅就绪（响应头到达）后**再 prompt」。
+	 *
+	 * ⚠️ 注意：只断言「events 请求早于 prompt 请求」**测不出**这个缺陷
+	 *（GET 确实先发出，但登记晚于 prompt）—— 必须让假 server 表达「登记有延迟」。
+	 */
+	async function startRaceRuntime(opts: { registerDelayMs: number; events: string[] }) {
+		const calls: Array<{ method: string; path: string }> = [];
+		/** 登记订阅者之前产生的事件：按 from=now 语义不投递，记下来当判据。 */
+		const dropped: string[] = [];
+		let registered = false;
+		let sse: ServerResponse | undefined;
+		const server = createServer((req, res) => {
+			const path = req.url ?? "";
+			calls.push({ method: req.method ?? "", path });
+			if (path.includes("/events")) {
+				sse = res;
+				// ⭐ 登记订阅者要时间；**登记前不写响应头**（客户端 fetch 也拿不到 res）
+				const t = setTimeout(() => {
+					res.writeHead(200, {
+						"content-type": "text/event-stream",
+						"cache-control": "no-cache",
+						connection: "keep-alive",
+					});
+					res.write(":keep-alive\n\n");
+					registered = true;
+				}, opts.registerDelayMs);
+				res.on("close", () => clearTimeout(t));
+				return;
+			}
+			if (path.includes("/prompt")) {
+				const emit = (frame: string): void => {
+					if (!registered || !sse) {
+						dropped.push(frame);
+						return;
+					}
+					sse.write(`data: ${frame}\n\n`);
+				};
+				for (const f of opts.events) emit(f);
+				emit(JSON.stringify({ type: "agent_end", data: { status: "completed" } }));
+				res.writeHead(202, { "content-type": "application/json" });
+				res.end("{}");
+				return;
+			}
+			res.writeHead(201, { "content-type": "application/json" });
+			res.end(JSON.stringify({ sessionId: "x", provider: "p", model: "m", status: "created" }));
+		});
+		await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+		const addr = server.address();
+		const port = typeof addr === "object" && addr ? addr.port : 0;
+		return {
+			url: `http://127.0.0.1:${port}`,
+			calls,
+			dropped,
+			close: async () => {
+				server.closeAllConnections();
+				await new Promise<void>((r) => server.close(() => r()));
+			},
+		};
+	}
+
+	it("订阅未就绪就发 prompt ⇒ 首个工具调用被吞（修复前必红）", async () => {
+		const fake = await startRaceRuntime({
+			registerDelayMs: 120,
+			events: [
+				JSON.stringify({
+					type: "tool_execution_start",
+					data: { toolName: "tool_search", toolCallId: "c1" },
+				}),
+			],
+		});
+		try {
+			const out = await runEvalCase({ baseUrl: fake.url, timeoutMs: 5000 }, { text: "查一下画布" });
+			assert.deepEqual(
+				fake.dropped,
+				[],
+				`prompt 触发的事件不该落在订阅登记之前；实际被吞：${JSON.stringify(fake.dropped)}`,
+			);
+			assert.deepEqual(
+				out.transcript.toolNames,
+				["tool_search"],
+				"首个工具调用必须投递；丢了它 = 把「搜了」记成「没搜」",
+			);
+			// 顺序是必要条件（非充分）：登记延迟才是本用例的判别式
+			const iSub = fake.calls.findIndex((c) => c.path.includes("/events"));
+			const iPrompt = fake.calls.findIndex((c) => c.path.includes("/prompt"));
+			assert.ok(iSub >= 0 && iSub < iPrompt, `订阅(${iSub}) 必须早于 prompt(${iPrompt})`);
+		} finally {
+			await fake.close();
+		}
+	});
+
+	it("订阅请求直接失败 ⇒ 必须放行（否则 `await subscribed` 永挂 / 未处理拒绝）", async () => {
+		const server = createServer((req, res) => {
+			const path = req.url ?? "";
+			if (path.includes("/events")) {
+				req.destroy();
+				return;
+			}
+			if (path.includes("/prompt")) {
+				res.writeHead(202, { "content-type": "application/json" });
+				res.end("{}");
+				return;
+			}
+			res.writeHead(201, { "content-type": "application/json" });
+			res.end(JSON.stringify({ sessionId: "x", provider: "p", model: "m", status: "created" }));
+		});
+		await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+		const addr = server.address();
+		const port = typeof addr === "object" && addr ? addr.port : 0;
+		const t0 = Date.now();
+		try {
+			const out = await runEvalCase(
+				{ baseUrl: `http://127.0.0.1:${port}`, timeoutMs: 30_000 },
+				{ text: "hi" },
+			);
+			const elapsed = Date.now() - t0;
+			assert.ok(
+				elapsed < 5000,
+				`订阅失败必须立刻返回，实际 ${elapsed}ms（接近 30s 说明 await subscribed 挂住了）`,
+			);
+			assert.equal(out.transcript.completed, false);
+			assert.ok(out.errors.length > 0, `必须留下错误信号，实际 ${JSON.stringify(out.errors)}`);
+		} finally {
 			server.closeAllConnections();
 			await new Promise<void>((r) => server.close(() => r()));
 		}

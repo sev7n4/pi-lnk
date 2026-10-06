@@ -116,14 +116,16 @@ export interface GoldenCase {
 	 *
 	 * 判据 = `expectTools` 里含 `propose_generation`（或 `ask_user`）。
 	 * 机制：`propose_generation` 阻塞在 `registry.waitForUser()`
-	 * （`canvas-write.ts`，生产 `ASK_USER_BLOCKING=true` + `ASK_USER_TIMEOUT_MS=300000`），
-	 * 只有 Nest 侧那个节点从 `pending_confirm` 变成 `generating` 才返回
-	 * ——而那是**前端点 DockStudio 生成按钮**触发的。
+	 * （`canvas-write.ts`，生产 `ASK_USER_BLOCKING=true` + `ASK_USER_TIMEOUT_MS=300000`）。
+	 * 两条放行路径：
+	 * ① **显式确认**（2026-10-06 起，主路径）：前端点 dock/节点生成 → `POST /answers`
+	 *    → registry resolve `answered` → tool 直接 confirmed；
+	 * ② 兜底轮询：Nest 侧节点从 `pending_confirm` 变成 `generating`（`canvas-write.ts`
+	 *    的 `get-node` 轮询臂）——覆盖「画布侧直接生成、无 /answers」的场合。
 	 *
-	 * ⚠️ 为什么不自动应答：确认不是走 `/answers` 端点，而是**轮询 Nest 的
-	 * `get-node` 看 status**（`canvas-write.ts:348-385`）。要它返回必须有个
-	 * 「用户点确认」的动作 —— 那是完整前端或一个模拟 DockStudio 的后端。
-	 * 假装「自动确认」会引入一个生产上不存在的路径，验出来的行为**不可信**。
+	 * ⚠️ 为什么不自动应答：两条路径都要求**真有用户确认动作**（前端 /answers，或
+	 * 前端点生成后 SSOT 状态真的前进）。假装「自动确认」会引入一个生产上不存在的
+	 * 路径，验出来的行为**不可信**。
 	 *
 	 * ⚠️ **只对「期望模型调用它」的 case 成立**：仅 `forbidTools` 含
 	 * `propose_generation` 的 case（如vision-002）模型遵守时**不会挂起**，

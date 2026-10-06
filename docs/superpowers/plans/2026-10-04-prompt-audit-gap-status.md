@@ -8,6 +8,11 @@ sources:
 
 # 提示词工程审计 · 缺口落地进展对账
 
+> ⚠️ **时效声明（2026-10-06 追加）**：本文正文是 **2026-10-04 的快照**（基线 `10e1e82c`），
+> 其中**多处判定已被后续 PR 翻转**（最典型：下文写「W1b L1 runner ⬜ 未做」，而它已交付并已真跑）。
+> **读本文正文前请先读文末「附录 A · 2026-10-06 复核对账」**——那里是对当前 `master` 的逐条重取证，
+> 以及两条**改变 W4–W5 开工条件**的新事实。正文保留原样，作为「当时判断」的历史记录。
+
 > 本文回答一个问题：**Round 1 的 16 条缺口 + Round 2 的 W1–W8 路线图，现在到哪一步了。**
 > 全部结论对着 `origin/master 006af0a` 逐条取证，不采信任何文档里的自述进度。
 > 取证命令：`git grep / git show origin/master:<path>`，工作区不算数。
@@ -364,3 +369,74 @@ Round 2 说「照 `packages/evals/src/pi-harness.ts:246` 的形态写 adapter」
 
 ⚠️ **W4–W5 的前置条件目前只完成了一半**：判据（case + `evaluateCase`）有了，
 但**从未真正跑过模型**。在没有一次真实 L1 跑之前，「回归集」只是纸面。
+
+---
+
+## 附录 A · 2026-10-06 复核对账（R1 窗口追加）
+
+> **取证基线**：`origin/master` = `ddbe5660`（SEL-REF #236 合并后）。正文快照基线为 `10e1e82c`。
+> **取证方式**：`git grep -n <pat> -- <path>` 只认 tracked 文件；合并判定用
+> `gh pr view <n> --json mergeCommit.oid` 与 master HEAD 比对（**禁用 `git cherry` / `--is-ancestor`**，squash 会重写提交 ⇒ 必然误判）。
+> ⚠️ 本节只覆盖两类内容：**正文判定已翻转** 与 **新增事实**。未提及的条目不代表已变，只是本轮未逐条重证。
+
+### A.1 判定翻转：正文写「未做」⇒ 实际已落地
+
+| 项 | 正文（10-04） | 现状（10-06 取证） | 证据 |
+|---|---|---|---|
+| **W1b L1 runner** | ⬜ 未做 | ✅ **已交付，且已真跑过模型** | `services/pi-runtime/src/eval/{cli,runner,driver,transcript,golden-cases}.ts`；跑法与坑见 `docs/EVAL_HARNESS_RUNBOOK.md` |
+| **P0-1 eval 体系** | ⬜ 未开始 | ✅ 双层判据均已在（L0 契约层零 token + L1 行为层真跑模型） | L0 = `evaluateCase`（12 条 case）；L1 = `runL1` + `cli.js` |
+| **P0-3 收尾（L-2）** | 🟡 部分（无 version 指标） | ✅ 已落地 | `apps/server/src/agent/agent.service.ts:926` 派生 `promptVersion = ${registryVersion}@${registryHash}`；指标 `pi_runtime_prompt_info`（`services/pi-runtime/src/metrics.prompt-info.test.ts`） |
+| **P2-1 压缩摘要全依赖 vendor** | ⬜ 通道通但未填值 | ✅ 已填值 | `services/pi-runtime/src/session-manager.ts:1811` 传 `customInstructions = COMPACTION_RETENTION_INSTRUCTIONS + buildRetentionInstructions(...)`；另有 `compaction-summary.ts` 的 `missingSummarySections` 审计（`:1166` fail-soft 告警） |
+| **W2③ 索引块触发条件** | ⏸ 挂起（原计划「先观测」作废） | 🟡 **以另一形态落地** | `prompt-registry/rules/canvas_daily_ops.md:12` 规则 20 写下自然语言触发词（「画布有什么/多少节点」「有哪些任务/生成到哪了/出错没」…）⇒ 索引块改为**按需 tool_search** 而非常驻名单 |
+
+### A.2 里程碑盘点（spec §12）
+
+`M1` PROMPT_SPEC + 规则地图生成器 / `M2` 语义 id + L10 门禁 / `M3` 组装契约 6 case /
+`M4` 地图改生成产出 + CI 校验 / `M5` 真模型 A/B 场景集 / `M6a` 记忆反哺剔除 / `M6b` 晋升候选队列
+—— **七项均已交付**。
+M5 场景集在 `services/pi-runtime/src/evals/prompt-ab-scenarios.ts`（首跑归档见 `docs/ops/prompt-ab-runbook.md`）；M6b 由 PR #210 交付。
+
+### A.3 三条改变 W4–W5 开工条件的新事实
+
+**① 阻塞点解除，但带着两个前提。**
+正文「阻塞点」写「PR #149 已建判据层，**L1 行为回归仍未跑** ⇒ W4–W5 继续挂起」。
+2026-10-06 已真跑（`docs/EVAL_HARNESS_RUNBOOK.md` §7 与 10-06 baseline）⇒ 由「不可开工」变为「**可开工，待排期**」。动手前必须知道：
+
+- **方案 A 盲区**：L1 直调 `loadRegistry + renderStatic`，**绕过 Nest 装配层**（动态段拼装 / `STATIC_BUDGET_CHARS` 截断 / 静态-动态分工）。
+  它只回答「**规则文本**改了行为变不变」，**不回答**「装配层有没有问题」——别拿「L1 跑通了」论证后者。
+- **429 是主要噪声源**：pi-runtime pod 内 `AGNES_API_KEY` 是**平台免费额度**，2026-10-06 实测 11 条里 **3 条撞 429**
+  （表现为 `agent_end failed/assistant_error`，会混进 fail/error）。⇒ 改动前必须先把 baseline 跑干净
+  （撞到的用 `--only <case>` + 更大 `--interval` 补跑），否则「限流」会被读成「行为退化」，把人引向改本来正确的提示词。
+
+**② P1-4 的根因被实测改写**（Round 2 判断 3 的假设被推翻）。
+Round 2 假设「模型不会主动搜工具」。2026-10-06 分级下发实验（PR #222 → #223，真实 agnes 模型、容器内解密 BYOK）给出反证：
+
+- 无「常驻替代品」的探针 ⇒ **4/4 主动 `tool_search` 且命中**；
+- 全量下沉后复测 10 轮 ⇒ 8/10 触发搜索、`hit=9/miss=1`、**0 幻觉**；
+- 历史「`tool_search` 恒 0」的真因是**没有动机**（能力全常驻，模型不需要搜），不是能力缺失。
+
+⇒ P1-4 的命题从「教会模型搜索」变成「**不要让某个常驻工具能给延迟领域凑出半个答案**」——
+实测有替代品时出现过「素材库 18 张图答成『没有任何节点』」的**静默答错**。新铁律：**核心读能力必须整套同进退**。
+
+**③ 「注入顺序跳跃」的改动成本远高于原估。**
+正文把注入顺序 `1,2,3,7,14,4,5,11,12,13` 的跳跃列为机械项。实测：规则编号被全仓 **227 处**「规则 N」引用
+（`prompt-ab-scenarios.ts`、`golden-cases.ts`、`pi-prompt-assembler.service.test.ts`、`tool-capability-catalog.md`、`PROMPT_SPEC §3` 表格；
+且「同步 6 处」这一表述还牵到归 R6 的 `AGENTS.md`）。
+⇒ 若做编号连续化，**必须同批改全部引用点**，不能「先改编号、回头再补」。
+
+⭐ 同时澄清一个曾经担心的点：**L10 门禁只管 anchor 引用**（`prompt-registry.loader.test.ts` 的引用正则
+「只认 反引号 + 小写字母数字连字符 + ≥4 字符」，故「见规则 14」**不会**被当成引用）
+⇒ 重排编号**不会**静默断运行链路，只会让注释/文档里的编号失准。**风险等级下降，但改动面仍广。**
+
+### A.4 仍未做（截至 10-06，对 master 零命中 / 未改动取证）
+
+W4–W5（规则原子化：编号仍跳 6/8/9、规则 4 仍 **934 字符**、无 XML 语义分区、0 条 canonical trajectory）、
+W6（`entryProjectors` 零命中）、W7（`before_request`/`after_response` 在 `services/` 零注册）、
+W8（skill frontmatter 仍 `name/version/description` 三字段、无灰度）、W3① 工具元信息 lint、
+W3③ vision 提示词孤岛（仍在 `apps/server/src/agent/sidebar-media-parse-prompt.ts`）、
+P0-4 schema token 口径、P1-1（人格层仍禁令体）/P1-2/P1-3、P2-2/P2-3/P2-5。
+
+> ⚠️ 与正文一致的一条判断仍然成立：**W4–W5 仍是本线风险最高的资产**，
+> 新增的 L1 判据只让「有判据可依」成立，**不等于收益已被证明**。
+> 真要动手，顺序建议：先把 baseline 跑干净 ⇒ 单条规则改动 ⇒ 立刻重跑 L1 对比 ⇒ 有增益才继续下一条。
+

@@ -247,6 +247,7 @@
 
 - `docs/superpowers/plans/2026-10-06-selection-as-default-reference.md` —— SEL-REF 实施计划（6 task，逐 task 带 TDD 步骤 + 上线验收）
 - `docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md` ★design —— 画布选中 = Agent 默认指代（产品定义 + 落地规格，承接 M3 D-B）
+- `docs/superpowers/specs/2026-10-06-propose-confirm-deterministic-design.md` ★design —— propose 确认的确定性信号（点生成被判成取消的事故复核 + 确认/取消权威信号表）
 - `docs/superpowers/plans/2026-09-30-ask-user-blocking.md`
 - `docs/superpowers/specs/2026-09-30-ask-user-blocking-design.md` ★design
 - `docs/superpowers/plans/2026-09-26-p1-turn-presentation.md`

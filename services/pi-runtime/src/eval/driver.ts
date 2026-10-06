@@ -79,6 +79,19 @@ export async function runEvalCase(
 	//   fetch 的 body reader 不被 cancel 的话，进程不会退出（Node 会一直等）——
 	//   那会让「eval 跑一次挂住整个 CI」变成可能。
 	const streamAbort = new AbortController();
+	// ⭐⭐ 「订阅**已建立**」必须显式等待：`void streamEvents(...)` 只保证**请求已发出**，
+	// 不保证**服务端已把本连接挂上事件流**。这两者之间的窗口里产生的事件会被
+	// `from=now` 当成「已存在事件」而**永不投递** ⇒ 表症是「模型的第一个工具调用看不见」。
+	//
+	// 2026-10-06 实测（同构客户端 + 容器内真模型）：12 轮里 **3 轮**丢了 `tool_search`
+	// 的 `tool_execution_start`，而 pod 内该 session 的 jsonl 里这次 `tool_search` 的
+	// `toolResult` **确实存在** ⇒ 不是「模型没调」，是**客户端没收到**。
+	// 最重的后果在「叙述代替调用」这类判据上：会把「搜了」记成「没搜」= **假阳性发生器**。
+	// ⇒ 契约从「先订阅后 prompt」收紧为「**订阅就绪后**再 prompt」。
+	let markSubscribed: () => void = () => {};
+	const subscribed = new Promise<void>((resolve) => {
+		markSubscribed = resolve;
+	});
 	const streamDone = new Promise<void>((resolve, reject) => {
 		const timer = setTimeout(() => {
 			reject(new Error(`eval timeout after ${timeoutMs}ms (session=${sessionId})`));
@@ -86,6 +99,7 @@ export async function runEvalCase(
 		void streamEvents(
 			`${base}/sessions/${encodeURIComponent(sessionId)}/events?from=now`,
 			streamAbort.signal,
+			markSubscribed,
 		)
 			.then((evts) => {
 				collected.push(...evts);
@@ -94,11 +108,37 @@ export async function runEvalCase(
 			})
 			.catch((err: unknown) => {
 				clearTimeout(timer);
+				// ⚠️ 订阅失败时也必须放行 `subscribed`，否则下面 ③ 的 await 会**永远挂住**
+				//（连不上就卡死，比直接报错更难查）。
+				markSubscribed();
 				reject(err instanceof Error ? err : new Error(String(err)));
 			});
 	});
+	// ⚠️⚠️ 必须**立刻**挂一个空 catch：`streamDone` 的 reject 可能早于 ④ 的
+	// `await streamDone`（中间隔着 `await subscribed` 与 prompt 往返两个 IO 点）。
+	// 那个窗口里的拒绝会被 Node 判为**未处理拒绝**，而 Node 默认
+	// `--unhandled-rejections=throw` ⇒ **评测进程直接崩**（单测里表现为随机红）。
+	// 挂空 catch 只是把「已处理」标上，④ 处 `await streamDone` 照样能拿到该错误。
+	void streamDone.catch(() => {});
 
-	// ③ 发 prompt。
+	// ③ 发 prompt。⭐ 等的是**订阅已建立**（响应头到达），不是「订阅请求已发出」。
+	// ⚠️ 但这个等待**必须有界**：真实 pi-runtime 的 SSE 一定会先 flush 响应头，
+	// 可对端若是不吐头的中间层（代理 / 错误实现 / 假 server），无界等待会让
+	// **整个评测挂死** —— 既没错误也没进度，比超时难查得多。
+	// 超时后照样发 prompt，让 ④ 的 `streamDone` 用既有语义（超时 + 已收事件）收尾。
+	// ⚠️ 计时器必须在 race 结束后 clearTimeout，否则它会把事件循环再挂住 timeoutMs
+	//（长连接用例 timeoutMs=30s ⇒ 测试文件跑完也不退出）。
+	let readyTimer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			subscribed,
+			new Promise<void>((resolve) => {
+				readyTimer = setTimeout(resolve, timeoutMs);
+			}),
+		]);
+	} finally {
+		if (readyTimer) clearTimeout(readyTimer);
+	}
 	await postJson(`${base}/sessions/${encodeURIComponent(sessionId)}/prompt`, {
 		text: input.text,
 		lane: "main",
@@ -240,12 +280,19 @@ async function postJson(
  * ⚠️ 事件名是 `event:` 行、数据在 `data:` 行（Fastify SSE 约定）。
  * 解析必须容忍注释行（`:keep-alive`）与空行分隔。
  */
-async function streamEvents(url: string, signal: AbortSignal): Promise<RuntimeEvent[]> {
+async function streamEvents(
+	url: string,
+	signal: AbortSignal,
+	/** ⭐ 订阅**已建立**（响应头到达）时回调。调用方靠它决定何时可以发 prompt ——
+	 * 因为只有到这一刻，服务端才会把后续事件投给本连接（`from=now` 语义）。 */
+	onSubscribed?: () => void,
+): Promise<RuntimeEvent[]> {
 	const res = await fetch(url, {
 		headers: { accept: "text/event-stream" },
 		signal,
 	});
 	if (!res.body) throw new Error(`SSE response has no body: ${url}`);
+	onSubscribed?.();
 	const reader = res.body.getReader();
 	const decoder = new TextDecoder();
 	const events: RuntimeEvent[] = [];

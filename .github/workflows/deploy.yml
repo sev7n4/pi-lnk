@@ -190,6 +190,58 @@ jobs:
               --exclude='docs' \
               -czf - . | /tmp/lnkpi-ssh-retry.sh "sync-tar" ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR} && if [[ -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/.env /tmp/lnkpi.env.bak; fi && rm -rf ${DEPLOY_DIR}/packages ${DEPLOY_DIR}/apps/server && tar -xzf - -C ${DEPLOY_DIR} && if [[ -f /tmp/lnkpi.env.bak ]]; then mv /tmp/lnkpi.env.bak ${DEPLOY_DIR}/.env; elif [[ ! -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/deploy/.env.production.example ${DEPLOY_DIR}/.env; fi && chmod +x ${DEPLOY_DIR}/deploy/deploy-remote-build.sh ${DEPLOY_DIR}/deploy/deploy-remote.sh ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${DEPLOY_DIR}/deploy/cvm-recover.sh ${DEPLOY_DIR}/deploy/deploy-web.sh ${DEPLOY_DIR}/deploy/smoke-graph-phase-a.sh && rm -f /tmp/lnkpi-deploy-${IMAGE_TAG}.status /tmp/lnkpi-deploy-${IMAGE_TAG}.log'"
 
+      # 平台级供应商密钥注入（单一来源 = GitHub Secrets）。
+      #
+      # 为什么必须放在流水线里：平台渠道凭证**只从 env 读取**（`provider-resolver.service.ts`
+      # 读 `process.env`，写 DB 无效）；而上面的 Sync 步骤会「备份并还原」既有 `.env`
+      # ⇒ 只在 CVM 上手工改一次，一旦 `.env` 被重建（换机 / 首次部署）就静默丢失，
+      # 表现为「平台级音频能力莫名不可用」且无任何报错。故由流水线幂等 upsert。
+      #
+      # 必须排在 Sync 之后、Launch background build 之前：容器在 build 步骤里被
+      # `compose up` 重建，`env_file: ../.env` 只在创建时读取，晚于该步则本次不生效。
+      #
+      # ⚠️ 未配置 secret 时**只告警不失败**：保持流水线可部署性，缺 key 仅影响
+      # 平台级 StepFun 通道，不影响其余发布。
+      - name: Inject platform provider keys into CVM .env
+        env:
+          STEPFUN_KEY: ${{ secrets.STEPFUN_API_KEY }}
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+
+          if [ -z "${STEPFUN_KEY}" ]; then
+            echo "WARN: secrets.STEPFUN_API_KEY 未配置 —— 平台级 StepFun 通道不可用（不影响本次部署）"
+            exit 0
+          fi
+
+          # 密钥经 stdin 传输：不进 argv / 不进远端进程列表 / 不落 CI 日志
+          printf '%s' "${STEPFUN_KEY}" | ssh -T deploy-cvm "umask 077; cat > /tmp/lnkpi-stepfun.key"
+
+          # 幂等 upsert：先删同名旧行再追加 ⇒ 反复部署不累积；随后立即销毁临时文件
+          ssh -T deploy-cvm "DEPLOY_DIR=${DEPLOY_DIR} bash -s" <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          F="${DEPLOY_DIR}/.env"
+          K=/tmp/lnkpi-stepfun.key
+
+          # 拒绝空值写入：`$(cat 缺失文件)` 在 printf 里**不触发 set -e**，
+          # 会静默写入 `STEPFUN_API_KEY=` 把既有可用 key 清空且无任何报错。
+          [ -s "$K" ] || { rm -f "$K"; echo "ERROR: $K 缺失或为空，拒绝写入（避免静默清空既有 key）"; exit 1; }
+          NEW=$(cat "$K")
+          [ -n "$NEW" ] || { rm -f "$K"; echo "ERROR: key 为空，拒绝写入"; exit 1; }
+
+          touch "$F"
+          grep -v '^STEPFUN_API_KEY=' "$F" > "${F}.new" || true
+          printf 'STEPFUN_API_KEY=%s\n' "$NEW" >> "${F}.new"
+          # ⚠️ chmod 必须在 mv **之后**再执行一次：mv 会让目标沿用 ${F}.new 的权限，
+          # 只在 mv 前 chmod 会把既有 600 的 .env 降级成 644（密钥变全局可读）。
+          chmod 600 "${F}.new"
+          mv "${F}.new" "$F"
+          chmod 600 "$F"
+          rm -f "$K"
+          echo "STEPFUN_API_KEY 已注入 ${F}（匹配行数 $(grep -c '^STEPFUN_API_KEY=' "$F" || true)，期望 1，权限 $(stat -c '%a' "$F" 2>/dev/null || stat -f '%Lp' "$F")）"
+          REMOTE
+
       - name: Pre-build disk guard on CVM
         run: |
           set -euo pipefail
