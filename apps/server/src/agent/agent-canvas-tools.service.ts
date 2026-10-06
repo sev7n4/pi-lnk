@@ -3,6 +3,7 @@ import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
+  audioKindOf,
   computeImportTranslation,
   decodeChannelModel,
   duplicateResultToCanvasActions,
@@ -19,6 +20,7 @@ import {
   resolveCanonicalVideoRequest,
   summarizePromptCompletion,
   validateWorkflow,
+  type AudioKind,
   type CanvasAction,
   type CanvasActionApplier,
   type CanvasData,
@@ -1387,11 +1389,19 @@ export class AgentCanvasToolsService {
   /**
    * 按模态列出可写模型 ref（= update_node 的合法取值集）。
    * `source` 直接来自 preferences 里的 channelId 前缀：`platform::*` → 平台，其余 → BYOK。
+   * `audioKind` 仅 audio 模态出现：未登记音频模型一律 `voice`（`audioKindOf` 是缺省唯一判据处）。
    */
   async listNodeModelOptions(input: { userId: string }): Promise<{
     modalities: Record<
       NodeModal,
-      Array<{ ref: string; model: string; channelId: string; channelName: string; source: ProviderSource }>
+      Array<{
+        ref: string
+        model: string
+        channelId: string
+        channelName: string
+        source: ProviderSource
+        audioKind?: AudioKind
+      }>
     >
   }> {
     if (!input.userId) throw new BadRequestException('userId required')
@@ -1399,25 +1409,30 @@ export class AgentCanvasToolsService {
     const nameOf = new Map<string, string>([[platformChannel.id, platformChannel.name]])
     for (const ch of channels) nameOf.set(ch.id, ch.name)
 
-    const build = (refs: string[]) =>
+    const build = (refs: string[], modality: NodeModal) =>
       refs.map((ref) => {
         const decoded = decodeChannelModel(ref)
         const channelId = decoded?.channelId ?? PLATFORM_CHANNEL_ID
+        const model = decoded?.modelName ?? ref
+        const entry = getModelEntry(model)
         return {
           ref,
-          model: decoded?.modelName ?? ref,
+          model,
           channelId,
           channelName: nameOf.get(channelId) ?? channelId,
           source: (channelId === PLATFORM_CHANNEL_ID ? 'platform' : 'user') as ProviderSource,
+          ...(modality === 'audio'
+            ? { audioKind: entry && entry.modality === 'audio' ? audioKindOf(entry) : 'voice' }
+            : {}),
         }
       })
 
     return {
       modalities: {
-        image: build(preferences.selectableImageModels),
-        video: build(preferences.selectableVideoModels),
-        text: build(preferences.selectableTextModels),
-        audio: build(preferences.selectableAudioModels),
+        image: build(preferences.selectableImageModels, 'image'),
+        video: build(preferences.selectableVideoModels, 'video'),
+        text: build(preferences.selectableTextModels, 'text'),
+        audio: build(preferences.selectableAudioModels, 'audio'),
       },
     }
   }

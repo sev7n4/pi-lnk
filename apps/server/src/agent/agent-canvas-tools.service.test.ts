@@ -139,7 +139,7 @@ describe('AgentCanvasToolsService', () => {
         selectableImageModels: ['platform::seedream-5.0-pro', 'ch_byok_1::custom-image'],
         selectableVideoModels: ['platform::agnes-video-v2.0'],
         selectableTextModels: ['platform::agnes-2.0-flash'],
-        selectableAudioModels: ['platform::minimax-speech-2.8-hd'],
+        selectableAudioModels: ['platform::minimax-speech-2.8-hd', 'platform::stepaudio-3-music-preview'],
       },
     })
     sliceImage.mockResolvedValue({
@@ -2639,6 +2639,20 @@ describe('AgentCanvasToolsService', () => {
     it('Review Focus 1：缺 userId → BadRequestException（fail-closed，不打 provider）', async () => {
       await expect(svc.listNodeModelOptions({ userId: '' })).rejects.toBeInstanceOf(BadRequestException)
       expect(providerBootstrap).not.toHaveBeenCalled()
+    })
+
+    it('list_model_options 的 audio 条目带 audioKind（agent 才能自主选分类）', async () => {
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      const audio = out.modalities.audio
+      const music = audio.find((m) => m.model === 'stepaudio-3-music-preview')
+      expect(music?.audioKind).toBe('music')
+      const voice = audio.find((m) => m.model === 'minimax-speech-2.8-hd')
+      expect(voice?.audioKind).toBe('voice')
+    })
+
+    it('非 audio 模态不带 audioKind 字段', async () => {
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      expect(out.modalities.image.every((m) => !('audioKind' in m))).toBe(true)
     })
   })
 
