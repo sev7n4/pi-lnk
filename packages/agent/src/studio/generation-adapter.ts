@@ -56,6 +56,8 @@ export interface BuiltAudioRequest {
     volume?: number
     pitch?: number
     emotion?: string
+    /** StepFun 的自然语言指导（`instruction`）：不进入朗读内容，仅控制演绎。 */
+    instruction?: string
   }
   meta: AdapterMeta
 }
@@ -65,6 +67,19 @@ const LANGUAGE_LABELS: Record<string, string> = {
   en: 'English',
   ja: '日语',
   ko: '韩语',
+}
+
+/**
+ * `emotion` → StepFun `instruction` 的措辞表。
+ *
+ * ⚠️ **只映射非中性情绪**：`neutral` 命中时返回 undefined ⇒ 不发 instruction。
+ * 上游默认就是中性表达，硬塞一句「语气自然」反而多一次无意义的覆盖。
+ * 措辞里**禁止出现要朗读的正文内容** —— instruction 是导演提示，不是台词。
+ */
+const EMOTION_INSTRUCTIONS: Record<string, string> = {
+  happy: '语气明快欢快，节奏轻快，带一点笑意',
+  sad: '语气低沉悲伤，语速偏慢，停顿略长',
+  serious: '语气严肃郑重，咬字清晰，不带笑意',
 }
 
 function resolveVoice(
@@ -157,6 +172,19 @@ export function buildAudioRequest(input: {
     if (disposition === 'native') {
       ;(options as Record<string, unknown>)[field] = value
       nativeParams[field] = value
+    } else if (disposition === 'instruction') {
+      // StepFun：情感走自然语言指导字段，**不进朗读正文**。
+      // 未知情绪值不猜措辞 —— 显式丢弃，让调用方在 droppedFields 里看到。
+      const instruction = EMOTION_INSTRUCTIONS[String(value)]
+      if (instruction) {
+        options.instruction = instruction
+        nativeParams.instruction = instruction
+      } else {
+        droppedFields.push({
+          field,
+          reason: `no instruction mapping for emotion "${value}" on ${entry.modelKey}`,
+        })
+      }
     } else if (disposition === 'metadataOnly') {
       droppedFields.push({
         field,

@@ -1,5 +1,12 @@
 export type StudioModality = 'text' | 'image' | 'video' | 'audio'
-export type ParamDisposition = 'native' | 'promptPrefix' | 'metadataOnly'
+/**
+ * - `native`：作为原生字段直传上游。
+ * - `promptPrefix`：拼进**待朗读正文**前缀（仅限会把整段文本当内容朗读、且无情感参数的上游）。
+ * - `instruction`：翻译成上游的**自然语言指导字段**（StepFun 的 `instruction`，≤500 字符）。
+ *   与 `promptPrefix` 的区别是**它不会进入朗读内容** —— 混用会让设定被念出来。
+ * - `metadataOnly`：不发送（进 `droppedFields` 对调用方可见，不静默吞）。
+ */
+export type ParamDisposition = 'native' | 'promptPrefix' | 'metadataOnly' | 'instruction'
 
 import { decodeChannelModel, encodeChannelModel, PLATFORM_CHANNEL_ID } from './providerChannels'
 
@@ -59,6 +66,31 @@ const MINIMAX_AUDIO_PARAMS: Record<string, ParamDisposition> = {
   pitch: 'native',
   emotion: 'native',
   language: 'promptPrefix',
+}
+
+/**
+ * StepFun（阶跃星辰）TTS 参数处置。**依据官方 API 参考逐字段核对**（2026-10-06），
+ * 不是按 OpenAI 形状类推：
+ *
+ * - `model` / `input` / `voice`：原生必填（voice 必填，无默认值）。
+ * - `speed`（0.5–2）/ `volume`（0.1–2）：原生。
+ * - `pitch`：**官方无此参数** ⇒ metadataOnly（丢弃并在 droppedFields 可见，不静默吞）。
+ * - `emotion`：官方**没有**顶层 emotion；情感只能走 `voice_label.emotion`（仅 2.5/2/mini）
+ *   或 `instruction`（仅 2.5/3）⇒ 走 `instruction` 通道（见 adapter 的 disposition 分支）。
+ * - `language`：官方 `voice_label.language` 只支持粤语/四川话/日语，且 3-tts 明确禁用
+ *   `voice_label` ⇒ 一律 metadataOnly。
+ *
+ * ⚠️ 为什么不把 `emotion` 标成 `promptPrefix`（仓内既有机制）：那是把「情绪=欢快」拼进
+ * **待朗读正文**，StepFun 会照字念出来 ⇒ 用 promptPrefix 会让情绪设定变成朗读内容。
+ */
+const STEPFUN_TTS_PARAMS: Record<string, ParamDisposition> = {
+  model: 'native',
+  voice: 'native',
+  speed: 'native',
+  volume: 'native',
+  pitch: 'metadataOnly',
+  emotion: 'instruction',
+  language: 'metadataOnly',
 }
 
 export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
@@ -315,6 +347,51 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
       { id: 'presenter_female', label: '女主播' },
     ],
     defaults: { voice: 'female-shaonv', speed: 1.0, volume: 1.0, pitch: 0 },
+  },
+  // ── StepFun（阶跃星辰）TTS ──
+  // 生产实测（2026-10-06）：`POST {base}/audio/speech` 端点通、鉴权通过，仅余额不足（402）。
+  // 单价 ¥0.9 / 万字符（全表最低）；音色 id 取自官方音色清单（**中文拼音风格**）。
+  // ⚠️ 第三方聚合站文档给的是 `lively-girl` 这类英文 id，那是它自己的代理命名，
+  // 直连 api.stepfun.com 用官方拼音 id，否则 400。
+  {
+    modelKey: 'step-tts-mini',
+    displayName: 'Step TTS Mini（阶跃）',
+    gatewayModelId: 'step-tts-mini',
+    modality: 'audio',
+    providerBinding: 'gateway-openai-compat',
+    params: STEPFUN_TTS_PARAMS,
+    voices: [
+      { id: 'livelybreezy-female', label: '活力轻快' },
+      { id: 'elegantgentle-female', label: '气质温婉' },
+      { id: 'wenrounvsheng', label: '温柔女声' },
+      { id: 'cixingnansheng', label: '磁性男声' },
+      { id: 'yuanqinansheng', label: '元气男声' },
+      { id: 'boyinnansheng', label: '播音男声' },
+      { id: 'ruyananshi', label: '儒雅男士' },
+      { id: 'linjiajiejie', label: '邻家姐姐' },
+    ],
+    defaults: { voice: 'livelybreezy-female', speed: 1.0, volume: 1.0 },
+  },
+  {
+    modelKey: 'stepaudio-3-tts',
+    displayName: 'StepAudio 3 TTS（阶跃·真人级）',
+    gatewayModelId: 'stepaudio-3-tts',
+    modality: 'audio',
+    providerBinding: 'gateway-openai-compat',
+    params: STEPFUN_TTS_PARAMS,
+    // 音色 id 与 mini 同源（官方音色清单按「支持模型」列标注，3-tts 为最新代机型）。
+    // 3-tts 独家能力：instruction 自然语言指导（≤500 字符）⇒ emotion 走该通道。
+    voices: [
+      { id: 'livelybreezy-female', label: '活力轻快' },
+      { id: 'elegantgentle-female', label: '气质温婉' },
+      { id: 'wenrounvsheng', label: '温柔女声' },
+      { id: 'cixingnansheng', label: '磁性男声' },
+      { id: 'yuanqinansheng', label: '元气男声' },
+      { id: 'boyinnansheng', label: '播音男声' },
+      { id: 'ruyananshi', label: '儒雅男士' },
+      { id: 'linjiajiejie', label: '邻家姐姐' },
+    ],
+    defaults: { voice: 'livelybreezy-female', speed: 1.0, volume: 1.0 },
   },
 ]
 
