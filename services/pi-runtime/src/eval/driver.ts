@@ -52,7 +52,11 @@ export async function runEvalCase(
 ): Promise<RuntimeRunResult> {
 	const base = options.baseUrl.replace(/\/+$/, "");
 	const timeoutMs = options.timeoutMs ?? 120_000;
-	const sessionId = `eval-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	//⭐ 允许调用方指定 sessionId 以**复用会话做多轮对照**（2026-10-07）。
+	//   为什么需要：每轮新会话 ⇒ 无法比较「工具集恒定」与「工具集变化」对 prompt cache 的影响
+	//   —— 跨会话的 cache_read 量不可比（同会话才有共享前缀）。
+	//   ⚠️ 复用时 `prompt` 是追加语义：`/sessions` 是幂等 upsert，systemPrompt 只在首次生效。
+	const sessionId = input.sessionId ?? `eval-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 	// ① 建会话。⚠️ 订阅必须先于 prompt（见函数注释）。
 	const created = await postJson(`${base}/sessions`, {
