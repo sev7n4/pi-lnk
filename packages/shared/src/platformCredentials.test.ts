@@ -3,12 +3,15 @@ import {
   DEFAULT_APIMART_BASE_URL,
   DEFAULT_FAL_BASE_URL,
   DEFAULT_MINIMAX_BASE_URL,
+  DEFAULT_STEPFUN_BASE_URL,
   isFalH3MaxPlatformModel,
   isMiniMaxH3PlatformModel,
+  isStepFunPlatformModel,
   resolveApimartPlatformCredentials,
   resolveFalH3MaxPlatformCredentials,
   resolveMiniMaxH3PlatformCredentials,
   resolvePlatformImageProviderOpts,
+  resolveStepFunPlatformCredentials,
   usesApimartImageGateway,
   type PlatformCredentialEnv,
 } from './platformCredentials'
@@ -177,5 +180,63 @@ describe('platformCredentials', () => {
       apiKey: '',
       baseUrl: 'https://minimax.custom.example',
     })
+  })
+})
+
+describe('resolveStepFunPlatformCredentials', () => {
+  it('匹配阶跃全家族模型名（step-tts-* / stepaudio-*）', () => {
+    for (const name of [
+      'step-tts-mini',
+      'stepaudio-3-tts',
+      'stepaudio-3-gen-preview',
+      'stepaudio-3-music-preview',
+    ]) {
+      expect(isStepFunPlatformModel(name)).toBe(true)
+    }
+  })
+
+  it('不误伤其它平台模型', () => {
+    for (const name of ['agnes-2.0-flash', 'h3-max-turbo', 'minimax-h3', 'speech-2.8-hd']) {
+      expect(isStepFunPlatformModel(name)).toBe(false)
+      expect(resolveStepFunPlatformCredentials(name, { stepfunApiKey: 'k' })).toBeNull()
+    }
+  })
+
+  it('缺省 baseUrl 指向阶跃官方网关', () => {
+    expect(
+      resolveStepFunPlatformCredentials('stepaudio-3-gen-preview', { stepfunApiKey: 'k' }),
+    ).toEqual({ apiKey: 'k', baseUrl: DEFAULT_STEPFUN_BASE_URL })
+  })
+
+  it('⚠️ 回归锁：匹配到阶跃模型时，即使 key 为空也返回非 null', () => {
+    // 返回 null 会让 resolver 落回 OpenAI 默认端点，把 step 模型名静默发到 OpenAI。
+    // 缺 key 的显式失败由调用方负责（apps/server 的音频路径），不在这里静默兜底。
+    const r = resolveStepFunPlatformCredentials('stepaudio-3-music-preview', {})
+    expect(r).not.toBeNull()
+    expect(r!.apiKey).toBe('')
+    expect(r!.baseUrl).toBe(DEFAULT_STEPFUN_BASE_URL)
+  })
+
+  it('显式 env 覆盖 process.env', () => {
+    const saved = process.env.STEPFUN_API_KEY
+    process.env.STEPFUN_API_KEY = 'from-process'
+    try {
+      expect(
+        resolveStepFunPlatformCredentials('stepaudio-3-tts', { stepfunApiKey: 'from-arg' })!.apiKey,
+      ).toBe('from-arg')
+      expect(resolveStepFunPlatformCredentials('stepaudio-3-tts')!.apiKey).toBe('from-process')
+    } finally {
+      if (saved === undefined) delete process.env.STEPFUN_API_KEY
+      else process.env.STEPFUN_API_KEY = saved
+    }
+  })
+
+  it('STEPFUN_BASE_URL 可覆盖', () => {
+    expect(
+      resolveStepFunPlatformCredentials('stepaudio-3-tts', {
+        stepfunApiKey: 'k',
+        stepfunBaseUrl: 'https://stepfun.internal/v1',
+      })!.baseUrl,
+    ).toBe('https://stepfun.internal/v1')
   })
 })
