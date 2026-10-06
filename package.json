@@ -16,6 +16,7 @@
     "test:runtime": "pnpm --filter @pi-lnk/pi-runtime test",
     "verify-contract": "npx tsx scripts/verify-contract.ts",
     "verify-tool-contract": "npx tsx scripts/verify-tool-contract.ts",
+    "verify-tool-tiering": "npx tsx scripts/verify-tool-tiering.ts",
     "verify-u-i2v-phase3": "npx tsx scripts/verify-u-i2v-phase3.ts",
     "verify-spec-figures": "npx tsx scripts/verify-spec-figures.ts",
     "verify-claims": "npx tsx scripts/verify-claims.ts",
