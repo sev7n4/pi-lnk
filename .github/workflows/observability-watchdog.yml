@@ -1,0 +1,88 @@
+name: Observability Watchdog
+
+# P2 的「发给谁 + 在哪看」：把断言跑在 GitHub Actions 上。
+#
+# 为什么必须在这里跑而不能用 Alertmanager：pi-lnk **没有** Alertmanager，
+# 宿主 `pintuotuo-alertmanager` 属另一项目（不可复用）。而 GitHub Actions
+# 自带通知（邮件 / 站内 / 可挂 Slack webhook），是当前唯一「零新组件」的接收端。
+#
+# 为什么断言必须在 CVM 上执行：Prometheus 是 NodePort 30909，**外网被腾讯云安全组拦住**
+# （见 deploy/observability/prometheus/README.md），GitHub runner 连不上 30909；
+# 但 runner 能 SSH 进 CVM ⇒ 把脚本送进去跑，PromQL 在本机 127.0.0.1:30909 执行。
+#
+# 频率：每 30 分钟。理由 —— 断言 1/2（采集断、服务挂）分钟级；断言 3（错误率）
+# 需要样本量，30 分钟足够积累又不至于让故障长时间无人知晓。
+# ⚠️ 本 workflow 是全仓**第一条带 `schedule` 的流水线**：不带 `branches` 过滤
+# （schedule 只认 cron），但它也不会被 push 触发（`on` 里没有 push）⇒ 不会误触发。
+
+on:
+  schedule:
+    # 每 30 分钟（避开整点：整点是各类定时任务最拥挤的时刻）
+    - cron: "7,37 * * * *"
+  workflow_dispatch: # 允许手动立刻跑一次（验证断言用）
+
+permissions:
+  contents: read
+
+concurrency:
+  group: observability-watchdog
+  cancel-in-progress: false # 巡检不该被上一次取消 —— 取消会让一次故障检查凭空消失
+
+jobs:
+  assert:
+    name: Assert observability (on CVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # 断言自身有 --max-time；整体兜底防 SSH 挂死
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH to CVM
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-cvm
+            HostName ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
+            User ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ConnectTimeout 20
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Preflight — CVM 可达
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            if ssh -T deploy-cvm 'curl -sS --max-time 8 http://127.0.0.1:30100/healthz | head -c 200'; then
+              ok=1; break
+            fi
+            echo "ssh attempt ${attempt}/3 failed, retrying..."
+            sleep $((attempt * 5))
+          done
+          [ "$ok" = "1" ] || { echo "::error::无法 SSH 到 CVM —— 巡检无法执行（这本身就是故障信号）"; exit 1; }
+
+      - name: Run observability assertions
+        run: |
+          set -euo pipefail
+          # 把脚本送进 CVM 跑：PromQL 在本机 127.0.0.1:30909 才有数据（外网被安全组拦）。
+          # 用 sudo 是不必要的 —— 断言只读 /metrics 与 healthz，不改任何状态。
+          ssh -T deploy-cvm 'bash -s' < deploy/observability/prometheus/observability-watchdog.sh
+
+      - name: Publish result
+        if: always()
+        run: |
+          # 把断言输出写进 job summary：workflow 失败时通知邮件只有一行，
+          # 真正的原因（哪个 KEY、什么值）必须能在 UI 里直接看到。
+          {
+            echo "### pi-runtime 观测巡检"
+            echo
+            echo "- 时间（UTC）：$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- 结果：${{ job.status }}"
+            echo
+            echo "PromQL 原始输出见上一步日志；完整判据说明见 \`deploy/observability/prometheus/README.md\`。"
+          } >> "$GITHUB_STEP_SUMMARY"

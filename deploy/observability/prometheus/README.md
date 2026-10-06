@@ -105,6 +105,34 @@ k3s 的 NodePort 段（30000-32767）不冲突，选 30909 为可读性。
 - **不装 Grafana**：本阶段只要「指标活下来」；用原生 UI + PromQL
 - **告警规则留空**：见 `rules/README.md`（阈值需 ≥1 个发布周期真实数据校准）
 
+## 巡检告警（P2：`谁算 + 发给谁 + 在哪看`）
+
+| 角色 | 落点 |
+|---|---|
+| **谁算** | `observability-watchdog.sh` —— 5 条断言（采集层 / healthz / 错误率 / 采集连续性 / LLM 维度可达） |
+| **发给谁** | **GitHub Actions 自带通知**（邮件 + 站内 + 可挂 webhook），无需新组件 |
+| **在哪看** | Actions 页面该 run 的日志 + job summary（失败时直接能看到是哪个 `KEY=VALUE` 不对） |
+
+**为什么不用 Alertmanager**：pi-lnk 没有 Alertmanager；宿主 `pintuotuo-alertmanager` 属**另一项目**，
+数据面与责任面都不清，不可复用。GitHub Actions 是当前唯一零新组件的接收端。
+
+**为什么断言必须在 CVM 上跑**：Prometheus 是 NodePort 30909，**外网被腾讯云安全组拦住**
+（见上文「访问方式」），GitHub runner 连不上 30909；但 runner 能 SSH 进 CVM ⇒
+脚本送进去执行，PromQL 在本机 `127.0.0.1:30909` 查询。
+
+**手动跑一次**（不必等 30 分钟的 cron）：
+
+```bash
+# Actions 页面：Observability Watchdog → Run workflow
+# 或在 CVM 上直接跑（诊断输出更全，见 read-decisions.sh）
+bash deploy/observability/prometheus/observability-watchdog.sh
+```
+
+⚠️ **阈值是 spec 初值，未校准**：默认 `ERROR_RATE_THRESHOLD=0.02` 取自 spec 规则 4
+（`2026-10-04-metrics-observability-design.md:320` 的「> 2%」）。
+spec 里的 **5%** 是规则 2（上游 5xx 占全部上游错误比），**不是工具错误率**，别混。
+初值未经真实基线校准 ⇒ 可能误报也可能漏报，校准前**别把它当唯一防线**。
+
 ## 改动如何生效（2026-10-05 实测）
 
 **没有任何 CI 会 apply 这里的 k8s 清单**（全仓 grep `kubectl` / `k3s` / `KUBECONFIG` 零命中）。
