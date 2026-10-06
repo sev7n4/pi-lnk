@@ -40,23 +40,28 @@
 | 2 | `prompt-registry/MANIFEST.yaml`（`contentHash` = `sha256(body.trimEnd())` 前 12 位；`version` 两处一致） | 完整性校验失败 |
 | 3 | `prompt-registry.loader.ts` 的 `COMPOSED_IDS` | 不参与组合 |
 | 4 | `prompt-registry.loader.ts` 的 `FALLBACK_BY_ID` 映射（仅此一处定义） | 降级路径与实际规则不一致 |
-| 5 | 🔴 `pi-prompt-assembler.service.ts` 的 `renderStaticFallback()` **拼装顺序** | **整段提示词静默消失，且无任何报错** |
+| 5 | 🔴 `prompt-registry.fallback.ts` 的**内嵌规则常量**（`CORE_RULES_PREFIX` / `MEMORY_SCOPE_RULES` / `WRITE_TOOLS_RULES` / `GEN_TOOLS_RULES` / `CANVAS_VIEW_POLICY` / `CANVAS_DAILY_OPS` …） | registry 加载失败时走降级路径，**提示词与磁盘规则不一致，且无任何报错** |
 | 6 | 🟡 `pi-prompt-assembler.service.test.ts` 的 `EXPECTED` 硬编码串 | 测试假绿 |
 
-**同步判据**：「磁盘 renderStatic == 内嵌 renderStaticFallback」四组合**逐字符相等**。
+**同步判据**：`prompt-registry.loader.ts` 的 `renderStatic()`（读磁盘）== 内嵌 fallback 常量按 `FALLBACK_BY_ID` 组合的结果，**逐字符相等**。
+**已机检**：由 `pnpm prompt-lint` 执行（独立流水线 `prompt-lint.yml`）——
+`prompt-registry.loader.ts` 的 **L7** 校验逐条比对「磁盘 body == 内嵌常量」，不一致即 exit 1。
+变异实测：把 `prompt-registry.fallback.ts` 里一个字改掉（`focus_nodes`→`focus_node`）⇒ 报
+「canvas_daily_ops.md 的 body 与常量不一致」+ 退出码 1。**所以第 5 处不是"靠自觉"，别再当它没人管。**
 
-⚠️ `renderStaticFallback` 在 3 个源文件 + 2 个测试文件出现（共 5 处），
-第 5 处指的是**内嵌 fallback 的那一处**；「四组合逐字符相等」判据的实现在
-`prompt-registry.loader.test.ts`。
-⚠️ `FALLBACK_BY_ID` 只在 loader 定义，`prompt-registry.fallback.ts` 里没有同名符号 ——
+⚠️ **同步点不在 `pi-prompt-assembler.service.ts`** —— 那里只是同时 import 磁盘渲染器与 fallback 常量再调用 `renderStatic`。
+本节早期写的 `renderStaticFallback()` 符号**已不存在**（2026-10-06 全仓 `git grep` 零命中，仓库里只有 `renderStatic`），
+按旧文字去「同步 5 处」会找不到目标 —— 这是 2026-10-06 由 R5/R1 交叉核实修正的失效指针。
+⚠️ `FALLBACK_BY_ID` 只在 loader 定义（`:112`），`prompt-registry.fallback.ts` 里没有同名符号 ——
 它靠**内容逐字相等**被约束，不是靠常量名对齐。
 ⚠️ 本仓 `grep` / `git grep` 可正常使用；大范围扫描（如全仓 python 遍历）会超时
 （exit 137），此时缩小到具体目录或改用 `git grep -n -- <符号> -- <目录>`。
 
 改完跑 `pnpm prompt:lint`（独立成 `prompt-lint.yml` 流水线，`ci.yml` 不覆盖它）。
 
-⚠️ **L6 预算上限 3200 字符**：最紧组合 `core+writeTools+genTools` 实测 **3192** ⇒ **实际余量仅 8 字符**
-（旧值「余量约 320 ≈ 还能加 4 条中等规则」是错的，勿据此排期）。加规则前必须先腾空间；复核用 `pnpm prompt:lint`。
+⚠️ **L6 预算上限 3200 字符**：最紧组合 `core+writeTools+genTools` 实测 **3042** ⇒ **余量 158 字符**
+（2026-10-06 减点名后重测；此前写的「3192 / 余量 8」已失效）。
+`pnpm prompt:lint` 会打印实测值并对超预警线（2720 = 85%）给 warning。加规则前先跑它看余量，别按旧数字排期。
 
 ### 改工具分层 ⇒ 必答「哪个资产点名了它」
 
