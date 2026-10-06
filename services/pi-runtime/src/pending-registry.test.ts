@@ -11,6 +11,24 @@ describe("PendingToolRegistry", () => {
 		assert.deepEqual(await p, { status: "answered", answers: { style: ["watercolor"] } });
 	});
 
+	it("decline resolves waitForUser as aborted（2026-10-06 显式取消除外，不再靠 SSOT 推断）", async () => {
+		const reg = new PendingToolRegistry();
+		const p = reg.waitForUser("s1", "c1", "propose_generation", 60_000);
+		assert.deepEqual(reg.decline("s1", "c1"), { ok: true, deduped: false });
+		assert.deepEqual(await p, { status: "aborted" });
+		// 幂等：已 settle → deduped，不抛错（回答端点重试安全）
+		assert.deepEqual(reg.decline("s1", "c1"), { ok: true, deduped: true });
+		assert.deepEqual(reg.decline("sx", "ghost"), { ok: true, deduped: true });
+	});
+
+	it("decline 与 answer 互斥：先 decline 后 answer 仍是 aborted（不被子序列覆盖）", async () => {
+		const reg = new PendingToolRegistry();
+		const p = reg.waitForUser("s1", "c2", "propose_generation", 60_000);
+		reg.decline("s1", "c2");
+		assert.deepEqual(reg.answer("s1", "c2", { propose: ["confirm"] }), { ok: true, deduped: true });
+		assert.deepEqual(await p, { status: "aborted" });
+	});
+
 	it("timeout resolves with empty answers, never rejects（无部分作答语义）", async () => {
 		const reg = new PendingToolRegistry();
 		const p = reg.waitForUser("s1", "c1", "ask_user", 60_000);

@@ -601,6 +601,8 @@ export class AgentService {
     threadId?: string | null
     callId: string
     answers: Record<string, string[]>
+    /** 2026-10-06：`decline` = 用户显式拒绝（propose 卡取消），runtime 以 aborted 交还。 */
+    decision?: 'answer' | 'decline'
   }): Promise<{ ok: boolean; deduped: boolean }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { ok: false, deduped: false }
@@ -608,6 +610,7 @@ export class AgentService {
     return this.createPiRuntimeClient(piUrl).answer(sessionKey, {
       callId: input.callId,
       answers: input.answers,
+      ...(input.decision ? { decision: input.decision } : {}),
     })
   }
 
