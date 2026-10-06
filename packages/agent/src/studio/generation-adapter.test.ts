@@ -37,6 +37,58 @@ describe('buildAudioRequest', () => {
     const r = buildAudioRequest({ mergedText: 'hi', modelKey: 'nope' })
     expect(r.meta.modelFallback).toBe(true)
   })
+
+  // U7（2026-10-06）：StepFun 情感走 instruction，**不进朗读正文**。
+  // 若误用 promptPrefix，「情绪=欢快」会被照字念出来。
+  it('maps StepFun emotion to instruction and keeps it out of the spoken text', () => {
+    const r = buildAudioRequest({
+      mergedText: '欢迎来到秋日上新专场',
+      modelKey: 'stepaudio-3-tts',
+      voice: 'cixingnansheng',
+      emotion: 'happy',
+      speed: 1.1,
+    })
+    expect(r.options.instruction).toBeTruthy()
+    expect(r.options.instruction).not.toContain('秋日上新')
+    expect(r.text).toBe('欢迎来到秋日上新专场')
+    expect(r.meta.promptPrefixApplied).toBeUndefined()
+    expect(r.meta.nativeParams.instruction).toBe(r.options.instruction)
+  })
+
+  it('omits instruction for neutral emotion (upstream default is already neutral)', () => {
+    const r = buildAudioRequest({
+      mergedText: '中性朗读',
+      modelKey: 'stepaudio-3-tts',
+      emotion: 'neutral',
+    })
+    expect(r.options.instruction).toBeUndefined()
+  })
+
+  it('drops pitch/language for StepFun instead of sending unsupported fields', () => {
+    const r = buildAudioRequest({
+      mergedText: '台词',
+      modelKey: 'step-tts-mini',
+      pitch: 2,
+      language: 'zh',
+    })
+    expect(r.options).not.toHaveProperty('pitch')
+    expect(r.options).not.toHaveProperty('language')
+    const dropped = r.meta.droppedFields.map((d) => d.field)
+    expect(dropped).toContain('pitch')
+    expect(r.meta.promptPrefixApplied).toBeUndefined()
+  })
+
+  it('falls back to the entry default voice when a Minimax voice id is passed for StepFun', () => {
+    const r = buildAudioRequest({
+      mergedText: '台词',
+      modelKey: 'stepaudio-3-tts',
+      voice: 'female-shaonv',
+    })
+    // 关键回归：用户存量偏好是 minimax 音色 id，直接透传会让 StepFun 返 400
+    expect(r.options.voice).not.toBe('female-shaonv')
+    expect(r.options.voice).toBe('livelybreezy-female')
+    expect(r.meta.droppedFields.some((d) => d.field === 'voice')).toBe(true)
+  })
 })
 
 describe('buildVideoProviderOptions', () => {

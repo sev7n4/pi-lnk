@@ -55,7 +55,43 @@ describe('studioModelCatalog', () => {
     expect(listModels('audio').map((m) => m.modelKey)).toEqual([
       'seed-audio-1.0',
       'minimax-speech-2.8-hd',
+      'step-tts-mini',
+      'stepaudio-3-tts',
     ])
+  })
+
+  // U7（2026-10-06）：StepFun 条目的 voice id 必须是官方音色清单里的**中文拼音 id**。
+  // 回归锁：曾差点采用第三方聚合站文档里的 `lively-girl` 这类英文 id —— 那是该站自己的
+  // 代理命名，直连 api.stepfun.com 会 400。
+  it('registers StepFun TTS entries with official pinyin voice ids', () => {
+    for (const key of ['step-tts-mini', 'stepaudio-3-tts']) {
+      const entry = getModelEntry(key)
+      expect(entry, key).toBeDefined()
+      expect(entry!.modality).toBe('audio')
+      expect(entry!.providerBinding).toBe('gateway-openai-compat')
+      const ids = entry!.voices?.map((v) => v.id) ?? []
+      expect(ids.length, key).toBeGreaterThan(0)
+      expect(ids, key).toContain('cixingnansheng')
+      // ⚠️ 黑名单而非正则：官方 id 本身含连字符（livelybreezy-female），
+      // 用「像不像英文单词」的正则会误伤合法音色。第三方聚合站那套英文 id 才是要防的。
+      for (const foreignId of ['lively-girl', 'vibrant-youth', 'soft-spoken-gentleman', 'magnetic-voiced-male']) {
+        expect(ids, key).not.toContain(foreignId)
+      }
+      // 默认音色必须是本条目自己的音色（不能是 minimax 的 female-shaonv）
+      expect(ids, key).toContain(entry!.defaults?.voice as string)
+    }
+    // getModelEntry 两种形态都要能命中（modelKey 与 gatewayModelId 同为 step-*）
+    expect(getModelEntry('stepaudio-3-tts')?.gatewayModelId).toBe('stepaudio-3-tts')
+  })
+
+  it('marks StepFun pitch/language as dropped and emotion as instruction', () => {
+    const step = getModelEntry('stepaudio-3-tts')!
+    // 官方无 pitch 顶层参数 ⇒ 必须 metadataOnly（进 droppedFields，不静默吞）
+    expect(step.params.pitch).toBe('metadataOnly')
+    // 情感只能走 instruction（voice_label 对 3-tts 会报错）
+    expect(step.params.emotion).toBe('instruction')
+    expect(step.params.speed).toBe('native')
+    expect(step.params.volume).toBe('native')
   })
 
   it('falls back unknown modelKey and sets fallback flag', () => {
