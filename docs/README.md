@@ -67,7 +67,7 @@
 | `agent/` | **agent 规范专题文件**（2026-10-04 从 `AGENTS.md` 拆出）—— `delivery.md` 交付流程 / `architecture.md` 架构与内核 / `docs.md` 文档管理 / `environment.md` 本机环境。主文件 `../AGENTS.md` 保留「任何上下文都要看得见」的 5 节并给出导航。<br>另有**工具框架结论资产**：`tool-framework-audit.md`（诊断）/ `tool-framework-roadmap.html`（路线，§3 主线 A/B/C）/ `tool-capability-catalog.md`（**能力目录** = 主线 A 落地：47 工具 × 点名资产 × 归属 × 触发话术，含可重跑的扫描命令） | 活资产 —— 章节名受上方「外部引用契约」约束 |
 | `adr/` | **架构决策记录**（0001-0009 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
 | `workflow/` | Agent 工作流交换契约（`README.md` + `examples/*.json`） | **活跃资产** —— 外部 Agent（WorkBuddy / Codex 等）靠它生成可导入画布的 JSON。校验函数是 `@lnkpi/shared` 的 `validateWorkflow`，代码里由 `useWorkflowExchange.ts`、`compositionLint.ts` 等消费。**不要删。** |
-| `superpowers/` | 历史 spec 与 plan（283 份：specs 137 / plans 146） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 +状态（🟢living / 🔒frozen / ⛔superseded）分组。索引可重跑：`python3 gen_index.py && python3 gen_index_md.py` |
+| `superpowers/` | 历史 spec 与 plan（**份数以实测为准**：`ls docs/superpowers/{specs,plans}/*.md \| wc -l`） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 + 状态（🟢living / 🔒frozen / ⛔superseded）分组。⚠️ 索引**纯手工维护**，其自述的生成脚本 `gen_index.py` / `gen_index_md.py` **在仓库里不存在**；新增文档须手工补主题分组 + 同步状态总览 |
 | `discussion/` | 讨论文档（第一资产） | 项目方向与决策来源 |
 | `ops/` | 部署 runbook | 生产运维 |
 
@@ -133,20 +133,24 @@ ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `servic
 | 裸文件名引用 | 大量 | 如 `prompt-registry.loader.ts` 省略子目录，文件真实存在，上下文合法 |
 | `.workbuddy/` `.superpowers/` | — | 私有记忆与临时产物，非仓库资产 |
 
-⇒ 门禁实际只扫 **66 个活跃资产 md**，噪音从 604 降到 21（且这 21 条只报告不阻断）。
+⇒ 门禁实际只扫**活跃资产 md**（当前 76 个，**以 `pnpm verify-links` 的实测输出为准**）；噪音从 604 降到 21（这两个数是 2026-10-04 审计快照，非实时值）。
 
 > **为什么人工审计不可持续**：这次手工扫 583 个 md **两次都超时**。
 > 所以要做的是机器化门禁，而不是一次性大扫除。
 
 ## `superpowers/` 索引（2026-10-03 已补）
 
-283 份文档**正文未改动**，新增 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 做导航：
-按 16 个主题分组，每份标 living / frozen / superseded，判定规则写在索引文末。
+历史 spec 与 plan 的**正文未改动**，新增 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 做导航：
+按主题分组，每份标 living / frozen / superseded，判定规则写在索引文末。
 
-- 状态分布：🟢 living 92 · 🔒frozen 186 · ⛔ superseded 5
-- 判定优先读文档开头的 `状态：` 字段，其次按月份 + 主题推断
-- **判定错了的修法**：改文档开头的状态字段，然后重跑脚本（不要手工涂改索引）
-- 重新生成：`python3 gen_index.py > index_data.json && python3 gen_index_md.py`
+- **份数不要写死在文档里**：specs 与 plans 的真实份数以
+  `ls docs/superpowers/specs/*.md | wc -l` / `ls docs/superpowers/plans/*.md | wc -l` 实测为准。
+  ⚠️ 本文与 INDEX 曾长期写着过时的硬编码份数（283 / 286），且两处都宣称「索引可重跑」——
+  **那个生成脚本从不存在**（INDEX 文末「重新生成」一节已自我更正）。故改为不给绝对数。
+- 状态分布（living / frozen / superseded 分解）同样**手工维护**，统计基线 2026-10-04、
+  **新增文档未回填** ⇒ 勿作判据。
+- 判定优先读文档开头的 `状态：` 字段，其次按月份 + 主题推断。
+- **判定错了的修法**：改文档开头的状态字段，并手工同步 INDEX 的状态总览（没有脚本可重跑）。
 
 > 决策依据见 [ADR-0008](./adr/0008-docs-index-over-doc-edits.md)——
-> 为什么不批量改正文（283 文件 diff 失控），以及为什么不用"按月份删/归档"（丢决策追溯价值）。
+> 为什么不批量改正文（文件量级 diff 失控），以及为什么不用"按月份删/归档"（丢决策追溯价值）。
