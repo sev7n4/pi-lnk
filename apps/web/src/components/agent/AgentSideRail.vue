@@ -43,8 +43,6 @@ import {
   shouldApplyReconciledAssistant,
 } from '@/components/agent/assistantReconcile'
 import AskUserCard from '@/components/agent/AskUserCard.vue'
-import ToolCallCard from '@/components/agent/ToolCallCard.vue'
-import { collapseToolCalls } from '@/components/agent/collapseToolCalls'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
 import AgentSvgCard from '@/components/agent/presentation/AgentSvgCard.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
@@ -2679,13 +2677,14 @@ defineExpose({
                   :title="msg.presentation.title"
                   :annotations="msg.presentation.body.annotations"
                 />
-                <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
-                  <ToolCallCard
-                    v-for="(cc, i) in collapseToolCalls(msg.toolCalls)"
-                    :key="i"
-                    :call="cc"
-                  />
-                </div>
+                <!--
+                  ⚠️ 工具调用不再在此平铺渲染（2026-10-06 下线 ToolCallCard）：
+                  msg.executionTrace 是执行过程的唯一 SSOT（含每条 tool 步 + 人话化文案，
+                  数据源与 toolCalls 同一批 SSE 事件）—— 此前两处同屏渲染造成
+                  「创建节点 / 处理中 / 提议生成」整组重复出现两遍（刷新后 loadHistory
+                  不恢复 toolCalls，所以只在活体会话可见）。活体流式期间由钉底 dense
+                  trace 承载（可展开），回落路径见 AgentExecutionTrace。
+                -->
                 <div
                   v-if="canShowMessageActions(msg) || canShowUserMessageActions(msg)"
                   class="agent-msg-actions"

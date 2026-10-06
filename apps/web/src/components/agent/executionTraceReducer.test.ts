@@ -13,6 +13,7 @@ import {
   turnSummaryLine,
 } from '@/components/agent/executionTraceReducer'
 import { labelFromTextReplace } from '@/components/agent/executionStepLabels'
+import { presentToolStep } from '@/components/agent/toolPresentation'
 
 describe('executionStepLabels', () => {
   it('maps sidebar copy stages', () => {
@@ -199,6 +200,59 @@ describe('applyToolCall isError（P0 工具失败标红）', () => {
     ])
     const step = trace.steps.find((s) => s.kind === 'tool')
     expect(step?.status).toBe('failed')
+  })
+})
+
+describe('replay 透传 args/toolCallId（P2 修复：刷新后步骤标签不降级）', () => {
+  it('R1: replay 后 tool 步带 args 摘要，人话化标签含节点名（此前降级成裸「创建节点」）', () => {
+    const trace = replayExecutionTraceEvents([
+      {
+        type: 'tool_call',
+        data: { name: 'upsert_media_node', toolCallId: 'c1', args: { title: '三国英雄照片' } },
+      },
+      {
+        type: 'tool_result',
+        data: { name: 'upsert_media_node', toolCallId: 'c1', result: { status: 'ok' } },
+      },
+    ])
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.meta?.toolCallId).toBe('c1')
+    expect(step?.meta?.args).toBe('三国英雄照片')
+    expect(presentToolStep(step!).label).toBe('创建节点 · 三国英雄照片')
+  })
+
+  it('R2: 同名并发调用 replay 各自按 toolCallId 闭合（不靠 name 兜底错配）', () => {
+    const trace = replayExecutionTraceEvents([
+      {
+        type: 'tool_call',
+        data: { name: 'upsert_media_node', toolCallId: 'c1', args: { title: 'A' } },
+      },
+      {
+        type: 'tool_call',
+        data: { name: 'upsert_media_node', toolCallId: 'c2', args: { title: 'B' } },
+      },
+      {
+        type: 'tool_result',
+        data: { name: 'upsert_media_node', toolCallId: 'c2', result: { status: 'ok' } },
+      },
+      {
+        type: 'tool_result',
+        data: { name: 'upsert_media_node', toolCallId: 'c1', result: { status: 'ok' } },
+      },
+    ])
+    const steps = trace.steps.filter((s) => s.kind === 'tool')
+    expect(steps).toHaveLength(2)
+    expect(steps.every((s) => s.status === 'done')).toBe(true)
+    expect(steps.map((s) => s.meta?.args).sort()).toEqual(['A', 'B'])
+  })
+
+  it('R3: 旧 metadata 无 args/toolCallId 时不崩、name+running 兜底仍合并为一步', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'tool_call', data: { name: 'get_canvas_summary' } },
+      { type: 'tool_result', data: { name: 'get_canvas_summary', result: { status: 'ok' } } },
+    ])
+    expect(trace.steps.filter((s) => s.kind === 'tool')).toHaveLength(1)
+    expect(trace.steps.find((s) => s.kind === 'tool')?.status).toBe('done')
   })
 })
 
