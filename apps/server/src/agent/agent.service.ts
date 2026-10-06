@@ -70,6 +70,8 @@ export interface PiCanvasContext {
   mentionedKeys?: string[]
   refOrder?: string[]
   focusNodeId?: string
+  /** SEL-REF：指代信号（本轮画布选中的节点 id 集合）。`focusNodeId` 由它派生。 */
+  selectedNodeIds?: string[]
 }
 
 const TRACE_PERSIST_EVENT_TYPES = new Set([
@@ -315,6 +317,8 @@ export class AgentService {
         mentionedKeys: validatedMentionedKeys,
         refOrder,
         focusNodeId,
+        // SEL-REF：指代信号。开关关闭时**不下发**，避免无消费方地占用每轮载荷。
+        selectedNodeIds: this.selectionRefEnabled() ? selectedNodeIds : undefined,
       }
       if (!piClient && !(await client.healthz())) {
         // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 维护态）。
@@ -630,6 +634,48 @@ export class AgentService {
   /** K-1 回滚开关：置 off → 停发 llm 字段，全量回落 pi-runtime env 装配（秒级止血，不改代码）。 */
   piLlmPassthroughEnabled(): boolean {
     return (process.env.PI_LLM_PASSTHROUGH?.trim().toLowerCase() || 'on') !== 'off'
+  }
+
+  /**
+   * SEL-REF 开关（R-S9）：**默认 off**，只认 `on`（大小写不敏感），其余值一律当 off。
+   *
+   * ⛔ 不用前端 `useFeatureFlag`——那是前端进程内 Map，够不到 Nest 注入点，
+   * 且其远程 kill switch 至今未落地（V2 前靠发版）。本开关由 **api 容器**读，
+   * 因此**不进 helm chart**、也**不需要** runtime-deploy；参照 `PI_RUNTIME_TOOL_TIERING` 形态。
+   */
+  selectionRefEnabled(): boolean {
+    return (process.env.SEL_REF_ENABLED?.trim().toLowerCase() || 'off') === 'on'
+  }
+
+  /**
+   * SEL-REF：指代节点的 type/title/绝对坐标。
+   *
+   * ⚠️ 必须用 `getCanvasLayout` 而不是 `getCanvasSummary`——后者的返回只有
+   * `{id, type, title, status}`，**没有坐标**，而 digest 要按位置稳定排序（R-S6/S-8）。
+   * 两者都走 `loadSession(sessionId)` ⇒ 同样只返回本会话画布的节点，归属校验白拿。
+   */
+  private async buildSelectionLookup(
+    sessionId: string,
+  ): Promise<Map<string, { type: string; title: string; x: number; y: number }>> {
+    const empty = new Map<string, { type: string; title: string; x: number; y: number }>()
+    if (!this.canvasTools) return empty
+    try {
+      const layout = await this.canvasTools.getCanvasLayout({ sessionId })
+      return new Map(
+        layout.nodes.map((n) => [
+          n.id,
+          // 用 absolutePosition 而非 position：后者相对父 group，节点被打组后同一节点
+          // 在两套坐标系里值不同，跨 group 比较会错。
+          { type: n.type, title: n.title, x: n.absolutePosition.x, y: n.absolutePosition.y },
+        ]),
+      )
+    } catch (err) {
+      // fail-open（R-S7）：查不到布局就不拼 digest，绝不注入半截列表。
+      this.piLogger?.warn?.(
+        `SEL-REF lookup unavailable for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return empty
+    }
   }
 
   /**
@@ -1007,11 +1053,21 @@ export class AgentService {
         this.piLogger?.warn?.(`memory injection skipped (fail-soft): ${err instanceof Error ? err.message : String(err)}`)
       }
     }
+    // SEL-REF：指代信号（R-S9 开关关时为空数组 ⇒ 既不拼 digest 也不改焦点过滤）。
+    const selRefIds = piContext?.selectedNodeIds ?? []
+    // 派生（R-S1/S2）：恰好 1 个选中时才派生焦点；0 个或多个都留 undefined ⇒
+    // 命中 getCanvasSummary 的「无焦点 → 全量返回」fail-open 第一闸。
+    // `?? piContext?.focusNodeId` 是**迁移期回落**：Task 3 已把新字段追加到参数表末尾，
+    // 前端尚未切到只发 selectedNodeIds 之前，旧字段仍需生效；前端切换后此回落自然失效。
+    const derivedFocusNodeId = selRefIds.length === 1 ? selRefIds[0] : undefined
+    const selRefLookup = selRefIds.length ? await this.buildSelectionLookup(sessionId) : undefined
     const dynamicBlocks = await assembler.assembleDynamic({
       sessionId,
       attachments: piContext?.attachments,
       // 审计 P0-①：焦点过滤（>30 节点画布只注入焦点 + 1 跳邻居），换话题污染收口。
-      focusNodeId: piContext?.focusNodeId,
+      focusNodeId: derivedFocusNodeId ?? piContext?.focusNodeId,
+      selectedNodeIds: selRefIds,
+      selectedNodeLookup: selRefLookup ? (id) => selRefLookup.get(id) : undefined,
       memoryBlock,
     })
     if (visionBlock) dynamicBlocks.push(visionBlock)
@@ -1063,7 +1119,8 @@ export class AgentService {
       attachments: piContext?.attachments,
       mentionedKeys: piContext?.mentionedKeys,
       refOrder: piContext?.refOrder,
-      focusNodeId: piContext?.focusNodeId,
+      // SEL-REF：与 assembleDynamic 用同一个派生值，避免两处各算一遍而分叉。
+      focusNodeId: derivedFocusNodeId ?? piContext?.focusNodeId,
       // W2①压缩保留段：把「待用户确认的节点」交给 pi-runtime，让它活过上下文压缩。
       // 压缩后模型看不到自己已经propose 过，最典型的后果是重复建节点 + 谎称已生成。
       retention: await this.collectRetentionState(sessionId),

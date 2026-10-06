@@ -6,6 +6,7 @@ export type NodeType = 'prompt' | 'image' | 'video' | 'audio' | 'text' | 'group'
 
 export * from './randomId'
 export * from './canvas/groupChildIds'
+export * from './canvas/selectionDigest'
 export * from './canvas/duplicateSubgraph'
 export * from './canvas/duplicateToCanvasActions'
 export * from './canvas/imageVersions'
