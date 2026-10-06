@@ -26,7 +26,7 @@
 | 主题 | 份数 | 其中 living |
 |---|---|---|
 | 画布工具与交互 | 41 | 14 |
-| 生成管线（图像/视频/3D） | 36 | 8 |
+| 生成管线（图像/视频/3D） | 37 | 9 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | 图片编辑器与精修台 | 30 | 5 |
 | Agent 交互与可见性 | 27 | 14 |
@@ -99,10 +99,11 @@
 
 </details>
 
-### 生成管线（图像/视频/3D）（36 份）
+### 生成管线（图像/视频/3D）（37 份）
 
-<details><summary>🟢 living · 8 份</summary>
+<details><summary>🟢 living · 9 份</summary>
 
+- `docs/superpowers/specs/2026-10-06-audio-node-unified-capability-design.md` ★design
 - `docs/superpowers/specs/2026-09-13-minimax-h3-full-video-design.md` ★design
 - `docs/superpowers/plans/2026-09-13-fal-h3-max-video-min.md`
 - `docs/superpowers/specs/2026-09-13-fal-h3-max-video-min-design.md` ★design
