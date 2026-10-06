@@ -83,9 +83,18 @@ describe('resolvePlatformAudioFallback（降级重放该用哪套凭证）', () 
   })
 
   it('两套都没有 ⇒ 显式拒绝并列出两个变量名', () => {
-    const r = resolvePlatformAudioFallback('minimax-speech-2.8-hd', {})
-    expect(r.ok).toBe(false)
-    expect(r.ok ? '' : r.reason).toMatch(/OPENAI_API_KEY/)
+    // Hermetic: `readPlatformCredentialEnv({})` 会回落到 process.env（见 platformCredentials.ts），
+    // 故必须显式清空并恢复，否则调用环境存在 OPENAI_API_KEY 时本用例会假失败。
+    const original = process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_API_KEY
+    try {
+      const r = resolvePlatformAudioFallback('minimax-speech-2.8-hd', {})
+      expect(r.ok).toBe(false)
+      expect(r.ok ? '' : r.reason).toMatch(/OPENAI_API_KEY/)
+    } finally {
+      if (original === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = original
+    }
   })
 })
 
