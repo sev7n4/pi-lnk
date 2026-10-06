@@ -1,7 +1,6 @@
 # superpowers 文档索引
 
-> spec / plan 的**导航索引**。**不写死总份数**——以 `ls docs/superpowers/{specs,plans}/*.md | wc -l` 实测为准。
-> 生成器 `gen_index.py` / `gen_index_md.py` **在仓库里不存在**（见文末「重新生成」），故条目与状态分布均为**手工维护**，统计基线 2026-10-04、新增文档未回填 ⇒ **勿据份数做判据**。判定依据见文末「状态判定规则」。
+> 全部 **302 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -14,42 +13,43 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 95 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 186 | 内容已定稿或功能已落地，作为历史依据 |
+| 🟢 living | 101 | 仍在演进，改动前先看这份 |
+| 🔒 frozen | 196 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 5 | 已被后续决策取代，勿再参考 |
-
-> ⚠️ 上表与下方「主题分布」的各主题份数都是**手工维护**的统计，基线 2026-10-04；此后新增文档只补进主题分组、**未回填这两张表** ⇒ 数字会小于实测。
-> **要份数就跑 `ls docs/superpowers/{specs,plans}/*.md | wc -l`，别读这两张表。**（生成器不存在，见文末「重新生成」。）
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 画布工具与交互 | 41 | 14 |
-| 生成管线（图像/视频/3D） | 37 | 9 |
+| 画布工具与交互 | 46 | 18 |
+| 生成管线（图像/视频/3D） | 38 | 8 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | 图片编辑器与精修台 | 30 | 5 |
-| Agent 交互与可见性 | 27 | 14 |
+| Agent 交互与可见性 | 26 | 13 |
 | 工具与运行时内核 | 19 | 6 |
 | 账号/登录/会员 | 18 | 4 |
 | 工作流导入导出 | 18 | 4 |
+| 其他 | 18 | 2 |
 | 规划与执行计划 | 16 | 5 |
 | UI 交互细节 | 15 | 8 |
-| 其他 | 10 | 1 |
 | 视觉输入（识图） | 7 | 6 |
-| 部署与基础设施 | 6 | 4 |
-| 长期记忆 | 4 | 3 |
+| 长期记忆 | 6 | 5 |
+| 部署与基础设施 | 4 | 2 |
+| 提示词注册表 | 4 | 4 |
 | 上下文工程 | 3 | 3 |
-| 提示词注册表 | 3 | 3 |
 
 ---
 
 ## 按主题浏览
 
-### 画布工具与交互（41 份）
+### 画布工具与交互（46 份）
 
-<details><summary>🟢 living · 14 份</summary>
+<details><summary>🟢 living · 18 份</summary>
 
+- `docs/superpowers/specs/2026-10-06-propose-confirm-deterministic-design.md` ★design
+- `docs/superpowers/plans/2026-10-06-audio-node-unified-capability.md`
+- `docs/superpowers/specs/2026-10-06-audio-node-unified-capability-design.md` ★design
+- `docs/superpowers/plans/2026-10-03-tool-contract-and-canvas-render-card.md`
 - `docs/superpowers/plans/2026-09-16-generic-canvas-compose.md`
 - `docs/superpowers/specs/2026-09-16-generic-canvas-compose-design.md` ★design
 - `docs/superpowers/plans/2026-09-16-canvas-operator-2e2-operator-set.md`
@@ -67,8 +67,9 @@
 
 </details>
 
-<details><summary>🔒 frozen · 27 份</summary>
+<details><summary>🔒 frozen · 28 份</summary>
 
+- `docs/superpowers/specs/2026-10-03-tool-contract-and-canvas-render-card-design.md` ★design
 - `docs/superpowers/plans/2026-09-29-canvas-node-crud-completeness.md`
 - `docs/superpowers/specs/2026-09-29-canvas-node-crud-completeness-design.md` ★design
 - `docs/superpowers/plans/2026-09-29-agent-tool-canvas-sessionid-hotfix.md`
@@ -99,11 +100,10 @@
 
 </details>
 
-### 生成管线（图像/视频/3D）（37 份）
+### 生成管线（图像/视频/3D）（38 份）
 
-<details><summary>🟢 living · 9 份</summary>
+<details><summary>🟢 living · 8 份</summary>
 
-- `docs/superpowers/specs/2026-10-06-audio-node-unified-capability-design.md` ★design
 - `docs/superpowers/specs/2026-09-13-minimax-h3-full-video-design.md` ★design
 - `docs/superpowers/plans/2026-09-13-fal-h3-max-video-min.md`
 - `docs/superpowers/specs/2026-09-13-fal-h3-max-video-min-design.md` ★design
@@ -115,8 +115,10 @@
 
 </details>
 
-<details><summary>🔒 frozen · 28 份</summary>
+<details><summary>🔒 frozen · 30 份</summary>
 
+- `docs/superpowers/plans/2026-10-04-media-generation-pipeline.md`
+- `docs/superpowers/specs/2026-10-04-media-generation-audit.md` ★design
 - `docs/superpowers/plans/2026-09-29-p0-abort-cascade-sse-resume.md`
 - `docs/superpowers/specs/2026-09-26-byok-into-pi-runtime-design.md` ★design
 - `docs/superpowers/plans/2026-09-14-minimax-h3-p1-reference.md`
@@ -241,13 +243,10 @@
 
 </details>
 
-### Agent 交互与可见性（27 份）
+### Agent 交互与可见性（26 份）
 
-<details><summary>🟢 living · 14 份</summary>
+<details><summary>🟢 living · 13 份</summary>
 
-- `docs/superpowers/plans/2026-10-06-selection-as-default-reference.md` —— SEL-REF 实施计划（6 task，逐 task 带 TDD 步骤 + 上线验收）
-- `docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md` ★design —— 画布选中 = Agent 默认指代（产品定义 + 落地规格，承接 M3 D-B）
-- `docs/superpowers/specs/2026-10-06-propose-confirm-deterministic-design.md` ★design —— propose 确认的确定性信号（点生成被判成取消的事故复核 + 确认/取消权威信号表）
 - `docs/superpowers/plans/2026-09-30-ask-user-blocking.md`
 - `docs/superpowers/specs/2026-09-30-ask-user-blocking-design.md` ★design
 - `docs/superpowers/plans/2026-09-26-p1-turn-presentation.md`
@@ -383,6 +382,36 @@
 
 </details>
 
+### 其他（18 份）
+
+<details><summary>🟢 living · 2 份</summary>
+
+- `docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md` ★design
+- `docs/superpowers/specs/2026-09-12-fallback-pending-dock-cancel-design.md` ★design
+
+</details>
+
+<details><summary>🔒 frozen · 16 份</summary>
+
+- `docs/superpowers/specs/2026-10-06-u6-3-audio-capability-source.md` ★design
+- `docs/superpowers/plans/2026-10-06-selection-as-default-reference.md`
+- `docs/superpowers/plans/2026-10-04-prompt-audit-gap-status.md`
+- `docs/superpowers/plans/2026-10-04-metrics-observability.md`
+- `docs/superpowers/specs/2026-10-04-metrics-observability-design.md` ★design
+- `docs/superpowers/plans/2026-10-04-agents-md-hardening.md`
+- `docs/superpowers/specs/2026-10-04-agents-md-hardening-design.md` ★design
+- `docs/superpowers/plans/2026-09-29-pi-events-live-subscribe.md`
+- `docs/superpowers/specs/2026-09-29-pi-events-live-subscribe-design.md` ★design
+- `docs/superpowers/plans/2026-09-25-d-eta-skill-framework.md`
+- `docs/superpowers/plans/2026-09-23-p1-prompt-context-audit.md`
+- `docs/superpowers/plans/2026-09-23-p1-nest-http-contract-audit.md`
+- `docs/superpowers/plans/2026-09-18-production-gold-test-guide.md`
+- `docs/superpowers/plans/2026-09-17-selection-batch-generate.md`
+- `docs/superpowers/specs/2026-09-17-selection-batch-generate-design.md` ★design
+- `docs/superpowers/plans/2026-09-12-fallback-pending-dock-cancel.md`
+
+</details>
+
 ### 规划与执行计划（16 份）
 
 <details><summary>🟢 living · 5 份</summary>
@@ -443,28 +472,6 @@
 
 </details>
 
-### 其他（10 份）
-
-<details><summary>🟢 living · 1 份</summary>
-
-- `docs/superpowers/specs/2026-09-12-fallback-pending-dock-cancel-design.md` ★design
-
-</details>
-
-<details><summary>🔒 frozen · 9 份</summary>
-
-- `docs/superpowers/plans/2026-09-29-pi-events-live-subscribe.md`
-- `docs/superpowers/specs/2026-09-29-pi-events-live-subscribe-design.md` ★design
-- `docs/superpowers/plans/2026-09-25-d-eta-skill-framework.md`
-- `docs/superpowers/plans/2026-09-23-p1-prompt-context-audit.md`
-- `docs/superpowers/plans/2026-09-23-p1-nest-http-contract-audit.md`
-- `docs/superpowers/plans/2026-09-18-production-gold-test-guide.md`
-- `docs/superpowers/plans/2026-09-17-selection-batch-generate.md`
-- `docs/superpowers/specs/2026-09-17-selection-batch-generate-design.md` ★design
-- `docs/superpowers/plans/2026-09-12-fallback-pending-dock-cancel.md`
-
-</details>
-
 ### 视觉输入（识图）（7 份）
 
 <details><summary>🟢 living · 6 份</summary>
@@ -484,28 +491,12 @@
 
 </details>
 
-### 部署与基础设施（6 份）
+### 长期记忆（6 份）
 
-<details><summary>🟢 living · 4 份</summary>
+<details><summary>🟢 living · 5 份</summary>
 
-- `docs/superpowers/plans/2026-09-23-p1-tool-registry-skeleton.md`
-- `docs/superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md` ★design
-- `docs/superpowers/specs/2026-10-04-metrics-observability-design.md` ★design — 指标可观测性（工具全覆盖 / 上游模型错误 / 静默降级 / Prometheus+Grafana）
-- `docs/superpowers/plans/2026-10-04-metrics-observability.md` — 阶段一实施计划（pi-runtime 工具与 LLM 指标，4 个 task）
-
-</details>
-
-<details><summary>🔒 frozen · 2 份</summary>
-
-- `docs/superpowers/plans/2026-07-19-test-infrastructure.md`
-- `docs/superpowers/specs/2026-07-19-test-infrastructure-design.md` ★design
-
-</details>
-
-### 长期记忆（4 份）
-
-<details><summary>🟢 living · 4 份</summary>
-
+- `docs/superpowers/plans/2026-10-06-memory-promotion-m6b.md`
+- `docs/superpowers/specs/2026-10-06-memory-promotion-m6b-design.md` ★design
 - `docs/superpowers/plans/2026-10-03-agent-memory-scope-isolation.md`
 - `docs/superpowers/specs/2026-10-03-agent-memory-scope-isolation-design.md` ★design
 - `docs/superpowers/plans/2026-09-29-agent-tool-p1-read-document-memory.md`
@@ -518,23 +509,40 @@
 
 </details>
 
-### 上下文工程（3 份）
+### 部署与基础设施（4 份）
+
+<details><summary>🟢 living · 2 份</summary>
+
+- `docs/superpowers/plans/2026-09-23-p1-tool-registry-skeleton.md`
+- `docs/superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md` ★design
+
+</details>
+
+<details><summary>🔒 frozen · 2 份</summary>
+
+- `docs/superpowers/plans/2026-07-19-test-infrastructure.md`
+- `docs/superpowers/specs/2026-07-19-test-infrastructure-design.md` ★design
+
+</details>
+
+### 提示词注册表（4 份）
 
 <details><summary>🟢 living · 4 份</summary>
+
+- `docs/superpowers/plans/2026-10-04-prompt-engineering.md`
+- `docs/superpowers/specs/2026-10-04-prompt-engineering-design.md` ★design
+- `docs/superpowers/plans/2026-10-02-w1a-prompt-registry.md`
+- `docs/superpowers/specs/2026-10-02-w1a-prompt-registry-design.md` ★design
+
+</details>
+
+### 上下文工程（3 份）
+
+<details><summary>🟢 living · 3 份</summary>
 
 - `docs/superpowers/plans/2026-10-01-context-engineering-p0-fixes.md`
 - `docs/superpowers/plans/2026-09-30-compaction-wiring.md`
 - `docs/superpowers/specs/2026-08-06-agent-context-engineering-design.md` ★design
-
-</details>
-
-### 提示词注册表（3 份）
-
-<details><summary>🟢 living · 3 份</summary>
-
-- `docs/superpowers/plans/2026-10-02-w1a-prompt-registry.md`
-- `docs/superpowers/specs/2026-10-02-w1a-prompt-registry-design.md` ★design
-- `docs/superpowers/specs/2026-10-04-prompt-engineering-design.md` ★design —— 提示词工程规格 + 外部建议稿否决清单
 
 </details>
 
@@ -561,14 +569,8 @@ python3 gen_index_md.py                  # 重新生成本文件
 
 新增文档后需重跑，并把新文档登记到 `docs/README.md`。
 
-> ⚠️ **2026-10-04 实测：上面两个脚本在仓库里不存在**（`docs/superpowers/*.py` 为空）。
-> 本索引最后更新时手工维护，新增条目需**手工补到对应主题分组**。
-> 同批发现的失效指针：`docs/README.md` 的 `superpowers/` 行也写了「索引可重跑」——
-> **2026-10-06 已修**：该行与本文档顶部的硬编码份数（283 / 286）一并改为「以 `ls … | wc -l` 实测为准」，
-> 顶部「状态总览」加注"基线 2026-10-04、未回填、勿作判据"。**恢复生成器仍是独立待办。**
-
 ## 维护约定
 
-- 本索引**不改正文**，只做导航 —— 避免数百份文件大改导致 diff 失控。
+- 本索引**不改正文**，只做导航 —— 避免 283 份文件大改导致 diff 失控。
 - 文档自身的状态写在**开头**（推荐 `**状态：** 已实现（YYYY-MM-DD）`），下次重跑即可被自动识别。
 - 发现某份文档的状态判断错了，直接改它的开头状态字段，然后重跑生成脚本。
