@@ -117,7 +117,9 @@
 
 `pi.on` / `pi.registerTool` / `registerCommand` / `ui.*` **全属 `pi-coding-agent`**
 （交互式终端宿主，本项目**未依赖**）。`interface ExtensionAPI` 唯一实现在
-`coding-agent/src/core/extensions/types.ts`。
+`vendor/earendil-works/pi/packages/coding-agent/src/core/extensions/types.ts`
+（原先此处只写了包内简路径「coding-agent / src / core / extensions / types.ts」—— 那种写法在仓库根定位不到，
+2026-10-06 由新增的判据 7 抓出并改为上面的完整路径）。
 
 ⇒ `docs/extensions.md` 是扩展面**全景**，**不是 agent-core 能力清单**。
 我们的事件源本来就是 vendor 的 `harness.events.on`（`session-manager.ts` 的 `attachEvents`）。
