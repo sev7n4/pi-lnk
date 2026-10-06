@@ -444,9 +444,9 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 */
 	const BASELINE: Record<string, number> = {
 		core: 693,
-		"core+writeTools": 2622,
+		"core+writeTools": 2656,
 		"core+genTools": 1113,
-		"core+writeTools+genTools": 3042,
+		"core+writeTools+genTools": 3076,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -454,9 +454,11 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 			expect({ [name]: renderStaticFallback(groups).length }).toEqual({ [name]: BASELINE[name] });
 		}
 		// 预算余量可见：全组合距硬线还剩多少（spec §L6 门禁数字的单一事实源）
-		// 2026-10-06 减点名第一批：规则 20/21/12 删读工具名改能力描述，3195→3042（余量 5→158，贴线状态解除）。**本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
+		// 2026-10-06 减点名第一批：规则 20/21/12 删读工具名改能力描述，3195→3042（余量 5→158，贴线状态解除）。
+		// 2026-10-06 规则 22 压「叙述代替调用」失败形态（分级下发实验残余 ~10-20%）：+34 字符，3042→3076（余量 158→124）。
+		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(158);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(124);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
