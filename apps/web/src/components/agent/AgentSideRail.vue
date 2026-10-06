@@ -2605,6 +2605,13 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])
       break
+    // SEL-REF：服务端确认本轮**实际注入**了哪些节点。只有收到它，回执才显示。
+    // 前端读不到 Nest 的 SEL_REF_ENABLED ⇒ 不能按本地快照自行推断（评审 C1）。
+    case 'selection_binding': {
+      const data = event.data as { nodes?: Array<{ id: string; type: string; title: string }> }
+      if (Array.isArray(data?.nodes)) agent.confirmSelectionBinding(data.nodes)
+      break
+    }
     case 'canvas_command': {
       const cmd = event.data as {
         type: string
@@ -3174,13 +3181,15 @@ defineExpose({
                   history-interactive
                   @reattach="reattachFromHistory"
                 />
-                <!-- SEL-REF R-S8：指代回执。逐消息渲染，数据源是该条消息发出时冻结的 id 快照；
-                     刻意不走模型自述（见 AgentSelectionBindingChip.vue 顶部判据）。 -->
+                <!-- SEL-REF R-S8：指代回执。逐消息渲染。数据源是**服务端 selection_binding
+                     确认**（评审 C1）：本地 id 快照只作留档，不参与渲染 —— 前端读不到
+                     Nest 的 SEL_REF_ENABLED，按快照渲染会让回执在开关关闭时仍在说谎。 -->
                 <AgentSelectionBindingChip
-                  v-if="msg.role === 'user' && msg.selectionNodeIds?.length"
+                  v-if="msg.role === 'user' && msg.selectionBindingConfirmed?.length"
                   class="mt-2"
-                  :node-ids="msg.selectionNodeIds"
+                  :node-ids="msg.selectionNodeIds ?? []"
                   :nodes="canvasNodesForBinding"
+                  :confirmed="msg.selectionBindingConfirmed"
                 />
                 <div
                   v-if="!readOnly && canReuseTurn(msg)"

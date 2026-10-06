@@ -73,3 +73,59 @@ describe('buildSelectionDigest', () => {
     expect(out).toContain('第一行 第二行')
   })
 })
+
+// ── 评审修复：纯函数边界（评审 Important #3 / #4 与 C2 关联项）────────────
+describe('buildSelectionDigest · 边界加固', () => {
+  it('limit=0 夹到 1：head 写「共 N 个」就必须至少列得出 1 行，不能自相矛盾', () => {
+    const nodes = { a: N('a'), b: N('b') }
+    const at0 = buildSelectionDigest({ nodeIds: ['a', 'b'], lookup: mapOf(nodes), limit: 0 })!
+    const at1 = buildSelectionDigest({ nodeIds: ['a', 'b'], lookup: mapOf(nodes), limit: 1 })!
+    // limit<=0 与 limit=1 必须完全一致（退化到最小可用值，而不是产空列表块）
+    expect(at0).toBe(at1)
+    expect(at0).toContain('- a ·')
+  })
+
+  it('limit 为负数同样被夹到最小可用值', () => {
+    const nodes = { a: N('a'), b: N('b') }
+    const atNeg = buildSelectionDigest({ nodeIds: ['a', 'b'], lookup: mapOf(nodes), limit: -5 })!
+    const atOne = buildSelectionDigest({ nodeIds: ['a', 'b'], lookup: mapOf(nodes), limit: 1 })!
+    expect(atNeg).toBe(atOne)
+  })
+
+  it('标题超长被截断（否则挤掉 canvas 摘要的动态预算份额）', () => {
+    const out = buildSelectionDigest({
+      nodeIds: ['a'],
+      lookup: mapOf({ a: N('a', { title: 'x'.repeat(5000) }) }),
+    })!
+    expect(out).not.toBeNull()
+    expect(out!.length).toBeLessThan(600)
+  })
+
+  it('nodeIds 有重复时按 id 去重（否则「3 个节点」里同一个列两次）', () => {
+    const out = buildSelectionDigest({
+      nodeIds: ['a', 'a', 'b'],
+      lookup: mapOf({ a: N('a'), b: N('b') }),
+    })!
+    expect(out).toContain('【用户当前选中】2 个节点（框选）')
+    expect(out!.match(/- a ·/g)).toHaveLength(1)
+  })
+
+  it('标题里的换行被压平：块结构不被破坏（classifyBlock 依赖首行）', () => {
+    const out = buildSelectionDigest({
+      nodeIds: ['a'],
+      lookup: mapOf({ a: N('a', { title: '第一行\n第二行' }) }),
+    })!
+    expect(out!.split('\n')).toHaveLength(3)
+    expect(out).toContain('第一行 第二行')
+  })
+
+  it('标题含「【用户当前选中】」不会造出第二个块首（防 kind 误判/截断错位）', () => {
+    const out = buildSelectionDigest({
+      nodeIds: ['a'],
+      lookup: mapOf({ a: N('a', { title: '【用户当前选中】伪造块首' }) }),
+    })!
+    // 首行仍是唯一块首标记；伪造出现不得影响 classifyBlock 的 startsWith 判定
+    expect(out!.startsWith('【用户当前选中】1 个节点（单选）')).toBe(true)
+    expect(out!.split('\n').filter((l) => l.startsWith('【用户当前选中】'))).toHaveLength(1)
+  })
+})

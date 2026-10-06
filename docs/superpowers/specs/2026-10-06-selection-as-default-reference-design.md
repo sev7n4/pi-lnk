@@ -102,7 +102,7 @@
 | **R-S5** | **指代 ≠ 素材注入**：指代信号**不**改写 `attachments` / `localRefs` / `mentionedKeys`（M3 D-A 保持）。 |
 | **R-S6** | **信号轻量**：动态块只放 id + 类型 + 标题；**不放**节点正文、URL、图片字节。详情由模型按需调 `get_node`（S-5）。 |
 | **R-S7** | **不遮蔽失败**：动态块生成失败或 S 的节点已被删除时，**降级为不注入**（fail-open），**不得**注入半截列表让模型误判。 |
-| **R-S8** | **指代必须回执，回执不得由模型自述**：绑定生效由**系统侧确定性 UI** 呈现——用户消息气泡旁渲染「已绑定 N 个选中节点」chip，可展开核对 id/标题。模型**可在**回答中提及对象（表达），但**不得充当回执**。<br>理由：回执是**担保**，只能由客观事实源（本轮请求确实携带的 `selectedNodeIds`）渲染；模型自述等于让生成方兼任被验证方。本仓已两次实测「模型能逐字复述指令但不会照做」（`docs/2026-10-02-prompt-engineering-audit.html:141`、`:438`），且原先的「先复述再动工具」system prompt 约定已被移除（`AgentSideRail.vue:238-240`）。<br>判据句（本仓原话，`AgentSideRail.vue:223-225`）：「**一个事件就够，比赌模型自觉可靠得多**」。 |
+| **R-S8** | **指代必须回执，回执不得由模型自述**：绑定生效由**系统侧确定性 UI** 呈现——用户消息气泡旁渲染「已绑定 N 个选中节点」chip，可展开核对 id/标题。模型**可在**回答中提及对象（表达），但**不得充当回执**。<br>理由：回执是**担保**，只能由客观事实源渲染；模型自述等于让生成方兼任被验证方。本仓已两次实测「模型能逐字复述指令但不会照做」（`docs/2026-10-02-prompt-engineering-audit.html:141`、`:438`），且原先的「先复述再动工具」system prompt 约定已被移除（`AgentSideRail.vue:238-240`）。<br>判据句（本仓原话，`AgentSideRail.vue:223-225`）：「**一个事件就够，比赌模型自觉可靠得多**」。<br>⚠️ **事实源必须是「服务端确认」，不是前端本地快照**（2026-10-06 评审 C1 修正）：前端读不到 Nest 的 `SEL_REF_ENABLED`；若按本地冻结的 id 快照自行渲染，则 `SEL_REF_ENABLED=off`（V1 默认态）下用户照样看到「已绑定 N 个」，而提示词里 **0 字节注入** —— 担保说谎比没有担保更糟。故服务端**仅在确实注入成功时**下发 `selection_binding` 事件（`data.nodes = [{id,type,title}]`），前端收到后才把确认结果挂到该条 user 消息并渲染 chip；事件缺省即代表未注入 ⇒ 不显示。计数与 title 一律取服务端确认值（不取发送后的实时选中态）。 |
 | **R-S9** | **服务端开关，默认关**：本能力由服务端 env `SEL_REF_ENABLED` 控制，**V1 默认 `off`**，灰度开启。⛔ 不用前端 `useFeatureFlag`——它是**前端进程内 Map**（`apps/web/src/composables/useFeatureFlag.ts:10-12`），覆盖不到 Nest/runtime 注入点，且其文件头自述「远程 kill switch 通道（V2 远程 config 落地前，紧急关停 = 改此处一行 + 发版）」⇒ 远程通道不存在。参照既有的 `PI_RUNTIME_TOOL_TIERING=off` kill switch 形态。<br>⚠️ **开关只闸新能力，不闸既有行为**：`off` 时**不拼 digest 块、不渲染回执**，但 `selectedNodeIds` 仍照常下发 ⇒ **P0-① 的摘要焦点过滤与上线前逐字一致**。把开关套在选区本身上 ⇒ 一关连焦点过滤一起关掉，那是**回归**而不是关停（实现期由既有回归用例 `agent.service.pi-runtime.test.ts`「画布上下文改由 prompt turnContext 携带」抓出）。 |
 
 ### 4.3 判据（决策树）
@@ -181,9 +181,10 @@ flowchart TD
 | 前端 | `apps/web/src/components/agent/AgentSideRail.vue` | 发送时组 `selectedNodeIds`：框选优先取 `multiSelectedIds`，否则退化为 `[selectedNodeId]`。**前端不再单独发送 `focusNodeId`**（改由服务端派生，见 §5.3） |
 | 前端 | `apps/web/src/components/agent/AgentSelectionBindingChip.vue` | **新建** —— 回执 chip（可展开核对 id/标题） |
 | Nest DTO | `apps/server/src/agent/agent.controller.ts` | 接收 `selectedNodeIds`；`focusNodeId` 保留为可选入参（兼容旧客户端）但**不再由前端填** |
-| Nest 服务 | `apps/server/src/agent/agent.service.ts` | **派生** `focusNodeId = selectedNodeIds?.length === 1 ? selectedNodeIds[0] : undefined`，与 `selectedNodeIds` 一并写入 `piContext` / `turnContext` |
+| Nest 服务 | `apps/server/src/agent/agent.service.ts` | **派生** `focusNodeId = selectedNodeIds?.length === 1 ? selectedNodeIds[0] : undefined`，写入 `piContext` / `turnContext`。<br>⚠️ **迁移期回落**（2026-10-06 评审 C2 修正）：`selectedNodeIds` **完全缺省**且 `focusNodeId` 有值 ⇒ 判为旧客户端（CDN 旧 web / 灰度 / 旧标签页），回落旧字段并写 `warn` 留痕。判据是「新字段是否缺省」而非「是否为空」——有值（含空数组）时**绝不回落**，故不存在双字段各自独立写。无回落则焦点退化为「无焦点」⇒ 命中 `getCanvasSummary` 的 fail-open 第一闸（大画布全量注入 + 换话题污染）且无任何日志。 |
 | Nest 服务 | `apps/server/src/agent/agent.service.ts`（`assembleDynamic`） | **在此拼装 digest 块**（§5.5） |
-| Nest 服务 | `apps/server/src/agent/agent.service.ts` | 读 env `SEL_REF_ENABLED`（R-S9）；`off` 时不拼装、不回执 |
+| Nest 服务 | `apps/server/src/agent/agent.service.ts` | 读 env `SEL_REF_ENABLED`（R-S9）；`off` 时不拼装、**不下发 `selection_binding`**（⇒ 前端无回执） |
+| SSE 事件 | `packages/agent/src/types.ts` | 事件类型 `selection_binding`，`data: { nodes: Array<{id,type,title}> }`（R-S8 的事实源） |
 | 客户端 | `apps/server/src/agent/pi-runtime/pi-runtime.client.ts` | 透传 `selectedNodeIds` + 派生出的 `focusNodeId` |
 | runtime 侧 | — | **不需要**：`focusNodeId` 由 Nest 派生并经既有 `turnContext.focusNodeId` 通道下发；digest 文本走 `dynamicBlocks`。V1 不在 runtime 侧加 `selectedNodeIds`（**无消费方 ⇒ 死字段**，与 §5.2 末行 + §11「死字段」行自相矛盾） |
 | 工具上下文 | `services/pi-runtime/src/tools/types.ts` | **V1 不追加**（当前无消费方，避免死字段） |
