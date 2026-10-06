@@ -57,6 +57,7 @@
 |---|---|---|
 | [`superpowers/specs/2026-10-06-selection-as-default-reference-design.md`](./superpowers/specs/2026-10-06-selection-as-default-reference-design.md) | **画布选中 = Agent 默认指代**（代号 SEL-REF）—— 产品定义 + 落地规格。承接 M3 的 D-B，并显式划清「指代 ≠ 素材注入」「指代 ≠ 授权」 | 活资产 —— 产品级交互契约 |
 | [`superpowers/plans/2026-10-06-selection-as-default-reference.md`](./superpowers/plans/2026-10-06-selection-as-default-reference.md) | **SEL-REF 实施计划** —— 6 个 task（纯函数 / kind 登记 / 契约 / Nest 拼装 / 前端回执 / 上线验收），逐 task 带 TDD 步骤、Review Focus 与回滚顺序 | 活资产 —— 实现依据 |
+| [`superpowers/specs/2026-10-06-audio-node-unified-capability-design.md`](./superpowers/specs/2026-10-06-audio-node-unified-capability-design.md) | **音频节点统一创作能力**——顶层模态不变（图/文/音/视频），音频节点内部分 `voice / design / music` 三类；agent 按需求自主选分类、填参数、产出音频。含平台级 StepFun 通道（阶段 0）与 gen→music 优先顺序 | 活资产 —— 待复核 |
 
 > 该规格**不新增 agent 工具**（走每轮动态上下文），因此不阻塞
 > `agent/tool-framework-roadmap.html` §4 P1 的常驻集下沉。
