@@ -265,6 +265,95 @@ schema ⇒ 覆盖态是提示词构成开关，**不是安全边界**。
   登记簿一旦可以随便膨胀，就等于没有登记簿。
 - **`userMessage` 引用画布既有内容 ⇒ 必须写 `setup`**，否则跑出假红灯。
 
+## 运行期操作纪律（2026-10-06 实测补齐）
+
+下面四条都是**踩过并按取证定位**的，不是最佳实践清单。每条尽量同段给复现命令 ——
+「这次没遇到」不等于「不会遇到」。
+
+### ① 同一时刻只允许一个 A/B worker
+
+免费额度（仍走平台 key 时）是**全账号共享**的。两个 worker 并发 ⇒ 429 出现率翻倍
+⇒ 重场景单轮更容易撞超时 ⇒ 有效样本两头一起变少。**别为了「跑快点」开第二个 worker。**
+
+判有没有并发在跑：
+
+```bash
+# 远端：会话目录里出现两个 RUN_ID、且创建时间交替 ⇒ 有并发
+# （本仓环境的 sessions PVC 路径；换环境就换路径）
+ssh deploy-cvm 'ls -t /var/lib/rancher/k3s/storage/*pi-lnk-runtime-sessions/ | grep "^ab-rule22" \
+  | sed "s/^ab-rule22-\([^-]*\)-.*/\1/" | sort | uniq -c'
+# 本地：有没有还在跑的 worker
+ps -eo pid,ppid,etime,command | grep '[d]ocker exec .*-e N='
+```
+
+### ② 后台 driver 被中断会留下**孤儿 worker**
+
+`ssh … docker exec … node -` 的父进程（driver 的 zsh）被杀时，**ssh 子进程不会跟着死**：
+它 reparent 到 `launchd`（`ppid=1`）继续跑满整个 plan，输出仍写进原日志文件。
+表症是「`ps` 里已经没有 driver，但额度还在被吃、日志文件还在长」。
+
+⇒ **每次开跑前先扫一遍 `ppid=1` 的 worker**（`ps -o pid,ppid,command -p <pid>`）；
+换 driver 或改脚本后，先把旧的杀干净再起新的，别指望它自己退出。
+
+### ③ 超时按**场景最坏耗时**设，别按平均
+
+实测 `s4-capability`（「把这几个镜头合并成一个九宫格」）单轮本来就要 **54–63s**（事件数 222），
+叠加 429 后的内部重试 ⇒ 轻易破 240s。表症：
+
+```
+DONE T|s4-capability|4 … end= nEv=0 240002ms ERR=This operation was aborted
+```
+
+⚠️ **`This operation was aborted` 有两条来源**：driver 侧 `ac.abort()`（客户端超时）与
+`agent_end` 的 `d.error.message`（上游 abort）。**只看错误字符串会归因错** ⇒
+必须同时看 `elapsedMs`：≈ 设定的超时值 = 客户端超时；否则是上游问题。
+
+### ④ 重试必须换**新会话**（否则 3 次机会退化成 1 次）
+
+一轮超时后**服务端那一轮仍在跑**；紧接着对**同一个 sessionId** 发 prompt 会拿到
+`prompt 409`（会话忙）。于是「重试 3 次」里 2 次必废 ⇒ 报告写「3 次」，实际只有 1 票。
+
+修法两条：
+1. `sessionId` 里带上 attempt 序号 ⇒ 每次重试都是**全新会话**（仓库内 L1 侧本来就是这样：
+   `driver.ts` 的 `eval-<ts>-<rand>`；A/B 脚本此前复用 `${RUN_ID}-${arm}-${场景}-${样本}` 才踩到）。
+2. 409 与 429 的退避要分开：**409 → 20s（等对端那一轮结束）、429 → 15s（配额节流）、其余 3s**。
+
+⚠️ 配套：断点续跑的 SKIP 集必须用「**已有有效样本**的 key」，不能用「有 DONE 行的 key」——
+后者会让一次环境失败**永久钉死**该 key，后续轮次再也不补。
+
+### ⑤ 判「手上这份数据是哪一版脚本产的」——看内容，别看文件名
+
+**日志文件名会骗人**（实测：`ab-run-v3.log` 里装的其实是 v4 脚本产的数据，
+而真正跑着 v3 共享画布脚本的那个 worker 恰好也往同一文件里写）。
+三条判据，按可靠性从低到高：
+
+1. **会话目录命名形态**：每样本独立会话的版本，目录名形如
+   `<RUN_ID>-<臂>-<场景>-<样本>`（重试版还带 `-a<attempt>`）。
+   若目录名里**没有样本序号**（只有 `<臂>-<场景>`）⇒ 是共享画布那一版，**数据作废**。
+
+   ```bash
+   ssh deploy-cvm 'ls <sessions-dir>/ | grep "^ab-rule22" \
+     | sed "s/^ab-rule22-[^-]*-//" | sort | uniq -c | sort -rn | head'
+   ```
+
+2. **Nest 会话计数（最硬）**：每样本新画布 = 每个样本在 Nest 里建一条会话。
+   按 RUN_ID 计数 ⇒ **条数 ≈ 跑过的 key 数**（重试会更多）；**为 0 就是共享画布版**。
+
+   ```bash
+   # 在 lnkpi-api 容器内执行（prisma 与生产库同源）
+   node -e 'const{PrismaClient}=require("@prisma/client");(async()=>{const p=new PrismaClient();
+   console.log(await p.session.count({where:{title:{startsWith:"ab-rule22-<RUN_ID>"}}}));
+   await p.$disconnect();})()'
+   ```
+
+3. **跨臂指纹（人工一眼可辨）**：在「画布上现在有几个节点」这类场景上，
+   共享画布版会出现 **C 臂全答「12 个节点」、T 臂全答「14 个节点」** ——
+   因为 C 臂先跑、它的 `s4-capability` 真的建了 2 个节点（`upsert_media_node` +
+   `apply_sidebar_attachments`），T 臂看到的是被改脏的**同一块**画布。
+
+⚠️ 「跑完了」≠「数据能用」。**第 2 条应该在开跑前就做一次**（确认自己起的是新版），
+而不是等跑完再回头怀疑自己。
+
 ## 结果归档
 
 每次跑完追加一行。**首版这些数字是基线，不是判定依据**（见上）。
