@@ -269,6 +269,11 @@ describe("L1 runner · 端到端（假 pi-runtime，零 LLM 调用）", () => {
 				}
 				if (path.includes("/events")) {
 					res.writeHead(200, { "content-type": "text/event-stream" });
+					// ⭐ 真实 SSE（见 app.ts `/events`）会**立刻 flush 响应头**；
+					// driver 现在把「响应头到达」当作**订阅就绪**信号，据此才发 prompt。
+					// 这里不 flush 就会与下面「等 prompt 再吐事件」互相死等，
+					// 直到 tick 的 5s 放弃 ⇒ 全部 case 落进超时分支（2026-10-06 实测）。
+					res.flushHeaders();
 					// ⭐ 等 prompt 到达再吐事件：复刻 `from=now` 的真实语义
 					//（driver 必须先订阅后 prompt，这里反过来就等prompt）。
 					// 不等的话 handler 读到空 text ⇒ 全部落进「上游报错」分支。

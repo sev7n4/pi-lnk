@@ -464,6 +464,13 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				"cache-control": "no-cache",
 				"connection": "keep-alive",
 			});
+			// ⭐⭐ 必须**立刻**把响应头推出去：`writeHead()` 只写进 Node 的响应缓冲区，
+			// 真正上线要等第一次 `write()`。而本端点在「无缓冲可重放」时第一条数据是
+			// **心跳**（`HEARTBEAT_MS = 15s`）⇒ 客户端要**空等最多 15 秒**才拿到响应头。
+			// 后果不止是慢：`eval/driver` 把「响应头到达」当作**订阅就绪**信号，并据此
+			// 才发 prompt（早发会因 `from=now` 水位线丢掉首批事件，2026-10-06 实测）。
+			// 不 flush ⇒ 每轮评测白等一个心跳周期，且时刻随心跳抖动。
+			reply.raw.flushHeaders();
 
 			// 重连/后订阅重放：先补发缓冲（仅 seq > afterSeq），监听已在 subscribe 时挂上。
 			// 走到这里说明重放**完整**（残缺已在写头前回 409），补发的一定完整。
