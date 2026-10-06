@@ -329,14 +329,20 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		if (!registry) return reply.code(503).send({ error: "pending registry not configured" });
 		const callId = request.body?.callId;
 		const answers = request.body?.answers;
-		// decline 不带答案（语义就是「不」）⇒ 只对 answer 分支要求 answers 是对象
 		const isDecline = request.body?.decision === "decline";
-		if (!callId || (!isDecline && (typeof answers !== "object" || answers === null))) {
+		if (!callId) {
 			return reply.code(400).send({ error: "callId and answers are required" });
 		}
+		// decline 不带答案（语义就是「不」）⇒ 先按 decline 收口，再对 answer 分支要求 answers 是对象。
+		// ⚠️ 两个校验**不能合并成一条 if**：那样 TS 收窄不出 `answers` 非空，
+		// 后面 `registry.answer(..., answers)` 会报 TS2345（tsx 只转译不查类型 ⇒ 本机测试照绿，
+		// 是 CI 的 `pnpm build` 抓出来的）。
 		if (isDecline) {
 			const canvasId = manager.getCanvasSessionId(toSessionKey(request.params.sessionId));
 			return reply.send(registry.decline(canvasId, callId));
+		}
+		if (typeof answers !== "object" || answers === null) {
+			return reply.code(400).send({ error: "callId and answers are required" });
 		}
 		// registry 键 = 画布会话 id（工具域），路由参数 = threadKey → 先 sanitize 成 pi 会话键，
 		// 再经 getCanvasSessionId 换算（#74/#76 解耦语义的镜像：会话不存在回落键本身，
