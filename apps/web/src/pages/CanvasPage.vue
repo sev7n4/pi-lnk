@@ -4836,6 +4836,7 @@ onUnmounted(() => {
         :session-id="sessionId"
         :read-only="agentReadOnly"
         :selected-node-id="selectedNodeId"
+        :selected-node-ids="multiSelectedIds.length ? multiSelectedIds : (selectedNodeId ? [selectedNodeId] : [])"
         :selected-node="selectedNode"
         :canvas-nodes="nodes"
         @canvas-actions="handleAgentActions"

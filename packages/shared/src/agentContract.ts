@@ -656,6 +656,8 @@ export const AgentConversationRequestSchema = z.object({
   threadId: z.string().optional(),
   skillId: z.string().optional(),
   focusNodeId: z.string().optional(),
+  /** SEL-REF：指代信号（本轮画布选中的节点 id 集合）。唯一新增上行字段。 */
+  selectedNodeIds: z.array(z.string()).max(200).optional(),
   model: z.string().optional(),
   attachments: z.array(SidebarAttachmentSchema).max(5).optional(),
   refOrder: z.array(z.string()).optional(),

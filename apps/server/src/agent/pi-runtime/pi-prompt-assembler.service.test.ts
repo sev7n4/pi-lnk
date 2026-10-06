@@ -550,3 +550,39 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	});
 });
 
+
+// ── SEL-REF：指代信号动态块（R-S6：块体自解释、只含 id/type/标题）────────
+describe("PiPromptAssembler 动态段（assembleDynamic：SEL-REF 指代块）", () => {
+	it("selectedNodeIds 非空时追加 digest 块", async () => {
+		const asm = makeAssembler({ nodes: [{ id: "a", type: "image", title: "小柚定妆照", status: "ready" }] });
+		const blocks = await asm.assembleDynamic({
+			sessionId: "s1",
+			selectedNodeIds: ["a"],
+			selectedNodeLookup: (id) =>
+				id === "a" ? { type: "image", title: "小柚定妆照", x: 0, y: 0 } : undefined,
+		});
+		expect(blocks.some((b) => b.startsWith("【用户当前选中】"))).toBe(true);
+	});
+
+	it("selectedNodeIds 为空时不追加该块", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const blocks = await asm.assembleDynamic({ sessionId: "s1", selectedNodeIds: [] });
+		expect(blocks.some((b) => b.startsWith("【用户当前选中】"))).toBe(false);
+	});
+
+	it("selectedNodeIds 缺省时不追加该块", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const blocks = await asm.assembleDynamic({ sessionId: "s1" });
+		expect(blocks.some((b) => b.startsWith("【用户当前选中】"))).toBe(false);
+	});
+
+	it("全部 id 查不到时返回 null ⇒ 不注入半截列表（R-S7 fail-open）", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const blocks = await asm.assembleDynamic({
+			sessionId: "s1",
+			selectedNodeIds: ["x"],
+			selectedNodeLookup: () => undefined,
+		});
+		expect(blocks.some((b) => b.startsWith("【用户当前选中】"))).toBe(false);
+	});
+});

@@ -12,7 +12,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common'
-import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 import type { Request, Response } from 'express'
 import { AuthGuard } from '../auth/auth.guard'
@@ -90,6 +90,16 @@ class ConversationDto {
   @IsOptional()
   @IsString()
   focusNodeId?: string
+
+  /**
+   * SEL-REF：指代信号（本轮画布选中的节点 id 集合；单选与框选统一走这里）。
+   * 唯一新增上行字段；`focusNodeId` 自本字段派生（见 agent.service.ts）。
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(200)
+  selectedNodeIds?: string[]
 
   /** 规划阶段 LLM 模型（含 channel 编码），Nest 解析凭证后转发 */
   @IsOptional()
@@ -575,6 +585,9 @@ export class AgentController {
         dto.thinking,
         dto.thinkingEffort,
         dto.branchFromEntryId,
+        // SEL-REF：指代信号。追加在参数表**末尾**——中间插入会移位，
+        // 而 `refOrder` / `mentionedKeys` 同为 string[] ⇒ 错位是静默的。
+        dto.selectedNodeIds,
       )) {
         res.write(`data: ${JSON.stringify(event)}\n\n`)
       }

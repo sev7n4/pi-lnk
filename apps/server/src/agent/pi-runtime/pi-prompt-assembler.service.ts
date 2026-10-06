@@ -21,6 +21,7 @@
  */
 import { createHash } from "node:crypto";
 import { Injectable, Logger } from "@nestjs/common";
+import { buildSelectionDigest } from "@lnkpi/shared";
 import { buildSidebarBlock, type SidebarBlockInput } from "./sidebar-block";
 import {
   CORE_RULES_PREFIX,
@@ -159,6 +160,16 @@ export class PiPromptAssembler {
 		focusNodeId?: string;
 		/** 审计 #7：长期记忆块（调用方拼好文本；assembler 只透传 + manifest 观测，不碰 prisma）。 */
 		memoryBlock?: string;
+		/**
+		 * SEL-REF：指代信号（本轮选中的节点 id 集合）；与摘要焦点过滤语义无关。
+		 * R-S5：不得据此改写 attachments / localRefs（指代 ≠ 素材注入）。
+		 */
+		selectedNodeIds?: string[];
+		/**
+		 * 本会话画布节点查找（id → type/title/坐标）；找不到即剔除，**同时承担归属校验**
+		 * （调用方用 `getCanvasLayout` 构造，其只返回本会话画布的节点）。
+		 */
+		selectedNodeLookup?: (id: string) => { type: string; title: string; x: number; y: number } | undefined;
 	}): Promise<string[]> {
 		const layers: PromptLayer[] = [];
 
@@ -185,6 +196,17 @@ export class PiPromptAssembler {
 		if (input.attachments?.length) {
 			const block = buildSidebarBlock(input.attachments);
 			if (block) layers.push(layer("sidebar", "sidebar", block));
+		}
+
+		// SEL-REF：指代信号块（R-S6：只含 id/type/标题 + 自解释尾注；R-S7：查不到就整块不输出）。
+		// ⚠️ 必须放在 memory 之前——它描述"用户此刻指着谁"，属世界状态；
+		// 块首标记 `【用户当前选中】` 已在 dynamic-budget.classifyBlock 登记为 canvas（R-S6 kind）。
+		if (input.selectedNodeIds?.length && input.selectedNodeLookup) {
+			const digest = buildSelectionDigest({
+				nodeIds: input.selectedNodeIds,
+				lookup: input.selectedNodeLookup,
+			});
+			if (digest) layers.push(layer("selection", "canvas", digest));
 		}
 
 		// 审计 #7：memory 层放最后（世界状态之后、模型近期关注），fail-soft 语义由调用方保证。

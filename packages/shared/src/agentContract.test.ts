@@ -83,3 +83,40 @@ describe('AgentConversationRequestSchema mentionedKeys', () => {
     ).toThrow()
   })
 })
+
+describe('AgentConversationRequestSchema selectedNodeIds', () => {
+  it('接受字符串数组（SEL-REF 指代信号）', () => {
+    const parsed = AgentConversationRequestSchema.parse({
+      sessionId: 's1',
+      message: '这个节点是什么',
+      selectedNodeIds: ['a', 'b'],
+    })
+    expect(parsed.selectedNodeIds).toEqual(['a', 'b'])
+  })
+
+  it('缺省时为 undefined（不传空数组，避免与"传了但为空"混淆）', () => {
+    const parsed = AgentConversationRequestSchema.parse({ sessionId: 's1', message: 'x' })
+    expect(parsed.selectedNodeIds).toBeUndefined()
+  })
+
+  it('非字符串元素被拒', () => {
+    expect(() =>
+      AgentConversationRequestSchema.parse({
+        sessionId: 's1',
+        message: 'x',
+        selectedNodeIds: [1],
+      }),
+    ).toThrow()
+  })
+
+  it('超过 200 个被拒（防滥用硬闸）', () => {
+    const tooMany = Array.from({ length: 201 }, (_, i) => `n${i}`)
+    expect(() =>
+      AgentConversationRequestSchema.parse({
+        sessionId: 's1',
+        message: 'x',
+        selectedNodeIds: tooMany,
+      }),
+    ).toThrow()
+  })
+})

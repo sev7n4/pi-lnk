@@ -11,6 +11,7 @@ import { apiUrl } from '@/services/api-base'
 import { sessionsApi } from '@/services/sessions-api'
 import NeoAgentLogo from '@/components/agent/NeoAgentLogo.vue'
 import AgentRefStrip from '@/components/agent/AgentRefStrip.vue'
+import AgentSelectionBindingChip from '@/components/agent/AgentSelectionBindingChip.vue'
 import AgentAssetPicker from '@/components/agent/AgentAssetPicker.vue'
 import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
@@ -156,6 +157,11 @@ const props = defineProps<{
   readOnly?: boolean
   /** W30: 画布选中节点 id，配合「快速生成」走单节点路径 */
   selectedNodeId?: string | null
+  /**
+   * SEL-REF：指代信号——本轮画布选中的节点 id 集合（单选与框选统一走这里）。
+   * 框选优先（CanvasPage 侧表达式已处理优先级）；空/缺省 ⇒ 本轮无指代信号。
+   */
+  selectedNodeIds?: string[]
   /** M2: 选中节点数据，发送时升格为 canvasNode attachment */
   selectedNode?: { id: string; type?: string; data?: Record<string, unknown> } | null
   /** Phase 2c.1: canvas nodes for pending_confirm SSOT chip recover */
@@ -261,6 +267,19 @@ const attachMenuRef = ref<HTMLElement | null>(null)
 useClickOutside(attachMenuRef, () => {
   attachMenuOpen.value = false
 })
+
+/**
+ * SEL-REF：给回执 chip 用的节点摘要。
+ * 标题取法沿用仓内既有约定（`executionStepLabels.ts:43` / `agentCanvasOutputs.ts:167`）：
+ * `data.title ?? data.prompt`，都没有则空串（chip 会显示「未知」类型 + 空标题）。
+ */
+const canvasNodesForBinding = computed(() =>
+  (props.canvasNodes ?? []).map((n) => ({
+    id: n.id,
+    type: String((n as { type?: string }).type ?? '未知'),
+    title: String(n.data?.title ?? n.data?.prompt ?? ''),
+  })),
+)
 
 function makeAttachmentItems(
   attachments: SidebarAttachment[] | undefined,
@@ -2008,9 +2027,13 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
   const mentionedKeys = normalizeMentionedKeys(parseRefMentions(message))
   const refOrder = attachments.map((a) => a.id)
   const attachmentRefKeys = assignRefKeysFor(attachments)
-  const userMessageExtras = attachments.length
-    ? { attachments, attachmentRefKeys }
-    : undefined
+  // SEL-REF：指代信号在**发送瞬间**冻结一份（Review Focus #5：用户发送后改选，
+  // 回执仍须与实际发出的内容一致；且这是回执唯一的数据源，不依赖模型）。
+  const bindingIds = props.selectedNodeIds?.length ? props.selectedNodeIds.slice() : []
+  const userMessageExtras = {
+    ...(attachments.length ? { attachments, attachmentRefKeys } : {}),
+    ...(bindingIds.length ? { selectionNodeIds: bindingIds } : {}),
+  }
 
   if (props.readOnly) {
     agent.addUserMessage(message, userMessageExtras)
@@ -2068,7 +2091,9 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
           showPlanningThinkingControls.value && planningThinking.value
             ? planningThinkingEffort.value
             : undefined,
-        focusNodeId: props.selectedNodeId || undefined,
+        // SEL-REF：指代信号是**唯一新增上行字段**；`focusNodeId` 由服务端从它派生
+        // （规格 §5.3），前端不再单独发 —— 双字段各自独立写会静默漂移。
+        selectedNodeIds: bindingIds.length ? bindingIds : undefined,
         attachments: attachments.length ? attachments : undefined,
         refOrder: refOrder.length ? refOrder : undefined,
         mentionedKeys,
@@ -3109,6 +3134,14 @@ defineExpose({
                   :removable="false"
                   history-interactive
                   @reattach="reattachFromHistory"
+                />
+                <!-- SEL-REF R-S8：指代回执。逐消息渲染，数据源是该条消息发出时冻结的 id 快照；
+                     刻意不走模型自述（见 AgentSelectionBindingChip.vue 顶部判据）。 -->
+                <AgentSelectionBindingChip
+                  v-if="msg.role === 'user' && msg.selectionNodeIds?.length"
+                  class="mt-2"
+                  :node-ids="msg.selectionNodeIds"
+                  :nodes="canvasNodesForBinding"
                 />
                 <div
                   v-if="!readOnly && canReuseTurn(msg)"

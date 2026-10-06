@@ -15,6 +15,8 @@ test("classifyBlock：真实生产块首命中与 general 兜底", () => {
 	assert.equal(classifyBlock("## 长期记忆（用户历史偏好，供参考）\n- 条目"), "memory");
 	assert.equal(classifyBlock("没有任何标记的普通块"), "general");
 	assert.equal(classifyBlock("  当前画布摘要：前导空白"), "canvas");
+	assert.equal(classifyBlock("【用户当前选中】2 个节点（框选）"), "canvas");
+	assert.equal(classifyBlock("【用户当前选中】不存在的块首"), "canvas");
 });
 
 test("不超限：输出与输入 join 逐字节一致", () => {
