@@ -172,7 +172,7 @@ describe('generateAudio 的 music 分支（异步任务）', () => {
     )
   })
 
-  it('BYOK 渠道失败也不进 fallback_pending（否则平台重放会变TTS）', async () => {
+  it('BYOK music 提交**后**失败也不进 fallback_pending（否则平台重放会变 TTS）', async () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
@@ -222,6 +222,78 @@ describe('generateAudio 的 music 分支（异步任务）', () => {
       expect.stringContaining('失败退款'),
       expect.objectContaining({ status: 'failed_refund' }),
     )
+  })
+
+  it('🔴 BYOK music 缺 apiKey → failed + 退款，绝不 fallback_pending（否则平台重放会变 TTS）', async () => {
+    // 回归锁（review Important 1）：通用守卫 `source==='user' && !apiKey` 在 music 分支
+    // **之前**抛错 ⇒ 缺 key 的 BYOK music 从不走 completeMusic，而是落进共享 catch。
+    // 若 catch 对 music 也走 BYOK 分支，记录就成了 fallback_pending，用户点「用平台重试」
+    // 会把 `stepaudio-3-music-preview` 当 TTS 模型发出去并被标 completed。
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        StudioService,
+        { provide: PointsService, useValue: { consume: pointsConsume, refund: pointsRefund } },
+        {
+          provide: PrismaService,
+          useValue: {
+            generationRecord: {
+              create: generationCreate,
+              update: generationUpdate,
+              updateMany: generationUpdateMany,
+              findFirst: vi.fn(async () => stored),
+              findMany: vi.fn(async () => []),
+            },
+          },
+        },
+        {
+          provide: ProviderResolverService,
+          useValue: {
+            // provider.service.ts 的 clearApiKey 就是写 encryptedApiKey: null
+            // ⇒ resolver 产出 apiKey: undefined。
+            resolveForGeneration: vi.fn(async () => ({
+              ...musicResolved,
+              channelId: 'ch_user',
+              source: 'user' as const,
+              credentials: { apiKey: undefined, baseUrl: 'https://user.example.com/v1' },
+            })),
+          },
+        },
+        {
+          provide: MediaProbeService,
+          useValue: { probeUrl: vi.fn(async (url: string) => ({ url })) },
+        },
+        { provide: UploadService, useValue: { saveUserFile } },
+      ],
+    }).compile()
+    const svcNoKey = moduleRef.get(StudioService)
+
+    await expect(
+      svcNoKey.generateAudio('u1', 'x', { model: MUSIC_MODEL, caption: 'x' }),
+    ).rejects.toThrow(/音乐生成失败/)
+
+    // 记录必须是 failed，且任何一次写盘都不得出现 fallback_pending。
+    expect(generationCreate).toHaveBeenCalledTimes(1)
+    const created = generationCreate.mock.calls[0][0].data as Record<string, unknown>
+    expect(created.status).toBe('failed')
+    const allStatuses = [
+      ...generationCreate.mock.calls.map((c) => c[0].data.status),
+      ...generationUpdate.mock.calls.map((c) => c[0].data.status),
+      ...generationUpdateMany.mock.calls.map((c) => c[0].data.status),
+    ]
+    expect(allStatuses).not.toContain('fallback_pending')
+
+    const meta = JSON.parse(String(created.metadata))
+    expect(meta.audioKind).toBe('music')
+    expect(meta.refundedPoints).toBe(15)
+    expect(String(meta.userMessage)).toContain('音乐生成失败')
+    expect(pointsRefund).toHaveBeenCalledWith(
+      'u1',
+      15,
+      expect.stringContaining('失败退款'),
+      expect.objectContaining({ kind: 'refund', category: 'audio', status: 'failed_refund' }),
+    )
+    // 提交根本没发生，别去碰上游。
+    expect(musicGenerate).not.toHaveBeenCalled()
   })
 
   it('生成期间用户取消 → 不再写completed，也不二次退款', async () => {

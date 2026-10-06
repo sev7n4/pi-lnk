@@ -2378,6 +2378,10 @@ export class StudioService {
         // 故乐观扣分 → 建 `status:'generating'` 记录 → 立即返回，让前端既有轮询器接管
         // （`useGenerationPolling` 每 2s 查 `getGeneration`），**不新增轮询端点**。
         // 终态失败（含上游 HTTP 200 但 status=FAILED）在 completeMusic 里退款 + 写可判读文案。
+        //
+        // 下面这个缺 key 守卫**只对平台渠道可达**：BYOK 缺 key 已被上面的通用守卫
+        // （`resolved.source === 'user' && !apiKey`）先一步抛走。两条路径殊途同归 ——
+        // 都落进 catch，且 music 一律进 failed（见 catch 里的 `kind === 'music'` 注释）。
         const apiKey = resolved.credentials.apiKey
         if (!apiKey) throw new Error('missing api key')
         // 未显式给 caption 时回落正文：music 的 caption 就是「要生成什么曲子」的描述，
@@ -2481,7 +2485,13 @@ export class StudioService {
       return { ...record, url }
     } catch (err) {
       if (isCancelledException(err)) throw err
-      if (resolved.source !== 'user') {
+      // 🔴 `kind === 'music'` 无论渠道来源都走「失败」而非 BYOK 的 `fallback_pending`：
+      // `fallback_pending` 的语义是「同模态换平台重试」，而 `confirmPlatformFallback` 的
+      // audio 分支（见下）固定发 OpenAI 兼容 TTS —— 音乐若挂上去，用户点「用平台重试」会拿到
+      // 一段把 `stepaudio-3-music-preview` 当 TTS 模型发出去的语音，并被标成 completed。
+      // 平台重放要支持 music 属Task 8+ 的范围；在此之前，失败必须显式可判读。
+      // （此分支同时覆盖 BYOK music 缺 key：通用守卫在 `:2319` 先于 music 分支抛错。）
+      if (resolved.source !== 'user' || kind === 'music') {
         await this.points.refund(
           userId,
           cost,
@@ -3065,6 +3075,7 @@ export class StudioService {
    * ⚠️ 失败一律进 `failed`，**不进 `fallback_pending`**：`confirmPlatformFallback` 的 audio
    * 分支固定走 `createAudioProvider`（TTS），音乐若挂上fallback_pending，用户点「用平台重试」
    * 会被静默重放成一段 TTS 语音 —— 比直接失败更坏。平台重放要支持 music 属Task 8+ 的范围。
+   * （提交**前**的失败由 `generateAudio` 的共享 catch 用`kind === 'music'` 保证同一不变量。）
    */
   private async completeMusic(
     id: string,
