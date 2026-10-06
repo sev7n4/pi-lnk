@@ -30,14 +30,14 @@ entries:
     order: 45
     contentHash: 8715971800d8
   - id: gen_tool_policy
-    version: 1.2.0
+    version: 1.3.0
     order: 50
-    contentHash: 90e08bce1596
+    contentHash: d4bcbcfd833f
   - id: write_guard
     version: 1.0.0
     order: 60
     contentHash: e0f6673a9974
   - id: canvas_daily_ops
-    version: 1.1.0
+    version: 1.2.0
     order: 46
-    contentHash: a723578a354b
+    contentHash: 36a84089f5a7

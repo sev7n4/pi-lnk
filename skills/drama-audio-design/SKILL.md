@@ -1,6 +1,6 @@
 ---
 name: drama-audio-design
-version: "0.1.1"
+version: "0.1.2"
 description: 短剧/漫剧配音与声音设计。当用户要求配音、旁白、台词念白、选声线、调情绪或语速、做音效与配乐说明、音画对齐、设计静默点时使用。覆盖 TTS 配音与声音设计说明单；音乐/音效生成与混音不在范围。
 ---
 
@@ -34,7 +34,7 @@ description: 短剧/漫剧配音与声音设计。当用户要求配音、旁白
 - **language**：zh / en / ja
 - **speed** / **volume** / **pitch**：数值微调
 
-⚠️ **agent 侧的写权限边界**（回代码核实）：`upsert_media_node` 只写 prompt / title；`update_node` 只能改 **title 与模型芯片**（image_model / video_model / text_model / audio_model，ref 须来自 `list_model_options`）——**改不了**节点的 emotion / speed / pitch 等 dock 参数（登记在规格 §12 后续包）。所以本 skill 的做法是：**把情绪演绎写进节点 prompt 与说明单，并明确提示用户在 dock 调整参数**——不要声称已设置参数。
+⚠️ **agent 侧的写权限边界**（回代码核实）：`upsert_media_node` 只写 prompt / title；`update_node` 只能改 **title 与模型芯片**（image_model / video_model / text_model / audio_model，ref 须来自模型选项列表工具（先 tool_search 搜「模型」加载））——**改不了**节点的 emotion / speed / pitch 等 dock 参数（登记在规格 §12 后续包）。所以本 skill 的做法是：**把情绪演绎写进节点 prompt 与说明单，并明确提示用户在 dock 调整参数**——不要声称已设置参数。
 
 ## 流程
 
@@ -106,7 +106,8 @@ description: 短剧/漫剧配音与声音设计。当用户要求配音、旁白
 
 **版本号语义**：`0.MAJOR.MINOR` —— MAJOR 表示流程性变更，MINOR 表示文案微调。
 
-- **0.1.1** (2026-09-29)：**权限边界订正**（回 origin/master 核实，PR #71 已合并）——`update_node` 已上线但仅支持 title + 模型芯片（ref 须来自 `list_model_options`），仍**改不了** emotion / speed / pitch 等 dock 参数，故「agent 只能写 prompt + 提示用户在 dock 调」的结论不变、表述改准。
+- **0.1.2** (2026-10-06)：**点名撤改**（配套读类工具下沉延迟集）——「ref 须来自模型选项列表工具」不再写工具名，改为「先 tool_search 搜『模型』加载」。
+- **0.1.1** (2026-09-29)：**权限边界订正**（回 origin/master 核实，PR #71 已合并）——`update_node` 已上线但仅支持 title + 模型芯片（ref 须来自模型选项列表工具（先 tool_search 搜「模型」加载）），仍**改不了** emotion / speed / pitch 等 dock 参数，故「agent 只能写 prompt + 提示用户在 dock 调」的结论不变、表述改准。
 - **0.1.0** (2026-09-29)：初版。综合行业配音与声音设计实践，为短剧/漫剧调优：
   - 声音三分类（人声 / 音效 / 配乐）与「voice = 台词 + 情绪 + 语气 + 语速」的描述公式借鉴 Alibaba Model-Studio 视频提示词的 Sound formula
   - 4 档情绪映射与参数微调、语速-时长约束（中文 4–5 字/秒）、静默点设计取自短剧配音与剪辑通行做法

@@ -126,7 +126,6 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 			"run_image_generation",
 			"cancel_generation",
 			"ask_user",
-			"get_canvas_summary",
 			"load_skill",
 		]) {
 			assert.ok(names.has(n), `${n} 必须常驻`);
@@ -367,5 +366,72 @@ describe("loader 描述（官方模式：description 承担发现能力，无 sy
 describe("render_canvas_view 常驻", () => {
 	it("必须在 ALWAYS_ON_TOOL_NAMES 内（延迟工具触发率为 0，延迟即不可达）", () => {
 		assert.equal(ALWAYS_ON_TOOL_NAMES.has("render_canvas_view"), true);
+	});
+});
+
+/**
+ * 2026-10-06 减点名下沉回归锁（R1，roadmap P1「常驻 ≤28」第一批）。
+ *
+ * 以下 9 个读类诊断工具已同步撤掉全部下发侧点名：
+ * - prompt 规则 20/21（canvas_daily_ops）改写为能力描述 + tool_search 指引；
+ * - prompt 规则 12（gen_tool_policy）删去 get_generation_status 名字；
+ * - 4 个 skill（drama-qc-review / drama-storyboard / ecommerce-product-photo /
+ *   drama-audio-design）的点名改为「先 tool_search 搜读工具」。
+ * 按准绳（点名 ⇒ 常驻；未点名 ⇒ 可延迟），它们现在必须**不在** ALWAYS_ON：
+ * 若有人恢复常驻而不同步撤点名，本用例不拦（常驻是保守方向）；
+ * 但若有人**撤了规则点名却忘了下沉**（或反之），上下文白名单与资产就会漂移。
+ */
+describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06 第一批）", () => {
+	const DEMOTED = [
+		"get_canvas_summary",
+		"get_canvas_layout",
+		"get_node",
+		"list_generation_tasks",
+		"get_generation_status",
+		"get_generation_diagnostic",
+		"list_user_assets",
+		"read_document",
+		"list_model_options",
+	];
+
+	it("全部不在 ALWAYS_ON_TOOL_NAMES（下沉生效）", () => {
+		for (const n of DEMOTED) {
+			assert.ok(!ALWAYS_ON_TOOL_NAMES.has(n), `${n} 应已下沉（点名已撤，见 canvas_daily_ops 20/21 改写）`);
+		}
+	});
+
+	it("下沉后仍在延迟目录可被搜到（query 命中名字片段 → get_canvas_summary 等）", async () => {
+		const e = buildToolEnsemble(fakeTools(), true);
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		const res = await loader.execute(
+			"c-demote",
+			{ query: "get_canvas" } as never,
+			() => {},
+			undefined as never,
+			{} as never,
+			undefined as never,
+		);
+		const names = res.addedToolNames ?? [];
+		assert.ok(names.includes("get_canvas_summary"), "「get_canvas」应命中 get_canvas_summary");
+		assert.ok(names.includes("get_canvas_layout"));
+	});
+
+	it("真实场景可搜性：中文 label 的下沉工具按中文关键词命中（搜「画布概览」）", async () => {
+		const e = buildToolEnsemble(
+			ALL_NAMES.map((n) =>
+				n === "get_canvas_summary" ? fakeToolWithDesc(n, "画布概览：节点清单与统计") : fakeTool(n),
+			),
+			true,
+		);
+		const loader = e.registered.find((t) => t.name === "tool_search")!;
+		const res = await loader.execute(
+			"c-demote-cjk",
+			{ query: "画布概览" } as never,
+			() => {},
+			undefined as never,
+			{} as never,
+			undefined as never,
+		);
+		assert.ok((res.addedToolNames ?? []).includes("get_canvas_summary"));
 	});
 });
