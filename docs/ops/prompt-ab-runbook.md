@@ -230,9 +230,60 @@ schema ⇒ 覆盖态是提示词构成开关，**不是安全边界**。
 
 每次跑完追加一行。**首版这些数字是基线，不是判定依据**（见上）。
 
-| 日期 | 分支 | 场景 | 3 次采样工具序列 | 通过 | token |
+| 日期 | 分支/commit | 场景 | 有效采样 | 通过 | 备注 |
 |---|---|---|---|---|---|
-| _(待填)_ | | | | | |
+| 2026-10-06 | `8a9a6030`（减点名**前置**基线） | `gen-need-confirm` | 6 | 3 | 3 例未调 `propose_generation`；零 `forbidTools` 命中 |
+| 2026-10-06 | `8a9a6030` | `single-node-no-view` | 4 | 4（机检） | 无 `render_canvas_view`；2 例上游报错已重采补齐 |
+| 2026-10-06 | `8a9a6030` | `chat-no-node` | 3 | 3 | 零工具 + 闲聊回复 |
+
+### 首跑明细（2026-10-06，R1）
+
+**执行条件**（后续跑次要能对齐，故必须记全）：
+
+- 模型 `agnes-3.0-flash`（用户 `17279698608` 的 BYOK，openai 格式通道）；`temperature` **未显式设置（平台默认）**。
+  ⚠️ 下次跑**必须**固定 temperature 并记具体值——否则两次数字不可比。
+- 执行位置：`lnkpi-api` 容器内（BYOK 明文密钥不出容器边界）。系统提示词从容器内 `/app/prompt-registry`
+  磁盘真值按 `renderStatic` 语义组装。
+- 测量：SSE 事件流（`tool_execution_start`）；**关键样本用 pod 内 session jsonl 交叉验证，两者一致**。
+- 单轮耗时：`gen-need-confirm` 约 **3–6 min/轮**（agnes 慢 + 9 轮工具）；负向场景 < 1 min。
+- 上游噪声：agnes 间歇返回错误（`stopReason:"error"`）。脚本对「零工具且零文本」样本**换画布重采**（≤3 次），
+  避免把上游 5xx 记成模型行为。
+
+`gen-need-confirm`（6 次有效采样，3 通过）：
+
+```
+r1d-s1  list_generation_scenes → upsert_media_node → set_node_generation_params → propose_generation        ✅
+r1d-s2  list_generation_scenes → list_model_options → get_canvas_summary → upsert_prompt_node
+        → upsert_media_node ×3 → set_node_generation_params ×3 → connect_nodes → propose_generation ×3      ✅
+r1d-s3  list_generation_scenes → list_model_options → upsert_media_node ×3 → set_node_generation_params ×3  ❌ 缺 propose_generation
+r1e-s1  upsert_media_node ×3                                                                               ❌ 缺 propose_generation
+r1e-s2  upsert_media_node → list_generation_scenes → list_model_options → set_node_text ×3
+        → upsert_media_node ×2 → set_node_generation_params ×3 → propose_generation                        ✅
+r1e-s3  list_generation_scenes → upsert_media_node ×3 → set_node_generation_params ×3                      ❌ 缺 propose_generation
+```
+
+⚠️ **零 `forbidTools` 命中**——没有一例直接 `run_*_generation`。「跳过确认门」的实际表现是
+**不调 `propose_generation`**，而非「绕过闸门直接生成」。这是本基线里最该盯的模型行为缺口：
+`gen-gate` 要求「建节点 → propose_generation → 等确认」，弱模型约半数会话漏掉中间那步；
+漏掉时的替代行为分两档——**用文本询问确认**（意图对、缺工具，尚可）与**直接汇报「已建好」**（无确认动作，更差）。
+
+`single-node-no-view`（4 次有效采样，4 通过机检）：
+
+```
+r1d-s1  get_canvas_summary → 「第二个节点是「镜头2」（image-…，draft）」                    ✅
+r1d-s2  / r1d-s3  连续 4 次 stopReason:error、零输出 ⇒ 上游故障，样本无效（已重采补齐）
+r1e-s1  get_canvas_summary → 「第二个节点的标题是「镜头2」」                                ✅
+r1e-s2  （零工具）→ 「**「画一张图：一个穿红色风衣的猫…」**」                                ⚠️ 未读画布直接作答
+r1e-s3  get_canvas_summary → 「第二个节点的标题是「镜头1」」                                ⚠️ 顺序歧义答错
+```
+
+⚠️ 机检全过（无 `render_canvas_view`），但 `manualJudge` 暴露两条：**零工具直接作答**（未取证即断言）
+与**「第二个」的排序歧义**（建节点顺序 ≠ 画布展示顺序）。前者是负向场景的隐藏风险——
+守卫住了「不出图」，但没守住「不臆断」。**修判据的建议**：给 `single-node-no-view` 补一条
+「文本答案须与 `get_canvas_summary`/`get_node` 结果一致」的人工判读项（当前 `expectTools: []`
+把「不读也答对/答错」一并判过）。
+
+`chat-no-node`（3 次采样，3 通过）：`[]` ×3，回复闲聊，零画布工具。
 
 ## 归档模板
 
