@@ -1465,9 +1465,9 @@ describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () =
 		assert.deepEqual(toolNames.sort(), ["get_canvas_summary", "t_probe", "tool_search"]);
 		const active = (h.captured!.activeToolNames as string[]).slice().sort();
 		// 初始激活只含常驻 + loader；t_probe 要靠 tool_search 的 addedToolNames 激活
-		// 2026-10-06 减点名第一批：get_canvas_summary 已下沉延迟集（tiering.ts），
-		// 仍全量注册但初始不激活 ⇒ active 只剩 loader 自己。
-		assert.deepEqual(active, ["tool_search"]);
+		// 2026-10-06 分级下发：get_canvas_summary 属「核心画布读能力」，已恢复常驻
+		// （见 tiering.ts 文件头 staged probe）⇒ 初始 active 含它 + loader 自己。
+		assert.deepEqual(active, ["get_canvas_summary", "tool_search"]);
 	});
 
 	it("tiering-on：staticPrompt 不含延迟工具索引块（官方模式不给名单，发现靠 tool_search 搜索）", async () => {

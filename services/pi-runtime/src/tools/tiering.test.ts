@@ -381,57 +381,77 @@ describe("render_canvas_view 常驻", () => {
  * 若有人恢复常驻而不同步撤点名，本用例不拦（常驻是保守方向）；
  * 但若有人**撤了规则点名却忘了下沉**（或反之），上下文白名单与资产就会漂移。
  */
-describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06 第一批）", () => {
+/**
+ * 2026-10-06 分级下发回归锁（R1，roadmap P1「常驻 ≤28」）。
+ *
+ * 背景：下沉的**充分条件**不是「点名已撤」，而是「模型会去搜」——`tool_search` 实测
+ * 两窗口触发率均为 0（2026-10-03 uptime 6.87h / 40 调用；2026-10-06 uptime 8h / 64 调用
+ * + 真实 token 流量）。故本批**只下沉 5 个探针工具**，4 个核心画布读能力恢复常驻
+ * （见 `tiering.ts` 文件头「分级下发 staged probe」）。
+ *
+ * 本用例锁两个方向，防两侧漂移：
+ *   1) 探针 5 个必须在延迟集（下沉生效）；
+ *   2) 恢复常驻的 4 个必须在常驻集（「最小失败面」这个前提不能被悄悄改掉）。
+ * 后续按观测扩下沉：把名字从 RESIDENT_RESTORED 移到 DEMOTED，本用例自动收紧。
+ */
+describe("分级下发：探针 5 工具下沉 / 核心 4 工具恢复常驻（2026-10-06）", () => {
 	const DEMOTED = [
-		"get_canvas_summary",
-		"get_canvas_layout",
-		"get_node",
 		"list_generation_tasks",
-		"get_generation_status",
 		"get_generation_diagnostic",
 		"list_user_assets",
 		"read_document",
 		"list_model_options",
 	];
+	const RESIDENT_RESTORED = [
+		"get_canvas_summary",
+		"get_canvas_layout",
+		"get_node",
+		"get_generation_status",
+	];
 
-	it("全部不在 ALWAYS_ON_TOOL_NAMES（下沉生效）", () => {
+	it("探针 5 个不在 ALWAYS_ON_TOOL_NAMES（下沉生效）", () => {
 		for (const n of DEMOTED) {
 			assert.ok(!ALWAYS_ON_TOOL_NAMES.has(n), `${n} 应已下沉（点名已撤，见 canvas_daily_ops 20/21 改写）`);
 		}
 	});
 
-	it("下沉后仍在延迟目录可被搜到（query 命中名字片段 → get_canvas_summary 等）", async () => {
+	it("核心 4 个在 ALWAYS_ON_TOOL_NAMES（最小失败面前提）", () => {
+		for (const n of RESIDENT_RESTORED) {
+			assert.ok(ALWAYS_ON_TOOL_NAMES.has(n), `${n} 必须常驻：全量下沉会让最主流三条话术一起失效`);
+		}
+	});
+
+	it("下沉后仍在延迟目录可被搜到（query 命中名字片段 → list_generation_tasks）", async () => {
 		const e = buildToolEnsemble(fakeTools(), true);
 		const loader = e.registered.find((t) => t.name === "tool_search")!;
 		const res = await loader.execute(
 			"c-demote",
-			{ query: "get_canvas" } as never,
+			{ query: "list_generation" } as never,
 			() => {},
 			undefined as never,
 			{} as never,
 			undefined as never,
 		);
 		const names = res.addedToolNames ?? [];
-		assert.ok(names.includes("get_canvas_summary"), "「get_canvas」应命中 get_canvas_summary");
-		assert.ok(names.includes("get_canvas_layout"));
+		assert.ok(names.includes("list_generation_tasks"), "「list_generation」应命中 list_generation_tasks");
 	});
 
-	it("真实场景可搜性：中文 label 的下沉工具按中文关键词命中（搜「画布概览」）", async () => {
+	it("真实场景可搜性：中文 label 的下沉工具按中文关键词命中（搜「素材库」）", async () => {
 		const e = buildToolEnsemble(
 			ALL_NAMES.map((n) =>
-				n === "get_canvas_summary" ? fakeToolWithDesc(n, "画布概览：节点清单与统计") : fakeTool(n),
+				n === "list_user_assets" ? fakeToolWithDesc(n, "素材库：列出用户资产") : fakeTool(n),
 			),
 			true,
 		);
 		const loader = e.registered.find((t) => t.name === "tool_search")!;
 		const res = await loader.execute(
 			"c-demote-cjk",
-			{ query: "画布概览" } as never,
+			{ query: "素材库" } as never,
 			() => {},
 			undefined as never,
 			{} as never,
 			undefined as never,
 		);
-		assert.ok((res.addedToolNames ?? []).includes("get_canvas_summary"));
+		assert.ok((res.addedToolNames ?? []).includes("list_user_assets"));
 	});
 });

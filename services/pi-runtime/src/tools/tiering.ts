@@ -32,24 +32,49 @@
  * 所以「进延迟集」对被子资产点名的工具等同于「不可达」——这是 arrange_nodes /
  * set_node_generation_params / save_memory / focus_node / remove_edges 留在常驻集的理由。
  *
- * 2026-10-06 减点名下沉（R1，roadmap P1「常驻 ≤28」第一批）：读类诊断 9 工具
+ * 2026-10-06 减点名下沉（R1，roadmap P1「常驻 ≤28」）：读类诊断 9 工具
  * （get_canvas_summary / get_canvas_layout / get_node / list_generation_tasks /
  * get_generation_status / get_generation_diagnostic / list_user_assets /
- * read_document / list_model_options）下沉 —— 前提是**点名已同步撤掉**：
+ * read_document / list_model_options）**点名已全部撤掉**：
  * prompt 规则 20/21/12 改写为能力描述 + tool_search 指引（canvas_daily_ops、
  * gen_tool_policy），4 个 skill 中的点名改为「先 tool_search 搜读工具」
  * （drama-qc-review / drama-storyboard / ecommerce-product-photo / drama-audio-design）。
- * ⚠️ web_search / web_fetch / recall_memory / list_generation_scenes 虽在候选之列但保留常驻：
- * 前两者是闲聊问答的通用能力（模型自发调用），recall_memory 被 5 个 skill 写成编号步骤，
- * list_generation_scenes 被规则 15 直接约束「建节点后先查场景」。
+ *
+ * ⚠️⚠️ **但「点名已撤」只是下沉的必要条件，不是充分条件。** 下沉（runtime 侧生效）会让
+ * 未点名工具对模型**不可见**，唯一发现路径是 `tool_search` —— 而该工具的实测触发率
+ * **两窗口均为 0**（2026-10-03：uptime 6.87h / 40 次工具调用；2026-10-06：uptime 8h /
+ * 64 次调用 + 真实 token 流量）。规则 20 已把「先 tool_search 搜…」写成前置动作并上线
+ * 47 分钟，触发率仍为 0 ⇒「搜得到」（#212/#217）≠「模型会去搜」。
+ * 全量下沉 = 一次不可逆的生产能力下线（模型不搜 ⇒ 静默失去 9 项读能力）。
+ *
+ * ⇒ **2026-10-06 分级下发（staged probe，R5 窗口协调建议）**：本批次**只下沉 5 个**，
+ * 常驻恢复 4 个核心画布读能力，用最小可行实验验证「模型会不会搜」：
+ *   - 常驻（本批恢复）：get_canvas_summary / get_canvas_layout / get_node / get_generation_status
+ *     —— 覆盖最主流的「画布有什么 / 看这个节点 / 生成到哪了」三条用户话术，失败面最小；
+ *   - 下沉（探针 5 个）：list_generation_tasks / get_generation_diagnostic /
+ *     list_user_assets / read_document / list_model_options
+ *     —— 需求明确、可用真实话术主动打探针（「有哪些任务在跑」「我的素材库里有什么」
+ *     「读一下我上传的文档」「有哪些模型可用」「刚才那次生成为什么失败」）。
+ * 判据（唯一）：`pi_runtime_tool_search_calls_total{outcome="hit"}` 出现 > 0 ⇒ 扩；
+ * 探针后仍恒 0 且同一会话 jsonl 显示模型绕开 ⇒ 回滚（把 5 个也放回常驻，单文件）。
+ *
+ * ⚠️ 另外 4 个读工具**从未进过本批候选**，继续常驻：web_search / web_fetch（闲聊问答通用自发调用）、
+ * recall_memory（5 个 skill 写成编号步骤）、list_generation_scenes（规则 15 逐字约束）。
  */
 import { Type } from "typebox";
 import { toolSummary, type LnkpiTool } from "./types.js";
 
 export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// read（画布 / 生成 / 资产 / 模型 / web / 文档 / 记忆读）
-	// —— 2026-10-06 起 9 个读类诊断工具下沉（见文件头「减点名下沉」），此处只留
-	// 「有资产点名或通用自发调用」的读工具：
+	// —— 2026-10-06 分级下发（见文件头「分级下发 staged probe」）：
+	// 常驻保留 4 个核心画布读能力（最主流三条话术「画布有什么 / 看这个节点 / 生成到哪了」），
+	// 其余 5 个读类工具下沉为探针（list_generation_tasks / get_generation_diagnostic /
+	// list_user_assets / read_document / list_model_options）。
+	// 依据：tool_search 实测触发率两窗口为 0 ⇒ 全量下沉 = 不可逆的能力下线，先做最小实验。
+	"get_canvas_summary",
+	"get_canvas_layout",
+	"get_node",
+	"get_generation_status",
 	"list_generation_scenes", // 规则 15「建节点后、propose 前先查场景」逐字约束
 	"web_search",
 	"web_fetch",
