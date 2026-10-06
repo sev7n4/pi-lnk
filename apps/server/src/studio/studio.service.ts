@@ -31,6 +31,7 @@ import {
   mergeRefsToPrompt,
   resolvePromptGenerateText,
   Seedance1xUnsupportedError,
+  StepFunDesignProvider,
   stripRefImagePromptTags,
   supportsVisionTextModel,
   type MergeTextSource,
@@ -2260,6 +2261,13 @@ export class StudioService {
       speed?: number
       volume?: number
       pitch?: number
+      kind?: string
+      roles?: Array<{ role: string; voice: string }>
+      scripts?: Array<{ role?: string; text: string }>
+      instruction?: string
+      caption?: string
+      lyrics?: string
+      instrumental?: boolean
     } = {},
     refs?: StudioRefInput[],
     mentionedKeys?: string[],
@@ -2305,6 +2313,60 @@ export class StudioService {
       assertStepFunAudioModel(kind, resolved.modelName)
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
+      }
+      if (kind === 'design') {
+        // 综合音频走非 OpenAI 兼容的同步端点，返回裸字节（不是 data URL）。
+        // 平台缺 key / 上游 402 / 模型不在目录都由既有 catch 显式退款报错，不静默回落。
+        const apiKey = resolved.credentials.apiKey
+        if (!apiKey) throw new Error('missing api key')
+        const { buffer, contentType } = await new StepFunDesignProvider(
+          apiKey,
+          resolved.credentials.baseUrl,
+        ).generate({
+          roles: options.roles ?? [],
+          scripts: options.scripts ?? [],
+          instruction: options.instruction,
+          responseFormat: 'mp3',
+        })
+        const stored = await this.upload.saveUserFile(userId, buffer, 'design.mp3', contentType)
+        if (cancel?.isCancelled()) {
+          await this.points.refund(
+            userId,
+            cost,
+            `${chargeReason}-取消退款`,
+            refundMeta('audio', 'cancelled_refund', {
+              model: resolved.modelName,
+              generationId: null,
+            }),
+          )
+          throwCancelledException(cost)
+        }
+        const designRecord = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'audio',
+            prompt: mergedText,
+            model: storeModel,
+            url: stored.url,
+            status: 'completed',
+            metadata: JSON.stringify(
+              applyChargeMeta(
+                {
+                  ...built.meta,
+                  skippedMerge,
+                  audioKind: kind,
+                  channelId: resolved.channelId,
+                  roles: options.roles,
+                  scripts: options.scripts,
+                  instruction: options.instruction,
+                },
+                cost,
+              ),
+            ),
+            ...withCanvasScope(scope),
+          },
+        })
+        return { ...designRecord, url: stored.url }
       }
       const { url } = await createAudioProvider(providerOpts(resolved)).generate(
         built.text,

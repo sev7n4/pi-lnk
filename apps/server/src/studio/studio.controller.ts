@@ -174,6 +174,34 @@ class GenerateAudioDto extends CanvasScopeFields {
   @IsArray()
   @IsString({ each: true })
   mentionedKeys?: string[]
+
+  @IsOptional()
+  @IsString()
+  kind?: string
+
+  @IsOptional()
+  @IsArray()
+  roles?: Array<{ role: string; voice: string }>
+
+  @IsOptional()
+  @IsArray()
+  scripts?: Array<{ role?: string; text: string }>
+
+  @IsOptional()
+  @IsString()
+  instruction?: string
+
+  @IsOptional()
+  @IsString()
+  caption?: string
+
+  @IsOptional()
+  @IsString()
+  lyrics?: string
+
+  @IsOptional()
+  @IsBoolean()
+  instrumental?: boolean
 }
 
 class GenerateTextDto extends CanvasScopeFields {
@@ -730,6 +758,13 @@ export class StudioController {
         speed: dto.speed,
         volume: dto.volume,
         pitch: dto.pitch,
+        kind: dto.kind,
+        roles: dto.roles,
+        scripts: dto.scripts,
+        instruction: dto.instruction,
+        caption: dto.caption,
+        lyrics: dto.lyrics,
+        instrumental: dto.instrumental,
       },
       dto.refs,
       dto.mentionedKeys,
