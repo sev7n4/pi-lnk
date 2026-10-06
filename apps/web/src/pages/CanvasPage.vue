@@ -171,6 +171,7 @@ import {
 import StoryboardDialog, { type StoryboardShot } from '@/components/canvas/StoryboardDialog.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
+import { shouldSyncProposePending } from '@/components/agent/proposeWaitActions'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
@@ -3674,6 +3675,9 @@ async function handleNodeGenerate() {
     cancelGeneration(node.id)
     return
   }
+  // L1：若本节点正卡在 propose 等待，先显式确认（registry answered）——不依赖 SSOT 时序，
+  // 避免「flush 写回 stale draft → runtime 轮询误判取消」（2026-10-06 生产事故）。
+  void agentRailRef.value?.confirmProposeWait?.(node.id)
   await debouncedNodePatch.flush()
   const fresh = editorNode.value
   if (!fresh) return
@@ -3688,11 +3692,28 @@ async function handleNodeGenerate() {
 async function handleAgentGenerateNode(nodeId: string) {
   const node = nodes.value.find((n) => n.id === nodeId)
   if (!node) return
+  // L1：与 dock 生成同一条显式确认路径（画布确认原子入口）
+  void agentRailRef.value?.confirmProposeWait?.(nodeId)
   // Phase 2c.1: leave pending_confirm as soon as confirm/dock generate starts.
   if ((node.data as Record<string, unknown> | undefined)?.status === 'pending_confirm') {
     patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.draft })
   }
   await generateForNode(node as EditableFlowNode)
+}
+
+/**
+ * L2（2026-10-06）：propose 等待开始 → 本地节点同步成 pending_confirm。
+ *
+ * 等待期 `update_node{pending_confirm}` 还没随 tool result 下发，本地是 stale draft；
+ * 期间任何 saveCanvas（点生成时的 flush / 拖节点 / 改参数 / 别处出图完成）都会用它
+ * **整份覆盖** SSOT 的待确认 ⇒ runtime 判「连续两次 draft = 用户取消」。
+ * 守卫：只在草稿态同步（见 shouldSyncProposePending），已 in-flight / 终态不动。
+ */
+function handleProposeWaitStart(nodeId: string) {
+  const node = nodes.value.find((n) => n.id === nodeId)
+  if (!node) return
+  if (!shouldSyncProposePending((node.data as Record<string, unknown> | undefined)?.status)) return
+  patchNodeData(nodeId, { status: 'pending_confirm' })
 }
 
 /** Phase 2c.1: cancel propose → Nest Jwt clear-propose, then local draft patch. */
@@ -4852,6 +4873,7 @@ onUnmounted(() => {
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"
         @clear-propose-generation="handleClearProposeGeneration"
+        @propose-wait-start="handleProposeWaitStart"
         :can-open="canOpenAgentPanel"
       />
     </div>

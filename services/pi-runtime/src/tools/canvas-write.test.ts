@@ -505,6 +505,15 @@ function fakeNestClient(
 }
 
 describe("propose_generation 阻塞确认（B-2）", () => {
+	/** 轮询式等待（registry 挂载 / 其它异步条件），超时即抛错防用例假绿。 */
+	async function waitFor(cond: () => boolean, timeoutMs = 1000): Promise<void> {
+		const start = Date.now();
+		while (!cond()) {
+			if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+			await new Promise((r) => setTimeout(r, 2));
+		}
+	}
+
 	it("画布确认（status 离开 pending_confirm）→ details.confirmed=true 返回", async () => {
 		const reg = new PendingToolRegistry();
 		const client = fakeNestClient([
@@ -530,6 +539,25 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		const text = String((result.content as Array<{ text: string }>)[0].text);
 		assert.match(text, /生成已由画布启动/);
 		assert.match(text, /不要对该节点调用 run_\*/);
+	});
+
+	it("显式确认（前端 /answers → registry answered）→ confirmed=true，不等 SSOT 轮询", async () => {
+		const reg = new PendingToolRegistry();
+		// get-node 恒 pending_confirm：若仍靠轮询判定，本用例只能跑到 30min 超时——
+		// answered 必须**自己**收口（2026-10-06 修：此前 answered 被映射成 timeout=
+		// 用户点了生成却被回「未在时限内确认」）。
+		const client = fakeNestClient(["pending_confirm"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /生成已由画布启动/);
+		assert.equal(reg.hasPending("s1"), false);
 	});
 
 	it("取消路径：连续两次轮询停 draft（用户 clear-propose）→ confirmed=false reason=rejected", async () => {

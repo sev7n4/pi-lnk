@@ -59,7 +59,10 @@ import {
   resolveAtomicConfirmNodeId,
   resolvePendingConfirmNodeId,
 } from '@/components/agent/agentChipSet'
-import { resolveProposeCancelNodeId } from '@/components/agent/proposeWaitActions'
+import {
+  resolveProposeCancelNodeId,
+  resolveProposeConfirmCallId,
+} from '@/components/agent/proposeWaitActions'
 import {
   chipSetFromInterrupt,
   interruptPayloadFromThreadState,
@@ -186,6 +189,13 @@ const emit = defineEmits<{
   generateNode: [nodeId: string]
   /** Phase 2b: cancel propose → clear pending_confirm on canvas node */
   clearProposeGeneration: [nodeId: string]
+  /**
+   * L2（2026-10-06）：propose 等待开始，把本地画布节点同步成 pending_confirm。
+   *
+   * 等待期 `update_node{pending_confirm}` 还没随 tool result 下发，本地是 stale draft；
+   * 任何 saveCanvas 都会用它整份覆盖 SSOT 的待确认 ⇒ runtime 误判「用户取消」。
+   */
+  proposeWaitStart: [nodeId: string]
   /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
   arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
 }>()
@@ -759,6 +769,28 @@ function cancelBlockingPropose() {
   const nodeId = resolveProposeCancelNodeId(agent.blockingWait)
   if (!nodeId) return
   emit('clearProposeGeneration', nodeId)
+}
+
+/**
+ * L1 显式确认（2026-10-06）：画布/dock 点生成时，把 propose 等待以 registry
+ * **answered** 收口——runtime 侧 answered 即 confirmed（canvas-write.ts），
+ * 因此确认不再依赖「SSOT 状态被正确写入」这条时序链。
+ *
+ * 返回是否真的发出确认（false = 当前没有该节点的 propose 等待，调用方走原路径）。
+ * 失败不阻断画布生成：轮询兜底仍在，最坏退回修复前的行为。
+ */
+async function confirmProposeWait(nodeId: string): Promise<boolean> {
+  const callId = resolveProposeConfirmCallId(agent.blockingWait, nodeId)
+  if (!callId) return false
+  try {
+    await submitAnswers(
+      { threadId: agentThreadId.value, sessionId: props.sessionId, callId, answers: {} },
+      answersPost,
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -2518,6 +2550,11 @@ function handleEvent(event: { type: string; data: unknown }) {
           question: d.question,
           timeoutMs: d.timeoutMs,
         })
+        // L2：propose 等待开始即把画布节点同步成 pending_confirm（消除 stale draft，
+        // 否则等待期任何 saveCanvas 都会用 draft 覆盖 SSOT 的待确认 → 被误判「用户取消」）
+        if (d.toolName === 'propose_generation' && d.nodeId) {
+          emit('proposeWaitStart', d.nodeId)
+        }
       }
       break
     }
@@ -2862,6 +2899,8 @@ defineExpose({
   setComposerInput,
   addAttachment,
   reconcileFromNodes,
+  /** L1：画布/dock 点生成时显式确认 propose 等待（answered），不再靠 SSOT 时序推断 */
+  confirmProposeWait,
   addFromCanvasNodes: (nodes: FocusNodeLike[]): CanvasRefAddResult => {
     const result = sidebar.addFromCanvasNodesDetailed(nodes)
     if (result.added < nodes.length && nodes.length === 1) {
