@@ -1,33 +1,33 @@
 {
- "total": 283,
+ "total": 302,
  "by_status": {
-  "living": 92,
-  "frozen": 186,
+  "living": 101,
+  "frozen": 196,
   "superseded": 5
  },
  "by_topic": {
-  "canvas-tool": 41,
-  "generation-pipeline": 36,
+  "canvas-tool": 46,
+  "generation-pipeline": 38,
   "canvas-product": 34,
   "image-editor": 30,
   "agent-ux": 26,
   "tool-runtime": 19,
   "account-auth": 18,
   "workflow-exchange": 18,
+  "other": 18,
   "planning": 16,
   "ui-interaction": 15,
-  "other": 10,
   "vision": 7,
+  "memory": 6,
   "deploy-infra": 4,
-  "memory": 4,
-  "context-engineering": 3,
-  "prompt-registry": 2
+  "prompt-registry": 4,
+  "context-engineering": 3
  },
  "by_month": {
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 8
+  "2026-10": 27
  },
  "items": [
   {
@@ -1262,6 +1262,96 @@
    "status": "living",
    "reason": "2026-10 活跃主题（memory）",
    "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-03-tool-contract-and-canvas-render-card-design.md",
+   "name": "2026-10-03-tool-contract-and-canvas-render-card-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-04-agents-md-hardening-design.md",
+   "name": "2026-10-04-agents-md-hardening-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-04-media-generation-audit.md",
+   "name": "2026-10-04-media-generation-audit.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-04-metrics-observability-design.md",
+   "name": "2026-10-04-metrics-observability-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-04-prompt-engineering-design.md",
+   "name": "2026-10-04-prompt-engineering-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "prompt-registry"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-06-audio-node-unified-capability-design.md",
+   "name": "2026-10-06-audio-node-unified-capability-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-06-memory-promotion-m6b-design.md",
+   "name": "2026-10-06-memory-promotion-m6b-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-06-propose-confirm-deterministic-design.md",
+   "name": "2026-10-06-propose-confirm-deterministic-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-06-selection-as-default-reference-design.md",
+   "name": "2026-10-06-selection-as-default-reference-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-06-u6-3-audio-capability-source.md",
+   "name": "2026-10-06-u6-3-audio-capability-source.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -2576,6 +2666,87 @@
    "status": "living",
    "reason": "2026-10 活跃主题（memory）",
    "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-03-tool-contract-and-canvas-render-card.md",
+   "name": "2026-10-03-tool-contract-and-canvas-render-card.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-04-agents-md-hardening.md",
+   "name": "2026-10-04-agents-md-hardening.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-04-media-generation-pipeline.md",
+   "name": "2026-10-04-media-generation-pipeline.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-04-metrics-observability.md",
+   "name": "2026-10-04-metrics-observability.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-04-prompt-audit-gap-status.md",
+   "name": "2026-10-04-prompt-audit-gap-status.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-04-prompt-engineering.md",
+   "name": "2026-10-04-prompt-engineering.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（prompt-registry）",
+   "topic": "prompt-registry"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-06-audio-node-unified-capability.md",
+   "name": "2026-10-06-audio-node-unified-capability.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-06-memory-promotion-m6b.md",
+   "name": "2026-10-06-memory-promotion-m6b.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（memory）",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-06-selection-as-default-reference.md",
+   "name": "2026-10-06-selection-as-default-reference.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
   }
  ]
 }
