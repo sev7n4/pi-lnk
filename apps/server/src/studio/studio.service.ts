@@ -44,7 +44,9 @@ import {
   IMAGE_EDIT_MODEL_PRICING,
   IMAGE_EDIT_MODEL_KEYS,
   resolveImageEditProfile,
+  audioKindOf,
   decodeChannelModel,
+  getModelEntry,
   redactProviderSnippet,
   resolveImageSize,
   resolveModelKey,
@@ -53,6 +55,7 @@ import {
   resolveVideoModelProfile,
   translateUpstreamFailure,
   type ErrorCode,
+  type AudioKind,
   type GenerationRefPayload,
   type GenerationDiagnostic,
   type ImageRefWire,
@@ -122,6 +125,11 @@ import {
 import { UploadService } from '../upload/upload.service'
 import sharp from 'sharp'
 import { hasCompositionPBlock } from './video-generation-request.util'
+import {
+  assertStepFunAudioModel,
+  audioFailureMessage,
+  resolvePlatformAudioFallback,
+} from './audio-kind'
 
 // Grace window before returning the async `generating` record: fast image
 // providers usually finish within this, sparing the client a polling round.
@@ -2291,8 +2299,10 @@ export class StudioService {
         : built.options
     const storeModel =
       resolved.source === 'user' ? options.model ?? built.meta.modelKey : built.meta.modelKey
+    const kind: AudioKind = audioKindOf(getModelEntry(resolved.modelName) ?? { modality: 'audio' })
 
     try {
+      assertStepFunAudioModel(kind, resolved.modelName)
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
       }
@@ -2343,6 +2353,7 @@ export class StudioService {
                 volume: options.volume,
                 pitch: options.pitch,
                 hasTtsData,
+                audioKind: kind,
                 channelId: resolved.channelId,
               },
               cost,
@@ -2376,6 +2387,7 @@ export class StudioService {
                 speed: options.speed ?? 1,
                 volume: options.volume,
                 pitch: options.pitch,
+                audioKind: kind,
                 channelId: resolved.channelId,
               },
               cost,
@@ -2384,6 +2396,7 @@ export class StudioService {
             'platform_failed',
           ),
           err,
+          { userMessage: audioFailureMessage(kind, err, resolved.channelId) },
         )
         const failed = await this.prisma.generationRecord.create({
           data: {
@@ -2432,6 +2445,7 @@ export class StudioService {
               speed: options.speed,
               volume: options.volume,
               pitch: options.pitch,
+              audioKind: kind,
               audioOptions: audioOpts,
             }),
           ),
@@ -2612,7 +2626,9 @@ export class StudioService {
           volume: prevAudio.volume ?? meta.volume,
           pitch: prevAudio.pitch ?? meta.pitch,
         }
-        const { url } = await createAudioProvider(undefined).generate(
+        const fallback = resolvePlatformAudioFallback(platformModel)
+        if (!fallback.ok) throw new Error(fallback.reason)
+        const { url } = await createAudioProvider(fallback.credentials).generate(
           record.prompt,
           audioOptions as { model?: string; voice?: string; speed?: number; volume?: number; pitch?: number },
         )
