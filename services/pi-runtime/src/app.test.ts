@@ -427,6 +427,41 @@ describe("POST /sessions/:key/answers（幂等 resolve，Review Focus 1）", () 
 		});
 	});
 
+	it("decision=decline → registry 以 aborted 交还（用户显式取消，无需 answers）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "canvas-1" } });
+				const wait = registry.waitForUser("canvas-1", "c9", "propose_generation", 60_000);
+				const res = await app.inject({ method: "POST", url: "/sessions/s1:t1/answers", payload: { callId: "c9", decision: "decline" } });
+				assert.equal(res.statusCode, 200);
+				assert.deepEqual(res.json(), { ok: true, deduped: false });
+				assert.deepEqual(await wait, { status: "aborted" });
+			} finally {
+				registry.abortAll("canvas-1");
+				await app.close();
+			}
+		});
+	});
+
+	it("decision 缺省 = answer（老前端不传也走作答语义，向后兼容）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const registry = new PendingToolRegistry();
+			const { app } = makeApp(root, okFactory, registry);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1", canvasSessionId: "canvas-1" } });
+				const wait = registry.waitForUser("canvas-1", "c10", "ask_user", 60_000);
+				const res = await app.inject({ method: "POST", url: "/sessions/s1:t1/answers", payload: { callId: "c10", answers: { q: ["a"] } } });
+				assert.equal(res.statusCode, 200);
+				assert.deepEqual(await wait, { status: "answered", answers: { q: ["a"] } });
+			} finally {
+				registry.abortAll("canvas-1");
+				await app.close();
+			}
+		});
+	});
+
 	it("未知 callId（已超时清理 / 从未注册）→ 仍 200 {ok:true,deduped:true}，业务路径不 404/500", async () => {
 		await withRoot("pi-runtime-app-", async (root) => {
 			const registry = new PendingToolRegistry();

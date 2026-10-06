@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  resolveProposeCancelCallId,
   resolveProposeCancelNodeId,
   resolveProposeConfirmCallId,
   shouldSyncProposePending,
@@ -66,5 +67,26 @@ describe('resolveProposeConfirmCallId（L1：显式确认信号）', () => {
     ).toBeNull()
     expect(resolveProposeConfirmCallId({ ...wait, callId: '   ' }, 'n1')).toBeNull()
     expect(resolveProposeConfirmCallId(wait, '')).toBeNull()
+  })
+})
+
+describe('resolveProposeCancelCallId（2026-10-06：取消走显式 decline）', () => {
+  it('propose 等待带 callId → 返回 callId（无需 nodeId 匹配）', () => {
+    expect(
+      resolveProposeCancelCallId({ toolName: 'propose_generation', callId: 'c1', nodeId: 'n1' }),
+    ).toBe('c1')
+    expect(resolveProposeCancelCallId({ toolName: 'propose_generation', callId: 'c1' })).toBe('c1')
+  })
+
+  it('非 propose / 无 callId / 空等待 → null（退回旧的 clear-propose + 轮询路径）', () => {
+    expect(resolveProposeCancelCallId({ toolName: 'ask_user', callId: 'c1' })).toBeNull()
+    expect(resolveProposeCancelCallId({ toolName: 'propose_generation', nodeId: 'n1' })).toBeNull()
+    expect(resolveProposeCancelCallId({ toolName: 'propose_generation', callId: '  ' })).toBeNull()
+    expect(resolveProposeCancelCallId(null)).toBeNull()
+  })
+
+  it('确认与取消取自同一个 callId（两条臂同源，不会各指一次等待）', () => {
+    const wait = { toolName: 'propose_generation', callId: 'c9', nodeId: 'n9' }
+    expect(resolveProposeConfirmCallId(wait, 'n9')).toBe(resolveProposeCancelCallId(wait))
   })
 })

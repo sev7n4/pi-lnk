@@ -71,27 +71,28 @@ export function turnStatusLine(input: TurnStatusLineInput): TurnStatusLine {
   return null
 }
 
-/** waiting 收紧：propose pending_confirm 一票通过；文本片段类 chip 需静默 2s
- * （detectAgentChipSet 基于 assistantText 片段匹配，流式途中即可能命中——假阳性防线）。 */
-const WAITING_TEXT_IDLE_MS = 2000
+/**
+ * waiting 收紧：两种「确定在等」的信号各自一票通过。
+ *
+ * 2026-10-06：原先还有第三路 ——「assistantText 片段嗅探出的 chipSet + 文本静默 ≥2s」，
+ * 那是为确认卡片（gate → chipSet → 确认/取消按钮）做的假阳性防线。确认卡片整体下线后
+ * 该路已无输入源，一并删除（`WAITING_TEXT_IDLE_MS` 随之移除）。
+ */
 export function resolveWaiting(input: {
   isStreaming: boolean
   proposePendingConfirm: boolean
-  chipSet: string | null
-  textIdleMs: number
   /**
    * 阻塞等待中的工具（`waiting_user{status:"waiting"}`）——一票通过，无需文本静默。
    *
    * 存在理由（2026-10-01 生产实证）：阻塞式工具的 tool_result 要等**等待结束**才发，
    * 所以 `proposePendingConfirm`（靠 tool_result 置位）在等待期内恒为 false；
-   * 只靠它 + 文本 chip 判定，整段等待期都会显示「生成回复中 · Ns」= 用户看到的卡死。
+   * 只靠它判定，整段等待期都会显示「生成回复中 · Ns」= 用户看到的卡死。
    */
   blockingWait?: { toolName?: string } | null
 }): boolean {
   if (!input.isStreaming) return false
   if (input.blockingWait) return true
-  if (input.proposePendingConfirm) return true
-  return input.chipSet !== null && input.textIdleMs >= WAITING_TEXT_IDLE_MS
+  return input.proposePendingConfirm
 }
 
 /** error → 人话（来源：SSE error 事件 data / 请求异常；禁用 JSON 工具摘要）。 */

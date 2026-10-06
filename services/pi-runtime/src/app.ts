@@ -310,22 +310,33 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	});
 
 	/**
-	 * 用户作答回传（ask_user 阻塞链路，2026-09-30 spec §6.2）。
+	 * 用户作答回传（ask_user 阻塞链路，2026-09-30 spec §6.2）。2026-10-06 扩展
+	 * `decision: "decline"` = 用户**显式拒绝**（propose 卡的「取消」）。
 	 *
-	 * 幂等铁律（Review Focus 1）：registry.answer 对未知 callId / 已 settle 一律
-	 * `{ok:true, deduped:true}` —— 业务路径**永不 404/500**。会话已被 sweeper 回收、
+	 * `decision` 缺省 `"answer"`（向后兼容，老前端不传即作答语义）；`"decline"` 时 resolve
+	 * `{status:"aborted"}` —— propose 工具的 race 双臂据此回 `confirmed:false, reason:"aborted"`，
+	 * 模型拿到的是**确定性事实**（用户点了取消），不再靠 SSOT 时序推断。
+	 *
+	 * 幂等铁律（Review Focus 1）：registry.answer / registry.decline 对未知 callId / 已 settle
+	 * 一律 `{ok:true, deduped:true}` —— 业务路径**永不 404/500**。会话已被 sweeper 回收、
 	 * callId 从未注册、Nest 超时重试重放，都落到 deduped 分支，回答端点重试安全。
 	 */
 	app.post<{
 		Params: { sessionId: string };
-		Body: { callId?: string; answers?: Record<string, string[]> };
+		Body: { callId?: string; answers?: Record<string, string[]>; decision?: "answer" | "decline" };
 	}>("/sessions/:sessionId/answers", async (request, reply) => {
 		const { registry } = deps;
 		if (!registry) return reply.code(503).send({ error: "pending registry not configured" });
 		const callId = request.body?.callId;
 		const answers = request.body?.answers;
-		if (!callId || typeof answers !== "object" || answers === null) {
+		// decline 不带答案（语义就是「不」）⇒ 只对 answer 分支要求 answers 是对象
+		const isDecline = request.body?.decision === "decline";
+		if (!callId || (!isDecline && (typeof answers !== "object" || answers === null))) {
 			return reply.code(400).send({ error: "callId and answers are required" });
+		}
+		if (isDecline) {
+			const canvasId = manager.getCanvasSessionId(toSessionKey(request.params.sessionId));
+			return reply.send(registry.decline(canvasId, callId));
 		}
 		// registry 键 = 画布会话 id（工具域），路由参数 = threadKey → 先 sanitize 成 pi 会话键，
 		// 再经 getCanvasSessionId 换算（#74/#76 解耦语义的镜像：会话不存在回落键本身，
