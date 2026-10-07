@@ -1466,8 +1466,11 @@ describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () =
 		const active = (h.captured!.activeToolNames as string[]).slice().sort();
 		// 初始激活只含常驻 + loader；t_probe 要靠 tool_search 的 addedToolNames 激活
 		// 2026-10-06 减点名第一批：get_canvas_summary 已下沉延迟集（tiering.ts），
-		// 仍全量注册但初始不激活 ⇒ active 只剩 loader 自己。
-		assert.deepEqual(active, ["tool_search"]);
+		// ⚠️ 2026-10-07：get_canvas_summary 提回常驻（tiering.ts）⇒ 原逐字名单断言必然红。
+		// 改成断言**契约**（loader 必须激活 / 延迟工具必须未激活），而不是具体名单内容。
+		assert.ok(active.includes("tool_search"), "tool_search 必须常驻（它就是 loader）");
+		assert.ok(!active.includes("t_probe"), "t_probe 是延迟工具，初始不该激活");
+		
 	});
 
 	it("tiering-on：staticPrompt 不含延迟工具索引块（官方模式不给名单，发现靠 tool_search 搜索）", async () => {

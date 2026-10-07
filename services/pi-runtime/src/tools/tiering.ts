@@ -69,6 +69,13 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// —— 2026-10-06 起 9 个读类诊断工具下沉（见文件头「减点名下沉」；已由分级下发实验
 	// 实证支持：无替代品时模型 4/4 主动搜索命中），此处只留「有资产点名或通用自发调用」的读工具：
 	"list_generation_scenes", // 规则 15「建节点后、propose 前先查场景」逐字约束
+	// ⭐ 2026-10-07 提回常驻：工具描述自己写着「Call this first to understand the canvas」，
+	//   但它在下沉集里 ⇒ 模型拿不到 schema ⇒ 退化成**逐个 get_node**（生产实测一次会话 10+ 次
+	//   「查看节点」，244k tokens + 侧栏被流水淹没）。
+	//   它是「省 schema token」的**主力反面案例**：单个 2104 token 的大头是 render_canvas_view，
+	//   而 get_canvas_summary 只值几百 token ⇒ 提它的代价极小、收益是整条读链路。
+	//   判据复核：**零规则/skill 点名**（减点名下沉的遗留），符合 catalog §2 一致性判据。
+	"get_canvas_summary",
 	"web_search",
 	"web_fetch",
 	"recall_memory",
