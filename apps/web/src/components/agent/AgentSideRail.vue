@@ -157,6 +157,15 @@ const emit = defineEmits<{
   proposeWaitStart: [nodeId: string]
   /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
   arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
+  /**
+   * 「展开到画布」（2026-07-24）：把节点图铺满**画布区**（侧栏与 composer 保持可用）。
+   *
+   * ⚠️ 为什么走 emit 而不在侧栏里直接弹层：目标区域是**画布区**（CanvasPage 拥有），
+   *   展开层必须挂在 `canvasAreaRef` 内才能只盖画布、不盖侧栏。
+   */
+  expandNodeGraph: [payload: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphPayload]
+  /** 「导入到画布」：建成结构化节点组（由 CanvasPage 写 SSOT）。 */
+  importNodeGraph: [payload: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphPayload]
 }>()
 
 const pickMode = useCanvasRefPickMode()
@@ -348,6 +357,23 @@ function hasRenderableNodeGraph(msg: AgentStreamMessage): msg is NodeGraphMessag
   return msg.role === 'assistant'
     && msg.presentation?.kind === 'node_graph'
     && Array.isArray((msg.presentation.body as { graph_nodes?: unknown } | undefined)?.graph_nodes)
+}
+
+type NodeGraphPayload = import('@/components/agent/presentation/AgentNodeGraph.vue').GraphPayload
+
+/**
+ * 把消息里的 node_graph 载荷取出来，供 expand / import 两个 emit 用。
+ *
+ * ⚠️ `graph_nodes` 在共享 body 类型里是 `NodeGraphBodyPayload['nodes']`
+ *   （不是 `unknown[]`）—— 这里只需把可能为 `undefined` 的字段兜成空数组。
+ */
+function nodeGraphPayload(msg: AgentStreamMessage): NodeGraphPayload {
+  const body = msg.presentation?.body
+  return {
+    nodes: body?.graph_nodes ?? [],
+    edges: body?.graph_edges ?? [],
+    title: body?.nodeGraphTitle ?? msg.presentation?.title,
+  }
 }
 
 /**
@@ -2749,7 +2775,10 @@ defineExpose({
                   class="mt-2"
                   :body="{ nodes: msg.presentation.body?.graph_nodes ?? [], edges: msg.presentation.body?.graph_edges ?? [], title: msg.presentation.title }"
                   :title="msg.presentation.title"
+                  :session-id="sessionId"
                   @focus-node="onFocusNode($event)"
+                  @expand-to-canvas="emit('expandNodeGraph', nodeGraphPayload(msg))"
+                  @import-to-canvas="emit('importNodeGraph', nodeGraphPayload(msg))"
                 />
                 <AgentSvgCard
                   v-else-if="hasRenderableSvgCard(msg)"

@@ -24,9 +24,15 @@ import { computed } from 'vue'
 import { VueFlow, useVueFlow, type Node, type Edge } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
+import { buildNodeGraphHtml } from './node-graph-export'
 
-/** 与后端 `services/pi-runtime/src/tools/types-node-graph.ts` 对齐（勿单方面改字段名）。 */
-interface GraphNode {
+/**
+ * 与后端 `services/pi-runtime/src/tools/types-node-graph.ts` 对齐（**勿单方面改字段名**）。
+ *
+ * ⭐ **导出**这个类型：调用方（CanvasPage 的展开层、AgentSideRail 的 emit）都引用它，
+ * 避免各处自己写一遍形状 ⇒ 字段一改就编译报错，而不是静默不匹配。
+ */
+export interface GraphNode {
   id: string
   type?: string
   title?: string
@@ -35,12 +41,12 @@ interface GraphNode {
   groupId?: string
   status?: 'idle' | 'running' | 'failed'
 }
-interface GraphEdge {
+export interface GraphEdge {
   source: string
   target: string
   label?: string
 }
-interface NodeGraphBody {
+export interface NodeGraphBody {
   title?: string
   nodes: GraphNode[]
   edges: GraphEdge[]
@@ -48,15 +54,27 @@ interface NodeGraphBody {
   totalNodeCount?: number
 }
 
+/**
+ * 载荷的聚合类型（组件 props 的形状）：调用方 emit / ref 统一用它。
+ * ⚠️ 单引出这一个，避免各处重写 `{ nodes, edges, title }` 而在某次改字段后静默不匹配。
+ */
+export interface GraphPayload extends NodeGraphBody {}
+
 const props = defineProps<{
   body: NodeGraphBody
   title?: string
+  /** 参与快照文件名（`<slug>-<sessionId前8位>.html`）。 */
+  sessionId?: string
   /** 图片节点的缩略图 URL 解析器（由父组件注入，agent 侧栏通常拿不到画布的 blob URL）。 */
   resolveNodeUrl?: (nodeId: string) => string | undefined
 }>()
 
 const emit = defineEmits<{
   focusNode: [nodeId: string]
+  /** 展开到画布：把节点图铺满**画布区**（侧栏与 composer 保持可用，见 CanvasPage 布局）。 */
+  expandToCanvas: []
+  /** 导入到画布：建成**结构化节点组**（非位图 —— 位图在画布上不可编辑、agent 也无法理解）。 */
+  importToCanvas: []
 }>()
 
 const { fitView } = useVueFlow()
@@ -157,6 +175,33 @@ const groupNodes = computed(() =>
 const shown = computed(() => props.body.nodes.length)
 const dropped = computed(() => props.body.droppedNodeIds ?? [])
 
+/**
+ * 「在新窗口打开」：生成独立 HTML 快照并 `window.open`。
+ *
+ * ⚠️ 用 **Blob + objectURL** 而不是 data: URL —— data: URL 在部分浏览器会被拦，
+ *    且长内容会撞 URL 长度上限。
+ * ⚠️ `window.open` 可能被**弹窗拦截器**挡（用户点了没反应）⇒ 兜底提示而不是静默。
+ *⚠️ 快照**不含缩略图**：载荷里没有图片 URL（见 node-graph-export.ts 文件头）。
+ */
+function openInNewWindow() {
+  const html = buildNodeGraphHtml(
+    props.body.nodes as never,
+    (props.body.edges ?? []) as never,
+    props.title,
+  )
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const win = window.open(url, "_blank", "noopener,noreferrer")
+  if (!win) {
+    // 弹窗被拦 ⇒ 明确告知，并给一个可点的兜底（不静默失败）
+    window.alert("浏览器拦截了新窗口。\n请允许本站弹出窗口后重试，或用「导出到画布」先保存。")
+    URL.revokeObjectURL(url)
+    return
+  }
+  // 不立即 revoke：新窗口加载需要时间；页面关闭时浏览器会回收
+  win.addEventListener?.("load", () => URL.revokeObjectURL(url), { once: true })
+}
+
 function onNodeClick(e: { node?: { id?: string } }) {
   const id = e?.node?.id
   // 跳过内部生成的分组框 id（`grp-*`）
@@ -188,6 +233,50 @@ defineExpose({ fitView })
         v-if="dropped.length"
         class="text-[var(--neo-warn,#f59e0b)]"
       >{{ dropped.length }} 项未显示</span>
+
+      <!-- 🔀 三个动作入口（2026-07-24）。线性排列、图标在前文字在 tooltip：
+           三者同属「把图拿出来看/用」这一族，参照 WorkBuddy 的图标组惯例。
+           ⚠️ 顺序 = 使用频率：展开到画布（最常用）→ 导入 → 新窗口打开。 -->
+      <span class="agent-graph-actions ml-auto flex items-center gap-0.5">
+        <button
+          type="button"
+          class="agent-graph-action"
+          title="展开到画布"
+          aria-label="展开到画布"
+          data-testid="ng-action-expand"
+          @click="emit('expandToCanvas')"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M6 2H2v4M10 2h4v4M14 10v4h-4M2 10v4h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="agent-graph-action"
+          title="导入到画布"
+          aria-label="导入到画布"
+          data-testid="ng-action-import"
+          @click="emit('importToCanvas')"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M8 2v7m0 0L5.2 6.2M8 9l2.8-2.8M2.5 11v2a1 1 0 001 1h9a1 1 0 001-1v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="agent-graph-action"
+          title="在新窗口打开（快照 / 可分享）"
+          aria-label="在新窗口打开"
+          data-testid="ng-action-open-window"
+          @click="openInNewWindow"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <rect x="1.75" y="2.75" width="9.5" height="8.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <path d="M5.5 14h8.25a1 1 0 001-1V5.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            <path d="M9 7l3.2 3.2M12.2 7v3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </span>
     </header>
 
     <div
@@ -283,5 +372,31 @@ defineExpose({ fitView })
 }
 .agent-node-graph :deep(.vue-flow__edge-text) {
   font-size: 10px;
+}
+
+/* ── 动作图标组（2026-07-24）────────────────────────────────────────────
+   三枚图标线性排列、无分隔（同族动作），hover 出tooltip（title 属性）。
+   默认低对比（不与卡片内容抢注意力），hover 时提亮 + 出现焦点环。 */
+.agent-graph-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--neo-text-muted, #8a8a82);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.agent-graph-action:hover {
+  background: var(--neo-surface-card, rgba(0, 0, 0, 0.06));
+  color: var(--neo-text, #1c1c1a);
+}
+/* ⭐ 键盘可达：focus-visible 必须有可见焦点环（图标按钮最容易漏这条）。 */
+.agent-graph-action:focus-visible {
+  outline: 2px solid var(--neo-accent, #3b82f6);
+  outline-offset: 1px;
 }
 </style>
