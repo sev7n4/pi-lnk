@@ -1156,6 +1156,34 @@ function onFocusNode(nodeId: string) {
   if (isMobileLayout.value) closePanel()
 }
 
+// ── 执行过程折叠状态（2026-10-07 修「打开后没法收起」）──────────────────
+// ⚠️ 之前 `AgentExecutionTrace` 的展开态只活在子组件本地 ref，而 reducer 每次写
+//   `trace.collapsed`（流式过程反复写）都会经 watch 把它拉回 ⇒ 用户刚展开就被收起。
+//   现在**父级持有真相**，子组件只 emit 意图。
+//   状态按消息 id 存，避免流式重写 trace 时丢状态；缺省 collapsed=true（保持 v1 默认折叠）。
+const traceCollapsed = ref<Record<string, boolean>>({})
+
+type TraceCarrier = { id?: string; executionTrace?: { collapsed?: boolean } }
+
+function historyTraceCollapsed(msg: TraceCarrier): boolean {
+  const id = msg?.id
+  const fallback = msg?.executionTrace?.collapsed ?? true
+  if (!id) return fallback
+  return traceCollapsed.value[id] ?? fallback
+}
+
+function onToggleTrace(msg: { id?: string }, collapsed: boolean) {
+  if (!msg?.id) return
+  traceCollapsed.value = { ...traceCollapsed.value, [msg.id]: collapsed }
+}
+
+/** 本轮活体trace 的折叠态：与历史同源，但只存一份（本轮只有一个）。 */
+const liveTraceCollapsed = ref(true)
+
+function onToggleLiveTrace(collapsed: boolean) {
+  liveTraceCollapsed.value = collapsed
+}
+
 function onFocusAll(nodeIds: string[]) {
   emit('focusAll', nodeIds)
   if (isMobileLayout.value) closePanel()
@@ -2591,6 +2619,17 @@ defineExpose({
                     <button type="button" class="agent-edit-btn agent-edit-btn--primary" @click="sendEditedUserMessage(msg)">发送</button>
                   </span>
                 </p>
+                <!-- 2026-10-07 顺序调整：执行过程提到**文本之前**（用户口径「操作过程实时流式，
+                     先看到过程再看总结」）。原来顺序是 文本 → 画布产出 → 执行过程，
+                     读完结论才知发生了什么，且折叠区在底部很难被注意到。 -->
+                <AgentExecutionTrace
+                  v-if="msg.role === 'assistant' && msg.executionTrace && !liveTrace"
+                  :trace="msg.executionTrace"
+                  :streaming="Boolean(msg.streaming)"
+                  :collapsed="historyTraceCollapsed(msg)"
+                  @update:collapsed="onToggleTrace(msg, $event)"
+                  @focus-node="onFocusNode($event)"
+                />
                 <p v-if="hasBubbleText(msg)" class="whitespace-pre-wrap">
                   {{
                     msg.role === 'user'
@@ -2638,12 +2677,6 @@ defineExpose({
                   :resolve-node-url="resolveCanvasNodeUrl"
                   @focus-node="onFocusNode($event)"
                   @focus-all="onFocusAll($event)"
-                />
-                <AgentExecutionTrace
-                  v-if="msg.role === 'assistant' && msg.executionTrace && !liveTrace"
-                  :trace="msg.executionTrace"
-                  :streaming="Boolean(msg.streaming)"
-                  @focus-node="onFocusNode($event)"
                 />
                 <AgentPresentationHost
                   v-if="historyPresentation(msg)"
@@ -2838,7 +2871,9 @@ defineExpose({
               class="agent-live-trace mb-1"
               :trace="liveTrace"
               :streaming="agent.isStreaming"
+              :collapsed="liveTraceCollapsed"
               dense
+              @update:collapsed="onToggleLiveTrace"
               @focus-node="onFocusNode($event)"
             />
             <p

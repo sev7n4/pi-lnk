@@ -12,16 +12,29 @@ const props = defineProps<{
   streaming?: boolean
   /** 钉底模式（本轮活体过程）：只渲染一行「N 步 · 最新人话」摘要，点开展开，不渲染底部分隔线。 */
   dense?: boolean
+  /**
+   * 折叠状态（受控，2026-10-07）。缺省时回退 `trace.collapsed`（保持旧调用点兼容）。
+   *
+   * ⚠️ 为什么必须受控：此前展开态只活在组件内部 ref，而reducer 的 `trace.collapsed`
+   * 每次写入（流式过程会反复写）都会经 watch 把展开态拉回 ⇒ **用户刚展开就被收起**，
+   * 表现为「打开后没法收起」。现在真相由父级持有，子组件只 emit 意图。
+   */
+  collapsed?: boolean
 }>()
 
 const emit = defineEmits<{
   focusNode: [nodeId: string]
+  /** 上抛折叠状态变化，让 reducer 成为唯一真相（修复「展开后无法收起」） */
+  'update:collapsed': [collapsed: boolean]
 }>()
 
-const expanded = ref(!props.trace.collapsed)
+// 折叠以**父级传入的 collapsed 为唯一真相**，本地只做乐观镜像（点击后立即反馈，等 props 回流）。
+// ⚠️ 2026-10-07 修「打开后没法收起」：此前真相只在本地 ref，而 reducer 每次写 trace.collapsed
+//   （流式过程会反复写）都会经 watch 把展开态拉回 ⇒ 刚展开就被收起。
+const expanded = ref(!(props.collapsed ?? props.trace.collapsed))
 
 watch(
-  () => props.trace.collapsed,
+  () => props.collapsed ?? props.trace.collapsed,
   (v) => {
     expanded.value = !v
   },
@@ -57,7 +70,9 @@ const showTrace = computed(
 )
 
 function toggle() {
-  expanded.value = !expanded.value
+  const next = !expanded.value
+  expanded.value = next
+  emit('update:collapsed', !next) // 注意：emit 的是 collapsed（取反）
 }
 
 function statusIcon(step: ExecutionStep): string {
