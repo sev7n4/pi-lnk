@@ -96,6 +96,29 @@ export interface AgentPresentationBody {
   basics_section_title?: string
 }
 
+/**
+ * `node_graph` 载荷体（2026-07）。
+ *
+ * ⚠️ 字段名与后端 `services/pi-runtime/src/tools/types-node-graph.ts` **一一对应**，
+ * 单方面改会造成「前端静默渲染空图」（不报错，最难查的一类退化）。
+ */
+export interface NodeGraphBodyPayload {
+  /** 与后端 `NodeGraphPayload.title` 对齐。 */
+  title?: string
+  nodes: Array<{
+    id: string
+    type?: string
+    title?: string
+    position?: { x: number; y: number }
+    size?: { width: number; height: number }
+    groupId?: string
+    status?: 'idle' | 'running' | 'failed'
+  }>
+  edges: Array<{ source: string; target: string; label?: string }>
+  droppedNodeIds?: string[]
+  totalNodeCount?: number
+}
+
 export interface AgentPresentationEnvelope {
   kind: string
   stepper: AgentPresentationStepper

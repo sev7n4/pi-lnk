@@ -7,7 +7,7 @@ import {
   labelFromTextReplace,
   nodeStatusLabel,
 } from '@/components/agent/executionStepLabels'
-import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
+import type { AgentPresentationEnvelope, NodeGraphBodyPayload } from '@/components/agent/presentation/types'
 
 export type ExecutionStepStatus =
   | 'pending'
@@ -552,6 +552,51 @@ export function replayExecutionTraceEvents(
  * `AgentSideRail.hasRenderableSvgCard` 同因：超 `SVG_MAX_CHARS` 时下发 `svg: ""`
  * （字段在、值为空），那张卡有专属的「已丢弃」可见文案，必须照样恢复。
  */
+/**
+ * 落库重放：`node_graph` 载荷（2026-07）。
+ *
+ * ⚠️ 与 `replaySvgCardPresentation` **并列**而非替换 —— 双写期两条都可能在事件流里。
+ * 调用方按「有 node_graph 就用它」的优先级取舍（见 AgentSideRail）。
+ *
+ * 为什么必须单独写：落库通道不存 stepper（服务端只存 cmd 本身），
+ * 与 svg_card 同款空 stepper；`node_graph` 走独立挂载，不进 AgentPresentationHost。
+ */
+/** `node_graph` 呈现信封（独立挂载，不进 AgentPresentationHost 的 stepper）。 */
+export type NodeGraphEnvelope = Omit<AgentPresentationEnvelope, 'kind' | 'body'> & {
+  kind: 'node_graph'
+  body: NodeGraphBodyPayload
+}
+
+export function replayNodeGraphPresentation(
+  events: Array<{ type: string; data: unknown }>,
+): NodeGraphEnvelope | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (event.type !== 'canvas_command') continue
+    const cmd = event.data as {
+      type?: string
+      nodes?: unknown
+      edges?: unknown
+      title?: string
+      droppedNodeIds?: unknown
+      totalNodeCount?: unknown
+    }
+    if (cmd?.type !== 'node_graph' || !Array.isArray(cmd.nodes)) continue
+    return {
+      kind: 'node_graph',
+      stepper: { current: '', completed: [] },
+      title: cmd.title,
+      body: {
+        nodes: cmd.nodes,
+        edges: Array.isArray(cmd.edges) ? cmd.edges : [],
+        droppedNodeIds: Array.isArray(cmd.droppedNodeIds) ? cmd.droppedNodeIds : undefined,
+        totalNodeCount: typeof cmd.totalNodeCount === 'number' ? cmd.totalNodeCount : undefined,
+      },
+    }
+  }
+  return undefined
+}
+
 export function replaySvgCardPresentation(
   events: Array<{ type: string; data: unknown }>,
 ): AgentPresentationEnvelope | undefined {

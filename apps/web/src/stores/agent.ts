@@ -27,6 +27,7 @@ import {
   finalizeExecutionTrace,
   replayExecutionTraceEvents,
   replaySvgCardPresentation,
+  replayNodeGraphPresentation,
   type ExecutionTraceState,
 } from '@/components/agent/executionTraceReducer'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
@@ -461,9 +462,14 @@ export const useAgentStore = defineStore('agent', () => {
       //
       // role 门与 `setPresentation` 对齐（那条只写最后一条 assistant 消息）：
       // 卡片是助手轮次的产出，挂在 user 消息上没有对应语义。
+      // ⚠️ **A 方案优先级（2026-07）**：node_graph 优先、svg_card 降级。
+      // 双写期两条载荷都在事件流里（后端 presentResultDual），
+      // `??` 的左偏决定了"有 node_graph 就用它，没有才回落静态 SVG"。
+      // 后端停止发 node_graph 时会自动回落，无需改前端。
       const replayedCard =
         persisted.role === 'assistant' && meta?.executionEvents?.length
-          ? replaySvgCardPresentation(meta.executionEvents)
+          ? (replayNodeGraphPresentation(meta.executionEvents)
+            ?? replaySvgCardPresentation(meta.executionEvents))
           : undefined
       const presentation =
         meta?.presentation && typeof meta.presentation === 'object'
