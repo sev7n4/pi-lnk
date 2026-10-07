@@ -43,6 +43,8 @@ export interface MediaInspectorTarget {
   kind?: 'image' | 'video'
   assetMediaInfo?: MediaInfo
   assetMeta?: Record<string, unknown>
+  /** 打开时直接落在哪个 tab（2026-10-08：异常态入口直落「诊断」） */
+  initialTab?: 'info' | 'diagnostic'
 }
 
 interface CachedRecord {

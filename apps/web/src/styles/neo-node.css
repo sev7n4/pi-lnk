@@ -574,12 +574,23 @@
 .neo-media-inspector-btn.is-pending {
   background: rgba(245, 158, 11, 0.95);
   color: #fff;
+  animation: neo-status-pending-pulse 1.6s ease-in-out infinite;
 }
 
-.neo-status-info .neo-task-diag-pop {
-  top: 0;
-  right: auto;
-  left: calc(100% + 6px);
+@keyframes neo-status-pending-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55);
+  }
+  55% {
+    box-shadow: 0 0 0 5px rgba(245, 158, 11, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neo-media-inspector-btn.is-pending {
+    animation: none;
+  }
 }
 
 .neo-gen-video-poster {

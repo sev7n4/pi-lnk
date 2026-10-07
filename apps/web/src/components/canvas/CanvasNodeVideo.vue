@@ -262,12 +262,9 @@ function openMediaInspector(e?: Event) {
           <NodeStatusInfoButton
             v-if="showInspectorBtn"
             :status="data.status"
-            :error-message="data.errorMessage as string | undefined"
-            :error-code="data.errorCode as string | undefined"
             :task-kind="taskKind"
             :task-id="taskId"
             :node-label="typeof data.label === 'string' ? data.label : undefined"
-            :session-id="sessionId"
             @inspect="openMediaInspector()"
           />
           <div v-if="data.status === 'uploading'" class="neo-upload-progress">
