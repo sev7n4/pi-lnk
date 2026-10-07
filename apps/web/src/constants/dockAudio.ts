@@ -1,4 +1,12 @@
-import { defaultModelKey, getModelEntry, listModels } from '@lnkpi/shared'
+import {
+  audioKindOf,
+  defaultModelKey,
+  getModelEntry,
+  listModels,
+  listModelsByAudioKind,
+  type AudioKind,
+  type StudioModelEntry,
+} from '@lnkpi/shared'
 
 export interface VoiceOption {
   id: string
@@ -68,3 +76,29 @@ export const SHOT_GENERATE_MODE_OPTIONS: Array<{ value: ShotGenerateMode; label:
   { value: 'image', label: '生成图像' },
   { value: 'video', label: '生成视频' },
 ]
+
+/**
+ * 音频节点的二阶分类（画布顶层节点类型仍是 `audio`，不新增节点类型）。
+ * 顺序即 UI chip 顺序，勿随意调整。
+ */
+export const AUDIO_KIND_OPTIONS: Array<{ value: AudioKind; label: string }> = [
+  { value: 'voice', label: '配音' },
+  { value: 'design', label: '综合音频' },
+  { value: 'music', label: '音乐' },
+]
+
+export function modelsForAudioKind(kind: AudioKind): StudioModelEntry[] {
+  return listModelsByAudioKind(kind)
+}
+
+/**
+ * 分类各自的首选模型；voice 保持目录默认（存量节点零变化）。
+ *
+ * 🔴 返回值必须属于 `kind` 分类：服务端 `assertAudioKindMatchesModel` 对
+ * 「声明 music 却拿着 TTS 模型」显式 400，切分类时用错模型就是必错组合。
+ */
+export function defaultVoiceForKind(kind: AudioKind | undefined): string {
+  const k: AudioKind = audioKindOf({ modality: 'audio', audioKind: kind })
+  if (k === 'voice') return defaultModelKey('audio')
+  return listModelsByAudioKind(k)[0]?.modelKey ?? defaultModelKey('audio')
+}
