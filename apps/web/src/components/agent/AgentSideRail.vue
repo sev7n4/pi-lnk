@@ -45,9 +45,10 @@ import {
 import AskUserCard from '@/components/agent/AskUserCard.vue'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
 import AgentSvgCard from '@/components/agent/presentation/AgentSvgCard.vue'
+import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
 import { hasSchemeDraftSections, splitAssistantDraftMessage } from '@/components/agent/presentation/schemeDraftProse'
-import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
+import type { AgentPresentationEnvelope, NodeGraphBodyPayload } from '@/components/agent/presentation/types'
 import {
   resolveProposeCancelCallId,
   resolveProposeCancelNodeId,
@@ -332,6 +333,23 @@ function hasRenderableSvgCard(msg: AgentStreamMessage): msg is SvgCardMessage {
     && msg.presentation.body?.svg !== undefined
 }
 
+/** 带着可渲染 `node_graph` 的消息（结构化载荷，Vue Flow 渲染）。 */
+type NodeGraphMessage = AgentStreamMessage & {
+  presentation: AgentPresentationEnvelope & { kind: 'node_graph' }
+}
+
+/**
+ * 有 node_graph 的助手轮次（2026-07）。
+ *
+ * ⚠️ **A 方案：node_graph 优先、svg_card 降级**（重放侧见 `stores/agent.ts` 的 `??` 左偏）。
+ * 这里只判"有没有"，两条都在时由模板 `v-if` / `v-else-if` 的顺序决定优先级。
+ */
+function hasRenderableNodeGraph(msg: AgentStreamMessage): msg is NodeGraphMessage {
+  return msg.role === 'assistant'
+    && msg.presentation?.kind === 'node_graph'
+    && Array.isArray((msg.presentation.body as { graph_nodes?: unknown } | undefined)?.graph_nodes)
+}
+
 /**
  * P0 决策 2：零内容不渲染气泡（判定在 bubbleVisibility.ts，纯函数可单测）。
  * 阻塞等待期不产生 token，旧实现「流式恒 true」会留下一个空白气泡 + 闪烁光标 = 白块。
@@ -342,7 +360,9 @@ function hasRenderableSvgCard(msg: AgentStreamMessage): msg is SvgCardMessage {
  * 例外只认「有卡片」，无卡片仍走 hasBubbleContent ⇒ P0 白块修复不受影响。
  */
 function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
-  return hasBubbleContent(msg) || hasRenderableSvgCard(msg)
+  // ⚠️ node_graph 与 svg_card 同为「卡片即全部产出」的情形（agent 只调 render_canvas_view 不说话）
+  //   ⇒ 两者都要放行，否则卡片静默不可见（PR #65 同类失效）。
+  return hasBubbleContent(msg) || hasRenderableSvgCard(msg) || hasRenderableNodeGraph(msg)
 }
 
 /**
@@ -2170,6 +2190,25 @@ function handleEvent(event: { type: string; data: unknown }) {
           if (sidebar.pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) break
           sidebar.addFromPayload(att)
         }
+      } else if (cmd.type === 'node_graph' && Array.isArray((cmd as unknown as { nodes?: unknown }).nodes)) {
+        // 🔀 render_canvas_view 的结构化产物（2026-07）：Vue Flow 渲染，可拖拽 / 带缩略图。
+        // ⚠️ **必须在 svg_card 分支之前**（A 方案：node_graph 优先、静态 SVG 降级）。
+        // ⚠️ 不塞 AgentPresentationHost：与 svg_card 同款理由（落库路径不恢复 stepper）。
+        const ng = cmd as unknown as NodeGraphBodyPayload
+        // ⚠️ body 走 `AgentPresentationBody` 的**可选字段**（不是联合类型，见 types.ts 注释）：
+        //   联合类型会让所有下游 `body.text` / `body.schemes` 访问变成 TS2339（实测 16 处）。
+        agent.setPresentation({
+          kind: 'node_graph',
+          stepper: { current: '', completed: [] },
+          title: ng.title ?? cmd.title,
+          body: {
+            graph_nodes: ng.nodes,
+            graph_edges: ng.edges ?? [],
+            graph_droppedNodeIds: ng.droppedNodeIds,
+            graph_totalNodeCount: ng.totalNodeCount,
+            nodeGraphTitle: ng.title,
+          },
+        } as unknown as AgentPresentationEnvelope)
       } else if (cmd.type === 'svg_card' && cmd.svg !== undefined) {
         // render_canvas_view 产物：净化在 AgentSvgCard 内做（spec §4.5）。
         // ⚠️ 刻意不塞 AgentPresentationHost：svg_card 是独立挂载（无 stepper 布局），
@@ -2703,8 +2742,17 @@ defineExpose({
                   新增图元时，必须同步过净化器白名单，否则整块被剥；净化器不报错，
                   静默降级成空卡片。
                 -->
+                <!-- 🔀 A ���案（2026-07）：node_graph 优先、svg_card 降级。
+                     v-if / v-else-if 的顺序**就是优先级**（与 stores/agent.ts 的 `??` 左偏一致）。 -->
+                <AgentNodeGraph
+                  v-if="hasRenderableNodeGraph(msg)"
+                  class="mt-2"
+                  :body="{ nodes: msg.presentation.body?.graph_nodes ?? [], edges: msg.presentation.body?.graph_edges ?? [], title: msg.presentation.title }"
+                  :title="msg.presentation.title"
+                  @focus-node="onFocusNode($event)"
+                />
                 <AgentSvgCard
-                  v-if="hasRenderableSvgCard(msg)"
+                  v-else-if="hasRenderableSvgCard(msg)"
                   class="mt-2"
                   :svg="msg.presentation.body.svg"
                   :title="msg.presentation.title"
