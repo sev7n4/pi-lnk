@@ -159,8 +159,7 @@ ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `servic
 ### 重新生成索引（⛔ 不要手改 INDEX.md）
 
 `INDEX.md` 是 `scripts/docs/` 下两个脚本的产物（`gen_index.py` 扫盘判定状态 →
-`index_data.json` → `gen_index_md.py` 渲染 md）。**手改会在下次重跑时被静默抹掉**，
-且让索引与数据源脱节。
+`index_data.json` → `gen_index_md.py` 渲染 md）。**手改会让索引与数据源脱节**：其中没有对应文件的手写内容会在重跑时被静默抹掉，而文件仍在盘上的条目会被扫盘重新收回（只改归类与小节标题计数）。
 
 实测状态（`c5f722b4` 重跑前）：`index_data.json` 的 `total` 停在 283，而 `INDEX.md` 有 290 条条目 —— 两个数来自不同的东西。差集实测：`index_data − INDEX = 0`、`INDEX − index_data = 7`，即那 7 条只存在于 `INDEX.md`、不在数据源里；其中 3 条落在「Agent 交互与可见性」小节，该小节标题写 27、实际 29。真正的缺口是 11 份（6 份 plan + 5 份 spec）。注意 `302 − 283 = 19` 是拿陈旧 `total` 比今天的总数，不能当作缺口。这 7 个文件在盘上都存在，所以按上面两条命令完整重跑时它们会被扫盘重新收回，变的是主题归类与小节标题计数；只有单跑 `gen_index_md.py`（配陈旧 `index_data.json`）才会把它们抹掉。真正会被重跑抹掉的是没有对应文件的手写内容。
 
