@@ -1,6 +1,6 @@
 # docs 目录说明
 
-整理于 2026-10-03，2026-10-04 补提示词审计报告登记。
+整理于 2026-10-03，2026-10-04 补提示词审计报告登记，2026-10-07 更正 `superpowers/` 索引的维护方式（改为走生成器）。
 
 ## 根目录的两份提示词工程审计报告
 
@@ -71,7 +71,7 @@
 | `agent/` | **agent 规范专题文件**（2026-10-04 从 `AGENTS.md` 拆出）—— `delivery.md` 交付流程 / `architecture.md` 架构与内核 / `docs.md` 文档管理 / `environment.md` 本机环境。主文件 `../AGENTS.md` 保留「任何上下文都要看得见」的 5 节并给出导航。<br>另有**工具框架结论资产**：`tool-framework-audit.md`（诊断）/ `tool-framework-roadmap.html`（路线，§3 主线 A/B/C）/ `tool-capability-catalog.md`（**能力目录** = 主线 A 落地：47 工具 × 点名资产 × 归属 × 触发话术，含可重跑的扫描命令） | 活资产 —— 章节名受上方「外部引用契约」约束 |
 | `adr/` | **架构决策记录**（0001-0009 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
 | `workflow/` | Agent 工作流交换契约（`README.md` + `examples/*.json`） | **活跃资产** —— 外部 Agent（WorkBuddy / Codex 等）靠它生成可导入画布的 JSON。校验函数是 `@lnkpi/shared` 的 `validateWorkflow`，代码里由 `useWorkflowExchange.ts`、`compositionLint.ts` 等消费。**不要删。** |
-| `superpowers/` | 历史 spec 与 plan（**份数以实测为准**：`ls docs/superpowers/{specs,plans}/*.md \| wc -l`） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 + 状态（🟢living / 🔒frozen / ⛔superseded）分组。⚠️ 索引**纯手工维护**，其自述的生成脚本 `gen_index.py` / `gen_index_md.py` **在仓库里不存在**；新增文档须手工补主题分组 + 同步状态总览 |
+| `superpowers/` | 历史 spec 与 plan（**份数以实测为准**：`ls docs/superpowers/{specs,plans}/*.md \| wc -l`） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 + 状态（🟢living / 🔒frozen / ⛔superseded）分组。⚠️ 索引是**生成产物**，⛔ **禁止手改** —— 新增文档后跑 `python3 scripts/docs/gen_index.py > scripts/docs/index_data.json && python3 scripts/docs/gen_index_md.py`（见下节） |
 | `discussion/` | 讨论文档（第一资产） | 项目方向与决策来源 |
 | `ops/` | 部署 runbook | 生产运维 |
 
@@ -149,12 +149,26 @@ ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `servic
 
 - **份数不要写死在文档里**：specs 与 plans 的真实份数以
   `ls docs/superpowers/specs/*.md | wc -l` / `ls docs/superpowers/plans/*.md | wc -l` 实测为准。
-  ⚠️ 本文与 INDEX 曾长期写着过时的硬编码份数（283 / 286），且两处都宣称「索引可重跑」——
-  **那个生成脚本从不存在**（INDEX 文末「重新生成」一节已自我更正）。故改为不给绝对数。
-- 状态分布（living / frozen / superseded 分解）同样**手工维护**，统计基线 2026-10-04、
-  **新增文档未回填** ⇒ 勿作判据。
+  ⚠️ 本文与 INDEX 曾长期写着过时的硬编码份数（283 / 286）。**根因是索引被手改过** ——
+  手改的内容会在下一次重跑生成脚本时被抹掉。**根治办法是不手改、走生成器**（见下）。
+- 状态分布（living / frozen / superseded 分解）由生成器从 `scripts/docs/index_data.json` 读出，
+  **不要手工维护**，也不要拿旧快照当判据。
 - 判定优先读文档开头的 `状态：` 字段，其次按月份 + 主题推断。
-- **判定错了的修法**：改文档开头的状态字段，并手工同步 INDEX 的状态总览（没有脚本可重跑）。
+- **判定错了的修法**：改文档开头的状态字段，然后**重跑生成脚本**，不要手改 INDEX。
+
+### 重新生成索引（⛔ 不要手改 INDEX.md）
+
+`INDEX.md` 是 `scripts/docs/` 下两个脚本的产物（`gen_index.py` 扫盘判定状态 →
+`index_data.json` → `gen_index_md.py` 渲染 md）。**手改会在下次重跑时被静默抹掉**，
+且让索引与数据源脱节 —— 2026-10-06 就因此出现「INDEX 少 19 份文档」的漂移。
+
+```bash
+python3 scripts/docs/gen_index.py > scripts/docs/index_data.json   # 重新判定
+python3 scripts/docs/gen_index_md.py                               # 重新生成本文件
+```
+
+⚠️ 两条命令都从**仓库根**跑（脚本内部按自身位置回溯定位仓库根，与 cwd 无关）。
+纯新增文档的正常结果应是 **0 删除**；若出现删除，先查是不是有文档被误删。
 
 > 决策依据见 [ADR-0008](./adr/0008-docs-index-over-doc-edits.md)——
 > 为什么不批量改正文（文件量级 diff 失控），以及为什么不用"按月份删/归档"（丢决策追溯价值）。
