@@ -1,5 +1,6 @@
 import type { CanvasAction } from '@lnkpi/shared'
 import { formatStructuredError } from '@/components/agent/executionStepErrors'
+import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
 import {
   canvasActionLabel,
   formatDuration,
@@ -324,7 +325,7 @@ export function applyToolCall(
     startedAt: now,
     endedAt: result !== undefined ? now : undefined,
     ms: result !== undefined ? 0 : undefined,
-    meta: { toolName: name, toolCallId: meta?.toolCallId },
+    meta: { toolName: name, toolCallId: meta?.toolCallId, args: meta?.args },
     detail: result !== undefined ? summarizeToolResult(result) : undefined,
   })
 }
@@ -453,16 +454,26 @@ export function replayExecutionTraceEvents(
       case 'text_replace':
         applyTextReplaceStage(trace, String((event.data as { text?: string })?.text ?? ''))
         break
-      case 'tool_call':
-        applyToolCall(trace, String((event.data as { name?: string })?.name ?? 'tool'))
+      case 'tool_call': {
+        // ⚠️ 必须透传 toolCallId + args（2026-10-06 修）：落库事件两者都带
+        // （pi-events.ts tool_execution_start 映射），只取 name 会让刷新后
+        // 重放出的步骤丢参数摘要 ⇒ 标签从「创建节点 · 三国英雄照片」降级成「创建节点」，
+        // 且同名并发调用的 result 会靠 name 兜底错配。
+        const d = event.data as { name?: string; args?: unknown; toolCallId?: string }
+        const name = String(d.name ?? 'tool')
+        applyToolCall(trace, name, undefined, {
+          toolCallId: d.toolCallId,
+          args: summarizeToolArgs(name, d.args),
+        })
         break
+      }
       case 'tool_result': {
-        const d = event.data as { name?: string; result?: unknown; isError?: boolean }
+        const d = event.data as { name?: string; result?: unknown; isError?: boolean; toolCallId?: string }
         applyToolCall(
           trace,
           String(d.name ?? 'tool'),
           d.result,
-          { isError: d.isError === true },
+          { toolCallId: d.toolCallId, isError: d.isError === true },
         )
         break
       }

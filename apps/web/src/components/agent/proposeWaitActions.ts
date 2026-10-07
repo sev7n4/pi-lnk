@@ -55,3 +55,20 @@ export function resolveProposeConfirmCallId(
   const callId = typeof wait.callId === 'string' ? wait.callId.trim() : ''
   return callId ? callId : null
 }
+
+/**
+ * 取消的显式信号（2026-10-06，第二处事故修复）：返回本次 propose 等待的 callId，
+ * 供 `POST /answers { decision: "decline" }` 把「用户点了取消」变成**确定性事实**。
+ *
+ * 与 `resolveProposeConfirmCallId` 的唯一差别：不需要 nodeId（取消卡只挂当前等待，
+ * 不存在「属于别的节点」的歧义），因此等待未带 nodeId 时同样可用。
+ *
+ * 不接这根线的后果（生产实证）：取消只写 Nest SSOT（节点回 draft），runtime 靠
+ * 「连续两次读到 draft」推断 rejected —— 修误报时只得把文案中性化成「不要断定用户
+ * 已取消」，于是用户真按了取消，模型也不知道，还回「请你在画布节点上点一下确认」。
+ */
+export function resolveProposeCancelCallId(wait: ProposeWaitLike): string | null {
+  if (!wait || wait.toolName !== 'propose_generation') return null
+  const callId = typeof wait.callId === 'string' ? wait.callId.trim() : ''
+  return callId ? callId : null
+}

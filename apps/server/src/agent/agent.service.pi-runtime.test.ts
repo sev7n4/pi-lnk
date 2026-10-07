@@ -1340,6 +1340,36 @@ describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
     })
   })
 
+  it('answerPiPending：decision=decline 透传（propose 卡取消走显式拒绝）', async () => {
+    const svc = createService()
+    const answer = vi.fn(async () => ({ ok: true, deduped: false }))
+    stubPi(svc, 'http://pi-runtime', { answer })
+
+    const result = await svc.answerPiPending({
+      sessionId: 's1',
+      threadId: 'tid-1',
+      callId: 'c1',
+      answers: {},
+      decision: 'decline',
+    })
+    expect(result).toEqual({ ok: true, deduped: false })
+    expect(answer).toHaveBeenCalledWith('tid-1', {
+      callId: 'c1',
+      answers: {},
+      decision: 'decline',
+    })
+  })
+
+  it('answerPiPending：不传 decision 时 body 不含该键（老前端语义完全不变）', async () => {
+    const svc = createService()
+    const answer = vi.fn(async () => ({ ok: true, deduped: false }))
+    stubPi(svc, 'http://pi-runtime', { answer })
+
+    await svc.answerPiPending({ sessionId: 's1', callId: 'c1', answers: { q: ['a'] } })
+    const body = answer.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(body).not.toHaveProperty('decision')
+  })
+
   it('answerPiPending：无 threadId 回落 sessionId', async () => {
     const svc = createService()
     const answer = vi.fn(async () => ({ ok: true, deduped: true }))

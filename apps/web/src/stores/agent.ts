@@ -41,7 +41,6 @@ export interface AgentStreamMessage {
    * 仅 user 消息会带（助手消息的 entryId 无重跑语义）。
    */
   entryId?: string
-  toolCalls?: Array<{ name: string; result?: unknown; toolCallId?: string; argsSummary?: string }>
   streaming?: boolean
   textReplaceHistory?: string[]
   executionTrace?: ExecutionTraceState
@@ -186,7 +185,6 @@ export const useAgentStore = defineStore('agent', () => {
       id: `msg-${Date.now()}`,
       role: 'assistant',
       content: '',
-      toolCalls: [],
       streaming: true,
       textReplaceHistory: [],
       executionTrace: createExecutionTrace(),
@@ -203,7 +201,7 @@ export const useAgentStore = defineStore('agent', () => {
    * （Task 6）只恢复最后一张，落库侧同样没有多卡槽位。
    * 回归锁：`agent.setPresentation.test.ts` 的「同轮第二张卡覆盖第一张」。
    *
-   * 无 assistant 消息时静默忽略：与 `appendText` / `addToolCall` 同款兜底，
+   * 无 assistant 消息时静默忽略：与 `appendText` 同款兜底，
    * 避免事件竞态（流早于 startAssistantMessage 到达）打断整条流。
    */
   function setPresentation(presentation: AgentPresentationEnvelope) {
@@ -232,25 +230,9 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function addToolCall(name: string, result?: unknown) {
-    const last = lastAssistant()
-    if (last) {
-      last.toolCalls?.push({ name, result })
-      ensureExecutionTrace()
-      if (last.executionTrace) {
-        applyToolCall(last.executionTrace, name, result)
-      }
-    }
-  }
-
   function beginToolCall(call: { toolCallId?: string; name: string; args?: unknown }) {
     const last = lastAssistant()
     if (!last) return
-    last.toolCalls?.push({
-      name: call.name,
-      toolCallId: call.toolCallId,
-      argsSummary: summarizeToolArgs(call.name, call.args),
-    })
     ensureExecutionTrace()
     if (last.executionTrace) {
       applyToolCall(last.executionTrace, call.name, undefined, {
@@ -270,13 +252,6 @@ export const useAgentStore = defineStore('agent', () => {
     }
     const last = lastAssistant()
     if (!last) return
-    if (toolCallId) {
-      const entry = last.toolCalls?.find(
-        (tc) => tc.toolCallId === toolCallId && tc.result === undefined,
-      )
-      if (entry) entry.result = result
-      if (!entry) last.toolCalls?.push({ name, result, toolCallId })
-    }
     ensureExecutionTrace()
     if (last.executionTrace) {
       applyToolCall(last.executionTrace, name, result, { toolCallId, isError: isError === true })
@@ -537,7 +512,6 @@ export const useAgentStore = defineStore('agent', () => {
     setPresentation,
     appendText,
     replaceAssistantText,
-    addToolCall,
     beginToolCall,
     endToolCall,
     trackNodeStatus,

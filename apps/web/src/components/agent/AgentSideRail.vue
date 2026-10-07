@@ -42,63 +42,22 @@ import {
   pickAssistantForLatestUserTurn,
   shouldApplyReconciledAssistant,
 } from '@/components/agent/assistantReconcile'
-import ProductVisualDeliveryCard from '@/components/agent/ProductVisualDeliveryCard.vue'
 import AskUserCard from '@/components/agent/AskUserCard.vue'
-import ToolCallCard from '@/components/agent/ToolCallCard.vue'
-import { collapseToolCalls } from '@/components/agent/collapseToolCalls'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
 import AgentSvgCard from '@/components/agent/presentation/AgentSvgCard.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
-import AgentMacroSchemeCards from '@/components/agent/presentation/AgentMacroSchemeCards.vue'
 import { hasSchemeDraftSections, splitAssistantDraftMessage } from '@/components/agent/presentation/schemeDraftProse'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 import {
-  confirmAtomicGeneration as runConfirmAtomicGeneration,
-  detectAgentChipSet,
-  canvasHasRecipeParent,
-  resolveAtomicConfirmNodeId,
-  resolvePendingConfirmNodeId,
-} from '@/components/agent/agentChipSet'
-import {
+  resolveProposeCancelCallId,
   resolveProposeCancelNodeId,
   resolveProposeConfirmCallId,
 } from '@/components/agent/proposeWaitActions'
 import {
-  chipSetFromInterrupt,
-  interruptPayloadFromThreadState,
-  buildRetakeContinueMessage,
   isRunCancelledState,
-  isRetakePendingPhase,
-  resolveImageQaBodyText,
-  resolveImageQaChecks,
-  resolveImageQaOptions,
-  resolveImageQaTitle,
-  buildSchemeConfirmMessage,
-  buildMacroSchemeConfirmMessage,
-  buildMacroAbFooterHint,
-  buildVisualIntentSummary,
-  buildDeliveryConfirmMessage,
-  buildDeliveryRefineMessage,
-  buildDeliverySwitchMessage,
-  buildShotDeliveryConfirmMessage,
-  buildShotDeliverySwitchMessage,
-  defaultDeliverySelections,
-  defaultMacroSchemeSelection,
-  toggleMacroSchemeSelection,
-  defaultSchemeSelections,
-  defaultShotDeliverySelections,
-  selectableImageTypes,
   filterAssistantVisibleText,
   filterUserVisibleText,
-  buildClientDeliveryGroups,
-  resolveGatePrimaryActionLabel,
-  type AgentInterruptPayload,
-  type ImageQaMetrics,
-  type ProductVisualMacroScheme,
-  type ProductVisualPlan,
-  type ProductVisualShot,
 } from '@/components/agent/agentInterruptGate'
-import { phaseHintFromInterrupt } from '@/components/agent/executionStepLabels'
 import {
   buildIdempotencyKey,
   createAgentThreadId,
@@ -144,7 +103,6 @@ import {
   describeActivity,
   describeRuntimeActivity,
 } from '@/components/agent/activityLine'
-import { nextChips, type NextChipAction } from '@/components/agent/nextChips'
 import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
@@ -387,10 +345,15 @@ function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
   return hasBubbleContent(msg) || hasRenderableSvgCard(msg)
 }
 
+/**
+ * 方案草稿散文（有结构化小节时改用 AgentProseBlock 排版）。
+ * 2026-10-06：原「产品视觉 V2 开关 + 草稿小节」双条件随门控一起下线，
+ * 现在只按结构化小节判定 —— 与方案卡片无关，是纯排版选择。
+ */
 function shouldRenderSchemeDraftProse(msg: AgentStreamMessage): boolean {
   if (msg.role !== 'assistant' || msg.streaming) return false
   const { prose } = splitAssistantDraftMessage(msg.content ?? '')
-  return productVisualSchemeV2.value && hasSchemeDraftSections(prose)
+  return hasSchemeDraftSections(prose)
 }
 
 function canReuseTurn(msg: AgentStreamMessage): boolean {
@@ -660,12 +623,6 @@ const cancelledPresentation = ref<AgentPresentationEnvelope | null>(null)
 const cancelledProgressText = ref<string | null>(null)
 const reconnecting = ref(false)
 const recoveredPhaseHint = ref<string | null>(null)
-/** P0-06: authoritative gate from SSE interrupt or thread-state reconnect */
-const interruptGate = ref<AgentInterruptPayload | null>(null)
-/** LangGraph checkpoint: same thread can regenerate/variant on prior atomic node */
-const hasAtomicCheckpoint = ref(false)
-/** Phase 2c.3: thread-state atomicNodeId for dock-mapped atomic confirm */
-const atomicNodeId = ref<string | null>(null)
 
 const agentStream = useAgentStream({
   onStale: () => {
@@ -673,25 +630,9 @@ const agentStream = useAgentStream({
   },
 })
 
-/** 方案确认门 / 主文案确认门：侧栏快捷钮 */
 const lastAssistantMessage = computed(() =>
   [...agent.messages].reverse().find((m) => m.role === 'assistant'),
 )
-
-const chipSet = computed(() => {
-  // generation_propose chips 已下线（2026-10-01 决策）：propose 确认入口唯一 =
-  // 画布节点「生成」按钮（阻塞等待期由琥珀卡指引 + 定位/取消），聊天侧不再出确认卡。
-  const fromInterrupt = chipSetFromInterrupt(interruptGate.value)
-  if (fromInterrupt) return fromInterrupt
-
-  if (agent.isStreaming) return null
-  const last = lastAssistantMessage.value
-  // 修复 P1-4：把"最近用户消息"传入 detectAgentChipSet，避免 modify 阶段误显示 plan 按钮
-  const lastUser = [...agent.messages].reverse().find((m) => m.role === 'user')
-  return detectAgentChipSet(last?.content || '', {
-    latestUserText: lastUser?.content,
-  })
-})
 
 /* ---- P1 回合状态行：实时秒数 ticker + waiting 收口 + 失败态 ---- */
 const nowSec = ref(Date.now())
@@ -718,16 +659,12 @@ onUnmounted(() => {
 })
 
 const turnStatus = computed(() => {
-  // waiting 收紧：propose pending_confirm 一票通过；文本片段类 chip 需静默 ≥2s
-  // （detectAgentChipSet 基于 assistantText 片段匹配，流式途中即可能命中——假阳性防线）
   const waiting = resolveWaiting({
     isStreaming: agent.isStreaming,
     proposePendingConfirm: agent.proposePendingConfirm,
     // 阻塞等待一票通过：等待开始的信号由后端 waiting_user 事件下发
     // （tool_result 要等等待结束才到，靠它反推「等待中」在本语义下恒不成立）
     blockingWait: agent.blockingWait,
-    chipSet: chipSet.value,
-    textIdleMs: nowSec.value - agent.lastTextDeltaAt,
   })
   const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
   // 「正在做什么」：优先 runtime 下发的 activity（P1 决策 8）；当前轮没有则拿 trace 最新一步人话；
@@ -761,13 +698,36 @@ function locateProposeNode() {
 }
 
 /**
- * 琥珀卡取消（2026-10-01）：只拒绝该节点的生成提议（clear-propose → 节点回 draft，
- * runtime 轮询判 rejected → run 恢复继续对话）；绝不是中止整个 run —— 那是
+ * 琥珀卡取消（2026-10-01；2026-10-06 接显式 decline）：只拒绝该节点的生成提议
+ * （clear-propose → 节点回 draft，run 恢复继续对话）；绝不是中止整个 run —— 那是
  * composer「停止」的语义。等待期流式守卫刻意不设（与 locateProposeNode 一致）。
+ *
+ * 2026-10-06 加的这半根线（生产事故 cmus6ha64001dk601lzsymqfa 第二处）：取消此前**只**
+ * 写 Nest SSOT，工具侧靠 SSOT 时序推断「用户拒绝」；把文案中性化以后用户真按了取消，
+ * 模型反而不知道，回「请你在画布节点上点一下确认」。现在先显式 `decline`
+ * （registry → aborted ⇒ tool result reason=aborted），再清画布 SSOT；
+ * 前者失败不阻断后者（轮询兜底仍在，且画布状态必须收敛）。
  */
-function cancelBlockingPropose() {
+async function cancelBlockingPropose() {
   const nodeId = resolveProposeCancelNodeId(agent.blockingWait)
   if (!nodeId) return
+  const callId = resolveProposeCancelCallId(agent.blockingWait)
+  if (callId) {
+    try {
+      await submitAnswers(
+        {
+          threadId: agentThreadId.value,
+          sessionId: props.sessionId,
+          callId,
+          answers: {},
+          decision: 'decline',
+        },
+        answersPost,
+      )
+    } catch {
+      // 幂等端点：失败说明网络/鉴权异常，画布侧仍要收敛（轮询兜底会判 rejected）
+    }
+  }
   emit('clearProposeGeneration', nodeId)
 }
 
@@ -793,78 +753,6 @@ async function confirmProposeWait(nodeId: string): Promise<boolean> {
   }
 }
 
-/**
- * 下一步动作（决策 4）：唯一一处 chips 渲染源。
- * 白名单在 nextChips.ts，这里只负责喂输入 —— 未知 chipSet 直接产出空数组 = 不渲染任何按钮。
- */
-const dockChips = computed(() =>
-  nextChips({
-    chipSet: chipSet.value,
-    canPromoteVariant: canPromoteVariant.value,
-    qaOptions: awaitingImageQa.value
-      ? imageQaOptions.value.map((o) => ({ id: o.id, label: o.label, message: o.message }))
-      : null,
-  }),
-)
-function runNextChip(action: NextChipAction) {
-  switch (action.kind) {
-    case 'preset':
-      void sendPreset(action.text)
-      break
-    case 'confirm_atomic':
-      confirmAtomicChip()
-      break
-    case 'cancel_atomic':
-      cancelAtomicChip()
-      break
-    case 'scheme_confirm':
-      void sendSchemeConfirm()
-      break
-    case 'scheme_revise':
-      void sendSchemeRevisePreset()
-      break
-    case 'macro_confirm':
-      void sendMacroSchemeConfirm()
-      break
-    case 'macro_revise':
-      void sendMacroSchemeRevise()
-      break
-    case 'qa_option':
-      void sendPreset(action.message)
-      break
-    default:
-      break
-  }
-}
-
-const awaitingCopyConfirm = computed(() => chipSet.value === 'copy')
-const awaitingTopoConfirm = computed(() => chipSet.value === 'topo')
-const canPromoteVariant = computed(() => canvasHasRecipeParent(props.canvasNodes))
-const awaitingImageQa = computed(() => chipSet.value === 'image_qa' && !isRetakePending.value)
-const isRetakePending = computed(() =>
-  isRetakePendingPhase({
-    phase: interruptGate.value?.phase,
-    retakePending: retakePending.value,
-  }),
-)
-const imageQaTitle = computed(() => resolveImageQaTitle(gatePresentation.value))
-const imageQaBodyText = computed(() => resolveImageQaBodyText(gatePresentation.value))
-const imageQaChecks = computed(() => resolveImageQaChecks(gatePresentation.value))
-const imageQaOptions = computed(() => resolveImageQaOptions(gatePresentation.value))
-const showRetakeContinueChip = computed(
-  () => isRetakePending.value && pendingAttachmentItems.value.length > 0,
-)
-const retakeCalloutText = computed(() => {
-  const pres = gatePresentation.value
-  const body = String(pres?.body?.text ?? '').trim()
-  if (body) return body
-  const title = String(pres?.title ?? '').trim()
-  if (title) return title
-  return '请上传新照片，上传完成后点继续'
-})
-const retakeContinueLabel = computed(
-  () => gatePresentation.value?.secondary_actions?.[0]?.label ?? '继续',
-)
 const showCancelledCallout = computed(
   () => isRunCancelledState(threadRunState.value) || runCancelled.value,
 )
@@ -874,104 +762,11 @@ const cancelledCalloutText = computed(() => {
     (cancelledProgressText.value ?? '')
   return text || '当前任务已停止，你可以发起新任务或直接输入新的需求。'
 })
-const awaitingSchemeSelect = computed(() => chipSet.value === 'scheme_select')
-const awaitingMacroSchemeSelect = computed(() => chipSet.value === 'macro_scheme_select')
-const awaitingShotConfirm = computed(
-  () =>
-    interruptGate.value?.phase === 'await_shot_confirm' ||
-    interruptGate.value?.node === 'await_shot_confirm' ||
-    interruptGate.value?.phase === 'await_shot_topo_confirm' ||
-    interruptGate.value?.node === 'await_shot_topo_confirm',
-)
-const gatePresentation = computed(() => interruptGate.value?.presentation ?? null)
-const completionPresentation = ref<AgentPresentationEnvelope | null>(null)
-const showCompletionPresentation = computed(
-  () => completionPresentation.value?.kind === 'delivery_summary_table',
-)
-const macroFooterHint = computed(() => {
-  const fromPres = String(gatePresentation.value?.body?.footer_hint ?? '').trim()
-  if (fromPres) return fromPres
-  if (!awaitingMacroSchemeSelect.value || macroSelections.value.length < 2) return ''
-  const expectedCount = gatePresentation.value?.body?.expected_delivery_count ?? null
-  return buildMacroAbFooterHint(macroSelections.value.length, expectedCount)
-})
-const deliveryGroupsForUi = computed(() => {
-  const fromPres = gatePresentation.value?.body?.groups
-  if (fromPres?.length) return fromPres
-  if (!awaitingDeliveryConfirm.value || !productVisualSchemeV2.value) return []
-  return buildClientDeliveryGroups(
-    shotManifest.value,
-    deliveryGenByKey.value,
-    userRequestLabels.value,
-    deliverySelections.value,
-  )
-})
-const deliveryPresentationForUi = computed((): AgentPresentationEnvelope | null => {
-  if (!awaitingDeliveryConfirm.value) return null
-  if (gatePresentation.value?.kind === 'delivery_cards' && deliveryGroupsForUi.value.length) {
-    return {
-      ...gatePresentation.value,
-      body: {
-        ...gatePresentation.value.body,
-        groups: deliveryGroupsForUi.value,
-        footer_hint:
-          gatePresentation.value.body?.footer_hint
-          ?? (deliveryGroupsForUi.value.length
-            ? `确认后将交付 ${deliveryGroupsForUi.value.length} 张定稿图`
-            : undefined),
-      },
-    }
-  }
-  if (!productVisualSchemeV2.value || !deliveryGroupsForUi.value.length) return null
-  return {
-    kind: 'delivery_cards',
-    stepper: { current: 'delivery', completed: ['image_qa', 'scheme_draft', 'macro_select', 'generating'] },
-    body: {
-      hint: '按场景切换定稿图；切换候选不会重新生成。',
-      groups: deliveryGroupsForUi.value,
-      footer_hint: `确认后将交付 ${deliveryGroupsForUi.value.length} 张定稿图`,
-    },
-    primary_action: { label: '确认全部定稿', message: '确认全部定稿' },
-  }
-})
-const gatePrimaryActionLabel = computed(() =>
-  resolveGatePrimaryActionLabel(gatePresentation.value, interruptGate.value?.phase ?? null),
-)
-const showGatePresentation = computed(
-  () =>
-    Boolean(gatePresentation.value?.primary_action) &&
-    (awaitingShotConfirm.value || (awaitingTopoConfirm.value && !awaitingShotConfirm.value)),
-)
-const showDeliveryPresentation = computed(
-  () => awaitingDeliveryConfirm.value && Boolean(deliveryPresentationForUi.value),
-)
-/** 底部 dock 含门控/定稿卡片时，需限高以免挤占聊天滚动区 */
-const hasDockPresentation = computed(
-  () =>
-    showDeliveryPresentation.value
-    || showGatePresentation.value
-    || awaitingMacroSchemeSelect.value
-    || awaitingImageQa.value
-    || (awaitingSchemeSelect.value && Boolean(productVisualPlan.value))
-    || (awaitingDeliveryConfirm.value && Boolean(productVisualPlan.value) && !productVisualSchemeV2.value)
-    || awaitingShotConfirm.value
-    || (awaitingTopoConfirm.value && !awaitingShotConfirm.value)
-    || isRetakePending.value
-    || showCancelledCallout.value,
-)
-const awaitingDeliveryConfirm = computed(() => chipSet.value === 'delivery_confirm')
-const userRequestLabels = ref<string[]>([])
-const productVisualPlan = ref<ProductVisualPlan | null>(null)
-const macroSchemes = ref<ProductVisualMacroScheme[]>([])
-const macroSelections = ref<string[]>([])
-const shotManifest = ref<ProductVisualShot[]>([])
-const productVisualSchemeV2 = ref(false)
-const imageQaReason = ref<string | null>(null)
-const imageQaMetrics = ref<ImageQaMetrics | null>(null)
-const retakePending = ref(false)
-const effectiveUtterance = ref<string | null>(null)
-const schemeSelections = ref<Record<string, string[]>>({})
-const deliverySelections = ref<Record<string, string>>({})
+/**
+ * 底部 dock 含门控/定稿卡片时需限高以免挤占聊天滚动区。
+ * 2026-10-06：门控/定稿卡片全部下线，只剩「已停止」提示仍钉在这里。
+ */
+const hasDockPresentation = computed(() => showCancelledCallout.value)
 
 /** ask_user 阻塞卡（B-6）：生命周期绑定 pending 状态，不再随新 user message 清空（提交/取消才清）。
  * callId 是卡片级提交依据（Task 2 payload），同卡多问题共享同一 callId，逐元素携带便于恢复/拦截取用。 */
@@ -1047,65 +842,6 @@ async function onAskCancel() {
     ElMessage.error('提交失败，请重试')
   }
 }
-const deliveryGenByKey = ref<Record<string, { node_id?: string | null; url?: string | null; title?: string | null }>>({})
-const deliveryRefineDraft = ref<Record<string, string>>({})
-const schemeSelectTypes = computed(() => selectableImageTypes(productVisualPlan.value))
-const visualIntentSummary = computed(() => buildVisualIntentSummary(productVisualPlan.value))
-
-function syncSchemeSelectionsFromPlan(plan: ProductVisualPlan | null | undefined) {
-  productVisualPlan.value = plan ?? null
-  schemeSelections.value = defaultSchemeSelections(plan)
-}
-
-function syncMacroSchemes(schemes: ProductVisualMacroScheme[] | null | undefined) {
-  macroSchemes.value = schemes ?? []
-  macroSelections.value = defaultMacroSchemeSelection(schemes)
-}
-
-function syncShotManifest(shots: ProductVisualShot[] | null | undefined) {
-  shotManifest.value = shots ?? []
-}
-
-function toggleMacroSelection(schemeId: string, checked: boolean) {
-  macroSelections.value = toggleMacroSchemeSelection(
-    macroSelections.value,
-    schemeId,
-    checked,
-    macroSchemes.value,
-  )
-}
-
-async function sendMacroSchemeConfirm() {
-  const message = buildMacroSchemeConfirmMessage(macroSelections.value)
-  await sendMessage(message)
-}
-
-async function sendMacroSchemeRevise() {
-  await sendMessage('需要调整方案')
-}
-
-async function sendShotConfirm() {
-  const msg = gatePresentation.value?.primary_action?.message ?? '确认出图'
-  await sendPreset(msg)
-}
-
-async function onGatePrimaryAction(message: string) {
-  await sendPreset(message)
-}
-
-function syncCompletionPresentation(
-  phase: string | null | undefined,
-  presentation: AgentPresentationEnvelope | null | undefined,
-) {
-  if (phase === 'done' && presentation?.kind === 'delivery_summary_table') {
-    completionPresentation.value = presentation
-    return
-  }
-  if (phase !== 'done') {
-    completionPresentation.value = null
-  }
-}
-
 function historyPresentation(msg: AgentStreamMessage): AgentPresentationEnvelope | null {
   if (msg.role !== 'assistant' || msg.streaming || !msg.presentation) return null
   // svg_card 走独立挂载（紧邻本函数调用点的 AgentSvgCard），不进 Host 的 stepper 布局：
@@ -1120,104 +856,6 @@ function historyMacroSelectedIds(presentation: AgentPresentationEnvelope): strin
   if (recommended.length) return recommended
   const maxSelect = presentation.body?.max_select ?? 2
   return schemes.slice(0, maxSelect).map((s) => String(s.id))
-}
-
-function syncRetakeFromPayload(data: {
-  retakePending?: boolean | null
-  effectiveUtterance?: string | null
-  phase?: string | null
-  presentation?: AgentPresentationEnvelope | null
-} | null | undefined) {
-  if (!data) return
-  const wasRetake = retakePending.value
-  if (data.retakePending != null) {
-    retakePending.value = Boolean(data.retakePending)
-  } else if (isRetakePendingPhase({ phase: data.phase })) {
-    retakePending.value = true
-  } else if (data.phase != null && !isRetakePendingPhase({ phase: data.phase })) {
-    retakePending.value = false
-  }
-  if (data.effectiveUtterance != null) {
-    effectiveUtterance.value = data.effectiveUtterance
-  }
-  if (retakePending.value && !wasRetake) {
-    ElMessage.info(PRODUCT_VISUAL_GUIDANCE.retakeToast)
-  }
-}
-
-async function sendRetakeContinue() {
-  const utterance =
-    effectiveUtterance.value?.trim()
-    || gatePresentation.value?.secondary_actions?.[0]?.message?.trim()
-  if (!utterance) return
-  await sendMessage(buildRetakeContinueMessage(utterance))
-}
-
-async function sendShotRevise() {
-  await sendMessage('调整构图')
-}
-
-function syncDeliveryCheckpoint(
-  plan: ProductVisualPlan | null | undefined,
-  selections: Record<string, string> | null | undefined,
-  genByKey: Record<string, { node_id?: string | null; url?: string | null; title?: string | null }> | null | undefined,
-) {
-  if (plan) productVisualPlan.value = plan
-  const merged = productVisualSchemeV2.value && shotManifest.value.length
-    ? {
-        ...defaultShotDeliverySelections(shotManifest.value, genByKey),
-        ...(selections ?? {}),
-      }
-    : {
-        ...defaultDeliverySelections(plan ?? productVisualPlan.value, genByKey),
-        ...(selections ?? {}),
-      }
-  deliverySelections.value = merged
-  deliveryGenByKey.value = genByKey ?? deliveryGenByKey.value
-}
-
-function toggleSchemeSelection(typeId: string, schemeId: string, checked: boolean) {
-  const current = new Set(schemeSelections.value[typeId] ?? [])
-  if (checked) current.add(schemeId)
-  else current.delete(schemeId)
-  schemeSelections.value = { ...schemeSelections.value, [typeId]: [...current] }
-}
-
-async function sendSchemeConfirm() {
-  const message = buildSchemeConfirmMessage(schemeSelections.value)
-  await sendMessage(message)
-}
-
-async function sendSchemeRevisePreset() {
-  await sendMessage('需要调整方案')
-}
-
-async function sendDeliverySwitch(typeId: string, schemeId: string) {
-  deliverySelections.value = { ...deliverySelections.value, [typeId]: schemeId }
-  await sendMessage(buildDeliverySwitchMessage(typeId, schemeId))
-}
-
-async function sendDeliveryRefine(typeId: string, feedback: string) {
-  const schemeId = deliverySelections.value[typeId]
-  if (!schemeId) return
-  await sendMessage(buildDeliveryRefineMessage(typeId, schemeId, feedback))
-}
-
-async function sendDeliveryConfirmAll() {
-  await sendMessage(buildDeliveryConfirmMessage(deliverySelections.value))
-}
-
-async function onDeliveryPrimaryAction(_message: string) {
-  if (productVisualSchemeV2.value) {
-    await sendMessage(buildShotDeliveryConfirmMessage(deliverySelections.value))
-  } else {
-    await sendDeliveryConfirmAll()
-  }
-}
-
-async function sendDeliveryVariantSwitch(shotId: string, variantKey: string) {
-  deliverySelections.value = { ...deliverySelections.value, [shotId]: variantKey }
-  await sendMessage(buildShotDeliverySwitchMessage(shotId, variantKey))
 }
 
 const canSubmitComposer = computed(() =>
@@ -1440,15 +1078,10 @@ async function selectThread(threadId: string) {
   persistActiveThreadId(props.sessionId, threadId)
   historyOpen.value = false
   taskProgress.value = emptyTaskProgress()
-  interruptGate.value = null
   runCancelled.value = false
   threadRunState.value = null
   cancelledPresentation.value = null
   cancelledProgressText.value = null
-  hasAtomicCheckpoint.value = false
-  atomicNodeId.value = null
-  retakePending.value = false
-  effectiveUtterance.value = null
   recoveredPhaseHint.value = null
   await loadHistory()
   void refreshThreadCheckpoint()
@@ -1496,15 +1129,10 @@ watch(
   () => props.sessionId,
   () => {
     taskProgress.value = emptyTaskProgress()
-    interruptGate.value = null
     runCancelled.value = false
     threadRunState.value = null
     cancelledPresentation.value = null
     cancelledProgressText.value = null
-    hasAtomicCheckpoint.value = false
-    atomicNodeId.value = null
-    retakePending.value = false
-    effectiveUtterance.value = null
     recoveredPhaseHint.value = null
     void bootstrapThread()
   },
@@ -1604,15 +1232,10 @@ function newAgentSession() {
   clearComposer()
   agent.clear()
   taskProgress.value = emptyTaskProgress()
-  interruptGate.value = null
   runCancelled.value = false
   threadRunState.value = null
   cancelledPresentation.value = null
   cancelledProgressText.value = null
-  hasAtomicCheckpoint.value = false
-  atomicNodeId.value = null
-  retakePending.value = false
-  effectiveUtterance.value = null
   recoveredPhaseHint.value = null
   agentThreadId.value = createAgentThreadId(props.sessionId)
   persistActiveThreadId(props.sessionId, agentThreadId.value)
@@ -1646,6 +1269,15 @@ function syncCancelledFromThreadState(
   return cancelled
 }
 
+/**
+ * 重连时拉一次 thread-state（`GET /api/agent/thread-state`，Nest 侧 `getThreadState`
+ * **恒返 null** —— 老 LangGraph checkpoint 随 runtime 2026-09-27 退役一起消失）。
+ *
+ * 保留这次调用是刻意的：端点仍在（删掉会让前端 404），返回恒空 ⇒ 只可能同步
+ * 「运行已停止」这一项；原先把 `productVisualPlan` / `shotManifest` / `macroSchemes` /
+ * gate 相位等一堆 LangGraph 时代的门控状态从这里回灌的分支，已随门控 UI 一起删除
+ * （2026-10-06）。
+ */
 async function refreshThreadCheckpoint() {
   try {
     const token = localStorage.getItem('token')
@@ -1655,62 +1287,12 @@ async function refreshThreadCheckpoint() {
     )
     const json = (await res.json()) as {
       data?: {
-        hasAtomicCheckpoint?: boolean
-        atomicNodeId?: string | null
-        interrupted?: boolean
         phase?: string | null
         runCancelled?: boolean | null
-        productVisualPlan?: ProductVisualPlan | null
-        macroSchemes?: ProductVisualMacroScheme[] | null
-        shotManifest?: ProductVisualShot[] | null
-        visualIntent?: Record<string, unknown> | null
-        productVisualSchemeV2?: boolean | null
-        deliverySelections?: Record<string, string> | null
-        deliveryGenByKey?: Record<string, { node_id?: string | null; url?: string | null; title?: string | null }> | null
-        imageQaReason?: string | null
-        imageQaMetrics?: ImageQaMetrics | null
-        visionUsed?: boolean | null
-        userRequestLabels?: string[] | null
-        retakePending?: boolean | null
-        effectiveUtterance?: string | null
         presentation?: AgentPresentationEnvelope | null
-        selectedMacroSchemeIds?: string[] | null
-      }
-    }
-    hasAtomicCheckpoint.value = Boolean(json.data?.hasAtomicCheckpoint)
-    atomicNodeId.value = json.data?.atomicNodeId ? String(json.data.atomicNodeId) : null
-    imageQaReason.value = json.data?.imageQaReason ?? null
-    imageQaMetrics.value = json.data?.imageQaMetrics ?? null
-    syncRetakeFromPayload(json.data)
-    syncCompletionPresentation(json.data?.phase, json.data?.presentation)
-    if (json.data?.productVisualSchemeV2 != null) {
-      productVisualSchemeV2.value = Boolean(json.data.productVisualSchemeV2)
-    }
-    if (json.data?.macroSchemes) {
-      syncMacroSchemes(json.data.macroSchemes)
-    }
-    if (json.data?.selectedMacroSchemeIds?.length) {
-      macroSelections.value = [...json.data.selectedMacroSchemeIds]
-    }
-    if (json.data?.shotManifest) {
-      syncShotManifest(json.data.shotManifest)
-    }
-    if (json.data?.userRequestLabels) {
-      userRequestLabels.value = json.data.userRequestLabels
-    }
-    if (json.data?.productVisualPlan) {
-      syncSchemeSelectionsFromPlan(json.data.productVisualPlan)
-    }
-    if (json.data?.productVisualPlan || json.data?.deliverySelections || json.data?.deliveryGenByKey) {
-      syncDeliveryCheckpoint(
-        json.data?.productVisualPlan,
-        json.data?.deliverySelections,
-        json.data?.deliveryGenByKey,
-      )
+      } | null
     }
     syncCancelledFromThreadState(json.data)
-    // A cancelled run can still hold a pending gate; chips stay under the callout.
-    interruptGate.value = interruptPayloadFromThreadState(json.data)
   } catch {
     // ignore — checkpoint hint is best-effort
   }
@@ -1945,51 +1527,6 @@ function fillExampleUtterance(text: string) {
   nextTick(() => composerRef.value?.focus())
 }
 
-/** Phase 2c.3: unwind await_atomic_confirm without running atomic gen. */
-async function unwindAtomicInterrupt() {
-  interruptGate.value = null
-  // Fire-and-forget resume revise/cancel so LangGraph leaves the gate; dock owns billing gen.
-  void sendPreset('取消')
-}
-
-/** Phase 2c.3: atomic chip confirm → dock when node resolvable. */
-function confirmAtomicChip() {
-  if (agent.isStreaming) return
-  const nodeId = resolveAtomicConfirmNodeId({
-    canvasNodes: props.canvasNodes,
-    selectedNodeId: props.selectedNodeId,
-    atomicNodeId: atomicNodeId.value,
-    selectedNodeType: props.selectedNode?.type ?? null,
-  })
-  void runConfirmAtomicGeneration(nodeId, {
-    generateForNode: (id) => emit('generateNode', id),
-    sendPreset,
-    unwindAtomicInterrupt,
-  })
-}
-
-/** Phase 2c.3: atomic cancel — clear pending if any, else interrupt cancel. */
-function cancelAtomicChip() {
-  if (agent.isStreaming) return
-  const pendingId = resolvePendingConfirmNodeId(props.canvasNodes, props.selectedNodeId)
-  if (pendingId) {
-    emit('clearProposeGeneration', pendingId)
-    interruptGate.value = null
-    return
-  }
-  void sendPreset('取消')
-}
-
-async function sendPreset(text: string) {
-  if (agent.isStreaming || isUploading.value || !text.trim()) return
-  if (!auth.isLoggedIn) {
-    auth.openLogin()
-    return
-  }
-  input.value = ''
-  await sendMessage(text.trim())
-}
-
 async function startNewTask() {
   if (agent.isStreaming || isUploading.value) return
   await sendMessage('__new_task__')
@@ -2091,10 +1628,6 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
   // Track whether SSE stream ended normally (received [DONE])
   let streamEndedNormally = false
   recoveredPhaseHint.value = null
-  interruptGate.value = null
-  retakePending.value = false
-  effectiveUtterance.value = null
-  completionPresentation.value = null
   runCancelled.value = false
   threadRunState.value = null
   cancelledPresentation.value = null
@@ -2288,59 +1821,13 @@ async function reconnectStream() {
       data?: {
         phase?: string | null
         runCancelled?: boolean | null
-        interrupted?: boolean
         finished?: boolean
-        nextNodes?: string[]
-        hasAtomicCheckpoint?: boolean
-        atomicNodeId?: string | null
-        productVisualPlan?: ProductVisualPlan | null
-        macroSchemes?: ProductVisualMacroScheme[] | null
-        shotManifest?: ProductVisualShot[] | null
-        visualIntent?: Record<string, unknown> | null
-        productVisualSchemeV2?: boolean | null
-        deliverySelections?: Record<string, string> | null
-        deliveryGenByKey?: Record<string, { node_id?: string | null; url?: string | null; title?: string | null }> | null
-        userRequestLabels?: string[] | null
         presentation?: AgentPresentationEnvelope | null
-        selectedMacroSchemeIds?: string[] | null
       } | null
     }
-    const phase = json.data?.phase ?? null
-    syncCompletionPresentation(phase, json.data?.presentation)
-    hasAtomicCheckpoint.value = Boolean(json.data?.hasAtomicCheckpoint)
-    atomicNodeId.value = json.data?.atomicNodeId ? String(json.data.atomicNodeId) : null
-    if (json.data?.productVisualSchemeV2 != null) {
-      productVisualSchemeV2.value = Boolean(json.data.productVisualSchemeV2)
-    }
-    if (json.data?.macroSchemes) {
-      syncMacroSchemes(json.data.macroSchemes)
-    }
-    if (json.data?.selectedMacroSchemeIds?.length) {
-      macroSelections.value = [...json.data.selectedMacroSchemeIds]
-    }
-    if (json.data?.shotManifest) {
-      syncShotManifest(json.data.shotManifest)
-    }
-    if (json.data?.userRequestLabels) {
-      userRequestLabels.value = json.data.userRequestLabels
-    }
-    if (json.data?.productVisualPlan) {
-      syncSchemeSelectionsFromPlan(json.data.productVisualPlan)
-    }
-    if (json.data?.productVisualPlan || json.data?.deliverySelections || json.data?.deliveryGenByKey) {
-      syncDeliveryCheckpoint(
-        json.data?.productVisualPlan,
-        json.data?.deliverySelections,
-        json.data?.deliveryGenByKey,
-      )
-    }
+    // 2026-10-06：LangGraph 时代的门控回灌（gate 相位 / 方案 / 镜头 / 交付选型）已随
+    // 确认型卡片一起删除。thread-state 端点仍在但恒返 null，这里只同步「运行已停止」。
     const cancelled = syncCancelledFromThreadState(json.data)
-    interruptGate.value = interruptPayloadFromThreadState(json.data)
-
-    const hint = phaseHintFromInterrupt(interruptGate.value)
-    if (hint) {
-      agent.trackPhaseHint({ phase: interruptGate.value?.phase ?? undefined, label: hint })
-    }
 
     if (agent.isStreaming) {
       agent.finishStreaming()
@@ -2735,69 +2222,11 @@ function handleEvent(event: { type: string; data: unknown }) {
       }
       break
     }
-    case 'interrupt': {
-      const data = event.data as AgentInterruptPayload & {
-        imageQaReason?: string | null
-        imageQaMetrics?: ImageQaMetrics | null
-        visionUsed?: boolean | null
-        retakePending?: boolean | null
-        effectiveUtterance?: string | null
-        presentation?: AgentInterruptPayload['presentation']
-      }
-      interruptGate.value = {
-        interrupted: data.interrupted ?? true,
-        phase: data.phase ?? null,
-        node: data.node ?? null,
-        imageQaReason: data.imageQaReason ?? null,
-        imageQaMetrics: data.imageQaMetrics ?? null,
-        visionUsed: data.visionUsed ?? null,
-        retakePending: data.retakePending ?? null,
-        effectiveUtterance: data.effectiveUtterance ?? null,
-        presentation: data.presentation ?? null,
-      }
-      if (data.imageQaReason) imageQaReason.value = data.imageQaReason
-      if (data.imageQaMetrics) imageQaMetrics.value = data.imageQaMetrics
-      syncRetakeFromPayload(data)
-      if (
-        data.phase === 'await_image_qa' ||
-        data.node === 'await_image_qa' ||
-        data.phase === 'await_retake_upload' ||
-        data.retakePending ||
-        data.phase === 'await_scheme_select' ||
-        data.node === 'await_scheme_select' ||
-        data.phase === 'await_macro_scheme_select' ||
-        data.node === 'await_macro_scheme_select' ||
-        data.phase === 'await_shot_confirm' ||
-        data.node === 'await_shot_confirm' ||
-        data.phase === 'await_shot_topo_confirm' ||
-        data.node === 'await_shot_topo_confirm' ||
-        data.phase === 'await_delivery_confirm' ||
-        data.node === 'await_delivery_confirm'
-      ) {
-        void refreshThreadCheckpoint()
-      }
-      break
-    }
-    case 'done': {
-      const data = event.data as {
-        retakePending?: boolean
-        effectiveUtterance?: string | null
-        phase?: string | null
-        presentation?: AgentPresentationEnvelope | null
-      }
-      syncRetakeFromPayload(data)
-      syncCompletionPresentation(data.phase ?? null, data.presentation)
-      if (data.retakePending && data.presentation) {
-        interruptGate.value = {
-          interrupted: true,
-          phase: 'await_retake_upload',
-          retakePending: true,
-          effectiveUtterance: data.effectiveUtterance ?? null,
-          presentation: data.presentation,
-        }
-      }
-      break
-    }
+    // `interrupt` / `done` 两个门控事件已整段下线（2026-10-06）：
+    //   生产侧 —— 老 LangGraph runtime 于 2026-09-27 退役，runtime 与 Nest 都不再产出这两个事件；
+    //   消费侧 —— 它们当时唯一的用途是把确认卡片所需的门控状态（gate 相位 / chipSet /
+    //   retake / 方案与交付选型）回灌进侧栏，随卡片一起删除。
+    // 故此处不留 `case`：事件真出现也只是被忽略，不再制造任何 UI。
     case 'force_choice': {
       const kind = (event.data as { kind?: string }).kind
       if (kind === 'plan_max_revise' || kind === 'copy_max_revise' || kind === 'gen_partial') {
@@ -3248,13 +2677,14 @@ defineExpose({
                   :title="msg.presentation.title"
                   :annotations="msg.presentation.body.annotations"
                 />
-                <div v-if="msg.toolCalls?.length" class="agent-tools mt-1 space-y-0.5 pt-1">
-                  <ToolCallCard
-                    v-for="(cc, i) in collapseToolCalls(msg.toolCalls)"
-                    :key="i"
-                    :call="cc"
-                  />
-                </div>
+                <!--
+                  ⚠️ 工具调用不再在此平铺渲染（2026-10-06 下线 ToolCallCard）：
+                  msg.executionTrace 是执行过程的唯一 SSOT（含每条 tool 步 + 人话化文案，
+                  数据源与 toolCalls 同一批 SSE 事件）—— 此前两处同屏渲染造成
+                  「创建节点 / 处理中 / 提议生成」整组重复出现两遍（刷新后 loadHistory
+                  不恢复 toolCalls，所以只在活体会话可见）。活体流式期间由钉底 dense
+                  trace 承载（可展开），回落路径见 AgentExecutionTrace。
+                -->
                 <div
                   v-if="canShowMessageActions(msg) || canShowUserMessageActions(msg)"
                   class="agent-msg-actions"
@@ -3379,19 +2809,6 @@ defineExpose({
               :progress="taskProgress"
               @focus-node="onFocusNode($event)"
             />
-            <!-- 完成后交付摘要随聊天历史一起滚动，避免底部 dock 占满侧栏 -->
-            <div
-              v-if="showCompletionPresentation && completionPresentation"
-              class="px-3 pb-2"
-            >
-              <AgentPresentationHost
-                :presentation="completionPresentation"
-                :disabled="agent.isStreaming"
-                @focus-node="onFocusNode($event)"
-                @focus-all="onFocusAll($event)"
-                @export-pack="onExportPack($event)"
-              />
-            </div>
           </div>
             <!-- 回看历史时的回到底部入口：仅在未跟随底部时出现 -->
             <button
@@ -3453,267 +2870,18 @@ defineExpose({
                 发起新任务
               </button>
             </div>
-            <div v-else-if="isRetakePending" class="mb-2 px-0.5" data-testid="retake-pending-callout">
-              <p
-                class="mb-2 rounded-lg border border-[var(--neo-border)] bg-[var(--neo-panel)] px-2 py-1.5 text-xs leading-relaxed text-[var(--neo-text-secondary)]"
-              >
-                {{ retakeCalloutText }}
-              </p>
-              <button
-                v-if="showRetakeContinueChip"
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                data-testid="retake-continue-chip"
-                :disabled="agent.isStreaming"
-                @click="sendRetakeContinue()"
-              >
-                {{ retakeContinueLabel }}
-              </button>
-            </div>
-            <div v-else-if="awaitingImageQa" class="mb-2 px-0.5" data-testid="image-qa-gate">
-              <div
-                v-if="imageQaTitle || imageQaBodyText || imageQaChecks.length"
-                class="mb-2 rounded-lg border border-[var(--neo-border)] bg-[var(--neo-surface)] p-2 text-xs text-[var(--neo-text-secondary)]"
-              >
-                <p v-if="imageQaTitle" class="mb-1 font-medium leading-relaxed">
-                  {{ imageQaTitle }}
-                </p>
-                <p v-if="imageQaBodyText" class="mb-1.5 leading-relaxed">
-                  {{ imageQaBodyText }}
-                </p>
-                <ul v-if="imageQaChecks.length" class="space-y-0.5 text-[var(--neo-muted)]">
-                  <li v-for="(check, idx) in imageQaChecks" :key="idx">
-                    {{ check.label }}：{{ check.ok ? '✓ 通过' : '✗ 需处理' }}
-                  </li>
-                </ul>
-              </div>
-            </div>
-            <div v-else-if="awaitingMacroSchemeSelect && macroSchemes.length" class="mb-2 px-0.5">
-              <p
-                v-if="gatePresentation?.body?.callout"
-                class="mb-2 rounded-lg border border-[var(--neo-border)] bg-[var(--neo-panel)] px-2 py-1.5 text-xs text-[var(--neo-muted)]"
-                data-testid="macro-style-callout"
-              >
-                {{ gatePresentation.body.callout }}
-              </p>
-              <p
-                v-if="gatePresentation?.body?.callout_conflict"
-                class="mb-2 rounded-lg border border-[var(--neo-border)] bg-[var(--neo-panel)] px-2 py-1.5 text-xs text-[var(--neo-muted)]"
-                data-testid="macro-conflict-callout"
-              >
-                {{ gatePresentation.body.callout_conflict }}
-              </p>
-              <AgentMacroSchemeCards
-                :schemes="macroSchemes"
-                :selected-ids="macroSelections"
-                :disabled="agent.isStreaming"
-                @toggle="toggleMacroSelection"
-              />
-              <p
-                v-if="macroFooterHint"
-                class="mt-2 text-xs text-[var(--neo-muted)]"
-                data-testid="macro-footer-hint"
-              >
-                {{ macroFooterHint }}
-              </p>
-            </div>
-            <div v-else-if="awaitingSchemeSelect && productVisualPlan" class="mb-2 px-0.5">
-              <p v-if="visualIntentSummary" class="mb-2 text-xs text-[var(--neo-muted)]">
-                系统理解：{{ visualIntentSummary }}
-              </p>
-              <div class="space-y-2">
-                <div
-                  v-for="imageType in schemeSelectTypes"
-                  :key="imageType.type_id"
-                  class="rounded-lg border border-[var(--neo-border)] p-2"
-                >
-                  <div class="mb-1.5 text-xs font-medium">{{ imageType.type_label }}</div>
-                  <div class="flex flex-col gap-1.5">
-                    <label
-                      v-for="scheme in imageType.schemes"
-                      :key="scheme.scheme_id"
-                      class="flex cursor-pointer items-start gap-2 text-xs"
-                    >
-                      <input
-                        type="checkbox"
-                        class="mt-0.5"
-                        :checked="(schemeSelections[imageType.type_id] ?? []).includes(scheme.scheme_id)"
-                        :disabled="agent.isStreaming"
-                        @change="toggleSchemeSelection(imageType.type_id, scheme.scheme_id, ($event.target as HTMLInputElement).checked)"
-                      />
-                      <span>
-                        <span class="font-medium">{{ scheme.name || scheme.scheme_id }}</span>
-                        <span v-if="scheme.recommended" class="ml-1 text-[var(--neo-accent)]">推荐</span>
-                        <span class="mt-0.5 block text-[var(--neo-muted)]">{{ scheme.prompt.slice(0, 80) }}{{ scheme.prompt.length > 80 ? '…' : '' }}</span>
-                      </span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <ProductVisualDeliveryCard
-              v-else-if="awaitingDeliveryConfirm && productVisualPlan && !productVisualSchemeV2"
-              class="mb-2 px-0.5"
-              :plan="productVisualPlan"
-              :gen-by-key="deliveryGenByKey"
-              :selections="deliverySelections"
-              :request-labels="userRequestLabels"
-              :disabled="agent.isStreaming"
-              v-model:refine-draft="deliveryRefineDraft"
-              @switch-scheme="sendDeliverySwitch"
-              @refine-type="sendDeliveryRefine"
-              @confirm-all="sendDeliveryConfirmAll"
-            />
-            <div
-              v-else-if="showDeliveryPresentation && deliveryPresentationForUi"
-              class="mb-2"
-            >
-              <AgentPresentationHost
-                :presentation="deliveryPresentationForUi"
-                :delivery-selections="deliverySelections"
-                :disabled="agent.isStreaming"
-                @primary-action="onDeliveryPrimaryAction"
-                @delivery-switch="sendDeliveryVariantSwitch"
-                @focus-node="onFocusNode($event)"
-                @focus-all="onFocusAll($event)"
-              />
-            </div>
-            <div v-else-if="showGatePresentation && gatePresentation" class="mb-2">
-              <AgentPresentationHost
-                :presentation="gatePresentation"
-                :disabled="agent.isStreaming"
-                @primary-action="onGatePrimaryAction"
-                @focus-node="onFocusNode($event)"
-                @focus-all="onFocusAll($event)"
-              />
-              <div v-if="awaitingShotConfirm" class="mt-2 flex flex-wrap gap-2 px-0.5">
-                <div v-if="shotManifest.length" class="mb-1 w-full space-y-1 text-xs text-[var(--neo-muted)]">
-                  <div v-for="shot in shotManifest" :key="shot.shot_id">
-                    · {{ shot.label || shot.shot_id }}
-                    <span v-if="shot.macro_scheme_id">（方案{{ shot.macro_scheme_id }}）</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                  :disabled="agent.isStreaming"
-                  @click="sendShotRevise()"
-                >
-                  调整构图
-                </button>
-              </div>
-              <div
-                v-else-if="awaitingTopoConfirm && !awaitingShotConfirm"
-                class="mt-2 flex flex-wrap gap-2 px-0.5"
-              >
-                <button
-                  type="button"
-                  class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                  :disabled="agent.isStreaming"
-                  @click="sendPreset('写入主文案')"
-                >
-                  写入主文案
-                </button>
-                <button
-                  type="button"
-                  class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                  :disabled="agent.isStreaming"
-                  @click="sendPreset('要改拓扑：')"
-                >
-                  要改拓扑
-                </button>
-              </div>
-            </div>
-            <div v-else-if="awaitingShotConfirm" class="mb-2 px-0.5">
-              <div v-if="shotManifest.length" class="mb-2 space-y-1 text-xs text-[var(--neo-muted)]">
-                <div v-for="shot in shotManifest" :key="shot.shot_id">
-                  · {{ shot.label || shot.shot_id }}
-                  <span v-if="shot.macro_scheme_id">（方案{{ shot.macro_scheme_id }}）</span>
-                </div>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                  :disabled="agent.isStreaming"
-                  @click="sendShotConfirm()"
-                >
-                  {{ gatePrimaryActionLabel }}
-                </button>
-                <button
-                  type="button"
-                  class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                  :disabled="agent.isStreaming"
-                  @click="sendShotRevise()"
-                >
-                  调整构图
-                </button>
-              </div>
-            </div>
-            <div v-else-if="awaitingTopoConfirm && !awaitingShotConfirm" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                :disabled="agent.isStreaming"
-                @click="sendPreset(gatePresentation?.primary_action?.message ?? '确认出图')"
-              >
-                {{ gatePrimaryActionLabel }}
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('写入主文案')"
-              >
-                写入主文案
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('要改拓扑：')"
-              >
-                要改拓扑
-              </button>
-            </div>
-            <div v-else-if="awaitingCopyConfirm" class="mb-2 flex flex-wrap gap-2 px-0.5">
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('写入主文案')"
-              >
-                写入主文案
-              </button>
-              <button
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :disabled="agent.isStreaming"
-                @click="sendPreset('文案要修改：')"
-              >
-                要修改
-              </button>
-            </div>
-            <!-- 下一步动作（决策 4）：白名单单点定义，恒 ≤2；未知 chipSet 不渲染任何按钮 -->
-            <div v-if="dockChips.length" class="mb-2 flex flex-wrap gap-2 px-0.5" data-testid="next-chips">
-              <button
-                v-for="chip in dockChips"
-                :key="chip.key"
-                type="button"
-                class="neo-ctl rounded-lg px-3 py-1.5 text-xs"
-                :class="chip.primary ? 'agent-preset-primary font-medium' : ''"
-                :data-testid="chip.testId ?? `next-chip-${chip.key}`"
-                :disabled="agent.isStreaming || Boolean(chip.disabled)"
-                @click="runNextChip(chip.action)"
-              >
-                {{ chip.label }}
-              </button>
-            </div>
+            <!--
+              侧栏门控/确认卡已全量下线（2026-10-06 决策）：以下旧分支被删除 ——
+              retake 提示、图片质检门、宏观方案卡、方案多选卡、定稿交付卡、shot/topo/copy
+              确认行。判据是它们**没有任何生产者**：老 LangGraph runtime 2026-09-27 退役，
+              `GET /agent/thread-state` 恒返 null（agent.service.ts「checkpoint 随它一起消失」），
+              runtime/Nest 都不再发 `interrupt` / `done` 门控事件。
+              确认入口收敛为两处：**画布节点「生成」按钮**（propose 阻塞等待）与**直接输入文字**。
+            -->
             <div
               class="agent-input-dock"
               :class="{
                 'is-drop-target': isDragOver,
-                'is-retake-highlight': isRetakePending,
               }"
               @dragover.prevent="onDragOver"
               @dragleave.prevent="onDragLeave"
@@ -4608,13 +3776,6 @@ defineExpose({
   border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-border));
   background: var(--neo-hover-bg);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 18%, transparent);
-}
-
-.agent-input-dock.is-retake-highlight {
-  border-color: color-mix(in srgb, var(--neo-accent, #888) 55%, var(--neo-glass-border));
-  box-shadow:
-    0 20px 44px rgba(0, 0, 0, 0.42),
-    0 0 0 2px color-mix(in srgb, var(--neo-accent, #888) 28%, transparent);
 }
 
 .agent-prompt-field {

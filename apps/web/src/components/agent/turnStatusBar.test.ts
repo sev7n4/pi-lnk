@@ -37,24 +37,18 @@ describe('turnStatusLine（P1 状态行）', () => {
 })
 
 describe('resolveWaiting（P1 waiting 收紧）', () => {
-  it('propose pending_confirm 一票通过（即使文本仍在静默前）', () => {
-    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: true, chipSet: null, textIdleMs: 0 })).toBe(true)
+  it('propose pending_confirm 一票通过', () => {
+    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: true })).toBe(true)
   })
-  it('纯文本片段 chip 需文本静默 ≥2s（防流式途中假阳性）', () => {
-    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false, chipSet: 'copy', textIdleMs: 300 })).toBe(false)
-    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false, chipSet: 'copy', textIdleMs: 2500 })).toBe(true)
+  it('非流式恒 false；两个信号都缺席恒 false', () => {
+    expect(resolveWaiting({ isStreaming: false, proposePendingConfirm: true })).toBe(false)
+    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false })).toBe(false)
   })
-  it('非流式恒 false；无 chip 且无 propose 恒 false', () => {
-    expect(resolveWaiting({ isStreaming: false, proposePendingConfirm: true, chipSet: 'plan', textIdleMs: 9999 })).toBe(false)
-    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false, chipSet: null, textIdleMs: 9999 })).toBe(false)
-  })
-  it('阻塞等待一票通过：等待开始即收口，不等 tool_result / 文本静默（2026-10-01）', () => {
+  it('阻塞等待一票通过：等待开始即收口，不等 tool_result（2026-10-01）', () => {
     expect(
       resolveWaiting({
         isStreaming: true,
         proposePendingConfirm: false, // 阻塞模式下等待期恒 false —— 正是旧判据失效的场景
-        chipSet: null,
-        textIdleMs: 0,
         blockingWait: { toolName: 'propose_generation' },
       }),
     ).toBe(true)
@@ -62,8 +56,6 @@ describe('resolveWaiting（P1 waiting 收紧）', () => {
       resolveWaiting({
         isStreaming: true,
         proposePendingConfirm: false,
-        chipSet: null,
-        textIdleMs: 0,
         blockingWait: { toolName: 'ask_user' },
       }),
     ).toBe(true)
@@ -73,8 +65,6 @@ describe('resolveWaiting（P1 waiting 收紧）', () => {
       resolveWaiting({
         isStreaming: true,
         proposePendingConfirm: false,
-        chipSet: null,
-        textIdleMs: 0,
         blockingWait: null,
       }),
     ).toBe(false)
@@ -82,8 +72,6 @@ describe('resolveWaiting（P1 waiting 收紧）', () => {
       resolveWaiting({
         isStreaming: false,
         proposePendingConfirm: false,
-        chipSet: null,
-        textIdleMs: 9999,
         blockingWait: { toolName: 'propose_generation' },
       }),
     ).toBe(false)

@@ -221,3 +221,52 @@ test("非 HTTP 状态码文本不受影响（回归：原先的关键词判定�
 		assert.equal(classifyToolOutcome({ isError: true, terminate: false, resultText: text }).errorClass, expected);
 	}
 });
+
+// ============================================================================
+// 🔴 生产取证驱动的回归（2026-10-07）
+//
+// 生产实测（Observability Watchdog #5 失败窗口：68.66 次调用 / 8.16 个错误）：
+// `error_class` 侧 **100% 落 `internal`**，而同窗口 `tool_error_kinds_total`
+// 的增长为 **0** —— 两条通道对**同一批错误**给出相反结论。
+//
+// 逐环核实：这批错误全部来自熔断。`NestClient.checkCircuit` 抛出的文案是
+// `circuit open for <path>`，不含任何既有正则的关键词 ⇒ 必然兜底 `internal`；
+// 而触发熔断的真因（上游超时 / 5xx）在窗口内反而一个都看不见。
+//
+// 后果不是「分类不准」而是**告警失去归因**：只剩「错误率超阈」，
+// 分不清该查上游可用性（熔断/超时）还是查参数（业务错误）。
+// ============================================================================
+
+test("熔断文案归 circuit_open（不再落 internal 黑洞）", () => {
+	assert.equal(
+		classifyToolOutcome({
+			isError: true,
+			terminate: false,
+			resultText: "circuit open for /agent/internal/upsert-media-node",
+		}).errorClass,
+		"circuit_open",
+	);
+});
+
+test("熔断优先于 gate_blocked：path 内含 gate 时不得被抢走", () => {
+	// `check-generation-gate` 的 "gate" 会被 `\bgate\b` 命中 ⇒ 若熔断规则排在
+	// gate 之后，熔断会被误报成 gate_blocked（引导去查凭证/权限，实际该查上游可用性）。
+	assert.equal(
+		classifyToolOutcome({
+			isError: true,
+			terminate: false,
+			resultText: "circuit open for /agent/internal/check-generation-gate",
+		}).errorClass,
+		"circuit_open",
+	);
+});
+
+test("熔断归因不得泄漏 path 原文（label 基数红线）", () => {
+	const r = classifyToolOutcome({
+		isError: true,
+		terminate: false,
+		resultText: "circuit open for /agent/internal/secret-endpoint-xyz",
+	});
+	assert.equal(r.errorClass, "circuit_open");
+	assert.equal(JSON.stringify(r).includes("secret-endpoint-xyz"), false, "熔断路径泄漏了原文");
+});

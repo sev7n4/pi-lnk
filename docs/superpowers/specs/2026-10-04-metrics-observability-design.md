@@ -127,6 +127,8 @@ pi_runtime_tool_error_kinds_total{tool, kind}             counter（实现期新
 > `errorKind` 精确分类通道（Nest 侧返回的结构化分类，比事件层拿错误文本正则猜更准），
 > 单独成族以免与事件层的 `error_class` 混淆。
 > 已知：`ToolErrorKind` 的 `gate_blocked` / `retry` 两值目前**无写入方**。
+> `circuit_open` 于 2026-10-07 接入（`nest-client.ts` 的 `checkCircuit` 分支），
+> 与 `error_class` 侧的同类值同名同义。
 
 - `tool`：`tool_end.toolName`，39 个闭集
 - `result`：`ok` | `error` | `blocked`（三值，由`isError`/`terminate` 派生）
@@ -196,7 +198,7 @@ pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram 
 
 > `retry_scheduled` 不在 `SpecialEventPayload` 内（`agent-harness.ts:377`），属lane 事件，**可经 `harness.events.on` 订阅**。这意味着「重试次数 + 退避时长 + 错误原文」全部免费可得，无需新钩子。
 
-### 4.4 `error_class` 分类器（闭集 8 值）
+### 4.4 `error_class` 分类器（闭集 9 值）
 
 判定优先级，自上而下，首个命中即定：
 
@@ -204,12 +206,13 @@ pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram 
 |---|---|---|
 | 1 | `terminate === true` | `blocked_terminate` |
 | 2 | `result` 含 abort/ 取消 | `aborted` |
-| 3 | 含 429 / rate limit | `upstream_4xx` |
-| 4 | 含 5xx / upstream | `upstream_5xx` |
-| 5 | 含 timeout / 超时 | `timeout` |
-| 6 | 含 ECONNREFUSED / fetch 失败 | `network` |
-| 7 | 含 gate / HITL / 未授权 | `gate_blocked` |
-| 8 | 含 invalid / 参数校验 | `validation` |
+| 3 | 含 `circuit open`（本进程熔断） | `circuit_open` |
+| 4 | 含 `http 4xx` / 4xx / 429 / rate limit | `upstream_4xx` |
+| 5 | 含 5xx / upstream | `upstream_5xx` |
+| 6 | 含 timeout / 超时 | `timeout` |
+| 7 | 含 ECONNREFUSED / fetch 失败 | `network` |
+| 8 | 含 gate / HITL / 未授权 | `gate_blocked` |
+| 9 | 含 invalid / 参数校验 | `validation` |
 | 兜底 | 以上均不命中 | `internal` |
 
 **两条纪律**：
@@ -218,6 +221,17 @@ pi_runtime_llm_stage_duration_seconds{stage, channel, model}          histogram 
 2. **禁止把错误原文当 label** —— 39 工具 × 无限报错串 = 基数爆炸
 
 分类依据是自由文本正则，**必然有误判**。这是刻意的取舍：上游只给自由文本，没有结构化错误码；闭集枚举保证指标可用，误判率通过 `internal` 占比监控（若`internal` 占比异常升高，说明分类器需更新）。
+
+> **`circuit_open`（2026-10-07 增补）**：本值对应**本进程熔断** —— `NestClient.checkCircuit`
+> 在断路器开路期间直接抛出 `circuit open for <path>`，请求根本没出网。
+>
+> 为什么必须单列（生产取证）：2026-10-07 的 Watchdog 失败窗口（68.66 次调用 / 8.16 个错误）里，
+> 这类错误**100% 落 `internal`**（文案不含任何既有正则的关键词），而同窗口
+> `pi_runtime_tool_error_kinds_total` 的增长为 **0**（`checkCircuit` 的 catch 不传 `errorKind`）
+> ⇒ 两条通道对同一批错误给出相反结论，告警只剩「错误率超阈」，分不清该查上游可用性还是参数。
+>
+> ⚠️ 规则必须排在 `gate_blocked` **之前**：该文案后面紧跟一条工具路径，而路径片段可能含 `gate`
+> （如 `/agent/internal/check-generation-gate`），实测会被 `\bgate\b` 抢成 `gate_blocked`。
 
 ## 5. apps/server 指标契约（从零新建）
 

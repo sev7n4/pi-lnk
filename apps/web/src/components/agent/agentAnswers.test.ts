@@ -56,4 +56,18 @@ describe('submitAnswers', () => {
     }))
     expect(result).toEqual({ ok: true, deduped: true })
   })
+
+  it('decision=decline → payload 带 decision（2026-10-06 propose 卡取消走显式拒绝）', async () => {
+    const { calls, post } = postOk()
+    await submitAnswers({ ...base, answers: {}, decision: 'decline' }, post)
+    const body = JSON.parse(calls[0].init.body)
+    expect(body.decision).toBe('decline')
+    expect(body.answers).toEqual({})
+  })
+
+  it('缺省 decision → payload 不含该键（老调用方语义与既有断言都不变）', async () => {
+    const { calls, post } = postOk()
+    await submitAnswers(base, post)
+    expect(JSON.parse(calls[0].init.body)).not.toHaveProperty('decision')
+  })
 })
