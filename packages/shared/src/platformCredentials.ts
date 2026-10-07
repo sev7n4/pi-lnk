@@ -4,6 +4,7 @@ import { resolveModelKey } from './studioModelCatalog'
 export const DEFAULT_APIMART_BASE_URL = 'https://api.apimart.ai/v1'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_MINIMAX_BASE_URL = 'https://api.minimax.io'
+export const DEFAULT_STEPFUN_BASE_URL = 'https://api.stepfun.com/v1'
 
 export type PlatformCredentialEnv = {
   apimartApiKey?: string
@@ -14,6 +15,8 @@ export type PlatformCredentialEnv = {
   openaiBaseUrl?: string
   minimaxApiKey?: string
   minimaxBaseUrl?: string
+  stepfunApiKey?: string
+  stepfunBaseUrl?: string
 }
 
 function readEnv(name: string): string | undefined {
@@ -40,6 +43,9 @@ export function readPlatformCredentialEnv(
     minimaxApiKey: env.minimaxApiKey ?? readEnv('MINIMAX_API_KEY') ?? '',
     minimaxBaseUrl:
       env.minimaxBaseUrl ?? readEnv('MINIMAX_BASE_URL') ?? DEFAULT_MINIMAX_BASE_URL,
+    stepfunApiKey: env.stepfunApiKey ?? readEnv('STEPFUN_API_KEY') ?? '',
+    stepfunBaseUrl:
+      env.stepfunBaseUrl ?? readEnv('STEPFUN_BASE_URL') ?? DEFAULT_STEPFUN_BASE_URL,
   }
 }
 
@@ -107,5 +113,30 @@ export function resolvePlatformImageProviderOpts(
   return {
     apiKey: vars.openaiApiKey,
     baseUrl: vars.openaiBaseUrl,
+  }
+}
+
+/**
+ * 阶跃星辰（StepFun）平台模型判别。
+ * 覆盖 `step-tts-*` / `stepaudio-*` 两个命名族；与 `/h3-max/i`、`/^minimax-h3$/i` 无交集。
+ */
+export function isStepFunPlatformModel(modelName: string): boolean {
+  return /^step/i.test(modelName.trim())
+}
+
+/**
+ * ⚠️ 匹配即返回，**绝不因缺 key 返回 null**：
+ * 返回 null 会让 `provider-resolver` 落回 `OPENAI_BASE_URL`，把阶跃模型名静默发到 OpenAI
+ * （典型静默错路由）。缺 key 的显式失败由调用方（apps/server 音频路径）负责。
+ */
+export function resolveStepFunPlatformCredentials(
+  modelName: string,
+  env?: PlatformCredentialEnv,
+): { apiKey: string; baseUrl: string } | null {
+  if (!isStepFunPlatformModel(modelName)) return null
+  const vars = readPlatformCredentialEnv(env)
+  return {
+    apiKey: vars.stepfunApiKey,
+    baseUrl: vars.stepfunBaseUrl || DEFAULT_STEPFUN_BASE_URL,
   }
 }

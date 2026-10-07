@@ -139,7 +139,7 @@ describe('AgentCanvasToolsService', () => {
         selectableImageModels: ['platform::seedream-5.0-pro', 'ch_byok_1::custom-image'],
         selectableVideoModels: ['platform::agnes-video-v2.0'],
         selectableTextModels: ['platform::agnes-2.0-flash'],
-        selectableAudioModels: ['platform::minimax-speech-2.8-hd'],
+        selectableAudioModels: ['platform::minimax-speech-2.8-hd', 'platform::stepaudio-3-music-preview'],
       },
     })
     sliceImage.mockResolvedValue({
@@ -745,6 +745,147 @@ describe('AgentCanvasToolsService', () => {
     expect(result.status).toBe('completed')
     expect(result.url).toBe('https://cdn.example/audio.mp3')
     expect(canvas.nodes[0].data.url).toBe('https://cdn.example/audio.mp3')
+  })
+
+  it('🔴 runAudioGeneration: music 异步分支 ⇒ 返回 timeout + 节点写 generating，不带 url', async () => {
+    // B1：`studio.generateAudio` 的 music 分支是异步的（submit+轮询，官方 1–3 分钟），
+    // 立即返回 `status:'generating'` 且 url 未设。agent 侧曾无条件写 `completed` +
+    // `url: undefined` 并返回 completed ⇒ 模型对用户说「已生成完成」，而上游还在跑、
+    // 甚至终态 FAILED 已退款（wrong-but-successful result）。
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-music',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: { prompt: '给这条分镜配 BGM', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    generateAudio.mockResolvedValueOnce({
+      id: 'gen-music-1',
+      status: 'generating',
+      // 终态 url 由 studio 的 completeMusic 事后落库并写回；此刻**没有** url。
+    })
+
+    const result = await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-music',
+      kind: 'music',
+    })
+
+    // ① 返回值映射为既有枚举 timeout（规则 12：如实说未完成，可再查生成状态）
+    expect(result.status).toBe('timeout')
+    // ② 绝不能谎报完成
+    expect(result.status).not.toBe('completed')
+    expect(result.url).toBeUndefined()
+    // ③ 节点停在 generating，且**没有** url 字段（前端会拿它当「已完成」渲染）
+    expect(canvas.nodes[0].data.status).toBe('generating')
+    expect(canvas.nodes[0].data).not.toHaveProperty('url')
+    // ④ 记录 id 必须落进节点，模型才能「再查生成状态」
+    expect(canvas.nodes[0].data.generationRecordId).toBe('gen-music-1')
+  })
+
+  it('runAudioGeneration: design 同步分支仍返回 completed（异步分流不误伤 design）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-design',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: { prompt: '给这段文案配综合音频', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    generateAudio.mockResolvedValueOnce({
+      id: 'gen-design-1',
+      status: 'completed',
+      url: 'https://cdn.example/design.mp3',
+    })
+
+    const result = await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-design',
+      kind: 'design',
+    })
+
+    expect(result.status).toBe('completed')
+    expect(result.url).toBe('https://cdn.example/design.mp3')
+    expect(canvas.nodes[0].data.status).toBe('completed')
+  })
+
+  it('runAudioGeneration 把工具内联的 kind 与分类参数透传给 studio（内联优先于节点值）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-2',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          // 节点上已有 voice/emotion：内联给了就必须盖掉节点值
+          data: {
+            prompt: '给这条分镜配 BGM',
+            status: 'draft',
+            audioVoice: 'node-voice',
+            audioEmotion: 'node-emotion',
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-2',
+      kind: 'music',
+      voice: 'inline-voice',
+      emotion: 'inline-emotion',
+      roles: [{ role: '旁白', voice: 'v1' }],
+      scripts: [{ role: '旁白', text: '开场' }],
+      instruction: '克制一些',
+      caption: '紧张感的弦乐',
+      lyrics: '歌词',
+      instrumental: true,
+    })
+    const options = generateAudio.mock.calls.at(-1)![2] as Record<string, unknown>
+    expect(options.kind).toBe('music')
+    expect(options.voice).toBe('inline-voice')
+    expect(options.emotion).toBe('inline-emotion')
+    expect(options.roles).toEqual([{ role: '旁白', voice: 'v1' }])
+    expect(options.scripts).toEqual([{ role: '旁白', text: '开场' }])
+    expect(options.instruction).toBe('克制一些')
+    expect(options.caption).toBe('紧张感的弦乐')
+    expect(options.lyrics).toBe('歌词')
+    expect(options.instrumental).toBe(true)
+  })
+
+  it('runAudioGeneration 不传内联参数时沿用节点 audioVoice/audioEmotion（存量取值不变）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-3',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '给这段文案配旁白',
+            status: 'draft',
+            audioVoice: 'node-voice',
+            audioEmotion: 'node-emotion',
+          },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runAudioGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'aud-3' })
+    const options = generateAudio.mock.calls.at(-1)![2] as Record<string, unknown>
+    expect(options.voice).toBe('node-voice')
+    expect(options.emotion).toBe('node-emotion')
+    expect(options.kind).toBeUndefined()
+    expect(options.caption).toBeUndefined()
+    expect(options.instrumental).toBeUndefined()
   })
 
   it('startImageGeneration passes node.data.mentionedKeys to studio', async () => {
@@ -2639,6 +2780,20 @@ describe('AgentCanvasToolsService', () => {
     it('Review Focus 1：缺 userId → BadRequestException（fail-closed，不打 provider）', async () => {
       await expect(svc.listNodeModelOptions({ userId: '' })).rejects.toBeInstanceOf(BadRequestException)
       expect(providerBootstrap).not.toHaveBeenCalled()
+    })
+
+    it('list_model_options 的 audio 条目带 audioKind（agent 才能自主选分类）', async () => {
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      const audio = out.modalities.audio
+      const music = audio.find((m) => m.model === 'stepaudio-3-music-preview')
+      expect(music?.audioKind).toBe('music')
+      const voice = audio.find((m) => m.model === 'minimax-speech-2.8-hd')
+      expect(voice?.audioKind).toBe('voice')
+    })
+
+    it('非 audio 模态不带 audioKind 字段', async () => {
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      expect(out.modalities.image.every((m) => !('audioKind' in m))).toBe(true)
     })
   })
 

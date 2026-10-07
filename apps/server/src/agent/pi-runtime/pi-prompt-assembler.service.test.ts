@@ -196,8 +196,12 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 		expect(prompt.includes("12. run_* 返回 timeout")).toBe(true);
 		expect(prompt.includes("fallback_pending")).toBe(true);
 		expect(prompt.includes("cancel_generation")).toBe(true);
-		// U8 TTS 边界（2026-10-06）：规则 23 随 genTools 注入
-		expect(prompt.includes("23. run_audio_generation 只做配音/朗读")).toBe(true);
+		// 音频三分类（2026-10-07）：规则 23 随 genTools 注入，按 kind 描述三类能力
+		expect(prompt.includes("23. run_audio_generation 按 kind 分三类")).toBe(true);
+		expect(prompt.includes("design 多角色台词+音效")).toBe(true);
+		expect(prompt.includes("music 配乐/BGM")).toBe(true);
+		// 旧文案「只做配音/朗读，不做 BGM/音效/配乐」必须已消失（能力已统一，不得残留否定声明）
+		expect(prompt.includes("不做 BGM/音效/配乐")).toBe(false);
 		// 规则 4/5（writeTools）与第 10 条守卫（writeTools 已启用 → 退出）不受影响
 		expect(prompt.includes("口语搭骨架")).toBe(true);
 		expect(prompt.includes("写操作尚未开放")).toBe(false);
@@ -429,13 +433,13 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * 长度基线。**改动规则正文后必须同步更新这张表**——这是本测试存在的意义：
 	 * 让「规则正文被改了但基线没更新」变成红灯，而不是静默放过。
 	 *
-	 * 数字来源（2026-10-06 用 `npx tsx` 在本 worktree 上实测，不是推算）。
+	 * 数字来源（2026-10-07 用 `npx tsx` 在本 worktree 上实测，不是推算）。
 	 * 相对 #215 合并点的逐组增量（`renderStaticFallback` 逐组合实跑）：
 	 * - core：693 → 693（Δ=0，未动 core 段）
-	 * - core+genTools：1132 → 1113（**Δ=−19**，`gen_tool_policy` 规则 12 删工具名「可 get_generation_status 再查」→「可再查生成状态」）
-	 * - core+writeTools：2756 → 2622（**Δ=−134**，`canvas_daily_ops` 规则 20/21 删 7 个读工具名、改写为能力描述 + tool_search 指引）
-	 * - 全组合：3195 → 3042（**Δ=−153**）
-	 * ⇒ 余量 3200 − 3042 = **158（大幅缓解 #208 以来的贴线状态）**
+	 * - core+genTools：1132 → 1148（`gen_tool_policy` 规则 12 删工具名「可 get_generation_status 再查」→「可再查生成状态」Δ=−19；规则 23 改写按 kind 描述三分类 Δ=+35）
+	 * - core+writeTools：2756 → 2656（**Δ=−100**，`canvas_daily_ops` 规则 20/21 删 7 个读工具名、改写为能力描述 + tool_search 指引）
+	 * - 全组合：3195 → 3111（**Δ=−84**）
+	 * ⇒ 余量 3200 − 3111 = **89**（较 #208 以来的贴线状态仍有余，但已不宽裕）
 	 * 同一笔改动把读类诊断 9 工具下沉延迟集（tiering.ts），点名撤除是下沉前提——见该文件头注释。
 	 *
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
@@ -445,8 +449,8 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	const BASELINE: Record<string, number> = {
 		core: 693,
 		"core+writeTools": 2656,
-		"core+genTools": 1113,
-		"core+writeTools+genTools": 3076,
+		"core+genTools": 1148,
+		"core+writeTools+genTools": 3111,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -456,9 +460,11 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 预算余量可见：全组合距硬线还剩多少（spec §L6 门禁数字的单一事实源）
 		// 2026-10-06 减点名第一批：规则 20/21/12 删读工具名改能力描述，3195→3042（余量 5→158，贴线状态解除）。
 		// 2026-10-06 规则 22 压「叙述代替调用」失败形态（分级下发实验残余 ~10-20%）：+34 字符，3042→3076（余量 158→124）。
+		// 2026-10-07 规则 23 按 kind 描述音频三分类（voice/design/music，音频节点统一能力）：
+		// +35 字符（62→97），3076→3111（余量 124→89）。core / core+writeTools 两组合未受影响。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(124);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(89);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { supportsVisionTextModel, upstreamChatModel } from '@lnkpi/agent'
-import type { GenerationType } from '@lnkpi/shared'
+import type { AudioKind, GenerationType } from '@lnkpi/shared'
 import { decodeChannelModel, modelOptionName } from '@lnkpi/shared'
 import { type StudioModality } from '@/constants/studioModels'
+import { audioKindOfModelValue } from '@/constants/dockAudio'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
@@ -25,6 +26,13 @@ const props = withDefaults(
     modality?: StudioModality
     /** ghost：无边框，hover 才高亮（Agent / 单层 dock） */
     ghost?: boolean
+    /**
+     * 只对 audio 生效：按二阶分类过滤候选模型。缺省不过滤 ⇒ 存量调用零变化。
+     *
+     * 🔴 这不是锦上添花而是防错：服务端 `assertAudioKindMatchesModel` 对
+     * 「声明 music 却拿着 TTS 模型」显式 400，所以选了分类后下拉不能列出别的分类。
+     */
+    audioKind?: AudioKind
   }>(),
   { ghost: false },
 )
@@ -48,8 +56,22 @@ function selectableForModality(modality: StudioModality): string[] {
   if (!prefs) return []
   if (modality === 'image') return prefs.selectableImageModels
   if (modality === 'video') return prefs.selectableVideoModels
-  if (modality === 'audio') return prefs.selectableAudioModels
+  if (modality === 'audio') return filterAudioByKind(prefs.selectableAudioModels)
   return prefs.selectableTextModels
+}
+
+/**
+ * 只在 `audioKind` 给了的时候过滤（存量调用零变化）。
+ *
+ * 判定走共享的 `audioKindOfModelValue`（与服务端 `assertAudioKindMatchesModel` 同源：
+ * 目录外模型按缺省 voice），所以下拉里能选到的组合一定不撞 400。
+ * 刻意不用「`modelsForAudioKind` 的 modelKey 白名单」那种写法：那会把 BYOK
+ * 音频模型从配音下拉里一起抹掉。
+ */
+function filterAudioByKind(ids: string[]): string[] {
+  const kind = props.audioKind
+  if (!kind) return ids
+  return ids.filter((id) => audioKindOfModelValue(id) === kind)
 }
 
 function channelNameForValue(value: string): string {

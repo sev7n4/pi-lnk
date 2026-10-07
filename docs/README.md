@@ -1,6 +1,6 @@
 # docs 目录说明
 
-整理于 2026-10-03，2026-10-04 补提示词审计报告登记。
+整理于 2026-10-03，2026-10-04 补提示词审计报告登记，2026-10-07 更正 `superpowers/` 索引的维护方式（改为走生成器）。
 
 ## 根目录的两份提示词工程审计报告
 
@@ -71,7 +71,7 @@
 | `agent/` | **agent 规范专题文件**（2026-10-04 从 `AGENTS.md` 拆出）—— `delivery.md` 交付流程 / `architecture.md` 架构与内核 / `docs.md` 文档管理 / `environment.md` 本机环境。主文件 `../AGENTS.md` 保留「任何上下文都要看得见」的 5 节并给出导航。<br>另有**工具框架结论资产**：`tool-framework-audit.md`（诊断）/ `tool-framework-roadmap.html`（路线，§3 主线 A/B/C）/ `tool-capability-catalog.md`（**能力目录** = 主线 A 落地：47 工具 × 点名资产 × 归属 × 触发话术，含可重跑的扫描命令） | 活资产 —— 章节名受上方「外部引用契约」约束 |
 | `adr/` | **架构决策记录**（0001-0009 + 模板）—— 回答"为什么这么定"。Accepted 后不删不改，被取代标Superseded。说明见 `adr/README.md` |
 | `workflow/` | Agent 工作流交换契约（`README.md` + `examples/*.json`） | **活跃资产** —— 外部 Agent（WorkBuddy / Codex 等）靠它生成可导入画布的 JSON。校验函数是 `@lnkpi/shared` 的 `validateWorkflow`，代码里由 `useWorkflowExchange.ts`、`compositionLint.ts` 等消费。**不要删。** |
-| `superpowers/` | 历史 spec 与 plan（**份数以实测为准**：`ls docs/superpowers/{specs,plans}/*.md \| wc -l`） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 + 状态（🟢living / 🔒frozen / ⛔superseded）分组。⚠️ 索引**纯手工维护**，其自述的生成脚本 `gen_index.py` / `gen_index_md.py` **在仓库里不存在**；新增文档须手工补主题分组 + 同步状态总览 |
+| `superpowers/` | 历史 spec 与 plan（**份数以实测为准**：`ls docs/superpowers/{specs,plans}/*.md \| wc -l`） | **从 [`superpowers/INDEX.md`](./superpowers/INDEX.md) 进** —— 按主题 + 状态（🟢living / 🔒frozen / ⛔superseded）分组。⚠️ 索引是**生成产物**，⛔ **禁止手改** —— 新增文档后跑 `python3 scripts/docs/gen_index.py > scripts/docs/index_data.json && python3 scripts/docs/gen_index_md.py`（见下节） |
 | `discussion/` | 讨论文档（第一资产） | 项目方向与决策来源 |
 | `ops/` | 部署 runbook | 生产运维 |
 
@@ -149,12 +149,48 @@ ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `servic
 
 - **份数不要写死在文档里**：specs 与 plans 的真实份数以
   `ls docs/superpowers/specs/*.md | wc -l` / `ls docs/superpowers/plans/*.md | wc -l` 实测为准。
-  ⚠️ 本文与 INDEX 曾长期写着过时的硬编码份数（283 / 286），且两处都宣称「索引可重跑」——
-  **那个生成脚本从不存在**（INDEX 文末「重新生成」一节已自我更正）。故改为不给绝对数。
-- 状态分布（living / frozen / superseded 分解）同样**手工维护**，统计基线 2026-10-04、
-  **新增文档未回填** ⇒ 勿作判据。
+  ⚠️ 本文与 INDEX 曾长期写着过时的硬编码份数（283 / 286）。**根因是索引被手改过** ——
+  没有对应文件的手写内容会在下一次重跑生成脚本时被抹掉。**根治办法是不手改、走生成器**（见下）。
+- 状态分布（living / frozen / superseded 分解）由生成器从 `scripts/docs/index_data.json` 读出，
+  **不要手工维护**，也不要拿旧快照当判据。
 - 判定优先读文档开头的 `状态：` 字段，其次按月份 + 主题推断。
-- **判定错了的修法**：改文档开头的状态字段，并手工同步 INDEX 的状态总览（没有脚本可重跑）。
+- **判定错了的修法**：改文档开头的状态字段，然后**重跑生成脚本**，不要手改 INDEX。
+
+### 重新生成索引（⛔ 不要手改 INDEX.md）
+
+`INDEX.md` 是 `scripts/docs/` 下两个脚本的产物（`gen_index.py` 扫盘判定状态 →
+`index_data.json` → `gen_index_md.py` 渲染 md）。**手改会让索引与数据源脱节**：其中没有对应文件的手写内容会在重跑时被静默抹掉，而文件仍在盘上的条目会被扫盘重新收回（只改归类与小节标题计数）。
+
+实测状态（`c5f722b4` 重跑前）：`index_data.json` 的 `total` 停在 283，而 `INDEX.md` 有 290 条条目 —— 两个数来自不同的东西。差集实测：`index_data − INDEX = 0`、`INDEX − index_data = 7`，即那 7 条只存在于 `INDEX.md`、不在数据源里；其中 3 条落在「Agent 交互与可见性」小节，该小节标题写 27、实际 29。真正的缺口是 11 份（6 份 plan + 5 份 spec）—— `ls` 实测 301 份 vs `INDEX.md` 290 条。注意 `302 − 283 = 19` 里的 302 是 `c5f722b4` 重跑后的份数、283 是重跑前的陈旧 `total`，两者不同作用域，不能当作缺口。这 7 个文件在盘上都存在，所以按上面两条命令完整重跑时它们会被扫盘重新收回，变的是主题归类与小节标题计数；只有单跑 `gen_index_md.py`（配陈旧 `index_data.json`）才会把它们抹掉。真正会被重跑抹掉的是没有对应文件的手写内容。
+
+```bash
+python3 scripts/docs/gen_index.py > scripts/docs/index_data.json   # 重新判定
+python3 scripts/docs/gen_index_md.py                               # 重新生成 INDEX.md
+```
+
+⚠️ 脚本自身按 `__file__` 回溯定位仓库根；但 `>` 重定向是**相对路径**，仍须从**仓库根**跑。
+
+**怎么读重跑后的 diff**（`gen_index_md.py` 按份数 `-len(...)` 排序主题分组）：
+
+主题分组是**按份数排序**的，所以某主题份数一变，**整个小节连同其下整块条目会移位**，
+diff 因此可能很大而**实际一份文档都没丢** —— 实测给 `other` 主题加 1 份文档：
+其中 18 行文档条目出现在 `-` 侧，但它们**全部**同时出现在 `+` 侧（移位）。
+
+✅ **唯一判据：有没有「净丢失」**。跑这一条即可（基线用改动前的 `INDEX.md`；
+下面直接取 `HEAD` 版，已有改动未提交时换成改前副本）：
+
+```bash
+diff <(git show HEAD:docs/superpowers/INDEX.md) docs/superpowers/INDEX.md \
+  | grep -oE '^[<>] - `docs/superpowers/[^`]+' | sort -u > /tmp/idx-changed.txt
+comm -23 <(grep '^<' /tmp/idx-changed.txt | grep -oE 'docs/superpowers/[^`]+') \
+         <(grep '^>' /tmp/idx-changed.txt | grep -oE 'docs/superpowers/[^`]+')
+```
+
+输出为空 ⇒ 没有文档丢失（重排属正常）。输出非空 ⇒ 那几份文档真的不在索引里了，查文件是否被删。
+（只抓 `- \`docs/superpowers/…\`` 这样的条目行；散文里提到路径的行不参与判定。）
+
+⛔ **不要因为「看到几十行 `-`」就去手改 INDEX.md 找补** —— 那是分组重排，不是漂移。
+要补条目，改/加文档后**重跑生成器**即可。
 
 > 决策依据见 [ADR-0008](./adr/0008-docs-index-over-doc-edits.md)——
 > 为什么不批量改正文（文件量级 diff 失控），以及为什么不用"按月份删/归档"（丢决策追溯价值）。

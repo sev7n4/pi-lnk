@@ -31,9 +31,12 @@ import {
   mergeRefsToPrompt,
   resolvePromptGenerateText,
   Seedance1xUnsupportedError,
+  StepFunDesignProvider,
+  StepFunMusicProvider,
   stripRefImagePromptTags,
   supportsVisionTextModel,
   type MergeTextSource,
+  type StepFunMusicInput,
 } from '@lnkpi/agent'
 import {
   BYOK_FALLBACK_CONFIRM_MESSAGE,
@@ -44,7 +47,9 @@ import {
   IMAGE_EDIT_MODEL_PRICING,
   IMAGE_EDIT_MODEL_KEYS,
   resolveImageEditProfile,
+  audioKindOf,
   decodeChannelModel,
+  getModelEntry,
   redactProviderSnippet,
   resolveImageSize,
   resolveModelKey,
@@ -53,6 +58,7 @@ import {
   resolveVideoModelProfile,
   translateUpstreamFailure,
   type ErrorCode,
+  type AudioKind,
   type GenerationRefPayload,
   type GenerationDiagnostic,
   type ImageRefWire,
@@ -122,6 +128,12 @@ import {
 import { UploadService } from '../upload/upload.service'
 import sharp from 'sharp'
 import { hasCompositionPBlock } from './video-generation-request.util'
+import {
+  assertStepFunAudioModel,
+  assertAudioKindMatchesModel,
+  audioFailureMessage,
+  resolvePlatformAudioFallback,
+} from './audio-kind'
 
 // Grace window before returning the async `generating` record: fast image
 // providers usually finish within this, sparing the client a polling round.
@@ -2252,21 +2264,32 @@ export class StudioService {
       speed?: number
       volume?: number
       pitch?: number
+      kind?: string
+      roles?: Array<{ role: string; voice: string }>
+      scripts?: Array<{ role?: string; text: string }>
+      instruction?: string
+      caption?: string
+      lyrics?: string
+      instrumental?: boolean
     } = {},
     refs?: StudioRefInput[],
     mentionedKeys?: string[],
     cancel?: CancelFlag,
     scope?: CanvasGenerationScope,
   ) {
-    const cost = 5
-    const chargeReason = '音频生成'
+    // ⚠️ 先resolve 再定 cost：`music` 15 分、`voice`/`design` 5 分（见 plan §全局约束）。
+    // kind 只能从 resolve 后的 modelName 判（用户可能传 `ch_xxx::model`），所以扣分点
+    // 必须后移；扣分金额/文案与既有 voice 路径逐字节相同（cost=5、reason=音频生成）。
+    const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
+    const kind: AudioKind = audioKindOf(getModelEntry(resolved.modelName) ?? { modality: 'audio' })
+    const cost = kind === 'music' ? 15 : 5
+    const chargeReason = kind === 'music' ? '音频生成-音乐' : '音频生成'
     await this.points.consume(
       userId,
       cost,
       chargeReason,
       consumeMeta('audio', { model: options.model ?? null, generationId: null }),
     )
-    const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
     const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
       text,
       refs,
@@ -2293,8 +2316,121 @@ export class StudioService {
       resolved.source === 'user' ? options.model ?? built.meta.modelKey : built.meta.modelKey
 
     try {
+      assertStepFunAudioModel(kind, resolved.modelName)
+      // R12：调用方声明的 kind 与模型分类必须一致。不一致时**显式拒绝** ——
+      // 上面那行守卫只管「design/music 必须是阶跃模型」，管不了「声明 music 却拿着
+      // TTS 模型」这种错配（那会让 voice 分支静默产出 TTS 并标 completed）。
+      // 放在 try 内首两条 ⇒ 异常走既有 catch 的退款 + failed 记录链路，不吞积分。
+      assertAudioKindMatchesModel(options.kind, resolved.modelName)
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
+      }
+      if (kind === 'design') {
+        // 综合音频走非 OpenAI 兼容的同步端点，返回裸字节（不是 data URL）。
+        // 平台缺 key / 上游 402 / 模型不在目录都由既有 catch 显式退款报错，不静默回落。
+        const apiKey = resolved.credentials.apiKey
+        if (!apiKey) throw new Error('missing api key')
+        const { buffer, contentType } = await new StepFunDesignProvider(
+          apiKey,
+          resolved.credentials.baseUrl,
+        ).generate({
+          roles: options.roles ?? [],
+          scripts: options.scripts ?? [],
+          instruction: options.instruction,
+          responseFormat: 'mp3',
+        })
+        const stored = await this.upload.saveUserFile(userId, buffer, 'design.mp3', contentType)
+        if (cancel?.isCancelled()) {
+          await this.points.refund(
+            userId,
+            cost,
+            `${chargeReason}-取消退款`,
+            refundMeta('audio', 'cancelled_refund', {
+              model: resolved.modelName,
+              generationId: null,
+            }),
+          )
+          throwCancelledException(cost)
+        }
+        const designRecord = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'audio',
+            prompt: mergedText,
+            model: storeModel,
+            url: stored.url,
+            status: 'completed',
+            metadata: JSON.stringify(
+              applyChargeMeta(
+                {
+                  ...built.meta,
+                  skippedMerge,
+                  audioKind: kind,
+                  channelId: resolved.channelId,
+                  roles: options.roles,
+                  scripts: options.scripts,
+                  instruction: options.instruction,
+                },
+                cost,
+              ),
+            ),
+            ...withCanvasScope(scope),
+          },
+        })
+        return { ...designRecord, url: stored.url }
+      }
+      if (kind === 'music') {
+        // 音乐是**异步任务**：submit + 轮询 query，官方 1–3 分钟，远超一次 HTTP 请求的耐心。
+        // 故乐观扣分 → 建 `status:'generating'` 记录 → 立即返回，让前端既有轮询器接管
+        // （`useGenerationPolling` 每 2s 查 `getGeneration`），**不新增轮询端点**。
+        // 终态失败（含上游 HTTP 200 但 status=FAILED）在 completeMusic 里退款 + 写可判读文案。
+        //
+        // 下面这个缺 key 守卫**只对平台渠道可达**：BYOK 缺 key 已被上面的通用守卫
+        // （`resolved.source === 'user' && !apiKey`）先一步抛走。两条路径殊途同归 ——
+        // 都落进 catch，且 music 一律进 failed（见 catch 里的 `kind === 'music'` 注释）。
+        const apiKey = resolved.credentials.apiKey
+        if (!apiKey) throw new Error('missing api key')
+        // 未显式给 caption 时回落正文：music 的 caption 就是「要生成什么曲子」的描述，
+        // 与 voice 用 mergedText 同理，避免空 caption 打上游拿不到可判读的错误。
+        const caption = options.caption ?? mergedText
+        const musicRecord = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'audio',
+            prompt: mergedText,
+            model: storeModel,
+            status: 'generating',
+            metadata: JSON.stringify(
+              applyChargeMeta(
+                {
+                  ...built.meta,
+                  skippedMerge,
+                  audioKind: kind,
+                  channelId: resolved.channelId,
+                  caption,
+                  lyrics: options.lyrics,
+                  instrumental: options.instrumental,
+                },
+                cost,
+              ),
+            ),
+            ...withCanvasScope(scope),
+          },
+        })
+        this.completeMusic(
+          musicRecord.id,
+          userId,
+          cost,
+          chargeReason,
+          {
+            caption,
+            lyrics: options.lyrics,
+            instrumental: options.instrumental,
+            responseFormat: 'mp3',
+          },
+          resolved,
+        ).catch(console.error)
+        return { ...musicRecord, generationStartedAt: new Date().toISOString() }
       }
       const { url } = await createAudioProvider(providerOpts(resolved)).generate(
         built.text,
@@ -2343,6 +2479,7 @@ export class StudioService {
                 volume: options.volume,
                 pitch: options.pitch,
                 hasTtsData,
+                audioKind: kind,
                 channelId: resolved.channelId,
               },
               cost,
@@ -2354,7 +2491,27 @@ export class StudioService {
       return { ...record, url }
     } catch (err) {
       if (isCancelledException(err)) throw err
-      if (resolved.source !== 'user') {
+      // 🔴 三类失败都**不得**变成「换平台重试」的重试入口，原因各不相同：
+      //
+      // 1. `kind !== 'voice'`（design / music）：`confirmPlatformFallback` 的 audio 分支
+      //    （见下）**不读 `meta.audioKind`**，固定发 OpenAI 兼容 TTS —— design/music
+      //    若挂上去，用户点「用平台重试」会拿到一段把 `stepaudio-3-gen-preview` /
+      //    `stepaudio-3-music-preview` 当 TTS 模型发出去的语音，并被标成 completed。
+      //    与 music 同源：平台重放要支持 design/music 属后续范围；在此之前，
+      //    失败必须显式可判读。voice 是唯一**语义与 TTS 重放一致**的分类，
+      //    故它的既有 fallback_pending 行为逐字节不变。
+      //    （此分支同时覆盖 BYOK design/music 缺 key：通用守卫先于分类分支抛错。）
+      //
+      // 2. 🔴 Ruling R14 `err instanceof BadRequestException`：**客户端参数校验类**失败
+      //    （`assertAudioKindMatchesModel` 的 kind↔模型不匹配、`assertStepFunAudioModel` 的
+      //    「design/music 给了非阶跃模型」）换渠道重试**必然还是同样的错** —— 用户点一下
+      //    只会再失败一次，且中途平台会拿 design/music 的模型名去发 TTS 请求。
+      //    这类失败不是「渠道故障」，重试入口是误导，必须显式失败。
+      //    按**异常类型**分流而非状态码：上游 4xx 由 provider 包成普通 `Error`
+      //    （见 audio-provider.ts 的 `TTS API ${res.status}`），仍算渠道侧问题，保留重试。
+      //
+      // 3. 其余（非 user 渠道）：既有行为，平台失败一律 failed。
+      if (resolved.source !== 'user' || kind !== 'voice' || err instanceof BadRequestException) {
         await this.points.refund(
           userId,
           cost,
@@ -2376,6 +2533,7 @@ export class StudioService {
                 speed: options.speed ?? 1,
                 volume: options.volume,
                 pitch: options.pitch,
+                audioKind: kind,
                 channelId: resolved.channelId,
               },
               cost,
@@ -2384,6 +2542,7 @@ export class StudioService {
             'platform_failed',
           ),
           err,
+          { userMessage: audioFailureMessage(kind, err, resolved.channelId) },
         )
         const failed = await this.prisma.generationRecord.create({
           data: {
@@ -2432,6 +2591,7 @@ export class StudioService {
               speed: options.speed,
               volume: options.volume,
               pitch: options.pitch,
+              audioKind: kind,
               audioOptions: audioOpts,
             }),
           ),
@@ -2612,7 +2772,9 @@ export class StudioService {
           volume: prevAudio.volume ?? meta.volume,
           pitch: prevAudio.pitch ?? meta.pitch,
         }
-        const { url } = await createAudioProvider(undefined).generate(
+        const fallback = resolvePlatformAudioFallback(platformModel)
+        if (!fallback.ok) throw new Error(fallback.reason)
+        const { url } = await createAudioProvider(fallback.credentials).generate(
           record.prompt,
           audioOptions as { model?: string; voice?: string; speed?: number; volume?: number; pitch?: number },
         )
@@ -2912,6 +3074,79 @@ export class StudioService {
       const failedMeta = applyFailureDiagnosticMeta(
         applyRefundMeta(meta, cost, 'platform_failed'),
         err,
+      )
+      await this.prisma.generationRecord.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          metadata: JSON.stringify(failedMeta),
+        },
+      })
+    }
+  }
+
+  /**
+   * 音乐异步任务的终态收敛（2026-10-06 audio-node-unified-capability Task 7）。
+   *
+   * 🔴 上游终态 `FAILED` 时 HTTP 仍是 200 ⇒ provider 层按 `status` 字段判失败并抛错，
+   * 这里据此退款 + 把可判读文案（`audioFailureMessage('music', ...)`）写进 metadata，
+   * 前端轮询到 `failed` 后由 `buildPollingFailurePatch` 展示。**绝不静默当成功。**
+   *
+   * ⚠️ 失败一律进 `failed`，**不进 `fallback_pending`**：`confirmPlatformFallback` 的 audio
+   * 分支固定走 `createAudioProvider`（TTS），音乐若挂上fallback_pending，用户点「用平台重试」
+   * 会被静默重放成一段 TTS 语音 —— 比直接失败更坏。平台重放要支持 music 属Task 8+ 的范围。
+   * （提交**前**的失败由 `generateAudio` 的共享 catch 用`kind !== 'voice'` 保证同一不变量 ——
+   *  design 与 music 同理：`stepaudio-3-gen-preview` 同样会被重放成 TTS。）
+   */
+  private async completeMusic(
+    id: string,
+    userId: string,
+    cost: number,
+    chargeReason: string,
+    input: StepFunMusicInput,
+    resolved: ResolvedGenerationProvider,
+  ) {
+    try {
+      const apiKey = resolved.credentials.apiKey
+      if (!apiKey) throw new Error('missing api key')
+      const { buffer } = await new StepFunMusicProvider(
+        apiKey,
+        resolved.credentials.baseUrl,
+      ).generate(input)
+      const stored = await this.upload.saveUserFile(userId, buffer, 'music.mp3', 'audio/mpeg')
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      // 用户在生成期间取消过 ⇒ 退款已由 cancelGeneration 结算，勿重复写/重复退。
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      const updated = await this.prisma.generationRecord.updateMany({
+        where: { id, status: 'generating' },
+        data: {
+          url: stored.url,
+          status: 'completed',
+          metadata: JSON.stringify(meta),
+        },
+      })
+      if (updated.count === 0) return
+    } catch (err) {
+      console.error('Music generation failed:', err)
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-失败退款`,
+        refundMeta('audio', 'failed_refund', {
+          model: resolved.modelName,
+          generationId: id,
+        }),
+      )
+      const failedMeta = applyFailureDiagnosticMeta(
+        applyRefundMeta(meta, cost, 'platform_failed'),
+        err,
+        { userMessage: audioFailureMessage('music', err, resolved.channelId) },
       )
       await this.prisma.generationRecord.update({
         where: { id },

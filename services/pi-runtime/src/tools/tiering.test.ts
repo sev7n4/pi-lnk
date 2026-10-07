@@ -157,6 +157,10 @@ describe("被资产点名的工具必须常驻（延迟即不可达，回归锁�
 		"focus_node", // 8 个 skill「出图后 QA 闸门」第一步
 		"focus_nodes", // ⚠️ 复数版：规则 canvas_daily_ops 第 19 条点名（2026-10-06 从延迟集提上来）
 		"remove_edges", // drama-qc-review 引用审计的错连修正
+		// 音频三分类（2026-10-07）：规则 23 按名字点名 run_audio_generation 要求按 kind 选分类，
+		// drama-audio-design 的能力边界表/流程第 6 步/踩坑表也都按名字写它
+		// ⇒ 按本 describe 的准绳（被资产点名 ⇒ 必须常驻）它必须在 ALWAYS_ON。
+		"run_audio_generation",
 	];
 
 	it("全部进 ALWAYS_ON 且初始即激活", () => {

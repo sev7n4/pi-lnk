@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  STUDIO_MODEL_CATALOG,
   listModels,
+  listModelsByAudioKind,
   resolveModelKey,
   defaultModelKey,
   getModelEntry,
@@ -57,6 +59,8 @@ describe('studioModelCatalog', () => {
       'minimax-speech-2.8-hd',
       'step-tts-mini',
       'stepaudio-3-tts',
+      'stepaudio-3-gen-preview',
+      'stepaudio-3-music-preview',
     ])
   })
 
@@ -220,5 +224,50 @@ describe('id 空间一致性（改动 getModelEntry 的前置条件）', () => {
         ).toBe(entry.gatewayModelId)
       }
     }
+  })
+})
+
+describe('audioKind 元数据', () => {
+  it('every audio entry declares an audioKind（新增 audio 条目必须声明 kind）', () => {
+    for (const entry of STUDIO_MODEL_CATALOG.filter((e) => e.modality === 'audio')) {
+      expect(entry.audioKind, `${entry.modelKey} 缺 audioKind`).toBeTruthy()
+    }
+  })
+
+  it('两条新模型归到正确 kind', () => {
+    expect(getModelEntry('stepaudio-3-gen-preview')?.audioKind).toBe('design')
+    expect(getModelEntry('stepaudio-3-music-preview')?.audioKind).toBe('music')
+  })
+
+  it('既有 4 条 audio 条目均为 voice', () => {
+    for (const key of [
+      'seed-audio-1.0',
+      'minimax-speech-2.8-hd',
+      'step-tts-mini',
+      'stepaudio-3-tts',
+    ]) {
+      expect(getModelEntry(key)?.audioKind, key).toBe('voice')
+    }
+  })
+
+  it('listModelsByAudioKind 只返回该 kind', () => {
+    expect(listModelsByAudioKind('music').map((e) => e.modelKey)).toEqual([
+      'stepaudio-3-music-preview',
+    ])
+    expect(listModelsByAudioKind('design').map((e) => e.modelKey)).toEqual([
+      'stepaudio-3-gen-preview',
+    ])
+    expect(listModelsByAudioKind('voice').length).toBe(4)
+  })
+
+  it('audio 模态条目数 = 6，且默认模型不变（存量行为锁）', () => {
+    expect(listModels('audio').length).toBe(6)
+    expect(defaultModelKey('audio')).toBe('minimax-speech-2.8-hd')
+  })
+
+  it('新模型登记后能被 resolveModelKey 命中（不再静默回退）', () => {
+    const r = resolveModelKey('audio', 'stepaudio-3-music-preview')
+    expect(r.fallback).toBe(false)
+    expect(r.modelKey).toBe('stepaudio-3-music-preview')
   })
 })

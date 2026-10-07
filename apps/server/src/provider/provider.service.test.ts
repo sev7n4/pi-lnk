@@ -565,4 +565,12 @@ describe('ProviderService', () => {
     expect(body).not.toContain('dav-pass')
     expect(body).not.toContain('encryptedApiKey')
   })
+
+  it('平台默认可选音频模型含三分类', async () => {
+    const { platformChannel } = await svc.bootstrap('u1')
+    const names = platformChannel.models.filter((m) => m.capability === 'audio').map((m) => m.name)
+    expect(names).toContain('stepaudio-3-tts')
+    expect(names).toContain('stepaudio-3-gen-preview')
+    expect(names).toContain('stepaudio-3-music-preview')
+  })
 })

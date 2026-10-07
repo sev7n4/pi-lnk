@@ -25,6 +25,10 @@ export {
   normalizeMiniMaxBaseUrl,
 } from './tools/minimax-h3-video-provider'
 export { createAudioProvider, OpenAITTSProvider } from './tools/audio-provider'
+export { StepFunDesignProvider } from './tools/stepfun-audio'
+export type { StepFunDesignInput } from './tools/stepfun-audio'
+export { StepFunMusicProvider } from './tools/stepfun-audio'
+export type { MusicQueryResult, StepFunMusicInput } from './tools/stepfun-audio'
 export type { ImageProvider, ProviderCredentialOpts, ImageGenerateOptions } from './tools/image-provider'
 export type { ImageEditProvider, ImageEditInput } from './tools/image-edit-provider'
 export type { SegmentProvider, SegmentPointInput } from './tools/segment-provider'

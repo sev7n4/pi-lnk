@@ -427,6 +427,51 @@ class RunImageGenerationDto {
   nodeId!: string
 }
 
+/**
+ * 音频生成（`run-audio-generation`）的 body：在 run 通用三字段之后**追加**音频二阶分类
+ * 与内联参数。⚠️ 字段必须有装饰器 —— `main.ts:30` 的 `whitelist: true` 会**静默剥掉**
+ * 无装饰器的字段（不报错、不提示），表现为「工具传了 roles，服务端永远拿到 undefined」。
+ *
+ * 新字段一律追加在末尾，不改既有字段顺序（同型参数错位不报错、只静默错值）。
+ */
+class RunAudioGenerationDto extends RunImageGenerationDto {
+  @IsOptional()
+  @IsString()
+  kind?: string
+
+  @IsOptional()
+  @IsString()
+  voice?: string
+
+  @IsOptional()
+  @IsString()
+  emotion?: string
+
+  @IsOptional()
+  @IsArray()
+  roles?: Array<{ role: string; voice: string }>
+
+  @IsOptional()
+  @IsArray()
+  scripts?: Array<{ role?: string; text: string }>
+
+  @IsOptional()
+  @IsString()
+  instruction?: string
+
+  @IsOptional()
+  @IsString()
+  caption?: string
+
+  @IsOptional()
+  @IsString()
+  lyrics?: string
+
+  @IsOptional()
+  @IsBoolean()
+  instrumental?: boolean
+}
+
 class RunVisionQaDto {
   @IsString()
   sessionId!: string
@@ -1219,7 +1264,7 @@ export class AgentCanvasToolsController {
   }
 
   @Post('run-audio-generation')
-  async runAudioGeneration(@Body() dto: RunImageGenerationDto) {
+  async runAudioGeneration(@Body() dto: RunAudioGenerationDto) {
     const data = await this.tools.runAudioGeneration(dto)
     return { code: 0, message: 'ok', data }
   }

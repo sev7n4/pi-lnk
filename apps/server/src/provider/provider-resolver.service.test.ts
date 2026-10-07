@@ -45,6 +45,8 @@ describe('ProviderResolverService', () => {
   const originalFalBase = process.env.FAL_BASE_URL
   const originalMinimaxKey = process.env.MINIMAX_API_KEY
   const originalMinimaxBase = process.env.MINIMAX_BASE_URL
+  const originalStepfunKey = process.env.STEPFUN_API_KEY
+  const originalStepfunBase = process.env.STEPFUN_BASE_URL
   let resolver: ProviderResolverService
   let crypto: CryptoService
   let prisma: ReturnType<typeof createMemoryPrisma>
@@ -59,6 +61,8 @@ describe('ProviderResolverService', () => {
     delete process.env.FAL_BASE_URL
     delete process.env.MINIMAX_API_KEY
     delete process.env.MINIMAX_BASE_URL
+    delete process.env.STEPFUN_API_KEY
+    delete process.env.STEPFUN_BASE_URL
     prisma = createMemoryPrisma([
       {
         id: PLATFORM_CHANNEL_ID,
@@ -105,6 +109,10 @@ describe('ProviderResolverService', () => {
     else process.env.MINIMAX_API_KEY = originalMinimaxKey
     if (originalMinimaxBase === undefined) delete process.env.MINIMAX_BASE_URL
     else process.env.MINIMAX_BASE_URL = originalMinimaxBase
+    if (originalStepfunKey === undefined) delete process.env.STEPFUN_API_KEY
+    else process.env.STEPFUN_API_KEY = originalStepfunKey
+    if (originalStepfunBase === undefined) delete process.env.STEPFUN_BASE_URL
+    else process.env.STEPFUN_BASE_URL = originalStepfunBase
   })
 
   it('decrypts user channel credentials', async () => {
@@ -367,5 +375,54 @@ describe('ProviderResolverService', () => {
     await expect(
       resolver.resolveForGeneration('u1', 'ch_other::m1', 'text'),
     ).rejects.toBeInstanceOf(NotFoundException)
+  })
+
+  it('routes platform stepfun models to StepFun credentials', async () => {
+    process.env.STEPFUN_API_KEY = 'stepfun-env-key'
+
+    const result = await resolver.resolveForGeneration(
+      'u1',
+      'platform::stepaudio-3-gen-preview',
+      'audio',
+    )
+    expect(result).toEqual({
+      channelId: 'platform',
+      modelName: 'stepaudio-3-gen-preview',
+      apiFormat: 'openai',
+      credentials: { apiKey: 'stepfun-env-key', baseUrl: 'https://api.stepfun.com/v1' },
+      source: 'platform',
+    })
+  })
+
+  it('honors STEPFUN_BASE_URL override', async () => {
+    process.env.STEPFUN_API_KEY = 'stepfun-env-key'
+    process.env.STEPFUN_BASE_URL = 'https://stepfun.custom/v1'
+
+    const result = await resolver.resolveForGeneration('u1', 'platform::stepaudio-3-tts', 'audio')
+    expect(result.credentials.baseUrl).toBe('https://stepfun.custom/v1')
+  })
+
+  it('🔴 缺 STEPFUN_API_KEY 时 baseUrl 仍指向阶跃（不得回落到 OpenAI 端点）', async () => {
+    const result = await resolver.resolveForGeneration(
+      'u1',
+      'platform::stepaudio-3-music-preview',
+      'audio',
+    )
+    expect(result.credentials.apiKey).not.toBe('platform-env-key')
+    expect(result.credentials.apiKey).toBeFalsy()
+    expect(result.credentials.baseUrl).toBe('https://api.stepfun.com/v1')
+  })
+
+  it('不干扰既有 fal / minimax 分支', async () => {
+    process.env.FAL_KEY = 'fal-env-key'
+    process.env.MINIMAX_API_KEY = 'minimax-env-key'
+    process.env.STEPFUN_API_KEY = 'stepfun-env-key'
+
+    expect(
+      (await resolver.resolveForGeneration('u1', 'platform::h3-max-turbo', 'video')).credentials,
+    ).toEqual({ apiKey: 'fal-env-key', baseUrl: 'https://fal.run' })
+    expect(
+      (await resolver.resolveForGeneration('u1', 'platform::minimax-h3', 'video')).credentials,
+    ).toEqual({ apiKey: 'minimax-env-key', baseUrl: 'https://api.minimax.io' })
   })
 })
