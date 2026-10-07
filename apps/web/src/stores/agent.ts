@@ -205,10 +205,30 @@ export const useAgentStore = defineStore('agent', () => {
    * 无 assistant 消息时静默忽略：与 `appendText` 同款兜底，
    * 避免事件竞态（流早于 startAssistantMessage 到达）打断整条流。
    */
+  /**
+   * presentation kind 的**优先级**（数字越大越优先）。
+   *
+   * ⚠️ 为什么需要它（2026-07-23 修node_graph 被覆盖）：
+   *   `render_canvas_view` 现在**双写** `node_graph` + `svg_card`，实时路径会**依次**调两次
+   *   `setPresentation`。而 `presentation` 是**单值**字段（见上方注释）⇒ 后者无条件覆盖前者
+   *   ⇒ 线上实际显示的是静态 SVG，A 方案（node_graph 优先）**在实时路径完全失效**。
+   *
+   * ⚠️ 只对**不同 kind** 生效；同 kind 仍是「后者覆盖前者」
+   *   （既有回归锁「同轮第二张卡覆盖第一张」必须继续绿，见 `agent.setPresentation.test.ts`）。
+   */
+  const PRESENTATION_KIND_PRIORITY: Record<string, number> = {
+    node_graph: 2, // Vue Flow 节点图 = 结构化、可交互，是本项目的目标形态
+    svg_card: 1, // 静态 SVG = 降级兜底
+  }
+
   function setPresentation(presentation: AgentPresentationEnvelope) {
     const last = lastAssistant()
     if (!last) return
-    last.presentation = presentation
+    const incoming = PRESENTATION_KIND_PRIORITY[presentation.kind] ?? 0
+    const current = last.presentation
+    const currentRank = current ? (PRESENTATION_KIND_PRIORITY[current.kind] ?? 0) : -1
+    // 同 kind（rank 相同）或没有更高优先级的新 kind ⇒ 按既有语义覆盖
+    if (incoming >= currentRank) last.presentation = presentation
   }
 
   function appendText(text: string) {
