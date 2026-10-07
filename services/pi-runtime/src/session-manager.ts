@@ -1882,18 +1882,17 @@ export class SessionManager {
 
 	/**
 	 * 中断该会话当前正在跑的 run（用户点「停止」）。
-	 * 会话本身保留——用户可以接着发新消息；无活跃 run 时返回 false（前端按「已断开」提示）。
+	 * 会话本身保留——用户可以接着发新消息；无活跃 run 时走下方 force 分支
+	 * （lane 上确有孤儿 operation ⇒ 返回 true；否则 false，前端按「已断开」提示）。
 	 *
 	 * abort 联动（2026-09-30-ask-user-blocking）：entry 找到即清理该会话的全部阻塞等待
 	 * （防御性——即使 cancelRun 已空，ask_user 挂起的 waitForUser 也要以 aborted 交还，
 	 * 否则模型侧永久悬挂）。键 = entry.canvasSessionId（工具域），未提供时回落 entry.id，
 	 * 与 toolContext.sessionId 的回落语义一致。
-	 */
-	/**
-	 * 中断当前 run；**无在途 run 时追加 force 语义**（2026-10-07 生产事故 P0-2）。
 	 *
-	 * 旧实现首判 `!entry?.cancelRun ⇒ return false`，于是「lane 上还钉着上一个进程留下的
-	 * 孤儿 operation」这一形态下，点「停止」是**空操作**：前端拿到 `{aborted:false}`，
+	 * **force 语义（2026-10-07 生产事故 P0-2）** —— 旧实现首判
+	 * `!entry?.cancelRun ⇒ return false`，于是「lane 上还钉着上一个进程留下的孤儿
+	 * operation」这一形态下，点「停止」是**空操作**：前端拿到 `{aborted:false}`，
 	 * 用户既看不到提示也没法自救 —— 而这正是 LaneBusy 卡死的现场本身。
 	 *
 	 * force 分支读 lane 的**实时**执行态（`inspectExecution`，不依赖 build 时的快照，
