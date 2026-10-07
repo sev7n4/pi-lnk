@@ -1,207 +1,160 @@
-<script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import type { ExecutionTraceState, ExecutionStep } from '@/components/agent/executionTraceReducer'
-import { formatDuration } from '@/components/agent/executionStepLabels'
-import { presentToolStep, timelineHeadline } from '@/components/agent/toolPresentation'
-import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
-import { derivePhase, PHASE_BADGE } from '@/components/agent/phaseAggregator'
-import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
-
-const props = defineProps<{
-  trace: ExecutionTraceState
-  streaming?: boolean
-  /** 钉底模式（本轮活体过程）：只渲染一行「N 步 · 最新人话」摘要，点开展开，不渲染底部分隔线。 */
-  dense?: boolean
-}>()
-
-const emit = defineEmits<{
-  focusNode: [nodeId: string]
-}>()
-
-const expanded = ref(!props.trace.collapsed)
-
-watch(
-  () => props.trace.collapsed,
-  (v) => {
-    expanded.value = !v
-  },
-)
-
-const stepCount = computed(() => props.trace.steps.length)
-
-const headerLabel = computed(() => {
-  const count = stepCount.value
-  if (props.streaming) {
-    if (count === 0) return '执行过程（进行中…）'
-    return `执行过程（进行中… · ${count} 步）`
-  }
-  if (count === 0) return '执行过程'
-  // P1 认知负荷：折叠头行附最新一步人话（N 步 · 最新：<icon> <label>）
-  if (!expanded.value) {
-    const headline = timelineHeadline(props.trace)
-    if (headline.includes('· 最新：')) return `执行过程（${headline}）`
-  }
-  return `执行过程（${count} 步）`
-})
-
-const durationLabel = computed(() => {
-  if (props.streaming) return '· 进行中…'
-  if (props.trace.totalMs != null) return `· ${formatDuration(props.trace.totalMs)}`
-  return ''
-})
-
-const showTrace = computed(
-  // usage 存在即渲染：纯文本回合（无步骤）也要露出回合摘要行（tokens 实耗）；
-  // 不用 totalMs 作门——否则老历史消息（无 usage）会多出重复的「执行过程」头行
-  () => stepCount.value > 0 || props.streaming || props.trace.usage != null,
-)
-
-function toggle() {
-  expanded.value = !expanded.value
-}
-
-function statusIcon(step: ExecutionStep): string {
-  switch (step.status) {
-    case 'done':
-      return '✓'
-    case 'failed':
-      return '✗'
-    case 'running':
-      return '…'
-    case 'waiting_user':
-      return '!'
-    case 'skipped':
-      return '–'
-    default:
-      return '○'
-  }
-}
-
-function stepDuration(step: ExecutionStep): string {
-  if (step.ms == null || step.status === 'running') return ''
-  if (step.ms === 0) return ''
-  return ` · ${formatDuration(step.ms)}`
-}
-
-function onStepClick(step: ExecutionStep) {
-  const nodeId = step.meta?.nodeId
-  if (nodeId) emit('focusNode', nodeId)
-}
-
-/** P1 注册表：tool 步经人话化翻译（icon + 动词 · args），其余步骤维持原 label。 */
-function stepDisplay(step: ExecutionStep): string {
-  if (step.kind !== 'tool') return step.label
-  return presentToolStep(step).label
-}
-
-const summaryLine = computed(() => turnSummaryLine(props.trace))
-
-/** dense（钉底）头行：`N 步 · 最新：<icon> <人话>`，不重复「执行过程」四个字——状态行已承载。 */
-const denseHeadline = computed(() => {
-  const visible = props.trace.steps.filter((s) => s.kind !== 'phase')
-  const last = visible[visible.length - 1]
-  if (!last) return props.streaming ? '正在准备…' : '执行过程'
-  const shown = presentToolStep(last)
-  const prefix = visible.length > 1 ? `${visible.length} 步 · ` : ''
-  return `${prefix}正在${shown.label}`
-})
-
-/** P1#4 阶段徽章：从 trace 步骤纯派生（仅流式期间显示）。 */
-const phaseBadge = computed(() => {
-  const p = derivePhase(props.trace.steps)
-  return p ? PHASE_BADGE[p] : null
-})
-</script>
-
-<template>
-  <div
-    v-if="showTrace"
-    class="agent-trace"
-    :class="dense ? 'mb-1' : 'mt-1.5 border-t border-white/10 pt-1.5'"
-  >
-    <button
-      type="button"
-      class="agent-trace-toggle flex w-full items-center gap-1 text-left text-[11px] text-[var(--neo-text-muted)] hover:text-[var(--neo-text-primary)]"
-      @click="toggle"
-    >
-      <span class="inline-block w-3 shrink-0">{{ expanded ? '▾' : '▸' }}</span>
-      <span
-        v-if="phaseBadge && streaming"
-        class="mr-1 inline-flex items-center gap-0.5 rounded-full bg-[var(--neo-panel)] px-1.5 py-0.5"
-        data-testid="phase-badge"
-      >{{ phaseBadge.icon }} {{ phaseBadge.label }}</span>
-      <span :data-testid="dense ? 'trace-headline-dense' : 'trace-headline'">{{ dense ? denseHeadline : headerLabel }}</span>
-      <span v-if="durationLabel && !expanded && !dense" class="opacity-70">{{ durationLabel }}</span>
-    </button>
-    <div v-if="expanded" class="mt-1 space-y-2 pl-4">
-      <section v-if="stepCount > 0" data-testid="operation-section">
-        <p class="mb-1 text-[10px] font-medium text-[var(--neo-text-muted)]">操作明细</p>
-        <ul class="space-y-0.5">
-          <li
-            v-for="(step, i) in trace.steps"
-            :key="step.id"
-            data-testid="operation-step"
-            class="agent-trace-step flex items-start gap-1.5 text-[10px] leading-snug"
-            :style="{ animationDelay: `${Math.min(i * 60, 600)}ms` }"
-            :class="[
-              step.meta?.nodeId ? 'cursor-pointer hover:text-[var(--neo-text-primary)]' : '',
-              step.status === 'failed' ? 'text-red-400/90' : 'text-[var(--neo-text-muted)]',
-              step.status === 'running' ? 'animate-pulse' : '',
-              step.kind === 'thinking' ? 'italic opacity-80' : '',
-              step.kind === 'explore' ? 'opacity-90' : '',
-              step.status === 'done' ? 'agent-trace-step--done' : '',
-            ]"
-            @click="onStepClick(step)"
-          >
-            <span class="min-w-0 flex-1">
-              <span>{{ statusIcon(step) }} {{ stepDisplay(step) }}{{ stepDuration(step) }}</span>
-              <p v-if="step.detail" class="mt-0.5 pl-3 opacity-75" :class="step.kind === 'thinking' ? 'whitespace-pre-wrap' : ''">{{ step.detail }}</p>
-            </span>
-            <CanvasLocatePinIcon
-              v-if="step.meta?.nodeId"
-              :size="11"
-              class="mt-0.5 shrink-0 opacity-60"
-            />
-          </li>
-        </ul>
-      </section>
-    </div>
-    <!-- P1 回合摘要行：done 后一次（节点/张数/耗时/tokens） -->
-    <p
-      v-if="!streaming && summaryLine"
-      data-testid="turn-summary-line"
-      class="mt-1 pl-4 text-[10px] text-[var(--neo-text-muted)]"
-    >
-      {{ summaryLine }}
-    </p>
-  </div>
-</template>
-
-<style scoped>
-/* P1 动效节拍：步骤 stagger 入场（delay 由行内 style 按 i*60ms 注入，上限 600ms） */
-.agent-trace-step {
-  animation: agent-trace-step-in 0.22s ease-out both;
-}
-
-.agent-trace-step--done {
-  transition: opacity 0.2s ease;
-}
-
-@keyframes agent-trace-step-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-trace-step {
-    animation: none;
-  }
-}
-</style>
+PHNjcmlwdCBzZXR1cCBsYW5nPSJ0cyI+CmltcG9ydCB7IGNvbXB1dGVkLCBy
+ZWYsIHdhdGNoIH0gZnJvbSAndnVlJwppbXBvcnQgdHlwZSB7IEV4ZWN1dGlv
+blRyYWNlU3RhdGUsIEV4ZWN1dGlvblN0ZXAgfSBmcm9tICdAL2NvbXBvbmVu
+dHMvYWdlbnQvZXhlY3V0aW9uVHJhY2VSZWR1Y2VyJwppbXBvcnQgeyBmb3Jt
+YXREdXJhdGlvbiB9IGZyb20gJ0AvY29tcG9uZW50cy9hZ2VudC9leGVjdXRp
+b25TdGVwTGFiZWxzJwppbXBvcnQgeyBwcmVzZW50VG9vbFN0ZXAsIHRpbWVs
+aW5lSGVhZGxpbmUgfSBmcm9tICdAL2NvbXBvbmVudHMvYWdlbnQvdG9vbFBy
+ZXNlbnRhdGlvbicKaW1wb3J0IHsgdHVyblN1bW1hcnlMaW5lIH0gZnJvbSAn
+QC9jb21wb25lbnRzL2FnZW50L2V4ZWN1dGlvblRyYWNlUmVkdWNlcicKaW1w
+b3J0IHsgZGVyaXZlUGhhc2UsIFBIQVNFX0JBREdFIH0gZnJvbSAnQC9jb21w
+b25lbnRzL2FnZW50L3BoYXNlQWdncmVnYXRvcicKaW1wb3J0IENhbnZhc0xv
+Y2F0ZVBpbkljb24gZnJvbSAnQC9jb21wb25lbnRzL3NoYXJlZC9DYW52YXNM
+b2NhdGVQaW5JY29uLnZ1ZScKCmNvbnN0IHByb3BzID0gZGVmaW5lUHJvcHM8
+ewogIHRyYWNlOiBFeGVjdXRpb25UcmFjZVN0YXRlCiAgc3RyZWFtaW5nPzog
+Ym9vbGVhbgogIC8qKiDpkonlupXmqKHlvI/vvIjmnKzova7mtLvkvZPov4fn
+qIvvvInvvJrlj6rmuLLmn5PkuIDooYzjgIxOIOatpSDCtyDmnIDmlrDkurro
+r53jgI3mkZjopoHvvIzngrnlvIDlsZXlvIDvvIzkuI3muLLmn5PlupXpg6jl
+iIbpmpTnur/jgIIgKi8KICBkZW5zZT86IGJvb2xlYW4KfT4oKQoKY29uc3Qg
+ZW1pdCA9IGRlZmluZUVtaXRzPHsKICBmb2N1c05vZGU6IFtub2RlSWQ6IHN0
+cmluZ10KfT4oKQoKY29uc3QgZXhwYW5kZWQgPSByZWYoIXByb3BzLnRyYWNl
+LmNvbGxhcHNlZCkKCndhdGNoKAogICgpID0+IHByb3BzLnRyYWNlLmNvbGxh
+cHNlZCwKICAodikgPT4gewogICAgZXhwYW5kZWQudmFsdWUgPSAhdgogIH0s
+CikKCmNvbnN0IHN0ZXBDb3VudCA9IGNvbXB1dGVkKCgpID0+IHByb3BzLnRy
+YWNlLnN0ZXBzLmxlbmd0aCkKCmNvbnN0IGhlYWRlckxhYmVsID0gY29tcHV0
+ZWQoKCkgPT4gewogIGNvbnN0IGNvdW50ID0gc3RlcENvdW50LnZhbHVlCiAg
+aWYgKHByb3BzLnN0cmVhbWluZykgewogICAgaWYgKGNvdW50ID09PSAwKSBy
+ZXR1cm4gJ+aJp+ihjOi/h+eoi++8iOi/m+ihjOS4reKApu+8iScKICAgIHJl
+dHVybiBg5omn6KGM6L+H56iL77yI6L+b6KGM5Lit4oCmIMK3ICR7Y291bnR9
+IOatpe+8iWAKICB9CiAgaWYgKGNvdW50ID09PSAwKSByZXR1cm4gJ+aJp+ih
+jOi/h+eoiycKICAvLyBQMSDorqTnn6XotJ/ojbfvvJrmipjlj6DlpLTooYzp
+mYTmnIDmlrDkuIDmraXkurror53vvIhOIOatpSDCtyDmnIDmlrDvvJo8aWNv
+bj4gPGxhYmVsPu+8iQogIGlmICghZXhwYW5kZWQudmFsdWUpIHsKICAgIGNv
+bnN0IGhlYWRsaW5lID0gdGltZWxpbmVIZWFkbGluZShwcm9wcy50cmFjZSkK
+ICAgIGlmIChoZWFkbGluZS5pbmNsdWRlcygnwrcg5pyA5paw77yaJykpIHJl
+dHVybiBg5omn6KGM6L+H56iL77yIJHtoZWFkbGluZX3vvIlgCiAgfQogIHJl
+dHVybiBg5omn6KGM6L+H56iL77yIJHtjb3VudH0g5q2l77yJYAp9KQoKY29u
+c3QgZHVyYXRpb25MYWJlbCA9IGNvbXB1dGVkKCgpID0+IHsKICBpZiAocHJv
+cHMuc3RyZWFtaW5nKSByZXR1cm4gJ8K3IOi/m+ihjOS4reKApicKICBpZiAo
+cHJvcHMudHJhY2UudG90YWxNcyAhPSBudWxsKSByZXR1cm4gYMK3ICR7Zm9y
+bWF0RHVyYXRpb24ocHJvcHMudHJhY2UudG90YWxNcyl9YAogIHJldHVybiAn
+Jwp9KQoKY29uc3Qgc2hvd1RyYWNlID0gY29tcHV0ZWQoCiAgLy8gdXNhZ2Ug
+5a2Y5Zyo5Y2z5riy5p+T77ya57qv5paH5pys5Zue5ZCI77yI5peg5q2l6aqk
+77yJ5Lmf6KaB6Zyy5Ye65Zue5ZCI5pGY6KaB6KGM77yIdG9rZW5zIOWunuiA
+l++8ie+8mwogIC8vIOS4jeeUqCB0b3RhbE1zIOS9nOmXqOKAlOKAlOWQpuWI
+meiAgeWOhuWPsua2iOaBr++8iOaXoCB1c2FnZe+8ieS8muWkmuWHuumHjeWk
+jeeahOOAjOaJp+ihjOi/h+eoi+OAjeWktOihjAogICgpID0+IHN0ZXBDb3Vu
+dC52YWx1ZSA+IDAgfHwgcHJvcHMuc3RyZWFtaW5nIHx8IHByb3BzLnRyYWNl
+LnVzYWdlICE9IG51bGwsCikKCmZ1bmN0aW9uIHRvZ2dsZSgpIHsKICBleHBh
+bmRlZC52YWx1ZSA9ICFleHBhbmRlZC52YWx1ZQp9CgpmdW5jdGlvbiBzdGF0
+dXNJY29uKHN0ZXA6IEV4ZWN1dGlvblN0ZXApOiBzdHJpbmcgewogIHN3aXRj
+aCAoc3RlcC5zdGF0dXMpIHsKICAgIGNhc2UgJ2RvbmUnOgogICAgICByZXR1
+cm4gJ+KckycKICAgIGNhc2UgJ2ZhaWxlZCc6CiAgICAgIHJldHVybiAn4pyX
+JwogICAgY2FzZSAncnVubmluZyc6CiAgICAgIHJldHVybiAn4oCmJwogICAg
+Y2FzZSAnd2FpdGluZ191c2VyJzoKICAgICAgcmV0dXJuICchJwogICAgY2Fz
+ZSAnc2tpcHBlZCc6CiAgICAgIHJldHVybiAn4oCTJwogICAgZGVmYXVsdDoK
+ICAgICAgcmV0dXJuICfil4snCiAgfQp9CgpmdW5jdGlvbiBzdGVwRHVyYXRp
+b24oc3RlcDogRXhlY3V0aW9uU3RlcCk6IHN0cmluZyB7CiAgaWYgKHN0ZXAu
+bXMgPT0gbnVsbCB8fCBzdGVwLnN0YXR1cyA9PT0gJ3J1bm5pbmcnKSByZXR1
+cm4gJycKICBpZiAoc3RlcC5tcyA9PT0gMCkgcmV0dXJuICcnCiAgcmV0dXJu
+IGAgwrcgJHtmb3JtYXREdXJhdGlvbihzdGVwLm1zKX1gCn0KCmZ1bmN0aW9u
+IG9uU3RlcENsaWNrKHN0ZXA6IEV4ZWN1dGlvblN0ZXApIHsKICBjb25zdCBu
+b2RlSWQgPSBzdGVwLm1ldGE/Lm5vZGVJZAogIGlmIChub2RlSWQpIGVtaXQo
+J2ZvY3VzTm9kZScsIG5vZGVJZCkKfQoKLyoqIFAxIOazqOWGjOihqO+8mnRv
+b2wg5q2l57uP5Lq66K+d5YyW57+76K+R77yIaWNvbiArIOWKqOivjSDCtyBh
+cmdz77yJ77yM5YW25L2Z5q2l6aqk57u05oyB5Y6fIGxhYmVs44CCICovCmZ1
+bmN0aW9uIHN0ZXBEaXNwbGF5KHN0ZXA6IEV4ZWN1dGlvblN0ZXApOiBzdHJp
+bmcgewogIGlmIChzdGVwLmtpbmQgIT09ICd0b29sJykgcmV0dXJuIHN0ZXAu
+bGFiZWwKICByZXR1cm4gcHJlc2VudFRvb2xTdGVwKHN0ZXApLmxhYmVsCn0K
+CmNvbnN0IHN1bW1hcnlMaW5lID0gY29tcHV0ZWQoKCkgPT4gdHVyblN1bW1h
+cnlMaW5lKHByb3BzLnRyYWNlKSkKCi8qKiBkZW5zZe+8iOmSieW6le+8ieWk
+tOihjO+8mmBOIOatpSDCtyDmnIDmlrDvvJo8aWNvbj4gPOS6uuivnT5g77yM
+5LiN6YeN5aSN44CM5omn6KGM6L+H56iL44CN5Zub5Liq5a2X4oCU4oCU54q2
+5oCB6KGM5bey5om/6L2944CCICovCmNvbnN0IGRlbnNlSGVhZGxpbmUgPSBj
+b21wdXRlZCgoKSA9PiB7CiAgY29uc3QgdmlzaWJsZSA9IHByb3BzLnRyYWNl
+LnN0ZXBzLmZpbHRlcigocykgPT4gcy5raW5kICE9PSAncGhhc2UnKQogIGNv
+bnN0IGxhc3QgPSB2aXNpYmxlW3Zpc2libGUubGVuZ3RoIC0gMV0KICBpZiAo
+IWxhc3QpIHJldHVybiBwcm9wcy5zdHJlYW1pbmcgPyAn5q2j5Zyo5YeG5aSH
+4oCmJyA6ICfmiafooYzov4fnqIsnCiAgY29uc3Qgc2hvd24gPSBwcmVzZW50
+VG9vbFN0ZXAobGFzdCkKICBjb25zdCBwcmVmaXggPSB2aXNpYmxlLmxlbmd0
+aCA+IDEgPyBgJHt2aXNpYmxlLmxlbmd0aH0g5q2lIMK3IGAgOiAnJwogIHJl
+dHVybiBgJHtwcmVmaXh95q2j5ZyoJHtzaG93bi5sYWJlbH1gCn0pCgovKiog
+UDEjNCDpmLbmrrXlvr3nq6DvvJrku44gdHJhY2Ug5q2l6aqk57qv5rS+55Sf
+77yI5LuF5rWB5byP5pyf6Ze05pi+56S677yJ44CCICovCmNvbnN0IHBoYXNl
+QmFkZ2UgPSBjb21wdXRlZCgoKSA9PiB7CiAgY29uc3QgcCA9IGRlcml2ZVBo
+YXNlKHByb3BzLnRyYWNlLnN0ZXBzKQogIHJldHVybiBwID8gUEhBU0VfQkFE
+R0VbcF0gOiBudWxsCn0pCjwvc2NyaXB0PgoKPHRlbXBsYXRlPgogIDxkaXYK
+ICAgIHYtaWY9InNob3dUcmFjZSIKICAgIGNsYXNzPSJhZ2VudC10cmFjZSIK
+ICAgIDpjbGFzcz0iZGVuc2UgPyAnbWItMScgOiAnbXQtMS41IGJvcmRlci10
+IGJvcmRlci13aGl0ZS8xMCBwdC0xLjUnIgogID4KICAgIDxidXR0b24KICAg
+ICAgdHlwZT0iYnV0dG9uIgogICAgICBjbGFzcz0iYWdlbnQtdHJhY2UtdG9n
+Z2xlIGZsZXggdy1mdWxsIGl0ZW1zLWNlbnRlciBnYXAtMSB0ZXh0LWxlZnQg
+dGV4dC1bMTFweF0gdGV4dC1bdmFyKC0tbmVvLXRleHQtbXV0ZWQpXSBob3Zl
+cjp0ZXh0LVt2YXIoLS1uZW8tdGV4dC1wcmltYXJ5KV0iCiAgICAgIEBjbGlj
+az0idG9nZ2xlIgogICAgPgogICAgICA8c3BhbiBjbGFzcz0iaW5saW5lLWJs
+b2NrIHctMyBzaHJpbmstMCI+e3sgZXhwYW5kZWQgPyAn4pa+JyA6ICfilrgn
+IH19PC9zcGFuPgogICAgICA8c3BhbgogICAgICAgIHYtaWY9InBoYXNlQmFk
+Z2UgJiYgc3RyZWFtaW5nIgogICAgICAgIGNsYXNzPSJtci0xIGlubGluZS1m
+bGV4IGl0ZW1zLWNlbnRlciBnYXAtMC41IHJvdW5kZWQtZnVsbCBiZy1bdmFy
+KC0tbmVvLXBhbmVsKV0gcHgtMS41IHB5LTAuNSIKICAgICAgICBkYXRhLXRl
+c3RpZD0icGhhc2UtYmFkZ2UiCiAgICAgID57eyBwaGFzZUJhZGdlLmljb24g
+fX0ge3sgcGhhc2VCYWRnZS5sYWJlbCB9fTwvc3Bhbj4KICAgICAgPHNwYW4g
+OmRhdGEtdGVzdGlkPSJkZW5zZSA/ICd0cmFjZS1oZWFkbGluZS1kZW5zZScg
+OiAndHJhY2UtaGVhZGxpbmUnIj57eyBkZW5zZSA/IGRlbnNlSGVhZGxpbmUg
+OiBoZWFkZXJMYWJlbCB9fTwvc3Bhbj4KICAgICAgPHNwYW4gdi1pZj0iZHVy
+YXRpb25MYWJlbCAmJiAhZXhwYW5kZWQgJiYgIWRlbnNlIiBjbGFzcz0ib3Bh
+Y2l0eS03MCI+e3sgZHVyYXRpb25MYWJlbCB9fTwvc3Bhbj4KICAgIDwvYnV0
+dG9uPgogICAgPGRpdiB2LWlmPSJleHBhbmRlZCIgY2xhc3M9Im10LTEgc3Bh
+Y2UteS0yIHBsLTQiPgogICAgICA8c2VjdGlvbiB2LWlmPSJzdGVwQ291bnQg
+PiAwIiBkYXRhLXRlc3RpZD0ib3BlcmF0aW9uLXNlY3Rpb24iPgogICAgICAg
+IDxwIGNsYXNzPSJtYi0xIHRleHQtWzEwcHhdIGZvbnQtbWVkaXVtIHRleHQt
+W3ZhcigtLW5lby10ZXh0LW11dGVkKV0iPuaTjeS9nOaYjue7hjwvcD4KICAg
+ICAgICA8dWwgY2xhc3M9InNwYWNlLXktMC41Ij4KICAgICAgICAgIDxsaQog
+ICAgICAgICAgICB2LWZvcj0iKHN0ZXAsIGkpIGluIHRyYWNlLnN0ZXBzIgog
+ICAgICAgICAgICA6a2V5PSJzdGVwLmlkIgogICAgICAgICAgICBkYXRhLXRl
+c3RpZD0ib3BlcmF0aW9uLXN0ZXAiCiAgICAgICAgICAgIGNsYXNzPSJhZ2Vu
+dC10cmFjZS1zdGVwIGZsZXggaXRlbXMtc3RhcnQgZ2FwLTEuNSB0ZXh0LVsx
+MHB4XSBsZWFkaW5nLXNudWciCiAgICAgICAgICAgIDpzdHlsZT0ieyBhbmlt
+YXRpb25EZWxheTogYCR7TWF0aC5taW4oaSAqIDYwLCA2MDApfW1zYCB9Igog
+ICAgICAgICAgICA6Y2xhc3M9IlsKICAgICAgICAgICAgICBzdGVwLm1ldGE/
+Lm5vZGVJZCA/ICdjdXJzb3ItcG9pbnRlciBob3Zlcjp0ZXh0LVt2YXIoLS1u
+ZW8tdGV4dC1wcmltYXJ5KV0nIDogJycsCiAgICAgICAgICAgICAgc3RlcC5z
+dGF0dXMgPT09ICdmYWlsZWQnID8gJ3RleHQtcmVkLTQwMC85MCcgOiAndGV4
+dC1bdmFyKC0tbmVvLXRleHQtbXV0ZWQpXScsCiAgICAgICAgICAgICAgc3Rl
+cC5zdGF0dXMgPT09ICdydW5uaW5nJyA/ICdhbmltYXRlLXB1bHNlJyA6ICcn
+LAogICAgICAgICAgICAgIHN0ZXAua2luZCA9PT0gJ3RoaW5raW5nJyA/ICdp
+dGFsaWMgb3BhY2l0eS04MCcgOiAnJywKICAgICAgICAgICAgICBzdGVwLmtp
+bmQgPT09ICdleHBsb3JlJyA/ICdvcGFjaXR5LTkwJyA6ICcnLAogICAgICAg
+ICAgICAgIHN0ZXAuc3RhdHVzID09PSAnZG9uZScgPyAnYWdlbnQtdHJhY2Ut
+c3RlcC0tZG9uZScgOiAnJywKICAgICAgICAgICAgXSIKICAgICAgICAgICAg
+QGNsaWNrPSJvblN0ZXBDbGljayhzdGVwKSIKICAgICAgICAgID4KICAgICAg
+ICAgICAgPHNwYW4gY2xhc3M9Im1pbi13LTAgZmxleC0xIj4KICAgICAgICAg
+ICAgICA8c3Bhbj57eyBzdGF0dXNJY29uKHN0ZXApIH19IHt7IHN0ZXBEaXNw
+bGF5KHN0ZXApIH19e3sgc3RlcER1cmF0aW9uKHN0ZXApIH19PC9zcGFuPgog
+ICAgICAgICAgICAgIDxwIHYtaWY9InN0ZXAuZGV0YWlsIiBjbGFzcz0ibXQt
+MC41IHBsLTMgb3BhY2l0eS03NSIgOmNsYXNzPSJzdGVwLmtpbmQgPT09ICd0
+aGlua2luZycgPyAnd2hpdGVzcGFjZS1wcmUtd3JhcCcgOiAnJyI+e3sgc3Rl
+cC5kZXRhaWwgfX08L3A+CiAgICAgICAgICAgIDwvc3Bhbj4KICAgICAgICAg
+ICAgPENhbnZhc0xvY2F0ZVBpbkljb24KICAgICAgICAgICAgICB2LWlmPSJz
+dGVwLm1ldGE/Lm5vZGVJZCIKICAgICAgICAgICAgICA6c2l6ZT0iMTEiCiAg
+ICAgICAgICAgICAgY2xhc3M9Im10LTAuNSBzaHJpbmstMCBvcGFjaXR5LTYw
+IgogICAgICAgICAgICAvPgogICAgICAgICAgPC9saT4KICAgICAgICA8L3Vs
+PgogICAgICA8L3NlY3Rpb24+CiAgICA8L2Rpdj4KICAgIDwhLS0gUDEg5Zue
+5ZCI5pGY6KaB6KGM77yaZG9uZSDlkI7kuIDmrKHvvIjoioLngrkv5byg5pWw
+L+iAl+aXti90b2tlbnPvvIkgLS0+CiAgICA8cAogICAgICB2LWlmPSIhc3Ry
+ZWFtaW5nICYmIHN1bW1hcnlMaW5lIgogICAgICBkYXRhLXRlc3RpZD0idHVy
+bi1zdW1tYXJ5LWxpbmUiCiAgICAgIGNsYXNzPSJtdC0xIHBsLTQgdGV4dC1b
+MTBweF0gdGV4dC1bdmFyKC0tbmVvLXRleHQtbXV0ZWQpXSIKICAgID4KICAg
+ICAge3sgc3VtbWFyeUxpbmUgfX0KICAgIDwvcD4KICA8L2Rpdj4KPC90ZW1w
+bGF0ZT4KCjxzdHlsZSBzY29wZWQ+Ci8qIFAxIOWKqOaViOiKguaLje+8muat
+pemqpCBzdGFnZ2VyIOWFpeWcuu+8iGRlbGF5IOeUseihjOWGhSBzdHlsZSDm
+jIkgaSo2MG1zIOazqOWFpe+8jOS4iumZkCA2MDBtc++8iSAqLwouYWdlbnQt
+dHJhY2Utc3RlcCB7CiAgYW5pbWF0aW9uOiBhZ2VudC10cmFjZS1zdGVwLWlu
+IDAuMjJzIGVhc2Utb3V0IGJvdGg7Cn0KCi5hZ2VudC10cmFjZS1zdGVwLS1k
+b25lIHsKICB0cmFuc2l0aW9uOiBvcGFjaXR5IDAuMnMgZWFzZTsKfQoKQGtl
+eWZyYW1lcyBhZ2VudC10cmFjZS1zdGVwLWluIHsKICBmcm9tIHsKICAgIG9w
+YWNpdHk6IDA7CiAgICB0cmFuc2Zvcm06IHRyYW5zbGF0ZVkoM3B4KTsKICB9
+CgogIHRvIHsKICAgIG9wYWNpdHk6IDE7CiAgICB0cmFuc2Zvcm06IHRyYW5z
+bGF0ZVkoMCk7CiAgfQp9CgpAbWVkaWEgKHByZWZlcnMtcmVkdWNlZC1tb3Rp
+b246IHJlZHVjZSkgewogIC5hZ2VudC10cmFjZS1zdGVwIHsKICAgIGFuaW1h
+dGlvbjogbm9uZTsKICB9Cn0KPC9zdHlsZT4K
