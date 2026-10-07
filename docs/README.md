@@ -160,15 +160,39 @@ ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `servic
 
 `INDEX.md` 是 `scripts/docs/` 下两个脚本的产物（`gen_index.py` 扫盘判定状态 →
 `index_data.json` → `gen_index_md.py` 渲染 md）。**手改会在下次重跑时被静默抹掉**，
-且让索引与数据源脱节 —— 2026-10-06 就因此出现「INDEX 少 19 份文档」的漂移。
+且让索引与数据源脱节 —— `c5f722b4` 重跑时一次补齐了此前**漏登记 11 份文档**的条目
+（6 份 plan + 5 份 spec；缺口自 `4d4275d1` 起恒为 11）。
+⚠️ 别把这个 11 读成「302 − 283」：283 是 `f59de429`（2026-10-03）建索引时的份数，
+当时数据源与索引是自洽的（283/283），此后**新增文档没有被重跑生成器**，`index_data.json`
+与 `INDEX.md` 就一起停在 283。拿这类陈旧 `total` 当基准会算出另一个（无意义的）差值。
 
 ```bash
 python3 scripts/docs/gen_index.py > scripts/docs/index_data.json   # 重新判定
-python3 scripts/docs/gen_index_md.py                               # 重新生成本文件
+python3 scripts/docs/gen_index_md.py                               # 重新生成 INDEX.md
 ```
 
-⚠️ 两条命令都从**仓库根**跑（脚本内部按自身位置回溯定位仓库根，与 cwd 无关）。
-纯新增文档的正常结果应是 **0 删除**；若出现删除，先查是不是有文档被误删。
+⚠️ 脚本自身按 `__file__` 回溯定位仓库根；但 `>` 重定向是**相对路径**，仍须从**仓库根**跑。
+
+**怎么读重跑后的 diff**（`gen_index_md.py` 按份数 `-len(...)` 排序主题分组）：
+
+主题分组是**按份数排序**的，所以某主题份数一变，**整个小节连同其下整块条目会移位**，
+diff 因此可能很大而**实际一份文档都没丢** —— 实测给 `other` 主题加 1 份文档：
+diff 67 行，其中 18 行文档条目出现在 `-` 侧，但它们**全部**同时出现在 `+` 侧（移位）。
+
+✅ **唯一判据：有没有「净丢失」**。跑这一条即可（基线用改动前的 `INDEX.md`；
+下面直接取 `HEAD` 版，已有改动未提交时换成改前副本）：
+
+```bash
+diff <(git show HEAD:docs/superpowers/INDEX.md) docs/superpowers/INDEX.md \
+  | grep -oE '^[<>].*docs/superpowers/[^`]+' | sort -u > /tmp/idx-changed.txt
+comm -23 <(grep '^<' /tmp/idx-changed.txt | grep -oE 'docs/superpowers/[^`]+') \
+         <(grep '^>' /tmp/idx-changed.txt | grep -oE 'docs/superpowers/[^`]+')
+```
+
+输出为空 ⇒ 没有文档丢失（重排属正常）。输出非空 ⇒ 那几份文档真的不在索引里了，查文件是否被删。
+
+⛔ **不要因为「看到几十行 `-`」就去手改 INDEX.md 找补** —— 那是分组重排，不是漂移。
+要补条目，改/加文档后**重跑生成器**即可。
 
 > 决策依据见 [ADR-0008](./adr/0008-docs-index-over-doc-edits.md)——
 > 为什么不批量改正文（文件量级 diff 失控），以及为什么不用"按月份删/归档"（丢决策追溯价值）。
