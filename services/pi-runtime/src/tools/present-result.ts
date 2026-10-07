@@ -39,12 +39,67 @@ export function presentResult(payload: SvgCardPayload): {
 		content: [
 			{
 				type: "text",
+				// ⚠️ 必须是 JSON：既有测试用 `JSON.parse(r.content[0].text)` 断言字段
+				//   （`present-result.test.ts` 的 summary()）。改成自然语言会让它抛
+				//   `Unexpected token` ⇒ 破坏性变更。别"优化"这个文案。
 				text: JSON.stringify({
 					ok: true,
 					type: payload.type,
 					...(payload.title ? { title: payload.title } : {}),
 					bytes: clipped.svg.length,
 					truncated,
+				}),
+			},
+		],
+		details,
+	};
+}
+/**
+ * 双写版（2026-10-07）：同时产出 `svg_card` 与 `node_graph`。
+ *
+ * ⚠️ **为什么双写**：`node_graph` 是给前端节点图库（Vue Flow）用的结构化载荷，
+ * 而 `svg_card` 是 717 行手写 SVG 的产物。前端尚未接`node_graph` 时，多出来的 command
+ * 会被 `AgentSideRail` 忽略（无害）⇒ 可以**先上后端、前端后接**，不必等前端就绪。
+ * 等前端灰度验证通过，再把 `svg_card` 那条路删掉。
+ */
+export function presentResultDual(
+	payload: SvgCardPayload,
+	nodeGraph: import("./types-node-graph.js").NodeGraphPayload,
+): {
+	content: [{ type: "text"; text: string }];
+	details: {
+		ok: true;
+		canvasCommands: (SvgCardPayload | import("./types-node-graph.js").NodeGraphPayload)[];
+		truncated?: boolean;
+	};
+} {
+	const truncated = payload.svg.length > SVG_MAX_CHARS;
+	const svg = truncated ? "" : payload.svg;
+	const clipped: SvgCardPayload = { ...payload, svg };
+	const details: {
+		ok: true;
+		canvasCommands: (SvgCardPayload | import("./types-node-graph.js").NodeGraphPayload)[];
+		truncated?: boolean;
+	} = { ok: true, canvasCommands: [clipped, nodeGraph] };
+	if (truncated) details.truncated = true;
+	return {
+		content: [
+			{
+				type: "text",
+				text: JSON.stringify({
+					ok: true,
+					type: payload.type,
+					...(payload.title ? { title: payload.title } : {}),
+					bytes: clipped.svg.length,
+					truncated,
+					// 双写时带上 node_graph 的规模，让模型知道结构化载荷已就绪
+					nodeGraph: {
+						nodes: nodeGraph.nodes.length,
+						edges: nodeGraph.edges.length,
+						...(nodeGraph.totalNodeCount != null
+							? { totalNodeCount: nodeGraph.totalNodeCount }
+							: {}),
+					},
 				}),
 			},
 		],
