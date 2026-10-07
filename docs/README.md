@@ -150,7 +150,7 @@ ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `servic
 - **份数不要写死在文档里**：specs 与 plans 的真实份数以
   `ls docs/superpowers/specs/*.md | wc -l` / `ls docs/superpowers/plans/*.md | wc -l` 实测为准。
   ⚠️ 本文与 INDEX 曾长期写着过时的硬编码份数（283 / 286）。**根因是索引被手改过** ——
-  手改的内容会在下一次重跑生成脚本时被抹掉。**根治办法是不手改、走生成器**（见下）。
+  没有对应文件的手写内容会在下一次重跑生成脚本时被抹掉。**根治办法是不手改、走生成器**（见下）。
 - 状态分布（living / frozen / superseded 分解）由生成器从 `scripts/docs/index_data.json` 读出，
   **不要手工维护**，也不要拿旧快照当判据。
 - 判定优先读文档开头的 `状态：` 字段，其次按月份 + 主题推断。
@@ -162,14 +162,7 @@ ADR 统一在 `docs/adr/`，但引用方分布在 `docs/discussion/` 与 `servic
 `index_data.json` → `gen_index_md.py` 渲染 md）。**手改会在下次重跑时被静默抹掉**，
 且让索引与数据源脱节。
 
-⚠️ **别拿份数相减去推断缺口，两个数来自不同的东西。** `c5f722b4` 重跑前的实测状态
-（`0754a643` = `c5f722b4^`）是：`index_data.json` 的 `total` 停在 **283**，
-而 `INDEX.md` 有 **290** 条条目 —— 多出的 **7 条是手工补进去的**，
-`comm -23` 实测 `index_data − INDEX = 0`、`INDEX − index_data = 7`。
-手改痕迹同样可见：`INDEX.md` 里「Agent 交互与可见性」小节标题写 **27** 份，
-该小节实际有 **29** 条条目。**这 7 条与标题不一致，都是手改留下的，重跑即被抹掉。**
-⇒ 用 `302 − 283` 算出来的 19 与真实的 11（缺 6 plan + 5 spec）都不是这个量，别混用。
-（重跑后两者已一致：302 份 / 302 条，手补 0 条。）
+实测状态（`c5f722b4` 重跑前）：`index_data.json` 的 `total` 停在 283，而 `INDEX.md` 有 290 条条目 —— 两个数来自不同的东西。差集实测：`index_data − INDEX = 0`、`INDEX − index_data = 7`，即那 7 条只存在于 `INDEX.md`、不在数据源里；其中 3 条落在「Agent 交互与可见性」小节，该小节标题写 27、实际 29。真正的缺口是 11 份（6 份 plan + 5 份 spec）。注意 `302 − 283 = 19` 是拿陈旧 `total` 比今天的总数，不能当作缺口。这 7 个文件在盘上都存在，所以按上面两条命令完整重跑时它们会被扫盘重新收回，变的是主题归类与小节标题计数；只有单跑 `gen_index_md.py`（配陈旧 `index_data.json`）才会把它们抹掉。真正会被重跑抹掉的是没有对应文件的手写内容。
 
 ```bash
 python3 scripts/docs/gen_index.py > scripts/docs/index_data.json   # 重新判定
