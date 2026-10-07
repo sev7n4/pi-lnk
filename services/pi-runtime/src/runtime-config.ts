@@ -102,6 +102,24 @@ export interface RuntimeConfig {
 	 * 从不压缩」，极易被误判为已修好（2026-09-30 诊断 F-01 · Review Focus #1）。
 	 */
 	compactionContextWindow?: number;
+	/**
+	 * 运行期无进展看护开关（2026-10-07生产事故 P1）。缺省 true。
+	 *
+	 * ⚠️ 这**不是**provider 请求超时：`openai@6` 客户端自带 `DEFAULT_TIMEOUT = 600000`
+	 * （10min，`client.js:695`）已兜住 HTTP 层挂起，所以再调 `streamOptions.timeoutMs`
+	 * 只是改这个总数、且会连带砍掉正常的长生成 —— 那条路是错的。
+	 * 真正缺的是「不依赖卡在哪一层」的看护：会话在跑却长时间零事件 ⇒ 强制结算。
+	 */
+	stallWatchdog?: boolean;
+	/**
+	 * 无进展判定阈值（ms）：处于 prompting/compacting 且**没有任何 harness 事件**
+	 * 超过这么久 ⇒ 判定卡死并强制结算。缺省 900_000（15min）。
+	 *
+	 * 取值权衡：必须**明显大于** openai SDK 的 10min 默认超时，否则会抢在 SDK 之前
+	 * 砍掉正在正常流式返回（长 reasoning / 大画布轮）的一轮；15min 让 SDK 先走完它
+	 * 自己的错误路径，看护只兜「SDK 兜不住」的那些（卡在 effect_pending / hook / 工具）。
+	 */
+	stallWatchdogMs?: number;
 }
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
@@ -115,6 +133,8 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
 	compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000, targetRatio: 0.7 },
 	steeringMode: DEFAULT_QUEUE_MODE,
 	followUpMode: DEFAULT_QUEUE_MODE,
+	stallWatchdog: true,
+	stallWatchdogMs: 900_000,
 };
 
 /** 正整数解析：非法（非数字 / 0 / 负数 / 空）一律回退，小数截断。
@@ -185,6 +205,8 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		// steering/followUp 队列模式（2026-10-02 由 configmap 化石收编为 env 口径）
 		steeringMode: parseQueueMode(env.PI_RUNTIME_STEERING_MODE, d.steeringMode),
 		followUpMode: parseQueueMode(env.PI_RUNTIME_FOLLOW_UP_MODE, d.followUpMode),
+		stallWatchdog: parseBool(env.PI_RUNTIME_STALL_WATCHDOG, true),
+		stallWatchdogMs: parsePositiveInt(env.PI_RUNTIME_STALL_WATCHDOG_MS, d.stallWatchdogMs ?? 900_000),
 	};
 }
 
