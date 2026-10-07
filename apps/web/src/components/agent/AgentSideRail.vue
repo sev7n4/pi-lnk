@@ -347,7 +347,7 @@ type NodeGraphMessage = AgentStreamMessage & {
 function hasRenderableNodeGraph(msg: AgentStreamMessage): msg is NodeGraphMessage {
   return msg.role === 'assistant'
     && msg.presentation?.kind === 'node_graph'
-    && Array.isArray((msg.presentation.body as { nodes?: unknown } | undefined)?.nodes)
+    && Array.isArray((msg.presentation.body as { graph_nodes?: unknown } | undefined)?.graph_nodes)
 }
 
 /**
@@ -2195,11 +2195,19 @@ function handleEvent(event: { type: string; data: unknown }) {
         // ⚠️ **必须在 svg_card 分支之前**（A 方案：node_graph 优先、静态 SVG 降级）。
         // ⚠️ 不塞 AgentPresentationHost：与 svg_card 同款理由（落库路径不恢复 stepper）。
         const ng = cmd as unknown as NodeGraphBodyPayload
+        // ⚠️ body 走 `AgentPresentationBody` 的**可选字段**（不是联合类型，见 types.ts 注释）：
+        //   联合类型会让所有下游 `body.text` / `body.schemes` 访问变成 TS2339（实测 16 处）。
         agent.setPresentation({
           kind: 'node_graph',
           stepper: { current: '', completed: [] },
           title: ng.title ?? cmd.title,
-          body: ng,
+          body: {
+            graph_nodes: ng.nodes,
+            graph_edges: ng.edges ?? [],
+            graph_droppedNodeIds: ng.droppedNodeIds,
+            graph_totalNodeCount: ng.totalNodeCount,
+            nodeGraphTitle: ng.title,
+          },
         } as unknown as AgentPresentationEnvelope)
       } else if (cmd.type === 'svg_card' && cmd.svg !== undefined) {
         // render_canvas_view 产物：净化在 AgentSvgCard 内做（spec §4.5）。
@@ -2739,7 +2747,7 @@ defineExpose({
                 <AgentNodeGraph
                   v-if="hasRenderableNodeGraph(msg)"
                   class="mt-2"
-                  :body="msg.presentation.body as unknown as NodeGraphBodyPayload"
+                  :body="{ nodes: msg.presentation.body?.graph_nodes ?? [], edges: msg.presentation.body?.graph_edges ?? [], title: msg.presentation.title }"
                   :title="msg.presentation.title"
                   @focus-node="onFocusNode($event)"
                 />

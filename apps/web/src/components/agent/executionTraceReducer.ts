@@ -562,9 +562,8 @@ export function replayExecutionTraceEvents(
  * 与 svg_card 同款空 stepper；`node_graph` 走独立挂载，不进 AgentPresentationHost。
  */
 /** `node_graph` 呈现信封（独立挂载，不进 AgentPresentationHost 的 stepper）。 */
-export type NodeGraphEnvelope = Omit<AgentPresentationEnvelope, 'kind' | 'body'> & {
+export type NodeGraphEnvelope = Omit<AgentPresentationEnvelope, 'kind'> & {
   kind: 'node_graph'
-  body: NodeGraphBodyPayload
 }
 
 export function replayNodeGraphPresentation(
@@ -586,11 +585,14 @@ export function replayNodeGraphPresentation(
       kind: 'node_graph',
       stepper: { current: '', completed: [] },
       title: cmd.title,
+      // ⚠️ 与 SideRail 实时路径同款：用 `AgentPresentationBody` 的可选字段承载
+      //   （联合类型会污染所有下游 body 访问，见 types.ts 的注释）。
       body: {
-        nodes: cmd.nodes,
-        edges: Array.isArray(cmd.edges) ? cmd.edges : [],
-        droppedNodeIds: Array.isArray(cmd.droppedNodeIds) ? cmd.droppedNodeIds : undefined,
-        totalNodeCount: typeof cmd.totalNodeCount === 'number' ? cmd.totalNodeCount : undefined,
+        graph_nodes: cmd.nodes as NodeGraphBodyPayload['nodes'],
+        graph_edges: (Array.isArray(cmd.edges) ? cmd.edges : []) as NodeGraphBodyPayload['edges'],
+        graph_droppedNodeIds: Array.isArray(cmd.droppedNodeIds) ? cmd.droppedNodeIds : undefined,
+        graph_totalNodeCount: typeof cmd.totalNodeCount === 'number' ? cmd.totalNodeCount : undefined,
+        nodeGraphTitle: cmd.title,
       },
     }
   }
