@@ -14,6 +14,7 @@
 
 - **禁止修改 `vendor/earendil-works/pi/**`**（ADR-0009：只读镜像）。本计划全部改动落在 `services/pi-runtime/src/`。
 - `error_class` 是**闭集 8 值**：`blocked_terminate` / `aborted` / `upstream_4xx` / `upstream_5xx` / `timeout` / `network` / `gate_blocked` / `validation`，兜底 `internal`。**兜底必须落 `internal`，绝不静默丢弃。**
+  - ⚠️ **2026-10-07 修订**：新增 `circuit_open`（本进程熔断），成 **9 值**。权威定义见 spec §4.4；本条保留当时的 8 值事实，不作改写。
 - **禁止把错误原文、model_id 自由文本、`session_id` 当label。** `channel` 只能取 `LlmIdentity.provider`（已是 12 位哈希或 `agnes`），`model` 只能取 `LlmIdentity.model`。
 - 改`metrics.ts` 时**只扩展、不重构**既有渲染逻辑；既有 25 个指标族的输出格式必须逐字不变。
 - 本仓**无 eslint/prettier/biome、无 husky**，风格靠人；沿用既有文件的 tab 缩进与命名习惯。

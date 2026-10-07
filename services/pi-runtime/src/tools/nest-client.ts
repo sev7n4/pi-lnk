@@ -4,8 +4,15 @@
  * per-path 熔断（5 次/60s）+ 按路径超时（默认 10s；image 210s / video 690s 预留）。
  * 零依赖：fetch + AbortSignal.timeout。
  */
-/** 错误分类（③）：upstream_* 按 HTTP 状态分层，envelope=200 但包络错误，timeout/network=传输层。 */
-export type NestErrorKind = "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network";
+/** 错误分类（③）：upstream_* 按 HTTP 状态分层，envelope=200 但包络错误，
+ * circuit_open=本进程熔断拦下（未出网），timeout/network=传输层。 */
+export type NestErrorKind =
+	| "upstream_4xx"
+	| "upstream_5xx"
+	| "envelope"
+	| "timeout"
+	| "network"
+	| "circuit_open";
 
 /** 每次 Nest 调用的观测信息：结果体积（ok 时）与错误分类（error 时）。 */
 export interface NestCallInfo {
@@ -90,7 +97,10 @@ export class NestClient {
 		try {
 			this.checkCircuit(path);
 		} catch (err) {
-			this.opts.onCall?.(toolLabel(path), "circuit_open");
+			// 熔断也必须进**结构化通道**（2026-10-07 生产实证）：这里原先只报 outcome、
+			// 不报 errorKind ⇒ `tool_error_kinds_total` 里熔断连 series 都不存在，
+			// 而事件层又只能从错误文本正则猜 ⇒ 两条通道同时失明，告警查不出真因。
+			this.opts.onCall?.(toolLabel(path), "circuit_open", { errorKind: "circuit_open" });
 			throw err;
 		}
 		const timeoutMs = this.timeoutMsFor(path);

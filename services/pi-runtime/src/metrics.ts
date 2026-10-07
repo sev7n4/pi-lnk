@@ -57,7 +57,7 @@ const BYTES_BUCKETS = [256, 1024, 4096, 16384, 65536, 262144, 1_048_576];
  * `retry_scheduled` 事件驱动 `pi_runtime_llm_retries_total` 承担。
  */
 export type ToolErrorKind =
-	| "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network" | "gate_blocked" | "retry";
+	| "upstream_4xx" | "upstream_5xx" | "envelope" | "timeout" | "network" | "gate_blocked" | "retry" | "circuit_open";
 
 interface HistogramState {
 	count: number;

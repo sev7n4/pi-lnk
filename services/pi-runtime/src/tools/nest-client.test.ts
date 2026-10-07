@@ -295,3 +295,31 @@ test("P0-② 终审修复：用户主动 abort 不计入熔断器（连续取消
 	await client.post("/agent/internal/run-image-generation", {});
 	assert.equal(okCalls, 1);
 });
+
+test("熔断时 onCall 必须带 errorKind（否则 kinds 整族查不到熔断）", async () => {
+	// 生产取证（2026-10-07）：熔断风暴期间 error_class 侧 8.16 个错误全落 internal，
+	// 而 kinds 侧同窗口增长为 0 —— 因为 checkCircuit 的 catch 只报 outcome 不报 errorKind，
+	// 熔断在结构化通道里**连 series 都不存在**，两条通道同时失明。
+	const seen: Array<{ outcome: string; errorKind?: string }> = [];
+	await withServer(
+		(_req, res) => {
+			res.statusCode = 500;
+			res.end("boom");
+		},
+		async (base) => {
+			const c = new NestClient({
+				baseUrl: base,
+				token: "t",
+				breakerThreshold: 1,
+				breakerCooldownMs: 10_000,
+				onCall: (_t, o, i) => seen.push({ outcome: o, errorKind: i?.errorKind }),
+			});
+			await assert.rejects(() => c.post("/agent/internal/upsert-media-node", {}), NestToolError);
+			await assert.rejects(() => c.post("/agent/internal/upsert-media-node", {}), NestCircuitOpenError);
+			assert.deepEqual(seen, [
+				{ outcome: "error", errorKind: "upstream_5xx" },
+				{ outcome: "circuit_open", errorKind: "circuit_open" },
+			]);
+		},
+	);
+});
