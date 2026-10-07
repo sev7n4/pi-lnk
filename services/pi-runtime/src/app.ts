@@ -304,7 +304,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	 */
 	app.post<{ Params: { sessionId: string } }>("/sessions/:sessionId/abort", async (request, reply) => {
 		const { sessionId } = request.params;
-		const aborted = manager.abort(sessionId);
+		const aborted = await manager.abort(sessionId);
 		app.log.info({ sessionId, aborted }, "abort requested");
 		return reply.send({ ok: aborted, skipped: !aborted });
 	});
