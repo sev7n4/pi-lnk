@@ -1,6 +1,6 @@
 ---
 name: drama-storyboard
-version: "0.1.3"
+version: "0.2.0"
 description: 从剧本解析提取分镜提示词与参考对象（角色/场景/道具/音频）。当用户要求拆分镜、出分镜提示词、镜头表、beat 拆解、剧本转分镜、提取资产清单、道具图、配音或音效节点，或提到分镜、storyboard、shot list、镜头语言、景别、轴线时使用。产出静帧分镜包（资产表 + 镜头表 + 提示词 + 参考绑定）；图生视频与 motion 提示词不在范围。
 ---
 
@@ -34,7 +34,7 @@ description: 从剧本解析提取分镜提示词与参考对象（角色/场景
 | 角色 | 名称、首次出场集数·场次、剧情功能、是否有图（节点 id） | 主角 / 配角 / 群演（群演不单独建模） |
 | 场景 | 场景名、内/外景、时段、出现集数、是否有图 | 主场景 / 过场场景（过场可复用主场景视角） |
 | 道具 | 名称、剧情意义、涉及人物、出现集数、是否有图 | **hero prop**（剧情关键）/ **action prop**（角色使用）/ **set dressing**（环境陈设） |
-| 音频 | 对白、独白（VO）、音效（SFX）、配乐（BGM 情绪） | 对白/VO **可生成**（TTS）；SFX/BGM 仅作声音设计说明 |
+| 音频 | 对白、独白（VO）、音效（SFX）、配乐（BGM 情绪） | 三类均可生成：对白/VO = `voice`；SFX/多角色台词 = `design`；BGM = `music` |
 
 - 每项标注「**已有**（节点 id）/ **缺失**」——缺失才进阶段二，已有资产**不得重复生成**
 - 群演、过场场景、set dressing 明确标注"不单独建模，用通用描述 + 复用主资产"，防资产表膨胀
@@ -44,9 +44,11 @@ description: 从剧本解析提取分镜提示词与参考对象（角色/场景
 - **角色图** → 转 drama-character-design（带上剧本给的首次出场描述与主角三角）
 - **场景图** → 转 drama-scene-worldview（带上剧本给的出场标注：内/外景、时段）
 - **道具图** → 本 skill 内完成，用轻量锚点（道具版身份锁）：`名称 + 材质（词+hex）+ 尺寸比例 + 固定细节（Logo / 文字 / 磨损状态 / 开合状态）+ 不可变项`；`upsert_media_node(target_type="image")` 建档，hero prop 单独出图，set dressing 并入场景图解
-- **音频**：分两类，**不要混淆可生成与仅说明**（`run_audio_generation` 当前**只做 TTS 配音**）：
-  - **对白 / VO（可生成）** → `upsert_media_node(target_type="audio")`：角色名 + 情绪 + 语气 + 语速 + 台词原文；VO 标注是否与画面同步（J-cut 声音先入 / L-cut 声音后出）；建节点后经 `propose_generation` → `run_audio_generation` 出音轨
-  - **SFX / BGM（仅说明，无生成链路）** → 写入镜头表的 Audio 列作为**声音设计说明**（SFX：具体声音事件 + 时间点"耳光声 00:03"；BGM：情绪曲线 + 强度 + 起止点"压抑钢琴，随反转爬升，00:40 处收"），供用户或剪辑环节执行；**不得声称已生成**
+- **音频**：按 `kind` 分三类，**三类都可生成**（`run_audio_generation` 按 `kind` 选分类，见 `drama-audio-design`）：
+  - **对白 / VO（`kind: "voice"`，默认）** → `upsert_media_node(target_type="audio")`：角色名 + 情绪 + 语气 + 语速 + 台词原文；VO 标注是否与画面同步（J-cut 声音先入 / L-cut 声音后出）；建节点后经 `propose_generation` → `run_audio_generation` 出音轨
+  - **多角色台词 + 音效 + 氛围（`kind: "design"`）** → 同建 audio 节点，调用时传 `roles`（角色→音色表）+ `scripts`（台词段，`()` 内为语气、`[]` 内为音效）；SFX 仍要写进镜头表 Audio 列（具体声音事件 + 时间点"耳光声 00:03"）作为设计意图记录
+  - **配乐 / BGM（`kind: "music"`）** → 传 `caption`（风格描述）；情绪曲线 + 强度 + 起止点（"压抑钢琴，随反转爬升，00:40 处收"）写进 `caption` 与镜头表 Audio 列；纯音乐（无歌词）加 `instrumental: true`
+  - ⚠️ **按诉求选分类，不要一律落 `voice`**（要 BGM 却出配音 = 冒充）；某一 `kind` 的模型不可用时工具会显式报错，如实转达，**不要静默换成别的分类**
 - 资产补齐走 `propose_generation` 等用户确认，确认前不调 `run_*`
 
 ## 阶段三：Beat 拆解与镜头表
@@ -121,7 +123,7 @@ description: 从剧本解析提取分镜提示词与参考对象（角色/场景
 ## 与上下游的交接
 
 - **上游**：剧本 skill 的 IP bible（人物名录、情绪曲线）+ 角色 / 场景 skill 的 bible 与基准图——全部经 `recall_memory` 与画布读工具取，不要求用户重述
-- **下游**：drama-motion-video（镜头表 → motion 提示词 → 图生视频）、drama-audio-design（镜头表的 Audio 列 → TTS 与声音设计说明）、drama-qc-review（审片与派发修复）；本 skill 的镜头表（含 Beat / Blocking / 运动 / 连续性锚点）是这三者的共同输入契约
+- **下游**：drama-motion-video（镜头表 → motion 提示词 → 图生视频）、drama-audio-design（镜头表的 Audio 列 → `run_audio_generation` 三类音频：voice 配音 / design 多角色台词+音效 / music 配乐 BGM）、drama-qc-review（审片与派发修复）；本 skill 的镜头表（含 Beat / Blocking / 运动 / 连续性锚点）是这三者的共同输入契约
 - 剧本改动后：资产表与受影响镜头需重跑；角色 / 场景基准图变更时，引用它的分镜 ref 需重新绑定
 
 ## 规则与边界
@@ -136,6 +138,7 @@ description: 从剧本解析提取分镜提示词与参考对象（角色/场景
 
 **版本号语义**：`0.MAJOR.MINOR` —— MAJOR 表示流程性变更，MINOR 表示文案微调。
 
+- **0.2.0** (2026-10-07)：**音频能力面订正（第二次，方向逆转）**——0.1.1 曾把音频拆成「对白/VO 可生成 + SFX/BGM 仅作说明」，那是当时 `run_audio_generation` 仅 TTS 的事实；现该工具已按 `kind` 支持三类（`voice` 配音朗读 / `design` 多角色台词+音效 / `music` 配乐 BGM），故撤掉「只做 TTS 配音」「SFX/BGM 无生成链路」表述，阶段二改为按 `kind` 分述并给出各自传参；资产表音频行与下游交接同步。混音（跨镜拼接、响度平衡）仍不在范围。
 - **0.1.3** (2026-10-06)：**点名撤改**（配套读类工具下沉延迟集）——「剧本」输入改为「先 tool_search 搜『画布』加载概览工具」，不再写读工具名。
 - **0.1.2** (2026-09-29)：下游指引落到实际 skill（drama-motion-video / drama-audio-design / drama-qc-review），镜头表明确为三者的共同输入契约。
 - **0.1.1** (2026-09-29)：**音频能力面订正**——回代码核实 `run_audio_generation` 仅支持 TTS（generation.ts:100），故拆分为「对白/VO 可生成」与「SFX/BGM 仅作声音设计说明、不得声称已生成」；资产表音频行同步标注。
