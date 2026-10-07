@@ -194,3 +194,195 @@ describe('generateAudio 的 kind↔模型一致性守卫（R12）', () => {
     expect(StepFunMusicProvider).toHaveBeenCalled()
   })
 })
+
+/**
+ * Ruling R14：**客户端参数校验类失败（`BadRequestException`）不得变成「换平台重试」的重试入口。**
+ *
+ * 🔴 危害链：`fallback_pending` 会让用户看到「用平台重试」，确认后
+ * `confirmPlatformFallback` 取 `meta.modelKey` → 平台凭证 → 把 design/music 的模型名发进
+ * `POST {baseUrl}/audio/speech`（**TTS** 端点）→ 记录标 `completed`。
+ * 用户点了重试、拿到一段「成功的语音」，而他要的是音乐/综合音频 —— 与 Task 7 修掉的
+ * music 缺陷同一类危害（那次是 music 落进 fallback_pending，这次是校验失败落进去）。
+ *
+ * 本文件锁死两条来源（两者都抛 `BadRequestException`，故同一条 catch 分支即可覆盖）：
+ *  (a) `assertAudioKindMatchesModel`：声明的 kind 与模型分类不符（R12 引入）；
+ *  (b) `assertStepFunAudioModel`：design/music 给了非阶跃模型（Task 4 引入，此前是
+ *      deferred minor #3「守卫在 try 内 ⇒ BYOK 下会落 fallback_pending 而非 400」）。
+ *
+ * ⚠️ (b) 在**当前目录**下不可触发：所有 design/music 条目都是阶跃模型
+ * （`stepaudio-3-gen-preview` / `stepaudio-3-music-preview`），阶跃判定 `^step` 必然通过。
+ * 故用例 (b) 直接让 `assertStepFunAudioModel` 抛（spy 注入），验证的是
+ * **catch 对该异常类型的处理**，而非目录内容 —— 这样目录将来新增非阶跃 design/music
+ * 条目时，本分支已经是安全的。
+ */
+describe('generateAudio 的 BYOK 失败：客户端校验类失败不进 fallback_pending（R14）', () => {
+  let pointsConsume: ReturnType<typeof vi.fn>
+  let pointsRefund: ReturnType<typeof vi.fn>
+  let generationCreate: ReturnType<typeof vi.fn>
+  let generationUpdate: ReturnType<typeof vi.fn>
+  let savedRecord: Record<string, unknown>
+
+  /** 所有写盘动作的 status 集合 —— 用它断言「任何一次写盘都不是 fallback_pending」。 */
+  const allStatuses = () => [
+    ...generationCreate.mock.calls.map((c) => c[0].data.status),
+    ...generationUpdate.mock.calls.map((c) => c[0].data.status),
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    savedRecord = {}
+    pointsConsume = vi.fn(async () => {})
+    pointsRefund = vi.fn(async () => {})
+    generationCreate = vi.fn(async (args: { data: Record<string, unknown> }) => {
+      savedRecord = { id: 'g-byok', createdAt: new Date(), ...args.data }
+      return savedRecord
+    })
+    generationUpdate = vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+      savedRecord = { ...savedRecord, ...args.data, id: args.where.id }
+      return savedRecord
+    })
+  })
+
+  /** BYOK 渠道（`source:'user'`）的 module —— 这是 fallback_pending 的唯一来源。 */
+  async function byokService(modelName: string) {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        StudioService,
+        { provide: PointsService, useValue: { consume: pointsConsume, refund: pointsRefund } },
+        {
+          provide: PrismaService,
+          useValue: {
+            generationRecord: {
+              create: generationCreate,
+              update: generationUpdate,
+              updateMany: vi.fn(async () => ({ count: 1 })),
+              findFirst: vi.fn(async () => savedRecord),
+              findMany: vi.fn(async () => []),
+            },
+          },
+        },
+        {
+          provide: ProviderResolverService,
+          useValue: {
+            resolveForGeneration: vi.fn(async () => ({
+              channelId: 'ch_user',
+              modelName,
+              apiFormat: 'openai' as const,
+              credentials: { apiKey: 'user-key', baseUrl: 'https://user.example.com/v1' },
+              source: 'user' as const,
+            })),
+          },
+        },
+        {
+          provide: MediaProbeService,
+          useValue: { probeUrl: vi.fn(async (url: string) => ({ url })) },
+        },
+        { provide: UploadService, useValue: { saveUserFile: vi.fn(async () => ({ url: 'x' })) } },
+      ],
+    }).compile()
+    return moduleRef.get(StudioService)
+  }
+
+  it('(a) 🔴 BYOK + kind 与模型不匹配 ⇒ 拒绝 + failed + 退款，绝不建 fallback_pending', async () => {
+    const svc = await byokService(TTS_MODEL)
+
+    await expect(svc.generateAudio('u1', '一段轻快的背景乐', { kind: 'music' })).rejects.toThrow(
+      BadRequestException,
+    )
+
+    // 核心断言：任何一次写盘都不得是 fallback_pending（否则用户能点「用平台重试」）。
+    expect(allStatuses()).not.toContain('fallback_pending')
+    const created = generationCreate.mock.calls.at(-1)![0].data as Record<string, unknown>
+    expect(created.status).toBe('failed')
+    // 积分必须退回，且走「失败退款」而非 BYOK 重试退款。
+    expect(pointsRefund).toHaveBeenCalledWith(
+      'u1',
+      5,
+      expect.stringContaining('失败退款'),
+      expect.objectContaining({ kind: 'refund', category: 'audio', status: 'failed_refund' }),
+    )
+    // 上游一次都不能碰。
+    expect(ttsGenerate).not.toHaveBeenCalled()
+    expect(musicGenerate).not.toHaveBeenCalled()
+  })
+
+  it('(b) 🔴 BYOK + 非阶跃 design 模型 ⇒ 同样不进 fallback_pending（覆盖 Task 4 缺口）', async () => {
+    // `stepaudio-3-gen-preview` 在目录里是 design 且是阶跃 ⇒ 直接调用不会抛。
+    // 这里让守卫真的抛，验证 catch 对「阶跃守卫抛出的 BadRequestException」的处理。
+    const audioKind = await import('./audio-kind')
+    const spy = vi
+      .spyOn(audioKind, 'assertStepFunAudioModel')
+      .mockImplementation(() => {
+        throw new BadRequestException('综合音频分类仅支持阶跃（StepFun）模型，当前模型为 my-custom-model')
+      })
+    try {
+      const svc = await byokService('my-custom-model')
+
+      await expect(
+        svc.generateAudio('u1', '一段综合音频', { kind: 'design' }),
+      ).rejects.toThrow(BadRequestException)
+
+      expect(allStatuses()).not.toContain('fallback_pending')
+      const created = generationCreate.mock.calls.at(-1)![0].data as Record<string, unknown>
+      expect(created.status).toBe('failed')
+      expect(pointsRefund).toHaveBeenCalledWith(
+        'u1',
+        5,
+        expect.stringContaining('失败退款'),
+        expect.objectContaining({ kind: 'refund', category: 'audio' }),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('(b 同型) BYOK + 非阶跃 music 模型 ⇒ 同样不进 fallback_pending', async () => {
+    const audioKind = await import('./audio-kind')
+    const spy = vi
+      .spyOn(audioKind, 'assertStepFunAudioModel')
+      .mockImplementation(() => {
+        throw new BadRequestException('音乐分类仅支持阶跃（StepFun）模型，当前模型为 my-custom-model')
+      })
+    try {
+      const svc = await byokService('my-custom-model')
+
+      await expect(
+        svc.generateAudio('u1', '一段背景乐', { kind: 'music', caption: '钢琴' }),
+      ).rejects.toThrow(BadRequestException)
+
+      expect(allStatuses()).not.toContain('fallback_pending')
+      const created = generationCreate.mock.calls.at(-1)![0].data as Record<string, unknown>
+      expect(created.status).toBe('failed')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('回归锁：BYOK 的**上游**失败（非 BadRequestException）仍走 fallback_pending + 重试入口', async () => {
+    // 这条是本改动的边界：只把「客户端参数校验类」失败移出重试入口，
+    // 真正的渠道/上游故障（这里是 502）必须保留既有的 fallback_pending 语义。
+    const svc = await byokService(TTS_MODEL)
+    ttsGenerate.mockRejectedValueOnce(new Error('TTS API 502: upstream boom'))
+
+    const record = await svc.generateAudio('u1', '一段旁白')
+
+    expect(record.status).toBe('fallback_pending')
+    expect(pointsRefund).toHaveBeenCalledWith(
+      'u1',
+      5,
+      '音频生成-BYOK失败退款',
+      expect.objectContaining({ kind: 'refund', category: 'audio', status: 'byok_refund' }),
+    )
+  })
+
+  it('回归锁：BYOK 上游失败返回 400 语义时也仍走 fallback_pending（按异常类型而非状态码分流）', async () => {
+    // 上游 400 由 provider 包成 `new Error('TTS API 400: ...')`（见 audio-provider.ts），
+    // 不是 BadRequestException ⇒ 仍算「渠道侧问题」，保留重试入口。
+    const svc = await byokService(TTS_MODEL)
+    ttsGenerate.mockRejectedValueOnce(new Error('TTS API 400: invalid voice'))
+
+    const record = await svc.generateAudio('u1', '一段旁白')
+
+    expect(record.status).toBe('fallback_pending')
+  })
+})

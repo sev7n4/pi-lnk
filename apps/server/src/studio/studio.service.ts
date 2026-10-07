@@ -2491,13 +2491,24 @@ export class StudioService {
       return { ...record, url }
     } catch (err) {
       if (isCancelledException(err)) throw err
-      // 🔴 `kind === 'music'` 无论渠道来源都走「失败」而非 BYOK 的 `fallback_pending`：
-      // `fallback_pending` 的语义是「同模态换平台重试」，而 `confirmPlatformFallback` 的
-      // audio 分支（见下）固定发 OpenAI 兼容 TTS —— 音乐若挂上去，用户点「用平台重试」会拿到
-      // 一段把 `stepaudio-3-music-preview` 当 TTS 模型发出去的语音，并被标成 completed。
-      // 平台重放要支持 music 属Task 8+ 的范围；在此之前，失败必须显式可判读。
-      // （此分支同时覆盖 BYOK music 缺 key：通用守卫在 `:2319` 先于 music 分支抛错。）
-      if (resolved.source !== 'user' || kind === 'music') {
+      // 🔴 三类失败都**不得**变成「换平台重试」的重试入口，原因各不相同：
+      //
+      // 1. `kind === 'music'`：`confirmPlatformFallback` 的 audio 分支（见下）固定发 OpenAI
+      //    兼容 TTS —— 音乐若挂上去，用户点「用平台重试」会拿到一段把
+      //    `stepaudio-3-music-preview` 当 TTS 模型发出去的语音，并被标成 completed。
+      //    平台重放要支持 music 属后续范围；在此之前，失败必须显式可判读。
+      //    （此分支同时覆盖 BYOK music 缺 key：通用守卫先于 music 分支抛错。）
+      //
+      // 2. 🔴 Ruling R14 `err instanceof BadRequestException`：**客户端参数校验类**失败
+      //    （`assertAudioKindMatchesModel` 的 kind↔模型不匹配、`assertStepFunAudioModel` 的
+      //    「design/music 给了非阶跃模型」）换渠道重试**必然还是同样的错** —— 用户点一下
+      //    只会再失败一次，且中途平台会拿 design/music 的模型名去发 TTS 请求。
+      //    这类失败不是「渠道故障」，重试入口是误导，必须显式失败。
+      //    按**异常类型**分流而非状态码：上游 4xx 由 provider 包成普通 `Error`
+      //    （见 audio-provider.ts 的 `TTS API ${res.status}`），仍算渠道侧问题，保留重试。
+      //
+      // 3. 其余（非 user 渠道）：既有行为，平台失败一律 failed。
+      if (resolved.source !== 'user' || kind === 'music' || err instanceof BadRequestException) {
         await this.points.refund(
           userId,
           cost,
