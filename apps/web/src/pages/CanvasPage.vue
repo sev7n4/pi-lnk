@@ -171,6 +171,7 @@ import {
 import StoryboardDialog, { type StoryboardShot } from '@/components/canvas/StoryboardDialog.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
+import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
 import { shouldSyncProposePending } from '@/components/agent/proposeWaitActions'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
@@ -1494,6 +1495,64 @@ function addNode(
     data: { createdAt: Date.now(), ...data },
   })
   return id
+}
+
+// ── node_graph 动作（2026-07-24）──────────────────────────────────────────
+// 三枚图标：展开到画布 / 导入到画布 / 在新窗口打开（后者在组件内做 blob 快照）。
+// 数据源都是 AgentSideRail 的 `node_graph` 载荷（position 来自画布 SSOT，零翻译）。
+
+/** 展开层的数据（null = 未展开）。 */
+/**
+ * 展开层载荷。⚠️ 形状**引用组件导出的类型**（`AgentNodeGraph.vue`）——
+ * 自己写一份必然漂移（改字段时这边不报错、运行时静默不匹配）。
+ */
+type ExpandedGraph = {
+  nodes: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphNode[]
+  edges: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphEdge[]
+  title?: string
+}
+const expandedGraph = ref<ExpandedGraph | null>(null)
+
+/** 「展开到画布」：只盖住画布区（侧栏与 composer 保持可用 —— 用户要能看着图继续对话）。 */
+function handleExpandNodeGraph(payload: {
+  nodes: ExpandedGraph['nodes']
+  edges: ExpandedGraph['edges']
+  title?: string
+}) {
+  if (!payload.nodes.length) return
+  expandedGraph.value = payload
+}
+
+/**
+ * 「导入到画布」：建成**结构化节点组**，不是一张位图。
+ *
+ * ⚠️ 为什么不用位图（2026-07-24 的产品决策）：
+ *   位图在画布上只是一块像素 —— agent 之后无法理解它、不能基于它推理，
+ *   且与画布上「真实资产」节点的语义冲突 ⇒ 会积累技术债。
+ *   结构化节点组则**可编辑、可被 agent 读懂**，与画布自身模型一致。
+ * ⚠️ 位置沿用图里的坐标（可能与现有节点重叠）⇒ 给一个固定偏移量，避免完全压在一起。
+ */
+function handleImportNodeGraph(payload: {
+  nodes: ExpandedGraph['nodes']
+  edges: ExpandedGraph['edges']
+  title?: string
+}) {
+  const OFFSET = { x: 120, y: 120 }
+  for (const raw of payload.nodes) {
+    const nodeType = raw.type === 'group' ? 'group' : (raw.type ?? 'text')
+    addNode(
+      nodeType,
+      { title: raw.title ?? raw.id, text: raw.title ?? raw.id, importedFrom: 'node_graph' },
+      {
+        position: {
+          x: (raw.position?.x ?? 0) + OFFSET.x,
+          y: (raw.position?.y ?? 0) + OFFSET.y,
+        },
+      },
+    )
+  }
+  // 提示用仓库既有的 ElMessage（与上面 `toast` 同一套）
+  ElMessage.success(`已导入到画布：${payload.nodes.length} 个节点`)
 }
 
 async function handleAgentActions(actions: unknown[]) {
@@ -4384,6 +4443,17 @@ async function loadSessions() {
 
 const vueFlowRef = ref<InstanceType<typeof VueFlow> | null>(null)
 const canvasAreaRef = ref<HTMLElement | null>(null)
+
+// Esc 关闭展开层（2026-07-24）。⛔ 监听挂在 window 上但**只在展开时存在**
+//   （`expandedGraph` 非空才 add），避免常驻监听器与画布快捷键打架。
+watch(expandedGraph, (v) => {
+  if (!v) return
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') expandedGraph.value = null
+  }
+  window.addEventListener('keydown', onKey)
+  onUnmounted(() => window.removeEventListener('keydown', onKey))
+})
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
 const { isMobileLayout } = useAgentMobileLayout()
@@ -4509,6 +4579,35 @@ onUnmounted(() => {
         class="relative min-h-0 min-w-0 flex-1"
         :class="{ 'canvas-ref-pick-mode': pickMode.active.value }"
       >
+        <!--展开到画布（2026-07-24）：absolute 挂在 canvasAreaRef 内⇒
+             ⭐ 只盖画布区，侧栏与 composer 保持可见可用（能看着图继续对话）。
+             Esc 关闭；z 高于画布层但低于侧栏（侧栏在 flex 兄弟位置，不受影响）。 -->
+        <div
+          v-if="expandedGraph"
+          class="absolute inset-0 z-[9000] flex flex-col bg-[var(--neo-bg)]/97 backdrop-blur-[1px]"
+          data-testid="node-graph-expanded"
+        >
+          <div class="flex shrink-0 items-center gap-2 border-b border-[var(--neo-border)] bg-[var(--neo-surface-card)] px-3 py-2">
+            <span class="text-[13px] font-medium">{{ expandedGraph.title || '画布概览' }}</span>
+            <span class="text-[11px] opacity-60">
+              {{ expandedGraph.nodes.length }} 个节点 · {{ expandedGraph.edges.length }} 条连线
+            </span>
+            <button
+              type="button"
+              class="ml-auto rounded px-2 py-1 text-[12px] hover:bg-[var(--neo-surface-card)]"
+              @click="expandedGraph = null"
+            >✕ 关闭（Esc）</button>
+          </div>
+          <div class="min-h-0 flex-1">
+            <AgentNodeGraph
+              class="h-full"
+              :body="expandedGraph"
+              :title="expandedGraph.title"
+              @focus-node="focusNodeById($event)"
+            />
+          </div>
+        </div>
+
         <ClickRippleLayer :container="canvasAreaRef" :theme="canvasTheme" />
         <CanvasRefPickOverlay
           v-if="pickMode.active.value"
@@ -4869,6 +4968,8 @@ onUnmounted(() => {
         @redo="handleAgentRedo"
         @open-image-editor="handleAgentOpenImageEditor"
         @arrange-nodes="handleArrangeNodes"
+        @expand-node-graph="handleExpandNodeGraph"
+        @import-node-graph="handleImportNodeGraph"
         @canvas-ref-pick-toggle="handleCanvasRefPickToggle"
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"
