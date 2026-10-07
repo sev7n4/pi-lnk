@@ -23,7 +23,8 @@ import {
   DEFAULT_AUDIO_SPEED,
   DEFAULT_AUDIO_VOLUME,
   DEFAULT_AUDIO_VOICE,
-  defaultVoiceForKind,
+  hasDesignContent,
+  pickSelectableModelForKind,
   type AudioVoiceSettings,
 } from '@/constants/dockAudio'
 import {
@@ -32,11 +33,16 @@ import {
   resolveGenerationModel,
 } from '@/constants/studioModels'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
+import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { isNodeGenerating } from '@/constants/dockStudio'
 import { estimateAudioCredits } from '@/constants/credits'
 import { useDockLocalImageUpload } from '@/components/canvas/dock-studio/shared/useDockLocalImageUpload'
 
 const { getConfig } = useModelProviderSettings()
+// 与 `UniversalModelSelector` 同一个 bootstrap 单例（不另造状态源）：切分类时用来
+// 确认目标模型在用户的可选列表里，避免指向用户已停用的模型。
+const { preferences } = useProviderBootstrap()
+const selectableAudioModels = computed(() => preferences.value?.selectableAudioModels ?? [])
 
 const props = defineProps<{
   node: EditableFlowNode
@@ -170,22 +176,38 @@ watch(audioModel, () => syncVoiceToCatalog(true))
 const hasRefs = computed(() => (props.refs?.length ?? 0) > 0)
 
 /**
- * design 的正文在 `scripts[]` 里（不是 prompt）⇒ 没有台词段时也允许生成，
- * 否则用户填完角色+脚本仍然点不动生成按钮。
+ * 能不能点生成。**按 kind 分派**，各分类的判据互不串味：
+ *
+ * - `design`：内容在 `scripts` / `roles` / `instruction` 三者之一（不在 `prompt`）。
+ *   🔴 刻意**不看 refs** —— 挂了 ref 但三类全空就提交，等于把 `scripts: []` /
+ *   `roles: []` / 无 instruction 原样发给上游，失败形态来自上游而非客户端信号。
+ * - `voice` / `music`：沿用原判据（正文非空或挂了 ref），逐字未变。
  */
-const canGenerate = computed(
-  () =>
-    !!prompt.value.trim() ||
-    hasRefs.value ||
-    (audioKind.value === 'design' && designScripts.value.some((s) => s.text.trim())),
-)
+const canGenerate = computed(() => {
+  if (audioKind.value === 'design') {
+    return hasDesignContent({
+      roles: designRoles.value,
+      scripts: designScripts.value,
+      instruction: designInstruction.value,
+    })
+  }
+  return !!prompt.value.trim() || hasRefs.value
+})
 
 function setAudioKind(next: AudioKind) {
   audioKind.value = next
-  // 切分类时把模型换成该分类的首选，避免「音乐分类 + TTS 模型」的必错组合
-  // （服务端 `assertAudioKindMatchesModel` 对这种错配显式 400）。
-  audioModel.value = resolveGenerationModel('audio', defaultVoiceForKind(next))
-  emit('patch', { audioKind: next, audioModel: audioModel.value })
+  // 切分类时把模型换成**该分类里用户真能选的那个**。两个原因：
+  // 1. 防错：避免「音乐分类 + TTS 模型」这个服务端必 400 的组合；
+  // 2. 防指向已停用模型：用户可自定义可选模型列表，目录里存在 ≠ 用户能选。
+  //    交集为空时**不改写** audioModel（kind 照切，下拉显示空列表即可）——
+  //    静默指向一个已停用模型比没有可选模型更不可判读。
+  const target = pickSelectableModelForKind(next, selectableAudioModels.value)
+  if (target) {
+    audioModel.value = resolveGenerationModel('audio', target)
+    emit('patch', { audioKind: next, audioModel: audioModel.value })
+    return
+  }
+  emit('patch', { audioKind: next })
 }
 
 function onPromptInput(value: string) {

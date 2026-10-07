@@ -2,8 +2,9 @@
 import { computed, ref } from 'vue'
 import { supportsVisionTextModel, upstreamChatModel } from '@lnkpi/agent'
 import type { AudioKind, GenerationType } from '@lnkpi/shared'
-import { audioKindOf, decodeChannelModel, getModelEntry, modelOptionName } from '@lnkpi/shared'
+import { decodeChannelModel, modelOptionName } from '@lnkpi/shared'
 import { type StudioModality } from '@/constants/studioModels'
+import { audioKindOfModelValue } from '@/constants/dockAudio'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
@@ -62,17 +63,15 @@ function selectableForModality(modality: StudioModality): string[] {
 /**
  * 只在 `audioKind` 给了的时候过滤（存量调用零变化）。
  *
- * 判定与服务端 `assertAudioKindMatchesModel` 同源：`audioKindOf(getModelEntry(name) ?? {modality:'audio'})`
- * —— 目录外模型（BYOK 自定义音频模型）按 voice 算，所以它们只在「配音」下出现。
- * 刻意不用「白名单 modelKey 集合」那种写法：那会把 BYOK 音频模型从配音下拉里一起抹掉。
+ * 判定走共享的 `audioKindOfModelValue`（与服务端 `assertAudioKindMatchesModel` 同源：
+ * 目录外模型按缺省 voice），所以下拉里能选到的组合一定不撞 400。
+ * 刻意不用「`modelsForAudioKind` 的 modelKey 白名单」那种写法：那会把 BYOK
+ * 音频模型从配音下拉里一起抹掉。
  */
 function filterAudioByKind(ids: string[]): string[] {
   const kind = props.audioKind
   if (!kind) return ids
-  return ids.filter((id) => {
-    const modelName = decodeChannelModel(id)?.modelName ?? id
-    return audioKindOf(getModelEntry(modelName) ?? { modality: 'audio' }) === kind
-  })
+  return ids.filter((id) => audioKindOfModelValue(id) === kind)
 }
 
 function channelNameForValue(value: string): string {

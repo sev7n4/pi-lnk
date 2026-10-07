@@ -1,5 +1,6 @@
 import {
   audioKindOf,
+  decodeChannelModel,
   defaultModelKey,
   getModelEntry,
   listModels,
@@ -96,9 +97,64 @@ export function modelsForAudioKind(kind: AudioKind): StudioModelEntry[] {
  *
  * 🔴 返回值必须属于 `kind` 分类：服务端 `assertAudioKindMatchesModel` 对
  * 「声明 music 却拿着 TTS 模型」显式 400，切分类时用错模型就是必错组合。
+ *
+ * ⚠️ 只表示「目录里的首选」。用户在配置里停用过该模型时用它会指向已停用模型 ——
+ * 切分类请走 {@link pickSelectableModelForKind}（与用户可选列表取交集）。
  */
 export function defaultVoiceForKind(kind: AudioKind | undefined): string {
   const k: AudioKind = audioKindOf({ modality: 'audio', audioKind: kind })
   if (k === 'voice') return defaultModelKey('audio')
   return listModelsByAudioKind(k)[0]?.modelKey ?? defaultModelKey('audio')
+}
+
+/**
+ * 一个模型**取值**（`channel::model` 或裸 modelKey）属于哪个分类。
+ *
+ * 与服务端 `assertAudioKindMatchesModel` 同源判定：目录外模型按缺省 `voice`。
+ * `UniversalModelSelector` 的候选过滤也走它 ⇒ 下拉能选到的组合一定不撞 400。
+ */
+export function audioKindOfModelValue(value: string): AudioKind {
+  const modelName = decodeChannelModel(value)?.modelName ?? value
+  return audioKindOf(getModelEntry(modelName) ?? { modality: 'audio' })
+}
+
+/**
+ * 切分类时的目标模型：在**用户可选列表**（`prefs.selectableAudioModels`）里
+ * 找该分类的第一个模型，返回列表原值（保留渠道前缀）。
+ *
+ * 🔴 为什么要跟用户列表取交集（而不是直接用 {@link defaultVoiceForKind}）：
+ * 用户可自定义可选模型列表，把 `stepaudio-3-music-preview` 移出音频桶是允许的。
+ * 无条件用 `platform::<目录首条>` 会把 `audioModel` 指向一个用户已停用的模型 ——
+ * 下拉显示「已停用」，而请求仍带着它发出去（可能落到用户没配的渠道/密钥上）。
+ *
+ * 交集为空时返回 `undefined`，调用方**不要改写** `audioModel`：此时 kind 仍然切换，
+ * 下拉显示空列表（`暂无可选模型，请先在配置中设置`）—— 这比静默指向已停用模型更可判读。
+ */
+export function pickSelectableModelForKind(
+  kind: AudioKind,
+  selectableModelValues: readonly string[],
+): string | undefined {
+  return selectableModelValues.find((value) => audioKindOfModelValue(value) === kind)
+}
+
+/**
+ * design 是否有可提交的内容：`scripts` / `roles` / `instruction` **任一非空**。
+ *
+ * 🔴 为什么单独判：design 的正文在 `scripts[]` 里（不在 `prompt`），而上游要的是
+ * 这三者。refs **不能**替代内容 —— 挂了 ref 但三类全空就提交，等于把
+ * `scripts: []` / `roles: []` / 无 instruction 原样发给上游，失败形态来自上游
+ * 而不是清晰的客户端信号。
+ *
+ * 门槛刻意不收更严：只填 `instruction` 也是合法的 design 请求。
+ */
+export function hasDesignContent(input: {
+  roles: ReadonlyArray<{ role: string; voice: string }>
+  scripts: ReadonlyArray<{ role?: string; text: string }>
+  instruction?: string
+}): boolean {
+  return (
+    input.roles.some((r) => !!r.role?.trim()) ||
+    input.scripts.some((s) => !!s.text?.trim()) ||
+    !!input.instruction?.trim()
+  )
 }

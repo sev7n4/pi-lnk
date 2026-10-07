@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { getModelEntry, listModels } from '@lnkpi/shared'
+import { encodeChannelModel, getModelEntry, listModels } from '@lnkpi/shared'
 import {
   AUDIO_VOICE_OPTIONS,
   DEFAULT_AUDIO_VOICE,
   AUDIO_KIND_OPTIONS,
+  audioKindOfModelValue,
   defaultVoiceForKind,
+  hasDesignContent,
   modelsForAudioKind,
+  pickSelectableModelForKind,
 } from './dockAudio'
 
 // 回归锁：DEFAULT_AUDIO_VOICE='female-shaonv'（catalog minimax-speech-2.8-hd 的
@@ -75,5 +78,71 @@ describe('音频三分类 kind helpers', () => {
         `${kind} 的首选模型 ${modelKey} 不在 ${kind} 分类里`,
       ).toBe(true)
     }
+  })
+})
+
+/**
+ * 🔴 R17：切分类时选的模型必须是**用户可选列表里**的那个分类的模型。
+ *
+ * 用户可自定义 `prefs.selectableAudioModels`（`provider.service.ts` 持久化任意数组），
+ * 所以目录里存在 ≠ 用户能选。无条件用 `platform::<目录首条>` 会把 `audioModel`
+ * 指向一个用户已停用的模型：下拉显示「已停用」，而请求仍会带着它发出去。
+ */
+describe('pickSelectableModelForKind 只选用户真能用的模型', () => {
+  const tts = encodeChannelModel('platform', 'minimax-speech-2.8-hd')
+  const music = encodeChannelModel('platform', 'stepaudio-3-music-preview')
+
+  it('列表里有该分类模型时，返回列表里那个值（保留渠道前缀）', () => {
+    expect(pickSelectableModelForKind('music', [tts, music])).toBe(music)
+  })
+
+  it('该分类模型全被用户停用时返回 undefined（调用方据此不改写 audioModel）', () => {
+    expect(pickSelectableModelForKind('music', [tts])).toBeUndefined()
+    expect(pickSelectableModelForKind('music', [])).toBeUndefined()
+  })
+
+  it('BYOK 音频模型（目录外，缺省 voice）不进 design/music 的交集', () => {
+    const byok = encodeChannelModel('ch1', 'my-custom-tts')
+    expect(pickSelectableModelForKind('voice', [byok])).toBe(byok)
+    expect(pickSelectableModelForKind('design', [byok])).toBeUndefined()
+  })
+})
+
+describe('audioKindOfModelValue', () => {
+  it('目录外模型按缺省 voice 判（与服务端 assertAudioKindMatchesModel 同源）', () => {
+    expect(audioKindOfModelValue(encodeChannelModel('ch1', 'whatever'))).toBe('voice')
+    expect(audioKindOfModelValue('bare-model-name')).toBe('voice')
+    expect(audioKindOfModelValue(encodeChannelModel('platform', 'stepaudio-3-music-preview'))).toBe(
+      'music',
+    )
+  })
+})
+
+/**
+ * 🔴 R18：design 的内容在 `scripts` / `roles` / `instruction` 里（三者至少一项非空）。
+ *
+ * 之前 `hasRefs` 没按 kind 门控 ⇒ 挂了 ref 但内容全空也能提交，最终把
+ * `scripts: []` / `roles: []` / 无 instruction 原样发给上游，失败形态来自上游
+ * 而不是清晰的客户端信号。挂 ref 不能替代内容。
+ */
+describe('hasDesignContent 按三类内容判（不看 ref）', () => {
+  it('三类全空 ⇒ 无内容', () => {
+    expect(hasDesignContent({ roles: [], scripts: [], instruction: '' })).toBe(false)
+    expect(
+      hasDesignContent({
+        roles: [{ role: '', voice: '' }],
+        scripts: [{ role: '', text: '  ' }],
+        instruction: '   ',
+      }),
+    ).toBe(false)
+  })
+
+  it('scripts / roles / instruction 任一非空即算有内容', () => {
+    expect(hasDesignContent({ roles: [], scripts: [{ role: '', text: '下雨了' }], instruction: '' })).toBe(true)
+    expect(
+      hasDesignContent({ roles: [{ role: '旁白', voice: 'wenrounvsheng' }], scripts: [], instruction: '' }),
+    ).toBe(true)
+    // 只填 instruction 也允许提交（门槛不得收得过严）
+    expect(hasDesignContent({ roles: [], scripts: [], instruction: '克制一点' })).toBe(true)
   })
 })
