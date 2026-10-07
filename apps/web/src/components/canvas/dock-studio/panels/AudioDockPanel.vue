@@ -24,7 +24,7 @@ import {
   DEFAULT_AUDIO_VOLUME,
   DEFAULT_AUDIO_VOICE,
   hasDesignContent,
-  pickSelectableModelForKind,
+  resolveKindSwitchModel,
   type AudioVoiceSettings,
 } from '@/constants/dockAudio'
 import {
@@ -42,7 +42,16 @@ const { getConfig } = useModelProviderSettings()
 // 与 `UniversalModelSelector` 同一个 bootstrap 单例（不另造状态源）：切分类时用来
 // 确认目标模型在用户的可选列表里，避免指向用户已停用的模型。
 const { preferences } = useProviderBootstrap()
-const selectableAudioModels = computed(() => preferences.value?.selectableAudioModels ?? [])
+/**
+ * 🔴 必须是 `string[] | null` 而不是 `?? []`：`null` 表示「prefs 还没加载/ 加载失败」
+ * （我还不知道用户能选什么），与「已知但用户在这一类里一个都没留」是**两种不同语义**
+ * —— 压成同一个 `[]` 会让 bootstrap 未就绪时切分类退化为「只切 kind、不换模型」，
+ * 而 `audioModel` 留在原分类 ⇒ 提交必撞服务端 400。
+ * `CanvasPage` 明确吞掉 bootstrap 失败并指望「Dock falls back to catalog defaults」。
+ */
+const selectableAudioModels = computed<string[] | null>(
+  () => preferences.value?.selectableAudioModels ?? null,
+)
 
 const props = defineProps<{
   node: EditableFlowNode
@@ -196,12 +205,11 @@ const canGenerate = computed(() => {
 
 function setAudioKind(next: AudioKind) {
   audioKind.value = next
-  // 切分类时把模型换成**该分类里用户真能选的那个**。两个原因：
-  // 1. 防错：避免「音乐分类 + TTS 模型」这个服务端必 400 的组合；
-  // 2. 防指向已停用模型：用户可自定义可选模型列表，目录里存在 ≠ 用户能选。
-  //    交集为空时**不改写** audioModel（kind 照切，下拉显示空列表即可）——
-  //    静默指向一个已停用模型比没有可选模型更不可判读。
-  const target = pickSelectableModelForKind(next, selectableAudioModels.value)
+  // 切分类时把模型换成**与该分类自洽**的那个，避免「音乐分类 + TTS 模型」这个服务端
+  // 必 400 的组合（`assertAudioKindMatchesModel`）。取哪个由 `resolveKindSwitchModel`
+  // 三态判定（见其注释）：prefs 未知 ⇒ 目录默认；prefs 已知 ⇒ 只用它真能选的那个；
+  // 已知但该分类一个都没留 ⇒ 不改写他的模型。
+  const target = resolveKindSwitchModel(next, selectableAudioModels.value)
   if (target) {
     audioModel.value = resolveGenerationModel('audio', target)
     emit('patch', { audioKind: next, audioModel: audioModel.value })

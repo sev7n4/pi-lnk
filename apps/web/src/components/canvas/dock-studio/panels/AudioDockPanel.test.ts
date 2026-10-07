@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { encodeChannelModel } from '@lnkpi/shared'
+import { audioKindOfModelValue } from '@/constants/dockAudio'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import AudioDockPanel from './AudioDockPanel.vue'
 
@@ -10,21 +11,30 @@ const MUSIC = encodeChannelModel('platform', 'stepaudio-3-music-preview')
 
 /** 每个用例可改写；`setSelectableAudioModels` 在用例内替换用户自定义的可选模型列表。 */
 let selectableAudioModels: string[] = [TTS, MUSIC]
+/**
+ * `true` ⇒ 模拟 bootstrap 未就绪 / 加载失败（`preferences` 为 `null`）。
+ * 这与「已知但列表为空」是**两种不同语义**，面板必须区别对待。
+ */
+let prefsUnknown = false
 
 vi.mock('@/composables/useProviderBootstrap', () => ({
   useProviderBootstrap: () => ({
     // `allChannels` 也是 `UniversalModelSelector` 的依赖（全量 mount 时是真组件渲染）
     allChannels: ref([{ id: 'platform', name: '平台' }, { id: 'ch1', name: 'BYOK' }]),
-    preferences: ref({
-      selectableAudioModels,
-      defaultAudioModel: selectableAudioModels[0],
-    }),
+    preferences: ref(
+      prefsUnknown
+        ? null
+        : {
+            selectableAudioModels,
+            defaultAudioModel: selectableAudioModels[0] ?? TTS,
+          },
+    ),
   }),
 }))
 
 vi.mock('@/composables/useModelProviderSettings', () => ({
   useModelProviderSettings: () => ({
-    getConfig: () => ({ apiKey: '', baseUrl: '', model: selectableAudioModels[0] }),
+    getConfig: () => ({ apiKey: '', baseUrl: '', model: selectableAudioModels[0] ?? TTS }),
   }),
 }))
 
@@ -110,6 +120,53 @@ describe('AudioDockPanel 切分类时的模型选择（R17）', () => {
 
     const last = allPatches(wrapper).at(-1)
     expect(last).toEqual({ audioKind: 'music' })
+    selectableAudioModels = [TTS, MUSIC]
+  })
+
+  /**
+   * 🔴 上一轮修复引入的回归：prefs 未就绪（`preferences === null`）时若也走
+   * 「交集为空 ⇒ 不改写」，`audioModel` 会留在**原分类**（TTS），而 kind 已切成 music
+   * ⇒ 提交必撞服务端 `assertAudioKindMatchesModel` 400。`CanvasPage` 明确吞掉
+   * bootstrap 失败并指望「Dock falls back to catalog defaults」，那条 fallback
+   * 在本路径上不能被打破。
+   */
+  it('prefs 未就绪（null）时切分类 ⇒ 用目录默认，kind 与模型自洽（不会撞 400）', async () => {
+    prefsUnknown = true
+    const wrapper = mountPanel(createNode({ audioModel: TTS }))
+    await clickKindChip(wrapper, '音乐')
+
+    const last = allPatches(wrapper).at(-1)
+    expect(last).toMatchObject({ audioKind: 'music' })
+    // 必须带 audioModel，且它属于 music 分类（不是留在原分类的 TTS）
+    expect(last).toHaveProperty('audioModel')
+    expect(audioKindOfModelValue(last!.audioModel as string)).toBe('music')
+    prefsUnknown = false
+  })
+
+  it('prefs 未就绪时对每个分类都自洽（voice / design / music 逐个验）', async () => {
+    prefsUnknown = true
+    for (const [label, kind] of [
+      ['配音', 'voice'],
+      ['综合音频', 'design'],
+      ['音乐', 'music'],
+    ] as const) {
+      const wrapper = mountPanel(createNode({ audioModel: MUSIC }))
+      await clickKindChip(wrapper, label)
+      const last = allPatches(wrapper).at(-1)
+      expect(last, `切到${label} 时应带 audioModel`).toHaveProperty('audioModel')
+      expect(audioKindOfModelValue(last!.audioModel as string), `切到${label} 的模型分类不对`).toBe(kind)
+    }
+    prefsUnknown = false
+  })
+
+  it('prefs 已加载但交集为空 ⇒ 仍然不改写 audioModel（上一轮行为不回归）', async () => {
+    selectableAudioModels = [TTS]
+    const wrapper = mountPanel(createNode({ audioModel: MUSIC }))
+    await clickKindChip(wrapper, '综合音频')
+
+    const last = allPatches(wrapper).at(-1)
+    expect(last).toEqual({ audioKind: 'design' })
+    expect(allPatches(wrapper).some((p) => 'audioModel' in p)).toBe(false)
     selectableAudioModels = [TTS, MUSIC]
   })
 })

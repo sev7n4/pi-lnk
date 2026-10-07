@@ -9,6 +9,7 @@ import {
   hasDesignContent,
   modelsForAudioKind,
   pickSelectableModelForKind,
+  resolveKindSwitchModel,
 } from './dockAudio'
 
 // 回归锁：DEFAULT_AUDIO_VOICE='female-shaonv'（catalog minimax-speech-2.8-hd 的
@@ -144,5 +145,44 @@ describe('hasDesignContent 按三类内容判（不看 ref）', () => {
     ).toBe(true)
     // 只填 instruction 也允许提交（门槛不得收得过严）
     expect(hasDesignContent({ roles: [], scripts: [], instruction: '克制一点' })).toBe(true)
+  })
+})
+
+/**
+ * 🔴 切分类时目标模型的三态判定 —— 关键是**把「我不知道」与「我知道了但没有」分开**：
+ *
+ * - `selectable === null`（bootstrap 未就绪/ 加载失败）⇒ 我不知道用户能选什么 ⇒ 退回
+ *   目录默认（kind 与模型自洽）。若此时也返回 undefined，`audioModel` 会留在原分类，
+ *   提交后由服务端 `assertAudioKindMatchesModel` 返 400 —— 而 `CanvasPage` 明确吞掉
+ *   bootstrap 失败（注释「Dock falls back to catalog defaults until bootstrap
+ *   succeeds」），那条fallback 在该路径上会被打破。
+ * - `selectable` 已知但该分类交集为空 ⇒ 不擅自改写用户的模型（上一轮 R17 的行为）。
+ */
+describe('resolveKindSwitchModel 区分「prefs 未知」与「交集为空」', () => {
+  const tts = encodeChannelModel('platform', 'minimax-speech-2.8-hd')
+  const music = encodeChannelModel('platform', 'stepaudio-3-music-preview')
+
+  it('prefs 未知（null）⇒ 退回目录默认，保证 kind 与模型自洽（不会撞 400）', () => {
+    const model = resolveKindSwitchModel('music', null)
+    expect(model).toBeDefined()
+    // 退回的模型必须真属于 music 分类，否则这正是那个必 400 的错配组合
+    expect(audioKindOfModelValue(model!)).toBe('music')
+  })
+
+  it('prefs 已知且有该分类模型 ⇒ 用用户列表里那个值', () => {
+    expect(resolveKindSwitchModel('music', [tts, music])).toBe(music)
+  })
+
+  it('prefs 已知但该分类一个都没留 ⇒ undefined（不改写用户的模型）', () => {
+    expect(resolveKindSwitchModel('music', [tts])).toBeUndefined()
+    expect(resolveKindSwitchModel('music', [])).toBeUndefined()
+  })
+
+  it('prefs 未知时对每个分类都给出自洽模型（不能只保 music）', () => {
+    for (const kind of AUDIO_KIND_OPTIONS.map((o) => o.value)) {
+      const model = resolveKindSwitchModel(kind, null)
+      expect(model, `${kind} 在 prefs 未知时拿不到模型`).toBeDefined()
+      expect(audioKindOfModelValue(model!)).toBe(kind)
+    }
   })
 })
