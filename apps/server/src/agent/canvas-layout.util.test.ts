@@ -195,7 +195,8 @@ describe('canvas-layout.util', () => {
       // Anchor = min absolute x/y across selected nodes (c.y=50 is the top edge).
       expect(byId.a).toEqual({ x: 200, y: 50 })
       expect(byId.b).toEqual({ x: 200 + 280 + 20, y: 50 })
-      expect(byId.c).toEqual({ x: 200, y: 50 + 280 + 20 })
+      // video 包络 320×320（尺寸随比例 contain，见 mediaNodeDisplaySize）
+      expect(byId.c).toEqual({ x: 200, y: 50 + 320 + 20 })
       expect(byId.d).toEqual({ x: 200 + 280 + 20, y: 50 + 120 + 20 })
     })
 

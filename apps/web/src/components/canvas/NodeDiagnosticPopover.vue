@@ -21,7 +21,7 @@ function onDocPointerDown(e: PointerEvent) {
   const target = e.target
   if (!(target instanceof Node)) return
   if (el.contains(target)) return
-  if (target instanceof Element && target.closest('.neo-task-diag-btn')) return
+  if (target instanceof Element && (target.closest('.neo-task-diag-btn') || target.closest('.neo-status-info-btn'))) return
   emit('close')
 }
 

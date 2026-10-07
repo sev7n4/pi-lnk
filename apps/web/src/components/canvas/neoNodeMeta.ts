@@ -12,7 +12,8 @@ export const NEO_NODE_META: Record<string, NeoNodeMeta> = {
   prompt: { label: '提示词', variant: 'node-prompt', icon: 'prompt', defaultWidth: 280, defaultHeight: 120 },
   text: { label: '文本', variant: 'node-text', icon: 'text', defaultWidth: 280, defaultHeight: 160 },
   image: { label: '图片', variant: 'node-image', icon: 'image', defaultWidth: 280, defaultHeight: 280 },
-  video: { label: '视频', variant: 'node-video', icon: 'video', defaultWidth: 280, defaultHeight: 280 },
+  /** 视频：默认 1:1 兜底 320×320（长边基准 320，尺寸随 videoSettings/mediaInfo 比例推导） */
+  video: { label: '视频', variant: 'node-video', icon: 'video', defaultWidth: 320, defaultHeight: 320 },
   audio: { label: '音频', variant: 'node-audio', icon: 'audio', defaultWidth: 280, defaultHeight: 140 },
   mediaInput: { label: '媒体输入', variant: 'node-input', icon: 'input', defaultWidth: 280, defaultHeight: 280 },
   shot: { label: '分镜', variant: 'node-generation', icon: 'shot', defaultWidth: 280, defaultHeight: 280 },
