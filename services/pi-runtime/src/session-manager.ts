@@ -270,6 +270,16 @@ interface SessionEntry {
 	model: ReturnType<typeof assembleModel>["model"];
 	/** 最近一次活动时间，TTL 的唯一数据源。 */
 	lastActivityAt: number;
+	/**
+	 * 最近一次**收到 harness 事件**的时间戳（运行期无进展看护用，2026-10-07）。
+	 *
+	 * 与 `lastActivityAt` 刻意分开：后者是「宿主侧动作」（create/prompt/settle），
+	 * 前者是「被驱动侧真的在动」。卡死形态恰恰是宿主以为在跑、被驱动侧早已静默，
+	 * 两者混用会把卡死会话的 lastActivityAt 一直刷新，看护永远不触发。
+	 */
+	lastProgressAt: number;
+	/** watchdog 判定卡死后置位，避免同一个 run 被反复结算。 */
+	stallSettled?: boolean;
 }
 
 const BUFFER_LIMIT = 500;
@@ -883,6 +893,7 @@ export class SessionManager {
 			models,
 			model,
 			lastActivityAt: Date.now(),
+			lastProgressAt: Date.now(),
 		};
 		// 归属/身份落盘（磁盘 resume 的 fail-closed 数据源，复核 Important #4）。
 		await writeSessionMeta(cwd, {
@@ -1069,7 +1080,10 @@ export class SessionManager {
 						runId?: string;
 						error?: { code?: string; message?: string };
 						message?: { role?: string; stopReason?: string; errorMessage?: string };
-					} & ToolLikeEvent) => {
+} & ToolLikeEvent) => {
+					// 运行期无进展看护：任何 harness 事件都是「被驱动侧还在动」的证据，
+					// 逐事件刷新进度戳（2026-10-07）。
+					entry.lastProgressAt = Date.now();
 					if (harnessType === "compaction_end") {
 						this.observeCompactionOutcome(evt.status);
 						// 审计 #6/#7：压缩成功后异步审计摘要（缺段计 metrics + 摘要上报）。
@@ -1279,9 +1293,16 @@ export class SessionManager {
 	 * 一次回收：TTL 只关内存（磁盘保留）；磁盘 LRU 跳过「内存驻留 + 正在跑 run」。
 	 * `now` 可注入，便于测试。
 	 */
-	async sweepOnce(now = Date.now()): Promise<{ closed: string[]; removedFromDisk: string[] }> {
+	async sweepOnce(now = Date.now()): Promise<{ closed: string[]; removedFromDisk: string[]; stalled: string[] }> {
 		const closed: string[] = [];
+		const stalled: string[] = [];
 		for (const [key, entry] of [...this.sessions]) {
+			// ⭐ 无进展看护必须排在下面 `prompting/compacting` 的跳过**之前**：
+			// 正是在跑（prompting=true）却长时间零事件的会话才会被卡死并锁死 lane。
+			if (this.stallWatchdogTick(entry, now)) {
+				stalled.push(key);
+				continue;
+			}
 			// 压缩在途同样是 active operation：此刻回收会让摘要白跑一次（Closed）。
 			if (entry.prompting || entry.compacting) continue;
 			if (now - entry.lastActivityAt < this.config.sessionTtlMs) continue;
@@ -1294,7 +1315,57 @@ export class SessionManager {
 			{ maxBytes: this.config.sessionsMaxBytes, maxCount: this.config.sessionsMaxCount },
 			protectedKeys,
 		);
-		return { closed, removedFromDisk };
+		return { closed, removedFromDisk, stalled };
+	}
+
+	/**
+	 * 运行期无进展看护（2026-10-07 生产事故 P1）：**同步判定 + 后台结算**。
+	 *
+	 * 为什么不设 provider 请求超时：`openai@6` 客户端自带 10min 默认超时
+	 * （`client.js:695 DEFAULT_TIMEOUT = 600000`），HTTP 层挂起本就有底；
+	 * 而 `streamOptions.timeoutMs` 是**总时长**超时，调小会连带砍掉正常的长生成，
+	 * pi-ai 也没有独立的 idle 旋钮（除codex 的 WebSocket 路径）。所以那不是正确的杠杆。
+	 *
+	 * 这里看的是**运行期是否还有进展**：处于 prompting/compacting 却超过阈值
+	 * 没收到任何 harness 事件 ⇒ 判定卡死。卡死形态（实测 2h13m 零写入）由此不再成立。
+	 *
+	 * 结算复用 P0-2 的 `forceSettleLaneOperation`：先 `cancelRun` 解开在途 await
+	 * （让真正卡住的那个 promise 有机会抛），再 requestAbort + drive 释放 lane 锁。
+	 * 同一个 run 只结算一次（`stallSettled` 闸），避免 sweeper 每轮重复动手。
+	 * 不 await 结算本身：sweepOnce 必须快速返回，否则会拖住整个回收循环。
+	 */
+	private stallWatchdogTick(entry: SessionEntry, now: number): boolean {
+		if (this.config.stallWatchdog === false) return false;
+		const threshold = this.config.stallWatchdogMs;
+		if (threshold === undefined || threshold <= 0) return false;
+		if (!entry.prompting && !entry.compacting) return false;
+		if (entry.stallSettled) return false;
+		const idleMs = now - entry.lastProgressAt;
+		if (idleMs < threshold) return false;
+
+		entry.stallSettled = true;
+		entry.compacting = false;
+		const cancelRun = entry.cancelRun;
+		entry.cancelRun = undefined;
+		if (cancelRun) {
+			// 用户主动取消的语义（抑制假警报 error 事件）；看护判定同理：这是中止不是崩溃。
+			entry.userAborted = true;
+			try {
+				cancelRun("stall_watchdog");
+			} catch {
+				/* 解不开也要继续走 force-settle */
+			}
+		}
+		console.warn(
+			`[pi-runtime] stall watchdog: no harness event for ${idleMs}ms (threshold ${threshold}ms), ` +
+				`settling session=${entry.id} prompting=${entry.prompting}`,
+		);
+		void this.forceSettleLaneOperation(entry)
+			.then((settled) => {
+				if (settled) entry.prompting = false;
+			})
+			.catch(() => {});
+		return true;
 	}
 
 	startSweeper(): void {
@@ -1565,6 +1636,9 @@ export class SessionManager {
 		if (entry.prompting) throw new BusyError(entry.id);
 		if (entry.compacting) throw new BusyError(entry.id, "compacting");
 		entry.prompting = true;
+		// 新一轮开始：复位看护闸门与进度戳（上一轮若被看护结算过，本会话要能重新被看护）。
+		entry.stallSettled = false;
+		entry.lastProgressAt = Date.now();
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
 		try {
 			const effectiveText = withForcedSkills(text, opts?.forceSkills, (name) =>
@@ -1785,6 +1859,9 @@ export class SessionManager {
 		// run 的 `.finally`（清 prompting）之前跑完；一旦把置位挪到某个 await 之后，就会出现
 		// 「run 已结束但压缩尚未接管」的空档，请求溜进去后撞 LaneBusy → 用户拿不到回答。
 		entry.compacting = true;
+		// 压缩也是一次在途操作，同样受看护；复位闸门与进度戳（见 prompt() 的同名注释）。
+		entry.stallSettled = false;
+		entry.lastProgressAt = Date.now();
 		// 截止自上而下覆盖**整条**链路（扫盘 + 摘要），而不只是摘要那一段：任何一环 hanging
 		// 都会让本方法永不返回，`entry.compacting` 就永远不清 —— 该会话此后永久 409。
 		const bounded = withCancel(this.context);
