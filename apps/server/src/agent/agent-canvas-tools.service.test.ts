@@ -747,6 +747,77 @@ describe('AgentCanvasToolsService', () => {
     expect(canvas.nodes[0].data.url).toBe('https://cdn.example/audio.mp3')
   })
 
+  it('🔴 runAudioGeneration: music 异步分支 ⇒ 返回 timeout + 节点写 generating，不带 url', async () => {
+    // B1：`studio.generateAudio` 的 music 分支是异步的（submit+轮询，官方 1–3 分钟），
+    // 立即返回 `status:'generating'` 且 url 未设。agent 侧曾无条件写 `completed` +
+    // `url: undefined` 并返回 completed ⇒ 模型对用户说「已生成完成」，而上游还在跑、
+    // 甚至终态 FAILED 已退款（wrong-but-successful result）。
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-music',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: { prompt: '给这条分镜配 BGM', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    generateAudio.mockResolvedValueOnce({
+      id: 'gen-music-1',
+      status: 'generating',
+      // 终态 url 由 studio 的 completeMusic 事后落库并写回；此刻**没有** url。
+    })
+
+    const result = await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-music',
+      kind: 'music',
+    })
+
+    // ① 返回值映射为既有枚举 timeout（规则 12：如实说未完成，可再查生成状态）
+    expect(result.status).toBe('timeout')
+    // ② 绝不能谎报完成
+    expect(result.status).not.toBe('completed')
+    expect(result.url).toBeUndefined()
+    // ③ 节点停在 generating，且**没有** url 字段（前端会拿它当「已完成」渲染）
+    expect(canvas.nodes[0].data.status).toBe('generating')
+    expect(canvas.nodes[0].data).not.toHaveProperty('url')
+    // ④ 记录 id 必须落进节点，模型才能「再查生成状态」
+    expect(canvas.nodes[0].data.generationRecordId).toBe('gen-music-1')
+  })
+
+  it('runAudioGeneration: design 同步分支仍返回 completed（异步分流不误伤 design）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'aud-design',
+          type: 'audio',
+          position: { x: 0, y: 0 },
+          data: { prompt: '给这段文案配综合音频', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    generateAudio.mockResolvedValueOnce({
+      id: 'gen-design-1',
+      status: 'completed',
+      url: 'https://cdn.example/design.mp3',
+    })
+
+    const result = await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-design',
+      kind: 'design',
+    })
+
+    expect(result.status).toBe('completed')
+    expect(result.url).toBe('https://cdn.example/design.mp3')
+    expect(canvas.nodes[0].data.status).toBe('completed')
+  })
+
   it('runAudioGeneration 把工具内联的 kind 与分类参数透传给 studio（内联优先于节点值）', async () => {
     canvas = {
       nodes: [

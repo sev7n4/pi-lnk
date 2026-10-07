@@ -36,6 +36,7 @@ vi.mock('@lnkpi/agent', async (importOriginal) => {
 
 const TTS_MODEL = 'minimax-speech-2.8-hd' // audioKind: 'voice'
 const MUSIC_MODEL = 'stepaudio-3-music-preview' // audioKind: 'music'
+const DESIGN_MODEL = 'stepaudio-3-gen-preview' // audioKind: 'design'
 
 describe('generateAudio 的 kind↔模型一致性守卫（R12）', () => {
   let svc: StudioService
@@ -356,6 +357,30 @@ describe('generateAudio 的 BYOK 失败：客户端校验类失败不进 fallbac
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('🔴 BYOK + design 上游 5xx ⇒ failed + 退款，不建 fallback_pending（平台重放会变 TTS）', async () => {
+    // 本条锁的是 B2 缺口：R14 的射程只覆盖了 music + BadRequestException，
+    // `kind === 'design'` + BYOK + 上游 5xx 曾落进 `fallback_pending` ——
+    // 而 `confirmPlatformFallback` 的 audio 分支**不读 `meta.audioKind`**，固定发
+    // `POST {baseUrl}/audio/speech`，会把 `stepaudio-3-gen-preview` 当 TTS 模型发出去并标 completed。
+    const svc = await byokService(DESIGN_MODEL)
+    designGenerate.mockRejectedValueOnce(new Error('StepFun design API 502: upstream boom'))
+
+    await expect(
+      svc.generateAudio('u1', '一段综合音频', { kind: 'design' }),
+    ).rejects.toThrow(/502/)
+
+    // 核心断言：任何一次写盘都不得是 fallback_pending（否则用户能点「用平台重试」→ 变 TTS）。
+    expect(allStatuses()).not.toContain('fallback_pending')
+    const created = generationCreate.mock.calls.at(-1)![0].data as Record<string, unknown>
+    expect(created.status).toBe('failed')
+    expect(pointsRefund).toHaveBeenCalledWith(
+      'u1',
+      5,
+      expect.stringContaining('失败退款'),
+      expect.objectContaining({ kind: 'refund', category: 'audio', status: 'failed_refund' }),
+    )
   })
 
   it('回归锁：BYOK 的**上游**失败（非 BadRequestException）仍走 fallback_pending + 重试入口', async () => {

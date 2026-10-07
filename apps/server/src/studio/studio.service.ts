@@ -2493,11 +2493,14 @@ export class StudioService {
       if (isCancelledException(err)) throw err
       // 🔴 三类失败都**不得**变成「换平台重试」的重试入口，原因各不相同：
       //
-      // 1. `kind === 'music'`：`confirmPlatformFallback` 的 audio 分支（见下）固定发 OpenAI
-      //    兼容 TTS —— 音乐若挂上去，用户点「用平台重试」会拿到一段把
+      // 1. `kind !== 'voice'`（design / music）：`confirmPlatformFallback` 的 audio 分支
+      //    （见下）**不读 `meta.audioKind`**，固定发 OpenAI 兼容 TTS —— design/music
+      //    若挂上去，用户点「用平台重试」会拿到一段把 `stepaudio-3-gen-preview` /
       //    `stepaudio-3-music-preview` 当 TTS 模型发出去的语音，并被标成 completed。
-      //    平台重放要支持 music 属后续范围；在此之前，失败必须显式可判读。
-      //    （此分支同时覆盖 BYOK music 缺 key：通用守卫先于 music 分支抛错。）
+      //    与 music 同源：平台重放要支持 design/music 属后续范围；在此之前，
+      //    失败必须显式可判读。voice 是唯一**语义与 TTS 重放一致**的分类，
+      //    故它的既有 fallback_pending 行为逐字节不变。
+      //    （此分支同时覆盖 BYOK design/music 缺 key：通用守卫先于分类分支抛错。）
       //
       // 2. 🔴 Ruling R14 `err instanceof BadRequestException`：**客户端参数校验类**失败
       //    （`assertAudioKindMatchesModel` 的 kind↔模型不匹配、`assertStepFunAudioModel` 的
@@ -2508,7 +2511,7 @@ export class StudioService {
       //    （见 audio-provider.ts 的 `TTS API ${res.status}`），仍算渠道侧问题，保留重试。
       //
       // 3. 其余（非 user 渠道）：既有行为，平台失败一律 failed。
-      if (resolved.source !== 'user' || kind === 'music' || err instanceof BadRequestException) {
+      if (resolved.source !== 'user' || kind !== 'voice' || err instanceof BadRequestException) {
         await this.points.refund(
           userId,
           cost,
@@ -3092,7 +3095,8 @@ export class StudioService {
    * ⚠️ 失败一律进 `failed`，**不进 `fallback_pending`**：`confirmPlatformFallback` 的 audio
    * 分支固定走 `createAudioProvider`（TTS），音乐若挂上fallback_pending，用户点「用平台重试」
    * 会被静默重放成一段 TTS 语音 —— 比直接失败更坏。平台重放要支持 music 属Task 8+ 的范围。
-   * （提交**前**的失败由 `generateAudio` 的共享 catch 用`kind === 'music'` 保证同一不变量。）
+   * （提交**前**的失败由 `generateAudio` 的共享 catch 用`kind !== 'voice'` 保证同一不变量 ——
+   *  design 与 music 同理：`stepaudio-3-gen-preview` 同样会被重放成 TTS。）
    */
   private async completeMusic(
     id: string,
