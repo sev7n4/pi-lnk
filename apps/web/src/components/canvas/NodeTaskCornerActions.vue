@@ -2,10 +2,9 @@
 import { computed, inject, onUnmounted, ref, watch } from 'vue'
 import { useNodeId } from '@vue-flow/core'
 import type { TaskKind } from '@lnkpi/shared'
-import NodeDiagnosticPopover from '@/components/canvas/NodeDiagnosticPopover.vue'
 import { resolveTaskChrome, truncateError } from '@/components/canvas/nodeTaskChrome'
 import { CANVAS_NODE_CANCEL_KEY, CANVAS_NODE_RETRY_KEY } from '@/composables/canvasNodeActions'
-import { useNodeDiagnostic } from '@/composables/useNodeDiagnostic'
+import { useMediaInspector } from '@/composables/useMediaInspector'
 import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 
 const props = defineProps<{
@@ -18,8 +17,9 @@ const props = defineProps<{
   nodeLabel?: string
   sessionId?: string
   /**
-   * 报错详情入口（2026-10-07 与用户拍板）：
-   * 'row'（默认）= 保留按钮上方的错误行 + ⓘ（无左上角状态图标的节点类型用）；
+   * 报错详情入口（2026-10-07 与用户拍板；2026-10-08 弹层改抽屉）：
+   * 'row'（默认）= 保留按钮上方的截断错误行 + ⓘ；点 ⓘ 直落媒体属性抽屉「诊断」tab
+   *   （原节点内弹层被节点 overflow:hidden 裁切且长 token 撑破容器，已删除）；
    * 'status-icon' = 不渲染错误行，报错详情统一收敛到节点左上角状态图标
    *   （NodeStatusInfoButton），同时保证重试/取消按钮位置与生成中状态完全一致。
    */
@@ -29,6 +29,7 @@ const props = defineProps<{
 const nodeId = useNodeId()
 const cancel = inject(CANVAS_NODE_CANCEL_KEY, null)
 const retry = inject(CANVAS_NODE_RETRY_KEY, null)
+const { openInspector } = useMediaInspector()
 
 const nowMs = ref(Date.now())
 const completedFlash = ref(false)
@@ -38,26 +39,6 @@ let flashTimer: ReturnType<typeof setTimeout> | undefined
 const isFallbackPending = computed(
   () => props.status === NODE_GENERATION_STATUS.fallback_pending,
 )
-
-const {
-  open: diagOpen,
-  loading: diagLoading,
-  popoverMessage,
-  popoverHint,
-  copyLabel,
-  toggle: toggleDiag,
-  close: closeDiag,
-  copyDiag,
-} = useNodeDiagnostic({
-  taskKind: () => props.taskKind,
-  taskId: () => props.taskId,
-  errorMessage: () => props.errorMessage,
-  errorCode: () => props.errorCode,
-  pending: () => isFallbackPending.value,
-  nodeId: () => nodeId || undefined,
-  nodeLabel: () => props.nodeLabel,
-  sessionId: () => props.sessionId,
-})
 
 watch(
   () => props.status,
@@ -115,6 +96,11 @@ const displayErr = computed(() => {
   return ''
 })
 
+/** 行内 ⓘ 可开抽屉诊断的判据：generation 记录（material 无诊断接口） */
+const canOpenDiagnostic = computed(
+  () => props.taskKind === 'generation' && Boolean(props.taskId),
+)
+
 const isClickable = computed(
   () => chrome.value?.action === 'cancel' || chrome.value?.action === 'retry',
 )
@@ -125,6 +111,17 @@ function onAction(e: Event) {
   if (!nodeId || !chrome.value?.action) return
   if (chrome.value.action === 'cancel') cancel?.(nodeId)
   if (chrome.value.action === 'retry') void retry?.(nodeId)
+}
+
+function openDiagnostic(e: Event) {
+  e.stopPropagation()
+  e.preventDefault()
+  if (!canOpenDiagnostic.value || !props.taskId) return
+  void openInspector({
+    generationRecordId: props.taskId,
+    nodeLabel: props.nodeLabel,
+    initialTab: 'diagnostic',
+  })
 }
 </script>
 
@@ -140,24 +137,16 @@ function onAction(e: Event) {
       <p class="neo-task-error-row">
         <span class="neo-task-error">{{ displayErr }}</span>
         <button
+          v-if="canOpenDiagnostic"
           type="button"
           class="neo-task-diag-btn"
-          aria-label="诊断信息"
-          title="诊断信息"
-          @click="toggleDiag"
+          aria-label="报错详情"
+          title="查看报错详情"
+          @click="openDiagnostic"
         >
           ⓘ
         </button>
       </p>
-      <NodeDiagnosticPopover
-        v-if="diagOpen"
-        :user-message="popoverMessage"
-        :hint="popoverHint"
-        :loading="diagLoading"
-        :copy-label="copyLabel"
-        @copy="copyDiag"
-        @close="closeDiag"
-      />
     </div>
     <div class="neo-task-chrome-row">
       <span v-if="chrome.elapsedText" class="neo-task-elapsed">{{ chrome.elapsedText }}</span>
