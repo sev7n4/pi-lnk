@@ -23,6 +23,7 @@ import {
 	type AgentLane,
 	type Context,
 	type JsonlSessionMetadata,
+	type OpenOperation,
 	type QueueMode,
 	type Session,
 	type ThinkingLevel,
@@ -900,7 +901,11 @@ export class SessionManager {
 		});
 
 		const toolEnsemble = this.getToolEnsemble();
-		const { harness } = await this.harnessFactory<LnkpiToolContext>(
+		// ⚠️ `open` 是 vendor 在 attach 时从盘上还原出来的**未完成 operation** 列表
+		// （`createAgentHarness` → `restoreSession`）。2026-10-07 之前这里只解构了
+		// `harness`，`open` 被整个丢弃 —— 那正是「lane 被孤儿 operation 永久占死」的
+		// 根因，详见 settleOrphanOperations 的注释。
+		const { harness, open } = await this.harnessFactory<LnkpiToolContext>(
 			{
 				session,
 				models,
@@ -991,7 +996,63 @@ export class SessionManager {
 		this.attachEvents(entry, harness);
 
 		this.sessions.set(key, entry);
+		// ⚠️ 顺序不变量：必须在 attachEvents + sessions.set **之后**。结算会经 lane 发出
+		// message_start/message_end（recovery 标记），要能被归一后 dispatch 到订阅者与缓冲；
+		// 且必须 await —— create 返回时 lane 必须是空闲的，否则紧随其后的 prompt 又会撞
+		// LaneBusy（这正是事故形态）。结算全程只读本地 jsonl、不调上游，耗时为毫秒级。
+		await this.settleOrphanOperations(entry, open);
 		return { provider: identity.provider, model: identity.model };
+	}
+
+	/**
+	 * 结算「上一个进程死时未完成」的 operation（2026-10-07 生产事故 P0-1）。
+	 *
+	 * 事故链：`AgentHarness.create()` 在 attach 时会把盘上还原出来的未完成 operation
+	 * 逐个列进返回值 `open`，但本文件此前只解构了 `harness` ⇒ `open` 被丢弃 ⇒ 那些
+	 * operation 既没人推进、也没人结算，`lane.state.currentOperationId` 永久非空 ⇒
+	 * 此后每个 prompt 都被 vendor 以 `LaneBusy: Lane "main" already has an active
+	 * operation` 拒掉（run 压根没起 ⇒ 零事件 ⇒ 前端永远停在「生成回复中」）。
+	 * **重启不治**：harness 从盘上还原 lane 状态，锁原样回来（生产实测：换 pod 后
+	 * 30 秒同一会话继续 LaneBusy）。
+	 *
+	 * 这里对每个 open operation 走一次 `lane.drive`：命中 `assistant.effect_pending`
+	 * 相位时 vendor 的 `recoverAssistantGeneration` 会**不再调上游**，按已提交帧前缀
+	 * 合成一条 `stopReason:"error"` 的 assistant 消息并 settle，从而释放 lane。
+	 *
+	 * 两条不变量：
+	 *   - 只在 `build()`（created / rebuilt / 磁盘 resume）里调用。内存快路径的
+	 *     `doCreate` 提前 return、不经过这里 —— 那条路上的 open operation 是**本进程
+	 *     正在跑的**合法在途 operation，绝不能结算。
+	 *   - fail-soft：结算失败只 warn，不阻断 create。create 还承担归属校验与事件
+	 *     订阅，抛错会把「一个孤儿 operation」放大成「整个会话建不起来」。
+	 */
+	private async settleOrphanOperations(entry: SessionEntry, open: OpenOperation[] | undefined): Promise<void> {
+		// `open` 允许为 undefined：测试注入的 fake harnessFactory 普遍只返回 `{ harness }`。
+		if (!open || open.length === 0) return;
+		for (const op of open) {
+			try {
+				const lane = await entry.harness.lane(op.lane, this.context);
+				const result = await lane.drive({ operationId: op.operationId }, this.context);
+				if (!result.ok) {
+					console.warn(
+						`[pi-runtime] settle orphan operation rejected: session=${entry.id} lane=${op.lane} ` +
+							`operation=${op.operationId} kind=${op.kind} error=${String(result.error)}`,
+					);
+					continue;
+				}
+				// warn 而非 info：这是「上一轮被中断」的信号，正常情况下不该出现，出现即需排查。
+				console.warn(
+					`[pi-runtime] settled orphan operation left by a previous process: session=${entry.id} ` +
+						`lane=${op.lane} operation=${op.operationId} kind=${op.kind} ` +
+						`startedAt=${new Date(op.startedAt).toISOString()} outcome=${result.value.kind}`,
+				);
+			} catch (err) {
+				console.warn(
+					`[pi-runtime] settle orphan operation threw (fail-soft): session=${entry.id} ` +
+						`lane=${op.lane} operation=${op.operationId}: ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+		}
 	}
 
 	/** 事件归一订阅：EVENT_MAP 全量透传；compaction_end 顺带计数（同一监听内，避免重复订阅）。
@@ -1828,14 +1889,64 @@ export class SessionManager {
 	 * 否则模型侧永久悬挂）。键 = entry.canvasSessionId（工具域），未提供时回落 entry.id，
 	 * 与 toolContext.sessionId 的回落语义一致。
 	 */
-	abort(threadKey: string): boolean {
+	/**
+	 * 中断当前 run；**无在途 run 时追加 force 语义**（2026-10-07 生产事故 P0-2）。
+	 *
+	 * 旧实现首判 `!entry?.cancelRun ⇒ return false`，于是「lane 上还钉着上一个进程留下的
+	 * 孤儿 operation」这一形态下，点「停止」是**空操作**：前端拿到 `{aborted:false}`，
+	 * 用户既看不到提示也没法自救 —— 而这正是 LaneBusy 卡死的现场本身。
+	 *
+	 * force 分支读 lane 的**实时**执行态（`inspectExecution`，不依赖 build 时的快照，
+	 * 因此对本进程内新产生的挂死同样有效）拿当前 operationId，先 `requestAbort` 标记
+	 * cancel_requested，再 `drive` 一次让 vendor 走
+	 * `reconcileOperation → recoverCancelledAssistantEffect` 把它结算掉：既取消、又释放锁。
+	 *
+	 * 保持 fail-soft：force 分支任何异常都只 warn 并返回 false，绝不让「停止」变成 500。
+	 */
+	async abort(threadKey: string): Promise<boolean> {
 		const entry = this.sessions.get(toSessionKey(threadKey));
 		if (entry) this.pendingRegistry?.abortAll(entry.canvasSessionId ?? entry.id);
-		if (!entry?.cancelRun) return false;
-		entry.userAborted = true;
-		entry.cancelRun("user_cancel");
-		entry.cancelRun = undefined;
-		return true;
+		if (!entry) return false;
+		if (entry.cancelRun) {
+			entry.userAborted = true;
+			entry.cancelRun("user_cancel");
+			entry.cancelRun = undefined;
+			return true;
+		}
+		return await this.forceSettleLaneOperation(entry);
+	}
+
+	/**
+	 * force 分支：lane 上确有孤儿 operation 时结算它并返回 true；没有则返回 false
+	 * （= 真没东西可停，语义与旧实现一致，前端提示「后台可能仍在收尾」）。
+	 */
+	private async forceSettleLaneOperation(entry: SessionEntry): Promise<boolean> {
+		try {
+			const lane = await entry.harness.lane(MAIN_LANE, this.context);
+			const execution = await lane.inspectExecution(this.context);
+			const current = execution.current;
+			if (!current) return false;
+			await lane.requestAbort(current.id, this.context);
+			const result = await lane.drive({ operationId: current.id }, this.context);
+			if (!result.ok) {
+				console.warn(
+					`[pi-runtime] force abort could not settle orphan: session=${entry.id} ` +
+						`operation=${current.id} error=${String(result.error)}`,
+				);
+				return false;
+			}
+			console.warn(
+				`[pi-runtime] force abort settled orphan operation: session=${entry.id} ` +
+					`operation=${current.id} kind=${current.kind} outcome=${result.value.kind}`,
+			);
+			return true;
+		} catch (err) {
+			console.warn(
+				`[pi-runtime] force abort threw (fail-soft): session=${entry.id}: ` +
+					`${err instanceof Error ? err.message : String(err)}`,
+			);
+			return false;
+		}
 	}
 
 	/** index.ts 装配用（构造签名长，避免位置参数漂移）。 */
