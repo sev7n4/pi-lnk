@@ -47,12 +47,25 @@ export type TextGenerationWithRefsOptions = {
   textOpts?: TextGenerateOptions
 }
 
+export interface TextForRefsResult {
+  text: string
+  visionUsed: boolean
+  /**
+   * 实际重试次数（首次成功 = 0）。与 vision 路径同口径，供上层写进账本 metadata。
+   *
+   * ⚠️ 非 vision 两条分支当前恒为 0：它们的 provider（`createTextProvider`）
+   * 尚未接`withUpstreamRetry`，真实计数由 Task 4 补齐。口径先对齐，
+   * 避免下游把「0」误读成「没重试过」。
+   */
+  retryCount: number
+}
+
 /** Route image-ref text generation to vision API or text-only fallback. */
 export async function generateTextForRefs(
   prompt: string,
   referenceImages: string[],
   opts: TextGenerationWithRefsOptions = {},
-): Promise<{ text: string; visionUsed: boolean }> {
+): Promise<TextForRefsResult> {
   const refs = referenceImages.map((url) => url.trim()).filter(Boolean)
   if (refs.length === 0) {
     const provider = createTextProvider({
@@ -61,16 +74,16 @@ export async function generateTextForRefs(
       model: opts.model,
     })
     const { text } = await provider.generate(prompt, opts.model, opts.textOpts)
-    return { text, visionUsed: false }
+    return { text, visionUsed: false, retryCount: 0 }
   }
 
   if (supportsVisionTextModel(opts.model)) {
-    const { text } = await generateTextWithImages(prompt, refs, {
+    const { text, retryCount } = await generateTextWithImages(prompt, refs, {
       model: upstreamChatModel(opts.model),
       apiKey: opts.apiKey,
       baseUrl: opts.baseUrl,
     })
-    return { text, visionUsed: true }
+    return { text, visionUsed: true, retryCount }
   }
 
   const provider = createTextProvider({
@@ -83,5 +96,5 @@ export async function generateTextForRefs(
     opts.model,
     opts.textOpts,
   )
-  return { text, visionUsed: false }
+  return { text, visionUsed: false, retryCount: 0 }
 }

@@ -55,7 +55,7 @@ describe('generateTextForRefs', () => {
       model: 'gemini-3.5-flash-lite',
     })
 
-    expect(result).toEqual({ text: 'vision ok', visionUsed: true })
+    expect(result).toEqual({ text: 'vision ok', visionUsed: true, retryCount: 0 })
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
     expect(body.stream).toBe(false)
     expect(body.messages[1].content[1]).toEqual({
@@ -76,7 +76,7 @@ describe('generateTextForRefs', () => {
       model: 'ch_x::deepseek-flash',
     })
 
-    expect(result).toEqual({ text: 'flash vision', visionUsed: true })
+    expect(result).toEqual({ text: 'flash vision', visionUsed: true, retryCount: 0 })
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
     expect(body.model).toBe('deepseek-flash')
     expect(body.messages[1].content[1]).toEqual({
@@ -97,7 +97,7 @@ describe('generateTextForRefs', () => {
       model: 'deepseek-v4-pro',
     })
 
-    expect(result).toEqual({ text: 'text ok', visionUsed: false })
+    expect(result).toEqual({ text: 'text ok', visionUsed: false, retryCount: 0 })
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
     expect(body.stream).toBe(false)
     expect(typeof body.messages[1].content).toBe('string')
@@ -117,8 +117,55 @@ describe('generateTextForRefs', () => {
       model: 'deepseek-v4-pro',
     })
 
-    expect(result).toEqual({ text: 'plain', visionUsed: false })
+    expect(result).toEqual({ text: 'plain', visionUsed: false, retryCount: 0 })
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
     expect(body.messages[1].content).toBe('hello')
+  })
+
+  // ── retryCount 透传：vision 分支传真值，两条非 vision 分支先返回 0 ──────
+  it('passes the real retryCount through from the vision branch', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'unavailable' })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'recovered' } }] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generateTextForRefs('describe', ['https://cdn.example/a.png'], {
+      apiKey: 'k',
+      model: 'gemini-3.5-flash-lite',
+    })
+
+    expect(result).toEqual({ text: 'recovered', visionUsed: true, retryCount: 1 })
+    expect(fetchMock.mock.calls.length).toBe(2)
+  }, 30_000)
+
+  it('reports retryCount 0 for the text-only fallback branch', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'text ok' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generateTextForRefs('describe', ['https://cdn.example/a.png'], {
+      apiKey: 'k',
+      model: 'deepseek-v4-pro',
+    })
+
+    expect(result.retryCount).toBe(0)
+  })
+
+  it('reports retryCount 0 for the no-refs branch', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'plain' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generateTextForRefs('hello', [], { apiKey: 'k', model: 'gpt-4o' })
+
+    expect(result.retryCount).toBe(0)
   })
 })

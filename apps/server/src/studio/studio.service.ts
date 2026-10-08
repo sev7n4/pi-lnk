@@ -697,12 +697,6 @@ export class StudioService {
   ) {
     const cost = 5
     const chargeReason = '文本生成'
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('text', { model: model ?? null, generationId: null }),
-    )
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
     const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('text', resolved.modelName)
     const gatewayModelId =
@@ -733,6 +727,34 @@ export class StudioService {
       ...(fallback && resolved.source === 'platform' ? { modelFallback: true } : {}),
     }
 
+    // 账本对账：先建 generating 占位再扣费，扣费交易携带 generationId。
+    // 与 generateImage 主路径（studio.service.ts:1132-1177）同构。
+    const record = await this.prisma.generationRecord.create({
+      data: {
+        userId,
+        type: 'text',
+        prompt: mergedText,
+        model: storeModel,
+        url: null,
+        status: 'generating',
+        metadata: JSON.stringify(applyChargeMeta({ ...baseMeta }, cost)),
+        ...withCanvasScope(scope),
+      },
+    })
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('text', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
+
     try {
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
@@ -754,21 +776,19 @@ export class StudioService {
           `${chargeReason}-取消退款`,
           refundMeta('text', 'cancelled_refund', {
             model: resolved.modelName,
-            generationId: null,
+            generationId: record.id,
           }),
         )
+        await this.prisma.generationRecord
+          .delete({ where: { id: record.id } })
+          .catch(() => undefined)
         throwCancelledException(cost)
       }
-      return this.prisma.generationRecord.create({
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
         data: {
-          userId,
-          type: 'text',
-          prompt: mergedText,
-          model: storeModel,
-          url: null,
           status: 'completed',
           metadata: JSON.stringify(applyChargeMeta({ ...baseMeta, text, visionUsed }, cost)),
-          ...withCanvasScope(scope),
         },
       })
     } catch (err) {
@@ -780,29 +800,24 @@ export class StudioService {
           `${chargeReason}-失败退款`,
           refundMeta('text', 'failed_refund', {
             model: resolved.modelName,
-            generationId: null,
+            generationId: record.id,
           }),
         )
         const failedMeta = applyFailureDiagnosticMeta(
           applyRefundMeta(applyChargeMeta({ ...baseMeta }, cost), cost, 'platform_failed'),
           err,
         )
-        const failed = await this.prisma.generationRecord.create({
+        await this.prisma.generationRecord.update({
+          where: { id: record.id },
           data: {
-            userId,
-            type: 'text',
-            prompt: mergedText,
-            model: storeModel,
-            url: null,
             status: 'failed',
             metadata: JSON.stringify(failedMeta),
-            ...withCanvasScope(scope),
           },
         })
         throwGenerationFailure({
           userMessage: String(failedMeta.userMessage ?? '生成失败'),
           errorCode: failedMeta.errorCode as ErrorCode,
-          taskId: failed.id,
+          taskId: record.id,
           refundedPoints: cost,
         })
       }
@@ -812,16 +827,12 @@ export class StudioService {
         `${chargeReason}-BYOK失败退款`,
         refundMeta('text', 'byok_refund', {
           model: resolved.modelName,
-          generationId: null,
+          generationId: record.id,
         }),
       )
-      return this.prisma.generationRecord.create({
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
         data: {
-          userId,
-          type: 'text',
-          prompt: mergedText,
-          model: storeModel,
-          url: null,
           status: 'fallback_pending',
           metadata: JSON.stringify(
             this.byokPendingMeta(resolved, err, cost, {
@@ -829,7 +840,6 @@ export class StudioService {
               ...baseMeta,
             }),
           ),
-          ...withCanvasScope(scope),
         },
       })
     }

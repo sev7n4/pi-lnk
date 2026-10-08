@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-lnk 文本节点生成链路与数据管线 · 诊断报告</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1f2c; --ink2:#4a5160; --ink3:#7a8190;
+    --line:#e3e6ec; --line2:#d4d8e0;
+    --red:#c0392b; --red-bg:#fdecea; --red-line:#f5c6c0;
+    --green:#1f8a4c; --green-bg:#e6f4ec; --green-line:#bfe3cc;
+    --amber:#b8860b; --amber-bg:#fdf6e3; --amber-line:#f0d9a0;
+    --blue:#2563a8; --blue-bg:#e8f1fa; --blue-line:#c2dcef;
+    --purple:#6b3fa0; --purple-bg:#f0e9f7; --purple-line:#d8c7ea;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:24px}
+  header h1{margin:0 0 6px;font-size:26px;font-weight:700;letter-spacing:-.3px}
+  header .meta{color:var(--ink2);font-size:13px}
+  header .meta b{color:var(--ink)}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 18px;margin-bottom:28px;font-size:14px}
+  .toc b{color:var(--ink)}
+  .toc a{color:var(--blue);text-decoration:none;margin-right:14px;display:inline-block}
+  .toc a:hover{text-decoration:underline}
+  h2{font-size:20px;margin:36px 0 14px;padding-bottom:6px;border-bottom:1px solid var(--line2);font-weight:700}
+  h3{font-size:16px;margin:26px 0 10px;font-weight:700;color:var(--ink)}
+  h4{font-size:14px;margin:18px 0 8px;font-weight:700;color:var(--ink2)}
+  p{margin:8px 0}
+  code{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;background:#eef0f4;padding:1px 5px;border-radius:3px;color:#b03060}
+  .file{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;color:var(--purple);background:var(--purple-bg);padding:1px 5px;border-radius:3px;white-space:nowrap}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;background:var(--card)}
+  th,td{border:1px solid var(--line2);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#f0f2f6;font-weight:600;color:var(--ink)}
+  td code,.file-cell{font-size:12px}
+  .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:10px;line-height:1.5}
+  .p-red{background:var(--red-bg);color:var(--red);border:1px solid var(--red-line)}
+  .p-green{background:var(--green-bg);color:var(--green);border:1px solid var(--green-line)}
+  .p-amber{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-line)}
+  .p-blue{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-line)}
+  .p-gray{background:#eef0f4;color:var(--ink2);border:1px solid var(--line2)}
+  .callout{border-radius:8px;padding:12px 16px;margin:14px 0;font-size:14px}
+  .c-red{background:var(--red-bg);border:1px solid var(--red-line);border-left:4px solid var(--red)}
+  .c-amber{background:var(--amber-bg);border:1px solid var(--amber-line);border-left:4px solid var(--amber)}
+  .c-blue{background:var(--blue-bg);border:1px solid var(--blue-line);border-left:4px solid var(--blue)}
+  .c-green{background:var(--green-bg);border:1px solid var(--green-line);border-left:4px solid var(--green)}
+  .c-gray{background:#f0f2f6;border:1px solid var(--line2);border-left:4px solid var(--ink3)}
+  .c-red b,.c-amber b{color:var(--ink)}
+  .flow{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin:14px 0;overflow-x:auto}
+  .flow-row{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .node{flex:0 0 auto;min-width:150px;border:1.5px solid var(--line2);border-radius:6px;padding:8px 10px;background:#fafbfc;font-size:12.5px;margin:4px}
+  .node b{display:block;font-size:13px;color:var(--ink)}
+  .node .loc{font-size:11px;color:var(--purple);font-family:"SF Mono",monospace;margin-top:3px;word-break:break-all}
+  .arrow{display:flex;align-items:center;justify-content:center;color:var(--ink3);font-size:18px;padding:0 2px;font-weight:700}
+  .lane{border-left:3px solid var(--blue);padding-left:10px;margin:10px 0}
+  .lane-label{font-size:12px;color:var(--blue);font-weight:700;margin-bottom:6px}
+  .sev{display:inline-block;width:46px;text-align:center}
+  details{margin:10px 0}
+  summary{cursor:pointer;font-weight:600;color:var(--blue);font-size:14px}
+  summary:hover{text-decoration:underline}
+  .small{font-size:12.5px;color:var(--ink2)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:780px){.grid2{grid-template-columns:1fr}.node{min-width:120px}}
+  ul.tight{margin:6px 0;padding-left:20px}
+  ul.tight li{margin:3px 0}
+  .tag-row{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line2);color:var(--ink3);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>pi-lnk 文本节点生成链路与数据管线 · 诊断报告</h1>
+  <div class="meta">
+    基线 commit：<b>e8ef2a43</b>（取证时工作区分支落后约 35–36 提交，全部源码经 <code>git show origin/master:&lt;path&gt;</code> 读取）·
+    取证时间 2026-10-08 · 报告范围：文本节点（text / prompt）生成全链路 + 数据管线 + 额外处理逻辑<br>
+    <span class="pill p-red" style="margin-top:6px">已被生产数据部分证伪 — 见 §8 复核结论（2026-10-08 追加）</span>
+  </div>
+</header>
+
+<div class="toc">
+  <b>目录</b><br>
+  <a href="#s0">0. 最关键的结构事实</a>
+  <a href="#s1">1. 链路全景</a>
+  <a href="#s2">2. 文本节点数据管线</a>
+  <a href="#s3">3. 额外处理逻辑清单（核心）</a>
+  <a href="#s4">4. 四类生成 × 六维对照</a>
+  <a href="#s5">5. Prompt 组装链路</a>
+  <a href="#s6">6. 问题诊断</a>
+  <a href="#s7">7. 优化建议</a>
+  <a href="#s8">8. ⚠️ 生产复核结论（本节优先级高于 §6/§7）</a>
+</div>
+
+<!-- ============ S0 ============ -->
+<h2 id="s0">0. 最关键的结构事实：存在三条互不相交的「文本生成」链路</h2>
+
+<p>在分析任何「文本生成」问题前必须先澄清——本仓的「文本生成」实际上是<b>三条独立链路</b>，它们入口不同、prompt 组装不同、产物落点不同、额外处理也不同。把它们混为一谈是诊断文本侧问题的头号陷阱。</p>
+
+<table>
+<tr><th>链路</th><th>入口</th><th>走 PiPromptAssembler？</th><th>走 prompt-modes？</th><th>产物落点</th><th>额外处理成熟度</th></tr>
+<tr><td><b>A. Agent 对话流</b></td>
+  <td>用户在画布侧边栏打字 → <code>POST /api/agent/chat/conversation</code>（SSE）→ pi-runtime → 模型</td>
+  <td><span class="pill p-green">是</span> 静态规则 + 动态世界状态</td>
+  <td><span class="pill p-gray">否</span></td>
+  <td>模型若决定给节点生成文案，会调 <code>run_text_generation</code> 工具 → 落到链路 B</td>
+  <td><span class="pill p-green">成熟</span>（鉴权/幂等/心跳/孤儿锁已修）</td></tr>
+<tr><td><b>B. Studio 直生成（text）</b></td>
+  <td>① 模型调 <code>run_text_generation</code> 工具 → Nest <code>/agent/internal/run-text-generation</code>；② 用户在画布点「生成」按钮 → <code>useNodeGeneration</code> → <code>studioApi.generateText</code></td>
+  <td><span class="pill p-red">否</span> <b>裸 LLM 调用</b></td>
+  <td><span class="pill p-red">否</span></td>
+  <td><code>update_node{content}</code> + <code>GenerationRecord(type:'text')</code></td>
+  <td><span class="pill p-red">半成品</span>（零重试/占位假成功/悬空扣费）</td></tr>
+<tr><td><b>B′. Studio 提示词生成（prompt）</b></td>
+  <td>模型调 <code>run_prompt_generation</code> 工具；或 turnaround 图片管线扩写</td>
+  <td><span class="pill p-red">否</span></td>
+  <td><span class="pill p-green">是</span> classify → mode 专属 system</td>
+  <td><code>update_node{content, promptMode}</code> + <code>GenerationRecord(type:'prompt')</code></td>
+  <td><span class="pill p-amber">中等</span>（有分类/overlay，但仍走链路 B 的扣费/超时模式）</td></tr>
+</table>
+
+<div class="callout c-red">
+<b>结构性断点（本次诊断最重要发现）</b>：Agent 对话流（链路 A）把完整的<b>世界状态</b>（画布摘要 / 侧栏素材 / 用户选中指代 / 长期记忆 / 侧栏识图结果）注入 system prompt，模型据此决策调用 <code>run_text_generation</code>。但工具一旦落到 <code>studio.generateText</code>（链路 B），<b>这些上下文被全部丢弃</b>——工具只拿到节点自身的 <code>prompt + refs</code> 裸调 LLM。即「决策有上下文、执行无上下文」。详见 §5。
+</div>
+
+<!-- ============ S1 ============ -->
+<h2 id="s1">1. 链路全景（从浏览器到模型的一跳跳调用链）</h2>
+
+<h3>1.1 链路 A · Agent 对话流入口</h3>
+<div class="flow">
+<div class="flow-row">
+  <div class="node"><b>浏览器</b>POST /api/agent/chat/conversation<br><span class="small">ConversationDto + SSE<br>headers: idempotency-key, JWT</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>nginx:8888</b>反代</div>
+  <div class="arrow">→</div>
+  <div class="node"><b>Nest apps/server:5100</b>AgentController.conversation<div class="loc">agent.controller.ts:540</div><span class="small">AuthGuard · 幂等键 · 会话归属 · SSE心跳15s</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>AgentService.streamConversation</b><div class="loc">agent.service.ts:197</div><span class="small">forkSession · 落用户消息</span></div>
+</div>
+<div class="flow-row" style="margin-top:6px">
+  <div class="arrow">↓</div>
+</div>
+<div class="flow-row">
+  <div class="node"><b>streamFromPiRuntime</b><div class="loc">agent.service.ts:920</div><span class="small">BYOK解析 · 直通图组装 · 侧栏识图 · PromptAssembler</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>PiRuntimeClient.createSession</b><div class="loc">pi-runtime.client.ts:218</div><span class="small">body: {sessionId, systemPrompt, llm(BYOK), canvasSessionId, promptInfo}</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>PiRuntimeClient.prompt</b><div class="loc">pi-runtime.client.ts:253</div><span class="small">lane:"main" · forceSkills · turnContext · images<br>409 → steer 兜底</span></div>
+</div>
+<div class="flow-row" style="margin-top:6px"><div class="arrow">↓</div></div>
+<div class="flow-row">
+  <div class="node"><b>pi-runtime (K3s NodePort 30100)</b>app.ts /sessions/:id/prompt<div class="loc">session-manager.ts:1633</div><span class="small">busy守卫 · generation-gate</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>lane.prompt → driveRunRequest</b><div class="loc">lane.ts:1133 / drive.ts</div><span class="small">LaneBusy守卫 · settleOrphan</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>vendor pi harness → 上游模型</b><span class="small">BYOK baseUrl+apiKey / env agnes</span></div>
+</div>
+<div class="flow-row" style="margin-top:10px">
+  <div class="node" style="border-color:var(--green);background:var(--green-bg)"><b>事件回流 SSE</b><span class="small">message_update(text_delta) → 前端<br>tool_execution_* → canvas_action SSE</span></div>
+  <div class="arrow">←</div>
+  <div class="node"><b>streamEvents 解析帧</b><div class="loc">pi-runtime.client.ts:407</div><span class="small">?from=now 防重放 · 断线续传</span></div>
+  <div class="arrow">←</div>
+  <div class="node"><b>mapPiEventToUiEvent 归一</b><div class="loc">pi-events.ts:79</div></div>
+  <div class="arrow">←</div>
+  <div class="node"><b>Nest SSE res.write</b><div class="loc">agent.controller.ts:584</div></div>
+</div>
+</div>
+
+<h3>1.2 链路 B · 文本节点生成工具回调（写画布）</h3>
+<div class="flow">
+<div class="flow-row">
+  <div class="node"><b>模型调 run_text_generation</b><div class="loc">generation.ts:112</div><span class="small">参数仅 node_id</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>checkGenerationGate (HITL)</b><div class="loc">generation-gate.ts:90</div><span class="small">fail-closed：节点须 pending_confirm + 非本轮自批 + V-γ重试预算</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>NestClient.post</b><div class="loc">nest-client.ts</div><span class="small">x-lnkpi-service-token · 熔断 · 超时</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>AgentCanvasToolsController</b><div class="loc">agent-canvas-tools.controller.ts:1254</div><span class="small">AgentInternalGuard</span></div>
+</div>
+<div class="flow-row" style="margin-top:6px"><div class="arrow">↓</div></div>
+<div class="flow-row">
+  <div class="node"><b>runTextGeneration service</b><div class="loc">agent-canvas-tools.service.ts:1882</div><span class="small">loadOwnedSession · 读节点 prompt<br>update_node{status:generating}</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>studio.generateText</b><div class="loc">studio.service.ts:695</div><span class="small">扣费5点 · resolveForGeneration · generateTextForRefs</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>GenerationRecord.create</b><div class="loc">studio.service.ts:759</div><span class="small">type:'text', status:'completed'</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>update_node{content}</b><div class="loc">service.ts:1929</div><span class="small">写 Session.canvasData</span></div>
+</div>
+</div>
+
+<h3>1.3 入口层额外处理清单</h3>
+<table>
+<tr><th>处理项</th><th>位置</th><th>说明</th><th>状态</th></tr>
+<tr><td>用户端鉴权（JWT）</td><td class="file-cell">agent.controller.ts:540 <code>@UseGuards(AuthGuard)</code></td><td>conversation / steer / followup / cancel / answers 全加</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>服务间鉴权（token）</td><td class="file-cell">agent-internal.guard.ts:30 + canvas-tools.controller.ts:1067 <code>@UseGuards(AgentInternalGuard)</code></td><td>pi-runtime→Nest 的 /agent/internal/* 校验 <code>x-lnkpi-service-token</code></td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>幂等键</td><td class="file-cell">agent.controller.ts:546-558 + agent.service.ts:200/391</td><td>5min TTL，processing 态命中回兜底文案</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>会话归属校验</td><td class="file-cell">agent.controller.ts:569 <code>sessionsService.findOne</code></td><td>ForbiddenException → SSE 写 SESSION_FORBIDDEN_HINT</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>SSE 心跳</td><td class="file-cell">agent.controller.ts:580 · app.ts:24 <code>HEARTBEAT_MS=15_000</code></td><td>防浏览器 stale 30s 自断</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>HITL 生成门禁</td><td class="file-cell">generation-gate.ts:90 <code>checkGenerationGate</code></td><td>run_* 须 pending_confirm + 非本轮自批 + V-γ 重试预算（第3次拦截转 ask_user）</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>Nest 端熔断</td><td class="file-cell">nest-client.ts:60-90 <code>BreakerState</code></td><td>5次/60s per-path 熔断</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>Nest 端超时</td><td class="file-cell">nest-client.ts:55-58</td><td>按路径超时（默认10s，image 210s/video 690s）</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>错误转换</td><td class="file-cell">agent.service.ts:1180 <code>classifyPiRunError</code></td><td>上游 429/5xx 分类为 kind/retry_hint</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>孤儿锁清理</td><td class="file-cell">session-manager.ts:1041 <code>settleOrphanOperations</code></td><td>build() 解构 {harness,open}，对每个 open op 走 lane.drive 释放</td><td><span class="pill p-green">已修</span></td></tr>
+<tr><td>409 steer 兜底</td><td class="file-cell">agent.service.ts:1147-1170</td><td>prompt 撞 409 改走 client.steer（durable 落盘），不再静默吞</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>promptInfo 指纹</td><td class="file-cell">agent.service.ts:1112 + session-manager.ts:819</td><td>落 meta.json，warn 规则版本不一致</td><td><span class="pill p-green">有</span></td></tr>
+<tr><td>限流（rate limit）</td><td>—</td><td>controller 层无 throttle，只有 busy 409 串行守卫</td><td><span class="pill p-amber">无</span></td></tr>
+<tr><td>conversation 入口画布校验</td><td>—</td><td>不校验画布内容合法性，只在后续工具经 gate 校验节点状态</td><td><span class="pill p-amber">无</span></td></tr>
+<tr><td>pi-runtime 端点用户鉴权</td><td class="file-cell">app.ts:183 注释</td><td>靠 K3s 网络隔离 + AgentInternalGuard token 信任边界</td><td><span class="pill p-amber">靠网络隔离</span></td></tr>
+</table>
+
+<!-- ============ S2 ============ -->
+<h2 id="s2">2. 文本节点数据管线</h2>
+
+<h3>2.1 文本节点生命周期</h3>
+<div class="flow">
+<div class="flow-row">
+  <div class="node"><b>创建节点</b>upsert_media_node{target_type:'text'}<div class="loc">canvas-write.ts:130 → service.ts:940</div><span class="small">add_node{nodeType:'text', data:{prompt, status:'draft', textModel}}</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>参数预填(可选)</b>set_node_generation_params<div class="loc">canvas-write.ts:230</div><span class="small">update_node{textModel, ...} · 白名单校验</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>提议确认</b>propose_generation<div class="loc">canvas-write.ts:180</div><span class="small">update_node{status:'pending_confirm'}<br>阻塞等用户确认/answers</span></div>
+</div>
+<div class="flow-row" style="margin-top:6px"><div class="arrow">↓</div></div>
+<div class="flow-row">
+  <div class="node"><b>gate 放行</b>checkGenerationGate<div class="loc">generation-gate.ts:90</div><span class="small">SSOT pending_confirm + 非自批 + V-γ</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>起手态</b>update_node{status:generating}<div class="loc">service.ts:1903</div></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>同步调 LLM</b>studio.generateText<div class="loc">studio.service.ts:695</div><span class="small">扣费5 → generateTextForRefs</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>建 record</b>GenerationRecord.create<div class="loc">studio.service.ts:759</div><span class="small">一创建即终态，无 generating 中间态</span></div>
+</div>
+<div class="flow-row" style="margin-top:6px"><div class="arrow">↓</div></div>
+<div class="flow-row">
+  <div class="node" style="border-color:var(--green);background:var(--green-bg)"><b>成功</b>update_node{status:completed, content, generationRecordId}<div class="loc">service.ts:1929</div></div>
+  <div class="node" style="border-color:var(--red);background:var(--red-bg)"><b>平台失败</b>update_node{status:error} + record failed + 退款<div class="loc">service.ts:1948 / studio:783</div></div>
+  <div class="node" style="border-color:var(--amber);background:var(--amber-bg)"><b>BYOK失败</b>update_node{status:?} + record fallback_pending + 退款<div class="loc">studio:816</div><span class="small">等用户点平台重试</span></div>
+</div>
+</div>
+
+<h3>2.2 双 applier 同源机制</h3>
+<p>文本节点写回画布走的是 <code>update_node</code>（不是 add_node），同一批 <code>CanvasAction[]</code> 被两份 applier 消费：</p>
+<div class="grid2">
+<div>
+<h4>后端 applier（DB 持久化）</h4>
+<ul class="tight">
+<li><span class="file">packages/agent/src/tools/executor.ts:13</span> <code>case 'add_node'</code></li>
+<li>经 <span class="file">canvas-action-applier.ts:16</span> 注入 Nest</li>
+<li>在 <span class="file">agent-canvas-tools.service.ts:3586</span> <code>persist()</code> 内 <code>prisma.$transaction</code> 重读 canvasData → apply → update</li>
+<li><b>额外处理</b>：add_node 幂等（命中同 id 原地更新，executor.ts:22，2026-10-01 修，生产 30/253 画布命中）</li>
+</ul>
+</div>
+<div>
+<h4>前端 applier（实时态）</h4>
+<ul class="tight">
+<li><span class="file">apps/web/src/composables/useCanvasActions.ts:46</span> <code>applyActionsToFlow</code></li>
+<li>消费 canvas_action SSE → 改 Vue 画布状态</li>
+<li><b>额外处理</b>：add_node 幂等（:67 同源修复）；<b>STALE_BLOCKED_STATUSES 状态降级守卫</b>（:21 本地在途/终态时丢弃 stale pending_confirm）；<b>存量自愈去重</b>（:140 dedupeNodesById）</li>
+</ul>
+</div>
+</div>
+
+<div class="callout c-gray">
+<b>画布 SSOT 在前端</b>：<code>saveCanvas</code> 整份覆盖回 DB；后端 <code>persist</code> 写的 canvasData 是同一份语义。前端最终以整份覆盖为准——后端 persist 主要是工具执行期的即时落地。
+</div>
+
+<h3>2.3 数据管线额外处理</h3>
+<table>
+<tr><th>机制</th><th>有无</th><th>位置</th><th>说明</th></tr>
+<tr><td>节点去重（add_node 幂等）</td><td><span class="pill p-green">有</span></td><td class="file-cell">executor.ts:22 · useCanvasActions.ts:67 · canvasDataToFlow:140</td><td>同 id 命中原地更新；存量自愈 dedupeNodesById</td></tr>
+<tr><td>乐观锁（DB 事务重读）</td><td><span class="pill p-green">有</span></td><td class="file-cell">persist:3586 <code>prisma.$transaction</code></td><td>注释明示「concurrent calls never lose each other's updates」</td></tr>
+<tr><td>冲突检测（stagedActions 互斥）</td><td><span class="pill p-green">有</span></td><td class="file-cell">persist:3600 / persistCanvasData:3535</td><td>stage 未 commit/rollback 前禁止直接 persist，抛 ConflictException</td></tr>
+<tr><td>stage TTL 过期清理</td><td><span class="pill p-green">有</span></td><td class="file-cell">expireStaleStage:3500 · STAGE_TTL_MS=30min</td><td>超时自动清 stagedActions</td></tr>
+<tr><td>前端状态降级守卫</td><td><span class="pill p-green">有</span></td><td class="file-cell">useCanvasActions.ts:21 STALE_BLOCKED_STATUSES</td><td>本地在途/终态时丢弃 stale pending_confirm</td></tr>
+<tr><td>V-γ 重试预算</td><td><span class="pill p-green">有</span></td><td class="file-cell">generation-gate.ts:46</td><td>同节点 run 次数限 2，第 3 次拦截转 ask_user；用户重新确认清零</td></tr>
+<tr><td>CanvasAction schema 校验</td><td><span class="pill p-green">有</span></td><td class="file-cell">pi-events.ts:357 CanvasActionSchema.safeParse</td><td>逐条校验 + NODE_TYPES 白名单收窄</td></tr>
+<tr><td>nodeType 白名单</td><td><span class="pill p-green">有</span></td><td class="file-cell">agentContract.ts:38 NODE_TYPES</td><td>[prompt,image,video,audio,text,group,shot,sceneComposer]</td></tr>
+<tr><td><b>幂等键（生成调用）</b></td><td><span class="pill p-red">无</span></td><td>—</td><td>重复 run_text_generation 会重复扣费、重复建 record；仅靠 gate V-γ + SSOT status 兜底</td></tr>
+<tr><td><b>版本号 / ETag</b></td><td><span class="pill p-red">无</span></td><td>—</td><td>CanvasData 无 version 字段；并发靠 DB 事务串行化</td></tr>
+</table>
+
+<!-- ============ S3 ============ -->
+<h2 id="s3">3. 额外处理逻辑清单（本报告核心）</h2>
+
+<p>这是本次诊断的<b>最核心部分</b>。文本生成链路上的每项额外处理逐项落实，并标注「有/无」与位置。文本 vs 图片的修复进度差异是主要发现。</p>
+
+<h3>3.1 超时</h3>
+<div class="callout c-amber">
+<b>文本有超时，但来自 upstreamFetch 通用 45s，无文本专属 env、无 TS 消费点。</b>
+<ul class="tight">
+<li><span class="file">text-provider.ts:65</span> <code>OpenAITextProvider.generate()</code> 调 <code>upstreamFetch(baseUrl/chat/completions, ...)</code>，未传 timeoutMs → 用默认 <code>UPSTREAM_FETCH_TIMEOUT_MS = 45_000</code>（<span class="file">upstream-fetch.ts:23</span>）</li>
+<li>upstream-fetch.ts 注释的「最坏 <code>3*45+4.5=139.5s &lt; LNKPI_IMAGE_GEN_TIMEOUT_SEC=180</code>」<b>只对图片成立</b>（图片裹 withUpstreamRetry 3 次）；文本不重试，最坏就是单次 45s</li>
+<li><code>git grep LNKPI_TEXT</code> 全仓零命中 → <b>文本没有任何专属超时环境变量</b></li>
+<li><code>git grep LNKPI_IMAGE_GEN_TIMEOUT_SEC</code> 只命中注释和测试 → 生产已设但 TS 零消费（印证 MEMORY）</li>
+</ul>
+<b>超时后行为</b>：抛 <code>UpstreamTimeoutError</code>（文案含 ASCII <code>timeout</code>，upstream-fetch.ts:42-46），冒泡到 generateText catch 走失败退款。不会挂起（#271 修法对文本也生效）。
+</div>
+
+<h3>3.2 重试</h3>
+<div class="callout c-red">
+<b>文本零重试——是四类生成里唯一无重试的。</b>
+<ul class="tight">
+<li><span class="file">upstream-retry.ts:60-79</span> <code>withUpstreamRetry</code> 默认 attempts=3、baseDelayMs=1500、退避 <code>base * 2^i</code>（1500/3000/6000）</li>
+<li>可重试判定 <code>isRetryableUpstreamError</code>：429 / 5xx / <code>fetch failed</code> / <code>timed out</code> / ECONNRESET；NON_RETRYABLE 优先（402/403/content_policy/已取消）</li>
+<li><b>关键纪律</b>：<code>!res.ok</code> 必须显式 throw，否则 fetch 对 4xx/5xx 正常返回、重试永不触发（upstream-retry.ts:18 注释明示「最容易做错的一处」）</li>
+<li><span class="file">image-provider.ts:96-103 / :130-137</span> 图片在 async_task + sync 两分支都把 upstreamFetch 包进 withUpstreamRetry</li>
+<li><span class="file">text-provider.ts:67</span> <b>文本直调 upstreamFetch，无 withUpstreamRetry 包裹</b></li>
+<li>视频：<span class="file">upstream-retry.ts:104</span> <code>withVideoRetry</code> = withUpstreamRetry 别名</li>
+</ul>
+<b>生产影响</b>：上游 429 抖动时，图片会自动退避重试 3 次，文本直接判失败退款 → <b>文本侧最直接的韧性缺口</b>。
+</div>
+
+<h3>3.3 降级 / 占位</h3>
+<div class="callout c-red">
+<b>文本有 PlaceholderTextProvider 占位（与图片同病：仅图片+文本保留，视频#166/音频#165已下线）。</b>
+<ul class="tight">
+<li><span class="file">text-provider.ts:34-43</span> <code>PlaceholderTextProvider</code> 返回硬编码「【AI 创作草案】…（配置 OPENAI_API_KEY 后可获得真实 LLM 输出）」</li>
+<li><span class="file">text-provider.ts:80-88</span> <code>createTextProvider()</code>：无 apiKey 且无 OPENAI_API_KEY 时返回 <code>new PlaceholderTextProvider()</code></li>
+<li><b>这意味着无凭据场景下文本静默返回占位草案并被标 completed</b>——与图片 PlaceholderImageProvider（image-provider.ts:23/:200）同构，是「假成功」文本版</li>
+<li>对照：video-provider.ts:486 注释「2026-10-04 已下线 PlaceholderVideoProvider，返回明确错误」；音频 PlaceholderAudioProvider master 全仓零命中</li>
+</ul>
+<b>BYOK 失败兜底</b>：<span class="file">studio.service.ts:816-830</span> 不退占位，写 <code>status='fallback_pending'</code> 等用户点平台重试（与图片 studio:1276 同构）。
+</div>
+
+<h3>3.4 reaper（在飞任务清理）</h3>
+<div class="callout c-red">
+<b>文本没有 reaper 覆盖，且 reaper 只收 image。</b>
+<ul class="tight">
+<li><span class="file">generation-reaper.service.ts:57-84</span> <code>GenerationReaperService</code> 实现 OnModuleInit/OnModuleDestroy，启动后 15s 首扫 + 每 5min 周期巡检（<b>非 @Cron，用 setInterval</b>，全仓 <code>git grep @Cron</code> 零命中）</li>
+<li><b>明确只收 image</b>：<code>where: { type: 'image', status: 'generating', createdAt: { lt: cutoff } }</code>，注释明示「video/audio 走各自编排层超时，不在此越界」</li>
+<li>阈值 DEFAULT_REAP_MINUTES=30（可由 LNKPI_GENERATION_REAP_MINUTES 覆盖）；事务内 updateMany 守卫 + 退款，exactly-once</li>
+</ul>
+<b>文本侧 reaper 盲区</b>：文本同步执行，正常路径不产生 generating 孤儿；但若进程在 <code>consume</code>（studio:711）之后、<code>generateTextForRefs</code>（:752）期间崩溃 → <b>已扣费、零 record、零退款</b>的悬空扣费，reaper 按 <code>type:'image',status:'generating'</code> 查 GenerationRecord 根本扫不到。<b>这类泄漏在文本侧没有任何兜底机制。</b>
+</div>
+
+<h3>3.5 计费与账本</h3>
+<div class="callout c-red">
+<b>文本账本不对（generationId:null）——图片已修，文本/视频/音频仍停在旧模式。</b>
+<ul class="tight">
+<li>文本：<span class="file">studio.service.ts:707-712</span> cost=5，<code>consume(consumeMeta('text', { model, generationId: null }))</code> — <b>扣费时 record 还没建</b></li>
+<li>图片：<span class="file">studio.service.ts:1143</span> 先建 record（generating）→ <span class="file">:1175</span> consume 带 <code>generationId: record.id</code>（B2 已修，注释「账本对账 B2」）</li>
+<li>视频 studio:2145、音频 studio:2293 同样 generationId:null（账本不对）</li>
+<li>退款三处：cancelled（studio:763）/ 平台失败 failed_refund（:789）/ BYOK byok_refund（:821），均 generationId:null</li>
+<li>退款幂等守卫：<span class="file">charge-session.ts:20-22</span> <code>alreadyRefunded(meta)</code> 看 refundedPoints&gt;0</li>
+</ul>
+<b>影响</b>：扣费 tx 与生成 record 无法用 generationId 直接 JOIN，对账只能靠 metadata.chargedPoints/refundedPoints（印证 MEMORY「退款对、账本不对」）。
+</div>
+
+<h3>3.6 错误落库与文案约定</h3>
+<table>
+<tr><th>场景</th><th>record status</th><th>节点 status</th><th>位置</th><th>退款</th></tr>
+<tr><td>成功</td><td>completed（metadata: text, visionUsed, chargedPoints:5）</td><td>completed</td><td class="file-cell">studio:759 / service:1929</td><td>—</td></tr>
+<tr><td>用户取消（cancelled 检查在 create 前）</td><td>不建 record</td><td>—</td><td class="file-cell">studio:756 throwCancelledException</td><td>cancelled_refund</td></tr>
+<tr><td>平台失败</td><td>failed + throwGenerationFailure</td><td>error</td><td class="file-cell">studio:783 / service:1948</td><td>failed_refund</td></tr>
+<tr><td>BYOK 失败</td><td>fallback_pending</td><td>（等用户重试）</td><td class="file-cell">studio:816-830</td><td>byok_refund</td></tr>
+</table>
+<div class="callout c-gray">
+<b>ASCII <code>timeout</code> 文案约定对文本无实际意义</b>：该约定（upstream-fetch.ts:42 注释）是给 upstream-retry 的 <code>/timed? ?out/i</code> 可重试判定用的。文本不重试，故文本超时文案改中文不会触发「静默降级」。但仍建议保持 ASCII <code>timeout</code> 以便 errorCode 归类一致。
+</div>
+
+<!-- ============ S4 ============ -->
+<h2 id="s4">4. 四类生成 × 六维处理对照</h2>
+
+<table>
+<tr><th>维度</th><th>文本 text</th><th>图片 image</th><th>视频 video</th><th>音频 audio</th></tr>
+<tr>
+<td><b>超时</b></td>
+<td><span class="pill p-amber">45s/次</span><br><span class="small">无重试故总45s<br>无专属env</span></td>
+<td><span class="pill p-green">45s×3重试≈139.5s</span><br><span class="small">LNKPI_IMAGE_GEN_TIMEOUT_SEC=180 生产已设但TS零消费<br>reaper 30min 兜底</span></td>
+<td><span class="pill p-green">编排层21min墙钟</span><br><span class="small">VIDEO_POLL_TIMEOUT_MS=1_260_000<br>单次HTTP 45s</span></td>
+<td><span class="pill p-amber">45s/次</span><br><span class="small">music 异步靠 completeMusic 轮询</span></td>
+</tr>
+<tr>
+<td><b>重试</b></td>
+<td><span class="pill p-red">无</span><br><span class="small">text-provider 直调 upstreamFetch，未包 withUpstreamRetry</span></td>
+<td><span class="pill p-green">有</span><br><span class="small">withUpstreamRetry 3次<br>退避1500×2^n</span></td>
+<td><span class="pill p-green">有</span><br><span class="small">withVideoRetry=withUpstreamRetry别名</span></td>
+<td><span class="pill p-amber">无统一包裹</span><br><span class="small">各 provider 自行</span></td>
+</tr>
+<tr>
+<td><b>降级/占位</b></td>
+<td><span class="pill p-red">有 PlaceholderTextProvider</span><br><span class="small">无凭据返硬编码草案，标completed</span></td>
+<td><span class="pill p-red">有 PlaceholderImageProvider</span><br><span class="small">唯一未下线的占位</span></td>
+<td><span class="pill p-green">已下线</span><br><span class="small">返回明确错误</span></td>
+<td><span class="pill p-green">已下线</span><br><span class="small">master 无 PlaceholderAudio</span></td>
+</tr>
+<tr>
+<td><b>reaper</b></td>
+<td><span class="pill p-red">无</span><br><span class="small">reaper只查type:'image'<br>文本无generating record，悬空扣费扫不到</span></td>
+<td><span class="pill p-green">有</span><br><span class="small">15s首扫+5min周期<br>30min阈值，事务内退款</span></td>
+<td><span class="pill p-gray">无（编排层兜底）</span></td>
+<td><span class="pill p-gray">无</span></td>
+</tr>
+<tr>
+<td><b>计费</b></td>
+<td><span class="pill p-red">cost=5, generationId:null</span><br><span class="small">账本不对</span></td>
+<td><span class="pill p-green">cost=10×n, generationId:record.id</span><br><span class="small">账本对 B2已修</span></td>
+<td><span class="pill p-red">动态, generationId:null</span><br><span class="small">账本不对</span></td>
+<td><span class="pill p-red">voice5/music15, generationId:null</span><br><span class="small">账本不对</span></td>
+</tr>
+<tr>
+<td><b>错误落库</b></td>
+<td><span class="pill p-green">同步</span><br><span class="small">completed/failed/fallback_pending<br>cancelled检查在create前</span></td>
+<td><span class="pill p-green">detached completeImage catch</span><br><span class="small">cancelled/alreadyRefunded守卫→failed/fallback_pending<br>reaper兜底stale→failed</span></td>
+<td><span class="pill p-green">detached completeVideo</span><br><span class="small">编排层timeout→「视频生成未完成或超时」</span></td>
+<td><span class="pill p-green">voice同步/music detached</span></td>
+</tr>
+</table>
+
+<div class="callout c-red">
+<b>核心结论</b>：图片侧的「零超时→有界超时(#271) + 无reaper→有reaper + 账本不对→账本对(B2)」三步修复<b>没有同步到文本侧</b>。文本侧仍保留着图片修复前的两个核心缺陷形态——「占位假成功」与「悬空扣费无兜底」，外加文本独有的「零重试」韧性缺口。
+<br><br>
+<span class="pill p-red">⚠️ 此结论已被 §8 生产复核部分推翻：占位在生产是死代码（env 已配），悬空扣费当前无发生，且「零重试」修复的是 2026-09-15 前的历史故障。以本节排期会做无效功。</span>
+<br><br>
+<span class="pill p-red">⚠️ 更严重的是：§3.1/§3.3 只覆盖了 <code>text-provider.ts</code>。<code>vision-text.ts</code>（生产活跃 82 笔）用<b>裸 fetch —— 完全没有超时保护</b>，是 2026-10-08 事故根因的残留。详见 <b>§8.7</b>。</span>
+</div>
+
+<!-- ============ S5 ============ -->
+<h2 id="s5">5. Prompt 组装链路</h2>
+
+<h3>5.1 链路 A · Agent 对话流（分层组装，有完整世界状态）</h3>
+<div class="flow">
+<div class="flow-row">
+  <div class="node"><b>静态段 S 层</b>assembleStatic<div class="loc">assembler:133 → loader:240</div><span class="small">磁盘 rules/*.md 按 order 拼<br>degraded → renderStaticFallback(loader:255)</span></div>
+  <div class="arrow">+</div>
+  <div class="node"><b>计划约定段</b>硬编码追加<div class="loc">agent.service.ts:1027-1035</div><span class="small">⟦plan⟧/⟦task-done⟧ 标记</span></div>
+  <div class="arrow">+</div>
+  <div class="node"><b>skills index 块</b>常驻尾部<div class="loc">session-manager.ts:2126</div><span class="small">会话级不变</span></div>
+</div>
+<div class="flow-row" style="margin-top:6px"><div class="arrow">↓ entry.staticPrompt</div></div>
+<div class="flow-row">
+  <div class="node"><b>动态段 G 层</b>assembleDynamic<div class="loc">assembler:157-230</div></div>
+</div>
+<div class="flow-row">
+  <div class="node">① canvas-summary<div class="loc">assembler:186</div><span class="small">画布摘要JSON+焦点过滤</span></div>
+  <div class="node">② sidebar<div class="loc">assembler:200</div><span class="small">buildSidebarBlock</span></div>
+  <div class="node">③ selection digest<div class="loc">assembler:205</div><span class="small">【用户当前选中】</span></div>
+  <div class="node">④ memory<div class="loc">assembler:215</div><span class="small">## 长期记忆 · M6a反哺剔除</span></div>
+  <div class="node">⑤ vision<div class="loc">agent.service.ts:1003</div><span class="small">侧栏识图结果</span></div>
+</div>
+<div class="flow-row" style="margin-top:6px"><div class="arrow">↓ turnContext.dynamicBlocks</div></div>
+<div class="flow-row">
+  <div class="node"><b>composeSystemPrompt</b><div class="loc">session-manager.ts:460</div><span class="small">static + \n\n + joined(dynamicBlocks)</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>applyDynamicBudget 分类截断</b><div class="loc">dynamic-budget.ts:49</div><span class="small">canvas55%/vision25%/sidebar10%/memory10%<br>超限内截断+尾注，不整块丢弃</span></div>
+  <div class="arrow">→</div>
+  <div class="node" style="border-color:var(--green);background:var(--green-bg)"><b>最终 system prompt</b>→ LLM</div>
+</div>
+</div>
+
+<h3>5.2 链路 B · Studio 直生成（裸 LLM，无上下文）</h3>
+<div class="callout c-red">
+<b>结构性断点</b>：<code>run_text_generation</code> 工具落到 <code>studio.generateText</code>（studio.service.ts:695）时：<br>
+<code>resolveMergedPrompt(prompt, refs)</code> → <code>generateTextForRefs(mergedText, providerRefs, {model,apiKey,baseUrl,textOpts})</code> → <code>createTextProvider().generate()</code>
+<br><br>
+<b>不注入</b>：画布摘要、侧栏素材、用户选中指代、长期记忆、侧栏识图结果、skills index。<b>只拿节点自身 prompt + refs。</b>
+</div>
+
+<h3>5.3 链路 B′ · prompt-modes（type='prompt' 专用）</h3>
+<div class="flow">
+<div class="flow-row">
+  <div class="node"><b>classify</b><div class="loc">classify.ts:35</div><span class="small">isProductFourPanelPrompt短路→generic<br>有Key:LLM分类(gpt-4o,temp0,输入截500)<br>无Key:heuristic正则</span></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>generatePromptContent</b><div class="loc">generate.ts:114</div></div>
+</div>
+<div class="flow-row" style="margin-top:6px">
+  <div class="node">def.system<div class="loc">mode专属</div><span class="small">generic/copywriting/script/<br>image_prompt_multi_style/<br>character_turnaround/storyboard/<br>commercial_storyboard</span></div>
+  <div class="arrow">+</div>
+  <div class="node">buildGuideSystemOverlay<div class="loc">generate.ts:135</div><span class="small">场景guide叠加</span></div>
+  <div class="arrow">+</div>
+  <div class="node">buildPromptVisionSystemOverlay<div class="loc">generate.ts:137</div><span class="small">视觉指引叠加</span></div>
+  <div class="arrow">+</div>
+  <div class="node">fewShots注入<div class="loc">generate.ts:142</div></div>
+</div>
+</div>
+
+<h3>5.4 预算控制</h3>
+<table>
+<tr><th>层级</th><th>上限</th><th>机制</th><th>超了怎么办</th></tr>
+<tr><td>静态段 L6</td><td>3200 字符（预警 2720）</td><td>四组合校验：core / +writeTools / +genTools / +writeTools+genTools</td><td>CI 硬门禁（prompt-lint.yml）阻断合并；运行时不截断</td></tr>
+<tr><td>动态段</td><td>48000 字符（可配）</td><td>按 kind 分类份额：canvas55/vision25/sidebar10/memory10</td><td>内截断+尾注，从不整块丢弃；unknown_kind 告警</td></tr>
+</table>
+<p class="small">当前最紧组合 core+writeTools+genTools 实测 3042 字符，余量 158（MEMORY 基线值）。</p>
+
+<h3>5.5 Prompt 组装链路额外处理清单</h3>
+<table>
+<tr><th>处理类型</th><th>有无</th><th>位置</th></tr>
+<tr><td>prompt 模板渲染</td><td><span class="pill p-red">无</span></td><td class="file-cell">loader.ts:240 规则正文原样拼接，无变量插值</td></tr>
+<tr><td>变量转义</td><td><span class="pill p-red">无</span></td><td>—</td></tr>
+<tr><td>敏感词过滤</td><td><span class="pill p-red">无</span></td><td>全链路无</td></tr>
+<tr><td>动态段长度截断</td><td><span class="pill p-green">有</span></td><td class="file-cell">dynamic-budget.ts:49-88</td></tr>
+<tr><td>静态段长度截断</td><td><span class="pill p-amber">CI门禁</span></td><td>靠 L6 lint，运行时不截断</td></tr>
+<tr><td>侧栏识图缓存（跨轮复用）</td><td><span class="pill p-green">有</span></td><td class="file-cell">agent.service.ts:745 getCachedParseBlock（只缓存成功）</td></tr>
+<tr><td>规则段缓存</td><td><span class="pill p-amber">无</span></td><td class="file-cell">assembler:135 注释「有意每次重读目录」</td></tr>
+<tr><td>frontmatter 解析</td><td><span class="pill p-green">有</span></td><td class="file-cell">loader.ts:73-91</td></tr>
+<tr><td>内容哈希</td><td><span class="pill p-green">有</span></td><td class="file-cell">loader.ts:122 sha256 前12位</td></tr>
+<tr><td>manifest 全量校验</td><td><span class="pill p-green">有</span></td><td class="file-cell">loader.ts:283-321 L0-L11</td></tr>
+<tr><td>用户输入截断（分类器）</td><td><span class="pill p-green">有</span></td><td class="file-cell">classify.ts:60 prompt.slice(0,500)</td></tr>
+<tr><td>计划标记追加</td><td><span class="pill p-green">有</span></td><td class="file-cell">agent.service.ts:1027-1035</td></tr>
+<tr><td>skills index 追加</td><td><span class="pill p-green">有</span></td><td class="file-cell">session-manager.ts:2126</td></tr>
+<tr><td>skill 正文前缀</td><td><span class="pill p-green">有</span></td><td class="file-cell">session-manager.ts:310 withForcedSkills</td></tr>
+<tr><td>M6a 反哺剔除</td><td><span class="pill p-green">有</span></td><td class="file-cell">agent.service.ts:1058 isSuppressed</td></tr>
+<tr><td>视觉直通标记 [In=]</td><td><span class="pill p-green">有</span></td><td class="file-cell">agent.service.ts:1190</td></tr>
+</table>
+
+<!-- ============ S6 ============ -->
+<h2 id="s6">6. 问题诊断（按严重度排序）</h2>
+
+<h3>P0 · 严重</h3>
+
+<div class="callout c-red">
+<b>① 文本零重试韧性缺口</b><br>
+<span class="file">text-provider.ts:67</span> 直调 upstreamFetch，未包 withUpstreamRetry。上游 429 抖动时图片自动退避 3 次，文本直接判失败退款。<b>文本是四类生成里唯一无重试的。</b>
+</div>
+
+<div class="callout c-red">
+<b>② PlaceholderTextProvider 假成功</b><br>
+<span class="file">text-provider.ts:34/:88</span> 无 OPENAI_API_KEY 时静默返回硬编码草案并被标 completed。与图片 PlaceholderImageProvider 同病，是「假成功」文本版。视频#166/音频#165 已下线占位，文本+图片是仅存遗漏。
+</div>
+
+<div class="callout c-red">
+<b>③ 悬空扣费无 reaper 兜底</b><br>
+进程在 <code>consume</code>（studio:711）之后、<code>generateTextForRefs</code>（:752）期间崩溃 → 已扣费、零 record、零退款。reaper（generation-reaper.service.ts:83）只查 <code>type:'image',status:'generating'</code>，文本无 generating record 可扫。<b>这类泄漏在文本侧没有任何兜底。</b>
+</div>
+
+<h3>P1 · 重要</h3>
+
+<div class="callout c-amber">
+<b>④ 文本账本不对（generationId:null）</b><br>
+<span class="file">studio.service.ts:712</span> consume 时 record 未建 → generationId:null。图片已修（B2：先建 record 后扣费），文本/视频/音频仍停旧模式。扣费 tx 与生成 record 无法 JOIN，对账只能靠 metadata.chargedPoints/refundedPoints。
+</div>
+
+<div class="callout c-amber">
+<b>⑤ 结构性断点：工具执行丢弃世界状态</b><br>
+链路 A 把完整世界状态注入 system prompt，但 <code>run_text_generation</code> 落到 <code>studio.generateText</code> 时<b>上下文被全部丢弃</b>，只拿节点 prompt + refs 裸调 LLM。「决策有上下文、执行无上下文」——模型可能基于画布上下文决定生成某节点文案，但执行时 LLM 看不到画布状态，生成质量受限。
+</div>
+
+<div class="callout c-amber">
+<b>⑥ 生成调用无幂等键</b><br>
+重复 run_text_generation（网络重试/并发）会重复扣费、重复建 record。仅靠 gate V-γ 重试预算（同节点第3次拦截）+ SSOT status 兜底，非幂等键。文本生成是扣费+建 record 两步，缺幂等键意味着并发触发有重复扣费风险。
+</div>
+
+<div class="callout c-amber">
+<b>⑦ 无文本专属超时 env</b><br>
+<code>git grep LNKPI_TEXT</code> 零命中。文本只能复用 upstreamFetch 45s 常量；若需按业务调超时，无任何环境变量可调，只能改 <code>UPSTREAM_FETCH_TIMEOUT_MS</code>（会影响所有上游调用）。
+</div>
+
+<h3>P2 · 提示</h3>
+
+<div class="callout c-gray">
+<b>⑧ conversation 入口无限流</b><br>controller 层无 throttle，只有 busy 409 串行守卫。恶意/异常高频对话无 rate limit 防护。
+</div>
+<div class="callout c-gray">
+<b>⑨ 规则段无运行时缓存</b><br>assembler:135 注释「有意每次重读目录」。每次请求 IO 读盘，虽 fail-soft 但有性能损耗（生产可观测性盲区，apps/server 无 prom-client/metrics）。
+</div>
+<div class="callout c-gray">
+<b>⑩ pi-runtime 端点无用户鉴权</b><br>靠 K3s 网络隔离 + AgentInternalGuard token 信任边界。若网络策略变化或 NodePort 暴露，存在信任越界风险。
+</div>
+
+<!-- ============ S7 ============ -->
+<h2 id="s7">7. 优化建议（按优先级与依赖排序）</h2>
+
+<h3>第一优先 · 对齐图片侧已验证的修复</h3>
+<table>
+<tr><th>#</th><th>建议</th><th>对应问题</th><th>实现要点</th><th>依赖</th></tr>
+<tr><td>O1</td><td>文本包裹 withUpstreamRetry</td><td>①零重试</td><td>text-provider.ts:67 把 upstreamFetch 包进 withUpstreamRetry（attempts=3）；注意 <code>!res.ok</code> 显式 throw 纪律</td><td>无</td></tr>
+<tr><td>O2</td><td>下线 PlaceholderTextProvider</td><td>②占位假成功</td><td>仿 video-provider.ts:486 模式：无凭据时返回明确错误而非占位；studio 层落 failed 而非 completed</td><td>无</td></tr>
+<tr><td>O3</td><td>文本 reaper 兜底悬空扣费</td><td>③悬空扣费</td><td>generation-reaper.service.ts 扩 type 范围或新增文本扫描：查「已扣费但无 GenerationRecord」的 PointTransaction（需 consume 阶段先建 pending record，见 O5）</td><td>O5</td></tr>
+<tr><td>O4</td><td>新增 LNKPI_TEXT_TIMEOUT_SEC</td><td>⑦无专属env</td><td>upstream-fetch.ts 读 env 覆盖 UPSTREAM_FETCH_TIMEOUT_MS；或在 text-provider.ts 注入 timeoutMs</td><td>无</td></tr>
+<tr><td>O5</td><td>文本先建 record 后扣费（账本对齐 B2）</td><td>④账本不对</td><td>studio.service.ts:695 重构为「建 pending/generating record → consume(generationId:record.id) → 生成 → update record」，与图片 studio:1143/1175 同构</td><td>无</td></tr>
+</table>
+
+<h3>第二优先 · 链路结构性改进</h3>
+<table>
+<tr><th>#</th><th>建议</th><th>对应问题</th><th>实现要点</th></tr>
+<tr><td>O6</td><td>工具执行注入精简世界状态</td><td>⑤结构性断点</td><td>runTextGeneration service 把 turnContext 的 selection digest / 画布摘要精简版拼进 generateText 的 prompt；或新增「节点级上下文」参数透传</td></tr>
+<tr><td>O7</td><td>生成调用幂等键</td><td>⑥无幂等键</td><td>run_text_generation 工具加 client_request_id（nodeId+turnId 哈希），service 层去重；或复用 gate V-γ 升级为硬幂等</td></tr>
+<tr><td>O8</td><td>conversation 入口限流</td><td>⑧无限流</td><td>controller 层加 per-user throttle（如 10req/min）</td></tr>
+</table>
+
+<h3>第三优先 · 可观测性与缓存</h3>
+<table>
+<tr><th>#</th><th>建议</th><th>对应问题</th><th>实现要点</th></tr>
+<tr><td>O9</td><td>apps/server 接 prom-client + /metrics</td><td>⑨无指标</td><td>MEMORY 已记「主路径无指标，96%图片生成带nodeId走画布直连⇒盲区」；文本同步路径同样无指标</td></tr>
+<tr><td>O10</td><td>规则段内存缓存（带 mtime 失效）</td><td>⑨无缓存</td><td>assembler loadRegistry 加内存缓存，文件 mtime 变化时失效；degraded 仍每次重读</td></tr>
+</table>
+
+<div class="callout c-blue">
+<b>顺序约束提醒</b>（来自项目纪律）：
+<ul class="tight">
+<li>改 <code>packages/agent</code>（text-provider/upstream-retry）只走 api 镜像；改 <code>services/pi-runtime</code>（generation/gate）走 runtime-deploy.yml（纯 workflow_dispatch，须手派且改 skills/** 要手 dispatch）</li>
+<li>跨 web/runtime 语义改动必须同窗；让「不认识对方」的一侧后发</li>
+<li>改 prompt-registry 规则须同步 6 处（磁盘/.md + MANIFEST + loader COMPOSED_IDS + FALLBACK_BY_ID + fallback.ts 内嵌常量 + 测试硬编码串），跑 <code>pnpm prompt:lint</code></li>
+<li>下沉工具到延迟集前必须先验证 <code>pi_runtime_tool_search_calls_total{outcome="hit"}</code> 首条出现（当前触发率 0）</li>
+<li>任何改动遵循分支纪律：新开分支 → 开发 → 提交 → PR → 盯CI → squash合并 → 盯部署 → 生产验证</li>
+</ul>
+</div>
+
+<!-- ============ S8 ============ -->
+<h2 id="s8">8. ⚠️ 生产复核结论（本节优先级高于 §6 / §7）</h2>
+
+<div class="callout c-red">
+<b>为什么要复核</b>：§6 的 P0/P1/P2 是<b>按代码形态</b>排的（谁没重试、谁没 reaper、谁 generationId 为 null），
+不是<b>按生产故障面</b>排的。本节用生产 env + 生产库实测复核每一条，
+结论是<b>§6 的优先级排序不成立</b>，§7 的 O1-O10 需要重新裁剪。
+<br><br>
+复核时间 2026-10-08 · 生产库 <code>lnkpi.db</code>（<code>docker cp</code> 导出后查询）
+· env 取自 <code>docker exec lnkpi-api printenv</code>（权威来源，compose 文件可能过期）
+</div>
+
+<h3>8.1 被证伪的四条</h3>
+<table>
+<tr><th>§6 原判断</th><th>生产实测</th><th>取证</th></tr>
+<tr>
+  <td><b>① P0 零重试 =「文本侧最直接的韧性缺口」</b></td>
+  <td><span class="pill p-amber">降级</span> 可重试故障<b>全部发生在 2026-09-15 及之前</b>，此后近 3 个月<b>零真实故障</b>；<br>但 <code>vision-text.ts</code> 那条路径<b>连超时都没有</b>（见 §8.7）</td>
+  <td class="file-cell">15 条 <code>errorCode='unknown'</code> 按日分布：<br>429×8 集中在 09-11 / 09-15<br><code>fetch failed</code>×3 在 07-29 / 09-11<br>503×1 在 07-24<br><code>model_not_found</code>×3 在 08-01（<b>不可重试</b>，属 NON_RETRYABLE）</td>
+</tr>
+<tr>
+  <td><b>② P0 占位假成功（PlaceholderTextProvider）</b></td>
+  <td><span class="pill p-amber">降级</span> 生产 <code>OPENAI_API_KEY</code> 已配置 ⇒ <b>当前</b>不走占位分支；<br>但 <b>历史确实发生过 7 笔</b>假成功（2026-07-14，见 §8.8）</td>
+  <td class="file-cell"><code>docker exec lnkpi-api printenv</code> ⇒ <code>OPENAI_API_KEY</code>(已设)<br><code>OPENAI_BASE_URL=https://apihub.agnes-ai.cn/v1</code><br><code>OPENAI_CHAT_MODEL=agnes-2.0-flash</code><br>⇒ 「死代码」判断不准确，见 <b>§8.8</b>；另有<b>独立的第二套占位</b>未被§3.3 覆盖，见 <b>§8.7</b></td>
+</tr>
+<tr>
+  <td><b>③ 文本无 generating 态 ⇒ reaper 盲区</b></td>
+  <td><span class="pill p-gray">现象成立，但严重性错位</span> 真正的问题在<b>图片侧</b>，见 8.2</td>
+  <td class="file-cell"><code>text</code> 与 <code>prompt</code> 两类型<b>零 <code>generating</code> 态</b>（生产实测）</td>
+</tr>
+<tr>
+  <td><b>④ 文本与图片缺陷等价（核心结论前提）</b></td>
+  <td><span class="pill p-red">证伪</span> <b>不等价</b>。文本<b>绕过</b>代理隧道，不受隧道楔死事故影响；图片<b>经</b>隧道出海</td>
+  <td class="file-cell"><code>NO_PROXY=...,apihub.agnes-ai.cn,.agnes-ai.cn,...</code><br>⇒ agnes（文本）直连；apimart（图片）走 <code>HTTP(S)_PROXY=172.17.0.1:17891</code></td>
+</tr>
+</table>
+
+<h3>8.2 报告未发现：图片侧 B2 只做了一半（影响面大于文本侧任何一项）</h3>
+<div class="callout c-red">
+<b>核心事实</b>：<code>consumeMeta('image', {{ generationId: null }})</code> 在生产代码中<b>仍有 3 处活跃路径</b>，
+只有 <code>studio.service.ts:1170</code>（generateImage 主路径）做了 record-first：
+<table style="background:#fff;margin:10px 0">
+<tr><th>位置</th><th>方法</th><th>是否 record-first</th></tr>
+<tr><td class="file-cell"><code>studio.service.ts:1170</code></td><td>generateImage（主路径）</td><td><span class="pill p-green">是</span></td></tr>
+<tr><td class="file-cell"><code>studio.service.ts:1311</code></td><td><b>generateImageVariation</b>（图像变体）</td><td><span class="pill p-red">否</span></td></tr>
+<tr><td class="file-cell"><code>studio.service.ts:1492</code></td><td><b>refineImage</b>（image_edit）</td><td><span class="pill p-red">否</span></td></tr>
+<tr><td class="file-cell"><code>canvas/material.service.ts:413</code></td><td><b>素材侧图片生成</b></td><td><span class="pill p-red">否</span></td></tr>
+</table>
+<b>生产量化</b>：<code>image</code> consume 侧 <b>1229 笔中 1223 笔 <code>generationId</code> 为 NULL</b>；
+且 <b>2026-10 仍有 295/301 笔为 NULL</b>（说明是<b>当前活跃</b>问题，非纯历史遗留）。
+<br>⇒ <b>「照抄图片 B2 模式」会照抄一个不完整的模式</b>；且图片侧残缺量级（295 笔/月）远大于文本侧（155 笔，历史）。
+<br><br>
+<b>连带发现</b>：<code>REAP_TYPES</code> 含 <code>image_edit</code>，但该类型<b>当前零 generating 态</b>
+（completed 9 / failed 68）⇒ reaper 对它是<b>无效覆盖</b>，注释说的「2026-10-08 纳入」实为<b>清理历史遗留</b>
+（已回收 image 13 笔 / image_edit 2 笔 / image_upscale 1 笔）。
+</div>
+
+<h3>8.3 流量与故障面</h3>
+<table>
+<tr><th>维度</th><th>实测值</th><th>推论</th></tr>
+<tr>
+  <td>近 30 天生成量</td>
+  <td class="file-cell">image <b>1112</b> · video 274 · image_edit 63 · <b>text 57 + prompt 52 = 109</b> · image_upscale 16 · audio 11</td>
+  <td>文本是<b>第三大量</b>类型，<b>未被废弃</b></td>
+</tr>
+<tr>
+  <td>月度趋势</td>
+  <td class="file-cell">2026-08: 236 次 · 2026-09: 106 次 · <b>2026-10（8 天）: 6 次</b></td>
+  <td><b>流量波动极大</b>（8→10 月 −97%）。上线须避开高峰，且<b>不可假设文本已废弃</b></td>
+</tr>
+<tr>
+  <td>文本成功率</td>
+  <td class="file-cell">近 30 天 85/109 = <b>78%</b></td>
+  <td>—</td>
+</tr>
+<tr>
+  <td>失败构成</td>
+  <td class="file-cell">44 条失败中：<b>cancelled 28</b>（用户主动取消，<b>非故障</b>）· unknown 15 · 空 1</td>
+  <td><b>真实故障仅 15 条</b>，报告未做此拆分，放大了严重性</td>
+</tr>
+<tr>
+  <td>可重试占比</td>
+  <td class="file-cell">15 条真实故障中 <b>12 条（80%）可被重试救回</b>：429×8 + fetch failed×3 + 503×1<br>剩 3 条 <code>model_not_found</code> 属 NON_RETRYABLE，<b>重试无用</b></td>
+  <td><b>O1 仍值得做</b>（80% 可救），但收益限于「渠道抖动复现时」的兜底</td>
+</tr>
+</table>
+
+<h3>8.4 429 的渠道归因（新增，未在原报告）</h3>
+<div class="callout c-amber">
+429 报错文案为 <code>LLM 请求失败: 429 Too Many Requests</code>，且同批伴随
+<code>Text API 503: {{"error":{{"code":"model_not_found","message":"No available channel for model gemini-3.1-flash…"}}}}</code>
+⇒ <b>根因在 agnes 侧 <code>gemini-3.1-flash</code> 渠道容量不足</b>，不是本仓代码缺陷。
+重试能吸收<b>瞬时</b>抖动，但<b>不能修复渠道缺失</b>；若该模型持续无渠道，应从
+<code>OPENAI_CHAT_MODEL</code> 候选中摘除（属配置决策，非本次代码范围）。
+</div>
+
+<h3>8.5 测试覆盖缺口（报告未列）</h3>
+<div class="callout c-gray">
+<code>packages/agent/src/tools/text-provider.test.ts</code> 现有 <b>8 个用例</b>，
+经逐条核对<b>全部</b>只覆盖 <code>isDeepSeekV4Model</code> / <code>buildDeepSeekThinkingFields</code> /
+凭据选择（<code>uses explicit opts over env credentials</code> 等）。
+<b>零覆盖</b>：重试行为、超时行为、占位行为。
+⇒ 这是「测试全绿但缺陷存在」的典型形态，<b>不能靠现有测试判断修复是否生效</b>。
+</div>
+
+<h3>8.6 实现约束（写 spec 时必须遵守，原报告未提）</h3>
+<table>
+<tr><th>约束</th><th>事实</th><th>影响</th></tr>
+<tr>
+  <td><b>超时不等式已被测试锁死</b></td>
+  <td class="file-cell"><code>upstream-fetch.test.ts:93-94</code>：<br><code>expect(UPSTREAM_FETCH_TIMEOUT_MS * 3 + 4500).toBeLessThan(180_000)</code></td>
+  <td>新增 <code>LNKPI_TEXT_TIMEOUT_SEC</code> 时<b>必须重算</b>并保持不等式成立，否则 CI 红</td>
+</tr>
+<tr>
+  <td><b>pi-runtime 侧已有 210s override</b></td>
+  <td class="file-cell"><code>services/pi-runtime/src/tools/config.ts</code>：<br><code>"/agent/internal/run-text-generation": 210_000</code><br>（<b>不是</b> <code>defaultTimeoutMs</code> 的 10s）</td>
+  <td>文本 3×45+4.5=<b>139.5s</b> 远小于 210s ⇒ <b>重试可安全启用</b></td>
+</tr>
+<tr>
+  <td><b>前端路径经 nginx 300s</b></td>
+  <td class="file-cell"><code>deploy/nginx.conf:32</code> <code>proxy_read_timeout 300s</code></td>
+  <td>前端直连（<code>studioApi.generateText</code>）同样容纳 139.5s</td>
+</tr>
+<tr>
+  <td><b>DTO whitelist 会静默剥字段</b></td>
+  <td class="file-cell"><code>apps/server/src/main.ts:30</code>：<br><code>new ValidationPipe({{ transform: true, whitelist: true }})</code><br>且 <code>RunImageGenerationDto</code> 现有字段<b>全无</b> <code>@IsOptional()</code></td>
+  <td>⛔ O6 若给 DTO 加 <code>context</code> 而漏 <code>@IsOptional()</code>，该字段会被<b>静默剥离</b>，功能看似上线实则失效</td>
+</tr>
+<tr>
+  <td><b>退款分类已同源</b></td>
+  <td class="file-cell"><code>point-categories.ts</code>：<code>if (type === 'text' || type === 'prompt') return 'text'</code></td>
+  <td>reaper 扩 <code>text</code> 时<b>无需</b>新增分类映射，天然正确</td>
+</tr>
+</table>
+
+<h3>8.7 二次调研发现：<code>vision-text.ts</code> 是被整体遗漏的分支（最严重）</h3>
+<div class="callout c-red">
+<b>⛔ 本节是 §8 中优先级最高的一条。</b> §3.1/§3.3 的「文本零重试」「文本占位」两条结论<b>只覆盖 <code>text-provider.ts</code></b>，
+而 <code>generateTextForRefs</code> 实际有<b>三条分支</b>：
+<table style="background:#fff;margin:10px 0">
+<tr><th>分支</th><th>条件</th><th>走向</th></tr>
+<tr><td>无参考图</td><td><code>refs.length===0</code></td><td><code>OpenAITextProvider</code>（§3.1/§3.3 的对象）</td></tr>
+<tr><td><b>vision 模型</b></td><td><code>supportsVisionTextModel(model)</code></td><td><b><code>generateTextWithImages()</code> → <code>vision-text.ts</code>（本节对象，完全绕过上一行）</b></td></tr>
+<tr><td>非vision 带图</td><td>其余</td><td><code>OpenAITextProvider</code> + <code>appendImageRefsForTextOnlyPrompt</code></td></tr>
+</table>
+<code>vision-text.ts</code> 独立携带三个缺陷，<b>与 <code>text-provider.ts</code> 无任何共享</b>：
+<table style="background:#fff;margin:10px 0">
+<tr><th>缺陷</th><th>位置</th><th>说明</th></tr>
+<tr><td><b>无超时保护</b></td><td><code>:64</code> 裸 <code>fetch(...)</code></td>
+<td>⛔ <b>这是 2026-10-08 生产事故根因的残留</b>。事故根因是「上游 fetch 一处 AbortSignal 都没有 ⇒ await 永不 settle」，
+#271 引入 <code>upstreamFetch</code> 时<b>漏掉了本文件</b>。隧道楔死时此路径<b>永久挂起</b>：不落 record、不退款，
+且因无 generating 态而 <b>reaper 也扫不到</b></td></tr>
+<tr><td>零重试</td><td><code>:64</code></td><td>同 §3.2</td></tr>
+<tr><td>第二套占位</td><td><code>:58</code> <code>buildPlaceholder()</code></td>
+<td>独立于 <code>PlaceholderTextProvider</code>，触发条件同为「无 apiKey」。文案也不同（<code>【电商视觉方案草案】</code>）</td></tr>
+</table>
+<b>生产证据（活跃路径，非死代码）</b>：<code>visionUsed=1</code> 的活跃记录 <b>82 笔</b>（text 66 + prompt 16）。
+</div>
+
+<h3>8.8 修正 8.1 ②：「占位是死代码」不准确</h3>
+<div class="callout c-amber">
+8.1 ② 判定「生产 <code>OPENAI_API_KEY</code> 已配 ⇒ 占位为死代码」。<b>该结论不完整</b>。
+查 <code>status='completed' AND json_extract(metadata,'$.text') LIKE '%草案%'</code>，命中 <b>7 笔</b>，其中2026-07-14 的内容为：
+<div style="background:#fff;padding:8px;margin:6px 0;font-size:12.5px">
+【AI 创作草案】<br><br>基于「生成一个万物生剧本」的扩写：<br><br>场景一：主角站在霓虹闪烁的街头…
+</div>
+与 <code>text-provider.ts:37</code> 的硬编码文案<b>逐字吻合</b>。
+<br><br>⇒ <b>准确表述</b>：占位假成功<b>在 <code>OPENAI_API_KEY</code> 配置前确实发生过</b>（7 月，7 笔），
+当前被 env 阻断。严重性应从「死代码」上调为「<b>已发生的事故，配置一旦回退即复发</b>」。
+<br><br>另一条<b>尚未证伪</b>的隐患：<code>vision-text.ts:57</code> 的 <code>buildPlaceholder</code> 用的是
+<b>完全独立</b>的第二套占位，§3.3 的修复对它无效。
+</div>
+
+<h3>8.9 复核后的行动建议</h3>
+<div class="callout c-blue">
+<b>顺序按「能否验证效果」+「风险敞口」排，不按报告原 P0 排：</b>
+<table style="background:#fff;margin:10px 0">
+<tr><th>序</th><th>动作</th><th>对应原建议</th><th>为什么这个顺序</th></tr>
+<tr><td>1</td><td><b>vision 占位改抛错</b></td><td>新增 G2'</td><td rowspan="2"><b>最高性价比</b>：<code>vision-text.ts:64</code> 是文本侧<b>唯一真正无超时</b>的上游路径（裸 fetch，事故根因残留）。修复成本约一行，风险敞口是「永久挂起 + 已扣费 + reaper 扫不到」。生产活跃 82 笔</td></tr>
+<tr><td>2</td><td><b>vision 换 upstreamFetch + 重试</b></td><td>新增 G1'</td></tr>
+<tr><td>3</td><td>文本 record-first +账本对齐</td><td>O5</td><td>155/155 笔 text 交易 generationId 为 NULL，结构性错账随流量线性放大</td></tr>
+<tr><td>4</td><td>reaper 扩 <code>text</code>（独立 10min 阈值）</td><td>O3</td><td><b>严格依赖第 3 项</b>——无generating 态则加了也是空转</td></tr>
+<tr><td>5</td><td>非vision 路径重试</td><td>O1</td><td>12/15 故障可救；成本极低；图片侧同款已验证</td></tr>
+<tr><td>6</td><td>非vision 占位改抛错</td><td>O2</td><td>生产当前零影响，但历史已发生 7 笔（8.8）；配置回退即复发</td></tr>
+<tr><td>7</td><td>可观测字段（metadata 承载）</td><td>O9 降级</td><td>apps/server 无 metrics 设施（见 8.10），改用 metadata + SQL 统计重试救回率</td></tr>
+<tr><td>8</td><td>世界状态注入</td><td>O6</td><td>影响「质量」而非「成败」，独立 PR、跨 web/runtime 需同窗</td></tr>
+</table>
+<b>移出本轮（YAGNI / 边界外）：</b>O7 幂等键、O8 限流、O10 规则缓存（复核无任何生产证据支撑）；
+图片侧 3 条未修 consume 路径（8.2，影响面更大但属另一链路，留给独立窗口）；
+<code>gemini-3.1-flash</code> 渠道摘除（属配置决策）。
+</div>
+
+<h3>8.10 apps/server 无可观测设施（G0 无法按原方案实施）</h3>
+<div class="callout c-gray">
+全仓唯一的 <code>Metrics</code> 类在 <code>services/pi-runtime/src/metrics.ts</code>，而重试发生在
+<b>apps/server 进程内</b>—— <code>apps/server</code> 与 <code>packages/agent</code> <b>都没有任何 metrics 设施</b>
+（<code>git ls-tree | grep -iE "apps/server.*(metric|prom)"</code> 零命中），且 studio.service.ts 连
+<code>new Logger</code> 都没有，<code>/metrics</code> 端点亦不存在。
+<br><br>
+⇒ 原 O9「apps/server 接 prom-client」需<b>先引入基础设施</b>，属独立工作项，本轮移出。
+改用已落库的 <code>GenerationRecord.metadata</code> 承载 <code>retryCount</code> /
+<code>upstreamAttempts</code> / <code>textPath</code>，上线后跑 SQL 统计重试救回率。
+<br><br>
+已存在的免费信号：<code>tool_error_kinds_total{tool="run_text_generation"}</code>
+（pi-runtime 侧 <code>config.ts</code> 的 <code>onCall</code> 已接入，覆盖 Nest 边界错误分类）。
+</div>
+
+<footer>
+初版：取证基线 origin/master=<code>e8ef2a43</code> · 2026-10-08 ·
+所有 <span class="file">文件:行号</span> 指向 master 版（源码经 <code>git show origin/master:&lt;path&gt;</code> 读取）<br>
+<strong>§8 生产复核：2026-10-08 追加</strong> · 用 <code>docker exec lnkpi-api printenv</code>（权威 env）+ 生产 SQLite 库实测复核 §6/§7，
+结论：<strong>§6 的 P0/P1 严重性与优先级不成立</strong>，§7 的 O1-O10 需按 §8.9 重排与裁剪。
+<strong>排期请以 §8 为准。</strong><br>
+<strong>§8.7-§8.10 为二次复核追加</strong>（写实施计划时发现）：<code>vision-text.ts</code> 用裸 <code>fetch</code>，
+是文本侧<b>唯一真正无超时</b>的上游路径（2026-10-08 事故根因残留，#271 漏改），生产活跃 82 笔；
+「占位是死代码」结论修正为「<b>已发生 7 笔假成功</b>，配置回退即复发」；
+<code>apps/server</code> 无 metrics 设施 ⇒ G0 降级为 metadata + SQL。<br>
+<strong>配套文档</strong>：<code>docs/superpowers/specs/2026-10-08-text-pipeline-hardening-design.md</code>（设计规格）·
+<code>docs/superpowers/plans/2026-10-08-text-pipeline-hardening.md</code>（实施计划，6 Task）<br>
+本报告为优化迭代输入，非改动方案；落地须遵循项目分支纪律与部署纪律。
+</footer>
+
+</div>
+</body>
+</html>

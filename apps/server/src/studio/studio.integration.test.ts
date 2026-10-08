@@ -703,3 +703,48 @@ describe('StudioService integration (provider params)', () => {
     await expect(svc.generatePrompt('u1', '')).rejects.toBeInstanceOf(BadRequestException)
   })
 })
+
+describe('StudioService text record-first ledger alignment', () => {
+  let svc: StudioService
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    svc = await createStudioService()
+  })
+
+  it('records non-null generationId on consume for successful text generation', async () => {
+    const consumeCalls: Array<{ generationId: string | null }> = []
+    const points = (svc as unknown as { points: { consume: (a: unknown, b: unknown, c: unknown, d: { generationId: string | null }) => Promise<unknown> } }).points
+    vi.spyOn(points, 'consume').mockImplementation(async (_u, _c, _r, meta) => {
+      consumeCalls.push({ generationId: meta.generationId })
+      return { id: 'pt1' } as never
+    })
+    await svc.generateText('u1', 'hello world', 'gemini-3.1-flash')
+    expect(consumeCalls.length).toBe(1)
+    expect(consumeCalls[0].generationId).not.toBeNull()
+  })
+
+  it('deletes the placeholder record when consume fails', async () => {
+    const prisma = (svc as unknown as { prisma: { generationRecord: { create: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> } } }).prisma
+    const createSpy = vi.spyOn(prisma.generationRecord, 'create')
+    const deleteSpy = vi.spyOn(prisma.generationRecord, 'delete')
+    const points = (svc as unknown as { points: { consume: (a: unknown, b: unknown, c: unknown, d: unknown) => Promise<unknown> } }).points
+    vi.spyOn(points, 'consume').mockRejectedValue(new Error('insufficient points'))
+    await expect(svc.generateText('u1', 'hello world', 'gemini-3.1-flash')).rejects.toThrow('insufficient points')
+    expect(createSpy).toHaveBeenCalled()
+    expect(deleteSpy).toHaveBeenCalled()
+  })
+
+  it('does not consume nor create record when resolve throws', async () => {
+    const prisma = (svc as unknown as { prisma: { generationRecord: { create: ReturnType<typeof vi.fn> } } }).prisma
+    const createSpy = vi.spyOn(prisma.generationRecord, 'create')
+    const points = (svc as unknown as { points: { consume: ReturnType<typeof vi.fn> } }).points
+    const consumeSpy = vi.spyOn(points, 'consume')
+    vi.mocked(ProviderResolverService).mockClear?.()
+    const resolver = (svc as unknown as { resolver: { resolveForGeneration: ReturnType<typeof vi.fn> } }).resolver
+    vi.spyOn(resolver, 'resolveForGeneration').mockRejectedValue(new Error('resolve boom'))
+    await expect(svc.generateText('u1', 'hello world', 'gemini-3.1-flash')).rejects.toThrow('resolve boom')
+    expect(consumeSpy).not.toHaveBeenCalled()
+    expect(createSpy).not.toHaveBeenCalled()
+  })
+})
