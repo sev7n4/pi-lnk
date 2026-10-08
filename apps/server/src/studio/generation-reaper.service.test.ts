@@ -51,7 +51,7 @@ describe('GenerationReaperService 收尾机制', () => {
   it('卡死记录：标记 failed(upstream_timeout) + 同事务退款，退款带 generationId', async () => {
     stuckStatus = 'generating'
     generationFindMany.mockResolvedValue([
-      { id: 'r1', userId: 'u1', model: 'seedream-5.0-pro', metadata: makeMeta() },
+      { id: 'r1', type: 'image', userId: 'u1', model: 'seedream-5.0-pro', metadata: makeMeta() },
     ])
 
     const n = await svc.reapOnce('manual')
@@ -75,6 +75,7 @@ describe('GenerationReaperService 收尾机制', () => {
     generationFindMany.mockResolvedValue([
       {
         id: 'r2',
+        type: 'image',
         userId: 'u1',
         model: null,
         metadata: makeMeta({ refundedPoints: 10, refundReason: '平台失败退款' }),
@@ -92,7 +93,7 @@ describe('GenerationReaperService 收尾机制', () => {
 
   it('用户已取消的记录：标记 failed 但不退款', async () => {
     generationFindMany.mockResolvedValue([
-      { id: 'r3', userId: 'u1', model: null, metadata: makeMeta({ cancelled: true }) },
+      { id: 'r3', type: 'image', userId: 'u1', model: null, metadata: makeMeta({ cancelled: true }) },
     ])
 
     const n = await svc.reapOnce('manual')
@@ -103,7 +104,7 @@ describe('GenerationReaperService 收尾机制', () => {
 
   it('无 chargedPoints 的记录：只迁移状态', async () => {
     generationFindMany.mockResolvedValue([
-      { id: 'r4', userId: 'u1', model: null, metadata: JSON.stringify({ foo: 1 }) },
+      { id: 'r4', type: 'image', userId: 'u1', model: null, metadata: JSON.stringify({ foo: 1 }) },
     ])
 
     const n = await svc.reapOnce('manual')
@@ -117,7 +118,7 @@ describe('GenerationReaperService 收尾机制', () => {
   it('状态守卫未命中（completeImage 已先行结算）：跳过且不退款', async () => {
     stuckStatus = 'completed' // 模拟 completeImage 恰好在 findMany 后结算完成
     generationFindMany.mockResolvedValue([
-      { id: 'r5', userId: 'u1', model: null, metadata: makeMeta() },
+      { id: 'r5', type: 'image', userId: 'u1', model: null, metadata: makeMeta() },
     ])
 
     const n = await svc.reapOnce('manual')
@@ -126,14 +127,57 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(refundInTx).not.toHaveBeenCalled()
   })
 
-  it('只回收 image 类型、按阈值过滤 createdAt', async () => {
+  it('回收范围为图片侧三类、按阈值过滤 createdAt', async () => {
     await svc.reapOnce('manual')
 
     const where = generationFindMany.mock.calls[0][0].where
-    expect(where.type).toBe('image')
+    expect(where.type).toEqual({ in: ['image', 'image_edit', 'image_upscale'] })
     expect(where.status).toBe('generating')
     expect(where.createdAt.lt).toBeInstanceOf(Date)
     // 默认 30 分钟阈值
     expect(Date.now() - where.createdAt.lt.getTime()).toBeGreaterThan(29 * 60_000)
+  })
+
+  it('image_edit 孤儿：退款分类 image + 文案「图像精修」', async () => {
+    generationFindMany.mockResolvedValue([
+      { id: 'e1', type: 'image_edit', userId: 'u1', model: 'agnes-image-edit', metadata: makeMeta() },
+    ])
+
+    const n = await svc.reapOnce('manual')
+
+    expect(n).toBe(1)
+    const refundArgs = refundInTx.mock.calls[0]
+    expect(refundArgs[2]).toBe(10)
+    expect(refundArgs[3]).toBe('图像精修-超时回收退款')
+    expect(refundArgs[4].category).toBe('image')
+    expect(refundArgs[4].generationId).toBe('e1')
+  })
+
+  it('image_upscale 孤儿：退款分类 other（与扣费侧同源，避免错账）', async () => {
+    generationFindMany.mockResolvedValue([
+      { id: 'p1', type: 'image_upscale', userId: 'u1', model: null, metadata: makeMeta() },
+    ])
+
+    await svc.reapOnce('manual')
+
+    expect(refundInTx.mock.calls[0][4].category).toBe('other')
+    expect(refundInTx.mock.calls[0][3]).toBe('图像放大-超时回收退款')
+  })
+
+  it('BYOK 孤儿：退款状态用 byok_refund（对齐正常失败路径语义）', async () => {
+    generationFindMany.mockResolvedValue([
+      {
+        id: 'b1',
+        type: 'image',
+        userId: 'u1',
+        model: 'agnes-image',
+        metadata: makeMeta({ providerSource: 'user' }),
+      },
+    ])
+
+    await svc.reapOnce('manual')
+
+    expect(refundInTx.mock.calls[0][4].status).toBe('byok_refund')
+    expect(refundInTx.mock.calls[0][4].category).toBe('image')
   })
 })

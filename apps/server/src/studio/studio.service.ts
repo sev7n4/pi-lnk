@@ -81,12 +81,9 @@ import {
   rethrowWithRefundedPoints,
   throwCancelledException,
 } from '../points/charge-session'
+import { studioPointCategory } from '../points/point-categories'
 import { PointsService } from '../points/points.service'
-import {
-  consumeMeta,
-  refundMeta,
-  type PointCategory,
-} from '../points/point-tx.types'
+import { consumeMeta, refundMeta } from '../points/point-tx.types'
 import {
   falH3MaxVideoRecordMeta,
   minimaxH3VideoRecordMeta,
@@ -276,13 +273,6 @@ function parseMeta(raw: string | null | undefined): Record<string, unknown> {
   } catch {
     return {}
   }
-}
-
-function studioPointCategory(type: string): PointCategory {
-  if (type === 'text' || type === 'prompt') return 'text'
-  if (type === 'image' || type === 'image_edit') return 'image'
-  if (type === 'audio' || type === 'video') return type
-  return 'other'
 }
 
 function hintForCode(code: ErrorCode): string | undefined {
