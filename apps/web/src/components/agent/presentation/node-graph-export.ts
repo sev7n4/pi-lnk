@@ -87,6 +87,10 @@ export function buildNodeGraphHtml(
 		maxX = 400;
 		maxY = 240;
 	}
+	//⚠️ 包围盒要**贴紧**节点，不能只算 min/max：
+	//   画布节点间距常是 200–400px，而节点本身仅 168px 宽 ⇒ 空白远大于内容
+	//   ⇒ SVG 视图里大量留白 ⇒ 内容被压得很小（用户实测"看不清"）。
+	//   这里保持紧贴（pad 20），让导出页至少是"节点排布"的密度。
 	const pad = 20;
 	const vbW = Math.max(1, maxX - minX + pad * 2);
 	const vbH = Math.max(1, maxY - minY + pad * 2);
