@@ -66,6 +66,58 @@ export const MIXED6: { nodes: GvNode[]; edges: GvEdge[] } = {
 	edges: [{ source: "m1", target: "m3" }],
 };
 
+/**
+ * 长标题 fixture —— **专门覆盖 D3-2 的提炼路径**。
+ *
+ * ⭐ 为什么必须有它：原有 8 个 fixture 的标题全是短中文（`镜头 1` / `EP01` / `甲`），
+ *全在各自视图的预算内 ⇒ 提炼是 no-op，快照**逐字节不变**。
+ * 也就是说：快照全绿**证明不了提炼是否正确**，这里必须有一个真会触发的样本。
+ *
+ * 三个标题分别超出所在视图的预算：layout(45 汉字) / tree(11 汉字) / swimlane(8 汉字)。
+ * 外加一个**中英混排**样本 —— 迁移前的 `clip()` 按字符数截，算不准混排的像素宽。
+ *
+ * ⭐⭐ 全部节点都带 `· 雨夜编` 这个**共有后缀** —— 这让 `shortLabels` 真的会剥。
+ *   我第一版 fixture 没有共有后缀，于是变异「跳过 shortLabels」**测不出来**：
+ *   没有后缀可剥，两条路径输出一模一样。⇒ 判据要覆盖「先剥后缀、再提炼」的**顺序**。
+ *   L4 剥完剩 9 汉字（18 单位 ≤ 22）⇒ 顺序反了会被先提炼砍到 14 汉字，标签就变了。
+ */
+export const LONG_TITLES: { nodes: GvNode[]; edges: GvEdge[] } = {
+	nodes: [
+		{
+			id: "L1",
+			type: "prompt",
+			// 69 汉字 = 138 单位 > layout 预算 90
+			title: "第一章少年在雨夜的老宅里发现祖父留下的那本没有署名的黑色笔记本里面夹着一张褪色的车票 · 雨夜编",
+			position: { x: 0, y: 0 },
+		},
+		{
+			id: "L2",
+			type: "prompt",
+			// 69 汉字，同样超 tree(11) / swimlane(8) 预算
+			title: "第二章少女在旧书店的阁楼里翻到那本笔记的残页发现墨迹下面还压着另一层被刮掉的字迹 · 雨夜编",
+			position: { x: 100, y: 0 },
+		},
+		{
+			id: "L3",
+			type: "image",
+			// 中英混排：单位宽与字符数不等价，旧 clip 会算错
+			title: "Scene 04A雨夜老宅 · 内景 · 手持笔记本特写 · 缓慢推进 · 无对白 · ENV: rain · 雨夜编",
+			position: { x: 200, y: 0 },
+		},
+		{
+			id: "L4",
+			type: "prompt",
+			// 刚好在 tree 预算内（9 汉字 = 18 单位 ≤ 22）⇒ **不该被提炼**
+			title: "第三章收尾与回望",
+			position: { x: 300, y: 0 },
+		},
+	],
+	edges: [
+		{ source: "L1", target: "L2" },
+		{ source: "L2", target: "L3" },
+	],
+};
+
 export function goldenFixtures(): Array<Omit<GoldenCase, "svg">> {
 	return [
 		{ name: "layout-dependency", params: { view: "layout", relation: "dependency" }, layout: BASE3 },
@@ -75,6 +127,10 @@ export function goldenFixtures(): Array<Omit<GoldenCase, "svg">> {
 		{ name: "timeline", params: { view: "timeline" }, layout: BASE3 },
 		{ name: "swimlane-type", params: { view: "swimlane", groupBy: "type" }, layout: TREE5 },
 		{ name: "matrix-type-status", params: { view: "matrix", rowBy: "type", colBy: "status" }, layout: MIXED6 },
+		// D3-2：提炼路径的快照样本（短标题用例证明不了提炼，见 LONG_TITLES 注释）
+		{ name: "layout-long-titles", params: { view: "layout", relation: "dependency" }, layout: LONG_TITLES },
+		{ name: "tree-long-titles", params: { view: "tree" }, layout: LONG_TITLES },
+		{ name: "swimlane-long-titles", params: { view: "swimlane", groupBy: "type" }, layout: LONG_TITLES },
 		{
 			name: "table-legacy-overlay",
 			// OverlayItem.level 是字符串枚举（"error" / "warn"），不是数字。

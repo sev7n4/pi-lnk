@@ -11,12 +11,12 @@
  *   swimlane  — 阶段横轴 × 分组纵轴，表达"谁在什么时候做什么"
  *   matrix    — 分类 × 状态交叉，表达"分布"
  */
-import { graphIRFromGv } from "../graph/graph-ir.js";
+import { condenseLabel, graphIRFromGv, labelBudgetFor, labelWidth } from "../graph/graph-ir.js";
 import { layoutLayout } from "../graph/layout/layout.js";
 import { layoutTimelineFlow } from "../graph/layout/timeline.js";
-import { LANE_LABEL_W, STAGE_COUNT, layoutSwimlane } from "../graph/layout/swimlane.js";
+import { LANE_LABEL_W, STAGE_COUNT, layoutSwimlane, swimlaneNodeWidth } from "../graph/layout/swimlane.js";
 import { layoutMatrix } from "../graph/layout/matrix.js";
-import { layoutTree } from "../graph/layout/tree.js";
+import { TREE_DEPTH_W, layoutTree } from "../graph/layout/tree.js";
 import { LABEL_W, PLOT_W, PLOT_X, ROW_H, W, edgePath } from "../graph/layout/types.js";
 import {
 	type GvEdge,
@@ -87,12 +87,13 @@ function nodeRect(
 	const parts: string[] = [];
 	parts.push(`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" class="${cls} n"${mis ? ' stroke-width="2"' : ""}/>`);
 	const seq = opts.seq && opts.seq > 0 ? `${ordinal(opts.seq)} ` : "";
-	const body = opts.label ?? n.title ?? n.id;
 	const typeTxt = opts.showType ? ` ${n.type ?? ""}` : "";
-	const maxChars = Math.max(4, Math.floor((box.w - 14) / 12));
-	parts.push(
-		`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="l">${esc(seq + clip(body, Math.max(2, maxChars - seq.length)) + typeTxt)}</text>`,
-	);
+	// ⭐⭐ N8：节点身份标签**不再 clip 截断**，改用 IR 提炼后的 `label`。
+	//   提炼在 `graphIRFromGv` 完成（按本视图节点框宽算预算），原文进 `description`。
+	//   ⚠️ 只有**没给 label** 时才现场提炼兜底（正常路径不会走到 —— 那是把
+	//   「预算」的责任又推回渲染层，正是 D2 迁移要消除的方向倒流）。
+	const body = opts.label ?? condenseLabel(n.title ?? n.id, labelBudgetFor(box.w));
+	parts.push(`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="l">${esc(seq + body + typeTxt)}</text>`);
 	if (mis) {
 		parts.push(`<text x="${box.x + box.w - 4}" y="${box.y + box.h / 2}" class="w" text-anchor="end">画布顺序</text>`);
 	}
@@ -145,6 +146,43 @@ function clip(s: string, max: number): string {
 	return s.length <= max ? s : `${s.slice(0, Math.max(1, max - 1))}…`;
 }
 
+/**
+ * 节点框里最终显示的标签：**先剥群组后缀，再按框宽提炼**。
+ *
+ * ⭐⭐ 两步的顺序不能反，而且**两步都必须做**：
+ *  - `shortLabels` 剥掉「所有节点共有」的后缀（`…· 森林偵探社` ⇒ 群组名进图例只出现一次）。
+ *    它可能把一个 20 字标题缩成 4 字 ⇒ **先提炼会把本该保住的字砍掉**。
+ *  - `condenseLabel` 保证剩下的文本符合预算。它不认得群组后缀。
+ *  少任何一步都会出问题：只提炼 → 后缀还在，框被撑爆；只剥后缀 → 长标题溢出。
+ *
+ * ⚠️ 迁移前是`clip(body, (box.w - 14) / 12 - seq.length)`：**按字符数**截，
+ *   对中英混排算不准（汉字实际 12px/字、拉丁约 6px，按字符一刀切必然过度截断）。
+ *   现在按单位宽算，中英混排也能装满。
+ */
+function nodeLabels(
+	nodes: readonly GvNode[],
+	boxWidthPx: number,
+	opts: { seqOf?: (n: GvNode) => number | undefined; showType?: boolean } = {},
+): Map<string, string> {
+	const full = labelBudgetFor(boxWidthPx);
+	return new Map(
+		shortLabels(nodes).map(({ n, label }) => {
+			// ⭐ 前缀（序号 `① ` / 类型 ` prompt`）也占框内宽度 ⇒ 必须从预算里扣掉。
+			//   迁移前是 `maxChars - seq.length`：只扣了序号、**没扣类型** ⇒
+			//   `showType` 打开时会把标签顶出框右缘。
+			//
+			// ⚠️ 类型预留必须**按视图条件化**：`showType` 只有 layout 传，
+			//   tree / swimlane 的 `nodeRect` 从不传 ⇒ 无条件扣会让窄框视图
+			//   白白少 2 个字（swimlane 112px 框从 8 汉字掉到 5 汉字）。
+			const seq = opts.seqOf?.(n);
+			const reserved =
+				labelWidth(seq ? `${ordinal(seq)} ` : "") +
+				(opts.showType === true ? labelWidth(` ${n.type ?? ""}`) : 0);
+			return [n.id, condenseLabel(label, full - reserved)] as const;
+		}),
+	);
+}
+
 // ══════════════════════════════════════════════════════════
 // layout：二分图 + 箭头（依赖关系的默认载体）
 // ══════════════════════════════════════════════════════════
@@ -190,6 +228,9 @@ export function buildLayoutSvg(
 		relation: opts.drawEdges ? "dependency" : "category",
 		nodes: nodesIn,
 		edges: edgesIn,
+		// ⭐ 预算按**本视图节点框宽**算，不是全局 24 单位 —— layout 框宽 554px，
+		//   能装 45 汉字；套24 单位（12 汉字）会把主视图信息量砍到 1/4（D3-2 实测）。
+		labelBudget: labelBudgetFor(PLOT_W),
 		groupBy: opts.groupBy,
 		scope: opts.scope,
 		showType: opts.showType,
@@ -272,7 +313,12 @@ export function buildLayoutSvg(
 	// 错位判定与节点顺序都由布局层给出（laid.audit），渲染层不重新推导。
 	const audit = laid.audit!;
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
-	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
+	// 序号占宽必须从预算里扣：`nodeLabels` 需要知道每个节点的 seq
+	const seqById = new Map(laid.nodes.map((p) => [p.id, p.seq] as const));
+	const labels = nodeLabels(nodes, PLOT_W, {
+		seqOf: (n) => seqById.get(n.id),
+		showType: opts.showType,
+	});
 	if (laid.focus !== undefined) {
 		// 局部视图必须自报家门，否则用户会误以为这就是全部
 		//
@@ -384,7 +430,14 @@ function groupLegend(nodes: readonly GvNode[], by: "parentNode"): Array<{ label:
 // `TREE_DEPTH_W` 也搬过去了）。本函数只画 —— 与 layout 视图同一条迁移边界。
 
 export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdge[]): string {
-	const ir = graphIRFromGv({ view: "tree", relation: "category", nodes: nodesIn, edges: edgesIn });
+	// 预算按tree 的节点框宽（150px ⇒ 22 单位 ≈ 11 汉字）
+	const ir = graphIRFromGv({
+		view: "tree",
+		relation: "category",
+		nodes: nodesIn,
+		edges: edgesIn,
+		labelBudget: labelBudgetFor(TREE_DEPTH_W),
+	});
 	const laid = layoutTree(ir);
 	const byId = new Map(nodesIn.map((n) => [n.id, n]));
 	// 图例 / 标签精简需要**完整**的 GvNode 字段，且要按**平铺序**（不是行序）。
@@ -394,7 +447,9 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 	const ORPHAN = orphans > 0;
 	const audit = laid.audit!;
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
-	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
+	const treeSeq = new Map(laid.nodes.map((p) => [p.id, p.seq] as const));
+	// tree 从不显示类型（`nodeRect` 不传 showType）⇒ 不做类型预留
+	const labels = nodeLabels(nodes, TREE_DEPTH_W, { seqOf: (n) => treeSeq.get(n.id) });
 	const parts: string[] = [svgOpen(H)];
 	// ⭐ 顺序校验说明（用户要求：按业务序渲染，并指出画布上放错的）
 	const note = auditNoteSvg(audit.misplaced, audit.compared);
@@ -463,7 +518,16 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 
 export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 	// ⭐ 行序、纵坐标、行间连线全部来自 `graph/layout/timeline.ts`。
-	const laid = layoutTimelineFlow(graphIRFromGv({ view: "timeline", relation: "category", nodes: nodesIn, edges: [] }));
+	// timeline 的标签画在**左侧标签带**里（x=8起），不是节点框内 ⇒ 预算按标签带宽度算
+	const laid = layoutTimelineFlow(
+		graphIRFromGv({
+			view: "timeline",
+			relation: "category",
+			nodes: nodesIn,
+			edges: [],
+			labelBudget: labelBudgetFor(LABEL_W),
+		}),
+	);
 	const byId = new Map(nodesIn.map((n) => [n.id, n]));
 	// 图例吃**平铺序**（与 tree 同理：迁移前是 `orderNodes(nodesIn)`）。
 	const nodes = (laid.flatOrder ?? laid.nodes.map((p) => p.id)).map((id) => byId.get(id)!);
@@ -508,11 +572,21 @@ export function buildSwimlaneSvg(
 	groupBy: "type" | "status",
 ): string {
 	// ⭐ 泳道行、阶段列、节点框、流转连线全部来自 `graph/layout/swimlane.ts`。
-	const ir = graphIRFromGv({ view: "swimlane", relation: edgesIn.length > 0 ? "dependency" : "category", nodes: nodesIn, edges: edgesIn, groupBy });
+	const ir = graphIRFromGv({
+		view: "swimlane",
+		relation: edgesIn.length > 0 ? "dependency" : "category",
+		nodes: nodesIn,
+		edges: edgesIn,
+		groupBy,
+		// 节点框宽 = stageW − 14（112px ⇒ 16 单位 ≈ 8 汉字）
+		labelBudget: labelBudgetFor(swimlaneNodeWidth()),
+	});
 	const laid = layoutSwimlane(ir);
 	const byId = new Map(nodesIn.map((n) => [n.id, n]));
 	// 图例吃**平铺序**（与 tree / timeline 同理）。
 	const nodes = (laid.flatOrder ?? laid.nodes.map((p) => p.id)).map((id) => byId.get(id)!);
+	const swimSeq = new Map(laid.nodes.map((p) => [p.id, p.seq] as const));
+	const swimLabels = nodeLabels(nodes, swimlaneNodeWidth(), { seqOf: (n) => swimSeq.get(n.id) });
 	const stageW = laid.stageW!;
 	const H = laid.height;
 	const headH = 26;
@@ -542,7 +616,10 @@ export function buildSwimlaneSvg(
 		const n = byId.get(p.id)!;
 		const box: Box = { id: n.id, x: p.x, y: p.y, w: p.w, h: p.h, row: p.row };
 		parts.push(`<g data-node="${esc(n.id)}" data-stage="${p.stage ?? 0}">`);
-		parts.push(nodeRect(n, box));
+		// ⭐ 标签走 `nodeLabels`（剥后缀 + 按框宽提炼），与 layout/tree 同一套。
+		//   迁移前这里不传 label，`nodeRect` 直接用 `n.title` ⇒ 靠内部 clip 截断，
+		//   既绕过提炼也按字符数算不准中英混排。
+		parts.push(nodeRect(n, box, { label: swimLabels.get(n.id) }));
 		parts.push("</g>");
 	}
 
@@ -591,6 +668,7 @@ export function buildMatrixSvg(
 ): string {
 	// ⭐ 行列、列宽、格子坐标、图例位置全部来自 `graph/layout/matrix.ts`。
 	const laid = layoutMatrix(
+		// matrix 不在节点框里画标题（格子里是计数）⇒ 不传 labelBudget
 		graphIRFromGv({ view: "matrix", relation: "category", nodes: nodesIn, edges: [] }),
 		rowBy,
 		colBy,

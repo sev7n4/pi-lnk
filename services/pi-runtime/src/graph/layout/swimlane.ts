@@ -17,6 +17,17 @@ export const LANE_LABEL_W = 74;
 export const STAGE_COUNT = 5;
 /** 每个泳道行高。 */
 export const LANE_H = 46;
+
+/**
+ * swimlane 的节点框宽（纯函数）。
+ *
+ * ⭐ 必须与 `layoutSwimlane` 内部用的 `stageW - 14` 同源：渲染层要先知道框宽才能
+ *   按框宽算标签预算，而布局要IR 才能跑 —— 顺序上天然成环。把公式抽成函数，
+ *   两处共用同一个定义，而不是各写一遍常量（那迟早漂移）。
+ */
+export function swimlaneNodeWidth(): number {
+	return (W - LANE_LABEL_W - 16) / STAGE_COUNT - 14;
+}
 /** 阶段列头高度。 */
 const HEAD_H = 26;
 /** 泳道框比节点框多出来的高度（上下各 3）。 */
@@ -49,6 +60,8 @@ export function layoutSwimlane(ir: GraphIR): LaidOut {
 	const laneRows = orderNodes(laneNames.map((k) => ({ id: k, title: k, type: k }))).map((n) => n.id);
 
 	const stageW = (W - LANE_LABEL_W - 16) / STAGE_COUNT;
+	// 节点框宽统一走 `swimlaneNodeWidth()`，避免与渲染层预算计算出现两份公式
+	const nodeW = swimlaneNodeWidth();
 	// ⚠️ 阶段按**节点下标**均分，不是按业务序值 —— 迁移前就是这样。
 	const stageOf = (i: number): number =>
 		Math.min(STAGE_COUNT - 1, Math.floor((i / Math.max(1, nodes.length)) * STAGE_COUNT));
@@ -78,7 +91,7 @@ export function layoutSwimlane(ir: GraphIR): LaidOut {
 			//    保留「同泳道内全部重叠」这一行为，但把那个 0 直接写成常量 ——
 			//    留着 `idxInLane * 0` 会让人以为「泳道内本来要错开、只是没生效」。
 			y: laneY(li) + NODE_INSET_X,
-			w: stageW - 14,
+			w: nodeW,
 			h: 20,
 			row: li,
 			label: irn?.label ?? n.id,

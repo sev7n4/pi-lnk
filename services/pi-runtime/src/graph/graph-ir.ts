@@ -37,8 +37,48 @@ export function isGraphView(v: ResolvedView): v is GraphView {
 /**
  * 标签预算（**单位宽**）：12 汉字 × 2 = 24，24 拉丁 × 1 = 24 ⇒ 同一个数表达两种边界。
  * ⭐ 统一成单位宽而不是字符数，否则中英混排时预算不可比。
+ *
+ * ⚠️ 它的角色是「**框宽未知时**的默认预算」（`condenseLabel` 的默认参数、
+ *   非法框宽的回落），**不是**每个视图的实际预算。实际预算走 `labelBudgetFor`
+ *   —— 各视图节点框宽差 5 倍，套同一个数会把宽框收紧、把窄框撑爆。
  */
 export const LABEL_BUDGET = 24;
+
+/** 节点框内边距（左右各 7px）。 */
+const BOX_PADDING = 14;
+/**
+ * 1 单位宽 = 多少 px。`.l{font:12px sans-serif}` ⇒ 汉字≈12px 记 2 单位 ⇒ 6px/单位。
+ * ⚠️ 拉丁字符实际约 6–7px（`m`/`w` 更宽），这里取下界保守估。
+ */
+const UNIT_PX = 6;
+
+/**
+ * 给定节点框宽，算出**该框真能装**的标签预算（单位宽）。
+ *
+ * ⭐⭐ 为什么必须有这个函数（2026-10-08，D3-2 实测）：
+ * `LABEL_BUDGET = 24` 是照 **layout 的 554px 框宽**定的，但五个视图框宽差 5 倍：
+ *
+ * ```
+ * 视图       框宽   旧口径(汉字)   若固定用 24 单位(=12 汉字)   结果
+ * layout      554        45             12               收紧 3.75 倍
+ * tree        150        11             12               溢出
+ * swimlane    112         8             12               溢出 50%
+ * ```
+ *
+ * 两类坏结果都**不会报错**（SVG 不换行，超宽只是视觉溢出；收紧也不违反任何断言）
+ * ⇒ 只能靠测试钉住。照固定预算执行会把承载 63 节点真实画布的主视图砍到 1/4。
+ *
+ * ⚠️ 这里**不做** `Math.min(LABEL_BUDGET, …)` 的全局封顶：封顶等于把宽框也压到
+ * 12 汉字，正是上面要避免的退化。`LABEL_BUDGET` 的角色是「**框宽未知时**的默认值」
+ * （`condenseLabel` 的默认参数、以及非法输入的回落），不是宽框的天花板。
+ */
+export function labelBudgetFor(boxWidthPx: number): number {
+	if (!Number.isFinite(boxWidthPx) || boxWidthPx < 0) return LABEL_BUDGET;
+	const fits = Math.floor((boxWidthPx - BOX_PADDING) / UNIT_PX);
+	// 框宽不足以放 1 个单位（如 4px）⇒ 预算 0。`condenseLabel(budget<=0)` 会返回原文，
+	// 由调用方兜底 —— 绝不在这里悄悄吞内容。
+	return fits <= 0 ? 0 : fits;
+}
 
 /** CJK（含全角标点）按 2 单位计，其余按 1 单位。 */
 const WIDE = /[㐀-䶿一-鿿豈-﫿　-〿＀-￯]/;
@@ -56,6 +96,9 @@ export function labelWidth(s: string): number {
 export function condenseLabel(raw: string, budget: number = LABEL_BUDGET): string {
 	const s = raw.trim();
 	if (s === "") return "";
+	// ⭐ 预算 0/负数（框宽不足1 单位）时不产出 "…" 这种无意义结果 ——
+	//   直接返回原文，溢出由调用方兜底，绝不在这里悄悄吞内容。
+	if (budget <= 0) return s;
 	if (labelWidth(s) <= budget) return s;
 	// 省略号占 1 单位，先从预算里扣掉 —— 否则截断后的总宽仍会超出预算。
 	const cap = budget - 1;
@@ -152,30 +195,39 @@ export interface GraphIRFromGvInput {
 /**
  * GvNode[] → GraphIR。
  *
- * ⚠️ 本阶段 **不做** `condenseLabel`：`label` 原样取 `title ?? id`，与迁移前
- * `nodeRect` 的 `opts.label ?? n.title ?? n.id` 完全一致。提炼在 D3-2 落地 ——
- * 提前做会破坏 D2「对外输出逐字节不变」的验收判据。
+ * ⭐ `label` = 按 `labelBudget`提炼后的短标签，**原文完整保留在 `description`**。
+ * 预算由调用方给（通常是布局层按本视图节点框宽算）⇒ IR 不假设框宽，
+ * 也就不会把layout 的宽框预算套到 swimlane 的窄框上。
+ *
+ * @param labelBudget 该视图的标签预算（单位宽）。缺省走全局上限。
  */
-export function graphIRFromGv(input: GraphIRFromGvInput): GraphIR {
+export function graphIRFromGv(input: GraphIRFromGvInput & { labelBudget?: number }): GraphIR {
 	const edgeKind: GraphIREdge["kind"] = input.relation === "dependency" ? "dependency" : "category";
+	const budget = input.labelBudget;
 	return {
 		view: input.view,
 		relation: input.relation,
 		...(input.title !== undefined ? { title: input.title } : {}),
-		nodes: input.nodes.map((n) => ({
-			id: n.id,
-			...(n.type !== undefined ? { type: n.type } : {}),
-			label: n.title ?? n.id,
-			description: n.title !== undefined && n.title !== n.id ? n.title : undefined,
-			...(n.title !== undefined ? { title: n.title } : {}),
-			...(n.status !== undefined ? { status: n.status } : {}),
-			...(n.parentNode !== undefined ? { parentNode: n.parentNode } : {}),
-			// ⭐ 必须透传：`orderNodes` 的次级排序键就是画布 `position.y/x`。
-			// 漏掉它 ⇒ 「有序号并列时按画布上下」这条判据失效，且**不会报错**
-			//（原地下标恰好同序时结果一致）⇒ 静默的排序行为变化。
-			...(n.position !== undefined ? { position: n.position } : {}),
-			sourceKind: "canvas",
-		})),
+		nodes: input.nodes.map((n) => {
+			const raw = n.title ?? n.id;
+			const label = budget === undefined ? raw : condenseLabel(raw, budget);
+			return {
+				id: n.id,
+				...(n.type !== undefined ? { type: n.type } : {}),
+				label,
+				// ⭐ 只有**真的被提炼了**才写 description —— 否则 `description`
+				// 会等于 `title`，让调用方误以为「有全文可回落」。
+				...(label !== raw ? { description: raw } : {}),
+				...(n.title !== undefined ? { title: n.title } : {}),
+				...(n.status !== undefined ? { status: n.status } : {}),
+				...(n.parentNode !== undefined ? { parentNode: n.parentNode } : {}),
+				// ⭐ 必须透传：`orderNodes` 的次级排序键就是画布 `position.y/x`。
+				// 漏掉它 ⇒「有序号并列时按画布上下」这条判据失效，且**不会报错**
+				//（原地下标恰好同序时结果一致）⇒ 静默的排序行为变化。
+				...(n.position !== undefined ? { position: n.position } : {}),
+				sourceKind: "canvas" as const,
+			};
+		}),
 		edges: input.edges.map((e) => ({ source: e.source, target: e.target, kind: edgeKind })),
 		...(input.groupBy !== undefined ? { groupBy: input.groupBy } : {}),
 		...(input.scope !== undefined ? { scope: input.scope } : {}),
