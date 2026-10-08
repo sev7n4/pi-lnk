@@ -11,19 +11,18 @@
  *   swimlane  — 阶段横轴 × 分组纵轴，表达"谁在什么时候做什么"
  *   matrix    — 分类 × 状态交叉，表达"分布"
  */
+import { graphIRFromGv } from "../graph/graph-ir.js";
+import { layoutLayout } from "../graph/layout/layout.js";
+import { LABEL_W, PLOT_W, PLOT_X, ROW_H, W, edgePath } from "../graph/layout/types.js";
 import {
 	type GvEdge,
 	type GvNode,
 	type Palette,
 	auditOrder,
 	businessOrder,
-	filterEdgesByScope,
-	focusNeighborhood,
-	nodesInNeighborhood,
 	type Scope,
 	type FocusAnchor,
 	AGGREGATE_THRESHOLD,
-	SPREAD_PER_EDGE,
 	registerColorClassMap,
 	commonSuffixes,
 	esc,
@@ -39,11 +38,8 @@ import {
 	NODE_PALETTE,
 } from "./render-canvas-view.expressive.js";
 
-const W = 720;
-const ROW_H = 26;
-const LABEL_W = 150;
-const PLOT_X = LABEL_W;
-const PLOT_W = W - PLOT_X - 16;
+// ⭐ W / ROW_H / LABEL_W / PLOT_X / PLOT_W / edgePath 已迁到 `graph/layout/types.ts`
+// （坐标的唯一来源）。此处改为 import —— 两处各留一份常量迟早漂移。
 
 /** 单个节点的外接框（供连线端点计算）。 */
 interface Box {
@@ -70,15 +66,7 @@ function boxesFrom(
 	return m;
 }
 
-/** 节点右上角 → 目标左侧的折线路径（同源多条边时起点沿高度分散，修「扫帚」）。 */
-function edgePath(from: Box, to: Box, siblingIndex = 0, siblingCount = 1): string {
-	const sx = from.x + from.w;
-	const sy = from.y + (siblingCount <= 1 ? from.h / 2 : (siblingIndex + 1) * (from.h / (siblingCount + 1)));
-	const tx = to.x;
-	const ty = to.y + to.h / 2;
-	const midX = sx + Math.max(18, (tx - sx) / 2);
-	return `M${sx},${Math.round(sy)} C${Math.round(midX)},${Math.round(sy)} ${Math.round(midX)},${Math.round(ty)} ${tx},${Math.round(ty)}`;
-}
+// `edgePath` 已迁到 `graph/layout/types.ts`（几何的唯一来源）。
 
 /**
  * 节点矩形 + 标签。
@@ -208,84 +196,39 @@ export function buildLayoutSvg(
 	edgesIn: readonly GvEdge[],
 	opts: LayoutOpts,
 ): string {
-	// ⭐ 先按 scope 裁边，再按 focus 裁节点（顺序不可颠倒：先裁边才知道邻域里有哪些边）
-	const scope: Scope = opts.scope ?? "structure";
-	const scopedEdges = opts.drawEdges ? filterEdgesByScope(nodesIn, edgesIn, scope) : [];
-	let nodes = orderNodes(nodesIn);
-	let edges = scopedEdges;
-	let focusKeep: Set<string> | undefined;
-	if (opts.focus !== undefined) {
-		focusKeep = focusNeighborhood(nodes, edges, opts.focus, opts.hops ?? 1);
-		nodes = nodesInNeighborhood(nodes, focusKeep);
-		edges = edges.filter((e) => focusKeep!.has(e.source) && focusKeep!.has(e.target));
-	}
-	const groupBy = opts.groupBy ?? "type";
-	// ⭐ groupBy 影响**行序**（同组相邻 ⇒ 一眼看出分组边界），
-	// 但**先按业务序号排**再稳分组合并 —— 否则同组内的业务顺序会被打乱。
-	// nodes/edges 已在函数开头按 scope + focus 处理完毕；这里只做 groupBy 的稳分组合并
-	const groupKey = (n: GvNode) =>
-		groupBy === "status" ? (n.status ?? "未标状态") : groupBy === "parentNode" ? (n.parentNode ?? "未归类") : (n.type ?? "default");
-	if (groupBy !== "type") nodes = groupAdjacent(nodes, groupKey);
-
-	// ⭐ 局部视图的出线策略（2026-10-05 UX 评审）
-	//
-	// 起因：`edgePath()` 已把同源多出边起点沿源节点高度分散，但**分散范围被源节点
-	// 20px 高度限死** ⇒ 18 条边塞进 20px、每条只隔 1px，视觉上仍是一条实线。
-	// 真实画布（63 节点/123 边）上实测：focus=資產表 的 31 条边全部视觉重叠。
-	//
-	// 三种策略（`FocusAnchor`）：
-	//   spread   — 焦点节点高度按下游数拉伸，每条边真正错开（默认）
-	//   bus      — 高度不变，右侧加一条垂直汇流条
-	//   aggregate— 边数超阈值时聚合成单箭头 +「→ N 个下游」
+	// ⭐ 坐标与方向**全部来自布局层**：本函数只负责把它们画出来（D2 的迁移边界）。
+	const ir = graphIRFromGv({
+		view: "layout",
+		relation: opts.drawEdges ? "dependency" : "category",
+		nodes: nodesIn,
+		edges: edgesIn,
+		groupBy: opts.groupBy,
+		scope: opts.scope,
+		showType: opts.showType,
+		colors: opts.colors,
+		emphasize: opts.emphasize,
+		...(opts.focus !== undefined
+			? { focus: opts.focus, hops: opts.hops, focusAnchor: opts.focusAnchor }
+			: {}),
+	});
+	const laid = layoutLayout(ir);
+	// 图例 / 标签精简 / 错位审计需要**完整**的 GvNode 字段 ⇒ 按布局产出的顺序取回。
+	const byId = new Map(nodesIn.map((n) => [n.id, n]));
+	const nodes = laid.nodes.map((p) => byId.get(p.id)!);
+	const boxes = new Map(laid.nodes.map((p) => [p.id, p]));
+	const edges = laid.edges;
+	const aggSources = new Set(laid.aggSources ?? []);
+	const H = laid.height;
 	const anchor: FocusAnchor = opts.focusAnchor ?? "spread";
-	// ⚠️出度要**所有策略都算**（不是只有 aggregate）——
-	// spread 也要靠它决定焦点行该拉多高。之前只在 aggregate 分支里填，
-	// 导致 spread 拿到空Map ⇒ 焦点行保持 20px ⇒ 18 条边又挤回一起（实测焦点高=26≈20）。
-	const outDeg = new Map<string, number>();
-	for (const e of edges) outDeg.set(e.source, (outDeg.get(e.source) ?? 0) + 1);
-	// 被聚合的边：只在「某源节点出边超阈值」时发生
-	const aggSources = new Set(
-		[...outDeg.entries()].filter(([, c]) => c > AGGREGATE_THRESHOLD).map(([k]) => k),
-	);
-	// 拉伸后的行高：焦点节点（或聚合源）需要 SPREAD_PER_EDGE × 出边数的高度
-	const rowHeight = (n: GvNode, idx: number): number => {
-		if (anchor !== "spread" || !focusKeep) return ROW_H;
-		if (!focusKeep.has(n.id)) return ROW_H;
-		const d = (outDeg.get(n.id) ?? 0) + 1;
-		return Math.max(ROW_H, d * SPREAD_PER_EDGE);
-	};
-	// 先算每行高度，再累加出y —— 变高行会把后续行整体下移
-	const rowHs: number[] = [];
-	{
-		let acc = 0;
-		for (let i = 0; i < nodes.length; i++) {
-			rowHs.push(rowHeight(nodes[i], i));
-			acc += rowHs[i];
-		}
-	}
-	const H = 40 + rowHs.reduce((a, b) => a + b, 0) + 24;
-	const rowY = new Array<number>(nodes.length);
-	{
-		let acc = 0;
-		for (let i = 0; i < nodes.length; i++) {
-			rowY[i] = 30 + acc;
-			acc += rowHs[i];
-		}
-	}
-	const boxes = boxesFrom(
-		nodes,
-		() => PLOT_X,
-		() => PLOT_W,
-		(_, i) => rowY[i],
-		(_, i) => rowHs[i],
-	);
+	const groupBy = opts.groupBy ?? "type";
 	const parts: string[] = [svgOpen(H)];
 
 	if (opts.drawEdges) {
 		// ⭐ 同源多出边起点沿源节点高度分散 —— 修「全部从同一点射出」的扫帚
 		const bySource = new Map<string, string[]>();
 		for (const e of edges) {
-			if (!boxes.has(e.source) || !boxes.has(e.target)) continue; // 端点不在图内→丢弃（不编造）
+			// 端点不在图内→丢弃（不编造）—— 布局层已过滤，这里再兜一次
+			if (!boxes.has(e.source) || !boxes.has(e.target)) continue;
 			const arr = bySource.get(e.source) ?? [];
 			arr.push(e.target);
 			bySource.set(e.source, arr);
@@ -293,7 +236,7 @@ export function buildLayoutSvg(
 		for (const [src, targets] of bySource) {
 			const from = boxes.get(src)!;
 			const ordered2 = orderNodes(
-				targets.map((id) => nodes.find((n) => n.id === id)).filter((x): x is GvNode => Boolean(x)),
+				targets.map((id) => byId.get(id)).filter((x): x is GvNode => Boolean(x)),
 			);
 			// ⭐ `aggregate`：出边超阈值时聚合成单箭头 + 计数（其余边**不画**，不静默丢弃——
 			// 计数与阈值都写在图上，用户知道还有多少条没画）
@@ -338,10 +281,11 @@ export function buildLayoutSvg(
 
 	const emph = new Set(opts.emphasize ?? []);
 	// ⭐ 与 tree 同一套：业务序号 + 精简标签 + 错位标记
-	const audit = auditOrder(nodes);
+	// 错位判定与节点顺序都由布局层给出（laid.audit），渲染层不重新推导。
+	const audit = laid.audit!;
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
 	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
-	if (focusKeep) {
+	if (laid.focus !== undefined) {
 		// 局部视图必须自报家门，否则用户会误以为这就是全部
 		//
 		// ⭐ **用节点标题而不是 id**（2026-10-05 UX 评审）：
@@ -351,9 +295,9 @@ export function buildLayoutSvg(
 		//
 		// 标题过长时裁剪并**保留 id 尾部**（`…· 資產表（…-46）`）：
 		// 用户要换 focus 中心时需要能报出 id，尾部 6 位足够定位且不干扰阅读。
-		const focusId = String(opts.focus ?? "");
+		const focusId = String(laid.focus.id);
 		const titleRaw = labels.get(focusId) ?? focusId;
-		const hopsShown = Math.max(1, Math.min(3, Math.floor(opts.hops ?? 1)));
+		const hopsShown = laid.focus.hops;
 		const isTitle = titleRaw !== focusId;
 		const name = isTitle
 			? clip(titleRaw, 26) + (titleRaw.length > 26 ? `（…${focusId.slice(-6)}）` : "")
@@ -367,8 +311,9 @@ export function buildLayoutSvg(
 	const note = auditNoteSvg(audit.misplaced, audit.compared);
 	if (note) parts.push(note);
 	let lastGroup: string | undefined;
-	for (const n of nodes) {
-		const g = groupKey(n);
+	for (const p of laid.nodes) {
+		const n = byId.get(p.id)!;
+		const g = p.groupKey ?? "default";
 		// 分组间隔线：同组相邻时给一条淡色分隔，groupBy 才有意义
 		if (lastGroup !== undefined && g !== lastGroup) {
 			const y = 30 + nodes.indexOf(n) * ROW_H - 4;
@@ -381,10 +326,10 @@ export function buildLayoutSvg(
 				`${mis ? " data-x" : ""}>`,
 		);
 		parts.push(
-			nodeRect(n, boxes.get(n.id)!, {
-				color: opts.colors?.[n.id],
-				emphasized: emph.has(n.id),
-				seq: nodes.indexOf(n) + 1,
+			nodeRect(n, boxes.get(p.id)!, {
+				color: p.color,
+				emphasized: p.emphasized === true,
+				seq: p.seq,
 				label: labels.get(n.id),
 				showType: opts.showType,
 				misplaced: mis,
@@ -424,19 +369,6 @@ export function buildLayoutSvg(
 	return parts.join("");
 }
 
-/** 稳定地把同 key 的节点聚到一起（保持组内原序）。 */
-function groupAdjacent<T>(list: readonly T[], keyOf: (n: T) => string): T[] {
-	const buckets = new Map<string, T[]>();
-	for (const n of list) {
-		const k = keyOf(n);
-		const arr = buckets.get(k) ?? [];
-		arr.push(n);
-		buckets.set(k, arr);
-	}
-	const out: T[] = [];
-	for (const arr of buckets.values()) out.push(...arr);
-	return out;
-}
 
 function statusLegend(nodes: readonly GvNode[]): Array<{ label: string; palette: Palette }> {
 	const seen: string[] = [];

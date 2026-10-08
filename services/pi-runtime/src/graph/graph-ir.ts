@@ -77,6 +77,14 @@ export interface GraphIRNode {
 	label: string;
 	/** 完整文本。⛔ 不进节点框。 */
 	description?: string;
+	/**
+	 * 原始标题（**未经** `condenseLabel`）。
+	 *
+	 * ⭐ 为什么 `label` 之外还要留它：业务序（`businessOrder`）是从标题推导的，
+	 * 若布局改用提炼后的 `label` 排序，D3-2 一打开提炼就会**静默改变节点顺序**。
+	 * knowledge 来源没有标题 ⇒ 可选。
+	 */
+	title?: string;
 	status?: string;
 	parentNode?: string;
 	sourceKind: "canvas" | "knowledge" | "derived";
@@ -89,7 +97,12 @@ export interface GraphIRNode {
 export interface GraphIREdge {
 	source: string;
 	target: string;
-	kind: "sequence" | "dependency" | "containment" | "flow";
+	/**
+	 * v1 的四种 kind 之外补 **`category`**：`relation=category` 是**无向**的分类关系，
+	 * 映射到 sequence / dependency / containment / flow 里任何一个都会说错语义
+	 * （containment 会暗示层级）。`edgeDirected` 对 category 返回 false。
+	 */
+	kind: "sequence" | "dependency" | "containment" | "flow" | "category";
 	label?: string;
 }
 
@@ -148,6 +161,7 @@ export function graphIRFromGv(input: GraphIRFromGvInput): GraphIR {
 			...(n.type !== undefined ? { type: n.type } : {}),
 			label: n.title ?? n.id,
 			description: n.title !== undefined && n.title !== n.id ? n.title : undefined,
+			...(n.title !== undefined ? { title: n.title } : {}),
 			...(n.status !== undefined ? { status: n.status } : {}),
 			...(n.parentNode !== undefined ? { parentNode: n.parentNode } : {}),
 			sourceKind: "canvas",
