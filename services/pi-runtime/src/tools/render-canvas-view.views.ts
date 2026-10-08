@@ -13,6 +13,7 @@
  */
 import { graphIRFromGv } from "../graph/graph-ir.js";
 import { layoutLayout } from "../graph/layout/layout.js";
+import { layoutTimelineFlow } from "../graph/layout/timeline.js";
 import { layoutTree } from "../graph/layout/tree.js";
 import { LABEL_W, PLOT_W, PLOT_X, ROW_H, W, edgePath } from "../graph/layout/types.js";
 import {
@@ -459,21 +460,27 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 // ══════════════════════════════════════════════════════════
 
 export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
-	const nodes = orderNodes(nodesIn);
-	const H = 40 + nodes.length * ROW_H + 34;
+	// ⭐ 行序、纵坐标、行间连线全部来自 `graph/layout/timeline.ts`。
+	const laid = layoutTimelineFlow(graphIRFromGv({ view: "timeline", relation: "category", nodes: nodesIn, edges: [] }));
+	const byId = new Map(nodesIn.map((n) => [n.id, n]));
+	// 图例吃**平铺序**（与 tree 同理：迁移前是 `orderNodes(nodesIn)`）。
+	const nodes = (laid.flatOrder ?? laid.nodes.map((p) => p.id)).map((id) => byId.get(id)!);
+	const H = laid.height;
 	const parts: string[] = [svgOpen(H)];
-	nodes.forEach((n, i) => {
-		const y = 30 + i * ROW_H;
-		const p = paletteOf(n);
-		const st = statusShade(n, p);
+	for (const p of laid.nodes) {
+		const n = byId.get(p.id)!;
+		const pal = paletteOf(n, p.color);
+		const st = statusShade(n, pal);
 		parts.push(`<g data-node="${esc(n.id)}">`);
-		parts.push(`<text x="8" y="${y + 13}" class="gv-t" dominant-baseline="central">${esc(clip(n.title ?? n.id, 12))}</text>`);
-		parts.push(`<rect x="${PLOT_X}" y="${y}" width="${PLOT_W}" height="20" rx="5" fill="${st.fill}" stroke="${st.stroke}" stroke-width="1"/>`);
-		if (i < nodes.length - 1) {
-			parts.push(`<path d="M${PLOT_X + 16},${y + 20} L${PLOT_X + 16},${y + ROW_H}" class="gv-e" marker-end="url(#gv-arrow)"/>`);
-		}
+		parts.push(`<text x="8" y="${p.y + 13}" class="gv-t" dominant-baseline="central">${esc(clip(p.label, 12))}</text>`);
+		parts.push(`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="5" fill="${st.fill}" stroke="${st.stroke}" stroke-width="1"/>`);
 		parts.push("</g>");
-	});
+	}
+	// ⏳ 方向语义尚未收敛到 IR（Task 9）：布局层给的是「相邻行有向连线」，
+	//   迁移前则是渲染层按 `i < len-1` 自行判定 —— 行为逐字节相同，判据已前移。
+	for (const t of laid.trunks) {
+		parts.push(`<path d="M${t.x},${t.yTop} L${t.x},${t.yBottom}" class="gv-e"${t.directed ? ' marker-end="url(#gv-arrow)"' : ""}/>`);
+	}
 	const lg = usedTypes(nodes);
 	parts.push(legendSvg(lg, 8, H - 14 - lg.length * 16));
 	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
