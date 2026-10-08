@@ -39,6 +39,8 @@ export interface PlacedNode {
 	depth?: number;
 	/** 是否是「无 parentNode 也无入边」的孤儿节点（tree 用，画在末尾分隔区）。 */
 	orphan?: boolean;
+	/** 阶段列号（swimlane 用；渲染层写 `data-stage`，不自己重算）。 */
+	stage?: number;
 }
 
 export interface PlacedEdge {
@@ -105,6 +107,8 @@ export interface LaidOut {
 	 * 所以由布局层显式给出，而不是让渲染层自己再排一次。
 	 */
 	flatOrder?: readonly string[];
+	/** 阶段列宽（swimlane 的列头与节点框共用；改它必须两处同步）。 */
+	stageW?: number;
 	/** 错位审计结果（渲染层直接消费，不重新推导 ⇒ 避免两套判定）。 */
 	audit?: { misplaced: MisplacedNode[]; compared: number };
 	/** 焦点视图的「自报家门」所需。 */

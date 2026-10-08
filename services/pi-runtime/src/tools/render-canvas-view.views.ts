@@ -14,6 +14,7 @@
 import { graphIRFromGv } from "../graph/graph-ir.js";
 import { layoutLayout } from "../graph/layout/layout.js";
 import { layoutTimelineFlow } from "../graph/layout/timeline.js";
+import { LANE_LABEL_W, STAGE_COUNT, layoutSwimlane } from "../graph/layout/swimlane.js";
 import { layoutTree } from "../graph/layout/tree.js";
 import { LABEL_W, PLOT_W, PLOT_X, ROW_H, W, edgePath } from "../graph/layout/types.js";
 import {
@@ -500,31 +501,20 @@ export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 // swimlane：阶段横轴 × 分组纵轴
 // ══════════════════════════════════════════════════════════
 
-const LANE_LABEL_W = 74;
-const STAGE_COUNT = 5;
-
 export function buildSwimlaneSvg(
 	nodesIn: readonly GvNode[],
 	edgesIn: readonly GvEdge[],
 	groupBy: "type" | "status",
 ): string {
-	const nodes = orderNodes(nodesIn);
-	// 阶段：按业务序号切成 5 段；无序号时按 index 均分
-	const laneKey = (n: GvNode) => String(n[groupBy] ?? "未分类");
-	const laneNames: string[] = [];
-	for (const n of nodes) {
-		const k = laneKey(n);
-		if (!laneNames.includes(k)) laneNames.push(k);
-	}
-	const laneRows = orderNodes(
-		laneNames.map((k) => ({ id: k, title: k, type: k })),
-	).map((n) => n.id);
-
-	const stageOf = (i: number) => Math.min(STAGE_COUNT - 1, Math.floor((i / Math.max(1, nodes.length)) * STAGE_COUNT));
-	const stageW = (W - LANE_LABEL_W - 16) / STAGE_COUNT;
-	const laneH = 46;
+	// ⭐ 泳道行、阶段列、节点框、流转连线全部来自 `graph/layout/swimlane.ts`。
+	const ir = graphIRFromGv({ view: "swimlane", relation: edgesIn.length > 0 ? "dependency" : "category", nodes: nodesIn, edges: edgesIn, groupBy });
+	const laid = layoutSwimlane(ir);
+	const byId = new Map(nodesIn.map((n) => [n.id, n]));
+	// 图例吃**平铺序**（与 tree / timeline 同理）。
+	const nodes = (laid.flatOrder ?? laid.nodes.map((p) => p.id)).map((id) => byId.get(id)!);
+	const stageW = laid.stageW!;
+	const H = laid.height;
 	const headH = 26;
-	const H = headH + 24 + laneRows.length * laneH + 30;
 	const parts: string[] = [svgOpen(H)];
 
 	// 阶段列头
@@ -536,53 +526,45 @@ export function buildSwimlaneSvg(
 		);
 	}
 
-	const boxOf = new Map<string, Box>();
 	// 泳道背景 + 标签
-	laneRows.forEach((lane, li) => {
-		const y = headH + 12 + li * laneH;
-		parts.push(`<g data-lane="${esc(lane)}">`);
+	for (const g of laid.groups) {
+		parts.push(`<g data-lane="${esc(g.key)}">`);
 		parts.push(
-			`<rect x="8" y="${y}" width="${W - 16}" height="${laneH - 6}" rx="6" fill="${li % 2 === 0 ? "#FAFBFC" : "#F5F6F8"}" stroke="#E6E8EB" stroke-width="0.5"/>`,
-			`<text x="16" y="${y + (laneH - 6) / 2}" class="gv-t" dominant-baseline="central">${esc(clip(lane, 8))}</text>`,
+			`<rect x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}" rx="6" fill="${laid.groups.indexOf(g) % 2 === 0 ? "#FAFBFC" : "#F5F6F8"}" stroke="#E6E8EB" stroke-width="0.5"/>`,
+			`<text x="16" y="${g.y + g.h / 2}" class="gv-t" dominant-baseline="central">${esc(clip(g.key, 8))}</text>`,
 		);
 		parts.push("</g>");
-	});
+	}
 
-	// 节点：x 按阶段、y 按泳道
-	for (const n of nodes) {
-		const li = laneRows.indexOf(laneKey(n));
-		if (li < 0) continue;
-		const idxInLane = nodes.filter((m) => laneKey(m) === laneKey(n)).indexOf(n);
-		const s = stageOf(nodes.indexOf(n));
-		const x = LANE_LABEL_W + s * stageW + 6;
-		const y = headH + 12 + li * laneH + 6 + Math.min(20, idxInLane * 0);
-		const box: Box = { id: n.id, x, y, w: stageW - 14, h: 20, row: li };
-		boxOf.set(n.id, box);
-		parts.push(`<g data-node="${esc(n.id)}" data-stage="${s}">`);
+	// 节点
+	for (const p of laid.nodes) {
+		const n = byId.get(p.id)!;
+		const box: Box = { id: n.id, x: p.x, y: p.y, w: p.w, h: p.h, row: p.row };
+		parts.push(`<g data-node="${esc(n.id)}" data-stage="${p.stage ?? 0}">`);
 		parts.push(nodeRect(n, box));
 		parts.push("</g>");
 	}
 
-	// 流转箭头：按 edges（或按业务序号相邻）
-	const arrowFrom: Array<[string, string]> = [];
-	for (const e of edgesIn) if (boxOf.has(e.source) && boxOf.has(e.target)) arrowFrom.push([e.source, e.target]);
-	if (arrowFrom.length === 0) {
-		for (let i = 0; i < nodes.length - 1; i++) arrowFrom.push([nodes[i].id, nodes[i + 1].id]);
-	}
-	for (const [a, b] of arrowFrom) {
-		const f = boxOf.get(a)!;
-		const t = boxOf.get(b)!;
+	// 流转箭头：连线形状在渲染层，但「串哪些」由布局层决定。
+	// ⏳ 方向语义尚未收敛到 IR（Task 9）：无边时的相邻 fallback 仍在。
+	for (const e of laid.edges) {
+		const f = laid.nodes.find((p) => p.id === e.source);
+		const t = laid.nodes.find((p) => p.id === e.target);
+		if (!f || !t) continue;
 		const sx = f.x + f.w;
 		const sy = f.y + f.h / 2;
 		const tx = t.x;
 		const ty = t.y + t.h / 2;
 		const mx = Math.round(sx + Math.max(12, (tx - sx) / 2));
 		parts.push(
-			`<path data-edge="1" d="M${sx},${Math.round(sy)} C${mx},${Math.round(sy)} ${mx},${Math.round(ty)} ${tx},${Math.round(ty)}" class="gv-e" marker-end="url(#gv-arrow)"/>`,
+			`<path data-edge="1" d="M${sx},${Math.round(sy)} C${mx},${Math.round(sy)} ${mx},${Math.round(ty)} ${tx},${Math.round(ty)}" class="gv-e"${e.directed ? ' marker-end="url(#gv-arrow)"' : ""}/>`,
 		);
 	}
 
-	const lg = groupBy === "type" ? usedTypes(nodes) : laneRows.slice(0, 4).map((k) => ({ label: k, palette: NODE_PALETTE.default }));
+	const lg =
+		groupBy === "type"
+			? usedTypes(nodes)
+			: laid.groups.slice(0, 4).map((g) => ({ label: g.key, palette: NODE_PALETTE.default }));
 	parts.push(legendSvg(lg, 8, H - 14 - lg.length * 16));
 	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
 	// 配色 class 走 `colorClass()`，它在**渲染每个节点时**才把「颜色⇒短类名」登记进
