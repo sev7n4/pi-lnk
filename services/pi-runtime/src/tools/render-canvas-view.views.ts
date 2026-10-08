@@ -13,13 +13,12 @@
  */
 import { graphIRFromGv } from "../graph/graph-ir.js";
 import { layoutLayout } from "../graph/layout/layout.js";
+import { layoutTree } from "../graph/layout/tree.js";
 import { LABEL_W, PLOT_W, PLOT_X, ROW_H, W, edgePath } from "../graph/layout/types.js";
 import {
 	type GvEdge,
 	type GvNode,
 	type Palette,
-	auditOrder,
-	businessOrder,
 	type Scope,
 	type FocusAnchor,
 	AGGREGATE_THRESHOLD,
@@ -51,20 +50,6 @@ interface Box {
 	row: number;
 }
 
-function boxesFrom(
-	nodes: readonly GvNode[],
-	xOf: (n: GvNode, row: number) => number,
-	wOf: (n: GvNode, row: number) => number,
-	yOf: (n: GvNode, row: number) => number,
-	hOf: (n: GvNode, row: number) => number,
-): Map<string, Box> {
-	const m = new Map<string, Box>();
-	nodes.forEach((n, i) => {
-		const row = i;
-		m.set(n.id, { id: n.id, x: xOf(n, row), y: yOf(n, row), w: wOf(n, row), h: hOf(n, row), row });
-	});
-	return m;
-}
 
 // `edgePath` 已迁到 `graph/layout/types.ts`（几何的唯一来源）。
 
@@ -392,150 +377,61 @@ function groupLegend(nodes: readonly GvNode[], by: "parentNode"): Array<{ label:
 // tree：层级 + 归属
 // ══════════════════════════════════════════════════════════
 
-const TREE_INDENT = 26;
-const TREE_DEPTH_W = 150;
+// ⭐ 行序、缩进、父子 trunk 的坐标全部在 `graph/layout/tree.ts`（`TREE_INDENT` /
+// `TREE_DEPTH_W` 也搬过去了）。本函数只画 —— 与 layout 视图同一条迁移边界。
 
 export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdge[]): string {
-	const nodes = orderNodes(nodesIn);
-	// ⭐ 根节点判定**必须看入边**，不能只看有没有 parentNode：
-	// 「大纲 → 6 个 EP」这种结构里，大纲节点既无 parentNode、又是指向 4 个节点的那个，
-	// 只看 parentNode 会把它误判成叶子、排到末尾（实测 bug：EP01..EP10 排在它前面）。
-	const childOf = new Map<string, Set<string>>();
-	const hasIncoming = new Set<string>();
-	for (const e of edgesIn) {
-		if (e.source === e.target) continue;
-		const arr = childOf.get(e.source) ?? new Set<string>();
-		arr.add(e.target);
-		childOf.set(e.source, arr);
-		hasIncoming.add(e.target);
-	}
-	// 显式 parentNode 优先（用户手动挂的层级比推断可靠）
-	const explicitChild = new Map<string, string[]>();
-	for (const n of nodes) {
-		if (n.parentNode && nodes.some((x) => x.id === n.parentNode)) {
-			const arr = explicitChild.get(n.parentNode) ?? [];
-			arr.push(n.id);
-			explicitChild.set(n.parentNode, arr);
-		}
-	}
-
-	const childrenOf = new Map<string, GvNode[]>();
-	const roots: GvNode[] = [];
-	for (const n of nodes) {
-		const explicit = explicitChild.get(n.id);
-		const inferred = [...(childOf.get(n.id) ?? [])];
-		const kids = [...new Set([...(explicit ?? []), ...inferred])]
-			.map((id) => nodes.find((x) => x.id === id))
-			// ⚠️ 必须先收窄再用 `.id`：`Boolean(x) && x.id !== n.id` 里 TS 不会跨 `&&` 收窄
-			// （`x` 仍是 `GvNode | undefined`）⇒ 报 TS18048。
-			.filter((x): x is GvNode => x !== undefined)
-			.filter((x) => x.id !== n.id);
-		if (kids.length > 0) childrenOf.set(n.id, kids);
-		// 无子节点 ⇒ 叶子；叶子不是根，除非它也没有 parentNode
-		const isLeaf = kids.length === 0;
-		const hasExplicitParent = Boolean(n.parentNode && nodes.some((x) => x.id === n.parentNode));
-		if (isLeaf && !hasExplicitParent) {
-			//叶子但没挂到任何人 ⇒ 顶层（画在根层）
-			roots.push(n);
-		} else if (!isLeaf) {
-			// 有子节点但自己被显式挂到别人下面 ⇒ 走 parentNode 分支，不当根
-			if (hasExplicitParent) {
-				// 交给显式 parent 的 childrenOf 处理（下一轮循环已建立）
-			} else {
-				roots.push(n);
-			}
-		}
-	}
-	// ⚠️ 子树内**必须按业务序号排**，不能按画布y：同一父节点下
-	// 「EP05(y=500) 在 EP04(y=600) 之前」是画布的摆放问题，不是剧情顺序。
-	// 根层已在下面单独处理（按画布位置 + 层级根优先）；子树直接用 orderNodes。
-	for (const [k, arr] of childrenOf) childrenOf.set(k, orderNodes(arr));
-
-	// 深度优先展开
-	const rowsAll: Array<{ n: GvNode; depth: number }> = [];
-	const seen = new Set<string>();
-	const walk = (list: readonly GvNode[], depth: number) => {
-		for (const n of list) {
-			if (seen.has(n.id)) continue; // 环保护
-			seen.add(n.id);
-			rowsAll.push({ n, depth });
-			walk(childrenOf.get(n.id) ?? [], depth + 1);
-		}
-	};
-	// ⭐ 根节点排序：**有子节点（层级根）优先**，再按业务序号。
-	// `orderNodes` 会把「无业务序号」的排到「有序号」之后 —— 那对平铺列表正确，
-	// 但对树是错的：层级根（如「全劇大綱」，标题无编号）会掉到叶子后面，
-	// 读起来像它属于最后那集（实测 bug）。
-	const rootsOrdered = roots
-		.map((n, i) => ({ n, i, hasKids: (childrenOf.get(n.id)?.length ?? 0) > 0 }))
-		.sort((a, b) => {
-			if (a.hasKids !== b.hasKids) return a.hasKids ? -1 : 1;
-			return 0;
-		})
-		.map((x) => x.n);
-	// ⭐ 根层排序三段（每段一个不可妥协的约束，按优先级）：
-	//   ① 层级根（有子节点）— 无论有无业务序号，都排在所有叶子之前。
-	//      理由：「全劇大綱」标题无编号，若按「有序号在前」会被甩到 EP01..EP06 后面，
-	//      读起来像它属于最后一集 —— 这正是第一版实测到的 bug。
-	//   ② 有业务序号的叶子 —— 按序号升序（EP04 在EP05 前，即使画布 y 相反）。
-	//   ③ 无业务序号的叶子 —— 回落画布位置。
-	const hasKids = (n: GvNode) => (childrenOf.get(n.id)?.length ?? 0) > 0;
-	const kids = rootsOrdered.filter(hasKids);
-	const leavesWithOrd = rootsOrdered.filter(
-		(n) => !hasKids(n) && businessOrder(n.title) !== undefined,
-	);
-	const leavesNoOrd = rootsOrdered.filter((n) => !hasKids(n) && businessOrder(n.title) === undefined);
-	const rootsFinal = [
-		...kids.sort((a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0)),
-		...leavesWithOrd.sort((a, b) => (businessOrder(a.title) ?? 0) - (businessOrder(b.title) ?? 0)),
-		...leavesNoOrd.sort(
-			(a, b) => (a.position?.y ?? 0) - (b.position?.y ?? 0) || (a.position?.x ?? 0) - (b.position?.x ?? 0),
-		),
-	];
-	walk(rootsFinal, 0);
-	const orphans = nodes.filter((n) => !seen.has(n.id));
-	const ORPHAN = orphans.length > 0;
-	if (ORPHAN) for (const n of orphans) rowsAll.push({ n, depth: 0 });
-
-	const legendRows = usedTypes(nodes);
-	// ⭐ 顺序校验 + 标签精简（用户要求：按业务序渲染，并指出画布上放错的）
-	const audit = auditOrder(nodes);
+	const ir = graphIRFromGv({ view: "tree", relation: "category", nodes: nodesIn, edges: edgesIn });
+	const laid = layoutTree(ir);
+	const byId = new Map(nodesIn.map((n) => [n.id, n]));
+	// 图例 / 标签精简需要**完整**的 GvNode 字段，且要按**平铺序**（不是行序）。
+	const nodes = (laid.flatOrder ?? laid.nodes.map((p) => p.id)).map((id) => byId.get(id)!);
+	const H = laid.height;
+	const orphans = laid.nodes.filter((p) => p.orphan === true).length;
+	const ORPHAN = orphans > 0;
+	const audit = laid.audit!;
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
 	const labels = new Map(shortLabels(nodes).map(({ n, label }) => [n.id, label]));
-	const H = 40 + rowsAll.length * ROW_H + (ORPHAN ? 24 : 0) + 24;
 	const parts: string[] = [svgOpen(H)];
+	// ⭐ 顺序校验说明（用户要求：按业务序渲染，并指出画布上放错的）
 	const note = auditNoteSvg(audit.misplaced, audit.compared);
 	if (note) {
 		parts.push(note);
 		// 有说明行时整体下移20px，避免与首行节点重叠
 	}
-	// 纵线（父子连线）
-	for (let i = 0; i < rowsAll.length; i++) {
-		const r = rowsAll[i];
-		if (r.depth === 0) continue;
-		const x = PLOT_X + r.depth * TREE_INDENT - 10;
-		parts.push(`<path d="M${x},${30 + (i - 1) * ROW_H + ROW_H / 2} L${x},${30 + i * ROW_H + ROW_H / 2}" class="gv-e"/>`);
-		parts.push(`<path d="M${x},${30 + i * ROW_H + ROW_H / 2} L${x + 8},${30 + i * ROW_H + ROW_H / 2}" class="gv-e" marker-end="url(#gv-arrow)"/>`);
+	// 纵线（父子连线）—— 坐标由布局层给出，渲染层不按 depth 反推缩进
+	for (const t of laid.trunks) {
+		parts.push(`<path d="M${t.x},${t.yTop} L${t.x},${t.yBottom}" class="gv-e"/>`);
+		// ⭐ 箭头只由 `directed`（来自 IR 的 containment 语义）决定，渲染层不自行决定（C1）
+		if (t.directed) {
+			parts.push(`<path d="M${t.x},${t.yBottom} L${t.armTo},${t.yBottom}" class="gv-e" marker-end="url(#gv-arrow)"/>`);
+		}
 	}
 	if (ORPHAN) {
+		const bodyRows = laid.nodes.length - orphans;
 		parts.push(
-			`<line x1="8" y1="${30 + rowsAll.length * ROW_H + 2}" x2="${W - 16}" y2="${30 + rowsAll.length * ROW_H + 2}" stroke="#D3D1C7" stroke-width="1"/>`,
-			`<text x="8" y="${30 + (rowsAll.length + 0.7) * ROW_H}" class="gv-s">未归类（无 parentNode，挂在根下）</text>`,
+			`<line x1="8" y1="${30 + bodyRows * ROW_H + 2}" x2="${W - 16}" y2="${30 + bodyRows * ROW_H + 2}" stroke="#D3D1C7" stroke-width="1"/>`,
+			`<text x="8" y="${30 + (bodyRows + 0.7) * ROW_H}" class="gv-s">未归类（无 parentNode，挂在根下）</text>`,
 		);
 	}
-	for (let i = 0; i < rowsAll.length; i++) {
-		const { n, depth } = rowsAll[i];
-		const x = PLOT_X + depth * TREE_INDENT;
-		const box: Box = { id: n.id, x, y: 30 + i * ROW_H, w: TREE_DEPTH_W, h: 20, row: i };
-		const isOrphan = ORPHAN && i >= rowsAll.length - orphans.length;
-		const mis = misIds.has(n.id);
+	for (const p of laid.nodes) {
+		const n = byId.get(p.id)!;
+		const box: Box = { id: n.id, x: p.x, y: p.y, w: p.w, h: p.h, row: p.row };
 		parts.push(
-			`<g data-node="${esc(n.id)}" data-depth="${depth}"` +
-				`${isOrphan ? " data-o" : ""}${mis ? " data-x" : ""}>`,
+			`<g data-node="${esc(n.id)}" data-depth="${p.depth ?? 0}"` +
+				`${p.orphan ? " data-o" : ""}${misIds.has(n.id) ? " data-x" : ""}>`,
 		);
-		parts.push(nodeRect(n, box, { seq: i + 1, label: labels.get(n.id), misplaced: mis }));
+		parts.push(
+			nodeRect(n, box, {
+				seq: p.seq,
+				label: labels.get(n.id),
+				color: p.color,
+				misplaced: misIds.has(n.id),
+			}),
+		);
 		parts.push("</g>");
 	}
+	const legendRows = usedTypes(nodes);
 	const sufs = [...commonSuffixes(nodes).keys()];
 	parts.push(legendSvg(legendRows, 8, H - 14 - (legendRows.length + sufs.length) * 16));
 	// 被折叠的群组后缀在这里补回来 —— 标签里省掉了，信息不能丢

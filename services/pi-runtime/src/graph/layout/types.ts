@@ -35,6 +35,10 @@ export interface PlacedNode {
 	/** 分组键（`groupBy` 的结果），渲染层用它画分组边界与 `data-group`。 */
 	groupKey?: string;
 	emphasized?: boolean;
+	/** 层级深度（tree 用，从 0 起）。其他视图不产出。 */
+	depth?: number;
+	/** 是否是「无 parentNode 也无入边」的孤儿节点（tree 用，画在末尾分隔区）。 */
+	orphan?: boolean;
 }
 
 export interface PlacedEdge {
@@ -50,6 +54,27 @@ export interface PlacedEdge {
 	/** 是否在关键路径上（命中 `emphasize`）。 */
 	isHi?: boolean;
 	label?: string;
+}
+
+/**
+ * tree视图的父子连线（trunk）：竖线 + 底端横臂。
+ *
+ * ⭐ 与 `PlacedEdge` 分开：trunk 的端点不是「某条边的两端」，而是「上一行与本行的
+ * 缩进位置」，来源是层级推断而不是 `edges`。混进 `edges` 会让 containment 被当依赖画。
+ */
+export interface Trunk {
+	/** 所属行号（= 子节点所在行）。 */
+	row: number;
+	/** 竖线 x。 */
+	x: number;
+	/** 竖线起点 y（上一行中心）。 */
+	yTop: number;
+	/** 竖线终点 / 横臂起点 y（本行中心）。 */
+	yBottom: number;
+	/** 横臂终点 x（=子节点框左边缘 −8）。 */
+	armTo: number;
+	/** ⭐ C1：箭头由 IR 的 containment 语义决定，渲染层不得自行决定。 */
+	directed: boolean;
 }
 
 export interface GroupBox {
@@ -70,6 +95,16 @@ export interface LaidOut {
 	showType: boolean;
 	colors?: Record<string, string | undefined>;
 	emphasize?: readonly string[];
+	/**
+	 * **平铺序**的节点 id（业务序优先，回落画布 y/x）。
+	 *
+	 * ⭐ 与 `nodes`（行序 = 视图的排布结果）**刻意不同**：图例的排列顺序取自
+	 * 「第一次出现的类型」，而 `shortLabels` / `commonSuffixes` 的后缀计数与
+	 * `Map` 插入序也都依赖输入顺序。迁移前这些helper 吃的是平铺序，
+	 * 若渲染层改吃行序（tree 的 DFS 序）⇒ 图例与群组后缀的排列会静默改变。
+	 * 所以由布局层显式给出，而不是让渲染层自己再排一次。
+	 */
+	flatOrder?: readonly string[];
 	/** 错位审计结果（渲染层直接消费，不重新推导 ⇒ 避免两套判定）。 */
 	audit?: { misplaced: MisplacedNode[]; compared: number };
 	/** 焦点视图的「自报家门」所需。 */

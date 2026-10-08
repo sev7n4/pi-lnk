@@ -48,6 +48,9 @@ function toGv(n: GraphIRNode): GvNode {
 		...(n.title !== undefined ? { title: n.title } : {}),
 		...(n.status !== undefined ? { status: n.status } : {}),
 		...(n.parentNode !== undefined ? { parentNode: n.parentNode } : {}),
+		// ⭐ `position` 必须带上：`orderNodes` / `auditOrder` 的次级排序键是画布 y/x。
+		// 漏掉它不会报错（多数用例原地下标恰好同序）⇒ 静默的排序行为变化。
+		...(n.position !== undefined ? { position: n.position } : {}),
 	};
 }
 

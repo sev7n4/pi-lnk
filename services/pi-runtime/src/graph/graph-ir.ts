@@ -87,6 +87,12 @@ export interface GraphIRNode {
 	title?: string;
 	status?: string;
 	parentNode?: string;
+	/**
+	 * 画布上的原始摆放。**输入事实**，不是布局产物 —— tree 的根层排序在「无业务
+	 * 序号」时会回落到它（见 `layout/tree.ts`）。
+	 * ⚠️ 别与 IR「不含坐标」的判据混淆：那条指的是布局产出的 x/y/w/h。
+	 */
+	position?: { x?: number; y?: number };
 	sourceKind: "canvas" | "knowledge" | "derived";
 	/** 语义标注（情绪强度 / 超时 / 严重度）→ 映射为强调色。 */
 	mark?: { kind: string; level: number; text?: string };
@@ -164,6 +170,10 @@ export function graphIRFromGv(input: GraphIRFromGvInput): GraphIR {
 			...(n.title !== undefined ? { title: n.title } : {}),
 			...(n.status !== undefined ? { status: n.status } : {}),
 			...(n.parentNode !== undefined ? { parentNode: n.parentNode } : {}),
+			// ⭐ 必须透传：`orderNodes` 的次级排序键就是画布 `position.y/x`。
+			// 漏掉它 ⇒ 「有序号并列时按画布上下」这条判据失效，且**不会报错**
+			//（原地下标恰好同序时结果一致）⇒ 静默的排序行为变化。
+			...(n.position !== undefined ? { position: n.position } : {}),
 			sourceKind: "canvas",
 		})),
 		edges: input.edges.map((e) => ({ source: e.source, target: e.target, kind: edgeKind })),
