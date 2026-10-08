@@ -1,3 +1,5 @@
+import { upstreamFetch } from '../tools/upstream-fetch'
+
 export const ECOMMERCE_VISION_SYSTEM = `你是电商视觉策划专家。根据用户提供的商品参考图与文字需求，输出完整的电商视觉方案，用中文 Markdown，结构清晰。
 必须包含：
 1. 商品理解（品类、卖点、目标人群）
@@ -61,7 +63,7 @@ export async function generateTextWithImages(
   const baseUrl = (opts.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '')
   const model = opts.model ?? process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o'
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  const res = await upstreamFetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({

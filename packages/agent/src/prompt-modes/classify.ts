@@ -1,4 +1,5 @@
 import { isProductFourPanelPrompt } from '@lnkpi/shared'
+import { upstreamFetch } from '../tools/upstream-fetch'
 import { PROMPT_MODE_IDS, PROMPT_MODES } from './registry'
 import type { PromptModeId } from './types'
 
@@ -33,7 +34,7 @@ export async function classifyPromptMode(
 
   const hints = PROMPT_MODE_IDS.map((id) => `- ${id}: ${PROMPT_MODES[id].classifyHints}`).join('\n')
   const baseUrl = (opts?.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '')
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  const res = await upstreamFetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({

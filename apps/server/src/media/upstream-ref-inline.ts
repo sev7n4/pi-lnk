@@ -1,5 +1,6 @@
 import { readFile } from 'fs/promises'
 import { extname, join } from 'path'
+import { upstreamFetch } from '@lnkpi/agent'
 import { needsUpstreamRefInline, parseUploadRefPath } from '@lnkpi/shared'
 
 const UPLOADS_ROOT = join(process.cwd(), 'uploads')
@@ -34,7 +35,7 @@ async function readUploadAsDataUrl(userId: string, fileName: string): Promise<st
 }
 
 async function fetchAsDataUrl(url: string): Promise<string> {
-  const res = await fetch(url)
+  const res = await upstreamFetch(url)
   if (!res.ok) {
     throw new Error(`参考图下载失败 (${res.status}): ${url}`)
   }

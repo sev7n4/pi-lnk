@@ -7,6 +7,7 @@ import {
 import { getPromptMode, PROMPT_MODE_IDS } from './registry'
 import type { PromptModeId } from './types'
 import { classifyPromptMode } from './classify'
+import { upstreamFetch } from '../tools/upstream-fetch'
 import { FOUR_PANEL_PRODUCT_SYSTEM } from './modes/four-panel-product'
 import { validateCommercialStoryboardOutput } from './modes/commercial-storyboard-validate'
 
@@ -89,7 +90,7 @@ async function callChat(
   messages: ChatMessage[],
   opts: { apiKey: string; baseUrl: string; model: string; temperature: number },
 ): Promise<string> {
-  const res = await fetch(`${opts.baseUrl}/chat/completions`, {
+  const res = await upstreamFetch(`${opts.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
     body: JSON.stringify({

@@ -1,3 +1,6 @@
+import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
+import { isRetryableUpstreamError } from './upstream-retry'
+
 export const FAL_ACCOUNT_ERROR_MESSAGE = '视频服务账户异常，请稍后重试或联系管理员'
 
 export interface FalVideoQueueOptions {
@@ -74,7 +77,7 @@ function sleep(ms: number) {
 export async function runFalVideoQueue(options: FalVideoQueueOptions): Promise<{ url: string }> {
   const queueBase = resolveFalQueueBase(options.baseUrl).replace(/\/$/, '')
   const submitUrl = `${queueBase}/${options.endpointId.replace(/^\//, '')}`
-  const submitRes = await fetch(submitUrl, {
+  const submitRes = await upstreamFetch(submitUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -110,9 +113,16 @@ export async function runFalVideoQueue(options: FalVideoQueueOptions): Promise<{
     if (attempt > 0) await sleep(pollIntervalMs)
     attempt += 1
 
-    const pollRes = await fetch(statusUrl, {
-      headers: falAuthHeaders(options.apiKey),
-    })
+    let pollRes: Response
+    try {
+      pollRes = await upstreamFetch(statusUrl, {
+        headers: falAuthHeaders(options.apiKey),
+        timeoutMs: UPSTREAM_POLL_TIMEOUT_MS,
+      })
+    } catch (err) {
+      if (isRetryableUpstreamError(err)) continue
+      throw err
+    }
     if (!pollRes.ok) {
       if (isAccountLockedError(pollRes.status, await pollRes.text())) {
         throw new Error(FAL_ACCOUNT_ERROR_MESSAGE)
@@ -134,7 +144,7 @@ export async function runFalVideoQueue(options: FalVideoQueueOptions): Promise<{
 
       const responseUrl = statusJson.response_url ?? submitted.response_url
       if (responseUrl) {
-        const resultRes = await fetch(responseUrl, {
+        const resultRes = await upstreamFetch(responseUrl, {
           headers: falAuthHeaders(options.apiKey),
         })
         if (!resultRes.ok) {

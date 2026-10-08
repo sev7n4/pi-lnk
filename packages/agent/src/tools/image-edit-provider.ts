@@ -1,5 +1,6 @@
 import { buildImageEditRequest, buildSyncImageEditRequestBody } from '../studio/edit-adapter'
 import { extractApimartTaskId, pollApimartImageTask } from './apimart-image-task'
+import { upstreamFetch } from './upstream-fetch'
 import { withUpstreamRetry } from './upstream-retry'
 
 export interface ImageEditInput {
@@ -55,7 +56,7 @@ export class ApimartImageEditProvider implements ImageEditProvider {
     // 必须在 `!res.ok` 显式 throw，`withUpstreamRetry` 才有介入机会。
     const res = await withUpstreamRetry(
       async () => {
-        const r = await fetch(`${root}/images/generations`, {
+        const r = await upstreamFetch(`${root}/images/generations`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -122,7 +123,7 @@ export class SyncImageEditProvider implements ImageEditProvider {
     // ⚠️ U9：同 Apimart —— `!res.ok` 必须显式 throw，否则重试永不触发。
     const res = await withUpstreamRetry(
       async () => {
-        const r = await fetch(`${root}/images/generations`, {
+        const r = await upstreamFetch(`${root}/images/generations`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

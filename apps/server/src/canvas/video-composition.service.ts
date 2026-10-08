@@ -15,6 +15,7 @@ import type {
   VideoCompositionExportRequest,
   VideoCompositionExportTrack,
 } from '@lnkpi/shared'
+import { upstreamFetch } from '@lnkpi/agent'
 import { PrismaService } from '../prisma/prisma.service'
 import { UploadService } from '../upload/upload.service'
 
@@ -112,7 +113,7 @@ export class VideoCompositionService {
 
   private async downloadTrack(workDir: string, track: VideoCompositionExportTrack, index: number) {
     const resolved = this.resolveMediaUrl(track.url)
-    const response = await fetch(resolved)
+    const response = await upstreamFetch(resolved)
     if (!response.ok) {
       throw new BadRequestException(`无法下载素材：${track.title || track.nodeId}`)
     }

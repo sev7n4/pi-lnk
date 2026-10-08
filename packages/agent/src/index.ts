@@ -1,4 +1,5 @@
 export { applyCanvasActions } from './tools/executor'
+export { upstreamFetch } from './tools/upstream-fetch'
 export { createImageProvider, PlaceholderImageProvider, OpenAIImageProvider } from './tools/image-provider'
 export { createImageEditProvider, ApimartImageEditProvider, SyncImageEditProvider } from './tools/image-edit-provider'
 export { createSegmentProvider } from './tools/segment-provider'

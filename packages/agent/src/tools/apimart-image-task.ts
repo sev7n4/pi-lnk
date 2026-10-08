@@ -1,3 +1,6 @@
+import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
+import { isRetryableUpstreamError } from './upstream-retry'
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -36,17 +39,29 @@ export async function pollApimartImageTask(opts: {
   taskId: string
   pollIntervalMs?: number
   maxPollMs?: number
+  /** 单次轮询请求上限；默认 {@link UPSTREAM_POLL_TIMEOUT_MS}。测试注入小值。 */
+  pollTimeoutMs?: number
 }): Promise<string[]> {
   const root = opts.baseUrl.replace(/\/$/, '')
   const intervalMs = opts.pollIntervalMs ?? 8_000
   const maxPollMs = opts.maxPollMs ?? 360_000
+  const pollTimeoutMs = opts.pollTimeoutMs ?? UPSTREAM_POLL_TIMEOUT_MS
   const deadline = Date.now() + maxPollMs
 
   while (Date.now() < deadline) {
     await sleep(intervalMs)
-    const res = await fetch(`${root}/tasks/${encodeURIComponent(opts.taskId)}`, {
-      headers: { Authorization: `Bearer ${opts.apiKey}` },
-    })
+    let res: Response
+    try {
+      res = await upstreamFetch(`${root}/tasks/${encodeURIComponent(opts.taskId)}`, {
+        headers: { Authorization: `Bearer ${opts.apiKey}` },
+        timeoutMs: pollTimeoutMs,
+      })
+    } catch (err) {
+      // ⚠️ 单次轮询超时**不判死**：出海口抖动是常态，交给外层 deadline 收敛。
+      // 若这里改成 throw，出海口抖一下就会把整条生成判失败。
+      if (isRetryableUpstreamError(err)) continue
+      throw err
+    }
     if (!res.ok) continue
 
     const json = await res.json()

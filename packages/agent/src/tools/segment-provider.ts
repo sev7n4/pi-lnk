@@ -1,3 +1,5 @@
+import { upstreamFetch } from './upstream-fetch'
+
 export interface SegmentPointInput {
   imageUrl: string
   x: number
@@ -36,7 +38,7 @@ export function createSegmentProvider(opts: {
 
   return {
     async segment(input: SegmentPointInput): Promise<{ maskUrl: string }> {
-      const res = await fetch(`https://fal.run/${model}`, {
+      const res = await upstreamFetch(`https://fal.run/${model}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
