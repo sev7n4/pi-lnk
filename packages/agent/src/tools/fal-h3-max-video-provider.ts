@@ -54,6 +54,8 @@ export class FalH3MaxVideoProvider implements VideoProvider {
     private apiKey: string,
     private baseUrl = 'https://fal.run',
     private defaultModel = 'h3-max-turbo',
+    /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
+    private createRetryBaseDelayMs = 1500,
   ) {}
 
   async generate(
@@ -83,6 +85,7 @@ export class FalH3MaxVideoProvider implements VideoProvider {
       input,
       pollIntervalMs: options?.pollIntervalMs,
       maxPollMs: options?.maxPollMs,
+      createRetryBaseDelayMs: this.createRetryBaseDelayMs,
     })
   }
 }

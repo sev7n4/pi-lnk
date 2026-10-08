@@ -318,6 +318,8 @@ export class ApimartVideoProvider implements VideoProvider {
     private baseUrl = 'https://api.apimart.ai/v1',
     private pollIntervalMs = 8_000,
     private maxPollMs = 600_000,
+    /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
+    private createRetryBaseDelayMs = 1500,
   ) {}
 
   async generate(
@@ -343,12 +345,31 @@ export class ApimartVideoProvider implements VideoProvider {
     if (options?.referenceVideos?.length) body.video_urls = options.referenceVideos
     if (options?.referenceAudios?.length) body.audio_urls = options.referenceAudios
 
-    const createRes = await upstreamFetch(`${root}/videos/generations`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify(body),
-    })
-    if (!createRes.ok) throw new Error(`Apimart video create ${createRes.status}: ${await createRes.text()}`)
+    // ⚠️ 2026-10-08（V6）：创建阶段加退避重试，对齐 Agnes #178。
+    // 切到非 Agnes 通道时 429/503 此前零重试。
+    // ⚠️ fetch 对 4xx/5xx 正常返回 ok:false 不抛异常，必须显式 throw 才能触发重试。
+    const createRes = await withVideoRetry(
+      async () => {
+        const res = await upstreamFetch(`${root}/videos/generations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          throw new Error(`Apimart video create ${res.status}: ${await res.text()}`)
+        }
+        return res
+      },
+      {
+        baseDelayMs: this.createRetryBaseDelayMs,
+        onRetry: ({ attempt, delayMs, error }) => {
+          console.warn(
+            `[ApimartVideoProvider] create failed (attempt ${attempt}), retrying in ${delayMs}ms:`,
+            error,
+          )
+        },
+      },
+    )
 
     const created = await createRes.json()
     const taskId = extractApimartTaskId(created)

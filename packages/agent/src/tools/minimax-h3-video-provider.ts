@@ -1,6 +1,6 @@
 import type { VideoGenerateOptions, VideoProvider } from './video-provider'
 import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
-import { createPollErrorTracker, isRetryableUpstreamError } from './upstream-retry'
+import { createPollErrorTracker, isRetryableUpstreamError, withUpstreamRetry } from './upstream-retry'
 
 const DEFAULT_BASE_URL = 'https://api.minimax.io'
 const DEFAULT_POLL_INTERVAL_MS = 10_000
@@ -120,6 +120,8 @@ export class MiniMaxH3VideoProvider implements VideoProvider {
     private apiKey: string,
     private baseUrl = DEFAULT_BASE_URL,
     _defaultModel = 'minimax-h3',
+    /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
+    private createRetryBaseDelayMs = 1500,
   ) {}
 
   async generate(
@@ -147,17 +149,35 @@ export class MiniMaxH3VideoProvider implements VideoProvider {
     const resolution = mapResolution(options?.resolution)
     if (resolution) body.resolution = resolution
 
-    const createRes = await upstreamFetch(createUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
+    // ⚠️ 2026-10-08（V6）：创建阶段加退避重试，对齐 Agnes #178。
+    // ⚠️ fetch 对 4xx/5xx 正常返回 ok:false 不抛异常，必须显式 throw 才能触发重试。
+    // throwMiniMaxHttpError 返回 never：401/402/403 → 账户异常文案（不可重试），
+    // 其余 → 含状态码的文案（429/503 可重试）。
+    const createRes = await withUpstreamRetry(
+      async () => {
+        const res = await upstreamFetch(createUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          throwMiniMaxHttpError(res.status, await res.text())
+        }
+        return res
       },
-      body: JSON.stringify(body),
-    })
-    if (!createRes.ok) {
-      throwMiniMaxHttpError(createRes.status, await createRes.text())
-    }
+      {
+        baseDelayMs: this.createRetryBaseDelayMs,
+        onRetry: ({ attempt, delayMs, error }) => {
+          console.warn(
+            `[MiniMaxH3VideoProvider] create failed (attempt ${attempt}), retrying in ${delayMs}ms:`,
+            error,
+          )
+        },
+      },
+    )
 
     const created = (await createRes.json()) as { task_id?: string }
     const taskId = created.task_id

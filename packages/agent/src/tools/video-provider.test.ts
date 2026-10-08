@@ -657,3 +657,160 @@ describe('AgnesVideoProvider 轮询错误处理', () => {
     expect(out.url).toBe('https://e/v.mp4')
   })
 })
+
+// P1-A（诊断报告 V6 / 附录 V6）：3 个 provider 创建阶段无重试——仅 Agnes 有 #178。
+// 生产 374 条 video 失败样本里 171 条可重试（429/503/fetch failed），切到非 Agnes
+// 通道时仍零重试。对齐 Agnes #178：创建阶段包 withUpstreamRetry。
+// ⚠️ fetch 对 4xx/5xx 正常返回 ok:false 不抛异常，必须显式 throw 才能触发重试。
+describe('ApimartVideoProvider 创建阶段退避重试', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('retries the create call on 429/503 and eventually succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limit' })
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'video_queue_full' })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ task_id: 'task_r' }] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { status: 'completed', result: { video_url: 'https://cdn/r.mp4' } } }),
+      })
+
+    const p = new ApimartVideoProvider('key', 'https://api.apimart.ai/v1', 0, 30_000, 1)
+    const { url } = await p.generate('hello', { model: 'doubao-seedance-2.0-mini', duration: 5 })
+
+    expect(url).toBe('https://cdn/r.mp4')
+    // 3 次 create + 1 次 poll
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('does NOT retry a 402 insufficient balance (account error, retry is futile)', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 402, text: async () => 'insufficient balance' })
+
+    const p = new ApimartVideoProvider('key', 'https://api.apimart.ai/v1', 0, 30_000, 1)
+    await expect(p.generate('hello')).rejects.toThrow(/402/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up after 3 attempts and surfaces the last error', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, text: async () => 'video_queue_full' })
+
+    const p = new ApimartVideoProvider('key', 'https://api.apimart.ai/v1', 0, 30_000, 1)
+    await expect(p.generate('hello')).rejects.toThrow(/video_queue_full/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('MiniMaxH3VideoProvider 创建阶段退避重试', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('retries the create call on 429 and eventually succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limit' })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ task_id: 'mm-task-r' }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ task: { status: 'succeeded', content: { url: 'https://cdn/mmr.mp4' } } }),
+      })
+
+    const p = new MiniMaxH3VideoProvider('key', 'https://api.minimax.io', 'minimax-h3', 1)
+    const { url } = await p.generate('hello')
+
+    expect(url).toBe('https://cdn/mmr.mp4')
+    // 2 次 create + 1 次 poll
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('does NOT retry a 402 account error (throwMiniMaxHttpError → 账户异常文案)', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 402, text: async () => 'insufficient balance' })
+
+    const p = new MiniMaxH3VideoProvider('key', 'https://api.minimax.io', 'minimax-h3', 1)
+    await expect(p.generate('hello')).rejects.toThrow(/账户异常/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up after 3 attempts on persistent 503', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, text: async () => 'Service Unavailable' })
+
+    const p = new MiniMaxH3VideoProvider('key', 'https://api.minimax.io', 'minimax-h3', 1)
+    await expect(p.generate('hello')).rejects.toThrow(/503/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('FalH3MaxVideoProvider 创建阶段退避重试', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('retries the submit call on 429/503 and eventually succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limit' })
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'video_queue_full' })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status_url: 'https://queue.fal.run/status/r' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'COMPLETED', response: { video: { url: 'https://cdn/falr.mp4' } } }),
+      })
+
+    const p = new FalH3MaxVideoProvider('fal-key', 'https://fal.run', 'h3-max-turbo', 1)
+    const { url } = await p.generate('hello')
+
+    expect(url).toBe('https://cdn/falr.mp4')
+    // 3 次 submit + 1 次 poll
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('does NOT retry a 403 account-locked error (throwFalVideoHttpError → 账户异常文案)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => 'User is locked. Reason: TOP_UP',
+    })
+
+    const p = new FalH3MaxVideoProvider('fal-key', 'https://fal.run', 'h3-max-turbo', 1)
+    await expect(p.generate('hello')).rejects.toThrow(/账户异常/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up after 3 attempts on persistent 503', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 503, text: async () => 'Service Unavailable' })
+
+    const p = new FalH3MaxVideoProvider('fal-key', 'https://fal.run', 'h3-max-turbo', 1)
+    await expect(p.generate('hello')).rejects.toThrow(/503/)
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
