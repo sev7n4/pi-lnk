@@ -54,6 +54,23 @@ export * from './gridSlice'
 
 export type GenerationType = 'text' | 'image' | 'video'
 
+/**
+ * ⛔ 不要再在这里导出模型清单。
+ *
+ * 2026-10-08 移除 `TEXT_MODELS` / `IMAGE_MODELS` / `VIDEO_MODELS`：它们与
+ * `STUDIO_MODEL_CATALOG`（见 `./studioModelCatalog`，本文件 :37 已 re-export）
+ * **零重叠**，却因`ModelSelector.vue` 与 `GET /agent/capabilities/list`
+ * 直接引用而对用户可见 ⇒ 用户选中 `sora` / `dall-e-3`，后端
+ * `resolveModelKey` 查不到 ⇒ 静默回落默认模型（`fallback:true` 仅写入
+ * metadata，不抛错）⇒ **选了 A 生成 B，且照扣费、页面不报错**。
+ *
+ * 需要模型清单时一律用 `./studioModelCatalog` 的 `STUDIO_MODEL_CATALOG` /
+ * `listModels(modality)` / `getModelEntry(id)`。
+ *
+ * `AIModel` 类型本身保留（`capabilities-api.ts` 与 `useCapabilities` 的返回
+ * 形状依赖它），但**实例必须从 catalog 派生**，不许再手写字面量数组。
+ * 回归锁见 `studioModelCatalog.ghost.test.ts`。
+ */
 export interface AIModel {
   id: string
   name: string
@@ -170,25 +187,8 @@ export const WORK_CATEGORIES = ['全部', '2026-赛事', '精选作品', '短片
 
 export type WorkCategory = (typeof WORK_CATEGORIES)[number]
 
-export const TEXT_MODELS: AIModel[] = [
-  { id: 'gpt-4o', name: 'GPT-4o', provider: 'OpenAI', type: 'text' },
-  { id: 'deepseek-v3', name: 'DeepSeek V3', provider: 'DeepSeek', type: 'text' },
-  { id: 'claude-sonnet', name: 'Claude Sonnet', provider: 'Anthropic', type: 'text' },
-]
-
-export const IMAGE_MODELS: AIModel[] = [
-  { id: 'dall-e-3', name: 'DALL·E 3', provider: 'OpenAI', type: 'image' },
-  { id: 'midjourney-v6', name: 'Midjourney V6', provider: 'Midjourney', type: 'image' },
-  { id: 'flux-pro', name: 'Flux Pro', provider: 'Black Forest', type: 'image' },
-  { id: 'sd-xl', name: 'Stable Diffusion XL', provider: 'Stability', type: 'image' },
-]
-
-export const VIDEO_MODELS: AIModel[] = [
-  { id: 'sora', name: 'Sora', provider: 'OpenAI', type: 'video' },
-  { id: 'kling-v1', name: '可灵 V1', provider: 'Kuaishou', type: 'video' },
-  { id: 'runway-gen3', name: 'Runway Gen-3', provider: 'Runway', type: 'video' },
-  { id: 'pika-v2', name: 'Pika V2', provider: 'Pika', type: 'video' },
-]
+// ⛔ 已移除（2026-10-08）：TEXT_MODELS / IMAGE_MODELS / VIDEO_MODELS。
+// 理由与替代来源见本文件 `AIModel` 上方的注释。
 
 export type VideoAspectRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | 'adaptive'
 export type VideoCropMode = 'none' | 'center' | 'fill'

@@ -17,11 +17,11 @@ import type {
   SidebarAttachment,
 } from '@lnkpi/shared'
 import {
-  IMAGE_MODELS,
-  TEXT_MODELS,
-  VIDEO_MODELS,
+  listModels,
   normalizeMentionedKeys,
   validateSidebarAttachments,
+  type GenerationType,
+  type StudioModality,
 } from '@lnkpi/shared'
 import { MaterialService } from '../canvas/material.service'
 import { ShotService } from '../canvas/shot.service'
@@ -146,11 +146,35 @@ export class AgentService {
     return this.canvasActionApplier ?? defaultCanvasActionApplier
   }
 
+  /**
+   * 能力清单 = `STUDIO_MODEL_CATALOG` 的派生投影（**唯一真相**）。
+   *
+   * ⛔ 2026-10-08：此前直接返回 `TEXT_MODELS` / `IMAGE_MODELS` / `VIDEO_MODELS`
+   * 那份手写清单，与 catalog **零重叠**（gpt-4o / dall-e-3 / sora… 全部不在目录里）。
+   * `packages/shared/src/index.ts` 里那三个常量已删除，此处改为从 catalog 派生，
+   * 于是「接口暴露的模型」与「后端能解析的模型」不再可能分叉。
+   *
+   *顺带补上 `audio`：catalog 有 4 个 modality，而 `GenerationType` 只有 3个，
+   * 旧接口缺audio ⇒ 音频面板拿不到列表。前端 `useCapabilities` 按需取用。
+   *
+   * 注：返回的是 `modelKey`（规范 id），不是 `gatewayModelId`。
+   * 调用方需要的是「可被 `resolveModelKey` 解析的 id」，
+   * 发给上游的 gatewayModelId 由 `generation-adapter` / `studio.service` 负责转换。
+   */
   getCapabilities() {
+    const asOption = (modality: StudioModality) =>
+      listModels(modality).map((entry) => ({
+        id: entry.modelKey,
+        name: entry.displayName,
+        provider: entry.providerBinding,
+        type: (entry.modality === 'audio' ? 'text' : entry.modality) as GenerationType,
+      }))
+
     return {
-      text: TEXT_MODELS,
-      image: IMAGE_MODELS,
-      video: VIDEO_MODELS,
+      text: asOption('text'),
+      image: asOption('image'),
+      video: asOption('video'),
+      audio: asOption('audio'),
       stsDirectUpload: isObjectStorageConfigured(),
     }
   }
