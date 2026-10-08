@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 540" width="900" height="540" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect x="0" y="0" width="900" height="540" fill="#ffffff"/>
+  <text x="30" y="30" font-size="15" font-weight="700" fill="#1c1c1a">视觉语言对照稿：现状（左）与目标（右）</text>
+  <text x="30" y="48" font-size="11" fill="#6b6b66">同一份 IR、同一个 timeline 视图，只改视觉语言层 —— 用于 §10 目视验收的基准对照</text>
+
+  <!-- 左：现状（不合格） -->
+  <rect x="30" y="66" width="400" height="330" rx="8" fill="#f5f4f1" stroke="#d9d7d2"/>
+  <text x="46" y="90" font-size="12" font-weight="700" fill="#8a8a84">现状：节点融进卡片底</text>
+
+  <rect x="60" y="108" width="150" height="46" rx="6" fill="#eceae7" stroke="#dedbd5"/>
+  <text x="70" y="128" font-size="11" fill="#a3a09b">镜头1 · 雨夜街道</text>
+  <text x="70" y="144" font-size="11" fill="#a3a09b">外景/日转夜</text>
+
+  <rect x="60" y="176" width="150" height="46" rx="6" fill="#eceae7" stroke="#dedbd5"/>
+  <text x="70" y="196" font-size="11" fill="#a3a09b">镜头2 · 霓虹反光</text>
+  <text x="70" y="212" font-size="11" fill="#a3a09b">特写/手持</text>
+
+  <rect x="60" y="244" width="150" height="46" rx="6" fill="#eceae7" stroke="#dedbd5"/>
+  <text x="70" y="264" font-size="11" fill="#a3a09b">镜头3 · 角色回眸</text>
+  <text x="70" y="280" font-size="11" fill="#a3a09b">近景/升格</text>
+
+  <!-- 无箭头连线（方向要靠猜） -->
+  <line x1="135" y1="154" x2="135" y2="176" stroke="#c9c6c0" stroke-width="1.5"/>
+  <line x1="135" y1="222" x2="135" y2="244" stroke="#c9c6c0" stroke-width="1.5"/>
+
+  <!-- 溢出文字（超出节点框） -->
+  <rect x="230" y="108" width="180" height="46" rx="6" fill="#eceae7" stroke="#dedbd5"/>
+  <text x="240" y="128" font-size="11" fill="#a3a09b">旁白：她停住了，雨水顺着</text>
+  <text x="240" y="144" font-size="11" fill="#a3a09b">伞骨滑下来，霓虹在水面碎成一片</text>
+  <text x="240" y="160" font-size="11" fill="#a3a09b">红色与青色的光斑，远处传来</text>
+  <path d="M410 158 l0 0" stroke="#c0392b" stroke-width="2"/>
+  <text x="248" y="176" font-size="11" fill="#c0392b">↑ 文字溢出节点块边框</text>
+
+  <text x="60" y="330" font-size="11" fill="#8a8a84">无主色条 · 无状态徽章 · 无有向箭头 · 无容器</text>
+  <text x="60" y="352" font-size="11" fill="#8a8a84">节点底色与卡片底色几乎同色 ⇒ 边界看不见</text>
+  <text x="60" y="374" font-size="11" fill="#8a8a84">长标题直接溢出，靠 CSS 截断只会更看不清</text>
+
+  <!-- 右：目标（合格） -->
+  <rect x="470" y="66" width="400" height="330" rx="8" fill="#f5f4f1" stroke="#d9d7d2"/>
+  <text x="486" y="90" font-size="12" font-weight="700" fill="#1c1c1a">目标：三层配色 + 容器 + 方向</text>
+
+  <!-- 虚线容器：第一幕 -->
+  <rect x="486" y="104" width="368" height="196" rx="8" fill="none" stroke="#8b8b86" stroke-dasharray="6 4"/>
+  <text x="496" y="122" font-size="11" fill="#6b6b66">第一幕（容器 · 虚线框）</text>
+
+  <!-- 节点 1 -->
+  <rect x="506" y="134" width="150" height="52" rx="6" fill="#ffffff" stroke="#c9c6c0"/>
+  <rect x="506" y="134" width="150" height="4" rx="2" fill="#93c5fd"/>
+  <circle cx="520" cy="158" r="9" fill="#eef2ff"/>
+  <text x="536" y="155" font-size="11" fill="#1c1c1a">镜头1 · 雨夜街道</text>
+  <text x="536" y="169" font-size="11" fill="#6b6b66">外景 / 日转夜</text>
+
+  <!-- 节点 2：带强调徽章（超时） -->
+  <rect x="506" y="200" width="150" height="52" rx="6" fill="#ffffff" stroke="#c9c6c0"/>
+  <rect x="506" y="200" width="150" height="4" rx="2" fill="#93c5fd"/>
+  <circle cx="520" cy="224" r="9" fill="#eef2ff"/>
+  <text x="536" y="221" font-size="11" fill="#1c1c1a">镜头2 · 霓虹反光</text>
+  <text x="536" y="235" font-size="11" fill="#6b6b66">特写 / 手持</text>
+  <rect x="628" y="204" width="20" height="16" rx="3" fill="#f59e0b"/>
+  <text x="631" y="216" font-size="11" fill="#ffffff">超</text>
+
+  <!-- 节点 3：提炼后的短标签 -->
+  <rect x="506" y="266" width="150" height="52" rx="6" fill="#ffffff" stroke="#c9c6c0"/>
+  <rect x="506" y="266" width="150" height="4" rx="2" fill="#93c5fd"/>
+  <circle cx="520" cy="290" r="9" fill="#eef2ff"/>
+  <text x="536" y="287" font-size="11" fill="#1c1c1a">镜头3 · 角色回眸</text>
+  <text x="536" y="301" font-size="11" fill="#6b6b66">近景 / 升格</text>
+
+  <!-- 有向箭头 -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3f3f3a"/>
+    </marker>
+  </defs>
+  <line x1="581" y1="186" x2="581" y2="200" stroke="#3f3f3a" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="581" y1="252" x2="581" y2="266" stroke="#3f3f3a" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 提炼后的旁白（两行夹紧，不溢出） -->
+  <rect x="676" y="134" width="160" height="52" rx="6" fill="#ffffff" stroke="#c9c6c0"/>
+  <rect x="676" y="134" width="160" height="4" rx="2" fill="#fca5a5"/>
+  <text x="686" y="158" font-size="12" fill="#1c1c1a">旁白 · 她停住了</text>
+  <text x="686" y="174" font-size="11" fill="#6b6b66">雨水顺伞骨滑落</text>
+
+  <text x="506" y="330" font-size="11" fill="#1c1c1a">主色条区分类别 · 徽章只给少数异常</text>
+  <text x="506" y="352" font-size="11" fill="#1c1c1a">虚线框表达容器 · 箭头表达方向</text>
+  <text x="506" y="374" font-size="11" fill="#1c1c1a">标题提炼到两行内，长文本不进节点框</text>
+
+  <!-- 圈注 -->
+  <circle cx="581" cy="136" r="10" fill="#1c1c1a"/>
+  <text x="576" y="140" font-size="12" fill="#ffffff">1</text>
+  <circle cx="638" cy="212" r="10" fill="#1c1c1a"/>
+  <text x="633" y="216" font-size="12" fill="#ffffff">2</text>
+  <circle cx="520" cy="224" r="10" fill="#1c1c1a"/>
+  <text x="515" y="228" font-size="12" fill="#ffffff">3</text>
+  <circle cx="496" cy="200" r="10" fill="#1c1c1a"/>
+  <text x="491" y="204" font-size="12" fill="#ffffff">4</text>
+
+  <!-- 图例 -->
+  <rect x="30" y="418" width="840" height="106" rx="8" fill="#faf9f7" stroke="#e3e1dc"/>
+  <text x="46" y="440" font-size="12" font-weight="700" fill="#1c1c1a">图例</text>
+  <text x="46" y="462" font-size="11" fill="#1c1c1a">① 主色条（顶部 4px）—— 类别一眼可辨，不必读文字</text>
+  <text x="46" y="480" font-size="11" fill="#1c1c1a">② 强调色徽章 —— 只给异常/焦点（琥珀=超时、红=失败），不给多数元素</text>
+  <text x="46" y="498" font-size="11" fill="#1c1c1a">③ 点缀色图标井 —— 弱化次要信息，不抢主色</text>
+  <text x="46" y="516" font-size="11" fill="#1c1c1a">④ 虚线容器 + 有向箭头 —— 表达「谁包含谁」与「谁依赖谁」，不靠读者猜</text>
+</svg>

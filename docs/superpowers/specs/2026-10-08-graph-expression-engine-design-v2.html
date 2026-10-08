@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>图形化表达引擎 设计规格 v2（质量优先）· 待评审</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+:root{--bg:#ffffff;--fg:#1c1c1a;--muted:#6b6b66;--line:#e3e1dc;--card:#faf9f7;--accent:#2563eb}
+body.dark{--bg:#141414;--fg:#e8e6e3;--muted:#9a9894;--line:#2e2e2e;--card:#1e1e24;--accent:#93c5fd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.75 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:32px 24px 96px}
+h1{font-size:26px;border-bottom:2px solid var(--line);padding-bottom:12px}
+h2{font-size:20px;margin-top:40px;border-bottom:1px solid var(--line);padding-bottom:8px}
+h3{font-size:17px;margin-top:28px}
+h4{font-size:15px;color:var(--muted);margin-top:22px}
+table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--card);font-weight:600}
+code{background:var(--card);padding:1px 5px;border-radius:4px;font-size:13px}
+pre{background:var(--card);padding:14px 16px;border-radius:8px;overflow-x:auto;border:1px solid var(--line)}
+pre code{background:none;padding:0}
+blockquote{margin:16px 0;padding:12px 16px;border-left:4px solid var(--accent);background:var(--card);color:var(--fg)}
+.mermaid{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin:16px 0;text-align:center}
+figure{margin:20px 0;text-align:center}
+figure img{max-width:100%;border:1px solid var(--line);border-radius:8px;background:#fff}
+figcaption{font-size:13px;color:var(--muted);margin-top:8px;font-style:italic}
+nav{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 18px;margin:20px 0}
+nav ol{margin:0;padding-left:20px}nav li{margin:3px 0}
+nav a{color:var(--accent);text-decoration:none}
+#toggle{position:fixed;right:20px;bottom:20px;background:var(--accent);color:#fff;border:0;
+border-radius:20px;padding:9px 16px;font-size:13px;cursor:pointer;z-index:99}
+a{color:var(--accent)}
+</style></head><body>
+<button id="toggle" onclick="document.body.classList.toggle('dark')">切换深浅</button>
+<div class="wrap">
+<h1>图形化表达引擎 设计规格 v2（质量优先）· 待评审</h1>
+<nav><strong>目录</strong><ol><li><a href="#0-配图索引">0. 配图索引</a></li><li><a href="#1-目标-3-条-均可验收">1. 目标（3 条，均可验收）</a></li><li><a href="#2-范围">2. 范围</a></li><li><a href="#3-与既有规格的关系">3. 与既有规格的关系</a></li><li><a href="#4-规范与判据">4. 规范与判据</a></li><li><a href="#5-架构与契约">5. 架构与契约</a></li><li><a href="#6-交付物与顺序">6. 交付物与顺序</a></li><li><a href="#7-数据与状态变更">7. 数据与状态变更</a></li><li><a href="#8-纯函数与算法-含单测要求">8. 纯函数与算法（含单测要求）</a></li><li><a href="#9-文件级改动清单-预期-实施阶段以计划为准">9. 文件级改动清单（预期，实施阶段以计划为准）</a></li><li><a href="#10-测试策略与验收标准">10. 测试策略与验收标准</a></li><li><a href="#11-风险">11. 风险</a></li><li><a href="#12-后续包-路线图">12. 后续包 / 路线图</a></li><li><a href="#13-配图规范自检">13. 配图规范自检</a></li></ol></nav>
+<h1 id="图形化表达引擎-设计规格-v2-质量优先">图形化表达引擎 —— 设计规格 v2（质量优先）</h1>
+<p>状态：待评审（brainstorming 产出，2026-10-08）</p>
+<p>作者：WorkBuddy × sev7n4</p>
+<p>输入：<code>docs/superpowers/canvas_rend_view-conversation.md</code>（用户原始意图的第一手记录，1304 行）</p>
+<p>取代：<code>2026-10-08-graph-expression-engine-design.md</code>（v1，PR #276，525 行）</p>
+<p>相关：<code>docs/ops/graph-observation-baseline-2026-10-08.md</code>（D1 生产基线，本版全部数据的出处）</p>
+<blockquote>⭐ <strong>本版的论点：从「让它更常被用」转向「让它一次就画好」。</strong> v1 写于观测数据之前，默认瓶颈是「模型不会用」，于是把触发判据排在第二。 D1 的生产数据推翻了这个默认：<strong>触发率并不低（用户口径 36%–57%），低的是需求基数（1.2%）。</strong> 而用户亲自反馈的痛点是「表达力弱」—— 那是<strong>单次质量</strong>，不是覆盖率。 因此本版把质量（IR → 布局 → 文字提炼 → 视觉语言）提到最前，触发与来源扩展后置。</blockquote>
+<h3 id="相对-v1-的五处修订-详见-3">相对 v1 的五处修订（详见 §3）</h3>
+<table><thead><tr><th>#</th><th>修订</th></tr></thead><tbody><tr><td>1</td><td>正交维度从 3 个变 <strong>4 个</strong>：新增<strong>视觉语言层</strong>（v1 完全没有，是用户 14:58 反馈的直接产物）</td></tr><tr><td>2</td><td>交付顺序重排：<code>IR → 质量 → 呈现 → 触发/来源</code>，v1 的「触发优先」被数据推翻</td></tr><tr><td>3</td><td><code>source=knowledge</code> 的真正阻塞不是缺 <code>source</code> 参数，而是<strong>缺关系声明通道</strong>（15 个参数里 6 个按画布 id 索引）</td></tr><tr><td>4</td><td>v1 的 D1 观测方案依赖 <code>text_delta</code>——<strong>实测它从不落库</strong>，历史回溯只能取 user content</td></tr><tr><td>5</td><td>v1 §7 的 L1 / L6 / L7 已由 D1 给出答案（本版直接引用，不再列为待验证）</td></tr></tbody></table>
+<hr>
+<h2 id="0-配图索引">0. 配图索引</h2>
+<table><thead><tr><th>编号</th><th>形式</th><th>内容</th><th>位置</th><th>用途</th></tr></thead><tbody><tr><td>图 1</td><td>内嵌 Mermaid</td><td>四个正交维度</td><td>§4.1</td><td>判据：任一维度的改动不得推导其他维度</td></tr><tr><td>图 2</td><td>内嵌 Mermaid</td><td>端到端数据流与三道质量关卡</td><td>§5</td><td>定位每道关卡各自的可测点</td></tr><tr><td>图 3</td><td>SVG 附件 <code>assets/graph-expression-engine-v2-3-visual-language.svg</code></td><td>视觉语言对照稿（现状 vs 目标）</td><td>§4.2</td><td>§10 目视验收的基准对照</td></tr><tr><td>图 4</td><td>内嵌 Mermaid</td><td>knowledge 来源的阻塞与最小通道</td><td>§4.4</td><td>防止「半个替代品」上线</td></tr><tr><td>图 5</td><td>内嵌 Mermaid</td><td>交付顺序与硬依赖</td><td>§6</td><td>排期门禁：D2 未完不得进 D3</td></tr><tr><td>图 6</td><td>内嵌 Mermaid</td><td>观测闭环</td><td>§10</td><td>上线后用数据验收，不用感觉验收</td></tr></tbody></table>
+<hr>
+<h2 id="1-目标-3-条-均可验收">1. 目标（3 条，均可验收）</h2>
+<table><thead><tr><th>#</th><th>目标</th><th>成功判据（可观测 / 可断言）</th></tr></thead><tbody><tr><td><strong>G1</strong></td><td><strong>单次表达质量达标</strong> —— 画出来的那一次就看得清、看得懂、有重点</td><td>目视：与 图 3 右侧一致（三层配色、虚线容器、有向箭头、无文字溢出）；断言：节点 label 在 168px × 2 行内完整显示</td></tr><tr><td><strong>G2</strong></td><td><strong>来源 × 视图 × 视觉语言正交</strong> —— 领域知识、画布事实、混合三类来源共用同一套视图与视觉语言</td><td>空画布 + <code>source=knowledge</code> + 模型自供实体 ⇒ 必须出图（意图 1 的硬判据）</td></tr><tr><td><strong>G3</strong></td><td><strong>图可嵌入画布继续创作</strong> —— 落地为结构化节点组，不是位图</td><td>嵌入后节点可编辑、agent 可读懂（位图不可：agent 无法理解一块像素）</td></tr></tbody></table>
+<p>⚠️ v1 的 G1–G6 里有一条仍然成立且本版继续主张：<strong>G6「模型用对了没有」必须由数据回答，不能假设</strong>。</p>
+<p>它的前提 D1 已交付（PR #285），因此本版把它从「遗留」移进 §10 的观测闭环。</p>
+<hr>
+<h2 id="2-范围">2. 范围</h2>
+<h3 id="2-1-本版要做的">2.1 本版要做的</h3>
+<table><thead><tr><th>编号</th><th>内容</th><th>对应用户意图</th></tr></thead><tbody><tr><td>D2</td><td>IR 抽取：把布局算法从渲染里剥离，legacy 别名在 IR 入口归一</td><td>全部三条</td></tr><tr><td>D3</td><td>表达质量：布局紧凑化 + 文字提炼 + 视觉语言规范</td><td>图看得清（14:58 反馈）</td></tr><tr><td>D4</td><td>呈现分工（静态 / 可交互）+ 嵌入画布为结构化节点组</td><td>意图 3「嵌入协同创作」</td></tr><tr><td>D5</td><td>触发判据对齐 + <code>source=knowledge</code> / <code>mixed</code> 来源扩展</td><td>意图 1 / 意图 2</td></tr></tbody></table>
+<h3 id="2-2-明确不做">2.2 明确不做</h3>
+<table><thead><tr><th>#</th><th>不做</th><th>理由</th></tr></thead><tbody><tr><td>N1</td><td>不做图表库（饼图 / 柱状图 / 折线图）</td><td>那是「数据可视化」不是「关系表达」，另开能力</td></tr><tr><td>N2</td><td>不做通用流程图编辑器</td><td>本工具产出是<strong>只读投影</strong>；可编辑画布是另一条链</td></tr><tr><td>N3</td><td>不做拖拽创建节点</td><td>越界。创建节点是 <code>upsert_media_node</code> 的职责</td></tr><tr><td>N4</td><td>不追求「一张图表达所有东西」</td><td>视图选择本身就是减法；强塞会退化成看不清</td></tr><tr><td>N5</td><td>不新增顶层参数（<strong>唯一例外：<code>edges</code></strong>，理由见 §4.5）</td><td>现有 15 个已超出模型可靠选择的能力边界</td></tr><tr><td>N6</td><td>不为覆盖所有场景而自动选视图</td><td>选不出来时<strong>如实说不确定</strong>，比乱选好</td></tr><tr><td>N7</td><td>不在本规格解决缩略图取图链路</td><td>只声明依赖（需一条带鉴权的取图接口）</td></tr><tr><td>N8</td><td>⛔ <strong>不用 CSS 截断代替内容提炼</strong></td><td>「字太多」是内容问题。夹紧只是把溢出变成省略号，用户看到的仍是没提炼</td></tr></tbody></table>
+<hr>
+<h2 id="3-与既有规格的关系">3. 与既有规格的关系</h2>
+<h3 id="3-1-对-v1-的显式修订">3.1 对 v1 的显式修订</h3>
+<table><thead><tr><th>#</th><th>v1 的说法</th><th>v2 修订</th><th>依据</th></tr></thead><tbody><tr><td>1</td><td>三个正交维度（来源 / 视图 / 呈现）</td><td><strong>四个</strong>：新增视觉语言层</td><td>用户 14:58 反馈「颜色对比不够、没有 PPT 感、文字溢出」——这三点都不在 v1 的任何维度里</td></tr><tr><td>2</td><td>D1 → D2 触发 → D3 IR → D4 能力 → D5 渲染</td><td>D1 ✅ → <strong>D2 IR → D3 质量 → D4 呈现 → D5 触发/来源</strong></td><td>D1 基线：用户口径触发率 36.4%（全量）/ 57.1%（30 天），<strong>不低</strong>；需求基数 1.2%</td></tr><tr><td>3</td><td>加 <code>source</code> 参数即落地 knowledge</td><td>不够。真正阻塞是<strong>无关系声明通道</strong></td><td>实测：<code>nodes</code> 只是 <code>{node_id, color}</code> 样式覆盖；<code>node_ids</code> / <code>focus</code> / <code>annotations[].node_id</code> / <code>overlay.data[].node_id</code> <strong>4 个</strong>直接按画布 id 索引，另有 <code>hops</code> 依赖 <code>focus</code></td></tr><tr><td>4</td><td>D1 观测点含 <code>text_delta</code></td><td>⛔ <code>text_delta</code> <strong>从不落库</strong>，改为取 user 行 content</td><td>实测 <code>agent.service.ts</code> 只在 <code>tool_call</code> / <code>tool_result</code> / <code>canvas_command</code> / <code>canvas_action</code> / <code>thinking</code> / <code>turn_usage</code> / <code>task_*</code> 时 push</td></tr><tr><td>5</td><td>L1 / L6 / L7 列为待验证</td><td>已由 D1 回答，直接引用</td><td>基线快照 §三</td></tr></tbody></table>
+<h3 id="3-2-与-282-视觉语言重设计-的关系">3.2 与 #282（视觉语言重设计）的关系</h3>
+<p>PR #282 已在 <code>neowow-tokens.css</code> 与 <code>AgentNodeGraph.vue</code> 上做了第一轮视觉修复（三层配色、防溢出、箭头虚框）。</p>
+<p>⭐ <strong>本版把 #282 的成果提升为规范</strong>（§4.2），并要求它在 IR 之上实现，而不是在「画布透传」之上——</p>
+<p>否则布局紧凑化（D3）落地时视觉层要重写一遍。</p>
+<hr>
+<h2 id="4-规范与判据">4. 规范与判据</h2>
+<h3 id="4-1-四个正交维度">4.1 四个正交维度</h3>
+<p>见 图 1。</p>
+<table><thead><tr><th>维度</th><th>决定什么</th><th>谁决定</th></tr></thead><tbody><tr><td><strong>来源</strong></td><td>画什么（有哪些实体、什么关系）</td><td>问句 + 画布是否有相关节点</td></tr><tr><td><strong>视图</strong></td><td>怎么排（关系 / 时序 / 层级 / 阶段交叉 / 分布）</td><td><strong>问句的形状</strong>，与来源无关</td></tr><tr><td><strong>视觉语言</strong></td><td>怎么看得清（主色 / 强调色 / 点缀色 / 容器 / 方向 / 对比度）</td><td>规范（本 §4.2），不由模型选</td></tr><tr><td><strong>呈现</strong></td><td>静态 SVG 还是可交互节点图</td><td>节点数 + 是否需要 overlay（§4.6）</td></tr></tbody></table>
+<p>⭐ <strong>关键</strong>：视觉语言是<strong>规范层，不是参数层</strong>。它绝不能变成第 16 个参数让模型去选——</p>
+<p>这正是 v1「不加参数」判据的延伸，也是「模型选不准」担忧的直接缓解。</p>
+<h4 id="图-1-四个正交维度">图 1 · 四个正交维度</h4>
+<p>*图 1 · 四个维度互不推导：换来源不换视图、换视图不换视觉语言、换视觉语言不换呈现。IR 是唯一真相源 ⇒ 任一维度的改动都收敛到一处。*</p>
+<div class="mermaid">flowchart TD
+  S[&quot;来源：knowledge / canvas / mixed&quot;] --&gt; IR[&quot;GraphIR：实体与关系&quot;]
+  Q[&quot;问句形状&quot;] --&gt; V[&quot;视图：布局算法&quot;]
+  IR --&gt; V
+  V --&gt; L[&quot;坐标&quot;]
+  L --&gt; VL[&quot;视觉语言：规范层&quot;]
+  IR --&gt; VL
+  VL --&gt; P1[&quot;呈现：静态图&quot;]
+  VL --&gt; P2[&quot;呈现：可交互节点图&quot;]
+  P2 --&gt; E[&quot;可选：嵌入画布成结构化节点组&quot;]
+  P1 --&gt; E</div>
+<h3 id="4-2-视觉语言规范-本版新增">4.2 视觉语言规范（本版新增）</h3>
+<p>见 图 3。这是用户 14:58 反馈的直接落地，四条硬判据：</p>
+<p><strong>（1）三层配色</strong>（PPT 式分工，各层职责不重叠）</p>
+<table><thead><tr><th>层</th><th>承载什么</th><th>落点</th><th>取色规则</th></tr></thead><tbody><tr><td>主色</td><td>「这是什么类别」</td><td>节点顶部 4px 色条 + 图例</td><td>浅色主题 500–600 档；深色主题 <strong>200 档</strong>（深底上可读性最高）</td></tr><tr><td>强调色</td><td>「这里需要你注意」</td><td>状态徽章（琥珀=超时/进行中，红=失败/阻塞）+ 选中描边</td><td>⛔ <strong>单图中强调色元素 ≤ 总数的 20%</strong> —— 超过等于没有强调</td></tr><tr><td>点缀色</td><td>「次要但要有位置」</td><td>图标井底色</td><td>主色的低透明度底，不得抢主色</td></tr></tbody></table>
+<p><strong>（2）容器与方向</strong></p>
+<ul><li>容器（分组 / 阶段）一律<strong>虚线框</strong>；⛔ 实线框会被误读成节点。</li><li>有向关系（<code>relation=dependency</code>）<strong>必须带箭头</strong>；无向（<code>relation=category</code>）<strong>不得带箭头</strong>。</li><li>判据：方向由 <code>view + relation</code> 决定，⛔ 禁止渲染层自行决定是否加箭头。</li></ul>
+<p><strong>（3）对比度（硬判据）</strong></p>
+<ul><li>节点底色必须与卡片底色<strong>不同色</strong>：浅色 <code>#ffffff</code> 节点 / 深色 <code>#2a2a33</code> 节点（比卡片亮一档）。</li><li>⛔ <strong>深色主题禁止纯白节点卡</strong> —— 纯白落在深底上形成刺眼白块，这是旧 SVG 卡片「字看不清」的根因。</li><li>正文对比度 ≥ 4.5:1（WCAG AA），节点标题字号 ≥ 12px。</li></ul>
+<p><strong>（4）文字提炼（内容规则，不是样式规则）</strong></p>
+<p>这是「字太多、文字溢出节点块」的<strong>真正解法</strong>：</p>
+<ul><li>判据：节点 <code>label</code> 必须能在 <strong>168px 宽 × 2 行</strong>内完整显示 ⇒ 由 <strong>IR 构建侧保证</strong>，不是渲染侧截断。</li><li>提炼规则：<code>label ≤ 12 个汉字或 24 个拉丁字符</code>（可断言的纯函数，见 §8）。</li><li>超出的部分进 <code>description</code>（hover / 详情 / 导出 HTML），⛔ 绝不进节点框。</li><li>⛔ 禁止「生成长文本 + CSS line-clamp」的组合（N8）。</li></ul>
+<h4 id="图-3-视觉语言对照稿">图 3 · 视觉语言对照稿</h4>
+<p>*图 3 · 同一份 IR、同一个 timeline 视图，只改视觉语言层。左侧是现状（节点融进卡片底色、无方向、文字溢出），右侧是本版目标。用于 §10 目视验收：上线后截图与右侧对照。*</p>
+<p><figure><img src="assets/graph-expression-engine-v2-3-visual-language.svg" alt="视觉语言对照稿：现状与目标"><figcaption>视觉语言对照稿：现状与目标</figcaption></figure></p>
+<h3 id="4-3-knowledge-来源-真正的阻塞">4.3 knowledge 来源：真正的阻塞</h3>
+<p>见 图 4。</p>
+<p><strong>事实核查</strong>（2026-10-08，核对 <code>render-canvas-view.ts</code>）：现有 15 个参数中，<strong>4 个直接按画布节点 id 索引</strong>，</p>
+<p>另有 <code>hops</code> 依赖 <code>focus</code>：</p>
+<pre><code class="lang-text">node_ids[]            &quot;Source node ids; omitted means all canvas nodes&quot;
+focus                 &quot;Must be an existing node id&quot;
+nodes[].node_id       &quot;Canvas node id this styling applies to&quot;
+annotations[].node_id &quot;Annotated node id&quot;
+overlay.data[].node_id  &quot;node_id omitted means positional against the canvas nodes&quot;
+hops                  依赖 focus，非直接索引</code></pre>
+<p>⚠️ 因此：<strong>只加 <code>source=knowledge</code> 而不给「实体声明通道」，等于让这 6 个参数在 knowledge 模式下全部失效。</strong></p>
+<p>这正是记忆里的铁律命中场景 ——「<strong>半个替代品 = 幻觉源</strong>」：模型会填 <code>source=knowledge</code> 却无处填实体，</p>
+<p>产出空图或假图，而没有任何东西会报错。</p>
+<h4 id="图-4-knowledge-的最小充分通道">图 4 · knowledge 的最小充分通道</h4>
+<p>*图 4 · knowledge 来源的最小充分集是三件事，缺一即不可上线。第三件（失效参数显式报错）是防止静默降级的关键。*</p>
+<div class="mermaid">flowchart TD
+  A[&quot;source=knowledge&quot;] --&gt; B{&quot;有实体声明通道？&quot;}
+  B --&gt;|&quot;否&quot;| X[&quot;半个替代品：模型无处填实体&quot;]
+  X --&gt; X2[&quot;产出空图或假图且不报错&quot;]
+  B --&gt;|&quot;是&quot;| C{&quot;有关系声明通道？&quot;}
+  C --&gt;|&quot;否&quot;| X
+  C --&gt;|&quot;是&quot;| D{&quot;按 id 索引的 6 个参数显式报错？&quot;}
+  D --&gt;|&quot;否&quot;| Y[&quot;静默忽略：模型以为填了&quot;]
+  D --&gt;|&quot;是&quot;| OK[&quot;空画布也能出图&quot;]</div>
+<p><strong>最小充分集</strong>（三件，缺一不可）：</p>
+<ol><li><code>nodes[]</code> 从「样式覆盖」扩展为「实体声明」：<code>node_id</code> 变<strong>可选</strong>；无 <code>node_id</code> 时 <code>label</code> <strong>必填</strong>（模型自造实体）。</li></ol>
+<p>   ⭐ 这样<strong>复用现有参数</strong>，不新增顶层参数。</p>
+<ol><li>新增 <strong><code>edges</code></strong> 参数 —— 本版唯一新增，理由：现有 15 个参数里<strong>没有任何</strong>关系声明通道，不可替代（§4.5）。</li><li>knowledge 模式下 <code>focus</code> / <code>hops</code> / <code>node_ids</code> / <code>annotations</code> / <code>overlay.data</code> <strong>必须显式报错</strong>，⛔ 不得静默忽略。</li></ol>
+<h3 id="4-4-参数门禁">4.4 参数门禁</h3>
+<p>沿用 v1 判据并提高门槛：<strong>新增任何参数前，必须证明它不可替代。</strong></p>
+<table><thead><tr><th>步骤</th><th>问题</th><th>本版结论</th></tr></thead><tbody><tr><td>1</td><td>能否用现有 15 个参数的组合表达？</td><td>能 ⇒ 不加</td></tr><tr><td>2</td><td>不能 ⇒ 能否<strong>扩展现有参数的取值域</strong>表达？</td><td>能 ⇒ 扩（如 <code>nodes[]</code> 扩为实体声明）</td></tr><tr><td>3</td><td>都不能 ⇒ 才允许新增顶层参数</td><td>本版仅 <code>edges</code> 一例</td></tr></tbody></table>
+<p>⭐ <strong>删除优先于新增</strong>：D1 已给出删除候选 <code>show_type</code>（生产使用 2 次）、<code>focus_anchor</code>（1 次）。</p>
+<p>删掉一个从没被用过的参数，比新增任何参数都更能改善模型选择准确性，且零成本。</p>
+<h3 id="4-5-呈现分工-沿用-v1-本版补一条">4.5 呈现分工（沿用 v1，本版补一条）</h3>
+<table><thead><tr><th>情况</th><th>选谁</th></tr></thead><tbody><tr><td>需要 overlay（情绪 / 预算 / 严重度）</td><td>静态图</td></tr><tr><td>节点数 &gt; 15</td><td>静态图</td></tr><tr><td>用户说「打开看看 / 点进去」</td><td>可交互节点图</td></tr><tr><td>默认</td><td>静态图</td></tr></tbody></table>
+<p>⭐ <strong>本版补充</strong>：无论选哪种呈现，都<strong>共用同一套视觉语言</strong>（§4.2）。</p>
+<p>⛔ 不允许静态图是一套配色、节点图是另一套——那正是历史上「两套逻辑必然漂移」的复发。</p>
+<hr>
+<h2 id="5-架构与契约">5. 架构与契约</h2>
+<p>见 图 2。</p>
+<h4 id="图-2-端到端数据流与三道质量关卡">图 2 · 端到端数据流与三道质量关卡</h4>
+<p>*图 2 · 从问句到呈现的八个阶段，其中三道质量关卡各自有可断言的纯函数（§8）。关卡的意义：质量问题是内容问题，必须在关卡内解决，不能推给渲染层。*</p>
+<div class="mermaid">flowchart LR
+  A[&quot;1 触发判定&quot;] --&gt; B[&quot;2 来源判定&quot;]
+  B --&gt; C[&quot;3 视图判定&quot;]
+  C --&gt; D[&quot;4 取数据&quot;]
+  D --&gt; E[&quot;5 构建 IR&quot;]
+  E --&gt; F[&quot;6 布局&quot;]
+  F --&gt; G[&quot;7 视觉语言&quot;]
+  G --&gt; H[&quot;8 呈现&quot;]
+  E -.-&gt;|&quot;关卡1：legacy 别名归一&quot;| K1[&quot;resolveView&quot;]
+  F -.-&gt;|&quot;关卡2：紧凑布局&quot;| K2[&quot;layoutCompact&quot;]
+  E -.-&gt;|&quot;关卡3：文字提炼&quot;| K3[&quot;condenseLabel&quot;]</div>
+<h3 id="5-1-GraphIR">5.1 GraphIR</h3>
+<p>在 v1 的 IR 上补三处（其余不变：<code>nodes</code> / <code>edges</code> / <code>view</code> / <code>title</code> / <code>overlays</code>）：</p>
+<pre><code class="lang-ts">interface GraphIRNode {
+  id: string;
+  type: &#x27;entity&#x27; | &#x27;step&#x27; | &#x27;group&#x27; | &#x27;milestone&#x27; | &#x27;category&#x27;;
+  /** ⭐ 提炼后的短标签，必须满足 168px × 2 行的预算（§4.2-4）。 */
+  label: string;
+  /** 完整文本。⛔ 不进节点框，只进 hover / 详情 / 导出。 */
+  description?: string;
+  /** 来源标识：canvas 有缩略图位，knowledge 没有。 */
+  sourceKind?: &#x27;canvas&#x27; | &#x27;knowledge&#x27; | &#x27;derived&#x27;;
+  /** knowledge 来源的语义标注（与 dim 互斥）。 */
+  concept?: { category?: string; definition?: string };
+  /** 语义标注（情绪强度 / 超时 / 严重度）→ 映射为强调色。 */
+  mark?: { kind: string; level: number; text?: string };
+  dim?: Record&lt;string, string&gt;;
+  canvasNodeId?: string;
+}
+
+interface GraphIREdge {
+  source: string;
+  target: string;
+  kind: &#x27;sequence&#x27; | &#x27;dependency&#x27; | &#x27;containment&#x27; | &#x27;flow&#x27;;
+  label?: string;
+}</code></pre>
+<p>⚠️ <strong>IR 仍然不含坐标</strong>（沿用 v1）：坐标是布局阶段的产物，换视图不动 IR。</p>
+<p>⭐ 本版新增的 <code>label</code> / <code>description</code> 分离，是「文字提炼」能成为<strong>可断言纯函数</strong>的前提。</p>
+<h3 id="5-2-布局层">5.2 布局层</h3>
+<p>五个视图算法（<code>buildLayoutSvg</code> / <code>buildTreeSvg</code> / <code>buildTimelineFlowSvg</code> / <code>buildSwimlaneSvg</code> / <code>buildMatrixSvg</code>）</p>
+<p>从「直接吐 SVG 字符串」改为「<strong>吐坐标</strong>」，渲染降级为纯消费。</p>
+<ul><li>⛔ legacy 别名 <code>topology</code> / <code>table</code> 在 <strong>IR 构建之前</strong>就归一（<code>resolveView</code>）⇒ IR 的 <code>view</code> 字段不含 legacy 值。</li><li>⭐ D1 数据：<code>topology</code> 32 次、<code>table</code> 40 次 ⇒ <strong>本轮不得废弃这两个别名</strong>。</li></ul>
+<h3 id="5-3-视觉语言层">5.3 视觉语言层</h3>
+<p>IR → 视觉角色的映射是<strong>纯函数</strong>（<code>visualRole</code>），不含样式字符串：</p>
+<table><thead><tr><th>IR 信号</th><th>视觉角色</th><th>落点</th></tr></thead><tbody><tr><td><code>node.type</code></td><td>主色</td><td>顶部 4px 色条 + 图例</td></tr><tr><td><code>node.mark.level</code> 超阈 / <code>severity=warn</code></td><td>强调色</td><td>状态徽章（≤ 总数 20%）</td></tr><tr><td>其他</td><td>点缀色</td><td>图标井底色</td></tr><tr><td><code>edge.kind=dependency</code></td><td>有向</td><td>带箭头</td></tr><tr><td><code>edge.kind=category</code></td><td>无向</td><td>不带箭头</td></tr><tr><td>分组 / 阶段容器</td><td>虚线框</td><td><code>stroke-dasharray</code></td></tr></tbody></table>
+<hr>
+<h2 id="6-交付物与顺序">6. 交付物与顺序</h2>
+<p>见 图 5。</p>
+<h4 id="图-5-交付顺序与硬依赖">图 5 · 交付顺序与硬依赖</h4>
+<p>*图 5 · 顺序即优先级，箭头是硬依赖。D2 未完成不得进 D3（IR 是地基）；D5 的前置是需求侧证据，而不是 D4 完成。*</p>
+<div class="mermaid">flowchart TD
+  D1[&quot;D1 可观测性：已完成 PR 285&quot;] --&gt; D2[&quot;D2 IR 抽取：纯重构&quot;]
+  D2 --&gt; D3[&quot;D3 表达质量：布局 / 提炼 / 视觉语言&quot;]
+  D3 --&gt; D4[&quot;D4 呈现分工 + 嵌入画布&quot;]
+  D3 --&gt; D5[&quot;D5 触发对齐 + knowledge 来源&quot;]
+  E[&quot;需求侧证据&quot;] -.-&gt;|&quot;前置&quot;| D5</div>
+<h3 id="D1-可观测性-已交付-PR-285">D1 可观测性 —— ✅ 已交付（PR #285）</h3>
+<p>产出：<code>pi_runtime_graph_*</code> 指标族 + 查询脚本 + 生产基线快照。</p>
+<p>本版全部数据来自它（见 §7）。</p>
+<h3 id="D2-IR-抽取-纯重构">D2 IR 抽取（纯重构）</h3>
+<ul><li>五个视图算法改吐坐标；legacy 别名在 IR 入口归一；</li><li><code>label</code> / <code>description</code> 分离；</li><li><strong>验收：对外输出逐字节不变</strong>（快照测试），否则不算纯重构。</li></ul>
+<h3 id="D3-表达质量-本版的核心">D3 表达质量（本版的核心）</h3>
+<table><thead><tr><th>编号</th><th>内容</th><th>对应判据</th></tr></thead><tbody><tr><td>D3-1</td><td>布局紧凑化 —— 坐标紧凑排布，消灭「vast 空里几个小点」</td><td>26 节点时包围盒面积显著小于透传</td></tr><tr><td>D3-2</td><td>文字提炼 —— <code>condenseLabel</code> 在构建侧保证预算</td><td>168px × 2 行内完整显示</td></tr><tr><td>D3-3</td><td>视觉语言规范落地 —— 三层配色 + 虚框 + 箭头 + 对比度</td><td>与 图 3 右侧一致</td></tr></tbody></table>
+<p>⭐ <strong>为什么 D3 排在触发之前</strong>：D1 数据显示用户口径触发率 <strong>36.4%（全量）/ 57.1%（近 30 天）</strong>，</p>
+<p>「模型不会用」不是主要矛盾；而用户亲自反馈的痛点是「表达力弱」。</p>
+<p>漏掉的 43%–64% 确实存在，但绝对量是<strong>每月 6–14 条</strong>量级 ⇒ 修触发规则的收益上限很小。</p>
+<h3 id="D4-呈现分工与嵌入">D4 呈现分工与嵌入</h3>
+<ul><li>按 §4.5 自动选呈现；两种呈现在同一套视觉语言之上；</li><li>嵌入画布 = IR → 结构化节点组（⛔ 不是位图）。</li></ul>
+<h3 id="D5-触发对齐与来源扩展">D5 触发对齐与来源扩展</h3>
+<ul><li>触发规则改为<strong>可判定信号</strong>（沿用 v1 §4.4）；</li><li><code>source=knowledge</code> / <code>mixed</code> 按 §4.3 的最小充分集落地；</li><li>⛔ <strong>前置条件：需求侧证据</strong>。D1 显示用户明确要图仅占轮次 <strong>1.2%（全量）/ 1.6%（近 30 天）</strong>，</li></ul>
+<p>  在这个基数上扩能力的收益未被证明 ⇒ 可后置，直到出现需求侧证据。</p>
+<hr>
+<h2 id="7-数据与状态变更">7. 数据与状态变更</h2>
+<p>本版全部决策数据的出处（<code>docs/ops/graph-observation-baseline-2026-10-08.md</code>，生产库全量 1806 轮 / 近 30 天 856 轮）：</p>
+<table><thead><tr><th>指标</th><th>全量</th><th>近 30 天</th></tr></thead><tbody><tr><td>轮次</td><td>1806</td><td>856</td></tr><tr><td>真调过 <code>render_canvas_view</code></td><td><strong>46（2.5%）</strong></td><td>—</td></tr><tr><td>用户明确要图的轮次</td><td>22（1.2%）</td><td>14（1.6%）</td></tr><tr><td>触发率（用户口径）</td><td><strong>36.4%</strong></td><td><strong>57.1%</strong></td></tr></tbody></table>
+<p><strong>本版新增测算</strong>（口径见 §10.3）：按「问句形状适合图形化」放宽（不要求用户说出「图」字），</p>
+<p>候选池 53 轮（2.9%），其中真画 13 轮 ⇒ <strong>24.5%</strong>。</p>
+<p>⇒ 即便放宽口径，适用场景仍在 <strong>3% 量级</strong>，这支撑了「质量优先于覆盖率」的排序。</p>
+<p>⚠️ <strong>头号发现（必须写进任何后续规则）</strong>：裸「图」在本产品线是<strong>反信号</strong> ——</p>
+<p>宽松词表 749 命中 / 19 真画（2.5%），严格词表 16 / 8（50%），差 20 倍。</p>
+<p>原因是本产品是<strong>生图平台</strong>，用户嘴里的「图」绝大多数指「生成一张图片」。</p>
+<p><strong>遗留问题的答案</strong>（v1 的 L1 / L6 / L7，本版不再列为待验证）：</p>
+<table><thead><tr><th>#</th><th>问题</th><th>答案</th></tr></thead><tbody><tr><td>L1</td><td>「该画没画」的发生率</td><td>用户口径下 43% 没画；绝对量每月 6–14 条</td></tr><tr><td>L6</td><td>哪些参数该删</td><td><code>show_type</code> 2 次、<code>focus_anchor</code> 1 次 ⇒ 删除候选</td></tr><tr><td>L7</td><td>legacy 别名是否还在用</td><td><code>topology</code> 32 次、<code>table</code> 40 次 ⇒ <strong>本轮不得废弃</strong></td></tr></tbody></table>
+<hr>
+<h2 id="8-纯函数与算法-含单测要求">8. 纯函数与算法（含单测要求）</h2>
+<table><thead><tr><th>函数</th><th>输入 → 输出</th><th>必须覆盖的用例</th></tr></thead><tbody><tr><td><code>resolveView(view)</code></td><td>legacy → 规范视图</td><td><code>topology</code> 与 <code>layout+dependency</code> 产出<strong>同一 IR</strong>（v1 Review Focus #4）</td></tr><tr><td><code>condenseLabel(label, budget)</code></td><td>长文本 → 短标签</td><td>中文 12 字边界、拉丁 24 字符边界、含标点、空串</td></tr><tr><td><code>layoutCompact(ir, view)</code></td><td>IR → 坐标</td><td>26 节点时包围盒面积显著小于透传；单节点不除零</td></tr><tr><td><code>visualRole(node)</code></td><td>IR 节点 → 视觉角色</td><td>强调色元素占比 <strong>≤ 20%</strong>；<code>mark</code> 缺失时回落点缀色</td></tr><tr><td><code>toCanvasNodeGroup(ir)</code></td><td>IR → 结构化节点组</td><td>产物含可编辑节点而非位图；标题含 <code>&lt;script&gt;</code> 被转义</td></tr></tbody></table>
+<p>⭐ <strong>项目硬纪律</strong>：每个纯函数至少做<strong>一次变异验证</strong>（人为改坏实现，确认对应用例转红），</p>
+<p>并在提交信息里写明「改了什么 → 哪条变红 → 还原后复绿」。本条与 D1 的六处接线变异一致。</p>
+<hr>
+<h2 id="9-文件级改动清单-预期-实施阶段以计划为准">9. 文件级改动清单（预期，实施阶段以计划为准）</h2>
+<table><thead><tr><th>文件</th><th>改动</th><th>阶段</th></tr></thead><tbody><tr><td><code>services/pi-runtime/src/graph/graph-ir.ts</code>（新增）</td><td>IR 类型 + <code>resolveView</code> + <code>condenseLabel</code></td><td>D2</td></tr><tr><td><code>services/pi-runtime/src/graph/layout/*.ts</code>（新增）</td><td>五视图「IR → 坐标」+ <code>layoutCompact</code></td><td>D2 / D3</td></tr><tr><td><code>services/pi-runtime/src/tools/render-canvas-view.views.ts</code></td><td>5 个 <code>build*Svg</code> 改为算坐标</td><td>D2</td></tr><tr><td><code>services/pi-runtime/src/tools/render-canvas-view.ts</code></td><td><code>nodes[]</code> 扩为实体声明；新增 <code>edges</code>；knowledge 模式显式报错</td><td>D5</td></tr><tr><td><code>apps/web/src/components/agent/presentation/AgentNodeGraph.vue</code></td><td>消费 IR + 视觉语言角色</td><td>D3 / D4</td></tr><tr><td><code>apps/web/src/styles/neowow-tokens.css</code></td><td>视觉语言变量（承接 #282）</td><td>D3</td></tr><tr><td><code>prompt-registry/</code> 触发规则</td><td>可判定信号（承接 D1「裸图是反信号」）</td><td>D5</td></tr></tbody></table>
+<hr>
+<h2 id="10-测试策略与验收标准">10. 测试策略与验收标准</h2>
+<h3 id="10-1-目视验收-G1-的判据">10.1 目视验收（G1 的判据）</h3>
+<p>上线后在<strong>深浅两种主题</strong>下各截一张，与 图 3 右侧对照：三层配色分明、容器是虚框、</p>
+<p>有向边有箭头、节点文字无溢出、节点与卡片底色可区分。</p>
+<h3 id="10-2-断言验收">10.2 断言验收</h3>
+<ul><li>D2：五视图渲染快照<strong>逐字节不变</strong>（纯重构判据）；</li><li>D3：<code>condenseLabel</code> 与 <code>visualRole</code> 单测 + 变异验证；</li><li>D4：嵌入产物含可编辑节点、XSS 转义（<code>&amp;</code> 必须第一个处理，否则 <code>&amp;lt;</code> 被二次转义）；</li><li>D5：<strong>空画布 + <code>source=knowledge</code> + 模型自供实体 ⇒ 必须出图</strong>（G2 硬判据）。</li></ul>
+<h3 id="10-3-观测闭环">10.3 观测闭环</h3>
+<p>见 图 6。D1 已交付指标，后续每项改动都与其对比，<strong>不用感觉验收</strong>。</p>
+<h4 id="图-6-观测闭环">图 6 · 观测闭环</h4>
+<p>*图 6 · 上线后按周取数，与基线对比；任一指标反向变化即触发复查，而不是等用户反馈。*</p>
+<div class="mermaid">flowchart LR
+  A[&quot;生产指标 pi_runtime_graph_*&quot;] --&gt; B[&quot;每周取数&quot;]
+  B --&gt; C{&quot;与基线对比&quot;}
+  C --&gt;|&quot;触发率上升&quot;| D[&quot;记录有效&quot;]
+  C --&gt;|&quot;触发率下降&quot;| E[&quot;复查规则改动&quot;]
+  C --&gt;|&quot;漏画仍高&quot;| F[&quot;判断是规则还是需求&quot;]
+  D --&gt; G[&quot;进入下一阶段&quot;]
+  E --&gt; G
+  F --&gt; G</div>
+<p><strong>本版新增测算的口径声明</strong>：§7 的「问句形状池」用关键词近似（关系 / 结构 / 流程 / 顺序 / 阶段 / 对比 / 分布 / 依赖 …），</p>
+<p>并排除了命中生图词的轮次。它<strong>会漏掉</strong>「这几镜之间什么关系」这类无关键词的诉求 ⇒ 只能作为上界参考，</p>
+<p>真值以 runtime 上线后的 <code>pi_runtime_graph_*</code> 指标为准。</p>
+<hr>
+<h2 id="11-风险">11. 风险</h2>
+<table><thead><tr><th>风险</th><th>影响</th><th>缓解</th></tr></thead><tbody><tr><td>需求基数仅 1.2%，D5 可能白做</td><td>投入产出比低</td><td>D5 的前置是需求侧证据（图 5），不是 D4 完成</td></tr><tr><td>D2 纯重构破坏现有行为</td><td>用户可见回归</td><td>验收判据是「对外输出逐字节不变」+ 快照测试</td></tr><tr><td>视觉语言是主观的</td><td>评审反复</td><td>图 3 作目视基准；深浅两主题各一版；不在评审里用形容词争论</td></tr><tr><td>knowledge 模式的失效参数被静默忽略</td><td>模型产出假图且无报错</td><td>§4.3 第三件：必须显式报错 + 单测锁住</td></tr><tr><td>缩略图取图链路未通</td><td>视觉资产画布上只有类型图标</td><td>N7：本规格只声明依赖，不解决</td></tr><tr><td>文字提炼压掉关键信息</td><td>图变清楚了但没信息</td><td><code>description</code> 保留全文，hover / 详情 / 导出可见</td></tr></tbody></table>
+<hr>
+<h2 id="12-后续包-路线图">12. 后续包 / 路线图</h2>
+<table><thead><tr><th>项</th><th>何时</th></tr></thead><tbody><tr><td>缩略图取图链路（带鉴权）</td><td>D4 之后单独一包</td></tr><tr><td>删除 <code>show_type</code> / <code>focus_anchor</code>（L6 候选）</td><td>D2 完成后，与 IR 一起做</td></tr><tr><td><code>source=knowledge</code> 的需求侧取证</td><td>D5 的前置</td></tr><tr><td>SVG 静态图路径的存废</td><td>D4 上线后用呈现分布数据决定，不在本规格下结论</td></tr><tr><td>导出独立 HTML（快照分享）</td><td>依赖取图链路</td></tr></tbody></table>
+<hr>
+<h2 id="13-配图规范自检">13. 配图规范自检</h2>
+<pre><code class="lang-bash">pnpm verify-spec-figures --file docs/superpowers/specs/2026-10-08-graph-expression-engine-design-v2.md</code></pre>
+<p>结果：见本包提交信息（要求 0 错误；R4 / R8 为警告级，需确认无遗漏引用）。</p>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:'default'});</script>
+</body></html>
