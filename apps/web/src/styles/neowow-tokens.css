@@ -27,6 +27,14 @@
      这正是旧SVG 卡片在深色主题下"字看不清 / 刺眼"的根因。 */
   --neo-graph-card-bg: #1e1e24;
   --neo-graph-card-border: rgba(255, 255, 255, 0.09);
+  /* 节点：深底上取**比卡片亮一档**的深灰 + 强描边（用户实测"节点看不清"）。
+     ⚠️ 不是纯白——纯白块在深色下刺眼；也不是与卡片同色——那就没有边界。 */
+  --neo-graph-node-bg: #2a2a33;
+  --neo-graph-node-border: #55555f;
+  --neo-graph-group-border: #6f6f7a;
+  --neo-graph-group-bg: rgba(255, 255, 255, 0.03);
+  --neo-graph-icon-well: rgba(255, 255, 255, 0.07);
+  --neo-graph-edge: #9d9dab;
   --neo-surface-card: #1a1a21;
   --neo-surface-elevated: #232330;
   --neo-border: rgba(255, 255, 255, 0.08);
@@ -137,6 +145,12 @@
   /* 浅色主题：纯白卡片落在偏冷灰的气泡背景上 ⇒ 差一档即可，不抢眼。 */
   --neo-graph-card-bg: #ffffff;
   --neo-graph-card-border: rgba(23, 25, 35, 0.1);
+  --neo-graph-node-bg: #fbfbfa;
+  --neo-graph-node-border: #b4b2a9;
+  --neo-graph-group-border: #888780;
+  --neo-graph-group-bg: rgba(0, 0, 0, 0.02);
+  --neo-graph-icon-well: rgba(0, 0, 0, 0.05);
+  --neo-graph-edge: #5f5e5a;
   --neo-surface-card: #ffffff;
   --neo-surface-elevated: #ffffff;
   --neo-border: rgba(23, 25, 35, 0.1);
