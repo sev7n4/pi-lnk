@@ -115,6 +115,7 @@ describe('StudioService BYOK fallback_pending', () => {
               updateMany: generationUpdateMany,
               findFirst: generationFindFirst,
               findMany: vi.fn(async () => []),
+              delete: vi.fn(async () => ({})),
             },
           },
         },
@@ -675,7 +676,8 @@ describe('StudioService BYOK fallback_pending', () => {
       '文本生成-取消退款',
       expect.objectContaining({ kind: 'refund', category: 'text', status: 'cancelled_refund' }),
     )
-    expect(generationCreate).not.toHaveBeenCalled()
+    // P0-C record-first：cancel 场景先建 generating 占位，cancel 后 delete 占位（不留孤儿）
+    expect(generationCreate).toHaveBeenCalledTimes(1)
   })
 
   it('image fast path: provider finishes within grace window → returns completed with urls', async () => {

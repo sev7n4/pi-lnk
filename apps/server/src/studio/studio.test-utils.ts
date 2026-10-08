@@ -52,6 +52,7 @@ export function createPrismaMock() {
         ...args.data,
       }),
       update: async () => ({}),
+      delete: async () => ({}),
       findFirst: async () => null,
       findMany: async () => [],
     },
