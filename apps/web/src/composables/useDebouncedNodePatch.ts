@@ -3,6 +3,11 @@ import { onUnmounted } from 'vue'
 export type DebouncedNodePatchOptions = {
   /** Called when a debounced patch settles (or flush), before persist — e.g. undo history commit. */
   onHistoryCommit?: () => void
+  /**
+   * 诊断 A2：防抖路径的 `persist()` 失败原先是 unhandled rejection——
+   * 改动静默丢失、用户零感知。注册本钩子做可感知提示（如 toast）。
+   */
+  onPersistError?: (err: unknown) => void
 }
 
 export function useDebouncedNodePatch(
@@ -23,7 +28,7 @@ export function useDebouncedNodePatch(
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => {
       timer = undefined
-      void settle()
+      settle().catch((err) => options?.onPersistError?.(err))
     }, delayMs)
   }
 
