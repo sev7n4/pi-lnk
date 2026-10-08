@@ -13,6 +13,7 @@ describe('AgentMemoryService', () => {
   const findUnique = vi.fn()
   const count = vi.fn()
   const deleteMany = vi.fn()
+  const update = vi.fn()
   /** findMany 桩的假库：mock 按 where 真过滤（作用域过滤下沉到 SQL，桩必须忠实执行）。 */
   let db: {
     id: string
@@ -52,7 +53,7 @@ describe('AgentMemoryService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentMemoryService,
-        { provide: PrismaService, useValue: { agentMemory: { create, findMany, findUnique, count, deleteMany } } },
+        { provide: PrismaService, useValue: { agentMemory: { create, findMany, findUnique, count, deleteMany, update } } },
       ],
     }).compile()
     count.mockResolvedValue(0)
@@ -597,5 +598,120 @@ describe('AgentMemoryService', () => {
         if (prev !== undefined) process.env.PI_RUNTIME_URL = prev
       }
     })
+  // ── Phase 2（B 策展蒸馏 / C 写入去重，spec 2026-10-08-pilnk-memory-product-adoption-scope.md）──
+  describe('Phase2 B 策展蒸馏 / C 写入去重', () => {
+    let seq: number
+    beforeEach(() => {
+      seq = 0
+      // 真实内存 store：create 落库（自增 id + 记录 source）、update 改内容、findMany/count 忠实过滤
+      create.mockImplementation(async ({ data }: any) => {
+        const row: any = {
+          id: 'gen' + (++seq),
+          userId: data.userId,
+          scope: data.scope ?? 'user',
+          sessionId: data.sessionId ?? null,
+          content: data.content,
+          source: data.source ?? 'agent_auto',
+          createdAt: new Date(),
+        }
+        db.push(row)
+        return row
+      })
+      update.mockImplementation(async ({ where, data }: any) => {
+        const row = db.find((r) => r.id === where.id)
+        if (row && data?.content !== undefined) row.content = data.content
+        return row
+      })
+      findMany.mockImplementation(async (args: any) => {
+        const w = args?.where ?? {}
+        return db
+          .filter((r: any) => (w.userId === undefined || r.userId === w.userId)
+            && (w.scope === undefined || r.scope === w.scope)
+            && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId)
+            && (w.source === undefined || (w.source?.not !== undefined ? r.source !== w.source.not : r.source === w.source)))
+          .sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())
+          .slice(0, args?.take ?? db.length)
+          .map((r: any) => ({ ...r }))
+      })
+      count.mockImplementation(async (args: any) => {
+        const w = args?.where ?? {}
+        return db.filter((r: any) => (w.userId === undefined || r.userId === w.userId)
+          && (w.scope === undefined || r.scope === w.scope)
+          && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId)
+          && (w.source === undefined || (w.source?.not !== undefined ? r.source !== w.source.not : r.source === w.source))).length
+      })
+      deleteMany.mockResolvedValue({ count: 0 })
+    })
+
+    it('C：13 条同画布字面重复 → 落库 1 行（G3，不出现 13 行重复）', async () => {
+      for (let i = 0; i < 13; i++) {
+        await svc.saveMemory({ userId: 'u1', content: '用户喜欢小熊', sessionId: 'S1' })
+      }
+      expect(create.mock.calls.length).toBe(1)
+      expect(update.mock.calls.length).toBe(12)
+    })
+
+    it('C：不同原文但同归一化 ⇒ 更新不新增（内容被覆盖）', async () => {
+      await svc.saveMemory({ userId: 'u1', content: '我喜欢小熊。', sessionId: 'S1' })
+      await svc.saveMemory({ userId: 'u1', content: '我喜欢小熊', sessionId: 'S1' })
+      expect(create.mock.calls.length).toBe(1)
+      expect(update.mock.calls.length).toBe(1)
+      const row = db.find((r) => r.userId === 'u1' && r.scope === 'canvas')
+      expect(row?.content).toBe('我喜欢小熊')
+    })
+
+    it('C：不同归一化内容不误并（保守，宁漏勿错）', async () => {
+      await svc.saveMemory({ userId: 'u1', content: '用户喜欢小熊', sessionId: 'S1' })
+      await svc.saveMemory({ userId: 'u1', content: '用户讨厌小猫', sessionId: 'S1' })
+      expect(create.mock.calls.length).toBe(2)
+      expect(update.mock.calls.length).toBe(0)
+    })
+
+    it('B：30 条同会话原始 → 策展 1 条 curated，原始 30 仍在库（可回溯，G2）', async () => {
+      for (let i = 0; i < 30; i++) {
+        await svc.saveMemory({ userId: 'u1', content: `小熊第${i}次出现`, sessionId: 'S1' })
+      }
+      const res = await svc.consolidateMemory({ userId: 'u1', scope: 'canvas' })
+      expect(res.created).toBe(1)
+      const all = db.filter((r) => r.userId === 'u1')
+      const curated = all.filter((r) => r.source === 'curated')
+      expect(curated.length).toBe(1)
+      expect(all.length).toBe(31) // 原始 30 + 策展 1，原始不删
+      expect(curated[0].content).toContain('策展自 30 条原始记忆')
+    })
+
+    it('B：召回优先返回策展摘要、排除已被策展的原始行（G2）', async () => {
+      for (let i = 0; i < 30; i++) {
+        await svc.saveMemory({ userId: 'u1', content: `小熊第${i}次出现`, sessionId: 'S1' })
+      }
+      await svc.consolidateMemory({ userId: 'u1', scope: 'canvas' })
+      const r = await svc.searchMemory({ userId: 'u1', sessionId: 'S1', limit: 50 })
+      expect(r.truncated).toBe(false)
+      expect(r.items.length).toBe(1) // 30 原始被排除，仅 1 条策展摘要
+      expect(r.items[0].content).not.toContain('策展自') // 溯源标记对模型透明（已剥离）
+      expect(r.items[0].content).toContain('小熊第29次出现') // 摘要来自原始原文
+    })
+
+    it('B：策展幂等（二次调用不重复策展已引用的原始）', async () => {
+      for (let i = 0; i < 30; i++) {
+        await svc.saveMemory({ userId: 'u1', content: `小熊第${i}次出现`, sessionId: 'S1' })
+      }
+      const first = await svc.consolidateMemory({ userId: 'u1', scope: 'canvas' })
+      const second = await svc.consolidateMemory({ userId: 'u1', scope: 'canvas' })
+      expect(first.created).toBe(1)
+      expect(second.created).toBe(0)
+      expect(db.filter((r) => r.userId === 'u1' && r.source === 'curated').length).toBe(1)
+    })
+
+    it('B：user scope 不策展（保守，避免误并偏好）', async () => {
+      for (let i = 0; i < 5; i++) {
+        await svc.saveMemory({ userId: 'u1', content: `偏好${i}`, scope: 'user' })
+      }
+      const res = await svc.consolidateMemory({ userId: 'u1', scope: 'user' })
+      expect(res.created).toBe(0)
+      expect(db.filter((r) => r.userId === 'u1' && r.source === 'curated').length).toBe(0)
+    })
+  })
+
   })
 })
