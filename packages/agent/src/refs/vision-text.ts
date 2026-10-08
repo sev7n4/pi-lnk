@@ -16,31 +16,6 @@ export interface VisionTextOptions {
   model?: string
 }
 
-function buildPlaceholder(prompt: string, imageCount: number): string {
-  return `【电商视觉方案草案】
-
-参考图：${imageCount} 张
-
-基于「${prompt}」：
-
-### 商品理解
-…（品类、核心卖点、目标人群）
-
-### 主图方案
-…（构图、背景、主文案）
-
-### 详情图方案
-…（卖点分层、信息架构）
-
-### 细节图方案
-…（材质/工艺/特写角度）
-
-### 模特图方案
-…（场景、姿态、穿搭展示）
-
-（配置 OPENAI_API_KEY 后可获得真实视觉模型输出）`
-}
-
 export async function generateTextWithImages(
   prompt: string,
   imageUrls: string[],
@@ -55,7 +30,7 @@ export async function generateTextWithImages(
 
   const key = opts.apiKey ?? process.env.OPENAI_API_KEY
   if (!key) {
-    return { text: buildPlaceholder(userText, urls.length) }
+    throw new Error('vision text credentials missing: set OPENAI_API_KEY or provide a BYOK key')
   }
 
   const baseUrl = (opts.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '')

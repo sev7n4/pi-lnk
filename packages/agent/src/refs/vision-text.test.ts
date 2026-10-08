@@ -10,18 +10,20 @@ describe('generateTextWithImages without key', () => {
     delete process.env.OPENAI_API_KEY
   })
 
-  it('returns structured ecommerce placeholder, not empty', async () => {
-    const { text } = await generateTextWithImages('春季连衣裙', ['https://example.com/dress.jpg'])
-    expect(text).toContain('【电商视觉方案草案】')
-    expect(text).toContain('春季连衣裙')
-    expect(text).toContain('### 主图方案')
-    expect(text).toContain('### 模特图方案')
-    expect(text.length).toBeGreaterThan(100)
+  it('throws instead of returning a placeholder', async () => {
+    await expect(
+      generateTextWithImages('春季连衣裙', ['https://example.com/dress.jpg']),
+    ).rejects.toThrow(/credentials missing/)
   })
 
-  it('uses default prompt when user prompt is empty', async () => {
-    const { text } = await generateTextWithImages('', ['https://example.com/a.jpg'])
-    expect(text).toContain(DEFAULT_VISION_USER_PROMPT)
+  it('never returns placeholder draft content', async () => {
+    await expect(
+      generateTextWithImages('', ['https://example.com/a.jpg']),
+    ).rejects.toThrow()
+    // 断言：不可能出现占位文案
+    await expect(
+      generateTextWithImages('x', ['https://example.com/a.jpg']).catch((e: Error) => e.message),
+    ).resolves.not.toContain('草案')
   })
 })
 
@@ -54,6 +56,23 @@ describe('generateTextWithImages with key', () => {
     expect(userContent[0]).toEqual({ type: 'text', text: '衣服图' })
     expect(userContent[1]).toEqual({ type: 'image_url', image_url: { url: urls[0] } })
     expect(userContent[2]).toEqual({ type: 'image_url', image_url: { url: urls[1] } })
+  })
+
+  it('falls back to DEFAULT_VISION_USER_PROMPT when user prompt is blank', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'vision result' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateTextWithImages('   ', ['https://example.com/a.jpg'], { apiKey: 'test-key' })
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(init.body as string) as {
+      messages: Array<{ role: string; content: unknown }>
+    }
+    const userContent = body.messages[1].content as Array<{ type: string; text?: string }>
+    expect(userContent[0]).toEqual({ type: 'text', text: DEFAULT_VISION_USER_PROMPT })
   })
 
   it('throws when API returns !ok', async () => {
