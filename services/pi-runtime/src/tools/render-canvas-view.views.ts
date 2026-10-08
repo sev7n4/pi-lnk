@@ -15,6 +15,7 @@ import { graphIRFromGv } from "../graph/graph-ir.js";
 import { layoutLayout } from "../graph/layout/layout.js";
 import { layoutTimelineFlow } from "../graph/layout/timeline.js";
 import { LANE_LABEL_W, STAGE_COUNT, layoutSwimlane } from "../graph/layout/swimlane.js";
+import { layoutMatrix } from "../graph/layout/matrix.js";
 import { layoutTree } from "../graph/layout/tree.js";
 import { LABEL_W, PLOT_W, PLOT_X, ROW_H, W, edgePath } from "../graph/layout/types.js";
 import {
@@ -588,45 +589,42 @@ export function buildMatrixSvg(
 	rowBy: "type" | "status" | "parentNode",
 	colBy: "type" | "status" | "parentNode",
 ): string {
-	const nodes = nodesIn;
-	const keyOf = (n: GvNode, by: typeof rowBy) => String(n[by] ?? "未分类");
-	const rows: string[] = [];
-	const cols: string[] = [];
-	for (const n of nodes) {
-		const r = keyOf(n, rowBy);
-		if (!rows.includes(r)) rows.push(r);
-		const c = keyOf(n, colBy);
-		if (!cols.includes(c)) cols.push(c);
-	}
-	const cw = Math.floor((W - 150) / Math.max(1, cols.length));
-	const ch = 30;
-	const H = 50 + rows.length * ch + 30;
+	// ⭐ 行列、列宽、格子坐标、图例位置全部来自 `graph/layout/matrix.ts`。
+	const laid = layoutMatrix(
+		graphIRFromGv({ view: "matrix", relation: "category", nodes: nodesIn, edges: [] }),
+		rowBy,
+		colBy,
+	);
+	const m = laid.matrix;
+	const H = laid.height;
 	const parts: string[] = [svgOpen(H)];
 	// 列头
-	cols.forEach((c, ci) => {
+	m.cols.forEach((c, ci) => {
 		parts.push(`<g data-col="${esc(c)}">`);
 		parts.push(
-			`<text x="${150 + ci * cw + cw / 2}" y="30" class="gv-s" text-anchor="middle" dominant-baseline="central">${esc(clip(c, Math.max(3, Math.floor(cw / 12))))}</text>`,
+			`<text x="${m.labelW + ci * m.cw + m.cw / 2}" y="${m.colLabelY}" class="gv-s" text-anchor="middle" dominant-baseline="central">${esc(clip(c, Math.max(3, Math.floor(m.cw / 12))))}</text>`,
 		);
 		parts.push("</g>");
 	});
-	// 行 + 交叉格
-	rows.forEach((r, ri) => {
-		const y = 44 + ri * ch;
+	// 行 + 交叉格：**逐行交错**输出（行标签紧跟本行的格子）。
+	// ⭐ 不能拆成「所有行标签」+「所有格子」两段 —— 那会改变 SVG 里元素的先后顺序，
+	//   视觉上等价但**字节不同** ⇒ D2 的验收判据是逐字节不变。
+	for (const r of m.rows) {
 		parts.push(`<g data-row="${esc(r)}">`);
-		parts.push(`<text x="8" y="${y + ch / 2}" class="gv-t" dominant-baseline="central">${esc(clip(r, 11))}</text>`);
+		parts.push(
+			`<text x="8" y="${m.firstRowY + m.rows.indexOf(r) * m.ch + m.ch / 2}" class="gv-t" dominant-baseline="central">${esc(clip(r, 11))}</text>`,
+		);
 		parts.push("</g>");
-		cols.forEach((c, ci) => {
-			const count = nodes.filter((n) => keyOf(n, rowBy) === r && keyOf(n, colBy) === c).length;
+		for (const cell of m.cells.filter((c) => c.row === r)) {
 			// ⭐ 0 也画出来：空交叉本身是信息（这一类没有该状态的东西）
-			const x = 150 + ci * cw;
+			const on = cell.count > 0;
 			parts.push(
-				`<g data-cell="${esc(r)}|${esc(c)}"><rect x="${x + 2}" y="${y + 2}" width="${cw - 4}" height="${ch - 4}" rx="4" fill="${count > 0 ? "#EEEDFE" : "#FAFBFC"}" stroke="${count > 0 ? "#7F77DD" : "#E6E8EB"}" stroke-width="0.5"/>` +
-					`<text x="${x + cw / 2}" y="${y + ch / 2}" class="${count > 0 ? "gv-t" : "gv-s"}" text-anchor="middle" dominant-baseline="central">${count}</text></g>`,
+				`<g data-cell="${esc(cell.row)}|${esc(cell.col)}"><rect x="${cell.x + 2}" y="${cell.y + 2}" width="${cell.w}" height="${cell.h}" rx="4" fill="${on ? "#EEEDFE" : "#FAFBFC"}" stroke="${on ? "#7F77DD" : "#E6E8EB"}" stroke-width="0.5"/>` +
+					`<text x="${cell.x + m.cw / 2}" y="${cell.y + m.ch / 2}" class="${on ? "gv-t" : "gv-s"}" text-anchor="middle" dominant-baseline="central">${cell.count}</text></g>`,
 			);
-		});
-	});
-	parts.push(legendSvg([{ label: "非空格 = 有内容", palette: NODE_PALETTE.prompt }], 8, H - 26));
+		}
+	}
+	parts.push(legendSvg([{ label: "非空格 = 有内容", palette: NODE_PALETTE.prompt }], 8, m.legendY));
 	// ⭐⭐ **header 必须在这里拼，不能在渲染开头。**
 	// 配色 class 走 `colorClass()`，它在**渲染每个节点时**才把「颜色⇒短类名」登记进
 	// 模块级 `CSS_CLASSES`；而 `svgHeader()` 内的 `buildCssRules()` 只读那个 Map。
