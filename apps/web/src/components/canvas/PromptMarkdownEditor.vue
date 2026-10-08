@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, onBeforeUnmount, shallowRef } from 'vue'
+import { watch, onMounted, onBeforeUnmount, shallowRef } from 'vue'
 import { EditorContent, Editor } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -13,7 +13,7 @@ import type { MarkdownStorage } from 'tiptap-markdown'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import './PromptMarkdownEditor.css'
 
-const props = defineProps<{ visible: boolean; modelValue: string }>()
+const props = defineProps<{ visible: boolean; modelValue: string; title?: string }>()
 const emit = defineEmits<{
   'update:visible': [boolean]
   'update:modelValue': [string]
@@ -76,6 +76,20 @@ watch(
   },
 )
 
+/**
+ * 沉浸层内 Esc 只关编辑器，且必须阻止冒泡：
+ * 画布 dock 也监听 window keydown 的 Esc（DockStudioToolbar.handleDockEscape），
+ * 不 stopPropagation 会「关编辑器的同时把 dock 一起收掉」。
+ * 用 capture 阶段抢在 dock 之前处理。
+ */
+function onKeydown(event: KeyboardEvent) {
+  if (!props.visible) return
+  if (event.key !== 'Escape') return
+  event.stopPropagation()
+  event.preventDefault()
+  close()
+}
+
 function close() {
   speech.stop()
   emit('update:visible', false)
@@ -101,7 +115,10 @@ function isActive(name: string, attrs?: Record<string, unknown>) {
   return editor.value?.isActive(name, attrs) ?? false
 }
 
+onMounted(() => window.addEventListener('keydown', onKeydown, true))
+
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown, true)
   speech.stop()
   if (saveTimer) clearTimeout(saveTimer)
   editor.value?.destroy()
@@ -111,93 +128,119 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="prompt-md-overlay" @click.self="close">
-      <div class="prompt-md-modal" @click.stop>
-        <div class="prompt-md-toolbar">
-          <div class="prompt-md-format-group">
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              :class="{ 'is-active': isActive('heading', { level: 1 }) }"
-              title="标题 1"
-              @click="editor?.chain().focus().toggleHeading({ level: 1 }).run()"
-            >
-              H1
+    <Transition name="prompt-md-fade">
+      <div
+        v-if="visible"
+        class="prompt-md-overlay"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="title || '编辑内容'"
+      >
+        <div class="prompt-md-shell">
+          <header class="prompt-md-topbar">
+            <button type="button" class="prompt-md-back" title="返回画布 (Esc)" @click="close">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+              <span>返回</span>
             </button>
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              :class="{ 'is-active': isActive('heading', { level: 2 }) }"
-              title="标题 2"
-              @click="editor?.chain().focus().toggleHeading({ level: 2 }).run()"
-            >
-              H2
-            </button>
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              :class="{ 'is-active': isActive('heading', { level: 3 }) }"
-              title="标题 3"
-              @click="editor?.chain().focus().toggleHeading({ level: 3 }).run()"
-            >
-              H3
-            </button>
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              :class="{ 'is-active': isActive('bold') }"
-              title="粗体"
-              @click="editor?.chain().focus().toggleBold().run()"
-            >
-              B
-            </button>
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              :class="{ 'is-active': isActive('italic') }"
-              title="斜体"
-              @click="editor?.chain().focus().toggleItalic().run()"
-            >
-              I
-            </button>
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              :class="{ 'is-active': isActive('bulletList') }"
-              title="无序列表"
-              @click="editor?.chain().focus().toggleBulletList().run()"
-            >
-              •
-            </button>
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              title="分隔线"
-              @click="editor?.chain().focus().setHorizontalRule().run()"
-            >
-              —
-            </button>
+
+            <div class="prompt-md-heading">
+              <span class="prompt-md-title">{{ title || '编辑内容' }}</span>
+            </div>
+
+            <div class="prompt-md-actions">
+              <button type="button" class="btn-primary text-xs" @click="copyAll">复制</button>
+              <button type="button" class="prompt-md-btn-secondary" @click="close">关闭</button>
+            </div>
+          </header>
+
+          <div class="prompt-md-scroll">
+            <div class="prompt-md-column">
+              <EditorContent :editor="editor" class="prompt-md-editor" />
+            </div>
           </div>
 
-          <div class="prompt-md-spacer" />
+          <div class="prompt-md-capsule">
+            <div class="prompt-md-format-group">
+              <button
+                type="button"
+                class="prompt-md-format-btn"
+                :class="{ 'is-active': isActive('heading', { level: 1 }) }"
+                title="标题 1"
+                @click="editor?.chain().focus().toggleHeading({ level: 1 }).run()"
+              >
+                H1
+              </button>
+              <button
+                type="button"
+                class="prompt-md-format-btn"
+                :class="{ 'is-active': isActive('heading', { level: 2 }) }"
+                title="标题 2"
+                @click="editor?.chain().focus().toggleHeading({ level: 2 }).run()"
+              >
+                H2
+              </button>
+              <button
+                type="button"
+                class="prompt-md-format-btn"
+                :class="{ 'is-active': isActive('heading', { level: 3 }) }"
+                title="标题 3"
+                @click="editor?.chain().focus().toggleHeading({ level: 3 }).run()"
+              >
+                H3
+              </button>
+              <button
+                type="button"
+                class="prompt-md-format-btn"
+                :class="{ 'is-active': isActive('bold') }"
+                title="粗体"
+                @click="editor?.chain().focus().toggleBold().run()"
+              >
+                B
+              </button>
+              <button
+                type="button"
+                class="prompt-md-format-btn"
+                :class="{ 'is-active': isActive('italic') }"
+                title="斜体"
+                @click="editor?.chain().focus().toggleItalic().run()"
+              >
+                I
+              </button>
+              <button
+                type="button"
+                class="prompt-md-format-btn"
+                :class="{ 'is-active': isActive('bulletList') }"
+                title="无序列表"
+                @click="editor?.chain().focus().toggleBulletList().run()"
+              >
+                •
+              </button>
+              <button
+                type="button"
+                class="prompt-md-format-btn"
+                title="分隔线"
+                @click="editor?.chain().focus().setHorizontalRule().run()"
+              >
+                —
+              </button>
+            </div>
 
-          <div class="prompt-md-actions">
+            <span class="prompt-md-capsule-divider" aria-hidden="true" />
+
             <button
               type="button"
-              class="dock-icon-btn"
+              class="prompt-md-format-btn"
               title="语音输入"
               :class="speech.listening.value ? 'animate-pulse text-red-400' : ''"
               @click="toggleVoice"
             >
               🎤
             </button>
-            <button type="button" class="btn-primary text-xs" @click="copyAll">复制</button>
-            <button type="button" class="prompt-md-btn-secondary" @click="close">关闭</button>
           </div>
         </div>
-
-        <EditorContent :editor="editor" class="prompt-md-editor" />
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>

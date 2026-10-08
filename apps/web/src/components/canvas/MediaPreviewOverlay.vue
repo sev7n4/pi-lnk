@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { useMediaInspector } from '@/composables/useMediaInspector'
@@ -30,6 +30,24 @@ const downloadTitle = computed(() => {
 })
 
 const canEdit = computed(() => target.value?.kind === 'image' && Boolean(target.value?.nodeId))
+
+/**
+ * 1:1 原始尺寸（2026-10-08 灯箱微调）：默认「适应窗口」，切到 1:1 时解除尺寸约束、
+ * 遮罩层可滚动平移 —— 看细节像素（抠图边缘 / 文字）时不再被缩放糊掉。
+ * 换一张图自动回到「适应」，避免上一张的放大状态残留。
+ */
+const actualSize = ref(false)
+const canToggleActualSize = computed(() => target.value?.kind === 'image')
+const actualSizeLabel = computed(() => (actualSize.value ? '适应' : '1:1'))
+
+function toggleActualSize() {
+  if (!canToggleActualSize.value) return
+  actualSize.value = !actualSize.value
+}
+
+watch(target, () => {
+  actualSize.value = false
+})
 
 function openEditorFromPreview() {
   const t = target.value
@@ -96,6 +114,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
       <div
         v-if="target"
         class="media-preview-mask fixed inset-0 z-[120] flex items-center justify-center"
+        :class="{ 'is-actual': actualSize }"
         @click.self="close"
       >
         <!-- 顶部操作栏 -->
@@ -124,6 +143,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
             @click.stop="openInspectorFromPreview"
           >
             更多信息
+          </button>
+          <button
+            v-if="canToggleActualSize"
+            type="button"
+            class="preview-ctl preview-ctl-text"
+            :title="actualSize ? '适应窗口（双击图片切换）' : '原始尺寸 1:1（双击图片切换）'"
+            @click.stop="toggleActualSize"
+          >
+            {{ actualSizeLabel }}
           </button>
           <button
             type="button"
@@ -156,7 +184,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
           :src="target.url"
           :alt="target.label ?? ''"
           class="preview-media neo-checkerboard select-none"
+          :class="{ 'is-actual': actualSize }"
           draggable="false"
+          title="双击切换原始尺寸"
+          @dblclick.stop="toggleActualSize"
         >
         <video
           v-else-if="target.kind === 'video'"
@@ -191,11 +222,27 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
   -webkit-backdrop-filter: blur(8px);
 }
 
+/* 1:1 原始尺寸：解除居中约束，让遮罩层可滚动平移大图（顶部留出操作栏） */
+.media-preview-mask.is-actual {
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  padding: 64px 24px 24px;
+}
+
 .preview-media {
-  max-width: min(90vw, 1400px);
-  max-height: 86vh;
+  max-width: min(94vw, 1800px);
+  max-height: 92vh;
   border-radius: 12px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+
+.preview-media.is-actual {
+  max-width: none;
+  max-height: none;
+  margin: 0 auto;
+  border-radius: 8px;
+  box-shadow: none;
 }
 
 .preview-audio-card {
