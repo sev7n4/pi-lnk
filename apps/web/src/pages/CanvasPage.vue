@@ -172,6 +172,7 @@ import StoryboardDialog, { type StoryboardShot } from '@/components/canvas/Story
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
 import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
+import { useAgentStore } from '@/stores/agent'
 import { shouldSyncProposePending } from '@/components/agent/proposeWaitActions'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
@@ -1503,25 +1504,43 @@ function addNode(
 
 /** 展开层的数据（null = 未展开）。 */
 /**
- * 展开层载荷。⚠️ 形状**引用组件导出的类型**（`AgentNodeGraph.vue`）——
- * 自己写一份必然漂移（改字段时这边不报错、运行时静默不匹配）。
+ * 「全屏图视图」模式（2026-07-24 改版）：`/workflow/<sid>?graph=1` 时**整页**渲染节点图。
+ *
+ * ⭐ 为什么从「覆盖层」改成「独立路由 + query」：
+ *   覆盖层有三个实测问题 —— 高度算不准（用户反馈"没拉满"）、半透明透底、
+ *   抢滚轮；而且它**盖住主画布**，无法与主画布并存。
+ *   改成独立路由后：浏览器保证全屏、不透明、滚轮归自己，
+ *   并且能和主窗口**并排**（一个看图、一个继续在画布上工作）。
+ *
+ * ⚠️ 图数据来源：与 agent 卡片同源（executionEvents 里的 node_graph command），
+ *   经`stores/agent` 的 `loadHistory` 复原 ⇒ 不需要额外取图接口。
  */
-type ExpandedGraph = {
-  nodes: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphNode[]
-  edges: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphEdge[]
-  title?: string
-}
-const expandedGraph = ref<ExpandedGraph | null>(null)
+const graphOnly = computed(() => route.query.graph === '1')
 
-/** 「展开到画布」：只盖住画布区（侧栏与 composer 保持可用 —— 用户要能看着图继续对话）。 */
-function handleExpandNodeGraph(payload: {
-  nodes: ExpandedGraph['nodes']
-  edges: ExpandedGraph['edges']
-  title?: string
-}) {
-  if (!payload.nodes.length) return
-  expandedGraph.value = payload
-}
+/** 从会话事件里取**最近一张**节点图（与气泡卡片同一份数据）。 */
+const sessionGraph = computed<import('@/components/agent/presentation/AgentNodeGraph.vue').GraphPayload | null>(() => {
+  if (!graphOnly.value) return null
+  const agent = useAgentStore()
+  const msg = [...agent.messages]
+    .reverse()
+    .find(
+      (m) =>
+        m.role === 'assistant' &&
+        m.presentation?.kind === 'node_graph' &&
+        Array.isArray((m.presentation.body as { graph_nodes?: unknown } | undefined)?.graph_nodes),
+    )
+  if (!msg) return null
+  const body = msg.presentation?.body as
+    | { graph_nodes?: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphNode[]
+        graph_edges?: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphEdge[]
+        nodeGraphTitle?: string }
+    | undefined
+  return {
+    nodes: body?.graph_nodes ?? [],
+    edges: body?.graph_edges ?? [],
+    title: body?.nodeGraphTitle ?? msg.presentation?.title,
+  }
+})
 
 /**
  * 「导入到画布」：建成**结构化节点组**，不是一张位图。
@@ -1533,8 +1552,8 @@ function handleExpandNodeGraph(payload: {
  * ⚠️ 位置沿用图里的坐标（可能与现有节点重叠）⇒ 给一个固定偏移量，避免完全压在一起。
  */
 function handleImportNodeGraph(payload: {
-  nodes: ExpandedGraph['nodes']
-  edges: ExpandedGraph['edges']
+  nodes: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphNode[]
+  edges: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphEdge[]
   title?: string
 }) {
   const OFFSET = { x: 120, y: 120 }
@@ -4444,16 +4463,7 @@ async function loadSessions() {
 const vueFlowRef = ref<InstanceType<typeof VueFlow> | null>(null)
 const canvasAreaRef = ref<HTMLElement | null>(null)
 
-// Esc 关闭展开层（2026-07-24）。⛔ 监听挂在 window 上但**只在展开时存在**
-//   （`expandedGraph` 非空才 add），避免常驻监听器与画布快捷键打架。
-watch(expandedGraph, (v) => {
-  if (!v) return
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') expandedGraph.value = null
-  }
-  window.addEventListener('keydown', onKey)
-  onUnmounted(() => window.removeEventListener('keydown', onKey))
-})
+
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
 const { isMobileLayout } = useAgentMobileLayout()
@@ -4579,32 +4589,37 @@ onUnmounted(() => {
         class="relative min-h-0 min-w-0 flex-1"
         :class="{ 'canvas-ref-pick-mode': pickMode.active.value }"
       >
-        <!--展开到画布（2026-07-24）：absolute 挂在 canvasAreaRef 内⇒
-             ⭐ 只盖画布区，侧栏与 composer 保持可见可用（能看着图继续对话）。
-             Esc 关闭；z 高于画布层但低于侧栏（侧栏在 flex 兄弟位置，不受影响）。 -->
+        <!--全屏图视图（2026-07-24 改版）：`?graph=1`（由卡片「新窗口打开」进入）。
+             ⭐ **不透明**底色（覆盖层曾用 `/97` + blur，导致透出主画布 —— 用户反馈"背景透明的"）。
+             ⭐ 高度用 `absolute inset-0` 铺满画布区，**由父级 flex 决定**，不再写死像素高度。 -->
         <div
-          v-if="expandedGraph"
-          class="absolute inset-0 z-[9000] flex flex-col bg-[var(--neo-bg)]/97 backdrop-blur-[1px]"
-          data-testid="node-graph-expanded"
+          v-if="graphOnly"
+          class="absolute inset-0 z-[9000] flex flex-col bg-[var(--neo-bg)]"
+          data-testid="node-graph-fullscreen"
         >
-          <div class="flex shrink-0 items-center gap-2 border-b border-[var(--neo-border)] bg-[var(--neo-surface-card)] px-3 py-2">
-            <span class="text-[13px] font-medium">{{ expandedGraph.title || '画布概览' }}</span>
-            <span class="text-[11px] opacity-60">
-              {{ expandedGraph.nodes.length }} 个节点 · {{ expandedGraph.edges.length }} 条连线
+          <div class="flex shrink-0 items-center gap-2 border-b border-[var(--neo-border)] px-4 py-2.5">
+            <span class="text-[13px] font-medium">{{ sessionGraph?.title || '画布概览' }}</span>
+            <span v-if="sessionGraph" class="text-[11px] opacity-60">
+              {{ sessionGraph.nodes.length }} 个节点 · {{ sessionGraph.edges.length }} 条连线
             </span>
-            <button
-              type="button"
-              class="ml-auto rounded px-2 py-1 text-[12px] hover:bg-[var(--neo-surface-card)]"
-              @click="expandedGraph = null"
-            >✕ 关闭（Esc）</button>
+            <a
+              class="ml-auto rounded px-2 py-1 text-[12px] opacity-70 hover:opacity-100"
+              :href="`/workflow/${sessionId}`"
+            >返回画布</a>
           </div>
           <div class="min-h-0 flex-1">
             <AgentNodeGraph
+              v-if="sessionGraph"
               class="h-full"
-              :body="expandedGraph"
-              :title="expandedGraph.title"
+              full-height
+              :body="sessionGraph"
+              :title="undefined"
               @focus-node="focusNodeById($event)"
             />
+            <div
+              v-else
+              class="flex h-full items-center justify-center text-[13px] opacity-60"
+            >这个会话还没有节点图。回到画布向 agent 提问即可生成。</div>
           </div>
         </div>
 
@@ -4951,7 +4966,10 @@ onUnmounted(() => {
 
       </div>
 
+      <!--ⓘ `?graph=1` 全屏图视图：隐藏侧栏与 composer，整页交给图。
+           （新窗口本来就窄，再挤一个侧栏会让图更小） -->
       <AgentSideRail
+        v-if="!graphOnly"
         ref="agentRailRef"
         :session-id="sessionId"
         :read-only="agentReadOnly"
@@ -4968,7 +4986,6 @@ onUnmounted(() => {
         @redo="handleAgentRedo"
         @open-image-editor="handleAgentOpenImageEditor"
         @arrange-nodes="handleArrangeNodes"
-        @expand-node-graph="handleExpandNodeGraph"
         @import-node-graph="handleImportNodeGraph"
         @canvas-ref-pick-toggle="handleCanvasRefPickToggle"
         @expanded-change="onAgentExpandedChange"
