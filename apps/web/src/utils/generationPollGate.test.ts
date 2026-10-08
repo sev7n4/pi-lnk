@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldApplyGenerationPoll } from './generationPollGate'
+import { nodeHasUsableOutput, shouldApplyGenerationPoll } from './generationPollGate'
 
 describe('shouldApplyGenerationPoll', () => {
   it('applies terminal result when node already error but same recordId', () => {
@@ -67,5 +67,33 @@ describe('shouldApplyGenerationPoll', () => {
         incomingStatus: 'failed',
       }),
     ).toBe(true)
+  })
+})
+
+describe('nodeHasUsableOutput', () => {
+  it('图片节点已有 images 数组 ⇒ 视为有产物', () => {
+    expect(nodeHasUsableOutput({ images: ['https://x/a.png'] })).toBe(true)
+  })
+
+  it('images 数组为空但 url 存在 ⇒ 视为有产物', () => {
+    expect(nodeHasUsableOutput({ images: [], url: 'https://x/a.png' })).toBe(true)
+  })
+
+  it('images 里只有空串 ⇒ 不算产物', () => {
+    expect(nodeHasUsableOutput({ images: [''] })).toBe(false)
+  })
+
+  it('既无 images 也无 url ⇒ 无产物', () => {
+    expect(nodeHasUsableOutput({ status: 'generating' })).toBe(false)
+  })
+
+  it('data 为空 / 非对象 ⇒ 无产物（不抛错）', () => {
+    expect(nodeHasUsableOutput(undefined)).toBe(false)
+    expect(nodeHasUsableOutput(null)).toBe(false)
+    expect(nodeHasUsableOutput('x')).toBe(false)
+  })
+
+  it('text 节点的 content 不属于本函数判定范围', () => {
+    expect(nodeHasUsableOutput({ content: '一段文本' })).toBe(false)
   })
 })
