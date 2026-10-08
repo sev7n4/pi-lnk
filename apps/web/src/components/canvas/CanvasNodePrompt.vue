@@ -53,7 +53,7 @@ function onSave(md: string) {
 
 <template>
   <NeoBaseNode node-type="prompt" :selected="selected" :data="data" :status="data.status">
-    <div class="neo-text-card" @dblclick.stop="openEditor">
+    <div class="neo-text-card" title="双击打开沉浸编辑（全屏）" @dblclick.stop="openEditor">
       <template v-if="preview">
         <p class="whitespace-pre-wrap text-left text-[12px] leading-relaxed text-white/80">{{ preview }}</p>
       </template>
@@ -69,6 +69,7 @@ function onSave(md: string) {
     <PromptMarkdownEditor
       v-model:visible="editorOpen"
       v-model="draft"
+      :title="typeof data.label === 'string' ? data.label : undefined"
       @save="onSave"
     />
   </NeoBaseNode>
