@@ -28,11 +28,13 @@ vi.mock('@lnkpi/agent', async (importOriginal) => {
 describe('StudioService video reference preflight', () => {
   let svc: StudioService
   let probeUrl: ReturnType<typeof vi.fn>
+  let pointsConsume: ReturnType<typeof vi.fn>
   let pointsRefund: ReturnType<typeof vi.fn>
   let generationCreate: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    pointsConsume = vi.fn(async () => {})
     pointsRefund = vi.fn(async () => {})
     generationCreate = vi.fn(async (args: { data: Record<string, unknown> }) => ({
       id: 'g1',
@@ -69,7 +71,7 @@ describe('StudioService video reference preflight', () => {
         {
           provide: PointsService,
           useValue: {
-            consume: vi.fn(async () => {}),
+            consume: pointsConsume,
             refund: pointsRefund,
           },
         },
@@ -133,6 +135,8 @@ describe('StudioService video reference preflight', () => {
 
     expect(videoGenerate).not.toHaveBeenCalled()
     expect(generationCreate).not.toHaveBeenCalled()
-    expect(pointsRefund).toHaveBeenCalled()
-  })
+    // P0-A：预检在扣费之前（记录先行），拒绝时未扣过费，故不退款
+    expect(pointsConsume).not.toHaveBeenCalled()
+    expect(pointsRefund).not.toHaveBeenCalled()
+  }, 30000)
 })
