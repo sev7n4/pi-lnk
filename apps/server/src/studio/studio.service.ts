@@ -447,6 +447,28 @@ function withCanvasScope(scope?: CanvasGenerationScope) {
   }
 }
 
+/**
+ * 把 `platformGatewayModelId` 的解析结果里**只有降级时**才有的字段并进 metadata。
+ *
+ * 前端 `describeModelFallback` 依赖 `{ modelFallback, originalModel, modelKey }`
+ * 三者齐全才提示（见 apps/web/src/utils/generationDiagnostic.ts）——
+ * 少一个就不提示，避免把「用户自选BYOK 模型但其实没换」误报成降级。
+ * 正常路径返回空对象，不污染存量 metadata。
+ */
+function platformMetaPatch(resolved: {
+  gatewayModelId: string
+  modelKey: string
+  modelFallback?: true
+  originalModel?: string
+}): Record<string, unknown> {
+  if (!resolved.modelFallback) return {}
+  return {
+    modelFallback: true,
+    originalModel: resolved.originalModel,
+    modelKey: resolved.modelKey,
+  }
+}
+
 function parseSessionCanvas(raw: string | null | undefined): CanvasData | undefined {
   if (!raw) return undefined
   try {
@@ -595,16 +617,36 @@ export class StudioService {
     throw new BadRequestException('不支持的生成类型')
   }
 
-  /** Catalog gateway id for platform confirm — never reuse user-channel modelName. */
+  /**
+   * Catalog gateway id for platform confirm — never reuse user-channel modelName.
+   *
+   * ⚠️ 2026-10-08：曾只返回 `.entry.gatewayModelId`，把 `resolveModelKey` 的
+   * `fallback` 标记直接丢掉 ⇒ BYOK 失败后回退平台（`confirmPlatformFallback`）
+   * 实际换了模型却没有任何记录，四条链路（image/text/audio/video）的用户全都
+   * 不知情。现在把「要的是什么/用了什么」一并带出。
+   *
+   * ⚠️ 判据是 `fallback` 本身，不是 `requested !== resolved`：空 modelKey
+   * 走默认是正常路径（`resolveModelKey` 已返回 `fallback:false`），
+   * 而 catalog 里同时存在 modelKey 与 gatewayModelId 两个空间的条目。
+   */
   private platformGatewayModelId(
     modality: StudioModality,
     meta: Record<string, unknown>,
-  ): string {
+  ): { gatewayModelId: string; modelKey: string; modelFallback?: true; originalModel?: string } {
     const requested =
       typeof meta.modelKey === 'string' && meta.modelKey.trim()
         ? meta.modelKey
         : undefined
-    return resolveModelKey(modality, requested).entry.gatewayModelId
+    const { modelKey, entry, fallback } = resolveModelKey(modality, requested)
+    if (!fallback || !requested) {
+      return { gatewayModelId: entry.gatewayModelId, modelKey }
+    }
+    return {
+      gatewayModelId: entry.gatewayModelId,
+      modelKey,
+      modelFallback: true,
+      originalModel: requested,
+    }
   }
 
   /** Internal agent path: vision QA for product_visual — no points charge. */
@@ -2656,7 +2698,9 @@ export class StudioService {
           ? (meta.nativeParams as Record<string, unknown>).resolution
           : undefined
         const n = Number(meta.count ?? 1) || 1
-        const modelId = this.platformGatewayModelId('image', meta)
+        const platformModel = this.platformGatewayModelId('image', meta)
+        const modelId = platformModel.gatewayModelId
+        Object.assign(chargedMeta, platformMetaPatch(platformModel))
         const refs = Array.isArray(meta.referenceImages)
           ? (meta.referenceImages as string[]).filter((url) => typeof url === 'string' && url.trim())
           : []
@@ -2720,7 +2764,9 @@ export class StudioService {
       }
 
       if (record.type === 'text' || record.type === 'prompt') {
-        const gatewayModelId = this.platformGatewayModelId('text', meta)
+        const platformModel = this.platformGatewayModelId('text', meta)
+        const gatewayModelId = platformModel.gatewayModelId
+        Object.assign(chargedMeta, platformMetaPatch(platformModel))
         const referenceImages = Array.isArray(meta.referenceImages)
           ? (meta.referenceImages as string[])
           : []
@@ -2789,7 +2835,9 @@ export class StudioService {
       }
 
       if (record.type === 'audio') {
-        const platformModel = this.platformGatewayModelId('audio', meta)
+        const platformModelInfo = this.platformGatewayModelId('audio', meta)
+        const platformModel = platformModelInfo.gatewayModelId
+        Object.assign(chargedMeta, platformMetaPatch(platformModelInfo))
         const prevAudio = (meta.audioOptions as Record<string, unknown> | undefined) ?? {}
         const audioOptions = {
           ...prevAudio,
@@ -2843,7 +2891,9 @@ export class StudioService {
       }
 
       if (record.type === 'video') {
-        const platformModel = this.platformGatewayModelId('video', meta)
+        const platformModelInfo = this.platformGatewayModelId('video', meta)
+        const platformModel = platformModelInfo.gatewayModelId
+        Object.assign(chargedMeta, platformMetaPatch(platformModelInfo))
         const { url } = await createVideoProvider(undefined).generate(record.prompt, {
           model: platformModel,
           duration: Number(meta.duration ?? 5),
