@@ -3,7 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { PrismaService } from '../prisma/prisma.service'
-import { AgentMemoryService, MEMORY_SCAN_MAX, normalizeMemoryContent } from './agent-memory.service'
+import { AgentMemoryService, MEMORY_SCAN_MAX, MEMORY_RECALL_CHAR_BUDGET, normalizeMemoryContent } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
 
 describe('AgentMemoryService', () => {
@@ -11,6 +11,8 @@ describe('AgentMemoryService', () => {
   const create = vi.fn()
   const findMany = vi.fn()
   const findUnique = vi.fn()
+  const count = vi.fn()
+  const deleteMany = vi.fn()
   /** findMany 桩的假库：mock 按 where 真过滤（作用域过滤下沉到 SQL，桩必须忠实执行）。 */
   let db: {
     id: string
@@ -50,9 +52,11 @@ describe('AgentMemoryService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentMemoryService,
-        { provide: PrismaService, useValue: { agentMemory: { create, findMany, findUnique } } },
+        { provide: PrismaService, useValue: { agentMemory: { create, findMany, findUnique, count, deleteMany } } },
       ],
     }).compile()
+    count.mockResolvedValue(0)
+    deleteMany.mockResolvedValue({ count: 0 })
     svc = moduleRef.get(AgentMemoryService)
   })
 
@@ -442,6 +446,71 @@ describe('AgentMemoryService', () => {
       const r = await svc.promotionCandidates({ userId: 'u1' })
       expect(r.candidates).toHaveLength(0)
       expect(r.scannedRows).toBe(0)
+    })
+  })
+
+
+
+  // ── Phase 1（A 配额驱逐 / E 召回预算，spec 2026-10-08-pilnk-memory-product-adoption-scope.md）──
+  describe('Phase1 A 配额驱逐 / E 召回预算', () => {
+    beforeEach(() => {
+      count.mockResolvedValue(0)
+      deleteMany.mockResolvedValue({ count: 0 })
+      findMany.mockImplementation(async (args: any) => {
+        const w = args?.where ?? {}
+        return db
+          .filter((r) => (w.userId === undefined || r.userId === w.userId)
+            && (w.scope === undefined || r.scope === w.scope)
+            && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .slice(0, args?.take ?? db.length)
+          .map((r) => ({ ...r }))
+      })
+    })
+
+    it('A：超 per-scope 配额时驱逐最旧 excess 条（LRU by createdAt asc）', async () => {
+      count.mockResolvedValue(500)
+      findMany.mockImplementation(async (args: any) => {
+        if (args?.orderBy?.createdAt === 'asc') {
+          return [{ id: 'oldest-1', userId: 'u1', scope: 'canvas', sessionId: 'S1', content: '最旧', createdAt: new Date('2026-01-01') }]
+        }
+        return []
+      })
+      await svc.saveMemory({ userId: 'u1', content: '新记忆', sessionId: 'S1' })
+      expect(count).toHaveBeenCalledWith({ where: { userId: 'u1', scope: 'canvas' } })
+      expect(findMany).toHaveBeenCalledWith({
+        where: { userId: 'u1', scope: 'canvas' },
+        orderBy: { createdAt: 'asc' },
+        take: 1,
+        select: { id: true },
+      })
+      expect(deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['oldest-1'] } } })
+      expect(create).toHaveBeenCalledTimes(1)
+    })
+
+    it('A：驱逐链路异常时 fail-soft，仍完成写入（不抛、不丢记忆）', async () => {
+      count.mockRejectedValue(new Error('db down'))
+      const out = await svc.saveMemory({ userId: 'u1', content: '新记忆', sessionId: 'S1' })
+      expect(out.scope).toBe('canvas')
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(deleteMany).not.toHaveBeenCalled()
+    })
+
+    it('E：超字符预算时截断低相关尾部并标 truncated，高相关项仍在前列（G5）', async () => {
+      db = Array.from({ length: 50 }, (_, i) => ({
+        id: `m${i}`,
+        userId: 'u1',
+        scope: 'canvas',
+        sessionId: 'S1',
+        content: '记'.repeat(200),
+        createdAt: new Date(2026, 0, 1 + i),
+      }))
+      const r = await svc.searchMemory({ userId: 'u1', sessionId: 'S1', limit: 50 })
+      expect(r.truncated).toBe(true)
+      expect(r.items.length).toBeGreaterThan(0)
+      const total = r.items.reduce((acc, it) => acc + it.content.length, 0)
+      expect(total).toBeLessThanOrEqual(MEMORY_RECALL_CHAR_BUDGET + 200)
+      expect(r.items[0].id).toBe('m49')
     })
   })
 
