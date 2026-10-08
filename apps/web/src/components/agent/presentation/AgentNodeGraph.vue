@@ -62,6 +62,13 @@ export interface GraphPayload extends NodeGraphBody {}
 
 const props = defineProps<{
   body: NodeGraphBody
+  /**
+   * 铺满父级高度。
+   *
+   * ⚠️ **必须显式开启**：默认仍走 320px，否则在气泡里会把整条消息撑得很高。
+   *   覆盖层/全屏页这些"容器已有确定高度"的场景传 `full-height`。
+   */
+  fullHeight?: boolean
   title?: string
   /** 参与快照文件名（`<slug>-<sessionId前8位>.html`）。 */
   sessionId?: string
@@ -71,8 +78,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   focusNode: [nodeId: string]
-  /** 展开到画布：把节点图铺满**画布区**（侧栏与 composer 保持可用，见 CanvasPage 布局）。 */
-  expandToCanvas: []
+  /**
+   * 在新窗口打开画布图（2026-07-24 改版）。
+   *
+   * ⭐ 语义从「覆盖画布区」改成「**开新窗口**」：覆盖层会有高度算不准、
+   *   半透明透底、抢滚轮三个问题（用户实测反馈），而且无法与主画布**并存**。
+   *   新窗口由浏览器保证全屏，且能和主窗口并排（各看各的）。
+   */
+  openInCanvasWindow: []
   /** 导入到画布：建成**结构化节点组**（非位图 —— 位图在画布上不可编辑、agent 也无法理解）。 */
   importToCanvas: []
 }>()
@@ -183,6 +196,36 @@ const dropped = computed(() => props.body.droppedNodeIds ?? [])
  * ⚠️ `window.open` 可能被**弹窗拦截器**挡（用户点了没反应）⇒ 兜底提示而不是静默。
  *⚠️ 快照**不含缩略图**：载荷里没有图片 URL（见 node-graph-export.ts 文件头）。
  */
+/**
+ * 「在新窗口打开画布图」：打开**真实画布页** `/workflow/<sid>?graph=1`。
+ *
+ * ⭐ 为什么不是 blob 快照（与第三枚「导出 HTML」的区别）：
+ *   - 这一枚给的是**活的应用**（同一 sessionId ⇒ 同一份画布数据、可继续对话）；
+ *   - 第三枚给的是**静态文件**（可分享/存档，无缩略图）。
+ *   两者用途不同，所以入口也不同。
+ * ⚠️ `?graph=1` 让新窗口直接进入「全屏图视图」分支 ⇒ 跳过大画布首屏渲染。
+ * ⚠️ `window.open` 可能被弹窗拦截器挡 ⇒ 明确 alert，不静默失败。
+ */
+function openCanvasWindow() {
+  const sid = props.sessionId
+  if (!sid) {
+    window.alert("缺少会话 ID，无法打开新窗口。")
+    return
+  }
+  const url = `/workflow/${encodeURIComponent(sid)}?graph=1`
+  const win = window.open(url, "_blank", "noopener,noreferrer")
+  if (!win) {
+    window.alert("浏览器拦截了新窗口。\n请允许本站弹出窗口后重试。")
+  }
+}
+
+/**
+ * 「导出为 HTML 文件」：生成独立 HTML 快照并 `window.open`。
+ *
+ * ⚠️ 用 **Blob + objectURL** 而不是 data: URL —— data: URL 在部分浏览器会被拦，
+ *    且长内容会撞 URL 长度上限。
+ * ⚠️ 快照**不含缩略图**：载荷里没有图片 URL（见 node-graph-export.ts 文件头）。
+ */
 function openInNewWindow() {
   const html = buildNodeGraphHtml(
     props.body.nodes as never,
@@ -234,53 +277,66 @@ defineExpose({ fitView })
         class="text-[var(--neo-warn,#f59e0b)]"
       >{{ dropped.length }} 项未显示</span>
 
-      <!-- 🔀 三个动作入口（2026-07-24）。线性排列、图标在前文字在 tooltip：
-           三者同属「把图拿出来看/用」这一族，参照 WorkBuddy 的图标组惯例。
-           ⚠️ 顺序 = 使用频率：展开到画布（最常用）→ 导入 → 新窗口打开。 -->
+      <!-- 🔀 三个动作入口（2026-07-24 改版）。
+           ⚠️ 隐喻的选择（用户反馈：「导入」像下载、「浏览器打开」不形象）：
+             ① **新窗口打开** ⇒ 一个方框 + 右上角斜出的小箭头 = "另开一个窗口看"，
+                比 expand 四角箭头更准确（它就是开新窗口，不是展开面板）。
+             ② **导入到画布** ⇒ 一个**画布框内长出小节点**（框 + 内含小方块 + 上箭头），
+                ⛔ 不再用"箭头向下进托盘"—— 那个隐喻= 下载，语义反了。
+             ③ **导出 HTML** ⇒ 一个**文档角标**（右上角折角 + 三条文字线），
+                比"浏览器 + 外链"更直接说明产物是**文件**。
+           顺序 = 使用频率：新窗口（最常用）→ 导入 → 导出。 -->
       <span class="agent-graph-actions ml-auto flex items-center gap-0.5">
         <button
           type="button"
           class="agent-graph-action"
-          title="展开到画布"
-          aria-label="展开到画布"
+          title="在新窗口打开画布图"
+          aria-label="在新窗口打开"
           data-testid="ng-action-expand"
-          @click="emit('expandToCanvas')"
+          @click="openCanvasWindow"
         >
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path d="M6 2H2v4M10 2h4v4M14 10v4h-4M2 10v4h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <path d="M2.5 4.2v-1a.7.7 0 01.7-.7h8.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            <rect x="2.5" y="3.5" width="9" height="10" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <path d="M8.6 11.6l4.6-4.6M11 7h2.2v2.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <button
           type="button"
           class="agent-graph-action"
-          title="导入到画布"
+          title="导入到画布（建成节点）"
           aria-label="导入到画布"
           data-testid="ng-action-import"
           @click="emit('importToCanvas')"
         >
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path d="M8 2v7m0 0L5.2 6.2M8 9l2.8-2.8M2.5 11v2a1 1 0 001 1h9a1 1 0 001-1v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            <rect x="1.6" y="2.4" width="12.8" height="11.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <rect x="5" y="8.2" width="6" height="3.6" rx="0.9" fill="none" stroke="currentColor" stroke-width="1.3" />
+            <path d="M8 6.6V3.2m0 0L6.4 4.8M8 3.2l1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <button
           type="button"
           class="agent-graph-action"
-          title="在新窗口打开（快照 / 可分享）"
-          aria-label="在新窗口打开"
+          title="导出为 HTML 文件（快照 / 可分享）"
+          aria-label="导出 HTML"
           data-testid="ng-action-open-window"
           @click="openInNewWindow"
         >
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <rect x="1.75" y="2.75" width="9.5" height="8.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4" />
-            <path d="M5.5 14h8.25a1 1 0 001-1V5.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-            <path d="M9 7l3.2 3.2M12.2 7v3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M4 1.9h5.2L13 5.7v8.4a.7.7 0 01-.7.7H4a.7.7 0 01-.7-.7V2.6a.7.7 0 01.7-.7z" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" />
+            <path d="M9.2 1.9v3.8H13" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" />
+            <path d="M5.9 9h4.2M5.9 11.3h4.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
           </svg>
         </button>
       </span>
     </header>
 
+    <!--⭐ 高度判据：默认 320px（气泡内）；传了 `h-full` / 父级有确定高度时**铺满**。
+         旧实现写死 `h-[320px]` ⇒ 外层传 `h-full` 无效 ⇒ 用户反馈"高度没全屏拉满"。 -->
     <div
-      class="relative h-[320px] w-full overflow-hidden rounded-md border border-[var(--neo-border)]"
+      class="relative w-full overflow-hidden rounded-md border border-[var(--neo-border)]"
+      :class="fullHeight ? 'h-full' : 'h-[320px]'"
     >
       <VueFlow
         :nodes="[...groupNodes, ...vueNodes]"
@@ -350,6 +406,19 @@ defineExpose({ fitView })
 </template>
 
 <style scoped>
+/* ── 卡片底色差异化（2026-07-24）────────────────────────────────────────
+   判据：**比气泡背景亮一档**，而不是"浮起来"。
+   - 浅色主题：纯白卡片落在偏暖灰的气泡背景上 → 边界清晰但不抢眼；
+   - 深色主题：用「比背景稍亮」的深灰（**不用纯白**——纯白卡片在深底上会形成
+     刺眼白块，这正是旧 SVG 卡片的问题）。
+   两套都靠 CSS 变量自适应，不写死颜色。 */
+.agent-node-graph {
+  background: var(--neo-graph-card-bg);
+  border: 1px solid var(--neo-graph-card-border);
+  border-radius: 10px;
+  padding: 10px;
+}
+
 /* 自定义节点：缩略图优先，标题为辅（视觉资产画布的主信息是图，不是文字）。 */
 .agent-node-graph :deep(.vue-flow__node) {
   overflow: hidden;

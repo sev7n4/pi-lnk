@@ -22,6 +22,11 @@
 
   /* ---- 深色表面层级 ---- */
   --neo-bg: #131318;
+  /* node_graph 卡片底（2026-07-24）：比 --neo-bg 亮一档 ⇒ 边界清晰但不"浮起来"。
+     ⚠️ 刻意**不用纯白** —— 纯白卡片落在深底上会形成刺眼白块，
+     这正是旧SVG 卡片在深色主题下"字看不清 / 刺眼"的根因。 */
+  --neo-graph-card-bg: #1e1e24;
+  --neo-graph-card-border: rgba(255, 255, 255, 0.09);
   --neo-surface-card: #1a1a21;
   --neo-surface-elevated: #232330;
   --neo-border: rgba(255, 255, 255, 0.08);
@@ -129,6 +134,9 @@
 :root[data-canvas-theme='light'] {
   --neo-accent-text: #5b4ce6;
   --neo-bg: #eef0f5;
+  /* 浅色主题：纯白卡片落在偏冷灰的气泡背景上 ⇒ 差一档即可，不抢眼。 */
+  --neo-graph-card-bg: #ffffff;
+  --neo-graph-card-border: rgba(23, 25, 35, 0.1);
   --neo-surface-card: #ffffff;
   --neo-surface-elevated: #ffffff;
   --neo-border: rgba(23, 25, 35, 0.1);
