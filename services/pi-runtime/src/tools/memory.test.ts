@@ -321,3 +321,9 @@ test("反哺：抑制动作通知可观测钩子，且同一条幂等（不重�
 	assert.equal(notified.length, 2);
 	assert.equal(isSuppressed("mem-suppressed-observer-3"), true);
 });
+
+test("recall_memory：透传 Nest 返回的 truncated 标记给模型", async () => {
+	const tools = buildMemoryTools(fakeClient({ calls: 0 }, { items: [{ id: "m1", content: "x", createdAt: "c" }], truncated: true }));
+	const p = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as { truncated?: boolean; count: number };
+	assert.equal(p.truncated, true);
+});

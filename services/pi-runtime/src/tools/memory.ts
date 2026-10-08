@@ -231,7 +231,7 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 					// 但必须带 crossCanvas 标记自曝归属。
 					...(tc.trustedCanvasSessionId ? { sessionId: tc.trustedCanvasSessionId } : {}),
 					scope: p.scope ?? "any",
-				})) as { items?: MemoryItem[] } | null | undefined;
+				})) as { items?: MemoryItem[]; truncated?: boolean } | null | undefined;
 				const items = Array.isArray(data?.items) ? data.items : [];
 				// 剔除**必须**发生在下面 crossCanvas / note 计算之前：
 				// 这两个都基于 items 派生。若先算crossCanvas 再剔，payload 会出现
@@ -250,6 +250,7 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 					// 否则模型会看到 count=3 但 items 只有 2 条，自己都解释不清。
 					count: kept.length,
 					items: kept,
+					...(data?.truncated ? { truncated: true } : {}),
 					...(crossCanvas.length ? { crossCanvasCount: crossCanvas.length, notice: CROSS_CANVAS_NOTICE } : {}),
 					...(note ? { note } : {}),
 				});

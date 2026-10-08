@@ -15,6 +15,21 @@ export const MEMORY_RECALL_MAX = 50
 export const MEMORY_SCAN_MAX = 200
 
 /**
+ * Phase 1（spec 2026-10-08-pilnk-memory-product-adoption-scope.md 项 A）：
+ * per-(userId, scope) 记忆条数配额，超限触发 LRU 驱逐（防单用户记忆无限膨胀）。
+ * 字符/token 总量配额需新增字段，留待 Phase 2 评估；本阶段以条数护栏达成"防淹没"核心目标。
+ */
+export const MEMORY_QUOTA_CANVAS = 500
+export const MEMORY_QUOTA_USER = 100
+
+/**
+ * Phase 1（项 E）：召回字符预算硬截（近似 token 预算，零依赖、可观测）。
+ * 6000 字 ≈ 1500–2000 token 量级（中文 1 字 ≈ 1–2 token）；按 tier 排序后在低相关尾部截断，
+ * 不降相关度。后续可替换为 tokenizer 精确值。
+ */
+export const MEMORY_RECALL_CHAR_BUDGET = 6000
+
+/**
  * 记忆作用域（spec 2026-10-03-agent-memory-scope-isolation-design.md §3.1）。
  * - canvas：仅本画布可见，`sessionId`（= Session.id）必填，`save_memory` 默认写这里
  * - user：该用户全部画布可见，只有显式 `scope:'user'` 才写这里（偏好/品牌/暗号）
@@ -110,6 +125,9 @@ export class AgentMemoryService {
     // 不变式「canvas ⇒ sessionId 非空」：拿不到归属时**降级成 user 而不是留下悬空 canvas 行**
     // （悬空行在召回时 fail-closed，等于悄悄丢记忆）。降级写 source='user_explicit' 留痕。
     const scope: AgentMemoryScope = requested === 'canvas' && !sessionId ? 'user' : requested
+    // A：写前按 scope 配额 LRU 驱逐最旧（fail-soft，异常不阻断写入）
+    const quota = scope === 'user' ? MEMORY_QUOTA_USER : MEMORY_QUOTA_CANVAS
+    await this.evictIfOverQuota(input.userId, scope, quota)
     const record = await this.prisma.agentMemory.create({
       data: {
         userId: input.userId,
@@ -120,6 +138,30 @@ export class AgentMemoryService {
       },
     })
     return { id: record.id, createdAt: record.createdAt.toISOString(), scope, sessionId }
+  }
+
+  /**
+   * A 配额驱逐（spec 项 A）：写前若 (userId, scope) 已超配额，按 createdAt 最旧删除超额部分。
+   * 软约束（非事务）：配额是"防膨胀护栏"而非硬锁，并发下短暂超一点可接受。
+   * fail-soft：驱逐链路任何异常都只跳过驱逐、不阻断本次写入（记忆不能因护栏失效而丢失）。
+   */
+  private async evictIfOverQuota(userId: string, scope: AgentMemoryScope, quota: number): Promise<void> {
+    try {
+      const count = await this.prisma.agentMemory.count({ where: { userId, scope } })
+      const excess = count + 1 - quota
+      if (excess <= 0) return
+      const oldest = await this.prisma.agentMemory.findMany({
+        where: { userId, scope },
+        orderBy: { createdAt: 'asc' },
+        take: excess,
+        select: { id: true },
+      })
+      if (oldest.length) {
+        await this.prisma.agentMemory.deleteMany({ where: { id: { in: oldest.map((o) => o.id) } } })
+      }
+    } catch {
+      // 驱逐失败不阻断写入：配额护栏是软约束，宁可少驱逐也不让 save 抛错
+    }
   }
 
   /**
@@ -146,7 +188,7 @@ export class AgentMemoryService {
     limit?: number
     sessionId?: string
     scope?: AgentMemoryScopeFilter
-  }): Promise<{ items: AgentMemoryItem[] }> {
+  }): Promise<{ items: AgentMemoryItem[]; truncated: boolean }> {
     const query = (input.query ?? '').trim()
     const rawLimit =
       typeof input.limit === 'number' && Number.isFinite(input.limit) ? Math.floor(input.limit) : MEMORY_RECALL_DEFAULT
@@ -156,7 +198,7 @@ export class AgentMemoryService {
 
     // fail-closed（spec §9 Review Focus #1）：要「本画布」却没给画布 id ⇒ 一条都不召回，
     // 绝不降级成全用户检索——那正是本次事故的形态。
-    if (want === 'canvas' && !currentSession) return { items: [] }
+    if (want === 'canvas' && !currentSession) return { items: [], truncated: false }
     // where 形状保持三种：{userId} / {userId,scope} / {userId,scope,sessionId}，
     // 靠 @@index([userId, scope, sessionId]) 左前缀命中（spec §9 #4）。
     const scopeWhere =
@@ -192,10 +234,25 @@ export class AgentMemoryService {
     // 用户级（品牌色/暗号）是**用户显式声明的跨会话事实**，可信度高于别的画布的情节记忆；
     // 跨画布条目排最后是本次事故的直接止血——它最容易被误当成当前画布的观察结果。
     // 同档内保持 findMany 的 createdAt 倒序（稳定排序，审计 #7 的 score 序不受影响）。
-    const items = matched
+    const limited = matched
       .map((m, i) => ({ m, i }))
       .sort((a, b) => tier(a.m, currentSession) - tier(b.m, currentSession) || a.i - b.i)
       .slice(0, limit)
+    // E: recall char-budget hard cap (spec item E). Truncate low-relevance tail after tier sort; never drop relevance.
+    // First entry is always kept (budgeted empty => no cap) so at least one result returns.
+    let used = 0
+    let truncated = false
+    const budgeted: typeof limited = []
+    for (const entry of limited) {
+      const len = entry.m.content.length
+      if (budgeted.length > 0 && used + len > MEMORY_RECALL_CHAR_BUDGET) {
+        truncated = true
+        break
+      }
+      budgeted.push(entry)
+      used += len
+    }
+    const items = budgeted
       .map(({ m }) => ({
         id: m.id,
         content: m.content,
@@ -205,7 +262,7 @@ export class AgentMemoryService {
         // 没有当前画布可比时不判定跨画布（不误标）；scope='user' 是显式跨会话偏好，不算跨画布。
         crossCanvas: m.scope === 'canvas' && !!currentSession && (m.sessionId ?? null) !== currentSession,
       }))
-    return { items }
+    return { items, truncated }
   }
 
   /**
