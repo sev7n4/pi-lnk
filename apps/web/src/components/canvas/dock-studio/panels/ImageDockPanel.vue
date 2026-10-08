@@ -91,7 +91,7 @@ const readonly = computed(() =>
     status: props.node.data?.status,
   }),
 )
-const credits = computed(() => estimateImageCredits(imageCount.value))
+const credits = computed(() => estimateImageCredits(imageCount.value, imageResolution.value))
 
 const showTurnaroundHint = computed(() => {
   const data = props.node.data ?? {}
