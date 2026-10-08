@@ -1304,14 +1304,41 @@ export class StudioService {
   ) {
     const cost = 10
     const chargeReason = '图像变体'
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('image', { model: model ?? null, generationId: null }),
-    )
-    const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
     const combined = basePrompt ? `${basePrompt}。变体要求：${prompt}` : prompt
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
+    const storeModel = model ?? resolved.modelName
+    const baseMeta = { variation: true, basePrompt, channelId: resolved.channelId, chargeReason }
+    // 账本对账（诊断 B2 收尾）：与 generateImage 同构的「记录先行」——先建 generating 占位
+    // 再扣费，扣费交易才带得上 generationId；扣费失败立即删除占位，不留孤儿。
+    // 旧顺序（先扣费后建记录）除账本对不上外还有两处泄漏：
+    //   ① `resolveForGeneration` 抛错时「已扣费 / 无记录 / 无退款」——它原本在 try 之外；
+    //   ② 进程在生成中途挂掉时同样无记录可查，reaper（#277/#281）只扫 GenerationRecord，
+    //      扫不到这一笔，扣的分永远退不回来。
+    const record = await this.prisma.generationRecord.create({
+      data: {
+        userId,
+        type: 'image',
+        prompt: combined,
+        model: storeModel,
+        url: null,
+        status: 'generating',
+        metadata: JSON.stringify(applyChargeMeta(baseMeta, cost)),
+        ...withCanvasScope(scope),
+      },
+    })
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('image', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
     try {
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
@@ -1320,37 +1347,39 @@ export class StudioService {
         modelId: resolved.modelName || undefined,
       })
       if (cancel?.isCancelled()) {
-        await this.points.refund(
-          userId,
-          cost,
-          `${chargeReason}-取消退款`,
-          refundMeta('image', 'cancelled_refund', {
-            model: resolved.modelName,
-            generationId: null,
-          }),
-        )
+        // 与 cancelGeneration 同源：先读一次已结算状态，alreadyRefunded 时不重复退款
+        // （占位记录此刻已存在 ⇒ 外部 cancelGeneration 也够得着它，必须防双退）。
+        const cur = await this.prisma.generationRecord.findFirst({ where: { id: record.id } })
+        let cancelMeta: Record<string, unknown> = { ...parseMeta(cur?.metadata), cancelled: true }
+        if (!alreadyRefunded(cancelMeta)) {
+          await this.points.refund(
+            userId,
+            cost,
+            `${chargeReason}-取消退款`,
+            refundMeta('image', 'cancelled_refund', {
+              model: resolved.modelName,
+              generationId: record.id,
+            }),
+          )
+          cancelMeta = applyRefundMeta(cancelMeta, cost, 'cancelled')
+        }
+        await this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            status: 'failed',
+            metadata: JSON.stringify(
+              applyFailureDiagnosticMeta(cancelMeta, new Error('已取消'), {
+                errorCode: 'cancelled',
+                userMessage: '已取消',
+              }),
+            ),
+          },
+        })
         throwCancelledException(cost)
       }
-      return this.prisma.generationRecord.create({
-        data: {
-          userId,
-          type: 'image',
-          prompt: combined,
-          model: model ?? resolved.modelName,
-          url,
-          status: 'completed',
-          metadata: JSON.stringify(
-            applyChargeMeta(
-              {
-                variation: true,
-                basePrompt,
-                channelId: resolved.channelId,
-              },
-              cost,
-            ),
-          ),
-          ...withCanvasScope(scope),
-        },
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
+        data: { url, status: 'completed' },
       })
     } catch (err) {
       if (isCancelledException(err)) throw err
@@ -1361,34 +1390,18 @@ export class StudioService {
           `${chargeReason}-失败退款`,
           refundMeta('image', 'failed_refund', {
             model: resolved.modelName,
-            generationId: null,
+            generationId: record.id,
           }),
         )
         const failedMeta = applyFailureDiagnosticMeta(
-          applyRefundMeta(
-            applyChargeMeta(
-              {
-                variation: true,
-                basePrompt,
-                channelId: resolved.channelId,
-              },
-              cost,
-            ),
-            cost,
-            'platform_failed',
-          ),
+          applyRefundMeta(applyChargeMeta(baseMeta, cost), cost, 'platform_failed'),
           err,
         )
-        const failed = await this.prisma.generationRecord.create({
+        const failed = await this.prisma.generationRecord.update({
+          where: { id: record.id },
           data: {
-            userId,
-            type: 'image',
-            prompt: combined,
-            model: model ?? resolved.modelName,
-            url: null,
             status: 'failed',
             metadata: JSON.stringify(failedMeta),
-            ...withCanvasScope(scope),
           },
         })
         throwGenerationFailure({
@@ -1404,16 +1417,12 @@ export class StudioService {
         `${chargeReason}-BYOK失败退款`,
         refundMeta('image', 'byok_refund', {
           model: resolved.modelName,
-          generationId: null,
+          generationId: record.id,
         }),
       )
-      return this.prisma.generationRecord.create({
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
         data: {
-          userId,
-          type: 'image',
-          prompt: combined,
-          model: model ?? resolved.modelName,
-          url: null,
           status: 'fallback_pending',
           metadata: JSON.stringify(
             this.byokPendingMeta(resolved, err, cost, {
@@ -1422,7 +1431,6 @@ export class StudioService {
               basePrompt,
             }),
           ),
-          ...withCanvasScope(scope),
         },
       })
     }
@@ -1485,32 +1493,16 @@ export class StudioService {
       throw err
     }
 
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('image', { model: editModelKey, generationId: null }),
-    )
     let resolved
     try {
       resolved = await this.resolver.resolveForGeneration(userId, editModelKey, 'image')
     } catch (err) {
-      // 渠道解析失败（如 BYOK 渠道不存在）：先退积分再抛
-      await this.points.refund(
-        userId,
-        cost,
-        `${chargeReason}-失败退款`,
-        refundMeta('image', 'failed_refund', { model: editModelKey, generationId: null }),
-      )
+      // 渠道解析失败（如 BYOK 渠道不存在）：此时尚未扣费（扣费已后移到占位记录之后），
+      // 直接抛即可 —— 原来的「先退积分再抛」是配合旧顺序（先扣费）的。
       throw err
     }
     if (byokChannel && resolved.apiFormat !== 'openai') {
-      await this.points.refund(
-        userId,
-        cost,
-        `${chargeReason}-失败退款`,
-        refundMeta('image', 'failed_refund', { model: editModelKey, generationId: null }),
-      )
+      // 同上：尚未扣费，无需退款。
       throw new BadRequestException('该渠道的 API 格式暂不支持图像编辑')
     }
     // BYOK 同步 wire 需要显式像素尺寸（部分上游 'auto' 会 500），缺省跟随原图
@@ -1583,6 +1575,23 @@ export class StudioService {
         ...withCanvasScope(scope),
       },
     })
+
+    // 账本对账（诊断 B2 收尾）：扣费交易必须携带 generationId，否则扣费与生成永远对不上。
+    // 精修的记录本来就在生成前创建（status=generating），把扣费挪到记录之后即与
+    // generateImage 同构；扣费失败（积分不足）立即删除占位，不留孤儿。
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('image', { model: editModelKey, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
 
     const refundAndFail = async (err: unknown) => {
       await this.points.refund(

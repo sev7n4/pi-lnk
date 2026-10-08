@@ -140,7 +140,13 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
     // 分类必须与扣费侧同源：image_upscale 扣在 other、image/image_edit 扣在 image，
     // 用同一个函数取，避免「退款分类 ≠ 扣费分类」的错账（见 point-categories.ts）。
     const category = studioPointCategory(rec.type)
-    const reasonLabel = REAP_REASON_BY_TYPE[rec.type] ?? '生成'
+    // 退款文案优先用记录自带的 chargeReason：同属 type='image' 的还有「图像变体」
+    // （generateImageVariation）这类子路径，只按 type 映射会把「图像变体」的退款
+    // 写成「图像生成」（金额与 category 不受影响，仅文案）。
+    const reasonLabel =
+      (typeof meta.chargeReason === 'string' && meta.chargeReason) ||
+      REAP_REASON_BY_TYPE[rec.type] ||
+      '生成'
     // BYOK 记录的失败退款在正常路径用 byok_refund（studio.service.ts completeImage），
     // 这里对齐同一语义；金额与 category 不受影响。
     const refundStatus = meta.providerSource === 'user' ? 'byok_refund' : 'failed_refund'

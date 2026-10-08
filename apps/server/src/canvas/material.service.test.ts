@@ -61,6 +61,7 @@ describe('MaterialService image', () => {
     ...args.data,
   }))
   const materialUpdate = vi.fn(async () => ({}))
+  const materialDelete = vi.fn(async () => ({}))
   const shotFindUnique = vi.fn(async () => ({
     id: 'shot-1',
     sessionId: 'sess-1',
@@ -77,7 +78,7 @@ describe('MaterialService image', () => {
           provide: PrismaService,
           useValue: {
             shot: { findUnique: shotFindUnique },
-            material: { create: materialCreate, update: materialUpdate },
+            material: { create: materialCreate, update: materialUpdate, delete: materialDelete },
           },
         },
         {
@@ -111,7 +112,7 @@ describe('MaterialService image', () => {
       category: 'image',
       status: 'success',
       model: 'seedream-5.0-pro',
-      generationId: null,
+      generationId: 'm1',
     })
     expect(imageGenerate).toHaveBeenCalledWith('a cat', {
       modelId: 'doubao-seedream-5-0-pro',
@@ -125,6 +126,29 @@ describe('MaterialService image', () => {
       referenceImages: undefined,
       quality: undefined,
     })
+  })
+
+  it('扣费失败（积分不足）时删除占位素材，不留孤儿', async () => {
+    consume.mockRejectedValueOnce(new BadRequestException('积分不足'))
+
+    await expect(
+      svc.generateImage({ userId: 'u1', shotId: 'shot-1', prompt: 'a cat' }),
+    ).rejects.toThrow('积分不足')
+
+    expect(materialDelete).toHaveBeenCalledWith({ where: { id: 'm1' } })
+    expect(imageGenerate).not.toHaveBeenCalled()
+  })
+
+  it('素材图扣费携带 materialId（账本对账），且素材先于扣费创建', async () => {
+    await svc.generateImage({ userId: 'u1', shotId: 'shot-1', prompt: 'a cat' })
+    await vi.waitFor(() => expect(imageGenerate).toHaveBeenCalled())
+
+    expect(consume).toHaveBeenCalledWith(
+      'u1',
+      10,
+      '图像生成',
+      expect.objectContaining({ category: 'image', generationId: 'm1' }),
+    )
   })
 
   it('rejects foreign shot without charging', async () => {
@@ -200,6 +224,7 @@ describe('MaterialService video', () => {
     ...args.data,
   }))
   const materialUpdate = vi.fn(async () => ({}))
+  const materialDelete = vi.fn(async () => ({}))
   const shotFindUnique = vi.fn(async () => ({
     id: 'shot-1',
     sessionId: 'sess-1',
@@ -216,7 +241,7 @@ describe('MaterialService video', () => {
           provide: PrismaService,
           useValue: {
             shot: { findUnique: shotFindUnique },
-            material: { create: materialCreate, update: materialUpdate },
+            material: { create: materialCreate, update: materialUpdate, delete: materialDelete },
           },
         },
         {
