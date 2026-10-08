@@ -708,7 +708,18 @@ const generationPolling = useGenerationPolling((results) => {
     }
   }
   void saveCanvas()
-})
+  },
+  {
+    // 诊断 C3：单节点轮询墙钟到期（默认 22min，与批量路径一致）——节点置 error，
+    // 不再永久「生成回复中」
+    onTimeout: (task) => {
+      patchNodeData(task.nodeId, {
+        status: NODE_GENERATION_STATUS.error,
+        errorMessage: '等待生成结果超时，请重试或刷新查看任务历史',
+      })
+    },
+  },
+)
 
 function startPollingForGeneratingShots() {
   const generatingIds: string[] = []
@@ -4227,7 +4238,11 @@ const debouncedNodePatch = useDebouncedNodePatch(
   (id, patch) => patchNodeData(id, patch),
   saveCanvas,
   400,
-  { onHistoryCommit: () => canvasUndo.commitAfterChange() },
+  {
+    onHistoryCommit: () => canvasUndo.commitAfterChange(),
+    // 诊断 A2：防抖落盘失败原先静默（unhandled rejection），改动悄悄丢失
+    onPersistError: () => ElMessage.error('画布保存失败，本次修改可能未同步，请检查网络后重试'),
+  },
 )
 
 watch(
