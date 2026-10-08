@@ -416,6 +416,8 @@
 <b>核心结论</b>：图片侧的「零超时→有界超时(#271) + 无reaper→有reaper + 账本不对→账本对(B2)」三步修复<b>没有同步到文本侧</b>。文本侧仍保留着图片修复前的两个核心缺陷形态——「占位假成功」与「悬空扣费无兜底」，外加文本独有的「零重试」韧性缺口。
 <br><br>
 <span class="pill p-red">⚠️ 此结论已被 §8 生产复核部分推翻：占位在生产是死代码（env 已配），悬空扣费当前无发生，且「零重试」修复的是 2026-09-15 前的历史故障。以本节排期会做无效功。</span>
+<br><br>
+<span class="pill p-red">⚠️ 更严重的是：§3.1/§3.3 只覆盖了 <code>text-provider.ts</code>。<code>vision-text.ts</code>（生产活跃 82 笔）用<b>裸 fetch —— 完全没有超时保护</b>，是 2026-10-08 事故根因的残留。详见 <b>§8.7</b>。</span>
 </div>
 
 <!-- ============ S5 ============ -->
@@ -616,13 +618,13 @@
 <tr><th>§6 原判断</th><th>生产实测</th><th>取证</th></tr>
 <tr>
   <td><b>① P0 零重试 =「文本侧最直接的韧性缺口」</b></td>
-  <td><span class="pill p-amber">降级</span> 可重试故障<b>全部发生在 2026-09-15 及之前</b>，此后近 3 个月<b>零真实故障</b></td>
+  <td><span class="pill p-amber">降级</span> 可重试故障<b>全部发生在 2026-09-15 及之前</b>，此后近 3 个月<b>零真实故障</b>；<br>但 <code>vision-text.ts</code> 那条路径<b>连超时都没有</b>（见 §8.7）</td>
   <td class="file-cell">15 条 <code>errorCode='unknown'</code> 按日分布：<br>429×8 集中在 09-11 / 09-15<br><code>fetch failed</code>×3 在 07-29 / 09-11<br>503×1 在 07-24<br><code>model_not_found</code>×3 在 08-01（<b>不可重试</b>，属 NON_RETRYABLE）</td>
 </tr>
 <tr>
   <td><b>② P0 占位假成功（PlaceholderTextProvider）</b></td>
-  <td><span class="pill p-red">证伪为死代码</span> 生产 <code>OPENAI_API_KEY</code> <b>已配置</b> ⇒ <code>createTextProvider()</code> 永不走占位分支</td>
-  <td class="file-cell"><code>docker exec lnkpi-api printenv</code> ⇒ <code>OPENAI_API_KEY</code>(已设)<br><code>OPENAI_BASE_URL=https://apihub.agnes-ai.cn/v1</code><br><code>OPENAI_CHAT_MODEL=agnes-2.0-flash</code></td>
+  <td><span class="pill p-amber">降级</span> 生产 <code>OPENAI_API_KEY</code> 已配置 ⇒ <b>当前</b>不走占位分支；<br>但 <b>历史确实发生过 7 笔</b>假成功（2026-07-14，见 §8.8）</td>
+  <td class="file-cell"><code>docker exec lnkpi-api printenv</code> ⇒ <code>OPENAI_API_KEY</code>(已设)<br><code>OPENAI_BASE_URL=https://apihub.agnes-ai.cn/v1</code><br><code>OPENAI_CHAT_MODEL=agnes-2.0-flash</code><br>⇒ 「死代码」判断不准确，见 <b>§8.8</b>；另有<b>独立的第二套占位</b>未被§3.3 覆盖，见 <b>§8.7</b></td>
 </tr>
 <tr>
   <td><b>③ 文本无 generating 态 ⇒ reaper 盲区</b></td>
@@ -734,28 +736,90 @@
 </tr>
 </table>
 
-<h3>8.7 复核后的行动建议</h3>
+<h3>8.7 二次调研发现：<code>vision-text.ts</code> 是被整体遗漏的分支（最严重）</h3>
+<div class="callout c-red">
+<b>⛔ 本节是 §8 中优先级最高的一条。</b> §3.1/§3.3 的「文本零重试」「文本占位」两条结论<b>只覆盖 <code>text-provider.ts</code></b>，
+而 <code>generateTextForRefs</code> 实际有<b>三条分支</b>：
+<table style="background:#fff;margin:10px 0">
+<tr><th>分支</th><th>条件</th><th>走向</th></tr>
+<tr><td>无参考图</td><td><code>refs.length===0</code></td><td><code>OpenAITextProvider</code>（§3.1/§3.3 的对象）</td></tr>
+<tr><td><b>vision 模型</b></td><td><code>supportsVisionTextModel(model)</code></td><td><b><code>generateTextWithImages()</code> → <code>vision-text.ts</code>（本节对象，完全绕过上一行）</b></td></tr>
+<tr><td>非vision 带图</td><td>其余</td><td><code>OpenAITextProvider</code> + <code>appendImageRefsForTextOnlyPrompt</code></td></tr>
+</table>
+<code>vision-text.ts</code> 独立携带三个缺陷，<b>与 <code>text-provider.ts</code> 无任何共享</b>：
+<table style="background:#fff;margin:10px 0">
+<tr><th>缺陷</th><th>位置</th><th>说明</th></tr>
+<tr><td><b>无超时保护</b></td><td><code>:64</code> 裸 <code>fetch(...)</code></td>
+<td>⛔ <b>这是 2026-10-08 生产事故根因的残留</b>。事故根因是「上游 fetch 一处 AbortSignal 都没有 ⇒ await 永不 settle」，
+#271 引入 <code>upstreamFetch</code> 时<b>漏掉了本文件</b>。隧道楔死时此路径<b>永久挂起</b>：不落 record、不退款，
+且因无 generating 态而 <b>reaper 也扫不到</b></td></tr>
+<tr><td>零重试</td><td><code>:64</code></td><td>同 §3.2</td></tr>
+<tr><td>第二套占位</td><td><code>:58</code> <code>buildPlaceholder()</code></td>
+<td>独立于 <code>PlaceholderTextProvider</code>，触发条件同为「无 apiKey」。文案也不同（<code>【电商视觉方案草案】</code>）</td></tr>
+</table>
+<b>生产证据（活跃路径，非死代码）</b>：<code>visionUsed=1</code> 的活跃记录 <b>82 笔</b>（text 66 + prompt 16）。
+</div>
+
+<h3>8.8 修正 8.1 ②：「占位是死代码」不准确</h3>
+<div class="callout c-amber">
+8.1 ② 判定「生产 <code>OPENAI_API_KEY</code> 已配 ⇒ 占位为死代码」。<b>该结论不完整</b>。
+查 <code>status='completed' AND json_extract(metadata,'$.text') LIKE '%草案%'</code>，命中 <b>7 笔</b>，其中2026-07-14 的内容为：
+<div style="background:#fff;padding:8px;margin:6px 0;font-size:12.5px">
+【AI 创作草案】<br><br>基于「生成一个万物生剧本」的扩写：<br><br>场景一：主角站在霓虹闪烁的街头…
+</div>
+与 <code>text-provider.ts:37</code> 的硬编码文案<b>逐字吻合</b>。
+<br><br>⇒ <b>准确表述</b>：占位假成功<b>在 <code>OPENAI_API_KEY</code> 配置前确实发生过</b>（7 月，7 笔），
+当前被 env 阻断。严重性应从「死代码」上调为「<b>已发生的事故，配置一旦回退即复发</b>」。
+<br><br>另一条<b>尚未证伪</b>的隐患：<code>vision-text.ts:57</code> 的 <code>buildPlaceholder</code> 用的是
+<b>完全独立</b>的第二套占位，§3.3 的修复对它无效。
+</div>
+
+<h3>8.9 复核后的行动建议</h3>
 <div class="callout c-blue">
-<b>顺序按「能否验证效果」排，不按报告原 P0 排：</b>
+<b>顺序按「能否验证效果」+「风险敞口」排，不按报告原 P0 排：</b>
 <table style="background:#fff;margin:10px 0">
 <tr><th>序</th><th>动作</th><th>对应原建议</th><th>为什么这个顺序</th></tr>
-<tr><td>1</td><td><b>文本链指标先行</b></td><td>O9（部分）</td><td>不先做，后面全是<b>盲改</b>；3 条故障归因困难（unknown），修完无法证明 429 被救回</td></tr>
-<tr><td>2</td><td>文本包裹 <code>withUpstreamRetry</code></td><td>O1</td><td>12/15 故障可救；成本极低；图片侧同款已验证</td></tr>
-<tr><td>3</td><td>占位改抛错</td><td>O2</td><td>生产当前零影响，但 <code>studio.service.ts:2742</code>（BYOK→平台回退）依赖同一 env，配置缺失会<b>静默假成功</b> ⇒ 定时炸弹非死代码</td></tr>
-<tr><td>4</td><td>文本 record-first</td><td>O5</td><td>155/155 笔 text 交易 generationId 为 NULL，结构性错账随流量线性放大</td></tr>
-<tr><td>5</td><td>reaper 扩 <code>text</code></td><td>O3</td><td><b>严格依赖第 4 项</b>——无 generating 态则加了也是空转</td></tr>
-<tr><td>6</td><td>世界状态注入</td><td>O6</td><td>影响「质量」而非「成败」，独立 PR、跨 web/runtime 需同窗</td></tr>
+<tr><td>1</td><td><b>vision 占位改抛错</b></td><td>新增 G2'</td><td rowspan="2"><b>最高性价比</b>：<code>vision-text.ts:64</code> 是文本侧<b>唯一真正无超时</b>的上游路径（裸 fetch，事故根因残留）。修复成本约一行，风险敞口是「永久挂起 + 已扣费 + reaper 扫不到」。生产活跃 82 笔</td></tr>
+<tr><td>2</td><td><b>vision 换 upstreamFetch + 重试</b></td><td>新增 G1'</td></tr>
+<tr><td>3</td><td>文本 record-first +账本对齐</td><td>O5</td><td>155/155 笔 text 交易 generationId 为 NULL，结构性错账随流量线性放大</td></tr>
+<tr><td>4</td><td>reaper 扩 <code>text</code>（独立 10min 阈值）</td><td>O3</td><td><b>严格依赖第 3 项</b>——无generating 态则加了也是空转</td></tr>
+<tr><td>5</td><td>非vision 路径重试</td><td>O1</td><td>12/15 故障可救；成本极低；图片侧同款已验证</td></tr>
+<tr><td>6</td><td>非vision 占位改抛错</td><td>O2</td><td>生产当前零影响，但历史已发生 7 笔（8.8）；配置回退即复发</td></tr>
+<tr><td>7</td><td>可观测字段（metadata 承载）</td><td>O9 降级</td><td>apps/server 无 metrics 设施（见 8.10），改用 metadata + SQL 统计重试救回率</td></tr>
+<tr><td>8</td><td>世界状态注入</td><td>O6</td><td>影响「质量」而非「成败」，独立 PR、跨 web/runtime 需同窗</td></tr>
 </table>
 <b>移出本轮（YAGNI / 边界外）：</b>O7 幂等键、O8 限流、O10 规则缓存（复核无任何生产证据支撑）；
-图片侧 3 条未修 consume 路径（8.2，影响面更大但属另一链路，留给独立窗口）。
+图片侧 3 条未修 consume 路径（8.2，影响面更大但属另一链路，留给独立窗口）；
+<code>gemini-3.1-flash</code> 渠道摘除（属配置决策）。
+</div>
+
+<h3>8.10 apps/server 无可观测设施（G0 无法按原方案实施）</h3>
+<div class="callout c-gray">
+全仓唯一的 <code>Metrics</code> 类在 <code>services/pi-runtime/src/metrics.ts</code>，而重试发生在
+<b>apps/server 进程内</b>—— <code>apps/server</code> 与 <code>packages/agent</code> <b>都没有任何 metrics 设施</b>
+（<code>git ls-tree | grep -iE "apps/server.*(metric|prom)"</code> 零命中），且 studio.service.ts 连
+<code>new Logger</code> 都没有，<code>/metrics</code> 端点亦不存在。
+<br><br>
+⇒ 原 O9「apps/server 接 prom-client」需<b>先引入基础设施</b>，属独立工作项，本轮移出。
+改用已落库的 <code>GenerationRecord.metadata</code> 承载 <code>retryCount</code> /
+<code>upstreamAttempts</code> / <code>textPath</code>，上线后跑 SQL 统计重试救回率。
+<br><br>
+已存在的免费信号：<code>tool_error_kinds_total{tool="run_text_generation"}</code>
+（pi-runtime 侧 <code>config.ts</code> 的 <code>onCall</code> 已接入，覆盖 Nest 边界错误分类）。
 </div>
 
 <footer>
 初版：取证基线 origin/master=<code>e8ef2a43</code> · 2026-10-08 ·
 所有 <span class="file">文件:行号</span> 指向 master 版（源码经 <code>git show origin/master:&lt;path&gt;</code> 读取）<br>
 <strong>§8 生产复核：2026-10-08 追加</strong> · 用 <code>docker exec lnkpi-api printenv</code>（权威 env）+ 生产 SQLite 库实测复核 §6/§7，
-结论：<strong>§6 的 P0/P1 严重性与优先级不成立</strong>，§7 的 O1-O10 需按 §8.7 重排与裁剪。
+结论：<strong>§6 的 P0/P1 严重性与优先级不成立</strong>，§7 的 O1-O10 需按 §8.9 重排与裁剪。
 <strong>排期请以 §8 为准。</strong><br>
+<strong>§8.7-§8.10 为二次复核追加</strong>（写实施计划时发现）：<code>vision-text.ts</code> 用裸 <code>fetch</code>，
+是文本侧<b>唯一真正无超时</b>的上游路径（2026-10-08 事故根因残留，#271 漏改），生产活跃 82 笔；
+「占位是死代码」结论修正为「<b>已发生 7 笔假成功</b>，配置回退即复发」；
+<code>apps/server</code> 无 metrics 设施 ⇒ G0 降级为 metadata + SQL。<br>
+<strong>配套文档</strong>：<code>docs/superpowers/specs/2026-10-08-text-pipeline-hardening-design.md</code>（设计规格）·
+<code>docs/superpowers/plans/2026-10-08-text-pipeline-hardening.md</code>（实施计划，6 Task）<br>
 本报告为优化迭代输入，非改动方案；落地须遵循项目分支纪律与部署纪律。
 </footer>
 
