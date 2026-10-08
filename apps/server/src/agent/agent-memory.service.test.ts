@@ -14,6 +14,8 @@ describe('AgentMemoryService', () => {
   const count = vi.fn()
   const deleteMany = vi.fn()
   const update = vi.fn()
+  /** `delete` 是 JS 关键字，变量名避让（Phase3 F 单行删除用）。 */
+  const del = vi.fn()
   /** findMany 桩的假库：mock 按 where 真过滤（作用域过滤下沉到 SQL，桩必须忠实执行）。 */
   let db: {
     id: string
@@ -22,6 +24,7 @@ describe('AgentMemoryService', () => {
     sessionId?: string | null
     content: string
     createdAt: Date
+    source?: string
   }[]
 
   beforeEach(async () => {
@@ -53,7 +56,7 @@ describe('AgentMemoryService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentMemoryService,
-        { provide: PrismaService, useValue: { agentMemory: { create, findMany, findUnique, count, deleteMany, update } } },
+        { provide: PrismaService, useValue: { agentMemory: { create, findMany, findUnique, count, deleteMany, update, delete: del } } },
       ],
     }).compile()
     count.mockResolvedValue(0)
@@ -87,9 +90,9 @@ describe('AgentMemoryService', () => {
       orderBy: { createdAt: 'desc' },
       take: 10,
     })
-    // 预期变更（作用域隔离）：条目多出归属三字段
+    // 预期变更（作用域隔离）：条目多出归属三字段；Phase3 D 起再带 superseded
     expect(out.items).toEqual([
-      { id: 'm1', content: '品牌色 #0F4C81', createdAt: '2026-09-29T01:00:00.000Z', scope: 'user', sessionId: null, crossCanvas: false },
+      { id: 'm1', content: '品牌色 #0F4C81', createdAt: '2026-09-29T01:00:00.000Z', scope: 'user', sessionId: null, crossCanvas: false, superseded: false },
     ])
   })
 
@@ -710,6 +713,170 @@ describe('AgentMemoryService', () => {
       const res = await svc.consolidateMemory({ userId: 'u1', scope: 'user' })
       expect(res.created).toBe(0)
       expect(db.filter((r) => r.userId === 'u1' && r.source === 'curated').length).toBe(0)
+    })
+  })
+
+  // ── Phase 3（D 冲突消解 / F 删除与 TTL，spec 2026-10-08-pilnk-memory-product-adoption-scope.md）──
+  describe('Phase3 D 冲突消解 / F 删除与TTL', () => {
+    let seq: number
+    beforeEach(() => {
+      seq = 0
+      // 真实内存 store（同 Phase2 模式）+ 忠实 delete/deleteMany（桩比真实 Prisma 严格——终审 M-1 同约定）
+      create.mockImplementation(async ({ data }: any) => {
+        const row: any = {
+          id: 'gen' + (++seq),
+          userId: data.userId,
+          scope: data.scope ?? 'user',
+          sessionId: data.sessionId ?? null,
+          content: data.content,
+          source: data.source ?? 'agent_auto',
+          createdAt: new Date(),
+        }
+        db.push(row)
+        return row
+      })
+      update.mockImplementation(async ({ where, data }: any) => {
+        const row = db.find((r: any) => r.id === where.id)
+        if (row && data?.content !== undefined) row.content = data.content
+        return row
+      })
+      findMany.mockImplementation(async (args: any) => {
+        const w = args?.where ?? {}
+        return db
+          .filter((r: any) => (w.userId === undefined || r.userId === w.userId)
+            && (w.scope === undefined || r.scope === w.scope)
+            && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId)
+            && (w.source === undefined || (w.source?.not !== undefined ? r.source !== w.source.not : r.source === w.source)))
+          .sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())
+          .slice(0, args?.take ?? db.length)
+          .map((r: any) => ({ ...r }))
+      })
+      count.mockImplementation(async (args: any) => {
+        const w = args?.where ?? {}
+        return db.filter((r: any) => (w.userId === undefined || r.userId === w.userId)
+          && (w.scope === undefined || r.scope === w.scope)
+          && (w.sessionId === undefined || (r.sessionId ?? null) === w.sessionId)
+          && (w.source === undefined || (w.source?.not !== undefined ? r.source !== w.source.not : r.source === w.source))).length
+      })
+      del.mockImplementation(async ({ where }: any) => {
+        const i = db.findIndex((r: any) => r.id === where?.id)
+        if (i < 0) return null
+        const [row] = db.splice(i, 1)
+        return row
+      })
+      // findUnique 也要忠实：clearAllMocks 不清 mock 实现，suppressMemory 用例残留的
+      // mockResolvedValue 会让 deleteMemory 拿到幽灵行（实测踩坑）
+      findUnique.mockImplementation(async ({ where }: any) => db.find((r: any) => r.id === where?.id) ?? null)
+      deleteMany.mockImplementation(async (args: any) => {
+        const w = args?.where ?? {}
+        const victim = (r: any) =>
+          (w.id?.in === undefined || w.id.in.includes(r.id))
+          && (w.createdAt?.lt === undefined || r.createdAt.getTime() < w.createdAt.lt.getTime())
+          && (w.source?.not === undefined || r.source !== w.source.not)
+        const before = db.length
+        db = db.filter((r: any) => !victim(r))
+        return { count: before - db.length }
+      })
+    })
+
+    const row = (id: string, at: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      userId: 'u1',
+      scope: 'user',
+      sessionId: null,
+      source: 'user_explicit',
+      content: '品牌色是蓝色',
+      createdAt: new Date(at),
+      ...extra,
+    })
+
+    it('D：旧 user 记忆 vs 新 canvas 记忆同主题 → 都返回，新版未标、旧版 superseded:true（G4）', async () => {
+      db = [
+        row('old-user', '2026-01-01T00:00:00.000Z'),
+        row('new-canvas', '2026-10-01T00:00:00.000Z', { scope: 'canvas', sessionId: 'S1', source: 'agent_auto' }),
+      ]
+      const r = await svc.searchMemory({ userId: 'u1', sessionId: 'S1', limit: 10 })
+      expect(r.items).toHaveLength(2)
+      expect(r.items.find((i) => i.id === 'new-canvas')!.superseded).toBe(false)
+      expect(r.items.find((i) => i.id === 'old-user')!.superseded).toBe(true)
+    })
+
+    it('D：无同主题冲突 → 全部 superseded:false（不误标）', async () => {
+      db = [
+        row('a', '2026-01-01T00:00:00.000Z', { content: '品牌色是蓝色' }),
+        row('b', '2026-01-02T00:00:00.000Z', { content: '喜欢圆形节点' }),
+      ]
+      const r = await svc.searchMemory({ userId: 'u1', limit: 10 })
+      expect(r.items.every((i) => i.superseded === false)).toBe(true)
+    })
+
+    it('D：createdAt 平手 → 权威序 user_explicit 压 agent_auto（新近性优先，权威只做 tiebreak）', async () => {
+      db = [
+        row('auto', '2026-05-01T00:00:00.000Z', { scope: 'canvas', sessionId: 'S1', source: 'agent_auto' }),
+        row('explicit', '2026-05-01T00:00:00.000Z', { source: 'user_explicit' }),
+      ]
+      const r = await svc.searchMemory({ userId: 'u1', sessionId: 'S1', limit: 10 })
+      expect(r.items.find((i) => i.id === 'explicit')!.superseded).toBe(false)
+      expect(r.items.find((i) => i.id === 'auto')!.superseded).toBe(true)
+    })
+
+    it('F：deleteMemory 删自己的记忆 → 行从库消失，返回归属（G6）', async () => {
+      db = [row('mine', '2026-01-01T00:00:00.000Z')]
+      const out = await svc.deleteMemory({ userId: 'u1', memoryId: 'mine' })
+      expect(out).toEqual({ id: 'mine', scope: 'user', sessionId: null })
+      expect(db.find((r: any) => r.id === 'mine')).toBeUndefined()
+    })
+
+    it('F：删别人的/不存在的记忆 → 404 同态拒绝（信息泄露最小化，同 suppressMemory）', async () => {
+      db = [row('theirs', '2026-01-01T00:00:00.000Z', { userId: 'u2' })]
+      await expect(svc.deleteMemory({ userId: 'u1', memoryId: 'theirs' })).rejects.toBeInstanceOf(NotFoundException)
+      await expect(svc.deleteMemory({ userId: 'u1', memoryId: 'nope' })).rejects.toBeInstanceOf(NotFoundException)
+      expect(db).toHaveLength(1)
+    })
+
+    it('F：memoryId 空白 → BadRequest，不查库', async () => {
+      await expect(svc.deleteMemory({ userId: 'u1', memoryId: '  ' })).rejects.toBeInstanceOf(BadRequestException)
+      expect(findUnique).not.toHaveBeenCalled()
+    })
+
+    it('F：TTL 默认关闭 → sweep 不删任何行、不触 deleteMany', async () => {
+      db = [row('old', '2020-01-01T00:00:00.000Z')]
+      const out = await svc.sweepExpiredMemories(new Date('2026-10-08T00:00:00.000Z'))
+      expect(out).toEqual({ deleted: 0, ttlDays: 0 })
+      expect(deleteMany).not.toHaveBeenCalled()
+      expect(db).toHaveLength(1)
+    })
+
+    it('F：TTL=7 → 过期行被清扫，promoted 行豁免（G6）', async () => {
+      db = [
+        row('ancient', '2020-01-01T00:00:00.000Z'),
+        row('fresh', '2026-10-07T00:00:00.000Z'),
+        row('rule', '2020-01-01T00:00:00.000Z', { source: 'promoted', content: '人工晋升的全局规则' }),
+      ]
+      const prev = process.env.MEMORY_TTL_DAYS
+      process.env.MEMORY_TTL_DAYS = '7'
+      try {
+        const out = await svc.sweepExpiredMemories(new Date('2026-10-08T00:00:00.000Z'))
+        expect(out).toEqual({ deleted: 1, ttlDays: 7 })
+        expect(db.map((r: any) => r.id).sort()).toEqual(['fresh', 'rule'])
+      } finally {
+        if (prev === undefined) delete process.env.MEMORY_TTL_DAYS
+        else process.env.MEMORY_TTL_DAYS = prev
+      }
+    })
+
+    it('F：saveMemory 写入点顺带触发 TTL 清扫（fail-soft 不阻断写入）', async () => {
+      db = [row('ancient', '2020-01-01T00:00:00.000Z')]
+      const prev = process.env.MEMORY_TTL_DAYS
+      process.env.MEMORY_TTL_DAYS = '7'
+      try {
+        await svc.saveMemory({ userId: 'u1', content: '新记忆', sessionId: 'S1' })
+      } finally {
+        if (prev === undefined) delete process.env.MEMORY_TTL_DAYS
+        else process.env.MEMORY_TTL_DAYS = prev
+      }
+      expect(db.find((r: any) => r.id === 'ancient')).toBeUndefined()
+      expect(db.some((r: any) => r.content === '新记忆')).toBe(true)
     })
   })
 

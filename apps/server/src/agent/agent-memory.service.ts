@@ -15,6 +15,16 @@ export const MEMORY_RECALL_MAX = 50
 export const MEMORY_SCAN_MAX = 200
 
 /**
+ * F：TTL 天数（env `MEMORY_TTL_DAYS`，默认 0 = 不过期）。**运行时**读取而非启动快照，便于热调。
+ * 零 schema 迁移的取舍（plan §2）：按 createdAt 年龄整批清扫，而非逐行 expiresAt
+ * （AgentMemory 无该列）；规格 §5 F 的 expiresAt 列 + 管理面板列 follow-up。
+ */
+export function readMemoryTtlDays(): number {
+  const raw = Number(process.env.MEMORY_TTL_DAYS ?? 0)
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+}
+
+/**
  * Phase 1（spec 2026-10-08-pilnk-memory-product-adoption-scope.md 项 A）：
  * per-(userId, scope) 记忆条数配额，超限触发 LRU 驱逐（防单用户记忆无限膨胀）。
  * 字符/token 总量配额需新增字段，留待 Phase 2 评估；本阶段以条数护栏达成"防淹没"核心目标。
@@ -114,6 +124,11 @@ export interface AgentMemoryItem {
    * 必须是**数据**字段而不是提示词规则：事故证明模型会违反写得再清楚的提示词。
    */
   crossCanvas: boolean
+  /**
+   * D 冲突消解（spec 项 D）：同主题（归一化内容相等）存在**更新版本**时为 true。
+   * 数据级自曝（crossCanvas 同哲学）：不静默丢弃旧版本，调用方/模型自行取舍。
+   */
+  superseded: boolean
 }
 
 /**
@@ -142,6 +157,8 @@ export class AgentMemoryService {
   }): Promise<{ id: string; createdAt: string; scope: AgentMemoryScope; sessionId: string | null }> {
     const content = (input.content ?? '').trim()
     if (!content) throw new BadRequestException('content required')
+    // F TTL：写入点顺带清扫过期记忆（默认 TTL=0 关闭 → 纯 env 读取即返回；fail-soft 不阻断写入）
+    try { await this.sweepExpiredMemories() } catch { /* fail-soft */ }
     const requested = input.scope === 'user' ? 'user' : 'canvas'
     const sessionId = requested === 'user' ? null : input.sessionId?.trim() || null
     // 不变式「canvas ⇒ sessionId 非空」：拿不到归属时**降级成 user 而不是留下悬空 canvas 行**
@@ -276,6 +293,35 @@ export class AgentMemoryService {
   }
 
   /**
+   * F 删除（spec 项 F）：按 id 删除**自己的**一条记忆。归属校验与 suppressMemory 同态：
+   * 不存在与不属于一律 404（暴露「这条 id 存在但不属于你」本身就是信息泄露）。
+   */
+  async deleteMemory(input: { userId: string; memoryId: string }): Promise<{ id: string; scope: string; sessionId: string | null }> {
+    const memoryId = (input.memoryId ?? '').trim()
+    if (!memoryId) throw new BadRequestException('memoryId required')
+    const row = await this.prisma.agentMemory.findUnique({ where: { id: memoryId } })
+    if (!row || row.userId !== input.userId) throw new NotFoundException('memory not found')
+    await this.prisma.agentMemory.delete({ where: { id: memoryId } })
+    return { id: row.id, scope: row.scope, sessionId: row.sessionId ?? null }
+  }
+
+  /**
+   * F TTL 清扫（spec 项 F）：删除 createdAt 早于 `MEMORY_TTL_DAYS` 天前的记忆。
+   * - 默认 0 = 关闭（不删任何行）；env 运行时读，可热调。
+   * - `source='promoted'` 豁免：晋升行是人工确认过的全局规则（M6b），不随 TTL 消失。
+   * - 触发时机：saveMemory 写入点顺带（fail-soft）；cron 周期清扫与 B 策展调度 hook 同批 follow-up。
+   */
+  async sweepExpiredMemories(now: Date = new Date()): Promise<{ deleted: number; ttlDays: number }> {
+    const ttlDays = readMemoryTtlDays()
+    if (ttlDays <= 0) return { deleted: 0, ttlDays: 0 }
+    const cutoff = new Date(now.getTime() - ttlDays * 86_400_000)
+    const res = await this.prisma.agentMemory.deleteMany({
+      where: { createdAt: { lt: cutoff }, source: { not: 'promoted' } },
+    })
+    return { deleted: res?.count ?? 0, ttlDays }
+  }
+
+  /**
    * 分词：空白/标点切分；CJK 串按 bigram（单字串回退整字）——中英混合 query 的子串召回。
    * bigram 让「整理」能命中「整理画布」，也天然兼容多字中文词的部分匹配。
    */
@@ -347,6 +393,22 @@ export class AgentMemoryService {
       scored.sort((a, b) => b.score - a.score)
       matched = scored.map((x) => x.m)
     }
+    // D 冲突消解（spec 项 D）：同主题 = 归一化内容相等（与 C 写入去重同一字面口径，宁漏勿错）。
+    // 每主题取「最新」为现行版本：createdAt 新者优先（AgentMemory 无 updatedAt 列——C 的 update
+    // 不改 createdAt，这是已知近似，见 plan §2）；createdAt 平手按权威序 user_explicit > promoted
+    // > curated > agent_auto。spec §8 风险#4 落实为「新近性压权威」：旧 user 记忆 vs 新 canvas
+    // 记忆 → 新版胜，旧版标 superseded:true。**不静默丢弃**（数据级自曝，crossCanvas 同哲学）。
+    const topicBest = new Map<string, { id: string; at: number; auth: number }>()
+    const topicKeyByRowId = new Map<string, string>()
+    const AUTHORITY: Record<string, number> = { user_explicit: 3, promoted: 2, curated: 1, agent_auto: 0 }
+    for (const r of matched) {
+      const key = normalizeMemoryContent(r.content)
+      topicKeyByRowId.set(r.id, key)
+      const at = r.createdAt.getTime()
+      const auth = AUTHORITY[r.source] ?? 0
+      const cur = topicBest.get(key)
+      if (!cur || at > cur.at || (at === cur.at && auth > cur.auth)) topicBest.set(key, { id: r.id, at, auth })
+    }
     // 排序（spec §6 意图）：本画布 > 用户级偏好 > 其他画布。
     // 用户级（品牌色/暗号）是**用户显式声明的跨会话事实**，可信度高于别的画布的情节记忆；
     // 跨画布条目排最后是本次事故的直接止血——它最容易被误当成当前画布的观察结果。
@@ -370,15 +432,21 @@ export class AgentMemoryService {
       used += len
     }
     const items = budgeted
-      .map(({ m }) => ({
-        id: m.id,
-        content: stripConsolidatedMarker(m.content),
-        createdAt: m.createdAt.toISOString(),
-        scope: m.scope,
-        sessionId: m.sessionId ?? null,
-        // 没有当前画布可比时不判定跨画布（不误标）；scope='user' 是显式跨会话偏好，不算跨画布。
-        crossCanvas: m.scope === 'canvas' && !!currentSession && (m.sessionId ?? null) !== currentSession,
-      }))
+      .map(({ m }) => {
+        const key = topicKeyByRowId.get(m.id)
+        const best = key ? topicBest.get(key) : undefined
+        return {
+          id: m.id,
+          content: stripConsolidatedMarker(m.content),
+          createdAt: m.createdAt.toISOString(),
+          scope: m.scope,
+          sessionId: m.sessionId ?? null,
+          // 没有当前画布可比时不判定跨画布（不误标）；scope='user' 是显式跨会话偏好，不算跨画布。
+          crossCanvas: m.scope === 'canvas' && !!currentSession && (m.sessionId ?? null) !== currentSession,
+          // D：同主题存在更新版本 ⇒ 旧版标 superseded（找不到簇键时保守视为未过期，不误标）。
+          superseded: !!best && best.id !== m.id,
+        }
+      })
     return { items, truncated }
   }
 
