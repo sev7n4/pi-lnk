@@ -307,6 +307,15 @@ describe('ApimartVideoProvider', () => {
       'https://getapib.org/video/9998213808887624-db838584-132d-48ee-a487-440a1a26f801-video_task_01KZGMCY3V95MGPWVY46C3NWF3.mp4',
     )
   })
+
+  it('RED→GREEN: 连续 5xx 后抛错（P0-D tracker 接入验证）', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ task_id: 'task_5xx' }] }) })
+      .mockResolvedValue({ ok: false, status: 503, text: async () => 'Service Unavailable' })
+    // maxPollMs=500 避免 RED 时 loop 到 30s 超时；GREEN 后 tracker 第 5 次抛错（<500ms）
+    const provider = new ApimartVideoProvider('key', 'https://api.apimart.ai/v1', 0, 500)
+    await expect(provider.generate('hello', { model: 'm', duration: 5 })).rejects.toThrow(/consecutive/i)
+  })
 })
 
 describe('resolveVideoParams', () => {
@@ -595,5 +604,56 @@ describe('AgnesVideoProvider 创建阶段退避重试', () => {
     await expect(p.generate('animate')).rejects.toThrow(/video_queue_full/)
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+// P0-D（诊断报告 V4）：四处视频轮询 `if(!pollRes.ok) continue` 无限吞 HTTP 错误。
+// 改为「4xx 非 429 立即抛 + 5xx/429 累计 N 次抛 + log」。
+describe('AgnesVideoProvider 轮询错误处理', () => {
+  const env = { ...process.env }
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    process.env = { ...env }
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    process.env = env
+    vi.unstubAllGlobals()
+  })
+
+  // maxPollAttempts=10 让 RED 时不会跑 120 次；GREEN 后 tracker 在第 5 次抛错（< 10）
+  const p = new AgnesVideoProvider('k', 'https://apihub.agnes-ai.com/v1', 'https://apihub.agnes-ai.com', 'agnes-video-v2.0', 1, 10, 1)
+
+  it('RED→GREEN: 连续 5 次 5xx 后抛错（不再 loop 到 timeout）', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ video_id: 'vid-1' }) })
+      .mockResolvedValue({ ok: false, status: 503, text: async () => 'Service Unavailable' })
+
+    await expect(p.generate('animate')).rejects.toThrow(/consecutive/i)
+    // 1 创建 + 5 轮询 503
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+  })
+
+  it('RED→GREEN: 4xx 非 429 立即抛错（不浪费轮询周期）', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ video_id: 'vid-1' }) })
+      .mockResolvedValue({ ok: false, status: 404, text: async () => 'not found' })
+
+    await expect(p.generate('animate')).rejects.toThrow(/404|non-retryable/i)
+    // 1 创建 + 1 轮询 404（立即抛）
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('回归: 5xx 未到阈值后恢复成功（reset 机制）', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ video_id: 'vid-1' }) })
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'x' })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', url: 'https://e/v.mp4' }) })
+
+    const out = await p.generate('animate')
+    expect(out.url).toBe('https://e/v.mp4')
   })
 })

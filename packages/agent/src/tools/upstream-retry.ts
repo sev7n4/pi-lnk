@@ -112,3 +112,55 @@ export async function withUpstreamRetry<T>(
 export const withVideoRetry = withUpstreamRetry
 export const isRetryableVideoError = isRetryableUpstreamError
 export type VideoRetryOptions = UpstreamRetryOptions
+
+/* ── 轮询阶段 HTTP 错误预算（P0-D / 诊断报告 V4）───────────────────────
+ *
+ * 背景：4 个 video provider 轮询一律 `if(!pollRes.ok) continue`，把 5xx/429
+ * 当「等下一轮」无限吞掉，直到 `maxPollAttempts`/`deadline` 超时才抛
+ * `timed out` —— 故障表现为「任务不返回」而非「任务失败」，监控看不到。
+ * 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.4 第 8 点。
+ *
+ * 改为：
+ *  ① 4xx 非 429（401/403/404/422…）：非可重试，立即抛 —— 参数错或权限错，
+ *     重试只会重复失败；带 body 便于定位。
+ *  ② 5xx / 429：累计 consecutive 计数，超 `maxConsecutive` 抛错退出；
+ *     未到阈值时打 warn（可观测），由调用方 `continue` 等下一轮。
+ *  ③ 成功响应（调用方在 `pollRes.ok` 后）调 `reset()` 重置计数 —— 避免一次
+ *     5xx 后的恢复被历史计数拖到阈值。
+ *
+ * ⚠️ 401/402/403 在 MiniMax/Fal 已有特定文案（ACCOUNT_ERROR_MESSAGE）的
+ * 内联抛错，应在调 `recordHttpError` **之前**过滤掉，否则会被本函数覆盖成
+ * 通用文案。Fal 的 `isAccountLockedError` 会消费 body，之后本函数 `res.text()`
+ * 返回空串，不影响抛错（4xx 非 429 仍按 status 抛）。
+ */
+export interface PollErrorTracker {
+  recordHttpError: (res: Response) => Promise<void>
+  reset: () => void
+}
+
+export function createPollErrorTracker(providerName: string, maxConsecutive = 5): PollErrorTracker {
+  let consecutive = 0
+  return {
+    async recordHttpError(res: Response) {
+      consecutive += 1
+      const status = res.status
+      // 4xx 非 429：非可重试，立即抛（401/403/404/422…）
+      if (status >= 400 && status < 500 && status !== 429) {
+        const body = await res.text().catch(() => '')
+        throw new Error(
+          `${providerName} poll ${status} non-retryable${body ? ` — ${body.slice(0, 200)}` : ''}`,
+        )
+      }
+      // 5xx / 429：超阈值抛
+      if (consecutive >= maxConsecutive) {
+        throw new Error(
+          `${providerName} poll: ${consecutive} consecutive HTTP errors (last ${status})`,
+        )
+      }
+      console.warn(`[${providerName}] poll ${status} (${consecutive}/${maxConsecutive} consecutive)`)
+    },
+    reset() {
+      consecutive = 0
+    },
+  }
+}
