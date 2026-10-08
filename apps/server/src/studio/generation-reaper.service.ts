@@ -10,24 +10,30 @@ import { studioPointCategory } from '../points/point-categories'
 import { refundMeta } from '../points/point-tx.types'
 
 /**
- * 回收范围（全部为走 `completeImage` 家族 detached 结算的图片侧记录）。
+ * 回收范围（走 detached 结算的图片侧 + 视频侧记录）。
  *
  * 2026-10-08 二轮：原只收 `image`，生产巡检发现同类孤儿还散在
  * `image_edit`（2 条，2026-09-25/26）与 `image_upscale`（1 条，2026-09-20，
  * 该 type 在当前代码中已不再产生，属历史遗留），三者共 3 条已扣未退 30 分。
  * 成因与 image 完全相同（detached completion + 无 reaper），故一并纳入。
  *
- * ⛔ 不含 video/audio：video 有独立编排层（`VIDEO_POLL_TIMEOUT_MS = 21min`），
- * 且其 BYOK 退款语义（`byok_refund` + `fallback_pending` 分支）需单独评审后
- * 再决定是否纳入，避免误退/重复退。
+ * 2026-10-08 三轮：纳入 `video`。视频 `completeVideo` 同为 detached
+ * （`studio.service.ts` `.catch(console.error)`），进程重启即丢失，与图片
+ * `completeImage` 同形态；生产另有 6 条 video 孤儿 / 290 分已扣未退。
+ * 视频超时 `VIDEO_POLL_TIMEOUT_MS = 21min`，30min 阈值留 9min 缓冲，不会
+ * 误收正常生成中的记录。BYOK 退款语义（`byok_refund`）由 reapOne 的
+ * `meta.providerSource === 'user'` 分支自动覆盖，与图片侧同路径。
+ *
+ * ⛔ 不含 audio：audio 走同步执行链路（无 detached），无孤儿风险。
  */
-const REAP_TYPES = ['image', 'image_edit', 'image_upscale'] as const
+const REAP_TYPES = ['image', 'image_edit', 'image_upscale', 'video'] as const
 
 /** 退款文案前缀，与各路径 `chargeReason` 保持一致（见 studio.service.ts）。 */
 const REAP_REASON_BY_TYPE: Record<string, string> = {
   image: '图像生成',
   image_edit: '图像精修',
   image_upscale: '图像放大',
+  video: '视频生成',
 }
 
 /** 卡死判定阈值：超过该分钟数仍停在 generating 的图片记录视为孤儿。 */
@@ -124,10 +130,10 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
     }
     if (stuck.length > 0) {
       this.logger.warn(
-        `[${reason}] 回收卡死图片侧生成 ${reaped}/${stuck.length} 条（类型 ${REAP_TYPES.join('/')}，阈值 ${threshold} 分钟，cutoff=${cutoff.toISOString()}）`,
+        `[${reason}] 回收卡死图片/视频侧生成 ${reaped}/${stuck.length} 条（类型 ${REAP_TYPES.join('/')}，阈值 ${threshold} 分钟，cutoff=${cutoff.toISOString()}）`,
       )
     } else if (reason === 'startup') {
-      this.logger.log('[startup] 无卡死图片侧生成记录')
+      this.logger.log('[startup] 无卡死图片/视频侧生成记录')
     }
     return reaped
   }

@@ -2122,12 +2122,6 @@ export class StudioService {
       referenceVideoCount: referenceBundle.videos.length,
     })
     const chargeReason = '视频生成'
-    await this.points.consume(
-      userId,
-      durationCredits,
-      chargeReason,
-      consumeMeta('video', { model: model ?? null, generationId: null }),
-    )
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'video')
     const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
       prompt,
@@ -2200,15 +2194,7 @@ export class StudioService {
         }
       }
       if (refPreflight.level === 'error' && built.meta.refWire === 'agnes_keyframes') {
-        await this.points.refund(
-          userId,
-          durationCredits,
-          `${chargeReason}-预检拒绝退款`,
-          refundMeta('video', 'failed_refund', {
-            model: resolved.modelName,
-            generationId: null,
-          }),
-        )
+        // 预检在扣费之前（记录先行 #277 形态）：拒绝时直接抛错，无需退款、无孤儿记录
         throw new BadRequestException(refPreflight.message)
       }
     }
@@ -2256,6 +2242,22 @@ export class StudioService {
         ...withCanvasScope(scope),
       },
     })
+    // 账本对齐 #277 形态：先建 generating 占位再扣费（携带 generationId）；
+    // 扣费失败（积分不足）立即删除占位，不留孤儿。旧顺序（先扣费后建记录）有
+    // 隐性泄漏——resolve/merge/预检阶段抛错时「已扣费、无记录、无退款」。
+    try {
+      await this.points.consume(
+        userId,
+        durationCredits,
+        chargeReason,
+        consumeMeta('video', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
     this.completeVideo(
       record.id,
       userId,
