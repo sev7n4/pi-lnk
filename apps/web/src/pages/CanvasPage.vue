@@ -4966,10 +4966,13 @@ onUnmounted(() => {
 
       </div>
 
-      <!--ⓘ `?graph=1` 全屏图视图：隐藏侧栏与 composer，整页交给图。
-           （新窗口本来就窄，再挤一个侧栏会让图更小） -->
+      <!--ⓘ `?graph=1` 全屏图视图：侧栏与 composer 整页交给图。
+           ⚠️⛔ **不能用 `v-if` 隐藏侧栏**（用户实测：新窗口里显示"这个会话还没有节点图"）：
+             `loadHistory()` / `bootstrapThread()` 都在 **AgentSideRail 的 onMounted** 里
+             ⇒ `v-if` 会让侧栏**根本不挂载** ⇒ 历史数据永不加载 ⇒ 图为空。
+           ✅ 用 CSS `hidden`（保持挂载与数据加载，只是不占布局），图表数据照常复原。 -->
       <AgentSideRail
-        v-if="!graphOnly"
+        :class="graphOnly ? 'hidden' : ''"
         ref="agentRailRef"
         :session-id="sessionId"
         :read-only="agentReadOnly"

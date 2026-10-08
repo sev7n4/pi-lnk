@@ -90,7 +90,21 @@ const emit = defineEmits<{
   importToCanvas: []
 }>()
 
-const { fitView } = useVueFlow()
+const { fitView, viewport } = useVueFlow()
+
+/**
+ * 把当前 zoom 写进 CSS 变量，供节点内的**反向缩放补偿**用（见样式里的注释）。
+ *
+ * ⚠️ Vue Flow 会把整个 viewport 按 zoom 缩放，节点里的文字一起变小
+ *   ⇒ 节点多、fitView 把 zoom 压低时标题糊掉（用户实测"看不清"）。
+ *   用反向缩放让**文字保持可读**，而位置/尺寸仍按 zoom 走（布局语义不变）。
+ *
+ * ⛔ 只补偿 < 1 的情形：放大时反向缩放会把字缩小，得不偿失。
+ */
+const zoomCompensation = computed(() => {
+  const z = viewport.value?.zoom ?? 1
+  return z < 0.85 ? z : 1
+})
 
 /** 视觉语义：类型 → 颜色/图标/尺寸。未知类型走中性色（不编造语义）。 */
 const TYPE_STYLE: Record<string, { label: string; icon: string; w: number; h: number }> = {
@@ -257,6 +271,7 @@ defineExpose({ fitView })
 <template>
   <div
     class="agent-node-graph"
+    :style="{ '--ng-zoom-compensation': String(zoomCompensation) }"
     :data-testid="'agent-node-graph'"
   >
     <header
@@ -338,10 +353,13 @@ defineExpose({ fitView })
       class="relative w-full overflow-hidden rounded-md border border-[var(--neo-border)]"
       :class="fullHeight ? 'h-full' : 'h-[320px]'"
     >
+      <!--⭐ min-zoom 从 0.2 提到 0.45：26 节点时 fitView 会把缩放压到 0.2x，
+           节点缩到 ~34px 宽 ⇒ 标题糊成一团（用户实测"看不清"）。
+           0.45 ≈ 能辨认标题的下限；节点更多时改为滚动，而不是无限缩小。 -->
       <VueFlow
         :nodes="[...groupNodes, ...vueNodes]"
         :edges="allEdges"
-        :min-zoom="0.2"
+        :min-zoom="0.45"
         :max-zoom="2.5"
         :default-viewport="{ x: 0, y: 0, zoom: 0.8 }"
         :nodes-draggable="false"
@@ -359,7 +377,7 @@ defineExpose({ fitView })
              ⚠️ Vue Flow 的 slot 名 = 节点 `type`。我们把 `type` 设为 `'agentNode'`（见上）
              而不是 `'default'`，否则 slot 不生效、只剩一个默认矩形。 -->
         <template #node-agentNode="{ data }">
-          <div class="h-full w-full overflow-hidden">
+          <div class="ng-node-inner h-full w-full overflow-hidden">
             <div
               v-if="data.thumb"
               class="w-full"
@@ -426,6 +444,13 @@ defineExpose({ fitView })
   border: 1px solid var(--neo-border, #2a2a2a);
   background: var(--neo-surface-card, #161616);
   font-size: 11px;
+}
+/* ⭐ 缩放补偿：Vue Flow 把整个 `.vue-flow__viewport` 按 zoom 缩放，节点内文字跟着变小
+   ⇒ 节点多时（fitView 压到 0.45x）标题糊掉。
+   在节点内**反向缩放**内容 ⇒ 文字保持可读；位置与尺寸仍按 zoom 走（布局语义不变）。 */
+.agent-node-graph :deep(.vue-flow__node .ng-node-inner) {
+  transform-origin: top left;
+  transform: scale(var(--ng-zoom-compensation, 1));
 }
 .agent-node-graph :deep(.vue-flow__node.selected) {
   border-color: var(--neo-accent, #3b82f6);
