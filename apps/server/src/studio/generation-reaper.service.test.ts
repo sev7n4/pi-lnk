@@ -127,14 +127,14 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(refundInTx).not.toHaveBeenCalled()
   })
 
-  it('回收范围为图片侧三类、按阈值过滤 createdAt', async () => {
+  it('回收范围含视频侧、按阈值过滤 createdAt', async () => {
     await svc.reapOnce('manual')
 
     const where = generationFindMany.mock.calls[0][0].where
-    expect(where.type).toEqual({ in: ['image', 'image_edit', 'image_upscale'] })
+    expect(where.type).toEqual({ in: ['image', 'image_edit', 'image_upscale', 'video'] })
     expect(where.status).toBe('generating')
     expect(where.createdAt.lt).toBeInstanceOf(Date)
-    // 默认 30 分钟阈值
+    // 默认 30 分钟阈值（视频 VIDEO_POLL_TIMEOUT_MS=21min，30min 阈值留 9min 缓冲）
     expect(Date.now() - where.createdAt.lt.getTime()).toBeGreaterThan(29 * 60_000)
   })
 
@@ -197,5 +197,48 @@ describe('GenerationReaperService 收尾机制', () => {
 
     expect(refundInTx.mock.calls[0][4].status).toBe('byok_refund')
     expect(refundInTx.mock.calls[0][4].category).toBe('image')
+  })
+
+  it('video 孤儿：标记 failed + 退款带 generationId，分类 video，文案「视频生成」', async () => {
+    generationFindMany.mockResolvedValue([
+      {
+        id: 'vid1',
+        type: 'video',
+        userId: 'u1',
+        model: 'seedance-2.0-min',
+        metadata: makeMeta({ chargeReason: '视频生成' }),
+      },
+    ])
+
+    const n = await svc.reapOnce('manual')
+
+    expect(n).toBe(1)
+    const data = generationUpdateMany.mock.calls[0][0].data
+    expect(data.status).toBe('failed')
+    const refundArgs = refundInTx.mock.calls[0]
+    expect(refundArgs[1]).toBe('u1')
+    expect(refundArgs[2]).toBe(10)
+    expect(refundArgs[3]).toBe('视频生成-超时回收退款')
+    expect(refundArgs[4].category).toBe('video')
+    expect(refundArgs[4].generationId).toBe('vid1')
+    expect(refundArgs[4].status).toBe('failed_refund')
+  })
+
+  it('video BYOK 孤儿：退款状态用 byok_refund（对齐正常失败路径语义）', async () => {
+    generationFindMany.mockResolvedValue([
+      {
+        id: 'vidb',
+        type: 'video',
+        userId: 'u1',
+        model: 'minimax-h3',
+        metadata: makeMeta({ providerSource: 'user', chargeReason: '视频生成' }),
+      },
+    ])
+
+    await svc.reapOnce('manual')
+
+    expect(refundInTx.mock.calls[0][4].status).toBe('byok_refund')
+    expect(refundInTx.mock.calls[0][4].category).toBe('video')
+    expect(refundInTx.mock.calls[0][3]).toBe('视频生成-超时回收退款')
   })
 })

@@ -214,3 +214,111 @@ describe('StudioService MiniMax H3 reference_to_video limits', () => {
     expect(consume).not.toHaveBeenCalled()
   })
 })
+
+describe('StudioService generateVideo 账本对齐 #277（扣费在建记录之后）', () => {
+  let svc: StudioService
+  let consume: ReturnType<typeof vi.fn>
+  let generationCreate: ReturnType<typeof vi.fn>
+  let generationDelete: ReturnType<typeof vi.fn>
+  let callOrder: string[]
+
+  /**
+   * 对齐图片 #277 形态：先建 generating 占位记录 → 再扣费（携带 generationId）→
+   * 扣费失败立即删除占位。旧顺序（先扣费后建记录）有隐性泄漏——resolve/merge 阶段
+   * 抛错时「已扣费、无记录、无退款」，用户侧连一条可展示的失败记录都没有。
+   */
+  async function buildService(opts?: {
+    resolver?: (userId: string, model?: string) => Promise<unknown>
+    consumeImpl?: () => Promise<void>
+  }) {
+    vi.clearAllMocks()
+    callOrder = []
+    consume = vi.fn(opts?.consumeImpl ?? (async () => { callOrder.push('consume') }))
+    generationCreate = vi.fn(async (args: { data: Record<string, unknown> }) => {
+      callOrder.push('create')
+      return { id: 'vid-rec-1', createdAt: new Date(), ...args.data }
+    })
+    generationDelete = vi.fn(async () => { callOrder.push('delete'); return {} })
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        StudioService,
+        { provide: PointsService, useValue: { consume, refund: vi.fn(async () => {}) } },
+        {
+          provide: PrismaService,
+          useValue: {
+            ...createPrismaMock(),
+            generationRecord: {
+              create: generationCreate,
+              delete: generationDelete,
+              update: async () => ({}),
+              findFirst: async () => null,
+              findMany: async () => [],
+            },
+          },
+        },
+        {
+          provide: ProviderResolverService,
+          useValue: {
+            resolveForGeneration: vi.fn(opts?.resolver ?? (async () => ({
+              channelId: 'platform',
+              modelName: 'seedance-2.0-min',
+              apiFormat: 'openai' as const,
+              credentials: { apiKey: 'k', baseUrl: 'https://api.apimart.ai' },
+              source: 'platform' as const,
+            }))),
+          },
+        },
+        { provide: MediaProbeService, useValue: createMediaProbeMock() },
+        {
+          provide: UploadService,
+          useValue: { saveUserFile: vi.fn(async () => ({ url: 'https://cdn/comp.png' })) },
+        },
+      ],
+    }).compile()
+    svc = moduleRef.get(StudioService)
+    // 屏蔽 detached completeVideo，避免后台发起真实 HTTP 请求污染测试
+    vi.spyOn(svc as never, 'completeVideo' as never).mockResolvedValue(undefined)
+    return svc
+  }
+
+  it('扣费在建记录之后，consume 携带 generationId = record.id', async () => {
+    const s = await buildService()
+    await s.generateVideo('u1', 'prompt', 'seedance-2.0-min', 5, '16:9')
+
+    expect(consume).toHaveBeenCalledTimes(1)
+    // create 必须先于 consume
+    expect(callOrder).toEqual(['create', 'consume'])
+    const meta = consume.mock.calls[0][3] as Record<string, unknown>
+    expect(meta.generationId).toBe('vid-rec-1')
+    expect(meta.category).toBe('video')
+  })
+
+  it('扣费失败时删除占位记录并抛错（不留孤儿）', async () => {
+    const s = await buildService({
+      consumeImpl: async () => { callOrder.push('consume'); throw new Error('积分不足') },
+    })
+
+    await expect(
+      s.generateVideo('u1', 'prompt', 'seedance-2.0-min', 5, '16:9'),
+    ).rejects.toThrow('积分不足')
+
+    expect(generationCreate).toHaveBeenCalledTimes(1)
+    expect(generationDelete).toHaveBeenCalledTimes(1)
+    expect(generationDelete.mock.calls[0][0]).toEqual({ where: { id: 'vid-rec-1' } })
+    expect(callOrder).toEqual(['create', 'consume', 'delete'])
+  })
+
+  it('resolveForGeneration 抛错时不扣费不建记录（根除泄漏）', async () => {
+    const s = await buildService({
+      resolver: async () => { throw new Error('channel not found') },
+    })
+
+    await expect(
+      s.generateVideo('u1', 'prompt', 'seedance-2.0-min', 5, '16:9'),
+    ).rejects.toThrow('channel not found')
+
+    expect(consume).not.toHaveBeenCalled()
+    expect(generationCreate).not.toHaveBeenCalled()
+    expect(generationDelete).not.toHaveBeenCalled()
+  })
+})
