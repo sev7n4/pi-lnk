@@ -1783,6 +1783,18 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
         if (!last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
           last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请使用弹出卡片的「重连」继续。`
         }
+      } else if (last?.role !== 'assistant') {
+        // 🔴 零事件场景（2026-10-07 生产事故复盘）：上面两条分支**都**以
+        // `last?.role === 'assistant'` 为前提，而「本轮一个事件都没收到」时
+        // assistant 消息压根不会被创建 ⇒ 两条全部落空、`appendText` 又会静默 no-op
+        // ⇒ 用户屏幕上什么都不出现（实测：run 被 vendor 以 LaneBusy 拒掉，SSE 9ms 断开）。
+        // 走 appendTurnNotice：它会先补一条 assistant 消息再落文本，保证文案可见。
+        //
+        // ⚠️ 用词刻意**不写**「生成服务不可达」：那断言的是不可达（需真实健康探测佐证），
+        // 这里只证实了「连接中断且没收到内容」。把未证实的事说成事实会误导排查。
+        agent.appendTurnNotice(
+          '\n\n⚠️ 本轮连接中断，没有收到任何回复内容。可点「重试」；若仍无响应，点「新建对话」后重发。',
+        )
       }
     }
 
