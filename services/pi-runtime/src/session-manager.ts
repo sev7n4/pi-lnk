@@ -44,6 +44,8 @@ import {
 	type RetentionState,
 } from "./compaction-retention.js";
 import type { Metrics, PromptInfo } from "./metrics.js";
+import { graphTurnObserver } from "./graph-observation/observer-instance.js";
+import { extractParamNames, extractViewName } from "./graph-observation/tool-args.js";
 import { COMPACTION_RETENTION_INSTRUCTIONS, missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
 import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
@@ -164,6 +166,11 @@ type ToolLikeEvent = {
 	terminate?: boolean;
 	/** tool_end 专用：工具结果（`AgentToolResult`，含 content 文本块）。 */
 	result?: unknown;
+	/**
+	 * tool_start 专用：工具入参。
+	 * ⛔ 只用于取**参数名**与枚举校验过的 `view`，参数值一律不进任何 label / 日志。
+	 */
+	args?: unknown;
 };
 
 /**
@@ -563,6 +570,22 @@ async function writeSessionMeta(cwd: string, meta: SessionMeta): Promise<void> {
  * 而分类正则（429/5xx/timeout/abort…）只看开头特征，500 字足够。
  * **提取出的文本绝不进 label**（会变基数爆炸），只作 `resultText` 传入分类器。
  */
+/**
+ * 从 `message_update` 里取助手文本增量（vendor 实测两种载荷形状都出现过）。
+ *
+ * ⚠️ 只用于**观测**，不参与任何 SSE 派生（那条链路在 Nest 侧 `pi-events.ts` 另有实现，
+ * 本函数不得反向依赖它，也不得改动事件载荷）。
+ */
+function extractAssistantDelta(evt: unknown): string {
+	const e = evt as {
+		event?: { type?: string; delta?: string };
+		assistantMessageEvent?: { type?: string; delta?: string };
+	};
+	const ame = e?.event ?? e?.assistantMessageEvent;
+	if (ame?.type === "text_delta" && typeof ame.delta === "string") return ame.delta;
+	return "";
+}
+
 function extractResultText(result: unknown): string {
 	try {
 		const content = (result as { content?: unknown })?.content;
@@ -1102,6 +1125,25 @@ export class SessionManager {
 					if (metrics && evt.toolCallId) {
 						metrics.toolMetrics().observeStart({ toolCallId: evt.toolCallId });
 					}
+						// 图形化表达观测（D1）：工具名 + 参数名 + 校验过的 view。
+						// 参数**值**不进 —— 只传名字（见 `tool-args.ts` 的安全判据）。
+						graphTurnObserver.feed({
+							kind: "tool",
+							toolName: evt.toolName ?? "unknown",
+							paramNames: extractParamNames(evt.args),
+							...(extractViewName(evt.args) !== undefined
+								? { view: extractViewName(evt.args) }
+								: {}),
+						});
+					}
+					if (harnessType === "message_update") {
+						// 模型自述文本（含「让我先搜索…」这类绕路自白）——
+						// 与用户问句分来源统计，见 `turn-observer.ts` 文件头。
+						const delta = extractAssistantDelta(evt);
+						if (delta) graphTurnObserver.feed({ kind: "text", text: delta });
+					}
+					if (harnessType === "turn_end") {
+						graphTurnObserver.feed({ kind: "turn_end" });
 					}
 					if (harnessType === "tool_end" && metrics && evt.toolCallId) {
 						metrics.toolMetrics().observeEnd({

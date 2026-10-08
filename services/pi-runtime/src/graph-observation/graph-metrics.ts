@@ -36,6 +36,36 @@ export const GRAPH_SIGNAL_WORDS = [
 ] as const;
 
 /**
+ * 模型侧自述文本专用的**严格**信号词（不含裸「图」）。
+ *
+ * ⚠️ 为什么与用户词表分开：中文里「图片 / 图表 / 图床」无处不在，
+ * 裸「图」在**模型自述**里几乎必然命中（"我先看看这张图"），
+ * 用它当分母会把触发率稀释成无意义的噪声。用户口中的「图」才是明确诉求。
+ */
+export const GRAPH_SIGNAL_WORDS_ASSIST = GRAPH_SIGNAL_WORDS.filter((w) => w.length >= 2);
+
+/** `render_canvas_view` 的 `view` 实测枚举（7 个，含 2 个 legacy 别名）。 */
+export const GRAPH_VIEW_NAMES = [
+	"layout",
+	"tree",
+	"timeline",
+	"swimlane",
+	"matrix",
+	"topology",
+	"table",
+] as const;
+
+/**
+ * view 取值是否已知。
+ *
+ * ⛔ 只有已知取值才允许进 Prometheus label —— `view` 名义上是枚举，但工具入参在运行时
+ * 是模型给的自由文本，直接把值塞进 label 等于把模型输出写进监控面（label 注入面）。
+ */
+export function isKnownViewName(view: string): boolean {
+	return (GRAPH_VIEW_NAMES as readonly string[]).includes(view);
+}
+
+/**
  * legacy 视图名 → 规范名。统计必须在**这里**归一，
  * 否则 `topology` 与 `layout+dependency` 会被双计（Review Focus #4）。
  */

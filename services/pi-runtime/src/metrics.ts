@@ -23,6 +23,7 @@
 // type-only：擦除后不留运行时依赖，只把 reason 的取值域锁到决策器的两个来源上。
 import type { CompactionOutcome, CompactionSkipReason } from "./compaction-check.js";
 import { ToolMetrics } from "./tool-metrics.js";
+import { graphMetrics } from "./graph-observation/observer-instance.js";
 
 const HIST_BUCKETS = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120];
 
@@ -584,6 +585,8 @@ export class Metrics {
 
 		// 事件层结算器在**尾部追加**：既有指标族的输出顺序与内容逐字不变，只在末尾多出工具/LLM 族。
 		this.toolMetricsSettler.renderInto(lines);
+		// 图形化表达观测（D1）：同样是尾部追加的独立族，不改动上面任何一行。
+		graphMetrics.renderInto(lines);
 
 		return `${lines.join("\n")}\n`;
 	}
