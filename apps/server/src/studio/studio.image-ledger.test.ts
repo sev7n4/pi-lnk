@@ -141,6 +141,14 @@ describe('generateImage 账本对账（记录先行）', () => {
     expect(pointsConsume.mock.calls[0][3].generationId).toBe('g1')
   })
 
+  it('分辨率分级定价（诊断 B4）：2K=15/张、4K=20/张，1K 维持 10', async () => {
+    await svc.generateImage('u1', '一张图', undefined, '1:1', [], [], '2K', 1, { sessionId: 's1' })
+    expect(pointsConsume.mock.calls[0][1]).toBe(15)
+
+    await svc.generateImage('u1', '一张图', undefined, '1:1', [], [], '4K', 1, { sessionId: 's1' })
+    expect(pointsConsume.mock.calls[1][1]).toBe(20)
+  })
+
   it('无文本引用时 merge 透传（skippedMerge），生成正常完成', async () => {
     const rec = await svc.generateImage('u1', '一只猫', undefined, '16:9', [], [], '1K', 1, {
       sessionId: 's1',

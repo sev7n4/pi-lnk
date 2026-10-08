@@ -69,6 +69,7 @@ import {
   type VideoGenerationMode,
   type CanvasData,
   assertMiniMaxH3ReferenceLimits,
+  imageGenerationCredits,
   resolveCompositionVideoPrompt,
 } from '@lnkpi/shared'
 import {
@@ -1102,7 +1103,8 @@ export class StudioService {
     scope?: CanvasGenerationScope,
   ) {
     const n = Math.max(1, Math.min(4, Number(count) || 1))
-    const cost = 10 * n
+    // 诊断 B4：定价按分辨率分级（1K=10 / 2K=15 / 4K=20 每张），单一真源在 shared
+    const cost = imageGenerationCredits({ count: n, resolution })
     const chargeReason = '图像生成'
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
     const { mergedText, skippedMerge, mergeDegraded, referenceImages } = await this.resolveMergedPrompt(

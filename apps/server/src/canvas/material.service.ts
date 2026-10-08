@@ -38,6 +38,7 @@ import {
   type ImageResolutionTier,
   type VideoGenerationMode,
   assertMiniMaxH3ReferenceLimits,
+  imageGenerationCredits,
 } from '@lnkpi/shared'
 import {
   alreadyRefunded,
@@ -401,7 +402,8 @@ export class MaterialService {
       )
     }
 
-    const cost = 10
+    // 诊断 B4：与 studio 主链路同源定价（按分辨率分级），单一真源 shared
+    const cost = imageGenerationCredits({ count: 1, resolution })
     const chargeReason = '图像生成'
     if (!skipCharge) {
       await this.points.consume(

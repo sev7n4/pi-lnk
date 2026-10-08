@@ -1,4 +1,4 @@
-import { audioKindOf, type AudioKind } from '@lnkpi/shared'
+import { audioKindOf, imageGenerationCredits, type AudioKind } from '@lnkpi/shared'
 
 export const BASE_GENERATION_CREDITS = {
   text: 5,
@@ -16,8 +16,12 @@ export function estimateTextCredits(): number {
   return BASE_GENERATION_CREDITS.text
 }
 
-export function estimateImageCredits(count = 1): number {
-  return BASE_GENERATION_CREDITS.image * Math.max(1, count)
+/**
+ * 图片积分估算。🔴 分档必须与服务端一致——两者都取 `shared/imageGenerationCredits`
+ * 单一真源（1K=10 / 2K=15 / 4K=20 每张），改档位请改 shared 的 FACTORS。
+ */
+export function estimateImageCredits(count = 1, resolution?: string): number {
+  return imageGenerationCredits({ count, resolution })
 }
 
 export function estimateVideoCredits(durationSec = 5): number {
