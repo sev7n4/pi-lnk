@@ -122,7 +122,7 @@ describe('generateTextForRefs', () => {
     expect(body.messages[1].content).toBe('hello')
   })
 
-  // ── retryCount 透传：vision 分支传真值，两条非 vision 分支先返回 0 ──────
+  // ── retryCount 透传：vision 分支传真值，两条非 vision 分支也传真值 ──────
   it('passes the real retryCount through from the vision branch', async () => {
     const fetchMock = vi
       .fn()
@@ -142,7 +142,7 @@ describe('generateTextForRefs', () => {
     expect(fetchMock.mock.calls.length).toBe(2)
   }, 30_000)
 
-  it('reports retryCount 0 for the text-only fallback branch', async () => {
+  it('reports retryCount 0 for the text-only fallback branch on first-attempt success', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ choices: [{ message: { content: 'text ok' } }] }),
@@ -155,9 +155,10 @@ describe('generateTextForRefs', () => {
     })
 
     expect(result.retryCount).toBe(0)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
-  it('reports retryCount 0 for the no-refs branch', async () => {
+  it('reports retryCount 0 for the no-refs branch on first-attempt success', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ choices: [{ message: { content: 'plain' } }] }),
@@ -167,5 +168,45 @@ describe('generateTextForRefs', () => {
     const result = await generateTextForRefs('hello', [], { apiKey: 'k', model: 'gpt-4o' })
 
     expect(result.retryCount).toBe(0)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
+
+  // ── 下面两条是 Task 4 的核心：非 vision 两条分支必须透传 provider 的真实
+  // 重试计数（此前恒为 0）。若retryCount 写死 0，这两条必红。
+  it('passes the real retryCount through from the text-only fallback branch', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limited' })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'text recovered' } }] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generateTextForRefs('describe', ['https://cdn.example/a.png'], {
+      apiKey: 'k',
+      model: 'deepseek-v4-pro',
+    })
+
+    expect(result).toEqual({ text: 'text recovered', visionUsed: false, retryCount: 1 })
+    expect(fetchMock.mock.calls.length).toBe(2)
+  }, 30_000)
+
+  it('passes the real retryCount through from the no-refs branch', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limited' })
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'unavailable' })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'plain recovered' } }] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await generateTextForRefs('hello', [], { apiKey: 'k', model: 'gpt-4o' })
+
+    // 总尝试 3 次 ⇒ 实际重试 2 次（口径不是总尝试数）
+    expect(result).toEqual({ text: 'plain recovered', visionUsed: false, retryCount: 2 })
+    expect(fetchMock.mock.calls.length).toBe(3)
+  }, 30_000)
 })

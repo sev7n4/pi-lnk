@@ -120,3 +120,82 @@ describe('createTextProvider', () => {
     expect(body.reasoning_effort).toBeUndefined()
   })
 })
+
+describe('OpenAITextProvider retry', () => {
+  const env = { ...process.env }
+  afterEach(() => {
+    process.env = env
+    vi.unstubAllGlobals()
+  })
+
+  it('retries on 429 then succeeds', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limited' })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'done' } }] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createTextProvider({ apiKey: 'k', baseUrl: 'https://x.invalid/v1' })
+    const { text } = await provider.generate('hello')
+    expect(text).toBe('done')
+    expect(fetchMock.mock.calls.length).toBe(2)
+  }, 30_000)
+
+  it('does not retry model_not_found', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 404, text: async () => 'model_not_found' })
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createTextProvider({ apiKey: 'k', baseUrl: 'https://x.invalid/v1' })
+    await expect(provider.generate('hello')).rejects.toThrow()
+    expect(fetchMock).toHaveBeenCalledOnce()
+  }, 30_000)
+
+  // ── 阈值锁死：attempts=3（与图片侧、vision 路径一致）────────────────────
+  it('gives up after exactly 3 attempts on persistent 503', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 503, text: async () => 'unavailable' })
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createTextProvider({ apiKey: 'k', baseUrl: 'https://x.invalid/v1' })
+    await expect(provider.generate('hello')).rejects.toThrow(/Text API 503/)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  }, 30_000)
+
+  // ── retryCount 口径：实际重试次数（非总尝试数），与 vision 路径一致 ──────
+  it('reports retryCount 0 when the first attempt succeeds', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'done' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createTextProvider({ apiKey: 'k', baseUrl: 'https://x.invalid/v1' })
+
+    const result = await provider.generate('hello')
+
+    expect(result.retryCount).toBe(0)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  }, 30_000)
+
+  it('reports retryCount 2 after two retried attempts (not 3 attempts)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limited' })
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'unavailable' })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'recovered' } }] }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createTextProvider({ apiKey: 'k', baseUrl: 'https://x.invalid/v1' })
+
+    const result = await provider.generate('hello')
+
+    expect(result.text).toBe('recovered')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    // 总尝试 3 次 ⇒ 实际重试 2 次。口径若错成「总尝试数」这里会是 3。
+    expect(result.retryCount).toBe(2)
+  }, 30_000)
+})

@@ -51,11 +51,11 @@ export interface TextForRefsResult {
   text: string
   visionUsed: boolean
   /**
-   * 实际重试次数（首次成功 = 0）。与 vision 路径同口径，供上层写进账本 metadata。
+   * 实际重试次数（首次成功 = 0，重试 1 次后成功 = 1）—— **不是总尝试数**。
+   * 与 vision 路径（`vision-text.ts`）同口径，供上层写进账本 metadata。
    *
-   * ⚠️ 非 vision 两条分支当前恒为 0：它们的 provider（`createTextProvider`）
-   * 尚未接`withUpstreamRetry`，真实计数由 Task 4 补齐。口径先对齐，
-   * 避免下游把「0」误读成「没重试过」。
+   * 非 vision 两条分支由 `OpenAITextProvider` 的 `withUpstreamRetry` 计数透传
+   * （见 `text-provider.ts`）；上游 429/503 抖动被退避重试救回时该值 > 0。
    */
   retryCount: number
 }
@@ -73,8 +73,8 @@ export async function generateTextForRefs(
       baseUrl: opts.baseUrl,
       model: opts.model,
     })
-    const { text } = await provider.generate(prompt, opts.model, opts.textOpts)
-    return { text, visionUsed: false, retryCount: 0 }
+    const { text, retryCount } = await provider.generate(prompt, opts.model, opts.textOpts)
+    return { text, visionUsed: false, retryCount }
   }
 
   if (supportsVisionTextModel(opts.model)) {
@@ -91,10 +91,10 @@ export async function generateTextForRefs(
     baseUrl: opts.baseUrl,
     model: opts.model,
   })
-  const { text } = await provider.generate(
+  const { text, retryCount } = await provider.generate(
     appendImageRefsForTextOnlyPrompt(prompt, refs),
     opts.model,
     opts.textOpts,
   )
-  return { text, visionUsed: false, retryCount: 0 }
+  return { text, visionUsed: false, retryCount }
 }
