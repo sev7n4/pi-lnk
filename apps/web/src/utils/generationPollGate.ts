@@ -92,6 +92,25 @@ export function settleDeadlineExceeded(opts: {
   return now - startedAt >= timeoutMs
 }
 
+/**
+ * 节点是否已经拿到可用产物（图片 / 视频 / 音频的地址）。
+ *
+ * ⚠️ 2026-10-08 新增。用于轮询墙钟超时（`onTimeout`）的兜底判定：
+ * 墙钟只应打击「真的什么也没拿到」的节点。此前 `onTimeout` 无条件写
+ * `status: error`，生产实测把已经 completed、图片可正常访问的节点刷成了
+ * `error` +「等待生成结果超时，请重试或刷新查看任务历史」，会诱发用户重复
+ * 生成（图片按张扣分 ⇒ 重复扣费）。
+ *
+ * `text` / `prompt` 节点的产物是 `content` 而非地址，不在本函数判定范围。
+ */
+export function nodeHasUsableOutput(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false
+  const d = data as Record<string, unknown>
+  if (Array.isArray(d.images) && d.images.some((u) => typeof u === 'string' && u)) return true
+  if (typeof d.url === 'string' && d.url) return true
+  return false
+}
+
 const MEDIA_TYPE_LABEL: Record<string, string> = {
   audio: '音频',
   image: '图片',

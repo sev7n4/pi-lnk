@@ -44,7 +44,7 @@ import { resolveCompositionTracks, mergeCompositionTracks, compositionTracksToNo
 import { resolveUpstreamContext } from '@/composables/useUpstreamNodeContext'
 import { resolveNodeRefs, type LocalRefBinding, type NodeRef } from '@/composables/useNodeRefs'
 import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating } from '@/constants/dockStudio'
-import { shouldApplyGenerationPoll } from '@/utils/generationPollGate'
+import { nodeHasUsableOutput, shouldApplyGenerationPoll } from '@/utils/generationPollGate'
 import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
 import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
 import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
@@ -713,6 +713,11 @@ const generationPolling = useGenerationPolling((results) => {
     // 诊断 C3：单节点轮询墙钟到期（默认 22min，与批量路径一致）——节点置 error，
     // 不再永久「生成回复中」
     onTimeout: (task) => {
+      // ⚠️ 2026-10-08 兜底守卫：墙钟只打击「真的什么也没拿到」的节点。
+      // 此前无条件写 error，生产实测把已经 completed、产物图可正常访问的节点
+      // 刷成 error（用户会以为生成失败并重复生成 ⇒ 重复扣分）。
+      const node = nodes.value.find((n) => n.id === task.nodeId)
+      if (nodeHasUsableOutput(node?.data)) return
       patchNodeData(task.nodeId, {
         status: NODE_GENERATION_STATUS.error,
         errorMessage: '等待生成结果超时，请重试或刷新查看任务历史',
