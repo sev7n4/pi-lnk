@@ -232,12 +232,32 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function appendText(text: string) {
-    // text_delta 落点：刷新最近文本时间戳（waiting 的文本静默判定依赖它）
+    // text_delta落点：刷新最近文本时间戳（waiting 的文本静默判定依赖它）
     lastTextDeltaAt.value = Date.now()
     const last = lastAssistant()
     if (last) {
       last.content += text
     }
+  }
+
+  /**
+   * 回合级提示：**先确保存在 assistant 消息**，再落文本（2026-10-08）。
+   *
+   * 为什么需要它：`appendText` 在**没有 assistant 消息时静默 no-op**
+   * （`if (last) last.content += text`，见其上方注释「无 assistant 消息时静默忽略」）。
+   * 而「本轮一个事件都没收到」时 assistant 消息**压根不会被创建**
+   * ⇒ 任何以 `appendText` 落地的兜底文案都落不了地、无声消失。
+   *
+   * 生产事故（2026-10-07）：run 被 vendor 以 `LaneBusy` 拒掉 ⇒ 零事件；
+   * SSE 9ms 后断开 ⇒ 前端的「异常结束」兜底分支又全部以
+   * `last?.role === 'assistant'` 为前提而全部落空 ⇒ 用户屏幕上什么都不出现。
+   *
+   * 语义边界：**不改变** `appendText` 本身的静默行为（多个既有调用方依赖它），
+   * 只为「回合收尾提示」这一类必须可见文案的场合提供有保障的通道。
+   */
+  function appendTurnNotice(text: string) {
+    if (!lastAssistant()) startAssistantMessage()
+    appendText(text)
   }
 
   function replaceAssistantText(text: string) {
@@ -536,6 +556,7 @@ export const useAgentStore = defineStore('agent', () => {
     confirmSelectionBinding,
     startAssistantMessage,
     setPresentation,
+    appendTurnNotice,
     appendText,
     replaceAssistantText,
     beginToolCall,
