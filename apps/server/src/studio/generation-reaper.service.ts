@@ -6,7 +6,29 @@ import {
   applyRefundMeta,
   isCancelledMeta,
 } from '../points/charge-session'
+import { studioPointCategory } from '../points/point-categories'
 import { refundMeta } from '../points/point-tx.types'
+
+/**
+ * 回收范围（全部为走 `completeImage` 家族 detached 结算的图片侧记录）。
+ *
+ * 2026-10-08 二轮：原只收 `image`，生产巡检发现同类孤儿还散在
+ * `image_edit`（2 条，2026-09-25/26）与 `image_upscale`（1 条，2026-09-20，
+ * 该 type 在当前代码中已不再产生，属历史遗留），三者共 3 条已扣未退 30 分。
+ * 成因与 image 完全相同（detached completion + 无 reaper），故一并纳入。
+ *
+ * ⛔ 不含 video/audio：video 有独立编排层（`VIDEO_POLL_TIMEOUT_MS = 21min`），
+ * 且其 BYOK 退款语义（`byok_refund` + `fallback_pending` 分支）需单独评审后
+ * 再决定是否纳入，避免误退/重复退。
+ */
+const REAP_TYPES = ['image', 'image_edit', 'image_upscale'] as const
+
+/** 退款文案前缀，与各路径 `chargeReason` 保持一致（见 studio.service.ts）。 */
+const REAP_REASON_BY_TYPE: Record<string, string> = {
+  image: '图像生成',
+  image_edit: '图像精修',
+  image_upscale: '图像放大',
+}
 
 /** 卡死判定阈值：超过该分钟数仍停在 generating 的图片记录视为孤儿。 */
 const DEFAULT_REAP_MINUTES = 30
@@ -33,6 +55,7 @@ function errMessage(err: unknown): string {
 
 interface StuckRecord {
   id: string
+  type: string
   userId: string
   model: string | null
   metadata: string | null
@@ -80,13 +103,11 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
     const minutes = Number(process.env.LNKPI_GENERATION_REAP_MINUTES ?? DEFAULT_REAP_MINUTES)
     const threshold = Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_REAP_MINUTES
     const cutoff = new Date(Date.now() - threshold * 60_000)
-    // 只收 image：completeImage detached + 无 reaper 是已证实的卡单来源；
-    // video/audio 走各自的编排层超时，不在此越界。
     let stuck: StuckRecord[] = []
     try {
       stuck = await this.prisma.generationRecord.findMany({
-        where: { type: 'image', status: 'generating', createdAt: { lt: cutoff } },
-        select: { id: true, userId: true, model: true, metadata: true },
+        where: { type: { in: [...REAP_TYPES] }, status: 'generating', createdAt: { lt: cutoff } },
+        select: { id: true, type: true, userId: true, model: true, metadata: true },
         take: REAP_BATCH,
       })
     } catch (err) {
@@ -103,10 +124,10 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
     }
     if (stuck.length > 0) {
       this.logger.warn(
-        `[${reason}] 回收卡死图片生成 ${reaped}/${stuck.length} 条（阈值 ${threshold} 分钟，cutoff=${cutoff.toISOString()}）`,
+        `[${reason}] 回收卡死图片侧生成 ${reaped}/${stuck.length} 条（类型 ${REAP_TYPES.join('/')}，阈值 ${threshold} 分钟，cutoff=${cutoff.toISOString()}）`,
       )
     } else if (reason === 'startup') {
-      this.logger.log('[startup] 无卡死图片生成记录')
+      this.logger.log('[startup] 无卡死图片侧生成记录')
     }
     return reaped
   }
@@ -116,6 +137,13 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
     const meta = parseMeta(rec.metadata)
     const charged = typeof meta.chargedPoints === 'number' && meta.chargedPoints > 0 ? meta.chargedPoints : 0
     const needRefund = charged > 0 && !alreadyRefunded(meta) && !isCancelledMeta(meta)
+    // 分类必须与扣费侧同源：image_upscale 扣在 other、image/image_edit 扣在 image，
+    // 用同一个函数取，避免「退款分类 ≠ 扣费分类」的错账（见 point-categories.ts）。
+    const category = studioPointCategory(rec.type)
+    const reasonLabel = REAP_REASON_BY_TYPE[rec.type] ?? '生成'
+    // BYOK 记录的失败退款在正常路径用 byok_refund（studio.service.ts completeImage），
+    // 这里对齐同一语义；金额与 category 不受影响。
+    const refundStatus = meta.providerSource === 'user' ? 'byok_refund' : 'failed_refund'
     const baseMeta: Record<string, unknown> = {
       ...meta,
       errorCode: 'upstream_timeout',
@@ -133,8 +161,8 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
       })
       if (updated.count === 0) return 0 as const
       if (needRefund) {
-        await this.points.refundInTx(tx, rec.userId, charged, '图像生成-超时回收退款', {
-          ...refundMeta('image', 'failed_refund', {
+        await this.points.refundInTx(tx, rec.userId, charged, `${reasonLabel}-超时回收退款`, {
+          ...refundMeta(category, refundStatus, {
             model: rec.model,
             generationId: rec.id,
           }),
