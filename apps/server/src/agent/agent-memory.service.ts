@@ -30,6 +30,28 @@ export const MEMORY_QUOTA_USER = 100
 export const MEMORY_RECALL_CHAR_BUDGET = 6000
 
 /**
+ * Phase 2（项 B/C）：策展蒸馏与写入去重的触发/封顶参数。
+ * - 写超阈值自动触发一次策展（canvas scope 原始条数穿越点）。
+ * - 每个 (userId, scope) 最多保留的策展摘要条数。
+ */
+export const MEMORY_CONSOLIDATE_THRESHOLD = 50
+export const MEMORY_CURATED_MAX = 10
+
+/** 策展摘要溯源标记：原始行不删，标记内嵌被策展的原始 id，召回据此排除原始、保留可回溯。 */
+const CONSOLIDATED_MARKER_RE = /(?:^|\n)---\s*策展自\s*(\d+)\s*条原始记忆\s*\(ids:\s*([\w,]+)\)\s*---/
+function buildConsolidatedMarker(n: number, ids: string[]): string {
+  return `\n--- 策展自 ${n} 条原始记忆 (ids: ${ids.join(',')}) ---`
+}
+function parseConsolidatedIds(content: string): string[] {
+  const m = content.match(CONSOLIDATED_MARKER_RE)
+  if (!m) return []
+  return m[2].split(',').filter(Boolean)
+}
+function stripConsolidatedMarker(content: string): string {
+  return content.replace(CONSOLIDATED_MARKER_RE, '').trim()
+}
+
+/**
  * 记忆作用域（spec 2026-10-03-agent-memory-scope-isolation-design.md §3.1）。
  * - canvas：仅本画布可见，`sessionId`（= Session.id）必填，`save_memory` 默认写这里
  * - user：该用户全部画布可见，只有显式 `scope:'user'` 才写这里（偏好/品牌/暗号）
@@ -127,16 +149,34 @@ export class AgentMemoryService {
     const scope: AgentMemoryScope = requested === 'canvas' && !sessionId ? 'user' : requested
     // A：写前按 scope 配额 LRU 驱逐最旧（fail-soft，异常不阻断写入）
     const quota = scope === 'user' ? MEMORY_QUOTA_USER : MEMORY_QUOTA_CANVAS
-    await this.evictIfOverQuota(input.userId, scope, quota)
-    const record = await this.prisma.agentMemory.create({
-      data: {
-        userId: input.userId,
-        scope,
-        sessionId,
-        source: scope === 'user' ? 'user_explicit' : 'agent_auto',
-        content: content.slice(0, MEMORY_CONTENT_MAX),
-      },
-    })
+    // 配额计数也 fail-soft：失败则视为 0（跳过驱逐，不阻断写入——恢复 Phase1 已锁的 fail-soft 判据）
+    let total = 0
+    try { total = await this.prisma.agentMemory.count({ where: { userId: input.userId, scope } }) } catch { /* fail-soft */ }
+    await this.evictIfOverQuota(input.userId, scope, quota, total)
+    // C 写入去重：同 (userId, scope, sessionId) 内字面重复 ⇒ 更新而非新增（消除"小熊×13"类重复）
+    const norm = normalizeMemoryContent(content)
+    const dup = await this.findDuplicate(input.userId, scope, sessionId, norm)
+    let record
+    if (dup) {
+      record = await this.prisma.agentMemory.update({
+        where: { id: dup.id },
+        data: { content: content.slice(0, MEMORY_CONTENT_MAX) },
+      })
+    } else {
+      record = await this.prisma.agentMemory.create({
+        data: {
+          userId: input.userId,
+          scope,
+          sessionId,
+          source: scope === 'user' ? 'user_explicit' : 'agent_auto',
+          content: content.slice(0, MEMORY_CONTENT_MAX),
+        },
+      })
+    }
+    // B 自动触发：canvas scope 原始越过阈值时跑一次策展（阈值穿越点触发，频率有界；fail-soft）
+    if (scope === 'canvas' && total + 1 > MEMORY_CONSOLIDATE_THRESHOLD) {
+      try { await this.consolidateMemory({ userId: input.userId, scope }) } catch { /* fail-soft */ }
+    }
     return { id: record.id, createdAt: record.createdAt.toISOString(), scope, sessionId }
   }
 
@@ -145,9 +185,9 @@ export class AgentMemoryService {
    * 软约束（非事务）：配额是"防膨胀护栏"而非硬锁，并发下短暂超一点可接受。
    * fail-soft：驱逐链路任何异常都只跳过驱逐、不阻断本次写入（记忆不能因护栏失效而丢失）。
    */
-  private async evictIfOverQuota(userId: string, scope: AgentMemoryScope, quota: number): Promise<void> {
+  private async evictIfOverQuota(userId: string, scope: AgentMemoryScope, quota: number, currentCount?: number): Promise<void> {
     try {
-      const count = await this.prisma.agentMemory.count({ where: { userId, scope } })
+      const count = currentCount ?? (await this.prisma.agentMemory.count({ where: { userId, scope } }))
       const excess = count + 1 - quota
       if (excess <= 0) return
       const oldest = await this.prisma.agentMemory.findMany({
@@ -161,6 +201,77 @@ export class AgentMemoryService {
       }
     } catch {
       // 驱逐失败不阻断写入：配额护栏是软约束，宁可少驱逐也不让 save 抛错
+    }
+  }
+
+  /**
+   * C 写入去重（spec 项 C）：在 (userId, scope, sessionId) 内按归一化内容查重，命中返回该行（供 update）。
+   * 只做字面去重（规格 C 非目标：不做语义级）；fail-soft：异常返回 null（退化为新增，不丢记忆）。
+   */
+  private async findDuplicate(userId: string, scope: AgentMemoryScope, sessionId: string | null, norm: string): Promise<{ id: string } | null> {
+    try {
+      const rows = await this.prisma.agentMemory.findMany({
+        where: { userId, scope, sessionId, source: { not: 'curated' } },
+        select: { id: true, content: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      })
+      const hit = rows.find((r) => normalizeMemoryContent(r.content) === norm)
+      return hit ? { id: hit.id } : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * B 策展蒸馏（spec 项 B，规则合并、无 LLM）：仅 canvas scope 内、按 sessionId 保守聚类，
+   * 把同会话 ≥2 条原始记忆合并为 1 条 `source='curated'` 摘要（取最新 3 条原文拼接）。
+   * 原始行**保留不删**（content 末尾内嵌 consolidatedFrom 溯源标记），召回时排除被策展原始行、优先返回摘要。
+   * 幂等：已策展引用的原始 id 不再重复策展；封顶 MEMORY_CURATED_MAX 条/ scope。fail-soft：异常返回 {created:0}。
+   */
+  async consolidateMemory(input: { userId: string; scope: AgentMemoryScope }): Promise<{ created: number }> {
+    if (input.scope !== 'canvas') return { created: 0 } // 保守：user 偏好不策展，避免误并
+    try {
+      const { userId, scope } = input
+      const existing = await this.prisma.agentMemory.findMany({
+        where: { userId, scope, source: 'curated' },
+        select: { content: true },
+      })
+      const already = new Set<string>()
+      for (const c of existing) for (const id of parseConsolidatedIds(c.content)) already.add(id)
+      const raws = await this.prisma.agentMemory.findMany({
+        where: { userId, scope, source: { not: 'curated' } },
+        orderBy: { createdAt: 'asc' },
+        take: 5000,
+      })
+      const groups = new Map<string, typeof raws>()
+      for (const r of raws) {
+        if (already.has(r.id)) continue
+        const key = r.sessionId ?? ''
+        const arr = groups.get(key)
+        if (arr) arr.push(r)
+        else groups.set(key, [r])
+      }
+      let created = 0
+      let curated = existing.length
+      for (const members of groups.values()) {
+        if (curated >= MEMORY_CURATED_MAX) break
+        if (members.length < 2) continue
+        members.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()) // 显式升序，取最新 3 条，不依赖查序
+        const ids = members.map((m) => m.id)
+        const marker = buildConsolidatedMarker(members.length, ids)
+        const cap = MEMORY_CONTENT_MAX - marker.length
+        const reps = members.slice(-3).map((m) => m.content.slice(0, 200)).join('；')
+        const summary = (reps.length > cap ? reps.slice(0, cap) : reps) + marker
+        await this.prisma.agentMemory.create({
+          data: { userId, scope, sessionId: members[0].sessionId, source: 'curated', content: summary },
+        })
+        created++
+        curated++
+      }
+      return { created }
+    } catch {
+      return { created: 0 }
     }
   }
 
@@ -212,15 +323,21 @@ export class AgentMemoryService {
       // 就必须扫满窗口再排。
       take: query || (currentSession && want !== 'user') ? MEMORY_SCAN_MAX : limit,
     })
+    // B：从 curated 行解析被策展的原始 id，召回时排除这些原始行（原始仍在库，可回溯）；curated 行本身保留。
+    const consolidatedFrom = new Set<string>()
+    for (const r of rows) {
+      if (r.source === 'curated') for (const id of parseConsolidatedIds(r.content)) consolidatedFrom.add(id)
+    }
+    const filtered = rows.filter((r) => r.source === 'curated' || !consolidatedFrom.has(r.id))
     // 分词打分召回（审计 #7）：OR 命中 + 计分（全 token 命中的排前），零分过滤。
     // % / _ 天然按普通子串处理（不是 LIKE，Review I-2 语义保持）；同分保持
     // findMany 的 createdAt 倒序（Array.prototype.sort 稳定排序）。
-    let matched: typeof rows
+    let matched: typeof filtered
     if (!query) {
-      matched = rows
+      matched = filtered
     } else {
       const tokens = this.tokenize(query)
-      const scored = rows
+      const scored = filtered
         .map((m) => {
           const content = m.content.toLowerCase()
           const score = tokens.reduce((acc, t) => acc + (content.includes(t) ? 1 : 0), 0)
@@ -255,7 +372,7 @@ export class AgentMemoryService {
     const items = budgeted
       .map(({ m }) => ({
         id: m.id,
-        content: m.content,
+        content: stripConsolidatedMarker(m.content),
         createdAt: m.createdAt.toISOString(),
         scope: m.scope,
         sessionId: m.sessionId ?? null,
