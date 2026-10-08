@@ -257,6 +257,15 @@ export class SearchMemoryDto {
   scope?: AgentMemoryScopeFilter
 }
 
+/** Phase3 F（spec 2026-10-08-pilnk-memory-product-adoption-scope.md §5 F）：删除请求体。 */
+export class DeleteMemoryDto {
+  @IsString()
+  userId!: string
+
+  @IsString()
+  memoryId!: string
+}
+
 // W32: Remove edges DTO
 class RemoveEdgesDto {
   @IsString()
@@ -1139,6 +1148,13 @@ export class AgentCanvasToolsController {
   @Post('memory-search')
   async searchMemory(@Body() dto: SearchMemoryDto) {
     const data = await this.memory.searchMemory(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  // Phase3 F：删除单条记忆（归属校验在 service，404 同态 suppressMemory）
+  @Post('memory-delete')
+  async deleteMemory(@Body() dto: DeleteMemoryDto) {
+    const data = await this.memory.deleteMemory(dto)
     return { code: 0, message: 'ok', data }
   }
 

@@ -36,6 +36,8 @@ interface MemoryItem {
 	scope?: string;
 	sessionId?: string | null;
 	crossCanvas?: boolean;
+	/** Phase3 D：同主题存在更新版本时为 true（旧版本仍返回，数据级自曝）。 */
+	superseded?: boolean;
 }
 
 /**
@@ -57,6 +59,13 @@ interface MemoryItem {
  * 刻意**不做**的：不给recall_memory 加「删除记忆」能力。删除是持久化操作、
  * 不可逆，且需要用户确认语义；抑制是进程内、可自动失效的，两者的风险量级不同。
  * 晋升（把反复出现的记忆升级成全局规则）是 M6b，排在本次之后——见规格 §13.3 的顺序论证。
+ *
+ * ⚠️ 上段「不做删除」已被 Phase 3 F **部分解禁**（spec
+ * docs/superpowers/specs/2026-10-08-pilnk-memory-product-adoption-scope.md §5 F）：
+ * 独立的 `delete_memory` 工具（tier=destructive，挂 before_tool 审批补回「用户确认语义」）
+ * 现已存在——但它与 recall_memory **解耦**（不挂在 recall 上），且定位是「用户明确要求
+ * 忘记某事实」；「事实只是变了」仍应优先 save_memory 改写。抑制（进程内、可自动失效）
+ * 与删除（持久、不可逆）的风险分界不变。
  */
 const SUPPRESSED_MEMORY_IDS = new Map<string, string>();
 
@@ -124,6 +133,15 @@ const CROSS_CANVAS_NOTICE =
 	"以上部分内容来自**另一个画布的记忆**，只可作为背景参考；" +
 	"**不能**把它当作当前图片、当前截图或当前对话内容的观察结果。" +
 	"若用户正在问「这张图/这个画面是什么」，请明确说明你无法直接查看图像内容并请用户描述，而不是用记忆去推断画面。";
+
+/**
+ * Phase3 D（spec 2026-10-08-pilnk-memory-product-adoption-scope.md §5 D）：
+ * 同主题冲突的数据级自曝。与 CROSS_CANVAS_NOTICE **分键**（supersededNotice），
+ * 两者可同时出现互不覆盖。
+ */
+const SUPERSEDED_NOTICE =
+	"标 superseded:true 的条目是同主题的**旧版本**，已被更新的记忆取代；" +
+	"请以未标记 superseded 的最新条目为准，不要把旧版本当作当前事实。";
 
 function memoryResult(payload: Record<string, unknown>): { content: [{ type: "text"; text: string }]; details: undefined } {
 	return { content: [{ type: "text", text: JSON.stringify(payload) }], details: undefined };
@@ -201,9 +219,11 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 				"Recall durable facts. Items carry scope/sessionId/crossCanvas: 'canvas' items belong to one " +
 				"canvas, 'user' items are cross-canvas facts the user asked you to keep. crossCanvas:true means " +
 				"the memory came from ANOTHER canvas — treat it as background only, NEVER as an observation of the " +
-				"current screen, image or canvas. Pass scope:'canvas' to search only this canvas, scope:'user' for " +
-				"cross-canvas facts only. Omit query to list the most recent memories; pass a query to match as a " +
-				"case-insensitive substring (only your most recent 200 memories are scanned).",
+				"current screen, image or canvas. superseded:true means a NEWER memory about the same topic " +
+				"exists in the results — trust the un-flagged one, not the superseded one. Pass scope:'canvas' to " +
+				"search only this canvas, scope:'user' for cross-canvas facts only. Omit query to list the most " +
+				"recent memories; pass a query to match as a case-insensitive substring (only your most recent " +
+				"200 memories are scanned).",
 			parameters: Type.Object({
 				query: Type.Optional(Type.String({ description: "Keyword filter; omit for most recent memories" })),
 				limit: Type.Optional(Type.Number({ description: "Max items (1-50, default 10)" })),
@@ -239,6 +259,8 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 				// 模型收到一条指向不存在条目的警示，且这种错位在数据上完全看不出来。
 				const kept = dropSuppressed(items);
 				const crossCanvas = kept.filter((i) => i?.crossCanvas === true);
+				// Phase3 D：同主题旧版本计数与提示（分键，不与 crossCanvas notice 互斥覆盖）
+				const supersededCount = kept.filter((i) => i?.superseded === true).length;
 				const note = kept.length
 					? undefined
 					: query
@@ -252,8 +274,45 @@ export function buildMemoryTools(client: NestClient): LnkpiTool[] {
 					items: kept,
 					...(data?.truncated ? { truncated: true } : {}),
 					...(crossCanvas.length ? { crossCanvasCount: crossCanvas.length, notice: CROSS_CANVAS_NOTICE } : {}),
+					...(supersededCount ? { supersededCount, supersededNotice: SUPERSEDED_NOTICE } : {}),
 					...(note ? { note } : {}),
 				});
+			},
+		},
+		{
+			tier: "destructive" as const,
+			name: "delete_memory",
+			label: "删除记忆",
+			description:
+				"Permanently DELETE one memory by its id (get ids from recall_memory results). " +
+				"Irreversible. Use ONLY when the user explicitly asks to forget/delete that fact — " +
+				"if the fact merely changed, prefer save_memory with the corrected content instead.",
+			parameters: Type.Object({
+				memoryId: Type.String({ description: "Memory id from recall_memory results" }),
+			}),
+			execute: async (_id, p: { memoryId: string }, _u, tc: LnkpiToolContext) => {
+				if (!tc?.userId) throw new Error("delete_memory requires userId in toolContext");
+				const memoryId = (p?.memoryId ?? "").trim();
+				if (!memoryId) throw new Error("delete_memory requires a non-empty memoryId");
+				try {
+					const data = (await client.post("/agent/internal/memory-delete", {
+						userId: tc.userId,
+						memoryId,
+					})) as { id?: string; scope?: string } | null | undefined;
+					return memoryResult({
+						ok: true,
+						id: data?.id ?? memoryId,
+						scope: data?.scope ?? null,
+						note: "已永久删除该记忆",
+					});
+				} catch {
+					// 不存在/不属于当前用户/服务暂不可用——统一降级为 ok:false，不向模型泄露细节
+					return memoryResult({
+						ok: false,
+						id: memoryId,
+						note: "删除失败：记忆不存在、不属于当前用户，或服务暂不可用",
+					});
+				}
 			},
 		},
 	];

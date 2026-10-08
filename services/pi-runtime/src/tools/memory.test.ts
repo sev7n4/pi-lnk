@@ -327,3 +327,80 @@ test("recall_memory：透传 Nest 返回的 truncated 标记给模型", async ()
 	const p = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as { truncated?: boolean; count: number };
 	assert.equal(p.truncated, true);
 });
+
+// ── Phase3 F：delete_memory（spec docs/superpowers/specs/2026-10-08-pilnk-memory-product-adoption-scope.md §5 F）──
+// M6a 头注曾「刻意不做删除」；Phase 3 F 解禁为独立工具（tier=destructive 挂审批），
+// 与 recall/save 解耦。这里的用例锁的是安全模型，不是删除语义本身（语义在 Nest 侧单测）。
+
+test("delete_memory：tier=destructive，schema 不暴露 userId（安全模型锁）", () => {
+	const tools = buildMemoryTools(fakeClient());
+	assert.equal(find(tools, "delete_memory").tier, "destructive");
+	const schema = JSON.stringify(find(tools, "delete_memory").parameters);
+	assert.ok(!schema.includes("userId"));
+	assert.ok(!schema.includes("sessionId"));
+});
+
+test("delete_memory：userId 缺失 → 抛错且不发请求（fail-closed，同 save/recall）", async () => {
+	const capture: Capture = { calls: 0 };
+	const tools = buildMemoryTools(fakeClient(capture));
+	await assert.rejects(
+		() => runTool(find(tools, "delete_memory"), { memoryId: "m1" }, { sessionId: "s1" } as LnkpiToolContext),
+		/requires userId/,
+	);
+	assert.equal(capture.calls, 0);
+});
+
+test("delete_memory：调用 internal/memory-delete，成功返回 ok + note（审计回显）", async () => {
+	const capture: Capture = { calls: 0 };
+	const tools = buildMemoryTools(fakeClient(capture, { id: "m1", scope: "canvas" }));
+	const p = payload(await runTool(find(tools, "delete_memory"), { memoryId: "m1" }, tc)) as { ok: boolean; id?: string; scope?: string; note?: string };
+	assert.equal(p.ok, true);
+	assert.equal(p.id, "m1");
+	assert.equal(p.scope, "canvas");
+	assert.ok((p.note ?? "").includes("已永久删除"));
+	assert.equal(capture.path, "/agent/internal/memory-delete");
+	assert.deepEqual(capture.body, { userId: "u1", memoryId: "m1" });
+});
+
+test("delete_memory：Nest 抛错（不存在/不属于你/服务不可用）→ ok:false 不炸（不向模型泄露细节）", async () => {
+	const client = {
+		post: async () => {
+			throw new Error("404");
+		},
+	} as unknown as NestClient;
+	const tools = buildMemoryTools(client);
+	const p = payload(await runTool(find(tools, "delete_memory"), { memoryId: "m1" }, tc)) as { ok: boolean; id?: string };
+	assert.equal(p.ok, false);
+	assert.equal(p.id, "m1");
+});
+
+test("delete_memory：空白 memoryId → 抛错不发请求", async () => {
+	const capture: Capture = { calls: 0 };
+	const tools = buildMemoryTools(fakeClient(capture));
+	await assert.rejects(() => runTool(find(tools, "delete_memory"), { memoryId: "  " }, tc), /non-empty memoryId/);
+	assert.equal(capture.calls, 0);
+});
+
+// ── Phase3 D：superseded 数据级自曝透传 ──
+
+test("recall_memory：superseded 条目透传 + supersededNotice（分键，不与 crossCanvas notice 互斥覆盖）", async () => {
+	const reply = {
+		items: [
+			{ id: "new", content: "品牌色是蓝色", createdAt: "2026-10-01T00:00:00.000Z", scope: "canvas", crossCanvas: false, superseded: false },
+			{ id: "old", content: "品牌色是蓝色", createdAt: "2026-01-01T00:00:00.000Z", scope: "user", crossCanvas: false, superseded: true },
+		],
+	};
+	const tools = buildMemoryTools(fakeClient({ calls: 0 }, reply));
+	const p = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as { count: number; supersededCount?: number; supersededNotice?: string };
+	assert.equal(p.count, 2);
+	assert.equal(p.supersededCount, 1);
+	assert.ok((p.supersededNotice ?? "").includes("旧版本"));
+});
+
+test("recall_memory：无 superseded 条目时不出 supersededNotice（不制造噪音，同 crossCanvas 约定）", async () => {
+	const reply = { items: [{ id: "a", content: "x", createdAt: "2026-01-01T00:00:00.000Z" }] };
+	const tools = buildMemoryTools(fakeClient({ calls: 0 }, reply));
+	const p = payload(await runTool(find(tools, "recall_memory"), {}, tc)) as { supersededCount?: number; supersededNotice?: string };
+	assert.equal(p.supersededCount, undefined);
+	assert.equal(p.supersededNotice, undefined);
+});
