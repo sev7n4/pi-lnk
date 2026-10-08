@@ -51,30 +51,44 @@ test("R1：单节点的 timeline 高度有限且不为 0", () => {
 	assert.ok(l.height > 0);
 });
 
-test("⏳ C1 未落地：timeline 现状无条件按相邻串箭头（D2 不改，Task 9 收敛）", () => {
-	// ⭐ **这是 D2 的已知不一致，不是本任务的成果**，如实记录：
-	//   `buildTimelineFlowSvg` 只接收 `nodes`、**根本不接 `edges`**
-	//   ⇒ 箭头是渲染层按「i+1 存在」自行决定的，正是 C1 判据的反例。
-	//   改成「按 IR 的 edge.kind 决定」会**删掉 golden `timeline` 用例里的一个箭头**
-	//   （BASE3 只有 n1→n2 一条边，现状却串两段）⇒ 与「逐字节不变」直接冲突。
-	//   按计划 Task 6 的先例，方向语义统一放在 Task 9；本任务只把「串哪些行」
-	//   这个决定从渲染层搬到布局层，使它可被断言、可被 Task 9 一处改掉。
+test("C1：trunk 只串 IR 里真实存在的有向边，不按相邻行自作主张", () => {
+	// ⭐ D2 遗留的反例：3 个节点只给a→b 一条边，现状仍串两段（row 1、row 2），
+	//   等于宣称「b→c 也是流转关系」—— 而 IR 里并没有这条事实。
+	//   Task 9 起方向来自 IR：只有 a→b 有 ⇒ 只有 row 1 一段，且 row 2 不存在。
+	const l = layoutTimelineFlow(
+		graphIRFromGv({
+			view: "timeline",
+			relation: "dependency",
+			nodes: [{ id: "a" }, { id: "b" }, { id: "c" }],
+			edges: [{ source: "a", target: "b" }],
+		}),
+	);
+	assert.deepEqual(
+		l.trunks!.map((t) => t.row),
+		[1],
+	);
+	assert.equal(l.trunks![0].directed, true);
+});
+
+test("C1：category 关系下 timeline 不带箭头（无向关系不得画箭头）", () => {
 	const l = layoutTimelineFlow(
 		graphIRFromGv({
 			view: "timeline",
 			relation: "category",
-			nodes: [{ id: "a" }, { id: "b" }, { id: "c" }],
-			// ⭐ 只给了一条边，现状仍会串两段 —— 这就是「自作主张」的证据
+			nodes: [{ id: "a" }, { id: "b" }],
 			edges: [{ source: "a", target: "b" }],
 		}),
 	);
-	assert.equal(l.trunks!.length, 2);
-	// trunk 归属**下行行号**（第 1、2 行各有一段上行箭头；第 0 行没有）
-	assert.deepEqual(
-		l.trunks!.map((t) => t.row),
-		[1, 2],
+	// 线还在（顺序仍表达），只是没有方向
+	assert.equal(l.trunks!.length, 1);
+	assert.equal(l.trunks![0].directed, false);
+});
+
+test("C1：没有边就没有 trunk（不再按相邻行兜底）", () => {
+	const l = layoutTimelineFlow(
+		graphIRFromGv({ view: "timeline", relation: "dependency", nodes: [{ id: "a" }, { id: "b" }], edges: [] }),
 	);
-	assert.equal(l.trunks!.every((t) => t.directed === true), true);
+	assert.deepEqual(l.trunks, []);
 });
 
 test("单节点 / 零节点不产生 trunk（否则会有一段指向虚空的箭头）", () => {
@@ -88,7 +102,13 @@ test("单节点 / 零节点不产生 trunk（否则会有一段指向虚空的�
 
 test("trunk 竖线固定落在绘图区左侧 16px、半径 6px（渲染层不该重算这两个数）", () => {
 	const l = layoutTimelineFlow(
-		graphIRFromGv({ view: "timeline", relation: "category", nodes: [{ id: "a" }, { id: "b" }], edges: [] }),
+		graphIRFromGv({
+			view: "timeline",
+			relation: "dependency",
+			nodes: [{ id: "a" }, { id: "b" }],
+			// ⭐ C1 起 trunk 只由边产生 ⇒ 几何用例也必须给边，否则测的是「空数组」
+			edges: [{ source: "a", target: "b" }],
+		}),
 	);
 	const t = l.trunks![0];
 	assert.equal(t.x, 16);

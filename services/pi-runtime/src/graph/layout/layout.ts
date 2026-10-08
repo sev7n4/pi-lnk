@@ -8,6 +8,7 @@ import {
 	orderNodes,
 } from "../../tools/render-canvas-view.expressive.js";
 import type { GvEdge, GvNode } from "../../tools/render-canvas-view.expressive.js";
+import { edgeDirected } from "../edge-direction.js";
 import type { GraphIR, GraphIRNode } from "../graph-ir.js";
 import { PLOT_W, PLOT_X, ROW_H, W, type LaidOut, type PlacedEdge, type PlacedNode } from "./types.js";
 
@@ -130,14 +131,21 @@ export function layoutLayout(ir: GraphIR): LaidOut {
 
 	// 端点不在图内 ⇒ 丢弃（不编造），与原实现一致
 	const ids = new Set(placed.map((p) => p.id));
+	const irEdgeByKey = new Map(ir.edges.map((e) => [`${e.source}\u0000${e.target}`, e]));
 	const placedEdges: PlacedEdge[] = edges
 		.filter((e) => ids.has(e.source) && ids.has(e.target))
-		.map((e) => ({
-			source: e.source,
-			target: e.target,
-			directed: ir.relation === "dependency",
-			isHi: emph.has(e.source) || emph.has(e.target),
-		}));
+		.map((e) => {
+			// ⭐ 方向来自 IR 的 `edge.kind`（C1），不是 `ir.relation`：
+			//   一图多关系时只看 relation 会抹掉个别的边方向。
+			const ire = irEdgeByKey.get(`${e.source}\u0000${e.target}`);
+			return {
+				source: e.source,
+				target: e.target,
+				// 边若不在 IR 里（理论上不会发生），保守不画箭头而不是画一个假的
+				directed: ire !== undefined && edgeDirected(ir, ire),
+				isHi: emph.has(e.source) || emph.has(e.target),
+			};
+		});
 
 	return {
 		width: W,

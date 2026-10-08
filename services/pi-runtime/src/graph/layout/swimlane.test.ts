@@ -77,10 +77,7 @@ test("R1：单节点的 swimlane 坐标有限", () => {
 	assert.ok(l.height > 0);
 });
 
-test("⏳ C1 未落地：显式边优先，缺边时才回落「按业务序相邻」（Task 9 收敛）", () => {
-	// ⭐ 迁移前的fallback：没有一条可用边时，**按 nodes 顺序**两两串箭头 ——
-	//   等于宣称「画布顺序 = 流转顺序」，而这正是 C1 要禁止的。
-	//   本任务保持逐字节不变，只把「串哪些」搬进布局层（见 commit b67e5941 同款处置）。
+test("C1：显式边照画，且没有「按业务序相邻」的兜底", () => {
 	const withEdge = layoutSwimlane(
 		graphIRFromGv({
 			view: "swimlane",
@@ -94,32 +91,42 @@ test("⏳ C1 未落地：显式边优先，缺边时才回落「按业务序相�
 		withEdge.edges.map((e) => [e.source, e.target]),
 		[["a", "c"]],
 	);
-	// 无边 ⇒ 回落相邻：3 个节点串 2 段
+	assert.equal(withEdge.edges[0].directed, true);
+	// ⭐ 无边 ⇒ **一条都不画**。D2 之前会回落成 a→b、b→c 两段，
+	//   等于宣称「画布顺序 = 流转顺序」—— IR 里并没有这条事实（C1 反例）。
 	const noEdge = layoutSwimlane(
-		graphIRFromGv({ view: "swimlane", relation: "category", nodes: MIX, edges: [], groupBy: "type" }),
+		graphIRFromGv({ view: "swimlane", relation: "dependency", nodes: MIX, edges: [], groupBy: "type" }),
 	);
-	assert.deepEqual(
-		noEdge.edges.map((e) => [e.source, e.target]),
-		[
-			["a", "b"],
-			["b", "c"],
-		],
-	);
+	assert.deepEqual(noEdge.edges, []);
 });
 
-test("端点不存在的边被丢弃（不编造节点）", () => {
+test("C1：category 关系下 swimlane 的边不画箭头", () => {
+	const l = layoutSwimlane(
+		graphIRFromGv({
+			view: "swimlane",
+			relation: "category",
+			nodes: MIX,
+			edges: [{ source: "a", target: "c" }],
+			groupBy: "type",
+		}),
+	);
+	assert.equal(l.edges.length, 1);
+	assert.equal(l.edges[0].directed, false);
+});
+
+test("端点不存在的边被丢弃（不编造节点），且不因此触发兜底", () => {
 	const l = layoutSwimlane(
 		graphIRFromGv({
 			view: "swimlane",
 			relation: "dependency",
 			nodes: MIX,
-			// ghost 不在图内 ⇒ 这条边不能用；但因剩下 0 条可用边，会走fallback
 			edges: [{ source: "a", target: "ghost" }],
 			groupBy: "type",
 		}),
 	);
-	// fallback 串的是相邻而非 ghost ⇒ 断言「没有任何一条边指向 ghost」
-	assert.equal(l.edges.every((e) => e.source !== "ghost" && e.target !== "ghost"), true);
+	// ⭐ 过滤后剩 0 条可用边。D2 之前这会走 fallback 串 a→b、b→c；
+	//   Task 9 起必须**保持为空** —— 「边端点不存在」不等于「这些节点按序相连」。
+	assert.deepEqual(l.edges, []);
 });
 
 test("groupBy=status 时泳道按 status 分（不是 type）", () => {

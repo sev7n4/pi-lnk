@@ -255,12 +255,16 @@ export function buildLayoutSvg(
 	if (opts.drawEdges) {
 		// ⭐ 同源多出边起点沿源节点高度分散 —— 修「全部从同一点射出」的扫帚
 		const bySource = new Map<string, string[]>();
+		// ⭐ C1：`directed` 来自布局层给的 `PlacedEdge`，⛔ 渲染层不自己判断
+		//   （也不从 `drawEdges` 反推 —— 那正是迁移前的做法）。
+		const directedBy = new Map<string, boolean>();
 		for (const e of edges) {
 			// 端点不在图内→丢弃（不编造）—— 布局层已过滤，这里再兜一次
 			if (!boxes.has(e.source) || !boxes.has(e.target)) continue;
 			const arr = bySource.get(e.source) ?? [];
 			arr.push(e.target);
 			bySource.set(e.source, arr);
+			directedBy.set(`${e.source} ${e.target}`, e.directed);
 		}
 		for (const [src, targets] of bySource) {
 			const from = boxes.get(src)!;
@@ -277,8 +281,10 @@ export function buildLayoutSvg(
 				// （实测 x=712 > 画布宽 720）⇒ 文字被裁掉，用户只看到「个下游（已聚合…）」。
 				const label = `→ ${ordered2.length} 个下游`;
 				const labelX = Math.max(4, toX - 8 - label.length * 6);
+				//聚合线代表这一组出边 ⇒ 只要**有任意一条**有向就带箭头
+				const anyDirected = ordered2.some((t) => directedBy.get(`${src} ${t.id}`) === true);
 				parts.push(
-					`<path d="M${from.x + from.w},${Math.round(midY)} L${toX},${Math.round(midY)}" class="gv-e" marker-end="url(#gv-arrow)"/>` +
+					`<path d="M${from.x + from.w},${Math.round(midY)} L${toX},${Math.round(midY)}" class="gv-e"${anyDirected ? ' marker-end="url(#gv-arrow)"' : ""}/>` +
 						`<text x="${labelX}" y="${Math.round(midY)}" class="gv-s" text-anchor="end" dominant-baseline="central">${esc(label)}</text>`,
 				);
 				continue;
@@ -297,12 +303,13 @@ export function buildLayoutSvg(
 			ordered2.forEach((target, i) => {
 				const to = boxes.get(target.id)!;
 				const isHi = (opts.emphasize ?? []).includes(src) || (opts.emphasize ?? []).includes(target.id);
+				const dir = directedBy.get(`${src} ${target.id}`) === true;
 				// bus 策略：起点改到汇流条上按序错开（否则仍从同一点射出）
 				const d = useBus
 					? edgePath({ ...from, x: from.x + from.w + 10, w: 0, y: from.y + 4, h: from.h - 8 }, to, i, ordered2.length)
 					: edgePath(from, to, i, ordered2.length);
 				parts.push(
-					`<path data-edge="1" d="${d}" class="gv-e" marker-end="url(#gv-arrow${isHi ? "-hi" : ""})"${isHi ? ' stroke="#534AB7" stroke-width="2"' : ""}/>`,
+					`<path data-edge="1" d="${d}" class="gv-e"${dir ? ` marker-end="url(#gv-arrow${isHi ? "-hi" : ""})"` : ""}${isHi ? ' stroke="#534AB7" stroke-width="2"' : ""}/>`,
 				);
 			});
 		}
@@ -542,8 +549,8 @@ export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 		parts.push(`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="5" fill="${st.fill}" stroke="${st.stroke}" stroke-width="1"/>`);
 		parts.push("</g>");
 	}
-	// ⏳ 方向语义尚未收敛到 IR（Task 9）：布局层给的是「相邻行有向连线」，
-	//   迁移前则是渲染层按 `i < len-1` 自行判定 —— 行为逐字节相同，判据已前移。
+	// 方向由布局层的 `Trunk.directed` 决定（来自 IR 的 `edge.kind`，C1）；
+	// 渲染层不按行序自行判断。
 	for (const t of laid.trunks) {
 		parts.push(`<path d="M${t.x},${t.yTop} L${t.x},${t.yBottom}" class="gv-e"${t.directed ? ' marker-end="url(#gv-arrow)"' : ""}/>`);
 	}
@@ -623,8 +630,7 @@ export function buildSwimlaneSvg(
 		parts.push("</g>");
 	}
 
-	// 流转箭头：连线形状在渲染层，但「串哪些」由布局层决定。
-	// ⏳ 方向语义尚未收敛到 IR（Task 9）：无边时的相邻 fallback 仍在。
+	// 流转箭头：连线形状在渲染层，「串哪些 + 有无箭头」由布局层给（IR 的边，C1）。
 	for (const e of laid.edges) {
 		const f = laid.nodes.find((p) => p.id === e.source);
 		const t = laid.nodes.find((p) => p.id === e.target);

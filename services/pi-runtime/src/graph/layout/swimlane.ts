@@ -1,5 +1,6 @@
 import { orderNodes } from "../../tools/render-canvas-view.expressive.js";
 import type { GvNode } from "../../tools/render-canvas-view.expressive.js";
+import { edgeDirected } from "../edge-direction.js";
 import type { GraphIR, GraphIRNode } from "../graph-ir.js";
 import { W, type GroupBox, type LaidOut, type PlacedEdge, type PlacedNode } from "./types.js";
 
@@ -104,20 +105,15 @@ export function layoutSwimlane(ir: GraphIR): LaidOut {
 		});
 	});
 
-	// 流转箭头：显式边优先；一条可用边都没有时回落「按业务序相邻」。
-	// ⚠️⏳ **D2 已知不一致，Task 9 收敛**：那个 fallback 等于宣称
-	//   「画布顺序 = 流转顺序」，而IR 里并没有这条事实（C1判据的反例）。
-	//   与迁移前逐字节相同 —— 本任务只把「串哪些」搬进布局层，使它可断言、可一处改。
+	// C1：流转箭头**只**来自 IR 的边，方向由 `edgeDirected` 决定。
+	//   ⛔ 不再回落「按业务序相邻」—— 那等于宣称「画布顺序 = 流转顺序」，
+	//   而 IR 里并没有这条事实（迁移前就是这个行为）。
+	//   无向边仍然画连线，只是不带箭头。
 	const ids = new Set(placed.map((p) => p.id));
 	const edges: PlacedEdge[] = [];
 	for (const e of ir.edges) {
-		if (ids.has(e.source) && ids.has(e.target)) edges.push({ source: e.source, target: e.target, directed: true });
-	}
-	if (edges.length === 0) {
-		for (let i = 0; i < nodes.length - 1; i++) {
-			const a = nodes[i].id;
-			const b = nodes[i + 1].id;
-			if (ids.has(a) && ids.has(b)) edges.push({ source: a, target: b, directed: true });
+		if (ids.has(e.source) && ids.has(e.target)) {
+			edges.push({ source: e.source, target: e.target, directed: edgeDirected(ir, e) });
 		}
 	}
 

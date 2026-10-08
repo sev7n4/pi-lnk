@@ -1,5 +1,6 @@
 import { orderNodes } from "../../tools/render-canvas-view.expressive.js";
 import type { GvNode } from "../../tools/render-canvas-view.expressive.js";
+import { edgeDirected } from "../edge-direction.js";
 import type { GraphIR, GraphIRNode } from "../graph-ir.js";
 import { PLOT_W, PLOT_X, ROW_H, W, type LaidOut, type PlacedNode, type Trunk } from "./types.js";
 
@@ -49,22 +50,31 @@ export function layoutTimelineFlow(ir: GraphIR): LaidOut & { trunks: Trunk[] } {
 		};
 	});
 
-	// ⚠️⏳ **D2 已知不一致，Task 9 收敛**：这里按「相邻行」无条件给 trunk，
-	//   而不是按 IR 的 `edge.kind` 决定方向 —— 与迁移前的行为逐字节一致。
-	//   迁移前 `buildTimelineFlowSvg` 压根不接 `edges`，方向是渲染层自行决定的。
-	//   本次只把「串哪些行」搬进布局层，使它可断言、可在 Task 9 一处改掉。
-	//   `row` 记的是**下行**的行号（末行没有下行 trunk）。
+	// C1：trunk 只串**IR 里真实存在的边**，方向由 `edgeDirected` 决定。
+	//   ⛔ 不再按「相邻行」无条件串 —— 那等于宣称「行序= 流转序」，
+	//   而 IR 里并没有这条事实（迁移前 `buildTimelineFlowSvg` 压根不接 edges）。
+	//   无向边仍然画 trunk，只是不带箭头：顺序信息不丢，方向不造假。
+	//   `row` 记的是**下行**的行号。
+	const rowOf = new Map(placed.map((p) => [p.id, p.row]));
 	const trunks: Trunk[] = [];
-	for (let i = 1; i < placed.length; i++) {
+	for (const e of ir.edges) {
+		const fromRow = rowOf.get(e.source);
+		const toRow = rowOf.get(e.target);
+		// 端点不在图内 ⇒ 丢弃（不编造）；同行 ⇒ 无「行间」可连
+		if (fromRow === undefined || toRow === undefined || fromRow === toRow) continue;
+		const lo = Math.min(fromRow, toRow);
+		const hi = Math.max(fromRow, toRow);
 		trunks.push({
-			row: i,
+			row: hi,
 			x: TRUNK_X,
-			yTop: placed[i - 1].y + BAR_H,
-			yBottom: placed[i].y,
+			yTop: placed[lo].y + BAR_H,
+			yBottom: placed[hi].y,
 			armTo: TRUNK_X,
-			directed: true,
+			directed: edgeDirected(ir, e),
 		});
 	}
+	// 行号小的在前：渲染层按数组顺序画，重叠 trunk 时上层是谁是确定的
+	trunks.sort((a, b) => a.row - b.row);
 
 	return {
 		width: W,

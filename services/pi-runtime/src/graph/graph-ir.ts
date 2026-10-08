@@ -158,9 +158,15 @@ export interface GraphIREdge {
 export interface GraphIR {
 	view: GraphView;
 	/**
-	 * ⭐ C1 修正：relation 进 IR。方向（有无箭头）由 `edge.kind` 决定，
-	 * ⛔ 禁止渲染层自行决定 —— 现状 `buildTreeSvg` / `buildTimelineFlowSvg`
-	 * 不接收 relation 却无条件画箭头，正是这条判据的反例。
+	 * ⭐ C1 修正：relation 进 IR。方向（有无箭头）由 `edge.kind` 决定
+	 * （判定收敛在 `edge-direction.ts` 的 `edgeDirected`），
+	 * ⛔ 禁止渲染层自行决定 —— 迁移前 `buildTreeSvg` 不接收 relation 却无条件画箭头，
+	 * `buildTimelineFlowSvg` 更是不接 `edges`，正是这条判据的反例。
+	 *
+	 * ⚠️ 另注：`buildTimelineFlowSvg` 目前**只被 import、没有调用点**，
+	 * 生产 `view=timeline` 走的是行级渲染器 `buildTimelineSvg`。
+	 * C1 在 timeline 上的改动因此暂时只影响布局层与单测，不影响线上输出；
+	 * 等 timeline 切到 flow 渲染器时自动生效。
 	 */
 	relation: "dependency" | "category";
 	title?: string;
