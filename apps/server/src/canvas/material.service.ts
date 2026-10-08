@@ -934,7 +934,7 @@ export class MaterialService {
     model?: string,
     videoImageRefs?: Array<{ refKey: string; label: string }>,
   ) {
-    const { mergedText, skippedMerge } = await mergeRefsToPrompt({
+    const { mergedText, skippedMerge, mergeDegraded } = await mergeRefsToPrompt({
       sources: extractTextSources(refs),
       localPrompt: localPrompt.trim() || undefined,
       downstreamType,
@@ -952,6 +952,7 @@ export class MaterialService {
     return {
       mergedText,
       skippedMerge,
+      mergeDegraded,
       referenceImages: extractReferenceImages(refs),
     }
   }
