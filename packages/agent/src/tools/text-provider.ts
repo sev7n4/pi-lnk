@@ -1,3 +1,5 @@
+import { upstreamFetch } from './upstream-fetch'
+
 export type TextThinkingEffort = 'high' | 'max'
 
 export type TextGenerateOptions = {
@@ -59,7 +61,7 @@ export class OpenAITextProvider implements TextProvider {
       Object.assign(body, buildDeepSeekThinkingFields(options))
     }
 
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+    const res = await upstreamFetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

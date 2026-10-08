@@ -1,5 +1,6 @@
 import type { ImageRefWire, ImageResponseMode } from '@lnkpi/shared'
 import { extractApimartTaskId, pollApimartImageTask } from './apimart-image-task'
+import { upstreamFetch } from './upstream-fetch'
 import { withUpstreamRetry } from './upstream-retry'
 
 export interface ImageGenerateOptions {
@@ -131,7 +132,7 @@ export class OpenAIImageProvider implements ImageProvider {
       // 只包 fetch 的话重试永远不会触发（这是 U5 踩过的坑）。
       const res = await withUpstreamRetry(
         async () => {
-          const r = await fetch(`${this.baseUrl}/images/generations`, {
+          const r = await upstreamFetch(`${this.baseUrl}/images/generations`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -164,7 +165,7 @@ export class OpenAIImageProvider implements ImageProvider {
       // ⚠️ U9：同 async 分支——`!res.ok` 必须显式 throw，否则重试不触发。
       const res = await withUpstreamRetry(
         async () => {
-          const r = await fetch(`${this.baseUrl}/images/generations`, {
+          const r = await upstreamFetch(`${this.baseUrl}/images/generations`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

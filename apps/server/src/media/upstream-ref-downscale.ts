@@ -5,6 +5,7 @@ import {
   VIDEO_REF_WARN_MAX_EDGE,
   type ProbedMediaFile,
 } from '@lnkpi/shared'
+import { upstreamFetch } from '@lnkpi/agent'
 import sharp from 'sharp'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
@@ -40,7 +41,7 @@ export async function readImageBuffer(url: string): Promise<Buffer> {
     }
     let res: Response
     try {
-      res = await fetch(url)
+      res = await upstreamFetch(url)
     } catch (err) {
       lastErr = err
       continue

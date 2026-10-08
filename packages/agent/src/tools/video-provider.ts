@@ -7,6 +7,8 @@ import {
   isMiniMaxH3Model,
 } from './minimax-h3-video-provider'
 import { withVideoRetry } from './video-retry'
+import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
+import { isRetryableUpstreamError } from './upstream-retry'
 
 export interface VideoGenerateOptions {
   model?: string
@@ -99,7 +101,7 @@ export class AgnesVideoProvider implements VideoProvider {
     // 显式 throw，让 `withVideoRetry` 有机会介入。只包 fetch 的话重试永远不会发生。
     const createRes = await withVideoRetry(
       async () => {
-        const res = await fetch(`${this.baseUrl}/videos`, {
+        const res = await upstreamFetch(`${this.baseUrl}/videos`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -136,9 +138,16 @@ export class AgnesVideoProvider implements VideoProvider {
       if (attempt > 0) await sleep(this.pollIntervalMs)
 
       const pollUrl = `${this.apiRoot}/agnesapi?video_id=${encodeURIComponent(videoId)}&model_name=${encodeURIComponent(model)}`
-      const pollRes = await fetch(pollUrl, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-      })
+      let pollRes: Response
+      try {
+        pollRes = await upstreamFetch(pollUrl, {
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          timeoutMs: UPSTREAM_POLL_TIMEOUT_MS,
+        })
+      } catch (err) {
+        if (isRetryableUpstreamError(err)) continue
+        throw err
+      }
       if (!pollRes.ok) continue
 
       const result = (await pollRes.json()) as AgnesVideoPollResponse
@@ -329,7 +338,7 @@ export class ApimartVideoProvider implements VideoProvider {
     if (options?.referenceVideos?.length) body.video_urls = options.referenceVideos
     if (options?.referenceAudios?.length) body.audio_urls = options.referenceAudios
 
-    const createRes = await fetch(`${root}/videos/generations`, {
+    const createRes = await upstreamFetch(`${root}/videos/generations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify(body),
@@ -343,9 +352,16 @@ export class ApimartVideoProvider implements VideoProvider {
     const deadline = Date.now() + (options?.maxPollMs ?? this.maxPollMs)
     while (Date.now() < deadline) {
       await sleep(options?.pollIntervalMs ?? this.pollIntervalMs)
-      const pollRes = await fetch(`${root}/tasks/${encodeURIComponent(taskId)}`, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-      })
+      let pollRes: Response
+      try {
+        pollRes = await upstreamFetch(`${root}/tasks/${encodeURIComponent(taskId)}`, {
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          timeoutMs: UPSTREAM_POLL_TIMEOUT_MS,
+        })
+      } catch (err) {
+        if (isRetryableUpstreamError(err)) continue
+        throw err
+      }
       if (!pollRes.ok) continue
       const json = await pollRes.json()
       const data = (json as { data?: unknown }).data ?? json

@@ -1,4 +1,6 @@
 import type { VideoGenerateOptions, VideoProvider } from './video-provider'
+import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
+import { isRetryableUpstreamError } from './upstream-retry'
 
 const DEFAULT_BASE_URL = 'https://api.minimax.io'
 const DEFAULT_POLL_INTERVAL_MS = 10_000
@@ -145,7 +147,7 @@ export class MiniMaxH3VideoProvider implements VideoProvider {
     const resolution = mapResolution(options?.resolution)
     if (resolution) body.resolution = resolution
 
-    const createRes = await fetch(createUrl, {
+    const createRes = await upstreamFetch(createUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -173,9 +175,16 @@ export class MiniMaxH3VideoProvider implements VideoProvider {
       if (attempt > 0) await sleep(pollIntervalMs)
       attempt += 1
 
-      const pollRes = await fetch(pollUrl, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-      })
+      let pollRes: Response
+      try {
+        pollRes = await upstreamFetch(pollUrl, {
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          timeoutMs: UPSTREAM_POLL_TIMEOUT_MS,
+        })
+      } catch (err) {
+        if (isRetryableUpstreamError(err)) continue
+        throw err
+      }
       if (!pollRes.ok) {
         if (pollRes.status === 401 || pollRes.status === 402 || pollRes.status === 403) {
           throw new Error(ACCOUNT_ERROR_MESSAGE)

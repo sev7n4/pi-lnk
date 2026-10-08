@@ -1,5 +1,6 @@
 import { buildDeepSeekThinkingFields, isDeepSeekV4Model } from '../tools/text-provider'
 import type { ImageRefDescriptor } from '../studio/generation-adapter'
+import { upstreamFetch } from '../tools/upstream-fetch'
 
 export interface MergeTextSource {
   refKey: string
@@ -130,7 +131,7 @@ export async function mergeRefsToPrompt(input: {
   // Merge is best-effort: any LLM failure degrades to concat instead of failing the whole generation
   // (points are already consumed by the caller at this stage).
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await upstreamFetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
