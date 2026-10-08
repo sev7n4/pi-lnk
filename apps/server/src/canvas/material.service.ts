@@ -405,14 +405,6 @@ export class MaterialService {
     // 诊断 B4：与 studio 主链路同源定价（按分辨率分级），单一真源 shared
     const cost = imageGenerationCredits({ count: 1, resolution })
     const chargeReason = '图像生成'
-    if (!skipCharge) {
-      await this.points.consume(
-        userId,
-        cost,
-        chargeReason,
-        consumeMeta('image', { model: model ?? null, generationId: null }),
-      )
-    }
 
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
     const material = await this.prisma.material.create({
@@ -435,6 +427,22 @@ export class MaterialService {
         ),
       },
     })
+    // 账本对账（诊断 B2 收尾）：素材侧的退款一直带 generationId（materialId），
+    // 但扣费侧此前是 null ⇒ 扣费与生成对不上。记录先行后扣费即可带上 materialId；
+    // 扣费失败（积分不足）立即删除占位素材，不留孤儿。
+    if (!skipCharge) {
+      try {
+        await this.points.consume(
+          userId,
+          cost,
+          chargeReason,
+          consumeMeta('image', { model: model ?? null, generationId: material.id }),
+        )
+      } catch (err) {
+        await this.prisma.material.delete({ where: { id: material.id } }).catch(() => undefined)
+        throw err
+      }
+    }
     this.runImageGeneration(
       material.id,
       userId,

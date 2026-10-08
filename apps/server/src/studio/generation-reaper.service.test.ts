@@ -164,6 +164,24 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(refundInTx.mock.calls[0][3]).toBe('图像放大-超时回收退款')
   })
 
+  it('图像变体孤儿：退款文案用记录自带的 chargeReason（不再是「图像生成」）', async () => {
+    generationFindMany.mockResolvedValue([
+      {
+        id: 'v1',
+        type: 'image',
+        userId: 'u1',
+        model: 'seedream-5.0-pro',
+        metadata: makeMeta({ variation: true, chargeReason: '图像变体' }),
+      },
+    ])
+
+    await svc.reapOnce('manual')
+
+    expect(refundInTx.mock.calls[0][3]).toBe('图像变体-超时回收退款')
+    // 分类仍与扣费侧同源（图像变体扣在 image）
+    expect(refundInTx.mock.calls[0][4].category).toBe('image')
+  })
+
   it('BYOK 孤儿：退款状态用 byok_refund（对齐正常失败路径语义）', async () => {
     generationFindMany.mockResolvedValue([
       {
