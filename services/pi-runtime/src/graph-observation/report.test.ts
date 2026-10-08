@@ -109,6 +109,23 @@ test("metadata 是 JSON 字符串（库里本来的形态）也能解析；坏 J
 	assert.deepEqual(r.views, { matrix: 1 });
 });
 
+test("信号来源分开计数：用户口径与含模型自述的口径不同（生产实测两者差 2 倍）", () => {
+	// 用户没提图形化，但助手正文提到了「时间线」⇒ 只进 signaledAssistant
+	const r = buildReport(turn("帮我做套详情页", [], "先梳理一下时间线"));
+	assert.equal(r.signaledUser, 0);
+	assert.equal(r.signaledAssistant, 1);
+	assert.equal(r.signaled, 1);
+	assert.equal(r.triggerRateUser, 0);
+
+	// 用户明确要图并画了 ⇒ 只进用户口径，且用户口径触发率为 1
+	const r2 = buildReport(
+		turn("画个关系图", [{ type: "tool_call", data: { toolName: "render_canvas_view", args: { view: "layout" } } }]),
+	);
+	assert.equal(r2.signaledUser, 1);
+	assert.equal(r2.drewUser, 1);
+	assert.equal(r2.triggerRateUser, 1);
+});
+
 test("未知 view 取值不进分布（不把模型自由文本当枚举）", () => {
 	const r = buildReport(turn("画个图", [{ type: "tool_call", data: { toolName: "render_canvas_view", args: { view: "沙丘" } } }]));
 	assert.deepEqual(r.views, {});

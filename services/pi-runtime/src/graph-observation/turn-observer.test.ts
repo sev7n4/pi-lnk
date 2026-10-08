@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { GraphMetrics } from "./graph-metrics.js";
+import { GRAPH_SIGNAL_WORDS, GraphMetrics } from "./graph-metrics.js";
 import { TurnObserver, containsSignal } from "./turn-observer.js";
 
 function render(m: GraphMetrics): string {
@@ -18,8 +18,23 @@ test("containsSignal：命中「示意图」", () => {
 	assert.equal(containsSignal("帮我画个示意图", ["图", "示意图"]), true);
 });
 
-test("containsSignal：用户词表里的裸「图」能命中用户问句", () => {
-	assert.equal(containsSignal("给我个图", ["图"]), true);
+test("🔴 生图类请求不得算「要画关系图」（生产实测的最大假阳性）", () => {
+	// 2026-10-08 生产基线：宽松词表命中的 749 条里 38% 是这类「生成图片」诉求，
+	// 它们把触发率的分母撑大 20 倍。裸「图」在本产品线是**反信号**。
+	for (const q of [
+		"帮我生成一张产品抠图透明底 PNG",
+		"帮我生成一张换装图，只换衣服保留脸",
+		"确认出图",
+		"请按上一份方案拆解画布并自动出图",
+	]) {
+		assert.equal(containsSignal(q, GRAPH_SIGNAL_WORDS), false, `误判为图形化请求：${q}`);
+	}
+});
+
+test("图形化表达专属问句仍要命中", () => {
+	for (const q of ["给我个示意图", "画个关系图", "梳理成图看看层级", "这 12 镜的时间线"]) {
+		assert.equal(containsSignal(q, GRAPH_SIGNAL_WORDS), true, `漏判：${q}`);
+	}
 });
 
 test("signal 命中（用户问句）但没调工具 ⇒ 落一条未触发（Review Focus #2）", () => {

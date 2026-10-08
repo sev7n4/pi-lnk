@@ -79,7 +79,9 @@ function main(): void {
 	lines.push(`- 轮次（user→assistant 配对）：${r.turns}`);
 	lines.push(`- 命中图形化信号的轮次：${r.signaled}`);
 	lines.push(`- 其中真调用了 render_canvas_view：${r.drew}`);
-	lines.push(`- **触发率**：${pct(r.triggerRate)}（${r.drew}/${r.signaled}）`);
+	lines.push(`- **触发率（用户口径）**：${pct(r.triggerRateUser)}（${r.drewUser}/${r.signaledUser}）`);
+	lines.push(`- 触发率（含模型自述命中）：${pct(r.triggerRate)}（${r.drew}/${r.signaled}）`);
+	lines.push(`- 信号来源：用户 ${r.signaledUser} / 模型自述 ${r.signaledAssistant}`);
 	lines.push("");
 	lines.push("## 视图分布（legacy 已归一，topology 计入 layout）");
 	const views = Object.entries(r.views).sort((a, b) => b[1] - a[1]);

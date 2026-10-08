@@ -42,6 +42,12 @@ export interface GraphObservationReport {
 	drew: number;
 	/** drew / signaled；分母为 0 时返回 **0**（不是 NaN / Infinity）。 */
 	triggerRate: number;
+	/** 只在**用户问句**命中信号时的触发率 —— 这才是「用户要图 → 画了没」的口径。 */
+	triggerRateUser: number;
+	signaledUser: number;
+	signaledAssistant: number;
+	/** 用户命中信号的轮次里真画了的数量（triggerRateUser 的分子）。 */
+	drewUser: number;
 	views: Record<string, number>;
 	legacy: number;
 	paramUsage: Record<string, number>;
@@ -101,6 +107,10 @@ export function buildReport(rows: readonly MessageRow[]): GraphObservationReport
 		signaled: 0,
 		drew: 0,
 		triggerRate: 0,
+		triggerRateUser: 0,
+		signaledUser: 0,
+		signaledAssistant: 0,
+		drewUser: 0,
 		views: {},
 		legacy: 0,
 		paramUsage: {},
@@ -120,9 +130,11 @@ export function buildReport(rows: readonly MessageRow[]): GraphObservationReport
 		report.turns += 1;
 
 		const assistantText = row.content ?? "";
-		const signaled =
-			containsSignal(userText, GRAPH_SIGNAL_WORDS) ||
-			containsSignal(assistantText, GRAPH_SIGNAL_WORDS_ASSIST);
+		// ⚠️ 两个来源分开计数：混在一起会让「模型自言自语提到关系图」也算成用户需求，
+		// 而这两件事的处置完全不同（前者是提示词问题，后者是能力/触发问题）。
+		const userHit = containsSignal(userText, GRAPH_SIGNAL_WORDS);
+		const assistHit = containsSignal(assistantText, GRAPH_SIGNAL_WORDS_ASSIST);
+		const signaled = userHit || assistHit;
 
 		const events = execEvents(row.metadata);
 		let drew = false;
@@ -147,14 +159,18 @@ export function buildReport(rows: readonly MessageRow[]): GraphObservationReport
 
 		if (!signaled) continue;
 		report.signaled += 1;
+		if (userHit) report.signaledUser += 1;
+		if (assistHit) report.signaledAssistant += 1;
 		if (drew) {
 			report.drew += 1;
 			if (detour !== null) bump(report.detours, detour);
+			if (userHit) report.drewUser += 1;
 		} else if (report.missedSamples.length < MISSED_SAMPLE_MAX) {
 			report.missedSamples.push(userText.slice(0, 80));
 		}
 	}
 
 	report.triggerRate = report.signaled === 0 ? 0 : report.drew / report.signaled;
+	report.triggerRateUser = report.signaledUser === 0 ? 0 : report.drewUser / report.signaledUser;
 	return report;
 }
