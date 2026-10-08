@@ -1,5 +1,5 @@
 import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
-import { isRetryableUpstreamError } from './upstream-retry'
+import { createPollErrorTracker, isRetryableUpstreamError } from './upstream-retry'
 
 export const FAL_ACCOUNT_ERROR_MESSAGE = '视频服务账户异常，请稍后重试或联系管理员'
 
@@ -107,6 +107,7 @@ export async function runFalVideoQueue(options: FalVideoQueueOptions): Promise<{
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
   const maxPollMs = options.maxPollMs ?? DEFAULT_MAX_POLL_MS
   const deadline = Date.now() + maxPollMs
+  const pollErrors = createPollErrorTracker('FalVideoQueue')
   let attempt = 0
 
   while (Date.now() < deadline) {
@@ -127,8 +128,10 @@ export async function runFalVideoQueue(options: FalVideoQueueOptions): Promise<{
       if (isAccountLockedError(pollRes.status, await pollRes.text())) {
         throw new Error(FAL_ACCOUNT_ERROR_MESSAGE)
       }
+      await pollErrors.recordHttpError(pollRes)
       continue
     }
+    pollErrors.reset()
 
     const statusJson = (await pollRes.json()) as {
       status?: string

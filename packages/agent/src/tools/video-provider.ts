@@ -8,7 +8,7 @@ import {
 } from './minimax-h3-video-provider'
 import { withVideoRetry } from './video-retry'
 import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
-import { isRetryableUpstreamError } from './upstream-retry'
+import { createPollErrorTracker, isRetryableUpstreamError } from './upstream-retry'
 
 export interface VideoGenerateOptions {
   model?: string
@@ -134,6 +134,7 @@ export class AgnesVideoProvider implements VideoProvider {
       throw new Error(`Agnes video create: missing video_id (${JSON.stringify(created)})`)
     }
 
+    const pollErrors = createPollErrorTracker('AgnesVideoProvider')
     for (let attempt = 0; attempt < this.maxPollAttempts; attempt++) {
       if (attempt > 0) await sleep(this.pollIntervalMs)
 
@@ -148,7 +149,11 @@ export class AgnesVideoProvider implements VideoProvider {
         if (isRetryableUpstreamError(err)) continue
         throw err
       }
-      if (!pollRes.ok) continue
+      if (!pollRes.ok) {
+        await pollErrors.recordHttpError(pollRes)
+        continue
+      }
+      pollErrors.reset()
 
       const result = (await pollRes.json()) as AgnesVideoPollResponse
       const url = result.url ?? result.metadata?.url
@@ -350,6 +355,7 @@ export class ApimartVideoProvider implements VideoProvider {
     if (!taskId) throw new Error(`Apimart video missing task_id: ${JSON.stringify(created)}`)
 
     const deadline = Date.now() + (options?.maxPollMs ?? this.maxPollMs)
+    const pollErrors = createPollErrorTracker('ApimartVideoProvider')
     while (Date.now() < deadline) {
       await sleep(options?.pollIntervalMs ?? this.pollIntervalMs)
       let pollRes: Response
@@ -362,7 +368,11 @@ export class ApimartVideoProvider implements VideoProvider {
         if (isRetryableUpstreamError(err)) continue
         throw err
       }
-      if (!pollRes.ok) continue
+      if (!pollRes.ok) {
+        await pollErrors.recordHttpError(pollRes)
+        continue
+      }
+      pollErrors.reset()
       const json = await pollRes.json()
       const data = (json as { data?: unknown }).data ?? json
       const status = (data as { status?: string }).status
