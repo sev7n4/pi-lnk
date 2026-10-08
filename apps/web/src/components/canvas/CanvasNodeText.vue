@@ -61,7 +61,7 @@ function onSave(md: string) {
 
 <template>
   <NeoBaseNode node-type="text" :selected="selected" :data="data" :status="data.status">
-    <div class="neo-text-card" @dblclick.stop="openEditor">
+    <div class="neo-text-card" title="双击打开沉浸编辑（全屏）" @dblclick.stop="openEditor">
       <p>{{ data.content || '双击编辑文本,或在下方 Dock 生成' }}</p>
       <NodeTaskCornerActions
         :status="data.status"
@@ -77,6 +77,7 @@ function onSave(md: string) {
     <PromptMarkdownEditor
       v-model:visible="editorOpen"
       v-model="draft"
+      :title="typeof data.label === 'string' ? data.label : undefined"
       @save="onSave"
     />
   </NeoBaseNode>

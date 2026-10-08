@@ -58,6 +58,7 @@ describe('StudioService.editImage', () => {
   let generationCreate: ReturnType<typeof vi.fn>
   let generationUpdate: ReturnType<typeof vi.fn>
   let generationUpdateMany: ReturnType<typeof vi.fn>
+  let generationDelete: ReturnType<typeof vi.fn>
   let pointsConsume: ReturnType<typeof vi.fn>
   let pointsRefund: ReturnType<typeof vi.fn>
   let saveUserFile: ReturnType<typeof vi.fn>
@@ -99,6 +100,11 @@ describe('StudioService.editImage', () => {
     })
     imageEdit.mockResolvedValue({ url: 'https://upstream/edit.png' })
 
+    generationDelete = vi.fn(async () => {
+      stored = {}
+      return stored
+    })
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
@@ -118,6 +124,7 @@ describe('StudioService.editImage', () => {
               updateMany: generationUpdateMany,
               findFirst: vi.fn(async () => stored),
               findMany: vi.fn(async () => []),
+              delete: generationDelete,
             },
           },
         },
@@ -147,6 +154,15 @@ describe('StudioService.editImage', () => {
     expect(generationCreate).not.toHaveBeenCalled()
   })
 
+  it('扣费失败（积分不足）时删除占位记录，不留孤儿', async () => {
+    pointsConsume.mockRejectedValueOnce(new BadRequestException('积分不足'))
+
+    await expect(svc.editImage('u1', input)).rejects.toThrow('积分不足')
+
+    expect(generationDelete).toHaveBeenCalledWith({ where: { id: 'g1' } })
+    expect(imageEdit).not.toHaveBeenCalled()
+  })
+
   it('returns composited url on success with image_edit record', async () => {
     const record = await svc.editImage('u1', input)
 
@@ -155,7 +171,13 @@ describe('StudioService.editImage', () => {
       'u1',
       10,
       '图像精修',
-      expect.objectContaining({ kind: 'consume', category: 'image', status: 'success' }),
+      expect.objectContaining({
+        kind: 'consume',
+        category: 'image',
+        status: 'success',
+        // 账本对账（诊断 B2 收尾）：扣费必须指向那条 image_edit 记录
+        generationId: 'g1',
+      }),
     )
     expect(createImageEditProvider).toHaveBeenCalled()
     expect(imageEdit).toHaveBeenCalled()
@@ -191,23 +213,26 @@ describe('StudioService.editImage', () => {
     )
   })
 
-  it('rejects non-openai BYOK channels with 400 and refunds', async () => {
+  it('rejects non-openai BYOK channels with 400 before any charge (no refund needed)', async () => {
     resolveForGeneration.mockResolvedValueOnce({ ...byokResolved, apiFormat: 'gemini' })
 
     await expect(svc.editImage('u1', { ...input, model: 'ch-1::m' })).rejects.toBeInstanceOf(
       BadRequestException,
     )
-    expect(pointsRefund).toHaveBeenCalled()
+    // 扣费已后移到占位记录之后 ⇒ 这条前置拒绝发生时尚未扣费，退款无从谈起
+    expect(pointsConsume).not.toHaveBeenCalled()
+    expect(pointsRefund).not.toHaveBeenCalled()
     expect(imageEdit).not.toHaveBeenCalled()
   })
 
-  it('refunds when channel resolution fails', async () => {
+  it('rejects when channel resolution fails, before any charge', async () => {
     resolveForGeneration.mockRejectedValueOnce(new Error('channel not found'))
 
     await expect(
       svc.editImage('u1', { ...input, model: 'ch-missing::m' }),
     ).rejects.toThrow('channel not found')
-    expect(pointsRefund).toHaveBeenCalled()
+    expect(pointsConsume).not.toHaveBeenCalled()
+    expect(pointsRefund).not.toHaveBeenCalled()
   })
 
   it('refunds points and marks record failed when provider throws', async () => {

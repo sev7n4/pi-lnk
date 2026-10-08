@@ -1,5 +1,6 @@
 import type { ImageRefWire, ImageResponseMode } from '@lnkpi/shared'
 import { extractApimartTaskId, pollApimartImageTask } from './apimart-image-task'
+import { upstreamFetch } from './upstream-fetch'
 import { withUpstreamRetry } from './upstream-retry'
 
 export interface ImageGenerateOptions {
@@ -19,20 +20,16 @@ export interface ImageProvider {
   generate(prompt: string, options?: ImageGenerateOptions): Promise<{ url: string; urls?: string[] }>
 }
 
+/**
+ * ⚠️ 2026-10-08：原实现返回随机 Unsplash 静态图并落库 status=completed（「假成功」）。
+ * 视频侧 #166、音频侧 #165 均已下线同类兜底，图片是最后一个遗漏——生产 2026-07-14
+ * 已命中 4 次。现改为抛错，让上层失败/退款路径正常介入。
+ */
 export class PlaceholderImageProvider implements ImageProvider {
-  private urls = [
-    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=512&q=80',
-    'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=512&q=80',
-    'https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=512&q=80',
-  ]
-
-  async generate(_prompt: string, options?: ImageGenerateOptions) {
-    const n = Math.max(1, Math.min(4, options?.n ?? 1))
-    const urls: string[] = []
-    for (let i = 0; i < n; i += 1) {
-      urls.push(this.urls[Math.floor(Math.random() * this.urls.length)])
-    }
-    return { url: urls[0], urls }
+  async generate(): Promise<{ url: string; urls?: string[] }> {
+    throw new Error(
+      'image provider credentials missing: set OPENAI_API_KEY / OPENAI_IMAGE_MODEL or provide a BYOK key',
+    )
   }
 }
 
@@ -131,7 +128,7 @@ export class OpenAIImageProvider implements ImageProvider {
       // 只包 fetch 的话重试永远不会触发（这是 U5 踩过的坑）。
       const res = await withUpstreamRetry(
         async () => {
-          const r = await fetch(`${this.baseUrl}/images/generations`, {
+          const r = await upstreamFetch(`${this.baseUrl}/images/generations`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -164,7 +161,7 @@ export class OpenAIImageProvider implements ImageProvider {
       // ⚠️ U9：同 async 分支——`!res.ok` 必须显式 throw，否则重试不触发。
       const res = await withUpstreamRetry(
         async () => {
-          const r = await fetch(`${this.baseUrl}/images/generations`, {
+          const r = await upstreamFetch(`${this.baseUrl}/images/generations`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -196,5 +193,6 @@ export function createImageProvider(opts?: ProviderCredentialOpts): ImageProvide
   if (key) {
     return new OpenAIImageProvider(key, process.env.OPENAI_BASE_URL, process.env.OPENAI_IMAGE_MODEL)
   }
+  // 无凭据：显式失败（原为 Unsplash 占位「假成功」，见 PlaceholderImageProvider 注释）
   return new PlaceholderImageProvider()
 }

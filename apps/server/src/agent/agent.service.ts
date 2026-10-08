@@ -71,9 +71,15 @@ export interface PiCanvasContext {
   refOrder?: string[]
   /**
    * SEL-REF：指代信号（本轮画布选中的节点 id 集合）—— **唯一真源**。
-   * ⛔ 不再有 `focusNodeId` 字段：它由本字段派生（§5.3），放进来就是只写死字段。
+   * `focusNodeId` 由本字段派生（§5.3）；正常客户端不发它。
    */
   selectedNodeIds?: string[]
+  /**
+   * @deprecated 仅供**迁移期回落**：版本错配期的旧客户端只发 `focusNodeId`。
+   * 只有当 `selectedNodeIds` **完全缺省**时才会被读（见 streamFromPiRuntime）；
+   * 命中即写 warn。有消费方，不是死字段，但**新客户端不得下发**。
+   */
+  legacyFocusNodeId?: string
 }
 
 const TRACE_PERSIST_EVENT_TYPES = new Set([
@@ -326,6 +332,9 @@ export class AgentService {
         // SEL-REF：指代信号（选区本身，开关**不**闸这里）——焦点要由它派生，
         // 闸掉就等于把 P0-① 的焦点过滤一起关掉。开关只作用于 digest 块（见调用方 digestIds）。
         selectedNodeIds: selectedNodeIds?.length ? [...selectedNodeIds] : undefined,
+        // SEL-REF 迁移期回落输入：新字段**完全缺省**且旧字段有值 ⇒ 旧客户端。
+        // 只往 piContext 带、不外泄到 turnContext 的其它位置。
+        legacyFocusNodeId: !selectedNodeIds?.length && focusNodeId?.trim() ? focusNodeId.trim() : undefined,
       }
       if (!piClient && !(await client.healthz())) {
         // 用户侧文案与「无可用链路」一致；排障靠这条 warn 区分（pi 挂 vs 维护态）。
@@ -592,6 +601,8 @@ export class AgentService {
     threadId?: string | null
     callId: string
     answers: Record<string, string[]>
+    /** 2026-10-06：`decline` = 用户显式拒绝（propose 卡取消），runtime 以 aborted 交还。 */
+    decision?: 'answer' | 'decline'
   }): Promise<{ ok: boolean; deduped: boolean }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { ok: false, deduped: false }
@@ -599,6 +610,7 @@ export class AgentService {
     return this.createPiRuntimeClient(piUrl).answer(sessionKey, {
       callId: input.callId,
       answers: input.answers,
+      ...(input.decision ? { decision: input.decision } : {}),
     })
   }
 
@@ -1069,9 +1081,23 @@ export class AgentService {
     const digestIds = this.selectionRefEnabled() ? selRefIds : []
     // 派生（R-S1/S2）：恰好 1 个选中时才派生焦点；0 个或多个都留 undefined ⇒
     // 命中 getCanvasSummary 的「无焦点 → 全量返回」fail-open 第一闸。
-    // 纯派生，**无迁移期回落**：前端已在 Task 5 停止发送 `focusNodeId`，
-    // 留回落就等于给「双字段各自独立写」留后门（规格 §5.3 要求结构上不可能漂移）。
-    const derivedFocusNodeId = selRefIds.length === 1 ? selRefIds[0] : undefined
+    //
+    // ⚠️ 迁移期回落（评审 C2）：版本错配期（CDN 旧 web / 灰度 / 旧标签页）的客户端
+    // **只发 `focusNodeId`、不发 `selectedNodeIds`**。若直接丢弃，焦点会退化成
+    // 「无焦点」⇒ 命中上面那道 fail-open 第一闸 ⇒ 大画布注入成本上升 + 换话题污染，
+    // 且无任何日志。判据是**新字段是否完全缺省**，不是「新字段是否为空」：
+    //   · `selectedNodeIds === undefined` → 旧客户端 → 回落旧字段（并 warn 留痕）；
+    //   · `selectedNodeIds` 有值（含空数组）→ 新客户端 → **绝不回落**。
+    // 这样仍不存在「双字段各自独立写」：两者不可能同时生效，回落路径唯一且有日志。
+    const legacyFocusNodeId = piContext?.legacyFocusNodeId
+    const legacyFocusOnly = selRefIds.length === 0 && !piContext?.selectedNodeIds && !!legacyFocusNodeId
+    let derivedFocusNodeId = selRefIds.length === 1 ? selRefIds[0] : undefined
+    if (legacyFocusOnly && legacyFocusNodeId) {
+      derivedFocusNodeId = legacyFocusNodeId
+      this.piLogger.warn(
+        `SEL-REF legacy fallback (session=${sessionId}): client sent focusNodeId only, selectedNodeIds absent`,
+      )
+    }
     const selRefLookup = digestIds.length ? await this.buildSelectionLookup(sessionId) : undefined
     const dynamicBlocks = await assembler.assembleDynamic({
       sessionId,
@@ -1083,6 +1109,26 @@ export class AgentService {
       memoryBlock,
     })
     if (visionBlock) dynamicBlocks.push(visionBlock)
+    // SEL-REF R-S8 + 评审 C1：回执**必须由服务端确认驱动**。
+    // 前端读不到 Nest 的 `SEL_REF_ENABLED`，若它只按「本地冻结的 id 非空」渲染 chip，
+    // 则 V1 默认态（off）下用户照样看到「已绑定 N 个选中节点」，而提示词里 0 字节注入
+    // —— 比没有回执更糟：回执是信任担保，担保说谎会引导用户去问无关问题。
+    // 故只在**确实有有效节点注入**时下发本事件；前端只在收到它时才显示 chip。
+    // 剔除规则必须与 digest 一致（lookup 查不到 = 已删/跨会话 ⇒ 不上报），
+    // 否则会出现「提示词里没有、但回执说有」的第二种不一致。
+    if (digestIds.length && selRefLookup) {
+      const bound = digestIds
+        .map((id) => ({ id, node: selRefLookup.get(id) }))
+        .filter((x): x is { id: string; node: NonNullable<typeof x.node> } => !!x.node)
+      if (bound.length > 0) {
+        yield {
+          type: 'selection_binding',
+          data: {
+            nodes: bound.map(({ id, node }) => ({ id, type: node.type, title: node.title })),
+          },
+        } as AgentStreamEvent
+      }
+    }
     const created = await this.ensurePiSession(client, sessionKey, {
       systemPrompt: systemPromptWithPlanConvention,
       userId,

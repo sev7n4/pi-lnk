@@ -44,7 +44,7 @@ import { resolveCompositionTracks, mergeCompositionTracks, compositionTracksToNo
 import { resolveUpstreamContext } from '@/composables/useUpstreamNodeContext'
 import { resolveNodeRefs, type LocalRefBinding, type NodeRef } from '@/composables/useNodeRefs'
 import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating } from '@/constants/dockStudio'
-import { shouldApplyGenerationPoll } from '@/utils/generationPollGate'
+import { nodeHasUsableOutput, shouldApplyGenerationPoll } from '@/utils/generationPollGate'
 import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
 import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
 import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
@@ -171,6 +171,8 @@ import {
 import StoryboardDialog, { type StoryboardShot } from '@/components/canvas/StoryboardDialog.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
+import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
+import { useAgentStore } from '@/stores/agent'
 import { shouldSyncProposePending } from '@/components/agent/proposeWaitActions'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
@@ -706,7 +708,23 @@ const generationPolling = useGenerationPolling((results) => {
     }
   }
   void saveCanvas()
-})
+  },
+  {
+    // 诊断 C3：单节点轮询墙钟到期（默认 22min，与批量路径一致）——节点置 error，
+    // 不再永久「生成回复中」
+    onTimeout: (task) => {
+      // ⚠️ 2026-10-08 兜底守卫：墙钟只打击「真的什么也没拿到」的节点。
+      // 此前无条件写 error，生产实测把已经 completed、产物图可正常访问的节点
+      // 刷成 error（用户会以为生成失败并重复生成 ⇒ 重复扣分）。
+      const node = nodes.value.find((n) => n.id === task.nodeId)
+      if (nodeHasUsableOutput(node?.data)) return
+      patchNodeData(task.nodeId, {
+        status: NODE_GENERATION_STATUS.error,
+        errorMessage: '等待生成结果超时，请重试或刷新查看任务历史',
+      })
+    },
+  },
+)
 
 function startPollingForGeneratingShots() {
   const generatingIds: string[] = []
@@ -1494,6 +1512,82 @@ function addNode(
     data: { createdAt: Date.now(), ...data },
   })
   return id
+}
+
+// ── node_graph 动作（2026-07-24）──────────────────────────────────────────
+// 三枚图标：展开到画布 / 导入到画布 / 在新窗口打开（后者在组件内做 blob 快照）。
+// 数据源都是 AgentSideRail 的 `node_graph` 载荷（position 来自画布 SSOT，零翻译）。
+
+/** 展开层的数据（null = 未展开）。 */
+/**
+ * 「全屏图视图」模式（2026-07-24 改版）：`/workflow/<sid>?graph=1` 时**整页**渲染节点图。
+ *
+ * ⭐ 为什么从「覆盖层」改成「独立路由 + query」：
+ *   覆盖层有三个实测问题 —— 高度算不准（用户反馈"没拉满"）、半透明透底、
+ *   抢滚轮；而且它**盖住主画布**，无法与主画布并存。
+ *   改成独立路由后：浏览器保证全屏、不透明、滚轮归自己，
+ *   并且能和主窗口**并排**（一个看图、一个继续在画布上工作）。
+ *
+ * ⚠️ 图数据来源：与 agent 卡片同源（executionEvents 里的 node_graph command），
+ *   经`stores/agent` 的 `loadHistory` 复原 ⇒ 不需要额外取图接口。
+ */
+const graphOnly = computed(() => route.query.graph === '1')
+
+/** 从会话事件里取**最近一张**节点图（与气泡卡片同一份数据）。 */
+const sessionGraph = computed<import('@/components/agent/presentation/AgentNodeGraph.vue').GraphPayload | null>(() => {
+  if (!graphOnly.value) return null
+  const agent = useAgentStore()
+  const msg = [...agent.messages]
+    .reverse()
+    .find(
+      (m) =>
+        m.role === 'assistant' &&
+        m.presentation?.kind === 'node_graph' &&
+        Array.isArray((m.presentation.body as { graph_nodes?: unknown } | undefined)?.graph_nodes),
+    )
+  if (!msg) return null
+  const body = msg.presentation?.body as
+    | { graph_nodes?: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphNode[]
+        graph_edges?: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphEdge[]
+        nodeGraphTitle?: string }
+    | undefined
+  return {
+    nodes: body?.graph_nodes ?? [],
+    edges: body?.graph_edges ?? [],
+    title: body?.nodeGraphTitle ?? msg.presentation?.title,
+  }
+})
+
+/**
+ * 「导入到画布」：建成**结构化节点组**，不是一张位图。
+ *
+ * ⚠️ 为什么不用位图（2026-07-24 的产品决策）：
+ *   位图在画布上只是一块像素 —— agent 之后无法理解它、不能基于它推理，
+ *   且与画布上「真实资产」节点的语义冲突 ⇒ 会积累技术债。
+ *   结构化节点组则**可编辑、可被 agent 读懂**，与画布自身模型一致。
+ * ⚠️ 位置沿用图里的坐标（可能与现有节点重叠）⇒ 给一个固定偏移量，避免完全压在一起。
+ */
+function handleImportNodeGraph(payload: {
+  nodes: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphNode[]
+  edges: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphEdge[]
+  title?: string
+}) {
+  const OFFSET = { x: 120, y: 120 }
+  for (const raw of payload.nodes) {
+    const nodeType = raw.type === 'group' ? 'group' : (raw.type ?? 'text')
+    addNode(
+      nodeType,
+      { title: raw.title ?? raw.id, text: raw.title ?? raw.id, importedFrom: 'node_graph' },
+      {
+        position: {
+          x: (raw.position?.x ?? 0) + OFFSET.x,
+          y: (raw.position?.y ?? 0) + OFFSET.y,
+        },
+      },
+    )
+  }
+  // 提示用仓库既有的 ElMessage（与上面 `toast` 同一套）
+  ElMessage.success(`已导入到画布：${payload.nodes.length} 个节点`)
 }
 
 async function handleAgentActions(actions: unknown[]) {
@@ -4149,7 +4243,11 @@ const debouncedNodePatch = useDebouncedNodePatch(
   (id, patch) => patchNodeData(id, patch),
   saveCanvas,
   400,
-  { onHistoryCommit: () => canvasUndo.commitAfterChange() },
+  {
+    onHistoryCommit: () => canvasUndo.commitAfterChange(),
+    // 诊断 A2：防抖落盘失败原先静默（unhandled rejection），改动悄悄丢失
+    onPersistError: () => ElMessage.error('画布保存失败，本次修改可能未同步，请检查网络后重试'),
+  },
 )
 
 watch(
@@ -4384,6 +4482,8 @@ async function loadSessions() {
 
 const vueFlowRef = ref<InstanceType<typeof VueFlow> | null>(null)
 const canvasAreaRef = ref<HTMLElement | null>(null)
+
+
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
 const { isMobileLayout } = useAgentMobileLayout()
@@ -4509,6 +4609,40 @@ onUnmounted(() => {
         class="relative min-h-0 min-w-0 flex-1"
         :class="{ 'canvas-ref-pick-mode': pickMode.active.value }"
       >
+        <!--全屏图视图（2026-07-24 改版）：`?graph=1`（由卡片「新窗口打开」进入）。
+             ⭐ **不透明**底色（覆盖层曾用 `/97` + blur，导致透出主画布 —— 用户反馈"背景透明的"）。
+             ⭐ 高度用 `absolute inset-0` 铺满画布区，**由父级 flex 决定**，不再写死像素高度。 -->
+        <div
+          v-if="graphOnly"
+          class="absolute inset-0 z-[9000] flex flex-col bg-[var(--neo-bg)]"
+          data-testid="node-graph-fullscreen"
+        >
+          <div class="flex shrink-0 items-center gap-2 border-b border-[var(--neo-border)] px-4 py-2.5">
+            <span class="text-[13px] font-medium">{{ sessionGraph?.title || '画布概览' }}</span>
+            <span v-if="sessionGraph" class="text-[11px] opacity-60">
+              {{ sessionGraph.nodes.length }} 个节点 · {{ sessionGraph.edges.length }} 条连线
+            </span>
+            <a
+              class="ml-auto rounded px-2 py-1 text-[12px] opacity-70 hover:opacity-100"
+              :href="`/workflow/${sessionId}`"
+            >返回画布</a>
+          </div>
+          <div class="min-h-0 flex-1">
+            <AgentNodeGraph
+              v-if="sessionGraph"
+              class="h-full"
+              full-height
+              :body="sessionGraph"
+              :title="undefined"
+              @focus-node="focusNodeById($event)"
+            />
+            <div
+              v-else
+              class="flex h-full items-center justify-center text-[13px] opacity-60"
+            >这个会话还没有节点图。回到画布向 agent 提问即可生成。</div>
+          </div>
+        </div>
+
         <ClickRippleLayer :container="canvasAreaRef" :theme="canvasTheme" />
         <CanvasRefPickOverlay
           v-if="pickMode.active.value"
@@ -4852,7 +4986,13 @@ onUnmounted(() => {
 
       </div>
 
+      <!--ⓘ `?graph=1` 全屏图视图：侧栏与 composer 整页交给图。
+           ⚠️⛔ **不能用 `v-if` 隐藏侧栏**（用户实测：新窗口里显示"这个会话还没有节点图"）：
+             `loadHistory()` / `bootstrapThread()` 都在 **AgentSideRail 的 onMounted** 里
+             ⇒ `v-if` 会让侧栏**根本不挂载** ⇒ 历史数据永不加载 ⇒ 图为空。
+           ✅ 用 CSS `hidden`（保持挂载与数据加载，只是不占布局），图表数据照常复原。 -->
       <AgentSideRail
+        :class="graphOnly ? 'hidden' : ''"
         ref="agentRailRef"
         :session-id="sessionId"
         :read-only="agentReadOnly"
@@ -4869,6 +5009,7 @@ onUnmounted(() => {
         @redo="handleAgentRedo"
         @open-image-editor="handleAgentOpenImageEditor"
         @arrange-nodes="handleArrangeNodes"
+        @import-node-graph="handleImportNodeGraph"
         @canvas-ref-pick-toggle="handleCanvasRefPickToggle"
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"

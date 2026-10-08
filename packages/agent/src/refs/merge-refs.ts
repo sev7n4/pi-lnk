@@ -1,5 +1,6 @@
 import { buildDeepSeekThinkingFields, isDeepSeekV4Model } from '../tools/text-provider'
 import type { ImageRefDescriptor } from '../studio/generation-adapter'
+import { upstreamFetch } from '../tools/upstream-fetch'
 
 export interface MergeTextSource {
   refKey: string
@@ -88,16 +89,18 @@ export async function mergeRefsToPrompt(input: {
   apiKey?: string
   baseUrl?: string
   model?: string
-}): Promise<{ mergedText: string; skippedMerge: boolean }> {
+}): Promise<{ mergedText: string; skippedMerge: boolean; mergeDegraded: boolean }> {
   const entries = buildTextEntries(input.sources, input.localPrompt)
 
   if (entries.length <= 1) {
-    return { mergedText: entries[0]?.text ?? '', skippedMerge: true }
+    return { mergedText: entries[0]?.text ?? '', skippedMerge: true, mergeDegraded: false }
   }
 
   const key = input.apiKey ?? process.env.OPENAI_API_KEY
   if (!key) {
-    return { mergedText: fallbackConcat(entries), skippedMerge: false }
+    // ⚠️ 降级：无 key 只能拼接，与 LLM 归纳成功用 mergeDegraded 区分（诊断 C2：
+    // 旧实现 skippedMerge=false 与成功不可区分，用户只会觉得「提示词写得怪怪的」）。
+    return { mergedText: fallbackConcat(entries), skippedMerge: false, mergeDegraded: true }
   }
 
   const model = input.model ?? process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o'
@@ -130,7 +133,7 @@ export async function mergeRefsToPrompt(input: {
   // Merge is best-effort: any LLM failure degrades to concat instead of failing the whole generation
   // (points are already consumed by the caller at this stage).
   try {
-    const res = await fetch(`${baseUrl}/chat/completions`, {
+    const res = await upstreamFetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
@@ -143,12 +146,13 @@ export async function mergeRefsToPrompt(input: {
     if (!mergedText) {
       throw new Error('LLM 返回空内容')
     }
-    return { mergedText, skippedMerge: false }
+    return { mergedText, skippedMerge: false, mergeDegraded: false }
   } catch (err) {
     console.warn(
       '[merge-refs] LLM merge failed, falling back to concat:',
       err instanceof Error ? err.message : err,
     )
-    return { mergedText: fallbackConcat(entries), skippedMerge: false }
+    // ⚠️ 降级：LLM 失败退拼接。mergeDegraded=true 让调用方可观测/落库。
+    return { mergedText: fallbackConcat(entries), skippedMerge: false, mergeDegraded: true }
   }
 }

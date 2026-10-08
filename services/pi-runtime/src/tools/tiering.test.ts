@@ -157,6 +157,10 @@ describe("被资产点名的工具必须常驻（延迟即不可达，回归锁�
 		"focus_node", // 8 个 skill「出图后 QA 闸门」第一步
 		"focus_nodes", // ⚠️ 复数版：规则 canvas_daily_ops 第 19 条点名（2026-10-06 从延迟集提上来）
 		"remove_edges", // drama-qc-review 引用审计的错连修正
+		// 音频三分类（2026-10-07）：规则 23 按名字点名 run_audio_generation 要求按 kind 选分类，
+		// drama-audio-design 的能力边界表/流程第 6 步/踩坑表也都按名字写它
+		// ⇒ 按本 describe 的准绳（被资产点名 ⇒ 必须常驻）它必须在 ALWAYS_ON。
+		"run_audio_generation",
 	];
 
 	it("全部进 ALWAYS_ON 且初始即激活", () => {
@@ -385,8 +389,8 @@ describe("render_canvas_view 常驻", () => {
  * ⇒ 扩到本批全量 9 个（见 tiering.ts 文件头「分级下发实验已做完」）。
  */
 describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06，已由分级下发实验支持）", () => {
+	// 2026-10-07：`get_canvas_summary` 已从本清单移出（提回常驻，见下方 describe）
 	const DEMOTED = [
-		"get_canvas_summary",
 		"get_canvas_layout",
 		"get_node",
 		"list_generation_tasks",
@@ -403,7 +407,18 @@ describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06，已
 		}
 	});
 
-	it("下沉后仍在延迟目录可被搜到（query 命中名字片段 → get_canvas_summary 等）", async () => {
+	// ⭐ 2026-10-07 回归锁：get_canvas_summary 必须常驻。
+	// 它的 description 自己写着「Call this first to understand the canvas」，却因减点名被下沉
+	// ⇒ 模型拿不到 schema ⇒ 生产实测退化成逐个 get_node（一次会话 10+ 次，244k tokens）。
+	// 它零规则/skill 点名（符合 catalog §2 判据），提回常驻代价极小。
+	it("get_canvas_summary 必须常驻（2026-10-07：防再次被下沉）", () => {
+		assert.ok(
+			ALWAYS_ON_TOOL_NAMES.has("get_canvas_summary"),
+			"get_canvas_summary 是画布读的入口（自称 Call this first），下沉会让模型退化成逐节点查询",
+		);
+	});
+
+	it("下沉后仍在延迟目录可被搜到（query 命中名字片段 → get_canvas_layout 等）", async () => {
 		const e = buildToolEnsemble(fakeTools(), true);
 		const loader = e.registered.find((t) => t.name === "tool_search")!;
 		const res = await loader.execute(
@@ -415,14 +430,17 @@ describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06，已
 			undefined as never,
 		);
 		const names = res.addedToolNames ?? [];
-		assert.ok(names.includes("get_canvas_summary"), "「get_canvas」应命中 get_canvas_summary");
-		assert.ok(names.includes("get_canvas_layout"));
+		// 2026-10-07：`get_canvas_summary` 已提回常驻（不再在延迟目录，故不在此处断言）
+		assert.ok(!names.includes("get_canvas_summary"), "get_canvas_summary 已常驻，不该经搜索激活");
+		assert.ok(names.includes("get_canvas_layout"), "「get_canvas」应命中 get_canvas_layout");
 	});
 
 	it("真实场景可搜性：中文 label 的下沉工具按中文关键词命中（搜「画布概览」）", async () => {
 		const e = buildToolEnsemble(
 			ALL_NAMES.map((n) =>
-				n === "get_canvas_summary" ? fakeToolWithDesc(n, "画布概览：节点清单与统计") : fakeTool(n),
+				// 2026-10-07：改测仍在延迟集的 `get_canvas_layout`
+				// （`get_canvas_summary` 已提回常驻，不再依赖搜索命中）
+				n === "get_canvas_layout" ? fakeToolWithDesc(n, "画布概览：节点清单与统计") : fakeTool(n),
 			),
 			true,
 		);
@@ -435,6 +453,6 @@ describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06，已
 			{} as never,
 			undefined as never,
 		);
-		assert.ok((res.addedToolNames ?? []).includes("get_canvas_summary"));
+		assert.ok((res.addedToolNames ?? []).includes("get_canvas_layout"));
 	});
 });

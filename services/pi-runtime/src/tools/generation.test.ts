@@ -42,6 +42,43 @@ test("six gen/lifecycle tools registered with tiers", () => {
 	assert.deepEqual(tools.map((t) => t.tier), ["gen", "gen", "gen", "gen", "gen", "lifecycle"]);
 });
 
+test("run_audio_generation 把 kind 与内联参数透传到 Nest（不要求先写节点）", async () => {
+	const fake = fakeClient();
+	const tool = createGenerationTools(fake as never).find((t) => t.name === "run_audio_generation")!;
+	await run(tool, {
+		node_id: "n1",
+		kind: "music",
+		caption: "紧张感的弦乐",
+		instrumental: true,
+	});
+	const call = fake.calls.at(-1)!;
+	assert.equal(call.path, "/agent/internal/run-audio-generation");
+	const body = call.body as Record<string, unknown>;
+	assert.equal(body.nodeId, "n1");
+	assert.equal(body.kind, "music");
+	assert.equal(body.caption, "紧张感的弦乐");
+	assert.equal(body.instrumental, true);
+});
+
+test("run_audio_generation 不传 kind 时 body 不含 kind / caption（存量调用逐字节不变）", async () => {
+	const fake = fakeClient();
+	const tool = createGenerationTools(fake as never).find((t) => t.name === "run_audio_generation")!;
+	await run(tool, { node_id: "n1" });
+	const body = fake.calls.at(-1)!.body as Record<string, unknown>;
+	assert.equal("kind" in body, false);
+	assert.equal("caption" in body, false);
+	assert.equal("roles" in body, false);
+});
+
+test("run_audio_generation schema 声明 kind（模型才能自主选分类）", () => {
+	const tool = createGenerationTools(fakeClient() as never).find(
+		(t) => t.name === "run_audio_generation",
+	)!;
+	const props = (tool.parameters as { properties?: Record<string, unknown> }).properties ?? {};
+	assert.ok("kind" in props, "缺少 kind 参数");
+	assert.ok("caption" in props, "缺少 caption 参数");
+});
+
 test("run_image_generation posts correct body and surfaces actions in details", async () => {
 	const client = fakeClient();
 	const tool = createGenerationTools(client as never).find((t) => t.name === "run_image_generation")!;

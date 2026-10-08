@@ -62,3 +62,27 @@ describe('SEL-REF · AgentSideRail 上行 payload 形状', () => {
     expect(body).toMatch(/selectedNodeIds:\s*bindingIds\.length\s*\?\s*bindingIds\s*:\s*undefined/)
   })
 })
+
+// ── 评审 C1：selection_binding 事件的接线（源码级不变量）────────────────────
+describe('SEL-REF · selection_binding 事件接线', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'AgentSideRail.vue'), 'utf8')
+
+  it('handleEvent 有 selection_binding 分支并调用 store 的 confirmSelectionBinding', () => {
+    expect(src).toMatch(/case 'selection_binding':/)
+    expect(src).toMatch(/agent\.confirmSelectionBinding\(/)
+  })
+
+  it('事件类型已在共享事件联合里登记（否则会被类型层判为不可能事件）', () => {
+    const types = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../../../packages/agent/src/types.ts'),
+      'utf8',
+    )
+    expect(types).toMatch(/^\s*\|\s*'selection_binding'\s*$/m)
+  })
+
+  it('chip 的渲染条件读 confirmed，而非本地 id 快照', () => {
+    // 判据用**行锚定的属性访问形状**：朴素 toContain 会被本文件的注释命中。
+    expect(src).toMatch(/v-if="msg\.role === 'user' && msg\.selectionBindingConfirmed\?\.length"/)
+    expect(src).not.toMatch(/v-if="msg\.role === 'user' && msg\.selectionNodeIds\?\.length"/)
+  })
+})

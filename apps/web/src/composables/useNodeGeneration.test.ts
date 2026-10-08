@@ -259,12 +259,76 @@ describe('useNodeGeneration', () => {
       'hello world',
       {
         model: encodeChannelModel('platform', defaultModelKey('audio')),
+        // 存量节点无 `audioKind` ⇒ 缺省视作 voice，且带 voice 参数（原有 7 个字段逐个不变）
+        kind: 'voice',
         voice: 'male-1',
         emotion: 'happy',
         language: 'en',
         speed: 1.5,
         volume: 1,
         pitch: 0,
+      },
+      [],
+      [],
+      expect.any(AbortSignal),
+      canvasScope('audio-1'),
+    )
+  })
+
+  // 🔴 kind 与模型错配会被服务端 `assertAudioKindMatchesModel` 显式 400，
+  // 所以前端必须把节点上的 kind 与对应参数一起发出去。
+  it('passes kind=design with roles/scripts/instruction instead of voice params', async () => {
+    const node = createNode('audio', {
+      prompt: 'scene 1',
+      audioKind: 'design',
+      audioModel: encodeChannelModel('platform', 'stepaudio-3-gen-preview'),
+      audioRoles: [{ role: '旁白', voice: 'wenrounvsheng' }],
+      audioScripts: [{ role: '旁白', text: '（轻声）下雨了' }],
+      audioInstruction: '克制一点',
+      // 残留的 voice 参数不得混进 design 请求
+      audioVoice: 'male-1',
+    })
+    const { api } = createDeps([node])
+
+    await api.generateForNode(node)
+
+    expect(studioApi.generateAudio).toHaveBeenCalledWith(
+      'scene 1',
+      {
+        model: encodeChannelModel('platform', 'stepaudio-3-gen-preview'),
+        kind: 'design',
+        roles: [{ role: '旁白', voice: 'wenrounvsheng' }],
+        scripts: [{ role: '旁白', text: '（轻声）下雨了' }],
+        instruction: '克制一点',
+      },
+      [],
+      [],
+      expect.any(AbortSignal),
+      canvasScope('audio-1'),
+    )
+  })
+
+  it('passes kind=music with caption/lyrics/instrumental instead of voice params', async () => {
+    const node = createNode('audio', {
+      prompt: '轻快的电子乐',
+      audioKind: 'music',
+      audioModel: encodeChannelModel('platform', 'stepaudio-3-music-preview'),
+      audioLyrics: '啦啦啦',
+      audioInstrumental: true,
+    })
+    const { api } = createDeps([node])
+
+    await api.generateForNode(node)
+
+    expect(studioApi.generateAudio).toHaveBeenCalledWith(
+      '轻快的电子乐',
+      {
+        model: encodeChannelModel('platform', 'stepaudio-3-music-preview'),
+        kind: 'music',
+        // caption 取正文（music 的 caption 就是「想生成什么曲子」）
+        caption: '轻快的电子乐',
+        lyrics: '啦啦啦',
+        instrumental: true,
       },
       [],
       [],

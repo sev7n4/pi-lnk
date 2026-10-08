@@ -11,6 +11,7 @@
 export type ToolErrorClass =
 	| "blocked_terminate"
 	| "aborted"
+	| "circuit_open"
 	| "upstream_4xx"
 	| "upstream_5xx"
 	| "timeout"
@@ -41,6 +42,18 @@ export function classifyToolOutcome(input: {
 
 	// aborted 要先于 4xx/5xx：「request aborted」里可能同时含错误码字样。
 	if (/\babort(ed)?\b|取消|中断/.test(text)) return { outcome: "error", errorClass: "aborted" };
+
+	// 熔断：本进程本地产生的确定性文案（非上游返回），
+	// 由 `NestClient.checkCircuit` 抛出 —— `circuit open for ${path}`（tools/nest-client.ts）。
+	//
+	// ⚠️ 必须排在 gate / 4xx / 5xx 之前：该文案后面**紧跟一条工具路径**，
+	// 而路径里可能含被其它规则误命中的词。实测（本文件用例 51）：
+	// `circuit open for /agent/internal/check-generation-gate` 会被 `\bgate\b`
+	// 抢成 gate_blocked —— 把「上游不可用」误报成「去查凭证/权限」。
+	//
+	// 生产取证（2026-10-07，Watchdog #5 失败窗口）：这批错误 100% 落 `internal`，
+	// 而同窗口 kinds 通道增长为 0 ⇒ 两条通道同时失明，告警只剩「错误率超阈」。
+	if (/\bcircuit open\b/.test(text)) return { outcome: "error", errorClass: "circuit_open" };
 
 	// 授权语义先于状态码：401/403 既是 4xx 又是「未授权」，
 	// 而 `gate_blocked` 比 `upstream_4xx` 更能指明该查什么（凭证/权限 vs 上游）。

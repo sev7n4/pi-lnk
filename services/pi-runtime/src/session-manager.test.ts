@@ -420,14 +420,14 @@ describe("SessionManager 用户取消 run（前端「停止」按钮）", () => 
 	it("无活跃 run 时 abort 返回 false（前端按 skipped 提示「已断开回复」）", async () => {
 		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		await sm.create("s-cancel-idle", {});
-		assert.equal(sm.abort("s-cancel-idle"), false);
+		assert.equal(await sm.abort("s-cancel-idle"), false);
 	});
 
 	it("abort 中断正在跑的 run，且会话保留（用户可接着发消息）", async () => {
 		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		await sm.create("s-cancel-run", {});
 		await sm.prompt("s-cancel-run", "hi");
-		assert.equal(sm.abort("s-cancel-run"), true);
+		assert.equal(await sm.abort("s-cancel-run"), true);
 		assert.equal(sm.hasKey("s-cancel-run"), true);
 	});
 
@@ -437,14 +437,14 @@ describe("SessionManager 用户取消 run（前端「停止」按钮）", () => 
 		const seen: string[] = [];
 		sm.subscribe("s-cancel-noerr", (e) => seen.push(e.type));
 		await sm.prompt("s-cancel-noerr", "hi");
-		assert.equal(sm.abort("s-cancel-noerr"), true);
+		assert.equal(await sm.abort("s-cancel-noerr"), true);
 		await new Promise((r) => setTimeout(r, 20)); // 等挂起的 promise reject 被 catch 处理
 		assert.deepEqual(seen.filter((t) => t === "error"), []);
 	});
 
-	it("未知 session abort 返回 false（不抛）", () => {
+	it("未知 session abort 返回 false（不抛）", async () => {
 		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
-		assert.equal(sm.abort("nope"), false);
+		assert.equal(await sm.abort("nope"), false);
 	});
 });
 
@@ -852,7 +852,7 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 		const mgr = managerWithLane(makeLane(calls, 120_000, gate));
 		await mgr.create("s-compact-abort", {});
 		await mgr.prompt("s-compact-abort", "hi");
-		assert.equal(mgr.abort("s-compact-abort"), true);
+		assert.equal(await mgr.abort("s-compact-abort"), true);
 		release(undefined);
 		await drain();
 		assert.deepEqual(calls, []);
@@ -1466,8 +1466,11 @@ describe("tiering-on 接线（评审 finding 3：集成缝必须有钉）", () =
 		const active = (h.captured!.activeToolNames as string[]).slice().sort();
 		// 初始激活只含常驻 + loader；t_probe 要靠 tool_search 的 addedToolNames 激活
 		// 2026-10-06 减点名第一批：get_canvas_summary 已下沉延迟集（tiering.ts），
-		// 仍全量注册但初始不激活 ⇒ active 只剩 loader 自己。
-		assert.deepEqual(active, ["tool_search"]);
+		// ⚠️ 2026-10-07：get_canvas_summary 提回常驻（tiering.ts）⇒ 原逐字名单断言必然红。
+		// 改成断言**契约**（loader 必须激活 / 延迟工具必须未激活），而不是具体名单内容。
+		assert.ok(active.includes("tool_search"), "tool_search 必须常驻（它就是 loader）");
+		assert.ok(!active.includes("t_probe"), "t_probe 是延迟工具，初始不该激活");
+		
 	});
 
 	it("tiering-on：staticPrompt 不含延迟工具索引块（官方模式不给名单，发现靠 tool_search 搜索）", async () => {

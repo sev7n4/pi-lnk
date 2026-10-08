@@ -1,5 +1,6 @@
 import { extractJsonObject } from './json-extract'
 import { supportsVisionTextModel, upstreamChatModel } from './text-generation'
+import { upstreamFetch } from '../tools/upstream-fetch'
 
 export interface VisionQaJsonOptions {
   apiKey?: string
@@ -94,7 +95,7 @@ async function postVisionChat(
   apiKey: string,
   body: Record<string, unknown>,
 ): Promise<Response> {
-  return fetch(url, {
+  return upstreamFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),

@@ -194,6 +194,16 @@ class AnswerPendingDto {
   /** 纯对象（key → string[]）；@IsArray 会误拒 Record 形态，@IsObject 保证 whitelist 不剥离 */
   @IsObject()
   answers!: Record<string, string[]>
+
+  /**
+   * 2026-10-06：`decline` = 用户**显式拒绝**（propose 卡的「取消」）⇒ pi-runtime 以
+   * `aborted` 交还，工具侧回 `reason:"aborted"`，模型拿到确定性事实而非 SSOT 推断。
+   * ⚠️ 必须带校验装饰器：`ValidationPipe({whitelist:true})` 会**静默剥掉**未装饰的字段
+   * （main.ts:30，无 forbidNonWhitelisted ⇒ 不报错、无日志）。
+   */
+  @IsOptional()
+  @IsIn(['answer', 'decline'])
+  decision?: 'answer' | 'decline'
 }
 
 class ListAgentThreadsQueryDto {
@@ -507,6 +517,7 @@ export class AgentController {
       threadId: dto.threadId,
       callId: dto.callId,
       answers: dto.answers,
+      decision: dto.decision,
     })
     return { code: 0, message: 'ok', data }
   }

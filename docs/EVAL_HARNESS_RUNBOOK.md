@@ -254,6 +254,35 @@ kubectl exec -n pi-lnk-runtime $POD -- sh -c 'cd /tmp/evalrun && \
 - 画布 `cmutrf2zy000cmy01uoe5af5r`（2 个 prompt 节点 + 1 条 `status=processing` 的 generationRecord）
 - **可跑 7 条中 6 条通过**；4 条 skip（需 DockStudio「用户点确认」动作）
 
+### 7.1 2026-10-06 重采（runner 带 error 补跑后，PR #242）
+
+| 项 | 值 |
+|---|---|
+| 产物分支 | `40a5215f`（`fix/eval-error-retry`，已并入 master `963c13c4`） |
+| 运行位置 | pi-runtime pod 内（`kubectl exec` + `/tmp/evalrun-l1`） |
+| 规则集 | `registry 1.3.0 hash=a75e0e061583 chars=3246`（8 条规则生效） |
+| 画布 | `cmuwhhguf0001qnlv2chhrpjt`（12 节点） |
+| 参数 | `--timeout 180000 --interval 8000` |
+| 结果 | **6/7 通过（85.7%）· fail 1 · error 0 · skip 4** |
+
+对照上一次（2026-10-04：`4 pass / 2 fail / 1 error / 4 skip`，`passRate 0.667`）：
+
+**`error` 从 1 → 0，通过 4 → 6。**
+
+差别主要来自 #242 的 error 补跑。为什么它值这个差：`error` 是**环境废票** ——
+它不投票，但**消耗尝试次数**（`repeat=3` + `errorRetries=2` 时最多尝试 5 次去凑 3 张真票）。
+改前 3 次里 2 次撞 429，就等于「**一票定生死**」，而报告仍写「3 次」，
+看不出票其实只有一张。本轮实测吸收了 **5 次**环境 error：
+
+```
+gen-claim-003    ：fail / pass / fail ⇒ fail（1/3 通过）
+tool-discovery-001：pass / fail / pass ⇒ pass（2/3；另有 2 次 error 已补跑、不计票）
+tool-discovery-002：pass ⇒ pass        （1/1；另有 1 次 error 已补跑、不计票）
+tool-discovery-003：pass / pass / pass ⇒ pass（3/3；另有 2 次 error 已补跑、不计票）
+```
+
+⚠️ `gen-claim-003` 是**真 fail**（三票都是真票）：`缺少期望工具 [cancel_generation]；实际调用 [无]`。
+
 ### 已知覆盖盲区
 
 方案 A 直调 `loadRegistry` + `renderStatic`，**绕过 Nest 的 `PiPromptAssembler`**：

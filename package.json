@@ -21,7 +21,8 @@
     "verify-spec-figures": "npx tsx scripts/verify-spec-figures.ts",
     "verify-claims": "npx tsx scripts/verify-claims.ts",
     "verify-links": "npx tsx scripts/verify-links.ts",
-    "prompt:lint": "npx tsx scripts/prompt-lint.ts"
+    "prompt:lint": "npx tsx scripts/prompt-lint.ts",
+    "memory:check": "npx tsx scripts/check-memory-size.ts"
   },
   "devDependencies": {
     "tsx": "^4.7.0",

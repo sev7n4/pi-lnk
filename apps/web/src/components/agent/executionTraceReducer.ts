@@ -1,12 +1,13 @@
 import type { CanvasAction } from '@lnkpi/shared'
 import { formatStructuredError } from '@/components/agent/executionStepErrors'
+import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
 import {
   canvasActionLabel,
   formatDuration,
   labelFromTextReplace,
   nodeStatusLabel,
 } from '@/components/agent/executionStepLabels'
-import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
+import type { AgentPresentationEnvelope, NodeGraphBodyPayload } from '@/components/agent/presentation/types'
 
 export type ExecutionStepStatus =
   | 'pending'
@@ -324,7 +325,7 @@ export function applyToolCall(
     startedAt: now,
     endedAt: result !== undefined ? now : undefined,
     ms: result !== undefined ? 0 : undefined,
-    meta: { toolName: name, toolCallId: meta?.toolCallId },
+    meta: { toolName: name, toolCallId: meta?.toolCallId, args: meta?.args },
     detail: result !== undefined ? summarizeToolResult(result) : undefined,
   })
 }
@@ -453,16 +454,26 @@ export function replayExecutionTraceEvents(
       case 'text_replace':
         applyTextReplaceStage(trace, String((event.data as { text?: string })?.text ?? ''))
         break
-      case 'tool_call':
-        applyToolCall(trace, String((event.data as { name?: string })?.name ?? 'tool'))
+      case 'tool_call': {
+        // ⚠️ 必须透传 toolCallId + args（2026-10-06 修）：落库事件两者都带
+        // （pi-events.ts tool_execution_start 映射），只取 name 会让刷新后
+        // 重放出的步骤丢参数摘要 ⇒ 标签从「创建节点 · 三国英雄照片」降级成「创建节点」，
+        // 且同名并发调用的 result 会靠 name 兜底错配。
+        const d = event.data as { name?: string; args?: unknown; toolCallId?: string }
+        const name = String(d.name ?? 'tool')
+        applyToolCall(trace, name, undefined, {
+          toolCallId: d.toolCallId,
+          args: summarizeToolArgs(name, d.args),
+        })
         break
+      }
       case 'tool_result': {
-        const d = event.data as { name?: string; result?: unknown; isError?: boolean }
+        const d = event.data as { name?: string; result?: unknown; isError?: boolean; toolCallId?: string }
         applyToolCall(
           trace,
           String(d.name ?? 'tool'),
           d.result,
-          { isError: d.isError === true },
+          { toolCallId: d.toolCallId, isError: d.isError === true },
         )
         break
       }
@@ -541,6 +552,53 @@ export function replayExecutionTraceEvents(
  * `AgentSideRail.hasRenderableSvgCard` 同因：超 `SVG_MAX_CHARS` 时下发 `svg: ""`
  * （字段在、值为空），那张卡有专属的「已丢弃」可见文案，必须照样恢复。
  */
+/**
+ * 落库重放：`node_graph` 载荷（2026-07）。
+ *
+ * ⚠️ 与 `replaySvgCardPresentation` **并列**而非替换 —— 双写期两条都可能在事件流里。
+ * 调用方按「有 node_graph 就用它」的优先级取舍（见 AgentSideRail）。
+ *
+ * 为什么必须单独写：落库通道不存 stepper（服务端只存 cmd 本身），
+ * 与 svg_card 同款空 stepper；`node_graph` 走独立挂载，不进 AgentPresentationHost。
+ */
+/** `node_graph` 呈现信封（独立挂载，不进 AgentPresentationHost 的 stepper）。 */
+export type NodeGraphEnvelope = Omit<AgentPresentationEnvelope, 'kind'> & {
+  kind: 'node_graph'
+}
+
+export function replayNodeGraphPresentation(
+  events: Array<{ type: string; data: unknown }>,
+): NodeGraphEnvelope | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (event.type !== 'canvas_command') continue
+    const cmd = event.data as {
+      type?: string
+      nodes?: unknown
+      edges?: unknown
+      title?: string
+      droppedNodeIds?: unknown
+      totalNodeCount?: unknown
+    }
+    if (cmd?.type !== 'node_graph' || !Array.isArray(cmd.nodes)) continue
+    return {
+      kind: 'node_graph',
+      stepper: { current: '', completed: [] },
+      title: cmd.title,
+      // ⚠️ 与 SideRail 实时路径同款：用 `AgentPresentationBody` 的可选字段承载
+      //   （联合类型会污染所有下游 body 访问，见 types.ts 的注释）。
+      body: {
+        graph_nodes: cmd.nodes as NodeGraphBodyPayload['nodes'],
+        graph_edges: (Array.isArray(cmd.edges) ? cmd.edges : []) as NodeGraphBodyPayload['edges'],
+        graph_droppedNodeIds: Array.isArray(cmd.droppedNodeIds) ? cmd.droppedNodeIds : undefined,
+        graph_totalNodeCount: typeof cmd.totalNodeCount === 'number' ? cmd.totalNodeCount : undefined,
+        nodeGraphTitle: cmd.title,
+      },
+    }
+  }
+  return undefined
+}
+
 export function replaySvgCardPresentation(
   events: Array<{ type: string; data: unknown }>,
 ): AgentPresentationEnvelope | undefined {

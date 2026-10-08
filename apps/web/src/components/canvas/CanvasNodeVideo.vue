@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
+import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
+import { resolveVideoNodeDisplaySize } from '@/components/canvas/mediaNodeDisplaySize'
 import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { useCanvasEditorStore } from '@/stores/canvasEditor'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { resolveMediaUrl } from '@/services/api-base'
 import { useNodeMediaUpload } from '@/composables/useNodeMediaUpload'
@@ -27,9 +30,11 @@ const props = defineProps<{
     generationRecordId?: string
     materialId?: string
     mediaInfo?: NodeMediaInfoSummary
+    videoSettings?: { aspectRatio?: string }
   }
 }>()
 
+const editor = useCanvasEditorStore()
 const route = useRoute()
 const { openInspector } = useMediaInspector()
 const sessionId = computed(() => route.params.sessionId as string | undefined)
@@ -55,6 +60,8 @@ const downloadTitle = computed(() =>
 const showMediaSummary = computed(() => Boolean(props.data.url && props.data.mediaInfo))
 const showInspectorBtn = computed(() => Boolean(props.data.generationRecordId))
 const isCompleted = computed(() => props.data.status === NODE_GENERATION_STATUS.completed)
+/** 节点尺寸跟随素材比例（长边 320 包络，probe 真实比例优先） */
+const displaySize = computed(() => resolveVideoNodeDisplaySize(props.data as Record<string, unknown>))
 useNodeMediaInfoFooter({
   nodeId: props.id,
   url: computed(() => props.data.url),
@@ -95,9 +102,21 @@ function saveToLibrary() {
   })
 }
 
-function openMediaInspector(e: Event) {
-  e.stopPropagation()
-  e.preventDefault()
+/** 双击 / 播放按钮 → 沉浸式预览（单击仍弹 dock，2026-10-07 拍板） */
+function openPreview() {
+  if (!displayUrl.value) return
+  editor.openMediaPreview({
+    url: displayUrl.value,
+    kind: 'video',
+    label: props.data.label,
+    generationRecordId: props.data.generationRecordId,
+    nodeId: props.id,
+  })
+}
+
+function openMediaInspector(e?: Event) {
+  e?.stopPropagation()
+  e?.preventDefault()
   const recordId = props.data.generationRecordId
   if (!recordId) return
   void openInspector({
@@ -108,46 +127,17 @@ function openMediaInspector(e: Event) {
     kind: 'video',
   })
 }
-
-const mode = ref<'drag' | 'play'>('drag')
-
-watch(
-  () => props.selected,
-  (sel) => {
-    if (!sel) mode.value = 'drag'
-  },
-)
-
-function enterPlay(e: Event) {
-  e.stopPropagation()
-  mode.value = 'play'
-}
-
-function onPreviewDblclick(e: Event) {
-  if (mode.value === 'drag') enterPlay(e)
-}
-
-function exitPlay() {
-  mode.value = 'drag'
-}
-
-function onEscape(e: KeyboardEvent) {
-  if (e.key === 'Escape' && mode.value === 'play') exitPlay()
-}
-
-watch(mode, (m, _prev, onCleanup) => {
-  if (m !== 'play') return
-  window.addEventListener('keydown', onEscape)
-  onCleanup(() => window.removeEventListener('keydown', onEscape))
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', onEscape)
-})
 </script>
 
 <template>
-  <NeoBaseNode node-type="video" :selected="selected" :data="data" :status="data.status">
+  <NeoBaseNode
+    node-type="video"
+    :selected="selected"
+    :data="data"
+    :status="data.status"
+    :width="displaySize.width"
+    :height="displaySize.height"
+  >
     <template v-if="showMediaSummary && data.mediaInfo" #footer>
       <MediaInfoSummary v-bind="data.mediaInfo" />
     </template>
@@ -161,41 +151,26 @@ onUnmounted(() => {
       @dragleave="onDragLeave"
       @drop="onDrop"
     >
-      <div v-if="data.url" class="neo-gen-preview" @dblclick.stop="onPreviewDblclick">
-        <template v-if="mode === 'drag'">
-          <video
-            :src="displayUrl"
-            muted
-            playsinline
-            preload="metadata"
-            class="neo-gen-video-poster"
-          />
-          <button
-            type="button"
-            class="neo-gen-video-play-btn nodrag"
-            title="播放视频"
-            @pointerdown.stop
-            @mousedown.stop
-            @click.stop="enterPlay"
-          >
-            <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-          </button>
-        </template>
-        <template v-else>
-          <video :src="displayUrl" controls autoplay class="nodrag nowheel" />
-          <button
-            type="button"
-            class="neo-gen-video-exit-btn nodrag"
-            title="退出播放"
-            @pointerdown.stop
-            @mousedown.stop
-            @click.stop="exitPlay"
-          >
-            退出
-          </button>
-        </template>
+      <div v-if="data.url" class="neo-gen-preview" title="双击预览" @dblclick.stop="openPreview">
+        <video
+          :src="displayUrl"
+          muted
+          playsinline
+          preload="metadata"
+          class="neo-gen-video-poster"
+        />
+        <button
+          type="button"
+          class="neo-gen-video-play-btn nodrag"
+          title="播放视频"
+          @pointerdown.stop
+          @mousedown.stop
+          @click.stop="openPreview"
+        >
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </button>
         <button
           type="button"
           class="neo-node-replace-btn nodrag"
@@ -284,18 +259,14 @@ onUnmounted(() => {
                   : '上传或等待生成'
             }}
           </span>
-          <button
+          <NodeStatusInfoButton
             v-if="showInspectorBtn"
-            type="button"
-            class="neo-media-inspector-btn neo-media-inspector-btn--placeholder nodrag"
-            aria-label="媒体属性"
-            title="媒体属性"
-            @pointerdown.stop
-            @mousedown.stop
-            @click.stop="openMediaInspector"
-          >
-            ⓘ
-          </button>
+            :status="data.status"
+            :task-kind="taskKind"
+            :task-id="taskId"
+            :node-label="typeof data.label === 'string' ? data.label : undefined"
+            @inspect="openMediaInspector()"
+          />
           <div v-if="data.status === 'uploading'" class="neo-upload-progress">
             <div class="neo-upload-progress-bar" :style="{ width: `${data.uploadProgress ?? 0}%` }" />
           </div>
@@ -319,6 +290,7 @@ onUnmounted(() => {
         :task-id="taskId"
         :node-label="typeof data.label === 'string' ? data.label : undefined"
         :session-id="sessionId"
+        error-detail="status-icon"
       />
     </div>
   </NeoBaseNode>

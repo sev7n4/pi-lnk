@@ -77,6 +77,13 @@ export interface CaseResult {
 	 * 而真相是「3 次里过了 2 次」—— 这两者的排查含义完全不同。
 	 */
 	attemptVerdicts?: Verdict[];
+	/**
+	 * ⭐ **因 `error`（限流/网络等环境问题）而废弃、未进表决**的 attempt 次数。
+	 *
+	 * 为什么必须记：`attemptVerdicts` 只有真实票，不写这个数就看不出
+	 * 「2/3 通过」到底是跑了 3 次还是跑了 5 次（含 2 次被限流）。
+	 */
+	errorAttempts?: number;
 	usage?: EvalTranscript["usage"];
 }
 
@@ -191,11 +198,15 @@ export function summarize(
 	// 而真相是「3 次里过了 2 次」—— 这两者排查含义完全不同。
 	// 例：「3次里 2 次过」是抖动；「3 次全不过」是真问题。
 	const repeatedSection = results
-		.filter((r) => (r.attempts ?? 1) > 1)
+		// ⭐ 含「有废票（补跑）」的 case 也要进这一节：否则「1/1 通过」看起来像一次定论，
+		// 实际是「补跑 2 次仍被限流，只剩 1 张真实票」。
+		.filter((r) => (r.attempts ?? 1) > 1 || (r.errorAttempts ?? 0) > 0)
 		.map(
 			(r) =>
-				`  ${r.caseId}：${r.attemptVerdicts?.join(" / ")} ⇒ ${r.verdict}` +
-				`（${(r.attemptVerdicts ?? []).filter((v) => v === "pass").length}/${r.attempts} 通过）`,
+				`  ${r.caseId}：${r.attemptVerdicts?.join(" / ") || "(无有效票)"} ⇒ ${r.verdict}` +
+				`（${(r.attemptVerdicts ?? []).filter((v) => v === "pass").length}/${r.attempts} 通过` +
+				((r.errorAttempts ?? 0) > 0 ? `；另有 ${r.errorAttempts} 次环境 error 已补跑、不计票` : "") +
+				`）`,
 		);
 	const repeatSection =
 		repeatedSection.length > 0
@@ -254,6 +265,18 @@ export interface L1RunOptions extends RuntimeDriverOptions {
 	/** 单条 case 之间的间隔（ms）。⚠️ 默认给 500：连续打模型容易被限流，
 	 * 而限流会伪装成「模型行为不符」。 */
 	intervalMs?: number;
+	/**
+	 * ⭐⭐ 某个 attempt 判 `error` 时**补跑**的上限（缺省 2）。
+	 *
+	 * 为什么需要：`error`（限流/网络）不参与表决，但它**占掉一次尝试**。
+	 * 实测（2026-10-06）`tool-discovery-001` 三次里两次撞 429
+	 * ⇒ 「多数表决」退化成**一票定生死**，而报告里仍写着「3 次」——
+	 * 判据可信度被环境噪声偷走却不显形。
+	 * 补跑把票补满，并把废票数如实记进 `errorAttempts`。
+	 *
+	 * ⚠️ 置 0 = 关闭补跑（保持旧的「error 直接占票」行为）。
+	 */
+	errorRetries?: number;
 	/** 进度回调（每条跑完触发，便于长跑时看进度）。 */
 	onProgress?: (done: number, total: number, result: CaseResult) => void;
 	/** 单条 case 的超时（覆盖 driver 默认）。 */
@@ -413,16 +436,38 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		}
 		const attemptVerdicts: Verdict[] = [];
 		const attemptResults: CaseResult[] = [];
-		for (let attempt = 1; attempt <= repeat; attempt++) {
+		// ⭐⭐ error 补跑：`error` 不投票但**占票位** ⇒ 不补跑就等于让环境噪声
+		// 直接决定判据强度（实测 3 次里 2 次 429 ⇒ 实际只有 1 票）。
+		// 只对 `error` 补；`pass/fail` 是真实票，不重跑（重跑会洗掉抖动这一测量对象）。
+		const errorRetries = Math.max(0, options.errorRetries ?? 2);
+		let errorAttempts = 0;
+		const errorResults: CaseResult[] = [];
+		let attempt = 0;
+		// 目标：拿满 `repeat` 张**真实票**；上界 = repeat + errorRetries（总尝试次数）。
+		// ⭐ 语义要清楚：`error` **永不投票**，只消耗尝试预算。
+		//（若让「预算用尽的 error 去占票位」，就退回成本次要修的毛病：
+		//  票数看着是 3，实际只有 1 张真实票 —— 判据强度被偷走却不显形。）
+		// 拿不满时如实报 `attempts`（真实票数）+ `errorAttempts`（废票数），由报告呈现。
+		const maxAttempts = repeat + errorRetries;
+		while (attemptVerdicts.length < repeat && attempt < maxAttempts) {
+			attempt++;
+			if (attempt > 1 && intervalMs > 0) await sleep(intervalMs);
 			const r = await runOneAttempt(testCase, options, staticPrompt);
+			if (r.verdict === "error") {
+				// 废票：如实记录，但不占表决票位
+				errorAttempts++;
+				errorResults.push(r);
+				continue;
+			}
 			attemptVerdicts.push(r.verdict);
 			attemptResults.push(r);
-			if (attempt < repeat && intervalMs > 0) await sleep(intervalMs);
 		}
 		// ⭐ 多数表决：只在pass / fail 之间比，error 不投票。
 		// 理由：error 是「环境挂了」而非「行为不符」，把它算成fail 会把限流
 		// 伪装成行为退化（= 本 runner 三条红线之一要防的事）。
 		// 全error ⇒ verdict=error（环境问题，如实报）。
+		// ⚠️ 走到这里还全 error，说明**连补跑都失败**（errorRetries 用尽）——
+		// 报告里必须同时给出废票数，否则「error」看不出严重程度。
 		const passN = attemptVerdicts.filter((v) => v === "pass").length;
 		const failN = attemptVerdicts.filter((v) => v === "fail").length;
 		const errN = attemptVerdicts.filter((v) => v === "error").length;
@@ -430,7 +475,11 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		let failures: string[];
 		if (passN + failN === 0) {
 			verdict = "error";
-			failures = [attemptResults.find((r) => r.failures.length > 0)?.failures.join("; ") ?? "全部 attempt 均error"];
+			const allErrs = [...errorResults, ...attemptResults];
+			failures = [
+				allErrs.find((r) => r.failures.length > 0)?.failures.join("; ") ?? "全部 attempt 均error",
+				...(errorAttempts > 0 ? [`（含 ${errorAttempts} 次补跑）`] : []),
+			];
 		} else if (passN > failN) {
 			verdict = "pass";
 			failures = [];
@@ -453,11 +502,17 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 			failures: verdict === "pass" ? [] : failures,
 			durationMs: Date.now() - started,
 			//工具序列取「与最终判定一致的那次」，便于人工核对失败原因。
+			// ⚠️ 兜底链必须有：补跑开启后，**全 error** 的 case 在 attemptResults 里
+			// 一张票都没有（都进了 errorResults）⇒ 只写下标 [0] 会 TypeError。
 			toolNames:
 				attemptResults.find((r) => r.verdict === verdict)?.toolNames ??
-				attemptResults[0].toolNames,
-			attempts: repeat,
+				attemptResults[0]?.toolNames ??
+				errorResults[0]?.toolNames ??
+				[],
+			// 真实票数（**不含**被补跑顶掉的 error 废票）
+			attempts: attemptVerdicts.length,
 			attemptVerdicts,
+			...(errorAttempts > 0 ? { errorAttempts } : {}),
 		};
 		results.push(result);
 		options.onProgress?.(i + 1, cases.length, result);

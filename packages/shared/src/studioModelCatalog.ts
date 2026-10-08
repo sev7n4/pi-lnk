@@ -1,4 +1,10 @@
 export type StudioModality = 'text' | 'image' | 'video' | 'audio'
+
+/**
+ * 音频节点内部的二阶分类。顶层模态仍是 `audio`（画布不新增节点类型）。
+ * 缺省视作 `voice` ⇒ 存量节点与老路径行为逐字节不变。
+ */
+export type AudioKind = 'voice' | 'design' | 'music'
 /**
  * - `native`：作为原生字段直传上游。
  * - `promptPrefix`：拼进**待朗读正文**前缀（仅限会把整段文本当内容朗读、且无情感参数的上游）。
@@ -21,6 +27,8 @@ export interface StudioModelEntry {
   gatewayModelId: string
   modality: StudioModality
   providerBinding: 'gateway-openai-compat' | 'fal-http' | 'minimax-http'
+  /** 仅 `modality === 'audio'` 时存在；缺省视作 `voice` */
+  audioKind?: AudioKind
   voices?: StudioVoiceOption[]
   /** 字段名 → 处置；未列出的生成参数默认 metadataOnly */
   params: Record<string, ParamDisposition>
@@ -91,6 +99,32 @@ const STEPFUN_TTS_PARAMS: Record<string, ParamDisposition> = {
   pitch: 'metadataOnly',
   emotion: 'instruction',
   language: 'metadataOnly',
+}
+
+/**
+ * 综合音频（`stepaudio-3-gen-preview`）：`roles[]` + `scripts[]` + `instruction`
+ * 全部原生直传 `POST /audio/generate`；无「待朗读正文」概念，故不走 promptPrefix 通道。
+ */
+const STEPFUN_DESIGN_PARAMS: Record<string, ParamDisposition> = {
+  model: 'native',
+  roles: 'native',
+  scripts: 'native',
+  instruction: 'native',
+  response_format: 'native',
+}
+
+/**
+ * 音乐（`stepaudio-3-music-preview`）。⚠️ 上游字段名是 `model_id` 而非 `model`，
+ * 由 `stepfun-audio.ts` 的 music provider 负责改名，此处仍声明 `model` 供 UI 归一。
+ */
+const STEPFUN_MUSIC_PARAMS: Record<string, ParamDisposition> = {
+  model: 'native',
+  caption: 'native',
+  lyrics: 'native',
+  instrumental: 'native',
+  temperature: 'native',
+  top_k: 'native',
+  response_format: 'native',
 }
 
 export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
@@ -325,6 +359,7 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
     displayName: 'Seed Audio 1.0',
     gatewayModelId: 'seed-audio-1.0',
     modality: 'audio',
+    audioKind: 'voice',
     providerBinding: 'gateway-openai-compat',
     params: SEED_AUDIO_PARAMS,
     voices: [
@@ -339,6 +374,7 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
     displayName: 'MiniMax Speech 2.8 HD',
     gatewayModelId: 'speech-2.8-hd',
     modality: 'audio',
+    audioKind: 'voice',
     providerBinding: 'gateway-openai-compat',
     params: MINIMAX_AUDIO_PARAMS,
     voices: [
@@ -358,6 +394,7 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
     displayName: 'Step TTS Mini（阶跃）',
     gatewayModelId: 'step-tts-mini',
     modality: 'audio',
+    audioKind: 'voice',
     providerBinding: 'gateway-openai-compat',
     params: STEPFUN_TTS_PARAMS,
     voices: [
@@ -377,6 +414,7 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
     displayName: 'StepAudio 3 TTS（阶跃·真人级）',
     gatewayModelId: 'stepaudio-3-tts',
     modality: 'audio',
+    audioKind: 'voice',
     providerBinding: 'gateway-openai-compat',
     params: STEPFUN_TTS_PARAMS,
     // 音色 id 与 mini 同源（官方音色清单按「支持模型」列标注，3-tts 为最新代机型）。
@@ -393,6 +431,26 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
     ],
     defaults: { voice: 'livelybreezy-female', speed: 1.0, volume: 1.0 },
   },
+  {
+    modelKey: 'stepaudio-3-gen-preview',
+    displayName: 'StepAudio 3 Gen（阶跃·综合音频）',
+    gatewayModelId: 'stepaudio-3-gen-preview',
+    modality: 'audio',
+    audioKind: 'design',
+    providerBinding: 'gateway-openai-compat',
+    params: STEPFUN_DESIGN_PARAMS,
+    defaults: { response_format: 'mp3' },
+  },
+  {
+    modelKey: 'stepaudio-3-music-preview',
+    displayName: 'StepAudio 3 Music（阶跃·音乐）',
+    gatewayModelId: 'stepaudio-3-music-preview',
+    modality: 'audio',
+    audioKind: 'music',
+    providerBinding: 'gateway-openai-compat',
+    params: STEPFUN_MUSIC_PARAMS,
+    defaults: { instrumental: 'true', response_format: 'mp3' },
+  },
 ]
 
 const DEFAULT_MODEL_KEYS: Record<StudioModality, string> = {
@@ -404,6 +462,15 @@ const DEFAULT_MODEL_KEYS: Record<StudioModality, string> = {
 
 export function listModels(modality: StudioModality): StudioModelEntry[] {
   return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === modality)
+}
+
+export function listModelsByAudioKind(kind: AudioKind): StudioModelEntry[] {
+  return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === 'audio' && audioKindOf(entry) === kind)
+}
+
+/** 缺省视作 `voice` —— 缺省值的唯一判据处，勿在调用方各自 `?? 'voice'`。 */
+export function audioKindOf(entry: Pick<StudioModelEntry, 'modality' | 'audioKind'>): AudioKind {
+  return entry.audioKind ?? 'voice'
 }
 
 /**

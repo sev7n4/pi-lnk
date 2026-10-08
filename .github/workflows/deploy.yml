@@ -245,10 +245,18 @@ jobs:
       - name: Pre-build disk guard on CVM
         run: |
           set -euo pipefail
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
           # 2026-09-30 爆盘事故加固：镜像构建 build cache 净增 1-2GB，累积把根盘
           # 推过 kubelet 15% 驱逐线 → disk-pressure 驱逐 pi-runtime pod（宕机 80min）。
           # 构建前先回收腾出空间；红线：禁 `docker image prune -a`（会删掉回退所需镜像）。
-          ssh deploy-cvm "docker builder prune -f | tail -1 || true; if [ -x /usr/local/sbin/disk-guard.sh ]; then /usr/local/sbin/disk-guard.sh; fi; df -h / | tail -1"
+          #
+          # 2026-10-08：disk-guard.sh 此前**只存在于 CVM 本机**、不在仓库里 ⇒ 无版本、
+          # 无审计、换机即丢，且旧副本只对 lnkpi-api 做 keep-3、没有 pi-runtime 策略
+          # （pi-runtime 堆到 20 个 tag ≈ 11GB，是 10-08 宕机的机制性缺口）。
+          # 这里从已同步的源码安装：版本化的策略 + 机器上的副本永不脱节。
+          # ⚠️ install 失败必须中断（`set -e`）：否则会静默沿用机器上的旧副本，
+          # 看起来部署成功而策略根本没更新——正是「以为有机制、其实没有」的那类坑。
+          ssh deploy-cvm "set -e; install -m 0755 '${DEPLOY_DIR}/deploy/disk-guard.sh' /usr/local/sbin/disk-guard.sh; docker builder prune -f | tail -1 || true; if [ -x /usr/local/sbin/disk-guard.sh ]; then /usr/local/sbin/disk-guard.sh; fi; df -h / | tail -1"
 
       - name: Launch background build on CVM
         run: |

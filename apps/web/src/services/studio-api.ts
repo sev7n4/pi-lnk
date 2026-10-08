@@ -37,6 +37,17 @@ export interface AudioGenerateOptions {
   volume?: number
   pitch?: number
   model?: string
+  /** 音频二阶分类；缺省视作 voice（存量节点不写此字段） */
+  kind?: 'voice' | 'design' | 'music'
+  /** design：角色→音色表 */
+  roles?: Array<{ role: string; voice: string }>
+  /** design：脚本段（`()` 语气、`[]` 音效） */
+  scripts?: Array<{ role?: string; text: string }>
+  instruction?: string
+  /** music：风格描述 / 歌词 / 纯音乐 */
+  caption?: string
+  lyrics?: string
+  instrumental?: boolean
 }
 
 export interface ImageSliceResult {

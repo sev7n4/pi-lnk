@@ -12,7 +12,7 @@ describe('mergeRefsToPrompt skip', () => {
       localPrompt: 'hello',
       downstreamType: 'text',
     })
-    expect(result).toEqual({ mergedText: 'hello', skippedMerge: true })
+    expect(result).toEqual({ mergedText: 'hello', skippedMerge: true, mergeDegraded: false })
   })
 
   it('returns single ref text when no localPrompt', async () => {
@@ -20,7 +20,7 @@ describe('mergeRefsToPrompt skip', () => {
       sources: [{ refKey: 'T1', label: '剧本', text: 'content' }],
       downstreamType: 'image',
     })
-    expect(result).toEqual({ mergedText: 'content', skippedMerge: true })
+    expect(result).toEqual({ mergedText: 'content', skippedMerge: true, mergeDegraded: false })
   })
 
   it('skips merge when only whitespace localPrompt', async () => {
@@ -29,7 +29,7 @@ describe('mergeRefsToPrompt skip', () => {
       localPrompt: '   ',
       downstreamType: 'text',
     })
-    expect(result).toEqual({ mergedText: 'only', skippedMerge: true })
+    expect(result).toEqual({ mergedText: 'only', skippedMerge: true, mergeDegraded: false })
   })
 })
 
@@ -45,6 +45,8 @@ describe('mergeRefsToPrompt fallback concat', () => {
       downstreamType: 'text',
     })
     expect(result.skippedMerge).toBe(false)
+    // 诊断 C2：降级必须与 LLM 成功可区分
+    expect(result.mergeDegraded).toBe(true)
     expect(result.mergedText).toContain('【T1·剧本】')
     expect(result.mergedText).toContain('A')
     expect(result.mergedText).toContain('【local·本节点】')
@@ -72,7 +74,7 @@ describe('mergeRefsToPrompt LLM merge', () => {
       apiKey: 'test-key',
     })
 
-    expect(result).toEqual({ mergedText: 'merged result', skippedMerge: false })
+    expect(result).toEqual({ mergedText: 'merged result', skippedMerge: false, mergeDegraded: false })
     expect(fetchMock).toHaveBeenCalledOnce()
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     const body = JSON.parse(init.body as string) as { temperature: number; messages: unknown[] }
@@ -95,6 +97,7 @@ describe('mergeRefsToPrompt LLM merge', () => {
       apiKey: 'test-key',
     })
     expect(result.skippedMerge).toBe(false)
+    expect(result.mergeDegraded).toBe(true)
     expect(result.mergedText).toContain('【T1·A】')
     expect(result.mergedText).toContain('one')
     expect(result.mergedText).toContain('【T2·B】')

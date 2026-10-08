@@ -3,6 +3,7 @@ import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
+  audioKindOf,
   computeImportTranslation,
   decodeChannelModel,
   duplicateResultToCanvasActions,
@@ -19,6 +20,7 @@ import {
   resolveCanonicalVideoRequest,
   summarizePromptCompletion,
   validateWorkflow,
+  type AudioKind,
   type CanvasAction,
   type CanvasActionApplier,
   type CanvasData,
@@ -1387,11 +1389,19 @@ export class AgentCanvasToolsService {
   /**
    * 按模态列出可写模型 ref（= update_node 的合法取值集）。
    * `source` 直接来自 preferences 里的 channelId 前缀：`platform::*` → 平台，其余 → BYOK。
+   * `audioKind` 仅 audio 模态出现：未登记音频模型一律 `voice`（`audioKindOf` 是缺省唯一判据处）。
    */
   async listNodeModelOptions(input: { userId: string }): Promise<{
     modalities: Record<
       NodeModal,
-      Array<{ ref: string; model: string; channelId: string; channelName: string; source: ProviderSource }>
+      Array<{
+        ref: string
+        model: string
+        channelId: string
+        channelName: string
+        source: ProviderSource
+        audioKind?: AudioKind
+      }>
     >
   }> {
     if (!input.userId) throw new BadRequestException('userId required')
@@ -1399,25 +1409,30 @@ export class AgentCanvasToolsService {
     const nameOf = new Map<string, string>([[platformChannel.id, platformChannel.name]])
     for (const ch of channels) nameOf.set(ch.id, ch.name)
 
-    const build = (refs: string[]) =>
+    const build = (refs: string[], modality: NodeModal) =>
       refs.map((ref) => {
         const decoded = decodeChannelModel(ref)
         const channelId = decoded?.channelId ?? PLATFORM_CHANNEL_ID
+        const model = decoded?.modelName ?? ref
+        const entry = getModelEntry(model)
         return {
           ref,
-          model: decoded?.modelName ?? ref,
+          model,
           channelId,
           channelName: nameOf.get(channelId) ?? channelId,
           source: (channelId === PLATFORM_CHANNEL_ID ? 'platform' : 'user') as ProviderSource,
+          ...(modality === 'audio'
+            ? { audioKind: entry && entry.modality === 'audio' ? audioKindOf(entry) : 'voice' }
+            : {}),
         }
       })
 
     return {
       modalities: {
-        image: build(preferences.selectableImageModels),
-        video: build(preferences.selectableVideoModels),
-        text: build(preferences.selectableTextModels),
-        audio: build(preferences.selectableAudioModels),
+        image: build(preferences.selectableImageModels, 'image'),
+        video: build(preferences.selectableVideoModels, 'video'),
+        text: build(preferences.selectableTextModels, 'text'),
+        audio: build(preferences.selectableAudioModels, 'audio'),
       },
     }
   }
@@ -2039,10 +2054,37 @@ export class AgentCanvasToolsService {
     }
   }
 
+  /**
+   * 音频生成（voice / design / music 三分类）。
+   *
+   * 🔴 **新字段一律追加在末尾**，既有三字段顺序不动 —— 本方法按位置/具名传参给
+   * `studio.generateAudio`，错位不报错、只静默错值。
+   *
+   * 工具内联参数（`kind` / `voice` / `emotion` / `roles` / `scripts` /
+   * `instruction` / `caption` / `lyrics` / `instrumental`）**优先于节点/账号默认值**：
+   * 缺省才沿用节点上的参数 ⇒ 存量调用的 options 形状与取值逐字节不变。
+   *
+   * ⚠️ `kind` **不参与选模型**：`studio.generateAudio` 的分支由**解析后的模型**派发
+   * （`audioKindOf(getModelEntry(resolved.modelName))`），不读 `options.kind`。
+   * ⇒ 分类真正生效靠节点上的 `audioModel` 是该分类的模型（`listNodeModelOptions`
+   * 会把每个模型的 `audioKind` 报给模型）。
+   * 但声明与模型不一致时**不会静默跑出错的分类**：`generateAudio` 内有
+   * `assertAudioKindMatchesModel` 守卫（Ruling R12），不匹配 ⇒ 显式失败 + 退款 +
+   * failed 记录（错误文案带 kind 与模型名），本方法把它落进节点的 `errorMessage`。
+   */
   async runAudioGeneration(input: {
     sessionId: string
     userId: string
     nodeId: string
+    kind?: string
+    voice?: string
+    emotion?: string
+    roles?: Array<{ role: string; voice: string }>
+    scripts?: Array<{ role?: string; text: string }>
+    instruction?: string
+    caption?: string
+    lyrics?: string
+    instrumental?: boolean
   }): Promise<{ url?: string; status: string; generationRecordId?: string; actions: CanvasAction[] }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
@@ -2075,12 +2117,20 @@ export class AgentCanvasToolsService {
         text,
         {
           model: pickString(node.data?.audioModel, prefs.defaultAudioModel) || undefined,
-          voice: pickString(node.data?.audioVoice, prefs.audioVoice || 'female-shaonv'),
-          emotion: pickString(node.data?.audioEmotion, 'neutral'),
+          // 工具内联优先：给了就用给的，没给才沿用节点/账号默认（存量取值不变）
+          voice: input.voice ?? pickString(node.data?.audioVoice, prefs.audioVoice || 'female-shaonv'),
+          emotion: input.emotion ?? pickString(node.data?.audioEmotion, 'neutral'),
           language: pickString(node.data?.audioLanguage, 'zh'),
           speed: typeof node.data?.audioSpeed === 'number' ? node.data.audioSpeed : prefs.audioSpeed ?? 1,
           volume: typeof node.data?.audioVolume === 'number' ? node.data.audioVolume : 1,
           pitch: typeof node.data?.audioPitch === 'number' ? node.data.audioPitch : 0,
+          kind: input.kind,
+          roles: input.roles,
+          scripts: input.scripts,
+          instruction: input.instruction,
+          caption: input.caption,
+          lyrics: input.lyrics,
+          instrumental: input.instrumental,
         },
         refs,
         undefined,
@@ -2089,6 +2139,35 @@ export class AgentCanvasToolsService {
       )
       const recordId = record.id
       const url = typeof record.url === 'string' && record.url ? record.url : undefined
+
+      // 🔴 异步生成（music：submit+轮询，官方 1–3 分钟）在这里就返回了
+      // `status:'generating'` 且 `url` 未设 —— 终态由 studio 的 completeMusic 落库
+      // （上游终态 FAILED 时 HTTP 仍是 200，会退款 + 写可判读文案）。
+      // 无条件写 `completed` + `url: undefined` 会让模型对用户说「已生成完成」，
+      // 而上游还在跑、甚至已经失败退款 ⇒ wrong-but-successful result
+      // （违反 AGENTS.md「禁止静默降级」与 spec §7.6）。故按记录状态分流。
+      if (record.status === 'generating') {
+        const pendingActions: CanvasAction[] = [
+          {
+            type: 'update_node',
+            payload: {
+              id: input.nodeId,
+              // ⛔ 不写 url：还没有。写了空串/旧值都会被前端当「已完成」渲染。
+              data: {
+                status: 'generating',
+                generationRecordId: recordId,
+                errorMessage: null,
+              },
+            },
+          },
+        ]
+        await this.persist(input.sessionId, pendingActions)
+        allActions.push(...pendingActions)
+        // 复用既有枚举 `timeout`（不新增枚举值、不改提示词）：规则 12 已经教模型
+        // 「run_* 返回 timeout：如实说未完成，可再查生成状态」，正好是这个语义。
+        return { status: 'timeout', generationRecordId: recordId, actions: allActions }
+      }
+
       const finishActions: CanvasAction[] = [
         {
           type: 'update_node',

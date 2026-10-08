@@ -116,6 +116,25 @@ export class PendingToolRegistry {
 	}
 
 	/**
+	 * 用户**显式拒绝**（2026-10-06）：propose 卡的「取消」走这里，而不是让工具靠 SSOT 轮询推断。
+	 *
+	 * 与 `answer` 的区别是语义而非实现：`answer` = 用户作答（propose 语义下 = 确认生成），
+	 * `decline` = 用户明确说不（propose 语义下 = 取消该节点的生成提议）。
+	 * 两者都幂等（未知/已 settle 一律 `{ok:true, deduped:true}`），回答端点重试安全。
+	 *
+	 * 存在理由（生产事故 cmus6ha64001dk601lzsymqfa 的第二处）：取消此前只写 Nest SSOT，
+	 * 工具侧靠「连续两次读到 draft」**推断**用户拒绝 —— 推断链上任何一次 stale 写入都会
+	 * 让模型收到错误的用户意图（修 bug 时只能给中性文案「不要断定用户已取消」，
+	 * 于是用户真按了取消，模型也不知道）。显式 decline 让「取消」成为确定性事实。
+	 */
+	decline(sessionId: string, callId: string): { ok: true; deduped: boolean } {
+		const entry = this.entries.get(sessionId)?.get(callId);
+		if (!entry) return { ok: true, deduped: true };
+		entry.resolve({ status: "aborted" });
+		return { ok: true, deduped: false };
+	}
+
+	/**
 	 * propose 确认轮询收尾：清条目清 timer，等待方（Promise.race 另一臂）不消费此 resolve。
 	 *
 	 * @param resolution 缺省 `aborted`（用户中止/取消）。

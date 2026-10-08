@@ -535,3 +535,145 @@ describe("L1 runner · ⭐ 缺画布上下文时 fail-fast（不跑一遍拿超�
 		);
 	});
 });
+
+describe("L1 runner · ⭐⭐ error（限流）补跑 —— 别让环境废票偷走判据强度", () => {
+	/**
+	 * 实测（2026-10-06 真模型基线，免费额度）：`tool-discovery-001` 三次 attempt 里
+	 * **两次撞 429**。`error` 不参与表决是对的（环境问题不是行为问题），
+	 * 但它**占掉票位** ⇒ 「多数表决」静默退化成**一票定生死**，
+	 * 而报告上仍写着「3 次」—— 判据强度被偷走却不显形。
+	 *
+	 * 本组锁两件事：① 补跑能把废票补成真实票；② 废票数如实进报告。
+	 */
+	const LIMIT_429 = "429 您已达到免费用户的 API 速率限制";
+
+	/**
+	 * 假 runtime：**按 prompt 的到达序号**决定吐什么事件。
+	 * ⚠️ 必须按 sessionId 门控（同 `withFakeRuntime` 的注释）：
+	 * 若只看「有没有收到过 prompt」，本轮的 events 连接会读到**上一轮**的序号。
+	 */
+	async function withSeqRuntime(
+		errorCalls: Set<number>,
+		fn: (baseUrl: string) => Promise<void>,
+	): Promise<void> {
+		const { createServer } = await import("node:http");
+		const seqBySession = new Map<string, number>();
+		let seq = 0;
+		const server = createServer((req, res) => {
+			const body: Buffer[] = [];
+			req.on("data", (c: Buffer) => body.push(c));
+			req.on("end", () => {
+				const path = req.url ?? "";
+				if (path.includes("/prompt")) {
+					const sid = /\/sessions\/([^/]+)\/prompt/.exec(path)?.[1] ?? "?";
+					seq++;
+					seqBySession.set(sid, seq);
+					res.writeHead(202, { "content-type": "application/json" });
+					res.end("{}");
+					return;
+				}
+				if (path.includes("/events")) {
+					const sid = /\/sessions\/([^/]+)\/events/.exec(path)?.[1] ?? "?";
+					res.writeHead(200, { "content-type": "text/event-stream" });
+					res.flushHeaders();
+					const started = Date.now();
+					const tick = (): void => {
+						const n = seqBySession.get(sid);
+						if (n !== undefined) {
+							if (errorCalls.has(n)) {
+								res.write(
+									`data: ${JSON.stringify({ type: "error", data: { message: LIMIT_429 } })}\n\n`,
+								);
+								res.write(
+									`data: ${JSON.stringify({ type: "agent_end", data: { status: "failed" } })}\n\n`,
+								);
+							} else {
+								res.write(
+									`data: ${JSON.stringify({ type: "agent_end", data: { status: "completed" } })}\n\n`,
+								);
+							}
+							res.end();
+						} else if (Date.now() - started < 3000) {
+							setTimeout(tick, 5);
+						} else {
+							res.end();
+						}
+					};
+					tick();
+					return;
+				}
+				res.writeHead(201, { "content-type": "application/json" });
+				res.end(JSON.stringify({ sessionId: "s", provider: "p", model: "m", status: "created" }));
+			});
+		});
+		await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+		const addr = server.address();
+		const port = typeof addr === "object" && addr ? addr.port : 0;
+		try {
+			await fn(`http://127.0.0.1:${port}`);
+		} finally {
+			server.closeAllConnections();
+			await new Promise<void>((r) => server.close(() => r()));
+		}
+	}
+
+	const runOpts = (baseUrl: string, errorRetries: number) => ({
+		baseUrl,
+		// tool-discovery-003：repeat=3、只禁写工具 ⇒ 「不调任何工具」即 pass，判据最干净
+		only: ["tool-discovery-003"],
+		intervalMs: 0,
+		caseTimeoutMs: 5000,
+		staticPrompt: "test-static-prompt",
+		userId: "test-user",
+		canvasSessionId: "test-canvas",
+		errorRetries,
+	});
+
+	it("⭐ 关闭补跑（errorRetries=0）⇒ 3 次全限流就只能是 error（环境问题，不判 pass/fail）", async () => {
+		const { runL1 } = await import("./runner.js");
+		await withSeqRuntime(new Set([1, 2, 3]), async (baseUrl) => {
+			const s = await runL1(runOpts(baseUrl, 0));
+			const r = s.results[0];
+			assert.equal(r.verdict, "error", `全限流必须是 error，实际 ${r.verdict}`);
+			assert.equal(s.passRate, 0, "error 不进分母 ⇒ passRate 0（不是 NaN）");
+		});
+	});
+
+	it("⭐⭐ 补跑（errorRetries=2）⇒ 3 次限流被顶掉，拿到真实票并判出结论", async () => {
+		const { runL1 } = await import("./runner.js");
+		await withSeqRuntime(new Set([1, 2, 3]), async (baseUrl) => {
+			const s = await runL1(runOpts(baseUrl, 2));
+			const r = s.results[0];
+			// 无补跑时这条是 error（上一用例已证）；补跑后应拿到真实票并给出 pass
+			assert.equal(r.verdict, "pass", `补跑后应判 pass，实际 ${r.verdict}（${r.attemptVerdicts?.join("/")}）`);
+			assert.equal(r.errorAttempts, 3, `应记录 3 次废票，实际 ${r.errorAttempts}`);
+			assert.equal(
+				r.attempts,
+				r.attemptVerdicts?.length,
+				"attempts 必须是**真实票数**，不能写 repeat（否则看不出票被顶掉）",
+			);
+			assert.ok(
+				(r.attempts ?? 0) < 3,
+				`总尝试上界=repeat+errorRetries=5 ⇒ 3 张废票后最多 2 张真实票，实际 ${r.attempts}`,
+			);
+			assert.match(
+				s.report,
+				/环境 error 已补跑、不计票/,
+				"报告必须显示废票数 —— 否则「2/3 通过」看不出其实只跑了 2 次真票",
+			);
+		});
+	});
+
+	it("⭐ 废票不污染判定：限流只在部分 attempt 出现时，仍按真实票多数表决", async () => {
+		const { runL1 } = await import("./runner.js");
+		// 第 2 次限流，其余正常 ⇒ 3 张真实票全 pass，且记 1 次废票
+		await withSeqRuntime(new Set([2]), async (baseUrl) => {
+			const s = await runL1(runOpts(baseUrl, 2));
+			const r = s.results[0];
+			assert.equal(r.verdict, "pass");
+			assert.equal(r.attempts, 3, "应拿满 3 张真实票");
+			assert.equal(r.errorAttempts, 1, "应记录 1 次废票");
+			assert.deepEqual(r.attemptVerdicts, ["pass", "pass", "pass"]);
+		});
+	});
+});

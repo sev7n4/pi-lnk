@@ -66,6 +66,21 @@ export interface DeliveryCardGroup {
 }
 
 export interface AgentPresentationBody {
+  /**
+   * 🔀 `node_graph` 结构化载荷（2026-07）。
+   *
+   * ⚠️ **做成可选字段而不是联合类型**：试过 `body?: AgentPresentationBody | NodeGraphBodyPayload`，
+   * 会让**所有**下游 `body.text` / `body.schemes` / `body.svg` 访问变成 TS2339（实测 16 处）。
+   * 可选字段零影响，且与 `svg` 现有做法一致（svg 也是这么塞的）。
+   */
+  // ⚠️ 字段名带 `graph_` 前缀：`nodes` / `edges` **已被占用**
+  //   （`nodes?: TopoCardNode[]` 是另一套「拓扑卡片」语义，`edges` 同理）⇒ 占用会TS2300。
+  graph_nodes?: NodeGraphBodyPayload['nodes']
+  graph_edges?: NodeGraphBodyPayload['edges']
+  graph_droppedNodeIds?: string[]
+  graph_totalNodeCount?: number
+  /** 与后端 `NodeGraphPayload.title` 对齐。 */
+  nodeGraphTitle?: string
   text?: string
   footer_hint?: string
   expected_delivery_count?: number
@@ -94,6 +109,29 @@ export interface AgentPresentationBody {
   finalized?: DeliverySummaryFinalizedRow[]
   basics?: DeliverySummaryBasicsRow[]
   basics_section_title?: string
+}
+
+/**
+ * `node_graph` 载荷体（2026-07）。
+ *
+ * ⚠️ 字段名与后端 `services/pi-runtime/src/tools/types-node-graph.ts` **一一对应**，
+ * 单方面改会造成「前端静默渲染空图」（不报错，最难查的一类退化）。
+ */
+export interface NodeGraphBodyPayload {
+  /** 与后端 `NodeGraphPayload.title` 对齐。 */
+  title?: string
+  nodes: Array<{
+    id: string
+    type?: string
+    title?: string
+    position?: { x: number; y: number }
+    size?: { width: number; height: number }
+    groupId?: string
+    status?: 'idle' | 'running' | 'failed'
+  }>
+  edges: Array<{ source: string; target: string; label?: string }>
+  droppedNodeIds?: string[]
+  totalNodeCount?: number
 }
 
 export interface AgentPresentationEnvelope {

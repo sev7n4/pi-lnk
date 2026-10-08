@@ -1,5 +1,10 @@
 import { ref, type Ref } from 'vue'
-import { resolveCompositionVideoPrompt, type VideoSettings } from '@lnkpi/shared'
+import {
+  audioKindOf,
+  resolveCompositionVideoPrompt,
+  type AudioKind,
+  type VideoSettings,
+} from '@lnkpi/shared'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating } from '@/constants/dockStudio'
 import {
@@ -975,14 +980,41 @@ async function cancelRemoteGeneration(
           status: NODE_GENERATION_STATUS.generating,
           prompt: local,
         })
+        // 🔴 `kind` 必须与模型分类一致（服务端 `assertAudioKindMatchesModel` 对错配显式 400），
+        // 所以前端下拉按 kind 过滤；缺省视作 voice（存量节点无 `audioKind`，判据走 `audioKindOf`）。
+        const kind: AudioKind = audioKindOf({
+          modality: 'audio',
+          audioKind: data.audioKind as AudioKind | undefined,
+        })
         const { data: res } = await studioApi.generateAudio(local, {
           model: resolveGenerationModel('audio', data.audioModel as string | undefined),
-          voice: String(data.audioVoice ?? DEFAULT_AUDIO_VOICE),
-          emotion: String(data.audioEmotion ?? 'neutral'),
-          language: String(data.audioLanguage ?? 'zh'),
-          speed: typeof data.audioSpeed === 'number' ? data.audioSpeed : 1,
-          volume: typeof data.audioVolume === 'number' ? data.audioVolume : 1,
-          pitch: typeof data.audioPitch === 'number' ? data.audioPitch : 0,
+          kind,
+          ...(kind === 'design'
+            ? {
+                roles: data.audioRoles as Array<{ role: string; voice: string }>,
+                scripts: data.audioScripts as Array<{ role?: string; text: string }>,
+                instruction: data.audioInstruction as string | undefined,
+              }
+            : {}),
+          ...(kind === 'music'
+            ? {
+                caption: local,
+                lyrics: data.audioLyrics as string | undefined,
+                instrumental: Boolean(data.audioInstrumental),
+              }
+            : {}),
+          // ⚠️ 判据是 `kind === 'voice'` 而不是 brief 片段里的「非 music 即 voice」：
+          // 后者会让 design 同时带上 voice/emotion/... ，与「参数区按 kind 互斥」矛盾。
+          ...(kind === 'voice'
+            ? {
+                voice: String(data.audioVoice ?? DEFAULT_AUDIO_VOICE),
+                emotion: String(data.audioEmotion ?? 'neutral'),
+                language: String(data.audioLanguage ?? 'zh'),
+                speed: typeof data.audioSpeed === 'number' ? data.audioSpeed : 1,
+                volume: typeof data.audioVolume === 'number' ? data.audioVolume : 1,
+                pitch: typeof data.audioPitch === 'number' ? data.audioPitch : 0,
+              }
+            : {}),
         }, refs, mentionedKeys, signal, canvasScope(node.id))
         if (signal.aborted) return
         deps.patchNodeData(node.id, { generationRecordId: res.data.id })

@@ -19,6 +19,12 @@ export interface SubmitAnswersInput {
   sessionId: string
   callId: string
   answers: Record<string, string[]>
+  /**
+   * 2026-10-06：`decline` = 用户**显式拒绝**（propose 卡「取消」）⇒ runtime 以 `aborted`
+   * 交还，工具回 `reason:"aborted"` —— 取消成为确定性事实，不再靠 SSOT 轮询推断。
+   * 缺省（undefined）不发送该键 = 作答语义，老调用方零改动。
+   */
+  decision?: 'answer' | 'decline'
 }
 
 export interface SubmitAnswersResult {
@@ -52,6 +58,7 @@ export async function submitAnswers(
       threadId: input.threadId,
       callId: input.callId,
       answers: input.answers,
+      ...(input.decision ? { decision: input.decision } : {}),
     }),
   })
   // status 进错误信息：出问题时能一眼区分 401（未登录）/ 409（会话忙）/ 5xx，省掉抓包

@@ -17,7 +17,8 @@
  */
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
-import { presentResult } from "./present-result.js";
+import { presentResult, presentResultDual } from "./present-result.js";
+import { buildNodeGraphPayload } from "./node-graph-payload.js";
 import {
 	ALLOWED_COLOR_NAMES,
 	isAllowedColorName,
@@ -697,9 +698,15 @@ export function createRenderCanvasViewTools(deps: {
 									.join("");
 					return fail(`${head}${advice}`);
 				}
-				return presentResult({
-					type: "svg_card",
-					svg,
+				// 🔀 双写（2026-10-07）：同时产出 `node_graph`（结构化、给 Vue Flow）
+				//   与 `svg_card`（旧路径）。前端未接 node_graph 时它会被忽略（无害），
+				//   ⇒ 后端可先上线，前端后接。等前端灰度验证通过再删SVG 那条路。
+				//   ⚠️ nodeGraph 用**全部**画布节点（raw.nodes），不是 p.node_ids 过滤后的子集——
+				//   节点图的语义是"看看画布上有什么"，按需筛选是SVG 卡片的事。
+				return presentResultDual(
+					{
+						type: "svg_card",
+						svg,
 					...(p.title ? { title: p.title } : {}),
 					...(p.annotations
 						? {
@@ -710,7 +717,9 @@ export function createRenderCanvasViewTools(deps: {
 								})),
 							}
 						: {}),
-				});
+					},
+					buildNodeGraphPayload(raw, p.title),
+				);
 			},
 		},
 	];

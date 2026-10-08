@@ -31,9 +31,12 @@ import {
   mergeRefsToPrompt,
   resolvePromptGenerateText,
   Seedance1xUnsupportedError,
+  StepFunDesignProvider,
+  StepFunMusicProvider,
   stripRefImagePromptTags,
   supportsVisionTextModel,
   type MergeTextSource,
+  type StepFunMusicInput,
 } from '@lnkpi/agent'
 import {
   BYOK_FALLBACK_CONFIRM_MESSAGE,
@@ -44,7 +47,9 @@ import {
   IMAGE_EDIT_MODEL_PRICING,
   IMAGE_EDIT_MODEL_KEYS,
   resolveImageEditProfile,
+  audioKindOf,
   decodeChannelModel,
+  getModelEntry,
   redactProviderSnippet,
   resolveImageSize,
   resolveModelKey,
@@ -53,6 +58,7 @@ import {
   resolveVideoModelProfile,
   translateUpstreamFailure,
   type ErrorCode,
+  type AudioKind,
   type GenerationRefPayload,
   type GenerationDiagnostic,
   type ImageRefWire,
@@ -63,6 +69,7 @@ import {
   type VideoGenerationMode,
   type CanvasData,
   assertMiniMaxH3ReferenceLimits,
+  imageGenerationCredits,
   resolveCompositionVideoPrompt,
 } from '@lnkpi/shared'
 import {
@@ -74,12 +81,9 @@ import {
   rethrowWithRefundedPoints,
   throwCancelledException,
 } from '../points/charge-session'
+import { studioPointCategory } from '../points/point-categories'
 import { PointsService } from '../points/points.service'
-import {
-  consumeMeta,
-  refundMeta,
-  type PointCategory,
-} from '../points/point-tx.types'
+import { consumeMeta, refundMeta } from '../points/point-tx.types'
 import {
   falH3MaxVideoRecordMeta,
   minimaxH3VideoRecordMeta,
@@ -122,6 +126,12 @@ import {
 import { UploadService } from '../upload/upload.service'
 import sharp from 'sharp'
 import { hasCompositionPBlock } from './video-generation-request.util'
+import {
+  assertStepFunAudioModel,
+  assertAudioKindMatchesModel,
+  audioFailureMessage,
+  resolvePlatformAudioFallback,
+} from './audio-kind'
 
 // Grace window before returning the async `generating` record: fast image
 // providers usually finish within this, sparing the client a polling round.
@@ -263,13 +273,6 @@ function parseMeta(raw: string | null | undefined): Record<string, unknown> {
   } catch {
     return {}
   }
-}
-
-function studioPointCategory(type: string): PointCategory {
-  if (type === 'text' || type === 'prompt') return 'text'
-  if (type === 'image' || type === 'image_edit') return 'image'
-  if (type === 'audio' || type === 'video') return type
-  return 'other'
 }
 
 function hintForCode(code: ErrorCode): string | undefined {
@@ -506,7 +509,7 @@ export class StudioService {
     model?: string,
     videoImageRefs?: Array<{ refKey: string; label: string }>,
   ) {
-    const { mergedText, skippedMerge } = await mergeRefsToPrompt({
+    const { mergedText, skippedMerge, mergeDegraded } = await mergeRefsToPrompt({
       sources: extractTextSources(refs),
       localPrompt: localPrompt.trim() || undefined,
       downstreamType,
@@ -524,6 +527,7 @@ export class StudioService {
     return {
       mergedText,
       skippedMerge,
+      mergeDegraded,
       referenceImages: extractReferenceImages(refs),
     }
   }
@@ -703,7 +707,7 @@ export class StudioService {
     const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('text', resolved.modelName)
     const gatewayModelId =
       resolved.source === 'user' ? resolved.modelName : entry.gatewayModelId
-    const { mergedText, skippedMerge, referenceImages } = await this.resolveMergedPrompt(
+    const { mergedText, skippedMerge, mergeDegraded, referenceImages } = await this.resolveMergedPrompt(
       prompt,
       refs,
       'text',
@@ -1089,16 +1093,11 @@ export class StudioService {
     scope?: CanvasGenerationScope,
   ) {
     const n = Math.max(1, Math.min(4, Number(count) || 1))
-    const cost = 10 * n
+    // 诊断 B4：定价按分辨率分级（1K=10 / 2K=15 / 4K=20 每张），单一真源在 shared
+    const cost = imageGenerationCredits({ count: n, resolution })
     const chargeReason = '图像生成'
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('image', { model: model ?? null, generationId: null }),
-    )
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
-    const { mergedText, skippedMerge, referenceImages } = await this.resolveMergedPrompt(
+    const { mergedText, skippedMerge, mergeDegraded, referenceImages } = await this.resolveMergedPrompt(
       prompt,
       refs,
       'image',
@@ -1126,6 +1125,10 @@ export class StudioService {
       imageRefDescriptorsFromRefs(refs),
     )
     const providerOptions = buildImageProviderGenerateOptions(built)
+    // 账本对账（诊断 B2）：扣费交易必须携带 generationId，否则扣费与生成永远无法对上。
+    // 记录先行：先建 generating 占位再扣费；扣费失败（积分不足）立即删除占位，不留孤儿。
+    // 旧顺序（先扣费后建记录）还有个隐性泄漏——resolve/merge 阶段抛错时「已扣费、
+    // 无记录、无退款」，用户侧连一条可展示的失败记录都没有。
     const record = await this.prisma.generationRecord.create({
       data: {
         userId,
@@ -1145,6 +1148,8 @@ export class StudioService {
               pixelSize,
               referenceImages,
               skippedMerge,
+              // 诊断 C2：降级（无 key / LLM 失败退拼接）与 LLM 归纳成功可区分，供排查与告警
+              mergeDegraded,
               channelId: resolved.channelId,
               originalModel: model,
               providerSource: resolved.source,
@@ -1157,6 +1162,19 @@ export class StudioService {
         ...withCanvasScope(scope),
       },
     })
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('image', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
     const completion = this.completeImage(
       record.id,
       userId,
@@ -1286,14 +1304,41 @@ export class StudioService {
   ) {
     const cost = 10
     const chargeReason = '图像变体'
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('image', { model: model ?? null, generationId: null }),
-    )
-    const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
     const combined = basePrompt ? `${basePrompt}。变体要求：${prompt}` : prompt
+    const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
+    const storeModel = model ?? resolved.modelName
+    const baseMeta = { variation: true, basePrompt, channelId: resolved.channelId, chargeReason }
+    // 账本对账（诊断 B2 收尾）：与 generateImage 同构的「记录先行」——先建 generating 占位
+    // 再扣费，扣费交易才带得上 generationId；扣费失败立即删除占位，不留孤儿。
+    // 旧顺序（先扣费后建记录）除账本对不上外还有两处泄漏：
+    //   ① `resolveForGeneration` 抛错时「已扣费 / 无记录 / 无退款」——它原本在 try 之外；
+    //   ② 进程在生成中途挂掉时同样无记录可查，reaper（#277/#281）只扫 GenerationRecord，
+    //      扫不到这一笔，扣的分永远退不回来。
+    const record = await this.prisma.generationRecord.create({
+      data: {
+        userId,
+        type: 'image',
+        prompt: combined,
+        model: storeModel,
+        url: null,
+        status: 'generating',
+        metadata: JSON.stringify(applyChargeMeta(baseMeta, cost)),
+        ...withCanvasScope(scope),
+      },
+    })
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('image', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
     try {
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
@@ -1302,37 +1347,39 @@ export class StudioService {
         modelId: resolved.modelName || undefined,
       })
       if (cancel?.isCancelled()) {
-        await this.points.refund(
-          userId,
-          cost,
-          `${chargeReason}-取消退款`,
-          refundMeta('image', 'cancelled_refund', {
-            model: resolved.modelName,
-            generationId: null,
-          }),
-        )
+        // 与 cancelGeneration 同源：先读一次已结算状态，alreadyRefunded 时不重复退款
+        // （占位记录此刻已存在 ⇒ 外部 cancelGeneration 也够得着它，必须防双退）。
+        const cur = await this.prisma.generationRecord.findFirst({ where: { id: record.id } })
+        let cancelMeta: Record<string, unknown> = { ...parseMeta(cur?.metadata), cancelled: true }
+        if (!alreadyRefunded(cancelMeta)) {
+          await this.points.refund(
+            userId,
+            cost,
+            `${chargeReason}-取消退款`,
+            refundMeta('image', 'cancelled_refund', {
+              model: resolved.modelName,
+              generationId: record.id,
+            }),
+          )
+          cancelMeta = applyRefundMeta(cancelMeta, cost, 'cancelled')
+        }
+        await this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            status: 'failed',
+            metadata: JSON.stringify(
+              applyFailureDiagnosticMeta(cancelMeta, new Error('已取消'), {
+                errorCode: 'cancelled',
+                userMessage: '已取消',
+              }),
+            ),
+          },
+        })
         throwCancelledException(cost)
       }
-      return this.prisma.generationRecord.create({
-        data: {
-          userId,
-          type: 'image',
-          prompt: combined,
-          model: model ?? resolved.modelName,
-          url,
-          status: 'completed',
-          metadata: JSON.stringify(
-            applyChargeMeta(
-              {
-                variation: true,
-                basePrompt,
-                channelId: resolved.channelId,
-              },
-              cost,
-            ),
-          ),
-          ...withCanvasScope(scope),
-        },
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
+        data: { url, status: 'completed' },
       })
     } catch (err) {
       if (isCancelledException(err)) throw err
@@ -1343,34 +1390,18 @@ export class StudioService {
           `${chargeReason}-失败退款`,
           refundMeta('image', 'failed_refund', {
             model: resolved.modelName,
-            generationId: null,
+            generationId: record.id,
           }),
         )
         const failedMeta = applyFailureDiagnosticMeta(
-          applyRefundMeta(
-            applyChargeMeta(
-              {
-                variation: true,
-                basePrompt,
-                channelId: resolved.channelId,
-              },
-              cost,
-            ),
-            cost,
-            'platform_failed',
-          ),
+          applyRefundMeta(applyChargeMeta(baseMeta, cost), cost, 'platform_failed'),
           err,
         )
-        const failed = await this.prisma.generationRecord.create({
+        const failed = await this.prisma.generationRecord.update({
+          where: { id: record.id },
           data: {
-            userId,
-            type: 'image',
-            prompt: combined,
-            model: model ?? resolved.modelName,
-            url: null,
             status: 'failed',
             metadata: JSON.stringify(failedMeta),
-            ...withCanvasScope(scope),
           },
         })
         throwGenerationFailure({
@@ -1386,16 +1417,12 @@ export class StudioService {
         `${chargeReason}-BYOK失败退款`,
         refundMeta('image', 'byok_refund', {
           model: resolved.modelName,
-          generationId: null,
+          generationId: record.id,
         }),
       )
-      return this.prisma.generationRecord.create({
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
         data: {
-          userId,
-          type: 'image',
-          prompt: combined,
-          model: model ?? resolved.modelName,
-          url: null,
           status: 'fallback_pending',
           metadata: JSON.stringify(
             this.byokPendingMeta(resolved, err, cost, {
@@ -1404,7 +1431,6 @@ export class StudioService {
               basePrompt,
             }),
           ),
-          ...withCanvasScope(scope),
         },
       })
     }
@@ -1467,32 +1493,16 @@ export class StudioService {
       throw err
     }
 
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('image', { model: editModelKey, generationId: null }),
-    )
     let resolved
     try {
       resolved = await this.resolver.resolveForGeneration(userId, editModelKey, 'image')
     } catch (err) {
-      // 渠道解析失败（如 BYOK 渠道不存在）：先退积分再抛
-      await this.points.refund(
-        userId,
-        cost,
-        `${chargeReason}-失败退款`,
-        refundMeta('image', 'failed_refund', { model: editModelKey, generationId: null }),
-      )
+      // 渠道解析失败（如 BYOK 渠道不存在）：此时尚未扣费（扣费已后移到占位记录之后），
+      // 直接抛即可 —— 原来的「先退积分再抛」是配合旧顺序（先扣费）的。
       throw err
     }
     if (byokChannel && resolved.apiFormat !== 'openai') {
-      await this.points.refund(
-        userId,
-        cost,
-        `${chargeReason}-失败退款`,
-        refundMeta('image', 'failed_refund', { model: editModelKey, generationId: null }),
-      )
+      // 同上：尚未扣费，无需退款。
       throw new BadRequestException('该渠道的 API 格式暂不支持图像编辑')
     }
     // BYOK 同步 wire 需要显式像素尺寸（部分上游 'auto' 会 500），缺省跟随原图
@@ -1565,6 +1575,23 @@ export class StudioService {
         ...withCanvasScope(scope),
       },
     })
+
+    // 账本对账（诊断 B2 收尾）：扣费交易必须携带 generationId，否则扣费与生成永远对不上。
+    // 精修的记录本来就在生成前创建（status=generating），把扣费挪到记录之后即与
+    // generateImage 同构；扣费失败（积分不足）立即删除占位，不留孤儿。
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('image', { model: editModelKey, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
 
     const refundAndFail = async (err: unknown) => {
       await this.points.refund(
@@ -2095,12 +2122,6 @@ export class StudioService {
       referenceVideoCount: referenceBundle.videos.length,
     })
     const chargeReason = '视频生成'
-    await this.points.consume(
-      userId,
-      durationCredits,
-      chargeReason,
-      consumeMeta('video', { model: model ?? null, generationId: null }),
-    )
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'video')
     const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
       prompt,
@@ -2173,15 +2194,7 @@ export class StudioService {
         }
       }
       if (refPreflight.level === 'error' && built.meta.refWire === 'agnes_keyframes') {
-        await this.points.refund(
-          userId,
-          durationCredits,
-          `${chargeReason}-预检拒绝退款`,
-          refundMeta('video', 'failed_refund', {
-            model: resolved.modelName,
-            generationId: null,
-          }),
-        )
+        // 预检在扣费之前（记录先行 #277 形态）：拒绝时直接抛错，无需退款、无孤儿记录
         throw new BadRequestException(refPreflight.message)
       }
     }
@@ -2229,6 +2242,22 @@ export class StudioService {
         ...withCanvasScope(scope),
       },
     })
+    // 账本对齐 #277 形态：先建 generating 占位再扣费（携带 generationId）；
+    // 扣费失败（积分不足）立即删除占位，不留孤儿。旧顺序（先扣费后建记录）有
+    // 隐性泄漏——resolve/merge/预检阶段抛错时「已扣费、无记录、无退款」。
+    try {
+      await this.points.consume(
+        userId,
+        durationCredits,
+        chargeReason,
+        consumeMeta('video', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
     this.completeVideo(
       record.id,
       userId,
@@ -2252,21 +2281,32 @@ export class StudioService {
       speed?: number
       volume?: number
       pitch?: number
+      kind?: string
+      roles?: Array<{ role: string; voice: string }>
+      scripts?: Array<{ role?: string; text: string }>
+      instruction?: string
+      caption?: string
+      lyrics?: string
+      instrumental?: boolean
     } = {},
     refs?: StudioRefInput[],
     mentionedKeys?: string[],
     cancel?: CancelFlag,
     scope?: CanvasGenerationScope,
   ) {
-    const cost = 5
-    const chargeReason = '音频生成'
+    // ⚠️ 先resolve 再定 cost：`music` 15 分、`voice`/`design` 5 分（见 plan §全局约束）。
+    // kind 只能从 resolve 后的 modelName 判（用户可能传 `ch_xxx::model`），所以扣分点
+    // 必须后移；扣分金额/文案与既有 voice 路径逐字节相同（cost=5、reason=音频生成）。
+    const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
+    const kind: AudioKind = audioKindOf(getModelEntry(resolved.modelName) ?? { modality: 'audio' })
+    const cost = kind === 'music' ? 15 : 5
+    const chargeReason = kind === 'music' ? '音频生成-音乐' : '音频生成'
     await this.points.consume(
       userId,
       cost,
       chargeReason,
       consumeMeta('audio', { model: options.model ?? null, generationId: null }),
     )
-    const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
     const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
       text,
       refs,
@@ -2293,8 +2333,121 @@ export class StudioService {
       resolved.source === 'user' ? options.model ?? built.meta.modelKey : built.meta.modelKey
 
     try {
+      assertStepFunAudioModel(kind, resolved.modelName)
+      // R12：调用方声明的 kind 与模型分类必须一致。不一致时**显式拒绝** ——
+      // 上面那行守卫只管「design/music 必须是阶跃模型」，管不了「声明 music 却拿着
+      // TTS 模型」这种错配（那会让 voice 分支静默产出 TTS 并标 completed）。
+      // 放在 try 内首两条 ⇒ 异常走既有 catch 的退款 + failed 记录链路，不吞积分。
+      assertAudioKindMatchesModel(options.kind, resolved.modelName)
       if (resolved.source === 'user' && !resolved.credentials.apiKey) {
         throw new Error('missing api key')
+      }
+      if (kind === 'design') {
+        // 综合音频走非 OpenAI 兼容的同步端点，返回裸字节（不是 data URL）。
+        // 平台缺 key / 上游 402 / 模型不在目录都由既有 catch 显式退款报错，不静默回落。
+        const apiKey = resolved.credentials.apiKey
+        if (!apiKey) throw new Error('missing api key')
+        const { buffer, contentType } = await new StepFunDesignProvider(
+          apiKey,
+          resolved.credentials.baseUrl,
+        ).generate({
+          roles: options.roles ?? [],
+          scripts: options.scripts ?? [],
+          instruction: options.instruction,
+          responseFormat: 'mp3',
+        })
+        const stored = await this.upload.saveUserFile(userId, buffer, 'design.mp3', contentType)
+        if (cancel?.isCancelled()) {
+          await this.points.refund(
+            userId,
+            cost,
+            `${chargeReason}-取消退款`,
+            refundMeta('audio', 'cancelled_refund', {
+              model: resolved.modelName,
+              generationId: null,
+            }),
+          )
+          throwCancelledException(cost)
+        }
+        const designRecord = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'audio',
+            prompt: mergedText,
+            model: storeModel,
+            url: stored.url,
+            status: 'completed',
+            metadata: JSON.stringify(
+              applyChargeMeta(
+                {
+                  ...built.meta,
+                  skippedMerge,
+                  audioKind: kind,
+                  channelId: resolved.channelId,
+                  roles: options.roles,
+                  scripts: options.scripts,
+                  instruction: options.instruction,
+                },
+                cost,
+              ),
+            ),
+            ...withCanvasScope(scope),
+          },
+        })
+        return { ...designRecord, url: stored.url }
+      }
+      if (kind === 'music') {
+        // 音乐是**异步任务**：submit + 轮询 query，官方 1–3 分钟，远超一次 HTTP 请求的耐心。
+        // 故乐观扣分 → 建 `status:'generating'` 记录 → 立即返回，让前端既有轮询器接管
+        // （`useGenerationPolling` 每 2s 查 `getGeneration`），**不新增轮询端点**。
+        // 终态失败（含上游 HTTP 200 但 status=FAILED）在 completeMusic 里退款 + 写可判读文案。
+        //
+        // 下面这个缺 key 守卫**只对平台渠道可达**：BYOK 缺 key 已被上面的通用守卫
+        // （`resolved.source === 'user' && !apiKey`）先一步抛走。两条路径殊途同归 ——
+        // 都落进 catch，且 music 一律进 failed（见 catch 里的 `kind === 'music'` 注释）。
+        const apiKey = resolved.credentials.apiKey
+        if (!apiKey) throw new Error('missing api key')
+        // 未显式给 caption 时回落正文：music 的 caption 就是「要生成什么曲子」的描述，
+        // 与 voice 用 mergedText 同理，避免空 caption 打上游拿不到可判读的错误。
+        const caption = options.caption ?? mergedText
+        const musicRecord = await this.prisma.generationRecord.create({
+          data: {
+            userId,
+            type: 'audio',
+            prompt: mergedText,
+            model: storeModel,
+            status: 'generating',
+            metadata: JSON.stringify(
+              applyChargeMeta(
+                {
+                  ...built.meta,
+                  skippedMerge,
+                  audioKind: kind,
+                  channelId: resolved.channelId,
+                  caption,
+                  lyrics: options.lyrics,
+                  instrumental: options.instrumental,
+                },
+                cost,
+              ),
+            ),
+            ...withCanvasScope(scope),
+          },
+        })
+        this.completeMusic(
+          musicRecord.id,
+          userId,
+          cost,
+          chargeReason,
+          {
+            caption,
+            lyrics: options.lyrics,
+            instrumental: options.instrumental,
+            responseFormat: 'mp3',
+          },
+          resolved,
+        ).catch(console.error)
+        return { ...musicRecord, generationStartedAt: new Date().toISOString() }
       }
       const { url } = await createAudioProvider(providerOpts(resolved)).generate(
         built.text,
@@ -2343,6 +2496,7 @@ export class StudioService {
                 volume: options.volume,
                 pitch: options.pitch,
                 hasTtsData,
+                audioKind: kind,
                 channelId: resolved.channelId,
               },
               cost,
@@ -2354,7 +2508,27 @@ export class StudioService {
       return { ...record, url }
     } catch (err) {
       if (isCancelledException(err)) throw err
-      if (resolved.source !== 'user') {
+      // 🔴 三类失败都**不得**变成「换平台重试」的重试入口，原因各不相同：
+      //
+      // 1. `kind !== 'voice'`（design / music）：`confirmPlatformFallback` 的 audio 分支
+      //    （见下）**不读 `meta.audioKind`**，固定发 OpenAI 兼容 TTS —— design/music
+      //    若挂上去，用户点「用平台重试」会拿到一段把 `stepaudio-3-gen-preview` /
+      //    `stepaudio-3-music-preview` 当 TTS 模型发出去的语音，并被标成 completed。
+      //    与 music 同源：平台重放要支持 design/music 属后续范围；在此之前，
+      //    失败必须显式可判读。voice 是唯一**语义与 TTS 重放一致**的分类，
+      //    故它的既有 fallback_pending 行为逐字节不变。
+      //    （此分支同时覆盖 BYOK design/music 缺 key：通用守卫先于分类分支抛错。）
+      //
+      // 2. 🔴 Ruling R14 `err instanceof BadRequestException`：**客户端参数校验类**失败
+      //    （`assertAudioKindMatchesModel` 的 kind↔模型不匹配、`assertStepFunAudioModel` 的
+      //    「design/music 给了非阶跃模型」）换渠道重试**必然还是同样的错** —— 用户点一下
+      //    只会再失败一次，且中途平台会拿 design/music 的模型名去发 TTS 请求。
+      //    这类失败不是「渠道故障」，重试入口是误导，必须显式失败。
+      //    按**异常类型**分流而非状态码：上游 4xx 由 provider 包成普通 `Error`
+      //    （见 audio-provider.ts 的 `TTS API ${res.status}`），仍算渠道侧问题，保留重试。
+      //
+      // 3. 其余（非 user 渠道）：既有行为，平台失败一律 failed。
+      if (resolved.source !== 'user' || kind !== 'voice' || err instanceof BadRequestException) {
         await this.points.refund(
           userId,
           cost,
@@ -2376,6 +2550,7 @@ export class StudioService {
                 speed: options.speed ?? 1,
                 volume: options.volume,
                 pitch: options.pitch,
+                audioKind: kind,
                 channelId: resolved.channelId,
               },
               cost,
@@ -2384,6 +2559,7 @@ export class StudioService {
             'platform_failed',
           ),
           err,
+          { userMessage: audioFailureMessage(kind, err, resolved.channelId) },
         )
         const failed = await this.prisma.generationRecord.create({
           data: {
@@ -2432,6 +2608,7 @@ export class StudioService {
               speed: options.speed,
               volume: options.volume,
               pitch: options.pitch,
+              audioKind: kind,
               audioOptions: audioOpts,
             }),
           ),
@@ -2612,7 +2789,9 @@ export class StudioService {
           volume: prevAudio.volume ?? meta.volume,
           pitch: prevAudio.pitch ?? meta.pitch,
         }
-        const { url } = await createAudioProvider(undefined).generate(
+        const fallback = resolvePlatformAudioFallback(platformModel)
+        if (!fallback.ok) throw new Error(fallback.reason)
+        const { url } = await createAudioProvider(fallback.credentials).generate(
           record.prompt,
           audioOptions as { model?: string; voice?: string; speed?: number; volume?: number; pitch?: number },
         )
@@ -2912,6 +3091,79 @@ export class StudioService {
       const failedMeta = applyFailureDiagnosticMeta(
         applyRefundMeta(meta, cost, 'platform_failed'),
         err,
+      )
+      await this.prisma.generationRecord.update({
+        where: { id },
+        data: {
+          status: 'failed',
+          metadata: JSON.stringify(failedMeta),
+        },
+      })
+    }
+  }
+
+  /**
+   * 音乐异步任务的终态收敛（2026-10-06 audio-node-unified-capability Task 7）。
+   *
+   * 🔴 上游终态 `FAILED` 时 HTTP 仍是 200 ⇒ provider 层按 `status` 字段判失败并抛错，
+   * 这里据此退款 + 把可判读文案（`audioFailureMessage('music', ...)`）写进 metadata，
+   * 前端轮询到 `failed` 后由 `buildPollingFailurePatch` 展示。**绝不静默当成功。**
+   *
+   * ⚠️ 失败一律进 `failed`，**不进 `fallback_pending`**：`confirmPlatformFallback` 的 audio
+   * 分支固定走 `createAudioProvider`（TTS），音乐若挂上fallback_pending，用户点「用平台重试」
+   * 会被静默重放成一段 TTS 语音 —— 比直接失败更坏。平台重放要支持 music 属Task 8+ 的范围。
+   * （提交**前**的失败由 `generateAudio` 的共享 catch 用`kind !== 'voice'` 保证同一不变量 ——
+   *  design 与 music 同理：`stepaudio-3-gen-preview` 同样会被重放成 TTS。）
+   */
+  private async completeMusic(
+    id: string,
+    userId: string,
+    cost: number,
+    chargeReason: string,
+    input: StepFunMusicInput,
+    resolved: ResolvedGenerationProvider,
+  ) {
+    try {
+      const apiKey = resolved.credentials.apiKey
+      if (!apiKey) throw new Error('missing api key')
+      const { buffer } = await new StepFunMusicProvider(
+        apiKey,
+        resolved.credentials.baseUrl,
+      ).generate(input)
+      const stored = await this.upload.saveUserFile(userId, buffer, 'music.mp3', 'audio/mpeg')
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      // 用户在生成期间取消过 ⇒ 退款已由 cancelGeneration 结算，勿重复写/重复退。
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      const updated = await this.prisma.generationRecord.updateMany({
+        where: { id, status: 'generating' },
+        data: {
+          url: stored.url,
+          status: 'completed',
+          metadata: JSON.stringify(meta),
+        },
+      })
+      if (updated.count === 0) return
+    } catch (err) {
+      console.error('Music generation failed:', err)
+      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+      if (!existing || existing.status !== 'generating') return
+      const meta = parseMeta(existing.metadata)
+      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+      await this.points.refund(
+        userId,
+        cost,
+        `${chargeReason}-失败退款`,
+        refundMeta('audio', 'failed_refund', {
+          model: resolved.modelName,
+          generationId: id,
+        }),
+      )
+      const failedMeta = applyFailureDiagnosticMeta(
+        applyRefundMeta(meta, cost, 'platform_failed'),
+        err,
+        { userMessage: audioFailureMessage('music', err, resolved.channelId) },
       )
       await this.prisma.generationRecord.update({
         where: { id },

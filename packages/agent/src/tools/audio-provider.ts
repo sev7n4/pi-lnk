@@ -1,3 +1,5 @@
+import { upstreamFetch } from './upstream-fetch'
+
 export interface AudioGenerateOptions {
   model?: string
   voice?: string
@@ -94,7 +96,7 @@ export class OpenAITTSProvider implements AudioProvider {
     model: string,
     options: AudioGenerateOptions,
   ): Promise<Buffer> {
-    const res = await fetch(`${this.baseUrl}/audio/speech`, {
+    const res = await upstreamFetch(`${this.baseUrl}/audio/speech`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

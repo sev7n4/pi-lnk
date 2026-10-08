@@ -27,6 +27,7 @@ import {
   finalizeExecutionTrace,
   replayExecutionTraceEvents,
   replaySvgCardPresentation,
+  replayNodeGraphPresentation,
   type ExecutionTraceState,
 } from '@/components/agent/executionTraceReducer'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
@@ -41,7 +42,6 @@ export interface AgentStreamMessage {
    * 仅 user 消息会带（助手消息的 entryId 无重跑语义）。
    */
   entryId?: string
-  toolCalls?: Array<{ name: string; result?: unknown; toolCallId?: string; argsSummary?: string }>
   streaming?: boolean
   textReplaceHistory?: string[]
   executionTrace?: ExecutionTraceState
@@ -50,10 +50,17 @@ export interface AgentStreamMessage {
   attachmentRefKeys?: string[]
   /**
    * SEL-REF：本条消息发出时随请求上行的画布选中节点 id 集合（**发送瞬间的快照**）。
-   * 回执 chip 按它渲染（逐消息），不用发送后的实时选中态 —— 否则用户改选后
-   * 回执会与实际发出的内容不符。空/缺省 ⇒ 该条无回执。
+   * 仅作**本地留档**（审计/降级文案）——回执 chip 的数据源是下面的
+   * `selectionBindingConfirmed`，因为前端读不到服务端的开关状态。
+   * 空/缺省 ⇒ 该条无回执。
    */
   selectionNodeIds?: string[]
+  /**
+   * SEL-REF：**服务端确认**本轮实际注入了哪些节点（`selection_binding` 事件）。
+   * 这是回执的**唯一**数据源 —— 缺省即代表服务端没注入，chip 不渲染
+   * （评审 C1：按本地快照渲染会让回执在开关关闭时仍在说谎）。
+   */
+  selectionBindingConfirmed?: Array<{ id: string; type: string; title: string }>
   linkedOutputs?: LinkedCanvasOutput[]
   canvasActions?: CanvasAction[]
 }
@@ -151,12 +158,34 @@ export const useAgentStore = defineStore('agent', () => {
     })
   }
 
+  /**
+   * SEL-REF：接收服务端 `selection_binding` 确认，挂到**最近一条 user 消息**。
+   *
+   * 为什么不用本地 id 快照当数据源（评审 C1）：前端读不到 Nest 的
+   * `SEL_REF_ENABLED`。若按本地快照渲染，V1 默认态（off）下用户照样看到
+   * 「已绑定 N 个选中节点」，而提示词里 0 字节注入 —— 回执是信任担保，
+   * 担保说谎会引导用户去问无关问题。
+   *
+   * 空数组 ⇒ **不写**字段（区分「服务端明确没注入」与「事件还没到」：
+   * 前者 chip 不渲染，后者 chip 暂不显示，都不该显示成「已绑定」）。
+   */
+  function confirmSelectionBinding(nodes: Array<{ id: string; type: string; title: string }>) {
+    if (!nodes.length) return
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (m.role === 'user') {
+        messages.value[i] = { ...m, selectionBindingConfirmed: nodes.map((n) => ({ ...n })) }
+        return
+      }
+    }
+    // 没有 user 消息可挂 ⇒ 忽略（不得凭空造消息）
+  }
+
   function startAssistantMessage() {
     const msg: AgentStreamMessage = {
       id: `msg-${Date.now()}`,
       role: 'assistant',
       content: '',
-      toolCalls: [],
       streaming: true,
       textReplaceHistory: [],
       executionTrace: createExecutionTrace(),
@@ -173,22 +202,62 @@ export const useAgentStore = defineStore('agent', () => {
    * （Task 6）只恢复最后一张，落库侧同样没有多卡槽位。
    * 回归锁：`agent.setPresentation.test.ts` 的「同轮第二张卡覆盖第一张」。
    *
-   * 无 assistant 消息时静默忽略：与 `appendText` / `addToolCall` 同款兜底，
+   * 无 assistant 消息时静默忽略：与 `appendText` 同款兜底，
    * 避免事件竞态（流早于 startAssistantMessage 到达）打断整条流。
    */
+  /**
+   * presentation kind 的**优先级**（数字越大越优先）。
+   *
+   * ⚠️ 为什么需要它（2026-07-23 修node_graph 被覆盖）：
+   *   `render_canvas_view` 现在**双写** `node_graph` + `svg_card`，实时路径会**依次**调两次
+   *   `setPresentation`。而 `presentation` 是**单值**字段（见上方注释）⇒ 后者无条件覆盖前者
+   *   ⇒ 线上实际显示的是静态 SVG，A 方案（node_graph 优先）**在实时路径完全失效**。
+   *
+   * ⚠️ 只对**不同 kind** 生效；同 kind 仍是「后者覆盖前者」
+   *   （既有回归锁「同轮第二张卡覆盖第一张」必须继续绿，见 `agent.setPresentation.test.ts`）。
+   */
+  const PRESENTATION_KIND_PRIORITY: Record<string, number> = {
+    node_graph: 2, // Vue Flow 节点图 = 结构化、可交互，是本项目的目标形态
+    svg_card: 1, // 静态 SVG = 降级兜底
+  }
+
   function setPresentation(presentation: AgentPresentationEnvelope) {
     const last = lastAssistant()
     if (!last) return
-    last.presentation = presentation
+    const incoming = PRESENTATION_KIND_PRIORITY[presentation.kind] ?? 0
+    const current = last.presentation
+    const currentRank = current ? (PRESENTATION_KIND_PRIORITY[current.kind] ?? 0) : -1
+    // 同 kind（rank 相同）或没有更高优先级的新 kind ⇒ 按既有语义覆盖
+    if (incoming >= currentRank) last.presentation = presentation
   }
 
   function appendText(text: string) {
-    // text_delta 落点：刷新最近文本时间戳（waiting 的文本静默判定依赖它）
+    // text_delta落点：刷新最近文本时间戳（waiting 的文本静默判定依赖它）
     lastTextDeltaAt.value = Date.now()
     const last = lastAssistant()
     if (last) {
       last.content += text
     }
+  }
+
+  /**
+   * 回合级提示：**先确保存在 assistant 消息**，再落文本（2026-10-08）。
+   *
+   * 为什么需要它：`appendText` 在**没有 assistant 消息时静默 no-op**
+   * （`if (last) last.content += text`，见其上方注释「无 assistant 消息时静默忽略」）。
+   * 而「本轮一个事件都没收到」时 assistant 消息**压根不会被创建**
+   * ⇒ 任何以 `appendText` 落地的兜底文案都落不了地、无声消失。
+   *
+   * 生产事故（2026-10-07）：run 被 vendor 以 `LaneBusy` 拒掉 ⇒ 零事件；
+   * SSE 9ms 后断开 ⇒ 前端的「异常结束」兜底分支又全部以
+   * `last?.role === 'assistant'` 为前提而全部落空 ⇒ 用户屏幕上什么都不出现。
+   *
+   * 语义边界：**不改变** `appendText` 本身的静默行为（多个既有调用方依赖它），
+   * 只为「回合收尾提示」这一类必须可见文案的场合提供有保障的通道。
+   */
+  function appendTurnNotice(text: string) {
+    if (!lastAssistant()) startAssistantMessage()
+    appendText(text)
   }
 
   function replaceAssistantText(text: string) {
@@ -202,25 +271,9 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  function addToolCall(name: string, result?: unknown) {
-    const last = lastAssistant()
-    if (last) {
-      last.toolCalls?.push({ name, result })
-      ensureExecutionTrace()
-      if (last.executionTrace) {
-        applyToolCall(last.executionTrace, name, result)
-      }
-    }
-  }
-
   function beginToolCall(call: { toolCallId?: string; name: string; args?: unknown }) {
     const last = lastAssistant()
     if (!last) return
-    last.toolCalls?.push({
-      name: call.name,
-      toolCallId: call.toolCallId,
-      argsSummary: summarizeToolArgs(call.name, call.args),
-    })
     ensureExecutionTrace()
     if (last.executionTrace) {
       applyToolCall(last.executionTrace, call.name, undefined, {
@@ -240,13 +293,6 @@ export const useAgentStore = defineStore('agent', () => {
     }
     const last = lastAssistant()
     if (!last) return
-    if (toolCallId) {
-      const entry = last.toolCalls?.find(
-        (tc) => tc.toolCallId === toolCallId && tc.result === undefined,
-      )
-      if (entry) entry.result = result
-      if (!entry) last.toolCalls?.push({ name, result, toolCallId })
-    }
     ensureExecutionTrace()
     if (last.executionTrace) {
       applyToolCall(last.executionTrace, name, result, { toolCallId, isError: isError === true })
@@ -456,9 +502,14 @@ export const useAgentStore = defineStore('agent', () => {
       //
       // role 门与 `setPresentation` 对齐（那条只写最后一条 assistant 消息）：
       // 卡片是助手轮次的产出，挂在 user 消息上没有对应语义。
+      // ⚠️ **A 方案优先级（2026-07）**：node_graph 优先、svg_card 降级。
+      // 双写期两条载荷都在事件流里（后端 presentResultDual），
+      // `??` 的左偏决定了"有 node_graph 就用它，没有才回落静态 SVG"。
+      // 后端停止发 node_graph 时会自动回落，无需改前端。
       const replayedCard =
         persisted.role === 'assistant' && meta?.executionEvents?.length
-          ? replaySvgCardPresentation(meta.executionEvents)
+          ? (replayNodeGraphPresentation(meta.executionEvents)
+            ?? replaySvgCardPresentation(meta.executionEvents))
           : undefined
       const presentation =
         meta?.presentation && typeof meta.presentation === 'object'
@@ -502,11 +553,12 @@ export const useAgentStore = defineStore('agent', () => {
     setBlockingWait,
     setActivity,
     addUserMessage,
+    confirmSelectionBinding,
     startAssistantMessage,
     setPresentation,
+    appendTurnNotice,
     appendText,
     replaceAssistantText,
-    addToolCall,
     beginToolCall,
     endToolCall,
     trackNodeStatus,

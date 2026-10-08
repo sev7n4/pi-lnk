@@ -44,13 +44,14 @@ export const WRITE_TOOLS_RULES = `4. 用户要创建媒体节点或明确「生�
  * genTools 组（B-5 启用）：生成闭环规则。编号 11/12/13 有意不占用老链路 6/8/9
  * （tool_search / B-4 工具 / upscale_image——三者已被路线修订 D4/关闭决策废弃，
  * 复用编号会误导维护者）。规则 9 不拷贝 = roadmap D4（upscale_image 不迁）。
- * 23 = TTS 边界（U8 2026-10-06）：14 已被 sidebar_vision.tail 占用，取下一空号。
+ * 23 = 音频三分类（kind：voice/design/music，2026-10-07 音频节点统一能力）：
+ * 14 已被 sidebar_vision.tail 占用，取下一空号。规则 9 不拷贝 = roadmap D4。
  * 压缩说明：L6 预算余量个位数，加 23 时同步压缩 11/12/13 措辞（语义不变，省 56 字符）。
  */
 export const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation 仅对已 propose_generation 且用户明确同意的节点调用（系统强制校验 pending_confirm）。禁用 run_* 或文生图提示词冒充放大/超分。
 12. run_* 返回 timeout：如实说未完成，可再查生成状态；fallback_pending：引导用户画布确认平台兜底，不声称成败、不自重试、不调不存在工具；failed/error：简要说明+下一步，禁虚构 url。
 13. 用户要取消：调用 cancel_generation（优先 generation_record_id，否则 node_id 取画布摘要），如实转述；仅 generating 可取消，其余如实说明。
-23. run_audio_generation 只做配音/朗读，不做 BGM/音效/配乐；用户要时如实说明不支持，禁冒充。`;
+23. run_audio_generation 按 kind 分三类：voice 配音朗读、design 多角色台词+音效、music 配乐/BGM；选错分类或无该分类模型时如实说明，禁冒充。`;
 
 /** canvas_view_policy（spec 2026-10-03§5.3）：render_canvas_view 的三层 when + 负向黑名单。 */
 export const CANVAS_VIEW_POLICY = `16. 用户问「为什么/怎么/关系/结构/流程/解释/说明/分析/对比/梳理」且答案涉及 3 个以上节点或 2 层以上关系时：用 render_canvas_view 把画布已有数据渲成只读卡片（view=timeline 横轴时序 / topology 有向依赖 / table 二维表），overlay 选业务语义轨道（emotion 情绪曲线 / budget 超时长标红 / severity 严重度色阶）。卡片是数据源投影，不改节点；要改走 set_node_text 改数据源后重渲。

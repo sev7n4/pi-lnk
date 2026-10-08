@@ -12,7 +12,8 @@ export type { FlowNode }
 const NODE_SIZES: Record<string, { w: number; h: number }> = {
   text: { w: 280, h: 160 },
   image: { w: 280, h: 280 },
-  video: { w: 280, h: 280 },
+  // 视频：长边基准 320（尺寸随比例 contain，包络 320×320）
+  video: { w: 320, h: 320 },
   audio: { w: 280, h: 140 },
   sceneComposer: { w: 280, h: 280 },
   shot: { w: 280, h: 280 },

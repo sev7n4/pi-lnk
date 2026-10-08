@@ -175,8 +175,11 @@
   }
 }
 
+/* 错误行浮出在按钮下方，不参与布局 ⇒ 重试/取消按钮位置与生成中状态完全一致（2026-10-07） */
 .neo-task-error-wrap {
-  position: relative;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -543,6 +546,53 @@
   background: rgba(0, 0, 0, 0.72);
 }
 
+/* 左上角状态图标（NodeStatusInfoButton）：统一详情入口。
+   正常态 = 媒体属性；异常态同形变色（失败/错误 → 红，fallback 待确认 → 黄）。 */
+.neo-status-info {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  width: 18px;
+  height: 18px;
+}
+
+.neo-status-info .neo-media-inspector-btn {
+  position: static;
+}
+
+.neo-media-inspector-btn.is-error {
+  background: #ef4444;
+  color: #fff;
+}
+
+.neo-media-inspector-btn.is-error:hover {
+  background: #dc2626;
+  color: #fff;
+}
+
+.neo-media-inspector-btn.is-pending {
+  background: rgba(245, 158, 11, 0.95);
+  color: #fff;
+  animation: neo-status-pending-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes neo-status-pending-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55);
+  }
+  55% {
+    box-shadow: 0 0 0 5px rgba(245, 158, 11, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neo-media-inspector-btn.is-pending {
+    animation: none;
+  }
+}
+
 .neo-gen-video-poster {
   pointer-events: none;
 }
@@ -584,24 +634,6 @@
 
 .neo-node-upload-target:hover .neo-gen-preview::after {
   opacity: 1;
-}
-
-.neo-gen-video-exit-btn {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  z-index: 2;
-  padding: 2px 8px;
-  border: none;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.55);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.neo-gen-video-exit-btn:hover {
-  background: rgba(0, 0, 0, 0.72);
 }
 
 .neo-node-upload-target {

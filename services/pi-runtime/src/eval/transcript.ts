@@ -49,6 +49,14 @@ export interface EvalCaseInput {
 	/** 画布会话 id（工具经 `toolContext.sessionId` 回查 Nest）。 */
 	canvasSessionId?: string;
 	/**
+	 * ⭐ 复用会话（多轮对照用）。缺省 = 每轮新建会话（保持既有行为不变）。
+	 *
+	 * 用途：prompt cache / 上下文工程类实验**必须同会话比较** —— 跨会话的
+	 * `cache_read` 不可比（同会话才共享可缓存前缀）。
+	 * ⚠️ 复用时 `systemPrompt` 只在首次生效（`/sessions` 是幂等 upsert）。
+	 */
+	sessionId?: string;
+	/**
 	 * ⭐ 真实 Nest userId。
 	 *
 	 * 画布工具（`get_canvas_summary` / `propose_generation` 等）都要它做归属校验，

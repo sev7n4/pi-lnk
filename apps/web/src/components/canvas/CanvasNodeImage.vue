@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
+import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
+import { resolveImageNodeDisplaySize } from '@/components/canvas/mediaNodeDisplaySize'
 import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { resolveMediaUrl } from '@/services/api-base'
@@ -26,7 +28,7 @@ const props = defineProps<{
     generationRecordId?: string
     materialId?: string
     mediaInfo?: NodeMediaInfoSummary
-    /** T9：扩图应用链路写入的节点卡显示尺寸（缺省走 neoNodeMeta 默认 280×280） */
+    /** T9：扩图应用链路写入的节点卡显示尺寸（优先级最高）；缺省按 imageAspect / mediaInfo 比例推导 */
     nodeSize?: { width: number; height: number }
   }
 }>()
@@ -52,6 +54,8 @@ const displayUrl = computed(() => resolveMediaUrl(String(props.data.url ?? '')))
 const showMediaSummary = computed(() => Boolean(props.data.url && props.data.mediaInfo))
 const showInspectorBtn = computed(() => Boolean(props.data.generationRecordId))
 const isCompleted = computed(() => props.data.status === NODE_GENERATION_STATUS.completed)
+/** 节点尺寸跟随素材比例（长边 280 包络；nodeSize 扩图链路优先，probe 真实比例次之） */
+const displaySize = computed(() => resolveImageNodeDisplaySize(props.data as Record<string, unknown>))
 useNodeMediaInfoFooter({
   nodeId: props.id,
   url: computed(() => props.data.url),
@@ -81,9 +85,9 @@ function openPreview() {
   })
 }
 
-function openMediaInspector(e: Event) {
-  e.stopPropagation()
-  e.preventDefault()
+function openMediaInspector(e?: Event) {
+  e?.stopPropagation()
+  e?.preventDefault()
   const recordId = props.data.generationRecordId
   if (!recordId) return
   void openInspector({
@@ -102,8 +106,8 @@ function openMediaInspector(e: Event) {
     :selected="selected"
     :data="data"
     :status="data.status"
-    :width="data.nodeSize?.width"
-    :height="data.nodeSize?.height"
+    :width="displaySize.width"
+    :height="displaySize.height"
   >
     <template v-if="showMediaSummary && data.mediaInfo" #footer>
       <MediaInfoSummary v-bind="data.mediaInfo" />
@@ -200,18 +204,14 @@ function openMediaInspector(e: Event) {
                   : '上传或等待生成'
             }}
           </span>
-          <button
+          <NodeStatusInfoButton
             v-if="showInspectorBtn"
-            type="button"
-            class="neo-media-inspector-btn neo-media-inspector-btn--placeholder nodrag"
-            aria-label="媒体属性"
-            title="媒体属性"
-            @pointerdown.stop
-            @mousedown.stop
-            @click.stop="openMediaInspector"
-          >
-            ⓘ
-          </button>
+            :status="data.status"
+            :task-kind="taskKind"
+            :task-id="taskId"
+            :node-label="typeof data.label === 'string' ? data.label : undefined"
+            @inspect="openMediaInspector()"
+          />
           <div v-if="data.status === 'uploading'" class="neo-upload-progress">
             <div class="neo-upload-progress-bar" :style="{ width: `${data.uploadProgress ?? 0}%` }" />
           </div>
@@ -234,6 +234,7 @@ function openMediaInspector(e: Event) {
         :task-id="taskId"
         :node-label="typeof data.label === 'string' ? data.label : undefined"
         :session-id="sessionId"
+        error-detail="status-icon"
       />
     </div>
   </NeoBaseNode>

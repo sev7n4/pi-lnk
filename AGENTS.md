@@ -85,8 +85,8 @@ stdout 为空 → `grep -c` 输出 0 ⇒ 看起来"符号不存在"，实际是*
 
 改完跑 `pnpm prompt:lint`（独立成 `prompt-lint.yml` 流水线，`ci.yml` 不覆盖它）。
 
-⚠️ **L6 预算上限 3200 字符**：最紧组合 `core+writeTools+genTools` 实测 **3042** ⇒ **余量 158 字符**
-（2026-10-06 减点名后重测；此前写的「3192 / 余量 8」已失效）。
+⚠️ **L6 预算上限 3200 字符**：最紧组合 `core+writeTools+genTools` 实测 **3111** ⇒ **余量 89 字符**
+（权威值见 `prompt-registry/PROMPT_SPEC.md` §5 budget-table，由 `scripts/gen-prompt-spec-map.ts` 机器生成、`--check` CI 守卫；本行手工同步，以 PROMPT_SPEC.md 为准，别按本行数字排期）。
 `pnpm prompt:lint` 会打印实测值并对超预警线（2720 = 85%）给 warning。加规则前先跑它看余量，别按旧数字排期。
 
 ### 改工具分层 ⇒ 必答「哪个资产点名了它」

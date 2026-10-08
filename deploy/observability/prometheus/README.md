@@ -44,9 +44,14 @@
 ### 可直接用的查询（开通后粘进Prometheus UI 的 Execute 里）
 
 ```promql
-# 工具错误按分类分布（#192 修复后应能看到 upstream_4xx / gate_blocked）
+# 工具错误按分类分布（#192 修复后应能看到 upstream_4xx / gate_blocked；
+# 2026-10-07 起熔断单列为 circuit_open —— 此前它落 internal 且 kinds 侧无 series，
+# 两条通道同时失明，告警只剩「错误率超阈」看不出真因）
 # ⚠️ 空族时返回空向量而非 0 —— 加 `or vector(0)` 才能区分「零错误」与「查不到」
 sum by (tool, error_class) (pi_runtime_tool_calls_total{result="error"}) or vector(0)
+
+# 错误的结构化归因（Nest 侧分类，比上面那行的正则猜测精确；排查时**以这条为准**）
+sum by (tool, kind) (pi_runtime_tool_error_kinds_total) or vector(0)
 
 # 工具调用总览
 sum by (tool, result) (pi_runtime_tool_calls_total) or vector(0)

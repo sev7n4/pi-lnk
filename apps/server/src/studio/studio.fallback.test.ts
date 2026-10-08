@@ -247,6 +247,7 @@ describe('StudioService BYOK fallback_pending', () => {
       name: 'image',
       pointCategory: 'image',
       platformCost: 10,
+      platformEnv: undefined,
       setupPending: async () => {
         imageGenerate.mockRejectedValueOnce(new Error('upstream 502'))
         await svc.generateImage('u1', 'a cat', 'ch_user::custom-model', '16:9', [], [], '1K', 1)
@@ -262,6 +263,7 @@ describe('StudioService BYOK fallback_pending', () => {
       name: 'text',
       pointCategory: 'text',
       platformCost: 5,
+      platformEnv: undefined,
       setupPending: async () => {
         vi.mocked(generateTextForRefs).mockRejectedValueOnce(new Error('unauthorized'))
         await svc.generateText('u1', 'hello', 'ch_user::custom-model')
@@ -274,6 +276,11 @@ describe('StudioService BYOK fallback_pending', () => {
       name: 'audio',
       pointCategory: 'audio',
       platformCost: 5,
+      // Task 4 起 audio 降级重放经 resolvePlatformAudioFallback 显式取平台凭证（读 env，不再 createAudioProvider(undefined)）
+      platformEnv: {
+        apiKey: 'plat-openai-key',
+        baseUrl: 'https://plat-openai.example.com/v1',
+      },
       setupPending: async () => {
         audioGenerate.mockRejectedValueOnce(new Error('network'))
         await svc.generateAudio('u1', 'hi', { model: 'ch_user::custom-model' })
@@ -288,6 +295,7 @@ describe('StudioService BYOK fallback_pending', () => {
     generate,
     platformCost,
     pointCategory,
+    platformEnv,
   }) => {
     await setupPending()
     vi.clearAllMocks()
@@ -296,27 +304,47 @@ describe('StudioService BYOK fallback_pending', () => {
       modelName: model?.includes('::') ? model.split('::')[1]! : (model ?? platformResolved.modelName),
     }))
 
-    const result = await svc.confirmPlatformFallback('u1', 'g1')
-    expect(result.status).toBe('completed')
-    const meta = JSON.parse(String(result.metadata))
-    expect(meta.providerFallback).toBe(true)
-    expect(meta.chargedPoints).toBe(platformCost)
-    expect(meta.priorByokRefunded).toBe(true)
-    expect(pointsConsume).toHaveBeenCalledWith(
-      'u1',
-      platformCost,
-      '平台回退生成',
-      expect.objectContaining({ kind: 'consume', category: pointCategory, status: 'success' }),
-    )
+    // env 只在 audio（platformEnv 非空）用例内注入并恢复：image/text 的 confirm 会经
+    // resolvePlatformImageProviderOpts 读同一批 env，全局注入会改变它们的调用形状。
+    const savedOpenAIKey = process.env.OPENAI_API_KEY
+    const savedOpenAIBase = process.env.OPENAI_BASE_URL
+    if (platformEnv) {
+      process.env.OPENAI_API_KEY = platformEnv.apiKey
+      process.env.OPENAI_BASE_URL = platformEnv.baseUrl
+    }
+    try {
+      const result = await svc.confirmPlatformFallback('u1', 'g1')
+      expect(result.status).toBe('completed')
+      const meta = JSON.parse(String(result.metadata))
+      expect(meta.providerFallback).toBe(true)
+      expect(meta.chargedPoints).toBe(platformCost)
+      expect(meta.priorByokRefunded).toBe(true)
+      expect(pointsConsume).toHaveBeenCalledWith(
+        'u1',
+        platformCost,
+        '平台回退生成',
+        expect.objectContaining({ kind: 'consume', category: pointCategory, status: 'success' }),
+      )
 
-    expect(createProvider).toHaveBeenCalled()
-    const credCall = vi.mocked(createProvider).mock.calls.find((c) => c[0] == null || c.length === 0 || !c[0]?.apiKey)
-    // platform path: no user credentials (undefined / omitted)
-    expect(
-      vi.mocked(createProvider).mock.calls.some((c) => c[0] === undefined || c.length === 0),
-    ).toBe(true)
-    expect(generate).toHaveBeenCalled()
-    void credCall
+      expect(createProvider).toHaveBeenCalled()
+      const credCall = vi.mocked(createProvider).mock.calls.find((c) => c[0] == null || c.length === 0 || !c[0]?.apiKey)
+      if (platformEnv) {
+        expect(createProvider).toHaveBeenCalledWith(platformEnv)
+        expect(generate).toHaveBeenCalledTimes(1)
+      } else {
+        // platform path: no user credentials (undefined / omitted)
+        expect(
+          vi.mocked(createProvider).mock.calls.some((c) => c[0] === undefined || c.length === 0),
+        ).toBe(true)
+      }
+      expect(generate).toHaveBeenCalled()
+      void credCall
+    } finally {
+      if (savedOpenAIKey === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = savedOpenAIKey
+      if (savedOpenAIBase === undefined) delete process.env.OPENAI_BASE_URL
+      else process.env.OPENAI_BASE_URL = savedOpenAIBase
+    }
   })
 
   it('text confirm → platform uses catalog gateway model, not user custom', async () => {
@@ -339,15 +367,78 @@ describe('StudioService BYOK fallback_pending', () => {
     vi.clearAllMocks()
     audioGenerate.mockResolvedValueOnce({ url: 'https://example.com/a.mp3' })
 
-    const result = await svc.confirmPlatformFallback('u1', 'g1')
-    expect(result.status).toBe('completed')
-    expect(createAudioProvider).toHaveBeenCalledWith(undefined)
-    expect(audioGenerate).toHaveBeenCalledWith(
-      'hi',
-      expect.objectContaining({ model: 'speech-2.8-hd' }),
+    // Task 4 起 audio 降级重放经 resolvePlatformAudioFallback 显式取平台凭证（读 env，不再 createAudioProvider(undefined)）
+    const savedOpenAIKey = process.env.OPENAI_API_KEY
+    const savedOpenAIBase = process.env.OPENAI_BASE_URL
+    process.env.OPENAI_API_KEY = 'plat-openai-key'
+    process.env.OPENAI_BASE_URL = 'https://plat-openai.example.com/v1'
+    try {
+      const result = await svc.confirmPlatformFallback('u1', 'g1')
+      expect(result.status).toBe('completed')
+      expect(createAudioProvider).toHaveBeenCalledWith({
+        apiKey: 'plat-openai-key',
+        baseUrl: 'https://plat-openai.example.com/v1',
+      })
+      expect(audioGenerate).toHaveBeenCalledWith(
+        'hi',
+        expect.objectContaining({ model: 'speech-2.8-hd' }),
+      )
+      const opts = audioGenerate.mock.calls[0][1] as { model?: string }
+      expect(opts.model).not.toBe('custom-model')
+    } finally {
+      if (savedOpenAIKey === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = savedOpenAIKey
+      if (savedOpenAIBase === undefined) delete process.env.OPENAI_BASE_URL
+      else process.env.OPENAI_BASE_URL = savedOpenAIBase
+    }
+  })
+
+  it('audio confirm without platform credentials → explicit reject, refund, failed', async () => {
+    audioGenerate.mockRejectedValueOnce(new Error('network'))
+    await svc.generateAudio('u1', 'hi', { model: 'ch_user::custom-model' })
+    vi.clearAllMocks()
+    resolveForGeneration.mockResolvedValue(platformResolved)
+
+    // 无任何平台凭证 ⇒ 降级重放显式拒绝（不静默吃别的端点），记录进失败态并退款。
+    const savedOpenAIKey = process.env.OPENAI_API_KEY
+    const savedOpenAIBase = process.env.OPENAI_BASE_URL
+    const savedStepFunKey = process.env.STEPFUN_API_KEY
+    delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_BASE_URL
+    delete process.env.STEPFUN_API_KEY
+    try {
+      await expect(svc.confirmPlatformFallback('u1', 'g1')).rejects.toMatchObject({
+        response: expect.objectContaining({
+          message: expect.stringContaining('OPENAI_API_KEY'),
+        }),
+      })
+    } finally {
+      if (savedOpenAIKey === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = savedOpenAIKey
+      if (savedOpenAIBase === undefined) delete process.env.OPENAI_BASE_URL
+      else process.env.OPENAI_BASE_URL = savedOpenAIBase
+      if (savedStepFunKey === undefined) delete process.env.STEPFUN_API_KEY
+      else process.env.STEPFUN_API_KEY = savedStepFunKey
+    }
+
+    expect(pointsConsume).toHaveBeenCalledWith(
+      'u1',
+      5,
+      '平台回退生成',
+      expect.objectContaining({ kind: 'consume', category: 'audio', status: 'success' }),
     )
-    const opts = audioGenerate.mock.calls[0][1] as { model?: string }
-    expect(opts.model).not.toBe('custom-model')
+    expect(pointsRefund).toHaveBeenCalledWith(
+      'u1',
+      5,
+      '平台回退失败退款',
+      expect.objectContaining({ kind: 'refund', category: 'audio', status: 'failed_refund' }),
+    )
+    const failedUpdate = generationUpdate.mock.calls.find((c) => c[0].data.status === 'failed')
+    expect(failedUpdate).toBeTruthy()
+    const meta = JSON.parse(String(failedUpdate![0].data.metadata))
+    expect(meta.refundedPoints).toBe(5)
+    expect(meta.refundReason).toBe('platform_fallback_failed')
+    expect(String(meta.errorRaw)).toContain('OPENAI_API_KEY')
   })
 
   it('video confirm → platform generate called', async () => {

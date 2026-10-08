@@ -1,18 +1,11 @@
 <script setup lang="ts">
 import { computed, inject, onUnmounted, ref, watch } from 'vue'
 import { useNodeId } from '@vue-flow/core'
-import type { ErrorCode, GenerationDiagnostic, TaskKind } from '@lnkpi/shared'
-import NodeDiagnosticPopover from '@/components/canvas/NodeDiagnosticPopover.vue'
+import type { TaskKind } from '@lnkpi/shared'
 import { resolveTaskChrome, truncateError } from '@/components/canvas/nodeTaskChrome'
 import { CANVAS_NODE_CANCEL_KEY, CANVAS_NODE_RETRY_KEY } from '@/composables/canvasNodeActions'
+import { useMediaInspector } from '@/composables/useMediaInspector'
 import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
-import { canvasApi } from '@/services/canvas-api'
-import { studioApi } from '@/services/studio-api'
-import { copyTextToClipboard } from '@/utils/copyToClipboard'
-import {
-  buildCopyForNode,
-  sharedDiagnosticCache,
-} from '@/utils/generationDiagnostic'
 
 const props = defineProps<{
   status?: unknown
@@ -23,21 +16,29 @@ const props = defineProps<{
   taskId?: string
   nodeLabel?: string
   sessionId?: string
+  /**
+   * 报错详情入口（2026-10-07 与用户拍板；2026-10-08 弹层改抽屉）：
+   * 'row'（默认）= 保留按钮上方的截断错误行 + ⓘ；点 ⓘ 直落媒体属性抽屉「诊断」tab
+   *   （原节点内弹层被节点 overflow:hidden 裁切且长 token 撑破容器，已删除）；
+   * 'status-icon' = 不渲染错误行，报错详情统一收敛到节点左上角状态图标
+   *   （NodeStatusInfoButton），同时保证重试/取消按钮位置与生成中状态完全一致。
+   */
+  errorDetail?: 'row' | 'status-icon'
 }>()
 
 const nodeId = useNodeId()
 const cancel = inject(CANVAS_NODE_CANCEL_KEY, null)
 const retry = inject(CANVAS_NODE_RETRY_KEY, null)
+const { openInspector } = useMediaInspector()
 
 const nowMs = ref(Date.now())
 const completedFlash = ref(false)
 let tick: ReturnType<typeof setInterval> | undefined
 let flashTimer: ReturnType<typeof setTimeout> | undefined
 
-const diagOpen = ref(false)
-const diagLoading = ref(false)
-const diag = ref<GenerationDiagnostic | null>(null)
-const copyLabel = ref('复制诊断')
+const isFallbackPending = computed(
+  () => props.status === NODE_GENERATION_STATUS.fallback_pending,
+)
 
 watch(
   () => props.status,
@@ -81,9 +82,6 @@ const chrome = computed(() =>
 )
 
 const err = computed(() => truncateError(props.errorMessage))
-const isFallbackPending = computed(
-  () => props.status === NODE_GENERATION_STATUS.fallback_pending,
-)
 const showError = computed(
   () =>
     (Boolean(err.value) &&
@@ -98,18 +96,14 @@ const displayErr = computed(() => {
   return ''
 })
 
+/** 行内 ⓘ 可开抽屉诊断的判据：generation 记录（material 无诊断接口） */
+const canOpenDiagnostic = computed(
+  () => props.taskKind === 'generation' && Boolean(props.taskId),
+)
+
 const isClickable = computed(
   () => chrome.value?.action === 'cancel' || chrome.value?.action === 'retry',
 )
-
-const popoverMessage = computed(
-  () => diag.value?.userMessage || props.errorMessage || displayErr.value || '生成失败',
-)
-const popoverHint = computed(() => {
-  if (diag.value?.hint) return diag.value.hint
-  if (isFallbackPending.value) return '请确认是否使用平台回退继续，或取消本次生成。'
-  return undefined
-})
 
 function onAction(e: Event) {
   e.stopPropagation()
@@ -119,73 +113,15 @@ function onAction(e: Event) {
   if (chrome.value.action === 'retry') void retry?.(nodeId)
 }
 
-function buildFallbackDiagnostic(): GenerationDiagnostic {
-  const code = (props.errorCode as ErrorCode | undefined) || 'unknown'
-  const taskKind: TaskKind = props.taskKind || 'generation'
-  return {
-    userMessage: props.errorMessage || displayErr.value || '生成失败',
-    code: isFallbackPending.value ? 'fallback_pending' : code,
-    taskKind,
-    taskId: props.taskId || 'unknown',
-    occurredAt: new Date().toISOString(),
-    providerSnippet: null,
-    hint: isFallbackPending.value
-      ? '请确认是否使用平台回退继续，或取消本次生成。'
-      : undefined,
-  }
-}
-
-async function fetchDiagnostic(): Promise<GenerationDiagnostic> {
-  const taskId = props.taskId
-  const taskKind = props.taskKind
-  if (!taskId || !taskKind) return buildFallbackDiagnostic()
-
-  return sharedDiagnosticCache.get(taskKind, taskId, () =>
-    taskKind === 'material'
-      ? canvasApi.getMaterialDiagnostic(taskId)
-      : studioApi.getGenerationDiagnostic(taskId),
-  )
-}
-
-async function openDiag(e: Event) {
+function openDiagnostic(e: Event) {
   e.stopPropagation()
   e.preventDefault()
-  if (diagOpen.value) {
-    diagOpen.value = false
-    return
-  }
-  diagOpen.value = true
-  diagLoading.value = true
-  copyLabel.value = '复制诊断'
-  try {
-    diag.value = await fetchDiagnostic()
-  } catch {
-    diag.value = buildFallbackDiagnostic()
-  } finally {
-    diagLoading.value = false
-  }
-}
-
-async function copyDiag() {
-  const payload = diag.value || buildFallbackDiagnostic()
-  const text = buildCopyForNode(payload, {
-    nodeId: nodeId || undefined,
+  if (!canOpenDiagnostic.value || !props.taskId) return
+  void openInspector({
+    generationRecordId: props.taskId,
     nodeLabel: props.nodeLabel,
-    sessionId: props.sessionId,
+    initialTab: 'diagnostic',
   })
-  try {
-    await copyTextToClipboard(text)
-    copyLabel.value = '已复制'
-    setTimeout(() => {
-      copyLabel.value = '复制诊断'
-    }, 1500)
-  } catch {
-    copyLabel.value = '复制失败'
-  }
-}
-
-function closeDiag() {
-  diagOpen.value = false
 }
 </script>
 
@@ -197,28 +133,20 @@ function closeDiag() {
     @mousedown.stop
     @click.stop
   >
-    <div v-if="showError" class="neo-task-error-wrap">
+    <div v-if="showError && errorDetail !== 'status-icon'" class="neo-task-error-wrap">
       <p class="neo-task-error-row">
         <span class="neo-task-error">{{ displayErr }}</span>
         <button
+          v-if="canOpenDiagnostic"
           type="button"
           class="neo-task-diag-btn"
-          aria-label="诊断信息"
-          title="诊断信息"
-          @click="openDiag"
+          aria-label="报错详情"
+          title="查看报错详情"
+          @click="openDiagnostic"
         >
           ⓘ
         </button>
       </p>
-      <NodeDiagnosticPopover
-        v-if="diagOpen"
-        :user-message="popoverMessage"
-        :hint="popoverHint"
-        :loading="diagLoading"
-        :copy-label="copyLabel"
-        @copy="copyDiag"
-        @close="closeDiag"
-      />
     </div>
     <div class="neo-task-chrome-row">
       <span v-if="chrome.elapsedText" class="neo-task-elapsed">{{ chrome.elapsedText }}</span>

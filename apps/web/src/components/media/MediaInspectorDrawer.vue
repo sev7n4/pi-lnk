@@ -14,6 +14,7 @@ import {
 } from '@/composables/useCanvasMedia'
 import { resolveMediaUrl } from '@/services/api-base'
 import { studioApi } from '@/services/studio-api'
+import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import {
   buildCopyForNode,
@@ -40,6 +41,7 @@ const {
   closeInspector,
   probeMedia,
   locateCanvasNode,
+  invalidateRecordCache,
 } = useMediaInspector()
 
 const lazyOutput = ref<ProbedMediaFile | undefined>()
@@ -48,6 +50,7 @@ const activeTab = ref<'info' | 'diagnostic'>('info')
 const diagnostic = ref<GenerationDiagnostic | null>(null)
 const diagnosticLoading = ref(false)
 const diagnosticCopyLabel = ref('复制诊断')
+const fallbackConfirming = ref<false | 'confirm' | 'cancel'>(false)
 const drawerSize = computed(() =>
   typeof window !== 'undefined' && window.innerWidth < 640 ? '100%' : '320px',
 )
@@ -60,7 +63,11 @@ watch(
       diagnostic.value = null
       diagnosticLoading.value = false
       diagnosticCopyLabel.value = '复制诊断'
+      fallbackConfirming.value = false
+      return
     }
+    // 异常态入口（红/黄节点图标）直落「诊断」tab
+    activeTab.value = target.value?.initialTab ?? 'info'
   },
 )
 
@@ -168,6 +175,113 @@ const diagnosticHint = computed(() => {
   if (diagnosticLoading.value) return undefined
   return diagnostic.value?.hint
 })
+
+// ===== 诊断 tab 三段式（2026-10-08 与用户拍板：结论 → 动作 → 技术详情） =====
+
+const DIAGNOSTIC_CODE_LABELS: Record<string, string> = {
+  insufficient_points: '积分不足',
+  upstream_timeout: '上游超时',
+  upstream_error: '上游错误',
+  cancelled: '已取消',
+  invalid_input: '参数有误',
+  model_unavailable: '模型不可用',
+  upload_required: '缺少参考图',
+  fallback_pending: '平台回退待确认',
+  unknown: '未知错误',
+}
+
+const diagnosticChips = computed(() => {
+  const chips: string[] = []
+  if (diagnostic.value) {
+    chips.push(DIAGNOSTIC_CODE_LABELS[diagnostic.value.code] ?? diagnostic.value.code)
+    if (diagnostic.value.httpStatus != null) chips.push(`HTTP ${diagnostic.value.httpStatus}`)
+  }
+  return chips
+})
+
+const diagnosticOccurredAt = computed(() => {
+  const ts = diagnostic.value?.occurredAt
+  if (!ts) return null
+  const d = new Date(ts)
+  return Number.isNaN(d.getTime()) ? ts : d.toLocaleString()
+})
+
+const isFallbackPendingRecord = computed(
+  () => record.value?.status === NODE_GENERATION_STATUS.fallback_pending,
+)
+
+const technicalRows = computed(() => {
+  const d = diagnostic.value
+  if (!d) return []
+  const rows: Array<{ label: string; value: string; copy?: string }> = []
+  if (d.model) rows.push({ label: '模型', value: d.model, copy: d.model })
+  if (d.channelId) rows.push({ label: '渠道', value: d.channelId })
+  if (d.apiFormat) rows.push({ label: 'API 格式', value: d.apiFormat })
+  if (d.httpStatus != null) rows.push({ label: 'HTTP', value: String(d.httpStatus) })
+  if (d.taskId) rows.push({ label: '任务 ID', value: d.taskId, copy: d.taskId })
+  if (d.occurredAt) rows.push({ label: '发生时间', value: diagnosticOccurredAt.value ?? d.occurredAt })
+  return rows
+})
+
+/** 原始报错（providerSnippet）：受限高、可断行、可滚动，从结构上保证撑不破界面 */
+const providerSnippet = computed(() => diagnostic.value?.providerSnippet?.trim() || '')
+
+/** 按错误码给「怎么解决」段落的引导文案（欠费类不给重试主按钮，避免无效重试） */
+const remedyGuides = computed(() => {
+  if (diagnosticLoading.value) return []
+  const code = diagnostic.value?.code
+  const guides: string[] = []
+  if (code === 'insufficient_points') {
+    guides.push('积分不足无法重试，请先充值或切换 BYOK 模型后重试。')
+  } else if (isFallbackPendingRecord.value) {
+    guides.push('已为你申请平台额度回退：确认后用平台额度继续本次生成，取消则结束本次任务。')
+  } else if (code === 'model_unavailable') {
+    guides.push('该模型暂不可用，请在模型选择中切换其他模型后重试。')
+  } else if (code === 'invalid_input' || code === 'upload_required') {
+    guides.push('请检查输入内容或补齐参考图后重试。')
+  } else if (diagnostic.value?.hint) {
+    guides.push(diagnostic.value.hint)
+  }
+  return guides
+})
+
+async function refreshRecordAfterFallback(id: string) {
+  invalidateRecordCache(id)
+  try {
+    const { data: res } = await studioApi.getGeneration(id)
+    record.value = res.data
+  } catch {
+    // 刷新失败不阻塞：节点状态由轮询兜底
+  }
+}
+
+async function confirmPlatformFallback() {
+  const id = record.value?.id
+  if (!id || fallbackConfirming.value) return
+  fallbackConfirming.value = 'confirm'
+  try {
+    await studioApi.confirmPlatformFallback(id)
+    await refreshRecordAfterFallback(id)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '确认平台回退失败'
+  } finally {
+    fallbackConfirming.value = false
+  }
+}
+
+async function cancelPlatformFallback() {
+  const id = record.value?.id
+  if (!id || fallbackConfirming.value) return
+  fallbackConfirming.value = 'cancel'
+  try {
+    await studioApi.cancelPlatformFallback(id)
+    await refreshRecordAfterFallback(id)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '取消平台回退失败'
+  } finally {
+    fallbackConfirming.value = false
+  }
+}
 
 const modelLabel = computed(() => {
   const model =
@@ -315,7 +429,13 @@ watch(
   () => [open.value, record.value?.id, record.value?.status] as const,
   async ([isOpen, , status]) => {
     diagnostic.value = null
-    if (!isOpen || !record.value || !status || !isFailedGenerationStatus(status)) return
+    fallbackConfirming.value = false
+    if (!isOpen || !record.value || !status) return
+    if (!isFailedGenerationStatus(status)) {
+      // 直落「诊断」但记录实际不是失败态（缓存竞态）⇒ 退回属性 tab，避免出现无 tab 头的孤儿内容
+      if (activeTab.value === 'diagnostic') activeTab.value = 'info'
+      return
+    }
     if (activeTab.value === 'diagnostic') {
       await loadDiagnostic()
     }
@@ -420,8 +540,74 @@ async function copyValue(text: string) {
       <div v-else-if="error" class="media-inspector-error">{{ error }}</div>
       <div v-else-if="activeTab === 'diagnostic'" class="media-inspector-body">
         <section class="media-inspector-section media-inspector-diagnostic">
+          <!-- ① 发生了什么 -->
+          <h4 class="media-inspector-section-title">发生了什么</h4>
+          <div class="media-inspector-diag-chips" v-if="diagnosticChips.length || diagnosticLoading">
+            <span v-for="chip in diagnosticChips" :key="chip" class="media-inspector-diag-chip">
+              {{ chip }}
+            </span>
+          </div>
           <p class="media-inspector-diag-msg">{{ diagnosticMessage }}</p>
           <p v-if="diagnosticHint" class="media-inspector-diag-hint">{{ diagnosticHint }}</p>
+
+          <!-- ② 怎么解决 -->
+          <template v-if="remedyGuides.length || isFallbackPendingRecord">
+            <h4 class="media-inspector-section-title media-inspector-diag-gap">怎么解决</h4>
+            <p
+              v-for="guide in remedyGuides"
+              :key="guide"
+              class="media-inspector-diag-remedy"
+            >
+              {{ guide }}
+            </p>
+            <div v-if="isFallbackPendingRecord" class="media-inspector-diag-actions">
+              <button
+                type="button"
+                class="media-inspector-action media-inspector-action-primary"
+                :disabled="Boolean(fallbackConfirming)"
+                @click="confirmPlatformFallback"
+              >
+                {{ fallbackConfirming === 'confirm' ? '确认中…' : '用平台额度继续' }}
+              </button>
+              <button
+                type="button"
+                class="media-inspector-action media-inspector-action-danger"
+                :disabled="Boolean(fallbackConfirming)"
+                @click="cancelPlatformFallback"
+              >
+                {{ fallbackConfirming === 'cancel' ? '取消中…' : '取消本次生成' }}
+              </button>
+            </div>
+          </template>
+
+          <!-- ③ 技术详情（默认折叠） -->
+          <details
+            v-if="technicalRows.length || providerSnippet"
+            class="media-inspector-diag-tech"
+          >
+            <summary class="media-inspector-section-title">技术详情</summary>
+            <dl v-if="technicalRows.length" class="media-inspector-dl media-inspector-diag-tech-rows">
+              <template v-for="row in technicalRows" :key="row.label">
+                <dt>{{ row.label }}</dt>
+                <dd>
+                  <span>{{ row.value }}</span>
+                  <button
+                    v-if="row.copy"
+                    type="button"
+                    class="media-inspector-copy-inline"
+                    @click="copyValue(row.copy)"
+                  >
+                    复制
+                  </button>
+                </dd>
+              </template>
+            </dl>
+            <div v-if="providerSnippet" class="media-inspector-diag-snippet-wrap">
+              <p class="media-inspector-diag-snippet-label">原始报错</p>
+              <pre class="media-inspector-diag-snippet">{{ providerSnippet }}</pre>
+            </div>
+          </details>
+
           <button
             type="button"
             class="media-inspector-action"
@@ -788,6 +974,102 @@ async function copyValue(text: string) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.media-inspector-diag-gap {
+  margin-top: 6px;
+}
+
+.media-inspector-diag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.media-inspector-diag-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.1);
+  color: #fca5a5;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.media-inspector-diag-remedy {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--neo-text-primary);
+}
+
+.media-inspector-diag-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.media-inspector-action-primary {
+  border-color: rgba(167, 139, 250, 0.45);
+  background: rgba(167, 139, 250, 0.16);
+  color: #ddd6fe;
+}
+
+.media-inspector-action-primary:hover {
+  background: rgba(167, 139, 250, 0.26);
+}
+
+.media-inspector-action-danger {
+  color: #fca5a5;
+}
+
+.media-inspector-diag-tech {
+  border: 1px solid var(--neo-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.media-inspector-diag-tech > summary {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+}
+
+.media-inspector-diag-tech > summary::-webkit-details-marker {
+  display: none;
+}
+
+.media-inspector-diag-tech[open] > summary {
+  margin-bottom: 10px;
+}
+
+.media-inspector-diag-tech-rows {
+  margin-bottom: 8px;
+}
+
+.media-inspector-diag-snippet-wrap {
+  margin-top: 4px;
+}
+
+.media-inspector-diag-snippet-label {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--neo-text-secondary);
+}
+
+.media-inspector-diag-snippet {
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--neo-text-secondary);
+  overflow: auto;
+  max-height: 160px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .media-inspector-diag-msg {
