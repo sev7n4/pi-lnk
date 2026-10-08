@@ -518,7 +518,7 @@ export class StudioService {
     model?: string,
     videoImageRefs?: Array<{ refKey: string; label: string }>,
   ) {
-    const { mergedText, skippedMerge } = await mergeRefsToPrompt({
+    const { mergedText, skippedMerge, mergeDegraded } = await mergeRefsToPrompt({
       sources: extractTextSources(refs),
       localPrompt: localPrompt.trim() || undefined,
       downstreamType,
@@ -536,6 +536,7 @@ export class StudioService {
     return {
       mergedText,
       skippedMerge,
+      mergeDegraded,
       referenceImages: extractReferenceImages(refs),
     }
   }
@@ -715,7 +716,7 @@ export class StudioService {
     const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('text', resolved.modelName)
     const gatewayModelId =
       resolved.source === 'user' ? resolved.modelName : entry.gatewayModelId
-    const { mergedText, skippedMerge, referenceImages } = await this.resolveMergedPrompt(
+    const { mergedText, skippedMerge, mergeDegraded, referenceImages } = await this.resolveMergedPrompt(
       prompt,
       refs,
       'text',
@@ -1110,7 +1111,7 @@ export class StudioService {
       consumeMeta('image', { model: model ?? null, generationId: null }),
     )
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
-    const { mergedText, skippedMerge, referenceImages } = await this.resolveMergedPrompt(
+    const { mergedText, skippedMerge, mergeDegraded, referenceImages } = await this.resolveMergedPrompt(
       prompt,
       refs,
       'image',
@@ -1157,6 +1158,8 @@ export class StudioService {
               pixelSize,
               referenceImages,
               skippedMerge,
+              // 诊断 C2：降级（无 key / LLM 失败退拼接）与 LLM 归纳成功可区分，供排查与告警
+              mergeDegraded,
               channelId: resolved.channelId,
               originalModel: model,
               providerSource: resolved.source,
