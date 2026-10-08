@@ -1103,12 +1103,6 @@ export class StudioService {
     const n = Math.max(1, Math.min(4, Number(count) || 1))
     const cost = 10 * n
     const chargeReason = '图像生成'
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('image', { model: model ?? null, generationId: null }),
-    )
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
     const { mergedText, skippedMerge, referenceImages } = await this.resolveMergedPrompt(
       prompt,
@@ -1138,6 +1132,10 @@ export class StudioService {
       imageRefDescriptorsFromRefs(refs),
     )
     const providerOptions = buildImageProviderGenerateOptions(built)
+    // 账本对账（诊断 B2）：扣费交易必须携带 generationId，否则扣费与生成永远无法对上。
+    // 记录先行：先建 generating 占位再扣费；扣费失败（积分不足）立即删除占位，不留孤儿。
+    // 旧顺序（先扣费后建记录）还有个隐性泄漏——resolve/merge 阶段抛错时「已扣费、
+    // 无记录、无退款」，用户侧连一条可展示的失败记录都没有。
     const record = await this.prisma.generationRecord.create({
       data: {
         userId,
@@ -1169,6 +1167,19 @@ export class StudioService {
         ...withCanvasScope(scope),
       },
     })
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('image', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
+    }
     const completion = this.completeImage(
       record.id,
       userId,

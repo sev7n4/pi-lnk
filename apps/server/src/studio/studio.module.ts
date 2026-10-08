@@ -6,6 +6,7 @@ import { ProviderModule } from '../provider/provider.module'
 import { SessionsModule } from '../sessions/sessions.module'
 import { UploadModule } from '../upload/upload.module'
 import { ImageSliceService } from './image-slice.service'
+import { GenerationReaperService } from './generation-reaper.service'
 import { StudioController } from './studio.controller'
 import { StudioService } from './studio.service'
 import { VideoGenerationOrchestrator } from './video-generation.orchestrator'
@@ -20,7 +21,7 @@ import { VideoGenerationOrchestrator } from './video-generation.orchestrator'
     UploadModule,
   ],
   controllers: [StudioController],
-  providers: [StudioService, VideoGenerationOrchestrator, ImageSliceService],
+  providers: [StudioService, VideoGenerationOrchestrator, ImageSliceService, GenerationReaperService],
   exports: [StudioService, VideoGenerationOrchestrator, ImageSliceService],
 })
 export class StudioModule {}
