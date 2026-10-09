@@ -2192,7 +2192,39 @@ function handleEvent(event: { type: string; data: unknown }) {
         svg?: string
         title?: string
         annotations?: Array<{ nodeId: string; text: string; severity: 'info' | 'warn' }>
+        /**
+         * D4 §4.5 呈现分工：本轮该呈现哪一种（后端 `presentResultDual` 双写时两条同值）。
+         *
+         * ⛔ **前端拿不到 `overlay.kind`**（它不在这两条 command 的原形状里）⇒ 无法自己
+         * 算判据，只能读后端结论；**不要在前端复刻这套规则**，两处实现必然漂移。
+         * 字段缺失（旧消息 / 重放路径）⇒ 沿用既有 `PRESENTATION_KIND_PRIORITY`。
+         */
+        preferredKind?: 'svg_card' | 'node_graph'
       }
+      /**
+       * D4 §4.5：**只有 node_graph 需要门禁**，svg_card 一侧刻意不加。
+       *
+       * ⭐ 为什么用「跳过 node_graph」而不是「改 `PRESENTATION_KIND_PRIORITY`」：
+       * `presentation` 是**单值**字段，而 `setPresentation` 的同 kind 覆盖语义被
+       * `agent.setPresentation.test.ts` 锁成活契约。跳过落选那条 ⇒ svg_card 那次调用面对的是
+       * 空 `presentation`（`currentRank = -1`）必然写入，**既不动优先级表也不碰契约**；
+       * 反过来无论 `canvasCommands` 顺序如何（后端固定 `[svg_card, node_graph]`）都成立。
+       *
+       * ⛔ **svg_card 侧加同款门禁是错的**（变异验证实测：删掉它测试仍全绿 ⇒ 该门禁
+       * 在双写场景下完全不可观测）：`PRESENTATION_KIND_PRIORITY` 里 node_graph rank 2 >
+       * svg_card rank 1 ⇒ `node_graph` 后续那次调用**总会覆盖** svg_card，跳不跳过都一样。
+       * 而它唯一可观测的场景（`node_graph` 命令缺席，例如 nodeGraph 节点为空、
+       * 或只收到 update 快照的一条）作用恰好是**制造空白**——把唯一的保底呈现也跳掉。
+       * svg_card 是「有内容就给人看」的保底，不该参与分工。
+       *
+       * ⛔ 白名单：`preferredKind` 若是未知值（脏数据 / 后端新增第三种呈现而本仓没同步），
+       * 一律**不判落选**⇒ 退回既有优先级，绝不出现「两条都被跳过 ⇒ 空白且无报错」。
+       */
+      const PRESENTATION_KINDS = ['svg_card', 'node_graph'] as const
+      const nodeGraphDeprioritized = (c: { type: string; preferredKind?: string }) =>
+        c.preferredKind !== undefined &&
+        (PRESENTATION_KINDS as readonly string[]).includes(c.preferredKind) &&
+        c.preferredKind !== 'node_graph'
       if (cmd.type === 'focus_node' && cmd.nodeId) {
         onFocusNode(cmd.nodeId)
       } else if (cmd.type === 'focus_nodes' && cmd.nodeIds?.length) {
@@ -2221,10 +2253,17 @@ function handleEvent(event: { type: string; data: unknown }) {
           if (sidebar.pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) break
           sidebar.addFromPayload(att)
         }
-      } else if (cmd.type === 'node_graph' && Array.isArray((cmd as unknown as { nodes?: unknown }).nodes)) {
+      } else if (
+        cmd.type === 'node_graph' &&
+        Array.isArray((cmd as unknown as { nodes?: unknown }).nodes) &&
+        !nodeGraphDeprioritized(cmd)
+      ) {
         // 🔀 render_canvas_view 的结构化产物（2026-07）：Vue Flow 渲染，可拖拽 / 带缩略图。
         // ⚠️ **必须在 svg_card 分支之前**（A 方案：node_graph 优先、静态 SVG 降级）。
         // ⚠️ 不塞 AgentPresentationHost：与 svg_card 同款理由（落库路径不恢复 stepper）。
+        // ⛔ 但 D4 §4.5：模型传了 overlay（情绪/预算/严重度）时本载荷**没有 severity/mark
+        //   字段**承载它 ⇒ 这时必须让 svg_card 赢，否则 D3-3 视觉语言被静默丢弃。
+        //   判据由后端算好后用 `preferred` 下发，这里只读不算。
         const ng = cmd as unknown as NodeGraphBodyPayload
         // ⚠️ body 走 `AgentPresentationBody` 的**可选字段**（不是联合类型，见 types.ts 注释）：
         //   联合类型会让所有下游 `body.text` / `body.schemes` 访问变成 TS2339（实测 16 处）。

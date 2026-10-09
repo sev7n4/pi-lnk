@@ -69,6 +69,15 @@ export interface NodeGraphPayload {
 	droppedNodeIds?: string[];
 	/** 画布上共有多少节点（即便 `nodes` 被裁剪，这个数仍是真实值）。 */
 	totalNodeCount?: number;
+	/**
+	 * D4 §4.5：本轮该呈现哪一种（与 `SvgCardPayload.preferredKind` 同一个值）。
+	 * 语义、通道约束与「为什么两条同值」的理由全见该字段处的注释。
+	 *
+	 * ⛔ 本载荷**没有 severity / mark 字段**（`toNodeGraphNode` 逐字段确认过）
+	 * ⇒ 一旦它赢下呈现，静态图里那套 `data-sev` / ERROR·WARN 配色 / 图例就全丢了。
+	 * 这正是判据把 winner 指向别处的唯一风险面，也是规格 §4.5 第一行拦它的原因。
+	 */
+	preferredKind?: "svg_card" | "node_graph";
 }
 
 /** 与 `SvgCardPayload` 并列的 present 载荷联合。 */
