@@ -605,6 +605,44 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * G5 · 画布概况（精简版）。
+ *
+ * 只回答「周围有什么」——节点总数与类型分布。**不注入** vision / sidebar /
+ * memory 全文：那是链路 A 决策阶段已经读过的内容，生成阶段重复灌入只会稀释
+ * prompt 并放大 token 成本。
+ */
+function summarizeCanvas(canvas: CanvasData, targetNodeId: string): string {
+  const total = canvas.nodes.length
+  const byType = new Map<string, number>()
+  for (const n of canvas.nodes) {
+    const t = String(n.type ?? 'node')
+    byType.set(t, (byType.get(t) ?? 0) + 1)
+  }
+  const dist = [...byType.entries()].map(([t, c]) => `${t} ${c}`).join('、')
+  return `画布共 ${total} 个节点（${dist}），当前生成节点 ${targetNodeId}`
+}
+
+/**
+ * 合成注入用的创作上下文。
+ *
+ * `selectionDigest` 目前**只有在调用方显式传入时才有值** —— 画布「选中 = 默认指代」
+ * 的通道（spec 2026-10-06）尚在排期，服务端没有可信的选中态可读取，
+ * 因此这里**不伪造**一个「当前选中」。宁可少给，也不给模型假的世界状态。
+ */
+function buildNodeContext(
+  canvas: CanvasData,
+  targetNodeId: string,
+  provided?: { selectionDigest?: string; canvasSummary?: string },
+): { selectionDigest?: string; canvasSummary?: string } | undefined {
+  const selectionDigest = provided?.selectionDigest?.trim()
+  const canvasSummary = provided?.canvasSummary?.trim() || summarizeCanvas(canvas, targetNodeId)
+  const ctx: { selectionDigest?: string; canvasSummary?: string } = {}
+  if (selectionDigest) ctx.selectionDigest = selectionDigest
+  if (canvasSummary) ctx.canvasSummary = canvasSummary
+  return Object.keys(ctx).length > 0 ? ctx : undefined
+}
+
 function clampImageGenCount(n: unknown): number {
   const v = typeof n === 'number' ? n : Number(n)
   if (!Number.isFinite(v)) return 1
@@ -1883,6 +1921,8 @@ export class AgentCanvasToolsService {
     sessionId: string
     userId: string
     nodeId: string
+    /** G5：外部（runtime）给出的创作上下文；缺省时 canvasSummary 由服务端现算。 */
+    nodeContext?: { selectionDigest?: string; canvasSummary?: string }
   }): Promise<{ status: string; generationRecordId?: string; actions: CanvasAction[] }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
@@ -1921,6 +1961,7 @@ export class AgentCanvasToolsService {
         node.data?.textThinking === true,
         node.data?.textThinkingEffort === 'max' ? 'max' : 'high',
         { sessionId: input.sessionId, nodeId: input.nodeId },
+        buildNodeContext(canvas, input.nodeId, input.nodeContext),
       )
       const recordId = record.id
       const content = parseRecordText(record.metadata, prompt)

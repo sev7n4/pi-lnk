@@ -736,6 +736,12 @@ export class StudioService {
     thinking?: boolean,
     thinkingEffort?: 'high' | 'max',
     scope?: CanvasGenerationScope,
+    /**
+     * G5 创作上下文（与 `@lnkpi/agent` 的 `CreationContext` 同构）。
+     * 注入到生成阶段的 system prompt 末尾——链路 A 决策时看过画布，
+     * 但工具执行时原本只拿节点自身 prompt + refs。
+     */
+    nodeContext?: { selectionDigest?: string; canvasSummary?: string },
   ) {
     const cost = 5
     const chargeReason = '文本生成'
@@ -810,6 +816,7 @@ export class StudioService {
         apiKey: creds.apiKey,
         baseUrl: creds.baseUrl,
         textOpts,
+        nodeContext,
       })
       if (cancel?.isCancelled()) {
         await this.points.refund(

@@ -654,6 +654,56 @@ describe('AgentCanvasToolsService', () => {
     expect(canvas.nodes[0].data.status).toBe('completed')
   })
 
+  // G5：决策有上下文、执行也得有上下文
+  it('runTextGeneration passes a canvas-derived nodeContext to studio.generateText', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'txt-1',
+          type: 'text',
+          position: { x: 0, y: 0 },
+          data: { prompt: '写一段天猫开场文案', status: 'draft' },
+        },
+        { id: 'img-1', type: 'image', position: { x: 10, y: 0 }, data: {} },
+      ],
+      edges: [],
+    }
+    await svc.runTextGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'txt-1' })
+
+    const call = generateText.mock.calls.at(-1) as unknown[]
+    const nodeContext = call?.[9] as { canvasSummary?: string; selectionDigest?: string } | undefined
+    expect(nodeContext?.canvasSummary).toContain('画布共 2 个节点')
+    expect(nodeContext?.canvasSummary).toContain('当前生成节点 txt-1')
+    // 服务端没有可信的选中态 ⇒ 不伪造 selectionDigest（宁可少给，不给假状态）
+    expect(nodeContext?.selectionDigest).toBeUndefined()
+  })
+
+  it('runTextGeneration keeps an externally provided nodeContext', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'txt-1',
+          type: 'text',
+          position: { x: 0, y: 0 },
+          data: { prompt: '写一段天猫开场文案', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    await svc.runTextGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'txt-1',
+      nodeContext: { selectionDigest: '当前选中：分镜-03' },
+    })
+
+    const call = generateText.mock.calls.at(-1) as unknown[]
+    const nodeContext = call?.[9] as { canvasSummary?: string; selectionDigest?: string } | undefined
+    expect(nodeContext?.selectionDigest).toBe('当前选中：分镜-03')
+    // 外部没给 canvasSummary ⇒ 服务端按画布现算补上
+    expect(nodeContext?.canvasSummary).toContain('画布共 1 个节点')
+  })
+
   it('runPromptGeneration writes content and promptMode', async () => {
     canvas = {
       nodes: [

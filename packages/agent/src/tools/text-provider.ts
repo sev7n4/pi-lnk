@@ -1,12 +1,19 @@
 import { upstreamFetch } from './upstream-fetch'
 import { withUpstreamRetry } from './upstream-retry'
+import { appendCreationContext } from './creation-context'
+import type { CreationContext } from './creation-context'
 
 export type TextThinkingEffort = 'high' | 'max'
 
 export type TextGenerateOptions = {
   thinking?: boolean
   thinkingEffort?: TextThinkingEffort
+  /** G5：创作上下文（选中指代 + 画布摘要），注入 system 末尾。 */
+  context?: CreationContext
 }
+
+const TEXT_SYSTEM_PROMPT =
+  '你是专业 AI 创作助手，擅长脚本、旁白与分镜描述。用中文回复，结构清晰。'
 
 /**
  * `generate` 的返回值。
@@ -57,7 +64,10 @@ export class OpenAITextProvider implements TextProvider {
       model: resolvedModel,
       stream: false,
       messages: [
-        { role: 'system', content: '你是专业 AI 创作助手，擅长脚本、旁白与分镜描述。用中文回复，结构清晰。' },
+        {
+          role: 'system',
+          content: appendCreationContext(TEXT_SYSTEM_PROMPT, options?.context),
+        },
         { role: 'user', content: prompt },
       ],
       temperature: 0.8,

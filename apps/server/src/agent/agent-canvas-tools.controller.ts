@@ -481,6 +481,38 @@ class RunAudioGenerationDto extends RunImageGenerationDto {
   instrumental?: boolean
 }
 
+/**
+ * 文本生成（`run-text-generation`）的 body：在 run 通用三字段之后**追加** G5 的
+ * 创作上下文。⚠️ 不复用 `RunImageGenerationDto` —— 图片端点的字段契约不该被文本
+ * 端点继承（一旦 RunImage 加字段，文本端点会静默获得它并不认识的参数）。
+ *
+ * ⛔ 两个装饰器缺一不可，**失效形态完全不同**（变异实测，勿想当然）：
+ *  - 无 `@IsObject()` ⇒ `whitelist: true` **静默剥掉**该字段（不报错、不提示），
+ *    表现为「runtime 传了上下文，服务端永远拿到 undefined」—— 这是最难查的一种。
+ *  - 无 `@IsOptional()` ⇒ 字段**缺失时抛 400**（不静默，但会让尚未升级的
+ *    runtime 侧调用整体失败），而字段传了的时候一切正常。
+ * 两条各有测试锁住（见 agent-canvas-tools.controller.test.ts）。
+ */
+export class RunTextGenerationDto {
+  @IsString()
+  sessionId!: string
+
+  @IsString()
+  userId!: string
+
+  @IsString()
+  nodeId!: string
+
+  @IsOptional()
+  @IsObject()
+  nodeContext?: {
+    /** 用户当前选中的节点摘要（selection 通道接入后才有值，目前可缺省）。 */
+    selectionDigest?: string
+    /** 画布概况精简版（节点数 / 类型分布）。缺省时由服务端按画布现算。 */
+    canvasSummary?: string
+  }
+}
+
 class RunVisionQaDto {
   @IsString()
   sessionId!: string
@@ -1268,7 +1300,7 @@ export class AgentCanvasToolsController {
   }
 
   @Post('run-text-generation')
-  async runTextGeneration(@Body() dto: RunImageGenerationDto) {
+  async runTextGeneration(@Body() dto: RunTextGenerationDto) {
     const data = await this.tools.runTextGeneration(dto)
     return { code: 0, message: 'ok', data }
   }

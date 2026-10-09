@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   AgentCanvasToolsController,
   InstantiateRecipeDto,
+  RunTextGenerationDto,
   SaveMemoryDto,
   SearchMemoryDto,
   UpdateNodeDto,
@@ -184,5 +185,41 @@ describe('AgentCanvasToolsController memory 端点透传', () => {
     const { controller, searchMemory } = makeController()
     await controller.searchMemory({ userId: 'u1' })
     expect(searchMemory).toHaveBeenCalledWith({ userId: 'u1' })
+  })
+})
+
+// ⛔ 强制验收项：main.ts:30 是 whitelist:true，漏 @IsOptional() 会被静默剥字段
+describe('RunTextGenerationDto', () => {
+  const pipe = new ValidationPipe({ transform: true, whitelist: true })
+  const base = { sessionId: 's1', userId: 'u1', nodeId: 'n1' }
+
+  it('keeps nodeContext under ValidationPipe whitelist', async () => {
+    const nodeContext = {
+      selectionDigest: '当前选中：分镜-03',
+      canvasSummary: '画布共 7 个节点',
+    }
+
+    const result = await pipe.transform(
+      { ...base, nodeContext },
+      { type: 'body', metatype: RunTextGenerationDto },
+    )
+
+    expect(result.nodeContext).toEqual(nodeContext)
+  })
+
+  it('allows nodeContext to be omitted entirely', async () => {
+    const result = await pipe.transform(base, {
+      type: 'body',
+      metatype: RunTextGenerationDto,
+    })
+    expect(result.nodeContext).toBeUndefined()
+  })
+
+  it('allows a partial nodeContext (only one of the two fields)', async () => {
+    const result = await pipe.transform(
+      { ...base, nodeContext: { canvasSummary: '画布共 2 个节点' } },
+      { type: 'body', metatype: RunTextGenerationDto },
+    )
+    expect(result.nodeContext).toEqual({ canvasSummary: '画布共 2 个节点' })
   })
 })
