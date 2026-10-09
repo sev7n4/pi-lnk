@@ -44,11 +44,21 @@ describe('settleDeadlineExceeded', () => {
 })
 
 describe('DEFAULT_SETTLE_TIMEOUT_MS', () => {
-  it('exceeds the server-side video poll timeout (1_260_000)', () => {
-    // 前端墙钟必须 > 服务端 VIDEO_POLL_TIMEOUT_MS(1_260_000)，
-    // 否则服务端刚判超时、客户端已经先放弃 ⇒ 拿不到最后的错误信息。
-    // 取 1_320_000 = 服务端 + 60s。
-    expect(DEFAULT_SETTLE_TIMEOUT_MS).toBeGreaterThan(1_260_000)
+  it('covers the worst-case server generation time + V6 create-retry upper bound + buffer', () => {
+    // 前端墙钟必须 ≥ 服务端真实最坏生成耗时 + V6 创建重试最坏上界 + 缓冲，
+    // 否则服务端还在跑、客户端已先放弃 ⇒ 用户看到假失败（钱已扣、历史里却是成功）。
+    //
+    // 服务端真实最大 deadline = MiniMax H3 的 DEFAULT_MAX_POLL_MS（见 minimax-h3-video-provider.ts）。
+    // V6 创建重试最坏上界 = 3 次尝试 × UPSTREAM_FETCH_TIMEOUT_MS(45s) + 退避(1.5s+3s) = 139_500ms
+    //   （这是病理上界：V6 要救的 429/503 毫秒级响应，实际只多 ~4.5s）。
+    // 缓冲 60_000ms 给 Agnes 常规轮询留余量。
+    // 改任一项都要重算本值（详见 generationPollGate.ts 顶部注释）。
+    const MAX_SERVER_POLL_MS = 1_200_000
+    const V6_CREATE_RETRY_WORST_MS = 3 * 45_000 + 4_500
+    const BUFFER_MS = 60_000
+    expect(DEFAULT_SETTLE_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      MAX_SERVER_POLL_MS + V6_CREATE_RETRY_WORST_MS + BUFFER_MS,
+    )
   })
 })
 
