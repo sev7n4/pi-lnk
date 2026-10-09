@@ -119,6 +119,10 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 错连修正（2026-10-03 生产取证）：drama-qc-review 的引用关系审计步骤点名
 	// （「错连还能用 edge id 走 remove_edges」），同 arrange_nodes 性质。
 	"remove_edges",
+	// 任务清单（C1，2026-10-09）：prompt 规则 task_tool.md 逐字点名（「开工前调用 todo_write」），
+	// 按本文件准绳（被点名 ⇒ 必须常驻）；且纯文本模式它常是唯一注册工具，
+	// 进延迟集 = 规则教了模型却拿不到 schema（延迟即不可达）。
+	"todo_write",
 	// gen（用户确认后当轮即用）
 	"run_image_generation",
 	"run_video_generation",
