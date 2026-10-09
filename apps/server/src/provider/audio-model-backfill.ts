@@ -85,10 +85,15 @@ export function planAudioModelBackfill(
  * （`updateChannel` 对 `platform` 直接抛 Forbidden），用户无法个性化它 ⇒
  * 它的正确状态就是「等于当前目录」，直接对齐即可。
  * 用户渠道（`userId != null`）**一律不碰** —— 那是用户自己配置的。
+ *
+ * availability 语义（S1-1）：目标数组经 `preserveModelAvailability` 重建 ——
+ * 既有条目保留存量 availability（绝不重置已灰显条目），新条目用目录侧自带值
+ * （调用方 `catalogModels()` 恒给 `'unknown'`）。diff 判定只比 name/capability，
+ * availability 永不参与 ⇒ 目录未变时灰显镜像不产生任何写库。
  */
 export interface PlatformChannelSyncPlan {
   /** 目标值（序列化前的数组）。 */
-  target: { name: string; capability: string }[]
+  target: { name: string; capability: string; availability?: string }[]
   /** 是否需要写库。 */
   changed: boolean
   reason: string
@@ -96,7 +101,7 @@ export interface PlatformChannelSyncPlan {
 
 export function planPlatformChannelSync(
   dbModelsJson: string,
-  catalogModels: readonly { name: string; capability: string }[],
+  catalogModels: readonly { name: string; capability: string; availability?: string }[],
 ): PlatformChannelSyncPlan {
   const current = parseModelEntries(dbModelsJson)
   const same =
@@ -108,10 +113,36 @@ export function planPlatformChannelSync(
     return { target: current, changed: false, reason: '已与目录一致' }
   }
   return {
-    target: catalogModels.map((m) => ({ name: m.name, capability: m.capability })),
+    target: preserveModelAvailability(current, catalogModels.map((m) => ({ ...m }))),
     changed: true,
     reason: `平台渠道目录镜像落后：${current.length} 条 → ${catalogModels.length} 条`,
   }
+}
+
+/** 合法 availability 三态（与 upstream-probe-logic.ts 的 ModelAvailability 一致；此处独立声明保持零依赖）。 */
+const AVAILABILITY_VALUES = ['available', 'unavailable', 'unknown'] as const
+
+function isKnownAvailability(value: string): value is (typeof AVAILABILITY_VALUES)[number] {
+  return (AVAILABILITY_VALUES as readonly string[]).includes(value)
+}
+
+/**
+ * 目录对齐整体重建条目数组时的 availability 保留语义（S1-1）：
+ * 探活器是唯一置 `unavailable` 的写入方 —— 重建绝不重置既有灰显/可用标记。
+ * - 既有条目（按 name 匹配）且存量值为合法三态 ⇒ 原样保留；
+ * - 旧格式条目（无字段或脏值）⇒ 采用目录侧自带值（调用方给 `'unknown'`，即升级写入）。
+ * 仅服务平台渠道镜像重建（planPlatformChannelSync / pullModels 平台分支）。
+ */
+export function preserveModelAvailability<T extends { name: string; availability?: string }>(
+  prevEntries: readonly { name: string; availability?: string }[],
+  nextEntries: readonly T[],
+): T[] {
+  const prevByName = new Map(prevEntries.map((e) => [e.name, e.availability]))
+  return nextEntries.map((entry) => {
+    const prev = prevByName.get(entry.name)
+    if (prev === undefined || !isKnownAvailability(prev)) return entry
+    return { ...entry, availability: prev }
+  })
 }
 
 function parseStringArray(raw: string): string[] {

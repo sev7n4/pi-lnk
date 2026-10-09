@@ -265,3 +265,55 @@ describe('S0-1 幽灵模型下架 sync 闭环', () => {
     expect(again.changed).toBe(false)
   })
 })
+
+/**
+ * S1-1 平台渠道镜像的 availability 保留语义（spec §3.1）：
+ * sync 整体重建目标数组时，既有条目的灰显/可用标记必须原样保留
+ * （探活器是唯一置 unavailable 的写入方），新条目用目录侧自带值。
+ */
+describe('S1-1 planPlatformChannelSync 的 availability 保留语义', () => {
+  const CATALOG_MODELS = STUDIO_MODEL_CATALOG.map((entry) => ({
+    name: entry.modelKey,
+    capability: entry.modality,
+    availability: 'unknown' as const,
+  }))
+
+  it('目录对齐但镜像含灰显条目 ⇒ 不产生写库（灰显绝不因对齐被重置）', () => {
+    const grayedMirror = JSON.stringify(
+      CATALOG_MODELS.map((m, i) => (i === 0 ? { ...m, availability: 'unavailable' } : m)),
+    )
+    const plan = planPlatformChannelSync(grayedMirror, CATALOG_MODELS)
+    expect(plan.changed).toBe(false)
+  })
+
+  it('目录新增模型触发重建 ⇒ 既有灰显保留、新条目 unknown、其余条目不重置', () => {
+    // 镜像 = 目录去掉最后一个模型；首条已灰显
+    const missing = CATALOG_MODELS[CATALOG_MODELS.length - 1]!
+    const stale = JSON.stringify(
+      CATALOG_MODELS.slice(0, -1).map((m, i) =>
+        i === 0 ? { ...m, availability: 'unavailable' } : m,
+      ),
+    )
+    const plan = planPlatformChannelSync(stale, CATALOG_MODELS)
+    expect(plan.changed).toBe(true)
+    expect(plan.target).toHaveLength(CATALOG_MODELS.length)
+    const byName = new Map(plan.target.map((m) => [m.name, m]))
+    // 既有灰显条目：availability 原样保留
+    expect(byName.get(CATALOG_MODELS[0]!.name)).toMatchObject({ availability: 'unavailable' })
+    // 新并入条目：目录侧自带 unknown
+    expect(byName.get(missing.name)).toMatchObject({ availability: 'unknown' })
+    // 未灰显的既有条目：unknown 原样保留（写库不等于重置）
+    expect(byName.get(CATALOG_MODELS[1]!.name)).toMatchObject({ availability: 'unknown' })
+  })
+
+  it('旧格式镜像（无 availability 字段）触发重建 ⇒ 升级写入为显式值', () => {
+    const legacy = JSON.stringify(
+      CATALOG_MODELS.slice(0, -1).map(({ name, capability }) => ({ name, capability })),
+    )
+    const plan = planPlatformChannelSync(legacy, CATALOG_MODELS)
+    expect(plan.changed).toBe(true)
+    for (const entry of plan.target) {
+      expect(entry.availability).toBe('unknown')
+    }
+  })
+})

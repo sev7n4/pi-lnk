@@ -277,6 +277,38 @@ describe('ProviderService', () => {
     expect(result.platformChannel.hasApiKey).toBe(false)
   })
 
+  it('A1：平台渠道 models 条目 availability 原样透传；旧数据缺字段读为 undefined（前端按 unknown 兜底）', async () => {
+    // 与 catalogModels() 同源构造（name/capability 对齐 ⇒ sync 判定未落后，不改写），
+    // 仅注入两处差异：首个条目置 unavailable（探活器写入形态）、第二个条目删字段（旧数据形态）。
+    const seeded = STUDIO_MODEL_CATALOG.map((entry, i) => {
+      const base = { name: entry.modelKey, capability: entry.modality, availability: 'unknown' as const }
+      if (i === 0) return { ...base, availability: 'unavailable' as const }
+      if (i === 1) {
+        const { availability: _drop, ...oldFormat } = base
+        return oldFormat
+      }
+      return base
+    })
+    prisma._channels.set('platform', {
+      id: 'platform',
+      userId: null,
+      name: '平台服务',
+      apiFormat: 'openai',
+      baseUrl: '',
+      encryptedApiKey: null,
+      iv: null,
+      authTag: null,
+      keyVersion: 1,
+      models: JSON.stringify(seeded),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const boot = await svc.bootstrap('u1')
+    const models = boot.platformChannel.models
+    expect(models[0]).toMatchObject({ availability: 'unavailable' })
+    expect(models[1]).not.toHaveProperty('availability')
+  })
+
   it('stores encrypted apiKey and never returns plaintext', async () => {
     await svc.createChannel('u1', {
       name: 'mine',
@@ -657,6 +689,78 @@ describe('ProviderService', () => {
     expect(boot.preferences.selectableImageModels.length).toBe(
       STUDIO_MODEL_CATALOG.filter((e) => e.modality === 'image').length,
     )
+  })
+
+  it('S1-1: 播种平台渠道时条目统一带 availability=unknown', async () => {
+    await svc.bootstrap('u1')
+    const stored = JSON.parse(prisma._channels.get('platform')!.models) as {
+      name: string
+      availability?: string
+    }[]
+    expect(stored.length).toBeGreaterThan(0)
+    for (const entry of stored) {
+      expect(entry.availability).toBe('unknown')
+    }
+  })
+
+  it('S1-1: bootstrap 对齐落后镜像时保留既有灰显、新条目 unknown', async () => {
+    const catalog = STUDIO_MODEL_CATALOG.map((e) => ({
+      name: e.modelKey,
+      capability: e.modality,
+      availability: 'unknown' as const,
+    }))
+    // 镜像 = 目录去掉最后一个模型，且首条已灰显（探活器写入的存量状态）
+    const staleMirror = catalog.slice(0, -1).map((m, i) =>
+      i === 0 ? { ...m, availability: 'unavailable' } : m,
+    )
+    prisma._channels.set('platform', {
+      id: 'platform',
+      userId: null,
+      name: '平台服务',
+      apiFormat: 'openai',
+      baseUrl: '',
+      encryptedApiKey: null,
+      iv: null,
+      authTag: null,
+      keyVersion: 1,
+      models: JSON.stringify(staleMirror),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    await svc.bootstrap('u1')
+    const stored = JSON.parse(prisma._channels.get('platform')!.models) as Array<{
+      name: string
+      availability?: string
+    }>
+    expect(stored).toHaveLength(catalog.length)
+    const byName = new Map(stored.map((m) => [m.name, m]))
+    expect(byName.get(catalog[0]!.name)!.availability).toBe('unavailable') // 灰显不被对齐重置
+    expect(byName.get(catalog[catalog.length - 1]!.name)!.availability).toBe('unknown') // 新条目 unknown
+  })
+
+  it('S1-1: pullModels 平台分支整体重建镜像时保留已灰显条目（Task 1 递延 Minor）', async () => {
+    await svc.bootstrap('u1')
+    const platform = prisma._channels.get('platform')!
+    // 模拟探活器已把首个目录模型灰显
+    const models = JSON.parse(platform.models) as Array<{ name: string; availability?: string }>
+    const grayedName = models[0]!.name
+    for (const entry of models) {
+      if (entry.name === grayedName) entry.availability = 'unavailable'
+    }
+    platform.models = JSON.stringify(models)
+
+    // pullModels 平台分支走整体重建（preserveModelAvailability(catalogModels())），
+    // ⛔ 不得把探活器写入的灰显重置回 unknown
+    const updated = await svc.pullModels('u1', 'platform')
+
+    expect(updated.models).toHaveLength(STUDIO_MODEL_CATALOG.length)
+    const byName = new Map(updated.models.map((m) => [m.name, m.availability]))
+    expect(byName.get(grayedName)).toBe('unavailable')
+    // 其余条目仍是显式 unknown（目录侧默认值）
+    for (const entry of updated.models) {
+      if (entry.name !== grayedName) expect(entry.availability).toBe('unknown')
+    }
   })
 })
 
