@@ -4,8 +4,10 @@ import { useRoute } from 'vue-router'
 import { useNodeId, useVueFlow } from '@vue-flow/core'
 import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
+import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import PromptMarkdownEditor from '@/components/canvas/PromptMarkdownEditor.vue'
 import { CANVAS_NODE_PATCH_KEY } from '@/composables/canvasNodeActions'
+import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 
 const props = defineProps<{
   selected?: boolean
@@ -45,6 +47,24 @@ const taskKind = computed(() =>
 const editorOpen = ref(false)
 const draft = ref('')
 
+/**
+ * 左上角状态图标仅异常态渲染（2026-10-09 对齐图片节点 2026-10-07/08 拍板）：
+ * 文本节点没有媒体属性抽屉，常态不渲染常驻 ⓘ；失败/错误 → 红、fallback 待确认 → 黄，
+ * 点击直落媒体属性抽屉「诊断」tab（诊断信息从右侧弹出）。
+ * 仅 generation 记录有诊断接口（material 无），与 NodeStatusInfoButton 内判据一致。
+ */
+const hasAbnormalStatus = computed(() => {
+  const s = props.data.status
+  return (
+    s === NODE_GENERATION_STATUS.error ||
+    s === NODE_GENERATION_STATUS.failed ||
+    s === NODE_GENERATION_STATUS.fallback_pending
+  )
+})
+const showStatusInfoButton = computed(
+  () => hasAbnormalStatus.value && taskKind.value === 'generation' && Boolean(taskId.value),
+)
+
 function openEditor() {
   draft.value = String(props.data.content ?? '')
   editorOpen.value = true
@@ -63,6 +83,13 @@ function onSave(md: string) {
   <NeoBaseNode node-type="text" :selected="selected" :data="data" :status="data.status">
     <div class="neo-text-card" title="双击打开沉浸编辑（全屏）" @dblclick.stop="openEditor">
       <p>{{ data.content || '双击编辑文本,或在下方 Dock 生成' }}</p>
+      <NodeStatusInfoButton
+        v-if="showStatusInfoButton"
+        :status="data.status"
+        :task-kind="taskKind"
+        :task-id="taskId"
+        :node-label="typeof data.label === 'string' ? data.label : undefined"
+      />
       <NodeTaskCornerActions
         :status="data.status"
         :started-at="typeof data.generationStartedAt === 'string' ? data.generationStartedAt : undefined"
@@ -72,6 +99,7 @@ function onSave(md: string) {
         :task-id="taskId"
         :node-label="typeof data.label === 'string' ? data.label : undefined"
         :session-id="sessionId"
+        error-detail="status-icon"
       />
     </div>
     <PromptMarkdownEditor
