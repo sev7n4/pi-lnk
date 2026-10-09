@@ -244,3 +244,131 @@ describe('describeDroppedFields', () => {
     ).toBe('以下参数当前模型不支持，已忽略：随机种子、音轨')
   })
 })
+
+// 回归锁：模型被静默换成默认模型时照扣费（生产 1206 笔 completed 且
+// originalModel != modelKey），`modelFallback` 只写进 metadata、前端零渲染
+// ⇒ 用户选了 Seedance、实际拿到 Agnes，全程不知情。
+// 与 droppedFields 同构：成功态也要让用户看见「能力被替换」。
+describe('modelFallback 暴露被替换的模型', () => {
+  const meta = (extra: Record<string, unknown>) =>
+    JSON.stringify({ modelFallback: true, ...extra })
+
+  it('names both the requested and the dispatched model on a SUCCESSFUL record', () => {
+    // 生产真实降级样本：选了 Seedance、实际生成 Agnes
+    const msg = getRecordFailureMessage({
+      status: 'completed',
+      metadata: meta({
+        originalModel: 'seedance-2.0-mini',
+        gatewayModelId: 'agnes-video-v2.0',
+      }),
+    })
+    expect(msg).toContain('seedance-2.0-mini')
+    expect(msg).toContain('agnes-video-v2.0')
+    expect(msg).toMatch(/不可用|默认模型|替换/)
+  })
+
+  it('STAYS SILENT when the dispatched model equals the requested one', () => {
+    expect(
+      getRecordFailureMessage({
+        status: 'completed',
+        metadata: meta({
+          originalModel: 'agnes-video-v2.0',
+          gatewayModelId: 'agnes-video-v2.0',
+        }),
+      }),
+    ).toBeNull()
+  })
+
+  it('STAYS SILENT for the 1196 BYOK records whose modelKey merely differs in naming', () => {
+    // 生产最大的一类。⚠️ 此样本里 `gatewayModelId` 与 `modelId` 互相矛盾
+    // （2.1 vs 2.0），真正投递的是 `modelId`（studio.service.ts:1171）。
+    // 若先读 gatewayModelId，这1196 笔全部会被误报成降级。
+    expect(
+      getRecordFailureMessage({
+        status: 'completed',
+        metadata: meta({
+          originalModel: 'cmrrwoqwz0005ql018ps94tid::agnes-image-2.0-flash',
+          modelKey: 'agnes-image-2.1-flash',
+          gatewayModelId: 'agnes-image-2.1-flash',
+          modelId: 'agnes-image-2.0-flash',
+          nativeParams: { model: 'agnes-image-2.1-flash' },
+        }),
+      }),
+    ).toBeNull()
+  })
+
+  it('reports a BYOK swap when the dispatched id really differs', () => {
+    const msg = getRecordFailureMessage({
+      status: 'completed',
+      metadata: meta({
+        originalModel: 'cmrrwoqwz0005ql018ps94tid::agnes-image-2.0-flash',
+        modelId: 'agnes-image-2.1-flash',
+      }),
+    })
+    expect(msg).toContain('agnes-image-2.0-flash')
+    expect(msg).toContain('agnes-image-2.1-flash')
+    // 渠道前缀 userId:: 不该出现在给用户看的文案里
+    expect(msg).not.toContain('cmrrwoqwz')
+  })
+
+  it('STAYS SILENT when no dispatched id can be found', () => {
+    // 只有 flag 与 modelKey、但没有 gatewayModelId/modelId ⇒
+    // 无法证明换了模型，不提示。
+    expect(
+      getRecordFailureMessage({
+        status: 'completed',
+        metadata: meta({ originalModel: 'seedance-2.0-mini', modelKey: 'agnes-video-v2.0' }),
+      }),
+    ).toBeNull()
+    expect(getRecordFailureMessage({ status: 'completed', metadata: meta({}) })).toBeNull()
+  })
+
+  it('tolerates the legacy boolean-only metadata shape', () => {
+    expect(getRecordFailureMessage({ status: 'completed', metadata: '{"modelFallback":true}' })).toBeNull()
+  })
+
+  it('is ignored when the flag is absent or falsy', () => {
+    expect(
+      getRecordFailureMessage({
+        status: 'completed',
+        metadata: JSON.stringify({
+          originalModel: 'a',
+          gatewayModelId: 'b',
+        }),
+      }),
+    ).toBeNull()
+    expect(
+      getRecordFailureMessage({
+        status: 'completed',
+        metadata: JSON.stringify({
+          modelFallback: false,
+          originalModel: 'a',
+          gatewayModelId: 'b',
+        }),
+      }),
+    ).toBeNull()
+  })
+
+  it('combines with the dropped-params notice and prefers a real failure message', () => {
+    const combined = getRecordFailureMessage({
+      status: 'completed',
+      metadata: meta({
+        originalModel: 'seedance-2.0-mini',
+        gatewayModelId: 'agnes-video-v2.0',
+        droppedFields: [{ field: 'crop', reason: 'x' }],
+      }),
+    })
+    expect(combined).toMatch(/不可用|默认模型|替换/)
+    expect(combined).toContain('裁切')
+
+    const failed = getRecordFailureMessage({
+      status: 'failed',
+      metadata: meta({
+        originalModel: 'seedance-2.0-mini',
+        gatewayModelId: 'agnes-video-v2.0',
+        userMessage: '上游 503',
+      }),
+    })
+    expect(failed).toBe('上游 503')
+  })
+})

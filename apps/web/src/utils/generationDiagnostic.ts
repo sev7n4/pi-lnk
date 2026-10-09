@@ -1,5 +1,5 @@
 import type { ErrorCode, GenerationDiagnostic, TaskKind } from '@lnkpi/shared'
-import { formatDiagnosticCopy } from '@lnkpi/shared'
+import { formatDiagnosticCopy, modelOptionName } from '@lnkpi/shared'
 import type { GenerationRecord } from '@/services/studio-api'
 import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 import {
@@ -192,16 +192,70 @@ export function getDroppedFieldsNotice(metadata?: string | null): string | null 
   )
 }
 
+/**
+ * 模型被换成默认模型时的一句用户可读提示（成功态也可能有）。
+ *
+ * ⚠️ 2026-10-08 新增。`modelFallback` 只写进 metadata、前端零渲染 ⇒
+ * 用户选了 Seedance、实际生成 Agnes，**页面不报错且照扣 30 积分**
+ * （生产 `completed` 且 `originalModel != modelKey` 共 1206 笔）。
+ *
+ * ⛔ 防误报闸门（本函数的主要复杂度都花在这里）：生产 `modelFallback`
+ * 命中 1653 笔、`completed` 1206 笔，但**拿「真正发给上游的 id」逐条核对后，
+ * 真降级只有 54 笔**（BYOK 44 + platform 10）：
+ *
+ * - 1196 笔 BYOK 记录的 `originalModel = 'userId::agnes-image-2.0-flash'`、
+ *   `modelKey = 'agnes-image-2.1-flash'` —— 看着像换了模型，但
+ *   `modelId`（= 真正投递值，见下）就是 2.0-flash，**根本没换**。
+ * - 那 10 笔 platform 是真降级：`originalModel=seedance-2.0-mini`，
+ *   实际生成 `agnes-video-v2.0`，照扣 30 积分。
+ *
+ * ⇒ 因此判据必须是「请求的模型」vs「**真正发出去的**模型」。
+ * ⛔ 而「真正发出去的」在不同链路落在不同字段，且同名 `gatewayModelId`
+ * 在 BYOK 场景是 adapter 内部口径而非实际投递值 —— 见 `pickModelId` 处的实测记录。
+ * 拿 `metadata.modelKey` 比会误报 1196 次，比用户看到静默更糟。
+ */
+export function describeModelFallback(meta: Record<string, unknown>): string | null {
+  if (meta.modelFallback !== true) return null
+  const requested = typeof meta.originalModel === 'string' ? meta.originalModel.trim() : ''
+  if (!requested) return null
+  // ⛔ 字段优先级是**实测定的，不能换**：
+  // 生产 BYOK 记录里 `gatewayModelId=agnes-image-2.1-flash` 与
+  // `modelId=agnes-image-2.0-flash` 同时存在且互相矛盾 —— 前者是
+  // generation-adapter 的内部解析口径，后者才是 studio.service.ts:1171
+  // 真正交给上游的（`resolved.source === 'user' ? resolved.modelName : ...`）。
+  // 先取 gatewayModelId 会把 1196 笔没换模型的记录全误报成降级。
+  const dispatchedRaw =
+    pickModelId(meta.modelId) ?? pickModelId(meta.gatewayModelId)
+  if (!dispatchedRaw) return null
+  // 渠道 ref（`userId::model`）与裸 id 视为同一模型，先归一再比。
+  const requestedName = modelOptionName(requested)
+  const dispatchedName = modelOptionName(dispatchedRaw)
+  if (requestedName === dispatchedName) return null
+  return `所选模型「${requestedName}」当前不可用，已用「${dispatchedName}」生成（按原计划扣费）`
+}
+
+function pickModelId(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+export function getModelFallbackNotice(metadata?: string | null): string | null {
+  return describeModelFallback(parseGenerationRecordMeta(metadata))
+}
+
 export function getRecordFailureMessage(
   record: Pick<GenerationRecord, 'status' | 'metadata'>,
 ): string | null {
   const meta = parseGenerationRecordMeta(record.metadata)
-  const droppedNotice = describeDroppedFields(
-    meta.droppedFields as ReadonlyArray<{ field?: unknown }> | undefined,
-  )
+  const notices = [
+    describeDroppedFields(
+      meta.droppedFields as ReadonlyArray<{ field?: unknown }> | undefined,
+    ),
+    describeModelFallback(meta),
+  ].filter((n): n is string => !!n)
+  const combinedNotice = notices.length > 0 ? notices.join('；') : null
   if (!isFailedGenerationStatus(record.status)) {
-    // 成功态也返回提示：能力被丢弃不是错误，但用户必须看得见
-    return droppedNotice
+    // 成功态也返回提示：能力被丢弃/模型被替换不是错误，但用户必须看得见
+    return combinedNotice
   }
   if (typeof meta.userMessage === 'string' && meta.userMessage) return meta.userMessage
   const byok =
@@ -210,13 +264,13 @@ export function getRecordFailureMessage(
     ''
   if (record.status === NODE_GENERATION_STATUS.fallback_pending) {
     const base = byok ? `平台回退待确认：${byok.slice(0, 240)}` : '平台回退待确认'
-    return droppedNotice ? `${base}；${droppedNotice}` : base
+    return combinedNotice ? `${base}；${combinedNotice}` : base
   }
   if (byok) {
     const raw = byok.slice(0, 240)
-    return droppedNotice ? `${raw}；${droppedNotice}` : raw
+    return combinedNotice ? `${raw}；${combinedNotice}` : raw
   }
-  return droppedNotice ?? '生成失败'
+  return combinedNotice ?? '生成失败'
 }
 
 export function buildFallbackDiagnostic(record: GenerationRecord): GenerationDiagnostic {
