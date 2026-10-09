@@ -210,3 +210,68 @@ describe('generateTextForRefs', () => {
     expect(fetchMock.mock.calls.length).toBe(3)
   }, 30_000)
 })
+
+// ── G5 世界状态注入：决策有上下文、执行也得有上下文 ─────────────────────────
+describe('nodeContext injection', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete process.env.OPENAI_API_KEY
+  })
+
+  const ctx = { selectionDigest: '当前选中：分镜-03', canvasSummary: '画布共 7 个节点' }
+
+  it('appends node context to the system message on the text path', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateTextForRefs('写脚本', [], {
+      apiKey: 'k',
+      model: 'deepseek-v4-pro',
+      nodeContext: ctx,
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    const system = String(body.messages[0].content)
+    expect(system).toContain('当前选中：分镜-03')
+    expect(system).toContain('画布共 7 个节点')
+    // 上下文进 system，不污染 user message（否则改的是用户意图本身）
+    expect(String(body.messages[1].content)).toBe('写脚本')
+  }, 30_000)
+
+  it('appends node context on the vision path too', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'vision ok' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateTextForRefs('describe', ['https://cdn.example/a.png'], {
+      apiKey: 'k',
+      model: 'gemini-3.5-flash-lite',
+      nodeContext: ctx,
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    const system = String(body.messages[0].content)
+    expect(system).toContain('当前选中：分镜-03')
+    expect(system).toContain('画布共 7 个节点')
+  }, 30_000)
+
+  it('leaves the system message untouched when no context is given', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateTextForRefs('写脚本', [], { apiKey: 'k', model: 'deepseek-v4-pro' })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
+    const system = String(body.messages[0].content)
+    expect(system).not.toContain('创作上下文')
+    expect(system).toBe('你是专业 AI 创作助手，擅长脚本、旁白与分镜描述。用中文回复，结构清晰。')
+  }, 30_000)
+})

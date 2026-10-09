@@ -1,6 +1,7 @@
 import { decodeChannelModel } from '@lnkpi/shared'
 import { createTextProvider } from '../tools/text-provider'
 import type { TextGenerateOptions } from '../tools/text-provider'
+import type { CreationContext } from '../tools/creation-context'
 import { generateTextWithImages } from './vision-text'
 
 const VISION_MODEL_PATTERN =
@@ -45,6 +46,11 @@ export type TextGenerationWithRefsOptions = {
   apiKey?: string
   baseUrl?: string
   textOpts?: TextGenerateOptions
+  /**
+   * G5：创作上下文（选中指代 + 画布摘要）。透传给 provider 后追加到 system 末尾。
+   * 不传时 system 与改动前**逐字相同**（有测试锁住这一点）。
+   */
+  nodeContext?: CreationContext
 }
 
 export interface TextForRefsResult {
@@ -67,13 +73,17 @@ export async function generateTextForRefs(
   opts: TextGenerationWithRefsOptions = {},
 ): Promise<TextForRefsResult> {
   const refs = referenceImages.map((url) => url.trim()).filter(Boolean)
+  // G5：上下文只注入 system（见 creation-context.ts），不参与 prompt 本身
+  const textOpts = opts.nodeContext
+    ? { ...opts.textOpts, context: opts.nodeContext }
+    : opts.textOpts
   if (refs.length === 0) {
     const provider = createTextProvider({
       apiKey: opts.apiKey,
       baseUrl: opts.baseUrl,
       model: opts.model,
     })
-    const { text, retryCount } = await provider.generate(prompt, opts.model, opts.textOpts)
+    const { text, retryCount } = await provider.generate(prompt, opts.model, textOpts)
     return { text, visionUsed: false, retryCount }
   }
 
@@ -82,6 +92,7 @@ export async function generateTextForRefs(
       model: upstreamChatModel(opts.model),
       apiKey: opts.apiKey,
       baseUrl: opts.baseUrl,
+      context: opts.nodeContext,
     })
     return { text, visionUsed: true, retryCount }
   }
@@ -94,7 +105,7 @@ export async function generateTextForRefs(
   const { text, retryCount } = await provider.generate(
     appendImageRefsForTextOnlyPrompt(prompt, refs),
     opts.model,
-    opts.textOpts,
+    textOpts,
   )
   return { text, visionUsed: false, retryCount }
 }
