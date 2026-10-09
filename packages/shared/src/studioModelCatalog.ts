@@ -137,30 +137,11 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
     providerBinding: 'gateway-openai-compat',
     params: TEXT_PARAMS,
   },
-  {
-    modelKey: 'gemini-3.1-flash',
-    displayName: 'Gemini 3.1 Flash',
-    gatewayModelId: 'gemini-3.1-flash',
-    modality: 'text',
-    providerBinding: 'gateway-openai-compat',
-    params: TEXT_PARAMS,
-  },
-  {
-    modelKey: 'deepseek-v4',
-    displayName: 'DeepSeek V4',
-    gatewayModelId: 'deepseek-v4',
-    modality: 'text',
-    providerBinding: 'gateway-openai-compat',
-    params: TEXT_PARAMS,
-  },
-  {
-    modelKey: 'gpt-5.5',
-    displayName: 'GPT 5.5',
-    gatewayModelId: 'gpt-5.5',
-    modality: 'text',
-    providerBinding: 'gateway-openai-compat',
-    params: TEXT_PARAMS,
-  },
+  /*
+   * 2026-10-09 探活下架（agnes hub 无渠道，见 docs/superpowers/specs/2026-10-09-model-platform-hardening-design.md §2.4），
+   * 上游开通后按 S1-1 探活对账结果重新上架。
+   * 下架条目：gemini-3.1-flash / deepseek-v4 / gpt-5.5（恢复 = 原样重加条目，见总体规格 §6）。
+   */
 
   // Image (§3.2)
   {

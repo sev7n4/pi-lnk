@@ -12,12 +12,9 @@ import { encodeChannelModel } from './providerChannels'
 
 describe('studioModelCatalog', () => {
   it('lists fixed product models per modality', () => {
-    expect(listModels('text').map((m) => m.modelKey)).toEqual([
-      'agnes-2.0-flash',
-      'gemini-3.1-flash',
-      'deepseek-v4',
-      'gpt-5.5',
-    ])
+    // 2026-10-09 S0-1：gemini-3.1-flash / deepseek-v4 / gpt-5.5 探活下架（agnes hub 无渠道），
+    // 文本仅剩 agnes-2.0-flash（详见 studioModelCatalog.ts 内的下架注释块）。
+    expect(listModels('text').map((m) => m.modelKey)).toEqual(['agnes-2.0-flash'])
     expect(listModels('image').map((m) => m.modelKey)).toEqual([
       'agnes-image-2.0-flash',
       'agnes-image-2.1-flash',
