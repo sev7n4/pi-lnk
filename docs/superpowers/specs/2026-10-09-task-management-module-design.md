@@ -52,7 +52,7 @@
 
 | WorkBuddy 层 | pi-lnk 目标形态 | 落地章节 |
 |---|---|---|
-| L1 任务实体 | 会话内任务清单（工具化 + details 快照持久化 + 跨压缩存活） | **§C1（已实现，待上线验收）** |
+| L1 任务实体 | 会话内任务清单（工具化 + details 快照持久化 + 跨压缩存活） | **§C1（已上线：2026-10-09 生产验收通过）** |
 | L2 模式层 | Plan 确认门（generation-gate 泛化为通用确认门；**拦截用 `before_tool`（HITL gate 同款，已验证可用），方案确认后追加执行轮用 `before_run_end {followUp}`**） | §C3 |
 | L3 步骤透明化 | 由 C1 事件流 + 现有 AgentTaskProgressCard 承载（零迁移） | §C1 |
 | L4 并行执行 | 只读 Explore 型子代理（fork + 独立 session） | §C4 |
@@ -72,7 +72,7 @@
 
 | 章节 | 内容 | 文档 | 状态 |
 |---|---|---|---|
-| **C1** | 任务清单工具化（todo_write 全量覆写 + details 快照持久化 + 跨压缩重注入）——P0+P1 | `docs/superpowers/specs/2026-10-09-task-tool-design.md` | **已实现（待上线验收）** |
+| **C1** | 任务清单工具化（todo_write 全量覆写 + details 快照持久化 + 跨压缩重注入）——P0+P1 | `docs/superpowers/specs/2026-10-09-task-tool-design.md` | **已上线（2026-10-09，PR #319 → `75d3105e`；生产断言 14/14 + 用户视角端到端演示通过；遗留前端消费 activeForm/status 记入 C1 台账 deferred）** |
 | **C1-B** | 二期：增量式多工具（task_create/update/list），B=「A 基座 + fold 增量入口」 | 概要见 C1 spec §8；立项时独立成文 | 未立项（触发条件未满足） |
 | **C2** | turnBudget 轮次硬边界（小件，可与任一章节搭车） | 未成文 | 未立项 |
 | **C3** | Plan 确认门（generation-gate 泛化 + 会话级 planMode） | 未成文 | 未立项 |

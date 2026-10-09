@@ -1,7 +1,7 @@
 # 任务清单工具化（todo_write）设计规格 — P0+P1【模块章节 C1】
 
 > 日期：2026-10-09 · v1.1（评审修订：diff 匹配键 / 事件载体裁决 / 返回值与呈现链 / kill switch 部署现实 / 成功指标）
-> 状态：待评审
+> 状态：**已上线**（2026-10-09 · PR #319 squash=`75d3105e` · 生产验收：runtime healthz/registry 版本一致 + 双部署单元行为断言 14/14 + 用户视角端到端演示通过）
 > 上级文档：`docs/superpowers/specs/2026-10-09-task-management-module-design.md`（任务管理模块总体设计/全景视图）——本文是其中的章节 C1，模块分层、设计原则、章节索引与资产维护约定见上级文档。
 > 输入：`docs/analysis/2026-10-09-workbuddy-task-planning-benchmark.md`（WorkBuddy 对标报告）+ pi vendor 内核与生态调研（结论沉淀于上级文档 §1）
 > 范围：P0（⟦plan⟧ 文本协议升级为内核任务工具）+ P1（任务状态持久化/跨压缩存活）。P2 Plan 确认门、P3 turnBudget、P4 子代理/automations 不在本章节内（见上级文档 §3 章节索引）。
