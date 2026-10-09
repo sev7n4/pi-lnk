@@ -61,3 +61,57 @@ export const TEXT_FILL = "#33414D";
 export function topBarColorOf(strong: string | undefined, stroke: string): string {
 	return strong ?? stroke;
 }
+
+/**
+ * 深色主题对应色（§238 跨端 parity的第二半）。
+ *
+ * ## 为什么深色需要一份独立值，而不是「反过来」
+ *
+ * 浅色那套的关系**不可镜像**：`NODE_FILL` 白、`NODE_STROKE` 中灰，都是「深字浅底」。
+ * 深底上白字是刺眼白块（§4.2(3)），而中灰 `#7A8391` 落在深底上对比度只有 ~2.5:1，
+ * 描边会「吃掉」⇒ 必须重新按 WCAG 复核，而不是取反或复用。
+ *
+ * ## 与浅色**同源不变**的一条铁律
+ *
+ * 节点底vs 卡片底 =1.17:1（浅色是 1.06:1）—— **两者都刻意拉不开**，
+ * 边界一律由 `NODE_STROKE` 表达。这不是缺陷而是设计：任何≥3:1 的底色差
+ * 都要求把底压到中灰，那会让容器层比节点还深、层次倒挂（见 `CARD_BG` 注释）。
+ * ⛔ 因此 parity 测试**不许**断言「节点底与卡片底对比度 ≥ X」——那条恒假。
+ *
+ * ## 所有比值均为 WCAG 2.1 相对亮度公式实测（2026-10-09），非估算
+ *
+ * | 关系 | 实测 | 判据 |
+ * |---|---|---|
+ * | `DARK_NODE_STROKE` vs `DARK_NODE_FILL` | 4.00:1 | ≥3:1 非文本 AA ✅ |
+ * | `DARK_NODE_STROKE` vs `DARK_CARD_BG` | 4.67:1 | ≥3:1 ✅ |
+ * | `DARK_TEXT_FILL` vs `DARK_NODE_FILL` | 12.91:1 | ≥4.5:1 正文 AA ✅ |
+ * | `SEVERITY_DARK.error` vs `DARK_NODE_FILL` | 5.12:1 | ≥3:1 ✅ |
+ * | `SEVERITY_DARK.warn` vs `DARK_NODE_FILL` | 6.59:1 | ≥3:1 ✅ |
+ *
+ * ⚠️ **改动前必须重算**：这批值是**成对**的（描边压深了，节点底就得跟着抬），
+ * 单独改一个会让上表某行掉到 3:1 以下。
+ */
+export const DARK_CARD_BG = "#1E1E24";
+
+/** 深色节点底：非纯白（§4.2(3)），比卡片底亮一档；边界靠 `DARK_NODE_STROKE`。 */
+export const DARK_NODE_FILL = "#2A2A33";
+
+/** 深色节点描边：vs 节点底 4.00:1 / vs 卡片底 4.67:1（WCAG 非文本 AA）。 */
+export const DARK_NODE_STROKE = "#828896";
+
+/** 深色容器描边：刻意比节点描边浅 —— 容器不该比节点更显眼。 */
+export const DARK_CONTAINER_STROKE = "#3E3E48";
+
+/** 深色正文/标题：vs 节点底 12.91:1（WCAG 正文 AA）。 */
+export const DARK_TEXT_FILL = "#F2F4F8";
+
+/**
+ * 深色 severity：error 提亮到 `#FF6B6A`、warn 提到 `#E8A33D`。
+ *
+ * ⚠️ 深色**不能**复用浅色的 `#E24B4A` / `#C97A12`：那两个是为白底调的，
+ *   落深底上会明显发闷（对比度掉到 2:1 档）⇒ 强调色在深底上等于没有强调。
+ */
+export const SEVERITY_DARK: Record<"error" | "warn", { stroke: string; badge: string }> = {
+	error: { stroke: "#FF6B6A", badge: "#3A1F22" },
+	warn: { stroke: "#E8A33D", badge: "#3A2E1A" },
+};

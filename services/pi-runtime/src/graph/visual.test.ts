@@ -339,9 +339,38 @@ describe("SVG 必须能被 XML 解析器吃下（无值属性 = 整图不渲染�
 			const svg = await svgOfCase({ view } as never, TRIGGER);
 			assert.match(svg, /data-x="1"/, `fixture 没在 view=${view} 触发错位标记 data-x ⇒ 无值属性断言覆盖不到`);
 		}
-		// ⚠️ `data-o`（孤儿标记）当前 fixture 触发不到 —— tree 的孤儿判定基于 IR containment，
-		//   完全孤立的节点仍会被当作根。它与 data-x 是同一段代码的同一个模板，
-		//   data-x 的变异验证已覆盖这条路径；等能稳定造出孤儿 fixture 再补断言。
+		// ⛔ data-o（孤儿标记）此前**没有任何断言覆盖**，理由写的是「造不出孤儿 fixture」。
+		//   那是错的：`tree.ts` 的孤儿判定是「DFS 从根出发走不到的节点」，
+		//   而**互相 parentNode 的环**天然走不到（见 layout/tree.test.ts 同fixture）。
+		//   ⛔ 「无父无子的孤立节点」测的是根层，**不是**孤儿——用错fixture 会假绿。
+		//   实测：view=tree 下该 fixture 产出 data-o="1" 两次；view=layout 产出 0 次
+		//   （layout 不走 tree 的孤儿判定）⇒ 下面只断言 tree，不是「所有视图」。
+		const ORPHAN = {
+			nodes: [
+				{ id: "normal", title: "正常节点" },
+				{ id: "cycA", parentNode: "cycB" }, // ⇄ 成环 ⇒ DFS 走不到 ⇒ 孤儿
+				{ id: "cycB", parentNode: "cycA" },
+			],
+			edges: [],
+		};
+		for (const view of ["tree", "layout"] as const) {
+			const svg = await svgOfCase({ view, relation: "category" } as never, ORPHAN as never);
+			const bare = [...svg.matchAll(/\s(data-[a-z-]+)(?=[\s/>])/g)].map((m) => m[1]);
+			assert.deepEqual(
+				[...new Set(bare)],
+				[],
+				`孤儿 fixture(view=${view}) 出现无值属性 ${JSON.stringify([...new Set(bare)])} ⇒ 同一模板的 data-o 会整图渲染失败`,
+			);
+		}
+		// ⛔ 自检：data-o 必须真被触发，否则上面两轮是空转。
+		//   变异验证：把 `data-o="1"` 改回无值 `data-o`，本断言转红 ⇒ 判据有效。
+		const orphanSvg = await svgOfCase({ view: "tree", relation: "category" } as never, ORPHAN as never);
+		assert.match(orphanSvg, /data-o="1"/, "孤儿 fixture 没触发 data-o ⇒ 无值属性断言覆盖不到孤儿分支");
+		assert.equal(
+			[...orphanSvg.matchAll(/data-o="1"/g)].length,
+			2,
+			"成环的两个节点都应标data-o（实测 2），数量变了说明孤儿判定被改动",
+		);
 	});
 
 	test("⛔ 整图能被严格 XML 解析器解析（端到端判据，不靠正则猜）", async () => {

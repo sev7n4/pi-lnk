@@ -24,9 +24,15 @@
   --neo-bg: #131318;
   /* node_graph 卡片底（2026-07-24）：比 --neo-bg 亮一档 ⇒ 边界清晰但不"浮起来"。
      ⚠️ 刻意**不用纯白** —— 纯白卡片落在深底上会形成刺眼白块，
-     这正是旧SVG 卡片在深色主题下"字看不清 / 刺眼"的根因。 */
-  --neo-graph-card-bg: #1e1e24;
-  --neo-graph-card-border: rgba(255, 255, 255, 0.09);
+     这正是旧SVG 卡片在深色主题下"字看不清 / 刺眼"的根因。
+     ⛔ = palette.DARK_CARD_BG（大小写也须一致，parity 守卫按字节比）。 */
+  --neo-graph-card-bg: #1E1E24;
+  /* ⛔ = palette.DARK_CONTAINER_STROKE（深色版容器描边，vs 卡片底 1.57:1）。
+     浅色对应值CONTAINER_STROKE 是 1.49:1 —— 两主题「容器不该比节点更显眼」
+     的关系强度保持一致（不是照抄同一个 hex，深底上要重新配）。
+     ⚠️ 该变量**只有** AgentNodeGraph.vue 消费（graph 作用域），
+        不要拿它去改全站节点描边（那是 --neo-node-border，另一套语义）。 */
+  --neo-graph-card-border: #3E3E48;
   --neo-surface-card: #1a1a21;
   --neo-surface-elevated: #232330;
   --neo-border: rgba(255, 255, 255, 0.08);
