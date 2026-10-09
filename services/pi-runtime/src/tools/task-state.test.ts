@@ -122,6 +122,19 @@ test("summarize: 紧凑摘要，不回显全量 JSON", () => {
 	assert.ok(!s.includes("plan-1"));
 });
 
+test("summarize: 多项 in_progress → 追加软提醒（spec §5，不硬校验）", () => {
+	const s = summarize([
+		{ id: "plan-1", content: "起稿", status: "in_progress" },
+		{ id: "plan-2", content: "配图", status: "in_progress", activeForm: "正在配图" },
+	]);
+	assert.ok(s.includes("共 2 项"));
+	assert.ok(s.includes("正在配图"));
+	assert.ok(s.includes("多项进行中"), "应含软提醒");
+	// 单项进行中不提醒
+	const s1 = summarize([{ id: "plan-1", content: "起稿", status: "in_progress" }]);
+	assert.ok(!s1.includes("多项进行中"));
+});
+
 test("renderTodoBlock: 三态标记渲染", () => {
 	const block = renderTodoBlock([
 		{ id: "plan-1", content: "起稿", status: "completed" },

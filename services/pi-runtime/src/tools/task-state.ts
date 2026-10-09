@@ -99,13 +99,17 @@ export function pickLatestSnapshot(entries: readonly unknown[]): TodoItemWithId[
 	return [];
 }
 
-/** 模型可见返回值：紧凑摘要（spec §3.1——禁回显全量 JSON）。 */
+/** 模型可见返回值：紧凑摘要（spec §3.1——禁回显全量 JSON）。
+ * spec §5：不硬校验不矫正，多项 in_progress 时工具结果文本一次性软提醒（模型自纠回路）。 */
 export function summarize(items: readonly TodoItemWithId[]): string {
 	if (items.length === 0) return "任务清单已清空";
-	const inProgress = items.find((i) => i.status === "in_progress");
+	const inProgressItems = items.filter((i) => i.status === "in_progress");
 	const done = items.filter((i) => i.status === "completed").length;
-	const focus = inProgress ? `，进行中：${inProgress.activeForm ?? inProgress.content}` : "";
-	return `任务清单已更新：共 ${items.length} 项${focus}；已完成 ${done} 项`;
+	const focus = inProgressItems.length
+		? `，进行中：${inProgressItems.map((i) => i.activeForm ?? i.content).join("、")}`
+		: "";
+	const multi = inProgressItems.length > 1 ? "；注意：存在多项进行中，建议只保留一项" : "";
+	return `任务清单已更新：共 ${items.length} 项${focus}；已完成 ${done} 项${multi}`;
 }
 
 /** 跨压缩动态块渲染（spec §3.4）。 */

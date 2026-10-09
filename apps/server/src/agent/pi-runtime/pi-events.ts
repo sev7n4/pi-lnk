@@ -380,6 +380,16 @@ export function extractCanvasActions(event: PiRuntimeEvent): CanvasAction[] {
 const TaskDiffSchema = z.object({
 	todo: z
 		.object({
+			snapshot: z
+				.array(
+					z.object({
+						id: z.string(),
+						content: z.string(),
+						status: z.string(),
+						activeForm: z.string().optional(),
+					}),
+				)
+				.optional(),
 			diff: z.object({
 				list: z
 					.array(
@@ -412,6 +422,7 @@ export function extractTaskEvents(event: PiRuntimeEvent): TaskWireEvent[] {
 	if (d.isError) return [];
 	const parsed = TaskDiffSchema.safeParse(d.result?.details);
 	if (!parsed.success || !parsed.data.todo) return [];
+	const { snapshot } = parsed.data.todo;
 	const { list, updates } = parsed.data.todo.diff;
 	if (list) {
 		return [
@@ -429,7 +440,21 @@ export function extractTaskEvents(event: PiRuntimeEvent): TaskWireEvent[] {
 		];
 	}
 	if (updates.length === 0) return [];
-	return updates.map((u) => ({ type: "task_update", data: { id: u.id, status: mapStatus(u.status) } }));
+	// updates 路径：从同载荷 snapshot 反查命中项，附 title/activeForm（spec §3.3 呈现链对增量更新成立）；
+	// 未命中（防御，snapshot 缺失或 id 漂移）退化为 {id,status}。
+	const byId = new Map((snapshot ?? []).map((s) => [s.id, s]));
+	return updates.map((u) => {
+		const hit = byId.get(u.id);
+		return {
+			type: "task_update" as const,
+			data: {
+				id: u.id,
+				status: mapStatus(u.status),
+				...(hit ? { title: hit.content } : {}),
+				...(hit?.activeForm ? { activeForm: hit.activeForm } : {}),
+			},
+		};
+	});
 }
 
 /** message_update 内嵌的 thinking 子事件（thinking_start/delta/end，实测见文件头注释）。 */

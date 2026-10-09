@@ -419,6 +419,41 @@ describe("extractTaskEvents（C1：todo_write diff → task_list/task_update 派
 		expect(events).toEqual([{ type: "task_update", data: { id: "plan-1", status: "done" } }]);
 	});
 
+	it("updates 命中 snapshot → task_update 附 title/activeForm（呈现链对增量更新成立）", () => {
+		const events = extractTaskEvents(
+			mkEnd({
+				todo: {
+					snapshot: [
+						{ id: "plan-1", content: "起稿", status: "in_progress", activeForm: "正在起稿" },
+						{ id: "plan-2", content: "配图", status: "pending" },
+					],
+					diff: {
+						updates: [
+							{ id: "plan-1", status: "in_progress" },
+							{ id: "plan-2", status: "completed" },
+						],
+					},
+				},
+			}),
+		);
+		expect(events).toEqual([
+			{ type: "task_update", data: { id: "plan-1", status: "running", title: "起稿", activeForm: "正在起稿" } },
+			{ type: "task_update", data: { id: "plan-2", status: "done", title: "配图" } },
+		]);
+	});
+
+	it("updates 未命中 snapshot（防御）→ task_update 退化为 {id,status}", () => {
+		const events = extractTaskEvents(
+			mkEnd({
+				todo: {
+					snapshot: [{ id: "plan-9", content: "无关项", status: "pending" }],
+					diff: { updates: [{ id: "plan-1", status: "completed" }] },
+				},
+			}),
+		);
+		expect(events).toEqual([{ type: "task_update", data: { id: "plan-1", status: "done" } }]);
+	});
+
 	it("非 tool_execution_end / isError / 无 details.todo → 空", () => {
 		expect(extractTaskEvents({ type: "message_update", ts: 1, data: {} } as never)).toEqual([]);
 		expect(

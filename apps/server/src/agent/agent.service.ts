@@ -1341,7 +1341,7 @@ export class AgentService {
           ;(ui.data as { text: string }).text = stripped.text
           if (stripped.plan?.length) {
             // C1 验收观测：⟦plan⟧ 已停教（prompt 只教 todo_write），部署后本日志应恒 0
-            this.piLogger?.info?.(`[legacy-plan-marker] items=${stripped.plan.length}`);
+            this.piLogger?.info?.(`[legacy-plan-marker] session=${sessionKey} items=${stripped.plan.length}`)
             const planEv = {
               type: 'task_list',
               data: {

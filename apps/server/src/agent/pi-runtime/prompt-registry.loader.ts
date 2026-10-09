@@ -33,9 +33,9 @@ const GROUP_VALUES = new Set<string>(["writeTools", "genTools", "todoTools"]);
  * 2026-10-03 加 canvas_view_policy（546字符）后全组合 2880 ⇒ 旧上限已无法容纳任何新规则。
  * 上调到 3200：距当前 2880 留约 320 字符（约 4 条中等规则），并配STATIC_BUDGET_WARN_CHARS
  * 预警线，让「快满了」在撞死线之前就先被看见。
- * ⚠️ C1（2026-10-09）：task_tool 入表时全组合余量仅 89 ⇒ task_tool 正文压缩到 58 字符
- * （详细约定在 todo_write 工具 schema description，规则只留触发指引）⇒ 全组合 3170，
- * 余量 30。**抬预算属 AGENTS.md 红线第 3 条（须人工决策），AI 不得自行改**——
+ * ⚠️ C1（2026-10-09）：task_tool 入表时全组合余量仅 89 ⇒ task_tool 正文压缩到 63 字符
+ * （详细约定在 todo_write 工具 schema description，规则只留触发指引）⇒ 全组合 3175，
+ * 余量 25。**抬预算属 AGENTS.md 红线第 3 条（须人工决策），AI 不得自行改**——
  * 如需扩容请人工拍板后改本常量并同步 PROMPT_SPEC.md。
  */
 export const STATIC_BUDGET_CHARS = 3200;

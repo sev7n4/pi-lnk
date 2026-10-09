@@ -69,7 +69,8 @@
 **三态 → 事件映射表**（事件 payload 是自有协议，加字段不算前端破坏性迁移）：
 - `task_list`：items 结构从 `{id, title}` 扩展为 `{id, title, status}`（status ∈ pending/in_progress/completed）；前端 reconcile 对未知 status 按"未完成"渲染（向后兼容）。
 - `task_update`：`{id, status}`，status 直接透传三态。
-- 呈现链：running（in_progress）项卡片主文案 = **`activeForm ?? content`**（对齐 WorkBuddy L3"正在分析数据"式阶段说明）；completed 项 = content。
+- **V-B 词汇映射裁决（2026-10-09 实现实证，取代上行的"直接透传三态"）**：`extractTaskEvents` 对外 status 一律映射——`completed→done`、其余→`running`。依据：web 端 `applyTaskEvent` 对 task_list items 硬编码 `status:'pending'`（不读 payload status）、`task_update` 对未知 status 原样赋值且 `TERMINAL_STATUSES` 不识别 `completed` ⇒ 三态透传会破坏卡片完成判定。V-A（原样透传）保留为 mapStatus 注释中的切换点。task_list items 的 `status`/`activeForm` 为 payload 先行字段，前端消费属后续 UI 迭代。
+- 呈现链：running（in_progress）项卡片主文案 = **`activeForm ?? content`**（对齐 WorkBuddy L3"正在分析数据"式阶段说明）；completed 项 = content。updates 路径（最常见增量：状态翻转）的 `task_update` 由 Nest 从同载荷 snapshot 反查命中项附加 `title`/`activeForm`（未命中退化为 `{id,status}`），保证呈现链对增量更新同样成立。
 - 老 ⟦plan⟧ 事件（无 status 字段）重放时由前端按 running 补默认，不影响旧卡片渲染。
 
 ### 3.4 跨压缩注入（改 `services/pi-runtime/src/session-manager.ts`）
@@ -97,7 +98,7 @@
 | 空 todos 数组 | 合法 = 清空清单（对齐 TodoWrite 清空约定） |
 | 模型漏发历史项（增量习惯） | description 明示"必须包含全部任务"；diff 侧对 n 序列断裂打 warn 日志（`GenerationRecord.metadata` 同款可观测降级，无 metrics 设施现状下的约定） |
 | resume 后无任何 todo_write | 快照为空，dynamicBlock 不注入 |
-| 工具未注册但模型发起 todo_write 调用（kill switch 漂移/幻觉） | 明确 isError 文本返回（"任务清单工具未启用"），阻断幻觉调用循环 |
+| 工具未注册但模型发起 todo_write 调用（kill switch 漂移/幻觉） | 明确 isError 文本返回（"任务清单工具未启用"），阻断幻觉调用循环。**实现落点注明（2026-10-09）**：复用 vendor 原生未注册工具错误（agent-loop `Tool todo_write not found`，isError:true）——功能等价（阻断成立），未自造专用文案，验收勿对字面。 |
 | 多 in_progress 出现率 | 上线后统计；**>10% 则升级为服务端硬校验**（Codex 同款），数据驱动收紧 |
 | kill switch off | 工具不注册 + prompt 规则不拼入（双侧同 env） |
 | prompt 预算超限 | 新增 ≈150–250 token，余量 124/3200；实现计划阶段实测，超则从低频规则（canvas_daily_ops 族）压缩腾挪 |
