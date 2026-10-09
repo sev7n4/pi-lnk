@@ -27,7 +27,6 @@ import {
   defaultGuideCapabilities,
   getGenerationScene,
   getModelEntry,
-  isTurnaroundLikePrompt,
   resolveImageModelProfile,
 } from '@lnkpi/shared'
 import {
@@ -93,10 +92,10 @@ const readonly = computed(() =>
 )
 const credits = computed(() => estimateImageCredits(imageCount.value, imageResolution.value))
 
+// 仅当节点真实运行 turnaround 管线时提示（管线由 agent workflow 显式设置）。
+// 不要按提示词关键词猜测：后端不会对普通提示词做四格补全，文案会变成虚假承诺。
 const showTurnaroundHint = computed(() => {
-  const data = props.node.data ?? {}
-  if (data.pipeline === 'turnaround_image') return true
-  return isTurnaroundLikePrompt(prompt.value)
+  return (props.node.data ?? {}).pipeline === 'turnaround_image'
 })
 
 const guideCapabilities = computed(() => {

@@ -3,7 +3,6 @@ import {
   buildPromptNodeCardPreview,
   countMarkdownTableDataRows,
   isProductFourPanelPrompt,
-  isTurnaroundLikePrompt,
   summarizePromptCompletion,
   TURNAROUND_PIPELINE_USER_NOTE,
 } from './promptContent'
@@ -39,11 +38,6 @@ describe('promptContent', () => {
     expect(TURNAROUND_PIPELINE_USER_NOTE).toContain('近景特写')
     expect(TURNAROUND_PIPELINE_USER_NOTE).toContain('四格')
     expect(TURNAROUND_PIPELINE_USER_NOTE).toContain('三视图')
-  })
-
-  it('detects turnaround-like prompts', () => {
-    expect(isTurnaroundLikePrompt('现代都市白领女主角的三视图')).toBe(true)
-    expect(isTurnaroundLikePrompt('蓝牙耳机主图')).toBe(false)
   })
 
   it('detects colloquial product four-panel prompts', () => {

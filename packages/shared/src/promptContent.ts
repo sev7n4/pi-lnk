@@ -14,6 +14,9 @@ export const PROMPT_MODE_LABELS: Record<string, string> = {
 export const TURNAROUND_PIPELINE_USER_NOTE =
   '已按角色设定图模版扩写并出图；在原有三视图（正/侧/背）基础上增加近景特写，共四格横排；使用 2:1 画幅（非账户默认比例）。'
 
+/** Only shown when the node actually runs the turnaround pipeline (data.pipeline === 'turnaround_image').
+ *  Never gate this on prompt-text heuristics: the backend four-panel completion is driven by the
+ *  explicit pipeline (or the narrow isProductFourPanelPrompt), not by broad keyword matching. */
 export const TURNAROUND_PIPELINE_DOCK_HINT =
   '三视图将自动补全为四格：近景特写 + 正/侧/背全身，2:1 横排出图'
 
@@ -92,12 +95,9 @@ export function buildPromptNodeCardPreview(input: {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
-export const TURNAROUND_INTENT_PATTERN =
-  /三视图|四视图|多视图|turnaround|角色设定|模特定妆|正侧背|模特图|q版|q萌|chibi/i
-
-export function isTurnaroundLikePrompt(text: string): boolean {
-  return TURNAROUND_INTENT_PATTERN.test(text)
-}
+// NOTE: 历史遗留的宽匹配启发式 isTurnaroundLikePrompt（/三视图|q版|chibi|.../）已于 2026-10-09 删除：
+// 它唯一消费方是 ImageDockPanel 的提示卡，而「Q版」「chibi」等词在普通单图生成里极常见，
+// 会展示一条后端根本不会执行的四格补全承诺（假阳性文案）。四格意图的权威判断见 isProductFourPanelPrompt。
 
 const PRODUCT_PANEL_RE =
   /同一\s*SKU|同一产品|产品四视图|产品三视图|产品的[三四]视图|这个产品.{0,20}[三四]视图|商品[三四]视图|禁止每格换款|SKU\s*外观|四格拼图.*产品/
