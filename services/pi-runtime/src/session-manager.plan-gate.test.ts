@@ -255,3 +255,17 @@ test("resume 播种：末条 decision=execute → idle 放行", async () => {
 	await runProposeAndReopen(threadKey, key, { plan_confirm: ["execute"] });
 	assert.equal(isPlanPending(key), false, "execute 播 idle（不拦写）");
 });
+
+test("resume 播种：kill switch off 时不播种（回滚场景存量会话不得被锁死）", async () => {
+	resetTodoStoreForTest();
+	const threadKey = "sess-plan-seed-killoff";
+	const key = toSessionKey(threadKey);
+	resetPlanState(key);
+	process.env.PI_RUNTIME_PLAN_GATE = "off";
+	try {
+		await runProposeAndReopen(threadKey, key, { plan_confirm: ["keep"] });
+	} finally {
+		delete process.env.PI_RUNTIME_PLAN_GATE;
+	}
+	assert.equal(isPlanPending(key), false, "off 时 resume 不得播种 planPending（否则 propose_plan 已注销 ⇒ 永久拦写）");
+});

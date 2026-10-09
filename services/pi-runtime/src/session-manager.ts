@@ -55,6 +55,7 @@ import { buildToolEnsemble } from "./tools/tiering.js";
 import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
 import { pickLatestPlanDecision, seedPlanState } from "./gate/plan-gate.js";
+import { planGateEnabled } from "./runtime-config.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import { stripImageBlocks } from "./sse-sanitize.js";
@@ -974,8 +975,10 @@ export class SessionManager {
 				seedTodoState(todoKey, pickLatestSnapshot(Array.isArray(entries) ? entries : []));
 				// C3（spec §3.5）：plan 状态播种——SSOT = transcript 末条 propose_plan details。
 				// 无 propose_plan 记录（老会话）不播种，保持默认 idle。
+				// kill switch 同门控（终审 Critical #1）：off 时恢复旧行为，存量 planPending
+				// 会话不得播种——propose_plan 已注销，播种=永久拦写无解锁出口。
 				const planDecision = pickLatestPlanDecision(Array.isArray(entries) ? entries : []);
-				if (planDecision) seedPlanState(todoKey, planDecision);
+				if (planDecision && planGateEnabled()) seedPlanState(todoKey, planDecision);
 			} catch (err) {
 				console.warn("[todo-resume] transcript seeding failed (fail-soft):", err);
 			}

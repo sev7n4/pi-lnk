@@ -15,18 +15,27 @@ import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import type { LnkpiToolContext } from "../tools/types.js";
 import type { Metrics } from "../metrics.js";
 import { getTodoState } from "../tools/todo.js";
+import { planGateEnabled } from "../runtime-config.js";
 import { consumePlanExecutionSignal, shouldBlockForPlan } from "./plan-gate.js";
 
 export function registerPlanGateHooks(
 	harness: AgentHarness<LnkpiToolContext>,
 	opts: {
-		planKey: string;
+		/** 键域解析器：canvasSessionId 每轮可能自愈（doCreate），钩子内必须**现算**——
+		 * 急切捕获会让「晚绑定画布会话」的门禁静默 fail-open（终审 Important #2）。 */
+		planKey: string | (() => string);
 		tiers: ReadonlyMap<string, string | undefined>;
 		metrics: Pick<Metrics, "observePlanGateBlocked">;
 	},
 ): void {
-	const { planKey, tiers, metrics } = opts;
+	// kill switch 三面全关（终审 Critical #1）：off ⇒ 不注册（拦/注入自然不存在）。
+	// 回滚止血场景：存量 planPending 会话不播种（session-manager 同门控）+ 工具不注册
+	// （config.ts 同门控）⇒ 逐字节旧行为，无锁死出口。
+	if (!planGateEnabled()) return;
+	const { tiers, metrics } = opts;
+	const resolveKey = () => (typeof opts.planKey === "function" ? opts.planKey() : opts.planKey);
 	harness.hooks.on("before_tool", async (event) => {
+		const planKey = resolveKey();
 		if (!shouldBlockForPlan(event.toolName, tiers.get(event.toolName), planKey)) return undefined;
 		metrics.observePlanGateBlocked(event.toolName);
 		return {
@@ -38,6 +47,7 @@ export function registerPlanGateHooks(
 	});
 	harness.hooks.on("before_run_end", async () => {
 		// 双保险不双执行（spec §3.4）：信号消费一次即清；todo 全部完成则不注入。
+		const planKey = resolveKey();
 		if (!consumePlanExecutionSignal(planKey)) return undefined;
 		const next = getTodoState(planKey).find((i) => i.status !== "completed");
 		if (!next) return undefined;

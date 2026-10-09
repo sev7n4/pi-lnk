@@ -148,10 +148,14 @@ const manager = new SessionManager(
 			});
 			// C3 Plan 确认门（spec 2026-10-10-plan-gate-design.md §3.3/§3.4）：与 generation-gate
 			// 并存不合并（节点级 SSOT vs transcript 快照两套语义）。键域 = canvasSessionId ?? key
-			// （与 propose_plan 的 tc.sessionId、session-manager 播种三方一致，#74 解耦语义）。
+			// （与 propose_plan 的 tc.sessionId、session-manager 播种三方一致，#74 解耦语义）——
+			// canvasSessionId 每轮可能自愈（doCreate），传解析器现算而非捕获值（终审 Important #2）。
 			// 必须挂在 if (!nestClient) 之前——propose_plan 纯文本模式也可用（与 config.ts 注册面一致）。
-			const planKey = manager.getCanvasSessionId(sessionId) ?? sessionId;
-			registerPlanGateHooks(harness, { planKey, tiers: toolTiers, metrics });
+			registerPlanGateHooks(harness, {
+				planKey: () => manager.getCanvasSessionId(sessionId) ?? sessionId,
+				tiers: toolTiers,
+				metrics,
+			});
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
 			harness.hooks.on("before_tool", async (event) => {
