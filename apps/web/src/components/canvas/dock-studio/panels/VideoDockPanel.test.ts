@@ -33,4 +33,17 @@ describe('VideoDockPanel bottom dock', () => {
     expect(panelSrc).not.toContain('title="图生视频"')
     expect(panelSrc).not.toContain('dock-advanced')
   })
+
+  it('does not embed the ref-preflight banner or client-side probe (server owns preflight)', () => {
+    expect(panelSrc).not.toContain('dock-ref-preflight-alert')
+    expect(panelSrc).not.toContain('ElAlert')
+    expect(panelSrc).not.toContain('refreshRefPreflight')
+    expect(panelSrc).not.toContain('loadCachedRefPreflight')
+    expect(panelSrc).not.toContain('probeMedia')
+    expect(panelSrc).not.toContain('evaluateMediaRefPreflight')
+    expect(panelSrc).not.toContain('studioApi')
+    // 失败 toast 兜底保留：错误回显仍按 refKey 定位（服务端拦截文案含「参考图 N」）
+    expect(panelSrc).toContain('pendingPreflightToast')
+    expect(panelSrc).toContain('ElMessage.error')
+  })
 })
