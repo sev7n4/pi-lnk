@@ -37,6 +37,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import postcss from 'postcss'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -111,4 +112,46 @@ describe('跨端调色板一致性（§238：静态图与节点图不得两套�
       expect(varIn('dark', name), `自检失败：深色主题读不到 ${name}`).toBeTruthy()
     }
   })
+
+  it('⛔ neowow-tokens.css 是合法 CSS（postcss 能解析）', () => {
+    // 实战踩坑（2026-10-09）：在一个 /* … */ 注释内部又插了一个 /* … */，
+    // 外层注释被提前闭合 ⇒ 剩余文本变成非法 CSS ⇒ postcss 报
+    //「Unknown word」⇒ `vite build` 直接失败。
+    // ⛔ 本地 `vite build` 可能命中缓存而不复现（我第一次就如此被骗），
+    //   所以这条断言直接调postcss 解析，1 秒内暴露而不是等 CI 的 3 分钟 build。
+    let err: Error | undefined
+    try {
+      postcss.parse(css, { from: TOKENS_CSS })
+    } catch (e) {
+      err = e as Error
+    }
+    expect(err, `neowow-tokens.css 语法错误（多半是注释嵌套/未闭合）：${err?.message}`).toBeUndefined()
+  })
+
+  it('⛔ CSS 注释没有嵌套（外层 /* 被内层 */ 提前闭合的根因）', () => {
+    // 逐字符扫描：注释内出现第二个 /* 就是非法嵌套（CSS 不支持嵌套注释）
+    const offenders: number[] = []
+    const lines = css.split('\n')
+    let inComment = false
+    lines.forEach((line, idx) => {
+      let i = 0
+      while (i < line.length) {
+        if (!inComment) {
+          const open = line.indexOf('/*', i)
+          if (open < 0) break
+          inComment = true
+          i = open + 2
+        } else {
+          const close = line.indexOf('*/', i)
+          const nested = line.indexOf('/*', i)
+          if (nested >= 0 && (close < 0 || nested < close)) offenders.push(idx + 1)
+          if (close < 0) break
+          inComment = false
+          i = close + 2
+        }
+      }
+    })
+    expect(offenders, `这些行在注释内又开了 /*（CSS 不支持嵌套注释）：${offenders.join(', ')}`).toEqual([])
+  })
+
 })
