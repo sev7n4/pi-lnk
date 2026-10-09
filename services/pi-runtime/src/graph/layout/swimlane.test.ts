@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { graphIRFromGv } from "../graph-ir.js";
-import { LANE_H, LANE_LABEL_W, STAGE_COUNT, layoutSwimlane } from "./swimlane.js";
+import { LANE_H, LANE_LABEL_W, STAGE_COUNT, laneHeight, layoutSwimlane } from "./swimlane.js";
 
 const MIX = [
 	{ id: "a", type: "prompt", title: "甲" },
@@ -187,4 +187,84 @@ test("flatOrder 存在（图例吃平铺序，不是节点行序）", () => {
 	);
 	assert.equal(l.flatOrder!.length, 3);
 	assert.equal(new Set(l.flatOrder).size, 3);
+});
+
+// ══════════════════════════════════════════════════════════
+// D3-1：同格纵向错开（修复「26 个节点只露出 10 个位置」）
+// ══════════════════════════════════════════════════════════
+
+/** 26 个节点：2 种 type（a 9 个 / b 17 个），下标均分到 5 个阶段。 */
+const MANY = Array.from({ length: 26 }, (_, i) => ({
+	id: `n${i}`,
+	title: `节点 ${i}`,
+	type: i % 3 === 0 ? "a" : "b",
+}));
+
+function manyLaid() {
+	return layoutSwimlane(
+		graphIRFromGv({ view: "swimlane", relation: "category", nodes: MANY, edges: [], groupBy: "type" }),
+	);
+}
+
+test("D3-1：laneHeight 单节点/格仍是 46（⇐ 与迁移前逐字节一致的前提）", () => {
+	// ⭐ 用字面量：slot=1 算出 32，被下限 46 兜住 ⇒ 小画布的行高、y、总高都不变
+	assert.equal(laneHeight(1), 46);
+	assert.equal(laneHeight(0), 46);
+	assert.equal(laneHeight(2), 2 * 20 + 1 * 4 + 12);
+	assert.equal(laneHeight(4), 4 * 20 + 3 * 4 + 12);
+});
+
+test("D3-1：同泳道同阶段的节点纵向错开 24px（20 高 + 4 间隙）", () => {
+	const l = manyLaid();
+	const byId = new Map(l.nodes.map((n) => [n.id, n]));
+	// 泳道 a 的前两个节点（i=0 / i=3）同落阶段 0
+	const a0 = byId.get("n0")!;
+	const a3 = byId.get("n3")!;
+	assert.equal(a0.stage, a3.stage);
+	assert.equal(a3.y - a0.y, 24);
+	// x 相同（同阶段）⇒ 错开只能靠 y
+	assert.equal(a3.x, a0.x);
+});
+
+test("D3-1：26 个节点占 26 个不同的位置（修复前只有 10 个）", () => {
+	const l = manyLaid();
+	assert.equal(l.nodes.length, 26);
+	const spots = new Set(l.nodes.map((n) => `${Math.round(n.x)},${Math.round(n.y)}`));
+	assert.equal(spots.size, 26);
+});
+
+test("D3-1：错开后节点仍在自己的泳道框内，不越界压到下一泳道", () => {
+	const l = manyLaid();
+	for (const g of l.groups) {
+		const inLane = l.nodes.filter((n) => n.groupKey === g.key);
+		for (const n of inLane) {
+			assert.ok(n.y >= g.y, `${n.id} 顶部越出泳道 ${g.key}`);
+			assert.ok(n.y + n.h <= g.y + g.h, `${n.id} 底部越出泳道 ${g.key}`);
+		}
+	}
+	// 相邻泳道之间不留负间隙
+	const sorted = [...l.groups].sort((a, b) => a.y - b.y);
+	for (let i = 1; i < sorted.length; i++) {
+		assert.ok(sorted[i].y >= sorted[i - 1].y + sorted[i - 1].h, "泳道之间出现重叠");
+	}
+});
+
+test("D3-1：总高改为累加各行高（a 泳道最大 2 格 / b 泳道最大 4 格）", () => {
+	const l = manyLaid();
+	// ⭐ 字面量：26(head) + 24 + [56, 104] + 30
+	assert.equal(l.height, 26 + 24 + 56 + 104 + 30);
+	// 第二条泳道的起点 = 第一条泳道结束（不再是 li * 46）
+	assert.equal(l.groups[1].y - l.groups[0].y, 56);
+	// ⭐ 绝对 y 也要断言：只测差值的话「整列一起下移」是等价变异、测不出来
+	assert.equal(l.nodes.find((n) => n.groupKey === "a")!.y, 26 + 12 + 6);
+	assert.equal(l.nodes.find((n) => n.groupKey === "b")!.y, 26 + 12 + 56 + 6);
+});
+
+test("D3-1：只动 y，节点集合与顺序不变", () => {
+	const l = manyLaid();
+	assert.deepEqual(
+		l.nodes.map((n) => n.id),
+		MANY.map((n) => n.id),
+	);
+	assert.equal(l.flatOrder!.length, 26);
 });

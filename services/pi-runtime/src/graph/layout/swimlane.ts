@@ -8,8 +8,15 @@ import { W, type GroupBox, type LaidOut, type PlacedEdge, type PlacedNode } from
  * swimlane 视图的布局：GraphIR → 泳道行 + 阶段列 + 流转连线。
  *
  * 视图语义：横轴 = 阶段（按节点序均分成 `STAGE_COUNT` 段），
- * 纵轴 = 泳道（按 `groupBy` 分组）。节点框宽固定 ⇒ **同阶段的节点会重叠**，
- * 这是迁移前就有的行为（D3 才改），本任务逐字节保持。
+ * 纵轴 = 泳道（按 `groupBy` 分组）。
+ *
+ * ⭐ D3-1 修正（2026-10-09）：同一个「泳道 × 阶段」格子里的多个节点**纵向错开**，
+ *   泳道行高按该泳道的最大格子占用数自适应。
+ *   迁移前的 `Math.min(20, idxInLane * 0)` 恒为 0 ⇒ 同格节点**完全重叠**，
+ *   26 个节点只露出 10 个位置（16 个被盖住）且不报错 —— 典型的静默降级。
+ *
+ * ⛔ 单节点/格时必须与迁移前**逐字节一致**：`laneHeight(1) = 32 < 46` ⇒ 取下限 46。
+ *   这样小画布（黄金快照的 5 节点用例）不受影响，diff 只落在真有多节点的场景。
  */
 
 /** 泳道标签带宽度。 */
@@ -33,8 +40,22 @@ export function swimlaneNodeWidth(): number {
 const HEAD_H = 26;
 /** 泳道框比节点框多出来的高度（上下各 3）。 */
 const LANE_PAD = 6;
-/** 节点框在泳道内的水平内缩。 */
+/** 节点框在泳道内的水平内缩（纵向也用同一个值，与迁移前一致）。 */
 const NODE_INSET_X = 6;
+/** 节点框高。 */
+const NODE_H = 20;
+/** 同格内相邻节点框的垂直间隙。 */
+const NODE_GAP = 4;
+
+/**
+ * 泳道行高：由该泳道内**最挤的那个格子**决定。
+ *
+ * ⭐ `slot = 1` 时算出 32 < 46 ⇒ 取 `LANE_H` 下限 ⇒ 单节点/格与迁移前逐字节一致。
+ */
+export function laneHeight(maxSlot: number): number {
+	const slot = Math.max(1, Math.floor(maxSlot));
+	return Math.max(LANE_H, slot * NODE_H + (slot - 1) * NODE_GAP + NODE_INSET_X * 2);
+}
 
 function toGv(n: GraphIRNode): GvNode {
 	return {
@@ -66,7 +87,25 @@ export function layoutSwimlane(ir: GraphIR): LaidOut {
 	// ⚠️ 阶段按**节点下标**均分，不是按业务序值 —— 迁移前就是这样。
 	const stageOf = (i: number): number =>
 		Math.min(STAGE_COUNT - 1, Math.floor((i / Math.max(1, nodes.length)) * STAGE_COUNT));
-	const laneY = (li: number): number => HEAD_H + 12 + li * LANE_H;
+	const laneIndex = new Map(laneRows.map((k, i) => [k, i]));
+	// 先统计每个「泳道 × 阶段」格子的节点数 —— 行高与格内偏移都依赖它
+	const cellOf = nodes.map((n, i) => {
+		const li = laneIndex.get(laneKeyOf(n));
+		return li === undefined ? undefined : { li, s: stageOf(i) };
+	});
+	const cellCount = new Map<string, number>();
+	for (const c of cellOf) {
+		if (!c) continue;
+		const k = `${c.li}|${c.s}`;
+		cellCount.set(k, (cellCount.get(k) ?? 0) + 1);
+	}
+	const laneHs = laneRows.map((_, li) => {
+		let slot = 1;
+		for (let s = 0; s < STAGE_COUNT; s++) slot = Math.max(slot, cellCount.get(`${li}|${s}`) ?? 0);
+		return laneHeight(slot);
+	});
+	// 行高不再固定 ⇒ y 必须**累加**，不能用 `li * LANE_H`
+	const laneY = (li: number): number => HEAD_H + 12 + laneHs.slice(0, li).reduce((a, b) => a + b, 0);
 
 	const groups: GroupBox[] = laneRows.map((key, li) => ({
 		key,
@@ -74,26 +113,27 @@ export function layoutSwimlane(ir: GraphIR): LaidOut {
 		x: 8,
 		y: laneY(li),
 		w: W - 16,
-		h: LANE_H - LANE_PAD,
+		h: laneHs[li] - LANE_PAD,
 	}));
 
 	const irById = new Map(ir.nodes.map((n) => [n.id, n]));
-	const laneIndex = new Map(laneRows.map((k, i) => [k, i]));
 	const placed: PlacedNode[] = [];
+	const cellSeen = new Map<string, number>();
 	nodes.forEach((n, i) => {
-		const li = laneIndex.get(laneKeyOf(n));
-		if (li === undefined) return;
-		const s = stageOf(i);
+		const c = cellOf[i];
+		if (!c) return;
+		const { li, s } = c;
+		// 格内序号 ⇒ 纵向错开（D3-1）。迁移前这里是恒 0 ⇒ 同格节点完全重叠。
+		const k = `${li}|${s}`;
+		const idxInCell = cellSeen.get(k) ?? 0;
+		cellSeen.set(k, idxInCell + 1);
 		const irn = irById.get(n.id);
 		placed.push({
 			id: n.id,
 			x: LANE_LABEL_W + s * stageW + NODE_INSET_X,
-			// ⚠️ 迁移前是 `+ Math.min(20, idxInLane * 0)` ⇒ 恒等于 0。
-			//    保留「同泳道内全部重叠」这一行为，但把那个 0 直接写成常量 ——
-			//    留着 `idxInLane * 0` 会让人以为「泳道内本来要错开、只是没生效」。
-			y: laneY(li) + NODE_INSET_X,
+			y: laneY(li) + NODE_INSET_X + idxInCell * (NODE_H + NODE_GAP),
 			w: nodeW,
-			h: 20,
+			h: NODE_H,
 			row: li,
 			label: irn?.label ?? n.id,
 			...(irn?.description !== undefined ? { description: irn.description } : {}),
@@ -119,7 +159,8 @@ export function layoutSwimlane(ir: GraphIR): LaidOut {
 
 	return {
 		width: W,
-		height: HEAD_H + 24 + laneRows.length * LANE_H + 30,
+		// ⭐ 行高不再固定 ⇒ 总高必须**累加** `laneHs`，不能 `laneRows.length * LANE_H`
+		height: HEAD_H + 24 + laneHs.reduce((a, b) => a + b, 0) + 30,
 		nodes: placed,
 		edges,
 		groups,

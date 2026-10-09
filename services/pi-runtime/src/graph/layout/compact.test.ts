@@ -24,10 +24,11 @@ import { W, bboxArea, hasOverlap, nodeAreaSum, overlapArea, whitespaceRatio } fr
  * （空白率恒为 0）。去「紧凑」它只能靠砍行高或砍框宽，那会直接损害 D3-2 的文字预算
  * （框宽变小 ⇒ `labelBudgetFor` 预算变小 ⇒ 标签更短）⇒ 与 D3 的目的一次性冲突。
  *
- * ⭐ 真正的发现是两个**在 layout 之外**的事实，已各用一条断言钉住：
- *   ① swimlane 同泳道同阶段的节点**完全重叠**（26 节点只露出 10 个位置，16 个被盖住）；
- *   ② tree 的画布填充率只有 0.146（节点框 150px，画布 720px，右侧 51% 全空）。
- *   这两条都不属于「压缩空白」，而是**重叠**与**宽度未利用**，改它们会动字节 ⇒ 不在本任务做。
+ * ⭐ 量基线时撞到两个**在 layout 之外**的事实：
+ *   ① swimlane 同泳道同阶段的节点**完全重叠**（26 节点只露出 10 个位置）⇒ 已修，见末条；
+ *   ② tree 的画布填充率只有 0.146（节点框 150px，画布 720px，右侧 51% 全空）
+ *      ⇒ **未修**：宽度属视觉语言层（规格 §4.2），规范未定先改几何会在 D3-3 返工；
+ *      且 D1 生产分布里 tree 调用 0 次（layout 54 / table 40 / timeline 17 / matrix 11 / swimlane 1）。
  */
 
 /** 26 个节点：5 个阶段 / 2 种 type / 2 种 status，父节点形成 3 层。 */
@@ -109,7 +110,7 @@ test("基线：timeline / tree 无重叠，空白率可判读（钉住实测值�
 	assert.ok(fill < 0.2, `tree 画布填充率 ${fill.toFixed(3)}，若已改善请更新本条与注释`);
 });
 
-test("⚠️ 已知缺陷基线：swimlane 同泳道同阶段的节点**完全重叠**（26 节点只露出 10 个位置）", () => {
+test("D3-1 修复后：swimlane 26 个节点各有自己的位置，不再互相盖住", () => {
 	const sl = layoutSwimlane(
 		graphIRFromGv({
 			view: "swimlane",
@@ -120,17 +121,12 @@ test("⚠️ 已知缺陷基线：swimlane 同泳道同阶段的节点**完全�
 		}),
 	);
 	assert.equal(sl.nodes.length, 26);
-	// 2 条泳道 × 5 个阶段 = 10 个格子，26 个节点 ⇒ 16 个被完全盖住
+	// ⭐ 修复前是 10 个位置装 26 个节点（16 个被完全盖住）
 	const spots = new Set(sl.nodes.map((n) => `${Math.round(n.x)},${Math.round(n.y)}`));
-	assert.equal(spots.size, 10);
-	assert.equal(hasOverlap(sl), true);
-	// 重叠量占节点面积的 96%
-	assert.ok(
-		overlapArea(sl) / nodeAreaSum(sl) > 0.9,
-		`重叠占比 ${(overlapArea(sl) / nodeAreaSum(sl)).toFixed(3)}`,
-	);
-	// ⭐ 负的空白率**不能**被读成「非常紧凑」—— 它只说明这个指标在此视图不适用
-	assert.ok(whitespaceRatio(sl) < 0, `swimlane 空白率 ${whitespaceRatio(sl)} 应为负（= 重叠）`);
-	// 修掉重叠时必须同时改这一条，并重生成黄金快照
+	assert.equal(spots.size, 26);
+	assert.equal(hasOverlap(sl), false);
+	assert.equal(overlapArea(sl), 0);
+	// 修好之后空白率才重新可判读（不再是负数）
+	assert.ok(whitespaceRatio(sl) > 0, `swimlane 空白率 ${whitespaceRatio(sl)} 应为正`);
 	assert.ok(sl.width <= W);
 });
