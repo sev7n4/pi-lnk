@@ -54,6 +54,7 @@ import { enforceRetention } from "./session-retention.js";
 import { buildToolEnsemble } from "./tools/tiering.js";
 import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
+import { pickLatestPlanDecision, seedPlanState } from "./gate/plan-gate.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import { stripImageBlocks } from "./sse-sanitize.js";
@@ -971,6 +972,10 @@ export class SessionManager {
 				const lane = await harness.lane(MAIN_LANE, this.context);
 				const entries = (await lane.findEntries({ order: "oldestFirst" }, this.context)) as readonly unknown[];
 				seedTodoState(todoKey, pickLatestSnapshot(Array.isArray(entries) ? entries : []));
+				// C3（spec §3.5）：plan 状态播种——SSOT = transcript 末条 propose_plan details。
+				// 无 propose_plan 记录（老会话）不播种，保持默认 idle。
+				const planDecision = pickLatestPlanDecision(Array.isArray(entries) ? entries : []);
+				if (planDecision) seedPlanState(todoKey, planDecision);
 			} catch (err) {
 				console.warn("[todo-resume] transcript seeding failed (fail-soft):", err);
 			}

@@ -191,3 +191,67 @@ test("plan-gate 接线：keep（不确认）后写工具被拦", async () => {
 	assert.equal(isPlanPending(key), true, "keep 保持拦写（fail-closed）");
 	assert.equal(getTodoState(key).length, 1, "步骤清单仍落卡");
 });
+
+/** 播种场景共用：sm1 真跑一次 propose_plan（details.plan.decision 落 transcript）→
+ * 清内存 store → sm2 同 dataRoot 磁盘 resume → 断言 plan 状态从 transcript 播种。 */
+async function runProposeAndReopen(
+	threadKey: string,
+	key: string,
+	answers: Record<string, string[]>,
+): Promise<SessionManager> {
+	const answerRegistry = {
+		waitForUser: async () => ({ status: "answered", answers }),
+	} as unknown as PendingToolRegistry;
+	const faux = fauxProvider();
+	faux.setResponses([
+		fauxAssistantMessage(
+			[fauxToolCall("propose_plan", { summary: "s", steps: [{ content: "a" }] })],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("好", { stopReason: "stop" }),
+	]);
+	const models = createModels();
+	models.setProvider(faux.provider);
+	const modelFactory = () => ({ models, model: faux.getModel(), providerId: faux.provider.id });
+	const tools: LnkpiTool[] = [...buildTodoTools(), fakeWriteTool, createProposePlanTool(answerRegistry, metricsStub)];
+	const tiers = new Map(tools.map((t) => [t.name, t.tier]));
+	const sm1 = new SessionManager(tools, "", modelFactory, undefined, {
+		onSessionCreated(sessionId, harness) {
+			registerPlanGateHooks(harness, { planKey: sessionId, tiers, metrics: metricsStub });
+		},
+	}, undefined, sharedConfig());
+	await sm1.create(threadKey, { userId: "u1" });
+	await sm1.prompt(threadKey, "先出方案");
+	await waitAgentEnd(sm1, threadKey);
+
+	// 清内存：resume 后的断言只能来自 transcript 播种（防假绿——模块级 plan store / todo store
+	// 都会残留 sm1 的运行态，不清则播种路径根本没被走到）。
+	resetTodoStoreForTest();
+	resetPlanState(key);
+	const sm2 = new SessionManager(tools, "", modelFactory, undefined, {
+		onSessionCreated(sessionId, harness) {
+			registerPlanGateHooks(harness, { planKey: sessionId, tiers, metrics: metricsStub });
+		},
+	}, undefined, sharedConfig());
+	const result = await sm2.create(threadKey, { userId: "u1" });
+	assert.equal(result.status, "resumed", "必须走磁盘 resume 路径");
+	return sm2;
+}
+
+test("resume 播种：transcript 末条 propose_plan decision=keep → planPending 生效", async () => {
+	resetTodoStoreForTest();
+	const threadKey = "sess-plan-seed-keep";
+	const key = toSessionKey(threadKey);
+	resetPlanState(key);
+	await runProposeAndReopen(threadKey, key, { plan_confirm: ["keep"] });
+	assert.equal(isPlanPending(key), true, "resume 后 plan 状态必须从 transcript 播种（拦写生效）");
+});
+
+test("resume 播种：末条 decision=execute → idle 放行", async () => {
+	resetTodoStoreForTest();
+	const threadKey = "sess-plan-seed-execute";
+	const key = toSessionKey(threadKey);
+	resetPlanState(key);
+	await runProposeAndReopen(threadKey, key, { plan_confirm: ["execute"] });
+	assert.equal(isPlanPending(key), false, "execute 播 idle（不拦写）");
+});
