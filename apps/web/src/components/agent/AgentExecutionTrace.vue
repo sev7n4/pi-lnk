@@ -151,7 +151,17 @@ const phaseBadge = computed(() => {
     <div v-if="expanded" class="mt-1 space-y-2 pl-4">
       <section v-if="stepCount > 0" data-testid="operation-section">
         <p class="mb-1 text-[10px] font-medium text-[var(--neo-text-muted)]">操作明细</p>
-        <ul class="space-y-0.5">
+        <!-- 2026-10-09 修「展开操作明细后历史滚动被锁死」：dense（钉底活体）展开态给步骤 <ul>
+             加 max-height + overflow-y:auto + overscroll-behavior:contain。
+             ⚠️ 只挂 dense：气泡形态的 trace 本就在可滚消息列表里，再加内层滚动会双层滚。
+             没有这个上限时长 thinking detail（whitespace-pre-wrap）会无限撑高 dock（shrink-0、
+             `--scrollable` 修饰只挂 hasDockPresentation=showCancelledCallout，正常回合恒 false），
+             把 chat-wrap（flex-1 min-h-0）挤到 0 高 ⇒ 历史列表不可见/不可滚 + 折叠头行命中区被顶飞。 -->
+        <ul
+          class="space-y-0.5"
+          data-testid="operation-steps"
+          :style="dense ? 'max-height: min(46vh, 420px); overflow-y: auto; overscroll-behavior: contain;' : undefined"
+        >
           <li
             v-for="(step, i) in trace.steps"
             :key="step.id"
