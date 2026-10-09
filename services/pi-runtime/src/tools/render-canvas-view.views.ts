@@ -13,7 +13,18 @@
  */
 import { condenseLabel, graphIRFromGv, labelBudgetFor, labelWidth } from "../graph/graph-ir.js";
 import type { NodeMark } from "../graph/graph-ir.js";
-import { visualRoles } from "../graph/visual-role.js";
+// ⚠️ 不含 CARD_BG —— 卡片底由 `svgOpen`（expressive.ts）在 SVG 开头统一铺，
+//   视图层若也铺一层会盖住容器底色。
+import {
+	CONTAINER_DASH,
+	CONTAINER_FILL,
+	CONTAINER_STROKE,
+	NODE_FILL,
+	NODE_STROKE,
+	SEVERITY,
+} from "../graph/palette.js";
+import { severityOf, visualRoles } from "../graph/visual-role.js";
+import type { SeverityLevel } from "../graph/visual-role.js";
 import { layoutLayout } from "../graph/layout/layout.js";
 import { layoutTimelineFlow } from "../graph/layout/timeline.js";
 import { LANE_LABEL_W, STAGE_COUNT, layoutSwimlane, swimlaneNodeWidth } from "../graph/layout/swimlane.js";
@@ -27,17 +38,19 @@ import {
 	type Scope,
 	type FocusAnchor,
 	AGGREGATE_THRESHOLD,
+	addTypeBar,
+	flushTypeBars,
 	registerColorClassMap,
 	commonSuffixes,
 	esc,
 	legendSvg,
 	orderNodes,
 	ordinal,
+	isFailureStatus,
 	paletteOf,
 	shortLabels,
 	svgOpen,
 	svgTail,
-	statusShade,
 	usedTypes,
 	NODE_PALETTE,
 } from "./render-canvas-view.expressive.js";
@@ -79,31 +92,50 @@ function nodeRect(
 		showType?: boolean;
 		misplaced?: boolean;
 		/**
-		 * D3-3 mark 通道的**最小视觉表现**：加粗描边。
-		 *
-		 * ⛔ 不动 fill —— 填充色是 `node.type` 的语义色（「一色一义」），
-		 *   用 severity 覆盖它会把类型色吃掉。配色 / 对比度留给 D3-3 的视觉语言规范，
-		 *   本步只保证「通道真的产生了可见差异」（否则它就是死代码）。
+		 * D3-3 mark 通道 · 三层配色中的**强调色**：severity 级别 → 强调描边着色。
+		 * - `error` ⇒ 红色描边 + 加粗（`SEVERITY.error.stroke`）
+		 * - `warn`  ⇒ 琥珀色描边 + 加粗（`SEVERITY.warn.stroke`）
+		 * - undefined ⇒ 无强调，描边走类型色（`cs<X>` class）
+		 * 上限由 `visualRoles` 保证 ≤10%（已在 mark 通道锁死）。
+		 * ⛔ 不动 fill —— 节点底永远是 `NODE_FILL`（白），类型色只出现在顶部 4px 色条。
 		 */
-		accent?: boolean;
+		sevLevel?: "error" | "warn";
 	} = {},
 ): string {
 	const p = paletteOf(n, opts.color);
-	const st = statusShade(n, p);
 	const mis = opts.misplaced === true;
-	// ⭐ 配色走 CSS class（`cf`=fill,`cs`=stroke）而不是每节点内联 fill/stroke ——
-	// 内联 63 次约 3.2KB，class 只需 63×13 字节。这是把 layout 从 23.6KB 压进 20KB 的关键。
-	const cls = `cf${colorClass(p.fill)} cs${colorClass(st.stroke)}`;
+	// 主节点框：白底 + **中性描边**（三层·主色的类型色只留在顶部色条）。
+	// ⛔ 描边**不再用类型色**：类型色是浅粉彩，vs 白底只有 1.5~1.9:1，看不出节点边界
+	//   （这正是「对比不足」的根因）。边界改由 `NODE_STROKE` 承担 3.77:1。
+	//   ⚠️ 失败态也不占用描边 —— 降维成顶部色条右侧的失败角标（见 `isFailureStatus`），
+	//   否则它与 severity 强调描边无法同时存在（一个通道只能有一个颜色）。
+	const sev = opts.sevLevel;
+	// ⛔ 描边走 **CSS class** 而不是内联 hex：63 节点的内联 `fill="#FFFFFF"
+	//   stroke="#7A8391" stroke-width="1"` 共 63×38B = 2.4KB，而 class 版只 63×9B。
+	//   D3-3 加色条让 63 节点图超了 20000B 预算（24862B），class 化后省回 2835B，
+	//   **零视觉损失**。⚠️ 这不是「为省字节牺牲表达」，是本来就不该内联常量。
+	const cls =
+		sev === "error" ? "nvE" : sev === "warn" ? "nvW" : mis ? "nvx" : "nv";
 	const parts: string[] = [];
 	parts.push(
-		`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" class="${cls} n"${mis || opts.accent === true ? ' stroke-width="2"' : ""}/>`,
+		`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="4" class="${cls}"/>`,
 	);
+	// 顶部 4px 类型色条（三层·主色唯一载体；severity 强调时仍显示类型，不互相覆盖）
+	// ⛔ 无 `rx`：4px 高的条上圆角几乎不可见，但每个节点要 7B（63 节点 441B）。
+	//   ⚠️ 与节点框的 rx=4 不同 —— 那个是 26px 高的框，圆角是设计的一部分。
+	// ⭐ D3-3 字节优化：色条**不在这里输出**，只登记进 `addTypeBar`，
+	//   由 `flushTypeBars()` 按颜色聚合成每色一个 `<path>`（63 节点 3747B → ~1200B）。
+	 //   绘制顺序不变：flush 在所有节点之后 ⇒ 色条仍盖在节点框之上。
+	addTypeBar(colorClass(p.strong ?? p.stroke), box.x, box.y, box.w);
+	// 失败态角标：与 severity 描边正交，一个节点可以既「被标注重要」又「状态失败」。
+	if (isFailureStatus(n)) {
+		parts.push(
+			`<rect x="${box.x + box.w - 9}" y="${box.y + 8}" width="6" height="6" rx="1" fill="${SEVERITY.error.stroke}" data-fail="1"/>`,
+		);
+	}
 	const seq = opts.seq && opts.seq > 0 ? `${ordinal(opts.seq)} ` : "";
 	const typeTxt = opts.showType ? ` ${n.type ?? ""}` : "";
 	// ⭐⭐ N8：节点身份标签**不再 clip 截断**，改用 IR 提炼后的 `label`。
-	//   提炼在 `graphIRFromGv` 完成（按本视图节点框宽算预算），原文进 `description`。
-	//   ⚠️ 只有**没给 label** 时才现场提炼兜底（正常路径不会走到 —— 那是把
-	//   「预算」的责任又推回渲染层，正是 D2 迁移要消除的方向倒流）。
 	const body = opts.label ?? condenseLabel(n.title ?? n.id, labelBudgetFor(box.w));
 	parts.push(`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="l">${esc(seq + body + typeTxt)}</text>`);
 	if (mis) {
@@ -258,10 +290,8 @@ export function buildLayoutSvg(
 	const laid = layoutLayout(ir);
 	// ⭐ 视觉角色由 IR 的 mark 决定（渲染层不猜谁重要），取前 10%
 	const roles = visualRoles(ir);
-	const sevOf = (id: string): string | undefined => {
-		if (roles.get(id) !== "accent") return undefined;
-		return ir.nodes.find((n) => n.id === id)?.mark?.text;
-	};
+	// severity 级别取自共用判据（accent 角色 + 已知级别文本），⛔ 不在渲染层强转类型
+	const sevOf = (id: string): SeverityLevel | undefined => severityOf(ir, roles, id);
 	// 图例 / 标签精简 / 错位审计需要**完整**的 GvNode 字段 ⇒ 按布局产出的顺序取回。
 	const byId = new Map(nodesIn.map((n) => [n.id, n]));
 	const nodes = laid.nodes.map((p) => byId.get(p.id)!);
@@ -305,7 +335,7 @@ export function buildLayoutSvg(
 				//聚合线代表这一组出边 ⇒ 只要**有任意一条**有向就带箭头
 				const anyDirected = ordered2.some((t) => directedBy.get(`${src} ${t.id}`) === true);
 				parts.push(
-					`<path d="M${from.x + from.w},${Math.round(midY)} L${toX},${Math.round(midY)}" class="gv-e"${anyDirected ? ' marker-end="url(#gv-arrow)"' : ""}/>` +
+					`<path d="M${from.x + from.w},${Math.round(midY)} L${toX},${Math.round(midY)}" class="${anyDirected ? "gva" : "gv-e"}"/>` +
 						`<text x="${labelX}" y="${Math.round(midY)}" class="gv-s" text-anchor="end" dominant-baseline="central">${esc(label)}</text>`,
 				);
 				continue;
@@ -329,9 +359,15 @@ export function buildLayoutSvg(
 				const d = useBus
 					? edgePath({ ...from, x: from.x + from.w + 10, w: 0, y: from.y + 4, h: from.h - 8 }, to, i, ordered2.length)
 					: edgePath(from, to, i, ordered2.length);
-				parts.push(
-					`<path data-edge="1" d="${d}" class="gv-e"${dir ? ` marker-end="url(#gv-arrow${isHi ? "-hi" : ""})"` : ""}${isHi ? ' stroke="#534AB7" stroke-width="2"' : ""}/>`,
-				);
+			parts.push(
+				// ⭐ D3-3 字节优化：箭头与高亮描边全部走 class，不再内联。
+				//   原写法 `marker-end="url(#gv-arrow-hi)" stroke="#534AB7" stroke-width="2"` = 66B/条。
+				//   ⛔ 顺带修掉一个**静默失效**：原代码同时写 `class="gv-e"`（CSS 里带 `stroke:`）
+				//   与内联 `stroke="#534AB7"` —— CSS 规则优先于 SVG presentation 属性，
+				//   ⇒ 高亮描边一直被 `.gv-e` 的中性灰盖住，**强调路径从来没亮过**。
+				//   改 class 后高亮才真正生效（`emphasize` 此前无测试覆盖，故无人发现）。
+				`<path data-edge="1" d="${d}" class="${isHi ? "gvh" : dir ? "gva" : "gv-e"}"/>`,
+			);
 			});
 		}
 	}
@@ -366,7 +402,7 @@ export function buildLayoutSvg(
 			: `${focusId}（该节点没有标题）`;
 		parts.push(
 			`<g data-focus="${esc(focusId)}" data-hops="${hopsShown}">` +
-				`<rect x="8" y="8" width="${W - 16}" height="20" rx="4" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>` +
+				`<rect x="8" y="8" width="${W - 16}" height="20" rx="4" class="cfw"/>` +
 				`<text x="14" y="18" class="gv-info" dominant-baseline="central">局部视图：只看「${esc(name)}」的 ${hopsShown} 跳邻域（${nodes.length} 个节点 / ${edges.length} 条边）· 换 focus 看别处</text></g>`,
 		);
 	}
@@ -386,7 +422,7 @@ export function buildLayoutSvg(
 		const sev = sevOf(n.id);
 		parts.push(
 			`<g data-node="${esc(n.id)}" data-group="${esc(g)}"` +
-				`${mis ? " data-x" : ""}${sev !== undefined ? ` data-sev="${esc(sev)}"` : ""}>`,
+				`${mis ? ' data-x="1"' : ""}${sev !== undefined ? ` data-sev="${esc(sev)}"` : ""}>`,
 		);
 		parts.push(
 			nodeRect(n, boxes.get(p.id)!, {
@@ -396,7 +432,7 @@ export function buildLayoutSvg(
 				label: labels.get(n.id),
 				showType: opts.showType,
 				misplaced: mis,
-				accent: sev !== undefined,
+				sevLevel: sev,
 			}),
 		);
 		if (emph.has(n.id)) {
@@ -429,6 +465,7 @@ export function buildLayoutSvg(
 	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
 	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
 	parts.push(svgTail(H));
+	parts.push(flushTypeBars());
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -494,12 +531,17 @@ export function buildTreeSvg(
 		// 有说明行时整体下移20px，避免与首行节点重叠
 	}
 	// 纵线（父子连线）—— 坐标由布局层给出，渲染层不按 depth 反推缩进
+	// ⭐ D3-3 字节优化：垂直段 + 水平段**合成一条 path**（`M x,yTop V yBottom H armTo`）。
+	//   分两段时每条边要 2 个 `<path>`（56B + 57B = 113B）；合成后 1 个（~55B）⇒ 56 条边省 ~3.2KB。
+	//   ⚠️ 折线走向（M→V→H）与原来两个 path 的叠加**完全一致**（同一 stroke 一次画完两段，
+	//   接缝处不会出现线帽缺口）。`H` 后省略的 y 会沿用当前 y = yBottom，正是水平段的 y。
 	for (const t of laid.trunks) {
-		parts.push(`<path d="M${t.x},${t.yTop} L${t.x},${t.yBottom}" class="gv-e"/>`);
 		// ⭐ 箭头只由 `directed`（来自 IR 的 containment 语义）决定，渲染层不自行决定（C1）
-		if (t.directed) {
-			parts.push(`<path d="M${t.x},${t.yBottom} L${t.armTo},${t.yBottom}" class="gv-e" marker-end="url(#gv-arrow)"/>`);
-		}
+		parts.push(
+			t.directed
+				? `<path d="M${t.x},${t.yTop} V${t.yBottom} H${t.armTo}" class="gva"/>`
+				: `<path d="M${t.x},${t.yTop} V${t.yBottom}" class="gv-e"/>`,
+		);
 	}
 	if (ORPHAN) {
 		const bodyRows = laid.nodes.length - orphans;
@@ -511,10 +553,17 @@ export function buildTreeSvg(
 	for (const p of laid.nodes) {
 		const n = byId.get(p.id)!;
 		const box: Box = { id: n.id, x: p.x, y: p.y, w: p.w, h: p.h, row: p.row };
-		const sev = roles.get(n.id) === "accent" ? ir.nodes.find((x) => x.id === n.id)?.mark?.text : undefined;
+		const sev = severityOf(ir, roles, n.id);
 		parts.push(
+			// ⛔⛔ `data-o` / `data-x` 必须**带值**（`="1"`），不能写成无值属性。
+			//   无值属性在 SVG（XML 模式）里是**规范错误**：
+			//   `error on line 1: Specification mandates value for attribute data-x`
+			//   ⇒ 浏览器按 XML 解析时**整张图渲染中断**，只显示红错框 + 首个错误前的片段。
+			//   （D3-3 做像素对比时撞到：Chrome headless 截出来是错误页，
+			//     而 HTML 解析器会容错 ⇒ 线上「看起来正常」，切 XML 就炸。）
+			//   这个坑从 #296（D2 迁移引入 `data-x`）起就一直存在，2026-10-09 才被抓到。
 			`<g data-node="${esc(n.id)}" data-depth="${p.depth ?? 0}"` +
-				`${p.orphan ? " data-o" : ""}${misIds.has(n.id) ? " data-x" : ""}` +
+				`${p.orphan ? ' data-o="1"' : ""}${misIds.has(n.id) ? ' data-x="1"' : ""}` +
 				`${sev !== undefined ? ` data-sev="${esc(sev)}"` : ""}>`,
 		);
 		parts.push(
@@ -523,7 +572,7 @@ export function buildTreeSvg(
 				label: labels.get(n.id),
 				color: p.color,
 				misplaced: misIds.has(n.id),
-				accent: sev !== undefined,
+				sevLevel: sev,
 			}),
 		);
 		parts.push("</g>");
@@ -547,6 +596,7 @@ export function buildTreeSvg(
 	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
 	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
 	parts.push(svgTail(H));
+	parts.push(flushTypeBars());
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -575,16 +625,19 @@ export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 	for (const p of laid.nodes) {
 		const n = byId.get(p.id)!;
 		const pal = paletteOf(n, p.color);
-		const st = statusShade(n, pal);
 		parts.push(`<g data-node="${esc(n.id)}">`);
 		parts.push(`<text x="8" y="${p.y + 13}" class="gv-t" dominant-baseline="central">${esc(clip(p.label, 12))}</text>`);
-		parts.push(`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="5" fill="${st.fill}" stroke="${st.stroke}" stroke-width="1"/>`);
+		// D3-3 三层配色：白底 + 中性描边 + 顶部 4px 类型色条（与 nodeRect **同一套** class）
+		// ⛔ 不能用 `cs<类型色>`：类型色 vs 白底只有 1.5~1.9:1，看不出边界。
+		parts.push(`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="5" class="nv"/>`);
+		// ⭐ 同 `nodeRect`：色条走 `addTypeBar` 聚合，由 `flushTypeBars()` 统一输出。
+		addTypeBar(colorClass(pal.strong ?? pal.stroke), p.x, p.y, p.w);
 		parts.push("</g>");
 	}
 	// 方向由布局层的 `Trunk.directed` 决定（来自 IR 的 `edge.kind`，C1）；
 	// 渲染层不按行序自行判断。
 	for (const t of laid.trunks) {
-		parts.push(`<path d="M${t.x},${t.yTop} L${t.x},${t.yBottom}" class="gv-e"${t.directed ? ' marker-end="url(#gv-arrow)"' : ""}/>`);
+		parts.push(`<path d="M${t.x},${t.yTop} L${t.x},${t.yBottom}" class="${t.directed ? "gva" : "gv-e"}"/>`);
 	}
 	const lg = usedTypes(nodes);
 	parts.push(legendSvg(lg, 8, H - 14 - lg.length * 16));
@@ -597,6 +650,7 @@ export function buildTimelineFlowSvg(nodesIn: readonly GvNode[]): string {
 	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
 	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
 	parts.push(svgTail(H));
+	parts.push(flushTypeBars());
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -638,7 +692,7 @@ export function buildSwimlaneSvg(
 	for (let s = 0; s < STAGE_COUNT; s++) {
 		const x = LANE_LABEL_W + s * stageW;
 		parts.push(
-			`<g data-stage="${s}"><rect x="${x + 2}" y="8" width="${stageW - 4}" height="${headH - 10}" rx="4" fill="#E6F1FB" stroke="#85B7EB" stroke-width="1"/>` +
+			`<g data-stage="${s}"><rect x="${x + 2}" y="8" width="${stageW - 4}" height="${headH - 10}" rx="4" class="cb"/>` +
 				`<text x="${x + stageW / 2}" y="${8 + (headH - 10) / 2}" class="gv-s" text-anchor="middle" dominant-baseline="central">阶段 ${s + 1}</text></g>`,
 		);
 	}
@@ -647,7 +701,7 @@ export function buildSwimlaneSvg(
 	for (const g of laid.groups) {
 		parts.push(`<g data-lane="${esc(g.key)}">`);
 		parts.push(
-			`<rect x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}" rx="6" fill="${laid.groups.indexOf(g) % 2 === 0 ? "#FAFBFC" : "#F5F6F8"}" stroke="#E6E8EB" stroke-width="0.5"/>`,
+			`<rect x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}" rx="6" class="cg"/>`,
 			`<text x="16" y="${g.y + g.h / 2}" class="gv-t" dominant-baseline="central">${esc(clip(g.key, 8))}</text>`,
 		);
 		parts.push("</g>");
@@ -657,14 +711,14 @@ export function buildSwimlaneSvg(
 	for (const p of laid.nodes) {
 		const n = byId.get(p.id)!;
 		const box: Box = { id: n.id, x: p.x, y: p.y, w: p.w, h: p.h, row: p.row };
-		const sev = roles.get(n.id) === "accent" ? ir.nodes.find((x) => x.id === n.id)?.mark?.text : undefined;
+		const sev = severityOf(ir, roles, n.id);
 		parts.push(
 			`<g data-node="${esc(n.id)}" data-stage="${p.stage ?? 0}"${sev !== undefined ? ` data-sev="${esc(sev)}"` : ""}>`,
 		);
 		// ⭐ 标签走 `nodeLabels`（剥后缀 + 按框宽提炼），与 layout/tree 同一套。
 		//   迁移前这里不传 label，`nodeRect` 直接用 `n.title` ⇒ 靠内部 clip 截断，
 		//   既绕过提炼也按字符数算不准中英混排。
-		parts.push(nodeRect(n, box, { label: swimLabels.get(n.id), accent: sev !== undefined }));
+		parts.push(nodeRect(n, box, { label: swimLabels.get(n.id), sevLevel: sev }));
 		parts.push("</g>");
 	}
 
@@ -679,7 +733,7 @@ export function buildSwimlaneSvg(
 		const ty = t.y + t.h / 2;
 		const mx = Math.round(sx + Math.max(12, (tx - sx) / 2));
 		parts.push(
-			`<path data-edge="1" d="M${sx},${Math.round(sy)} C${mx},${Math.round(sy)} ${mx},${Math.round(ty)} ${tx},${Math.round(ty)}" class="gv-e"${e.directed ? ' marker-end="url(#gv-arrow)"' : ""}/>`,
+			`<path data-edge="1" d="M${sx},${Math.round(sy)} C${mx},${Math.round(sy)} ${mx},${Math.round(ty)} ${tx},${Math.round(ty)}" class="${e.directed ? "gva" : "gv-e"}"/>`,
 		);
 	}
 
@@ -697,6 +751,7 @@ export function buildSwimlaneSvg(
 	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
 	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
 	parts.push(svgTail(H));
+	parts.push(flushTypeBars());
 	parts.push("</svg>");
 	return parts.join("");
 }
@@ -741,7 +796,7 @@ export function buildMatrixSvg(
 			// ⭐ 0 也画出来：空交叉本身是信息（这一类没有该状态的东西）
 			const on = cell.count > 0;
 			parts.push(
-				`<g data-cell="${esc(cell.row)}|${esc(cell.col)}"><rect x="${cell.x + 2}" y="${cell.y + 2}" width="${cell.w}" height="${cell.h}" rx="4" fill="${on ? "#EEEDFE" : "#FAFBFC"}" stroke="${on ? "#7F77DD" : "#E6E8EB"}" stroke-width="0.5"/>` +
+				`<g data-cell="${esc(cell.row)}|${esc(cell.col)}"><rect x="${cell.x + 2}" y="${cell.y + 2}" width="${cell.w}" height="${cell.h}" rx="4" fill="${on ? "#EEEDFE" : "#FAFBFC"}" stroke="${on ? "#7F77DD" : "#E6E8EB"}" stroke-width="1" stroke-dasharray="${CONTAINER_DASH}"/>` +
 					`<text x="${cell.x + m.cw / 2}" y="${cell.y + m.ch / 2}" class="${on ? "gv-t" : "gv-s"}" text-anchor="middle" dominant-baseline="central">${cell.count}</text></g>`,
 			);
 		}
@@ -756,6 +811,7 @@ export function buildMatrixSvg(
 	// ⭐⭐ **svgTail 必须在所有节点渲染完之后**（配色 class 要等colorClass() 登记完）。
 	// 详见 expressive.ts 的 svgTail 文档：提前调用 ⇒ `<style>` 无配色规则 ⇒ 节点全黑。
 	parts.push(svgTail(H));
+	parts.push(flushTypeBars());
 	parts.push("</svg>");
 	return parts.join("");
 }

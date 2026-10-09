@@ -181,3 +181,200 @@ export function saveGolden(g: GoldenFile): void {
 	mkdirSync(dirname(p), { recursive: true });
 	writeFileSync(p, JSON.stringify(g, null, 2) + "\n");
 }
+
+/**
+ * 分层 diff：把「输出变了」拆成「纯视觉变化」与「几何被改了」。
+ *
+ * ⭐ 为什么逐字节快照不够：重生快照时它只告诉你「变了」，不告诉你**变了什么**。
+ *   D2/D3-1 的做法是逐字节不变（纯重构），但 D3-3 是**有意改像素**的
+ *   ⇒ 必须有一道判据能证明「视觉可以变、坐标不许变」，否则「改配色顺手挪了节点」
+ *   会被快照重生静默盖掉。
+ *
+ * 判据（按元素粒度，不是按属性袋子）：
+ *  ① 剥掉 `<style>` / `<defs>`（前者是 CSS 颜色，后者是箭头 marker）
+ *  ② 逐元素抽 (tag, 几何属性, 自身文本)，得有序序列
+ *  ③ 旧序列必须是新序列的**子序列** ⇒ 允许纯新增（色条 / 卡片底 / 虚框容器），
+ *     但任何原有元素被删或被改都算硬失败。子序列判定天然排除「坐标被挪动」。
+ *
+ * ⛔ 几何属性刻意**不含 `rx/ry`**（圆角是纯视觉，D3-3 给节点框加了 rx=4）。
+ * ⛔ 匹配必须带前导空格边界：`\bwidth\b` 会命中 `stroke-width` 子串。
+ */
+export interface GoldenDiff {
+	name: string;
+	/** 逐字节是否相同。 */
+	identical: boolean;
+	/** 原有元素是否全部保留（保序，允许纯新增）。 */
+	geometricIntact: boolean;
+	/** 人类可读的差异说明（纯新增统计 / 首个失配位置）。 */
+	detail: string;
+}
+
+interface SvgElement {
+	tag: string;
+	geom: string;
+	text: string;
+	/**
+	 * ⭐ 语义角色（归一化用，见 `classifyRole`）。空串 = 普通元素；
+	 * `typebar` = 顶部类型色条；`edge` = 连线。
+	 */
+	role: string;
+	/** ⭐ `typebar` 角色的语义条数（一个 path 里的 `M` 子路径数）。 */
+	segCount: number;
+	/** ⭐ `edge` 角色的去重键（同一批边合并后`d` 唯一）。 */
+	dedge: string;
+}
+
+/** 剥掉 `<style>`…</style>` 与 `<defs>`…</defs>。 */
+function stripNonVisual(svg: string): string {
+	return svg.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<defs>[\s\S]*?<\/defs>/g, "");
+}
+
+/**
+ * 归一化：把「视觉等价但写法不同」的元素标成同一种语义角色。
+ *
+ * ## 为什么需要（两处 D3-3 字节优化都会撞上这层判据）
+ *
+ * ① **顶部类型色条**：从「每节点一个 `<rect height="4" class="cfX">`」
+ *    改成「每种颜色一个 `<path class="cfX" d="M…h…v4h-…z…">`」
+ *    （63 节点 3747B → ~1200B）。这是**元素类型替换**（rect→path）
+ *    ⇒ 纯子序列匹配会判「原有元素被删」= 假红。两者视觉语义完全相同。
+ * ② **连线**：tree 原来一条边画两个 `<path>`（垂直段 + 带箭头的水平段），
+ *    现在合成一个 `M…V…H…`。合并后元素数少 1 ⇒ 同样不是「纯新增」。
+ *
+ * ⛔ 只有这两类元素清空 geom；节点框 / 容器 / 文本 / 图例的坐标仍逐字段比对
+ *   —— 放宽必须精确到「本次确实重写过的那两类」，不能整体降级。
+ */
+function classifyRole(tag: string, attrs: string): string {
+	if (/class="[^"]*\bcf[a-z0-9]+\b[^"]*"/.test(attrs) && (tag === "path" || /\sheight="4"/.test(attrs))) {
+		return "typebar";
+	}
+	if (tag === "path" && /class="[^"]*\b(gv-e|gva|gvh)\b/.test(attrs)) return "edge";
+	return "";
+}
+
+/** 按元素顺序抽出 (tag, 几何属性, 自身文本, 语义角色)。 */
+function svgElements(svg: string): SvgElement[] {
+	const out: SvgElement[] = [];
+	const re = /<([a-zA-Z][\w-]*)((?:\s+[\w:-]+="[^"]*")*)\s*\/?>([^<]*)/g;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(stripNonVisual(svg))) !== null) {
+		const attrs = m[2] ?? "";
+		const geom = [...attrs.matchAll(/\s(x|y|x1|y1|x2|y2|width|height|cx|cy|viewBox)="([^"]*)"/g)]
+			.map((a) => `${a[1]}=${a[2]}`)
+			.join(" ");
+		const role = classifyRole(m[1], attrs);
+		const d = attrs.match(/\sd="([^"]*)"/)?.[1] ?? "";
+		const segCount = role === "typebar" ? d.split("M").filter(Boolean).length : 0;
+		out.push({ tag: m[1], geom: role ? "" : geom, text: (m[3] ?? "").trim(), role, segCount, dedge: d });
+	}
+	return out;
+}
+
+/**
+ * 元素等价判定。
+ *
+ * ⭐ 普通元素比 (tag, geom, text) 三项；**被归一化过的元素**（色条 / 连线）
+ *   只比角色 —— 它们的写法在 D3-3 字节优化里刻意变了，但视觉与走向不变。
+ */
+const sameElement = (a: SvgElement, b: SvgElement): boolean =>
+	a.tag === b.tag && a.geom === b.geom && a.text === b.text;
+
+/**
+ * 配对序列：把**归一化元素**（色条/连线）与**严格元素**分开。
+ *
+ * ## 为什么必须拆成两个序列（子序列匹配的盲区）
+ *
+ * 主判据是「旧序列是新序列的**子序列**」，需要保序。但D3-3 字节优化把色条
+ * 从「每个 `<g data-node>` 内部」移到了「整图末尾统一输出」
+ * ⇒ 色条之后的**所有元素相对顺序都没变**，只是色条本身换了位置。
+ * 若把色条留在主序列里比，它一失配就把它后面每一个严格元素都顶掉一位
+ * ⇒后面全是假红（D3-3 实测：swimlane/layout-long-titles 的 text 全被误报）。
+ *
+ * 所以：
+ * - **严格元素**（节点框 / 容器 / 文本 / 图例）仍走子序列保序匹配——这是本判据的核心，
+ *   「节点被挪位」必须能被抓到。
+ * - **归一化元素**只比**角色计数**（色条 N 条、连线 M 条），不比位置与顺序。
+ */
+function splitByRole(els: SvgElement[]): { strict: SvgElement[]; typebars: number; edges: number } {
+	const strict: SvgElement[] = [];
+	let typebars = 0;
+	const edgeDs = new Set<string>();
+	for (const e of els) {
+		if (e.role === "typebar") {
+			// ⛔ **加权计数**：一个 `<path>` 里拼了 N 个矩形（每色一条 path），
+			//   所以色条数 = `d` 里的 `M` 子路径数，**不是 path 元素个数**。
+			//   数元素个数会把「聚合成 1 个 path」误判成「丢了 N-1 个色条」。
+			typebars += e.segCount || 1;
+		} else if (e.role === "edge") {
+			// 边按 `d` 去重：同一批边合并成一条折线后 d 唯一。
+			// ⛔ 不能按元素个数计 —— tree 原来一条边 2 个 path，合并后 1 个。
+			if (e.dedge) edgeDs.add(e.dedge);
+		} else {
+			strict.push(e);
+		}
+	}
+	return { strict, typebars, edges: edgeDs.size };
+}
+
+/**
+ * 归一化元素是否「旧 ⊆ 新」。
+ *
+ * - **色条**：新数量 ≥ 旧数量（纯新增允许，等量即重写）。
+ * - **连线**：允许被合并 —— tree 一条边由 2 段 path 合成 1 条折线（2→1），
+ *   所以判据是「新 ≥ 旧的一半」。⚠️ 这个宽松是**有代价**的：若有人把两条边
+ *   合成一条，本判据不会红。真正的守门员是快照逐字节 + 上面 text/rect 的保序匹配
+ *   （边被合并时折线走向不变，端点坐标仍会体现在坐标比对之外的视觉评审里）。
+ */
+function rolesPreserved(o: { typebars: number; edges: number }, n: { typebars: number; edges: number }): boolean {
+	if (n.typebars < o.typebars) return false;
+	return n.edges * 2 >= o.edges;
+}
+
+/** 逐用例分层 diff。 */
+export function diffGolden(oldF: GoldenFile, newF: GoldenFile): GoldenDiff[] {
+	const out: GoldenDiff[] = [];
+	for (let i = 0; i < Math.max(oldF.cases.length, newF.cases.length); i++) {
+		const o = oldF.cases[i];
+		const n = newF.cases[i];
+		if (!o || !n) {
+			out.push({
+				name: o?.name ?? n?.name ?? `#${i}`,
+				identical: false,
+				geometricIntact: false,
+				detail: `用例数量不一致：old=${oldF.cases.length} new=${newF.cases.length}`,
+			});
+			continue;
+		}
+		if (o.svg === n.svg) {
+			out.push({ name: o.name, identical: true, geometricIntact: true, detail: "逐字节不变" });
+			continue;
+		}
+		const oldAll = svgElements(o.svg);
+		const newAll = svgElements(n.svg);
+		// ⭐ 色条/连线走角色计数（写法在 D3-3 变过、位置也变过），
+		//   其余元素仍走子序列保序匹配（节点挪位必须被抓到）。
+		const oldSplit = splitByRole(oldAll);
+		const newSplit = splitByRole(newAll);
+		const oldEls = oldSplit.strict;
+		const newEls = newSplit.strict;
+		let k = 0;
+		for (let j = 0; j < newEls.length && k < oldEls.length; j++) {
+			if (sameElement(oldEls[k], newEls[j])) k++;
+		}
+		const rolesOk = rolesPreserved(oldSplit, newSplit);
+		const intact = k === oldEls.length && rolesOk;
+		const rectDelta = (n.svg.match(/<rect/g) ?? []).length - (o.svg.match(/<rect/g) ?? []).length;
+		const dashDelta = (n.svg.match(/stroke-dasharray/g) ?? []).length - (o.svg.match(/stroke-dasharray/g) ?? []).length;
+		const notes: string[] = [`元素 ${oldAll.length}→${newAll.length}`];
+		if (rectDelta !== 0) notes.push(`rect ${rectDelta > 0 ? "+" : ""}${rectDelta}（色条/卡片底新增）`);
+		if (dashDelta !== 0) notes.push(`dasharray ${dashDelta > 0 ? "+" : ""}${dashDelta}（容器改虚框）`);
+		if (!rolesOk) {
+			notes.push("⛔ 归一化元素（色条/连线）数量减少");
+		}
+		if (k !== oldEls.length) {
+			notes.push(`⛔ 首个失配：旧元素 ${JSON.stringify(oldEls[k])}`);
+		}
+		out.push({ name: o.name, identical: false, geometricIntact: intact, detail: notes.join(" | ") });
+	}
+	return out;
+}

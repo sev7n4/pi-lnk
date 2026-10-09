@@ -430,8 +430,13 @@ describe("D3-3 mark 通道：overlay.kind=severity 进图形视图", () => {
 		const svg = await svgOf({ view: "layout", relation: "dependency", overlay: SEV });
 		assert.match(svg, /data-node="n2"[^>]*data-sev="error"/);
 		// ⭐ 3 个节点 ⇒ cap = ceil(3*0.1) = 1 ⇒ 只有 1 个加粗描边
-		const bold = [...svg.matchAll(/<rect[^>]*stroke-width="2"/g)].length;
-		assert.equal(bold, 1);
+		// ⚠️ D3-3 起描边走 **class**（`.nvE`/`.nvW`/`.nvx`）而不再是内联 `stroke-width="2"`
+		//   —— 内联版38B/节点，正是撞 20000B 预算的主因。判据必须按 class 定位。
+		// ⛔ 不能只数 `nvE`：`.nvx`（错放节点）也是 `stroke-width:2`，两者会互相污染。
+		const bold = [...svg.matchAll(/<rect[^>]*class="nv(?:E|W|x)"/g)].length;
+		assert.equal(bold, 1, `加粗节点框应恰好 1 个，实际 ${bold}`);
+		// 且加粗确实来自 severity（error 用红描边 .nvE，不是中性加粗 .nvx）
+		assert.equal([...svg.matchAll(/<rect[^>]*class="nvE"/g)].length, 1, "error 应用 .nvE（红描边）");
 		// 未被标的节点不得带 data-sev
 		assert.equal(svg.includes('data-node="n1" data-group="prompt" data-sev='), false);
 	});
