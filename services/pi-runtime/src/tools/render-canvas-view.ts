@@ -466,6 +466,15 @@ export function createRenderCanvasViewTools(deps: {
 					}),
 				),
 				node_ids: Type.Optional(Type.Array(Type.String(), { description: "Source node ids; omitted means all canvas nodes" })),
+				interactive: Type.Optional(
+					Type.Boolean({
+						description:
+							"Set true ONLY when the user explicitly asked for an interactive view — " +
+							"phrases like 打开看看 / 点进去 / 我要拖拽或展开操作它 / let me interact with it. " +
+							"The default (a read-only SVG card) is correct for 请画一张图 / 看看结构 and must not be overridden. " +
+							"Ignored when `overlay` is present or the canvas has more than 15 nodes — the severity visuals and readability win over interactivity.",
+					}),
+				),
 				title: Type.Optional(Type.String({ description: "Card title" })),
 				annotations: Type.Optional(
 					Type.Array(
@@ -504,6 +513,8 @@ export function createRenderCanvasViewTools(deps: {
 					nodes?: Array<{ node_id: string; color?: string }>;
 					overlay?: Overlay;
 					node_ids?: string[];
+					/** 用户显式表达了可交互意图（模型从用户原话提取；缺省/非 true 一律静态图）。 */
+					interactive?: boolean;
 					title?: string;
 					annotations?: Array<{ node_id: string; text: string; severity: "info" | "warn" }>;
 				},
@@ -739,14 +750,15 @@ export function createRenderCanvasViewTools(deps: {
 				//   `data-sev` / ERROR·WARN 配色 / 图例会**静默丢失**。
 				//   判据必须在后端算：前端拿得到节点数，但拿不到 `overlay.kind`。
 				//
-				//⛔ `wantsInteractive` 恒为 undefined：工具读不到用户原话，而规格把
-				//   「用户说『打开看看/点进去』」列为节点图的**唯一**正当理由。
-				//   在接上真实意图信号之前，节点图只在「显式传入」时才会被选中——
-				//   也就是**默认静态图**（规格表最后一行）。这比现状（无条件节点图）
-				//   保守，但不会丢视觉信息。要接通这条，需前端从用户输入提取该意图。
+				// ⛔ `wantsInteractive` 的提取权在模型（2026-10-10 接通）：它本来就读得到
+				//   用户原话，通过 `interactive` 入参结构化传入（与 `overlay` 通道同构）。
+				//   语义仍是规格 §4.5 第三行：**唯一**正当理由，且压不过 overlay 与节点数
+				//   （decidePresentation 的行序锁死）。缺省/非 true 一律默认静态图——
+				//   严格 `=== true` 判真，"false"/0 之类脏数据不得触发交互分支。
 				const preferred = decidePresentation({
 					nodes: Array.isArray(raw.nodes) ? raw.nodes : [],
 					overlay: p.overlay,
+					wantsInteractive: p.interactive === true,
 				});
 				return presentResultDual(
 					{

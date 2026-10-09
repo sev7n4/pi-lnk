@@ -99,3 +99,71 @@ describe("D4 §4.5 端到端：preferredPresentation随载荷下发", () => {
 		}
 	});
 });
+
+describe("D4 §4.5：interactive 入参接通 wantsInteractive（2026-10-10）", () => {
+	/**
+	 * ⭐ 背景：规格 §4.5 第三行「用户说『打开看看/点进去』⇒ 可交互节点图」
+	 * 是节点图唯一的正当理由，但 `wantsInteractive` 此前恒为 undefined
+	 * （工具读不到用户原话）。本 PR 把提取权交给模型——它本来就读得到用户
+	 * 原话，通过新的 `interactive` 入参结构化传入，与 `overlay` 通道同构。
+	 *
+	 * ⛔ 语义（decidePresentation 已锁死，这里测的是接线）：
+	 * - interactive=true 且无 overlay、无超量 ⇒ node_graph
+	 * - interactive=true 压不过 overlay / 节点数 > 15（视觉不可退让）
+	 * - interactive=false / 缺省 ⇒ svg_card（严格 `=== true`，防 truthy 误判：
+	 *   字符串 "false"、数字 0 之类的脏数据都不得触发交互分支）
+	 */
+
+	it("interactive=true（无 overlay、3 节点）⇒ 节点图", async () => {
+		const { cmds, summary } = await callTool({ interactive: true });
+		assert.equal(summary.preferredPresentation, "node_graph", "模型显式传了交互意图，仍给静态图");
+		// 双通道同值（#323 的契约：preferredKind 挂在两条 command 上，同值）
+		for (const c of cmds) {
+			assert.equal(
+				(c as { preferredKind?: string }).preferredKind,
+				"node_graph",
+				`command ${c.type} 的 preferredKind 与判据不一致`,
+			);
+		}
+	});
+
+	it("⛔ interactive=true + overlay ⇒ 仍 svg_card（视觉不可退让）", async () => {
+		const { summary } = await callTool({
+			view: "timeline",
+			overlay: { kind: "severity", data: [{ node_id: "img-0", level: "warn" }] },
+			interactive: true,
+		});
+		assert.equal(summary.ok, true);
+		assert.equal(summary.preferredPresentation, "svg_card", "交互意图压过了 overlay ⇒ severity 视觉又丢了");
+	});
+
+	it("⛔ interactive=true + 节点数 > 15 ⇒ 仍 svg_card", async () => {
+		const { summary } = await callTool({ interactive: true }, 20);
+		assert.equal(summary.preferredPresentation, "svg_card", "交互意图压过了节点数上限");
+	});
+
+	it("⛔ interactive=false / 字符串 'false' / 缺省 ⇒ 都必须 svg_card（严格判真）", async () => {
+		for (const v of [false, "false", 0, undefined]) {
+			const params = v === undefined ? {} : { interactive: v };
+			const { summary } = await callTool(params);
+			assert.equal(
+				summary.preferredPresentation,
+				"svg_card",
+				`interactive=${JSON.stringify(v)} 触发了交互分支（truthy 误判）`,
+			);
+		}
+	});
+
+	it("schema 必须声明 interactive（可选 boolean，带提取指引）", () => {
+		const tools = createRenderCanvasViewTools({ fetchLayout: async () => ({ nodes: [], edges: [] }) });
+		const schema = (tools[0] as unknown as { parameters?: { properties?: Record<string, { type?: string; description?: string }> } }).parameters;
+		assert.ok(schema, "工具没有 parameters schema（#320 教训：schema 在 .parameters）");
+		const interactive = schema.properties?.interactive;
+		assert.ok(interactive, `schema.properties 缺 interactive，实际字段: ${Object.keys(schema.properties ?? {}).join(",")}`);
+		assert.equal(interactive.type, "boolean");
+		assert.ok(
+			interactive.description?.includes("interactive"),
+			"description 必须写给模型看：什么时候传 true",
+		);
+	});
+});
