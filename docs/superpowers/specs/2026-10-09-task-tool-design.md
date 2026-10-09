@@ -64,6 +64,7 @@
 职责切分：**diff 在 pi-runtime 侧产出**——工具 execute 内调 `reduce` 算出增量，`details` 载荷固定为 `{ snapshot, diff }`（快照供持久化/重建，diff 供转译）；**Nest 只做映射**：把 details.diff 映射为现有 `task_list` / `task_update` 事件，并收集进 executionEvents 持久化（刷新重放沿用现有机制）。
 
 **事件载体裁决（评审补充，实现计划 Task 0 验证）**：实测 `EVENT_MAP` 有 `tool_end → tool_execution_end` 且 `TOOL_RESULT_EVENT_TYPES` 含 `tool_end`（session-manager.ts:135-155，工具结果载荷确实流向 Nest），但**归一化层是否保留 `details` 字段未验证**。裁决顺序：①首选透传——若归一化剥离 details 则在归一化处补透传；②fallback——pi-runtime 侧新增 harness 事件映射（EVENT_MAP 追加自定义事件）。Task 0 = 半天通路 spike，结论回写本节后再动 Nest。
+**2026-10-09 裁决：attachEvents 原样透传 `result.details`（session-manager.ts:1123 的 `stripImageBlocks` 只重建 `content` 数组，`details` 字段随展开保留；`extractCanvasActions` 生产先例同路径），Task 3 直接走透传路径，无需 EVENT_MAP 改动。**
 
 **三态 → 事件映射表**（事件 payload 是自有协议，加字段不算前端破坏性迁移）：
 - `task_list`：items 结构从 `{id, title}` 扩展为 `{id, title, status}`（status ∈ pending/in_progress/completed）；前端 reconcile 对未知 status 按"未完成"渲染（向后兼容）。
