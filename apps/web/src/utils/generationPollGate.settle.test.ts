@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
+import { SETTLE_TIMEOUT_FLOOR_MS } from '@lnkpi/shared'
 import {
   describeCompletedWithoutOutput,
   settleDeadlineExceeded,
@@ -45,20 +46,14 @@ describe('settleDeadlineExceeded', () => {
 
 describe('DEFAULT_SETTLE_TIMEOUT_MS', () => {
   it('covers the worst-case server generation time + V6 create-retry upper bound + buffer', () => {
-    // 前端墙钟必须 ≥ 服务端真实最坏生成耗时 + V6 创建重试最坏上界 + 缓冲，
-    // 否则服务端还在跑、客户端已先放弃 ⇒ 用户看到假失败（钱已扣、历史里却是成功）。
+    // 前端墙钟必须 ≥ 服务端真实最坏生成耗时 + 缓冲，否则服务端还在跑、
+    // 客户端已先放弃 ⇒ 用户看到假失败（钱已扣、历史里却是成功）。
     //
-    // 服务端真实最大 deadline = MiniMax H3 的 DEFAULT_MAX_POLL_MS（见 minimax-h3-video-provider.ts）。
-    // V6 创建重试最坏上界 = 3 次尝试 × UPSTREAM_FETCH_TIMEOUT_MS(45s) + 退避(1.5s+3s) = 139_500ms
-    //   （这是病理上界：V6 要救的 429/503 毫秒级响应，实际只多 ~4.5s）。
-    // 缓冲 60_000ms 给 Agnes 常规轮询留余量。
-    // 改任一项都要重算本值（详见 generationPollGate.ts 顶部注释）。
-    const MAX_SERVER_POLL_MS = 1_200_000
-    const V6_CREATE_RETRY_WORST_MS = 3 * 45_000 + 4_500
-    const BUFFER_MS = 60_000
-    expect(DEFAULT_SETTLE_TIMEOUT_MS).toBeGreaterThanOrEqual(
-      MAX_SERVER_POLL_MS + V6_CREATE_RETRY_WORST_MS + BUFFER_MS,
-    )
+    // 2026-10-09 起服务端最坏耗时由 @lnkpi/shared/generationTimeoutBudget
+    // 单一来源派生（MiniMax H3 deadline + V6 创建重试上界），本测试直接
+    // 引用 SETTLE_TIMEOUT_FLOOR_MS——三层任一常量变动都会即时反映到这里，
+    // 不再有「本地字面量过期仍全绿」的假绿温床。
+    expect(DEFAULT_SETTLE_TIMEOUT_MS).toBeGreaterThanOrEqual(SETTLE_TIMEOUT_FLOOR_MS)
   })
 })
 

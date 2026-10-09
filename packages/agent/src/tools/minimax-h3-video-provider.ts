@@ -1,10 +1,13 @@
 import type { VideoGenerateOptions, VideoProvider } from './video-provider'
 import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
 import { createPollErrorTracker, isRetryableUpstreamError, withUpstreamRetry } from './upstream-retry'
+import { VIDEO_CREATE_RETRY_BASE_DELAY_MS, VIDEO_POLL_DEADLINE_MS } from '@lnkpi/shared'
 
 const DEFAULT_BASE_URL = 'https://api.minimax.io'
 const DEFAULT_POLL_INTERVAL_MS = 10_000
-const DEFAULT_MAX_POLL_MS = 1_200_000
+// 轮询 deadline 来自跨层预算单一来源（@lnkpi/shared/generationTimeoutBudget）：
+// 当前全 provider 最大（20min），web 墙钟与 reaper 阈值都按它派生。
+const DEFAULT_MAX_POLL_MS = VIDEO_POLL_DEADLINE_MS.minimaxH3
 const ACCOUNT_ERROR_MESSAGE = '视频服务账户异常，请稍后重试或联系管理员'
 
 export function isMiniMaxH3Model(model?: string): boolean {
@@ -121,7 +124,7 @@ export class MiniMaxH3VideoProvider implements VideoProvider {
     private baseUrl = DEFAULT_BASE_URL,
     _defaultModel = 'minimax-h3',
     /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
-    private createRetryBaseDelayMs = 1500,
+    private createRetryBaseDelayMs: number = VIDEO_CREATE_RETRY_BASE_DELAY_MS,
   ) {}
 
   async generate(

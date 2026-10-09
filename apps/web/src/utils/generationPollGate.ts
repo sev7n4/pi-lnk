@@ -63,28 +63,21 @@ export function shouldApplyGenerationPoll(opts: {
 /**
  * 前端「等节点落定」的墙钟上限。
  *
- * ⚠️ 必须 ≥ 服务端各 provider 的真实最坏生成耗时 + 缓冲，否则服务端还在跑、
- * 客户端已先放弃 ⇒ 用户看到假失败（钱已扣、历史里却是成功）。
+ * 2026-10-09 起数值由 `@lnkpi/shared/generationTimeoutBudget` 提供（跨层
+ * 超时预算单一来源）：web 墙钟 / agent 重试与轮询 / server reaper 阈值
+ * 三层都从同一组常量派生，关系由不等式锁测试钉死（本文件原先是注释里的
+ * 口头约定，V6 改动时差点静默失衡）。
  *
- * 服务端各 provider 的真实轮询预算（与前端同步核对过，2026-10-09）：
- *   - MiniMax H3：`DEFAULT_MAX_POLL_MS = 1_200_000`（20min）← 真实最大 deadline
- *   - Apimart / Fal / Fal-H3-Max：`maxPollMs = 600_000`（10min）
- *   - Agnes：循环制 `maxPollAttempts=120`，无固定 deadline（异常态最坏 ≈70min，
- *     超出本墙钟，属服务端 120 次轮询配置本身的问题，不在前端墙钟范围内解决）
+ * 预算构成（见 shared 文件，2026-10-09 核对）：
+ *   - 服务端最坏总耗时 `VIDEO_SERVER_WORST_MS` = MiniMax H3 轮询 deadline
+ *     20min + V6 创建重试上界 139.5s ≈ 22.3min
+ *   - 实际墙钟 = 最坏 + ~120.5s 防御余量 = 1_460_000（PR #301 定值，行为保持）
+ *   - Agnes 循环制无 deadline（最坏 ≈70min）不被墙钟覆盖，属服务端配置问题
  *
- * V6 给「创建」阶段补了退避重试（`withUpstreamRetry`：3 次尝试、退避 1.5s+3s），
- * 创建发生在轮询之前，最坏上界 = `3 × 45s`（每次创建挂满 `UPSTREAM_FETCH_TIMEOUT_MS`）
- * `+ 4.5s`（退避）= `139_500ms`。注意这是上界：V6 真正要救的 429/503 是毫秒级
- * 响应，实际只多 ~4.5s；只有「隧道全死、每次创建都挂满 45s」的病理场景才触达上界。
- *
- * 取值（2026-10-09 重算）：`1_200_000 + 139_500 + 120_500(缓冲) = 1_460_000`。
- * 缓冲覆盖 MiniMax H3 病理态创建重试，并给 Agnes 常规轮询留余量。
- * ⚠️ 改任一项（MiniMax `DEFAULT_MAX_POLL_MS` / `UPSTREAM_FETCH_TIMEOUT_MS` /
- * V6 重试次数）都必须重算本值，且 `generationPollGate.settle.test.ts` 里有断言锁住。
- * 另：reaper 孤儿回收默认 `LNKPI_GENERATION_REAP_MINUTES=30`（1_800_000）仍远大于本值，
- * 墙钟超时判「放弃」不会与 reaper 退款冲突。
+ * ⛔ 不要在本文件改数值——改 shared 的 `DEFAULT_SETTLE_TIMEOUT_MS`，
+ * `settle.test.ts` 会用 `SETTLE_TIMEOUT_FLOOR_MS` 拦住失衡改动。
  */
-export const DEFAULT_SETTLE_TIMEOUT_MS = 1_460_000
+export { DEFAULT_SETTLE_TIMEOUT_MS } from '@lnkpi/shared'
 
 /**
  * 是否已超过墙钟上限。

@@ -24,11 +24,13 @@
  * `LNKPI_IMAGE_GEN_TIMEOUT_SEC=180`。否则编排层先超时掐断，
  * 记录又会停在 `generating` —— 正是本次事故要消灭的形态。
  * 改大它之前先重算这条不等式，`upstream-fetch.test.ts` 里有断言锁住。
+ *
+ * 2026-10-09 起数值迁移到 `@lnkpi/shared/generationTimeoutBudget`（跨层
+ * 超时预算单一来源：web 墙钟 / reaper 阈值都由它派生）。此处 re-export
+ * 保持本模块既有 import 面不变；改值请改 shared，三处锁测试会一起拦。
  */
-export const UPSTREAM_FETCH_TIMEOUT_MS = 45_000
-
-/** 轮询类请求（响应体很小）用更短的上限，保证轮询周期不被单次卡死吃掉。 */
-export const UPSTREAM_POLL_TIMEOUT_MS = 30_000
+export { UPSTREAM_FETCH_TIMEOUT_MS, UPSTREAM_POLL_TIMEOUT_MS } from '@lnkpi/shared'
+import { UPSTREAM_FETCH_TIMEOUT_MS, UPSTREAM_POLL_TIMEOUT_MS } from '@lnkpi/shared'
 
 export class UpstreamTimeoutError extends Error {
   readonly code = 'UPSTREAM_TIMEOUT'
