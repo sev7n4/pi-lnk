@@ -17,6 +17,13 @@ for (const rel of packages) {
       types: './dist/index.d.ts',
       default: './dist/index.js',
     },
+    // B1 S1-1：探活服务 import '@lnkpi/shared/upstreamReconciliation'（复用 shared 的
+    // diff 纯函数，禁第二套）。与 src 侧 package.json 的子路径导出一一对应——
+    // 这里漏掉会让生产镜像运行时 ERR_PACKAGE_PATH_NOT_EXPORTED。
+    './upstreamReconciliation': {
+      types: './dist/upstreamReconciliation.d.ts',
+      default: './dist/upstreamReconciliation.js',
+    },
   }
   fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`)
   console.log(`patched ${rel}`)

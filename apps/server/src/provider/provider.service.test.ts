@@ -706,6 +706,30 @@ describe('ProviderService', () => {
     expect(byName.get(catalog[0]!.name)!.availability).toBe('unavailable') // 灰显不被对齐重置
     expect(byName.get(catalog[catalog.length - 1]!.name)!.availability).toBe('unknown') // 新条目 unknown
   })
+
+  it('S1-1: pullModels 平台分支整体重建镜像时保留已灰显条目（Task 1 递延 Minor）', async () => {
+    await svc.bootstrap('u1')
+    const platform = prisma._channels.get('platform')!
+    // 模拟探活器已把首个目录模型灰显
+    const models = JSON.parse(platform.models) as Array<{ name: string; availability?: string }>
+    const grayedName = models[0]!.name
+    for (const entry of models) {
+      if (entry.name === grayedName) entry.availability = 'unavailable'
+    }
+    platform.models = JSON.stringify(models)
+
+    // pullModels 平台分支走整体重建（preserveModelAvailability(catalogModels())），
+    // ⛔ 不得把探活器写入的灰显重置回 unknown
+    const updated = await svc.pullModels('u1', 'platform')
+
+    expect(updated.models).toHaveLength(STUDIO_MODEL_CATALOG.length)
+    const byName = new Map(updated.models.map((m) => [m.name, m.availability]))
+    expect(byName.get(grayedName)).toBe('unavailable')
+    // 其余条目仍是显式 unknown（目录侧默认值）
+    for (const entry of updated.models) {
+      if (entry.name !== grayedName) expect(entry.availability).toBe('unknown')
+    }
+  })
 })
 
 function makePrefsRow(userId: string, overrides: Partial<PreferencesRow> = {}): PreferencesRow {

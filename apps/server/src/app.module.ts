@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 import { AssetsModule } from './assets/assets.module'
+import { AdminModule } from './admin/admin.module'
 import { AuthModule } from './auth/auth.module'
 import { SessionsModule } from './sessions/sessions.module'
 import { WorksModule } from './works/works.module'
@@ -33,6 +34,7 @@ import { StorageModule } from './storage/storage.module'
     UploadModule,
     HealthModule,
     ProviderModule,
+    AdminModule,
     MediaModule,
   ],
 })
