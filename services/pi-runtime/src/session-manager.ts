@@ -52,6 +52,8 @@ import { estimateImageTokens, toImageContents, type DirectImage } from "./direct
 import { annotateImagesForSummary } from "./compaction-images.js";
 import { enforceRetention } from "./session-retention.js";
 import { buildToolEnsemble } from "./tools/tiering.js";
+import { seedTodoState, getTodoState } from "./tools/todo.js";
+import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import { stripImageBlocks } from "./sse-sanitize.js";
@@ -954,6 +956,26 @@ export class SessionManager {
 		);
 		entry.harness = harness;
 
+		// C1（spec 2026-10-09-task-tool-design.md §3.4）：create/resume/rebuild 三态收敛点播种
+		// todo 快照——从 transcript 扫最后一个 todo_write 的 details（oldestFirst 保证数组尾=最新）。
+		// 键 = toolContext.sessionId 同式（canvasSessionId ?? key）；注意 canvasSessionId 后续每轮
+		// 自愈（doCreate :770）时 store 键不会迁移——同画布会话内恒定，属可接受边界（台账 Ruling）。
+		// ⭐ 只在 existingFs.session（磁盘 resume / fork）时扫：新建路径（doCreate :820）也传
+		// existingFs={env,repo} 但无 session、transcript 必空，扫描是纯 no-op；而压缩测试用
+		// 门控 stub lane（findEntries await 外部 gate），无条件调用会把 create 挂死并破坏
+		// findEntries 查询形状断言（实测 2026-10-09，17 cancelled）。
+		// fail-soft：lane/扫描失败只 warn，绝不阻断会话建立。
+		if (existingFs?.session) {
+			try {
+				const todoKey = entry.canvasSessionId ?? key;
+				const lane = await harness.lane(MAIN_LANE, this.context);
+				const entries = (await lane.findEntries({ order: "oldestFirst" }, this.context)) as readonly unknown[];
+				seedTodoState(todoKey, pickLatestSnapshot(Array.isArray(entries) ? entries : []));
+			} catch (err) {
+				console.warn("[todo-resume] transcript seeding failed (fail-soft):", err);
+			}
+		}
+
 		// T4 压缩图片占位（spec §3.3 / B1 取证 Ruling）：before_compaction hook 只能整体替代
 		// 压缩结果、宿主又没有 compaction 触发路径，因此在此对 preparation 的消息**副本**做
 		// 图片侧注（annotateImagesForSummary）后调 vendor 导出的 compact() 自产摘要并整体返回。
@@ -1590,7 +1612,7 @@ export class SessionManager {
 	/** 测试观测口：按会话当前 turn 求值 systemPrompt（与 harness 内部同一组合函数）。 */
 	resolveSystemPromptForTest(threadKey: string): string {
 		const entry = this.require(threadKey);
-		const sp = composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
+		const sp = composeSystemPrompt(entry.staticPrompt, this.assembleDynamicBlocks(entry), this.dynamicBudgetOption());
 		this.metrics?.observeSystemPromptBytes(Buffer.byteLength(sp, "utf8")); // M2：utf8 字节（名字是 bytes，UTF-16 length 会低估 CJK 2~3x）
 		return sp;
 	}
@@ -1608,10 +1630,23 @@ export class SessionManager {
 		};
 	}
 
+	/**
+	 * 动态块装配（C1 §3.4）：Nest 每轮 turnContext 块 + todo 跨压缩块（store 非空才注入）。
+	 * todo 块在**组装时**从内存 store 实时读取——不进 turn 状态（turn 是 Nest 整体覆盖语义，
+	 * 存进去会被下一轮 Nest 载荷冲掉），这才是「跨压缩存活」的实现点：压缩后每次 LLM 请求
+	 * 重新求值 systemPrompt，块恒在。预算走 dynamic-budget 的独立 "todo" kind（5% 份额）。
+	 */
+	private assembleDynamicBlocks(entry: SessionEntry): string[] {
+		const blocks = [...(entry.turn.dynamicBlocks ?? [])];
+		const todoItems = getTodoState(entry.canvasSessionId ?? entry.id);
+		if (todoItems.length > 0) blocks.push(renderTodoBlock(todoItems));
+		return blocks;
+	}
+
 	/** 组装 systemPrompt 并上报 bytes 水位（T3 观测）。闭包捕获 entry 而非 require(threadKey)：
 	 * harness 可能在会话注册进 this.sessions 之前就调用此闭包（create/fork 时序），require 会炸。 */
 	private composeEntryAndObserve(entry: SessionEntry): string {
-		const sp = composeSystemPrompt(entry.staticPrompt, entry.turn.dynamicBlocks ?? [], this.dynamicBudgetOption());
+		const sp = composeSystemPrompt(entry.staticPrompt, this.assembleDynamicBlocks(entry), this.dynamicBudgetOption());
 		this.metrics?.observeSystemPromptBytes(Buffer.byteLength(sp, "utf8")); // M2：utf8 字节（名字是 bytes，UTF-16 length 会低估 CJK 2~3x）
 		return sp;
 	}

@@ -12,6 +12,12 @@
  * 2. **golden 串**：短输入逐字符比对；长输入用 sha256 前缀钉死（挡无意识漂移）。
  *
  * ⚠️ golden 值只允许在**有意变更装配逻辑**时更新，且必须同步改本文件头说明改了什么。
+ *
+ * golden 变更史：
+ * - 2026-10-09 C1（spec 2026-10-09-task-tool-design.md §3.4）：dynamic-budget 新增
+ *   "todo" kind（份额 5%，从 canvas 0.55→0.50 挪出，总和 1.0 不变量保持）——跨压缩
+ *   任务清单块需要独立预算分类，canvas 截断点随份额变化 ⇒ 「混合四 kind」golden 摘要
+ *   由 4d78fe37b10388a1 → 2f045e7dd9f49fb4。结构不变式（静态段最前/总量上界）不变。
  */
 
 import assert from "node:assert/strict";
@@ -117,7 +123,7 @@ describe("composeSystemPrompt golden：截断场景（不变式 + 摘要）", ()
 		// 结构不变式（先于摘要断言，防止「把现状录成 golden」式假绿）
 		assert.ok(out.startsWith("RULES\n\n"));
 		assert.ok(out.length <= 4800 + 5 * 200, `总量上界失守：${out.length}`);
-		assert.equal(digest(out), "4d78fe37b10388a1", "golden 摘要漂移 —— 若是有意改动，请更新并说明");
+		assert.equal(digest(out), "2f045e7dd9f49fb4", "golden 摘要漂移 —— 若是有意改动，请更新并说明");
 	});
 });
 

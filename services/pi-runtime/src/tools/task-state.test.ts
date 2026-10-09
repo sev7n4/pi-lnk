@@ -93,6 +93,24 @@ test("pickLatestSnapshot: 无 todo_write / 畸形 details → 空数组", () => 
 	assert.deepEqual(pickLatestSnapshot([]), []);
 });
 
+test("pickLatestSnapshot: vendor 真实形态（message 包裹 toolResult）→ 可读", () => {
+	// 2026-10-09 生产 probe 实测：lane.findEntries 返回 {type:"message", message:{role:"toolResult", toolName, details}}
+	const entries = [
+		{ type: "message", message: { role: "user", content: [] } },
+		{
+			type: "message",
+			message: {
+				role: "toolResult",
+				toolName: "todo_write",
+				details: { todo: { snapshot: [{ id: "plan-1", content: "起稿", status: "in_progress" }] } },
+			},
+		},
+	];
+	const snap = pickLatestSnapshot(entries);
+	assert.equal(snap[0]?.content, "起稿");
+	assert.equal(snap[0]?.status, "in_progress");
+});
+
 test("summarize: 紧凑摘要，不回显全量 JSON", () => {
 	const s = summarize([
 		{ id: "plan-1", content: "起稿", status: "completed" },

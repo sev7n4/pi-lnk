@@ -13,14 +13,17 @@
  * general（真未知标记）份额 0：只享 MIN_BLOCK_CHARS 保底，且计 unknown_kind 告警。
  */
 
-export type BlockKind = "canvas" | "vision" | "sidebar" | "memory" | "general";
+export type BlockKind = "canvas" | "vision" | "sidebar" | "memory" | "todo" | "general";
 
-/** kind → 占总预算比例（canvas 55% + vision 25% + sidebar 10% + memory 10% = 1.0；general 0=只享保底）。 */
+/** kind → 占总预算比例（canvas 50% + vision 25% + sidebar 10% + memory 10% + todo 5% = 1.0；general 0=只享保底）。
+ * todo 5% 从 canvas 挪出（C1 跨压缩任务清单，spec 2026-10-09-task-tool-design.md §3.4；
+ * 任务清单截断=静默丢任务，故给独立 kind 而非落 general 80 字保底）。 */
 const DEFAULT_SHARES: Record<BlockKind, number> = {
-	canvas: 0.55,
+	canvas: 0.5,
 	vision: 0.25,
 	sidebar: 0.1,
 	memory: 0.1,
+	todo: 0.05,
 	general: 0,
 };
 
@@ -51,6 +54,7 @@ export function classifyBlock(block: string): BlockKind {
 	if (t.startsWith("【侧栏参考图解析】")) return "vision";
 	if (t.startsWith("侧栏参考素材")) return "sidebar";
 	if (t.startsWith("## 长期记忆")) return "memory";
+	if (t.startsWith("## 当前任务清单")) return "todo";
 	return "general";
 }
 
@@ -67,8 +71,8 @@ export interface BudgetResult {
 
 export function applyDynamicBudget(blocks: readonly string[], opts: BudgetOptions): BudgetResult {
 	const shares = { ...DEFAULT_SHARES, ...(opts.shares ?? {}) };
-	const dropped: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, general: 0 };
-	const used: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, general: 0 };
+	const dropped: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, todo: 0, general: 0 };
+	const used: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, todo: 0, general: 0 };
 
 	const out = blocks.map((block) => {
 		if (block.trim().length === 0) return block; // 空块原样（不进预算、不计数）

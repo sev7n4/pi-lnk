@@ -60,13 +60,27 @@ export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItem[
 }
 
 /** 从会话 transcript 条目（任意形态）反向扫描最后一个 todo_write 快照。
- * 防御式字段访问：vendor entry 形态随版本可能变化（tool_result 顶层或包在 message 内）。 */
+ * 防御式字段访问：vendor entry 形态随版本可能变化——2026-10-09 生产 probe 实测形态为
+ * `{type:"message", message:{role:"toolResult", toolName, details}}`（message 包裹层），
+ * 同时保留官方 todo.ts 同构的顶层 `{toolName, details}` 与 `{result:{details}}` 兼容。 */
 export function pickLatestSnapshot(entries: readonly unknown[]): TodoItemWithId[] {
 	for (let i = entries.length - 1; i >= 0; i--) {
-		const e = entries[i] as { toolName?: string; details?: unknown; result?: { details?: unknown } } | null;
-		if (!e || e.toolName !== "todo_write") continue;
-		const raw = (e.details ?? e.result?.details) as { todo?: { snapshot?: unknown } } | undefined;
-		const snap = raw?.todo?.snapshot;
+		const e = entries[i] as {
+			toolName?: string;
+			details?: unknown;
+			result?: { details?: unknown };
+			message?: { toolName?: string; details?: unknown; result?: { details?: unknown } };
+		} | null;
+		if (!e) continue;
+		let raw: unknown;
+		if (e.toolName === "todo_write") {
+			raw = e.details ?? e.result?.details;
+		} else if (e.message?.toolName === "todo_write") {
+			raw = e.message.details ?? e.message.result?.details;
+		} else {
+			continue;
+		}
+		const snap = (raw as { todo?: { snapshot?: unknown } } | undefined)?.todo?.snapshot;
 		if (!Array.isArray(snap)) continue;
 		const items: TodoItemWithId[] = [];
 		for (const it of snap) {
