@@ -3,6 +3,8 @@ import { NestClient, loadNestConfig } from "./nest-client.js";
 import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
+import { createProposePlanTool } from "./propose-plan.js";
+import { planGateEnabled } from "../runtime-config.js";
 import type { Metrics } from "../metrics.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 
@@ -41,7 +43,13 @@ export function resolveToolsWithClient(
 			);
 		}
 		// C1：todo_write 不依赖 Nest client——纯文本模式也可用（kill switch PI_RUNTIME_TODO_TOOL）。
-		return { tools: isTodoToolEnabled() ? buildTodoTools() : [], client: null, registry: deps.registry ?? null };
+		// C3：propose_plan 只依赖 registry 阻塞确认，纯文本模式（registry 存在）也可用。
+		const planTools = deps.registry && planGateEnabled() ? [createProposePlanTool(deps.registry, metrics)] : [];
+		return {
+			tools: [...(isTodoToolEnabled() ? buildTodoTools() : []), ...planTools],
+			client: null,
+			registry: deps.registry ?? null,
+		};
 	}
 	const client = new NestClient({
 		...cfg,
@@ -60,6 +68,8 @@ export function resolveToolsWithClient(
 	const tools: LnkpiTool[] = [
 		// C1：todo_write 纯本地工具，不依赖 client（spec 2026-10-09-task-tool-design.md §3.1）。
 		...(isTodoToolEnabled() ? buildTodoTools() : []),
+		// C3：propose_plan 同上——不依赖 client，registry 存在即可注册（kill switch PI_RUNTIME_PLAN_GATE）。
+		...(deps.registry && planGateEnabled() ? [createProposePlanTool(deps.registry, metrics)] : []),
 		...buildCanvasReadTools(client),
 		...buildCanvasWriteTools(client, deps.registry),
 		...buildUiCommandTools(),

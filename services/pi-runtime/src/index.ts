@@ -12,6 +12,8 @@ import { loadRuntimeConfig } from "./runtime-config.js";
 import { SkillRegistry, approxTokens } from "./skills/registry.js";
 import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
+import { clearPlanRunFlag } from "./gate/plan-gate.js";
+import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
 import { governImagePayload } from "./payload-images.js";
@@ -68,6 +70,8 @@ metrics.setSkillsPromptTokens(approxTokens(skillRegistry.indexBlock)); // follow
 // P0-① 会话常驻后：onSessionCreated 只在新建/重建时触发，onPrompt 每轮触发——
 // 「同轮」判定因此从「每轮重建恒为 0」变成真实递增的轮号，语义反而更准。
 const gateStore = new GenerationGateStore();
+// C3：before_tool 事件只带 toolName，tier 查注册面（注册表外工具 tier=undefined → 放行）。
+const toolTiers = new Map(tools.map((t) => [t.name, t.tier]));
 const manager = new SessionManager(
 	tools,
 	undefined,
@@ -142,6 +146,16 @@ const manager = new SessionManager(
 					return undefined;
 				}
 			});
+			// C3 Plan 确认门（spec 2026-10-10-plan-gate-design.md §3.3/§3.4）：与 generation-gate
+			// 并存不合并（节点级 SSOT vs transcript 快照两套语义）。键域 = canvasSessionId ?? key
+			// （与 propose_plan 的 tc.sessionId、session-manager 播种三方一致，#74 解耦语义）——
+			// canvasSessionId 每轮可能自愈（doCreate），传解析器现算而非捕获值（终审 Important #2）。
+			// 必须挂在 if (!nestClient) 之前——propose_plan 纯文本模式也可用（与 config.ts 注册面一致）。
+			registerPlanGateHooks(harness, {
+				planKey: () => manager.getCanvasSessionId(sessionId) ?? sessionId,
+				tiers: toolTiers,
+				metrics,
+			});
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
 			harness.hooks.on("before_tool", async (event) => {
@@ -163,6 +177,8 @@ const manager = new SessionManager(
 		},
 		onPrompt(sessionId) {
 			gateStore.bumpUserTurn(sessionId);
+			// C3：新用户轮 = 新 run，清执行信号（不动 pending——确认前绝不执行）。
+			clearPlanRunFlag(manager.getCanvasSessionId(sessionId) ?? sessionId);
 		},
 	},
 	skillRegistry,

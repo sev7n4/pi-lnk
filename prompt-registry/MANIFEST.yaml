@@ -34,9 +34,9 @@ entries:
     order: 50
     contentHash: 117bf1aedc23
   - id: task_tool
-    version: 1.0.0
+    version: 1.1.0
     order: 55
-    contentHash: ca8396f98bc4
+    contentHash: cf83fff13bba
   - id: write_guard
     version: 1.0.0
     order: 60

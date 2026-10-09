@@ -64,6 +64,7 @@ const ALL_NAMES = [
 	"attach_refs",
 	"apply_sidebar_attachments",
 	"propose_generation",
+	"propose_plan",
 	// 以下为「资产点名」而常驻的工具（2026-10-03 生产取证：tool_search 触发率 0 ⇒ 延迟即不可达）
 	// 画布编排：drama-* / ecommerce-product-photo 写死 arrange_nodes(along_edges)
 	"arrange_nodes",
@@ -162,6 +163,10 @@ describe("被资产点名的工具必须常驻（延迟即不可达，回归锁�
 		// ⇒ 按本 describe 的准绳（被资产点名 ⇒ 必须常驻）它必须在 ALWAYS_ON。
 		"run_audio_generation",
 	];
+
+	it("propose_plan 常驻（task_tool.md 点名，C3 spec §3.7）", () => {
+		assert.ok(ALWAYS_ON_TOOL_NAMES.has("propose_plan"));
+	});
 
 	it("全部进 ALWAYS_ON 且初始即激活", () => {
 		const e = buildToolEnsemble(fakeTools(), true);

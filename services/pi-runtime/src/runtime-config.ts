@@ -262,3 +262,9 @@ export function askUserBlocking(env: Record<string, string | undefined> = proces
 export function askUserTimeoutMs(env: Record<string, string | undefined> = process.env): number {
 	return parsePositiveInt(env.ASK_USER_TIMEOUT_MS, 300_000);
 }
+
+/** C3 Plan 确认门开关（spec §3.7）：off = propose_plan 不注册 + gate 不拦 + followUp 不注入。
+ * 已知降级：task_tool.md 点名悬空 → 模型直调吃 vendor unavailable error 后自行回退（仅止血用）。 */
+export function planGateEnabled(env: Record<string, string | undefined> = process.env): boolean {
+	return parseBool(env.PI_RUNTIME_PLAN_GATE, true);
+}

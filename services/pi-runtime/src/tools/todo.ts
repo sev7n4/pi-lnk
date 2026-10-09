@@ -64,6 +64,26 @@ const todoSchema = Type.Object({
 	),
 });
 
+/** 全量覆写唯一入口（C3：propose_plan 复用同一条写管道，spec §3.2「不做两步组合」）。 */
+export function overwriteTodos(sessionId: string, todos: TodoItem[]): { snapshot: TodoItemWithId[]; diff: TodoDiff } {
+	const state = stateFor(sessionId);
+	// 漏发告警（Review Focus #3）：prev 未完成项从 next 消失
+	const nextContents = new Set(todos.map((t) => t.content));
+	const dropped = state.items.filter((i) => i.status !== "completed" && !nextContents.has(i.content));
+	if (dropped.length > 0) {
+		console.warn(
+			`[todo_write] dropped-incomplete session=${sessionId} items=${JSON.stringify(dropped.map((d) => d.content))}`,
+		);
+	}
+	const diff = reduce(state.items, todos);
+	const nextItems = diff.list ?? state.items.map((prev) => {
+		const upd = diff.updates.find((u) => u.id === prev.id);
+		return upd ? { ...prev, status: upd.status } : prev;
+	});
+	state.items = nextItems;
+	return { snapshot: nextItems, diff };
+}
+
 export function buildTodoTools(): LnkpiTool[] {
 	if (!isTodoToolEnabled()) return [];
 	const tool: LnkpiTool = {
@@ -84,24 +104,10 @@ export function buildTodoTools(): LnkpiTool[] {
 			_invocation: unknown,
 			_context: unknown,
 		): Promise<AgentToolResult<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>> {
-			const state = stateFor(toolContext.sessionId);
-			// 漏发告警（Review Focus #3）：prev 未完成项从 next 消失
-			const nextContents = new Set(params.todos.map((t) => t.content));
-			const dropped = state.items.filter((i) => i.status !== "completed" && !nextContents.has(i.content));
-			if (dropped.length > 0) {
-				console.warn(
-					`[todo_write] dropped-incomplete session=${toolContext.sessionId} items=${JSON.stringify(dropped.map((d) => d.content))}`,
-				);
-			}
-			const diff = reduce(state.items, params.todos);
-			const nextItems = diff.list ?? state.items.map((prev) => {
-				const upd = diff.updates.find((u) => u.id === prev.id);
-				return upd ? { ...prev, status: upd.status } : prev;
-			});
-			state.items = nextItems;
+			const { snapshot, diff } = overwriteTodos(toolContext.sessionId, params.todos);
 			return {
-				content: [{ type: "text", text: summarize(nextItems) }],
-				details: { todo: { snapshot: nextItems, diff } },
+				content: [{ type: "text", text: summarize(snapshot) }],
+				details: { todo: { snapshot, diff } },
 			};
 		},
 	};
