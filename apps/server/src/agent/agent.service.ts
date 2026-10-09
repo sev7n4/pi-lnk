@@ -62,7 +62,7 @@ import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
 import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（P0-① 起全部经 prompt 的 turnContext 逐轮透传，不再随会话创建注入）。 */
 export interface PiCanvasContext {
@@ -1313,6 +1313,12 @@ export class AgentService {
           executionEvents.push({ type: 'canvas_action', data: action })
           yield { type: 'canvas_action', data: action }
         }
+        // C1：todo_write diff → task_list/task_update（todo 面板数据源；与 ⟦plan⟧ 派生路径并存，
+        // 老标记只读兼容，见 planMarkers.ts deprecation 注释）
+        for (const task of extractTaskEvents(event)) {
+          executionEvents.push(task)
+          yield task as AgentStreamEvent
+        }
         // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件（delta 只累积）
         const thinkingUi = thinkingAccumulator.feed(event)
         if (thinkingUi) {
@@ -1334,6 +1340,8 @@ export class AgentService {
           assistantText += stripped.text
           ;(ui.data as { text: string }).text = stripped.text
           if (stripped.plan?.length) {
+            // C1 验收观测：⟦plan⟧ 已停教（prompt 只教 todo_write），部署后本日志应恒 0
+            this.piLogger?.info?.(`[legacy-plan-marker] items=${stripped.plan.length}`);
             const planEv = {
               type: 'task_list',
               data: {
