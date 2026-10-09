@@ -30,7 +30,7 @@
  * 保持本模块既有 import 面不变；改值请改 shared，三处锁测试会一起拦。
  */
 export { UPSTREAM_FETCH_TIMEOUT_MS, UPSTREAM_POLL_TIMEOUT_MS } from '@lnkpi/shared'
-import { UPSTREAM_FETCH_TIMEOUT_MS, UPSTREAM_POLL_TIMEOUT_MS } from '@lnkpi/shared'
+import { UPSTREAM_FETCH_TIMEOUT_MS } from '@lnkpi/shared'
 
 export class UpstreamTimeoutError extends Error {
   readonly code = 'UPSTREAM_TIMEOUT'
