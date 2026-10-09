@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  planDisabledModelsOnPreferencesUpdate,
-  planUserSelectableSyncRow,
-  type SelectableFieldsRow,
-} from './model-catalog-sync'
+  encodeChannelModel,
+  PLATFORM_CHANNEL_ID,
+  STUDIO_MODEL_CATALOG,
+  type StudioModality,
+} from '@lnkpi/shared'
+import { planDisabledModelsOnPreferencesUpdate, planUserSelectableSyncRow, type SelectableFieldsRow } from './model-catalog-sync'
+import { planPlatformChannelSync } from './audio-model-backfill'
 
 const P = 'platform::'
 const CATALOG = {
@@ -181,5 +184,84 @@ describe('planDisabledModelsOnPreferencesUpdate', () => {
       CATALOG,
     )
     expect(plan.target).toEqual([`${P}agnes-image-2.0-flash`])
+  })
+})
+
+/**
+ * S0-1 幽灵模型下架闭环（2026-10-09）：目录删除 3 个 agnes hub 无渠道的文本模型后，
+ * 既有 sync 机制（#306）必须把 DB 镜像与用户快照收敛干净。目录现为 25 条
+ * （文本仅 agnes-2.0-flash），fixture 按 provider.service.ts 的真实编码方式构造
+ * （`catalogModels()` / `defaultSelectableFor()`：name=modelKey、capability=modality、
+ * 编码值=`platform::<modelKey>`）。
+ */
+describe('S0-1 幽灵模型下架 sync 闭环', () => {
+  const GHOST_KEYS = ['deepseek-v4', 'gemini-3.1-flash', 'gpt-5.5']
+
+  /** 与 provider.service.ts `catalogModels()` 同构：当前目录的全量镜像。 */
+  const CATALOG_MODELS = STUDIO_MODEL_CATALOG.map((entry) => ({
+    name: entry.modelKey,
+    capability: entry.modality,
+  }))
+
+  /** 与 provider.service.ts `catalogEncodedByModality()` 同构：按 modality 分桶的编码清单。 */
+  function catalogEncodedByModalityFixture(): Record<StudioModality, string[]> {
+    const bucket = (modality: StudioModality) =>
+      STUDIO_MODEL_CATALOG.filter((e) => e.modality === modality).map((e) =>
+        encodeChannelModel(PLATFORM_CHANNEL_ID, e.modelKey),
+      )
+    return {
+      image: bucket('image'),
+      video: bucket('video'),
+      text: bucket('text'),
+      audio: bucket('audio'),
+    }
+  }
+
+  it('A2：预置 28 条含 3 幽灵的镜像行 → sync 后 25 条且幽灵消失', () => {
+    const staleMirror = JSON.stringify([
+      ...CATALOG_MODELS,
+      ...GHOST_KEYS.map((name) => ({ name, capability: 'text' })),
+    ])
+    expect(JSON.parse(staleMirror)).toHaveLength(28) // fixture 自检：下架前的镜像形态
+
+    const plan = planPlatformChannelSync(staleMirror, CATALOG_MODELS)
+    expect(plan.changed).toBe(true)
+    expect(plan.target).toHaveLength(25)
+    const names = plan.target.map((m) => m.name)
+    for (const key of GHOST_KEYS) {
+      expect(names, `幽灵 ${key} 仍在镜像中`).not.toContain(key)
+    }
+    expect(names).toContain('agnes-2.0-flash') // 真实可用文本模型保留
+  })
+
+  it('A3：deepseek-v4 既在 selectableTextModels 又在 disabledModels（同形歧义复合形态）→ sync 后两者均清理', () => {
+    const ghostRef = encodeChannelModel(PLATFORM_CHANNEL_ID, 'deepseek-v4')
+    const agnesRef = encodeChannelModel(PLATFORM_CHANNEL_ID, 'agnes-2.0-flash')
+    // 下架前的文本快照（4 条旧目录序）+ 该幽灵的停用记录 = #306 已知的同形歧义复合形态。
+    const input = row({
+      selectableTextModels: JSON.stringify([
+        ghostRef,
+        encodeChannelModel(PLATFORM_CHANNEL_ID, 'gemini-3.1-flash'),
+        encodeChannelModel(PLATFORM_CHANNEL_ID, 'gpt-5.5'),
+        agnesRef,
+      ]),
+      disabledModels: JSON.stringify([ghostRef]),
+    })
+
+    const plan = planUserSelectableSyncRow(input, catalogEncodedByModalityFixture(), P)
+    expect(plan.changed).toBe(true)
+    // selectable：3 个幽灵清掉，真实模型保留原顺序，无复活
+    const selectable = JSON.parse(plan.data.selectableTextModels!) as string[]
+    expect(selectable).toEqual([agnesRef])
+    // disabled：幽灵的停用记录一并清理（清空）
+    expect(JSON.parse(plan.data.disabledModels!) as string[]).toEqual([])
+
+    // 闭环：把产出回填再跑一次 = 已对齐，不再变化
+    const again = planUserSelectableSyncRow(
+      { ...input, ...plan.data } as SelectableFieldsRow,
+      catalogEncodedByModalityFixture(),
+      P,
+    )
+    expect(again.changed).toBe(false)
   })
 })

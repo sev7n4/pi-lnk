@@ -608,13 +608,13 @@ describe('StudioService integration (provider params)', () => {
   })
 
   it('resolves text model via catalog gateway id when no image refs', async () => {
-    await svc.generateText('u1', 'hello world', 'gemini-3.1-flash')
+    await svc.generateText('u1', 'hello world', 'agnes-2.0-flash')
 
     expect(generateTextForRefs).toHaveBeenCalledWith(
       'hello world',
       [],
       expect.objectContaining({
-        model: 'gemini-3.1-flash',
+        model: 'agnes-2.0-flash',
         textOpts: { thinking: false, thinkingEffort: 'high' },
       }),
     )
@@ -622,7 +622,7 @@ describe('StudioService integration (provider params)', () => {
 
   it('passes catalog gateway model to generateTextForRefs when image refs present', async () => {
     const refUrl = 'https://example.com/dress.jpg'
-    await svc.generateText('u1', 'describe dress', 'gemini-3.1-flash', [
+    await svc.generateText('u1', 'describe dress', 'agnes-2.0-flash', [
       { refKey: 'i1', mediaType: 'image', url: refUrl },
     ])
 
@@ -631,7 +631,7 @@ describe('StudioService integration (provider params)', () => {
       'describe dress',
       [refUrl],
       expect.objectContaining({
-        model: 'gemini-3.1-flash',
+        model: 'agnes-2.0-flash',
         apiKey: process.env.OPENAI_API_KEY,
         baseUrl: process.env.OPENAI_BASE_URL,
       }),
@@ -643,7 +643,7 @@ describe('StudioService integration (provider params)', () => {
     const inlined = 'data:image/png;base64,abc'
     vi.mocked(inlineUpstreamReferenceImages).mockResolvedValueOnce([inlined])
 
-    await svc.generateText('u1', 'describe packaging', 'gemini-3.1-flash', [
+    await svc.generateText('u1', 'describe packaging', 'agnes-2.0-flash', [
       { refKey: 'I1', mediaType: 'image', url: refUrl },
     ])
 
@@ -651,7 +651,7 @@ describe('StudioService integration (provider params)', () => {
     expect(generateTextForRefs).toHaveBeenCalledWith(
       'describe packaging',
       [inlined],
-      expect.objectContaining({ model: 'gemini-3.1-flash' }),
+      expect.objectContaining({ model: 'agnes-2.0-flash' }),
     )
   })
 
@@ -660,7 +660,7 @@ describe('StudioService integration (provider params)', () => {
     const record = await svc.generatePrompt(
       'u1',
       '写主图提示词',
-      'gemini-3.1-flash',
+      'agnes-2.0-flash',
       undefined,
       undefined,
       undefined,
@@ -671,7 +671,7 @@ describe('StudioService integration (provider params)', () => {
     expect(generatePromptFromUserInput).toHaveBeenCalledWith(
       '写主图提示词',
       expect.objectContaining({
-        model: 'gemini-3.1-flash',
+        model: 'agnes-2.0-flash',
         referenceImages: [refUrl],
         mentionedKeys: ['I1'],
       }),
@@ -685,7 +685,7 @@ describe('StudioService integration (provider params)', () => {
     await svc.generatePrompt(
       'u1',
       '  ',
-      'gemini-3.1-flash',
+      'agnes-2.0-flash',
       undefined,
       undefined,
       undefined,
@@ -719,7 +719,7 @@ describe('StudioService text record-first ledger alignment', () => {
       consumeCalls.push({ generationId: meta.generationId })
       return { id: 'pt1' } as never
     })
-    await svc.generateText('u1', 'hello world', 'gemini-3.1-flash')
+    await svc.generateText('u1', 'hello world', 'agnes-2.0-flash')
     expect(consumeCalls.length).toBe(1)
     expect(consumeCalls[0].generationId).not.toBeNull()
   })
@@ -730,7 +730,7 @@ describe('StudioService text record-first ledger alignment', () => {
     const deleteSpy = vi.spyOn(prisma.generationRecord, 'delete')
     const points = (svc as unknown as { points: { consume: (a: unknown, b: unknown, c: unknown, d: unknown) => Promise<unknown> } }).points
     vi.spyOn(points, 'consume').mockRejectedValue(new Error('insufficient points'))
-    await expect(svc.generateText('u1', 'hello world', 'gemini-3.1-flash')).rejects.toThrow('insufficient points')
+    await expect(svc.generateText('u1', 'hello world', 'agnes-2.0-flash')).rejects.toThrow('insufficient points')
     expect(createSpy).toHaveBeenCalled()
     expect(deleteSpy).toHaveBeenCalled()
   })
@@ -743,7 +743,7 @@ describe('StudioService text record-first ledger alignment', () => {
     vi.mocked(ProviderResolverService).mockClear?.()
     const resolver = (svc as unknown as { resolver: { resolveForGeneration: ReturnType<typeof vi.fn> } }).resolver
     vi.spyOn(resolver, 'resolveForGeneration').mockRejectedValue(new Error('resolve boom'))
-    await expect(svc.generateText('u1', 'hello world', 'gemini-3.1-flash')).rejects.toThrow('resolve boom')
+    await expect(svc.generateText('u1', 'hello world', 'agnes-2.0-flash')).rejects.toThrow('resolve boom')
     expect(consumeSpy).not.toHaveBeenCalled()
     expect(createSpy).not.toHaveBeenCalled()
   })
