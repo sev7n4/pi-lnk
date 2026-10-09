@@ -7,6 +7,12 @@ import { type StudioModality } from '@/constants/studioModels'
 import { audioKindOfModelValue } from '@/constants/dockAudio'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
+import {
+  availabilityOfModel,
+  healthDotOfModel,
+  useModelHealth,
+  type ModelHealthDot,
+} from '@/composables/useModelHealth'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import type { DockNodeIconKind } from '@/components/canvas/dock-studio/shared/dockIcons'
 
@@ -16,6 +22,10 @@ export type SelectorModelOption = {
   channelName: string
   disabled?: boolean
   visionCapable?: boolean
+  /** S1-3 探活灰显：仅平台渠道 `unavailable` 置灰（unknown/缺字段照常可选）。 */
+  unavailable?: boolean
+  /** S1-3 健康角标（A4）：近 24h 成功率 <0.5 红 / <0.9 黄 / 其余无。 */
+  healthDot?: ModelHealthDot | null
 }
 
 const props = withDefaults(
@@ -48,6 +58,9 @@ useClickOutside(rootRef, () => {
 })
 
 const { preferences, allChannels } = useProviderBootstrap()
+
+// S1-3 健康投影：5 分钟客户端缓存（useModelHealth 模块级，幂等触发，失败静默不影响选择）
+const modelHealth = useModelHealth()
 
 const catalogModality = computed((): StudioModality => props.modality ?? props.type)
 
@@ -86,12 +99,19 @@ function labelForValue(value: string): string {
 }
 
 const selectableOptions = computed((): SelectorModelOption[] => {
-  return selectableForModality(catalogModality.value).map((id) => ({
-    id,
-    name: modelOptionName(id),
-    channelName: channelNameForValue(id),
-    visionCapable: supportsVisionTextModel(upstreamChatModel(id)),
-  }))
+  const channels = allChannels.value
+  const healthRows = modelHealth.value?.rows
+  return selectableForModality(catalogModality.value).map((id) => {
+    const unavailable = availabilityOfModel(channels, id) === 'unavailable'
+    return {
+      id,
+      name: modelOptionName(id),
+      channelName: channelNameForValue(id),
+      visionCapable: supportsVisionTextModel(upstreamChatModel(id)),
+      unavailable,
+      healthDot: unavailable ? null : healthDotOfModel(healthRows, id),
+    }
+  })
 })
 
 const current = computed((): SelectorModelOption | undefined => {
@@ -132,8 +152,24 @@ const typeTitle = computed(() => {
 })
 
 function select(id: string) {
+  // S1-3：unavailable 条目不可点（灰显防呆——点了也会在生成链路撞不可用）
+  if (selectableOptions.value.find((m) => m.id === id)?.unavailable) return
   emit('update:modelValue', id)
   open.value = false
+}
+
+/** 灰显条目 hover：暂不可用 + 最近探活统计时间（若健康投影响应携带）。 */
+function unavailableTitle(): string {
+  const generatedAt = modelHealth.value?.generatedAt
+  const base = '暂不可用 · 平台暂未开通'
+  if (!generatedAt) return base
+  const time = new Date(generatedAt).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  return `${base}（最近探活 ${time}）`
 }
 </script>
 
@@ -174,12 +210,31 @@ function select(id: string) {
         :key="model.id"
         type="button"
         class="neo-popover-item flex w-full items-center justify-between px-3 py-2 text-xs"
-        :class="model.id === modelValue ? '!bg-[var(--neo-hi-bg)] !text-[var(--neo-hi-text)] shadow-[var(--neo-hi-shadow)]' : ''"
+        :class="[
+          model.id === modelValue && !model.unavailable
+            ? '!bg-[var(--neo-hi-bg)] !text-[var(--neo-hi-text)] shadow-[var(--neo-hi-shadow)]'
+            : '',
+          model.unavailable ? 'cursor-not-allowed opacity-45' : '',
+        ]"
+        :disabled="model.unavailable || undefined"
+        :title="model.unavailable ? unavailableTitle() : undefined"
         @click="select(model.id)"
       >
         <span class="truncate">{{ model.name }}</span>
         <span
-          v-if="type === 'text' && model.visionCapable"
+          v-if="model.unavailable"
+          class="ml-1 shrink-0 text-[10px] text-[var(--neo-warm,--neo-text-muted)]"
+        >
+          暂不可用
+        </span>
+        <span
+          v-else-if="model.healthDot"
+          class="model-health-dot ml-1 h-1.5 w-1.5 shrink-0 rounded-full"
+          :class="model.healthDot.kind === 'red' ? 'bg-red-500/90' : 'bg-amber-400/90'"
+          :title="model.healthDot.title"
+        />
+        <span
+          v-if="type === 'text' && model.visionCapable && !model.unavailable"
           class="ml-1 shrink-0 text-[10px] text-emerald-400/80"
         >
           可识图

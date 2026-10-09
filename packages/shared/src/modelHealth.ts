@@ -190,6 +190,60 @@ export function rowsToHealth(
     .sort((a, b) => (a.model === b.model ? a.channelId.localeCompare(b.channelId) : a.model.localeCompare(b.model)))
 }
 
+// ── S1-3 用户投影（spec 2026-10-09-mph-s13 §3.1）────────────────────────────
+
+/**
+ * 用户端健康行：admin 诊断语义（errorCodeCounts / balance402Count / alerts）不下发，
+ * 只保留用户可理解的成功率聚合。
+ */
+export interface ModelHealthSummaryRow {
+  model: string
+  channelId: string
+  windowHours: number
+  total: number
+  completed: number
+  failed: number
+  fallbackPending: number
+  refunded: number
+  successRate: number | null
+}
+
+/**
+ * 用户投影过滤（A2）：平台行全量保留；BYOK 行只保留当前用户自己的
+ * （rowsToHealth 已把 BYOK 行的 channelId 归一为 userId 前缀段）。同时剥掉
+ * admin 诊断字段。⛔ 绝不回其他用户的 BYOK 行。纯函数：零 IO。
+ */
+export function toUserHealthRows(
+  rows: readonly ModelHealthRow[],
+  userId: string,
+): ModelHealthSummaryRow[] {
+  const out: ModelHealthSummaryRow[] = []
+  for (const row of rows) {
+    if (row.channelId !== 'platform' && row.channelId !== userId) continue
+    const { errorCodeCounts: _ec, balance402Count: _b, ...rest } = row
+    out.push(rest)
+  }
+  return out
+}
+
+export type HealthDotKind = 'red' | 'yellow'
+
+/**
+ * 角标阈值（A4 矩阵，brief 4.3 字面）：<0.5 红 / <0.9 黄 /
+ * ≥0.9 或 null 或 total=0 → null（避免新模型零流量被标红）。
+ */
+export function healthDotKind(successRate: number | null, total: number): HealthDotKind | null {
+  if (successRate === null || total <= 0) return null
+  if (successRate < 0.5) return 'red'
+  if (successRate < 0.9) return 'yellow'
+  return null
+}
+
+/** 角标 hover 文案：「近24h 成功率 x/x」。 */
+export function healthDotTitle(windowHours: number, completed: number, total: number): string {
+  return `近${windowHours}h 成功率 ${completed}/${total}`
+}
+
 /** R2 允许的 errorCode 集合：全部失败都归「模型不可用」才疑幽灵（spec §3.3）。 */
 const GHOST_ERROR_CODES = new Set(['model_unavailable'])
 

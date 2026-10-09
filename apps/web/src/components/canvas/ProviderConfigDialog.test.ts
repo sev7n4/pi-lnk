@@ -22,7 +22,10 @@ vi.mock('@/composables/useProviderBootstrap', async () => {
     name: '平台',
     apiFormat: 'openai' as const,
     baseUrl: '',
-    models: [{ name: 'agnes-image', capability: 'image' as const }],
+    models: [
+      { name: 'agnes-ghost', capability: 'text' as const, availability: 'unavailable' as const },
+      { name: 'agnes-image', capability: 'image' as const },
+    ],
     hasApiKey: true,
     readOnly: true,
     createdAt: '',
@@ -117,5 +120,23 @@ describe('ProviderConfigDialog', () => {
     expect(imageOptions.some((opt) => opt.value.endsWith('model-1'))).toBe(true)
     expect(imageOptions.some((opt) => opt.value.endsWith('model-0'))).toBe(false)
     expect(imageOptions.length).toBeLessThan(200)
+  })
+
+  it('S1-3：平台渠道 unavailable 条目灰显标注「暂不可用」，正常条目不标注', async () => {
+    const wrapper = mount(ProviderConfigDialog, {
+      props: { modelValue: false },
+      global: { plugins: [ElementPlus] },
+    })
+
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    const ghostRow = wrapper.findAll('.channel-model-row').find((el) => el.text().includes('agnes-ghost'))
+    expect(ghostRow).toBeTruthy()
+    expect(ghostRow!.text()).toContain('暂不可用')
+
+    const okRow = wrapper.findAll('.channel-model-row').find((el) => el.text().includes('agnes-image'))
+    expect(okRow).toBeTruthy()
+    expect(okRow!.text()).not.toContain('暂不可用')
   })
 })

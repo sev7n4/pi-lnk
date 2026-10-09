@@ -57,6 +57,8 @@ type ChannelDraft = {
   clearApiKey: boolean
   modelNames: string[]
   modelMeta: Record<string, ModelCapability>
+  /** S1-3：平台渠道镜像条目的探活三态（仅平台携带；缺字段不进表 ⇒ 正常渲染）。 */
+  modelAvailability: Record<string, 'available' | 'unavailable' | 'unknown'>
   hasApiKey: boolean
   apiKeyMask?: string
   readOnly: boolean
@@ -162,6 +164,12 @@ const addModelDraft = reactive<Record<string, string>>({})
 function toDraft(ch: ProviderChannelPublic): ChannelDraft {
   const meta: Record<string, ModelCapability> = {}
   for (const m of ch.models) meta[m.name] = m.capability
+  const availability: Record<string, 'available' | 'unavailable' | 'unknown'> = {}
+  for (const m of ch.models) {
+    if (m.availability === 'available' || m.availability === 'unavailable' || m.availability === 'unknown') {
+      availability[m.name] = m.availability
+    }
+  }
   return {
     id: ch.id,
     name: ch.name,
@@ -171,6 +179,7 @@ function toDraft(ch: ProviderChannelPublic): ChannelDraft {
     clearApiKey: false,
     modelNames: ch.models.map((m) => m.name),
     modelMeta: meta,
+    modelAvailability: availability,
     hasApiKey: ch.hasApiKey,
     apiKeyMask: ch.apiKeyMask,
     readOnly: ch.readOnly,
@@ -745,7 +754,18 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                         class="channel-model-row"
                         :style="{ top: `${((channelModelWindows[draft.id]?.start ?? 0) + i) * CHANNEL_MODEL_ROW_H}px` }"
                       >
-                        <span class="min-w-0 flex-1 truncate text-[11px] text-[var(--neo-text-secondary)]">{{ name }}</span>
+                        <!-- S1-3：平台渠道 unavailable 条目灰显标注（unknown/缺字段照常） -->
+                        <span
+                          class="min-w-0 flex-1 truncate text-[11px]"
+                          :class="draft.modelAvailability[name] === 'unavailable' ? 'text-[var(--neo-text-muted)] line-through opacity-70' : 'text-[var(--neo-text-secondary)]'"
+                          :title="draft.modelAvailability[name] === 'unavailable' ? '暂不可用 · 平台最近探活未通过' : undefined"
+                        >{{ name }}</span>
+                        <span
+                          v-if="draft.modelAvailability[name] === 'unavailable'"
+                          class="shrink-0 text-[10px] text-[var(--neo-warm,--neo-text-muted)]"
+                        >
+                          暂不可用
+                        </span>
                         <select
                           class="channel-model-cap"
                           :disabled="draft.readOnly"

@@ -277,6 +277,38 @@ describe('ProviderService', () => {
     expect(result.platformChannel.hasApiKey).toBe(false)
   })
 
+  it('A1：平台渠道 models 条目 availability 原样透传；旧数据缺字段读为 undefined（前端按 unknown 兜底）', async () => {
+    // 与 catalogModels() 同源构造（name/capability 对齐 ⇒ sync 判定未落后，不改写），
+    // 仅注入两处差异：首个条目置 unavailable（探活器写入形态）、第二个条目删字段（旧数据形态）。
+    const seeded = STUDIO_MODEL_CATALOG.map((entry, i) => {
+      const base = { name: entry.modelKey, capability: entry.modality, availability: 'unknown' as const }
+      if (i === 0) return { ...base, availability: 'unavailable' as const }
+      if (i === 1) {
+        const { availability: _drop, ...oldFormat } = base
+        return oldFormat
+      }
+      return base
+    })
+    prisma._channels.set('platform', {
+      id: 'platform',
+      userId: null,
+      name: '平台服务',
+      apiFormat: 'openai',
+      baseUrl: '',
+      encryptedApiKey: null,
+      iv: null,
+      authTag: null,
+      keyVersion: 1,
+      models: JSON.stringify(seeded),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const boot = await svc.bootstrap('u1')
+    const models = boot.platformChannel.models
+    expect(models[0]).toMatchObject({ availability: 'unavailable' })
+    expect(models[1]).not.toHaveProperty('availability')
+  })
+
   it('stores encrypted apiKey and never returns plaintext', async () => {
     await svc.createChannel('u1', {
       name: 'mine',

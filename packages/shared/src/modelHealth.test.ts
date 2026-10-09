@@ -5,6 +5,9 @@ import {
   flagHealthAnomalies,
   rowsToHealth,
   splitByokModel,
+  toUserHealthRows,
+  healthDotKind,
+  healthDotTitle,
   type ModelHealthRow,
   type RawHealthRow,
 } from './modelHealth'
@@ -209,5 +212,49 @@ describe('flagHealthAnomalies（R1-R3，阈值两侧边界）', () => {
 
   it('空输入返回空告警', () => {
     expect(flagHealthAnomalies([])).toEqual([])
+  })
+})
+
+// ── S1-3 用户投影（brief 4.1/4.3）───────────────────────────────────────────
+
+describe('toUserHealthRows（A2：平台全量 + 本人 BYOK，admin 语义剥除）', () => {
+  it('平台行全量保留；本人 BYOK 行保留；他人 BYOK 行绝不返回', () => {
+    const rows: ModelHealthRow[] = [
+      health({ model: 'agnes-image-2.0-flash' }),
+      { ...health({ model: 'deepseek-v4-pro' }), channelId: 'u-me' },
+      { ...health({ model: 'kling-v3' }), channelId: 'u-other' },
+    ]
+    const out = toUserHealthRows(rows, 'u-me')
+    expect(out.map((r) => `${r.model}@${r.channelId}`).sort()).toEqual([
+      'agnes-image-2.0-flash@platform',
+      'deepseek-v4-pro@u-me',
+    ])
+  })
+
+  it('剥掉 admin 诊断字段（errorCodeCounts / balance402Count 不下发）', () => {
+    const rows: ModelHealthRow[] = [
+      health({ model: 'm', total: 6, failed: 6, errorCodeCounts: { model_unavailable: 6 }, balance402Count: 2 }),
+    ]
+    const out = toUserHealthRows(rows, 'u-me')
+    expect(out).toHaveLength(1)
+    expect(out[0]).not.toHaveProperty('errorCodeCounts')
+    expect(out[0]).not.toHaveProperty('balance402Count')
+    expect(out[0]).toMatchObject({ model: 'm', total: 6, failed: 6, successRate: 0 })
+  })
+})
+
+describe('healthDotKind（A4 阈值矩阵：0.4→红、0.7→黄、0.95→无、null/total=0→无）', () => {
+  it('0.4 → red', () => expect(healthDotKind(0.4, 10)).toBe('red'))
+  it('恰好 0.5 → yellow（< 严格小于）', () => expect(healthDotKind(0.5, 10)).toBe('yellow'))
+  it('0.7 → yellow', () => expect(healthDotKind(0.7, 10)).toBe('yellow'))
+  it('恰好 0.9 → null（≥0.9 无角标）', () => expect(healthDotKind(0.9, 10)).toBeNull())
+  it('0.95 → null', () => expect(healthDotKind(0.95, 10)).toBeNull())
+  it('null（total=0 归一产物）→ null', () => expect(healthDotKind(null, 0)).toBeNull())
+  it('total=0 兜底 → null', () => expect(healthDotKind(0.4, 0)).toBeNull())
+})
+
+describe('healthDotTitle', () => {
+  it('「近24h 成功率 x/x」', () => {
+    expect(healthDotTitle(24, 3, 4)).toBe('近24h 成功率 3/4')
   })
 })

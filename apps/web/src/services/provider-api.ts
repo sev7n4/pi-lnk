@@ -4,6 +4,11 @@ import type { ApiCallFormat, ModelCapability } from '@lnkpi/shared'
 export type ChannelModelEntry = {
   name: string
   capability: ModelCapability
+  /**
+   * S1-1 探活三态：仅平台渠道镜像条目携带；旧数据/用户渠道缺字段
+   * ⇒ 按 unknown（正常渲染）。
+   */
+  availability?: 'available' | 'unavailable' | 'unknown'
 }
 
 export type ProviderChannelPublic = {
