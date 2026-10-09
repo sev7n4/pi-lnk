@@ -23,18 +23,23 @@
  * ⇒ 覆盖态不是安全边界，仅是提示词构成开关。生产部署不得设置该变量。
  */
 
-/** 规则组取值。与 prompt-registry MANIFEST 的 group 字段同域。 */
-export type RuleGroup = 'core' | 'writeTools' | 'genTools'
+/** 规则组取值。与 prompt-registry MANIFEST 的 group 字段同域。
+ * todoTools（C1 2026-10-09）：task_tool 规则（todo_write 任务计划汇报）。
+ * ⚠️ kill switch 不走 AGENT_RULE_GROUPS：PI_RUNTIME_TODO_TOOL=off 时由调用方
+ * （agent.service.ts）从 groups 里剔除 todoTools——与本文件 A/B 语义正交。 */
+export type RuleGroup = 'core' | 'writeTools' | 'genTools' | 'todoTools'
 
-/** 生产默认：三组全开（B-5：run_* 生成工具已注册，genTools 规则组启用）。 */
+/** 生产默认：全组开（B-5：run_* 生成工具已注册；C1：todo_write 已注册）。
+ * PI_RUNTIME_TODO_TOOL=off 时调用方必须剔除 todoTools（双侧部署单元各自读 env）。 */
 export const PRODUCTION_RULE_GROUPS: readonly RuleGroup[] = Object.freeze([
   'core',
   'writeTools',
   'genTools',
+  'todoTools',
 ] as RuleGroup[])
 
 /** 规范序：输出与输入顺序无关，保证同组合同一构成（renderStatic 按 order 排，本序仅保证确定性）。 */
-const CANONICAL_ORDER: Record<RuleGroup, number> = { core: 0, writeTools: 1, genTools: 2 }
+const CANONICAL_ORDER: Record<RuleGroup, number> = { core: 0, writeTools: 1, genTools: 2, todoTools: 3 }
 
 /**
  * 解析 `AGENT_RULE_GROUPS` 环境变量。
@@ -50,7 +55,7 @@ export function resolveRuleGroups(raw: string | undefined): RuleGroup[] {
   const unknown = parts.filter((p) => !(p in CANONICAL_ORDER))
   if (unknown.length > 0) {
     throw new Error(
-      `AGENT_RULE_GROUPS 含未知规则组「${unknown.join('、')}」。允许值: core / writeTools / genTools`,
+      `AGENT_RULE_GROUPS 含未知规则组「${unknown.join('、')}」。允许值: core / writeTools / genTools / todoTools`,
     )
   }
   return (parts as RuleGroup[]).sort((a, b) => CANONICAL_ORDER[a] - CANONICAL_ORDER[b])

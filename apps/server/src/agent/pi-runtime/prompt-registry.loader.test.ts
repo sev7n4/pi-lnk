@@ -68,6 +68,8 @@ const VALID: Array<[string, [string | undefined, number], string | undefined, st
   // W4（2026-10-04）：画布日常操作（排版/查看/任务/资产 + tool_search 触发）
   ["canvas_daily_ops", ["writeTools", 46], undefined, "canvas-daily-ops"],
   ["gen_tool_policy", ["genTools", 50], undefined, "gen-gate"],
+  // C1（2026-10-09）：todo_write 任务计划汇报（todoTools 组，kill switch 由调用方剔组）
+  ["task_tool", ["todoTools", 55], undefined, "todo-write-tool"],
   ["write_guard", [undefined, 60], "writeTools", "readonly-session-guard"],
 ];
 
@@ -434,12 +436,12 @@ describe("L11 anchor（语义短名必填、全局唯一且字符集合规）", 
     }
   });
 
-  it("回归：磁盘上 10 条规则的 anchor 全在、互不相同且字符集合规（L11 对真实资产零 error）", () => {
+  it("回归：磁盘上 11 条规则的 anchor 全在、互不相同且字符集合规（L11 对真实资产零 error）", () => {
     const { errors } = checkRegistryIntegrity(resolveRegistryRoot());
     expect(errors.filter((e) => e.includes("L11"))).toEqual([]);
-    // 正面断言：10 条 anchor 逐条过字符集（防上面那条回归用例变成空断言）
+    // 正面断言：11 条 anchor 逐条过字符集（防上面那条回归用例变成空断言）
     const metas = toRuleMeta(loadRegistry(resolveRegistryRoot()).entries);
-    expect(metas).toHaveLength(10);
+    expect(metas).toHaveLength(11);
     for (const m of metas) expect(m.anchor).toMatch(/^[a-z][a-z0-9-]{3,}$/);
   });
 });
@@ -636,12 +638,13 @@ describe("§8.1 case3：order 决定组装顺序", () => {
     // indexOf 返回同一个位置，positions 变成非严格递增却仍"看起来有序"）。
     const bodyOf = new Map<string, string>(snap.entries.map((e): [string, string] => [e.id, e.body]));
     const positions = metas.map((m) => rendered.indexOf(bodyOf.get(m.id)!));
-    // 缺席的两条恰好是互斥版本：nogen 被 genTools 的 unlessGroup 排除、write_guard 被 writeTools 排除。
+    // 缺席的三条：nogen 被 genTools 的 unlessGroup 排除、write_guard 被 writeTools 排除、
+    // task_tool（C1）属 todoTools 组不在此组合。
     // ⚠️ 必须显式断言缺席名单，否则「缺席」会被 indexOf=-1 混进排序断言里而看不出是谁缺席。
     const absent = metas.filter((m) => positions[metas.indexOf(m)] === -1).map((m) => m.id);
-    expect(absent).toEqual(["no_gen_claim.nogen", "write_guard"]);
+    expect(absent).toEqual(["no_gen_claim.nogen", "task_tool", "write_guard"]);
     const present = positions.filter((p) => p >= 0);
-    expect(present).toHaveLength(metas.length - 2);
+    expect(present).toHaveLength(metas.length - 3);
     // 在场者的出现次序 == order 升序
     expect(present).toEqual([...present].sort((a, b) => a - b));
     // ⚠️ **本条的有效性依赖磁盘 manifest 的文件序不是 order 升序**（实测 [46,45,50,10,40,35,20,20,30,60]）：

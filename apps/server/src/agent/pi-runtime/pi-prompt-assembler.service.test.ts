@@ -462,6 +462,8 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 2026-10-06 规则 22 压「叙述代替调用」失败形态（分级下发实验残余 ~10-20%）：+34 字符，3042→3076（余量 158→124）。
 		// 2026-10-07 规则 23 按 kind 描述音频三分类（voice/design/music，音频节点统一能力）：
 		// +35 字符（62→97），3076→3111（余量 124→89）。core / core+writeTools 两组合未受影响。
+		// 2026-10-09 C1 task_tool：正文压缩到 63 字符（抬预算属 AGENTS.md 红线，不可自行改），
+		// 全组合（+todoTools）=3175（余量 25）——贴线状态，扩容须人工拍板。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
 		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(89);
@@ -590,5 +592,21 @@ describe("PiPromptAssembler 动态段（assembleDynamic：SEL-REF 指代块）",
 			selectedNodeLookup: () => undefined,
 		});
 		expect(blocks.some((b) => b.startsWith("【用户当前选中】"))).toBe(false);
+	});
+});
+
+// ── C1：task_tool 规则组注入/剔除（kill switch 的组级机制；env 过滤在 agent.service）──
+describe("C1 task_tool（todoTools 组）注入与剔除", () => {
+	it("todoTools 组开 → assembled prompt 含 task_tool 规则", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const text = await asm.assembleStatic({ ruleGroups: ["core", "writeTools", "genTools", "todoTools"] });
+		expect(text).toContain("todo_write");
+		expect(text).toContain("全量覆写");
+	});
+
+	it("todoTools 组剔除（PI_RUNTIME_TODO_TOOL=off 语义）→ 不含该规则", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const text = await asm.assembleStatic({ ruleGroups: ["core", "writeTools", "genTools"] });
+		expect(text).not.toContain("todo_write 提交任务清单");
 	});
 });

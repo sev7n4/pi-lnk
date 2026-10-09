@@ -18,11 +18,12 @@ import {
   RULE_10_WRITE_GUARD,
   CORE_RULES_TAIL,
   MEMORY_SCOPE_RULES,
+  TASK_TOOL_RULES,
   WRITE_TOOLS_RULES,
 } from "./prompt-registry.fallback";
 
 /** L4 白名单：group / unlessGroup 出现未知值即报错。 */
-const GROUP_VALUES = new Set<string>(["writeTools", "genTools"]);
+const GROUP_VALUES = new Set<string>(["writeTools", "genTools", "todoTools"]);
 
 /**
  * L6 静态段字符预算：硬上限，超过即 lint 失败。
@@ -32,6 +33,10 @@ const GROUP_VALUES = new Set<string>(["writeTools", "genTools"]);
  * 2026-10-03 加 canvas_view_policy（546字符）后全组合 2880 ⇒ 旧上限已无法容纳任何新规则。
  * 上调到 3200：距当前 2880 留约 320 字符（约 4 条中等规则），并配STATIC_BUDGET_WARN_CHARS
  * 预警线，让「快满了」在撞死线之前就先被看见。
+ * ⚠️ C1（2026-10-09）：task_tool 入表时全组合余量仅 89 ⇒ task_tool 正文压缩到 58 字符
+ * （详细约定在 todo_write 工具 schema description，规则只留触发指引）⇒ 全组合 3170，
+ * 余量 30。**抬预算属 AGENTS.md 红线第 3 条（须人工决策），AI 不得自行改**——
+ * 如需扩容请人工拍板后改本常量并同步 PROMPT_SPEC.md。
  */
 export const STATIC_BUDGET_CHARS = 3200;
 
@@ -41,6 +46,7 @@ export const STATIC_BUDGET_WARN_CHARS = Math.floor(STATIC_BUDGET_CHARS * 0.85); 
 /** L6 预算校验的常见组合：预警与硬报错共用同一份，避免两处漂移。 */
 const BUDGET_COMBOS: readonly (readonly string[])[] = [
   ["core"], ["core", "writeTools"], ["core", "genTools"], ["core", "writeTools", "genTools"],
+  ["core", "writeTools", "genTools", "todoTools"], // C1：task_tool 进预算校验（todoTools 生产常开）
 ];
 
 const REQUIRED_FIELDS = ["id", "version", "title", "order", "owner", "updated", "anchor"] as const;
@@ -105,7 +111,7 @@ export interface PromptRegistrySnapshot {
 export const COMPOSED_IDS = [
   "identity.opening", "no_gen_claim.nogen", "no_gen_claim.gen", "sidebar_vision.tail",
   "memory_scope.tail", "media_tool_policy", "canvas_view_policy", "canvas_daily_ops",
-  "gen_tool_policy", "write_guard",
+  "gen_tool_policy", "task_tool", "write_guard",
 ] as const;
 
 /** L7：Registry id → fallback 常量的映射。 */
@@ -119,6 +125,7 @@ export const FALLBACK_BY_ID: Record<string, string> = {
   "canvas_view_policy": CANVAS_VIEW_POLICY,
   "canvas_daily_ops": CANVAS_DAILY_OPS,
   "gen_tool_policy": GEN_TOOLS_RULES,
+  "task_tool": TASK_TOOL_RULES,
   "write_guard": RULE_10_WRITE_GUARD,
 };
 
@@ -266,6 +273,7 @@ export function renderStaticFallback(groups: readonly string[]): string {
   // 且长度差恰好等于漏掉规则的 body 字符数，是唯一可测的信号。
   if (groups.includes("writeTools")) parts.push(WRITE_TOOLS_RULES, CANVAS_VIEW_POLICY, CANVAS_DAILY_OPS);
   if (groups.includes("genTools")) parts.push(GEN_TOOLS_RULES);
+  if (groups.includes("todoTools")) parts.push(TASK_TOOL_RULES);
   if (!groups.includes("writeTools") && coreOn) parts.push(RULE_10_WRITE_GUARD);
   return parts.filter(Boolean).join("\n");
 }

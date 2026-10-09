@@ -8,10 +8,10 @@ import { PRODUCTION_RULE_GROUPS, resolveRuleGroups } from './rule-groups'
  * fail-closed：未知值抛错，绝不静默回落默认（否则「以为在测 ['core']，实际三组全开」= 假绿）。
  */
 describe('resolveRuleGroups', () => {
-  it('undefined / 空串 / 纯空白 → 生产默认三组全开', () => {
-    expect(resolveRuleGroups(undefined)).toEqual(['core', 'writeTools', 'genTools'])
-    expect(resolveRuleGroups('')).toEqual(['core', 'writeTools', 'genTools'])
-    expect(resolveRuleGroups('   ')).toEqual(['core', 'writeTools', 'genTools'])
+  it('undefined / 空串 / 纯空白 → 生产默认全组开（C1 起 todoTools 入默认集）', () => {
+    expect(resolveRuleGroups(undefined)).toEqual(['core', 'writeTools', 'genTools', 'todoTools'])
+    expect(resolveRuleGroups('')).toEqual(['core', 'writeTools', 'genTools', 'todoTools'])
+    expect(resolveRuleGroups('   ')).toEqual(['core', 'writeTools', 'genTools', 'todoTools'])
   })
 
   it('单组 / 多组正常解析', () => {
@@ -34,8 +34,8 @@ describe('resolveRuleGroups', () => {
   })
 
   it('未知组名 → 抛错（报错含允许值清单），绝不静默回落默认', () => {
-    expect(() => resolveRuleGroups('core,admin')).toThrow(/core \/ writeTools \/ genTools/)
-    expect(() => resolveRuleGroups('ADMIN')).toThrow(/core \/ writeTools \/ genTools/)
+    expect(() => resolveRuleGroups('core,admin')).toThrow(/core \/ writeTools \/ genTools \/ todoTools/)
+    expect(() => resolveRuleGroups('ADMIN')).toThrow(/core \/ writeTools \/ genTools \/ todoTools/)
   })
 
   it('大小写敏感：Core ≠ core（防「看着像对」的近似输入混进评测）', () => {
@@ -43,7 +43,7 @@ describe('resolveRuleGroups', () => {
   })
 
   it('PRODUCTION_RULE_GROUPS 与生产硬编码字面量一致且冻结', () => {
-    expect([...PRODUCTION_RULE_GROUPS]).toEqual(['core', 'writeTools', 'genTools'])
+    expect([...PRODUCTION_RULE_GROUPS]).toEqual(['core', 'writeTools', 'genTools', 'todoTools'])
     expect(Object.isFrozen(PRODUCTION_RULE_GROUPS)).toBe(true)
   })
 })

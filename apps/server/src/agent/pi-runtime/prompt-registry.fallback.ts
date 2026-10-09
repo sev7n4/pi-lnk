@@ -63,3 +63,7 @@ export const CANVAS_DAILY_OPS = `19. 用户要求「整理/排版/排列/按关�
 20. 问「画布有什么/多少节点」「有哪些任务/生成到哪了/出错没」，或要素材库、读上传文档：先 tool_search 搜「画布/节点/任务/进度/资产/文档」类读工具，命中按其参数调用，勿凭记忆答。
 21. 引用已有媒体节点用 attach_refs；查外部资料用 web_search / web_fetch（须给来源）。
 22. 工具列表里没有的能力，先 tool_search 按关键词搜（勿直接答「做不到」），搜到后按其参数调用；宣告要搜的同一轮必须真调 tool_search，禁止只叙述不调用。闲聊/道谢/纯识图问句不调上述工具。`;
+
+/** task_tool（C1 2026-10-09）：todo_write 任务计划汇报。与 rules/task_tool.md body 逐字一致（L7 校验）。
+ * 正文刻意极简（63 字符）：L6 预算余量仅 89，详细约定在 todo_write 工具 schema description。 */
+export const TASK_TOOL_RULES = `多步任务（≥3 步）开工前调用 todo_write 提交任务清单（全量覆写），每完成一项即更新状态；全部完成提交空数组清空。`;

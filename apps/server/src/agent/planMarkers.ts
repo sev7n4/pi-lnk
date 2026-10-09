@@ -1,5 +1,14 @@
-/** P1#5 todo 面板：agent 文本内联计划标记（prompt 约定）解析。
- * 标记必须独占一行；strip 后标记行替换为空行，其余内容字节级不动。 */
+/**
+ * P1#5 todo 面板：agent 文本内联计划标记（prompt 约定）解析。
+ * 标记必须独占一行；strip 后标记行替换为空行，其余内容字节级不动。
+ *
+ * @deprecated C1（2026-10-09，spec docs/superpowers/specs/2026-10-09-task-tool-design.md §3.5）：
+ * 模型已改教 todo_write 工具（prompt-registry task_tool 规则），⟦plan⟧/⟦task-done⟧ 教学
+ * 已从 agent.service.ts 删除。本解析器降级为**只读重放兼容层**——老会话 resume/刷新的
+ * executionEvents 重放仍需渲染旧任务卡片，解析行为保持不变。
+ * 退场条件：session-retention TTL 覆盖全部历史会话后整文件删除。
+ * 验收：部署后 `[legacy-plan-marker]` 日志恒 0（agent.service.ts 派生点）。
+ */
 const PLAN_RE = /^⟦plan⟧(.+)$/gm
 const DONE_RE = /^⟦task-done⟧(\d+)$/gm
 

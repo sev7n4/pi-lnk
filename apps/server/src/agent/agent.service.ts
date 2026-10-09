@@ -1047,16 +1047,16 @@ export class AgentService {
         `AGENT_RULE_GROUPS 覆盖生效: [${ruleGroups.join(',')}] —— 仅限 A/B 评测，生产发版不得携带该变量`,
       )
     }
-    const staticPrompt = await assembler.assembleStatic({ ruleGroups })
-    // P1#5：尾部追加任务计划汇报约定（⟦plan⟧/⟦task-done⟧ 内联标记，Nest 剥离后派生 task 事件）。
-    // 静态指令进 staticPrompt（visionBlock 等动态段由 assembleDynamic 每轮追加，不冻结进历史）。
-    const systemPromptWithPlanConvention = `${staticPrompt}
-
-## 任务计划汇报（多步任务时启用）
-多步出图/改造任务开工前，先单独一行输出计划标记（会被界面渲染为任务清单，用户可见）：
-⟦plan⟧[{"n":1,"title":"起稿"},{"n":2,"title":"配图"}]
-每完成一项，单独一行输出：⟦task-done⟧<n>
-标记行之外不要解释标记本身；单步简单任务不要输出标记。`
+    const staticPrompt = await assembler.assembleStatic({
+      ruleGroups: ruleGroups.filter(
+        // C1 kill switch（spec 2026-10-09-task-tool-design.md §3.1）：PI_RUNTIME_TODO_TOOL=off
+        // 时 task_tool 规则不注入。⚠️ 双部署单元（Nest 容器 / pi-runtime k3s）各自读同一 env 名，
+        // 上线检查单必须核对一致；off 但工具仍注册的错配由 pi-runtime 侧 isError 兜底。
+        (g) => g !== 'todoTools' || process.env.PI_RUNTIME_TODO_TOOL !== 'off',
+      ),
+    })
+    // C1：⟦plan⟧/⟦task-done⟧ 教学段已删除——模型改教 todo_write 工具（prompt-registry task_tool 规则）。
+    // planMarkers.ts 保留为只读重放兼容层（老会话 resume 渲染旧卡片），TTL 自然退场。
     // P0-①：会话键 = 对话（threadId），不是画布会话（sessionId）——新对话即新键、新上下文。
     // 与持久化键 / cancelRun 共用同一推导，三处必须一致。
     const sessionKey = threadId?.trim() || sessionId
@@ -1154,7 +1154,7 @@ export class AgentService {
       }
     }
     const created = await this.ensurePiSession(client, sessionKey, {
-      systemPrompt: systemPromptWithPlanConvention,
+      systemPrompt: staticPrompt,
       userId,
       // D-T1：老 UI effort 两档映射为 pi 档位，逐请求透传
       thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
