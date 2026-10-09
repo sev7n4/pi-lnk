@@ -47,6 +47,7 @@
 | 45 | `canvas-view-card` | 画布视图卡片策略 | writeTools | 16. 用户问「为什么/怎么/关系/结构/流程/解释/说明/分析/对比/梳理… |
 | 46 | `canvas-daily-ops` | 画布日常操作 | writeTools | 19. 用户要求「整理/排版/排列/按关系展开/对齐」节点：用 arrange_nodes… |
 | 50 | `gen-gate` | 生成工具策略 | genTools | 11. run_image/video/text/prompt/audio_generation 仅对已 propose… |
+| 55 | `todo-write-tool` | 任务计划汇报（todo_write） | todoTools | 多步任务（≥3 步）开工前调用 todo_write 提交任务清单（全量覆写），每完成一项即更新状态… |
 | 60 | `readonly-session-guard` | 写操作守卫 | core（除非 writeTools） | 10. 当前会话仅开放只读查询工具（画布摘要/节点/生成状态/素材列表等）；创建、修改、连线… |
 <!-- END:rule-map -->
 
