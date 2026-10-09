@@ -1,9 +1,10 @@
-# 任务清单工具化（todo_write）设计规格 — P0+P1
+# 任务清单工具化（todo_write）设计规格 — P0+P1【模块章节 C1】
 
 > 日期：2026-10-09
 > 状态：待评审
-> 输入：`docs/analysis/2026-10-09-workbuddy-task-planning-benchmark.md`（WorkBuddy 对标报告）
-> 范围：P0（⟦plan⟧ 文本协议升级为内核任务工具）+ P1（任务状态持久化/跨压缩存活）。P2 Plan 确认门、P3 turnBudget、P4 子代理/automations 不在本规格内。
+> 上级文档：`docs/superpowers/specs/2026-10-09-task-management-module-design.md`（任务管理模块总体设计/全景视图）——本文是其中的章节 C1，模块分层、设计原则、章节索引与资产维护约定见上级文档。
+> 输入：`docs/analysis/2026-10-09-workbuddy-task-planning-benchmark.md`（WorkBuddy 对标报告）+ pi vendor 内核与生态调研（结论沉淀于上级文档 §1）
+> 范围：P0（⟦plan⟧ 文本协议升级为内核任务工具）+ P1（任务状态持久化/跨压缩存活）。P2 Plan 确认门、P3 turnBudget、P4 子代理/automations 不在本章节内（见上级文档 §3 章节索引）。
 
 ---
 
