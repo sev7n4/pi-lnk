@@ -33,6 +33,18 @@
  * 锁「**语义对**」而非「逐字节相同」：
  * - 浅色主题下 node 描边 / 卡片底 / 文本色必须等于 palette.ts 的对应常量；
  * - 深色主题下 node 底色必须是**非纯白**（§4.2(3) 硬判据：纯白落深底 = 刺眼白块）。
+ *
+ * ## 为什么深色也要逐字节锁（2026-10-09 补）
+ *
+ * 此前深色只有两条**结构**断言（"非纯白"、"与卡片底不同色"），
+ * 实测这两条在旧值上全过，而旧值的真实表现是：
+ *
+ *   `--neo-node-border: rgba(255,255,255,0.08)` 合成后 #303036
+ *     vs 合成节点底 #222229 = **1.21:1**
+ *
+ * ⇒ 节点边界**几乎不可见**，但结构断言完全测不出来。
+ * 这就是「锁结构不锁数值」的典型假绿：断言问"是不是纯白"，
+ * 缺陷却是"描边对比度差 19倍"。故深色改为**逐字节 + 实测 WCAG比值**双重锁。
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -42,15 +54,39 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CARD_BG,
+  DARK_CARD_BG,
+  DARK_CONTAINER_STROKE,
+  DARK_NODE_FILL,
+  DARK_NODE_STROKE,
+  DARK_TEXT_FILL,
   NODE_FILL,
   NODE_STROKE,
   SEVERITY,
+  SEVERITY_DARK,
   TEXT_FILL,
 } from '../../../../services/pi-runtime/src/graph/palette.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TOKENS_CSS = join(HERE, '..', 'styles', 'neowow-tokens.css')
 const css = readFileSync(TOKENS_CSS, 'utf8')
+
+/** WCAG 2.1 相对亮度（与 pi-runtime visual.test.ts 同公式，两处必须一致）。 */
+function luminance(hex: string): number {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex)
+  if (!m) throw new Error(`不是 6 位 hex：${hex}`)
+  const n = parseInt(m[1]!, 16)
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.2992 * ch[2]!
+}
+
+/** WCAG 对比度。⛔ 别用不带 +0.05 的简写公式，会算出 0.22:1 这类假报警。 */
+function contrast(a: string, b: string): number {
+  const [l1, l2] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (l1 + 0.05) / (l2 + 0.05)
+}
 
 /** 取某个主题区块内的 CSS 变量值（深色 `:root` 或浅色 `[data-canvas-theme='light']`）。 */
 function varIn(theme: 'dark' | 'light', name: string): string | undefined {
@@ -154,4 +190,70 @@ describe('跨端调色板一致性（§238：静态图与节点图不得两套�
     expect(offenders, `这些行在注释内又开了 /*（CSS 不支持嵌套注释）：${offenders.join(', ')}`).toEqual([])
   })
 
+})
+
+/**
+ * 深色主题 parity（2026-10-09 补）。
+ *
+ * ⛔ **本suite 不许断言「节点底 vs 卡片底 ≥ X」** —— 那条恒假：
+ *   浅色两者本就只有 1.06:1、深色 1.17:1，**边界刻意由描边表达**
+ *   （任何 ≥3:1 的底色差都要把底压到中灰，容器层会比节点还深、层次倒挂）。
+ *   写这条断言的人会以为在保护对比度，实际只会逼出一个错误的视觉改版。
+ */
+describe('深色主题调色板一致性（§238 深色半边）', () => {
+  it('深色：graph 卡片底 / 容器描边与 palette深色常量逐字节一致', () => {
+    expect(varIn('dark', '--neo-graph-card-bg'), '深色卡片底漂移').toBe(DARK_CARD_BG)
+    expect(varIn('dark', '--neo-graph-card-border'), '深色容器描边漂移').toBe(DARK_CONTAINER_STROKE)
+  })
+
+  it('⛔ 深色节点描边实测 ≥3:1（WCAG 非文本 AA）—— 这条锁的是数值不是结构', () => {
+    // ⭐ 旧值 rgba(255,255,255,0.08) 合成后 #303036 vs 合成底 #222229 = 1.21:1，
+    //   边界几乎不可见，而当时的两条结构断言全过 ⇒ 必须锁数值。
+    const ratio = contrast(DARK_NODE_STROKE, DARK_NODE_FILL)
+    expect(
+      ratio,
+      `深色节点描边 ${DARK_NODE_STROKE} vs 节点底 ${DARK_NODE_FILL} 仅 ${ratio.toFixed(2)}:1，` +
+        `需≥3:1（WCAG 非文本 AA）。深底上描边是唯一边界来源，压暗= 边界消失`,
+    ).toBeGreaterThanOrEqual(3)
+    // vs 卡片底也要站得住（节点可能直接压在卡片上）
+    expect(contrast(DARK_NODE_STROKE, DARK_CARD_BG)).toBeGreaterThanOrEqual(3)
+  })
+
+  it('⛔ 深色文本 vs 节点底实测 ≥4.5:1（WCAG 正文 AA）', () => {
+    const ratio = contrast(DARK_TEXT_FILL, DARK_NODE_FILL)
+    expect(
+      ratio,
+      `深色文本 ${DARK_TEXT_FILL} vs 节点底 ${DARK_NODE_FILL} 仅 ${ratio.toFixed(2)}:1，需 ≥4.5:1`,
+    ).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('⛔ 深色 severity 两档 vs 节点底实测 ≥3:1，且不复用浅色 hex', () => {
+    for (const level of ['error', 'warn'] as const) {
+      const ratio = contrast(SEVERITY_DARK[level].stroke, DARK_NODE_FILL)
+      expect(
+        ratio,
+        `深色 severity.${level} ${SEVERITY_DARK[level].stroke} vs 节点底仅 ${ratio.toFixed(2)}:1，需 ≥3:1`,
+      ).toBeGreaterThanOrEqual(3)
+      // ⛔ 深底上复用浅色强调色 = 强调色沉底 ⇒ 等于没有强调
+      expect(
+        SEVERITY_DARK[level].stroke,
+        `深色 severity.${level} 复用了浅色 hex，强调色在深底上会发闷`,
+      ).not.toBe(SEVERITY[level].stroke)
+    }
+    // 仍靠色相区分，不是亮度（与浅色同一约束）
+    expect(SEVERITY_DARK.error.stroke).not.toBe(SEVERITY_DARK.warn.stroke)
+  })
+
+  it('深色：节点底非纯白，且与卡片底不同色（§4.2(3) 结构判据仍保留）', () => {
+    const bg = varIn('dark', '--neo-node-card-bg')
+    expect(bg, '--neo-node-card-bg 在深色主题下必须有定义').toBeTruthy()
+    expect(bg).not.toBe(DARK_CARD_BG)
+  })
+
+  it('两主题的「边界靠描边」关系一致（都不靠底色差）', () => {
+    // ⭐ 这条锁的是**设计意图**：两个主题的底色差都应远低于 3:1，
+    //   提醒后来者别把它当缺陷去"修"（那会让层次倒挂）。
+    expect(contrast(NODE_FILL, CARD_BG)).toBeLessThan(3)
+    expect(contrast(DARK_NODE_FILL, DARK_CARD_BG)).toBeLessThan(3)
+  })
 })
