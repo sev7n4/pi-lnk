@@ -40,3 +40,30 @@ export function visualRoles(ir: GraphIR): Map<string, VisualRole> {
 		]),
 	);
 }
+
+/** D3-3 渲染能表达的 severity 级别。⛔ 不是 `NodeMark.text` 的全部取值域。 */
+export type SeverityLevel = "error" | "warn";
+
+/**
+ * IR → 该节点**可被渲染表达**的 severity 级别。
+ *
+ * ⛔ 为什么不能直接 `as SeverityLevel`：调用方传的 `mark.text` 是自由字符串
+ *   （`NodeMark.text?: string`），只有 `error` / `warn` 两种级别有对应的视觉语言
+ *   （红描边 / 琥珀描边）。其余取值（`"critical"`、`"高风险"`、空串…）**收不到就
+ *   返回 undefined，而不是 `as` 强转当 error 上色** —— 后者会把一个没定义的颜色
+ *   画成最高级别的红，是在图上编造严重度（与「级别贴到错的节点上」同级的事故）。
+ *
+ *   判据：`roles` 为 `accent`（进了前 `ACCENT_MAX_RATIO`）+ `text` 是已知级别。
+ *   两个条件都要 —— 只看 text 会让被 10% 上限挤掉的节点漏出强调。
+ *
+ * @param roles `visualRoles(ir)` 的返回值（由本文件产出，避免调用方各建一套）
+ */
+export function severityOf(
+	ir: GraphIR,
+	roles: ReadonlyMap<string, VisualRole>,
+	id: string,
+): SeverityLevel | undefined {
+	if (roles.get(id) !== "accent") return undefined;
+	const text = ir.nodes.find((n) => n.id === id)?.mark?.text;
+	return text === "error" || text === "warn" ? text : undefined;
+}

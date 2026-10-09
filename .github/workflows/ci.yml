@@ -84,6 +84,17 @@ jobs:
       - name: Build packages
         run: pnpm build
 
+      - name: Install XML validator (xmllint)
+        # ⛔ 为什么必须显式装：`graph/visual.test.ts` 的「SVG 必须能被 XML 解析器吃下」
+        #   是唯一能兜住「无值属性」这类规范错误的判据（正则只认已知属性名）。
+        #   ubuntu-latest 镜像**不自带** xmllint ⇒ 2026-10-09 首次上 CI 时
+        #   该断言以 `spawnSync xmllint ENOENT` 失败，而 macOS 本地自带 xmllint 全绿
+        #   ⇒ 典型「本地绿 / CI 红」的环境依赖型假阴性。
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          xmllint --version 2>&1 | head -1
+
       - name: Unit and integration tests
         run: pnpm test
 

@@ -25,6 +25,8 @@
  */
 
 /** 画布节点的最小模型（只取表达层需要的字段；`get-canvas-layout` 提供全部）。 */
+import { CARD_BG, CONTAINER_DASH, CONTAINER_FILL, CONTAINER_STROKE, NODE_FILL, NODE_STROKE, SEVERITY, TEXT_FILL } from "../graph/palette.js";
+
 export interface GvNode {
 	id: string;
 	type?: string;
@@ -115,6 +117,25 @@ export function statusShade(node: GvNode, palette: Palette): { fill: string; str
 		return { fill: palette.fill, stroke: palette.stroke, bold: false };
 	}
 	return { fill: palette.fill, stroke: palette.stroke, bold: false };
+}
+
+/**
+ * 节点是否处于**失败/阻塞**状态（`node.status` 自身，与 severity 标注无关）。
+ *
+ * ⛔ 与 `statusShade` 的区别：D3-3 把节点底改成中性白、描边改成中性之后，
+ *   `statusShade` 算出的 `fill`/`stroke` 在新结构里**无处安放** —— 类型色已独占
+ *   「顶部 4px 色条」通道，severity 已独占「强调描边」通道。
+ *   若直接删掉，失败态节点将与正常节点长得完全一样（迁移前失败态是红框，
+ *   删掉 = 让一个真实信号静默消失）。
+ *   所以把它降维成一个布尔：**顶部色条右侧加一枚失败角标**，
+ *   状态语义保住，且不再与类型色 / severity 抢同一个通道。
+ *
+ * ⛔ 只覆盖真正需要被看见的失败三态：`draft/pending/review` 不是异常，
+ *   `completed/done/delivered` 是正常态 —— 都不该报警。
+ */
+export function isFailureStatus(node: GvNode): boolean {
+	const s = (node.status ?? "").toLowerCase();
+	return s === "failed" || s === "error" || s === "blocked";
 }
 
 // ══════════════════════════════════════════════════════════
@@ -241,7 +262,69 @@ export function buildCssRules(): string {
 	for (const [color, cls] of cssColorClassMap()) {
 		rules.push(`.cs${cls}{stroke:${color}}`);
 	}
+	// ⭐ D3-3 节点框：白底 + 中性描边 + 加粗变体。
+	//   ⛔ 刻意不用 `.cs<X>`：节点描边是**中性**常量，不是类型色（类型色只在顶部色条）。
+	//   内联这三项要 38B/节点 ⇒ 63 节点 2.4KB，正是 D3-3 撞 20000B 预算的主因。
+	//   `nv`=普通 / `nvE`=error 强调 / `nvW`=warn 强调 / `nvx`=错放（加粗但不染色）。
+	//   ⚠️ 四者 fill 都是 NODE_FILL（白底）：类型色唯一载体是顶部 4px 色条。
+	rules.push(`.nv{fill:${NODE_FILL};stroke:${NODE_STROKE};stroke-width:1}`);
+	rules.push(`.nvE{fill:${NODE_FILL};stroke:${SEVERITY.error.stroke};stroke-width:2}`);
+	rules.push(`.nvW{fill:${NODE_FILL};stroke:${SEVERITY.warn.stroke};stroke-width:2}`);
+	rules.push(`.nvx{fill:${NODE_FILL};stroke:${NODE_STROKE};stroke-width:2}`);
 	return rules.join("");
+}
+
+// ══════════════════════════════════════════════════════════
+// 顶部色条聚合：每节点一个 rect → 每种颜色一个 path
+// ══════════════════════════════════════════════════════════
+
+/**
+ * D3-3 的顶部 4px 类型色条：**按颜色聚合成 path**，而不是每节点一个 `<rect>`。
+ *
+ * ## 为什么（字节账）
+ *
+ * 单条 rect：`<rect x="150" y="30" width="150" height="4" class="cfa0"/>` = **59B**。
+ * path 片段：`M150 30h150v4h-150z` = **18B**（省 41B/条）。
+ * 63 节点的生产实测：rect 版 **3747B**（占 SVG 17.2%）⇒ path 版约 **1200B**，省 **~2.5KB**。
+ * 这让 D3-3 的视觉增强（63 节点 tree 22563B）从「超20000B 护栏」变成有余量。
+ *
+ * ## 视觉完全等价
+ *
+ * 两者都是「同色矩形、同一位置同一尺寸」；`class` 相同 ⇒ fill 相同。
+ * 唯一差别是**绘制顺序**：path 版在所有节点之后统一输出，色条画在节点框**之上**
+ * —— 这正是原本的顺序（`nodeRect` 里色条紧跟在节点框 `rect` 之后 push）。
+ *
+ * ## ⛔ 时序约束
+ *
+ * 与 `buildCssRules` 同一个坑：`class` 由 `colorClass()` 在**渲染每个节点时**才登记。
+ * ⇒ `flushTypeBars()` **必须**在所有节点渲染完之后调用（紧跟 `svgTail` 之前）。
+ */
+const typeBarPaths = new Map<string, string[]>();
+
+/** 登记一条顶部色条（`nodeRect` / swimlane 内部调用）。 */
+export function addTypeBar(cls: string, x: number, y: number, w: number): void {
+	const list = typeBarPaths.get(cls);
+	// 闭合四边形：右下 → 左下 → 回到左上（顺时针，与 rect 同向）
+	const seg = `M${x} ${y}h${w}v4h-${w}z`;
+	if (list) list.push(seg);
+	else typeBarPaths.set(cls, [seg]);
+}
+
+/**
+ * 输出所有登记的色条（每色一个 `<path>`），并清空累积状态。
+ *
+ * ⚠️ 状态在模块级，因此**每次 flush 都会清空** —— 否则第二张图会带上第一张的色条。
+ * `SVG_CLASSES`（配色 class Map）也是模块级且**故意**跨图累积（类名稳定 ⇒ 快照稳定），
+ * 两者语义不同，别一起改。
+ */
+export function flushTypeBars(): string {
+	if (typeBarPaths.size === 0) return "";
+	const parts: string[] = [];
+	for (const [cls, segs] of typeBarPaths) {
+		parts.push(`<path class="cf${cls}" d="${segs.join("")}"/>`);
+	}
+	typeBarPaths.clear();
+	return parts.join("");
 }
 
 /** 由 views 层注入（避免循环依赖：views 依赖 expressive，这里只消费它给的 Map）。 */
@@ -255,7 +338,11 @@ function cssColorClassMap(): Map<string, string> {
 
 /** 箭头 marker + 图例的公共前缀。marker id 固定，全图唯一。 */
 export function svgOpen(height: number): string {
-	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" role="img">`;
+	// D3-3 视觉语言：画布卡片底（浅灰），节点白底落其上才有对比（§4.2(3)）。
+	return (
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" role="img">` +
+		`<rect x="0" y="0" width="${W}" height="${height}" fill="${CARD_BG}"/>`
+	);
 }
 
 /**
@@ -281,16 +368,41 @@ export function svgTail(height: number, extraCss = ""): string {
 		`<path d="M2 1L8 5L2 9" fill="none" stroke="#534AB7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` +
 		`</marker></defs>` +
 		`<style>${buildCssRules()}</style>` +
-		// ⚠️ `dominant-baseline` 写进 class 而不是每个 <text> 重复 63 次
-		// （实测单这一项就占 1764B；SVG 里 class 与内联等价，但 class 只写一次）
-		`<style>.gv-t{font:12px sans-serif;fill:#334;dominant-baseline:central}` +
+// ⚠️ `dominant-baseline` 写进 class 而不是每个 <text> 重复 63 次
+	// （实测单这一项就占 1764B；SVG 里 class 与内联等价，但 class 只写一次）
+	// ⭐ D3-3：文本色与错误色从 `graph/palette.ts` 取值，不在此处硬编码。
+	//   此前 `.l` 写的是缩写色 `#334`（= #333334），而 palette 的 TEXT_FILL 是
+	//   `#33414D` —— 同一语义两个 hex，正是 §238 说的「两套逻辑漂移」。
+	`<style>.gv-t{font:12px sans-serif;fill:${TEXT_FILL};dominant-baseline:central}` +
 		`.gv-s{font:11px sans-serif;fill:#5F5E5A;dominant-baseline:central}` +
-		`.gv-warn{font:11px sans-serif;fill:#A32D2D;dominant-baseline:central}` +
+		`.gv-warn{font:11px sans-serif;fill:${SEVERITY.error.stroke};dominant-baseline:central}` +
 		`.gv-info{font:11px sans-serif;fill:#1A4E7A;dominant-baseline:central}` +
 		`.n{stroke-width:1;rx:5}` +
-		`.l{font:12px sans-serif;fill:#334;dominant-baseline:central}` +
-		`.w{font:11px sans-serif;fill:#A32D2D;dominant-baseline:central;text-anchor:end}` +
-		`.gv-e{stroke:#8aa;stroke-width:1.5;fill:none}.gvl{font:11px sans-serif;fill:#888780}</style>` +
+		`.l{font:12px sans-serif;fill:${TEXT_FILL};dominant-baseline:central}` +
+		`.w{font:11px sans-serif;fill:${SEVERITY.error.stroke};dominant-baseline:central;text-anchor:end}` +
+		`.gv-e{stroke:${CONTAINER_STROKE};stroke-width:1.5;fill:none}` +
+		// ⭐ D3-3 字节优化：箭头 marker 走 class 而不是内联 `marker-end`。
+		//   内联 ` marker-end="url(#gv-arrow)"` = 28B/边 ⇒ 56 条有向边 1568B（占 tree 的 7.8%）。
+		//   ⚠️ `marker-end` 是**几何无关**的呈现属性，SVG 里 class 与属性完全等价。
+		//   ⚠️ marker id 仍是 `gv-arrow`（本函数上方 `<defs>` 里定义），高亮态用 `gv-arrow-hi`。
+		// ⭐⭐ `.gva` / `.gvh` **自带边的全套样式**（不是只加 marker）——
+		//   这样输出端能只写 `class="gva"` 而不必写 `class="gv-e gva"`，每条有向边再省 8B
+		//   （56 条 = 448B）。⚠️ 代价是 `.gva` 与 `.gv-e` 的 stroke 样式有两份定义 ——
+		//   改边宽/颜色时**两处都要改**，故把 `.gv-e` 的值抽成常量再拼进两条规则。
+		`.gva{stroke:${CONTAINER_STROKE};stroke-width:1.5;fill:none;marker-end:url(#gv-arrow)}` +
+		// 高亮依赖边：换 marker + 换描边色/粗细 + 无填充（`gv-e` 的 `fill:none` 也要保留）。
+		//   原内联 `marker-end="url(#gv-arrow-hi)" stroke="#534AB7" stroke-width="2"` = 66B/条。
+		`.gvh{stroke:#534AB7;stroke-width:2;fill:none;marker-end:url(#gv-arrow-hi)}` +
+		// ⭐ D3-3 字节优化：容器虚框的 fill/stroke/dasharray 全部走 class。
+		//   内联版每个容器 ~124B（`fill="#E6F1FB" stroke="#85B7EB" stroke-width="1" stroke-dasharray="4 3"`）
+		//   ⇒ swimlane 的 8 个 stage 头就 993B。class 版只留 `class="cb"`（~13B）。
+		//   ⚠️ 两种容器（stage 头偏蓝 / lane 中性灰）必须**分别**留 class，不能合并成一个
+		//   —— 它们的 fill 与 stroke 都不同，合并会把其中一个的配色覆盖掉。
+		`.cb{fill:#E6F1FB;stroke:#85B7EB;stroke-width:1;stroke-dasharray:${CONTAINER_DASH}}` +
+		`.cg{fill:${CONTAINER_FILL};stroke:${CONTAINER_STROKE};stroke-width:1;stroke-dasharray:${CONTAINER_DASH}}` +
+		// focus 局部视图框：实线细边（区别于容器的虚线），强调「当前只看这一块」。
+		`.cfw{fill:#E6F1FB;stroke:#378ADD;stroke-width:0.5}` +
+		`.gvl{font:11px sans-serif;fill:#888780}</style>` +
 		extraCss
 	);
 }

@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import { graphIRFromGv } from "./graph-ir.js";
-import { ACCENT_MAX_RATIO, visualRoles } from "./visual-role.js";
+import { ACCENT_MAX_RATIO, severityOf, visualRoles } from "./visual-role.js";
 
 /**
  * mark 通道 + 视觉角色。
@@ -11,7 +11,10 @@ import { ACCENT_MAX_RATIO, visualRoles } from "./visual-role.js";
  * `muted`，写它就是死代码 —— 所以第一条测的是通道本身。
  */
 
-function irWith(marks: Record<string, { kind: string; level: number }>, n = 10) {
+function irWith(
+	marks: Record<string, { kind: string; level: number; text?: string }>,
+	n = 10,
+) {
 	return graphIRFromGv({
 		view: "layout",
 		relation: "dependency",
@@ -103,4 +106,70 @@ test("角色覆盖每个节点（不多不少）", () => {
 	const roles = visualRoles(ir);
 	assert.equal(roles.size, 7);
 	assert.deepEqual([...roles.keys()].sort(), ir.nodes.map((n) => n.id).sort());
+});
+
+/**
+ * `severityOf` 的**第二道防线**单元断言。
+ *
+ * ⭐ 为什么必须有这条独立用例（不能只靠集成断言）：
+ *   `render-canvas-view.ts` 入口已过滤 `if (level !== "error" && level !== "warn") return;`
+ *   ⇒ 集成路径上 `critical` 根本进不到 `severityOf`，集成断言**永远绿**（假绿）。
+ *   `severityOf` 的白名单是防御性第二层 —— 只有直接构造 IR 才能证伪它。
+ *   （变异验证时正是靠这条才抓得住：把白名单换成 `as` 强转时集成断言全绿、
+ *    只有这条转红。若没有它，那次变异就是「看起来测过了其实没测」。）
+ */
+describe("severityOf：只有 error / warn 有对应视觉语言", () => {
+	const rolesOf = (ir: ReturnType<typeof irWith>) => visualRoles(ir);
+
+	test("error / warn 正常返回", () => {
+		// ⛔ 必须用 n=3（cap=ceil(3*0.1)=1）逐个测，不能一次标两个：
+		//   10 节点时 cap=1，两个 mark 只有一个能进前 10%，另一个必然 primary
+		//   —— 我第一版就踩了这个坑，把「上限」当成「两个都能强调」写了进去。
+		const e = irWith({ n0: { kind: "severity", level: 2, text: "error" } }, 3);
+		assert.equal(severityOf(e, rolesOf(e), "n0"), "error");
+		const w = irWith({ n0: { kind: "severity", level: 1, text: "warn" } }, 3);
+		assert.equal(severityOf(w, rolesOf(w), "n0"), "warn");
+	});
+
+	test("⭐ 同批两个标记，只有高 level 进前 10%（上限真的会筛掉人）", () => {
+		const ir = irWith({
+			n0: { kind: "severity", level: 2, text: "error" },
+			n1: { kind: "severity", level: 1, text: "warn" },
+		});
+		const r = rolesOf(ir);
+		assert.equal(r.get("n0"), "accent");
+		assert.equal(r.get("n1"), "primary");
+		assert.equal(severityOf(ir, r, "n0"), "error");
+		assert.equal(severityOf(ir, r, "n1"), undefined, "warn 越过了 10% 上限");
+	});
+
+	test("⛔ 未知级别（critical / info / 高风险）⇒ undefined，不 `as` 强转成 error", () => {
+		for (const t of ["critical", "info", "高风险", "", "ERROR"]) {
+			const ir = irWith({ n0: { kind: "severity", level: 5, text: t } });
+			assert.equal(severityOf(ir, rolesOf(ir), "n0"), undefined, `text=${t} 被渲染成了级别色`);
+		}
+	});
+
+	test("⛔ 无 mark 的节点 ⇒ undefined（不靠 mark 缺失猜级别）", () => {
+		const ir = irWith({ n0: { kind: "severity", level: 2, text: "error" } });
+		assert.equal(severityOf(ir, rolesOf(ir), "n5"), undefined);
+	});
+
+	test("⛔ 被 10% 上限挤掉的节点 ⇒ undefined（只被标不算被强调）", () => {
+		// ⚠️ 判据必须让「更高级别的节点占掉唯一名额」：10 节点 ⇒ cap=1。
+		//   若只标 n9 一个，它就是第一名（必然 accent），测不到「被挤掉」。
+		const ir = irWith({
+			n0: { kind: "severity", level: 2, text: "error" },
+			n9: { kind: "severity", level: 1, text: "warn" },
+		});
+		const r = rolesOf(ir);
+		assert.equal(r.get("n0"), "accent");
+		assert.equal(r.get("n9"), "primary", "n9 应被上限挤掉");
+		assert.equal(severityOf(ir, r, "n9"), undefined, "被挤掉的节点仍被画上了级别色");
+	});
+
+	test("text 缺失（只有 level）⇒ undefined，不猜级别", () => {
+		const ir = irWith({ n0: { kind: "severity", level: 2 } });
+		assert.equal(severityOf(ir, rolesOf(ir), "n0"), undefined);
+	});
 });
