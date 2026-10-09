@@ -123,6 +123,9 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 按本文件准绳（被点名 ⇒ 必须常驻）；且纯文本模式它常是唯一注册工具，
 	// 进延迟集 = 规则教了模型却拿不到 schema（延迟即不可达）。
 	"todo_write",
+	// 方案确认门（C3，2026-10-10）：prompt 规则 task_tool.md 点名（「先 propose_plan 征得确认」），
+	// 按本文件准绳（被点名 ⇒ 必须常驻）；且它承载「确认前绝不执行」的解锁入口，延迟即不可达。
+	"propose_plan",
 	// gen（用户确认后当轮即用）
 	"run_image_generation",
 	"run_video_generation",
