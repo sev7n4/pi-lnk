@@ -19,13 +19,13 @@
 1. **数据模型**：`ProviderChannel.models` 的条目结构 `[{name, capability}]` 扩展为 `[{name, capability, availability}]`，`availability: 'available' | 'unavailable' | 'unknown'`（缺省 `unknown`，兼容旧数据零迁移——JSON 列，旧条目读出后按 unknown 处理）。
    - ⚠️ 写入方同步点：`ensurePlatformChannel`、`model-catalog-sync`（syncAdded/syncRemoved 两路径）写入时保留/复位 availability；探活器是唯一置 `unavailable` 的写入方。
 2. **探活服务** `apps/server/src/provider/upstream-probe.service.ts`：
-   - `@Interval` 每 6h（env `LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES`，默认 360；`0`=禁用，测试用低于默认值——env 覆盖类测试必须取低于默认值，防假绿）；
-   - 每 6h 连续失败 ≥3 次（连续计数落内存，重启重置）才置 `unavailable`；1-2 次失败只记日志（防网络抖动误灰显，总体规格 Review Focus 第 2 行）；
+   - 手动 `setInterval` 每 6h（env `LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES`，默认 360；`0`=禁用，测试用低于默认值——env 覆盖类测试必须取低于默认值，防假绿）。⚠️ 2026-10-09 修订：规格原写 `@Interval` 装饰器，与仓库现实（reaper 用手动 setInterval，generation-reaper.service.ts:149-165）不符，按实现惯例改为手动 setInterval；
+   - 置 `unavailable` 双条件（⚠️ 2026-10-09 修订，源自 B0 探针实跑：`minimax-speech-2.8-hd` 在 MiniMax /models 未列出但生产成功 5 次 ⇒ /models 清单 ≠ 全量可用）：①连续失败 ≥3 次（连续计数落内存，重启重置）**且** ②该模型近 24h 零成功记录（GenerationRecord SQL 计数）。任一不满足只记日志，绝不灰显——防「/models 缺失但实际可用」假阳性；1-2 次失败只记日志（防网络抖动误灰显，总体规格 Review Focus 第 2 行）；
    - 恢复（探活通过且当前 unavailable）→ 置回 `available` + 日志「模型恢复」；
    - 探活目标 = 路由表（首版沿用 S0-3 脚本内硬编码表，S2-2 后改为读路由表）；
    - **只读 `/v1/models`**，任何情况下不发生成请求。
 3. **告警信号**：探测结果整帧写入新表 `UpstreamProbeRun {id, ranAt, upstream, httpStatus, modelCount, ghosts[], missing[], error?}`；最近一次 run 存在 ghost/unavailable 变化时打结构化日志 `[MPH][probe] ...`（运维可 grep）。推送渠道（邮件/IM）**明确不在本分项**——B1 验收 = 落库+日志，推送待产品决策后另立分项。
-4. **对账端点**：`GET /api/admin/upstream-probe/latest`（AuthGuard admin）返回最近 run，供 S1-3/S1-2 与运维 curl 检查。
+4. **对账端点**：`GET /api/admin/upstream-probe/latest`（AdminTokenGuard——⚠️ 2026-10-09 修订：仓库无 admin 角色概念，规格原写「AuthGuard admin」无法落地；实现为 `Authorization: Bearer ${LNKPI_ADMIN_TOKEN}`，env 未设置恒 401）返回最近 run，供 S1-3/S1-2 与运维 curl 检查。
 
 ## 4. 验收判据（可断言）
 
