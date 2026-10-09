@@ -135,7 +135,9 @@
   --neo-accent-text: #5b4ce6;
   --neo-bg: #eef0f5;
   /* ---- 图形表达引擎视觉语言（§4.2 / §238）----
-     ⛔ 浅色主题下以下 4 个值必须与 `services/pi-runtime/src/graph/palette.ts`
+     /* redeploy-note: 本文件含PR #314 的跨端调色板对齐（§238），改动已合入 master
+      但当日 deploy.yml run被并发提交取消 ⇒ 需一次触及 apps/web/** 的提交以重发部署。 */
+   ⛔ 浅色主题下以下 4 个值必须与 `services/pi-runtime/src/graph/palette.ts`
         的同名常量**逐字节一致**（唯一真相源在pi-runtime 侧）。
         由 apps/web/src/styles/palette-parity.test.ts 在 CI 里锁住——
         改一侧不改另一侧，测试立刻红。 */
