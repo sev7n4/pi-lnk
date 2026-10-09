@@ -814,9 +814,9 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
     })
     // SEL-REF：runtime 侧**不下发** selectedNodeIds（无消费方 ⇒ 死字段，规格 §5.2 已修正）
     expect(promptOpts.turnContext).not.toHaveProperty('selectedNodeIds')
-    // P1#5：静态 systemPrompt 尾部含任务计划汇报约定（⟦plan⟧/⟦task-done⟧ 内联标记）
-    expect(createOpts.systemPrompt).toContain('⟦plan⟧')
-    expect(createOpts.systemPrompt).toContain('⟦task-done⟧')
+    // C1（2026-10-09）：⟦plan⟧/⟦task-done⟧ 教学段已删——模型改教 todo_write 工具，
+    // strip 行为保留为只读重放兼容层（planMarkers.ts deprecated）。
+    expect(createOpts.systemPrompt).not.toContain('⟦plan⟧')
     expect(events.map((e) => e.type)).toContain('done')
   })
 
@@ -1212,7 +1212,7 @@ const runMemoryInjection = async (items: unknown[], tag: string): Promise<string
 })
 
 describe('AgentService B-2 ruleGroups + minors', () => {
-  it('active：assemble 收到 ruleGroups [core, writeTools, genTools]（B-5）', async () => {
+  it('active：assemble 收到 ruleGroups [core, writeTools, genTools, todoTools]（B-5 + C1）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
 
@@ -1262,6 +1262,59 @@ describe('AgentService B-2 ruleGroups + minors', () => {
       events.push(event)
     }
     expect(events.map((e) => e.type)).toContain('done')
+    expect(assembleStatic.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools', 'todoTools'] })
+  })
+
+  it('active：PI_RUNTIME_TODO_TOOL=off → todoTools 从 ruleGroups 剔除（C1 kill switch）', async () => {
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    process.env.PI_RUNTIME_TODO_TOOL = 'off'
+
+    const agentMessageFindMany = vi.fn().mockResolvedValue([])
+    const agentMessageCreate = vi.fn().mockResolvedValue({})
+    const agentThreadFindUnique = vi.fn().mockResolvedValue(null)
+    const agentThreadUpsert = vi.fn().mockResolvedValue({})
+    const sessionFindUnique = vi.fn().mockResolvedValue({ id: 's1', canvasData: null })
+    const service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentThread: { findUnique: agentThreadFindUnique, upsert: agentThreadUpsert, update: vi.fn() },
+        session: { findUnique: sessionFindUnique, update: vi.fn() },
+        idempotencyRecord: {
+          create: vi.fn(),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+      { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
+    )
+    const pi = {
+      healthz: vi.fn().mockResolvedValue({ status: 'ok' }),
+      createSession: vi.fn().mockResolvedValue({ sessionId: 'x', provider: 'agnes', model: 'm' }),
+      createSessionReplacingStale: vi.fn().mockResolvedValue({ sessionId: 'x', provider: 'agnes', model: 'm' }),
+      prompt: vi.fn().mockResolvedValue(undefined),
+      deleteSession: vi.fn().mockResolvedValue(true),
+      streamEvents: vi.fn((_sid: string, onEvent: (e: { type: string; ts: number; data: unknown }) => void) => {
+        onEvent({ type: 'agent_end', ts: Date.now(), data: { status: 'completed' } })
+        return () => {}
+      }),
+    } as never
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const assembleStatic = vi.fn().mockResolvedValue('PROMPT')
+    vi.spyOn(service, 'createPiPromptAssembler').mockReturnValue({
+      assembleStatic,
+      assembleDynamic: vi.fn().mockResolvedValue([]),
+    } as never)
+    const events: Array<{ type: string }> = []
+    for await (const event of service.streamConversation('s1', '你好', 'u1', 't1')) {
+      events.push(event)
+    }
+    delete process.env.PI_RUNTIME_TODO_TOOL
     expect(assembleStatic.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
   })
 

@@ -2,6 +2,7 @@
 import { NestClient, loadNestConfig } from "./nest-client.js";
 import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
+import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import type { Metrics } from "../metrics.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 
@@ -39,7 +40,8 @@ export function resolveToolsWithClient(
 				"[pi-runtime] NEST_BASE_URL/NEST_SERVICE_TOKEN not set — canvas tools disabled (pure-text mode)",
 			);
 		}
-		return { tools: [], client: null, registry: deps.registry ?? null };
+		// C1：todo_write 不依赖 Nest client——纯文本模式也可用（kill switch PI_RUNTIME_TODO_TOOL）。
+		return { tools: isTodoToolEnabled() ? buildTodoTools() : [], client: null, registry: deps.registry ?? null };
 	}
 	const client = new NestClient({
 		...cfg,
@@ -56,6 +58,8 @@ export function resolveToolsWithClient(
 	});
 	const hasTavily = !!process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY !== "REPLACE_ME";
 	const tools: LnkpiTool[] = [
+		// C1：todo_write 纯本地工具，不依赖 client（spec 2026-10-09-task-tool-design.md §3.1）。
+		...(isTodoToolEnabled() ? buildTodoTools() : []),
 		...buildCanvasReadTools(client),
 		...buildCanvasWriteTools(client, deps.registry),
 		...buildUiCommandTools(),

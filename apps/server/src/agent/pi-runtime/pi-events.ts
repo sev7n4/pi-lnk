@@ -9,6 +9,7 @@
  */
 
 import { CanvasActionSchema, NODE_TYPES, type CanvasAction } from "@lnkpi/shared";
+import { z } from "zod";
 
 /** pi-runtime SSE 归一事件（与 services/pi-runtime/src/session-manager.ts 对齐） */
 export interface PiRuntimeEvent<T = unknown> {
@@ -366,6 +367,94 @@ export function extractCanvasActions(event: PiRuntimeEvent): CanvasAction[] {
 		out.push(parsed.data);
 	}
 	return out;
+}
+
+/**
+ * C1：todo_write 的 details.todo.diff → task_list/task_update 事件（spec 2026-10-09-task-tool-design.md §3.3）。
+ * 复刻 extractCanvasActions 的透传读取路径（tool_execution_end → result.details，生产先例）。
+ * 词汇映射默认 V-B（completed→done，其余→running）：web applyTaskEvent 对未知 status 原样赋值，
+ * TERMINAL_STATUSES 不识别 completed，三态透传会破坏卡片完成判定（Task 3 Step 1 实测裁决）。
+ * task_list items 的 status/activeForm 字段为自有协议扩展，现版前端忽略（items 状态硬编码 pending），
+ * 前端消费属后续 UI 迭代（payload 先行，向后兼容）。
+ */
+const TaskDiffSchema = z.object({
+	todo: z
+		.object({
+			snapshot: z
+				.array(
+					z.object({
+						id: z.string(),
+						content: z.string(),
+						status: z.string(),
+						activeForm: z.string().optional(),
+					}),
+				)
+				.optional(),
+			diff: z.object({
+				list: z
+					.array(
+						z.object({
+							id: z.string(),
+							content: z.string(),
+							status: z.string(),
+							activeForm: z.string().optional(),
+						}),
+					)
+					.optional(),
+				updates: z.array(z.object({ id: z.string(), status: z.string() })).default([]),
+			}),
+		})
+		.optional(),
+});
+
+export interface TaskWireEvent {
+	type: "task_list" | "task_update";
+	data: unknown;
+}
+
+function mapStatus(s: string): string {
+	return s === "completed" ? "done" : "running"; // V-B；V-A：直接返回 s
+}
+
+export function extractTaskEvents(event: PiRuntimeEvent): TaskWireEvent[] {
+	if (event.type !== "tool_execution_end") return [];
+	const d = event.data as { isError?: boolean; result?: { details?: unknown } };
+	if (d.isError) return [];
+	const parsed = TaskDiffSchema.safeParse(d.result?.details);
+	if (!parsed.success || !parsed.data.todo) return [];
+	const { snapshot } = parsed.data.todo;
+	const { list, updates } = parsed.data.todo.diff;
+	if (list) {
+		return [
+			{
+				type: "task_list",
+				data: {
+					items: list.map((i) => ({
+						id: i.id,
+						title: i.content,
+						status: mapStatus(i.status),
+						...(i.activeForm ? { activeForm: i.activeForm } : {}),
+					})),
+				},
+			},
+		];
+	}
+	if (updates.length === 0) return [];
+	// updates 路径：从同载荷 snapshot 反查命中项，附 title/activeForm（spec §3.3 呈现链对增量更新成立）；
+	// 未命中（防御，snapshot 缺失或 id 漂移）退化为 {id,status}。
+	const byId = new Map((snapshot ?? []).map((s) => [s.id, s]));
+	return updates.map((u) => {
+		const hit = byId.get(u.id);
+		return {
+			type: "task_update" as const,
+			data: {
+				id: u.id,
+				status: mapStatus(u.status),
+				...(hit ? { title: hit.content } : {}),
+				...(hit?.activeForm ? { activeForm: hit.activeForm } : {}),
+			},
+		};
+	});
 }
 
 /** message_update 内嵌的 thinking 子事件（thinking_start/delta/end，实测见文件头注释）。 */

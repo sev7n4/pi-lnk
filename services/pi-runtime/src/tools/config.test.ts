@@ -3,25 +3,28 @@ import assert from "node:assert/strict";
 import { Metrics } from "../metrics.js";
 import { resolveTools } from "./config.js";
 
-test("env 缺失 → 返回空数组（纯文本模式不受影响）", () => {
+test("env 缺失 → 纯文本模式只剩 todo_write（C1：todo 不依赖 Nest client，spec 2026-10-09-task-tool-design.md §3.1）", () => {
 	const prev = { b: process.env.NEST_BASE_URL, t: process.env.NEST_SERVICE_TOKEN };
 	delete process.env.NEST_BASE_URL;
 	delete process.env.NEST_SERVICE_TOKEN;
 	try {
-		assert.deepEqual(resolveTools(new Metrics()), []);
+		const tools = resolveTools(new Metrics());
+		assert.equal(tools.length, 1);
+		assert.ok(tools[0].name === "todo_write");
 	} finally {
 		if (prev.b !== undefined) process.env.NEST_BASE_URL = prev.b;
 		if (prev.t !== undefined) process.env.NEST_SERVICE_TOKEN = prev.t;
 	}
 });
 
-test("env 齐全（TAVILY 缺省）→ 9 read + 14 write + 7 ui_command + 6 gen/lifecycle + 2 destructive + 1 read_document + 2 memory + 1 remove_edges + 1 present = 43", () => {
+test("env 齐全（TAVILY 缺省）→ 9 read + 14 write + 7 ui_command + 6 gen/lifecycle + 2 destructive + 1 read_document + 2 memory + 1 remove_edges + 1 present + 1 todo_write = 44", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	delete process.env.TAVILY_API_KEY;
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 43);
+		assert.equal(tools.length, 44);
+		assert.ok(tools.some((t) => t.name === "todo_write" && t.tier === "write_light"));
 		assert.ok(tools.some((t) => t.name === "upsert_media_node"));
 		assert.ok(tools.some((t) => t.name === "connect_nodes"));
 		assert.ok(tools.some((t) => t.name === "set_node_text"));
@@ -89,13 +92,13 @@ test("B-5：gen 工具超时档位对齐老链路（image/text/prompt 210s、aud
 	assert.equal(TOOL_TIMEOUT_OVERRIDES["/agent/internal/wait-video-generation"], 690_000);
 });
 
-test("P0：TAVILY_API_KEY 齐全 → 45 个工具（web_search/web_fetch 注册）", () => {
+test("P0：TAVILY_API_KEY 齐全 → 46 个工具（web_search/web_fetch 注册）", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	process.env.TAVILY_API_KEY = "test-key";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 45);
+		assert.equal(tools.length, 46);
 		assert.ok(tools.some((t) => t.name === "web_search" && t.tier === "read"));
 		assert.ok(tools.some((t) => t.name === "web_fetch" && t.tier === "read"));
 	} finally {
@@ -105,13 +108,13 @@ test("P0：TAVILY_API_KEY 齐全 → 45 个工具（web_search/web_fetch 注册�
 	}
 });
 
-test("P0：TAVILY_API_KEY=REPLACE_ME 占位 → 视同未配置（43 个）", () => {
+test("P0：TAVILY_API_KEY=REPLACE_ME 占位 → 视同未配置（44 个）", () => {
 	process.env.NEST_BASE_URL = "http://127.0.0.1:1";
 	process.env.NEST_SERVICE_TOKEN = "tok";
 	process.env.TAVILY_API_KEY = "REPLACE_ME";
 	try {
 		const tools = resolveTools(new Metrics());
-		assert.equal(tools.length, 43);
+		assert.equal(tools.length, 44);
 		assert.ok(!tools.some((t) => t.name === "web_search"));
 	} finally {
 		delete process.env.NEST_BASE_URL;

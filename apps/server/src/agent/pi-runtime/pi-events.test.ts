@@ -4,6 +4,7 @@ import {
 	createUsageAccumulator,
 	extractCanvasActions,
 	extractCanvasCommands,
+	extractTaskEvents,
 	mapPiEventToUiEvent,
 	type PiRuntimeEvent,
 } from "./pi-events";
@@ -375,5 +376,93 @@ describe("turn_usage cost（审计 P0-③）", () => {
 		acc.feed(msgEnd({ input: 100, output: 20 }));
 		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
 		expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 100, outputTokens: 20 } });
+	});
+});
+
+describe("extractTaskEvents（C1：todo_write diff → task_list/task_update 派生，V-B 词汇映射）", () => {
+	const mkEnd = (details: unknown, isError = false): PiRuntimeEvent =>
+		({
+			type: "tool_execution_end",
+			ts: Date.now(),
+			data: { toolCallId: "t1", toolName: "todo_write", isError, result: { details } },
+		}) as never;
+
+	it("结构变化 → 单条 task_list 全量（title=content，activeForm 附加）", () => {
+		const events = extractTaskEvents(
+			mkEnd({
+				todo: {
+					snapshot: [],
+					diff: {
+						list: [
+							{ id: "plan-1", content: "起稿", status: "in_progress", activeForm: "正在起稿" },
+							{ id: "plan-2", content: "配图", status: "pending" },
+						],
+						updates: [],
+					},
+				},
+			}),
+		);
+		expect(events.length).toBe(1);
+		expect(events[0].type).toBe("task_list");
+		expect(events[0].data).toEqual({
+			items: [
+				{ id: "plan-1", title: "起稿", status: "running", activeForm: "正在起稿" },
+				{ id: "plan-2", title: "配图", status: "running" },
+			],
+		});
+	});
+
+	it("仅状态变化 → task_update（completed→done，其余→running）", () => {
+		const events = extractTaskEvents(
+			mkEnd({ todo: { snapshot: [], diff: { updates: [{ id: "plan-1", status: "completed" }] } } }),
+		);
+		expect(events).toEqual([{ type: "task_update", data: { id: "plan-1", status: "done" } }]);
+	});
+
+	it("updates 命中 snapshot → task_update 附 title/activeForm（呈现链对增量更新成立）", () => {
+		const events = extractTaskEvents(
+			mkEnd({
+				todo: {
+					snapshot: [
+						{ id: "plan-1", content: "起稿", status: "in_progress", activeForm: "正在起稿" },
+						{ id: "plan-2", content: "配图", status: "pending" },
+					],
+					diff: {
+						updates: [
+							{ id: "plan-1", status: "in_progress" },
+							{ id: "plan-2", status: "completed" },
+						],
+					},
+				},
+			}),
+		);
+		expect(events).toEqual([
+			{ type: "task_update", data: { id: "plan-1", status: "running", title: "起稿", activeForm: "正在起稿" } },
+			{ type: "task_update", data: { id: "plan-2", status: "done", title: "配图" } },
+		]);
+	});
+
+	it("updates 未命中 snapshot（防御）→ task_update 退化为 {id,status}", () => {
+		const events = extractTaskEvents(
+			mkEnd({
+				todo: {
+					snapshot: [{ id: "plan-9", content: "无关项", status: "pending" }],
+					diff: { updates: [{ id: "plan-1", status: "completed" }] },
+				},
+			}),
+		);
+		expect(events).toEqual([{ type: "task_update", data: { id: "plan-1", status: "done" } }]);
+	});
+
+	it("非 tool_execution_end / isError / 无 details.todo → 空", () => {
+		expect(extractTaskEvents({ type: "message_update", ts: 1, data: {} } as never)).toEqual([]);
+		expect(
+			extractTaskEvents(mkEnd({ todo: { snapshot: [], diff: { updates: [] } } }, true)),
+		).toEqual([]);
+		expect(extractTaskEvents(mkEnd({ other: 1 }))).toEqual([]);
+	});
+
+	it("空 diff（无变化）→ 空（不打扰前端）", () => {
+		expect(extractTaskEvents(mkEnd({ todo: { snapshot: [], diff: { updates: [] } } }))).toEqual([]);
 	});
 });
