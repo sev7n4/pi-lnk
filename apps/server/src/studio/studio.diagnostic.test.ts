@@ -137,7 +137,10 @@ describe('StudioService.getGenerationDiagnostic', () => {
     // 生产 503 原文（总体规格 §2.4 逐字）
     const prod503Text =
       'Text API 503: {"error":{"code":"model_not_found","message":"No available channel for model deepseek-v4 under group default (distributor) (request id: 20261009043413943840776XprVkXAP)","type":"AgnesAI_error"}}'
-    // metadata 与失败写入路径（applyFailureDiagnosticMeta + 文本解析链填充的 httpStatus）产出一致
+    // metadata 模拟失败记录：故意不写入 errorCode，让 code 断言走读取路径的真实分类回落分支
+    // mapMessageToErrorCode(errRaw)（studio.service.ts:1112-1113），用生产 503 原文非循环地验证分类。
+    // userMessage 仍为 metadata 回放（读取路径只透传 meta.userMessage）；写入路径（applyFailureDiagnosticMeta）
+    // 的覆盖属已知限制，留待后续任务。
     generationFindFirst.mockResolvedValue({
       id: 'g-503',
       userId: 'u1',
@@ -145,7 +148,6 @@ describe('StudioService.getGenerationDiagnostic', () => {
       model: 'deepseek-v4',
       createdAt: new Date('2026-10-09T04:34:00.000Z'),
       metadata: JSON.stringify({
-        errorCode: 'model_unavailable',
         errorRaw: prod503Text,
         userMessage: '平台暂未开通该模型（上游无可用渠道），请换个模型或联系管理员',
         httpStatus: 503,
@@ -154,7 +156,9 @@ describe('StudioService.getGenerationDiagnostic', () => {
     })
 
     const d = await svc.getGenerationDiagnostic('u1', 'g-503')
+    // userMessage = metadata 回放（见上注释）
     expect(d.userMessage).toBe('平台暂未开通该模型（上游无可用渠道），请换个模型或联系管理员')
+    // code = 真实分类回落分支：meta 无 errorCode → mapMessageToErrorCode(生产 503 原文)
     expect(d.code).toBe('model_unavailable')
     expect(d.hint).toBe('请更换可用模型')
     // 2.4：解析链把 meta.httpStatus 填进 diagnostic
