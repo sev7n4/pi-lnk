@@ -92,6 +92,8 @@ export function mapMessageToErrorCode(message: string): ErrorCode {
 
   if (text.includes('积分不足')) return 'insufficient_points'
   if (/timeout/i.test(text) || text.includes('ETIMEDOUT')) return 'upstream_timeout'
+  // 分发渠道无可用渠道（2026-10-09 生产 503 model_not_found 事故）：\b 防止误伤 model_not_found_x 类近似串
+  if (/model_not_found\b|No available channel/i.test(text)) return 'model_unavailable'
   if (text.includes('已取消')) return 'cancelled'
   if (text.includes('参考图尚未上传')) return 'upload_required'
   if (text.includes('模型') && text.includes('停用')) return 'model_unavailable'
@@ -106,6 +108,7 @@ export function mapMessageToErrorCode(message: string): ErrorCode {
  * - fal.ai 欠费锁定：`Segment API 403: {"detail":"User is locked. Reason: TOP_UP."}`
  * - apimart 欠费：`Image edit API 402: ... insufficient balance (current: 0.013570 USD, required: 0.050000 USD)`
  * - CVM DNS 污染：`fetch failed`（undici UND_ERR_CONNECT_TIMEOUT）
+ * - 分发渠道无可用渠道（2026-10-09）：`Text API 503: {"error":{"code":"model_not_found",...}}`
  */
 export function translateUpstreamFailure(message: string): string | undefined {
   const text = message.trim()
@@ -125,6 +128,10 @@ export function translateUpstreamFailure(message: string): string | undefined {
   }
   if (/\b429\b/.test(text) || /rate limit|too many requests/i.test(text)) {
     return '上游生成服务限流，请稍后重试'
+  }
+  // 与 mapMessageToErrorCode 的 model_unavailable 规则同字面量族（\b 防止误伤 model_not_found_x）
+  if (/model_not_found\b|No available channel/i.test(text)) {
+    return '平台暂未开通该模型（上游无可用渠道），请换个模型或联系管理员'
   }
   return undefined
 }
