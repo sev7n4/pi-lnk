@@ -361,8 +361,24 @@ describe("SVG 必须能被 XML 解析器吃下（无值属性 = 整图不渲染�
 			// xmllint --noout = 只做良构性检查，不取 DTD/联网
 			execFileSync("xmllint", ["--noout", tmp], { stdio: "pipe" });
 		} catch (e) {
-			const err = e as { stderr?: Buffer; stdout?: Buffer };
-			assert.fail(`xmllint 报 XML 不合法（view=tree）：\n${err.stderr?.toString() ?? err.stdout?.toString() ?? String(e)}`);
+			const err = e as { code?: string; stderr?: Buffer; stdout?: Buffer; message?: string };
+			// ⛔⛔ 必须区分「工具不存在」与「XML 真不合法」
+			//   （2026-10-09 实踩：CI 的 ubuntu-latest 不自带 xmllint，
+			//    ENOENT 混进 catch 后被报成「xmllint 报 XML 不合法」——
+			//    错误归因完全错位，害我差点去改渲染代码。）
+			//   也绝不能 skip 成假绿：这条是唯一兜住「无值属性」的判据，
+			//   一旦工具缺失就静默跳过 ⇒ 缺陷可无声回归（正是它当初漏了一整天）。
+			//   正确处置 = 响亮失败 + 指明装法；CI 侧已在 ci.yml 装 libxml2-utils。
+			if (err.code === "ENOENT") {
+				assert.fail(
+					"xmllint 不存在（ENOENT），XML 良构性判据未执行 —— 这不是通过，是没测到。\n" +
+						"macOS 自带；Debian/Ubuntu: sudo apt-get install -y libxml2-utils\n" +
+						"（CI 已在 .github/workflows/ci.yml 显式安装；若此处失败说明该配置被移除）",
+				);
+			}
+			assert.fail(
+				`xmllint 报 XML 不合法（view=tree）：\n${err.stderr?.toString() ?? err.stdout?.toString() ?? err.message ?? String(e)}`,
+			);
 		} finally {
 			rmSync(tmp, { force: true });
 		}
