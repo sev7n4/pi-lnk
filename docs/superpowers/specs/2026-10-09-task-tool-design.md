@@ -69,9 +69,10 @@
 **三态 → 事件映射表**（事件 payload 是自有协议，加字段不算前端破坏性迁移）：
 - `task_list`：items 结构从 `{id, title}` 扩展为 `{id, title, status}`（status ∈ pending/in_progress/completed）；前端 reconcile 对未知 status 按"未完成"渲染（向后兼容）。
 - `task_update`：`{id, status}`，status 直接透传三态。
-- **V-B 词汇映射裁决（2026-10-09 实现实证，取代上行的"直接透传三态"）**：`extractTaskEvents` 对外 status 一律映射——`completed→done`、其余→`running`。依据：web 端 `applyTaskEvent` 对 task_list items 硬编码 `status:'pending'`（不读 payload status）、`task_update` 对未知 status 原样赋值且 `TERMINAL_STATUSES` 不识别 `completed` ⇒ 三态透传会破坏卡片完成判定。V-A（原样透传）保留为 mapStatus 注释中的切换点。task_list items 的 `status`/`activeForm` 为 payload 先行字段，前端消费属后续 UI 迭代。
+- **V-B 词汇映射裁决（2026-10-09 实现实证，取代上行的"直接透传三态"）**：`extractTaskEvents` 对外 status 一律映射——`completed→done`、其余→`running`。依据：web 端 `applyTaskEvent` 对 task_list items 硬编码 `status:'pending'`（不读 payload status）、`task_update` 对未知 status 原样赋值且 `TERMINAL_STATUSES` 不识别 `completed` ⇒ 三态透传会破坏卡片完成判定。V-A（原样透传）保留为 mapStatus 注释中的切换点。
+- **V-B′ 消费迭代（2026-10-09 晚，同日落地）**：前端开始消费 payload status ⇒ mapStatus 升级为三态——`completed→done`、`in_progress→running`、其余→`pending`（pending 与 in_progress 在 payload 中可区分，卡片能渲染"未开始 vs 进行中"）。前端 `applyTaskEvent`：task_list items 按白名单消费 status（未知值/旧 ⟦plan⟧ 重放缺省 → `pending`，向后兼容）+ 透传 `activeForm`；`AgentTaskProgressCard` 对 running 项主文案取 `activeForm ?? title`；`formatTaskProgressLine` 进度行同规则。双向部署兼容：旧 web+新 server（旧端忽略 status/activeForm）、新 web+旧 server（payload 无 pending → 缺省渲染 pending）。`task_update` 新增的 `pending` 对 `executionTraceReducer.applyTaskUpdate` 无分支命中 ⇒ 时间线 step 保持现态（重开条目可接受）。
 - 呈现链：running（in_progress）项卡片主文案 = **`activeForm ?? content`**（对齐 WorkBuddy L3"正在分析数据"式阶段说明）；completed 项 = content。updates 路径（最常见增量：状态翻转）的 `task_update` 由 Nest 从同载荷 snapshot 反查命中项附加 `title`/`activeForm`（未命中退化为 `{id,status}`），保证呈现链对增量更新同样成立。
-- 老 ⟦plan⟧ 事件（无 status 字段）重放时由前端按 running 补默认，不影响旧卡片渲染。
+- 老 ⟦plan⟧ 事件（无 status 字段）重放时由前端按 **pending** 补默认（白名单缺省路径，与 V-B 时代硬编码行为一致），不影响旧卡片渲染。
 
 ### 3.4 跨压缩注入（改 `services/pi-runtime/src/session-manager.ts`）
 

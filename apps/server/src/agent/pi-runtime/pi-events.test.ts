@@ -379,7 +379,7 @@ describe("turn_usage cost（审计 P0-③）", () => {
 	});
 });
 
-describe("extractTaskEvents（C1：todo_write diff → task_list/task_update 派生，V-B 词汇映射）", () => {
+describe("extractTaskEvents（C1：todo_write diff → task_list/task_update 派生，V-B′ 三态映射）", () => {
 	const mkEnd = (details: unknown, isError = false): PiRuntimeEvent =>
 		({
 			type: "tool_execution_end",
@@ -407,9 +407,41 @@ describe("extractTaskEvents（C1：todo_write diff → task_list/task_update 派
 		expect(events[0].data).toEqual({
 			items: [
 				{ id: "plan-1", title: "起稿", status: "running", activeForm: "正在起稿" },
-				{ id: "plan-2", title: "配图", status: "running" },
+				{ id: "plan-2", title: "配图", status: "pending" },
 			],
 		});
+	});
+
+	it("V-B′：pending 与 in_progress 在 payload 中可区分（前端消费迭代）", () => {
+		const events = extractTaskEvents(
+			mkEnd({
+				todo: {
+					snapshot: [],
+					diff: {
+						list: [
+							{ id: "plan-1", content: "起稿", status: "in_progress" },
+							{ id: "plan-2", content: "配图", status: "pending" },
+							{ id: "plan-3", content: "导出", status: "completed" },
+						],
+						updates: [],
+					},
+				},
+			}),
+		);
+		expect(events[0].data).toEqual({
+			items: [
+				{ id: "plan-1", title: "起稿", status: "running" },
+				{ id: "plan-2", title: "配图", status: "pending" },
+				{ id: "plan-3", title: "导出", status: "done" },
+			],
+		});
+	});
+
+	it("V-B′：updates 路径 pending→pending（重开条目）", () => {
+		const events = extractTaskEvents(
+			mkEnd({ todo: { snapshot: [], diff: { updates: [{ id: "plan-1", status: "pending" }] } } }),
+		);
+		expect(events).toEqual([{ type: "task_update", data: { id: "plan-1", status: "pending" } }]);
 	});
 
 	it("仅状态变化 → task_update（completed→done，其余→running）", () => {

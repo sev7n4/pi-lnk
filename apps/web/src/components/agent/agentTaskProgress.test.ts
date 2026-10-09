@@ -26,6 +26,14 @@ describe('formatTaskProgressLine', () => {
     ])
     expect(line).toBe('已完成 1/2 · 正在生成：礼盒主视觉')
   })
+
+  it('C1 呈现链：running 项优先用 activeForm 作为阶段说明', () => {
+    const line = formatTaskProgressLine([
+      { id: 'a', title: '确定活动主题和 slogan', status: 'done' },
+      { id: 'b', title: '写三条朋友圈预热文案', status: 'running', activeForm: '正在写预热文案' },
+    ])
+    expect(line).toBe('已完成 1/2 · 正在生成：正在写预热文案')
+  })
 })
 
 describe('applyTaskEvent', () => {
@@ -38,6 +46,43 @@ describe('applyTaskEvent', () => {
       },
     })
     expect(s.banner).toBe('出图进行中，请勿切换标签页')
+  })
+
+  it('C1 payload 先行消费：task_list items 携带 status/activeForm（V-B′ 三态）', () => {
+    const s = applyTaskEvent(emptyTaskProgress(), {
+      type: 'task_list',
+      data: {
+        items: [
+          { id: 'a', title: '起稿', status: 'running', activeForm: '正在起稿' },
+          { id: 'b', title: '配图', status: 'pending' },
+          { id: 'c', title: '导出', status: 'done' },
+        ],
+      },
+    })
+    expect(s.items[0]).toMatchObject({ status: 'running', activeForm: '正在起稿' })
+    expect(s.items[1].status).toBe('pending')
+    expect(s.items[2].status).toBe('done')
+  })
+
+  it('向后兼容：无 status 的旧 task_list（⟦plan⟧ 重放）仍渲染 pending', () => {
+    const s = applyTaskEvent(emptyTaskProgress(), {
+      type: 'task_list',
+      data: { items: [{ id: 'a', title: '旧协议条目' }] },
+    })
+    expect(s.items[0].status).toBe('pending')
+    expect(s.items[0].activeForm).toBeUndefined()
+  })
+
+  it('C1 呈现链：task_update 携带的 title/activeForm 落到 item（Nest snapshot 反查）', () => {
+    let s = applyTaskEvent(emptyTaskProgress(), {
+      type: 'task_list',
+      data: { items: [{ id: 'a', title: '起稿' }] },
+    })
+    s = applyTaskEvent(s, {
+      type: 'task_update',
+      data: { id: 'a', status: 'running', title: '起稿', activeForm: '正在起稿' },
+    })
+    expect(s.items[0]).toMatchObject({ status: 'running', title: '起稿', activeForm: '正在起稿' })
   })
   it('applies task_update retrying attempt', () => {
     let s = applyTaskEvent(emptyTaskProgress(), {

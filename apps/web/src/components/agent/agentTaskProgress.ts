@@ -13,6 +13,8 @@ export interface AgentTaskItem {
   nodeId?: string
   kind?: string
   status: TaskItemStatus
+  /** C1 呈现链：running 项的阶段说明（activeForm ?? title），来自 todo_write payload。 */
+  activeForm?: string
   recordId?: string
   attempt?: number
   maxAttempts?: number
@@ -41,13 +43,32 @@ export const emptyTaskProgress = (): AgentTaskProgressState => ({
 
 const TERMINAL_STATUSES: TaskItemStatus[] = ['done', 'failed', 'needs_user', 'skipped']
 
+/** task_list payload status 白名单（C1 消费迭代）：未知值（含旧 ⟦plan⟧ 重放缺省）按 pending 渲染。 */
+const KNOWN_ITEM_STATUSES: ReadonlySet<string> = new Set([
+  'pending',
+  'running',
+  'retrying',
+  'done',
+  'failed',
+  'needs_user',
+  'skipped',
+])
+
 type TaskEvent =
-  | { type: 'task_list'; data: { items: Array<{ id: string; title: string; nodeId?: string; kind?: string }>; banner?: string } }
+  | {
+      type: 'task_list'
+      data: {
+        items: Array<{ id: string; title: string; nodeId?: string; kind?: string; status?: string; activeForm?: string }>
+        banner?: string
+      }
+    }
   | {
       type: 'task_update'
       data: {
         id: string
         status: TaskItemStatus
+        title?: string
+        activeForm?: string
         recordId?: string
         attempt?: number
         maxAttempts?: number
@@ -86,7 +107,8 @@ export function formatTaskProgressLine(items: AgentTaskItem[]): string | null {
   const current =
     items.find((it) => it.status === 'running' || it.status === 'retrying') ??
     items.find((it) => it.status === 'pending')
-  const currentTitle = current?.title ?? '…'
+  // C1 呈现链：进行中项优先展示阶段说明（activeForm），对齐 WorkBuddy「正在分析数据」式文案
+  const currentTitle = current?.activeForm ?? current?.title ?? '…'
   return `已完成 ${done}/${total} · 正在生成：${currentTitle}`
 }
 
@@ -101,7 +123,11 @@ export function applyTaskEvent(
         title: it.title,
         nodeId: it.nodeId,
         kind: it.kind,
-        status: 'pending',
+        status:
+          typeof it.status === 'string' && KNOWN_ITEM_STATUSES.has(it.status)
+            ? (it.status as TaskItemStatus)
+            : 'pending',
+        ...(it.activeForm ? { activeForm: it.activeForm } : {}),
       })),
       finished: false,
       banner: event.data.banner,

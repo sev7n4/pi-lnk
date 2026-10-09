@@ -60,7 +60,7 @@ const showBanner = computed(
       >
         <span class="mt-0.5 w-14 shrink-0 opacity-70">{{ statusLabel[item.status] || item.status }}</span>
         <span class="min-w-0 flex-1">
-          <span class="font-medium">{{ item.title }}</span>
+          <span class="font-medium">{{ item.status === 'running' && item.activeForm ? item.activeForm : item.title }}</span>
           <span v-if="item.status === 'retrying' && item.attempt" class="ml-1 opacity-60">
             重试 {{ item.attempt }}/{{ item.maxAttempts || 2 }}
           </span>

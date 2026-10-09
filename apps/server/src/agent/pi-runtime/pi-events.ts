@@ -424,7 +424,11 @@ export interface TaskWireEvent {
 }
 
 function mapStatus(s: string): string {
-	return s === "completed" ? "done" : "running"; // V-B；V-A：直接返回 s
+	// V-B′（2026-10-09 前端消费迭代）：completed→done / in_progress→running / 其余→pending——
+	// 前端 agentTaskProgress.applyTaskEvent 已消费 payload status（V-B 时代的 task_list 硬编码
+	// pending 已移除），三态可区分使卡片能渲染"未开始 vs 进行中"。
+	// V-A 切换点：直接返回 s（须前端 TERMINAL_STATUSES 同步认识 completed，否则坏完成判定）。
+	return s === "completed" ? "done" : s === "in_progress" ? "running" : "pending";
 }
 
 export function extractTaskEvents(event: PiRuntimeEvent): TaskWireEvent[] {
