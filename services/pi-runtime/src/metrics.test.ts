@@ -37,6 +37,20 @@ test("renders pi_runtime_prompt_skills_tokens gauge（follow-up-1）", () => {
 	assert.ok(out.indexOf("pi_runtime_prompt_skills_tokens") > out.indexOf("pi_runtime_skills_loaded"));
 });
 
+test("renders C3 plan-gate counters（propose/decision/blocked）", () => {
+	const m = new Metrics();
+	m.observePlanProposed();
+	m.observePlanProposed();
+	m.observePlanDecision("execute");
+	m.observePlanDecision("timeout");
+	m.observePlanGateBlocked("upsert_media_node");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_plan_proposed_total 2/);
+	assert.match(out, /pi_runtime_plan_decisions_total\{decision="execute"\} 1/);
+	assert.match(out, /pi_runtime_plan_decisions_total\{decision="timeout"\} 1/);
+	assert.match(out, /pi_runtime_plan_gate_blocked_total\{tool="upsert_media_node"\} 1/);
+});
+
 test("③ 错误分类：Nest 结构化 errorKind 走 tool_error_kinds 通道（精确，不靠正则猜）", () => {
 	// 2026-10-04：原用例断言 tool_calls_total{kind="gate_blocked"/"upstream_4xx"}，
 	// 该渲染方已删。归因改由 observeToolErrorKind 通道承担——它拿的是 NestClient

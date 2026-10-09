@@ -89,6 +89,9 @@ export class Metrics {
 	 */
 	private queueOps = new Map<string, number>();
 	private pendingOps = new Map<string, number>(); // key: tool|status
+	private planProposed = 0; // C3 propose_plan 调用数
+	private planDecisions = new Map<string, number>(); // key: decision (execute|refine|keep|timeout|aborted)
+	private planGateBlocked = new Map<string, number>(); // key: tool——planPending 期间被拦的写工具
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	/**
@@ -260,6 +263,19 @@ export class Metrics {
 	observePendingOp(tool: string, status: "answered" | "timeout" | "aborted"): void {
 		const key = `${tool}|${status}`;
 		this.pendingOps.set(key, (this.pendingOps.get(key) ?? 0) + 1);
+	}
+
+	/** C3 Plan 确认门观测（spec §3.7）：proposed/decision 在工具层，blocked 在 before_tool 层。 */
+	observePlanProposed(): void {
+		this.planProposed += 1;
+	}
+
+	observePlanDecision(decision: string): void {
+		this.planDecisions.set(decision, (this.planDecisions.get(decision) ?? 0) + 1);
+	}
+
+	observePlanGateBlocked(tool: string): void {
+		this.planGateBlocked.set(tool, (this.planGateBlocked.get(tool) ?? 0) + 1);
 	}
 
 	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
@@ -450,12 +466,28 @@ export class Metrics {
 			lines.push(`pi_runtime_queue_ops_total{op="${esc(op)}",kind="${esc(kind)}",outcome="${esc(outcome)}"} ${count}`);
 		}
 
-		lines.push("# HELP pi_runtime_pending_ops_total Blocking-wait settlements (user answered / timeout / aborted).");
-		lines.push("# TYPE pi_runtime_pending_ops_total counter");
-		for (const [key, count] of [...this.pendingOps.entries()].sort()) {
-			const [tool, status] = key.split("|");
-			lines.push(`pi_runtime_pending_ops_total{tool="${esc(tool)}",status="${esc(status)}"} ${count}`);
-		}
+	lines.push("# HELP pi_runtime_pending_ops_total Blocking-wait settlements (user answered / timeout / aborted).");
+	lines.push("# TYPE pi_runtime_pending_ops_total counter");
+	for (const [key, count] of [...this.pendingOps.entries()].sort()) {
+		const [tool, status] = key.split("|");
+		lines.push(`pi_runtime_pending_ops_total{tool="${esc(tool)}",status="${esc(status)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_plan_proposed_total propose_plan invocations (C3 plan gate).");
+	lines.push("# TYPE pi_runtime_plan_proposed_total counter");
+	lines.push(`pi_runtime_plan_proposed_total ${this.planProposed}`);
+
+	lines.push("# HELP pi_runtime_plan_decisions_total Plan confirmation outcomes by decision.");
+	lines.push("# TYPE pi_runtime_plan_decisions_total counter");
+	for (const [decision, count] of [...this.planDecisions.entries()].sort()) {
+		lines.push(`pi_runtime_plan_decisions_total{decision="${esc(decision)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_plan_gate_blocked_total Write tools blocked by the plan gate, by tool.");
+	lines.push("# TYPE pi_runtime_plan_gate_blocked_total counter");
+	for (const [tool, count] of [...this.planGateBlocked.entries()].sort()) {
+		lines.push(`pi_runtime_plan_gate_blocked_total{tool="${esc(tool)}"} ${count}`);
+	}
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
 		lines.push("# TYPE pi_runtime_skills_loaded gauge");
