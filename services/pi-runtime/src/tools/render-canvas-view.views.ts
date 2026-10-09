@@ -12,6 +12,8 @@
  *   matrix    — 分类 × 状态交叉，表达"分布"
  */
 import { condenseLabel, graphIRFromGv, labelBudgetFor, labelWidth } from "../graph/graph-ir.js";
+import type { NodeMark } from "../graph/graph-ir.js";
+import { visualRoles } from "../graph/visual-role.js";
 import { layoutLayout } from "../graph/layout/layout.js";
 import { layoutTimelineFlow } from "../graph/layout/timeline.js";
 import { LANE_LABEL_W, STAGE_COUNT, layoutSwimlane, swimlaneNodeWidth } from "../graph/layout/swimlane.js";
@@ -76,6 +78,14 @@ function nodeRect(
 		label?: string;
 		showType?: boolean;
 		misplaced?: boolean;
+		/**
+		 * D3-3 mark 通道的**最小视觉表现**：加粗描边。
+		 *
+		 * ⛔ 不动 fill —— 填充色是 `node.type` 的语义色（「一色一义」），
+		 *   用 severity 覆盖它会把类型色吃掉。配色 / 对比度留给 D3-3 的视觉语言规范，
+		 *   本步只保证「通道真的产生了可见差异」（否则它就是死代码）。
+		 */
+		accent?: boolean;
 	} = {},
 ): string {
 	const p = paletteOf(n, opts.color);
@@ -85,7 +95,9 @@ function nodeRect(
 	// 内联 63 次约 3.2KB，class 只需 63×13 字节。这是把 layout 从 23.6KB 压进 20KB 的关键。
 	const cls = `cf${colorClass(p.fill)} cs${colorClass(st.stroke)}`;
 	const parts: string[] = [];
-	parts.push(`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" class="${cls} n"${mis ? ' stroke-width="2"' : ""}/>`);
+	parts.push(
+		`<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" class="${cls} n"${mis || opts.accent === true ? ' stroke-width="2"' : ""}/>`,
+	);
 	const seq = opts.seq && opts.seq > 0 ? `${ordinal(opts.seq)} ` : "";
 	const typeTxt = opts.showType ? ` ${n.type ?? ""}` : "";
 	// ⭐⭐ N8：节点身份标签**不再 clip 截断**，改用 IR 提炼后的 `label`。
@@ -192,6 +204,8 @@ export interface LayoutOpts {
 	drawEdges: boolean;
 	/** 强调这些 id（如关键路径首节点）。 */
 	emphasize?: readonly string[];
+	/** D3-3 mark 通道：按节点 id 的语义标注（来自 `overlay.kind=severity`）。 */
+	marks?: Readonly<Record<string, NodeMark | undefined>>;
 	colors?: Record<string, string | undefined>;
 	/**
 	 * 分组依据。影响**着色**（type/status/parentNode）**与行序**（同组相邻），
@@ -236,11 +250,18 @@ export function buildLayoutSvg(
 		showType: opts.showType,
 		colors: opts.colors,
 		emphasize: opts.emphasize,
+		...(opts.marks !== undefined ? { marks: opts.marks } : {}),
 		...(opts.focus !== undefined
 			? { focus: opts.focus, hops: opts.hops, focusAnchor: opts.focusAnchor }
 			: {}),
 	});
 	const laid = layoutLayout(ir);
+	// ⭐ 视觉角色由 IR 的 mark 决定（渲染层不猜谁重要），取前 10%
+	const roles = visualRoles(ir);
+	const sevOf = (id: string): string | undefined => {
+		if (roles.get(id) !== "accent") return undefined;
+		return ir.nodes.find((n) => n.id === id)?.mark?.text;
+	};
 	// 图例 / 标签精简 / 错位审计需要**完整**的 GvNode 字段 ⇒ 按布局产出的顺序取回。
 	const byId = new Map(nodesIn.map((n) => [n.id, n]));
 	const nodes = laid.nodes.map((p) => byId.get(p.id)!);
@@ -362,9 +383,10 @@ export function buildLayoutSvg(
 		}
 		lastGroup = g;
 		const mis = misIds.has(n.id);
+		const sev = sevOf(n.id);
 		parts.push(
 			`<g data-node="${esc(n.id)}" data-group="${esc(g)}"` +
-				`${mis ? " data-x" : ""}>`,
+				`${mis ? " data-x" : ""}${sev !== undefined ? ` data-sev="${esc(sev)}"` : ""}>`,
 		);
 		parts.push(
 			nodeRect(n, boxes.get(p.id)!, {
@@ -374,6 +396,7 @@ export function buildLayoutSvg(
 				label: labels.get(n.id),
 				showType: opts.showType,
 				misplaced: mis,
+				accent: sev !== undefined,
 			}),
 		);
 		if (emph.has(n.id)) {
@@ -436,7 +459,11 @@ function groupLegend(nodes: readonly GvNode[], by: "parentNode"): Array<{ label:
 // ⭐ 行序、缩进、父子 trunk 的坐标全部在 `graph/layout/tree.ts`（`TREE_INDENT` /
 // `TREE_DEPTH_W` 也搬过去了）。本函数只画 —— 与 layout 视图同一条迁移边界。
 
-export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdge[]): string {
+export function buildTreeSvg(
+	nodesIn: readonly GvNode[],
+	edgesIn: readonly GvEdge[],
+	opts: { marks?: Readonly<Record<string, NodeMark | undefined>> } = {},
+): string {
 	// 预算按tree 的节点框宽（150px ⇒ 22 单位 ≈ 11 汉字）
 	const ir = graphIRFromGv({
 		view: "tree",
@@ -444,8 +471,10 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 		nodes: nodesIn,
 		edges: edgesIn,
 		labelBudget: labelBudgetFor(TREE_DEPTH_W),
+		...(opts.marks !== undefined ? { marks: opts.marks } : {}),
 	});
 	const laid = layoutTree(ir);
+	const roles = visualRoles(ir);
 	const byId = new Map(nodesIn.map((n) => [n.id, n]));
 	// 图例 / 标签精简需要**完整**的 GvNode 字段，且要按**平铺序**（不是行序）。
 	const nodes = (laid.flatOrder ?? laid.nodes.map((p) => p.id)).map((id) => byId.get(id)!);
@@ -482,9 +511,11 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 	for (const p of laid.nodes) {
 		const n = byId.get(p.id)!;
 		const box: Box = { id: n.id, x: p.x, y: p.y, w: p.w, h: p.h, row: p.row };
+		const sev = roles.get(n.id) === "accent" ? ir.nodes.find((x) => x.id === n.id)?.mark?.text : undefined;
 		parts.push(
 			`<g data-node="${esc(n.id)}" data-depth="${p.depth ?? 0}"` +
-				`${p.orphan ? " data-o" : ""}${misIds.has(n.id) ? " data-x" : ""}>`,
+				`${p.orphan ? " data-o" : ""}${misIds.has(n.id) ? " data-x" : ""}` +
+				`${sev !== undefined ? ` data-sev="${esc(sev)}"` : ""}>`,
 		);
 		parts.push(
 			nodeRect(n, box, {
@@ -492,6 +523,7 @@ export function buildTreeSvg(nodesIn: readonly GvNode[], edgesIn: readonly GvEdg
 				label: labels.get(n.id),
 				color: p.color,
 				misplaced: misIds.has(n.id),
+				accent: sev !== undefined,
 			}),
 		);
 		parts.push("</g>");
@@ -577,6 +609,7 @@ export function buildSwimlaneSvg(
 	nodesIn: readonly GvNode[],
 	edgesIn: readonly GvEdge[],
 	groupBy: "type" | "status",
+	opts: { marks?: Readonly<Record<string, NodeMark | undefined>> } = {},
 ): string {
 	// ⭐ 泳道行、阶段列、节点框、流转连线全部来自 `graph/layout/swimlane.ts`。
 	const ir = graphIRFromGv({
@@ -587,8 +620,10 @@ export function buildSwimlaneSvg(
 		groupBy,
 		// 节点框宽 = stageW − 14（112px ⇒ 16 单位 ≈ 8 汉字）
 		labelBudget: labelBudgetFor(swimlaneNodeWidth()),
+		...(opts.marks !== undefined ? { marks: opts.marks } : {}),
 	});
 	const laid = layoutSwimlane(ir);
+	const roles = visualRoles(ir);
 	const byId = new Map(nodesIn.map((n) => [n.id, n]));
 	// 图例吃**平铺序**（与 tree / timeline 同理）。
 	const nodes = (laid.flatOrder ?? laid.nodes.map((p) => p.id)).map((id) => byId.get(id)!);
@@ -622,11 +657,14 @@ export function buildSwimlaneSvg(
 	for (const p of laid.nodes) {
 		const n = byId.get(p.id)!;
 		const box: Box = { id: n.id, x: p.x, y: p.y, w: p.w, h: p.h, row: p.row };
-		parts.push(`<g data-node="${esc(n.id)}" data-stage="${p.stage ?? 0}">`);
+		const sev = roles.get(n.id) === "accent" ? ir.nodes.find((x) => x.id === n.id)?.mark?.text : undefined;
+		parts.push(
+			`<g data-node="${esc(n.id)}" data-stage="${p.stage ?? 0}"${sev !== undefined ? ` data-sev="${esc(sev)}"` : ""}>`,
+		);
 		// ⭐ 标签走 `nodeLabels`（剥后缀 + 按框宽提炼），与 layout/tree 同一套。
 		//   迁移前这里不传 label，`nodeRect` 直接用 `n.title` ⇒ 靠内部 clip 截断，
 		//   既绕过提炼也按字符数算不准中英混排。
-		parts.push(nodeRect(n, box, { label: swimLabels.get(n.id) }));
+		parts.push(nodeRect(n, box, { label: swimLabels.get(n.id), accent: sev !== undefined }));
 		parts.push("</g>");
 	}
 

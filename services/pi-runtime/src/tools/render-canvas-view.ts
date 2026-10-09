@@ -28,6 +28,7 @@ import {
 	svgBudgetReport,
 	suggestNodeIds,
 } from "./render-canvas-view.expressive.js";
+import type { NodeMark } from "../graph/graph-ir.js";
 import {
 	buildLayoutSvg,
 	buildMatrixSvg,
@@ -461,7 +462,7 @@ export function createRenderCanvasViewTools(deps: {
 					Type.Object({
 						kind: Type.Union(OVERLAYS.map((k) => Type.Literal(k)), {
 							description:
-								"Row-level metrics overlay (timeline / table only): emotion (intensity curve), budget (flags rows whose dialogue_chars exceed duration_sec x 4.5, Chinese speech at 4-5 chars/sec), severity (recolors rows by the level you pass). Match the kind to the question — the others are rejected on that view rather than ignored.",
+								"emotion (intensity curve) and budget (flags rows whose dialogue_chars exceed duration_sec x 4.5, Chinese speech at 4-5 chars/sec) are row-level tracks and work only on timeline / table. severity marks which nodes matter and works on every view except matrix (layout / tree / swimlane / timeline / table): pass data[].level=error|warn per node and at most 10% of the nodes get emphasised, highest level first. Unsupported combinations are rejected, not ignored.",
 						}),
 						data: Type.Union([Type.Array(Type.Unknown()), Type.Object({}, { description: "Empty object: declare there is no row-level data." })], {
 							description:
@@ -539,11 +540,25 @@ export function createRenderCanvasViewTools(deps: {
 				if (!GROUP_BYS.includes(rowBy) || !GROUP_BYS.includes(colBy)) {
 					return fail(`rowBy/colBy 非法，可选 ${GROUP_BYS.join(" | ")}`);
 				}
+				// ⭐ overlay 分两类，**不再一刀切拒绝**（D3-3 mark 通道）：
+				//   · `emotion` / `budget` = **行级时序指标**（要行轨道才画得出）⇒ 图形视图仍是错误；
+				//   · `severity` = **节点语义标注**（每节点一个级别）⇒ 图形视图收下，进 `node.mark`。
+				//   一刀切拒绝会让「在依赖图上标出出问题的节点」这条路根本不存在。
 				if (p.overlay && (view === "topology" || view === "layout" || view === "tree" || view === "swimlane" || view === "matrix")) {
-					return fail(
-						`overlay（行级指标）not supported on view=${view}（它只用于 timeline / table 的行级轨道）。` +
-							`关系表达请改用 view + relation + groupBy —— overlay 不表达逻辑关系。`,
-					);
+					if (p.overlay.kind !== "severity") {
+						return fail(
+							`overlay.kind=${String(p.overlay.kind)}（行级指标）not supported on view=${view}（它只用于 timeline / table 的行级轨道）。` +
+								`关系表达请改用 view + relation + groupBy —— overlay 不表达逻辑关系。`,
+						);
+					}
+					// ⛔ matrix 画的是格子、没有节点框 ⇒ severity 无处表达。
+					//    收下却不画 = 静默忽略叠加，比报错更难查（agent 以为生效了）。
+					if (view === "matrix") {
+						return fail(
+							`overlay.kind=severity 无法在 view=matrix 上表达（matrix 画的是分类交叉的格子，没有节点框可标注）。` +
+								`要标出异常节点请改用 layout / tree / swimlane。`,
+						);
+					}
 				}
 				// table 只实现了 severity 行底色；收下 emotion/budget 却什么都不画，与 topology
 				// 同属「静默忽略叠加」——agent 会以为叠加生效了而图上少一条轨道，比报错更难查。
@@ -601,6 +616,25 @@ export function createRenderCanvasViewTools(deps: {
 				 */
 				const aligned = alignByKey(items, nodes.map((n) => n.id));
 
+				/**
+				 * `overlay.kind=severity` → `node.mark`（D3-3 mark 通道的输入端）。
+				 *
+				 * ⭐ 对齐规则与 timeline / table **共用** `alignByKey`：带 `node_id` 按 id 命中，
+				 *   不带的按数组顺序填入未被命中的行 —— 换成另一套规则会把级别贴到错的节点上
+				 *   （既是静默错配，也是在图上编造不存在的严重度）。
+				 * ⭐ level 归一为数值：`visualRoles` 要按它降序取前 10%。
+				 *   `error`=2 / `warn`=1 / 其它=0（0 不算标注，与行级渲染「非 error/warn 不配色」一致）。
+				 */
+				const severityMarks: Record<string, NodeMark | undefined> = {};
+				if (p.overlay?.kind === "severity") {
+					nodes.forEach((n, i) => {
+						const level = aligned[i]?.level;
+						if (level !== "error" && level !== "warn") return;
+						severityMarks[n.id] = { kind: "severity", level: level === "error" ? 2 : 1, text: level };
+					});
+				}
+				const hasMarks = Object.keys(severityMarks).length > 0;
+
 				// 关系视图需要**完整节点字段**（type/status/parentNode/position）——
 				// 这正是过去被丢弃、导致「多颜色 / 层级 / 分类」画不出来的那部分。
 				const gvNodes: GvNode[] = nodes.map((n) => ({
@@ -636,9 +670,9 @@ export function createRenderCanvasViewTools(deps: {
 								p.overlay,
 							)
 						: effView === "tree"
-							? buildTreeSvg(gvNodes, gvEdges)
+							? buildTreeSvg(gvNodes, gvEdges, hasMarks ? { marks: severityMarks } : {})
 							: effView === "swimlane"
-								? buildSwimlaneSvg(gvNodes, gvEdges, groupBy === "parentNode" ? "status" : groupBy)
+								? buildSwimlaneSvg(gvNodes, gvEdges, groupBy === "parentNode" ? "status" : groupBy, hasMarks ? { marks: severityMarks } : {})
 								: effView === "matrix"
 									? buildMatrixSvg(gvNodes, rowBy, colBy)
 									: buildLayoutSvg(gvNodes, gvEdges, {
@@ -647,6 +681,7 @@ export function createRenderCanvasViewTools(deps: {
 											groupBy,
 											showType: p.show_type === true,
 											scope,
+											...(hasMarks ? { marks: severityMarks } : {}),
 											...(p.focus !== undefined
 											? { focus: p.focus, hops: p.hops, focusAnchor }
 											: {}),

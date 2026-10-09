@@ -182,11 +182,31 @@ export interface GraphIR {
 	emphasize?: readonly string[];
 }
 
+/**
+ * 语义标注（D3-3 mark 通道的输入）。
+ *
+ * ⭐ 唯一来源是 `overlay.kind=severity`（调用方按节点给的级别），**不是**渲染层猜的
+ *   —— 「什么是重要的」是输入事实，渲染只负责表达。
+ */
+export interface NodeMark {
+	kind: string;
+	/** 数值越大越该被强调；`visualRoles` 按它降序取前 `ACCENT_MAX_RATIO`。 */
+	level: number;
+	text?: string;
+}
+
 export interface GraphIRFromGvInput {
 	view: GraphView;
 	relation: "dependency" | "category";
 	nodes: readonly GvNode[];
 	edges: readonly GvEdge[];
+	/**
+	 * 按节点 id 索引的语义标注。缺省（或该 id 没有条目）⇒ 节点无 `mark`。
+	 *
+	 * ⛔ 不提供这个入口的话 `GraphIRNode.mark` 永远为空 ⇒ `visualRoles` 恒返回
+	 *    `muted`，那是死代码。通道的输入端必须真的接得上调用方能给的东西。
+	 */
+	marks?: Readonly<Record<string, NodeMark | undefined>>;
 	groupBy?: "type" | "status" | "parentNode";
 	scope?: "structure" | "ownership" | "detail";
 	showType?: boolean;
@@ -231,6 +251,7 @@ export function graphIRFromGv(input: GraphIRFromGvInput & { labelBudget?: number
 				// 漏掉它 ⇒「有序号并列时按画布上下」这条判据失效，且**不会报错**
 				//（原地下标恰好同序时结果一致）⇒ 静默的排序行为变化。
 				...(n.position !== undefined ? { position: n.position } : {}),
+				...(input.marks?.[n.id] !== undefined ? { mark: input.marks[n.id] } : {}),
 				sourceKind: "canvas" as const,
 			};
 		}),

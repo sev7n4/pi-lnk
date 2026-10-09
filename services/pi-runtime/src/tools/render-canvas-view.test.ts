@@ -422,3 +422,70 @@ describe("buildTableSvg / buildTopologySvg", () => {
 		assert.match(svg, /&lt;x&gt;&amp;/);
 	});
 });
+
+describe("D3-3 mark 通道：overlay.kind=severity 进图形视图", () => {
+	const SEV = { kind: "severity", data: [{ node_id: "n2", level: "error" }] };
+
+	it("layout：被标的节点带 data-sev 与加粗描边", async () => {
+		const svg = await svgOf({ view: "layout", relation: "dependency", overlay: SEV });
+		assert.match(svg, /data-node="n2"[^>]*data-sev="error"/);
+		// ⭐ 3 个节点 ⇒ cap = ceil(3*0.1) = 1 ⇒ 只有 1 个加粗描边
+		const bold = [...svg.matchAll(/<rect[^>]*stroke-width="2"/g)].length;
+		assert.equal(bold, 1);
+		// 未被标的节点不得带 data-sev
+		assert.equal(svg.includes('data-node="n1" data-group="prompt" data-sev='), false);
+	});
+
+	it("tree / swimlane 同样收下 severity（通道是视图无关的）", async () => {
+		for (const view of ["tree", "swimlane"]) {
+			const svg = await svgOf({ view, overlay: SEV });
+			assert.match(svg, /data-sev="error"/, `view=${view} 未生效`);
+		}
+	});
+
+	it("⛔ matrix 上 severity 无法表达 ⇒ 报错（不静默忽略）", async () => {
+		const { tool } = makeTool();
+		const r = await run(tool, { view: "matrix", overlay: SEV });
+		const d = r.details as Details;
+		assert.equal(d.ok, false);
+		assert.match(d.error!, /matrix/);
+	});
+
+	it("emotion / budget 仍是行级指标 ⇒ 图形视图继续报错", async () => {
+		for (const kind of ["emotion", "budget"]) {
+			const { tool } = makeTool();
+			const r = await run(tool, { view: "layout", overlay: { kind, data: [] } });
+			assert.equal((r.details as Details).ok, false, `kind=${kind} 应被拒绝`);
+		}
+	});
+
+	it("level 非 error/warn ⇒ 不产生标注（与行级渲染同一口径）", async () => {
+		const svg = await svgOf({
+			view: "layout",
+			relation: "dependency",
+			overlay: { kind: "severity", data: [{ node_id: "n2", level: "info" }] },
+		});
+		assert.equal(svg.includes("data-sev"), false);
+	});
+
+	it("不传 overlay ⇒ 输出不含任何 data-sev（黄金快照的前提）", async () => {
+		const svg = await svgOf({ view: "layout", relation: "dependency" });
+		assert.equal(svg.includes("data-sev"), false);
+	});
+
+	it("全部节点标 error ⇒ 只有 10% 被强调（ceil(3*0.1)=1）", async () => {
+		const svg = await svgOf({
+			view: "layout",
+			relation: "dependency",
+			overlay: {
+				kind: "severity",
+				data: [
+					{ node_id: "n1", level: "error" },
+					{ node_id: "n2", level: "error" },
+					{ node_id: "n3", level: "error" },
+				],
+			},
+		});
+		assert.equal([...svg.matchAll(/data-sev="error"/g)].length, 1);
+	});
+});
