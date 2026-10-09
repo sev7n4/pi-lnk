@@ -18,6 +18,7 @@
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import { presentResult, presentResultDual } from "./present-result.js";
+import { decidePresentation } from "./presentation-decision.js";
 import { buildNodeGraphPayload } from "./node-graph-payload.js";
 import {
 	ALLOWED_COLOR_NAMES,
@@ -727,8 +728,26 @@ export function createRenderCanvasViewTools(deps: {
 				// 🔀 双写（2026-10-07）：同时产出 `node_graph`（结构化、给 Vue Flow）
 				//   与 `svg_card`（旧路径）。前端未接 node_graph 时它会被忽略（无害），
 				//   ⇒ 后端可先上线，前端后接。等前端灰度验证通过再删SVG 那条路。
-				//   ⚠️ nodeGraph 用**全部**画布节点（raw.nodes），不是 p.node_ids 过滤后的子集——
+				//⚠️ nodeGraph 用**全部**画布节点（raw.nodes），不是 p.node_ids 过滤后的子集——
 				//   节点图的语义是"看看画布上有什么"，按需筛选是SVG 卡片的事。
+				//
+				// 🎯 D4 §4.5 呈现分工（2026-10-09）：双写**保留**（dualwrite 测试锁着
+				//   「必须两条都发」），但把「该显示哪个」算出来随载荷下发。
+				//   为什么必须有判据：前端 `PRESENTATION_KIND_PRIORITY` 让 node_graph
+				//   无条件赢（apps/web/src/stores/agent.ts:219-222），而 `NodeGraphNode`
+				//   **没有 severity/mark 字段** ⇒模型传了 overlay 时，静态图里的
+				//   `data-sev` / ERROR·WARN 配色 / 图例会**静默丢失**。
+				//   判据必须在后端算：前端拿得到节点数，但拿不到 `overlay.kind`。
+				//
+				//⛔ `wantsInteractive` 恒为 undefined：工具读不到用户原话，而规格把
+				//   「用户说『打开看看/点进去』」列为节点图的**唯一**正当理由。
+				//   在接上真实意图信号之前，节点图只在「显式传入」时才会被选中——
+				//   也就是**默认静态图**（规格表最后一行）。这比现状（无条件节点图）
+				//   保守，但不会丢视觉信息。要接通这条，需前端从用户输入提取该意图。
+				const preferred = decidePresentation({
+					nodes: Array.isArray(raw.nodes) ? raw.nodes : [],
+					overlay: p.overlay,
+				});
 				return presentResultDual(
 					{
 						type: "svg_card",
@@ -745,6 +764,7 @@ export function createRenderCanvasViewTools(deps: {
 						: {}),
 					},
 					buildNodeGraphPayload(raw, p.title),
+					preferred,
 				);
 			},
 		},

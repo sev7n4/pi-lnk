@@ -65,6 +65,24 @@ export function presentResult(payload: SvgCardPayload): {
 export function presentResultDual(
 	payload: SvgCardPayload,
 	nodeGraph: import("./types-node-graph.js").NodeGraphPayload,
+	/**
+	 * D4 §4.5 呈现分工的判据结果（`decidePresentation` 的返回值）。
+	 *
+	 * ⚠️ **为什么下发而不是后端单发**：`render-canvas-view.dualwrite.test.ts`
+	 * 把「成功时**同时**产出两条 command」锁成了活契约（前端按 `type` 分派，
+	 * 少一条会静默什么都不渲染）。所以这里**保留双写**，只把「该显示哪个」的
+	 * 结论交给前端。
+	 *
+	 * ⭐ 不这样做会导致**视觉信息静默丢失**：`NodeGraphNode` 没有 severity/mark
+	 * 字段（见 `node-graph-payload.ts` 的 `toNodeGraphNode`），而前端
+	 * `PRESENTATION_KIND_PRIORITY` 让 `node_graph` 无条件赢
+	 * （`apps/web/src/stores/agent.ts:219-222`）⇒ 模型传了 `overlay` 时，
+	 * 静态图里的 `data-sev` / ERROR·WARN 配色 / 图例全被丢掉。
+	 *
+	 * ⛔ **不能靠前端自己判断 overlay**：前端拿得到节点数，但拿不到 `overlay.kind`
+	 * （它不在这两条 command 的形状里）⇒ 只有后端知道。所以判据必须在后端算。
+	 */
+	preferred: import("./presentation-decision.js").PresentationKind = "svg_card",
 ): {
 	content: [{ type: "text"; text: string }];
 	details: {
@@ -92,6 +110,9 @@ export function presentResultDual(
 					...(payload.title ? { title: payload.title } : {}),
 					bytes: clipped.svg.length,
 					truncated,
+					// D4 §4.5：把「该显示哪个」显式告诉前端，别让前端的固定优先级
+					// 无条件选 node_graph（那会丢掉 overlay 的 severity 视觉）。
+					preferredPresentation: preferred,
 					// 双写时带上 node_graph 的规模，让模型知道结构化载荷已就绪
 					nodeGraph: {
 						nodes: nodeGraph.nodes.length,
