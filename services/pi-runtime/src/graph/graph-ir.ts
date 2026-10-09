@@ -177,7 +177,6 @@ export interface GraphIR {
 	focus?: string;
 	hops?: number;
 	focusAnchor?: "spread" | "bus" | "aggregate";
-	showType?: boolean;
 	colors?: Record<string, string | undefined>;
 	emphasize?: readonly string[];
 }
@@ -209,7 +208,6 @@ export interface GraphIRFromGvInput {
 	marks?: Readonly<Record<string, NodeMark | undefined>>;
 	groupBy?: "type" | "status" | "parentNode";
 	scope?: "structure" | "ownership" | "detail";
-	showType?: boolean;
 	colors?: Record<string, string | undefined>;
 	emphasize?: readonly string[];
 	focus?: string;
@@ -258,7 +256,6 @@ export function graphIRFromGv(input: GraphIRFromGvInput & { labelBudget?: number
 		edges: input.edges.map((e) => ({ source: e.source, target: e.target, kind: edgeKind })),
 		...(input.groupBy !== undefined ? { groupBy: input.groupBy } : {}),
 		...(input.scope !== undefined ? { scope: input.scope } : {}),
-		...(input.showType !== undefined ? { showType: input.showType } : {}),
 		...(input.colors !== undefined ? { colors: input.colors } : {}),
 		...(input.emphasize !== undefined ? { emphasize: input.emphasize } : {}),
 		...(input.focus !== undefined ? { focus: input.focus } : {}),

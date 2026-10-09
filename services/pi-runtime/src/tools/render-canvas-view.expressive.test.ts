@@ -559,20 +559,13 @@ describe("节点标签：简洁且能表达清楚这个节点", () => {
 		);
 	});
 
-	it("类型标签可开关（默认不显示 —— 颜色 + 图例已表达，写出来只是噪音）", () => {
-		const nodes = [
-			{ id: "a", type: "prompt", title: "EP01" },
-			{ id: "b", type: "image", title: "EP02" },
-		];
-		const without = buildLayoutSvg(nodes as never, [] as never, { drawEdges: false });
-		const withType = buildLayoutSvg(nodes as never, [] as never, { drawEdges: false, showType: true });
-		assert.ok(
-			withType.length > without.length,
-			`showType=true 应输出更多：${without.length} → ${withType.length}`,
-		);
-		assert.equal(/>① EP01 prompt</.test(withType), true, "开启后类型应出现在标签内");
-		assert.equal(/>① EP01 prompt</.test(without), false, "默认不应显示类型");
-	});
+	// ⛔ 此处原有一条「类型标签可开关」的测试（手工喂 `showType: true` 断言标签里出现
+	//   `① EP01 prompt`），随 `show_type` 参数删除而移除（2026-10-09）。
+	//
+	//   ⭐ 它正是本仓库最典型的假绿：**手工喂参数 ⇒ 断言通过 ⇒ 看起来功能正常**，
+	//   但线上 `nodeRect` 的三个调用点没有一个传 `showType` ⇒ 类型文字**从未出现过**。
+	//   「测试是绿的、线上是死的」的典型样本。类型现由顶部 4px 色条 + 图例表达（D3-3）。
+	//   删除后的等价保障见 `graph/show-type-removal.test.ts`（schema 不得再暴露该参数）。
 });
 
 // ══════════════════════════════════════════════════════════

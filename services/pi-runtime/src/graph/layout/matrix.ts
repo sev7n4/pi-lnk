@@ -100,7 +100,6 @@ export function layoutMatrix(ir: GraphIR, rowBy: MatrixBy, colBy: MatrixBy): Mat
 		nodes: [],
 		edges: [],
 		groups: [],
-		showType: ir.showType === true,
 		...(ir.colors !== undefined ? { colors: ir.colors } : {}),
 		matrix: {
 			rows,

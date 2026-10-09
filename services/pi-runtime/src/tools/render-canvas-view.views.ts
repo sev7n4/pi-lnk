@@ -75,10 +75,11 @@ interface Box {
  * 节点矩形 + 标签。
  *
  * ⭐ 标签构成（2026-10-05 用户要求「非常简洁且能表达清楚这个节点」）：
- *   `{带圈序号} {精简名称} {类型}`
+ *   `{带圈序号} {精简名称}`
  * - 序号用 ①②③ 表达「业务上的第几个」，**同一标签内**而不是另起一行
  * - 名称剥掉重复群组后缀（6 个「…· 森林偵探社」⇒ 群组名进图例，只出现一次）
- * - 类型默认不显示（颜色 + 图例已表达），`showType` 打开
+ * - 类型**不**写进节点框：由顶部 4px 色条 + 图例表达（D3-3）。
+ *   曾有 `show_type` 参数想在标题后追加类型文字，但它从未真正生效，已删除。
  * - 错位节点（画布摆放与业务序不一致）描边加宽 + 角标，让「画布本身错了」可见
  */
 function nodeRect(
@@ -89,7 +90,6 @@ function nodeRect(
 		emphasized?: boolean;
 		seq?: number;
 		label?: string;
-		showType?: boolean;
 		misplaced?: boolean;
 		/**
 		 * D3-3 mark 通道 · 三层配色中的**强调色**：severity 级别 → 强调描边着色。
@@ -134,10 +134,9 @@ function nodeRect(
 		);
 	}
 	const seq = opts.seq && opts.seq > 0 ? `${ordinal(opts.seq)} ` : "";
-	const typeTxt = opts.showType ? ` ${n.type ?? ""}` : "";
 	// ⭐⭐ N8：节点身份标签**不再 clip 截断**，改用 IR 提炼后的 `label`。
 	const body = opts.label ?? condenseLabel(n.title ?? n.id, labelBudgetFor(box.w));
-	parts.push(`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="l">${esc(seq + body + typeTxt)}</text>`);
+	parts.push(`<text x="${box.x + 6}" y="${box.y + box.h / 2}" class="l">${esc(seq + body)}</text>`);
 	if (mis) {
 		parts.push(`<text x="${box.x + box.w - 4}" y="${box.y + box.h / 2}" class="w" text-anchor="end">画布顺序</text>`);
 	}
@@ -206,22 +205,20 @@ function clip(s: string, max: number): string {
 function nodeLabels(
 	nodes: readonly GvNode[],
 	boxWidthPx: number,
-	opts: { seqOf?: (n: GvNode) => number | undefined; showType?: boolean } = {},
+	opts: { seqOf?: (n: GvNode) => number | undefined } = {},
 ): Map<string, string> {
 	const full = labelBudgetFor(boxWidthPx);
 	return new Map(
 		shortLabels(nodes).map(({ n, label }) => {
-			// ⭐ 前缀（序号 `① ` / 类型 ` prompt`）也占框内宽度 ⇒ 必须从预算里扣掉。
-			//   迁移前是 `maxChars - seq.length`：只扣了序号、**没扣类型** ⇒
-			//   `showType` 打开时会把标签顶出框右缘。
+			// ⭐ 前缀（序号 `① `）也占框内宽度 ⇒ 必须从预算里扣掉。
+			//   迁移前是 `maxChars - seq.length`，扣少了会让标签顶出框右缘。
 			//
-			// ⚠️ 类型预留必须**按视图条件化**：`showType` 只有 layout 传，
-			//   tree / swimlane 的 `nodeRect` 从不传 ⇒ 无条件扣会让窄框视图
-			//   白白少 2 个字（swimlane 112px 框从 8 汉字掉到 5 汉字）。
+			// ⛔ 这里曾有一段「类型预留」（按 `showType` 额外扣 ` ${type}` 的宽度），
+			//   已随 `show_type` 参数一起删除（2026-10-09）：该参数从未真正生效 ——
+			//   `nodeRect` 支持它但没有任何调用点传入，标签里从来没出现过类型文字。
+			//   类型由顶部 4px 色条 + 图例表达（D3-3 视觉语言），不再写进节点框。
 			const seq = opts.seqOf?.(n);
-			const reserved =
-				labelWidth(seq ? `${ordinal(seq)} ` : "") +
-				(opts.showType === true ? labelWidth(` ${n.type ?? ""}`) : 0);
+			const reserved = labelWidth(seq ? `${ordinal(seq)} ` : "");
 			return [n.id, condenseLabel(label, full - reserved)] as const;
 		}),
 	);
@@ -244,8 +241,6 @@ export interface LayoutOpts {
 	 * 不改变「形状」—— 形状只由`view` 决定（正交性要求）。
 	 */
 	groupBy?: "type" | "status" | "parentNode";
-	/** 标签里是否显示节点类型（默认否—— 颜色 + 图例已表达，写出来只是噪音）。 */
-	showType?: boolean;
 	/**
 	 * 观察尺度：宏观（只画骨架）/ 中观（骨架+归属）/ 微观（全量）。
 	 * ⚠️ 默认 `structure`（宏观）—— 「依赖」在用户嘴里就排除了「顺序」，
@@ -279,7 +274,6 @@ export function buildLayoutSvg(
 		labelBudget: labelBudgetFor(PLOT_W),
 		groupBy: opts.groupBy,
 		scope: opts.scope,
-		showType: opts.showType,
 		colors: opts.colors,
 		emphasize: opts.emphasize,
 		...(opts.marks !== undefined ? { marks: opts.marks } : {}),
@@ -379,10 +373,7 @@ export function buildLayoutSvg(
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
 	// 序号占宽必须从预算里扣：`nodeLabels` 需要知道每个节点的 seq
 	const seqById = new Map(laid.nodes.map((p) => [p.id, p.seq] as const));
-	const labels = nodeLabels(nodes, PLOT_W, {
-		seqOf: (n) => seqById.get(n.id),
-		showType: opts.showType,
-	});
+	const labels = nodeLabels(nodes, PLOT_W, { seqOf: (n) => seqById.get(n.id) });
 	if (laid.focus !== undefined) {
 		// 局部视图必须自报家门，否则用户会误以为这就是全部
 		//
@@ -430,7 +421,6 @@ export function buildLayoutSvg(
 				emphasized: p.emphasized === true,
 				seq: p.seq,
 				label: labels.get(n.id),
-				showType: opts.showType,
 				misplaced: mis,
 				sevLevel: sev,
 			}),
@@ -521,7 +511,7 @@ export function buildTreeSvg(
 	const audit = laid.audit!;
 	const misIds = new Set(audit.misplaced.map((m) => m.id));
 	const treeSeq = new Map(laid.nodes.map((p) => [p.id, p.seq] as const));
-	// tree 从不显示类型（`nodeRect` 不传 showType）⇒ 不做类型预留
+	// 类型不写进节点框（色条 + 图例已表达）⇒ 无需为类型预留宽度
 	const labels = nodeLabels(nodes, TREE_DEPTH_W, { seqOf: (n) => treeSeq.get(n.id) });
 	const parts: string[] = [svgOpen(H)];
 	// ⭐ 顺序校验说明（用户要求：按业务序渲染，并指出画布上放错的）

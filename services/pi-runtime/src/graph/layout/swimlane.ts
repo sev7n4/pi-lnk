@@ -164,7 +164,6 @@ export function layoutSwimlane(ir: GraphIR): LaidOut {
 		nodes: placed,
 		edges,
 		groups,
-		showType: ir.showType === true,
 		...(ir.colors !== undefined ? { colors: ir.colors } : {}),
 		flatOrder: nodes.map((n) => n.id),
 		// 阶段列宽：渲染层画列头要用，不能自己再算一遍

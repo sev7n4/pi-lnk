@@ -153,7 +153,6 @@ export function layoutLayout(ir: GraphIR): LaidOut {
 		nodes: placed,
 		edges: placedEdges,
 		groups: [],
-		showType: ir.showType === true,
 		...(ir.colors !== undefined ? { colors: ir.colors } : {}),
 		...(ir.emphasize !== undefined ? { emphasize: ir.emphasize } : {}),
 		audit: { misplaced: audit.misplaced, compared: audit.compared },

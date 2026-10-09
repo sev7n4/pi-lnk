@@ -215,7 +215,7 @@ test("trunk 横臂从竖线 x 向右伸 8px，终点正好抵住子节点框左�
 	assert.equal(Number.isFinite(t.yBottom), true);
 });
 
-test("showType 与 colors 从 IR 透传到布局产物（渲染层直接消费，不重新推导）", () => {
+test("colors 从 IR 透传到布局产物（渲染层直接消费，不重新推导）", () => {
 	const l = layoutTree(
 		graphIRFromGv({
 			view: "tree",
@@ -228,7 +228,9 @@ test("showType 与 colors 从 IR 透传到布局产物（渲染层直接消费�
 			colors: { a: "#FF0000" },
 		}),
 	);
-	assert.equal(l.showType, false);
+	// ⛔ 此处原有一条 `assert.equal(l.showType, false)`，随 `show_type` 参数删除而移除
+	//   （2026-10-09）：该参数从未真正生效，删它对布局产物**零**影响。
+	//   保留 colors 与 type 的断言 —— 它们才是这条测试真正的覆盖面。
 	assert.equal(l.colors!["a"], "#FF0000");
 	assert.equal(l.nodes.find((n) => n.id === "a")!.color, "#FF0000");
 	assert.equal(l.nodes.find((n) => n.id === "b")!.type, "ep");

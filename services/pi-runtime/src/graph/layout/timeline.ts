@@ -83,7 +83,6 @@ export function layoutTimelineFlow(ir: GraphIR): LaidOut & { trunks: Trunk[] } {
 		// timeline 不画依赖边（顺序由 trunk 表达）⇒ 不从 `ir.edges` 取。
 		edges: [],
 		groups: [],
-		showType: ir.showType === true,
 		...(ir.colors !== undefined ? { colors: ir.colors } : {}),
 		flatOrder: flat.map((n) => n.id),
 		trunks,
