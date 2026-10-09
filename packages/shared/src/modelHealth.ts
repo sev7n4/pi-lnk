@@ -182,7 +182,7 @@ export function rowsToHealth(
     group.row.balance402Count += cnt * (toNum(raw.balance402) === 1 ? 1 : 0)
   }
   return [...groups.values()]
-    .map(({ model, channelId, row }) => ({
+    .map(({ row }) => ({
       ...row,
       windowHours,
       successRate: row.total === 0 ? null : row.completed / row.total,
