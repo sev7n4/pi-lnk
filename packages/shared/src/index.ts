@@ -5,6 +5,7 @@ export type WorkType = 'canvas' | 'shortfilm'
 export type NodeType = 'prompt' | 'image' | 'video' | 'audio' | 'text' | 'group' | 'shot' | 'sceneComposer'
 
 export * from './randomId'
+export * from './generationTimeoutBudget'
 export * from './canvas/groupChildIds'
 export * from './canvas/selectionDigest'
 export * from './canvas/duplicateSubgraph'

@@ -15,6 +15,8 @@
  * 的接入点都遵守它。
  */
 
+import { VIDEO_CREATE_RETRY_ATTEMPTS, VIDEO_CREATE_RETRY_BASE_DELAY_MS } from '@lnkpi/shared'
+
 /**
  * 不可重试的规则**优先于**可重试的 —— 错误文案里常混数字：
  * `402 insufficient balance` / `403 User is locked` 含数字但重试只会继续扣钱
@@ -86,8 +88,10 @@ export async function withUpstreamRetry<T>(
   fn: () => Promise<T>,
   opts: UpstreamRetryOptions = {},
 ): Promise<T> {
-  const attempts = Math.max(1, opts.attempts ?? 3)
-  const base = Math.max(0, opts.baseDelayMs ?? 1500)
+  // 默认值来自 @lnkpi/shared/generationTimeoutBudget（跨层预算单一来源）：
+  // web 墙钟与 reaper 阈值都由 attempts/timeout 派生，改默认值 = 改三层。
+  const attempts = Math.max(1, opts.attempts ?? VIDEO_CREATE_RETRY_ATTEMPTS)
+  const base = Math.max(0, opts.baseDelayMs ?? VIDEO_CREATE_RETRY_BASE_DELAY_MS)
   for (let i = 0; i < attempts; i += 1) {
     try {
       return await fn()

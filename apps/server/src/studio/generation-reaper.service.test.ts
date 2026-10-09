@@ -1,6 +1,7 @@
 import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
+import { DEFAULT_VIDEO_REAP_MINUTES, VIDEO_SERVER_WORST_MS } from '@lnkpi/shared'
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { GenerationReaperService } from './generation-reaper.service'
@@ -489,5 +490,17 @@ describe('GenerationReaperService 收尾机制', () => {
 
     expect(n).toBe(0)
     expect(generationUpdateMany).not.toHaveBeenCalled()
+  })
+})
+describe('video 回收阈值 × 跨层超时预算（单一来源锁）', () => {
+  it('reaper 默认阈值必须 ≥ 服务端最坏总耗时 + 5min 缓冲', () => {
+    // reaper 阈值小于服务端最坏生成耗时 ⇒ 会把**在生成的视频**判成孤儿并退款，
+    // 视频随后完成 ⇒ 「用户拿到视频 + 拿到退款」＝漏扣费。
+    // VIDEO_SERVER_WORST_MS 由 @lnkpi/shared/generationTimeoutBudget 派生
+    // （MiniMax H3 轮询 deadline + V6 创建重试上界）；agent/web 改预算会即时
+    // 反映到这里，防止三层静默失衡。
+    expect(DEFAULT_VIDEO_REAP_MINUTES * 60_000).toBeGreaterThanOrEqual(
+      VIDEO_SERVER_WORST_MS + 5 * 60_000,
+    )
   })
 })

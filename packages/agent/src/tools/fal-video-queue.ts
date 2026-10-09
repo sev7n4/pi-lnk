@@ -1,5 +1,6 @@
 import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
 import { createPollErrorTracker, isRetryableUpstreamError, withUpstreamRetry } from './upstream-retry'
+import { VIDEO_CREATE_RETRY_BASE_DELAY_MS, VIDEO_POLL_DEADLINE_MS } from '@lnkpi/shared'
 
 export const FAL_ACCOUNT_ERROR_MESSAGE = '视频服务账户异常，请稍后重试或联系管理员'
 
@@ -16,7 +17,8 @@ export interface FalVideoQueueOptions {
 
 const DEFAULT_QUEUE_BASE = 'https://queue.fal.run'
 const DEFAULT_POLL_INTERVAL_MS = 2_000
-const DEFAULT_MAX_POLL_MS = 600_000
+// falH3Max 透传 options.maxPollMs 到这里，缺省即本值（跨层预算单一来源）。
+const DEFAULT_MAX_POLL_MS = VIDEO_POLL_DEADLINE_MS.fal
 
 export function resolveFalQueueBase(baseUrl?: string): string {
   if (!baseUrl?.trim()) return DEFAULT_QUEUE_BASE
@@ -99,7 +101,7 @@ export async function runFalVideoQueue(options: FalVideoQueueOptions): Promise<{
       return res
     },
     {
-      baseDelayMs: options.createRetryBaseDelayMs ?? 1500,
+      baseDelayMs: options.createRetryBaseDelayMs ?? VIDEO_CREATE_RETRY_BASE_DELAY_MS,
       onRetry: ({ attempt, delayMs, error }) => {
         console.warn(
           `[FalVideoQueue] submit failed (attempt ${attempt}), retrying in ${delayMs}ms:`,

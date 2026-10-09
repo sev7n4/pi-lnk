@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common'
+import { DEFAULT_VIDEO_REAP_MINUTES as SHARED_VIDEO_REAP_MINUTES } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { PointsService } from '../points/points.service'
 import {
@@ -60,10 +61,13 @@ const DEFAULT_REAP_MINUTES = 30
 /**
  * 视频侧独立阈值（分钟）。
  *
- * ⚠️ 必须与图片侧解耦：真实视频最坏耗时 ≈ 22.4min = MiniMax H3 轮询 deadline
- * `DEFAULT_MAX_POLL_MS = 1_200_000`（20min，见 minimax-h3-video-provider.ts，
- * 全 provider 最大 deadline）+ V6 创建重试上界 139.5s（3×45s + 退避 4.5s，
- * 病理上界；典型 429/503 只多 ~4.5s）。30min 默认留 ~7.6min 缓冲。
+ * 2026-10-09 起数值由 `@lnkpi/shared/generationTimeoutBudget` 提供（跨层
+ * 超时预算单一来源）：web 墙钟 / agent 创建重试与轮询 deadline / 本阈值
+ * 三层都从同一组常量派生，关系由不等式锁测试钉死。
+ *
+ * ⚠️ 必须与图片侧解耦：真实视频最坏耗时 `VIDEO_SERVER_WORST_MS` ≈ 22.3min
+ * （MiniMax H3 轮询 deadline 20min + V6 创建重试上界 139.5s，病理上界；
+ * 典型 429/503 只多 ~4.5s）。30min 默认留 ~7.7min 缓冲。
  *
  * 历史教训：video 原与 image 共用 `LNKPI_GENERATION_REAP_MINUTES`——为图片把
  * 该 env 调低，会把**正在生成中的视频**判成孤儿并退款；视频随后完成 ⇒
@@ -76,7 +80,7 @@ const DEFAULT_REAP_MINUTES = 30
  * 但那要求所有轮询都挂满 30s 超时——此时视频必然取不到 URL，提前回收退款
  * 对用户是更优结果（exactly-once 守卫保证不会与 completeVideo 双重结算）。
  */
-const DEFAULT_VIDEO_REAP_MINUTES = 30
+const DEFAULT_VIDEO_REAP_MINUTES = SHARED_VIDEO_REAP_MINUTES
 /**
  * 文本侧独立阈值（分钟）。
  *

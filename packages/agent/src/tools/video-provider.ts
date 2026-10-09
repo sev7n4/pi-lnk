@@ -1,5 +1,10 @@
 import type { VideoGenerationMode, VideoRefWire } from '@lnkpi/shared'
-import { isAgnesVideo25Family, isAgnesVideo25FlashModel } from '@lnkpi/shared'
+import {
+  isAgnesVideo25Family,
+  isAgnesVideo25FlashModel,
+  VIDEO_CREATE_RETRY_BASE_DELAY_MS,
+  VIDEO_POLL_DEADLINE_MS,
+} from '@lnkpi/shared'
 import { FalH3MaxVideoProvider } from './fal-h3-max-video-provider'
 import {
   MiniMaxH3VideoProvider,
@@ -80,9 +85,11 @@ export class AgnesVideoProvider implements VideoProvider {
     private apiRoot = 'https://apihub.agnes-ai.com',
     private defaultModel = 'agnes-video-v2.0',
     private pollIntervalMs = 5000,
+    // ⚠️ Agnes 是循环制（无 deadline，最坏 ≈120×(5s+30s)=70min），**不被**
+    // web 墙钟覆盖；见 @lnkpi/shared generationTimeoutBudget 文件头「已知例外」。
     private maxPollAttempts = 120,
     /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
-    private createRetryBaseDelayMs = 1500,
+    private createRetryBaseDelayMs: number = VIDEO_CREATE_RETRY_BASE_DELAY_MS,
   ) {}
 
   async generate(prompt: string, options?: VideoGenerateOptions): Promise<{ url: string }> {
@@ -317,9 +324,12 @@ export class ApimartVideoProvider implements VideoProvider {
     private apiKey: string,
     private baseUrl = 'https://api.apimart.ai/v1',
     private pollIntervalMs = 8_000,
-    private maxPollMs = 600_000,
+    // 轮询 deadline 来自跨层预算单一来源（@lnkpi/shared/generationTimeoutBudget）。
+    // 显式 `: number`：shared 常量是 as const 字面量类型，不注解会把 ctor 参数
+    // 收窄成 `600000`，测试注入小值直接编译失败。
+    private maxPollMs: number = VIDEO_POLL_DEADLINE_MS.apimart,
     /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
-    private createRetryBaseDelayMs = 1500,
+    private createRetryBaseDelayMs: number = VIDEO_CREATE_RETRY_BASE_DELAY_MS,
   ) {}
 
   async generate(
