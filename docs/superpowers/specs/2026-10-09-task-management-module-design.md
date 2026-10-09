@@ -75,7 +75,7 @@
 | **C1** | 任务清单工具化（todo_write 全量覆写 + details 快照持久化 + 跨压缩重注入）——P0+P1 | `docs/superpowers/specs/2026-10-09-task-tool-design.md` | **已上线（2026-10-09，PR #319 → `75d3105e`；生产断言 14/14 + 用户视角端到端演示通过；遗留前端消费 activeForm/status 记入 C1 台账 deferred）** |
 | **C1-B** | 二期：增量式多工具（task_create/update/list），B=「A 基座 + fold 增量入口」 | 概要见 C1 spec §8；立项时独立成文 | 未立项（触发条件未满足） |
 | **C2** | turnBudget 轮次硬边界（小件，可与任一章节搭车） | 未成文 | 未立项 |
-| **C3** | Plan 确认门（generation-gate 泛化 + 会话级 planMode） | 未成文 | 未立项 |
+| **C3** | Plan 确认门（generation-gate 泛化 + 会话级 planMode） | `docs/superpowers/specs/2026-10-10-plan-gate-design.md` | **已立项（2026-10-10）**：提议式 `propose_plan` + ask_user 通道阻塞确认 + planPending 期间 before_tool 拦写 + `before_run_end {followUp}` 执行轮保障；前端零改动 |
 | **C4** | 子代理（只读 Explore 型先行；并发/预算/超时三件套照抄 WorkBuddy 不可禁用设计） | 未成文 | 未立项 |
 | **C5** | Automations（cron 设施 + 无人值守护栏） | 未成文 | 未立项（新子系统） |
 
@@ -109,7 +109,8 @@
 docs/analysis/2026-10-09-workbuddy-task-planning-benchmark.md   输入一：对标分析（调研快照，不随实现更新）
 docs/superpowers/specs/2026-10-09-task-management-module-design.md  ← 本文：模块全景（骨架，随章节推进维护）
 docs/superpowers/specs/2026-10-09-task-tool-design.md            章节 C1：P0+P1 规格（随实现/评审更新）
-（未来）C1-B / C2 / C3 / C4 / C5 各自 spec                                     章节：立项时创建
+docs/superpowers/specs/2026-10-10-plan-gate-design.md            章节 C3：Plan 确认门规格（2026-10-10 立项）
+（未来）C1-B / C2 / C4 / C5 各自 spec                                     章节：立项时创建
 ```
 
 **维护规则**：
