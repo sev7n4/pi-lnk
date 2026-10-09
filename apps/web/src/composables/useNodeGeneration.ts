@@ -775,8 +775,9 @@ async function cancelRemoteGeneration(
     // ⚠️ 2026-10-04（U6）：此前是 `for (;;)` **无墙钟** —— 若 `getGeneration`
     // 持续失败且节点状态始终停在 `generating`/`pending`，循环永不退出，
     // 单次生成可永久挂住 UI（`CanvasPage.vue` 以 `waitForNodeSettled` 消费它）。
-    // 墙钟取 DEFAULT_SETTLE_TIMEOUT_MS，**必须 > 服务端 VIDEO_POLL_TIMEOUT_MS**，
-    // 否则服务端刚判超时、客户端已放弃 ⇒ 用户拿不到最后的错误信息。
+    // 墙钟取 DEFAULT_SETTLE_TIMEOUT_MS，必须 ≥ 服务端真实最坏生成耗时（MiniMax H3
+    // 的 DEFAULT_MAX_POLL_MS=1_200_000）+ V6 创建重试最坏上界（139_500ms）+ 缓冲，
+    // 否则服务端还在跑、客户端已放弃 ⇒ 用户看到假失败。公式见 generationPollGate.ts。
     const startedAt = Date.now()
     for (;;) {
       if (

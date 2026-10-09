@@ -1,5 +1,5 @@
 import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
-import { createPollErrorTracker, isRetryableUpstreamError } from './upstream-retry'
+import { createPollErrorTracker, isRetryableUpstreamError, withUpstreamRetry } from './upstream-retry'
 
 export const FAL_ACCOUNT_ERROR_MESSAGE = '视频服务账户异常，请稍后重试或联系管理员'
 
@@ -10,6 +10,8 @@ export interface FalVideoQueueOptions {
   input: Record<string, unknown>
   pollIntervalMs?: number
   maxPollMs?: number
+  /** 创建阶段退避基数（ms）。测试注入 1 保持快速。 */
+  createRetryBaseDelayMs?: number
 }
 
 const DEFAULT_QUEUE_BASE = 'https://queue.fal.run'
@@ -77,17 +79,35 @@ function sleep(ms: number) {
 export async function runFalVideoQueue(options: FalVideoQueueOptions): Promise<{ url: string }> {
   const queueBase = resolveFalQueueBase(options.baseUrl).replace(/\/$/, '')
   const submitUrl = `${queueBase}/${options.endpointId.replace(/^\//, '')}`
-  const submitRes = await upstreamFetch(submitUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...falAuthHeaders(options.apiKey),
+  // ⚠️ 2026-10-08（V6）：创建阶段加退避重试，对齐 Agnes #178。
+  // ⚠️ fetch 对 4xx/5xx 正常返回 ok:false 不抛异常，必须显式 throw 才能触发重试。
+  // throwFalVideoHttpError 返回 never：401/403 locked → 账户异常文案（不可重试），
+  // 其余 → 含状态码的文案（429/503 可重试）。
+  const submitRes = await withUpstreamRetry(
+    async () => {
+      const res = await upstreamFetch(submitUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...falAuthHeaders(options.apiKey),
+        },
+        body: JSON.stringify(options.input),
+      })
+      if (!res.ok) {
+        throwFalVideoHttpError(res.status, await res.text())
+      }
+      return res
     },
-    body: JSON.stringify(options.input),
-  })
-  if (!submitRes.ok) {
-    throwFalVideoHttpError(submitRes.status, await submitRes.text())
-  }
+    {
+      baseDelayMs: options.createRetryBaseDelayMs ?? 1500,
+      onRetry: ({ attempt, delayMs, error }) => {
+        console.warn(
+          `[FalVideoQueue] submit failed (attempt ${attempt}), retrying in ${delayMs}ms:`,
+          error,
+        )
+      },
+    },
+  )
 
   const submitted = (await submitRes.json()) as {
     status_url?: string
