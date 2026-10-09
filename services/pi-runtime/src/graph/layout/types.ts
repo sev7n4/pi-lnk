@@ -94,7 +94,6 @@ export interface LaidOut {
 	nodes: PlacedNode[];
 	edges: PlacedEdge[];
 	groups: GroupBox[];
-	showType: boolean;
 	colors?: Record<string, string | undefined>;
 	emphasize?: readonly string[];
 	/**

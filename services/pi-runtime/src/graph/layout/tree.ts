@@ -180,7 +180,6 @@ export function layoutTree(ir: GraphIR): LaidOut & { trunks: Trunk[] } {
 		// 端点是层级而非依赖 ⇒ 不放进 `edges`，否则渲染层会把 containment 画成依赖。
 		edges: [],
 		groups: [],
-		showType: ir.showType === true,
 		...(ir.colors !== undefined ? { colors: ir.colors } : {}),
 		// ⭐ 图例 / 标签精简吃的是**平铺序**（迁移前是 `orderNodes(nodesIn)`），
 		// 不是 DFS 行序 —— 否则图例项与群组后缀的排列会静默改变。

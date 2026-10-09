@@ -487,7 +487,7 @@ flowchart LR
 | 项 | 何时 |
 |---|---|
 | 缩略图取图链路（带鉴权） | D4 之后单独一包 |
-| 删除 `show_type` / `focus_anchor`（L6 候选） | D2 完成后，与 IR 一起做 |
+| 删除 `show_type`（L6 候选） | ✅ 已完成（2026-10-09，`show_type` 从未真正生效：IR/五个 layout 全透传，但 `nodeRect` 三个调用点无一传入 ⇒ 标签里从未出现过类型文字；删除对用户零影响）。<br>⚠️ **`focus_anchor` 不在此列** —— 本规格把它与 `show_type` 并列是错的：它**确有真实消费方**（`layout/layout.ts` 的 `anchor = ir.focusAnchor ?? "spread"` 真实影响行高计算），**不得删除**。 |
 | `source=knowledge` 的需求侧取证 | D5 的前置 |
 | SVG 静态图路径的存废 | D4 上线后用呈现分布数据决定，不在本规格下结论 |
 | 导出独立 HTML（快照分享） | 依赖取图链路 |
