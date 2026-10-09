@@ -94,11 +94,28 @@ export function presentResultDual(
 	const truncated = payload.svg.length > SVG_MAX_CHARS;
 	const svg = truncated ? "" : payload.svg;
 	const clipped: SvgCardPayload = { ...payload, svg };
+	/**
+	 * D4 §4.5 判据的**最终生效值**：截断时翻转到 node_graph。
+	 *
+	 * ⭐ 为什么必须翻转（真实边界，不是假想）：`truncated` 时下发 `svg: ""`，
+	 * 前端 `AgentSvgCard` 只会显示「已丢弃」降级卡（`svg-card-discarded` testid）。
+	 * 若此时仍把 `preferred` 给 svg_card，用户就只看到一句「已丢弃」，
+	 * **而 node_graph 里其实有完整可交互的节点**——这是把可用内容藏起来。
+	 *
+	 * 这属「有界失败 + 降级到另一条可用路」，不是静默丢失。
+	 * 双写契约不受影响：两条 command 都还在，只是 `preferred` 换了人。
+	 */
+	const effective: typeof preferred = truncated ? "node_graph" : preferred;
+	const svgCmd: SvgCardPayload = { ...clipped, preferredKind: effective };
+	const graphCmd: import("./types-node-graph.js").NodeGraphPayload = {
+		...nodeGraph,
+		preferredKind: effective,
+	};
 	const details: {
 		ok: true;
 		canvasCommands: (SvgCardPayload | import("./types-node-graph.js").NodeGraphPayload)[];
 		truncated?: boolean;
-	} = { ok: true, canvasCommands: [clipped, nodeGraph] };
+	} = { ok: true, canvasCommands: [svgCmd, graphCmd] };
 	if (truncated) details.truncated = true;
 	return {
 		content: [
@@ -110,9 +127,10 @@ export function presentResultDual(
 					...(payload.title ? { title: payload.title } : {}),
 					bytes: clipped.svg.length,
 					truncated,
-					// D4 §4.5：把「该显示哪个」显式告诉前端，别让前端的固定优先级
-					// 无条件选 node_graph（那会丢掉 overlay 的 severity 视觉）。
-					preferredPresentation: preferred,
+					// D4 §4.5：给模型的摘要。⚠️ 这**不是**下发给前端的通道
+					// （前端只读 details.canvasCommands 上的 preferred），
+					// 保留它只为模型能自己复述「我给你看的是哪种呈现」。
+					preferredPresentation: effective,
 					// 双写时带上 node_graph 的规模，让模型知道结构化载荷已就绪
 					nodeGraph: {
 						nodes: nodeGraph.nodes.length,

@@ -294,6 +294,17 @@ export interface PiCanvasCommand {
 	svg?: string;
 	title?: string;
 	annotations?: Array<{ nodeId: string; text: string; severity: "info" | "warn" }>;
+	/**
+	 * D4 §4.5 呈现分工：本轮该呈现哪一种（双写的两条 command 带同一个值）。
+	 *
+	 * ⚠️ **这里只是声明，`extractCanvasCommands` 不需要改**：它的 filter 只校验
+	 * `type` 是字符串，其余字段原样透传（见上方 `ask_user`/`arrange_nodes` 字段的同款注释）。
+	 * 声明它是为了让「字段真的能到前端」有编译期落点，而不是靠运行时碰巧。
+	 *
+	 * 🔴 反面教材：PR #321 把判据写进了 `result.content[0].text`—— 那是给模型读的文本，
+	 * 本文件**一条命令都不提取**，前端与落库都拿不到，测试却全绿。
+	 */
+	preferredKind?: "svg_card" | "node_graph";
 }
 
 /**
