@@ -6,6 +6,7 @@ import { CryptoService } from './crypto.service'
 import { ProviderService } from './provider.service'
 import { WebdavService } from './webdav.service'
 import { PrismaService } from '../prisma/prisma.service'
+import { encodeChannelModel, STUDIO_MODEL_CATALOG } from '@lnkpi/shared'
 
 type ChannelRow = {
   id: string
@@ -28,6 +29,7 @@ type PreferencesRow = {
   selectableVideoModels: string
   selectableTextModels: string
   selectableAudioModels: string
+  disabledModels: string
   defaultImageModel: string
   defaultVideoModel: string
   defaultTextModel: string
@@ -76,6 +78,8 @@ function createMemoryPrisma() {
 
   return {
     _sessions: sessions,
+    _channels: channels,
+    _preferences: preferences,
     providerChannel: {
       findUnique: async ({ where }: { where: { id?: string } }) => {
         if (where.id) return channels.get(where.id) ?? null
@@ -573,4 +577,113 @@ describe('ProviderService', () => {
     expect(names).toContain('stepaudio-3-gen-preview')
     expect(names).toContain('stepaudio-3-music-preview')
   })
+
+  it('P1: bootstrap 把落后于目录的平台渠道 models 对齐到当前 catalog', async () => {
+    const now = new Date()
+    const stale = STUDIO_MODEL_CATALOG.filter((e) => e.modelKey !== 'stepaudio-3-music-preview')
+    prisma._channels.set('platform', {
+      id: 'platform',
+      userId: null,
+      name: '平台服务',
+      apiFormat: 'openai',
+      baseUrl: '',
+      encryptedApiKey: null,
+      iv: null,
+      authTag: null,
+      keyVersion: 1,
+      models: JSON.stringify(stale.map((e) => ({ name: e.modelKey, capability: e.modality }))),
+      createdAt: now,
+      updatedAt: now,
+    })
+    const boot = await svc.bootstrap('u1')
+    const names = boot.platformChannel.models.map((m) => m.name)
+    expect(names).toContain('stepaudio-3-music-preview')
+    expect(names.length).toBe(STUDIO_MODEL_CATALOG.length)
+  })
+
+  it('P1: bootstrap 把目录新增模型并入存量用户 selectable，但不复活被停用的', async () => {
+    const imageEntries = STUDIO_MODEL_CATALOG.filter((e) => e.modality === 'image')
+    const disabledKey = imageEntries[0]!.modelKey
+    const disabledEncoded = encodeChannelModel('platform', disabledKey)
+    prisma._preferences.set(
+      'u1',
+      makePrefsRow('u1', {
+        selectableImageModels: JSON.stringify(
+          imageEntries
+            .filter((e) => e.modelKey !== disabledKey)
+            .map((e) => encodeChannelModel('platform', e.modelKey)),
+        ),
+        disabledModels: JSON.stringify([disabledEncoded]),
+      }),
+    )
+    const boot = await svc.bootstrap('u1')
+    const imageList = boot.preferences.selectableImageModels
+    expect(imageList).not.toContain(disabledEncoded)
+    expect(imageList.length).toBe(imageEntries.length - 1)
+  })
+
+  it('P1: bootstrap 把目录新增模型并入无停用记录的存量用户 selectable', async () => {
+    prisma._preferences.set('u1', makePrefsRow('u1'))
+    const boot = await svc.bootstrap('u1')
+    expect(boot.preferences.selectableImageModels).toEqual(
+      STUDIO_MODEL_CATALOG.filter((e) => e.modality === 'image').map((e) =>
+        encodeChannelModel('platform', e.modelKey),
+      ),
+    )
+  })
+
+  it('P1: updatePreferences 记录显式停用且 bootstrap 不复活；重新启用后恢复', async () => {
+    const firstBoot = await svc.bootstrap('u1')
+    const full = firstBoot.preferences.selectableImageModels
+    expect(full.length).toBeGreaterThan(0)
+    const disabled = full[0]!
+    await svc.updatePreferences('u1', {
+      selectableImageModels: full.filter((m) => m !== disabled),
+    })
+    const afterDisable = await svc.bootstrap('u1')
+    expect(afterDisable.preferences.selectableImageModels).not.toContain(disabled)
+    await svc.updatePreferences('u1', { selectableImageModels: full })
+    const afterEnable = await svc.bootstrap('u1')
+    expect(afterEnable.preferences.selectableImageModels).toContain(disabled)
+  })
+
+  it('P1: bootstrap 刚并入的模型不在保存请求里 ⇒ 不判为用户停用', async () => {
+    // 存量用户：image 快照为空（= 所有目录 image 模型对它都是「新上架」）
+    prisma._preferences.set('u1', makePrefsRow('u1'))
+    // 用户用「加载于同步之前的旧草稿」（空列表）保存
+    await svc.updatePreferences('u1', { selectableImageModels: [] })
+    // 不应产生任何停用记录 ⇒ 再次 bootstrap 时全量 image 模型仍然可用
+    const boot = await svc.bootstrap('u1')
+    expect(boot.preferences.selectableImageModels.length).toBe(
+      STUDIO_MODEL_CATALOG.filter((e) => e.modality === 'image').length,
+    )
+  })
 })
+
+function makePrefsRow(userId: string, overrides: Partial<PreferencesRow> = {}): PreferencesRow {
+  return {
+    userId,
+    selectableImageModels: '[]',
+    selectableVideoModels: '[]',
+    selectableTextModels: '[]',
+    selectableAudioModels: '[]',
+    disabledModels: '[]',
+    defaultImageModel: '',
+    defaultVideoModel: '',
+    defaultTextModel: '',
+    defaultAudioModel: '',
+    canvasImageCount: 3,
+    defaultImageAspect: '16:9',
+    defaultImageResolution: '1K',
+    defaultVideoAspect: '16:9',
+    defaultVideoDuration: 5,
+    defaultVideoResolution: '720p',
+    defaultVideoCrop: 'none',
+    audioVoice: 'female-shaonv',
+    audioFormat: 'mp3',
+    audioSpeed: 1,
+    audioInstructions: null,
+    systemPrompt: null,
+    ...overrides,
+  }
+}

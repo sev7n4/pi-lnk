@@ -17,6 +17,11 @@ import {
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { CryptoService } from './crypto.service'
+import { planPlatformChannelSync } from './audio-model-backfill'
+import {
+  planDisabledModelsOnPreferencesUpdate,
+  planUserSelectableSyncRow,
+} from './model-catalog-sync'
 import { assertSafeOutboundUrl } from './ssrf'
 import { WebdavService } from './webdav.service'
 
@@ -202,6 +207,16 @@ function defaultSelectableFor(modality: StudioModality): string[] {
   )
 }
 
+/** 当前目录的全量编码清单（按 modality 分桶）—— 自动对齐的目标态。 */
+function catalogEncodedByModality(): Record<StudioModality, string[]> {
+  return {
+    image: defaultSelectableFor('image'),
+    video: defaultSelectableFor('video'),
+    text: defaultSelectableFor('text'),
+    audio: defaultSelectableFor('audio'),
+  }
+}
+
 function defaultPreferencesData(userId: string) {
   return {
     userId,
@@ -209,6 +224,7 @@ function defaultPreferencesData(userId: string) {
     selectableVideoModels: JSON.stringify(defaultSelectableFor('video')),
     selectableTextModels: JSON.stringify(defaultSelectableFor('text')),
     selectableAudioModels: JSON.stringify(defaultSelectableFor('audio')),
+    disabledModels: '[]',
     defaultImageModel: encodeChannelModel(PLATFORM_CHANNEL_ID, defaultModelKey('image')),
     defaultVideoModel: encodeChannelModel(PLATFORM_CHANNEL_ID, defaultModelKey('video')),
     defaultTextModel: encodeChannelModel(PLATFORM_CHANNEL_ID, defaultModelKey('text')),
@@ -238,7 +254,7 @@ export class ProviderService {
 
   async bootstrap(userId: string) {
     const platformChannel = await this.ensurePlatformChannel()
-    const preferences = await this.ensurePreferences(userId)
+    const { row: preferences } = await this.ensurePreferences(userId)
     const userChannels = await this.prisma.providerChannel.findMany({
       where: { userId },
       orderBy: { createdAt: 'asc' },
@@ -445,7 +461,7 @@ export class ProviderService {
   }
 
   async updatePreferences(userId: string, input: UpdatePreferencesInput) {
-    await this.ensurePreferences(userId)
+    const { row: current, syncAdded } = await this.ensurePreferences(userId)
 
     if (input.canvasImageCount !== undefined) {
       if (
@@ -478,6 +494,23 @@ export class ProviderService {
     }
     if (input.selectableAudioModels !== undefined) {
       data.selectableAudioModels = JSON.stringify(input.selectableAudioModels)
+    }
+    // P1：从 prev/next 全量列表 diff 推导显式停用清单（前端本来就全量 PUT，零前端改动）。
+    // syncAdded 必须从 prev 侧排除 —— bootstrap 刚并入、用户草稿加载于并入之前的模型
+    // 不在保存请求里，那不是「主动停用」。
+    const nextByModality: Partial<Record<StudioModality, string[]>> = {}
+    if (input.selectableImageModels !== undefined) nextByModality.image = input.selectableImageModels
+    if (input.selectableVideoModels !== undefined) nextByModality.video = input.selectableVideoModels
+    if (input.selectableTextModels !== undefined) nextByModality.text = input.selectableTextModels
+    if (input.selectableAudioModels !== undefined) nextByModality.audio = input.selectableAudioModels
+    if (Object.keys(nextByModality).length > 0) {
+      const diff = planDisabledModelsOnPreferencesUpdate(
+        current,
+        nextByModality,
+        catalogEncodedByModality(),
+        syncAdded,
+      )
+      if (diff.changed) data.disabledModels = JSON.stringify(diff.target)
     }
     for (const key of [
       'defaultImageModel',
@@ -648,10 +681,16 @@ export class ProviderService {
       where: { id: PLATFORM_CHANNEL_ID },
     })
     if (existing) {
-      if (envBaseUrl && existing.baseUrl !== envBaseUrl) {
+      // P1：平台渠道是只读系统目录镜像（用户无法个性化），bootstrap 时对齐当前目录，
+      // 上新模型不再需要人工回填（StepFun 42 用户回填的根因消除）。
+      const sync = planPlatformChannelSync(existing.models, catalogModels())
+      const data: { baseUrl?: string; models?: string } = {}
+      if (envBaseUrl && existing.baseUrl !== envBaseUrl) data.baseUrl = envBaseUrl
+      if (sync.changed) data.models = JSON.stringify(sync.target)
+      if (data.baseUrl !== undefined || data.models !== undefined) {
         return this.prisma.providerChannel.update({
           where: { id: PLATFORM_CHANNEL_ID },
-          data: { baseUrl: envBaseUrl },
+          data,
         })
       }
       return existing
@@ -673,12 +712,33 @@ export class ProviderService {
     })
   }
 
-  private async ensurePreferences(userId: string) {
+  /**
+   * 保证用户偏好存在，且存量用户的 selectable 快照与当前目录对齐（P1）。
+   * 返回 `syncAdded`（本次对齐并入的条目）：updatePreferences 的停用 diff 必须把它们从
+   * prev 侧排除 —— 用户草稿加载于并入之前时请求里没有它们，那不是「主动停用」。
+   */
+  private async ensurePreferences(userId: string): Promise<{
+    row: Awaited<ReturnType<PrismaService['userAiPreferences']['create']>>
+    syncAdded: Partial<Record<StudioModality, string[]>>
+  }> {
     const existing = await this.prisma.userAiPreferences.findUnique({ where: { userId } })
-    if (existing) return existing
-    return this.prisma.userAiPreferences.create({
+    if (existing) {
+      const plan = planUserSelectableSyncRow(
+        existing,
+        catalogEncodedByModality(),
+        `${PLATFORM_CHANNEL_ID}::`,
+      )
+      if (!plan.changed) return { row: existing, syncAdded: {} }
+      const row = await this.prisma.userAiPreferences.update({
+        where: { userId },
+        data: plan.data,
+      })
+      return { row, syncAdded: plan.added }
+    }
+    const row = await this.prisma.userAiPreferences.create({
       data: defaultPreferencesData(userId),
     })
+    return { row, syncAdded: {} }
   }
 
   private async requireUserChannel(userId: string, id: string): Promise<ChannelRow> {

@@ -110,6 +110,7 @@ model UserAiPreferences {
   selectableVideoModels  String  @default("[]")
   selectableTextModels   String  @default("[]")
   selectableAudioModels  String  @default("[]")
+  disabledModels         String  @default("[]")
   defaultImageModel      String  @default("")
   defaultVideoModel      String  @default("")
   defaultTextModel       String  @default("")
