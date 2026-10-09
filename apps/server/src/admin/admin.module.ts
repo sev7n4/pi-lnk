@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 import { AdminTokenGuard } from './admin-token.guard'
+import { ModelHealthAdminController } from './model-health.controller'
 import { UpstreamProbeAdminController } from './upstream-probe-admin.controller'
 
 /**
@@ -7,7 +8,7 @@ import { UpstreamProbeAdminController } from './upstream-probe-admin.controller'
  * PrismaModule 是 @Global，直接注入 PrismaService。
  */
 @Module({
-  controllers: [UpstreamProbeAdminController],
+  controllers: [UpstreamProbeAdminController, ModelHealthAdminController],
   providers: [AdminTokenGuard],
 })
 export class AdminModule {}

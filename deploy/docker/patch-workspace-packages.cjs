@@ -24,6 +24,12 @@ for (const rel of packages) {
       types: './dist/upstreamReconciliation.d.ts',
       default: './dist/upstreamReconciliation.js',
     },
+    // B1 S1-2：model-health 控制器 import '@lnkpi/shared/modelHealth'（聚合/告警
+    // 纯函数，禁第二套）。与 src 侧 package.json 的子路径导出一一对应。
+    './modelHealth': {
+      types: './dist/modelHealth.d.ts',
+      default: './dist/modelHealth.js',
+    },
   }
   fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`)
   console.log(`patched ${rel}`)

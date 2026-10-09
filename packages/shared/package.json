@@ -7,11 +7,13 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./upstreamReconciliation": "./src/upstreamReconciliation.ts"
+    "./upstreamReconciliation": "./src/upstreamReconciliation.ts",
+    "./modelHealth": "./src/modelHealth.ts"
   },
   "typesVersions": {
     "*": {
-      "upstreamReconciliation": ["src/upstreamReconciliation.ts"]
+      "upstreamReconciliation": ["src/upstreamReconciliation.ts"],
+      "modelHealth": ["src/modelHealth.ts"]
     }
   },
   "scripts": {
