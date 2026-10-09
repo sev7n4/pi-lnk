@@ -61,6 +61,7 @@ describe('GenerationReaperService 收尾机制', () => {
     vi.clearAllMocks()
     process.env = { ...env }
     delete process.env.LNKPI_GENERATION_REAP_MINUTES
+    delete process.env.LNKPI_VIDEO_REAP_MINUTES
     delete process.env.LNKPI_TEXT_REAP_MINUTES
     db = []
     raceComplete = false
@@ -240,14 +241,19 @@ describe('GenerationReaperService 收尾机制', () => {
   it('回收范围含视频侧、按阈值过滤 createdAt', async () => {
     await svc.reapOnce('manual')
 
-    // 两次 findMany：图片/视频侧一组、文本侧一组
-    expect(generationFindMany).toHaveBeenCalledTimes(2)
+    // 三次 findMany：图片侧一组、视频侧一组（V2b 独立阈值）、文本侧一组
+    expect(generationFindMany).toHaveBeenCalledTimes(3)
     const imageWhere = generationFindMany.mock.calls[0][0].where
-    expect(imageWhere.type).toEqual({ in: ['image', 'image_edit', 'image_upscale', 'video'] })
+    expect(imageWhere.type).toEqual({ in: ['image', 'image_edit', 'image_upscale'] })
     expect(imageWhere.status).toBe('generating')
     expect(imageWhere.createdAt.lt).toBeInstanceOf(Date)
-    // 默认 30 分钟阈值（视频 VIDEO_POLL_TIMEOUT_MS=21min，30min 阈值留 9min 缓冲）
+    // 默认 30 分钟阈值（真实视频最坏 ≈22.4min = MiniMax H3 20min + V6 创建重试上界
+    // ~2.3min，30min 留 ~7.6min 缓冲；旧注释的 VIDEO_POLL_TIMEOUT_MS=21min 是虚构常量）
     expect(Date.now() - imageWhere.createdAt.lt.getTime()).toBeGreaterThan(29 * 60_000)
+    // 视频组独立成组，默认阈值同为 30min
+    const videoWhere = generationFindMany.mock.calls[1][0].where
+    expect(videoWhere.type).toEqual({ in: ['video'] })
+    expect(Date.now() - videoWhere.createdAt.lt.getTime()).toBeGreaterThan(29 * 60_000)
   })
 
   it('image_edit 孤儿：退款分类 image + 文案「图像精修」', async () => {
@@ -333,6 +339,66 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(refundInTx.mock.calls[0][3]).toBe('视频生成-超时回收退款')
   })
 
+  // ── V2b：video 与 image 的回收阈值解耦 ──
+  // 真实视频最坏耗时 = MiniMax H3 轮询 deadline 20min（DEFAULT_MAX_POLL_MS=1_200_000，
+  // 见 minimax-h3-video-provider.ts）+ V6 创建重试上界 ~2.3min ≈ 22.4min。
+  // 为图片调低 LNKPI_GENERATION_REAP_MINUTES 时，正在生成中的视频不得被误判孤儿
+  // 退款（否则「视频最终成功 + 已退款」＝漏扣费）。
+  it('video 与 image 解耦：调低 LNKPI_GENERATION_REAP_MINUTES 不影响 video', async () => {
+    process.env.LNKPI_GENERATION_REAP_MINUTES = '5'
+    // 同龄 15min：image 按 5min 阈值该收；video 按自身默认 30min 不该收
+    seed({
+      id: 'img-15min',
+      type: 'image',
+      metadata: makeMeta(),
+      createdAt: new Date(Date.now() - 15 * 60_000),
+    })
+    seed({
+      id: 'vid-15min',
+      type: 'video',
+      metadata: makeMeta(),
+      createdAt: new Date(Date.now() - 15 * 60_000),
+    })
+
+    const n = await svc.reapOnce('manual')
+
+    expect(n).toBe(1)
+    const reapedIds = generationUpdateMany.mock.calls.map((c) => c[0].where.id)
+    expect(reapedIds).toEqual(['img-15min'])
+
+    // 结构断言：video 独立成组，cutoff 按默认 30min（不是被调低的 5min）
+    const videoCall = generationFindMany.mock.calls.find(
+      (c) => c[0].where.type.in.length === 1 && c[0].where.type.in[0] === 'video',
+    )
+    expect(videoCall).toBeDefined()
+    const ageMs = Date.now() - videoCall[0].where.createdAt.lt.getTime()
+    expect(ageMs).toBeGreaterThan(29 * 60_000)
+    expect(ageMs).toBeLessThan(31 * 60_000)
+  })
+
+  it('video 阈值可被 LNKPI_VIDEO_REAP_MINUTES 覆盖', async () => {
+    // ⚠️ 用 8min（低于默认 30min）：旧实现忽略该 env、按 30min ⇒ 15min 的记录收不到
+    // ⇒ 测试红；若设成高于 30min 的值，旧实现也会「收不到」而假绿。
+    process.env.LNKPI_VIDEO_REAP_MINUTES = '8'
+    seed({
+      id: 'vid-15min',
+      type: 'video',
+      metadata: makeMeta(),
+      createdAt: new Date(Date.now() - 15 * 60_000),
+    })
+
+    const n = await svc.reapOnce('manual')
+
+    expect(n).toBe(1)
+    const videoCall = generationFindMany.mock.calls.find(
+      (c) => c[0].where.type.in.length === 1 && c[0].where.type.in[0] === 'video',
+    )
+    expect(videoCall).toBeDefined()
+    const ageMs = Date.now() - videoCall[0].where.createdAt.lt.getTime()
+    expect(ageMs).toBeGreaterThan(7 * 60_000)
+    expect(ageMs).toBeLessThan(9 * 60_000)
+  })
+
   // ── text（Task 4）：依赖 Task 3 的 record-first 让text 产生 generating 态 ──
   it('text 孤儿：回收并退款，文案「文本生成-超时回收退款」，分类 text', async () => {
     seed({
@@ -375,8 +441,8 @@ describe('GenerationReaperService 收尾机制', () => {
     const reapedIds = generationUpdateMany.mock.calls.map((c) => c[0].where.id)
     expect(reapedIds).toEqual(['text-15min'])
 
-    // 文本那组的 cutoff 确实按 10min 算
-    const textWhere = generationFindMany.mock.calls[1][0].where
+    // 文本那组的 cutoff 确实按 10min 算（第三组：图片 / 视频 / 文本）
+    const textWhere = generationFindMany.mock.calls[2][0].where
     expect(textWhere.type).toEqual({ in: ['text'] })
     expect(Date.now() - textWhere.createdAt.lt.getTime()).toBeGreaterThan(9 * 60_000)
     expect(Date.now() - textWhere.createdAt.lt.getTime()).toBeLessThan(11 * 60_000)

@@ -20,8 +20,9 @@ import { refundMeta } from '../points/point-tx.types'
  * 2026-10-08 三轮：纳入 `video`。视频 `completeVideo` 同为 detached
  * （`studio.service.ts` `.catch(console.error)`），进程重启即丢失，与图片
  * `completeImage` 同形态；生产另有 6 条 video 孤儿 / 290 分已扣未退。
- * 视频超时 `VIDEO_POLL_TIMEOUT_MS = 21min`，30min 阈值留 9min 缓冲，不会
- * 误收正常生成中的记录。BYOK 退款语义（`byok_refund`）由 reapOne 的
+ * 真实视频最坏耗时 ≈22.4min（MiniMax H3 轮询 deadline 20min + V6 创建重试
+ * 上界 ~2.3min，见 {@link DEFAULT_VIDEO_REAP_MINUTES}），30min 阈值留 ~7.6min
+ * 缓冲，不会误收正常生成中的记录。BYOK 退款语义（`byok_refund`）由 reapOne 的
  * `meta.providerSource === 'user'` 分支自动覆盖，与图片侧同路径。
  *
  * 2026-10-08 四轮：纳入 `text`。文本生成改 record-first 后（`studio.service.ts`
@@ -54,8 +55,28 @@ const REAP_REASON_BY_TYPE: Record<string, string> = {
   text: '文本生成',
 }
 
-/** 卡死判定阈值：超过该分钟数仍停在 generating 的图片/视频记录视为孤儿。 */
+/** 卡死判定阈值：超过该分钟数仍停在 generating 的图片记录视为孤儿。 */
 const DEFAULT_REAP_MINUTES = 30
+/**
+ * 视频侧独立阈值（分钟）。
+ *
+ * ⚠️ 必须与图片侧解耦：真实视频最坏耗时 ≈ 22.4min = MiniMax H3 轮询 deadline
+ * `DEFAULT_MAX_POLL_MS = 1_200_000`（20min，见 minimax-h3-video-provider.ts，
+ * 全 provider 最大 deadline）+ V6 创建重试上界 139.5s（3×45s + 退避 4.5s，
+ * 病理上界；典型 429/503 只多 ~4.5s）。30min 默认留 ~7.6min 缓冲。
+ *
+ * 历史教训：video 原与 image 共用 `LNKPI_GENERATION_REAP_MINUTES`——为图片把
+ * 该 env 调低，会把**正在生成中的视频**判成孤儿并退款；视频随后完成 ⇒
+ * 「用户拿到视频 + 拿到退款」＝漏扣费（completeVideo 的状态守卫会把迟到的
+ * 成功结果丢弃）。独立 env 后图片调优不再波及视频。
+ *
+ * 注：旧注释里的「视频超时 `VIDEO_POLL_TIMEOUT_MS = 21min`」是**虚构常量**
+ * （代码里不存在），2026-10-09 已按真实 provider 源码更正为上式。
+ * Agnes 是循环制（`maxPollAttempts=120`）无固定 deadline，异常态最坏 ≈70min，
+ * 但那要求所有轮询都挂满 30s 超时——此时视频必然取不到 URL，提前回收退款
+ * 对用户是更优结果（exactly-once 守卫保证不会与 completeVideo 双重结算）。
+ */
+const DEFAULT_VIDEO_REAP_MINUTES = 30
 /**
  * 文本侧独立阈值（分钟）。
  *
@@ -110,8 +131,9 @@ interface StuckRecord {
  * 1. 启动后 15s 首扫——回收上一进程留下的孤儿；
  * 2. 每 5min 周期巡检——回收超时未结算的记录（含「失败路径自身失败」的逃逸场景）。
  *
- * 阈值按 type 分派（图片/视频 {@link DEFAULT_REAP_MINUTES}，文本
- * {@link DEFAULT_TEXT_REAP_MINUTES}），见 {@link reapOnce}。
+ * 阈值按 type 分派（图片 {@link DEFAULT_REAP_MINUTES} / 视频
+ * {@link DEFAULT_VIDEO_REAP_MINUTES} / 文本 {@link DEFAULT_TEXT_REAP_MINUTES}），
+ * 见 {@link reapOnce}。
  *
  * exactly-once 语义：状态迁移用 `updateMany({ where: { status: 'generating' } })`
  * 守卫并与退款放进同一事务——与 `completeImage` 的结算守卫同构，谁先把 status
@@ -141,21 +163,27 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
 
   /** 单轮回收。返回成功收尾的记录数；供未来管理端点手动触发。 */
   async reapOnce(reason: 'startup' | 'periodic' | 'manual'): Promise<number> {
-    // 阈值按 type 分派：图片/视频侧 30min，文本侧 10min（秒级完成的作业卡
+    // 阈值按 type 分派：图片侧 30min、视频侧 30min（独立 env，见
+    // DEFAULT_VIDEO_REAP_MINUTES）、文本侧 10min（秒级完成的作业卡
     // 10 分钟必然是崩溃残留，共用 30min 会让文本孤儿多存活 20 分钟）。
-    // 分派方式用**两次 findMany**而非统一取min()：语义更清晰，且能保证
-    // 「文本组用文本阈值」这件事在代码里是显式的、可被测试断言的。
+    // 分派方式用**三次 findMany**而非统一取min()：语义更清晰，且能保证
+    // 「各组用各自阈值」这件事在代码里是显式的、可被测试断言的。
     const mediaMinutes = positiveMinutes(
       process.env.LNKPI_GENERATION_REAP_MINUTES,
       DEFAULT_REAP_MINUTES,
     )
+    const videoMinutes = positiveMinutes(
+      process.env.LNKPI_VIDEO_REAP_MINUTES,
+      DEFAULT_VIDEO_REAP_MINUTES,
+    )
     const textMinutes = positiveMinutes(process.env.LNKPI_TEXT_REAP_MINUTES, DEFAULT_TEXT_REAP_MINUTES)
     const groups: Array<{ types: readonly string[]; cutoff: Date }> = [
       {
-        types: REAP_TYPES.filter((t) => t !== 'text'),
+        types: REAP_TYPES.filter((t) => t !== 'video' && t !== 'text'),
         cutoff: new Date(Date.now() - mediaMinutes * 60_000),
       },
-      { types: REAP_TYPES.filter((t) => t === 'text'), cutoff: new Date(Date.now() - textMinutes * 60_000) },
+      { types: ['video'], cutoff: new Date(Date.now() - videoMinutes * 60_000) },
+      { types: ['text'], cutoff: new Date(Date.now() - textMinutes * 60_000) },
     ]
 
     let stuck: StuckRecord[] = []
@@ -187,7 +215,7 @@ export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
     }
     if (stuck.length > 0) {
       this.logger.warn(
-        `[${reason}] 回收卡死图片/视频/文本侧生成 ${reaped}/${stuck.length} 条（类型 ${REAP_TYPES.join('/')}，阈值 图片/视频 ${mediaMinutes} 分钟 / 文本 ${textMinutes} 分钟）`,
+        `[${reason}] 回收卡死图片/视频/文本侧生成 ${reaped}/${stuck.length} 条（类型 ${REAP_TYPES.join('/')}，阈值 图片 ${mediaMinutes} / 视频 ${videoMinutes} / 文本 ${textMinutes} 分钟）`,
       )
     } else if (reason === 'startup') {
       this.logger.log('[startup] 无卡死图片/视频/文本侧生成记录')
