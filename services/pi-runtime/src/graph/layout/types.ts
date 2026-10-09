@@ -151,6 +151,35 @@ export function whitespaceRatio(l: LaidOut): number {
 	return 1 - nodeAreaSum(l) / b;
 }
 
+/**
+ * 节点框两两相交的面积之和（重叠量）。
+ *
+ * ⭐ 为什么必须有它：**`whitespaceRatio` 在节点重叠时会算出负数**
+ * （`nodeAreaSum > bboxArea`），而负数读起来像「极其紧凑」—— 含义恰好相反
+ * （重叠 = 节点被后面的盖住 = 看不见）。这是典型的静默降级：一个真实缺陷被
+ * 指标表达成了优点，且不会报错。
+ *
+ * ⇒ **判读顺序固定为：先看 `hasOverlap`，再看 `whitespaceRatio`。**
+ *   有重叠时 `whitespaceRatio` 不可判读（swimlane 实测 −0.43）。
+ */
+export function overlapArea(l: LaidOut): number {
+	let area = 0;
+	for (let i = 0; i < l.nodes.length; i++) {
+		for (let j = i + 1; j < l.nodes.length; j++) {
+			const a = l.nodes[i];
+			const b = l.nodes[j];
+			const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+			const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+			if (w > 0 && h > 0) area += w * h;
+		}
+	}
+	return area;
+}
+
+export function hasOverlap(l: LaidOut): boolean {
+	return overlapArea(l) > 0;
+}
+
 interface EdgeBox {
 	x: number;
 	y: number;
