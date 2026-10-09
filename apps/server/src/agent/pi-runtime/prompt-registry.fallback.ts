@@ -66,4 +66,4 @@ export const CANVAS_DAILY_OPS = `19. 用户要求「整理/排版/排列/按关�
 
 /** task_tool（C1 2026-10-09）：todo_write 任务计划汇报。与 rules/task_tool.md body 逐字一致（L7 校验）。
  * 正文刻意极简（63 字符）：L6 预算余量仅 89，详细约定在 todo_write 工具 schema description。 */
-export const TASK_TOOL_RULES = `多步任务（≥3 步）开工前调用 todo_write 提交任务清单（全量覆写），每完成一项即更新状态；全部完成提交空数组清空。`;
+export const TASK_TOOL_RULES = `多步任务开工前 todo_write 提交清单（全量覆写），完成即更新，全部完成交空数组；需先出方案时先 propose_plan 征确认再执行，确认前不写画布不调生成。`;
