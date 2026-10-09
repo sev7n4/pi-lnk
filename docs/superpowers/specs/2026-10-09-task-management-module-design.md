@@ -34,10 +34,11 @@
 | `onUpdate` 流式更新 → SSE | `session-manager.ts:144` | 清单实时推送 |
 | 未用 hooks：`before_run`/`before_run_end`/`before_navigation` 等 | `agent-harness.ts:430-500` | P2 Plan 门预留落点 |
 
-**关键坑位（调研实锤）**：
+**关键坑位（调研实锤 + 评审修正 2026-10-09）**：
 1. Session Value 应用 namespace 在 **branch fork 不拷贝**（`fork-policy.ts:31`）→ 持久化选 details 快照而非 Value。
 2. custom entry 在压缩点前被 `stopAtType:"compaction"` 截断（`transcript.ts:60`）→ 不走 custom entry 注入。
 3. **上游 1.0.0 breaking**：harness（AgentHarness/session/compaction/skills）整体迁出到新包 `pi-durable`；vendored 0.85.1 是 harness 完整在 core 内的最后稳定形态。**所有章节设计在触发 upmerge 评审（≥3 minor，D-γ' 纪律）时必须重新映射落点。**
+4. **AgentLoop 钩子 ≠ harness 钩子**：`shouldStopAfterTurn`/`prepareNextTurn` 等属于低层 AgentLoop（pi-runtime 未使用），harness 不暴露它们，且上游 0.87.0 已移除 `shouldStopAfterTurn`——本模块任何章节不得以 AgentLoop 钩子为落点，一律用 harness hooks（`before_tool`/`before_run_end`/`before_compaction` 等）。
 
 **生态结论**：
 - 上游明确拒绝内置 todo（README："No built-in to-dos. They confuse models."），0.85.1→1.1.0 无任何任务规划能力 → **内核级现成包不存在，自建是唯一路线**。
@@ -52,7 +53,7 @@
 | WorkBuddy 层 | pi-lnk 目标形态 | 落地章节 |
 |---|---|---|
 | L1 任务实体 | 会话内任务清单（工具化 + details 快照持久化 + 跨压缩存活） | **§C1（已立项，见 §4）** |
-| L2 模式层 | Plan 确认门（generation-gate 泛化为通用确认门，`shouldStopAfterTurn`+followUp 承接） | §C3 |
+| L2 模式层 | Plan 确认门（generation-gate 泛化为通用确认门；**拦截用 `before_tool`（HITL gate 同款，已验证可用），方案确认后追加执行轮用 `before_run_end {followUp}`**） | §C3 |
 | L3 步骤透明化 | 由 C1 事件流 + 现有 AgentTaskProgressCard 承载（零迁移） | §C1 |
 | L4 并行执行 | 只读 Explore 型子代理（fork + 独立 session） | §C4 |
 | L5 规模控制 | turnBudget 硬边界 + kill switch 族 | §C2（P3 搭车） |

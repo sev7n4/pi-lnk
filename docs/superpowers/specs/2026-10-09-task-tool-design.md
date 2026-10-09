@@ -1,6 +1,6 @@
 # 任务清单工具化（todo_write）设计规格 — P0+P1【模块章节 C1】
 
-> 日期：2026-10-09
+> 日期：2026-10-09 · v1.1（评审修订：diff 匹配键 / 事件载体裁决 / 返回值与呈现链 / kill switch 部署现实 / 成功指标）
 > 状态：待评审
 > 上级文档：`docs/superpowers/specs/2026-10-09-task-management-module-design.md`（任务管理模块总体设计/全景视图）——本文是其中的章节 C1，模块分层、设计原则、章节索引与资产维护约定见上级文档。
 > 输入：`docs/analysis/2026-10-09-workbuddy-task-planning-benchmark.md`（WorkBuddy 对标报告）+ pi vendor 内核与生态调研（结论沉淀于上级文档 §1）
@@ -48,18 +48,28 @@
 - description 明确三条约定：全量覆写（每次必须包含全部任务，漏发即删）、至多一个 in_progress、全部完成时提交空数组清空。
 - `executionMode: "sequential"`（内核 `AgentTool.executionMode`，`vendor/.../types.ts:405-411`）防并发覆写竞态。
 - execute 流程：校验 → 更新内存快照 → `onUpdate` 推流（管线已通至 SSE `tool_execution_update`，`session-manager.ts:144`）→ 返回 `details` 全量快照（持久化单元）。
-- **Kill switch**：env `PI_RUNTIME_TODO_TOOL=off` 时不注册工具；Nest 侧共读同一配置决定是否拼入 prompt 规则（同一 env 双侧同源）。
+- **模型可见返回值（content）**：紧凑摘要文本，如「清单已更新：共 N 项，进行中：〈首项 content〉；已完成 M 项」。**禁止回显全量 JSON**——省 token，且避免模型把返回值当上下文重复处理（对 pi 作者"todo 增加模型负担"批评的针对性缓解）。
+- **无副作用声明**：工具只写会话内任务状态，不触外部世界；`replay` 语义显式标注，防 upmerge 后语义漂移。
+- **Kill switch**：env `PI_RUNTIME_TODO_TOOL=off` 时不注册工具；Nest 侧按同一配置决定是否拼入 prompt 规则。**部署现实**：Nest（docker compose）与 pi-runtime（k3s）是两个部署单元、两份 env 来源，漂移风险实锤——三重防线：①两侧各自配置；②pi-runtime 收到 `todo_write` 调用而工具未注册时返回明确 isError（防模型幻觉调用死循环）；③上线检查单加"两侧 flag 一致"核对项。
 
 ### 3.2 `task-state` 模块（新，`services/pi-runtime/src/tools/task-state.ts`）
 
 纯函数模块，与工具实现分离——**此模块即 B 期扩展缝**：
-- `reduce(prev, next)`：全量 → 全量 diff，产出 `{ list?, updates[] }`（新增项、状态变化项、消失项）。
-- `reconstructState(branch)`：扫描 branch 上最后一个 `todo_write` 的 toolResult details 重建快照（抄官方 todo.ts `reconstructState` 骨架，`coding-agent/examples/extensions/todo.ts:114-129`）。
+- `reduce(prev, next)`：全量 → 全量 diff，产出 `{ list?, updates[] }`（新增项、状态变化项、消失项）。**匹配键 = content 精确匹配**：同 content 视为同一项（status 变化 → `task_update`），顺序重排不产生任何事件；content 无匹配 → 新增（`task_list` 追加或重发）；next 中消失的 content → 删除。content 重复时退化为位置序匹配。理由：事件 id 是位置序 `plan-<n>`，若纯按位置 diff，模型重排顺序会把"同一任务的状态变更"撕成"新增+删除"对，前端卡片抖动——Codex/Claude 均未解决此问题（无服务端 diff），本模块服务端持有 SSOT，应做对。
+- `reconstructState(branch)`：扫描 branch 上最后一个 `todo_write` 的 toolResult details 重建快照（抄官方 todo.ts `reconstructState` 骨架，`coding-agent/examples/extensions/todo.ts:114-129`）。**从尾部反向扫描，遇首个 todo_write 即停**（末快照即 SSOT；官方范例正序全扫，长会话白费）。
 - 预留 B 期入口签名：`applyIncremental(snapshot, op)`（一期不实现，类型与文档占位在模块注释中说明）。
 
 ### 3.3 事件转译（改 Nest，`apps/server/src/agent/agent.service.ts`）
 
-职责切分：**diff 在 pi-runtime 侧产出**——工具 execute 内调 `reduce` 算出增量，`details` 载荷固定为 `{ snapshot, diff }`（快照供持久化/重建，diff 供转译）；**Nest 只做映射**：工具结果流经现有 tool-result 通路时，把 details.diff 映射为现有 `task_list`（items id=`plan-<n>`，status=running）与 `task_update`（status=done/running）事件，并收集进 executionEvents 持久化（刷新重放沿用现有机制，`agent.service.ts:1330-1354` 改造点）。
+职责切分：**diff 在 pi-runtime 侧产出**——工具 execute 内调 `reduce` 算出增量，`details` 载荷固定为 `{ snapshot, diff }`（快照供持久化/重建，diff 供转译）；**Nest 只做映射**：把 details.diff 映射为现有 `task_list` / `task_update` 事件，并收集进 executionEvents 持久化（刷新重放沿用现有机制）。
+
+**事件载体裁决（评审补充，实现计划 Task 0 验证）**：实测 `EVENT_MAP` 有 `tool_end → tool_execution_end` 且 `TOOL_RESULT_EVENT_TYPES` 含 `tool_end`（session-manager.ts:135-155，工具结果载荷确实流向 Nest），但**归一化层是否保留 `details` 字段未验证**。裁决顺序：①首选透传——若归一化剥离 details 则在归一化处补透传；②fallback——pi-runtime 侧新增 harness 事件映射（EVENT_MAP 追加自定义事件）。Task 0 = 半天通路 spike，结论回写本节后再动 Nest。
+
+**三态 → 事件映射表**（事件 payload 是自有协议，加字段不算前端破坏性迁移）：
+- `task_list`：items 结构从 `{id, title}` 扩展为 `{id, title, status}`（status ∈ pending/in_progress/completed）；前端 reconcile 对未知 status 按"未完成"渲染（向后兼容）。
+- `task_update`：`{id, status}`，status 直接透传三态。
+- 呈现链：running（in_progress）项卡片主文案 = **`activeForm ?? content`**（对齐 WorkBuddy L3"正在分析数据"式阶段说明）；completed 项 = content。
+- 老 ⟦plan⟧ 事件（无 status 字段）重放时由前端按 running 补默认，不影响旧卡片渲染。
 
 ### 3.4 跨压缩注入（改 `services/pi-runtime/src/session-manager.ts`）
 
@@ -86,19 +96,36 @@
 | 空 todos 数组 | 合法 = 清空清单（对齐 TodoWrite 清空约定） |
 | 模型漏发历史项（增量习惯） | description 明示"必须包含全部任务"；diff 侧对 n 序列断裂打 warn 日志（`GenerationRecord.metadata` 同款可观测降级，无 metrics 设施现状下的约定） |
 | resume 后无任何 todo_write | 快照为空，dynamicBlock 不注入 |
+| 工具未注册但模型发起 todo_write 调用（kill switch 漂移/幻觉） | 明确 isError 文本返回（"任务清单工具未启用"），阻断幻觉调用循环 |
+| 多 in_progress 出现率 | 上线后统计；**>10% 则升级为服务端硬校验**（Codex 同款），数据驱动收紧 |
 | kill switch off | 工具不注册 + prompt 规则不拼入（双侧同 env） |
 | prompt 预算超限 | 新增 ≈150–250 token，余量 124/3200；实现计划阶段实测，超则从低频规则（canvas_daily_ops 族）压缩腾挪 |
 
 ## 6. 测试策略
 
-1. `task-state` 单测：reduce（新增/状态变/删除/清空/乱序/重复提交幂等）、reconstructState（多快照取末、无快照、分支截断）。锁行为不锁数字。
+1. `task-state` 单测：reduce（新增/状态变/删除/清空/乱序/重复提交幂等 + **重排顺序不产生新增/删除事件对** + content 重复退化位置序）、reconstructState（多快照取末/尾部反向即停、无快照、分支截断）。锁行为不锁数字。
+0. **Task 0 通路验证（前置 spike，半天）**：验证 tool_end 归一化载荷是否保留 details；结论回写 §3.3 载荷裁决节，选定透传或 fallback 路径后才动 Nest。
 2. 工具真 harness 测试：`AgentHarness.create` + faux 模型（沿用 `session-manager.toolmetrics-realharness.test.ts` 模式）——注册、执行、details 快照、onUpdate、sequential 串行。
 3. 事件转译集成：mock 模型调用 → SSE `task_list`/`task_update` 断言 + executionEvents 收集断言。
 4. resume 测试：磁盘 resume 后快照恢复 + dynamicBlock 注入内容断言。
 5. kill switch：off 时无工具 + prompt 无规则段。
 6. 兼容回归：含 `⟦plan⟧` 的历史 executionEvents 重放仍渲染卡片。
 7. 上线验收（生产）：真实多步任务手工观察；部署后 SQL/日志验证新 `⟦plan⟧` 产生 = 0（对齐"占位图=0"验证手法）。
-8. CI 无外部二进制依赖，无环境型假阴性风险。
+8. 老会话并存窗口为**显式验收 case**（§9.4 的落地形式）：老会话 resume → 续聊触发首个 todo_write → 卡片单卡替换不双卡，人工验证一次。
+9. CI 无外部二进制依赖，无环境型假阴性风险。
+
+## 6.1 产品级成功指标（评审补充）
+
+工程验收之上，用数据回答"这工具值不值"（pi 作者的质疑必须用数据回应）：
+
+| 指标 | 口径 | 目标 |
+|---|---|---|
+| 清单采用率 | 多步生成任务中产出 todo_write 的会话占比 | 建立基线，观察趋势 |
+| 跨压缩存活率 | 发生过 compaction 且后续仍有任务活动的会话中，压缩后清单仍正确注入的占比 | 100%（这是本工具存在的理由） |
+| 新 `⟦plan⟧` 产量 | 部署后新增标记数 | 恒 0 |
+| 卡片抖动率 | reduce 产出"新增+删除"对占全部 diff 的比例 | ≈0（匹配键有效性的回归指标） |
+| 多 in_progress 率 | 单次提交 >1 个 in_progress 的比例 | <10%，否则升硬校验 |
+| 模型漏发率 | n 序列断裂告警次数 / 提交次数 | 建立基线，升高则收紧 description |
 
 ## 7. 生态复用对照表（吃满 pi-agent，不重复造轮子）
 
@@ -132,7 +159,7 @@
 1. **上游 1.0.0 breaking**：上游已将 harness（AgentHarness/session/compaction/skills）整体迁出至新包 `pi-durable`；vendored 0.85.1 是 harness 完整在 pi-agent-core 内的最后一个稳定形态。本设计所有落点（details、sequential、composeEntryAndObserve、EVENT_MAP）在触发 upmerge 评审（≥3 minor，D-γ' 纪律）时必须重新映射，规格随 upmerge 重审。
 2. **模型遵循度**：全量覆写依赖模型每次带全量清单；漏发即误删。靠 description 强约定 + n 序列断裂告警兜底，上线后观察误删率，必要时加"删除需显式 status"启发。
 3. **prompt 预算**：见 §5 表；实测责任在实现计划阶段。
-4. **开放问题**：`⟦plan⟧` 老会话与新工具并存窗口（§4 fork 路径）的 UX 细节——卡片覆盖时机由前端 reconcile 决定，建议实现期用一次真实老会话 resume 验证。
+4. **开放问题（实现计划显式 case）**：`⟦plan⟧` 老会话与新工具并存窗口的 UX 细节——卡片覆盖时机由前端 reconcile 决定，已列为 §6 测试第 8 条显式验收 case（老会话 resume 续聊单卡替换）。
 
 ---
 
