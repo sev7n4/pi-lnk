@@ -5,7 +5,6 @@ export { createImageEditProvider, ApimartImageEditProvider, SyncImageEditProvide
 export { createSegmentProvider } from './tools/segment-provider'
 export {
   createTextProvider,
-  PlaceholderTextProvider,
   OpenAITextProvider,
   isDeepSeekV4Model,
   buildDeepSeekThinkingFields,

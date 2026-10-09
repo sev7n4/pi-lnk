@@ -5,6 +5,7 @@ import {
   isDeepSeekV4Model,
   OpenAITextProvider,
 } from './text-provider'
+import * as textProviderModule from './text-provider'
 
 describe('isDeepSeekV4Model', () => {
   it('matches common deepseek-v4 id shapes', () => {
@@ -198,4 +199,49 @@ describe('OpenAITextProvider retry', () => {
     // 总尝试 3 次 ⇒ 实际重试 2 次。口径若错成「总尝试数」这里会是 3。
     expect(result.retryCount).toBe(2)
   }, 30_000)
+})
+
+// ── 占位假成功：无凭据必须抛错，绝不返回硬编码草案 ─────────────────────────
+describe('createTextProvider without any credentials', () => {
+  const env = { ...process.env }
+
+  beforeEach(() => {
+    process.env = { ...env }
+    delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_BASE_URL
+    delete process.env.OPENAI_CHAT_MODEL
+  })
+
+  afterEach(() => {
+    process.env = env
+    vi.unstubAllGlobals()
+  })
+
+  it('throws instead of returning a placeholder provider', () => {
+    expect(() => createTextProvider()).toThrow(/credentials missing/)
+  })
+
+  it('throws when opts carry no apiKey either', () => {
+    expect(() => createTextProvider({ baseUrl: 'https://x.invalid/v1' })).toThrow(
+      /credentials missing/,
+    )
+  })
+
+  it('never produces placeholder draft content', () => {
+    let message = ''
+    try {
+      createTextProvider()
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).toBeTruthy()
+    // 「草案」/「霓虹」是 PlaceholderTextProvider 硬编码文案的特征词（见 :50）
+    expect(message).not.toContain('草案')
+    expect(message).not.toContain('霓虹')
+  })
+
+  it('no longer exports a placeholder provider at all', () => {
+    // 保留一个可被引用的占位实现 = 给后人留一把假成功的枪
+    expect(Object.keys(textProviderModule)).not.toContain('PlaceholderTextProvider')
+  })
 })

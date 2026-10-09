@@ -44,15 +44,6 @@ export function buildDeepSeekThinkingFields(
   }
 }
 
-export class PlaceholderTextProvider implements TextProvider {
-  async generate(prompt: string): Promise<TextGenerateResult> {
-    return {
-      text: `【AI 创作草案】\n\n基于「${prompt}」的扩写：\n\n场景一：主角站在霓虹闪烁的街头，雨水倒映着城市的灯光。\n\n场景二：镜头缓缓推进，揭示隐藏在阴影中的秘密。\n\n（配置 OPENAI_API_KEY 后可获得真实 LLM 输出）`,
-      retryCount: 0,
-    }
-  }
-}
-
 export class OpenAITextProvider implements TextProvider {
   constructor(
     private apiKey: string,
@@ -115,5 +106,13 @@ export function createTextProvider(opts?: ProviderCredentialOpts): TextProvider 
   if (key) {
     return new OpenAITextProvider(key, process.env.OPENAI_BASE_URL, process.env.OPENAI_CHAT_MODEL)
   }
-  return new PlaceholderTextProvider()
+  // ⛔ 绝不回落到「返回硬编码草案并标 completed」：那是假成功。
+  // 生产已有 7 笔 completed 记录的内容是占位模板（2026-07-14，与旧文案逐字吻合）。
+  //
+  // 抛错时机是**这里（create 阶段）而非 generate 阶段**（与图片侧
+  // `image-provider.ts:197` 返回 `PlaceholderImageProvider`、由其 generate 抛错不同）：
+  // 文本侧没有「先构造再择机使用」的形态，所有调用点都是 create 后立即 generate，
+  // 提前到 create 抛错能让契约无法被误用（连一个 provider 对象都拿不到）。
+  // 抛错后由 studio 层既有 catch 接住 ⇒ 落 failed / fallback_pending + 退款。
+  throw new Error('text provider credentials missing: set OPENAI_API_KEY or provide a BYOK key')
 }
