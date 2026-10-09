@@ -17,11 +17,12 @@ import {
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { CryptoService } from './crypto.service'
-import { planPlatformChannelSync } from './audio-model-backfill'
+import { planPlatformChannelSync, preserveModelAvailability } from './audio-model-backfill'
 import {
   planDisabledModelsOnPreferencesUpdate,
   planUserSelectableSyncRow,
 } from './model-catalog-sync'
+import type { ModelAvailability } from './upstream-probe-logic'
 import { assertSafeOutboundUrl } from './ssrf'
 import { WebdavService } from './webdav.service'
 
@@ -30,6 +31,12 @@ export const PLATFORM_CHANNEL_ID = 'platform'
 export type ChannelModelEntry = {
   name: string
   capability: ModelCapability
+  /**
+   * S1-1 探活对账三态。仅平台渠道镜像使用：播种/对齐写入新条目给 `'unknown'`，
+   * 探活器是唯一置 `'unavailable'` 的写入方；用户渠道条目不带此字段
+   * （旧数据缺字段读为 unknown）。
+   */
+  availability?: ModelAvailability
 }
 
 export type ChannelPublic = {
@@ -176,6 +183,8 @@ function catalogModels(): ChannelModelEntry[] {
   return STUDIO_MODEL_CATALOG.map((entry) => ({
     name: entry.modelKey,
     capability: entry.modality,
+    // S1-1：播种/对齐写入的新条目统一 unknown —— 探活器是唯一置 unavailable 的写入方。
+    availability: 'unknown',
   }))
 }
 
@@ -353,7 +362,8 @@ export class ProviderService {
         : await this.requireUserChannel(userId, id)
 
     if (id === PLATFORM_CHANNEL_ID) {
-      const models = catalogModels()
+      // S1-1：整体重建镜像时保留既有 availability（绝不重置已灰显条目）。
+      const models = preserveModelAvailability(parseModelsJson(channel.models), catalogModels())
       const row = await this.prisma.providerChannel.update({
         where: { id: PLATFORM_CHANNEL_ID },
         data: { models: JSON.stringify(models) },

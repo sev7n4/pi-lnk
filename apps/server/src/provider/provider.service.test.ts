@@ -658,6 +658,54 @@ describe('ProviderService', () => {
       STUDIO_MODEL_CATALOG.filter((e) => e.modality === 'image').length,
     )
   })
+
+  it('S1-1: 播种平台渠道时条目统一带 availability=unknown', async () => {
+    await svc.bootstrap('u1')
+    const stored = JSON.parse(prisma._channels.get('platform')!.models) as {
+      name: string
+      availability?: string
+    }[]
+    expect(stored.length).toBeGreaterThan(0)
+    for (const entry of stored) {
+      expect(entry.availability).toBe('unknown')
+    }
+  })
+
+  it('S1-1: bootstrap 对齐落后镜像时保留既有灰显、新条目 unknown', async () => {
+    const catalog = STUDIO_MODEL_CATALOG.map((e) => ({
+      name: e.modelKey,
+      capability: e.modality,
+      availability: 'unknown' as const,
+    }))
+    // 镜像 = 目录去掉最后一个模型，且首条已灰显（探活器写入的存量状态）
+    const staleMirror = catalog.slice(0, -1).map((m, i) =>
+      i === 0 ? { ...m, availability: 'unavailable' } : m,
+    )
+    prisma._channels.set('platform', {
+      id: 'platform',
+      userId: null,
+      name: '平台服务',
+      apiFormat: 'openai',
+      baseUrl: '',
+      encryptedApiKey: null,
+      iv: null,
+      authTag: null,
+      keyVersion: 1,
+      models: JSON.stringify(staleMirror),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+
+    await svc.bootstrap('u1')
+    const stored = JSON.parse(prisma._channels.get('platform')!.models) as Array<{
+      name: string
+      availability?: string
+    }>
+    expect(stored).toHaveLength(catalog.length)
+    const byName = new Map(stored.map((m) => [m.name, m]))
+    expect(byName.get(catalog[0]!.name)!.availability).toBe('unavailable') // 灰显不被对齐重置
+    expect(byName.get(catalog[catalog.length - 1]!.name)!.availability).toBe('unknown') // 新条目 unknown
+  })
 })
 
 function makePrefsRow(userId: string, overrides: Partial<PreferencesRow> = {}): PreferencesRow {
