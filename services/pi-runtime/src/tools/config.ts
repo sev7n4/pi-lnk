@@ -4,9 +4,11 @@ import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, build
 import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import { createProposePlanTool } from "./propose-plan.js";
+import { createSpawnSubagentTool } from "./spawn-subagent.js";
 import { planGateEnabled } from "../runtime-config.js";
 import type { Metrics } from "../metrics.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
+import type { SubagentCoordinator } from "../gate/subagent.js";
 
 let warned = false;
 
@@ -32,7 +34,7 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
  * deps.registry（2026-09-30-ask-user-blocking B-1）：阻塞式确认类工具的等待注册表，透传给 ask_user。 */
 export function resolveToolsWithClient(
 	metrics: Metrics,
-	deps: { registry?: PendingToolRegistry } = {},
+	deps: { registry?: PendingToolRegistry; coordinator?: SubagentCoordinator } = {},
 ): { tools: LnkpiTool[]; client: NestClient | null; registry: PendingToolRegistry | null } {
 	const cfg = loadNestConfig();
 	if (!cfg) {
@@ -44,9 +46,12 @@ export function resolveToolsWithClient(
 		}
 		// C1：todo_write 不依赖 Nest client——纯文本模式也可用（kill switch PI_RUNTIME_TODO_TOOL）。
 		// C3：propose_plan 只依赖 registry 阻塞确认，纯文本模式（registry 存在）也可用。
+		// C4：spawn_subagent 只依赖 coordinator（attach SessionManager 后），纯文本模式同样可用
+		// （子会话工具表 = 白名单 ∩ 本进程已注册工具，纯文本模式下自然缩为 todo/plan/spawn）。
 		const planTools = deps.registry && planGateEnabled() ? [createProposePlanTool(deps.registry, metrics)] : [];
+		const spawnTools = deps.coordinator ? [createSpawnSubagentTool(deps.coordinator, metrics)] : [];
 		return {
-			tools: [...(isTodoToolEnabled() ? buildTodoTools() : []), ...planTools],
+			tools: [...(isTodoToolEnabled() ? buildTodoTools() : []), ...planTools, ...spawnTools],
 			client: null,
 			registry: deps.registry ?? null,
 		};
@@ -70,6 +75,8 @@ export function resolveToolsWithClient(
 		...(isTodoToolEnabled() ? buildTodoTools() : []),
 		// C3：propose_plan 同上——不依赖 client，registry 存在即可注册（kill switch PI_RUNTIME_PLAN_GATE）。
 		...(deps.registry && planGateEnabled() ? [createProposePlanTool(deps.registry, metrics)] : []),
+		// C4：spawn_subagent 同上——不依赖 client，coordinator 存在即可注册（spec 2026-10-10-c4-subagent-design.md §3.1）。
+		...(deps.coordinator ? [createSpawnSubagentTool(deps.coordinator, metrics)] : []),
 		...buildCanvasReadTools(client),
 		...buildCanvasWriteTools(client, deps.registry),
 		...buildUiCommandTools(),

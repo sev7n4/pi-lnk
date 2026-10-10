@@ -14,6 +14,7 @@ import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 import { clearPlanRunFlag } from "./gate/plan-gate.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
+import { SubagentCoordinator } from "./gate/subagent.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
 import { governImagePayload } from "./payload-images.js";
@@ -54,7 +55,10 @@ const registry = new PendingToolRegistry({
 		metrics.observePendingOp(toolName, status);
 	},
 });
-const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry });
+// C4：spawn_subagent ↔ SessionManager 的解耦中转（PendingToolRegistry 同款装配顺序）：
+// 同一实例两处共享——工具域（spawn 工具 tryRun）、manager 构造后 attach(runSubagent 实现)。
+const subagentCoordinator = new SubagentCoordinator();
+const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry, coordinator: subagentCoordinator });
 
 // D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。
 // 目录缺失/为空时 indexBlock=""、tools=[]，会话行为与未配置 skills 逐字节一致。
@@ -203,6 +207,9 @@ const manager = new SessionManager(
 );
 
 manager.setPendingRegistry(registry);
+// C4：spawn 工具的 runner 落地（SessionManager#runSubagent 兼容 SubagentRunner——第 3 参可选）。
+// attach 必须在首个 prompt 之前：spawn 可发生在任何会话的任何一轮。
+subagentCoordinator.attach(manager);
 
 const app = buildApp(manager, { metrics, version: VERSION, logger: true, registry });
 

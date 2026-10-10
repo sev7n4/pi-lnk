@@ -2,8 +2,8 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | v1.1.0（draft-review；v1.0.1 补网络出口裁决 §3.3/§4-8，v1.1.0 补 §5-8 白名单逐项断言） |
-| 状态 | 已立项，未实现 |
+| 版本 | v1.2.0（implemented；v1.0.1 补网络出口裁决 §3.3/§4-8，v1.1.0 补 §5-8 白名单逐项断言，v1.2.0 实现收口） |
+| 状态 | 已实现（feat/c4-subagent → PR 待合并；实现与 spec 的两处有意偏差见 §7） |
 | 日期 | 2026-10-10 |
 | 上游 | `2026-10-09-task-management-module-design.md` §3 C4 |
 | 决策人 | 用户（七项拍板，见 §4） |
@@ -133,3 +133,18 @@ pi-runtime 现状：单 session 单 run 串行对话，模型遇到「大范围�
 
 - 总体设计 §3 C4 状态更新为「已立项（本 spec）」；「C4 依赖 C1-B」的依赖声明按 §4-5 裁决改记为「一期无依赖，C1-B 由并行清单需求独立触发」。
 - 总体设计 §7 规则 2（upmerge ≥3 minor 全落点重映射）适用于本 spec 全部 vendor 锚点（fork API、事件类型、结算路径）。
+
+## 8. 实现收口（v1.2.0，2026-10-10）
+
+实现 = `feat/c4-subagent` 分支六提交（gate 常量/白名单/并发闸 → metrics 观测 → spawn_subagent 工具 + piSessionKey 上下文 → SessionManager.runSubagent → 端到端集成 → 本收口）。测试面：单测 9+28+5+3、集成 6，全量串行回归见 PR。
+
+**与 spec 的两处有意偏差**（效果等价或更严，注释已在产码锚点）：
+
+1. **超时机制**：spec §3.4 说「复用 stall watchdog 结算路径」，实现用 `withCancel` 子 context + `run.cancel()`——与主会话用户「停止」完全同路径，vendor 以 aborted 语义正常结算（不进错误率），无需 forceSettle（那是挂死兜底，超时 cancel 不挂死）。机制更薄，效果与 spec 意图一致。
+2. **超限状态可区分**：spec 原案超限落 "failed"，实现经 settled 闸细分为 `budget_exceeded`（forceSettle 会把 run 折叠成正常 completed，run 终态不可信，settled 是权威信号）——metrics 由此可分型观测。
+
+**实现期新增的三个 vendor 事实**（spec 未覆盖，均已写入产码注释 + 测试锁定）：
+
+- fork 还原的盘上 lane config 带**来源会话**全量 activeToolNames（restore.ts 原样还原，seed 只对新建 lane 生效），与白名单 config.tools 不一致会撞 vendor generation 校验 `configured_tools_unavailable`（run 直接 failed）——修复 = build() 快照 `entry.subagentToolNames` + `lane.setActiveTools` 覆盖（写 fork 出的子会话存储，不触主会话）。
+- `lane.prompt` 的 `result.ok` 只是 operation 信封（跑到终态），run 真实状态在 `result.value.status`（TerminalStatus：completed/declined/aborted/failed）——配置失败也是 ok:true+failed，读错会把失败静默报成 completed。
+- 预算硬停/超时/取消都经 cancel(run.context) 表达，vendor 对在途 run 以 throw AbortError 结束——runSubagent catch 后按可见状态归类，绝不外抛（SubagentCoordinator 契约：promise 永不 reject）。
