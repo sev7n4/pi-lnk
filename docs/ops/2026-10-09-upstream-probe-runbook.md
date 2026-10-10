@@ -83,3 +83,31 @@ node --experimental-strip-types ops/probe-upstream-models.mjs | tee docs/ops/pro
 | `ExperimentalWarning: Type stripping …`（stderr） | Node 实验特性告警，无害，忽略 |
 | agnes 报 `未配置 OPENAI_BASE_URL` | 本地形态需显式给 base url（agnes hub 无默认值） |
 | apimart 一直超时 | 检查 `HTTPS_PROXY`（跨境必须走代理）与 undici 可用性（报告会标注「未走代理」） |
+
+## B2/B3 批次增补（2026-10-10）
+
+### startup 首轮语义（#343 热修）
+
+- 启动日志序列：`启动首轮探活待路由表就绪后触发（来源=startup）` → 路由表播种/装载落定 → `触发启动首轮探活（来源=startup）`。
+- 等待上限 15s（`STARTUP_PROBE_ROUTES_READY_TIMEOUT_MS`）；超时照常执行并 WARN「等待路由表就绪超时」——按当前缓存路由执行（可能空表 → 组内跳过），**绝不静默丢失首轮**。
+- 判「竞态未修」的症状：启动后立刻出现「N 个目录条目未命中任何路由行且无可用 default 行」WARN（N≈目录条目数）。出现即说明启动序列异常，排查 SeedService/DB。
+
+### reason 列（B3）
+
+- `UpstreamProbeRun.reason`：`startup` / `periodic` / `manual`，可空（B3 前旧行为 NULL）。
+- `GET /api/admin/upstream-probe/latest` 响应透出 reason 字段；事后排查「这轮是谁触发的」以 run.reason 为准（此前只能靠日志回溯）。
+
+### 探活分组目录来源（B3）
+
+- 分组与对账读 **DB 目录**（`currentCatalogEntries()`，5s TTL 缓存）而非代码常量：**admin 新增/下架模型自动进对账**，无需发版。
+- 新增模型无匹配路由行时由 default 行（→ agnes_hub）接住；若 default 行被停用则该条目进 unroutable WARN 跳过（不算 ghost）。
+
+### 路由表维护操作项
+
+- **二跳边界**：admin 新增「modelKey 无路由特征、但 gatewayModelId 命中 apimart backed 名单」的条目时，**必须同步加路由行**（PUT /api/admin/upstream-routes 或种子），否则探活/生成路由会把该模型归 agnes_hub 而真实流量走 apimart（路由纯函数无法表达 gatewayModelId 二跳，见 s22 规格）。
+- 多 default 行按装载序取第一行兜底（priority desc → id asc）；运营端点 PUT 已校验「至多一条 default」。
+
+### 回退路径 availability 校验（B3 + B4 登记）
+
+- **audio** 回退（confirm 门控重放）已接 `assertPlatformModelAvailable`（按 modelKey 查镜像——注意 audio 的 gatewayModelId 与 modelKey 不同名，如 minimax-speech-2.8-hd ≠ speech-2.8-hd，按 gatewayModelId 查会恒 miss）。
+- **image/text/video 回退分支未接**（B4 登记项）：灰显模型回退的代价=一轮注定失败的上游调用后进统一漏斗（退款+failed），无资损。补齐时**必须按 modelKey 查镜像**（video/image 多条目 modelKey≠gatewayModelId：seedance-2.0→doubao-seedance-2.0、image2 等），按 gatewayModelId 查会造出「静默恒过」的假校验。
