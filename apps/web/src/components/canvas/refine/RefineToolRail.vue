@@ -434,7 +434,7 @@ const isViewOpen = (id: 'compare' | 'fit') => openMenu.value?.kind === 'view' &&
 .refine-rail__fly {
   position: absolute; top: -6px; left: calc(100% + 8px); z-index: 2; min-width: 196px; padding: 8px;
   border: 1px solid var(--neo-glass-border, var(--neo-border)); border-radius: 14px;
-  background: var(--neo-surface, #17181d); box-shadow: 0 12px 32px rgba(0, 0, 0, .36);
+  background: var(--neo-surface, #17181d); box-shadow: var(--lnk-shadow-lg);
 }
 /* 底部两枚（对照 / 适配）向上弹，避免飞出视口下缘 */
 .refine-rail__fly--up { top: auto; bottom: -6px; }

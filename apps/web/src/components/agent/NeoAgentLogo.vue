@@ -48,7 +48,7 @@ const sizeMap = {
   border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.14);
   border-radius: 50%;
   background: transparent;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--lnk-shadow-md);
   transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.28s ease, border-color 0.28s ease;
 }
 

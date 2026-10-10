@@ -234,7 +234,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
   max-width: min(94vw, 1800px);
   max-height: 92vh;
   border-radius: 12px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--lnk-shadow-xl);
 }
 
 .preview-media.is-actual {

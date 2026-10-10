@@ -36,8 +36,8 @@ const hasGenerating = computed(() => props.generatingCount > 0)
       >
         {{ groupCount }} 分组
       </button>
-      <span v-if="hasGenerating" class="flex items-center gap-1 text-amber-400">
-        <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+      <span v-if="hasGenerating" class="flex items-center gap-1 text-warning">
+        <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
         {{ generatingCount }} 生成中
       </span>
     </div>

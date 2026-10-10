@@ -138,8 +138,8 @@ async function optimizePrompt(shot: StoryboardShot) {
               <span
                 class="shrink-0 rounded px-1.5 py-0.5 text-[10px]"
                 :class="{
-                  'bg-yellow-600/20 text-yellow-400': shot.status === 'generating',
-                  'bg-green-600/20 text-green-400': shot.status === 'generated' || shot.status === 'completed',
+                  'bg-warning-bg text-warning': shot.status === 'generating',
+                  'bg-success-bg text-success': shot.status === 'generated' || shot.status === 'completed',
                   'bg-overlay/5 text-fg-3': !shot.status || shot.status === 'draft',
                 }"
               >

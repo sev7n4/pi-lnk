@@ -360,7 +360,7 @@ function toggleVoice() {
   position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 50;
   min-width: 180px; padding: 4px; border: 1px solid var(--neo-border);
   border-radius: 10px; background: var(--neo-surface, #111);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+  box-shadow: var(--lnk-shadow-md);
 }
 .refine-dock__select-item {
   display: block; width: 100%; text-align: left; padding: 6px 8px;

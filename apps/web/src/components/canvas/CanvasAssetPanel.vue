@@ -501,7 +501,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
               <button
                 v-if="asset.source === 'user'"
                 type="button"
-                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-red-500/90 hover:text-fg"
+                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-danger hover:text-fg"
                 title="从资产库删除"
                 @click.stop="removeAsset(asset)"
               >

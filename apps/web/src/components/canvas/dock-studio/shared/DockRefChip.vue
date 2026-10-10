@@ -283,6 +283,6 @@ function onClick() {
 }
 
 .dock-ref-chip__remove:hover {
-  background: rgba(239, 68, 68, 0.75);
+  background: var(--lnk-error);
 }
 </style>

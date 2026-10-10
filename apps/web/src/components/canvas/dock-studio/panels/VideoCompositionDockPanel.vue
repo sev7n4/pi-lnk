@@ -93,14 +93,14 @@ function readSavedTracks(): CompositionTrackRecord[] {
       <span>{{ orderedTracks.length }} 轨</span>
       <span>视频 {{ videoTrackCount }}</span>
       <span>音频 {{ audioTrackCount }}</span>
-      <span v-if="readSavedTracks().length" class="text-emerald-300/70">已持久化 {{ readSavedTracks().length }} 轨</span>
-      <span v-if="!orderedTracks.length" class="text-amber-300/80">请连接 video / audio / 媒体输入 节点</span>
+      <span v-if="readSavedTracks().length" class="text-success">已持久化 {{ readSavedTracks().length }} 轨</span>
+      <span v-if="!orderedTracks.length" class="text-warning">请连接 video / audio / 媒体输入 节点</span>
     </div>
 
     <CompositionTimelinePreview :tracks="orderedTracks" :readonly="locked" />
 
     <div v-if="exportedUrl" class="export-preview">
-      <p class="mb-2 text-[10px] text-emerald-300/80">已导出合成视频</p>
+      <p class="mb-2 text-[10px] text-success">已导出合成视频</p>
       <video :src="exportedUrl" class="w-full rounded-lg" controls />
     </div>
 
@@ -179,8 +179,8 @@ function readSavedTracks(): CompositionTrackRecord[] {
   margin-bottom: 8px;
   padding: 8px;
   border-radius: 12px;
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid var(--lnk-success-border);
+  background: var(--lnk-success-bg);
 }
 
 .composition-track-list {
@@ -232,7 +232,7 @@ function readSavedTracks(): CompositionTrackRecord[] {
 }
 
 .composition-track-type.audio {
-  background: rgba(16, 185, 129, 0.18);
+  background: var(--lnk-success-bg);
   color: #6ee7b7;
 }
 

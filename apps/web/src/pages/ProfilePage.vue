@@ -282,7 +282,7 @@ onMounted(() => {
     </div>
 
     <div v-if="activeTab === 'billing'" class="space-y-4">
-      <div v-if="usageError" class="rounded-2xl border border-red-400/15 p-6 text-sm text-red-300/80">
+      <div v-if="usageError" class="rounded-2xl border border-danger-border p-6 text-sm text-danger">
         {{ usageError }}
         <button type="button" class="ml-2 underline" @click="loadUsage">重新加载</button>
       </div>
@@ -298,7 +298,7 @@ onMounted(() => {
       />
       <div v-else-if="usageViewLoading" class="h-48 animate-pulse rounded-2xl bg-overlay/5" />
 
-      <div v-if="daysError" class="rounded-2xl border border-red-400/15 p-6 text-sm text-red-300/80">
+      <div v-if="daysError" class="rounded-2xl border border-danger-border p-6 text-sm text-danger">
         {{ daysError }}
         <button type="button" class="ml-2 underline" @click="loadUsageDays">重新加载</button>
       </div>
@@ -310,7 +310,7 @@ onMounted(() => {
         @update:range="usageRange = $event"
       />
 
-      <div v-if="allDaysError" class="rounded-2xl border border-red-400/15 p-6 text-sm text-red-300/80">
+      <div v-if="allDaysError" class="rounded-2xl border border-danger-border p-6 text-sm text-danger">
         {{ allDaysError }}
         <button type="button" class="ml-2 underline" @click="loadUsageAllDays">重新加载</button>
       </div>

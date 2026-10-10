@@ -62,7 +62,7 @@ function onSave(md: string) {
         <p class="text-[11px] text-fg-3">双击编辑文本</p>
         <p v-if="data.prompt" class="mt-1 line-clamp-2 text-[11px] text-fg-3">{{ data.prompt }}</p>
       </template>
-      <p v-if="isError && data.errorMessage" class="mt-1 line-clamp-2 text-[10px] text-red-400/90">
+      <p v-if="isError && data.errorMessage" class="mt-1 line-clamp-2 text-[10px] text-danger">
         {{ data.errorMessage }}
       </p>
     </div>

@@ -1054,8 +1054,8 @@ async function copyValue(text: string) {
 .media-inspector-diag-chip {
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid var(--lnk-error-border);
+  background: var(--lnk-error-bg);
   color: #fca5a5;
   font-size: 10.5px;
   line-height: 1.5;

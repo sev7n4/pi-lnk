@@ -238,9 +238,9 @@ defineExpose({
         />
       </div>
 
-      <p v-if="authHint" class="text-xs text-amber-400/90">{{ authHint }}</p>
+      <p v-if="authHint" class="text-xs text-warning">{{ authHint }}</p>
 
-      <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
+      <p v-if="error" class="text-sm text-danger">{{ error }}</p>
 
       <button
         type="button"
