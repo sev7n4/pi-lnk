@@ -63,8 +63,14 @@ export interface SubagentOutcome {
 	status: SubagentStatus;
 }
 
+/** runSubagent 运行期可选项（评审 I2：主 run「停止」要能传播到子 run）。 */
+export interface SubagentRunOpts {
+	/** 外部取消信号（spawn 工具透传 chordCtx.abortSignal）。abort → cancel 子 run → status=failed。 */
+	signal?: AbortSignal;
+}
+
 export interface SubagentRunner {
-	runSubagent(piSessionKey: string, task: string): Promise<SubagentOutcome>;
+	runSubagent(piSessionKey: string, task: string, opts?: SubagentRunOpts): Promise<SubagentOutcome>;
 }
 
 /**
@@ -83,13 +89,14 @@ export class SubagentCoordinator {
 	tryRun(
 		piSessionKey: string,
 		task: string,
+		opts?: SubagentRunOpts,
 	): { ok: true; promise: Promise<SubagentOutcome> } | { ok: false; reason: "not_attached" | "concurrency_full" } {
 		if (!this.runner) return { ok: false, reason: "not_attached" };
 		if (!this.slots.acquire()) return { ok: false, reason: "concurrency_full" };
 		// 契约：返回的 promise 永不 reject——runner 内部兜底 + 此处第二道安全网，
 		// 调用方（spawn 工具）免 try/catch，也根除 unhandledRejection 窗口。
 		const promise = this.runner
-			.runSubagent(piSessionKey, task)
+			.runSubagent(piSessionKey, task, opts)
 			.catch(
 				(err: unknown): SubagentOutcome => ({
 					report: `子代理运行失败: ${err instanceof Error ? err.message : String(err)}`,

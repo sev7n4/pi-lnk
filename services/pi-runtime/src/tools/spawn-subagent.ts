@@ -14,7 +14,6 @@ import { Type } from "typebox";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool } from "./types.js";
 import type { SubagentCoordinator } from "../gate/subagent.js";
-import { SUBAGENT_REPORT_MAX_CHARS } from "../gate/subagent.js";
 import type { Metrics } from "../metrics.js";
 
 function textResult(data: unknown): AgentToolResult<Record<string, unknown>> {
@@ -38,28 +37,35 @@ export function createSpawnSubagentTool(coordinator: SubagentCoordinator, metric
 		parameters: Type.Object({
 			task: Type.String({ description: "任务描述（写清背景、要查什么、期望的报告形态）" }),
 		}),
-		execute: async (_id, p: { task?: string }, _u, tc: { piSessionKey?: string }) => {
-			const task = (p?.task ?? "").trim();
-			const piSessionKey = tc?.piSessionKey;
-			if (!task) return textResult({ ok: false, error: "spawn_subagent_requires_task" });
-			if (!piSessionKey) return textResult({ ok: false, error: "spawn_subagent_requires_pi_session_key" });
-			const attempt = coordinator.tryRun(piSessionKey, task);
-			if (!attempt.ok) {
-				metrics.observeSubagentRejected(attempt.reason);
-				return textResult({
-					ok: false,
-					error:
-						attempt.reason === "concurrency_full"
-							? "subagent_concurrency_full"
-							: "subagent_not_available",
-				});
-			}
-			metrics.observeSubagentSpawned();
-			const outcome = await attempt.promise;
-			const report =
-				outcome.report.length > SUBAGENT_REPORT_MAX_CHARS
-					? `${outcome.report.slice(0, SUBAGENT_REPORT_MAX_CHARS)}…[截断]`
-					: outcome.report;
+	// 6 参姿势（vendor AgentHarnessTool 真实签名）：chordCtx 携带本 run 的 abortSignal——
+	// 评审 I2：用户「停止」主 run 时联动取消子 run（signal 经 coordinator → runSubagent.run.cancel）。
+	execute: async (
+		_id,
+		p: { task?: string },
+		_u,
+		tc: { piSessionKey?: string },
+		_invocation: unknown,
+		chordCtx: { abortSignal?: AbortSignal } | undefined,
+	) => {
+		const task = (p?.task ?? "").trim();
+		const piSessionKey = tc?.piSessionKey;
+		if (!task) return textResult({ ok: false, error: "spawn_subagent_requires_task" });
+		if (!piSessionKey) return textResult({ ok: false, error: "spawn_subagent_requires_pi_session_key" });
+		const attempt = coordinator.tryRun(piSessionKey, task, { signal: chordCtx?.abortSignal });
+		if (!attempt.ok) {
+			metrics.observeSubagentRejected(attempt.reason);
+			return textResult({
+				ok: false,
+				error:
+					attempt.reason === "concurrency_full"
+						? "subagent_concurrency_full"
+						: "subagent_not_available",
+			});
+		}
+		metrics.observeSubagentSpawned();
+		const outcome = await attempt.promise;
+		// 截断唯一属主 = runSubagent（已 slice 到 SUBAGENT_REPORT_MAX_CHARS），此处不再二次截
+		const report = outcome.report;
 			if (outcome.status === "completed") {
 				return textResult({ ok: true, report, usage: { turns: outcome.turns, durationMs: outcome.durationMs, status: outcome.status } });
 			}

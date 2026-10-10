@@ -18,11 +18,11 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { AgentHarness } from "@earendil-works/pi-agent-core";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage } from "@earendil-works/pi-ai";
-import { SessionManager, type EventListener } from "./session-manager.js";
+import { SessionManager, isSubagentSessionKey, type EventListener } from "./session-manager.js";
 import { SubagentCoordinator } from "./gate/subagent.js";
 import { createSpawnSubagentTool } from "./tools/spawn-subagent.js";
 import { buildWebTools } from "./tools/registry.js";
-import { buildTodoTools, resetTodoStoreForTest } from "./tools/todo.js";
+import { buildTodoTools, getTodoState, resetTodoStoreForTest } from "./tools/todo.js";
 import { isSubagentTool } from "./gate/subagent.js";
 import { Metrics } from "./metrics.js";
 import type { LnkpiTool } from "./tools/types.js";
@@ -154,9 +154,14 @@ test("端到端 fork 正确性：主 run 第一轮 spawn → 子 run 报告回�
 test("端到端白名单硬边界：子 harness 工具表 ⊆ 白名单，web 双工具在表（裁决 8 可审计面）", async () => {
 	resetTodoStoreForTest();
 	const metrics = new Metrics();
+	// 子 run 响应用工厂形态捕获请求上下文——内容级 fork 断言（评审 M4）：子 prompt 必须真见到主对话历史
+	let subRequestMessages: Array<unknown> = [];
 	const { sm, captured } = makeE2e(metrics, [
 		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
-		fauxAssistantMessage("调研结论：X", { stopReason: "stop" }),
+		(context: { messages: Array<unknown> }) => {
+			subRequestMessages = context.messages;
+			return fauxAssistantMessage("调研结论：X", { stopReason: "stop" });
+		},
 	]);
 	const threadKey = "s-e2e-wl";
 	await sm.create(threadKey, { userId: "u1" });
@@ -166,6 +171,11 @@ test("端到端白名单硬边界：子 harness 工具表 ⊆ 白名单，web �
 
 	const outcome = await sm.runSubagent(threadKey, "调研任务");
 	assert.equal(outcome.status, "completed");
+	// fork 正确性内容级：子 run 的 LLM 请求上下文里能看到主对话第一轮的 assistant 文本
+	assert.ok(
+		JSON.stringify(subRequestMessages).includes("主对话第一轮"),
+		"子 run 请求上下文未包含主对话历史（fork 失效）",
+	);
 	const sub = captured[captured.length - 1]!;
 	assert.ok(sub.tools.length > 0, "子工具表非空（有效性断言）");
 	for (const t of sub.tools) {
@@ -226,6 +236,13 @@ test("端到端并发闸：并发满（2 槽）后第 3 个 spawn 得 subagent_c
 	assert.equal(bodyB.ok, false);
 	assert.equal(bodyB.error, "subagent_concurrency_full");
 
+	// 跨会话共享计数（评审 M6）：另一会话的 spawn 同样撞**全局**闸（create 不消费响应队列）
+	await sm.create("s-e2e-conc-b", { userId: "u1" });
+	const resB2 = await spawnTool.execute("probe-b2", { task: "跨会话探针" } as never, () => {}, { piSessionKey: "s-e2e-conc-b" } as never, invocation as never, {} as never);
+	const bodyB2 = JSON.parse((resB2.content as Array<{ text: string }>)[0].text) as Record<string, unknown>;
+	assert.equal(bodyB2.ok, false);
+	assert.equal(bodyB2.error, "subagent_concurrency_full");
+
 	// 逆序放行：探针 A（resolver[1]）→ 主 run 的 spawn（resolver[0]）→ 主 run 收尾
 	resolvers[1]!(fauxAssistantMessage("延迟报告A", { stopReason: "stop" }));
 	await probeA;
@@ -251,7 +268,8 @@ test("端到端超时硬停：挂起子 run 撞 timeoutMs → status=timeout，�
 	await waitAgentEnd(sm, threadKey);
 	await waitSourceIdle(sm, threadKey);
 
-	const outcome = await sm.runSubagent(threadKey, "长调研", { timeoutMs: 80 });
+	const outcome = await sm.runSubagent(threadKey, "长调研", { timeoutMs: 600 });
+	// 600ms：I3 后计时器从 fork 前起跳，须给 fork+build 留出余量；子 run 永挂必然撞线
 	assert.equal(outcome.status, "timeout");
 	// 子 entry 已摘除（清理铁律：sessions.delete）
 	assert.deepEqual(subKeys(sm), [], "子 entry 未从 sessions map 摘除");
@@ -309,4 +327,71 @@ test("端到端异常隔离：子 run LLM 失败 → spawn fail-soft 返回 suba
 	assert.match(payload, /subagent_failed/, "子 run 失败未以 fail-soft 语义回流");
 	assert.match(payload, /"ok":false/, "spawn 应以 ok:false 报告失败");
 	assert.ok(!events.some((e) => e.type === "error"), `主 run 出现 error 事件（异常隔离失效）: ${JSON.stringify(events.filter((e) => e.type === "error"))}`);
+});
+
+test("评审 C1 回归：主会话带 canvasSessionId 时，子 run 的 todo_write 不落主会话 store", async () => {
+	resetTodoStoreForTest();
+	const metrics = new Metrics();
+	const { sm } = makeE2e(metrics, [
+		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
+		// 子 run：写一条 todo（白名单内）后收尾——若 storeScope 泄漏，这条会污染 canvas-main
+		fauxAssistantMessage(
+			[fauxToolCall("todo_write", { todos: [{ content: "子代理清单项", status: "in_progress" }] })],
+			{ stopReason: "toolUse" },
+		),
+		fauxAssistantMessage("调研结论：X", { stopReason: "stop" }),
+	]);
+	const threadKey = "s-e2e-c1";
+	// 关键：主会话挂真实 canvasSessionId（生产常态）——单测/集成的既有用例都不传它，恰是盲区
+	await sm.create(threadKey, { userId: "u1", canvasSessionId: "canvas-main" });
+	await sm.prompt(threadKey, "开始");
+	await waitAgentEnd(sm, threadKey);
+	await waitSourceIdle(sm, threadKey);
+
+	const outcome = await sm.runSubagent(threadKey, "调研任务");
+	assert.equal(outcome.status, "completed");
+	// 不变量：主会话 C1 清单（canvas-main 键）零污染——子 run 的 todo_write 落在自己的 storeScopeKey
+	assert.deepEqual(getTodoState("canvas-main"), [], "子 run 的 todo_write 泄漏进了主会话 store（fork 隔离被击穿）");
+	assert.ok(outcome.report.includes("调研结论：X"), "子 run 未按预期完成 todo_write 后收尾");
+});
+
+test("评审 I2：外部 abort 传播——signal.abort 联动取消子 run，主会话存活", async () => {
+	resetTodoStoreForTest();
+	const metrics = new Metrics();
+	// 子 run 响应 = 可观测的挂起工厂：必须等它**真正被消费**（resolver 就绪）再 abort——
+	// 否则 abort 早于 LLM 调用，挂起响应留在队列里被主会话下一轮误消费（实测踩过）。
+	const resolvers: Array<() => void> = [];
+	const hangFactory = (): Promise<AssistantMessage> =>
+		new Promise<AssistantMessage>((resolve) => {
+			resolvers.push(() => resolve(fauxAssistantMessage("不应到达", { stopReason: "stop" })));
+		});
+	const { sm } = makeE2e(metrics, [
+		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
+		hangFactory,
+		fauxAssistantMessage("主对话第二轮", { stopReason: "stop" }),
+	]);
+	const threadKey = "s-e2e-abort";
+	await sm.create(threadKey, { userId: "u1" });
+	await sm.prompt(threadKey, "开始");
+	await waitAgentEnd(sm, threadKey);
+	await waitSourceIdle(sm, threadKey);
+
+	const controller = new AbortController();
+	const p = sm.runSubagent(threadKey, "长调研", { signal: controller.signal });
+	for (let i = 0; i < 100 && resolvers.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+	assert.ok(resolvers.length > 0, "子 run 的 LLM 调用未到达挂起工厂");
+	controller.abort(); // 用户「停止」主 run → 联动取消子 run（挂起响应已消费，不会泄漏给主会话）
+
+	const outcome = await p;
+	assert.equal(outcome.status, "failed", "用户中止的子 run 应归类 failed（非完成/超时/超限）");
+	assert.deepEqual(subKeys(sm), [], "abort 后子 entry 未摘除");
+	// 主会话仍可正常跑
+	await sm.prompt(threadKey, "继续");
+	await waitAgentEnd(sm, threadKey);
+});
+
+test("评审 I1 配套：isSubagentSessionKey 键形状判别", () => {
+	assert.ok(isSubagentSessionKey("s-foo-12345678__sub_01a1-7145-73bf-1199ef13"));
+	assert.ok(!isSubagentSessionKey("s-foo-12345678"));
+	assert.ok(!isSubagentSessionKey(""));
 });

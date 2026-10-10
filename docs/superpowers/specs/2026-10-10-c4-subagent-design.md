@@ -148,3 +148,27 @@ pi-runtime 现状：单 session 单 run 串行对话，模型遇到「大范围�
 - fork 还原的盘上 lane config 带**来源会话**全量 activeToolNames（restore.ts 原样还原，seed 只对新建 lane 生效），与白名单 config.tools 不一致会撞 vendor generation 校验 `configured_tools_unavailable`（run 直接 failed）——修复 = build() 快照 `entry.subagentToolNames` + `lane.setActiveTools` 覆盖（写 fork 出的子会话存储，不触主会话）。
 - `lane.prompt` 的 `result.ok` 只是 operation 信封（跑到终态），run 真实状态在 `result.value.status`（TerminalStatus：completed/declined/aborted/failed）——配置失败也是 ok:true+failed，读错会把失败静默报成 completed。
 - 预算硬停/超时/取消都经 cancel(run.context) 表达，vendor 对在途 run 以 throw AbortError 结束——runSubagent catch 后按可见状态归类，绝不外抛（SubagentCoordinator 契约：promise 永不 reject）。
+
+## 9. 评审收口（fresh reviewer 终审 → 修后合并，2026-10-10）
+
+**C1（Critical，已修）**：todo/plan 内存 store 作用域与画布 id 解耦——新增 `entry.storeScopeKey`
+（常规会话 = canvasSessionId ?? key 逐字节旧行为；子会话 = 自身 pi 键），贯穿 toolContext
+（`storeScopeKey` 字段）、todo_write 写侧、动态块读侧、build 播种四处。修复前：主会话带
+canvasSessionId（生产常态）时子 run 的 todo_write 直接覆写主会话 C1 清单，fork 隔离被击穿；
+且既有测试全部不传 canvasSessionId——「测试绿功能死」典型，新增带 canvasSessionId 的回归测试。
+
+**I1（已修）**：子会话跳过 plan-gate 钩子（`isSubagentSessionKey` 键形状判别，onSessionCreated
+装配点跳过）+ 跳过 plan 播种（fork 快照回灌会回退主会话闸门决策）。裁决记录：plan-gate 是
+主对话语义，子代理无 propose_plan（白名单排除），闸门对子无意义。
+
+**I2（已修）**：主 run「停止」传播——spawn 工具透传 chordCtx.abortSignal → tryRun opts →
+runSubagent 联动 run.cancel；用户中止归类 failed（非完成/超时/超限的诚实语义）。
+
+**I3（已修）**：超时计时器起点提前到 fork 之前（原只盖 lane.prompt）；fork 传 run.context
+可被 abort 打断，打断且已超时归类 timeout；build 段结束若已超时短路返回。残余暴露面 =
+build 本地 IO 挂死（风险极低，注释留痕）。
+
+**Minor 处置**：M1 abort 归类 failed（接受，注释留痕）；M2 死截断删除（截断唯一属主 =
+runSubagent）；M3 budget 计数混同（接受，outcome 分型可对账）；M4 内容级 fork 断言已补
+（子 run LLM 请求上下文含主对话文本）；M5 meta.json 指纹覆写（公共 fork 同病，接受）；
+M6 跨会话共享计数已补测试（另一会话 spawn 同撞全局闸）。
