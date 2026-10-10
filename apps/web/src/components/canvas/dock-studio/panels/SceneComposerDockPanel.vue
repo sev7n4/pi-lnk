@@ -333,7 +333,7 @@ const canBatchGenerate = computed(() =>
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgb(var(--lnk-overlay-rgb) / 0.03);
   color: rgba(255, 255, 255, 0.65);
   font-size: 11px;
   text-align: left;
@@ -351,7 +351,7 @@ const canBatchGenerate = computed(() =>
   gap: 10px;
   padding: 8px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
   background: rgba(0, 0, 0, 0.18);
 }
 
@@ -364,8 +364,8 @@ const canBatchGenerate = computed(() =>
   flex-shrink: 0;
   overflow: hidden;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
+  background: rgb(var(--lnk-overlay-rgb) / 0.04);
 }
 
 .shot-preview img {

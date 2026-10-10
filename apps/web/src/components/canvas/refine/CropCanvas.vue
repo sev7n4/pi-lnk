@@ -249,7 +249,7 @@ function stopDrag() {
 
 .crop-canvas__line {
   position: absolute;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgb(var(--lnk-overlay-rgb) / 0.55);
   pointer-events: none;
 }
 .crop-canvas__line--v1 { top: 0; bottom: 0; left: 33.333%; width: 1px; }

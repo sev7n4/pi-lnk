@@ -397,7 +397,7 @@ async function persistUserEditAsync() {
   await saveCanvas()
 }
 
-const DEFAULT_DARK_GRID_COLOR = 'rgba(255,255,255,0.08)'
+const DEFAULT_DARK_GRID_COLOR = 'rgb(var(--lnk-overlay-rgb) / 0.08)'
 const effectiveGridColor = computed(() => {
   if (canvasTheme.value === 'light' && viewportSettings.value.gridColor === DEFAULT_DARK_GRID_COLOR) {
     return 'rgba(0,0,0,0.12)'

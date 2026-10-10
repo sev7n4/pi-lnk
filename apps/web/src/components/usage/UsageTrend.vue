@@ -121,7 +121,7 @@ function capsuleClass(selected: boolean) {
         :x2="trendPlot.width - trendPlot.pad.r"
         :y1="yScale(tick)"
         :y2="yScale(tick)"
-        stroke="rgba(255,255,255,0.08)"
+        stroke="rgb(var(--lnk-overlay-rgb) / 0.08)"
       />
       <text
         v-for="tick in yTicks"
@@ -131,7 +131,7 @@ function capsuleClass(selected: boolean) {
         :y="yScale(tick)"
         text-anchor="end"
         dominant-baseline="middle"
-        fill="rgba(255,255,255,0.45)"
+        fill="rgb(var(--lnk-overlay-rgb) / 0.45)"
         font-size="10"
       >
         {{ tick }}
@@ -143,7 +143,7 @@ function capsuleClass(selected: boolean) {
         :x="points[index]?.x"
         :y="trendPlot.height - 8"
         text-anchor="middle"
-        fill="rgba(255,255,255,0.45)"
+        fill="rgb(var(--lnk-overlay-rgb) / 0.45)"
         font-size="10"
       >
         {{ formatTrendXLabel(days[index]?.date ?? '') }}
@@ -151,7 +151,7 @@ function capsuleClass(selected: boolean) {
       <polyline
         :points="polylinePoints"
         fill="none"
-        stroke="rgba(255,255,255,0.8)"
+        stroke="rgb(var(--lnk-overlay-rgb) / 0.8)"
       />
       <circle
         v-for="p in points"
@@ -159,7 +159,7 @@ function capsuleClass(selected: boolean) {
         :cx="p.x"
         :cy="p.y"
         r="3"
-        fill="rgba(255,255,255,0.8)"
+        fill="rgb(var(--lnk-overlay-rgb) / 0.8)"
       >
         <title>{{ p.date }} · {{ p.value }}</title>
       </circle>

@@ -33,7 +33,7 @@ let circleId = 0
 let boundEl: HTMLElement | null = null
 
 const clickColor = computed(() =>
-  props.theme === 'light' ? 'rgba(23, 25, 35, 0.5)' : 'rgba(255, 255, 255, 0.78)',
+  props.theme === 'light' ? 'rgba(23, 25, 35, 0.5)' : 'rgb(var(--lnk-overlay-rgb) / 0.78)',
 )
 
 const SKIP_SELECTOR = [

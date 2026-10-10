@@ -781,7 +781,7 @@ async function copyValue(text: string) {
 }
 
 .media-inspector-close:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--lnk-overlay-rgb) / 0.06);
   color: var(--neo-text-primary);
 }
 
@@ -905,14 +905,14 @@ async function copyValue(text: string) {
   border: 1px solid var(--neo-border);
   border-radius: 10px;
   padding: 9px 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgb(var(--lnk-overlay-rgb) / 0.03);
   color: var(--neo-text-primary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .media-inspector-action:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--lnk-overlay-rgb) / 0.06);
 }
 
 .media-inspector-action:disabled {

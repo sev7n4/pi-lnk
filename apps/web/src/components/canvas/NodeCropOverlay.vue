@@ -396,7 +396,7 @@ onUnmounted(() => {
 <style scoped>
 /* 裁剪框：白细边 + 压暗框外（阴影铺满 stage，由 overflow-hidden 裁掉出血） */
 .node-crop-rect {
-  border: 1px solid rgba(255, 255, 255, 0.92);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.92);
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
   cursor: move;
   touch-action: none;
@@ -404,7 +404,7 @@ onUnmounted(() => {
 
 .node-crop-grid-line {
   position: absolute;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgb(var(--lnk-overlay-rgb) / 0.55);
   pointer-events: none;
 }
 .node-crop-grid-line.is-v {
