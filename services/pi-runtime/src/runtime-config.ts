@@ -120,6 +120,11 @@ export interface RuntimeConfig {
 	 * 自己的错误路径，看护只兜「SDK 兜不住」的那些（卡在 effect_pending / hook / 工具）。
 	 */
 	stallWatchdogMs?: number;
+	/**
+	 * C2 turnBudget：per-run 轮次预算（硬边界）。正整数；"off" 整体关闭。
+	 * 缺省 120（「不误伤正常复杂 run」约束下的偏紧值，上线后按 metrics 分布再收紧）。
+	 */
+	turnBudget?: number | "off";
 }
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
@@ -207,6 +212,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		followUpMode: parseQueueMode(env.PI_RUNTIME_FOLLOW_UP_MODE, d.followUpMode),
 		stallWatchdog: parseBool(env.PI_RUNTIME_STALL_WATCHDOG, true),
 		stallWatchdogMs: parsePositiveInt(env.PI_RUNTIME_STALL_WATCHDOG_MS, d.stallWatchdogMs ?? 900_000),
+		turnBudget: turnBudget(env.PI_RUNTIME_TURN_BUDGET),
 	};
 }
 
@@ -261,6 +267,16 @@ export function askUserBlocking(env: Record<string, string | undefined> = proces
  */
 export function askUserTimeoutMs(env: Record<string, string | undefined> = process.env): number {
 	return parsePositiveInt(env.ASK_USER_TIMEOUT_MS, 300_000);
+}
+
+/** C2 turnBudget（spec docs/superpowers/specs/2026-10-10-turn-budget-design.md §3.4）。
+ * 正整数 = per-run 轮次预算；字面量 off（大小写不敏感）= 整体关闭（不计数/warn/硬停）。
+ * 延续 C1/C3 kill switch 惯例：只做整体开关，无半开语义。非法值回落默认。 */
+export const DEFAULT_TURN_BUDGET = 120;
+
+export function turnBudget(raw: string | undefined): number | "off" {
+	if (raw !== undefined && raw.trim().toLowerCase() === "off") return "off";
+	return parsePositiveInt(raw, DEFAULT_TURN_BUDGET);
 }
 
 /** C3 Plan 确认门开关（spec §3.7）：off = propose_plan 不注册 + gate 不拦 + followUp 不注入。
