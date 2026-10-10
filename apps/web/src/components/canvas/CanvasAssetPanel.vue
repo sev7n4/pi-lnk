@@ -525,8 +525,8 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.25);
+  background: rgb(var(--lnk-overlay-rgb) / 0.92);
   color: #111;
   transition: transform 0.15s ease, background 0.15s ease;
 }

@@ -595,8 +595,8 @@ onUnmounted(() => {
 /* 芯片选区观感（与元素编辑同款） */
 .node-inpaint-shape {
   position: absolute;
-  border: 1.5px solid rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.12);
+  border: 1.5px solid rgb(var(--lnk-overlay-rgb) / 0.92);
+  background: rgb(var(--lnk-overlay-rgb) / 0.12);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   border-radius: 2px;

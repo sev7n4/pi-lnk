@@ -45,7 +45,7 @@ const sizeMap = {
   height: 100%;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.14);
   border-radius: 50%;
   background: transparent;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
@@ -66,12 +66,12 @@ const sizeMap = {
   border-radius: 50%;
   background: conic-gradient(
     from 0deg,
-    rgba(255, 255, 255, 0.04),
-    rgba(255, 255, 255, 0.04) 175deg,
+    rgb(var(--lnk-overlay-rgb) / 0.04),
+    rgb(var(--lnk-overlay-rgb) / 0.04) 175deg,
     rgba(176, 184, 214, 0.28) 255deg,
     rgba(228, 233, 248, 0.42) 300deg,
     rgba(176, 184, 214, 0.28) 345deg,
-    rgba(255, 255, 255, 0.04) 360deg
+    rgb(var(--lnk-overlay-rgb) / 0.04) 360deg
   );
   opacity: 0.65;
   animation: neo-agent-aura-spin 8s linear infinite;
@@ -81,7 +81,7 @@ const sizeMap = {
 .neo-agent-logo.is-active .neo-agent-logo__ring,
 .neo-agent-logo:hover .neo-agent-logo__ring {
   transform: scale(1.06);
-  border-color: rgba(255, 255, 255, 0.22);
+  border-color: rgb(var(--lnk-overlay-rgb) / 0.22);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4), 0 0 16px 1px rgba(170, 178, 205, 0.22);
 }
 

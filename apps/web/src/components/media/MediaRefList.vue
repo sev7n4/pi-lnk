@@ -77,7 +77,7 @@ const items = computed(() =>
   flex-shrink: 0;
   border-radius: 8px;
   object-fit: cover;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--lnk-overlay-rgb) / 0.06);
 }
 
 .media-ref-body {

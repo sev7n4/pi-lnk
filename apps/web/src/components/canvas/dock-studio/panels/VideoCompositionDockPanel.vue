@@ -196,7 +196,7 @@ function readSavedTracks(): CompositionTrackRecord[] {
 .composition-empty {
   padding: 16px 12px;
   border-radius: 12px;
-  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border: 1px dashed rgb(var(--lnk-overlay-rgb) / 0.12);
   text-align: center;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.45);
@@ -208,7 +208,7 @@ function readSavedTracks(): CompositionTrackRecord[] {
   gap: 8px;
   padding: 8px 10px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
   background: rgba(0, 0, 0, 0.18);
 }
 
@@ -247,8 +247,8 @@ function readSavedTracks(): CompositionTrackRecord[] {
   width: 22px;
   height: 18px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.1);
+  background: rgb(var(--lnk-overlay-rgb) / 0.04);
   font-size: 10px;
   color: rgba(255, 255, 255, 0.7);
 }

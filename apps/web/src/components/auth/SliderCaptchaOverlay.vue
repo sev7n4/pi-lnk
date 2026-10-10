@@ -182,7 +182,7 @@ onUnmounted(() => {
     aria-label="滑块验证"
   >
     <div
-      class="captcha-card flex h-full w-full flex-col overflow-hidden border border-[var(--neo-border-strong)] bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(18,18,24,0.92))] shadow-[0_24px_64px_rgba(0,0,0,0.55)] backdrop-blur-xl max-md:rounded-t-2xl md:h-auto md:max-h-[90%] md:w-[min(400px,92%)] md:rounded-2xl"
+      class="captcha-card flex h-full w-full flex-col overflow-hidden border border-[var(--neo-border-strong)] bg-[linear-gradient(180deg,rgb(var(--lnk-overlay-rgb) / 0.06),rgba(18,18,24,0.92))] shadow-[0_24px_64px_rgba(0,0,0,0.55)] backdrop-blur-xl max-md:rounded-t-2xl md:h-auto md:max-h-[90%] md:w-[min(400px,92%)] md:rounded-2xl"
     >
     <div class="flex items-center justify-between border-b border-[var(--neo-border)] px-4 py-3">
       <p class="text-sm font-medium text-[var(--neo-text-primary)]">拖动滑块完成验证</p>
@@ -299,9 +299,9 @@ onUnmounted(() => {
   z-index: 1;
   background: linear-gradient(
     110deg,
-    rgba(255, 255, 255, 0.03) 25%,
-    rgba(255, 255, 255, 0.1) 37%,
-    rgba(255, 255, 255, 0.03) 63%
+    rgb(var(--lnk-overlay-rgb) / 0.03) 25%,
+    rgb(var(--lnk-overlay-rgb) / 0.1) 37%,
+    rgb(var(--lnk-overlay-rgb) / 0.03) 63%
   );
   background-size: 200% 100%;
   animation: captcha-shimmer 1.1s ease-in-out infinite;
@@ -350,7 +350,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 10px 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgb(var(--lnk-overlay-rgb) / 0.04);
   border: 1px solid var(--neo-border);
   overflow: hidden;
 }
@@ -371,7 +371,7 @@ onUnmounted(() => {
   transform: translateY(-50%);
   box-sizing: border-box;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.22);
   background: linear-gradient(180deg, #f2f3f7 0%, #d7dae3 100%);
   color: #1a1a21;
   font-size: 14px;

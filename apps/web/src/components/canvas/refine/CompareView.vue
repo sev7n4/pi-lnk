@@ -364,8 +364,8 @@ onBeforeUnmount(() => {
   z-index: 1;
   background: repeating-linear-gradient(
     45deg,
-    rgba(255, 255, 255, 0.09) 0,
-    rgba(255, 255, 255, 0.09) 8px,
+    rgb(var(--lnk-overlay-rgb) / 0.09) 0,
+    rgb(var(--lnk-overlay-rgb) / 0.09) 8px,
     transparent 8px,
     transparent 16px
   );
@@ -387,8 +387,8 @@ onBeforeUnmount(() => {
   inset: 0;
   background: repeating-linear-gradient(
     45deg,
-    rgba(255, 255, 255, 0.09) 0,
-    rgba(255, 255, 255, 0.09) 8px,
+    rgb(var(--lnk-overlay-rgb) / 0.09) 0,
+    rgb(var(--lnk-overlay-rgb) / 0.09) 8px,
     transparent 8px,
     transparent 16px
   );

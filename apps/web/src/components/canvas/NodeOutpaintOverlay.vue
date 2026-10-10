@@ -408,15 +408,15 @@ onUnmounted(() => {
 <style scoped>
 /* 新画布框：白边 + 框外压暗；扩出区铺一层浅白提示可生成 */
 .node-outpaint-stage {
-  border: 1.5px solid rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgb(var(--lnk-overlay-rgb) / 0.92);
+  background: rgb(var(--lnk-overlay-rgb) / 0.08);
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
   touch-action: none;
 }
 
 .node-outpaint-base {
   position: absolute;
-  border: 1px dashed rgba(255, 255, 255, 0.45);
+  border: 1px dashed rgb(var(--lnk-overlay-rgb) / 0.45);
   pointer-events: none;
 }
 
