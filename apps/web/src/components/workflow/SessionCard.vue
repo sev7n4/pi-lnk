@@ -71,7 +71,7 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
         <button type="button" class="neo-popover-item flex w-full px-3 py-2 text-left text-xs" @click="emit('duplicate')">
           复制副本
         </button>
-        <button type="button" class="neo-popover-item flex w-full px-3 py-2 text-left text-xs text-red-400" @click="emit('delete')">
+        <button type="button" class="neo-popover-item flex w-full px-3 py-2 text-left text-xs text-danger" @click="emit('delete')">
           删除
         </button>
       </div>
@@ -118,7 +118,7 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
 
 .session-card:hover {
   border-color: color-mix(in srgb, var(--neo-hi-text) 28%, var(--neo-border));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--lnk-shadow-md);
 }
 
 .session-card-selected {

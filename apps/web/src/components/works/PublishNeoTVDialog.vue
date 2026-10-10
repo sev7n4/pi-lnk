@@ -178,7 +178,7 @@ async function handlePublish() {
         </el-select>
       </div>
       <div>
-        <label class="mb-1 block text-xs text-fg-3">主成片节点 <span class="text-red-400">*</span></label>
+        <label class="mb-1 block text-xs text-fg-3">主成片节点 <span class="text-danger">*</span></label>
         <div v-if="loadingNodes" class="py-4 text-center text-sm text-fg-3">加载节点中…</div>
         <div v-else-if="!primaryNodes.length" class="rounded-lg border border-dashed border-overlay/10 p-4 text-sm text-fg-3">
           当前画布没有可发布的图片/视频节点，请先生成或上传媒体
@@ -224,7 +224,7 @@ async function handlePublish() {
           </el-radio>
         </el-radio-group>
       </div>
-      <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
+      <p v-if="error" class="text-sm text-danger">{{ error }}</p>
       <div class="flex justify-end gap-2 pt-2">
         <el-button @click="visible = false">取消</el-button>
         <el-button type="primary" :loading="loading" :disabled="!canSubmit" native-type="submit">发布</el-button>

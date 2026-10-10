@@ -85,8 +85,8 @@ function onFileChange(event: Event) {
       <div class="min-w-0 flex-1 space-y-1 text-[11px]">
         <p class="truncate text-fg-2">{{ fileName || '未命名素材' }}</p>
         <p class="text-fg-3">{{ mimeType || '未知类型' }} · {{ mediaKind }}</p>
-        <p v-if="url.startsWith('blob:')" class="text-amber-400/80">本地预览（登录后上传可持久化）</p>
-        <p v-else-if="url" class="text-emerald-400/70">已上传</p>
+        <p v-if="url.startsWith('blob:')" class="text-warning">本地预览（登录后上传可持久化）</p>
+        <p v-else-if="url" class="text-success">已上传</p>
       </div>
     </div>
 

@@ -167,7 +167,7 @@ function selectModel(key: string) {
   border: 1px solid var(--neo-border);
   border-radius: 14px;
   background: var(--neo-surface, #17181d);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, .36);
+  box-shadow: var(--lnk-shadow-lg);
   pointer-events: auto;
 }
 .outpaint-dock__exit,
@@ -187,7 +187,7 @@ function selectModel(key: string) {
 .outpaint-dock__model-menu {
   position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 50; min-width: 160px;
   padding: 4px; border: 1px solid var(--neo-border); border-radius: 10px;
-  background: var(--neo-surface, #111); box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+  background: var(--neo-surface, #111); box-shadow: var(--lnk-shadow-md);
 }
 .outpaint-dock__model-item {
   display: block; width: 100%; padding: 6px 8px; border: none; border-radius: 6px;
@@ -201,7 +201,7 @@ function selectModel(key: string) {
 .outpaint-dock__prompt {
   position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; z-index: 40;
   padding: 8px; border: 1px solid var(--neo-border); border-radius: 12px;
-  background: var(--neo-surface, #17181d); box-shadow: 0 12px 32px rgba(0, 0, 0, .36);
+  background: var(--neo-surface, #17181d); box-shadow: var(--lnk-shadow-lg);
 }
 .outpaint-dock__textarea {
   display: block; width: 100%; max-height: 84px; resize: none; padding: 6px 8px;

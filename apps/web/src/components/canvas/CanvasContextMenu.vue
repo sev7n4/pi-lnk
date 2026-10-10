@@ -96,7 +96,7 @@ function run(action: string, payload?: string) {
     </button>
     <button
       v-if="nodeId"
-      class="neo-popover-item block w-full px-4 py-2 text-left text-xs !text-red-400 hover:!text-red-300"
+      class="neo-popover-item block w-full px-4 py-2 text-left text-xs !text-danger hover:!text-danger"
       @click="run('delete')"
     >
       删除节点

@@ -232,7 +232,7 @@ watch(
         </div>
         <p
           v-if="durationBelowMinHint"
-          class="mt-1 text-[10px] text-amber-400/90"
+          class="mt-1 text-[10px] text-warning"
         >
           {{ durationBelowMinHint }}
         </p>

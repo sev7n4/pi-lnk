@@ -47,7 +47,7 @@ const ctaTitle = computed(() => (props.mattingUnavailable ? '抠图服务未启�
   border: 1px solid var(--neo-border);
   border-radius: 14px;
   background: var(--neo-surface, #17181d);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, .36);
+  box-shadow: var(--lnk-shadow-lg);
   pointer-events: auto;
 }
 </style>

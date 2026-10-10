@@ -91,7 +91,7 @@ function onLeave() {
   position: absolute;
   z-index: 5;
   border: 2px solid rgb(var(--lnk-overlay-rgb) / 0.85);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--lnk-shadow-md);
   background-color: #111;
 }
 

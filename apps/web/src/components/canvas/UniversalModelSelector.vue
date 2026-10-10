@@ -183,7 +183,7 @@ function unavailableTitle(): string {
       @click="open = !open"
     >
       <DockTypeIcon :icon="typeIcon" :size="13" class="opacity-60" />
-      <span class="max-w-[140px] truncate font-medium" :class="current?.disabled ? 'text-amber-400/90' : ''">
+      <span class="max-w-[140px] truncate font-medium" :class="current?.disabled ? 'text-warning' : ''">
         {{ currentLabel }}
       </span>
       <svg class="h-3 w-3 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -199,11 +199,11 @@ function unavailableTitle(): string {
       <button
         v-if="current?.disabled"
         type="button"
-        class="flex w-full items-center justify-between px-3 py-2 text-xs text-amber-400/90"
+        class="flex w-full items-center justify-between px-3 py-2 text-xs text-warning"
         disabled
       >
         <span class="truncate">{{ labelForValue(current.id) }}</span>
-        <span class="ml-2 shrink-0 text-amber-400/60">已停用</span>
+        <span class="ml-2 shrink-0 text-warning">已停用</span>
       </button>
       <button
         v-for="model in selectableOptions"
@@ -230,12 +230,12 @@ function unavailableTitle(): string {
         <span
           v-else-if="model.healthDot"
           class="model-health-dot ml-1 h-1.5 w-1.5 shrink-0 rounded-full"
-          :class="model.healthDot.kind === 'red' ? 'bg-red-500/90' : 'bg-amber-400/90'"
+          :class="model.healthDot.kind === 'red' ? 'bg-danger' : 'bg-warning'"
           :title="model.healthDot.title"
         />
         <span
           v-if="type === 'text' && model.visionCapable && !model.unavailable"
-          class="ml-1 shrink-0 text-[10px] text-emerald-400/80"
+          class="ml-1 shrink-0 text-[10px] text-success"
         >
           可识图
         </span>

@@ -89,7 +89,7 @@ function toggleVoice() {
         <button
           type="button"
           class="dock-icon-btn"
-          :class="speech.listening.value ? 'animate-pulse text-red-400' : ''"
+          :class="speech.listening.value ? 'animate-pulse text-danger' : ''"
           title="语音输入"
           @click="toggleVoice"
         >

@@ -376,7 +376,7 @@ function onRefMention(refKey: string) {
       @add-upload="pickReferenceImage"
     />
     <input ref="refInput" type="file" accept="image/*" class="hidden" @change="onRefFileChange">
-    <p v-if="refUploadError" class="mx-3 mb-1 text-[10px] text-red-400/90">{{ refUploadError }}</p>
+    <p v-if="refUploadError" class="mx-3 mb-1 text-[10px] text-danger">{{ refUploadError }}</p>
 
     <div v-if="showChipActions" class="dock-video-chip-actions">
       <button
@@ -487,11 +487,11 @@ function onRefMention(refKey: string) {
   margin: 0 2px 4px;
   padding: 4px 8px;
   border-radius: 6px;
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid var(--lnk-warning-border);
+  background: var(--lnk-warning-bg);
   font-size: 10px;
   line-height: 1.4;
-  color: rgba(253, 224, 71, 0.95);
+  color: var(--lnk-warning);
 }
 
 .dock-video-chip-actions {

@@ -260,7 +260,7 @@ IP 形象的原型是墨鱼（cuttlefish）。选它不是因为可爱，是因�
 
 **IP 语义（§1.5.3 第 3 条）**：阴影五档 = 锚链五节。已落地为 `--lnk-shadow-xs..xl`（深浅成对），Tailwind 别名 `shadow-lnk-xs..xl`（新键，不覆盖默认阶梯）。守卫两条：①深色每档 alpha 必须 > 浅色（深海 vs 阳光海面——深色主题里投影是唯一深度线索，更重是功能不是风格）②深色五档单调不降（锚链越深越沉）。
 
-**存量迁移落点**：67 处内联 `rgba(0,0,0,…)` box-shadow 逐批替换为 `var(--lnk-shadow-*)`（P2d 批次，棘轮 `inline-rgba` 相应下调）。
+**存量迁移落点**：67 处内联 `rgba(0,0,0,…)` box-shadow 中 22 处纯垂直投影已替换为 `var(--lnk-shadow-*)`（P2d，棘轮 `inline-rgba` 178→142）；其余为侧向/组合/媒体遮罩，保留清单见 §7.2。
 
 ### 2.9 动效
 
@@ -640,9 +640,11 @@ WCAG 2.1 sRGB 相对亮度的蓝通道系数是 **0.0722**，不是 0.2992（后
 | P2a (#335) | 44 处死值深灰底 → `surface-*` token（arbitrary-hex 83→39） | ✅ 上线 |
 | P2b (#336) | 跨主题叠加通道色 `overlay` + 137 处 `white/` 工具类翻转（bg-white/ 58→0、border-white/ 77→0） | ✅ 上线 |
 | P2c (#339) | 内联白叠层 81 处 → `rgb(var(--lnk-overlay-rgb) / A)`（inline-rgba 259→178） | ✅ 上线 |
-| **P2d（待启动）** | 状态色 84 处 → `--lnk-{v}-bg/-border` 三件套；黑阴影 67 处 → `--lnk-shadow-*` | ⬜ 令牌已就绪（本批） |
+| P2d | 状态色 16 处内联 → `var(--lnk-{v}[-bg/-border])` + **64 处 Tailwind 状态类**（red/amber/green/emerald/sky/yellow/orange 全档）→ `text-danger / bg-warning-bg / border-success-border` 等；22 处纯垂直黑 box-shadow → `var(--lnk-shadow-xs..xl)`（inline-rgba 178→142） | ✅ 本批 |
 
-**当前棘轮基线**：`inline-rgba` 178（白文字 27 + 黑阴影 67 + 状态色 84）· `bg-black` 25 · `arbitrary-hex` 39 · 品牌蓝 39（F-5，走品牌评审）。
+**当前棘轮基线**：`inline-rgba` 142（白文字 27 + 保留黑 40 + 内容/品牌彩 75）· `bg-black` 25 · `arbitrary-hex` 39 · 品牌蓝 39（F-5，走品牌评审）。
+
+**P2d 刻意保留项（不是漏扫）**：①黑阴影保留 40 处——`text-shadow`（媒体字 5）、`drop-shadow`（图标 4）、侧向投影 2、带 `inset` 底边线组合 2、带描边环组合 1、媒体遮罩黑底（lightbox/裁剪暗幕/crop 9999px 幕布 ~18）、`0 0 0 1px` 描边技巧 3、JS 返回值 1；②彩色内联 75 处——画布节点类型标记色、Refine 工具深蓝系（配套 #7cc0ff 文字）、媒体时间轴分类色、品牌紫光晕，均属内容性/品牌性色彩，随品牌蓝 F-5 评审一并处置；③hover 透明度阶梯依赖 alpha 分层的组（AgentSideRail 只读按钮、浅色警报条已翻但 hover 加深丢失）待引入状态 hover 档位后补。
 
 **两个刻意保留项（不是漏扫）**：①白文字 27 处——多带黑 text-shadow 覆盖在媒体/玻璃上，翻 overlay 在亮媒体失效，需按「元素背景是否令牌化」逐个审（§2.3 硬规则：文字永远实色）；②品牌蓝 39 处——品牌资产，改动需品牌评审（F-5）。
 
@@ -670,3 +672,4 @@ Tailwind 默认阶梯与令牌命名**不是一一对应**：
 | 2026-10-10 | **P0 实施**（分支 `feat/web-design-system-p0`）：修 F-1 亮度公式 + 3 条自守断言；主题机制全局化（`index.html` 引导脚本）；属性统一为 `data-theme`；Tailwind 语义色接线并删僵尸配置；清扫 241 处 `text-white` → `text-fg/-2/-3`；新增棘轮守卫 `theme-usage.test.ts`（8 类计数 + 4 条机制不变量）。详见 §7 |
 | 2026-10-10 | **P1–P2c 上线**：ThemeToggle 入口全局化(#333)；死值深灰底 44 处 → surface token(#335)；`overlay` 跨主题叠加通道色 + 137 处 `white/` 工具类翻转(#336)；内联白叠层 81 处 → `rgb(var(--lnk-overlay-rgb)/A)`，白文字 27 处刻意保留(#339)。详见 §7.2 |
 | 2026-10-10 | **P3 品牌 IP 层**：新增 §1.5「墨鱼锚 Inkfish Anchor」（lnk/π/超创释义、墨鱼五特征、锚三层寓意、锚灯、调性传递映射表、IP 应用硬规则）；状态三件套补 `-border` 4×2 变量并接 Tailwind（DEFAULT 键不回归）；阴影接 Tailwind `shadow-lnk-*`；守卫 40 → 62 条（状态 alpha 域 + 状态文字合成对比度 8 条 + 锚链阴影 6 条）；§7.2 更新为批次进度表 |
+| 2026-10-10 | **P2d 状态/阴影清扫**：内联状态色 16 处 → `var(--lnk-{v}*)` 三件套；Tailwind 状态类 64 处（106 次替换）→ `text-danger / bg-*-bg / border-*-border`；22 处纯垂直黑阴影 → `var(--lnk-shadow-*)`；棘轮 inline-rgba 178→142。保留清单与理由见 §7.2 |

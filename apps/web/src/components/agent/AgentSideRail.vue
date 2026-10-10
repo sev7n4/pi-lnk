@@ -2649,7 +2649,7 @@ defineExpose({
 
           <div
             v-if="readOnly"
-            class="agent-readonly-banner mx-3 mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-100"
+            class="agent-readonly-banner mx-3 mt-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2.5 text-[11px] leading-relaxed text-warning"
           >
             <p>此画布属于其他账号，Agent 无法写入节点。</p>
             <p class="mt-1 opacity-80">请新建自己的画布，或使用画布所有者账号登录。</p>
@@ -2926,11 +2926,11 @@ defineExpose({
             <!-- 阻塞等待 propose_generation：确认入口在画布节点上，聊天侧明示去哪点（2026-10-01） -->
             <div
               v-if="proposeWait"
-              class="mx-3 mb-1 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-[12px] text-amber-900"
+              class="mx-3 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
               data-testid="propose-wait-hint"
             >
               <div class="flex items-start gap-2">
-                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span>
+                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
                 <p class="flex-1 leading-relaxed">
                   已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
                 </p>
@@ -2939,7 +2939,7 @@ defineExpose({
                 <button
                   v-if="proposeWait.nodeId"
                   type="button"
-                  class="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg"
                   data-testid="propose-wait-locate"
                   @click="locateProposeNode"
                 >
@@ -2948,7 +2948,7 @@ defineExpose({
                 <button
                   v-if="proposeWait.nodeId"
                   type="button"
-                  class="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100"
+                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg"
                   data-testid="propose-wait-cancel"
                   @click="cancelBlockingPropose"
                 >
@@ -3592,7 +3592,7 @@ defineExpose({
   line-height: 1;
   color: var(--neo-hi-text);
   background: color-mix(in srgb, var(--neo-hi-bg) 88%, transparent);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--lnk-shadow-md);
   backdrop-filter: blur(8px);
   transition: background 0.15s ease, transform 0.15s ease;
   animation: agent-jump-in 0.16s ease-out;
@@ -3743,7 +3743,7 @@ defineExpose({
   background-position: 0 0, 0 4px, 4px -4px, -4px 0;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, #fff 42%, transparent),
-    0 1px 3px rgba(0, 0, 0, 0.14);
+    var(--lnk-shadow-xs);
 }
 
 .agent-bubble-user :deep(.dock-ref-chip.has-media .dock-ref-chip__key) {
@@ -4078,7 +4078,7 @@ defineExpose({
   -webkit-backdrop-filter: blur(var(--neo-glass-lite-blur)) saturate(1.4);
   box-shadow:
     var(--neo-glass-lite-shadow),
-    0 4px 12px rgba(0, 0, 0, 0.18);
+    var(--lnk-shadow-md);
   transform: translate(-50%, -50%);
   transition:
     background 0.22s ease,
@@ -4123,7 +4123,7 @@ defineExpose({
   transform: translate(-50%, -50%) scale(1.05);
   box-shadow:
     var(--neo-glass-lite-shadow),
-    0 6px 16px rgba(0, 0, 0, 0.22);
+    var(--lnk-shadow-md);
 }
 
 .composer-canvas-pick-btn:hover:not(:disabled):not(.is-active) .composer-canvas-pick-btn__halo {
@@ -4144,7 +4144,7 @@ defineExpose({
   box-shadow:
     var(--neo-hi-shadow),
     0 0 0 1px rgb(var(--lnk-overlay-rgb) / 0.55),
-    0 8px 20px rgba(0, 0, 0, 0.34);
+    var(--lnk-shadow-md);
 }
 
 .composer-canvas-pick-btn.is-active .composer-canvas-pick-btn__halo {
@@ -4170,7 +4170,7 @@ defineExpose({
   box-shadow:
     var(--neo-hi-shadow),
     0 0 0 2px rgb(var(--lnk-overlay-rgb) / 0.45),
-    0 6px 16px rgba(0, 0, 0, 0.3);
+    var(--lnk-shadow-md);
 }
 
 .composer-canvas-pick-btn.is-hint:not(.is-active) .composer-canvas-pick-btn__halo {
@@ -4202,7 +4202,7 @@ defineExpose({
   opacity: 0;
   transform: translateX(-50%) translateY(2px);
   transition: opacity 0.15s ease, transform 0.15s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--lnk-shadow-md);
 }
 
 .composer-canvas-pick-btn:hover:not(:disabled) .composer-canvas-pick-tip,

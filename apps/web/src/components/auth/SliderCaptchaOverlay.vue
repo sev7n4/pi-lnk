@@ -272,7 +272,7 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
+      <p v-if="error" class="text-sm text-danger">{{ error }}</p>
       <p v-else-if="verifying" class="text-sm text-[var(--neo-electric)]">验证中…</p>
       <p v-else-if="loading" class="text-xs text-[var(--neo-text-muted)]">正在准备验证…</p>
       <p v-else class="text-xs text-[var(--neo-text-muted)]">将滑块拖动到正确位置</p>
@@ -286,7 +286,7 @@ onUnmounted(() => {
   background: #0c0c10;
   border: 1px solid var(--neo-border);
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--lnk-shadow-md);
 }
 
 .captcha-board--loading {
@@ -389,7 +389,7 @@ onUnmounted(() => {
 
 .captcha-track__thumb--dragging {
   cursor: grabbing;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--lnk-shadow-md);
   transform: translateY(-50%) scale(1.04);
 }
 

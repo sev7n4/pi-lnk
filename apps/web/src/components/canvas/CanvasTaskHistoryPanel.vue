@@ -104,12 +104,12 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
-  completed: { label: '成功', cls: 'bg-emerald-500/15 text-emerald-300' },
-  generating: { label: '生成中', cls: 'bg-sky-500/15 text-sky-300 animate-pulse' },
+  completed: { label: '成功', cls: 'bg-success-bg text-success' },
+  generating: { label: '生成中', cls: 'bg-info-bg text-info animate-pulse' },
   pending: { label: '排队中', cls: 'bg-[var(--neo-active-bg)] text-[var(--neo-text-secondary)] animate-pulse' },
-  fallback_pending: { label: '待确认', cls: 'bg-amber-500/15 text-amber-300' },
-  failed: { label: '失败', cls: 'bg-red-500/15 text-red-300' },
-  error: { label: '失败', cls: 'bg-red-500/15 text-red-300' },
+  fallback_pending: { label: '待确认', cls: 'bg-warning-bg text-warning' },
+  failed: { label: '失败', cls: 'bg-danger-bg text-danger' },
+  error: { label: '失败', cls: 'bg-danger-bg text-danger' },
 }
 
 interface RecordMeta {
@@ -557,7 +557,7 @@ onUnmounted(stopPolling)
                   <button
                     v-if="isFailedStatus(attempt.status)"
                     type="button"
-                    class="neo-task-diag-btn flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500/20 text-[10px] font-bold text-red-300 hover:bg-red-500/30"
+                    class="neo-task-diag-btn flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-danger-bg text-[10px] font-bold text-danger hover:bg-danger-bg"
                     title="查看错误"
                     @click="openFailurePopover(attempt, $event)"
                   >
@@ -632,7 +632,7 @@ onUnmounted(stopPolling)
 
               <div v-if="recordFailureMessage(attempt)">
                 <p class="mb-1 text-[10px] uppercase tracking-wider text-[var(--neo-text-muted)]">失败原因</p>
-                <p class="whitespace-pre-wrap break-words rounded-lg bg-red-500/10 p-2 text-[11px] leading-relaxed text-red-300">
+                <p class="whitespace-pre-wrap break-words rounded-lg bg-danger-bg p-2 text-[11px] leading-relaxed text-danger">
                   {{ recordFailureMessage(attempt) }}
                 </p>
               </div>
@@ -742,7 +742,7 @@ onUnmounted(stopPolling)
             <button
               v-if="isFailedStatus(group.latest.status)"
               type="button"
-              class="neo-task-diag-btn relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500/20 text-[10px] font-bold text-red-300 hover:bg-red-500/30"
+              class="neo-task-diag-btn relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-danger-bg text-[10px] font-bold text-danger hover:bg-danger-bg"
               title="查看错误"
               @click="openFailurePopover(group.latest, $event)"
             >
