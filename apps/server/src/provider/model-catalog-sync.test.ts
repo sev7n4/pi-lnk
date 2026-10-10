@@ -217,16 +217,16 @@ describe('S0-1 幽灵模型下架 sync 闭环', () => {
     }
   }
 
-  it('A2：预置 28 条含 3 幽灵的镜像行 → sync 后 25 条且幽灵消失', () => {
+  it('A2：预置 29 条含 3 幽灵的镜像行 → sync 后 26 条且幽灵消失', () => {
     const staleMirror = JSON.stringify([
       ...CATALOG_MODELS,
       ...GHOST_KEYS.map((name) => ({ name, capability: 'text' })),
     ])
-    expect(JSON.parse(staleMirror)).toHaveLength(28) // fixture 自检：下架前的镜像形态
+    expect(JSON.parse(staleMirror)).toHaveLength(29) // fixture 自检：下架前的镜像形态
 
     const plan = planPlatformChannelSync(staleMirror, CATALOG_MODELS)
     expect(plan.changed).toBe(true)
-    expect(plan.target).toHaveLength(25)
+    expect(plan.target).toHaveLength(26)
     const names = plan.target.map((m) => m.name)
     for (const key of GHOST_KEYS) {
       expect(names, `幽灵 ${key} 仍在镜像中`).not.toContain(key)
