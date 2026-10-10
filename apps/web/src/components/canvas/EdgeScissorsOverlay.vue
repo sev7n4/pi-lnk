@@ -14,7 +14,7 @@ const emit = defineEmits<{
   <button
     v-if="edgeId"
     type="button"
-    class="edge-scissors neo-chrome pointer-events-auto absolute z-[45] flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full transition hover:!border-danger-border hover:!bg-danger-bg hover:!text-danger"
+    class="edge-scissors neo-chrome pointer-events-auto absolute z-[45] flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full transition hover:!border-danger-border-hover hover:!bg-danger-bg-hover hover:!text-danger"
     :style="{ left: `${x}px`, top: `${y}px` }"
     title="删除连线"
     @click.stop="emit('delete', edgeId)"

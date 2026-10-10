@@ -642,7 +642,8 @@ WCAG 2.1 sRGB 相对亮度的蓝通道系数是 **0.0722**，不是 0.2992（后
 | P2c (#339) | 内联白叠层 81 处 → `rgb(var(--lnk-overlay-rgb) / A)`（inline-rgba 259→178） | ✅ 上线 |
 | P2d | 状态色 16 处内联 → `var(--lnk-{v}[-bg/-border])` + **64 处 Tailwind 状态类**（red/amber/green/emerald/sky/yellow/orange 全档）→ `text-danger / bg-warning-bg / border-success-border` 等；22 处纯垂直黑 box-shadow → `var(--lnk-shadow-xs..xl)`（inline-rgba 178→142） | ✅ 本批 |
 | P2e | **盲区补扫**：3 个 el-dialog 硬编码深底 `#1a1a1a`→`var(--lnk-surface-overlay)` + 标题白字→`var(--lnk-text-primary)`；ReplayPage 画布底 `#141414`→`var(--lnk-surface-canvas)`；on-accent 白字 3 处→`var(--lnk-text-on-accent)`；守卫新增第 9 类 `hardcoded-dark-bg`（基线 8，全为内容性保留） | ✅ 上线 |
-| P4 | **状态 hover 档位**：新增 `--lnk-{v}-bg-hover` ×4×2 + `--lnk-{v}-border-hover` ×4×2，Tailwind 接 `bg-hover`/`border-hover` 键；6 处无效 `hover:bg-*-bg`（与底同值）→ `hover:bg-*-bg-hover`；守卫 +24 条（合成底亮度判定 + border-hover 加实 + hover 底 AA ≥4.5），总计 86 条 | ✅ 本批 |
+| P4 | **状态 hover 档位**：新增 `--lnk-{v}-bg-hover` ×4×2 + `--lnk-{v}-border-hover` ×4×2，Tailwind 接 `bg-hover`/`border-hover` 键；6 处无效 `hover:bg-*-bg`（与底同值）→ `hover:bg-*-bg-hover`；守卫 +24 条（合成底亮度判定 + border-hover 加实 + hover 底 AA ≥4.5），总计 86 条 | ✅ 上线 |
+| P5 | **border-hover 消费方接线**：AgentSideRail 只读警报按钮 ×2 + SceneComposerDockPanel 按钮 + EdgeScissorsOverlay 描边按钮（`hover:!border-danger-border` 升档）→ `hover:border-*-border-hover`，hover 信号完整（底+描边双通道）；**F-5 品牌评审材料**（`F5-brand-color-review.md`）：品牌蓝/紫 57 处全量分类（fallback 8 保 / 画布内容 5 保 / UI 交互 ~44 三方案待拍板） | ✅ 本批 |
 
 **P4 关键设计决策（AA 约束下的 hover 加深）**：纯 alpha 加深的可行空间被文字 AA 卡死——实测 dark error 只能 +0.009、light warning/error 只能 +0.014（均不可感知）。故分主题策略：**dark 用基色深化**（bg-hover = 600 色阶 @ 同 alpha 0.14，底更暗使文字对比度反升，AA 必过且可感知）；**light 用描边主导**（bg-hover = 组内 AA 允许的最大统一 alpha 0.11 + border-hover 0.3→0.45 承担主信号）。守卫据此用「合成底亮度 < bg」判定可感知性，而非 alpha 比较。
 
@@ -679,3 +680,4 @@ Tailwind 默认阶梯与令牌命名**不是一一对应**：
 | 2026-10-10 | **P2d 状态/阴影清扫**：内联状态色 16 处 → `var(--lnk-{v}*)` 三件套；Tailwind 状态类 64 处（106 次替换）→ `text-danger / bg-*-bg / border-*-border`；22 处纯垂直黑阴影 → `var(--lnk-shadow-*)`；棘轮 inline-rgba 178→142。保留清单与理由见 §7.2 |
 | 2026-10-10 | **P2e 盲区补扫**：bg-black 25 处审计（模态 dim/媒体角标全保留）；白文字 27 处逐个审（on-accent 3 处升令牌，其余媒体/refine 体系保留）；发现并修复守卫盲区——3 个 el-dialog 硬编码深底+白标题双主题坏 → surface-overlay/text-primary；ReplayPage 画布底令牌化；守卫新增第 9 类 `hardcoded-dark-bg`（基线 8） |
 | 2026-10-10 | **P4 状态 hover 档位**：新增 `--lnk-{v}-bg-hover`/`--lnk-{v}-border-hover` 各 4×2 主题；dark bg-hover 用 600 色阶基色深化（AA 下 alpha 空间 <0.01 不可感知的破局）、light 用最大统一 alpha 0.11 + border-hover 0.45 主导；Tailwind 接 `bg-hover`/`border-hover`；6 处无效 `hover:bg-*-bg` 修复；守卫 +24（合成底亮度可感知判定 / border-hover 加实 / hover 底 AA），总计 86 条 |
+| 2026-10-10 | **P5 border-hover 接线 + F-5 评审材料**：4 处描边按钮/交互元素补 `hover:border-*-border-hover`（EdgeScissorsOverlay 顺带升档）；新增 `F5-brand-color-review.md` —— 品牌蓝/紫 57 处全量分类与三方案收编建议，**待拍板** |
