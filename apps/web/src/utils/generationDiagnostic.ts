@@ -292,5 +292,11 @@ export function buildFallbackDiagnostic(record: GenerationRecord): GenerationDia
     model: record.model ?? (typeof meta.originalModel === 'string' ? meta.originalModel : null),
     providerSnippet: byok ? byok.slice(0, 2048) : null,
     hint: isFallback ? '请确认是否使用平台回退继续，或取消本次生成。' : undefined,
+    // S2-3 退款透明化：metadata 三字段只透传不重算（缺字段不下发，抽屉不渲染退款行）
+    ...(typeof meta.chargedPoints === 'number' ? { chargedPoints: meta.chargedPoints } : {}),
+    ...(typeof meta.refundedPoints === 'number' ? { refundedPoints: meta.refundedPoints } : {}),
+    ...(typeof meta.refundReason === 'string' && meta.refundReason
+      ? { refundReason: meta.refundReason }
+      : {}),
   }
 }

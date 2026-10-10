@@ -26,6 +26,13 @@ export interface GenerationDiagnostic {
   occurredAt: string
   providerSnippet: string | null
   hint?: string
+  /**
+   * 退款三字段（S2-3 退款透明化）：只从 GenerationRecord.metadata 透传，⛔ 不重算。
+   * 缺字段（undefined）＝该记录无退款语义，消费方不得渲染任何退款 UI。
+   */
+  chargedPoints?: number
+  refundedPoints?: number
+  refundReason?: string
 }
 
 const BEARER_PATTERN = /Bearer\s+\S+/gi
@@ -78,6 +85,13 @@ export function formatDiagnosticCopy(d: GenerationDiagnostic): string {
   if (isPresent(d.httpStatus)) lines.push(`httpStatus: ${d.httpStatus}`)
   if (isPresent(d.occurredAt)) lines.push(`occurredAt: ${d.occurredAt}`)
   if (isPresent(d.hint)) lines.push(`hint: ${d.hint}`)
+  // S2-3 退款行（缺字段不渲染；refundedPoints ≤ 0 视为无退款语义）：
+  // `refund: charged 5 → refunded 5 (platform_failed)`；chargedPoints 缺失时省略 charged 段。
+  if (typeof d.refundedPoints === 'number' && d.refundedPoints > 0) {
+    const chargedPart = typeof d.chargedPoints === 'number' ? `charged ${d.chargedPoints} → ` : ''
+    const reasonPart = d.refundReason ? ` (${d.refundReason})` : ''
+    lines.push(`refund: ${chargedPart}refunded ${d.refundedPoints}${reasonPart}`)
+  }
 
   if (d.providerSnippet != null && d.providerSnippet !== '') {
     lines.push(formatProviderSnippetBlock(d.providerSnippet))

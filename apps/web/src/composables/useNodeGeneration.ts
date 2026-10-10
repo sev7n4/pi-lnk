@@ -216,7 +216,8 @@ function parseConfirmMessage(metadata?: string | null): string | undefined {
   }
 }
 
-function modalityForNodeType(nodeType: string): StudioModality | null {
+/** 节点类型 → 生成模态（S2-3 换模型重试复用，勿在调用方重写判定）。 */
+export function modalityForNodeType(nodeType: string): StudioModality | null {
   if (nodeType === 'image') return 'image'
   if (nodeType === 'video') return 'video'
   if (nodeType === 'audio') return 'audio'
@@ -224,7 +225,8 @@ function modalityForNodeType(nodeType: string): StudioModality | null {
   return null
 }
 
-function modelFieldForModality(modality: StudioModality): string {
+/** 模态 → 节点数据上的模型字段名（与生成路径读取同源，SSOT）。 */
+export function modelFieldForModality(modality: StudioModality): string {
   if (modality === 'image') return 'imageModel'
   if (modality === 'video') return 'videoModel'
   if (modality === 'audio') return 'audioModel'

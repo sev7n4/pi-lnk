@@ -1,8 +1,8 @@
 import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { NotFoundException } from '@nestjs/common'
+import { BadRequestException, NotFoundException } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { UPSTREAM_ROUTE_SEEDS } from '@lnkpi/shared'
+import { mapMessageToErrorCode, UPSTREAM_ROUTE_SEEDS } from '@lnkpi/shared'
 import { CryptoService } from './crypto.service'
 import { PLATFORM_CHANNEL_ID } from './provider.service'
 import { ProviderResolverService } from './provider-resolver.service'
@@ -479,5 +479,82 @@ describe('ProviderResolverService', () => {
     await expect(
       resolver.resolveForGeneration('u1', 'platform::agnes-2.0-flash', 'text'),
     ).rejects.toThrow(/禁止回落 OpenAI 链/)
+  })
+
+  // ── S2-3 生成入口 availability 校验 ────────────────────────────────
+
+  it('S2-3：探活 unavailable 的平台模型 → 400 拒绝，body 携带 errorCode=model_unavailable', async () => {
+    prisma._channels.set(PLATFORM_CHANNEL_ID, {
+      ...prisma._channels.get(PLATFORM_CHANNEL_ID)!,
+      models: JSON.stringify([
+        { name: 'agnes-image-2.1-flash', capability: 'image', availability: 'unavailable' },
+      ]),
+    })
+    const err = await resolver
+      .resolveForGeneration('u1', 'platform::agnes-image-2.1-flash', 'image')
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(BadRequestException)
+    const body = (err as BadRequestException).getResponse() as Record<string, unknown>
+    expect(body.errorCode).toBe('model_unavailable')
+    expect(String(body.message)).toContain('停用')
+  })
+
+  it('S2-3：拒绝 message 命中 S0-2 字面量族（模型+停用 → model_unavailable）', () => {
+    expect(mapMessageToErrorCode('模型「agnes-image-2.1-flash」已停用，请更换可用模型后重试')).toBe(
+      'model_unavailable',
+    )
+  })
+
+  it('S2-3：available / unknown / 缺条目 / 镜像畸形 JSON → 放行', async () => {
+    prisma._channels.set(PLATFORM_CHANNEL_ID, {
+      ...prisma._channels.get(PLATFORM_CHANNEL_ID)!,
+      models: JSON.stringify([
+        { name: 'agnes-video-v2.0', capability: 'video', availability: 'available' },
+        { name: 'seedance-2.0-mini', capability: 'video' },
+      ]),
+    })
+    await expect(
+      resolver.resolveForGeneration('u1', 'platform::agnes-video-v2.0', 'video'),
+    ).resolves.toMatchObject({ source: 'platform' })
+    await expect(
+      resolver.resolveForGeneration('u1', 'platform::seedance-2.0-mini', 'video'),
+    ).resolves.toMatchObject({ source: 'platform' })
+    await expect(
+      resolver.resolveForGeneration('u1', 'platform::not-in-mirror', 'image'),
+    ).resolves.toMatchObject({ source: 'platform' })
+    prisma._channels.set(PLATFORM_CHANNEL_ID, {
+      ...prisma._channels.get(PLATFORM_CHANNEL_ID)!,
+      models: 'not-json',
+    })
+    await expect(
+      resolver.resolveForGeneration('u1', 'platform::agnes-video-v2.0', 'video'),
+    ).resolves.toMatchObject({ source: 'platform' })
+  })
+
+  it('S2-3：BYOK 渠道不参与 availability 校验（镜像语义只覆盖平台渠道）', async () => {
+    const enc = crypto.encrypt('sk-user-key')
+    prisma._channels.set('ch_user', {
+      id: 'ch_user',
+      userId: 'u1',
+      name: '自定义',
+      apiFormat: 'openai',
+      baseUrl: 'https://user.example.com/v1',
+      encryptedApiKey: enc.ciphertext,
+      iv: enc.iv,
+      authTag: enc.authTag,
+      keyVersion: enc.keyVersion,
+      models: JSON.stringify([
+        { name: 'my-model', capability: 'image', availability: 'unavailable' },
+      ]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    const resolved = await resolver.resolveForGeneration(
+      'u1',
+      'ch_user::my-model',
+      'image',
+    )
+    expect(resolved.source).toBe('user')
+    expect(resolved.modelName).toBe('my-model')
   })
 })

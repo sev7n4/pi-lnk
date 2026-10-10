@@ -1,4 +1,9 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common'
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common'
 import {
   decodeChannelModel,
   readPlatformCredentialEnv,
@@ -67,6 +72,47 @@ function baseUrlForUpstream(
   }
 }
 
+/**
+ * 平台渠道镜像条目（ProviderChannel.models JSON）：只读所需的最小形状。
+ * ⛔ availability 的唯一写入方是 upstream-probe.service（B1 裁定），此处只读过滤。
+ */
+type MirrorModelEntry = { name?: unknown; availability?: unknown }
+
+/**
+ * 解析平台渠道镜像 models JSON（防御式：畸形/缺字段一律返回空数组——availability
+ * 校验是「有证据才拒绝」，解析失败不得阻断生成）。
+ */
+function parseMirrorModels(raw: string | null | undefined): MirrorModelEntry[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as MirrorModelEntry[]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * S2-3 生成入口模型 availability 校验（防绕过 UI 直发）：
+ * 平台镜像条目被探活器灰显（availability === 'unavailable'）→ 400 拒绝。
+ * 错误语义：BadRequestException body 携带 `errorCode: 'model_unavailable'`
+ * （与 throwGenerationFailure 同形状）；message 命中 S0-2 字面量族
+ * （模型+停用 → mapMessageToErrorCode === 'model_unavailable'），使得该错误
+ * 沿既有失败落库路径（applyFailureDiagnosticMeta）记录时 errorCode 语义一致。
+ * 缺条目 / unknown / 解析失败 → 放行（校验绝不比探活更激进）。
+ */
+export function assertPlatformModelAvailable(
+  mirrorModelsJson: string | null | undefined,
+  modelName: string,
+): void {
+  const entry = parseMirrorModels(mirrorModelsJson).find((m) => m.name === modelName)
+  if (entry?.availability !== 'unavailable') return
+  throw new BadRequestException({
+    message: `模型「${modelName}」已停用，请更换可用模型后重试`,
+    errorCode: 'model_unavailable',
+  })
+}
+
 @Injectable()
 export class ProviderResolverService {
   constructor(
@@ -97,6 +143,10 @@ export class ProviderResolverService {
       const channel = await this.prisma.providerChannel.findUnique({
         where: { id: PLATFORM_CHANNEL_ID },
       })
+      // S2-3：生成入口模型 availability 校验（单点覆盖 studio/material/agent 三条
+      // 生成链路——它们全部经由本方法 resolve 平台模型；探活灰显的模型在此拒绝，
+      // 不再放行到上游才失败）。
+      assertPlatformModelAvailable(channel?.models, modelName)
       // S2-2b：路由判定查表（UpstreamRoute DB 真源，经 5s TTL 缓存 + 运营写端点显式刷新）。
       // 未命中且无可用 default 行 → resolveUpstreamRoute 确定性抛错（A3：绝不静默回落
       // OpenAI 链，把 platformCredentials 注释级防护升级为类型级）。

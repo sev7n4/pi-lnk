@@ -164,4 +164,39 @@ describe('StudioService.getGenerationDiagnostic', () => {
     // 2.4：解析链把 meta.httpStatus 填进 diagnostic
     expect(d.httpStatus).toBe(503)
   })
+
+  it('S2-3：诊断透传 metadata 退款三字段（只透传不重算，缺字段不下发）', async () => {
+    generationFindFirst.mockResolvedValue({
+      id: 'g-refund',
+      userId: 'u1',
+      status: 'failed',
+      model: 'agnes-image-2.1-flash',
+      createdAt: new Date('2026-10-10T00:00:00.000Z'),
+      metadata: JSON.stringify({
+        errorCode: 'upstream_error',
+        errorRaw: 'upstream boom',
+        chargedPoints: 5,
+        refundedPoints: 5,
+        refundReason: 'platform_failed',
+      }),
+    })
+    const d = await svc.getGenerationDiagnostic('u1', 'g-refund')
+    expect(d.chargedPoints).toBe(5)
+    expect(d.refundedPoints).toBe(5)
+    expect(d.refundReason).toBe('platform_failed')
+
+    // 缺字段：不下发（undefined），前端不渲染退款行
+    generationFindFirst.mockResolvedValue({
+      id: 'g-norefund',
+      userId: 'u1',
+      status: 'failed',
+      model: 'agnes-image-2.1-flash',
+      createdAt: new Date('2026-10-10T00:00:00.000Z'),
+      metadata: JSON.stringify({ errorCode: 'upstream_error', errorRaw: 'boom' }),
+    })
+    const d2 = await svc.getGenerationDiagnostic('u1', 'g-norefund')
+    expect(d2.refundedPoints).toBeUndefined()
+    expect(d2.chargedPoints).toBeUndefined()
+    expect(d2.refundReason).toBeUndefined()
+  })
 })

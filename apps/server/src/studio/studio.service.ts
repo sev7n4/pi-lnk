@@ -1139,6 +1139,12 @@ export class StudioService {
         record.status === 'fallback_pending'
           ? '请确认是否使用平台回退继续，或取消本次生成。'
           : hintForCode(code),
+      // S2-3 退款透明化：metadata 三字段只透传不重算（缺字段不下发）
+      ...(typeof meta.chargedPoints === 'number' ? { chargedPoints: meta.chargedPoints } : {}),
+      ...(typeof meta.refundedPoints === 'number' ? { refundedPoints: meta.refundedPoints } : {}),
+      ...(typeof meta.refundReason === 'string' && meta.refundReason
+        ? { refundReason: meta.refundReason }
+        : {}),
     }
   }
 
