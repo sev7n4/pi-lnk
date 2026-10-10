@@ -92,7 +92,8 @@ import { PrismaService } from '../prisma/prisma.service'
 import { classifyByokFailure } from '../provider/byok-fallback'
 import { mergeChatModel } from '../provider/merge-chat-model'
 // S2-1a：server 端 DB 包装器（同签名同步函数，5s TTL 缓存 + 软删过滤），替换 shared 常量版
-import { resolveModelKey } from '../provider/model-catalog-store'
+// S2-1c：currentCatalogEntries 供 agent 侧 builder 注入 DB 目录 rows（消除静默 fallback）
+import { currentCatalogEntries, resolveModelKey } from '../provider/model-catalog-store'
 import {
   providerContextFromResolved,
   type ProviderContext,
@@ -1175,6 +1176,8 @@ export class StudioService {
       referenceImages,
       byok: resolved.source === 'user',
       channelBaseUrl: resolved.credentials.baseUrl,
+      // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+      catalogRows: currentCatalogEntries(),
     })
     const modelId = resolved.source === 'user' ? resolved.modelName : built.modelId
     const storeModel =
@@ -2207,6 +2210,8 @@ export class StudioService {
           generateAudio,
           seed,
           negativePrompt,
+          // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+          catalogRows: currentCatalogEntries(),
         })
       } catch (err) {
         if (err instanceof Seedance1xUnsupportedError) {
@@ -2384,6 +2389,8 @@ export class StudioService {
       speed: options.speed,
       volume: options.volume,
       pitch: options.pitch,
+      // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+      catalogRows: currentCatalogEntries(),
     })
     const audioOpts =
       resolved.source === 'user'

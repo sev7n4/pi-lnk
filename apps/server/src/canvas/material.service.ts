@@ -68,7 +68,7 @@ import {
 import { classifyByokFailure } from '../provider/byok-fallback'
 import { mergeChatModel } from '../provider/merge-chat-model'
 // S2-1a：server 端 DB 包装器（同签名同步函数，5s TTL 缓存 + 软删过滤），替换 shared 常量版
-import { resolveModelKey } from '../provider/model-catalog-store'
+import { currentCatalogEntries, resolveModelKey } from '../provider/model-catalog-store'
 import {
   ProviderResolverService,
   type ResolvedGenerationProvider,
@@ -1011,6 +1011,8 @@ export class MaterialService {
       referenceImages,
       byok: resolved.source === 'user',
       channelBaseUrl: resolved.credentials.baseUrl,
+      // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+      catalogRows: currentCatalogEntries(),
     })
     const modelId = resolved.source === 'user' ? resolved.modelName : built.modelId
     const effectivePrompt = buildEffectiveImagePrompt(
@@ -1215,6 +1217,8 @@ export class MaterialService {
         gatewayModelHint: resolved.source === 'user' ? resolved.modelName : undefined,
         channelBaseUrl: resolved.credentials.baseUrl,
         generateAudio,
+        // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+        catalogRows: currentCatalogEntries(),
       })
     } catch (err) {
       if (err instanceof Seedance1xUnsupportedError) {
