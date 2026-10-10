@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   STUDIO_MODEL_CATALOG,
+  isDefaultModelKey,
   listModels,
   listModelsByAudioKind,
+  listModelsByAudioKindFromRows,
+  listModelsFromRows,
+  normalizeModelRef,
+  normalizeModelRefFromRows,
   resolveModelKey,
   resolveModelKeyFromRows,
   defaultModelKey,
   getModelEntry,
-  normalizeModelRef,
 } from './studioModelCatalog'
 import { encodeChannelModel } from './providerChannels'
 
@@ -346,5 +350,60 @@ describe('resolveModelKeyFromRows（rows 注入形态，S2-1a A3 全量回归）
         resolveModelKey(entry.modality, 'no-such-model'),
       )
     }
+  })
+})
+
+describe('S2-1b 新增 rows 变体纯函数（web 下发目录驱动）', () => {
+  it('listModelsFromRows ≡ listModels（常量 rows 对拍）', () => {
+    for (const modality of ['text', 'image', 'video', 'audio'] as const) {
+      expect(listModelsFromRows(STUDIO_MODEL_CATALOG, modality)).toEqual(listModels(modality))
+      expect(listModelsFromRows(STUDIO_MODEL_CATALOG, modality)).toEqual(
+        STUDIO_MODEL_CATALOG.filter((e) => e.modality === modality),
+      )
+    }
+  })
+
+  it('listModelsByAudioKindFromRows ≡ listModelsByAudioKind（常量 rows 对拍）', () => {
+    for (const kind of ['voice', 'design', 'music'] as const) {
+      expect(listModelsByAudioKindFromRows(STUDIO_MODEL_CATALOG, kind)).toEqual(
+        listModelsByAudioKind(kind),
+      )
+    }
+    // 注入真的注入：子集只含 music 条目时 voice 列表为空
+    const musicOnly = STUDIO_MODEL_CATALOG.filter((e) => e.audioKind === 'music')
+    expect(listModelsByAudioKindFromRows(musicOnly, 'music')).toHaveLength(musicOnly.length)
+    expect(listModelsByAudioKindFromRows(musicOnly, 'voice')).toEqual([])
+  })
+
+  it('normalizeModelRefFromRows ≡ normalizeModelRef（常量 rows 对拍）', () => {
+    expect(normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, 'video', null)).toBeNull()
+    expect(normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, 'video', '  ')).toBeNull()
+    expect(normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, 'video', undefined)).toEqual(
+      normalizeModelRef('video', undefined),
+    )
+    for (const entry of STUDIO_MODEL_CATALOG) {
+      expect(normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, entry.modality, entry.modelKey)).toEqual(
+        normalizeModelRef(entry.modality, entry.modelKey),
+      )
+      expect(normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, entry.modality, entry.gatewayModelId)).toEqual(
+        normalizeModelRef(entry.modality, entry.gatewayModelId),
+      )
+      expect(normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, entry.modality, 'no-such-model')).toEqual(
+        normalizeModelRef(entry.modality, 'no-such-model'),
+      )
+    }
+    // 已编码 ref 原样返回（不重编码）
+    const encoded = encodeChannelModel('ch1', 'whatever')
+    expect(normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, 'text', encoded)).toEqual(
+      normalizeModelRef('text', encoded),
+    )
+  })
+
+  it('isDefaultModelKey：四个模态默认命中，其余不命中', () => {
+    for (const modality of ['text', 'image', 'video', 'audio'] as const) {
+      expect(isDefaultModelKey(defaultModelKey(modality))).toBe(true)
+    }
+    expect(isDefaultModelKey('no-such-model')).toBe(false)
+    expect(isDefaultModelKey('navo-pro')).toBe(false)
   })
 })

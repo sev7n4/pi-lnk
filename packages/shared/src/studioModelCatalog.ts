@@ -442,11 +442,19 @@ const DEFAULT_MODEL_KEYS: Record<StudioModality, string> = {
 }
 
 export function listModels(modality: StudioModality): StudioModelEntry[] {
-  return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === modality)
+  return listModelsFromRows(STUDIO_MODEL_CATALOG, modality)
+}
+
+export function listModelsFromRows(rows: StudioModelEntry[], modality: StudioModality): StudioModelEntry[] {
+  return rows.filter((entry) => entry.modality === modality)
 }
 
 export function listModelsByAudioKind(kind: AudioKind): StudioModelEntry[] {
-  return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === 'audio' && audioKindOf(entry) === kind)
+  return listModelsByAudioKindFromRows(STUDIO_MODEL_CATALOG, kind)
+}
+
+export function listModelsByAudioKindFromRows(rows: StudioModelEntry[], kind: AudioKind): StudioModelEntry[] {
+  return rows.filter((entry) => entry.modality === 'audio' && audioKindOf(entry) === kind)
 }
 
 /** 缺省视作 `voice` —— 缺省值的唯一判据处，勿在调用方各自 `?? 'voice'`。 */
@@ -531,6 +539,19 @@ export function normalizeModelRef(
   modality: StudioModality,
   raw?: string | null,
 ): { ref: string; channelId: string; modelName: string; fallback: boolean } | null {
+  return normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, modality, raw)
+}
+
+/**
+ * `normalizeModelRef` 的纯函数内核（S2-1b）：rows 注入形态。
+ * 行为与常量版逐 case 一致；web 归一层（下发目录驱动）与 server 调用方共用，
+ * 判定 SSOT 仍在本文件，勿在调用方重写。
+ */
+export function normalizeModelRefFromRows(
+  rows: StudioModelEntry[],
+  modality: StudioModality,
+  raw?: string | null,
+): { ref: string; channelId: string; modelName: string; fallback: boolean } | null {
   const trimmed = raw?.trim()
   if (!trimmed) return null
   const decoded = decodeChannelModel(trimmed)
@@ -542,11 +563,20 @@ export function normalizeModelRef(
       fallback: false,
     }
   }
-  const { modelKey, fallback } = resolveModelKey(modality, trimmed)
+  const { modelKey, fallback } = resolveModelKeyFromRows(rows, modality, trimmed)
   return {
     ref: encodeChannelModel(PLATFORM_CHANNEL_ID, modelKey),
     channelId: PLATFORM_CHANNEL_ID,
     modelName: modelKey,
     fallback,
   }
+}
+
+/**
+ * modelKey 是否是某模态的目录默认（S2-1b）。server 端运营端点的 DELETE
+ * 用它做防呆：默认模型被下架会让 `resolveModelKey` 的确定性 fallback
+ * 悬空（找不到 fallback 条目），所以禁止通过后台软删默认模型。
+ */
+export function isDefaultModelKey(modelKey: string): boolean {
+  return (Object.values(DEFAULT_MODEL_KEYS) as string[]).includes(modelKey)
 }

@@ -24,7 +24,7 @@
  */
 
 import { Injectable, Inject, OnModuleInit } from '@nestjs/common'
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import {
   STUDIO_MODEL_CATALOG,
   resolveModelKeyFromRows,
@@ -35,6 +35,9 @@ import { PrismaService } from '../prisma/prisma.service'
 
 /** 进程内缓存 TTL（毫秒）。5s：spec 判据「后台保存 ≤5 分钟生效」的上限远大于此，留足余量。 */
 export const MODEL_CATALOG_CACHE_TTL_MS = 5_000
+
+/** ModelCatalogVersion 单行的固定主键（整个库只有一行版本记录）。 */
+export const CATALOG_VERSION_ROW_ID = 'catalog'
 
 const VALID_MODALITIES: readonly StudioModality[] = ['text', 'image', 'video', 'audio']
 const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http'] as const
@@ -161,6 +164,58 @@ export async function refreshModelCatalogCache(prisma: PrismaClient): Promise<vo
   }
 }
 
+/**
+ * 当前生效目录条目（同步、缓存优先）：供 provider.service 的
+ * `catalogModels()` / `catalogEncodedByModality()` 从 DB 真源派生镜像与用户快照
+ * 对齐目标（S2-1b 前，它们直读种子常量，后台新增条目无法进入对齐）。
+ * TTL 过期时异步触发刷新（fire-and-forget），本次调用返回缓存值——
+ * 版本触发路径（ensurePlatformChannel）会在版本变更时显式 await 刷新，保证确定性。
+ */
+export function currentCatalogEntries(): StudioModelEntry[] {
+  maybeRefresh()
+  return cachedRows
+}
+
+// ── 目录版本号（S2-1b：写端点 bump，ensurePlatformChannel 版本触发） ──
+
+/**
+ * 读当前目录版本号。版本行不存在（未写过 / 旧库）视作 0 —— 与
+ * `appliedCatalogVersion` 初态（null）区分：进程首次调用必定做一次对齐。
+ */
+export async function readModelCatalogVersion(prisma: PrismaClient): Promise<number> {
+  const row = await prisma.modelCatalogVersion.findUnique({ where: { id: CATALOG_VERSION_ROW_ID } })
+  return row?.version ?? 0
+}
+
+/**
+ * 版本号原子 +1 并返回新值（单调递增、last-write-win）。
+ * 用 SQL 层 `increment`：SQLite 下编译为单条 `UPDATE ... SET version = version + 1`，
+ * 两个并发写各自完整 +1，不丢计数（竞态回归锁见 model-catalog 控制器集成测试）。
+ */
+export async function bumpModelCatalogVersion(
+  prisma: PrismaClient | Prisma.TransactionClient,
+): Promise<number> {
+  const row = await prisma.modelCatalogVersion.upsert({
+    where: { id: CATALOG_VERSION_ROW_ID },
+    update: { version: { increment: 1 } },
+    create: { id: CATALOG_VERSION_ROW_ID, version: 1 },
+  })
+  return row.version
+}
+
+/** 本进程已对齐过的目录版本（null = 尚未对齐过，下次 provider 调用必对齐）。 */
+let appliedCatalogVersion: number | null = null
+
+/** 目录版本是否与已对齐版本不一致（含首次调用 / 他实例写入后的场景）。 */
+export function isModelCatalogVersionChanged(version: number): boolean {
+  return appliedCatalogVersion !== version
+}
+
+/** 标记某版本已对齐（ensurePlatformChannel 完成本次对齐后调用）。 */
+export function markModelCatalogVersionApplied(version: number): void {
+  appliedCatalogVersion = version
+}
+
 /** TTL 过期且无在途刷新时，异步触发一次刷新（fire-and-forget，失败吞掉保旧值）。 */
 function maybeRefresh(): void {
   if (!registeredPrisma) return
@@ -211,6 +266,11 @@ export function __expireModelCatalogCacheForTests(): void {
 /** 测试专用：观察在途刷新（同步触发后 await 它再断言新值）。 */
 export function __modelCatalogRefreshInFlightForTests(): Promise<void> | null {
   return refreshInFlight
+}
+
+/** 测试专用：重置「已对齐版本」标记（每个用例独立判定首次对齐）。 */
+export function __resetModelCatalogVersionForTests(): void {
+  appliedCatalogVersion = null
 }
 
 /**

@@ -4,7 +4,6 @@ import { useClickOutside } from '@/composables/useClickOutside'
 import {
   clampVideoDuration,
   DEFAULT_VIDEO_SETTINGS,
-  resolveModelKey,
   VIDEO_ASPECT_RATIO_OPTIONS,
   VIDEO_CROP_OPTIONS,
   VIDEO_DURATION_MARKS,
@@ -16,6 +15,8 @@ import {
   type VideoResolution,
   type VideoSettings,
 } from '@lnkpi/shared'
+// S2-1b：resolveModelKey 改读服务端下发目录（归一层注入 rows），不再直读 shared 常量。
+import { resolveModelKey } from '@/constants/studioModels'
 
 const props = defineProps<{
   modelValue: VideoSettings

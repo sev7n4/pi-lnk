@@ -1,5 +1,6 @@
 import { onMounted, ref } from 'vue'
-import { listModels, type AIModel, type GenerationType, type StudioModality } from '@lnkpi/shared'
+import type { AIModel, GenerationType } from '@lnkpi/shared'
+import { listModels, type StudioModality } from '@/constants/studioModels'
 import { capabilitiesApi } from '@/services/capabilities-api'
 
 /**

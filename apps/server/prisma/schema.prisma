@@ -320,6 +320,30 @@ model ModelCatalogEntry {
   @@index([modality, deletedAt])
 }
 
+/// S2-1b 目录版本号（单行，id 固定 'catalog'）：运营端点每次写操作原子 +1，
+/// 单调递增、last-write-win。`ensurePlatformChannel` 对齐前比对它，
+/// 版本变更即重载目录并对齐镜像/用户快照（不新增定时器）。
+model ModelCatalogVersion {
+  id        String   @id @default("catalog")
+  version   Int
+  updatedAt DateTime @updatedAt
+}
+
+/// S2-1b admin 写操作审计行（who/when/before/after）。who 为 'admin'
+/// —— 共享密钥鉴权（AdminTokenGuard）无更细身份，密钥本身绝不落库。
+/// before/after 为写操作前后行快照 JSON（create 时 before 为 null）。
+model AdminAuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  resource  String
+  before    String?
+  after     String?
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
+}
+
 /// Idempotency records for POST /agent/chat/conversation — prevent duplicate requests
 /// from network retries. 5 min TTL, lazy-cleaned on each lookup.
 model IdempotencyRecord {

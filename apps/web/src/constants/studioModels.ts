@@ -1,23 +1,56 @@
 import {
-  listModels,
+  STUDIO_MODEL_CATALOG,
   defaultModelKey,
-  resolveModelKey,
-  getModelEntry,
   decodeChannelModel,
   encodeChannelModel,
+  getModelEntryFromRows,
+  listModelsByAudioKindFromRows,
+  listModelsFromRows,
   modelOptionName,
-  normalizeModelRef,
+  normalizeModelRefFromRows,
+  resolveModelKeyFromRows,
   supportsThinkingLevel,
   type StudioModality,
   type StudioModelEntry,
   type StudioVoiceOption,
 } from '@lnkpi/shared'
 
+/**
+ * web 目录归一层（S2-1b，spec: docs/superpowers/specs/2026-10-09-mph-s21-catalog-as-data-design.md §3.2）。
+ *
+ * 目录来源切换：条目由服务端**随既有 bootstrap 响应下发**（`ProviderBootstrap.catalog`
+ * ——payload 两案裁决：方案 A「扩既有响应体加 catalog 数组」，理由：
+ * 平台渠道镜像 `platformChannel.models` 是 `{name, capability, availability}[]` 的
+ * 探活/灰显专用形状（S1-1 语义），方案 B 往镜像条目上塞 displayName/params/voices
+ * 会把「渠道镜像状态」与「目录条目数据」两种概念压进一个数组，且用户渠道的镜像
+ * 条目没有目录对应物，形状只能靠「缺字段」区分；方案 A 语义清晰、与 admin 端点
+ * 的条目形状同构）。`useProviderBootstrap.load()` 成功后调
+ * {@link setStudioCatalogEntries} 注入，**不新增轮询通道**。
+ *
+ * 未注入/注入失败时回落种子常量 `STUDIO_MODEL_CATALOG`（与服务端播种后的 DB 内容
+ * 逐字节一致），冷启动窗口渲染零漂移。判定内核仍是 shared 的 `*FromRows` 纯函数
+ * （SSOT），本层只做「rows 来源切换」，不重写任何语义。
+ */
+let catalogRows: StudioModelEntry[] = STUDIO_MODEL_CATALOG
+
+/** 注入服务端下发的目录条目（bootstrap 响应到达时调用）。空数组/非数组忽略（保底常量）。 */
+export function setStudioCatalogEntries(entries: StudioModelEntry[]): void {
+  if (!Array.isArray(entries) || entries.length === 0) return
+  catalogRows = entries
+}
+
+/** 观察当前生效 rows（测试/调试用）。 */
+export function getStudioCatalogEntries(): StudioModelEntry[] {
+  return catalogRows
+}
+
+/** 测试专用：回到常量初态（vitest per-file isolate，无需跨文件协调）。 */
+export function __resetStudioCatalogForTests(): void {
+  catalogRows = STUDIO_MODEL_CATALOG
+}
+
 export {
-  listModels,
   defaultModelKey,
-  resolveModelKey,
-  getModelEntry,
   decodeChannelModel,
   encodeChannelModel,
   modelOptionName,
@@ -25,6 +58,26 @@ export {
   type StudioModality,
   type StudioModelEntry,
   type StudioVoiceOption,
+}
+
+export function listModels(modality: StudioModality): StudioModelEntry[] {
+  return listModelsFromRows(catalogRows, modality)
+}
+
+export function listModelsByAudioKind(kind: StudioModelEntry['audioKind']): StudioModelEntry[] {
+  return listModelsByAudioKindFromRows(catalogRows, kind as NonNullable<StudioModelEntry['audioKind']>)
+}
+
+/** 按 id（modelKey 或 gatewayModelId）查条目——读注入 rows，不再直读常量。 */
+export function getModelEntry(id: string): StudioModelEntry | undefined {
+  return getModelEntryFromRows(catalogRows, id)
+}
+
+export function resolveModelKey(
+  modality: StudioModality,
+  requested?: string | null,
+): { modelKey: string; entry: StudioModelEntry; fallback: boolean } {
+  return resolveModelKeyFromRows(catalogRows, modality, requested)
 }
 
 export function modelsAsSelectorOptions(modality: StudioModality) {
@@ -36,14 +89,16 @@ export function modelsAsSelectorOptions(modality: StudioModality) {
 }
 
 /**
- * 节点级生成模型解析：有值时归一（委托 shared 的 SSOT），无值时回落到平台默认。
- * ⚠️ 与 agent 侧 update_node 共用 normalizeModelRef，勿在组件里重写判定。
+ * 节点级生成模型解析：有值时归一（rows 注入形态，语义与 shared normalizeModelRef 同源），
+ * 无值时回落到平台默认。
+ * ⚠️ 与 agent 侧 update_node 共用 shared 的判定内核（normalizeModelRefFromRows），
+ * 勿在组件里重写判定。
  */
 export function resolveGenerationModel(
   modality: StudioModality,
   requested?: string | null,
 ): string {
-  const normalized = normalizeModelRef(modality, requested)
+  const normalized = normalizeModelRefFromRows(catalogRows, modality, requested)
   if (normalized) return normalized.ref
   return encodeChannelModel('platform', defaultModelKey(modality))
 }
