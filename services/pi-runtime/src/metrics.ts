@@ -92,6 +92,8 @@ export class Metrics {
 	private planProposed = 0; // C3 propose_plan 调用数
 	private planDecisions = new Map<string, number>(); // key: decision (execute|refine|keep|timeout|aborted)
 	private planGateBlocked = new Map<string, number>(); // key: tool——planPending 期间被拦的写工具
+	private turnBudgetWarned = 0; // C2 预算将尽 steer 提醒次数
+	private turnBudgetExceeded = 0; // C2 超限硬停次数
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	/**
@@ -276,6 +278,15 @@ export class Metrics {
 
 	observePlanGateBlocked(tool: string): void {
 		this.planGateBlocked.set(tool, (this.planGateBlocked.get(tool) ?? 0) + 1);
+	}
+
+	/** C2 turnBudget 观测（spec §3.5）：warned 在事件层软着陆时，exceeded 在硬停时。 */
+	observeTurnBudgetWarned(): void {
+		this.turnBudgetWarned += 1;
+	}
+
+	observeTurnBudgetExceeded(): void {
+		this.turnBudgetExceeded += 1;
 	}
 
 	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
@@ -488,6 +499,14 @@ export class Metrics {
 	for (const [tool, count] of [...this.planGateBlocked.entries()].sort()) {
 		lines.push(`pi_runtime_plan_gate_blocked_total{tool="${esc(tool)}"} ${count}`);
 	}
+
+	lines.push("# HELP pi_runtime_turn_budget_warned_total Turn-budget nearing-exhaustion steer warnings (C2).");
+	lines.push("# TYPE pi_runtime_turn_budget_warned_total counter");
+	lines.push(`pi_runtime_turn_budget_warned_total ${this.turnBudgetWarned}`);
+
+	lines.push("# HELP pi_runtime_turn_budget_exceeded_total Runs hard-stopped by the turn budget (C2).");
+	lines.push("# TYPE pi_runtime_turn_budget_exceeded_total counter");
+	lines.push(`pi_runtime_turn_budget_exceeded_total ${this.turnBudgetExceeded}`);
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
 		lines.push("# TYPE pi_runtime_skills_loaded gauge");
