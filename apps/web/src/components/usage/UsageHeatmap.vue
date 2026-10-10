@@ -61,16 +61,16 @@ function cellTitle(cell: HeatmapCell) {
 <template>
   <section
     tabindex="0"
-    class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-white outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
+    class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-fg outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
   >
     <header class="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
       <div>
         <h2 class="text-sm font-medium">活跃度</h2>
-        <p class="mt-1 text-xs text-white/40">{{ from }} – {{ to }}</p>
+        <p class="mt-1 text-xs text-fg-3">{{ from }} – {{ to }}</p>
       </div>
       <div class="flex flex-wrap items-center gap-3">
-        <p class="text-xs text-white/50">{{ activeDays }} 个活跃日</p>
-        <div class="flex items-center gap-1 text-[10px] text-white/40">
+        <p class="text-xs text-fg-3">{{ activeDays }} 个活跃日</p>
+        <div class="flex items-center gap-1 text-[10px] text-fg-3">
           <span>低</span>
           <span class="h-3 w-3 rounded-[3px] bg-white/[0.06]" />
           <span class="h-3 w-3 rounded-[3px]" style="background-color: #0e4429" />
@@ -93,13 +93,13 @@ function cellTitle(cell: HeatmapCell) {
       <div
         v-for="week in columns.length"
         :key="`month-${week}`"
-        class="h-4 overflow-visible whitespace-nowrap text-[10px] leading-4 text-white/35"
+        class="h-4 overflow-visible whitespace-nowrap text-[10px] leading-4 text-fg-3"
       >
         {{ monthByWeek.get(week - 1) ?? '' }}
       </div>
       <template v-for="(row, rowIndex) in grid" :key="rowIndex">
         <span
-          class="flex items-center pr-2 text-[10px] leading-none text-white/35"
+          class="flex items-center pr-2 text-[10px] leading-none text-fg-3"
           aria-hidden="true"
         >
           {{ WEEKDAY_LABELS[rowIndex] }}

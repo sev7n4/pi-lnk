@@ -36,13 +36,13 @@ const style = computed(() => computeRefPreviewStyle(props.anchor))
       @mouseleave="emit('mouseleave')"
     >
       <div class="flex items-center border-b border-white/8 px-3 py-2">
-        <span class="truncate text-xs text-white/70">{{ refItem.refKey }} · {{ refItem.label }}</span>
+        <span class="truncate text-xs text-fg-2">{{ refItem.refKey }} · {{ refItem.label }}</span>
       </div>
 
       <div class="p-3">
         <p
           v-if="refItem.mediaType === 'text'"
-          class="max-h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-white/80"
+          class="max-h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg"
         >
           {{ textContent || '（空文本）' }}
         </p>
@@ -68,7 +68,7 @@ const style = computed(() => computeRefPreviewStyle(props.anchor))
           class="pointer-events-auto w-full"
         />
 
-        <p v-else class="text-xs text-white/40">暂无可预览内容</p>
+        <p v-else class="text-xs text-fg-3">暂无可预览内容</p>
       </div>
     </div>
   </Teleport>

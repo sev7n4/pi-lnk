@@ -70,7 +70,7 @@ function onAudioLoadedMetadata(e: Event) {
           <span class="neo-placeholder-text">拖入或上传素材</span>
         </div>
       </div>
-      <p v-if="data.fileName" class="truncate px-1 pt-1 text-[10px] text-white/40">{{ data.fileName }}</p>
+      <p v-if="data.fileName" class="truncate px-1 pt-1 text-[10px] text-fg-3">{{ data.fileName }}</p>
     </div>
   </NeoBaseNode>
 </template>

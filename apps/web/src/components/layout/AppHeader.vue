@@ -46,7 +46,7 @@ function navigate(path: string) {
             v-for="tab in tabs"
             :key="tab.path"
             class="rounded-lg px-4 py-2 text-sm font-medium transition"
-            :class="activeTab === tab.path ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'"
+            :class="activeTab === tab.path ? 'bg-white/10 text-fg' : 'text-fg-2 hover:text-fg'"
             @click="navigate(tab.path)"
           >
             {{ tab.label }}

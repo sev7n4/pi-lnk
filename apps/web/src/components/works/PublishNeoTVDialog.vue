@@ -148,11 +148,11 @@ async function handlePublish() {
   >
     <div v-if="success" class="py-8 text-center">
       <p class="text-lg text-[#818cf8]">发布成功 🎉</p>
-      <p class="mt-2 text-sm text-white/50">作品已出现在社区作品流</p>
+      <p class="mt-2 text-sm text-fg-3">作品已出现在社区作品流</p>
     </div>
     <form v-else class="space-y-4" @submit.prevent="handlePublish">
       <div v-if="!sessionId && sessions?.length">
-        <label class="mb-1 block text-xs text-white/50">选择画布</label>
+        <label class="mb-1 block text-xs text-fg-3">选择画布</label>
         <el-select v-model="selectedSessionId" class="w-full">
           <el-option
             v-for="s in sessions"
@@ -163,11 +163,11 @@ async function handlePublish() {
         </el-select>
       </div>
       <div>
-        <label class="mb-1 block text-xs text-white/50">作品标题</label>
+        <label class="mb-1 block text-xs text-fg-3">作品标题</label>
         <el-input v-model="title" placeholder="输入作品标题" />
       </div>
       <div>
-        <label class="mb-1 block text-xs text-white/50">分类</label>
+        <label class="mb-1 block text-xs text-fg-3">分类</label>
         <el-select v-model="category" class="w-full">
           <el-option
             v-for="cat in WORK_CATEGORIES.filter((c) => c !== '全部')"
@@ -178,9 +178,9 @@ async function handlePublish() {
         </el-select>
       </div>
       <div>
-        <label class="mb-1 block text-xs text-white/50">主成片节点 <span class="text-red-400">*</span></label>
-        <div v-if="loadingNodes" class="py-4 text-center text-sm text-white/40">加载节点中…</div>
-        <div v-else-if="!primaryNodes.length" class="rounded-lg border border-dashed border-white/10 p-4 text-sm text-white/40">
+        <label class="mb-1 block text-xs text-fg-3">主成片节点 <span class="text-red-400">*</span></label>
+        <div v-if="loadingNodes" class="py-4 text-center text-sm text-fg-3">加载节点中…</div>
+        <div v-else-if="!primaryNodes.length" class="rounded-lg border border-dashed border-white/10 p-4 text-sm text-fg-3">
           当前画布没有可发布的图片/视频节点，请先生成或上传媒体
         </div>
         <el-radio-group v-else v-model="primaryNodeId" class="flex w-full flex-col gap-2">
@@ -209,7 +209,7 @@ async function handlePublish() {
               <div class="flex shrink-0 items-center gap-1" @click.stop>
                 <button
                   type="button"
-                  class="rounded-md px-2 py-1 text-[11px] text-white/55 transition hover:bg-white/10 hover:text-white"
+                  class="rounded-md px-2 py-1 text-[11px] text-fg-3 transition hover:bg-white/10 hover:text-fg"
                   title="预览"
                   @click="previewNode(node, $event)"
                 >

@@ -30,7 +30,7 @@ onUnmounted(() => {
 <template>
   <div ref="containerRef" class="relative h-full w-full overflow-hidden">
     <canvas ref="canvasRef" class="h-full w-full" />
-    <div class="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/50 px-2 py-1 text-[10px] text-white/60">
+    <div class="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/50 px-2 py-1 text-[10px] text-fg-2">
       PlayCanvas POC · 拖拽旋转 · 滚轮缩放
     </div>
   </div>

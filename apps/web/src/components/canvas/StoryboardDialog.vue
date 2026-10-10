@@ -124,10 +124,10 @@ async function optimizePrompt(shot: StoryboardShot) {
               class="h-full w-full object-cover"
               alt=""
             />
-            <div v-else class="flex h-full min-h-[100px] items-center justify-center text-xs text-white/30">
+            <div v-else class="flex h-full min-h-[100px] items-center justify-center text-xs text-fg-3">
               暂无封面
             </div>
-            <span class="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white/80">
+            <span class="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-fg">
               #{{ index + 1 }}
             </span>
           </button>
@@ -140,7 +140,7 @@ async function optimizePrompt(shot: StoryboardShot) {
                 :class="{
                   'bg-yellow-600/20 text-yellow-400': shot.status === 'generating',
                   'bg-green-600/20 text-green-400': shot.status === 'generated' || shot.status === 'completed',
-                  'bg-white/5 text-white/40': !shot.status || shot.status === 'draft',
+                  'bg-white/5 text-fg-3': !shot.status || shot.status === 'draft',
                 }"
               >
                 {{ shot.status === 'generating' ? '生成中' : (shot.status === 'generated' || shot.status === 'completed') ? '已完成' : '草稿' }}

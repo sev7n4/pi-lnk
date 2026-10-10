@@ -46,7 +46,7 @@ function commitRename() {
           v-if="isRenaming"
           ref="renameInputRef"
           v-model="renameDraft"
-          class="mt-1 w-full rounded-md border border-indigo-500/50 bg-black/30 px-2 py-0.5 text-sm font-semibold text-white outline-none"
+          class="mt-1 w-full rounded-md border border-indigo-500/50 bg-black/30 px-2 py-0.5 text-sm font-semibold text-fg outline-none"
           placeholder="分组名称"
           @keydown.enter.stop="commitRename"
           @keydown.esc.stop="isRenaming = false"
@@ -54,8 +54,8 @@ function commitRename() {
           @click.stop
           @mousedown.stop
         >
-        <h4 v-else class="text-sm font-semibold text-white/85">{{ data.title || '未命名分组' }}</h4>
-        <p class="mt-0.5 text-[11px] text-white/40">
+        <h4 v-else class="text-sm font-semibold text-fg">{{ data.title || '未命名分组' }}</h4>
+        <p class="mt-0.5 text-[11px] text-fg-3">
           {{ (data.childIds?.length ?? 0) }} 个节点 · 拖此栏移动整组
         </p>
       </div>

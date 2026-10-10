@@ -1,7 +1,40 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<!--
+  `data-theme` 是主题的唯一开关。静态值 `dark` 是无 JS / 脚本失败时的兜底，
+  真正的取值由下面 <head> 里的同步引导脚本决定。
+-->
+<html lang="zh-CN" class="dark" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      /*
+       * 主题引导 —— 必须同步执行且位于首屏绘制之前，否则会先闪一下深色再跳浅色（FOUC）。
+       *
+       * ⛔ 历史缺陷：主题曾经由 `useCanvasTheme.ts` 的**模块级副作用**设置，
+       *   而该模块只被 `CanvasPage.vue` import，且 17 条路由全部懒加载 ⇒
+       *   除画布页外 16 条路由**永不求值**，`data-theme` 从未落地；
+       *   更糟的是属性一旦设上就不再移除，页面外观取决于「用户有没有访问过画布」。
+       *   ⇒ 主题是应用级关注点，不属于任何页面模块。
+       *
+       * 优先级：用户显式选择(localStorage) > 系统偏好(prefers-color-scheme) > 深色。
+       * `.dark` class 是给 Element Plus 的 dark/css-vars.css 用的，必须同步切换。
+       */
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('lnkpi-canvas-theme')
+          var theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+          document.documentElement.setAttribute('data-theme', theme)
+          document.documentElement.classList.toggle('dark', theme === 'dark')
+        } catch (e) {
+          /* localStorage 被禁用（隐私模式）时保持 HTML 上的静态 dark */
+        }
+      })()
+    </script>
     <link rel="icon" type="image/png" href="/brand/mascot-logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="超创平台 - AI 无限画布创作工作流，支持 AI 图像、视频生成与漫剧制作" />
@@ -10,7 +43,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Unbounded:wght@400;600;700&display=swap" rel="stylesheet" />
   </head>
-  <body class="bg-[#141414] text-white antialiased">
+  <!-- ⛔ 这里曾是 bg-[#141414] text-white：写死的深色，浅色主题下白字落白底直接消失。
+       改为语义变量类后随 data-theme 自动切换。 -->
+  <body class="bg-surface-canvas text-fg antialiased">
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

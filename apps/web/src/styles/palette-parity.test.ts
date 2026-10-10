@@ -70,7 +70,18 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const TOKENS_CSS = join(HERE, '..', 'styles', 'neowow-tokens.css')
 const css = readFileSync(TOKENS_CSS, 'utf8')
 
-/** WCAG 2.1 相对亮度（与 pi-runtime visual.test.ts 同公式，两处必须一致）。 */
+/**
+ * WCAG 2.1 相对亮度。
+ *
+ * 🔴 修过一次真缺陷（2026-10-10）：蓝通道系数曾是 **0.2992**，WCAG sRGB 规定是 **0.0722**。
+ *    实测偏差最大 3.58（`#131318`/`#a89dff`：正确 7.88 vs 旧式 11.46），
+ *    且偏差方向随含蓝量变化 ⇒ 对含蓝高的颜色**系统性偏高** ⇒ 不达标的配色会被判成达标（假绿）。
+ *    本轮 7 条既有断言在两种公式下都恰好通过，所以它是**潜伏**风险而非已爆雷——
+ *    但一条会系统性放水的守卫，它给的绿灯没有证据力。
+ *
+ * ⛔ 不要把它抽出去共享给 `design-token.test.ts`：后者需要一份**独立实现**互为交叉验证，
+ *    共享一处实现会让「公式写错」这类缺陷同时骗过两边。
+ */
 function luminance(hex: string): number {
   const m = /^#([0-9a-f]{6})$/i.exec(hex)
   if (!m) throw new Error(`不是 6 位 hex：${hex}`)
@@ -79,8 +90,25 @@ function luminance(hex: string): number {
     const s = v / 255
     return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
   })
-  return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.2992 * ch[2]!
+  return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.0722 * ch[2]!
 }
+
+describe('守卫自身：亮度公式必须是 WCAG sRGB（防止再被写成 0.2992）', () => {
+  // 这条直接锁系数本身：纯蓝的相对亮度按定义就等于蓝通道系数。
+  // 若有人把 0.0722 改回 0.2992，这条**必然**先红，而不是等某条对比度断言碰巧翻车。
+  it('纯蓝 #0000ff 的相对亮度 == 蓝通道系数 0.0722', () => {
+    expect(luminance('#0000ff')).toBeCloseTo(0.0722, 4)
+  })
+
+  it('纯黑 0 / 纯白 1（sRGB 归一化端点）', () => {
+    expect(luminance('#000000')).toBe(0)
+    expect(luminance('#ffffff')).toBeCloseTo(1, 6)
+  })
+
+  it('与 WCAG 参考值对齐：#777777 亮度 0.1845', () => {
+    expect(luminance('#777777')).toBeCloseTo(0.1845, 3)
+  })
+})
 
 /** WCAG 对比度。⛔ 别用不带 +0.05 的简写公式，会算出 0.22:1 这类假报警。 */
 function contrast(a: string, b: string): number {
@@ -88,11 +116,14 @@ function contrast(a: string, b: string): number {
   return (l1 + 0.05) / (l2 + 0.05)
 }
 
-/** 取某个主题区块内的 CSS 变量值（深色 `:root` 或浅色 `[data-canvas-theme='light']`）。 */
+/** 取某个主题区块内的 CSS 变量值（深色 `:root` 或浅色 `[data-theme='light']`）。 */
 function varIn(theme: 'dark' | 'light', name: string): string | undefined {
   // 先切出主题区块，再在其中找变量，避免跨区块串色
-  const lightStart = css.indexOf(":root[data-canvas-theme='light']")
-  expect(lightStart, 'neowow-tokens.css 必须含浅色主题区块（否则下面全部读不到 = 空转）').toBeGreaterThan(0)
+  const lightStart = css.indexOf(":root[data-theme='light']")
+  expect(
+    lightStart,
+    'neowow-tokens.css 必须含浅色主题区块（否则下面全部读不到 = 空转）',
+  ).toBeGreaterThan(0)
   const scope = theme === 'light' ? css.slice(lightStart) : css.slice(0, lightStart)
   const m = scope.match(new RegExp(`^\\s*${name}\\s*:\\s*([^;]+);`, 'm'))
   return m?.[1]?.trim()

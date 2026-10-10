@@ -271,7 +271,7 @@ watch(
         <p class="mb-1.5 text-[10px] text-[var(--neo-text-muted)]">Seed</p>
         <input
           type="number"
-          class="w-full rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/90"
+          class="w-full rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-fg"
           :value="seed ?? ''"
           placeholder="随机"
           step="1"
@@ -283,7 +283,7 @@ watch(
         <p class="mb-1.5 text-[10px] text-[var(--neo-text-muted)]">排除内容</p>
         <input
           type="text"
-          class="w-full rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-white/90"
+          class="w-full rounded-md border border-white/10 bg-black/25 px-2 py-1 text-[10px] text-fg"
           :value="negativePrompt ?? ''"
           placeholder="如 watermark, blur"
           @input="emit('update:negativePrompt', ($event.target as HTMLInputElement).value)"
@@ -292,7 +292,7 @@ watch(
 
       <button
         type="button"
-        class="mt-3 w-full rounded-lg py-1 text-[10px] text-[var(--neo-text-muted)] hover:text-white/70"
+        class="mt-3 w-full rounded-lg py-1 text-[10px] text-[var(--neo-text-muted)] hover:text-fg-2"
         @click="patch(DEFAULT_VIDEO_SETTINGS)"
       >
         重置默认

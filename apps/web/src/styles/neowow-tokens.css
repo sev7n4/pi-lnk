@@ -3,7 +3,7 @@
    主色   —— 电光紫 #6d5dfc（创造力 / AI）
    强调色 —— 电流青 #22d3ee（连线电流 / 能量流动）
    点缀色 —— 琥珀橙 #f59e0b（积分 / 能量值 / 氛围光）
-   两套主题通过 :root[data-canvas-theme] 切换
+   两套主题通过 :root[data-theme] 切换
    ============================================================ */
 :root {
   /* ---- 品牌色 ---- */
@@ -137,8 +137,32 @@
 /* ============================================================
    白天模式 —— 全组件跟随（画布 / dock / 节点 / 弹出卡片 / 小地图）
    ============================================================ */
-:root[data-canvas-theme='light'] {
+:root[data-theme='light'] {
   --neo-accent-text: #5b4ce6;
+
+  /* ---- 补齐浅色缺口（2026-10-10）----
+     深色块里这 10 个颜色变量此前**没有浅色覆写** ⇒ 浅色主题会静默沿用深色值
+     （`--neo-electric` 的 #22d3ee 压白底只有 1.7:1，等于看不见）。
+     值一律引用 design-tokens.css 的 L1 色板，避免再造第四个真相源。
+     对比度实测（WCAG，压白底 / canvas #eef0f5 / sunken #e6e9f0）：
+       accent #5b4ce6        5.80 / 5.09 / 4.77   白字压它 5.80
+       accent-hover #4a3bc4  7.74 / 6.79 / 6.37   白字压它 7.74
+       accent-strong #3b2f9e                      白字压它 10.07
+       electric #0c6377      6.85 / 6.01 / 5.63
+       warm #8a5200          6.39 / 5.60 / 5.26
+       accent-border rgba(91,76,230,0.75) 压白底 3.55（非文本 AA 需 ≥3） */
+  --neo-accent: var(--lnk-purple-600);
+  --neo-accent-hover: var(--lnk-purple-700);
+  --neo-accent-strong: var(--lnk-purple-800);
+  --neo-accent-soft: rgba(91, 76, 230, 0.12);
+  --neo-accent-border: rgba(91, 76, 230, 0.75);
+  --neo-electric: var(--lnk-cyan-700);
+  --neo-electric-glow: rgba(12, 99, 119, 0.35);
+  --neo-warm: var(--lnk-amber-800);
+  --neo-warm-soft: rgba(138, 82, 0, 0.12);
+  /* 品牌渐变两主题同值（品牌锚点，不可改）；⚠️ 它承载白字时末端只有 3.67:1，见 Design_system.md F-5 */
+  --neo-brand-gradient: var(--lnk-accent-gradient);
+
   --neo-bg: #eef0f5;
   /* ---- 图形表达引擎视觉语言（§4.2 / §238）----
      redeploy-note: 本文件含 PR #314 的跨端调色板对齐（§238），改动已合入 master

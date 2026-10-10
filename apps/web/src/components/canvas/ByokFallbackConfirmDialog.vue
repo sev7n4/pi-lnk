@@ -34,19 +34,19 @@ function onCancel() {
     @click.self="onCancel"
   >
     <div
-      class="w-full max-w-md rounded-2xl border border-white/10 bg-[#1e1e1e] p-5 text-white shadow-2xl"
+      class="w-full max-w-md rounded-2xl border border-white/10 bg-[#1e1e1e] p-5 text-fg shadow-2xl"
       role="dialog"
       aria-modal="true"
       aria-labelledby="byok-fallback-title"
     >
       <h2 id="byok-fallback-title" class="text-base font-semibold">渠道回退确认</h2>
-      <p class="mt-3 text-sm leading-relaxed text-white/70">
+      <p class="mt-3 text-sm leading-relaxed text-fg-2">
         {{ displayMessage() }}
       </p>
       <div class="mt-5 flex justify-end gap-2">
         <button
           type="button"
-          class="rounded-lg px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
+          class="rounded-lg px-3 py-1.5 text-sm text-fg-2 transition hover:bg-white/5"
           :disabled="loading"
           @click="onCancel"
         >
@@ -54,7 +54,7 @@ function onCancel() {
         </button>
         <button
           type="button"
-          class="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:opacity-50"
+          class="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-indigo-400 disabled:opacity-50"
           :disabled="loading"
           @click="onConfirm"
         >

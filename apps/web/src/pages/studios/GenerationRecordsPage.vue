@@ -27,7 +27,7 @@ onMounted(load)
         v-for="t in (['all', 'image', 'video', 'audio'] as const)"
         :key="t"
         class="rounded-lg px-3 py-1.5 text-xs transition"
-        :class="filter === t ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-white/5 text-white/60'"
+        :class="filter === t ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-white/5 text-fg-2'"
         @click="filter = t; load()"
       >
         {{ t === 'all' ? '全部' : t === 'image' ? '图像' : t === 'video' ? '视频' : '音频' }}
@@ -47,13 +47,13 @@ onMounted(load)
         <div class="min-w-0 flex-1">
           <div class="mb-1 flex items-center gap-2">
             <span class="rounded bg-white/10 px-2 py-0.5 text-[10px] uppercase">{{ item.type }}</span>
-            <span class="text-[10px] text-white/40">{{ item.status }}</span>
+            <span class="text-[10px] text-fg-3">{{ item.status }}</span>
           </div>
           <p class="truncate text-sm">{{ item.prompt }}</p>
-          <p class="text-[10px] text-white/30">{{ new Date(item.createdAt).toLocaleString() }}</p>
+          <p class="text-[10px] text-fg-3">{{ new Date(item.createdAt).toLocaleString() }}</p>
         </div>
       </div>
     </div>
-    <p v-if="!records.length" class="py-16 text-center text-white/30">暂无记录</p>
+    <p v-if="!records.length" class="py-16 text-center text-fg-3">暂无记录</p>
   </StudioShell>
 </template>

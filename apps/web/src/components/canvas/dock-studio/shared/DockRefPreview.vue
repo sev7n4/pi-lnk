@@ -55,10 +55,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         @click.stop
       >
         <div class="flex items-center justify-between border-b border-white/8 px-3 py-2">
-          <span class="truncate text-xs text-white/70">{{ refItem.refKey }} · {{ refItem.label }}</span>
+          <span class="truncate text-xs text-fg-2">{{ refItem.refKey }} · {{ refItem.label }}</span>
           <button
             type="button"
-            class="rounded-md p-1 text-white/40 hover:bg-white/10 hover:text-white/80"
+            class="rounded-md p-1 text-fg-3 hover:bg-white/10 hover:text-fg"
             aria-label="关闭预览"
             @click="emit('close')"
           >
@@ -71,7 +71,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         <div class="p-3">
           <p
             v-if="refItem.mediaType === 'text'"
-            class="max-h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-white/80"
+            class="max-h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg"
           >
             {{ textContent || '（空文本）' }}
           </p>
@@ -97,7 +97,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             class="w-full"
           />
 
-          <p v-else class="text-xs text-white/40">暂无可预览内容</p>
+          <p v-else class="text-xs text-fg-3">暂无可预览内容</p>
         </div>
       </div>
     </div>

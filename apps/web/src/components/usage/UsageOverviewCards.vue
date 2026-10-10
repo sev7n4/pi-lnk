@@ -20,7 +20,7 @@ const cards = computed(() => [
 </script>
 
 <template>
-  <section class="text-white">
+  <section class="text-fg">
     <h2 class="mb-3 text-sm font-medium">用量总览</h2>
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
       <div
@@ -28,7 +28,7 @@ const cards = computed(() => [
         :key="card.label"
         class="rounded-xl border border-white/8 bg-[#16161C] p-4"
       >
-        <p class="text-xs text-white/45">{{ card.label }}</p>
+        <p class="text-xs text-fg-3">{{ card.label }}</p>
         <p class="mt-2 text-2xl font-semibold tabular-nums">{{ card.value }}</p>
       </div>
     </div>

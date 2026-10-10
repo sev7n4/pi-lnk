@@ -66,7 +66,7 @@ function toggleVoice() {
           v-for="tab in (['text', 'image', 'video'] as const)"
           :key="tab"
           class="rounded-lg px-3 py-1 text-xs transition"
-          :class="activeTab === tab ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'text-white/40 hover:text-white/70'"
+          :class="activeTab === tab ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'text-fg-3 hover:text-fg-2'"
           @click="activeTab = tab"
         >
           {{ tab === 'text' ? '文本' : tab === 'image' ? '图像' : '视频' }}
@@ -94,8 +94,8 @@ function toggleVoice() {
           :class="speech.listening.value
             ? 'bg-red-500/20 text-red-400 animate-pulse'
             : speech.supported
-              ? 'bg-white/5 text-white/60 hover:bg-white/10'
-              : 'bg-white/5 text-white/30'"
+              ? 'bg-white/5 text-fg-2 hover:bg-white/10'
+              : 'bg-white/5 text-fg-3'"
           :title="speech.supported ? '语音输入' : '浏览器不支持语音识别'"
           @click="toggleVoice"
         >

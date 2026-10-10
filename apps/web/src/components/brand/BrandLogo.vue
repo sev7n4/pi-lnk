@@ -32,7 +32,7 @@ const sizeClass: Record<string, string> = {
       :class="sizeClass[size]"
       draggable="false"
     >
-    <span v-if="showName" class="font-display text-lg font-semibold tracking-tight text-white">{{ name }}</span>
+    <span v-if="showName" class="font-display text-lg font-semibold tracking-tight text-fg">{{ name }}</span>
   </div>
 </template>
 

@@ -1,0 +1,13 @@
+{
+  "_说明": "深色专用写法的棘轮基线。只能减、不能增；每清扫一批就手工下调这里并把数字写进 PR 说明。",
+  "_生成时间": "2026-10-10",
+  "_生成方式": "统计 src/**/*.vue 中下列正则的匹配总数",
+  "text-white": 0,
+  "bg-black": 25,
+  "bg-white-slash": 59,
+  "border-white-slash": 77,
+  "arbitrary-hex": 83,
+  "brand-blue-6366f1": 21,
+  "brand-blue-818cf8": 18,
+  "inline-rgba": 259
+}

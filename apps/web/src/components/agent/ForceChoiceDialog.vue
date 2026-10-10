@@ -68,24 +68,24 @@ function onSecondary() {
     @click.self="close"
   >
     <div
-      class="w-full max-w-md rounded-2xl border border-white/10 bg-[#1e1e1e] p-5 text-white shadow-2xl"
+      class="w-full max-w-md rounded-2xl border border-white/10 bg-[#1e1e1e] p-5 text-fg shadow-2xl"
       role="dialog"
       aria-modal="true"
     >
       <h2 class="text-base font-semibold">{{ meta()!.title }}</h2>
-      <p class="mt-3 text-sm leading-relaxed text-white/70">{{ meta()!.body }}</p>
+      <p class="mt-3 text-sm leading-relaxed text-fg-2">{{ meta()!.body }}</p>
       <div class="mt-5 flex justify-end gap-2">
         <button
           v-if="meta()!.secondary"
           type="button"
-          class="rounded-lg px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
+          class="rounded-lg px-3 py-1.5 text-sm text-fg-2 transition hover:bg-white/5"
           @click="onSecondary"
         >
           {{ meta()!.secondary }}
         </button>
         <button
           type="button"
-          class="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-400"
+          class="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-indigo-400"
           @click="onPrimary"
         >
           {{ meta()!.primary }}

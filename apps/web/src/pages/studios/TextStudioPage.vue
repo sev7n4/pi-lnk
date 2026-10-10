@@ -50,7 +50,7 @@ onMounted(loadRecords)
 <template>
   <StudioShell>
     <h1 class="mb-2 text-2xl font-semibold">文本工作室</h1>
-    <p class="mb-6 text-sm text-white/50">脚本 / 旁白 / 分镜描述，消耗 5 积分/次</p>
+    <p class="mb-6 text-sm text-fg-3">脚本 / 旁白 / 分镜描述，消耗 5 积分/次</p>
 
     <div class="mb-8 max-w-2xl rounded-2xl border border-white/8 bg-[#1a1a1a] p-4">
       <textarea v-model="prompt" class="input-field mb-3 min-h-[120px] w-full" placeholder="输入创作需求，如：写一个赛博朋克开场旁白..." />
@@ -69,8 +69,8 @@ onMounted(loadRecords)
         :key="item.id"
         class="rounded-xl border border-white/8 bg-[#1a1a1a] p-4"
       >
-        <p class="mb-2 text-xs text-white/40">{{ item.prompt }}</p>
-        <pre class="whitespace-pre-wrap text-sm leading-relaxed text-white/80">{{ parseText(item) }}</pre>
+        <p class="mb-2 text-xs text-fg-3">{{ item.prompt }}</p>
+        <pre class="whitespace-pre-wrap text-sm leading-relaxed text-fg">{{ parseText(item) }}</pre>
       </article>
     </div>
   </StudioShell>

@@ -4177,11 +4177,11 @@ defineExpose({
   animation: composer-pick-halo-breathe 2.6s ease-in-out infinite;
 }
 
-:global(:root[data-canvas-theme='light']) .composer-canvas-pick-btn:not(.is-active) {
+:global(:root[data-theme='light']) .composer-canvas-pick-btn:not(.is-active) {
   color: var(--neo-text-secondary);
 }
 
-:global(:root[data-canvas-theme='light']) .composer-canvas-pick-btn.is-active {
+:global(:root[data-theme='light']) .composer-canvas-pick-btn.is-active {
   color: var(--neo-hi-text);
 }
 

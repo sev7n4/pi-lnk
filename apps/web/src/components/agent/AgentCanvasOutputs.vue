@@ -158,7 +158,7 @@ function hideBrokenImg(e: Event) {
           />
           <span
             v-if="isVideoUrl(nodeUrl(item.nodeId)!)"
-            class="absolute inset-0 flex items-center justify-center text-[9px] text-white/90"
+            class="absolute inset-0 flex items-center justify-center text-[9px] text-fg"
           >▶</span>
         </span>
         <DockTypeIcon v-else :type="item.nodeType" :size="12" class="shrink-0 opacity-80" />

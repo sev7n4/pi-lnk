@@ -229,7 +229,7 @@ function onRefMention(refKey: string) {
         :disabled="readonly"
         @optimized="onOptimized"
       />
-      <span class="text-[10px] text-white/35">{{ wordCount }}</span>
+      <span class="text-[10px] text-fg-3">{{ wordCount }}</span>
 
       <div class="ml-auto flex items-center gap-2">
         <DockMicButton

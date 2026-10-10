@@ -16,7 +16,7 @@ const route = useRoute()
 <template>
   <div class="flex min-h-[calc(100vh-4rem)]">
     <aside class="w-[220px] shrink-0 border-r border-white/5 bg-[#1a1a1a] p-4">
-      <h2 class="mb-4 text-xs font-medium uppercase tracking-wider text-white/40">创作工作室</h2>
+      <h2 class="mb-4 text-xs font-medium uppercase tracking-wider text-fg-3">创作工作室</h2>
       <nav class="space-y-1">
         <router-link
           v-for="link in links"
@@ -25,7 +25,7 @@ const route = useRoute()
           class="block rounded-lg px-3 py-2 text-sm transition"
           :class="route.path === link.path
             ? 'bg-[#6366f1]/20 text-[#818cf8]'
-            : 'text-white/60 hover:bg-white/5 hover:text-white'"
+            : 'text-fg-2 hover:bg-white/5 hover:text-fg'"
         >
           {{ link.label }}
         </router-link>

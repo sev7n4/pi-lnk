@@ -968,12 +968,12 @@
   color: var(--neo-handle-plus, rgba(255, 255, 255, 0.88));
 }
 
-:root[data-canvas-theme='light'] .neo-node-wrapper .handle-plus-inner {
+:root[data-theme='light'] .neo-node-wrapper .handle-plus-inner {
   border-color: rgba(23, 25, 35, 0.45);
   background: rgba(255, 255, 255, 0.72);
 }
 
-:root[data-canvas-theme='light'] .neo-node-wrapper .handle-plus-inner::before {
+:root[data-theme='light'] .neo-node-wrapper .handle-plus-inner::before {
   color: rgba(23, 25, 35, 0.85);
 }
 

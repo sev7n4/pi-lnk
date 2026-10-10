@@ -208,7 +208,7 @@ onMounted(() => {
       <h1 class="text-2xl font-semibold">个人中心</h1>
       <button
         type="button"
-        class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-white/50 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
+        class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-fg-3 transition hover:bg-white/[0.06] hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
         aria-label="关闭"
         @click="closeProfile"
       >
@@ -222,7 +222,7 @@ onMounted(() => {
         :key="tab[0]"
         type="button"
         class="rounded-full px-4 py-1.5 text-sm transition"
-        :class="activeTab === tab[0] ? 'bg-white/12 text-white' : 'text-white/50 hover:text-white/80'"
+        :class="activeTab === tab[0] ? 'bg-white/12 text-fg' : 'text-fg-3 hover:text-fg'"
         @click="setTab(tab[0])"
       >
         {{ tab[1] }}
@@ -242,8 +242,8 @@ onMounted(() => {
           </div>
           <div class="min-w-0">
             <h2 class="truncate text-lg font-medium">{{ profile.nickname }}</h2>
-            <p class="text-sm text-white/50">{{ profile.phone }}</p>
-            <span class="mt-1 inline-block rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-white/60">
+            <p class="text-sm text-fg-3">{{ profile.phone }}</p>
+            <span class="mt-1 inline-block rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-fg-2">
               {{ membershipLabel }}
             </span>
           </div>
@@ -251,33 +251,33 @@ onMounted(() => {
       </section>
 
       <section class="rounded-2xl border border-white/8 bg-[#16161C] p-6">
-        <p class="text-sm text-white/45">创作能量</p>
+        <p class="text-sm text-fg-3">创作能量</p>
         <p class="mt-2 text-3xl font-semibold tabular-nums text-[var(--neo-warm)]">{{ profile.points ?? 0 }}</p>
-        <p v-if="isFreeMembership" class="mt-3 text-xs text-white/35">开通会员，获得更多积分与高级能力</p>
+        <p v-if="isFreeMembership" class="mt-3 text-xs text-fg-3">开通会员，获得更多积分与高级能力</p>
         <div class="mt-4 flex gap-3">
           <button type="button" class="flex-1 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-black" @click="showMembership = true">
             充值
           </button>
-          <button type="button" class="flex-1 rounded-xl border border-white/15 px-4 py-2.5 text-sm text-white/80" @click="showMembership = true">
+          <button type="button" class="flex-1 rounded-xl border border-white/15 px-4 py-2.5 text-sm text-fg" @click="showMembership = true">
             {{ isFreeMembership ? '升级会员' : '管理会员' }}
           </button>
         </div>
       </section>
 
       <section class="rounded-2xl border border-white/8 bg-[#16161C] p-6">
-        <p class="text-sm text-white/45">我的邀请码</p>
+        <p class="text-sm text-fg-3">我的邀请码</p>
         <div class="mt-2 flex items-center gap-3">
-          <code class="text-lg tracking-widest text-white">{{ profile.inviteCode ?? '—' }}</code>
+          <code class="text-lg tracking-widest text-fg">{{ profile.inviteCode ?? '—' }}</code>
           <button
             type="button"
-            class="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+            class="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-fg-2 transition hover:bg-white/[0.06] hover:text-fg disabled:opacity-40"
             :disabled="!profile.inviteCode"
             @click="copyInvite"
           >
             {{ inviteCopied ? '已复制' : '复制' }}
           </button>
         </div>
-        <p class="mt-3 text-sm text-white/50">已邀请 {{ profile.inviteeCount ?? 0 }} 人</p>
+        <p class="mt-3 text-sm text-fg-3">已邀请 {{ profile.inviteeCount ?? 0 }} 人</p>
       </section>
     </div>
 

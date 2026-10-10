@@ -263,7 +263,7 @@ onUnmounted(() => {
         />
       </div>
 
-      <p class="absolute bottom-5 left-1/2 z-[2] -translate-x-1/2 text-xs tracking-wide text-white/55">
+      <p class="absolute bottom-5 left-1/2 z-[2] -translate-x-1/2 text-xs tracking-wide text-fg-3">
         {{ caption }}
       </p>
     </div>
