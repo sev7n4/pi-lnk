@@ -167,8 +167,8 @@ onUnmounted(() => { if (playTimer) clearInterval(playTimer) })
 
 <template>
   <div class="flex h-[calc(100vh-4rem)]">
-    <aside class="flex w-[300px] shrink-0 flex-col border-r border-white/5 bg-surface-base">
-      <div class="border-b border-white/5 p-4">
+    <aside class="flex w-[300px] shrink-0 flex-col border-r border-overlay/5 bg-surface-base">
+      <div class="border-b border-overlay/5 p-4">
         <button class="btn-ghost mb-2 text-xs" @click="router.push(`/workflow/${sessionId}`)">← 返回画布</button>
         <h2 class="text-sm font-medium">{{ sessionTitle }}</h2>
         <p class="mt-1 text-xs text-fg-3">创作过程回放</p>
@@ -186,7 +186,7 @@ onUnmounted(() => { if (playTimer) clearInterval(playTimer) })
           class="mb-2 cursor-pointer rounded-lg border px-3 py-2 text-xs transition"
           :class="idx === currentStep
             ? 'border-[#6366f1]/50 bg-[#6366f1]/15 text-[#818cf8]'
-            : 'border-white/5 text-fg-2 hover:bg-white/5'"
+            : 'border-overlay/5 text-fg-2 hover:bg-overlay/5'"
           @click="goToStep(idx)"
         >
           <span class="text-[10px] uppercase text-fg-3">{{ step.role }}</span>
@@ -196,7 +196,7 @@ onUnmounted(() => { if (playTimer) clearInterval(playTimer) })
           暂无 Agent 对话记录
         </li>
       </ol>
-      <div v-if="agentDebug && graphTimeline.length" class="border-t border-white/5 p-3 text-[10px] text-fg-3">
+      <div v-if="agentDebug && graphTimeline.length" class="border-t border-overlay/5 p-3 text-[10px] text-fg-3">
         <p class="mb-1 font-medium text-fg-2">Graph timeline (debug)</p>
         <ul class="space-y-0.5">
           <li v-for="(e, i) in graphTimeline" :key="i">

@@ -30,12 +30,12 @@ const style = computed(() => computeRefPreviewStyle(props.anchor))
 <template>
   <Teleport to="body">
     <div
-      class="agent-ref-hover-preview pointer-events-auto fixed z-[130] w-[340px] max-h-[min(420px,70vh)] overflow-hidden rounded-xl border border-white/12 bg-[rgba(24,24,24,0.96)] shadow-2xl backdrop-blur-xl"
+      class="agent-ref-hover-preview pointer-events-auto fixed z-[130] w-[340px] max-h-[min(420px,70vh)] overflow-hidden rounded-xl border border-overlay/12 bg-[rgba(24,24,24,0.96)] shadow-2xl backdrop-blur-xl"
       :style="style"
       @mouseenter="emit('mouseenter')"
       @mouseleave="emit('mouseleave')"
     >
-      <div class="flex items-center border-b border-white/8 px-3 py-2">
+      <div class="flex items-center border-b border-overlay/8 px-3 py-2">
         <span class="truncate text-xs text-fg-2">{{ refItem.refKey }} · {{ refItem.label }}</span>
       </div>
 

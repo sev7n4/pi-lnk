@@ -115,7 +115,7 @@ function toggleVoice() {
     />
 
     <div class="bottom-toolbar-actions flex-wrap">
-      <div class="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5">
+      <div class="flex items-center gap-1 rounded-lg border border-overlay/10 bg-overlay/5 p-0.5">
         <button
           v-for="opt in SHOT_GENERATE_MODE_OPTIONS"
           :key="opt.value"

@@ -42,7 +42,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
 
 <template>
   <div
-    class="canvas-zoom-bar flex items-center gap-0.5 rounded-xl border border-white/10 bg-[rgba(20,20,20,0.92)] shadow-xl backdrop-blur-md"
+    class="canvas-zoom-bar flex items-center gap-0.5 rounded-xl border border-overlay/10 bg-[rgba(20,20,20,0.92)] shadow-xl backdrop-blur-md"
     :class="props.compact ? 'w-full flex-wrap p-0.5' : 'gap-1 p-1'"
   >
     <button type="button" class="bar-btn" title="缩小" @click="zoomBy(-10)">−</button>
@@ -62,7 +62,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
 
     <button type="button" class="bar-btn" title="放大" @click="zoomBy(10)">+</button>
 
-    <span class="mx-0.5 hidden h-4 w-px bg-white/10 sm:block" />
+    <span class="mx-0.5 hidden h-4 w-px bg-overlay/10 sm:block" />
 
     <button type="button" class="bar-btn" title="适应画布" @click="resetView">
       <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -74,7 +74,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
       <button
         type="button"
         class="bar-btn"
-        :class="showGridPanel ? 'bg-white/10 text-fg' : ''"
+        :class="showGridPanel ? 'bg-overlay/10 text-fg' : ''"
         title="网格设置"
         @click="showGridPanel = !showGridPanel"
       >
@@ -85,7 +85,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
 
       <div
         v-if="showGridPanel"
-        class="grid-settings-popover absolute bottom-full left-0 mb-2 w-[200px] rounded-xl border border-white/10 bg-surface-elevated p-3 shadow-xl"
+        class="grid-settings-popover absolute bottom-full left-0 mb-2 w-[200px] rounded-xl border border-overlay/10 bg-surface-elevated p-3 shadow-xl"
         @click.stop
       >
         <div class="mb-2 flex items-center justify-between">
@@ -93,7 +93,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="rounded-md px-2 py-0.5 text-[10px]"
-            :class="settings.gridVisible ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-white/5 text-fg-3'"
+            :class="settings.gridVisible ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-overlay/5 text-fg-3'"
             @click="patch({ gridVisible: !settings.gridVisible })"
           >
             {{ settings.gridVisible ? '显示' : '隐藏' }}
@@ -104,7 +104,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="flex-1 rounded-lg py-1 text-[10px]"
-            :class="settings.gridVariant === 'dots' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-white/5 text-fg-3'"
+            :class="settings.gridVariant === 'dots' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-overlay/5 text-fg-3'"
             @click="patch({ gridVariant: 'dots' })"
           >
             点阵
@@ -112,7 +112,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="flex-1 rounded-lg py-1 text-[10px]"
-            :class="settings.gridVariant === 'lines' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-white/5 text-fg-3'"
+            :class="settings.gridVariant === 'lines' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-overlay/5 text-fg-3'"
             @click="patch({ gridVariant: 'lines' })"
           >
             线格
@@ -147,7 +147,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
       </div>
     </div>
 
-    <span class="mx-0.5 h-4 w-px bg-white/10" />
+    <span class="mx-0.5 h-4 w-px bg-overlay/10" />
 
     <button
       type="button"
@@ -166,7 +166,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
 
 <style scoped>
 .bar-btn {
-  @apply flex h-6 w-6 items-center justify-center rounded-lg text-fg-2 transition hover:bg-white/10 hover:text-fg;
+  @apply flex h-6 w-6 items-center justify-center rounded-lg text-fg-2 transition hover:bg-overlay/10 hover:text-fg;
 }
 
 .zoom-slider {

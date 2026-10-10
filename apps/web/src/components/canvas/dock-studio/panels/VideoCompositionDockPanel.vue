@@ -166,7 +166,7 @@ function readSavedTracks(): CompositionTrackRecord[] {
         :href="exportedUrl"
         target="_blank"
         rel="noopener noreferrer"
-        class="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-fg-2"
+        class="rounded-lg border border-overlay/10 px-3 py-1.5 text-xs text-fg-2"
       >
         下载 MP4
       </a>

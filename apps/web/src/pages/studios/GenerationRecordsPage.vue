@@ -27,7 +27,7 @@ onMounted(load)
         v-for="t in (['all', 'image', 'video', 'audio'] as const)"
         :key="t"
         class="rounded-lg px-3 py-1.5 text-xs transition"
-        :class="filter === t ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-white/5 text-fg-2'"
+        :class="filter === t ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-overlay/5 text-fg-2'"
         @click="filter = t; load()"
       >
         {{ t === 'all' ? '全部' : t === 'image' ? '图像' : t === 'video' ? '视频' : '音频' }}
@@ -38,7 +38,7 @@ onMounted(load)
       <div
         v-for="item in records"
         :key="item.id"
-        class="flex items-center gap-4 rounded-xl border border-white/8 bg-surface-base p-4"
+        class="flex items-center gap-4 rounded-xl border border-overlay/8 bg-surface-base p-4"
       >
         <div class="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-surface-elevated">
           <img v-if="item.type !== 'audio' && item.url" :src="item.url" class="h-full w-full object-cover" alt="" />
@@ -46,7 +46,7 @@ onMounted(load)
         </div>
         <div class="min-w-0 flex-1">
           <div class="mb-1 flex items-center gap-2">
-            <span class="rounded bg-white/10 px-2 py-0.5 text-[10px] uppercase">{{ item.type }}</span>
+            <span class="rounded bg-overlay/10 px-2 py-0.5 text-[10px] uppercase">{{ item.type }}</span>
             <span class="text-[10px] text-fg-3">{{ item.status }}</span>
           </div>
           <p class="truncate text-sm">{{ item.prompt }}</p>

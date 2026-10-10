@@ -50,7 +50,7 @@ function onHoverLeave() {
 
 <template>
   <article
-    class="group cursor-pointer overflow-hidden rounded-2xl border border-white/[0.08] bg-surface-base transition hover:border-[#6366f1]/30 hover:shadow-lg hover:shadow-[#6366f1]/5"
+    class="group cursor-pointer overflow-hidden rounded-2xl border border-overlay/[0.08] bg-surface-base transition hover:border-[#6366f1]/30 hover:shadow-lg hover:shadow-[#6366f1]/5"
     @click="$emit('viewWork', work.id)"
     @mouseenter="onHoverEnter"
     @mouseleave="onHoverLeave"
@@ -89,7 +89,7 @@ function onHoverLeave() {
         </button>
         <button
           v-if="work.sessionId"
-          class="rounded-lg bg-white/10 px-3 py-1.5 text-xs backdrop-blur-sm transition hover:bg-white/20"
+          class="rounded-lg bg-overlay/10 px-3 py-1.5 text-xs backdrop-blur-sm transition hover:bg-overlay/20"
           @click.stop="$emit('viewProcess', work.id)"
         >
           制作过程

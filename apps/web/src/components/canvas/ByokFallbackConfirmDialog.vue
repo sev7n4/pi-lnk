@@ -34,7 +34,7 @@ function onCancel() {
     @click.self="onCancel"
   >
     <div
-      class="w-full max-w-md rounded-2xl border border-white/10 bg-surface-base p-5 text-fg shadow-2xl"
+      class="w-full max-w-md rounded-2xl border border-overlay/10 bg-surface-base p-5 text-fg shadow-2xl"
       role="dialog"
       aria-modal="true"
       aria-labelledby="byok-fallback-title"
@@ -46,7 +46,7 @@ function onCancel() {
       <div class="mt-5 flex justify-end gap-2">
         <button
           type="button"
-          class="rounded-lg px-3 py-1.5 text-sm text-fg-2 transition hover:bg-white/5"
+          class="rounded-lg px-3 py-1.5 text-sm text-fg-2 transition hover:bg-overlay/5"
           :disabled="loading"
           @click="onCancel"
         >

@@ -26,7 +26,7 @@ const cards = computed(() => [
       <div
         v-for="card in cards"
         :key="card.label"
-        class="rounded-xl border border-white/8 bg-surface-canvas p-4"
+        class="rounded-xl border border-overlay/8 bg-surface-canvas p-4"
       >
         <p class="text-xs text-fg-3">{{ card.label }}</p>
         <p class="mt-2 text-2xl font-semibold tabular-nums">{{ card.value }}</p>

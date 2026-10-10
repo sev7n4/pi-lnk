@@ -213,7 +213,7 @@ const canBatchGenerate = computed(() =>
           </button>
           <button
             type="button"
-            class="rounded-md border border-white/10 px-2 py-1 text-[10px] text-fg-2 hover:bg-white/5"
+            class="rounded-md border border-overlay/10 px-2 py-1 text-[10px] text-fg-2 hover:bg-overlay/5"
             :disabled="locked"
             @click="addShot(activeScene.id)"
           >
@@ -240,7 +240,7 @@ const canBatchGenerate = computed(() =>
                   :readonly="locked"
                   @input="updateShot(activeScene.id, shot.id, { title: ($event.target as HTMLInputElement).value })"
                 >
-                <div class="flex rounded-md border border-white/10 p-0.5">
+                <div class="flex rounded-md border border-overlay/10 p-0.5">
                   <button
                     v-for="opt in ([['image', '图'], ['video', '视'], ['none', '无']] as const)"
                     :key="opt[0]"
@@ -288,7 +288,7 @@ const canBatchGenerate = computed(() =>
 
       <button
         type="button"
-        class="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-fg-2 hover:bg-white/5"
+        class="rounded-lg border border-overlay/10 px-3 py-1.5 text-xs text-fg-2 hover:bg-overlay/5"
         :disabled="locked"
         @click="emit('save')"
       >

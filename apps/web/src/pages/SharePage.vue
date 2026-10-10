@@ -66,7 +66,7 @@ async function handleShare() {
     <div v-if="loading" class="aspect-video animate-pulse rounded-2xl bg-surface-base" />
 
     <template v-else-if="work">
-      <div class="overflow-hidden rounded-2xl border border-white/8 bg-surface-base">
+      <div class="overflow-hidden rounded-2xl border border-overlay/8 bg-surface-base">
         <div class="bg-black">
           <video
             v-if="isVideo && mediaUrl"

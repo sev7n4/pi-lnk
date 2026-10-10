@@ -1,6 +1,6 @@
 <template>
   <div
-    class="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-r from-indigo-950/40 to-[#1a1a1a]"
+    class="relative overflow-hidden rounded-2xl border border-overlay/[0.08] bg-gradient-to-r from-indigo-950/40 to-[#1a1a1a]"
   >
     <div class="flex min-h-[200px] items-center justify-center p-8">
       <div class="text-center">

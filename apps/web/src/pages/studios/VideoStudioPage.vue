@@ -56,7 +56,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
     <h1 class="mb-2 text-2xl font-semibold">视频工作室</h1>
     <p class="mb-6 text-sm text-fg-3">AI 视频生成，消耗 30 积分/次</p>
 
-    <div class="mb-8 max-w-2xl rounded-2xl border border-white/8 bg-surface-base p-4">
+    <div class="mb-8 max-w-2xl rounded-2xl border border-overlay/8 bg-surface-base p-4">
       <textarea v-model="prompt" class="input-field mb-3 min-h-[100px] w-full" placeholder="描述视频场景与运镜..." />
       <div class="mb-3 flex items-center gap-4">
         <label class="text-xs text-fg-3">时长 {{ duration }}s</label>
@@ -73,7 +73,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
     </div>
 
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-      <div v-for="item in records" :key="item.id" class="overflow-hidden rounded-xl border border-white/8 bg-surface-base">
+      <div v-for="item in records" :key="item.id" class="overflow-hidden rounded-xl border border-overlay/8 bg-surface-base">
         <div class="relative aspect-video bg-surface-elevated">
           <img v-if="item.url && item.status === 'completed'" :src="item.url" class="h-full w-full object-cover" alt="" />
           <div v-else class="flex h-full items-center justify-center text-sm text-yellow-400">生成中...</div>

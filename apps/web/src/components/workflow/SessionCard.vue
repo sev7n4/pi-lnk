@@ -32,7 +32,7 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
   >
     <label
       v-if="manageMode"
-      class="absolute left-2 top-2 z-20 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-white/20 bg-black/50"
+      class="absolute left-2 top-2 z-20 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-overlay/20 bg-black/50"
       @click.stop
     >
       <input

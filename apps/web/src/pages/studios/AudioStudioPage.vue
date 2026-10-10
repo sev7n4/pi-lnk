@@ -45,14 +45,14 @@ onMounted(loadRecords)
     <h1 class="mb-2 text-2xl font-semibold">音频工作室</h1>
     <p class="mb-6 text-sm text-fg-3">文本转语音 / 旁白生成，消耗 5 积分/次</p>
 
-    <div class="mb-8 max-w-2xl rounded-2xl border border-white/8 bg-surface-base p-4">
+    <div class="mb-8 max-w-2xl rounded-2xl border border-overlay/8 bg-surface-base p-4">
       <textarea v-model="text" class="input-field mb-3 min-h-[120px] w-full" placeholder="输入台词或旁白文本..." />
       <div class="mb-3 flex flex-wrap gap-2">
         <button
           v-for="v in voices"
           :key="v.id"
           class="rounded-lg px-3 py-1.5 text-xs transition"
-          :class="voice === v.id ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-white/5 text-fg-2'"
+          :class="voice === v.id ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-overlay/5 text-fg-2'"
           @click="voice = v.id"
         >
           {{ v.label }}
@@ -65,7 +65,7 @@ onMounted(loadRecords)
     </div>
 
     <div class="space-y-3">
-      <div v-for="item in records" :key="item.id" class="rounded-xl border border-white/8 bg-surface-base p-4">
+      <div v-for="item in records" :key="item.id" class="rounded-xl border border-overlay/8 bg-surface-base p-4">
         <p class="mb-2 text-sm">{{ item.prompt }}</p>
         <audio v-if="item.url" :src="item.url" controls class="w-full" />
       </div>
