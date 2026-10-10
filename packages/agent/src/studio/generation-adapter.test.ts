@@ -873,9 +873,10 @@ describe('catalogRows 注入（B2 S2-1c）', () => {
 
   it('②缺省（未注入）回落种子常量：DB-only 模型仍走既有 fallback 行为', () => {
     const out = buildVideoProviderOptions({ modelKey: 'db-only-video', duration: 5 })
-    expect(out.meta.modelKey).toBe('agnes-video-v2.0')
+    // 默认模型从 defaultModelKey 派生（2026-10-10 v2.0→2.5-flash 切换），不硬编码字面量
+    expect(out.meta.modelKey).toBe(shared.defaultModelKey('video'))
     expect(out.meta.modelFallback).toBe(true)
-    expect(out.providerOptions.model).toBe('agnes-video-v2.0')
+    expect(out.providerOptions.model).toBe(shared.defaultModelKey('video'))
   })
 
   it('②注入种子常量 rows ≡ 不注入（逐字段对拍，覆盖三模态）', () => {

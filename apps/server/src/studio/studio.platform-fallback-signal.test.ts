@@ -1,5 +1,6 @@
 import 'reflect-metadata'
 import { describe, expect, it } from 'vitest'
+import { defaultModelKey } from '@lnkpi/shared'
 import { StudioService } from './studio.service'
 
 /**
@@ -45,8 +46,9 @@ describe('platformGatewayModelId 的模型替换信号', () => {
 
   it('treats a missing modelKey as the default, NOT as a swap', () => {
     // 空 modelKey 走默认是正常路径，不是「用户选了别的被换掉」
+    // 默认值从 shared defaultModelKey 派生（2026-10-10 v2.0→2.5-flash 切换）
     const r = resolve('video', {})
     expect(r.modelFallback).toBeUndefined()
-    expect(r.gatewayModelId).toBe('agnes-video-v2.0')
+    expect(r.gatewayModelId).toBe(defaultModelKey('video'))
   })
 })

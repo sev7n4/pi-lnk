@@ -45,8 +45,9 @@ describe('resolveGenerationModel', () => {
   })
 
   it('裸名不在目录中 → 回落平台默认（与改动前一致）', () => {
+    // 从 defaultModelKey 派生而非硬编码字面量：默认模型切换（2026-10-10 v2.0→2.5-flash）不再碰测试
     expect(resolveGenerationModel('video', '完全不存在的模型-xyz')).toBe(
-      encodeChannelModel('platform', 'agnes-video-v2.0'),
+      encodeChannelModel('platform', defaultModelKey('video')),
     )
   })
 })

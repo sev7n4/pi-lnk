@@ -2,7 +2,7 @@ import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { createImageProvider, createVideoProvider, mergeRefsToPrompt } from '@lnkpi/agent'
-import { BYOK_FALLBACK_CONFIRM_MESSAGE } from '@lnkpi/shared'
+import { BYOK_FALLBACK_CONFIRM_MESSAGE, defaultModelKey } from '@lnkpi/shared'
 import { BadRequestException } from '@nestjs/common'
 import { createCancelFlag } from '../points/charge-session'
 import { MaterialService } from './material.service'
@@ -326,7 +326,8 @@ describe('MaterialService BYOK fallback_pending', () => {
     expect(videoGenerate).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        model: 'agnes-video-v2.0',
+        // 平台回落用目录默认视频模型（2026-10-10 v2.0→2.5-flash），从 shared 派生防漂移
+        model: defaultModelKey('video'),
         image: 'https://cdn.example.com/frame.png',
       }),
     )
