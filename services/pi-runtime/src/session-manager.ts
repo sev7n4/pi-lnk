@@ -56,6 +56,13 @@ import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
 import { pickLatestPlanDecision, seedPlanState } from "./gate/plan-gate.js";
 import {
+	isSubagentTool,
+	SUBAGENT_REPORT_MAX_CHARS,
+	SUBAGENT_TIMEOUT_MS,
+	SUBAGENT_TURN_BUDGET,
+	type SubagentOutcome,
+} from "./gate/subagent.js";
+import {
 	createTurnBudgetState,
 	turnBudgetOnTurnStart,
 	turnBudgetRunEnd,
@@ -293,6 +300,15 @@ interface SessionEntry {
 	stallSettled?: boolean;
 	/** C2 turnBudget per-run 状态（run_start/turn_start/run_end 事件维护；纯内存，重启即失）。 */
 	turnBudget: TurnBudgetState;
+	/** C4：per-entry turn 预算覆盖（子代理=30）。undefined = 用全局 turnBudgetLimit。 */
+	turnBudgetLimit?: number;
+	/**
+	 * C4：子会话白名单工具名（build() 装配 ensemble 时快照）。runSubagent 用它对 lane
+	 * 做 setActiveTools 覆盖——fork 还原的盘上 lane config 带着来源会话的全量
+	 * activeToolNames（含白名单外工具），不覆盖会在 vendor generation 校验
+	 * （activeToolNames ⊆ config.tools）处撞 configured_tools_unavailable，run 直接 failed。
+	 */
+	subagentToolNames?: string[];
 }
 
 const BUFFER_LIMIT = 500;
@@ -428,6 +444,10 @@ export interface CreateOptions {
 	 * 两者都要：前者回答「这个会话目录是哪版规则建的」，后者回答「现在跑的是哪版」。
 	 */
 	promptInfo?: PromptInfo;
+	/** C4 内部（runSubagent 专用，Nest 入参不透传）：子会话工具表按白名单过滤。 */
+	subagentTools?: boolean;
+	/** C4 内部：per-entry turn 预算覆盖（子代理 = SUBAGENT_TURN_BUDGET）。 */
+	turnBudgetLimit?: number;
 }
 
 export interface CreateResult {
@@ -879,6 +899,7 @@ export class SessionManager {
 			droppedFromSeq: 0,
 			activityStep: 0,
 			turnBudget: createTurnBudgetState(),
+			turnBudgetLimit: opts.turnBudgetLimit,
 			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
 			// 字段（app.ts:113），传空串 / 不传时这里**不能**退化成「没有 base prompt」——
 			// 否则默认系统提示被整段顶替掉（生产上表现为 agent 没有任何基础人设，只剩裸动态段）。
@@ -925,7 +946,16 @@ export class SessionManager {
 			promptHash: opts.promptInfo?.promptHash,
 		});
 
-		const toolEnsemble = this.getToolEnsemble();
+		// C4：子会话 ensemble 按白名单过滤（tiering 强制 off——白名单全量激活，无 tool_search），
+		// 不走缓存（主会话 ensemble 与子会话 ensemble 是两个不同集合）。
+		const toolEnsemble = opts.subagentTools
+			? buildToolEnsemble(
+					this.tools.filter((t) => isSubagentTool(t.name)) as LnkpiTool[],
+					false,
+					undefined,
+				)
+			: this.getToolEnsemble();
+		if (opts.subagentTools) entry.subagentToolNames = toolEnsemble.registered.map((t) => t.name);
 		// ⚠️ `open` 是 vendor 在 attach 时从盘上还原出来的**未完成 operation** 列表
 		// （`createAgentHarness` → `restoreSession`）。2026-10-07 之前这里只解构了
 		// `harness`，`open` 被整个丢弃 —— 那正是「lane 被孤儿 operation 永久占死」的
@@ -1429,7 +1459,9 @@ export class SessionManager {
 
 	/** turn_start 计数入口。warn/exceed 的副作用全部 fail-soft，绝不影响事件分发主链路。 */
 	private turnBudgetTick(entry: SessionEntry, runId: string | undefined): void {
-		const budget = this.turnBudgetLimit();
+		// C4：per-entry 预算覆盖优先（子代理=30，三件套不可禁用——全局 off 也不旁路子代理）。
+		const globalBudget = this.turnBudgetLimit();
+		const budget = entry.turnBudgetLimit ?? globalBudget;
 		if (budget === "off") return;
 		const action = turnBudgetOnTurnStart(entry.turnBudget, runId, budget);
 		if (action === "warn") {
@@ -2225,6 +2257,146 @@ export class SessionManager {
 			{ env: source.env, repo: source.repo, session: forkedSession },
 		);
 		return { newKey: rawNewKey, newSessionId };
+	}
+
+	/**
+	 * C4：运行一个只读 Explore 子代理（spec docs/superpowers/specs/2026-10-10-c4-subagent-design.md
+	 * §3.1/§3.2/§3.4）。fork 主会话全量历史 → 白名单 ensemble 建 sub entry → 同步 await
+	 * lane.prompt（三重硬边界内）→ 提取最终报告 → 清理。
+	 *
+	 * 与公共 fork() 的唯一语义分歧：**不检查 source.prompting**——spawn 本就发生在主 run
+	 * 进行中的工具执行内；vendor fork 读快照 + fresh idle lane（session/types.ts ForkOptions），
+	 * 串台风险不成立（公共 fork 的守卫是产品级 fail-closed，非 vendor 限制）。
+	 *
+	 * ⚠️ 清理铁律：sub entry 结束只 `sessions.delete` + `harness.close`——**绝不**
+	 * releaseHandles（其 env/repo 与来源会话共享，误清 = 主会话瘫痪）。
+	 */
+	async runSubagent(
+		piSessionKey: string,
+		task: string,
+		opts?: { timeoutMs?: number },
+	): Promise<SubagentOutcome> {
+		const t0 = Date.now();
+		const source = this.require(piSessionKey);
+		if (!source.session || !source.sessionMeta) {
+			throw new Error(`session ${source.id} missing underlying session snapshot; cannot spawn subagent`);
+		}
+		// 全量历史：entryId 缺省 = 当前 tip、position 缺省含 tip（session/types.ts ForkOptions）。
+		const forkedSession = await source.repo.fork(
+			source.sessionMeta,
+			{ scope: "branch", branch: MAIN_LANE },
+			this.context,
+		);
+		const subKey = toSessionKey(`${source.id}__sub_${forkedSession.metadata.id}`);
+		await this.build(
+			subKey,
+			{
+				systemPrompt: source.basePrompt,
+				workingDir: source.sessionMeta.cwd,
+				canvasSessionId: source.canvasSessionId,
+				userId: source.userId,
+				thinkingLevel: source.thinkingLevel,
+				subagentTools: true,
+				turnBudgetLimit: SUBAGENT_TURN_BUDGET,
+			},
+			source.models,
+			source.model,
+			source.identity,
+			{ env: source.env, repo: source.repo, session: forkedSession },
+		);
+		const sub = this.sessions.get(subKey);
+		if (!sub) throw new Error(`subagent entry ${subKey} missing after build`);
+		sub.prompting = true; // 防其他入口（prompt/steer/followUp）误用子会话
+		let timedOut = false;
+		try {
+			const lane = await sub.harness.lane(MAIN_LANE, this.context);
+			// fork 还原的盘上 lane config 带着**来源会话**的全量 activeToolNames（restore.ts
+			// 原样还原、seed 只对新建 lane 生效），而子 harness 的 config.tools 是白名单子集
+			// ——vendor generation 校验 activeToolNames ⊆ config.tools 会撞
+			// configured_tools_unavailable（run 直接 failed）。官方覆盖口：setActiveTools
+			// 落在 fork 出来的子会话自己的存储上，不触碰主会话。
+			if (sub.subagentToolNames) {
+				await lane.setActiveTools(sub.subagentToolNames, this.context);
+			}
+			const run = withCancel(this.context);
+			sub.cancelRun = run.cancel;
+			sub.userAborted = false;
+			const timer = setTimeout(() => {
+				timedOut = true;
+				run.cancel();
+			}, opts?.timeoutMs ?? SUBAGENT_TIMEOUT_MS);
+			let result: { ok: boolean; value?: { status?: string; error?: unknown }; error?: unknown };
+			try {
+				result = (await lane.prompt(task, undefined, run.context)) as {
+					ok: boolean;
+					value?: { status?: string; error?: unknown };
+					error?: unknown;
+				};
+			} catch (err) {
+				// 预算硬停（turnBudgetHardStop）/ 超时 / 取消都经 cancel(run.context) 表达，
+				// vendor 对在途 run 以 throw AbortError 结束（主链路 prompt() 的 catch
+				// userAborted 同款语义）。按可见状态归类，绝不外抛——SubagentCoordinator
+				// 契约：promise 永不 reject，失败兜底转 failed outcome（settled/timedOut
+				// 检查在其前，budget_exceeded / timeout 优先级不受影响）。
+				result = { ok: false, error: err };
+			} finally {
+				clearTimeout(timer);
+			}
+			// ⚠️ result.ok 只是 vendor 的信封（operation 跑到终态），**run 真实状态在
+			// result.value.status**（TerminalStatus：completed/declined/aborted/failed）——
+			// configured_tools_unavailable 等配置失败也是 ok:true + status:"failed"，把信封
+			// ok 当 run 成功会把失败静默报成 completed（探针实锤）。
+			const outcome = result.ok
+				? (result.value ?? {})
+				: { status: "failed", error: result.error };
+			const turns = sub.turnBudget.count;
+			const durationMs = Date.now() - t0;
+			const report = (await this.extractSubagentReport(lane)).slice(0, SUBAGENT_REPORT_MAX_CHARS);
+			// 状态判定优先级：预算超限（settled 闸是权威信号——forceSettle 会把 run 折叠成
+			// 正常结算的 completed，run status 不可信）> 超时（我们 cancel）> run 终态 > 其他失败。
+			if (sub.turnBudget.settled) {
+				return { report, turns, durationMs, status: "budget_exceeded" };
+			}
+			if (timedOut) {
+				return { report, turns, durationMs, status: "timeout" };
+			}
+			if (outcome.status === "completed") {
+				return { report, turns, durationMs, status: "completed" };
+			}
+			return { report, turns, durationMs, status: "failed" };
+		} finally {
+			// 清理铁律：只摘内存 + 关子 harness；绝不 releaseHandles（env/repo 共享）。
+			this.sessions.delete(subKey);
+			await sub.harness.close(this.context).catch(() => {});
+		}
+	}
+
+	/** 子 run 报告提取：transcript 倒序找第一条有文本的 assistant 消息（plan-gate 扫描同款防御式形状）。 */
+	private async extractSubagentReport(lane: AgentLane): Promise<string> {
+		const entries = await lane
+			.findEntries({ order: "newestFirst" }, this.context)
+			.then((v) => (Array.isArray(v) ? v : []), () => []);
+		for (const e of entries) {
+			const entry = e as {
+				role?: string;
+				content?: unknown;
+				message?: { role?: string; content?: unknown };
+			} | null;
+			if (!entry) continue;
+			const role = entry.message?.role ?? entry.role;
+			if (role !== "assistant") continue;
+			const content = entry.message?.content ?? entry.content;
+			const text = Array.isArray(content)
+				? content
+						.filter((p) => (p as { type?: string })?.type === "text")
+						.map((p) => (p as { text?: string })?.text ?? "")
+						.join("\n")
+				: typeof content === "string"
+					? content
+					: "";
+			if (text.trim()) return text.trim();
+		}
+		return "";
 	}
 
 	async remove(threadKey: string): Promise<boolean> {

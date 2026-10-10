@@ -70,7 +70,7 @@ describe("白名单判定（spec §3.3 副作用面三类）", () => {
 				...buildTodoTools(),
 				...buildCanvasReadTools(client),
 				...buildWebTools(),
-				...buildReadDocumentTools(client),
+				...buildReadDocumentTools(),
 				...buildMemoryTools(client),
 			].map((t) => t.name),
 		);
