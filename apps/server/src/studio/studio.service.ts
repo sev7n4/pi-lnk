@@ -909,12 +909,6 @@ export class StudioService {
     if (!trimmed) throw new BadRequestException('prompt 不能为空')
     const cost = 5
     const chargeReason = '提示词模式生成'
-    await this.points.consume(
-      userId,
-      cost,
-      chargeReason,
-      consumeMeta('text', { model: model ?? null, generationId: null }),
-    )
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
     const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('text', resolved.modelName)
     const gatewayModelId =
@@ -931,6 +925,37 @@ export class StudioService {
       ...(fallback && resolved.source === 'platform' ? { modelFallback: true } : {}),
       ...(guideSceneId ? { guideSceneId } : {}),
       ...(mentionedKeys?.length ? { mentionedKeys } : {}),
+    }
+
+    // 账本对账（G3 归零复查 2026-10-10）：generatePrompt 原为「先扣费后建记录」，
+    // consume/refund 的 generationId 写死 null，成功/失败的 GenerationRecord 后置创建
+    // 永远无法与积分交易关联（生产实测 15 笔 consume + 15 笔 refund 全 NULL，
+    // 15 条 type='prompt' 记录零关联孤儿）。改造为 record-first，与 generateText /
+    // generateImage 主路径同构：先建 generating 占位再扣费，扣费失败立即删占位。
+    const record = await this.prisma.generationRecord.create({
+      data: {
+        userId,
+        type: 'prompt',
+        prompt: trimmed,
+        model: storeModel,
+        url: null,
+        status: 'generating',
+        metadata: JSON.stringify(applyChargeMeta({ ...baseMeta }, cost)),
+        ...withCanvasScope(scope),
+      },
+    })
+    try {
+      await this.points.consume(
+        userId,
+        cost,
+        chargeReason,
+        consumeMeta('text', { model: model ?? null, generationId: record.id }),
+      )
+    } catch (err) {
+      await this.prisma.generationRecord
+        .delete({ where: { id: record.id } })
+        .catch(() => undefined)
+      throw err
     }
 
     try {
@@ -955,23 +980,28 @@ export class StudioService {
           `${chargeReason}-取消退款`,
           refundMeta('text', 'cancelled_refund', {
             model: resolved.modelName,
-            generationId: null,
+            generationId: record.id,
           }),
         )
+        await this.prisma.generationRecord.update({
+          where: { id: record.id },
+          data: {
+            status: 'failed',
+            metadata: JSON.stringify(
+              applyRefundMeta(applyChargeMeta({ ...baseMeta }, cost), cost, 'cancelled'),
+            ),
+          },
+        })
         throwCancelledException(cost)
       }
-      return this.prisma.generationRecord.create({
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
         data: {
-          userId,
-          type: 'prompt',
-          prompt: trimmed,
-          model: storeModel,
           url: null,
           status: 'completed',
           metadata: JSON.stringify(
             applyChargeMeta({ ...baseMeta, mode, content, visionUsed }, cost),
           ),
-          ...withCanvasScope(scope),
         },
       })
     } catch (err) {
@@ -983,29 +1013,24 @@ export class StudioService {
           `${chargeReason}-失败退款`,
           refundMeta('text', 'failed_refund', {
             model: resolved.modelName,
-            generationId: null,
+            generationId: record.id,
           }),
         )
         const failedMeta = applyFailureDiagnosticMeta(
           applyRefundMeta(applyChargeMeta({ ...baseMeta }, cost), cost, 'platform_failed'),
           err,
         )
-        const failed = await this.prisma.generationRecord.create({
+        await this.prisma.generationRecord.update({
+          where: { id: record.id },
           data: {
-            userId,
-            type: 'prompt',
-            prompt: trimmed,
-            model: storeModel,
-            url: null,
             status: 'failed',
             metadata: JSON.stringify(failedMeta),
-            ...withCanvasScope(scope),
           },
         })
         throwGenerationFailure({
           userMessage: String(failedMeta.userMessage ?? '生成失败'),
           errorCode: failedMeta.errorCode as ErrorCode,
-          taskId: failed.id,
+          taskId: record.id,
           refundedPoints: cost,
         })
       }
@@ -1015,15 +1040,12 @@ export class StudioService {
         `${chargeReason}-BYOK失败退款`,
         refundMeta('text', 'byok_refund', {
           model: resolved.modelName,
-          generationId: null,
+          generationId: record.id,
         }),
       )
-      return this.prisma.generationRecord.create({
+      return this.prisma.generationRecord.update({
+        where: { id: record.id },
         data: {
-          userId,
-          type: 'prompt',
-          prompt: trimmed,
-          model: storeModel,
           url: null,
           status: 'fallback_pending',
           metadata: JSON.stringify(
@@ -1032,7 +1054,6 @@ export class StudioService {
               ...baseMeta,
             }),
           ),
-          ...withCanvasScope(scope),
         },
       })
     }
