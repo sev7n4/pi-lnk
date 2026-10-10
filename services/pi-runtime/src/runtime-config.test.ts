@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { loadRuntimeConfig, parseBool, parsePositiveInt, DEFAULT_RUNTIME_CONFIG, askUserBlocking, askUserTimeoutMs, effectiveCompactionSettings } from "./runtime-config.js";
+import { loadRuntimeConfig, parseBool, parsePositiveInt, DEFAULT_RUNTIME_CONFIG, DEFAULT_TURN_BUDGET, askUserBlocking, askUserTimeoutMs, effectiveCompactionSettings, turnBudget } from "./runtime-config.js";
 
 describe("parsePositiveInt", () => {
 	it("合法正整数原样返回", () => {
@@ -226,3 +226,26 @@ describe("effectiveCompactionSettings（审计 P0-①）", () => {
 		const ok = loadRuntimeConfig({ PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS: "4" });
 		assert.equal(ok.directImageHistoryRounds, 4);
 	});
+
+describe("turnBudget（C2）", () => {
+	it("缺省 120", () => {
+		assert.equal(turnBudget(undefined), DEFAULT_TURN_BUDGET);
+	});
+	it("正整数直通", () => {
+		assert.equal(turnBudget("8"), 8);
+		assert.equal(turnBudget(" 120 "), 120);
+	});
+	it('"off" 大小写不敏感整体关闭', () => {
+		for (const v of ["off", "OFF", "Off", " off "]) assert.equal(turnBudget(v), "off");
+	});
+	it("非法值回落 120（0/负数/非数字/空串）", () => {
+		for (const v of ["abc", "12abc", "0", "-5", ""]) {
+			assert.equal(turnBudget(v), DEFAULT_TURN_BUDGET);
+		}
+	});
+	it("loadRuntimeConfig 接线 PI_RUNTIME_TURN_BUDGET", () => {
+		assert.equal(loadRuntimeConfig({}).turnBudget, 120);
+		assert.equal(loadRuntimeConfig({ PI_RUNTIME_TURN_BUDGET: "8" }).turnBudget, 8);
+		assert.equal(loadRuntimeConfig({ PI_RUNTIME_TURN_BUDGET: "off" }).turnBudget, "off");
+	});
+});

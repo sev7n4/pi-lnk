@@ -279,3 +279,20 @@ test("tool_calls_total 全局只渲染一次（新旧渲染方不共存）", () 
 		"HELP 行出现多次 ⇒ Prometheus 会丢弃该指标");
 	assert.equal(out.includes('kind="'), false, "旧 kind 标签仍在渲染");
 });
+
+test("C2 turnBudget 计数器：warn/exceeded 渲染", () => {
+	const m = new Metrics();
+	m.observeTurnBudgetWarned();
+	m.observeTurnBudgetWarned();
+	m.observeTurnBudgetExceeded();
+	const text = m.render(0, "0.0.15");
+	assert.match(text, /pi_runtime_turn_budget_warned_total 2/);
+	assert.match(text, /pi_runtime_turn_budget_exceeded_total 1/);
+});
+
+test("C2 turnBudget 计数器：零样本渲染 0（标量 counter 语义）", () => {
+	const m = new Metrics();
+	const text = m.render(0, "0.0.15");
+	assert.match(text, /pi_runtime_turn_budget_warned_total 0/);
+	assert.match(text, /pi_runtime_turn_budget_exceeded_total 0/);
+});

@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| 版本 | v1.0.0（draft-review） |
+| 版本 | v1.1.0（implemented） |
 | 日期 | 2026-10-10 |
 | 模块 | 任务管理模块 §C2（L5 规模控制） |
 | 上游 | `2026-10-09-task-management-module-design.md`（原则 §2.2）、`2026-10-09-workbuddy-task-planning-benchmark.md`（L5/P3） |
-| 状态 | 已立项，未实现 |
+| 状态 | 已实现（feat/turn-budget） |
 
 ## 1. 背景与目标
 
