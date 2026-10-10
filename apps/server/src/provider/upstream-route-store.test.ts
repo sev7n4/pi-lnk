@@ -173,6 +173,44 @@ describe('缓存（TTL 惰性刷新，同 T1 形态；T3b 接 routesVersion 失�
     // 刷新失败 → 旧缓存仍在（行数不变）
     expect(currentUpstreamRoutes().length).toBe(goodRows.length)
   })
+
+  it('B3 空表保护：load 返回空数组时旧缓存保留（对称 model-catalog-store）；后续正常装载仍生效', async () => {
+    // 空表保护下 cachedAt 不更新 ⇒ 每次读取都可能再链式触发一次刷新；
+    // 断言前必须把在途刷新（含链式）全部等完，否则会误等到旧刷新。
+    async function settleRefresh(): Promise<void> {
+      for (;;) {
+        const p = __upstreamRouteRefreshInFlightForTests()
+        if (!p) return
+        await p
+      }
+    }
+
+    const { prisma, state } = makeFakePrisma()
+    __registerUpstreamRoutePrismaForTests(prisma as never)
+    await refreshUpstreamRouteCache(prisma as never)
+    const goodRows = currentUpstreamRoutes()
+    expect(goodRows).toHaveLength(UPSTREAM_ROUTE_SEEDS.length)
+
+    // DB 瞬时读空（findMany 返回 []）：刷新后旧缓存逐条保留，绝不被空表冲掉
+    const emptyPrisma = {
+      upstreamRoute: {
+        findMany: vi.fn(async () => []),
+        create: vi.fn(async () => ({})),
+      },
+    }
+    __registerUpstreamRoutePrismaForTests(emptyPrisma as never)
+    __expireUpstreamRouteCacheForTests()
+    currentUpstreamRoutes() // 同步返回旧值，异步触发刷新
+    await settleRefresh()
+    expect(currentUpstreamRoutes()).toEqual(goodRows)
+
+    // 正常装载不受保护影响：DB 重新有行 → 装载即生效（新行可见）。
+    // 直调 refresh（确定性）：异步 TTL 路径已有上方用例与「DB 新增行」用例覆盖。
+    __registerUpstreamRoutePrismaForTests(prisma as never)
+    state.rows.push(makeSeedRow({ id: 'row-after-empty', matchType: 'exact', pattern: 'recovered-model', capability: 'text', upstream: 'stepfun', priority: 50 }))
+    await refreshUpstreamRouteCache(prisma as never)
+    expect(currentUpstreamRoutes().find((r) => r.pattern === 'recovered-model')).toBeDefined()
+  })
 })
 
 describe('bootstrap 落定信号（B3 热修：startup 探活等待路由就绪）', () => {

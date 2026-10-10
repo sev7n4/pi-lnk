@@ -142,12 +142,20 @@ let refreshInFlight: Promise<void> | null = null
 /**
  * bootstrap = 播种 + 装载 + 刷新缓存。由 UpstreamRouteSeedService.onModuleInit
  * 触发（非阻塞）；也可被 TTL 惰性刷新复用。失败向上抛给调用方处理（保旧缓存）。
+ *
+ * B3：装载空表不写缓存（与 model-catalog-store 补对称）——DB 瞬时读空（故障/竞态）
+ * 不把旧路由表冲掉；`currentUpstreamRoutes()` 冷启动初值仍为 `[]`（消费方空表
+ * 语义不变：resolver 确定性抛错 / 探活组内跳过）。空表也保旧值的代价是「admin
+ * 删光全部路由行」不会清缓存——由 TTL 每次读取重试装载兜底，且运营删光路由属
+ * 异常态（default 行恒在），可接受。
  */
 export async function refreshUpstreamRouteCache(prisma: PrismaClient): Promise<void> {
   await seedUpstreamRoutes(prisma)
   const rows = await loadUpstreamRouteRows(prisma)
-  cachedRows = rows
-  cachedAt = Date.now()
+  if (rows.length > 0) {
+    cachedRows = rows
+    cachedAt = Date.now()
+  }
 }
 
 /** 当前生效路由行（同步、缓存优先）：T3b 的 resolver 查表/探活分组消费。 */

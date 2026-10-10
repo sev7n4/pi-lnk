@@ -15,6 +15,7 @@ interface StoredRun {
   ghosts: string | null
   missing: string | null
   error: string | null
+  reason: string | null
 }
 
 /**
@@ -80,6 +81,7 @@ describe('UpstreamProbeAdminController（A6：GET /api/admin/upstream-probe/late
         ghosts: '["agnes-image-2.0-flash"]',
         missing: '[]',
         error: null,
+        reason: null, // B3 前的旧行：reason 列为 NULL
       },
       {
         id: 'run-new',
@@ -90,6 +92,7 @@ describe('UpstreamProbeAdminController（A6：GET /api/admin/upstream-probe/late
         ghosts: '[]',
         missing: '["brand-new-model"]',
         error: null,
+        reason: 'startup',
       },
       {
         id: 'run-fail',
@@ -100,6 +103,7 @@ describe('UpstreamProbeAdminController（A6：GET /api/admin/upstream-probe/late
         ghosts: null,
         missing: null,
         error: 'HTTP 402（余额不足）',
+        reason: null, // B3 前的旧行：reason 列为 NULL
       },
     )
 
@@ -116,8 +120,11 @@ describe('UpstreamProbeAdminController（A6：GET /api/admin/upstream-probe/late
       ghosts: [],
       missing: ['brand-new-model'],
       error: null,
+      // B3 新字段：触发来源透出
+      reason: 'startup',
     })
-    expect(byUpstream['apimart']).toMatchObject({ error: 'HTTP 402（余额不足）', httpStatus: 402 })
+    // 旧行 reason=null 不破坏既有消费：latest 响应字段可空、原样透出 null
+    expect(byUpstream['apimart']).toMatchObject({ error: 'HTTP 402（余额不足）', httpStatus: 402, reason: null })
     // 其余上游无 run ⇒ 不出现
     expect(res.data.runs).toHaveLength(2)
   })

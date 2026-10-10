@@ -1,11 +1,12 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common'
-import { STUDIO_MODEL_CATALOG, resolveUpstreamRoute, type ModelCapability, type UpstreamId, type UpstreamRouteRow } from '@lnkpi/shared'
+import { resolveUpstreamRoute, type ModelCapability, type UpstreamId, type UpstreamRouteRow } from '@lnkpi/shared'
 import {
   diffCatalogAgainstUpstream,
   type UpstreamId as ReconciliationUpstreamId,
 } from '@lnkpi/shared/upstreamReconciliation'
 import { PrismaService } from '../prisma/prisma.service'
 import { PLATFORM_CHANNEL_ID } from './provider.service'
+import { currentCatalogEntries } from './model-catalog-store'
 import { currentUpstreamRoutes, whenUpstreamRoutesBootstrapped } from './upstream-route-store'
 import {
   bumpConsecutiveFailures,
@@ -288,7 +289,10 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
    */
   async probeOnce(reason: 'manual' | 'periodic' | 'startup' = 'manual'): Promise<void> {
     try {
-      const catalogEntries: ProbeCatalogEntry[] = STUDIO_MODEL_CATALOG.map((entry) => ({
+      // B3：目录来源从种子常量切 DB 目录（model-catalog-store，同 resolver/镜像对齐真源）——
+      // admin 新增/下架模型自动进探活分组与对账。缓存初值=种子常量（未注册 prisma 时
+      // currentCatalogEntries() 返回 STUDIO_MODEL_CATALOG），存量分组结果逐条不变。
+      const catalogEntries: ProbeCatalogEntry[] = currentCatalogEntries().map((entry) => ({
         modelKey: entry.modelKey,
         gatewayModelId: entry.gatewayModelId,
         modality: entry.modality,
@@ -345,7 +349,7 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
       console.log(
         `[MPH][probe] upstream=${upstream.id} outcome=${outcome.kind === 'noModelsEndpoint' ? 'NO_MODELS_ENDPOINT' : 'unavailable'} reason=${JSON.stringify(outcome.error)}`,
       )
-      await this.writeRunRecord(upstream.id, outcome, null, null)
+      await this.writeRunRecord(upstream.id, outcome, null, null, reason)
       return
     }
 
@@ -416,7 +420,7 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
       )
     }
 
-    await this.writeRunRecord(upstream.id, outcome, diff.ghosts, missing)
+    await this.writeRunRecord(upstream.id, outcome, diff.ghosts, missing, reason)
   }
 
   /** 单上游只读 GET /v1/models。绝不抛出——失败一律折叠为 failed(reason)。 */
@@ -529,6 +533,7 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
     outcome: Exclude<ProbeOutcome, { kind: 'ok' }> | { kind: 'ok'; httpStatus: number; ids: string[] },
     ghosts: readonly string[] | null,
     missing: readonly string[] | null,
+    reason: 'manual' | 'periodic' | 'startup',
   ): Promise<void> {
     await this.prisma.upstreamProbeRun.create({
       data: {
@@ -538,6 +543,8 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
         ghosts: ghosts === null ? null : JSON.stringify(ghosts),
         missing: missing === null ? null : JSON.stringify(missing),
         error: outcome.kind === 'ok' ? null : outcome.error,
+        // B3：触发来源落列（旧行为 NULL）；admin latest 透出供运维区分 startup/periodic/manual。
+        reason,
       },
     })
   }

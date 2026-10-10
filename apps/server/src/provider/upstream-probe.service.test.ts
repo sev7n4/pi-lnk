@@ -5,8 +5,16 @@ import {
   resolveUpstreamRoute,
   STUDIO_MODEL_CATALOG,
   UPSTREAM_ROUTE_SEEDS,
+  type StudioModelEntry,
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+import {
+  __resetModelCatalogStoreForTests,
+  __registerModelCatalogPrismaForTests,
+  __modelCatalogRefreshInFlightForTests,
+  currentCatalogEntries,
+  type ModelCatalogEntryRow,
+} from './model-catalog-store'
 import {
   __resetUpstreamRouteStoreForTests,
   __setCachedUpstreamRoutesForTests,
@@ -60,6 +68,7 @@ interface StoredRun {
   ghosts: string | null
   missing: string | null
   error: string | null
+  reason: string | null
 }
 
 type ModelFixture = { name: string; capability: string; availability?: string }
@@ -205,6 +214,9 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
     svc?.onModuleDestroy()
     consoleLogSpy.mockRestore()
     process.env = savedEnv
+    // B3：探活分组切 DB 目录——逐用例重置 catalog store 缓存/句柄，
+    // 防 DB-only fixture 泄漏进其他用例（重置后 currentCatalogEntries() 回落种子常量）。
+    __resetModelCatalogStoreForTests()
     vi.restoreAllMocks()
   })
 
@@ -494,6 +506,83 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
     await svc.probeOnce('manual')
     const run = agnesRun(1)
     expect(run.ghosts).toBe(JSON.stringify([GHOST_MODEL]))
+  })
+
+  it('B3 探活分组切 DB 目录：DB-only 条目（admin 新增）真实进分组与对账（ghost/matched 双向具体值断言）', async () => {
+    // DB-only 条目：modelKey 与 gatewayModelId 不同名 —— ghosts 报 modelKey、
+    // 匹配走 gatewayModelId（upstreamReconciliation 语义），两侧断言互不混淆。
+    const DB_ONLY_ENTRY: StudioModelEntry = {
+      modelKey: 'agnes-db-only-probe-model',
+      displayName: 'DB-only 探活对账用例',
+      gatewayModelId: 'db-only-gateway-id',
+      modality: 'text',
+      providerBinding: 'gateway-openai-compat',
+      params: { model: 'native' },
+    }
+    const catalogRow = (entry: StudioModelEntry, id: string): ModelCatalogEntryRow => ({
+      id,
+      modelKey: entry.modelKey,
+      displayName: entry.displayName,
+      gatewayModelId: entry.gatewayModelId,
+      modality: entry.modality,
+      providerBinding: entry.providerBinding,
+      audioKind: entry.audioKind ?? null,
+      voices: entry.voices ? JSON.stringify(entry.voices) : null,
+      params: JSON.stringify(entry.params),
+      defaults: entry.defaults ? JSON.stringify(entry.defaults) : null,
+      deletedAt: null,
+    })
+    const dbRows = [
+      ...STUDIO_MODEL_CATALOG.map((entry, i) => catalogRow(entry, `row-${i}`)),
+      catalogRow(DB_ONLY_ENTRY, 'row-db-only'),
+    ]
+    // catalog store 走真实装载路径（fixture 已含全部种子 modelKey ⇒ 播种零插入，
+    // create 若被调用即响亮失败）：findMany 返回种子行 + DB-only 行。
+    const catalogPrisma = {
+      modelCatalogEntry: {
+        findMany: vi.fn(async () => dbRows.map((r) => ({ ...r }))),
+        create: vi.fn(async () => {
+          throw new Error('播种不应插入：fixture 已含全部种子 modelKey')
+        }),
+      },
+    }
+    __resetModelCatalogStoreForTests()
+    __registerModelCatalogPrismaForTests(catalogPrisma as never)
+    currentCatalogEntries() // 触发 TTL 惰性刷新（异步装载）
+    await __modelCatalogRefreshInFlightForTests()
+    // 前置证据：DB-only 条目确已进目录缓存（不只 mock 透传）
+    expect(currentCatalogEntries().some((e) => e.modelKey === DB_ONLY_ENTRY.modelKey)).toBe(true)
+
+    // 轮 1：agnes 清单不含 DB-only gatewayModelId ⇒ 该条目被判 ghost（报 modelKey）
+    agnesResolves(AGNES_IDS)
+    await compile()
+    await svc.probeOnce('manual')
+    const ghostRun = agnesRun(1)
+    expect(ghostRun.ghosts).toBe(JSON.stringify([DB_ONLY_ENTRY.modelKey]))
+    expect(ghostRun.modelCount).toBe(AGNES_IDS.length)
+
+    // 轮 2：agnes 清单补上 DB-only gatewayModelId ⇒ matched（ghosts 空，modelCount +1）
+    agnesResolves([...AGNES_IDS, DB_ONLY_ENTRY.gatewayModelId])
+    await svc.probeOnce('manual')
+    const matchedRun = agnesRun(2)
+    expect(matchedRun.ghosts).toBe('[]')
+    expect(matchedRun.modelCount).toBe(AGNES_IDS.length + 1)
+  })
+
+  it('B3 writeRunRecord 落 reason 列：failed/ok 两种 outcome 均透传触发来源（periodic/startup）', async () => {
+    agnesUnreachable()
+    await compile()
+    await svc.probeOnce('startup')
+    const failedRun = agnesRun(1)
+    expect(failedRun.reason).toBe('startup')
+    expect(failedRun.error).toMatch(/网络错误/)
+
+    agnesResolves(AGNES_IDS)
+    await svc.probeOnce('periodic')
+    const okRun = agnesRun(2)
+    expect(okRun.reason).toBe('periodic')
+    expect(okRun.modelCount).toBe(AGNES_IDS.length)
+    expect(okRun.ghosts).toBe('[]')
   })
 })
 
