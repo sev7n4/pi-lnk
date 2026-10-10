@@ -14,6 +14,7 @@ import {
 import { withVideoRetry } from './video-retry'
 import { UPSTREAM_POLL_TIMEOUT_MS, upstreamFetch } from './upstream-fetch'
 import { createPollErrorTracker, isRetryableUpstreamError } from './upstream-retry'
+import { ZhipuVideoProvider, isZhipuBaseUrl, isZhipuVideoModel } from './zhipu-video-provider'
 
 export interface VideoGenerateOptions {
   model?: string
@@ -482,6 +483,16 @@ export function isFalBaseUrl(baseUrl?: string): boolean {
 export type ProviderCredentialOpts = { apiKey?: string; baseUrl?: string; model?: string }
 
 export function createVideoProvider(opts?: ProviderCredentialOpts): VideoProvider {
+  if (isZhipuVideoModel(opts?.model) || isZhipuBaseUrl(opts?.baseUrl)) {
+    if (!opts?.apiKey) {
+      throw new Error('未配置智谱 API Key（ZHIPU_API_KEY）')
+    }
+    return new ZhipuVideoProvider(
+      opts.apiKey,
+      opts.baseUrl || process.env.ZHIPU_BASE_URL || undefined,
+      opts.model,
+    )
+  }
   if (isFalVideoModel(opts?.model) || isFalBaseUrl(opts?.baseUrl)) {
     if (!opts?.apiKey) {
       throw new Error('视频加速通道未配置')

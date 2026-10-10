@@ -10,7 +10,7 @@ import {
   mergeRefsToPrompt,
 } from '@lnkpi/agent'
 import { BadRequestException } from '@nestjs/common'
-import { BYOK_FALLBACK_CONFIRM_MESSAGE } from '@lnkpi/shared'
+import { BYOK_FALLBACK_CONFIRM_MESSAGE, defaultModelKey } from '@lnkpi/shared'
 import { createCancelFlag } from '../points/charge-session'
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
@@ -357,7 +357,7 @@ describe('StudioService BYOK fallback_pending', () => {
     const result = await svc.confirmPlatformFallback('u1', 'g1')
     expect(result.status).toBe('completed')
     expect(createTextProvider).toHaveBeenCalledWith(undefined)
-    expect(textGenerate).toHaveBeenCalledWith('hello', 'agnes-2.0-flash')
+    expect(textGenerate).toHaveBeenCalledWith('hello', defaultModelKey('text'))
     const [[, modelArg]] = textGenerate.mock.calls
     expect(modelArg).not.toBe('custom-model')
   })

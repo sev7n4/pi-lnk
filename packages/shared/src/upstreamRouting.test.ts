@@ -50,10 +50,10 @@ const ALIAS_KEYS = [
 ]
 
 describe('A1 对拍有效性断言（先证明 fixture 非空集、覆盖 5 上游）', () => {
-  it('fixture 规模：目录 25 条 + 幽灵 3 条 = 28；别名补充 5 条', () => {
-    expect(CATALOG_KEYS).toHaveLength(25)
+  it('fixture 规模：目录 26 条 + 幽灵 3 条 = 29；别名补充 5 条', () => {
+    expect(CATALOG_KEYS).toHaveLength(26)
     expect(GHOST_KEYS).toHaveLength(3)
-    expect(FIXTURE_KEYS).toHaveLength(28)
+    expect(FIXTURE_KEYS).toHaveLength(29)
     expect(ALIAS_KEYS).toHaveLength(5)
   })
 
@@ -78,7 +78,7 @@ describe('A1 对拍有效性断言（先证明 fixture 非空集、覆盖 5 上�
 })
 
 describe('A1 硬门禁：28 条 × 4 capability × legacy/新表逐条一致', () => {
-  it('全量对比无分歧（132 组对比，逐条真实值比对）', () => {
+  it('全量对比无分歧（136 组对比，逐条真实值比对）', () => {
     const keys = [...FIXTURE_KEYS, ...ALIAS_KEYS]
     const mismatches: string[] = []
     let comparisons = 0
@@ -92,8 +92,8 @@ describe('A1 硬门禁：28 条 × 4 capability × legacy/新表逐条一致', (
         }
       }
     }
-    // 有效性：132 = (28 + 5) × 4，逐条真实值比对非抽样
-    expect(comparisons).toBe(132)
+    // 有效性：136 = (29 + 5) × 4，逐条真实值比对非抽样
+    expect(comparisons).toBe(136)
     expect(mismatches, mismatches.join('\n')).toEqual([])
   })
 

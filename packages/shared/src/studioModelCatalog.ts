@@ -137,6 +137,17 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
     providerBinding: 'gateway-openai-compat',
     params: TEXT_PARAMS,
   },
+  {
+    // 2026-10-10：agnes-2.0-flash 从上游分销渠道消失后的接位模型（上游 /v1/models
+    // 在售，BYOK 渠道同日实证 2发2成）。纯函数 fallback（defaultModelKey('text')）
+    // 依赖本条目存在——与 DB 目录（admin POST 同 key）双写一致。
+    modelKey: 'agnes-2.5-flash',
+    displayName: 'Agnes 2.5 Flash',
+    gatewayModelId: 'agnes-2.5-flash',
+    modality: 'text',
+    providerBinding: 'gateway-openai-compat',
+    params: TEXT_PARAMS,
+  },
   /*
    * 2026-10-09 探活下架（agnes hub 无渠道，见 docs/superpowers/specs/2026-10-09-model-platform-hardening-design.md §2.4），
    * 上游开通后按 S1-1 探活对账结果重新上架。
@@ -435,7 +446,10 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
 ]
 
 const DEFAULT_MODEL_KEYS: Record<StudioModality, string> = {
-  text: 'agnes-2.0-flash',
+  // ⚠️ 2026-10-10：agnes-2.0-flash 已从上游分销渠道消失（/v1/models 实测无此模型，
+  // 24h 20发0败），默认切 agnes-2.5-flash（BYOK 渠道同日 2发2成）——同 v2.0 视频模式：
+  // 目录运营端点 DELETE 防呆以此常量判定默认模型，切默认是下架旧模型的前置。
+  text: 'agnes-2.5-flash',
   image: 'agnes-image-2.1-flash',
   // ⚠️ 2026-10-10：agnes 官方已于 2026-09-25 下线 agnes-video-v2.0（分发渠道
   // 10-09 深夜才实际切断），目录运营端点 DELETE 防呆以此常量判定默认模型，

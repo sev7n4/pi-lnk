@@ -5,6 +5,7 @@ export const DEFAULT_APIMART_BASE_URL = 'https://api.apimart.ai/v1'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_MINIMAX_BASE_URL = 'https://api.minimax.io'
 export const DEFAULT_STEPFUN_BASE_URL = 'https://api.stepfun.com/v1'
+export const DEFAULT_ZHIPU_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'
 
 export type PlatformCredentialEnv = {
   apimartApiKey?: string
@@ -17,6 +18,8 @@ export type PlatformCredentialEnv = {
   minimaxBaseUrl?: string
   stepfunApiKey?: string
   stepfunBaseUrl?: string
+  zhipuApiKey?: string
+  zhipuBaseUrl?: string
 }
 
 function readEnv(name: string): string | undefined {
@@ -46,6 +49,8 @@ export function readPlatformCredentialEnv(
     stepfunApiKey: env.stepfunApiKey ?? readEnv('STEPFUN_API_KEY') ?? '',
     stepfunBaseUrl:
       env.stepfunBaseUrl ?? readEnv('STEPFUN_BASE_URL') ?? DEFAULT_STEPFUN_BASE_URL,
+    zhipuApiKey: env.zhipuApiKey ?? readEnv('ZHIPU_API_KEY') ?? '',
+    zhipuBaseUrl: env.zhipuBaseUrl ?? readEnv('ZHIPU_BASE_URL') ?? DEFAULT_ZHIPU_BASE_URL,
   }
 }
 
