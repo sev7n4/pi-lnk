@@ -296,3 +296,24 @@ test("C2 turnBudget 计数器：零样本渲染 0（标量 counter 语义）", (
 	assert.match(text, /pi_runtime_turn_budget_warned_total 0/);
 	assert.match(text, /pi_runtime_turn_budget_exceeded_total 0/);
 });
+
+test("C4 subagent 计数器：spawned/rejected/outcome 渲染", () => {
+	const m = new Metrics();
+	m.observeSubagentSpawned();
+	m.observeSubagentRejected("concurrency_full");
+	m.observeSubagentOutcome("completed");
+	m.observeSubagentOutcome("timeout");
+	const text = m.render(0, "test");
+	assert.match(text, /pi_runtime_subagent_spawned_total 1/);
+	assert.match(text, /pi_runtime_subagent_rejected_total\{reason="concurrency_full"\} 1/);
+	assert.match(text, /pi_runtime_subagent_outcome_total\{status="completed"\} 1/);
+	assert.match(text, /pi_runtime_subagent_outcome_total\{status="timeout"\} 1/);
+});
+
+test("C4 subagent 计数器：零样本渲染 0（标量 counter 语义；Map 族空集不渲染行 = C3 planGateBlocked 同款）", () => {
+	const m = new Metrics();
+	const text = m.render(0, "test");
+	assert.match(text, /pi_runtime_subagent_spawned_total 0/);
+	assert.doesNotMatch(text, /pi_runtime_subagent_rejected_total\{reason=/);
+	assert.doesNotMatch(text, /pi_runtime_subagent_outcome_total\{status=/);
+});

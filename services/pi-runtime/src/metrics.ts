@@ -94,6 +94,9 @@ export class Metrics {
 	private planGateBlocked = new Map<string, number>(); // key: tool——planPending 期间被拦的写工具
 	private turnBudgetWarned = 0; // C2 预算将尽 steer 提醒次数
 	private turnBudgetExceeded = 0; // C2 超限硬停次数
+	private subagentSpawned = 0; // C4 spawn_subagent 成功受理次数
+	private subagentRejected = new Map<string, number>(); // C4 key: reason (concurrency_full|not_attached)
+	private subagentOutcome = new Map<string, number>(); // C4 key: status (completed|failed|timeout|budget_exceeded)
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	/**
@@ -287,6 +290,19 @@ export class Metrics {
 
 	observeTurnBudgetExceeded(): void {
 		this.turnBudgetExceeded += 1;
+	}
+
+	/** C4 subagent 观测（spec §3.5）：spawned 在受理时，rejected 在并发满/未接线时，outcome 在子 run 结算时。 */
+	observeSubagentSpawned(): void {
+		this.subagentSpawned += 1;
+	}
+
+	observeSubagentRejected(reason: "concurrency_full" | "not_attached"): void {
+		this.subagentRejected.set(reason, (this.subagentRejected.get(reason) ?? 0) + 1);
+	}
+
+	observeSubagentOutcome(status: "completed" | "failed" | "timeout" | "budget_exceeded"): void {
+		this.subagentOutcome.set(status, (this.subagentOutcome.get(status) ?? 0) + 1);
 	}
 
 	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
@@ -507,6 +523,22 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_turn_budget_exceeded_total Runs hard-stopped by the turn budget (C2).");
 	lines.push("# TYPE pi_runtime_turn_budget_exceeded_total counter");
 	lines.push(`pi_runtime_turn_budget_exceeded_total ${this.turnBudgetExceeded}`);
+
+	lines.push("# HELP pi_runtime_subagent_spawned_total Subagent spawns accepted (C4).");
+	lines.push("# TYPE pi_runtime_subagent_spawned_total counter");
+	lines.push(`pi_runtime_subagent_spawned_total ${this.subagentSpawned}`);
+
+	lines.push("# HELP pi_runtime_subagent_rejected_total Subagent spawn attempts rejected, by reason (C4).");
+	lines.push("# TYPE pi_runtime_subagent_rejected_total counter");
+	for (const [reason, count] of [...this.subagentRejected.entries()].sort()) {
+		lines.push(`pi_runtime_subagent_rejected_total{reason="${reason}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_subagent_outcome_total Subagent run outcomes, by status (C4).");
+	lines.push("# TYPE pi_runtime_subagent_outcome_total counter");
+	for (const [status, count] of [...this.subagentOutcome.entries()].sort()) {
+		lines.push(`pi_runtime_subagent_outcome_total{status="${status}"} ${count}`);
+	}
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
 		lines.push("# TYPE pi_runtime_skills_loaded gauge");
