@@ -18,7 +18,7 @@
  */
 
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common'
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import {
   assertRoutePatternSafe,
   UPSTREAM_ROUTE_SEEDS,
@@ -29,7 +29,7 @@ import {
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 
-/** 进程内缓存 TTL（毫秒）。与 model-catalog-store 同值；T3b 接 routesVersion 失效后此值仅兜底。 */
+/** 进程内缓存 TTL（毫秒）。与 model-catalog-store 同值；S2-2b 运营写端点显式刷新后此值仅兜底（跨实例 5s 内生效）。 */
 export const UPSTREAM_ROUTE_CACHE_TTL_MS = 5_000
 
 const VALID_MATCH_TYPES: readonly UpstreamRouteMatchType[] = ['prefix', 'exact', 'regex', 'default']
@@ -194,6 +194,44 @@ export function __upstreamRouteRefreshInFlightForTests(): Promise<void> | null {
 /** 测试专用：把缓存标记为刚过期（下一次 currentUpstreamRoutes 触发刷新）。 */
 export function __expireUpstreamRouteCacheForTests(): void {
   cachedAt = 0
+}
+
+/** 测试专用：直接注入缓存路由行（单测无 DB 场景；不影响 registeredPrisma/TTL 状态）。 */
+export function __setCachedUpstreamRoutesForTests(rows: readonly UpstreamRouteRow[]): void {
+  cachedRows = [...rows]
+  cachedAt = Date.now()
+}
+
+// ── routesVersion（S2-2b：运营端点写 bump；与 catalogVersion 同表分域） ──
+
+/**
+ * routesVersion 单行的固定主键。存储落点裁定（T2 ModelCatalogVersion **同表加第二行**，
+ * 不建新表）：`ModelCatalogVersion` 实际是「按 id 分域的单行版本计数表」（id 为自由
+ * 主键、upsert increment 同型），加 `id='routes'` 行即可复用同一套原子 +1 语义——
+ * 零 DDL/零迁移、竞态回归锁（T2 集成测试）同源；`catalog` 行查询走 findUnique(id)
+ * 互不干扰。schema 注释已同步（仅注释，免迁移）。
+ */
+export const ROUTES_VERSION_ROW_ID = 'routes'
+
+/** 读当前路由版本号。版本行不存在（未写过）视作 0。 */
+export async function readUpstreamRoutesVersion(prisma: PrismaClient): Promise<number> {
+  const row = await prisma.modelCatalogVersion.findUnique({ where: { id: ROUTES_VERSION_ROW_ID } })
+  return row?.version ?? 0
+}
+
+/**
+ * 路由版本号原子 +1 并返回新值（单调递增、last-write-win）。
+ * SQL 层 `increment`（同 bumpModelCatalogVersion）：并发两写各自完整 +1，不丢计数。
+ */
+export async function bumpUpstreamRoutesVersion(
+  prisma: PrismaClient | Prisma.TransactionClient,
+): Promise<number> {
+  const row = await prisma.modelCatalogVersion.upsert({
+    where: { id: ROUTES_VERSION_ROW_ID },
+    update: { version: { increment: 1 } },
+    create: { id: ROUTES_VERSION_ROW_ID, version: 1 },
+  })
+  return row.version
 }
 
 /**

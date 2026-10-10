@@ -2,9 +2,15 @@ import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { NotFoundException } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
+import { UPSTREAM_ROUTE_SEEDS } from '@lnkpi/shared'
 import { CryptoService } from './crypto.service'
 import { PLATFORM_CHANNEL_ID } from './provider.service'
 import { ProviderResolverService } from './provider-resolver.service'
+import {
+  __resetUpstreamRouteStoreForTests,
+  __setCachedUpstreamRoutesForTests,
+} from './upstream-route-store'
+import { resolvePlatformAudioFallback } from '../studio/audio-kind'
 import { PrismaService } from '../prisma/prisma.service'
 
 type ChannelRow = {
@@ -63,6 +69,10 @@ describe('ProviderResolverService', () => {
     delete process.env.MINIMAX_BASE_URL
     delete process.env.STEPFUN_API_KEY
     delete process.env.STEPFUN_BASE_URL
+    // S2-2b 查表化：内存 prisma 无 UpstreamRoute 表 —— 直接注入种子路由行到 store 缓存
+    // （registeredPrisma 不注册 ⇒ TTL 刷新不会触发，缓存即测试注入值）。
+    __resetUpstreamRouteStoreForTests()
+    __setCachedUpstreamRoutesForTests([...UPSTREAM_ROUTE_SEEDS])
     prisma = createMemoryPrisma([
       {
         id: PLATFORM_CHANNEL_ID,
@@ -424,5 +434,50 @@ describe('ProviderResolverService', () => {
     expect(
       (await resolver.resolveForGeneration('u1', 'platform::minimax-h3', 'video')).credentials,
     ).toEqual({ apiKey: 'minimax-env-key', baseUrl: 'https://api.minimax.io' })
+  })
+
+  it('A6：路由命中但缺 key —— baseUrl 仍指向阶跃 + 下游回退通路显式报错（文案含「未配置」，绝不静默回落）', async () => {
+    const result = await resolver.resolveForGeneration(
+      'u1',
+      'platform::stepaudio-3-music-preview',
+      'audio',
+    )
+    // resolver 层：绝不静默错路由到 OpenAI 端点/密钥
+    expect(result.credentials.apiKey).not.toBe('platform-env-key')
+    expect(result.credentials.apiKey).toBeFalsy()
+    expect(result.credentials.baseUrl).toBe('https://api.stepfun.com/v1')
+    // 下游回退通路（audio fallback）：既有显式失败语义，错误文案含「未配置」
+    const fallback = resolvePlatformAudioFallback('stepaudio-3-music-preview')
+    expect(fallback.ok).toBe(false)
+    if (!fallback.ok) expect(fallback.reason).toContain('未配置')
+  })
+
+  it('A6：apimart 主 key 缺失时按命中行 fallbackApiKeyEnvName 回落 OPENAI_API_KEY', async () => {
+    delete process.env.APIMART_API_KEY
+    const result = await resolver.resolveForGeneration('u1', 'platform::seedream-5.0-pro', 'image')
+    expect(result.credentials).toEqual({
+      apiKey: 'platform-env-key',
+      baseUrl: 'https://api.apimart.ai/v1',
+    })
+  })
+
+  it('查表化：路由行是数据真源 —— 禁用 stepfun 行后 stepaudio-* 落 default（agnes hub）', async () => {
+    __setCachedUpstreamRoutesForTests(
+      UPSTREAM_ROUTE_SEEDS.map((row) =>
+        row.upstream === 'stepfun' ? { ...row, enabled: false } : { ...row },
+      ),
+    )
+    const result = await resolver.resolveForGeneration('u1', 'platform::stepaudio-3-tts', 'audio')
+    expect(result.credentials).toEqual({
+      apiKey: 'platform-env-key',
+      baseUrl: 'https://platform.example.com/v1',
+    })
+  })
+
+  it('查表化：缓存为空且无 default 行 → 确定性抛错（A3，绝不静默回落 OpenAI 链）', async () => {
+    __setCachedUpstreamRoutesForTests([])
+    await expect(
+      resolver.resolveForGeneration('u1', 'platform::agnes-2.0-flash', 'text'),
+    ).rejects.toThrow(/禁止回落 OpenAI 链/)
   })
 })

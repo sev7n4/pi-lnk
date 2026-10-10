@@ -1,8 +1,12 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common'
-import { STUDIO_MODEL_CATALOG } from '@lnkpi/shared'
-import { diffCatalogAgainstUpstream } from '@lnkpi/shared/upstreamReconciliation'
+import { STUDIO_MODEL_CATALOG, resolveUpstreamRoute, type ModelCapability, type UpstreamId, type UpstreamRouteRow } from '@lnkpi/shared'
+import {
+  diffCatalogAgainstUpstream,
+  type UpstreamId as ReconciliationUpstreamId,
+} from '@lnkpi/shared/upstreamReconciliation'
 import { PrismaService } from '../prisma/prisma.service'
 import { PLATFORM_CHANNEL_ID } from './provider.service'
+import { currentUpstreamRoutes } from './upstream-route-store'
 import {
   bumpConsecutiveFailures,
   planAvailabilityWrites,
@@ -66,25 +70,67 @@ const RECENT_SUCCESS_WINDOW_MS = 24 * 60 * 60_000
  */
 const GENERATION_SUCCESS_STATUSES = ['completed']
 
+/** 探活分组的目录条目形状（modality 供路由表 capability 维度判定）。 */
+export interface ProbeCatalogEntry {
+  readonly modelKey: string
+  readonly gatewayModelId: string
+  readonly modality: ModelCapability
+}
+
 /**
- * family→upstream 路由表 + 上游 env 清单：**与 ops/probe-upstream-models.mjs（S0-3）
- * 逐字一致，与 platformCredentials.ts 保持一致，S2-2 后改为数据化路由表**。
- * ⛔ 不要在这里发明第二套映射——两处必须同步修改。
+ * routing UpstreamId（路由表，shared upstreamRouting）→ 对账 UpstreamId
+ * （shared upstreamReconciliation / 探活 run 记录 / ops 脚本 env 前缀）。
+ * ⛔ B1 裁定延续：两套 id 并存且都不改名（路由表 'agnes_hub' vs 对账 'agnes'），
+ * 探活接线必须经本**穷举 switch 显式映射**，禁止任何字符串拼接/替换绕过映射。
  */
-const UPSTREAM_ROUTING_MAP = [
-  { upstream: 'stepfun', pattern: /^step|^seed-audio/i },
-  { upstream: 'minimax', pattern: /^minimax-h3$|^minimax-speech/i },
-  { upstream: 'fal', pattern: /h3-max/i },
-  {
-    upstream: 'apimart',
-    pattern:
-      /^seedance-|^doubao-seedance-|^wan-|^seedream-|^doubao-seedream-|^gpt-image-2|^image2$|^midjourney-|^navo-|^happyhose-/i,
-  },
-  { upstream: 'agnes', pattern: /^agnes-/i },
-] as const
+export function toReconciliationUpstreamId(upstream: UpstreamId): ReconciliationUpstreamId {
+  switch (upstream) {
+    case 'agnes_hub':
+      return 'agnes'
+    case 'apimart':
+      return 'apimart'
+    case 'fal':
+      return 'fal'
+    case 'minimax':
+      return 'minimax'
+    case 'stepfun':
+      return 'stepfun'
+  }
+}
+
+/**
+ * S2-2b 探活分组：对每个目录条目按路由表解析归属上游（resolveUpstreamRoute 单胜者：
+ * priority 降序、同分 exact > prefix > regex —— **同名模型双行配置也只归路由指向的
+ * 那一家**，A5），再按对账上游 id 分组。未命中且无可用 default 行的条目（如运营禁用
+ * default 行的配置态）不归任何上游：本轮跳过对账并上报，绝不算 ghost。
+ */
+export function groupCatalogEntriesByUpstream(
+  routeRows: readonly UpstreamRouteRow[],
+  catalogEntries: readonly ProbeCatalogEntry[],
+): { byUpstream: Map<ReconciliationUpstreamId, ProbeCatalogEntry[]>; unroutable: string[] } {
+  const byUpstream = new Map<ReconciliationUpstreamId, ProbeCatalogEntry[]>()
+  const unroutable: string[] = []
+  for (const entry of catalogEntries) {
+    let upstream: ReconciliationUpstreamId
+    try {
+      // resolveUpstreamRoute 内部排序需可变数组：拷贝一份（每轮一次，28 行量级）。
+      upstream = toReconciliationUpstreamId(
+        resolveUpstreamRoute([...routeRows], entry.modelKey, entry.modality).upstream,
+      )
+    } catch {
+      unroutable.push(entry.modelKey)
+      continue
+    }
+    const bucket = byUpstream.get(upstream)
+    if (bucket) bucket.push({ ...entry })
+    else byUpstream.set(upstream, [{ ...entry }])
+  }
+  return { byUpstream, unroutable }
+}
 
 interface ProbeUpstream {
-  readonly id: string
+  /** 对账上游 id（ReconciliationUpstreamId；与探活 run 记录 / ops 脚本 env 前缀一致）。 */
+  readonly id: ReconciliationUpstreamId
   readonly baseUrlEnv: string
   readonly keyEnv: string
   readonly defaultBaseUrl: string
@@ -188,6 +234,11 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
     // unref：探活器绝不阻止进程退出（Ruling C：手动 setInterval + unref）。
     this.timer.unref?.()
     this.logger.log(`[MPH][probe] 定时探活已注册：每 ${minutes} 分钟一轮`)
+    // B1 登记顺手项（S2-2b 落地）：注册后立即触发启动首轮 —— 非阻塞（不 await、
+    // probeOnce 整体吞异常）、失败绝不阻断启动；日志来源=startup 与 periodic 区分
+    // （可观测判据：startup 首轮失败只落 run 记录 / error 日志，进程照常起）。
+    this.logger.log('[MPH][probe] 触发启动首轮探活（来源=startup）')
+    void this.probeOnce('startup')
   }
 
   onModuleDestroy(): void {
@@ -196,15 +247,28 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * 单轮探活：对 5 个上游逐一 GET /v1/models → diff → 灰显判定 → 镜像读写 → run 落库。
-   * 单上游失败不影响其余上游；整轮异常被吞掉（只记日志），绝不向上抛。
+   * 单轮探活：按路由表把目录条目分组到 5 个上游 → 逐一 GET /v1/models → diff →
+   * 灰显判定 → 镜像读写 → run 落库。单上游失败不影响其余上游；整轮异常被吞掉
+   * （只记日志），绝不向上抛。
    */
-  async probeOnce(reason: 'manual' | 'periodic' = 'manual'): Promise<void> {
+  async probeOnce(reason: 'manual' | 'periodic' | 'startup' = 'manual'): Promise<void> {
     try {
-      const catalogEntries = STUDIO_MODEL_CATALOG.map((entry) => ({
+      const catalogEntries: ProbeCatalogEntry[] = STUDIO_MODEL_CATALOG.map((entry) => ({
         modelKey: entry.modelKey,
         gatewayModelId: entry.gatewayModelId,
+        modality: entry.modality,
       }))
+      // S2-2b：路由行取自 upstream-route-store 缓存（运营改路由 → 写端点显式刷新 +
+      // 5s TTL 跨实例兜底，探活周期分钟级 ⇒ 下个探活周期必见新路由，不热重启）。
+      const { byUpstream, unroutable } = groupCatalogEntriesByUpstream(
+        currentUpstreamRoutes(),
+        catalogEntries,
+      )
+      if (unroutable.length > 0) {
+        this.logger.warn(
+          `[MPH][probe] ${unroutable.length} 个目录条目未命中任何路由行且无可用 default 行，本轮跳过对账（不算 ghost）：${JSON.stringify(unroutable)}`,
+        )
+      }
       const channel = await this.prisma.providerChannel.findUnique({
         where: { id: PLATFORM_CHANNEL_ID },
       })
@@ -213,7 +277,13 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
 
       for (const upstream of PROBE_UPSTREAMS) {
         try {
-          await this.probeUpstream(upstream, prevModels, catalogEntries, dispatcher, reason)
+          await this.probeUpstream(
+            upstream,
+            prevModels,
+            byUpstream.get(upstream.id) ?? [],
+            dispatcher,
+            reason,
+          )
         } catch (err) {
           // 单上游异常（含落库失败）不拖垮其余上游
           this.logger.error(
@@ -229,9 +299,9 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
   private async probeUpstream(
     upstream: ProbeUpstream,
     prevModels: readonly ModelEntryLike[],
-    catalogEntries: readonly { modelKey: string; gatewayModelId: string }[],
+    entries: readonly ProbeCatalogEntry[],
     dispatcher: unknown,
-    reason: 'manual' | 'periodic',
+    reason: 'manual' | 'periodic' | 'startup',
   ): Promise<void> {
     const outcome = await this.fetchUpstreamModels(upstream, dispatcher)
 
@@ -244,10 +314,12 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
       return
     }
 
+    // S2-2b：归属分组已在 probeOnce 由路由表完成（组内条目全数指向本上游）；
+    // 这里的单规则 map 只是 diffCatalogAgainstUpstream 的分组直通垫片（⛔ 非第二套路由映射）。
     const diff: UpstreamDiffLike = diffCatalogAgainstUpstream(
-      catalogEntries,
+      entries,
       outcome.ids,
-      UPSTREAM_ROUTING_MAP,
+      [{ upstream: upstream.id, pattern: /.*/ }],
       { targetUpstream: upstream.id },
     )
 
