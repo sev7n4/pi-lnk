@@ -2,7 +2,7 @@ import 'reflect-metadata'
 import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
-import { IMPORT_PLACE_MARGIN, rectsOverlap, unionNodeBBox, type CanvasData } from '@lnkpi/shared'
+import { IMPORT_PLACE_MARGIN, rectsOverlap, unionNodeBBox, STUDIO_MODEL_CATALOG, type CanvasData, type StudioModelEntry } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { PersistRemoteService } from '../assets/persist-remote.service'
 import { StudioService } from '../studio/studio.service'
@@ -11,6 +11,20 @@ import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestr
 import { MaterialService } from '../canvas/material.service'
 import { ProviderService } from '../provider/provider.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+
+// B2 S2-1e：audioKind 派生走 DB 目录缓存。默认实现返回种子常量
+// （与真实缓存的初值/无 DB 环境行为一致），用例内可注入 DB-only 条目。
+const { currentCatalogEntries } = vi.hoisted(() => ({
+  currentCatalogEntries: vi.fn(),
+}))
+
+vi.mock('../provider/model-catalog-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../provider/model-catalog-store')>()
+  return {
+    ...actual,
+    currentCatalogEntries,
+  }
+})
 
 const emptyCanvas = (): CanvasData => ({ nodes: [], edges: [] })
 
@@ -63,6 +77,8 @@ describe('AgentCanvasToolsService', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    currentCatalogEntries.mockReset()
+    currentCatalogEntries.mockImplementation(() => STUDIO_MODEL_CATALOG)
     canvas = emptyCanvas()
     sessionFindUnique.mockImplementation(async () => ({
       id: 's1',
@@ -2844,6 +2860,49 @@ describe('AgentCanvasToolsService', () => {
     it('非 audio 模态不带 audioKind 字段', async () => {
       const out = await svc.listNodeModelOptions({ userId: 'u1' })
       expect(out.modalities.image.every((m) => !('audioKind' in m))).toBe(true)
+    })
+
+    // B2 S2-1e：audioKind 派生走 DB 目录缓存——admin 新增的 music 模型不在常量目录，
+    // 旧实现（常量 getModelEntry）会误判 voice，agent 拿到错误分类就无法自主选对。
+    it('audioKind 派生走 DB 目录缓存（DB-only music 模型不再误判 voice）', async () => {
+      const dbOnlyMusic: StudioModelEntry = {
+        modelKey: 'stepmusic-db-only',
+        displayName: 'DB 新增音乐模型',
+        gatewayModelId: 'stepmusic-db-only-gw',
+        modality: 'audio',
+        audioKind: 'music',
+        providerBinding: 'gateway-openai-compat',
+        params: { model: 'native' },
+      }
+      currentCatalogEntries.mockImplementation(() => [...STUDIO_MODEL_CATALOG, dbOnlyMusic])
+      providerBootstrap.mockResolvedValue({
+        platformChannel: { id: 'platform', name: '平台', models: [] },
+        channels: [],
+        preferences: {
+          selectableImageModels: [],
+          selectableVideoModels: [],
+          selectableTextModels: [],
+          selectableAudioModels: ['platform::stepmusic-db-only'],
+        },
+      })
+
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      expect(out.modalities.audio).toEqual([
+        {
+          ref: 'platform::stepmusic-db-only',
+          model: 'stepmusic-db-only',
+          channelId: 'platform',
+          channelName: '平台',
+          source: 'platform',
+          audioKind: 'music',
+        },
+      ])
+    })
+
+    it('audioKind 派生缺省回落种子常量（常量目录模型行为不变）', async () => {
+      const out = await svc.listNodeModelOptions({ userId: 'u1' })
+      const music = out.modalities.audio.find((m) => m.model === 'stepaudio-3-music-preview')
+      expect(music?.audioKind).toBe('music')
     })
   })
 

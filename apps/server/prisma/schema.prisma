@@ -293,6 +293,79 @@ model UpstreamProbeRun {
   @@index([upstream, ranAt])
 }
 
+/// S2-1 模型目录数据化（spec: docs/superpowers/specs/2026-10-09-mph-s21-catalog-as-data-design.md）：
+/// DB 是模型目录的**唯一真源**；`STUDIO_MODEL_CATALOG` 代码常量降级为播种种子
+/// （bootstrap 时 insert-if-absent——按 modelKey 存在即跳过，绝不覆盖，人工/后台改动存活）。
+/// 字段与 `StudioModelEntry` 逐字同构；params/voices/defaults 为 JSON 字符串（仓内惯例）。
+/// 下架 = 软删（deletedAt，同 S0-1 语义）；软删行在播种存在性检查中仍算「已存在」，不复活。
+model ModelCatalogEntry {
+  id              String   @id @default(cuid())
+  modelKey        String   @unique
+  displayName     String
+  gatewayModelId  String
+  modality        String
+  providerBinding String
+  /// 仅 modality === 'audio' 时存在；缺省视作 voice
+  audioKind       String?
+  /// JSON: StudioVoiceOption[]（{ id, label }[]）
+  voices          String?
+  /// JSON: Record<string, ParamDisposition>
+  params          String
+  /// JSON: Record<string, string | number>
+  defaults        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  @@index([modality, deletedAt])
+}
+
+/// S2-1b 目录/路由版本号表：按 id 分域的单行版本计数（运营写端点每次写操作原子 +1，
+/// 单调递增、last-write-win）。已知两行：id='catalog'（S2-1b 目录版本，ensurePlatformChannel
+/// 对齐前比对）；id='routes'（S2-2b 路由版本，运营改路由 bump，探活器下个周期生效）。
+model ModelCatalogVersion {
+  id        String   @id @default("catalog")
+  version   Int
+  updatedAt DateTime @updatedAt
+}
+
+/// S2-2a 上游路由表（spec: docs/superpowers/specs/2026-10-09-mph-s22-routing-table-design.md §3.1）：
+/// 「哪个模型走哪个上游」的数据真源。matchType ∈ prefix|exact|regex|default，
+/// default 行（pattern 为空）= 未命中兜底；enabled=false 即下线该行（无软删列）。
+/// upstream ∈ agnes_hub|apimart|stepfun|minimax|fal。种子从 legacy resolver 链逐条翻译
+/// （shared UPSTREAM_ROUTE_SEEDS，insert-if-absent 只插不改，存在即跳过）。
+/// fallbackApiKeyEnvName：命中行的密钥回落 env 名——apimart 行记录 'OPENAI_API_KEY'
+/// （legacy resolveApimartPlatformCredentials 的 apimartApiKey || openaiApiKey 回落语义）。
+model UpstreamRoute {
+  id                    String   @id @default(cuid())
+  matchType             String
+  pattern               String?
+  capability            String
+  upstream              String
+  priority              Int      @default(0)
+  enabled               Boolean  @default(true)
+  fallbackApiKeyEnvName String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([enabled, priority])
+}
+
+/// S2-1b admin 写操作审计行（who/when/before/after）。who 为 'admin'
+/// —— 共享密钥鉴权（AdminTokenGuard）无更细身份，密钥本身绝不落库。
+/// before/after 为写操作前后行快照 JSON（create 时 before 为 null）。
+model AdminAuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  resource  String
+  before    String?
+  after     String?
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
+}
+
 /// Idempotency records for POST /agent/chat/conversation — prevent duplicate requests
 /// from network retries. 5 min TTL, lazy-cleaned on each lookup.
 model IdempotencyRecord {

@@ -26,7 +26,6 @@ import {
   mapMessageToErrorCode,
   redactProviderSnippet,
   resolveImageSize,
-  resolveModelKey,
   resolvePlatformImageProviderOpts,
   resolvePublicMediaUrls,
   resolveVideoModelProfile,
@@ -68,6 +67,8 @@ import {
 } from '../points/video-credits'
 import { classifyByokFailure } from '../provider/byok-fallback'
 import { mergeChatModel } from '../provider/merge-chat-model'
+// S2-1a：server 端 DB 包装器（同签名同步函数，5s TTL 缓存 + 软删过滤），替换 shared 常量版
+import { currentCatalogEntries, resolveModelKey } from '../provider/model-catalog-store'
 import {
   ProviderResolverService,
   type ResolvedGenerationProvider,
@@ -932,6 +933,12 @@ export class MaterialService {
         material.status === 'fallback_pending'
           ? '请确认是否使用平台回退继续，或取消本次生成。'
           : hintForCode(code),
+      // S2-3 退款透明化：metadata 三字段只透传不重算（缺字段不下发）
+      ...(typeof meta.chargedPoints === 'number' ? { chargedPoints: meta.chargedPoints } : {}),
+      ...(typeof meta.refundedPoints === 'number' ? { refundedPoints: meta.refundedPoints } : {}),
+      ...(typeof meta.refundReason === 'string' && meta.refundReason
+        ? { refundReason: meta.refundReason }
+        : {}),
     }
   }
 
@@ -1010,6 +1017,8 @@ export class MaterialService {
       referenceImages,
       byok: resolved.source === 'user',
       channelBaseUrl: resolved.credentials.baseUrl,
+      // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+      catalogRows: currentCatalogEntries(),
     })
     const modelId = resolved.source === 'user' ? resolved.modelName : built.modelId
     const effectivePrompt = buildEffectiveImagePrompt(
@@ -1214,6 +1223,8 @@ export class MaterialService {
         gatewayModelHint: resolved.source === 'user' ? resolved.modelName : undefined,
         channelBaseUrl: resolved.credentials.baseUrl,
         generateAudio,
+        // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+        catalogRows: currentCatalogEntries(),
       })
     } catch (err) {
       if (err instanceof Seedance1xUnsupportedError) {

@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common'
 import { isMiniMaxBaseUrl } from '@lnkpi/agent'
 import {
-  STUDIO_MODEL_CATALOG,
   defaultModelKey,
   encodeChannelModel,
   resolvePulledModelCapability,
@@ -17,6 +16,14 @@ import {
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { CryptoService } from './crypto.service'
+import {
+  currentCatalogEntries,
+  isModelCatalogVersionChanged,
+  loadModelCatalogRows,
+  markModelCatalogVersionApplied,
+  readModelCatalogVersion,
+  refreshModelCatalogCache,
+} from './model-catalog-store'
 import { planPlatformChannelSync, preserveModelAvailability } from './audio-model-backfill'
 import {
   planDisabledModelsOnPreferencesUpdate,
@@ -180,7 +187,9 @@ function maskApiKey(plaintext: string): string {
 }
 
 function catalogModels(): ChannelModelEntry[] {
-  return STUDIO_MODEL_CATALOG.map((entry) => ({
+  // S2-1b：对齐目标改读 DB 目录缓存（种子播种 + 后台写端点都会刷新缓存），
+  // 运营后台新增/下架条目进入下一次 provider 调用的镜像对齐。
+  return currentCatalogEntries().map((entry) => ({
     name: entry.modelKey,
     capability: entry.modality,
     // S1-1：播种/对齐写入的新条目统一 unknown —— 探活器是唯一置 unavailable 的写入方。
@@ -211,9 +220,10 @@ export function formatPullModelsFetchError(err: unknown, host: string): string {
 }
 
 function defaultSelectableFor(modality: StudioModality): string[] {
-  return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === modality).map((entry) =>
-    encodeChannelModel(PLATFORM_CHANNEL_ID, entry.modelKey),
-  )
+  // S2-1b：同 catalogModels，对齐目标读 DB 目录缓存（#306 快照对齐语义不变）。
+  return currentCatalogEntries()
+    .filter((entry) => entry.modality === modality)
+    .map((entry) => encodeChannelModel(PLATFORM_CHANNEL_ID, entry.modelKey))
 }
 
 /** 当前目录的全量编码清单（按 modality 分桶）—— 自动对齐的目标态。 */
@@ -275,6 +285,9 @@ export class ProviderService {
       channels: userChannels.map((ch) => this.toPublicChannel(ch, { readOnly: false })),
       preferences: this.toPublicPreferences(preferences),
       webdav: this.toPublicWebdav(webdavRow),
+      // S2-1b（spec §3.2）：web 目录来源切换——目录条目随既有 bootstrap 响应下发
+      //（方案 A，payload 两案裁决见 web 侧 studioModels.ts 头注释），不新增轮询通道。
+      catalog: await loadModelCatalogRows(this.prisma),
     }
   }
 
@@ -687,6 +700,14 @@ export class ProviderService {
 
   private async ensurePlatformChannel(): Promise<ChannelRow> {
     const envBaseUrl = process.env.OPENAI_BASE_URL?.trim() || ''
+    // S2-1b 版本触发（spec §3.4）：对齐前比对目录版本号，变更（后台保存 /
+    // 他实例写入 / 本进程首次调用）即从 DB 重载目录缓存再对齐。
+    // 语义 = 「保存后台下一次 provider 调用即生效」，不新增定时器。
+    const catalogVersion = await readModelCatalogVersion(this.prisma)
+    if (isModelCatalogVersionChanged(catalogVersion)) {
+      await refreshModelCatalogCache(this.prisma)
+      markModelCatalogVersionApplied(catalogVersion)
+    }
     const existing = await this.prisma.providerChannel.findUnique({
       where: { id: PLATFORM_CHANNEL_ID },
     })

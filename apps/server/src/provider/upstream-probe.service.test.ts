@@ -1,23 +1,38 @@
 import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
-import { STUDIO_MODEL_CATALOG } from '@lnkpi/shared'
+import {
+  resolveUpstreamRoute,
+  STUDIO_MODEL_CATALOG,
+  UPSTREAM_ROUTE_SEEDS,
+} from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import {
+  __resetUpstreamRouteStoreForTests,
+  __setCachedUpstreamRoutesForTests,
+} from './upstream-route-store'
+import {
   DEFAULT_PROBE_INTERVAL_MINUTES,
+  groupCatalogEntriesByUpstream,
   resolveProbeIntervalMinutes,
+  toReconciliationUpstreamId,
   UPSTREAM_PROBE_FETCH,
   UpstreamProbeService,
+  type ProbeCatalogEntry,
   type ProbeFetchResponse,
 } from './upstream-probe.service'
 
 /**
- * agnes 路由清单：与 ops/probe-upstream-models.mjs / upstream-probe.service.ts 的
- * 路由表兜底规则一致（/^agnes-/i，且不命中更早的 step/minimax/fal/apimart 规则）。
+ * agnes 帧对账清单（S2-2b 起与探活分组**同源**）：按路由种子表判定归属 agnes_hub 的
+ * 目录条目（包含 step/minimax-h3/h3-max/apimart-image 名单之外的一切 —— 注意这比旧
+ * 硬编码探活映射宽：seedance/wan/minimax-speech 等在 resolver 链里本就落 agnes hub，
+ * 旧映射把它们错探到 apimart/minimax，S2-2b 消除第二套映射后归位）。
  * 假上游返回「全量 agnes 清单 − 指定模型」⇒ ghost 集恰好 = 被摘掉的那个模型。
  */
 const AGNES_IDS = STUDIO_MODEL_CATALOG.filter(
-  (entry) => /^agnes-/i.test(entry.modelKey) || /^agnes-/i.test(entry.gatewayModelId),
+  (entry) =>
+    resolveUpstreamRoute([...UPSTREAM_ROUTE_SEEDS], entry.modelKey, entry.modality).upstream ===
+    'agnes_hub',
 ).map((entry) => entry.gatewayModelId)
 
 const GHOST_MODEL = 'agnes-image-2.0-flash'
@@ -174,6 +189,11 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
     }
     process.env.OPENAI_BASE_URL = 'https://agnes.example/v1'
     process.env.OPENAI_API_KEY = 'k-agnes-secret'
+
+    // S2-2b 探活接线：路由行来自 upstream-route-store 缓存 —— 注入种子行
+    // （不注册 store 的 prisma ⇒ TTL 刷新不触发，缓存即测试注入值）。
+    __resetUpstreamRouteStoreForTests()
+    __setCachedUpstreamRoutesForTests([...UPSTREAM_ROUTE_SEEDS])
 
     store = createMemoryPrisma(FIXTURE_MODELS)
     fetchImpl = vi.fn()
@@ -431,6 +451,89 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
     store.findUnique.mockRejectedValue(new Error('db down'))
     await expect(svc.probeOnce('manual')).resolves.toBeUndefined()
   })
+
+  it('A5 双行 fixture：同名模型双上游都配 → 只探路由行指向的那一家（exact 高优胜出）', async () => {
+    // 完整种子表 + 叠加同名双行：exact → apimart（priority 100）vs regex → agnes_hub
+    // （priority 5）。路由胜者 = apimart 行 ⇒ agnes 帧的 expected 不含它。
+    __setCachedUpstreamRoutesForTests([
+      { matchType: 'exact', pattern: 'agnes-image-2.0-flash', capability: 'image', upstream: 'apimart', priority: 100, enabled: true },
+      { matchType: 'regex', pattern: 'agnes-image-.*', capability: 'image', upstream: 'agnes_hub', priority: 5, enabled: true },
+      ...UPSTREAM_ROUTE_SEEDS.map((row) => ({ ...row })),
+    ])
+    // agnes 返回「全量 agnes 清单 − GHOST_MODEL」：若误归 agnes，GHOST_MODEL 会被判 ghost；
+    // 正确行为（只探 apimart）⇒ agnes 帧 ghosts 恒空、apimart 缺 key 探测失败只落 run 记录。
+    agnesResolves(AGNES_IDS.filter((id) => id !== GHOST_MODEL))
+    await compile()
+
+    await svc.probeOnce('manual')
+    await svc.probeOnce('manual')
+    await svc.probeOnce('manual')
+
+    const run = agnesRun(3)
+    expect(run.ghosts).toBe('[]')
+    const apimartRun = store.runs.find((r) => r.upstream === 'apimart')!
+    expect(apimartRun.error).toContain('未配置 APIMART_API_KEY')
+    expect(apimartRun.ghosts).toBeNull()
+    // 没有任何上游能判它 ghost ⇒ 三轮后镜像不变
+    expect(store.update).not.toHaveBeenCalled()
+    expect(store.getModels()).toEqual(FIXTURE_MODELS)
+  })
+
+  it('A5 反向 fixture：禁用高优 exact 行后同名模型归低优 regex 行（enabled 过滤生效）', async () => {
+    // 同款叠加，但 exact 行 enabled=false ⇒ 低优 regex 行接棒（agnes_hub）⇒ 归 agnes。
+    __setCachedUpstreamRoutesForTests([
+      { matchType: 'exact', pattern: 'agnes-image-2.0-flash', capability: 'image', upstream: 'apimart', priority: 100, enabled: false },
+      { matchType: 'regex', pattern: 'agnes-image-.*', capability: 'image', upstream: 'agnes_hub', priority: 5, enabled: true },
+      ...UPSTREAM_ROUTE_SEEDS.map((row) => ({ ...row })),
+    ])
+    // agnes 清单摘掉 GHOST_MODEL ⇒ 此时它归 agnes（低优 regex 行接棒）⇒ 被判 ghost
+    agnesResolves(AGNES_IDS.filter((id) => id !== GHOST_MODEL))
+    await compile()
+
+    await svc.probeOnce('manual')
+    const run = agnesRun(1)
+    expect(run.ghosts).toBe(JSON.stringify([GHOST_MODEL]))
+  })
+})
+
+describe('S2-2b 路由分组与双 id 映射（A5 单胜者 / B1 裁定：穷举 switch、无字符串绕过）', () => {
+  const ENTRIES: ProbeCatalogEntry[] = [
+    { modelKey: 'agnes-image-2.0-flash', gatewayModelId: 'agnes-image-2.0-flash', modality: 'image' },
+    { modelKey: 'agnes-2.0-flash', gatewayModelId: 'agnes-2.0-flash', modality: 'text' },
+  ]
+
+  it('同名模型双上游都配 → 只归胜者（priority 降序 + exact > regex）指向那一家', () => {
+    const { byUpstream, unroutable } = groupCatalogEntriesByUpstream(
+      [
+        { matchType: 'exact', pattern: 'agnes-image-2.0-flash', capability: 'image', upstream: 'apimart', priority: 100, enabled: true },
+        { matchType: 'regex', pattern: 'agnes-image-.*', capability: 'image', upstream: 'agnes_hub', priority: 5, enabled: true },
+        { matchType: 'default', pattern: null, capability: '*', upstream: 'agnes_hub', priority: 0, enabled: true },
+      ],
+      ENTRIES,
+    )
+    expect(byUpstream.get('apimart')?.map((e) => e.modelKey)).toEqual(['agnes-image-2.0-flash'])
+    expect(byUpstream.get('agnes')?.map((e) => e.modelKey)).toEqual(['agnes-2.0-flash'])
+    expect(unroutable).toEqual([])
+  })
+
+  it('未命中且无可用 default 行 → 不归任何上游（unroutable 上报，绝不算 ghost）', () => {
+    const { byUpstream, unroutable } = groupCatalogEntriesByUpstream(
+      [
+        { matchType: 'exact', pattern: 'other-model', capability: '*', upstream: 'fal', priority: 10, enabled: true },
+      ],
+      ENTRIES,
+    )
+    expect(byUpstream.size).toBe(0)
+    expect(unroutable).toEqual(['agnes-image-2.0-flash', 'agnes-2.0-flash'])
+  })
+
+  it('穷举 switch 映射：routing agnes_hub → 对账 agnes，其余四家同名直映', () => {
+    expect(toReconciliationUpstreamId('agnes_hub')).toBe('agnes')
+    expect(toReconciliationUpstreamId('apimart')).toBe('apimart')
+    expect(toReconciliationUpstreamId('fal')).toBe('fal')
+    expect(toReconciliationUpstreamId('minimax')).toBe('minimax')
+    expect(toReconciliationUpstreamId('stepfun')).toBe('stepfun')
+  })
 })
 
 describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES）', () => {
@@ -446,6 +549,8 @@ describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL
       ],
     }).compile()
     svc = moduleRef.get(UpstreamProbeService)
+    // 默认静音启动首轮（本 describe 只断言调度；个别用例再自建 spy 断言 startup 触发）。
+    vi.spyOn(svc, 'probeOnce').mockResolvedValue(undefined)
   }
 
   afterEach(() => {
@@ -501,6 +606,32 @@ describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL
     svc.onModuleInit()
     svc.onModuleDestroy()
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('启动首轮（B1 登记顺手项）：注册定时器后立即触发一次 probeOnce("startup")', async () => {
+    delete process.env.NODE_ENV
+    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
+    await compile()
+    const spy = vi.spyOn(svc, 'probeOnce')
+    svc.onModuleInit()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith('startup')
+  })
+
+  it('启动首轮不触发：env=0 显式禁用 / NODE_ENV=test（与定时器同款纪律）', async () => {
+    delete process.env.NODE_ENV
+    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '0'
+    await compile()
+    const spy0 = vi.spyOn(svc, 'probeOnce')
+    svc.onModuleInit()
+    expect(spy0).not.toHaveBeenCalled()
+
+    process.env.NODE_ENV = 'test'
+    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
+    await compile()
+    const spy1 = vi.spyOn(svc, 'probeOnce')
+    svc.onModuleInit()
+    expect(spy1).not.toHaveBeenCalled()
   })
 
   it('resolveProbeIntervalMinutes：缺失/非法回落默认；0 保留为禁用', () => {

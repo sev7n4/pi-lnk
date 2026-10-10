@@ -1,5 +1,5 @@
 import { api } from './api'
-import type { ApiCallFormat, ModelCapability } from '@lnkpi/shared'
+import type { ApiCallFormat, ModelCapability, StudioModelEntry } from '@lnkpi/shared'
 
 export type ChannelModelEntry = {
   name: string
@@ -61,6 +61,8 @@ export type ProviderBootstrap = {
   channels: ProviderChannelPublic[]
   preferences: ProviderPreferencesPublic
   webdav: ProviderWebdavPublic
+  /** S2-1b（payload 方案 A）：服务端目录条目随既有 bootstrap 响应下发（web 归一层注入）。 */
+  catalog: StudioModelEntry[]
 }
 
 export type CreateChannelInput = {

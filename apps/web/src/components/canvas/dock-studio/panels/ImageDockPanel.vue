@@ -20,13 +20,16 @@ import GuidePickerPopover from '@/components/canvas/dock-studio/shared/GuidePick
 import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
-import { catalogModelKeyFromValue, resolveGenerationModel } from '@/constants/studioModels'
+import {
+  catalogModelKeyFromValue,
+  getModelEntry,
+  resolveGenerationModel,
+} from '@/constants/studioModels'
 import { estimateImageCredits } from '@/constants/credits'
 import {
   TURNAROUND_PIPELINE_DOCK_HINT,
   defaultGuideCapabilities,
   getGenerationScene,
-  getModelEntry,
   resolveImageModelProfile,
 } from '@lnkpi/shared'
 import {

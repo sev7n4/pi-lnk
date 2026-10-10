@@ -34,6 +34,50 @@ describe('formatDiagnosticCopy', () => {
     expect(text).toContain('nodeId: node_1')
     expect(text).toContain('providerSnippet:')
   })
+
+  it('S2-3: refund 三字段齐全 → refund 行 charged → refunded (reason)', () => {
+    const text = formatDiagnosticCopy({
+      userMessage: '生成失败',
+      code: 'upstream_error',
+      taskKind: 'generation',
+      taskId: 'gen_1',
+      occurredAt: '2026-10-10T00:00:00.000Z',
+      providerSnippet: null,
+      chargedPoints: 5,
+      refundedPoints: 5,
+      refundReason: 'platform_failed',
+    })
+    expect(text).toContain('refund: charged 5 → refunded 5 (platform_failed)')
+  })
+
+  it('S2-3: 仅 refundedPoints（缺 chargedPoints/refundReason）→ 退化为 refunded 段', () => {
+    const text = formatDiagnosticCopy({
+      userMessage: '生成失败',
+      code: 'upstream_error',
+      taskKind: 'generation',
+      taskId: 'gen_1',
+      occurredAt: '2026-10-10T00:00:00.000Z',
+      providerSnippet: null,
+      refundedPoints: 3,
+    })
+    expect(text).toContain('refund: refunded 3')
+    expect(text).not.toContain('charged')
+  })
+
+  it('S2-3: 缺退款字段 / refundedPoints=0 → 不渲染 refund 行', () => {
+    const base = {
+      userMessage: '生成失败',
+      code: 'upstream_error' as const,
+      taskKind: 'generation' as const,
+      taskId: 'gen_1',
+      occurredAt: '2026-10-10T00:00:00.000Z',
+      providerSnippet: null,
+    }
+    expect(formatDiagnosticCopy(base)).not.toContain('refund:')
+    expect(formatDiagnosticCopy({ ...base, chargedPoints: 5, refundedPoints: 0 })).not.toContain(
+      'refund:',
+    )
+  })
 })
 
 describe('mapMessageToErrorCode', () => {

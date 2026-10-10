@@ -1,13 +1,17 @@
 import { BadRequestException } from '@nestjs/common'
 import {
   audioKindOf,
-  getModelEntry,
+  getModelEntryFromRows,
   isStepFunPlatformModel,
   readPlatformCredentialEnv,
   resolveStepFunPlatformCredentials,
   type AudioKind,
   type PlatformCredentialEnv,
 } from '@lnkpi/shared'
+// B2 S2-1d：kind 判定切 DB 目录缓存（DB 是唯一真源）——admin 后台新增的 music/design
+// 分类模型不在常量目录里，旧实现会误判成 voice（扣 5 分而非 15 分）且 kind 校验对不上。
+// 缓存初值 = 种子常量 ⇒ 常量目录里已有模型的分类行为逐字节不变。
+import { currentCatalogEntries } from '../provider/model-catalog-store'
 
 const KIND_LABEL: Record<AudioKind, string> = {
   voice: '配音',
@@ -41,7 +45,10 @@ export function assertStepFunAudioModel(kind: AudioKind, modelName: string): voi
  */
 export function assertAudioKindMatchesModel(kind: string | undefined, modelName: string): void {
   if (kind === undefined) return
-  const modelKind: AudioKind = audioKindOf(getModelEntry(modelName) ?? { modality: 'audio' })
+  // B2 S2-1d：目录查找走 DB 缓存 rows（非 currentCatalogEntries 的常量薄壳），
+  // 缓存外模型按 `audioKindOf` 的缺省（voice）判定 —— 与 generateAudio 的 kind 派生同源。
+  const entry = getModelEntryFromRows(currentCatalogEntries(), modelName)
+  const modelKind: AudioKind = audioKindOf(entry ?? { modality: 'audio' })
   if (kind === modelKind) return
   throw new BadRequestException(
     `音频分类与当前模型不匹配：请求 ${KIND_LABEL[kind as AudioKind] ?? kind}（kind=${kind}），` +

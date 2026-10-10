@@ -74,6 +74,25 @@ function createMemoryPrisma() {
   const preferences = new Map<string, PreferencesRow>()
   const webdav = new Map<string, WebdavRow>()
   const sessions = new Map<string, SessionRow>()
+  // S2-1b：ensurePlatformChannel 版本触发 + bootstrap 目录下发依赖模型目录/版本表。
+  // 内存实现（播种由 store 的 refreshModelCatalogCache 驱动 create 写入）。
+  const catalogEntries: {
+    id: string
+    modelKey: string
+    displayName: string
+    gatewayModelId: string
+    modality: string
+    providerBinding: string
+    audioKind: string | null
+    voices: string | null
+    params: string
+    defaults: string | null
+    deletedAt: Date | null
+    createdAt: Date
+    updatedAt: Date
+  }[] = []
+  const catalogVersionRows = new Map<string, { id: string; version: number; updatedAt: Date }>()
+  let catalogSeq = 0
   let seq = 0
 
   return {
@@ -144,6 +163,65 @@ function createMemoryPrisma() {
         if (!existing) throw new Error('not found')
         channels.delete(where.id)
         return existing
+      },
+    },
+    modelCatalogVersion: {
+      findUnique: async ({ where }: { where: { id: string } }) =>
+        catalogVersionRows.get(where.id) ?? null,
+      upsert: async ({
+        where,
+        update,
+        create,
+      }: {
+        where: { id: string }
+        update: { version: { increment: number } }
+        create: { id: string; version: number }
+      }) => {
+        const existing = catalogVersionRows.get(where.id)
+        if (existing) {
+          const row = {
+            ...existing,
+            version: existing.version + update.version.increment,
+            updatedAt: new Date(),
+          }
+          catalogVersionRows.set(where.id, row)
+          return row
+        }
+        const row = { id: create.id, version: create.version, updatedAt: new Date() }
+        catalogVersionRows.set(row.id, row)
+        return row
+      },
+    },
+    modelCatalogEntry: {
+      findMany: async () => [...catalogEntries],
+      create: async ({
+        data,
+      }: {
+        data: {
+          modelKey: string
+          displayName: string
+          gatewayModelId: string
+          modality: string
+          providerBinding: string
+          audioKind?: string | null
+          voices?: string | null
+          params: string
+          defaults?: string | null
+        }
+      }) => {
+        const now = new Date()
+        const row = {
+          id: `mce_${++catalogSeq}`,
+          audioKind: data.audioKind ?? null,
+          voices: data.voices ?? null,
+          defaults: data.defaults ?? null,
+          deletedAt: null,
+          createdAt: now,
+          updatedAt: now,
+          ...data,
+        }
+        catalogEntries.push(row)
+        return row
       },
     },
     userAiPreferences: {

@@ -1,4 +1,5 @@
-import { resolveModelKey } from '@lnkpi/shared'
+// S2-1a：server 端 DB 包装器（同签名同步函数，5s TTL 缓存 + 软删过滤），替换 shared 常量版
+import { resolveModelKey } from './model-catalog-store'
 
 /**
  * Chat model used by the refs-merge (chat/completions) call.

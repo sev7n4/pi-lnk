@@ -15,9 +15,11 @@ import {
   type VideoRefWire,
   type VideoResponseMode,
   type SeedanceVariantTag,
-  resolveModelKey,
+  resolveModelKeyFromRows,
   resolveImageSize,
+  STUDIO_MODEL_CATALOG,
   type StudioModelEntry,
+  type StudioModality,
   isSeedance1x,
 } from '@lnkpi/shared'
 import {
@@ -133,6 +135,24 @@ function buildPromptPrefix(
   return `【朗读设定】${parts.join('；')}\n`
 }
 
+/**
+ * 模型目录解析（B2 S2-1c）：优先用**调用方注入的 DB 目录 rows**，
+ * 缺省回落种子常量 `STUDIO_MODEL_CATALOG`（与非 server 宿主下的既有行为逐字节一致）。
+ *
+ * server 宿主下，后台 admin 新增的模型只存在于 `ModelCatalogEntry`（DB 是唯一真源），
+ * 常量目录查不到 ⇒ 旧实现会静默回落默认模型并计费。server 调用点把
+ * `model-catalog-store.currentCatalogEntries()`（5s TTL 缓存）作为 `catalogRows`
+ * 传入后，resolve 命中 DB 条目；解析语义复用 shared 纯函数 `resolveModelKeyFromRows`，
+ * 不在此重写第二份逻辑。
+ */
+function resolveFromCatalog(
+  modality: StudioModality,
+  requested?: string | null,
+  catalogRows?: StudioModelEntry[],
+): { modelKey: string; entry: StudioModelEntry; fallback: boolean } {
+  return resolveModelKeyFromRows(catalogRows ?? STUDIO_MODEL_CATALOG, modality, requested)
+}
+
 export function buildAudioRequest(input: {
   mergedText: string
   modelKey?: string
@@ -142,9 +162,11 @@ export function buildAudioRequest(input: {
   speed?: number
   volume?: number
   pitch?: number
+  /** server 宿主注入的 DB 目录 rows（缺省回落种子常量）。 */
+  catalogRows?: StudioModelEntry[]
 }): BuiltAudioRequest {
-  const { mergedText, modelKey, voice, emotion, language, speed, volume, pitch } = input
-  const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('audio', modelKey)
+  const { mergedText, modelKey, voice, emotion, language, speed, volume, pitch, catalogRows } = input
+  const { modelKey: resolvedKey, entry, fallback } = resolveFromCatalog('audio', modelKey, catalogRows)
 
   const droppedFields: AdapterMeta['droppedFields'] = []
   const nativeParams: Record<string, unknown> = {}
@@ -365,6 +387,8 @@ export function buildImageProviderOptions(input: {
   /** BYOK: keep upstream gateway id; never fall back to platform catalog default. */
   byok?: boolean
   channelBaseUrl?: string
+  /** server 宿主注入的 DB 目录 rows（缺省回落种子常量）。 */
+  catalogRows?: StudioModelEntry[]
 }): {
   modelId: string
   size: string
@@ -382,8 +406,9 @@ export function buildImageProviderOptions(input: {
     referenceImages,
     byok = false,
     channelBaseUrl,
+    catalogRows,
   } = input
-  const catalog = resolveModelKey('image', modelKey)
+  const catalog = resolveFromCatalog('image', modelKey, catalogRows)
   let resolvedKey = catalog.modelKey
   let catalogGateway = catalog.entry.gatewayModelId
   let catalogFallback = catalog.fallback
@@ -653,6 +678,8 @@ export function buildVideoProviderOptions(input: {
   generateAudio?: boolean
   seed?: number
   negativePrompt?: string
+  /** server 宿主注入的 DB 目录 rows（缺省回落种子常量）。 */
+  catalogRows?: StudioModelEntry[]
 }): BuiltVideoProviderOptions {
   const {
     modelKey,
@@ -666,11 +693,12 @@ export function buildVideoProviderOptions(input: {
     generateAudio,
     seed,
     negativePrompt,
+    catalogRows,
   } = input
   if (gatewayModelHint && isSeedance1x(gatewayModelHint)) {
     throw new Seedance1xUnsupportedError(gatewayModelHint)
   }
-  const catalog = resolveModelKey('video', modelKey)
+  const catalog = resolveFromCatalog('video', modelKey, catalogRows)
   let resolvedKey = catalog.modelKey
   let catalogGateway = catalog.entry.gatewayModelId
   let catalogFallback = catalog.fallback
