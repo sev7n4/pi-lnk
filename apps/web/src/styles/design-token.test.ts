@@ -237,6 +237,120 @@ describe('非文本对比度：焦点环与状态边框（WCAG 1.4.11，≥3:1�
   }
 })
 
+/* ---------------- 判据 4.5：状态三件套与阴影（品牌 IP 一致性） ---------------- */
+
+/**
+ * 状态三件套（-text / -bg / -border）守卫。
+ *
+ * IP 语义：状态灯是「锚灯」的信号灯形态——确定性必须可读。
+ * - bg 是 alpha 底色（文字对比度由"实色文字压合成底"保证，见下方合成守卫）；
+ * - border 是描边，弱于文字对比度要求；
+ * - 状态文字永远用实色 --lnk-{v}（AA 守卫已在"语义前景色对比度"覆盖）。
+ */
+
+/** 解析 rgba(...) 的 [r,g,b,a]；解析失败返回 null。 */
+function parseRgba(raw: string): [number, number, number, number] | null {
+  const m = /rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)/.exec(raw)
+  if (!m) return null
+  return [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])]
+}
+
+/** 把 rgba 前景合成到不透明底色上，返回 6 位 hex。 */
+function compositeOver(fgRgba: [number, number, number, number], bgHex: string): string {
+  const n = parseInt(bgHex.slice(1), 16)
+  const bg = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  const [r, g, b, a] = fgRgba
+  const mix = (f: number, s: number) => Math.round(a * f + (1 - a) * s)
+  return (
+    '#' +
+    [mix(r, bg[0]!), mix(g, bg[1]!), mix(b, bg[2]!)]
+      .map((v) => v.toString(16).padStart(2, '0'))
+      .join('')
+  )
+}
+
+const STATUS_KEYS = ['success', 'warning', 'error', 'info'] as const
+const SHADOW_LEVELS = ['xs', 'sm', 'md', 'lg', 'xl'] as const
+
+describe('状态三件套（-bg / -border / 实色文字）', () => {
+  for (const theme of ['dark', 'light'] as const) {
+    for (const key of STATUS_KEYS) {
+      it(`${theme} · ${key}：bg/border alpha 在既定域内`, () => {
+        const bgRaw = blocks[theme].decls.get(`--lnk-${key}-bg`)
+        const borderRaw = blocks[theme].decls.get(`--lnk-${key}-border`)
+        expect(bgRaw, `${theme} 缺 --lnk-${key}-bg`).toBeTruthy()
+        expect(borderRaw, `${theme} 缺 --lnk-${key}-border`).toBeTruthy()
+        const bg = parseRgba(bgRaw!)
+        const border = parseRgba(borderRaw!)
+        expect(bg, `${theme} --lnk-${key}-bg 必须是 rgba（底色允许透明度）`).toBeTruthy()
+        expect(border, `${theme} --lnk-${key}-border 必须是 rgba`).toBeTruthy()
+        // 底色 tint 太重会吞掉层次（变成实色块），太轻会看不见
+        expect(bg![3], `${theme} ${key}-bg alpha=${bg![3]}（要求 0.06–0.2）`).toBeGreaterThanOrEqual(0.06)
+        expect(bg![3]).toBeLessThanOrEqual(0.2)
+        // 描边必须比底色实，否则三件套塌成两件
+        expect(border![3], `${theme} ${key}-border alpha=${border![3]}（要求 0.25–0.5）`).toBeGreaterThanOrEqual(0.25)
+        expect(border![3]).toBeLessThanOrEqual(0.5)
+        expect(border![3]).toBeGreaterThan(bg![3])
+      })
+
+      it(`${theme} · ${key}：实色状态文字压合成底（4 表面最差）≥ 4.5:1`, () => {
+        const scope = blocks[theme]
+        const fg = resolve(`--lnk-${key}`, scope)
+        const bgRaw = scope.decls.get(`--lnk-${key}-bg`)
+        expect(fg, `${theme} 缺 --lnk-${key}（或引用未定义）`).toBeTruthy()
+        expect(bgRaw, `${theme} 缺 --lnk-${key}-bg`).toBeTruthy()
+        const bgRgba = parseRgba(bgRaw!)!
+        let worst = Number.POSITIVE_INFINITY
+        for (const s of SURFACES) {
+          const surface = resolve(s, scope)
+          expect(surface, `${theme} 缺 ${s}`).toBeTruthy()
+          const chipBg = compositeOver(bgRgba, surface!)
+          worst = Math.min(worst, contrast(fg!, chipBg))
+        }
+        expect(
+          worst,
+          `${theme} 状态文字 ${key} 压 -bg 合成底最差 ${worst.toFixed(2)}:1（要求 ≥4.5:1）`,
+        ).toBeGreaterThanOrEqual(4.5)
+      })
+    }
+  }
+})
+
+describe('阴影（锚链）：五档成对、深海更重、档位单调加重', () => {
+  for (const level of SHADOW_LEVELS) {
+    it(`${level}：深色投影必须比浅色重（深海 vs 阳光海面）`, () => {
+      const darkRaw = blocks.dark.decls.get(`--lnk-shadow-${level}`)
+      const lightRaw = blocks.light.decls.get(`--lnk-shadow-${level}`)
+      expect(darkRaw, `深色缺 --lnk-shadow-${level}`).toBeTruthy()
+      expect(lightRaw, `浅色缺 --lnk-shadow-${level}`).toBeTruthy()
+      const darkA = parseRgba(darkRaw!)
+      const lightA = parseRgba(lightRaw!)
+      expect(darkA, `深色 shadow-${level} 首段必须是 rgba`).toBeTruthy()
+      expect(lightA, `浅色 shadow-${level} 首段必须是 rgba`).toBeTruthy()
+      expect(
+        darkA![3],
+        `shadow-${level} 深色 alpha ${darkA![3]} 必须 > 浅色 ${lightA![3]}（IP：深色=无光深海，投影是唯一深度线索）`,
+      ).toBeGreaterThan(lightA![3])
+    })
+  }
+
+  it('深色五档 alpha 单调不降（锚链越深越沉）', () => {
+    const alphas = SHADOW_LEVELS.map((lv) => {
+      const raw = blocks.dark.decls.get(`--lnk-shadow-${lv}`)
+      expect(raw, `深色缺 --lnk-shadow-${lv}`).toBeTruthy()
+      const p = parseRgba(raw!)
+      expect(p, `深色 shadow-${lv} 首段必须是 rgba`).toBeTruthy()
+      return p![3]!
+    })
+    for (let i = 0; i < alphas.length - 1; i++) {
+      expect(
+        alphas[i + 1]!,
+        `阴影档位 ${i}→${i + 1} 未单调加重：${alphas.join(' ≤ ')}`,
+      ).toBeGreaterThanOrEqual(alphas[i]!)
+    }
+  })
+})
+
 /* ---------------- 判据 4：非颜色阶梯 ---------------- */
 
 describe('非颜色阶梯', () => {
