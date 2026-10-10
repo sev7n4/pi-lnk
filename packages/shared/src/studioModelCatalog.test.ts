@@ -4,6 +4,7 @@ import {
   listModels,
   listModelsByAudioKind,
   resolveModelKey,
+  resolveModelKeyFromRows,
   defaultModelKey,
   getModelEntry,
   normalizeModelRef,
@@ -266,5 +267,84 @@ describe('audioKind 元数据', () => {
     const r = resolveModelKey('audio', 'stepaudio-3-music-preview')
     expect(r.fallback).toBe(false)
     expect(r.modelKey).toBe('stepaudio-3-music-preview')
+  })
+})
+
+// ── S2-1a（2026-10-10）：resolveModelKeyFromRows rows 注入形态 —— A3 全量回归 ──
+// resolveModelKey 已重构为薄壳（常量层断言保留在上面各 describe，现锁的是种子）；
+// 本层把既有 resolveModelKey 的全部 case 镜像到 rows 注入形态，两层逐 case 同结果。
+// server 端 DB 包装器（apps/server model-catalog-store.ts）查表后调的就是这个纯函数。
+describe('resolveModelKeyFromRows（rows 注入形态，S2-1a A3 全量回归）', () => {
+  const ROWS = STUDIO_MODEL_CATALOG
+
+  it('全量 25 条 fixture：按 modelKey 解析命中（模态闸门内）', () => {
+    expect(ROWS).toHaveLength(25)
+    for (const entry of ROWS) {
+      const r = resolveModelKeyFromRows(ROWS, entry.modality, entry.modelKey)
+      expect(r.fallback, entry.modelKey).toBe(false)
+      expect(r.modelKey, entry.modelKey).toBe(entry.modelKey)
+      expect(r.entry, entry.modelKey).toBe(entry)
+    }
+  })
+
+  it('全量 25 条 fixture：gatewayModelId 形态也命中并归一到规范 modelKey', () => {
+    for (const entry of ROWS) {
+      const r = resolveModelKeyFromRows(ROWS, entry.modality, entry.gatewayModelId)
+      expect(r.fallback, entry.gatewayModelId).toBe(false)
+      expect(r.modelKey, entry.gatewayModelId).toBe(entry.modelKey)
+    }
+  })
+
+  it('空 requested → 各模态默认条目，fallback:false', () => {
+    for (const modality of ['text', 'image', 'video', 'audio'] as const) {
+      const r = resolveModelKeyFromRows(ROWS, modality, undefined)
+      expect(r.fallback, modality).toBe(false)
+      expect(r.modelKey).toBe(defaultModelKey(modality))
+      expect(r.entry.modelKey).toBe(defaultModelKey(modality))
+      // null / 空串同为 falsy，走同一分支（旧行为逐 case 保持）
+      expect(resolveModelKeyFromRows(ROWS, modality, null).modelKey).toBe(defaultModelKey(modality))
+      expect(resolveModelKeyFromRows(ROWS, modality, '').fallback).toBe(false)
+    }
+  })
+
+  it('未知 id / 跨模态 id → fallback 到该模态默认条目（确定性兜底，非 throw）', () => {
+    const r = resolveModelKeyFromRows(ROWS, 'image', 'not-a-real-model')
+    expect(r.fallback).toBe(true)
+    expect(r.modelKey).toBe(defaultModelKey('image'))
+    expect(r.entry.modelKey).toBe(defaultModelKey('image'))
+    // 跨模态的 gateway id 仍判回退（模态闸门不被绕过）
+    expect(resolveModelKeyFromRows(ROWS, 'video', 'gemini-3.1-flash').fallback).toBe(true)
+    // S0-1 幽灵 key 在 rows 注入形态下同样不命中
+    for (const ghost of ['deepseek-v4', 'gpt-5.5']) {
+      const g = resolveModelKeyFromRows(ROWS, 'text', ghost)
+      expect(g.fallback, ghost).toBe(true)
+      expect(g.modelKey).toBe('agnes-2.0-flash')
+    }
+  })
+
+  it('注入隔离：rows 子集里只有子集内条目可见（注入真的注入了，非读全局常量）', () => {
+    const subset = ROWS.filter((e) => e.modelKey === 'image2')
+    const hit = resolveModelKeyFromRows(subset, 'image', 'image2')
+    expect(hit.fallback).toBe(false)
+    expect(hit.entry.modelKey).toBe('image2')
+    // 子集外的目录条目查不到 → 回落（且回落条目也从子集取；本子集无 image 默认条目）
+    expect(resolveModelKeyFromRows(subset, 'image', 'navo-pro').fallback).toBe(true)
+  })
+
+  it('薄壳逐 case 对拍：resolveModelKey(常量) ≡ resolveModelKeyFromRows(常量 rows)', () => {
+    for (const modality of ['text', 'image', 'video', 'audio'] as const) {
+      expect(resolveModelKeyFromRows(ROWS, modality, undefined)).toEqual(resolveModelKey(modality, undefined))
+    }
+    for (const entry of ROWS) {
+      expect(resolveModelKeyFromRows(ROWS, entry.modality, entry.modelKey)).toEqual(
+        resolveModelKey(entry.modality, entry.modelKey),
+      )
+      expect(resolveModelKeyFromRows(ROWS, entry.modality, entry.gatewayModelId)).toEqual(
+        resolveModelKey(entry.modality, entry.gatewayModelId),
+      )
+      expect(resolveModelKeyFromRows(ROWS, entry.modality, 'no-such-model')).toEqual(
+        resolveModelKey(entry.modality, 'no-such-model'),
+      )
+    }
   })
 })

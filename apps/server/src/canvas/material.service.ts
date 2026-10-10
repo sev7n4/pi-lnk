@@ -26,7 +26,6 @@ import {
   mapMessageToErrorCode,
   redactProviderSnippet,
   resolveImageSize,
-  resolveModelKey,
   resolvePlatformImageProviderOpts,
   resolvePublicMediaUrls,
   resolveVideoModelProfile,
@@ -68,6 +67,8 @@ import {
 } from '../points/video-credits'
 import { classifyByokFailure } from '../provider/byok-fallback'
 import { mergeChatModel } from '../provider/merge-chat-model'
+// S2-1a：server 端 DB 包装器（同签名同步函数，5s TTL 缓存 + 软删过滤），替换 shared 常量版
+import { resolveModelKey } from '../provider/model-catalog-store'
 import {
   ProviderResolverService,
   type ResolvedGenerationProvider,

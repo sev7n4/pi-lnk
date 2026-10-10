@@ -455,6 +455,19 @@ export function audioKindOf(entry: Pick<StudioModelEntry, 'modality' | 'audioKin
 }
 
 /**
+ * 按 id 在**注入的 rows** 里查条目（S2-1a 抽取的纯函数内核）。**同时接受
+ * `modelKey` 与 `gatewayModelId` 两种形态**，顺序：**modelKey 优先**。
+ */
+export function getModelEntryFromRows(
+  rows: StudioModelEntry[],
+  id: string,
+): StudioModelEntry | undefined {
+  const byModelKey = rows.find((entry) => entry.modelKey === id)
+  if (byModelKey) return byModelKey
+  return rows.find((entry) => entry.gatewayModelId === id)
+}
+
+/**
  * 按 id 查目录条目。**同时接受 `modelKey` 与 `gatewayModelId` 两种形态**。
  *
  * ⚠️ 2026-10-04：此前只比较 `entry.modelKey`，而生产 `GenerationRecord.model`
@@ -467,31 +480,44 @@ export function audioKindOf(entry: Pick<StudioModelEntry, 'modality' | 'audioKin
  * 必须靠优先级消歧（`studioModelCatalog.test.ts` 有对应回归锁）。
  */
 export function getModelEntry(id: string): StudioModelEntry | undefined {
-  const byModelKey = STUDIO_MODEL_CATALOG.find((entry) => entry.modelKey === id)
-  if (byModelKey) return byModelKey
-  return STUDIO_MODEL_CATALOG.find((entry) => entry.gatewayModelId === id)
+  return getModelEntryFromRows(STUDIO_MODEL_CATALOG, id)
 }
 
 export function defaultModelKey(modality: StudioModality): string {
   return DEFAULT_MODEL_KEYS[modality]
 }
 
-export function resolveModelKey(
+/**
+ * `resolveModelKey` 的纯函数内核（S2-1a）：rows 注入形态。
+ *
+ * 行为与旧 `resolveModelKey` 实现**逐 case 一致**（旧实现体原样搬迁，仅把
+ * 目录查找换成 rows 注入）；shared 包无 DB，server 端 DB 包装器
+ * （apps/server `model-catalog-store.ts`）查表后调它，web/agent 仍走常量薄壳。
+ */
+export function resolveModelKeyFromRows(
+  rows: StudioModelEntry[],
   modality: StudioModality,
   requested?: string | null,
 ): { modelKey: string; entry: StudioModelEntry; fallback: boolean } {
   const fallbackKey = defaultModelKey(modality)
-  const fallbackEntry = getModelEntry(fallbackKey)!
+  const fallbackEntry = getModelEntryFromRows(rows, fallbackKey)!
   if (!requested) {
     return { modelKey: fallbackKey, entry: fallbackEntry, fallback: false }
   }
-  const entry = getModelEntry(requested)
+  const entry = getModelEntryFromRows(rows, requested)
   if (entry?.modality === modality) {
     // ⚠️ 返回目录里的规范 modelKey，而不是 `requested` 原文：
     // 调用方可能传的是 gatewayModelId，原样返回会让下游拿到非规范 id。
     return { modelKey: entry.modelKey, entry, fallback: false }
   }
   return { modelKey: fallbackKey, entry: fallbackEntry, fallback: true }
+}
+
+export function resolveModelKey(
+  modality: StudioModality,
+  requested?: string | null,
+): { modelKey: string; entry: StudioModelEntry; fallback: boolean } {
+  return resolveModelKeyFromRows(STUDIO_MODEL_CATALOG, modality, requested)
 }
 
 /**
