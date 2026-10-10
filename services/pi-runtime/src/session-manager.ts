@@ -46,7 +46,7 @@ import {
 import type { Metrics, PromptInfo } from "./metrics.js";
 import { COMPACTION_RETENTION_INSTRUCTIONS, missingSummarySections } from "./compaction-summary.js";
 import { assembleModel, type SessionLlmOverride } from "./model-assembly.js";
-import { effectiveCompactionSettings, loadRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
+import { effectiveCompactionSettings, loadRuntimeConfig, DEFAULT_TURN_BUDGET, type RuntimeConfig } from "./runtime-config.js";
 import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js"
 import { estimateImageTokens, toImageContents, type DirectImage } from "./direct-images.js";
 import { annotateImagesForSummary } from "./compaction-images.js";
@@ -55,6 +55,13 @@ import { buildToolEnsemble } from "./tools/tiering.js";
 import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
 import { pickLatestPlanDecision, seedPlanState } from "./gate/plan-gate.js";
+import {
+	createTurnBudgetState,
+	turnBudgetOnTurnStart,
+	turnBudgetRunEnd,
+	turnBudgetRunStart,
+	type TurnBudgetState,
+} from "./gate/turn-budget.js";
 import { planGateEnabled } from "./runtime-config.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
@@ -284,6 +291,8 @@ interface SessionEntry {
 	lastProgressAt: number;
 	/** watchdog 判定卡死后置位，避免同一个 run 被反复结算。 */
 	stallSettled?: boolean;
+	/** C2 turnBudget per-run 状态（run_start/turn_start/run_end 事件维护；纯内存，重启即失）。 */
+	turnBudget: TurnBudgetState;
 }
 
 const BUFFER_LIMIT = 500;
@@ -869,6 +878,7 @@ export class SessionManager {
 			nextSeq: 0,
 			droppedFromSeq: 0,
 			activityStep: 0,
+			turnBudget: createTurnBudgetState(),
 			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
 			// 字段（app.ts:113），传空串 / 不传时这里**不能**退化成「没有 base prompt」——
 			// 否则默认系统提示被整段顶替掉（生产上表现为 agent 没有任何基础人设，只剩裸动态段）。
@@ -1120,11 +1130,17 @@ export class SessionManager {
 						// fire-and-forget：审计失败不影响事件分发与会话主链路。
 						if (evt.status === "completed") void this.auditCompactionSummary(entry);
 					}
-					if (harnessType === "run_end") {
-						// P0.5：vendor 把 LLM 上游失败物化成正常结算的 run（见
-						// observeLlmRunOutcome 注释）——这是 lane.prompt 结算层看不到的失败形态。
-						this.observeLlmRunOutcome(entry, evt);
-					}
+				if (harnessType === "run_start") {
+					// C2 turnBudget：开新计数窗口（重置 count/warned/settled，spec §3.1）。
+					turnBudgetRunStart(entry.turnBudget, evt.runId ?? "");
+				}
+				if (harnessType === "run_end") {
+					// P0.5：vendor 把 LLM 上游失败物化成正常结算的 run（见
+					// observeLlmRunOutcome 注释）——这是 lane.prompt 结算层看不到的失败形态。
+					this.observeLlmRunOutcome(entry, evt);
+					// C2 turnBudget：关计数窗口（下一 run 的 run_start 会重置，此处保底）。
+					turnBudgetRunEnd(entry.turnBudget);
+				}
 					if (harnessType === "tool_start") {
 						this.dispatchActivity(entry, evt);
 						// spec §3.2：工具计数/耗时在**事件层**统一结算，39 个工具零改动全覆盖
@@ -1144,7 +1160,11 @@ export class SessionManager {
 						model: entry.identity.model,
 					});
 					}
-					if (harnessType === "turn_start") entry.activityStep = 0;
+					if (harnessType === "turn_start") {
+					entry.activityStep = 0;
+					// C2 turnBudget：计数 + 软着陆/硬停判定（warn/exceed 副作用全 fail-soft）。
+					this.turnBudgetTick(entry, evt.runId);
+				}
 					this.dispatch(entry, {
 						type: sseType,
 						lane: evt.lane,
@@ -1396,6 +1416,79 @@ export class SessionManager {
 			})
 			.catch(() => {});
 		return true;
+	}
+
+	// ── C2 turnBudget（spec 2026-10-10-turn-budget-design.md §3.1-3.3）──────────
+
+	/** 预算解析：config 未配走默认 120；"off" 全旁路（不计数 / 不 warn / 不硬停）。 */
+	private turnBudgetLimit(): number | "off" {
+		return this.config.turnBudget ?? DEFAULT_TURN_BUDGET;
+	}
+
+	/** turn_start 计数入口。warn/exceed 的副作用全部 fail-soft，绝不影响事件分发主链路。 */
+	private turnBudgetTick(entry: SessionEntry, runId: string | undefined): void {
+		const budget = this.turnBudgetLimit();
+		if (budget === "off") return;
+		const action = turnBudgetOnTurnStart(entry.turnBudget, runId, budget);
+		if (action === "warn") {
+			this.metrics?.observeTurnBudgetWarned();
+			void this.turnBudgetSteer(entry);
+		} else if (action === "exceed") {
+			this.turnBudgetHardStop(entry);
+		}
+	}
+
+	/**
+	 * §3.2 软着陆：vendor 原生插话通道（steer() 同款 lane 调用）。前端展示复用
+	 * 既有「用户补充 · 插在本轮进行中」链路，零前端改动。每 run 至多一次由状态机保证。
+	 */
+	private async turnBudgetSteer(entry: SessionEntry): Promise<void> {
+		try {
+			const lane = await entry.harness.lane(MAIN_LANE, this.context);
+			const res = await lane.steer(
+				"轮次预算将尽（剩余约 10 轮），请尽快收尾并总结当前进展。",
+				undefined,
+				this.context,
+			);
+			if (!res.ok) {
+				console.warn(
+					`[pi-runtime] turn budget steer rejected: session=${entry.id}: ${describeQueueError(res.error)}`,
+				);
+			}
+		} catch (err) {
+			console.warn(
+				`[pi-runtime] turn budget steer failed (fail-soft): session=${entry.id}: ` +
+					`${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	}
+
+	/**
+	 * §3.3 硬停：与 stallWatchdogTick 完全同路径（userAborted + cancelRun + forceSettle），
+	 * reason="turn_budget"。userAborted 语义 = 中止不是崩溃：不派发 error、不进错误率。
+	 * 只结算一次由状态机 settled 闸保证（结算期后续 turn_start 漂移无害，§5-4）。
+	 */
+	private turnBudgetHardStop(entry: SessionEntry): void {
+		entry.turnBudget.settled = true;
+		const cancelRun = entry.cancelRun;
+		entry.cancelRun = undefined;
+		if (cancelRun) {
+			entry.userAborted = true;
+			try {
+				cancelRun("turn_budget");
+			} catch {
+				/* 解不开也要继续走 force-settle */
+			}
+		}
+		console.warn(
+			`[pi-runtime] turn budget exceeded (${entry.turnBudget.count} turns), settling session=${entry.id}`,
+		);
+		this.metrics?.observeTurnBudgetExceeded();
+		void this.forceSettleLaneOperation(entry)
+			.then((settled) => {
+				if (settled) entry.prompting = false;
+			})
+			.catch(() => {});
 	}
 
 	startSweeper(): void {
