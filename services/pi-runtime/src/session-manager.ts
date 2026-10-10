@@ -2277,7 +2277,13 @@ export class SessionManager {
 		opts?: { timeoutMs?: number },
 	): Promise<SubagentOutcome> {
 		const t0 = Date.now();
-		const source = this.require(piSessionKey);
+		// 双形态查找：toolContext 传的 piSessionKey 就是 sessions map key（本就是映射产物），
+		// 而 require() 的 toSessionKey **非幂等**（每次追加 -<sha8>），对已映射键二次调用必
+		// NotFound（集成测试实锤：spawn 嵌在主 run 内时 100% 复现）。优先精确键，回落原始
+		// threadKey 映射（外部直调/测试传入未映射形态）。
+		const source =
+			this.sessions.get(piSessionKey) ?? this.sessions.get(toSessionKey(piSessionKey));
+		if (!source) throw new NotFoundError(piSessionKey);
 		if (!source.session || !source.sessionMeta) {
 			throw new Error(`session ${source.id} missing underlying session snapshot; cannot spawn subagent`);
 		}
