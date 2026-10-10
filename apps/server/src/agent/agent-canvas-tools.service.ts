@@ -9,7 +9,7 @@ import {
   duplicateResultToCanvasActions,
   duplicateSubgraph,
   getGenerationScene,
-  getModelEntry,
+  getModelEntryFromRows,
   isProductFourPanelPrompt,
   SUPPORTED_ASPECT_RATIOS,
   isRootNode,
@@ -41,6 +41,10 @@ import { StudioService, type StudioRefInput } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
 import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
+// B2 S2-1e：模型能力判定/audioKind 派生切 DB 目录缓存（DB 是唯一真源）——
+// admin 后台新增的模型不在常量目录，旧实现会误判（如 music 模型判 voice、
+// 音色清单查不到而拒绝合法设置）。缓存初值 = 种子常量 ⇒ 存量行为逐字节不变。
+import { currentCatalogEntries } from '../provider/model-catalog-store'
 import {
   applyLayoutOps,
   createGroupFromNodes,
@@ -354,7 +358,7 @@ export function validateGenerationParams(input: {
       const modelRef = typeof nodeData.audioModel === 'string' ? nodeData.audioModel : ''
       // 与前端 catalogModelKeyFromValue 同源：ref 可能是编码过的 channelModel
       const modelKey = decodeChannelModel(modelRef)?.modelName ?? modelRef
-      const entry = modelKey ? getModelEntry(modelKey) : undefined
+      const entry = modelKey ? getModelEntryFromRows(currentCatalogEntries(), modelKey) : undefined
       // ⚠️ 查不到音色清单时**不能放行**：那会让任意音色号静默落库，
       // 而 dock 面板读不出/读错都无提示。与「失败绝不静默回落」同款纪律。
       if (!entry?.voices?.length) {
@@ -1452,7 +1456,7 @@ export class AgentCanvasToolsService {
         const decoded = decodeChannelModel(ref)
         const channelId = decoded?.channelId ?? PLATFORM_CHANNEL_ID
         const model = decoded?.modelName ?? ref
-        const entry = getModelEntry(model)
+        const entry = getModelEntryFromRows(currentCatalogEntries(), model)
         return {
           ref,
           model,
@@ -2106,7 +2110,8 @@ export class AgentCanvasToolsService {
    * 缺省才沿用节点上的参数 ⇒ 存量调用的 options 形状与取值逐字节不变。
    *
    * ⚠️ `kind` **不参与选模型**：`studio.generateAudio` 的分支由**解析后的模型**派发
-   * （`audioKindOf(getModelEntry(resolved.modelName))`），不读 `options.kind`。
+   * （`audioKindOf(getModelEntryFromRows(currentCatalogEntries(), resolved.modelName))`，
+   * S2-1e 起 kind 派生与校验均走 DB 目录缓存），不读 `options.kind`。
    * ⇒ 分类真正生效靠节点上的 `audioModel` 是该分类的模型（`listNodeModelOptions`
    * 会把每个模型的 `audioKind` 报给模型）。
    * 但声明与模型不一致时**不会静默跑出错的分类**：`generateAudio` 内有
