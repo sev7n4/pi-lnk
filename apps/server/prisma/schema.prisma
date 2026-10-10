@@ -329,6 +329,28 @@ model ModelCatalogVersion {
   updatedAt DateTime @updatedAt
 }
 
+/// S2-2a 上游路由表（spec: docs/superpowers/specs/2026-10-09-mph-s22-routing-table-design.md §3.1）：
+/// 「哪个模型走哪个上游」的数据真源。matchType ∈ prefix|exact|regex|default，
+/// default 行（pattern 为空）= 未命中兜底；enabled=false 即下线该行（无软删列）。
+/// upstream ∈ agnes_hub|apimart|stepfun|minimax|fal。种子从 legacy resolver 链逐条翻译
+/// （shared UPSTREAM_ROUTE_SEEDS，insert-if-absent 只插不改，存在即跳过）。
+/// fallbackApiKeyEnvName：命中行的密钥回落 env 名——apimart 行记录 'OPENAI_API_KEY'
+/// （legacy resolveApimartPlatformCredentials 的 apimartApiKey || openaiApiKey 回落语义）。
+model UpstreamRoute {
+  id                    String   @id @default(cuid())
+  matchType             String
+  pattern               String?
+  capability            String
+  upstream              String
+  priority              Int      @default(0)
+  enabled               Boolean  @default(true)
+  fallbackApiKeyEnvName String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([enabled, priority])
+}
+
 /// S2-1b admin 写操作审计行（who/when/before/after）。who 为 'admin'
 /// —— 共享密钥鉴权（AdminTokenGuard）无更细身份，密钥本身绝不落库。
 /// before/after 为写操作前后行快照 JSON（create 时 before 为 null）。
