@@ -236,11 +236,11 @@ async function handlePublish() {
 
 <style>
 .publish-dialog .el-dialog {
-  background: #1a1a1a;
+  background: var(--lnk-surface-overlay);
   border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
 }
 .publish-dialog .el-dialog__title {
-  color: #fff;
+  color: var(--lnk-text-primary);
 }
 .publish-dialog .primary-node-radio .el-radio__label {
   width: 100%;

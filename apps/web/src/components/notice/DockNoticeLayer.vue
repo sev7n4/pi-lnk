@@ -127,7 +127,7 @@ function onClose(n: DockNotice) {
   justify-content: center;
   font-size: 12px;
   font-weight: 700;
-  color: #fff;
+  color: var(--lnk-text-on-accent);
   background: var(--notice-accent, #3b82f6);
 }
 
@@ -173,7 +173,7 @@ function onClose(n: DockNotice) {
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  color: #fff;
+  color: var(--lnk-text-on-accent);
   background: var(--notice-accent, #3b82f6);
 }
 .dock-notice-action:hover {

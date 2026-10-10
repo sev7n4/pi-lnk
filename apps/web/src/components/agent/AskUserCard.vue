@@ -205,7 +205,7 @@ function submitOther(q: AskUserQuestion) {
 	border: none;
 	border-radius: 6px;
 	background: var(--neo-accent);
-	color: #fff;
+	color: var(--lnk-text-on-accent);
 	font-size: 12px;
 	cursor: pointer;
 	transition: background 0.15s;

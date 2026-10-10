@@ -641,8 +641,9 @@ WCAG 2.1 sRGB 相对亮度的蓝通道系数是 **0.0722**，不是 0.2992（后
 | P2b (#336) | 跨主题叠加通道色 `overlay` + 137 处 `white/` 工具类翻转（bg-white/ 58→0、border-white/ 77→0） | ✅ 上线 |
 | P2c (#339) | 内联白叠层 81 处 → `rgb(var(--lnk-overlay-rgb) / A)`（inline-rgba 259→178） | ✅ 上线 |
 | P2d | 状态色 16 处内联 → `var(--lnk-{v}[-bg/-border])` + **64 处 Tailwind 状态类**（red/amber/green/emerald/sky/yellow/orange 全档）→ `text-danger / bg-warning-bg / border-success-border` 等；22 处纯垂直黑 box-shadow → `var(--lnk-shadow-xs..xl)`（inline-rgba 178→142） | ✅ 本批 |
+| P2e | **盲区补扫**：3 个 el-dialog 硬编码深底 `#1a1a1a`→`var(--lnk-surface-overlay)` + 标题白字→`var(--lnk-text-primary)`；ReplayPage 画布底 `#141414`→`var(--lnk-surface-canvas)`；on-accent 白字 3 处→`var(--lnk-text-on-accent)`；守卫新增第 9 类 `hardcoded-dark-bg`（基线 8，全为内容性保留） | ✅ 本批 |
 
-**当前棘轮基线**：`inline-rgba` 142（白文字 27 + 保留黑 40 + 内容/品牌彩 75）· `bg-black` 25 · `arbitrary-hex` 39 · 品牌蓝 39（F-5，走品牌评审）。
+**当前棘轮基线**：`inline-rgba` 142（白文字 27 + 保留黑 40 + 内容/品牌彩 75）· `bg-black` 25（模态 dim 8 + 媒体角标 14 + 深底页 3，全刻意保留：黑 dim 是双主题惯例、媒体角标是内容性）· `arbitrary-hex` 39 · `hardcoded-dark-bg` 8 · 品牌蓝 39（F-5，走品牌评审）。
 
 **P2d 刻意保留项（不是漏扫）**：①黑阴影保留 40 处——`text-shadow`（媒体字 5）、`drop-shadow`（图标 4）、侧向投影 2、带 `inset` 底边线组合 2、带描边环组合 1、媒体遮罩黑底（lightbox/裁剪暗幕/crop 9999px 幕布 ~18）、`0 0 0 1px` 描边技巧 3、JS 返回值 1；②彩色内联 75 处——画布节点类型标记色、Refine 工具深蓝系（配套 #7cc0ff 文字）、媒体时间轴分类色、品牌紫光晕，均属内容性/品牌性色彩，随品牌蓝 F-5 评审一并处置；③hover 透明度阶梯依赖 alpha 分层的组（AgentSideRail 只读按钮、浅色警报条已翻但 hover 加深丢失）待引入状态 hover 档位后补。
 
@@ -673,3 +674,4 @@ Tailwind 默认阶梯与令牌命名**不是一一对应**：
 | 2026-10-10 | **P1–P2c 上线**：ThemeToggle 入口全局化(#333)；死值深灰底 44 处 → surface token(#335)；`overlay` 跨主题叠加通道色 + 137 处 `white/` 工具类翻转(#336)；内联白叠层 81 处 → `rgb(var(--lnk-overlay-rgb)/A)`，白文字 27 处刻意保留(#339)。详见 §7.2 |
 | 2026-10-10 | **P3 品牌 IP 层**：新增 §1.5「墨鱼锚 Inkfish Anchor」（lnk/π/超创释义、墨鱼五特征、锚三层寓意、锚灯、调性传递映射表、IP 应用硬规则）；状态三件套补 `-border` 4×2 变量并接 Tailwind（DEFAULT 键不回归）；阴影接 Tailwind `shadow-lnk-*`；守卫 40 → 62 条（状态 alpha 域 + 状态文字合成对比度 8 条 + 锚链阴影 6 条）；§7.2 更新为批次进度表 |
 | 2026-10-10 | **P2d 状态/阴影清扫**：内联状态色 16 处 → `var(--lnk-{v}*)` 三件套；Tailwind 状态类 64 处（106 次替换）→ `text-danger / bg-*-bg / border-*-border`；22 处纯垂直黑阴影 → `var(--lnk-shadow-*)`；棘轮 inline-rgba 178→142。保留清单与理由见 §7.2 |
+| 2026-10-10 | **P2e 盲区补扫**：bg-black 25 处审计（模态 dim/媒体角标全保留）；白文字 27 处逐个审（on-accent 3 处升令牌，其余媒体/refine 体系保留）；发现并修复守卫盲区——3 个 el-dialog 硬编码深底+白标题双主题坏 → surface-overlay/text-primary；ReplayPage 画布底令牌化；守卫新增第 9 类 `hardcoded-dark-bg`（基线 8） |

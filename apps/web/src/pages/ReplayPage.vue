@@ -225,6 +225,6 @@ onUnmounted(() => { if (playTimer) clearInterval(playTimer) })
 
 <style scoped>
 .canvas-flow {
-  background: #141414;
+  background: var(--lnk-surface-canvas);
 }
 </style>
