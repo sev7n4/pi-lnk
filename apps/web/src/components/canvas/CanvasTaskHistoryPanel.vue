@@ -557,7 +557,7 @@ onUnmounted(stopPolling)
                   <button
                     v-if="isFailedStatus(attempt.status)"
                     type="button"
-                    class="neo-task-diag-btn flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-danger-bg text-[10px] font-bold text-danger hover:bg-danger-bg"
+                    class="neo-task-diag-btn flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-danger-bg text-[10px] font-bold text-danger hover:bg-danger-bg-hover"
                     title="查看错误"
                     @click="openFailurePopover(attempt, $event)"
                   >
@@ -742,7 +742,7 @@ onUnmounted(stopPolling)
             <button
               v-if="isFailedStatus(group.latest.status)"
               type="button"
-              class="neo-task-diag-btn relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-danger-bg text-[10px] font-bold text-danger hover:bg-danger-bg"
+              class="neo-task-diag-btn relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-danger-bg text-[10px] font-bold text-danger hover:bg-danger-bg-hover"
               title="查看错误"
               @click="openFailurePopover(group.latest, $event)"
             >

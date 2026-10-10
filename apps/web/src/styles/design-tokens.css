@@ -239,6 +239,18 @@
   --lnk-warning-bg: rgba(251, 191, 36, 0.14);
   --lnk-error-bg: rgba(248, 113, 113, 0.14);
   --lnk-info-bg: rgba(96, 165, 250, 0.14);
+  /* 状态底 hover 档：dark 用深一档色阶（600）@ 同 alpha——基色深化让文字对比度反升（AA 保）
+     light 用组内 AA 允许的最大统一 alpha 0.11（error/warning 临界 0.114/0.115 之下取整）。
+     纯 alpha 加深在 AA 下空间不足 0.01（不可感知），故 dark 靠色阶、light 靠 border-hover 主导 */
+  --lnk-success-bg-hover: rgba(22, 163, 74, 0.14);
+  --lnk-warning-bg-hover: rgba(217, 119, 6, 0.14);
+  --lnk-error-bg-hover: rgba(220, 38, 38, 0.14);
+  --lnk-info-bg-hover: rgba(37, 99, 235, 0.14);
+  /* 状态描边 hover 档：alpha 显著加实，浅色主题 hover 反馈的主信号 */
+  --lnk-success-border-hover: rgba(74, 222, 128, 0.55);
+  --lnk-warning-border-hover: rgba(251, 191, 36, 0.55);
+  --lnk-error-border-hover: rgba(248, 113, 113, 0.55);
+  --lnk-info-border-hover: rgba(96, 165, 250, 0.55);
   /* 状态边框：与 -bg 配套构成"底色+描边+实色文字"三件套
      （84 处内联 rgba 状态色迁移到这里的既定落点，守卫见 design-token.test.ts） */
   --lnk-success-border: rgba(74, 222, 128, 0.38);
@@ -321,6 +333,14 @@
   --lnk-warning-bg: rgba(138, 82, 0, 0.1);
   --lnk-error-bg: rgba(179, 38, 30, 0.1);
   --lnk-info-bg: rgba(29, 78, 216, 0.1);
+  --lnk-success-bg-hover: rgba(22, 101, 52, 0.11);
+  --lnk-warning-bg-hover: rgba(138, 82, 0, 0.11);
+  --lnk-error-bg-hover: rgba(179, 38, 30, 0.11);
+  --lnk-info-bg-hover: rgba(29, 78, 216, 0.11);
+  --lnk-success-border-hover: rgba(22, 101, 52, 0.45);
+  --lnk-warning-border-hover: rgba(138, 82, 0, 0.45);
+  --lnk-error-border-hover: rgba(179, 38, 30, 0.45);
+  --lnk-info-border-hover: rgba(29, 78, 216, 0.45);
   --lnk-success-border: rgba(22, 101, 52, 0.3);
   --lnk-warning-border: rgba(138, 82, 0, 0.3);
   --lnk-error-border: rgba(179, 38, 30, 0.32);
