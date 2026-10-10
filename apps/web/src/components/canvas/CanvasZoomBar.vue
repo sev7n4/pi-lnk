@@ -85,7 +85,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
 
       <div
         v-if="showGridPanel"
-        class="grid-settings-popover absolute bottom-full left-0 mb-2 w-[200px] rounded-xl border border-white/10 bg-[#242424] p-3 shadow-xl"
+        class="grid-settings-popover absolute bottom-full left-0 mb-2 w-[200px] rounded-xl border border-white/10 bg-surface-elevated p-3 shadow-xl"
         @click.stop
       >
         <div class="mb-2 flex items-center justify-between">

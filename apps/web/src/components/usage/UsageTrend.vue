@@ -74,7 +74,7 @@ function capsuleClass(selected: boolean) {
 </script>
 
 <template>
-  <section class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-fg">
+  <section class="rounded-2xl border border-white/8 bg-surface-canvas p-5 text-fg">
     <header class="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
       <div class="space-y-3">
         <h2 class="text-sm font-medium">用量趋势</h2>

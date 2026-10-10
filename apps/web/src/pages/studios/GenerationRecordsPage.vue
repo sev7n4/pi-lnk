@@ -38,9 +38,9 @@ onMounted(load)
       <div
         v-for="item in records"
         :key="item.id"
-        class="flex items-center gap-4 rounded-xl border border-white/8 bg-[#1a1a1a] p-4"
+        class="flex items-center gap-4 rounded-xl border border-white/8 bg-surface-base p-4"
       >
-        <div class="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-[#242424]">
+        <div class="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-surface-elevated">
           <img v-if="item.type !== 'audio' && item.url" :src="item.url" class="h-full w-full object-cover" alt="" />
           <div v-else class="flex h-full items-center justify-center text-lg">🎵</div>
         </div>

@@ -56,7 +56,7 @@ onMounted(load)
     </div>
 
     <div v-if="loading" class="grid grid-cols-3 gap-4">
-      <div v-for="i in 3" :key="i" class="aspect-[3/4] animate-pulse rounded-2xl bg-[#1a1a1a]" />
+      <div v-for="i in 3" :key="i" class="aspect-[3/4] animate-pulse rounded-2xl bg-surface-base" />
     </div>
 
     <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -64,10 +64,10 @@ onMounted(load)
         v-for="story in stories"
         :key="story.id"
         type="button"
-        class="overflow-hidden rounded-2xl border border-white/8 bg-[#1a1a1a] text-left transition hover:border-[#6366f1]/40"
+        class="overflow-hidden rounded-2xl border border-white/8 bg-surface-base text-left transition hover:border-[#6366f1]/40"
         @click="openStory(story)"
       >
-        <div class="aspect-[4/3] overflow-hidden bg-[#242424]">
+        <div class="aspect-[4/3] overflow-hidden bg-surface-elevated">
           <img v-if="story.coverUrl" :src="story.coverUrl" class="h-full w-full object-cover" alt="" />
         </div>
         <div class="p-4">

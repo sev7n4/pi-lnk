@@ -86,7 +86,7 @@ function backToShare() {
 
 <template>
   <div class="flex h-[calc(100vh-4rem)] flex-col">
-    <div class="flex items-center justify-between border-b border-white/8 bg-[#141414] px-4 py-3">
+    <div class="flex items-center justify-between border-b border-white/8 bg-surface-canvas px-4 py-3">
       <div class="flex items-center gap-3">
         <button class="text-sm text-fg-3 hover:text-fg" @click="backToShare">← 返回详情</button>
         <span class="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">只读 · 制作过程</span>
@@ -110,7 +110,7 @@ function backToShare() {
         :pan-on-drag="true"
         :zoom-on-scroll="true"
         fit-view-on-init
-        class="canvas-flow h-full w-full bg-[#0a0a0a]"
+        class="canvas-flow h-full w-full bg-surface-sunken"
       >
         <Background pattern-color="#333" :gap="20" />
       </VueFlow>

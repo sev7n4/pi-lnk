@@ -68,7 +68,7 @@ function onSecondary() {
     @click.self="close"
   >
     <div
-      class="w-full max-w-md rounded-2xl border border-white/10 bg-[#1e1e1e] p-5 text-fg shadow-2xl"
+      class="w-full max-w-md rounded-2xl border border-white/10 bg-surface-base p-5 text-fg shadow-2xl"
       role="dialog"
       aria-modal="true"
     >

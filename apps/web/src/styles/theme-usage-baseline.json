@@ -4,9 +4,9 @@
   "_生成方式": "统计 src/**/*.vue 中下列正则的匹配总数",
   "text-white": 0,
   "bg-black": 25,
-  "bg-white-slash": 59,
+  "bg-white-slash": 58,
   "border-white-slash": 77,
-  "arbitrary-hex": 83,
+  "arbitrary-hex": 39,
   "brand-blue-6366f1": 21,
   "brand-blue-818cf8": 18,
   "inline-rgba": 259

@@ -61,7 +61,7 @@ function cellTitle(cell: HeatmapCell) {
 <template>
   <section
     tabindex="0"
-    class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-fg outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
+    class="rounded-2xl border border-white/8 bg-surface-canvas p-5 text-fg outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
   >
     <header class="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
       <div>

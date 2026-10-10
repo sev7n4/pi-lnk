@@ -15,7 +15,7 @@ const route = useRoute()
 
 <template>
   <div class="flex min-h-[calc(100vh-4rem)]">
-    <aside class="w-[220px] shrink-0 border-r border-white/5 bg-[#1a1a1a] p-4">
+    <aside class="w-[220px] shrink-0 border-r border-white/5 bg-surface-base p-4">
       <h2 class="mb-4 text-xs font-medium uppercase tracking-wider text-fg-3">创作工作室</h2>
       <nav class="space-y-1">
         <router-link

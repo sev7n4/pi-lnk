@@ -59,7 +59,7 @@ function toggleVoice() {
 </script>
 
 <template>
-  <div class="border-t border-white/5 bg-[#1a1a1a]/95 backdrop-blur-xl">
+  <div class="border-t border-white/5 bg-surface-base backdrop-blur-xl">
     <div class="mx-auto max-w-4xl p-4">
       <div class="mb-3 flex items-center gap-2">
         <button

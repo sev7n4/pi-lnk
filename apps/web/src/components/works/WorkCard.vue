@@ -50,12 +50,12 @@ function onHoverLeave() {
 
 <template>
   <article
-    class="group cursor-pointer overflow-hidden rounded-2xl border border-white/[0.08] bg-[#1a1a1a] transition hover:border-[#6366f1]/30 hover:shadow-lg hover:shadow-[#6366f1]/5"
+    class="group cursor-pointer overflow-hidden rounded-2xl border border-white/[0.08] bg-surface-base transition hover:border-[#6366f1]/30 hover:shadow-lg hover:shadow-[#6366f1]/5"
     @click="$emit('viewWork', work.id)"
     @mouseenter="onHoverEnter"
     @mouseleave="onHoverLeave"
   >
-    <div class="relative aspect-video overflow-hidden bg-[#242424]">
+    <div class="relative aspect-video overflow-hidden bg-surface-elevated">
       <video
         v-if="isVideoPlayback"
         ref="videoRef"

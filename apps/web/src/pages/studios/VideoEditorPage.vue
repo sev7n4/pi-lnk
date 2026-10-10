@@ -36,7 +36,7 @@ onMounted(loadVideos)
     <h1 class="mb-2 text-2xl font-semibold">视频编辑器</h1>
     <p class="mb-6 text-sm text-fg-3">将视频工作室素材拖入时间轴进行简易剪辑（MVP）</p>
 
-    <div class="mb-6 aspect-video overflow-hidden rounded-2xl border border-white/8 bg-[#0a0a0a]">
+    <div class="mb-6 aspect-video overflow-hidden rounded-2xl border border-white/8 bg-surface-sunken">
       <img
         v-if="timelineClips[playhead]?.url"
         :src="timelineClips[playhead]!.url!"
@@ -53,7 +53,7 @@ onMounted(loadVideos)
     </div>
 
     <div class="mb-2 text-xs text-fg-3">时间轴</div>
-    <div class="mb-8 flex min-h-[80px] gap-2 overflow-x-auto rounded-xl border border-white/8 bg-[#1a1a1a] p-3">
+    <div class="mb-8 flex min-h-[80px] gap-2 overflow-x-auto rounded-xl border border-white/8 bg-surface-base p-3">
       <div
         v-for="(clip, idx) in timelineClips"
         :key="clip.id"
