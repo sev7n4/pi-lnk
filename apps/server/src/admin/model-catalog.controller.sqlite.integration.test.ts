@@ -47,10 +47,11 @@ function newProviderService(prisma: PrismaClient): ProviderService {
   )
 }
 
+// 2026-10-10：agnes-2.5-flash 已入种子（文本默认接位），admin 新增 fixture 换真实不存在的 key。
 const NEW_MODEL = {
-  modelKey: 'agnes-2.5-flash',
-  displayName: 'Agnes 2.5 Flash',
-  gatewayModelId: 'agnes-2.5-flash',
+  modelKey: 'admin-added-model',
+  displayName: 'Admin Added Model',
+  gatewayModelId: 'admin-added-model',
   modality: 'text',
   providerBinding: 'gateway-openai-compat',
   params: { model: 'native' },
@@ -138,9 +139,9 @@ describe('ModelCatalogAdminController CRUD + 审计 + 版本（S2-1b A2/A5）', 
     const beforeVersion = base.data.version
 
     await expect(controller.create(NEW_MODEL)).rejects.toMatchObject({ status: 409 })
-    // 默认模型防呆：agnes-2.0-flash 是 text 默认
+    // 默认模型防呆：text 默认（现= agnes-2.5-flash，随 shared defaultModelKey 切换）
     const defaultRow = await prisma.modelCatalogEntry.findUnique({
-      where: { modelKey: 'agnes-2.0-flash' },
+      where: { modelKey: 'agnes-2.5-flash' },
     })
     await expect(controller.remove(defaultRow!.id)).rejects.toMatchObject({ status: 400 })
     await expect(controller.update('no-such-id', { displayName: 'x' })).rejects.toMatchObject({
