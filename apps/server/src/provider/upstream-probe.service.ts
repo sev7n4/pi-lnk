@@ -102,6 +102,8 @@ export function toReconciliationUpstreamId(upstream: UpstreamId): Reconciliation
       return 'minimax'
     case 'stepfun':
       return 'stepfun'
+    case 'zhipu':
+      return 'zhipu'
   }
 }
 
@@ -149,6 +151,7 @@ const PROBE_UPSTREAMS: readonly ProbeUpstream[] = [
   { id: 'fal', baseUrlEnv: 'FAL_BASE_URL', keyEnv: 'FAL_KEY', defaultBaseUrl: 'https://fal.run' },
   { id: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', keyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io' },
   { id: 'stepfun', baseUrlEnv: 'STEPFUN_BASE_URL', keyEnv: 'STEPFUN_API_KEY', defaultBaseUrl: 'https://api.stepfun.com/v1' },
+  { id: 'zhipu', baseUrlEnv: 'ZHIPU_BASE_URL', keyEnv: 'ZHIPU_API_KEY', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
 ]
 
 /** admin 端点（S1-2/S1-3 与运维 curl）按这组 id 取各上游最近一帧 run。 */

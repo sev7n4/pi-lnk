@@ -45,7 +45,7 @@ import { AdminTokenGuard } from './admin-token.guard'
  */
 
 const VALID_MODALITIES = ['text', 'image', 'video', 'audio'] as const
-const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http'] as const
+const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http'] as const
 const VALID_AUDIO_KINDS = ['voice', 'design', 'music'] as const
 
 const ACTOR = 'admin'

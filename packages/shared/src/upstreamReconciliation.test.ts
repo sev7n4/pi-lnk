@@ -69,9 +69,10 @@ const ROUTING_MAP: UpstreamRoutingMap = [
   { upstream: 'agnes', pattern: /^agnes-/i },
 ]
 
-/** 当前目录按路由表归到 agnes 的条目（其余 19 个归 stepfun/minimax/fal/apimart） */
+/** 当前目录按路由表归到 agnes 的条目（其余 18 个归 stepfun/minimax/fal/apimart/zhipu） */
 const CURRENT_CATALOG_AGNES_MATCHED = [
   'agnes-2.0-flash',
+  'agnes-2.5-flash',
   'agnes-image-2.0-flash',
   'agnes-image-2.1-flash',
   'agnes-image-2.5-flash',
@@ -79,9 +80,9 @@ const CURRENT_CATALOG_AGNES_MATCHED = [
   'agnes-video-v2.0',
 ].sort()
 
-/** agnes hub 有而目录无（总体规格 §2.4：5 个文本上架机会 + 1 个视频） */
+/** agnes hub 有而目录无（总体规格 §2.4：4 个文本上架机会 + 1 个视频；
+ * 2026-10-10 agnes-2.5-flash 文本已上架接位默认，从 missing 移除） */
 const EXPECTED_MISSING_CURRENT = [
-  'agnes-2.5-flash',
   'agnes-2.5-pro',
   'agnes-2.5-pro-alpha',
   'agnes-2.5-pro-beta',
@@ -101,7 +102,7 @@ describe('S0-3 diffCatalogAgainstUpstream', () => {
     }
   })
 
-  it('A1 当前目录：matched 恰为 6 个 agnes 条目、missing 恰为网关多出的 6 个可用模型', () => {
+  it('A1 当前目录：matched 恰为 7 个 agnes 条目、missing 恰为网关多出的 5 个可用模型', () => {
     const diff = diffCatalogAgainstUpstream(STUDIO_MODEL_CATALOG, AGNES_HUB_REAL_12, ROUTING_MAP)
     expect(diff.matched).toEqual(CURRENT_CATALOG_AGNES_MATCHED)
     expect(diff.missing).toEqual(EXPECTED_MISSING_CURRENT)

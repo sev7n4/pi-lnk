@@ -47,10 +47,11 @@ function newProviderService(prisma: PrismaClient): ProviderService {
   )
 }
 
+// 2026-10-10：agnes-2.5-flash 已入种子（文本默认接位），admin 新增 fixture 换真实不存在的 key。
 const NEW_MODEL = {
-  modelKey: 'agnes-2.5-flash',
-  displayName: 'Agnes 2.5 Flash',
-  gatewayModelId: 'agnes-2.5-flash',
+  modelKey: 'admin-added-model',
+  displayName: 'Admin Added Model',
+  gatewayModelId: 'admin-added-model',
   modality: 'text',
   providerBinding: 'gateway-openai-compat',
   params: { model: 'native' },
@@ -83,7 +84,7 @@ describe('ModelCatalogAdminController CRUD + 审计 + 版本（S2-1b A2/A5）', 
 
   beforeEach(async () => {
     // 测试间 DB 隔离（同文件共享一个临时库）：清掉本任务写入的三类行 + 进程内标记，
-    // 再播种种子目录（25 条），保证每个用例从「已播种、零写操作」的初态出发。
+    // 再播种种子目录（26 条），保证每个用例从「已播种、零写操作」的初态出发。
     await prisma.modelCatalogEntry.deleteMany({ where: { modelKey: NEW_MODEL.modelKey } })
     await prisma.adminAuditLog.deleteMany()
     await prisma.modelCatalogVersion.deleteMany()
@@ -138,9 +139,9 @@ describe('ModelCatalogAdminController CRUD + 审计 + 版本（S2-1b A2/A5）', 
     const beforeVersion = base.data.version
 
     await expect(controller.create(NEW_MODEL)).rejects.toMatchObject({ status: 409 })
-    // 默认模型防呆：agnes-2.0-flash 是 text 默认
+    // 默认模型防呆：text 默认（现= agnes-2.5-flash，随 shared defaultModelKey 切换）
     const defaultRow = await prisma.modelCatalogEntry.findUnique({
-      where: { modelKey: 'agnes-2.0-flash' },
+      where: { modelKey: 'agnes-2.5-flash' },
     })
     await expect(controller.remove(defaultRow!.id)).rejects.toMatchObject({ status: 400 })
     await expect(controller.update('no-such-id', { displayName: 'x' })).rejects.toMatchObject({
@@ -171,11 +172,11 @@ describe('ModelCatalogAdminController CRUD + 审计 + 版本（S2-1b A2/A5）', 
     // UserAiPreferences.userId 外键指向 User，先建用户行
     await prisma.user.create({ data: { id: userId, phone: '13800000002', nickname: 'a2' } })
 
-    // 首次调用：播种镜像 + 用户快照（当前目录 = 25 条种子）
+    // 首次调用：播种镜像 + 用户快照（当前目录 = 26 条种子）
     const first = await service.bootstrap(userId)
-    expect(first.platformChannel.models).toHaveLength(25)
+    expect(first.platformChannel.models).toHaveLength(26)
     expect(first.preferences.selectableTextModels).toContain('platform::agnes-2.0-flash')
-    expect(first.catalog).toHaveLength(25) // 下发 payload（web 目录来源）
+    expect(first.catalog).toHaveLength(26) // 下发 payload（web 目录来源）
 
     // 后台新增 → 下一次 provider 调用即生效（无定时器、无重启）
     const created = await controller.create(NEW_MODEL)
@@ -183,7 +184,7 @@ describe('ModelCatalogAdminController CRUD + 审计 + 版本（S2-1b A2/A5）', 
     const second = await service.bootstrap(userId)
     const mirrorNames = second.platformChannel.models.map((m) => m.name)
     expect(mirrorNames).toContain(NEW_MODEL.modelKey)
-    expect(mirrorNames).toHaveLength(26)
+    expect(mirrorNames).toHaveLength(27)
     expect(second.preferences.selectableTextModels).toContain(`platform::${NEW_MODEL.modelKey}`)
     expect(second.catalog.find((e) => e.modelKey === NEW_MODEL.modelKey)).toBeTruthy()
 

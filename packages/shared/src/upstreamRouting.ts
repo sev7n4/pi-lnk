@@ -27,6 +27,7 @@ import {
   DEFAULT_FAL_BASE_URL,
   DEFAULT_MINIMAX_BASE_URL,
   DEFAULT_STEPFUN_BASE_URL,
+  DEFAULT_ZHIPU_BASE_URL,
   isFalH3MaxPlatformModel,
   isMiniMaxH3PlatformModel,
   isStepFunPlatformModel,
@@ -35,7 +36,7 @@ import {
 import type { ModelCapability } from './providerChannels'
 
 /** 路由可指向的上游集合（S2-2 spec §3.1）。 */
-export type UpstreamId = 'agnes_hub' | 'apimart' | 'stepfun' | 'minimax' | 'fal'
+export type UpstreamId = 'agnes_hub' | 'apimart' | 'stepfun' | 'minimax' | 'fal' | 'zhipu'
 
 /** 行匹配类型；`default` = 兜底行（pattern 为空，仅在未命中任何普通行时生效）。 */
 export type UpstreamRouteMatchType = 'prefix' | 'exact' | 'regex' | 'default'
@@ -97,6 +98,9 @@ export const UPSTREAM_REGISTRY: Record<UpstreamId, UpstreamRegistryEntry> = {
   stepfun: { baseUrl: DEFAULT_STEPFUN_BASE_URL, apiKeyEnvName: 'STEPFUN_API_KEY' },
   minimax: { baseUrl: DEFAULT_MINIMAX_BASE_URL, apiKeyEnvName: 'MINIMAX_API_KEY' },
   fal: { baseUrl: DEFAULT_FAL_BASE_URL, apiKeyEnvName: 'FAL_KEY' },
+  // 智谱 BigModel（cogvideox 免费视频）：OpenAI 风格 base 但路径含 /api/paas/v4，
+  // 异步视频走 POST {base}/videos/generations + GET {base}/async-result/{id}。
+  zhipu: { baseUrl: DEFAULT_ZHIPU_BASE_URL, apiKeyEnvName: 'ZHIPU_API_KEY' },
 }
 
 // ── regex 行 ReDoS 防线（spec §5：pattern 长度上限 + 禁嵌套量词 lint） ──
@@ -256,6 +260,8 @@ export function legacyResolveUpstream(modelKey: string, capability: ModelCapabil
   if (isMiniMaxH3PlatformModel(modelKey)) return 'minimax'
   if (isStepFunPlatformModel(modelKey)) return 'stepfun'
   if (capability === 'image' && usesApimartImageGateway(modelKey)) return 'apimart'
+  // 2026-10-10：智谱 cogvideox 视频族（免费档），与种子 prefix 行 'cogvideox-' 对拍同步。
+  if (/^cogvideox/i.test(modelKey)) return 'zhipu'
   return 'agnes_hub'
 }
 
@@ -307,6 +313,8 @@ export const UPSTREAM_ROUTE_SEEDS: UpstreamRouteSeed[] = [
   { matchType: 'prefix', pattern: 'gpt-image-2', capability: 'image', upstream: 'apimart', priority: 10, enabled: true, fallbackApiKeyEnvName: 'OPENAI_API_KEY' },
   { matchType: 'regex', pattern: '^gemini-3\\.[0-9]+-flash$', capability: 'image', upstream: 'apimart', priority: 10, enabled: true, fallbackApiKeyEnvName: 'OPENAI_API_KEY' },
   { matchType: 'regex', pattern: 'gemini-.*-flash-image', capability: 'image', upstream: 'apimart', priority: 10, enabled: true, fallbackApiKeyEnvName: 'OPENAI_API_KEY' },
+  // 智谱 cogvideox 免费视频（2026-10-10 接入实测通过；cogvideox-flash 官方免费档）
+  { matchType: 'prefix', pattern: 'cogvideox-', capability: 'video', upstream: 'zhipu', priority: 10, enabled: true },
   // 链尾兜底：agnes hub（OpenAI 链）
   { matchType: 'default', pattern: null, capability: '*', upstream: 'agnes_hub', priority: 0, enabled: true },
 ]

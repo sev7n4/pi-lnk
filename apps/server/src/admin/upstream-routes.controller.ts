@@ -41,7 +41,7 @@ import { AdminTokenGuard } from './admin-token.guard'
  */
 
 const VALID_MATCH_TYPES: readonly UpstreamRouteMatchType[] = ['prefix', 'exact', 'regex', 'default']
-const VALID_UPSTREAMS = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal'] as const
+const VALID_UPSTREAMS = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal', 'zhipu'] as const
 const VALID_CAPABILITIES: readonly UpstreamRouteCapability[] = ['*', 'text', 'image', 'video', 'audio']
 
 const ACTOR = 'admin'

@@ -33,7 +33,7 @@ import { PrismaService } from '../prisma/prisma.service'
 export const UPSTREAM_ROUTE_CACHE_TTL_MS = 5_000
 
 const VALID_MATCH_TYPES: readonly UpstreamRouteMatchType[] = ['prefix', 'exact', 'regex', 'default']
-const VALID_UPSTREAMS: readonly UpstreamId[] = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal']
+const VALID_UPSTREAMS: readonly UpstreamId[] = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal', 'zhipu']
 const VALID_CAPABILITIES: readonly UpstreamRouteCapability[] = ['*', 'text', 'image', 'video', 'audio']
 
 /** DB 行的最小形状（列名与 Prisma 逐字一致，见 model-catalog-sync 的注释教训）。 */

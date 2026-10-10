@@ -11,7 +11,7 @@
  */
 
 /** 上游 id，与探针脚本的 env 前缀一一对应。 */
-export type UpstreamId = 'agnes' | 'apimart' | 'fal' | 'minimax' | 'stepfun'
+export type UpstreamId = 'agnes' | 'apimart' | 'fal' | 'minimax' | 'stepfun' | 'zhipu'
 
 /**
  * 未命中任何路由规则的目录条目兜底归到这里 —— 与 platformCredentials 的

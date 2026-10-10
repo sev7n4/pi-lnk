@@ -17,9 +17,12 @@ import { encodeChannelModel } from './providerChannels'
 
 describe('studioModelCatalog', () => {
   it('lists fixed product models per modality', () => {
-    // 2026-10-09 S0-1：gemini-3.1-flash / deepseek-v4 / gpt-5.5 探活下架（agnes hub 无渠道），
-    // 文本仅剩 agnes-2.0-flash（详见 studioModelCatalog.ts 内的下架注释块）。
-    expect(listModels('text').map((m) => m.modelKey)).toEqual(['agnes-2.0-flash'])
+    // 2026-10-09 S0-1：gemini-3.1-flash / deepseek-v4 / gpt-5.5 探活下架（agnes hub 无渠道）。
+    // 2026-10-10：agnes-2.0-flash 上游消失，补 agnes-2.5-flash 接位（默认切换）。
+    expect(listModels('text').map((m) => m.modelKey)).toEqual([
+      'agnes-2.0-flash',
+      'agnes-2.5-flash',
+    ])
     expect(listModels('image').map((m) => m.modelKey)).toEqual([
       'agnes-image-2.0-flash',
       'agnes-image-2.1-flash',
@@ -283,8 +286,8 @@ describe('audioKind 元数据', () => {
 describe('resolveModelKeyFromRows（rows 注入形态，S2-1a A3 全量回归）', () => {
   const ROWS = STUDIO_MODEL_CATALOG
 
-  it('全量 25 条 fixture：按 modelKey 解析命中（模态闸门内）', () => {
-    expect(ROWS).toHaveLength(25)
+  it('全量 26 条 fixture：按 modelKey 解析命中（模态闸门内）', () => {
+    expect(ROWS).toHaveLength(26)
     for (const entry of ROWS) {
       const r = resolveModelKeyFromRows(ROWS, entry.modality, entry.modelKey)
       expect(r.fallback, entry.modelKey).toBe(false)
@@ -293,7 +296,7 @@ describe('resolveModelKeyFromRows（rows 注入形态，S2-1a A3 全量回归）
     }
   })
 
-  it('全量 25 条 fixture：gatewayModelId 形态也命中并归一到规范 modelKey', () => {
+  it('全量 26 条 fixture：gatewayModelId 形态也命中并归一到规范 modelKey', () => {
     for (const entry of ROWS) {
       const r = resolveModelKeyFromRows(ROWS, entry.modality, entry.gatewayModelId)
       expect(r.fallback, entry.gatewayModelId).toBe(false)
@@ -324,7 +327,7 @@ describe('resolveModelKeyFromRows（rows 注入形态，S2-1a A3 全量回归）
     for (const ghost of ['deepseek-v4', 'gpt-5.5']) {
       const g = resolveModelKeyFromRows(ROWS, 'text', ghost)
       expect(g.fallback, ghost).toBe(true)
-      expect(g.modelKey).toBe('agnes-2.0-flash')
+      expect(g.modelKey).toBe(defaultModelKey('text'))
     }
   })
 

@@ -228,8 +228,8 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
     // matched 条目不动（unknown 保持 unknown）
     expect(store.getModels().find((m) => m.name === MATCHED_MODEL)?.availability).toBe('unknown')
 
-    // run 落库：每轮 5 上游各一帧；agnes 帧带 ghosts/modelCount
-    expect(store.runs).toHaveLength(15)
+    // run 落库：每轮 6 上游各一帧（2026-10-10 加 zhipu）；agnes 帧带 ghosts/modelCount
+    expect(store.runs).toHaveLength(18)
     const run = agnesRun(3)
     expect(run).toMatchObject({
       upstream: 'agnes',
@@ -412,15 +412,15 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
     })
   })
 
-  it('每轮对 5 个上游各落一帧 run；未配置 env 的上游记 unavailable(未配置) 不判 ghost', async () => {
+  it('每轮对 6 个上游各落一帧 run；未配置 env 的上游记 unavailable(未配置) 不判 ghost', async () => {
     agnesResolves(AGNES_IDS)
     await compile()
 
     await svc.probeOnce('manual')
 
-    expect(store.runs).toHaveLength(5)
+    expect(store.runs).toHaveLength(6)
     const upstreams = new Set(store.runs.map((r) => r.upstream))
-    expect(upstreams).toEqual(new Set(['agnes', 'apimart', 'fal', 'minimax', 'stepfun']))
+    expect(upstreams).toEqual(new Set(['agnes', 'apimart', 'fal', 'minimax', 'stepfun', 'zhipu']))
     const apimart = store.runs.find((r) => r.upstream === 'apimart')!
     expect(apimart.error).toContain('未配置 APIMART_API_KEY')
     expect(apimart.ghosts).toBeNull()

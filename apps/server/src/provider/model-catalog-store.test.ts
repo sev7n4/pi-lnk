@@ -92,12 +92,12 @@ describe('modelCatalogRowToEntry（行 → 条目校验）', () => {
 describe('seedModelCatalogEntries（insert-if-absent，只插不改）', () => {
   beforeEach(() => __resetModelCatalogStoreForTests())
 
-  it('空库首播 25 条；二次播种 0 条（幂等，create 不再被调用）', async () => {
+  it('空库首播 26 条；二次播种 0 条（幂等，create 不再被调用）', async () => {
     const { prisma, state } = makeFakePrisma()
-    expect(await seedModelCatalogEntries(prisma)).toBe(25)
-    expect(state.created).toHaveLength(25)
+    expect(await seedModelCatalogEntries(prisma)).toBe(26)
+    expect(state.created).toHaveLength(26)
     expect(await seedModelCatalogEntries(prisma)).toBe(0)
-    expect(state.created).toHaveLength(25)
+    expect(state.created).toHaveLength(26)
   })
 
   it('存在即跳过：人工改过 displayName 的行不被覆盖；软删行算存在（下架不复活）', async () => {
@@ -106,7 +106,7 @@ describe('seedModelCatalogEntries（insert-if-absent，只插不改）', () => {
       makeRow({ modelKey: 'navo-pro', deletedAt: new Date() }),
     ])
     const inserted = await seedModelCatalogEntries(prisma)
-    expect(inserted).toBe(23)
+    expect(inserted).toBe(24)
     // 两条已存在（含软删）都不重插
     expect(state.created.find((d) => d.modelKey === 'image2')).toBeUndefined()
     expect(state.created.find((d) => d.modelKey === 'navo-pro')).toBeUndefined()
@@ -137,7 +137,7 @@ describe('loadModelCatalogRows（软删过滤 + 排序）', () => {
     rows[3]!.deletedAt = new Date()
     const { prisma } = makeFakePrisma(rows)
     const entries = await loadModelCatalogRows(prisma as never)
-    expect(entries).toHaveLength(24)
+    expect(entries).toHaveLength(25)
     expect(entries.find((e) => e.modelKey === STUDIO_MODEL_CATALOG[3]!.modelKey)).toBeUndefined()
   })
 })

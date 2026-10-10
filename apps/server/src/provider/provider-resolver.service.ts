@@ -44,6 +44,8 @@ function readCredentialEnvValue(envName: string, vars: Required<PlatformCredenti
       return vars.minimaxApiKey
     case 'FAL_KEY':
       return vars.falApiKey
+    case 'ZHIPU_API_KEY':
+      return vars.zhipuApiKey
     default:
       return ''
   }
@@ -69,6 +71,8 @@ function baseUrlForUpstream(
       return vars.minimaxBaseUrl
     case 'stepfun':
       return vars.stepfunBaseUrl
+    case 'zhipu':
+      return vars.zhipuBaseUrl
   }
 }
 

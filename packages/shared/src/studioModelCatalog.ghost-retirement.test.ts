@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { getModelEntry, listModels, resolveModelKey, STUDIO_MODEL_CATALOG } from './studioModelCatalog'
+import {
+  defaultModelKey,
+  getModelEntry,
+  listModels,
+  resolveModelKey,
+  STUDIO_MODEL_CATALOG,
+} from './studioModelCatalog'
 
 /**
  * S0-1 幽灵模型下架回归锁（2026-10-09）。
@@ -14,11 +20,10 @@ import { getModelEntry, listModels, resolveModelKey, STUDIO_MODEL_CATALOG } from
 describe('S0-1 幽灵模型下架', () => {
   const GHOST_KEYS = ['deepseek-v4', 'gemini-3.1-flash', 'gpt-5.5']
 
-  it('A1：文本模型恰剩 1 个（agnes-2.0-flash），目录总数 25', () => {
+  it('A1：文本模型恰剩 2 个（2.0-flash + 2.5-flash 接位），目录总数 26', () => {
     const text = listModels('text')
-    expect(text).toHaveLength(1)
-    expect(text[0]!.modelKey).toBe('agnes-2.0-flash')
-    expect(STUDIO_MODEL_CATALOG).toHaveLength(25)
+    expect(text.map((m) => m.modelKey)).toEqual(['agnes-2.0-flash', 'agnes-2.5-flash'])
+    expect(STUDIO_MODEL_CATALOG).toHaveLength(26)
   })
 
   it('A1：3 个幽灵 key 均已不在目录（双向查不到）', () => {
@@ -36,8 +41,8 @@ describe('S0-1 幽灵模型下架', () => {
     for (const key of GHOST_KEYS) {
       const r = resolveModelKey('text', key)
       expect(r.fallback, `${key} 不应命中目录`).toBe(true)
-      expect(r.modelKey).toBe('agnes-2.0-flash')
-      expect(r.entry.modelKey).toBe('agnes-2.0-flash')
+      expect(r.modelKey).toBe(defaultModelKey('text'))
+      expect(r.entry.modelKey).toBe(defaultModelKey('text'))
     }
   })
 })

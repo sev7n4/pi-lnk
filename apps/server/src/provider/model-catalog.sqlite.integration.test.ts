@@ -52,13 +52,13 @@ describe('ModelCatalogEntry 播种幂等 + DB 路径对拍（S2-1a A1）', () =>
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('A1：空库首播 25 条，二次播种行数不变、无重复 modelKey、新插 0 条', async () => {
-    expect(await seedModelCatalogEntries(prisma)).toBe(25)
+  it('A1：空库首播 26 条，二次播种行数不变、无重复 modelKey、新插 0 条', async () => {
+    expect(await seedModelCatalogEntries(prisma)).toBe(26)
     expect(await seedModelCatalogEntries(prisma)).toBe(0)
     const rows = await prisma.modelCatalogEntry.findMany()
-    expect(rows).toHaveLength(25)
+    expect(rows).toHaveLength(26)
     const keys = rows.map((r) => r.modelKey)
-    expect(new Set(keys).size).toBe(25)
+    expect(new Set(keys).size).toBe(26)
     // 内容逐条与种子常量一致（insert-only 的直接后果）
     for (const entry of STUDIO_MODEL_CATALOG) {
       const row = rows.find((r) => r.modelKey === entry.modelKey)
@@ -106,10 +106,10 @@ describe('ModelCatalogEntry 播种幂等 + DB 路径对拍（S2-1a A1）', () =>
     expect(entries.find((e) => e.modelKey === 'navo-pro')).toBeUndefined() // 装载被过滤
   })
 
-  it('双层对拍：DB 装载 rows 解析 ≡ 常量版 resolveModelKey（25 条 × modelKey/gatewayId/未知/默认）', async () => {
+  it('双层对拍：DB 装载 rows 解析 ≡ 常量版 resolveModelKey（26 条 × modelKey/gatewayId/未知/默认）', async () => {
     const rows = await loadModelCatalogRows(prisma)
-    // 25 条种子 - 1 软删（navo-pro，上一用例留下）+ 1 后台新增（admin-added-model）= 25
-    expect(rows).toHaveLength(25)
+    // 26 条种子 - 1 软删（navo-pro，上一用例留下）+ 1 后台新增（admin-added-model）= 26
+    expect(rows).toHaveLength(26)
     expect(rows.find((e) => e.modelKey === 'navo-pro')).toBeUndefined()
     expect(rows.find((e) => e.modelKey === 'admin-added-model')).toBeDefined()
     for (const entry of STUDIO_MODEL_CATALOG) {
