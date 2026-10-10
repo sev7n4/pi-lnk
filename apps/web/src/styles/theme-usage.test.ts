@@ -155,6 +155,17 @@ describe('主题机制不变量', () => {
     // 看不出是超时还是真超标的红。
   }, 30000)
 
+  it('⛔ 主题切换入口不得只在画布页（AppHeader 必须挂 ThemeToggle）', () => {
+    // 主题在 P0 已升级为应用级能力（index.html 同步引导），但入口一度只留在画布页
+    // ⇒ 其余 16 条路由「主题能生效，但用户够不着」。沉浸画布没有 header，
+    // 所以 CanvasPage 那份必须保留 —— 这里守的是「全站那份不许再被摘掉」。
+    const header = readFileSync(join(SRC, 'components/layout/AppHeader.vue'), 'utf8')
+    expect(
+      header,
+      'AppHeader 不含 ThemeToggle ⇒ 主题切换又退回只在画布页可用',
+    ).toContain('ThemeToggle')
+  })
+
   it('⛔ useCanvasTheme.ts 不得在模块顶层调用 applyTheme（副作用不许回来）', () => {
     const src = readFileSync(join(SRC, 'composables/useCanvasTheme.ts'), 'utf8')
     const topLevel = src

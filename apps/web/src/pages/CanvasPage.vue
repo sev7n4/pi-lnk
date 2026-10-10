@@ -61,6 +61,7 @@ import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
 import CanvasFloatingChrome from '@/components/canvas/CanvasFloatingChrome.vue'
 import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
+import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
@@ -286,7 +287,7 @@ const contextMenu = ref<{
   mimeType?: string
 } | null>(null)
 const { settings: viewportSettings, cycleMinimap } = useCanvasViewportSettings()
-const { theme: canvasTheme, toggleTheme: toggleCanvasTheme } = useCanvasTheme()
+const { theme: canvasTheme } = useCanvasTheme()
 const showMembership = ref(false)
 
 /** Session cache so delete→undo can restore url/status/images/materialId after strip. */
@@ -4923,22 +4924,12 @@ onUnmounted(() => {
           >
             导出工作流
           </button>
-          <button
-            type="button"
-            class="canvas-theme-toggle neo-chrome pointer-events-auto flex h-9 w-9 items-center justify-center rounded-xl transition"
-            :title="canvasTheme === 'dark' ? '切换白天模式' : '切换黑夜模式'"
-            @click="toggleCanvasTheme"
-          >
-            <!-- 太阳 -->
-            <svg v-if="canvasTheme === 'dark'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
-              <circle cx="12" cy="12" r="4" />
-              <path stroke-linecap="round" d="M12 3v2m0 14v2M5.64 5.64l1.41 1.41m9.9 9.9 1.41 1.41M3 12h2m14 0h2M5.64 18.36l1.41-1.41m9.9-9.9 1.41-1.41" />
-            </svg>
-            <!-- 月亮 -->
-            <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-            </svg>
-          </button>
+          <!-- 沉浸画布没有 AppHeader，主题入口必须保留在这里；
+               实现与 header 共用 `ThemeToggle`，不再内联一份 svg。
+               `canvas-theme-toggle` 类名保留：既有样式/选择器依赖它。 -->
+          <ThemeToggle
+            class="canvas-theme-toggle neo-chrome pointer-events-auto h-9 w-9 rounded-xl text-fg-2 hover:text-fg"
+          />
           <CanvasAccountChrome />
         </div>
 
