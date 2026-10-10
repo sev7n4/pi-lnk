@@ -149,7 +149,11 @@ describe('主题机制不变量', () => {
       if (readFileSync(join(SRC, f), 'utf8').includes(legacy)) hits.push(f)
     }
     expect(hits, `这些文件还在用旧属性名 ${legacy}`).toEqual([])
-  })
+    // 全量读 .vue（182 个）。正常机器 <1s，但本仓沙箱每次 readFileSync 有约 29ms
+    // 固定开销（实测 547 文件 = 14.9s，且热读不打折），并发下会翻数倍 ⇒
+    // 沿用 randomId.guard.test.ts 的先例显式放宽，避免「Test timed out」这种
+    // 看不出是超时还是真超标的红。
+  }, 30000)
 
   it('⛔ useCanvasTheme.ts 不得在模块顶层调用 applyTheme（副作用不许回来）', () => {
     const src = readFileSync(join(SRC, 'composables/useCanvasTheme.ts'), 'utf8')
