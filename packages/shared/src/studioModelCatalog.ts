@@ -437,7 +437,10 @@ export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [
 const DEFAULT_MODEL_KEYS: Record<StudioModality, string> = {
   text: 'agnes-2.0-flash',
   image: 'agnes-image-2.1-flash',
-  video: 'agnes-video-v2.0',
+  // ⚠️ 2026-10-10：agnes 官方已于 2026-09-25 下线 agnes-video-v2.0（分发渠道
+  // 10-09 深夜才实际切断），目录运营端点 DELETE 防呆以此常量判定默认模型，
+  // 默认必须指向仍在售的 agnes-video-2.5-flash 才能下架 v2.0。
+  video: 'agnes-video-2.5-flash',
   audio: 'minimax-speech-2.8-hd',
 }
 

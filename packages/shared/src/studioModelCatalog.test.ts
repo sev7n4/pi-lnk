@@ -37,7 +37,9 @@ describe('studioModelCatalog', () => {
       'h3-max',
       'minimax-h3',
     ]))
-    expect(defaultModelKey('video')).toBe('agnes-video-v2.0')
+    // 2026-10-10：默认视频模型切换 —— agnes 官方下线 agnes-video-v2.0，默认改指向
+    // 目录中仍在售的 agnes-video-2.5-flash（同时解除目录 DELETE 对 v2.0 的防呆）。
+    expect(defaultModelKey('video')).toBe('agnes-video-2.5-flash')
     expect(getModelEntry('h3-max-turbo')).toMatchObject({
       displayName: 'H3 Max Turbo (fal)',
       gatewayModelId: 'minimax/h3-max-turbo',
