@@ -13,6 +13,22 @@
 | [`docs/agent/architecture.md`](./docs/agent/architecture.md) | pi 内核版本 · pi-runtime 开发纪律 · 仓库结构 · 端口约定 | 动 vendor / pi-runtime / 部署配置时 |
 | [`docs/agent/docs.md`](./docs/agent/docs.md) | 文档管理规范（去哪写、引用怎么处理、归档vs 删除） | 加删文档时 |
 | [`docs/agent/environment.md`](./docs/agent/environment.md) | 本机环境（PATH、gh 位置、4 核限制） | 跑命令、排查环境问题时 |
+| [`docs/design/Design_system.md`](./docs/design/Design_system.md) | **前端设计体系**：设计方向 · Design Tokens · 基础组件规范 · 文案 | **改 `apps/web` 任何 UI 前读** |
+
+### 前端设计体系（改动 `apps/web` 前必读）
+
+设计方向已定稿为**墨流 Ink Flow**（中性承载结构，品牌色只做点睛）。三条硬约束：
+
+1. **令牌 SSOT 是 `apps/web/src/styles/design-tokens.css`**（三层：L1 原始 → L2 语义 → L3 组件）。
+   组件**只允许消费 L2/L3，禁止直接引用 L1 色板**，禁止新增 hex / `rgba(` / `text-white` / `bg-[#`。
+2. **每个 L2 变量必须在深色块与浅色块中同名成对**，且**文字色一律实色 hex**（禁止用 rgba 透明度当文字色
+   —— 透明度文字的对比度随所在表面变化，单一令牌无法保证。旧 `--neo-text-muted` 就是因此只有 2.60:1）。
+3. **主题是应用级关注点，不是画布页的模块副作用**。`data-theme` 必须由 `index.html` 的引导脚本设置，
+   不得依赖任何懒加载路由的模块求值（历史缺陷：17 条路由里 16 条拿不到主题）。
+
+一致性由 `apps/web/src/styles/design-token.test.ts` 守卫（成对性 / 对比度 / 引用完整性 / 阶梯单调），
+**改令牌或组件样式后必须跑它**。⛔ 该测试故意不复用 `palette-parity.test.ts` 的 `luminance()`：
+后者蓝通道系数用了 0.2992（应为 0.0722），实测偏差最大 3.58 且方向随含蓝量变化，会产出假绿。**修它时需同步复核其既有阈值。**
 
 ⚠️ **引用契约**：`分支纪律` / `文档管理规范` / `pi 内核版本` / `端口约定` 这几个章节名
 被 ADR-0001 / 0008 / 0009 与 `charts/pi-lnk-runtime/README.md` 按名引用。

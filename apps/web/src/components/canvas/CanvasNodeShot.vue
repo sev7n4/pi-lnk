@@ -54,7 +54,7 @@ const taskKind = computed(() =>
             <line x1="3" y1="9" x2="21" y2="9" />
           </svg>
           <span class="neo-placeholder-text">{{ data.title || '未命名分镜' }}</span>
-          <span v-if="data.prompt" class="line-clamp-2 max-w-[220px] text-[11px] text-white/40">{{ data.prompt }}</span>
+          <span v-if="data.prompt" class="line-clamp-2 max-w-[220px] text-[11px] text-fg-3">{{ data.prompt }}</span>
         </div>
       </div>
       <NodeTaskCornerActions

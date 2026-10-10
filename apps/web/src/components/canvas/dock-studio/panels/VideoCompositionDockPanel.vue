@@ -89,7 +89,7 @@ function readSavedTracks(): CompositionTrackRecord[] {
     @update:title="onTitleInput"
     @close="emit('close')"
   >
-    <div class="mb-2 flex flex-wrap items-center gap-2 px-1 text-[10px] text-white/45">
+    <div class="mb-2 flex flex-wrap items-center gap-2 px-1 text-[10px] text-fg-3">
       <span>{{ orderedTracks.length }} 轨</span>
       <span>视频 {{ videoTrackCount }}</span>
       <span>音频 {{ audioTrackCount }}</span>
@@ -107,17 +107,17 @@ function readSavedTracks(): CompositionTrackRecord[] {
     <div class="composition-track-list">
       <div v-if="!orderedTracks.length" class="composition-empty">
         <p>暂无入边素材</p>
-        <p class="text-white/35">支持 video、audio、媒体输入（视频/音频）连线</p>
+        <p class="text-fg-3">支持 video、audio、媒体输入（视频/音频）连线</p>
       </div>
       <div v-for="(track, index) in orderedTracks" :key="track.nodeId" class="composition-track-row">
         <span class="composition-track-index">{{ index + 1 }}</span>
         <span class="composition-track-type" :class="track.type">{{ track.label }}</span>
         <div class="min-w-0 flex-1">
-          <p class="truncate text-[11px] text-white/80">{{ track.title }}</p>
-          <p class="truncate text-[10px] text-white/35">{{ track.url || '尚无媒体 URL' }}</p>
+          <p class="truncate text-[11px] text-fg">{{ track.title }}</p>
+          <p class="truncate text-[10px] text-fg-3">{{ track.url || '尚无媒体 URL' }}</p>
         </div>
         <label class="duration-input">
-          <span class="text-[10px] text-white/35">时长</span>
+          <span class="text-[10px] text-fg-3">时长</span>
           <input
             type="number"
             min="1"
@@ -166,7 +166,7 @@ function readSavedTracks(): CompositionTrackRecord[] {
         :href="exportedUrl"
         target="_blank"
         rel="noopener noreferrer"
-        class="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70"
+        class="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-fg-2"
       >
         下载 MP4
       </a>

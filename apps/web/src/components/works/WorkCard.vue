@@ -111,12 +111,12 @@ function onHoverLeave() {
         >
           {{ work.authorName[0] }}
         </button>
-        <button class="text-xs text-white/50 hover:text-[#818cf8]" @click.stop="$emit('viewAuthor', work.authorId)">
+        <button class="text-xs text-fg-3 hover:text-[#818cf8]" @click.stop="$emit('viewAuthor', work.authorId)">
           @{{ work.authorName }}
         </button>
       </div>
       <h3 class="line-clamp-2 text-sm font-medium leading-snug">{{ work.title }}</h3>
-      <div class="mt-3 flex items-center gap-4 text-xs text-white/40">
+      <div class="mt-3 flex items-center gap-4 text-xs text-fg-3">
         <span>{{ work.likes }} 赞</span>
         <span>{{ work.views }} 浏览</span>
       </div>

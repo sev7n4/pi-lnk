@@ -54,12 +54,12 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 <template>
   <StudioShell>
     <h1 class="mb-2 text-2xl font-semibold">视频工作室</h1>
-    <p class="mb-6 text-sm text-white/50">AI 视频生成，消耗 30 积分/次</p>
+    <p class="mb-6 text-sm text-fg-3">AI 视频生成，消耗 30 积分/次</p>
 
     <div class="mb-8 max-w-2xl rounded-2xl border border-white/8 bg-[#1a1a1a] p-4">
       <textarea v-model="prompt" class="input-field mb-3 min-h-[100px] w-full" placeholder="描述视频场景与运镜..." />
       <div class="mb-3 flex items-center gap-4">
-        <label class="text-xs text-white/50">时长 {{ duration }}s</label>
+        <label class="text-xs text-fg-3">时长 {{ duration }}s</label>
         <!-- 4–15 与 shared clampVideoDuration 默认界一致（旧值 3–10 会放出模型不支持的 3s 且截断 11–15s） -->
         <input v-model.number="duration" type="range" min="4" max="15" step="1" class="flex-1" />
       </div>
@@ -79,7 +79,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
           <div v-else class="flex h-full items-center justify-center text-sm text-yellow-400">生成中...</div>
         </div>
         <div class="p-3">
-          <p class="line-clamp-2 text-xs text-white/60">{{ item.prompt }}</p>
+          <p class="line-clamp-2 text-xs text-fg-2">{{ item.prompt }}</p>
         </div>
       </div>
     </div>

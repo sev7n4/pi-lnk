@@ -68,13 +68,13 @@ const yScale = computed(() => {
 
 function capsuleClass(selected: boolean) {
   return selected
-    ? 'bg-white/12 text-white'
-    : 'text-white/50 hover:text-white/80'
+    ? 'bg-white/12 text-fg'
+    : 'text-fg-3 hover:text-fg'
 }
 </script>
 
 <template>
-  <section class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-white">
+  <section class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-fg">
     <header class="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
       <div class="space-y-3">
         <h2 class="text-sm font-medium">用量趋势</h2>

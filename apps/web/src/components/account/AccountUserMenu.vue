@@ -78,13 +78,13 @@ const membershipLabel = (value?: string) =>
             >
           </div>
           <div class="min-w-0">
-            <p class="truncate text-[13px] font-medium text-white">{{ auth.user?.nickname }}</p>
-            <p class="text-[10px] text-white/70">{{ membershipLabel(auth.user?.membership) }}</p>
+            <p class="truncate text-[13px] font-medium text-fg">{{ auth.user?.nickname }}</p>
+            <p class="text-[10px] text-fg-2">{{ membershipLabel(auth.user?.membership) }}</p>
           </div>
         </div>
         <button
           type="button"
-          class="mt-2.5 flex w-full items-center justify-between rounded-lg bg-white/12 text-[11px] text-white transition hover:bg-white/20"
+          class="mt-2.5 flex w-full items-center justify-between rounded-lg bg-white/12 text-[11px] text-fg transition hover:bg-white/20"
           :class="compact ? 'px-2 py-1' : 'px-2.5 py-1.5'"
           @click="openMembership"
         >

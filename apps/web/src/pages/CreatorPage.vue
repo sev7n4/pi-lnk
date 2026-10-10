@@ -61,7 +61,7 @@ function viewShare(workId: string) {
         </div>
         <div>
           <h1 class="text-2xl font-semibold">{{ profile.user.nickname }}</h1>
-          <p class="mt-1 text-sm text-white/50">
+          <p class="mt-1 text-sm text-fg-3">
             {{ profile.user.workCount }} 作品 ·
             {{ profile.user.membership === 'pro' ? '专业版' : profile.user.membership === 'studio' ? '工作室版' : '免费版' }}
           </p>
@@ -81,9 +81,9 @@ function viewShare(workId: string) {
           @view-share="viewShare"
         />
       </div>
-      <p v-if="!profile.works.length" class="py-16 text-center text-white/40">暂无发布作品</p>
+      <p v-if="!profile.works.length" class="py-16 text-center text-fg-3">暂无发布作品</p>
     </template>
 
-    <p v-else class="py-16 text-center text-white/40">创作者不存在</p>
+    <p v-else class="py-16 text-center text-fg-3">创作者不存在</p>
   </div>
 </template>

@@ -57,7 +57,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
         :value="zoomPercent"
         @input="onZoomInput"
       >
-      <span class="w-8 shrink-0 text-center text-[9px] tabular-nums text-white/55">{{ zoomPercent }}%</span>
+      <span class="w-8 shrink-0 text-center text-[9px] tabular-nums text-fg-3">{{ zoomPercent }}%</span>
     </div>
 
     <button type="button" class="bar-btn" title="放大" @click="zoomBy(10)">+</button>
@@ -74,7 +74,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
       <button
         type="button"
         class="bar-btn"
-        :class="showGridPanel ? 'bg-white/10 text-white' : ''"
+        :class="showGridPanel ? 'bg-white/10 text-fg' : ''"
         title="网格设置"
         @click="showGridPanel = !showGridPanel"
       >
@@ -89,11 +89,11 @@ function patch(patch: Partial<CanvasViewportSettings>) {
         @click.stop
       >
         <div class="mb-2 flex items-center justify-between">
-          <span class="text-xs text-white/80">网格底纹</span>
+          <span class="text-xs text-fg">网格底纹</span>
           <button
             type="button"
             class="rounded-md px-2 py-0.5 text-[10px]"
-            :class="settings.gridVisible ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-white/5 text-white/40'"
+            :class="settings.gridVisible ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-white/5 text-fg-3'"
             @click="patch({ gridVisible: !settings.gridVisible })"
           >
             {{ settings.gridVisible ? '显示' : '隐藏' }}
@@ -104,7 +104,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="flex-1 rounded-lg py-1 text-[10px]"
-            :class="settings.gridVariant === 'dots' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-white/5 text-white/50'"
+            :class="settings.gridVariant === 'dots' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-white/5 text-fg-3'"
             @click="patch({ gridVariant: 'dots' })"
           >
             点阵
@@ -112,14 +112,14 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="flex-1 rounded-lg py-1 text-[10px]"
-            :class="settings.gridVariant === 'lines' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-white/5 text-white/50'"
+            :class="settings.gridVariant === 'lines' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-white/5 text-fg-3'"
             @click="patch({ gridVariant: 'lines' })"
           >
             线格
           </button>
         </div>
 
-        <label class="mb-2 block text-[10px] text-white/40">
+        <label class="mb-2 block text-[10px] text-fg-3">
           网格间距 {{ settings.gridGap }}px
           <input
             type="range"
@@ -132,7 +132,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           >
         </label>
 
-        <label class="block text-[10px] text-white/40">
+        <label class="block text-[10px] text-fg-3">
           点大小 {{ settings.gridDotSize.toFixed(1) }}
           <input
             type="range"
@@ -152,7 +152,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
     <button
       type="button"
       class="bar-btn flex gap-0.5 px-1"
-      :class="settings.minimapExpanded === 0 ? 'text-white/30' : 'text-[#818cf8]'"
+      :class="settings.minimapExpanded === 0 ? 'text-fg-3' : 'text-[#818cf8]'"
       :title="`小地图：${settings.minimapExpanded === 0 ? '隐藏' : settings.minimapExpanded === 1 ? '缩略图' : '列表'}`"
       @click="emit('cycleMinimap')"
     >
@@ -166,7 +166,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
 
 <style scoped>
 .bar-btn {
-  @apply flex h-6 w-6 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white;
+  @apply flex h-6 w-6 items-center justify-center rounded-lg text-fg-2 transition hover:bg-white/10 hover:text-fg;
 }
 
 .zoom-slider {

@@ -270,7 +270,7 @@ function openMediaInspector(e?: Event) {
           <div v-if="data.status === 'uploading'" class="neo-upload-progress">
             <div class="neo-upload-progress-bar" :style="{ width: `${data.uploadProgress ?? 0}%` }" />
           </div>
-          <span v-if="data.duration" class="text-[11px] text-white/35">{{ data.duration }}s</span>
+          <span v-if="data.duration" class="text-[11px] text-fg-3">{{ data.duration }}s</span>
         </div>
       </div>
       <input

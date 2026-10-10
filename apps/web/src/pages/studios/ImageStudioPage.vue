@@ -40,7 +40,7 @@ onMounted(loadRecords)
 <template>
   <StudioShell>
     <h1 class="mb-2 text-2xl font-semibold">图像工作室</h1>
-    <p class="mb-6 text-sm text-white/50">独立图像生成，消耗 10 积分/次</p>
+    <p class="mb-6 text-sm text-fg-3">独立图像生成，消耗 10 积分/次</p>
 
     <div class="mb-8 max-w-2xl rounded-2xl border border-white/8 bg-[#1a1a1a] p-4">
       <textarea v-model="prompt" class="input-field mb-3 min-h-[100px] w-full" placeholder="描述你想生成的图像..." />
@@ -58,10 +58,10 @@ onMounted(loadRecords)
       <div v-for="item in records" :key="item.id" class="overflow-hidden rounded-xl border border-white/8 bg-[#1a1a1a]">
         <img v-if="item.url" :src="item.url" class="aspect-square object-cover" alt="" />
         <div class="p-3">
-          <p class="line-clamp-2 text-xs text-white/60">{{ item.prompt }}</p>
+          <p class="line-clamp-2 text-xs text-fg-2">{{ item.prompt }}</p>
         </div>
       </div>
     </div>
-    <p v-if="!records.length" class="py-12 text-center text-white/30">登录后查看生成记录</p>
+    <p v-if="!records.length" class="py-12 text-center text-fg-3">登录后查看生成记录</p>
   </StudioShell>
 </template>

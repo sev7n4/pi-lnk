@@ -128,7 +128,7 @@ function toggleVoice() {
           {{ opt.label }}
         </button>
       </div>
-      <span class="text-[10px] text-white/40">{{ modeLabel }}</span>
+      <span class="text-[10px] text-fg-3">{{ modeLabel }}</span>
 
       <VideoSettingsSelector
         v-if="shotGenerateMode === 'video'"

@@ -19,7 +19,7 @@ export const CANVAS_DOCK_MENU_ITEMS: CanvasDockMenuItem[] = [
   { type: 'videoComposition', label: '视频合成', desc: '多轨视频合成', tone: 'text-indigo-300 bg-indigo-500/15' },
   { type: 'worldModel', label: '3D World', desc: '生成可漫游的 3D 世界', badge: 'Beta', tone: 'text-orange-300 bg-orange-500/15' },
   { type: 'shot', label: '分镜', desc: '故事板分镜节点', tone: 'text-rose-300 bg-rose-500/15' },
-  { type: 'group', label: '分组', desc: '组织多个节点', tone: 'text-white/70 bg-white/10' },
+  { type: 'group', label: '分组', desc: '组织多个节点', tone: 'text-fg-2 bg-white/10' },
 ]
 
 /** 从源节点拖出连线时可创建的目标类型（简化规则，后续可按 Neo 细化） */

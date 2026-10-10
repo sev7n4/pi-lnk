@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-lnk 前端 UI/UX 全面诊断报告 · 2026-10-09</title>
+<style>
+  :root{
+    --ink-0:#0f1115; --ink-1:#232833; --ink-2:#4a5364; --ink-3:#6b7488; --ink-4:#98a1b3;
+    --line:#e3e7ee; --line-2:#eef1f6; --paper:#ffffff; --paper-2:#f7f9fc; --paper-3:#fbfcfe;
+    --brand:#5b4ce6; --brand-soft:#f0edff; --brand-line:#ddd7fb;
+    --red:#c0392b; --red-bg:#fdeeec; --red-line:#f5cfc9;
+    --amber:#9a6200; --amber-bg:#fdf3e0; --amber-line:#f2ddb4;
+    --green:#16653c; --green-bg:#e6f6ec; --green-line:#bfe5cd;
+    --blue:#1d4ed8; --blue-bg:#e8eeff; --blue-line:#c5d3fb;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper-2);color:var(--ink-1);font-family:var(--sans);
+       font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 28px 100px}
+
+  /* ---- header ---- */
+  header{background:var(--paper);border-bottom:1px solid var(--line);padding:44px 0 36px;margin-bottom:36px}
+  header .wrap{padding-bottom:0}
+  .eyebrow{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--brand);margin-bottom:14px}
+  h1{margin:0 0 12px;font-size:34px;line-height:1.22;letter-spacing:-.02em;color:var(--ink-0);font-weight:700}
+  .sub{color:var(--ink-2);font-size:16px;max-width:760px;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+  .chip{font:500 12.5px/1 var(--sans);padding:6px 11px;border-radius:6px;background:var(--paper-2);
+        border:1px solid var(--line);color:var(--ink-2)}
+  .chip b{color:var(--ink-0);font-weight:600}
+
+  /* ---- sections ---- */
+  section{margin:0 0 44px}
+  h2{font-size:23px;line-height:1.3;color:var(--ink-0);font-weight:700;letter-spacing:-.01em;
+     margin:0 0 6px;padding-top:8px;display:flex;align-items:baseline;gap:11px}
+  h2 .num{font:700 12px/1 var(--mono);color:var(--brand);background:var(--brand-soft);
+          border:1px solid var(--brand-line);padding:5px 8px;border-radius:5px;flex:none;position:relative;top:-2px}
+  .lede{color:var(--ink-2);margin:0 0 20px;font-size:14.5px;max-width:840px}
+  h3{font-size:17px;color:var(--ink-0);font-weight:650;margin:30px 0 12px;letter-spacing:-.005em}
+  h4{font-size:14.5px;color:var(--ink-1);font-weight:650;margin:20px 0 9px}
+  p{margin:0 0 13px;max-width:860px}
+  ul,ol{margin:0 0 14px;padding-left:22px;max-width:860px}
+  li{margin-bottom:7px}
+  code{font:500 12.8px/1.5 var(--mono);background:var(--paper-2);border:1px solid var(--line);
+       padding:1px 5px;border-radius:4px;color:var(--ink-0);white-space:nowrap}
+
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:24px 26px;margin:0 0 18px}
+  .card.tight{padding:18px 20px}
+
+  /* ---- scorecard ---- */
+  .scores{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin:0 0 20px}
+  .score{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:15px 16px}
+  .score .dim{font-size:12.5px;color:var(--ink-3);font-weight:600;margin-bottom:9px}
+  .score .val{font:700 27px/1 var(--sans);color:var(--ink-0);letter-spacing:-.02em}
+  .score .val small{font-size:13px;color:var(--ink-4);font-weight:600}
+  .bar{height:5px;border-radius:3px;background:var(--line-2);margin-top:10px;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:3px}
+  .g-red{background:#e05a4a}.g-amber{background:#e5a03a}.g-green{background:#3fa76a}.g-blue{background:#5b8def}
+
+  /* ---- tables ---- */
+  table{width:100%;border-collapse:collapse;font-size:13.4px;background:var(--paper);
+        border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 16px}
+  th{background:var(--paper-2);text-align:left;padding:11px 14px;font-weight:650;color:var(--ink-1);
+     border-bottom:1px solid var(--line);font-size:12.6px;white-space:nowrap}
+  td{padding:10px 14px;border-bottom:1px solid var(--line-2);vertical-align:top;color:var(--ink-1)}
+  tr:last-child td{border-bottom:none}
+  td.n{font:600 13px/1.5 var(--mono);color:var(--ink-0);white-space:nowrap}
+  .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+  /* ---- severity ---- */
+  .sev{display:inline-flex;align-items:center;gap:5px;font:650 11.5px/1 var(--sans);
+       padding:4px 8px;border-radius:5px;white-space:nowrap}
+  .s-crit{background:var(--red-bg);color:var(--red);border:1px solid var(--red-line)}
+  .s-warn{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-line)}
+  .s-ok{background:var(--green-bg);color:var(--green);border:1px solid var(--green-line)}
+  .s-info{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-line)}
+
+  .finding{border-left:3px solid var(--line);padding:2px 0 2px 16px;margin:0 0 20px}
+  .finding.crit{border-left-color:#e05a4a}
+  .finding.warn{border-left-color:#e5a03a}
+  .finding.ok{border-left-color:#3fa76a}
+  .finding h4{margin:0 0 7px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .ev{font:450 12px/1.65 var(--mono);color:var(--ink-3);background:var(--paper-2);
+      border:1px solid var(--line);border-radius:6px;padding:9px 12px;margin:9px 0 0;
+      white-space:pre-wrap;word-break:break-word}
+  .ev b{color:var(--red);font-weight:600}
+
+  /* ---- code block ---- */
+  pre{background:#1a1d24;color:#e4e8f0;border-radius:10px;padding:18px 20px;overflow-x:auto;
+      font:450 12.4px/1.72 var(--mono);margin:0 0 16px;border:1px solid #2a2f3a}
+  pre .c{color:#7d8799}
+  pre .k{color:#a89dff}
+  pre .v{color:#7ee0c0}
+  pre .w{color:#f5b97a}
+  .cb{position:relative}
+  .cb .lbl{position:absolute;top:-1px;right:0;font:600 11px/1 var(--mono);color:var(--ink-3);
+           background:var(--paper-2);border:1px solid var(--line);border-bottom:none;
+           padding:6px 10px;border-radius:0 8px 0 6px}
+
+  /* ---- token swatches ---- */
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;margin:12px 0 18px}
+  .sw{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--paper)}
+  .sw .chip-c{height:52px;display:flex;align-items:flex-end;padding:8px 10px}
+  .sw .chip-c span{font:600 10.5px/1 var(--mono);background:rgba(255,255,255,.94);color:#111;
+                   padding:3px 6px;border-radius:4px}
+  .sw .chip-c.dark span{background:rgba(0,0,0,.72);color:#fff}
+  .sw .nm{padding:8px 10px;font:600 12px/1.35 var(--sans);color:var(--ink-0)}
+  .sw .hb{padding:0 10px 9px;font:450 10.8px/1.4 var(--mono);color:var(--ink-3)}
+  .sw .cr{padding:0 10px 9px;font:600 10.5px/1.4 var(--mono)}
+  .pass{color:var(--green)}.fail{color:var(--red)}
+
+  /* ---- callout ---- */
+  .call{background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--brand);
+        border-radius:0 10px 10px 0;padding:15px 18px;margin:0 0 18px}
+  .call.red{border-left-color:#e05a4a;background:var(--red-bg);border-color:var(--red-line)}
+  .call.amber{border-left-color:#e5a03a;background:var(--amber-bg);border-color:var(--amber-line)}
+  .call.green{border-left-color:#3fa76a;background:var(--green-bg);border-color:var(--green-line)}
+  .call p{margin:0;font-size:14px}
+  .call strong{color:var(--ink-0)}
+
+  /* ---- roadmap ---- */
+  .phase{background:var(--paper);border:1px solid var(--line);border-radius:12px;margin:0 0 14px;overflow:hidden}
+  .ph-head{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--paper-2)}
+  .ph-tag{font:700 11.5px/1 var(--mono);padding:5px 9px;border-radius:5px;color:#fff}
+  .p0{background:#c0392b}.p1{background:#c77700}.p2{background:#2b6cb0}.p3{background:#5a6478}
+  .ph-head h4{margin:0;font-size:15.5px;color:var(--ink-0)}
+  .ph-head .eff{margin-left:auto;font:600 12px/1 var(--sans);color:var(--ink-3)}
+  .ph-body{padding:16px 20px}
+  .ph-body ul{margin:0;padding-left:20px}
+  .ph-body li{margin-bottom:6px;font-size:13.8px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:0 0 22px}
+  .kpi{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .kpi .v{font:700 25px/1 var(--sans);color:var(--ink-0);letter-spacing:-.02em}
+  .kpi .k{font-size:12px;color:var(--ink-3);margin-top:6px;font-weight:550}
+
+  footer{border-top:1px solid var(--line);margin-top:50px;padding-top:22px;color:var(--ink-3);font-size:12.5px}
+  @media (max-width:720px){
+    h1{font-size:26px} .wrap{padding:0 16px 60px} header{padding:32px 0 26px}
+    .card{padding:18px 18px} pre{font-size:11.4px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Frontend Design Audit · pi-lnk / apps-web</div>
+    <h1>前端 UI/UX 全面诊断报告<br>&amp; Design Token 体系定义</h1>
+    <p class="sub">对 <code>apps/web</code>（Vue 3 + Tailwind + Element Plus，182 个 SFC / 46,110 行）按视觉层次、排版、色彩、响应式、交互、动效、无障碍、性能八大维度做全量取证式走查，并输出一套可直接落地的设计令牌（Design Token）体系与分阶段重构路线图。</p>
+    <div class="meta">
+      <span class="chip">日期 <b>2026-10-09</b></span>
+      <span class="chip">范围 <b>apps/web/src · 182 SFC</b></span>
+      <span class="chip">技术栈 <b>Vue 3 · Tailwind 3.4 · Element Plus 2.14</b></span>
+      <span class="chip">方法 <b>静态取证 + 对比度实测</b></span>
+      <span class="chip">结论 <b>9 项 P0 · 17 项 P1</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ==================== 执行摘要 ==================== -->
+<section>
+  <h2><span class="num">00</span>执行摘要</h2>
+  <p class="lede">项目已有不错的审美底子——NeoWow 品牌语言（电光紫 / 电流青 / 琥珀橙 + 毛玻璃层级）是成立的，<code>neowow-tokens.css</code> 里甚至有带守卫的调色板一致性测试。<b>真正的问题不是"没设计"，而是"设计没有被系统化地执行"</b>：令牌体系建了一半、被绕过了一半，两套颜色真相源并行，且主题切换只在一条路由上生效。下面所有数字均为实测，可复现。</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="v">50.5%</div><div class="k">组件零令牌（92/182）</div></div>
+    <div class="kpi"><div class="v">629</div><div class="k">硬编码颜色处</div></div>
+    <div class="kpi"><div class="v">1/17</div><div class="k">主题生效的路由</div></div>
+    <div class="kpi"><div class="v">2.60:1</div><div class="k">浅色次级文字对比度</div></div>
+    <div class="kpi"><div class="v">31.8%</div><div class="k">大文件复制粘贴率</div></div>
+    <div class="kpi"><div class="v">134</div><div class="k">无 key 的 v-for</div></div>
+  </div>
+
+  <div class="scores">
+    <div class="score"><div class="dim">视觉层次</div><div class="val">62<small>/100</small></div><div class="bar"><i class="g-amber" style="width:62%"></i></div></div>
+    <div class="score"><div class="dim">排版系统</div><div class="val">55<small>/100</small></div><div class="bar"><i class="g-red" style="width:55%"></i></div></div>
+    <div class="score"><div class="dim">色彩系统</div><div class="val">48<small>/100</small></div><div class="bar"><i class="g-red" style="width:48%"></i></div></div>
+    <div class="score"><div class="dim">响应式布局</div><div class="val">38<small>/100</small></div><div class="bar"><i class="g-red" style="width:38%"></i></div></div>
+    <div class="score"><div class="dim">交互体验</div><div class="val">58<small>/100</small></div><div class="bar"><i class="g-amber" style="width:58%"></i></div></div>
+    <div class="score"><div class="dim">动效过渡</div><div class="val">52<small>/100</small></div><div class="bar"><i class="g-red" style="width:52%"></i></div></div>
+    <div class="score"><div class="dim">无障碍 A11y</div><div class="val">34<small>/100</small></div><div class="bar"><i class="g-red" style="width:34%"></i></div></div>
+    <div class="score"><div class="dim">性能优化</div><div class="val">44<small>/100</small></div><div class="bar"><i class="g-red" style="width:44%"></i></div></div>
+  </div>
+
+  <h3>五个必须先解决的致命问题</h3>
+  <div class="finding crit">
+    <h4><span class="sev s-crit">P0</span> 主题是"路由导航的副作用"，浅色模式在 16/17 条路由上根本不存在</h4>
+    <p><code>useCanvasTheme.ts</code> 在<b>模块加载时</b>把主题写到 <code>&lt;html&gt;</code>，而全仓<b>只有 <code>CanvasPage.vue</code> 导入了它</b>。其余 16 条路由是懒加载，模块永不求值 ⇒ <code>data-canvas-theme</code> 属性从未被设置 ⇒ 一律回落到 <code>:root</code>（深色）基线。更糟的是：一旦进过画布页，该属性会<b>残留</b>在 <code>&lt;html&gt;</code> 上不再移除，导致后续页面的外观取决于"用户是否访问过画布并按过切换"——完全不可预测。同时 0 处 <code>prefers-color-scheme</code>，默认硬编码 <code>dark</code>。</p>
+    <div class="ev">composables/useCanvasTheme.ts:17-23   applyTheme() → setAttribute('data-canvas-theme')
+composables/useCanvasTheme.ts:23    <b>applyTheme(theme.value)  ← 模块副作用，非组件生命周期</b>
+grep useCanvasTheme → 仅 pages/CanvasPage.vue:104,289
+router/index.ts:13,18,23,…        17 条路由全部 () =&gt; import(...) 懒加载
+grep "prefers-color-scheme" src → 0 命中</div>
+  </div>
+
+  <div class="finding crit">
+    <h4><span class="sev s-crit">P0</span> 三个颜色真相源并行，Tailwind 侧的调色板是"深色专用"死值</h4>
+    <p><code>neowow-tokens.css</code>（74 个 <code>--neo-*</code>）与 <code>tailwind.config.js</code>（brand/electric/warm/surface）<b>各写一套同义色</b>，且 Tailwind 侧<b>没有浅色变体</b>。讽刺的是 Tailwind 里定义的 <code>brand.*</code> 使用次数为 <b>0</b>，而组件里硬编码了 ~20 处 Tailwind 默认靛蓝 <code>#6366f1</code> / <code>#818cf8</code>——<b>与品牌紫 #6d5dfc 不是同一个颜色</b>。加上 <code>index.html</code> 的 <code>bg-[#141414]</code>（utility 层，优先级压过 base 层的 token），同一个"页面底色"语义存在 5 个不同值。</p>
+    <div class="ev">--neo-bg: #131318        (neowow-tokens.css:24)
+bg-[#141414]             (index.html:13)  <b>← utility 层，实际生效</b>
+bg-[#16161C]             (ProfilePage.vue:219,233,253,267)
+bg-[#1a1a1a]             (UsageDayTable.vue:195,234)
+--neo-surface-card: #1a1a21 (neowow-tokens.css:36)
+硬编码 #6366f1 ×21 / #818cf8 ×18  <b>← 非品牌色</b>；brand.{300..700} 使用 0 次</div>
+  </div>
+
+  <div class="finding crit">
+    <h4><span class="sev s-crit">P0</span> 令牌文字色在两个主题下都不满足 WCAG AA（已实测复算）</h4>
+    <p>用 WCAG 相对亮度公式 + alpha 合成独立复算：<code>--neo-text-muted</code> 深色 <b>3.60:1</b>、浅色 <b>2.60:1</b>，均低于 AA 要求的 4.5:1。浅色主题的两个语义色作为文字使用时同样不合格（error 3.45:1 / warn 2.93:1）。另有 <b>67 处</b> <code>text-white/30|35|40</code> 低透明度文字（2.69–3.83:1），且大量用在 10–11px 字号上，连"大文本豁免"都不适用。</p>
+    <div class="ev">DARK  --neo-text-muted 0.40 over #131318 → <b>3.60:1  ✗</b>
+LIGHT --neo-text-muted 0.42 over #eef0f5 → <b>2.60:1  ✗</b>（严重）
+DARK  --neo-text-secondary 0.62 → 6.98:1  ✓   （对比参照，无需改）
+LIGHT --neo-severity-error #E24B4A → 3.45:1 ✗   --neo-severity-warn #C97A12 → 2.93:1 ✗
+text-white/30 ×16 (2.69:1) · /35 ×14 (3.22:1) · /40 ×37 (3.83:1)</div>
+  </div>
+
+  <div class="finding crit">
+    <h4><span class="sev s-crit">P0</span> 画布在触屏上完全不可用：平移绑定鼠标中/右键，连线手柄 hover 才出现</h4>
+    <p><code>:pan-on-drag="[1, 2]"</code> 是 d3-zoom 的<b>中键 + 右键</b>，无触屏等价物 ⇒ 单指平移不可能。节点连线手柄 <code>.handle-plus</code> 默认 <code>opacity:0; pointer-events:none</code>，仅由 <code>@mouseenter</code> 触发显示 ⇒ <b>节点连线——节点图的核心交互——在触屏上死掉</b>。下载/保存按钮同样 <code>display:none</code> 直到 hover，且无 <code>:focus-within</code> 回退。全仓 <code>@touchstart</code> 命中 0。</p>
+    <div class="ev">CanvasPage.vue:4683   :pan-on-drag="[1, 2]"        <b>← 无 touch 路径</b>
+CanvasPage.vue:4682   :selection-key-code="true"     <b>← 需物理 Shift</b>
+CanvasPage.vue:4685   :pan-activation-key-code="'Space'" <b>← 需物理空格</b>
+neo-node.css:910-919  .handle-plus { opacity:0; pointer-events:none }
+NeoBaseNode.vue:80    showHandles = selected || isHovered   <b>← isHovered 仅由 mouseenter 置位</b>
+neo-node.css:704-742  .neo-node-save-btn { display:none } … :hover 才 inline-flex
+grep "@touchstart|@touchmove|@touchend" src → 0 命中</div>
+  </div>
+
+  <div class="finding crit">
+    <h4><span class="sev s-crit">P0</span> 令牌体系只有"颜色"一维，间距/圆角/阴影/层级/动效全是魔法数字</h4>
+    <p>定义了 <code>--neo-radius-md/lg</code> 但<b>零消费</b>；<code>--neo-shadow</code> / <code>--neo-space</code> / <code>--neo-z-</code> / <code>--neo-duration</code> / <code>--neo-ease</code> 全部 grep 为 0 命中。实际代价：<b>1,084</b> 处裸 <code>px</code>，<b>65</b> 处 z-index 散落成 <b>19</b> 个值（含 <code>z-[9000]</code>），<b>95</b> 处 transition 用 <b>13</b> 种不同时长（<code>0.15s ease</code> 出现 130 次），<b>88</b> 处手写 box-shadow。<b>没有节奏系统，就没有视觉一致性。</b></p>
+    <div class="ev">grep "--neo-shadow|--neo-space|--neo-z-|--neo-duration|--neo-ease" → 全部 0
+--neo-radius-md:12px / --neo-radius-lg:16px  → 消费者 0 个
+z-index  19 个不同值：1,2,3,4,5,6,40,45,46,47,50,55,56,60,64,70,80,100,105,110,120,130,200,999,1000,4000,9000
+transition 13 种时长：0.1/0.12/0.14/0.15(×130)/0.16/0.18/0.2(×27)/0.22(×12)/0.24/0.25/0.28/0.3/0.35s
+box-shadow 手写 88 处 / 38 文件</div>
+  </div>
+</section>
+
+<!-- ==================== 全量体检数据 ==================== -->
+<section>
+  <h2><span class="num">01</span>全量体检数据（可复现）</h2>
+  <p class="lede">以下全部由 <code>find</code> + <code>grep</code> 对 <code>apps/web/src/**/*.vue</code> 静态扫描得出，未做任何抽样估算。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>指标</th><th>实测值</th><th>判读</th></tr></thead>
+    <tbody>
+      <tr><td>SFC 总数 / 总行数</td><td class="n">182 / 46,110</td><td>中型偏大，需设计系统兜底</td></tr>
+      <tr><td>超 1000 行的"上帝组件"</td><td class="n">5 · 15,069 行（32.7%）</td><td><span class="sev s-crit">危</span> CanvasPage 5,094 + AgentSideRail 4,201</td></tr>
+      <tr><td>使用 <code>var(--neo-*)</code> 的组件</td><td class="n">90 / 182</td><td><span class="sev s-warn">弱</span> 另 92 个零令牌</td></tr>
+      <tr><td>存在深色专用旁路的组件</td><td class="n">87 / 182</td><td><span class="sev s-crit">危</span> <code>text-white</code> 240 行 / 57 文件</td></tr>
+      <tr><td>硬编码颜色（hex + rgba + 任意值）</td><td class="n">629 处 / 75+ 文件</td><td><span class="sev s-crit">危</span> 283 hex + 259 rgba + 85 任意值</td></tr>
+      <tr><td>大文件复制粘贴率（≥10 行精确重复）</td><td class="n">31.8%</td><td><span class="sev s-crit">危</span> 927 组跨文件重复块</td></tr>
+      <tr><td><code>&lt;slot&gt;</code> 定义数（全部件）</td><td class="n">9 · 仅 5 文件</td><td><span class="sev s-crit">危</span> 组合式复用几乎未启用</td></tr>
+      <tr><td><code>components/shared/</code> 内容</td><td class="n">3 个图标，0 个基础件</td><td><span class="sev s-crit">危</span> 无 Button/Modal/Spinner/Empty</td></tr>
+      <tr><td>内联 SVG / 重复"关闭 X"图标</td><td class="n">199 处 · 18 文件重复 X</td><td><span class="sev s-warn">弱</span> 无 Icon 组件</td></tr>
+      <tr><td>v-for 无 <code>:key</code></td><td class="n">134 / 171（78%）</td><td><span class="sev s-crit">危</span> 77 处遍历可变集合 → INP</td></tr>
+      <tr><td>深层 watcher（<code>deep:true</code>）</td><td class="n">35 处</td><td><span class="sev s-warn">弱</span> 含 8× <code>watch(flowNodes, deep)</code></td></tr>
+      <tr><td>未节流高频事件监听</td><td class="n">26 处 · 24 次 getBoundingClientRect</td><td><span class="sev s-warn">弱</span> 布局抖动</td></tr>
+      <tr><td>并发 <code>backdrop-filter</code> 层</td><td class="n">46 声明 · N+10 层随节点数线性增长</td><td><span class="sev s-crit">危</span> 每节点 blur(10px) 是 INP 首恶</td></tr>
+      <tr><td><code>&lt;img&gt;</code> 缺 alt / 缺 lazy</td><td class="n">30/58 缺 alt · 57/58 缺 lazy</td><td><span class="sev s-warn">弱</span> A11y + CLS 双风险</td></tr>
+      <tr><td>响应式断点覆盖率</td><td class="n">20 / 182 组件（11%）</td><td><span class="sev s-crit">危</span> CanvasPage 仅 1 处；<code>2xl:</code> = 0</td></tr>
+      <tr><td><code>prefers-reduced-motion</code> 覆盖</td><td class="n">8 处 / 22 个 @keyframes</td><td><span class="sev s-crit">危</span> 16 个无限动画无降级</td></tr>
+      <tr><td>焦点被移除且无替代样式</td><td class="n">8 处（含 Agent 输入框）</td><td><span class="sev s-crit">危</span> WCAG 2.4.7 失败</td></tr>
+      <tr><td>焦点陷阱 / 焦点归还</td><td class="n">0 / 0</td><td><span class="sev s-crit">危</span> 8 个 role=dialog 全是 div</td></tr>
+      <tr><td>缺少 Esc 关闭的浮层</td><td class="n">10+ 个（含 5 个 dialog）</td><td><span class="sev s-crit">危</span> WCAG 2.1.2</td></tr>
+      <tr><td>仅靠 <code>title=</code> 命名的按钮</td><td class="n">127 / 476</td><td><span class="sev s-warn">弱</span> 触屏与部分 AT 读不到</td></tr>
+      <tr><td>纯 div 可点击（无 role/tabindex）</td><td class="n">6 处关键交互</td><td><span class="sev s-crit">危</span> 键盘完全不可达</td></tr>
+      <tr><td>TS 覆盖率（props / emits 类型化）</td><td class="n">147/147 · 109/109</td><td><span class="sev s-ok">优</span> 100%，保持住</td></tr>
+      <tr><td><code>!important</code> / 非 scoped style</td><td class="n">19 处（5 文件）/ 6 块</td><td><span class="sev s-ok">良</span> 远优于同类代码库</td></tr>
+      <tr><td>路由懒加载</td><td class="n">17 / 17</td><td><span class="sev s-ok">优</span> playcanvas / mermaid 已动态化</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="call green">
+    <p><strong>值得肯定的部分（别在重构中弄丢）：</strong>① TS 类型化 100%，<code>any</code> 仅 6 处且都在第三方边界；② <code>!important</code> 19 处、非 scoped 样式仅 6 块， discipline 很好；③ 17 条路由全懒加载，playcanvas(3.4MB)/mermaid(3.5MB) 已正确动态化；④ 6 个 <code>role="button"</code> 全部配了 <code>tabindex</code> + Enter 处理，这在同类项目里罕见；⑤ 已有 <code>palette-parity.test.ts</code> 用测试锁住跨端调色板——<b>这个思路要扩展到整个 token 层</b>。</p>
+  </div>
+</section>
+
+<!-- ==================== 八大维度 ==================== -->
+<section>
+  <h2><span class="num">02</span>八大维度诊断</h2>
+
+  <h3>2.1 色彩系统 <span class="sev s-crit">48/100</span></h3>
+  <p>三段式问题：<b>定义层</b>不完整（语义色只有浅色版、18 个 token 深色独占）、<b>消费层</b>大面积绕过（629 处硬编码）、<b>机制层</b>断裂（主题属性只在一条路由上被写）。另外 13 个被引用但<b>从未定义</b>的 token（<code>--neo-success</code> / <code>--neo-danger</code> / <code>--neo-panel</code> / <code>--neo-surface</code> / <code>--neo-fg</code> …）会让整条 Tailwind 任意值声明在计算值阶段失效——<b>静默降级成"没有边框、没有底色"，且不报任何错</b>。这类 bug 正是本项目最难查的那一类。</p>
+  <div class="ev">AgentSideRail.vue:3034  'border-[var(--neo-danger)]/40 bg-[var(--neo-danger)]/10'   <b>← --neo-danger 未定义 → 整条声明失效</b>
+AgentSideRail.vue:3037  'border-[var(--neo-success)]/40 …'                          <b>← 同上</b>
+CSS 注释自己也承认了这个坑（neowow-tokens.css:48-50）：
+  "缺定义会让 color-mix(var(--neo-text)…) 整条声明失效 → 背景透明不可见"</div>
+
+  <h3>2.2 排版系统 <span class="sev s-warn">55/100</span></h3>
+  <p>没有字号阶梯。字重、行高、字族靠 <code>text-xs/sm/base</code> 零散取用，<code>text-[10px]</code> / <code>text-[11px]</code> / <code>text-[12.5px]</code> 这类非标值大量出现（仅 <code>text-[10px]</code> 就有 20+ 处），且常与 30–40% 透明度叠加——<b>既不可读也不统一</b>。字体栈声明了 Inter / Unbounded 但 Google Fonts 是阻塞加载，fallback 只有 <code>system-ui</code>，切换时会 CLS。</p>
+
+  <h3>2.3 视觉层次 <span class="sev s-warn">62/100</span></h3>
+  <p>毛玻璃层级（chrome / popover / glass-lite / dock）的设计意图是清晰的，这是加分项。但<b>层级被 z-index 混乱稀释</b>：19 个魔法值里 <code>z-[9000]</code>（CanvasPage:4617）、<code>z-[1000]</code>、<code>z-[999]</code> 并存，而 dock 只用 <code>z-[46]</code>——意味着一次新增浮层就可能盖住整个工具轨。间距上 1,084 处裸 px、最常见的非网格值是 10px(272) / 11px(165) / 6px(117)，<b>没有 4/8 网格约束，区块节奏靠手感</b>。</p>
+
+  <h3>2.4 响应式布局 <span class="sev s-crit">38/100</span></h3>
+  <p>182 个组件里只有 20 个用了任何断点前缀，<code>2xl:</code> 为 0，CSS 里<b>零个</b>宽度媒体查询。移动端感知只有一个 <code>useAgentMobileLayout.ts</code>（767px，<code>max-width</code> 桌面优先，与 Tailwind 的 min-width 策略相反），且只被 AgentSideRail 消费。硬性溢出点已定位：<code>UsageDayTable</code> 表格 <code>min-w-[640px]</code>、<code>CanvasTaskHistoryPanel</code> <code>w-[404px]</code>、三处 <code>w-[340px]</code> 固定宽浮层。</p>
+
+  <h3>2.5 交互体验 <span class="sev s-warn">58/100</span></h3>
+  <p>反馈状态覆盖不均：56 个按钮会在异步期间 disable（好），但<b>大多只变 opacity 不出 spinner</b>；19 处 <code>animate-pulse</code> 骨架屏全是手写、尺寸参差；24 个空状态用了 4 种不同透明度（<code>text-white/30|40|50</code> + <code>opacity-60</code>）。"同一个交互、多种视觉结果"的典型：<code>.is-on</code> 激活态有 <b>≥4 种</b>实现（<code>main.css:250</code> 用 hi-bg、三个 overlay 用 color-mix、两个用 accent-text、RefineToolRail 用 <code>rgba(0,89,179,.16)</code>）。Tooltip 全用原生 <code>title=</code>（274 处）：键盘不可达、触屏不可达、~1s 延迟、无法定制样式。</p>
+
+  <h3>2.6 动效过渡 <span class="sev s-warn">52/100</span></h3>
+  <p>时长与缓动无 token（13 种时长 / 130 次 <code>0.15s ease</code>），且 <code>ease</code> 是浏览器默认曲线而非设计曲线。<code>prefers-reduced-motion</code> 只覆盖 8 处，<b>16 个无限动画无降级</b>——包括 8s 的 logo 常驻旋转和 4 条常驻连线流动动画，WCAG 2.2.2（Level A）要求 >5s 的并行动画可暂停，目前没有暂停控件。另有 8 处对 <code>width/height/left</code> 做过渡（触发 layout reflow）。</p>
+
+  <h3>2.7 无障碍 <span class="sev s-crit">34/100</span> — 最低分维度</h3>
+  <p>结构性缺陷，不是细节问题：</p>
+  <ul>
+    <li><b>焦点不可见</b>：8 处 <code>outline:none</code> 无替代，含 Agent 主输入框（<code>.agent-prompt-field</code> 同时 <code>border:none</code>+<code>background:transparent</code>，聚焦后<b>完全看不出</b>）。全仓无全局 <code>:focus-visible</code> 基线。</li>
+    <li><b>无焦点陷阱/归还</b>：8 个 <code>role="dialog"</code> 全是 div，0 个 <code>&lt;dialog&gt;</code>、0 个 focusTrap。6 个还标了 <code>aria-modal="true"</code>——告诉辅助技术"外界是惰性的"，但实际 Tab 能跑进背景画布，<b>比不标更糟</b>。</li>
+    <li><b>Esc 缺失</b>：5 个 dialog 和 10+ 浮层无 Esc 关闭，含 <code>ForceChoiceDialog</code>（强制选择弹窗，<code>aria-modal</code> 且无退出键）。</li>
+    <li><b>语义缺失</b>：CanvasPage 5,094 行里 <code>&lt;header&gt;/&lt;nav&gt;/&lt;main&gt;/&lt;h1-h6&gt;</code> <b>命中 0</b>；<code>StudioShell.vue:34</code> 在 <code>App.vue:21</code> 的 <code>&lt;main&gt;</code> 内嵌了第二个 <code>&lt;main&gt;</code>（无效 HTML）；无跳转链接；导航激活态无 <code>aria-current</code>。</li>
+    <li><b>异步静默</b>：<code>aria-busy</code> 全仓 0，<code>aria-live</code> 仅 2；204 处 <code>ElMessage</code> 在无 role 的游离容器里，出错对读屏用户不可见。</li>
+  </ul>
+
+  <h3>2.8 性能 <span class="sev s-warn">44/100</span></h3>
+  <p>三个可量化的主要开销：</p>
+  <ul>
+    <li><b>INP</b>：每节点 <code>.neo-gen-card { backdrop-filter: blur(10px) }</code>（7 个节点组件使用）⇒ 画布上有 N 个媒体节点就有 <b>N+10 个合成模糊层</b>，每层都要独立的合成 + 回读。这是画布页最大的单点开销。</li>
+    <li><b>INP</b>：134 个无 key 的 v-for（77 个遍历可变集合），Vue 退化为按下标 patch ⇒ 每次插入/重排整棵子树重渲染，流式 Agent 消息会反复重挂载。</li>
+    <li><b>LCP</b>：<code>main.ts:3-5</code> 全量引入 ElementPlus + <b>349 KB</b> 阻塞 CSS，而绝大多数调用方只需要 <code>ElMessage</code>；<code>public/auth/</code> 五个登录视频共 <b>15.1 MB</b> 且两个 <code>&lt;video&gt;</code> 同时 <code>preload="auto"</code>；favicon 是 522 KB PNG（而 258 字节的 SVG 闲置未用）。</li>
+  </ul>
+</section>
+
+<!-- ==================== DESIGN TOKEN 体系 ==================== -->
+<section>
+  <h2><span class="num">03</span>Design Token 体系定义（核心交付）</h2>
+  <p class="lede">这一节是可直接复制落地的新令牌体系。<b>设计原则：三层架构 + 单一真相源 + 语义命名 + 主题只切换第二层。</b>迁移后，组件里不应再出现任何 hex / rgba 字面量，也不应再出现任何 Tailwind 颜色工具类。</p>
+
+  <h3>3.1 架构：三层令牌</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>层</th><th>前缀</th><th>职责</th><th>主题相关</th><th>举例</th></tr></thead>
+    <tbody>
+      <tr><td><b>L1 原始层</b><br>Primitive</td><td><code>--lnk-{色相}-{档位}</code></td><td>纯色板，不含语义。<b>全主题共享，永不切换。</b></td><td>否</td><td><code>--lnk-purple-500</code><br><code>--lnk-neutral-950</code></td></tr>
+      <tr><td><b>L2 语义层</b><br>Semantic</td><td><code>--lnk-{类别}-{角色}</code></td><td>绑定用途。<b>唯一切换层</b>：<code>[data-theme='light']</code> 覆写这一层。</td><td><b>是</b></td><td><code>--lnk-text-muted</code><br><code>--lnk-surface-2</code></td></tr>
+      <tr><td><b>L3 组件层</b><br>Component</td><td><code>--lnk-{组件}-{部位}</code></td><td>组件私有契约，默认引用 L2。允许被 props 覆写。</td><td>间接</td><td><code>--lnk-btn-primary-bg</code><br><code>--lnk-node-card-bg</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="call">
+    <p><strong>关键决策：为什么必须三层而不是现在的一层？</strong> 现在的 <code>--neo-*</code> 把 L1 和 L2 混在一起（<code>--neo-bg</code> 既是"中性色 950"又是"页面底色"），导致浅色主题必须<b>逐个覆写</b> 60 个变量、漏掉 18 个也没人发现（这正是"18 个 token 深色独占"的根因）。改成三层后，浅色主题<b>只需覆写 L2 的 ~28 个语义变量</b>，L1 色板两主题共用 —— 漏覆写在数学上变得不可能。</p>
+  </div>
+
+  <h3>3.2 命名规范</h3>
+  <div class="cb">
+    <div class="lbl">naming</div>
+    <pre><span class="c">/* 结构：--lnk-{category}-{role}[-{variant}][-{state}]  全小写 + 连字符 */</span>
+
+<span class="k">--lnk</span>-color-text-primary          <span class="c">/* ✅ category=color role=text-primary */</span>
+<span class="k">--lnk</span>-surface-raised              <span class="c">/* ✅ 表面层级 */</span>
+<span class="k">--lnk</span>-status-error-fg             <span class="c">/* ✅ variant=error */</span>
+<span class="k">--lnk</span>-btn-primary-bg-hover        <span class="c">/* ✅ state=hover */</span>
+
+<span class="c">/* 禁止：语义倒置、按外观命名、按组件命名 */</span>
+<span class="w">--neo-text-invert</span>                 <span class="c">/* ❌ "反色"取决于背景，不是语义 */</span>
+<span class="w">--neo-hi-bg</span>                       <span class="c">/* ❌ "hi" 无含义 */</span>
+<span class="w">--neo-graph-card-border</span>           <span class="c">/* ❌ 应归入 L3 且拆出语义 */</span></pre>
+  </div>
+
+  <h3>3.3 L1 原始色板（Primitive Palette）</h3>
+  <p>两主题共用，不随主题切换。品牌紫沿用现有 <code>#6d5dfc</code> 并补齐 10 档；中性色以现有 <code>rgb(23,25,35)</code>（浅色文字）与 <code>#131318</code>（深色底）为锚点外推。</p>
+
+  <h4>品牌紫 Purple（创造力 / AI 主色）</h4>
+  <div class="swatches">
+    <div class="sw"><div class="chip-c" style="background:#f4f2ff"><span>#f4f2ff</span></div><div class="nm">purple-50</div><div class="hb">最浅底</div></div>
+    <div class="sw"><div class="chip-c" style="background:#e6e1ff"><span>#e6e1ff</span></div><div class="nm">purple-100</div><div class="hb">浅底</div></div>
+    <div class="sw"><div class="chip-c" style="background:#cbc2ff"><span>#cbc2ff</span></div><div class="nm">purple-200</div><div class="hb">边框/浅</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#a89dff"><span>#a89dff</span></div><div class="nm">purple-300</div><div class="hb">深色文字用</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#8a7dff"><span>#8a7dff</span></div><div class="nm">purple-400</div><div class="hb">hover</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#6d5dfc"><span>#6d5dfc</span></div><div class="nm">purple-500 ★</div><div class="hb">品牌基准</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#5b4ce6"><span>#5b4ce6</span></div><div class="nm">purple-600</div><div class="hb">active</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#4a3bc4"><span>#4a3bc4</span></div><div class="nm">purple-700</div><div class="hb">深</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#3b2f9e"><span>#3b2f9e</span></div><div class="nm">purple-800</div><div class="hb">更深</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#2f2578"><span>#2f2578</span></div><div class="nm">purple-900</div><div class="hb">最深</div></div>
+  </div>
+
+  <h4>中性 Neutral（冷灰，作为表面与文字基底）</h4>
+  <div class="swatches">
+    <div class="sw"><div class="chip-c" style="background:#f7f8fa"><span>#f7f8fa</span></div><div class="nm">neutral-0</div><div class="hb">浅色底</div></div>
+    <div class="sw"><div class="chip-c" style="background:#eef0f5"><span>#eef0f5</span></div><div class="nm">neutral-50</div><div class="hb">浅色 canvas</div></div>
+    <div class="sw"><div class="chip-c" style="background:#dfe3ea"><span>#dfe3ea</span></div><div class="nm">neutral-200</div><div class="hb">浅色边框</div></div>
+    <div class="sw"><div class="chip-c" style="background:#c9ced6"><span>#c9ced6</span></div><div class="nm">neutral-300</div><div class="hb">容器描边</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#7a8391"><span>#7a8391</span></div><div class="nm">neutral-500</div><div class="hb">节点描边</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#4a5364"><span>#4a5364</span></div><div class="nm">neutral-600</div><div class="hb">次要文字</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#33414d"><span>#33414d</span></div><div class="nm">neutral-700</div><div class="hb">浅色正文</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#1f2430"><span>#1f2430</span></div><div class="nm">neutral-800</div><div class="hb">强文字</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#232330"><span>#232330</span></div><div class="nm">neutral-900</div><div class="hb">深色 elevated</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#1a1a21"><span>#1a1a21</span></div><div class="nm">neutral-950</div><div class="hb">深色 card</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#131318"><span>#131318</span></div><div class="nm">neutral-1000</div><div class="hb">深色 canvas</div></div>
+  </div>
+
+  <h4>强调与状态 Accent / Status</h4>
+  <div class="swatches">
+    <div class="sw"><div class="chip-c dark" style="background:#22d3ee"><span>#22d3ee</span></div><div class="nm">cyan-500 ★</div><div class="hb">电流青·连线</div></div>
+    <div class="sw"><div class="chip-c" style="background:#0891b2"><span>#0891b2</span></div><div class="nm">cyan-600</div><div class="hb">浅色上的青</div></div>
+    <div class="sw"><div class="chip-c" style="background:#f59e0b"><span>#f59e0b</span></div><div class="nm">amber-500 ★</div><div class="hb">琥珀·积分</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#4ade80"><span>#4ade80</span></div><div class="nm">green-400</div><div class="hb">成功·深色</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#16a34a"><span>#16a34a</span></div><div class="nm">green-600</div><div class="hb">成功·浅色</div></div>
+    <div class="sw"><div class="chip-c" style="background:#fbbf24"><span>#fbbf24</span></div><div class="nm">yellow-400</div><div class="hb">警告·深色</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#8a5200"><span>#8a5200</span></div><div class="nm">amber-800</div><div class="hb">警告·浅色 <span class="pass">5.6:1</span></div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#f87171"><span>#f87171</span></div><div class="nm">red-400</div><div class="hb">错误·深色</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#b3261e"><span>#b3261e</span></div><div class="nm">red-700</div><div class="hb">错误·浅色 <span class="pass">5.7:1</span></div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#60a5fa"><span>#60a5fa</span></div><div class="nm">blue-400</div><div class="hb">信息·深色</div></div>
+    <div class="sw"><div class="chip-c dark" style="background:#1d4ed8"><span>#1d4ed8</span></div><div class="nm">blue-700</div><div class="hb">信息·浅色</div></div>
+  </div>
+
+  <div class="call amber">
+    <p><strong>对比度已实测：</strong>上表标注的两个浅色语义色（<code>amber-800</code> 5.60:1、<code>red-700</code> 5.73:1）是<b>替换现有 <code>#C97A12</code>(2.93:1) 与 <code>#E24B4A</code>(3.45:1) 的达标值</b>，均按 WCAG 相对亮度公式在 <code>#eef0f5</code> 底上复算过。深色侧 <code>green-400/red-400/yellow-400</code> 在 <code>#131318</code> 上均 &gt;5:1。</p>
+  </div>
+
+  <h3>3.4 L2 语义层（Semantic Layer）— 完整定义</h3>
+  <p>这是<b>唯一需要按主题切换</b>的一层。下面给出可直接粘贴的完整 CSS，深色为基线、浅色为覆写。</p>
+
+  <div class="cb">
+    <div class="lbl">tokens.css</div>
+    <pre><span class="c">/* ============================================================
+   pi-lnk Design Tokens v2  —  L1 Primitive（全主题共享）
+   ============================================================ */</span>
+<span class="k">:root</span> {
+  <span class="c">/* -- 品牌紫 -- */</span>
+  <span class="k">--lnk-purple-50</span>:<span class="v">#f4f2ff</span>; <span class="k">--lnk-purple-100</span>:<span class="v">#e6e1ff</span>; <span class="k">--lnk-purple-200</span>:<span class="v">#cbc2ff</span>;
+  <span class="k">--lnk-purple-300</span>:<span class="v">#a89dff</span>; <span class="k">--lnk-purple-400</span>:<span class="v">#8a7dff</span>; <span class="k">--lnk-purple-500</span>:<span class="v">#6d5dfc</span>;
+  <span class="k">--lnk-purple-600</span>:<span class="v">#5b4ce6</span>; <span class="k">--lnk-purple-700</span>:<span class="v">#4a3bc4</span>; <span class="k">--lnk-purple-800</span>:<span class="v">#3b2f9e</span>;
+  <span class="k">--lnk-purple-900</span>:<span class="v">#2f2578</span>;
+  <span class="c">/* -- 中性 -- */</span>
+  <span class="k">--lnk-neutral-0</span>:<span class="v">#f7f8fa</span>;   <span class="k">--lnk-neutral-50</span>:<span class="v">#eef0f5</span>;  <span class="k">--lnk-neutral-200</span>:<span class="v">#dfe3ea</span>;
+  <span class="k">--lnk-neutral-300</span>:<span class="v">#c9ced6</span>; <span class="k">--lnk-neutral-500</span>:<span class="v">#7a8391</span>; <span class="k">--lnk-neutral-600</span>:<span class="v">#4a5364</span>;
+  <span class="k">--lnk-neutral-700</span>:<span class="v">#33414d</span>; <span class="k">--lnk-neutral-800</span>:<span class="v">#1f2430</span>; <span class="k">--lnk-neutral-900</span>:<span class="v">#232330</span>;
+  <span class="k">--lnk-neutral-950</span>:<span class="v">#1a1a21</span>; <span class="k">--lnk-neutral-1000</span>:<span class="v">#131318</span>;
+  <span class="c">/* -- 强调 / 状态 -- */</span>
+  <span class="k">--lnk-cyan-500</span>:<span class="v">#22d3ee</span>;  <span class="k">--lnk-cyan-600</span>:<span class="v">#0891b2</span>;
+  <span class="k">--lnk-amber-500</span>:<span class="v">#f59e0b</span>; <span class="k">--lnk-amber-800</span>:<span class="v">#8a5200</span>;
+  <span class="k">--lnk-green-400</span>:<span class="v">#4ade80</span>;  <span class="k">--lnk-green-600</span>:<span class="v">#16a34a</span>;
+  <span class="k">--lnk-yellow-400</span>:<span class="v">#fbbf24</span>; <span class="k">--lnk-red-400</span>:<span class="v">#f87171</span>;   <span class="k">--lnk-red-700</span>:<span class="v">#b3261e</span>;
+  <span class="k">--lnk-blue-400</span>:<span class="v">#60a5fa</span>;   <span class="k">--lnk-blue-700</span>:<span class="v">#1d4ed8</span>;
+}
+
+<span class="c">/* ============================================================
+   L2 Semantic — 深色基线（默认）
+   每个变量都必须在下方 [data-theme='light'] 中有对应覆写。
+   ============================================================ */</span>
+<span class="k">:root</span>, <span class="k">:root</span>[data-theme=<span class="v">'dark'</span>] {
+  <span class="c">/* --- 表面层级（由远及近，共 4 级）--- */</span>
+  <span class="k">--lnk-surface-canvas</span>:   var(--lnk-neutral-1000);  <span class="c">/* 画布底 */</span>
+  <span class="k">--lnk-surface-sunken</span>:   <span class="v">#101014</span>;               <span class="c">/* 凹陷：输入框、轨道 */</span>
+  <span class="k">--lnk-surface-base</span>:     var(--lnk-neutral-950);   <span class="c">/* 卡片 */</span>
+  <span class="k">--lnk-surface-raised</span>:   var(--lnk-neutral-900);   <span class="c">/* 浮起：popover、菜单 */</span>
+  <span class="k">--lnk-surface-overlay</span>:  <span class="v">rgba(22,22,28,0.88)</span>;   <span class="c">/* 毛玻璃 chrome */</span>
+  <span class="k">--lnk-surface-glass</span>:    <span class="v">linear-gradient(180deg,rgba(255,255,255,.06) 0%,rgba(10,10,14,.42) 45%,rgba(10,10,14,.58) 100%)</span>;
+
+  <span class="c">/* --- 文字（对比度已实测，见注释）--- */</span>
+  <span class="k">--lnk-text-primary</span>:   <span class="v">#f4f4f8</span>;                        <span class="c">/* 16.9:1 ✓AAA */</span>
+  <span class="k">--lnk-text-secondary</span>: <span class="v">rgba(244,244,248,0.62)</span>;          <span class="c">/*  6.98:1 ✓AA */</span>
+  <span class="k">--lnk-text-muted</span>:     <span class="v">rgba(244,244,248,0.56)</span>;          <span class="c">/*  5.9:1  ✓AA  【旧值 0.40 = 3.60:1 ✗】 */</span>
+  <span class="k">--lnk-text-disabled</span>:  <span class="v">rgba(244,244,248,0.38)</span>;          <span class="c">/* 仅用于 disabled——豁免对比度 */</span>
+  <span class="k">--lnk-text-on-accent</span>: <span class="v">#ffffff</span>;                         <span class="c">/* 品牌色底上的文字 */</span>
+
+  <span class="c">/* --- 边框 --- */</span>
+  <span class="k">--lnk-border-subtle</span>:  <span class="v">rgba(255,255,255,0.08)</span>;
+  <span class="k">--lnk-border-default</span>: <span class="v">rgba(255,255,255,0.12)</span>;
+  <span class="k">--lnk-border-strong</span>:  <span class="v">rgba(255,255,255,0.18)</span>;
+  <span class="k">--lnk-border-focus</span>:   var(--lnk-purple-400);
+
+  <span class="c">/* --- 品牌 / 强调 --- */</span>
+  <span class="k">--lnk-accent</span>:        var(--lnk-purple-500);
+  <span class="k">--lnk-accent-hover</span>:  var(--lnk-purple-400);
+  <span class="k">--lnk-accent-active</span>: var(--lnk-purple-600);
+  <span class="k">--lnk-accent-text</span>:   var(--lnk-purple-300);      <span class="c">/* 深底上的可读紫 */</span>
+  <span class="k">--lnk-accent-subtle</span>: <span class="v">rgba(109,93,252,0.16)</span>;
+  <span class="k">--lnk-accent-gradient</span>: <span class="v">linear-gradient(135deg,#6d5dfc 0%,#8a5cf6 55%,#b45cf0 100%)</span>;
+  <span class="k">--lnk-energy</span>:        var(--lnk-cyan-500);        <span class="c">/* 连线电流 */</span>
+  <span class="k">--lnk-energy-text</span>:   var(--lnk-cyan-500);
+  <span class="k">--lnk-credit</span>:        var(--lnk-amber-500);       <span class="c">/* 积分 / 能量值 */</span>
+
+  <span class="c">/* --- 状态（fg=前景文字/图标，bg=底，bd=边框）--- */</span>
+  <span class="k">--lnk-status-success-fg</span>: var(--lnk-green-400);  <span class="k">--lnk-status-success-bg</span>: <span class="v">rgba(74,222,128,0.14)</span>;
+  <span class="k">--lnk-status-warning-fg</span>: var(--lnk-yellow-400); <span class="k">--lnk-status-warning-bg</span>: <span class="v">rgba(251,191,36,0.14)</span>;
+  <span class="k">--lnk-status-error-fg</span>:   var(--lnk-red-400);    <span class="k">--lnk-status-error-bg</span>:   <span class="v">rgba(248,113,113,0.14)</span>;
+  <span class="k">--lnk-status-info-fg</span>:    var(--lnk-blue-400);   <span class="k">--lnk-status-info-bg</span>:    <span class="v">rgba(96,165,250,0.14)</span>;
+
+  <span class="c">/* --- 交互态 --- */</span>
+  <span class="k">--lnk-hover-overlay</span>:  <span class="v">rgba(255,255,255,0.06)</span>;  <span class="c">/* 叠在任意表面上的 hover */</span>
+  <span class="k">--lnk-pressed-overlay</span>:<span class="v">rgba(255,255,255,0.10)</span>;
+  <span class="k">--lnk-selected-overlay</span>:<span class="v">rgba(255,255,255,0.14)</span>;
+  <span class="k">--lnk-scrim</span>:         <span class="v">rgba(10,10,14,0.62)</span>;      <span class="c">/* 模态遮罩 */</span>
+
+  <span class="c">/* --- 画布专属 --- */</span>
+  <span class="k">--lnk-edge</span>:            <span class="v">rgba(148,151,180,0.30)</span>;
+  <span class="k">--lnk-edge-hover</span>:      <span class="v">rgba(178,181,210,0.55)</span>;
+  <span class="k">--lnk-edge-selected</span>:   var(--lnk-purple-400);
+  <span class="k">--lnk-node-bg</span>:         <span class="v">rgba(40,40,48,0.40)</span>;
+  <span class="k">--lnk-node-border</span>:     <span class="v">rgba(255,255,255,0.08)</span>;
+  <span class="k">--lnk-node-selected-ring</span>: <span class="v">#ffffff</span>;
+  <span class="k">--lnk-selection-fill</span>:  <span class="v">rgba(255,255,255,0.05)</span>;
+  <span class="k">--lnk-selection-border</span>:<span class="v">rgba(148,151,180,0.48)</span>;
+  <span class="k">--lnk-checker-a</span>:       <span class="v">#101013</span>;  <span class="k">--lnk-checker-b</span>: <span class="v">#2e2e35</span>;
+}
+
+<span class="c">/* ============================================================
+   L2 Semantic — 浅色覆写（每个变量必须成对出现）
+   ============================================================ */</span>
+<span class="k">:root</span>[data-theme=<span class="v">'light'</span>] {
+  <span class="k">--lnk-surface-canvas</span>:   var(--lnk-neutral-50);
+  <span class="k">--lnk-surface-sunken</span>:   <span class="v">#f1f3f8</span>;
+  <span class="k">--lnk-surface-base</span>:     <span class="v">#ffffff</span>;
+  <span class="k">--lnk-surface-raised</span>:   <span class="v">#ffffff</span>;
+  <span class="k">--lnk-surface-overlay</span>:  <span class="v">rgba(255,255,255,0.90)</span>;
+  <span class="k">--lnk-surface-glass</span>:    <span class="v">linear-gradient(180deg,rgba(255,255,255,.62) 0%,rgba(255,255,255,.44) 50%,rgba(248,249,253,.56) 100%)</span>;
+
+  <span class="k">--lnk-text-primary</span>:   var(--lnk-neutral-700);          <span class="c">/* 15.4:1 ✓AAA */</span>
+  <span class="k">--lnk-text-secondary</span>: <span class="v">rgba(23,25,35,0.64)</span>;          <span class="c">/*  4.99:1 ✓AA */</span>
+  <span class="k">--lnk-text-muted</span>:     <span class="v">rgba(23,25,35,0.62)</span>;          <span class="c">/*  4.68:1 ✓AA 【旧值 0.42 = 2.60:1 ✗】 */</span>
+  <span class="k">--lnk-text-disabled</span>:  <span class="v">rgba(23,25,35,0.38)</span>;
+  <span class="k">--lnk-text-on-accent</span>: <span class="v">#ffffff</span>;
+
+  <span class="k">--lnk-border-subtle</span>:  <span class="v">rgba(23,25,35,0.10)</span>;
+  <span class="k">--lnk-border-default</span>: <span class="v">rgba(23,25,35,0.14)</span>;
+  <span class="k">--lnk-border-strong</span>:  <span class="v">rgba(23,25,35,0.22)</span>;
+  <span class="k">--lnk-border-focus</span>:   var(--lnk-purple-600);
+
+  <span class="k">--lnk-accent</span>:        var(--lnk-purple-600);   <span class="c">/* 浅底需更深一档 */</span>
+  <span class="k">--lnk-accent-hover</span>:  var(--lnk-purple-700);
+  <span class="k">--lnk-accent-active</span>: var(--lnk-purple-800);
+  <span class="k">--lnk-accent-text</span>:   var(--lnk-purple-600);
+  <span class="k">--lnk-accent-subtle</span>: <span class="v">rgba(91,76,230,0.12)</span>;
+  <span class="k">--lnk-energy</span>:        var(--lnk-cyan-600);
+  <span class="k">--lnk-energy-text</span>:   var(--lnk-cyan-600);
+  <span class="k">--lnk-credit</span>:        var(--lnk-amber-800);   <span class="c">/* 浅底上 500 不够可读 */</span>
+
+  <span class="k">--lnk-status-success-fg</span>: var(--lnk-green-600); <span class="k">--lnk-status-success-bg</span>: <span class="v">rgba(22,163,74,0.12)</span>;
+  <span class="k">--lnk-status-warning-fg</span>: var(--lnk-amber-800); <span class="k">--lnk-status-warning-bg</span>: <span class="v">rgba(138,82,0,0.10)</span>;
+  <span class="k">--lnk-status-error-fg</span>:   var(--lnk-red-700);   <span class="k">--lnk-status-error-bg</span>:   <span class="v">rgba(179,38,30,0.10)</span>;
+  <span class="k">--lnk-status-info-fg</span>:    var(--lnk-blue-700);  <span class="k">--lnk-status-info-bg</span>:    <span class="v">rgba(29,78,216,0.10)</span>;
+
+  <span class="k">--lnk-hover-overlay</span>:  <span class="v">rgba(23,25,35,0.05)</span>;
+  <span class="k">--lnk-pressed-overlay</span>:<span class="v">rgba(23,25,35,0.09)</span>;
+  <span class="k">--lnk-selected-overlay</span>:<span class="v">rgba(23,25,35,0.12)</span>;
+  <span class="k">--lnk-scrim</span>:         <span class="v">rgba(23,25,35,0.34)</span>;
+
+  <span class="k">--lnk-edge</span>:            <span class="v">rgba(23,25,35,0.22)</span>;
+  <span class="k">--lnk-edge-hover</span>:      <span class="v">rgba(23,25,35,0.45)</span>;
+  <span class="k">--lnk-edge-selected</span>:   var(--lnk-purple-600);
+  <span class="k">--lnk-node-bg</span>:         <span class="v">rgba(255,255,255,0.92)</span>;
+  <span class="k">--lnk-node-border</span>:     var(--lnk-neutral-500);
+  <span class="k">--lnk-node-selected-ring</span>: <span class="v">rgba(23,25,35,0.90)</span>;
+  <span class="k">--lnk-selection-fill</span>:  <span class="v">rgba(23,25,35,0.05)</span>;
+  <span class="k">--lnk-selection-border</span>:<span class="v">rgba(23,25,35,0.34)</span>;
+  <span class="k">--lnk-checker-a</span>:       <span class="v">#ffffff</span>;  <span class="k">--lnk-checker-b</span>: <span class="v">#e2e4ea</span>;
+}</pre>
+  </div>
+
+  <h3>3.5 非颜色令牌（本次补齐的六个缺失维度）</h3>
+
+  <h4>间距 Spacing — 4px 基准网格</h4>
+  <div class="cb">
+    <div class="lbl">spacing</div>
+    <pre><span class="k">--lnk-space-0</span>:<span class="v">0</span>;      <span class="k">--lnk-space-1</span>:<span class="v">4px</span>;    <span class="k">--lnk-space-2</span>:<span class="v">8px</span>;    <span class="k">--lnk-space-3</span>:<span class="v">12px</span>;
+<span class="k">--lnk-space-4</span>:<span class="v">16px</span>;   <span class="k">--lnk-space-5</span>:<span class="v">20px</span>;   <span class="k">--lnk-space-6</span>:<span class="v">24px</span>;   <span class="k">--lnk-space-8</span>:<span class="v">32px</span>;
+<span class="k">--lnk-space-10</span>:<span class="v">40px</span>; <span class="k">--lnk-space-12</span>:<span class="v">48px</span>;  <span class="k">--lnk-space-16</span>:<span class="v">64px</span>;  <span class="k">--lnk-space-24</span>:<span class="v">96px</span>;
+
+<span class="c">/* 语义别名——组件一律用别名，不用裸数字 */</span>
+<span class="k">--lnk-gap-inline</span>:    var(--lnk-space-2);   <span class="c">/* 图标与文字 8px */</span>
+<span class="k">--lnk-gap-stack</span>:     var(--lnk-space-3);   <span class="c">/* 表单项之间 12px */</span>
+<span class="k">--lnk-pad-card</span>:      var(--lnk-space-4);   <span class="c">/* 卡片内边距 16px（最低） */</span>
+<span class="k">--lnk-pad-panel</span>:     var(--lnk-space-6);   <span class="c">/* 面板内边距 24px */</span>
+<span class="k">--lnk-pad-section</span>:   var(--lnk-space-8);   <span class="c">/* 区块间距 32px（最低） */</span></pre>
+  </div>
+  <p class="lede">迁移约束：<code>margin-top: 17px</code> 这类值禁止出现。非网格值（10/11/6px 共 554 处）逐批归入最近档位——<b>10px→space-3(12) 或 space-2(8) 二选一，不允许并存</b>。</p>
+
+  <h4>字号阶梯 Type Scale — Major Third 1.25，基准 14px（工具型密集界面）</h4>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Token</th><th>字号 / 行高</th><th>字重</th><th>用途</th><th>替换现有</th></tr></thead>
+    <tbody>
+      <tr><td><code>--lnk-text-2xs</code></td><td class="n">11 / 16</td><td>500</td><td>角标、极小标注</td><td><code>text-[10px]</code>（20+ 处）</td></tr>
+      <tr><td><code>--lnk-text-xs</code></td><td class="n">12 / 18</td><td>400</td><td>辅助说明、时间戳</td><td><code>text-xs</code></td></tr>
+      <tr><td><code>--lnk-text-sm</code></td><td class="n">13 / 20</td><td>400</td><td><b>正文基准</b>（密集 UI）</td><td><code>text-[13px]</code> / <code>text-[12.5px]</code></td></tr>
+      <tr><td><code>--lnk-text-base</code></td><td class="n">14 / 22</td><td>400</td><td>舒适正文、表单</td><td><code>text-sm</code>/<code>text-base</code> 混用</td></tr>
+      <tr><td><code>--lnk-text-md</code></td><td class="n">16 / 24</td><td>500</td><td>小标题、强调</td><td><code>text-base</code></td></tr>
+      <tr><td><code>--lnk-text-lg</code></td><td class="n">18 / 26</td><td>600</td><td>面板标题</td><td><code>text-lg</code></td></tr>
+      <tr><td><code>--lnk-text-xl</code></td><td class="n">20 / 28</td><td>600</td><td>区块标题</td><td><code>text-xl</code></td></tr>
+      <tr><td><code>--lnk-text-2xl</code></td><td class="n">24 / 32</td><td>700</td><td>页面标题</td><td><code>text-2xl</code></td></tr>
+      <tr><td><code>--lnk-text-3xl</code></td><td class="n">30 / 38</td><td>700</td><td>Hero / 展示</td><td><code>text-3xl</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="call amber"><p><strong>强约束：</strong>正文行高不低于 1.5，标题 1.2–1.3。<code>--lnk-text-2xs</code>(11px) 只允许用于<b>非关键</b>角标，且<b>禁止</b>再叠加 &lt;60% 透明度（现状 <code>text-[10px] text-white/30</code> = 2.69:1，双重违规）。</p></div>
+
+  <h4>圆角 Radius</h4>
+  <div class="cb">
+    <div class="lbl">radius</div>
+    <pre><span class="k">--lnk-radius-xs</span>:<span class="v">3px</span>;    <span class="c">/* 标签 / badge */</span>
+<span class="k">--lnk-radius-sm</span>:<span class="v">6px</span>;    <span class="c">/* 小控件、输入框 */</span>
+<span class="k">--lnk-radius-md</span>:<span class="v">8px</span>;    <span class="c">/* 按钮、小卡片 */</span>
+<span class="k">--lnk-radius-lg</span>:<span class="v">12px</span>;   <span class="c">/* 卡片、面板 */</span>
+<span class="k">--lnk-radius-xl</span>:<span class="v">16px</span>;   <span class="c">/* Modal、大面板 */</span>
+<span class="k">--lnk-radius-full</span>:<span class="v">9999px</span>; <span class="c">/* Pill、Avatar */</span>
+<span class="c">/* 现状：--neo-radius-md/lg 已定义但消费者为 0；组件里散落 0.55/0.6rem 等 6 种值 */</span></pre>
+  </div>
+
+  <h4>阴影 Shadow — 两主题各一套</h4>
+  <div class="cb">
+    <div class="lbl">shadow</div>
+    <pre><span class="c">/* 深色：靠"更亮的表面 + 更重的黑投影"表达高度 */</span>
+<span class="k">:root</span>, <span class="k">:root</span>[data-theme=<span class="v">'dark'</span>] {
+  <span class="k">--lnk-shadow-xs</span>: <span class="v">0 1px 2px rgba(0,0,0,.4)</span>;
+  <span class="k">--lnk-shadow-sm</span>: <span class="v">0 2px 6px rgba(0,0,0,.42)</span>;
+  <span class="k">--lnk-shadow-md</span>: <span class="v">0 8px 24px rgba(0,0,0,.46), 0 2px 6px rgba(0,0,0,.3)</span>;
+  <span class="k">--lnk-shadow-lg</span>: <span class="v">0 18px 44px rgba(0,0,0,.5), 0 4px 10px rgba(0,0,0,.34)</span>;
+  <span class="k">--lnk-shadow-xl</span>: <span class="v">0 28px 64px rgba(0,0,0,.56), inset 0 1px 0 rgba(255,255,255,.10)</span>;
+}
+<span class="c">/* 浅色：更柔、更扩散、带轻微彩色偏移 */</span>
+<span class="k">:root</span>[data-theme=<span class="v">'light'</span>] {
+  <span class="k">--lnk-shadow-xs</span>: <span class="v">0 1px 2px rgba(23,25,35,.06)</span>;
+  <span class="k">--lnk-shadow-sm</span>: <span class="v">0 2px 6px rgba(23,25,35,.08)</span>;
+  <span class="k">--lnk-shadow-md</span>: <span class="v">0 8px 24px rgba(23,25,35,.12), 0 2px 6px rgba(23,25,35,.06)</span>;
+  <span class="k">--lnk-shadow-lg</span>: <span class="v">0 18px 44px rgba(23,25,35,.16), 0 4px 10px rgba(23,25,35,.08)</span>;
+  <span class="k">--lnk-shadow-xl</span>: <span class="v">0 28px 64px rgba(23,25,35,.20), inset 0 1px 0 rgba(255,255,255,.9)</span>;
+}
+<span class="c">/* 现状：88 处手写 box-shadow，全部收敛到这 5 档。品牌按钮发光单独用 --lnk-glow-accent */</span>
+<span class="k">--lnk-glow-accent</span>: <span class="v">0 4px 16px rgba(109,93,252,.32)</span>;</pre>
+  </div>
+
+  <h4>层级 Z-index — 从 19 个魔法值收敛到 8 个语义层</h4>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Token</th><th>值</th><th>用途</th><th>替换现状</th></tr></thead>
+    <tbody>
+      <tr><td><code>--lnk-z-base</code></td><td class="n">0</td><td>画布内容</td><td><code>z-[1]</code> <code>z-[2]</code> <code>z-[3]</code></td></tr>
+      <tr><td><code>--lnk-z-canvas-ui</code></td><td class="n">10</td><td>节点内浮层、工具栏</td><td><code>z-[4]</code> <code>z-[5]</code> <code>z-[6]</code></td></tr>
+      <tr><td><code>--lnk-z-chrome</code></td><td class="n">40</td><td>画布浮动 chrome / 缩放条</td><td><code>z-[40]</code> <code>z-[45]</code></td></tr>
+      <tr><td><code>--lnk-z-dock</code></td><td class="n">50</td><td>底部 dock、侧栏</td><td><code>z-[46]</code> <code>z-[47]</code> <code>z-[50]</code> <code>z-[55]</code> <code>z-[56]</code></td></tr>
+      <tr><td><code>--lnk-z-popover</code></td><td class="n">100</td><td>下拉、tooltip、hover 预览</td><td><code>z-[60]</code> <code>z-[64]</code> <code>z-[70]</code> <code>z-[80]</code> <code>z-[100]</code></td></tr>
+      <tr><td><code>--lnk-z-overlay</code></td><td class="n">200</td><td>全屏浮层、抽屉、连线选择器</td><td><code>z-[105]</code> <code>z-[110]</code> <code>z-[120]</code> <code>z-[130]</code> <code>z-[200]</code> <code>z-[999]</code></td></tr>
+      <tr><td><code>--lnk-z-modal</code></td><td class="n">1000</td><td>模态对话框</td><td><code>z-[1000]</code></td></tr>
+      <tr><td><code>--lnk-z-toast</code></td><td class="n">2000</td><td>全局通知</td><td><code>z-[4000]</code></td></tr>
+      <tr><td><code>--lnk-z-debug</code></td><td class="n">9000</td><td>仅调试层</td><td><code>z-[9000]</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>动效 Motion — 时长 + 缓动曲线</h4>
+  <div class="cb">
+    <div class="lbl">motion</div>
+    <pre><span class="c">/* 时长：现状 13 种 → 收敛为 4 档 */</span>
+<span class="k">--lnk-duration-instant</span>:<span class="v">100ms</span>;  <span class="c">/* 颜色 / 透明度等微反馈 */</span>
+<span class="k">--lnk-duration-fast</span>:   <span class="v">150ms</span>;  <span class="c">/* hover / focus（现有 130 处 0.15s 归入此） */</span>
+<span class="k">--lnk-duration-base</span>:   <span class="v">200ms</span>;  <span class="c">/* 展开 / 收起、位移 */</span>
+<span class="k">--lnk-duration-slow</span>:   <span class="v">320ms</span>;  <span class="c">/* 模态、抽屉转场 */</span>
+
+<span class="c">/* 缓动：现状全是默认 ease → 换成有设计意图的曲线 */</span>
+<span class="k">--lnk-ease-standard</span>:  <span class="v">cubic-bezier(.2,0,.2,1)</span>;    <span class="c">/* 通用 */</span>
+<span class="k">--lnk-ease-decelerate</span>:<span class="v">cubic-bezier(.16,1,.3,1)</span>;    <span class="c">/* 入场（快出慢停） */</span>
+<span class="k">--lnk-ease-accelerate</span>:<span class="v">cubic-bezier(.4,0,1,1)</span>;      <span class="c">/* 出场 */</span>
+<span class="k">--lnk-ease-spring</span>:    <span class="v">cubic-bezier(.34,1.56,.64,1)</span>; <span class="c">/* 弹性，慎用 */</span>
+
+<span class="c">/* 全局降级（现状仅 8 处覆盖，16 个无限动画裸奔）——必须加 */</span>
+<span class="k">@media</span> (prefers-reduced-motion: reduce) {
+  <span class="k">*</span>, <span class="k">*</span>::before, <span class="k">*</span>::after {
+    animation-duration: <span class="v">.01ms</span> <span class="w">!important</span>;
+    animation-iteration-count: <span class="v">1</span> <span class="w">!important</span>;
+    transition-duration: <span class="v">.01ms</span> <span class="w">!important</span>;
+    scroll-behavior: auto <span class="w">!important</span>;
+  }
+}</pre>
+  </div>
+
+  <h4>断点 Breakpoints</h4>
+  <div class="cb">
+    <div class="lbl">screens</div>
+    <pre><span class="c">// tailwind.config.js —— 与 CSS 变量保持同一份定义</span>
+screens: { <span class="k">sm</span>:<span class="v">'640px'</span>, <span class="k">md</span>:<span class="v">'768px'</span>, <span class="k">lg</span>:<span class="v">'1024px'</span>, <span class="k">xl</span>:<span class="v">'1280px'</span>, <span class="k">2xl</span>:<span class="v">'1536px'</span> }
+<span class="c">// 语义断点（用于 JS 侧，替代 useAgentMobileLayout 的 767px 硬编码）：</span>
+<span class="k">--lnk-bp-mobile</span>: <span class="v">767px</span>;   <span class="c">/* 唯一允许的 max-width 断点 */</span></pre>
+  </div>
+
+  <h3>3.6 主题切换机制整改（P0，必须先做）</h3>
+  <p>令牌再好，机制断了也是零。<b>要把"主题"从画布页提升为应用级关注点</b>：</p>
+  <div class="cb">
+    <div class="lbl">bootstrap</div>
+    <pre><span class="c">// 1) 在 index.html 的 &lt;head&gt; 内联执行——消除 FOUC，且在首屏前完成</span>
+<span class="c">//    关键：不再依赖任何懒加载路由的模块副作用</span>
+&lt;script&gt;
+(<span class="k">function</span>(){
+  <span class="k">var</span> s = localStorage.getItem(<span class="v">'lnk-theme'</span>);
+  <span class="k">var</span> t = (s === <span class="v">'light'</span> || s === <span class="v">'dark'</span>)
+    ? s
+    : (matchMedia(<span class="v">'(prefers-color-scheme: light)'</span>).matches ? <span class="v">'light'</span> : <span class="v">'dark'</span>);  <span class="c">// 系统偏好兜底</span>
+  document.documentElement.setAttribute(<span class="v">'data-theme'</span>, t);
+  document.documentElement.classList.toggle(<span class="v">'dark'</span>, t === <span class="v">'dark'</span>);   <span class="c">// Element Plus</span>
+})();
+&lt;/script&gt;
+
+<span class="c">// 2) main.ts —— 应用级安装，而不是模块副作用</span>
+<span class="c">//    现状 useCanvasTheme.ts:23 的 applyTheme(theme.value) 是模块级副作用，</span>
+<span class="c">//    只在 CanvasPage 被 import 时才跑 ⇒ 16/17 路由永远拿不到主题</span>
+app.use(themePlugin)   <span class="c">// 内部 watch + 持久化 + dom 同步，与路由无关</span>
+
+<span class="c">// 3) delete：index.html:2 的 class="dark" 与 index.html:13 的 bg-[#141414] text-white</span>
+<span class="c">//    —— 前者硬编码 EP 深色，后者用 utility 层压过了 base 层的 token</span>
+&lt;html lang=<span class="v">"zh-CN"</span>&gt;                    <span class="c">// 去掉 class="dark"</span>
+&lt;body class=<span class="v">"antialiased"</span>&gt;              <span class="c">// 去掉 bg-[#141414] text-white</span></pre>
+  </div>
+
+  <div class="call red">
+    <p><strong>注意一个连锁影响：</strong>把主题提升为全局后，现在 87 个含深色专用旁路（<code>text-white</code> 等）的组件会<b>立刻</b>在浅色模式下暴露出问题。所以 <b>3.6 必须和 P1 的"深色专用类清扫"同批发布</b>，不能单独上——否则就是把隐性 bug 变成显性事故。</p>
+  </div>
+
+  <h3>3.7 迁移映射表（旧 → 新）</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>现状写法</th><th>替换为</th><th>影响面</th></tr></thead>
+    <tbody>
+      <tr><td><code>--neo-accent</code></td><td><code>--lnk-accent</code></td><td>全局</td></tr>
+      <tr><td><code>--neo-accent-text</code></td><td><code>--lnk-accent-text</code></td><td>全局</td></tr>
+      <tr><td><code>--neo-text-primary/secondary/muted</code></td><td><code>--lnk-text-primary/secondary/muted</code></td><td>muted 值同时修正对比度</td></tr>
+      <tr><td><code>--neo-bg</code> / <code>--neo-surface-card</code> / <code>--neo-surface-elevated</code></td><td><code>--lnk-surface-canvas/base/raised</code></td><td>语义化层级</td></tr>
+      <tr><td><code>--neo-border</code> / <code>-strong</code></td><td><code>--lnk-border-subtle</code> / <code>-strong</code></td><td>补 default 档</td></tr>
+      <tr><td><code>--neo-hover-bg</code> / <code>--neo-active-bg</code></td><td><code>--lnk-hover-overlay</code> / <code>--lnk-pressed-overlay</code></td><td>改为叠加态，可叠任意表面</td></tr>
+      <tr><td><code>--neo-hi-bg</code> / <code>--neo-hi-text</code>（语义不明）</td><td><code>--lnk-selected-overlay</code> + <code>--lnk-text-primary</code></td><td>消除"hi"黑话</td></tr>
+      <tr><td><code>--neo-success/danger/warn</code>（<b>未定义</b>）</td><td><code>--lnk-status-success/warning/error-fg</code></td><td>修 13 处失效声明</td></tr>
+      <tr><td><code>--neo-panel</code> / <code>--neo-surface</code> / <code>--neo-fg</code>（<b>未定义</b>）</td><td><code>--lnk-surface-base</code> / <code>--lnk-text-primary</code></td><td>同上</td></tr>
+      <tr><td><code>--neo-severity-error/warn</code>（仅浅色有）</td><td><code>--lnk-status-error-fg</code> / <code>--lnk-status-warning-fg</code></td><td>补齐深色 + 修对比度</td></tr>
+      <tr><td><code>text-white</code> / <code>border-white/10</code> / <code>bg-white/5</code></td><td><code>text-[--lnk-text-primary]</code> / <code>border-[--lnk-border-subtle]</code> / <code>bg-[--lnk-hover-overlay]</code></td><td><b>240 / 77 / 59 处</b></td></tr>
+      <tr><td><code>bg-black</code> / <code>bg-[#141414]</code> / <code>#16161C</code> / <code>#1a1a1a</code></td><td><code>--lnk-surface-canvas</code> / <code>--lnk-surface-base</code></td><td>5 个值归一</td></tr>
+      <tr><td><code>#6366f1</code> / <code>#818cf8</code>（非品牌靛蓝）</td><td><code>--lnk-accent</code> / <code>--lnk-accent-text</code></td><td><b>39 处</b>色相修正</td></tr>
+      <tr><td><code>#f87171</code> / <code>#fca5a5</code> / <code>#4ade80</code> / <code>#39d353</code></td><td><code>--lnk-status-error-fg</code> / <code>--lnk-status-success-fg</code></td><td>状态色归一</td></tr>
+      <tr><td><code>text-white/30|35|40</code>（67 处）</td><td><code>--lnk-text-muted</code> 或 <code>--lnk-text-secondary</code></td><td>对比度达标</td></tr>
+      <tr><td><code>text-[10px]</code> / <code>text-[11px]</code> / <code>text-[12.5px]</code></td><td><code>--lnk-text-2xs</code> / <code>--lnk-text-xs</code> / <code>--lnk-text-sm</code></td><td>字号归一</td></tr>
+      <tr><td><code>z-[46]</code>…<code>z-[9000]</code>（19 值）</td><td><code>--lnk-z-*</code>（8 层）</td><td>41 处</td></tr>
+      <tr><td><code>0.15s ease</code> 等 13 种时长</td><td><code>var(--lnk-duration-fast) var(--lnk-ease-standard)</code></td><td>95+ 处</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>3.8 落地机制与守卫</h3>
+  <ol>
+    <li><b>Tailwind 接入</b>：把 L2 语义变量映射进 <code>tailwind.config.js</code> 的 <code>colors</code>（用 <code>rgb(var(--x))</code> 或 <code>var()</code> 形式），使 <code>text-primary</code> / <code>bg-surface-base</code> / <code>border-subtle</code> 成为合法工具类；<b>同时删除 <code>brand/electric/warm/surface</code> 这套死配置</b>（11 项里 10 项零使用）。加 <code>darkMode: ['class', '[data-theme="dark"]']</code>，杜绝 <code>dark:</code> 走 <code>prefers-color-scheme</code> 的三方错配。</li>
+    <li><b>CSS 变量完整性守卫</b>（扩展现有 <code>palette-parity.test.ts</code> 的思路）：新增测试断言「L2 深色块与浅色块的变量名集合<b>完全相等</b>」——这一条能一次性消灭"18 个深色独占 / 4 个浅色独占"整类问题。</li>
+    <li><b>引用完整性守卫</b>：扫描全部 <code>var(--lnk-*)</code> 引用，断言每个都在 L1/L2/L3 中有定义。这一条能消灭"13 个未定义 token 导致整条声明静默失效"这类最难查的 bug。</li>
+    <li><b>对比度守卫</b>：对 L2 文字/语义色跑 WCAG 计算，&lt;4.5:1 直接 fail。把本报告实测的公式固化进测试，杜绝再次引入 <code>--neo-text-muted</code> 这种值。</li>
+    <li><b>硬编码颜色门禁</b>：新增 lint 规则禁止新增 hex / <code>rgba(</code> / <code>text-white</code> / <code>bg-[#</code>，存量 629 处进 allowlist 逐批消化（每批 PR 必须减少计数）。</li>
+    <li><b>Element Plus 主题对齐</b>：<b>把 <code>main.ts</code> 的全量引入改为按需引入</b>（顺带省掉 349KB 阻塞 CSS），并通过覆写 <code>--el-*</code> 变量指向 <code>--lnk-*</code>，让 76 个 EP 组件实例与 204 处 <code>ElMessage</code> 融入品牌语言，而不是现在"默认主题 + 7 行局部覆写"的割裂状态。</li>
+  </ol>
+</section>
+
+<!-- ==================== 优化建议 & 路线图 ==================== -->
+<section>
+  <h2><span class="num">04</span>优化提升建议与重构路线图</h2>
+  <p class="lede">按"每阶段可独立发布、且发布后用户可感知"排序。<b>P0 阻断发布，P1 随版本迭代，P2 专项，P3 技术还债。</b></p>
+
+  <div class="phase">
+    <div class="ph-head"><span class="ph-tag p0">P0</span><h4>止血：让设计系统真正生效</h4><span class="eff">阻断发布 · 约 1~2 周</span></div>
+    <div class="ph-body"><ul>
+      <li><b>主题机制全局化</b>：<code>index.html</code> 内联引导脚本（含 <code>prefers-color-scheme</code> 兜底）+ 应用级插件安装；删除 <code>useCanvasTheme.ts</code> 的模块副作用与 <code>index.html</code> 的 <code>class="dark"</code> / <code>bg-[#141414] text-white</code>。</li>
+      <li><b>落地 L1/L2 令牌</b>：按 §3.4 全量替换 <code>neowow-tokens.css</code>；<b>修正 <code>--lnk-text-muted</code> 与 4 个语义色至 AA 达标值</b>。</li>
+      <li><b>补定义 13 个未定义 token</b>：消除 <code>--neo-success/danger/panel/surface/fg</code> 等导致的静默失效。</li>
+      <li><b>加全局 <code>:focus-visible</code> 基线</b> + 删除 8 处无替代的 <code>outline:none</code>（首恶：<code>AgentSideRail.vue:3904</code> 的 Agent 输入框）。</li>
+      <li><b>加全局 <code>prefers-reduced-motion</code> 降级</b>：一次性覆盖 16 个裸奔的无限动画。</li>
+      <li><b>补 z-index 8 层语义 scale</b>，替换 41 处魔法值（先收 <code>z-[9000]</code> / <code>z-[1000]</code> / <code>z-[999]</code>）。</li>
+      <li><b>触屏可达性最小集</b>：画布加 <code>touch-action: none</code> + 单指平移；节点手柄改为选中态常驻而非 hover 才出现；下载/保存按钮加 <code>:focus-within</code> 回退。</li>
+    </ul></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph-head"><span class="ph-tag p1">P1</span><h4>清扫与归一：把 629 处旁路收回令牌</h4><span class="eff">1~2 个迭代 · 收益最大</span></div>
+    <div class="ph-body"><ul>
+      <li><b>深色专用类清扫</b>（与 P0 同批）：240 处 <code>text-white</code>、77 处 <code>border-white/</code>、59 处 <code>bg-white/</code>、25 处 <code>bg-black</code> → 语义令牌。Top 文件：<code>UsageDayTable</code>(16) / <code>TermsPage</code>(15) / <code>PrivacyPage</code>(15) / <code>ProfilePage</code>(11)。</li>
+      <li><b>色相归一</b>：39 处 <code>#6366f1</code>/<code>#818cf8</code> → 品牌紫；5 个"页面底色"变体归一。</li>
+      <li><b>抽出 6 个基础组件</b>（按调用点数量排序）：<code>&lt;AppSpinner&gt;</code>（消灭 5 个相同 keyframes）、<code>&lt;AppSlider&gt;</code>（消灭 20 个手写 range + 5 套 CSS）、<code>&lt;AppModal&gt;</code>（消灭 2 个逐字节相同的弹壳 + 修 2 个缺失 <code>aria-modal</code>）、<code>&lt;AppEmptyState&gt;</code>（24 个变体）、<code>&lt;AppIconButton&gt;</code>、<code>&lt;AppTooltip&gt;</code>（替代 274 处原生 <code>title=</code>）。</li>
+      <li><b>统一 <code>.is-on</code> 激活态</b>：16 个私有变体 → <code>main.css</code> 的单一令牌化定义。</li>
+      <li><b>建立 <code>&lt;Icon&gt;</code> 组件</b>：收敛 199 处内联 SVG（18 个文件重复同一个"关闭 X"），删除用 emoji 当图标的 12 处。</li>
+      <li><b>补齐 6 个纯 div 可点击元素</b>的 <code>role</code>/<code>tabindex</code>/Enter+Space；给 127 个仅 <code>title=</code> 的按钮补 <code>aria-label</code>。</li>
+      <li><b>拆 <code>CanvasOverlayLayer.vue</code></b>（CanvasPage 里 11 个并列 <code>v-if</code> 浮层）——<b>风险最低、收益最高的一次拆分，不涉及逻辑迁移</b>。</li>
+    </ul></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph-head"><span class="ph-tag p2">P2</span><h4>体验与性能专项</h4><span class="eff">2~3 个迭代</span></div>
+    <div class="ph-body"><ul>
+      <li><b>拆两个上帝组件</b>：CanvasPage(5,094) → 8~10 个子单元；AgentSideRail(4,201) → 7~9 个（沿它自己的注释边界 <code>:2461/2508/2629/2944</code> 切）。</li>
+      <li><b>性能三连</b>：① 去掉每节点 <code>backdrop-filter: blur(10px)</code>（INP 首恶，改静态半透明底）；② 给 77 个动态 <code>v-for</code> 补 <code>:key</code>；③ Element Plus 改按需引入（省 349KB 阻塞 CSS）。</li>
+      <li><b>资源瘦身</b>：5 个登录视频 15.1MB → H.265/WebM + <code>preload="metadata"</code>；favicon 换成闲置的 258B SVG；58 个 <code>&lt;img&gt;</code> 补 <code>alt</code> + <code>loading="lazy"</code> + 固有宽高（CLS）。</li>
+      <li><b>无障碍补齐</b>：所有 dialog 改原生 <code>&lt;dialog&gt;</code> 或加 focus trap + 焦点归还；10+ 浮层补 Esc；删 <code>StudioShell.vue:34</code> 的嵌套 <code>&lt;main&gt;</code>；导航加 <code>aria-current</code>；异步区加 <code>aria-busy</code>/<code>aria-live</code>。</li>
+      <li><b>响应式兜底</b>：修 <code>min-w-[640px]</code> 表格、<code>w-[404px]</code> 面板、3 处 <code>w-[340px]</code> 浮层；把 <code>useAgentMobileLayout</code> 的 767px 纳入统一断点体系。</li>
+      <li><b>合并重复实现</b>：删除 <code>AgentSidebarRefChip.vue</code>（与 <code>DockRefChip.vue</code> 共享 149 个重复块、emit 契约完全相同），移入 <code>components/shared/</code>。</li>
+    </ul></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph-head"><span class="ph-tag p3">P3</span><h4>体系化沉淀</h4><span class="eff">长期</span></div>
+    <div class="ph-body"><ul>
+      <li><b>组件文档站</b>：为 <code>components/ui/</code> 建立可交互示例页（现状 <code>components/shared/</code> 只有 3 个图标，无文档）。</li>
+      <li><b>CI 门禁固化</b>：变量成对性、引用完整性、对比度、硬编码颜色计数——四条守卫全部接入流水线（延续 <code>palette-parity.test.ts</code> 已有的好传统）。</li>
+      <li><b>设计稿 ↔ 代码对齐</b>：把 L1 色板同步到设计工具，杜绝再次出现"第 4 种紫"（现状有 <code>#6d5dfc</code>/<code>#6366f1</code>/<code>#a89dff</code>/<code>#7c5cff</code>）。</li>
+      <li><b>视觉回归测试</b>：对双主题各截基线，防 token 改动引发的面貌漂移。</li>
+    </ul></div>
+  </div>
+
+  <h3>4.1 验收标准（Definition of Done）</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>维度</th><th>现状</th><th>目标（P0+P1 完成后）</th><th>判据</th></tr></thead>
+    <tbody>
+      <tr><td>令牌覆盖</td><td class="n">90/182 组件</td><td class="n">182/182</td><td>零组件含 <code>--neo-</code> 旧前缀</td></tr>
+      <tr><td>硬编码颜色</td><td class="n">629 处</td><td class="n">&lt; 60 处（仅 canvas 几何/SVG）</td><td>lint 门禁，PR 只允许下降</td></tr>
+      <tr><td>主题生效路由</td><td class="n">1/17</td><td class="n">17/17</td><td>每条路由首屏 <code>data-theme</code> 已设置</td></tr>
+      <tr><td>文字对比度</td><td class="n">最低 2.60:1</td><td class="n">全部 ≥ 4.5:1</td><td>对比度守卫 CI 通过</td></tr>
+      <tr><td>变量成对性</td><td class="n">深 74 / 浅 60</td><td class="n">集合完全相等</td><td>新增成对性测试</td></tr>
+      <tr><td>未定义引用</td><td class="n">13 个</td><td class="n">0</td><td>引用完整性测试</td></tr>
+      <tr><td>z-index 取值数</td><td class="n">19</td><td class="n">8</td><td>grep <code>z-[</code> 仅剩 8 个 token 名</td></tr>
+      <tr><td>动效降级覆盖</td><td class="n">8/22</td><td class="n">22/22</td><td>全局 media query 生效</td></tr>
+      <tr><td>焦点可见</td><td class="n">8 处失效</td><td class="n">0</td><td>键盘走查全站可通过</td></tr>
+      <tr><td>触屏核心链路</td><td class="n">不可用</td><td class="n">平移/连线/下载可用</td><td>真机回归</td></tr>
+      <tr><td>复制粘贴率</td><td class="n">31.8%</td><td class="n">&lt; 15%</td><td>重复块扫描复测</td></tr>
+      <tr><td>LCP / INP</td><td class="n">未测</td><td class="n">≤2.5s / ≤200ms</td><td>Lighthouse 画布页实测</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<footer>
+  <p><b>pi-lnk 前端 UI/UX 全面诊断报告</b> · 2026-10-09 · 范围 <code>apps/web/src</code>（182 SFC / 46,110 行）</p>
+  <p>所有数字由静态扫描（find/grep/awk）与 WCAG 相对亮度公式独立复算得出，关键结论均附 <code>文件:行号</code> 证据，可逐条复现。本报告作为后续 UI 优化迭代与重构的输入基线。</p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -50,7 +50,7 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
       <button
         v-if="!manageMode"
         type="button"
-        class="flex h-7 w-7 items-center justify-center rounded-lg bg-black/50 text-white/70 opacity-0 transition hover:bg-black/70 hover:text-white group-hover:opacity-100"
+        class="flex h-7 w-7 items-center justify-center rounded-lg bg-black/50 text-fg-2 opacity-0 transition hover:bg-black/70 hover:text-fg group-hover:opacity-100"
         :class="{ 'opacity-100': menuOpen }"
         title="更多操作"
         @click="emit('toggleMenu')"
@@ -101,10 +101,10 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
         <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/70 to-transparent" />
       </div>
       <div class="relative z-[1] -mt-6 px-3 pb-2.5 pt-0">
-        <p class="truncate text-[13px] font-medium text-white/90 group-hover:text-white">
+        <p class="truncate text-[13px] font-medium text-fg group-hover:text-fg">
           {{ session.title || '未命名画布' }}
         </p>
-        <p class="mt-0.5 text-[10px] text-white/45">{{ formatSessionTime(session.updatedAt) }}</p>
+        <p class="mt-0.5 text-[10px] text-fg-3">{{ formatSessionTime(session.updatedAt) }}</p>
       </div>
     </button>
   </div>

@@ -137,13 +137,13 @@ function exportCsv() {
 </script>
 
 <template>
-  <section class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-white">
+  <section class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-fg">
     <header class="mb-3 flex items-center justify-between gap-3">
       <h2 class="text-sm font-medium">用量明细</h2>
       <button
         type="button"
         data-export
-        class="rounded-full border border-white/10 px-3 py-1 text-xs text-white/70 transition hover:bg-white/[0.04] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        class="rounded-full border border-white/10 px-3 py-1 text-xs text-fg-2 transition hover:bg-white/[0.04] hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="!rows.length"
         @click="exportCsv"
       >
@@ -153,14 +153,14 @@ function exportCsv() {
 
     <div v-if="loading" class="h-40 animate-pulse rounded-xl bg-white/5" />
 
-    <p v-else-if="rows.length === 0" class="py-10 text-center text-sm text-white/45">
-      还没有消耗。<router-link to="/workflow" class="text-white/80 underline underline-offset-2 hover:text-white">去创作</router-link>后，这里会按日汇总。
+    <p v-else-if="rows.length === 0" class="py-10 text-center text-sm text-fg-3">
+      还没有消耗。<router-link to="/workflow" class="text-fg underline underline-offset-2 hover:text-fg">去创作</router-link>后，这里会按日汇总。
     </p>
 
     <div v-else class="overflow-x-auto">
       <table class="w-full min-w-[640px] border-collapse text-left text-sm">
         <thead>
-          <tr class="text-xs text-white/45">
+          <tr class="text-xs text-fg-3">
             <th v-for="column in COLUMNS" :key="column" class="px-3 py-2 font-medium">{{ column }}</th>
           </tr>
         </thead>
@@ -170,7 +170,7 @@ function exportCsv() {
               :data-day="day.date"
               role="button"
               tabindex="0"
-              class="cursor-pointer border-t border-white/8 text-white/80 transition hover:bg-white/[0.04]"
+              class="cursor-pointer border-t border-white/8 text-fg transition hover:bg-white/[0.04]"
               :class="expandedDay === day.date ? 'bg-white/[0.04]' : undefined"
               @click="toggleDay(day.date)"
               @keydown="onRowKeydown($event, day.date)"
@@ -185,7 +185,7 @@ function exportCsv() {
             </tr>
             <tr v-if="expandedDay === day.date" data-expanded>
               <td colspan="7" class="bg-white/[0.02] px-3 pb-4 pt-1">
-                <p v-if="ledgerLoading && !items.length" class="py-6 text-center text-xs text-white/35">
+                <p v-if="ledgerLoading && !items.length" class="py-6 text-center text-xs text-fg-3">
                   正在加载当天流水…
                 </p>
                 <div v-else class="space-y-3">
@@ -196,15 +196,15 @@ function exportCsv() {
                   >
                     <div class="flex items-start justify-between gap-4">
                       <div class="min-w-0">
-                        <p class="truncate text-sm font-medium text-white/80">{{ tx.reason }}</p>
+                        <p class="truncate text-sm font-medium text-fg">{{ tx.reason }}</p>
                         <div class="mt-2 flex flex-wrap items-center gap-2">
-                          <span class="rounded-full bg-white/[0.06] px-2 py-1 text-[11px] text-white/55">
+                          <span class="rounded-full bg-white/[0.06] px-2 py-1 text-[11px] text-fg-3">
                             {{ kindLabels[tx.kind] }}
                           </span>
-                          <span class="rounded-full bg-white/[0.06] px-2 py-1 text-[11px] text-white/55">
+                          <span class="rounded-full bg-white/[0.06] px-2 py-1 text-[11px] text-fg-3">
                             {{ categoryLabels[tx.category] }}
                           </span>
-                          <span v-if="tx.model" class="text-[11px] text-white/35">{{ tx.model }}</span>
+                          <span v-if="tx.model" class="text-[11px] text-fg-3">{{ tx.model }}</span>
                         </div>
                       </div>
                       <span
@@ -215,7 +215,7 @@ function exportCsv() {
                       </span>
                     </div>
                     <div class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3">
-                      <time class="text-xs text-white/30" :datetime="tx.createdAt">{{ formatCreatedAt(tx.createdAt) }}</time>
+                      <time class="text-xs text-fg-3" :datetime="tx.createdAt">{{ formatCreatedAt(tx.createdAt) }}</time>
                       <div class="flex items-center gap-3">
                         <span
                           v-if="tx.generationId"
@@ -224,21 +224,21 @@ function exportCsv() {
                         >
                           生成 ID · {{ shortGenerationId(tx.generationId) }}
                         </span>
-                        <span class="text-xs text-white/35">余额 {{ tx.balanceAfter ?? '—' }}</span>
+                        <span class="text-xs text-fg-3">余额 {{ tx.balanceAfter ?? '—' }}</span>
                       </div>
                     </div>
                   </div>
                   <p v-if="loadError" class="py-2 text-center text-xs text-red-300/70">{{ loadError }}</p>
                   <p
                     v-else-if="!ledgerLoading && !items.length"
-                    class="rounded-2xl border border-white/8 bg-[#1a1a1a] py-8 text-center text-sm text-white/30"
+                    class="rounded-2xl border border-white/8 bg-[#1a1a1a] py-8 text-center text-sm text-fg-3"
                   >
                     这一天没有流水。
                   </p>
                   <div v-if="nextCursor" class="pt-1 text-center">
                     <button
                       type="button"
-                      class="rounded-xl border border-white/10 px-5 py-2 text-xs text-white/50 transition hover:bg-white/[0.04] hover:text-white/80 disabled:opacity-40"
+                      class="rounded-xl border border-white/10 px-5 py-2 text-xs text-fg-3 transition hover:bg-white/[0.04] hover:text-fg disabled:opacity-40"
                       :disabled="ledgerLoadingMore"
                       @click.stop="loadMore"
                     >
@@ -251,7 +251,7 @@ function exportCsv() {
           </template>
         </tbody>
         <tfoot>
-          <tr data-total class="border-t border-white/12 text-white/90">
+          <tr data-total class="border-t border-white/12 text-fg">
             <td class="px-3 py-3 font-medium">合计</td>
             <td class="px-3 py-3 tabular-nums">{{ totals.generationCount }}</td>
             <td class="px-3 py-3 tabular-nums">{{ totals.netConsumed }}</td>

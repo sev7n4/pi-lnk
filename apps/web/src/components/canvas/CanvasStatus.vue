@@ -24,7 +24,7 @@ const hasGenerating = computed(() => props.generatingCount > 0)
     :class="compact ? 'mb-0 px-2 py-1.5' : 'mb-2 px-3 py-2'"
   >
     <div
-      class="flex flex-wrap items-center gap-y-0.5 text-white/50"
+      class="flex flex-wrap items-center gap-y-0.5 text-fg-3"
       :class="compact ? 'gap-x-2 text-[9px]' : 'gap-x-3 text-[10px]'"
     >
       <span>{{ nodeCount }} 节点</span>
@@ -47,11 +47,11 @@ const hasGenerating = computed(() => props.generatingCount > 0)
         v-for="g in groups"
         :key="g.id"
         type="button"
-        class="mb-0.5 flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-[10px] text-white/60 hover:bg-white/5"
+        class="mb-0.5 flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-[10px] text-fg-2 hover:bg-white/5"
         @click="emit('focusGroup', g.id)"
       >
         <span>{{ g.title }}</span>
-        <span class="text-white/30">{{ g.childCount }}</span>
+        <span class="text-fg-3">{{ g.childCount }}</span>
       </button>
     </div>
   </div>

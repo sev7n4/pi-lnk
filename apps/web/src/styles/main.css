@@ -1,3 +1,7 @@
+/* ⛔ 顺序有意义：design-tokens.css 提供全部 --lnk-* 变量，
+   Tailwind 的颜色类（text-fg / bg-surface-…）与下面的 @apply 都依赖它。
+   缺失时不会报错，只会静默产出「无颜色」的规则 —— 那正是本项目最难查的一类 bug。 */
+@import './design-tokens.css';
 @import './neowow-tokens.css';
 @import './neo-node.css';
 
@@ -40,14 +44,16 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50;
-    background: var(--neo-brand-gradient);
-    box-shadow: 0 4px 16px rgba(109, 93, 252, 0.32);
+    /* text-fg-on = --lnk-text-on-accent（两主题都是白字）。
+       ⛔ 这里原来是 text-white：浅色主题下若底色被换成浅紫，白字会掉到不达标。 */
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-fg-on transition disabled:cursor-not-allowed disabled:opacity-50;
+    background: var(--lnk-accent-gradient);
+    box-shadow: var(--lnk-accent-glow);
   }
 
   .btn-primary:hover:not(:disabled) {
     filter: brightness(1.08);
-    box-shadow: 0 6px 20px rgba(109, 93, 252, 0.42);
+    box-shadow: var(--lnk-accent-glow);
   }
 
   .btn-ghost {

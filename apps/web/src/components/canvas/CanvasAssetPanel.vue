@@ -435,7 +435,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
             <!-- 类型角标 -->
             <span
               v-if="asset.kind !== 'image'"
-              class="absolute left-1 top-1 rounded bg-black/60 px-1 py-px text-[8px] text-white/85"
+              class="absolute left-1 top-1 rounded bg-black/60 px-1 py-px text-[8px] text-fg"
             >
               {{ asset.kind === 'video' ? '视频' : '音频' }}
             </span>
@@ -490,7 +490,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
               <button
                 v-if="asset.source === 'user'"
                 type="button"
-                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-white/80 transition hover:bg-black/85 hover:text-white"
+                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-black/85 hover:text-fg"
                 title="重命名"
                 @click.stop="renameAsset(asset)"
               >
@@ -501,7 +501,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
               <button
                 v-if="asset.source === 'user'"
                 type="button"
-                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-white/80 transition hover:bg-red-500/90 hover:text-white"
+                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-red-500/90 hover:text-fg"
                 title="从资产库删除"
                 @click.stop="removeAsset(asset)"
               >

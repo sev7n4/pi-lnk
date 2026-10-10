@@ -85,14 +85,14 @@ async function upgrade(plan: string) {
     <div v-if="auth.isLoggedIn" class="space-y-4">
       <!-- 积分总览：品牌渐变能量卡 -->
       <div class="membership-hero relative overflow-hidden rounded-xl p-4">
-        <p class="text-xs text-white/75">当前积分</p>
-        <p class="mt-0.5 flex items-baseline gap-1.5 text-3xl font-semibold text-white">
+        <p class="text-xs text-fg-2">当前积分</p>
+        <p class="mt-0.5 flex items-baseline gap-1.5 text-3xl font-semibold text-fg">
           <svg class="h-5 w-5 self-center text-[var(--neo-warm)]" viewBox="0 0 24 24" fill="currentColor">
             <path d="M13 2 4.5 13.5h5.6L11 22l8.5-11.5h-5.6L13 2z" />
           </svg>
           {{ points }}
         </p>
-        <p class="mt-1 text-xs text-white/70">
+        <p class="mt-1 text-xs text-fg-2">
           会员：{{ membership === 'pro' ? '专业版' : membership === 'studio' ? '工作室版' : '免费版' }}
         </p>
         <el-button class="membership-claim-btn mt-3" size="small" :loading="loading" @click="claimDaily">

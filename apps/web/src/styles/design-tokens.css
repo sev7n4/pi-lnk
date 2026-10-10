@@ -1,0 +1,334 @@
+/* ============================================================
+   lnk π Design Tokens  v2
+   方向：墨流 Ink Flow —— 中性承载结构，品牌色只做点睛
+
+   三层架构
+     L1 原始层  --lnk-{色相}-{档位}     全主题共享，永不切换
+     L2 语义层  --lnk-{类别}-{角色}     唯一按主题切换的层
+     L3 组件层  --lnk-{组件}-{部位}     组件私有，默认引用 L2
+
+   硬规则
+     1. 组件只允许消费 L2 / L3，禁止直接引用 L1 色板。
+     2. 每个 L2 变量必须在深色块与浅色块中成对出现
+        （由 styles/design-token.test.ts 守卫，漏一个即 CI 红）。
+     3. 文字色一律用实色 hex，禁止用 rgba 透明度当文字色
+        —— 透明度文字的对比度随所在表面变化，无法被单一令牌保证。
+     4. 注释里禁止出现字面星号紧跟斜杠的写法（会提前闭合注释，postcss 报 Unknown word）。
+
+   品牌锚点（不可改，改动需走品牌评审）
+     电光紫 #6d5dfc  创造力 / AI
+     电流青 #22d3ee  连线电流 / 能量流动
+     琥珀橙 #f59e0b  积分 / 能量值 / 氛围光
+   ============================================================ */
+
+/* ============================================================
+   L1 原始层 —— 按明度排序，不含任何语义
+   ============================================================ */
+:root {
+  /* 墨阶 Ink —— 冷中性，承担 90% 的界面结构 */
+  --lnk-ink-0: #ffffff;
+  --lnk-ink-50: #f7f8fa;
+  --lnk-ink-100: #eef0f5;
+  --lnk-ink-200: #e2e5ec;
+  --lnk-ink-300: #c9ced6;
+  --lnk-ink-400: #9aa3b2;
+  --lnk-ink-500: #7a8391;
+  --lnk-ink-600: #5a6478;
+  --lnk-ink-700: #4a5364;
+  --lnk-ink-800: #33414d;
+  --lnk-ink-900: #1f2430;
+  --lnk-ink-950: #1a1a21;
+  --lnk-ink-1000: #131318;
+  --lnk-ink-1050: #0e0e12;
+
+  /* 电光紫 Purple —— 品牌主色，只做点睛 */
+  --lnk-purple-50: #f4f2ff;
+  --lnk-purple-100: #e6e1ff;
+  --lnk-purple-200: #cbc2ff;
+  --lnk-purple-300: #a89dff;
+  --lnk-purple-400: #8a7dff;
+  --lnk-purple-500: #6d5dfc; /* 品牌基准 */
+  --lnk-purple-600: #5b4ce6;
+  --lnk-purple-700: #4a3bc4;
+  --lnk-purple-800: #3b2f9e;
+  --lnk-purple-900: #2f2578;
+
+  /* 电流青 Cyan —— 唯一语义：能量流动 / 连线 */
+  --lnk-cyan-300: #67e8f9;
+  --lnk-cyan-400: #22d3ee;
+  --lnk-cyan-500: #06b6d4;
+  --lnk-cyan-600: #0891b2;
+  --lnk-cyan-700: #0c6377; /* 浅色主题的可用文字档（实测 5.63:1） */
+
+  /* 琥珀橙 Amber —— 唯一语义：积分 / 消耗 */
+  --lnk-amber-300: #fcd34d;
+  --lnk-amber-400: #fbbf24;
+  --lnk-amber-500: #f59e0b;
+  --lnk-amber-600: #d97706;
+  --lnk-amber-700: #b45309;
+  --lnk-amber-800: #8a5200;
+
+  /* 状态色 Status */
+  --lnk-green-300: #86efac;
+  --lnk-green-400: #4ade80;
+  --lnk-green-600: #16a34a;
+  --lnk-green-700: #15803d;
+  --lnk-green-800: #166534;
+  --lnk-red-300: #fca5a5;
+  --lnk-red-400: #f87171;
+  --lnk-red-600: #dc2626;
+  --lnk-red-700: #b3261e;
+  --lnk-blue-300: #93c5fd;
+  --lnk-blue-400: #60a5fa;
+  --lnk-blue-600: #2563eb;
+  --lnk-blue-700: #1d4ed8;
+
+  /* ---- 字体 ---- */
+  /* 中文产品：西文与中文必须分开声明，否则 Unbounded 无 CJK 字形会静默回退 */
+  --lnk-font-sans: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    system-ui, -apple-system, sans-serif;
+  --lnk-font-display: 'Unbounded', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --lnk-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---- 字号阶梯（Major Third 1.25，基准 14px：工具型密集界面）---- */
+  --lnk-text-2xs: 11px;  --lnk-lh-2xs: 16px;
+  --lnk-text-xs: 12px;   --lnk-lh-xs: 18px;
+  --lnk-text-sm: 13px;   --lnk-lh-sm: 20px;
+  --lnk-text-base: 14px; --lnk-lh-base: 22px;
+  --lnk-text-md: 16px;   --lnk-lh-md: 24px;
+  --lnk-text-lg: 18px;   --lnk-lh-lg: 26px;
+  --lnk-text-xl: 20px;   --lnk-lh-xl: 28px;
+  --lnk-text-2xl: 24px;  --lnk-lh-2xl: 32px;
+  --lnk-text-3xl: 30px;  --lnk-lh-3xl: 38px;
+  --lnk-text-4xl: 36px;  --lnk-lh-4xl: 44px;
+
+  --lnk-weight-regular: 400;
+  --lnk-weight-medium: 500;
+  --lnk-weight-semibold: 600;
+  --lnk-weight-bold: 700;
+
+  /* ---- 间距（4px 基准网格）---- */
+  --lnk-space-0: 0px;
+  --lnk-space-1: 4px;
+  --lnk-space-2: 8px;
+  --lnk-space-3: 12px;
+  --lnk-space-4: 16px;
+  --lnk-space-5: 20px;
+  --lnk-space-6: 24px;
+  --lnk-space-8: 32px;
+  --lnk-space-10: 40px;
+  --lnk-space-12: 48px;
+  --lnk-space-16: 64px;
+  --lnk-space-24: 96px;
+
+  /* 语义别名：组件一律用别名，不用裸档位 */
+  --lnk-gap-inline: var(--lnk-space-2);
+  --lnk-gap-stack: var(--lnk-space-3);
+  --lnk-pad-card: var(--lnk-space-4);
+  --lnk-pad-panel: var(--lnk-space-6);
+  --lnk-pad-section: var(--lnk-space-8);
+
+  /* ---- 圆角 ---- */
+  --lnk-radius-xs: 3px;
+  --lnk-radius-sm: 6px;
+  --lnk-radius-md: 8px;
+  --lnk-radius-lg: 12px;
+  --lnk-radius-xl: 16px;
+  --lnk-radius-2xl: 24px;
+  --lnk-radius-full: 9999px;
+
+  /* ---- 层级（从 19 个魔法值收敛到 8 层）---- */
+  --lnk-z-base: 0;
+  --lnk-z-canvas-ui: 10;
+  --lnk-z-chrome: 40;
+  --lnk-z-dock: 50;
+  --lnk-z-popover: 100;
+  --lnk-z-overlay: 200;
+  --lnk-z-modal: 1000;
+  --lnk-z-toast: 2000;
+  --lnk-z-debug: 9000;
+
+  /* ---- 动效 ---- */
+  --lnk-duration-instant: 100ms;
+  --lnk-duration-fast: 150ms;
+  --lnk-duration-base: 200ms;
+  --lnk-duration-slow: 320ms;
+  --lnk-duration-slower: 500ms;
+
+  --lnk-ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
+  --lnk-ease-decelerate: cubic-bezier(0.16, 1, 0.3, 1);
+  --lnk-ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+  --lnk-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ---- 图标 ---- */
+  --lnk-icon-sm: 16px;
+  --lnk-icon-md: 20px;
+  --lnk-icon-lg: 24px;
+  --lnk-icon-xl: 32px;
+  --lnk-icon-stroke: 1.5px; /* 24px 网格下的线宽，缩放时按比例换算 */
+
+  /* ---- 控件尺寸 ---- */
+  --lnk-control-sm: 32px;
+  --lnk-control-md: 40px;
+  --lnk-control-lg: 48px;
+  --lnk-touch-target: 44px; /* 移动端最小触控目标 */
+
+  /* ---- 断点（与 tailwind.config.js 保持同一份定义）---- */
+  --lnk-bp-sm: 640px;
+  --lnk-bp-md: 768px;
+  --lnk-bp-lg: 1024px;
+  --lnk-bp-xl: 1280px;
+  --lnk-bp-2xl: 1536px;
+  --lnk-bp-mobile: 767px; /* 唯一允许的 max-width 断点 */
+}
+
+/* ============================================================
+   L2 语义层 —— 深色基线
+   每个变量都必须在下方浅色块中有同名覆写。
+   ============================================================ */
+:root,
+:root[data-theme='dark'] {
+  /* 表面：由远及近 4 级 */
+  --lnk-surface-canvas: var(--lnk-ink-1000);
+  --lnk-surface-sunken: var(--lnk-ink-1050);
+  --lnk-surface-base: var(--lnk-ink-950);
+  --lnk-surface-raised: var(--lnk-ink-900);
+  --lnk-surface-overlay: rgba(26, 26, 33, 0.88);
+  --lnk-surface-glass: linear-gradient(
+    180deg, rgba(255, 255, 255, 0.06) 0%, rgba(14, 14, 18, 0.46) 45%,
+    rgba(14, 14, 18, 0.62) 100%
+  );
+
+  /* 文字：全部实色，最差表面对比度见注释 */
+  --lnk-text-primary: #f4f4f8;   /* 14.15:1 AAA */
+  --lnk-text-secondary: #b9bdc9; /*  8.27:1 AAA */
+  --lnk-text-muted: #949aa8;     /*  5.50:1 AA  */
+  --lnk-text-disabled: #6b7180;  /* 豁免：仅用于 disabled */
+  --lnk-text-on-accent: #ffffff;
+
+  /* 边框 */
+  --lnk-border-subtle: rgba(255, 255, 255, 0.08);
+  --lnk-border-default: rgba(255, 255, 255, 0.12);
+  --lnk-border-strong: rgba(255, 255, 255, 0.18);
+  --lnk-border-focus: var(--lnk-purple-400);
+
+  /* 品牌点睛：注意 hover 走更深一档而非更浅
+     —— 白字压在 #8a7dff 上只有 3.25:1，不达标；#5b4ce6 为 5.80:1。
+     深色下"hover 变深"靠外发光补偿前进感，不是靠提亮。 */
+  --lnk-accent: var(--lnk-purple-500);
+  --lnk-accent-hover: var(--lnk-purple-600);
+  --lnk-accent-active: var(--lnk-purple-700);
+  --lnk-accent-text: var(--lnk-purple-300); /* 表面上的紫字/链接，与按钮底色分开 */
+  --lnk-accent-subtle: rgba(109, 93, 252, 0.16);
+  --lnk-accent-glow: 0 4px 16px rgba(109, 93, 252, 0.32);
+  --lnk-accent-gradient: linear-gradient(135deg, #6d5dfc 0%, #8a5cf6 55%, #b45cf0 100%);
+
+  /* 单语义强调色 */
+  --lnk-energy: var(--lnk-cyan-400);  /* 仅：连线 / 能量流动 */
+  --lnk-credit: var(--lnk-amber-400); /* 仅：积分 / 消耗 */
+
+  /* 状态 */
+  --lnk-success: var(--lnk-green-400);
+  --lnk-warning: var(--lnk-amber-400);
+  --lnk-error: var(--lnk-red-400);
+  --lnk-info: var(--lnk-blue-400);
+  --lnk-success-bg: rgba(74, 222, 128, 0.14);
+  --lnk-warning-bg: rgba(251, 191, 36, 0.14);
+  --lnk-error-bg: rgba(248, 113, 113, 0.14);
+  --lnk-info-bg: rgba(96, 165, 250, 0.14);
+
+  /* 交互叠加态：叠在任意表面之上，避免为每个表面各配一套 hover */
+  --lnk-hover-overlay: rgba(255, 255, 255, 0.06);
+  --lnk-pressed-overlay: rgba(255, 255, 255, 0.1);
+  --lnk-selected-overlay: rgba(255, 255, 255, 0.14);
+  --lnk-scrim: rgba(10, 10, 14, 0.62);
+
+  /* 画布专属 */
+  --lnk-edge: rgba(148, 151, 180, 0.3);
+  --lnk-edge-hover: rgba(178, 181, 210, 0.55);
+  --lnk-edge-selected: var(--lnk-purple-400);
+  --lnk-node-bg: rgba(40, 40, 48, 0.4);
+  --lnk-node-border: rgba(255, 255, 255, 0.08);
+  --lnk-node-selected-ring: #ffffff;
+  --lnk-selection-fill: rgba(255, 255, 255, 0.05);
+  --lnk-selection-border: rgba(148, 151, 180, 0.48);
+  --lnk-checker-a: #101013;
+  --lnk-checker-b: #2e2e35;
+
+  /* 阴影：深色靠"更重的黑投影 + 内侧顶部高光"表达高度 */
+  --lnk-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --lnk-shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.42);
+  --lnk-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.46), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --lnk-shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.5), 0 4px 10px rgba(0, 0, 0, 0.34);
+  --lnk-shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.56), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================
+   L2 语义层 —— 浅色覆写（与深色块严格成对）
+   ============================================================ */
+:root[data-theme='light'] {
+  --lnk-surface-canvas: var(--lnk-ink-100);
+  --lnk-surface-sunken: #e6e9f0;
+  --lnk-surface-base: var(--lnk-ink-0);
+  --lnk-surface-raised: var(--lnk-ink-0);
+  --lnk-surface-overlay: rgba(255, 255, 255, 0.9);
+  --lnk-surface-glass: linear-gradient(
+    180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.44) 50%,
+    rgba(248, 249, 253, 0.56) 100%
+  );
+
+  --lnk-text-primary: var(--lnk-ink-900);   /* 12.77:1 AAA */
+  --lnk-text-secondary: var(--lnk-ink-700); /*  6.37:1 AA  */
+  --lnk-text-muted: var(--lnk-ink-600);     /*  4.90:1 AA  */
+  --lnk-text-disabled: var(--lnk-ink-400);
+  --lnk-text-on-accent: #ffffff;
+
+  --lnk-border-subtle: rgba(23, 25, 35, 0.1);
+  --lnk-border-default: rgba(23, 25, 35, 0.14);
+  --lnk-border-strong: rgba(23, 25, 35, 0.22);
+  --lnk-border-focus: var(--lnk-purple-600);
+
+  --lnk-accent: var(--lnk-purple-600);
+  --lnk-accent-hover: var(--lnk-purple-700);
+  --lnk-accent-active: var(--lnk-purple-800);
+  --lnk-accent-text: var(--lnk-purple-700);
+  --lnk-accent-subtle: rgba(91, 76, 230, 0.12);
+  --lnk-accent-glow: 0 4px 16px rgba(91, 76, 230, 0.24);
+  --lnk-accent-gradient: linear-gradient(135deg, #6d5dfc 0%, #8a5cf6 55%, #b45cf0 100%);
+
+  --lnk-energy: var(--lnk-cyan-700);  /* 浅底需更深的青 */
+  --lnk-credit: var(--lnk-amber-800); /* 浅底需更深的琥珀 */
+
+  --lnk-success: var(--lnk-green-800);
+  --lnk-warning: var(--lnk-amber-800);
+  --lnk-error: var(--lnk-red-700);
+  --lnk-info: var(--lnk-blue-700);
+  --lnk-success-bg: rgba(22, 101, 52, 0.1);
+  --lnk-warning-bg: rgba(138, 82, 0, 0.1);
+  --lnk-error-bg: rgba(179, 38, 30, 0.1);
+  --lnk-info-bg: rgba(29, 78, 216, 0.1);
+
+  --lnk-hover-overlay: rgba(23, 25, 35, 0.05);
+  --lnk-pressed-overlay: rgba(23, 25, 35, 0.09);
+  --lnk-selected-overlay: rgba(23, 25, 35, 0.12);
+  --lnk-scrim: rgba(23, 25, 35, 0.34);
+
+  --lnk-edge: rgba(23, 25, 35, 0.22);
+  --lnk-edge-hover: rgba(23, 25, 35, 0.45);
+  --lnk-edge-selected: var(--lnk-purple-600);
+  --lnk-node-bg: rgba(255, 255, 255, 0.92);
+  --lnk-node-border: var(--lnk-ink-500);
+  --lnk-node-selected-ring: rgba(23, 25, 35, 0.9);
+  --lnk-selection-fill: rgba(23, 25, 35, 0.05);
+  --lnk-selection-border: rgba(23, 25, 35, 0.34);
+  --lnk-checker-a: #ffffff;
+  --lnk-checker-b: #e2e4ea;
+
+  /* 浅色阴影：更柔、更扩散 */
+  --lnk-shadow-xs: 0 1px 2px rgba(23, 25, 35, 0.06);
+  --lnk-shadow-sm: 0 2px 6px rgba(23, 25, 35, 0.08);
+  --lnk-shadow-md: 0 8px 24px rgba(23, 25, 35, 0.12), 0 2px 6px rgba(23, 25, 35, 0.06);
+  --lnk-shadow-lg: 0 18px 44px rgba(23, 25, 35, 0.16), 0 4px 10px rgba(23, 25, 35, 0.08);
+  --lnk-shadow-xl: 0 28px 64px rgba(23, 25, 35, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}

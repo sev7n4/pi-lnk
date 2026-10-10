@@ -19,7 +19,7 @@ defineProps<{
             <path d="M12 3a15 15 0 0 1 0 18" />
           </svg>
           <span class="neo-placeholder-text">{{ data.title || '3D 世界' }}</span>
-          <span v-if="data.prompt" class="line-clamp-2 max-w-[220px] text-[11px] text-white/40">{{ data.prompt }}</span>
+          <span v-if="data.prompt" class="line-clamp-2 max-w-[220px] text-[11px] text-fg-3">{{ data.prompt }}</span>
         </div>
       </div>
     </div>

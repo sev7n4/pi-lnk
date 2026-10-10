@@ -51,7 +51,7 @@ onMounted(fetchWorks)
   <div class="mx-auto max-w-7xl px-6 pb-20 pt-8">
     <div class="mb-8 text-center">
       <h1 class="font-display text-3xl font-semibold">超创站</h1>
-      <p class="mt-2 text-white/60">发现社区优秀作品，探索 AI 创作无限可能</p>
+      <p class="mt-2 text-fg-2">发现社区优秀作品，探索 AI 创作无限可能</p>
     </div>
 
     <div class="mb-8 flex justify-center">
@@ -83,7 +83,7 @@ onMounted(fetchWorks)
       />
     </div>
 
-    <div v-else class="py-20 text-center text-white/40">
+    <div v-else class="py-20 text-center text-fg-3">
       暂无作品，成为第一个创作者吧
     </div>
   </div>

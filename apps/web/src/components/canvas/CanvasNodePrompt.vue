@@ -55,12 +55,12 @@ function onSave(md: string) {
   <NeoBaseNode node-type="prompt" :selected="selected" :data="data" :status="data.status">
     <div class="neo-text-card" title="双击打开沉浸编辑（全屏）" @dblclick.stop="openEditor">
       <template v-if="preview">
-        <p class="whitespace-pre-wrap text-left text-[12px] leading-relaxed text-white/80">{{ preview }}</p>
+        <p class="whitespace-pre-wrap text-left text-[12px] leading-relaxed text-fg">{{ preview }}</p>
       </template>
       <template v-else>
         <p>输入需求生成提示词</p>
-        <p class="text-[11px] text-white/35">双击编辑文本</p>
-        <p v-if="data.prompt" class="mt-1 line-clamp-2 text-[11px] text-white/40">{{ data.prompt }}</p>
+        <p class="text-[11px] text-fg-3">双击编辑文本</p>
+        <p v-if="data.prompt" class="mt-1 line-clamp-2 text-[11px] text-fg-3">{{ data.prompt }}</p>
       </template>
       <p v-if="isError && data.errorMessage" class="mt-1 line-clamp-2 text-[10px] text-red-400/90">
         {{ data.errorMessage }}

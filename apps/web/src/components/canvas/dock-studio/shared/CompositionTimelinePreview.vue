@@ -62,7 +62,7 @@ function nextClip() {
       <button type="button" class="timeline-btn" :disabled="readonly || playhead <= 0" @click="prevClip">
         上一段
       </button>
-      <span class="text-[10px] text-white/50">
+      <span class="text-[10px] text-fg-3">
         {{ layout.length ? playhead + 1 : 0 }} / {{ layout.length }} · 总长 ~{{ totalDuration }}s
       </span>
       <button

@@ -199,7 +199,7 @@ function saveToLibrary() {
           </div>
         </div>
       </div>
-      <p v-if="data.prompt" class="line-clamp-2 text-[11px] text-white/45">{{ data.prompt }}</p>
+      <p v-if="data.prompt" class="line-clamp-2 text-[11px] text-fg-3">{{ data.prompt }}</p>
       <input
         ref="fileInput"
         type="file"

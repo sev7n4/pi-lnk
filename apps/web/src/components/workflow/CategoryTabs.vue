@@ -14,7 +14,7 @@ defineEmits<{ 'update:modelValue': [v: string] }>()
       :key="cat"
       type="button"
       class="rounded-full px-4 py-1.5 text-sm transition"
-      :class="modelValue === cat ? 'bg-[#6366f1] text-white' : 'bg-white/5 text-white/60 hover:text-white'"
+      :class="modelValue === cat ? 'bg-[#6366f1] text-fg' : 'bg-white/5 text-fg-2 hover:text-fg'"
       @click="$emit('update:modelValue', cat)"
     >
       {{ cat }}

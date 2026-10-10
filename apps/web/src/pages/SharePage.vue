@@ -101,7 +101,7 @@ async function handleShare() {
             </span>
             @{{ work.authorName }}
           </button>
-          <div class="mt-4 flex gap-4 text-sm text-white/40">
+          <div class="mt-4 flex gap-4 text-sm text-fg-3">
             <span>{{ work.likes }} 赞</span>
             <span>{{ work.views }} 浏览</span>
           </div>
@@ -123,6 +123,6 @@ async function handleShare() {
       </div>
     </template>
 
-    <p v-else class="py-16 text-center text-white/40">作品不存在</p>
+    <p v-else class="py-16 text-center text-fg-3">作品不存在</p>
   </div>
 </template>

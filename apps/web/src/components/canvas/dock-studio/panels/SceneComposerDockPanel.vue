@@ -152,7 +152,7 @@ const canBatchGenerate = computed(() =>
     @update:title="onTitleInput"
     @close="emit('close')"
   >
-    <div class="mb-2 flex items-center justify-between px-1 text-[10px] text-white/45">
+    <div class="mb-2 flex items-center justify-between px-1 text-[10px] text-fg-3">
       <span>{{ statsLabel }}</span>
       <span v-if="payload.expanded" class="text-amber-300/80">已展开子图</span>
     </div>
@@ -168,7 +168,7 @@ const canBatchGenerate = computed(() =>
     <div class="scene-composer-layout">
       <div class="scene-composer-scenes">
         <div class="mb-1 flex items-center justify-between px-1">
-          <span class="text-[10px] uppercase tracking-wide text-white/40">场景</span>
+          <span class="text-[10px] uppercase tracking-wide text-fg-3">场景</span>
           <button
             type="button"
             class="text-[10px] text-[var(--neo-hi-text)] hover:opacity-80"
@@ -189,7 +189,7 @@ const canBatchGenerate = computed(() =>
             @click="selectScene(scene.id)"
           >
             <span class="truncate">{{ scene.title }}</span>
-            <span class="text-white/35">{{ scene.shots.length }}</span>
+            <span class="text-fg-3">{{ scene.shots.length }}</span>
           </button>
         </div>
       </div>
@@ -213,7 +213,7 @@ const canBatchGenerate = computed(() =>
           </button>
           <button
             type="button"
-            class="rounded-md border border-white/10 px-2 py-1 text-[10px] text-white/70 hover:bg-white/5"
+            class="rounded-md border border-white/10 px-2 py-1 text-[10px] text-fg-2 hover:bg-white/5"
             :disabled="locked"
             @click="addShot(activeScene.id)"
           >
@@ -229,7 +229,7 @@ const canBatchGenerate = computed(() =>
           >
             <div class="shot-preview">
               <img v-if="shot.previewUrl" :src="shot.previewUrl" alt="">
-              <span v-else class="text-[10px] text-white/30">{{ shotIndex + 1 }}</span>
+              <span v-else class="text-[10px] text-fg-3">{{ shotIndex + 1 }}</span>
             </div>
             <div class="min-w-0 flex-1 space-y-1">
               <div class="flex flex-wrap items-center gap-2">
@@ -288,7 +288,7 @@ const canBatchGenerate = computed(() =>
 
       <button
         type="button"
-        class="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/75 hover:bg-white/5"
+        class="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-fg-2 hover:bg-white/5"
         :disabled="locked"
         @click="emit('save')"
       >

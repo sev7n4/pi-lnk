@@ -31,7 +31,7 @@ function stepState(id: string): 'done' | 'current' | 'pending' {
       <span
         class="rounded px-1 py-0.5"
         :class="{
-          'bg-[var(--neo-accent)] text-white font-medium': stepState(step.id) === 'current',
+          'bg-[var(--neo-accent)] text-fg font-medium': stepState(step.id) === 'current',
           'text-[var(--neo-muted)] line-through opacity-70': stepState(step.id) === 'done',
           'text-[var(--neo-muted)] opacity-50': stepState(step.id) === 'pending',
         }"
