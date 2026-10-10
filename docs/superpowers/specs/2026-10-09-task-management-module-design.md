@@ -76,10 +76,10 @@
 | **C1-B** | 二期：增量式多工具（task_create/update/list），B=「A 基座 + fold 增量入口」 | 概要见 C1 spec §8；立项时独立成文 | 未立项（触发条件未满足） |
 | **C2** | turnBudget 轮次硬边界（小件，可与任一章节搭车） | `docs/superpowers/specs/2026-10-10-turn-budget-design.md` | **已立项（2026-10-10）**：per-run turn 计数（runId 匹配排除 compaction 轮）+ 软着陆 steer（预算-10 一次）+ 超限硬停（复用 stall watchdog 结算路径）+ `PI_RUNTIME_TURN_BUDGET=120/off` |
 | **C3** | Plan 确认门（generation-gate 泛化 + 会话级 planMode） | `docs/superpowers/specs/2026-10-10-plan-gate-design.md` | **已实现（2026-10-10，PR #329；生产部署 + 行为断言见 prod-deploy-verify）**：propose_plan + plan-gate（before_tool 拦写 + before_run_end followUp 执行轮）+ transcript 播种 + kill switch PI_RUNTIME_PLAN_GATE |
-| **C4** | 子代理（只读 Explore 型先行；并发/预算/超时三件套照抄 WorkBuddy 不可禁用设计） | 未成文 | 未立项 |
+| **C4** | 子代理（只读 Explore 型先行；并发/预算/超时三件套硬编码紧默认：全局并发 2 / turn 预算 30 复用 C2 / 超时 5min 复用 watchdog 结算） | `docs/superpowers/specs/2026-10-10-c4-subagent-design.md` | **已立项（2026-10-10）**：spawn_subagent 工具化自主派发 + 严格只读白名单 + 纯 fork 载体 + 同步阻塞返回（报告=工具结果，卡片透出，transcript 落盘无 UI）；一期不依赖 C1-B（只读语义下依赖环消解，见该 spec §4-5） |
 | **C5** | Automations（cron 设施 + 无人值守护栏） | 未成文 | 未立项（新子系统） |
 
-章节立项规则：每个章节独立走 spec → plan → implementation 循环；立项前在本文更新状态列；与 C1 有接口依赖的章节（C3 依赖 C1 的事件管道、C4 依赖 C1-B 的 id 化）须回读前章 spec 的「不变面承诺」。
+章节立项规则：每个章节独立走 spec → plan → implementation 循环；立项前在本文更新状态列；与 C1 有接口依赖的章节（C3 依赖 C1 的事件管道；C4 一期**不依赖 C1-B**——「依赖 id 化」在只读子代理语义下是伪依赖，已裁决消解，见 C4 spec §4-5）须回读前章 spec 的「不变面承诺」。
 
 ## 4. 当前章节：C1 任务清单工具化（P0+P1）
 
@@ -111,7 +111,8 @@ docs/superpowers/specs/2026-10-09-task-management-module-design.md  ← 本文�
 docs/superpowers/specs/2026-10-09-task-tool-design.md            章节 C1：P0+P1 规格（随实现/评审更新）
 docs/superpowers/specs/2026-10-10-plan-gate-design.md            章节 C3：Plan 确认门规格（2026-10-10 立项）
 docs/superpowers/specs/2026-10-10-turn-budget-design.md          章节 C2：turnBudget 轮次硬边界规格（2026-10-10 立项）
-（未来）C1-B / C2 / C4 / C5 各自 spec                                     章节：立项时创建
+docs/superpowers/specs/2026-10-10-c4-subagent-design.md          章节 C4：子代理（只读 Explore 型）规格（2026-10-10 立项）
+（未来）C1-B / C5 各自 spec                                              章节：立项时创建
 ```
 
 **维护规则**：
