@@ -49,7 +49,7 @@ import {
   resolveImageEditProfile,
   audioKindOf,
   decodeChannelModel,
-  getModelEntry,
+  getModelEntryFromRows,
   redactProviderSnippet,
   resolveImageSize,
   resolvePlatformImageProviderOpts,
@@ -2363,7 +2363,11 @@ export class StudioService {
     // kind 只能从 resolve 后的 modelName 判（用户可能传 `ch_xxx::model`），所以扣分点
     // 必须后移；扣分金额/文案与既有 voice 路径逐字节相同（cost=5、reason=音频生成）。
     const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
-    const kind: AudioKind = audioKindOf(getModelEntry(resolved.modelName) ?? { modality: 'audio' })
+    // B2 S2-1d：kind 判定走 DB 目录缓存 rows —— admin 新增的 music 模型不在常量目录，
+    // 旧实现会误判 voice（扣 5 分而非 15 分）。缓存外模型仍按缺省 voice 判定（语义同源）。
+    const kind: AudioKind = audioKindOf(
+      getModelEntryFromRows(currentCatalogEntries(), resolved.modelName) ?? { modality: 'audio' },
+    )
     const cost = kind === 'music' ? 15 : 5
     const chargeReason = kind === 'music' ? '音频生成-音乐' : '音频生成'
     await this.points.consume(

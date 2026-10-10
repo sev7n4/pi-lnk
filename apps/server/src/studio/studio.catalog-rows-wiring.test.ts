@@ -31,6 +31,7 @@ const imageGenerate = vi.fn(async () => ({
 }))
 const videoGenerate = vi.fn(async () => ({ url: 'https://example.com/v.mp4' }))
 const audioGenerate = vi.fn(async () => ({ url: 'https://example.com/a.mp3' }))
+const musicGenerate = vi.fn(async () => ({ buffer: Buffer.from('music-bytes') }))
 
 vi.mock('@lnkpi/agent', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@lnkpi/agent')>()
@@ -43,6 +44,8 @@ vi.mock('@lnkpi/agent', async (importOriginal) => {
     createImageProvider: vi.fn(() => ({ generate: imageGenerate })),
     createVideoProvider: vi.fn(() => ({ generate: videoGenerate })),
     createAudioProvider: vi.fn(() => ({ generate: audioGenerate })),
+    // music 分支不走 createAudioProvider，直接 new StepFunMusicProvider（completeMusic 内）
+    StepFunMusicProvider: vi.fn(() => ({ generate: musicGenerate })),
   }
 })
 
@@ -86,6 +89,17 @@ const dbOnlyRows: StudioModelEntry[] = [
     audioKind: 'voice',
     providerBinding: 'gateway-openai-compat',
     params: { model: 'native', voice: 'native', speed: 'native' },
+  },
+  {
+    // B2 S2-1d 效果用例的主角：admin 新增的 music 分类模型（不在常量目录）。
+    // 名字以 step 开头 ⇒ 通过 assertStepFunAudioModel 的阶跃守卫。
+    modelKey: 'stepmusic-db-only',
+    displayName: 'DB 新增音乐模型',
+    gatewayModelId: 'stepmusic-db-only-gw',
+    modality: 'audio',
+    audioKind: 'music',
+    providerBinding: 'gateway-openai-compat',
+    params: { model: 'native' },
   },
 ]
 
@@ -187,5 +201,40 @@ describe('StudioService → agent adapter 注入 DB 目录 rows（B2 S2-1c 接�
     expect(opts.model).toBe('db-only-audio-gw')
     expect(opts.model).not.toBe('speech-2.8-hd')
     expect(record.model).toBe('db-only-audio')
+  })
+
+  // B2 S2-1d：kind 派生与校验也走 DB 目录缓存。旧实现（常量目录）下
+  // stepmusic-db-only 查不到 ⇒ 判成 voice ⇒ 扣 5 分且 kind:'music' 校验直接抛错。
+  it('music：DB-only music 模型按 music 计费（15 分）且 kind 校验通过', async () => {
+    const consume = vi.mocked(
+      (svc as unknown as { points: { consume: ReturnType<typeof vi.fn> } }).points.consume,
+    )
+    const record = await svc.generateAudio('u1', 'hi', {
+      model: 'stepmusic-db-only',
+      kind: 'music',
+    })
+
+    // 旧实现这里会 BadRequestException（kind=music vs 误判 voice）
+    expect(record.status).toBe('generating')
+    expect(record.model).toBe('stepmusic-db-only')
+    expect(consume).toHaveBeenCalledWith(
+      'u1',
+      15,
+      '音频生成-音乐',
+      expect.objectContaining({ kind: 'consume', category: 'audio' }),
+    )
+    const meta = JSON.parse(String(record.metadata))
+    expect(meta.audioKind).toBe('music')
+    expect(meta.chargedPoints).toBe(15)
+    // music 是异步任务：provider 在 completeMusic 里被调
+    await vi.waitFor(() => expect(musicGenerate).toHaveBeenCalled())
+  })
+
+  it('music：DB-only music 模型声明 voice 仍被显式拒绝（校验语义不变）', async () => {
+    await expect(
+      svc.generateAudio('u1', 'hi', { model: 'stepmusic-db-only', kind: 'voice' }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ message: expect.stringContaining('音乐') }),
+    })
   })
 })
