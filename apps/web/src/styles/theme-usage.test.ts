@@ -35,10 +35,15 @@ const PATTERNS: Record<string, RegExp> = {
   'brand-blue-6366f1': /#6366f1/gi,
   'brand-blue-818cf8': /#818cf8/gi,
   'inline-rgba': /rgba\(/g,
+  // P2e 盲区补扫：CSS 内硬编码深色背景（#0x–#2x 开头 6 位 hex）。
+  // Tailwind 类形式已被 arbitrary-hex 覆盖，这里抓的是 <style> 块与 inline style
+  // 里的 `background: #1a1a1a` —— 曾造成 3 个 el-dialog 深底白字双主题坏。
+  // 基线 8 处均为内容性保留：验证码深卡 1、媒体对比底 4、GitHub 风格热力图色阶 3。
+  'hardcoded-dark-bg': /(?:background(?:-color)?|bg)\s*:\s*#(?:[0-2][0-9a-fA-F]{5})\b/gi,
 }
 
 /**
- * 一次遍历读完并把 8 个模式全统计完。
+ * 一次遍历读完并把 9 个模式全统计完。
  *
  * ⛔ 早期写法是「每个模式各自扫一遍全盘」= 182 个文件被读了 8 次，
  *    首条用例实测 5.9s，超过 vitest 默认 5s 超时 ⇒ **在 CI 慢机器上必然 flake**。
