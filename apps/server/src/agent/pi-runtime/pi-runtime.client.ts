@@ -97,6 +97,13 @@ export interface PiSessionLlmOverride {
 	 * （省略字段等于把判断交回pi-runtime 的硬编码，即故障形状）。
 	 */
 	supportsVision?: boolean;
+	/**
+	 * 渠道费率（USD / 百万 token）。P1 cost 接线：来自渠道 models[].pricing
+	 * （resolveChannelModelCost），经 llm-override 白名单透传，model-assembly
+	 * 填进 Model.cost → vendor calculateCost 自动计算 usage.cost。
+	 * 缺省不传 = cost 全 0（行为不变）。
+	 */
+	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 /** #12：/sessions 全量可选字段（pi-runtime 侧原样透传进 toolContext）。 */

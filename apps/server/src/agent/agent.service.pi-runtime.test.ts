@@ -199,6 +199,32 @@ describe('AgentService pi-runtime switch (B4)', () => {
       expect(opts?.llm).toBeUndefined()
     })
 
+    // P1 cost 接线：渠道 models[].pricing → override.cost → vendor calculateCost。
+    it('BYOK 渠道配置 pricing → llm 带 cost（四元组，缺省键补 0）', async () => {
+      setResolver({
+        ...BYOK_RESOLVED,
+        channelModelsJson: JSON.stringify([
+          { name: 'deepseek-flash', capability: 'text' },
+          { name: 'deepseek-flash', capability: 'text', pricing: { inputPerM: 0.27, outputPerM: 1.1 } },
+        ]),
+      })
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      expect((opts?.llm as Record<string, unknown> | undefined)?.cost).toEqual({
+        input: 0.27,
+        output: 1.1,
+        cacheRead: 0,
+        cacheWrite: 0,
+      })
+    })
+
+    it('BYOK 渠道无 pricing → llm 不带 cost 字段（行为不变）', async () => {
+      setResolver(BYOK_RESOLVED)
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      const llm = opts?.llm as Record<string, unknown> | undefined
+      expect(llm).toBeDefined()
+      expect('cost' in (llm as object)).toBe(false)
+    })
+
     it('resolve 失败（渠道停用/无 key）→ fail-soft 不发 llm', async () => {
       setResolver(null)
       const opts = await runTurn('ch_byok::deepseek-flash')

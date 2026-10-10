@@ -46,6 +46,7 @@ import {
   type PiSessionLlmOverride,
 } from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability, resolveVisionInputSupport } from '../provider/model-capability'
+import { resolveChannelModelCost } from '../provider/model-cost'
 import {
   formatParseContextBlock,
   getCachedParseBlock,
@@ -852,6 +853,9 @@ export class AgentService {
     }
     if (ctx.source !== 'user') return undefined
     const cap = resolveModelCapability(ctx.providerRef)
+    // P1 cost 接线：渠道 models[].pricing → override.cost（vendor calculateCost
+    // 据此算 usage.cost）。未配置 pricing → undefined → 字段不出现，行为不变。
+    const cost = resolveChannelModelCost(ctx.channelModelsJson, ctx.model)
     return {
       model: ctx.model,
       apiKey: ctx.apiKey,
@@ -863,6 +867,7 @@ export class AgentService {
       maxTokens: cap.maxTokens,
       // 视觉输入能力必须**显式**传下去，且永远是 boolean（见下方注释）。
       supportsVision: this.resolveOverrideSupportsVision(ctx),
+      ...(cost ? { cost } : {}),
     }
   }
 

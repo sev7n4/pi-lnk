@@ -149,6 +149,7 @@ describe('ProviderResolverService', () => {
       apiFormat: 'openai',
       credentials: { apiKey: 'sk-user-secret', baseUrl: 'https://user.example.com/v1' },
       source: 'user',
+      channelModelsJson: '[]',
     })
   })
 
@@ -163,6 +164,7 @@ describe('ProviderResolverService', () => {
         baseUrl: 'https://platform.example.com/v1',
       },
       source: 'platform',
+      channelModelsJson: '[]',
     })
   })
 
@@ -257,6 +259,7 @@ describe('ProviderResolverService', () => {
         baseUrl: 'https://fal.run',
       },
       source: 'platform',
+      channelModelsJson: '[]',
     })
   })
 
@@ -302,6 +305,7 @@ describe('ProviderResolverService', () => {
       apiFormat: 'openai',
       credentials: { apiKey: 'sk-user-fal', baseUrl: 'https://user-fal.example.com' },
       source: 'user',
+      channelModelsJson: '[]',
     })
   })
 
@@ -318,6 +322,7 @@ describe('ProviderResolverService', () => {
         baseUrl: 'https://api.minimax.io',
       },
       source: 'platform',
+      channelModelsJson: '[]',
     })
   })
 
@@ -363,6 +368,7 @@ describe('ProviderResolverService', () => {
       apiFormat: 'openai',
       credentials: { apiKey: 'sk-user-minimax', baseUrl: 'https://user-minimax.example.com' },
       source: 'user',
+      channelModelsJson: '[]',
     })
   })
 
@@ -401,6 +407,7 @@ describe('ProviderResolverService', () => {
       apiFormat: 'openai',
       credentials: { apiKey: 'stepfun-env-key', baseUrl: 'https://api.stepfun.com/v1' },
       source: 'platform',
+      channelModelsJson: '[]',
     })
   })
 

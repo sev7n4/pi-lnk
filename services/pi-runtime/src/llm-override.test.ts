@@ -87,6 +87,51 @@ describe("parseLlmOverride", () => {
 		assert.equal(parseLlmOverride({ ...VALID, maxTokens: -1 }).state, "invalid");
 	});
 
+	// P1 cost 接线：同 supportsVision 的教训 —— 解析层逐字段重建返回值，
+	// 不在此处透传的字段会被静默剥掉。本组测试把 cost 链路钉死。
+	it("cost 全键 → 透传", () => {
+		const r = parseLlmOverride({
+			...VALID,
+			cost: { input: 0.5, output: 2, cacheRead: 0.05, cacheWrite: 0.1 },
+		});
+		assert.equal(r.state, "ok");
+		assert.deepEqual(r.state === "ok" && r.value.cost, {
+			input: 0.5,
+			output: 2,
+			cacheRead: 0.05,
+			cacheWrite: 0.1,
+		});
+	});
+
+	it("cost 部分键 → 缺省键补 0（vendor calculateCost 消费完整四元组）", () => {
+		const r = parseLlmOverride({ ...VALID, cost: { input: 1.25 } });
+		assert.equal(r.state, "ok");
+		assert.deepEqual(r.state === "ok" && r.value.cost, {
+			input: 1.25,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		});
+	});
+
+	it("cost 缺省 / 空对象 → 字段不出现（行为不变）", () => {
+		assert.equal(
+			parseLlmOverride({ ...VALID }).state === "ok" &&
+				"cost" in (parseLlmOverride({ ...VALID }) as { state: "ok"; value: object }).value,
+			false,
+		);
+		const empty = parseLlmOverride({ ...VALID, cost: {} });
+		assert.equal(empty.state, "ok");
+		assert.equal(empty.state === "ok" && "cost" in empty.value, false);
+	});
+
+	it("cost 畸形（非对象 / 负数 / 非数值）→ invalid", () => {
+		assert.equal(parseLlmOverride({ ...VALID, cost: "0.5" }).state, "invalid");
+		assert.equal(parseLlmOverride({ ...VALID, cost: { input: -1 } }).state, "invalid");
+		assert.equal(parseLlmOverride({ ...VALID, cost: { output: "2" } }).state, "invalid");
+		assert.equal(parseLlmOverride({ ...VALID, cost: { input: Number.NaN } }).state, "invalid");
+	});
+
 	it("非对象 → invalid", () => {
 		assert.equal(parseLlmOverride("nope").state, "invalid");
 		assert.equal(parseLlmOverride(42).state, "invalid");
