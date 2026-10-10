@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, afterAll } from 'vitest'
 import { encodeChannelModel, getModelEntry, listModels } from '@lnkpi/shared'
+import type { StudioModelEntry } from '@lnkpi/shared'
+import {
+  __resetStudioCatalogForTests,
+  setStudioCatalogEntries,
+} from './studioModels'
 import {
   AUDIO_VOICE_OPTIONS,
   DEFAULT_AUDIO_VOICE,
@@ -184,5 +189,50 @@ describe('resolveKindSwitchModel 区分「prefs 未知」与「交集为空」',
       expect(model, `${kind} 在 prefs 未知时拿不到模型`).toBeDefined()
       expect(audioKindOfModelValue(model!)).toBe(kind)
     }
+  })
+})
+
+/**
+ * B3 遗留⑥ dockAudio 惰性求值：两派生导出（AUDIO_VOICE_OPTIONS / DEFAULT_AUDIO_VOICE）
+ * 此前在模块加载时从种子常量固化，bootstrap 注入的目录（admin 后台新增 audio 条目）
+ * 本会话不可见。现改为注入成功后经 `onStudioCatalogRowsChanged` 重算重绑 ——
+ * 本组锁两种时序：注入前（种子派生值）与注入后（取值反映新条目）；外加重置还原。
+ */
+describe('AUDIO_VOICE_OPTIONS / DEFAULT_AUDIO_VOICE 注入后重算（B3 惰性求值）', () => {
+  const seedOptions = () =>
+    listModels('audio').flatMap((m) => m.voices ?? []).map((v) => ({ id: v.id, label: v.label }))
+
+  afterAll(() => {
+    __resetStudioCatalogForTests()
+  })
+
+  it('未注入时为种子常量派生值（冷启动渲染零漂移）', () => {
+    expect(AUDIO_VOICE_OPTIONS).toEqual(seedOptions())
+    expect(DEFAULT_AUDIO_VOICE).toBe('female-shaonv')
+  })
+
+  it('注入含新音色的目录后，选项与默认音色反映新条目（ESM live binding）', () => {
+    // 全量替换 rows：目录里只有后台新增的一个 TTS 条目 ⇒ 派生值只能来自注入内容
+    setStudioCatalogEntries([
+      {
+        modelKey: 'admin-tts-x',
+        displayName: '后台 TTS X',
+        gatewayModelId: 'admin-tts-x',
+        modality: 'audio',
+        audioKind: 'voice',
+        providerBinding: 'gateway-openai-compat',
+        voices: [{ id: 'admin-voice-x', label: '后台音色 X' }],
+        params: {},
+        defaults: { voice: 'admin-voice-x' },
+      },
+    ] satisfies StudioModelEntry[])
+    expect(AUDIO_VOICE_OPTIONS).toEqual([{ id: 'admin-voice-x', label: '后台音色 X' }])
+    expect(DEFAULT_AUDIO_VOICE).toBe('admin-voice-x')
+  })
+
+  it('重置回种子初态后派生值同步还原（__resetStudioCatalogForTests 同样通知重算）', () => {
+    __resetStudioCatalogForTests()
+    expect(AUDIO_VOICE_OPTIONS).toEqual(seedOptions())
+    expect(DEFAULT_AUDIO_VOICE).toBe('female-shaonv')
   })
 })

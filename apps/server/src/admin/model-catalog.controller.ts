@@ -48,6 +48,25 @@ const VALID_MODALITIES = ['text', 'image', 'video', 'audio'] as const
 const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http'] as const
 const VALID_AUDIO_KINDS = ['voice', 'design', 'music'] as const
 
+/**
+ * POST 并发兜底（B3 遗留③）：create 的查重（上方 409）是事务外 check-then-act，
+ * 并发同 key create（或多实例部署）会在窗口内双双通过查重 → 后落库者撞 DB
+ * `modelKey @unique` 拒绝（Prisma P2002）→ 500。这里把事务内 create/update 的
+ * P2002 转成与既有查重**同形**的 409（审计/版本 bump 都未执行，事务随异常回滚）。
+ * 判定走鸭子类型（code === 'P2002' + meta.target 含 modelKey），与本文件其余
+ * 错误处理同风格；表上非 id 唯一约束只有 modelKey（schema.prisma:305），array /
+ * 约束名两种 target 形态都按 includes 命中。
+ */
+function isUniqueModelKeyError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; meta?: { target?: string[] | string } }
+  if (e.code !== 'P2002') return false
+  const target = e.meta?.target
+  if (target === undefined) return true // 唯一非 id 约束只有 modelKey，缺 target 也按它处理
+  if (Array.isArray(target)) return target.includes('modelKey')
+  return target.includes('modelKey')
+}
+
 const ACTOR = 'admin'
 const RESOURCE_PREFIX = 'model-catalog'
 
@@ -166,9 +185,19 @@ export class ModelCatalogAdminController {
       deletedAt: null,
     }
     const { row, version } = await this.prisma.$transaction(async (tx) => {
-      const row = await (existing
-        ? tx.modelCatalogEntry.update({ where: { id: existing.id }, data })
-        : tx.modelCatalogEntry.create({ data }))
+      let row: CatalogEntryRow
+      try {
+        row = await (existing
+          ? tx.modelCatalogEntry.update({ where: { id: existing.id }, data })
+          : tx.modelCatalogEntry.create({ data }))
+      } catch (err) {
+        // 并发窗口兜底：查重通过后、落库前另一请求/实例同 key 抢先提交 → P2002
+        // → 与既有查重同形的 409（审计与 bump 尚未执行，事务整体回滚）。
+        if (isUniqueModelKeyError(err)) {
+          throw new ConflictException(`modelKey 已存在: ${input.modelKey}`)
+        }
+        throw err
+      }
       await tx.adminAuditLog.create({
         data: {
           actor: ACTOR,

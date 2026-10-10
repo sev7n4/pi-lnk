@@ -68,6 +68,7 @@ describe('StudioService BYOK fallback_pending', () => {
   let generationFindFirst: ReturnType<typeof vi.fn>
   let pointsConsume: ReturnType<typeof vi.fn>
   let pointsRefund: ReturnType<typeof vi.fn>
+  let providerChannelFindUnique: ReturnType<typeof vi.fn>
   let stored: Record<string, unknown>
 
   beforeEach(async () => {
@@ -75,6 +76,9 @@ describe('StudioService BYOK fallback_pending', () => {
     stored = {}
     pointsConsume = vi.fn(async () => {})
     pointsRefund = vi.fn(async () => {})
+    // B3：audio 平台回退 confirm 前查平台镜像做 availability 校验（S2-3 补口子）。
+    // 默认无镜像行（undefined）→ 校验放行，既有用例行为不变。
+    providerChannelFindUnique = vi.fn(async () => undefined)
     resolveForGeneration = vi.fn(async () => userResolved)
     generationCreate = vi.fn(async (args: { data: Record<string, unknown> }) => {
       stored = { id: 'g1', createdAt: new Date(), ...args.data }
@@ -116,6 +120,9 @@ describe('StudioService BYOK fallback_pending', () => {
               findFirst: generationFindFirst,
               findMany: vi.fn(async () => []),
               delete: vi.fn(async () => ({})),
+            },
+            providerChannel: {
+              findUnique: providerChannelFindUnique,
             },
           },
         },
@@ -440,6 +447,49 @@ describe('StudioService BYOK fallback_pending', () => {
     expect(meta.refundedPoints).toBe(5)
     expect(meta.refundReason).toBe('platform_fallback_failed')
     expect(String(meta.errorRaw)).toContain('OPENAI_API_KEY')
+  })
+
+  it('audio confirm → 镜像灰显模型被拒（model_unavailable），不发上游、退款 + failed', async () => {
+    audioGenerate.mockRejectedValueOnce(new Error('network'))
+    await svc.generateAudio('u1', 'hi', { model: 'ch_user::custom-model' })
+    vi.clearAllMocks()
+
+    // B3 遗留⑤（方案 A）：平台镜像把解析后的 modelKey（minimax-speech-2.8-hd）灰显
+    // —— 探活器唯一写方的 unavailable 在回退重放入口同样生效。镜像按 modelKey 命中
+    // （gatewayModelId='speech-2.8-hd' ≠ modelKey，按它查会恒 miss）。
+    providerChannelFindUnique.mockResolvedValue({
+      id: 'platform',
+      models: JSON.stringify([
+        { name: 'minimax-speech-2.8-hd', capability: 'audio', availability: 'unavailable' },
+      ]),
+    })
+
+    await expect(svc.confirmPlatformFallback('u1', 'g1')).rejects.toMatchObject({
+      response: expect.objectContaining({ errorCode: 'model_unavailable' }),
+    })
+
+    // 不烧注定失败的上游往返：平台 TTS provider 未被创建/调用
+    expect(createAudioProvider).not.toHaveBeenCalled()
+    expect(audioGenerate).not.toHaveBeenCalled()
+    // 统一失败漏斗（与其他 confirm 失败同形）：consume 后退款 + 记录 failed
+    expect(pointsConsume).toHaveBeenCalledWith(
+      'u1',
+      5,
+      '平台回退生成',
+      expect.objectContaining({ kind: 'consume', category: 'audio' }),
+    )
+    expect(pointsRefund).toHaveBeenCalledWith(
+      'u1',
+      5,
+      '平台回退失败退款',
+      expect.objectContaining({ kind: 'refund', category: 'audio', status: 'failed_refund' }),
+    )
+    const failedUpdate = generationUpdate.mock.calls.find((c) => c[0].data.status === 'failed')
+    expect(failedUpdate).toBeTruthy()
+    const meta = JSON.parse(String(failedUpdate![0].data.metadata))
+    expect(meta.errorCode).toBe('model_unavailable')
+    expect(meta.refundedPoints).toBe(5)
+    expect(meta.refundReason).toBe('platform_fallback_failed')
   })
 
   it('video confirm → platform generate called', async () => {

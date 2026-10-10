@@ -1,9 +1,12 @@
 import { audioKindOf, decodeChannelModel, defaultModelKey, type AudioKind } from '@lnkpi/shared'
 // S2-1b：目录读取改走归一层（rows 由 bootstrap 下发注入），不再直读 shared 常量。
+// B3：onStudioCatalogRowsChanged 用于注入后重算下方两个派生导出（归一层不感知订阅方，
+// 无 dockAudio ↔ studioModels 循环依赖）。
 import {
   getModelEntry,
   listModels,
   listModelsByAudioKind,
+  onStudioCatalogRowsChanged,
   type StudioModelEntry,
 } from '@/constants/studioModels'
 
@@ -21,10 +24,22 @@ export interface VoiceOption {
  * `female-shaonv` / `male-qingnian` / `presenter_female`
  * ⇒ **两套完全重叠为零**，用户在面板上看到的音色后端根本不认。
  * 现直接以 catalog 为 SSOT（`dockAudio.test.ts` 有对齐回归锁）。
+ *
+ * ⚠️ B3 惰性求值：两导出（本表 + {@link DEFAULT_AUDIO_VOICE}）在**模块加载时**
+ * 从 rows 派生，而 bootstrap 注入发生在其后 ⇒ 曾固化为种子常量派生值，admin 后台
+ * 新增的 audio 条目（含音色）在本会话不可见。现改为注入成功后经
+ * `onStudioCatalogRowsChanged` 重算并重绑（ESM live binding，消费方 import 形状
+ * 零改动）。选「注入后重算」而非「首次访问 memo」的原因：memo 在注入前被任何
+ * 消费点读到即固化，注入后反而看不到新值 —— 与目标（注入后可见）相反。
+ * 非响应式语义不变：已挂载组件的本地快照不热更（热更需刷新页面，同既有）。
  */
-export const AUDIO_VOICE_OPTIONS: VoiceOption[] = listModels('audio')
-  .flatMap((m) => m.voices ?? [])
-  .map((v) => ({ id: v.id, label: v.label }))
+function computeVoiceOptions(): VoiceOption[] {
+  return listModels('audio')
+    .flatMap((m) => m.voices ?? [])
+    .map((v) => ({ id: v.id, label: v.label }))
+}
+
+export let AUDIO_VOICE_OPTIONS: VoiceOption[] = computeVoiceOptions()
 
 export type AudioEmotion = 'neutral' | 'happy' | 'sad' | 'serious'
 
@@ -48,12 +63,24 @@ export const AUDIO_LANGUAGE_OPTIONS: Array<{ value: AudioLanguage; label: string
  * 不再硬编码字面量——否则 catalog 改音色时这里会静默变成悬空值
  * （`dockAudio.test.ts` 有「默认值必须在选项里」的回归锁）。
  * ⚠️ `defaults` 是 `Record<string, string | number>`，故要断言成 string。
+ * 惰性求值机制同 {@link AUDIO_VOICE_OPTIONS}。
  */
-const catalogDefaultVoice = getModelEntry(defaultModelKey('audio'))?.defaults?.voice
-export const DEFAULT_AUDIO_VOICE: string =
-  (typeof catalogDefaultVoice === 'string' ? catalogDefaultVoice : undefined) ??
-  AUDIO_VOICE_OPTIONS[0]?.id ??
-  'female-shaonv'
+function computeDefaultAudioVoice(): string {
+  const catalogDefaultVoice = getModelEntry(defaultModelKey('audio'))?.defaults?.voice
+  return (
+    (typeof catalogDefaultVoice === 'string' ? catalogDefaultVoice : undefined) ??
+    AUDIO_VOICE_OPTIONS[0]?.id ??
+    'female-shaonv'
+  )
+}
+export let DEFAULT_AUDIO_VOICE: string = computeDefaultAudioVoice()
+
+// bootstrap 注入成功（或测试重置）后重算重绑；订阅发生在模块加载时，注入回调
+// 一定会送达（注册先于任何注入 —— setStudioCatalogEntries 由 bootstrap 运行时调用）。
+onStudioCatalogRowsChanged(() => {
+  AUDIO_VOICE_OPTIONS = computeVoiceOptions()
+  DEFAULT_AUDIO_VOICE = computeDefaultAudioVoice()
+})
 export const DEFAULT_AUDIO_EMOTION: AudioEmotion = 'neutral'
 export const DEFAULT_AUDIO_LANGUAGE: AudioLanguage = 'zh'
 export const DEFAULT_AUDIO_SPEED = 1
