@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { UPSTREAM_ROUTE_SEEDS, type UpstreamRouteRow } from '@lnkpi/shared'
 import {
   loadUpstreamRouteRows,
+  markUpstreamRoutesBootstrapped,
   refreshUpstreamRouteCache,
   seedUpstreamRoutes,
+  UpstreamRouteSeedService,
   UPSTREAM_ROUTE_CACHE_TTL_MS,
   upstreamRouteRowFromDb,
   currentUpstreamRoutes,
+  whenUpstreamRoutesBootstrapped,
   __expireUpstreamRouteCacheForTests,
   __registerUpstreamRoutePrismaForTests,
   __resetUpstreamRouteStoreForTests,
@@ -169,5 +172,46 @@ describe('缓存（TTL 惰性刷新，同 T1 形态；T3b 接 routesVersion 失�
     await __upstreamRouteRefreshInFlightForTests()
     // 刷新失败 → 旧缓存仍在（行数不变）
     expect(currentUpstreamRoutes().length).toBe(goodRows.length)
+  })
+})
+
+describe('bootstrap 落定信号（B3 热修：startup 探活等待路由就绪）', () => {
+  beforeEach(() => __resetUpstreamRouteStoreForTests())
+
+  it('mark 前 pending，mark 后 resolve（成功落定）', async () => {
+    let settled = false
+    void whenUpstreamRoutesBootstrapped().then(() => {
+      settled = true
+    })
+    await new Promise((r) => setTimeout(r, 5))
+    expect(settled).toBe(false)
+    markUpstreamRoutesBootstrapped()
+    await whenUpstreamRoutesBootstrapped()
+    expect(settled).toBe(true)
+    // 重复 mark 幂等；已落定后 when 直接 resolve
+    markUpstreamRoutesBootstrapped()
+    await expect(whenUpstreamRoutesBootstrapped()).resolves.toBeUndefined()
+  })
+
+  it('SeedService.onModuleInit：refresh 成功 → mark 且缓存可读', async () => {
+    const { prisma } = makeFakePrisma()
+    new UpstreamRouteSeedService(prisma as never).onModuleInit()
+    await whenUpstreamRoutesBootstrapped()
+    expect(currentUpstreamRoutes()).toHaveLength(UPSTREAM_ROUTE_SEEDS.length)
+  })
+
+  it('SeedService.onModuleInit：refresh 失败也 mark（失败=落定，消费方按当前缓存自处理）', async () => {
+    const broken = {
+      upstreamRoute: {
+        findMany: vi.fn(async () => {
+          throw new Error('db down')
+        }),
+        create: vi.fn(async () => ({})),
+      },
+    }
+    new UpstreamRouteSeedService(broken as never).onModuleInit()
+    // 失败不悬挂：when 仍落定（失败也算落定），缓存保持空数组由消费方告警
+    await expect(whenUpstreamRoutesBootstrapped()).resolves.toBeUndefined()
+    expect(currentUpstreamRoutes()).toEqual([])
   })
 })

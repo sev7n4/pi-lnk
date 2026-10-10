@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import {
   __resetUpstreamRouteStoreForTests,
   __setCachedUpstreamRoutesForTests,
+  markUpstreamRoutesBootstrapped,
 } from './upstream-route-store'
 import {
   DEFAULT_PROBE_INTERVAL_MINUTES,
@@ -556,6 +557,8 @@ describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL
   afterEach(() => {
     svc?.onModuleDestroy()
     process.env = savedEnv
+    // B3 热修：startup 探活现在依赖路由表 bootstrap 落定信号（store 模块级状态），逐用例重置防污染。
+    __resetUpstreamRouteStoreForTests()
   })
 
   it('env 缺省按 360 分钟注册 timer', async () => {
@@ -608,14 +611,47 @@ describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
-  it('启动首轮（B1 登记顺手项）：注册定时器后立即触发一次 probeOnce("startup")', async () => {
+  it('启动首轮（B3 热修）：等路由表就绪后触发一次 probeOnce("startup")', async () => {
     delete process.env.NODE_ENV
     process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
+    __resetUpstreamRouteStoreForTests()
     await compile()
     const spy = vi.spyOn(svc, 'probeOnce')
     svc.onModuleInit()
+    // 路由表未落定 → 不立即触发（消除「空表 → 全量 unroutable」启动竞态）
+    expect(spy).not.toHaveBeenCalled()
+    markUpstreamRoutesBootstrapped()
+    await vi.waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledWith('startup')
+    })
+  })
+
+  it('启动首轮等待超时兜底：路由表一直未就绪也照常执行（绝不静默丢失首轮）', async () => {
+    delete process.env.NODE_ENV
+    __resetUpstreamRouteStoreForTests()
+    await compile()
+    const spy = vi.spyOn(svc, 'probeOnce')
+    await (
+      svc as unknown as { startupProbeWhenRoutesReady(t?: number): Promise<void> }
+    ).startupProbeWhenRoutesReady(30)
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy).toHaveBeenCalledWith('startup')
+  })
+
+  it('启动首轮等待不阻塞 bootstrap：路由早已落定时 onModuleInit 同步返回、探测异步补跑', async () => {
+    delete process.env.NODE_ENV
+    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
+    __resetUpstreamRouteStoreForTests()
+    markUpstreamRoutesBootstrapped()
+    await compile()
+    const spy = vi.spyOn(svc, 'probeOnce')
+    const t0 = Date.now()
+    svc.onModuleInit()
+    expect(Date.now() - t0).toBeLessThan(1_000)
+    await vi.waitFor(() => {
+      expect(spy).toHaveBeenCalledWith('startup')
+    })
   })
 
   it('启动首轮不触发：env=0 显式禁用 / NODE_ENV=test（与定时器同款纪律）', async () => {

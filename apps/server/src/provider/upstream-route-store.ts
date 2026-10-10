@@ -171,6 +171,38 @@ function maybeRefresh(): void {
     })
 }
 
+// ── bootstrap 落定信号（B3 热修：startup 探活等待路由就绪，消除空表竞态） ──
+
+let bootstrapped = false
+let bootstrapReadyResolve: (() => void) | null = null
+let bootstrapReadyPromise: Promise<void> | null = null
+
+/**
+ * 路由表首次 bootstrap（播种+装载）**落定即 resolve —— 成功与失败都算落定**：
+ * 失败时缓存保持空数组，继续等待不会改善结果，消费方（探活 startup 首轮）应按
+ * 当前缓存执行并自行告警（与「空表 → 组内跳过/确定性抛错」语义一致，不静默回落）。
+ *
+ * 背景（B2 生产复测实证）：SeedService.onModuleInit 与探活 startup 首轮同为
+ * fire-and-forget，探活先于装载完成执行 → 首轮必见空路由表 → 全量 unroutable
+ * 跳过，ghost 检测空转到下个周期轮。本信号让 startup 首轮有序化（仍不阻塞 bootstrap）。
+ */
+export function whenUpstreamRoutesBootstrapped(): Promise<void> {
+  if (bootstrapped) return Promise.resolve()
+  if (!bootstrapReadyPromise) {
+    bootstrapReadyPromise = new Promise<void>((resolve) => {
+      bootstrapReadyResolve = resolve
+    })
+  }
+  return bootstrapReadyPromise
+}
+
+/** bootstrap 落定标记：SeedService 的 refresh settle（成功或失败）后调用；测试可直调。 */
+export function markUpstreamRoutesBootstrapped(): void {
+  if (bootstrapped) return
+  bootstrapped = true
+  bootstrapReadyResolve?.()
+}
+
 // ── 测试钩子（仅测试使用；生产路径不可达） ──
 
 /** 测试专用：重置模块级缓存/句柄（vitest isolate per file，无需跨文件协调）。 */
@@ -179,6 +211,9 @@ export function __resetUpstreamRouteStoreForTests(): void {
   cachedAt = 0
   registeredPrisma = null
   refreshInFlight = null
+  bootstrapped = false
+  bootstrapReadyResolve = null
+  bootstrapReadyPromise = null
 }
 
 /** 测试专用：注入 prisma 句柄（模拟 UpstreamRouteSeedService 的注册动作）。 */
@@ -245,8 +280,12 @@ export class UpstreamRouteSeedService implements OnModuleInit {
 
   onModuleInit(): void {
     registeredPrisma = this.prisma
-    void refreshUpstreamRouteCache(this.prisma).catch((err) => {
-      console.error('[upstream-route-store] bootstrap 播种/装载失败（缓存为空，T3b 消费方走确定性抛错路径）：', err)
-    })
+    void refreshUpstreamRouteCache(this.prisma)
+      .catch((err) => {
+        console.error('[upstream-route-store] bootstrap 播种/装载失败（缓存为空，T3b 消费方走确定性抛错路径）：', err)
+      })
+      // B3 热修：成败都算「落定」——等待方（探活 startup 首轮）按当前缓存执行，
+      // 绝不让一次 DB 故障把 startup 首轮悬挂到超时。
+      .finally(() => markUpstreamRoutesBootstrapped())
   }
 }
