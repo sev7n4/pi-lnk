@@ -141,7 +141,7 @@ function onChipMention(refKey: string) {
 
 .agent-ref-strip__scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgb(var(--lnk-overlay-rgb) / 0.18);
 }
 
 .agent-ref-strip__chip--readonly :deep(.dock-ref-chip__remove) {

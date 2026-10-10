@@ -233,7 +233,7 @@ onBeforeUnmount(() => {
               type="button"
               class="prompt-md-format-btn"
               title="语音输入"
-              :class="speech.listening.value ? 'animate-pulse text-red-400' : ''"
+              :class="speech.listening.value ? 'animate-pulse text-danger' : ''"
               @click="toggleVoice"
             >
               🎤

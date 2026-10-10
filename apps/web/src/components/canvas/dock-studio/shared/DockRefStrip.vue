@@ -150,7 +150,7 @@ function onDragEnd() {
 
 .dock-ref-strip__scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgb(var(--lnk-overlay-rgb) / 0.18);
 }
 
 .dock-ref-strip__add {

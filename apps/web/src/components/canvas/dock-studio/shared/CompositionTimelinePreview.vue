@@ -106,7 +106,7 @@ function nextClip() {
   min-height: 120px;
   overflow: hidden;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
   background: rgba(0, 0, 0, 0.35);
 }
 
@@ -130,8 +130,8 @@ function nextClip() {
 
 .timeline-btn {
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.1);
+  background: rgb(var(--lnk-overlay-rgb) / 0.04);
   padding: 4px 10px;
   font-size: 10px;
   color: rgba(255, 255, 255, 0.75);
@@ -149,8 +149,8 @@ function nextClip() {
   overflow-x: auto;
   padding: 8px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
+  background: rgb(var(--lnk-overlay-rgb) / 0.03);
 }
 
 .timeline-clip {

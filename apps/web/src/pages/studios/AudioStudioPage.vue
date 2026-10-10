@@ -61,7 +61,7 @@ onMounted(loadRecords)
       <button class="btn-primary px-6" :disabled="loading || !text.trim()" @click="generate">
         {{ loading ? '生成中...' : '生成音频' }}
       </button>
-      <p v-if="error" class="mt-2 text-sm text-red-400">{{ error }}</p>
+      <p v-if="error" class="mt-2 text-sm text-danger">{{ error }}</p>
     </div>
 
     <div class="space-y-3">

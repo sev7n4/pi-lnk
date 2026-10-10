@@ -60,7 +60,7 @@ onMounted(loadRecords)
           {{ loading ? '生成中...' : '生成文本' }}
         </button>
       </div>
-      <p v-if="error" class="mt-2 text-sm text-red-400">{{ error }}</p>
+      <p v-if="error" class="mt-2 text-sm text-danger">{{ error }}</p>
     </div>
 
     <div class="space-y-4">

@@ -108,7 +108,7 @@ onMounted(load)
 <style>
 .story-dialog .el-dialog {
   background: #1a1a1a;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
 }
 .story-dialog .el-dialog__title { color: #fff; }
 </style>

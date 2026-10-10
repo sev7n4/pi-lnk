@@ -113,7 +113,7 @@ function onSecondaryAction(action: AgentPresentationPrimaryAction) {
       </p>
       <p
         v-if="presentation.body?.callout_shot_limit"
-        class="rounded-lg border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-xs text-[var(--neo-muted)]"
+        class="rounded-lg border border-warning-border bg-warning-bg px-2 py-1.5 text-xs text-[var(--neo-muted)]"
         data-testid="presentation-shot-limit-callout"
       >
         {{ presentation.body.callout_shot_limit }}

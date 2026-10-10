@@ -64,10 +64,10 @@ const title = computed(() => {
       />
     </div>
     <div class="mt-1.5 flex items-center gap-3 text-[10px] text-[var(--neo-text-muted)] tabular-nums">
-      <span v-if="progress.done" class="text-emerald-500">完成 {{ progress.done }}</span>
-      <span v-if="progress.failed" class="text-red-400">失败 {{ progress.failed }}</span>
-      <span v-if="progress.cancelled" class="text-amber-400">取消 {{ progress.cancelled }}</span>
-      <span v-if="progress.timeout" class="text-orange-400">超时 {{ progress.timeout }}</span>
+      <span v-if="progress.done" class="text-success">完成 {{ progress.done }}</span>
+      <span v-if="progress.failed" class="text-danger">失败 {{ progress.failed }}</span>
+      <span v-if="progress.cancelled" class="text-warning">取消 {{ progress.cancelled }}</span>
+      <span v-if="progress.timeout" class="text-warning">超时 {{ progress.timeout }}</span>
       <span v-if="progress.skipped">跳过 {{ progress.skipped }}</span>
     </div>
   </div>

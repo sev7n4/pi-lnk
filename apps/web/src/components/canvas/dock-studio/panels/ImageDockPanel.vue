@@ -20,13 +20,16 @@ import GuidePickerPopover from '@/components/canvas/dock-studio/shared/GuidePick
 import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
-import { catalogModelKeyFromValue, resolveGenerationModel } from '@/constants/studioModels'
+import {
+  catalogModelKeyFromValue,
+  getModelEntry,
+  resolveGenerationModel,
+} from '@/constants/studioModels'
 import { estimateImageCredits } from '@/constants/credits'
 import {
   TURNAROUND_PIPELINE_DOCK_HINT,
   defaultGuideCapabilities,
   getGenerationScene,
-  getModelEntry,
   resolveImageModelProfile,
 } from '@lnkpi/shared'
 import {
@@ -315,7 +318,7 @@ function toggleVoice() {
       @add-upload="pickReferenceImage"
     />
     <input ref="refInput" type="file" accept="image/*" class="hidden" @change="onRefFileChange">
-    <p v-if="refUploadError" class="mx-3 mb-1 text-[10px] text-red-400/90">{{ refUploadError }}</p>
+    <p v-if="refUploadError" class="mx-3 mb-1 text-[10px] text-danger">{{ refUploadError }}</p>
 
     <DockPromptSection
       ref="promptSectionRef"

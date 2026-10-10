@@ -174,7 +174,7 @@ function miniMapNodeColor(node: { type?: string }) {
     group: 'rgba(192, 132, 252, 0.5)',
     prompt: 'rgba(129, 140, 248, 0.55)',
   }
-  return map[String(node.type ?? '')] ?? 'rgba(255, 255, 255, 0.35)'
+  return map[String(node.type ?? '')] ?? 'rgb(var(--lnk-overlay-rgb) / 0.35)'
 }
 
 function onMapToggle() {

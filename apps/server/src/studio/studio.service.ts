@@ -49,10 +49,9 @@ import {
   resolveImageEditProfile,
   audioKindOf,
   decodeChannelModel,
-  getModelEntry,
+  getModelEntryFromRows,
   redactProviderSnippet,
   resolveImageSize,
-  resolveModelKey,
   resolvePlatformImageProviderOpts,
   resolvePublicMediaUrls,
   resolveVideoModelProfile,
@@ -92,6 +91,9 @@ import {
 import { PrismaService } from '../prisma/prisma.service'
 import { classifyByokFailure } from '../provider/byok-fallback'
 import { mergeChatModel } from '../provider/merge-chat-model'
+// S2-1a：server 端 DB 包装器（同签名同步函数，5s TTL 缓存 + 软删过滤），替换 shared 常量版
+// S2-1c：currentCatalogEntries 供 agent 侧 builder 注入 DB 目录 rows（消除静默 fallback）
+import { currentCatalogEntries, resolveModelKey } from '../provider/model-catalog-store'
 import {
   providerContextFromResolved,
   type ProviderContext,
@@ -1158,6 +1160,12 @@ export class StudioService {
         record.status === 'fallback_pending'
           ? '请确认是否使用平台回退继续，或取消本次生成。'
           : hintForCode(code),
+      // S2-3 退款透明化：metadata 三字段只透传不重算（缺字段不下发）
+      ...(typeof meta.chargedPoints === 'number' ? { chargedPoints: meta.chargedPoints } : {}),
+      ...(typeof meta.refundedPoints === 'number' ? { refundedPoints: meta.refundedPoints } : {}),
+      ...(typeof meta.refundReason === 'string' && meta.refundReason
+        ? { refundReason: meta.refundReason }
+        : {}),
     }
   }
 
@@ -1195,6 +1203,8 @@ export class StudioService {
       referenceImages,
       byok: resolved.source === 'user',
       channelBaseUrl: resolved.credentials.baseUrl,
+      // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+      catalogRows: currentCatalogEntries(),
     })
     const modelId = resolved.source === 'user' ? resolved.modelName : built.modelId
     const storeModel =
@@ -2227,6 +2237,8 @@ export class StudioService {
           generateAudio,
           seed,
           negativePrompt,
+          // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+          catalogRows: currentCatalogEntries(),
         })
       } catch (err) {
         if (err instanceof Seedance1xUnsupportedError) {
@@ -2378,7 +2390,11 @@ export class StudioService {
     // kind 只能从 resolve 后的 modelName 判（用户可能传 `ch_xxx::model`），所以扣分点
     // 必须后移；扣分金额/文案与既有 voice 路径逐字节相同（cost=5、reason=音频生成）。
     const resolved = await this.resolver.resolveForGeneration(userId, options.model, 'audio')
-    const kind: AudioKind = audioKindOf(getModelEntry(resolved.modelName) ?? { modality: 'audio' })
+    // B2 S2-1d：kind 判定走 DB 目录缓存 rows —— admin 新增的 music 模型不在常量目录，
+    // 旧实现会误判 voice（扣 5 分而非 15 分）。缓存外模型仍按缺省 voice 判定（语义同源）。
+    const kind: AudioKind = audioKindOf(
+      getModelEntryFromRows(currentCatalogEntries(), resolved.modelName) ?? { modality: 'audio' },
+    )
     const cost = kind === 'music' ? 15 : 5
     const chargeReason = kind === 'music' ? '音频生成-音乐' : '音频生成'
     await this.points.consume(
@@ -2404,6 +2420,8 @@ export class StudioService {
       speed: options.speed,
       volume: options.volume,
       pitch: options.pitch,
+      // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
+      catalogRows: currentCatalogEntries(),
     })
     const audioOpts =
       resolved.source === 'user'

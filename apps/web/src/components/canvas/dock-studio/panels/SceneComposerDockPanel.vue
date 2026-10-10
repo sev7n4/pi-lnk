@@ -154,7 +154,7 @@ const canBatchGenerate = computed(() =>
   >
     <div class="mb-2 flex items-center justify-between px-1 text-[10px] text-fg-3">
       <span>{{ statsLabel }}</span>
-      <span v-if="payload.expanded" class="text-amber-300/80">已展开子图</span>
+      <span v-if="payload.expanded" class="text-warning">已展开子图</span>
     </div>
 
     <DockPromptSection
@@ -205,7 +205,7 @@ const canBatchGenerate = computed(() =>
           >
           <button
             type="button"
-            class="text-[10px] text-red-300/80 hover:text-red-200"
+            class="text-[10px] text-danger hover:text-danger"
             :disabled="locked || payload.scenes.length <= 1"
             @click="removeScene(activeScene.id)"
           >
@@ -255,7 +255,7 @@ const canBatchGenerate = computed(() =>
                 </div>
                 <button
                   type="button"
-                  class="text-[10px] text-red-300/70"
+                  class="text-[10px] text-danger"
                   :disabled="locked || activeScene.shots.length <= 1"
                   @click="removeShot(activeScene.id, shot.id)"
                 >
@@ -269,7 +269,7 @@ const canBatchGenerate = computed(() =>
                 :readonly="locked"
                 @input="updateShot(activeScene.id, shot.id, { prompt: ($event.target as HTMLTextAreaElement).value })"
               />
-              <p v-if="shot.shotNodeId" class="text-[10px] text-emerald-300/70">
+              <p v-if="shot.shotNodeId" class="text-[10px] text-success">
                 已关联分镜节点 {{ shot.shotNodeId.slice(0, 8) }}…
               </p>
             </div>
@@ -297,7 +297,7 @@ const canBatchGenerate = computed(() =>
 
       <button
         type="button"
-        class="rounded-lg border border-amber-400/30 px-3 py-1.5 text-xs text-amber-200/90 hover:bg-amber-400/10"
+        class="rounded-lg border border-warning-border px-3 py-1.5 text-xs text-warning hover:bg-warning-bg"
         :disabled="locked"
         @click="emit('expand')"
       >
@@ -333,7 +333,7 @@ const canBatchGenerate = computed(() =>
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgb(var(--lnk-overlay-rgb) / 0.03);
   color: rgba(255, 255, 255, 0.65);
   font-size: 11px;
   text-align: left;
@@ -341,8 +341,8 @@ const canBatchGenerate = computed(() =>
 }
 
 .scene-tab.is-active {
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(245, 158, 11, 0.12);
+  border-color: var(--lnk-warning-border);
+  background: var(--lnk-warning-bg);
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -351,7 +351,7 @@ const canBatchGenerate = computed(() =>
   gap: 10px;
   padding: 8px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
   background: rgba(0, 0, 0, 0.18);
 }
 
@@ -364,8 +364,8 @@ const canBatchGenerate = computed(() =>
   flex-shrink: 0;
   overflow: hidden;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
+  background: rgb(var(--lnk-overlay-rgb) / 0.04);
 }
 
 .shot-preview img {

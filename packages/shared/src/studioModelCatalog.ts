@@ -442,16 +442,37 @@ const DEFAULT_MODEL_KEYS: Record<StudioModality, string> = {
 }
 
 export function listModels(modality: StudioModality): StudioModelEntry[] {
-  return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === modality)
+  return listModelsFromRows(STUDIO_MODEL_CATALOG, modality)
+}
+
+export function listModelsFromRows(rows: StudioModelEntry[], modality: StudioModality): StudioModelEntry[] {
+  return rows.filter((entry) => entry.modality === modality)
 }
 
 export function listModelsByAudioKind(kind: AudioKind): StudioModelEntry[] {
-  return STUDIO_MODEL_CATALOG.filter((entry) => entry.modality === 'audio' && audioKindOf(entry) === kind)
+  return listModelsByAudioKindFromRows(STUDIO_MODEL_CATALOG, kind)
+}
+
+export function listModelsByAudioKindFromRows(rows: StudioModelEntry[], kind: AudioKind): StudioModelEntry[] {
+  return rows.filter((entry) => entry.modality === 'audio' && audioKindOf(entry) === kind)
 }
 
 /** 缺省视作 `voice` —— 缺省值的唯一判据处，勿在调用方各自 `?? 'voice'`。 */
 export function audioKindOf(entry: Pick<StudioModelEntry, 'modality' | 'audioKind'>): AudioKind {
   return entry.audioKind ?? 'voice'
+}
+
+/**
+ * 按 id 在**注入的 rows** 里查条目（S2-1a 抽取的纯函数内核）。**同时接受
+ * `modelKey` 与 `gatewayModelId` 两种形态**，顺序：**modelKey 优先**。
+ */
+export function getModelEntryFromRows(
+  rows: StudioModelEntry[],
+  id: string,
+): StudioModelEntry | undefined {
+  const byModelKey = rows.find((entry) => entry.modelKey === id)
+  if (byModelKey) return byModelKey
+  return rows.find((entry) => entry.gatewayModelId === id)
 }
 
 /**
@@ -467,31 +488,44 @@ export function audioKindOf(entry: Pick<StudioModelEntry, 'modality' | 'audioKin
  * 必须靠优先级消歧（`studioModelCatalog.test.ts` 有对应回归锁）。
  */
 export function getModelEntry(id: string): StudioModelEntry | undefined {
-  const byModelKey = STUDIO_MODEL_CATALOG.find((entry) => entry.modelKey === id)
-  if (byModelKey) return byModelKey
-  return STUDIO_MODEL_CATALOG.find((entry) => entry.gatewayModelId === id)
+  return getModelEntryFromRows(STUDIO_MODEL_CATALOG, id)
 }
 
 export function defaultModelKey(modality: StudioModality): string {
   return DEFAULT_MODEL_KEYS[modality]
 }
 
-export function resolveModelKey(
+/**
+ * `resolveModelKey` 的纯函数内核（S2-1a）：rows 注入形态。
+ *
+ * 行为与旧 `resolveModelKey` 实现**逐 case 一致**（旧实现体原样搬迁，仅把
+ * 目录查找换成 rows 注入）；shared 包无 DB，server 端 DB 包装器
+ * （apps/server `model-catalog-store.ts`）查表后调它，web/agent 仍走常量薄壳。
+ */
+export function resolveModelKeyFromRows(
+  rows: StudioModelEntry[],
   modality: StudioModality,
   requested?: string | null,
 ): { modelKey: string; entry: StudioModelEntry; fallback: boolean } {
   const fallbackKey = defaultModelKey(modality)
-  const fallbackEntry = getModelEntry(fallbackKey)!
+  const fallbackEntry = getModelEntryFromRows(rows, fallbackKey)!
   if (!requested) {
     return { modelKey: fallbackKey, entry: fallbackEntry, fallback: false }
   }
-  const entry = getModelEntry(requested)
+  const entry = getModelEntryFromRows(rows, requested)
   if (entry?.modality === modality) {
     // ⚠️ 返回目录里的规范 modelKey，而不是 `requested` 原文：
     // 调用方可能传的是 gatewayModelId，原样返回会让下游拿到非规范 id。
     return { modelKey: entry.modelKey, entry, fallback: false }
   }
   return { modelKey: fallbackKey, entry: fallbackEntry, fallback: true }
+}
+
+export function resolveModelKey(
+  modality: StudioModality,
+  requested?: string | null,
+): { modelKey: string; entry: StudioModelEntry; fallback: boolean } {
+  return resolveModelKeyFromRows(STUDIO_MODEL_CATALOG, modality, requested)
 }
 
 /**
@@ -502,6 +536,19 @@ export function resolveModelKey(
  * 静默采用会把「设错了模型」伪装成「设置成功」。
  */
 export function normalizeModelRef(
+  modality: StudioModality,
+  raw?: string | null,
+): { ref: string; channelId: string; modelName: string; fallback: boolean } | null {
+  return normalizeModelRefFromRows(STUDIO_MODEL_CATALOG, modality, raw)
+}
+
+/**
+ * `normalizeModelRef` 的纯函数内核（S2-1b）：rows 注入形态。
+ * 行为与常量版逐 case 一致；web 归一层（下发目录驱动）与 server 调用方共用，
+ * 判定 SSOT 仍在本文件，勿在调用方重写。
+ */
+export function normalizeModelRefFromRows(
+  rows: StudioModelEntry[],
   modality: StudioModality,
   raw?: string | null,
 ): { ref: string; channelId: string; modelName: string; fallback: boolean } | null {
@@ -516,11 +563,20 @@ export function normalizeModelRef(
       fallback: false,
     }
   }
-  const { modelKey, fallback } = resolveModelKey(modality, trimmed)
+  const { modelKey, fallback } = resolveModelKeyFromRows(rows, modality, trimmed)
   return {
     ref: encodeChannelModel(PLATFORM_CHANNEL_ID, modelKey),
     channelId: PLATFORM_CHANNEL_ID,
     modelName: modelKey,
     fallback,
   }
+}
+
+/**
+ * modelKey 是否是某模态的目录默认（S2-1b）。server 端运营端点的 DELETE
+ * 用它做防呆：默认模型被下架会让 `resolveModelKey` 的确定性 fallback
+ * 悬空（找不到 fallback 条目），所以禁止通过后台软删默认模型。
+ */
+export function isDefaultModelKey(modelKey: string): boolean {
+  return (Object.values(DEFAULT_MODEL_KEYS) as string[]).includes(modelKey)
 }

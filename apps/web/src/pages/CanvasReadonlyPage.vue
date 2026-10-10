@@ -89,7 +89,7 @@ function backToShare() {
     <div class="flex items-center justify-between border-b border-overlay/8 bg-surface-canvas px-4 py-3">
       <div class="flex items-center gap-3">
         <button class="text-sm text-fg-3 hover:text-fg" @click="backToShare">← 返回详情</button>
-        <span class="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">只读 · 制作过程</span>
+        <span class="rounded-md bg-warning-bg px-2 py-0.5 text-xs text-warning">只读 · 制作过程</span>
         <span v-if="work" class="text-sm text-fg-2">{{ work.title }}</span>
       </div>
       <button class="btn-primary text-sm" :disabled="forking" @click="forkToMyCanvas">

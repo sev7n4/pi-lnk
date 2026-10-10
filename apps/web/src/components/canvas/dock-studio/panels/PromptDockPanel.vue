@@ -226,7 +226,7 @@ function onRefMention(refKey: string) {
       @add-upload="pickReferenceImage"
     />
     <input ref="refInput" type="file" accept="image/*" class="hidden" @change="onRefFileChange">
-    <p v-if="refUploadError" class="mx-3 mb-1 text-[10px] text-red-400/90">{{ refUploadError }}</p>
+    <p v-if="refUploadError" class="mx-3 mb-1 text-[10px] text-danger">{{ refUploadError }}</p>
 
     <DockPromptSection
       ref="promptSectionRef"

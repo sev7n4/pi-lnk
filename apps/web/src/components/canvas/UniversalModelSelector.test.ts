@@ -211,7 +211,7 @@ describe('UniversalModelSelector 健康角标（A4 抽行）', () => {
       await openDropdown(wrapper)
       const redDot = optionButton(wrapper, 'minimax-ok')!.find('.model-health-dot')
       expect(redDot.exists()).toBe(true)
-      expect(redDot.classes()).toContain('bg-red-500/90')
+      expect(redDot.classes()).toContain('bg-danger')
       expect(redDot.attributes('title')).toBe('近24h 成功率 4/10')
     } finally {
       setHealth(null)
@@ -226,7 +226,7 @@ describe('UniversalModelSelector 健康角标（A4 抽行）', () => {
       })
       await openDropdown(wrapper)
       const dot = optionButton(wrapper, 'minimax-ok')!.find('.model-health-dot')
-      expect(dot.classes()).toContain('bg-amber-400/90')
+      expect(dot.classes()).toContain('bg-warning')
     } finally {
       setHealth(null)
     }

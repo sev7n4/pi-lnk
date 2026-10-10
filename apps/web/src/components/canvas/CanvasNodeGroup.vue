@@ -88,7 +88,7 @@ function commitRename() {
   cursor: grab;
   padding: 8px 10px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.08);
   background: rgba(24, 24, 27, 0.72);
   backdrop-filter: blur(8px);
 }

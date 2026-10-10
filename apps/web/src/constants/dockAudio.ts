@@ -1,13 +1,11 @@
+import { audioKindOf, decodeChannelModel, defaultModelKey, type AudioKind } from '@lnkpi/shared'
+// S2-1b：目录读取改走归一层（rows 由 bootstrap 下发注入），不再直读 shared 常量。
 import {
-  audioKindOf,
-  decodeChannelModel,
-  defaultModelKey,
   getModelEntry,
   listModels,
   listModelsByAudioKind,
-  type AudioKind,
   type StudioModelEntry,
-} from '@lnkpi/shared'
+} from '@/constants/studioModels'
 
 export interface VoiceOption {
   id: string

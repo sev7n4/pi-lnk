@@ -38,7 +38,7 @@ const showBanner = computed(
   <div class="agent-task-card rounded-xl border border-[var(--neo-border)] bg-[var(--neo-surface-card)] p-3 text-xs">
     <div
       v-if="showBanner"
-      class="mb-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-sky-200"
+      class="mb-2 rounded-lg border border-info-border bg-info-bg px-2.5 py-2 text-[11px] leading-relaxed text-info"
     >
       {{ progress.banner }}
     </div>

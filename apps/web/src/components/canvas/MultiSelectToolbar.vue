@@ -446,8 +446,8 @@ onUnmounted(() => {
 }
 .export-menu {
   background: var(--neo-chrome-bg, rgba(20, 20, 24, 0.96));
-  border: 1px solid var(--neo-border, rgba(255, 255, 255, 0.08));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--neo-border, rgb(var(--lnk-overlay-rgb) / 0.08));
+  box-shadow: var(--lnk-shadow-md);
 }
 .export-menu-item {
   display: block;

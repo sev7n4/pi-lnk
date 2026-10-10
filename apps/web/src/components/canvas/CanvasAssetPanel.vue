@@ -501,7 +501,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
               <button
                 v-if="asset.source === 'user'"
                 type="button"
-                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-red-500/90 hover:text-fg"
+                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-danger hover:text-fg"
                 title="从资产库删除"
                 @click.stop="removeAsset(asset)"
               >
@@ -525,8 +525,8 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.25);
+  background: rgb(var(--lnk-overlay-rgb) / 0.92);
   color: #111;
   transition: transform 0.15s ease, background 0.15s ease;
 }

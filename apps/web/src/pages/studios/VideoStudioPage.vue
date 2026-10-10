@@ -69,14 +69,14 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
           {{ loading ? '提交中...' : '生成视频' }}
         </button>
       </div>
-      <p v-if="error" class="mt-2 text-sm text-red-400">{{ error }}</p>
+      <p v-if="error" class="mt-2 text-sm text-danger">{{ error }}</p>
     </div>
 
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
       <div v-for="item in records" :key="item.id" class="overflow-hidden rounded-xl border border-overlay/8 bg-surface-base">
         <div class="relative aspect-video bg-surface-elevated">
           <img v-if="item.url && item.status === 'completed'" :src="item.url" class="h-full w-full object-cover" alt="" />
-          <div v-else class="flex h-full items-center justify-center text-sm text-yellow-400">生成中...</div>
+          <div v-else class="flex h-full items-center justify-center text-sm text-warning">生成中...</div>
         </div>
         <div class="p-3">
           <p class="line-clamp-2 text-xs text-fg-2">{{ item.prompt }}</p>

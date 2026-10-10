@@ -134,7 +134,7 @@ function hideBrokenImg(e: Event) {
       >
         <span
           class="w-3 shrink-0 text-center"
-          :class="item.status === 'failed' ? 'text-red-400/90' : 'text-[var(--neo-text-muted)]'"
+          :class="item.status === 'failed' ? 'text-danger' : 'text-[var(--neo-text-muted)]'"
         >{{ statusIcon(item.status) }}</span>
         <span
           v-if="item.status === 'done' && nodeUrl(item.nodeId)"
@@ -164,7 +164,7 @@ function hideBrokenImg(e: Event) {
         <DockTypeIcon v-else :type="item.nodeType" :size="12" class="shrink-0 opacity-80" />
         <span
           class="min-w-0 flex-1 truncate"
-          :class="item.status === 'failed' ? 'text-red-400/90' : 'text-[var(--neo-fg)]'"
+          :class="item.status === 'failed' ? 'text-danger' : 'text-[var(--neo-fg)]'"
         >{{ item.title }}</span>
         <CanvasLocateButton
           v-if="item.status === 'done' || item.status === 'failed'"

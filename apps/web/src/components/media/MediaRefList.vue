@@ -77,7 +77,7 @@ const items = computed(() =>
   flex-shrink: 0;
   border-radius: 8px;
   object-fit: cover;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--lnk-overlay-rgb) / 0.06);
 }
 
 .media-ref-body {
@@ -108,13 +108,13 @@ const items = computed(() =>
 }
 
 .media-ref-badge.is-warn {
-  background: rgba(234, 179, 8, 0.15);
-  color: #facc15;
+  background: var(--lnk-warning-bg);
+  color: var(--lnk-warning);
 }
 
 .media-ref-badge.is-error {
-  background: rgba(239, 68, 68, 0.15);
-  color: #fca5a5;
+  background: var(--lnk-error-bg);
+  color: var(--lnk-error);
 }
 
 .media-ref-detail {

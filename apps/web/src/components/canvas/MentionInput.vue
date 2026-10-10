@@ -232,7 +232,7 @@ function onKeydown(e: KeyboardEvent) {
 .mention-input-backdrop::-webkit-scrollbar-thumb,
 .mention-input-field::-webkit-scrollbar-thumb {
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.2);
+  background: rgb(var(--lnk-overlay-rgb) / 0.2);
 }
 
 .mention-input-backdrop {

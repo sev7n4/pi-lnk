@@ -6,6 +6,7 @@ import {
   type ProviderPreferencesPublic,
   type ProviderWebdavPublic,
 } from '@/services/provider-api'
+import { setStudioCatalogEntries } from '@/constants/studioModels'
 
 const bootstrap = ref<ProviderBootstrap | null>(null)
 const loading = ref(false)
@@ -32,6 +33,9 @@ export function useProviderBootstrap() {
     loadPromise = providerApi
       .bootstrap()
       .then((data) => {
+        // S2-1b：目录条目随 bootstrap 下发（方案 A），注入归一层供 resolveModelKey /
+        // getModelEntry 等读服务端真源；失败/空回落种子常量（setStudioCatalogEntries 内部忽略）。
+        setStudioCatalogEntries(data.catalog)
         bootstrap.value = data
         return data
       })

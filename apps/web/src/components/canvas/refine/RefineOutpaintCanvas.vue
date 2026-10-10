@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
   object-fit: fill;
   pointer-events: none;
   user-select: none;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 0 1px rgb(var(--lnk-overlay-rgb) / 0.35);
 }
 
 .refine-outpaint__handle {

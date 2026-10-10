@@ -33,7 +33,11 @@ import { useShotPolling } from '@/composables/useShotPolling'
 import { useGenerationPolling, parseRecordPromptContent, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
 import { buildNodeMediaInfoSummary, buildMaterialMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
 import type { GenerationRecord } from '@/services/studio-api'
-import { useNodeGeneration } from '@/composables/useNodeGeneration'
+import {
+  modalityForNodeType,
+  modelFieldForModality,
+  useNodeGeneration,
+} from '@/composables/useNodeGeneration'
 import { useSelectionGenerate } from '@/composables/useSelectionGenerate'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { type CompositionRunGroup } from '@/composables/compositionRunGroup'
@@ -132,6 +136,7 @@ import {
   CANVAS_REF_PICK_ACTIVE_KEY,
   CANVAS_REF_PICK_NODE_IDS_KEY,
   CANVAS_REF_PICK_REJECT_KEY,
+  type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
@@ -397,7 +402,7 @@ async function persistUserEditAsync() {
   await saveCanvas()
 }
 
-const DEFAULT_DARK_GRID_COLOR = 'rgba(255,255,255,0.08)'
+const DEFAULT_DARK_GRID_COLOR = 'rgb(var(--lnk-overlay-rgb) / 0.08)'
 const effectiveGridColor = computed(() => {
   if (canvasTheme.value === 'light' && viewportSettings.value.gridColor === DEFAULT_DARK_GRID_COLOR) {
     return 'rgba(0,0,0,0.12)'
@@ -4213,7 +4218,7 @@ const {
   compositionRunGroup,
 })
 
-function retryNodeGeneration(nodeId: string) {
+function retryNodeGeneration(nodeId: string, overrides?: CanvasNodeRetryOverrides) {
   const node = nodes.value.find((n) => n.id === nodeId)
   if (!node) return
   const data = node.data ?? {}
@@ -4225,12 +4230,23 @@ function retryNodeGeneration(nodeId: string) {
     })
     return
   }
+  // S2-3 一键换模型重试：模型覆盖走页面级 patch（patchNodeData + persistUserEdit，
+  // 与 CANVAS_NODE_PATCH_KEY 同一通路）——禁 updateNodeData 直写内部 store，
+  // 否则旧数据轮询/落盘会覆盖掉模型字段（受控画布教训）。
+  if (overrides?.modelKey) {
+    const modality = modalityForNodeType(String(node.type))
+    const field = modality ? modelFieldForModality(modality) : null
+    if (field) {
+      // 模型换新后旧失败诊断已过时，一并清掉 errorMessage/errorCode
+      patchNodeMediaById(nodeId, { [field]: overrides.modelKey, errorMessage: null, errorCode: null })
+    }
+  }
   patchNodeData(nodeId, { errorMessage: null })
   return generateForNode(node as EditableFlowNode)
 }
 
 provide(CANVAS_NODE_CANCEL_KEY, (id) => cancelGeneration(id))
-provide(CANVAS_NODE_RETRY_KEY, (id) => { void retryNodeGeneration(id) })
+provide(CANVAS_NODE_RETRY_KEY, (id, overrides) => { void retryNodeGeneration(id, overrides) })
 
 const selectedNodeGenerating = computed(() => {
   const node = editorNode.value

@@ -72,11 +72,27 @@ export default {
         energy: 'var(--lnk-energy)', // 仅：连线 / 能量流动
         credit: 'var(--lnk-credit)', // 仅：积分 / 消耗
 
-        /* ---- 状态 ---- */
-        success: 'var(--lnk-success)',
-        warning: 'var(--lnk-warning)',
-        danger: 'var(--lnk-error)',
-        info: 'var(--lnk-info)',
+        /* ---- 状态：DEFAULT=实色文字/图标；bg/border=三件套（-bg 已实测对比度）---- */
+        success: {
+          DEFAULT: 'var(--lnk-success)',
+          bg: 'var(--lnk-success-bg)',
+          border: 'var(--lnk-success-border)',
+        },
+        warning: {
+          DEFAULT: 'var(--lnk-warning)',
+          bg: 'var(--lnk-warning-bg)',
+          border: 'var(--lnk-warning-border)',
+        },
+        danger: {
+          DEFAULT: 'var(--lnk-error)',
+          bg: 'var(--lnk-error-bg)',
+          border: 'var(--lnk-error-border)',
+        },
+        info: {
+          DEFAULT: 'var(--lnk-info)',
+          bg: 'var(--lnk-info-bg)',
+          border: 'var(--lnk-info-border)',
+        },
       },
       fontFamily: {
         // 中文字体必须显式声明：Unbounded / Inter 没有 CJK 字形，
@@ -88,6 +104,12 @@ export default {
       // ⚠️ 以下全是**新增键**，不与 Tailwind 默认键冲突，故不改变既有类名取值
       boxShadow: {
         glow: 'var(--lnk-accent-glow)',
+        // 锚链五节（surface 层级与 shadow 档位一一对应）：css 类 shadow-lnk-xs..xl
+        'lnk-xs': 'var(--lnk-shadow-xs)',
+        'lnk-sm': 'var(--lnk-shadow-sm)',
+        'lnk-md': 'var(--lnk-shadow-md)',
+        'lnk-lg': 'var(--lnk-shadow-lg)',
+        'lnk-xl': 'var(--lnk-shadow-xl)',
       },
       zIndex: {
         'canvas-ui': 'var(--lnk-z-canvas-ui)',

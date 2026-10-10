@@ -619,7 +619,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
       <el-tabs v-model="activeTab">
         <!-- 渠道 -->
         <el-tab-pane label="渠道" name="channels" lazy>
-          <div class="mb-3 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+          <div class="mb-3 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5">
             <div class="min-w-0 text-xs leading-5 text-[var(--neo-text-secondary)]">
               <span class="font-medium text-[var(--neo-warm)]">重要提示：</span>
               新增或拉取模型后，请到「模型」Tab 勾选可选项，Dock 才会显示这些模型。

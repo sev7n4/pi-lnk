@@ -92,7 +92,7 @@ function toggleVoice() {
         <button
           class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition"
           :class="speech.listening.value
-            ? 'bg-red-500/20 text-red-400 animate-pulse'
+            ? 'bg-danger-bg text-danger animate-pulse'
             : speech.supported
               ? 'bg-overlay/5 text-fg-2 hover:bg-overlay/10'
               : 'bg-overlay/5 text-fg-3'"

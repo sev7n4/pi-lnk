@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { modelOptionName } from '@lnkpi/shared'
 import type { GenerationDiagnostic, MediaInfo, ProbedMediaFile } from '@lnkpi/shared'
 import MediaRefList from '@/components/media/MediaRefList.vue'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 import { useMediaInspector } from '@/composables/useMediaInspector'
+import { CANVAS_NODE_RETRY_KEY } from '@/composables/canvasNodeActions'
+import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
+import { useModelHealth } from '@/composables/useModelHealth'
 import {
   downloadMediaFile,
   isUpstreamMediaUrl,
@@ -23,6 +26,11 @@ import {
   sharedDiagnosticCache,
 } from '@/utils/generationDiagnostic'
 import {
+  buildRetryRecommendation,
+  recordTypeToModality,
+  type RetryRecommendationView,
+} from '@/utils/retryRecommendation'
+import {
   formatMediaBytes,
   formatMediaDimensions,
   truncateUrl,
@@ -30,6 +38,11 @@ import {
 
 const route = useRoute()
 const sessionId = computed(() => route.params.sessionId as string | undefined)
+
+// S2-3 一键换模型重试：候选数据源（bootstrap 渠道镜像 + 健康投影）与重试注入
+const { allChannels } = useProviderBootstrap()
+const healthSummary = useModelHealth()
+const retryNode = inject(CANVAS_NODE_RETRY_KEY, null)
 
 const {
   open,
@@ -244,6 +257,47 @@ const remedyGuides = computed(() => {
   }
   return guides
 })
+
+// ===== S2-3 退款透明化 + 一键换模型重试 =====
+
+/** 退款提示（refundedPoints>0 时渲染；缺字段/0 不渲染——只透传不重算）。 */
+const refundNotice = computed(() => {
+  const refunded = diagnostic.value?.refundedPoints
+  if (typeof refunded !== 'number' || refunded <= 0) return null
+  return `已自动退还 ${refunded} 积分`
+})
+
+/** 无可重试语义的错误码：不渲染换模型重试区（spec §3.4 显式留白）。 */
+const NON_RETRYABLE_ERROR_CODES = new Set(['cancelled', 'invalid_input', 'upload_required'])
+
+const retryRecommendation = computed<RetryRecommendationView | null>(() => {
+  if (diagnosticLoading.value) return null
+  const code = diagnostic.value?.code
+  if (code && NON_RETRYABLE_ERROR_CODES.has(code)) return null
+  const modality = recordTypeToModality(record.value?.type)
+  if (!modality || !retryNode) return null
+  const meta = parsedMeta.value
+  const failedModel =
+    (typeof meta.modelKey === 'string' && meta.modelKey.trim()) ||
+    (typeof meta.originalModel === 'string' && meta.originalModel.trim()) ||
+    diagnostic.value?.model ||
+    record.value?.model ||
+    ''
+  return buildRetryRecommendation({
+    failedModel,
+    modality,
+    channels: allChannels.value,
+    healthRows: healthSummary.value?.rows,
+  })
+})
+
+function retryWithRecommendedModel() {
+  const rec = retryRecommendation.value
+  const nodeId = target.value?.nodeId ?? record.value?.nodeId
+  if (!rec || !nodeId || !retryNode) return
+  void retryNode(nodeId, { modelKey: rec.modelKey })
+  closeInspector()
+}
 
 async function refreshRecordAfterFallback(id: string) {
   invalidateRecordCache(id)
@@ -548,10 +602,11 @@ async function copyValue(text: string) {
             </span>
           </div>
           <p class="media-inspector-diag-msg">{{ diagnosticMessage }}</p>
+          <p v-if="refundNotice" class="media-inspector-diag-remedy">{{ refundNotice }}</p>
           <p v-if="diagnosticHint" class="media-inspector-diag-hint">{{ diagnosticHint }}</p>
 
           <!-- ② 怎么解决 -->
-          <template v-if="remedyGuides.length || isFallbackPendingRecord">
+          <template v-if="remedyGuides.length || isFallbackPendingRecord || retryRecommendation">
             <h4 class="media-inspector-section-title media-inspector-diag-gap">怎么解决</h4>
             <p
               v-for="guide in remedyGuides"
@@ -560,6 +615,16 @@ async function copyValue(text: string) {
             >
               {{ guide }}
             </p>
+            <div v-if="retryRecommendation" class="media-inspector-diag-actions">
+              <button
+                type="button"
+                class="media-inspector-action media-inspector-action-primary"
+                @click="retryWithRecommendedModel"
+              >
+                换 {{ retryRecommendation.displayName }} 重试
+              </button>
+              <p class="media-inspector-diag-hint">{{ retryRecommendation.reason }}</p>
+            </div>
             <div v-if="isFallbackPendingRecord" class="media-inspector-diag-actions">
               <button
                 type="button"
@@ -781,7 +846,7 @@ async function copyValue(text: string) {
 }
 
 .media-inspector-close:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--lnk-overlay-rgb) / 0.06);
   color: var(--neo-text-primary);
 }
 
@@ -905,14 +970,14 @@ async function copyValue(text: string) {
   border: 1px solid var(--neo-border);
   border-radius: 10px;
   padding: 9px 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgb(var(--lnk-overlay-rgb) / 0.03);
   color: var(--neo-text-primary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .media-inspector-action:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--lnk-overlay-rgb) / 0.06);
 }
 
 .media-inspector-action:disabled {
@@ -989,8 +1054,8 @@ async function copyValue(text: string) {
 .media-inspector-diag-chip {
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid var(--lnk-error-border);
+  background: var(--lnk-error-bg);
   color: #fca5a5;
   font-size: 10.5px;
   line-height: 1.5;

@@ -44,7 +44,7 @@ const statsLabel = computed(
             <line x1="12" y1="17" x2="12" y2="21" />
           </svg>
           <span class="neo-placeholder-text">{{ data.title || '场景编排' }}</span>
-          <span class="text-[11px] text-amber-200/70">{{ statsLabel }}</span>
+          <span class="text-[11px] text-warning">{{ statsLabel }}</span>
           <span v-if="data.prompt" class="line-clamp-2 max-w-[220px] text-[11px] text-fg-3">{{ data.prompt }}</span>
         </div>
       </div>

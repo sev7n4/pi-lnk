@@ -1,5 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { STUDIO_MODEL_CATALOG, type StudioModelEntry } from '@lnkpi/shared'
 import { validateGenerationParams } from './agent-canvas-tools.service'
+
+// B2 S2-1e：audioVoice 能力判定走 DB 目录缓存。默认实现返回种子常量
+// （与真实缓存初值/无 DB 环境行为一致），用例内可注入 DB-only 条目。
+const { currentCatalogEntries } = vi.hoisted(() => ({
+  currentCatalogEntries: vi.fn(),
+}))
+
+vi.mock('../provider/model-catalog-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../provider/model-catalog-store')>()
+  return {
+    ...actual,
+    currentCatalogEntries,
+  }
+})
+
+// 默认回落种子常量；个别用例内 mockImplementation 注入 DB-only 条目。
+currentCatalogEntries.mockImplementation(() => STUDIO_MODEL_CATALOG)
 
 /**
  * set_node_generation_params 的入参校验判据。
@@ -184,5 +202,53 @@ describe('validateGenerationParams', () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toMatch(/no audioModel/)
+  })
+
+  // ── B2 S2-1e：音色能力判定走 DB 目录缓存 ──────────────────────────────
+  describe('audioVoice × DB 目录缓存（B2 S2-1e）', () => {
+    const dbOnlyVoiceModel: StudioModelEntry = {
+      modelKey: 'stepvoice-db-only',
+      displayName: 'DB 新增配音模型',
+      gatewayModelId: 'stepvoice-db-only-gw',
+      modality: 'audio',
+      audioKind: 'voice',
+      providerBinding: 'gateway-openai-compat',
+      voices: [
+        { id: 'db-voice-1', label: '一号音色' },
+        { id: 'db-voice-2', label: '二号音色' },
+      ],
+      params: { model: 'native', voice: 'native' },
+    }
+
+    it('DB-only 模型的音色清单可校验（旧实现查常量目录 ⇒ no voice list 误拒）', () => {
+      currentCatalogEntries.mockImplementation(() => [...STUDIO_MODEL_CATALOG, dbOnlyVoiceModel])
+      const node = { type: 'audio', data: { audioModel: 'stepvoice-db-only' } }
+      const r = validateGenerationParams({ params: { audioVoice: 'db-voice-2' }, node })
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.data).toMatchObject({ audioVoice: 'db-voice-2' })
+    })
+
+    it('DB-only 模型：不在音色清单的值仍拒（allowed 回 DB 清单，不静默放行）', () => {
+      currentCatalogEntries.mockImplementation(() => [...STUDIO_MODEL_CATALOG, dbOnlyVoiceModel])
+      const node = { type: 'audio', data: { audioModel: 'stepvoice-db-only' } }
+      const r = validateGenerationParams({ params: { audioVoice: 'female-shaonv' }, node })
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.allowed).toEqual(['db-voice-1', 'db-voice-2'])
+    })
+
+    it('缺省回落种子常量：常量目录模型的音色校验行为不变', () => {
+      currentCatalogEntries.mockImplementation(() => STUDIO_MODEL_CATALOG)
+      const withModel = { type: 'audio', data: { audioModel: 'seed-audio-1.0' } }
+      expect(
+        validateGenerationParams({ params: { audioVoice: 'seed-female-1' }, node: withModel }).ok,
+      ).toBe(true)
+      const bad = validateGenerationParams({
+        params: { audioVoice: 'db-voice-1' },
+        node: withModel,
+      })
+      expect(bad.ok).toBe(false)
+    })
   })
 })

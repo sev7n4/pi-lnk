@@ -209,7 +209,7 @@ function exportCsv() {
                       </div>
                       <span
                         class="shrink-0 text-base font-semibold"
-                        :class="tx.amount >= 0 ? 'text-green-400' : 'text-red-400'"
+                        :class="tx.amount >= 0 ? 'text-success' : 'text-danger'"
                       >
                         {{ tx.amount >= 0 ? '+' : '' }}{{ tx.amount }}
                       </span>
@@ -228,7 +228,7 @@ function exportCsv() {
                       </div>
                     </div>
                   </div>
-                  <p v-if="loadError" class="py-2 text-center text-xs text-red-300/70">{{ loadError }}</p>
+                  <p v-if="loadError" class="py-2 text-center text-xs text-danger">{{ loadError }}</p>
                   <p
                     v-else-if="!ledgerLoading && !items.length"
                     class="rounded-2xl border border-overlay/8 bg-surface-base py-8 text-center text-sm text-fg-3"

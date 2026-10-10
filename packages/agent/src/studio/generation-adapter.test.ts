@@ -799,3 +799,106 @@ describe('buildVideoProviderOptions 对 gatewayModelId 的能力判定', () => {
     expect(viaGateway.meta.nativeParams).toMatchObject(viaKey.meta.nativeParams)
   })
 })
+
+// ── B2 S2-1c：catalogRows 注入（DB 目录真源）────────────────────────────────
+// 缺陷：agent 侧 resolve 只认常量目录，后台 admin 新增的模型（仅存于 DB）
+// 查不到 ⇒ fallback:true ⇒ 静默用默认模型生成并计费。
+// 修复：三个 builder 加可选 catalogRows，server 宿主注入 DB 缓存 rows；
+// 缺省回落种子常量（与既有行为逐字节一致，非 server 宿主零改动）。
+describe('catalogRows 注入（B2 S2-1c）', () => {
+  // 「常量目录没有、DB 有」的 admin 新增条目（模拟 ModelCatalogEntry 转出的目录行）。
+  const dbOnlyRows: shared.StudioModelEntry[] = [
+    {
+      modelKey: 'db-only-video',
+      displayName: 'DB 新增视频模型',
+      gatewayModelId: 'db-only-video-gw',
+      modality: 'video',
+      providerBinding: 'gateway-openai-compat',
+      params: { model: 'native', duration: 'native', aspectRatio: 'native', resolution: 'native' },
+    },
+    {
+      modelKey: 'db-only-image',
+      displayName: 'DB 新增图像模型',
+      gatewayModelId: 'db-only-image-gw',
+      modality: 'image',
+      providerBinding: 'gateway-openai-compat',
+      params: { model: 'native', size: 'native', n: 'native' },
+    },
+    {
+      modelKey: 'db-only-audio',
+      displayName: 'DB 新增音频模型',
+      gatewayModelId: 'db-only-audio-gw',
+      modality: 'audio',
+      audioKind: 'voice',
+      providerBinding: 'gateway-openai-compat',
+      params: { model: 'native', voice: 'native', speed: 'native' },
+    },
+  ]
+  const catalogRows = [...shared.STUDIO_MODEL_CATALOG, ...dbOnlyRows]
+
+  it('①注入 rows：video 命中 DB 新增条目（常量目录没有），不静默 fallback', () => {
+    const out = buildVideoProviderOptions({
+      modelKey: 'db-only-video',
+      duration: 5,
+      catalogRows,
+    })
+    expect(out.meta.modelKey).toBe('db-only-video')
+    expect(out.meta.modelFallback).toBeUndefined()
+    expect(out.providerOptions.model).toBe('db-only-video-gw')
+    expect(out.meta.gatewayModelId).toBe('db-only-video-gw')
+  })
+
+  it('①注入 rows：image 命中 DB 新增条目', () => {
+    const out = buildImageProviderOptions({
+      modelKey: 'db-only-image',
+      n: 1,
+      referenceImages: [],
+      catalogRows,
+    })
+    expect(out.meta.modelKey).toBe('db-only-image')
+    expect(out.meta.modelFallback).toBeUndefined()
+    expect(out.modelId).toBe('db-only-image-gw')
+  })
+
+  it('①注入 rows：audio 命中 DB 新增条目', () => {
+    const out = buildAudioRequest({
+      mergedText: 'hi',
+      modelKey: 'db-only-audio',
+      catalogRows,
+    })
+    expect(out.meta.modelKey).toBe('db-only-audio')
+    expect(out.meta.modelFallback).toBeUndefined()
+    expect(out.options.model).toBe('db-only-audio-gw')
+  })
+
+  it('②缺省（未注入）回落种子常量：DB-only 模型仍走既有 fallback 行为', () => {
+    const out = buildVideoProviderOptions({ modelKey: 'db-only-video', duration: 5 })
+    expect(out.meta.modelKey).toBe('agnes-video-v2.0')
+    expect(out.meta.modelFallback).toBe(true)
+    expect(out.providerOptions.model).toBe('agnes-video-v2.0')
+  })
+
+  it('②注入种子常量 rows ≡ 不注入（逐字段对拍，覆盖三模态）', () => {
+    const seed = shared.STUDIO_MODEL_CATALOG
+    for (const key of ['seedance-2.0-min', 'doubao-seedance-2.0-mini', 'agnes-video-v2.0', undefined]) {
+      expect(buildVideoProviderOptions({ modelKey: key, duration: 5, catalogRows: seed })).toEqual(
+        buildVideoProviderOptions({ modelKey: key, duration: 5 }),
+      )
+    }
+    for (const key of ['seedream-5.0-pro', 'agnes-image-2.1-flash', 'nope']) {
+      expect(
+        buildImageProviderOptions({ modelKey: key, n: 1, referenceImages: [], catalogRows: seed }),
+      ).toEqual(buildImageProviderOptions({ modelKey: key, n: 1, referenceImages: [] }))
+      expect(buildAudioRequest({ mergedText: 'hi', modelKey: key, catalogRows: seed })).toEqual(
+        buildAudioRequest({ mergedText: 'hi', modelKey: key }),
+      )
+    }
+  })
+
+  it('②缺省行为对拍 shared 常量薄壳 resolveModelKey（audio 入口抽查）', () => {
+    const expected = shared.resolveModelKey('audio', 'minimax-speech-2.8-hd')
+    const out = buildAudioRequest({ mergedText: 'hi', modelKey: 'minimax-speech-2.8-hd' })
+    expect(out.meta.modelKey).toBe(expected.modelKey)
+    expect(out.meta.modelFallback).toBeUndefined()
+  })
+})

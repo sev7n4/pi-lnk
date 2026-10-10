@@ -277,7 +277,7 @@ onUnmounted(() => {
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.28);
+  background: rgb(var(--lnk-overlay-rgb) / 0.28);
   cursor: pointer;
   transition: height 0.2s ease, background 0.2s ease;
 }

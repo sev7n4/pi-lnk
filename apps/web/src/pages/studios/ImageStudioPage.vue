@@ -50,7 +50,7 @@ onMounted(loadRecords)
           {{ loading ? '生成中...' : '生成图像' }}
         </button>
       </div>
-      <p v-if="error" class="mt-2 text-sm text-red-400">{{ error }}</p>
+      <p v-if="error" class="mt-2 text-sm text-danger">{{ error }}</p>
     </div>
 
     <h2 class="mb-4 text-lg font-medium">最近生成</h2>

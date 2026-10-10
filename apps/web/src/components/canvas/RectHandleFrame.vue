@@ -109,7 +109,7 @@ function onPointerUp() {
 <style scoped>
 .rhf {
   position: absolute;
-  border: 1.5px solid rgba(255, 255, 255, 0.92);
+  border: 1.5px solid rgb(var(--lnk-overlay-rgb) / 0.92);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
   cursor: move;
   touch-action: none;

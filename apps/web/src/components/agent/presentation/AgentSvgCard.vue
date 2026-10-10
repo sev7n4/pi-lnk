@@ -63,7 +63,7 @@ const isDiscarded = computed(() => props.svg.trim() === '')
         :data-severity="a.severity"
         :class="
           a.severity === 'warn'
-            ? 'font-medium text-red-500'
+            ? 'font-medium text-danger'
             : 'text-[var(--neo-text-muted)]'
         "
       >

@@ -151,7 +151,7 @@ async function upgrade(plan: string) {
   width: 140px;
   height: 140px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.22), transparent 70%);
+  background: radial-gradient(circle, rgb(var(--lnk-overlay-rgb) / 0.22), transparent 70%);
   pointer-events: none;
 }
 .membership-claim-btn {

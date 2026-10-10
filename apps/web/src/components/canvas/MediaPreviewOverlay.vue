@@ -234,7 +234,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
   max-width: min(94vw, 1800px);
   max-height: 92vh;
   border-radius: 12px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--lnk-shadow-xl);
 }
 
 .preview-media.is-actual {
@@ -248,7 +248,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
 .preview-audio-card {
   padding: 32px 40px;
   border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.12);
   background: rgba(24, 24, 30, 0.9);
   color: rgba(255, 255, 255, 0.85);
   text-align: center;
@@ -260,7 +260,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
   height: 36px;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.16);
   border-radius: 12px;
   background: rgba(20, 20, 26, 0.72);
   color: rgba(255, 255, 255, 0.85);
