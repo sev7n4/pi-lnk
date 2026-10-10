@@ -34,6 +34,12 @@ export interface SidebarAttachment {
 /** 每会话注入 toolContext 的值；SessionManager.create 时构造。 */
 export interface LnkpiToolContext {
 	/**
+	 * **pi 会话键**（C4）：`spawn_subagent` 用它定位来源会话做 fork。
+	 * 与 `sessionId`（画布会话 id，#70 语义）刻意分离——见该字段警示。
+	 * 可选：仅 spawn 消费（缺失时 fail-soft 拒绝派发），生产 toolContext 恒填。
+	 */
+	piSessionKey?: string;
+	/**
 	 * **画布会话 id**（Nest `/agent/internal/*` 用它 `findUnique({id})` 查 `Session`）。
 	 *
 	 * ⚠️ 这**不是** pi 会话键（`toSessionKey(threadKey)`）。二者曾于 #70 被合并进本字段，

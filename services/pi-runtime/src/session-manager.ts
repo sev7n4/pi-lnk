@@ -945,8 +945,10 @@ export class SessionManager {
 				// ⚠️ `sessionId` 语义 = **画布会话 id**（Nest 用它查库），不是 pi 会话键 `key`。
 				// 取值优先级：本轮/建会话时传入的 canvasSessionId → 会话内已存值 → 回落 pi 会话键
 				// （旧 Nest 不传该字段时语义退化为 #70 行为，不产生新失败形态）。
-				toolContext: () => ({
-					sessionId: entry.canvasSessionId ?? key,
+							toolContext: () => ({
+								sessionId: entry.canvasSessionId ?? key,
+								// C4：spawn_subagent 定位来源会话做 fork（画布 id 与 pi 键分离，见 types.ts）
+								piSessionKey: key,
 					// 终审 I-3：只有真canvasSessionId 才给可信字段；回落 pi 键时留undefined，
 					// 让记忆写入方选择「不挂画布」而不是挂一个不存在的 Session。
 					trustedCanvasSessionId: entry.canvasSessionId,
