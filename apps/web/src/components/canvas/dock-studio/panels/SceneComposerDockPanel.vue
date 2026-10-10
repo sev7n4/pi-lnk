@@ -297,7 +297,7 @@ const canBatchGenerate = computed(() =>
 
       <button
         type="button"
-        class="rounded-lg border border-warning-border px-3 py-1.5 text-xs text-warning hover:bg-warning-bg-hover"
+        class="rounded-lg border border-warning-border px-3 py-1.5 text-xs text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover"
         :disabled="locked"
         @click="emit('expand')"
       >
