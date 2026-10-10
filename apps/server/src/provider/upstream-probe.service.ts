@@ -6,7 +6,7 @@ import {
 } from '@lnkpi/shared/upstreamReconciliation'
 import { PrismaService } from '../prisma/prisma.service'
 import { PLATFORM_CHANNEL_ID } from './provider.service'
-import { currentUpstreamRoutes } from './upstream-route-store'
+import { currentUpstreamRoutes, whenUpstreamRoutesBootstrapped } from './upstream-route-store'
 import {
   bumpConsecutiveFailures,
   planAvailabilityWrites,
@@ -60,6 +60,13 @@ const PROBE_TIMEOUT_MS = 15_000
 
 /** 探测间隔 env。默认 360 分钟；`0` = 显式禁用（不注册 timer）；缺失/非法回落默认。 */
 export const DEFAULT_PROBE_INTERVAL_MINUTES = 360
+
+/**
+ * B3 热修：startup 首轮等待路由表 bootstrap 落定的超时上限（毫秒）。
+ * 正常情况 SeedService 的播种+装载远快于此（毫秒级）；超时 = DB 故障等异常形态，
+ * 此时按当前缓存路由照常执行（可能空表 → 组内跳过 + warn），绝不悬挂、绝不丢失首轮。
+ */
+export const STARTUP_PROBE_ROUTES_READY_TIMEOUT_MS = 15_000
 
 /** recentSuccesses 统计窗口：近 24h。 */
 const RECENT_SUCCESS_WINDOW_MS = 24 * 60 * 60_000
@@ -234,11 +241,39 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
     // unref：探活器绝不阻止进程退出（Ruling C：手动 setInterval + unref）。
     this.timer.unref?.()
     this.logger.log(`[MPH][probe] 定时探活已注册：每 ${minutes} 分钟一轮`)
-    // B1 登记顺手项（S2-2b 落地）：注册后立即触发启动首轮 —— 非阻塞（不 await、
-    // probeOnce 整体吞异常）、失败绝不阻断启动；日志来源=startup 与 periodic 区分
-    // （可观测判据：startup 首轮失败只落 run 记录 / error 日志，进程照常起）。
+    // B1 登记顺手项（S2-2b 落地）：注册后触发启动首轮 —— 非阻塞（onModuleInit 不 await、
+    // probeOnce 整体吞异常）、失败绝不阻断启动；日志来源=startup 与 periodic 区分。
+    // B3 热修：先等路由表 bootstrap 落定（成功/失败都算落定，带超时上限防悬挂）再跑，
+    // 消除「路由缓存空表 → 全量 unroutable 跳过、ghost 检测空转一个周期」的启动竞态
+    // （B2 生产复测实证）。
+    this.logger.log('[MPH][probe] 启动首轮探活待路由表就绪后触发（来源=startup）')
+    void this.startupProbeWhenRoutesReady()
+  }
+
+  /**
+   * startup 首轮：等路由表 bootstrap 落定（上限
+   * {@link STARTUP_PROBE_ROUTES_READY_TIMEOUT_MS}，unref 计时器——绝不阻止进程退出、
+   * 绝不阻塞 bootstrap 主流程）后再触发 probeOnce('startup')。超时路径照常执行
+   * （按当前缓存路由，可能空表 → 组内跳过 + warn），绝不静默丢失首轮。
+   */
+  private async startupProbeWhenRoutesReady(
+    timeoutMs: number = STARTUP_PROBE_ROUTES_READY_TIMEOUT_MS,
+  ): Promise<void> {
+    const waitStartedAt = Date.now()
+    await Promise.race([
+      whenUpstreamRoutesBootstrapped(),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+    if (Date.now() - waitStartedAt >= timeoutMs) {
+      this.logger.warn(
+        `[MPH][probe] 等待路由表就绪超时（${timeoutMs}ms），startup 首轮按当前缓存路由执行`,
+      )
+    }
     this.logger.log('[MPH][probe] 触发启动首轮探活（来源=startup）')
-    void this.probeOnce('startup')
+    await this.probeOnce('startup')
   }
 
   onModuleDestroy(): void {
