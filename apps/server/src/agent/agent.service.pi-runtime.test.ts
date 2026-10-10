@@ -123,6 +123,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
 
     afterEach(() => {
       delete process.env.PI_LLM_PASSTHROUGH
+      delete process.env.PI_LLM_PLATFORM_PASSTHROUGH
     })
 
     it('BYOK 模型 → create body 带 llm（source=user + 能力字段）', async () => {
@@ -196,6 +197,43 @@ describe('AgentService pi-runtime switch (B4)', () => {
       process.env.PI_LLM_PASSTHROUGH = 'off'
       setResolver(BYOK_RESOLVED)
       const opts = await runTurn('ch_byok::deepseek-flash')
+      expect(opts?.llm).toBeUndefined()
+    })
+
+    // ── P2 平台透传（撤决策 A，kill switch 缺省 off） ──
+    it('PI_LLM_PLATFORM_PASSTHROUGH 缺省 → 平台模型仍不发 llm（决策 A 原状，零变化）', async () => {
+      delete process.env.PI_LLM_PLATFORM_PASSTHROUGH
+      setResolver(PLATFORM_RESOLVED)
+      const opts = await runTurn('platform::agnes-2.0-flash')
+      expect(opts?.llm).toBeUndefined()
+    })
+
+    it('PI_LLM_PLATFORM_PASSTHROUGH=on → 平台模型带 llm（source=platform + 能力字段显式）', async () => {
+      process.env.PI_LLM_PLATFORM_PASSTHROUGH = 'on'
+      setResolver(PLATFORM_RESOLVED)
+      const opts = await runTurn('platform::agnes-2.0-flash')
+      const llm = opts?.llm as Record<string, unknown> | undefined
+      expect(llm).toBeDefined()
+      expect(llm?.model).toBe('agnes-2.0-flash')
+      expect(llm?.apiKey).toBe('sk-PLATFORM')
+      expect(llm?.baseUrl).toBe('https://apihub.agnes-ai.cn/v1')
+      expect(llm?.providerRef).toBe('platform::agnes-2.0-flash')
+      expect(llm?.source).toBe('platform')
+      expect(typeof llm?.supportsVision).toBe('boolean')
+    })
+
+    it('平台透传 on + resolve 失败 → fail-soft 不发 llm（与 BYOK 同语义）', async () => {
+      process.env.PI_LLM_PLATFORM_PASSTHROUGH = 'on'
+      setResolver(null)
+      const opts = await runTurn('platform::agnes-2.0-flash')
+      expect(opts?.llm).toBeUndefined()
+    })
+
+    it('主开关 PI_LLM_PASSTHROUGH=off 压过平台透传 on（层级：主开关杀整条链）', async () => {
+      process.env.PI_LLM_PASSTHROUGH = 'off'
+      process.env.PI_LLM_PLATFORM_PASSTHROUGH = 'on'
+      setResolver(PLATFORM_RESOLVED)
+      const opts = await runTurn('platform::agnes-2.0-flash')
       expect(opts?.llm).toBeUndefined()
     })
 

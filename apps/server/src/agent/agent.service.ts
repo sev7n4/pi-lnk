@@ -681,6 +681,16 @@ export class AgentService {
   }
 
   /**
+   * P2 平台透传开关：**默认 off**（决策 A 原状），只认 `on`（大小写不敏感）。
+   * on 时平台 ctx 也注入 pi 会话 llm override —— 平台用户侧栏选的模型对对话线生效。
+   * 前置运维语义：开启即宣告「Nest 平台通道与 pi env 不同源」问题已被接受，
+   * 平台用户将按 UpstreamRoute 路由走平台通道（availability 校验/探活灰显照常生效）。
+   */
+  piLlmPlatformPassthroughEnabled(): boolean {
+    return (process.env.PI_LLM_PLATFORM_PASSTHROUGH?.trim().toLowerCase() || 'off') === 'on'
+  }
+
+  /**
    * SEL-REF 开关（R-S9）：**默认 off**，只认 `on`（大小写不敏感），其余值一律当 off。
    *
    * ⛔ 不用前端 `useFeatureFlag`——那是前端进程内 Map，够不到 Nest 注入点，
@@ -829,9 +839,15 @@ export class AgentService {
    * 失败语义：任何一步拿不到 → undefined（pi 走 env 装配）。对齐老路径 ctx 缺省语义，
    * 不引入 fallback_pending（spec §4）。
    *
-   * 决策 A：只透传 BYOK（source=user），平台用户保持 env 装配——生产上 Nest 平台通道
-   * （apihub + 老 key + agnes-2.0-flash）与 pi-runtime env（api.agnes-ai.cn + 新 key +
-   * agnes-2.5-flash）**不同源**，透传会让平台用户换网关换模型，属回归。
+   * 决策 A（P2 修订）：默认只透传 BYOK（source=user），平台用户保持 env 装配——
+   * 生产上 Nest 平台通道（apihub + 老 key + agnes-2.0-flash）与 pi-runtime env
+   * （api.agnes-ai.cn + 新 key + agnes-2.5-flash）不同源，无条件透传会让平台用户
+   * 换网关换模型，属回归。
+   *
+   * P2 平台透传：`PI_LLM_PLATFORM_PASSTHROUGH=on` 时平台 ctx（provider-resolver
+   * platform 分支：UpstreamRoute 路由 + availability 校验 + 平台 key）也注入 override，
+   * 让侧栏选择的平台模型对 pi 对话线真实生效。缺省 off = 行为与决策 A 原状完全一致。
+   * 层级：主开关 `PI_LLM_PASSTHROUGH=off` 仍然杀掉整条链路（含平台透传）。
    */
   private async resolvePiSessionLlm(
     userId: string | undefined,
@@ -851,7 +867,7 @@ export class AgentService {
       // 渠道停用/无 key/解密失败 → 不发 llm → env 兜底（UI 侧已有「模型已停用」拦截）
       return undefined
     }
-    if (ctx.source !== 'user') return undefined
+    if (ctx.source !== 'user' && !this.piLlmPlatformPassthroughEnabled()) return undefined
     const cap = resolveModelCapability(ctx.providerRef)
     // P1 cost 接线：渠道 models[].pricing → override.cost（vendor calculateCost
     // 据此算 usage.cost）。未配置 pricing → undefined → 字段不出现，行为不变。
