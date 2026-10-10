@@ -72,26 +72,35 @@ export default {
         energy: 'var(--lnk-energy)', // 仅：连线 / 能量流动
         credit: 'var(--lnk-credit)', // 仅：积分 / 消耗
 
-        /* ---- 状态：DEFAULT=实色文字/图标；bg/border=三件套（-bg 已实测对比度）---- */
+        /* ---- 状态：DEFAULT=实色文字/图标；bg/border=三件套（-bg 已实测对比度）；
+                bg-hover/border-hover=hover 档（dark 靠色阶深化、light 靠描边加实） ---- */
         success: {
           DEFAULT: 'var(--lnk-success)',
           bg: 'var(--lnk-success-bg)',
           border: 'var(--lnk-success-border)',
+          'bg-hover': 'var(--lnk-success-bg-hover)',
+          'border-hover': 'var(--lnk-success-border-hover)',
         },
         warning: {
           DEFAULT: 'var(--lnk-warning)',
           bg: 'var(--lnk-warning-bg)',
           border: 'var(--lnk-warning-border)',
+          'bg-hover': 'var(--lnk-warning-bg-hover)',
+          'border-hover': 'var(--lnk-warning-border-hover)',
         },
         danger: {
           DEFAULT: 'var(--lnk-error)',
           bg: 'var(--lnk-error-bg)',
           border: 'var(--lnk-error-border)',
+          'bg-hover': 'var(--lnk-error-bg-hover)',
+          'border-hover': 'var(--lnk-error-border-hover)',
         },
         info: {
           DEFAULT: 'var(--lnk-info)',
           bg: 'var(--lnk-info-bg)',
           border: 'var(--lnk-info-border)',
+          'bg-hover': 'var(--lnk-info-bg-hover)',
+          'border-hover': 'var(--lnk-info-border-hover)',
         },
       },
       fontFamily: {

@@ -358,7 +358,7 @@ watch(() => auth.isLoggedIn, () => {
         <button
           v-if="manageSessions && selectedSessionIds.length"
           type="button"
-          class="rounded-lg bg-danger-bg px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger-bg"
+          class="rounded-lg bg-danger-bg px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger-bg-hover"
           @click="batchDeleteSessions"
         >
           删除选中 ({{ selectedSessionIds.length }})

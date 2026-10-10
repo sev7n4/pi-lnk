@@ -2939,7 +2939,7 @@ defineExpose({
                 <button
                   v-if="proposeWait.nodeId"
                   type="button"
-                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg"
+                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover"
                   data-testid="propose-wait-locate"
                   @click="locateProposeNode"
                 >
@@ -2948,7 +2948,7 @@ defineExpose({
                 <button
                   v-if="proposeWait.nodeId"
                   type="button"
-                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg"
+                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover"
                   data-testid="propose-wait-cancel"
                   @click="cancelBlockingPropose"
                 >

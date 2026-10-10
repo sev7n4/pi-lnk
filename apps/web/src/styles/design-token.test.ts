@@ -316,6 +316,72 @@ describe('状态三件套（-bg / -border / 实色文字）', () => {
   }
 })
 
+describe('状态底 hover 档（-bg-hover / -border-hover）', () => {
+  // IP 语义：hover 是「锚灯变亮」——必须可感知加深，但不能深到变实色块吞掉层次。
+  // 纯 alpha 加深在 AA 约束下空间不足 0.01（不可感知），故 dark 靠基色深化（400→600）、
+  // light 靠 alpha 微增 + border-hover 主导。守卫判定用「合成底亮度」而非 alpha。
+  for (const theme of ['dark', 'light'] as const) {
+    for (const key of STATUS_KEYS) {
+      it(`${theme} · ${key}-bg-hover：合成底比 -bg 更深且未成实色块`, () => {
+        const scope = blocks[theme]
+        const bgRaw = scope.decls.get(`--lnk-${key}-bg`)
+        const hoverRaw = scope.decls.get(`--lnk-${key}-bg-hover`)
+        expect(hoverRaw, `${theme} 缺 --lnk-${key}-bg-hover`).toBeTruthy()
+        const bg = parseRgba(bgRaw!)
+        const hover = parseRgba(hoverRaw!)
+        expect(hover, `${theme} --lnk-${key}-bg-hover 必须是 rgba`).toBeTruthy()
+        // 可感知加深：hover 合成底（压最暗表面 canvas）亮度必须 < bg 合成底
+        const canvas = resolve('--lnk-surface-canvas', scope)
+        expect(canvas, `${theme} 缺 --lnk-surface-canvas`).toBeTruthy()
+        const bgLum = luminance(compositeOver(bg!, canvas!))
+        const hoverLum = luminance(compositeOver(hover!, canvas!))
+        expect(
+          hoverLum,
+          `${theme} ${key}-bg-hover 合成底亮度 ${hoverLum.toFixed(4)} 必须 < bg ${bgLum.toFixed(4)}（hover 必须可感知加深）`,
+        ).toBeLessThan(bgLum)
+        expect(
+          hover![3],
+          `${theme} ${key}-bg-hover alpha=${hover![3]} 过重会吞掉层次（要求 ≤0.3）`,
+        ).toBeLessThanOrEqual(0.3)
+      })
+
+      it(`${theme} · ${key}-border-hover：比 -border 更实（主 hover 信号）`, () => {
+        const scope = blocks[theme]
+        const borderRaw = scope.decls.get(`--lnk-${key}-border`)
+        const hoverRaw = scope.decls.get(`--lnk-${key}-border-hover`)
+        expect(hoverRaw, `${theme} 缺 --lnk-${key}-border-hover`).toBeTruthy()
+        const border = parseRgba(borderRaw!)
+        const hover = parseRgba(hoverRaw!)
+        expect(hover, `${theme} --lnk-${key}-border-hover 必须是 rgba`).toBeTruthy()
+        expect(
+          hover![3],
+          `${theme} ${key}-border-hover alpha=${hover![3]} 必须 > border ${border![3]}`,
+        ).toBeGreaterThan(border![3])
+        expect(hover![3]).toBeLessThanOrEqual(0.6)
+      })
+
+      it(`${theme} · ${key}：实色状态文字压 hover 合成底（4 表面最差）≥ 4.5:1`, () => {
+        const scope = blocks[theme]
+        const fg = resolve(`--lnk-${key}`, scope)
+        const hoverRaw = scope.decls.get(`--lnk-${key}-bg-hover`)
+        expect(fg, `${theme} 缺 --lnk-${key}`).toBeTruthy()
+        expect(hoverRaw, `${theme} 缺 --lnk-${key}-bg-hover`).toBeTruthy()
+        const hoverRgba = parseRgba(hoverRaw!)!
+        let worst = Number.POSITIVE_INFINITY
+        for (const s of SURFACES) {
+          const surface = resolve(s, scope)
+          const chipBg = compositeOver(hoverRgba, surface!)
+          worst = Math.min(worst, contrast(fg!, chipBg))
+        }
+        expect(
+          worst,
+          `${theme} 状态文字 ${key} 压 -bg-hover 合成底最差 ${worst.toFixed(2)}:1（要求 ≥4.5:1）`,
+        ).toBeGreaterThanOrEqual(4.5)
+      })
+    }
+  }
+})
+
 describe('阴影（锚链）：五档成对、深海更重、档位单调加重', () => {
   for (const level of SHADOW_LEVELS) {
     it(`${level}：深色投影必须比浅色重（深海 vs 阳光海面）`, () => {
