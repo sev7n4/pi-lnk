@@ -252,7 +252,11 @@ describe('S0-1 幽灵模型下架 sync 闭环', () => {
     expect(plan.changed).toBe(true)
     // selectable：3 个幽灵清掉，真实模型保留原顺序，无复活
     const selectable = JSON.parse(plan.data.selectableTextModels!) as string[]
-    expect(selectable).toEqual([agnesRef])
+    // 2026-10-10 目录补 agnes-2.5-flash 接位条目，sync 会一并补入 selectable
+    expect(selectable).toEqual([
+      agnesRef,
+      encodeChannelModel(PLATFORM_CHANNEL_ID, 'agnes-2.5-flash'),
+    ])
     // disabled：幽灵的停用记录一并清理（清空）
     expect(JSON.parse(plan.data.disabledModels!) as string[]).toEqual([])
 
