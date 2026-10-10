@@ -16,7 +16,7 @@ import {
       <span class="font-display text-base font-semibold">{{ BRAND_NAME }}</span>
     </RouterLink>
 
-    <header class="mt-10 border-b border-white/10 pb-8">
+    <header class="mt-10 border-b border-overlay/10 pb-8">
       <h1 class="font-display text-3xl font-semibold text-fg">{{ TERMS_TITLE }}</h1>
       <p class="mt-4 text-sm text-fg-3">
         更新日期：2026-09-14 · 生效日期：2026-09-14
@@ -92,7 +92,7 @@ import {
       </section>
     </article>
 
-    <footer class="legal-page__footer mt-16 border-t border-white/10 pt-8 text-center text-xs text-fg-3">
+    <footer class="legal-page__footer mt-16 border-t border-overlay/10 pt-8 text-center text-xs text-fg-3">
       <p>{{ LEGAL_ENTITY }}</p>
       <p class="mt-2">
         <a :href="`mailto:${SUPPORT_EMAIL}`" class="hover:text-fg-2">{{ SUPPORT_EMAIL }}</a>

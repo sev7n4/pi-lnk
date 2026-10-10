@@ -180,7 +180,7 @@ async function handlePublish() {
       <div>
         <label class="mb-1 block text-xs text-fg-3">主成片节点 <span class="text-red-400">*</span></label>
         <div v-if="loadingNodes" class="py-4 text-center text-sm text-fg-3">加载节点中…</div>
-        <div v-else-if="!primaryNodes.length" class="rounded-lg border border-dashed border-white/10 p-4 text-sm text-fg-3">
+        <div v-else-if="!primaryNodes.length" class="rounded-lg border border-dashed border-overlay/10 p-4 text-sm text-fg-3">
           当前画布没有可发布的图片/视频节点，请先生成或上传媒体
         </div>
         <el-radio-group v-else v-model="primaryNodeId" class="flex w-full flex-col gap-2">
@@ -188,7 +188,7 @@ async function handlePublish() {
             v-for="node in primaryNodes"
             :key="node.id"
             :value="node.id"
-            class="primary-node-radio !mr-0 !h-auto w-full rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2"
+            class="primary-node-radio !mr-0 !h-auto w-full rounded-lg border border-overlay/8 bg-overlay/[0.03] px-3 py-2"
           >
             <div class="flex w-full min-w-0 items-center gap-3">
               <video
@@ -209,7 +209,7 @@ async function handlePublish() {
               <div class="flex shrink-0 items-center gap-1" @click.stop>
                 <button
                   type="button"
-                  class="rounded-md px-2 py-1 text-[11px] text-fg-3 transition hover:bg-white/10 hover:text-fg"
+                  class="rounded-md px-2 py-1 text-[11px] text-fg-3 transition hover:bg-overlay/10 hover:text-fg"
                   title="预览"
                   @click="previewNode(node, $event)"
                 >

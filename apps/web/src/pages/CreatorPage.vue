@@ -55,7 +55,7 @@ function viewShare(workId: string) {
     </div>
 
     <template v-else-if="profile">
-      <header class="mb-10 flex items-center gap-5 rounded-2xl border border-white/8 bg-surface-base p-6">
+      <header class="mb-10 flex items-center gap-5 rounded-2xl border border-overlay/8 bg-surface-base p-6">
         <div class="flex h-16 w-16 items-center justify-center rounded-full bg-[#6366f1]/30 text-2xl font-semibold">
           {{ profile.user.nickname[0] }}
         </div>

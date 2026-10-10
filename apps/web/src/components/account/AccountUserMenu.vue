@@ -84,7 +84,7 @@ const membershipLabel = (value?: string) =>
         </div>
         <button
           type="button"
-          class="mt-2.5 flex w-full items-center justify-between rounded-lg bg-white/12 text-[11px] text-fg transition hover:bg-white/20"
+          class="mt-2.5 flex w-full items-center justify-between rounded-lg bg-overlay/12 text-[11px] text-fg transition hover:bg-overlay/20"
           :class="compact ? 'px-2 py-1' : 'px-2.5 py-1.5'"
           @click="openMembership"
         >

@@ -61,7 +61,7 @@ function cellTitle(cell: HeatmapCell) {
 <template>
   <section
     tabindex="0"
-    class="rounded-2xl border border-white/8 bg-surface-canvas p-5 text-fg outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
+    class="rounded-2xl border border-overlay/8 bg-surface-canvas p-5 text-fg outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
   >
     <header class="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
       <div>
@@ -72,7 +72,7 @@ function cellTitle(cell: HeatmapCell) {
         <p class="text-xs text-fg-3">{{ activeDays }} 个活跃日</p>
         <div class="flex items-center gap-1 text-[10px] text-fg-3">
           <span>低</span>
-          <span class="h-3 w-3 rounded-[3px] bg-white/[0.06]" />
+          <span class="h-3 w-3 rounded-[3px] bg-overlay/[0.06]" />
           <span class="h-3 w-3 rounded-[3px]" style="background-color: #0e4429" />
           <span class="h-3 w-3 rounded-[3px]" style="background-color: #006d32" />
           <span class="h-3 w-3 rounded-[3px]" style="background-color: #26a641" />
@@ -109,7 +109,7 @@ function cellTitle(cell: HeatmapCell) {
           :key="cell.date"
           data-cell
           class="aspect-square w-full rounded-[3px]"
-          :class="isEmptyCell(cell) ? 'bg-white/[0.06]' : undefined"
+          :class="isEmptyCell(cell) ? 'bg-overlay/[0.06]' : undefined"
           :style="cellStyle(cell)"
           :title="cellTitle(cell)"
         />

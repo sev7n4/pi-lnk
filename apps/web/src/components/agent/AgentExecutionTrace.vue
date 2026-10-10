@@ -132,7 +132,7 @@ const phaseBadge = computed(() => {
   <div
     v-if="showTrace"
     class="agent-trace"
-    :class="dense ? 'mb-1' : 'mt-1.5 border-t border-white/10 pt-1.5'"
+    :class="dense ? 'mb-1' : 'mt-1.5 border-t border-overlay/10 pt-1.5'"
   >
     <button
       type="button"

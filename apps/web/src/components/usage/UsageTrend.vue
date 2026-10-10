@@ -68,17 +68,17 @@ const yScale = computed(() => {
 
 function capsuleClass(selected: boolean) {
   return selected
-    ? 'bg-white/12 text-fg'
+    ? 'bg-overlay/12 text-fg'
     : 'text-fg-3 hover:text-fg'
 }
 </script>
 
 <template>
-  <section class="rounded-2xl border border-white/8 bg-surface-canvas p-5 text-fg">
+  <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-5 text-fg">
     <header class="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
       <div class="space-y-3">
         <h2 class="text-sm font-medium">用量趋势</h2>
-        <div class="inline-flex rounded-full border border-white/8 p-1">
+        <div class="inline-flex rounded-full border border-overlay/8 p-1">
           <button
             v-for="item in RANGES"
             :key="item.key"
@@ -92,7 +92,7 @@ function capsuleClass(selected: boolean) {
           </button>
         </div>
       </div>
-      <div class="inline-flex flex-wrap rounded-full border border-white/8 p-1">
+      <div class="inline-flex flex-wrap rounded-full border border-overlay/8 p-1">
         <button
           v-for="item in SERIES"
           :key="item.key"
@@ -106,7 +106,7 @@ function capsuleClass(selected: boolean) {
       </div>
     </header>
 
-    <div v-if="loading" class="h-48 animate-pulse bg-white/5" />
+    <div v-if="loading" class="h-48 animate-pulse bg-overlay/5" />
     <svg
       v-else
       :viewBox="`0 0 ${trendPlot.width} ${trendPlot.height}`"

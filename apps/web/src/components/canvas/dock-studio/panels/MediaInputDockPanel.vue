@@ -76,7 +76,7 @@ function onFileChange(event: Event) {
     @close="emit('close')"
   >
     <div class="mb-3 flex gap-3 px-1">
-      <div class="h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+      <div class="h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-overlay/10 bg-black/30">
         <video v-if="url && mediaKind === 'video'" :src="url" class="h-full w-full object-cover" muted />
         <audio v-else-if="url && mediaKind === 'audio'" :src="url" controls class="w-full p-1" />
         <img v-else-if="url" :src="url" alt="" class="h-full w-full object-cover">
@@ -93,7 +93,7 @@ function onFileChange(event: Event) {
     <div class="bottom-toolbar-actions flex-wrap">
       <button
         type="button"
-        class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] text-fg-2 transition hover:bg-white/10"
+        class="rounded-lg border border-overlay/10 bg-overlay/5 px-2.5 py-1.5 text-[10px] text-fg-2 transition hover:bg-overlay/10"
         :disabled="locked"
         @click="pickFile"
       >
@@ -104,7 +104,7 @@ function onFileChange(event: Event) {
       <button
         v-if="canConvertImage && url"
         type="button"
-        class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] text-fg-2 hover:bg-white/10"
+        class="rounded-lg border border-overlay/10 bg-overlay/5 px-2.5 py-1.5 text-[10px] text-fg-2 hover:bg-overlay/10"
         :disabled="locked"
         @click="emit('convert', 'image')"
       >
@@ -113,7 +113,7 @@ function onFileChange(event: Event) {
       <button
         v-if="canConvertVideo && url"
         type="button"
-        class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] text-fg-2 hover:bg-white/10"
+        class="rounded-lg border border-overlay/10 bg-overlay/5 px-2.5 py-1.5 text-[10px] text-fg-2 hover:bg-overlay/10"
         :disabled="locked"
         @click="emit('convert', 'video')"
       >
@@ -122,7 +122,7 @@ function onFileChange(event: Event) {
       <button
         v-if="canConvertAudio && url"
         type="button"
-        class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] text-fg-2 hover:bg-white/10"
+        class="rounded-lg border border-overlay/10 bg-overlay/5 px-2.5 py-1.5 text-[10px] text-fg-2 hover:bg-overlay/10"
         :disabled="locked"
         @click="emit('convert', 'audio')"
       >

@@ -64,7 +64,7 @@ onMounted(load)
         v-for="story in stories"
         :key="story.id"
         type="button"
-        class="overflow-hidden rounded-2xl border border-white/8 bg-surface-base text-left transition hover:border-[#6366f1]/40"
+        class="overflow-hidden rounded-2xl border border-overlay/8 bg-surface-base text-left transition hover:border-[#6366f1]/40"
         @click="openStory(story)"
       >
         <div class="aspect-[4/3] overflow-hidden bg-surface-elevated">

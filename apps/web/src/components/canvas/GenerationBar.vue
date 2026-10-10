@@ -59,7 +59,7 @@ function toggleVoice() {
 </script>
 
 <template>
-  <div class="border-t border-white/5 bg-surface-base backdrop-blur-xl">
+  <div class="border-t border-overlay/5 bg-surface-base backdrop-blur-xl">
     <div class="mx-auto max-w-4xl p-4">
       <div class="mb-3 flex items-center gap-2">
         <button
@@ -94,8 +94,8 @@ function toggleVoice() {
           :class="speech.listening.value
             ? 'bg-red-500/20 text-red-400 animate-pulse'
             : speech.supported
-              ? 'bg-white/5 text-fg-2 hover:bg-white/10'
-              : 'bg-white/5 text-fg-3'"
+              ? 'bg-overlay/5 text-fg-2 hover:bg-overlay/10'
+              : 'bg-overlay/5 text-fg-3'"
           :title="speech.supported ? '语音输入' : '浏览器不支持语音识别'"
           @click="toggleVoice"
         >

@@ -3261,7 +3261,7 @@ defineExpose({
 
                   <div
                     v-if="showPlanningThinkingControls"
-                    class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1"
+                    class="flex items-center gap-1.5 rounded-lg border border-overlay/10 bg-overlay/5 px-2 py-1"
                   >
                     <button
                       type="button"

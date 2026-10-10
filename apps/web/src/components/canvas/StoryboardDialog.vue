@@ -110,7 +110,7 @@ async function optimizePrompt(shot: StoryboardShot) {
       <article
         v-for="(shot, index) in localShots"
         :key="shot.id"
-        class="overflow-hidden rounded-xl border border-white/10 bg-surface-base"
+        class="overflow-hidden rounded-xl border border-overlay/10 bg-surface-base"
       >
         <div class="grid gap-0 md:grid-cols-[200px_1fr]">
           <button
@@ -140,7 +140,7 @@ async function optimizePrompt(shot: StoryboardShot) {
                 :class="{
                   'bg-yellow-600/20 text-yellow-400': shot.status === 'generating',
                   'bg-green-600/20 text-green-400': shot.status === 'generated' || shot.status === 'completed',
-                  'bg-white/5 text-fg-3': !shot.status || shot.status === 'draft',
+                  'bg-overlay/5 text-fg-3': !shot.status || shot.status === 'draft',
                 }"
               >
                 {{ shot.status === 'generating' ? '生成中' : (shot.status === 'generated' || shot.status === 'completed') ? '已完成' : '草稿' }}

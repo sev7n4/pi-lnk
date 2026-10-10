@@ -50,15 +50,15 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
   <Teleport to="body">
     <div class="fixed inset-0 z-[130]" @click="emit('close')">
       <div
-        class="dock-ref-preview pointer-events-auto fixed w-[340px] max-h-[min(420px,70vh)] overflow-hidden rounded-xl border border-white/12 bg-[rgba(24,24,24,0.96)] shadow-2xl backdrop-blur-xl"
+        class="dock-ref-preview pointer-events-auto fixed w-[340px] max-h-[min(420px,70vh)] overflow-hidden rounded-xl border border-overlay/12 bg-[rgba(24,24,24,0.96)] shadow-2xl backdrop-blur-xl"
         :style="style"
         @click.stop
       >
-        <div class="flex items-center justify-between border-b border-white/8 px-3 py-2">
+        <div class="flex items-center justify-between border-b border-overlay/8 px-3 py-2">
           <span class="truncate text-xs text-fg-2">{{ refItem.refKey }} · {{ refItem.label }}</span>
           <button
             type="button"
-            class="rounded-md p-1 text-fg-3 hover:bg-white/10 hover:text-fg"
+            class="rounded-md p-1 text-fg-3 hover:bg-overlay/10 hover:text-fg"
             aria-label="关闭预览"
             @click="emit('close')"
           >

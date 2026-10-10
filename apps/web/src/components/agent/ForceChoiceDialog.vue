@@ -68,7 +68,7 @@ function onSecondary() {
     @click.self="close"
   >
     <div
-      class="w-full max-w-md rounded-2xl border border-white/10 bg-surface-base p-5 text-fg shadow-2xl"
+      class="w-full max-w-md rounded-2xl border border-overlay/10 bg-surface-base p-5 text-fg shadow-2xl"
       role="dialog"
       aria-modal="true"
     >
@@ -78,7 +78,7 @@ function onSecondary() {
         <button
           v-if="meta()!.secondary"
           type="button"
-          class="rounded-lg px-3 py-1.5 text-sm text-fg-2 transition hover:bg-white/5"
+          class="rounded-lg px-3 py-1.5 text-sm text-fg-2 transition hover:bg-overlay/5"
           @click="onSecondary"
         >
           {{ meta()!.secondary }}

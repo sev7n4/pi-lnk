@@ -208,7 +208,7 @@ onMounted(() => {
       <h1 class="text-2xl font-semibold">个人中心</h1>
       <button
         type="button"
-        class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-fg-3 transition hover:bg-white/[0.06] hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
+        class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-fg-3 transition hover:bg-overlay/[0.06] hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
         aria-label="关闭"
         @click="closeProfile"
       >
@@ -216,13 +216,13 @@ onMounted(() => {
       </button>
     </div>
 
-    <div class="mb-6 inline-flex rounded-full border border-white/8 bg-surface-canvas p-1">
+    <div class="mb-6 inline-flex rounded-full border border-overlay/8 bg-surface-canvas p-1">
       <button
         v-for="tab in ([['account', '账户'], ['billing', '用量']] as const)"
         :key="tab[0]"
         type="button"
         class="rounded-full px-4 py-1.5 text-sm transition"
-        :class="activeTab === tab[0] ? 'bg-white/12 text-fg' : 'text-fg-3 hover:text-fg'"
+        :class="activeTab === tab[0] ? 'bg-overlay/12 text-fg' : 'text-fg-3 hover:text-fg'"
         @click="setTab(tab[0])"
       >
         {{ tab[1] }}
@@ -230,7 +230,7 @@ onMounted(() => {
     </div>
 
     <div v-if="profile && activeTab === 'account'" data-account-cards class="space-y-4">
-      <section class="rounded-2xl border border-white/8 bg-surface-canvas p-6">
+      <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-6">
         <div class="flex items-center gap-4">
           <div class="profile-avatar flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full">
             <img
@@ -243,14 +243,14 @@ onMounted(() => {
           <div class="min-w-0">
             <h2 class="truncate text-lg font-medium">{{ profile.nickname }}</h2>
             <p class="text-sm text-fg-3">{{ profile.phone }}</p>
-            <span class="mt-1 inline-block rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-fg-2">
+            <span class="mt-1 inline-block rounded-full bg-overlay/[0.06] px-2.5 py-0.5 text-xs text-fg-2">
               {{ membershipLabel }}
             </span>
           </div>
         </div>
       </section>
 
-      <section class="rounded-2xl border border-white/8 bg-surface-canvas p-6">
+      <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-6">
         <p class="text-sm text-fg-3">创作能量</p>
         <p class="mt-2 text-3xl font-semibold tabular-nums text-[var(--neo-warm)]">{{ profile.points ?? 0 }}</p>
         <p v-if="isFreeMembership" class="mt-3 text-xs text-fg-3">开通会员，获得更多积分与高级能力</p>
@@ -258,19 +258,19 @@ onMounted(() => {
           <button type="button" class="flex-1 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-black" @click="showMembership = true">
             充值
           </button>
-          <button type="button" class="flex-1 rounded-xl border border-white/15 px-4 py-2.5 text-sm text-fg" @click="showMembership = true">
+          <button type="button" class="flex-1 rounded-xl border border-overlay/15 px-4 py-2.5 text-sm text-fg" @click="showMembership = true">
             {{ isFreeMembership ? '升级会员' : '管理会员' }}
           </button>
         </div>
       </section>
 
-      <section class="rounded-2xl border border-white/8 bg-surface-canvas p-6">
+      <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-6">
         <p class="text-sm text-fg-3">我的邀请码</p>
         <div class="mt-2 flex items-center gap-3">
           <code class="text-lg tracking-widest text-fg">{{ profile.inviteCode ?? '—' }}</code>
           <button
             type="button"
-            class="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-fg-2 transition hover:bg-white/[0.06] hover:text-fg disabled:opacity-40"
+            class="shrink-0 rounded-lg border border-overlay/15 px-3 py-1.5 text-xs text-fg-2 transition hover:bg-overlay/[0.06] hover:text-fg disabled:opacity-40"
             :disabled="!profile.inviteCode"
             @click="copyInvite"
           >
@@ -287,7 +287,7 @@ onMounted(() => {
         <button type="button" class="ml-2 underline" @click="loadUsage">重新加载</button>
       </div>
       <UsageOverviewCards v-else-if="usage" :overview="usage.overview" />
-      <div v-else class="h-28 animate-pulse rounded-2xl bg-white/5" />
+      <div v-else class="h-28 animate-pulse rounded-2xl bg-overlay/5" />
 
       <UsageHeatmap
         v-if="usage && !usageError"
@@ -296,7 +296,7 @@ onMounted(() => {
         :active-days="usage.heatmap.activeDays"
         :days="usage.heatmap.days"
       />
-      <div v-else-if="usageViewLoading" class="h-48 animate-pulse rounded-2xl bg-white/5" />
+      <div v-else-if="usageViewLoading" class="h-48 animate-pulse rounded-2xl bg-overlay/5" />
 
       <div v-if="daysError" class="rounded-2xl border border-red-400/15 p-6 text-sm text-red-300/80">
         {{ daysError }}

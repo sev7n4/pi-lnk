@@ -244,6 +244,11 @@
   --lnk-selected-overlay: rgba(255, 255, 255, 0.14);
   --lnk-scrim: rgba(10, 10, 14, 0.62);
 
+  /* 跨主题叠加通道：深=白，浅=黑。配合 Tailwind <alpha-value> 让 bg-white/X 这类
+     任意透明度类可双主题翻转（浅色主题下白底叠白会隐形，翻成黑即修复）。
+     仅承载"叠在表面之上的半透明 tint"，不替代 --lnk-surface-overlay（实体半透明面）。 */
+  --lnk-overlay-rgb: 255 255 255;
+
   /* 画布专属 */
   --lnk-edge: rgba(148, 151, 180, 0.3);
   --lnk-edge-hover: rgba(178, 181, 210, 0.55);
@@ -313,6 +318,8 @@
   --lnk-pressed-overlay: rgba(23, 25, 35, 0.09);
   --lnk-selected-overlay: rgba(23, 25, 35, 0.12);
   --lnk-scrim: rgba(23, 25, 35, 0.34);
+
+  --lnk-overlay-rgb: 0 0 0;
 
   --lnk-edge: rgba(23, 25, 35, 0.22);
   --lnk-edge-hover: rgba(23, 25, 35, 0.45);

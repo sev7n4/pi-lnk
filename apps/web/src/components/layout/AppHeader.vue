@@ -32,7 +32,7 @@ function navigate(path: string) {
 </script>
 
 <template>
-  <!-- ⛔ 这里曾经是 `border-white/5 bg-[#141414]/95`：深色的**死值**，
+  <!-- ⛔ 这里曾经是 `border-overlay/5 bg-[#141414]/95`：深色的**死值**，
        浅色主题上线后 header 会继续保持近黑 —— 而 header 正是全站唯一常驻的 chrome。
        改指语义 token 后，深色取值基本不变（canvas #131318 ≈ 旧 #141414）。
        ⚠️ `bg-surface/95` 不生效：CSS 变量类无法做 alpha 合成（见 tailwind.config.js 注释），

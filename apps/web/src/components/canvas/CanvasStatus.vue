@@ -20,7 +20,7 @@ const hasGenerating = computed(() => props.generatingCount > 0)
 
 <template>
   <div
-    class="canvas-status rounded-xl border border-white/10 bg-[rgba(20,20,20,0.92)] shadow-xl backdrop-blur-md"
+    class="canvas-status rounded-xl border border-overlay/10 bg-[rgba(20,20,20,0.92)] shadow-xl backdrop-blur-md"
     :class="compact ? 'mb-0 px-2 py-1.5' : 'mb-2 px-3 py-2'"
   >
     <div
@@ -42,12 +42,12 @@ const hasGenerating = computed(() => props.generatingCount > 0)
       </span>
     </div>
 
-    <div v-if="showGroups && groups.length" class="mt-2 max-h-[120px] overflow-y-auto border-t border-white/5 pt-2">
+    <div v-if="showGroups && groups.length" class="mt-2 max-h-[120px] overflow-y-auto border-t border-overlay/5 pt-2">
       <button
         v-for="g in groups"
         :key="g.id"
         type="button"
-        class="mb-0.5 flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-[10px] text-fg-2 hover:bg-white/5"
+        class="mb-0.5 flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-[10px] text-fg-2 hover:bg-overlay/5"
         @click="emit('focusGroup', g.id)"
       >
         <span>{{ g.title }}</span>

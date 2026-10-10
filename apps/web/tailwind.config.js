@@ -24,6 +24,12 @@ export default {
   theme: {
     extend: {
       colors: {
+        /* ---- 跨主题叠加通道：深=白，浅=黑，可带任意透明度 ----
+           取代手写 bg-white/X / border-white/X（浅色主题下白底叠白会隐形）。
+           用法：bg-overlay/5、border-overlay/8、outline-overlay/40 等，
+           透明度走 <alpha-value>，深=白、浅=黑自动翻转。 */
+        overlay: 'rgb(var(--lnk-overlay-rgb) / <alpha-value>)',
+
         /* ---- 文字：三档，对应 --lnk-text-primary / secondary / muted ---- */
         fg: {
           DEFAULT: 'var(--lnk-text-primary)',
