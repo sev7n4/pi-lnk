@@ -137,7 +137,7 @@ function exportCsv() {
 </script>
 
 <template>
-  <section class="rounded-2xl border border-white/8 bg-[#16161C] p-5 text-fg">
+  <section class="rounded-2xl border border-white/8 bg-surface-canvas p-5 text-fg">
     <header class="mb-3 flex items-center justify-between gap-3">
       <h2 class="text-sm font-medium">用量明细</h2>
       <button
@@ -192,7 +192,7 @@ function exportCsv() {
                   <div
                     v-for="tx in items"
                     :key="tx.id"
-                    class="rounded-2xl border border-white/8 bg-[#1a1a1a] p-4"
+                    class="rounded-2xl border border-white/8 bg-surface-base p-4"
                   >
                     <div class="flex items-start justify-between gap-4">
                       <div class="min-w-0">
@@ -231,7 +231,7 @@ function exportCsv() {
                   <p v-if="loadError" class="py-2 text-center text-xs text-red-300/70">{{ loadError }}</p>
                   <p
                     v-else-if="!ledgerLoading && !items.length"
-                    class="rounded-2xl border border-white/8 bg-[#1a1a1a] py-8 text-center text-sm text-fg-3"
+                    class="rounded-2xl border border-white/8 bg-surface-base py-8 text-center text-sm text-fg-3"
                   >
                     这一天没有流水。
                   </p>

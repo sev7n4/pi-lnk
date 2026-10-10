@@ -48,14 +48,14 @@ function viewShare(workId: string) {
 <template>
   <div class="mx-auto max-w-7xl px-6 py-10">
     <div v-if="loading" class="animate-pulse space-y-6">
-      <div class="h-24 rounded-2xl bg-[#1a1a1a]" />
+      <div class="h-24 rounded-2xl bg-surface-base" />
       <div class="grid grid-cols-4 gap-4">
-        <div v-for="i in 4" :key="i" class="aspect-video rounded-2xl bg-[#1a1a1a]" />
+        <div v-for="i in 4" :key="i" class="aspect-video rounded-2xl bg-surface-base" />
       </div>
     </div>
 
     <template v-else-if="profile">
-      <header class="mb-10 flex items-center gap-5 rounded-2xl border border-white/8 bg-[#1a1a1a] p-6">
+      <header class="mb-10 flex items-center gap-5 rounded-2xl border border-white/8 bg-surface-base p-6">
         <div class="flex h-16 w-16 items-center justify-center rounded-full bg-[#6366f1]/30 text-2xl font-semibold">
           {{ profile.user.nickname[0] }}
         </div>

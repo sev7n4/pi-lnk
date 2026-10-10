@@ -110,12 +110,12 @@ async function optimizePrompt(shot: StoryboardShot) {
       <article
         v-for="(shot, index) in localShots"
         :key="shot.id"
-        class="overflow-hidden rounded-xl border border-white/10 bg-[#1a1a1a]"
+        class="overflow-hidden rounded-xl border border-white/10 bg-surface-base"
       >
         <div class="grid gap-0 md:grid-cols-[200px_1fr]">
           <button
             type="button"
-            class="relative aspect-video bg-[#242424] text-left md:aspect-auto md:min-h-[140px]"
+            class="relative aspect-video bg-surface-elevated text-left md:aspect-auto md:min-h-[140px]"
             @click="emit('select', shot.id)"
           >
             <img

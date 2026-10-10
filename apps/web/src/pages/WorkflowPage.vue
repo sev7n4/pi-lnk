@@ -421,7 +421,7 @@ watch(() => auth.isLoggedIn, () => {
       </div>
 
       <div v-if="loading" class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <div v-for="i in 8" :key="i" class="aspect-video animate-pulse rounded-2xl bg-[#1a1a1a]" />
+        <div v-for="i in 8" :key="i" class="aspect-video animate-pulse rounded-2xl bg-surface-base" />
       </div>
 
       <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

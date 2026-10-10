@@ -216,7 +216,7 @@ onMounted(() => {
       </button>
     </div>
 
-    <div class="mb-6 inline-flex rounded-full border border-white/8 bg-[#16161C] p-1">
+    <div class="mb-6 inline-flex rounded-full border border-white/8 bg-surface-canvas p-1">
       <button
         v-for="tab in ([['account', '账户'], ['billing', '用量']] as const)"
         :key="tab[0]"
@@ -230,7 +230,7 @@ onMounted(() => {
     </div>
 
     <div v-if="profile && activeTab === 'account'" data-account-cards class="space-y-4">
-      <section class="rounded-2xl border border-white/8 bg-[#16161C] p-6">
+      <section class="rounded-2xl border border-white/8 bg-surface-canvas p-6">
         <div class="flex items-center gap-4">
           <div class="profile-avatar flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full">
             <img
@@ -250,7 +250,7 @@ onMounted(() => {
         </div>
       </section>
 
-      <section class="rounded-2xl border border-white/8 bg-[#16161C] p-6">
+      <section class="rounded-2xl border border-white/8 bg-surface-canvas p-6">
         <p class="text-sm text-fg-3">创作能量</p>
         <p class="mt-2 text-3xl font-semibold tabular-nums text-[var(--neo-warm)]">{{ profile.points ?? 0 }}</p>
         <p v-if="isFreeMembership" class="mt-3 text-xs text-fg-3">开通会员，获得更多积分与高级能力</p>
@@ -264,7 +264,7 @@ onMounted(() => {
         </div>
       </section>
 
-      <section class="rounded-2xl border border-white/8 bg-[#16161C] p-6">
+      <section class="rounded-2xl border border-white/8 bg-surface-canvas p-6">
         <p class="text-sm text-fg-3">我的邀请码</p>
         <div class="mt-2 flex items-center gap-3">
           <code class="text-lg tracking-widest text-fg">{{ profile.inviteCode ?? '—' }}</code>

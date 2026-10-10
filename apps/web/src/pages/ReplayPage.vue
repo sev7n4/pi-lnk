@@ -167,7 +167,7 @@ onUnmounted(() => { if (playTimer) clearInterval(playTimer) })
 
 <template>
   <div class="flex h-[calc(100vh-4rem)]">
-    <aside class="flex w-[300px] shrink-0 flex-col border-r border-white/5 bg-[#1a1a1a]">
+    <aside class="flex w-[300px] shrink-0 flex-col border-r border-white/5 bg-surface-base">
       <div class="border-b border-white/5 p-4">
         <button class="btn-ghost mb-2 text-xs" @click="router.push(`/workflow/${sessionId}`)">← 返回画布</button>
         <h2 class="text-sm font-medium">{{ sessionTitle }}</h2>
