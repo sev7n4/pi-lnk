@@ -30,3 +30,5 @@ fi
 echo "初始化完成: $DEPLOY_DIR"
 echo "下一步: push main 触发 GHA deploy，或手动:"
 echo "  cd $DEPLOY_DIR && IMAGE_TAG=<git-sha> bash deploy/deploy-remote-build.sh"
+
+# noop: 触发 deploy 重跑（前序 run 因 CVM logind session 泄漏挂死；见 2026-10-10 事故记录）
