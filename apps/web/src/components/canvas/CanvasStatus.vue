@@ -31,7 +31,7 @@ const hasGenerating = computed(() => props.generatingCount > 0)
       <span>{{ edgeCount }} 连线</span>
       <button
         type="button"
-        class="transition hover:text-[#818cf8]"
+        class="transition hover:text-fg-accent"
         @click="showGroups = !showGroups"
       >
         {{ groupCount }} 分组

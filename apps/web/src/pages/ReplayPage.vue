@@ -185,7 +185,7 @@ onUnmounted(() => { if (playTimer) clearInterval(playTimer) })
           :key="step.id"
           class="mb-2 cursor-pointer rounded-lg border px-3 py-2 text-xs transition"
           :class="idx === currentStep
-            ? 'border-[#6366f1]/50 bg-[#6366f1]/15 text-[#818cf8]'
+            ? 'border-accent bg-accent-subtle text-fg-accent'
             : 'border-overlay/5 text-fg-2 hover:bg-overlay/5'"
           @click="goToStep(idx)"
         >

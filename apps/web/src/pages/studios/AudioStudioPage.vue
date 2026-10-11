@@ -52,7 +52,7 @@ onMounted(loadRecords)
           v-for="v in voices"
           :key="v.id"
           class="rounded-lg px-3 py-1.5 text-xs transition"
-          :class="voice === v.id ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-overlay/5 text-fg-2'"
+          :class="voice === v.id ? 'bg-accent-subtle text-fg-accent' : 'bg-overlay/5 text-fg-2'"
           @click="voice = v.id"
         >
           {{ v.label }}

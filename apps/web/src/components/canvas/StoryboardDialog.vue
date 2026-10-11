@@ -104,7 +104,7 @@ async function optimizePrompt(shot: StoryboardShot) {
     class="storyboard-dialog"
     destroy-on-close
   >
-    <p v-if="message" class="mb-3 text-xs text-[#818cf8]">{{ message }}</p>
+    <p v-if="message" class="mb-3 text-xs text-fg-accent">{{ message }}</p>
 
     <div v-if="localShots.length" class="space-y-4">
       <article

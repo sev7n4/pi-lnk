@@ -58,7 +58,7 @@ onMounted(loadVideos)
         v-for="(clip, idx) in timelineClips"
         :key="clip.id"
         class="w-32 shrink-0 cursor-pointer overflow-hidden rounded-lg border-2 transition"
-        :class="idx === playhead ? 'border-[#6366f1]' : 'border-transparent'"
+        :class="idx === playhead ? 'border-accent' : 'border-transparent'"
         @click="playhead = idx"
       >
         <img v-if="clip.url" :src="clip.url" class="aspect-video object-cover" alt="" />
@@ -73,7 +73,7 @@ onMounted(loadVideos)
         :key="v.id"
         type="button"
         class="overflow-hidden rounded-lg border transition"
-        :class="selectedIds.includes(v.id) ? 'border-[#6366f1]' : 'border-overlay/10 opacity-60 hover:opacity-100'"
+        :class="selectedIds.includes(v.id) ? 'border-accent' : 'border-overlay/10 opacity-60 hover:opacity-100'"
         @click="toggleClip(v.id)"
       >
         <img v-if="v.url" :src="v.url" class="aspect-video object-cover" alt="" />

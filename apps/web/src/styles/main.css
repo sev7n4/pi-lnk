@@ -47,7 +47,7 @@
     /* text-fg-on = --lnk-text-on-accent（两主题都是白字）。
        ⛔ 这里原来是 text-white：浅色主题下若底色被换成浅紫，白字会掉到不达标。 */
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-fg-on transition disabled:cursor-not-allowed disabled:opacity-50;
-    background: var(--lnk-accent-gradient);
+    background: var(--lnk-accent);
     box-shadow: var(--lnk-accent-glow);
   }
 

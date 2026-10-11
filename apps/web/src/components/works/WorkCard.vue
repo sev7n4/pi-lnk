@@ -50,7 +50,7 @@ function onHoverLeave() {
 
 <template>
   <article
-    class="group cursor-pointer overflow-hidden rounded-2xl border border-overlay/[0.08] bg-surface-base transition hover:border-[#6366f1]/30 hover:shadow-lg hover:shadow-[#6366f1]/5"
+    class="group cursor-pointer overflow-hidden rounded-2xl border border-overlay/[0.08] bg-surface-base transition hover:border-accent hover:shadow-lg hover:shadow-glow"
     @click="$emit('viewWork', work.id)"
     @mouseenter="onHoverEnter"
     @mouseleave="onHoverLeave"
@@ -82,7 +82,7 @@ function onHoverLeave() {
 
       <div class="absolute bottom-3 left-3 flex gap-2">
         <button
-          class="rounded-lg bg-[#6366f1] px-3 py-1.5 text-xs font-medium backdrop-blur-sm transition hover:bg-[#5558e3]"
+          class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium backdrop-blur-sm transition hover:bg-accent-hover"
           @click.stop="$emit('viewWatch', work.id)"
         >
           立即观看
@@ -106,12 +106,12 @@ function onHoverLeave() {
     <div class="p-4">
       <div class="mb-2 flex items-center gap-2">
         <button
-          class="flex h-6 w-6 items-center justify-center rounded-full bg-[#6366f1]/30 text-[10px] hover:bg-[#6366f1]/50"
+          class="flex h-6 w-6 items-center justify-center rounded-full bg-accent-subtle text-[10px]"
           @click.stop="$emit('viewAuthor', work.authorId)"
         >
           {{ work.authorName[0] }}
         </button>
-        <button class="text-xs text-fg-3 hover:text-[#818cf8]" @click.stop="$emit('viewAuthor', work.authorId)">
+        <button class="text-xs text-fg-3 hover:text-fg-accent" @click.stop="$emit('viewAuthor', work.authorId)">
           @{{ work.authorName }}
         </button>
       </div>

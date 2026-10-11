@@ -84,7 +84,7 @@ async function handleShare() {
         <div class="p-6">
           <h1 class="text-2xl font-semibold">{{ work.title }}</h1>
           <button
-            class="mt-3 flex items-center gap-2 text-sm text-[#818cf8] hover:underline"
+            class="mt-3 flex items-center gap-2 text-sm text-fg-accent hover:underline"
             @click="viewCreator"
           >
             <span
@@ -95,7 +95,7 @@ async function handleShare() {
             </span>
             <span
               v-else
-              class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#6366f1]/30 text-xs"
+              class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-accent-subtle text-xs"
             >
               {{ work.authorName[0] }}
             </span>

@@ -24,7 +24,7 @@ const route = useRoute()
           :to="link.path"
           class="block rounded-lg px-3 py-2 text-sm transition"
           :class="route.path === link.path
-            ? 'bg-[#6366f1]/20 text-[#818cf8]'
+            ? 'bg-accent-subtle text-fg-accent'
             : 'text-fg-2 hover:bg-overlay/5 hover:text-fg'"
         >
           {{ link.label }}
