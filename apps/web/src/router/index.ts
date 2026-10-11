@@ -92,6 +92,18 @@ const router = createRouter({
       name: 'privacy',
       component: () => import('../pages/PrivacyPage.vue'),
     },
+    {
+      path: '/admin',
+      component: () => import('@/pages/admin/AdminLayoutPage.vue'),
+      children: [
+        { path: '', redirect: '/admin/models' },
+        { path: 'models', name: 'admin-models', component: () => import('@/pages/admin/AdminModelsPage.vue') },
+        { path: 'routes', name: 'admin-routes', component: () => import('@/pages/admin/AdminRoutesPage.vue') },
+        { path: 'health', name: 'admin-health', component: () => import('@/pages/admin/AdminHealthPage.vue') },
+        { path: 'pricing', name: 'admin-pricing', component: () => import('@/pages/admin/AdminPricingPage.vue') },
+        { path: 'audit', name: 'admin-audit', component: () => import('@/pages/admin/AdminAuditPage.vue') },
+      ],
+    },
   ],
 })
 
