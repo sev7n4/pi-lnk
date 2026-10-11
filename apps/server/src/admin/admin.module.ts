@@ -3,6 +3,7 @@ import { AdminTokenGuard } from './admin-token.guard'
 import { AuditLogsAdminController } from './audit-logs.controller'
 import { ModelCatalogAdminController } from './model-catalog.controller'
 import { ModelHealthAdminController } from './model-health.controller'
+import { PlatformChannelAdminController } from './platform-channel.controller'
 import { UpstreamProbeAdminController } from './upstream-probe-admin.controller'
 import { UpstreamRoutesAdminController } from './upstream-routes.controller'
 
@@ -20,6 +21,7 @@ import { UpstreamRoutesAdminController } from './upstream-routes.controller'
     ModelHealthAdminController,
     ModelCatalogAdminController,
     UpstreamRoutesAdminController,
+    PlatformChannelAdminController,
   ],
   providers: [AdminTokenGuard],
 })
