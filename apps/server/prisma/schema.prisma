@@ -291,6 +291,9 @@ model UpstreamProbeRun {
   error      String?
   /// 探活触发来源：'startup'|'periodic'|'manual'（B3 加列，旧行为 NULL，无回填）
   reason     String?
+  /// 盲区声明跳过标记（model-ops Task 3）：'probeMode=none' = 该上游无 /models 在售清单，
+  /// 本轮有意跳过拉取与 diff（非失败）；旧行为 NULL，无回填
+  skipped    String?
 
   @@index([upstream, ranAt])
 }

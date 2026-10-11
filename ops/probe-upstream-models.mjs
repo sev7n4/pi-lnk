@@ -85,6 +85,9 @@ const UPSTREAMS = [
   { id: 'fal', label: 'fal', baseUrlEnv: 'FAL_BASE_URL', keyEnv: 'FAL_KEY', defaultBaseUrl: 'https://fal.run' },
   { id: 'minimax', label: 'MiniMax', baseUrlEnv: 'MINIMAX_BASE_URL', keyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io' },
   { id: 'stepfun', label: 'StepFun', baseUrlEnv: 'STEPFUN_BASE_URL', keyEnv: 'STEPFUN_API_KEY', defaultBaseUrl: 'https://api.stepfun.com/v1' },
+  // model-ops Task 3：zhipu 上游（2026-10-10 接入）。probeMode 从 shared 注册表读取
+  // （唯一事实来源，见 main 的 upstreamProbeMode 接线），此处不写死。
+  { id: 'zhipu', label: '智谱 BigModel', baseUrlEnv: 'ZHIPU_BASE_URL', keyEnv: 'ZHIPU_API_KEY', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
 ]
 
 const TIMEOUT_MS = Number(process.env.PROBE_TIMEOUT_MS ?? 15000)
@@ -217,6 +220,8 @@ function renderReport({ catalogSize, results, proxyNote }) {
       lines.push(`- 匹配：${probe.diff.matched.length} 个`)
     } else if (probe.status === 'NO_MODELS_ENDPOINT') {
       lines.push(`- 状态：⏭️ NO_MODELS_ENDPOINT（该上游无 /models 端点，按约定跳过，不视为失败）`)
+    } else if (probe.status === 'SKIPPED') {
+      lines.push(`- 状态：⏭️ ${probe.reason}`)
     } else {
       const fatalMark = probe.fatal ? ' **（402/403：计入失败退出码，需充值/换 key）**' : ''
       lines.push(`- 状态：⛔ unavailable — ${probe.reason}${fatalMark}`)
@@ -231,7 +236,13 @@ function renderReport({ catalogSize, results, proxyNote }) {
   lines.push('|---|---|---|---|---|')
   for (const { upstream, probe } of results) {
     const status =
-      probe.status === 'ok' ? 'ok' : probe.status === 'NO_MODELS_ENDPOINT' ? 'NO_MODELS_ENDPOINT' : `unavailable(${probe.reason})`
+      probe.status === 'ok'
+        ? 'ok'
+        : probe.status === 'NO_MODELS_ENDPOINT'
+          ? 'NO_MODELS_ENDPOINT'
+          : probe.status === 'SKIPPED'
+            ? 'SKIPPED(probeMode=none)'
+            : `unavailable(${probe.reason})`
     const ghostCount = probe.status === 'ok' ? probe.diff.ghosts.length : 0
     const missingCount = probe.status === 'ok' ? probe.diff.missing.length : 0
     lines.push(`| ${upstream.label} | ${status} | ${probe.status === 'ok' ? probe.ids.length : '-'} | ${ghostCount} | ${missingCount} |`)
@@ -246,10 +257,18 @@ async function main() {
     process.exit(0)
   }
 
-  const [{ diffCatalogAgainstUpstream }, catalogMod] = await Promise.all([
+  const [{ diffCatalogAgainstUpstream }, catalogMod, routingMod] = await Promise.all([
     importShared('upstreamReconciliation.ts'),
     importShared('studioModelCatalog.ts'),
+    importShared('upstreamRouting.ts'),
   ])
+  // model-ops Task 3：probeMode 唯一事实来源 = shared UPSTREAM_REGISTRY（对账 id →
+  // 注册表 id 穷举映射，与 server 探活同款纪律；缺省 'models'）。
+  const upstreamProbeModeById = (id) => {
+    const registryId = id === 'agnes' ? 'agnes_hub' : id
+    const entry = routingMod.UPSTREAM_REGISTRY?.[registryId]
+    return entry?.probeMode ?? 'models'
+  }
   const catalog = catalogMod.STUDIO_MODEL_CATALOG ?? catalogMod.default?.STUDIO_MODEL_CATALOG
   if (!Array.isArray(catalog)) {
     throw new Error('shared 目录模块加载成功但不含 STUDIO_MODEL_CATALOG')
@@ -261,6 +280,14 @@ async function main() {
 
   const results = []
   for (const upstream of UPSTREAMS) {
+    // 盲区声明：跳过 fetch 与 diff，不产 ghost 判定（SKIPPED 不计失败退出码）。
+    if (upstreamProbeModeById(upstream.id) === 'none') {
+      results.push({
+        upstream,
+        probe: { status: 'SKIPPED', reason: 'probeMode=none（盲区声明：无 /models 在售清单，跳过 diff 不判 ghost）' },
+      })
+      continue
+    }
     const probe = await fetchModelIds(upstream, dispatcher)
     if (probe.status === 'ok') {
       probe.diff = diffCatalogAgainstUpstream(entries, probe.ids, ROUTING_MAP, { targetUpstream: upstream.id })
