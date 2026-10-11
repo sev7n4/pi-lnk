@@ -21,7 +21,7 @@
  * 因为画布 SSOT 在前端主画布（`saveCanvas` 整份覆盖），不是这个只读投影。
  */
 import { computed } from 'vue'
-import { VueFlow, useVueFlow, type Node, type Edge } from '@vue-flow/core'
+import { VueFlow, useVueFlow, MarkerType, type Node, type Edge } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { buildNodeGraphHtml } from './node-graph-export'
@@ -107,15 +107,23 @@ const zoomCompensation = computed(() => {
 })
 
 /** 视觉语义：类型 → 颜色/图标/尺寸。未知类型走中性色（不编造语义）。 */
-const TYPE_STYLE: Record<string, { label: string; icon: string; w: number; h: number }> = {
-  image: { label: '图片', icon: '🖼', w: 168, h: 128 },
-  video: { label: '视频', icon: '🎬', w: 168, h: 110 },
-  audio: { label: '音频', icon: '🎵', w: 168, h: 96 },
-  text: { label: '文本', icon: '📝', w: 168, h: 110 },
-  table: { label: '表格', icon: '📊', w: 168, h: 110 },
-  group: { label: '分组', icon: '🗂', w: 200, h: 140 },
+/**
+ * 类型 → 视觉语言（2026-10-08 重设计）。
+ *
+ * ⭐ `accent` 是**主色**：深色主题下全部取 200档色阶（不是 600/800）——
+ *   600/800 在深底上对比不足（用户实测"看不清"），
+ *   200 是深底上可读性最高的档位，同时保留色彩身份。
+ * ⭐ 浅色主题下由 CSS 变量 `border-color` 覆盖为 600 档（见样式注释）。
+ */
+const TYPE_STYLE: Record<string, { label: string; icon: string; w: number; h: number; accent: string }> = {
+  image: { label: '图片', icon: '🖼', w: 168, h: 128, accent: '#CECBF6' },
+  video: { label: '视频', icon: '🎬', w: 168, h: 110, accent: '#F5C4B3' },
+  audio: { label: '音频', icon: '🎵', w: 168, h: 96, accent: '#FAC775' },
+  text: { label: '文本', icon: '📝', w: 168, h: 110, accent: '#9FE1CB' },
+  table: { label: '表格', icon: '📊', w: 168, h: 110, accent: '#B5D4F4' },
+  group: { label: '分组', icon: '🗂', w: 200, h: 140, accent: '#D3D1C7' },
 }
-const NEUTRAL = { label: '节点', icon: '⬦', w: 150, h: 96 }
+const NEUTRAL = { label: '节点', icon: '⬦', w: 150, h: 96, accent: '#B4B2A9' }
 
 function styleOf(t?: string) {
   return (t && TYPE_STYLE[t]) || NEUTRAL
@@ -151,6 +159,9 @@ const vueEdges = computed<Edge[]>(() =>
     label: e.label,
     // 层级边（group→member）画成虚线，视觉上弱于显式连线
     animated: false,
+    // ⭐ 箭头（用户 2026-10-08 明确要"箭头等丰富元素"）：
+    //   有向边必须能读出方向，否则"谁依赖谁"要靠猜。
+    markerEnd: MarkerType.ArrowClosed,
   })),
 )
 
@@ -162,7 +173,7 @@ const hierarchyEdges = computed<Edge[]>(() =>
       id: `h${i}`,
       source: n.groupId!,
       target: n.id,
-      style: { strokeDasharray: '4 3', opacity: 0.45 },
+      style: { strokeDasharray: '4 3', opacity: 0.6 },
     })),
 )
 
@@ -269,6 +280,21 @@ defineExpose({ fitView })
 </script>
 
 <template>
+  <!-- ⭐ 箭头 marker（用户明确要"箭头"）：定义一次，供全部有向边复用。
+       颜色用 `context-stroke` ⇒ 跟随边色，深浅主题都不失配。 -->
+  <defs>
+    <marker
+      id="ng-arrow"
+      viewBox="0 0 10 10"
+      refX="9"
+      refY="5"
+      markerWidth="7"
+      markerHeight="7"
+      orient="auto-start-reverse"
+    >
+      <path d="M0 1L9 5L0 9z" fill="context-stroke" />
+    </marker>
+  </defs>
   <div
     class="agent-node-graph"
     :style="{ '--ng-zoom-compensation': String(zoomCompensation) }"
@@ -378,10 +404,13 @@ defineExpose({ fitView })
              而不是 `'default'`，否则 slot 不生效、只剩一个默认矩形。 -->
         <template #node-agentNode="{ data }">
           <div class="ng-node-inner h-full w-full overflow-hidden">
+            <!-- ⭐ 顶部类型色条 = PPT 里的「主色」。一行色条让节点在灰底上
+                 一眼可辨类型，不必读文字。 -->
+            <div class="ng-accent-bar" :style="{ background: data.style.accent }" />
             <div
               v-if="data.thumb"
               class="w-full"
-              :style="{ height: 'calc(100% - 34px)' }"
+              :style="{ height: 'calc(100% - 54px)' }"
             >
               <img
                 :src="data.thumb"
@@ -392,21 +421,21 @@ defineExpose({ fitView })
             </div>
             <div
               v-else
-              class="flex items-center justify-center text-[26px] opacity-45"
-              :style="{ height: 'calc(100% - 34px)' }"
+              class="ng-icon-well flex items-center justify-center"
+              :style="{ height: 'calc(100% - 54px)' }"
             >{{ data.style.icon }}</div>
-            <div class="flex h-[34px] items-center gap-1 px-1.5">
-              <span class="shrink-0 text-[10px] opacity-60">{{ data.style.icon }}</span>
-              <span class="truncate text-[11px] font-medium">
-                {{ data.raw.title || data.raw.id }}
-              </span>
+            <!-- 标题区：**两行 + 行高夹紧 + 溢出隐藏**，
+                 ⛔ 长标题不再溢出节点边框（用户 2026-10-08 实测反馈）。 -->
+            <div class="ng-label">
+              <span class="ng-label-icon">{{ data.style.icon }}</span>
+              <span class="ng-label-text">{{ data.raw.title || data.raw.id }}</span>
               <span
                 v-if="data.raw.status === 'running'"
-                class="ml-auto shrink-0 text-[9px] text-[#f59e0b]"
+                class="ng-badge ng-badge-run"
               >进行中</span>
               <span
                 v-else-if="data.raw.status === 'failed'"
-                class="ml-auto shrink-0 text-[9px] text-[#ef4444]"
+                class="ng-badge ng-badge-fail"
               >失败</span>
             </div>
           </div>
@@ -437,37 +466,130 @@ defineExpose({ fitView })
   padding: 10px;
 }
 
-/* 自定义节点：缩略图优先，标题为辅（视觉资产画布的主信息是图，不是文字）。 */
+/* ═══ 节点视觉语言（2026-10-08 重设计）═══════════════════════════════════
+   用户实测反馈：「灰色背景下节点和边对比不够强烈，看不太清，没有 PPT 的感觉」。
+   ⇒ 三层配色（PPT 术语）：
+      主色 = `.ng-accent-bar`（顶部色条，类型身份）
+      强调色 = 选中态描边 + 状态徽章（只给少数 —— 强调重点）
+      点缀色 = 图标井底色（弱化内容，不抢主色）
+   ⚠️ 深色主题取 200 档色阶、浅色取 600 档（见各注释）——
+      同一组颜色在两种底色上的可读性档位不同。 */
+
+/* 自定义节点：白/浅底 + 强描边 ⇒ 在灰卡片上形成清晰边界。
+   旧实现用 `--neo-surface-card`（与卡片底几乎同色）⇒ 用户实测"看不清"。 */
 .agent-node-graph :deep(.vue-flow__node) {
   overflow: hidden;
-  border-radius: 8px;
-  border: 1px solid var(--neo-border, #2a2a2a);
-  background: var(--neo-surface-card, #161616);
-  font-size: 11px;
+  border-radius: 10px;
+  /* 浅底+ 实边：在灰卡片上"浮起来"，这是可读性的第一前提 */
+  background: var(--neo-graph-node-bg, #f6f6f4);
+  border: 1.5px solid var(--neo-graph-node-border, #b4b2a9);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
 }
-/* ⭐ 缩放补偿：Vue Flow 把整个 `.vue-flow__viewport` 按 zoom 缩放，节点内文字跟着变小
-   ⇒ 节点多时（fitView 压到 0.45x）标题糊掉。
-   在节点内**反向缩放**内容 ⇒ 文字保持可读；位置与尺寸仍按 zoom 走（布局语义不变）。 */
+
+/* ⭐ 缩放补偿：viewport 按 zoom 缩放时，节点内文字跟着变小。
+   在节点内**反向缩放**内容 ⇒ 文字保持可读；位置与尺寸仍按 zoom 走。 */
 .agent-node-graph :deep(.vue-flow__node .ng-node-inner) {
   transform-origin: top left;
   transform: scale(var(--ng-zoom-compensation, 1));
+  display: flex;
+  flex-direction: column;
 }
+
+/* 主色条：4px 实色横条，类型一眼可辨 */
+.ng-accent-bar {
+  height: 4px;
+  flex: none;
+}
+
+/* 点缀色：图标井 —— 弱化的底色，让图标可辨但不抢主色 */
+.ng-icon-well {
+  color: var(--neo-text, #1c1c1a);
+  font-size: 26px;
+  background: var(--neo-graph-icon-well, rgba(0, 0, 0, 0.05));
+  flex: none;
+}
+
+/* 标题区：两行夹紧 + 溢出隐藏 ⇒ ⛔ 长标题不再溢出边框 */
+.ng-label {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 5px 7px;
+  line-height: 1.32;
+}
+.ng-label-icon {
+  flex: none;
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.75;
+}
+.ng-label-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;         /* 旧值 11px —— 放大到 12px 且加行高 */
+  font-weight: 500;
+  color: var(--neo-text, #1c1c1a);
+  /* ⭐ 两行截断：`-webkit-line-clamp` 才是多行溢出正解，
+     `truncate` 只管单行（用户反馈文字溢出边框的根因）。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 强调色：只给状态徽章（少数元素 —— 这正是 PPT 的"强调"用法） */
+.ng-badge {
+  flex: none;
+  font-size: 9px;
+  line-height: 1.5;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #fff;
+}
+.ng-badge-run { background: #EF9F27; }
+.ng-badge-fail { background: #E24B4A; }
+
 .agent-node-graph :deep(.vue-flow__node.selected) {
   border-color: var(--neo-accent, #3b82f6);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.28);
+  box-shadow: 0 0 0 2px var(--neo-accent, #3b82f6);
 }
 .agent-node-graph :deep(.vue-flow__handle) {
   display: none;
 }
-/* 分组框：只显示标题条，不要交互样式 */
+
+/* 分组框：**虚线**（用户明确要"虚框"）—— 表达"这是容器不是实体" */
 .agent-node-graph :deep(.vue-flow__node[id^='grp-']) {
-  border: none;
-  background: transparent;
+  border: 1.5px dashed var(--neo-graph-group-border, #888780);
+  background: var(--neo-graph-group-bg, transparent);
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+/* ═══ 边（用户反馈"边看不清"）══════════════════════════════════════════
+   旧值 `opacity: 0.45` 在灰底上几乎不可见 ⇒ 提到 0.85 并给主色。 */
+.agent-node-graph :deep(.vue-flow__edge-path) {
+  stroke: var(--neo-graph-edge, #7c7a72);
+  stroke-width: 1.8;
+  opacity: 0.85;
+}
+.agent-node-graph :deep(.vue-flow__edge.animated .vue-flow__edge-path) {
+  stroke: var(--neo-accent, #3b82f6);
+  stroke-width: 2.4;
+}
+.agent-node-graph :deep(.vue-flow__arrowhead) {
+  fill: var(--neo-graph-edge, #7c7a72);
 }
 .agent-node-graph :deep(.vue-flow__edge-text) {
   font-size: 10px;
+  fill: var(--neo-text-2, #55554f);
+  paint-order: stroke;                /* 描边打底⇒ 压在连线上也读得清 */
+  stroke: var(--neo-graph-card-bg, #f7f7f5);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
-
 /* ── 动作图标组（2026-07-24）────────────────────────────────────────────
    三枚图标线性排列、无分隔（同族动作），hover 出tooltip（title 属性）。
    默认低对比（不与卡片内容抢注意力），hover 时提亮 + 出现焦点环。 */

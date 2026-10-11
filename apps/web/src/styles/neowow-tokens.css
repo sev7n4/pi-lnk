@@ -33,6 +33,14 @@
      ⚠️ 该变量**只有** AgentNodeGraph.vue 消费（graph 作用域），
         不要拿它去改全站节点描边（那是 --neo-node-border，另一套语义）。 */
   --neo-graph-card-border: #3E3E48;
+  /* 节点：深底上取**比卡片亮一档**的深灰 + 强描边（用户实测"节点看不清"）。
+     ⚠️ 不是纯白——纯白块在深色下刺眼；也不是与卡片同色——那就没有边界。 */
+  --neo-graph-node-bg: #2a2a33;
+  --neo-graph-node-border: #55555f;
+  --neo-graph-group-border: #6f6f7a;
+  --neo-graph-group-bg: rgba(255, 255, 255, 0.03);
+  --neo-graph-icon-well: rgba(255, 255, 255, 0.07);
+  --neo-graph-edge: #9d9dab;
   --neo-surface-card: #1a1a21;
   --neo-surface-elevated: #232330;
   --neo-border: rgba(255, 255, 255, 0.08);
@@ -174,6 +182,12 @@
         ⚠️ 注释里禁止出现字面 `*` + `/`（会提前闭合注释，postcss 报 Unknown word）。 */
   --neo-graph-card-bg: #F7F8FA;   /* = palette CARD_BG（节点底要比卡片底亮一档） */
   --neo-graph-card-border: #C9CED6; /* = palette CONTAINER_STROKE（容器不该比节点更显眼） */
+  --neo-graph-node-bg: #fbfbfa;
+  --neo-graph-node-border: #b4b2a9;
+  --neo-graph-group-border: #888780;
+  --neo-graph-group-bg: rgba(0, 0, 0, 0.02);
+  --neo-graph-icon-well: rgba(0, 0, 0, 0.05);
+  --neo-graph-edge: #5f5e5a;
   --neo-surface-card: #ffffff;
   --neo-surface-elevated: #ffffff;
   --neo-border: rgba(23, 25, 35, 0.1);
