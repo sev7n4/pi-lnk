@@ -200,7 +200,7 @@ const groupNodes = computed(() =>
         position: { x: minX, y: minY },
         width: maxX - minX,
         height: maxY - minY,
-        style: { background: 'rgba(120,120,140,0.07)', border: '1.5px dashed rgba(140,140,170,0.45)', borderRadius: '10px' },
+        style: { background: '#78788c12', border: '1.5px dashed #8c8caa73', borderRadius: '10px' },
         draggable: false,
         selectable: false,
         zIndex: -1,
@@ -396,7 +396,7 @@ defineExpose({ fitView })
         fit-view-on-init
         @node-click="onNodeClick"
       >
-        <Background :gap="18" :size="1" pattern-color="rgba(140,140,170,0.25)" />
+        <Background :gap="18" :size="1" pattern-color="#8c8caa40" />
         <Controls :show-interactive="false" />
 
         <!-- 自定义节点模板：缩略图优先，标题为辅。
@@ -483,7 +483,7 @@ defineExpose({ fitView })
   /* 浅底+ 实边：在灰卡片上"浮起来"，这是可读性的第一前提 */
   background: var(--neo-graph-node-bg, #f6f6f4);
   border: 1.5px solid var(--neo-graph-node-border, #b4b2a9);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 3px #0000001f;
   font-size: 12px;
 }
 
@@ -506,7 +506,7 @@ defineExpose({ fitView })
 .ng-icon-well {
   color: var(--neo-text, #1c1c1a);
   font-size: 26px;
-  background: var(--neo-graph-icon-well, rgba(0, 0, 0, 0.05));
+  background: var(--neo-graph-icon-well);
   flex: none;
 }
 
@@ -607,7 +607,7 @@ defineExpose({ fitView })
   transition: background 0.12s ease, color 0.12s ease;
 }
 .agent-graph-action:hover {
-  background: var(--neo-surface-card, rgba(0, 0, 0, 0.06));
+  background: var(--neo-surface-card);
   color: var(--neo-text, #1c1c1a);
 }
 /* ⭐ 键盘可达：focus-visible 必须有可见焦点环（图标按钮最容易漏这条）。 */
