@@ -1,5 +1,14 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common'
-import { resolveUpstreamRoute, type ModelCapability, type UpstreamId, type UpstreamRouteRow } from '@lnkpi/shared'
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common'
+import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
+import {
+  resolveUpstreamRoute,
+  UPSTREAM_REGISTRY,
+  upstreamProbeMode,
+  type ModelCapability,
+  type UpstreamId,
+  type UpstreamProbeMode,
+  type UpstreamRouteRow,
+} from '@lnkpi/shared'
 import {
   diffCatalogAgainstUpstream,
   type UpstreamId as ReconciliationUpstreamId,
@@ -40,6 +49,7 @@ type ProbeOutcome =
   | { kind: 'ok'; httpStatus: number; ids: string[] }
   | { kind: 'noModelsEndpoint'; httpStatus: number; error: string }
   | { kind: 'failed'; httpStatus: number | null; error: string }
+  | { kind: 'skipped'; httpStatus: null; error: null }
 
 /** 探活 fetch 的最小注入接口（真实 fetch 天然满足；测试注入替身）。 */
 export interface ProbeFetchResponse {
@@ -59,7 +69,11 @@ export const UPSTREAM_PROBE_FETCH = Symbol('UPSTREAM_PROBE_FETCH')
 /** 探测单上游超时（与 S0-3 脚本 PROBE_TIMEOUT_MS 默认一致）。 */
 const PROBE_TIMEOUT_MS = 15_000
 
-/** 探测间隔 env。默认 360 分钟；`0` = 显式禁用（不注册 timer）；缺失/非法回落默认。 */
+/**
+ * 探测间隔 env（默认 360 分钟；`0` = 显式禁用）。
+ * @deprecated C5 P0 起间隔由 AutomationJob.intervalMinutes 配置（裁决 D3，env 语义退役），
+ * 本常量仅为兼容保留。
+ */
 export const DEFAULT_PROBE_INTERVAL_MINUTES = 360
 
 /**
@@ -144,21 +158,46 @@ interface ProbeUpstream {
   readonly baseUrlEnv: string
   readonly keyEnv: string
   readonly defaultBaseUrl: string
+  /**
+   * 探活模式（model-ops Task 3）：**唯一来源 = shared `upstreamProbeMode`**（注册表
+   * `probeMode`，缺省 'models'）。'none' = 盲区声明：跳过 /models 拉取与 diff，
+   * 不产 ghost、不改 availability（zhipu /models 只含 glm 文本族）。
+   */
+  readonly probeMode: UpstreamProbeMode
 }
 
-const PROBE_UPSTREAMS: readonly ProbeUpstream[] = [
-  { id: 'agnes', baseUrlEnv: 'OPENAI_BASE_URL', keyEnv: 'OPENAI_API_KEY', defaultBaseUrl: '' },
-  { id: 'apimart', baseUrlEnv: 'APIMART_BASE_URL', keyEnv: 'APIMART_API_KEY', defaultBaseUrl: 'https://api.apimart.ai/v1' },
-  { id: 'fal', baseUrlEnv: 'FAL_BASE_URL', keyEnv: 'FAL_KEY', defaultBaseUrl: 'https://fal.run' },
-  { id: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', keyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io' },
-  { id: 'stepfun', baseUrlEnv: 'STEPFUN_BASE_URL', keyEnv: 'STEPFUN_API_KEY', defaultBaseUrl: 'https://api.stepfun.com/v1' },
-  { id: 'zhipu', baseUrlEnv: 'ZHIPU_BASE_URL', keyEnv: 'ZHIPU_API_KEY', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-]
+/**
+ * 对账 id（探活侧）→ 路由注册表 id（shared UpstreamId）的穷举映射 —— 与
+ * {@link toReconciliationUpstreamId} 互逆。probeMode 从注册表读取必须经此映射，
+ * 禁止在对账 id 命名空间重写第二份声明。
+ */
+const RECONCILIATION_TO_ROUTING_UPSTREAM: Record<ReconciliationUpstreamId, UpstreamId> = {
+  agnes: 'agnes_hub',
+  apimart: 'apimart',
+  fal: 'fal',
+  minimax: 'minimax',
+  stepfun: 'stepfun',
+  zhipu: 'zhipu',
+}
+
+const PROBE_UPSTREAMS: readonly ProbeUpstream[] = (
+  [
+    { id: 'agnes', baseUrlEnv: 'OPENAI_BASE_URL', keyEnv: 'OPENAI_API_KEY', defaultBaseUrl: '' },
+    { id: 'apimart', baseUrlEnv: 'APIMART_BASE_URL', keyEnv: 'APIMART_API_KEY', defaultBaseUrl: 'https://api.apimart.ai/v1' },
+    { id: 'fal', baseUrlEnv: 'FAL_BASE_URL', keyEnv: 'FAL_KEY', defaultBaseUrl: 'https://fal.run' },
+    { id: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', keyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io' },
+    { id: 'stepfun', baseUrlEnv: 'STEPFUN_BASE_URL', keyEnv: 'STEPFUN_API_KEY', defaultBaseUrl: 'https://api.stepfun.com/v1' },
+    { id: 'zhipu', baseUrlEnv: 'ZHIPU_BASE_URL', keyEnv: 'ZHIPU_API_KEY', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  ] as const
+).map((u) => ({ ...u, probeMode: upstreamProbeMode(RECONCILIATION_TO_ROUTING_UPSTREAM[u.id]) }))
 
 /** admin 端点（S1-2/S1-3 与运维 curl）按这组 id 取各上游最近一帧 run。 */
 export const PROBE_UPSTREAM_IDS: readonly string[] = PROBE_UPSTREAMS.map((u) => u.id)
 
-/** 解析分钟数 env：缺失/空 → 默认；`0` → 0（禁用）；负数/非数字 → 默认。 */
+/**
+ * 解析分钟数 env：缺失/空 → 默认；`0` → 0（禁用）；负数/非数字 → 默认。
+ * @deprecated C5 P0 起间隔由 AutomationJob.intervalMinutes 配置（裁决 D3），本函数仅为兼容保留。
+ */
 export function resolveProbeIntervalMinutes(
   raw: string | undefined,
   fallback: number = DEFAULT_PROBE_INTERVAL_MINUTES,
@@ -221,46 +260,46 @@ function normalizeAvailability(value: string | undefined): ModelAvailability {
   return value === 'available' || value === 'unavailable' ? value : 'unknown'
 }
 
+/**
+ * C5 起定时职责移交 AutomationSchedulerService，本服务不再持有 timer：
+ * onModuleInit 只注册 handler（'upstream-probe'）；开关/间隔/参数走 AutomationJob DB 配置。
+ */
 @Injectable()
-export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
+export class UpstreamProbeService implements OnModuleInit {
   private readonly logger = new Logger(UpstreamProbeService.name)
-  private timer?: ReturnType<typeof setInterval>
   /** 连败计数：模型名 → 连续被判 ghost 的次数。内存态，进程重启归零（Ruling 3）。 */
   private readonly consecutiveFailures = new Map<string, number>()
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Optional() @Inject(UPSTREAM_PROBE_FETCH) private readonly probeFetch: ProbeFetch = globalThis.fetch.bind(globalThis),
+    // C5：可选注入——单测直接构造时无 scheduler，跳过 handler 注册。
+    @Optional() @Inject(AutomationSchedulerService) private readonly scheduler?: AutomationSchedulerService,
   ) {}
 
   onModuleInit(): void {
-    // 与 generation-reaper 同款纪律：测试环境不注册真实定时器。
-    if (process.env.NODE_ENV === 'test') return
-    const minutes = resolveProbeIntervalMinutes(process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES)
-    if (minutes === 0) {
-      this.logger.log('[MPH][probe] LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES=0，定时探活已禁用')
-      return
-    }
-    this.timer = setInterval(() => void this.probeOnce('periodic'), minutes * 60_000)
-    // unref：探活器绝不阻止进程退出（Ruling C：手动 setInterval + unref）。
-    this.timer.unref?.()
-    this.logger.log(`[MPH][probe] 定时探活已注册：每 ${minutes} 分钟一轮`)
-    // B1 登记顺手项（S2-2b 落地）：注册后触发启动首轮 —— 非阻塞（onModuleInit 不 await、
-    // probeOnce 整体吞异常）、失败绝不阻断启动；日志来源=startup 与 periodic 区分。
-    // B3 热修：先等路由表 bootstrap 落定（成功/失败都算落定，带超时上限防悬挂）再跑，
-    // 消除「路由缓存空表 → 全量 unroutable 跳过、ghost 检测空转一个周期」的启动竞态
-    // （B2 生产复测实证）。
-    this.logger.log('[MPH][probe] 启动首轮探活待路由表就绪后触发（来源=startup）')
-    void this.startupProbeWhenRoutesReady()
+    // C5：定时职责移交 AutomationSchedulerService（spec 2026-10-11-automations-design，
+    // 计划裁决 D2/D3/D4）。本方法只注册 handler；单测直接构造时无 scheduler，跳过。
+    if (!this.scheduler) return
+    this.scheduler.registerHandler('upstream-probe', async (_params, ctx) => {
+      if (ctx.reason === 'startup') {
+        // B3 语义原样保留：等路由表 bootstrap 落定（带超时上限）再跑启动首轮。
+        await this.probeOnceWhenRoutesReady()
+        return
+      }
+      await this.probeOnce(ctx.reason === 'scheduled' ? 'periodic' : ctx.reason)
+    })
+    this.logger.log('[MPH][probe] 探活 handler 已注册至 AutomationSchedulerService（配置见 AutomationJob）')
   }
 
   /**
-   * startup 首轮：等路由表 bootstrap 落定（上限
-   * {@link STARTUP_PROBE_ROUTES_READY_TIMEOUT_MS}，unref 计时器——绝不阻止进程退出、
-   * 绝不阻塞 bootstrap 主流程）后再触发 probeOnce('startup')。超时路径照常执行
-   * （按当前缓存路由，可能空表 → 组内跳过 + warn），绝不静默丢失首轮。
+   * startup 首轮（C5 起由 automation handler 在 reason='startup' 时调用）：
+   * 等路由表 bootstrap 落定（上限 {@link STARTUP_PROBE_ROUTES_READY_TIMEOUT_MS}，
+   * unref 计时器——绝不阻止进程退出、绝不阻塞 bootstrap 主流程）后再触发
+   * probeOnce('startup')。超时路径照常执行（按当前缓存路由，可能空表 → 组内跳过 +
+   * warn），绝不静默丢失首轮。
    */
-  private async startupProbeWhenRoutesReady(
+  async probeOnceWhenRoutesReady(
     timeoutMs: number = STARTUP_PROBE_ROUTES_READY_TIMEOUT_MS,
   ): Promise<void> {
     const waitStartedAt = Date.now()
@@ -278,11 +317,6 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
     }
     this.logger.log('[MPH][probe] 触发启动首轮探活（来源=startup）')
     await this.probeOnce('startup')
-  }
-
-  onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer)
-    this.timer = undefined
   }
 
   /**
@@ -345,6 +379,25 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
     dispatcher: unknown,
     reason: 'manual' | 'periodic' | 'startup',
   ): Promise<void> {
+    // model-ops Task 3 盲区声明：probeMode='none' 的上游（zhipu）**跳过 /models 拉取与
+    // diff**——不产 ghost 判定、不 bump 连败、不改镜像/availability；run 帧照常落库
+    // （分组条目可见性 + 审计保留），帧里记 skipped 标记便于运维辨认。
+    // ⛔ 唯一事实来源 = shared UPSTREAM_REGISTRY.probeMode；新增盲区上游只需改注册表。
+    if (upstream.probeMode === 'none') {
+      console.log(
+        `[MPH][probe] upstream=${upstream.id} skipped=probeMode%3Dnone（盲区声明：无 /models 在售清单，跳过 diff 不判 ghost）`,
+      )
+      await this.writeRunRecord(
+        upstream.id,
+        { kind: 'skipped', httpStatus: null, error: null },
+        null,
+        null,
+        reason,
+        'probeMode=none',
+      )
+      return
+    }
+
     const outcome = await this.fetchUpstreamModels(upstream, dispatcher)
 
     if (outcome.kind !== 'ok') {
@@ -537,6 +590,7 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
     ghosts: readonly string[] | null,
     missing: readonly string[] | null,
     reason: 'manual' | 'periodic' | 'startup',
+    skipped?: string,
   ): Promise<void> {
     await this.prisma.upstreamProbeRun.create({
       data: {
@@ -548,6 +602,8 @@ export class UpstreamProbeService implements OnModuleInit, OnModuleDestroy {
         error: outcome.kind === 'ok' ? null : outcome.error,
         // B3：触发来源落列（旧行为 NULL）；admin latest 透出供运维区分 startup/periodic/manual。
         reason,
+        // model-ops Task 3：盲区声明跳过标记（复刻 reason 列模式：旧行 NULL、无回填）。
+        skipped: skipped ?? null,
       },
     })
   }

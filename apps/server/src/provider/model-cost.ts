@@ -24,6 +24,18 @@ export type OverrideModelCost = {
   cacheWrite: number
 }
 
+/**
+ * 渠道 models[].pricing 的存储形态（与 provider.controller 的 ModelPricingDto 同构，
+ * 键带 PerM 后缀）。四键全部可选；解析/校验只在读取面 resolveChannelModelCost 做
+ * —— 重建/保留路径不判好坏，原样透传（宁可少算不错算由读取面兜底）。
+ */
+export type ChannelModelPricing = {
+  inputPerM?: number
+  outputPerM?: number
+  cacheReadPerM?: number
+  cacheWritePerM?: number
+}
+
 const COST_KEYS = ['inputPerM', 'outputPerM', 'cacheReadPerM', 'cacheWritePerM'] as const
 
 function isNonNegativeFinite(v: unknown): v is number {

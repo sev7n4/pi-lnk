@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common'
+import { AutomationModule } from '../automation/automation.module'
 import { MediaProbeModule } from '../media/media-probe.module'
 import { PointsModule } from '../points/points.module'
 import { PrismaModule } from '../prisma/prisma.module'
@@ -13,6 +14,7 @@ import { VideoGenerationOrchestrator } from './video-generation.orchestrator'
 
 @Module({
   imports: [
+    AutomationModule,
     MediaProbeModule,
     PointsModule,
     ProviderModule,

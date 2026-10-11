@@ -26,13 +26,25 @@ export interface StudioModelEntry {
   displayName: string
   gatewayModelId: string
   modality: StudioModality
-  providerBinding: 'gateway-openai-compat' | 'fal-http' | 'minimax-http'
+  // 2026-10-11：加 zhipu-http——#348 接智谱时只接了 admin controller 白名单，
+  // 此处类型联合与 server 端 model-catalog-store 装载白名单漏接，导致 admin POST
+  // zhipu-http 条目落库成功但被装载器当脏行静默跳过（目录缓存/镜像/用户快照
+  // 永远看不到该模型）。binding 的运行时分发按模型名（cogvideox* → ZhipuVideoProvider），
+  // 此值只作装载校验与能力清单投影。
+  providerBinding: 'gateway-openai-compat' | 'fal-http' | 'minimax-http' | 'zhipu-http'
   /** 仅 `modality === 'audio'` 时存在；缺省视作 `voice` */
   audioKind?: AudioKind
   voices?: StudioVoiceOption[]
   /** 字段名 → 处置；未列出的生成参数默认 metadataOnly */
   params: Record<string, ParamDisposition>
   defaults?: Record<string, string | number>
+  /**
+   * 每模态默认标记（model-ops Task 1）：DB 目录行的 `isDefault` 透传。
+   * 种子常量 `STUDIO_MODEL_CATALOG` 恒不带此字段——resolveModelKeyFromRows 的
+   * fallback 链据此把种子降级为 fallback（DB isDefault 优先）。写路径只有
+   * admin `model-defaults` 端点与播种 migration（单写原则，全局约束 §1）。
+   */
+  isDefault?: boolean
 }
 
 const TEXT_PARAMS: Record<string, ParamDisposition> = {
@@ -513,6 +525,18 @@ export function defaultModelKey(modality: StudioModality): string {
 }
 
 /**
+ * 每模态默认模型键（model-ops Task 1）：**DB isDefault 行优先 → 种子常量 fallback**。
+ * rows 由 server store 装载（软删已过滤）；`isDefault` 缺省/无命中即回落
+ * `DEFAULT_MODEL_KEYS`（bootstrap 冷启动 / 空表兜底，种子降级为 fallback）。
+ * 同一模态出现多行 isDefault 属非法配置——DB 层由部分唯一索引挡死；
+ * 纯函数侧取**首个**命中（确定性）。
+ */
+export function resolveDefaultModelKeyFromRows(rows: StudioModelEntry[], modality: StudioModality): string {
+  const dbDefault = rows.find((entry) => entry.modality === modality && entry.isDefault === true)
+  return dbDefault?.modelKey ?? DEFAULT_MODEL_KEYS[modality]
+}
+
+/**
  * `resolveModelKey` 的纯函数内核（S2-1a）：rows 注入形态。
  *
  * 行为与旧 `resolveModelKey` 实现**逐 case 一致**（旧实现体原样搬迁，仅把
@@ -524,10 +548,15 @@ export function resolveModelKeyFromRows(
   modality: StudioModality,
   requested?: string | null,
 ): { modelKey: string; entry: StudioModelEntry; fallback: boolean } {
-  const fallbackKey = defaultModelKey(modality)
-  const fallbackEntry = getModelEntryFromRows(rows, fallbackKey)!
+  // model-ops Task 1 fallback 链：DB isDefault 行优先 → 种子常量兜底。
+  // ⚠️ fallbackEntry 允许 undefined（rows 子集注入形态下 fallback 键可能不在子集）——
+  // 旧行为用 `!` 非空断言掩盖这一点（运行时同样返回 undefined）；升级只换默认键来源，
+  // 不改该边界（调用方只消费 modelKey/fallback 时不受理影响）。
+  const fallbackKey = resolveDefaultModelKeyFromRows(rows, modality)
+  const fallbackEntry = getModelEntryFromRows(rows, fallbackKey) ?? getModelEntryFromRows(rows, DEFAULT_MODEL_KEYS[modality])
+  const asEntry = fallbackEntry as StudioModelEntry
   if (!requested) {
-    return { modelKey: fallbackKey, entry: fallbackEntry, fallback: false }
+    return { modelKey: fallbackKey, entry: asEntry, fallback: false }
   }
   const entry = getModelEntryFromRows(rows, requested)
   if (entry?.modality === modality) {
@@ -535,7 +564,7 @@ export function resolveModelKeyFromRows(
     // 调用方可能传的是 gatewayModelId，原样返回会让下游拿到非规范 id。
     return { modelKey: entry.modelKey, entry, fallback: false }
   }
-  return { modelKey: fallbackKey, entry: fallbackEntry, fallback: true }
+  return { modelKey: fallbackKey, entry: asEntry, fallback: true }
 }
 
 export function resolveModelKey(

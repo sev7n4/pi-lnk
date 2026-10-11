@@ -27,7 +27,9 @@ import { Injectable, Inject, OnModuleInit } from '@nestjs/common'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import {
   STUDIO_MODEL_CATALOG,
+  defaultModelKey,
   resolveModelKeyFromRows,
+  resolveDefaultModelKeyFromRows,
   type StudioModelEntry,
   type StudioModality,
 } from '@lnkpi/shared'
@@ -40,7 +42,10 @@ export const MODEL_CATALOG_CACHE_TTL_MS = 5_000
 export const CATALOG_VERSION_ROW_ID = 'catalog'
 
 const VALID_MODALITIES: readonly StudioModality[] = ['text', 'image', 'video', 'audio']
-const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http'] as const
+// 2026-10-11：加 zhipu-http（#348 漏接——admin controller 放行但本装载器跳过，
+// 见 shared StudioModelEntry.providerBinding 处同注）。必须与
+// admin/model-catalog.controller.ts 的 VALID_PROVIDER_BINDINGS 保持一致。
+const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http'] as const
 
 /** DB 行的最小形状（列名与 Prisma 逐字一致，见 model-catalog-sync 的注释教训）。 */
 export interface ModelCatalogEntryRow {
@@ -55,6 +60,8 @@ export interface ModelCatalogEntryRow {
   params: string
   defaults: string | null
   deletedAt: Date | null
+  /** model-ops Task 1：每模态默认标记（旧测试 fixture 可能缺省 → 视为 false）。 */
+  isDefault?: boolean
 }
 
 /** 缓存初值 = 种子常量：bootstrap 完成前的冷启动窗口行为与常量模式逐字节一致。 */
@@ -105,6 +112,8 @@ export function modelCatalogRowToEntry(row: ModelCatalogEntryRow): StudioModelEn
     ...(voices != null ? { voices: voices as StudioModelEntry['voices'] } : {}),
     params: params as StudioModelEntry['params'],
     ...(defaults != null ? { defaults: defaults as StudioModelEntry['defaults'] } : {}),
+    // model-ops Task 1：DB isDefault 透传（resolveModelKeyFromRows fallback 链消费）。
+    ...(row.isDefault === true ? { isDefault: true } : {}),
   }
 }
 
@@ -130,6 +139,9 @@ export async function seedModelCatalogEntries(prisma: PrismaClient): Promise<num
         voices: entry.voices ? JSON.stringify(entry.voices) : null,
         params: JSON.stringify(entry.params),
         defaults: entry.defaults ? JSON.stringify(entry.defaults) : null,
+        // model-ops Task 1：播种写默认标记（insert-only，绝不 UPDATE 存量——
+        // 存量行的 isDefault 由 migration 回填，人工/后台改动永不被覆盖）。
+        isDefault: entry.modelKey === defaultModelKey(entry.modality),
       },
     })
     inserted++
@@ -174,6 +186,16 @@ export async function refreshModelCatalogCache(prisma: PrismaClient): Promise<vo
 export function currentCatalogEntries(): StudioModelEntry[] {
   maybeRefresh()
   return cachedRows
+}
+
+/**
+ * 当前生效的每模态默认模型键（model-ops Task 1，同步读缓存）：DB isDefault 行优先 →
+ * 种子常量兜底。缓存 miss（bootstrap 前 cachedRows = 种子常量，不含 isDefault）时
+ * 天然回落种子——与 resolveModelKey 同一缓存视图，无第二真源。
+ */
+export function currentDefaultModelKey(modality: StudioModality): string {
+  maybeRefresh()
+  return resolveDefaultModelKeyFromRows(cachedRows, modality)
 }
 
 // ── 目录版本号（S2-1b：写端点 bump，ensurePlatformChannel 版本触发） ──

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common'
+import { AutomationModule } from '../automation/automation.module'
 import { CryptoService } from './crypto.service'
 import { ModelCatalogSeedService } from './model-catalog-store'
 import { ModelHealthSummaryController } from './model-health-summary.controller'
@@ -10,13 +11,14 @@ import { UpstreamRouteSeedService } from './upstream-route-store'
 import { WebdavService } from './webdav.service'
 
 @Module({
+  imports: [AutomationModule],
   controllers: [ProviderController, ModelHealthSummaryController],
   providers: [
     CryptoService,
     ProviderService,
     ProviderResolverService,
     WebdavService,
-    // S1-1 定时探活对账器（onModuleInit 注册 interval；env=0 禁用）
+    // C5 起定时职责在 AutomationSchedulerService，此处仅注册 handler（onModuleInit）
     UpstreamProbeService,
     // S2-1a 模型目录播种接线（onModuleInit 非阻塞播种 ModelCatalogEntry + 装载缓存）
     ModelCatalogSeedService,

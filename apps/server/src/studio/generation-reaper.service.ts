@@ -1,7 +1,8 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common'
+import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common'
 import { DEFAULT_VIDEO_REAP_MINUTES as SHARED_VIDEO_REAP_MINUTES } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { PointsService } from '../points/points.service'
+import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
 import {
   alreadyRefunded,
   applyRefundMeta,
@@ -89,10 +90,6 @@ const DEFAULT_VIDEO_REAP_MINUTES = SHARED_VIDEO_REAP_MINUTES
  * 文本孤儿多存活 20 分钟——而这段时间里用户的积分已被扣走且无人退款。
  */
 const DEFAULT_TEXT_REAP_MINUTES = 10
-/** 巡检间隔。 */
-const REAP_INTERVAL_MS = 5 * 60 * 1000
-/** 启动后首扫延迟：等应用就绪，专门回收上一进程（重启/崩溃）留下的孤儿。 */
-const STARTUP_SWEEP_DELAY_MS = 15_000
 /** 单轮最多回收条数：控制事务批量，剩余交给下一轮。 */
 const REAP_BATCH = 50
 
@@ -143,26 +140,30 @@ interface StuckRecord {
  * 守卫并与退款放进同一事务——与 `completeImage` 的结算守卫同构，谁先把 status
  * 迁走谁负责收尾；若 completeImage 先结算（罕见竞态），本服务 count=0 直接跳过。
  */
+/**
+ * C5 起定时职责移交 AutomationSchedulerService，本服务不再持有 timer：
+ * onModuleInit 只注册 handler（'generation-reaper'）；15s 启动首扫与 5min 巡检
+ * 由 AutomationJob（runOnStartup + intervalMinutes=5）承载。
+ */
 @Injectable()
-export class GenerationReaperService implements OnModuleInit, OnModuleDestroy {
+export class GenerationReaperService implements OnModuleInit {
   private readonly logger = new Logger(GenerationReaperService.name)
-  private timer?: ReturnType<typeof setInterval>
-  private startupTimer?: ReturnType<typeof setTimeout>
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(PointsService) private readonly points: PointsService,
+    // C5：可选注入——单测直接构造时无 scheduler，跳过 handler 注册。
+    @Optional() @Inject(AutomationSchedulerService) private readonly scheduler?: AutomationSchedulerService,
   ) {}
 
   onModuleInit(): void {
-    if (process.env.NODE_ENV === 'test') return
-    this.startupTimer = setTimeout(() => void this.reapOnce('startup'), STARTUP_SWEEP_DELAY_MS)
-    this.timer = setInterval(() => void this.reapOnce('periodic'), REAP_INTERVAL_MS)
-  }
-
-  onModuleDestroy(): void {
-    if (this.startupTimer) clearTimeout(this.startupTimer)
-    if (this.timer) clearInterval(this.timer)
+    // C5：15s 启动首扫 + 5min 巡检移交 AutomationSchedulerService（runOnStartup +
+    // interval=5，见 AUTOMATION_DEFAULT_JOBS；D2/D4）。reason 映射：scheduled→periodic。
+    if (!this.scheduler) return
+    this.scheduler.registerHandler('generation-reaper', async (_params, ctx) => {
+      return this.reapOnce(ctx.reason === 'scheduled' ? 'periodic' : ctx.reason)
+    })
+    this.logger.log('[reaper] 回收 handler 已注册至 AutomationSchedulerService（配置见 AutomationJob）')
   }
 
   /** 单轮回收。返回成功收尾的记录数；供未来管理端点手动触发。 */

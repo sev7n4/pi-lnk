@@ -87,6 +87,20 @@ describe('modelCatalogRowToEntry（行 → 条目校验）', () => {
     expect(modelCatalogRowToEntry(makeRow({ voices: '{broken' }))).toBeNull()
     expect(modelCatalogRowToEntry(makeRow({ defaults: '[1,2]' }))).toBeNull()
   })
+
+  it('zhipu-http binding 合法（回归：#348 漏接装载白名单，admin POST 的智谱条目被当脏行跳过）', () => {
+    // 2026-10-11 生产实证：admin POST cogvideox-flash (zhipu-http) 落库成功，
+    // 但本装载器白名单无 zhipu-http → 缓存/镜像/用户快照永远看不到该模型。
+    const entry = modelCatalogRowToEntry(makeRow({ providerBinding: 'zhipu-http' }))
+    expect(entry).not.toBeNull()
+    expect(entry?.providerBinding).toBe('zhipu-http')
+  })
+
+  it('model-ops Task1：isDefault 透传（true → true；false/缺省 → 字段缺省不出现）', () => {
+    expect(modelCatalogRowToEntry(makeRow({ isDefault: true }))?.isDefault).toBe(true)
+    expect(modelCatalogRowToEntry(makeRow({ isDefault: false }))?.isDefault).toBeUndefined()
+    expect(modelCatalogRowToEntry(makeRow())?.isDefault).toBeUndefined()
+  })
 })
 
 describe('seedModelCatalogEntries（insert-if-absent，只插不改）', () => {
@@ -113,6 +127,17 @@ describe('seedModelCatalogEntries（insert-if-absent，只插不改）', () => {
     // 人工改名仍在（未 UPDATE）
     const image2 = state.rows.find((r) => r.modelKey === 'image2')
     expect(image2?.displayName).toBe('人工改名')
+  })
+
+  it('model-ops Task1：播种写 isDefault——种子默认键恰 4 条为 true，其余 false（有效性断言：逐模态各一）', async () => {
+    const { prisma, state } = makeFakePrisma()
+    await seedModelCatalogEntries(prisma)
+    const created = state.created as Array<{ modelKey: string; isDefault: boolean }>
+    const defaults = created.filter((d) => d.isDefault === true).map((d) => d.modelKey).sort()
+    expect(defaults).toEqual(['agnes-2.5-flash', 'agnes-image-2.1-flash', 'agnes-video-2.5-flash', 'minimax-speech-2.8-hd'].sort())
+    // 其余条目 isDefault=false（显式写，非缺省）
+    const nonDefaults = created.filter((d) => d.isDefault === false)
+    expect(nonDefaults.length).toBe(created.length - defaults.length)
   })
 })
 

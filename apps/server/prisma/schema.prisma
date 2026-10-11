@@ -291,6 +291,9 @@ model UpstreamProbeRun {
   error      String?
   /// 探活触发来源：'startup'|'periodic'|'manual'（B3 加列，旧行为 NULL，无回填）
   reason     String?
+  /// 盲区声明跳过标记（model-ops Task 3）：'probeMode=none' = 该上游无 /models 在售清单，
+  /// 本轮有意跳过拉取与 diff（非失败）；旧行为 NULL，无回填
+  skipped    String?
 
   @@index([upstream, ranAt])
 }
@@ -315,6 +318,9 @@ model ModelCatalogEntry {
   params          String
   /// JSON: Record<string, string | number>
   defaults        String?
+  /// 每模态默认标记（model-ops Task 1）：部分唯一索引保证每模态至多一个活默认；
+  /// 写路径只有 admin model-defaults 端点与本 migration 回填（单写原则）
+  isDefault       Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
@@ -464,4 +470,40 @@ model AgentMemory {
 
   @@index([userId, scope, sessionId])
   @@map("agent_memories")
+}
+
+// ── C5 Automations（spec docs/superpowers/specs/2026-10-11-automations-design.md）──────
+// AutomationJob：配置层（handler 代码级注册，运维配置级）。id 用固定语义键
+// （'job-upstream-probe'），种子 create-if-missing（D5），admin 不发 id。
+model AutomationJob {
+  id                String   @id
+  name              String
+  description       String?
+  handlerKey        String
+  enabled           Boolean  @default(true)
+  scheduleType      String   @default("interval") // P0 仅 interval；cron 属 P2
+  intervalMinutes   Int      @default(5)
+  params            String? // JSON
+  concurrencyPolicy String   @default("forbid") // forbid | replace | allow（P0 replace 视同 forbid，D6）
+  runOnStartup      Boolean  @default(false) // D1：启动后延迟派发一次 reason='startup'
+  failureThreshold  Int      @default(3) // P1 告警消费
+  failureWebhook    String? // P1 告警消费
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  runs              AutomationRun[]
+}
+
+// AutomationRun：运行史（G2）。reason: scheduled|manual|startup；status: running|success|failure|skipped
+model AutomationRun {
+  id         String        @id @default(cuid())
+  jobId      String
+  job        AutomationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  reason     String
+  status     String        @default("running")
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  output     String? // JSON（reapOnce 返回的收尾条数等）
+  error      String?
+
+  @@index([jobId, startedAt])
 }

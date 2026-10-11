@@ -4,6 +4,8 @@ import {
   ConflictException,
   Controller,
   Get,
+  Headers,
+  HttpException,
   Inject,
   NotFoundException,
   Param,
@@ -195,7 +197,17 @@ export class UpstreamRoutesAdminController {
 
   @Put(':id')
   @UseGuards(AdminTokenGuard)
-  async update(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+  async update(
+    @Headers() headers: Record<string, unknown>,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    // model-ops Task 2：enabled 翻转属高危写（探活分组/运行时路由立即变化），X-Confirm 确认。
+    // 缺失/不一致 → 428（dryRun 语义不适用于本端点，无豁免路径）。
+    const confirmRaw = headers?.['x-confirm'] ?? headers?.['X-Confirm']
+    if (typeof confirmRaw !== 'string' || confirmRaw.trim() !== id) {
+      throw new HttpException(`X-Confirm 头必须为路由行 id "${id}"（高危写操作确认）`, 428)
+    }
     const existing = await this.prisma.upstreamRoute.findUnique({ where: { id } })
     if (!existing) {
       throw new NotFoundException('路由行不存在（路由行由种子播种，本端点只改不增删）')

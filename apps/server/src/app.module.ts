@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { AssetsModule } from './assets/assets.module'
 import { AdminModule } from './admin/admin.module'
 import { AuthModule } from './auth/auth.module'
+import { AutomationModule } from './automation/automation.module'
 import { SessionsModule } from './sessions/sessions.module'
 import { WorksModule } from './works/works.module'
 import { AgentModule } from './agent/agent.module'
@@ -34,6 +35,8 @@ import { StorageModule } from './storage/storage.module'
     UploadModule,
     HealthModule,
     ProviderModule,
+    // C5 Automations：统一调度器（probe/reaper handler 注册方，AdminModule 端点依赖）
+    AutomationModule,
     AdminModule,
     MediaModule,
   ],
