@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import AdminModelsPage from './AdminModelsPage.vue'
 
-const { ElMessageBoxConfirm } = vi.hoisted(() => ({ ElMessageBoxConfirm: vi.fn(async () => 'confirm') }))
+const { ElMessageBoxConfirm } = vi.hoisted(() => ({ ElMessageBoxConfirm: vi.fn(async (..._a: unknown[]) => 'confirm') }))
 
 // brief 原文用 vi.spyOn(await import('element-plus'), 'ElMessageBox')，但 vitest 下
 // ESM namespace 不可 reconfigure（"Module namespace is not configurable"），必然抛错；

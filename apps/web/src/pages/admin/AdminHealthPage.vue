@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import type { HealthAlert, ModelHealthRow } from '@lnkpi/shared'
+import type { HealthAlert, ModelHealthRow } from '@lnkpi/shared/modelHealth'
 import { adminApi, AdminApiError, type ProbeRunRow } from '@/services/admin-api'
 
 const WINDOW_OPTIONS = [1, 6, 24, 168] as const

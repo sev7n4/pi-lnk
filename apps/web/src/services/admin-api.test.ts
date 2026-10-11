@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ADMIN_TOKEN_KEY,
-  AdminApiError,
   adminApi,
   handleAdminRequest,
   handleAdminResponseError,

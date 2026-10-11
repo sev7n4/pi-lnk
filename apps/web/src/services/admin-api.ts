@@ -1,6 +1,6 @@
 import axios, { type AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 import { getApiBaseUrl } from './api-base'
-import type { HealthAlert, ModelHealthRow } from '@lnkpi/shared'
+import type { HealthAlert, ModelHealthRow } from '@lnkpi/shared/modelHealth'
 
 /**
  * Ops Console admin API（spec §4.2）：
