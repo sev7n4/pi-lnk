@@ -87,6 +87,14 @@ describe('modelCatalogRowToEntry（行 → 条目校验）', () => {
     expect(modelCatalogRowToEntry(makeRow({ voices: '{broken' }))).toBeNull()
     expect(modelCatalogRowToEntry(makeRow({ defaults: '[1,2]' }))).toBeNull()
   })
+
+  it('zhipu-http binding 合法（回归：#348 漏接装载白名单，admin POST 的智谱条目被当脏行跳过）', () => {
+    // 2026-10-11 生产实证：admin POST cogvideox-flash (zhipu-http) 落库成功，
+    // 但本装载器白名单无 zhipu-http → 缓存/镜像/用户快照永远看不到该模型。
+    const entry = modelCatalogRowToEntry(makeRow({ providerBinding: 'zhipu-http' }))
+    expect(entry).not.toBeNull()
+    expect(entry?.providerBinding).toBe('zhipu-http')
+  })
 })
 
 describe('seedModelCatalogEntries（insert-if-absent，只插不改）', () => {
