@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import AdminHealthPage from './AdminHealthPage.vue'
+import { AdminApiError } from '@/services/admin-api'
 
 const { modelHealth, latestProbeRuns } = vi.hoisted(() => ({
   modelHealth: vi.fn(),
@@ -73,5 +74,14 @@ describe('AdminHealthPage', () => {
     const w = mountPage()
     await flushPromises()
     expect(w.text()).toContain('暂无数据')
+  })
+
+  it('加载失败透出错误文案', async () => {
+    modelHealth.mockRejectedValue(new AdminApiError('上游探活服务不可用', 503))
+    latestProbeRuns.mockResolvedValue({ runs: [] })
+    const w = mountPage()
+    await flushPromises()
+    expect(w.text()).toContain('上游探活服务不可用')
+    expect(w.text()).not.toContain('m-1')
   })
 })
