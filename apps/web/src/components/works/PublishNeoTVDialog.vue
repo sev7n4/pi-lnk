@@ -147,7 +147,7 @@ async function handlePublish() {
     destroy-on-close
   >
     <div v-if="success" class="py-8 text-center">
-      <p class="text-lg text-[#818cf8]">发布成功 🎉</p>
+      <p class="text-lg text-fg-accent">发布成功 🎉</p>
       <p class="mt-2 text-sm text-fg-3">作品已出现在社区作品流</p>
     </div>
     <form v-else class="space-y-4" @submit.prevent="handlePublish">

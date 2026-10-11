@@ -93,7 +93,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="rounded-md px-2 py-0.5 text-[10px]"
-            :class="settings.gridVisible ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-overlay/5 text-fg-3'"
+            :class="settings.gridVisible ? 'bg-accent-subtle text-fg-accent' : 'bg-overlay/5 text-fg-3'"
             @click="patch({ gridVisible: !settings.gridVisible })"
           >
             {{ settings.gridVisible ? '显示' : '隐藏' }}
@@ -104,7 +104,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="flex-1 rounded-lg py-1 text-[10px]"
-            :class="settings.gridVariant === 'dots' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-overlay/5 text-fg-3'"
+            :class="settings.gridVariant === 'dots' ? 'bg-accent-subtle text-fg-accent' : 'bg-overlay/5 text-fg-3'"
             @click="patch({ gridVariant: 'dots' })"
           >
             点阵
@@ -112,7 +112,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
           <button
             type="button"
             class="flex-1 rounded-lg py-1 text-[10px]"
-            :class="settings.gridVariant === 'lines' ? 'bg-[#6366f1]/25 text-[#818cf8]' : 'bg-overlay/5 text-fg-3'"
+            :class="settings.gridVariant === 'lines' ? 'bg-accent-subtle text-fg-accent' : 'bg-overlay/5 text-fg-3'"
             @click="patch({ gridVariant: 'lines' })"
           >
             线格
@@ -152,7 +152,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
     <button
       type="button"
       class="bar-btn flex gap-0.5 px-1"
-      :class="settings.minimapExpanded === 0 ? 'text-fg-3' : 'text-[#818cf8]'"
+      :class="settings.minimapExpanded === 0 ? 'text-fg-3' : 'text-fg-accent'"
       :title="`小地图：${settings.minimapExpanded === 0 ? '隐藏' : settings.minimapExpanded === 1 ? '缩略图' : '列表'}`"
       @click="emit('cycleMinimap')"
     >
@@ -170,7 +170,7 @@ function patch(patch: Partial<CanvasViewportSettings>) {
 }
 
 .zoom-slider {
-  accent-color: #6366f1;
+  accent-color: var(--lnk-accent);
   height: 4px;
 }
 </style>

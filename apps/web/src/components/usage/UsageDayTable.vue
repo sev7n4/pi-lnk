@@ -219,7 +219,7 @@ function exportCsv() {
                       <div class="flex items-center gap-3">
                         <span
                           v-if="tx.generationId"
-                          class="font-mono text-[11px] text-[#818cf8]/70"
+                          class="font-mono text-[11px] text-fg-accent"
                           :title="tx.generationId"
                         >
                           生成 ID · {{ shortGenerationId(tx.generationId) }}

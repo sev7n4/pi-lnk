@@ -4,7 +4,7 @@
   >
     <div class="flex min-h-[200px] items-center justify-center p-8">
       <div class="text-center">
-        <p class="text-sm uppercase tracking-widest text-[#818cf8]">沉浸式创作</p>
+        <p class="text-sm uppercase tracking-widest text-fg-accent">沉浸式创作</p>
         <p class="mt-2 font-display text-2xl font-semibold">AI 无限画布 · 图像 · 视频 · 漫剧</p>
       </div>
     </div>
