@@ -16,6 +16,7 @@ import {
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { CryptoService } from './crypto.service'
+import type { ChannelModelPricing } from './model-cost'
 import {
   currentCatalogEntries,
   isModelCatalogVersionChanged,
@@ -44,6 +45,11 @@ export type ChannelModelEntry = {
    * （旧数据缺字段读为 unknown）。
    */
   availability?: ModelAvailability
+  /**
+   * P1：单模型费率（USD/百万 token，键带 PerM 后缀）。写入面 = 渠道 create/update DTO；
+   * 读取面 = resolveChannelModelCost（校验也只在读取面做，重建路径原样透传）。
+   */
+  pricing?: ChannelModelPricing
 }
 
 export type ChannelPublic = {
@@ -426,14 +432,30 @@ export class ProviderService {
     }
 
     const body = (await response.json()) as { data?: Array<{ id?: string }> }
-    const previousByName: Record<string, ModelCapability> = {}
+    // P1 修复：重建按 name 保留既有 capability（探活能力解析输入）与 pricing（费率手工数据，
+    // pull-models 绝不抹除——校验由读取面 resolveChannelModelCost 负责）。
+    const previousByName: Record<
+      string,
+      { capability: ModelCapability; pricing?: ChannelModelPricing }
+    > = {}
     try {
       const existing = JSON.parse(channel.models || '[]') as ChannelModelEntry[]
       for (const entry of existing) {
-        if (entry?.name && entry.capability) previousByName[entry.name] = entry.capability
+        if (entry?.name && entry.capability) {
+          previousByName[entry.name] = {
+            capability: entry.capability,
+            ...(typeof entry.pricing === 'object' && entry.pricing !== null
+              ? { pricing: entry.pricing }
+              : {}),
+          }
+        }
       }
     } catch {
       // ignore malformed stored models
+    }
+    const previousCapability: Record<string, ModelCapability> = {}
+    for (const [name, prev] of Object.entries(previousByName)) {
+      previousCapability[name] = prev.capability
     }
 
     const models: ChannelModelEntry[] = (body.data ?? [])
@@ -441,14 +463,21 @@ export class ProviderService {
       .filter((name): name is string => typeof name === 'string' && name.length > 0)
       .map((name) => ({
         name,
-        capability: resolvePulledModelCapability(name, previousByName),
+        capability: resolvePulledModelCapability(name, previousCapability),
+        ...(previousByName[name]?.pricing !== undefined
+          ? { pricing: previousByName[name]!.pricing }
+          : {}),
       }))
 
     if (isMiniMaxBaseUrl(channel.baseUrl)) {
       const names = new Set(models.map((entry) => entry.name))
-      for (const [name, capability] of Object.entries(previousByName)) {
+      for (const [name, prev] of Object.entries(previousByName)) {
         if (!names.has(name)) {
-          models.push({ name, capability })
+          models.push({
+            name,
+            capability: prev.capability,
+            ...(prev.pricing !== undefined ? { pricing: prev.pricing } : {}),
+          })
           names.add(name)
         }
       }

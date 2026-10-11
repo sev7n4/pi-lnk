@@ -28,7 +28,8 @@ import { ProviderService } from './provider.service'
  * 渠道 models[].pricing 随既有 JSON 列落库（零迁移），由
  * `resolveChannelModelCost` 读取并经 pi 会话 override 下发，
  * vendor calculateCost 据此计算 usage.cost。全部可选；缺省 = 不计费（行为不变）。
- * 注：`pull-models` 从上游 /v1/models 重建列表时 pricing 不保留，需在手动编辑时重填。
+ * 注：`pull-models` 从上游 /v1/models 重建列表时按 name 保留既有 pricing（含平台
+ * 镜像对齐路径）；新拉到的模型不带费率，需手动补填。
  */
 class ModelPricingDto {
   @IsOptional()
