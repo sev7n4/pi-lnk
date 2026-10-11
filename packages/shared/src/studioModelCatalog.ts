@@ -26,7 +26,12 @@ export interface StudioModelEntry {
   displayName: string
   gatewayModelId: string
   modality: StudioModality
-  providerBinding: 'gateway-openai-compat' | 'fal-http' | 'minimax-http'
+  // 2026-10-11：加 zhipu-http——#348 接智谱时只接了 admin controller 白名单，
+  // 此处类型联合与 server 端 model-catalog-store 装载白名单漏接，导致 admin POST
+  // zhipu-http 条目落库成功但被装载器当脏行静默跳过（目录缓存/镜像/用户快照
+  // 永远看不到该模型）。binding 的运行时分发按模型名（cogvideox* → ZhipuVideoProvider），
+  // 此值只作装载校验与能力清单投影。
+  providerBinding: 'gateway-openai-compat' | 'fal-http' | 'minimax-http' | 'zhipu-http'
   /** 仅 `modality === 'audio'` 时存在；缺省视作 `voice` */
   audioKind?: AudioKind
   voices?: StudioVoiceOption[]

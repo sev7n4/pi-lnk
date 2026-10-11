@@ -40,7 +40,10 @@ export const MODEL_CATALOG_CACHE_TTL_MS = 5_000
 export const CATALOG_VERSION_ROW_ID = 'catalog'
 
 const VALID_MODALITIES: readonly StudioModality[] = ['text', 'image', 'video', 'audio']
-const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http'] as const
+// 2026-10-11：加 zhipu-http（#348 漏接——admin controller 放行但本装载器跳过，
+// 见 shared StudioModelEntry.providerBinding 处同注）。必须与
+// admin/model-catalog.controller.ts 的 VALID_PROVIDER_BINDINGS 保持一致。
+const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http'] as const
 
 /** DB 行的最小形状（列名与 Prisma 逐字一致，见 model-catalog-sync 的注释教训）。 */
 export interface ModelCatalogEntryRow {
