@@ -8,6 +8,7 @@ import {
   type StudioModelEntry,
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
 import {
   __resetModelCatalogStoreForTests,
   __registerModelCatalogPrismaForTests,
@@ -21,7 +22,6 @@ import {
   markUpstreamRoutesBootstrapped,
 } from './upstream-route-store'
 import {
-  DEFAULT_PROBE_INTERVAL_MINUTES,
   groupCatalogEntriesByUpstream,
   resolveProbeIntervalMinutes,
   toReconciliationUpstreamId,
@@ -211,7 +211,7 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
   })
 
   afterEach(async () => {
-    svc?.onModuleDestroy()
+    // C5：服务不再持有 timer/onModuleDestroy（调度移交 AutomationSchedulerService）。
     consoleLogSpy.mockRestore()
     process.env = savedEnv
     // B3：探活分组切 DB 目录——逐用例重置 catalog store 缓存/句柄，
@@ -626,9 +626,14 @@ describe('S2-2b 路由分组与双 id 映射（A5 单胜者 / B1 裁定：穷举
   })
 })
 
-describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES）', () => {
+describe('探活调度（C5：定时职责移交 AutomationSchedulerService，本服务只注册 handler）', () => {
   const savedEnv = { ...process.env }
   let svc: UpstreamProbeService
+  let registerHandler: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    registerHandler = vi.fn()
+  })
 
   async function compile() {
     const moduleRef = await Test.createTestingModule({
@@ -636,128 +641,83 @@ describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL
         UpstreamProbeService,
         { provide: PrismaService, useValue: {} },
         { provide: UPSTREAM_PROBE_FETCH, useValue: vi.fn() },
+        { provide: AutomationSchedulerService, useValue: { registerHandler } },
       ],
     }).compile()
     svc = moduleRef.get(UpstreamProbeService)
-    // 默认静音启动首轮（本 describe 只断言调度；个别用例再自建 spy 断言 startup 触发）。
     vi.spyOn(svc, 'probeOnce').mockResolvedValue(undefined)
   }
 
   afterEach(() => {
-    svc?.onModuleDestroy()
     process.env = savedEnv
-    // B3 热修：startup 探活现在依赖路由表 bootstrap 落定信号（store 模块级状态），逐用例重置防污染。
+    // B3：startup 探活依赖路由表 bootstrap 信号（store 模块级状态），逐用例重置防污染。
     __resetUpstreamRouteStoreForTests()
   })
 
-  it('env 缺省按 360 分钟注册 timer', async () => {
+  it('onModuleInit 只注册 handler（key=upstream-probe），不再注册任何 timer（G1/D2）', async () => {
     delete process.env.NODE_ENV
-    delete process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES
     await compile()
-    const spy = vi.spyOn(global, 'setInterval')
+    const intervalSpy = vi.spyOn(global, 'setInterval')
     svc.onModuleInit()
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy.mock.calls[0]![1]).toBe(DEFAULT_PROBE_INTERVAL_MINUTES * 60_000)
+    expect(intervalSpy).not.toHaveBeenCalled()
+    expect(registerHandler).toHaveBeenCalledTimes(1)
+    expect(registerHandler.mock.calls[0]![0]).toBe('upstream-probe')
+    expect(typeof registerHandler.mock.calls[0]![1]).toBe('function')
   })
 
-  it('env=1 分钟（低于默认值，防假绿）生效：60_000ms 注册且 unref', async () => {
-    delete process.env.NODE_ENV
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
+  it('handler reason 映射：scheduled→periodic、manual→manual（D4）', async () => {
     await compile()
-    const spy = vi.spyOn(global, 'setInterval')
     svc.onModuleInit()
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy.mock.calls[0]![1]).toBe(60_000)
-    const handle = spy.mock.results[0]!.value as unknown as { hasRef?: () => boolean }
-    expect(handle.hasRef?.()).toBe(false)
+    const handler = registerHandler.mock.calls[0]![1] as (
+      p: unknown,
+      ctx: { reason: string },
+    ) => Promise<void>
+    await handler({}, { reason: 'scheduled' })
+    expect(vi.mocked(svc.probeOnce)).toHaveBeenCalledWith('periodic')
+    await handler({}, { reason: 'manual' })
+    expect(vi.mocked(svc.probeOnce)).toHaveBeenCalledWith('manual')
   })
 
-  it('env=0 显式禁用：不注册任何 timer', async () => {
-    delete process.env.NODE_ENV
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '0'
-    await compile()
-    const spy = vi.spyOn(global, 'setInterval')
-    svc.onModuleInit()
-    expect(spy).not.toHaveBeenCalled()
-  })
-
-  it('NODE_ENV=test 不注册 timer（与 generation-reaper 同款纪律）', async () => {
-    process.env.NODE_ENV = 'test'
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
-    await compile()
-    const spy = vi.spyOn(global, 'setInterval')
-    svc.onModuleInit()
-    expect(spy).not.toHaveBeenCalled()
-  })
-
-  it('onModuleDestroy 清掉 timer', async () => {
-    delete process.env.NODE_ENV
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
-    await compile()
-    const spy = vi.spyOn(global, 'clearInterval')
-    svc.onModuleInit()
-    svc.onModuleDestroy()
-    expect(spy).toHaveBeenCalledTimes(1)
-  })
-
-  it('启动首轮（B3 热修）：等路由表就绪后触发一次 probeOnce("startup")', async () => {
-    delete process.env.NODE_ENV
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
+  it('handler reason=startup → probeOnceWhenRoutesReady（B3 语义保留）：路由未落定不触发，落定后 probeOnce("startup")', async () => {
     __resetUpstreamRouteStoreForTests()
     await compile()
-    const spy = vi.spyOn(svc, 'probeOnce')
     svc.onModuleInit()
-    // 路由表未落定 → 不立即触发（消除「空表 → 全量 unroutable」启动竞态）
-    expect(spy).not.toHaveBeenCalled()
+    const handler = registerHandler.mock.calls[0]![1] as (
+      p: unknown,
+      ctx: { reason: string },
+    ) => Promise<void>
+    const pending = handler({}, { reason: 'startup' })
+    expect(svc.probeOnce).not.toHaveBeenCalled()
     markUpstreamRoutesBootstrapped()
     await vi.waitFor(() => {
-      expect(spy).toHaveBeenCalledTimes(1)
-      expect(spy).toHaveBeenCalledWith('startup')
+      expect(svc.probeOnce).toHaveBeenCalledTimes(1)
+      expect(svc.probeOnce).toHaveBeenCalledWith('startup')
     })
+    await pending
   })
 
-  it('启动首轮等待超时兜底：路由表一直未就绪也照常执行（绝不静默丢失首轮）', async () => {
-    delete process.env.NODE_ENV
+  it('无 scheduler（单测直接构造）→ onModuleInit 安全跳过注册', () => {
+    const bare = new UpstreamProbeService({} as PrismaService, vi.fn())
+    expect(() => bare.onModuleInit()).not.toThrow()
+  })
+
+  it('probeOnceWhenRoutesReady 超时兜底：路由表一直未就绪也照常执行（绝不静默丢失首轮）', async () => {
     __resetUpstreamRouteStoreForTests()
     await compile()
-    const spy = vi.spyOn(svc, 'probeOnce')
-    await (
-      svc as unknown as { startupProbeWhenRoutesReady(t?: number): Promise<void> }
-    ).startupProbeWhenRoutesReady(30)
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy).toHaveBeenCalledWith('startup')
+    await svc.probeOnceWhenRoutesReady(30)
+    expect(svc.probeOnce).toHaveBeenCalledTimes(1)
+    expect(svc.probeOnce).toHaveBeenCalledWith('startup')
   })
 
-  it('启动首轮等待不阻塞 bootstrap：路由早已落定时 onModuleInit 同步返回、探测异步补跑', async () => {
-    delete process.env.NODE_ENV
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
+  it('路由早已落定时 probeOnceWhenRoutesReady 直接执行 startup 首轮', async () => {
     __resetUpstreamRouteStoreForTests()
     markUpstreamRoutesBootstrapped()
     await compile()
-    const spy = vi.spyOn(svc, 'probeOnce')
-    const t0 = Date.now()
-    svc.onModuleInit()
-    expect(Date.now() - t0).toBeLessThan(1_000)
-    await vi.waitFor(() => {
-      expect(spy).toHaveBeenCalledWith('startup')
-    })
+    await svc.probeOnceWhenRoutesReady(30)
+    expect(svc.probeOnce).toHaveBeenCalledTimes(1)
+    expect(svc.probeOnce).toHaveBeenCalledWith('startup')
   })
-
-  it('启动首轮不触发：env=0 显式禁用 / NODE_ENV=test（与定时器同款纪律）', async () => {
-    delete process.env.NODE_ENV
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '0'
-    await compile()
-    const spy0 = vi.spyOn(svc, 'probeOnce')
-    svc.onModuleInit()
-    expect(spy0).not.toHaveBeenCalled()
-
-    process.env.NODE_ENV = 'test'
-    process.env.LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES = '1'
-    await compile()
-    const spy1 = vi.spyOn(svc, 'probeOnce')
-    svc.onModuleInit()
-    expect(spy1).not.toHaveBeenCalled()
-  })
+})
 
   it('resolveProbeIntervalMinutes：缺失/非法回落默认；0 保留为禁用', () => {
     expect(resolveProbeIntervalMinutes(undefined)).toBe(360)
@@ -767,4 +727,3 @@ describe('探活调度（A2：手动 setInterval + LNKPI_UPSTREAM_PROBE_INTERVAL
     expect(resolveProbeIntervalMinutes('0')).toBe(0)
     expect(resolveProbeIntervalMinutes('17')).toBe(17)
   })
-})
