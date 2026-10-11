@@ -7,6 +7,7 @@
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import { Metrics, routeLabel } from "./metrics.js";
+import { graphTurnObserver } from "./graph-observation/observer-instance.js";
 import { parseLlmOverride } from "./llm-override.js";
 import {
 	BusyError,
@@ -193,6 +194,11 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	}>("/sessions/:sessionId/prompt", async (request, reply) => {
 		const { sessionId } = request.params;
 		try {
+			// ⭐ 图形化表达观测：**用户问句**只在这里拿得到。
+			// 「该画没画」的分母必须是用户问句 —— 落库里只有**调用过**的记录，
+			// 没调用的那一行根本不存在（`AgentMessage.metadata` 只在调用发生时才写）。
+			// ⇒ 这个 feed 是补该盲区的唯一入口（spec §6 D1-1）。不抛错、不影响主链路。
+			graphTurnObserver.feed({ kind: "user_text", text: request.body?.text ?? "" });
 			// turnContext 随 prompt 一起提交：在 busy 校验之后应用（复核 Important #5）——
 			// 被 409 拒绝的请求不得改写在跑 run 下一轮 LLM 调用将读到的动态上下文。
 			await manager.prompt(sessionId, request.body.text, request.body.lane, {
