@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common'
 import type { Prisma } from '@prisma/client'
 import { PLATFORM_CHANNEL_ID } from '../provider/provider.service'
+import { listDefaultAlternatives, type DefaultAlternative } from './model-ops-shared'
 import { PrismaService } from '../prisma/prisma.service'
 import {
   bumpModelCatalogVersion,
@@ -176,12 +177,8 @@ export function assertXConfirm(headers: Record<string, unknown> | undefined, exp
   }
 }
 
-/** 同模态在架候选（下架默认模型时的 alternatives，含镜像探活 availability）。 */
-export interface DefaultAlternative {
-  modelKey: string
-  displayName: string
-  availability: 'available' | 'unavailable' | 'unknown'
-}
+/** 同模态在架候选形状（Task 1 定义于 model-ops-shared，此处 re-export 保持既有 import 面）。 */
+export type { DefaultAlternative } from './model-ops-shared'
 
 @Controller('admin/model-catalog')
 export class ModelCatalogAdminController {
@@ -307,7 +304,7 @@ export class ModelCatalogAdminController {
     if (existing.isDefault === true) {
       // model-ops Task 1 防呆升级：判定从常量（isDefaultModelKey）切 DB isDefault——
       // 运营切默认后旧常量不再阻塞下架；409 附 alternatives 供一键切换。
-      const alternatives = await this.listDefaultAlternatives(existing.modality, existing.modelKey)
+      const alternatives = await listDefaultAlternatives(this.prisma, existing.modality, existing.modelKey)
       throw new ConflictException({
         message: `${existing.modelKey} 是 ${existing.modality} 模态的当前默认模型，禁止直接下架（默认模型被软删会让确定性 fallback 悬空）。请先 PUT /api/admin/model-defaults 切换默认。`,
         alternatives,
@@ -334,39 +331,6 @@ export class ModelCatalogAdminController {
     })
     await refreshModelCatalogCache(this.prisma)
     return { code: 0, message: 'ok', data: { version, id: row.id, modelKey: row.modelKey } }
-  }
-
-  /**
-   * 同模态在架候选（排除目标自身），availability 从平台镜像读（探活唯一写入方，
-   * 无镜像行/无探活数据 → 'unknown'，不阻塞切换——宁漏灰不误灰同款口径）。
-   */
-  private async listDefaultAlternatives(modality: string, excludeModelKey: string): Promise<DefaultAlternative[]> {
-    const [rows, channel] = await Promise.all([
-      this.prisma.modelCatalogEntry.findMany({
-        where: { modality, deletedAt: null, modelKey: { not: excludeModelKey } },
-        orderBy: [{ createdAt: 'asc' }, { modelKey: 'asc' }],
-      }),
-      this.prisma.providerChannel.findUnique({ where: { id: PLATFORM_CHANNEL_ID } }),
-    ])
-    let availabilityByName = new Map<string, string>()
-    try {
-      const models = channel?.models ? (JSON.parse(channel.models) as { name?: unknown; availability?: unknown }[]) : []
-      availabilityByName = new Map(
-        models
-          .filter((m) => typeof m?.name === 'string')
-          .map((m) => [m.name as string, typeof m.availability === 'string' ? m.availability : 'unknown']),
-      )
-    } catch {
-      // 镜像脏数据：全部按 unknown 处理（不阻塞 alternatives 展示）
-    }
-    return rows.map((row) => {
-      const availability = availabilityByName.get(row.modelKey) ?? availabilityByName.get(row.gatewayModelId) ?? 'unknown'
-      return {
-        modelKey: row.modelKey,
-        displayName: row.displayName,
-        availability: (availability === 'available' || availability === 'unavailable' ? availability : 'unknown') as DefaultAlternative['availability'],
-      }
-    })
   }
 }
 

@@ -93,7 +93,7 @@ describe('UpstreamRoutesAdminController（GET/PUT /api/admin/upstream-routes）'
     const id = await rowIdByPattern('minimax-h3')
     expect(resolveUpstreamRoute([...currentUpstreamRoutes()], 'minimax-h3', 'video').upstream).toBe('minimax')
 
-    const res = await controller.update(id, { upstream: 'apimart' })
+    const res = await controller.update({ 'x-confirm': id }, id, { upstream: 'apimart' })
     expect(res.code).toBe(0)
     expect(res.data.version).toBe(1)
     expect(res.data.route).toMatchObject({ id, upstream: 'apimart', pattern: 'minimax-h3' })
@@ -113,7 +113,7 @@ describe('UpstreamRoutesAdminController（GET/PUT /api/admin/upstream-routes）'
 
   it('PUT：改 priority / enabled 同样审计 + bump；enabled=false 后解析不再命中该行', async () => {
     const id = await rowIdByPattern('minimax-h3')
-    const res = await controller.update(id, { enabled: false, priority: 99 })
+    const res = await controller.update({ 'x-confirm': id }, id, { enabled: false, priority: 99 })
     expect(res.data.version).toBe(1)
     expect(res.data.route).toMatchObject({ enabled: false, priority: 99 })
     expect(resolveUpstreamRoute([...currentUpstreamRoutes()], 'minimax-h3', 'video').upstream).toBe('agnes_hub')
@@ -126,13 +126,13 @@ describe('UpstreamRoutesAdminController（GET/PUT /api/admin/upstream-routes）'
     const stepRowId = await rowIdByPattern('step')
     const regexRowId = await rowIdByPattern('h3-max')
 
-    await expect(controller.update(stepRowId, { upstream: 'openai' })).rejects.toMatchObject({ status: 400 })
+    await expect(controller.update({ 'x-confirm': stepRowId }, stepRowId, { upstream: 'openai' })).rejects.toMatchObject({ status: 400 })
     // ReDoS 防线：嵌套量词 pattern 被 assertRoutePatternSafe 拒绝
-    await expect(controller.update(regexRowId, { pattern: '(a+)+' })).rejects.toMatchObject({ status: 400 })
-    await expect(controller.update(stepRowId, { priority: 1.5 })).rejects.toMatchObject({ status: 400 })
-    await expect(controller.update('no-such-id', { priority: 1 })).rejects.toMatchObject({ status: 404 })
+    await expect(controller.update({ 'x-confirm': regexRowId }, regexRowId, { pattern: '(a+)+' })).rejects.toMatchObject({ status: 400 })
+    await expect(controller.update({ 'x-confirm': stepRowId }, stepRowId, { priority: 1.5 })).rejects.toMatchObject({ status: 400 })
+    await expect(controller.update({ 'x-confirm': 'no-such-id' }, 'no-such-id', { priority: 1 })).rejects.toMatchObject({ status: 404 })
     // 普通 exact 行不允许 pattern 置空（只有 default 行可以）
-    await expect(controller.update(stepRowId, { pattern: null })).rejects.toMatchObject({ status: 400 })
+    await expect(controller.update({ 'x-confirm': stepRowId }, stepRowId, { pattern: null })).rejects.toMatchObject({ status: 400 })
 
     expect(await prisma.adminAuditLog.count()).toBe(0)
     const versionRow = await prisma.modelCatalogVersion.findUnique({ where: { id: 'routes' } })
@@ -141,13 +141,13 @@ describe('UpstreamRoutesAdminController（GET/PUT /api/admin/upstream-routes）'
 
   it('default 行唯一：把普通行改成 default 而库里已有 default 行 → 409，不落库', async () => {
     const stepRowId = await rowIdByPattern('step')
-    await expect(controller.update(stepRowId, { matchType: 'default', pattern: null })).rejects.toMatchObject({
+    await expect(controller.update({ 'x-confirm': stepRowId }, stepRowId, { matchType: 'default', pattern: null })).rejects.toMatchObject({
       status: 409,
     })
     expect(await prisma.adminAuditLog.count()).toBe(0)
     // default 行自身可以改 upstream（不触发唯一性冲突）
     const defaultRow = await prisma.upstreamRoute.findFirst({ where: { matchType: 'default' } })
-    const res = await controller.update(defaultRow!.id, { upstream: 'apimart' })
+    const res = await controller.update({ 'x-confirm': defaultRow!.id }, defaultRow!.id, { upstream: 'apimart' })
     expect(res.data.route).toMatchObject({ matchType: 'default', upstream: 'apimart' })
     expect(res.data.version).toBe(1)
   })
