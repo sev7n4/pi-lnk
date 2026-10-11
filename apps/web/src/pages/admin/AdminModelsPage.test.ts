@@ -103,4 +103,67 @@ describe('AdminModelsPage', () => {
     expect((w.vm as unknown as { actionError: string }).actionError).toContain('禁止下架')
     expect(listCatalog).toHaveBeenCalledTimes(1)
   })
+
+  it('新增成功：submitForm 调用 createCatalogEntry，关闭弹窗并刷新', async () => {
+    listCatalog.mockResolvedValue({ version: 7, entries: [entry({})] })
+    createCatalogEntry.mockResolvedValue({ version: 8, id: 'id-new', modelKey: 'm-new' })
+    const w = mountPage()
+    await flushPromises()
+
+    const vm = w.vm as unknown as { startCreate: () => void; submitForm: () => Promise<void> }
+    vm.startCreate()
+    await flushPromises()
+    // appendToBody 默认 false，弹窗未 teleport，留在组件树内
+    expect(w.find('.el-dialog').exists()).toBe(true)
+    expect(w.find('.el-dialog').isVisible()).toBe(true)
+
+    // 填表：按 label 定位文本输入；paramsJson 是弹窗内唯一 textarea
+    const fillByLabel = async (label: string, value: string) => {
+      const item = w.findAll('.el-dialog .el-form-item').find(
+        (i) => i.find('.el-form-item__label').text().trim() === label,
+      )
+      expect(item, `找不到表单项 ${label}`).toBeTruthy()
+      await item!.find('input').setValue(value)
+    }
+    await fillByLabel('modelKey', 'm-new')
+    await fillByLabel('displayName', 'Model New')
+    await fillByLabel('gatewayModelId', 'gw-new')
+    await w.find('.el-dialog textarea').setValue('{"model":"native"}')
+    await flushPromises()
+
+    await vm.submitForm()
+    await flushPromises()
+
+    expect(createCatalogEntry).toHaveBeenCalledTimes(1)
+    expect(createCatalogEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelKey: 'm-new',
+        displayName: 'Model New',
+        gatewayModelId: 'gw-new',
+        params: { model: 'native' },
+      }),
+    )
+    // 成功后弹窗关闭（overlay v-show → display:none）
+    expect(w.find('.el-dialog').isVisible()).toBe(false)
+    expect(listCatalog).toHaveBeenCalledTimes(2) // 初始加载 + 成功后 reload
+  })
+
+  it('paramsJson 非法 JSON：submitForm 中止并提示，不调用 createCatalogEntry', async () => {
+    listCatalog.mockResolvedValue({ version: 7, entries: [entry({})] })
+    const w = mountPage()
+    await flushPromises()
+
+    const vm = w.vm as unknown as { startCreate: () => void; submitForm: () => Promise<void> }
+    vm.startCreate()
+    await flushPromises()
+    await w.find('.el-dialog textarea').setValue('not-json')
+    await flushPromises()
+
+    await vm.submitForm()
+    await flushPromises()
+
+    expect((w.vm as unknown as { actionError: string }).actionError).toContain('params 不是合法 JSON')
+    expect(createCatalogEntry).not.toHaveBeenCalled()
+    expect(listCatalog).toHaveBeenCalledTimes(1) // 中止，未 reload
+  })
 })
