@@ -66,7 +66,7 @@ function toggleVoice() {
           v-for="tab in (['text', 'image', 'video'] as const)"
           :key="tab"
           class="rounded-lg px-3 py-1 text-xs transition"
-          :class="activeTab === tab ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'text-fg-3 hover:text-fg-2'"
+          :class="activeTab === tab ? 'bg-accent-subtle text-fg-accent' : 'text-fg-3 hover:text-fg-2'"
           @click="activeTab = tab"
         >
           {{ tab === 'text' ? '文本' : tab === 'image' ? '图像' : '视频' }}

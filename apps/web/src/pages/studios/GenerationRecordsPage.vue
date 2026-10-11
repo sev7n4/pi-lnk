@@ -27,7 +27,7 @@ onMounted(load)
         v-for="t in (['all', 'image', 'video', 'audio'] as const)"
         :key="t"
         class="rounded-lg px-3 py-1.5 text-xs transition"
-        :class="filter === t ? 'bg-[#6366f1]/30 text-[#818cf8]' : 'bg-overlay/5 text-fg-2'"
+        :class="filter === t ? 'bg-accent-subtle text-fg-accent' : 'bg-overlay/5 text-fg-2'"
         @click="filter = t; load()"
       >
         {{ t === 'all' ? '全部' : t === 'image' ? '图像' : t === 'video' ? '视频' : '音频' }}
