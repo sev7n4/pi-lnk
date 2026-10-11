@@ -274,6 +274,13 @@ async function renameAsset(asset: CanvasAssetItem) {
   }
 }
 
+function onAssetCommand(cmd: unknown, asset: CanvasAssetItem) {
+  const action = String(cmd)
+  if (action === 'inspect') openAssetInspector(asset, undefined)
+  else if (action === 'rename') void renameAsset(asset)
+  else if (action === 'remove') void removeAsset(asset)
+}
+
 function openUploadPicker() {
   if (!loggedIn.value) {
     ElMessage.warning('登录后才能上传到资产库')
@@ -407,7 +414,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
             tabindex="0"
             draggable="true"
             class="group relative aspect-square cursor-zoom-in overflow-hidden rounded-lg border border-[var(--neo-border)] bg-[var(--neo-hover-bg)] transition hover:border-[var(--neo-border-strong)]"
-            :title="`${asset.label}（点击预览 · 可拖到画布新建节点 / 拖到底部工具条作引用）`"
+            :title="`${asset.label && asset.label.length > 24 ? asset.label.slice(0, 24) + '…' : asset.label}（点击预览 · 可拖到画布新建节点 / 拖到底部工具条作引用）`"
             @dragstart="onDragStart($event, asset)"
             @click="preview(asset)"
             @keydown.enter="preview(asset)"
@@ -446,69 +453,72 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
               公共
             </span>
 
-            <MediaInfoSummary
-              v-if="asset.mediaSummary && (asset.kind === 'image' || asset.kind === 'video')"
-              v-bind="asset.mediaSummary"
-              class="absolute inset-x-0 bottom-0 z-[1] opacity-0 transition group-hover:opacity-100 neo-media-info-summary--overlay"
-            />
-
-            <!-- hover 操作层 -->
+            <!-- hover 信息 + 操作合并为一条底部渐变层（避免规格条与图标叠压） -->
             <div
-              class="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 bg-gradient-to-t from-black/85 to-transparent px-1.5 pb-1.5 pt-5 opacity-0 transition group-hover:opacity-100"
+              class="absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 bg-gradient-to-t from-black/90 to-transparent px-1.5 pb-1.5 pt-3 opacity-0 transition group-hover:opacity-100"
+              @click.stop
             >
-              <button
-                v-if="asset.kind === 'image' || asset.kind === 'video'"
-                type="button"
-                class="asset-hover-btn"
-                title="媒体属性"
-                aria-label="媒体属性"
-                @click.stop="openAssetInspector(asset, $event)"
-              >
-                ⓘ
-              </button>
-              <button
-                type="button"
-                class="asset-hover-btn"
-                title="加入 Agent 引用"
-                aria-label="加入 Agent 引用"
-                @click.stop="addToAgent(asset)"
-              >
-                <CanvasRefTargetIcon :size="12" />
-              </button>
-              <button
-                type="button"
-                class="asset-hover-btn"
-                title="加载到当前画布"
-                aria-label="加载到当前画布"
-                @click.stop="apply(asset)"
-              >
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0-12l-4 4m4-4l4 4" />
-                  <path stroke-linecap="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-                </svg>
-              </button>
-              <button
-                v-if="asset.source === 'user'"
-                type="button"
-                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-black/85 hover:text-fg"
-                title="重命名"
-                @click.stop="renameAsset(asset)"
-              >
-                <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
-                </svg>
-              </button>
-              <button
-                v-if="asset.source === 'user'"
-                type="button"
-                class="flex h-4 w-4 items-center justify-center rounded-md bg-black/60 text-fg transition hover:bg-danger hover:text-fg"
-                title="从资产库删除"
-                @click.stop="removeAsset(asset)"
-              >
-                <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                </svg>
-              </button>
+              <MediaInfoSummary
+                v-if="asset.mediaSummary && (asset.kind === 'image' || asset.kind === 'video')"
+                v-bind="asset.mediaSummary"
+                class="neo-media-info-summary--overlay"
+              />
+              <div class="flex items-center justify-center gap-1.5">
+                <button
+                  type="button"
+                  class="asset-hover-btn"
+                  title="加入 Agent 引用"
+                  aria-label="加入 Agent 引用"
+                  @click.stop="addToAgent(asset)"
+                >
+                  <CanvasRefTargetIcon :size="12" />
+                </button>
+                <button
+                  type="button"
+                  class="asset-hover-btn"
+                  title="加载到当前画布"
+                  aria-label="加载到当前画布"
+                  @click.stop="apply(asset)"
+                >
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0-12l-4 4m4-4l4 4" />
+                    <path stroke-linecap="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                  </svg>
+                </button>
+                <el-dropdown trigger="click" @command="onAssetCommand($event, asset)">
+                  <button
+                    type="button"
+                    class="asset-hover-btn"
+                    title="更多操作"
+                    aria-label="更多操作"
+                  >
+                    ⋯
+                  </button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item
+                        v-if="asset.kind === 'image' || asset.kind === 'video'"
+                        command="inspect"
+                      >
+                        媒体属性
+                      </el-dropdown-item>
+                      <el-dropdown-item
+                        v-if="asset.source === 'user'"
+                        command="rename"
+                      >
+                        重命名
+                      </el-dropdown-item>
+                      <el-dropdown-item
+                        v-if="asset.source === 'user'"
+                        command="remove"
+                        divided
+                      >
+                        删除
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
             </div>
           </div>
         </div>
@@ -524,15 +534,16 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
   height: 26px;
   align-items: center;
   justify-content: center;
+  border: none;
   border-radius: 999px;
-  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.25);
-  background: rgb(var(--lnk-overlay-rgb) / 0.92);
-  color: #111;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.72);
   transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .asset-hover-btn:hover {
   transform: scale(1.06);
-  background: #fff;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
 }
 </style>
