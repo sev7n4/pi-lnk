@@ -56,6 +56,13 @@ import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
 import { pickLatestPlanDecision, seedPlanState } from "./gate/plan-gate.js";
 import {
+	isSubagentTool,
+	SUBAGENT_REPORT_MAX_CHARS,
+	SUBAGENT_TIMEOUT_MS,
+	SUBAGENT_TURN_BUDGET,
+	type SubagentOutcome,
+} from "./gate/subagent.js";
+import {
 	createTurnBudgetState,
 	turnBudgetOnTurnStart,
 	turnBudgetRunEnd,
@@ -293,6 +300,21 @@ interface SessionEntry {
 	stallSettled?: boolean;
 	/** C2 turnBudget per-run 状态（run_start/turn_start/run_end 事件维护；纯内存，重启即失）。 */
 	turnBudget: TurnBudgetState;
+	/** C4：per-entry turn 预算覆盖（子代理=30）。undefined = 用全局 turnBudgetLimit。 */
+	turnBudgetLimit?: number;
+	/**
+	 * C4：子会话白名单工具名（build() 装配 ensemble 时快照）。runSubagent 用它对 lane
+	 * 做 setActiveTools 覆盖——fork 还原的盘上 lane config 带着来源会话的全量
+	 * activeToolNames（含白名单外工具），不覆盖会在 vendor generation 校验
+	 * （activeToolNames ⊆ config.tools）处撞 configured_tools_unavailable，run 直接 failed。
+	 */
+	subagentToolNames?: string[];
+	/**
+	 * C4（评审 C1）：内存状态 store（todo/plan）作用域键 = toolContext.storeScopeKey。
+	 * 常规会话 = canvasSessionId ?? key（逐字节旧行为）；子会话 = 自身 pi 键——
+	 * 子 run 的 todo_write 绝不落到主会话共享键上（fork 隔离，spec §3.6）。
+	 */
+	storeScopeKey: string;
 }
 
 const BUFFER_LIMIT = 500;
@@ -428,6 +450,10 @@ export interface CreateOptions {
 	 * 两者都要：前者回答「这个会话目录是哪版规则建的」，后者回答「现在跑的是哪版」。
 	 */
 	promptInfo?: PromptInfo;
+	/** C4 内部（runSubagent 专用，Nest 入参不透传）：子会话工具表按白名单过滤。 */
+	subagentTools?: boolean;
+	/** C4 内部：per-entry turn 预算覆盖（子代理 = SUBAGENT_TURN_BUDGET）。 */
+	turnBudgetLimit?: number;
 }
 
 export interface CreateResult {
@@ -450,6 +476,17 @@ export function toSessionKey(threadKey: string): string {
 	if (!trimmed) throw new Error("toSessionKey requires a non-empty threadKey");
 	const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 8);
 	return `${trimmed.replace(SESSION_KEY_INVALID, "_")}-${digest}`;
+}
+
+/**
+ * C4（评审 I1）：子会话键判别。子键由 runSubagent 构造：`${source.id}__sub_${forkId}` 经
+ * toSessionKey 消毒（`_` 是合法字符，`__sub_` 标记原样保留）。供 per-session 钩子装配点
+ * （index.ts onSessionCreated）跳过子会话——plan-gate 钩子/播种是主对话语义，spec §3.6
+ * 明文排除子代理。用键形状而非 sessions map 查找：onSessionCreated 触发早于 sessions.set，
+ * 查表会漏判。
+ */
+export function isSubagentSessionKey(key: string): boolean {
+	return key.includes("__sub_");
 }
 
 /**
@@ -879,6 +916,7 @@ export class SessionManager {
 			droppedFromSeq: 0,
 			activityStep: 0,
 			turnBudget: createTurnBudgetState(),
+			turnBudgetLimit: opts.turnBudgetLimit,
 			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
 			// 字段（app.ts:113），传空串 / 不传时这里**不能**退化成「没有 base prompt」——
 			// 否则默认系统提示被整段顶替掉（生产上表现为 agent 没有任何基础人设，只剩裸动态段）。
@@ -890,6 +928,11 @@ export class SessionManager {
 			identity,
 			userId: opts.userId,
 			canvasSessionId: opts.canvasSessionId,
+			// C4（评审 C1）：内存状态 store 作用域键。子会话**强制**用自身 pi 键——
+			// 若沿用 canvasSessionId（主会话常态），子 run 的 todo_write 会经
+			// toolContext.sessionId 直接覆写主会话的 C1 清单，fork 隔离被击穿。
+			// canvasSessionId 本身保留：画布读工具（get_canvas_summary 等）仍靠它查 Nest。
+			storeScopeKey: opts.subagentTools ? key : (opts.canvasSessionId ?? key),
 			turn: normalizeTurnContext({
 				attachments: opts.attachments,
 				mentionedKeys: opts.mentionedKeys,
@@ -925,7 +968,16 @@ export class SessionManager {
 			promptHash: opts.promptInfo?.promptHash,
 		});
 
-		const toolEnsemble = this.getToolEnsemble();
+		// C4：子会话 ensemble 按白名单过滤（tiering 强制 off——白名单全量激活，无 tool_search），
+		// 不走缓存（主会话 ensemble 与子会话 ensemble 是两个不同集合）。
+		const toolEnsemble = opts.subagentTools
+			? buildToolEnsemble(
+					this.tools.filter((t) => isSubagentTool(t.name)) as LnkpiTool[],
+					false,
+					undefined,
+				)
+			: this.getToolEnsemble();
+		if (opts.subagentTools) entry.subagentToolNames = toolEnsemble.registered.map((t) => t.name);
 		// ⚠️ `open` 是 vendor 在 attach 时从盘上还原出来的**未完成 operation** 列表
 		// （`createAgentHarness` → `restoreSession`）。2026-10-07 之前这里只解构了
 		// `harness`，`open` 被整个丢弃 —— 那正是「lane 被孤儿 operation 永久占死」的
@@ -945,8 +997,13 @@ export class SessionManager {
 				// ⚠️ `sessionId` 语义 = **画布会话 id**（Nest 用它查库），不是 pi 会话键 `key`。
 				// 取值优先级：本轮/建会话时传入的 canvasSessionId → 会话内已存值 → 回落 pi 会话键
 				// （旧 Nest 不传该字段时语义退化为 #70 行为，不产生新失败形态）。
-				toolContext: () => ({
-					sessionId: entry.canvasSessionId ?? key,
+						toolContext: () => ({
+							sessionId: entry.canvasSessionId ?? key,
+							// C4（评审 C1）：内存状态 store 作用域键——todo/plan store 用它做键，
+							// 子会话指向自身（隔离）；其余工具继续用 sessionId（画布 id 语义不变）。
+							storeScopeKey: entry.storeScopeKey,
+							// C4：spawn_subagent 定位来源会话做 fork（画布 id 与 pi 键分离，见 types.ts）
+							piSessionKey: key,
 					// 终审 I-3：只有真canvasSessionId 才给可信字段；回落 pi 键时留undefined，
 					// 让记忆写入方选择「不挂画布」而不是挂一个不存在的 Session。
 					trustedCanvasSessionId: entry.canvasSessionId,
@@ -979,7 +1036,9 @@ export class SessionManager {
 		// fail-soft：lane/扫描失败只 warn，绝不阻断会话建立。
 		if (existingFs?.session) {
 			try {
-				const todoKey = entry.canvasSessionId ?? key;
+				// C4（评审 C1）：播种键 = storeScopeKey（子会话=自身键，fork 快照落自己作用域，
+				// 与 fork 语义一致——子代理看到 fork 时点的主会话清单，但写不进主会话）。
+				const todoKey = entry.storeScopeKey ?? (entry.canvasSessionId ?? key);
 				const lane = await harness.lane(MAIN_LANE, this.context);
 				const entries = (await lane.findEntries({ order: "oldestFirst" }, this.context)) as readonly unknown[];
 				seedTodoState(todoKey, pickLatestSnapshot(Array.isArray(entries) ? entries : []));
@@ -987,7 +1046,12 @@ export class SessionManager {
 				// 无 propose_plan 记录（老会话）不播种，保持默认 idle。
 				// kill switch 同门控（终审 Critical #1）：off 时恢复旧行为，存量 planPending
 				// 会话不得播种——propose_plan 已注销，播种=永久拦写无解锁出口。
-				const planDecision = pickLatestPlanDecision(Array.isArray(entries) ? entries : []);
+				// C4（评审 I1）：子会话**跳过 plan 播种**——plan 状态键与主会话共享
+				// （storeScopeKey 之外的闸门状态域），fork 快照回灌会回退主会话刚做的
+				// 确认/拒绝决策；且子代理无 propose_plan（白名单排除），闸门对子无意义。
+				const planDecision = opts.subagentTools
+					? undefined
+					: pickLatestPlanDecision(Array.isArray(entries) ? entries : []);
 				if (planDecision && planGateEnabled()) seedPlanState(todoKey, planDecision);
 			} catch (err) {
 				console.warn("[todo-resume] transcript seeding failed (fail-soft):", err);
@@ -1427,7 +1491,9 @@ export class SessionManager {
 
 	/** turn_start 计数入口。warn/exceed 的副作用全部 fail-soft，绝不影响事件分发主链路。 */
 	private turnBudgetTick(entry: SessionEntry, runId: string | undefined): void {
-		const budget = this.turnBudgetLimit();
+		// C4：per-entry 预算覆盖优先（子代理=30，三件套不可禁用——全局 off 也不旁路子代理）。
+		const globalBudget = this.turnBudgetLimit();
+		const budget = entry.turnBudgetLimit ?? globalBudget;
 		if (budget === "off") return;
 		const action = turnBudgetOnTurnStart(entry.turnBudget, runId, budget);
 		if (action === "warn") {
@@ -1739,7 +1805,8 @@ export class SessionManager {
 	 */
 	private assembleDynamicBlocks(entry: SessionEntry): string[] {
 		const blocks = [...(entry.turn.dynamicBlocks ?? [])];
-		const todoItems = getTodoState(entry.canvasSessionId ?? entry.id);
+		// C4（评审 C1）：读侧同走 storeScopeKey（子会话读自己的作用域，不读主会话清单）。
+		const todoItems = getTodoState(entry.storeScopeKey ?? entry.canvasSessionId ?? entry.id);
 		if (todoItems.length > 0) blocks.push(renderTodoBlock(todoItems));
 		return blocks;
 	}
@@ -2223,6 +2290,176 @@ export class SessionManager {
 			{ env: source.env, repo: source.repo, session: forkedSession },
 		);
 		return { newKey: rawNewKey, newSessionId };
+	}
+
+	/**
+	 * C4：运行一个只读 Explore 子代理（spec docs/superpowers/specs/2026-10-10-c4-subagent-design.md
+	 * §3.1/§3.2/§3.4）。fork 主会话全量历史 → 白名单 ensemble 建 sub entry → 同步 await
+	 * lane.prompt（三重硬边界内）→ 提取最终报告 → 清理。
+	 *
+	 * 与公共 fork() 的唯一语义分歧：**不检查 source.prompting**——spawn 本就发生在主 run
+	 * 进行中的工具执行内；vendor fork 读快照 + fresh idle lane（session/types.ts ForkOptions），
+	 * 串台风险不成立（公共 fork 的守卫是产品级 fail-closed，非 vendor 限制）。
+	 *
+	 * ⚠️ 清理铁律：sub entry 结束只 `sessions.delete` + `harness.close`——**绝不**
+	 * releaseHandles（其 env/repo 与来源会话共享，误清 = 主会话瘫痪）。
+	 */
+	async runSubagent(
+		piSessionKey: string,
+		task: string,
+		opts?: { timeoutMs?: number; signal?: AbortSignal },
+	): Promise<SubagentOutcome> {
+		const t0 = Date.now();
+		// 双形态查找：toolContext 传的 piSessionKey 就是 sessions map key（本就是映射产物），
+		// 而 require() 的 toSessionKey **非幂等**（每次追加 -<sha8>），对已映射键二次调用必
+		// NotFound（集成测试实锤：spawn 嵌在主 run 内时 100% 复现）。优先精确键，回落原始
+		// threadKey 映射（外部直调/测试传入未映射形态）。
+		const source =
+			this.sessions.get(piSessionKey) ?? this.sessions.get(toSessionKey(piSessionKey));
+		if (!source) throw new NotFoundError(piSessionKey);
+		if (!source.session || !source.sessionMeta) {
+			throw new Error(`session ${source.id} missing underlying session snapshot; cannot spawn subagent`);
+		}
+		// I3（评审）：硬边界覆盖 fork/build 段——计时器从 fork 之前起跳（原来只盖 lane.prompt）。
+		// fork 传 run.context：超时/外部取消能让 fork 本身 fail-fast；build 内部走 this.context
+		// 不可中断（纯本地磁盘操作、无 LLM/网络等待），若 build 结束时已超时，直接短路返回，
+		// 不再进入 prompt。残余暴露面 = build 自身挂死（本地 IO，风险极低）。
+		const run = withCancel(this.context);
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			run.cancel();
+		}, opts?.timeoutMs ?? SUBAGENT_TIMEOUT_MS);
+		// I2（评审）：主 run「停止」传播——spawn 工具透传 chordCtx.abortSignal，这里联动
+		// run.cancel。用户中止的子 run 归类 failed（诚实语义：非完成非超时非超限）。
+		const onAbort = () => run.cancel();
+		opts?.signal?.addEventListener("abort", onAbort, { once: true });
+		let subKey: string | undefined;
+		try {
+			// 全量历史：entryId 缺省 = 当前 tip、position 缺省含 tip（session/types.ts ForkOptions）。
+			let forkedSession: Awaited<ReturnType<typeof source.repo.fork>>;
+			try {
+				forkedSession = await source.repo.fork(
+					source.sessionMeta,
+					{ scope: "branch", branch: MAIN_LANE },
+					run.context,
+				);
+				subKey = toSessionKey(`${source.id}__sub_${forkedSession.metadata.id}`);
+				await this.build(
+					subKey,
+					{
+						systemPrompt: source.basePrompt,
+						workingDir: source.sessionMeta.cwd,
+						canvasSessionId: source.canvasSessionId,
+						userId: source.userId,
+						thinkingLevel: source.thinkingLevel,
+						subagentTools: true,
+						turnBudgetLimit: SUBAGENT_TURN_BUDGET,
+					},
+					source.models,
+					source.model,
+					source.identity,
+					{ env: source.env, repo: source.repo, session: forkedSession },
+				);
+			} catch (err) {
+				// I3：fork/build 段被超时/取消打断（fork 传 run.context，abort 会炸掉 staging）——
+				// timedOut 在此优先归类 timeout，真错误照常外抛（coordinator 兜底转 failed）。
+				if (timedOut) return { report: "", turns: 0, durationMs: Date.now() - t0, status: "timeout" };
+				throw err;
+			}
+			const sub = this.sessions.get(subKey);
+			if (!sub) throw new Error(`subagent entry ${subKey} missing after build`);
+			sub.prompting = true; // 防其他入口（prompt/steer/followUp）误用子会话
+			if (timedOut) {
+				return { report: "", turns: 0, durationMs: Date.now() - t0, status: "timeout" };
+			}
+			const lane = await sub.harness.lane(MAIN_LANE, this.context);
+			// fork 还原的盘上 lane config 带着**来源会话**的全量 activeToolNames（restore.ts
+			// 原样还原、seed 只对新建 lane 生效），而子 harness 的 config.tools 是白名单子集
+			// ——vendor generation 校验 activeToolNames ⊆ config.tools 会撞
+			// configured_tools_unavailable（run 直接 failed）。官方覆盖口：setActiveTools
+			// 落在 fork 出来的子会话自己的存储上，不触碰主会话。
+			if (sub.subagentToolNames) {
+				await lane.setActiveTools(sub.subagentToolNames, this.context);
+			}
+			sub.cancelRun = run.cancel;
+			sub.userAborted = false;
+			let result: { ok: boolean; value?: { status?: string; error?: unknown }; error?: unknown };
+			try {
+				result = (await lane.prompt(task, undefined, run.context)) as {
+					ok: boolean;
+					value?: { status?: string; error?: unknown };
+					error?: unknown;
+				};
+			} catch (err) {
+				// 预算硬停（turnBudgetHardStop）/ 超时 / 外部取消都经 cancel(run.context) 表达，
+				// vendor 对在途 run 以 throw AbortError 结束（主链路 prompt() 的 catch
+				// userAborted 同款语义）。按可见状态归类，绝不外抛——SubagentCoordinator
+				// 契约：promise 永不 reject，失败兜底转 failed outcome（settled/timedOut
+				// 检查在其前，budget_exceeded / timeout 优先级不受影响）。
+				result = { ok: false, error: err };
+			}
+			// ⚠️ result.ok 只是 vendor 的信封（operation 跑到终态），**run 真实状态在
+			// result.value.status**（TerminalStatus：completed/declined/aborted/failed）——
+			// configured_tools_unavailable 等配置失败也是 ok:true + status:"failed"，把信封
+			// ok 当 run 成功会把失败静默报成 completed（探针实锤）。
+			const outcome = result.ok
+				? (result.value ?? {})
+				: { status: "failed", error: result.error };
+			const turns = sub.turnBudget.count;
+			const durationMs = Date.now() - t0;
+			const report = (await this.extractSubagentReport(lane)).slice(0, SUBAGENT_REPORT_MAX_CHARS);
+			// 状态判定优先级：预算超限（settled 闸是权威信号——forceSettle 会把 run 折叠成
+			// 正常结算的 completed，run status 不可信）> 超时（我们 cancel）> run 终态 > 其他失败。
+			if (sub.turnBudget.settled) {
+				return { report, turns, durationMs, status: "budget_exceeded" };
+			}
+			if (timedOut) {
+				return { report, turns, durationMs, status: "timeout" };
+			}
+			if (outcome.status === "completed") {
+				return { report, turns, durationMs, status: "completed" };
+			}
+			return { report, turns, durationMs, status: "failed" };
+		} finally {
+			clearTimeout(timer);
+			opts?.signal?.removeEventListener("abort", onAbort);
+			// 清理铁律：只摘内存 + 关子 harness；绝不 releaseHandles（env/repo 共享）。
+			// fork/build 抛错（subKey 未定）时无 entry 可摘，同样安全。
+			if (subKey) {
+				const sub = this.sessions.get(subKey);
+				this.sessions.delete(subKey);
+				if (sub) await sub.harness.close(this.context).catch(() => {});
+			}
+		}
+	}
+
+	/** 子 run 报告提取：transcript 倒序找第一条有文本的 assistant 消息（plan-gate 扫描同款防御式形状）。 */
+	private async extractSubagentReport(lane: AgentLane): Promise<string> {
+		const entries = await lane
+			.findEntries({ order: "newestFirst" }, this.context)
+			.then((v) => (Array.isArray(v) ? v : []), () => []);
+		for (const e of entries) {
+			const entry = e as {
+				role?: string;
+				content?: unknown;
+				message?: { role?: string; content?: unknown };
+			} | null;
+			if (!entry) continue;
+			const role = entry.message?.role ?? entry.role;
+			if (role !== "assistant") continue;
+			const content = entry.message?.content ?? entry.content;
+			const text = Array.isArray(content)
+				? content
+						.filter((p) => (p as { type?: string })?.type === "text")
+						.map((p) => (p as { text?: string })?.text ?? "")
+						.join("\n")
+				: typeof content === "string"
+					? content
+					: "";
+			if (text.trim()) return text.trim();
+		}
+		return "";
 	}
 
 	async remove(threadKey: string): Promise<boolean> {

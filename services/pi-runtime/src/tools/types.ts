@@ -34,6 +34,20 @@ export interface SidebarAttachment {
 /** 每会话注入 toolContext 的值；SessionManager.create 时构造。 */
 export interface LnkpiToolContext {
 	/**
+	 * **pi 会话键**（C4）：`spawn_subagent` 用它定位来源会话做 fork。
+	 * 与 `sessionId`（画布会话 id，#70 语义）刻意分离——见该字段警示。
+	 * 可选：仅 spawn 消费（缺失时 fail-soft 拒绝派发），生产 toolContext 恒填。
+	 */
+	piSessionKey?: string;
+	/**
+	 * **内存状态 store 作用域键**（C4 评审 C1）：todo/plan 等「会话内存 store」用本字段做键，
+	 * 而非 sessionId——sessionId 是画布会话 id（跨会话共享语义），直接拿它当 store 键会让
+	 * 子会话（storeScopeKey=自身 pi 键）的写入覆写主会话状态。常规会话 storeScopeKey 恒等于
+	 * `canvasSessionId ?? pi 会话键`（逐字节旧行为）；子会话指向自身。可选：旧构造点缺失时
+	 * 消费方回落 sessionId（行为不变）。
+	 */
+	storeScopeKey?: string;
+	/**
 	 * **画布会话 id**（Nest `/agent/internal/*` 用它 `findUnique({id})` 查 `Session`）。
 	 *
 	 * ⚠️ 这**不是** pi 会话键（`toSessionKey(threadKey)`）。二者曾于 #70 被合并进本字段，

@@ -5,7 +5,7 @@
  * 路由本身在 app.ts（可被 `app.inject` 测试）；会话生命周期在 SessionManager。
  */
 import { buildApp } from "./app.js";
-import { SessionManager } from "./session-manager.js";
+import { SessionManager, isSubagentSessionKey } from "./session-manager.js";
 import { assembleModel } from "./model-assembly.js";
 import { Metrics, VERSION } from "./metrics.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
@@ -14,6 +14,7 @@ import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 import { clearPlanRunFlag } from "./gate/plan-gate.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
+import { SubagentCoordinator } from "./gate/subagent.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
 import { governImagePayload } from "./payload-images.js";
@@ -54,7 +55,10 @@ const registry = new PendingToolRegistry({
 		metrics.observePendingOp(toolName, status);
 	},
 });
-const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry });
+// C4：spawn_subagent ↔ SessionManager 的解耦中转（PendingToolRegistry 同款装配顺序）：
+// 同一实例两处共享——工具域（spawn 工具 tryRun）、manager 构造后 attach(runSubagent 实现)。
+const subagentCoordinator = new SubagentCoordinator();
+const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry, coordinator: subagentCoordinator });
 
 // D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。
 // 目录缺失/为空时 indexBlock=""、tools=[]，会话行为与未配置 skills 逐字节一致。
@@ -151,11 +155,15 @@ const manager = new SessionManager(
 			// （与 propose_plan 的 tc.sessionId、session-manager 播种三方一致，#74 解耦语义）——
 			// canvasSessionId 每轮可能自愈（doCreate），传解析器现算而非捕获值（终审 Important #2）。
 			// 必须挂在 if (!nestClient) 之前——propose_plan 纯文本模式也可用（与 config.ts 注册面一致）。
-			registerPlanGateHooks(harness, {
-				planKey: () => manager.getCanvasSessionId(sessionId) ?? sessionId,
-				tiers: toolTiers,
-				metrics,
-			});
+			// C4（评审 I1）：子会话跳过——plan-gate 是主对话语义（spec c4 §3.6 明文排除），
+			// 子 harness 挂钩会在共享键上回灌/拦写主会话的闸门状态。
+			if (!isSubagentSessionKey(sessionId)) {
+				registerPlanGateHooks(harness, {
+					planKey: () => manager.getCanvasSessionId(sessionId) ?? sessionId,
+					tiers: toolTiers,
+					metrics,
+				});
+			}
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
 			harness.hooks.on("before_tool", async (event) => {
@@ -203,6 +211,9 @@ const manager = new SessionManager(
 );
 
 manager.setPendingRegistry(registry);
+// C4：spawn 工具的 runner 落地（SessionManager#runSubagent 兼容 SubagentRunner——第 3 参可选）。
+// attach 必须在首个 prompt 之前：spawn 可发生在任何会话的任何一轮。
+subagentCoordinator.attach(manager);
 
 const app = buildApp(manager, { metrics, version: VERSION, logger: true, registry });
 

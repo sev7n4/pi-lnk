@@ -104,7 +104,9 @@ export function buildTodoTools(): LnkpiTool[] {
 			_invocation: unknown,
 			_context: unknown,
 		): Promise<AgentToolResult<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>> {
-			const { snapshot, diff } = overwriteTodos(toolContext.sessionId, params.todos);
+			// C4（评审 C1）：store 键走 storeScopeKey（子会话=自身键）——直接用 sessionId 时
+			// 子 run 的 todo_write 会覆写主会话（同画布 id）的 C1 清单，fork 隔离被击穿。
+			const { snapshot, diff } = overwriteTodos(toolContext.storeScopeKey ?? toolContext.sessionId, params.todos);
 			return {
 				content: [{ type: "text", text: summarize(snapshot) }],
 				details: { todo: { snapshot, diff } },
