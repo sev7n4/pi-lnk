@@ -4,6 +4,18 @@ import { createPinia, setActivePinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import AdminPricingPage from './AdminPricingPage.vue'
 
+const { ElMessageBoxConfirm } = vi.hoisted(() => ({ ElMessageBoxConfirm: vi.fn(async () => 'confirm') }))
+
+// brief 原文未 mock ElMessageBox.confirm，但真实弹窗在 vitest 下永远 pending，
+// clearPricing 用例会因此阻塞；沿用 AdminModelsPage.test.ts 已验证的部分 mock 先例。
+vi.mock('element-plus', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('element-plus')>()
+  return {
+    ...mod,
+    ElMessageBox: { ...mod.ElMessageBox, confirm: (...a: unknown[]) => ElMessageBoxConfirm(...a) },
+  }
+})
+
 const { platformChannel, setPlatformModelPricing } = vi.hoisted(() => ({
   platformChannel: vi.fn(),
   setPlatformModelPricing: vi.fn(),

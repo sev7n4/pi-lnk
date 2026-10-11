@@ -107,6 +107,9 @@ async function clearPricing(name: string) {
 }
 
 onMounted(reload)
+
+// 测试经 w.vm 直调（同 AdminModelsPage 先例）：script setup 顶层绑定默认不暴露。
+defineExpose({ openEditor, submitPricing, clearPricing, pricingForm, actionError })
 </script>
 
 <template>
