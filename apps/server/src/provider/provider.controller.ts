@@ -23,12 +23,42 @@ import { Type } from 'class-transformer'
 import { AuthGuard } from '../auth/auth.guard'
 import { ProviderService } from './provider.service'
 
+/**
+ * 单模型渠道费率（USD / 百万 token）。P1 cost 接线的**写入面**：
+ * 渠道 models[].pricing 随既有 JSON 列落库（零迁移），由
+ * `resolveChannelModelCost` 读取并经 pi 会话 override 下发，
+ * vendor calculateCost 据此计算 usage.cost。全部可选；缺省 = 不计费（行为不变）。
+ * 注：`pull-models` 从上游 /v1/models 重建列表时 pricing 不保留，需在手动编辑时重填。
+ */
+class ModelPricingDto {
+  @IsOptional()
+  @IsNumber()
+  inputPerM?: number
+
+  @IsOptional()
+  @IsNumber()
+  outputPerM?: number
+
+  @IsOptional()
+  @IsNumber()
+  cacheReadPerM?: number
+
+  @IsOptional()
+  @IsNumber()
+  cacheWritePerM?: number
+}
+
 class ChannelModelDto {
   @IsString()
   name!: string
 
   @IsIn(['text', 'image', 'video', 'audio'])
   capability!: 'text' | 'image' | 'video' | 'audio'
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ModelPricingDto)
+  pricing?: ModelPricingDto
 }
 
 class CreateChannelDto {

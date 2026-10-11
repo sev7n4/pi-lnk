@@ -34,6 +34,31 @@ function optionalPositiveInt(v: unknown): number | undefined | null {
 	return Math.floor(v);
 }
 
+/**
+ * 可选 cost（渠道费率，USD / 百万 token）。P1 接线：Nest 侧从渠道
+ * `models[].pricing` 解析后随 override 下发，model-assembly 填进 Model.cost，
+ * vendor calculateCost 在响应时自动算出 usage.cost。
+ *
+ * 四个键全部可选（缺 = 0）；对象整体缺省 = 不传（行为不变）。
+ * 任何出现的键非法（非有限非负数）→ null = 畸形 → 调用方 400。
+ * 四键全缺省时视为未声明（返回 undefined，不产出全零对象）。
+ */
+function optionalCost(v: unknown): SessionLlmOverride["cost"] | undefined | null {
+	if (v === undefined) return undefined;
+	if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+	const c = v as Record<string, unknown>;
+	const out = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	let seen = false;
+	for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+		const raw = c[key];
+		if (raw === undefined) continue;
+		if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return null;
+		out[key] = raw;
+		seen = true;
+	}
+	return seen ? out : undefined;
+}
+
 export function parseLlmOverride(raw: unknown): LlmOverrideParseResult {
 	if (raw === undefined || raw === null) return { state: "absent" };
 	if (typeof raw !== "object" || Array.isArray(raw)) return { state: "invalid" };
@@ -62,6 +87,8 @@ export function parseLlmOverride(raw: unknown): LlmOverrideParseResult {
 	// 教训与 #126 同形：加了字段没接线。此处缺省 = 字段不出现，交回「不猜」默认。
 	const supportsVision = optionalBoolean(r.supportsVision);
 	if (supportsVision === null) return { state: "invalid" };
+	const cost = optionalCost(r.cost);
+	if (cost === null) return { state: "invalid" };
 
 	return {
 		state: "ok",
@@ -75,6 +102,7 @@ export function parseLlmOverride(raw: unknown): LlmOverrideParseResult {
 			...(contextWindow === undefined ? {} : { contextWindow }),
 			...(maxTokens === undefined ? {} : { maxTokens }),
 			...(supportsVision === undefined ? {} : { supportsVision }),
+			...(cost === undefined ? {} : { cost }),
 		},
 	};
 }

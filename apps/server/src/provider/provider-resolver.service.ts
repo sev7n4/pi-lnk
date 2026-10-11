@@ -24,6 +24,12 @@ export type ResolvedGenerationProvider = {
   apiFormat: ApiCallFormat
   credentials: { apiKey?: string; baseUrl: string }
   source: 'user' | 'platform'
+  /**
+   * 命中渠道的 models JSON 原文（渠道条目含可选 pricing）。
+   * P1 cost 接线：provider-context 侧用 `resolveChannelModelCost` 从中解析费率。
+   * 平台分支回镜像 models（PLATFORM_CHANNEL_ID 行），缺行/缺列时缺省。
+   */
+  channelModelsJson?: string
 }
 
 /**
@@ -173,6 +179,7 @@ export class ProviderResolverService {
           baseUrl: baseUrlForUpstream(route.upstream, channel, vars),
         },
         source: 'platform',
+        channelModelsJson: channel?.models,
       }
     }
 
@@ -199,6 +206,7 @@ export class ProviderResolverService {
       apiFormat: channel.apiFormat as ApiCallFormat,
       credentials: { apiKey, baseUrl: channel.baseUrl },
       source: 'user',
+      channelModelsJson: channel.models,
     }
   }
 }

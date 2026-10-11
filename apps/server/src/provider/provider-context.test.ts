@@ -61,4 +61,34 @@ describe('buildTextProviderContext', () => {
     expect(canvasCtx.providerRef).toBe(agentCtx.providerRef)
     expect(canvasCtx.apiKey).toBe(agentCtx.apiKey)
   })
+
+  it('channelModelsJson 缺省 → ProviderContext 不带该字段（不计费，行为不变）', async () => {
+    const resolver = {
+      resolveForGeneration: vi.fn().mockResolvedValue({
+        channelId: 'ch_byok',
+        modelName: 'm',
+        apiFormat: 'openai',
+        credentials: { apiKey: 'sk', baseUrl: 'https://x/v1' },
+        source: 'user',
+      }),
+    }
+    const ctx = await buildTextProviderContext(resolver as never, 'u1', 'ch_byok::m')
+    expect('channelModelsJson' in ctx).toBe(false)
+  })
+
+  it('resolved.channelModelsJson → ProviderContext 原样透传（P1 cost 读取面）', async () => {
+    const modelsJson = JSON.stringify([{ name: 'm', capability: 'text', pricing: { inputPerM: 1 } }])
+    const resolver = {
+      resolveForGeneration: vi.fn().mockResolvedValue({
+        channelId: 'ch_byok',
+        modelName: 'm',
+        apiFormat: 'openai',
+        credentials: { apiKey: 'sk', baseUrl: 'https://x/v1' },
+        source: 'user',
+        channelModelsJson: modelsJson,
+      }),
+    }
+    const ctx = await buildTextProviderContext(resolver as never, 'u1', 'ch_byok::m')
+    expect(ctx.channelModelsJson).toBe(modelsJson)
+  })
 })
