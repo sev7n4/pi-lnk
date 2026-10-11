@@ -3,9 +3,11 @@ import {
   ADMIN_TOKEN_KEY,
   AdminApiError,
   adminApi,
+  handleAdminRequest,
   handleAdminResponseError,
   setAdminUnauthorizedHandler,
 } from './admin-api'
+import type { InternalAxiosRequestConfig } from 'axios'
 
 const { axiosGet, axiosPut, axiosPost, axiosDelete } = vi.hoisted(() => ({
   axiosGet: vi.fn(),
@@ -52,12 +54,32 @@ describe('admin-api', () => {
     setAdminUnauthorizedHandler(null)
   })
 
-  it('请求前从 sessionStorage 注入 Bearer 头（request 拦截器）', async () => {
-    // 拦截器注册发生在模块加载期；这里直接验证 adminApi 走 axios 并携带数据解包
-    sessionStorage.setItem(ADMIN_TOKEN_KEY, 't-1')
+  it('listCatalog 调用 GET /admin/model-catalog（URL/params 形态）', async () => {
     axiosGet.mockResolvedValue(ok({ version: 1, entries: [] }))
     await adminApi.listCatalog()
     expect(axiosGet).toHaveBeenCalledWith('/admin/model-catalog', expect.objectContaining({ params: undefined }))
+  })
+
+  it('handleAdminRequest：token 存在 → 注入 Bearer Authorization 头', () => {
+    sessionStorage.setItem(ADMIN_TOKEN_KEY, 't-1')
+    const config = { headers: {} } as InternalAxiosRequestConfig
+    const result = handleAdminRequest(config)
+    expect(result.headers.Authorization).toBe('Bearer t-1')
+  })
+
+  it('handleAdminRequest：token 缺失 → 不设置 Authorization 头', () => {
+    const config = { headers: {} } as InternalAxiosRequestConfig
+    const result = handleAdminRequest(config)
+    expect(result.headers.Authorization).toBeUndefined()
+  })
+
+  it('handleAdminRequest：不影响 config 其余字段', () => {
+    sessionStorage.setItem(ADMIN_TOKEN_KEY, 't-1')
+    const config = { headers: {}, baseURL: '/api', url: '/admin/model-catalog' } as InternalAxiosRequestConfig
+    const result = handleAdminRequest(config)
+    expect(result.baseURL).toBe('/api')
+    expect(result.url).toBe('/admin/model-catalog')
+    expect(result.headers.Authorization).toBe('Bearer t-1')
   })
 
   it('信封 code=0 → 解包 data', async () => {

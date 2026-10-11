@@ -1,4 +1,4 @@
-import axios, { type AxiosError, type AxiosInstance } from 'axios'
+import axios, { type AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 import { getApiBaseUrl } from './api-base'
 import type { HealthAlert, ModelHealthRow } from '@lnkpi/shared'
 
@@ -25,13 +25,16 @@ export const adminHttp: AxiosInstance = axios.create({
   timeout: 30_000,
 })
 
-adminHttp.interceptors.request.use((config) => {
+/** 请求拦截器纯函数（可导出以便测试直调）：token 存在时注入 Bearer 头。 */
+export function handleAdminRequest(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   const token = sessionStorage.getItem(ADMIN_TOKEN_KEY)
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
-})
+}
+
+adminHttp.interceptors.request.use(handleAdminRequest)
 
 type UnauthorizedHandler = () => void
 let unauthorizedHandler: UnauthorizedHandler | null = null
