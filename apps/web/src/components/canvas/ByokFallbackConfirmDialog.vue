@@ -30,7 +30,7 @@ function onCancel() {
 <template>
   <div
     v-if="modelValue"
-    class="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 px-4"
+    class="fixed inset-0 z-[80] flex items-center justify-center bg-dim/55 px-4"
     @click.self="onCancel"
   >
     <div

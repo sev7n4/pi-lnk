@@ -269,6 +269,11 @@
      仅承载"叠在表面之上的半透明 tint"，不替代 --lnk-surface-overlay（实体半透明面）。 */
   --lnk-overlay-rgb: 255 255 255;
 
+  /* 恒黑压暗通道：双主题同值（盖在媒体/品牌渐变上的 scrim —— 主题翻转在此是错的：
+     媒体角标、渐变上的文字压层、模态遮罩都恒为黑）。与 overlay 通道互补：
+     overlay 管「随主题翻转的 tint」，dim 管「恒黑压暗」。 */
+  --lnk-dim-rgb: 0 0 0;
+
   /* 画布专属 */
   --lnk-edge: rgba(148, 151, 180, 0.3);
   --lnk-edge-hover: rgba(178, 181, 210, 0.55);
@@ -352,6 +357,9 @@
   --lnk-scrim: rgba(23, 25, 35, 0.34);
 
   --lnk-overlay-rgb: 0 0 0;
+
+  /* 恒黑压暗通道：双主题同值（媒体/渐变上的 scrim，主题翻转在此是错的）。 */
+  --lnk-dim-rgb: 0 0 0;
 
   --lnk-edge: rgba(23, 25, 35, 0.22);
   --lnk-edge-hover: rgba(23, 25, 35, 0.45);

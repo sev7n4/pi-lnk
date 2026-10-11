@@ -115,7 +115,7 @@ IP 形象的原型是墨鱼（cuttlefish）。选它不是因为可爱，是因�
 |---|---|---|---|
 | 墨 | 创造介质 | 墨阶 `--lnk-ink-*` + 表面四层 | 棘轮 8 类只减 |
 | 触手 | 连接 | 描边体系 `border-*` / `edge-*` | 成对性 |
-| 色素细胞显色 | 风格切换的瞬间 | `--lnk-accent*`（≤10%）+ 品牌渐变（F-5 已锁） | 品牌锚点 describe |
+| 色素细胞显色 | 风格切换的瞬间 | `--lnk-accent*`（≤10%）+ 品牌渐变（F-5 已落地：仅 hero 大面垫 `bg-dim/25` 消费） | 品牌锚点 describe |
 | 锚链 | 层级深度 | `--lnk-shadow-xs..xl` + `shadow-lnk-*` 工具类 | 深色>浅色 / 单调加重 |
 | 锚灯 | 确定性信标 | `--lnk-energy`（青）用于 focus/成功/进行中 | 单语义守卫 |
 | π | 无限不循环 | display 字体 + shimmer 相位偏移动画 | reduced-motion 强制静止 |
@@ -511,7 +511,7 @@ WCAG 2.1 sRGB 相对亮度的蓝通道系数是 **0.0722**，不是 0.2992（后
 
 ---
 
-### F-5 🔶 待决（P0 实施中新发现）：品牌渐变承载白字不达标
+### F-5 ✅ 已闭环：品牌渐变承载白字不达标
 
 品牌渐变 `#6d5dfc → #8a5cf6 → #b45cf0` 两个主题同值。实测它承载白字的能力**沿渐变衰减**：
 
@@ -521,16 +521,11 @@ WCAG 2.1 sRGB 相对亮度的蓝通道系数是 **0.0722**，不是 0.2992（后
 | 中段 `#8a5cf6` | **4.25** | ❌ |
 | 终点 `#b45cf0` | **3.67** | ❌ |
 
-影响面：`.btn-primary`（`main.css`）把白字压在这条渐变上，按钮右半区间的文字低于 AA。
-**这不是本轮引入的**，两个主题一直如此，只是此前没人测过渐变内部的对比度衰减。
+**闭环路径（F-5 + P6，方案 B 的完整版）**：
 
-为什么不在本轮改：渐变属于"品牌锚点，改动需走品牌评审"（§2.2）。两个候选方案各有代价：
-
-- **A. 压暗渐变末端**（`#b45cf0 → #7c3fd6` 一类）：可达标，但动品牌资产，需评审。
-- **B. 主按钮改用实色 `--lnk-accent`**：可达标且不动品牌，但主按钮失去渐变质感 —— 是视觉改版。
-
-当前处置：`design-token.test.ts` 锁了三色标不许漂移，并断言「白字压末端 ≥3:1（大字 AA）」——
-即**记录偏差、只锁不许更糟**，把 A/B 的取舍留给品牌决策。
+- **F-5（PR #352）**：`.btn-primary` 改用实色 `var(--lnk-accent)`（白字压实色紫：深 4.77 / 浅 6.2，均过 AA）——按钮这类高频小字操作件不再压渐变；渐变资产**原样保留**（不动三色标），退为「英雄资产」令牌 `bg-brand-gradient`。
+- **P6（本批）**：接入英雄资产的唯一合法消费方——hero 大面（CarouselBanner）：`bg-brand-gradient` + `bg-dim/25` 恒黑压层，白字（`text-fg-on`）对全渐变 ≥4.5（合成底最差 5.36:1）。**IP 语义归位**：显色时刻只给「创造发生」的大面情绪位，不给高频操作件。
+- **守卫**：`design-token.test.ts` 品牌锚点段——三色标不许漂移 + 裸渐变白字 ≥3:1（防小字白标回潮）+ **hero 白字压 dim/25 合成底 ≥4.5**（压层强度与组件耦合，调整须同步）。
 
 ---
 
@@ -644,14 +639,16 @@ WCAG 2.1 sRGB 相对亮度的蓝通道系数是 **0.0722**，不是 0.2992（后
 | P2e | **盲区补扫**：3 个 el-dialog 硬编码深底 `#1a1a1a`→`var(--lnk-surface-overlay)` + 标题白字→`var(--lnk-text-primary)`；ReplayPage 画布底 `#141414`→`var(--lnk-surface-canvas)`；on-accent 白字 3 处→`var(--lnk-text-on-accent)`；守卫新增第 9 类 `hardcoded-dark-bg`（基线 8，全为内容性保留） | ✅ 上线 |
 | P4 | **状态 hover 档位**：新增 `--lnk-{v}-bg-hover` ×4×2 + `--lnk-{v}-border-hover` ×4×2，Tailwind 接 `bg-hover`/`border-hover` 键；6 处无效 `hover:bg-*-bg`（与底同值）→ `hover:bg-*-bg-hover`；守卫 +24 条（合成底亮度判定 + border-hover 加实 + hover 底 AA ≥4.5），总计 86 条 | ✅ 上线 |
 | P5 | **border-hover 消费方接线**：AgentSideRail 只读警报按钮 ×2 + SceneComposerDockPanel 按钮 + EdgeScissorsOverlay 描边按钮（`hover:!border-danger-border` 升档）→ `hover:border-*-border-hover`，hover 信号完整（底+描边双通道）；**F-5 品牌评审材料**（`F5-brand-color-review.md`）：品牌蓝/紫 57 处全量分类（fallback 8 保 / 画布内容 5 保 / UI 交互 ~44 三方案待拍板） | ✅ 本批 |
+| F-5 (#352) | **品牌蓝收编**：indigo `#6366f1/#818cf8` 39 处（Tailwind 默认蓝紫遗留）→ accent 令牌族（text-fg-accent / bg-accent[-subtle] / border-accent / shadow-glow；保 2 处画布连线 stroke）；`.btn-primary` 渐变→实色 `var(--lnk-accent)`（brand-blue 21→0 · 818cf8 18→2 · arbitrary-hex 39→3） | ✅ 上线 |
+| P6 | **恒黑 dim 通道 + hero 渐变落地**：新增 `--lnk-dim-rgb: 0 0 0`（双主题同值，与 overlay 互补：overlay 管随主题翻转的 tint，dim 管恒黑压暗）+ Tailwind `dim` 键；CarouselBanner 死值渐变（`from-indigo-950/40 to-[#1a1a1a]`）→ `bg-brand-gradient` + `bg-dim/25` 压层 + `text-fg-on`（白字全渐变 ≥5.3:1）；4 处模态 dim（AgentAssetPicker/ForceChoiceDialog/ByokFallbackConfirmDialog/SliderCaptcha）`bg-black/N`→`bg-dim/N`；AgentSideRail 只读按钮 SCSS amber 6 处 → warning 三件套（含浅色 amber-100 文字不可读修复）；守卫 +1（hero 白字压 dim/25 合成底 ≥4.5），总计 87 条 | ✅ 本批 |
 
 **P4 关键设计决策（AA 约束下的 hover 加深）**：纯 alpha 加深的可行空间被文字 AA 卡死——实测 dark error 只能 +0.009、light warning/error 只能 +0.014（均不可感知）。故分主题策略：**dark 用基色深化**（bg-hover = 600 色阶 @ 同 alpha 0.14，底更暗使文字对比度反升，AA 必过且可感知）；**light 用描边主导**（bg-hover = 组内 AA 允许的最大统一 alpha 0.11 + border-hover 0.3→0.45 承担主信号）。守卫据此用「合成底亮度 < bg」判定可感知性，而非 alpha 比较。
 
-**当前棘轮基线**：`inline-rgba` 142（白文字 27 + 保留黑 40 + 内容/品牌彩 75）· `bg-black` 25（模态 dim 8 + 媒体角标 14 + 深底页 3，全刻意保留：黑 dim 是双主题惯例、媒体角标是内容性）· `arbitrary-hex` 39 · `hardcoded-dark-bg` 8 · 品牌蓝 39（F-5，走品牌评审）。
+**当前棘轮基线**：`inline-rgba` 136（白文字 27 + 保留黑 40 + 内容/品牌彩 69）· `bg-black` 21（媒体角标 14 + 深底页 3 + LoginDialog/LoginVideoPanel/SharePage 全屏底，全刻意保留）· `arbitrary-hex` 3（注释 1 + 画布节点状态色 2）· `hardcoded-dark-bg` 8 · brand-blue 818cf8 2（画布连线）。
 
-**P2d 刻意保留项（不是漏扫）**：①黑阴影保留 40 处——`text-shadow`（媒体字 5）、`drop-shadow`（图标 4）、侧向投影 2、带 `inset` 底边线组合 2、带描边环组合 1、媒体遮罩黑底（lightbox/裁剪暗幕/crop 9999px 幕布 ~18）、`0 0 0 1px` 描边技巧 3、JS 返回值 1；②彩色内联 75 处——画布节点类型标记色、Refine 工具深蓝系（配套 #7cc0ff 文字）、媒体时间轴分类色、品牌紫光晕，均属内容性/品牌性色彩，随品牌蓝 F-5 评审一并处置；③~~hover 透明度阶梯依赖 alpha 分层的组~~ → 已由 **P4 状态 hover 档位**补齐（`hover:bg-*-bg-hover` + `hover:border-*-border-hover`）。
+**P2d/P6 刻意保留项（不是漏扫）**：①黑阴影保留 40 处——`text-shadow`（媒体字 5）、`drop-shadow`（图标 4）、侧向投影 2、带 `inset` 底边线组合 2、带描边环组合 1、媒体遮罩黑底（lightbox/裁剪暗幕/crop 9999px 幕布 ~18）、`0 0 0 1px` 描边技巧 3、JS 返回值 1；②彩色内联 69 处（P6 审计裁定）——画布节点类型标记色（CanvasBottomLeftControls 九色分类、AgentNodeGraph 网格/选中环）、Refine 工具深蓝系（配套 #7cc0ff 文字，画布恒深底的子品牌）、媒体时间轴分类色（CompositionTimeline/DockPanel video/audio）、MediaInspectorDrawer 紫（媒体类型标记）、品牌紫光晕（AccountUserMenu/MembershipModal 压在渐变上）、暗色玻璃面（MediaPreviewOverlay/CanvasStatus 等，盖在媒体/画布上恒深）、DockNoticeLayer 冷黑描边影——均属**内容性/品牌性**色彩，主题翻转反而是错的；③~~hover 透明度阶梯依赖 alpha 分层的组~~ → 已由 **P4 状态 hover 档位**补齐（`hover:bg-*-bg-hover` + `hover:border-*-border-hover`）。
 
-**两个刻意保留项（不是漏扫）**：①白文字 27 处——多带黑 text-shadow 覆盖在媒体/玻璃上，翻 overlay 在亮媒体失效，需按「元素背景是否令牌化」逐个审（§2.3 硬规则：文字永远实色）；②品牌蓝 39 处——品牌资产，改动需品牌评审（F-5）。
+**两个刻意保留项（不是漏扫）**：①白文字 27 处——多带黑 text-shadow 覆盖在媒体/玻璃上，翻 overlay 在亮媒体失效，需按「元素背景是否令牌化」逐个审（§2.3 硬规则：文字永远实色）；②~~品牌蓝 39 处~~ → 已由 **F-5（#352）收编为 accent 令牌**。
 
 ### 7.3 为什么字号 / 圆角 / 阴影没接进 Tailwind
 
@@ -681,3 +678,5 @@ Tailwind 默认阶梯与令牌命名**不是一一对应**：
 | 2026-10-10 | **P2e 盲区补扫**：bg-black 25 处审计（模态 dim/媒体角标全保留）；白文字 27 处逐个审（on-accent 3 处升令牌，其余媒体/refine 体系保留）；发现并修复守卫盲区——3 个 el-dialog 硬编码深底+白标题双主题坏 → surface-overlay/text-primary；ReplayPage 画布底令牌化；守卫新增第 9 类 `hardcoded-dark-bg`（基线 8） |
 | 2026-10-10 | **P4 状态 hover 档位**：新增 `--lnk-{v}-bg-hover`/`--lnk-{v}-border-hover` 各 4×2 主题；dark bg-hover 用 600 色阶基色深化（AA 下 alpha 空间 <0.01 不可感知的破局）、light 用最大统一 alpha 0.11 + border-hover 0.45 主导；Tailwind 接 `bg-hover`/`border-hover`；6 处无效 `hover:bg-*-bg` 修复；守卫 +24（合成底亮度可感知判定 / border-hover 加实 / hover 底 AA），总计 86 条 |
 | 2026-10-10 | **P5 border-hover 接线 + F-5 评审材料**：4 处描边按钮/交互元素补 `hover:border-*-border-hover`（EdgeScissorsOverlay 顺带升档）；新增 `F5-brand-color-review.md` —— 品牌蓝/紫 57 处全量分类与三方案收编建议，**待拍板** |
+| 2026-10-11 | **F-5 品牌蓝收编上线（#352）**：indigo 39→2（保画布连线）；`.btn-primary` 实色化；棘轮 brand-blue 21→0/18→2、arbitrary-hex 39→3；守卫 86 条 |
+| 2026-10-11 | **P6 恒黑 dim 通道 + hero 渐变落地**：`--lnk-dim-rgb` 双主题通道 + Tailwind `dim` 键；CarouselBanner → `bg-brand-gradient` + `bg-dim/25` + `text-fg-on`（F-5 全闭环）；4 处模态 dim → `bg-dim/N`；AgentSideRail SCSS amber 6 处 → warning 三件套；彩色内联 75→69（内容性保留裁定落档 §7.2）；守卫 87 条 |
