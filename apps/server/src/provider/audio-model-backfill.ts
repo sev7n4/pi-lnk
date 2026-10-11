@@ -127,21 +127,28 @@ function isKnownAvailability(value: string): value is (typeof AVAILABILITY_VALUE
 }
 
 /**
- * 目录对齐整体重建条目数组时的 availability 保留语义（S1-1）：
- * 探活器是唯一置 `unavailable` 的写入方 —— 重建绝不重置既有灰显/可用标记。
- * - 既有条目（按 name 匹配）且存量值为合法三态 ⇒ 原样保留；
- * - 旧格式条目（无字段或脏值）⇒ 采用目录侧自带值（调用方给 `'unknown'`，即升级写入）。
- * 仅服务平台渠道镜像重建（planPlatformChannelSync / pullModels 平台分支）。
+ * 目录对齐整体重建条目数组时的保留语义（S1-1 + P1 修复）：
+ * - availability：探活器是唯一置 `unavailable` 的写入方 —— 重建绝不重置既有灰显/可用标记。
+ *   既有条目（按 name 匹配）且存量值为合法三态 ⇒ 原样保留；旧格式条目（无字段或脏值）
+ *   ⇒ 采用目录侧自带值（调用方给 `'unknown'`，即升级写入）。
+ * - pricing：运营/BYOK 配置的费率是重建之外的手工数据 —— 同 name 命中即原样透传
+ *   （只判「是不是对象」，不判内容好坏；坏数据由读取面 resolveChannelModelCost 兜底）。
+ * 服务平台渠道镜像重建（planPlatformChannelSync / pullModels 平台分支）与 BYOK 重建。
  */
 export function preserveModelAvailability<T extends { name: string; availability?: string }>(
-  prevEntries: readonly { name: string; availability?: string }[],
+  prevEntries: readonly { name: string; availability?: string; pricing?: unknown }[],
   nextEntries: readonly T[],
-): T[] {
-  const prevByName = new Map(prevEntries.map((e) => [e.name, e.availability]))
+): (T & { pricing?: unknown })[] {
+  const prevByName = new Map(prevEntries.map((e) => [e.name, e]))
   return nextEntries.map((entry) => {
+    const out = { ...entry } as T & { pricing?: unknown }
     const prev = prevByName.get(entry.name)
-    if (prev === undefined || !isKnownAvailability(prev)) return entry
-    return { ...entry, availability: prev }
+    if (prev === undefined) return out
+    if (prev.availability !== undefined && isKnownAvailability(prev.availability)) {
+      out.availability = prev.availability
+    }
+    if (typeof prev.pricing === 'object' && prev.pricing !== null) out.pricing = prev.pricing
+    return out
   })
 }
 

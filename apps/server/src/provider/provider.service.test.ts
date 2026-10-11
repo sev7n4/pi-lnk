@@ -840,6 +840,59 @@ describe('ProviderService', () => {
       if (entry.name !== grayedName) expect(entry.availability).toBe('unknown')
     }
   })
+
+  it('P1 修复: 平台 pull-models 整体重建时保留既有条目的 pricing', async () => {
+    // 运营页把 pricing 写进平台渠道 models[] 后，pull-models / 目录对齐重建
+    // ⛔ 不得把费率抹掉（P1 已知限制的回归测试）
+    await svc.bootstrap('u1')
+    const platform = prisma._channels.get('platform')!
+    const models = JSON.parse(platform.models) as Array<{ name: string; pricing?: unknown }>
+    const keepName = models[0]!.name
+    models[0]!.pricing = { inputPerM: 2, outputPerM: 8, cacheReadPerM: 0.2, cacheWritePerM: 2 }
+    platform.models = JSON.stringify(models)
+
+    const updated = await svc.pullModels('u1', 'platform')
+
+    const entry = updated.models.find((m) => m.name === keepName)!
+    expect(entry.pricing).toEqual({
+      inputPerM: 2,
+      outputPerM: 8,
+      cacheReadPerM: 0.2,
+      cacheWritePerM: 2,
+    })
+    // S1-1 既有语义不受影响：availability 保留逻辑仍在
+    expect(entry.availability).toBeDefined()
+  })
+
+  it('P1 修复: BYOK pull-models 重建列表时保留既有条目的 pricing', async () => {
+    const created = await svc.createChannel('u1', {
+      name: 'pull-pricing',
+      apiFormat: 'openai',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-test-123',
+      models: [
+        { name: 'm-keep', capability: 'text', pricing: { inputPerM: 1.5, outputPerM: 6 } },
+        { name: 'm-gone', capability: 'text' },
+      ],
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ data: [{ id: 'm-keep' }, { id: 'm-new' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    const updated = await svc.pullModels('u1', created.id)
+
+    const byName = new Map(updated.models.map((m) => [m.name, m]))
+    expect(byName.get('m-keep')!.pricing).toEqual({ inputPerM: 1.5, outputPerM: 6 })
+    expect(byName.get('m-keep')!.capability).toBe('text')
+    expect(byName.get('m-new')!.pricing).toBeUndefined() // 新条目不带 pricing
+    expect(byName.has('m-gone')).toBe(false) // 上游已下线且非 minimax 域名 ⇒ 不回填
+  })
 })
 
 function makePrefsRow(userId: string, overrides: Partial<PreferencesRow> = {}): PreferencesRow {
