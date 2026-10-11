@@ -3543,28 +3543,30 @@ defineExpose({
 
 .agent-readonly-btn {
   border-radius: 8px;
-  border: 1px solid rgba(251, 191, 36, 0.35);
+  /* P6：amber 硬编码收编为 warning 三件套（P2d 在本文件转了 Tailwind 类，此处是 SCSS 漏网）。
+     文字用实色 --lnk-warning：浅色主题下原 amber-100 压浅玻璃不可读，amber-800 修复。 */
+  border: 1px solid var(--lnk-warning-border);
   background: rgba(0, 0, 0, 0.15);
   padding: 4px 10px;
   font-size: 11px;
   line-height: 1.4;
-  color: rgb(254, 243, 199);
+  color: var(--lnk-warning);
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .agent-readonly-btn:hover {
-  background: rgba(251, 191, 36, 0.12);
-  border-color: rgba(251, 191, 36, 0.55);
+  background: var(--lnk-warning-bg);
+  border-color: var(--lnk-warning-border-hover);
 }
 
 .agent-readonly-btn-primary {
-  border-color: rgba(251, 191, 36, 0.55);
-  background: rgba(251, 191, 36, 0.18);
-  color: rgb(255, 251, 235);
+  border-color: var(--lnk-warning-border-hover);
+  background: var(--lnk-warning-bg);
+  color: var(--lnk-warning);
 }
 
 .agent-readonly-btn-primary:hover {
-  background: rgba(251, 191, 36, 0.28);
+  background: var(--lnk-warning-bg-hover);
 }
 
 /* ---- 消息列表 ---- */

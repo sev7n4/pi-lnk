@@ -176,7 +176,7 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="captcha-overlay z-[110] flex flex-col max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:h-[60vh] max-md:rounded-t-2xl md:absolute md:inset-0 md:items-center md:justify-center md:bg-black/40 md:backdrop-blur-sm"
+    class="captcha-overlay z-[110] flex flex-col max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:h-[60vh] max-md:rounded-t-2xl md:absolute md:inset-0 md:items-center md:justify-center md:bg-dim/40 md:backdrop-blur-sm"
     role="dialog"
     aria-modal="true"
     aria-label="滑块验证"

@@ -30,6 +30,10 @@ export default {
            透明度走 <alpha-value>，深=白、浅=黑自动翻转。 */
         overlay: 'rgb(var(--lnk-overlay-rgb) / <alpha-value>)',
 
+        /* ---- 恒黑压暗通道：双主题同值（媒体角标 / 渐变上的文字压层 / 模态遮罩）。
+           用法：bg-dim/25、bg-dim/55 等。与 overlay 互补：overlay 随主题翻转，dim 恒黑。 */
+        dim: 'rgb(var(--lnk-dim-rgb) / <alpha-value>)',
+
         /* ---- 文字：三档，对应 --lnk-text-primary / secondary / muted ---- */
         fg: {
           DEFAULT: 'var(--lnk-text-primary)',

@@ -1,14 +1,14 @@
 {
   "_说明": "深色专用写法的棘轮基线。只能减、不能增；每清扫一批就手工下调这里并把数字写进 PR 说明。",
   "_生成时间": "2026-10-11",
-  "_生成方式": "统计 src/**/*.vue 中下列正则的匹配总数（F-5：indigo #6366f1/#818cf8 收编为 accent 令牌）",
+  "_生成方式": "统计 src/**/*.vue 中下列正则的匹配总数（P6：恒黑 dim 通道 + hero 渐变落地 + 模态 dim/amber SCSS 收编）",
   "text-white": 0,
-  "bg-black": 25,
+  "bg-black": 21,
   "bg-white-slash": 0,
   "border-white-slash": 0,
   "arbitrary-hex": 3,
   "brand-blue-6366f1": 0,
   "brand-blue-818cf8": 2,
-  "inline-rgba": 142,
+  "inline-rgba": 136,
   "hardcoded-dark-bg": 8
 }

@@ -63,7 +63,7 @@ watch(
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-4"
+      class="fixed inset-0 z-[70] flex items-center justify-center bg-dim/35 p-4"
       role="dialog"
       aria-modal="true"
       aria-label="从资产库添加参考素材"
