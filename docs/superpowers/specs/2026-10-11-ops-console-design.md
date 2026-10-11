@@ -104,7 +104,7 @@ body { pricing: { inputPerM, outputPerM, cacheReadPerM?, cacheWritePerM? } | nul
 
 - **硬编码只操作 `PLATFORM_CHANNEL_ID`（'platform'）行**，不复现通用渠道 CRUD——BYOK 渠道结构性不可达。
 - GET 返回的 `models` 为服务端解析后的列表；`models` JSON 畸形 → 返回 `models: []` + `parseError` 标记（fail-soft，与 PR #350 解析纪律同语义），绝不 500。
-- PUT 语义：在 `models` JSON 数组中按条目名定位（**条目定位键以 `provider.service.ts` 消费 `models` 的现有 schema 为准，实现前先读该消费代码**），仅替换该条目的 `pricing` 键——set（对象）或 clear（null）——其余字段一律不动（防 pull-models 式整块覆盖重演）。
+- PUT 语义：在 `models` JSON 数组中按条目 `name` 定位（条目形状 = `{ name, capability, pricing? }`，与 `provider.controller.ts` 的 `ChannelModelDto` 一致），仅替换该条目的 `pricing` 键——set（对象）或 clear（null）——其余字段一律不动（防 pull-models 式整块覆盖重演）。
   - 定位失败 → 404；`models` JSON 畸形 → 409（拒绝盲写，提示先修复渠道行）。
   - DTO 校验：四字段非负数，`cacheReadPerM`/`cacheWritePerM` 可缺省（缺省补 0，与 `resolveChannelModelCost` 对齐）。
 - 审计：复用 `adminAuditLog` 三件套，`action = 'platform-channel.pricing.set' | 'platform-channel.pricing.clear'`，`before`/`after` 存**条目级 diff**（该模型的旧/新 pricing 对象），不落整块 JSON。
@@ -121,7 +121,7 @@ src/pages/admin/
   AdminLayoutPage.vue        # token 门 + 侧栏壳（五页导航），子路由出口
   AdminModelsPage.vue        # 模型目录：列表/搜索/新增/编辑/软删；409 alternatives 一键渲染
   AdminRoutesPage.vue        # 路由表：列表/启停（PUT enabled）；版本号展示
-  AdminHealthPage.vue        # 模型健康总览 + 探活触发与 run 结果
+  AdminHealthPage.vue        # 模型健康总览 + 最近一次探活 run 结果（探活为定时自动运行，无手动触发端点）
   AdminPricingPage.vue       # 平台渠道定价：模型行 + pricing 徽标（未配=醒目提示）+ 行内编辑弹窗
   AdminAuditPage.vue         # 审计日志：分页表格 + action/resource 过滤 + before/after 展开
 src/services/admin-api.ts    # fetch 封装：统一 Bearer 注入、401 清门、错误归一
@@ -143,7 +143,7 @@ src/stores/admin.ts          # token 会话态 + 各页列表缓存（pinia，�
 | 目录 DELETE 命中默认 → 409 | 渲染响应体 `alternatives` 为「切换到 X 再下架」操作引导（对齐 model-ops spec P5 语义） |
 | 平台渠道 `models` JSON 畸形 | GET fail-soft 展示 `parseError`；PUT 409 拒写（不盲修） |
 | 网络错误/超时 | 统一 toast，列表保留上次成功数据（不清空） |
-| 探活触发 | 触发后轮询 run 状态至终态，展示耗时/结果 |
+| 探活结果 | 只读展示（探活定时自动运行，`GET /api/admin/upstream-probe/latest`；手动触发端点不存在，列为后续项） |
 
 ---
 
@@ -165,7 +165,7 @@ src/stores/admin.ts          # token 会话态 + 各页列表缓存（pinia，�
 
 1. `/admin` 输 token 后五页可用；目录页完成「新增 → 编辑 → 软删 → 409 防呆触发」全流程零 curl。
 2. 路由页启停一行 → 审计页立即可见该操作 before/after。
-3. 健康页触发一次探活并读懂结果；无需打开 JSON。
+3. 健康页读懂健康总览与最近一次探活 run 结果；无需打开 JSON。
 4. 定价页为平台渠道某模型 set pricing → 新建生成会话的 llm override 含 `cost`（与 `resolveChannelModelCost` 测试样例对拍）；clear 后字段消失。
 5. 审计页分页/过滤可检索本验收产生的全部写操作。
 6. 构建产物枚举：admin 代码在独立懒加载 chunk，首屏入口 chunk 不含 admin 模块。
@@ -179,6 +179,6 @@ src/stores/admin.ts          # token 会话态 + 各页列表缓存（pinia，�
 |----|------|
 | pull-models 抹 pricing | 本 spec 只做「可见 + 可补配」，根修（重建时 merge 保留已有 pricing）列独立 hardening PR |
 | token 明文 sessionStorage | 单运营者可接受；引入多人运营时再升级账号体系（届时 `actor` 字段已有落点） |
-| `models` 条目定位键 | spec 未锁定字段名——实现第一步先读 `provider.service.ts` 的 `models` 消费代码，以真实 schema 为准（禁止凭猜） |
+| 手动探活触发 | 服务端无触发端点（定时自动探活）；如需手动触发，后续加 `POST /api/admin/upstream-probe/run`，不阻塞 V1-A |
 | V1-B 编排 UI | 依赖 model-ops spec 评审；其 P0（默认模型数据化）落地后，AdminModelsPage 增加「设为默认」操作位 |
 | 扩域路径 | 用户/积分/内容/大盘 = 新增 pages + 只读端点，架构不变（§1 已记录） |
