@@ -99,9 +99,13 @@ import {
   type ProviderContext,
 } from '../provider/provider-context'
 import {
+  assertPlatformModelAvailable,
   ProviderResolverService,
   type ResolvedGenerationProvider,
 } from '../provider/provider-resolver.service'
+// B3 裁定（遗留⑤）：audio 平台回退重放换用了平台资源，与主路径同受 S2-3
+// availability 校验约束 —— 平台渠道行 id 常量与镜像形状（name=modelKey）的真源在此。
+import { PLATFORM_CHANNEL_ID } from '../provider/provider.service'
 import { MediaProbeService } from '../media/media-probe.service'
 import {
   parseJpegDimensions,
@@ -2883,6 +2887,19 @@ export class StudioService {
       if (record.type === 'audio') {
         const platformModelInfo = this.platformGatewayModelId('audio', meta)
         const platformModel = platformModelInfo.gatewayModelId
+        // B3 裁定（遗留⑤，方案 A）：回退重放是唯一绕过 resolveForGeneration 直达
+        // 平台生成的入口 —— 主路径（platform）有 S2-3 校验、BYOK 主路径用的是用户
+        // 自己的凭证，而 confirm 后换平台凭证重放，必须补同一道 availability 校验。
+        // 实测依据：镜像条目 name=modelKey（provider.service 镜像同步 `name: entry.modelKey`），
+        // 且音频条目 modelKey ≠ gatewayModelId（如 minimax-speech-2.8-hd / speech-2.8-hd）
+        // —— 按 gatewayModelId 查镜像恒 miss（校验恒过），必须用解析后的 modelKey。
+        // 探活器覆盖全目录条目（probeOnce 无 modality 过滤），audio 也会被灰显；
+        // 校验命中时走下方统一 catch（退款 + failed + model_unavailable 错误码），
+        // 不再烧一轮注定失败的上游往返。
+        const platformChannel = await this.prisma.providerChannel.findUnique({
+          where: { id: PLATFORM_CHANNEL_ID },
+        })
+        assertPlatformModelAvailable(platformChannel?.models, platformModelInfo.modelKey)
         Object.assign(chargedMeta, platformMetaPatch(platformModelInfo))
         const prevAudio = (meta.audioOptions as Record<string, unknown> | undefined) ?? {}
         const audioOptions = {

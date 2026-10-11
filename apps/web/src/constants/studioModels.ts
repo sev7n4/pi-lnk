@@ -33,10 +33,31 @@ import {
  */
 let catalogRows: StudioModelEntry[] = STUDIO_MODEL_CATALOG
 
+/**
+ * 目录注入监听（B3 dockAudio 惰性求值）：派生量（音色表/默认音色）在注入成功后
+ * 需要重算并重绑。registry 是通用回调表，归一层**不感知**订阅方是谁（studioModels
+ * 不 import dockAudio ⇒ 无 dockAudio ↔ studioModels 循环依赖）。
+ */
+type CatalogRowsListener = () => void
+const catalogRowsListeners = new Set<CatalogRowsListener>()
+
+/** 订阅目录注入/重置变化；返回退订函数。 */
+export function onStudioCatalogRowsChanged(listener: CatalogRowsListener): () => void {
+  catalogRowsListeners.add(listener)
+  return () => {
+    catalogRowsListeners.delete(listener)
+  }
+}
+
+function notifyCatalogRowsListeners(): void {
+  for (const listener of catalogRowsListeners) listener()
+}
+
 /** 注入服务端下发的目录条目（bootstrap 响应到达时调用）。空数组/非数组忽略（保底常量）。 */
 export function setStudioCatalogEntries(entries: StudioModelEntry[]): void {
   if (!Array.isArray(entries) || entries.length === 0) return
   catalogRows = entries
+  notifyCatalogRowsListeners()
 }
 
 /** 观察当前生效 rows（测试/调试用）。 */
@@ -47,6 +68,8 @@ export function getStudioCatalogEntries(): StudioModelEntry[] {
 /** 测试专用：回到常量初态（vitest per-file isolate，无需跨文件协调）。 */
 export function __resetStudioCatalogForTests(): void {
   catalogRows = STUDIO_MODEL_CATALOG
+  // 通知派生量订阅方重算（dockAudio），否则测试注入后派生值会滞留在注入态
+  notifyCatalogRowsListeners()
 }
 
 export {

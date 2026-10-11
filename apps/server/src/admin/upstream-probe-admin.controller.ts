@@ -46,6 +46,8 @@ export class UpstreamProbeAdminController {
         ghosts: parseStringArray(row.ghosts),
         missing: parseStringArray(row.missing),
         error: row.error,
+        // B3：触发来源（旧行为 null，不破坏既有消费）。
+        reason: row.reason,
       }))
     return { code: 0, message: 'ok', data: { runs } }
   }

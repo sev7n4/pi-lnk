@@ -289,6 +289,8 @@ model UpstreamProbeRun {
   missing    String?
   /// 探测失败原因（HTTP 非 200 / fetch 异常）；非空时 ghosts/missing 无意义
   error      String?
+  /// 探活触发来源：'startup'|'periodic'|'manual'（B3 加列，旧行为 NULL，无回填）
+  reason     String?
 
   @@index([upstream, ranAt])
 }

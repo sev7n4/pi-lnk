@@ -3,9 +3,12 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { PrismaClient } from '@prisma/client'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { PrismaClient, Prisma } from '@prisma/client'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Test } from '@nestjs/testing'
+import { UnauthorizedException } from '@nestjs/common'
 import { ModelCatalogAdminController } from './model-catalog.controller'
+import { AdminTokenGuard } from './admin-token.guard'
 import { CryptoService } from '../provider/crypto.service'
 import { WebdavService } from '../provider/webdav.service'
 import { PrismaService } from '../prisma/prisma.service'
@@ -222,5 +225,94 @@ describe('ModelCatalogAdminController CRUD + 审计 + 版本（S2-1b A2/A5）', 
       bumpModelCatalogVersion(prisma),
     ])
     expect([b1, b2].sort((x, y) => x - y)).toEqual([versionBefore + 3, versionBefore + 4])
+  })
+
+  it('POST 并发兜底：事务内 create 抛 P2002 → 409，零审计零 bump 零落库', async () => {
+    // check-then-act 窗口模拟：包装事务 client，让 modelCatalogEntry.create 抛
+    // 真实 PrismaClientKnownRequestError('P2002')（@prisma/client 运行时真形态，
+    // 对应「查重通过后另一请求/实例同 key 抢先提交 → DB unique(modelKey) 拒绝」）。
+    const boom = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed on the fields: (`modelKey`)',
+      { code: 'P2002', clientVersion: '6.2.1', meta: { target: ['modelKey'] } },
+    )
+    const originalTransaction = prisma.$transaction.bind(prisma)
+    const txSpy = vi.spyOn(prisma, '$transaction').mockImplementation(((cb: unknown) =>
+      originalTransaction((tx: Prisma.TransactionClient) => {
+        // 原型链包装：只覆写 create 为 P2002，其余 delegate 透传（审计/版本调用不到——
+        // create 先抛，事务整体回滚）
+        const failingEntry = Object.create(tx.modelCatalogEntry) as PrismaClient['modelCatalogEntry']
+        Object.assign(failingEntry, {
+          create: async () => {
+            throw boom
+          },
+        })
+        const txWithRace = Object.create(tx) as Prisma.TransactionClient
+        txWithRace.modelCatalogEntry = failingEntry
+        return (cb as (tx: Prisma.TransactionClient) => Promise<unknown>)(txWithRace)
+      })) as never)
+
+    try {
+      await expect(controller.create(NEW_MODEL)).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining('modelKey 已存在'),
+      })
+    } finally {
+      txSpy.mockRestore()
+    }
+
+    // 失败路径：零审计、零 bump、零落库（事务随异常回滚，缓存刷新未执行）
+    expect(await prisma.adminAuditLog.count()).toBe(0)
+    expect(await readModelCatalogVersion(prisma)).toBe(0)
+    expect(
+      await prisma.modelCatalogEntry.findUnique({ where: { modelKey: NEW_MODEL.modelKey } }),
+    ).toBeNull()
+  })
+})
+
+/**
+ * B3 遗留②补齐（与 upstream-routes.controller.sqlite.integration.test.ts 的 guard
+ * describe 同构）：guard 类已有独立单测，这里锁「路由真的挂了守卫」——
+ * ① 四个路由处理器的路由级 `__guards__` 元数据 = [AdminTokenGuard]；
+ * ② LNKPI_ADMIN_TOKEN 未设时带任意 Bearer 仍 fail-closed 401（token 匹配才放行）。
+ */
+describe('ModelCatalogAdminController guard 401（B3 遗留补齐）', () => {
+  const originalToken = process.env.LNKPI_ADMIN_TOKEN
+
+  afterAll(() => {
+    if (originalToken === undefined) delete process.env.LNKPI_ADMIN_TOKEN
+    else process.env.LNKPI_ADMIN_TOKEN = originalToken
+  })
+
+  it('GET/POST/PUT/DELETE 处理器都挂 AdminTokenGuard（路由级元数据断言）', () => {
+    // Nest 把路由级 guard 写在 GUARDS_METADATA（'__guards__'）下
+    for (const handler of [
+      ModelCatalogAdminController.prototype.list,
+      ModelCatalogAdminController.prototype.create,
+      ModelCatalogAdminController.prototype.update,
+      ModelCatalogAdminController.prototype.remove,
+    ]) {
+      const guards = Reflect.getMetadata('__guards__', handler) as unknown[] | undefined
+      expect(guards).toEqual([AdminTokenGuard])
+    }
+  })
+
+  it('env 未设置 → 恒 401（fail-closed，即使带了任意 Bearer）；token 不匹配 → 401', async () => {
+    delete process.env.LNKPI_ADMIN_TOKEN
+    const moduleRef = await Test.createTestingModule({
+      controllers: [ModelCatalogAdminController],
+      providers: [AdminTokenGuard, { provide: PrismaService, useValue: {} }],
+    }).compile()
+    const guard = moduleRef.get(AdminTokenGuard)
+    const ctx = (authorization?: string) =>
+      ({
+        switchToHttp: () => ({ getRequest: () => ({ headers: authorization ? { authorization } : {} }) }),
+      }) as never
+
+    expect(() => guard.canActivate(ctx('Bearer anything'))).toThrow(UnauthorizedException)
+    expect(() => guard.canActivate(ctx(undefined))).toThrow(UnauthorizedException)
+
+    process.env.LNKPI_ADMIN_TOKEN = 'secret-token'
+    expect(() => guard.canActivate(ctx('Bearer wrong-token'))).toThrow(UnauthorizedException)
+    expect(guard.canActivate(ctx('Bearer secret-token'))).toBe(true)
   })
 })
