@@ -533,7 +533,7 @@ async function copyDiagnostic() {
 async function downloadOutput() {
   const url = record.value?.url || target.value?.url || outputFile.value?.url
   if (!url) return
-  const kind = previewKind.value === 'video' ? 'video' : 'image'
+  const kind = previewKind.value === 'video' ? 'video' : previewKind.value === 'audio' ? 'audio' : 'image'
   await downloadMediaFile(
     resolveMediaUrl(url),
     mediaDownloadName(url, kind, title.value),
@@ -688,10 +688,17 @@ async function copyValue(text: string) {
           <div class="media-inspector-preview">
             <img v-if="previewKind === 'image'" :src="previewUrl" alt="" class="media-inspector-media">
             <video
-              v-else
+              v-else-if="previewKind === 'video'"
               :src="previewUrl"
               controls
               playsinline
+              preload="metadata"
+              class="media-inspector-media"
+            />
+            <audio
+              v-else
+              :src="previewUrl"
+              controls
               preload="metadata"
               class="media-inspector-media"
             />

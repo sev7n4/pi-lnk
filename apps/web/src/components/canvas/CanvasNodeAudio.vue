@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
+import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { resolveMediaUrl } from '@/services/api-base'
 import { useNodeMediaUpload } from '@/composables/useNodeMediaUpload'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
-import type { NodeMediaInfoSummary } from '@/composables/useMediaInspector'
+import { useMediaInspector, type NodeMediaInfoSummary } from '@/composables/useMediaInspector'
+import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 import { downloadMediaFile, isUpstreamMediaUrl, mediaDownloadName, UPSTREAM_MEDIA_DOWNLOAD_HINT } from '@/composables/useCanvasMedia'
 import { saveAssetToLibrary } from '@/composables/useAssetLibrary'
 
@@ -44,7 +46,10 @@ const taskKind = computed(() =>
       ? ('material' as const)
       : undefined,
 )
+const { openInspector } = useMediaInspector()
 const displayUrl = computed(() => resolveMediaUrl(String(props.data.url ?? '')))
+const showInspectorBtn = computed(() => Boolean(props.data.generationRecordId))
+const isCompleted = computed(() => props.data.status === NODE_GENERATION_STATUS.completed)
 const downloadTitle = computed(() =>
   isUpstreamMediaUrl(String(props.data.url ?? ''))
     ? UPSTREAM_MEDIA_DOWNLOAD_HINT
@@ -93,6 +98,20 @@ function saveToLibrary() {
     prompt: props.data.prompt,
     sourceNodeId: props.id,
     sessionId: sessionId.value,
+  })
+}
+
+function openMediaInspector(e?: Event) {
+  e?.stopPropagation()
+  e?.preventDefault()
+  const recordId = props.data.generationRecordId
+  if (!recordId) return
+  void openInspector({
+    generationRecordId: recordId,
+    nodeId: props.id,
+    nodeLabel: props.data.label ?? props.data.prompt,
+    url: props.data.url,
+    kind: 'audio',
   })
 }
 </script>
@@ -159,6 +178,19 @@ function saveToLibrary() {
             <path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
           </svg>
         </button>
+        <button
+          v-if="showInspectorBtn"
+          type="button"
+          class="neo-media-inspector-btn nodrag"
+          :class="{ 'is-completed': isCompleted }"
+          aria-label="媒体属性"
+          title="媒体属性"
+          @pointerdown.stop
+          @mousedown.stop
+          @click.stop="openMediaInspector"
+        >
+          ⓘ
+        </button>
       </div>
       <div
         v-else
@@ -194,6 +226,14 @@ function saveToLibrary() {
                   : '上传或等待生成'
             }}
           </span>
+          <NodeStatusInfoButton
+            v-if="showInspectorBtn"
+            :status="data.status"
+            :task-kind="taskKind"
+            :task-id="taskId"
+            :node-label="typeof data.label === 'string' ? data.label : undefined"
+            @inspect="openMediaInspector()"
+          />
           <div v-if="data.status === 'uploading'" class="neo-upload-progress">
             <div class="neo-upload-progress-bar" :style="{ width: `${data.uploadProgress ?? 0}%` }" />
           </div>
@@ -217,6 +257,7 @@ function saveToLibrary() {
         :task-id="taskId"
         :node-label="typeof data.label === 'string' ? data.label : undefined"
         :session-id="sessionId"
+        error-detail="status-icon"
       />
     </div>
   </NeoBaseNode>
