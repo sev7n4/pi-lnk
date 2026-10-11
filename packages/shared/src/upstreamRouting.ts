@@ -81,7 +81,17 @@ export interface UpstreamRegistryEntry {
   baseUrl: string | undefined
   apiKeyEnvName: string
   fallbackApiKeyEnvName?: string
+  /**
+   * 探活盲区声明（model-ops Task 3，spec: docs/superpowers/specs/2026-10-10-model-ops-simplify-design.md）：
+   * `'models'`（缺省）= 按 GET /v1/models 对账判 ghost；`'none'` = 该上游**无可用 /models
+   * 在售清单**（如 zhipu /models 只含 glm 文本族），探活必须跳过拉取与 diff——
+   * 不产 ghost 判定、不改 availability（防 cogvideox 等异步创建型模型被误判灰显）。
+   */
+  probeMode?: UpstreamProbeMode
 }
+
+/** 探活模式：'models' 按 /models 清单对账（缺省）；'none' 盲区声明，探活跳过。 */
+export type UpstreamProbeMode = 'models' | 'none'
 
 export const UPSTREAM_REGISTRY: Record<UpstreamId, UpstreamRegistryEntry> = {
   agnes_hub: {
@@ -100,7 +110,15 @@ export const UPSTREAM_REGISTRY: Record<UpstreamId, UpstreamRegistryEntry> = {
   fal: { baseUrl: DEFAULT_FAL_BASE_URL, apiKeyEnvName: 'FAL_KEY' },
   // 智谱 BigModel（cogvideox 免费视频）：OpenAI 风格 base 但路径含 /api/paas/v4，
   // 异步视频走 POST {base}/videos/generations + GET {base}/async-result/{id}。
-  zhipu: { baseUrl: DEFAULT_ZHIPU_BASE_URL, apiKeyEnvName: 'ZHIPU_API_KEY' },
+  // probeMode='none'：/models 只含 glm 文本族，cogvideox 异步创建才是真探针——
+  // 盲区声明防探活把 cogvideox 误判 ghost（model-ops Task 3；server 探活与 S0-3
+  // 冒烟探针都消费本字段，禁止在消费方重写第二份声明）。
+  zhipu: { baseUrl: DEFAULT_ZHIPU_BASE_URL, apiKeyEnvName: 'ZHIPU_API_KEY', probeMode: 'none' },
+}
+
+/** 读上游探活模式（缺省 'models'——单一读取点，消费方不得自行 `?? 'models'` 漂移）。 */
+export function upstreamProbeMode(upstream: UpstreamId): UpstreamProbeMode {
+  return UPSTREAM_REGISTRY[upstream].probeMode ?? 'models'
 }
 
 // ── regex 行 ReDoS 防线（spec §5：pattern 长度上限 + 禁嵌套量词 lint） ──

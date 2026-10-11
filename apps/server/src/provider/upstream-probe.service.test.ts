@@ -69,6 +69,7 @@ interface StoredRun {
   missing: string | null
   error: string | null
   reason: string | null
+  skipped: string | null
 }
 
 type ModelFixture = { name: string; capability: string; availability?: string }
@@ -583,6 +584,82 @@ describe('UpstreamProbeService（S1-1 定时探活对账）', () => {
     expect(okRun.reason).toBe('periodic')
     expect(okRun.modelCount).toBe(AGNES_IDS.length)
     expect(okRun.ghosts).toBe('[]')
+  })
+
+  it('model-ops Task3 probeMode=none：zhipu 分组跳过 /models 拉取与 diff——帧落 skipped 标记、不产 ghost、不改 availability；agnes 行为逐字节不变（回归锁）', async () => {
+    // 复刻 B3 DB-only 注入法：目录注入 cogvideox-flash（zhipu-http，video）——
+    // 复现生产事故形状：admin 上架后条目经路由种子行 'cogvideox-' → zhipu 进探活分组，
+    // 若无 probeMode=none 会被智谱 /models（只含 glm 文本族）误判 ghost 逐步灰显。
+    const ZHIPU_ENTRY: StudioModelEntry = {
+      modelKey: 'cogvideox-flash',
+      displayName: 'CogVideoX-Flash（智谱免费）',
+      gatewayModelId: 'cogvideox-flash',
+      modality: 'video',
+      providerBinding: 'zhipu-http',
+      params: {},
+    }
+    const catalogRow = (entry: StudioModelEntry, id: string): ModelCatalogEntryRow => ({
+      id,
+      modelKey: entry.modelKey,
+      displayName: entry.displayName,
+      gatewayModelId: entry.gatewayModelId,
+      modality: entry.modality,
+      providerBinding: entry.providerBinding,
+      audioKind: entry.audioKind ?? null,
+      voices: entry.voices ? JSON.stringify(entry.voices) : null,
+      params: JSON.stringify(entry.params),
+      defaults: entry.defaults ? JSON.stringify(entry.defaults) : null,
+      deletedAt: null,
+    })
+    const dbRows = [
+      ...STUDIO_MODEL_CATALOG.map((entry, i) => catalogRow(entry, `row-${i}`)),
+      catalogRow(ZHIPU_ENTRY, 'row-zhipu'),
+    ]
+    const catalogPrisma = {
+      modelCatalogEntry: {
+        findMany: vi.fn(async () => dbRows.map((r) => ({ ...r }))),
+        create: vi.fn(async () => {
+          throw new Error('播种不应插入：fixture 已含全部种子 modelKey')
+        }),
+      },
+    }
+    __resetModelCatalogStoreForTests()
+    __registerModelCatalogPrismaForTests(catalogPrisma as never)
+    currentCatalogEntries()
+    await __modelCatalogRefreshInFlightForTests()
+
+    // 有效性断言（防空集假绿）：cogvideox-flash 确实被路由分组归到 zhipu
+    const grouped = groupCatalogEntriesByUpstream([...UPSTREAM_ROUTE_SEEDS], [
+      { modelKey: 'cogvideox-flash', gatewayModelId: 'cogvideox-flash', modality: 'video' },
+    ])
+    expect(grouped.byUpstream.get('zhipu')?.map((e) => e.modelKey)).toEqual(['cogvideox-flash'])
+
+    // fetchImpl 只放行 agnes（agnesResolves 对其余 URL 响亮抛错）⇒ 若 zhipu 被拉取必炸
+    agnesResolves(AGNES_IDS)
+    await compile()
+    await svc.probeOnce('manual')
+
+    // zhipu 帧：恰好 1 帧、无 diff 产物、带 skipped 标记
+    const zhipuRuns = store.runs.filter((r) => r.upstream === 'zhipu')
+    expect(zhipuRuns.length).toBe(1)
+    expect(zhipuRuns[0]).toMatchObject({
+      httpStatus: null,
+      modelCount: null,
+      ghosts: null,
+      missing: null,
+      error: null,
+      reason: 'manual',
+    })
+    expect(zhipuRuns[0]!.skipped).toContain('probeMode=none')
+
+    // agnes 帧行为逐字节不变（回归锁：probeMode 缺省上游零影响）
+    const agnes = agnesRun(1)
+    expect(agnes).toMatchObject({ httpStatus: 200, modelCount: AGNES_IDS.length, ghosts: '[]' })
+    expect(agnes.skipped).toBeNull()
+
+    // 镜像绝不变（cogvideox 不被灰显；存量 fixture 不动）
+    expect(store.update).not.toHaveBeenCalled()
+    expect(store.getModels()).toEqual(FIXTURE_MODELS)
   })
 })
 

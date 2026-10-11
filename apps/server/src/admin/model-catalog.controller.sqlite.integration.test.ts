@@ -137,16 +137,22 @@ describe('ModelCatalogAdminController CRUD + 审计 + 版本（S2-1b A2/A5）', 
     expect(row.deletedAt).not.toBeNull()
   })
 
-  it('失败操作不写审计、不 bump 版本（active 重复 POST 409 / 默认模型 DELETE 400 / 不存在 PUT 404）', async () => {
+  it('失败操作不写审计、不 bump 版本（active 重复 POST 409 / 默认模型 DELETE 409+alternatives / 不存在 PUT 404）', async () => {
     const base = await controller.create(NEW_MODEL)
     const beforeVersion = base.data.version
 
     await expect(controller.create(NEW_MODEL)).rejects.toMatchObject({ status: 409 })
-    // 默认模型防呆：text 默认（现= agnes-2.5-flash，随 shared defaultModelKey 切换）
+    // 默认模型防呆（model-ops Task 1 升级：判定从常量切 DB isDefault，400 → 409+alternatives）：
+    // text 默认 = agnes-2.5-flash（migration 回填，随 shared DEFAULT_MODEL_KEYS 同步）；
+    // 本文件 harness 走 db push（不跑 migration 回填），此处显式置位模拟回填后状态
     const defaultRow = await prisma.modelCatalogEntry.findUnique({
       where: { modelKey: 'agnes-2.5-flash' },
     })
-    await expect(controller.remove(defaultRow!.id)).rejects.toMatchObject({ status: 400 })
+    await prisma.modelCatalogEntry.update({ where: { id: defaultRow!.id }, data: { isDefault: true } })
+    const conflict = await controller.remove(defaultRow!.id).catch((e) => e)
+    expect(conflict.status).toBe(409)
+    expect(Array.isArray(conflict.getResponse().alternatives)).toBe(true)
+    expect(conflict.getResponse().alternatives.length).toBeGreaterThan(0)
     await expect(controller.update('no-such-id', { displayName: 'x' })).rejects.toMatchObject({
       status: 404,
     })

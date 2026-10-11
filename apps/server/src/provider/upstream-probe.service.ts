@@ -1,6 +1,14 @@
 import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common'
 import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
-import { resolveUpstreamRoute, type ModelCapability, type UpstreamId, type UpstreamRouteRow } from '@lnkpi/shared'
+import {
+  resolveUpstreamRoute,
+  UPSTREAM_REGISTRY,
+  upstreamProbeMode,
+  type ModelCapability,
+  type UpstreamId,
+  type UpstreamProbeMode,
+  type UpstreamRouteRow,
+} from '@lnkpi/shared'
 import {
   diffCatalogAgainstUpstream,
   type UpstreamId as ReconciliationUpstreamId,
@@ -41,6 +49,7 @@ type ProbeOutcome =
   | { kind: 'ok'; httpStatus: number; ids: string[] }
   | { kind: 'noModelsEndpoint'; httpStatus: number; error: string }
   | { kind: 'failed'; httpStatus: number | null; error: string }
+  | { kind: 'skipped'; httpStatus: null; error: null }
 
 /** 探活 fetch 的最小注入接口（真实 fetch 天然满足；测试注入替身）。 */
 export interface ProbeFetchResponse {
@@ -149,16 +158,38 @@ interface ProbeUpstream {
   readonly baseUrlEnv: string
   readonly keyEnv: string
   readonly defaultBaseUrl: string
+  /**
+   * 探活模式（model-ops Task 3）：**唯一来源 = shared `upstreamProbeMode`**（注册表
+   * `probeMode`，缺省 'models'）。'none' = 盲区声明：跳过 /models 拉取与 diff，
+   * 不产 ghost、不改 availability（zhipu /models 只含 glm 文本族）。
+   */
+  readonly probeMode: UpstreamProbeMode
 }
 
-const PROBE_UPSTREAMS: readonly ProbeUpstream[] = [
-  { id: 'agnes', baseUrlEnv: 'OPENAI_BASE_URL', keyEnv: 'OPENAI_API_KEY', defaultBaseUrl: '' },
-  { id: 'apimart', baseUrlEnv: 'APIMART_BASE_URL', keyEnv: 'APIMART_API_KEY', defaultBaseUrl: 'https://api.apimart.ai/v1' },
-  { id: 'fal', baseUrlEnv: 'FAL_BASE_URL', keyEnv: 'FAL_KEY', defaultBaseUrl: 'https://fal.run' },
-  { id: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', keyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io' },
-  { id: 'stepfun', baseUrlEnv: 'STEPFUN_BASE_URL', keyEnv: 'STEPFUN_API_KEY', defaultBaseUrl: 'https://api.stepfun.com/v1' },
-  { id: 'zhipu', baseUrlEnv: 'ZHIPU_BASE_URL', keyEnv: 'ZHIPU_API_KEY', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-]
+/**
+ * 对账 id（探活侧）→ 路由注册表 id（shared UpstreamId）的穷举映射 —— 与
+ * {@link toReconciliationUpstreamId} 互逆。probeMode 从注册表读取必须经此映射，
+ * 禁止在对账 id 命名空间重写第二份声明。
+ */
+const RECONCILIATION_TO_ROUTING_UPSTREAM: Record<ReconciliationUpstreamId, UpstreamId> = {
+  agnes: 'agnes_hub',
+  apimart: 'apimart',
+  fal: 'fal',
+  minimax: 'minimax',
+  stepfun: 'stepfun',
+  zhipu: 'zhipu',
+}
+
+const PROBE_UPSTREAMS: readonly ProbeUpstream[] = (
+  [
+    { id: 'agnes', baseUrlEnv: 'OPENAI_BASE_URL', keyEnv: 'OPENAI_API_KEY', defaultBaseUrl: '' },
+    { id: 'apimart', baseUrlEnv: 'APIMART_BASE_URL', keyEnv: 'APIMART_API_KEY', defaultBaseUrl: 'https://api.apimart.ai/v1' },
+    { id: 'fal', baseUrlEnv: 'FAL_BASE_URL', keyEnv: 'FAL_KEY', defaultBaseUrl: 'https://fal.run' },
+    { id: 'minimax', baseUrlEnv: 'MINIMAX_BASE_URL', keyEnv: 'MINIMAX_API_KEY', defaultBaseUrl: 'https://api.minimax.io' },
+    { id: 'stepfun', baseUrlEnv: 'STEPFUN_BASE_URL', keyEnv: 'STEPFUN_API_KEY', defaultBaseUrl: 'https://api.stepfun.com/v1' },
+    { id: 'zhipu', baseUrlEnv: 'ZHIPU_BASE_URL', keyEnv: 'ZHIPU_API_KEY', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  ] as const
+).map((u) => ({ ...u, probeMode: upstreamProbeMode(RECONCILIATION_TO_ROUTING_UPSTREAM[u.id]) }))
 
 /** admin 端点（S1-2/S1-3 与运维 curl）按这组 id 取各上游最近一帧 run。 */
 export const PROBE_UPSTREAM_IDS: readonly string[] = PROBE_UPSTREAMS.map((u) => u.id)
@@ -348,6 +379,25 @@ export class UpstreamProbeService implements OnModuleInit {
     dispatcher: unknown,
     reason: 'manual' | 'periodic' | 'startup',
   ): Promise<void> {
+    // model-ops Task 3 盲区声明：probeMode='none' 的上游（zhipu）**跳过 /models 拉取与
+    // diff**——不产 ghost 判定、不 bump 连败、不改镜像/availability；run 帧照常落库
+    // （分组条目可见性 + 审计保留），帧里记 skipped 标记便于运维辨认。
+    // ⛔ 唯一事实来源 = shared UPSTREAM_REGISTRY.probeMode；新增盲区上游只需改注册表。
+    if (upstream.probeMode === 'none') {
+      console.log(
+        `[MPH][probe] upstream=${upstream.id} skipped=probeMode%3Dnone（盲区声明：无 /models 在售清单，跳过 diff 不判 ghost）`,
+      )
+      await this.writeRunRecord(
+        upstream.id,
+        { kind: 'skipped', httpStatus: null, error: null },
+        null,
+        null,
+        reason,
+        'probeMode=none',
+      )
+      return
+    }
+
     const outcome = await this.fetchUpstreamModels(upstream, dispatcher)
 
     if (outcome.kind !== 'ok') {
@@ -540,6 +590,7 @@ export class UpstreamProbeService implements OnModuleInit {
     ghosts: readonly string[] | null,
     missing: readonly string[] | null,
     reason: 'manual' | 'periodic' | 'startup',
+    skipped?: string,
   ): Promise<void> {
     await this.prisma.upstreamProbeRun.create({
       data: {
@@ -551,6 +602,8 @@ export class UpstreamProbeService implements OnModuleInit {
         error: outcome.kind === 'ok' ? null : outcome.error,
         // B3：触发来源落列（旧行为 NULL）；admin latest 透出供运维区分 startup/periodic/manual。
         reason,
+        // model-ops Task 3：盲区声明跳过标记（复刻 reason 列模式：旧行 NULL、无回填）。
+        skipped: skipped ?? null,
       },
     })
   }

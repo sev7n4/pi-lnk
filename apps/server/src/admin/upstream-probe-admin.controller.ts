@@ -48,6 +48,8 @@ export class UpstreamProbeAdminController {
         error: row.error,
         // B3：触发来源（旧行为 null，不破坏既有消费）。
         reason: row.reason,
+        // model-ops Task 3：盲区声明跳过标记（'probeMode=none'；旧行为 null）。
+        skipped: row.skipped,
       }))
     return { code: 0, message: 'ok', data: { runs } }
   }

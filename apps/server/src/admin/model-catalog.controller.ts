@@ -5,6 +5,8 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
+  HttpException,
   Inject,
   NotFoundException,
   Param,
@@ -13,7 +15,8 @@ import {
   UseGuards,
 } from '@nestjs/common'
 import type { Prisma } from '@prisma/client'
-import { isDefaultModelKey } from '@lnkpi/shared'
+import { PLATFORM_CHANNEL_ID } from '../provider/provider.service'
+import { listDefaultAlternatives, type DefaultAlternative } from './model-ops-shared'
 import { PrismaService } from '../prisma/prisma.service'
 import {
   bumpModelCatalogVersion,
@@ -67,6 +70,21 @@ function isUniqueModelKeyError(err: unknown): boolean {
   return target.includes('modelKey')
 }
 
+/**
+ * model-ops Task 1：部分唯一索引 `ModelCatalogEntry_live_default_per_modality`
+ * （每模态至多一个活默认）的 P2002 判定——Prisma 对 partial unique index 冲突
+ * 的 meta.target 可能是索引名或 ['modality'] 列数组，两类都按本冲突处理。
+ */
+function isUniqueLiveDefaultError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; meta?: { target?: string[] | string } }
+  if (e.code !== 'P2002') return false
+  const target = e.meta?.target
+  if (target === undefined) return false
+  const asList = Array.isArray(target) ? target : [target]
+  return asList.includes('ModelCatalogEntry_live_default_per_modality') || asList.includes('modality')
+}
+
 const ACTOR = 'admin'
 const RESOURCE_PREFIX = 'model-catalog'
 
@@ -82,6 +100,8 @@ export type AdminCatalogEntry = {
   voices: { id: string; label: string }[] | null
   params: Record<string, unknown>
   defaults: Record<string, unknown> | null
+  /** model-ops Task 1：每模态默认标记（DB isDefault 透传）。 */
+  isDefault: boolean
   deletedAt: string | null
   createdAt: string
   updatedAt: string
@@ -98,6 +118,7 @@ type CatalogEntryRow = {
   voices: string | null
   params: string
   defaults: string | null
+  isDefault?: boolean
   deletedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -124,6 +145,7 @@ function rowToAdminEntry(row: CatalogEntryRow): AdminCatalogEntry {
     voices: parseJsonField<{ id: string; label: string }[] | null>(row.voices, null),
     params: parseJsonField<Record<string, unknown>>(row.params, {}),
     defaults: parseJsonField<Record<string, unknown> | null>(row.defaults, null),
+    isDefault: row.isDefault === true,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -143,6 +165,20 @@ function auditSnapshot(row: CatalogEntryRow): Record<string, unknown> {
     ...rowToAdminEntry(row),
   }
 }
+
+/**
+ * 高危写端点确认（model-ops Task 1）：`X-Confirm` 头值必须与目标 id/modelKey 一致，
+ * 缺失/不一致 → 428 Precondition Required。dryRun 请求不经过本断言。
+ */
+export function assertXConfirm(headers: Record<string, unknown> | undefined, expected: string): void {
+  const raw = headers?.['x-confirm'] ?? headers?.['X-Confirm']
+  if (typeof raw !== 'string' || raw.trim() !== expected) {
+    throw new HttpException(`X-Confirm 头必须为 "${expected}"（高危写操作确认）`, 428)
+  }
+}
+
+/** 同模态在架候选形状（Task 1 定义于 model-ops-shared，此处 re-export 保持既有 import 面）。 */
+export type { DefaultAlternative } from './model-ops-shared'
 
 @Controller('admin/model-catalog')
 export class ModelCatalogAdminController {
@@ -265,10 +301,14 @@ export class ModelCatalogAdminController {
     if (!existing || existing.deletedAt != null) {
       throw new NotFoundException('目录条目不存在（或已下架）')
     }
-    if (isDefaultModelKey(existing.modelKey)) {
-      throw new BadRequestException(
-        `${existing.modelKey} 是目录默认模型，禁止下架（resolveModelKey 的确定性 fallback 依赖它）`,
-      )
+    if (existing.isDefault === true) {
+      // model-ops Task 1 防呆升级：判定从常量（isDefaultModelKey）切 DB isDefault——
+      // 运营切默认后旧常量不再阻塞下架；409 附 alternatives 供一键切换。
+      const alternatives = await listDefaultAlternatives(this.prisma, existing.modality, existing.modelKey)
+      throw new ConflictException({
+        message: `${existing.modelKey} 是 ${existing.modality} 模态的当前默认模型，禁止直接下架（默认模型被软删会让确定性 fallback 悬空）。请先 PUT /api/admin/model-defaults 切换默认。`,
+        alternatives,
+      })
     }
 
     const deletedAt = new Date()
@@ -291,6 +331,96 @@ export class ModelCatalogAdminController {
     })
     await refreshModelCatalogCache(this.prisma)
     return { code: 0, message: 'ok', data: { version, id: row.id, modelKey: row.modelKey } }
+  }
+}
+
+/**
+ * model-ops Task 1：切默认 = 1 次 PUT，零发版（spec: 2026-10-10-model-ops-simplify-design.md）。
+ *
+ * - `PUT /api/admin/model-defaults` `{modality, modelKey}` + `X-Confirm: <modelKey>`；
+ * - 校验：目标在架且模态匹配；镜像探活 availability='unavailable' → 409（可查时才拦，
+ *   unknown/缺镜像行放行——宁漏灰不误灰）；
+ * - 事务：同模态活默认清 false → 目标置 true → 审计 → 版本 bump；并发写撞部分唯一索引
+ *   → P2002 → 409（审计/bump 未执行，事务回滚）；提交后显式刷新目录缓存。
+ */
+@Controller('admin/model-defaults')
+export class ModelDefaultsAdminController {
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  @Put()
+  @UseGuards(AdminTokenGuard)
+  async setDefault(
+    @Headers() headers: Record<string, unknown>,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const modality = assertNonEmptyString(body['modality'], 'modality')
+    if (!(VALID_MODALITIES as readonly string[]).includes(modality)) {
+      throw new BadRequestException(`modality 必须是 ${VALID_MODALITIES.join('/')}，收到: ${modality}`)
+    }
+    const modelKey = assertNonEmptyString(body['modelKey'], 'modelKey')
+    assertXConfirm(headers, modelKey)
+
+    const target = await this.prisma.modelCatalogEntry.findUnique({ where: { modelKey } })
+    if (!target || target.deletedAt != null) {
+      throw new NotFoundException(`目录条目不存在（或已下架）: ${modelKey}`)
+    }
+    if (target.modality !== modality) {
+      throw new BadRequestException(`modality 不匹配：条目 ${modelKey} 属 ${target.modality}，请求为 ${modality}`)
+    }
+    // 探活 available 可查时才拦 unavailable（镜像缺行/unknown 放行）
+    const channel = await this.prisma.providerChannel.findUnique({ where: { id: PLATFORM_CHANNEL_ID } })
+    if (channel?.models) {
+      try {
+        const models = JSON.parse(channel.models) as { name?: unknown; availability?: unknown }[]
+        const mirror = models.find((m) => m.name === modelKey || m.name === target.gatewayModelId)
+        if (mirror?.availability === 'unavailable') {
+          throw new ConflictException(`${modelKey} 探活不可用（unavailable），禁止设为默认；请先恢复上游或选择其他模型`)
+        }
+      } catch (err) {
+        if (err instanceof ConflictException) throw err
+        // 镜像脏数据 → 放行（宁漏灰不误灰）
+      }
+    }
+
+    const { row, version, previous } = await this.prisma.$transaction(async (tx) => {
+      const previous = await tx.modelCatalogEntry.findFirst({
+        where: { modality, deletedAt: null, isDefault: true },
+      })
+      let row
+      try {
+        if (previous && previous.id !== target.id) {
+          await tx.modelCatalogEntry.update({ where: { id: previous.id }, data: { isDefault: false } })
+        }
+        row = await tx.modelCatalogEntry.update({ where: { id: target.id }, data: { isDefault: true } })
+      } catch (err) {
+        if (isUniqueModelKeyError(err) || isUniqueLiveDefaultError(err)) {
+          throw new ConflictException(`并发切换默认冲突（${modality} 活默认唯一索引），请重试`)
+        }
+        throw err
+      }
+      await tx.adminAuditLog.create({
+        data: {
+          actor: ACTOR,
+          action: 'model-defaults.set',
+          resource: `model-defaults:${modality}`,
+          before: previous ? JSON.stringify({ modelKey: previous.modelKey, isDefault: true }) : null,
+          after: JSON.stringify({ modelKey: row.modelKey, isDefault: true }),
+        },
+      })
+      const version = await bumpModelCatalogVersion(tx)
+      return { row, version, previous }
+    })
+    await refreshModelCatalogCache(this.prisma)
+    return {
+      code: 0,
+      message: 'ok',
+      data: {
+        version,
+        modality,
+        previousDefault: previous?.modelKey ?? null,
+        default: { modelKey: row.modelKey, displayName: row.displayName, isDefault: row.isDefault },
+      },
+    }
   }
 }
 

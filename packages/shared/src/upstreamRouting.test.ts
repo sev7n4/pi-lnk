@@ -12,6 +12,7 @@ import {
   MAX_ROUTE_PATTERN_LENGTH,
   resolveUpstreamRoute,
   UPSTREAM_REGISTRY,
+  upstreamProbeMode,
   UPSTREAM_ROUTE_SEEDS,
   UpstreamRoutePatternError,
   UpstreamRouteResolutionError,
@@ -376,5 +377,29 @@ describe('注册表 env 名与 readPlatformCredentialEnv 跨模块对齐（防�
       if (registry.baseUrl === undefined) expect(result.baseUrl).toBeUndefined()
       else expect(result.baseUrl).toBe(registry.baseUrl)
     }
+  })
+})
+
+describe('model-ops Task3 探活盲区声明（probeMode）', () => {
+  it('zhipu 显式 probeMode=none；其余上游缺省按 models（有效性断言：注册表非空 + 上游 id 全打印）', () => {
+    const ids = Object.keys(UPSTREAM_REGISTRY)
+    // 有效性断言：注册表非空集且覆盖已知 6 上游（防空对象假绿）
+    expect(ids.length).toBe(6)
+    console.log('[probeMode] registry ids =', ids.join(', '))
+    expect(UPSTREAM_REGISTRY.zhipu?.probeMode).toBe('none')
+    for (const id of ids) {
+      if (id === 'zhipu') continue
+      const entry = UPSTREAM_REGISTRY[id as keyof typeof UPSTREAM_REGISTRY]
+      expect(entry.probeMode ?? 'models', id).toBe('models')
+    }
+  })
+
+  it('upstreamProbeMode 辅助函数：zhipu → none，其余 → models；非法 id 走注册表键型约束（编译期），运行时缺省 models', () => {
+    expect(upstreamProbeMode('zhipu')).toBe('none')
+    expect(upstreamProbeMode('agnes_hub')).toBe('models')
+    expect(upstreamProbeMode('apimart')).toBe('models')
+    expect(upstreamProbeMode('fal')).toBe('models')
+    expect(upstreamProbeMode('minimax')).toBe('models')
+    expect(upstreamProbeMode('stepfun')).toBe('models')
   })
 })

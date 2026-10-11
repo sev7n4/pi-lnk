@@ -291,6 +291,9 @@ model UpstreamProbeRun {
   error      String?
   /// 探活触发来源：'startup'|'periodic'|'manual'（B3 加列，旧行为 NULL，无回填）
   reason     String?
+  /// 盲区声明跳过标记（model-ops Task 3）：'probeMode=none' = 该上游无 /models 在售清单，
+  /// 本轮有意跳过拉取与 diff（非失败）；旧行为 NULL，无回填
+  skipped    String?
 
   @@index([upstream, ranAt])
 }
@@ -315,6 +318,9 @@ model ModelCatalogEntry {
   params          String
   /// JSON: Record<string, string | number>
   defaults        String?
+  /// 每模态默认标记（model-ops Task 1）：部分唯一索引保证每模态至多一个活默认；
+  /// 写路径只有 admin model-defaults 端点与本 migration 回填（单写原则）
+  isDefault       Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
