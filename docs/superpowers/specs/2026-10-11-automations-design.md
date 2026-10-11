@@ -1,6 +1,6 @@
 # Automations（自动化调度）模块设计规格 v1
 
-> 日期：2026-10-11 · 版本 v1 · 状态：待评审
+> 日期：2026-10-11 · 版本 v1.1.0 · 状态：P0 已实现（待部署验证）
 > 定位：任务管理模块 §C5；新子系统立项规格。
 > 作者：WorkBuddy
 > 输入：
@@ -83,6 +83,7 @@ AutomationJob（DB 配置层）
   schedule: { type: 'interval', minutes: number } | { type: 'cron', expression: string }
   params: JSON
   concurrencyPolicy: 'forbid' | 'replace' | 'allow'   // 默认 forbid
+  runOnStartup: boolean                               // v1.1.0（D1）：启动后延迟派发一次 reason='startup'
   failureThreshold: number                            // 默认 3
   failureWebhook: string | null
 
@@ -178,6 +179,8 @@ flowchart TB
   - 通过 bootstrap 种子插入两条默认 job 配置；
 - admin 只读端点 + trigger 手动触发。
 
+**P0 实现状态（v1.1.0）**：已实现（Task 1-4，分支 `feat/automations-p0`）——两表 + 手写 migration、`AutomationSchedulerService`（60s tick / forbid 同步占位 / manual trigger / startup 延迟派发 / create-if-missing 种子，13 测试）、admin 三端点（list / runs 分页 / trigger，7 集成测试）、probe/reaper 迁移接线（测试契约同步重写 25 例）。PATCH 写端点与告警属 P1 未实现。
+
 **出口判据**：G1 + G2 + G4（trigger/只读）达成；生产无业务级 `setInterval`。
 
 ### P1：失败告警 + 运行史完善（1 周）
@@ -215,6 +218,19 @@ flowchart TB
 6. **Admin 鉴权复用**：所有 admin 端点走 `AdminTokenGuard`（B1 已上线），不再新建角色体系；
 7. **不引入新依赖**：优先使用 Nest 内置 scheduler 或手写最小实现；如需 cron 解析，用 `node-cron` 或更小替代，评审时论证。
 8. **边界裁定（回应总体设计 §6 的「C5 立项时再评估」）**：画布 workflow recipe（`UserWorkflowRecipe`）**不并入**本子系统——它是画布模板编译，不产生「定时 / 无人值守」执行语义；其未来若出现批量执行需求，在自身规格内设计，C5 只提供 job 注册面。该裁定随本规格评审确认，若有异议则在评审时推翻并回写总体设计 §6。
+
+### 6.1 P0 实现期裁决回写（v1.1.0，2026-10-11，全文见 `docs/superpowers/plans/2026-10-11-automations-p0.md` 裁决表）
+
+- **D1**：schema 增列 `runOnStartup`（§4.1 已同步）——`reason='startup'` 的唯一触发来源；probe/reaper 现有启动首扫语义（B3 竞态修复 / 15s 首扫）必须保留。
+- **D2**：两服务的 startup 首扫从「服务内 setTimeout」迁移为「scheduler 启动后延迟 15s 派发 reason='startup' 的 run」（`STARTUP_RUN_DELAY_MS`）；probe 的「等路由表就绪」逻辑（B3 归属）保留在 probe 服务内（`probeOnceWhenRoutesReady` public 化），handler 在 startup 时先 await 它。
+- **D3**：`LNKPI_UPSTREAM_PROBE_INTERVAL_MINUTES` 语义退役（间隔改 `AutomationJob.intervalMinutes` DB 配置）；`resolveProbeIntervalMinutes` 导出函数与纯函数测试保留（`@deprecated`）。
+- **D4**：reason 映射 `'scheduled'→'periodic'` / `'manual'` / `'startup'`——`probeOnce`/`reapOnce` 签名零改动。
+- **D5**：种子策略 = scheduler `start()` 时 create-if-missing（upsert `update: {}`），重启绝不覆盖运维调过的配置。
+- **D6**：`concurrencyPolicy='replace'` P0 视同 `forbid`（不实现取消），P1 再实现。
+- **D7**：due 判据 = 最近一条 run（任意 status，含 skipped）的 `startedAt + max(1, intervalMinutes)·60s ≤ now`；无 run ⇒ 立即 due。
+- **D8**：dispatch 的 check-then-act 竞口用同步占位封死（先 `running.set(jobId,'pending')` 再 await create）。
+- **D9**：重启孤儿（DB 残留 status='running' 行）不阻塞新调度（内存 Map 才是并发权威）；P1 告警可检测「超长 running」再收口。
+- **G1 口径澄清**：「无业务级 timer」指**无调度型（recurring job）timer**；请求级 one-shot timer（重试退避 / abort 超时 / SSE 心跳 / grace 窗口）与本裁决无关。实测 `git grep setInterval|setTimeout` 仅剩 probe 的 `Promise.race` 等待上限（B3 归属，非调度 timer）与请求级 one-shot 命中，调度型命中为零。
 
 ---
 

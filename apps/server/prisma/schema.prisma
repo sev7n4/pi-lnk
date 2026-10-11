@@ -465,3 +465,39 @@ model AgentMemory {
   @@index([userId, scope, sessionId])
   @@map("agent_memories")
 }
+
+// ── C5 Automations（spec docs/superpowers/specs/2026-10-11-automations-design.md）──────
+// AutomationJob：配置层（handler 代码级注册，运维配置级）。id 用固定语义键
+// （'job-upstream-probe'），种子 create-if-missing（D5），admin 不发 id。
+model AutomationJob {
+  id                String   @id
+  name              String
+  description       String?
+  handlerKey        String
+  enabled           Boolean  @default(true)
+  scheduleType      String   @default("interval") // P0 仅 interval；cron 属 P2
+  intervalMinutes   Int      @default(5)
+  params            String? // JSON
+  concurrencyPolicy String   @default("forbid") // forbid | replace | allow（P0 replace 视同 forbid，D6）
+  runOnStartup      Boolean  @default(false) // D1：启动后延迟派发一次 reason='startup'
+  failureThreshold  Int      @default(3) // P1 告警消费
+  failureWebhook    String? // P1 告警消费
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  runs              AutomationRun[]
+}
+
+// AutomationRun：运行史（G2）。reason: scheduled|manual|startup；status: running|success|failure|skipped
+model AutomationRun {
+  id         String        @id @default(cuid())
+  jobId      String
+  job        AutomationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  reason     String
+  status     String        @default("running")
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  output     String? // JSON（reapOnce 返回的收尾条数等）
+  error      String?
+
+  @@index([jobId, startedAt])
+}
