@@ -37,7 +37,7 @@ export const AUTOMATION_DEFAULT_JOBS = [
   },
 ] as const
 
-type AutomationJobRow = Awaited<ReturnType<PrismaService['automationJob']['findUniqueOrThrow']>>
+export type AutomationJobRow = Awaited<ReturnType<PrismaService['automationJob']['findUniqueOrThrow']>>
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
