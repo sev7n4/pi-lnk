@@ -10,6 +10,7 @@ import {
   normalizeModelRefFromRows,
   resolveModelKey,
   resolveModelKeyFromRows,
+  resolveDefaultModelKeyFromRows,
   defaultModelKey,
   getModelEntry,
 } from './studioModelCatalog'
@@ -354,6 +355,62 @@ describe('resolveModelKeyFromRows（rows 注入形态，S2-1a A3 全量回归）
       expect(resolveModelKeyFromRows(ROWS, entry.modality, 'no-such-model')).toEqual(
         resolveModelKey(entry.modality, 'no-such-model'),
       )
+    }
+  })
+})
+
+// ── model-ops Task 1：默认模型数据化（DB isDefault 优先，种子常量降级为 fallback） ──
+describe('resolveDefaultModelKeyFromRows + fallback 链升级（model-ops Task 1）', () => {
+  const ROWS = STUDIO_MODEL_CATALOG
+
+  it('rows 无 isDefault 行 → 回落种子常量 DEFAULT_MODEL_KEYS（有效性断言：种子默认键非空）', () => {
+    for (const modality of ['text', 'image', 'video', 'audio'] as const) {
+      expect(defaultModelKey(modality), modality).toBeTruthy()
+      expect(resolveDefaultModelKeyFromRows(ROWS, modality)).toBe(defaultModelKey(modality))
+    }
+  })
+
+  it('rows 有 isDefault 行 → 该行 modelKey 优先（跨模态隔离：只认本模态的 isDefault）', () => {
+    const rows = [
+      { ...ROWS.find((e) => e.modelKey === 'agnes-2.0-flash')!, isDefault: true },
+      ...ROWS.filter((e) => e.modality === 'text' && e.modelKey !== 'agnes-2.0-flash'),
+    ]
+    expect(resolveDefaultModelKeyFromRows(rows, 'text')).toBe('agnes-2.0-flash')
+    // 其他模态不受影响（该 isDefault 只标在 text 条目上）
+    expect(resolveDefaultModelKeyFromRows(rows, 'image')).toBe(defaultModelKey('image'))
+    expect(resolveDefaultModelKeyFromRows(rows, 'video')).toBe(defaultModelKey('video'))
+    expect(resolveDefaultModelKeyFromRows(rows, 'audio')).toBe(defaultModelKey('audio'))
+  })
+
+  it('isDefault 行被软删/不在 rows → 回落种子常量（rows 即活条目集，无 deletedAt 维度）', () => {
+    const rows = ROWS.filter((e) => !(e.modality === 'text' && e.modelKey === 'agnes-2.5-flash'))
+    expect(resolveDefaultModelKeyFromRows(rows, 'text')).toBe(defaultModelKey('text'))
+  })
+
+  it('resolveModelKeyFromRows fallback 链：isDefault 行优先于种子常量（空 requested 与未知 id 两条路一致）', () => {
+    const rows = [
+      { ...ROWS.find((e) => e.modelKey === 'agnes-2.0-flash')!, isDefault: true },
+      ...ROWS.filter((e) => e.modality === 'text' && e.modelKey !== 'agnes-2.0-flash'),
+    ]
+    for (const requested of [undefined, null, '', 'not-a-real-model']) {
+      const r = resolveModelKeyFromRows(rows, 'text', requested)
+      expect(r.modelKey).toBe('agnes-2.0-flash')
+      expect(r.entry.modelKey).toBe('agnes-2.0-flash')
+    }
+    // requested 精确命中非默认条目仍精确命中（isDefault 不劫持显式请求）
+    const explicit = resolveModelKeyFromRows(rows, 'text', 'agnes-2.5-flash')
+    expect(explicit.modelKey).toBe('agnes-2.5-flash')
+    expect(explicit.fallback).toBe(false)
+  })
+
+  it('回归锁：种子常量 rows（无 isDefault 字段）行为与升级前逐字节一致（薄壳对拍不破）', () => {
+    for (const modality of ['text', 'image', 'video', 'audio'] as const) {
+      const r = resolveModelKeyFromRows(ROWS, modality, undefined)
+      expect(r.modelKey).toBe(defaultModelKey(modality))
+      expect(r.fallback).toBe(false)
+      const fallbackHit = resolveModelKeyFromRows(ROWS, modality, 'no-such-model')
+      expect(fallbackHit.modelKey).toBe(defaultModelKey(modality))
+      expect(fallbackHit.fallback).toBe(true)
     }
   })
 })

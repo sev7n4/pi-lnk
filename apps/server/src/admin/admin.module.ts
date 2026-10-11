@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common'
 import { AdminTokenGuard } from './admin-token.guard'
-import { ModelCatalogAdminController } from './model-catalog.controller'
+import { ModelCatalogAdminController, ModelDefaultsAdminController } from './model-catalog.controller'
 import { ModelHealthAdminController } from './model-health.controller'
 import { UpstreamProbeAdminController } from './upstream-probe-admin.controller'
 import { UpstreamRoutesAdminController } from './upstream-routes.controller'
@@ -13,6 +13,7 @@ import { AutomationModule } from '../automation/automation.module'
  * S2-1b：model-catalog 目录运营端点（GET/POST/PUT/DELETE，写操作审计 + bump catalogVersion）。
  * S2-2b：upstream-routes 路由运营端点（GET/PUT，写操作审计 + bump routesVersion）。
  * C5 P0：automation 只读 + trigger 端点（scheduler 由 AutomationModule 提供）。
+ * model-ops Task 1：model-defaults 切默认端点（PUT，X-Confirm 428 + 审计 + bump）。
  */
 @Module({
   imports: [AutomationModule],
@@ -20,6 +21,7 @@ import { AutomationModule } from '../automation/automation.module'
     UpstreamProbeAdminController,
     ModelHealthAdminController,
     ModelCatalogAdminController,
+    ModelDefaultsAdminController,
     UpstreamRoutesAdminController,
     AutomationAdminController,
   ],
