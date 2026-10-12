@@ -199,4 +199,24 @@ describe('StudioService.getGenerationDiagnostic', () => {
     expect(d2.chargedPoints).toBeUndefined()
     expect(d2.refundReason).toBeUndefined()
   })
+
+  it('429 限流失败 → code=rate_limited + 退避 hint（信号层 P1 配套工单，spec §6）', async () => {
+    // 生产病例形态（agnes hub 免费档 429）：metadata 不写 errorCode，
+    // 让 code 走读取路径的真实分类回落 mapMessageToErrorCode(errRaw)。
+    generationFindFirst.mockResolvedValue({
+      id: 'g-429',
+      userId: 'u1',
+      status: 'failed',
+      model: 'agnes-video-2.5-flash',
+      createdAt: new Date('2026-10-12T00:00:00.000Z'),
+      metadata: JSON.stringify({
+        errorRaw: 'agnes hub: 429 Too Many Requests, please retry later',
+        failedAt: '2026-10-12T00:01:00.000Z',
+      }),
+    })
+
+    const d = await svc.getGenerationDiagnostic('u1', 'g-429')
+    expect(d.code).toBe('rate_limited')
+    expect(d.hint).toBe('请稍后重试')
+  })
 })

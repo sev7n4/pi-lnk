@@ -2,6 +2,7 @@ export type ErrorCode =
   | 'insufficient_points'
   | 'upstream_timeout'
   | 'upstream_error'
+  | 'rate_limited'
   | 'cancelled'
   | 'invalid_input'
   | 'model_unavailable'
@@ -106,6 +107,12 @@ export function mapMessageToErrorCode(message: string): ErrorCode {
 
   if (text.includes('积分不足')) return 'insufficient_points'
   if (/timeout/i.test(text) || text.includes('ETIMEDOUT')) return 'upstream_timeout'
+  // 限流（2026-10-12 信号层 P1 配套工单，spec §6）：此前 429 全落 unknown ⇒ pi-runtime
+  // 信号层只能 hedge。归类 rate_limited 后错误文本含 "rate_limited"，vendor 分类器
+  // （RETRYABLE_PROVIDER_ERROR_PATTERN 的 "rate.?limit"）自动判 retryable:true → 退避提示。
+  // ⚠️ 排在 timeout 之后：'timeout waiting, then 429' 混合文本保持既有 upstream_timeout
+  // 分类不变（vendor 看全文仍判可重试，行为不受影响）。
+  if (/\b429\b|rate.?limit|too many requests/i.test(text)) return 'rate_limited'
   // 分发渠道无可用渠道（2026-10-09 生产 503 model_not_found 事故）：\b 防止误伤 model_not_found_x 类近似串
   if (/model_not_found\b|No available channel/i.test(text)) return 'model_unavailable'
   if (text.includes('已取消')) return 'cancelled'

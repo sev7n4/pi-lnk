@@ -30,6 +30,26 @@ describe("signalFromUpstream（vendor 薄适配 + 本地域单点，禁 LLM）",
 		assert.equal(s.status, "failed");
 		assert.equal("retryable" in s, false);
 	});
+	it("⭐ 跨层合同：Nest 归类 rate_limited（P1 配套工单）→ failed + retryable=true", () => {
+		// Nest mapMessageToErrorCode 把 429 文本归为 errorCode='rate_limited' 后，
+		// rawText 含 "rate_limited" → vendor RETRYABLE pattern 的 "rate.?limit" 命中。
+		const s = signalFromUpstream({
+			ok: false,
+			errorCode: "rate_limited",
+			message: "agnes hub: 429 Too Many Requests, please retry later",
+		});
+		assert.equal(s.status, "failed");
+		assert.equal(s.retryable, true);
+	});
+	it("订阅型配额（GoUsageLimitError）→ retryable 缺省（vendor 非重试模式优先，不鼓励盲重试）", () => {
+		const s = signalFromUpstream({
+			ok: false,
+			errorCode: "unknown",
+			message: "GoUsageLimitError: free tier quota exhausted",
+		});
+		assert.equal(s.status, "failed");
+		assert.equal("retryable" in s, false);
+	});
 	it("empty_result（本地域事实）→ partial + retryable=false", () => {
 		const s = signalFromUpstream({ ok: true, status: "empty_result" });
 		assert.equal(s.status, "partial");

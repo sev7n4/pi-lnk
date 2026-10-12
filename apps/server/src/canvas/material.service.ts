@@ -194,6 +194,9 @@ function hintForCode(code: ErrorCode): string | undefined {
       return '请更换可用模型'
     case 'upstream_error':
       return '请稍后重试或更换模型'
+    case 'rate_limited':
+      // 信号层 P1 配套工单（spec §6）：限流是瞬时失败，退避后重试通常有效。
+      return '请稍后重试'
     case 'fallback_pending':
       return '可确认使用平台通道或取消'
     case 'invalid_input':
@@ -217,6 +220,8 @@ function userMessageForCode(code: ErrorCode, fallback: string): string {
       return '模型不可用'
     case 'upstream_error':
       return '上游服务异常'
+    case 'rate_limited':
+      return '上游限流，请稍后重试'
     case 'fallback_pending':
       return '需要确认是否使用平台回退'
     case 'invalid_input':
