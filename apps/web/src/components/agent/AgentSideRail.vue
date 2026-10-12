@@ -2166,7 +2166,7 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.trackThinking(event.data as { status: string; summary?: string })
       break
     case 'turn_usage':
-      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number })
+      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number; cost?: number })
       break
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])
