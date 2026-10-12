@@ -7,12 +7,9 @@ import { fileToPersistedPayload } from '@/composables/useMediaUpload'
 import { resolveMediaUrl } from '@/services/api-base'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
-import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
 import {
-  buildAssetMediaInfoSummary,
   parseAssetMetadata,
   useMediaInspector,
-  type NodeMediaInfoSummary,
 } from '@/composables/useMediaInspector'
 import type { MediaInfo } from '@lnkpi/shared'
 
@@ -28,7 +25,6 @@ export interface CanvasAssetItem {
   source?: 'user' | 'public'
   metadata?: string | null
   generationRecordId?: string
-  mediaSummary?: NodeMediaInfoSummary
 }
 
 const emit = defineEmits<{
@@ -86,7 +82,6 @@ async function loadUserAssets() {
         metadata,
         generationRecordId:
           typeof parsed.generationRecordId === 'string' ? parsed.generationRecordId : undefined,
-        mediaSummary: buildAssetMediaInfoSummary({ kind: item.kind, metadata }),
       }
     })
   } catch {
@@ -414,7 +409,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
             tabindex="0"
             draggable="true"
             class="group relative aspect-square cursor-zoom-in overflow-hidden rounded-lg border border-[var(--neo-border)] bg-[var(--neo-hover-bg)] transition hover:border-[var(--neo-border-strong)]"
-            :title="`${asset.label && asset.label.length > 24 ? asset.label.slice(0, 24) + '…' : asset.label}（点击预览 · 可拖到画布新建节点 / 拖到底部工具条作引用）`"
+            title="点击预览 · 可拖到画布新建节点"
             @dragstart="onDragStart($event, asset)"
             @click="preview(asset)"
             @keydown.enter="preview(asset)"
@@ -453,16 +448,11 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
               公共
             </span>
 
-            <!-- hover 信息 + 操作合并为一条底部渐变层（避免规格条与图标叠压） -->
+                        <!-- hover 纯操作层（2026-10-12 用户口径：规格条/提示词干扰图标操作，全删） -->
             <div
-              class="absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 bg-gradient-to-t from-black/90 to-transparent px-1.5 pb-1.5 pt-3 opacity-0 transition group-hover:opacity-100"
+              class="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 bg-gradient-to-t from-black/90 to-transparent px-1.5 pb-1.5 pt-3 opacity-0 transition group-hover:opacity-100"
               @click.stop
             >
-              <MediaInfoSummary
-                v-if="asset.mediaSummary && (asset.kind === 'image' || asset.kind === 'video')"
-                v-bind="asset.mediaSummary"
-                class="neo-media-info-summary--overlay"
-              />
               <div class="flex items-center justify-center gap-1.5">
                 <button
                   type="button"

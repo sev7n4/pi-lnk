@@ -13,6 +13,8 @@ const emit = defineEmits<{
   save: []
   storyboard: []
   publish: []
+  importWorkflow: []
+  exportWorkflow: []
 }>()
 
 const router = useRouter()
@@ -85,6 +87,22 @@ useClickOutside(menuRef, closeMenu)
             @click="emit('publish'); closeMenu()"
           >
             发布作品
+          </button>
+          <!-- 2026-10-12 迁入：导入/导出是非高频操作，从右上角常驻按钮收敛到
+               「...」菜单，画布常驻 chrome 只留主题与账号 -->
+          <button
+            type="button"
+            class="neo-popover-item flex w-full px-3 py-2 text-left text-xs"
+            @click="emit('importWorkflow'); closeMenu()"
+          >
+            导入工作流
+          </button>
+          <button
+            type="button"
+            class="neo-popover-item flex w-full px-3 py-2 text-left text-xs"
+            @click="emit('exportWorkflow'); closeMenu()"
+          >
+            导出工作流
           </button>
         </div>
       </div>
