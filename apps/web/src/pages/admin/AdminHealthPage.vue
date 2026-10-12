@@ -17,6 +17,16 @@ function successRateText(rate: number | null): string {
   return rate === null ? '—' : `${Math.round(rate * 100)}%`
 }
 
+/** ghost 清单文本（空数组显示 —），供展开行与测试使用 */
+function ghostText(row: ProbeRunRow): string {
+  return row.ghosts.length > 0 ? row.ghosts.join('、') : '—'
+}
+
+/** missing 清单文本，同上 */
+function missingText(row: ProbeRunRow): string {
+  return row.missing.length > 0 ? row.missing.join('、') : '—'
+}
+
 async function reload() {
   loading.value = true
   error.value = ''
@@ -34,6 +44,9 @@ async function reload() {
 }
 
 onMounted(reload)
+
+// 测试经 w.vm 直调（同 AdminModelsPage 先例）：script setup 顶层绑定默认不暴露。
+defineExpose({ reload, ghostText, missingText })
 </script>
 
 <template>
@@ -75,6 +88,16 @@ onMounted(reload)
     <h2 class="mb-2 text-sm font-semibold text-fg-2">最近一次探活（各上游）</h2>
     <p v-if="runs.length === 0" class="text-sm text-fg-3">暂无数据（探活间隔默认 6h，部署初态正常）</p>
     <el-table v-else :data="runs" size="small" border>
+      <el-table-column type="expand">
+        <template #default="{ row }">
+          <div class="p-3 text-sm">
+            <p class="text-fg-2">ghost（上游有、目录没有 → 候选上架）</p>
+            <p class="mb-2 font-mono text-xs text-fg">{{ ghostText(row) }}</p>
+            <p class="text-fg-2">missing（目录有、上游没有 → 候选下架）</p>
+            <p class="font-mono text-xs text-fg">{{ missingText(row) }}</p>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column prop="upstream" label="上游" width="120" />
       <el-table-column prop="ranAt" label="时间" min-width="170" />
       <el-table-column prop="httpStatus" label="HTTP" width="80" />

@@ -102,6 +102,7 @@ const router = createRouter({
         { path: 'health', name: 'admin-health', component: () => import('@/pages/admin/AdminHealthPage.vue') },
         { path: 'pricing', name: 'admin-pricing', component: () => import('@/pages/admin/AdminPricingPage.vue') },
         { path: 'audit', name: 'admin-audit', component: () => import('@/pages/admin/AdminAuditPage.vue') },
+        { path: 'guide', name: 'admin-guide', component: () => import('@/pages/admin/AdminGuidePage.vue') },
       ],
     },
   ],
