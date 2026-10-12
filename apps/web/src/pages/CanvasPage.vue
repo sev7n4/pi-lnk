@@ -1954,6 +1954,15 @@ function handleUngroupSelection() {
   handleUngroupById(multiSelectedIds.value[0])
 }
 
+/** P3 2026-10-12：分组色卡选择（null = 复位默认中性）。 */
+function handleGroupColorSelection(key: string | null) {
+  if (multiSelectedIds.value.length !== 1) return
+  const node = findNodeById(multiSelectedIds.value[0])
+  if (!node || node.type !== 'group') return
+  patchNodeData(node.id, { colorKey: key ?? undefined })
+  persistUserEdit()
+}
+
 function handleDeleteSelection() {
   const ids = [...multiSelectedIds.value]
   const toRemove = new Set<string>()
@@ -4741,6 +4750,7 @@ onUnmounted(() => {
             :selection-batch="selectionBatchProp"
             @group="handleGroupSelection"
             @ungroup="handleUngroupSelection"
+            @group-color="handleGroupColorSelection"
             @delete="handleDeleteSelection"
             @layout="handleLayoutSelection"
             @generate-video="handleGenerateVideoFromSelection"

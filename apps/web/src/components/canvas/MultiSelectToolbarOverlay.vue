@@ -32,6 +32,7 @@ const emit = defineEmits<{
   generateRegen: []
   stopSelection: []
   blockedHint: [reason: 'pending_confirm' | 'limit_24' | 'missing_prompt']
+  groupColor: [key: string | null]
 }>()
 
 const { viewport, nodes: flowNodes } = useVueFlow()
@@ -116,5 +117,6 @@ const visible = computed(() => props.selectedIds.length >= 2 || !!props.canUngro
     @generate-regen="emit('generateRegen')"
     @stop-selection="emit('stopSelection')"
     @blocked-hint="emit('blockedHint', $event)"
+    @group-color="emit('groupColor', $event)"
   />
 </template>

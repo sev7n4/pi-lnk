@@ -1345,21 +1345,26 @@
   pointer-events: none;
 }
 
+/* 分组容器（P3 2026-10-12 重构）：
+   - 背景与虚线边全部从 --neo-group-accent（由 CanvasNodeGroup 按 colorKey
+     注入，默认 neutral 中性灰）color-mix 派生 —— 默认与画布仅数个百分点的
+     明度差，「有差异、不强占主视线」；不再使用品牌紫 rgba 硬编码。
+   - 信息条（.group-drag-handle，组件内 scoped）无底无框贴上沿。 */
 .group-node-container {
   z-index: 0;
   min-width: 280px;
   min-height: 160px;
   padding: 12px;
-  border: 2px dashed var(--neo-border-strong);
+  border: 2px dashed color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 32%, transparent);
   border-radius: 20px;
-  background: rgba(109, 93, 252, 0.06);
+  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 7%, transparent);
   pointer-events: none;
 }
 
 .group-node-wrapper.is-active .group-node-container {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-border));
-  background: var(--neo-hover-bg);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neo-hi-text) 25%, transparent);
+  border-color: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 55%, var(--neo-border-strong));
+  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 11%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 25%, transparent);
 }
 
 /* ============================================================
