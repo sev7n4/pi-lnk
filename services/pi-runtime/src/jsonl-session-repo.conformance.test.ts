@@ -85,14 +85,19 @@ describe("JsonlSessionRepo vendor conformance（P4 版本钉死护栏）", () =>
 				repo.fork(source.metadata, { id: "destination", scope: "tree" }, BACKGROUND_CONTEXT),
 				repo.create({ id: "destination" }, BACKGROUND_CONTEXT),
 			]);
-			const fulfilled = results.filter((r) => r.status === "fulfilled");
-			const rejected = results.filter((r) => r.status === "rejected");
-			assert.equal(fulfilled.length, 1, "必须恰有一方赢得预留");
-			assert.equal(rejected.length, 1, "必须恰有一方被拒绝");
+			const fulfilledCount = results.filter((r) => r.status === "fulfilled").length;
+			const rejectedCount = results.filter((r) => r.status === "rejected").length;
+			assert.equal(fulfilledCount, 1, "必须恰有一方赢得预留");
+			assert.equal(rejectedCount, 1, "必须恰有一方被拒绝");
 			// 有效性：胜者确实是 destination（而非双方都因别的故障失败）
-			const winner = fulfilled[0] as PromiseFulfilledResult<{ metadata: { id: string } }>;
-			assert.equal(winner.value.metadata.id, "destination");
-			await winner.value.close(BACKGROUND_CONTEXT);
+			const [forkRes, createRes] = results;
+			const winner =
+				forkRes.status === "fulfilled" ? forkRes.value
+				: createRes.status === "fulfilled" ? createRes.value
+				: undefined;
+			assert.ok(winner, "胜者必须是 create/fork 之一");
+			assert.equal(winner.metadata.id, "destination");
+			await winner.close(BACKGROUND_CONTEXT);
 			await source.close(BACKGROUND_CONTEXT);
 		} finally {
 			await onClose();
