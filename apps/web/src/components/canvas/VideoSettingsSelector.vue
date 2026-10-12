@@ -37,7 +37,8 @@ const nativeParams = computed(() => {
   }
 })
 
-const showGenerateAudio = computed(() => nativeParams.value.generateAudio)
+/** 生成音频是否为该模型原生参数；不支持时常驻展示但置灰（基线全集原则） */
+const audioSupported = computed(() => nativeParams.value.generateAudio)
 
 const showSeed = computed(() => nativeParams.value.seed)
 
@@ -274,20 +275,24 @@ function aspectLabel(value: VideoAspectRatio): string {
         </p>
       </div>
 
-      <div v-if="showGenerateAudio" class="mb-3 flex items-center justify-between">
-        <p class="text-[10px] text-[var(--neo-text-muted)]">生成音频</p>
+      <div class="mb-3 flex items-center justify-between">
+        <p
+          class="text-[10px] text-[var(--neo-text-muted)]"
+          :class="audioSupported ? '' : 'opacity-50'"
+        >生成音频</p>
         <button
           type="button"
           role="switch"
-          :aria-checked="modelValue.generateAudio ?? true"
-          class="relative h-[18px] w-8 rounded-full transition-colors"
-          :class="(modelValue.generateAudio ?? true) ? 'bg-[var(--neo-text-primary)]' : 'bg-[var(--neo-border-strong)]'"
-          :title="(modelValue.generateAudio ?? true) ? '生成音频：开' : '生成音频：关'"
-          @click="patch({ generateAudio: !(modelValue.generateAudio ?? true) })"
+          :disabled="!audioSupported"
+          :aria-checked="audioSupported ? (modelValue.generateAudio ?? true) : false"
+          class="relative h-[18px] w-8 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          :class="audioSupported && (modelValue.generateAudio ?? true) ? 'bg-[var(--neo-text-primary)]' : 'bg-[var(--neo-border-strong)]'"
+          :title="audioSupported ? ((modelValue.generateAudio ?? true) ? '生成音频：开' : '生成音频：关') : '当前模型不支持生成音频'"
+          @click="audioSupported && patch({ generateAudio: !(modelValue.generateAudio ?? true) })"
         >
           <span
             class="absolute top-[2px] h-[14px] w-[14px] rounded-full bg-[var(--neo-text-invert)] transition-all"
-            :class="(modelValue.generateAudio ?? true) ? 'left-[16px]' : 'left-[2px]'"
+            :class="audioSupported && (modelValue.generateAudio ?? true) ? 'left-[16px]' : 'left-[2px]'"
           />
         </button>
       </div>

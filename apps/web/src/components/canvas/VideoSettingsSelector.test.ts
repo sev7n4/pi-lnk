@@ -13,7 +13,7 @@ async function openPopover(wrapper: ReturnType<typeof mount>) {
 }
 
 describe('VideoSettingsSelector', () => {
-  it('hides generateAudio when supportsGenerateAudio is false', async () => {
+  it('shows a disabled generateAudio switch when model lacks native audio (agnes-video-v2.0)', async () => {
     const capabilities = resolveVideoModelCapabilities('agnes-video-v2.0', 'agnes-video-v2.0')
     const wrapper = mount(VideoSettingsSelector, {
       props: {
@@ -24,10 +24,12 @@ describe('VideoSettingsSelector', () => {
     })
 
     await openPopover(wrapper)
-    expect(wrapper.text()).not.toContain('生成音频')
+    const sw = wrapper.get('button[role="switch"]')
+    expect(sw.attributes('disabled')).toBeDefined()
+    expect(sw.attributes('title')).toBe('当前模型不支持生成音频')
   })
 
-  it('hides generateAudio, seed and negative for minimax-h3', async () => {
+  it('disables generateAudio, hides seed and negative for minimax-h3', async () => {
     const capabilities = resolveVideoModelCapabilities('minimax-h3', 'MiniMax-H3')
     const wrapper = mount(VideoSettingsSelector, {
       props: {
@@ -39,7 +41,7 @@ describe('VideoSettingsSelector', () => {
 
     await openPopover(wrapper)
     const text = wrapper.text()
-    expect(text).not.toContain('生成音频')
+    expect(wrapper.get('button[role="switch"]').attributes('disabled')).toBeDefined()
     expect(text).not.toContain('Seed')
     expect(text).not.toContain('排除内容')
   })
@@ -79,7 +81,7 @@ describe('VideoSettingsSelector', () => {
     await openPopover(wrapper)
     expect(wrapper.text()).not.toContain('Seed')
     expect(wrapper.text()).not.toContain('排除内容')
-    expect(wrapper.text()).not.toContain('生成音频')
+    expect(wrapper.get('button[role="switch"]').attributes('disabled')).toBeDefined()
   })
 
   it('shows generateAudio for seedance models', async () => {
@@ -168,7 +170,7 @@ describe('VideoSettingsSelector', () => {
     expect(res4k?.attributes('title')).toContain('不支持')
   })
 
-  it('cogvideox: 全集置灰 + 时长离散为 5s/10s pill（无滑轨）', async () => {
+  it('cogvideox: 全集置灰 + 时长离散为 5s/10s pill（无滑轨）+ 生成音频开关置灰', async () => {
     const capabilities = resolveVideoModelCapabilities('cogvideox-flash', 'cogvideox-flash')
     const wrapper = mount(VideoSettingsSelector, {
       props: {
@@ -191,6 +193,10 @@ describe('VideoSettingsSelector', () => {
     expect(wrapper.find('input[type="range"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('5s')
     expect(wrapper.text()).toContain('10s')
+    // 生成音频开关常驻但置灰（cogvideox 无原生音频）
+    const sw = wrapper.get('button[role="switch"]')
+    expect(sw.attributes('disabled')).toBeDefined()
+    expect(sw.attributes('title')).toBe('当前模型不支持生成音频')
   })
 
   it('snaps invalid settings to nearest allowed on open (4k→1080p, 21:9→16:9)', async () => {

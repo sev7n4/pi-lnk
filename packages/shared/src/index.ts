@@ -223,7 +223,9 @@ export const VIDEO_ASPECT_RATIO_OPTIONS: { value: VideoAspectRatio; label: strin
   { value: '1:1', label: '1:1 方形' },
 ]
 
-export const VIDEO_DURATION_MARKS = [4, 5, 10, 15] as const
+// 30s 预埋 Seedance 2.5（4–30s）：滑轨 max 由模型 capabilities.maxDuration 收口，
+// 上架 2.5 前该刻度会被 filter 掉，不产生假范围。
+export const VIDEO_DURATION_MARKS = [4, 5, 10, 15, 30] as const
 
 export const VIDEO_DURATION_OPTIONS: { value: 4 | 5 | 10 | 15; label: string }[] = [
   { value: 4, label: '4 秒' },
