@@ -52,7 +52,8 @@ const groupStyle = computed(() => ({
     @mouseleave="isHovered = false"
   >
     <!-- 标题外沿条：与图片/视频节点的 .neo-node-external-title 同位同字体
-         （top:-32px · 13px/600 · --neo-node-title-color），兼任拖拽把手 -->
+         （top:-32px · 13px/600 · --neo-node-title-color）；分组整盒可拖
+         （2026-10-12 去掉 dragHandle 后此条不再是唯一拖拽面，仅保留重命名入口） -->
     <div class="group-drag-handle" @dblclick.stop="startRename">
       <input
         v-if="isRenaming"
@@ -89,6 +90,12 @@ const groupStyle = computed(() => ({
   overflow: visible;
   width: 100%;
   height: 100%;
+  /* 整盒可拖（2026-10-12）：光标即「这里可拖」的暗示 */
+  cursor: grab;
+}
+
+.group-node-wrapper:active {
+  cursor: grabbing;
 }
 
 .group-node-container {
@@ -96,7 +103,8 @@ const groupStyle = computed(() => ({
 }
 
 /* 标题外沿条：与图片/视频节点同位（neo-node.css .neo-node-external-title 同款定位），
-   字体 token 与 .neo-node-title 同源；兼作拖拽把手（dragHandle 选择器不变） */
+   字体 token 与 .neo-node-title 同源；2026-10-12 起分组整盒可拖，此条只保留
+   重命名入口（dblclick），不再是唯一拖拽面 */
 .group-drag-handle {
   pointer-events: auto;
   cursor: grab;

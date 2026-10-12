@@ -90,11 +90,13 @@ import { CONNECT_OUT_TARGET_TYPES } from '@/components/canvas/canvasDockMenu'
 import { computeNewNodePosition, snapToGrid } from '@/composables/useCanvasNodePlacement'
 import {
   applyArrangeLayout,
+  applySnapOnRelease,
   createGroupFromNodes,
   getNodeSize,
   getSelectionBounds,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
+  nextGroupTitle,
   resizeGroupToFitChildren,
   restoreGroupHierarchy,
   syncGroupsToFitChildren,
@@ -1428,7 +1430,7 @@ function createNodeAt(type: DockNodeType, position: { x: number; y: number }) {
       id = addNode('sceneComposer', createInitialSceneComposerNodeData(), { position })
       break
     case 'group':
-      id = addNode('group', { title: `分组 ${countNodesByType('group') + 1}`, childIds: [] }, { position })
+      id = addNode('group', { title: nextGroupTitle(nodes.value), childIds: [] }, { position })
       break
     case 'mediaInput':
       id = addNode('mediaInput', { url: '', status: 'idle', title: '媒体输入', fileName: '' }, { position })
@@ -1690,6 +1692,17 @@ function resolveNewNodePosition(type: string) {
 
 const locateFlashNodeIds = ref<Set<string>>(new Set())
 
+/** 拖拽开始时的 dragItems 位置快照（id → position），松手吸附算平移量用 */
+let dragStartPositions = new Map<string, { x: number; y: number }>()
+
+/** 拖拽中临时抬升过 z-index 的节点（分组 + 其子节点），松手时还原 */
+let dragLiftedNodeIds = new Set<string>()
+
+/** 分组静态 z 序：分组 0、子节点 1（子节点压分组盒体）；拖拽中临时抬到 5/6 */
+const GROUP_Z_BASE = 0
+const GROUP_CHILD_Z = 1
+const GROUP_DRAG_Z = 5
+
 function triggerLocateFlash(ids: string[]) {
   locateFlashNodeIds.value = new Set(ids)
   setTimeout(() => {
@@ -1889,18 +1902,70 @@ function onNodesInitialized() {
   }
 }
 
+/**
+ * 拖拽开始：快照所有 dragItems 的位置（供松手吸附算平移量用）。
+ * vue-flow 的 dragItems 只含被抓节点与同批多选兄弟；已选父节点的子节点
+ * 不在其中（相对坐标不变、随父移动），不该被平移。
+ *
+ * 分组整体拖拽时临时抬升 z 序：分组盒抬到 5、其子节点抬到 6 —— 否则
+ * 拖着分组越过别的分组时，本组盒体会被对方子节点（z=1）压住。松手还原。
+ */
+function onNodeDragStart(event: NodeDragEvent) {
+  dragStartPositions = new Map()
+  for (const n of event.nodes) {
+    dragStartPositions.set(n.id, { x: n.position.x, y: n.position.y })
+  }
+  dragLiftedNodeIds = new Set()
+  for (const n of event.nodes) {
+    if (n.type !== 'group') continue
+    const group = nodes.value.find((x) => x.id === n.id)
+    if (!group) continue
+    group.zIndex = GROUP_DRAG_Z
+    dragLiftedNodeIds.add(group.id)
+    for (const child of nodes.value) {
+      if (child.parentNode === group.id) {
+        child.zIndex = GROUP_DRAG_Z + 1
+        dragLiftedNodeIds.add(child.id)
+      }
+    }
+  }
+}
+
+/** 还原拖拽中临时抬升的 z 序（分组回 0、子节点回 1） */
+function restoreDraggedZIndex() {
+  for (const id of dragLiftedNodeIds) {
+    const node = nodes.value.find((x) => x.id === id)
+    if (!node) continue
+    node.zIndex = node.parentNode ? GROUP_CHILD_Z : GROUP_Z_BASE
+  }
+  dragLiftedNodeIds = new Set()
+}
+
+/**
+ * 拖拽结束（2026-10-12 拖拽丝滑化）：拖拽中节点 1:1 跟手（VueFlow 的
+ * snap-to-grid 已关），松手时才按 grid 吸附。先吸附再 resize 分组——
+ * 顺序反了会按吸附前的位置算包围盒，松手后分组边框跳变。
+ */
 function onNodeDragStop(event: NodeDragEvent) {
   const node = event.node
-  if (node.parentNode) {
-    nodes.value = resizeGroupToFitChildren(nodes.value as unknown as FlowNode[], node.parentNode) as EditableFlowNode[]
-  }
-  if (viewportSettings.value.snapToGrid) {
+  if (viewportSettings.value.snapToGrid && dragStartPositions.size > 0) {
+    nodes.value = applySnapOnRelease(
+      nodes.value as unknown as FlowNode[],
+      dragStartPositions,
+      node.id,
+      viewportSettings.value.gridGap,
+    ) as EditableFlowNode[]
     locateFlashNodeIds.value = new Set([node.id])
     window.setTimeout(() => {
       if (locateFlashNodeIds.value.has(node.id)) {
         locateFlashNodeIds.value = new Set()
       }
     }, 500)
+  }
+  dragStartPositions = new Map()
+  restoreDraggedZIndex()
+  if (node.parentNode) {
+    nodes.value = resizeGroupToFitChildren(nodes.value as unknown as FlowNode[], node.parentNode) as EditableFlowNode[]
   }
   persistUserEdit()
 }
@@ -4114,14 +4179,6 @@ function handleContextAction(action: string) {
   }
 }
 
-function countNodesByType(type: string) {
-  let count = 0
-  for (const node of nodes.value) {
-    if (node.type === type) count += 1
-  }
-  return count
-}
-
 function handleStoryboardUpdated(shots: StoryboardShot[]) {
   for (const shot of shots) {
     const node = findNodeById(shot.id)
@@ -4733,7 +4790,7 @@ onUnmounted(() => {
           :nodes-connectable="!viewportSettings.viewLocked"
           :multi-selection-key-code="['Shift', 'Meta', 'Control'] as any"
           :selection-mode="SelectionMode.Partial"
-          :snap-to-grid="viewportSettings.snapToGrid"
+          :snap-to-grid="false"
           :snap-grid="[viewportSettings.gridGap, viewportSettings.gridGap]"
           :connection-radius="48"
           :delete-key-code="null"
@@ -4748,6 +4805,7 @@ onUnmounted(() => {
           @nodes-initialized="onNodesInitialized"
           @selection-end="onSelectionEnd"
           @node-click="onNodeClick"
+          @node-drag-start="onNodeDragStart"
           @node-drag-stop="onNodeDragStop"
           @pane-click="onPaneClick"
           @dblclick="onPaneDoubleClick"

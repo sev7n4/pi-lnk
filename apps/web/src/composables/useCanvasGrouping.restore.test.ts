@@ -14,7 +14,9 @@ import {
  * 分组塌缩成 280×160 小卡悬在画布顶部，节点全部逃出）。
  *
  * 锁定：① 子节点回填 parentNode/extent/expandParent/zIndex；
- * ② group 回填 dragHandle/zIndex/尺寸（按子节点相对包围盒 + 兜底尺寸表估算）；
+ * ② group 回填 zIndex/尺寸（按子节点相对包围盒 + 兜底尺寸表估算；2026-10-12
+ * 起不再回填 dragHandle —— 分组整盒可拖，见 useCanvasGrouping.nextGroupTitle
+ * 注释同源的「只能抓 26px 外沿标题条」问题）；
  * ③ 幂等（跑两遍结果一致，完好画布零扰动）；④ 坏数据容错（childIds 指向
  * 不存在节点 / 指向 group 自身时跳过）；⑤ 测量后精修 syncGroupsToFitChildren
  * 按真实 dimensions 重算、已贴合时返回原引用。
@@ -67,10 +69,12 @@ describe('restoreGroupHierarchy：刷新后按 childIds 重建分组', () => {
     expect(g.position).toEqual({ x: 500, y: 400 })
   })
 
-  it('group 回填 dragHandle/zIndex，尺寸 = 子节点相对包围盒 + 2×GROUP_PADDING', () => {
+  it('group 回填 zIndex 且不带 dragHandle（整盒可拖），尺寸 = 子节点相对包围盒 + 2×GROUP_PADDING', () => {
     const out = restoreGroupHierarchy(persistedScene())
     const g = out.find((n) => n.id === 'group-1')!
-    expect(g.dragHandle).toBe('.group-drag-handle')
+    // 2026-10-12 拖拽修复：dragHandle 会让分组只能抓盒体外沿 26px 标题条，
+    // fit-view 缩到 0.25 倍后屏幕仅 ~6px 高，用户感知「分组拖不动」。
+    expect(g.dragHandle).toBeUndefined()
     expect(g.zIndex).toBe(0)
     expect(g.selectable).toBe(true)
     // image 兜底 280×280：maxX = 80+300+280=660, maxY = 80+200+280=560, min=80
