@@ -156,11 +156,18 @@ const previewKind = computed(() => {
 })
 
 const title = computed(() => {
-  if (target.value?.nodeLabel?.trim()) return target.value.nodeLabel.trim()
-  if (record.value?.prompt?.trim()) return record.value.prompt.trim()
-  const promptPreview = parsedMeta.value.promptPreview
-  if (typeof promptPreview === 'string' && promptPreview.trim()) return promptPreview.trim()
-  return target.value?.nodeId ? `节点 ${target.value.nodeId}` : '媒体属性'
+  // 标题只取节点名；无名称时给短语义标签，**永不落入 prompt 全文**——
+  // 历史缺陷：曾把整条 prompt 当标题且头部无截断，长提示词把诊断三段式
+  // 整体压出抽屉视口（2026-10-12 用户口径：提示词全文的归属是「任务」菜单，
+  // 本抽屉的职责是诊断失败原因；需要上下文时走「技术详情」折叠区）。
+  const label = target.value?.nodeLabel?.trim()
+  if (label) return label
+  const rawKind = record.value?.type ?? target.value?.kind
+  const kindText = rawKind === 'video' ? '视频' : rawKind === 'audio' ? '音频' : '图片'
+  const ts = record.value?.createdAt
+  const d = ts ? new Date(ts) : null
+  const timeText = d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+  return timeText ? `${kindText}任务 · ${timeText}` : `${kindText}任务`
 })
 
 const createdAtText = computed(() => {
@@ -226,13 +233,20 @@ const isFallbackPendingRecord = computed(
 const technicalRows = computed(() => {
   const d = diagnostic.value
   if (!d) return []
-  const rows: Array<{ label: string; value: string; copy?: string }> = []
+  const rows: Array<{ label: string; value: string; copy?: string; multiline?: boolean }> = []
   if (d.model) rows.push({ label: '模型', value: d.model, copy: d.model })
   if (d.channelId) rows.push({ label: '渠道', value: d.channelId })
   if (d.apiFormat) rows.push({ label: 'API 格式', value: d.apiFormat })
   if (d.httpStatus != null) rows.push({ label: 'HTTP', value: String(d.httpStatus) })
   if (d.taskId) rows.push({ label: '任务 ID', value: d.taskId, copy: d.taskId })
   if (d.occurredAt) rows.push({ label: '发生时间', value: diagnosticOccurredAt.value ?? d.occurredAt })
+  // Prompt 上下文只进「技术详情」折叠区（默认收起，不参与首屏高度），限高滚动可复制；
+  // 全文与「任务」菜单同源，不在标题/首屏出现（2026-10-12 用户口径）。
+  const promptText =
+    record.value?.prompt?.trim() ||
+    (typeof parsedMeta.value.prompt === 'string' && parsedMeta.value.prompt.trim()) ||
+    (typeof parsedMeta.value.promptPreview === 'string' ? parsedMeta.value.promptPreview.trim() : '')
+  if (promptText) rows.push({ label: 'Prompt', value: promptText, copy: promptText, multiline: true })
   return rows
 })
 
@@ -654,7 +668,7 @@ async function copyValue(text: string) {
             <dl v-if="technicalRows.length" class="media-inspector-dl media-inspector-diag-tech-rows">
               <template v-for="row in technicalRows" :key="row.label">
                 <dt>{{ row.label }}</dt>
-                <dd>
+                <dd :class="{ 'is-multiline': row.multiline }">
                   <span>{{ row.value }}</span>
                   <button
                     v-if="row.copy"
@@ -832,6 +846,13 @@ async function copyValue(text: string) {
   font-size: 14px;
   font-weight: 700;
   line-height: 1.35;
+  /* 结构兜底：任何来源的标题（含长节点名）最多 2 行，撑不破头部
+     —— 历史缺陷：prompt 全文当标题 + 无截断，把诊断内容压出视口 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .media-inspector-subtitle {
@@ -946,6 +967,15 @@ async function copyValue(text: string) {
 }
 
 .media-inspector-dl dd.is-multiline {
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+/* 技术详情里的多行值（Prompt）：限高滚动，展开后也撑不破抽屉 */
+.media-inspector-diag-tech-rows dd.is-multiline span {
+  display: block;
+  max-height: 120px;
+  overflow-y: auto;
   white-space: pre-wrap;
   line-height: 1.45;
 }
