@@ -4700,6 +4700,8 @@ onUnmounted(() => {
           @save="saveCanvas"
           @storyboard="showStoryboard = true"
           @publish="openPublish"
+          @import-workflow="openWorkflowImportPicker"
+          @export-workflow="handleExportPack([], 'full_package')"
         />
 
         <RefineCanvasBack
@@ -4952,22 +4954,6 @@ onUnmounted(() => {
         />
 
         <div v-if="!canvasChromeHidden" class="pointer-events-none absolute right-3 top-3 z-[50] flex items-center gap-2">
-          <button
-            type="button"
-            class="canvas-theme-toggle neo-chrome pointer-events-auto flex h-9 items-center justify-center rounded-xl px-3 text-xs transition"
-            title="导入工作流"
-            @click="openWorkflowImportPicker"
-          >
-            导入工作流
-          </button>
-          <button
-            type="button"
-            class="canvas-theme-toggle neo-chrome pointer-events-auto flex h-9 items-center justify-center rounded-xl px-3 text-xs transition"
-            title="导出工作流"
-            @click="handleExportPack([], 'full_package')"
-          >
-            导出工作流
-          </button>
           <!-- 沉浸画布没有 AppHeader，主题入口必须保留在这里；
                实现与 header 共用 `ThemeToggle`，不再内联一份 svg。
                `canvas-theme-toggle` 类名保留：既有样式/选择器依赖它。 -->

@@ -9,7 +9,6 @@ import DockPromptSection from '@/components/canvas/dock-studio/shared/DockPrompt
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
 import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
 import DockCreditBadge from '@/components/canvas/dock-studio/shared/DockCreditBadge.vue'
-import DockOptimizePrompt from '@/components/canvas/dock-studio/shared/DockOptimizePrompt.vue'
 import DockRefStrip from '@/components/canvas/dock-studio/shared/DockRefStrip.vue'
 import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
@@ -99,11 +98,6 @@ watch(
 )
 
 function onPromptInput(value: string) {
-  prompt.value = value
-  emit('patch', { prompt: value })
-}
-
-function onOptimized(value: string) {
   prompt.value = value
   emit('patch', { prompt: value })
 }
@@ -223,12 +217,6 @@ function onRefMention(refKey: string) {
           </button>
         </template>
       </div>
-      <DockOptimizePrompt
-        :prompt="prompt"
-        optimize-style="copywriting"
-        :disabled="readonly"
-        @optimized="onOptimized"
-      />
       <span class="text-[10px] text-fg-3">{{ wordCount }}</span>
 
       <div class="ml-auto flex items-center gap-2">

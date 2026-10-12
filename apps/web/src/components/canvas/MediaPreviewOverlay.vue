@@ -203,13 +203,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
           <audio :src="target.url" controls autoplay class="w-[320px]" />
         </div>
 
-        <!-- 底部标题 -->
-        <p
-          v-if="target.label"
-          class="absolute bottom-4 left-1/2 max-w-[70vw] -translate-x-1/2 truncate rounded-full bg-black/55 px-4 py-1.5 text-xs text-fg backdrop-blur-sm"
-        >
-          {{ target.label }}
-        </p>
       </div>
     </Transition>
   </Teleport>

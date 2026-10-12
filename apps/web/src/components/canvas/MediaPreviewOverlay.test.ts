@@ -119,3 +119,23 @@ describe('MediaPreviewOverlay 原始尺寸切换', () => {
     wrapper.unmount()
   })
 })
+
+/**
+ * 灯箱减法（2026-10-12 用户口径）：底部 prompt/label 文本条删除——
+ * 长提示词横在画面底部污染视觉；prompt 统一走「更多信息」抽屉查看。
+ */
+describe('MediaPreviewOverlay 底部提示词条删除', () => {
+  it('有 label 的预览不再渲染底部文本条', async () => {
+    editor.previewTarget = {
+      url: 'https://cdn/a.png',
+      kind: 'image',
+      nodeId: 'n1',
+      label: '皮克斯3D动画风格，一只睿智的老狐狸，橙色皮毛带有白色腹部',
+    }
+    const wrapper = mount(MediaPreviewOverlay, { attachTo: document.body })
+    await wrapper.vm.$nextTick()
+    expect(document.body.textContent).not.toContain('皮克斯3D动画风格')
+    expect(document.body.querySelector('p.absolute.bottom-4'), '底部提示词条不得复活').toBeNull()
+    wrapper.unmount()
+  })
+})
