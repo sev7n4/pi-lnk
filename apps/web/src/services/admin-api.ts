@@ -86,6 +86,18 @@ export type AdminCatalogEntry = {
   updatedAt: string
 }
 
+/**
+ * 目录条目链路原料（2026-10-12 目录页【上游端点 + 链路状态】增强），以 modelKey 为键。
+ * 服务端组装失败时 fail-soft 下发 null ⇒ 可选字段，前端对缺省渲染「—」。
+ */
+export type AdminCatalogLinkOps = {
+  upstream: string | null
+  baseUrl: string | null
+  availability: 'available' | 'unavailable' | 'unknown' | null
+  completed24h: number
+  balance40224h: number
+}
+
 export type CatalogEntryInput = {
   modelKey?: string
   displayName?: string
@@ -160,7 +172,7 @@ export const adminApi = {
       }),
     ),
 
-  listCatalog: (): Promise<{ version: number; entries: AdminCatalogEntry[] }> =>
+  listCatalog: (): Promise<{ version: number; entries: AdminCatalogEntry[]; ops?: Record<string, AdminCatalogLinkOps> }> =>
     unwrap(adminHttp.get('/admin/model-catalog', { params: undefined })),
 
   createCatalogEntry: (input: CatalogEntryInput) =>

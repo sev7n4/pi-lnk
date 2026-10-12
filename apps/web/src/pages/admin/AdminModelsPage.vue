@@ -1,11 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { adminApi, AdminApiError, type AdminCatalogEntry, type CatalogEntryInput } from '@/services/admin-api'
+import {
+  adminApi,
+  AdminApiError,
+  type AdminCatalogEntry,
+  type AdminCatalogLinkOps,
+  type CatalogEntryInput,
+} from '@/services/admin-api'
+import { linkStatusOf, LINK_LEVEL_TEXT_CLASS } from './modelLinkStatus'
 
 const loading = ref(false)
 const version = ref(0)
 const entries = ref<AdminCatalogEntry[]>([])
+/** modelKey → 链路原料（服务端 fail-soft 时为 null → 灯色全灰「未知」）。 */
+const opsByModel = ref<Record<string, AdminCatalogLinkOps> | null>(null)
 const keyword = ref('')
 const actionError = ref('')
 
@@ -20,12 +29,19 @@ const filtered = computed(() => {
   )
 })
 
+/** 单行链路状态（灯色 + 文案 + tooltip）；供模板与测试使用。 */
+function linkOf(row: AdminCatalogEntry) {
+  return linkStatusOf(opsByModel.value?.[row.modelKey] ?? null, row.deletedAt !== null)
+}
+defineExpose({ removeEntry, actionError, startCreate, startEdit, submitForm, linkOf })
+
 async function reload() {
   loading.value = true
   try {
     const data = await adminApi.listCatalog()
     version.value = data.version
     entries.value = data.entries
+    opsByModel.value = data.ops ?? null
   } catch (err) {
     actionError.value = err instanceof AdminApiError ? err.message : '加载失败'
   } finally {
@@ -110,8 +126,7 @@ async function submitForm() {
   }
 }
 
-// script setup 默认封闭，供测试通过 w.vm 数据驱动
-defineExpose({ removeEntry, actionError, startCreate, startEdit, submitForm })
+// defineExpose 见上方 linkOf 处（一并暴露 removeEntry/actionError/startCreate/startEdit/submitForm）
 </script>
 
 <template>
@@ -129,6 +144,25 @@ defineExpose({ removeEntry, actionError, startCreate, startEdit, submitForm })
       <el-table-column prop="displayName" label="名称" min-width="140" />
       <el-table-column prop="modality" label="模态" width="80" />
       <el-table-column prop="providerBinding" label="绑定" min-width="160" />
+      <el-table-column label="上游端点" min-width="200">
+        <template #default="{ row }">
+          <template v-if="row.deletedAt">
+            <span class="text-fg-3">—</span>
+          </template>
+          <template v-else-if="opsByModel && opsByModel[row.modelKey]">
+            <div class="font-mono text-xs text-fg">{{ opsByModel[row.modelKey]!.baseUrl ?? '端点未知' }}</div>
+            <div class="text-xs text-fg-3">上游 {{ opsByModel[row.modelKey]!.upstream ?? '未路由' }}</div>
+          </template>
+          <span v-else class="text-fg-3">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="链路状态" width="110">
+        <template #default="{ row }">
+          <el-tooltip :content="linkOf(row).tooltip" placement="top">
+            <span :class="LINK_LEVEL_TEXT_CLASS[linkOf(row).level]" class="cursor-help text-sm">● {{ linkOf(row).label }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <span v-if="row.deletedAt" class="text-warning">已下架</span>
