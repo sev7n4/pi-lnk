@@ -55,6 +55,7 @@ async function submitToken() {
         <el-menu-item index="/admin/health">健康探活</el-menu-item>
         <el-menu-item index="/admin/pricing">渠道定价</el-menu-item>
         <el-menu-item index="/admin/audit">审计日志</el-menu-item>
+        <el-menu-item index="/admin/guide">使用说明</el-menu-item>
       </el-menu>
     </el-aside>
     <el-main>

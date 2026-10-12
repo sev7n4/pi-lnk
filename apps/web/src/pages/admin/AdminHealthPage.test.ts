@@ -84,4 +84,14 @@ describe('AdminHealthPage', () => {
     expect(w.text()).toContain('上游探活服务不可用')
     expect(w.text()).not.toContain('m-1')
   })
+
+  it('ghost/missing 清单文本：有清单拼接顿号，空清单显示 —', () => {
+    const w = mountPage()
+    const vm = w.vm as unknown as {
+      ghostText: (r: { ghosts: string[] }) => string
+      missingText: (r: { missing: string[] }) => string
+    }
+    expect(vm.ghostText({ ghosts: ['g-1', 'g-2'] })).toBe('g-1、g-2')
+    expect(vm.missingText({ missing: [] })).toBe('—')
+  })
 })
