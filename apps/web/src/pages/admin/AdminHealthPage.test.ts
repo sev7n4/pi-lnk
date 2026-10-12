@@ -97,7 +97,12 @@ describe('AdminHealthPage', () => {
 
   it('ghost/missing 展开行标签语义与后端对账口径一致（2026-10-12 修复：此前写反）', async () => {
     modelHealth.mockResolvedValue({ generatedAt: '', rows: [], alerts: [] })
-    latestProbeRuns.mockResolvedValue({ runs: [] })
+    // 展开行标签只随探活 run 表格渲染（runs 为空显示「暂无数据」），必须给一条 run。
+    latestProbeRuns.mockResolvedValue({
+      runs: [
+        { id: 'p1', ranAt: '2026-10-11T04:00:00.000Z', upstream: 'agnes_hub', httpStatus: 200, modelCount: 5, ghosts: [], missing: [], error: null, reason: null },
+      ],
+    })
     const w = mountPage()
     await flushPromises()
     // 后端语义（upstreamReconciliation.ts）：ghost = 目录有、上游 /models 没报（候选下架）；
