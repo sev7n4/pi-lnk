@@ -124,6 +124,61 @@ describe('深色专用写法棘轮（只许减少）', () => {
   })
 })
 
+/**
+ * `.css` 盲区补扫（2026-10-12，P2 事故驱动）。
+ *
+ * **盲区机制**：上面的棘轮只扫 `.vue` 文件 —— 而 `PromptMarkdownEditor.css`
+ * 是独立 .css 文件，整文件硬编码 `color: rgba(255,255,…)` 白字 +
+ * 暗面 rgba，白天模式下浅背景 + 白字 = 内容不可见，且**历次棘轮清扫都看不见它**。
+ *
+ * 本块把 `.css`（排除两份令牌定义文件 —— 它们内部的 rgba 白字是两主题成对
+ * 定义，属合法）纳入 `color: rgba(255` 白字计数。基线 36 = 补口当日存量
+ * （neo-node.css 9、CompositionTimelinePreview 6、MembershipModal 4 等共 13 文件），
+ * 只许减少不许增加。存量多为「深色表面上的白字」语义性保留，不盲改 ——
+ * 改错背景上的文字色比不改更糟，逐批清扫时下调基线。
+ */
+describe('白字 rgba 棘轮（.css 盲区补扫，只许减少）', () => {
+  const WHITE_TEXT_RE = /color\s*:\s*rgba\(255/gi
+  /** 令牌定义文件：rgba 白字在这里是两主题成对声明的合法载体，排除。 */
+  const TOKEN_FILES = new Set(['neowow-tokens.css', 'design-tokens.css'])
+
+  let scannedCss = 0
+  function countWhiteText(dir: string): number {
+    let n = 0
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name)
+      if (e.isDirectory()) n += countWhiteText(p)
+      else if (e.name.endsWith('.vue') || e.name.endsWith('.css')) {
+        if (e.name.endsWith('.css')) scannedCss += 1
+        if (TOKEN_FILES.has(e.name)) continue
+        const m = readFileSync(p, 'utf8').match(WHITE_TEXT_RE)
+        if (m) n += m.length
+      }
+    }
+    return n
+  }
+
+  const WHITE_COUNT = countWhiteText(SRC)
+
+  /** 2026-10-12 补口当日实测存量（13 文件 36 处）。清扫一批下调一次。 */
+  const WHITE_BASELINE = 36
+
+  it('⛔ 守卫自身有效：确实扫到了 .css 文件（否则等于没补盲区）', () => {
+    // 全 src 独立 .css 共 5 份，排除 2 份令牌定义后应为 3（neo-node / main / PromptMarkdownEditor）。
+    expect(scannedCss, '一个 .css 都没扫到 —— 补口形同虚设').toBeGreaterThanOrEqual(3)
+  })
+
+  it('⛔ color: rgba(255 …（白字）不得增加', () => {
+    expect(
+      WHITE_COUNT,
+      `白字 rgba 从基线 ${WHITE_BASELINE} 涨到 ${WHITE_COUNT}。\n` +
+        `新增代码不得硬编码白色文字 —— 请改用 var(--neo-text-primary/secondary) 等语义令牌\n` +
+        `（两主题成对；硬编码白字在浅色主题下不可见，PromptMarkdownEditor.css 即前车之鉴）。\n` +
+        `若本批是有意清扫，请同步下调 WHITE_BASELINE 并在 PR 里写明。`,
+    ).toBeLessThanOrEqual(WHITE_BASELINE)
+  })
+})
+
 describe('主题机制不变量', () => {
   const html = readFileSync(join(WEB_ROOT, 'index.html'), 'utf8')
 
