@@ -166,4 +166,33 @@ describe('AdminModelsPage', () => {
     expect(createCatalogEntry).not.toHaveBeenCalled()
     expect(listCatalog).toHaveBeenCalledTimes(1) // 中止，未 reload
   })
+
+  it('上游端点 + 链路状态列：ops 渲染端点与灯色，缺 ops 渲染 —（2026-10-12 增强）', async () => {
+    listCatalog.mockResolvedValue({
+      version: 7,
+      entries: [
+        entry({}),
+        entry({ id: 'id-2', modelKey: 'm-2' }),
+        entry({ id: 'id-3', modelKey: 'm-3' }),
+        entry({ id: 'id-4', modelKey: 'm-4', deletedAt: '2026-10-10T00:00:00.000Z' }),
+      ],
+      ops: {
+        'm-1': { upstream: 'agnes_hub', baseUrl: 'https://apihub.agnes-ai.cn/v1', availability: 'unavailable', completed24h: 0, balance40224h: 0 },
+        'm-2': { upstream: 'agnes_hub', baseUrl: 'https://apihub.agnes-ai.cn/v1', availability: 'unknown', completed24h: 3, balance40224h: 0 },
+      },
+    })
+    const w = mountPage()
+    await flushPromises()
+    const text = w.text()
+    // 端点列：agnes baseUrl + 上游标注；无 ops 行渲染 —
+    expect(text).toContain('https://apihub.agnes-ai.cn/v1')
+    expect(text).toContain('上游 agnes_hub')
+    // 链路状态：红（探活判定）/绿（流量背书）/灰（无 ops）
+    expect(text).toContain('不可用')
+    expect(text).toContain('正常')
+    expect((w.vm as unknown as { linkOf: (row: { modelKey: string; deletedAt: string | null }) => { level: string; label: string } }).linkOf({ modelKey: 'm-1', deletedAt: null })).toMatchObject({ level: 'red', label: '不可用' })
+    expect((w.vm as unknown as { linkOf: (row: { modelKey: string; deletedAt: string | null }) => { level: string; label: string } }).linkOf({ modelKey: 'm-2', deletedAt: null })).toMatchObject({ level: 'green', label: '正常' })
+    expect((w.vm as unknown as { linkOf: (row: { modelKey: string; deletedAt: string | null }) => { level: string; label: string } }).linkOf({ modelKey: 'm-3', deletedAt: null })).toMatchObject({ level: 'gray', label: '未知' })
+    expect((w.vm as unknown as { linkOf: (row: { modelKey: string; deletedAt: string | null }) => { level: string; label: string } }).linkOf({ modelKey: 'm-4', deletedAt: '2026-10-10T00:00:00.000Z' })).toMatchObject({ level: 'gray', label: '已下架' })
+  })
 })

@@ -15,8 +15,16 @@ import {
   UseGuards,
 } from '@nestjs/common'
 import type { Prisma } from '@prisma/client'
+import { buildHealthSql, rowsToHealth, type RawHealthRow } from '@lnkpi/shared/modelHealth'
 import { PLATFORM_CHANNEL_ID } from '../provider/provider.service'
+import { currentUpstreamRoutes } from '../provider/upstream-route-store'
 import { listDefaultAlternatives, type DefaultAlternative } from './model-ops-shared'
+import {
+  buildEntryOps,
+  foldPlatformTraffic,
+  parseAvailabilityByName,
+  type EntryLinkOps,
+} from './model-catalog-link'
 import { PrismaService } from '../prisma/prisma.service'
 import {
   bumpModelCatalogVersion,
@@ -193,7 +201,68 @@ export class ModelCatalogAdminController {
         orderBy: [{ createdAt: 'asc' }, { modelKey: 'asc' }],
       }),
     ])
-    return { code: 0, message: 'ok', data: { version, entries: rows.map(rowToAdminEntry) } }
+    return {
+      code: 0,
+      message: 'ok',
+      // 2026-10-12 运营增强：目录页【上游端点 + 链路状态】。ops 以 modelKey 为键与
+      // entries 并读；组装失败（探活镜像/流量 SQL/路由缓存任一异常）按 fail-soft
+      // 降级为 null——目录 CRUD 主功能绝不因增强字段挂掉；前端对 null 渲染「—」。
+      data: { version, entries: rows.map(rowToAdminEntry), ops: await this.buildLinkOps(rows) },
+    }
+  }
+
+  /**
+   * 逐条目链路原料组装（上游端点 + availability + 平台侧 24h 流量）。
+   * 取数三源：平台渠道镜像（availability，name=modelKey）、modelHealth 聚合原语
+   * （buildHealthSql/rowsToHealth，⛔ 不另写第二套 SQL；channelId='platform' 子集）、
+   * 路由表缓存（与探活分组同一 resolve 语义）。任一源异常 → 整体 fail-soft 返回 null。
+   */
+  private async buildLinkOps(rows: CatalogEntryRow[]): Promise<Record<string, EntryLinkOps> | null> {
+    try {
+      const [channel, healthRaw] = await Promise.all([
+        this.prisma.providerChannel.findUnique({ where: { id: PLATFORM_CHANNEL_ID } }),
+        (async () => {
+          const { sql, params } = buildHealthSql(24)
+          return (await this.prisma.$queryRawUnsafe(sql, ...params)) as RawHealthRow[]
+        })(),
+      ])
+      const availByName = parseAvailabilityByName(channel?.models)
+      const mirrorNames = new Set(availByName.keys())
+      // 镜像条目可能无合法 availability 值（旧格式）——「在镜像但值缺失」按 unknown 报，
+      // 与「不在镜像」报 null 区分。
+      try {
+        const mirrorRaw = channel?.models ? (JSON.parse(channel.models) as unknown) : null
+        if (Array.isArray(mirrorRaw)) {
+          for (const item of mirrorRaw) {
+            if (item && typeof item === 'object' && typeof (item as { name?: unknown }).name === 'string') {
+              mirrorNames.add((item as { name: string }).name)
+            }
+          }
+        }
+      } catch {
+        // 镜像 JSON 畸形 ⇒ parseAvailabilityByName 已返回空 map，这里维持现状
+      }
+      const trafficByModel = foldPlatformTraffic(rowsToHealth(healthRaw, 24))
+      const routeRows = currentUpstreamRoutes()
+      const agnesHubBaseUrl = process.env.OPENAI_BASE_URL?.trim() ?? ''
+      const ops: Record<string, EntryLinkOps> = {}
+      for (const row of rows) {
+        ops[row.modelKey] = buildEntryOps(
+          row.modelKey,
+          row.modality,
+          routeRows,
+          agnesHubBaseUrl,
+          availByName,
+          (name) => mirrorNames.has(name),
+          trafficByModel,
+        )
+      }
+      return ops
+    } catch (err) {
+      // fail-soft 但绝不静默：降级原因进日志（排障可判读），主功能照常返回
+      console.error('[model-catalog][link-ops] ops 组装失败，降级为无 ops 字段:', err instanceof Error ? err.message : err)
+      return null
+    }
   }
 
   @Post()

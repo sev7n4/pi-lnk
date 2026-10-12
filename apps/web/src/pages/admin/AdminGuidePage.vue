@@ -28,6 +28,10 @@
             <span class="font-mono text-fg">instruction</span> 作指令注入 ·
             <span class="font-mono text-fg">metadataOnly</span> 只记元数据（默认）。不确定就填 <span class="font-mono">{}</span>。
           </li>
+          <li>
+            每行两列链路信息（与探活自动同步）：<span class="text-fg">上游端点</span> = 按路由表解析的 baseUrl + 归属上游；
+            <span class="text-fg">链路状态</span> = 🔴 不可用（探活判定，候选下架）· 🟡 欠费（近 24h 有 402）· 🟢 正常 · ⚪ 未知（探活未判定）。悬停看依据。
+          </li>
           <li>下架报 409 = 该模型是某模态默认模型，先改默认再下架。</li>
         </ul>
       </div>
