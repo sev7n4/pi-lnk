@@ -45,6 +45,23 @@ describe('AdminLayoutPage', () => {
     expect(w.find('.admin-shell').exists()).toBe(true)
   })
 
+  // Follow-up ⑤：先验真后落 token——verify 被调用时 sessionStorage 必须仍为空，
+  // 且显式传入候选 token（此前实现先 setToken 再 verify，未验证的 token 会短暂可被其他请求读到）
+  it('验证顺序：先 verify（带候选 token 参数）→ 成功后才落 sessionStorage', async () => {
+    let sessionStorageAtVerify: string | null = 'unset'
+    verifyMock.mockImplementation(async (token: unknown) => {
+      sessionStorageAtVerify = sessionStorage.getItem(ADMIN_TOKEN_KEY)
+      expect(token).toBe('sk-admin')
+      return { version: 1, entries: [] }
+    })
+    const w = mountPage()
+    await w.find('input[type="password"]').setValue('sk-admin')
+    await w.find('button').trigger('click')
+    await flushPromises()
+    expect(sessionStorageAtVerify).toBeNull()
+    expect(sessionStorage.getItem(ADMIN_TOKEN_KEY)).toBe('sk-admin')
+  })
+
   it('验证失败（401）→ 清 token、停留输入门并提示', async () => {
     verifyMock.mockRejectedValue(new Error('401'))
     const w = mountPage()

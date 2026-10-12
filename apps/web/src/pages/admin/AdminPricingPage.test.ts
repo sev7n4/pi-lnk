@@ -62,6 +62,28 @@ describe('AdminPricingPage', () => {
     expect(w.text()).toContain('未配定价')
   })
 
+  // Follow-up ③（前端）：pricing:null 与未配置同义——此前 ===undefined 判定会把 null
+  // 条目计入已配计数、定价列渲染为空串；归一后 null 行显示徽标、不计计数、清除禁用（同 undefined 行）
+  it('pricing:null 条目 → 按「未配定价」渲染，不计入已配计数，清除按钮禁用（同未配置行）', async () => {
+    platformChannel.mockResolvedValue({
+      id: 'platform',
+      name: '平台渠道',
+      apiFormat: 'openai',
+      parseError: false,
+      models: [model({ pricing: { inputPerM: 1 } }), model({ name: 'm-null', pricing: null })],
+    })
+    const w = mountPage()
+    await flushPromises()
+    expect(w.text()).toContain('1/2 已配定价')
+    expect(w.text()).toContain('未配定价')
+    const clearBtns = w.findAll('button').filter((b) => b.text() === '清除')
+    expect(clearBtns).toHaveLength(2)
+    const disabledOf = (b: { element: Element }) => (b.element as HTMLButtonElement).disabled
+    // 行序 = models 序：已配行可清除，null 行禁用（与 undefined 未配置行为一致）
+    expect(disabledOf(clearBtns[0]!)).toBe(false)
+    expect(disabledOf(clearBtns[1]!)).toBe(true)
+  })
+
   it('set pricing：填四字段后提交 → PUT 对象，成功后刷新', async () => {
     platformChannel.mockResolvedValue({
       id: 'platform', name: '平台渠道', apiFormat: 'openai', parseError: false,

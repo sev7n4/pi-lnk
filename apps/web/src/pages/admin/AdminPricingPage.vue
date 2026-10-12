@@ -12,7 +12,7 @@ const actionError = ref('')
 const PRICING_KEYS = ['inputPerM', 'outputPerM', 'cacheReadPerM', 'cacheWritePerM'] as const
 type PricingKey = (typeof PRICING_KEYS)[number]
 
-const configuredCount = computed(() => models.value.filter((m) => m.pricing !== undefined).length)
+const configuredCount = computed(() => models.value.filter((m) => m.pricing != null).length)
 
 const editorVisible = ref(false)
 const editingName = ref('')
@@ -34,7 +34,8 @@ async function reload() {
 }
 
 function pricingText(m: ChannelModelEntry): string {
-  if (m.pricing === undefined) return '未配定价'
+  // Follow-up ③（前端）：pricing:null 与未配置同义（pull-models 事故残留形态）
+  if (m.pricing == null) return '未配定价'
   return PRICING_KEYS.filter((k) => m.pricing?.[k] !== undefined)
     .map((k) => `${k}=${m.pricing![k]}`)
     .join(' / ')
@@ -129,14 +130,14 @@ defineExpose({ openEditor, submitPricing, clearPricing, pricingForm, actionError
       <el-table-column prop="capability" label="能力" width="90" />
       <el-table-column label="定价（USD/百万 token）" min-width="240">
         <template #default="{ row }">
-          <span v-if="row.pricing === undefined" class="rounded border border-warning-border bg-warning-bg px-1 text-warning">未配定价</span>
+          <span v-if="row.pricing == null" class="rounded border border-warning-border bg-warning-bg px-1 text-warning">未配定价</span>
           <span v-else class="text-fg">{{ pricingText(row) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" :disabled="parseError" @click="openEditor(row.name)">编辑</el-button>
-          <el-button link type="danger" :disabled="parseError || row.pricing === undefined" @click="clearPricing(row.name)">清除</el-button>
+          <el-button link type="danger" :disabled="parseError || row.pricing == null" @click="clearPricing(row.name)">清除</el-button>
         </template>
       </el-table-column>
     </el-table>

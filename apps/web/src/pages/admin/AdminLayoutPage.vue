@@ -20,11 +20,12 @@ async function submitToken() {
   }
   verifying.value = true
   error.value = ''
-  admin.setToken(token)
   try {
-    await adminApi.verify()
+    // Follow-up ⑤：先验真后落库——verify 显式携带候选 token，成功才写 sessionStorage
+    // （此前先 setToken 再 verify，未验证的 token 会短暂落入会话可被其他请求读到）
+    await adminApi.verify(token)
+    admin.setToken(token)
   } catch {
-    admin.clearToken()
     error.value = 'token 校验失败（密钥不匹配或服务端未配置 LNKPI_ADMIN_TOKEN）'
   } finally {
     verifying.value = false

@@ -63,8 +63,9 @@ defineExpose({ filters, page, pageSize, reload })
       <el-table-column type="expand">
         <template #default="{ row }">
           <div class="p-3 font-mono text-xs">
-            <p class="text-fg-2">before：<pre class="whitespace-pre-wrap">{{ row.before ?? 'null' }}</pre></p>
-            <p class="text-fg-2">after：<pre class="whitespace-pre-wrap">{{ row.after ?? 'null' }}</pre></p>
+            <!-- Follow-up ⑥：p 只允许 phrasing content，嵌 pre 违 HTML 内容模型 → div -->
+            <div class="text-fg-2">before：<pre class="whitespace-pre-wrap">{{ row.before ?? 'null' }}</pre></div>
+            <div class="text-fg-2">after：<pre class="whitespace-pre-wrap">{{ row.after ?? 'null' }}</pre></div>
           </div>
         </template>
       </el-table-column>
