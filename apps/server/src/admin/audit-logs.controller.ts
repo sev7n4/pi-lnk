@@ -12,6 +12,7 @@ import { AdminTokenGuard } from './admin-token.guard'
  * - 只读：无任何写路径，不 bump 任何版本。
  */
 const MAX_PAGE_SIZE = 100
+const MAX_PAGE = 1000
 const DEFAULT_PAGE = 1
 const DEFAULT_PAGE_SIZE = 20
 
@@ -28,7 +29,8 @@ export class AuditLogsAdminController {
   @Get()
   @UseGuards(AdminTokenGuard)
   async list(@Query() query: Record<string, unknown>) {
-    const page = parseBoundedInt(query['page'], DEFAULT_PAGE, 1, Number.MAX_SAFE_INTEGER)
+    // Follow-up ④：page 上限收口到 1000（此前 Number.MAX_SAFE_INTEGER，天文 page 产生巨大 skip）
+    const page = parseBoundedInt(query['page'], DEFAULT_PAGE, 1, MAX_PAGE)
     const pageSize = parseBoundedInt(query['pageSize'], DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE)
     const action = typeof query['action'] === 'string' && query['action'] !== '' ? query['action'] : undefined
     const resource =

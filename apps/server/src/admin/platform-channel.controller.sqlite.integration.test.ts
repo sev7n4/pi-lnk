@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PrismaClient } from '@prisma/client'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BadRequestException,
   ConflictException,
@@ -82,6 +82,26 @@ describe('PlatformChannelAdminController（Ops Console §5.2）', () => {
     it('平台渠道行不存在 → 404', async () => {
       await expect(controller.show()).rejects.toThrow(NotFoundException)
     })
+
+    // Follow-up ②：pull-models 事故可见性盲区——数组混入 null/非对象元素会让前端逐条渲染崩页
+    it('GET 消毒：models 数组混入 null/非对象元素 → 过滤后返回，parseError 仍 false', async () => {
+      await seedPlatformChannel(
+        prisma,
+        JSON.stringify([{ name: 'm-ok', capability: 'text' }, null, 'garbage', 42, { name: 'm-2', capability: 'image' }]),
+      )
+      const res = await controller.show()
+      expect(res.data.parseError).toBe(false)
+      expect(res.data.models.map((m) => m.name)).toEqual(['m-ok', 'm-2'])
+    })
+
+    // Follow-up ③：pricing:null 与未配置同义（键归一移除），前端徽标与计数才能正确显示
+    it('GET 归一：条目 pricing:null → 视为未配置（pricing 键被移除）', async () => {
+      await seedPlatformChannel(prisma, JSON.stringify([{ name: 'm-n', capability: 'text', pricing: null }]))
+      const res = await controller.show()
+      expect(res.data.models).toHaveLength(1)
+      expect(res.data.models[0]).not.toHaveProperty('pricing')
+      expect(res.data.models[0]).toMatchObject({ name: 'm-n', capability: 'text' })
+    })
   })
 
   describe('PUT pricing', () => {
@@ -155,6 +175,24 @@ describe('PlatformChannelAdminController（Ops Console §5.2）', () => {
       await controller.setPricing('m-a', { pricing: { inputPerM: 9 } })
       const userRow = await prisma.providerChannel.findUniqueOrThrow({ where: { id: 'user-ch-1' } })
       expect(userRow.models).toBe(MODELS_JSON)
+    })
+
+    // Follow-up ①：读取与写回之间存在窗口（pull-models/bootstrap 对齐并发写）→ 乐观锁拒盲写
+    it('并发防线：渠道行在读取后被并发改写 → 409，并发写入者的版本不被覆盖', async () => {
+      const stale = await prisma.providerChannel.findUniqueOrThrow({ where: { id: 'platform' } })
+      // 模拟并发写：controller 将读取到 stale 快照，DB 实际已是 pull-models 重建后的版本
+      const concurrentModels = JSON.stringify([{ name: 'm-a', capability: 'text' }])
+      await prisma.providerChannel.update({ where: { id: 'platform' }, data: { models: concurrentModels } })
+      const spy = vi.spyOn(prisma.providerChannel, 'findUnique').mockResolvedValue(stale)
+      try {
+        await expect(controller.setPricing('m-a', { pricing: { inputPerM: 1 } })).rejects.toThrow(ConflictException)
+      } finally {
+        spy.mockRestore()
+      }
+      const after = await prisma.providerChannel.findUniqueOrThrow({ where: { id: 'platform' } })
+      expect(after.models).toBe(concurrentModels)
+      // 写回被拒 → 审计不留痕
+      expect(await prisma.adminAuditLog.count()).toBe(0)
     })
   })
 })

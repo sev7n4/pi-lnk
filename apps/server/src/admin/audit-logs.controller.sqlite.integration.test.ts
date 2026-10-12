@@ -95,6 +95,14 @@ describe('AuditLogsAdminController（Ops Console §5.1）', () => {
     expect(junk.data.pageSize).toBe(20)
   })
 
+  // Follow-up ④：page 上限此前是 Number.MAX_SAFE_INTEGER，天文数字 page 会产生巨大 skip
+  it('超大 page 被 clamp 到上限 1000（不产生天文 skip）', async () => {
+    await seedRows()
+    const res = await controller.list({ page: '99999999' })
+    expect(res.data.page).toBe(1000)
+    expect(res.data.rows).toEqual([]) // 数据量远小于 1000 页，clamp 后为空页而非错误
+  })
+
   it('before/after 原样透传（字符串）', async () => {
     await seedRows()
     const res = await controller.list({ action: 'platform-channel.pricing.set' })
