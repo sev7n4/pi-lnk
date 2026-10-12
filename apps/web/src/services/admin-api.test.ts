@@ -69,6 +69,12 @@ describe('admin-api', () => {
     )
   })
 
+  it('triggerAutomation 调 POST /admin/automations/:id/trigger（手动探活复用 C5 trigger 端点）', async () => {
+    axiosPost.mockResolvedValue(ok({ runId: 'run-1' }))
+    await adminApi.triggerAutomation('job-1')
+    expect(axiosPost).toHaveBeenCalledWith('/admin/automations/job-1/trigger', {})
+  })
+
   it('handleAdminRequest：token 存在 → 注入 Bearer Authorization 头', () => {
     sessionStorage.setItem(ADMIN_TOKEN_KEY, 't-1')
     const config = { headers: {} } as InternalAxiosRequestConfig
