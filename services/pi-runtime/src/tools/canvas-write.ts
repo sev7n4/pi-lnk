@@ -445,7 +445,14 @@ export function createCanvasWriteTools(
 											: "未检测到该节点的生成确认（节点已回到草稿状态），不要执行 run_*；请先向用户确认是继续生成还是调整参数，不要断定用户已取消。",
 							}),
 						}],
-						details: { ok: false, confirmed: false },
+						// P1 golden case ②（spec §6）：缺 confirmed 是本地域事实——工具自己知道
+						// 同参重试无意义（§5 retryable:false），reason 进 errorCode；partial =
+						// 提议未完成但无破坏性。gate 契约键 ok/confirmed 原样保留（只增不改）。
+						details: {
+							ok: false,
+							confirmed: false,
+							_signal: { status: "partial", retryable: false, errorCode: outcome.reason },
+						},
 					};
 				}
 				const withActions = withWriteSignal(base, 1);

@@ -227,6 +227,17 @@ describe("effectiveCompactionSettings（审计 P0-①）", () => {
 		assert.equal(ok.directImageHistoryRounds, 4);
 	});
 
+	it("resultSignals（P1 信号 listener kill switch）：缺省 true；PI_RUNTIME_RESULT_SIGNALS=off → false", () => {
+		const def = loadRuntimeConfig({});
+		assert.equal(def.resultSignals, true);
+		const off = loadRuntimeConfig({ PI_RUNTIME_RESULT_SIGNALS: "off" });
+		assert.equal(off.resultSignals, false);
+		const on = loadRuntimeConfig({ PI_RUNTIME_RESULT_SIGNALS: "true" });
+		assert.equal(on.resultSignals, true);
+		const bad = loadRuntimeConfig({ PI_RUNTIME_RESULT_SIGNALS: "maybe" });
+		assert.equal(bad.resultSignals, true, "非法值回落缺省（开启）");
+	});
+
 describe("turnBudget（C2）", () => {
 	it("缺省 120", () => {
 		assert.equal(turnBudget(undefined), DEFAULT_TURN_BUDGET);

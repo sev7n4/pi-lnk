@@ -17,6 +17,7 @@ import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
 import { SubagentCoordinator } from "./gate/subagent.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
+import { registerResultSignalListener } from "./result-signal-wiring.js";
 import { governImagePayload } from "./payload-images.js";
 import { readRecord, readStringField, readBooleanField } from "./hook-contract.js";
 import {
@@ -114,6 +115,12 @@ const manager = new SessionManager(
 				metrics.observeToolResultTrim(event.toolName);
 				return { content: capped.content };
 			});
+			// P1 信号 listener（spec 2026-10-12-tool-details-contract-design.md §4/§6）：
+			// ⭐ 必须注册在上方合并 after_tool listener 之后——HookMap 多 listener 链式 replace
+			// （hooks.ts:305-324），后注册者看到前者的 patch，截断 marker 与信号行的叠加序
+			// 「正文→截断→信号」依赖此顺序。kill switch 在 wiring 内判定
+			// （hookCfg.resultSignals === false 不注册，回滚 = 环境变量一行）。
+			registerResultSignalListener(harness.hooks, hookCfg, { tiers: toolTiers, metrics });
 			// 审计 #8：trust boundary（目标复述 + 工具结果来源标注）。
 			// 纯文本模式也注册（无 toolResult 时复述仍有价值）；off = 逐字节旧行为。
 			// fail-soft：纯函数不 throw；压缩摘要走 generateSummary 独立请求路径，不经本 hook。
