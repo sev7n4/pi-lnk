@@ -247,6 +247,62 @@ describe('clampVideoGenerationInput', () => {
   })
 })
 
+describe('zhipu cogvideox profile', () => {
+  const refs = { referenceImages: [], referenceVideos: [], referenceAudios: [] }
+
+  it('resolves cogvideox-flash to discrete 5/10s with no controllable ratio/resolution', () => {
+    const p = resolveVideoModelProfile('cogvideox-flash', 'cogvideox-flash')
+    expect(p.refWire).toBe('legacy_prompt_tags')
+    expect(p.gatewayModelId).toBe('cogvideox-flash')
+    expect(p.minDuration).toBe(5)
+    expect(p.maxDuration).toBe(10)
+    expect(p.allowedDurations).toEqual([5, 10])
+    // 智谱侧无 aspectRatio/resolution 对应参数 → 空集 = 模型自动处理，UI 整组置灰
+    expect(p.allowedAspectRatios).toEqual([])
+    expect(p.allowedResolutions).toEqual([])
+    expect(p.defaultGenerateAudio).toBe(false)
+    expect(p.maxImageRefs).toBe(2)
+    expect(p.maxVideoRefs).toBe(0)
+    expect(p.maxAudioRefs).toBe(0)
+  })
+
+  it('detects cogvideox by gateway id as well', () => {
+    expect(resolveVideoModelProfile('custom-key', 'cogvideox-3').minDuration).toBe(5)
+  })
+
+  it('clamps duration to nearest discrete tier and records the drop', () => {
+    const profile = resolveVideoModelProfile('cogvideox-flash', 'cogvideox-flash')
+    const r15 = clampVideoGenerationInput(profile, { duration: 15, ...refs })
+    expect(r15.duration).toBe(10)
+    expect(r15.droppedFields.some((d) => d.field === 'duration')).toBe(true)
+    const r6 = clampVideoGenerationInput(profile, { duration: 6, ...refs })
+    expect(r6.duration).toBe(5)
+    const r8 = clampVideoGenerationInput(profile, { duration: 8, ...refs })
+    expect(r8.duration).toBe(10)
+  })
+
+  it('keeps in-range discrete duration without drops', () => {
+    const profile = resolveVideoModelProfile('cogvideox-flash', 'cogvideox-flash')
+    const r = clampVideoGenerationInput(profile, { duration: 5, ...refs })
+    expect(r.duration).toBe(5)
+    expect(r.droppedFields.some((d) => d.field === 'duration')).toBe(false)
+  })
+
+  it('passes ratio/resolution through untouched when the model controls them', () => {
+    const profile = resolveVideoModelProfile('cogvideox-flash', 'cogvideox-flash')
+    const r = clampVideoGenerationInput(profile, {
+      duration: 5,
+      aspectRatio: '21:9',
+      resolution: '1080p',
+      ...refs,
+    })
+    expect(r.aspectRatio).toBe('21:9')
+    expect(r.resolution).toBe('1080p')
+    expect(r.droppedFields.some((d) => d.field === 'aspectRatio')).toBe(false)
+    expect(r.droppedFields.some((d) => d.field === 'resolution')).toBe(false)
+  })
+})
+
 describe('resolveVideoGatewayModelId', () => {
   it('rewrites seedance catalog id', () => {
     expect(resolveVideoGatewayModelId('seedance-2.0-min', 'seedance-2.0-min')).toBe(

@@ -21,7 +21,7 @@ import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import { catalogModelKeyFromValue, resolveGenerationModel } from '@/constants/studioModels'
-import { DEFAULT_VIDEO_SETTINGS, type VideoSettings } from '@lnkpi/shared'
+import { DEFAULT_VIDEO_SETTINGS, snapVideoSettingsToCapabilities, type VideoSettings } from '@lnkpi/shared'
 import { isNodeGenerating, NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 import { estimateVideoCredits } from '@/constants/credits'
 import { useDockLocalImageUpload, createLocalRefId } from '@/components/canvas/dock-studio/shared/useDockLocalImageUpload'
@@ -262,6 +262,16 @@ watch(
   },
   { immediate: true },
 )
+
+// 模型切换后就近回落越界参数并一次性提示（cogvideox 等空集能力由 UI 置灰表达，不回落不提示）
+watch(videoModel, (_model, prev) => {
+  if (!prev) return
+  const { next, adjusted } = snapVideoSettingsToCapabilities(videoSettings.value, capabilities.value)
+  if (adjusted.length === 0) return
+  videoSettings.value = next
+  syncField('videoSettings', next)
+  ElMessage.info(adjusted.map((a) => a.reason).join('；'))
+})
 
 function syncField(field: string, value: unknown) {
   emit('patch', { [field]: value })

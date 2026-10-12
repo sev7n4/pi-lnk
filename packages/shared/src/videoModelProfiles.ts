@@ -46,6 +46,8 @@ export interface VideoModelProfile {
   maxAudioRefs: number
   minDuration: number
   maxDuration: number
+  /** 离散时长档位（如 cogvideox 仅 5/10s）；缺省 = min–max 连续滑轨 */
+  allowedDurations?: number[]
   allowedAspectRatios: string[]
   allowedResolutions: string[]
   defaultGenerateAudio: boolean
@@ -70,6 +72,31 @@ export function isAgnesVideo25Family(modelKey: string, gatewayModelId = ''): boo
 
 function isOfficialMiniMaxH3VideoModel(modelKey: string, gatewayModelId: string): boolean {
   return /^minimax-h3$/i.test(modelKey) || /^minimax-h3$/i.test(gatewayModelId)
+}
+
+/**
+ * 智谱 CogVideoX：provider 只消费 model/prompt/duration(5|10)/image_url。
+ * 比例与分辨率无上游参数（模型自动处理）→ 空集 = UI 整组置灰、值原样透传。
+ */
+function isZhipuCogVideoModel(modelKey: string, gatewayModelId: string): boolean {
+  return /cogvideox/i.test(modelKey) || /cogvideox/i.test(gatewayModelId)
+}
+
+const ZHIPU_COGVIDEO_PROFILE: Omit<VideoModelProfile, 'gatewayModelId'> = {
+  refWire: 'legacy_prompt_tags',
+  sizeWire: 'ratio_duration',
+  responseMode: 'async_task',
+  maxImageRefs: 2,
+  maxVideoRefs: 0,
+  maxAudioRefs: 0,
+  minDuration: 5,
+  maxDuration: 10,
+  allowedDurations: [5, 10],
+  allowedAspectRatios: [],
+  allowedResolutions: [],
+  defaultGenerateAudio: false,
+  pollIntervalMs: 5_000,
+  maxPollMs: 600_000,
 }
 
 function isFalH3MaxVideoModel(modelKey: string, gatewayModelId: string): boolean {
@@ -244,6 +271,13 @@ export function resolveVideoModelProfile(
     return profile
   }
 
+  if (isZhipuCogVideoModel(modelKey, gatewayModelId)) {
+    return {
+      ...ZHIPU_COGVIDEO_PROFILE,
+      gatewayModelId: resolveVideoGatewayModelId(modelKey, gatewayModelId),
+    }
+  }
+
   const gw = resolveVideoGatewayModelId(modelKey, gatewayModelId)
   if (isAgnesVideo25FlashModel(modelKey, gw)) {
     return {
@@ -326,11 +360,27 @@ function nearestAllowedResolution(
   return best
 }
 
+function nearestAllowedDuration(duration: number, tiers: number[]): number {
+  let best = tiers[0] ?? duration
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const candidate of tiers) {
+    const dist = Math.abs(candidate - duration)
+    // 距离并列时取更高档位（与分辨率就近规则一致）
+    if (dist < bestDist || (dist === bestDist && candidate > best)) {
+      best = candidate
+      bestDist = dist
+    }
+  }
+  return best
+}
+
 function clampResolution(
   resolution: string,
   profile: VideoModelProfile,
   droppedFields: Array<{ field: string; reason: string }>,
 ): string {
+  // 空集 = 模型自动处理（如 cogvideox）：值原样透传，不记录回落
+  if (profile.allowedResolutions.length === 0) return resolution
   const cap = profile.maxResolution ?? '1080p'
   const resolutionRank = RESOLUTION_RANK[resolution as VideoResolutionTier] ?? 0
   const capRank = RESOLUTION_RANK[cap] ?? 0
@@ -368,8 +418,25 @@ export function clampVideoGenerationInput(
   let resolution = input.resolution ?? '720p'
   let aspectRatio = input.aspectRatio ?? '16:9'
 
+  const rawDuration = duration
   duration = Math.min(profile.maxDuration, Math.max(profile.minDuration, Math.round(duration)))
-  if (!profile.allowedAspectRatios.includes(aspectRatio)) {
+  if (
+    profile.allowedDurations
+    && profile.allowedDurations.length > 0
+    && !profile.allowedDurations.includes(duration)
+  ) {
+    duration = nearestAllowedDuration(duration, profile.allowedDurations)
+  }
+  if (duration !== rawDuration) {
+    droppedFields.push({
+      field: 'duration',
+      reason: `${rawDuration}s not on ${profile.variantTag ?? 'model'}; use ${duration}s`,
+    })
+  }
+  if (
+    profile.allowedAspectRatios.length > 0
+    && !profile.allowedAspectRatios.includes(aspectRatio)
+  ) {
     droppedFields.push({ field: 'aspectRatio', reason: `fallback to 16:9` })
     aspectRatio = '16:9'
   }

@@ -3,8 +3,8 @@ import { mount } from '@vue/test-utils'
 import {
   DEFAULT_VIDEO_SETTINGS,
   resolveVideoModelCapabilities,
-  videoAspectRatioOptionsForCapabilities,
-  videoResolutionOptionsForCapabilities,
+  videoBaselineAspectOptionsForCapabilities,
+  videoBaselineResolutionOptionsForCapabilities,
 } from '@lnkpi/shared'
 import VideoSettingsSelector from './VideoSettingsSelector.vue'
 
@@ -122,7 +122,7 @@ describe('VideoSettingsSelector', () => {
     expect(wrapper.text()).toContain('该模型最短 5 秒')
   })
 
-  it('shows profile-filtered aspect and resolution options for seedance standard', async () => {
+  it('renders seedance baseline option set for seedance standard (all enabled)', async () => {
     const capabilities = resolveVideoModelCapabilities('seedance-2.0', 'doubao-seedance-2.0')
     const wrapper = mount(VideoSettingsSelector, {
       props: {
@@ -134,20 +134,66 @@ describe('VideoSettingsSelector', () => {
 
     await openPopover(wrapper)
     const text = wrapper.text()
-    expect(text).toContain('21:9 超宽')
+    expect(text).toContain('宽高比')
+    expect(text).toContain('21:9')
     expect(text).toContain('4K')
-    expect(text).not.toContain('21:9 超宽'.repeat(2))
-    const arOpts = videoAspectRatioOptionsForCapabilities(capabilities)
-    const resOpts = videoResolutionOptionsForCapabilities(capabilities)
+    const arOpts = videoBaselineAspectOptionsForCapabilities(capabilities)
+    const resOpts = videoBaselineResolutionOptionsForCapabilities(capabilities)
     for (const opt of arOpts) {
-      expect(text).toContain(opt.label)
+      expect(text).toContain(opt.value === 'adaptive' ? '自适应' : opt.value)
     }
     for (const opt of resOpts) {
       expect(text).toContain(opt.label)
     }
   })
 
-  it('patches invalid aspectRatio and resolution to first allowed on open', async () => {
+  it('greys out unsupported baseline options for seedance mini', async () => {
+    const capabilities = resolveVideoModelCapabilities('seedance-2.0-mini', 'doubao-seedance-2.0-mini')
+    const wrapper = mount(VideoSettingsSelector, {
+      props: {
+        modelValue: { ...DEFAULT_VIDEO_SETTINGS, resolution: '720p' },
+        capabilities,
+        modelKey: 'seedance-2.0-mini',
+      },
+    })
+
+    await openPopover(wrapper)
+    const disabled = wrapper.findAll('button[disabled]').map((b) => b.text())
+    // 比例全集可用（mini 限制在分辨率），4K 置灰
+    expect(disabled).toContain('4K')
+    expect(disabled).not.toContain('16:9')
+    const res4k = wrapper
+      .findAll('button')
+      .find((b) => b.text() === '4K')
+    expect(res4k?.attributes('title')).toContain('不支持')
+  })
+
+  it('cogvideox: 全集置灰 + 时长离散为 5s/10s pill（无滑轨）', async () => {
+    const capabilities = resolveVideoModelCapabilities('cogvideox-flash', 'cogvideox-flash')
+    const wrapper = mount(VideoSettingsSelector, {
+      props: {
+        modelValue: { ...DEFAULT_VIDEO_SETTINGS, duration: 10 },
+        capabilities,
+        modelKey: 'cogvideox-flash',
+      },
+    })
+
+    await openPopover(wrapper)
+    // 宽高比/分辨率整组置灰（模型自动处理）
+    const disabledTexts = wrapper.findAll('button[disabled]').map((b) => b.text())
+    for (const ratio of ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']) {
+      expect(disabledTexts).toContain(ratio)
+    }
+    for (const res of ['480p', '720p', '1080p', '4K']) {
+      expect(disabledTexts).toContain(res)
+    }
+    // 时长离散档位，无 range input
+    expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('5s')
+    expect(wrapper.text()).toContain('10s')
+  })
+
+  it('snaps invalid settings to nearest allowed on open (4k→1080p, 21:9→16:9)', async () => {
     const capabilities = resolveVideoModelCapabilities('agnes-video-v2.0', 'agnes-video-v2.0')
     const wrapper = mount(VideoSettingsSelector, {
       props: {
@@ -166,7 +212,7 @@ describe('VideoSettingsSelector', () => {
     expect(emitted?.length).toBeGreaterThan(0)
     const last = emitted!.at(-1)![0] as typeof DEFAULT_VIDEO_SETTINGS
     expect(last.aspectRatio).toBe('16:9')
-    expect(last.resolution).toBe('480p')
+    expect(last.resolution).toBe('1080p')
   })
 
   it('limits Agnes Video 2.5 Flash to 720p, 21:9, seed, and 4–12s', async () => {
@@ -181,10 +227,11 @@ describe('VideoSettingsSelector', () => {
 
     await openPopover(wrapper)
     const text = wrapper.text()
-    expect(text).toContain('21:9 超宽')
+    expect(text).toContain('21:9')
     expect(text).toContain('Seed')
     expect(text).not.toContain('排除内容')
-    expect(text).toMatch(/分辨率720p/)
+    expect(text).toContain('分辨率')
+    expect(text).toContain('720p')
 
     const range = wrapper.get('input[type="range"]')
     expect(range.attributes('min')).toBe('4')
