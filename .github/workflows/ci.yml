@@ -42,6 +42,9 @@ jobs:
       - name: Verify tool framework contract (pi-runtime ↔ vendored pi-agent-core)
         run: pnpm verify-tool-contract
 
+      - name: Verify tool details contract（_signal 注入完备性 + 键名规范）
+        run: pnpm verify:details
+
       - name: Verify tool tiering consistency (常驻集 ⇄ 资产点名)
         run: pnpm verify-tool-tiering
 

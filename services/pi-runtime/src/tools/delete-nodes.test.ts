@@ -79,6 +79,8 @@ test("delete_nodes：Nest 返回的 actions 进 details.actions（canvas_action 
 			{ type: "remove_edge", payload: { id: "e1" } },
 			{ type: "remove_node", payload: { id: "n1" } },
 		],
+		affectedCount: 1,
+		_signal: { status: "ok" },
 	});
 	// 文本载荷保持 {ok,data} 形态（模型仍能看到删除统计）
 	assert.ok(out.content[0].text.includes("actions"));

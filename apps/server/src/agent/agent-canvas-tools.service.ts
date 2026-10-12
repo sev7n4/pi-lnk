@@ -773,6 +773,19 @@ function canEditImageNodeType(input: {
   return mime.startsWith('image/')
 }
 
+/**
+ * 生成实际使用的参数回读（工具结果质量信号，spec 2026-10-12 §2.2 数据源拍板 A）。
+ * 与节点 dock（用户意图 SSOT）职责分离：dock 显示设定值，used 是执行事实——
+ * turnaround pipeline 的 2:1/2K 静默 bump 据此对 agent 可判读。
+ */
+export interface ImageGenUsedParams {
+  /** 实际传给上游的模型 ref；未显式解析时 undefined（pi-runtime 侧报 "unspecified"，不造值）。 */
+  model?: string
+  aspectRatio: string
+  resolution: string
+  count: number
+}
+
 @Injectable()
 export class AgentCanvasToolsService {
   /** Overridable in unit tests */
@@ -1638,7 +1651,12 @@ export class AgentCanvasToolsService {
     sessionId: string
     userId: string
     nodeId: string
-  }): Promise<{ generationRecordId: string; status: string; actions: CanvasAction[] }> {
+  }): Promise<{
+    generationRecordId: string
+    status: string
+    actions: CanvasAction[]
+    used: ImageGenUsedParams
+  }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
@@ -1746,6 +1764,9 @@ export class AgentCanvasToolsService {
       generationRecordId: recordId,
       status: 'generating',
       actions: allActions,
+      // 工具结果质量信号（spec 2026-10-12 §2.2）：实际使用的生成参数回读透传——
+      // turnaround pipeline 会静默 bump 2:1/2K，agent 侧据此判读「请求参数 ≠ 实际参数」。
+      used: { model, aspectRatio, resolution, count },
     }
   }
 
@@ -1811,7 +1832,13 @@ export class AgentCanvasToolsService {
     sessionId: string
     userId: string
     nodeId: string
-  }): Promise<{ url?: string; status: string; generationRecordId?: string; actions: CanvasAction[] }> {
+  }): Promise<{
+    url?: string
+    status: string
+    generationRecordId?: string
+    actions: CanvasAction[]
+    used?: ImageGenUsedParams
+  }> {
     try {
       const started = await this.startImageGeneration(input)
       const finished = await this.waitImageGeneration({
@@ -1821,6 +1848,7 @@ export class AgentCanvasToolsService {
       return {
         ...finished,
         actions: [...started.actions, ...finished.actions],
+        used: started.used,
       }
     } catch (err) {
       if (err instanceof ForbiddenException || err instanceof NotFoundException) throw err
@@ -2131,7 +2159,13 @@ export class AgentCanvasToolsService {
     caption?: string
     lyrics?: string
     instrumental?: boolean
-  }): Promise<{ url?: string; status: string; generationRecordId?: string; actions: CanvasAction[] }> {
+  }): Promise<{
+    url?: string
+    status: string
+    generationRecordId?: string
+    actions: CanvasAction[]
+    used?: { model?: string; kind?: string; voice: string }
+  }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
@@ -2158,13 +2192,19 @@ export class AgentCanvasToolsService {
     try {
       const prefs = await this.loadAccountGenPrefs(input.userId)
       const refs = toStudioRefs(node, canvas)
+      // 实际使用参数提取（used 回读透传）：与下方调用同一取值表达式，单一事实。
+      const usedAudio: { model?: string; kind?: string; voice: string } = {
+        model: pickString(node.data?.audioModel, prefs.defaultAudioModel) || undefined,
+        kind: input.kind,
+        voice: input.voice ?? pickString(node.data?.audioVoice, prefs.audioVoice || 'female-shaonv'),
+      }
       const record = await this.studio.generateAudio(
         input.userId,
         text,
         {
-          model: pickString(node.data?.audioModel, prefs.defaultAudioModel) || undefined,
+          model: usedAudio.model,
           // 工具内联优先：给了就用给的，没给才沿用节点/账号默认（存量取值不变）
-          voice: input.voice ?? pickString(node.data?.audioVoice, prefs.audioVoice || 'female-shaonv'),
+          voice: usedAudio.voice,
           emotion: input.emotion ?? pickString(node.data?.audioEmotion, 'neutral'),
           language: pickString(node.data?.audioLanguage, 'zh'),
           speed: typeof node.data?.audioSpeed === 'number' ? node.data.audioSpeed : prefs.audioSpeed ?? 1,
@@ -2211,7 +2251,7 @@ export class AgentCanvasToolsService {
         allActions.push(...pendingActions)
         // 复用既有枚举 `timeout`（不新增枚举值、不改提示词）：规则 12 已经教模型
         // 「run_* 返回 timeout：如实说未完成，可再查生成状态」，正好是这个语义。
-        return { status: 'timeout', generationRecordId: recordId, actions: allActions }
+        return { status: 'timeout', generationRecordId: recordId, actions: allActions, used: usedAudio }
       }
 
       const finishActions: CanvasAction[] = [
@@ -2230,7 +2270,7 @@ export class AgentCanvasToolsService {
       ]
       await this.persist(input.sessionId, finishActions)
       allActions.push(...finishActions)
-      return { url, status: 'completed', generationRecordId: recordId, actions: allActions }
+      return { url, status: 'completed', generationRecordId: recordId, actions: allActions, used: usedAudio }
     } catch (err) {
       if (err instanceof ForbiddenException || err instanceof NotFoundException) throw err
       const errorMessage = err instanceof Error ? err.message : '音频生成失败'

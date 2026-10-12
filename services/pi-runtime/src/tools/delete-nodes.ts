@@ -12,6 +12,7 @@ import type { NestClient } from "./nest-client.js";
 // 由 Nest pi-events 派生 canvas_action SSE（前端实时删节点）。共享 helper 见
 // result-with-actions.ts（PR #65 用 textResult 丢掉 actions 的坑在那里有完整注释）。
 import { resultWithActions } from "./result-with-actions.js";
+import { withSignal } from "./result-signal.js";
 
 export const DELETE_NODES_MAX = 50;
 
@@ -41,7 +42,13 @@ export function buildDeleteNodesTools(client: NestClient): LnkpiTool[] {
 					sessionId: tc.sessionId,
 					nodeIds: p.node_ids,
 				});
-				return resultWithActions(data);
+				// affectedCount 工具直报（spec §2.1 护栏）：Nest removeNodes 对每个入参 id
+				// 无条件生成一条 remove_node action（service 1204-1227 源码核对，无 skip），
+				// 1:1 成立 ⇒ 直报请求数即实际删除数；不存在「部分生效」形态。
+				const base = resultWithActions(data);
+				return withSignal({ ...base, details: { ...base.details, affectedCount: p.node_ids.length } }, {
+					status: "ok",
+				});
 			},
 		},
 	];

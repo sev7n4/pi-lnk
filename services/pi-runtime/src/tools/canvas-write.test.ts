@@ -626,3 +626,69 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		}
 	});
 });
+
+// ---- Task 3：details._signal + affectedCount 直报（spec 2026-10-12 §2.2/§3）----
+
+describe("canvas-write: _signal + affectedCount 契约", () => {
+	it("写工具 details._signal 存在且 actions/affectedCount 保留", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const res = await run(findTool(tools, "upsert_prompt_node"), {
+			prompt: "p",
+			content: "c",
+		});
+		const d = res.details as Record<string, unknown>;
+		assert.equal((d._signal as { status: string }).status, "ok");
+		assert.equal(d.affectedCount, 1);
+		assert.ok(Array.isArray(d.actions));
+	});
+
+	it("grid_slice_image affectedCount = cols×rows（与 actions.length 解耦）", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const res = await run(findTool(tools, "grid_slice_image"), {
+			cols: 3,
+			rows: 2,
+			source_url: "https://x/a.png",
+		});
+		const d = res.details as Record<string, unknown>;
+		assert.equal(d.affectedCount, 6);
+	});
+
+	it("connect_nodes affectedCount = 请求边数（graph_batch）", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const res = await run(findTool(tools, "connect_nodes"), {
+			edges: [
+				{ source: "a", target: "b" },
+				{ source: "b", target: "c" },
+			],
+		});
+		assert.equal((res.details as Record<string, unknown>).affectedCount, 2);
+	});
+
+	it("propose_generation 确认后 details 顶层 confirmed=true 且 _signal 存在（gate 回归锁）", async () => {
+		// registry 不注入 → 旧行为分支（B-2 off）也必须有 _signal + affectedCount
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const res = await run(findTool(tools, "propose_generation"), { node_id: "n1" });
+		const d = res.details as Record<string, unknown>;
+		assert.equal((d._signal as { status: string }).status, "ok");
+		assert.equal(d.affectedCount, 1);
+	});
+
+	it("textRaw 短路分支 details 补齐 {ok:false, affectedCount:0}（不再 undefined）", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		// ctx 也不带 attachments（CTX 自带一份，会走 fallback 而非短路）
+		const emptyCtx: LnkpiToolContext = { ...CTX, attachments: [], mentionedKeys: [] };
+		const res = await run(
+			findTool(tools, "apply_sidebar_attachments"),
+			{ node_ids: ["n1"], attachments: [] },
+			emptyCtx,
+		);
+		const d = res.details as Record<string, unknown>;
+		assert.equal(d.ok, false);
+		assert.equal(d.affectedCount, 0);
+	});
+});

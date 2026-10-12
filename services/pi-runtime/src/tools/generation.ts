@@ -20,6 +20,50 @@ import { fetchImageAsBlock, isImageRefineEnabled, type ImageBlock } from "./imag
 // B-5：Nest 返回的 CanvasAction[] 进 details.actions，由 Nest pi-events 派生 canvas_action SSE。
 // helper 已抽到 result-with-actions.ts（canvas-write / delete-nodes / 本文件共用一份）。
 import { resultWithActions } from "./result-with-actions.js";
+// 工具结果质量信号（spec 2026-10-12 §2.2/§3）：_signal 注入 + GenDetails 必填字段。
+import { signalFromUpstream, withSignal, type ToolResultSignal } from "./result-signal.js";
+
+/** Nest run / wait 响应的 used 回读（agent-canvas-tools.service.ts ImageGenUsedParams）。 */
+type NestUsedParams = {
+	model?: string;
+	aspectRatio?: string;
+	resolution?: string;
+	count?: number;
+	kind?: string;
+	voice?: string;
+};
+
+/** GenDetails 组装：used 缺失（Nest 版本偏斜）→ "unspecified"/{}，fail-soft 不造值。 */
+function genDetailsFromUsed(used: NestUsedParams | undefined): {
+	modelUsed: string;
+	generationParams: Record<string, unknown>;
+} {
+	return {
+		modelUsed: typeof used?.model === "string" && used.model ? used.model : "unspecified",
+		generationParams: {
+			...(used?.aspectRatio !== undefined ? { aspectRatio: used.aspectRatio } : {}),
+			...(used?.resolution !== undefined ? { resolution: used.resolution } : {}),
+			...(used?.count !== undefined ? { count: used.count } : {}),
+			...(used?.kind !== undefined ? { kind: used.kind } : {}),
+			...(used?.voice !== undefined ? { voice: used.voice } : {}),
+		},
+	};
+}
+
+/** 统一包装：resultWithActions + GenDetails + _signal（actions/confirmed 消费方契约由 withSignal 展开保留）。 */
+function withGenSignal(data: unknown): {
+	content: [{ type: "text"; text: string }];
+	details: { actions: Record<string, unknown>[]; modelUsed: string; generationParams: Record<string, unknown>; _signal: ToolResultSignal };
+} {
+	const base = resultWithActions(data);
+	return withSignal(
+		{
+			...base,
+			details: { ...base.details, ...genDetailsFromUsed((data as { used?: NestUsedParams } | null)?.used) },
+		},
+		signalFromUpstream(data),
+	);
+}
 
 /** 成功路径 content 可为「文本 + 图」两 block；details 契约与共享 helper 完全一致。 */
 type ToolResultContent = { type: "text"; text: string } | ImageBlock;
@@ -80,7 +124,7 @@ export function createGenerationTools(
 				{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
 				{ signal: context?.abortSignal ?? undefined },
 			)) as { url?: string } & Record<string, unknown>;
-			const base = resultWithActions(data);
+			const base = withGenSignal(data);
 			// 视觉自评闭环（spec 2026-09-29 §4.2）只回流 run_image_generation；其余 run_* 形态不变
 			if (name !== "run_image_generation") return base;
 			// Review Focus ④：开关 off → 逐字节等同旧行为（不加字段、不附加 block）
@@ -203,7 +247,7 @@ export function createGenerationTools(
 				const data = (await client.post("/agent/internal/run-audio-generation", body, {
 					signal: context?.abortSignal ?? undefined,
 				})) as { url?: string } & Record<string, unknown>;
-				return resultWithActions(data);
+				return withGenSignal(data);
 			},
 		},
 		{
@@ -231,6 +275,7 @@ export function createGenerationTools(
 				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId };
 				if (p.generation_record_id) body.generationRecordId = p.generation_record_id;
 				if (p.node_id) body.nodeId = p.node_id;
+				// verify-details:ignore cancel_generation 是 lifecycle 自描述结果（缺口报告 §3.6 勾选不进信号层）
 				return resultWithActions(
 					await client.post("/agent/internal/cancel-generation", body, {
 						signal: context?.abortSignal ?? undefined,

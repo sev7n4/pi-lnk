@@ -37,11 +37,14 @@ export type ArrangeDegradedReason =
 
 function uiResult(payload: Record<string, unknown>, commands: unknown[]): {
 	content: [{ type: "text"; text: string }];
-	details: { ok: true; canvasCommands: unknown[] };
+	details: { ok: true; canvasCommands: unknown[]; affectedCount: number; _signal: { status: "ok" } };
 } {
+	// Task 3（spec §2.2）：arranged 为工具直报的实际生效数（L2 校验后 present 集合大小）；
+	// 单向 UI 命令、无 Nest 写副作用 ⇒ _signal 恒 ok（missing/degraded 已在 content 自描述）。
+	const arranged = typeof payload.arranged === "number" ? payload.arranged : 0;
 	return {
 		content: [{ type: "text", text: JSON.stringify({ ok: true, ...payload, canvasCommands: commands }) }],
-		details: { ok: true, canvasCommands: commands },
+		details: { ok: true, canvasCommands: commands, affectedCount: arranged, _signal: { status: "ok" } },
 	};
 }
 

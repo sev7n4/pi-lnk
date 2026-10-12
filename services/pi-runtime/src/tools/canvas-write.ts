@@ -10,6 +10,7 @@ import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
 import type { SidebarAttachment } from "./types.js";
 import { extractActions, resultWithActions } from "./result-with-actions.js";
+import { signalFromUpstream, withSignal } from "./result-signal.js";
 import { askUserBlocking, askUserTimeoutMs } from "../runtime-config.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
@@ -21,8 +22,21 @@ const CONNECT_NODES_MAX_EDGES = 20;
  * 「没有侧栏附件」——那里根本不打 Nest，不存在 CanvasAction 可推）。
  * 其余一律走 resultWithActions：Nest 的实时通道只认 details.actions。
  */
-function textRaw(value: unknown): { content: [{ type: "text"; text: string }]; details: undefined } {
-	return { content: [{ type: "text", text: JSON.stringify(value) }], details: undefined };
+function textRaw(value: unknown): {
+	content: [{ type: "text"; text: string }];
+	details: { ok: false; affectedCount: 0 };
+} {
+	return { content: [{ type: "text", text: JSON.stringify(value) }], details: { ok: false, affectedCount: 0 } };
+}
+
+/**
+ * 写类统一包装（Task 3，spec 2026-10-12 §2.2/§3）：`_signal` 注入 + affectedCount 工具直报。
+ * affectedCount 由各调用点按自身语义显式传（单对象=1；批量=请求语义计数）；
+ * ⭐ 禁止通用 `actions.length` 反推——一条 action 可覆盖批量，反推必错（§2.1 护栏）。
+ */
+function withWriteSignal(data: unknown, affectedCount: number) {
+	const base = resultWithActions(data);
+	return withSignal({ ...base, details: { ...base.details, affectedCount } }, signalFromUpstream(data));
 }
 
 /** 条件字段：仅非空（undefined/空串）才进 body。 */
@@ -73,7 +87,7 @@ export function createCanvasWriteTools(
 					content: p.content,
 				};
 				setIfPresent(body, "nodeId", p.node_id);
-				return resultWithActions(await client.post("/agent/internal/upsert-prompt-node", body));
+				return withWriteSignal(await client.post("/agent/internal/upsert-prompt-node", body), 1);
 			},
 		},
 		{
@@ -103,7 +117,7 @@ export function createCanvasWriteTools(
 				};
 				setIfPresent(body, "title", p.title);
 				setIfPresent(body, "nodeId", p.node_id);
-				return resultWithActions(await client.post("/agent/internal/upsert-media-node", body));
+				return withWriteSignal(await client.post("/agent/internal/upsert-media-node", body), 1);
 			},
 		},
 		{
@@ -154,7 +168,7 @@ export function createCanvasWriteTools(
 					collected.push(...extractActions(done));
 				}
 				// 两个分支的 actions 合并后一次性回给 Nest（details.actions 是实时通道）
-				return resultWithActions({ actions: collected });
+				return withWriteSignal({ actions: collected }, 1);
 			},
 		},
 		{
@@ -196,13 +210,14 @@ export function createCanvasWriteTools(
 				if (Object.keys(patch).length === 0) {
 					throw new Error("update_node requires at least one of title/image_model/video_model/text_model/audio_model");
 				}
-				return resultWithActions(
+				return withWriteSignal(
 					await client.post("/agent/internal/update-node", {
 						sessionId: tc.sessionId,
 						userId: tc.userId,
 						nodeId: p.node_id,
 						patch,
 					}),
+					1,
 				);
 			},
 		},
@@ -283,13 +298,14 @@ export function createCanvasWriteTools(
 				if (Object.keys(params).length === 0) {
 					throw new Error("set_node_generation_params requires at least one parameter");
 				}
-				return resultWithActions(
+				return withWriteSignal(
 					await client.post("/agent/internal/set-node-generation-params", {
 						sessionId: tc.sessionId,
 						userId: tc.userId,
 						nodeId: p.node_id,
 						params,
 					}),
+					1,
 				);
 			},
 		},
@@ -304,12 +320,13 @@ export function createCanvasWriteTools(
 				ref_order: Type.Array(Type.String(), { description: "Ordered reference node ids" }),
 			}),
 			execute: async (_id, p: { node_id: string; ref_order: string[] }, _u, tc: LnkpiToolContext) => {
-				return resultWithActions(
+				return withWriteSignal(
 					await client.post("/agent/internal/attach-refs", {
 						sessionId: tc.sessionId,
 						nodeId: p.node_id,
 						refOrder: p.ref_order,
 					}),
+					1,
 				);
 			},
 		},
@@ -335,7 +352,7 @@ export function createCanvasWriteTools(
 					nodeId: p.node_id,
 				});
 				// B-5 off（或无 registry）→ 旧行为逐字节保留（spec §8 回退纪律）
-				if (!registry || !askUserBlocking()) return resultWithActions(base);
+				if (!registry || !askUserBlocking()) return withWriteSignal(base, 1);
 
 			// 阻塞确认：registry 挂 pending（供 /pending 查询与 abort 联动），双臂 race——
 			// ① 轮询画布 SSOT（缺省 2s 间隔，spec §4.2）；
@@ -431,7 +448,7 @@ export function createCanvasWriteTools(
 						details: { ok: false, confirmed: false },
 					};
 				}
-				const withActions = resultWithActions(base);
+				const withActions = withWriteSignal(base, 1);
 				return {
 					...withActions,
 					details: { ...withActions.details, confirmed: true },
@@ -497,7 +514,7 @@ export function createCanvasWriteTools(
 				};
 				const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
 				if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
-				return resultWithActions(await client.post("/agent/internal/apply-sidebar-attachments", body));
+				return withWriteSignal(await client.post("/agent/internal/apply-sidebar-attachments", body), p.node_ids.length);
 			},
 		},
 		{
@@ -517,7 +534,7 @@ export function createCanvasWriteTools(
 				tc: LnkpiToolContext,
 			) => {
 				if (!tc.userId) throw new Error("apply_asset_to_node requires userId in toolContext");
-				return resultWithActions(
+				return withWriteSignal(
 					await client.post("/agent/internal/apply-asset-to-node", {
 						sessionId: tc.sessionId,
 						userId: tc.userId,
@@ -525,6 +542,7 @@ export function createCanvasWriteTools(
 						assetId: p.asset_id,
 						source: p.source,
 					}),
+					1,
 				);
 			},
 		},
@@ -541,7 +559,7 @@ export function createCanvasWriteTools(
 				if (!tc.userId) throw new Error("save_node_to_asset_library requires userId in toolContext");
 				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id };
 				setIfPresent(body, "label", p.label);
-				return resultWithActions(await client.post("/agent/internal/save-node-to-asset-library", body));
+				return withWriteSignal(await client.post("/agent/internal/save-node-to-asset-library", body), 1);
 			},
 		},
 		{
@@ -571,7 +589,7 @@ export function createCanvasWriteTools(
 				setIfPresent(body, "nodeId", p.node_id);
 				if (p.node_ids && p.node_ids.length > 0) body.nodeIds = p.node_ids;
 				if (p.include_upstream === true) body.includeUpstream = true;
-				return resultWithActions(await client.post("/agent/internal/duplicate-node", body));
+				return withWriteSignal(await client.post("/agent/internal/duplicate-node", body), p.node_ids?.length ?? 1);
 			},
 		},
 		{
@@ -598,7 +616,7 @@ export function createCanvasWriteTools(
 					mediaType: p.media_type,
 				};
 				setIfPresent(body, "title", p.title);
-				return resultWithActions(await client.post("/agent/internal/upload-media-to-canvas", body));
+				return withWriteSignal(await client.post("/agent/internal/upload-media-to-canvas", body), 1);
 			},
 		},
 		{
@@ -634,7 +652,7 @@ export function createCanvasWriteTools(
 				};
 				setIfPresent(body, "sourceUrl", p.source_url);
 				setIfPresent(body, "nodeId", p.node_id);
-				return resultWithActions(await client.post("/agent/internal/grid-slice-image", body));
+				return withWriteSignal(await client.post("/agent/internal/grid-slice-image", body), p.cols * p.rows);
 			},
 		},
 		{
@@ -657,7 +675,7 @@ export function createCanvasWriteTools(
 						`connect_nodes accepts at most ${CONNECT_NODES_MAX_EDGES} edges per call (got ${p.edges.length})`,
 					);
 				}
-				return resultWithActions(await client.post("/agent/internal/connect-nodes", { sessionId: tc.sessionId, edges: p.edges }));
+				return withWriteSignal(await client.post("/agent/internal/connect-nodes", { sessionId: tc.sessionId, edges: p.edges }), p.edges.length);
 			},
 		},
 	];
@@ -673,12 +691,13 @@ export function createCanvasWriteTools(
 			}),
 			execute: async (_id, p: { node_ids: string[] }, _u, tc: LnkpiToolContext) => {
 				if (!tc.userId) throw new Error("introduce_nodes_to_agent requires userId in toolContext");
-				return resultWithActions(
+				return withWriteSignal(
 					await client.post("/agent/internal/introduce-nodes-to-agent", {
 						sessionId: tc.sessionId,
 						userId: tc.userId,
 						nodeIds: p.node_ids,
 					}),
+					p.node_ids.length,
 				);
 			},
 		});

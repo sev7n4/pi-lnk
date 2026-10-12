@@ -3033,6 +3033,54 @@ describe('AgentCanvasToolsService', () => {
     const summary = await svc.getCanvasSummary({ sessionId: 's1' })
     expect(summary.nodes.length).toBe(32)
   })
+
+  // ---- used 回读透传（spec 2026-10-12 §2.2 数据源拍板 A）----
+
+  it('runImageGeneration 回传 used（实际 model/aspectRatio/resolution/count）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-used',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '白底图',
+            status: 'draft',
+            imageModel: 'platform::agnes-image',
+            imageAspect: '16:9',
+            imageResolution: '1K',
+            imageCount: 2,
+          },
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.runImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-used' })
+    expect(result.used).toBeDefined()
+    expect(result.used?.model).toBe('platform::agnes-image')
+    expect(result.used?.aspectRatio).toBe('16:9')
+    expect(result.used?.resolution).toBe('1K')
+    expect(result.used?.count).toBe(2)
+  })
+
+  it('runAudioGeneration 回传 used（timeout 分支也带 model/kind/voice）', async () => {
+    canvas = {
+      nodes: [
+        { id: 'aud-used', type: 'audio', position: { x: 0, y: 0 }, data: { prompt: '配旁白', status: 'draft' } },
+      ],
+      edges: [],
+    }
+    generateAudio.mockResolvedValueOnce({ id: 'gen-used-1', status: 'generating' })
+    const timeoutResult = await svc.runAudioGeneration({
+      sessionId: 's1',
+      userId: 'u1',
+      nodeId: 'aud-used',
+      kind: 'voice',
+    })
+    expect(timeoutResult.status).toBe('timeout')
+    expect(timeoutResult.used?.kind).toBe('voice')
+    expect(typeof timeoutResult.used?.voice).toBe('string')
+  })
 })
 })
 })
