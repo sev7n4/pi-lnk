@@ -1438,12 +1438,16 @@ export class SessionManager {
 			// 核实），迁移会丢每次调用耗时直方图与「模型主动终止=blocked 不算错误」分类。
 			// after_tool 只做 raw 事件没有的**增量**观测：每工具调用的 token usage
 			// （hook 独有字段）。返回 undefined 不改结果，不影响既有 listener 链。
-			entry.unsubscribes.push(
-				harness.hooks.on("after_tool", async (event) => {
-					if (event.usage) metrics.observeToolUsage(event.toolName, event.usage);
-					return undefined;
-				}),
-			);
+			// ⚠️ 测试注入的 fake harness 可能只有 events 没有 hooks（CI 实证）——
+			// P3 观测是增量能力，hooks 缺席时 fail-soft 跳过，不得拖垮事件订阅装配。
+			if (harness.hooks) {
+				entry.unsubscribes.push(
+					harness.hooks.on("after_tool", async (event) => {
+						if (event.usage) metrics.observeToolUsage(event.toolName, event.usage);
+						return undefined;
+					}),
+				);
+			}
 		}
 	}
 
