@@ -1153,9 +1153,9 @@ export class SessionManager {
 	 * **重启不治**：harness 从盘上还原 lane 状态，锁原样回来（生产实测：换 pod 后
 	 * 30 秒同一会话继续 LaneBusy）。
 	 *
-	 * 这里对每个 open operation 走一次 `lane.drive`：命中 `assistant.effect_pending`
-	 * 相位时 vendor 的 `recoverAssistantGeneration` 会**不再调上游**，按已提交帧前缀
-	 * 合成一条 `stopReason:"error"` 的 assistant 消息并 settle，从而释放 lane。
+	 * 这里对每个 open operation 走一次 `requestAbort` + `lane.drive`（见 `settleOneOrphan`）：
+	 * 先取消标记、drive 走 `reconcileOperation → recoverCancelledAssistantEffect` 取消收尾路径，
+	 * 绝不调上游、**绝不 resume 上次被中断的 run**，毫秒级释放 lane。
 	 *
 	 * 两条不变量：
 	 *   - 只在 `build()`（created / rebuilt / 磁盘 resume）里调用。内存快路径的
@@ -1164,33 +1164,80 @@ export class SessionManager {
 	 *   - fail-soft：结算失败只 warn，不阻断 create。create 还承担归属校验与事件
 	 *     订阅，抛错会把「一个孤儿 operation」放大成「整个会话建不起来」。
 	 */
+	/**
+	 * 结算「上一个进程死时未完成」的 operation（2026-10-07 P0-1），**取消收尾**语义。
+	 *
+	 * 关键修正（2026-10-12 生产事故 cmv3zzid）：先前这里直接 `lane.drive`，对 run-kind 孤儿
+	 * 会命中「续推」分支 = **真实 resume 上游 LLM**（上游 612s 才返回 ⇒ create 被同步阻塞、
+	 * Nest 10s 超时 abort ⇒ 前端 11s 报「上游响应超时」，重试必现）。
+	 *
+	 * 正确语义与 P0-2 `forceSettleLaneOperation` 完全一致：先 `requestAbort` 标记
+	 * cancel_requested，再 `drive` 走 `reconcileOperation → recoverCancelledAssistantEffect`
+	 * 取消收尾路径，**绝不 resume 上游**。孤儿永远是「收尾」不是「重生」。
+	 *
+	 * 不变量（同 1137-1140）：create 返回时 lane 必须空闲；结算全程本地、毫秒级。仍包 8s
+	 * 兜底（见 `settleOneOrphan`）防 vendor 行为漂移再次拖死 create。fail-soft：任一孤儿结算
+	 * 失败/超时只 warn，不阻断 create（否则会把「一个孤儿」放大成「整个会话建不起来」）。
+	 */
 	private async settleOrphanOperations(entry: SessionEntry, open: OpenOperation[] | undefined): Promise<void> {
 		// `open` 允许为 undefined：测试注入的 fake harnessFactory 普遍只返回 `{ harness }`。
 		if (!open || open.length === 0) return;
 		for (const op of open) {
 			try {
-				const lane = await entry.harness.lane(op.lane, this.context);
-				const result = await lane.drive({ operationId: op.operationId }, this.context);
-				if (!result.ok) {
-					console.warn(
-						`[pi-runtime] settle orphan operation rejected: session=${entry.id} lane=${op.lane} ` +
-							`operation=${op.operationId} kind=${op.kind} error=${String(result.error)}`,
-					);
-					continue;
-				}
-				// warn 而非 info：这是「上一轮被中断」的信号，正常情况下不该出现，出现即需排查。
-				console.warn(
-					`[pi-runtime] settled orphan operation left by a previous process: session=${entry.id} ` +
-						`lane=${op.lane} operation=${op.operationId} kind=${op.kind} ` +
-						`startedAt=${new Date(op.startedAt).toISOString()} outcome=${result.value.kind}`,
-				);
+				await this.settleOneOrphan(entry, op);
 			} catch (err) {
 				console.warn(
-					`[pi-runtime] settle orphan operation threw (fail-soft): session=${entry.id} ` +
+					`[pi-runtime] settle orphan operation timed out/threw (fail-soft): session=${entry.id} ` +
 						`lane=${op.lane} operation=${op.operationId}: ${err instanceof Error ? err.message : String(err)}`,
 				);
 			}
 		}
+	}
+
+	/** 单个孤儿 operation 的结算：requestAbort 收尾 + drive，整体包 8s 硬超时 fail-soft。 */
+	private async settleOneOrphan(entry: SessionEntry, op: OpenOperation): Promise<void> {
+		const lane = await entry.harness.lane(op.lane, this.context);
+		const result = await this.withSettleTimeout(
+			(async () => {
+				// 孤儿 = 收尾而非重生：先取消标记，drive 才走 reconcile 取消路径（不 resume 上游）
+				await lane.requestAbort(op.operationId, this.context);
+				return lane.drive({ operationId: op.operationId }, this.context);
+			})(),
+			`session=${entry.id} operation=${op.operationId}`,
+		);
+		if (!result.ok) {
+			console.warn(
+				`[pi-runtime] settle orphan operation rejected: session=${entry.id} lane=${op.lane} ` +
+					`operation=${op.operationId} kind=${op.kind} error=${String(result.error)}`,
+			);
+			return;
+		}
+		// warn 而非 info：这是「上一轮被中断」的信号，正常情况下不该出现，出现即需排查。
+		console.warn(
+			`[pi-runtime] settled orphan operation left by a previous process: session=${entry.id} ` +
+				`lane=${op.lane} operation=${op.operationId} kind=${op.kind} ` +
+				`startedAt=${new Date(op.startedAt).toISOString()} outcome=${result.value.kind}`,
+		);
+	}
+
+	/**
+	 * 孤儿结算兜底（纵深防御，2026-10-12 事故）：单个 operation 的 requestAbort+drive 整体包
+	 * 8s 硬超时。正常情况下 drive 走取消收尾路径、毫秒级返回；一旦 vendor 行为漂移再次 resume
+	 * 上游，超时会 fail-soft 放行 create（底层 promise 仍在跑但不再阻塞会话建立），避免重演
+	 * cmv3zzid 的「会话被锁死 ~10min」形态。
+	 */
+	private withSettleTimeout<T>(p: Promise<T>, label: string): Promise<T> {
+		const ms = 8_000;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(
+				() => reject(new Error(`settle orphan timed out after ${ms}ms: ${label}`)),
+				ms,
+			);
+		});
+		return Promise.race([p, timeout]).finally(() => {
+			if (timer) clearTimeout(timer);
+		});
 	}
 
 	/** 事件归一订阅：EVENT_MAP 全量透传；compaction_end 顺带计数（同一监听内，避免重复订阅）。

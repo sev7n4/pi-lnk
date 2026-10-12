@@ -30,6 +30,10 @@ interface LaneProbe {
 	driveThrows: boolean;
 	/** 非空时 inspectExecution 报「lane 上有 current operation」（force 分支的输入） */
 	currentOperationId?: string;
+	/** cmv3zzid 可证伪探针：drive 在 requestAbort 之前被调用 ⇒ vendor 续推上游 LLM（事故形态） */
+	resumedUpstreamWithoutAbort?: boolean;
+	/** drive 永不 resolve（模拟 vendor 续推上游永久挂死），用于证伪 8s 超时兜底 */
+	driveHangs?: boolean;
 }
 
 /**
@@ -51,6 +55,8 @@ function makeHarnessFactory(opts: {
 			driveResult: { ok: true, kind: "settled" },
 			inspectThrows: false,
 			driveThrows: false,
+			resumedUpstreamWithoutAbort: false,
+			driveHangs: false,
 			...opts.probe,
 		};
 		probes.push(p);
@@ -66,6 +72,12 @@ function makeHarnessFactory(opts: {
 				prompt: async () => ({ ok: true }),
 				drive: async (o: { operationId: string }) => {
 					probe.driveCalls.push({ operationId: o.operationId });
+					// 复现 cmv3zzid 事故形态：若 drive 在 requestAbort 之前被调用（缺取消前置），
+					// vendor 会续推上游 LLM 把 run「重生」——正是把 create 阻塞 612s 的根因。
+					if (!probe.requestAbortCalls.includes(o.operationId)) {
+						probe.resumedUpstreamWithoutAbort = true;
+					}
+					if (probe.driveHangs) return new Promise<never>(() => {});
 					if (probe.driveThrows) throw new Error("drive boom");
 					return probe.driveResult.ok
 						? { ok: true, value: { kind: probe.driveResult.kind ?? "settled" } }
@@ -115,12 +127,17 @@ const OPEN_RUN = [
 ];
 
 describe("P0-1 create() 结算上一个进程留下的孤儿 operation", () => {
-	it("open 里的 operation 被 drive 一次（释放 lane 的唯一手段）", async () => {
+	it("open 里的 run-kind 孤儿：requestAbort（取消收尾）+ drive 各一次，drive 不再续推上游", async () => {
 		await withTempDataRoot(async (root) => {
 			const { factory, probes } = makeHarnessFactory({ open: OPEN_RUN });
 			const sm = makeManager(factory, root);
-			await sm.create("s1:t1", { userId: "u1" });
+			const out = await sm.create("s1:t1", { userId: "u1" });
+			assert.equal(out.status, "created");
+			// 关键不变量：结算走 cancel 收尾路径，vendor 收到 cancel_requested
+			assert.deepEqual(probes[0].requestAbortCalls, ["op-orphan-1"]);
 			assert.deepEqual(probes[0].driveCalls, [{ operationId: "op-orphan-1" }]);
+			// 可证伪 cmv3zzid 事故：裸 drive 会续推上游 LLM（resume），此处必须没有
+			assert.equal(probes[0].resumedUpstreamWithoutAbort, false);
 		});
 	});
 
@@ -184,6 +201,23 @@ describe("P0-1 create() 结算上一个进程留下的孤儿 operation", () => {
 			const second = await sm.create("s7:t1", { userId: "u1" });
 			assert.equal(second.status, "resumed");
 			// 第二次是内存快路径：不得再次 drive（否则会把在跑的 run 结算掉）
+			assert.equal(probes[0].driveCalls.length, 1);
+		});
+	});
+
+	it("孤儿结算兜底（§四.1）：drive 永久挂死时 8s 超时 fail-soft 放行 create", async () => {
+		// 复现 cmv3zzid 最坏形态（vendor 续推上游永不返回）：withSettleTimeout 必须让 create
+		// 在 ~8s 返回，而非挂死到上游默认 10min 客户端超时（那样会话会被锁死 ~10min）。
+		await withTempDataRoot(async (root) => {
+			const { factory, probes } = makeHarnessFactory({ open: OPEN_RUN, probe: { driveHangs: true } });
+			const sm = makeManager(factory, root);
+			const start = Date.now();
+			const out = await sm.create("s-hang:t1", { userId: "u1" });
+			const elapsed = Date.now() - start;
+			// fail-soft：create 仍成功建立（孤儿被超时放行，而非放大成建不起会话）
+			assert.equal(out.status, "created");
+			// 超时兜底生效：明显早于上游默认 10min 客户端超时（留 1s 余量）
+			assert.ok(elapsed < 9_000, `create 应在 8s 超时内返回，实际 ${elapsed}ms`);
 			assert.equal(probes[0].driveCalls.length, 1);
 		});
 	});
