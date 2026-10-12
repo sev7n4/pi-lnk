@@ -59,6 +59,16 @@ describe('admin-api', () => {
     expect(axiosGet).toHaveBeenCalledWith('/admin/model-catalog', expect.objectContaining({ params: undefined }))
   })
 
+  it('updateRoute 携带 X-Confirm 头且值等于路由行 id（服务端 428 防线）', async () => {
+    axiosPut.mockResolvedValue(ok({ version: 2, route: { id: 'r1' } }))
+    await adminApi.updateRoute('r1', { enabled: false })
+    expect(axiosPut).toHaveBeenCalledWith(
+      '/admin/upstream-routes/r1',
+      { enabled: false },
+      expect.objectContaining({ headers: { 'X-Confirm': 'r1' } }),
+    )
+  })
+
   it('handleAdminRequest：token 存在 → 注入 Bearer Authorization 头', () => {
     sessionStorage.setItem(ADMIN_TOKEN_KEY, 't-1')
     const config = { headers: {} } as InternalAxiosRequestConfig

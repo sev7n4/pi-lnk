@@ -163,8 +163,11 @@ export const adminApi = {
   listRoutes: (): Promise<{ version: number; routes: AdminRouteRow[] }> =>
     unwrap(adminHttp.get('/admin/upstream-routes')),
 
+  // model-ops Task 2 起服务端要求高危写确认：X-Confirm 头必须等于目标路由行 id（缺失 → 428）
   updateRoute: (id: string, input: AdminRouteInput) =>
-    unwrap<{ version: number; route: AdminRouteRow }>(adminHttp.put(`/admin/upstream-routes/${id}`, input)),
+    unwrap<{ version: number; route: AdminRouteRow }>(
+      adminHttp.put(`/admin/upstream-routes/${id}`, input, { headers: { 'X-Confirm': id } }),
+    ),
 
   modelHealth: (windowHours?: 1 | 6 | 24 | 168) =>
     unwrap<{ generatedAt: string; rows: ModelHealthRow[]; alerts: HealthAlert[] }>(
