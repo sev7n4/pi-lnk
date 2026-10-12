@@ -8,6 +8,8 @@ const props = defineProps<{
   selectedIds: string[]
   canGenerateVideo?: boolean
   canUngroup?: boolean
+  /** 当前分组色（透传给工具条色点高亮） */
+  groupColorKey?: string | null
   selectionBatch?: {
     runCount: number
     regenCount?: number
@@ -102,6 +104,7 @@ const visible = computed(() => props.selectedIds.length >= 2 || !!props.canUngro
     :selected-ids="selectedIds"
     :can-generate-video="canGenerateVideo"
     :can-ungroup="canUngroup"
+    :group-color-key="groupColorKey"
     :screen-position="screenPosition"
     :selection-batch="selectionBatch"
     @group="emit('group')"

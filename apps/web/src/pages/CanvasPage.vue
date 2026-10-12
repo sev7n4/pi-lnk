@@ -1017,6 +1017,14 @@ const multiSelectCanUngroup = computed(() => {
   return node?.type === 'group'
 })
 
+/** 单选分组时的当前色（工具条色点高亮用；非分组/多选 = 无，落默认 neutral） */
+const multiSelectGroupColorKey = computed(() => {
+  if (!multiSelectCanUngroup.value) return null
+  const node = findNodeById(multiSelectedIds.value[0])
+  const key = (node?.data as Record<string, unknown> | undefined)?.colorKey
+  return typeof key === 'string' ? key : null
+})
+
 const multiSelectCanGenerateVideo = computed(() => {
   if (multiSelectedIds.value.length < 2) return false
   let hasText = false
@@ -4825,6 +4833,7 @@ onUnmounted(() => {
             :selected-ids="multiSelectedIds"
             :can-generate-video="multiSelectCanGenerateVideo"
             :can-ungroup="multiSelectCanUngroup"
+            :group-color-key="multiSelectGroupColorKey"
             :selection-batch="selectionBatchProp"
             @group="handleGroupSelection"
             @ungroup="handleUngroupSelection"
