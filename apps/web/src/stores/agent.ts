@@ -116,6 +116,12 @@ export const useAgentStore = defineStore('agent', () => {
    * 两者取其一即可，前端「有 activity 就用 activity」—— activity 更实时。
    */
   const activity = ref<{ toolName?: string; done?: number; total?: number } | null>(null)
+  /**
+   * P2「会话恢复中」：vendor `retry_scheduled{recovery:true}` 标记经 recovery 事件透传。
+   * 瞬时态——真实进度事件（activity/tool_call）或回合结束（agent_end/error）清位，
+   * 由组件层事件开关维护，这里只存值；状态行据此显示「会话恢复中」而非「上游响应超时」。
+   */
+  const recovering = ref(false)
   /** P1 状态行：最近一次 text_delta 时间戳（waiting 文本静默 ≥2s 判定用） */
   const lastTextDeltaAt = ref(0)
   /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
@@ -141,10 +147,11 @@ export const useAgentStore = defineStore('agent', () => {
       selectionNodeIds?: string[]
     },
   ) {
-    // 新回合开始：重置回合级状态行信号（propose 置位 / 阻塞等待 / 文本时间戳 / 失败态）
+    // 新回合开始：重置回合级状态行信号（propose 置位 / 阻塞等待 / 恢复态 / 文本时间戳 / 失败态）
     proposePendingConfirm.value = false
     blockingWait.value = null
     activity.value = null
+    recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
     messages.value.push({
@@ -387,6 +394,8 @@ export const useAgentStore = defineStore('agent', () => {
     isStreaming.value = false
     // 回合结束即无等待（后端 resolved 事件可能因断流迟到，这里再兜一次）
     blockingWait.value = null
+    // 回合结束同样无「恢复中」（P2：瞬时态不跨回合残留）
+    recovering.value = false
   }
 
   /**
@@ -417,6 +426,11 @@ export const useAgentStore = defineStore('agent', () => {
    */
   function setActivity(next: { toolName?: string; done?: number; total?: number } | null) {
     activity.value = next?.toolName ? { ...next } : null
+  }
+
+  /** P2：recovery 事件落点——置位/清位「会话恢复中」（清位由组件层在真实进度事件里调用）。 */
+  function setRecovering(next: boolean) {
+    recovering.value = next
   }
 
   /** 入参放宽到 `string | null`，理由同 parseMessageMetadata：函数体 `if (!raw)` 早就能处理。 */
@@ -539,6 +553,7 @@ export const useAgentStore = defineStore('agent', () => {
     proposePendingConfirm.value = false
     blockingWait.value = null
     activity.value = null
+    recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
   }
@@ -549,10 +564,12 @@ export const useAgentStore = defineStore('agent', () => {
     proposePendingConfirm,
     blockingWait,
     activity,
+    recovering,
     lastTextDeltaAt,
     turnError,
     setBlockingWait,
     setActivity,
+    setRecovering,
     addUserMessage,
     confirmSelectionBinding,
     startAssistantMessage,

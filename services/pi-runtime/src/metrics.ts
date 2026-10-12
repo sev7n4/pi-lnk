@@ -209,6 +209,17 @@ export class Metrics {
 		}
 	}
 
+	/** P1：孤儿结算是否走了 vendor 取消收尾路径（abort_reconcile checkpoint）。
+	 *  ok = 结构信号确认取消收尾真走（正常）；drift = 计数为 0，vendor 行为可能漂移
+	 *  （又 resume 上游）——比 8s 墙钟超时更早、更准的告警源。 */
+	private orphanAbortReconcile = { ok: 0, drift: 0 };
+
+	/** P1：孤儿结算结果观测（ok/drift），见字段注释。 */
+	observeOrphanSettle(tookAbortReconcile: boolean): void {
+		if (tookAbortReconcile) this.orphanAbortReconcile.ok += 1;
+		else this.orphanAbortReconcile.drift += 1;
+	}
+
 	/** P0-① 会话 create 结果：new（新建）/ memory（内存复用）/ disk（磁盘恢复）/ rebuilt（身份变更重建）。 */
 	observeSessionResume(outcome: "memory" | "disk" | "new" | "rebuilt"): void {
 		this.sessionResumes.set(outcome, (this.sessionResumes.get(outcome) ?? 0) + 1);
@@ -474,6 +485,12 @@ export class Metrics {
 		for (const [outcome, count] of [...this.sessionResumes.entries()].sort()) {
 			lines.push(`pi_runtime_session_resumes_total{outcome="${esc(outcome)}"} ${count}`);
 		}
+
+		// P1：孤儿结算取消收尾路径信号。恒渲染（0 也出样本），drift 恒 0 才是健康态。
+		lines.push("# HELP pi_runtime_orphan_settle_abort_reconcile_total Orphan operation settle: cancel-reconcile path taken (ok) vs vendor drift (drift).");
+		lines.push("# TYPE pi_runtime_orphan_settle_abort_reconcile_total counter");
+		lines.push(`pi_runtime_orphan_settle_abort_reconcile_total{outcome="ok"} ${this.orphanAbortReconcile.ok}`);
+		lines.push(`pi_runtime_orphan_settle_abort_reconcile_total{outcome="drift"} ${this.orphanAbortReconcile.drift}`);
 
 		// M6b：恒渲染（0 也出样本），让「链路从未触发」与「指标缺失」可区分。
 		lines.push("# HELP pi_runtime_memory_suppressed_total Memories suppressed by feedback loop.");
