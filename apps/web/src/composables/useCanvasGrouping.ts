@@ -100,12 +100,11 @@ export function createGroupFromNodes(
     position: { x: groupX, y: groupY },
     style: { width: `${groupW}px`, height: `${groupH}px` },
     data: {
-      title: groupTitle ?? `分组 ${countGroups(next)}`,
+      title: groupTitle ?? nextGroupTitle(next),
       childIds: eligible.map((n) => n.id),
     },
     draggable: true,
     selectable: true,
-    dragHandle: '.group-drag-handle',
     zIndex: 0,
   } as FlowNode)
 
@@ -196,9 +195,12 @@ export function resizeGroupToFitChildren(nodes: FlowNode[], groupId: string): Fl
  * group 塌缩成 CSS 最小尺寸小卡，子节点的相对坐标被当绝对坐标渲染（整组散架）。
  *
  * 本函数从 group.data.childIds 重建：子节点回填 parentNode/extent/zIndex，
- * group 回填 dragHandle/zIndex 并按「子节点相对包围盒 + 兜底尺寸表」估算尺寸。
+ * group 回填 zIndex 并按「子节点相对包围盒 + 兜底尺寸表」估算尺寸。
  * 子节点存的坐标本就是相对 group 的，关系一回填位置即归位；尺寸在
  * vue-flow 测量完成后由 syncGroupsToFitChildren 精修。对已完好的画布幂等。
+ *
+ * 2026-10-12 拖拽修复：不再回填 `dragHandle` —— 见下方 nextGroupTitle 注释
+ * 同源的「分组只能抓 26px 外沿标题条」问题；分组与普通节点一致整盒可拖。
  */
 export function restoreGroupHierarchy<T extends FlowNode>(nodes: T[]): T[] {
   const childIdsOf = (n: FlowNode): string[] => {
@@ -255,7 +257,6 @@ export function restoreGroupHierarchy<T extends FlowNode>(nodes: T[]): T[] {
       ...node,
       draggable: true,
       selectable: true,
-      dragHandle: '.group-drag-handle',
       zIndex: 0,
       style: {
         ...(typeof node.style === 'object' && node.style ? node.style : {}),
@@ -332,12 +333,53 @@ export function ungroupNodes(nodes: FlowNode[], groupId: string): FlowNode[] | n
   return next
 }
 
-function countGroups(nodes: FlowNode[]) {
-  let c = 0
+/**
+ * 分组命名：取最小的未被占用的正整数（"分组 1"起）。
+ *
+ * 旧口径 `分组 ${countGroups(next)}` 按「当前分组总数」计数 —— 取消分组或
+ * 删除分组会让总数回落，再次建组即重名（生产实测：画布上 4 个分组里两个叫
+ * 「分组 1」；且首个分组叫「分组 0」，与 addNode 空组路径的 +1 口径不一致）。
+ * 新口径扫描现存分组 title 占位、取最小空位 ⇒ 任何创建/删除时序都不会重名。
+ */
+export function nextGroupTitle(nodes: FlowNode[]): string {
+  const taken = new Set<string>()
   for (const n of nodes) {
-    if (n.type === 'group') c += 1
+    if (n.type !== 'group') continue
+    const title = (n.data as Record<string, unknown> | undefined)?.title
+    if (typeof title === 'string' && title) taken.add(title)
   }
-  return c
+  let i = 1
+  while (taken.has(`分组 ${i}`)) i += 1
+  return `分组 ${i}`
+}
+
+/**
+ * 松手吸附（2026-10-12 拖拽丝滑化）：拖拽中节点 1:1 跟手（VueFlow 的
+ * snap-to-grid 已关），松手时才把「被抓节点」吸附到 grid，其余同批被拖
+ * 节点（多选兄弟）平移同一吸附量 —— 相对阵列不变，整批一次性落格。
+ *
+ * dragStarts 是拖拽开始时的位置快照（id → position），只含 vue-flow 的
+ * dragItems：已选父节点的子节点不在其中（它们随父移动、相对坐标不变，
+ * 不该被平移）。无吸附量时返回原数组引用（零扰动）。
+ */
+export function applySnapOnRelease(
+  nodes: FlowNode[],
+  dragStarts: Map<string, { x: number; y: number }>,
+  anchorId: string,
+  grid: number,
+): FlowNode[] {
+  if (!(grid > 0)) return nodes
+  const start = dragStarts.get(anchorId)
+  const anchor = nodes.find((n) => n.id === anchorId)
+  if (!start || !anchor) return nodes
+  const round = (v: number) => Math.round(v / grid) * grid
+  const shiftX = round(anchor.position.x) - start.x
+  const shiftY = round(anchor.position.y) - start.y
+  if (shiftX === 0 && shiftY === 0) return nodes
+  return nodes.map((n) => {
+    const s = dragStarts.get(n.id)
+    return s ? { ...n, position: { x: s.x + shiftX, y: s.y + shiftY } } : n
+  })
 }
 
 export function layoutNodesInGrid(nodes: FlowNode[], selectedIds: string[], gap = 40): FlowNode[] {

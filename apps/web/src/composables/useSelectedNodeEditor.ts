@@ -10,6 +10,8 @@ export interface EditableFlowNode {
   parentNode?: string
   extent?: 'parent' | [[number, number], [number, number]]
   expandParent?: boolean
+  /** 分组 stacking：group=0 / 子节点=1 / 拖拽中临时抬升（见 CanvasPage onNodeDragStart） */
+  zIndex?: number
 }
 
 export function useSelectedNodeEditor(nodes: Ref<EditableFlowNode[]>) {
