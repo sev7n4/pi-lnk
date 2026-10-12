@@ -96,6 +96,8 @@ import {
   layoutNodesAlongEdges,
   layoutNodesInGrid,
   resizeGroupToFitChildren,
+  restoreGroupHierarchy,
+  syncGroupsToFitChildren,
   ungroupNodes,
   type FlowNode,
 } from '@/composables/useCanvasGrouping'
@@ -1875,6 +1877,18 @@ function onSelectionEnd() {
   syncMultiSelectionFromNodes()
 }
 
+/**
+ * vue-flow 测量完成后精修分组尺寸（刷新加载自愈的第二步）：
+ * restoreGroupHierarchy 用兜底尺寸表估算了 group 尺寸，子节点真实
+ * dimensions 就绪后按包围盒重算，保证 group 恰好包住子节点。
+ */
+function onNodesInitialized() {
+  const synced = syncGroupsToFitChildren(nodes.value as unknown as FlowNode[])
+  if (synced !== (nodes.value as unknown as FlowNode[])) {
+    nodes.value = synced as EditableFlowNode[]
+  }
+}
+
 function onNodeDragStop(event: NodeDragEvent) {
   const node = event.node
   if (node.parentNode) {
@@ -2819,6 +2833,9 @@ async function onWorkflowImportSelected(event: Event) {
         for (const e of mergeEdges) {
           edges.value.push({ id: e.id, source: e.source, target: e.target })
         }
+        // 工作流交换格式不携带 group 尺寸（style）——按 childIds 估算回填，
+        // 测量就绪后由 onNodesInitialized 精修（幂等，不影响既有节点）。
+        nodes.value = restoreGroupHierarchy(nodes.value)
         persistUserEdit()
       },
     })
@@ -4344,11 +4361,11 @@ async function loadSession() {
       const serverNodes = dedupeNodesById(
         data.data.canvasData.nodes as EditableFlowNode[],
       )
-      nodes.value = (
-        nodes.value.length
+      nodes.value = restoreGroupHierarchy(
+        (nodes.value.length
           ? mergeCanvasNodesFromServer(nodes.value, serverNodes)
-          : serverNodes
-      ) as EditableFlowNode[]
+          : serverNodes) as EditableFlowNode[],
+      )
       edges.value = hydrateCanvasEdges(
         (data.data.canvasData.edges ?? []) as CanvasEdge[],
         nodes.value,
@@ -4726,6 +4743,7 @@ onUnmounted(() => {
           @connect-end="onConnectEnd"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
+          @nodes-initialized="onNodesInitialized"
           @selection-end="onSelectionEnd"
           @node-click="onNodeClick"
           @node-drag-stop="onNodeDragStop"

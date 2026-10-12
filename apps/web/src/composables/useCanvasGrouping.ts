@@ -190,6 +190,118 @@ export function resizeGroupToFitChildren(nodes: FlowNode[], groupId: string): Fl
   })
 }
 
+/**
+ * 刷新加载自愈：持久化（flowToCanvasData）只存 id/type/position/data，
+ * group 的 style 尺寸与子节点的 parentNode 父子关系全被丢弃 —— 刷新后
+ * group 塌缩成 CSS 最小尺寸小卡，子节点的相对坐标被当绝对坐标渲染（整组散架）。
+ *
+ * 本函数从 group.data.childIds 重建：子节点回填 parentNode/extent/zIndex，
+ * group 回填 dragHandle/zIndex 并按「子节点相对包围盒 + 兜底尺寸表」估算尺寸。
+ * 子节点存的坐标本就是相对 group 的，关系一回填位置即归位；尺寸在
+ * vue-flow 测量完成后由 syncGroupsToFitChildren 精修。对已完好的画布幂等。
+ */
+export function restoreGroupHierarchy<T extends FlowNode>(nodes: T[]): T[] {
+  const childIdsOf = (n: FlowNode): string[] => {
+    const raw = (n.data as Record<string, unknown> | undefined)?.childIds
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : []
+  }
+  const hasGroup = nodes.some((n) => n.type === 'group' && childIdsOf(n).length > 0)
+  if (!hasGroup) return nodes
+
+  const next = nodes.map((n) => ({ ...n }))
+
+  // 1) 子节点回填父子关系（幂等：已挂对的子节点跳过）
+  for (const g of next) {
+    if (g.type !== 'group') continue
+    for (const cid of childIdsOf(g)) {
+      const child = next.find((n) => n.id === cid)
+      if (!child || child.type === 'group' || child.parentNode === g.id) continue
+      child.parentNode = g.id
+      child.extent = 'parent'
+      child.expandParent = true
+      child.zIndex = 1
+      child.draggable = true
+      child.selectable = true
+    }
+  }
+
+  // 2) group 本体回填属性；尺寸 = 子节点相对包围盒（dimensions 缺失时落兜底尺寸表）
+  const estimateSize = (g: FlowNode): { w: number; h: number } | null => {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const cid of childIdsOf(g)) {
+      const child = next.find((n) => n.id === cid)
+      if (!child || child.type === 'group' || child.parentNode !== g.id) continue
+      const { w, h } = getNodeSize(child)
+      minX = Math.min(minX, child.position.x)
+      minY = Math.min(minY, child.position.y)
+      maxX = Math.max(maxX, child.position.x + w)
+      maxY = Math.max(maxY, child.position.y + h)
+    }
+    if (!Number.isFinite(minX)) return null
+    return {
+      w: maxX - minX + GROUP_PADDING * 2,
+      h: maxY - minY + GROUP_PADDING * 2,
+    }
+  }
+
+  return next.map((node) => {
+    if (node.type !== 'group') return node
+    const size = estimateSize(node)
+    if (!size) return node
+    return {
+      ...node,
+      draggable: true,
+      selectable: true,
+      dragHandle: '.group-drag-handle',
+      zIndex: 0,
+      style: {
+        ...(typeof node.style === 'object' && node.style ? node.style : {}),
+        width: `${size.w}px`,
+        height: `${size.h}px`,
+      },
+    }
+  })
+}
+
+/**
+ * vue-flow 测量完成（nodes-initialized）后的精修：按真实 dimensions 重算分组尺寸。
+ * 已贴合（±1px）的分组跳过，返回原数组引用 —— 幂等，避免无谓的 nodes 引用抖动。
+ */
+export function syncGroupsToFitChildren(nodes: FlowNode[]): FlowNode[] {
+  let next = nodes
+  for (const g of nodes) {
+    if (g.type !== 'group') continue
+    const children = next.filter((n) => n.parentNode === g.id)
+    if (!children.length) continue
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const child of children) {
+      const { w, h } = getNodeSize(child)
+      minX = Math.min(minX, child.position.x)
+      minY = Math.min(minY, child.position.y)
+      maxX = Math.max(maxX, child.position.x + w)
+      maxY = Math.max(maxY, child.position.y + h)
+    }
+    if (!Number.isFinite(minX)) continue
+    const wantW = maxX - minX + GROUP_PADDING * 2
+    const wantH = maxY - minY + GROUP_PADDING * 2
+    const cur = typeof g.style === 'object' && g.style ? g.style : undefined
+    const curW = Number.parseFloat(String(cur?.width ?? ''))
+    const curH = Number.parseFloat(String(cur?.height ?? ''))
+    if (
+      Number.isFinite(curW) && Math.abs(curW - wantW) <= 1 &&
+      Number.isFinite(curH) && Math.abs(curH - wantH) <= 1
+    ) continue
+    next = resizeGroupToFitChildren(next, g.id)
+  }
+  return next
+}
+
 export function ungroupNodes(nodes: FlowNode[], groupId: string): FlowNode[] | null {
   const group = nodes.find((n) => n.id === groupId && n.type === 'group')
   if (!group) return null

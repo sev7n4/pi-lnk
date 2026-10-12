@@ -18,15 +18,17 @@
   --neo-electric: #22d3ee;
 
   /* 分组色卡（P3 2026-10-12）：低饱和预设，分组框背景/虚线边经 color-mix 派生；
-     默认 neutral 中性灰避开品牌紫。浅色块取淡雅档、深色块取沉郁档，成对守卫。 */
-  --neo-group-neutral: #3f434e;
-  --neo-group-moss: #37513f;
-  --neo-group-dusk: #35496b;
-  --neo-group-clay: #6b5430;
-  --neo-group-celadon: #2e5b66;
-  --neo-group-graphite: #2c313b;
-  --neo-group-rose: #6b4350;
-  --neo-group-plum: #4c4068;
+     默认 neutral 中性灰避开品牌紫。
+     2026-10-12 复测：color-mix 32%/7% 双主题都太淡（用户实测），深色档整体提亮、
+     浅色档整体加深一档，配合 neo-node.css 的混色比例上调保证可辨识。 */
+  --neo-group-neutral: #6b7080;
+  --neo-group-moss: #4f7a5f;
+  --neo-group-dusk: #5472a8;
+  --neo-group-clay: #a3854a;
+  --neo-group-celadon: #4a8b99;
+  --neo-group-graphite: #5a6070;
+  --neo-group-rose: #a56479;
+  --neo-group-plum: #7a68a8;
   --neo-electric-glow: rgba(34, 211, 238, 0.5);
   --neo-warm: #f59e0b;
   --neo-warm-soft: rgba(245, 158, 11, 0.16);
@@ -177,15 +179,15 @@
   --neo-accent-border: rgba(91, 76, 230, 0.75);
   --neo-electric: var(--lnk-cyan-700);
 
-  /* 分组色卡浅色档（与深色块成对） */
-  --neo-group-neutral: #d7dbe4;
-  --neo-group-moss: #cfe0d2;
-  --neo-group-dusk: #ccd9ec;
-  --neo-group-clay: #e8dcc2;
-  --neo-group-celadon: #c4dde2;
-  --neo-group-graphite: #c9cdd6;
-  --neo-group-rose: #ecd2d8;
-  --neo-group-plum: #dcd4ec;
+  /* 分组色卡浅色档（与深色块成对；2026-10-12 复测加深一档保对比度） */
+  --neo-group-neutral: #b9bfd0;
+  --neo-group-moss: #a9c4ae;
+  --neo-group-dusk: #a8bde0;
+  --neo-group-clay: #d0b98c;
+  --neo-group-celadon: #9cc3cc;
+  --neo-group-graphite: #b0b5c2;
+  --neo-group-rose: #d8aab6;
+  --neo-group-plum: #bfaede;
   --neo-electric-glow: rgba(12, 99, 119, 0.35);
   --neo-warm: var(--lnk-amber-800);
   --neo-warm-soft: rgba(138, 82, 0, 0.12);

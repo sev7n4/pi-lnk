@@ -1355,16 +1355,19 @@
   min-width: 280px;
   min-height: 160px;
   padding: 12px;
-  border: 2px dashed color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 32%, transparent);
+  /* 2026-10-12 复测上调：常态 32%/7% 双主题都太淡（用户实测「释放后看不清」），
+     提到 55%/10%，令牌本身也两档提亮/加深（见 neowow-tokens.css 分组色卡注释） */
+  border: 2px dashed color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 55%, transparent);
   border-radius: 20px;
-  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 7%, transparent);
+  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 10%, transparent);
   pointer-events: none;
 }
 
 .group-node-wrapper.is-active .group-node-container {
-  border-color: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 55%, var(--neo-border-strong));
-  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 11%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 25%, transparent);
+  /* 选中态在常态之上再拉开一档：边更实、底更深、外环更亮 */
+  border-color: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 80%, var(--neo-border-strong));
+  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 45%, transparent);
 }
 
 /* ============================================================

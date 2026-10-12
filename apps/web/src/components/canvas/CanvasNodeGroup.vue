@@ -51,28 +51,27 @@ const groupStyle = computed(() => ({
     @mouseenter="isHovered = true"
     @mouseleave="isHovered = false"
   >
-    <div class="group-node-container h-full w-full">
-      <!-- 信息条贴分组框上沿，无底无框（2026-10-12 P3：拆掉内嵌小卡，
-           分组内不再被实体卡片污染；拖拽感由 cursor + hover 提亮传达） -->
-      <div class="group-drag-handle" @dblclick.stop="startRename">
-        <input
-          v-if="isRenaming"
-          ref="renameInputRef"
-          v-model="renameDraft"
-          class="group-rename-input"
-          placeholder="分组名称"
-          @keydown.enter.stop="commitRename"
-          @keydown.esc.stop="isRenaming = false"
-          @blur="commitRename"
-          @click.stop
-          @mousedown.stop
-        >
-        <template v-else>
-          <h4 class="group-title">{{ data.title || '未命名分组' }}</h4>
-          <span class="group-meta">{{ data.childIds?.length ?? 0 }} 个节点</span>
-        </template>
-      </div>
+    <!-- 标题外沿条：与图片/视频节点的 .neo-node-external-title 同位同字体
+         （top:-32px · 13px/600 · --neo-node-title-color），兼任拖拽把手 -->
+    <div class="group-drag-handle" @dblclick.stop="startRename">
+      <input
+        v-if="isRenaming"
+        ref="renameInputRef"
+        v-model="renameDraft"
+        class="group-rename-input"
+        placeholder="分组名称"
+        @keydown.enter.stop="commitRename"
+        @keydown.esc.stop="isRenaming = false"
+        @blur="commitRename"
+        @click.stop
+        @mousedown.stop
+      >
+      <template v-else>
+        <h4 class="group-title">{{ data.title || '未命名分组' }}</h4>
+        <span class="group-meta">{{ data.childIds?.length ?? 0 }} 个节点</span>
+      </template>
     </div>
+    <div class="group-node-container h-full w-full" />
     <Handle id="target" type="target" :position="Position.Top" class="neo-flow-handle">
       <div class="handle-hitbox" />
       <div class="handle-plus"><div class="handle-plus-inner" /></div>
@@ -96,14 +95,20 @@ const groupStyle = computed(() => ({
   pointer-events: none;
 }
 
-/* 无底无框信息条：贴容器上沿，文字直接坐在分组近画布底色上 */
+/* 标题外沿条：与图片/视频节点同位（neo-node.css .neo-node-external-title 同款定位），
+   字体 token 与 .neo-node-title 同源；兼作拖拽把手（dragHandle 选择器不变） */
 .group-drag-handle {
   pointer-events: auto;
   cursor: grab;
+  position: absolute;
+  top: -32px;
+  left: 0;
+  right: 0;
+  z-index: 1;
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 6px 10px 0;
+  min-height: 26px;
 }
 
 .group-drag-handle:active {
@@ -119,7 +124,8 @@ const groupStyle = computed(() => ({
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--neo-node-text-muted);
+  color: var(--neo-node-title-color);
+  white-space: nowrap;
   transition: color 0.15s ease;
 }
 
