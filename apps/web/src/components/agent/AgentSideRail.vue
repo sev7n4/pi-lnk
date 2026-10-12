@@ -2768,18 +2768,11 @@ defineExpose({
                   :nodes="canvasNodesForBinding"
                   :confirmed="msg.selectionBindingConfirmed"
                 />
-                <div
-                  v-if="!readOnly && canReuseTurn(msg)"
-                  class="agent-bubble-reuse mt-1.5 flex justify-end"
-                >
-                  <button
-                    type="button"
-                    class="agent-bubble-reuse-btn"
-                    @click="reattachTurnFromHistory(msg)"
-                  >
-                    ↺ 复用本轮（提示词 + 引用）
-                  </button>
-                </div>
+                <!-- 2026-10-12：「复用本轮（提示词 + 引用）」从气泡正文中段
+                     （原为虚线胶囊文字按钮、独占一行）收敛为**图标**，
+                     与底部「编辑 / 复制」并列 —— 中段那颗胶囊占掉了气泡内部
+                     可编辑空间（用户口径），且同一行里只有它是文字按钮。
+                     功能入口不变：判据仍是 canReuseTurn(msg)（role=user 且有正文或引用）。 -->
                 <AgentCanvasOutputs
                   v-if="msg.role === 'assistant' && (assistantOutputsById.get(msg.id)?.length ?? 0) > 0"
                   :outputs="assistantOutputsById.get(msg.id) ?? []"
@@ -2910,6 +2903,22 @@ defineExpose({
                       </svg>
                       <svg v-else viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </button>
+                    <!-- 复用本轮：图标化（原为气泡中段的虚线胶囊文字按钮）。
+                         文案移入 title/aria-label，行内只留 ↺ 图标 —— 与 编辑/复制 同尺寸同权重。 -->
+                    <button
+                      v-if="canReuseTurn(msg)"
+                      type="button"
+                      class="agent-msg-action-btn"
+                      title="复用本轮（提示词 + 引用）"
+                      aria-label="复用本轮（提示词 + 引用）"
+                      data-testid="reuse-turn-btn"
+                      @click="reattachTurnFromHistory(msg)"
+                    >
+                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M1 4v6h6" />
                       </svg>
                     </button>
                   </template>
@@ -3049,7 +3058,7 @@ defineExpose({
                 role="status"
               >
                 <span class="min-w-0 flex-1 text-[var(--neo-text-secondary)]">
-                  点击历史消息中的 ↺ 引用可再次加入输入框；也可点「复用本轮」一键带回提示词与全部引用。
+                  点击历史消息中的 ↺ 引用可再次加入输入框；点消息右下角的 ↺ 可一键带回提示词与全部引用。
                 </span>
                 <button
                   type="button"
@@ -3143,7 +3152,7 @@ defineExpose({
                   v-if="showComposerReattachHint"
                   class="agent-composer-reattach-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--neo-text-muted)]"
                 >
-                  点击上方历史消息中的 ↺ 引用，或「复用本轮」，可再次加入本次对话
+                  点击上方历史消息中的 ↺ 引用，或消息右下角的 ↺，可再次加入本次对话
                 </p>
                 <p
                   v-if="showProductVisualAttachmentHint && !pendingAttachmentItems.length"
@@ -3764,22 +3773,8 @@ defineExpose({
   text-shadow: none;
 }
 
-.agent-bubble-reuse-btn {
-  border: 1px dashed color-mix(in srgb, var(--agent-user-text) 22%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--agent-user-text) 6%, transparent);
-  padding: 2px 8px;
-  font-size: 10px;
-  line-height: 1.4;
-  color: color-mix(in srgb, var(--agent-user-text) 78%, transparent);
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.agent-bubble-reuse-btn:hover {
-  border-color: color-mix(in srgb, var(--agent-user-text) 35%, transparent);
-  background: color-mix(in srgb, var(--agent-user-text) 12%, transparent);
-  color: var(--agent-user-text);
-}
+/* 「复用本轮」按钮样式（.agent-bubble-reuse-btn）已于 2026-10-12 删除：
+   该入口收敛为 .agent-msg-action-btn 图标按钮，与 编辑/复制 共用同一套样式。 */
 
 .agent-history-coachmark {
   border-color: color-mix(in srgb, var(--neo-hi-text) 14%, var(--neo-border));
