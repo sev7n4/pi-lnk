@@ -14,6 +14,7 @@ const ERROR_CODES = new Set<string>([
   'insufficient_points',
   'upstream_timeout',
   'upstream_error',
+  'rate_limited',
   'cancelled',
   'invalid_input',
   'model_unavailable',

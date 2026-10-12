@@ -119,3 +119,26 @@ describe('translateUpstreamFailure', () => {
     expect(translateUpstreamFailure('')).toBeUndefined()
   })
 })
+
+describe('mapMessageToErrorCode · rate_limited（信号层 P1 配套工单，spec §6）', () => {
+  it('429 状态码文本 → rate_limited（生产病例：agnes hub 免费档 429）', () => {
+    expect(mapMessageToErrorCode('agnes hub: 429 Too Many Requests, please retry later')).toBe('rate_limited')
+  })
+
+  it('中文限流文案 → rate_limited', () => {
+    expect(mapMessageToErrorCode('429: 您已达到免费用户的 API 速率限制')).toBe('rate_limited')
+  })
+
+  it('rate limit / too many requests 无状态码形态 → rate_limited', () => {
+    expect(mapMessageToErrorCode('Video API rate limit exceeded')).toBe('rate_limited')
+    expect(mapMessageToErrorCode('Image API: too many requests')).toBe('rate_limited')
+  })
+
+  it('优先级保持：timeout+429 混合文本仍归 upstream_timeout（vendor 分类器看全文判可重试）', () => {
+    expect(mapMessageToErrorCode('timeout waiting, then 429')).toBe('upstream_timeout')
+  })
+
+  it('订阅型配额错误（GoUsageLimitError）不误判 → 保持 unknown（vendor 非重试模式在信号层兜底）', () => {
+    expect(mapMessageToErrorCode('GoUsageLimitError: free tier quota exhausted')).toBe('unknown')
+  })
+})

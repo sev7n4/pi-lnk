@@ -114,4 +114,23 @@ describe('MaterialService.getMaterialDiagnostic', () => {
     expect(d.taskId).toBe('m2')
     expect(d.taskKind).toBe('material')
   })
+
+  it('429 限流失败 → code=rate_limited + 退避 hint（信号层 P1 配套工单，spec §6）', async () => {
+    materialFindFirst.mockResolvedValue({
+      id: 'm-429',
+      type: 'video',
+      status: 'error',
+      prompt: null,
+      createdAt: new Date('2026-10-12T00:00:00.000Z'),
+      metadata: JSON.stringify({
+        errorRaw: 'agnes hub: 429 Too Many Requests, please retry later',
+        failedAt: '2026-10-12T00:01:00.000Z',
+      }),
+      shot: { session: { userId: 'u1', id: 'sess-1' } },
+    })
+
+    const d = await svc.getMaterialDiagnostic('u1', 'm-429')
+    expect(d.code).toBe('rate_limited')
+    expect(d.hint).toBe('请稍后重试')
+  })
 })
