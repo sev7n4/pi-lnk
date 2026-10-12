@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { GROUP_COLOR_KEYS } from './groupColors'
 
 const props = defineProps<{
   selectedIds: string[]
@@ -33,10 +34,21 @@ const emit = defineEmits<{
   generateRegen: []
   stopSelection: []
   blockedHint: [reason: 'pending_confirm' | 'limit_24' | 'missing_prompt']
+  /** P3 2026-10-12：分组色卡选择；null = 复位回默认中性 */
+  groupColor: [key: string | null]
 }>()
 
 const exportMenuOpen = ref(false)
 const layoutMenuOpen = ref(false)
+const colorMenuOpen = ref(false)
+
+const colorKeys = GROUP_COLOR_KEYS
+
+/** 当前选中的分组色（仅 canUngroup 时有值由宿主传入？——色板只做选择，展示态由色卡按钮自身高亮即可） */
+function onPickColor(key: string | null) {
+  colorMenuOpen.value = false
+  emit('groupColor', key)
+}
 
 function closeExportMenu() {
   exportMenuOpen.value = false
@@ -44,6 +56,10 @@ function closeExportMenu() {
 
 function closeLayoutMenu() {
   layoutMenuOpen.value = false
+}
+
+function closeColorMenu() {
+  colorMenuOpen.value = false
 }
 
 function onGenerateClick() {
@@ -118,6 +134,9 @@ function onDocClick(event: MouseEvent) {
   }
   if (!target?.closest('[data-layout-menu]')) {
     closeLayoutMenu()
+  }
+  if (!target?.closest('[data-color-menu]')) {
+    closeColorMenu()
   }
 }
 
@@ -229,6 +248,58 @@ onUnmounted(() => {
         </svg>
         <span v-if="!batchRunning" class="badge">{{ batchRegenCount }}</span>
       </button>
+      <!-- P3 2026-10-12：分组色卡（仅选中分组时出现）。
+           8 格低饱和预设 + 首格复位（⃠ 回默认中性）；色值全部走
+           --neo-group-* 令牌，组件内无字面 hex。 -->
+      <div
+        v-if="canUngroup"
+        class="relative"
+        data-color-menu
+      >
+        <button
+          type="button"
+          class="toolbar-action"
+          data-testid="group-color-trigger"
+          aria-label="颜色"
+          title="分组颜色"
+          @click.stop="colorMenuOpen = !colorMenuOpen; layoutMenuOpen = false; exportMenuOpen = false"
+        >
+          <svg viewBox="0 0 16 16" class="ico" aria-hidden="true">
+            <circle cx="8" cy="8" r="5.5" />
+            <path d="M8 2.5v11M2.5 8h11" stroke-opacity="0.35" />
+          </svg>
+        </button>
+        <div
+          v-if="colorMenuOpen"
+          class="export-menu neo-chrome absolute left-0 top-full z-50 mt-1 rounded-lg p-2"
+        >
+          <div class="grid grid-cols-4 gap-1.5">
+            <button
+              type="button"
+              class="group-color-swatch"
+              data-testid="group-color-none"
+              aria-label="恢复默认色"
+              title="恢复默认色"
+              @click="onPickColor(null)"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M3 13 13 3" />
+              </svg>
+            </button>
+            <button
+              v-for="key in colorKeys"
+              :key="key"
+              type="button"
+              class="group-color-swatch"
+              :data-testid="`group-color-${key}`"
+              :aria-label="`分组色 ${key}`"
+              :title="`分组色 ${key}`"
+              :style="{ background: `var(--neo-group-${key})` }"
+              @click="onPickColor(key)"
+            />
+          </div>
+        </div>
+      </div>
       <button
         v-if="canUngroup"
         type="button"
@@ -461,5 +532,31 @@ onUnmounted(() => {
 .export-menu-item:hover {
   background: var(--neo-hover-bg);
   color: var(--neo-text-primary);
+}
+
+/* 分组色卡格子（P3 2026-10-12）：色由内联 var(--neo-group-*) 提供，这里只管形状与悬停反馈 */
+.group-color-swatch {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--neo-text) 18%, transparent);
+  border-radius: 7px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+.group-color-swatch:hover {
+  transform: scale(1.08);
+  border-color: color-mix(in srgb, var(--neo-text) 45%, transparent);
+}
+.group-color-swatch svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--neo-text);
+  stroke-width: 1.6;
+  stroke-linecap: round;
 }
 </style>
