@@ -214,10 +214,30 @@ export class Metrics {
 	 *  （又 resume 上游）——比 8s 墙钟超时更早、更准的告警源。 */
 	private orphanAbortReconcile = { ok: 0, drift: 0 };
 
+	/** P3：每工具调用的 token 消耗（vendor `after_tool` hook 独有的 usage 字段，
+	 *  raw tool_start/tool_end 事件不带）。key: tool|kind。 */
+	private toolUsage = new Map<string, number>();
+
 	/** P1：孤儿结算结果观测（ok/drift），见字段注释。 */
 	observeOrphanSettle(tookAbortReconcile: boolean): void {
 		if (tookAbortReconcile) this.orphanAbortReconcile.ok += 1;
 		else this.orphanAbortReconcile.drift += 1;
+	}
+
+	/** P3：工具调用 token 观测（防御式：非有限/负数丢弃，与 observeUsage 同口径）。 */
+	observeToolUsage(
+		tool: string,
+		usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number },
+	): void {
+		const bump = (kind: string, delta: number | undefined) => {
+			if (!Number.isFinite(delta) || (delta ?? 0) < 0) return;
+			const key = `${tool}|${kind}`;
+			this.toolUsage.set(key, (this.toolUsage.get(key) ?? 0) + (delta ?? 0));
+		};
+		bump("input", usage.input);
+		bump("output", usage.output);
+		bump("cache_read", usage.cacheRead);
+		bump("cache_write", usage.cacheWrite);
 	}
 
 	/** P0-① 会话 create 结果：new（新建）/ memory（内存复用）/ disk（磁盘恢复）/ rebuilt（身份变更重建）。 */
@@ -593,6 +613,15 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_usage_cost_total counter");
 	for (const [kind, v] of [...this.usageCost.entries()].sort()) {
 		lines.push(`pi_runtime_usage_cost_total{kind="${kind}"} ${v.toFixed(6)}`);
+	}
+
+	// P3：每工具调用 token（after_tool hook 独有 usage 字段）。空 Map 只出 HELP/TYPE
+	//（与 usage_tokens 同口径：零流量不谎报）。
+	lines.push("# HELP pi_runtime_tool_usage_tokens_total Per-tool-call token usage by kind (vendor after_tool hook).");
+	lines.push("# TYPE pi_runtime_tool_usage_tokens_total counter");
+	for (const [key, v] of [...this.toolUsage.entries()].sort()) {
+		const [tool, kind] = key.split("|");
+		lines.push(`pi_runtime_tool_usage_tokens_total{tool="${esc(tool)}",kind="${esc(kind)}"} ${v}`);
 	}
 
 	lines.push("# HELP pi_runtime_tool_search_calls_total tool_search invocations by search outcome.");

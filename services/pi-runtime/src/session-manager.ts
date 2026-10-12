@@ -1430,6 +1430,20 @@ export class SessionManager {
 					}
 				}),
 			);
+
+			// P3 架构裁决（vendor 设计哲学对齐）：工具计时/分类的 SSOT 维持 raw
+			// tool_start/tool_end 事件——hooks 是**可变更的中间件面**（截断/信号/门控，
+			// 返回值会 patch 结果），events 是**纯观测总线**（成对 start/end + terminate）。
+			// vendor after_tool 事件缺 start 时间戳与 terminate 字段（agent-harness.d.ts:564
+			// 核实），迁移会丢每次调用耗时直方图与「模型主动终止=blocked 不算错误」分类。
+			// after_tool 只做 raw 事件没有的**增量**观测：每工具调用的 token usage
+			// （hook 独有字段）。返回 undefined 不改结果，不影响既有 listener 链。
+			entry.unsubscribes.push(
+				harness.hooks.on("after_tool", async (event) => {
+					if (event.usage) metrics.observeToolUsage(event.toolName, event.usage);
+					return undefined;
+				}),
+			);
 		}
 	}
 
