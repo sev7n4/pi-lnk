@@ -159,6 +159,22 @@ export type AuditLogRow = {
 
 export type AuditLogPage = { rows: AuditLogRow[]; total: number; page: number; pageSize: number }
 
+/** automation job 摘要（GET /admin/automations 返回的运营侧子集；C5 P0 只读+trigger）。 */
+export type AutomationJobSummary = {
+  id: string
+  name: string
+  handlerKey: string
+  enabled: boolean
+  lastRun: {
+    id: string
+    reason: string
+    status: string
+    startedAt: string
+    finishedAt: string | null
+    error: string | null
+  } | null
+}
+
 export const adminApi = {
   /**
    * token 验真：复用目录 GET（最轻的鉴权读端点）。
@@ -199,6 +215,15 @@ export const adminApi = {
     ),
 
   latestProbeRuns: (): Promise<{ runs: ProbeRunRow[] }> => unwrap(adminHttp.get('/admin/upstream-probe/latest')),
+
+  listAutomations: (): Promise<{ jobs: AutomationJobSummary[] }> =>
+    unwrap(adminHttp.get('/admin/automations', { params: undefined })),
+
+  /** 手动触发 automation job（C5 trigger 端点）；探活 = handlerKey 'upstream-probe'。 */
+  triggerAutomation: (id: string) =>
+    unwrap<Record<string, unknown>>(
+      adminHttp.post(`/admin/automations/${encodeURIComponent(id)}/trigger`, {}),
+    ),
 
   platformChannel: (): Promise<PlatformChannelView> => unwrap(adminHttp.get('/admin/platform-channel')),
 

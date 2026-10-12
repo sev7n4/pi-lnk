@@ -6,6 +6,17 @@ import AdminModelsPage from './AdminModelsPage.vue'
 
 const { ElMessageBoxConfirm } = vi.hoisted(() => ({ ElMessageBoxConfirm: vi.fn(async (..._a: unknown[]) => 'confirm') }))
 
+// vue-router mock：route.query 可变（预填/筛选回填用例），router.replace/push 记录调用
+const routeState = vi.hoisted(() => ({
+  query: {} as Record<string, unknown>,
+  replace: vi.fn(async () => ({})),
+  push: vi.fn(async () => ({})),
+}))
+vi.mock('vue-router', () => ({
+  useRoute: () => routeState,
+  useRouter: () => ({ replace: routeState.replace, push: routeState.push }),
+}))
+
 // brief 原文用 vi.spyOn(await import('element-plus'), 'ElMessageBox')，但 vitest 下
 // ESM namespace 不可 reconfigure（"Module namespace is not configurable"），必然抛错；
 // 改为等价意图的部分 mock：确认弹窗默认 resolve，断言与数据驱动不变。
@@ -63,6 +74,9 @@ function mountPage() {
 describe('AdminModelsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    routeState.query = {}
+    routeState.replace.mockClear()
+    routeState.push.mockClear()
   })
 
   it('加载目录并渲染行；软删行带已下架标记', async () => {
@@ -194,5 +208,134 @@ describe('AdminModelsPage', () => {
     expect((w.vm as unknown as { linkOf: (row: { modelKey: string; deletedAt: string | null }) => { level: string; label: string } }).linkOf({ modelKey: 'm-2', deletedAt: null })).toMatchObject({ level: 'green', label: '正常' })
     expect((w.vm as unknown as { linkOf: (row: { modelKey: string; deletedAt: string | null }) => { level: string; label: string } }).linkOf({ modelKey: 'm-3', deletedAt: null })).toMatchObject({ level: 'gray', label: '未知' })
     expect((w.vm as unknown as { linkOf: (row: { modelKey: string; deletedAt: string | null }) => { level: string; label: string } }).linkOf({ modelKey: 'm-4', deletedAt: '2026-10-10T00:00:00.000Z' })).toMatchObject({ level: 'gray', label: '已下架' })
+  })
+
+  it('分类筛选：模态/链路状态/生命周期/上游组合过滤（2026-10-12 增强）', async () => {
+    listCatalog.mockResolvedValue({
+      version: 7,
+      entries: [
+        entry({}),
+        entry({ id: 'id-2', modelKey: 'm-2', gatewayModelId: 'gw-2', modality: 'video' }),
+        entry({ id: 'id-3', modelKey: 'm-3', gatewayModelId: 'gw-3', deletedAt: '2026-10-10T00:00:00.000Z' }),
+      ],
+      ops: {
+        'm-1': { upstream: 'agnes_hub', baseUrl: 'https://apihub.agnes-ai.cn/v1', availability: 'unavailable', completed24h: 0, balance40224h: 0 },
+        'm-2': { upstream: 'fal', baseUrl: 'https://fal.run/v1', availability: 'available', completed24h: 2, balance40224h: 0 },
+      },
+    })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      filtered: { modelKey: string }[]
+      modalityFilter: string
+      linkFilter: string
+      lifecycleFilter: string
+      upstreamFilter: string
+      keyword: string
+    }
+    expect(vm.filtered.map((e) => e.modelKey)).toEqual(['m-1', 'm-2', 'm-3'])
+    vm.modalityFilter = 'video'
+    await flushPromises()
+    expect(vm.filtered.map((e) => e.modelKey)).toEqual(['m-2'])
+    vm.modalityFilter = ''
+    vm.linkFilter = 'red'
+    await flushPromises()
+    expect(vm.filtered.map((e) => e.modelKey)).toEqual(['m-1'])
+    vm.linkFilter = ''
+    vm.lifecycleFilter = 'off'
+    await flushPromises()
+    expect(vm.filtered.map((e) => e.modelKey)).toEqual(['m-3'])
+    vm.lifecycleFilter = ''
+    vm.upstreamFilter = 'fal'
+    await flushPromises()
+    expect(vm.filtered.map((e) => e.modelKey)).toEqual(['m-2'])
+    vm.upstreamFilter = ''
+    vm.keyword = 'gw-1'
+    await flushPromises()
+    // 关键词扩展到 gatewayModelId
+    expect(vm.filtered.map((e) => e.modelKey)).toEqual(['m-1'])
+  })
+
+  it('筛选态同步 URL query（可分享/收藏）', async () => {
+    listCatalog.mockResolvedValue({ version: 7, entries: [entry({})] })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as { modalityFilter: string; lifecycleFilter: string }
+    vm.modalityFilter = 'video'
+    await flushPromises()
+    vm.lifecycleFilter = 'active'
+    await flushPromises()
+    expect(routeState.replace).toHaveBeenLastCalledWith({ query: expect.objectContaining({ modality: 'video', lifecycle: 'active' }) })
+  })
+
+  it('预填上架：?prefill=<modelKey> → 自动打开新增弹窗并预填三标识（missing 去上架闭环）', async () => {
+    routeState.query = { prefill: 'agnes-2.5-pro' }
+    listCatalog.mockResolvedValue({ version: 7, entries: [entry({})] })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as { dialogVisible: boolean; form: Record<string, unknown> }
+    expect(vm.dialogVisible).toBe(true)
+    expect(vm.form.modelKey).toBe('agnes-2.5-pro')
+    expect(vm.form.gatewayModelId).toBe('agnes-2.5-pro')
+  })
+
+  it('在售开关 on→off：确认后调 deleteCatalogEntry（复用下架确认）', async () => {
+    listCatalog.mockResolvedValue({ version: 7, entries: [entry({})] })
+    deleteCatalogEntry.mockResolvedValue({ version: 8, id: 'id-1', modelKey: 'm-1' })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as { toggleSale: (row: { id: string; modelKey: string; deletedAt: string | null }) => Promise<void> }
+    await vm.toggleSale({ id: 'id-1', modelKey: 'm-1', deletedAt: null })
+    await flushPromises()
+    expect(ElMessageBoxConfirm).toHaveBeenCalled()
+    expect(deleteCatalogEntry).toHaveBeenCalledWith('id-1')
+  })
+
+  it('在售开关 off→on（软删行）：按既有配置走 POST 恢复上架', async () => {
+    listCatalog.mockResolvedValue({ version: 7, entries: [entry({ id: 'id-4', modelKey: 'm-4', deletedAt: '2026-10-10T00:00:00.000Z' })] })
+    createCatalogEntry.mockResolvedValue({ version: 8, id: 'id-4', modelKey: 'm-4' })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      toggleSale: (row: { id: string; modelKey: string; deletedAt: string | null }) => Promise<void>
+      form: Record<string, unknown>
+    }
+    await vm.toggleSale({ ...entry({ id: 'id-4', modelKey: 'm-4', deletedAt: '2026-10-10T00:00:00.000Z' }) })
+    await flushPromises()
+    expect(createCatalogEntry).toHaveBeenCalledWith(expect.objectContaining({ modelKey: 'm-4', gatewayModelId: 'gw-1' }))
+  })
+
+  it('批量下架：仅对在售选中项逐条 DELETE，失败项汇总透出、成功项生效', async () => {
+    listCatalog.mockResolvedValue({
+      version: 7,
+      entries: [entry({}), entry({ id: 'id-2', modelKey: 'm-2' }), entry({ id: 'id-3', modelKey: 'm-3', deletedAt: '2026-10-10T00:00:00.000Z' })],
+    })
+    const { AdminApiError } = await import('@/services/admin-api')
+    deleteCatalogEntry.mockImplementation(async (id: string) => {
+      if (id === 'id-1') throw new AdminApiError('m-1 是默认模型，禁止下架', 409)
+      return { version: 8, id, modelKey: id }
+    })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      onSelectionChange: (rows: unknown[]) => void
+      activeSelectedCount: number
+      batchOffboard: () => Promise<void>
+      actionError: string
+    }
+    const rows = [
+      { id: 'id-1', modelKey: 'm-1', deletedAt: null },
+      { id: 'id-2', modelKey: 'm-2', deletedAt: null },
+      { id: 'id-3', modelKey: 'm-3', deletedAt: '2026-10-10T00:00:00.000Z' },
+    ]
+    vm.onSelectionChange(rows)
+    expect(vm.activeSelectedCount).toBe(2)
+    await vm.batchOffboard()
+    await flushPromises()
+    expect(ElMessageBoxConfirm).toHaveBeenCalledTimes(1)
+    expect(deleteCatalogEntry).toHaveBeenCalledTimes(2)
+    expect(deleteCatalogEntry).toHaveBeenCalledWith('id-1')
+    expect(deleteCatalogEntry).toHaveBeenCalledWith('id-2')
+    expect(vm.actionError).toContain('m-1 是默认模型，禁止下架')
   })
 })

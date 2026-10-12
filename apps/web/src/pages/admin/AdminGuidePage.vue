@@ -18,7 +18,8 @@
       <div class="rounded border border-line-subtle bg-surface-base p-3">
         <h2 class="mb-1 font-semibold text-fg">模型目录</h2>
         <ul class="list-disc pl-5 text-fg-2">
-          <li><span class="text-fg">modelKey</span> 创建后不可改；下架是软删（可恢复），同 modelKey 重新新增即恢复上架。</li>
+          <li><span class="text-fg">modelKey</span> 创建后不可改；<span class="text-fg">在售开关</span>拨 off = 下架（软删），拨回 on = 按既有配置恢复上架。</li>
+          <li>工具栏可按 生命周期 / 模态 / 归属上游 / 链路状态 组合筛选（筛选态在 URL，可分享链接）；选中多行可<span class="text-fg">批量下架</span>。</li>
           <li><span class="text-fg">modality</span> = 输出能力（text/image/video/audio，单选）。</li>
           <li><span class="text-fg">providerBinding</span> = 服务端装载适配器白名单（文本模型一律 gateway-openai-compat）。</li>
           <li>
@@ -49,10 +50,10 @@
         <h2 class="mb-1 font-semibold text-fg">健康探活</h2>
         <ul class="list-disc pl-5 text-fg-2">
           <li>上半区 = 全部真实流量统计（含 BYOK 用户渠道，按 模型+渠道 分组）；402 计数 = 上游余额不足。</li>
-          <li>下半区 = 定时探活（默认 6h，只读 GET /v1/models，不发生成请求），无手动触发按钮。</li>
+          <li>下半区 = 探活（默认每 6h 定时跑，只读 GET /v1/models，不发生成请求）；「立即探活」可手动触发一轮，完成后自动刷新。</li>
           <li>
             <span class="text-warning">ghost N</span> = 目录有、上游 /models 没报（候选下架）；
-            <span class="text-fg-2">missing N</span> = 上游有、目录没有（候选上架）——展开行看清单。注意上游 /models 清单 ≠ 实际可用（如 agnes hub 第三方模型不上清单），判活以真实流量为准。
+            <span class="text-fg-2">missing N</span> = 上游有、目录没有（候选上架）——展开行逐项带「去上架」，点击跳目录页并预填新增弹窗。注意上游 /models 清单 ≠ 实际可用（如 agnes hub 第三方模型不上清单），判活以真实流量为准。
           </li>
           <li>HTTP/模型数空白 = 该次探活失败（看同行错误列，如超时）。</li>
         </ul>

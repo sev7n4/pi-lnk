@@ -5,15 +5,25 @@ import ElementPlus from 'element-plus'
 import AdminHealthPage from './AdminHealthPage.vue'
 import { AdminApiError } from '@/services/admin-api'
 
-const { modelHealth, latestProbeRuns } = vi.hoisted(() => ({
+const { modelHealth, latestProbeRuns, listAutomations, triggerAutomation, routerPush } = vi.hoisted(() => ({
   modelHealth: vi.fn(),
   latestProbeRuns: vi.fn(),
+  listAutomations: vi.fn(),
+  triggerAutomation: vi.fn(),
+  routerPush: vi.fn(async () => ({})),
+}))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: routerPush, replace: vi.fn(async () => ({})) }),
+  useRoute: () => ({ query: {} }),
 }))
 
 vi.mock('@/services/admin-api', () => ({
   adminApi: {
     modelHealth: (...a: unknown[]) => modelHealth(...a),
     latestProbeRuns: (...a: unknown[]) => latestProbeRuns(...a),
+    listAutomations: (...a: unknown[]) => listAutomations(...a),
+    triggerAutomation: (...a: unknown[]) => triggerAutomation(...a),
   },
   AdminApiError: class extends Error {},
 }))
@@ -114,5 +124,55 @@ describe('AdminHealthPage', () => {
     // missing = 上游有、目录没有（候选上架）。文案必须与之一致，防止运营误读。
     expect(w.text()).toContain('ghost（目录有、上游 /models 没报 → 候选下架')
     expect(w.text()).toContain('missing（上游有、目录没有 → 候选上架）')
+  })
+
+  it('missing 模型逐项渲染「去上架」→ 跳目录页带 prefill query（2026-10-12 闭环）', async () => {
+    modelHealth.mockResolvedValue({ generatedAt: '', rows: [], alerts: [] })
+    latestProbeRuns.mockResolvedValue({
+      runs: [
+        { id: 'p1', ranAt: '2026-10-11T04:00:00.000Z', upstream: 'agnes_hub', httpStatus: 200, modelCount: 5, ghosts: [], missing: ['agnes-2.5-pro', 'agnes-video-2.5'], error: null, reason: null },
+      ],
+    })
+    const w = mountPage()
+    await flushPromises()
+    await w.find('.el-table__expand-icon').trigger('click')
+    await flushPromises()
+    const buttons = w.findAll('button').filter((b) => b.text() === '去上架')
+    expect(buttons.length).toBe(2)
+    await buttons[0]!.trigger('click')
+    await flushPromises()
+    expect(routerPush).toHaveBeenCalledWith({ path: '/admin/models', query: { prefill: 'agnes-2.5-pro' } })
+  })
+
+  it('立即探活：按 handlerKey 解析 job → POST trigger → 轮询到新 run 自动刷新', async () => {
+    modelHealth.mockResolvedValue({ generatedAt: '', rows: [], alerts: [] })
+    // 首次 = 页面加载；其后 = 探活轮询（返回新 ranAt）
+    latestProbeRuns
+      .mockResolvedValueOnce({ runs: [{ id: 'p0', ranAt: '2026-10-11T04:00:00.000Z', upstream: 'agnes_hub', httpStatus: 200, modelCount: 5, ghosts: [], missing: [], error: null, reason: 'periodic' }] })
+      .mockResolvedValue({ runs: [{ id: 'p1', ranAt: '2026-10-12T06:00:00.000Z', upstream: 'agnes_hub', httpStatus: 200, modelCount: 5, ghosts: [], missing: [], error: null, reason: 'manual' }] })
+    listAutomations.mockResolvedValue({ jobs: [{ id: 'job-1', name: '上游探活', handlerKey: 'upstream-probe', enabled: true, lastRun: null }] })
+    triggerAutomation.mockResolvedValue({ runId: 'run-1' })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as { triggerProbe: (opts?: { pollDelayMs?: number }) => Promise<void>; probing: boolean }
+    await vm.triggerProbe({ pollDelayMs: 0 })
+    await flushPromises()
+    expect(triggerAutomation).toHaveBeenCalledWith('job-1')
+    expect(vm.probing).toBe(false)
+  })
+
+  it('探活 job 缺失/禁用 → 提示不触发；触发失败透出错误', async () => {
+    modelHealth.mockResolvedValue({ generatedAt: '', rows: [], alerts: [] })
+    latestProbeRuns.mockResolvedValue({ runs: [] })
+    listAutomations.mockResolvedValue({ jobs: [{ id: 'job-9', name: '探活', handlerKey: 'upstream-probe', enabled: false, lastRun: null }] })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as { triggerProbe: (opts?: { pollDelayMs?: number }) => Promise<void> }
+    await vm.triggerProbe({ pollDelayMs: 0 })
+    expect(triggerAutomation).not.toHaveBeenCalled()
+
+    listAutomations.mockRejectedValue(new AdminApiError('服务不可用', 503))
+    await vm.triggerProbe({ pollDelayMs: 0 })
+    expect(w.text()).toContain('服务不可用')
   })
 })

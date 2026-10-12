@@ -20,11 +20,14 @@ describe('AdminGuidePage', () => {
     }
   })
 
-  it('覆盖关键操作语义（params 处置 / ghost-missing / 定价单位 / 软删恢复）', () => {
+  it('覆盖关键操作语义（params 处置 / ghost-missing / 定价单位 / 开关与预填上架）', () => {
     const w = mountPage()
     expect(w.text()).toContain('metadataOnly')
     expect(w.text()).toContain('候选上架')
     expect(w.text()).toContain('每百万 token 绝对美元单价')
-    expect(w.text()).toContain('同 modelKey 重新新增即恢复上架')
+    // 2026-10-12：软删恢复入口从「重新新增」升级为「在售开关拨回 on」；missing 带去上架
+    expect(w.text()).toContain('按既有配置恢复上架')
+    expect(w.text()).toContain('去上架')
+    expect(w.text()).toContain('立即探活')
   })
 })
