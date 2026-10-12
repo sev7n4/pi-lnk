@@ -11,6 +11,8 @@ export interface VideoModelCapabilities {
   supports4K: boolean
   allowedAspectRatios: string[]
   allowedResolutions: string[]
+  /** 离散时长档位（如 cogvideox [5,10]）；缺省 = minDuration–maxDuration 连续 */
+  allowedDurations?: number[]
   minDuration: number
   maxDuration: number
   maxImageRefs: number
@@ -43,6 +45,7 @@ export function resolveVideoModelCapabilities(
     supports4K: profile.maxResolution === '4k',
     allowedAspectRatios: profile.allowedAspectRatios,
     allowedResolutions: profile.allowedResolutions,
+    allowedDurations: profile.allowedDurations,
     minDuration: profile.minDuration,
     maxDuration: profile.maxDuration,
     maxImageRefs: profile.maxImageRefs,

@@ -34,6 +34,12 @@ describe('VideoDockPanel bottom dock', () => {
     expect(panelSrc).not.toContain('dock-advanced')
   })
 
+  it('snaps video settings on model switch with a one-shot hint (shared snapVideoSettingsToCapabilities)', () => {
+    expect(panelSrc).toContain('snapVideoSettingsToCapabilities')
+    expect(panelSrc).toContain('watch(videoModel')
+    expect(panelSrc).toContain('ElMessage.info(adjusted')
+  })
+
   it('does not embed the ref-preflight banner or client-side probe (server owns preflight)', () => {
     expect(panelSrc).not.toContain('dock-ref-preflight-alert')
     expect(panelSrc).not.toContain('ElAlert')

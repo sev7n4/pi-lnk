@@ -4,15 +4,13 @@ import { useClickOutside } from '@/composables/useClickOutside'
 import {
   clampVideoDuration,
   DEFAULT_VIDEO_SETTINGS,
-  VIDEO_ASPECT_RATIO_OPTIONS,
+  snapVideoSettingsToCapabilities,
+  videoBaselineAspectOptionsForCapabilities,
+  videoBaselineResolutionOptionsForCapabilities,
   VIDEO_CROP_OPTIONS,
   VIDEO_DURATION_MARKS,
-  VIDEO_RESOLUTION_OPTIONS,
-  videoAspectRatioOptionsForCapabilities,
-  videoResolutionOptionsForCapabilities,
   type VideoAspectRatio,
   type VideoModelCapabilities,
-  type VideoResolution,
   type VideoSettings,
 } from '@lnkpi/shared'
 // S2-1b：resolveModelKey 改读服务端下发目录（归一层注入 rows），不再直读 shared 常量。
@@ -39,7 +37,8 @@ const nativeParams = computed(() => {
   }
 })
 
-const showGenerateAudio = computed(() => nativeParams.value.generateAudio)
+/** 生成音频是否为该模型原生参数；不支持时常驻展示但置灰（基线全集原则） */
+const audioSupported = computed(() => nativeParams.value.generateAudio)
 
 const showSeed = computed(() => nativeParams.value.seed)
 
@@ -52,6 +51,9 @@ const durationBounds = computed(() => ({
   max: props.capabilities?.maxDuration ?? 15,
 }))
 
+/** 离散时长档位（如 cogvideox 仅 5/10s）；非空时以 pill 呈现，替代连续滑轨 */
+const discreteDurations = computed(() => props.capabilities?.allowedDurations ?? null)
+
 const durationMarks = computed(() =>
   VIDEO_DURATION_MARKS.filter((mark) => mark >= durationBounds.value.min && mark <= durationBounds.value.max),
 )
@@ -62,40 +64,20 @@ const durationBelowMinHint = computed(() => {
   return `该模型最短 ${min} 秒`
 })
 
-const aspectRatioOptions = computed(() => {
-  if (!props.capabilities) return VIDEO_ASPECT_RATIO_OPTIONS
-  return videoAspectRatioOptionsForCapabilities(props.capabilities)
-})
+/**
+ * Seedance 基线全集常驻展示；模型不支持的能力置灰（disabled + title 提示），
+ * 与选中值无关——切换模型时能力差异一眼可见。
+ */
+const aspectOptions = computed(() => videoBaselineAspectOptionsForCapabilities(props.capabilities))
 
-const resolutionOptions = computed(() => {
-  if (!props.capabilities) return VIDEO_RESOLUTION_OPTIONS
-  return videoResolutionOptionsForCapabilities(props.capabilities)
-})
+const resolutionOptions = computed(() => videoBaselineResolutionOptionsForCapabilities(props.capabilities))
+
+const disabledCapabilityTitle = '当前模型不支持，由模型自动处理'
 
 function ensureAllowedSettings() {
-  const partial: Partial<VideoSettings> = {}
-  if (props.capabilities) {
-    const arOpts = aspectRatioOptions.value
-    if (
-      arOpts.length > 0
-      && !arOpts.some((o) => o.value === props.modelValue.aspectRatio)
-    ) {
-      partial.aspectRatio = arOpts[0].value as VideoAspectRatio
-    }
-    const resOpts = resolutionOptions.value
-    if (
-      resOpts.length > 0
-      && !resOpts.some((o) => o.value === props.modelValue.resolution)
-    ) {
-      partial.resolution = resOpts[0].value as VideoResolution
-    }
-  }
-  const clamped = clampVideoDuration(props.modelValue.duration, durationBounds.value)
-  if (clamped !== props.modelValue.duration) {
-    partial.duration = clamped
-  }
-  if (Object.keys(partial).length > 0) {
-    patch(partial)
+  const { next, adjusted } = snapVideoSettingsToCapabilities(props.modelValue, props.capabilities ?? null)
+  if (adjusted.length > 0) {
+    patch(next)
   }
 }
 
@@ -141,6 +123,28 @@ watch(
     ensureAllowedSettings()
   },
 )
+
+/** 比例小图标：按宽高比绘制示意矩形（与图片参数卡同款） */
+function aspectRect(value: string) {
+  if (value === 'adaptive') {
+    return { x: 2, y: 5, width: 14, height: 8 }
+  }
+  const [w, h] = value.split(':').map(Number)
+  const max = 14
+  const scale = max / Math.max(w, h)
+  const rw = Math.max(4, Math.round(w * scale))
+  const rh = Math.max(4, Math.round(h * scale))
+  return {
+    x: (18 - rw) / 2,
+    y: (18 - rh) / 2,
+    width: rw,
+    height: rh,
+  }
+}
+
+function aspectLabel(value: VideoAspectRatio): string {
+  return value === 'adaptive' ? '自适应' : value
+}
 </script>
 
 <template>
@@ -165,23 +169,37 @@ watch(
 
     <div
       v-if="open"
-      class="absolute bottom-full right-0 z-50 mb-1 w-[240px] neo-popover rounded-xl p-3"
+      class="absolute bottom-full right-0 z-50 mb-1 w-[264px] neo-popover rounded-xl p-3"
       @click.stop
     >
       <div class="mb-3">
-        <p class="mb-1.5 text-[10px] text-[var(--neo-text-muted)]">画面比例</p>
-        <div class="flex flex-wrap gap-1">
+        <p class="mb-1.5 text-[10px] text-[var(--neo-text-muted)]">宽高比</p>
+        <div class="grid grid-cols-3 gap-1">
           <button
-            v-for="opt in aspectRatioOptions"
+            v-for="opt in aspectOptions"
             :key="opt.value"
             type="button"
-            class="neo-chip rounded-md px-2 py-1 text-[10px]"
-            :class="modelValue.aspectRatio === opt.value
-              ? 'is-on'
-              : ''"
-            @click="patch({ aspectRatio: opt.value })"
+            class="neo-chip flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-[10px]"
+            :class="[
+              modelValue.aspectRatio === opt.value ? 'is-on' : '',
+              opt.disabled ? 'cursor-not-allowed opacity-40' : '',
+            ]"
+            :disabled="opt.disabled"
+            :title="opt.disabled ? disabledCapabilityTitle : undefined"
+            @click="!opt.disabled && patch({ aspectRatio: opt.value })"
           >
-            {{ opt.label }}
+            <svg
+              viewBox="0 0 18 18"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              :stroke-dasharray="opt.value === 'adaptive' ? '2 2' : undefined"
+            >
+              <rect v-bind="aspectRect(opt.value)" rx="1.5" />
+            </svg>
+            {{ aspectLabel(opt.value) }}
           </button>
         </div>
       </div>
@@ -193,11 +211,14 @@ watch(
             v-for="opt in resolutionOptions"
             :key="opt.value"
             type="button"
-            class="neo-chip flex-1 rounded-md px-2 py-1 text-[10px]"
-            :class="modelValue.resolution === opt.value
-              ? 'is-on'
-              : ''"
-            @click="patch({ resolution: opt.value })"
+            class="neo-chip flex-1 rounded-md px-1 py-1 text-[10px]"
+            :class="[
+              modelValue.resolution === opt.value ? 'is-on' : '',
+              opt.disabled ? 'cursor-not-allowed opacity-40' : '',
+            ]"
+            :disabled="opt.disabled"
+            :title="opt.disabled ? disabledCapabilityTitle : undefined"
+            @click="!opt.disabled && patch({ resolution: opt.value })"
           >
             {{ opt.label }}
           </button>
@@ -209,27 +230,43 @@ watch(
           <span>时长</span>
           <span class="tabular-nums text-[var(--neo-text-secondary)]">{{ modelValue.duration }}s</span>
         </p>
-        <input
-          type="range"
-          :min="durationBounds.min"
-          :max="durationBounds.max"
-          step="1"
-          class="w-full accent-[var(--neo-accent)]"
-          :value="modelValue.duration"
-          @input="patch({ duration: clampVideoDuration(($event.target as HTMLInputElement).value, durationBounds) })"
-        />
-        <div class="mt-1 flex justify-between text-[10px]">
-          <button
-            v-for="mark in durationMarks"
-            :key="mark"
-            type="button"
-            class="text-[var(--neo-text-muted)]"
-            :class="mark === 10 || mark === 15 ? 'font-semibold text-[var(--neo-accent-text)]' : ''"
-            @click="patch({ duration: mark })"
-          >
-            {{ mark }}
-          </button>
-        </div>
+        <template v-if="discreteDurations && discreteDurations.length > 0">
+          <div class="flex gap-1">
+            <button
+              v-for="tier in discreteDurations"
+              :key="tier"
+              type="button"
+              class="neo-chip flex-1 rounded-md px-2 py-1 text-[10px]"
+              :class="modelValue.duration === tier ? 'is-on' : ''"
+              @click="patch({ duration: tier })"
+            >
+              {{ tier }}s
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <input
+            type="range"
+            :min="durationBounds.min"
+            :max="durationBounds.max"
+            step="1"
+            class="w-full accent-[var(--neo-text-primary)]"
+            :value="modelValue.duration"
+            @input="patch({ duration: clampVideoDuration(($event.target as HTMLInputElement).value, durationBounds) })"
+          />
+          <div class="mt-1 flex justify-between text-[10px]">
+            <button
+              v-for="mark in durationMarks"
+              :key="mark"
+              type="button"
+              class="text-[var(--neo-text-muted)]"
+              :class="mark === modelValue.duration ? 'font-semibold text-fg' : ''"
+              @click="patch({ duration: mark })"
+            >
+              {{ mark }}
+            </button>
+          </div>
+        </template>
         <p
           v-if="durationBelowMinHint"
           class="mt-1 text-[10px] text-warning"
@@ -238,15 +275,25 @@ watch(
         </p>
       </div>
 
-      <div v-if="showGenerateAudio" class="mb-3">
-        <p class="mb-1.5 text-[10px] text-[var(--neo-text-muted)]">生成音频</p>
+      <div class="mb-3 flex items-center justify-between">
+        <p
+          class="text-[10px] text-[var(--neo-text-muted)]"
+          :class="audioSupported ? '' : 'opacity-50'"
+        >生成音频</p>
         <button
           type="button"
-          class="neo-chip rounded-md px-2 py-1 text-[10px]"
-          :class="(modelValue.generateAudio ?? true) ? 'is-on' : ''"
-          @click="patch({ generateAudio: !(modelValue.generateAudio ?? true) })"
+          role="switch"
+          :disabled="!audioSupported"
+          :aria-checked="audioSupported ? (modelValue.generateAudio ?? true) : false"
+          class="relative h-[18px] w-8 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          :class="audioSupported && (modelValue.generateAudio ?? true) ? 'bg-[var(--neo-text-primary)]' : 'bg-[var(--neo-border-strong)]'"
+          :title="audioSupported ? ((modelValue.generateAudio ?? true) ? '生成音频：开' : '生成音频：关') : '当前模型不支持生成音频'"
+          @click="audioSupported && patch({ generateAudio: !(modelValue.generateAudio ?? true) })"
         >
-          {{ (modelValue.generateAudio ?? true) ? '开启' : '关闭' }}
+          <span
+            class="absolute top-[2px] h-[14px] w-[14px] rounded-full bg-[var(--neo-text-invert)] transition-all"
+            :class="audioSupported && (modelValue.generateAudio ?? true) ? 'left-[16px]' : 'left-[2px]'"
+          />
         </button>
       </div>
 

@@ -81,7 +81,7 @@ function bumpPitch(delta: number) {
     </button>
     <div
       v-if="open"
-      class="absolute bottom-full right-0 z-50 mb-1 w-[220px] neo-popover rounded-xl p-3"
+      class="absolute bottom-full right-0 z-50 mb-1 w-[240px] neo-popover rounded-xl p-3"
       @click.stop
     >
       <div class="mb-3">
@@ -130,7 +130,7 @@ function bumpPitch(delta: number) {
             max="2"
             step="0.1"
             :value="modelValue.speed"
-            class="min-w-0 flex-1 accent-[var(--neo-accent)]"
+            class="min-w-0 flex-1 accent-[var(--neo-text-primary)]"
             @input="patch({ speed: Number(($event.target as HTMLInputElement).value) })"
           >
           <button
@@ -158,7 +158,7 @@ function bumpPitch(delta: number) {
             max="2"
             step="0.1"
             :value="modelValue.volume"
-            class="min-w-0 flex-1 accent-[var(--neo-accent)]"
+            class="min-w-0 flex-1 accent-[var(--neo-text-primary)]"
             @input="patch({ volume: Number(($event.target as HTMLInputElement).value) })"
           >
           <button
@@ -186,7 +186,7 @@ function bumpPitch(delta: number) {
             max="12"
             step="1"
             :value="modelValue.pitch"
-            class="min-w-0 flex-1 accent-[var(--neo-accent)]"
+            class="min-w-0 flex-1 accent-[var(--neo-text-primary)]"
             @input="patch({ pitch: Number(($event.target as HTMLInputElement).value) })"
           >
           <button
