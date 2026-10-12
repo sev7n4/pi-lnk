@@ -105,6 +105,11 @@ describe('AdminHealthPage', () => {
     })
     const w = mountPage()
     await flushPromises()
+    // el-table 展开行内容点击展开后才渲染：先点展开图标再断言。
+    const expandIcon = w.find('.el-table__expand-icon')
+    expect(expandIcon.exists()).toBe(true)
+    await expandIcon.trigger('click')
+    await flushPromises()
     // 后端语义（upstreamReconciliation.ts）：ghost = 目录有、上游 /models 没报（候选下架）；
     // missing = 上游有、目录没有（候选上架）。文案必须与之一致，防止运营误读。
     expect(w.text()).toContain('ghost（目录有、上游 /models 没报 → 候选下架')
