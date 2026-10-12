@@ -106,13 +106,16 @@ for (const rel of P0_FILES) {
 }
 if (failures === beforeR2) ok('R2 通过：无无下划线注入键')
 
-console.log('R3: 信号 listener 注册序（P1 前瞻）')
+console.log('R3: 信号 listener 注册序（P1）')
 const indexPath = join(REPO, 'services/pi-runtime/src/index.ts')
 const indexSrc = readFileSync(indexPath, 'utf8')
 const mergedListener = indexSrc.indexOf('harness.hooks.on("after_tool"')
-const signalListener = indexSrc.indexOf('result-signal-listener')
+// P1 落地形态：接线函数 registerResultSignalListener（result-signal-wiring.ts，plan-gate-wiring 先例）。
+// 锚点 = index.ts 内该标识符的**最后一次**出现（= 调用点）：import 语句也含此标识符，
+// indexOf 首个命中会落在 import 行（< 合并 listener 行）使本规则恒 FAIL（SDD 台账 Ruling）。
+const signalListener = indexSrc.lastIndexOf('registerResultSignalListener')
 if (signalListener === -1) {
-	console.log('  SKIP：P1 信号 listener 尚未落地（result-signal-listener 未在 index.ts 引用）；P1 合入后本规则自动生效')
+	console.log('  SKIP：P1 信号 listener 尚未落地（index.ts 未调用 registerResultSignalListener）')
 } else if (mergedListener === -1) {
 	fail('index.ts 未找到合并 after_tool listener 注册点（结构漂移？）')
 } else {

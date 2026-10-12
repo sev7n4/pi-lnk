@@ -85,6 +85,12 @@ export interface RuntimeConfig {
 	/** 单条工具结果的字符上限。缺省 24000（高于现存各工具自带截断，只兜异常值）。 */
 	toolResultMaxChars?: number;
 	/**
+	 * 工具结果信号 listener 开关（P1 · spec 2026-10-12-tool-details-contract-design.md §6）。
+	 * off = 信号 listener 不注册（契约层类型化不受影响，行为与本开关引入前逐字节一致）。
+	 * 缺省 true。回滚 = 环境变量一行，无 schema 迁移。
+	 */
+	resultSignals?: boolean;
+	/**
 	 * steering 队列消费模式（vendor `AgentHarnessOptions.steeringMode`）。
 	 *
 	 * "all" = 每个 turn 边界把队列里**全部** steer 一次性注入；"one-at-a-time" = 每轮只注入
@@ -207,6 +213,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		compactionRetention: parseBool(env.PI_RUNTIME_COMPACTION_RETENTION, true),
 		toolResultBudget: parseBool(env.PI_RUNTIME_TOOL_RESULT_BUDGET, true),
 		toolResultMaxChars: parsePositiveInt(env.PI_RUNTIME_TOOL_RESULT_MAX_CHARS, 24_000),
+		resultSignals: parseBool(env.PI_RUNTIME_RESULT_SIGNALS, true),
 		// steering/followUp 队列模式（2026-10-02 由 configmap 化石收编为 env 口径）
 		steeringMode: parseQueueMode(env.PI_RUNTIME_STEERING_MODE, d.steeringMode),
 		followUpMode: parseQueueMode(env.PI_RUNTIME_FOLLOW_UP_MODE, d.followUpMode),

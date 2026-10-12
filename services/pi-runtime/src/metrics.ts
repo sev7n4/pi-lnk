@@ -128,6 +128,8 @@ export class Metrics {
 	private directImageTokens = 0; // 直通图片 token 估算累计（成本闸门观测）
 	private payloadTrims = new Map<string, number>(); // key: reason (history_image|overflow|text_overflow)
 	private toolResultTrims = new Map<string, number>(); // key: tool（统一上限触发的截断次数）
+	private resultSignals = new Map<string, number>(); // key: tier|status（P1 信号活性探针）
+	private resultSignalUnknown = new Map<string, number>(); // key: tool——errorCode=unknown 单独计数（§6 根因修复驱动）
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
 	private startedAt = Date.now();
 	/**
@@ -381,6 +383,21 @@ export class Metrics {
 		this.toolResultTrims.set(tool, (this.toolResultTrims.get(tool) ?? 0) + 1);
 	}
 
+	/**
+	 * 工具结果信号活性探针（P1 §6）：契约工具每次带 _signal 的结果按 tier|status 计数
+	 * （含 ok——探针语义是「链路在跑」，不只是「出了异常」）。
+	 * 与 tool_result_trims 同形态：Map 为空（kill switch off / 无契约流量）不渲染数据行。
+	 */
+	observeResultSignal(tier: string, status: "ok" | "partial" | "failed"): void {
+		const key = `${tier}|${status}`;
+		this.resultSignals.set(key, (this.resultSignals.get(key) ?? 0) + 1);
+	}
+
+	/** errorCode=unknown 单独计数（§5 配套）：用出现次数驱动上游 429 分类修复工单。 */
+	observeResultSignalUnknown(tool: string): void {
+		this.resultSignalUnknown.set(tool, (this.resultSignalUnknown.get(tool) ?? 0) + 1);
+	}
+
 	/** systemPrompt 总长水位（static+dynamic），每次组装后刷新（gauge 语义：取最新值）。 */
 	observeSystemPromptBytes(n: number): void {
 		this.systemPromptBytes = n;
@@ -612,6 +629,21 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_tool_result_trims_total counter");
 	for (const [tool, count] of [...this.toolResultTrims.entries()].sort()) {
 		lines.push(`pi_runtime_tool_result_trims_total{tool="${esc(tool)}"} ${count}`);
+	}
+
+	// P1 信号活性探针（§6）：Map 为空（off/无契约流量）不出数据行，使「从未触发」与「触发过但 0」可区分。
+	lines.push("# HELP pi_runtime_result_signal_total Tool-result signals observed by tier and status (activity probe).");
+	lines.push("# TYPE pi_runtime_result_signal_total counter");
+	for (const [key, count] of [...this.resultSignals.entries()].sort()) {
+		const [tier, status] = key.split("|");
+		lines.push(`pi_runtime_result_signal_total{tier="${esc(tier ?? "")}",status="${esc(status ?? "")}"} ${count}`);
+	}
+
+	// errorCode=unknown 单独计数：恒渲染数据行为空（无 unknown 就没有行），出现即驱动上游分类修复。
+	lines.push("# HELP pi_runtime_result_signal_unknown_total Tool-result signals with errorCode=unknown, by tool (drives upstream classification fixes).");
+	lines.push("# TYPE pi_runtime_result_signal_unknown_total counter");
+	for (const [tool, count] of [...this.resultSignalUnknown.entries()].sort()) {
+		lines.push(`pi_runtime_result_signal_unknown_total{tool="${esc(tool)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_transform_context_runs_total transform_context hook runs, by whether the goal was restated.");

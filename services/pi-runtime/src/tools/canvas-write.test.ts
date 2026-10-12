@@ -571,6 +571,10 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		const text = String((result.content as Array<{ text: string }>)[0].text);
 		assert.match(text, /rejected/);
 		assert.equal(reg.hasPending("s1"), false);
+		// P1 golden case ②（spec §6）：缺 confirmed → 信号 partial + retryable:false（§5 本地域事实：
+		// 工具自己知道同参重试无意义）+ reason 进 errorCode；gate 契约键 ok/confirmed 原样保留。
+		const sig = (result.details as { _signal?: Record<string, unknown> })._signal;
+		assert.deepEqual(sig, { status: "partial", retryable: false, errorCode: "rejected" });
 	});
 
 	it("draft 翻转边界：单次 draft 后转 generating（draftStreak 重置）→ confirmed=true", async () => {
