@@ -275,6 +275,7 @@ export function createGenerationTools(
 				const body: Record<string, unknown> = { sessionId: tc.sessionId, userId: tc.userId };
 				if (p.generation_record_id) body.generationRecordId = p.generation_record_id;
 				if (p.node_id) body.nodeId = p.node_id;
+				// verify-details:ignore cancel_generation 是 lifecycle 自描述结果（缺口报告 §3.6 勾选不进信号层）
 				return resultWithActions(
 					await client.post("/agent/internal/cancel-generation", body, {
 						signal: context?.abortSignal ?? undefined,
