@@ -515,6 +515,10 @@ function cancelEditUserMessage() {
  * 引用条（`AgentRefStrip`）与指代回执（`AgentSelectionBindingChip`）本次刻意保留 ——
  * 它们承载「这条消息当时带了哪些素材 / 指代了哪些节点」的既成事实，不是编辑内容的重复。
  *
+ * 2026-10-12 二次口径（同一张卡片）：它同时是气泡壳的宽度开关 ——
+ * 见 `.agent-bubble-user--editing`。展示态靠 max-width + 内容撑满，编辑态内容更窄会被
+ * shrink-to-fit 收窄，两态外形对不上；故编辑态显式取满同宽（88%）。
+ *
  * 取消编辑即原样恢复（本函数只做渲染门禁，不改 `editingDraft` / 消息数据）。
  */
 function isMessageUnderEdit(msg: AgentStreamMessage): boolean {
@@ -2717,33 +2721,49 @@ defineExpose({
               class="agent-turn"
               :class="msg.role === 'user' ? 'agent-turn--user' : 'agent-turn--assistant'"
             >
+              <!-- 用户气泡的二次编辑态是**同一张卡片**：同一个 .agent-bubble-user 容器，
+                   宽度/底色/圆角/内边距全不变，只有底部那一排按钮换成「取消 / 发送」。
+                   唯一需要额外声明的是宽度基准（agent-bubble-user--editing）：
+                   展示态靠 `max-width: 88%` + 内容撑满（长文案即取满 88%），
+                   而编辑态内容是一张 textarea，天然比正文窄 ⇒ shrink-to-fit 会把卡片收窄、
+                   看起来就换了张卡片。见下方 .agent-bubble-user--editing 的注释。 -->
               <div
                 v-if="shouldShowMessageBubbleText(msg)"
                 class="agent-bubble text-[13px] leading-relaxed"
-                :class="msg.role === 'user' ? 'agent-bubble-user' : 'agent-bubble-assistant'"
+                :class="[
+                  msg.role === 'user' ? 'agent-bubble-user' : 'agent-bubble-assistant',
+                  isMessageUnderEdit(msg) ? 'agent-bubble-user--editing' : '',
+                ]"
               >
                 <AgentProseBlock
                   v-if="shouldRenderSchemeDraftProse(msg)"
                   :content="msg.content"
                 />
                 <!-- 已发送用户消息的就地二次编辑（抄 WorkBuddy：默认只显编辑/复制，点编辑才出发送/取消）。
-                     编辑态下该消息的**历史正文**与其**操作行**退场（见 isMessageUnderEdit），
-                     免得同一段话在 textarea 与下方正文里各出现一次、下面还挂三个无用按钮。 -->
+                     编辑态 = 同一张用户卡片的另一种状态，**不是**另一张卡：
+                     · 卡片壳（底色 / 描边 / 圆角 / 内边距 / 宽度）全部沿用 .agent-bubble-user；
+                     · 正文换成**无缝** textarea（transparent + 无描边 + 零内边距 + display:block），
+                       文字起点与展示态正文逐像素对齐 —— 原先它自带 rounded/border/bg 与 p-2，
+                       在卡片里套出一块「卡中卡」，正是「看着换了张卡片」的主因；
+                     · 底部一排仍落在卡片内、与展示态图标行**同槽同高**（见 .agent-edit-actions）：
+                       展示态是「编辑 / 复制 / 复用本轮」，编辑态是「取消 / 发送」，仅此不同；
+                     · 该消息的**历史正文**与**操作行**退场（见 isMessageUnderEdit），
+                       免得同一段话在 textarea 与下方正文里各出现一次、下面还挂三个无用按钮。 -->
                 <p
                   v-else-if="isMessageUnderEdit(msg)"
-                  class="agent-edit-card whitespace-pre-wrap"
+                  class="agent-edit-card"
                 >
                   <textarea
                     v-model="editingDraft"
-                    class="agent-edit-textarea w-full resize-y rounded-md border border-[var(--neo-border)] bg-[var(--neo-surface-card)] p-2 text-[13px] leading-relaxed text-[var(--neo-text)] outline-none focus:border-[var(--neo-accent)]"
+                    class="agent-edit-textarea w-full resize-y text-[13px] leading-relaxed outline-none"
                     rows="3"
                     @keydown.meta.enter.prevent="sendEditedUserMessage(msg)"
                     @keydown.ctrl.enter.prevent="sendEditedUserMessage(msg)"
                   />
-                  <span class="mt-1 block text-[10px] text-[var(--neo-text-muted)]">
+                  <span class="agent-edit-hint mt-1 block text-[10px]">
                     ⓘ 编辑后将从此处重新开始对话，已有产物不会被删除
                   </span>
-                  <span class="mt-1.5 flex justify-end gap-2">
+                  <span class="agent-edit-actions">
                     <button type="button" class="agent-edit-btn" @click="cancelEditUserMessage">取消</button>
                     <button type="button" class="agent-edit-btn agent-edit-btn--primary" @click="sendEditedUserMessage(msg)">发送</button>
                   </span>
@@ -3708,6 +3728,19 @@ defineExpose({
   padding: 8px 12px;
 }
 
+/*
+ * 编辑态宽度基准 = 展示态的宽度上限。
+ *
+ * 展示态：`max-width: 88%` + 内容撑满 —— 正文够长时卡片就取满 88%（用户截图那张即是）。
+ * 编辑态：正文被换成一张 textarea，天然比正文窄，`max-width` 拦不住 shrink-to-fit，
+ *         卡片会被收窄到 ~288px，看起来「换了张卡片」（用户 2026-10-12 口径）。
+ * ⇒ 显式给同一张卡片补上 width: 88%，两种状态同一外形；`max-width: 88%` 仍在兜底。
+ *   展示态**不动**（没有这条类），短消息的窄气泡照旧。
+ */
+.agent-bubble-user--editing {
+  width: 88%;
+}
+
 .agent-bubble-assistant {
   width: 100%;
   max-width: none;
@@ -3864,17 +3897,44 @@ defineExpose({
   background: color-mix(in srgb, var(--neo-accent) 18%, transparent);
 }
 
-/* ---- 已发送用户消息就地二次编辑卡（抄 WorkBuddy） ---- */
+/* ---- 已发送用户消息就地二次编辑（同一张用户卡片的编辑态，不是另一张卡） ----
+ * 这里的每一条都是「与展示态对齐」的：卡片壳与宽度由 .agent-bubble-user（+--editing）负责，
+ * 本块只负责把 textarea 做无缝、把底部一排按钮摆回展示态图标行的槽位。 */
 .agent-edit-card {
   display: block;
 }
 
+/* 无缝正文：去掉 rounded/border/bg/p-2，文字起点与展示态正文完全对齐。
+ * display:block 顺手消掉 textarea 作为 inline-block 时的基线余隙。 */
 .agent-edit-textarea {
+  display: block;
   font-family: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+
+/* 提示语取用户气泡自己的文字色（而非全局 --neo-text-muted）：
+ * 它落在 --agent-user-bg 上，跟随气泡的明暗才不会有对比度缺口。 */
+.agent-edit-hint {
+  color: color-mix(in srgb, var(--agent-user-text) 62%, transparent);
+}
+
+/* 展示态图标行 .agent-msg-actions 的同槽：同样的左对齐、8px 顶距、26px 行高。
+ * 不共用那个类是因为它有 opacity: 0.55 + hover 才到 1 —— 编辑中的按钮必须常亮。 */
+.agent-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 /* 同上：次级按钮不能用 --neo-hi-bg + --neo-text 的同向配色（白底白字 / 深底深字） */
 .agent-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
   border: 1px solid var(--neo-border-strong);
   border-radius: 999px;
   background: var(--neo-surface-elevated);
