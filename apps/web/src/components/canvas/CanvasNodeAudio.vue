@@ -138,7 +138,11 @@ function openMediaInspector(e?: Event) {
           class="nodrag nowheel w-full"
           @loadedmetadata="onAudioLoadedMetadata"
         />
+        <!-- hover 收敛（2026-10-12 用户口径）：有任务记录的节点 hover 只留 ⓘ，
+             下载/存资产库统一进详情抽屉；无记录的本地上传节点保留原按钮兜底
+             （此时抽屉不可达，否则功能无处可去） -->
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-replace-btn nodrag"
           title="替换音频"
@@ -153,6 +157,7 @@ function openMediaInspector(e?: Event) {
           </svg>
         </button>
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-download-btn nodrag"
           :title="downloadTitle"
@@ -167,6 +172,7 @@ function openMediaInspector(e?: Event) {
           </svg>
         </button>
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-save-btn nodrag"
           title="存入资产库"
@@ -239,7 +245,8 @@ function openMediaInspector(e?: Event) {
           </div>
         </div>
       </div>
-      <p v-if="data.prompt" class="line-clamp-2 text-[11px] text-fg-3">{{ data.prompt }}</p>
+      <!-- prompt 文本卡（2026-10-12 删）：音频是唯一有媒体后仍显示 prompt 的节点，
+           与图片/视频不对齐且挤占卡片；prompt 统一在详情抽屉查看 -->
       <input
         ref="fileInput"
         type="file"

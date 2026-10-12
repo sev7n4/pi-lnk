@@ -172,6 +172,7 @@ function openMediaInspector(e?: Event) {
           </svg>
         </button>
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-replace-btn nodrag"
           title="替换视频"
@@ -186,6 +187,7 @@ function openMediaInspector(e?: Event) {
           </svg>
         </button>
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-download-btn nodrag"
           :title="downloadTitle"
@@ -200,6 +202,7 @@ function openMediaInspector(e?: Event) {
           </svg>
         </button>
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-save-btn nodrag"
           title="存入资产库"
