@@ -7,7 +7,8 @@
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
-import { resultWithActions } from "./result-with-actions.js";
+import { extractActions, resultWithActions } from "./result-with-actions.js";
+import { withSignal } from "./result-signal.js";
 
 export const REMOVE_EDGES_MAX = 20;
 
@@ -33,13 +34,17 @@ export function buildRemoveEdgesTools(client: NestClient): LnkpiTool[] {
 				if (p.edge_ids.length > REMOVE_EDGES_MAX) {
 					throw new Error("remove_edges accepts at most " + REMOVE_EDGES_MAX + " edges per call");
 				}
-				return resultWithActions(
-					await client.post("/agent/internal/remove-edges", {
-						sessionId: tc.sessionId,
-						userId: tc.userId,
-						edgeIds: p.edge_ids,
-					}),
-				);
+				const data = await client.post("/agent/internal/remove-edges", {
+					sessionId: tc.sessionId,
+					userId: tc.userId,
+					edgeIds: p.edge_ids,
+				});
+				// affectedCount 工具直报（spec §2.1 护栏）：Nest removeEdges 会 skip 不存在的边
+				// （service 1236-1262 源码核对），每条实际删除的边恰一条 remove_edge action，
+				// 1:1 成立 ⇒ 按响应内 remove_edge 计数；请求数与生效数之差 = 不存在的边（P1 对账判据）。
+				const affectedCount = extractActions(data).filter((a) => a.type === "remove_edge").length;
+				const base = resultWithActions(data);
+				return withSignal({ ...base, details: { ...base.details, affectedCount } }, { status: "ok" });
 			},
 		},
 	];
