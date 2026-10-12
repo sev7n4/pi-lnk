@@ -255,6 +255,8 @@ git commit -m "feat(pi-runtime): ToolResultSignal 契约 + vendor 分类器薄�
 
 ### Task 2: gen 族接线（generation.ts 7 工具）
 
+> **2026-10-12 拍板补充（用户选定方案 A）**：GenDetails 数据源 = Nest 侧 `used` 回读透传——`startImageGeneration` 补 `used:{model,aspectRatio,resolution,count}`（实际值局部变量已在作用域）、`runImageGeneration` 透传、`runAudioGeneration` 补 `used:{model,kind,voice}`（提取 `usedAudio` 局部量，两 return 点都带）；service 测试 +2（used 回读，113/113）。`used` 缺失（Nest 版本偏斜）→ `modelUsed:"unspecified"` / `generationParams:{}`，fail-soft 不造值。dock 语义不变：dock=用户意图 SSOT，details.used=执行事实。
+
 **Files:**
 - Modify: `services/pi-runtime/src/tools/generation.ts`（runTool.execute return 点 + run_audio return；propose_generation 保留 `confirmed`）
 - Test: `services/pi-runtime/src/tools/generation.test.ts`（追加用例）

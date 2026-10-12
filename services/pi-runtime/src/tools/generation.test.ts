@@ -261,3 +261,60 @@ test("其余 run_* 不回流（V-ε）：run_video_generation 结果无 image bl
 	const res = await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n_1" });
 	assert.equal(res.content.length, 1);
 });
+
+// ---- Task 2：details._signal + GenDetails（spec 2026-10-12 §2.2/§3）----
+
+test("run_image details._signal=ok + GenDetails 从 data.used 直报", async () => {
+	const clientWithUsed = {
+		post: async () => ({
+			status: "completed",
+			url: "https://x/y.png",
+			generationRecordId: "g1",
+			actions: [],
+			used: { model: "platform::agnes-image", aspectRatio: "16:9", resolution: "1K", count: 2 },
+		}),
+	};
+	const tools = createGenerationTools(clientWithUsed as never, { fetchImpl: imageFetch() });
+	const res = await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n_1" });
+	const d = res.details as Record<string, unknown>;
+	assert.equal((d._signal as { status: string }).status, "ok");
+	assert.equal(d.modelUsed, "platform::agnes-image");
+	assert.deepEqual(d.generationParams, { aspectRatio: "16:9", resolution: "1K", count: 2 });
+});
+
+test("used 缺失（Nest 版本偏斜）→ modelUsed='unspecified'、generationParams={}（fail-soft 不造值）", async () => {
+	const tools = createGenerationTools(fakeClient() as never);
+	const res = await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n_1" });
+	const d = res.details as Record<string, unknown>;
+	assert.equal(d.modelUsed, "unspecified");
+	assert.deepEqual(d.generationParams, {});
+	assert.equal((d._signal as { status: string }).status, "ok");
+});
+
+test("status=timeout → _signal partial + retryable=true（vendor 分类器）", async () => {
+	const clientTimeout = {
+		post: async () => ({ status: "timeout", generationRecordId: "g1", actions: [] }),
+	};
+	const tools = createGenerationTools(clientTimeout as never);
+	const res = await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n_1" });
+	const sig = (res.details as Record<string, unknown>)._signal as Record<string, unknown>;
+	assert.equal(sig.status, "partial");
+	assert.equal(sig.retryable, true);
+});
+
+test("run_audio_generation details._signal + used（model/kind/voice）", async () => {
+	const clientAudio = {
+		post: async () => ({
+			status: "completed",
+			url: "https://x/a.mp3",
+			actions: [],
+			used: { model: "platform::tts-1", kind: "voice", voice: "female-shaonv" },
+		}),
+	};
+	const tools = createGenerationTools(clientAudio as never);
+	const res = await run(tools.find((t) => t.name === "run_audio_generation")!, { node_id: "n_1" });
+	const d = res.details as Record<string, unknown>;
+	assert.equal((d._signal as { status: string }).status, "ok");
+	assert.equal(d.modelUsed, "platform::tts-1");
+	assert.deepEqual(d.generationParams, { kind: "voice", voice: "female-shaonv" });
+});

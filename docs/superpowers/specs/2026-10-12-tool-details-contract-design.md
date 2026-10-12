@@ -49,7 +49,7 @@ export interface ToolResultSignal {
 
 | 工具族 | 文件 | TDetails 必填字段（通用 `_signal` 之外） |
 |---|---|---|
-| gen | generation.ts（run_image/video/text/prompt/audio_generation、propose_generation、grid_slice_image） | `modelUsed: string`、`generationParams: Record<string, unknown>`、propose_generation 另有 `confirmed: boolean`（gate 消费中，保留） |
+| gen | generation.ts（run_image/video/text/prompt/audio_generation、propose_generation、grid_slice_image） | `modelUsed: string`、`generationParams: Record<string, unknown>`、propose_generation 另有 `confirmed: boolean`（gate 消费中，保留）。**数据源（2026-10-12 实施期拍板 A）**：Nest `startImageGeneration` 补 `used:{model,aspectRatio,resolution,count}` 透传、`runAudioGeneration` 补 `used:{model,kind,voice}`（数据在 Nest 局部变量已存在，仅回读缺失）；`used` 缺失时 fail-soft `modelUsed:"unspecified"`，不造值。dock 语义不变：dock=用户意图 SSOT，used=执行事实（turnaround pipeline 2:1/2K 静默 bump 据此可判读） |
 | write_light | canvas-write.ts、arrange-nodes.ts | `affectedCount: number`、canvas-write 错误路径保留 `{ok, confirmed}`（`textRaw` 路径现为 `details: undefined`，须补齐） |
 | graph_batch | canvas-write.ts（render_canvas_view 路径） | 沿用现有 `canvasCommands` 契约，仅补 `_signal` |
 | destructive | delete-nodes.ts、remove-edges.ts | `affectedCount: number` + `actions`（resultWithActions 既有，保留不动） |
@@ -107,7 +107,7 @@ const retryable = isRetryableAssistantError({ stopReason: "error", errorMessage:
 | 输入 | status | retryable | 判据 |
 |---|---|---|---|
 | 有错误文本，vendor 判瞬时可重试（429 限流/5xx/timeout/network 类） | failed/partial | **true** | vendor RETRYABLE pattern |
-| 有错误文本，vendor 判配额/计费耗尽（`insufficient_quota`/`billing` 类） | failed | **false** | vendor NON_RETRYABLE pattern——换渠道而非退避 |
+| 有错误文本，vendor 判配额/计费耗尽（`insufficient_quota`/`billing` 类） | failed | **false** | vendor NON_RETRYABLE pattern——换渠道而非退避。⭐ **实施期收敛（2026-10-12）**：vendor 只导出 boolean、patterns 未导出 ⇒ 配额类与未识别同返 false 无法区分，实现上与本表第 3 行合并按「未判明」处理（hedge 文本「换模型」建议覆盖配额场景）；根因修复仍由 unknown 计数驱动 |
 | 无错误文本 / vendor 不识别 | failed | **缺省不写（= 未判明）** | 评审拍板三态语义（下） |
 | empty_result（本地域事实） | partial | false | 重试同参无意义，提示改参 |
 | invalid_params / validation（本地域事实） | failed | false | 改参重试 |
