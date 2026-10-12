@@ -94,4 +94,15 @@ describe('AdminHealthPage', () => {
     expect(vm.ghostText({ ghosts: ['g-1', 'g-2'] })).toBe('g-1、g-2')
     expect(vm.missingText({ missing: [] })).toBe('—')
   })
+
+  it('ghost/missing 展开行标签语义与后端对账口径一致（2026-10-12 修复：此前写反）', async () => {
+    modelHealth.mockResolvedValue({ generatedAt: '', rows: [], alerts: [] })
+    latestProbeRuns.mockResolvedValue({ runs: [] })
+    const w = mountPage()
+    await flushPromises()
+    // 后端语义（upstreamReconciliation.ts）：ghost = 目录有、上游 /models 没报（候选下架）；
+    // missing = 上游有、目录没有（候选上架）。文案必须与之一致，防止运营误读。
+    expect(w.text()).toContain('ghost（目录有、上游 /models 没报 → 候选下架')
+    expect(w.text()).toContain('missing（上游有、目录没有 → 候选上架）')
+  })
 })

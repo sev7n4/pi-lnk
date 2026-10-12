@@ -91,9 +91,9 @@ defineExpose({ reload, ghostText, missingText })
       <el-table-column type="expand">
         <template #default="{ row }">
           <div class="p-3 text-sm">
-            <p class="text-fg-2">ghost（上游有、目录没有 → 候选上架）</p>
+            <p class="text-fg-2">ghost（目录有、上游 /models 没报 → 候选下架；上游 /models 清单 ≠ 实际可用，以真实流量为准）</p>
             <p class="mb-2 font-mono text-xs text-fg">{{ ghostText(row) }}</p>
-            <p class="text-fg-2">missing（目录有、上游没有 → 候选下架）</p>
+            <p class="text-fg-2">missing（上游有、目录没有 → 候选上架）</p>
             <p class="font-mono text-xs text-fg">{{ missingText(row) }}</p>
           </div>
         </template>

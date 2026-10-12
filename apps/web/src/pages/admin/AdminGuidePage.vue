@@ -47,8 +47,8 @@
           <li>上半区 = 全部真实流量统计（含 BYOK 用户渠道，按 模型+渠道 分组）；402 计数 = 上游余额不足。</li>
           <li>下半区 = 定时探活（默认 6h，只读 GET /v1/models，不发生成请求），无手动触发按钮。</li>
           <li>
-            <span class="text-warning">ghost N</span> = 上游有、目录没有（候选上架）；
-            <span class="text-fg-2">missing N</span> = 目录有、上游没有（候选下架）——展开行看清单。
+            <span class="text-warning">ghost N</span> = 目录有、上游 /models 没报（候选下架）；
+            <span class="text-fg-2">missing N</span> = 上游有、目录没有（候选上架）——展开行看清单。注意上游 /models 清单 ≠ 实际可用（如 agnes hub 第三方模型不上清单），判活以真实流量为准。
           </li>
           <li>HTTP/模型数空白 = 该次探活失败（看同行错误列，如超时）。</li>
         </ul>
