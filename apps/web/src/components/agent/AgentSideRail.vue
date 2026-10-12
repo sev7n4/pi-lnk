@@ -504,6 +504,24 @@ function cancelEditUserMessage() {
 }
 
 /**
+ * 该条用户消息是否正处于**就地二次编辑**态。
+ *
+ * 为什么需要它（2026-10-12 用户口径）：编辑卡原先只是气泡里的一个 `v-else-if` 分支，
+ * 而气泡中该消息的**静态展示**是并列的兄弟节点，编辑时照旧渲染 —— 于是同一段话
+ * 出现两遍（一次在 textarea，一次是下方的历史正文），下面还挂着 编辑/复制/复用本轮
+ * 三个对编辑态无意义的图标按钮，把二次编辑卡本身淹没掉。
+ *
+ * 当前退场范围：**历史正文** + **操作行**（正是用户点名的两块）。
+ * 引用条（`AgentRefStrip`）与指代回执（`AgentSelectionBindingChip`）本次刻意保留 ——
+ * 它们承载「这条消息当时带了哪些素材 / 指代了哪些节点」的既成事实，不是编辑内容的重复。
+ *
+ * 取消编辑即原样恢复（本函数只做渲染门禁，不改 `editingDraft` / 消息数据）。
+ */
+function isMessageUnderEdit(msg: AgentStreamMessage): boolean {
+  return msg.role === 'user' && editingMessageId.value === msg.id
+}
+
+/**
  * 已发送用户消息二次编辑 → 从此处重新开始对话（抄 WorkBuddy）。
  * 本地丢弃该消息之后的所有消息，并把该消息内容更新为编辑稿后重新发送；已有产物保留。
  *
@@ -2708,9 +2726,11 @@ defineExpose({
                   v-if="shouldRenderSchemeDraftProse(msg)"
                   :content="msg.content"
                 />
-                <!-- 已发送用户消息的就地二次编辑（抄 WorkBuddy：默认只显编辑/复制，点编辑才出发送/取消） -->
+                <!-- 已发送用户消息的就地二次编辑（抄 WorkBuddy：默认只显编辑/复制，点编辑才出发送/取消）。
+                     编辑态下该消息的**历史正文**与其**操作行**退场（见 isMessageUnderEdit），
+                     免得同一段话在 textarea 与下方正文里各出现一次、下面还挂三个无用按钮。 -->
                 <p
-                  v-else-if="msg.role === 'user' && editingMessageId === msg.id"
+                  v-else-if="isMessageUnderEdit(msg)"
                   class="agent-edit-card whitespace-pre-wrap"
                 >
                   <textarea
@@ -2739,7 +2759,7 @@ defineExpose({
                   @update:collapsed="onToggleTrace(msg, $event)"
                   @focus-node="onFocusNode($event)"
                 />
-                <p v-if="hasBubbleText(msg)" class="whitespace-pre-wrap">
+                <p v-if="hasBubbleText(msg) && !isMessageUnderEdit(msg)" class="whitespace-pre-wrap">
                   {{
                     msg.role === 'user'
                       ? visibleUserContent(msg)
@@ -2832,7 +2852,10 @@ defineExpose({
                   trace 承载（可展开），回落路径见 AgentExecutionTrace。
                 -->
                 <div
-                  v-if="canShowMessageActions(msg) || canShowUserMessageActions(msg)"
+                  v-if="
+                    (canShowMessageActions(msg) || canShowUserMessageActions(msg)) &&
+                    !isMessageUnderEdit(msg)
+                  "
                   class="agent-msg-actions"
                 >
                   <template v-if="msg.role === 'assistant'">
