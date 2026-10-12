@@ -164,6 +164,36 @@ describe('applyTurnUsage + turnSummaryLine（P1 摘要行）', () => {
     expect(turnSummaryLine(replayed)).toContain('消耗 600 tokens')
     expect(turnSummaryLine(source)).toContain('提议生成 1 张')
   })
+
+  it('T6-4: usage 带 cost 时写入并幂等覆盖；无 cost 字段不出现（向后兼容）', () => {
+    const trace = createExecutionTrace()
+    applyTurnUsage(trace, { inputTokens: 664, outputTokens: 211, cost: 0.00016469 })
+    applyTurnUsage(trace, { inputTokens: 664, outputTokens: 211, cost: 0.00016469 })
+    expect(trace.usage).toEqual({ inputTokens: 664, outputTokens: 211, cost: 0.00016469 })
+
+    const bare = createExecutionTrace()
+    applyTurnUsage(bare, { inputTokens: 100, outputTokens: 20 })
+    expect(bare.usage).toEqual({ inputTokens: 100, outputTokens: 20 })
+    expect('cost' in (bare.usage ?? {})).toBe(false)
+  })
+
+  it('T6-5: 摘要行带 cost 段（3 位有效数字防浮点尾巴）；无 cost 省略该段', () => {
+    const trace = createExecutionTrace()
+    applyTurnUsage(trace, { inputTokens: 664, outputTokens: 211, cost: 0.00016469 })
+    const line = turnSummaryLine(trace)
+    expect(line).toContain('费用 ≈0.000165')
+
+    const bare = createExecutionTrace()
+    applyTurnUsage(bare, { inputTokens: 100, outputTokens: 20 })
+    expect(turnSummaryLine(bare)).not.toContain('费用')
+  })
+
+  it('T6-6: replay 透传 cost 字段', () => {
+    const replayed = replayExecutionTraceEvents([
+      { type: 'turn_usage', data: { inputTokens: 664, outputTokens: 211, cost: 0.00016469 } },
+    ])
+    expect(replayed.usage).toEqual({ inputTokens: 664, outputTokens: 211, cost: 0.00016469 })
+  })
 })
 
 describe('applyToolCall isError（P0 工具失败标红）', () => {

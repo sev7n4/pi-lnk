@@ -354,8 +354,9 @@ export const useAgentStore = defineStore('agent', () => {
     if (last?.executionTrace) applyThinking(last.executionTrace, data)
   }
 
-  /** P1：turn_usage 事件落 trace（摘要行数据源），沿 thinking 同款接线。 */
-  function trackTurnUsage(data: { inputTokens: number; outputTokens: number }) {
+  /** P1：turn_usage 事件落 trace（摘要行数据源），沿 thinking 同款接线。
+   * cost：渠道配了 pricing 时服务端折叠的 usage.cost 总额（可选透传）。 */
+  function trackTurnUsage(data: { inputTokens: number; outputTokens: number; cost?: number }) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyTurnUsage(last.executionTrace, data)

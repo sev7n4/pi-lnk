@@ -52,8 +52,10 @@ export interface ExecutionTraceState {
   turnStartedAt: number
   turnEndedAt?: number
   totalMs?: number
-  /** P1 回合 token 实耗（turn_usage 事件覆盖写入，replay 幂等） */
-  usage?: { inputTokens: number; outputTokens: number }
+  /** P1 回合 token 实耗（turn_usage 事件覆盖写入，replay 幂等）。
+   * cost：服务端 pi-events createUsageAccumulator 折叠的 usage.cost 总额
+   * （渠道未配 pricing 时字段不出现——0 视为「未计费」不携带）。 */
+  usage?: { inputTokens: number; outputTokens: number; cost?: number }
 }
 
 let stepCounter = 0
@@ -399,12 +401,18 @@ export function visibleStepCount(trace: ExecutionTraceState): number {
   return trace.steps.length
 }
 
-/** P1：turn_usage 事件写入（重复调用覆盖不叠加——replay/多事件幂等）。 */
+/** P1：turn_usage 事件写入（重复调用覆盖不叠加——replay/多事件幂等）。
+ * cost 仅在合法有限数时透传（P1 cost 接线：渠道 models[].pricing → vendor
+ * calculateCost → 服务端 turn_usage.cost；未配价 = 字段不出现，行为不变）。 */
 export function applyTurnUsage(
   trace: ExecutionTraceState,
-  usage: { inputTokens: number; outputTokens: number },
+  usage: { inputTokens: number; outputTokens: number; cost?: number },
 ) {
-  trace.usage = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }
+  trace.usage = {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
+  }
 }
 
 /** tokens 人类化：≥1k 显示 X.Xk（3400 → 3.4k），否则原数。 */
@@ -441,6 +449,10 @@ export function turnSummaryLine(trace: ExecutionTraceState): string | null {
     segments.push(
       `消耗 ${formatTokens(trace.usage.inputTokens + trace.usage.outputTokens)} tokens`,
     )
+    // P1 cost 展示（最后一厘米）：费率单位跟随渠道 pricing 配置，此处不带货币符号。
+    if (trace.usage.cost != null) {
+      segments.push(`费用 ≈${Number(trace.usage.cost.toPrecision(3))}`)
+    }
   }
   return segments.length > 0 ? segments.join(' · ') : null
 }
@@ -493,7 +505,7 @@ export function replayExecutionTraceEvents(
         applyThinking(trace, event.data as { status: string; summary?: string })
         break
       case 'turn_usage':
-        applyTurnUsage(trace, event.data as { inputTokens: number; outputTokens: number })
+        applyTurnUsage(trace, event.data as { inputTokens: number; outputTokens: number; cost?: number })
         break
       case 'explore':
         applyExplore(trace, event.data as Parameters<typeof applyExplore>[1])
