@@ -17,6 +17,7 @@ import {
 } from '@/composables/useCanvasMedia'
 import { resolveMediaUrl } from '@/services/api-base'
 import { studioApi } from '@/services/studio-api'
+import { saveAssetToLibrary } from '@/composables/useAssetLibrary'
 import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import {
@@ -556,6 +557,34 @@ async function downloadOutput() {
   )
 }
 
+/**
+ * 存入资产库（2026-10-12 hover 收敛配套）：节点 hover 图标收敛为只留 ⓘ 后，
+ * 下载/存资产库统一收进本抽屉动作区。数据源与 downloadOutput 同路
+ * （record → target 兜底），kind 覆盖 audio（target.kind / record.type 双路）。
+ */
+const saveLabel = ref('存入资产库')
+async function saveOutputToLibrary() {
+  const url = record.value?.url || target.value?.url
+  if (!url) return
+  const type = record.value?.type
+  const kind = target.value?.kind ?? (type === 'video' ? 'video' : type === 'audio' ? 'audio' : 'image')
+  const ok = await saveAssetToLibrary({
+    kind,
+    url: resolveMediaUrl(url),
+    label: target.value?.nodeLabel ?? title.value,
+    prompt: record.value?.prompt || undefined,
+    sourceNodeId: target.value?.nodeId,
+    sessionId: sessionId.value,
+    generationRecordId: record.value?.id || target.value?.generationRecordId,
+  })
+  if (ok) {
+    saveLabel.value = '已存入'
+    setTimeout(() => {
+      saveLabel.value = '存入资产库'
+    }, 1500)
+  }
+}
+
 async function copyValue(text: string) {
   try {
     await copyTextToClipboard(text)
@@ -818,6 +847,14 @@ async function copyValue(text: string) {
             @click="downloadOutput"
           >
             下载
+          </button>
+          <button
+            v-if="previewUrl"
+            type="button"
+            class="media-inspector-action"
+            @click="saveOutputToLibrary"
+          >
+            {{ saveLabel }}
           </button>
         </section>
       </div>

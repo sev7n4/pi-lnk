@@ -130,6 +130,7 @@ function openMediaInspector(e?: Event) {
       >
         <img :src="displayUrl" alt="" class="pointer-events-none" draggable="false">
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-preview-btn nodrag"
           title="预览大图"
@@ -143,6 +144,7 @@ function openMediaInspector(e?: Event) {
           </svg>
         </button>
         <button
+          v-if="!showInspectorBtn"
           type="button"
           class="neo-node-replace-btn nodrag"
           title="替换图片"
