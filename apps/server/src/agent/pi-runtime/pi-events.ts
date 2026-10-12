@@ -38,7 +38,10 @@ export type PiEventType =
 	/** 「正在做什么」（决策 8）：工具起手即发，人话由客户端目录翻译，runtime 只给工具名。 */
 	| "activity"
 	/** 上下文压缩起止（审计 #6）：vendor compaction_start/end 归一，payload 由 Nest 归一为 phase。 */
-	| "compaction";
+	| "compaction"
+	/** P2：vendor「调度恢复中」标记（retry_scheduled{recovery:true}）透传——前端据此显示
+	 *  「会话恢复中」而非「上游响应超时」。 */
+	| "recovery";
 
 /** 现有 UI 事件（消费端实测子集；其余事件类型保持 passthrough） */
 export interface UiEvent<T = unknown> {
@@ -175,6 +178,12 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 			const d = (event.data ?? {}) as { status?: string; reason?: string };
 			const phase = d.status ? 'end' : 'start';
 			return { type: 'pi_compaction', data: { phase, status: d.status, reason: d.reason } };
+		}
+		case "recovery": {
+			// P2：调度恢复中（vendor retry_scheduled{recovery:true} 标记）。不走 default 的
+			// `pi_` 前缀——前端按 type 分支消费，加前缀会被静默丢弃，状态行就退回
+			// 「上游响应超时」，等于这条白接了（同 activity/waiting_user 的既有裁决）。
+			return { type: "recovery", data: {} };
 		}
 		default:
 			return { type: `pi_${event.type}`, data: event.data, };

@@ -108,3 +108,34 @@ describe('failureReason（P1 失败人话）', () => {
     expect(failureReason('boom')).toBe('生成失败，请重试')
   })
 })
+
+describe('turnStatusLine（P2 恢复态：会话恢复中 vs 真上游超时）', () => {
+  const t0 = 3_000_000
+  it('recovering：显示「会话恢复中」而非常规文案', () => {
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 4200, waiting: false, recovering: true,
+    })).toEqual({ text: '会话恢复中 · 4s', mode: 'running' })
+  })
+  it('recovering：有 activity 也让位恢复文案（恢复是更准确的信号）', () => {
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 4200, waiting: false,
+      recovering: true, activity: '创建节点',
+    })).toEqual({ text: '会话恢复中 · 4s', mode: 'running' })
+  })
+  it('waiting 优先于 recovering（用户须操作 > 恢复中）', () => {
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 4200, waiting: true, recovering: true,
+    })).toEqual({ text: '等待你确认', mode: 'waiting' })
+  })
+  it('真实进度清位后回常规文案（回归防线）', () => {
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 4200, waiting: false, recovering: false,
+    })).toEqual({ text: '生成回复中 · 4s', mode: 'running' })
+  })
+  it('非流式不进恢复态（failed 语义不变，仍显示上游超时）', () => {
+    expect(turnStatusLine({
+      isStreaming: false, turnStartedAt: t0, now: t0 + 4200, waiting: false, recovering: true,
+      lastFailed: '上游响应超时',
+    })).toEqual({ text: '生成失败 · 上游响应超时', mode: 'failed' })
+  })
+})

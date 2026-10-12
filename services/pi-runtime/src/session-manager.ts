@@ -28,10 +28,12 @@ import {
 	type Session,
 	type ThinkingLevel,
 	BACKGROUND_CONTEXT,
+	InMemoryTelemetryContext,
 	JsonlSessionRepo,
 	withCancel,
 	compact,
 } from "@earendil-works/pi-agent-core";
+import { withTelemetryContext } from "@earendil-works/pi-agent-core/harness/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
 	classifyCompactionError,
@@ -78,6 +80,25 @@ import { stripImageBlocks } from "./sse-sanitize.js";
 import { classifyLlmFailure, shouldCountLlmFailure } from "./llm-error-class.js";
 import type { LnkpiToolContext, SidebarAttachment, LnkpiTool } from "./tools/types.js";
 
+/** P1：从 vendor 遥测 span 里数出 `pi.harness.checkpoint{kind:abort_reconcile}` 的数量。
+ *
+ * ⚠️ vendor 遥测是**结构化**的——`RecordedTelemetrySpan` 没有墙钟时间戳（memory.d.ts 已核实），
+ * 所以它**不能**算耗时；它提供的是「取消收尾路径是否真走了」的**结构证据**：孤儿结算先
+ * `requestAbort` 再 `drive`，正常必走 reconcile 合成结算、发出 `abort_reconcile` checkpoint，
+ * 故这里计数应 ≥1；为 0 即 vendor 行为漂移（可能又 resume 上游），需告警。
+ * 入参用结构类型而非 vendor 具体类型，避免本仓与 vendor 内部 span 形状耦合。 */
+export function countAbortReconcileSpans(
+	spans: readonly { name: string; attributes: Readonly<Record<string, unknown>> }[],
+): number {
+	let n = 0;
+	for (const s of spans) {
+		if (s.name === "pi.harness.checkpoint" && s.attributes["pi.checkpoint.kind"] === "abort_reconcile") {
+			n += 1;
+		}
+	}
+	return n;
+}
+
 export type NormalizedEventType =
 	| "agent_start"
 	| "agent_end"
@@ -95,7 +116,10 @@ export type NormalizedEventType =
 	 *  等待**开始**即发：tool_result 在等待结束后才到，靠它反推「等待中」永远不成立。 */
 	| "waiting_user"
 	/** 「正在做什么 / 做到第几步」（P1 决策 8）。与 tool_start 同源，紧跟 tool_execution_start 之后一条。 */
-	| "activity";
+	| "activity"
+	/** P2：vendor 把「调度恢复中」显式标记（`retry_scheduled{recovery:true}`，仅 branch_summary
+	 *  重试一处带）——与真上游超时区分。仅 recovery 时下发，普通重试不下发，避免误报。 */
+	| "recovery";
 
 /** `activity` 事件载荷。
  *
@@ -1197,11 +1221,15 @@ export class SessionManager {
 	/** 单个孤儿 operation 的结算：requestAbort 收尾 + drive，整体包 8s 硬超时 fail-soft。 */
 	private async settleOneOrphan(entry: SessionEntry, op: OpenOperation): Promise<void> {
 		const lane = await entry.harness.lane(op.lane, this.context);
+		// P1：在 scoped telemetry sink 上跑取消收尾，drive 后读 abort_reconcile checkpoint 计数——
+		// 这是「取消收尾路径真走了」的结构证据（vendor 遥测不计时，墙钟 8s 兜底保留作耗时上限）。
+		const scopedTelemetry = new InMemoryTelemetryContext();
+		const settleContext = withTelemetryContext(scopedTelemetry, this.context);
 		const result = await this.withSettleTimeout(
 			(async () => {
 				// 孤儿 = 收尾而非重生：先取消标记，drive 才走 reconcile 取消路径（不 resume 上游）
-				await lane.requestAbort(op.operationId, this.context);
-				return lane.drive({ operationId: op.operationId }, this.context);
+				await lane.requestAbort(op.operationId, settleContext);
+				return lane.drive({ operationId: op.operationId }, settleContext);
 			})(),
 			`session=${entry.id} operation=${op.operationId}`,
 		);
@@ -1211,6 +1239,15 @@ export class SessionManager {
 					`operation=${op.operationId} kind=${op.kind} error=${String(result.error)}`,
 			);
 			return;
+		}
+		// P1：读 vendor 结构信号——取消收尾路径是否真走（正常必 ≥1；0 = vendor 漂移强告警）。
+		const abortReconcile = countAbortReconcileSpans(scopedTelemetry.getSpans());
+		this.metrics?.observeOrphanSettle(abortReconcile > 0);
+		if (abortReconcile === 0) {
+			console.warn(
+				`[pi-runtime] orphan settle took NO abort_reconcile path (vendor drift?): session=${entry.id} ` +
+					`lane=${op.lane} operation=${op.operationId} kind=${op.kind} outcome=${result.value.kind}`,
+			);
 		}
 		// warn 而非 info：这是「上一轮被中断」的信号，正常情况下不该出现，出现即需排查。
 		console.warn(
@@ -1379,14 +1416,38 @@ export class SessionManager {
 			// **待 vendor 配合**：给 `retry_scheduled` 事件加判别字段（`stage`/`kind`），
 			// 落地后这里直接透传，`ToolMetrics` 与渲染逻辑无需改动。
 			entry.unsubscribes.push(
-				harness.events.on("retry_scheduled" as never, (_evt: { attempt?: number; errorMessage?: string }) => {
+				harness.events.on("retry_scheduled" as never, (evt: { attempt?: number; errorMessage?: string; recovery?: boolean }) => {
 					metrics.toolMetrics().observeLlmRetry({
 						stage: "unknown",
 						channel: entry.identity.provider,
 						model: entry.identity.model,
 					});
+					// P2：vendor 把「调度恢复中」显式标记（仅 structural.ts:1098 带 recovery:true）。
+					// 透传前端 → 状态行显示「会话恢复中」而非「上游响应超时」。普通重试（recovery
+					// 缺省 false）不下发，避免把普通重试误报成恢复。
+					if (evt.recovery === true) {
+						this.dispatch(entry, { type: "recovery", ts: Date.now(), data: {} });
+					}
 				}),
 			);
+
+			// P3 架构裁决（vendor 设计哲学对齐）：工具计时/分类的 SSOT 维持 raw
+			// tool_start/tool_end 事件——hooks 是**可变更的中间件面**（截断/信号/门控，
+			// 返回值会 patch 结果），events 是**纯观测总线**（成对 start/end + terminate）。
+			// vendor after_tool 事件缺 start 时间戳与 terminate 字段（agent-harness.d.ts:564
+			// 核实），迁移会丢每次调用耗时直方图与「模型主动终止=blocked 不算错误」分类。
+			// after_tool 只做 raw 事件没有的**增量**观测：每工具调用的 token usage
+			// （hook 独有字段）。返回 undefined 不改结果，不影响既有 listener 链。
+			// ⚠️ 测试注入的 fake harness 可能只有 events 没有 hooks（CI 实证）——
+			// P3 观测是增量能力，hooks 缺席时 fail-soft 跳过，不得拖垮事件订阅装配。
+			if (harness.hooks) {
+				entry.unsubscribes.push(
+					harness.hooks.on("after_tool", async (event) => {
+						if (event.usage) metrics.observeToolUsage(event.toolName, event.usage);
+						return undefined;
+					}),
+				);
+			}
 		}
 	}
 

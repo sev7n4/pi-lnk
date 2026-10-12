@@ -739,6 +739,8 @@ const turnStatus = computed(() => {
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
     now: nowSec.value,
     waiting,
+    // P2：恢复中显示「会话恢复中」而非「上游响应超时」（waiting 优先级更高，见 turnStatusBar）
+    recovering: agent.recovering,
     waitingTool: agent.blockingWait?.toolName ?? null,
     waitingQuestion: agent.blockingWait?.question ?? null,
     waitingDeadline: agent.blockingWait?.deadlineAt ?? null,
@@ -2110,6 +2112,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       break
     }
     case 'tool_call': {
+      // P2：真实工具开始 = 恢复结束（清「会话恢复中」瞬时态）
+      agent.setRecovering(false)
       const d = event.data as { name: string; toolCallId?: string; args?: unknown }
       agent.beginToolCall({ toolCallId: d.toolCallId, name: d.name, args: d.args })
       break
@@ -2149,9 +2153,18 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'activity': {
       // 「正在做什么」（决策 8）：runtime 在工具起手时下发，比 tool_call 更早到。
       // 中文在组件层查 TOOL_PRESENTATION 出（决策 7：runtime 只声明意图、不塞文案）。
+      // P2：真实活动到达 = 恢复结束（清「会话恢复中」瞬时态）。
+      agent.setRecovering(false)
       const d = event.data as { toolName?: string; done?: number; total?: number };
       agent.setActivity({ toolName: d.toolName, done: d.done, total: d.total });
       break;
+    }
+    case 'recovery': {
+      // P2「会话恢复中」：vendor retry_scheduled{recovery:true} 透传。置位瞬时态，
+      // 状态行显示「会话恢复中」而非误导性的「上游响应超时」；真实进度（activity/
+      // tool_call）或回合结束（store endTurn）清位。
+      agent.setRecovering(true)
+      break
     }
     case 'pi_compaction': {
       // 审计 #6：压缩对用户可见。开始→状态行「压缩上下文」；结束（completed/

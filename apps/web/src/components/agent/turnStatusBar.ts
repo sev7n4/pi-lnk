@@ -22,6 +22,12 @@ export interface TurnStatusLineInput {
   waitingDeadline?: number | null
   /** 「正在做什么」人话（来自最新执行步骤）；缺失时退化为 GENERIC_ACTIVITY（决策 3 / 5）。 */
   activity?: string | null
+  /**
+   * P2「会话恢复中」：vendor `retry_scheduled{recovery:true}` 经 recovery 事件透传的瞬时态。
+   * 与「上游响应超时」（failed 态）严格区分：恢复是 run 还在推进的良性信号。
+   * waiting（用户须操作）优先级高于 recovering。
+   */
+  recovering?: boolean
 }
 
 export type TurnStatusLine = {
@@ -64,6 +70,10 @@ export function turnStatusLine(input: TurnStatusLineInput): TurnStatusLine {
     const seconds = input.turnStartedAt != null
       ? Math.max(0, Math.floor((input.now - input.turnStartedAt) / 1000))
       : 0
+    // P2：恢复中优先于常规活动文案——「会话在恢复」的显式良性信号，不冒充上游超时。
+    if (input.recovering) {
+      return { text: `会话恢复中 · ${seconds}s`, mode: 'running' }
+    }
     const subject = input.activity?.trim() ? input.activity : '生成回复中'
     return { text: `${subject} · ${seconds}s`, mode: 'running' }
   }
