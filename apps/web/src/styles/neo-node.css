@@ -489,14 +489,6 @@
   backdrop-filter: blur(6px);
 }
 
-.neo-media-info-summary--overlay {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  z-index: 2;
-}
-
 .neo-media-info-summary-text {
   min-width: 0;
   overflow: hidden;
