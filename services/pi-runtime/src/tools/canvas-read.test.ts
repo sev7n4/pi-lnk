@@ -255,3 +255,33 @@ describe("读工具结果瘦身（③ trimData/slimLayout）", () => {
 		assert.deepEqual(out, data);
 	});
 });
+
+// ---- Task 4：get_canvas_summary coverage/scope（spec 2026-10-12 §2.2 read 族）----
+
+test("get_canvas_summary：空画布 → coverage:'empty' + scope='nodes[0..0]'", async () => {
+	const tools = buildCanvasReadTools(fakeClient({ nodes: [] }) as never);
+	const res = await call(tools.find((t) => t.name === "get_canvas_summary")!, {}, CTX);
+	const d = res.details as Record<string, unknown>;
+	assert.equal((d._signal as { status: string; coverage: string }).status, "ok");
+	assert.equal((d._signal as { coverage: string }).coverage, "empty");
+	assert.equal(d.scope, "nodes[0..0]");
+});
+
+test("get_canvas_summary：有节点 → coverage:'full'", async () => {
+	const tools = buildCanvasReadTools(
+		fakeClient({ nodes: [{ id: "n1" }, { id: "n2" }, { id: "n3" }] }) as never,
+	);
+	const res = await call(tools.find((t) => t.name === "get_canvas_summary")!, {}, CTX);
+	const d = res.details as Record<string, unknown>;
+	assert.equal((d._signal as { coverage: string }).coverage, "full");
+	assert.equal(d.scope, "nodes[0..3]");
+});
+
+test("get_canvas_summary：trim 截断（>50）→ coverage:'partial' + scope 标 truncated（防局部当全量）", async () => {
+	const many = Array.from({ length: 60 }, (_, i) => ({ id: "n" + i }));
+	const tools = buildCanvasReadTools(fakeClient({ nodes: many }) as never);
+	const res = await call(tools.find((t) => t.name === "get_canvas_summary")!, {}, CTX);
+	const d = res.details as Record<string, unknown>;
+	assert.equal((d._signal as { coverage: string }).coverage, "partial");
+	assert.ok(String(d.scope).includes("truncated"));
+});

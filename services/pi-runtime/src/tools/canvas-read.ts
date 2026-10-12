@@ -2,6 +2,7 @@
 import { Type } from "typebox";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
+import type { ToolResultSignal } from "./result-signal.js";
 
 const DIAG_REQUIRED = "pass generation_record_id or node_id (at least one)";
 
@@ -51,6 +52,22 @@ function textResult(data: unknown): { content: [{ type: "text"; text: string }];
 	return { content: [{ type: "text", text: JSON.stringify({ ok: true, data }) }], details: undefined };
 }
 
+/**
+ * get_canvas_summary 信号（Task 4，spec §2.2 read 族）：coverage 防「局部当全量」静默答错
+ * （生产病例：摘要被 trim 截断后模型把局部当全量作答）。scope 描述采样范围；
+ * truncated 判定复用 trimData 的 truncated 标记，不重复猜测。
+ */
+function summarySignal(data: unknown): { signal: ToolResultSignal; scope: string } {
+	const d = data as { nodes?: unknown[]; truncated?: boolean } | null;
+	const nodeCount = Array.isArray(d?.nodes) ? d.nodes.length : 0;
+	const truncated = d?.truncated === true;
+	const coverage = nodeCount === 0 ? "empty" : truncated ? "partial" : "full";
+	return {
+		signal: { status: "ok", coverage },
+		scope: truncated ? `nodes[0..${nodeCount}] (truncated)` : `nodes[0..${nodeCount}]`,
+	};
+}
+
 export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 	const base = { tier: "read" as const };
 	return [
@@ -62,7 +79,9 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 				"Get a lightweight summary of the current canvas (node list with ids, types and counts). Call this first to understand the canvas.",
 			parameters: Type.Object({}),
 			execute: async (_id, _p, _u, tc: LnkpiToolContext) => {
-				return textResult(trimData(await client.post("/agent/internal/get-canvas-summary", { sessionId: tc.sessionId })));
+				const data = trimData(await client.post("/agent/internal/get-canvas-summary", { sessionId: tc.sessionId }));
+				const { signal, scope } = summarySignal(data);
+				return { ...textResult(data), details: { _signal: signal, scope } };
 			},
 		},
 		{
