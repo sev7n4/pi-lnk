@@ -97,6 +97,25 @@ describe('admin-api', () => {
     expect(data).toEqual({ runs: [] })
   })
 
+  // Follow-up ⑦：信封 code!==0（HTTP 200 但业务失败）此前被静默当成功解包
+  it('信封 code!==0 → 抛 AdminApiError（携带 message），不解包 data', async () => {
+    axiosGet.mockResolvedValue({ data: { code: 1, message: '业务失败原因', data: null } })
+    await expect(adminApi.latestProbeRuns()).rejects.toMatchObject({
+      name: 'AdminApiError',
+      message: '业务失败原因',
+    })
+  })
+
+  // Follow-up ⑤：token 先验真后落库——verify 支持显式 token（不依赖 sessionStorage 拦截器注入）
+  it('verify(token) → 显式 Authorization 头覆盖请求', async () => {
+    axiosGet.mockResolvedValue(ok({ version: 1, entries: [] }))
+    await adminApi.verify('sk-candidate')
+    expect(axiosGet).toHaveBeenCalledWith(
+      '/admin/model-catalog',
+      expect.objectContaining({ headers: { Authorization: 'Bearer sk-candidate' } }),
+    )
+  })
+
   it('HTTP 401 → 清 sessionStorage + 触发 handler + 抛 AdminApiError', async () => {
     const onUnauthorized = vi.fn()
     setAdminUnauthorizedHandler(onUnauthorized)

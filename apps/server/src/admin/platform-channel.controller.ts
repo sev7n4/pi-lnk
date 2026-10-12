@@ -39,7 +39,16 @@ function parseModels(raw: string | null): { models: ChannelModelEntry[]; parseEr
   try {
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return { models: [], parseError: true }
-    return { models: parsed as ChannelModelEntry[], parseError: false }
+    // Follow-up ②：消毒 null/非对象元素（pull-models 事故可见性盲区——前端逐条渲染会崩页）
+    // Follow-up ③：pricing:null 与未配置同义，归一移除该键（前端徽标/计数按 undefined 判定）
+    const models: ChannelModelEntry[] = []
+    for (const item of parsed) {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) continue
+      const entry = { ...(item as Record<string, unknown>) }
+      if (entry['pricing'] === null) delete entry['pricing']
+      models.push(entry as ChannelModelEntry)
+    }
+    return { models, parseError: false }
   } catch {
     return { models: [], parseError: true }
   }
@@ -114,10 +123,15 @@ export class PlatformChannelAdminController {
     nextModels[index] = entry
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.providerChannel.update({
-        where: { id: PLATFORM_CHANNEL_ID },
+      // Follow-up ①：乐观锁——models 原文在读取后未被并发改写（pull-models/bootstrap
+      // 对齐并发写防线）；改写则拒写 409，绝不覆盖并发写入者的版本
+      const updated = await tx.providerChannel.updateMany({
+        where: { id: PLATFORM_CHANNEL_ID, models: channel.models },
         data: { models: JSON.stringify(nextModels) },
       })
+      if (updated.count === 0) {
+        throw new ConflictException('平台渠道 models 已被并发修改，请刷新后重试')
+      }
       await tx.adminAuditLog.create({
         data: {
           actor: ACTOR,

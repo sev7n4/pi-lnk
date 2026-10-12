@@ -59,8 +59,12 @@ adminHttp.interceptors.response.use((response) => response, handleAdminResponseE
 
 type Envelope<T> = { code: number; message: string; data: T }
 
-async function unwrap<T>(p: Promise<{ data: Envelope<T> }>): Promise<T> {
+async function unwrap<T>(p: Promise<{ data: Envelope<T>; status: number }>): Promise<T> {
   const res = await p
+  // Follow-up ⑦：HTTP 200 但信封 code!==0 = 业务失败，归一为 AdminApiError（此前被静默当成功解包）
+  if (res.data?.code !== 0) {
+    throw new AdminApiError(res.data?.message || '响应信封异常', res.status)
+  }
   return res.data.data
 }
 
@@ -144,9 +148,17 @@ export type AuditLogRow = {
 export type AuditLogPage = { rows: AuditLogRow[]; total: number; page: number; pageSize: number }
 
 export const adminApi = {
-  /** token 验真：复用目录 GET（最轻的鉴权读端点）。 */
-  verify: (): Promise<{ version: number; entries: AdminCatalogEntry[] }> =>
-    unwrap(adminHttp.get('/admin/model-catalog', { params: undefined })),
+  /**
+   * token 验真：复用目录 GET（最轻的鉴权读端点）。
+   * Follow-up ⑤：支持显式传入候选 token（先验真后落库——不依赖 sessionStorage 拦截器注入）。
+   */
+  verify: (token?: string): Promise<{ version: number; entries: AdminCatalogEntry[] }> =>
+    unwrap(
+      adminHttp.get('/admin/model-catalog', {
+        params: undefined,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }),
+    ),
 
   listCatalog: (): Promise<{ version: number; entries: AdminCatalogEntry[] }> =>
     unwrap(adminHttp.get('/admin/model-catalog', { params: undefined })),
