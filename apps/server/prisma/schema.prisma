@@ -155,6 +155,7 @@ model PointTransaction {
   model        String?
   generationId String?
   balanceAfter Int?
+  ruleVersion String?
   createdAt    DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -506,4 +507,55 @@ model AutomationRun {
   error      String?
 
   @@index([jobId, startedAt])
+}
+
+// ── 定价体系（P0 等价迁移 · spec 2026-10-13-pricing-baseline-config-design.md §4）──
+// P0 口径：PriceListEntry.credits 是权威售价（显式值，seed 自 legacy 常量）；
+// CostRate/MarginPolicy 为溯源与 P1 重定价地基，P0 不从它们推导售价。
+
+model PriceListVersion {
+  id          String           @id @default(cuid())
+  version     String           @unique
+  status      String           @default("draft") // draft | active | archived
+  note        String?
+  createdAt   DateTime         @default(now())
+  publishedAt DateTime?
+  entries     PriceListEntry[]
+}
+
+model PriceListEntry {
+  id         String           @id @default(cuid())
+  versionId  String
+  version    PriceListVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  capability String
+  matchKey   String
+  credits    Int
+  basis      String           @default("legacy-equivalent")
+  costRateId String?
+  costRate   CostRate?        @relation(fields: [costRateId], references: [id])
+  @@unique([versionId, matchKey])
+  @@index([versionId, capability])
+}
+
+model CostRate {
+  id        String          @id @default(cuid())
+  channel   String
+  modelKey  String
+  spec      String
+  unit      String
+  costYuan  Float
+  source    String          @default("official_list")
+  note      String?
+  createdAt DateTime        @default(now())
+  entries   PriceListEntry[]
+  @@unique([channel, modelKey, spec])
+}
+
+model MarginPolicy {
+  id                  String   @id @default(cuid())
+  phase               String   @unique
+  anchorCents         Int      @default(1)
+  marginBp            Int      @default(11000)
+  capabilityOverrides String? // JSON，如 {"video":11000}；P1 重定价消费
+  createdAt           DateTime @default(now())
 }
