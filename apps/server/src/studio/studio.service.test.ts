@@ -16,6 +16,8 @@ import {
   readImageBuffer,
 } from '../media/composite-unmasked'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const imageEdit = vi.fn()
 
@@ -94,6 +96,7 @@ describe('editImage 参数化与定价', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: {

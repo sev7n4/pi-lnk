@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { AutomationModule } from '../automation/automation.module'
 import { MediaProbeModule } from '../media/media-probe.module'
 import { PointsModule } from '../points/points.module'
+import { PricingModule } from '../pricing/pricing.module'
 import { PrismaModule } from '../prisma/prisma.module'
 import { ProviderModule } from '../provider/provider.module'
 import { SessionsModule } from '../sessions/sessions.module'
@@ -17,6 +18,7 @@ import { VideoGenerationOrchestrator } from './video-generation.orchestrator'
     AutomationModule,
     MediaProbeModule,
     PointsModule,
+    PricingModule,
     ProviderModule,
     PrismaModule,
     SessionsModule,

@@ -2,6 +2,8 @@ import { Test } from '@nestjs/testing'
 import { vi } from 'vitest'
 import { MediaProbeService } from '../media/media-probe.service'
 import { PointsService } from '../points/points.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { StudioService } from './studio.service'
 import { PrismaService } from '../prisma/prisma.service'
@@ -85,6 +87,7 @@ export async function createStudioService() {
   const moduleRef = await Test.createTestingModule({
     providers: [
       StudioService,
+      { provide: PricingService, useValue: createPricingMock() },
       PointsService,
       {
         provide: PrismaService,

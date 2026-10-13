@@ -12,6 +12,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { MediaProbeService } from '../media/media-probe.service'
 import { UploadService } from '../upload/upload.service'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 import { readImageBuffer } from '../media/composite-unmasked'
 
 // 1x1 PNG（仅够通过 PNG 签名 / IHDR 尺寸解析，不依赖真实解码）
@@ -52,6 +54,7 @@ describe('StudioService.mattingImage', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: {

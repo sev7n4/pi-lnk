@@ -9,6 +9,8 @@ import { MediaProbeService } from '../media/media-probe.service'
 import { UploadService } from '../upload/upload.service'
 import { inlineUpstreamReferenceImages } from '../media/upstream-ref-inline'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 vi.mock('../media/upstream-ref-inline', () => ({
   inlineUpstreamReferenceImages: vi.fn(async (urls: string[]) => urls),
@@ -38,6 +40,7 @@ describe('runVisionQaInternal ProviderContext', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: { consume: vi.fn(), refund: vi.fn() },

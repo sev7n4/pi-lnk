@@ -24,6 +24,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { MediaProbeService } from '../media/media-probe.service'
 import { UploadService } from '../upload/upload.service'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const imageGenerate = vi.fn(async () => ({
   url: 'https://example.com/i.png',
@@ -128,6 +130,7 @@ describe('StudioService → agent adapter 注入 DB 目录 rows（B2 S2-1c 接�
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: { consume: vi.fn(async () => {}), refund: vi.fn(async () => {}) },

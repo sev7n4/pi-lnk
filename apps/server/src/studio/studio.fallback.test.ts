@@ -18,6 +18,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { MediaProbeService } from '../media/media-probe.service'
 import { UploadService } from '../upload/upload.service'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const imageGenerate = vi.fn()
 const videoGenerate = vi.fn()
@@ -103,6 +105,7 @@ describe('StudioService BYOK fallback_pending', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: {
