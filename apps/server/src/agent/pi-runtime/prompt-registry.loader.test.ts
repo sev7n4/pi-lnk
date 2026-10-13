@@ -501,15 +501,16 @@ describe("L10 语义引用有效性", () => {
     expect(errors.filter((e) => e.startsWith("L10"))).toEqual([]);
   });
 
-  it("回归：磁盘上两处引用确实写成了 anchor 形态（否则上一条是空断言）", () => {
-    // 防「L10 绿是因为正则谁都不匹配」的假绿：正面断言两条真实引用存在。
+  it("回归：磁盘上真实 anchor 引用确实存在（否则 L10 是空断言）", () => {
+    // 防「L10 绿是因为正则谁都不匹配」的假绿：正面断言真实引用存在。
+    // 2026-10-13 去重：no_gen_claim.gen v1.1.0 删中段后其「见 `gen-gate`」引用随之消失
+    // （确认门语义由同组 gen_tool_policy r11 承接，不再交叉引用），磁盘引用收敛为
+    // media_tool_policy r5 一处；L10 正则可匹配性另由上方 fixture 用例保障。
     const body = (id: string) =>
       parseFrontmatter(readFileSync(join(resolveRegistryRoot(), "rules", `${id}.md`), "utf8")).body;
     expect(body("media_tool_policy")).toContain("见 `no-template`");
-    expect(body("no_gen_claim.gen")).toContain("见 `gen-gate`");
-    // 且旧的数字引用已从这两条里清零
+    // 且旧的数字引用已从该条里清零
     expect(body("media_tool_policy")).not.toMatch(/规则\s*14/);
-    expect(body("no_gen_claim.gen")).not.toMatch(/规则\s*11/);
   });
 });
 
@@ -711,8 +712,10 @@ describe("§8.1 case6：磁盘 anchor 引用全部可解析", () => {
     const refs = snap.entries.flatMap((e) =>
       [...e.body.matchAll(ANCHOR_REF)].map((m) => ({ from: e.id, ref: m[1]! })),
     );
-    // ⚠️ 防假绿守卫 1：确实扫到了引用（否则「全部可解析」是空断言）
-    expect(refs.length).toBeGreaterThanOrEqual(2);
+    // ⚠️ 防假绿守卫 1：确实扫到了引用（否则「全部可解析」是空断言）。
+    // 2026-10-13 去重：no_gen_claim.gen 删中段后其「见 gen-gate」引用消失，磁盘引用
+    // 收敛为 media_tool_policy r5 一处 ⇒ 下限 2→1；正则可匹配性另由 fixture 用例保障。
+    expect(refs.length).toBeGreaterThanOrEqual(1);
     // ⚠️ 防假绿守卫 2：不存在的 anchor 必须解析不了（否则上一步的解析能力是假的）
     expect(anchors.has("ghost-anchor")).toBe(false);
     // 真正的判据：零悬空引用，且能指出是谁引用了谁

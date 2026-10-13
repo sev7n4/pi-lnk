@@ -39,7 +39,7 @@
 | order | 语义 id | 标题 | 生效范围 | 管什么 |
 |---|---|---|---|---|
 | 10 | `identity-and-truthfulness` | 身份与语气 | core | 你是 lnkpi 无限画布助手 |
-| 20 | `no-gen-claim` | 禁止声称正在生成（genTools 启用） | genTools | 3. 不要声称「正在生成」「马上生成」「已开始出图」；用户明确同意前禁止调用 run_*_generation… |
+| 20 | `no-gen-claim` | 禁止声称正在生成（genTools 启用） | genTools | 3. 不要声称「正在生成」「马上生成」「已开始出图」；也不要假装已出图 |
 | 20 | `no-gen-tools` | 禁止声称正在生成（genTools 未启用） | core（除非 genTools） | 3. 不要声称「正在生成」「马上生成」「已开始出图」；不要调用 run_*_generation… |
 | 30 | `no-template` | 侧栏参考图与芯片 key | core | 7. 已提供【侧栏参考图解析】时不得声称只能看到文件名或节点标题 |
 | 35 | `memory-scope-isolation` | 记忆归属与「记忆 ≠ 当前观察」 | core | 记忆条目带 scope/sessionId/crossCanvas |
@@ -71,8 +71,8 @@
 |---|---|
 | 硬线 `STATIC_BUDGET_CHARS` | 3200 |
 | 预警线 `STATIC_BUDGET_WARN_CHARS` | 2720（= 3200 × 0.85） |
-| 全组合当前实测 | **3108**（已过预警线，硬线内） |
-| **余量** | **92 字符**（硬线 3200 − 实测 3108） |
+| 全组合当前实测 | **3051**（已过预警线，硬线内） |
+| **余量** | **149 字符**（硬线 3200 − 实测 3051） |
 <!-- END:budget-table -->
 
 **余量是硬事实，不是估计。** 加新规则前先跑 `pnpm prompt:lint` 看余量。

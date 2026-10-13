@@ -191,7 +191,10 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 		const asm = makeAssembler({ nodes: [] });
 		const prompt = await asm.assembleStatic({ ruleGroups: ["core", "writeTools", "genTools"] });
 		expect(prompt.includes("禁止调用任何 run_*")).toBe(false);
-		expect(prompt.includes("用户明确同意前禁止调用 run_*_generation")).toBe(true);
+		// 2026-10-13 registry 去重：规则 3' 的「同意前禁止 run_*」中段已删（与规则 11 同义），
+		// r3' 只剩声称黑名单；确认门语义由同组规则 11 全量承接，两条都要在。
+		expect(prompt.includes("也不要假装已出图")).toBe(true);
+		expect(prompt.includes("仅对已 propose_generation 且用户明确同意")).toBe(true);
 		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
 		expect(prompt.includes("12. run_* 返回 timeout")).toBe(true);
 		expect(prompt.includes("fallback_pending")).toBe(true);
@@ -446,6 +449,12 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * 腾 rule5 尾句（gen_tool_policy 规则 11 已覆盖）与 rule15「（不确定就说明依据）」：
 	 * core+writeTools 2656→2653（Δ=−3）、全组合 3111→3108（Δ=−3），余量 3200−3108=**92**。
 	 *
+	 * 2026-10-13 registry 去重（本 PR）：no_gen_claim.gen v1.1.0 删规则 3' 中段
+	 * 「用户明确同意前禁止调用 run_*_generation（系统强制校验，见 gen-gate），确认后可调用」
+	 * ——与 gen_tool_policy 规则 11 逐语义重复且同组（genTools）恒同注入；声称黑名单保留。
+	 * core 693 不变（genTools 未启用走 RULE_3_NO_GEN）、core+writeTools 2653 不变、
+	 * core+genTools 1148→1091（Δ=−57）、全组合 3108→3051（Δ=−57），余量 3200−3051=**149**。
+	 *
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
@@ -453,8 +462,8 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	const BASELINE: Record<string, number> = {
 		core: 693,
 		"core+writeTools": 2653,
-		"core+genTools": 1148,
-		"core+writeTools+genTools": 3108,
+		"core+genTools": 1091,
+		"core+writeTools+genTools": 3051,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -469,9 +478,11 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 2026-10-09 C1 task_tool：正文压缩到 63 字符（抬预算属 AGENTS.md 红线，不可自行改），
 		// 全组合（+todoTools）=3175（余量 25）——贴线状态，扩容须人工拍板。
 		// 2026-10-13 澄清决策矩阵（PR #389）：全组合 3111→3108（余量 89→92）。
+		// 2026-10-13 registry 去重（本 PR）：no_gen_claim.gen 规则 3' 删与规则 11 同义中段
+		// （同组恒同注入、语义全量由规则 11 承接+服务端硬校验兜底）：3108→3051（余量 92→149）。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(92);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(149);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
@@ -500,7 +511,10 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		expect(off.length).toBeGreaterThan(0);
 		expect(on).not.toBe(off);
 		// 且两版都真的带规则 3（互斥发生在规则 3 内部，不是靠整条规则缺席）
-		expect(on).toContain("用户明确同意前禁止调用 run_*_generation");
+		// 2026-10-13 去重后 gen 版特征=「也不要假装已出图」（nogen 版无此句）；
+		// 确认门语义由 gen 版规则 11 独有（off 里不得有，见上方 not.toContain）。
+		expect(on).toContain("也不要假装已出图");
+		expect(on).toContain("仅对已 propose_generation 且用户明确同意");
 		expect(off).toContain("不要调用 run_*_generation");
 	});
 
