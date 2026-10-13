@@ -1,7 +1,27 @@
-import { Injectable } from '@nestjs/common'
-import { AgentService } from '../agent.service'
+import { Inject, Injectable } from '@nestjs/common'
 import { decideRecoveryDispatch, type DispatchDecision } from './recovery-dispatch.decider'
 import { isSessionOnline } from './presence'
+
+/**
+ * 对 AgentService 的窄端口。⚠️ 不要在这里 import AgentService 类：
+ * `agent.service → agent-canvas-tools.service → 本文件 → agent.service` 会成
+ * 循环 import，编译产物里 AgentCanvasToolsService 在 agent.service 求值时尚未
+ * 初始化 ⇒ Nest DI 拿到 undefined token，生产启动即崩（#398 部署事故）。
+ * 绑定在 AgentModule：`{ provide: RECOVERY_AGENT_PORT, useExisting: AgentService }`。
+ */
+export const RECOVERY_AGENT_PORT = Symbol('RECOVERY_AGENT_PORT')
+
+export interface RecoveryAgentPort {
+  followUpPiRun(input: { sessionId: string; threadId?: string; text: string }): Promise<{
+    queued: boolean
+  }>
+  streamConversation(
+    sessionId: string,
+    message: string,
+    userId?: string,
+    threadId?: string,
+  ): AsyncGenerator<unknown>
+}
 
 export interface GenerationFailedInput {
   sessionId: string
@@ -40,7 +60,7 @@ export class GenerationRecoveryService {
   /** nodeId → { errorCode, streak }：同因连败计数（spec §6.3 降级简报判据）。 */
   private readonly nodeCodeStreaks = new Map<string, { errorCode: string; streak: number }>()
 
-  constructor(private readonly agent: AgentService) {}
+  constructor(@Inject(RECOVERY_AGENT_PORT) private readonly agent: RecoveryAgentPort) {}
 
   get enabled(): boolean {
     return process.env.GENERATION_RECOVERY_ENABLED === 'true'
