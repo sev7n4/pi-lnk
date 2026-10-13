@@ -22,6 +22,15 @@ export const CANVAS_NODE_RETRY_KEY: InjectionKey<CanvasNodeRetryFn> = Symbol('ca
 
 export const CANVAS_NODE_LOCATE_FLASH_KEY: InjectionKey<Ref<Set<string>>> = Symbol('canvasNodeLocateFlash')
 
+/** PR1：诊断抽屉「让 Agent 诊断」——预填 composer（不自动发送，等用户显式点发送表达意图）。 */
+export type CanvasNodeAgentDiagnoseFn = (info: {
+  nodeId: string
+  title: string
+  userMessage: string
+  errorCode?: string
+}) => void
+export const CANVAS_AGENT_DIAGNOSE_KEY: InjectionKey<CanvasNodeAgentDiagnoseFn> = Symbol('canvasAgentDiagnose')
+
 export type CanvasNodeAddAgentFn = (nodeId: string) => void
 export const CANVAS_NODE_ADD_AGENT_KEY: InjectionKey<CanvasNodeAddAgentFn> = Symbol('canvasNodeAddAgent')
 

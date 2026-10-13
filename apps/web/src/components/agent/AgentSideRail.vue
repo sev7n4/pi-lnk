@@ -229,6 +229,18 @@ function markQueueApplied() {
 const editingMessageId = ref<string | null>(null)
 const editingDraft = ref('')
 const composerRef = ref<InstanceType<typeof MentionInput> | null>(null)
+
+// PR1「让 Agent 诊断」：诊断抽屉按钮写入预填文案后，这里消费并落到 composer（不自动发送，
+// 等用户显式点发送表达意图）。与既有 mention/插话槽位同款预填模式（见下方 insertText）。
+watch(
+  () => agent.pendingDiagnosticText,
+  (text) => {
+    if (!text) return
+    input.value = text
+    agent.consumePendingDiagnosticText()
+    nextTick(() => composerRef.value?.focus())
+  },
+)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const chatContainer = ref<HTMLElement>()
 const sidebar = useSidebarAttachments()
