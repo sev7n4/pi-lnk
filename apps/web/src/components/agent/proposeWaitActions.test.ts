@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  forcePendingConfirmInPayload,
   resolveProposeCancelCallId,
   resolveProposeCancelNodeId,
   resolveProposeConfirmCallId,
@@ -88,5 +89,35 @@ describe('resolveProposeCancelCallId（2026-10-06：取消走显式 decline）',
   it('确认与取消取自同一个 callId（两条臂同源，不会各指一次等待）', () => {
     const wait = { toolName: 'propose_generation', callId: 'c9', nodeId: 'n9' }
     expect(resolveProposeConfirmCallId(wait, 'n9')).toBe(resolveProposeCancelCallId(wait))
+  })
+})
+
+describe('forcePendingConfirmInPayload（P0-C：等待期 PUT 强制声明真值）', () => {
+  it('等待节点 status 被强制成 pending_confirm（无论本地 stale 成什么）', () => {
+    const canvasData = {
+      nodes: [
+        { id: 'n1', data: { status: 'completed', content: 'x' } },
+        { id: 'n2', data: { status: 'generating' } },
+      ],
+    }
+    forcePendingConfirmInPayload(canvasData, 'n1')
+    expect(canvasData.nodes[0].data.status).toBe('pending_confirm')
+    expect(canvasData.nodes[0].data.content).toBe('x') // 其余字段不动
+    expect(canvasData.nodes[1].data.status).toBe('generating') // 非等待节点不动
+  })
+
+  it('等待节点无 data / 无 status → 补声明 pending_confirm', () => {
+    const canvasData = { nodes: [{ id: 'n1' }, { id: 'n2', data: {} }] }
+    forcePendingConfirmInPayload(canvasData, 'n1')
+    forcePendingConfirmInPayload(canvasData, 'n2')
+    expect(canvasData.nodes[0].data?.status).toBe('pending_confirm')
+    expect(canvasData.nodes[1].data?.status).toBe('pending_confirm')
+  })
+
+  it('无等待 / 空 nodes → 原样不动', () => {
+    const canvasData = { nodes: [{ id: 'n1', data: { status: 'completed' } }] }
+    forcePendingConfirmInPayload(canvasData, null)
+    expect(canvasData.nodes[0].data.status).toBe('completed')
+    forcePendingConfirmInPayload({}, 'n1') // 无 nodes 不崩
   })
 })
