@@ -1,5 +1,6 @@
 import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { BadRequestException } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { CanvasData, SidebarAttachment } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
@@ -266,5 +267,42 @@ describe('AgentCanvasToolsService.applySidebarAttachments', () => {
       mentionedKeys: ['I1', 'T2'],
     })
     expect(sessionUpdate).toHaveBeenCalled()
+  })
+
+  it('伪造 attachments（事故形态）→ BadRequestException 400，message 含字段细节与正确用法（RB-D3，不再 500）', async () => {
+    await expect(
+      svc.applySidebarAttachments({
+        sessionId: 's1',
+        nodeIds: ['n1'],
+        attachments: [{ source: 'I1', target_node_id: 'image-x' } as never],
+        mode: 'localRefs',
+      }),
+    ).rejects.toThrow(BadRequestException)
+
+    await expect(
+      svc.applySidebarAttachments({
+        sessionId: 's1',
+        nodeIds: ['n1'],
+        attachments: [{ source: 'I1', target_node_id: 'image-x' } as never],
+        mode: 'localRefs',
+      }),
+    ).rejects.toThrow(/attachments 校验失败/)
+    await expect(
+      svc.applySidebarAttachments({
+        sessionId: 's1',
+        nodeIds: ['n1'],
+        attachments: [{ source: 'I1', target_node_id: 'image-x' } as never],
+        mode: 'localRefs',
+      }),
+    ).rejects.toThrow(/省略 attachments/)
+  })
+
+  it('合法形状但超 5 个 → BadRequest，文案含「最多添加」，与形状错可区分', async () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({
+      id: `a${i}`, mediaType: 'image' as const, sourceKind: 'upload' as const, label: `a${i}.jpg`, url: `https://x/${i}.png`,
+    }))
+    await expect(
+      svc.applySidebarAttachments({ sessionId: 's1', nodeIds: ['n1'], attachments: six, mode: 'localRefs' }),
+    ).rejects.toThrow(/最多添加 5 个/)
   })
 })
