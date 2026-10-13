@@ -183,4 +183,24 @@ describe("registerResultSignalListener", () => {
 		assert.equal(patch, undefined);
 		assert.ok(!renderHas(metrics, "pi_runtime_result_signal_total{tier="), "非契约工具不打活性探针");
 	});
+
+	it("RB-D4：nest 4xx throw（无 _signal）⇒ 注入 ⚠️ 行 + metrics 计 failed", async () => {
+		const hooks = new FakeHooks();
+		const metrics = new Metrics();
+		registerResultSignalListener(hooks, {}, { tiers: TIERS, metrics });
+		const patch = (await hooks.handlers[0]({
+			toolCallId: "c9",
+			toolName: "apply_sidebar_attachments",
+			args: { node_ids: ["n1"] },
+			content: [{ type: "text", text: "nest /x http 400: attachments 校验失败" }],
+			isError: true,
+		})) as { content?: unknown[]; details?: Record<string, unknown> } | undefined;
+		assert.ok(patch, "throw 路径必须有 patch");
+		assert.ok(JSON.stringify(patch.content).includes("⚠️[unknown]"));
+		assert.equal((patch.details?._signal as { errorCode?: string }).errorCode, "invalid_params");
+		assert.ok(
+			renderHas(metrics, 'pi_runtime_result_signal_total{tier="unknown",status="failed"} 1'),
+			"throw 路径合成信号应计 metrics（tier=unknown fallback）",
+		);
+	});
 });

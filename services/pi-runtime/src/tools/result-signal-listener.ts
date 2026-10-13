@@ -26,7 +26,8 @@ export interface SignalPatch {
 
 /**
  * details._signal 窄化：非对象 details（契约外形态）或无有效 _signal（非契约工具）→ undefined。
- * 非契约工具（ask_user/load_skill 等）不在注入纪律覆盖范围内：isError 裸真不触发注入，
+ * 非契约工具（ask_user/load_skill 等）不在注入纪律覆盖范围内：isError 裸真不触发注入
+ * （RB-D4 例外：nest 形态错误文本可经 signalFromErrorContent 合成，见 appendSignalLine）。
  * 其错误表现归事件层与既有链路（Ruling 2026-10-12，见 SDD 台账）。
  * 供接线层读信号打 metrics（活性探针不依赖注入发生）。
  */
@@ -38,6 +39,26 @@ export function readSignal(details: unknown): ToolResultSignal | undefined {
 
 function isTextBlock(b: SignalContentBlock): b is { type: "text"; text: string } {
 	return b.type === "text" && typeof b.text === "string";
+}
+
+/**
+ * RB-D4（spec 2026-10-13-sidebar-ref-bind-invariant-design.md）：信号层 throw 路径分支。
+ * NestToolError 文本模式（nest-client.ts:124）：`nest <path> http <status>: <msg>`。
+ * 4xx ⇒ invalid_params（参数错不可重试）；5xx ⇒ upstream_5xx（退避）。
+ * envelope(code=)/timeout/network 无状态码 ⇒ undefined 不妄言；非 nest 消息不匹配 ⇒
+ * 维持 10-12 Ruling「契约外工具零注入」。
+ */
+export function signalFromErrorContent(content: SignalContentBlock[]): ToolResultSignal | undefined {
+	let text = "";
+	for (const b of content) {
+		if (isTextBlock(b)) text += `${b.text}\n`;
+	}
+	const m = /\bhttp ([1-5]\d{2})\b/.exec(text);
+	if (!m) return undefined;
+	const status = Number(m[1]);
+	if (status >= 500) return { status: "failed", retryable: true, errorCode: "upstream_5xx" };
+	if (status >= 400) return { status: "failed", retryable: false, errorCode: "invalid_params" };
+	return undefined;
 }
 
 /** 按信号内容组装告警行（15-30 token 预算；自解释——prompt 预算仅剩 3 字符，禁止外加解读规则）。 */
@@ -73,17 +94,22 @@ function signalLines(sig: ToolResultSignal, tier: string, extraLine: string | un
 /**
  * 尾部追加信号行 + details 展开合并。零告警 → undefined（调用方不返回 patch）。
  *
+ * 信号来源（RB-D4）：details._signal（readSignal）优先；throw 路径（vendor
+ * createErrorToolResult：details=undefined）无 _signal，isError=true 时回退
+ * signalFromErrorContent 从错误文本合成——details 已有合法 _signal 时提取不生效。
+ *
+ * @param isError throw 路径分支开关：true 且无 _signal 时从 content 合成信号。
  * @param extraLine 对账告警（reconcileAffected 产物），与信号行一起统一追加。
  */
 export function appendSignalLine(
 	_toolName: string,
 	tier: string,
-	_isError: boolean,
+	isError: boolean,
 	content: SignalContentBlock[],
 	details: unknown,
 	extraLine?: string,
 ): SignalPatch | undefined {
-	const sig = readSignal(details);
+	const sig = readSignal(details) ?? (isError ? signalFromErrorContent(content) : undefined);
 	if (!sig) return undefined;
 	const lines = signalLines(sig, tier, extraLine);
 	if (lines.length === 0) return undefined;
