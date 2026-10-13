@@ -6,7 +6,7 @@ import type { GenerationDiagnostic, MediaInfo, ProbedMediaFile } from '@lnkpi/sh
 import MediaRefList from '@/components/media/MediaRefList.vue'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 import { useMediaInspector } from '@/composables/useMediaInspector'
-import { CANVAS_NODE_RETRY_KEY } from '@/composables/canvasNodeActions'
+import { CANVAS_NODE_RETRY_KEY, CANVAS_AGENT_DIAGNOSE_KEY } from '@/composables/canvasNodeActions'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { useModelHealth } from '@/composables/useModelHealth'
 import {
@@ -44,6 +44,8 @@ const sessionId = computed(() => route.params.sessionId as string | undefined)
 const { allChannels } = useProviderBootstrap()
 const healthSummary = useModelHealth()
 const retryNode = inject(CANVAS_NODE_RETRY_KEY, null)
+// PR1「让 Agent 诊断」：诊断抽屉按钮 → provide 写入 composer 预填（见 CanvasPage）
+const agentDiagnose = inject(CANVAS_AGENT_DIAGNOSE_KEY, null)
 
 const {
   open,
@@ -688,6 +690,22 @@ async function copyValue(text: string) {
               </button>
             </div>
           </template>
+
+          <!-- ②½ 让 Agent 诊断：预填 composer（不自动发送，等用户显式发送表达意图） -->
+          <div v-if="agentDiagnose && diagnostic" class="media-inspector-diag-actions">
+            <button
+              type="button"
+              class="media-inspector-action"
+              @click="agentDiagnose({
+                nodeId: target?.nodeId ?? record?.nodeId ?? '',
+                title: target?.nodeLabel ?? '未命名节点',
+                userMessage: diagnosticMessage,
+                errorCode: diagnostic?.code,
+              })"
+            >
+              让 Agent 诊断
+            </button>
+          </div>
 
           <!-- ③ 技术详情（默认折叠） -->
           <details

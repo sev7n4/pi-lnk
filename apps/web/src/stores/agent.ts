@@ -126,6 +126,12 @@ export const useAgentStore = defineStore('agent', () => {
   const lastTextDeltaAt = ref(0)
   /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
   const turnError = ref<unknown>(null)
+  /**
+   * PR1「让 Agent 诊断」：诊断抽屉点按钮后由 CanvasPage provide 写入预填文案，
+   * AgentSideRail 消费后写入 composer 并聚焦（**不自动发送**——发送是用户显式意图）。
+   * 单槽：写入即覆盖上一条未消费的预填（抽屉是单例，不会并发两条）。
+   */
+  const pendingDiagnosticText = ref<string | null>(null)
 
   function lastAssistant(): AgentStreamMessage | undefined {
     return [...messages.value].reverse().find((m) => m.role === 'assistant')
@@ -548,6 +554,18 @@ export const useAgentStore = defineStore('agent', () => {
     turnError.value = err
   }
 
+  /** PR1「让 Agent 诊断」：写入预填文案（由画布 provide 的 diagnose 函数调用）。 */
+  function requestAgentDiagnose(text: string): void {
+    pendingDiagnosticText.value = text
+  }
+
+  /** PR1「让 Agent 诊断」：AgentSideRail 消费后清空（一次性，避免重复预填）。 */
+  function consumePendingDiagnosticText(): string | null {
+    const text = pendingDiagnosticText.value
+    pendingDiagnosticText.value = null
+    return text
+  }
+
   function clear() {
     messages.value = []
     proposePendingConfirm.value = false
@@ -588,6 +606,9 @@ export const useAgentStore = defineStore('agent', () => {
     trackExplore,
     addCanvasAction,
     markTurnError,
+    pendingDiagnosticText,
+    requestAgentDiagnose,
+    consumePendingDiagnosticText,
     trackTurnUsage,
     finishStreaming,
     loadHistory,

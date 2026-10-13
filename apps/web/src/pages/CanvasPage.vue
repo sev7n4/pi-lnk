@@ -138,6 +138,7 @@ import {
   CANVAS_NODE_PATCH_KEY,
   CANVAS_NODE_RENAME_KEY,
   CANVAS_NODE_RETRY_KEY,
+  CANVAS_AGENT_DIAGNOSE_KEY,
   CANVAS_REF_PICK_ACTIVE_KEY,
   CANVAS_REF_PICK_NODE_IDS_KEY,
   CANVAS_REF_PICK_REJECT_KEY,
@@ -4388,6 +4389,14 @@ function retryNodeGeneration(nodeId: string, overrides?: CanvasNodeRetryOverride
 
 provide(CANVAS_NODE_CANCEL_KEY, (id) => cancelGeneration(id))
 provide(CANVAS_NODE_RETRY_KEY, (id, overrides) => { void retryNodeGeneration(id, overrides) })
+// PR1「让 Agent 诊断」：诊断抽屉按钮 → 预填 composer（不自动发送，等用户显式发送）
+provide(CANVAS_AGENT_DIAGNOSE_KEY, (info) => {
+  const reason = info.errorCode
+    ? `${info.userMessage}，错误码：${info.errorCode}`
+    : info.userMessage
+  const text = `节点「${info.title}」生成失败了（原因：${reason}），帮我诊断并给下一步建议`
+  useAgentStore().requestAgentDiagnose(text)
+})
 
 const selectedNodeGenerating = computed(() => {
   const node = editorNode.value
