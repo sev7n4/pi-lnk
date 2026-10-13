@@ -19,6 +19,11 @@ export const SidebarAttachmentSchema = z.object({
 export type SidebarAttachment = z.infer<typeof SidebarAttachmentSchema>
 
 export function validateSidebarAttachments(items: SidebarAttachment[]): SidebarAttachment[] {
+  // RB-D7/M-3：非数组输入曾走到 items.map 抛英文 TypeError（PR-A 终审 M-3）。
+  // 守卫为可行动中文文案：M-1 形态（芯片 key 当数组传）在 Nest 侧可直接自愈。
+  if (!Array.isArray(items)) {
+    throw new Error('attachments 必须是数组（每项为侧栏附件实体）；请省略该参数，由平台自动填充本轮侧栏附件')
+  }
   if (items.length > SIDEBAR_ATTACHMENT_MAX) {
     throw new Error(`最多添加 ${SIDEBAR_ATTACHMENT_MAX} 个参考素材`)
   }

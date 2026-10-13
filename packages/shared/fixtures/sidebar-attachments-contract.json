@@ -1,0 +1,55 @@
+[
+  {
+    "name": "platform-fill-entities",
+    "note": "SM-D4 平台填充回落：execute 把 tc.attachments 实体放进 POST body（事故会话的正确终态）",
+    "attachments": [
+      { "id": "mv6f01", "mediaType": "image", "sourceKind": "upload", "label": "girl.png", "url": "https://cdn.example/girl.png" },
+      { "id": "mv6f02", "mediaType": "image", "sourceKind": "upload", "label": "dress.jpg", "url": "https://cdn.example/dress.jpg" }
+    ],
+    "expectZod": "pass"
+  },
+  {
+    "name": "legacy-explicit-entity",
+    "note": "老链路显式传参：模型从上下文回显完整实体（不得误杀）",
+    "attachments": [
+      { "id": "mv6f03", "mediaType": "image", "sourceKind": "asset", "label": "a.jpg", "url": "https://cdn.example/a.png" }
+    ],
+    "expectZod": "pass"
+  },
+  {
+    "name": "fabricated-chips",
+    "note": "事故形态：模型伪造 attachments，字段全虚构（{source,target_node_id}）——消毒整删后不会出现在 body，此处建模「消毒前模型 try 传参」",
+    "attachments": [
+      { "source": "I1", "target_node_id": "image-x" }
+    ],
+    "expectZod": "reject",
+    "rejectReason": "shape"
+  },
+  {
+    "name": "empty-array",
+    "note": "空数组：M-1 老回落语义（空数组 ⇒ 平台填充），Zod 放行",
+    "attachments": [],
+    "expectZod": "pass"
+  },
+  {
+    "name": "non-array-string",
+    "note": "M-1 缺陷形态：模型把芯片 key 当 attachments 传（字符串）——消毒透传，Nest 必拒（M-3：须中文可行动文案，不得 TypeError）",
+    "attachments": "I1",
+    "expectZod": "reject",
+    "rejectReason": "non-array"
+  },
+  {
+    "name": "over-limit",
+    "note": "M-2 载体：形状全合法但超 SIDEBAR_ATTACHMENT_MAX=5——消毒透传，Nest 拒（文案须可区分「超限」与「形状错」）",
+    "attachments": [
+      { "id": "a0", "mediaType": "image", "sourceKind": "upload", "label": "0.jpg", "url": "https://cdn.example/0.png" },
+      { "id": "a1", "mediaType": "image", "sourceKind": "upload", "label": "1.jpg", "url": "https://cdn.example/1.png" },
+      { "id": "a2", "mediaType": "image", "sourceKind": "upload", "label": "2.jpg", "url": "https://cdn.example/2.png" },
+      { "id": "a3", "mediaType": "image", "sourceKind": "upload", "label": "3.jpg", "url": "https://cdn.example/3.png" },
+      { "id": "a4", "mediaType": "image", "sourceKind": "upload", "label": "4.jpg", "url": "https://cdn.example/4.png" },
+      { "id": "a5", "mediaType": "image", "sourceKind": "upload", "label": "5.jpg", "url": "https://cdn.example/5.png" }
+    ],
+    "expectZod": "reject",
+    "rejectReason": "limit"
+  }
+]
