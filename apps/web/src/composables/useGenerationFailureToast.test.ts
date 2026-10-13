@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, type VNode } from 'vue'
 import { shouldToastForFailure, useGenerationFailureToast } from './useGenerationFailureToast'
 
 vi.mock('element-plus', () => ({
@@ -59,12 +59,10 @@ describe('useGenerationFailureToast', () => {
     const { onNodeError } = useGenerationFailureToast({ onOpenDetail })
     onNodeError({ id: 'n1', title: '大灰狼视频', status: 'error', errorMessage: '上游超时' })
     expect(ElMessage).toHaveBeenCalledTimes(1)
-    const arg = vi.mocked(ElMessage).mock.calls[0][0] as unknown as {
-      message: string
-      onClick: () => void
-    }
-    expect(arg.message).toBe('大灰狼视频 生成失败：上游超时')
-    arg.onClick()
+    const arg = vi.mocked(ElMessage).mock.calls[0][0] as unknown as { message: VNode }
+    // ElMessage 选项类型无顶层 onClick：可点击消息以 message VNode 承载（onClick 在 props 上）
+    expect((arg.message.children as string)).toBe('大灰狼视频 生成失败：上游超时')
+    ;(arg.message.props?.onClick as () => void)()
     expect(onOpenDetail).toHaveBeenCalledWith('n1')
     await nextTick()
   })

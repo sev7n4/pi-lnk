@@ -1,5 +1,5 @@
 import { ElMessage } from 'element-plus'
-import { onScopeDispose } from 'vue'
+import { h, onScopeDispose } from 'vue'
 
 interface NodeErrorLike {
   status?: unknown
@@ -56,11 +56,19 @@ export function useGenerationFailureToast(opts: FailureToastOptions) {
     const title = node.title?.trim() || '节点'
     const msg =
       typeof node.errorMessage === 'string' && node.errorMessage ? node.errorMessage : '生成失败'
+    // ElMessage 选项类型没有顶层 onClick：可点击消息用 message VNode 承载点击
     ElMessage({
       type: 'warning',
       duration: 8000,
-      message: `${title} 生成失败：${msg}`,
-      onClick: () => opts.onOpenDetail(node.id),
+      message: h(
+        'span',
+        {
+          class: 'gen-failure-toast-link',
+          style: 'cursor:pointer',
+          onClick: () => opts.onOpenDetail(node.id),
+        },
+        `${title} 生成失败：${msg}`,
+      ),
     })
   }
 
