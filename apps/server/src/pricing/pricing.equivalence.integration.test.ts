@@ -60,6 +60,7 @@ describe('金标准：价目表 ≡ 现行常量（全网枚举）', () => {
   })
 
   it('别名拼写：quote === legacy（命中同一行）', async () => {
+    expect(enumerateAliasCases().length).toBeGreaterThan(0)
     for (const q of enumerateAliasCases()) {
       const quote = await svc.quote(q)
       expect(quote.credits, JSON.stringify(q)).toBe(legacyPriceOf(q))
@@ -68,6 +69,7 @@ describe('金标准：价目表 ≡ 现行常量（全网枚举）', () => {
   })
 
   it('表外组合：走 fallback 且 quote === legacy', async () => {
+    expect(enumerateOutOfSpaceCases().length).toBeGreaterThan(0)
     for (const q of enumerateOutOfSpaceCases()) {
       const quote = await svc.quote(q)
       expect(quote.credits, JSON.stringify(q)).toBe(legacyPriceOf(q))
