@@ -46,6 +46,7 @@ describe('PointsService', () => {
         model: 'seedream',
         generationId: null,
         balanceAfter: 90,
+        ruleVersion: null,
       },
     })
   })
@@ -108,6 +109,7 @@ describe('PointsService', () => {
         model: null,
         generationId: 'gen-1',
         balanceAfter: 95,
+        ruleVersion: null,
       },
     })
   })
@@ -164,6 +166,7 @@ describe('PointsService', () => {
         model: null,
         generationId: null,
         balanceAfter: 90,
+        ruleVersion: null,
       },
     })
   })
@@ -195,6 +198,7 @@ describe('PointsService', () => {
         model: null,
         generationId: null,
         balanceAfter: 95,
+        ruleVersion: null,
       },
     })
   })
@@ -209,5 +213,28 @@ describe('PointsService', () => {
     }).compile()
     await moduleRef.get(PointsService).refund('u1', 0, 'x')
     expect($transaction).not.toHaveBeenCalled()
+  })
+
+  it('persists ruleVersion from meta and defaults to null', async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }))
+    const findUnique = vi.fn(async () => ({ points: 90 }))
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: 'pt3', ...args.data }))
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ user: { updateMany, findUnique }, pointTransaction: { create } }),
+    )
+    const moduleRef = await Test.createTestingModule({
+      providers: [PointsService, { provide: PrismaService, useValue: { $transaction } }],
+    }).compile()
+    const svc = moduleRef.get(PointsService)
+
+    await svc.consume('u1', 10, '图像生成', {
+      kind: 'consume',
+      category: 'image',
+      ruleVersion: 'v1-legacy-equivalent',
+    })
+    expect(create.mock.calls[0][0].data.ruleVersion).toBe('v1-legacy-equivalent')
+
+    await svc.consume('u1', 10, '图像生成', { kind: 'consume', category: 'image' })
+    expect(create.mock.calls[1][0].data.ruleVersion).toBeNull()
   })
 })
