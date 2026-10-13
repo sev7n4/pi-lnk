@@ -20,6 +20,7 @@ import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.
 import { registerResultSignalListener } from "./result-signal-wiring.js";
 import { governImagePayload } from "./payload-images.js";
 import { readRecord, readStringField, readBooleanField } from "./hook-contract.js";
+import { appendVideoContract } from "./tools/video-prompt-contract.js";
 import {
 	DEFAULT_TOOL_RESULT_MAX_CHARS,
 	capToolResult,
@@ -105,15 +106,26 @@ const manager = new SessionManager(
 						});
 					}
 				}
-				// 统一上限（审计「缺统一上限」）：体积观测全量接线 + 越界兜底截断。
-				// 观测放在开关之前——即使治理关掉，也要能回答「一条结果占了多少上下文」。
-				const size = measureToolResult(event.content);
-				if (size.bytes > 0) metrics.observeToolResult(event.toolName, size.bytes);
-				if (hookCfg.toolResultBudget === false) return undefined;
-				const capped = capToolResult(event.content, hookCfg.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS);
-				if (!capped.trimmed) return undefined;
-				metrics.observeToolResultTrim(event.toolName);
-				return { content: capped.content };
+			// 统一上限（审计「缺统一上限」）：体积观测全量接线 + 越界兜底截断。
+			// 观测放在开关之前——即使治理关掉，也要能回答「一条结果占了多少上下文」。
+			const size = measureToolResult(event.content);
+			if (size.bytes > 0) metrics.observeToolResult(event.toolName, size.bytes);
+			// 图生视频 prompt 契约纠偏（spec §5.2）：upsert_media_node 落成 video 节点 →
+			// 工具结果末尾附提醒，给模型「propose 前改写 prompt」的确定性修正窗口。
+			// 只加文本，不改写 args、不拦截工具；纠偏段拼在**截断后** content 末尾
+			// （先截断后拼接，保证不被吞）；独立于 toolResultBudget 开关
+			// （纠偏不是治理特性，关治理不关纠偏）。无需纠偏时保持逐字节旧行为（return undefined）。
+			if (hookCfg.toolResultBudget === false) {
+				const patched = appendVideoContract(event.content, event.toolName, event.isError, event.args);
+				return patched.length === event.content.length ? undefined : { content: patched };
+			}
+			const capped = capToolResult(event.content, hookCfg.toolResultMaxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS);
+			if (!capped.trimmed) {
+				const patched = appendVideoContract(event.content, event.toolName, event.isError, event.args);
+				return patched.length === event.content.length ? undefined : { content: patched };
+			}
+			metrics.observeToolResultTrim(event.toolName);
+			return { content: appendVideoContract(capped.content, event.toolName, event.isError, event.args) };
 			});
 			// P1 信号 listener（spec 2026-10-12-tool-details-contract-design.md §4/§6）：
 			// ⭐ 必须注册在上方合并 after_tool listener 之后——HookMap 多 listener 链式 replace
