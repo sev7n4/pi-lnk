@@ -115,10 +115,12 @@ propose 成功结果**无 `reason` 字段**：`/answers` 真确认与轮询推�
 
 - 补两条约定：「有推荐时推荐项放首位并在 label 标注（推荐）+ description 说明推荐理由」「不得问可合理默认的细节（尺寸/张数/分辨率按场景默认并在回复中声明）」。
 
-### P2 观测（本批不落码，登记）
+### P2 观测
 
-- eval 场景：`style-unspecified-declare`（不问但须声明默认）、`params-default-fill`（propose 摘要含默认值）、`propose-no-false-confirm`（无生成不得声称出图）。
+- eval 场景（登记待批）：`style-unspecified-declare`（不问但须声明默认）、`params-default-fill`（propose 摘要含默认值）、`propose-no-false-confirm`（无生成不得声称出图）。
 - 指标：ask_user 触发率、propose `confirmed` 按 reason 分布（`pi_runtime_propose_outcome_total{reason}`）。
+  - **指标已实施**（实施计划 `docs/superpowers/plans/2026-10-13-propose-outcome-metric-p2.md`）：runtime /metrics 新增 `pi_runtime_propose_outcome_total{reason}`，结算单点 = Promise.race 后的 `outcome` + 早退路径 `nonblocking`；`stale_status:*` 白名单归一防 label 基数爆炸；工具层经回调观察者注入（不持 Metrics，2026-10-04 纪律不破）。
+  - **ask_user 触发率不加新指标**：事件层 `tool_calls_total{tool="ask_user"}` 已存在，触发率派生即可。
 
 ## 3. 验收标准
 

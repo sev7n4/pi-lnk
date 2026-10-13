@@ -317,3 +317,42 @@ test("C4 subagent 计数器：零样本渲染 0（标量 counter 语义；Map �
 	assert.doesNotMatch(text, /pi_runtime_subagent_rejected_total\{reason=/);
 	assert.doesNotMatch(text, /pi_runtime_subagent_outcome_total\{status=/);
 });
+
+test("P2 propose_outcome：多 reason 计数渲染（spec 2026-10-13 §2）", () => {
+	const m = new Metrics();
+	m.observeProposeOutcome("answered");
+	m.observeProposeOutcome("answered");
+	m.observeProposeOutcome("timeout");
+	m.observeProposeOutcome("stale_status:completed");
+	m.observeProposeOutcome("nonblocking");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="answered"\} 2/);
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="timeout"\} 1/);
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="stale_status:completed"\} 1/);
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="nonblocking"\} 1/);
+});
+
+test("P2 propose_outcome：stale_status 白名单归一（防 label 基数爆炸）", () => {
+	const m = new Metrics();
+	// 白名单内原样保留
+	m.observeProposeOutcome("stale_status:completed");
+	m.observeProposeOutcome("stale_status:error");
+	// 白名单外（前端未来新状态/任意串）折进 other
+	m.observeProposeOutcome("stale_status:some_new_state");
+	m.observeProposeOutcome("stale_status:");
+	// 空 reason 兜底 unknown
+	m.observeProposeOutcome("");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="stale_status:completed"\} 1/);
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="stale_status:error"\} 1/);
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="stale_status:other"\} 2/);
+	assert.match(out, /pi_runtime_propose_outcome_total\{reason="unknown"\} 1/);
+});
+
+test("P2 propose_outcome：零样本不渲染数据行（「从未触发」与「触发过但 0」可区分）", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.ok(out.includes("# HELP pi_runtime_propose_outcome_total "));
+	assert.ok(out.includes("# TYPE pi_runtime_propose_outcome_total counter"));
+	assert.doesNotMatch(out, /pi_runtime_propose_outcome_total\{reason=/);
+});

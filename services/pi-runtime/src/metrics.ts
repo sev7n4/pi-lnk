@@ -16,6 +16,7 @@
  *   - pi_runtime_skill_loads_total{skill,outcome}       load_skill 按技能名的路由计数（ok/unknown/read_error）
  *   - pi_runtime_queue_ops_total{op,kind,outcome}       steer/followUp 队列操作计数
  *   - pi_runtime_pending_ops_total{tool,status}         阻塞等待结算（answered/timeout/aborted）
+ *   - pi_runtime_propose_outcome_total{reason}          propose_generation 结算归因（P2，spec 2026-10-13）
  *   - pi_runtime_tool_search_activated_total            经 tool_search 激活的延迟工具数累计
  *   - pi_runtime_build_info / pi_runtime_uptime_seconds
  */
@@ -90,6 +91,11 @@ export class Metrics {
 	 */
 	private queueOps = new Map<string, number>();
 	private pendingOps = new Map<string, number>(); // key: tool|status
+	/**
+	 * P2（spec 2026-10-13 propose-confirm §2）：propose_generation 结算分布，key = reason。
+	 * reason 域见 observeProposeOutcome 注释；stale_status:* 在写入前白名单归一（防基数爆炸）。
+	 */
+	private proposeOutcomes = new Map<string, number>();
 	private planProposed = 0; // C3 propose_plan 调用数
 	private planDecisions = new Map<string, number>(); // key: decision (execute|refine|keep|timeout|aborted)
 	private planGateBlocked = new Map<string, number>(); // key: tool——planPending 期间被拦的写工具
@@ -302,6 +308,30 @@ export class Metrics {
 	observePendingOp(tool: string, status: "answered" | "timeout" | "aborted"): void {
 		const key = `${tool}|${status}`;
 		this.pendingOps.set(key, (this.pendingOps.get(key) ?? 0) + 1);
+	}
+
+	/**
+	 * P2（spec 2026-10-13 propose-confirm §2）：propose_generation 结算归因。
+	 *
+	 * 为什么事件层不够：reason 在工具结果 JSON 内部，事件层只能拿 resultText 正则猜；
+	 * 这里由工具经回调观察者注入（tools/config.ts 接线）。与 2026-10-04「计数走事件层」
+	 * 纪律的关系：工具调用**计数**仍归事件层（tool_calls_total），本指标只做**结算归因**
+	 * （一次 propose 恰好一条观测，早退路径 nonblocking 与等待结算互斥不双计）。
+	 *
+	 * reason 取值域：answered / generating / fallback_pending / new_record / new_generation /
+	 * timeout / aborted / rejected / gone / nonblocking / stale_status:*。
+	 *
+	 * label 归一：stale_status:<status> 的 status 来自前端写入的任意终态，白名单
+	 * （completed|error|failed|cancelled）外折进 stale_status:other，防 label 基数爆炸。
+	 * 归一只作用于 label——模型可见的 tool_result 文本由工具层原样透传，不经此处。
+	 */
+	observeProposeOutcome(reason: string): void {
+		let label = reason || "unknown";
+		if (label.startsWith("stale_status:")) {
+			const s = label.slice("stale_status:".length);
+			label = ["completed", "error", "failed", "cancelled"].includes(s) ? label : "stale_status:other";
+		}
+		this.proposeOutcomes.set(label, (this.proposeOutcomes.get(label) ?? 0) + 1);
 	}
 
 	/** C3 Plan 确认门观测（spec §3.7）：proposed/decision 在工具层，blocked 在 before_tool 层。 */
@@ -553,6 +583,14 @@ export class Metrics {
 	for (const [key, count] of [...this.pendingOps.entries()].sort()) {
 		const [tool, status] = key.split("|");
 		lines.push(`pi_runtime_pending_ops_total{tool="${esc(tool)}",status="${esc(status)}"} ${count}`);
+	}
+
+	// P2（spec 2026-10-13 propose-confirm §2）：propose 结算分布。Map 为空（无 propose 流量）
+	// 不出数据行——与 skill_loads 同口径：「从未触发」与「触发过但 0」可区分。
+	lines.push("# HELP pi_runtime_propose_outcome_total propose_generation settlements by outcome reason.");
+	lines.push("# TYPE pi_runtime_propose_outcome_total counter");
+	for (const [reason, count] of [...this.proposeOutcomes.entries()].sort()) {
+		lines.push(`pi_runtime_propose_outcome_total{reason="${esc(reason)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_plan_proposed_total propose_plan invocations (C3 plan gate).");
