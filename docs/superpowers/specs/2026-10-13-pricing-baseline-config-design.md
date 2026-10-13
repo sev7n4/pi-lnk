@@ -186,7 +186,7 @@ model PriceListVersion {     // L3：价目表版本（发布物）
 
 `PointLedger`（即现有 `PointTransaction`）加 `ruleVersion String?` + `lockedCredits Int?` 两列——**B8 的解 + 价格锁**，与原设计一致。
 
-> **P0 落地形状说明**：本节为设计稿数据模型。P0 等价迁移（2026-10-13）的实际落地形状——4 张表一次建齐（PriceListVersion / PriceListEntry / CostRate / MarginPolicy，P0 只写前两张）+ `PointTransaction.ruleVersion` 列 + `matchKey` 规范化细节——以 `docs/superpowers/plans/2026-10-13-p0-pricing-equivalent-migration.md` Task 1 为准。
+> **P0 落地形状说明**：本节为设计稿数据模型。P0 等价迁移（2026-10-13）的实际落地形状——4 张表一次建齐（PriceListVersion / PriceListEntry / CostRate / MarginPolicy；P0 定价只消费前两张，CostRate / MarginPolicy 仅落溯源数据、P1 重定价启用）+ `PointTransaction.ruleVersion` 列 + `matchKey` 规范化细节——以 `docs/superpowers/plans/2026-10-13-p0-pricing-equivalent-migration.md` Task 1 为准。
 
 ### 4.2 与现有代码的接线（增量，零迁移风险）
 
