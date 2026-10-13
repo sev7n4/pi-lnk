@@ -96,6 +96,7 @@ import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.v
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
+import { hasFailedTraceStep } from '@/components/agent/executionTraceReducer'
 import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
@@ -775,6 +776,8 @@ const turnStatus = computed(() => {
 const proposeWait = computed(() =>
   agent.blockingWait?.toolName === 'propose_generation' ? agent.blockingWait : null,
 )
+// RB-D6②：本轮存在 failed 步骤 ⇒ dock 确认区持久警示（把红色 ✗ 与确认决策连起来）。
+const turnHasFailedStep = computed(() => hasFailedTraceStep(lastAssistantMessage.value?.executionTrace?.steps))
 // P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：等待结束信号。
 // CanvasPage 在等待期对 PUT 载荷强制声明 pending_confirm（防 stale 全量盖写 SSOT），
 // 等待结束必须解除，否则确认启动后的 generating/completed 会被倒灌回待确认。
@@ -3027,6 +3030,9 @@ defineExpose({
               class="mx-3 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
               data-testid="propose-wait-hint"
             >
+              <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--neo-text-muted)' }">
+                ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
+              </p>
               <div class="flex items-start gap-2">
                 <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
                 <p class="flex-1 leading-relaxed">
