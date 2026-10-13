@@ -9,6 +9,7 @@ import {
   applyTurnUsage,
   createExecutionTrace,
   finalizeExecutionTrace,
+  hasFailedTraceStep,
   replayExecutionTraceEvents,
   turnSummaryLine,
 } from '@/components/agent/executionTraceReducer'
@@ -309,5 +310,18 @@ describe('replayExecutionTraceEvents · task_list replay', () => {
     expect(steps).toHaveLength(2)
     expect(steps[0]?.label).toBe('生成「起稿」')
     expect(steps[1]?.label).toBe('生成「配图」')
+  })
+})
+
+describe('hasFailedTraceStep（RB-D6② 持久警示判定）', () => {
+  it('存在 failed 步骤 → true', () => {
+    expect(hasFailedTraceStep([{ status: 'done' }, { status: 'failed' }])).toBe(true)
+  })
+  it('全部 done / 空数组 → false', () => {
+    expect(hasFailedTraceStep([{ status: 'done' }])).toBe(false)
+    expect(hasFailedTraceStep([])).toBe(false)
+  })
+  it('undefined（历史会话无 trace）→ false 不抛错（Review Focus 5）', () => {
+    expect(hasFailedTraceStep(undefined)).toBe(false)
   })
 })

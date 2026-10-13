@@ -635,3 +635,8 @@ export function replaySvgCardPresentation(
   }
   return undefined
 }
+
+/** RB-D6②（spec 2026-10-13-sidebar-ref-bind-invariant-design.md）：本轮 trace 是否存在 failed 步骤。 */
+export function hasFailedTraceStep(steps: { status?: string }[] | undefined): boolean {
+  return (steps ?? []).some((s) => s.status === 'failed')
+}

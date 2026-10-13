@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common'
 import { ModuleRef } from '@nestjs/core'
+import { ZodError } from 'zod'
 import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
@@ -1573,7 +1574,20 @@ export class AgentCanvasToolsService {
     mode: 'localRefs' | 'attach_edges'
     mentionedKeys?: string[]
   }): Promise<{ actions: CanvasAction[]; sourceNodeIds: string[] }> {
-    validateSidebarAttachments(input.attachments)
+    // RB-D3（spec 2026-10-13-sidebar-ref-bind-invariant-design.md）：失败必须可行动。
+    // 事故实证：ZodError 未转 HttpException → 500，字段级细节全丢，模型丧失自愈能力。
+    // 就地转 400（与同文件 BadRequestException('创建媒体节点失败') 同风格，不引全局 filter）。
+    try {
+      validateSidebarAttachments(input.attachments)
+    } catch (e) {
+      const detail =
+        e instanceof ZodError
+          ? e.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')
+          : (e as Error).message
+      throw new BadRequestException(
+        `attachments 校验失败（${detail}）。正确用法：省略 attachments 参数，由平台自动填充本轮侧栏附件（只传 nodeIds 与 mentionedKeys）。`,
+      )
+    }
     const order = input.refOrder?.length
       ? input.refOrder
       : input.attachments.map((a) => a.id)

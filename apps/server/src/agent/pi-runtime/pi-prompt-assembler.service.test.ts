@@ -69,7 +69,7 @@ describe("PiPromptAssembler 静态段（assembleStatic：规则组文本，会�
 		// 规则 4 原文特征句（2026-10-04 W4 压缩措辞：「建/更新节点」→「建节点」、
 		// 「并等待用户确认」→「等用户确认」，约束未变）
 		expect(prompt.includes("upsert_media_node 建节点（可带 prompt）")).toBe(true);
-		expect(prompt.includes("mentioned_keys 用 I1/I2 芯片序")).toBe(true);
+		expect(prompt.includes("mentioned_keys 用芯片序")).toBe(true);
 		// 规则 5 原文特征句
 		expect(prompt.includes("口语搭骨架")).toBe(true);
 		expect(prompt.includes("不要把 @I* 芯片连成边")).toBe(true);
@@ -455,15 +455,20 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * core 693 不变（genTools 未启用走 RULE_3_NO_GEN）、core+writeTools 2653 不变、
 	 * core+genTools 1148→1091（Δ=−57）、全组合 3108→3051（Δ=−57），余量 3200−3051=**149**。
 	 *
+	 * 2026-10-13 规则 4 收紧（本任务，v1.6.0）：media_tool_policy rule 4 改写——
+	 * 「attachments 一律省略，由平台填充本轮附件」入文（RB-D1/S0-3）：
+	 * core 693 不变、core+writeTools 2653→2637（Δ=−16）、core+genTools 1091 不变、
+	 * 全组合 3051→3035（Δ=−16），余量 3200−3035=**165**。
+	 *
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
 	 */
 	const BASELINE: Record<string, number> = {
 		core: 693,
-		"core+writeTools": 2653,
+		"core+writeTools": 2637,
 		"core+genTools": 1091,
-		"core+writeTools+genTools": 3051,
+		"core+writeTools+genTools": 3035,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -480,9 +485,10 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 2026-10-13 澄清决策矩阵（PR #389）：全组合 3111→3108（余量 89→92）。
 		// 2026-10-13 registry 去重（本 PR）：no_gen_claim.gen 规则 3' 删与规则 11 同义中段
 		// （同组恒同注入、语义全量由规则 11 承接+服务端硬校验兜底）：3108→3051（余量 92→149）。
+		// 2026-10-13 规则 4 收紧（v1.6.0）：attachments 省略入文，3051→3035（余量 149→165）。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(149);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(165);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────

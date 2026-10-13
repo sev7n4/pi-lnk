@@ -39,6 +39,40 @@ function withWriteSignal(data: unknown, affectedCount: number) {
 	return withSignal({ ...base, details: { ...base.details, affectedCount } }, signalFromUpstream(data));
 }
 
+/**
+ * RB-D2（spec 2026-10-13-sidebar-ref-bind-invariant-design.md）：引用不是值。
+ * 事故 cmv6f48s20041p401qm0hxfkh：模型伪造 attachments（{source,target_node_id}）穿透空对象
+ * schema 后被 Nest Zod 拒成 500。消毒判据复用 packages/shared SidebarAttachmentSchema 的
+ * 必填形状（id/mediaType/label 非空 + url|text 至一非空）；任一项不符 ⇒ 整参数删除，
+ * execute 既有回落 `p.attachments?.length ? p.attachments : tc.attachments` 自然命中
+ * tc.attachments（SM-D4 路径），execute 逻辑零改动。
+ * 全有或全无：混合形态整删——逐项过滤会产出「部分模型编造+部分真实」的杂交数组，不可对账。
+ */
+function looksLikeSidebarEntity(x: unknown): boolean {
+	if (typeof x !== "object" || x === null) return false;
+	const a = x as Record<string, unknown>;
+	const hasUrl = typeof a.url === "string" && a.url.trim().length > 0;
+	const hasText = typeof a.text === "string" && a.text.trim().length > 0;
+	return (
+		typeof a.id === "string" &&
+		a.id.length > 0 &&
+		typeof a.mediaType === "string" &&
+		a.mediaType.length > 0 &&
+		typeof a.label === "string" &&
+		a.label.length > 0 &&
+		(hasUrl || hasText)
+	);
+}
+
+function sanitizeSidebarAttachmentsArg(args: unknown): unknown {
+	if (typeof args !== "object" || args === null) return args;
+	const a = args as Record<string, unknown>;
+	if (!Array.isArray(a.attachments) || a.attachments.length === 0) return args;
+	if (a.attachments.every(looksLikeSidebarEntity)) return args;
+	const { attachments: _fabricated, ...rest } = a;
+	return rest;
+}
+
 /** 条件字段：仅非空（undefined/空串）才进 body。 */
 function setIfPresent(body: Record<string, unknown>, key: string, value: unknown): void {
 	if (value !== undefined && value !== null && value !== "") body[key] = value;
@@ -543,6 +577,7 @@ export function createCanvasWriteTools(
 			label: "落侧栏附件",
 			description:
 				"Write sidebar chip attachments onto canvas nodes as localRefs (default). mentioned_keys are I1/I2 chip keys, not canvas image-* ids. attachments may be omitted; falls back to this-turn sidebar attachments from the conversation context.",
+			prepareArguments: sanitizeSidebarAttachmentsArg,
 			parameters: Type.Object({
 				node_ids: Type.Array(Type.String(), { description: "Target canvas node ids" }),
 				attachments: Type.Optional(
@@ -584,9 +619,24 @@ export function createCanvasWriteTools(
 					refOrder: p.ref_order ?? tc.refOrder ?? [],
 					mode,
 				};
-				const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
-				if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
-				return withWriteSignal(await client.post("/agent/internal/apply-sidebar-attachments", body), p.node_ids.length);
+			const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
+			if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
+			const usedPlatformFill = !p.attachments?.length;
+			const result = withWriteSignal(
+				await client.post("/agent/internal/apply-sidebar-attachments", body),
+				p.node_ids.length,
+			);
+			// RB-D2 对账：平台填充路径必须声明实际挂载来源（省略参数与消毒删除都落到本分支）。
+			if (usedPlatformFill) {
+				const ids = (tc.attachments ?? [])
+					.map((a) => (typeof (a as { id?: unknown }).id === "string" ? (a as { id: string }).id : ""))
+					.filter(Boolean)
+					.join(", ");
+				const note = `📎 参考图来源：本轮侧栏附件${ids ? `（${ids}）` : ""}，由平台填充并挂载。`;
+				const content: Array<{ type: "text"; text: string }> = [...result.content, { type: "text", text: note }];
+				return { ...result, content } as typeof result;
+			}
+			return result;
 			},
 		},
 		{

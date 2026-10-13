@@ -769,6 +769,85 @@ describe("canvas-write: _signal + affectedCount 契约", () => {
 	});
 });
 
+describe("canvas-write: apply_sidebar_attachments prepareArguments 消毒（RB-D2）", () => {
+	function toolWithArgs() {
+		const { client } = makeClient();
+		return findTool(createCanvasWriteTools(client), "apply_sidebar_attachments");
+	}
+
+	it("事故形态（source/target_node_id 字段全虚构）→ 整参数删除，execute 回落 tc.attachments", () => {
+		const out = toolWithArgs().prepareArguments?.({
+			node_ids: ["n1"],
+			mode: "localRefs",
+			attachments: [{ source: "I1", target_node_id: "image-x" }],
+		});
+		assert.deepEqual(out, { node_ids: ["n1"], mode: "localRefs" });
+	});
+
+	it("合法实体（id/mediaType/label + url）原样透传——不误杀老链路显式传参", () => {
+		const att = [{ id: "mv6f", mediaType: "image", sourceKind: "upload", label: "a.jpg", url: "https://x/a.png" }];
+		const out = toolWithArgs().prepareArguments?.({ node_ids: ["n1"], attachments: att });
+		assert.deepEqual(out, { node_ids: ["n1"], attachments: att });
+	});
+
+	it("省略 / 空数组 / 非数组 attachments 原样透传（SM-D4、M-1 回归零变化）", () => {
+		const t = toolWithArgs();
+		assert.deepEqual(t.prepareArguments?.({ node_ids: ["n1"] }), { node_ids: ["n1"] });
+		assert.deepEqual(t.prepareArguments?.({ node_ids: ["n1"], attachments: [] }), { node_ids: ["n1"], attachments: [] });
+		assert.deepEqual(t.prepareArguments?.({ node_ids: ["n1"], attachments: "I1" }), { node_ids: ["n1"], attachments: "I1" });
+	});
+
+	it("混合形态（部分合法部分伪造）→ 整参数删除（确定性，不做逐项过滤）", () => {
+		const out = toolWithArgs().prepareArguments?.({
+			node_ids: ["n1"],
+			attachments: [
+				{ id: "a", mediaType: "image", sourceKind: "upload", label: "a.jpg", url: "https://x/a.png" },
+				{ source: "I2", target_node_id: "n1" },
+			],
+		});
+		assert.deepEqual(out, { node_ids: ["n1"] });
+	});
+
+	it("url 为 blob: 但形状合法 → 不消毒（形状判断与内容治理分离，blob 拒绝仍归 Nest）", () => {
+		const att = [{ id: "b", mediaType: "image", sourceKind: "upload", label: "b.jpg", url: "blob:x" }];
+		const out = toolWithArgs().prepareArguments?.({ node_ids: ["n1"], attachments: att });
+		assert.deepEqual(out, { node_ids: ["n1"], attachments: att });
+	});
+});
+
+describe("canvas-write: apply_sidebar_attachments 平台填充对账文案（RB-D2）", () => {
+	it("省略 attachments（平台填充）→ content 尾部追加来源说明行", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const res = await run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] });
+		const blocks = res.content as Array<{ type: string; text: string }>;
+		assert.equal(blocks[0].type, "text");
+		const note = blocks.find((b) => b.text.includes("本轮侧栏附件"));
+		assert.ok(note, "missing reconciliation note");
+		assert.ok(note.text.includes("平台填充"));
+	});
+
+	it("tc.attachments 实体缺 id（旧数据形态）→ 文案优雅降级不抛错", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const ctx: LnkpiToolContext = { sessionId: "s1", userId: "u1", attachments: [{ url: "https://x/a.png", mediaType: "image" }] };
+		const res = await run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] }, ctx);
+		const blocks = res.content as Array<{ type: string; text: string }>;
+		assert.ok(blocks.some((b) => b.text.includes("平台填充")));
+	});
+
+	it("显式传合法实体 → 不追加对账行（老链路 content 形态不变）", async () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const res = await run(findTool(tools, "apply_sidebar_attachments"), {
+			node_ids: ["n1"],
+			attachments: [{ id: "a", mediaType: "image", sourceKind: "upload", label: "a.jpg", url: "https://x/a.png" }],
+		});
+		const blocks = res.content as Array<{ type: string; text: string }>;
+		assert.equal(blocks.length, 1);
+	});
+});
+
 // ── propose_generation 结算归因回调（P2，spec 2026-10-13 §2）────────────────
 // 一次 propose 恰好一条观测：race 收敛单点（等待结算）与早退路径（nonblocking）互斥不双计。
 describe("propose_generation 结算归因回调（P2）", () => {
