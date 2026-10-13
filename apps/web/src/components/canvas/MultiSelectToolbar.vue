@@ -47,7 +47,11 @@ const layoutMenuOpen = ref(false)
  * 分组背景色菜单（2026-10-13 迭代）：常驻单排色点收敛为「内外环触发钮 +
  * hover 展开下拉」。触发钮内环实时显示当前分组背景色（host 经 groupColorKey
  * 传入，改色即跟随）；指针进入触发区展开下拉，横向平铺 8 个色块，指针进入
- * 色条整条放大到易点尺寸。离开时给 220ms 宽限（按钮→下拉的途中不闪闭）。
+ * 色条整条放大到易点尺寸。
+ *
+ * 防闪闭双层：① 隐形桥梁——.group-color-menu::after 覆盖触发器与下拉之间
+ * 的 6px 间隙，指针跨越时命中区连续，永不触发 mouseleave；② 150ms 宽限
+ * 兜底（异常快速划过时）。离开即收。
  */
 const colorMenuOpen = ref(false)
 let colorCloseTimer: ReturnType<typeof setTimeout> | undefined
@@ -61,7 +65,7 @@ function closeColorMenuLanded() {
   clearTimeout(colorCloseTimer)
   colorCloseTimer = setTimeout(() => {
     colorMenuOpen.value = false
-  }, 220)
+  }, 150)
 }
 
 function toggleColorMenu() {
@@ -601,6 +605,18 @@ onUnmounted(() => {
   border-radius: 10px;
   padding: 6px;
   box-shadow: var(--lnk-shadow-md);
+}
+
+/* 隐形桥梁：覆盖触发器与下拉之间的 6px 间隙——指针跨越时命中区连续，
+   不触发 wrapper 的 mouseleave（hover 展开的经典闪闭坑）；配合 150ms
+   宽限双保险。视觉上不可见（无背景无边框）。 */
+.group-color-menu::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 10px;
 }
 
 /* 色条：静止小点、指针进入整条放大到易点尺寸（transform 缩放不占布局盒、

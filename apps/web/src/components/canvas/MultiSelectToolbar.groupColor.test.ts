@@ -50,17 +50,17 @@ describe('MultiSelectToolbar: 分组背景色触发钮 + hover 下拉', () => {
     w.unmount()
   })
 
-  it('mouseleave 后宽限 220ms 才收起（按钮→下拉途中不闪闭）；到点即收', async () => {
+  it('mouseleave 后宽限 150ms 才收起（异常快速划过不闪闭）；到点即收', async () => {
     vi.useFakeTimers()
     const w = mount(MultiSelectToolbar, { props: { ...base, canUngroup: true } })
     await w.find('.group-color-menu').trigger('mouseenter')
     expect(w.find('[data-testid="group-color-dropdown"]').exists()).toBe(true)
     await w.find('.group-color-menu').trigger('mouseleave')
     // 宽限窗口内仍展开（指针正在前往下拉的途中）
-    vi.advanceTimersByTime(200)
+    vi.advanceTimersByTime(100)
     await nextTick()
-    expect(w.find('[data-testid="group-color-dropdown"]').exists(), '220ms 宽限内不应收起').toBe(true)
-    vi.advanceTimersByTime(50)
+    expect(w.find('[data-testid="group-color-dropdown"]').exists(), '150ms 宽限内不应收起').toBe(true)
+    vi.advanceTimersByTime(100)
     await nextTick()
     expect(w.find('[data-testid="group-color-dropdown"]').exists(), '宽限结束应收起').toBe(false)
     w.unmount()
@@ -131,7 +131,7 @@ describe('MultiSelectToolbar: 分组背景色触发钮 + hover 下拉', () => {
     w.unmount()
   })
 
-  it('CSS 契约：色块 transform 缩放（hover 放大不占布局盒）+ 当前色品牌色环 + 触发钮内外环', () => {
+  it('CSS 契约：色块 transform 缩放（hover 放大不占布局盒）+ 当前色品牌色环 + 触发钮内外环 + 防闪闭桥梁', () => {
     const src = readFileSync(join(HERE, 'MultiSelectToolbar.vue'), 'utf8')
     // 色块：静止缩小、色条 hover 放大（transform 不占布局盒）
     expect(src).toMatch(/\.group-color-dot\s*\{[^}]*transform:\s*scale\(0\.7\)/)
@@ -141,5 +141,7 @@ describe('MultiSelectToolbar: 分组背景色触发钮 + hover 下拉', () => {
     // 触发钮内外环结构：外环圆描边 + 内环实心圆
     expect(src).toMatch(/\.group-color-trigger\s*\{[^}]*border-radius:\s*9999px/)
     expect(src).toMatch(/\.group-color-trigger-core\s*\{[^}]*border-radius:\s*9999px/)
+    // 防闪闭桥梁：wrapper 伪元素覆盖触发器→下拉间隙，跨越时命中区连续
+    expect(src).toMatch(/\.group-color-menu::after\s*\{[^}]*top:\s*100%[^}]*height:\s*10px/)
   })
 })
