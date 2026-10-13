@@ -59,6 +59,7 @@ import {
   filterAssistantVisibleText,
   filterUserVisibleText,
 } from '@/components/agent/agentInterruptGate'
+import { isSystemEventText } from '@/components/agent/systemEventRender'
 import {
   buildIdempotencyKey,
   createAgentThreadId,
@@ -324,6 +325,11 @@ function visibleAssistantContent(msg: AgentStreamMessage): string {
 function visibleUserContent(msg: AgentStreamMessage): string {
   if (msg.role !== 'user') return msg.content ?? ''
   return filterUserVisibleText(msg.content ?? '')
+}
+
+/** 宿主回注的系统事件消息（spec §6.4，PR3）：前缀判据唯一实现在 systemEventRender.ts。 */
+function isUserSystemEvent(msg: AgentStreamMessage): boolean {
+  return msg.role === 'user' && isSystemEventText(msg.content ?? '')
 }
 
 /** 带着可渲染 svg_card 的消息：`body.svg` 收窄为 `string`（非 `string | undefined`）。 */
@@ -2766,6 +2772,7 @@ defineExpose({
                 :class="[
                   msg.role === 'user' ? 'agent-bubble-user' : 'agent-bubble-assistant',
                   isMessageUnderEdit(msg) ? 'agent-bubble-user--editing' : '',
+                  isUserSystemEvent(msg) ? 'agent-bubble-user--system' : '',
                 ]"
               >
                 <AgentProseBlock
@@ -2812,6 +2819,12 @@ defineExpose({
                   @update:collapsed="onToggleTrace(msg, $event)"
                   @focus-node="onFocusNode($event)"
                 />
+                <!-- 宿主回注的系统事件（spec §6.4，PR3）：用户消息带 [系统事件· 前缀时
+                     渲染「系统」标签 + 事件态卡片（左侧竖线），见 .agent-bubble-user--system -->
+                <span
+                  v-if="isUserSystemEvent(msg)"
+                  class="agent-system-tag"
+                >系统</span>
                 <p v-if="hasBubbleText(msg) && !isMessageUnderEdit(msg)" class="whitespace-pre-wrap">
                   {{
                     msg.role === 'user'
@@ -3772,6 +3785,31 @@ defineExpose({
  */
 .agent-bubble-user--editing {
   width: 88%;
+}
+
+/*
+ * 宿主回注的系统事件消息（spec §6.4，PR3）：「[系统事件·」前缀的用户轮次。
+ * 视觉上必须一眼区别于真人发言：左侧竖线 + info 语义面 + 「系统」标签。
+ * 令牌只消费 L2（--lnk-info-* / --lnk-text-* / --lnk-radius-*），
+ * 禁新增 hex（design-token.test.ts 守卫）。
+ */
+.agent-bubble-user--system {
+  max-width: 100%;
+  border: 1px solid var(--lnk-info-border);
+  border-left-width: 3px;
+  border-radius: var(--lnk-radius-md);
+  background: var(--lnk-info-bg);
+}
+
+.agent-system-tag {
+  display: inline-block;
+  margin-bottom: var(--lnk-space-1);
+  padding: 0 var(--lnk-space-2);
+  border: 1px solid var(--lnk-info-border);
+  border-radius: var(--lnk-radius-full);
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
 }
 
 .agent-bubble-assistant {
