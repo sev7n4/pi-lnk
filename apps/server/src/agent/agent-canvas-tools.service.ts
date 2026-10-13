@@ -40,6 +40,8 @@ import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { StudioService, type StudioRefInput } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
+import { emitGenerationFailure } from './generation-recovery/emission'
+import { GenerationRecoveryService } from './generation-recovery/generation-recovery.service'
 import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
 // B2 S2-1e：模型能力判定/audioKind 派生切 DB 目录缓存（DB 是唯一真源）——
 // admin 后台新增的模型不在常量目录，旧实现会误判（如 music 模型判 voice、
@@ -806,6 +808,10 @@ export class AgentCanvasToolsService {
     @Optional()
     @Inject(CANVAS_ACTION_APPLIER)
     private readonly canvasActionApplier?: CanvasActionApplier,
+    // 生成失败回注（PR3，spec §6）：@Optional + flag 双闸，缺省/flag off = 逐字节旧行为。
+    @Optional()
+    @Inject(GenerationRecoveryService)
+    private readonly generationRecovery?: GenerationRecoveryService,
   ) {}
 
   /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
@@ -1914,7 +1920,7 @@ export class AgentCanvasToolsService {
     nodeId: string
     generationRecordId: string
   }): Promise<{ url?: string; status: string; generationRecordId: string; actions: CanvasAction[] }> {
-    return this.videoOrchestrator.wait(
+    const result = await this.videoOrchestrator.wait(
       input.userId,
       {
         sessionId: input.sessionId,
@@ -1923,6 +1929,10 @@ export class AgentCanvasToolsService {
       },
       (actions) => this.persist(input.sessionId, actions),
     )
+    // 生成失败回注发射（spec §6，PR3）：两处 orchestrator 失败终态在此以 status==='error'
+    // 汇出。fail-open，绝不影响返回值（见 generation-recovery/emission.ts 顶部说明）。
+    emitGenerationFailure(this.generationRecovery, input, result)
+    return result
   }
 
   async runVideoGeneration(input: {

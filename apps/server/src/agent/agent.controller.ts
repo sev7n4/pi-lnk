@@ -20,6 +20,7 @@ import { SessionsService } from '../sessions/sessions.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentMemoryService } from './agent-memory.service'
 import { AgentService } from './agent.service'
+import { recordSessionSeen } from './generation-recovery/presence'
 import {
   loadRegistry,
   renderStatic,
@@ -478,6 +479,14 @@ export class AgentController {
     @Res() res: Response,
   ) {
     await this.sessionsService.findOne(sessionId, req.user.sub)
+    // 生成失败回注的在线态代理（spec §6.0-1）：双键记录（sessionId + threadId）。
+    // 发射点只知道 canvas sessionId，而前端旁听流通常带 threadId 订阅 —— 单键会导致
+    // 在线判定恒 false、回注全部 skip（presence.ts 顶部注释有完整说明）。
+    recordSessionSeen(sessionId)
+    const presenceThreadId = threadId?.trim()
+    if (presenceThreadId && presenceThreadId !== sessionId) {
+      recordSessionSeen(presenceThreadId)
+    }
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
