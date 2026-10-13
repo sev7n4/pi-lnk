@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common'
+import { ModuleRef } from '@nestjs/core'
 import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
@@ -808,11 +809,23 @@ export class AgentCanvasToolsService {
     @Optional()
     @Inject(CANVAS_ACTION_APPLIER)
     private readonly canvasActionApplier?: CanvasActionApplier,
-    // 生成失败回注（PR3，spec §6）：@Optional + flag 双闸，缺省/flag off = 逐字节旧行为。
+    // 生成失败回注（PR3，spec §6）：⚠️ 必须经 ModuleRef 运行时惰性解析、**不能构造器注入**。
+    // AgentService → 本 service（构造依赖）→ GenerationRecoveryService → port → AgentService
+    // 会构成 Nest 实例化环 ⇒ DI 死锁、事件循环耗尽、进程静默 exit 0（#399 前的两次部署事故）。
+    // ModuleRef 同样 @Optional：单测手工构造不传也零破坏；运行时拿不到 = flag 第二道闸。
     @Optional()
-    @Inject(GenerationRecoveryService)
-    private readonly generationRecovery?: GenerationRecoveryService,
+    @Inject(ModuleRef)
+    private readonly moduleRef?: ModuleRef,
   ) {}
+
+  /** 运行时惰性解析回注服务（构造环见上）。解析失败 = 未装配 = 不发射（fail-open）。 */
+  private get generationRecovery(): GenerationRecoveryService | undefined {
+    try {
+      return this.moduleRef?.get(GenerationRecoveryService, { strict: false })
+    } catch {
+      return undefined
+    }
+  }
 
   /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
   private get applier(): CanvasActionApplier {
