@@ -43,12 +43,37 @@ const emit = defineEmits<{
 const exportMenuOpen = ref(false)
 const layoutMenuOpen = ref(false)
 
+/**
+ * 分组背景色菜单（2026-10-13 迭代）：常驻单排色点收敛为「内外环触发钮 +
+ * hover 展开下拉」。触发钮内环实时显示当前分组背景色（host 经 groupColorKey
+ * 传入，改色即跟随）；指针进入触发区展开下拉，横向平铺 8 个色块，指针进入
+ * 色条整条放大到易点尺寸。离开时给 220ms 宽限（按钮→下拉的途中不闪闭）。
+ */
+const colorMenuOpen = ref(false)
+let colorCloseTimer: ReturnType<typeof setTimeout> | undefined
+
+function openColorMenu() {
+  clearTimeout(colorCloseTimer)
+  colorMenuOpen.value = true
+}
+
+function closeColorMenuLanded() {
+  clearTimeout(colorCloseTimer)
+  colorCloseTimer = setTimeout(() => {
+    colorMenuOpen.value = false
+  }, 220)
+}
+
+function toggleColorMenu() {
+  colorMenuOpen.value = !colorMenuOpen.value
+}
+
 const colorKeys = GROUP_COLOR_KEYS
 
 /** 活跃色点：host 传入当前分组色；缺省/null 均落 neutral（默认色） */
 const activeGroupColorKey = computed(() => props.groupColorKey ?? 'neutral')
 
-/** 色点只做选择（无弹层要关）；null 契约保留但 UI 不再单设复位格——neutral 即默认色 */
+/** 色点只做选择；null 契约保留但 UI 不单设复位格——neutral 即默认色 */
 function onPickColor(key: string) {
   emit('groupColor', key)
 }
@@ -134,12 +159,16 @@ function onDocClick(event: MouseEvent) {
   if (!target?.closest('[data-layout-menu]')) {
     closeLayoutMenu()
   }
+  if (!target?.closest('[data-color-menu]')) {
+    colorMenuOpen.value = false
+  }
 }
 
 onMounted(() => {
   document.addEventListener('click', onDocClick)
 })
 onUnmounted(() => {
+  clearTimeout(colorCloseTimer)
   document.removeEventListener('click', onDocClick)
 })
 </script>
@@ -155,10 +184,10 @@ onUnmounted(() => {
     }"
   >
     <div
-      class="neo-chrome pointer-events-auto flex items-center gap-1 rounded-xl px-1.5 py-1"
+      class="neo-chrome pointer-events-auto flex items-center gap-1.5 rounded-xl px-2 py-1.5"
       @click.stop
     >
-      <span class="px-2 text-[10px] text-[var(--neo-text-muted)]">已选 {{ selectedIds.length }}</span>
+      <span class="px-1.5 text-xs text-[var(--neo-text-muted)]">已选 {{ selectedIds.length }}</span>
       <button
         v-if="canGenerateVideo"
         type="button"
@@ -244,31 +273,55 @@ onUnmounted(() => {
         </svg>
         <span v-if="!batchRunning" class="badge">{{ batchRegenCount }}</span>
       </button>
-      <!-- 优化点③（2026-10-12）：分组色卡单排内嵌——原「颜色按钮 + 三排
-           弹层」收敛为常驻一排 8 个色点；指针进入色条时整条放大到易点
-           尺寸（transform 缩放，不占布局盒、不推挤相邻按钮），当前分组色
-           以品牌色环标识。neutral 即默认色，复位语义与色点合一，不再单设
-           复位格。色值全部走 --neo-group-* 令牌，组件内无字面 hex。 -->
+      <!-- 分组背景色（2026-10-13 迭代）：内外环触发钮 + hover 下拉。
+           钮内环实时显示当前分组背景色（groupColorKey 驱动，改色即跟随）；
+           指针进入触发区展开下拉，横向平铺 8 个色块；指针进入色条整条
+           放大到易点尺寸（transform 缩放，不占布局盒、不推挤相邻按钮），
+           当前分组色以品牌色环高亮。neutral 即默认色，复位语义与色点合一。
+           色值全部走 --neo-group-* 令牌，组件内无字面 hex。 -->
       <div
         v-if="canUngroup"
-        class="group-color-strip"
+        class="group-color-menu relative"
         data-color-menu
-        role="group"
-        aria-label="分组颜色"
+        @mouseenter="openColorMenu"
+        @mouseleave="closeColorMenuLanded"
       >
         <button
-          v-for="key in colorKeys"
-          :key="key"
           type="button"
-          class="group-color-dot"
-          :class="{ 'is-active': key === activeGroupColorKey }"
-          :data-testid="`group-color-${key}`"
-          :aria-label="key === 'neutral' ? '默认色' : `分组色 ${key}`"
-          :aria-pressed="key === activeGroupColorKey"
-          :title="key === 'neutral' ? '默认色' : `分组色 ${key}`"
-          :style="{ background: `var(--neo-group-${key})` }"
-          @click="onPickColor(key)"
-        />
+          class="group-color-trigger"
+          data-testid="group-color-trigger"
+          :aria-label="`分组背景色：${activeGroupColorKey}`"
+          :aria-expanded="colorMenuOpen"
+          title="分组背景色（悬停展开色卡）"
+          @click.stop="toggleColorMenu"
+        >
+          <span
+            class="group-color-trigger-core"
+            data-testid="group-color-trigger-core"
+            :style="{ background: `var(--neo-group-${activeGroupColorKey})` }"
+          />
+        </button>
+        <div
+          v-if="colorMenuOpen"
+          class="group-color-dropdown neo-chrome"
+          data-testid="group-color-dropdown"
+        >
+          <div class="group-color-strip" role="group" aria-label="分组背景颜色">
+            <button
+              v-for="key in colorKeys"
+              :key="key"
+              type="button"
+              class="group-color-dot"
+              :class="{ 'is-active': key === activeGroupColorKey }"
+              :data-testid="`group-color-${key}`"
+              :aria-label="key === 'neutral' ? '默认色' : `分组色 ${key}`"
+              :aria-pressed="key === activeGroupColorKey"
+              :title="key === 'neutral' ? '默认色' : `分组色 ${key}`"
+              :style="{ background: `var(--neo-group-${key})` }"
+              @click="onPickColor(key)"
+            />
+          </div>
+        </div>
       </div>
       <button
         v-if="canUngroup"
@@ -435,8 +488,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 工具条控件放大（2026-10-13）：参照图片节点单击弹出卡片的控件尺度
+   （ DockStudio 28px 按钮 / 24px 图标钮）—— 分组工具条原 16px 图标 +
+   py-1 在 0.25 倍缩放的画布上偏小。hit 区 30px、图标 18px、条高 ~44px。
+   浮层是屏幕空间 HTML 覆盖物，不随画布缩放（缩放即不可读，见 PR 说明）。 */
 .toolbar-action {
-  @apply relative rounded-lg px-2 py-1.5 transition;
+  @apply relative rounded-lg p-2 transition;
   color: var(--neo-text-secondary);
 }
 .toolbar-action:hover {
@@ -464,8 +521,8 @@ onUnmounted(() => {
 }
 .ico {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.4;
@@ -476,11 +533,11 @@ onUnmounted(() => {
   position: absolute;
   top: -2px;
   right: -2px;
-  min-width: 14px;
+  min-width: 15px;
   padding: 0 3px;
   border-radius: 9999px;
-  font-size: 9px;
-  line-height: 14px;
+  font-size: 10px;
+  line-height: 15px;
   text-align: center;
   color: var(--neo-text-primary);
   background: var(--neo-hover-bg, rgba(128, 128, 128, 0.35));
@@ -494,8 +551,8 @@ onUnmounted(() => {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.4rem 0.75rem;
-  font-size: 12px;
+  padding: 0.5rem 0.85rem;
+  font-size: 13px;
   color: var(--neo-text-secondary);
   background: transparent;
 }
@@ -504,33 +561,72 @@ onUnmounted(() => {
   color: var(--neo-text-primary);
 }
 
-/* 分组色卡单排（优化点③ 2026-10-12）：替代原 trigger 按钮 + 三排弹层。
-   8 个色点常驻工具条一排；指针进入色条整条放大到易点尺寸——transform
-   缩放不占布局盒、不推挤相邻按钮，离开缩回小点。当前分组色以品牌色环
-   标识。色由内联 var(--neo-group-*) 提供，这里只管形状与悬停反馈。 */
+/* 分组背景色触发钮（2026-10-13）：内外环结构——外环为中性描边圆钮，
+   内环（core）实时显示当前分组背景色（内联 var(--neo-group-*)），
+   改色即跟随；hover 时外环提亮暗示可展开。 */
+.group-color-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--neo-text) 22%, transparent);
+  border-radius: 9999px;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.group-color-trigger:hover {
+  border-color: color-mix(in srgb, var(--neo-text) 45%, transparent);
+  background: var(--neo-hover-bg);
+}
+.group-color-trigger-core {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--neo-text) 18%, transparent);
+  transition: background 0.14s ease;
+}
+
+/* 下拉：触发器正下方，横向平铺 8 个色块（替代旧三排网格弹层） */
+.group-color-dropdown {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 6px);
+  z-index: 50;
+  transform: translateX(-50%);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: var(--lnk-shadow-md);
+}
+
+/* 色条：静止小点、指针进入整条放大到易点尺寸（transform 缩放不占布局盒、
+   不推挤相邻色块）；当前分组色以品牌色环高亮。 */
 .group-color-strip {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 0 3px;
+  gap: 4px;
 }
 .group-color-dot {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex: none;
   border: 1px solid color-mix(in srgb, var(--neo-text) 18%, transparent);
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 0;
   cursor: pointer;
-  transform: scale(0.6);
+  transform: scale(0.7);
   transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
 }
 .group-color-strip:hover .group-color-dot {
-  transform: scale(1.15);
+  transform: scale(1.2);
 }
 /* 特异性 (0,4,0) 压过色条 hover 规则：被指的那个再大一点 */
 .group-color-strip:hover .group-color-dot:hover {
-  transform: scale(1.2);
+  transform: scale(1.25);
 }
 .group-color-dot.is-active {
   border-color: var(--neo-accent);

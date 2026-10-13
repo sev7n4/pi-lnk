@@ -47,6 +47,45 @@ afterEach(() => renameFn.mockClear())
  * `--neo-group-accent` 注入值、以及 neo-node.css 规则层（紫色 rgba 清零 +
  * 容器规则消费 accent 令牌）。
  */
+describe('CanvasNodeGroup：标题前分组图标（2026-10-13）', () => {
+  it('有效性前置：标题条渲染分组图标（svg）且无文字徽标', () => {
+    const w = mountGroup({ title: '分组 1', childIds: ['a'] })
+    const icon = w.find('.group-title-icon')
+    expect(icon.exists(), '分组图标必须渲染').toBe(true)
+    expect(icon.find('svg').exists(), '图标应为 svg').toBe(true)
+    expect(icon.text(), '图标不得携带文字（避免复活旧「分组」徽标）').toBe('')
+    w.unmount()
+  })
+
+  it('图标颜色跟随分组背景色：CSS 消费 --neo-group-accent，svg 用 currentColor 继承', () => {
+    const fs = readFileSync(join(HERE, 'CanvasNodeGroup.vue'), 'utf8')
+    const iconScope = fs.match(/(?:^|\n)\.group-title-icon\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(iconScope, '找不到分组图标规则块').toBeTruthy()
+    expect(iconScope, '图标色应跟随分组色（与色卡当前色一致）').toContain('var(--neo-group-accent)')
+    // svg stroke=currentColor ⇒ 颜色由 .group-title-icon 的 color 继承
+    const svgTag = fs.match(/<svg[^>]*stroke="currentColor"[^>]*>/)?.[0] ?? ''
+    expect(svgTag, '图标 svg 应以 currentColor 描边').toContain('stroke="currentColor"')
+    // DOM 层：moss 分组下 wrapper 注入的 accent 链完整（图标消费同一变量）
+    const w = mountGroup({ title: 'g', childIds: [], colorKey: 'moss' })
+    const style = w.find('.group-node-wrapper').attributes('style') ?? ''
+    expect(style).toContain('var(--neo-group-moss)')
+    w.unmount()
+  })
+
+  it('图标位于标题之前（速识位），不侵占容器内部', () => {
+    const w = mountGroup({ title: '分组 2', childIds: ['a', 'b'] })
+    const strip = w.find('.group-drag-handle')
+    const icon = strip.find('.group-title-icon')
+    const title = strip.find('.group-title')
+    expect(icon.exists() && title.exists()).toBe(true)
+    // DOM 顺序：icon 在 title 之前
+    expect(icon.element.compareDocumentPosition(title.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 图标不在分组容器内（容器 pointer-events:none，只作视觉承载）
+    expect(w.find('.group-node-container .group-title-icon').exists()).toBe(false)
+    w.unmount()
+  })
+})
+
 describe('CanvasNodeGroup：信息条外沿化（拆内嵌小卡）', () => {
   it('有效性前置：信息条渲染名称与节点数', () => {
     const w = mountGroup({ title: '分组 0', childIds: ['a', 'b'] })

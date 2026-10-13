@@ -68,6 +68,14 @@ const groupStyle = computed(() => ({
         @mousedown.stop
       >
       <template v-else>
+        <span class="group-title-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="2" />
+            <rect x="13" y="3.5" width="7.5" height="7.5" rx="2" />
+            <rect x="3.5" y="13" width="7.5" height="7.5" rx="2" />
+            <rect x="13" y="13" width="7.5" height="7.5" rx="2" />
+          </svg>
+        </span>
         <h4 class="group-title">{{ data.title || '未命名分组' }}</h4>
         <span class="group-meta">{{ data.childIds?.length ?? 0 }} 个节点</span>
       </template>
@@ -126,6 +134,24 @@ const groupStyle = computed(() => ({
 /* hover 提亮即「这里可拖」的暗示，替代旧文案解释 */
 .group-drag-handle:hover .group-title {
   color: var(--neo-node-text);
+}
+
+/* 分组图标（2026-10-13）：标题前的 2×2 网格标——「这是一组」的速识。
+   颜色跟随分组背景色（--neo-group-accent 由 wrapper 按 colorKey 注入），
+   与色卡当前色保持一致；改色即跟随。 */
+.group-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  align-self: center;
+  color: var(--neo-group-accent);
+  transition: color 0.15s ease;
+}
+.group-title-icon svg {
+  display: block;
+  width: 13px;
+  height: 13px;
 }
 
 .group-title {
