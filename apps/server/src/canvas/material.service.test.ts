@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { createImageProvider, createVideoProvider, FAL_H3_MAX_ENDPOINTS, mergeRefsToPrompt } from '@lnkpi/agent'
 import { MaterialService } from './material.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { ProviderResolverService } from '../provider/provider-resolver.service'
@@ -73,6 +75,7 @@ describe('MaterialService image', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         MaterialService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume } },
         {
           provide: PrismaService,
@@ -113,6 +116,7 @@ describe('MaterialService image', () => {
       status: 'success',
       model: 'seedream-5.0-pro',
       generationId: 'm1',
+      ruleVersion: 'test-constants',
     })
     expect(imageGenerate).toHaveBeenCalledWith('a cat', {
       modelId: 'doubao-seedream-5-0-pro',
@@ -236,6 +240,7 @@ describe('MaterialService video', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         MaterialService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume } },
         {
           provide: PrismaService,
@@ -277,6 +282,7 @@ describe('MaterialService video', () => {
       status: 'success',
       model: 'seedance-2.0-min',
       generationId: null,
+      ruleVersion: 'test-constants',
     })
     expect(videoGenerate).toHaveBeenCalledWith(
       'walk',
@@ -311,6 +317,7 @@ describe('MaterialService video', () => {
       status: 'success',
       model: 'h3-max-turbo',
       generationId: null,
+      ruleVersion: 'test-constants',
     })
     expect(createVideoProvider).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'h3-max-turbo' }),
@@ -347,6 +354,7 @@ describe('MaterialService video', () => {
       status: 'success',
       model: 'minimax-h3',
       generationId: null,
+      ruleVersion: 'test-constants',
     })
     expect(createVideoProvider).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'minimax-h3' }),

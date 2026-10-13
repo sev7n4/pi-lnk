@@ -6,6 +6,8 @@ import { BYOK_FALLBACK_CONFIRM_MESSAGE, defaultModelKey } from '@lnkpi/shared'
 import { BadRequestException } from '@nestjs/common'
 import { createCancelFlag } from '../points/charge-session'
 import { MaterialService } from './material.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { ProviderResolverService } from '../provider/provider-resolver.service'
@@ -76,6 +78,7 @@ describe('MaterialService BYOK fallback_pending', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         MaterialService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: {
