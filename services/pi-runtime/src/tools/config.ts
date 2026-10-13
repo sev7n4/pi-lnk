@@ -78,7 +78,11 @@ export function resolveToolsWithClient(
 		// C4：spawn_subagent 同上——不依赖 client，coordinator 存在即可注册（spec 2026-10-10-c4-subagent-design.md §3.1）。
 		...(deps.coordinator ? [createSpawnSubagentTool(deps.coordinator, metrics)] : []),
 		...buildCanvasReadTools(client),
-		...buildCanvasWriteTools(client, deps.registry),
+		// P2（spec 2026-10-13 §2）：propose 结算归因回调——工具层不持 Metrics（2026-10-04 纪律），
+		// 经观察者回调接线；label 归一（stale_status:* 白名单折叠）在 metrics 侧单点完成。
+		...buildCanvasWriteTools(client, deps.registry, {
+			onProposeOutcome: (reason) => metrics.observeProposeOutcome(reason),
+		}),
 		...buildUiCommandTools(),
 		...buildAskUserTools(deps.registry),
 		...buildArrangeNodesTools(client),

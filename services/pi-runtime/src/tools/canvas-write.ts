@@ -48,13 +48,22 @@ function setIfPresent(body: Record<string, unknown>, key: string, value: unknown
  * opts.registry（2026-09-30-ask-user-blocking B-2）：阻塞式确认注册表。
  * 注入且 askUserBlocking() 开 → propose_generation 走阻塞确认分支；否则逐字节旧行为。
  * opts.pollMs：画布 SSOT 轮询间隔（仅测试注入；缺省 2s，spec §4.2）。
+ * opts.onProposeOutcome（P2，spec 2026-10-13 §2）：propose 结算回调观察者——工具层不持
+ * Metrics（2026-10-04 纪律），config.ts 接线到 metrics.observeProposeOutcome。
+ * 约定：回调只做 Map.set，**不得抛**（调用点不 try/catch，抛错会污染结算路径）。
  */
 export function createCanvasWriteTools(
 	client: NestClient,
-	opts: { includeDeferred?: boolean; registry?: PendingToolRegistry; pollMs?: number } = {},
+	opts: {
+		includeDeferred?: boolean;
+		registry?: PendingToolRegistry;
+		pollMs?: number;
+		onProposeOutcome?: (reason: string, confirmed: boolean) => void;
+	} = {},
 ): LnkpiTool[] {
 	const write = { tier: "write_light" as const };
 	const registry = opts.registry;
+	const onProposeOutcome = opts.onProposeOutcome;
 	const tools: LnkpiTool[] = [
 		{
 			...write,
@@ -352,7 +361,11 @@ export function createCanvasWriteTools(
 					nodeId: p.node_id,
 				});
 				// B-5 off（或无 registry）→ 旧行为逐字节保留（spec §8 回退纪律）
-				if (!registry || !askUserBlocking()) return withWriteSignal(base, 1);
+				if (!registry || !askUserBlocking()) {
+					// P2 结算归因：非阻塞路径也是一次 propose 结算（不记会使 outcome 分布的分母失真）
+					onProposeOutcome?.("nonblocking", false);
+					return withWriteSignal(base, 1);
+				}
 
 			// 阻塞确认：registry 挂 pending（供 /pending 查询与 abort 联动），双臂 race——
 			// ① 轮询画布 SSOT（缺省 2s 间隔，spec §4.2）；
@@ -455,6 +468,10 @@ export function createCanvasWriteTools(
 					),
 				]);
 				settled = true;
+				// P2 结算归因（spec 2026-10-13 §2）：race 收敛单点，恰好一条观测。
+				// stale_status:<status> 的 label 归一在 Metrics.observeProposeOutcome 内做，
+				// 这里透传原始 reason（模型可见文本不变）。
+				onProposeOutcome?.(outcome.reason ?? "unknown", outcome.confirmed);
 				// 收尾清理（另一臂未 settle 也无妨：cancel 即清）。
 				// ⚠️ 语义：确认成功必须按 answered 上报，否则 waiting_user 的 resolved 会误报 aborted
 				// （生产实证 2026-10-01：画布确认成功却广播 reason=aborted，与 tool_result confirmed:true 矛盾）。

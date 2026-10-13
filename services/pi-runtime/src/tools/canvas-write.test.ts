@@ -768,3 +768,95 @@ describe("canvas-write: _signal + affectedCount 契约", () => {
 		assert.equal(d.affectedCount, 0);
 	});
 });
+
+// ── propose_generation 结算归因回调（P2，spec 2026-10-13 §2）────────────────
+// 一次 propose 恰好一条观测：race 收敛单点（等待结算）与早退路径（nonblocking）互斥不双计。
+describe("propose_generation 结算归因回调（P2）", () => {
+	it("无 registry（旧行为早退）→ onProposeOutcome(nonblocking, false) 且结果逐字节旧行为", async () => {
+		const client = fakeNestClient(["pending_confirm"]);
+		const outcomes: Array<[string, boolean]> = [];
+		const [propose] = createCanvasWriteTools(client, {
+			onProposeOutcome: (reason, confirmed) => outcomes.push([reason, confirmed]),
+		}).filter((t) => t.name === "propose_generation");
+		const result = await run(propose, { node_id: "n1" });
+		assert.deepEqual(outcomes, [["nonblocking", false]]);
+		assert.equal((result.details as Record<string, unknown>).confirmed, undefined, "早退路径不产生 confirmed 语义");
+	});
+
+	it("B-5 off（env=off）→ 同样记 nonblocking（开关关闭也进分母）", async () => {
+		const prev = process.env.ASK_USER_BLOCKING;
+		process.env.ASK_USER_BLOCKING = "off";
+		try {
+			const reg = new PendingToolRegistry();
+			const client = fakeNestClient(["pending_confirm"]);
+			const outcomes: Array<[string, boolean]> = [];
+			const [propose] = createCanvasWriteTools(client, {
+				registry: reg,
+				onProposeOutcome: (reason, confirmed) => outcomes.push([reason, confirmed]),
+			}).filter((t) => t.name === "propose_generation");
+			await run(propose, { node_id: "n1" });
+			assert.deepEqual(outcomes, [["nonblocking", false]]);
+			assert.equal(reg.hasPending("s1"), false);
+		} finally {
+			if (prev === undefined) delete process.env.ASK_USER_BLOCKING;
+			else process.env.ASK_USER_BLOCKING = prev;
+		}
+	});
+
+	it("/answers 显式确认 → onProposeOutcome(answered, true)（唯一不依赖 SSOT 时序的路径）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"]); // 轮询臂永远看不到生成——确认只能来自 /answers
+		const outcomes: Array<[string, boolean]> = [];
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 5,
+			onProposeOutcome: (reason, confirmed) => outcomes.push([reason, confirmed]),
+		}).filter((t) => t.name === "propose_generation");
+		const pending = run(propose, { node_id: "n1" });
+		// 轮询式等待 registry 挂载（复用本文件 waitFor 语义，避免挂载竞态假绿）
+		const start = Date.now();
+		while (!reg.hasPending("s1")) {
+			if (Date.now() - start > 1000) throw new Error("waitFor pending timeout");
+			await new Promise((r) => setTimeout(r, 2));
+		}
+		reg.answer("s1", "tc1", {});
+		await pending;
+		assert.deepEqual(outcomes, [["answered", true]]);
+	});
+
+	it("stale 覆盖回 completed → onProposeOutcome(stale_status:completed, false)（2026-10-12 事故形态的观测锚）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm", "completed"]);
+		const outcomes: Array<[string, boolean]> = [];
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 5,
+			onProposeOutcome: (reason, confirmed) => outcomes.push([reason, confirmed]),
+		}).filter((t) => t.name === "propose_generation");
+		await run(propose, { node_id: "n1" });
+		assert.deepEqual(outcomes, [["stale_status:completed", false]]);
+	});
+
+	it("超时（registry timer）→ onProposeOutcome(timeout, false)", async () => {
+		const reg = new PendingToolRegistry();
+		// 轮询臂恒 pending_confirm（不出任何正证据），让 registry 超时臂赢下 race
+		const client = fakeNestClient(["pending_confirm"]);
+		const outcomes: Array<[string, boolean]> = [];
+		// askUserTimeoutMs 走 env；注入最短档（>=1000ms 下限由实现保证的话用 1s）
+		const prev = process.env.ASK_USER_TIMEOUT_MS;
+		process.env.ASK_USER_TIMEOUT_MS = "1";
+		try {
+			const [propose] = createCanvasWriteTools(client, {
+				registry: reg,
+				pollMs: 50,
+				onProposeOutcome: (reason, confirmed) => outcomes.push([reason, confirmed]),
+			}).filter((t) => t.name === "propose_generation");
+			const result = await run(propose, { node_id: "n1" });
+			assert.equal((result.details as { confirmed?: boolean }).confirmed, false);
+			assert.deepEqual(outcomes, [["timeout", false]]);
+		} finally {
+			if (prev === undefined) delete process.env.ASK_USER_TIMEOUT_MS;
+			else process.env.ASK_USER_TIMEOUT_MS = prev;
+		}
+	});
+});
