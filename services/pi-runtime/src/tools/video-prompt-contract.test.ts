@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { videoContractReminder, VIDEO_MOTION_CONTRACT_REMINDER } from './video-prompt-contract.ts'
+import { videoContractReminder, VIDEO_MOTION_CONTRACT_REMINDER } from './video-prompt-contract.js'
 
 test('target_type=video → 返回纠偏文本', () => {
 	const out = videoContractReminder({ target_type: 'video', prompt: '一只狼' })
