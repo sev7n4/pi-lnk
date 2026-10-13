@@ -10,9 +10,9 @@ entries:
     order: 20
     contentHash: a2254c1ddb62
   - id: no_gen_claim.gen
-    version: 1.0.2
+    version: 1.1.0
     order: 20
-    contentHash: fdb53d21a342
+    contentHash: fd8d1b6b3867
   - id: sidebar_vision.tail
     version: 1.2.0
     order: 30
