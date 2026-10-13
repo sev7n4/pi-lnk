@@ -442,15 +442,19 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * ⇒ 余量 3200 − 3111 = **89**（较 #208 以来的贴线状态仍有余，但已不宽裕）
 	 * 同一笔改动把读类诊断 9 工具下沉延迟集（tiering.ts），点名撤除是下沉前提——见该文件头注释。
 	 *
+	 * 2026-10-13 澄清决策矩阵（PR #389）：media_tool_policy 规则 16 改三档（必问/偏好默认+声明），
+	 * 腾 rule5 尾句（gen_tool_policy 规则 11 已覆盖）与 rule15「（不确定就说明依据）」：
+	 * core+writeTools 2656→2653（Δ=−3）、全组合 3111→3108（Δ=−3），余量 3200−3108=**92**。
+	 *
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
 	 */
 	const BASELINE: Record<string, number> = {
 		core: 693,
-		"core+writeTools": 2656,
+		"core+writeTools": 2653,
 		"core+genTools": 1148,
-		"core+writeTools+genTools": 3111,
+		"core+writeTools+genTools": 3108,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -464,9 +468,10 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// +35 字符（62→97），3076→3111（余量 124→89）。core / core+writeTools 两组合未受影响。
 		// 2026-10-09 C1 task_tool：正文压缩到 63 字符（抬预算属 AGENTS.md 红线，不可自行改），
 		// 全组合（+todoTools）=3175（余量 25）——贴线状态，扩容须人工拍板。
+		// 2026-10-13 澄清决策矩阵（PR #389）：全组合 3111→3108（余量 89→92）。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(89);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(92);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
