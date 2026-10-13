@@ -13,6 +13,7 @@ import { AgentService } from './agent.service'
 import { CompositionService } from './composition.service'
 import { WorkflowRecipeService } from './workflow-recipe.service'
 import { AgentMemoryService } from './agent-memory.service'
+import { GenerationRecoveryService } from './generation-recovery/generation-recovery.service'
 
 @Module({
   imports: [CanvasModule, ProviderModule, SessionsModule, StudioModule, AssetsModule],
@@ -24,6 +25,10 @@ import { AgentMemoryService } from './agent-memory.service'
     WorkflowRecipeService,
     CompositionService,
     AgentMemoryService,
+    // 生成失败回注（spec §6，PR3）：默认 flag off（GENERATION_RECOVERY_ENABLED），
+    // off 时零派发；发射点在 AgentCanvasToolsService.waitVideoGeneration（两处
+    // orchestrator 失败终态在此汇出，且本模块已 imports StudioModule，反向注入会成环）。
+    GenerationRecoveryService,
     // 画布动作落地实现（归属待定的 seam）：换实现只改这一行，调用点零改动
     { provide: CANVAS_ACTION_APPLIER, useValue: defaultCanvasActionApplier },
   ],
