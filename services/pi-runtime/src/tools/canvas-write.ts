@@ -619,9 +619,24 @@ export function createCanvasWriteTools(
 					refOrder: p.ref_order ?? tc.refOrder ?? [],
 					mode,
 				};
-				const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
-				if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
-				return withWriteSignal(await client.post("/agent/internal/apply-sidebar-attachments", body), p.node_ids.length);
+			const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
+			if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
+			const usedPlatformFill = !p.attachments?.length;
+			const result = withWriteSignal(
+				await client.post("/agent/internal/apply-sidebar-attachments", body),
+				p.node_ids.length,
+			);
+			// RB-D2 对账：平台填充路径必须声明实际挂载来源（省略参数与消毒删除都落到本分支）。
+			if (usedPlatformFill) {
+				const ids = (tc.attachments ?? [])
+					.map((a) => (typeof (a as { id?: unknown }).id === "string" ? (a as { id: string }).id : ""))
+					.filter(Boolean)
+					.join(", ");
+				const note = `📎 参考图来源：本轮侧栏附件${ids ? `（${ids}）` : ""}，由平台填充并挂载。`;
+				const content: Array<{ type: "text"; text: string }> = [...result.content, { type: "text", text: note }];
+				return { ...result, content } as typeof result;
+			}
+			return result;
 			},
 		},
 		{
