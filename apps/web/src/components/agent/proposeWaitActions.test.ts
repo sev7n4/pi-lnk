@@ -107,7 +107,9 @@ describe('forcePendingConfirmInPayload（P0-C：等待期 PUT 强制声明真值
   })
 
   it('等待节点无 data / 无 status → 补声明 pending_confirm', () => {
-    const canvasData = { nodes: [{ id: 'n1' }, { id: 'n2', data: {} }] }
+    const canvasData: { nodes: Array<{ id: string; data?: Record<string, unknown> }> } = {
+      nodes: [{ id: 'n1' }, { id: 'n2', data: {} }],
+    }
     forcePendingConfirmInPayload(canvasData, 'n1')
     forcePendingConfirmInPayload(canvasData, 'n2')
     expect(canvasData.nodes[0].data?.status).toBe('pending_confirm')
