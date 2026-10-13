@@ -155,6 +155,8 @@ const emit = defineEmits<{
    * 任何 saveCanvas 都会用它整份覆盖 SSOT 的待确认 ⇒ runtime 误判「用户取消」。
    */
   proposeWaitStart: [nodeId: string]
+  /** P0-C（2026-10-13）：propose 等待结束——CanvasPage 解除 PUT 载荷强制声明 */
+  proposeWaitEnd: []
   /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
   arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
   /** 「导入到画布」：建成结构化节点组（由 CanvasPage 写 SSOT）。 */
@@ -755,6 +757,12 @@ const turnStatus = computed(() => {
 const proposeWait = computed(() =>
   agent.blockingWait?.toolName === 'propose_generation' ? agent.blockingWait : null,
 )
+// P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：等待结束信号。
+// CanvasPage 在等待期对 PUT 载荷强制声明 pending_confirm（防 stale 全量盖写 SSOT），
+// 等待结束必须解除，否则确认启动后的 generating/completed 会被倒灌回待确认。
+watch(proposeWait, (w, prev) => {
+  if (prev && !w) emit('proposeWaitEnd')
+})
 function locateProposeNode() {
   const nodeId = proposeWait.value?.nodeId
   if (nodeId) onFocusNode(nodeId)

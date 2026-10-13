@@ -367,6 +367,25 @@ export function createCanvasWriteTools(
 			});
 				const POLL_MS = opts.pollMs ?? 2_000;
 				let settled = false; // race 收尾后让落败的轮询臂退出，防 30min timeout 后仍在空转
+				// 2026-10-13 虚假确认修复（会话 cmv51vwpu0008p801hxaxcf8m）：
+				// 旧逻辑把**任何**非 pending/draft 状态当「已确认自起生成」——而 completed/error 是
+				// **旧生成的合法终态**，前端 stale 全量 PUT 把 pending_confirm 盖回 completed 时
+				// 轮询首读即虚假 confirmed（零生成，模型却被告知「生成已由画布启动」）。
+				// 修法：轮询臂只认**正证据**（见下），终态本身永远没有 confirmed 表决权。
+				// 先快照 propose 时刻的生成指纹，用于判定「是否有**新**生成启动」。
+				let snapRecordId: string | undefined;
+				let snapStartedAtMs = 0;
+				try {
+					const snap = (await client.post("/agent/internal/get-node", {
+						sessionId: tc.sessionId,
+						nodeId: p.node_id,
+					})) as { data?: { generationRecordId?: unknown; generationStartedAt?: unknown } } | null;
+					snapRecordId = typeof snap?.data?.generationRecordId === "string" ? snap.data.generationRecordId : undefined;
+					const t = Date.parse(String(snap?.data?.generationStartedAt ?? ""));
+					snapStartedAtMs = Number.isFinite(t) ? t : 0;
+				} catch {
+					// 快照 best-effort：失败则退化为仅 status 正证据（generating），不阻断主流程
+				}
 				const confirmResult = (async (): Promise<{ confirmed: boolean; reason?: string }> => {
 					// Finding 2：draft 稳定性启发式——前端取消（clear-propose）节点停在 draft，
 					// 确认则 draft→generating；连续 ≥2 次轮询仍 draft → 用户拒绝（fail-closed）。
@@ -383,7 +402,10 @@ export function createCanvasWriteTools(
 								nodeId: p.node_id,
 							});
 							errorStreak = 0;
-							const status = (node as { data?: { status?: unknown } } | null)?.data?.status;
+							const data = (node as {
+								data?: { status?: unknown; generationRecordId?: unknown; generationStartedAt?: unknown };
+							} | null)?.data;
+							const status = data?.status;
 							if (status === "pending_confirm") {
 								draftStreak = 0; // 仍在待确认（用户已确认/未动，语义见 spec §4.2）
 								continue;
@@ -394,7 +416,21 @@ export function createCanvasWriteTools(
 								continue;
 							}
 							draftStreak = 0;
-							return { confirmed: true, reason: String(status ?? "unknown") }; // generating/completed/error 等 = 已确认自起生成
+							// 正证据（任一）：① in-flight 状态；② generationRecordId 相对快照变化
+							// （cuid 服务端签发，无浏览器/容器时钟偏差问题）；③ generationStartedAt 相对
+							// 快照前进（相对比较，对时钟偏差稳健；快照无值时任何非空值都算新）。
+							const recId = typeof data?.generationRecordId === "string" ? data.generationRecordId : undefined;
+							const startedAtMs = Date.parse(String(data?.generationStartedAt ?? ""));
+							const recChanged = !!recId && recId !== snapRecordId;
+							const startedFresh = Number.isFinite(startedAtMs) && startedAtMs > snapStartedAtMs;
+							if (status === "generating" || status === "fallback_pending") {
+								return { confirmed: true, reason: String(status) };
+							}
+							if (recChanged) return { confirmed: true, reason: "new_record" };
+							if (startedFresh) return { confirmed: true, reason: "new_generation" };
+							// 终态（completed/error/failed 等）但无新生成证据 = 旧状态残留或被 stale
+							// 覆盖（2026-10-12 事故形态）⇒ fail-closed，绝不出 confirmed。
+							return { confirmed: false, reason: `stale_status:${String(status ?? "unknown")}` };
 						} catch (err) {
 							// 404 = 节点确定性消失（用户删除/取消）→ 立即 gone，不走容忍
 							// （404 再等多久都不会回来，fail-closed 时序恢复首轮即决）
@@ -440,9 +476,13 @@ export function createCanvasWriteTools(
 										? "用户未在时限内确认，请等待用户后续指示，不要自行执行 run_*。"
 										: outcome.reason === "aborted"
 											? "用户已中止。"
-											// rejected 是**推断**（SSOT 连续两次停 draft）而非事实，文案不得替用户
-											// 下定论：2026-10-06 生产事故里用户点了生成，模型却照此复述「用户取消了生成确认」。
-											: "未检测到该节点的生成确认（节点已回到草稿状态），不要执行 run_*；请先向用户确认是继续生成还是调整参数，不要断定用户已取消。",
+											: outcome.reason?.startsWith("stale_status:")
+												// 2026-10-12 事故形态：状态被 stale 覆盖回旧终态，零生成。
+												// 必须明说「未启动」，禁止模型复述「正在出图」。
+												? `未检测到生成启动（节点状态为 ${outcome.reason.slice("stale_status:".length)} 但无新生成证据），不要声称正在出图或已启动生成，不要执行 run_*；请重新 propose_generation 或请用户在画布节点上确认。`
+												// rejected 是**推断**（SSOT 连续两次停 draft）而非事实，文案不得替用户
+												// 下定论：2026-10-06 生产事故里用户点了生成，模型却照此复述「用户取消了生成确认」。
+												: "未检测到该节点的生成确认（节点已回到草稿状态），不要执行 run_*；请先向用户确认是继续生成还是调整参数，不要断定用户已取消。",
 							}),
 						}],
 						// P1 golden case ②（spec §6）：缺 confirmed 是本地域事实——工具自己知道
@@ -456,9 +496,11 @@ export function createCanvasWriteTools(
 					};
 				}
 				const withActions = withWriteSignal(base, 1);
+				// 2026-10-13 契约修复：confirmed 必须带证据来源——此前 /answers 真确认与轮询
+				// 推断产出的结果逐字节相同，模型无法区分「用户真确认」与「状态被读到」。
 				return {
 					...withActions,
-					details: { ...withActions.details, confirmed: true },
+					details: { ...withActions.details, confirmed: true, reason: outcome.reason },
 					content: [{
 						type: "text",
 						// Finding 1：前端画布确认会清 pending_confirm 并自起生成 → 生成已在跑，
@@ -466,7 +508,11 @@ export function createCanvasWriteTools(
 						text: JSON.stringify({
 							ok: true,
 							confirmed: true,
-							message: "用户已在画布确认，生成已由画布启动；不要对该节点调用 run_*，可继续对话或处理其他任务。",
+							reason: outcome.reason,
+							message:
+								outcome.reason === "answered"
+									? "用户已在画布确认，生成已由画布启动；不要对该节点调用 run_*，可继续对话或处理其他任务。"
+									: "检测到该节点已在画布侧启动生成（有新生成证据）；不要对该节点调用 run_*，可继续对话或处理其他任务。",
 						}),
 					}],
 				};

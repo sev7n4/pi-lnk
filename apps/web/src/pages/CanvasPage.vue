@@ -183,7 +183,7 @@ import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
 import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
 import { useAgentStore } from '@/stores/agent'
-import { shouldSyncProposePending } from '@/components/agent/proposeWaitActions'
+import { forcePendingConfirmInPayload, shouldSyncProposePending } from '@/components/agent/proposeWaitActions'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
@@ -3908,7 +3908,13 @@ async function handleAgentGenerateNode(nodeId: string) {
  * **整份覆盖** SSOT 的待确认 ⇒ runtime 判「连续两次 draft = 用户取消」。
  * 守卫：只在草稿态同步（见 shouldSyncProposePending），已 in-flight / 终态不动。
  */
+// P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：propose 等待期记录等待节点，
+// saveCanvas 载荷对该节点强制声明 pending_confirm（真值），防 stale 全量盖写 SSOT。
+// AgentSideRail proposeWaitEnd 时解除；服务端另有 P0-B 状态转移守卫兜底。
+const proposeWaitingNodeId = ref<string | null>(null)
+
 function handleProposeWaitStart(nodeId: string) {
+  proposeWaitingNodeId.value = nodeId
   const node = nodes.value.find((n) => n.id === nodeId)
   if (!node) return
   if (!shouldSyncProposePending((node.data as Record<string, unknown> | undefined)?.status)) return
@@ -4256,6 +4262,9 @@ async function saveCanvas() {
         compositionRunGroup.value = canvasData.compositionRunGroup
       }
     }
+    // P0-C：propose 等待期，等待节点 status 强制声明真值（整份替换语义下
+    // 「剥离」= 删除字段，同样是一次状态变化——强制 pending_confirm 才是不覆盖）。
+    forcePendingConfirmInPayload(canvasData, proposeWaitingNodeId.value)
     await api.put(`/sessions/${sessionId.value}`, {
       title: sessionTitle.value,
       canvasData,
@@ -5103,6 +5112,7 @@ onUnmounted(() => {
         @generate-node="handleAgentGenerateNode"
         @clear-propose-generation="handleClearProposeGeneration"
         @propose-wait-start="handleProposeWaitStart"
+        @propose-wait-end="proposeWaitingNodeId = null"
         :can-open="canOpenAgentPanel"
       />
     </div>

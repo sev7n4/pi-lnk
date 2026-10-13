@@ -72,3 +72,24 @@ export function resolveProposeCancelCallId(wait: ProposeWaitLike): string | null
   const callId = typeof wait.callId === 'string' ? wait.callId.trim() : ''
   return callId ? callId : null
 }
+
+/**
+ * P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：propose 等待期 PUT 载荷守卫。
+ *
+ * 整份替换语义下「剥离 status」等于删除字段——undefined 同样是一次状态变化；
+ * 「不覆盖 SSOT」的唯一正确形态是**强制声明当前真值 pending_confirm**：
+ * 等待期的服务端真值就是 pending_confirm（propose 服务端写入），本地无论 stale 成
+ * 什么终态，PUT 载荷都不得把它带出去盖写 SSOT。
+ * 服务端还有 P0-B 状态转移守卫兜底（sessions.service），本函数是第二道防线。
+ */
+export function forcePendingConfirmInPayload(
+  canvasData: { nodes?: Array<{ id?: string; data?: Record<string, unknown> }> },
+  waitingNodeId: string | null,
+): void {
+  if (!waitingNodeId || !Array.isArray(canvasData.nodes)) return
+  for (const node of canvasData.nodes) {
+    if (node && node.id === waitingNodeId) {
+      node.data = { ...(node.data ?? {}), status: 'pending_confirm' }
+    }
+  }
+}

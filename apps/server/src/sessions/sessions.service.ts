@@ -39,6 +39,47 @@ export class SessionsService {
     return this.formatSession(session)
   }
 
+  /** pending_confirm 的合法客户端出口（显式确认 patch 序列 + clear-propose）；终态一律无权直达。 */
+  private static readonly PENDING_CONFIRM_CLIENT_EXITS = new Set(['pending_confirm', 'draft', 'generating'])
+
+  /**
+   * 2026-10-13 虚假确认事故（cmv51vwpu0008p801hxaxcf8m）：浏览器整份 PUT 把
+   * 服务端 pending_confirm 盖回旧终态 completed，runtime 轮询误读为「已确认自起生成」
+   * （零生成，模型却被告知出图中）。守卫：pending_confirm 节点的客户端 status 只允许
+   * 合法出口，违规**字段级**保留服务端值（其余字段照常落库，不 409 整单）。
+   * 仅挂浏览器 PUT —— agent/生成链路走 agent-canvas-tools 的 persist，不经过本函数。
+   */
+  private guardPendingConfirmStatuses(prevRaw: string | null, next: unknown): unknown {
+    const nextCanvas = next as { nodes?: Array<{ id?: string; data?: Record<string, unknown> }> } | null
+    if (!nextCanvas || !Array.isArray(nextCanvas.nodes)) return next
+    let prevNodes: Map<string, { data?: { status?: unknown } }> | undefined
+    try {
+      const prevCanvas =
+        typeof prevRaw === 'string'
+          ? (JSON.parse(prevRaw) as { nodes?: Array<{ id?: string; data?: { status?: unknown } }> })
+          : null
+      if (prevCanvas && Array.isArray(prevCanvas.nodes)) {
+        prevNodes = new Map(
+          prevCanvas.nodes
+            .filter((n) => typeof n?.id === 'string')
+            .map((n) => [n.id as string, n]),
+        )
+      }
+    } catch {
+      return next // 旧数据脏：守卫直通，保存优先
+    }
+    if (!prevNodes) return next
+    for (const node of nextCanvas.nodes) {
+      const prevNode = typeof node?.id === 'string' ? prevNodes.get(node.id) : undefined
+      if (prevNode?.data?.status !== 'pending_confirm') continue
+      const status = node?.data?.status
+      if (typeof status !== 'string' || !SessionsService.PENDING_CONFIRM_CLIENT_EXITS.has(status)) {
+        node.data = { ...(node.data ?? {}), status: 'pending_confirm' }
+      }
+    }
+    return next
+  }
+
   async update(id: string, userId: string, data: { title?: string; canvasData?: unknown }) {
     const session = await this.prisma.session.findUnique({ where: { id } })
     if (!session) throw new NotFoundException('会话不存在')
@@ -48,7 +89,9 @@ export class SessionsService {
       where: { id },
       data: {
         title: data.title,
-        canvasData: data.canvasData ? JSON.stringify(data.canvasData) : undefined,
+        canvasData: data.canvasData
+          ? JSON.stringify(this.guardPendingConfirmStatuses(session.canvasData, data.canvasData))
+          : undefined,
       },
     })
     return this.formatSession(updated)

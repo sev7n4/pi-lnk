@@ -1294,8 +1294,16 @@ export class AgentCanvasToolsService {
     stage?: boolean
   }): Promise<{ actions: CanvasAction[] }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
-    if (!canvas.nodes.some((n) => n.id === input.nodeId)) {
+    const node = canvas.nodes.find((n) => n.id === input.nodeId)
+    if (!node) {
       throw new NotFoundException('节点不存在')
+    }
+    // P1-1（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：媒体节点正文不可写。
+    // 模型曾把风格文本写进 image 节点的 content（应为 prompt），旧实现还顺带强制
+    // status:'completed' 污染生成状态机。fail-closed：显式报错 + 指引 prompt 参数，
+    // 把静默错写变成模型可自愈的信号。文本类节点语义不动。
+    if (['image', 'video', 'audio'].includes(String(node.type))) {
+      throw new BadRequestException('媒体节点正文不可写；改生成提示词请用 set_node_text 的 prompt 参数')
     }
     const actions: CanvasAction[] = [
       {
