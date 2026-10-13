@@ -305,4 +305,16 @@ describe('AgentCanvasToolsService.applySidebarAttachments', () => {
       svc.applySidebarAttachments({ sessionId: 's1', nodeIds: ['n1'], attachments: six, mode: 'localRefs' }),
     ).rejects.toThrow(/最多添加 5 个/)
   })
+
+  it('超限 400 指引必须是「裁剪到 5 个以内」而非「省略 attachments」（M-2：平台填充同样受 5 个上限约束）', async () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({
+      id: `b${i}`, mediaType: 'image' as const, sourceKind: 'upload' as const, label: `b${i}.jpg`, url: `https://x/${i}.png`,
+    }))
+    await expect(
+      svc.applySidebarAttachments({ sessionId: 's1', nodeIds: ['n1'], attachments: six, mode: 'localRefs' }),
+    ).rejects.toThrow(/裁剪 attachments 至 5 个以内/)
+    await expect(
+      svc.applySidebarAttachments({ sessionId: 's1', nodeIds: ['n1'], attachments: six, mode: 'localRefs' }),
+    ).rejects.not.toThrow(/正确用法：省略 attachments 参数/)
+  })
 })

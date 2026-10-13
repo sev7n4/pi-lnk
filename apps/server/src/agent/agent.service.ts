@@ -25,6 +25,7 @@ import {
 } from '@lnkpi/shared'
 import { MaterialService } from '../canvas/material.service'
 import { ShotService } from '../canvas/shot.service'
+import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
@@ -256,8 +257,16 @@ export class AgentService {
       await this.registerIdempotencyKey(idempotencyKey, sessionId, threadId || sessionId)
     }
 
-    const validatedAttachments =
-      attachments?.length ? validateSidebarAttachments(attachments) : undefined
+    let validatedAttachments: SidebarAttachment[] | undefined
+    try {
+      validatedAttachments = attachments?.length ? validateSidebarAttachments(attachments) : undefined
+    } catch (e) {
+      // RB-D3 延伸（PR-A 终审）：用户消息附件路径同样不再 500，字段细节 + 正确用法直达。
+      const detail = e instanceof ZodError
+        ? e.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')
+        : (e as Error).message
+      throw new BadRequestException(`参考素材校验失败（${detail}）。请检查上传的参考素材后重试。`)
+    }
     const validatedMentionedKeys =
       mentionedKeys?.length ? normalizeMentionedKeys(mentionedKeys) : undefined
 
