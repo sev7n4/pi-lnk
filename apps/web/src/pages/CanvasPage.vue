@@ -32,6 +32,7 @@ import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
 import { useShotPolling } from '@/composables/useShotPolling'
 import { useGenerationPolling, parseRecordPromptContent, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
 import { buildNodeMediaInfoSummary, buildMaterialMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
+import { useGenerationFailureToast, shouldToastForFailure } from '@/composables/useGenerationFailureToast'
 import type { GenerationRecord } from '@/services/studio-api'
 import {
   modalityForNodeType,
@@ -197,7 +198,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const canvasEditor = useCanvasEditorStore()
-const { registerLocateNodeHandler, closeInspector } = useMediaInspector()
+const { registerLocateNodeHandler, closeInspector, openInspector } = useMediaInspector()
 const sessionId = computed(() => route.params.sessionId as string)
 
 interface CanvasEdge {
@@ -3810,6 +3811,46 @@ function handleAgentOpenImageEditor(nodeId: string) {
 watch(selectedNodeId, (id) => {
   applyRefineSelectionDecision(id)
 })
+
+// 生成失败 toast：只监听「转移到 error」的边，不监听快照相等。
+// 重试开始（→ generating）即清该节点去重，保证「失败→重试→再失败」第二次也 toast。
+// 详情跳转复用既有诊断抽屉（initialTab: 'diagnostic'），与节点角标 ⓘ 同路径。
+function openNodeDiagnostic(nodeId: string) {
+  const node = nodes.value.find((n) => n.id === nodeId)
+  if (!node) return
+  const data = node.data ?? {}
+  const generationRecordId = typeof data.generationRecordId === 'string' ? data.generationRecordId : undefined
+  void openInspector({
+    generationRecordId,
+    nodeLabel: typeof data.title === 'string' ? data.title : undefined,
+    initialTab: 'diagnostic',
+  })
+}
+
+const { onNodeError: toastNodeFailure, clearNodeDedupe } = useGenerationFailureToast({
+  onOpenDetail: (nodeId) => { void openNodeDiagnostic(nodeId) },
+})
+
+watch(
+  () => nodes.value.map((n) => ({
+    id: n.id,
+    title: typeof n.data?.title === 'string' ? n.data.title : undefined,
+    status: n.data?.status,
+    errorMessage: n.data?.errorMessage,
+  })),
+  (curr, prevByIdArr) => {
+    const prevById = new Map((prevByIdArr ?? []).map((p) => [p.id, p]))
+    for (const cur of curr) {
+      const prev = prevById.get(cur.id)
+      // 仅对「已知节点」的状态转移 toast；初次拉取即已是 error 的节点（无前序快照）不冒泡，
+      // 避免打开画布时旧失败节点刷出 toast。
+      if (prev === undefined) continue
+      if (cur.status === 'generating') clearNodeDedupe(cur.id)
+      if (shouldToastForFailure(prev, cur)) toastNodeFailure(cur)
+    }
+  },
+  { deep: false },
+)
 
 watch(
   () => canvasEditor.imageTarget,
