@@ -8,10 +8,11 @@ import type {
 } from '@lnkpi/shared'
 import { MaterialService } from './material.service'
 import { ShotService } from './shot.service'
+import { PrismaService } from '../prisma/prisma.service'
+import { PricingService } from '../pricing/pricing.service'
+import type { PricingQuote } from '../pricing/pricing.core'
 import { PointsService } from '../points/points.service'
 import { consumeMeta } from '../points/point-tx.types'
-import { videoCreditsForModel } from '../points/video-credits'
-import { PrismaService } from '../prisma/prisma.service'
 
 @Injectable()
 export class SceneComposerService {
@@ -20,6 +21,7 @@ export class SceneComposerService {
     @Inject(ShotService) private readonly shotService: ShotService,
     @Inject(MaterialService) private readonly materialService: MaterialService,
     @Inject(PointsService) private readonly points: PointsService,
+    @Inject(PricingService) private readonly pricing: PricingService,
   ) {}
 
   private async assertOwnedSession(sessionId: string, userId: string) {
@@ -30,18 +32,21 @@ export class SceneComposerService {
     return session
   }
 
-  private itemCredits(item: SceneComposerBatchItem): number {
+  private async itemQuote(item: SceneComposerBatchItem): Promise<PricingQuote> {
     if (item.mediaType === 'video') {
       const bundle = buildVideoReferenceBundle(item.refs ?? [])
-      return videoCreditsForModel({
-        duration: item.duration ?? 5,
+      return this.pricing.quote({
+        capability: 'video',
         modelKey: item.model,
+        duration: item.duration ?? 5,
         resolution: item.resolution,
         referenceImageCount: bundle.images.length,
         referenceVideoCount: bundle.videos.length,
       })
     }
-    return 10
+    // 图像平铺 10 分：quote 只传 capability + count，不传 resolution/modelKey
+    // （legacyPriceOf({capability:'image',count:1}) → 1K 因子 = 10，与原 return 10 等价）
+    return this.pricing.quote({ capability: 'image', count: 1 })
   }
 
   private async assertShotInSession(shotId: string, sessionId: string) {
@@ -118,13 +123,19 @@ export class SceneComposerService {
 
     this.assertNoBlobRefsInBatch(dto.items)
 
-    const total = dto.items.reduce((sum, item) => sum + this.itemCredits(item), 0)
+    const quotes = await Promise.all(dto.items.map((item) => this.itemQuote(item)))
+    const total = quotes.reduce((sum, q) => sum + q.credits, 0)
+    // 同一 batch 内 ruleVersion 不一致（表命中与常量兜底混排）时保守记 null，不谎报版本来源
+    const ruleVersion =
+      quotes.length > 0 && quotes.every((q) => q.ruleVersion === quotes[0].ruleVersion)
+        ? quotes[0].ruleVersion
+        : null
     if (total > 0) {
       await this.points.consume(
         userId,
         total,
         `导演台批量生成 ×${dto.items.length}`,
-        consumeMeta('other', { generationId: null }),
+        consumeMeta('other', { generationId: null, ruleVersion }),
       )
     }
 
