@@ -1,4 +1,4 @@
-import { readStringField } from "../hook-contract.ts";
+import { readStringField } from "../hook-contract.js";
 
 /**
  * 图生视频 prompt 契约纠偏（spec §5.2 主杠杆 B）。
@@ -38,6 +38,6 @@ export function appendVideoContract<T extends { type: string }>(
 	const reminder = videoContractReminder(args);
 	if (!reminder) return [...content];
 	// 文本块是合法 content block；T 是调用方（vendor ContentBlock）的元素类型，
-	// 此处受控收窄以保持调用侧零 as。
-	return [...content, { type: "text", text: reminder } as T];
+	// 此处受控收窄以保持调用侧零 as（TS 无法从 {type:string} 约束证明子类型，需双跳）。
+	return [...content, { type: "text", text: reminder } as unknown as T];
 }
