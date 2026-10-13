@@ -18,7 +18,7 @@
  * - metrics（§6）：observeResultSignal 活性探针（含 ok）+ errorCode=unknown 单独计数。
  */
 import type { Metrics } from "./metrics.js";
-import { appendSignalLine, readSignal, reconcileAffected, type SignalContentBlock } from "./tools/result-signal-listener.js";
+import { appendSignalLine, readSignal, reconcileAffected, signalFromErrorContent, type SignalContentBlock } from "./tools/result-signal-listener.js";
 
 /** after_tool 事件窄面（vendor HookMap 形态子集，测试 fake 与本接线共用）。 */
 export interface SignalToolEvent {
@@ -86,14 +86,28 @@ export function registerResultSignalListener(
 	hooks.on(
 		"after_tool",
 		(event) => {
-			const signal = readSignal(event.details);
-			if (!signal) return undefined; // 契约外工具零接触（不打点不注入）
+			// RB-D4 throw 路径：details._signal 优先；throw（details=undefined）+ isError 时
+			// 从错误文本合成 nest 4xx/5xx 信号——非 nest 错误仍零接触（不打点不注入）。
+			const signal =
+				readSignal(event.details) ?? (event.isError ? signalFromErrorContent(event.content) : undefined);
+			if (!signal) return undefined; // 契约外工具 / 非 nest 错误零接触（不打点不注入）
+			// 合成信号预合并进 details（展开保留既有键），下游对账/注入看到同一份 details；
+			// details._signal 已存在时不重复合并（readSignal 优先，幂等）。
+			const details =
+				readSignal(event.details) === undefined
+					? {
+							...((typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
+								? (event.details as Record<string, unknown>)
+								: {}) as Record<string, unknown>),
+							_signal: signal,
+						}
+					: event.details;
 			const tier = tiers.get(event.toolName) ?? "unknown";
 			metrics.observeResultSignal(tier, signal.status);
 			if (signal.errorCode === "unknown") metrics.observeResultSignalUnknown(event.toolName);
 			const requested = requestedCountOf(event.toolName, event.args);
-			const extra = reconcileAffected(requested, affectedCountOf(event.details));
-			const patch = appendSignalLine(event.toolName, tier, event.isError, event.content, event.details, extra);
+			const extra = reconcileAffected(requested, affectedCountOf(details));
+			const patch = appendSignalLine(event.toolName, tier, event.isError, event.content, details, extra);
 			if (!patch) return undefined;
 			// patch 面纪律（§4）：只 content/details。
 			return { content: patch.content, details: patch.details };

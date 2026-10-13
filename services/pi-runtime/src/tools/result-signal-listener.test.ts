@@ -10,7 +10,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { appendSignalLine, reconcileAffected } from "./result-signal-listener.js";
+import { appendSignalLine, reconcileAffected, signalFromErrorContent } from "./result-signal-listener.js";
 
 type Block = { type: string; text?: string };
 
@@ -143,6 +143,76 @@ describe("appendSignalLine", () => {
 		const text = out.content[out.content.length - 1].text ?? "";
 		assert.ok(text.includes("部分生效"), `对账行应被追加：${text}`);
 		assert.ok(text.includes("⚠️[destructive]") || text.includes("partial"), `信号行也应存在：${text}`);
+	});
+});
+
+describe("signalFromErrorContent（RB-D4 throw 路径）", () => {
+	it("isError + nest http 4xx ⇒ {status:failed, retryable:false, errorCode:invalid_params}", () => {
+		const sig = signalFromErrorContent([
+			{ type: "text", text: "nest /agent/internal/apply-sidebar-attachments http 400: attachments 校验失败（id: Required）。正确用法：省略 attachments 参数。" },
+		]);
+		assert.deepEqual(sig, { status: "failed", retryable: false, errorCode: "invalid_params" });
+	});
+
+	it("isError + nest http 5xx ⇒ {status:failed, retryable:true, errorCode:upstream_5xx}", () => {
+		const sig = signalFromErrorContent([{ type: "text", text: "nest /x http 502: Bad Gateway" }]);
+		assert.deepEqual(sig, { status: "failed", retryable: true, errorCode: "upstream_5xx" });
+	});
+
+	it("非 nest 错误（harness immediateError / ask_user）⇒ undefined（Review Focus 1）", () => {
+		assert.equal(signalFromErrorContent([{ type: "text", text: 'Tool "x" is unavailable' }]), undefined);
+	});
+
+	it("envelope/timeout/network（无 http 状态码）⇒ undefined 不妄言（Review Focus 2）", () => {
+		assert.equal(signalFromErrorContent([{ type: "text", text: "nest /x code=1: boom" }]), undefined);
+		assert.equal(signalFromErrorContent([{ type: "text", text: "nest /x timeout after 60000ms: T" }]), undefined);
+		assert.equal(signalFromErrorContent([{ type: "text", text: "nest /x network error: ECONNRESET" }]), undefined);
+	});
+
+	it("空内容 / 无文本块 ⇒ undefined", () => {
+		assert.equal(signalFromErrorContent([]), undefined);
+		assert.equal(signalFromErrorContent([{ type: "image", data: "x" } as never]), undefined);
+	});
+});
+
+describe("appendSignalLine × throw 路径（RB-D4）", () => {
+	it("nest 4xx 错误 + 无 _signal + 既有 actions ⇒ ⚠️ 行 + _signal 合成且 actions 保留（硬表第 6 行）", () => {
+		const patch = appendSignalLine(
+			"apply_sidebar_attachments",
+			"write",
+			true,
+			[{ type: "text", text: "nest /x http 400: attachments 校验失败" }],
+			{ actions: [{ type: "canvas_apply_refs" }] },
+		);
+		assert.ok(patch, "throw 路径必须有 patch");
+		const lastText = (patch.content.at(-1) as { type: string; text: string }).text;
+		assert.ok(lastText.includes("⚠️[write]"));
+		assert.ok(lastText.includes("invalid_params"));
+		assert.ok(lastText.includes("重试同参无意义"));
+		const sig = (patch.details as { _signal?: { errorCode?: string; retryable?: boolean } })._signal;
+		assert.equal(sig?.errorCode, "invalid_params");
+		assert.equal(sig?.retryable, false);
+		assert.deepEqual((patch.details as { actions: unknown[] }).actions, [{ type: "canvas_apply_refs" }]);
+	});
+
+	it("details 已有合法 _signal ⇒ readSignal 优先，message 提取不生效（Review Focus 3）", () => {
+		const patch = appendSignalLine(
+			"gen_image",
+			"gen",
+			true,
+			[{ type: "text", text: "nest /x http 400: should-not-win" }],
+			{ _signal: { status: "failed", retryable: true, errorCode: "rate_limited" } },
+		);
+		assert.ok(patch);
+		const sig = (patch!.details as { _signal: { errorCode?: string } })._signal;
+		assert.equal(sig.errorCode, "rate_limited");
+	});
+
+	it("非 nest 错误 + 无 _signal ⇒ undefined（零注入，成功静默纪律不受影响）", () => {
+		assert.equal(
+			appendSignalLine("ask_user", "unknown", true, [{ type: "text", text: 'Tool "x" is unavailable' }], undefined),
+			undefined,
+		);
 	});
 });
 

@@ -13,6 +13,7 @@ import {
   getGenerationScene,
   getModelEntryFromRows,
   isProductFourPanelPrompt,
+  SIDEBAR_ATTACHMENT_MAX,
   SUPPORTED_ASPECT_RATIOS,
   isRootNode,
   normalizeModelRef,
@@ -1584,8 +1585,13 @@ export class AgentCanvasToolsService {
         e instanceof ZodError
           ? e.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')
           : (e as Error).message
+      // M-2（PR-A 终审）：超限与形状错指引必须可区分——平台填充同样受 5 个上限约束，
+      // 对超限说「省略 attachments」是死路，应指引「裁剪」或改用多轮逐个挂载。
+      const isOverLimit = /最多添加/.test(detail)
       throw new BadRequestException(
-        `attachments 校验失败（${detail}）。正确用法：省略 attachments 参数，由平台自动填充本轮侧栏附件（只传 nodeIds 与 mentionedKeys）。`,
+        isOverLimit
+          ? `attachments 校验失败（${detail}）。请裁剪 attachments 至 ${SIDEBAR_ATTACHMENT_MAX} 个以内，或改用多轮逐个挂载。`
+          : `attachments 校验失败（${detail}）。正确用法：省略 attachments 参数，由平台自动填充本轮侧栏附件（只传 nodeIds 与 mentionedKeys）。`,
       )
     }
     const order = input.refOrder?.length

@@ -1,6 +1,7 @@
 import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CanvasAction } from '@lnkpi/shared'
+import { BadRequestException } from '@nestjs/common'
+import type { CanvasAction, SidebarAttachment } from '@lnkpi/shared'
 import { AgentService, deriveLinkedOutputs, buildTurnMetadata } from './agent.service'
 import { piEvent, stubPiClient } from './agent.test-utils'
 
@@ -309,6 +310,41 @@ describe('AgentService streamConversation', () => {
         attachments: JSON.stringify(attachments),
       },
     })
+  })
+
+  it('RB-D3 延伸：非法参考素材（超限）⇒ BadRequestException 400 化，不再裸 500', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    // 6 个合法形状实体，仅数量超 SIDEBAR_ATTACHMENT_MAX=5
+    const sixValidEntities: SidebarAttachment[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `b${i}`,
+      mediaType: 'image' as const,
+      sourceKind: 'upload' as const,
+      label: `b${i}.jpg`,
+      url: `https://x/${i}.png`,
+    }))
+
+    const drain = async () => {
+      for await (const _event of service.streamConversation(
+        's1',
+        '营销',
+        'u1',
+        's1:thread-a',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sixValidEntities,
+      )) {
+        // drain
+      }
+    }
+
+    // 校验发生在首个 yield 之前，但 async generator 惰性执行——须驱动首项才触发
+    await expect(drain()).rejects.toThrow(BadRequestException)
+    await expect(drain()).rejects.toThrow(/最多添加/)
   })
 })
 
