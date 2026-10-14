@@ -61,12 +61,22 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   render_canvas_view: { icon: '🖼️', verb: '渲染画布视图' },
   todo_write: { icon: '☑️', verb: '记录任务' },
   tool_search: { icon: '🧭', verb: '检索工具' },
+  // 2026-10-15 补登记（P1#3 全量覆盖扫描：这 4 个运行时工具此前漏登记，全落 ⚙「已完成」兜底，
+  // 与「已完成」语义 bug 同源；现各自人话化，漏登的也会在兜底处自曝真实工具名）
+  delete_memory: { icon: '🧹', verb: '删除记忆' },
+  propose_plan: { icon: '📐', verb: '拟定计划' },
+  spawn_subagent: { icon: '🤖', verb: '派生子代理' },
+  view_canvas_media: { icon: '🎞️', verb: '查看画布素材' },
 }
 
 const RUN_PREFIX_ICON = '🎨'
 const FALLBACK_ICON = '⚙'
 /** 思考步图标：thinking 不是工具调用，独立图标避免落进 ⚙「调用 xxx」兜底语义。 */
 const THINKING_ICON = '🧠'
+
+/** 内部探针工具（决策 5）：绝不向用户暴露原始名，走中性兜底，不进自曝分支。
+ *  与 runtimeToolNames / verify-tool-tiering 的探针豁免同源，新增探针请三处同步。 */
+const INTERNAL_PROBES = new Set(['t_probe'])
 
 /** P1 时间线默认折叠（v1 不做用户偏好持久化）。 */
 export const collapsedDefault = true
@@ -92,12 +102,20 @@ export function presentToolStep(step: {
   if (!name) return { icon: FALLBACK_ICON, label: step.label || '执行步骤' }
   const hit = TOOL_PRESENTATION[name]
   if (!hit) {
+    // 内部探针（t_probe 等）：决策 5 绝不吐内部名，按状态走中性兜底，不进自曝分支。
+    if (INTERNAL_PROBES.has(name)) {
+      const fallbackVerb =
+        step.status === 'failed' ? '执行失败' : step.status === 'done' ? '已完成' : '处理中'
+      return { icon: FALLBACK_ICON, label: fallbackVerb }
+    }
     // run_ 前缀（生成类）→ 🎨；其余未登记工具降级——
     // 把 `upsert_media_node` 这类内部名吐给用户等于没说（决策 5），细节留在线索里。
     if (name.startsWith('run_')) return { icon: RUN_PREFIX_ICON, label: `生成 · ${name.slice(4)}` }
-    const fallbackVerb =
-      step.status === 'failed' ? '执行失败' : step.status === 'done' ? '已完成' : '处理中'
-    return { icon: FALLBACK_ICON, label: fallbackVerb }
+    // 未登记工具：自曝真实工具名（不掩盖为「已完成」），漏登记在生产一眼可见、可修。
+    // 注意：仅对用户态漏登工具自曝；内部探针已在上面拦截（决策 5）。
+    const suffix =
+      step.status === 'failed' ? '（失败）' : step.status === 'running' ? '（执行中）' : ''
+    return { icon: FALLBACK_ICON, label: `调用 ${name}${suffix}` }
   }
   const args = step.meta?.args ?? argsFromLabel(name, step.label)
   return { icon: hit.icon, label: args ? `${hit.verb} · ${args}` : hit.verb }

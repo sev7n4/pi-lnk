@@ -205,7 +205,35 @@ function nodeStatusToArtifact(status: string): 'pending' | 'running' | 'done' | 
   }
 }
 
+/**
+ * 收口正在 streaming 的文本块（Fix 1+2）。
+ *
+ * 服务端 `createTextSegmentPersister` 的边界定义是「两次非文本事件之间的 delta 连续流」，
+ * 且每次非文本事件前都会 `flush()`。客户端 live 路径此前从不收口 ⇒ 多段叙述全堆进第一块
+ * 文本、工具被压到下方（时序倒挂 / 正文整体前置）。此处镜像同语义：任意非文本事件到达即
+ * 把当前 streaming 文本块翻 `done`，使后续 `text_delta` 另起一段、按真实发生位置归位。
+ */
+function closeOpenTextBlock(timeline: TurnTimeline): void {
+  const part = [...timeline.parts].reverse().find(
+    (p): p is Extract<TimelinePart, { kind: 'text' }> =>
+      p.kind === 'text' && p.status === 'streaming',
+  )
+  if (part) part.status = 'done'
+}
+
 export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent): void {
+  // 非文本事件 ⇒ 先收口正在 streaming 的文本段（服务端 flush 同语义），保证文本按真实
+  // 发生位置分段、与工具/思考交错顺序一致。文本类事件（text_delta/text/text_replace）与
+  // 回合边界（message_start/message_end，由 finalizeTurnTimeline 收口）不触发。
+  if (
+    event.type !== 'text_delta' &&
+    event.type !== 'text' &&
+    event.type !== 'text_replace' &&
+    event.type !== 'message_start' &&
+    event.type !== 'message_end'
+  ) {
+    closeOpenTextBlock(timeline)
+  }
   switch (event.type) {
     case 'text_delta': {
       const text = event.data.text ?? ''

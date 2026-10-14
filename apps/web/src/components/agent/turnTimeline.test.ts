@@ -194,6 +194,27 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(byKind(tl, 'text')[0].status).toBe('done')
   })
 
+  it('⭐ Fix 1+2：非文本事件收口 streaming 文本块 ⇒ text→tool→text 各成段、按序归位', () => {
+    // 生产实证：live 路径此前不收口，所有 text_delta 堆进第一块文本、工具被压到下方（时序倒挂）
+    const tl = feed([
+      { type: 'text_delta', data: { text: '先说点什么。' } },
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'get_canvas_summary', args: {} } },
+      { type: 'tool_result', data: { toolCallId: 'c1', name: 'get_canvas_summary', result: {} } },
+      { type: 'text_delta', data: { text: '工具跑完再说。' } },
+    ])
+    const texts = byKind(tl, 'text')
+    expect(texts).toHaveLength(2)
+    expect(texts[0].text).toBe('先说点什么。')
+    expect(texts[1].text).toBe('工具跑完再说。')
+    // 顺序：text[0] → tool → text[1]（工具穿插在两段文本之间，不前置、不后置）
+    expect(kinds(tl)).toEqual(['text', 'tool', 'text'])
+    // 收口：第一段在工具事件后已翻 done，第二段直到 finalize 才收
+    expect(texts[0].status).toBe('done')
+    expect(texts[1].status).toBe('streaming')
+    finalizeTurnTimeline(tl)
+    expect(byKind(tl, 'text')[1].status).toBe('done')
+  })
+
   it('⭐ 落库 text 段按发生位置归位（2026-10-14 时序倒挂修复）：thinking → text → tool ⇒ text 在中间', () => {
     // 生产实证场景：ask_user 后 agent 的回复正文（「用户选择了…」）此前只存整条
     // message.content，重放时 unshift 到最前 ⇒ 跑到 ask/工具行上面。服务端现在把

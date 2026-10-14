@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
  * 2026-10-14 生产反馈（阻塞等待确认时历史对话无法上下滑动）—— **2026-10-09 已修过一次，本次是复发**。
  *
  * 复发机制（2026-10-09 的修复没解决根因，只是打了一处补丁）：
- *   `.agent-input-area--scrollable` 的 max-height 限高**一直存在**（AgentSideRail.vue 样式区），
+ *   `.agent-dock-scroll--scrollable` 的 max-height 限高**一直存在**（AgentSideRail.vue 样式区），
  *   但启用条件 `hasDockPresentation = showCancelledCallout`（:923）**只认「已停止」态**。
  *   该判定的注释自证了退化过程：「2026-10-06：门控/定稿卡片全部下线，只剩『已停止』提示仍钉在这里」
  *   —— 限高条件从结构不变量（「dock 有内容」）退化成内容枚举（「dock 里只有取消提示」）。
@@ -59,7 +59,7 @@ describe('AgentSideRail — dock 限高门控必须是结构不变量（防 2026
   })
 
   it('CSS 侧限高仍然存在（门控修好也不可删样式，二者互为防线）', () => {
-    expect(sideRail).toContain('.agent-input-area--scrollable')
-    expect(sideRail).toMatch(/agent-input-area--scrollable[\s\S]{0,200}max-height/)
+    expect(sideRail).toContain('.agent-dock-scroll--scrollable')
+    expect(sideRail).toMatch(/agent-dock-scroll--scrollable[\s\S]{0,200}max-height/)
   })
 })

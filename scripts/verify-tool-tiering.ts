@@ -29,6 +29,7 @@
 
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
+import { collectRuntimeToolNames, collectPresentedToolNames } from "../apps/web/src/components/agent/runtimeToolNames";
 
 const ROOT = process.cwd();
 const TOOLS_DIR = join(ROOT, "services/pi-runtime/src/tools");
@@ -152,9 +153,23 @@ for (const n of ["focus_node", "focus_nodes"]) {
 	if (!registered.has(n)) fail(`A4 回归锁：\`${n}\` 应存在于注册集。`);
 }
 
+// A5（Fix 4）展示注册表覆盖：每个用户态运行时工具都必须在 TOOL_PRESENTATION 有条目。
+// 此前 4 个运行时工具漏登却因手写清单「双双漏登」而无人察觉；改由源码派生强制覆盖。
+const presentedSet = new Set(collectPresentedToolNames(ROOT));
+const internalProbes = new Set(["t_probe"]); // 内部探针，故意不进展示注册表
+for (const n of collectRuntimeToolNames(ROOT)) {
+	if (internalProbes.has(n) || n.startsWith("run_")) continue; // run_ 前缀走通用「生成 ·」兜底
+	if (!presentedSet.has(n))
+		fail(
+			`A5 展示覆盖缺失：运行时工具 \`${n}\` 未在 TOOL_PRESENTATION 注册。` +
+				`\n      漏登会在生产落 ⚙「调用 ${n}」自曝兜底，应补登记为人话化条目。`,
+		);
+}
+
 /* ---------- 5. 报告 ---------- */
 const zeroNamed = [...alwaysOn].filter((n) => !byRule.has(n) && !bySkill.has(n));
 console.log(`解析：注册 ${registered.size} / 常驻 ${alwaysOn.size} / 延迟 ${deferred.length}`);
+console.log(`展示注册表覆盖 ${presentedSet.size} 条（A5 已校验运行时工具全覆盖）`);
 console.log(`下发规则 ${downRules.size} 条（COMPOSED_IDS），skill ${skillFiles.length} 份`);
 console.log(`常驻里零资产点名（可下沉候选）：${zeroNamed.length ? zeroNamed.join(", ") : "无"}`);
 for (const n of notes) console.log(`ℹ ${n}`);
