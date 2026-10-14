@@ -2419,7 +2419,12 @@ export class StudioService {
     const kind: AudioKind = audioKindOf(
       getModelEntryFromRows(currentCatalogEntries(), resolved.modelName) ?? { modality: 'audio' },
     )
-    const quote = await this.pricing.quote({ capability: 'audio', audioKind: kind })
+    const quote = await this.pricing.quote({
+      capability: 'audio',
+      // AudioKind（'voice'|'design'|'music'）归一为 AudioPriceKind（'voice'|'music'）：
+      // 与 legacy 计价分支逐字同果——music 15 分、voice/design 5 分（pricing.core.ts legacyPriceOf audio 分支）
+      audioKind: kind === 'music' ? 'music' : 'voice',
+    })
     const cost = quote.credits
     const chargeReason = kind === 'music' ? '音频生成-音乐' : '音频生成'
     await this.points.consume(

@@ -20,7 +20,7 @@ import {
   type PricingQuote,
 } from './pricing.core'
 import { enumeratePricingSpace } from './pricing.space'
-import { seedPricing } from '../../prisma/seed-pricing'
+import { seedPricing } from './seed-pricing'
 
 const CACHE_TTL_MS = 30_000
 
