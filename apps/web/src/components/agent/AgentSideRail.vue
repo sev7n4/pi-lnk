@@ -698,6 +698,23 @@ const liveTimeline = computed(() => {
   return active ? last.timeline : null
 })
 
+/**
+ * P2-2 修复（2026-10-14 生产实证）：钉底期间气泡内 `useTimeline(msg)` 仍对**同一条**
+ * live 消息成立 ⇒ 同一回合渲染两份（截图复盘：气泡内一份 + pinned 一份）。
+ * 设计注释（上）早有警告「同一判定必须用在两处」，旧 trace 气泡实例有 `!liveTrace`
+ * 防线，新时间线的气泡实例漏配。此处给出钉底消息 id，供气泡内渲染按消息级互斥
+ * （只抑制钉住那一条，历史消息的内联时间线不受影响）；收束后 liveTimeline 归 null，
+ * 气泡内接管 —— 与设计「收束后由气泡内组件接管」闭环。
+ */
+const liveTimelineMessageId = computed<string | null>(() => {
+  if (!liveTimeline.value) return null
+  for (let i = agent.messages.length - 1; i >= 0; i--) {
+    const m = agent.messages[i]
+    if (m && m.role === 'assistant') return m.id
+  }
+  return null
+})
+
 /** P2-2：活体时间线的定位/重试接线（复用既有画布能力与节点生成 emit）。 */
 function onLiveTimelineRetry(nodeId: string) {
   if (nodeId) emit('generateNode', nodeId)
@@ -2880,7 +2897,7 @@ defineExpose({
                      取代下方「旧 trace + 独立正文 + 独立产物 + 独立摘要行」的槽位拼装。
                      产物（artifact）原位出现、摘要 notice 落在最末（D1/D2/现象3/4 的解）。 -->
                 <AgentTurnTimeline
-                  v-if="useTimeline(msg)"
+                  v-if="useTimeline(msg) && msg.id !== liveTimelineMessageId"
                   class="mt-1.5"
                   :parts="msg.timeline!.parts"
                   :streaming="Boolean(msg.streaming)"
@@ -3087,13 +3104,6 @@ defineExpose({
                 </div>
               </div>
             </div>
-            <AskUserCard
-              v-if="pendingAskUser.length && lastMessageIsAssistant"
-              class="mx-3"
-              :questions="pendingAskUser"
-              @submit="onAskSubmit"
-              @cancel="onAskCancel"
-            />
             <!-- 阻塞等待 propose_generation：确认入口在画布节点上，聊天侧明示去哪点（2026-10-01） -->
             <div
               v-if="proposeWait"
@@ -3190,6 +3200,17 @@ defineExpose({
               {{ turnStatus.text }}
               <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
             </p>
+            <!-- ask_user 卡片贴 composer（2026-10-14）：原挂在消息滚动容器末尾，P2 时间线
+                 钉底后气泡内近空，卡片被视觉孤立到列表顶部、与「等待你确认」状态行/输入框
+                 隔了整个 live 区。移到 dock 区状态行之下 —— 等待态的唯一交互面贴输入框；
+                 pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。 -->
+            <AskUserCard
+              v-if="pendingAskUser.length && lastMessageIsAssistant"
+              class="mx-0.5 mb-2"
+              :questions="pendingAskUser"
+              @submit="onAskSubmit"
+              @cancel="onAskCancel"
+            />
             <div
               v-if="showCancelledCallout"
               class="mb-2 px-0.5"
