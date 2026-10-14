@@ -356,3 +356,60 @@ test("P2 propose_outcome：零样本不渲染数据行（「从未触发」与�
 	assert.ok(out.includes("# TYPE pi_runtime_propose_outcome_total counter"));
 	assert.doesNotMatch(out, /pi_runtime_propose_outcome_total\{reason=/);
 });
+
+// ── RB-D9（PR-D Task 1）：侧栏参考图绑定观测批核心指标 ──────────────────────
+test("RB-D9 sidebar_ref_bind：四 outcome 分别累加渲染（#407 观测批）", () => {
+	const m = new Metrics();
+	m.observeSidebarRefBind("ok");
+	m.observeSidebarRefBind("ok");
+	m.observeSidebarRefBind("invalid_params");
+	m.observeSidebarRefBind("invalid_params");
+	m.observeSidebarRefBind("upstream_error");
+	m.observeSidebarRefBind("short_circuit");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_sidebar_ref_bind_total\{outcome="ok"\} 2/);
+	assert.match(out, /pi_runtime_sidebar_ref_bind_total\{outcome="invalid_params"\} 2/);
+	assert.match(out, /pi_runtime_sidebar_ref_bind_total\{outcome="upstream_error"\} 1/);
+	assert.match(out, /pi_runtime_sidebar_ref_bind_total\{outcome="short_circuit"\} 1/);
+});
+
+test("RB-D9 sidebar_ref_bind：零样本不渲染数据行（与「触发过但 0」可区分）", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.ok(out.includes("# HELP pi_runtime_sidebar_ref_bind_total "));
+	assert.ok(out.includes("# TYPE pi_runtime_sidebar_ref_bind_total counter"));
+	assert.doesNotMatch(out, /pi_runtime_sidebar_ref_bind_total\{outcome=/);
+});
+
+test("RB-D9 propose_missing_refs：累加到 pi_runtime_propose_missing_refs_total（gauge 恒渲染）", () => {
+	const m = new Metrics();
+	m.observeProposeMissingRefs();
+	m.observeProposeMissingRefs();
+	m.observeProposeMissingRefs();
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_propose_missing_refs_total 3/);
+});
+
+test("RB-D9 propose_missing_refs：零样本恒渲染 0（gauge 语义，不开行也不缺行）", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_propose_missing_refs_total 0/);
+});
+
+test("RB-D9 nest_zod_reject：按 endpoint 维度累加渲染", () => {
+	const m = new Metrics();
+	m.observeNestZodReject("apply-sidebar-attachments");
+	m.observeNestZodReject("apply-sidebar-attachments");
+	m.observeNestZodReject("some-other-endpoint");
+	const out = m.render(0, "test");
+	assert.match(out, /nest_zod_reject_total\{endpoint="apply-sidebar-attachments"\} 2/);
+	assert.match(out, /nest_zod_reject_total\{endpoint="some-other-endpoint"\} 1/);
+});
+
+test("RB-D9 nest_zod_reject：零样本不渲染数据行", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.ok(out.includes("# HELP nest_zod_reject_total "));
+	assert.ok(out.includes("# TYPE nest_zod_reject_total counter"));
+	assert.doesNotMatch(out, /nest_zod_reject_total\{endpoint=/);
+});

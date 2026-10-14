@@ -96,6 +96,17 @@ export class Metrics {
 	 * reason 域见 observeProposeOutcome 注释；stale_status:* 在写入前白名单归一（防基数爆炸）。
 	 */
 	private proposeOutcomes = new Map<string, number>();
+	/**
+	 * RB-D9（PR-D Task 1，#407 观测批）：侧栏参考图绑定链路 outcome 分布，key = outcome。
+	 * ok=apply POST 成功 / invalid_params=apply 400（Nest Zod 拒） / upstream_error=apply 5xx·网络 /
+	 * short_circuit=propose_generation 门禁短路（RB-D5 missing_refs）。与 propose_outcome 同口径——
+	 * Map 为空不出数据行，使「从未触发」与「触发过但 0」可区分。
+	 */
+	private sidebarRefBind = new Map<string, number>(); // key: outcome (ok|invalid_params|upstream_error|short_circuit)
+	/** RB-D9：propose_generation 门禁短路累计（RB-D5 missing_refs），gauge 语义恒渲染样本行。 */
+	private proposeMissingRefs = 0;
+	/** RB-D9：运行时观测到的 Nest Zod/校验 400，按 endpoint 分维度（如 apply-sidebar-attachments）。 */
+	private nestZodReject = new Map<string, number>(); // key: endpoint
 	private planProposed = 0; // C3 propose_plan 调用数
 	private planDecisions = new Map<string, number>(); // key: decision (execute|refine|keep|timeout|aborted)
 	private planGateBlocked = new Map<string, number>(); // key: tool——planPending 期间被拦的写工具
@@ -332,6 +343,24 @@ export class Metrics {
 			label = ["completed", "error", "failed", "cancelled"].includes(s) ? label : "stale_status:other";
 		}
 		this.proposeOutcomes.set(label, (this.proposeOutcomes.get(label) ?? 0) + 1);
+	}
+
+	/**
+	 * RB-D9（PR-D Task 1，#407）：侧栏参考图绑定链路 outcome 观测。回调只做 Map.set，不得抛；
+	 * 调用点不包 try/catch。outcome 取值域锁死四态——防止 label 基数爆炸。
+	 */
+	observeSidebarRefBind(outcome: "ok" | "invalid_params" | "upstream_error" | "short_circuit"): void {
+		this.sidebarRefBind.set(outcome, (this.sidebarRefBind.get(outcome) ?? 0) + 1);
+	}
+
+	/** RB-D9：propose_generation 门禁短路累计（一例一次，与 settle 单点同口径）。 */
+	observeProposeMissingRefs(): void {
+		this.proposeMissingRefs += 1;
+	}
+
+	/** RB-D9：Nest Zod/校验 400 观测，按 endpoint 分维度（运行时侧比事件层正则更精确）。 */
+	observeNestZodReject(endpoint: string): void {
+		this.nestZodReject.set(endpoint, (this.nestZodReject.get(endpoint) ?? 0) + 1);
 	}
 
 	/** C3 Plan 确认门观测（spec §3.7）：proposed/decision 在工具层，blocked 在 before_tool 层。 */
@@ -591,6 +620,26 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_propose_outcome_total counter");
 	for (const [reason, count] of [...this.proposeOutcomes.entries()].sort()) {
 		lines.push(`pi_runtime_propose_outcome_total{reason="${esc(reason)}"} ${count}`);
+	}
+
+	// RB-D9（PR-D Task 1，#407 观测批）：侧栏参考图绑定链路 outcome 分布。counter 型 Map 为空
+	// 不出数据行——与 propose_outcome 同口径。outcome 标签域锁死四态防基数爆炸。
+	lines.push("# HELP pi_runtime_sidebar_ref_bind_total Reference-image bind link outcomes (apply ok/400/5xx + propose gate short_circuit).");
+	lines.push("# TYPE pi_runtime_sidebar_ref_bind_total counter");
+	for (const [outcome, count] of [...this.sidebarRefBind.entries()].sort()) {
+		lines.push(`pi_runtime_sidebar_ref_bind_total{outcome="${esc(outcome)}"} ${count}`);
+	}
+
+	// RB-D9：propose_generation 门禁短路累计。gauge 语义恒渲染样本行（即使 0 也不缺行）。
+	lines.push("# HELP pi_runtime_propose_missing_refs_total propose_generation gate short-circuits (RB-D5 missing_refs).");
+	lines.push("# TYPE pi_runtime_propose_missing_refs_total counter");
+	lines.push(`pi_runtime_propose_missing_refs_total ${this.proposeMissingRefs}`);
+
+	// RB-D9：Nest Zod/校验 400 观测，按 endpoint 分维度。counter 型 Map 为空不出数据行。
+	lines.push("# HELP nest_zod_reject_total Nest Zod/validation 400s observed by runtime, by endpoint.");
+	lines.push("# TYPE nest_zod_reject_total counter");
+	for (const [endpoint, count] of [...this.nestZodReject.entries()].sort()) {
+		lines.push(`nest_zod_reject_total{endpoint="${esc(endpoint)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_plan_proposed_total propose_plan invocations (C3 plan gate).");

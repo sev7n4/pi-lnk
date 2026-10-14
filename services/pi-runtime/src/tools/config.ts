@@ -82,6 +82,9 @@ export function resolveToolsWithClient(
 		// 经观察者回调接线；label 归一（stale_status:* 白名单折叠）在 metrics 侧单点完成。
 		...buildCanvasWriteTools(client, deps.registry, {
 			onProposeOutcome: (reason) => metrics.observeProposeOutcome(reason),
+			onSidebarRefBind: (outcome) => metrics.observeSidebarRefBind(outcome),
+			onProposeMissingRefs: () => metrics.observeProposeMissingRefs(),
+			onNestZodReject: (endpoint) => metrics.observeNestZodReject(endpoint),
 		}),
 		...buildUiCommandTools(),
 		...buildAskUserTools(deps.registry),

@@ -813,6 +813,45 @@ describe("canvas-write: apply_sidebar_attachments prepareArguments 消毒（RB-D
 		const out = toolWithArgs().prepareArguments?.({ node_ids: ["n1"], attachments: att });
 		assert.deepEqual(out, { node_ids: ["n1"], attachments: att });
 	});
+
+	it(
+		"事故形态端到端（G2 伪造 source/target_node_id）→ 消毒删除后回落 tc.attachments，apply 成功触发 onSidebarRefBind('ok') 一次",
+		async () => {
+			const { client, calls } = makeClient();
+			const bind: string[] = [];
+			const tools = createCanvasWriteTools(client, {
+				onSidebarRefBind: (o) => bind.push(o),
+			});
+			const tool = findTool(tools, "apply_sidebar_attachments");
+			// 模型传入的 G2 形态伪造参数
+			const forged = [{ source: "I1", target_node_id: "image-x" }];
+			// harness 契约：prepareArguments 先消毒，再以消毒后参数 execute
+			// （vendor harness/execution/tools.ts:88：
+			//  `const preparedArguments = tool.prepareArguments ? tool.prepareArguments(call.arguments) : call.arguments;`）
+			const prepared = (tool.prepareArguments?.({
+				node_ids: ["n1"],
+				mode: "localRefs",
+				attachments: forged,
+			}) ?? { node_ids: ["n1"], mode: "localRefs", attachments: forged }) as Record<string, unknown>;
+			// ① prepareArguments 直接断言：伪造项整删（与既有 RB-D2 用例同口径）
+			assert.deepEqual(prepared, { node_ids: ["n1"], mode: "localRefs" });
+			// ② 端到端：以消毒后参数执行（与 harness 同路径）
+			await run(tool, prepared);
+			assert.equal(calls[0].path, "/agent/internal/apply-sidebar-attachments");
+			const sent = calls[0].body.attachments as Array<Record<string, unknown>>;
+			// ③ POST body 的 attachments 不含伪造字段（source/target_node_id 已消毒）
+			assert.ok(Array.isArray(sent));
+			for (const a of sent) {
+				assert.equal("source" in a, false, "消毒后不得残留 source 字段");
+				assert.equal("target_node_id" in a, false, "消毒后不得残留 target_node_id 字段");
+			}
+			// ④ 回落 SM-D4 路径：body.attachments 等于 tc.attachments 实体（CTX，无 source/target_node_id）
+			assert.deepEqual(sent, CTX.attachments);
+			// ⑤ stub 恒返 200（makeClient 成功路径）→ apply 成功 → onSidebarRefBind('ok') 一次
+			assert.equal(bind.length, 1);
+			assert.equal(bind[0], "ok");
+		},
+	);
 });
 
 describe("canvas-write: apply_sidebar_attachments 平台填充对账文案（RB-D2）", () => {
@@ -1023,5 +1062,80 @@ describe("propose_generation RB-D5 门禁短路", () => {
 		);
 		const result = await run(propose, { node_id: "n1" });
 		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+	});
+});
+
+// ── RB-D9（PR-D Task 1）：侧栏参考图绑定观测批核心指标发射 ───────────────────
+// 三个新回调只做 Map.set、不得抛；调用点不包 try/catch。本 describe 用注入回调断言
+// 调用次数/取值，复用既有 makeClient / findTool / run 辅助与 NestToolError 形态。
+describe("canvas-write: RB-D9 指标发射", () => {
+	/** apply_sidebar_attachments 专用 stub：按 behavior 决定 POST 结果（200 / 400 / 500）。 */
+	function applyClient(behavior: "ok" | "bad400" | "bad500") {
+		return {
+			post: async (path: string, _body: Record<string, unknown>) => {
+				if (path === "/agent/internal/apply-sidebar-attachments") {
+					if (behavior === "bad400") throw new NestToolError("nest apply zod 400", "http", 400);
+					if (behavior === "bad500") throw new NestToolError("nest apply 500", "http", 500);
+					return { ok: true };
+				}
+				return { ok: true };
+			},
+		} as never;
+	}
+
+	it("apply 成功（stub 200）→ onSidebarRefBind('ok') 调用一次", async () => {
+		const bind: string[] = [];
+		const tools = createCanvasWriteTools(applyClient("ok"), {
+			onSidebarRefBind: (o) => bind.push(o),
+		});
+		await run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] });
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "ok");
+	});
+
+	it("apply 返回 400（NestToolError status 400）→ onSidebarRefBind('invalid_params') + onNestZodReject('apply-sidebar-attachments')", async () => {
+		const bind: string[] = [];
+		const reject: string[] = [];
+		const tools = createCanvasWriteTools(applyClient("bad400"), {
+			onSidebarRefBind: (o) => bind.push(o),
+			onNestZodReject: (ep) => reject.push(ep),
+		});
+		// 失败仍向上 fail-visible（链路错误不静默吞），但指标已先行记录
+		await assert.rejects(run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] }));
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "invalid_params");
+		assert.equal(reject.length, 1);
+		assert.equal(reject[0], "apply-sidebar-attachments");
+	});
+
+	it("apply 返回 500（NestToolError 5xx）→ onSidebarRefBind('upstream_error')", async () => {
+		const bind: string[] = [];
+		const tools = createCanvasWriteTools(applyClient("bad500"), {
+			onSidebarRefBind: (o) => bind.push(o),
+		});
+		await assert.rejects(run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] }));
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "upstream_error");
+	});
+
+	it("propose 短路（confirmed:false missing_refs）→ onSidebarRefBind('short_circuit') + onProposeMissingRefs()", async () => {
+		const bind: string[] = [];
+		let missingRefs = 0;
+		const client = {
+			post: async (path: string) => {
+				if (path === "/agent/internal/propose-generation") {
+					return { confirmed: false, reason: "missing_refs", message: "m" };
+				}
+				return { ok: true };
+			},
+		} as never;
+		const [propose] = createCanvasWriteTools(client, {
+			onSidebarRefBind: (o) => bind.push(o),
+			onProposeMissingRefs: () => missingRefs++,
+		}).filter((t) => t.name === "propose_generation");
+		await run(propose, { node_id: "n1" });
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "short_circuit");
+		assert.equal(missingRefs, 1);
 	});
 });
