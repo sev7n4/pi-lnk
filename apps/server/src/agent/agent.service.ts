@@ -1284,15 +1284,24 @@ export class AgentService {
     // Q2（2026-10-14 积分预估展示，spec §6.7 数据链路第 1 步·展示先行）：按 MarginPolicy
     // 当前生效系数（只读，缺省 11000bp=1.10×）+ FX 把 usage.cost（USD）折算为**预估积分**。
     // 纯展示，不落账不扣分——P2 token 价目条目 + turn_settled 落地后由权威结算覆盖。
-    // 折算不可用（usage.cost=0 / 表读失败）时回调返回 null，事件不带预估字段（绝不显示 0）。
-    const [marginPolicyRow, fxUsdCny] = await Promise.all([
-      this.prisma.marginPolicy.findFirst({ orderBy: { createdAt: 'desc' } }).catch(() => null),
+    // 防御性读取：prisma 替身缺 marginPolicy（单测 mock 是手写局部对象）/ 表读失败都不阻断
+    // 回合——降级默认系数；折算不可用（usage.cost=0）时回调返回 null，事件不带预估字段
+    // （绝不显示 0）。⚠️ 不能写 `this.prisma.marginPolicy.findFirst().catch()`——mock 缺
+    // marginPolicy 时是同步 TypeError，.catch 挂不上（#415 CI 78 例失败实证）。
+    const readMarginBp = async (): Promise<number> => {
+      try {
+        const row = await this.prisma?.marginPolicy?.findFirst?.({ orderBy: { createdAt: 'desc' } })
+        return typeof row?.marginBp === 'number' && row.marginBp > 0 ? row.marginBp : 11000
+      } catch {
+        return 11000
+      }
+    }
+    const [marginBp, fxUsdCny] = await Promise.all([
+      readMarginBp(),
       Promise.resolve(resolveFxUsdCny(process.env as NodeJS.ProcessEnv)),
     ])
     const estimateTurnCredits = (totals: { cost?: number }): number | null =>
-      totals.cost && totals.cost > 0
-        ? estimateCreditsFromUsdCost(totals.cost, marginPolicyRow?.marginBp ?? 11000, fxUsdCny)
-        : null
+      totals.cost && totals.cost > 0 ? estimateCreditsFromUsdCost(totals.cost, marginBp, fxUsdCny) : null
     const usageAccumulator = createUsageAccumulator(estimateTurnCredits)
     const executionEvents: PersistedExecutionEvent[] = []
     // P2-3：落库事件显式带 seq/ts/messageIndex（数组下标即序，seq 冗余但抗裁剪；
