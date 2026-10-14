@@ -23,15 +23,17 @@ import {
   formatDuration,
 } from '@/components/agent/executionStepLabels'
 
+export type ThinkingPart = {
+  kind: 'thinking'
+  id: string
+  text: string
+  status: 'running' | 'done'
+  startedAt: number
+  endedAt?: number
+}
+
 export type TimelinePart =
-  | {
-      kind: 'thinking'
-      id: string
-      text: string
-      status: 'running' | 'done'
-      startedAt: number
-      endedAt?: number
-    }
+  | ThinkingPart
   | {
       kind: 'text'
       id: string
@@ -151,9 +153,19 @@ export type TimelineEvent =
   | { type: 'text_replace'; data: { text?: string } }
 
 let partCounter = 0
+/**
+ * part id **必须稳定**（2026-10-14）。
+ *
+ * 曾经带 `Date.now()`，导致 `replayTimelineEvents` 重跑或 liveTimeline 刷新后
+ * 每个 part 的 `:key` 都变 ⇒ `<details>` 等元素被卸载重挂 ⇒ 折叠/展开状态、
+ * 动画状态、滚动锚点、增量 DOM patch 全部丢失（思考块「点开收不回」的路径 A）。
+ *
+ * 稳定 key 是上述所有能力的**共同前提**，不应由时间戳决定。
+ * 计数器 + 模块级唯一性已足够：同一 timeline 内绝不重号，replay 重建时天然是同一套序号。
+ */
 function nextPartId(prefix: string): string {
   partCounter += 1
-  return `${prefix}-${partCounter}-${Date.now()}`
+  return `${prefix}-${partCounter}`
 }
 
 export function createTurnTimeline(): TurnTimeline {
