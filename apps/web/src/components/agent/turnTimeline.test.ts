@@ -171,15 +171,14 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(byKind(tl, 'text')[0].status).toBe('done')
   })
 
-  it('waiting_user resolved 不产 notice；waiting 产 warn notice', () => {
+  it('waiting_user 不产任何 part（2026-10-14：等待态由 dock 状态行单一渲染，时间线不再重复）', () => {
     const tl = feed([
       { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
       { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
+      { type: 'waiting_user', data: { status: 'waiting', reason: '请选择风格' } },
     ])
-    const notices = byKind(tl, 'notice')
-    expect(notices).toHaveLength(1)
-    expect(notices[0].tone).toBe('warn')
-    expect(notices[0].text).toContain('确认生成')
+    expect(byKind(tl, 'notice')).toHaveLength(0)
+    expect(tl.parts).toHaveLength(0)
   })
 })
 

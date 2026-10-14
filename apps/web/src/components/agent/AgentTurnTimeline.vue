@@ -45,7 +45,12 @@ function isVideoUrl(url: string): boolean {
 }
 
 function toolLabel(p: Extract<TimelinePart, { kind: 'tool' }>): string {
-  const shown = presentToolStep({ label: p.toolName, kind: 'tool', meta: { toolName: p.toolName, args: p.args } })
+  const shown = presentToolStep({
+    label: p.toolName,
+    kind: 'tool',
+    status: p.status,
+    meta: { toolName: p.toolName, args: p.args },
+  })
   return shown.label
 }
 function toolIcon(p: Extract<TimelinePart, { kind: 'tool' }>): string {
@@ -132,13 +137,14 @@ const rootClass = computed(() =>
         :class="dense ? 'line-clamp-3' : ''"
       >{{ part.text }}<span v-if="isStreamingCursor(part)" class="animate-pulse">▊</span></p>
 
-      <!-- tool -->
+      <!-- tool：有 resultSummary 才包 details（可展开看结果）；
+           无摘要时渲染纯行——空 details 是「点了没内容」的死交互（2026-10-14 生产反馈） -->
       <div
         v-else-if="part.kind === 'tool'"
         class="rounded border border-[var(--agent-assistant-divider)] px-2 py-1"
         :class="part.status === 'failed' ? 'border-danger/40' : ''"
       >
-        <details>
+        <details v-if="part.resultSummary">
           <summary class="flex cursor-pointer items-center gap-1.5">
             <span>{{ toolIcon(part) }}</span>
             <span :class="part.status === 'failed' ? 'text-danger' : 'text-[var(--neo-text-secondary)]'">{{ toolLabel(part) }}</span>
@@ -149,11 +155,18 @@ const rootClass = computed(() =>
             <span v-else-if="part.status === 'done'" class="ml-auto text-[var(--neo-text-muted)]">✓</span>
             <span v-else-if="part.status === 'failed'" class="ml-auto text-danger">✗</span>
           </summary>
-          <p
-            v-if="part.resultSummary"
-            class="mt-1 whitespace-pre-wrap text-[10px] text-[var(--neo-text-muted)]"
-          >{{ part.resultSummary }}</p>
+          <p class="mt-1 whitespace-pre-wrap text-[10px] text-[var(--neo-text-muted)]">{{ part.resultSummary }}</p>
         </details>
+        <div v-else class="flex items-center gap-1.5">
+          <span>{{ toolIcon(part) }}</span>
+          <span :class="part.status === 'failed' ? 'text-danger' : 'text-[var(--neo-text-secondary)]'">{{ toolLabel(part) }}</span>
+          <span
+            v-if="part.status === 'running'"
+            class="ml-auto inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--neo-text-muted)]"
+          />
+          <span v-else-if="part.status === 'done'" class="ml-auto text-[var(--neo-text-muted)]">✓</span>
+          <span v-else-if="part.status === 'failed'" class="ml-auto text-danger">✗</span>
+        </div>
       </div>
 
       <!-- canvas -->

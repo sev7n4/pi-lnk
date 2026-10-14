@@ -369,20 +369,9 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       return
     }
     case 'waiting_user': {
-      const d = event.data
-      if (d.status === 'resolved') return
-      const text =
-        d.toolName === 'propose_generation'
-          ? '等待你在画布上确认生成'
-          : d.reason
-            ? `等待你确认：${d.reason}`
-            : '等待你确认'
-      timeline.parts.push({
-        kind: 'notice',
-        id: nextPartId('notice'),
-        text,
-        tone: 'warn',
-      })
+      // 2026-10-14（生产反馈「等待你在画布上确认生成 重复」）：等待态**只由 dock 状态行渲染**
+      // （turnStatusBar resolveWaiting，含「还剩 N 分钟自动取消」倒计时），时间线不再产 notice ——
+      // D3「一处渲染/单一焦点」。事件本身保留在流里（落库/重放兼容），此处直接吞掉。
       return
     }
     case 'error': {
