@@ -3153,10 +3153,12 @@ defineExpose({
           </div>
 
           <!-- 底部输入 dock：与节点 dock-studio 同款毛玻璃 -->
-          <div
-            class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1"
-            :class="{ 'agent-input-area--scrollable': hasDockPresentation }"
-          >
+          <div class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1">
+            <!-- dock 内容单独限高滚动；composer 始终钉底，不被卷入滚动区（Fix：composer 被挤到底部 / 双层滚） -->
+            <div
+              class="agent-dock-scroll"
+              :class="{ 'agent-dock-scroll--scrollable': hasDockPresentation }"
+            >
             <!-- 活体过程卡：钉在 composer 上方（P0 决策 1）；回合收束后由上面的气泡内 trace 接管。
                  P2-2：flag on 时改用 AgentTurnTimeline(dense)，与历史气泡同一套 parts 渲染。 -->
             <AgentExecutionTrace
@@ -3266,6 +3268,7 @@ defineExpose({
               runtime/Nest 都不再发 `interrupt` / `done` 门控事件。
               确认入口收敛为两处：**画布节点「生成」按钮**（propose 阻塞等待）与**直接输入文字**。
             -->
+            </div><!-- /agent-dock-scroll -->
             <div
               class="agent-input-dock"
               :class="{
@@ -3861,7 +3864,10 @@ defineExpose({
   }
 }
 
-.agent-input-area--scrollable {
+.agent-dock-scroll {
+  min-height: 0;
+}
+.agent-dock-scroll--scrollable {
   max-height: min(42vh, 400px);
   overflow-y: auto;
   overscroll-behavior: contain;
