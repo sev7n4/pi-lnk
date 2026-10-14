@@ -14,7 +14,7 @@
  *   failed 出内联重试入口（D2）+ 错误文案；点击/定位复用现有画布能力
  * - notice：按 tone 着色；error 带重试按钮
  */
-import { computed, reactive } from 'vue'
+import { computed, shallowReactive, type CSSProperties } from 'vue'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
 import { presentToolStep } from '@/components/agent/toolPresentation'
@@ -119,9 +119,16 @@ const hasContent = computed(() => props.parts.length > 0)
  *
  * ⚠️ 缓存键必须是 part.id 而非数组下标：parts 会随流式增长/重排，下标会错位。
  */
-const thinkingDisclosures = reactive(new Map<string, ReturnType<typeof useDisclosure>>())
+type Disclosure = ReturnType<typeof useDisclosure>
 
-function disclosureFor(part: ThinkingPart) {
+/**
+ * 用 `shallowReactive` 而非 `reactive`：后者会**深度解包 ref**，
+ * 使 Map 里存的对象变成 `{ isOpen: boolean }`（`.value` 消失、类型被改写）。
+ * 这里要的就是「Map 本身可追踪、但内部实例保持原样」。
+ */
+const thinkingDisclosures = shallowReactive(new Map<string, Disclosure>())
+
+function disclosureFor(part: ThinkingPart): Disclosure {
   let d = thinkingDisclosures.get(part.id)
   if (!d) {
     d = useDisclosure(() => part.status === 'running')
@@ -157,13 +164,15 @@ const rootClass = computed(() =>
     : 'agent-turn-timeline flex flex-col gap-1 text-[11px] leading-snug',
 )
 
-const rootStyle = computed(() =>
+const rootStyle = computed<CSSProperties | undefined>(() =>
   props.dense
     ? {
         'max-height': DENSE_MAX_HEIGHT,
-        'overflow-y': 'auto',
+        // ⚠️ 必须写 CSSProperties 而非让TS 推断成 `{ 'overflow-y': string }`：
+        // Vue 的 StyleValue 要求 OverflowY 字面量类型，string 会报 TS2322（CI 实测）。
+        overflowY: 'auto',
         // contain：到边界不链式滚动外层历史列表（避免"滚到头就带动整页"的错位手感）
-        'overscroll-behavior': 'contain',
+        overscrollBehavior: 'contain',
       }
     : undefined,
 )

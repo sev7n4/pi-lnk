@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
 
 /**
  * 原生 `<details>` 折叠契约（2026-10-14）。
@@ -44,17 +44,18 @@ export function useDisclosure(getDefault: () => boolean): {
   onNativeToggle: (nativeOpen: boolean) => void
   /** 显式重置用户意图（回到跟随默认值）。仅在逻辑块身份变化时使用。 */
   reset: () => void
-  /** 仅供测试：当前是否已有用户意图。 */
-  hasManualOverride: Ref<boolean>
+  /** 是否已有用户显式意图（测试与调试用）。 */
+  hasManualOverride: ComputedRef<boolean>
 } {
   /** null = 用户尚未表达意图；true/false = 用户的显式选择。 */
   const manual = ref<boolean | null>(null)
 
   const isOpen = computed(() => manual.value ?? getDefault())
+  const hasManualOverride = computed(() => manual.value !== null)
 
   return {
     isOpen,
-    hasManualOverride: computed(() => manual.value !== null) as Ref<boolean>,
+    hasManualOverride,
     onNativeToggle: (nativeOpen: boolean) => {
       // 只有当原生状态与「实际展示态」确实相反时才算用户意图；
       // Vue 因默认值变化主动写回 DOM 时同样会触发 toggle，
