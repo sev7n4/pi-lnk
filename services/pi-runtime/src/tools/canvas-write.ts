@@ -84,7 +84,9 @@ function setIfPresent(body: Record<string, unknown>, key: string, value: unknown
  * opts.pollMs：画布 SSOT 轮询间隔（仅测试注入；缺省 2s，spec §4.2）。
  * opts.onProposeOutcome（P2，spec 2026-10-13 §2）：propose 结算回调观察者——工具层不持
  * Metrics（2026-10-04 纪律），config.ts 接线到 metrics.observeProposeOutcome。
- * 约定：回调只做 Map.set，**不得抛**（调用点不 try/catch，抛错会污染结算路径）。
+ * opts.onSidebarRefBind / onProposeMissingRefs / onNestZodReject（RB-D9，#407 观测批）：侧栏
+ * 参考图绑定链路 outcome 观察者，config.ts 接线到 metrics 三方法。
+ * 约定：四个回调都只做 Map.set，**不得抛**（调用点不 try/catch，抛错会污染结算/绑定路径）。
  */
 export function createCanvasWriteTools(
 	client: NestClient,
@@ -93,11 +95,17 @@ export function createCanvasWriteTools(
 		registry?: PendingToolRegistry;
 		pollMs?: number;
 		onProposeOutcome?: (reason: string, confirmed: boolean) => void;
+		onSidebarRefBind?: (outcome: "ok" | "invalid_params" | "upstream_error" | "short_circuit") => void;
+		onProposeMissingRefs?: () => void;
+		onNestZodReject?: (endpoint: string) => void;
 	} = {},
 ): LnkpiTool[] {
 	const write = { tier: "write_light" as const };
 	const registry = opts.registry;
 	const onProposeOutcome = opts.onProposeOutcome;
+	const onSidebarRefBind = opts.onSidebarRefBind;
+	const onProposeMissingRefs = opts.onProposeMissingRefs;
+	const onNestZodReject = opts.onNestZodReject;
 	const tools: LnkpiTool[] = [
 		{
 			...write,
@@ -404,9 +412,12 @@ export function createCanvasWriteTools(
 				// （Ruling 1：withWriteSignal 会包出 {ok:true,data} 与 fail-closed 语义矛盾）。
 				// 判定键严格双条件：confirmed === false 且 reason === 'missing_refs'（Review Focus 5）。
 				const gate = (base ?? null) as { confirmed?: unknown; reason?: unknown; message?: unknown } | null;
-				if (gate && gate.confirmed === false && gate.reason === "missing_refs") {
-					// P2 结算归因：短路也是一次 propose 结算（分母不失真）
-					onProposeOutcome?.("missing_refs", false);
+			if (gate && gate.confirmed === false && gate.reason === "missing_refs") {
+				// P2 结算归因：短路也是一次 propose 结算（分母不失真）
+				onProposeOutcome?.("missing_refs", false);
+				// RB-D9（#407）：门禁短路 = 一条 sidebar_ref_bind 的 short_circuit 观测 + 一次 missing_refs 短路累计
+				onSidebarRefBind?.("short_circuit");
+				onProposeMissingRefs?.();
 					const message =
 						typeof gate.message === "string" && gate.message
 							? gate.message
@@ -651,10 +662,24 @@ export function createCanvasWriteTools(
 			const mentioned = p.mentioned_keys ?? tc.mentionedKeys;
 			if (mentioned && mentioned.length > 0) body.mentionedKeys = mentioned;
 			const usedPlatformFill = !p.attachments?.length;
-			const result = withWriteSignal(
-				await client.post("/agent/internal/apply-sidebar-attachments", body),
-				p.node_ids.length,
-			);
+			let result: Awaited<ReturnType<typeof withWriteSignal>>;
+			try {
+				result = withWriteSignal(
+					await client.post("/agent/internal/apply-sidebar-attachments", body),
+					p.node_ids.length,
+				);
+			} catch (err) {
+				// RB-D9（#407）：apply 链路 outcome 观测。404（无侧栏附件，上文已早退）不计——属用户侧无图，非链路失败。
+				if (err instanceof NestToolError && err.status === 400) {
+					onSidebarRefBind?.("invalid_params");
+					onNestZodReject?.("apply-sidebar-attachments");
+				} else {
+					onSidebarRefBind?.("upstream_error");
+				}
+				throw err;
+			}
+			// RB-D9：apply POST 成功 = 一条 sidebar_ref_bind 的 ok 观测
+			onSidebarRefBind?.("ok");
 			// RB-D2 对账：平台填充路径必须声明实际挂载来源（省略参数与消毒删除都落到本分支）。
 			if (usedPlatformFill) {
 				const ids = (tc.attachments ?? [])

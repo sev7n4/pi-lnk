@@ -1025,3 +1025,78 @@ describe("propose_generation RB-D5 门禁短路", () => {
 		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
 	});
 });
+
+// ── RB-D9（PR-D Task 1）：侧栏参考图绑定观测批核心指标发射 ───────────────────
+// 三个新回调只做 Map.set、不得抛；调用点不包 try/catch。本 describe 用注入回调断言
+// 调用次数/取值，复用既有 makeClient / findTool / run 辅助与 NestToolError 形态。
+describe("canvas-write: RB-D9 指标发射", () => {
+	/** apply_sidebar_attachments 专用 stub：按 behavior 决定 POST 结果（200 / 400 / 500）。 */
+	function applyClient(behavior: "ok" | "bad400" | "bad500") {
+		return {
+			post: async (path: string, _body: Record<string, unknown>) => {
+				if (path === "/agent/internal/apply-sidebar-attachments") {
+					if (behavior === "bad400") throw new NestToolError("nest apply zod 400", "http", 400);
+					if (behavior === "bad500") throw new NestToolError("nest apply 500", "http", 500);
+					return { ok: true };
+				}
+				return { ok: true };
+			},
+		} as never;
+	}
+
+	it("apply 成功（stub 200）→ onSidebarRefBind('ok') 调用一次", async () => {
+		const bind: string[] = [];
+		const tools = createCanvasWriteTools(applyClient("ok"), {
+			onSidebarRefBind: (o) => bind.push(o),
+		});
+		await run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] });
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "ok");
+	});
+
+	it("apply 返回 400（NestToolError status 400）→ onSidebarRefBind('invalid_params') + onNestZodReject('apply-sidebar-attachments')", async () => {
+		const bind: string[] = [];
+		const reject: string[] = [];
+		const tools = createCanvasWriteTools(applyClient("bad400"), {
+			onSidebarRefBind: (o) => bind.push(o),
+			onNestZodReject: (ep) => reject.push(ep),
+		});
+		// 失败仍向上 fail-visible（链路错误不静默吞），但指标已先行记录
+		await assert.rejects(run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] }));
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "invalid_params");
+		assert.equal(reject.length, 1);
+		assert.equal(reject[0], "apply-sidebar-attachments");
+	});
+
+	it("apply 返回 500（NestToolError 5xx）→ onSidebarRefBind('upstream_error')", async () => {
+		const bind: string[] = [];
+		const tools = createCanvasWriteTools(applyClient("bad500"), {
+			onSidebarRefBind: (o) => bind.push(o),
+		});
+		await assert.rejects(run(findTool(tools, "apply_sidebar_attachments"), { node_ids: ["n1"] }));
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "upstream_error");
+	});
+
+	it("propose 短路（confirmed:false missing_refs）→ onSidebarRefBind('short_circuit') + onProposeMissingRefs()", async () => {
+		const bind: string[] = [];
+		let missingRefs = 0;
+		const client = {
+			post: async (path: string) => {
+				if (path === "/agent/internal/propose-generation") {
+					return { confirmed: false, reason: "missing_refs", message: "m" };
+				}
+				return { ok: true };
+			},
+		} as never;
+		const [propose] = createCanvasWriteTools(client, {
+			onSidebarRefBind: (o) => bind.push(o),
+			onProposeMissingRefs: () => missingRefs++,
+		}).filter((t) => t.name === "propose_generation");
+		await run(propose, { node_id: "n1" });
+		assert.equal(bind.length, 1);
+		assert.equal(bind[0], "short_circuit");
+		assert.equal(missingRefs, 1);
+	});
+});

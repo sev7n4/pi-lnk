@@ -39,11 +39,18 @@ export function buildCanvasReadTools(client: NestClient): LnkpiTool[] {
  * introduce_nodes_to_agent 属老链路 DEFERRED，默认不暴露（includeDeferred 显式开启）。
  * registry 可选注入（2026-09-30-ask-user-blocking B-2）：注入且开关开 → propose_generation 阻塞分支。
  * hooks.onProposeOutcome（P2）：propose 结算回调，config.ts 接线到 metrics（工具层不持 Metrics）。
+ * hooks.onSidebarRefBind / onProposeMissingRefs / onNestZodReject（RB-D9，#407）：侧栏参考图绑定
+ * 链路 outcome 观察者，config.ts 接线到 metrics 三方法（透传到 createCanvasWriteTools）。
  */
 export function buildCanvasWriteTools(
 	client: NestClient,
 	registry?: PendingToolRegistry,
-	hooks?: { onProposeOutcome?: (reason: string, confirmed: boolean) => void },
+	hooks?: {
+		onProposeOutcome?: (reason: string, confirmed: boolean) => void;
+		onSidebarRefBind?: (outcome: "ok" | "invalid_params" | "upstream_error" | "short_circuit") => void;
+		onProposeMissingRefs?: () => void;
+		onNestZodReject?: (endpoint: string) => void;
+	},
 ): LnkpiTool[] {
 	return createCanvasWriteTools(client, { registry, ...hooks });
 }
