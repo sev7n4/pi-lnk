@@ -2652,6 +2652,110 @@ describe('AgentCanvasToolsService', () => {
       expect(generateVideo).not.toHaveBeenCalled()
       expect(orchStart).not.toHaveBeenCalled()
     })
+
+    it('RB-D5 门禁：sidebarImageCount>0 且 localRefs 空 → missing_refs，不做状态转移', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { title: '产品主图', prompt: '蓝色天空产品主图', status: 'draft', imageModel: 'platform::user-default-image' },
+          },
+        ],
+        edges: [],
+      }
+      const orchStart = vi.spyOn(
+        (svc as unknown as { videoOrchestrator: { start: (...args: unknown[]) => unknown } }).videoOrchestrator,
+        'start',
+      )
+
+      const result = await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+        sidebarImageCount: 2,
+      })
+
+      expect(result).toMatchObject({ confirmed: false, reason: 'missing_refs' })
+      expect((result as { message?: string }).message).toContain('apply_sidebar_attachments')
+      // 不做状态转移：节点停 draft、无会话持久化写、零生成调用
+      expect(canvas.nodes[0].data.status).toBe('draft')
+      expect(sessionUpdate).not.toHaveBeenCalled()
+      expect(generateImage).not.toHaveBeenCalled()
+      expect(generateVideo).not.toHaveBeenCalled()
+      expect(orchStart).not.toHaveBeenCalled()
+    })
+
+    it('RB-D5 放行：localRefs 非空 → pending_confirm（正常状态转移）', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '产品主图',
+              prompt: '蓝色天空产品主图',
+              status: 'draft',
+              imageModel: 'platform::user-default-image',
+              localRefs: [{ id: 'a1', mediaType: 'image', sourceKind: 'upload', label: 'a.png', url: 'https://x/a.png' }],
+            },
+          },
+        ],
+        edges: [],
+      }
+      const result = await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+        sidebarImageCount: 1,
+      })
+      expect(result.nodeId).toBe('img-1')
+      expect(result.status).toBe('pending_confirm')
+      expect(canvas.nodes[0].data.status).toBe('pending_confirm')
+    })
+
+    it('RB-D5 出口：sidebarImageCount=0 与字段缺省 → 旧行为逐字节（pending_confirm）', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-1',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { title: '产品主图', prompt: '蓝色天空产品主图', status: 'draft' },
+          },
+        ],
+        edges: [],
+      }
+      const withZero = await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'img-1',
+        sidebarImageCount: 0,
+      })
+      expect(withZero.status).toBe('pending_confirm')
+
+      canvas.nodes[0].data.status = 'draft'
+      const withoutField = await svc.proposeGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' })
+      expect(withoutField.status).toBe('pending_confirm')
+    })
+
+    it('RB-D5 限界（Ruling 2）：text 节点不受门禁', async () => {
+      canvas = {
+        nodes: [
+          { id: 'text-1', type: 'text', position: { x: 0, y: 0 }, data: { title: 't', prompt: 'p', status: 'draft' } },
+        ],
+        edges: [],
+      }
+      const result = await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'text-1',
+        sidebarImageCount: 3,
+      })
+      expect(result.status).toBe('pending_confirm')
+    })
   })
 
   // Phase 2c.1 C3: clearProposeGeneration cancels pending without generating

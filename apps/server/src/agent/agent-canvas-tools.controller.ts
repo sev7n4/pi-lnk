@@ -1,5 +1,5 @@
 import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common'
-import { IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Min, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 import { PrismaService } from '../prisma/prisma.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
@@ -71,6 +71,16 @@ class ProposeGenerationDto {
 
   @IsString()
   nodeId!: string
+
+  /**
+   * RB-D5（spec 2026-10-13-sidebar-ref-bind-invariant-design.md）：本轮侧栏图片附件计数
+   * （runtime tc.attachments 中 mediaType==='image'）。旧 runtime 不发 ⇒ undefined 门禁关
+   * （部署窗口期向后兼容，Ruling 6）。
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sidebarImageCount?: number
 }
 
 class ClearProposeGenerationDto {

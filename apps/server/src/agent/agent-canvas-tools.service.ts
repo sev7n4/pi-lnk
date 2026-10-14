@@ -1098,23 +1098,28 @@ export class AgentCanvasToolsService {
     sessionId: string
     userId: string
     nodeId: string
-  }): Promise<{
-    nodeId: string
-    status: 'pending_confirm'
-    summary: {
-      type: string
-      promptPreview: string
-      title?: string
-      imageModel?: string
-      videoModel?: string
-      textModel?: string
-      audioModel?: string
-      imageAspect?: string
-      imageResolution?: string
-      videoSettings?: unknown
-    }
-    actions: CanvasAction[]
-  }> {
+    /** RB-D5：本轮侧栏图片附件计数；缺省/0 ⇒ 门禁关（Ruling 6）。 */
+    sidebarImageCount?: number
+  }): Promise<
+    | {
+        nodeId: string
+        status: 'pending_confirm'
+        summary: {
+          type: string
+          promptPreview: string
+          title?: string
+          imageModel?: string
+          videoModel?: string
+          textModel?: string
+          audioModel?: string
+          imageAspect?: string
+          imageResolution?: string
+          videoSettings?: unknown
+        }
+        actions: CanvasAction[]
+      }
+    | { confirmed: false; reason: 'missing_refs'; message: string }
+  > {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
@@ -1122,6 +1127,25 @@ export class AgentCanvasToolsService {
     const prompt = String(node.data?.prompt ?? '').trim()
     if (!prompt) {
       throw new BadRequestException('节点缺少 prompt，无法提出生成确认')
+    }
+
+    // RB-D5 前置不过不出图（fail-closed）：本轮有侧栏图但目标节点 localRefs 为空 ⇒
+    // 不做状态转移，返回可行动失败。门禁限 image/video 节点（Ruling 2）；localRefs 是
+    // SM-D7 显式绑定 SSOT，只看它（规格硬表措辞），edges 上游 refs 不豁免（Review Focus 3）。
+    if (
+      (node.type === 'image' || node.type === 'video') &&
+      typeof input.sidebarImageCount === 'number' &&
+      input.sidebarImageCount > 0
+    ) {
+      const localRefs = (node.data?.localRefs as LocalRefBinding[] | undefined) ?? []
+      if (localRefs.length === 0) {
+        return {
+          confirmed: false,
+          reason: 'missing_refs',
+          message:
+            '参考图未绑定成功，请重试 apply_sidebar_attachments（只传 node_ids 与 mentioned_keys），或请用户在画布上手动添加参考图',
+        }
+      }
     }
 
     const title = nodeTitle(node) || undefined
