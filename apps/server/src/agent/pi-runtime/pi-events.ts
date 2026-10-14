@@ -638,14 +638,27 @@ function extractUsageDelta(event: PiRuntimeEvent): TurnUsage | null {
 /** P1 状态行：message_end.usage 逐条累积，agent_end 前折叠为一次 turn_usage 事件。
  * 仅当本回合出现过至少一条带 usage 的 message_end 才发（seenUsage 门）——区分
  * 「上游没回 usage」（不显示 tokens 段）与「usage 真为 0」（显示 0），杜绝误导。
- * cost 仅在累计 > 0 时附带（未配费率 = 0 = 不带字段，向后兼容）。 */
-export function createUsageAccumulator(): {
+ * cost 仅在累计 > 0 时附带（未配费率 = 0 = 不带字段，向后兼容）。
+ *
+ * Q2（2026-10-14 积分预估展示，spec §6.7 数据链路第 1 步）：可选 `estimateCredits`
+ * 回调（服务端按 MarginPolicy + usage.cost 折算，纯展示预估）——
+ *  - 每条 message_end 折叠出 delta 后**即时 emit 一次 `usage_delta`**（transient，
+ *    只走 SSE 供状态行「预估 -N积分」，不落库）；
+ *  - `turn_usage` 增量携带 `estimatedCredits`（落库，回合摘要积分化用）。
+ */
+export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => number | null): {
 	feed(event: PiRuntimeEvent): UiEvent | null;
 } {
 	let input = 0;
 	let output = 0;
 	let cost: number | undefined;
 	let seenUsage = false;
+	const creditsOf = (): number | null => {
+		if (!estimateCredits) return null;
+		const totals: TurnUsage = { inputTokens: input, outputTokens: output, ...(cost !== undefined ? { cost } : {}) };
+		const v = estimateCredits(totals);
+		return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+	};
 	return {
 		feed(event: PiRuntimeEvent): UiEvent | null {
 			const delta = extractUsageDelta(event);
@@ -656,13 +669,29 @@ export function createUsageAccumulator(): {
 				if (delta.cost !== undefined) {
 					cost = (cost ?? 0) + delta.cost;
 				}
+				// Q2：实时预估（running 状态行）。estimateCredits 缺席/不可算（cost=0）时不发——
+				// 状态行退回「无预估」形态，绝不显示 0 积分假象。
+				const est = creditsOf();
+				if (est !== null) {
+					return {
+						type: "usage_delta",
+						data: { inputTokens: input, outputTokens: output, estimatedCredits: est, transient: true },
+						seq: event.seq,
+					};
+				}
 				return null;
 			}
 			if (event.type === "agent_end") {
 				if (!seenUsage) return null;
+				const est = creditsOf();
 				return {
 					type: "turn_usage",
-					data: { inputTokens: input, outputTokens: output, ...(cost && cost > 0 ? { cost } : {}) },
+					data: {
+						inputTokens: input,
+						outputTokens: output,
+						...(cost && cost > 0 ? { cost } : {}),
+						...(est !== null ? { estimatedCredits: est } : {}),
+					},
 					seq: event.seq,
 				};
 			}

@@ -77,7 +77,8 @@ export interface TurnTimeline {
   parts: TimelinePart[]
   turnStartedAt: number
   turnEndedAt?: number
-  usage?: { inputTokens: number; outputTokens: number; cost?: number }
+  /** Q2（2026-10-14）：estimatedCredits = 服务端预估积分（MarginPolicy+FX 折算，纯展示）。 */
+  usage?: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }
   /**
    * 2026-10-14（生产实证）：上游 thinking done 事件曾以**累积快照**下发（每段带此前
    * 全部段全文，4 段 len 220/758/822/963 同 head）。服务端已修（accumulator 段间重置），
@@ -88,7 +89,7 @@ export interface TurnTimeline {
   lastRawThinking?: string
 }
 
-export type TimelineUsage = { inputTokens: number; outputTokens: number; cost?: number }
+export type TimelineUsage = { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }
 
 export type TimelineEvent =
   | { type: 'text_delta'; data: { text: string } }
@@ -106,7 +107,7 @@ export type TimelineEvent =
     }
   | { type: 'canvas_action'; data: CanvasAction }
   | { type: 'node_status'; data: { nodeId: string; status: string; url?: string } }
-  | { type: 'turn_usage'; data: TimelineUsage }
+  | { type: 'turn_usage'; data: TimelineUsage & { estimatedCredits?: number } }
   | {
       type: 'waiting_user'
       data: { status?: string; toolName?: string; nodeId?: string; reason?: string }
@@ -413,6 +414,10 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         inputTokens: u.inputTokens,
         outputTokens: u.outputTokens,
         ...(typeof u.cost === 'number' && Number.isFinite(u.cost) ? { cost: u.cost } : {}),
+        ...(typeof (u as { estimatedCredits?: number }).estimatedCredits === 'number' &&
+        Number.isFinite((u as { estimatedCredits?: number }).estimatedCredits)
+          ? { estimatedCredits: (u as { estimatedCredits?: number }).estimatedCredits }
+          : {}),
       }
       return
     }
@@ -584,8 +589,12 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
     const tokens = timeline.usage.inputTokens + timeline.usage.outputTokens
     const tokenStr = tokens < 1000 ? `${tokens}` : `${(Math.round(tokens / 100) / 10).toFixed(1)}k`
     segments.push(`消耗 ${tokenStr} tokens`)
-    if (timeline.usage.cost != null) {
-      segments.push(`费用 ≈${Number(timeline.usage.cost.toPrecision(3))}`)
+    // Q2（2026-10-14）：摘要把消耗收敛到**积分**单一口径（与项目计费体系一致）——
+    // USD cost 是上游内部成本口径，不再透出给用户；预估积分缺（渠道未配 pricing /
+    // MarginPolicy 不可用）时只显示 tokens，绝不显示 0 积分假象。
+    const credits = timeline.usage.estimatedCredits
+    if (typeof credits === 'number' && Number.isFinite(credits) && credits > 0) {
+      segments.push(`≈${Math.ceil(credits)} 积分（预估）`)
     }
   }
   return segments.length > 0 ? segments.join(' · ') : null

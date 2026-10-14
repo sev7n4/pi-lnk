@@ -55,7 +55,7 @@ export interface ExecutionTraceState {
   /** P1 回合 token 实耗（turn_usage 事件覆盖写入，replay 幂等）。
    * cost：服务端 pi-events createUsageAccumulator 折叠的 usage.cost 总额
    * （渠道未配 pricing 时字段不出现——0 视为「未计费」不携带）。 */
-  usage?: { inputTokens: number; outputTokens: number; cost?: number }
+  usage?: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }
 }
 
 let stepCounter = 0
@@ -449,12 +449,15 @@ export function visibleStepCount(trace: ExecutionTraceState): number {
  * calculateCost → 服务端 turn_usage.cost；未配价 = 字段不出现，行为不变）。 */
 export function applyTurnUsage(
   trace: ExecutionTraceState,
-  usage: { inputTokens: number; outputTokens: number; cost?: number },
+  usage: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number },
 ) {
   trace.usage = {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     ...(typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
+    ...(typeof usage.estimatedCredits === 'number' && Number.isFinite(usage.estimatedCredits)
+      ? { estimatedCredits: usage.estimatedCredits }
+      : {}),
   }
 }
 

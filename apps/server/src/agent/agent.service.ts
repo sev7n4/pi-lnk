@@ -66,6 +66,7 @@ import { stripPlanMarkers } from './planMarkers'
 import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
 
 /** #12：pi 每轮的画布上下文（P0-① 起全部经 prompt 的 turnContext 逐轮透传，不再随会话创建注入）。 */
 export interface PiCanvasContext {
@@ -1280,7 +1281,28 @@ export class AgentService {
     let assistantText = ''
     const canvasActions: CanvasAction[] = []
     const thinkingAccumulator = createThinkingAccumulator()
-    const usageAccumulator = createUsageAccumulator()
+    // Q2（2026-10-14 积分预估展示，spec §6.7 数据链路第 1 步·展示先行）：按 MarginPolicy
+    // 当前生效系数（只读，缺省 11000bp=1.10×）+ FX 把 usage.cost（USD）折算为**预估积分**。
+    // 纯展示，不落账不扣分——P2 token 价目条目 + turn_settled 落地后由权威结算覆盖。
+    // 防御性读取：prisma 替身缺 marginPolicy（单测 mock 是手写局部对象）/ 表读失败都不阻断
+    // 回合——降级默认系数；折算不可用（usage.cost=0）时回调返回 null，事件不带预估字段
+    // （绝不显示 0）。⚠️ 不能写 `this.prisma.marginPolicy.findFirst().catch()`——mock 缺
+    // marginPolicy 时是同步 TypeError，.catch 挂不上（#415 CI 78 例失败实证）。
+    const readMarginBp = async (): Promise<number> => {
+      try {
+        const row = await this.prisma?.marginPolicy?.findFirst?.({ orderBy: { createdAt: 'desc' } })
+        return typeof row?.marginBp === 'number' && row.marginBp > 0 ? row.marginBp : 11000
+      } catch {
+        return 11000
+      }
+    }
+    const [marginBp, fxUsdCny] = await Promise.all([
+      readMarginBp(),
+      Promise.resolve(resolveFxUsdCny(process.env as NodeJS.ProcessEnv)),
+    ])
+    const estimateTurnCredits = (totals: { cost?: number }): number | null =>
+      totals.cost && totals.cost > 0 ? estimateCreditsFromUsdCost(totals.cost, marginBp, fxUsdCny) : null
+    const usageAccumulator = createUsageAccumulator(estimateTurnCredits)
     const executionEvents: PersistedExecutionEvent[] = []
     // P2-3：落库事件显式带 seq/ts/messageIndex（数组下标即序，seq 冗余但抗裁剪；
     // messageIndex 以 message_end 分段，供时间线还原「多段叙述各自成块」的块归属）。
@@ -1381,10 +1403,14 @@ export class AgentService {
           }
           yield thinkingUi as AgentStreamEvent
         }
-        // P1 状态行：usage 累积，agent_end 前恰发一次 turn_usage（seenUsage 门，见 pi-events.ts）
+        // P1 状态行：usage 累积，agent_end 前恰发一次 turn_usage（seenUsage 门，见 pi-events.ts）。
+        // Q2：usage_delta 是实时预估快照（transient）——只走 SSE 供状态行「预估 -N积分」，
+        // 不落库（turn_usage 落库时带 estimatedCredits 权威预估，重放走它）。
         const usageUi = usageAccumulator.feed(event)
         if (usageUi) {
-          pushTraceEvent('turn_usage', usageUi.data)
+          if ((usageUi.data as { transient?: boolean }).transient !== true) {
+            pushTraceEvent(usageUi.type, usageUi.data)
+          }
           yield usageUi as AgentStreamEvent
         }
         // 上游帧契约对齐（2026-10-14）：vendor AssistantMessageFrame 的 text_end 帧携带

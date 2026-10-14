@@ -131,6 +131,29 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     }
   })
 
+  it('Q2：turn_usage 带预估积分 → 摘要「≈N 积分（预估）」，USD 内部成本口径不再透出', () => {
+    const tl = feed([
+      { type: 'turn_usage', data: { inputTokens: 8200, outputTokens: 400, cost: 0.0112, estimatedCredits: 8 } },
+    ])
+    finalizeTurnTimeline(tl)
+    const last = tl.parts[tl.parts.length - 1]
+    expect(last.kind).toBe('notice')
+    if (last.kind === 'notice') {
+      expect(last.text).toContain('≈8 积分（预估）')
+      expect(last.text).not.toContain('费用')
+    }
+  })
+
+  it('Q2：无预估积分（渠道未配 pricing）→ 摘要只显示 tokens，绝不显示 0 积分假象', () => {
+    const tl = feed([{ type: 'turn_usage', data: { inputTokens: 100, outputTokens: 50 } }])
+    finalizeTurnTimeline(tl)
+    const last = tl.parts[tl.parts.length - 1]
+    if (last.kind === 'notice') {
+      expect(last.text).toContain('tokens')
+      expect(last.text).not.toContain('积分')
+    }
+  })
+
   it('一致性：live feed 与 replay 同一事件序列 ⇒ parts.kind 序列逐项相等（消除双源漂移）', () => {
     const events: TimelineEvent[] = [
       { type: 'thinking', data: { status: 'running' } },
