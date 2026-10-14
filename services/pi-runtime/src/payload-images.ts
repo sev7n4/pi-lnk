@@ -32,8 +32,11 @@ export interface TrimResult {
 const MAX_IMAGE_BASE64 = 8 * 1024 * 1024; // 8MB base64 字符数
 const MAX_TEXT_CHARS = 200_000;
 
-function placeholder(label: string): string {
-	return `[图片${label} 已从上下文移除，可用 read_document 取回]`;
+function placeholder(label: string, canvasNodeId?: string): string {
+	if (canvasNodeId) {
+		return `[图片（画布节点 ${canvasNodeId}）已从上下文移除，可用 view_canvas_media(node_id:"${canvasNodeId}") 取回]`;
+	}
+	return `[图片${label} 已从上下文移除，可调 view_canvas_media 重新查看]`;
 }
 
 /** 提取 OpenAI data URL 的 base64 部分；非 data URL 视为超大（无法判定，保守剔除）。 */
@@ -85,6 +88,12 @@ interface ImageRef {
 	oversize: boolean;
 }
 
+/** 占位标签信息：`text` 为人类可读标签（芯片编号等）；`canvasNodeId` 为画布节点锚（可恢复）。 */
+interface ImageLabel {
+	text: string;
+	canvasNodeId?: string;
+}
+
 export function governImagePayload(payload: unknown, historyRounds: number, maxImages: number): TrimResult {
 	const messages = (payload as { messages?: unknown } | null | undefined)?.messages;
 	if (!Array.isArray(messages)) return { messages: undefined, trims: [] };
@@ -119,15 +128,15 @@ export function governImagePayload(payload: unknown, historyRounds: number, maxI
 	// 第二遍：决定每个 image part 的去留。
 	const remove = new Map<string, string>(); // "msgIdx:partIdx" -> 占位文本
 	const trimCounts: Record<TrimReason, number> = { history_image: 0, overflow: 0, text_overflow: 0 };
-	const drop = (ref: ImageRef, reason: TrimReason, label: string) => {
-		remove.set(`${ref.msgIdx}:${ref.partIdx}`, placeholder(label));
+	const drop = (ref: ImageRef, reason: TrimReason, info: ImageLabel) => {
+		remove.set(`${ref.msgIdx}:${ref.partIdx}`, placeholder(info.text, info.canvasNodeId));
 		trimCounts[reason] += 1;
 	};
 
 	const survivors: ImageRef[] = [];
 	for (const ref of images) {
 		if (ref.oversize) {
-			drop(ref, "overflow", "（超大图片）");
+			drop(ref, "overflow", { text: "（超大图片）" });
 		} else if (ref.round >= Math.max(historyRounds, 0)) {
 			drop(ref, "history_image", labelFor(messages, normalized, ref));
 		} else {
@@ -180,18 +189,20 @@ export function governImagePayload(payload: unknown, historyRounds: number, maxI
 	return { messages: nextMessages, trims };
 }
 
-/** 占位标签：从同消息 text parts 里的 `[I{n}=` 标记恢复编号；无标记用空（占位含「图片」）。 */
-function labelFor(
-	messages: unknown[],
-	normalized: (NormalizedPart[] | undefined)[],
-	ref: ImageRef,
-): string {
+/** 占位标签：从同消息 text parts 恢复锚。优先 canvasNode（view_canvas_media 可精确恢复）；
+ *  否则用 `[I{n}=` 侧栏芯片编号；两者都没有则空标签。 */
+function labelFor(messages: unknown[], normalized: (NormalizedPart[] | undefined)[], ref: ImageRef): ImageLabel {
 	const parts = normalized[ref.msgIdx];
-	if (!parts) return "";
+	if (!parts) return { text: "" };
+	let canvasNodeId: string | undefined;
 	for (const p of parts) {
 		if (p.kind !== "text" || !p.text) continue;
-		const m = /\[I(\d+)=/.exec(p.text);
-		if (m) return ` I${m[1]}`;
+		if (!canvasNodeId) {
+			const nm = /"canvasNode":"([^"]+)"/.exec(p.text);
+			if (nm) canvasNodeId = nm[1];
+		}
+		const im = /\[I(\d+)=/.exec(p.text);
+		if (im) return { text: ` I${im[1]}`, canvasNodeId };
 	}
-	return "";
+	return { text: "", canvasNodeId };
 }

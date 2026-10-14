@@ -76,6 +76,10 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	//   而 get_canvas_summary 只值几百 token ⇒ 提它的代价极小、收益是整条读链路。
 	//   判据复核：**零规则/skill 点名**（减点名下沉的遗留），符合 catalog §2 一致性判据。
 	"get_canvas_summary",
+	// P0 感知闭环（2026-10-14）：T2 图片降级占位文案点名它作恢复路径（payload-images.labelFor
+	// ⇒ 占位含 view_canvas_media(node_id:…)）——按「被点名 ⇒ 必须常驻」准绳必须常驻；
+	// 且「看图」是高频刚需，延迟即不可达（tool_search 语义靠不住的教训见文件头）。
+	"view_canvas_media",
 	"web_search",
 	"web_fetch",
 	"recall_memory",

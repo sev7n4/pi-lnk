@@ -101,12 +101,13 @@ test("超时 → timeout；空 url → empty-url；http 404 → http", async () 
 	);
 });
 
-test("开关：PI_RUNTIME_IMAGE_REFINE=off 时 disabled；缺省 on", async () => {
+test("I-1 解耦：fetchImageAsBlock 不受 PI_RUNTIME_IMAGE_REFINE 影响（开关归调用方 generation.ts 自闸）；isImageRefineEnabled 纯函数语义不变", async () => {
 	const prev = process.env.PI_RUNTIME_IMAGE_REFINE;
 	try {
 		process.env.PI_RUNTIME_IMAGE_REFINE = "off";
 		assert.equal(isImageRefineEnabled(), false);
-		assert.deepEqual(await fetchImageAsBlock("http://127.0.0.1:1/x.png"), { ok: false, reason: "disabled" });
+		// flag off 时 fetch 本身照常工作（行为只由 url / 网络决定）
+		assert.deepEqual(await fetchImageAsBlock(""), { ok: false, reason: "empty-url" });
 		process.env.PI_RUNTIME_IMAGE_REFINE = "on";
 		assert.equal(isImageRefineEnabled(), true);
 		delete process.env.PI_RUNTIME_IMAGE_REFINE;

@@ -14,6 +14,7 @@ import { buildReadDocumentTools } from "./read-document.js";
 import { buildMemoryTools } from "./memory.js";
 import { buildRemoveEdgesTools } from "./remove-edges.js";
 import { createRenderCanvasViewTools } from "./render-canvas-view.js";
+import { createViewCanvasMediaTools } from "./view-canvas-media.js";
 
 /** P0 批次：web_search/web_fetch（感知层）。TAVILY_API_KEY 未配置时由 config.ts 条件装配。 */
 export { buildWebTools };
@@ -94,4 +95,10 @@ export function buildRenderCanvasViewTools(client: NestClient): LnkpiTool[] {
 	return createRenderCanvasViewTools({
 		fetchLayout: async (sessionId) => client.post("/agent/internal/get-canvas-layout", { sessionId }),
 	});
+}
+
+/** P0 感知闭环（spec 2026-10-14-view-canvas-media-design.md）：view_canvas_media
+ *  （tier=read，按需读画布/侧栏图片像素，复用 image-refine fetcher，零 Nest 改动）。 */
+export function buildViewCanvasMediaTools(client: NestClient): LnkpiTool[] {
+	return createViewCanvasMediaTools(client);
 }

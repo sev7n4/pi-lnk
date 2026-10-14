@@ -134,7 +134,9 @@ export function createGenerationTools(
 			if (!url) return withImageRefine(base, data, "n/a");
 			const fetched = await fetchImageAsBlock(url, { fetchImpl: deps.fetchImpl });
 			if (!fetched.ok) return withImageRefine(base, data, "skipped", fetched.reason);
-			const attached = withImageRefine(base, data, "attached");
+			// P1（2026-10-14）：canvasNode 锚随文本 JSON 落盘——T2 降级占位（payload-images.labelFor）
+			// 据此生成「view_canvas_media(node_id:…)」可恢复提示；锚字段与 labelFor 正则逐字对齐。
+			const attached = withImageRefine(base, { ...data, canvasNode: p.node_id }, "attached");
 			return { ...attached, content: [...attached.content, fetched.block satisfies ImageBlock] };
 		},
 	});

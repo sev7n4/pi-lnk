@@ -38,7 +38,41 @@ test("历史图片（2 轮前）→ 文本占位（history_image）", () => {
 	const first = messages[0].content as Array<{ type: string; text?: string }>;
 	assert.equal(first.filter((p) => p.type === "image_url").length, 0);
 	assert.ok(first.some((p) => p.type === "text" && p.text?.includes("已从上下文移除")), JSON.stringify(first));
-	assert.ok(first.some((p) => p.type === "text" && p.text?.includes("read_document")));
+	assert.ok(first.some((p) => p.type === "text" && p.text?.includes("view_canvas_media")));
+});
+
+test("canvasNode 锚：同消息文本含 canvasNode 时占位带节点 id 与 view_canvas_media 恢复路径", () => {
+	const payload = {
+		messages: [
+			{
+				role: "user",
+				content: [
+					oaiText('结果 {"ok":true,"data":{"canvasNode":"n_9","url":"http://x/a.png"}}'),
+					oaiImage("AAAA"),
+				],
+			},
+		],
+	};
+	const r = governImagePayload(payload, 0, 4); // historyRounds=0 ⇒ 全部降级
+	const parts = (r.messages as Array<{ content: unknown[] }>)[0].content as Array<{
+		type: string;
+		text?: string;
+	}>;
+	const ph = parts.find((p) => p.type === "text" && p.text?.includes("已从上下文移除"))?.text ?? "";
+	assert.match(ph, /view_canvas_media\(node_id:"n_9"\)/);
+});
+
+test("无锚旧文案：占位恢复提示指向 view_canvas_media 而非 read_document", () => {
+	const payload = {
+		messages: [
+			{ role: "user", content: [oaiText("[I1=a.png]"), oaiImage("AAAA")] },
+		],
+	};
+	const parts = (governImagePayload(payload, 0, 4).messages as Array<{ content: unknown[] }>)[0]
+		.content as Array<{ type: string; text?: string }>;
+	const ph = parts.find((p) => p.type === "text" && p.text?.includes("已从上下文移除"))?.text ?? "";
+	assert.match(ph, /view_canvas_media/);
+	assert.doesNotMatch(ph, /read_document/);
 });
 
 test("最近 2 轮内的图片保留", () => {
