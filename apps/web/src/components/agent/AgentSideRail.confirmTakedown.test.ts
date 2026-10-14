@@ -249,3 +249,48 @@ describe('② propose「取消」走显式 decline（回归锁）', () => {
     expect(w.emitted('clearProposeGeneration')).toEqual([['node-err']])
   })
 })
+
+describe('③ proposeWait 传送门（2026-10-15：整句文案即「点击定位节点」）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    answersRequests.length = 0
+    stubFetch()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('有 nodeId：传送门（testid=propose-wait-locate）存在，点击 → emit focusNode(nodeId)', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    agent.blockingWait = {
+      toolName: 'propose_generation',
+      callId: 'call-1',
+      nodeId: 'node-1',
+    } as never
+    await flushPromises()
+
+    const portal = w.find('[data-testid="propose-wait-locate"]')
+    expect(portal.exists()).toBe(true)
+    // 传送门是 <button>（键盘可达），不是挂在 div 上的 click
+    expect(portal.element.tagName).toBe('BUTTON')
+    await portal.trigger('click')
+    await flushPromises()
+    expect(w.emitted('focusNode')).toEqual([['node-1']])
+  })
+
+  it('无 nodeId：传送门降级为纯文本（定位无目标时不装可点）', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    agent.blockingWait = {
+      toolName: 'propose_generation',
+      callId: 'call-1',
+    } as never
+    await flushPromises()
+
+    expect(w.find('[data-testid="propose-wait-hint"]').exists()).toBe(true)
+    expect(w.find('[data-testid="propose-wait-locate"]').exists()).toBe(false)
+    await w.find('[data-testid="propose-wait-hint"]').trigger('click')
+    expect(w.emitted('focusNode')).toBeUndefined()
+  })
+})

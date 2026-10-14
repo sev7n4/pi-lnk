@@ -3184,7 +3184,9 @@ defineExpose({
             <!-- 阻塞等待 propose_generation（2026-10-14 移入 dock）：等待期回合内容钉在上方
                  live 时间线、气泡内近空，提示条留在消息流会被视觉顶到内容「上面」；
              移到 live 区之下、状态行之上 = 视觉上落在回合内容「下面」、贴 composer。
-             它带定位/取消按钮，是半交互面，与 AskUserCard 同区。 -->
+             Q2（2026-10-15）传送门升级：整句文案即「点击定位节点」传送门——点击文案本身
+             就把视口送到画布节点（fitView + 定位闪烁），不再让定位能力藏在句尾小按钮里
+             （用户反馈：「升级点击定位节点传送门」）。无 nodeId 时降级为纯文本。 -->
             <div
               v-if="proposeWait"
               class="mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
@@ -3195,7 +3197,18 @@ defineExpose({
               </p>
               <div class="flex items-start gap-2">
                 <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
-                <p class="flex-1 leading-relaxed">
+                <!-- 传送门：整句可点（键盘可达 + aria-label）；hover 下划线给「可点」暗示 -->
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="flex-1 cursor-pointer rounded text-left leading-relaxed underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                  data-testid="propose-wait-locate"
+                  aria-label="点击定位到画布上待确认的节点"
+                  @click="locateProposeNode"
+                >
+                  已提议生成，等你确认：<span class="font-semibold">点击定位节点 ↗</span> 随后到画布对应节点点「生成」，确认后本轮自动继续。
+                </button>
+                <p v-else class="flex-1 leading-relaxed">
                   已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
                 </p>
               </div>
@@ -3203,16 +3216,7 @@ defineExpose({
                 <button
                   v-if="proposeWait.nodeId"
                   type="button"
-                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover"
-                  data-testid="propose-wait-locate"
-                  @click="locateProposeNode"
-                >
-                  定位该节点
-                </button>
-                <button
-                  v-if="proposeWait.nodeId"
-                  type="button"
-                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover"
+                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
                   data-testid="propose-wait-cancel"
                   @click="cancelBlockingPropose"
                 >
