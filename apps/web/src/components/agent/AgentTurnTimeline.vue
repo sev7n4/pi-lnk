@@ -128,10 +128,25 @@ type Disclosure = ReturnType<typeof useDisclosure>
  */
 const thinkingDisclosures = shallowReactive(new Map<string, Disclosure>())
 
+/**
+ * 思考块当前是否有流式快照（展示默认值的**唯一**响应式来源）。
+ *
+ * ⚠️ 必须从 `props.parts` 派生并保持响应式，不能在 `useDisclosure` 的回调里
+ * 现查现算：那样 `getDefault` 的求值时机落在 computed 的依赖追踪之外，
+ * parts 换新对象时结果不会被重算（CI 实测：running→done 后仍不自动收起）。
+ * 抽成独立 computed 后，Vue 能把它记进依赖链，parts 变化即触发重算。
+ */
+function isRunningThinking(id: string): boolean {
+  return props.parts.some((p) => p.kind === 'thinking' && p.id === id && p.status === 'running')
+}
+
 function disclosureFor(part: ThinkingPart): Disclosure {
   let d = thinkingDisclosures.get(part.id)
   if (!d) {
-    d = useDisclosure(() => part.status === 'running')
+    // 默认值读响应式派生的 isRunningThinking —— 实时、且被 computed 正确追踪。
+    // ⛔ 不可写成 `() => part.status === 'running'`：捕获首次渲染的 part 引用，
+    // replay 用同 id 新对象替换旧 part 后默认值会锁死在旧 status 上（CI 实测踩过）。
+    d = useDisclosure(() => isRunningThinking(part.id))
     thinkingDisclosures.set(part.id, d)
   }
   return d

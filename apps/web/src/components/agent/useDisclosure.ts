@@ -36,6 +36,11 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
  *
  * ⚠️ 调用方须保证同一逻辑块在生命周期内**复用同一实例**（组件内 `ref` 即可），
  * 不要在 `v-for` 里每次渲染新建 —— 那等价于没有状态。
+ *
+ * ⚠️ `getDefault` 必须是**读实时数据**的函数（如 `() => props.status === 'running'`），
+ * 不可写成 `() => part.status === 'running'` 去捕获某个对象/数组元素的快照：
+ * 流式渲染会用**同 id 的新对象**替换旧 part（replay / 状态收口），
+ * 捕获的旧引用会锁死默认值 ⇒ running→done 后不跟随收起（CI 实测踩过）。
  */
 export function useDisclosure(getDefault: () => boolean): {
   /** 实际展开态：用户意图优先，否则展示默认值。 */

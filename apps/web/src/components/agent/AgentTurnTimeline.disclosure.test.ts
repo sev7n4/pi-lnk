@@ -86,6 +86,9 @@ describe('AgentTurnTimeline — 思考块折叠契约（用户意图优先于展
     const details = w.find('details').element as HTMLDetailsElement
     expect(details.open).toBe(true)
 
+    // ⚠️ 这里刻意传入**同 id 的新对象**而非原地改 status：
+    // replay 重建 parts 走的正是「新对象替换旧对象」，若实现捕获了首次渲染的 part 引用，
+    // 默认值会被锁死在此前的 running 上 ⇒ 本用例就会挂（曾真实发生过，`expected true to be false`）。
     await w.setProps({ parts: [thinkingPart('done')], streaming: false })
     expect(details.open, '用户没动过 ⇒ 跟随默认值自动收起').toBe(false)
   })
