@@ -412,29 +412,29 @@ export function createCanvasWriteTools(
 				// （Ruling 1：withWriteSignal 会包出 {ok:true,data} 与 fail-closed 语义矛盾）。
 				// 判定键严格双条件：confirmed === false 且 reason === 'missing_refs'（Review Focus 5）。
 				const gate = (base ?? null) as { confirmed?: unknown; reason?: unknown; message?: unknown } | null;
-			if (gate && gate.confirmed === false && gate.reason === "missing_refs") {
-				// P2 结算归因：短路也是一次 propose 结算（分母不失真）
-				onProposeOutcome?.("missing_refs", false);
-				// RB-D9（#407）：门禁短路 = 一条 sidebar_ref_bind 的 short_circuit 观测 + 一次 missing_refs 短路累计
-				onSidebarRefBind?.("short_circuit");
-				onProposeMissingRefs?.();
-					const message =
-						typeof gate.message === "string" && gate.message
-							? gate.message
-							: "参考图未绑定成功，请重试 apply_sidebar_attachments，或请用户在画布上手动添加参考图";
-					return {
-						content: [
-							{
-								type: "text",
-								text: JSON.stringify({ ok: false, confirmed: false, reason: "missing_refs", message }),
+				if (gate && gate.confirmed === false && gate.reason === "missing_refs") {
+					// P2 结算归因：短路也是一次 propose 结算（分母不失真）
+					onProposeOutcome?.("missing_refs", false);
+					// RB-D9（#407）：门禁短路 = 一条 sidebar_ref_bind 的 short_circuit 观测 + 一次 missing_refs 短路累计
+					onSidebarRefBind?.("short_circuit");
+					onProposeMissingRefs?.();
+						const message =
+							typeof gate.message === "string" && gate.message
+								? gate.message
+								: "参考图未绑定成功，请重试 apply_sidebar_attachments，或请用户在画布上手动添加参考图";
+						return {
+							content: [
+								{
+									type: "text",
+									text: JSON.stringify({ ok: false, confirmed: false, reason: "missing_refs", message }),
+								},
+							],
+							details: {
+								ok: false,
+								confirmed: false,
+								_signal: { status: "failed", retryable: false, errorCode: "missing_refs" },
 							},
-						],
-						details: {
-							ok: false,
-							confirmed: false,
-							_signal: { status: "failed", retryable: false, errorCode: "missing_refs" },
-						},
-					};
+						};
 				}
 				// B-5 off（或无 registry）→ 旧行为逐字节保留（spec §8 回退纪律）
 				if (!registry || !askUserBlocking()) {
@@ -669,7 +669,7 @@ export function createCanvasWriteTools(
 					p.node_ids.length,
 				);
 			} catch (err) {
-				// RB-D9（#407）：apply 链路 outcome 观测。404（无侧栏附件，上文已早退）不计——属用户侧无图，非链路失败。
+				// RB-D9（#407）：apply 链路 outcome 观测。无侧栏附件（上文已 textRaw 早退，根本不打 Nest）不计——属用户侧无图，非链路失败。
 				if (err instanceof NestToolError && err.status === 400) {
 					onSidebarRefBind?.("invalid_params");
 					onNestZodReject?.("apply-sidebar-attachments");
