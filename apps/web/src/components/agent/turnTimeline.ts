@@ -274,8 +274,18 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         }
       }
       if (target) {
+        // Q1（2026-10-14 流式思考）：running 期间已透传累积快照（server 节流，快照是
+        // done 全文的前缀）。此时直接以 done 全文**权威替换**；否则（存量无流式数据）
+        // 保持差分追加语义。判据 = 目标块当时还是 running 且已带快照文本。
+        const wasStreaming = target.status === 'running'
         target.status = 'done'
-        if (delta) target.text = target.text ? `${target.text}${delta}` : delta
+        if (delta) {
+          if (wasStreaming && target.text && raw.startsWith(target.text)) {
+            target.text = raw
+          } else {
+            target.text = target.text ? `${target.text}${delta}` : delta
+          }
+        }
         target.endedAt = Date.now()
         if (!target.text) timeline.parts.splice(targetIdx, 1)
       } else if (delta) {

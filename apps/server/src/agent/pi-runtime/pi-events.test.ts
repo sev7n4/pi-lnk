@@ -283,6 +283,40 @@ describe("thinking 全文透传（P0 思考面板）", () => {
 	});
 });
 
+describe("thinking 流式快照（Q1 2026-10-14 对齐 WorkBuddy：推理中显性展示）", () => {
+	const deltaEv = (ts: number, delta: string) =>
+		({ type: "message_update", ts, data: { event: { type: "thinking_delta", delta } } }) as never;
+
+	it("delta 按节流间隔透传累积快照（running + transient:true），间隔内静默", () => {
+		const acc = createThinkingAccumulator(2000, 400);
+		acc.feed({ type: "message_update", ts: 1000, data: { event: { type: "thinking_start" } } } as never);
+		const s1 = acc.feed(deltaEv(1000, "第一段")) as { data: Record<string, unknown> } | null;
+		expect(s1?.data.status).toBe("running");
+		expect(s1?.data.summary).toBe("第一段");
+		expect(s1?.data.transient).toBe(true);
+		// 间隔内：静默（只累积，不外发）
+		expect(acc.feed(deltaEv(1200, "第二段"))).toBeNull();
+		// 过间隔：快照为全量累积（前端替换语义）
+		const s3 = acc.feed(deltaEv(1500, "第三段")) as { data: Record<string, unknown> } | null;
+		expect(s3?.data.summary).toBe("第一段第二段第三段");
+	});
+
+	it("done 全文非 transient（落库收口）；跨段后快照只含本段文本", () => {
+		const acc = createThinkingAccumulator(2000, 400);
+		acc.feed({ type: "message_update", ts: 1000, data: { event: { type: "thinking_start" } } } as never);
+		acc.feed(deltaEv(1000, "段一"));
+		const done1 = acc.feed({ type: "message_update", ts: 1100, data: { event: { type: "thinking_end" } } } as never) as {
+			data: Record<string, unknown>;
+		} | null;
+		expect(done1?.data.transient).toBeUndefined();
+		expect(done1?.data.summary).toBe("段一");
+		// 段 2 快照：buffer 已在 done 重置 ⇒ 快照只含本段
+		acc.feed({ type: "message_update", ts: 2000, data: { event: { type: "thinking_start" } } } as never);
+		const s2 = acc.feed(deltaEv(2000, "段二")) as { data: Record<string, unknown> } | null;
+		expect(s2?.data.summary).toBe("段二");
+	});
+});
+
 describe("正文分段落库器（2026-10-14 text 时序归位）", () => {
 	const thinkEvent = (type: string, delta?: string) =>
 		({

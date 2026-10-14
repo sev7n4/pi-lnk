@@ -530,13 +530,20 @@ export function extractThinking(event: PiRuntimeEvent): ThinkingPhase | null {
 /**
  * thinking 累积器（可观测性专项 ③）：把 pi 的流式 thinking 子事件折叠为
  * 老 UI 契约的 `thinking` 事件（start→running，end→done+全文）。
- * delta 只累积不透传（v1 不做逐字思考流）；P0 思考面板：end 时全文透传，
- * clamp 2000 字防超大 payload，前端折叠展示。
+ *
+ * 2026-10-14 Q1（对齐 WorkBuddy「推理中流式显性展示、结束后收起」）：delta 阶段按
+ * `streamIntervalMs` 节流透传**累积快照**（status=running + summary + transient:true）——
+ * 前端 running 块实时长出思考文本；transient 事件只走 SSE、不落库（防 executionEvents
+ * 膨胀，重放也不需要中间快照）。done 仍发整段全文（权威收口，前端防追加重见 turnTimeline）。
  */
-export function createThinkingAccumulator(limit = 2000): {
+export function createThinkingAccumulator(
+	limit = 2000,
+	streamIntervalMs = 400,
+): {
 	feed(event: PiRuntimeEvent): UiEvent | null;
 } {
 	let buffer = "";
+	let lastStreamTs = 0;
 	return {
 		feed(event: PiRuntimeEvent): UiEvent | null {
 			const t = extractThinking(event);
@@ -544,6 +551,15 @@ export function createThinkingAccumulator(limit = 2000): {
 			if (t.phase === "start") return { type: "thinking", data: { status: "running" }, seq: event.seq };
 			if (t.phase === "delta" && t.text) {
 				buffer += t.text;
+				const ts = typeof event.ts === "number" && event.ts > 0 ? event.ts : Date.now();
+				if (ts - lastStreamTs >= streamIntervalMs) {
+					lastStreamTs = ts;
+					return {
+						type: "thinking",
+						data: { status: "running", summary: buffer.slice(0, limit), transient: true },
+						seq: event.seq,
+					};
+				}
 				return null;
 			}
 		const summary = buffer.slice(0, limit);

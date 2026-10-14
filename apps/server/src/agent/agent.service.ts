@@ -1370,10 +1370,15 @@ export class AgentService {
           pushTraceEvent(task.type, task.data)
           yield task as AgentStreamEvent
         }
-        // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件（delta 只累积）
+        // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件。
+        // Q1（2026-10-14）：delta 阶段的节流流式快照带 transient:true——只 yield 走 SSE
+        // 供前端实时长出思考文本，不 pushTraceEvent（executionEvents 只留 start/done，
+        // 防落库膨胀；重放走 done 全文即可）。
         const thinkingUi = thinkingAccumulator.feed(event)
         if (thinkingUi) {
-          pushTraceEvent('thinking', thinkingUi.data)
+          if ((thinkingUi.data as { transient?: boolean }).transient !== true) {
+            pushTraceEvent('thinking', thinkingUi.data)
+          }
           yield thinkingUi as AgentStreamEvent
         }
         // P1 状态行：usage 累积，agent_end 前恰发一次 turn_usage（seenUsage 门，见 pi-events.ts）
