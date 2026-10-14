@@ -54,6 +54,13 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   undo: { icon: '↩', verb: '撤销' },
   redo: { icon: '↪', verb: '重做' },
   open_image_editor: { icon: '🎨', verb: '打开图片编辑' },
+  // 生产实证补登记（2026-10-14，36h tool_call 扫描：这 5 个全落「处理中」兜底，
+  // set_node_generation_params 71 次最高频——正是「创建节点 → 提议生成」之间的那行）
+  set_node_generation_params: { icon: '🎛', verb: '设置生成参数' },
+  list_generation_scenes: { icon: '🗂', verb: '查看生成场景' },
+  render_canvas_view: { icon: '🖼️', verb: '渲染画布视图' },
+  todo_write: { icon: '☑️', verb: '记录任务' },
+  tool_search: { icon: '🧭', verb: '检索工具' },
 }
 
 const RUN_PREFIX_ICON = '🎨'
@@ -70,10 +77,13 @@ function argsFromLabel(toolName: string, label: string): string | undefined {
   return label.startsWith(prefix) ? label.slice(prefix.length) : undefined
 }
 
-/** 步骤 → { icon, label }：icon/动词查注册表，args 取 meta.args 优先、label 后缀兜底。 */
+/** 步骤 → { icon, label }：icon/动词查注册表，args 取 meta.args 优先、label 后缀兜底。
+ *  status 可选：未登记工具的兜底文案按状态语义化（done 步叫「处理中」是语义 bug，
+ *  2026-10-14 生产截图实证「✓ 处理中」）；不传 status 维持「处理中」（旧调用方兼容）。 */
 export function presentToolStep(step: {
   label: string
   kind?: string
+  status?: string
   meta?: { toolName?: string; args?: string }
 }): { icon: string; label: string } {
   // thinking 步（模型思考流）不走工具注册表：直接保留原 label，图标用 🧠
@@ -82,10 +92,12 @@ export function presentToolStep(step: {
   if (!name) return { icon: FALLBACK_ICON, label: step.label || '执行步骤' }
   const hit = TOOL_PRESENTATION[name]
   if (!hit) {
-    // run_ 前缀（生成类）→ 🎨；其余未登记工具降级「处理中」——
+    // run_ 前缀（生成类）→ 🎨；其余未登记工具降级——
     // 把 `upsert_media_node` 这类内部名吐给用户等于没说（决策 5），细节留在线索里。
     if (name.startsWith('run_')) return { icon: RUN_PREFIX_ICON, label: `生成 · ${name.slice(4)}` }
-    return { icon: FALLBACK_ICON, label: '处理中' }
+    const fallbackVerb =
+      step.status === 'failed' ? '执行失败' : step.status === 'done' ? '已完成' : '处理中'
+    return { icon: FALLBACK_ICON, label: fallbackVerb }
   }
   const args = step.meta?.args ?? argsFromLabel(name, step.label)
   return { icon: hit.icon, label: args ? `${hit.verb} · ${args}` : hit.verb }

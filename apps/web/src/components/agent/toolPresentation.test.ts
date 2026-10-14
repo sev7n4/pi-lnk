@@ -19,12 +19,20 @@ describe('toolPresentation（P1 注册表）', () => {
     expect(presentToolStep(step({ label: '', status: 'running', meta: { toolName: 'propose_generation', args: '2 个节点' } })))
       .toEqual({ icon: '🖼️', label: '提议生成 · 2 个节点' })
   })
-  it('run_ 前缀与未知工具兜底（P0 决策 5：未知一律降级「处理中」，不吐内部名）', () => {
+  it('run_ 前缀与未知工具兜底（P0 决策 5：未知不吐内部名；兜底文案按状态语义化）', () => {
     expect(presentToolStep(step({ status: 'done', meta: { toolName: 'run_image_generation' } })).icon).toBe('🎨')
     expect(presentToolStep(step({ status: 'done', meta: { toolName: 'run_image_generation' } })).label)
       .toBe('生成 · image_generation')
+    // 2026-10-14：done 步叫「处理中」是语义 bug（生产截图「✓ 处理中」实证），按状态分形
     expect(presentToolStep(step({ status: 'done', meta: { toolName: 'mystery_tool' } })))
+      .toEqual({ icon: '⚙', label: '已完成' })
+    expect(presentToolStep(step({ status: 'failed', meta: { toolName: 'mystery_tool' } })))
+      .toEqual({ icon: '⚙', label: '执行失败' })
+    expect(presentToolStep(step({ status: 'running', meta: { toolName: 'mystery_tool' } })))
       .toEqual({ icon: '⚙', label: '处理中' })
+    // helper 默认 status:'done' ⇒ 这条实际验 done 兜底；running/failed/无 status 语义见上
+    expect(presentToolStep(step({ meta: { toolName: 'mystery_tool' } })))
+      .toEqual({ icon: '⚙', label: '已完成' })
   })
   it('meta.args 缺失时从 label 后缀解析（reducer 只把 args 写进 label）', () => {
     expect(presentToolStep(step({ label: '调用 get_canvas_summary · 3 个节点', meta: { toolName: 'get_canvas_summary' } })))
@@ -82,6 +90,8 @@ describe('TOOL_PRESENTATION 全量覆盖（P1#3）', () => {
     // P0 决策 5 补齐：B-N 批次后注册的运行时工具（权威清单见 services/pi-runtime/src/tools/*.ts）
     'delete_nodes', 'remove_edges', 'read_document', 'save_memory', 'recall_memory',
     'update_node', 'list_model_options', 'web_search', 'web_fetch',
+    // 2026-10-14 生产实证补登记（36h tool_call 扫描，5 个全落「处理中」兜底）
+    'set_node_generation_params', 'list_generation_scenes', 'render_canvas_view', 'todo_write', 'tool_search',
   ] as const
 
   it('每个本地 runtime 工具都有展示条目', () => {

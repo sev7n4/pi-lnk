@@ -3104,42 +3104,6 @@ defineExpose({
                 </div>
               </div>
             </div>
-            <!-- 阻塞等待 propose_generation：确认入口在画布节点上，聊天侧明示去哪点（2026-10-01） -->
-            <div
-              v-if="proposeWait"
-              class="mx-3 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
-              data-testid="propose-wait-hint"
-            >
-              <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--neo-text-muted)' }">
-                ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
-              </p>
-              <div class="flex items-start gap-2">
-                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
-                <p class="flex-1 leading-relaxed">
-                  已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
-                </p>
-              </div>
-              <div class="mt-1.5 flex items-center gap-1.5">
-                <button
-                  v-if="proposeWait.nodeId"
-                  type="button"
-                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover"
-                  data-testid="propose-wait-locate"
-                  @click="locateProposeNode"
-                >
-                  定位该节点
-                </button>
-                <button
-                  v-if="proposeWait.nodeId"
-                  type="button"
-                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover"
-                  data-testid="propose-wait-cancel"
-                  @click="cancelBlockingPropose"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
             <AgentTaskProgressCard
               v-if="showTaskCardAtComposer"
               class="mx-3"
@@ -3191,6 +3155,45 @@ defineExpose({
               @retry-node="onLiveTimelineRetry"
               @focus-node="onFocusNode($event)"
             />
+            <!-- 阻塞等待 propose_generation（2026-10-14 移入 dock）：等待期回合内容钉在上方
+                 live 时间线、气泡内近空，提示条留在消息流会被视觉顶到内容「上面」；
+             移到 live 区之下、状态行之上 = 视觉上落在回合内容「下面」、贴 composer。
+             它带定位/取消按钮，是半交互面，与 AskUserCard 同区。 -->
+            <div
+              v-if="proposeWait"
+              class="mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
+              data-testid="propose-wait-hint"
+            >
+              <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--neo-text-muted)' }">
+                ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
+              </p>
+              <div class="flex items-start gap-2">
+                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
+                <p class="flex-1 leading-relaxed">
+                  已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
+                </p>
+              </div>
+              <div class="mt-1.5 flex items-center gap-1.5">
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover"
+                  data-testid="propose-wait-locate"
+                  @click="locateProposeNode"
+                >
+                  定位该节点
+                </button>
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover"
+                  data-testid="propose-wait-cancel"
+                  @click="cancelBlockingPropose"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
             <p
               v-if="turnStatus"
               class="agent-turn-status mx-0.5 mb-1 text-[11px]"
