@@ -460,15 +460,20 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * core 693 不变、core+writeTools 2653→2637（Δ=−16）、core+genTools 1091 不变、
 	 * 全组合 3051→3035（Δ=−16），余量 3200−3035=**165**。
 	 *
+	 * 2026-10-15 规则 15 收紧（v1.7.0）：正文不复述节点参数/节点信息入文
+	 * （生产反馈：参数落库后正文复述「节点信息：…」成噪音），同规则内压字补偿：
+	 * core 693 不变、core+writeTools 2637→2648（Δ=+11）、core+genTools 1091 不变、
+	 * 全组合 3035→3046（Δ=+11），余量 3200−3046=**154**。
+	 *
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
 	 */
 	const BASELINE: Record<string, number> = {
 		core: 693,
-		"core+writeTools": 2637,
+		"core+writeTools": 2648,
 		"core+genTools": 1091,
-		"core+writeTools+genTools": 3035,
+		"core+writeTools+genTools": 3046,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -486,9 +491,11 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 2026-10-13 registry 去重（本 PR）：no_gen_claim.gen 规则 3' 删与规则 11 同义中段
 		// （同组恒同注入、语义全量由规则 11 承接+服务端硬校验兜底）：3108→3051（余量 92→149）。
 		// 2026-10-13 规则 4 收紧（v1.6.0）：attachments 省略入文，3051→3035（余量 149→165）。
+		// 2026-10-15 规则 15 收紧（v1.7.0）：正文不复述节点参数入文（同规则压字补偿），
+		// 3035→3046（余量 165→154）。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(165);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(154);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
