@@ -23,13 +23,13 @@
 - ✅ 工具层不持 `Metrics`（2026-10-04 纪律）：观测经 `createCanvasWriteTools` 的 opts 回调注入，由 `config.ts` 接线到 `metrics.*`——与 PR-C 的 `onProposeOutcome` 同路。
 - ✅ 回调约定：只做 Map.set，**不得抛**（调用点无 try/catch，抛错会污染结算路径，见 canvas-write.ts:87 注释）。
 
-## 2. Task 0：worktree 与软链（已完成，记录）
+## Task 0：worktree 与软链（已完成，记录）
 
 - worktree `.worktrees/prd-obs`（分支 `feat/sidebar-ref-bind-prd`，off master `666d4d84`）。
 - 软链纪律（PR-A 修正版）：`apps/server`、`apps/web`、`services/pi-runtime` 的 `node_modules` 逐项软链主仓同路径（含 `.bin`）；`@lnkpi/shared`、`@lnkpi/agent`、`@lnkpi/pi-poc` 指向**本 worktree** `packages/*`（绝对路径）。
 - 冒烟：`cd services/pi-runtime && node --import tsx --test src/tools/canvas-write.test.ts` 可跑；`cd apps/server && ./node_modules/.bin/vitest run src/agent/agent-canvas-tools.service.test.ts` 可跑。
 
-## 3. Task 1：Runtime 指标（RB-D9 核心）
+## Task 1：Runtime 指标（RB-D9 核心）
 
 ### 3.1 `services/pi-runtime/src/metrics.ts`
 - 新增私有字段（Map，key 语义见下）：
@@ -87,7 +87,7 @@
 - `cd services/pi-runtime && node --import tsx --test src/tools/canvas-write.test.ts src/metrics.test.ts` 全绿。
 - `cd services/pi-runtime && ./node_modules/.bin/tsc --noEmit`：改动文件零新增错误（已知 28 个软链 packages/agent 预存噪音与本次无关）。
 
-## 4. Task 2：golden case（事故形态回归）
+## Task 2：golden case（事故形态回归）
 
 - **确定性单测（主载体）**：在 `canvas-write.test.ts` 现有「畸形 attachments 消毒」用例基础上，新增一个**端到端**用例——模拟模型伪造参数 `[{source:"I1",target_node_id:"image-x"}]`（事故 G2 形态），断言：
   - `prepareArguments` 消毒删除该伪造项；
@@ -103,7 +103,7 @@
   - ⚠️ 若 eval runner 不支持注入「本轮侧栏附件 / 画布节点」上下文，则该 L1 case 仅作登记、以确定性单测为唯一可跑判据；实现者在 brief 中裁定并注明 runner 能力缺口。
 - 验收：`node --import tsx --test src/tools/canvas-write.test.ts` 含该用例全绿；`golden-cases.ts` 类型检查通过（`tsc`/现有 eval 测试 `golden-cases.test.ts` 不红）。
 
-## 5. Task 3：告警草稿（纪律接入，不部署硬规则）
+## Task 3：告警草稿（纪律接入，不部署硬规则）
 
 - 新增文档 `deploy/observability/prometheus/rules/sidebar-ref-bind.md`，内容：
   - 说明本批新增三个指标及其语义；
@@ -114,7 +114,7 @@
   - 明确标注：**阈值待 ≥1 发布周期真实流量校准后，再落成 `rules/*.yml`**（复用 README 的窗口校正原则：带 `or vector(0)`、窗口 < 典型重启间隔、先确认分母非零）。
 - ❌ 不创建 `rules/*.yml`（纪律：目录刻意留空）。
 
-## 6. Task 4：全量回归 + push + 开 PR
+## Task 4：全量回归 + push + 开 PR
 
 - 范围回归（与 PR-C 同裁决）：本机跑 scoped 套件（runtime canvas-write + metrics + server 触碰文件单测 + web 既有），全量信号交 CI（4 核机全量性价比极低）。
 - `git status --short` 必须干净（勿加 node_modules/.pi-runtime-data）。
