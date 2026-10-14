@@ -180,6 +180,40 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(byKind(tl, 'notice')).toHaveLength(0)
     expect(tl.parts).toHaveLength(0)
   })
+
+  it('⭐ 2026-10-14 累积快照差分：存量 done.summary 带前文时按前缀差分出段增量，不再整段重复', () => {
+    // 复刻生产实测形态：4 段 summary len 220/758/822/963，head 完全相同（累积快照）
+    const seg1 = '用户想要图标库。'
+    const seg2 = `${seg1}需要先查画布再建节点。`
+    const seg3 = `${seg2}节点ID不对，重新操作。`
+    const tl = feed([
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: seg1 } },
+      { type: 'tool_call', data: { toolCallId: 't1', name: 'get_canvas_summary', args: {} } },
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: seg2 } },
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: seg3 } },
+    ])
+    const blocks = byKind(tl, 'thinking')
+    expect(blocks).toHaveLength(3)
+    expect(blocks[0].text).toBe(seg1)
+    expect(blocks[1].text).toBe('需要先查画布再建节点。') // 差分增量，而非整段 seg2
+    expect(blocks[2].text).toBe('节点ID不对，重新操作。')
+  })
+
+  it('⭐ 增量形态（服务端修复后）不受差分逻辑影响：done.summary 即段原文', () => {
+    const tl = feed([
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: '第一段' } },
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: '第二段' } },
+    ])
+    const blocks = byKind(tl, 'thinking')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].text).toBe('第一段')
+    expect(blocks[1].text).toBe('第二段')
+  })
 })
 
 describe('P2 — 落库 seq 排序 + 缩略图/失败态（设计 §5-P2）', () => {
@@ -248,7 +282,8 @@ describe('P2 — 落库 seq 排序 + 缩略图/失败态（设计 §5-P2）', ()
     ]
     const tl = feed(events)
     // 模型层无 dense 概念 —— 断言其不存在于 TurnTimeline 形状里（回归锁：别把渲染态混入模型）
-    expect(Object.keys(tl).sort()).toEqual(['parts', 'turnStartedAt'])
+    // lastRawThinking：2026-10-14 累积快照差分游标（replay 内存态，不落库、不进事件契约）
+    expect(Object.keys(tl).sort()).toEqual(['lastRawThinking', 'parts', 'turnStartedAt'])
     expect(kinds(tl)).toEqual(['thinking', 'artifact'])
   })
 })
