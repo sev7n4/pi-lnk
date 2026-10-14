@@ -63,15 +63,13 @@ describe('seedPricing against real SQLite', () => {
     expect(rates).toBeGreaterThanOrEqual(15)
   })
 
-  it('archives any other active version when re-seeding (单一 active 不变量)', async () => {
-    // 预置第二个 active 版本——静态断言 active.length === 1 覆盖不到的分叉：
-    // seedPricing 的 updateMany 归档分支（seed-pricing.ts 末段）零覆盖，
-    // Task 5 PricingService 只读 THE active 版本，该不变量是承重的。
+  it('P1-a 起不再归档其他 active 版本（发布流接管，P0 遗物 updateMany 已移除）', async () => {
+    // 原断言「seedPricing 归档非 v1 的 active 版本」——该 updateMany 分支已随
+    // P1-a 发布流接管删除（seed-pricing.ts），非 v1 版本由发布流/promote 管理，
+    // seed 只保证 v1 自身幂等，不再碰其他版本的状态。
     await prisma.priceListVersion.create({
-      data: { version: 'v9-other-active', status: 'active', note: '覆盖归档分支：非 v1 的 active 版本', publishedAt: new Date() },
+      data: { version: 'v9-other-active', status: 'active', note: '验证 seed 不再越权归档', publishedAt: new Date() },
     })
-    const preActive = await prisma.priceListVersion.findMany({ where: { status: 'active' } })
-    expect(preActive.length).toBe(2)
 
     const beforeEntries = await prisma.priceListEntry.count({
       where: { version: { version: PRICING_VERSION_V1 } },
@@ -80,10 +78,7 @@ describe('seedPricing against real SQLite', () => {
     const seeded = await seedPricing(prisma)
 
     const other = await prisma.priceListVersion.findUnique({ where: { version: 'v9-other-active' } })
-    expect(other?.status).toBe('archived')
-    const postActive = await prisma.priceListVersion.findMany({ where: { status: 'active' } })
-    expect(postActive.length).toBe(1)
-    expect(postActive[0]!.version).toBe(PRICING_VERSION_V1)
+    expect(other?.status).toBe('active')
     const v1Entries = await prisma.priceListEntry.count({
       where: { version: { version: PRICING_VERSION_V1 } },
     })

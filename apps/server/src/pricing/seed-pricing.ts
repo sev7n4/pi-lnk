@@ -4,8 +4,8 @@
  * v1 = legacy-equivalent：逐档调 legacyPriceOf 落显式值——表与常量**同源同值**，
  * 这是「等价迁移」的定义。P1 起改价走运营发布流（§8.4），本脚本退役为历史工具。
  *
- * boot 时若无 active 版本，PricingService 会调用本函数自愈（P0 专属便利，
- * 见 pricing.service.ts 注释）；手动执行：`pnpm --filter @lnkpi/server db:seed:pricing`。
+ * P1-a 起 boot 不再自播种（发布流接管，见 pricing.service.ts）：本函数退役为
+ * 手动工具；手动执行：`pnpm --filter @lnkpi/server db:seed:pricing`。
  *
  * 位置说明：实现从 prisma/seed-pricing.ts 迁至 src/pricing/——seed 逻辑消费
  * pricing.core/pricing.space，属定价域；且 src 外文件无法被 pricing.service.ts
@@ -83,10 +83,6 @@ export async function seedPricing(prisma: PrismaClient): Promise<{ version: stri
     create: { phase: 'launch', anchorCents: 1, marginBp: 11000 },
   })
 
-  // P0 单一 active 版本：其余一律归档（P1 发布流接管后删除本行）
-  await prisma.priceListVersion.updateMany({
-    where: { status: 'active', version: { not: PRICING_VERSION_V1 } },
-    data: { status: 'archived' },
-  })
+  // P0 遗物：发布流接管后移除（原「单一 active 版本：其余一律归档」updateMany）
   return { version: PRICING_VERSION_V1, entries }
 }
