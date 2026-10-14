@@ -813,6 +813,45 @@ describe("canvas-write: apply_sidebar_attachments prepareArguments 消毒（RB-D
 		const out = toolWithArgs().prepareArguments?.({ node_ids: ["n1"], attachments: att });
 		assert.deepEqual(out, { node_ids: ["n1"], attachments: att });
 	});
+
+	it(
+		"事故形态端到端（G2 伪造 source/target_node_id）→ 消毒删除后回落 tc.attachments，apply 成功触发 onSidebarRefBind('ok') 一次",
+		async () => {
+			const { client, calls } = makeClient();
+			const bind: string[] = [];
+			const tools = createCanvasWriteTools(client, {
+				onSidebarRefBind: (o) => bind.push(o),
+			});
+			const tool = findTool(tools, "apply_sidebar_attachments");
+			// 模型传入的 G2 形态伪造参数
+			const forged = [{ source: "I1", target_node_id: "image-x" }];
+			// harness 契约：prepareArguments 先消毒，再以消毒后参数 execute
+			// （vendor harness/execution/tools.ts:88：
+			//  `const preparedArguments = tool.prepareArguments ? tool.prepareArguments(call.arguments) : call.arguments;`）
+			const prepared = (tool.prepareArguments?.({
+				node_ids: ["n1"],
+				mode: "localRefs",
+				attachments: forged,
+			}) ?? { node_ids: ["n1"], mode: "localRefs", attachments: forged }) as Record<string, unknown>;
+			// ① prepareArguments 直接断言：伪造项整删（与既有 RB-D2 用例同口径）
+			assert.deepEqual(prepared, { node_ids: ["n1"], mode: "localRefs" });
+			// ② 端到端：以消毒后参数执行（与 harness 同路径）
+			await run(tool, prepared);
+			assert.equal(calls[0].path, "/agent/internal/apply-sidebar-attachments");
+			const sent = calls[0].body.attachments as Array<Record<string, unknown>>;
+			// ③ POST body 的 attachments 不含伪造字段（source/target_node_id 已消毒）
+			assert.ok(Array.isArray(sent));
+			for (const a of sent) {
+				assert.equal("source" in a, false, "消毒后不得残留 source 字段");
+				assert.equal("target_node_id" in a, false, "消毒后不得残留 target_node_id 字段");
+			}
+			// ④ 回落 SM-D4 路径：body.attachments 等于 tc.attachments 实体（CTX，无 source/target_node_id）
+			assert.deepEqual(sent, CTX.attachments);
+			// ⑤ stub 恒返 200（makeClient 成功路径）→ apply 成功 → onSidebarRefBind('ok') 一次
+			assert.equal(bind.length, 1);
+			assert.equal(bind[0], "ok");
+		},
+	);
 });
 
 describe("canvas-write: apply_sidebar_attachments 平台填充对账文案（RB-D2）", () => {

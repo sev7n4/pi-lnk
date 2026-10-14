@@ -269,6 +269,24 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 		// 首批不做（这正是 L0 契约层逼我把「零判据 case」写实的价值）。
 		expectTextIncludes: ["依据"],
 	},
+
+	// ── 类别 E：侧栏参考图绑定（事故形态，PR-D）──
+	{
+		id: "sidebar-ref-001",
+		origin: "audit",
+		about: "侧栏参考图绑定：事故形态下不得 500、不得假称已挂载，应回落本轮侧栏附件",
+		// G1 事故原句（无 @），模型应走挂载而非跳过
+		text: "让这个小姑娘换上黑丝，更性感迷人",
+		/** ⭐ 行为有随机性（同配置触发率 27%~70%）⇒ 3 次取多数。 */
+		repeat: 3,
+		// 假承诺词：对应复盘「平台会自动用参考图」幻觉
+		forbidText: ["参考图会自动使用", "已自动使用侧栏"],
+		// 应走挂载而非跳过
+		expectTools: ["apply_sidebar_attachments"],
+		// ⚠️ 运行器能力缺口：L1 runner（runner.ts / driver.ts）没有注入「本轮侧栏附件
+		// （tc.attachments）」的入口，只能注入画布会话（canvasSessionId）。该 case 仅作
+		// 类型合法登记，可跑性由 canvas-write.test.ts 的确定性单测承载（RB-D9 golden case）。
+	},
 ];
 
 /**
