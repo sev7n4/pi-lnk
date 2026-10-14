@@ -714,7 +714,11 @@ describe('AgentService pi-runtime switch (B4)', () => {
     const metadata = JSON.parse(persisted.data.metadata) as {
       executionEvents: Array<{ type: string; data: unknown }>
     }
-    expect(metadata.executionEvents).toContainEqual({ type: 'canvas_action', data: action })
+    // P2-3 起落库事件额外带 seq/ts/messageIndex ⇒ 用 objectContaining 断言通道内容，
+    // 不因新增元字段而变化（原意：该 action 确实进了 executionEvents）。
+    expect(metadata.executionEvents).toContainEqual(
+      expect.objectContaining({ type: 'canvas_action', data: action }),
+    )
   })
 
   it('active + healthz 失败：直接报不可用——老 runtime 已删，没有任何回落链路', async () => {
@@ -1852,7 +1856,11 @@ describe('svg_card 落库 executionEvents（刷新恢复通道）', () => {
   function canvasCommands(
     events: Array<{ type: string; data: unknown }> | null,
   ): Array<{ type: string; data: unknown }> {
-    return (events ?? []).filter((e) => e.type === 'canvas_command')
+    // P2-3：落库事件带 seq/ts/messageIndex 元字段 ⇒ 这里只取通道相关字段（type/data），
+    // 使下方 toEqual 断言锁定的是「通道内容」而非新增元数据。
+    return (events ?? [])
+      .filter((e) => e.type === 'canvas_command')
+      .map((e) => ({ type: e.type, data: e.data }))
   }
 
   it('svg_card 进 executionEvents（刷新后前端可从 metadata 重放恢复）', async () => {

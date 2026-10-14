@@ -194,26 +194,69 @@ export function applyStructuredError(
   })
 }
 
+/**
+ * P0（agent-turn-timeline-design §5）：思考**分段**且**不再置顶**。
+ *
+ * ⚠️ 旧实现用固定 id `thinking:parse` + `steps.unshift`：
+ *   - 固定 id ⇒ 同一回合内所有思考段被折叠成「一个」块（用户口径「一次思考」）；
+ *   - unshift ⇒ 该块永远钉在队头，即使它发生在若干工具之后（时间序被破坏）。
+ *
+ * 新实现（不动后端契约——pi-events.createThinkingAccumulator 已在每个
+ * thinking_start 发 `running`、每个 thinking_end 发 `done+summary`，多段思考
+ * 本就分别到达）：
+ *   - `running`（thinking_start）：若无「正在 running 的思考段」则新建一段并 **push 到尾部**；
+ *     若有（异常：start 未伴 done 即再次 start）则复用，避免重复块。
+ *   - 终态（done）：落到**最近一段 running 思考**；找不到则找最后一段 thinking
+ *     （兼容缺 start 的重放 / 上游只发 end）；再兜底新建 done 段到尾部。
+ * 结果：多段思考按真实时间序与工具交错出现，首块不再恒为 thinking。
+ */
 export function applyThinking(
   trace: ExecutionTraceState,
-  data: { status: string; summary?: string },
+  data: { status: string; summary?: string; segmentId?: string },
 ) {
-  const id = 'thinking:parse'
-  let step = trace.steps.find((s) => s.id === id)
-  if (!step) {
-    step = {
-      id,
+  if (data.status === 'running') {
+    const running = trace.steps.find((s) => s.kind === 'thinking' && s.status === 'running')
+    if (running) {
+      if (data.summary) running.detail = data.summary
+      return
+    }
+    trace.steps.push({
+      id: nextStepId('thinking'),
       kind: 'thinking',
       label: '思考中…',
-      status: data.status === 'done' ? 'done' : 'running',
+      status: 'running',
       startedAt: Date.now(),
       detail: data.summary,
+    })
+    return
+  }
+  // 终态（done 或任何非 running）：优先落到最近一段 running 思考；否则最后一段 thinking。
+  let target: ExecutionStep | undefined
+  for (let i = trace.steps.length - 1; i >= 0; i -= 1) {
+    const s = trace.steps[i]
+    if (s.kind !== 'thinking') continue
+    if (s.status === 'running') {
+      target = s
+      break
     }
-    trace.steps.unshift(step)
+    if (!target) target = s
+  }
+  if (target) {
+    target.status = 'done'
+    if (data.summary) target.detail = data.summary
+    completeStep(target)
   } else {
-    step.status = data.status === 'done' ? 'done' : 'running'
-    if (data.summary) step.detail = data.summary
-    if (data.status === 'done') completeStep(step)
+    // 防御：没有任何思考段，直接追加 done 段到尾部（兼容缺 start 的脏数据）。
+    trace.steps.push({
+      id: nextStepId('thinking'),
+      kind: 'thinking',
+      label: '思考完成',
+      status: 'done',
+      startedAt: Date.now(),
+      endedAt: Date.now(),
+      ms: 0,
+      detail: data.summary,
+    })
   }
 }
 

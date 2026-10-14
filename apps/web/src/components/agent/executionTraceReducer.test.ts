@@ -5,6 +5,7 @@ import {
   applyPhaseHint,
   applyStep,
   applyTextReplaceStage,
+  applyThinking,
   applyToolCall,
   applyTurnUsage,
   createExecutionTrace,
@@ -86,6 +87,59 @@ describe('executionTraceReducer', () => {
     ])
     expect(trace.steps.some((s) => s.label === '理解需求')).toBe(true)
     expect(trace.totalMs).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('applyThinking 分段 + 时间序（P0 agent-turn-timeline-design §5）', () => {
+  it('P0-1/2: 多段思考与工具交错，思考不再置顶（第二段思考索引 > 工具）', () => {
+    const trace = createExecutionTrace()
+    applyThinking(trace, { status: 'running' })
+    applyThinking(trace, { status: 'done', summary: '先想一下' })
+    applyToolCall(trace, 'explore_canvas')
+    applyThinking(trace, { status: 'running' })
+    applyThinking(trace, { status: 'done', summary: '再想想' })
+    const thinkingSteps = trace.steps.filter((s) => s.kind === 'thinking')
+    const toolIdx = trace.steps.findIndex((s) => s.kind === 'tool')
+    const secondThinkingIdx = trace.steps.findIndex((s, i) => s.kind === 'thinking' && i > toolIdx)
+    expect(thinkingSteps).toHaveLength(2)
+    expect(secondThinkingIdx).toBeGreaterThan(toolIdx)
+    expect(thinkingSteps[0]?.detail).toBe('先想一下')
+    expect(thinkingSteps[1]?.detail).toBe('再想想')
+  })
+
+  it('P0-2: 工具先到时首步 kind 不为 thinking（unshift 不再把思考钉在队头）', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'explore_canvas')
+    applyThinking(trace, { status: 'running' })
+    applyThinking(trace, { status: 'done', summary: '思考' })
+    expect(trace.steps[0]?.kind).toBe('tool')
+    expect(trace.steps.find((s) => s.kind === 'thinking')?.status).toBe('done')
+  })
+
+  it('P0-5: replay 多段思考按序还原（thinking 事件已按序落库）', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: 'A' } },
+      { type: 'tool_call', data: { name: 'explore_canvas' } },
+      { type: 'tool_result', data: { name: 'explore_canvas', result: { status: 'ok' } } },
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: 'B' } },
+    ])
+    const thinkingSteps = trace.steps.filter((s) => s.kind === 'thinking')
+    expect(thinkingSteps).toHaveLength(2)
+    expect(thinkingSteps[0]?.detail).toBe('A')
+    expect(thinkingSteps[1]?.detail).toBe('B')
+    const toolIdx = trace.steps.findIndex((s) => s.kind === 'tool')
+    const secondThinkingIdx = trace.steps.findIndex((s, i) => s.kind === 'thinking' && i > toolIdx)
+    expect(secondThinkingIdx).toBeGreaterThan(toolIdx)
+  })
+
+  it('P0-5: 缺 start 只发 done 的脏数据兜底为单段 done（不崩、不置顶）', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'explore_canvas')
+    applyThinking(trace, { status: 'done', summary: '只有 done' })
+    expect(trace.steps[0]?.kind).toBe('tool')
+    expect(trace.steps.find((s) => s.kind === 'thinking')?.detail).toBe('只有 done')
   })
 })
 

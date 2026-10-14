@@ -14,6 +14,7 @@ import type {
   CanvasData,
   ExecutionTraceState,
   LinkedCanvasOutput,
+  PersistedExecutionEvent,
   SidebarAttachment,
 } from '@lnkpi/shared'
 import {
@@ -102,7 +103,7 @@ const TRACE_PERSIST_EVENT_TYPES = new Set([
 export function buildTurnMetadata(input: {
   presentation?: Record<string, unknown>
   executionTrace?: ExecutionTraceState
-  executionEvents?: Array<{ type: string; data: unknown }>
+  executionEvents?: PersistedExecutionEvent[]
 }): AgentMessageMetadata | undefined {
   const metadata: AgentMessageMetadata = {}
   if (input.executionTrace) metadata.executionTrace = input.executionTrace
@@ -1280,7 +1281,23 @@ export class AgentService {
     const canvasActions: CanvasAction[] = []
     const thinkingAccumulator = createThinkingAccumulator()
     const usageAccumulator = createUsageAccumulator()
-    const executionEvents: Array<{ type: string; data: unknown }> = []
+    const executionEvents: PersistedExecutionEvent[] = []
+    // P2-3：落库事件显式带 seq/ts/messageIndex（数组下标即序，seq 冗余但抗裁剪；
+    // messageIndex 以 message_end 分段，供时间线还原「多段叙述各自成块」的块归属）。
+    let traceSeq = 0
+    let traceMessageIndex = 0
+    const pushTraceEvent = (type: string, data: unknown): PersistedExecutionEvent => {
+      traceSeq += 1
+      const ev: PersistedExecutionEvent = {
+        type,
+        data,
+        seq: traceSeq,
+        ts: Date.now(),
+        messageIndex: traceMessageIndex,
+      }
+      executionEvents.push(ev)
+      return ev
+    }
     let done = false
     try {
       while (!done) {
@@ -1332,7 +1349,7 @@ export class AgentService {
               )
               if (idx >= 0) executionEvents.splice(idx, 1)
             }
-            executionEvents.push({ type: 'canvas_command', data: cmd })
+            pushTraceEvent('canvas_command', cmd)
           }
           yield { type: 'canvas_command', data: cmd }
         }
@@ -1340,25 +1357,25 @@ export class AgentService {
         // 对齐老链路 NestEventProxy 转发语义），节点状态经此实时到前端
         for (const action of extractCanvasActions(event)) {
           canvasActions.push(action)
-          executionEvents.push({ type: 'canvas_action', data: action })
+          pushTraceEvent('canvas_action', action)
           yield { type: 'canvas_action', data: action }
         }
         // C1：todo_write diff → task_list/task_update（todo 面板数据源；与 ⟦plan⟧ 派生路径并存，
         // 老标记只读兼容，见 planMarkers.ts deprecation 注释）
         for (const task of extractTaskEvents(event)) {
-          executionEvents.push(task)
+          pushTraceEvent(task.type, task.data)
           yield task as AgentStreamEvent
         }
         // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件（delta 只累积）
         const thinkingUi = thinkingAccumulator.feed(event)
         if (thinkingUi) {
-          executionEvents.push({ type: 'thinking', data: thinkingUi.data })
+          pushTraceEvent('thinking', thinkingUi.data)
           yield thinkingUi as AgentStreamEvent
         }
         // P1 状态行：usage 累积，agent_end 前恰发一次 turn_usage（seenUsage 门，见 pi-events.ts）
         const usageUi = usageAccumulator.feed(event)
         if (usageUi) {
-          executionEvents.push({ type: 'turn_usage', data: usageUi.data })
+          pushTraceEvent('turn_usage', usageUi.data)
           yield usageUi as AgentStreamEvent
         }
         const ui = mapPiEventToUiEvent(event)
@@ -1382,12 +1399,12 @@ export class AgentService {
                 })),
               },
             }
-            executionEvents.push(planEv)
+            pushTraceEvent(planEv.type, planEv.data)
             yield planEv as AgentStreamEvent
           }
           if (stripped.doneN != null) {
             const doneEv = { type: 'task_update', data: { id: `plan-${stripped.doneN}`, status: 'done' } }
-            executionEvents.push(doneEv)
+            pushTraceEvent(doneEv.type, doneEv.data)
             yield doneEv as AgentStreamEvent
           }
         }
@@ -1395,7 +1412,12 @@ export class AgentService {
         // extractCanvasActions 循环内同步入 canvasActions/executionEvents，
         // mapPiEventToUiEvent 不产出该类型
         if (ui.type === 'tool_call' || ui.type === 'tool_result') {
-          executionEvents.push({ type: ui.type, data: ui.data })
+          pushTraceEvent(ui.type, ui.data)
+        }
+        // P2-3：message_end 是「一条 assistant 消息的权威收束」⇒ 其后的执行事件归属下一段，
+        // 供时间线还原多段叙述各自的块归属（messageIndex 从 0 起）。
+        if (event.type === 'message_end') {
+          traceMessageIndex += 1
         }
         yield ui as AgentStreamEvent
       }

@@ -16,6 +16,8 @@ import AgentAssetPicker from '@/components/agent/AgentAssetPicker.vue'
 import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
+import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
+import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { resolveMessageOutputs } from '@/components/agent/agentCanvasOutputs'
 import { acceptedHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
@@ -96,7 +98,7 @@ import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.v
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
-import { hasFailedTraceStep } from '@/components/agent/executionTraceReducer'
+import { hasFailedTraceStep, turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
@@ -658,6 +660,47 @@ function canvasOutputsForMessage(msg: AgentStreamMessage) {
     taskItems: isLiveTurnMessage(msg) ? taskProgress.value.items : undefined,
     isLiveTurn: isLiveTurnMessage(msg),
   })
+}
+
+/**
+ * P0（agent-turn-timeline-design §5 P0-4）：回合摘要行（节点/张数/耗时/tokens）。
+ * 仅在本回合**已结束**（非 streaming）且确有 trace 时给出，供模板在产物之后渲染。
+ * 旧实现把该行写死在 AgentExecutionTrace 组件内（ul 之后），而 trace 又排在正文/产物之前，
+ * 导致「回合末才算出的统计行」永远压在产物之上；现独立渲染、落在时间线最末（产物之后）。
+ */
+function bubbleSummaryLine(msg: AgentStreamMessage): string | null {
+  if (msg.role !== 'assistant' || msg.streaming || !msg.executionTrace) return null
+  return turnSummaryLine(msg.executionTrace)
+}
+
+/**
+ * P1（agent-turn-timeline-design §5-P1）：TurnTimeline 灰度开关。默认 off（useFeatureFlag）。
+ * off 时气泡仍走旧 trace + 独立正文 + 独立产物，零行为变化；on 时由 AgentTurnTimeline
+ * 一个组件承接 thinking/text/tool/canvas/artifact/notice，取代上述三处拼装。
+ */
+const turnTimelineOn = computed(() => isFeatureOn('turn_timeline'))
+/** 该条 assistant 消息是否用时间线渲染（flag on 且确有 timeline）。 */
+function useTimeline(msg: AgentStreamMessage): boolean {
+  return turnTimelineOn.value && msg.role === 'assistant' && Boolean(msg.timeline)
+}
+
+/**
+ * P2-2：活体时间线。与 `liveTrace`（旧 trace 钉底）**同判定**——本轮活跃时钉在 composer 上方，
+ * 回合收束后由气泡内的 AgentTurnTimeline 接管。flag on 时用同一组件 + dense 变体渲染，
+ * 消除「live dense trace vs history 气泡」两套渲染造成的布局跳变（设计 §3 现象 5）。
+ * 判定必须与 liveTrace 完全一致，否则收束瞬间会在两处各渲染一份。
+ */
+const liveTimeline = computed(() => {
+  if (!turnTimelineOn.value) return null
+  const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
+  if (!last?.timeline) return null
+  const active = agent.isStreaming || showTaskCard.value || Boolean(last.streaming)
+  return active ? last.timeline : null
+})
+
+/** P2-2：活体时间线的定位/重试接线（复用既有画布能力与节点生成 emit）。 */
+function onLiveTimelineRetry(nodeId: string) {
+  if (nodeId) emit('generateNode', nodeId)
 }
 
 const assistantOutputsById = computed(() => {
@@ -2159,6 +2202,8 @@ function handleEvent(event: { type: string; data: unknown }) {
         /** ask_user 经 meta.questionTitle 下发的题面（2026-10-02） */
         question?: string
         timeoutMs?: number
+        /** P1：waiting_user 也带 reason（供 TurnTimeline warn notice 文案） */
+        reason?: string
       }
       if (d.status === 'resolved' || !d.toolName) {
         agent.setBlockingWait(null)
@@ -2171,6 +2216,8 @@ function handleEvent(event: { type: string; data: unknown }) {
           question: d.question,
           timeoutMs: d.timeoutMs,
         })
+        // P1：waiting_user → TurnTimeline warn notice（flag 关闭时 feedTimeline 内短路，零成本）
+        agent.trackWaitingUser({ status: d.status, toolName: d.toolName, nodeId: d.nodeId, reason: d.reason })
         // L2：propose 等待开始即把画布节点同步成 pending_confirm（消除 stale draft，
         // 否则等待期任何 saveCanvas 都会用 draft 覆盖 SSOT 的待确认 → 被误判「用户取消」）
         if (d.toolName === 'propose_generation' && d.nodeId) {
@@ -2815,7 +2862,7 @@ defineExpose({
                      先看到过程再看总结」）。原来顺序是 文本 → 画布产出 → 执行过程，
                      读完结论才知发生了什么，且折叠区在底部很难被注意到。 -->
                 <AgentExecutionTrace
-                  v-if="msg.role === 'assistant' && msg.executionTrace && !liveTrace"
+                  v-if="msg.role === 'assistant' && msg.executionTrace && !liveTrace && !turnTimelineOn"
                   :trace="msg.executionTrace"
                   :streaming="Boolean(msg.streaming)"
                   :collapsed="historyTraceCollapsed(msg)"
@@ -2828,7 +2875,20 @@ defineExpose({
                   v-if="isUserSystemEvent(msg)"
                   class="agent-system-tag"
                 >系统</span>
-                <p v-if="hasBubbleText(msg) && !isMessageUnderEdit(msg)" class="whitespace-pre-wrap">
+                <!-- P1（agent-turn-timeline-design §5-P1）：flag 开启且该消息有 timeline 时，
+                     由单一时间线组件承接 thinking/text/tool/canvas/artifact/notice，
+                     取代下方「旧 trace + 独立正文 + 独立产物 + 独立摘要行」的槽位拼装。
+                     产物（artifact）原位出现、摘要 notice 落在最末（D1/D2/现象3/4 的解）。 -->
+                <AgentTurnTimeline
+                  v-if="useTimeline(msg)"
+                  class="mt-1.5"
+                  :parts="msg.timeline!.parts"
+                  :streaming="Boolean(msg.streaming)"
+                  :resolve-node-url="resolveCanvasNodeUrl"
+                  @retry-node="emit('generateNode', $event)"
+                  @focus-node="onFocusNode($event)"
+                />
+                <p v-if="hasBubbleText(msg) && !isMessageUnderEdit(msg) && !useTimeline(msg)" class="whitespace-pre-wrap">
                   {{
                     msg.role === 'user'
                       ? visibleUserContent(msg)
@@ -2863,12 +2923,22 @@ defineExpose({
                      可编辑空间（用户口径），且同一行里只有它是文字按钮。
                      功能入口不变：判据仍是 canReuseTurn(msg)（role=user 且有正文或引用）。 -->
                 <AgentCanvasOutputs
-                  v-if="msg.role === 'assistant' && (assistantOutputsById.get(msg.id)?.length ?? 0) > 0"
+                  v-if="msg.role === 'assistant' && !turnTimelineOn && (assistantOutputsById.get(msg.id)?.length ?? 0) > 0"
                   :outputs="assistantOutputsById.get(msg.id) ?? []"
                   :resolve-node-url="resolveCanvasNodeUrl"
                   @focus-node="onFocusNode($event)"
                   @focus-all="onFocusAll($event)"
                 />
+                <!-- P0（agent-turn-timeline-design §5 P0-4）：回合摘要行落在产物之后（时间线最末）。
+                     条件：assistant + 本回合已结束（!streaming）+ 有 trace + 行非空。
+                     P1：timeline 模式下摘要由时间线末尾的 notice part 承担，这里不再重复渲染。 -->
+                <p
+                  v-if="msg.role === 'assistant' && !turnTimelineOn && !msg.streaming && msg.executionTrace && bubbleSummaryLine(msg)"
+                  data-testid="turn-summary-line"
+                  class="mt-1 pl-4 text-[10px] text-[var(--neo-text-muted)]"
+                >
+                  {{ bubbleSummaryLine(msg) }}
+                </p>
                 <AgentPresentationHost
                   v-if="historyPresentation(msg)"
                   :presentation="historyPresentation(msg)!"
@@ -3089,15 +3159,26 @@ defineExpose({
             class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1"
             :class="{ 'agent-input-area--scrollable': hasDockPresentation }"
           >
-            <!-- 活体过程卡：钉在 composer 上方（P0 决策 1）；回合收束后由上面的气泡内 trace 接管 -->
+            <!-- 活体过程卡：钉在 composer 上方（P0 决策 1）；回合收束后由上面的气泡内 trace 接管。
+                 P2-2：flag on 时改用 AgentTurnTimeline(dense)，与历史气泡同一套 parts 渲染。 -->
             <AgentExecutionTrace
-              v-if="liveTrace"
+              v-if="liveTrace && !liveTimeline"
               class="agent-live-trace mb-1"
               :trace="liveTrace"
               :streaming="agent.isStreaming"
               :collapsed="liveTraceCollapsed"
               dense
               @update:collapsed="onToggleLiveTrace"
+              @focus-node="onFocusNode($event)"
+            />
+            <AgentTurnTimeline
+              v-else-if="liveTimeline"
+              class="agent-live-trace mb-1"
+              :parts="liveTimeline.parts"
+              :resolve-node-url="resolveCanvasNodeUrl"
+              :streaming="agent.isStreaming"
+              dense
+              @retry-node="onLiveTimelineRetry"
               @focus-node="onFocusNode($event)"
             />
             <p

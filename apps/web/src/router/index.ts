@@ -83,6 +83,12 @@ const router = createRouter({
       component: () => import('@/pages/studios/GenerationRecordsPage.vue'),
     },
     {
+      // 开发预览（仅用于本地肉眼验证 Agent 回合时间线新旧对比，无后端依赖）
+      path: '/dev/timeline-preview',
+      name: 'dev-timeline-preview',
+      component: () => import('@/pages/DevTimelinePreviewPage.vue'),
+    },
+    {
       path: '/terms',
       name: 'terms',
       component: () => import('../pages/TermsPage.vue'),
