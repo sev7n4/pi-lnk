@@ -171,6 +171,40 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(byKind(tl, 'text')[0].status).toBe('done')
   })
 
+  it('⭐ 落库 text 段按发生位置归位（2026-10-14 时序倒挂修复）：thinking → text → tool ⇒ text 在中间', () => {
+    // 生产实证场景：ask_user 后 agent 的回复正文（「用户选择了…」）此前只存整条
+    // message.content，重放时 unshift 到最前 ⇒ 跑到 ask/工具行上面。服务端现在把
+    // 正文按段落库为 text 事件，重放必须按事件序插入，不前置。
+    const events: Array<{ type: string; data: unknown }> = [
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: '用户已选择风格' } },
+      { type: 'text', data: { text: '用户选择了皮克斯风格，我现在开始生成。' } },
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'propose_generation' } },
+      { type: 'tool_result', data: { toolCallId: 'c1', name: 'propose_generation' } },
+    ]
+    const tl = replayTimelineEvents(events)
+    expect(kinds(tl)).toEqual(['thinking', 'text', 'tool', 'notice'])
+    const textPart = tl.parts.find((p) => p.kind === 'text')
+    if (textPart && textPart.kind === 'text') {
+      expect(textPart.text).toBe('用户选择了皮克斯风格，我现在开始生成。')
+      expect(textPart.status).toBe('done')
+    }
+  })
+
+  it('⭐ 已有 text 落库段时 bodyText 不再 unshift（防「段文本 + 整条正文」双份渲染）', () => {
+    const events: Array<{ type: string; data: unknown }> = [
+      { type: 'text', data: { text: '分段落库的正文' } },
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'get_canvas_summary' } },
+    ]
+    const tl = replayTimelineEvents(events, '整条 message.content 的正文')
+    const texts = byKind(tl, 'text')
+    expect(texts).toHaveLength(1)
+    expect(texts[0].text).toBe('分段落库的正文')
+    // text 在 tool 之前按事件序归位，而不是被 bodyText unshift 到最前之外再加一份
+    expect(kinds(tl)[0]).toBe('text')
+    expect(kinds(tl)[1]).toBe('tool')
+  })
+
   it('waiting_user 不产任何 part（2026-10-14：等待态由 dock 状态行单一渲染，时间线不再重复）', () => {
     const tl = feed([
       { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },

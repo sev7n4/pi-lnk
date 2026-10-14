@@ -92,6 +92,12 @@ export type TimelineUsage = { inputTokens: number; outputTokens: number; cost?: 
 
 export type TimelineEvent =
   | { type: 'text_delta'; data: { text: string } }
+  | {
+      /** 落库正文段（2026-10-14）：服务端把两次非文本事件之间的 delta 折叠为一段 text，
+       *  重放时按 seq 归位 —— 修「正文整体前置、时序倒挂」。仅出现在历史 executionEvents。 */
+      type: 'text'
+      data: { text: string }
+    }
   | { type: 'thinking'; data: { status: string; summary?: string } }
   | { type: 'tool_call'; data: { toolCallId?: string; name: string; args?: unknown } }
   | {
@@ -198,6 +204,14 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         timeline.parts.push(part)
       }
       part.text += text
+      return
+    }
+    case 'text': {
+      // 落库正文段：按发生位置插入 done 文本块（段 = 两次非文本事件之间的连续 delta）。
+      // 服务端已按边界切好段，这里直接落块；空段防御性跳过。
+      const text = String(event.data.text ?? '')
+      if (!text.trim()) return
+      timeline.parts.push({ kind: 'text', id: nextPartId('text'), text, status: 'done' })
       return
     }
     case 'text_replace': {

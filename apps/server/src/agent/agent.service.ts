@@ -65,7 +65,7 @@ import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
 import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createThinkingAccumulator, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** #12：pi 每轮的画布上下文（P0-① 起全部经 prompt 的 turnContext 逐轮透传，不再随会话创建注入）。 */
 export interface PiCanvasContext {
@@ -1287,6 +1287,7 @@ export class AgentService {
     let traceSeq = 0
     let traceMessageIndex = 0
     const pushTraceEvent = (type: string, data: unknown): PersistedExecutionEvent => {
+      if (type !== 'text') textPersister.flush()
       traceSeq += 1
       const ev: PersistedExecutionEvent = {
         type,
@@ -1299,6 +1300,9 @@ export class AgentService {
       return ev
     }
     let done = false
+    // 正文分段落库（2026-10-14）：任何非文本 trace 事件落库前先 flush，text 事件 seq
+    // 恒小于边界事件 ⇒ 前端重放时正文按真实时序归位（修「正文整体跑到工具行上面」）。
+    const textPersister = createTextSegmentPersister((type, data) => pushTraceEvent(type, data))
     try {
       while (!done) {
         const { value: event, done: streamClosed } = await iterator.next()
@@ -1378,6 +1382,12 @@ export class AgentService {
           pushTraceEvent('turn_usage', usageUi.data)
           yield usageUi as AgentStreamEvent
         }
+        // 上游帧契约对齐（2026-10-14）：vendor AssistantMessageFrame 的 text_end 帧携带
+        // contentIndex + 整块 content，是「一段正文块」的权威边界（非启发式）。以此为主触发
+        // flush——正文 text 事件的 seq 精确落在上游块边界，而非「下一个非文本事件」的推测位置。
+        // 「pushTraceEvent 非 text 先 flush」的启发式保留作兜底（个别 provider 路径缺 text_end 时仍归位）。
+        // 注意：必须在 `if (!ui) continue` 之前——text_end 映射为 null UI 事件，放后面永远走不到。
+        if (extractTextEnd(event) !== null) textPersister.flush()
         const ui = mapPiEventToUiEvent(event)
         if (!ui) continue
         if (ui.type === 'text_delta') {
@@ -1385,6 +1395,7 @@ export class AgentService {
           const rawText = (ui.data as { text: string }).text
           const stripped = stripPlanMarkers(rawText)
           assistantText += stripped.text
+          textPersister.add(stripped.text)
           ;(ui.data as { text: string }).text = stripped.text
           if (stripped.plan?.length) {
             // C1 验收观测：⟦plan⟧ 已停教（prompt 只教 todo_write），部署后本日志应恒 0
@@ -1417,11 +1428,13 @@ export class AgentService {
         // P2-3：message_end 是「一条 assistant 消息的权威收束」⇒ 其后的执行事件归属下一段，
         // 供时间线还原多段叙述各自的块归属（messageIndex 从 0 起）。
         if (event.type === 'message_end') {
+          textPersister.flush() // 收束前把正文段归入当前 messageIndex
           traceMessageIndex += 1
         }
         yield ui as AgentStreamEvent
       }
     } finally {
+      textPersister.flush() // 回合收尾：残留正文段（尾段后无边界事件时）落库
       // P0-①：会话跨轮保留（历史即上下文），回收由 pi-runtime 的 TTL / 磁盘 LRU 负责。
       // 这里只退订本轮订阅（触发 iteratePiEvents 的 finally → client.cancel）。
       await iterator.return(undefined).catch(() => {})
