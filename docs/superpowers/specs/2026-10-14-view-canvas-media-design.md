@@ -25,6 +25,9 @@
 - 执行：node_id → `get-node` 取 `data.url` → `fetchImageAsBlock` → ImageContent 进 tool result；文本 part 带 `{"canvasNode":"<id>"}` 锚。
 - 失败一律 `{ok:false, error}` 文本，不抛错；video/audio/text 节点、无 url、fetch 失败（timeout/network/http/mime/too-large）分别给出可读原因。
 - 已知边界：模型非视觉时图片会被 vendor `downgradeUnsupportedImages` 换成占位（BYOK `supportsVision` 必须显式声明，#123 既有纪律）；>2MB 拒绝（与 image-refine 同限，等 metrics 证明需要再引入缩图）。
+- 评审裁决（2026-10-14 独立评审波）：
+  - **I-1 解耦**：`fetchImageAsBlock` 与 `PI_RUNTIME_IMAGE_REFINE` 开关无关——开关语义是「生成自评是否回流附图」，归调用方 `generation.ts withImageRefine` 自闸判断；本工具按需读图不受该开关影响。实现已移除 fetch 内的冗余开关检查。
+  - **I-2 SSRF 风险接受**：`url` 参数允许模型指定任意 url 取图，理论上是 SSRF 面。风险接受理由：① pi-runtime 本就是模型可执行代码的运行时（威胁模型内 web_fetch 已开放任意 url）；② 图片走 2MB / mime 白名单熔断；③ 与既有 web_fetch 同级暴露，不新增攻击面类别。生产灰度期间观察异常出网行为，必要时再收敛为画布域名白名单。
 
 ## 3. P1：占位符修复 + 节点锚点
 

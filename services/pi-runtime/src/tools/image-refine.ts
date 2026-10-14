@@ -2,7 +2,7 @@
 export interface ImageBlock { type: "image"; data: string; mimeType: string }
 export type ImageFetchResult =
 	| { ok: true; block: ImageBlock }
-	| { ok: false; reason: "disabled" | "empty-url" | "timeout" | "network" | "http" | "mime" | "too-large" };
+	| { ok: false; reason: "empty-url" | "timeout" | "network" | "http" | "mime" | "too-large" };
 
 const ALLOWED_MIMES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/webp"]);
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
@@ -12,11 +12,15 @@ export function isImageRefineEnabled(): boolean {
 	return (process.env.PI_RUNTIME_IMAGE_REFINE ?? "on").toLowerCase() !== "off";
 }
 
+/**
+ * 通用图片取回（I-1 解耦评审裁决）：本函数与 PI_RUNTIME_IMAGE_REFINE 开关无关——
+ * 开关语义是「生成自评是否回流附图」，归调用方（generation.ts withImageRefine 自闸）判断；
+ * view_canvas_media 等按需读图场景不受该开关误伤。
+ */
 export async function fetchImageAsBlock(
 	url: string,
 	deps: { fetchImpl?: typeof fetch; maxBytes?: number; timeoutMs?: number } = {},
 ): Promise<ImageFetchResult> {
-	if (!isImageRefineEnabled()) return { ok: false, reason: "disabled" };
 	if (!url) return { ok: false, reason: "empty-url" };
 	const maxBytes = deps.maxBytes ?? DEFAULT_MAX_BYTES;
 	const fetchImpl = deps.fetchImpl ?? fetch;

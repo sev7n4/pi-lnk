@@ -147,6 +147,43 @@ test("无任何来源 → ok:false 给出用法提示", async () => {
 	assert.equal(JSON.parse(res.content[0]!.text!).ok, false);
 });
 
+test("I-1：PI_RUNTIME_IMAGE_REFINE=off 时 view_canvas_media 仍可用（开关只闸生成自评，不闸按需读图）", async () => {
+	const { url, close } = await pngServer(10);
+	const prev = process.env.PI_RUNTIME_IMAGE_REFINE;
+	try {
+		process.env.PI_RUNTIME_IMAGE_REFINE = "off";
+		const tool = viewTool(fakeClient({ type: "image", data: { url } }), async (u) => fetch(u));
+		const res = await run(tool, { node_id: "n_1" });
+		assert.equal(res.content.length, 2);
+		assert.equal(res.content[1]!.type, "image");
+	} finally {
+		if (prev === undefined) delete process.env.PI_RUNTIME_IMAGE_REFINE;
+		else process.env.PI_RUNTIME_IMAGE_REFINE = prev;
+		await close();
+	}
+});
+
+test("M-1：focus 为非图片节点但显式给了 url → 用 url 直取，不因 focus 类型报错", async () => {
+	const { url, close } = await pngServer(10);
+	try {
+		let called = false;
+		const client = {
+			post: async () => {
+				called = true;
+				return { type: "prompt", data: {} };
+			},
+		} as never;
+		const tool = viewTool(client, async (u) => fetch(u));
+		const res = await run(tool, { url }, { ...CTX, focusNodeId: "n_prompt" });
+		const out = JSON.parse(res.content[0]!.text!);
+		assert.equal(out.ok, true);
+		assert.equal(called, false);
+		assert.equal(res.content[1]!.type, "image");
+	} finally {
+		await close();
+	}
+});
+
 test("fetch mime 不符 → ok:false 带原因", async () => {
 	const tool = viewTool(
 		fakeClient({ type: "image", data: { url: "http://127.0.0.1:1/x.png" } }),

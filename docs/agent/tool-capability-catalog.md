@@ -230,7 +230,7 @@ if (addedNames.length !== 0) {
 
 ## 6. 复现命令
 
-在仓库根目录执行（47 个工具名按 §1 口径穷举＝实际注册数，含 5 个工厂构造的 `run_*`）：
+在仓库根目录执行（48 个工具名按 §1 口径穷举＝工具总数，含默认不注册的 `introduce_nodes_to_agent` 与 5 个工厂构造的 `run_*`；实际注册数 47）：
 
 ```bash
 TOOLS="apply_asset_to_node apply_sidebar_attachments arrange_nodes ask_user attach_refs \

@@ -52,8 +52,12 @@ export function createViewCanvasMediaTools(
 				_u,
 				tc: LnkpiToolContext,
 			): Promise<ViewResult> => {
-				const nodeId = (p?.node_id ?? "").trim() || (tc?.focusNodeId ?? "").trim();
-				let url = (p?.url ?? "").trim();
+				// 来源优先级（M-1，spec §2 权威口径）：node_id > url > focusNodeId——
+				// 显式给了 url 时不再回落焦点节点，避免焦点为非图片节点误报。
+				const explicitNodeId = (p?.node_id ?? "").trim();
+				const explicitUrl = (p?.url ?? "").trim();
+				const nodeId = explicitNodeId || (explicitUrl ? "" : (tc?.focusNodeId ?? "").trim());
+				let url = explicitUrl;
 				let canvasNode: string | undefined;
 				if (nodeId) {
 					let node: { type?: unknown; data?: { url?: unknown } } | null;
@@ -90,7 +94,6 @@ export function createViewCanvasMediaTools(
 				const fetched = await fetchImageAsBlock(url, { fetchImpl: deps.fetchImpl });
 				if (!fetched.ok) {
 					const reasonText: Record<string, string> = {
-						disabled: "view_canvas_media 已被关闭（PI_RUNTIME_IMAGE_REFINE=off）",
 						"empty-url": "图片 url 为空",
 						timeout: "图片下载超时",
 						network: "图片下载网络失败",
