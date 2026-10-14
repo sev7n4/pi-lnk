@@ -1009,6 +1009,10 @@ describe("propose_generation RB-D5 门禁短路", () => {
 		};
 		await run(findTool(tools, "propose_generation"), { node_id: "n1" }, ctx);
 		assert.equal(bodies[0].sidebarImageCount, 1);
+		// Ruling 6 锚：无附件（含 0）也恒上行，DTO 可选字段收到显式 0
+		const emptyCtx: LnkpiToolContext = { sessionId: "s1", userId: "u1", attachments: [] };
+		await run(findTool(tools, "propose_generation"), { node_id: "n1" }, emptyCtx);
+		assert.equal(bodies[1].sidebarImageCount, 0);
 	});
 
 	it("Nest 正常放行（无 confirmed:false）→ 不短路，走既有路径（Review Focus 5 回归锚）", async () => {
