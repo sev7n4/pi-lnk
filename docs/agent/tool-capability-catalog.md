@@ -1,7 +1,7 @@
 # 工具能力目录（capability-map）
 
 > 对应 [`tool-framework-roadmap.html`](./tool-framework-roadmap.html) **§3 主线 A「能力目录先行」** 的落地产物：
-> **47 个工具 × 「谁点名了它」×「归属」×「什么时候该用它」**四列登记。
+> **48 个工具 × 「谁点名了它」×「归属」×「什么时候该用它」**四列登记。
 > roadmap §7 把这一步写成 B（技能包化）的前置——「在能力目录成型前吃 `setActiveTools`，只是把 36 个硬编码白名单搬进 API 调用——换皮，不是能力」。
 >
 > 本表不是描述性文档，是**决策依据**：它回答「哪个工具可以安全地移出常驻集」「哪个组合已经不一致」。
@@ -19,9 +19,9 @@
 
 | 口径 | 数值 | 说明 |
 |---|---|---|
-| 工具总数 | **47** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具） |
-| 实际注册 | **46** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
-| 常驻 / 延迟 | **28 / 19**（2026-10-06 分级下发实验后确认） | `ALWAYS_ON_TOOL_NAMES` 28 个；其余 19 个延迟（含默认不注册的那 1 个）<br>2026-10-06 上午发现 A 按 A1 修复 `focus_nodes` 提为常驻（37/10）；同日 R1 完成减点名第一批：读类诊断 9 工具下沉（规则 20/21/12 改写为能力描述 + 4 个 skill 点名撤改），37→28，达成 roadmap P1「≤28」。<br>⚠️ 中间曾按 R5 协调意见发过一版「分级下发」（常驻 32 + 探针 5 个，#222）——那是**为取得「模型会不会搜」的实验证据**；实测 `tool_search` hit=6/miss=0（无常驻替代品时 4/4 主动搜索）后，本 PR 扩回全量 28。详见 §7「常驻瘦身」行 |
+| 工具总数 | **48** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具） |
+| 实际注册 | **47** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
+| 常驻 / 延迟 | **29 / 19**（2026-10-14 起） | `ALWAYS_ON_TOOL_NAMES` 29 个；其余 19 个延迟（含默认不注册的那 1 个）<br>2026-10-14：`view_canvas_media` 新增常驻（P0 感知闭环，spec 2026-10-14-view-canvas-media-design.md；点名资产 = T2 图片降级占位文案，运行时下发面）。此前：2026-10-06 分级下发实验确认 28/19，详见 §7 |
 
 ⚠️ 计数的两个坑（已踩过）：① 5 个 `run_*_generation` 由 `generation.ts:99-128` 的 `runTool(...)` 工厂以**位置参数**构造（`runTool(name, label, description, path)`），`grep 'name: "'` 扫不到 ⇒ 早期漏计成 41；② `focus_node`（单数）与 `focus_nodes`（复数）是两个工具，只差一个字母。
 
@@ -162,7 +162,7 @@ if (addedNames.length !== 0) {
 
 ---
 
-## 4. 目录 — 常驻集（28）
+## 4. 目录 — 常驻集（29）
 
 「点名」列只列**会下发**的来源；`PR:` = prompt-registry 规则，`SK:` = skill（括号内为文件:行）。
 2026-10-06 减点名第一批：原 #1-#8、#12（读类诊断 9 工具）已下沉延迟集，点名同步撤除（规则 20/21/12 改写 + 4 个 skill 撤改）。
@@ -197,6 +197,7 @@ if (addedNames.length !== 0) {
 | 26 | `ask_user` | PR:media_tool_policy:14；SK:drama-*, ecommerce（4 个） | 需要用户拍板/补信息时出选项卡，别替用户猜 |
 | 27 | `load_skill` | SK:ecommerce-product-photo | 进入某垂类任务（剧集、电商图…）时加载该 skill 的详细步骤 |
 | 28 | `tool_search` | PR:canvas_daily_ops:12/14 | **现有工具里没有用户要的能力时先搜它**（勿直接答「做不到」） |
+| 29 | `view_canvas_media` | T2 图片降级占位文案（payload-images.ts，运行时下发面）＋工具描述自述；prompt-registry/skills 零点名 | 看**图片像素内容**：用户问「图里有什么/构图如何」、指代图片节点、或上下文占位提示图片被移除后取回（P0 感知闭环，spec 2026-10-14） |
 
 ## 5. 目录 — 延迟集（19）
 
@@ -229,7 +230,7 @@ if (addedNames.length !== 0) {
 
 ## 6. 复现命令
 
-在仓库根目录执行（46 个工具名按 §1 口径穷举，含 5 个工厂构造的 `run_*`）：
+在仓库根目录执行（47 个工具名按 §1 口径穷举＝实际注册数，含 5 个工厂构造的 `run_*`）：
 
 ```bash
 TOOLS="apply_asset_to_node apply_sidebar_attachments arrange_nodes ask_user attach_refs \
@@ -239,7 +240,7 @@ grid_slice_image introduce_nodes_to_agent list_generation_scenes list_generation
 list_model_options list_user_assets load_skill open_image_editor propose_generation \
 read_document recall_memory redo remove_edges render_canvas_view save_memory \
 save_node_to_asset_library set_node_generation_params set_node_text tool_search undo \
-update_node upload_media_to_canvas upsert_media_node upsert_prompt_node web_fetch web_search \
+update_node upload_media_to_canvas upsert_media_node upsert_prompt_node view_canvas_media web_fetch web_search \
 run_image_generation run_video_generation run_text_generation run_prompt_generation run_audio_generation"
 for t in $TOOLS; do
   hits=$(grep -rlE "\b${t}\b" prompt-registry skills 2>/dev/null | sort | tr '\n' ' ')
