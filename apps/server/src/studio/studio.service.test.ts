@@ -56,6 +56,7 @@ describe('editImage 参数化与定价', () => {
   let pointsRefund: ReturnType<typeof vi.fn>
   let saveUserFile: ReturnType<typeof vi.fn>
   let stored: Record<string, unknown>
+  let pricingQuote: ReturnType<typeof vi.fn>
 
   const baseInput = {
     prompt: '去除污渍',
@@ -93,10 +94,13 @@ describe('editImage 参数化与定价', () => {
     })
     imageEdit.mockResolvedValue({ url: 'https://upstream/edit.png' })
 
+    const pricing = createPricingMock()
+    pricingQuote = pricing.quote
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
-        { provide: PricingService, useValue: createPricingMock() },
+        { provide: PricingService, useValue: pricing },
         {
           provide: PointsService,
           useValue: {
@@ -149,6 +153,28 @@ describe('editImage 参数化与定价', () => {
     expect(meta.editModelKey).toBe(P1_IMAGE_EDIT_MODEL_KEY)
     expect(meta.editMode).toBe('inpaint')
     expect(meta.editSize).toBe('auto')
+  })
+
+  it('灰度命中：quote 以 (queryObject, userId) 两参调用，consume meta 携带 grayReleaseId', async () => {
+    pricingQuote.mockResolvedValueOnce({ credits: 5, ruleVersion: 'v2-launch', grayReleaseId: 'rel_1' })
+
+    await svc.editImage('u1', { ...baseInput })
+
+    expect(pricingQuote).toHaveBeenCalledWith(
+      { capability: 'image_edit', modelKey: P1_IMAGE_EDIT_MODEL_KEY },
+      'u1',
+    )
+    expect(pointsConsume).toHaveBeenCalledWith(
+      'u1',
+      5,
+      '图像精修',
+      expect.objectContaining({
+        kind: 'consume',
+        category: 'image',
+        status: 'success',
+        grayReleaseId: 'rel_1',
+      }),
+    )
   })
 
   it('白名单外 model → BadRequestException，且 points.consume 未被调', async () => {

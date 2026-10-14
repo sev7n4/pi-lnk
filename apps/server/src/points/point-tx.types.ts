@@ -12,6 +12,8 @@ export interface PointTxMeta {
   generationId?: string | null
   /** 扣费时的价目表版本（P0 定价等价迁移；兜底路径为 'constants-fallback'）。 */
   ruleVersion?: string | null
+  /** 灰度命中时的 release id（undefined = 走 global，不写库——保持既有断言逐字不变） */
+  grayReleaseId?: string | null
 }
 
 export function consumeMeta(
