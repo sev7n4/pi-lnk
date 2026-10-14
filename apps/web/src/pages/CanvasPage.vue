@@ -48,6 +48,12 @@ import { canvasApi } from '@/services/canvas-api'
 import { resolveCompositionTracks, mergeCompositionTracks, compositionTracksToNodePatch } from '@/utils/compositionUpstream'
 import { resolveUpstreamContext } from '@/composables/useUpstreamNodeContext'
 import { resolveNodeRefs, type LocalRefBinding, type NodeRef } from '@/composables/useNodeRefs'
+import {
+  MISSING_REFS_CONFIRM_MESSAGE,
+  MISSING_REFS_CONFIRM_TITLE,
+  latestUserSidebarImageCount,
+  shouldConfirmDirectGenerateWithoutRefs,
+} from '@/utils/missingRefsConfirm'
 import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating } from '@/constants/dockStudio'
 import { nodeHasUsableOutput, shouldApplyGenerationPoll } from '@/utils/generationPollGate'
 import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
@@ -3925,6 +3931,35 @@ async function handleNodeGenerate() {
   if (isNodeBusy(fresh.id) || isDockGenerateBusy(fresh.data?.status)) {
     cancelGeneration(fresh.id)
     return
+  }
+  // RB-D6①：dock 直生路径——本轮侧栏有图但节点无任何 refs（宽判定含上游边）⇒ 二次确认。
+  // propose 确认路径 handleAgentGenerateNode 不加（Ruling 5：那是确认动作本身，弹窗双重打断）。
+  const agentStore = useAgentStore()
+  const freshData = (fresh.data ?? {}) as Record<string, unknown>
+  const refCount = resolveNodeRefs({
+    targetNodeId: fresh.id,
+    targetType: String(fresh.type),
+    nodes: nodes.value,
+    edges: edges.value,
+    localRefs: (freshData.localRefs as LocalRefBinding[]) ?? [],
+    refOrder: (freshData.refOrder as string[]) ?? [],
+  }).filter((r) => !r.stale).length
+  if (
+    shouldConfirmDirectGenerateWithoutRefs({
+      nodeType: String(fresh.type),
+      refCount,
+      sidebarImageCount: latestUserSidebarImageCount(agentStore.messages),
+    })
+  ) {
+    try {
+      await ElMessageBox.confirm(MISSING_REFS_CONFIRM_MESSAGE, MISSING_REFS_CONFIRM_TITLE, {
+        confirmButtonText: '直接生成',
+        cancelButtonText: '先绑定参考图',
+        type: 'warning',
+      })
+    } catch {
+      return // 用户取消：不生成（Nest RB-D5 门禁仍兜底）
+    }
   }
   await generateForNode(fresh)
 }
