@@ -136,3 +136,29 @@ export function legacyPriceOf(q: PricingQuery): number {
 export function computeCreditsFromCost(costYuan: number, marginBp: number): number {
   return Math.ceil((costYuan * marginBp) / 100)
 }
+
+/**
+ * 展示层预估（Q2 2026-10-14，spec §6.5/§6.7 呈现口径的先行实现）：
+ * vendor usage.cost（USD，渠道 models[].pricing 四元组经 vendor calculateCost 算出）
+ * → 元（× FX）→ 积分（复用 §5.1 公式 + MarginPolicy.marginBp）。
+ *
+ * ⚠️ 定位：**纯展示预估**，不落账、不扣分、不是 P2 §3.4 的权威 token 结算——
+ * P2 价目表（每模型反比率行）落地后由 turn_settled 权威值覆盖。FX 只是 USD 计价
+ * 渠道成本折元的近似，配置化（PRICING_FX_USD_CNY，默认 7.2）；CostRate 有该模型
+ * token 行时应走元口径（那是官方实证成本），USD 路径是渠道 pricing 存在时的兜底。
+ */
+export const DEFAULT_FX_USD_CNY = 7.2
+
+export function resolveFxUsdCny(env: { PRICING_FX_USD_CNY?: string } | undefined): number {
+  const raw = env?.PRICING_FX_USD_CNY
+  const v = raw ? Number(raw) : NaN
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_FX_USD_CNY
+}
+
+export function estimateCreditsFromUsdCost(
+  costUsd: number,
+  marginBp: number,
+  fxUsdCny = DEFAULT_FX_USD_CNY,
+): number {
+  return computeCreditsFromCost(costUsd * fxUsdCny, marginBp)
+}

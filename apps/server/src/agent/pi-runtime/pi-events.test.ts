@@ -256,6 +256,50 @@ describe("turn_usage（P1 状态行）", () => {
 	});
 });
 
+describe("usage_delta / estimatedCredits（Q2 2026-10-14 积分预估展示）", () => {
+	const msgEnd = (usage: Record<string, number>) =>
+		({
+			type: "message_end",
+			ts: 1,
+			data: { message: { usage } },
+		}) as never;
+	const estimate = (t: { cost?: number }) => (t.cost && t.cost > 0 ? Math.ceil(t.cost * 720) : null);
+
+	it("配了 estimate 回调：每条 message_end 即时发 usage_delta（transient），turn_usage 带 estimatedCredits", () => {
+		const acc = createUsageAccumulator(estimate);
+		// usage.cost 是 vendor 分项对象（{input,output,cacheRead,cacheWrite}），总额 = 求和
+		const d1 = acc.feed(msgEnd({ input: 8000, output: 300, cost: { input: 0.008, output: 0.002 } })) as {
+			type: string;
+			data: Record<string, unknown>;
+		} | null;
+		expect(d1?.type).toBe("usage_delta");
+		expect(d1?.data.transient).toBe(true);
+		expect(d1?.data.estimatedCredits).toBe(8); // ceil(0.01×7.2÷0.01)=ceil(7.2)=8
+		const end = acc.feed({ type: "agent_end", ts: 1, data: {} } as never) as {
+			type: string;
+			data: Record<string, unknown>;
+		} | null;
+		expect(end?.type).toBe("turn_usage");
+		expect(end?.data.estimatedCredits).toBe(8);
+		expect(end?.data.transient).toBeUndefined();
+	});
+
+	it("cost=0 / 无回调：绝不发 usage_delta、turn_usage 不带 estimatedCredits（杜绝 0 积分假象）", () => {
+		const accNoCb = createUsageAccumulator();
+		accNoCb.feed(msgEnd({ input: 100, output: 10, cost: { input: 0.4, output: 0.1 } }));
+		expect(accNoCb.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
+			type: "turn_usage",
+			data: { inputTokens: 100, outputTokens: 10, cost: 0.5 },
+		});
+		const accZero = createUsageAccumulator(estimate);
+		accZero.feed(msgEnd({ input: 100, output: 10 })); // 无 cost
+		expect(accZero.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
+			type: "turn_usage",
+			data: { inputTokens: 100, outputTokens: 10 },
+		});
+	});
+});
+
 describe("thinking 全文透传（P0 思考面板）", () => {
 	it("end 时全文透传，clamp 2000 字", () => {
 		const acc = createThinkingAccumulator();

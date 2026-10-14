@@ -100,6 +100,9 @@ type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'
 export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
   const isStreaming = ref(false)
+  /** Q2（2026-10-14）：本回合实时预估积分（usage_delta 事件逐段覆盖，turn 结束清位）。
+   * 状态行 running 段「预估 -N积分」数据源；纯展示预估，P2 落账后由 settled 权威值替代。 */
+  const liveEstimatedCredits = ref<number | null>(null)
   /** P1 状态行：本回合 propose_generation 已返回 pending_confirm（waiting 一票通过） */
   const proposePendingConfirm = ref(false)
   /**
@@ -210,6 +213,8 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function startAssistantMessage() {
+    // Q2：新回合开始，清掉上一回合的实时预估（状态行只显示本回合消耗）
+    liveEstimatedCredits.value = null
     const msg: AgentStreamMessage = {
       id: `msg-${Date.now()}`,
       role: 'assistant',
@@ -407,12 +412,22 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   /** P1：turn_usage 事件落 trace（摘要行数据源），沿 thinking 同款接线。
-   * cost：渠道配了 pricing 时服务端折叠的 usage.cost 总额（可选透传）。 */
-  function trackTurnUsage(data: { inputTokens: number; outputTokens: number; cost?: number }) {
+   * cost：渠道配了 pricing 时服务端折叠的 usage.cost 总额（可选透传）。
+   * estimatedCredits：Q2 服务端预估积分（MarginPolicy+FX 折算，纯展示）；回合结束清实时态。 */
+  function trackTurnUsage(data: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyTurnUsage(last.executionTrace, data)
     feedTimeline({ type: 'turn_usage', data })
+    liveEstimatedCredits.value = null
+  }
+
+  /** Q2：usage_delta（transient 实时预估快照）→ 状态行 running 段「预估 -N积分」。
+   * 只更新 live 态，不进时间线（重放走 turn_usage.estimatedCredits）。 */
+  function trackUsageDelta(data: { inputTokens?: number; outputTokens?: number; estimatedCredits?: number }) {
+    if (typeof data.estimatedCredits === 'number' && Number.isFinite(data.estimatedCredits)) {
+      liveEstimatedCredits.value = data.estimatedCredits
+    }
   }
 
   function trackExplore(data: Parameters<typeof applyExplore>[1]) {
@@ -636,6 +651,7 @@ export const useAgentStore = defineStore('agent', () => {
   return {
     messages,
     isStreaming,
+    liveEstimatedCredits,
     proposePendingConfirm,
     blockingWait,
     activity,
@@ -667,6 +683,7 @@ export const useAgentStore = defineStore('agent', () => {
     requestAgentDiagnose,
     consumePendingDiagnosticText,
     trackTurnUsage,
+    trackUsageDelta,
     trackWaitingUser,
     finishStreaming,
     loadHistory,

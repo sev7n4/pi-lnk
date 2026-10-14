@@ -826,6 +826,8 @@ const turnStatus = computed(() => {
     waitingQuestion: agent.blockingWait?.question ?? null,
     waitingDeadline: agent.blockingWait?.deadlineAt ?? null,
     activity: traceActivity,
+    // Q2：本回合实时预估积分（usage_delta 逐段覆盖；null 时状态行不拼预估尾巴）
+    estimatedCredits: agent.liveEstimatedCredits,
     lastFailed,
   })
 })
@@ -2294,7 +2296,11 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.trackThinking(event.data as { status: string; summary?: string })
       break
     case 'turn_usage':
-      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number; cost?: number })
+      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number })
+      break
+    case 'usage_delta':
+      // Q2（2026-10-14）：实时预估积分快照（transient）→ 状态行 running 段「预估 -N积分」
+      agent.trackUsageDelta(event.data as { estimatedCredits?: number })
       break
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])

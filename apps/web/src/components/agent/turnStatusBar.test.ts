@@ -97,6 +97,17 @@ describe('turnStatusLine（P0 两行状态行）', () => {
       isStreaming: true, turnStartedAt: t0, now: t0 + 5000, waiting: true,
     })).toEqual({ text: '等待你确认', mode: 'waiting' })
   })
+  it('Q2：running 带预估积分 → 拼「· 预估 -N积分」；null/0 → 缺省不拼（杜绝 0 积分假象）', () => {
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 3000, waiting: false, estimatedCredits: 8,
+    })).toEqual({ text: '生成回复中 · 3s · 预估 -8积分', mode: 'running' })
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 3000, waiting: false, estimatedCredits: null,
+    })).toEqual({ text: '生成回复中 · 3s', mode: 'running' })
+    expect(turnStatusLine({
+      isStreaming: true, turnStartedAt: t0, now: t0 + 3000, waiting: false, estimatedCredits: 0,
+    })).toEqual({ text: '生成回复中 · 3s', mode: 'running' })
+  })
 })
 
 describe('failureReason（P1 失败人话）', () => {

@@ -28,6 +28,12 @@ export interface TurnStatusLineInput {
    * waiting（用户须操作）优先级高于 recovering。
    */
   recovering?: boolean
+  /**
+   * Q2（2026-10-14，spec §6.7-A5）：本回合实时预估积分（usage_delta 事件逐段覆盖）。
+   * running 文案拼「· 预估 -N积分」；null/undefined 时缺省不拼（「无预估」形态，绝不显示 0）。
+   * 设计锚：积分字重 < 动词、同句非竖线 —— 用「·」弱分隔（与秒数同款式）。
+   */
+  estimatedCredits?: number | null
 }
 
 export type TurnStatusLine = {
@@ -39,6 +45,12 @@ export type TurnStatusLine = {
 
 /** 缺省活动主语：注册表与 trace 都拿不到人话时的兜底，禁止把内部工具名吐给用户（决策 5）。 */
 export const GENERIC_ACTIVITY = '处理中'
+
+/** Q2：running 文案的预估积分尾巴——「 · 预估 -N积分」；无效值（≤0/非有限数）一律不拼。 */
+function estimateSuffix(credits: number | null | undefined): string {
+  if (credits == null || !Number.isFinite(credits) || credits <= 0) return ''
+  return ` · 预估 -${Math.ceil(credits)}积分`
+}
 
 /** 剩余等待时间人话：≥60s 显示「还剩 N 分钟自动取消」，<60s 精确到秒。 */
 export function waitHint(deadline: number | null | undefined, now: number): string | null {
@@ -72,10 +84,10 @@ export function turnStatusLine(input: TurnStatusLineInput): TurnStatusLine {
       : 0
     // P2：恢复中优先于常规活动文案——「会话在恢复」的显式良性信号，不冒充上游超时。
     if (input.recovering) {
-      return { text: `会话恢复中 · ${seconds}s`, mode: 'running' }
+      return { text: `会话恢复中 · ${seconds}s${estimateSuffix(input.estimatedCredits)}`, mode: 'running' }
     }
     const subject = input.activity?.trim() ? input.activity : '生成回复中'
-    return { text: `${subject} · ${seconds}s`, mode: 'running' }
+    return { text: `${subject} · ${seconds}s${estimateSuffix(input.estimatedCredits)}`, mode: 'running' }
   }
   if (input.lastFailed) return { text: `生成失败 · ${input.lastFailed}`, mode: 'failed' }
   return null
