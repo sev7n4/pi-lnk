@@ -10,6 +10,7 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:pricing": "tsx prisma/seed-pricing.ts",
+    "db:seed:pricing:v2-draft": "tsx prisma/seed-pricing-v2-draft.ts",
     "backfill:point-transactions": "tsx scripts/backfill-point-transactions.ts",
     "lint": "echo 'no lint configured'",
     "test": "vitest run"
