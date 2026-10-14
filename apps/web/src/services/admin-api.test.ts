@@ -151,4 +151,31 @@ describe('admin-api', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1)
     expect(sessionStorage.getItem(ADMIN_TOKEN_KEY)).toBe('t-1')
   })
+
+  // model-ops Task 1 防呆：409 体除 message 外还带 alternatives（同模态在架候选），
+  // 前端要读它渲染「切换到 X 再下架」——payload 必须原样透出，不能被归一成 message 丢掉
+  it('HTTP 409 体带 alternatives → AdminApiError 保留 payload 与 message', async () => {
+    const alternatives = [{ modelKey: 'm-2', displayName: 'M2', availability: 'unknown' }]
+    await expect(
+      handleAdminResponseError({
+        response: { status: 409, data: { message: 'm-1 是 audio 默认，禁止直接下架', alternatives } },
+        message: 'Request failed',
+      }),
+    ).rejects.toMatchObject({
+      name: 'AdminApiError',
+      status: 409,
+      message: 'm-1 是 audio 默认，禁止直接下架',
+      payload: { message: 'm-1 是 audio 默认，禁止直接下架', alternatives },
+    })
+  })
+
+  it('setDefault 调 PUT /admin/model-defaults 且 X-Confirm 等于 modelKey', async () => {
+    axiosPut.mockResolvedValue(ok({ version: 8, modality: 'audio', previousDefault: 'm-1', default: { modelKey: 'm-2', displayName: 'M2', isDefault: true } }))
+    await adminApi.setDefault('audio', 'm-2')
+    expect(axiosPut).toHaveBeenCalledWith(
+      '/admin/model-defaults',
+      { modality: 'audio', modelKey: 'm-2' },
+      expect.objectContaining({ headers: { 'X-Confirm': 'm-2' } }),
+    )
+  })
 })

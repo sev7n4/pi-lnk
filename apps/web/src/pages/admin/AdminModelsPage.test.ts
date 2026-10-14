@@ -28,10 +28,11 @@ vi.mock('element-plus', async (importOriginal) => {
   }
 })
 
-const { listCatalog, createCatalogEntry, deleteCatalogEntry } = vi.hoisted(() => ({
+const { listCatalog, createCatalogEntry, deleteCatalogEntry, setDefault } = vi.hoisted(() => ({
   listCatalog: vi.fn(),
   createCatalogEntry: vi.fn(),
   deleteCatalogEntry: vi.fn(),
+  setDefault: vi.fn(),
 }))
 
 vi.mock('@/services/admin-api', () => ({
@@ -40,12 +41,15 @@ vi.mock('@/services/admin-api', () => ({
     createCatalogEntry: (...a: unknown[]) => createCatalogEntry(...a),
     updateCatalogEntry: vi.fn(),
     deleteCatalogEntry: (...a: unknown[]) => deleteCatalogEntry(...a),
+    setDefault: (...a: unknown[]) => setDefault(...a),
   },
   AdminApiError: class extends Error {
     status: number
-    constructor(message: string, status: number) {
+    payload?: unknown
+    constructor(message: string, status: number, payload?: unknown) {
       super(message)
       this.status = status
+      this.payload = payload
     }
   },
 }))
@@ -337,5 +341,94 @@ describe('AdminModelsPage', () => {
     expect(deleteCatalogEntry).toHaveBeenCalledWith('id-1')
     expect(deleteCatalogEntry).toHaveBeenCalledWith('id-2')
     expect(vm.actionError).toContain('m-1 是默认模型，禁止下架')
+  })
+
+  it('isDefault 条目渲染「默认」徽标 + 非默认渲染占位（model-ops Task 1 数据化）', async () => {
+    listCatalog.mockResolvedValue({
+      version: 7,
+      entries: [entry({ id: 'id-1', modelKey: 'm-1', isDefault: true }), entry({ id: 'id-2', modelKey: 'm-2' })],
+    })
+    const w = mountPage()
+    await flushPromises()
+    expect(w.text()).toContain('默认')
+  })
+
+  it('下架默认模型 409 带 alternatives → 渲染切换面板，点候选先切默认再下架（spec P0-4）', async () => {
+    const { AdminApiError } = await import('@/services/admin-api')
+    listCatalog.mockResolvedValue({
+      version: 7,
+      entries: [
+        entry({ id: 'id-1', modelKey: 'm-1', modality: 'audio', isDefault: true }),
+        entry({ id: 'id-2', modelKey: 'm-2', modality: 'audio' }),
+      ],
+    })
+    const alternatives = [{ modelKey: 'm-2', displayName: 'Model Two', availability: 'unknown' as const }]
+    deleteCatalogEntry
+      .mockRejectedValueOnce(new AdminApiError('m-1 是 audio 模态的当前默认模型，禁止直接下架', 409, { alternatives }))
+      .mockResolvedValueOnce({ version: 8, id: 'id-1', modelKey: 'm-1' })
+    setDefault.mockResolvedValue({
+      version: 8,
+      modality: 'audio',
+      previousDefault: 'm-1',
+      default: { modelKey: 'm-2', displayName: 'Model Two', isDefault: true },
+    })
+
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      toggleSale: (row: { id: string; modelKey: string; modality: string; deletedAt: string | null }) => Promise<void>
+      defaultBlocker: { modelKey: string; modality: string; alternatives: { modelKey: string }[] } | null
+      switchDefaultAndDelist: (alt: { modelKey: string; displayName: string; availability: string }) => Promise<void>
+    }
+    await vm.toggleSale({ id: 'id-1', modelKey: 'm-1', modality: 'audio', deletedAt: null })
+    await flushPromises()
+
+    // 409 被转化为切换面板（而非裸文案），含候选按钮
+    expect(vm.defaultBlocker).toMatchObject({ modelKey: 'm-1', modality: 'audio' })
+    expect(w.text()).toContain('切换到 m-2 再下架')
+    expect(listCatalog).toHaveBeenCalledTimes(1) // 未下架，未 reload
+
+    // 点候选 → 先切默认（modality+modelKey），再 DELETE 原条目
+    await vm.switchDefaultAndDelist(alternatives[0])
+    await flushPromises()
+    expect(setDefault).toHaveBeenCalledWith('audio', 'm-2')
+    expect(deleteCatalogEntry).toHaveBeenLastCalledWith('id-1')
+    expect(vm.defaultBlocker).toBeNull()
+    expect(listCatalog).toHaveBeenCalledTimes(2)
+  })
+
+  it('切默认自身 409（目标 unavailable）→ 保留面板并透出原因，不改选则不下架', async () => {
+    const { AdminApiError } = await import('@/services/admin-api')
+    listCatalog.mockResolvedValue({
+      version: 7,
+      entries: [
+        entry({ id: 'id-1', modelKey: 'm-1', modality: 'audio', isDefault: true }),
+        entry({ id: 'id-2', modelKey: 'm-2', modality: 'audio' }),
+      ],
+    })
+    deleteCatalogEntry.mockRejectedValue(
+      new AdminApiError('m-1 是 audio 模态的当前默认模型，禁止直接下架', 409, {
+        alternatives: [{ modelKey: 'm-2', displayName: 'Model Two', availability: 'unknown' as const }],
+      }),
+    )
+    setDefault.mockRejectedValue(new AdminApiError('m-2 探活不可用（unavailable），禁止设为默认', 409))
+
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as {
+      toggleSale: (row: { id: string; modelKey: string; modality: string; deletedAt: string | null }) => Promise<void>
+      defaultBlocker: { modelKey: string } | null
+      switchDefaultAndDelist: (alt: { modelKey: string; displayName: string; availability: string }) => Promise<void>
+    }
+    await vm.toggleSale({ id: 'id-1', modelKey: 'm-1', modality: 'audio', deletedAt: null })
+    await flushPromises()
+    await vm.switchDefaultAndDelist({ modelKey: 'm-2', displayName: 'Model Two', availability: 'unknown' })
+    await flushPromises()
+
+    expect(setDefault).toHaveBeenCalledWith('audio', 'm-2')
+    expect((w.vm as unknown as { actionError: string }).actionError).toContain('禁止设为默认')
+    // 面板仍在，可改选其它候选
+    expect(vm.defaultBlocker).not.toBeNull()
+    expect(deleteCatalogEntry).toHaveBeenCalledTimes(1) // 仅首次下架被拦，未继续删
   })
 })
