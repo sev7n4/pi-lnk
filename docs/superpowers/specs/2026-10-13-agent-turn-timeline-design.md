@@ -255,6 +255,14 @@ P0 是**可达 80% 观感收益**的一档：用户立刻能看到"多次思考 
 
 > ⚠️ **本沙箱 vitest 纪律（已多次复现，需写入记忆）**：默认 5s `testTimeout` 对本环境过紧。凡「失败形态 = `Test timed out in 5000ms` 且跨无关领域」一律先按**环境超时**处理，用「单跑 + 放大超时」证伪，**不要**当回归。
 
+#### Flag 转正记录（2026-10-14，分支 `feat/turn-timeline-ga`）
+
+| 项 | 内容 |
+| --- | --- |
+| 决定 | `turn_timeline` **默认 off → on（转正）**，时间线成为唯一渲染路径；紧急关停 = `useFeatureFlag.ts` 改一行 + 发版（同 `selection_batch_generate` kill switch 约定） |
+| 依据 | #405 已合并（master `2b71f896`）+ 生产部署取证通过：入口 chunk `index-DlHjqE0S.js`（旧入口 404 锚）、`AgentTurnTimeline` chunk 内 grep 到「重试生成」、`CanvasPage` chunk 含 `turn_timeline`、`/api/health` 200 |
+| 回滚 | flag 改回 `false` 发版即回旧渲染；数据层 `seq/ts/messageIndex` 为可选字段，老消息/旧前端双向兼容 |
+
 ---
 
 ## 6. 复用清单（不重复造轮子）
