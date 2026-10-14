@@ -30,6 +30,15 @@ import {
   replayNodeGraphPresentation,
   type ExecutionTraceState,
 } from '@/components/agent/executionTraceReducer'
+import {
+  applyTimelineEvent,
+  createTurnTimeline,
+  finalizeTurnTimeline,
+  replayTimelineEvents,
+  type TimelineEvent,
+  type TurnTimeline,
+} from '@/components/agent/turnTimeline'
+import { isFeatureOn } from '@/composables/useFeatureFlag'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 
 export interface AgentStreamMessage {
@@ -63,6 +72,12 @@ export interface AgentStreamMessage {
   selectionBindingConfirmed?: Array<{ id: string; type: string; title: string }>
   linkedOutputs?: LinkedCanvasOutput[]
   canvasActions?: CanvasAction[]
+  /**
+   * P1（agent-turn-timeline-design §4）：有序时间线模型层。`parts` 顺序 = 事件到达序，
+   * 唯一真相，替代「trace 步骤 + 独立 body + 独立产物」的槽位拼装。flag `turn_timeline`
+   * 关闭时**不创建**（零成本），渲染层按 flag 切流。
+   */
+  timeline?: TurnTimeline
 }
 
 /**
@@ -244,12 +259,26 @@ export const useAgentStore = defineStore('agent', () => {
     if (incoming >= currentRank) last.presentation = presentation
   }
 
+  /**
+   * P1（agent-turn-timeline-design §5-P1）：与 trace 并行的事件喂入。
+   * flag `turn_timeline` 关闭时**直接返回**（零成本，旧 trace 路径完全不受影响）。
+   * 自举创建消息上的 timeline（与 ensureExecutionTrace 同形），再 applyTimelineEvent 落 parts。
+   */
+  function feedTimeline(event: TimelineEvent) {
+    if (!isFeatureOn('turn_timeline')) return
+    const last = lastAssistant()
+    if (!last) return
+    if (!last.timeline) last.timeline = createTurnTimeline()
+    applyTimelineEvent(last.timeline, event)
+  }
+
   function appendText(text: string) {
     // text_delta落点：刷新最近文本时间戳（waiting 的文本静默判定依赖它）
     lastTextDeltaAt.value = Date.now()
     const last = lastAssistant()
     if (last) {
       last.content += text
+      feedTimeline({ type: 'text_delta', data: { text } })
     }
   }
 
@@ -282,6 +311,7 @@ export const useAgentStore = defineStore('agent', () => {
     if (last.executionTrace) {
       applyTextReplaceStage(last.executionTrace, text)
     }
+    feedTimeline({ type: 'text_replace', data: { text } })
   }
 
   function beginToolCall(call: { toolCallId?: string; name: string; args?: unknown }) {
@@ -294,6 +324,7 @@ export const useAgentStore = defineStore('agent', () => {
         args: summarizeToolArgs(call.name, call.args),
       })
     }
+    feedTimeline({ type: 'tool_call', data: { toolCallId: call.toolCallId, name: call.name, args: call.args } })
   }
 
   function endToolCall(toolCallId: string | undefined, name: string, result?: unknown, isError?: boolean) {
@@ -310,6 +341,7 @@ export const useAgentStore = defineStore('agent', () => {
     if (last.executionTrace) {
       applyToolCall(last.executionTrace, name, result, { toolCallId, isError: isError === true })
     }
+    feedTimeline({ type: 'tool_result', data: { toolCallId, name, result, isError: isError === true } })
   }
 
   function trackCanvasAction(action: CanvasAction) {
@@ -318,6 +350,7 @@ export const useAgentStore = defineStore('agent', () => {
     if (last?.executionTrace) {
       applyCanvasAction(last.executionTrace, action)
     }
+    feedTimeline({ type: 'canvas_action', data: action })
   }
 
   function trackNodeStatus(data: { nodeId: string; status: string; url?: string }) {
@@ -326,6 +359,7 @@ export const useAgentStore = defineStore('agent', () => {
     if (last?.executionTrace) {
       applyNodeStatus(last.executionTrace, data)
     }
+    feedTimeline({ type: 'node_status', data })
   }
 
   function trackTaskUpdate(data: {
@@ -341,30 +375,35 @@ export const useAgentStore = defineStore('agent', () => {
     if (last?.executionTrace) {
       applyTaskUpdate(last.executionTrace, data)
     }
+    feedTimeline({ type: 'task_update', data })
   }
 
   function trackStep(data: Parameters<typeof applyStep>[1]) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyStep(last.executionTrace, data)
+    feedTimeline({ type: 'step', data })
   }
 
   function trackPhaseHint(data: { phase?: string; label: string }) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyPhaseHint(last.executionTrace, data)
+    feedTimeline({ type: 'phase_hint', data })
   }
 
   function trackStructuredError(data: Parameters<typeof applyStructuredError>[1]) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyStructuredError(last.executionTrace, data)
+    feedTimeline({ type: 'error', data })
   }
 
   function trackThinking(data: { status: string; summary?: string }) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyThinking(last.executionTrace, data)
+    feedTimeline({ type: 'thinking', data })
   }
 
   /** P1：turn_usage 事件落 trace（摘要行数据源），沿 thinking 同款接线。
@@ -373,12 +412,19 @@ export const useAgentStore = defineStore('agent', () => {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyTurnUsage(last.executionTrace, data)
+    feedTimeline({ type: 'turn_usage', data })
   }
 
   function trackExplore(data: Parameters<typeof applyExplore>[1]) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyExplore(last.executionTrace, data)
+    feedTimeline({ type: 'explore', data })
+  }
+
+  /** P1：waiting_user → 时间线 warn notice（设计 §10；D1 定位卡之外的时间线提示）。 */
+  function trackWaitingUser(data: { status?: string; toolName?: string; nodeId?: string; reason?: string }) {
+    feedTimeline({ type: 'waiting_user', data })
   }
 
   /**
@@ -395,6 +441,9 @@ export const useAgentStore = defineStore('agent', () => {
     const last = lastAssistant()
     if (last?.executionTrace) {
       finalizeExecutionTrace(last.executionTrace)
+    }
+    if (last?.timeline) {
+      finalizeTurnTimeline(last.timeline)
     }
     if (last) last.streaming = false
     isStreaming.value = false
@@ -512,6 +561,13 @@ export const useAgentStore = defineStore('agent', () => {
       if (!executionTrace && meta?.executionEvents?.length) {
         executionTrace = replayExecutionTraceEvents(meta.executionEvents)
       }
+      // P1（agent-turn-timeline-design §5-P1 双源接入·历史）：flag 开启时由有序
+      // executionEvents 重放出 TurnTimeline；bodyText 取自 persisted.content（历史无
+      // text_delta，用正文补一个 done 文本块，避免时间线缺正文）。flag 关闭时不构建。
+      let timeline: TurnTimeline | undefined
+      if (isFeatureOn('turn_timeline') && meta?.executionEvents?.length) {
+        timeline = replayTimelineEvents(meta.executionEvents, persisted.content)
+      }
       // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在
       // metadata.executionEvents 里（服务端 buildTurnMetadata 不写 metadata.presentation），
       // 刷新后从这里重放出与实时路径同形的 envelope，交给与 setPresentation 同一个挂载点。
@@ -545,6 +601,7 @@ export const useAgentStore = defineStore('agent', () => {
         canvasActions: parsePersistedToolCalls(persisted.toolCalls),
         executionTrace,
         presentation,
+        timeline,
       }
     })
   }
@@ -610,6 +667,7 @@ export const useAgentStore = defineStore('agent', () => {
     requestAgentDiagnose,
     consumePendingDiagnosticText,
     trackTurnUsage,
+    trackWaitingUser,
     finishStreaming,
     loadHistory,
     clear,

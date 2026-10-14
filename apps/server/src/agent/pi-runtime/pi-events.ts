@@ -47,6 +47,14 @@ export type PiEventType =
 export interface UiEvent<T = unknown> {
 	type: string;
 	data: T;
+	/**
+	 * P0（agent-turn-timeline-design §5 P0-3）：把 pi-runtime 的会话内单调 `seq`
+	 * 透传下来，供 P1 按 seq 做稳定插入（P0 仍按 SSE 到达序渲染，不消费本字段）。
+	 * 可选：未携带时上游不保证序，且 `toEqual` 会忽略 undefined，不影响既有测试。
+	 * ⚠️ `ts` 暂不在此透传——`PiRuntimeEvent.ts` 为必填，既有 mapPiEventToUiEvent
+	 * 测试用 `toEqual({type,data})` 精确比对，带 ts 会破坏；P1 前端真正按序插入时再补并同步改测试。
+	 */
+	seq?: number;
 }
 
 /**
@@ -81,9 +89,13 @@ export function extractTextDelta(event: PiRuntimeEvent): string | null {
  *   其余                        → pi_ 前缀透传     （Round 5 补全映射）
  */
 export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
+	// P0（agent-turn-timeline-design §5 P0-3）：统一把服务端 seq 透传到 UiEvent，
+	// 供 P1 按 seq 稳定插入。seq 可选，未携带时为 undefined（toEqual 忽略，零回归）。
+	const ui = (type: string, data: unknown): UiEvent => ({ type, data, seq: event.seq });
+
 	const delta = extractTextDelta(event);
 	if (delta !== null) {
-		return { type: "text_delta", data: { text: delta } };
+		return ui("text_delta", { text: delta });
 	}
 
 	switch (event.type) {
@@ -91,21 +103,21 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 			const d = event.data as { toolCallId: string; toolName: string; args: unknown };
 			// name 为老 runtime tool_call 契约字段（前端 SideRail/Panel/FloatingWindow/reducer 均读
 			// data.name）——2026-09-25 侧栏实测「调用 undefined」即缺它所致；toolName 保留兼容。
-			return { type: "tool_call", data: { toolCallId: d.toolCallId, name: d.toolName, toolName: d.toolName, args: d.args } };
+			return ui("tool_call", { toolCallId: d.toolCallId, name: d.toolName, toolName: d.toolName, args: d.args });
 		}
 		case "tool_execution_end": {
 			const d = event.data as { toolCallId: string; toolName: string; result: unknown; isError: boolean };
-			return {
-				type: "tool_result",
-				data: { toolCallId: d.toolCallId, name: d.toolName, toolName: d.toolName, result: d.result, isError: d.isError },
-			};
+			return ui("tool_result", {
+				toolCallId: d.toolCallId,
+				name: d.toolName,
+				toolName: d.toolName,
+				result: d.result,
+				isError: d.isError,
+			});
 		}
 		case "agent_end": {
 			const d = event.data as { status?: string; error?: unknown };
-			return {
-				type: "done",
-				data: { status: d.status ?? "completed", error: d.error ?? null, __pi: true },
-			};
+			return ui("done", { status: d.status ?? "completed", error: d.error ?? null, __pi: true });
 		}
 		case "message_update":
 			// message_update 但取不到文本 delta（thinking/工具参数流）：Round 5 决定 UI 事件
@@ -119,15 +131,12 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 				retry_hint?: string;
 				tool_name?: string;
 			};
-			return {
-				type: "error",
-				data: {
-					message: d.message,
-					error_type: d.error_type,
-					retry_hint: d.retry_hint,
-					tool_name: d.tool_name,
-				},
-			};
+			return ui("error", {
+				message: d.message,
+				error_type: d.error_type,
+				retry_hint: d.retry_hint,
+				tool_name: d.tool_name,
+			});
 		}
 		case "waiting_user": {
 			// 阻塞等待可见化（2026-10-01）：透传给前端做状态行/确认提示。
@@ -140,17 +149,14 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 				nodeId?: string;
 				reason?: string;
 			};
-			return {
-				type: "waiting_user",
-				data: {
-					status: d.status === "resolved" ? "resolved" : "waiting",
-					toolName: d.toolName,
-					callId: d.callId,
-					timeoutMs: d.timeoutMs,
-					nodeId: d.nodeId,
-					reason: d.reason,
-				},
-			};
+			return ui("waiting_user", {
+				status: d.status === "resolved" ? "resolved" : "waiting",
+				toolName: d.toolName,
+				callId: d.callId,
+				timeoutMs: d.timeoutMs,
+				nodeId: d.nodeId,
+				reason: d.reason,
+			});
 		}
 		case "activity": {
 			// 「正在做什么」（决策 8）：同样不走 default 的 `pi_` 前缀——加了前缀前端按 type
@@ -161,32 +167,29 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 				done?: number;
 				total?: number;
 			};
-			return {
-				type: "activity",
-				data: {
-					toolName: d.toolName,
-					done: d.done,
-					// total 在 vendor harness 侧无源（turn_start 不带计划步数）→ runtime 不产生，
-					// 这里也不伪造；前端据此只说「第 N 步」，不渲染假分母。
-					total: d.total,
-				},
-			};
+			return ui("activity", {
+				toolName: d.toolName,
+				done: d.done,
+				// total 在 vendor harness 侧无源（turn_start 不带计划步数）→ runtime 不产生，
+				// 这里也不伪造；前端据此只说「第 N 步」，不渲染假分母。
+				total: d.total,
+			});
 		}
 		case 'compaction': {
 			// 审计 #6 压缩可见性：vendor compaction_start{reason} / compaction_end{status,...}
 			// 共用 SSE 类型 `compaction`；以 status 有无区分 phase，供前端状态行起止收口。
 			const d = (event.data ?? {}) as { status?: string; reason?: string };
 			const phase = d.status ? 'end' : 'start';
-			return { type: 'pi_compaction', data: { phase, status: d.status, reason: d.reason } };
+			return ui('pi_compaction', { phase, status: d.status, reason: d.reason });
 		}
 		case "recovery": {
 			// P2：调度恢复中（vendor retry_scheduled{recovery:true} 标记）。不走 default 的
 			// `pi_` 前缀——前端按 type 分支消费，加前缀会被静默丢弃，状态行就退回
 			// 「上游响应超时」，等于这条白接了（同 activity/waiting_user 的既有裁决）。
-			return { type: "recovery", data: {} };
+			return ui("recovery", {});
 		}
 		default:
-			return { type: `pi_${event.type}`, data: event.data, };
+			return ui(`pi_${event.type}`, event.data);
 	}
 }
 
@@ -517,13 +520,13 @@ export function createThinkingAccumulator(limit = 2000): {
 		feed(event: PiRuntimeEvent): UiEvent | null {
 			const t = extractThinking(event);
 			if (!t) return null;
-			if (t.phase === "start") return { type: "thinking", data: { status: "running" } };
+			if (t.phase === "start") return { type: "thinking", data: { status: "running" }, seq: event.seq };
 			if (t.phase === "delta" && t.text) {
 				buffer += t.text;
 				return null;
 			}
 		const summary = buffer.slice(0, limit);
-		return { type: "thinking", data: { status: "done", summary: summary || undefined } };
+		return { type: "thinking", data: { status: "done", summary: summary || undefined }, seq: event.seq };
 		},
 	};
 }
@@ -589,6 +592,7 @@ export function createUsageAccumulator(): {
 				return {
 					type: "turn_usage",
 					data: { inputTokens: input, outputTokens: output, ...(cost && cost > 0 ? { cost } : {}) },
+					seq: event.seq,
 				};
 			}
 			return null;

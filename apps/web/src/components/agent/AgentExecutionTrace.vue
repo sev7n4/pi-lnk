@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 import type { ExecutionTraceState, ExecutionStep } from '@/components/agent/executionTraceReducer'
 import { formatDuration } from '@/components/agent/executionStepLabels'
 import { presentToolStep, timelineHeadline } from '@/components/agent/toolPresentation'
-import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import { derivePhase, PHASE_BADGE } from '@/components/agent/phaseAggregator'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 
@@ -109,8 +108,6 @@ function stepDisplay(step: ExecutionStep): string {
   return presentToolStep(step).label
 }
 
-const summaryLine = computed(() => turnSummaryLine(props.trace))
-
 /** dense（钉底）头行：`N 步 · 最新：<icon> <人话>`，不重复「执行过程」四个字——状态行已承载。 */
 const denseHeadline = computed(() => {
   const visible = props.trace.steps.filter((s) => s.kind !== 'phase')
@@ -191,14 +188,12 @@ const phaseBadge = computed(() => {
         </ul>
       </section>
     </div>
-    <!-- P1 回合摘要行：done 后一次（节点/张数/耗时/tokens） -->
-    <p
-      v-if="!streaming && summaryLine"
-      data-testid="turn-summary-line"
-      class="mt-1 pl-4 text-[10px] text-[var(--neo-text-muted)]"
-    >
-      {{ summaryLine }}
-    </p>
+    <!--
+      ⚠️ P0（agent-turn-timeline-design §5 P0-4）：回合摘要行已从本组件迁出。
+      旧实现把摘要行写死在 trace 内部（ul 之后），而 trace 又在气泡内排在正文/产物之前，
+      导致「回合末才算出的统计行」永远渲染在产物之上（用户口径「摘要比产物晚出现却压在产物上」）。
+      现摘要行由 AgentSideRail 在 AgentCanvasOutputs（产物）之后独立渲染，落在时间线最末。
+    -->
   </div>
 </template>
 

@@ -9,6 +9,9 @@
 
 const flags = new Map<string, boolean>([
   ['selection_batch_generate', true], // SB-D16 默认 off → 2026-09-23 拍板维持 on（见文件头）
+  // P1（agent-turn-timeline-design §5-P1）：TurnTimeline 模型层。默认 off，灰度期走
+  // `?feature=turn_timeline` 本地开启；转正后改此处为 true。off 时前端零行为变化。
+  ['turn_timeline', false],
 ])
 
 export function isFeatureOn(key: string): boolean {
