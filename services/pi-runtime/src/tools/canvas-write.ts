@@ -391,11 +391,40 @@ export function createCanvasWriteTools(
 				context: Context,
 			) => {
 				if (!tc.userId) throw new Error("propose_generation requires userId in toolContext");
-				const base = await client.post("/agent/internal/propose-generation", {
-					sessionId: tc.sessionId,
-					userId: tc.userId,
-					nodeId: p.node_id,
-				});
+			// RB-D5（spec 2026-10-13-sidebar-ref-bind-invariant-design.md）：本轮侧栏图片计数随
+			// body 上行；门禁 SSOT 在 Nest（localRefs 空 ⇒ confirmed:false missing_refs，不做状态转移）。
+			const sidebarImageCount = (tc.attachments ?? []).filter((a) => a.mediaType === "image").length;
+			const base = await client.post("/agent/internal/propose-generation", {
+				sessionId: tc.sessionId,
+				userId: tc.userId,
+				nodeId: p.node_id,
+				sidebarImageCount,
+			});
+			// RB-D5 短路：Nest fail-closed ⇒ 不进阻塞等待，镜像同工具 not-confirmed 结果形状
+			// （Ruling 1：withWriteSignal 会包出 {ok:true,data} 与 fail-closed 语义矛盾）。
+			// 判定键严格双条件：confirmed === false 且 reason === 'missing_refs'（Review Focus 5）。
+			const gate = (base ?? null) as { confirmed?: unknown; reason?: unknown; message?: unknown } | null;
+			if (gate && gate.confirmed === false && gate.reason === "missing_refs") {
+				// P2 结算归因：短路也是一次 propose 结算（分母不失真）
+				onProposeOutcome?.("missing_refs", false);
+				const message =
+					typeof gate.message === "string" && gate.message
+						? gate.message
+						: "参考图未绑定成功，请重试 apply_sidebar_attachments，或请用户在画布上手动添加参考图";
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({ ok: false, confirmed: false, reason: "missing_refs", message }),
+						},
+					],
+					details: {
+						ok: false,
+						confirmed: false,
+						_signal: { status: "failed", retryable: false, errorCode: "missing_refs" },
+					},
+				};
+			}
 				// B-5 off（或无 registry）→ 旧行为逐字节保留（spec §8 回退纪律）
 				if (!registry || !askUserBlocking()) {
 					// P2 结算归因：非阻塞路径也是一次 propose 结算（不记会使 outcome 分布的分母失真）

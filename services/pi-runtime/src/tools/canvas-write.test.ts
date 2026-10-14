@@ -120,14 +120,14 @@ describe("canvas-write: body 形态与条件字段", () => {
 		assert.equal(calls.length, 2);
 	});
 
-	it("attach_refs 发 refOrder 且不带 userId；propose_generation 带 userId", async () => {
+	it("attach_refs 发 refOrder 且不带 userId；propose_generation 带 userId + sidebarImageCount", async () => {
 		const { client, calls } = makeClient();
 		const tools = createCanvasWriteTools(client);
 		await run(findTool(tools, "attach_refs"), { node_id: "n1", ref_order: ["a", "b"] });
 		assert.deepEqual(calls[0].body, { sessionId: "s1", nodeId: "n1", refOrder: ["a", "b"] });
 
 		await run(findTool(tools, "propose_generation"), { node_id: "n1" });
-		assert.deepEqual(calls[1].body, { sessionId: "s1", userId: "u1", nodeId: "n1" });
+		assert.deepEqual(calls[1].body, { sessionId: "s1", userId: "u1", nodeId: "n1", sidebarImageCount: 1 });
 	});
 
 	it("duplicate_node 条件字段：includeUpstream 仅 true 才发", async () => {
@@ -937,5 +937,87 @@ describe("propose_generation 结算归因回调（P2）", () => {
 			if (prev === undefined) delete process.env.ASK_USER_TIMEOUT_MS;
 			else process.env.ASK_USER_TIMEOUT_MS = prev;
 		}
+	});
+});
+
+// ── propose_generation RB-D5 门禁短路（spec 2026-10-13-sidebar-ref-bind-invariant-design）──
+describe("propose_generation RB-D5 门禁短路", () => {
+	function gateClient(gateBody: unknown, record: (path: string, body: Record<string, unknown>) => void) {
+		return {
+			post: async (path: string, body: Record<string, unknown>) => {
+				record(path, body);
+				if (path === "/agent/internal/propose-generation") return gateBody;
+				return { ok: true };
+			},
+		} as never;
+	}
+
+	it("Nest fail-closed（confirmed:false missing_refs）→ 短路返回，不进阻塞等待、无 get-node 轮询", async () => {
+		const paths: string[] = [];
+		const outcomes: Array<[string, boolean]> = [];
+		const client = gateClient(
+			{ confirmed: false, reason: "missing_refs", message: "参考图未绑定成功，请重试 apply_sidebar_attachments（只传 node_ids 与 mentioned_keys），或请用户在画布上手动添加参考图" },
+			(p) => paths.push(p),
+		);
+		const [propose] = createCanvasWriteTools(client, {
+			registry: new PendingToolRegistry(),
+			pollMs: 5,
+			onProposeOutcome: (reason, confirmed) => outcomes.push([reason, confirmed]),
+		}).filter((t) => t.name === "propose_generation");
+
+		const result = await run(propose, { node_id: "n1" });
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /missing_refs/);
+		assert.match(text, /apply_sidebar_attachments/);
+		const details = result.details as { ok?: boolean; confirmed?: boolean; _signal?: { status?: string; retryable?: boolean; errorCode?: string } };
+		assert.equal(details.ok, false);
+		assert.equal(details.confirmed, false);
+		assert.deepEqual(details._signal, { status: "failed", retryable: false, errorCode: "missing_refs" });
+		// 短路：只有 propose-generation 一次调用，无 get-node 快照/轮询，registry 无 pending
+		assert.deepEqual(paths, ["/agent/internal/propose-generation"]);
+		assert.equal(outcomes.length, 1);
+		assert.equal(outcomes[0][0], "missing_refs");
+		assert.equal(outcomes[0][1], false);
+	});
+
+	it("B-5 off（无 registry）短路同样生效——门禁独立于阻塞模式", async () => {
+		const client = gateClient({ confirmed: false, reason: "missing_refs", message: "m" }, () => {});
+		const [propose] = createCanvasWriteTools(client).filter((t) => t.name === "propose_generation");
+		const result = await run(propose, { node_id: "n1" });
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /missing_refs/);
+		assert.doesNotMatch(text, /"ok":true/);
+	});
+
+	it("tc.attachments 只计 image：text/video 附件不计入 body.sidebarImageCount", async () => {
+		const bodies: Array<Record<string, unknown>> = [];
+		const client = {
+			post: async (path: string, body: Record<string, unknown>) => {
+				bodies.push(body);
+				return { ok: true };
+			},
+		} as never;
+		const tools = createCanvasWriteTools(client);
+		const ctx: LnkpiToolContext = {
+			sessionId: "s1",
+			userId: "u1",
+			attachments: [
+				{ url: "https://x/a.png", mediaType: "image" },
+				{ text: "参考文案", mediaType: "text" },
+				{ url: "https://x/v.mp4", mediaType: "video" },
+			],
+		};
+		await run(findTool(tools, "propose_generation"), { node_id: "n1" }, ctx);
+		assert.equal(bodies[0].sidebarImageCount, 1);
+	});
+
+	it("Nest 正常放行（无 confirmed:false）→ 不短路，走既有路径（Review Focus 5 回归锚）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["generating"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
 	});
 });
