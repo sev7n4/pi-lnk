@@ -13,10 +13,13 @@ export const ADMIN_TOKEN_KEY = 'lnkpi_admin_token'
 
 export class AdminApiError extends Error {
   readonly status: number
-  constructor(message: string, status: number) {
+  /** HTTP 响应体原文（409 时含 `alternatives` 等拓展字段），供调用方读取结构化判据。 */
+  readonly payload?: unknown
+  constructor(message: string, status: number, payload?: unknown) {
     super(message)
     this.name = 'AdminApiError'
     this.status = status
+    this.payload = payload
   }
 }
 
@@ -47,12 +50,16 @@ export function setAdminUnauthorizedHandler(handler: UnauthorizedHandler | null)
 export function handleAdminResponseError(err: unknown): Promise<never> {
   const axiosErr = err as AxiosError<{ message?: string }> | undefined
   const status = axiosErr?.response?.status ?? 0
+  const payload = axiosErr?.response?.data
   if (status === 401 || status === 403) {
     sessionStorage.removeItem(ADMIN_TOKEN_KEY)
     unauthorizedHandler?.()
   }
-  const message = axiosErr?.response?.data?.message ?? axiosErr?.message ?? '请求失败'
-  return Promise.reject(new AdminApiError(message, status))
+  const message =
+    (payload && typeof payload === 'object' && 'message' in payload
+      ? (payload as { message?: unknown }).message
+      : undefined) ?? axiosErr?.message ?? '请求失败'
+  return Promise.reject(new AdminApiError(typeof message === 'string' ? message : '请求失败', status, payload))
 }
 
 adminHttp.interceptors.response.use((response) => response, handleAdminResponseError)
@@ -81,9 +88,18 @@ export type AdminCatalogEntry = {
   voices: { id: string; label: string }[] | null
   params: Record<string, unknown>
   defaults: Record<string, unknown> | null
+  /** 每模态默认标记（DB isDefault 透传）；前端据此展示「默认」徽标 + 下架防呆判据。 */
+  isDefault?: boolean
   deletedAt: string | null
   createdAt: string
   updatedAt: string
+}
+
+/** 切默认时的在架候选（服务端 409 体附带，与 server model-ops-shared DefaultAlternative 一致）。 */
+export type CatalogDefaultAlternative = {
+  modelKey: string
+  displayName: string
+  availability: 'available' | 'unavailable' | 'unknown'
 }
 
 /**
@@ -199,6 +215,23 @@ export const adminApi = {
 
   deleteCatalogEntry: (id: string) =>
     unwrap<{ version: number; id: string; modelKey: string }>(adminHttp.delete(`/admin/model-catalog/${id}`)),
+
+  /**
+   * 切默认模型（spec P0-4）：PUT /admin/model-defaults `{modality, modelKey}` + X-Confirm=<modelKey>。
+   * 返回新默认态；目标 unavailable / 并发冲突 → 409（体含 message，无 alternatives）。
+   */
+  setDefault: (
+    modality: string,
+    modelKey: string,
+  ): Promise<{
+    version: number
+    modality: string
+    previousDefault: string | null
+    default: { modelKey: string; displayName: string; isDefault: boolean }
+  }> =>
+    unwrap(
+      adminHttp.put('/admin/model-defaults', { modality, modelKey }, { headers: { 'X-Confirm': modelKey } }),
+    ),
 
   listRoutes: (): Promise<{ version: number; routes: AdminRouteRow[] }> =>
     unwrap(adminHttp.get('/admin/upstream-routes')),

@@ -7,6 +7,7 @@ import {
   AdminApiError,
   type AdminCatalogEntry,
   type AdminCatalogLinkOps,
+  type CatalogDefaultAlternative,
   type CatalogEntryInput,
 } from '@/services/admin-api'
 import { linkStatusOf, LINK_LEVEL_TEXT_CLASS } from './modelLinkStatus'
@@ -21,6 +22,26 @@ const entries = ref<AdminCatalogEntry[]>([])
 const opsByModel = ref<Record<string, AdminCatalogLinkOps> | null>(null)
 const keyword = ref('')
 const actionError = ref('')
+
+/**
+ * 下架默认模型被 409 拦截时的上下文：目标条目 + 同模态在架候选。
+ * 非空时渲染「切换到 X 再下架」一键面板（spec P0-4），点选后先切默认再继续下架。
+ */
+const defaultBlocker = ref<{
+  id: string
+  modelKey: string
+  modality: string
+  alternatives: CatalogDefaultAlternative[]
+} | null>(null)
+
+/** 从 AdminApiError 里取 409 体附带的 alternatives（无则 null）。 */
+function extractAlternatives(err: unknown): CatalogDefaultAlternative[] | null {
+  if (!(err instanceof AdminApiError)) return null
+  const payload = err.payload
+  if (!payload || typeof payload !== 'object') return null
+  const alts = (payload as { alternatives?: CatalogDefaultAlternative[] }).alternatives
+  return Array.isArray(alts) && alts.length > 0 ? alts : null
+}
 
 const VALID_MODALITIES = ['text', 'image', 'video', 'audio']
 const VALID_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http']
@@ -83,9 +104,13 @@ async function reload() {
   }
 }
 
-/** 下架（软删）；复用于行内开关 off 与批量下架。409/400 防呆原样透出。 */
+/**
+ * 下架（软删）；复用于行内开关 off 与批量下架。
+ * 400/409 防呆原样透出；其中默认模型拦阻（409 带 alternatives）升级为「切换到 X 再下架」面板。
+ */
 async function removeEntry(id: string, modelKey: string) {
   actionError.value = ''
+  defaultBlocker.value = null
   try {
     await ElMessageBox.confirm(`确认下架 ${modelKey}？（软删，可由 POST 同 modelKey 恢复）`, '下架确认', {
       type: 'warning',
@@ -101,6 +126,43 @@ async function removeEntry(id: string, modelKey: string) {
     await reload()
   } catch (err) {
     // 400/409 防呆（默认模型等）原样透出，引导运营先处理
+    if (err instanceof AdminApiError && err.status === 409) {
+      const alts = extractAlternatives(err)
+      const row = entries.value.find((e) => e.id === id)
+      if (alts && row) {
+        // 默认模型拦阻：渲染「切换到 X 再下架」一键面板（spec P0-4）
+        defaultBlocker.value = { id, modelKey, modality: row.modality, alternatives: alts }
+        actionError.value = err.message
+        return
+      }
+    }
+    actionError.value = err instanceof AdminApiError ? err.message : '操作失败'
+  }
+}
+
+/**
+ * 「切换到 X 再下架」：先 PUT /admin/model-defaults 把该模态默认切到候选，
+ * 成功后再 DELETE 原条目（此时它已非默认，防呆放行）。切默认自身 409
+ * （目标 unavailable / 并发）时保留面板并透出原因，供改选或中止。
+ */
+async function switchDefaultAndDelist(alt: CatalogDefaultAlternative) {
+  const blocker = defaultBlocker.value
+  if (!blocker) return
+  try {
+    await adminApi.setDefault(blocker.modality, alt.modelKey)
+    ElMessage.success(`已切换 ${blocker.modality} 默认至 ${alt.modelKey}，继续下架原模型…`)
+    defaultBlocker.value = null
+    actionError.value = ''
+    await adminApi.deleteCatalogEntry(blocker.id)
+    ElMessage.success(`已下架 ${blocker.modelKey}`)
+    await reload()
+  } catch (err) {
+    const alts = extractAlternatives(err)
+    if (err instanceof AdminApiError && err.status === 409 && alts && defaultBlocker.value) {
+      defaultBlocker.value = { ...defaultBlocker.value, alternatives: alts }
+    } else if (!(err instanceof AdminApiError)) {
+      defaultBlocker.value = null
+    }
     actionError.value = err instanceof AdminApiError ? err.message : '操作失败'
   }
 }
@@ -108,6 +170,7 @@ async function removeEntry(id: string, modelKey: string) {
 /** 恢复上架：软删行开关拨回 on → 确认后按既有配置走 POST（服务端同 key 恢复语义）。 */
 async function restoreEntry(row: AdminCatalogEntry) {
   actionError.value = ''
+  defaultBlocker.value = null
   try {
     await ElMessageBox.confirm(`恢复上架 ${row.modelKey}？（按既有配置恢复，可再编辑）`, '上架确认', {
       type: 'info',
@@ -168,6 +231,7 @@ async function batchOffboard() {
     return
   }
   actionError.value = ''
+  defaultBlocker.value = null
   const failed: string[] = []
   for (const t of targets) {
     try {
@@ -257,6 +321,8 @@ async function submitForm() {
 // 测试经 w.vm 数据驱动（script setup 顶层绑定默认不暴露）：ref 赋值即写 .value。
 defineExpose({
   removeEntry,
+  switchDefaultAndDelist,
+  defaultBlocker,
   actionError,
   startCreate,
   startEdit,
@@ -306,7 +372,30 @@ defineExpose({
       <el-button type="primary" @click="startCreate">新增条目</el-button>
       <el-button :loading="loading" @click="reload">刷新</el-button>
     </header>
-    <p v-if="actionError" class="mb-2 rounded border border-danger-border bg-danger-bg p-2 text-sm text-danger">{{ actionError }}</p>
+    <p v-if="actionError && !defaultBlocker" class="mb-2 rounded border border-danger-border bg-danger-bg p-2 text-sm text-danger">{{ actionError }}</p>
+    <div v-if="defaultBlocker" class="mb-2 rounded border border-warning-border bg-warning-bg p-3 text-sm">
+      <p class="font-medium text-warning">{{ actionError }}</p>
+      <p class="mt-1 text-fg-3">
+        选择一个在架候选作为新的 {{ defaultBlocker.modality }} 默认模型，切换后将自动继续下架
+        <span class="text-fg">{{ defaultBlocker.modelKey }}</span>：
+      </p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <el-button
+          v-for="alt in defaultBlocker.alternatives"
+          :key="alt.modelKey"
+          size="small"
+          type="warning"
+          plain
+          :disabled="alt.availability === 'unavailable'"
+          :title="alt.availability === 'unavailable' ? '探活不可用，切换会被服务端拦截' : ''"
+          @click="switchDefaultAndDelist(alt)"
+        >
+          切换到 {{ alt.modelKey }} 再下架
+          <span v-if="alt.availability === 'unavailable'" class="ml-1 opacity-70">（探活不可用）</span>
+          <span v-else-if="alt.availability === 'unknown'" class="ml-1 text-fg-3">（探活未知）</span>
+        </el-button>
+      </div>
+    </div>
     <el-table :data="filtered" v-loading="loading" size="small" border @selection-change="onSelectionChange">
       <el-table-column type="selection" width="42" />
       <el-table-column prop="modelKey" label="modelKey" min-width="180" />
@@ -337,6 +426,14 @@ defineExpose({
           <el-tooltip :content="row.deletedAt ? '已下架，拨回恢复上架' : '在售，拨回下架（软删）'" placement="top">
             <el-switch :model-value="row.deletedAt === null" @change="toggleSale(row)" />
           </el-tooltip>
+        </template>
+      </el-table-column>
+      <el-table-column label="默认" width="80">
+        <template #default="{ row }">
+          <el-tooltip v-if="row.isDefault" content="该模态的当前默认模型（resolveModelKey 的确定性 fallback）；下架前需先切换默认" placement="top">
+            <el-tag type="warning" size="small" effect="light" round>默认</el-tag>
+          </el-tooltip>
+          <span v-else class="text-fg-3">—</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">

@@ -55,6 +55,11 @@
 
 **验收**：切换默认 = 1 次 PUT；下架旧默认 = 切换后 1 次 DELETE；全程零代码改动。以 agnes-2.0-flash（本次已用代码方式切完）为回归样例。
 
+> **实现注记（2026-10-14，web 运营侧补齐 P0-4）**：后端交付时前端只透出 `message`、把 `alternatives` 丢了，且列表不展示 `isDefault`——运营只能撞 409 才知道某模型是默认，而提示里的 `PUT /admin-defaults` 在运营页没有入口。现已补齐：
+> - `AdminCatalogEntry` 透出 `isDefault`，列表新增「默认」列（徽标 + tooltip 说明为何不能直接下架）；
+> - DELETE 命中默认返回 409 时，`alternatives` 渲染成「切换到 X 再下架」按钮：`adminApi.setDefault(modality, modelKey)`（客户端注入 `X-Confirm: <modelKey>`）→ 成功后自动 DELETE 原条目；切默认自身 409（目标 unavailable / 并发）时保留面板并透出原因供改选。
+> - ⚠️ 与本节原文的出入：`alternatives` 实际是**全部在架同模态行**（含 `unavailable`，按钮置灰并标注「探活不可用」），不是「只含 available」——以 `model-ops-shared.ts listDefaultAlternatives` 为准。
+
 ### P1 上架/下架原子编排（model-ops）
 
 新增 `apps/server/src/admin/model-ops.controller.ts`，编排既有能力而非新增存储：
