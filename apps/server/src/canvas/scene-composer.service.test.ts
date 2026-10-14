@@ -5,11 +5,14 @@ import { Test } from '@nestjs/testing'
 import { SceneComposerService } from './scene-composer.service'
 import { MaterialService } from './material.service'
 import { ShotService } from './shot.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
 
 describe('SceneComposerService batchGenerate', () => {
   let svc: SceneComposerService
+  let pricingMock: ReturnType<typeof createPricingMock>
   const consume = vi.fn(async () => {})
   const generateImage = vi.fn(async () => ({ id: 'm-img' }))
   const generateVideo = vi.fn(async () => ({ id: 'm-vid' }))
@@ -31,9 +34,11 @@ describe('SceneComposerService batchGenerate', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    pricingMock = createPricingMock()
     const moduleRef = await Test.createTestingModule({
       providers: [
         SceneComposerService,
+        { provide: PricingService, useValue: pricingMock },
         { provide: PointsService, useValue: { consume } },
         {
           provide: MaterialService,
@@ -87,7 +92,10 @@ describe('SceneComposerService batchGenerate', () => {
       category: 'other',
       status: 'success',
       generationId: null,
+      ruleVersion: 'test-constants',
     })
+    // 接线防线：2 个 item 都确实走了 PricingService.quote
+    expect(pricingMock.quote).toHaveBeenCalledTimes(2)
     expect(generateImage).toHaveBeenCalledWith({
       userId: 'u1',
       shotId: 'shot-img',
@@ -133,6 +141,7 @@ describe('SceneComposerService batchGenerate', () => {
       category: 'other',
       status: 'success',
       generationId: null,
+      ruleVersion: 'test-constants',
     })
   })
 
@@ -276,6 +285,7 @@ describe('SceneComposerService save', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         SceneComposerService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume: vi.fn() } },
         {
           provide: MaterialService,

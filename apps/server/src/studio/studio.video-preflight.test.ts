@@ -10,6 +10,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { UploadService } from '../upload/upload.service'
 import { createPrismaMock, defaultPlatformResolve } from './studio.test-utils'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const videoGenerate = vi.fn(async () => ({ url: 'https://example.com/v.mp4' }))
 
@@ -68,6 +70,7 @@ describe('StudioService video reference preflight', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: {

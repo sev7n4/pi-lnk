@@ -16,6 +16,8 @@ import { UploadService } from '../upload/upload.service'
 import { buildCanonicalVideoRequestFromBody } from './video-generation-request.util'
 import { createMediaProbeMock, createPrismaMock, defaultPlatformResolve } from './studio.test-utils'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const IMAGE_A = 'https://cdn.example/a.png'
 const IMAGE_B = 'https://cdn.example/b.png'
@@ -148,6 +150,7 @@ describe('StudioService MiniMax H3 reference_to_video limits', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume, refund: vi.fn(async () => {}) } },
         { provide: PrismaService, useValue: prisma },
         {
@@ -242,6 +245,7 @@ describe('StudioService generateVideo 账本对齐 #277（扣费在建记录之�
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume, refund: vi.fn(async () => {}) } },
         {
           provide: PrismaService,

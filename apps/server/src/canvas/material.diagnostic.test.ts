@@ -6,6 +6,8 @@ import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { MediaProbeService } from '../media/media-probe.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 import { MaterialService } from './material.service'
 
 describe('MaterialService.getMaterialDiagnostic', () => {
@@ -19,6 +21,7 @@ describe('MaterialService.getMaterialDiagnostic', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         MaterialService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: { consume: vi.fn(), refund: vi.fn() },

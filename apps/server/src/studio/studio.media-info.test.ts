@@ -9,6 +9,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { UploadService } from '../upload/upload.service'
 import { createMediaProbeMock, createPrismaMock, defaultPlatformResolve } from './studio.test-utils'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const imageGenerate = vi.fn(async () => ({
   url: 'https://example.com/output.png',
@@ -68,6 +70,7 @@ describe('StudioService mediaInfo on generation complete', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         PointsService,
         { provide: PrismaService, useValue: prisma },
         {

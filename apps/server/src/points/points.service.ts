@@ -34,6 +34,7 @@ export class PointsService {
           model: meta?.model ?? null,
           generationId: meta?.generationId ?? null,
           balanceAfter: user?.points ?? null,
+          ruleVersion: meta?.ruleVersion ?? null,
         },
       })
     })
@@ -80,6 +81,7 @@ export class PointsService {
         model: meta?.model ?? null,
         generationId: meta?.generationId ?? null,
         balanceAfter: user?.points ?? null,
+        ruleVersion: meta?.ruleVersion ?? null,
       },
     })
   }

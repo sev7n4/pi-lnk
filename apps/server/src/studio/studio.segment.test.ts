@@ -28,6 +28,8 @@ import {
   allowSegmentRate,
   resetSegmentRateLimitForTests,
 } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const segment = vi.fn()
 
@@ -100,6 +102,7 @@ describe('StudioService.segmentImage', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         {
           provide: PointsService,
           useValue: {
@@ -234,6 +237,7 @@ describe('StudioService.segmentImage (internal MobileSAM)', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume: vi.fn(), refund: vi.fn() } },
         { provide: PrismaService, useValue: {} },
         { provide: ProviderResolverService, useValue: {} },
@@ -419,6 +423,7 @@ describe('StudioService.elementRecognize (naming degrade)', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume: vi.fn(), refund: vi.fn() } },
         { provide: PrismaService, useValue: {} },
         { provide: ProviderResolverService, useValue: { resolveForGeneration } },

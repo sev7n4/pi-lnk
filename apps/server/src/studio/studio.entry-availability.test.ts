@@ -16,6 +16,8 @@ import {
 import { MediaProbeService } from '../media/media-probe.service'
 import { UploadService } from '../upload/upload.service'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 const imageGenerate = vi.fn()
 
@@ -129,6 +131,7 @@ describe('S2-3 生成入口 availability 校验 + 二次失败独立计费退款
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         ProviderResolverService,
         CryptoService,
         { provide: PrismaService, useValue: prisma },

@@ -37,7 +37,6 @@ import {
   type ImageResolutionTier,
   type VideoGenerationMode,
   assertMiniMaxH3ReferenceLimits,
-  imageGenerationCredits,
 } from '@lnkpi/shared'
 import {
   alreadyRefunded,
@@ -54,6 +53,8 @@ import {
   enrichVideoMediaInfoDimensions,
 } from '../media/build-media-info'
 import { PrismaService } from '../prisma/prisma.service'
+import { PricingService } from '../pricing/pricing.service'
+import type { PricingQuote } from '../pricing/pricing.core'
 import { PointsService } from '../points/points.service'
 import {
   consumeMeta,
@@ -63,7 +64,6 @@ import {
 import {
   falH3MaxVideoRecordMeta,
   minimaxH3VideoRecordMeta,
-  videoCreditsForModel,
 } from '../points/video-credits'
 import { classifyByokFailure } from '../provider/byok-fallback'
 import { mergeChatModel } from '../provider/merge-chat-model'
@@ -289,6 +289,7 @@ export class MaterialService {
     @Inject(PointsService) private readonly points: PointsService,
     @Inject(ProviderResolverService) private readonly resolver: ProviderResolverService,
     @Inject(MediaProbeService) private readonly mediaProbe: MediaProbeService,
+    @Inject(PricingService) private readonly pricing: PricingService,
   ) {}
 
   async createFromAgent(data: {
@@ -347,10 +348,11 @@ export class MaterialService {
     )
   }
 
-  private platformFallbackCost(type: string, meta: Record<string, unknown>): number {
-    if (type === 'image') return 10
+  private async platformFallbackQuote(type: string, meta: Record<string, unknown>): Promise<PricingQuote> {
+    if (type === 'image') return this.pricing.quote({ capability: 'image', count: 1 })
     if (type === 'video') {
-      return videoCreditsForModel({
+      return this.pricing.quote({
+        capability: 'video',
         duration: Number(meta.duration ?? 5),
         modelKey:
           (typeof meta.modelKey === 'string' && meta.modelKey) ||
@@ -409,7 +411,8 @@ export class MaterialService {
     }
 
     // 诊断 B4：与 studio 主链路同源定价（按分辨率分级），单一真源 shared
-    const cost = imageGenerationCredits({ count: 1, resolution })
+    const quote = await this.pricing.quote({ capability: 'image', count: 1, resolution })
+    const cost = quote.credits
     const chargeReason = '图像生成'
 
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
@@ -442,7 +445,7 @@ export class MaterialService {
           userId,
           cost,
           chargeReason,
-          consumeMeta('image', { model: model ?? null, generationId: material.id }),
+          consumeMeta('image', { model: model ?? null, generationId: material.id, ruleVersion: quote.ruleVersion }),
         )
       } catch (err) {
         await this.prisma.material.delete({ where: { id: material.id } }).catch(() => undefined)
@@ -519,21 +522,23 @@ export class MaterialService {
       }
     }
 
-    const cost = videoCreditsForModel({
-      duration,
+    const quote = await this.pricing.quote({
+      capability: 'video',
       modelKey: model,
       resolution,
+      duration,
       videoMode: resolvedVideoMode,
       referenceImageCount: referenceBundle.images.length,
       referenceVideoCount: referenceBundle.videos.length,
     })
+    const cost = quote.credits
     const chargeReason = '视频生成'
     if (!skipCharge) {
       await this.points.consume(
         userId,
         cost,
         chargeReason,
-        consumeMeta('video', { model: model ?? null, generationId: null }),
+        consumeMeta('video', { model: model ?? null, generationId: null, ruleVersion: quote.ruleVersion }),
       )
     }
 
@@ -604,7 +609,8 @@ export class MaterialService {
       throw new BadRequestException('当前状态不可确认平台回退')
     }
     const meta = parseMeta(material.metadata)
-    const platformCost = this.platformFallbackCost(material.type, meta)
+    const fallbackQuote = await this.platformFallbackQuote(material.type, meta)
+    const platformCost = fallbackQuote.credits
     const pointCategory = materialPointCategory(material.type)
     const pointExtra = {
       model: typeof meta.model === 'string' ? meta.model : null,
@@ -614,7 +620,7 @@ export class MaterialService {
       userId,
       platformCost,
       '平台回退生成',
-      consumeMeta(pointCategory, pointExtra),
+      consumeMeta(pointCategory, { ...pointExtra, ruleVersion: fallbackQuote.ruleVersion }),
     )
     const chargedMeta = { ...meta, chargedPoints: platformCost, priorByokRefunded: true }
 
@@ -809,7 +815,7 @@ export class MaterialService {
       const cost =
         typeof meta.chargedPoints === 'number'
           ? meta.chargedPoints
-          : this.platformFallbackCost(material.type, meta)
+          : (await this.platformFallbackQuote(material.type, meta)).credits
       await this.points.refund(
         userId,
         cost,

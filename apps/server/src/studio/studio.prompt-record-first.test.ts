@@ -2,6 +2,8 @@ import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { ProviderResolverService } from '../provider/provider-resolver.service'
@@ -65,6 +67,7 @@ describe('StudioService.generatePrompt record-first（G3 缺口修复）', () =>
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume: pointsConsume, refund: pointsRefund } },
         {
           provide: PrismaService,

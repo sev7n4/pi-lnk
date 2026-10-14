@@ -9,6 +9,8 @@ import { ProviderResolverService } from '../provider/provider-resolver.service'
 import { MediaProbeService } from '../media/media-probe.service'
 import { UploadService } from '../upload/upload.service'
 import { StudioService } from './studio.service'
+import { createPricingMock } from '../pricing/pricing.test-utils'
+import { PricingService } from '../pricing/pricing.service'
 
 /**
  * Ruling R12：`kind`（调用方声明的音频二阶分类）必须与**模型目录里的分类**一致。
@@ -60,6 +62,7 @@ describe('generateAudio 的 kind↔模型一致性守卫（R12）', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume: pointsConsume, refund: pointsRefund } },
         {
           provide: PrismaService,
@@ -152,6 +155,7 @@ describe('generateAudio 的 kind↔模型一致性守卫（R12）', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume: pointsConsume, refund: pointsRefund } },
         {
           provide: PrismaService,
@@ -249,6 +253,7 @@ describe('generateAudio 的 BYOK 失败：客户端校验类失败不进 fallbac
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
+        { provide: PricingService, useValue: createPricingMock() },
         { provide: PointsService, useValue: { consume: pointsConsume, refund: pointsRefund } },
         {
           provide: PrismaService,
