@@ -44,6 +44,14 @@ function isVideoUrl(url: string): boolean {
   return VIDEO_URL_RE.test(url)
 }
 
+/**
+ * 2026-10-14（生产实证）：模型会在两段文本之间吐 3+ 连续换行（本例 11 个），
+ * whitespace-pre-wrap 原样渲染成大块空白。渲染层折叠 3+ 换行为空行（保留段落间距语义）。
+ */
+function collapseBlankRuns(text: string): string {
+  return text.replace(/\n{3,}/g, '\n\n')
+}
+
 function toolLabel(p: Extract<TimelinePart, { kind: 'tool' }>): string {
   const shown = presentToolStep({
     label: p.toolName,
@@ -127,7 +135,7 @@ const rootClass = computed(() =>
             class="ml-auto inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--neo-text-muted)]"
           />
         </summary>
-        <p class="mt-1 whitespace-pre-wrap text-[var(--neo-text-secondary)]">{{ part.text }}</p>
+        <p class="mt-1 whitespace-pre-wrap text-[var(--neo-text-secondary)]">{{ collapseBlankRuns(part.text) }}</p>
       </details>
 
       <!-- text -->
@@ -135,7 +143,7 @@ const rootClass = computed(() =>
         v-else-if="part.kind === 'text'"
         class="whitespace-pre-wrap text-[var(--neo-fg)]"
         :class="dense ? 'line-clamp-3' : ''"
-      >{{ part.text }}<span v-if="isStreamingCursor(part)" class="animate-pulse">▊</span></p>
+      >{{ collapseBlankRuns(part.text) }}<span v-if="isStreamingCursor(part)" class="animate-pulse">▊</span></p>
 
       <!-- tool：有 resultSummary 才包 details（可展开看结果）；
            无摘要时渲染纯行——空 details 是「点了没内容」的死交互（2026-10-14 生产反馈） -->

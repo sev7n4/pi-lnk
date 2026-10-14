@@ -265,6 +265,20 @@ describe("thinking 全文透传（P0 思考面板）", () => {
 		const summary = (out!.data as { summary?: string }).summary ?? "";
 		expect(summary.length).toBe(2000);
 	});
+
+	it("2026-10-14 生产实证：end 后 buffer 必须重置——第二段 done 只含本段文本，不带前段", () => {
+		const acc = createThinkingAccumulator();
+		// 段 1
+		acc.feed({ type: "message_update", ts: 1, data: { event: { type: "thinking_start" } } } as never);
+		acc.feed({ type: "message_update", ts: 2, data: { event: { type: "thinking_delta", delta: "第一段思考" } } } as never);
+		const seg1 = acc.feed({ type: "message_update", ts: 3, data: { event: { type: "thinking_end" } } } as never);
+		expect((seg1!.data as { summary?: string }).summary).toBe("第一段思考");
+		// 段 2：修复前 summary = "第一段思考第二段思考"（跨段累积 ⇒ 前端大面积重复）
+		acc.feed({ type: "message_update", ts: 4, data: { event: { type: "thinking_start" } } } as never);
+		acc.feed({ type: "message_update", ts: 5, data: { event: { type: "thinking_delta", delta: "第二段思考" } } } as never);
+		const seg2 = acc.feed({ type: "message_update", ts: 6, data: { event: { type: "thinking_end" } } } as never);
+		expect((seg2!.data as { summary?: string }).summary).toBe("第二段思考");
+	});
 });
 
 describe("waiting_user 透传（2026-10-01 阻塞等待可见化）", () => {

@@ -78,6 +78,14 @@ export interface TurnTimeline {
   turnStartedAt: number
   turnEndedAt?: number
   usage?: { inputTokens: number; outputTokens: number; cost?: number }
+  /**
+   * 2026-10-14（生产实证）：上游 thinking done 事件曾以**累积快照**下发（每段带此前
+   * 全部段全文，4 段 len 220/758/822/963 同 head）。服务端已修（accumulator 段间重置），
+   * 但**存量落库事件仍是累积形态**，且前端必须对两种形态都鲁棒：
+   * 记录上一条原始 summary，新 summary 以其为前缀 ⇒ 差分出本段增量；否则视为段增量原文。
+   * 仅存在于内存模型（replay 每次重建），不落库。
+   */
+  lastRawThinking?: string
 }
 
 export type TimelineUsage = { inputTokens: number; outputTokens: number; cost?: number }
@@ -225,26 +233,42 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         })
         return
       }
-      // 终态：落到最近一段 running 思考；否则最后一段 thinking；都没有则新建 done 段
+      // 终态：落到最近一段 running 思考；否则最后一段 thinking；都没有则新建 done 段。
+      // 2026-10-14：done.summary 可能是**累积快照**（含此前段全文，存量落库数据），
+      // 与 lastRawThinking 前缀比对差分出本段增量；无前缀关系则视为段增量原文（服务端
+      // 已修为段间重置后的新形态）。差分为空且段内无文本时不留空思考块。
+      const raw = d.summary ?? ''
+      let delta = raw
+      const lastRaw = timeline.lastRawThinking
+      if (lastRaw && raw.startsWith(lastRaw) && raw.length > lastRaw.length) {
+        delta = raw.slice(lastRaw.length)
+      }
+      timeline.lastRawThinking = raw
       let target: Extract<TimelinePart, { kind: 'thinking' }> | undefined
+      let targetIdx = -1
       for (let i = timeline.parts.length - 1; i >= 0; i -= 1) {
         const p = timeline.parts[i]
         if (p.kind !== 'thinking') continue
         if (p.status === 'running') {
           target = p
+          targetIdx = i
           break
         }
-        if (!target) target = p
+        if (!target) {
+          target = p
+          targetIdx = i
+        }
       }
       if (target) {
         target.status = 'done'
-        if (d.summary) target.text = d.summary
+        if (delta) target.text = target.text ? `${target.text}${delta}` : delta
         target.endedAt = Date.now()
-      } else {
+        if (!target.text) timeline.parts.splice(targetIdx, 1)
+      } else if (delta) {
         timeline.parts.push({
           kind: 'thinking',
           id: nextPartId('thinking'),
-          text: d.summary ?? '',
+          text: delta,
           status: 'done',
           startedAt: Date.now(),
           endedAt: Date.now(),

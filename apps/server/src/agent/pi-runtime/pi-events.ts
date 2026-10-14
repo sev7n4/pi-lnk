@@ -526,6 +526,10 @@ export function createThinkingAccumulator(limit = 2000): {
 				return null;
 			}
 		const summary = buffer.slice(0, limit);
+		// 2026-10-14（生产实证）：end 后必须清空 buffer —— 否则下一段 thinking 的 done
+		// 会带上此前**所有**段的全文（截图复盘：4 段 summary len 220/758/822/963 且 head
+		// 完全相同），前端时间线每段都渲染从头开始的转写 ⇒ 大面积重复。
+		buffer = "";
 		return { type: "thinking", data: { status: "done", summary: summary || undefined }, seq: event.seq };
 		},
 	};
