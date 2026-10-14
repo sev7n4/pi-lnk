@@ -81,6 +81,27 @@ export function extractTextDelta(event: PiRuntimeEvent): string | null {
 }
 
 /**
+ * 上游帧契约（2026-10-14 深读 vendor）：message_update 内嵌的 `text_end` 子事件
+ * 携带 `contentIndex` + **整块 `content`**（vendor packages/ai/src/types.ts:550：
+ * `{ type:"text_end"; contentIndex; content: string; partial }`），是 AssistantMessage.content
+ * 有序块模型里「一段正文块」的**权威边界**——不是启发式，是上游 replayable 帧协议的原生语义。
+ *
+ * 返回整块文本（仅用于边界判定/校验，正文数据源仍是 text_delta 流——plan 剥离在 delta 侧做）。
+ */
+export function extractTextEnd(event: PiRuntimeEvent): string | null {
+	if (event.type !== "message_update") return null;
+	const data = event.data as {
+		event?: { type?: string; content?: string };
+		assistantMessageEvent?: { type?: string; content?: string };
+	};
+	const ame = data.event ?? data.assistantMessageEvent;
+	if (ame?.type === "text_end" && typeof ame.content === "string") {
+		return ame.content;
+	}
+	return null;
+}
+
+/**
  * 最小映射：
  *   message_update(文本 delta) → text_delta      （流式渲染主通道）
  *   tool_execution_start       → tool_call       （工具开始）
@@ -535,7 +556,37 @@ export function createThinkingAccumulator(limit = 2000): {
 	};
 }
 
+/**
+ * 正文分段落库器（2026-10-14）：把流式 text_delta 按「段」折叠为落库 `text` 事件。
+ *
+ * 根因背景：text_delta 此前**从不进 executionEvents**，正文只存为整条 message.content ——
+ * 历史重放时前端只能把整段正文 unshift 到时间线**最前面**，而产出正文的思考/工具行
+ * 按事件序排在后面 ⇒ 时序倒挂（生产实证：「用户选择了…」跑到 ask_user 行上面；
+ * 收尾叙述跑到产出它的思考上面）。
+ *
+ * 段的定义 = 两次非文本事件之间的 delta 连续流。调用方在**任何非文本 trace 事件落库前**
+ * 调 `flush()`（含 message_end / 回合收尾），保证 text 事件 seq 恒小于紧随其后的边界事件。
+ */
+export function createTextSegmentPersister(push: (type: string, data: unknown) => void): {
+	add(delta: string): void;
+	flush(): void;
+} {
+	let buffer = "";
+	return {
+		add(delta: string) {
+			if (delta) buffer += delta;
+		},
+		flush() {
+			if (!buffer) return;
+			const text = buffer;
+			buffer = "";
+			push("text", { text });
+		},
+	};
+}
+
 export interface TurnUsage {
+
 	inputTokens: number;
 	outputTokens: number;
 	/** 本回合 cost 总额（USD，vendor calculateCost 产物四字段求和）。> 0 才携带——

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	createThinkingAccumulator,
+	createTextSegmentPersister,
 	createUsageAccumulator,
 	extractCanvasActions,
 	extractCanvasCommands,
 	extractTaskEvents,
+	extractTextEnd,
 	mapPiEventToUiEvent,
 	type PiRuntimeEvent,
 } from "./pi-events";
@@ -278,6 +280,62 @@ describe("thinking 全文透传（P0 思考面板）", () => {
 		acc.feed({ type: "message_update", ts: 5, data: { event: { type: "thinking_delta", delta: "第二段思考" } } } as never);
 		const seg2 = acc.feed({ type: "message_update", ts: 6, data: { event: { type: "thinking_end" } } } as never);
 		expect((seg2!.data as { summary?: string }).summary).toBe("第二段思考");
+	});
+});
+
+describe("正文分段落库器（2026-10-14 text 时序归位）", () => {
+	const thinkEvent = (type: string, delta?: string) =>
+		({
+			type: "message_update",
+			ts: 1,
+			data: { event: { type, ...(delta !== undefined ? { delta } : {}) } },
+		}) as never;
+
+	it("delta 累积成段；flush 后清空；空 flush 不产事件", () => {
+		const pushed: Array<{ type: string; data: unknown }> = [];
+		const p = createTextSegmentPersister((type, data) => pushed.push({ type, data }));
+		p.add("第一段");
+		p.add("正文");
+		p.flush();
+		expect(pushed).toEqual([{ type: "text", data: { text: "第一段正文" } }]);
+		p.flush(); // 已清空，不再产事件
+		expect(pushed).toHaveLength(1);
+	});
+
+	it("多段：add → flush → add → flush 产出两个独立 text 事件（段序即发生序）", () => {
+		const pushed: Array<{ type: string; data: unknown }> = [];
+		const p = createTextSegmentPersister((type, data) => pushed.push({ type, data }));
+		p.add("开场白");
+		p.flush();
+		p.add("收尾叙述");
+		p.flush();
+		expect(pushed).toEqual([
+			{ type: "text", data: { text: "开场白" } },
+			{ type: "text", data: { text: "收尾叙述" } },
+		]);
+	});
+});
+
+describe("extractTextEnd（2026-10-14 上游帧契约：text_end 权威块边界）", () => {
+	const msgUpdate = (ame: Record<string, unknown>) =>
+		({ type: "message_update", ts: 1, data: { event: ame } }) as never;
+
+	it("text_end 携带整块 content ⇒ 返回该文本", () => {
+		expect(extractTextEnd(msgUpdate({ type: "text_end", contentIndex: 1, content: "正文块全文" }))).toBe(
+			"正文块全文",
+		);
+	});
+
+	it("text_delta / thinking_end / 非文本字段 ⇒ null（边界判定不误触）", () => {
+		expect(extractTextEnd(msgUpdate({ type: "text_delta", delta: "增量" }))).toBeNull();
+		expect(extractTextEnd(msgUpdate({ type: "thinking_end" }))).toBeNull();
+		expect(extractTextEnd(msgUpdate({ type: "text_end" }))).toBeNull(); // 缺 content 字段
+		expect(extractTextEnd({ type: "agent_end", ts: 1, data: {} } as never)).toBeNull();
+	});
+
+	it("契约锁：text_end 映射为 null UI 事件 ⇒ 消费方 flush 必须置于 `if (!ui) continue` 之前", () => {
+		// 若有人在 mapPiEventToUiEvent 之后才消费 text_end，此断言会解释为什么永远走不到
+		expect(mapPiEventToUiEvent(msgUpdate({ type: "text_end", content: "x" }))).toBeNull();
 	});
 });
 
