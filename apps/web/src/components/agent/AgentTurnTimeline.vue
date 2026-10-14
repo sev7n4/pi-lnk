@@ -121,21 +121,25 @@ const rootClass = computed(() =>
 <template>
   <div v-if="hasContent" :class="rootClass">
     <template v-for="part in parts" :key="part.id">
-      <!-- thinking -->
+      <!-- thinking：Q1（2026-10-14 对齐 WorkBuddy）——running 期间展开、流式快照实时可见；
+           done 后默认收起（:open 随状态翻转自动折叠），用户可随时点开回看 -->
       <details
         v-if="part.kind === 'thinking'"
         class="group rounded border border-[var(--agent-assistant-divider)] bg-[var(--agent-assistant-bg-soft)] px-2 py-1"
-        :open="!dense"
+        :open="part.status === 'running'"
       >
         <summary class="flex cursor-pointer items-center gap-1.5 text-[var(--neo-text-muted)]">
           <span>🧠</span>
-          <span class="font-medium">思考</span>
+          <span class="font-medium">{{ part.status === 'running' ? '思考中' : '思考' }}</span>
           <span
             v-if="part.status === 'running'"
             class="ml-auto inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--neo-text-muted)]"
           />
         </summary>
-        <p class="mt-1 whitespace-pre-wrap text-[var(--neo-text-secondary)]">{{ collapseBlankRuns(part.text) }}</p>
+        <p
+          class="mt-1 whitespace-pre-wrap text-[var(--neo-text-secondary)]"
+          :class="part.status === 'running' ? 'max-h-40 overflow-y-auto' : ''"
+        >{{ collapseBlankRuns(part.text) }}<span v-if="part.status === 'running'" class="animate-pulse">▊</span></p>
       </details>
 
       <!-- text -->

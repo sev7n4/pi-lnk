@@ -236,6 +236,20 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(blocks[2].text).toBe('节点ID不对，重新操作。')
   })
 
+  it('⭐ Q1 流式思考（2026-10-14 对齐 WorkBuddy）：running 快照实时更新文本，done 权威替换不追加重', () => {
+    const tl = feed([
+      { type: 'thinking', data: { status: 'running' } },
+      // 服务端节流透传的累积快照（transient 只影响落库，模型层照常消费）
+      { type: 'thinking', data: { status: 'running', summary: '用户已选择' } },
+      { type: 'thinking', data: { status: 'running', summary: '用户已选择风格，开始' } },
+      { type: 'thinking', data: { status: 'done', summary: '用户已选择风格，开始生成' } },
+    ])
+    const blocks = byKind(tl, 'thinking')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('用户已选择风格，开始生成')
+    expect(blocks[0].status).toBe('done')
+  })
+
   it('⭐ 增量形态（服务端修复后）不受差分逻辑影响：done.summary 即段原文', () => {
     const tl = feed([
       { type: 'thinking', data: { status: 'running' } },
