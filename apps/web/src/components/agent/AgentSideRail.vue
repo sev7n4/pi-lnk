@@ -916,12 +916,6 @@ const cancelledCalloutText = computed(() => {
     (cancelledProgressText.value ?? '')
   return text || '当前任务已停止，你可以发起新任务或直接输入新的需求。'
 })
-/**
- * 底部 dock 含门控/定稿卡片时需限高以免挤占聊天滚动区。
- * 2026-10-06：门控/定稿卡片全部下线，只剩「已停止」提示仍钉在这里。
- */
-const hasDockPresentation = computed(() => showCancelledCallout.value)
-
 /** ask_user 阻塞卡（B-6）：生命周期绑定 pending 状态，不再随新 user message 清空（提交/取消才清）。
  * callId 是卡片级提交依据（Task 2 payload），同卡多问题共享同一 callId，逐元素携带便于恢复/拦截取用。 */
 const pendingAskUser = ref<Array<{ callId: string; id: string; question: string; options: { label: string; value: string }[]; multiSelect?: boolean; allowOther?: boolean }>>([])
@@ -931,6 +925,30 @@ const lastMessageIsAssistant = computed(() => {
   const last = msgs[msgs.length - 1]
   return !!last && last.role === 'assistant'
 })
+
+/**
+ * 底部 dock 含展示内容时需限高，以免挤占聊天滚动区。
+ *
+ * 2026-10-14（生产反馈「阻塞等待确认时历史对话无法上下滑动」复发修复）：
+ * 本判定此前**只认取消态**（`showCancelledCallout`），源于 2026-10-06「门控/定稿卡片全部下线」
+ * 时把限高条件从结构不变量（「dock 有内容」）**退化成了内容枚举**（「dock 里只有取消提示」）。
+ * 于是 propose 等待确认 / ask 卡 / 活跃 live timeline 全部退回无上限：
+ * `agent-input-area`(shrink-0) 被撑高 ⇒ `chat-wrap`(flex-1 min-h-0) 压到 0 高
+ * ⇒ 历史消息既看不见也滑不动。
+ *
+ * ⚠️ 2026-10-09 的修复只给 `AgentExecutionTrace(dense)` 的步骤 `<ul>` 加了 max-height，
+ * 而阻塞期实际走的是**没有任何上限**的 `AgentTurnTimeline(dense)` ⇒ 修了通电的那根线，故本次复发。
+ *
+ * ⇒ 现在按**结构不变量**判定：dock 出现任一展示态即限高，未来新增内容自动受保护。
+ * ⚠️ 声明必须晚于上面四个依赖（const TDZ），移动此块时勿上移。
+ */
+const hasDockPresentation = computed(
+  () =>
+    showCancelledCallout.value ||
+    Boolean(liveTimeline.value) ||
+    Boolean(proposeWait.value) ||
+    (pendingAskUser.value.length > 0 && lastMessageIsAssistant.value),
+)
 
 /** 组件侧回答回传：payload 组装收敛在 agentAnswers 模块（含明文 HTTP 降级）。 */
 function answersPost(

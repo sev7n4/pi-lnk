@@ -14,11 +14,12 @@
  *   failed 出内联重试入口（D2）+ 错误文案；点击/定位复用现有画布能力
  * - notice：按 tone 着色；error 带重试按钮
  */
-import { computed } from 'vue'
+import { computed, shallowReactive, type CSSProperties } from 'vue'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
 import { presentToolStep } from '@/components/agent/toolPresentation'
-import type { TimelinePart } from '@/components/agent/turnTimeline'
+import { useDisclosure } from '@/components/agent/useDisclosure'
+import type { TimelinePart, ThinkingPart } from '@/components/agent/turnTimeline'
 
 const props = defineProps<{
   parts: TimelinePart[]
@@ -110,23 +111,100 @@ const toneClass = (tone: 'info' | 'warn' | 'error') =>
 
 const hasContent = computed(() => props.parts.length > 0)
 
-/** 容器：dense（活体钉底）收紧行距与字号；其余完全一致（同一套 parts 渲染）。 */
+/**
+ * 思考块的折叠契约（2026-10-14）：用户意图优先于展示默认值。
+ *
+ * 每个 thinking part 持有**独立**的 disclosure 实例，按 part.id 缓存 —— 重建 parts
+ * 数组（同 id）时复用同一实例，用户点过的选择因此能跨 patch 存活。
+ *
+ * ⚠️ 缓存键必须是 part.id 而非数组下标：parts 会随流式增长/重排，下标会错位。
+ */
+type Disclosure = ReturnType<typeof useDisclosure>
+
+/**
+ * 用 `shallowReactive` 而非 `reactive`：后者会**深度解包 ref**，
+ * 使 Map 里存的对象变成 `{ isOpen: boolean }`（`.value` 消失、类型被改写）。
+ * 这里要的就是「Map 本身可追踪、但内部实例保持原样」。
+ */
+const thinkingDisclosures = shallowReactive(new Map<string, Disclosure>())
+
+/**
+ * 思考块当前是否有流式快照（展示默认值的**唯一**响应式来源）。
+ *
+ * ⚠️ 必须从 `props.parts` 派生并保持响应式，不能在 `useDisclosure` 的回调里
+ * 现查现算：那样 `getDefault` 的求值时机落在 computed 的依赖追踪之外，
+ * parts 换新对象时结果不会被重算（CI 实测：running→done 后仍不自动收起）。
+ * 抽成独立 computed 后，Vue 能把它记进依赖链，parts 变化即触发重算。
+ */
+function isRunningThinking(id: string): boolean {
+  return props.parts.some((p) => p.kind === 'thinking' && p.id === id && p.status === 'running')
+}
+
+function disclosureFor(part: ThinkingPart): Disclosure {
+  let d = thinkingDisclosures.get(part.id)
+  if (!d) {
+    // 默认值读响应式派生的 isRunningThinking —— 实时、且被 computed 正确追踪。
+    // ⛔ 不可写成 `() => part.status === 'running'`：捕获首次渲染的 part 引用，
+    // replay 用同 id 新对象替换旧 part 后默认值会锁死在旧 status 上（CI 实测踩过）。
+    d = useDisclosure(() => isRunningThinking(part.id))
+    thinkingDisclosures.set(part.id, d)
+  }
+  return d
+}
+
+function thinkingOpen(part: ThinkingPart): boolean {
+  return disclosureFor(part).isOpen.value
+}
+
+function onThinkingToggle(part: ThinkingPart, nativeOpen: boolean): void {
+  disclosureFor(part).onNativeToggle(nativeOpen)
+}
+
+/**
+ * 钉底（dense）内容高度上限。与 `AgentExecutionTrace(dense)` 的步骤 `<ul>` 同口径
+ * （min(46vh, 420px)），避免同一 dock 里两种限高值。
+ *
+ * ⚠️ 这是**第二道防线**，不是唯一防线：dock 容器 `.agent-input-area--scrollable`
+ * （`AgentSideRail.vue` 的 `hasDockPresentation` 门控）才是主防线。
+ * 2026-10-09 只给 `AgentExecutionTrace(dense)` 加了上限、未覆盖本组件，
+ * 而阻塞期实际走的正是本组件 ⇒ 限高缺失 ⇒ 历史滚动被锁死（2026-10-14 复发）。
+ * 两处都要在：主防线保证 dock 整体不被撑破，本兜底保证单个组件先在自己内部滚。
+ */
+const DENSE_MAX_HEIGHT = 'min(46vh, 420px)'
+
+/** 容器：dense（活体钉底）收紧行距与字号并限高；其余完全一致（同一套 parts 渲染）。 */
 const rootClass = computed(() =>
   props.dense
     ? 'agent-turn-timeline agent-turn-timeline--dense flex flex-col gap-0.5 text-[10px] leading-snug'
     : 'agent-turn-timeline flex flex-col gap-1 text-[11px] leading-snug',
 )
+
+const rootStyle = computed<CSSProperties | undefined>(() =>
+  props.dense
+    ? {
+        'max-height': DENSE_MAX_HEIGHT,
+        // ⚠️ 必须写 CSSProperties 而非让TS 推断成 `{ 'overflow-y': string }`：
+        // Vue 的 StyleValue 要求 OverflowY 字面量类型，string 会报 TS2322（CI 实测）。
+        overflowY: 'auto',
+        // contain：到边界不链式滚动外层历史列表（避免"滚到头就带动整页"的错位手感）
+        overscrollBehavior: 'contain',
+      }
+    : undefined,
+)
 </script>
 
 <template>
-  <div v-if="hasContent" :class="rootClass">
+  <div v-if="hasContent" :class="rootClass" :style="rootStyle">
     <template v-for="part in parts" :key="part.id">
-      <!-- thinking：Q1（2026-10-14 对齐 WorkBuddy）——running 期间展开、流式快照实时可见；
-           done 后默认收起（:open 随状态翻转自动折叠），用户可随时点开回看 -->
+      <!-- thinking：折叠契约（2026-10-14）——展示默认值（running 展开 / done 收起）仅在
+           用户未表达意图时生效；用户点过后由 @toggle 记录意图，后续 patch 不再改写。
+           ⛔ 不可写成 `<details :open="part.status === 'running'">`：那会把默认值当受控值，
+           running 期间恒 true ⇒ 用户点了收起，下个 patch 就被强制弹回（生产反馈：收不回）。 -->
       <details
         v-if="part.kind === 'thinking'"
         class="group rounded border border-[var(--agent-assistant-divider)] bg-[var(--agent-assistant-bg-soft)] px-2 py-1"
-        :open="part.status === 'running'"
+        :open="thinkingOpen(part)"
+        @toggle="onThinkingToggle(part, ($event.target as HTMLDetailsElement).open)"
       >
         <summary class="flex cursor-pointer items-center gap-1.5 text-[var(--neo-text-muted)]">
           <span>🧠</span>
