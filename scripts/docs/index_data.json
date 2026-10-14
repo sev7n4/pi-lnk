@@ -1,24 +1,24 @@
 {
- "total": 302,
+ "total": 358,
  "by_status": {
-  "living": 101,
-  "frozen": 196,
-  "superseded": 5
+  "living": 123,
+  "frozen": 229,
+  "superseded": 6
  },
  "by_topic": {
-  "canvas-tool": 46,
-  "generation-pipeline": 38,
+  "canvas-tool": 50,
+  "other": 50,
+  "generation-pipeline": 40,
   "canvas-product": 34,
+  "agent-ux": 31,
   "image-editor": 30,
-  "agent-ux": 26,
-  "tool-runtime": 19,
+  "tool-runtime": 25,
+  "planning": 18,
   "account-auth": 18,
   "workflow-exchange": 18,
-  "other": 18,
-  "planning": 16,
   "ui-interaction": 15,
+  "memory": 11,
   "vision": 7,
-  "memory": 6,
   "deploy-infra": 4,
   "prompt-registry": 4,
   "context-engineering": 3
@@ -27,7 +27,7 @@
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 27
+  "2026-10": 83
  },
  "items": [
   {
@@ -1347,6 +1347,276 @@
   {
    "path": "docs/superpowers/specs/2026-10-06-u6-3-audio-capability-source.md",
    "name": "2026-10-06-u6-3-audio-capability-source.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-08-graph-expression-engine-design-v2.md",
+   "name": "2026-10-08-graph-expression-engine-design-v2.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-08-pilnk-memory-product-adoption-scope.md",
+   "name": "2026-10-08-pilnk-memory-product-adoption-scope.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-08-text-pipeline-hardening-design.md",
+   "name": "2026-10-08-text-pipeline-hardening-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-08-workbuddy-three-layer-memory-design.md",
+   "name": "2026-10-08-workbuddy-three-layer-memory-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-model-platform-hardening-design.md",
+   "name": "2026-10-09-model-platform-hardening-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s01-ghost-model-retirement-design.md",
+   "name": "2026-10-09-mph-s01-ghost-model-retirement-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s02-error-semantic-mapping-design.md",
+   "name": "2026-10-09-mph-s02-error-semantic-mapping-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s03-smoke-probe-design.md",
+   "name": "2026-10-09-mph-s03-smoke-probe-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s11-liveness-reconciliation-design.md",
+   "name": "2026-10-09-mph-s11-liveness-reconciliation-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s12-model-health-stats-design.md",
+   "name": "2026-10-09-mph-s12-model-health-stats-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s13-dock-health-badge-design.md",
+   "name": "2026-10-09-mph-s13-dock-health-badge-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s21-catalog-as-data-design.md",
+   "name": "2026-10-09-mph-s21-catalog-as-data-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s22-routing-table-design.md",
+   "name": "2026-10-09-mph-s22-routing-table-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-mph-s23-failure-self-heal-design.md",
+   "name": "2026-10-09-mph-s23-failure-self-heal-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-task-management-module-design.md",
+   "name": "2026-10-09-task-management-module-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-09-task-tool-design.md",
+   "name": "2026-10-09-task-tool-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-10-c4-subagent-design.md",
+   "name": "2026-10-10-c4-subagent-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-10-model-ops-simplify-design.md",
+   "name": "2026-10-10-model-ops-simplify-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-10-plan-gate-design.md",
+   "name": "2026-10-10-plan-gate-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-10-turn-budget-design.md",
+   "name": "2026-10-10-turn-budget-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-11-automations-design.md",
+   "name": "2026-10-11-automations-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-11-ops-console-design.md",
+   "name": "2026-10-11-ops-console-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-12-tool-details-contract-design.md",
+   "name": "2026-10-12-tool-details-contract-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-13-agent-turn-timeline-design.md",
+   "name": "2026-10-13-agent-turn-timeline-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-13-canvas-settings-panel-design.md",
+   "name": "2026-10-13-canvas-settings-panel-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-13-generation-failure-recovery-and-motion-prompt-design.md",
+   "name": "2026-10-13-generation-failure-recovery-and-motion-prompt-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-13-pricing-baseline-config-design.md",
+   "name": "2026-10-13-pricing-baseline-config-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-13-propose-confirm-evidence-and-clarify-matrix-design.md",
+   "name": "2026-10-13-propose-confirm-evidence-and-clarify-matrix-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-13-sidebar-ref-bind-invariant-design.md",
+   "name": "2026-10-13-sidebar-ref-bind-invariant-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-14-agent-conversation-three-defects-analysis.md",
+   "name": "2026-10-14-agent-conversation-three-defects-analysis.md",
    "month": "2026-10",
    "kind": "spec",
    "status": "frozen",
@@ -2747,6 +3017,240 @@
    "status": "frozen",
    "reason": "2026-10 非活跃主题",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-08-memory-phase1-quota-budget.md",
+   "name": "2026-10-08-memory-phase1-quota-budget.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（memory）",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-08-memory-phase2-curation-dedup.md",
+   "name": "2026-10-08-memory-phase2-curation-dedup.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（memory）",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-08-memory-phase3-conflict-lifecycle.md",
+   "name": "2026-10-08-memory-phase3-conflict-lifecycle.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "memory"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-08-text-pipeline-hardening.md",
+   "name": "2026-10-08-text-pipeline-hardening.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-09-model-platform-hardening-b0.md",
+   "name": "2026-10-09-model-platform-hardening-b0.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-09-model-platform-hardening-b1.md",
+   "name": "2026-10-09-model-platform-hardening-b1.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-09-task-tool-todo-write.md",
+   "name": "2026-10-09-task-tool-todo-write.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-10-c4-subagent.md",
+   "name": "2026-10-10-c4-subagent.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-10-model-platform-hardening-b2.md",
+   "name": "2026-10-10-model-platform-hardening-b2.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-10-model-platform-hardening-b3.md",
+   "name": "2026-10-10-model-platform-hardening-b3.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-10-plan-gate.md",
+   "name": "2026-10-10-plan-gate.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "planning"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-10-turn-budget.md",
+   "name": "2026-10-10-turn-budget.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-11-automations-p0.md",
+   "name": "2026-10-11-automations-p0.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-11-ops-console.md",
+   "name": "2026-10-11-ops-console.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-12-rate-limited-error-code.md",
+   "name": "2026-10-12-rate-limited-error-code.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-12-tool-details-contract-p0.md",
+   "name": "2026-10-12-tool-details-contract-p0.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-13-p0-pricing-equivalent-migration.md",
+   "name": "2026-10-13-p0-pricing-equivalent-migration.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-13-pr1-failure-toast-agent-diagnose.md",
+   "name": "2026-10-13-pr1-failure-toast-agent-diagnose.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-13-pr2-video-prompt-contract.md",
+   "name": "2026-10-13-pr2-video-prompt-contract.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-13-pr3-generation-failure-recovery.md",
+   "name": "2026-10-13-pr3-generation-failure-recovery.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-13-propose-confirm-evidence-p0.md",
+   "name": "2026-10-13-propose-confirm-evidence-p0.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-13-propose-outcome-metric-p2.md",
+   "name": "2026-10-13-propose-outcome-metric-p2.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-13-sidebar-ref-bind-pr-a.md",
+   "name": "2026-10-13-sidebar-ref-bind-pr-a.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-14-sidebar-ref-bind-pr-b.md",
+   "name": "2026-10-14-sidebar-ref-bind-pr-b.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-14-sidebar-ref-bind-pr-c.md",
+   "name": "2026-10-14-sidebar-ref-bind-pr-c.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-14-sidebar-ref-bind-pr-d.md",
+   "name": "2026-10-14-sidebar-ref-bind-pr-d.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
   }
  ]
 }
