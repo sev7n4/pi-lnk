@@ -52,6 +52,7 @@ const ALL_NAMES = [
 	"web_search",
 	"web_fetch",
 	"read_document",
+	"view_canvas_media",
 	"recall_memory",
 	// 记忆写（2026-10-03）：被 memory_scope.tail.md 直接约束，常驻
 	"save_memory",
