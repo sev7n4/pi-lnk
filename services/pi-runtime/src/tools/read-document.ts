@@ -86,7 +86,11 @@ export function buildReadDocumentTools(): LnkpiTool[] {
 				if (hit.item.mediaType !== "text") {
 					return readResult({
 						ok: false,
-						error: hit.key + " 是 " + hit.item.mediaType + " 素材，read_document 仅支持文本素材；图片素材已随对话注入视觉解析",
+						error:
+						hit.key +
+						" 是 " +
+						hit.item.mediaType +
+						" 素材，read_document 仅支持文本素材；图片素材可用 view_canvas_media 传 url（或节点 node_id）查看",
 					});
 				}
 				const body = (hit.item.text ?? "").trim();

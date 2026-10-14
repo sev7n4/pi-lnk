@@ -212,6 +212,15 @@ test("V-β：run_image_generation 成功 → 文本 + image block，imageRefine=
 	assert.deepEqual((res.details as { actions: unknown[] })?.actions, [{ type: "update_node", payload: { id: "n_1", data: { status: "completed" } } }]);
 });
 
+test("视觉自评闭环：attached 时文本 JSON 带 canvasNode 锚（T2 降级恢复的依据）", async () => {
+	const tools = createGenerationTools(fakeClient() as never, { fetchImpl: imageFetch() });
+	const tool = tools.find((t) => t.name === "run_image_generation")!;
+	const res = await run(tool, { node_id: "n_1" });
+	const text = JSON.parse((res.content[0] as { text: string }).text);
+	assert.equal(text.data.canvasNode, "n_1");
+	assert.equal(res.content.length, 2);
+});
+
 test("V-ζ：图片取不到 → 仅文本 + imageRefine=skipped:http（fail-open）", async () => {
 	const failFetch = (async () => new Response("nope", { status: 404 })) as typeof fetch;
 	const tools = createGenerationTools(fakeClient() as never, { fetchImpl: failFetch });
