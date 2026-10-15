@@ -76,6 +76,16 @@ describe('三滚动条治理 — dock 内不得再有内层滚动容器', () => 
     expect(src, '应扫到模板主体').toMatch(/class="mt-1 whitespace-pre-wrap/)
   })
 
+  it('AgentExecutionTrace：dense 展开的步骤 <ul> 不再加内层 max-height/overflow', () => {
+    const src = stripComments(readFileSync(tracePath, 'utf8'))
+    expect(
+      src,
+      'dense 步骤 <ul> 不得再挂 max-height/overflow-y（主防线在 dock 外层，内层即嵌套滚动）',
+    ).not.toMatch(/max-height/)
+    // 有效性断言（防空集假绿）：确认扫到了 template 主体
+    expect(src, '应扫到 template 主体').toMatch(/data-testid="operation-steps"/)
+  })
+
   it('组件源码里已无残留的 DENSE_MAX_HEIGHT 常量（做减法，不留死代码）', () => {
     const src = stripComments(readFileSync(timelinePath, 'utf8'))
     expect(src, 'DENSE_MAX_HEIGHT 已无使用者，应完全删除').not.toMatch(/DENSE_MAX_HEIGHT/)
