@@ -11,6 +11,7 @@
  *   ri 枚举 0..6（前 5 张免费）、rv 枚举 0..2。
  */
 import type { PricingQuery } from './pricing.core'
+import { TEXT_TOKEN_MODELS, type TextTokenSpec } from './pricing.core'
 
 export const ENUMERATED_IMAGE_RESOLUTIONS = ['1K', '2K', '4K'] as const
 export const ENUMERATED_IMAGE_COUNTS = [1, 2, 3, 4] as const
@@ -54,6 +55,44 @@ export function enumeratePricingSpace(): PricingQuery[] {
           }
         }
       }
+    }
+  }
+  return out
+}
+
+// —— P2 T4：文本 token 反比率行枚举 ——
+
+export interface TextTokenRowSpec {
+  modelKey: string
+  spec: TextTokenSpec
+}
+
+/** step-2-16k 上游未公布 cache 价（CostRate 无 per_1m_tokens_cache 行）→ 不枚举 cache 行。 */
+const TEXT_TOKEN_MODELS_WITH_CACHE: readonly string[] = [
+  'step-3.5-flash',
+  'step-3.7-flash',
+  'step-5-preview',
+  'minimax-m2.7',
+]
+
+/**
+ * 文本 token 反比率行枚举（P2 · spec §6.5）：5 模型 × in/out 全量 + cache 4 行 = 14 行。
+ *
+ * 刻意**不并入** enumeratePricingSpace()：那里的每个 case 都必须能过 legacyPriceOf
+ * （v1 seed 逐行落 legacy 值、启动自检、金标准 tripwire 三处共同前提），而 token
+ * 反比率行没有 legacy 常量、只进新版本（v1 不重播——Global Constraints 生命线）。
+ * 消费者（v2 草案种子/发布流）参照既有 image/video 行的挂法：按 (modelKey, spec)
+ * 查 CostRate `per_1m_tokens_*` 行，用
+ * `r = floor(1e6 / (costYuan × 100 × marginBp / 100))` 现算反比率并挂 costRateId
+ * （basis='launch-reprice'，marginBp 取当前生效阶段，缺省 11000bp）。
+ */
+export function enumerateTextTokenRows(): TextTokenRowSpec[] {
+  const out: TextTokenRowSpec[] = []
+  for (const modelKey of TEXT_TOKEN_MODELS) {
+    out.push({ modelKey, spec: 'in' })
+    out.push({ modelKey, spec: 'out' })
+    if (TEXT_TOKEN_MODELS_WITH_CACHE.includes(modelKey)) {
+      out.push({ modelKey, spec: 'cache' })
     }
   }
   return out

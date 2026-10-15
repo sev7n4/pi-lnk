@@ -106,6 +106,32 @@ export function buildMatchKey(q: PricingQuery): string {
   }
 }
 
+/**
+ * 文本 token 反比率行（P2 · spec §6.5）：`text:<modelKey>:in|cache|out` 三行一组，
+ * credits 存反比率整数 `r = floor(1e6 / (costYuan × 100 × marginBp / 100))`。
+ */
+export type TextTokenSpec = 'in' | 'cache' | 'out'
+
+/**
+ * 文本 token 计费的 5 个模型键（P2，与 CostRate `per_1m_tokens_*` 行同键：
+ * 小写连字符）。结算按此判定已知模型；未知模型 → USD 成本兜底。
+ */
+export const TEXT_TOKEN_MODELS: readonly string[] = [
+  'step-3.5-flash',
+  'step-3.7-flash',
+  'step-2-16k',
+  'step-5-preview',
+  'minimax-m2.7',
+]
+
+/**
+ * 反比率行匹配键。⚠️ `buildMatchKey` 的 `text` 单行分支不动——studio 文本直生
+ * 仍走 `text` 单行 5 分（Out of Scope），两套键空间以 `text:` 前缀天然隔离。
+ */
+export function buildTextTokenMatchKey(modelKey: string, spec: TextTokenSpec): string {
+  return `text:${modelKey}:${spec}`
+}
+
 /** 现行常量行为（= 迁移前的代码路径）。任何查询都可求值，用于兜底与金标准比对。 */
 export function legacyPriceOf(q: PricingQuery): number {
   switch (q.capability) {
