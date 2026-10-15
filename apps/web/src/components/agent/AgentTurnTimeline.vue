@@ -161,17 +161,16 @@ function onThinkingToggle(part: ThinkingPart, nativeOpen: boolean): void {
 }
 
 /**
- * 容器：dense（活体钉底）只收紧行距与字号；**不再自带 max-height / overflow-y**。
+ * 2026-10-15（三滚动条治理 2/2）：dense 根的限高滚动**恢复**，但语境已完全不同——
+ * live 态对话内容已移回 `.agent-chat-scroll` 主滚动流（dock 滚动容器整体删除），
+ * 卡片自身的 `max-height + overflow-y` 现在是**唯一允许的内嵌滚动**
+ * （用户口径「composer 上方只有思考消息流自带滚动条，其余是一整套页面」）。
  *
- * 2026-10-15（三滚动条治理）：此前本组件在 dense 态给根节点加 `max-height: min(46vh,420px)`
- * + `overflow-y:auto`，与 dock 外层 `.agent-dock-scroll--scrollable`（`min(42vh,400px)`）
- * **构成两层嵌套滚动**；叠加 thinking running 块的 `max-h-40 overflow-y-auto`，
- * 流式回合里同时出现三条竖直滚动条。
- *
- * 那道「第二道防线」的前提是「dock 外层限高只认已取消态」——该前提已被
- * #416 推翻：`hasDockPresentation` 现在把 liveTimeline / proposeWait / ask 卡
- * 都计入，外层对**所有**活跃展示态恒限高。
- * ⇒ 内层限高是纯冗余嵌套，主防线已覆盖它。删除不会回归 #416 的「历史滑不动」。
+ * 历史脉络：1/2 曾删掉这道限高，因为当时它与 dock 外层 `.agent-dock-scroll--scrollable`
+ * 构成两层嵌套滚动（流式回合三条竖直滚动条的第三条）；2/2 外层已不存在，
+ * 卡片内滚不再嵌套，且是内容超长时的唯一防线。规则本体在 AgentSideRail.vue 的
+ * `.agent-turn-timeline--dense`（限高 min(46vh,420px)），不在本组件——
+ * 历史气泡内（非 dense）形态不加，跟随主滚动流。
  */
 
 /** 容器：dense（活体钉底）收紧行距与字号；其余完全一致（同一套 parts 渲染）。 */
@@ -327,3 +326,17 @@ const rootClass = computed(() =>
     </template>
   </div>
 </template>
+
+<style scoped>
+/* 2026-10-15（三滚动条治理 2/2）：dense（live 活体）根的限高滚动——
+ * 唯一允许的内嵌滚动（用户口径「composer 上方的对话内容是一整套页面，
+ * 只有思考消息流自带滚动条」）。live 内容已入 .agent-chat-scroll 主滚动流，
+ * 本规则是卡片内容超长时的唯一防线，不与任何外层滚动容器嵌套。
+ * 历史气泡内（非 dense）不加：跟随主滚动流。规则放本组件而非父级 scoped，
+ * 避免依赖「子组件根带父 scope attr」的隐式命中（换父即静默失效）。 */
+.agent-turn-timeline--dense {
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+</style>

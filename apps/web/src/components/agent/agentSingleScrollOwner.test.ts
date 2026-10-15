@@ -6,18 +6,19 @@ import AgentTurnTimeline from './AgentTurnTimeline.vue'
 import type { TimelinePart } from './turnTimeline'
 
 /**
- * 2026-10-15 生产反馈：对话框里同时出现**三条**竖直滚动条。
+ * 2026-10-15 三滚动条治理全程守卫。
  *
- * 机制（三层 `overflow-y:auto` 叠加，全部命中同一条 dock）：
- *   ① 消息列表 `.agent-chat-scroll`（正常滚动主体）
- *   ② dock 外层 `.agent-dock-scroll--scrollable`（`min(42vh,400px)`，#416 起对所有活跃展示态恒生效）
- *   ③ `AgentTurnTimeline(dense)` 根 `max-height: min(46vh,420px)` + thinking running `<p>` `max-h-40`
- * ③ 与 ② **嵌套**。②③ 都为「限高防撑爆」而设，但 ② 已成为覆盖全场景的主防线，
- * ③ 是前提被 #416 推翻后残留的冗余嵌套。
+ * 1/2（#421）：删掉 dense 组件内层与 dock 外层的冗余嵌套滚动。
+ * 2/2（本 PR）：live 态对话内容（时间线 / 提示卡 / ask 卡 / 取消提示）移回
+ * `.agent-chat-scroll` 主滚动流，dock 只留 composer——用户口径
+ * 「composer 上方的对话内容是一整套页面，只有思考消息流自带滚动条」。
  *
- * 本测试锁「**dock 内不得再出现内层滚动**」这条结构不变量：
- * 限高职责唯一归属 dock 外层，组件只管内容不管滚动。
- * ⚠️ 只锁断言不算回归防护——下面第 3 条用变异实测验证这些断言**能证伪**。
+ * 本文件锁 2/2 之后的结构不变量：
+ *   ① dock 不再存在第二个滚动上下文（.agent-dock-scroll 系列全删除）
+ *   ② dense 时间线卡片自带限高滚动（唯一允许的内嵌滚动，选择器与规则成对存在）
+ *   ③ thinking running 块不嵌第三层（卡片内再有内滚就是复发三滚动条）
+ *   ④ 主滚动容器自身不再被 scoped 规则覆盖（min-h-0 必须真实生效）
+ * ⚠️ 只锁断言不算回归防护——末条用变异实测验证断言能证伪。
  */
 
 const railPath = resolve(__dirname, 'AgentSideRail.vue')
@@ -37,8 +38,8 @@ function runningThinking(): TimelinePart {
 /**
  * 剔除注释行，只留真实代码。
  *
- * ⚠️ 这几个断言涉及的组件注释里**正面记录了被删除的历史**（含 `max-h-40`、
- * `DENSE_MAX_HEIGHT`、`max-height` 等字面量），全文匹配会把注释当代码 ⇒ 假红。
+ * ⚠️ 这几个断言涉及的组件注释里**正面记录了被删除的历史**（含 dock-scroll、
+ * max-height 等字面量），全文匹配会把注释当代码 ⇒ 假红。
  *
  * 三种注释形态都要剔：
  *   ① 双斜杠单行（TS/JS）
@@ -60,63 +61,94 @@ function stripComments(src: string): string {
     .join('\n')
 }
 
-describe('三滚动条治理 — dock 内不得再有内层滚动容器', () => {
-  it('AgentTurnTimeline：dense 根节点不再挂 max-height/overflow-y（限高职责归 dock 外层）', () => {
+describe('三滚动条治理 2/2 — 滚动上下文唯一，dense 卡片自带限高', () => {
+  it('① dock 第二滚动上下文已彻底删除（模板 class + CSS 规则 + hasDockPresentation 全无）', () => {
+    const rail = stripComments(readFileSync(railPath, 'utf8'))
+    expect(rail, '.agent-dock-scroll 容器类应从模板与 CSS 中完全删除').not.toMatch(/agent-dock-scroll/)
+    expect(rail, 'hasDockPresentation 判定已无消费点，应删除').not.toMatch(/hasDockPresentation/)
+    expect(
+      rail,
+      '主滚动容器 .agent-chat-scroll 必须仍在',
+    ).toMatch(/agent-chat-scroll/)
+    // 有效性断言（防空集假绿）：确认确实扫到了模板与样式主体
+    expect(rail, '应扫到模板主体').toMatch(/data-testid="propose-wait-hint"/)
+    expect(rail, '应扫到样式主体').toMatch(/\.agent-chat-scroll \{/)
+  })
+
+  it('② AgentTurnTimeline：dense 根挂 --dense 类，且限高规则在组件自身 scoped style 中成对存在', () => {
     const w = mount(AgentTurnTimeline, {
       props: { parts: [runningThinking()], streaming: true, dense: true },
       attachTo: document.body,
     })
     // 有效性断言（防空集假绿）：组件确实渲染了
     expect(w.find('.agent-turn-timeline').exists()).toBe(true)
-    const style = w.find('.agent-turn-timeline').attributes('style') ?? ''
-    expect(style, `dense 根不应再带 max-height；实际 style=${style}`).not.toContain('max-height')
-    expect(style, `dense 根不应再带 overflow-y；实际 style=${style}`).not.toMatch(/overflow/)
+    const cls = w.find('.agent-turn-timeline').attributes('class') ?? ''
+    expect(cls, `dense 根必须挂 --dense 类（限高选择器）；实际 class=${cls}`).toContain('agent-turn-timeline--dense')
+
+    const src = stripComments(readFileSync(timelinePath, 'utf8'))
+    const m = src.match(/\.agent-turn-timeline--dense \{([\s\S]*?)\}/)
+    expect(m, '限高规则必须存在于组件自身 style 块（放父级 scoped 换父即静默失效）').toBeTruthy()
+    const body = m![1]
+    expect(body, '规则体必须含 max-height').toMatch(/max-height/)
+    expect(body, '规则体必须含 overflow-y:auto').toMatch(/overflow-y:\s*auto/)
+    expect(body, '规则体应含 overscroll-behavior（防滚动链穿透）').toMatch(/overscroll-behavior/)
   })
 
-  it('AgentTurnTimeline：thinking running 块不再挂 max-h-40 / overflow-y-auto', () => {
-    // ⚠️ 只扫「代码」不扫注释：本文件注释里正面记录了这段历史（含 max-h-40 字面量），
-    //   全文匹配会把注释当成代码 ⇒ 假红。剔除 // 与 /* * 开头（含 * 续行）的行。
+  it('③ thinking running 块不嵌第三层滚动（卡片内再内滚即复发三滚动条）', () => {
     const src = stripComments(readFileSync(timelinePath, 'utf8'))
     expect(
       src,
-      'thinking running 块不得再加 max-h-40 overflow-y-auto（与 dock 外层构成第三条滚动条）',
+      'thinking running 块不得再加 max-h-40 overflow-y-auto（卡片根已限高，再内滚即第三层）',
     ).not.toMatch(/max-h-40/)
     // 有效性断言（防空集假绿）：确认确实扫到了模板主体
     expect(src, '应扫到模板主体').toMatch(/class="mt-1 whitespace-pre-wrap/)
   })
 
-  it('AgentExecutionTrace：dense 展开的步骤 <ul> 不再加内层 max-height/overflow', () => {
+  it('③b AgentExecutionTrace：步骤 <ul> 无内层滚动，dense 限高在卡片根成对存在', () => {
     const src = stripComments(readFileSync(tracePath, 'utf8'))
+    const m = src.match(/\.agent-trace--dense \{([\s\S]*?)\}/)
+    expect(m, 'dense 限高规则必须在组件自身 style 块').toBeTruthy()
+    expect(m![1], '规则体必须含 max-height').toMatch(/max-height/)
+    expect(m![1], '规则体必须含 overflow-y:auto').toMatch(/overflow-y:\s*auto/)
+    // 模板里的步骤 <ul> 不挂内联限高/溢出（1/2 的断言口径延续到 2/2 语境）
     expect(
       src,
-      'dense 步骤 <ul> 不得再挂 max-height/overflow-y（主防线在 dock 外层，内层即嵌套滚动）',
-    ).not.toMatch(/max-height/)
-    // 有效性断言（防空集假绿）：确认扫到了 template 主体
+      '步骤 <ul> 标签不得挂 max-height/overflow 内联类（限高只在卡片根）',
+    ).not.toMatch(/space-y-0\.5[^"']*max-h/)
+    // 有效性断言：确认扫到了 template 主体
     expect(src, '应扫到 template 主体').toMatch(/data-testid="operation-steps"/)
   })
 
-  it('组件源码里已无残留的 DENSE_MAX_HEIGHT 常量（做减法，不留死代码）', () => {
+  it('④ 组件源码里无残留死代码（DENSE_MAX_HEIGHT / rootStyle）', () => {
     const src = stripComments(readFileSync(timelinePath, 'utf8'))
-    expect(src, 'DENSE_MAX_HEIGHT 已无使用者，应完全删除').not.toMatch(/DENSE_MAX_HEIGHT/)
-    expect(src, 'rootStyle 已无使用者，应完全删除').not.toMatch(/rootStyle/)
+    expect(src, 'DENSE_MAX_HEIGHT 应完全删除').not.toMatch(/DENSE_MAX_HEIGHT/)
+    expect(src, 'rootStyle 应完全删除').not.toMatch(/rootStyle/)
     // 有效性断言（防空集假绿）：确认确实扫到了 script 主体
     expect(src, '应扫到 script 主体').toMatch(/const rootClass = computed/)
   })
 
-  it('dock 外层限高仍是唯一防线（减法不得误删主防线）', () => {
+  it('⑤ live 态对话内容在主滚动流内、composer 之后无对话内容（模板顺序断言）', () => {
     const rail = readFileSync(railPath, 'utf8')
-    expect(rail).toMatch(/\.agent-dock-scroll--scrollable[\s\S]{0,200}max-height/)
+    const iScroll = rail.indexOf('agent-chat-scroll')
+    const iWait = rail.indexOf('data-testid="propose-wait-hint"')
+    const iInput = rail.indexOf('class="agent-input-area')
+    expect(iScroll, '主滚动容器应存在').toBeGreaterThan(-1)
+    expect(iWait, 'proposeWait 提示条应存在').toBeGreaterThan(-1)
+    expect(iInput, '输入区应存在').toBeGreaterThan(-1)
+    expect(
+      iScroll < iWait && iWait < iInput,
+      `模板顺序必须是 主滚动容器(${iScroll}) < live 提示条(${iWait}) < 输入区(${iInput})——提示条搬回消息流后不得再落回 dock`,
+    ).toBe(true)
   })
 
-  it('消息列表的 min-h-0 不再被 scoped CSS 覆盖（scoped 特异性曾使模板死类失效）', () => {
-    // 同样剔注释：本文件该规则上方的注释正面记录了被删的 `min-height` / `flex: 1` 字面量
+  it('⑥ 消息列表的 min-h-0 不被 scoped CSS 覆盖（scoped 特异性曾使模板死类失效）', () => {
     const rail = stripComments(readFileSync(railPath, 'utf8'))
     const m = rail.match(/\.agent-chat-scroll \{([\s\S]*?)\}/)
     expect(m, '应仍能找到 .agent-chat-scroll 规则').toBeTruthy()
     const body = m![1]
     expect(
       body,
-      '.agent-chat-scroll 不得再设 min-height（360px 硬下限会挤压 dock、加剧多滚动条）',
+      '.agent-chat-scroll 不得再设 min-height（硬下限会加剧多滚动条与布局抖动）',
     ).not.toMatch(/min-height/)
     expect(
       body,

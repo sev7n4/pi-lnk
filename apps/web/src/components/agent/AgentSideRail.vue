@@ -927,28 +927,14 @@ const lastMessageIsAssistant = computed(() => {
 })
 
 /**
- * 底部 dock 含展示内容时需限高，以免挤占聊天滚动区。
- *
- * 2026-10-14（生产反馈「阻塞等待确认时历史对话无法上下滑动」复发修复）：
- * 本判定此前**只认取消态**（`showCancelledCallout`），源于 2026-10-06「门控/定稿卡片全部下线」
- * 时把限高条件从结构不变量（「dock 有内容」）**退化成了内容枚举**（「dock 里只有取消提示」）。
- * 于是 propose 等待确认 / ask 卡 / 活跃 live timeline 全部退回无上限：
- * `agent-input-area`(shrink-0) 被撑高 ⇒ `chat-wrap`(flex-1 min-h-0) 压到 0 高
- * ⇒ 历史消息既看不见也滑不动。
- *
- * ⚠️ 2026-10-09 的修复只给 `AgentExecutionTrace(dense)` 的步骤 `<ul>` 加了 max-height，
- * 而阻塞期实际走的是**没有任何上限**的 `AgentTurnTimeline(dense)` ⇒ 修了通电的那根线，故本次复发。
- *
- * ⇒ 现在按**结构不变量**判定：dock 出现任一展示态即限高，未来新增内容自动受保护。
- * ⚠️ 声明必须晚于上面四个依赖（const TDZ），移动此块时勿上移。
+ * 2026-10-15（三滚动条治理 2/2）：`hasDockPresentation`（dock 展示态 → dock 外层限高滚动）
+ * 已随结构一并删除——live 态对话内容（live 时间线 / proposeWait / ask 卡 / 取消提示）
+ * 移回 `.agent-chat-scroll` 主滚动流，dock 只留 composer，不再存在第二个滚动上下文。
+ * 2026-10-14 的「历史滑不动」问题（dock 内容撑高 shrink-0 压扁 flex-1 滚动区）在流内
+ * 结构下不复存在：所有对话内容都在 flex-1 的滚动区里，内容再长也只是让滚动区变长。
+ * 唯一保留的内嵌滚动是 dense 态时间线卡片自身（用户口径「思考消息流自带滚动条」），
+ * 见 `.agent-turn-timeline--dense` / `.agent-trace--dense` 的限高规则。
  */
-const hasDockPresentation = computed(
-  () =>
-    showCancelledCallout.value ||
-    Boolean(liveTimeline.value) ||
-    Boolean(proposeWait.value) ||
-    (pendingAskUser.value.length > 0 && lastMessageIsAssistant.value),
-)
 
 /** 组件侧回答回传：payload 组装收敛在 agentAnswers 模块（含明文 HTTP 降级）。 */
 function answersPost(
@@ -2305,6 +2291,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.setRecovering(false)
       const d = event.data as { name: string; toolCallId?: string; args?: unknown }
       agent.beginToolCall({ toolCallId: d.toolCallId, name: d.name, args: d.args })
+      // 治理 2/2：live 内容已入主滚动流，内容增长须跟随（仅 followLatest 时生效）
+      scrollToBottom()
       break
     }
     case 'waiting_user': {
@@ -2369,6 +2357,8 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'tool_result': {
       const d = event.data as { name: string; toolCallId?: string; result: unknown; isError?: boolean }
       agent.endToolCall(d.toolCallId, d.name, d.result, d.isError === true)
+      // 治理 2/2：live 内容已入主滚动流（同 tool_call）
+      scrollToBottom()
       break
     }
     case 'canvas_action': {
@@ -2386,12 +2376,16 @@ function handleEvent(event: { type: string; data: unknown }) {
     }
     case 'step':
       agent.trackStep(event.data as Parameters<typeof agent.trackStep>[0])
+      // 治理 2/2：live trace 步骤已入主滚动流（同 tool_call 口径）
+      scrollToBottom()
       break
     case 'phase_hint':
       agent.trackPhaseHint(event.data as { phase?: string; label: string })
       break
     case 'thinking':
       agent.trackThinking(event.data as { status: string; summary?: string })
+      // 治理 2/2：思考流已入主滚动流，增长须跟随（同 text_delta 口径）
+      scrollToBottom()
       break
     case 'turn_usage':
       agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number })
@@ -2402,6 +2396,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       break
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])
+      // 治理 2/2：探索步骤同样入主滚动流（同 step 口径）
+      scrollToBottom()
       break
     // SEL-REF：服务端确认本轮**实际注入**了哪些节点。只有收到它，回执才显示。
     // 前端读不到 Nest 的 SEL_REF_ENABLED ⇒ 不能按本地快照自行推断（评审 C1）。
@@ -3200,31 +3196,13 @@ defineExpose({
               :progress="taskProgress"
               @focus-node="onFocusNode($event)"
             />
-          </div>
-            <!-- 回看历史时的回到底部入口：仅在未跟随底部时出现 -->
-            <button
-              v-if="!followLatest"
-              type="button"
-              class="agent-jump-latest"
-              data-testid="jump-to-latest"
-              :title="hasNewBelow ? '下方有新消息，回到底部' : '回到底部'"
-              @click="jumpToLatest"
-            >
-              <span v-if="hasNewBelow" class="agent-jump-dot" aria-hidden="true"></span>
-              <span>{{ hasNewBelow ? '有新消息' : '回到底部' }}</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m0 0-5-5m5 5 5-5" />
-              </svg>
-            </button>
-          </div>
-
-          <!-- 底部输入 dock：与节点 dock-studio 同款毛玻璃 -->
-          <div class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1">
-            <!-- dock 内容单独限高滚动；composer 始终钉底，不被卷入滚动区（Fix：composer 被挤到底部 / 双层滚） -->
-            <div
-              class="agent-dock-scroll"
-              :class="{ 'agent-dock-scroll--scrollable': hasDockPresentation }"
-            >
+            <!-- 2026-10-15（三滚动条治理 2/2）：live 态对话内容移回主滚动流——
+                 用户口径「composer 上方的对话内容是一整套页面，只有思考消息流自带滚动条」。
+                 此前这些块挂在 dock 外层独立滚动容器（.agent-dock-scroll--scrollable）里，
+                 与消息列表构成两个割裂的滚动上下文；dock 现在只留 composer。
+                 2/2 同时把 dense 卡片限高滚动收回卡片自身（唯一允许的内嵌滚动），
+                 #416 的「历史滑不动」在流内结构下不复存在（内容全在 flex-1 滚动区里）。
+                 注：门控决策注释（确认入口收敛）随内容一并搬移，仍然有效。 -->
             <!-- 活体过程卡：钉在 composer 上方（P0 决策 1）；回合收束后由上面的气泡内 trace 接管。
                  P2-2：flag on 时改用 AgentTurnTimeline(dense)，与历史气泡同一套 parts 渲染。 -->
             <AgentExecutionTrace
@@ -3338,7 +3316,28 @@ defineExpose({
               runtime/Nest 都不再发 `interrupt` / `done` 门控事件。
               确认入口收敛为两处：**画布节点「生成」按钮**（propose 阻塞等待）与**直接输入文字**。
             -->
-            </div><!-- /agent-dock-scroll -->
+          </div>
+            <!-- 回看历史时的回到底部入口：仅在未跟随底部时出现 -->
+            <button
+              v-if="!followLatest"
+              type="button"
+              class="agent-jump-latest"
+              data-testid="jump-to-latest"
+              :title="hasNewBelow ? '下方有新消息，回到底部' : '回到底部'"
+              @click="jumpToLatest"
+            >
+              <span v-if="hasNewBelow" class="agent-jump-dot" aria-hidden="true"></span>
+              <span>{{ hasNewBelow ? '有新消息' : '回到底部' }}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m0 0-5-5m5 5 5-5" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- 底部输入 dock：与节点 dock-studio 同款毛玻璃 -->
+          <div class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1">
+            <!-- 2026-10-15（治理 2/2）：dock 不再承载对话内容与滚动——
+                 live 时间线 / 提示卡 / ask 卡已移回上方主滚动流；这里只剩 composer 与其周边固定件。 -->
             <div
               class="agent-input-dock"
               :class="{
@@ -3922,13 +3921,13 @@ defineExpose({
   background: var(--lnk-warning-bg-hover);
 }
 
-/* ---- 消息列表 ----
- * ⚠️ 2026-10-15（三滚动条治理）：此处原有 `flex: 1 1 45%` + `min-height: min(360px, 52%)`。
+/* ---- 消息列表：面板内唯一的主滚动上下文（治理 2/2 起对话内容全在此） ----
+ * ⚠️ 2026-10-15（三滚动条治理 1/2）：此处原有 `flex: 1 1 45%` + `min-height: min(360px, 52%)`。
  * ① 冲突：scoped 选择器带 [data-v-x] 属性，特异性高于模板上的 Tailwind `flex-1 min-h-0`
  *    ⇒ 那两个类是**死类**，`min-h-0`（滚动容器正确收缩的前提）实际从未生效。
- * ② 危害：`min-height: min(360px, 52%)` 给滚动容器设了硬下限，即使内容很少也强行占高，
- *    挤压下方 dock；与 dock 的限高不变量叠加，加剧多滚动条与布局抖动。
+ * ② 危害：`min-height` 硬下限即使内容很少也强行占高，加剧多滚动条与布局抖动。
  * ⇒ 只保留布局必需项（flex 列 + gap）；伸缩与收缩交给模板的 flex-1 min-h-0 单一来源。
+ * （2/2：live 态对话内容已移入本容器，dock 不再有第二个滚动上下文。）
  */
 .agent-chat-scroll {
   display: flex;
@@ -3986,14 +3985,11 @@ defineExpose({
   }
 }
 
-.agent-dock-scroll {
-  min-height: 0;
-}
-.agent-dock-scroll--scrollable {
-  max-height: min(42vh, 400px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
+/* 2026-10-15（治理 2/2）：.agent-dock-scroll / --scrollable 已随结构删除——
+ * dock 只留 composer，对话内容全部在 .agent-chat-scroll 主滚动流里，
+ * 面板内常驻滚动上下文唯一。
+ * dense 时间线卡片的限高（用户口径「思考消息流自带滚动条」）规则本体
+ * 在各组件自身 scoped style：AgentTurnTimeline / AgentExecutionTrace 的 --dense。 */
 
 .agent-turn--user {
   display: flex;
