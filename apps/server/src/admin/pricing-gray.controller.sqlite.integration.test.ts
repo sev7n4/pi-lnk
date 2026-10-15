@@ -58,8 +58,9 @@ describe('PricingGrayController（P1-a T5）', () => {
       stdio: 'pipe',
     })
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
-    const publishing = new PricingPublishingService(prisma as never)
-    const gray = new PricingGrayReleaseService(prisma as never, publishing)
+    const pricing = new PricingService(prisma as never)
+    const publishing = new PricingPublishingService(prisma as never, pricing)
+    const gray = new PricingGrayReleaseService(prisma as never, publishing, pricing)
     controller = new PricingGrayController(gray)
   }, 180_000) // 集成 harness 高负载下 beforeAll 超 vitest 默认 10s，本文件局部放宽
 

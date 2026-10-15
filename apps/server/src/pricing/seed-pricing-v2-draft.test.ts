@@ -196,7 +196,7 @@ describe('seedPricingV2Draft against real SQLite', () => {
     const perSec = a5!.costYuan / 5
     expect(Math.abs(perSec - a10!.costYuan / 10)).toBeLessThanOrEqual(0.001)
     expect(Math.abs(perSec - a15!.costYuan / 15)).toBeLessThanOrEqual(0.001)
-  }, 240_000) // 234 档 × seedPricing + seedPricingV2Draft 两轮 upsert，同 P0 集成测试放宽超时
+  }, 240_000) // 318 档（enumeratePricingSpace 实测值，同 pricing.equivalence 的 tripwire）× seedPricing + seedPricingV2Draft 两轮 upsert，同 P0 集成测试放宽超时
 
   it('幂等：同名 draft 重跑重新 upsert 全部条目，计数与值不变', async () => {
     const before = await prisma.priceListEntry.count({

@@ -10,6 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { PricingPublishingController } from './pricing-publishing.controller'
 import { PricingPublishingService } from '../pricing/pricing-publishing.service'
+import { PricingService } from '../pricing/pricing.service'
 import { AdminTokenGuard } from './admin-token.guard'
 
 const serverRoot = path.resolve(__dirname, '../..')
@@ -47,7 +48,7 @@ describe('PricingPublishingController（P1-a T4）', () => {
       stdio: 'pipe',
     })
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
-    service = new PricingPublishingService(prisma as never)
+    service = new PricingPublishingService(prisma as never, new PricingService(prisma as never))
     controller = new PricingPublishingController(service)
   }, 180_000) // 集成 harness 高负载下 beforeAll 超 vitest 默认 10s，本文件局部放宽
 
@@ -165,7 +166,7 @@ describe('PricingPublishingController（P1-a T4）', () => {
   })
 
   describe('GET /:id/diff（diffSummary）', () => {
-    it('返回对比摘要：changed/added/removed/maxIncrease', async () => {
+    it('返回对比摘要：changed/added/maxIncrease + 全表无成本覆盖（无 removed 字段）', async () => {
       await seedActiveVersion(prisma, 'v1', [
         { matchKey: 'm-a', capability: 'text', credits: 100 },
         { matchKey: 'm-b', capability: 'image', credits: 500 },
@@ -176,15 +177,18 @@ describe('PricingPublishingController（P1-a T4）', () => {
         { matchKey: 'm-c', capability: 'video', credits: 2000 },
       ])
       const res = await controller.diff(draft.id)
-      // draft 复制自 v1（m-a/m-b），改 m-a、增 m-c → changed:1 added:1 removed:0 unchanged:1
+      // draft 复制自 v1（m-a/m-b），改 m-a、增 m-c → changed:1 added:1 unchanged:1
       expect(res.data).toMatchObject({
         draftVersion: 'v2',
         activeVersion: 'v1',
         changed: 1,
         added: 1,
-        removed: 0,
         unchanged: 1,
       })
+      // 死计数 removed 已删（upsertEntries 不提供删条目）
+      expect(Object.keys(res.data)).not.toContain('removed')
+      // 全表口径无成本覆盖：m-b 未改但也无 costRateId，必须被列出（终审 I4）
+      expect(res.data.noCostCoverage.sort()).toEqual(['m-a', 'm-b', 'm-c'])
       expect(res.data.maxIncrease).toMatchObject({ matchKey: 'm-a', from: 100, to: 150 })
       await expect(controller.diff('nope')).rejects.toThrow(NotFoundException)
     })

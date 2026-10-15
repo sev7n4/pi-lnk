@@ -315,4 +315,19 @@ describe('AdminGrayReleasePage', () => {
     expect(ElMessageBoxConfirm).toHaveBeenCalledTimes(2)
     expect(grayRollback).toHaveBeenCalledWith('r-1')
   })
+
+  it('关停确认文案与实现对齐：不再承诺「立即」，改为缓存窗口上限（终审 I3）', async () => {
+    grayList.mockResolvedValue([releaseRow()])
+    listVersions.mockResolvedValue([])
+    grayRollback.mockResolvedValue(undefined)
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as PageVm
+    await vm.rollbackRelease('r-1')
+    const [msg] = ElMessageBoxConfirm.mock.calls.at(-1) as string[]
+    // 服务端写路径已 invalidate 缓存（实际下一笔即生效），但 UI 只承诺可验证的
+    // 上限，不写「立即」——文案必须与实现的上界一致，不能夸大。
+    expect(msg).toContain('30s')
+    expect(msg).not.toContain('立即回到全局价目')
+  })
 })

@@ -10,8 +10,9 @@ import type { PrismaService } from '../prisma/prisma.service'
  * 灰度发布服务测试（P1-a T5）。
  *
  * 桩模式照 pricing-publishing.service.test.ts（mock PrismaService + $transaction
- * 「缓冲提交」语义）。测试 8 额外用同一 FakeDb 驱动 PricingService，断言 rollback
- * 后名单用户 quote 立即回 global 值（quote 读 status='active'，天然生效）。
+ * 「缓冲提交」语义）。用例 8-10 用同一 FakeDb 驱动**同一个** PricingService 单例，
+ * 断言 rollback / promote / publish 后名单用户与全局报价立即按新价解析
+ * （缓存未过期 ⇒ 写路径必须 invalidate，TTL 30s 内不再错扣）。
  */
 
 type Row = Record<string, any>
@@ -109,6 +110,10 @@ class FakeDb {
         },
       },
       pricingGrayRelease: {
+        findFirst: async (args: any) => {
+          const rows = this.findReleases(args)
+          return rows[0] ? this.relFull(rows[0]) : null
+        },
         create: async (args: any) => {
           const row = {
             id: this.nextId(),
@@ -244,8 +249,19 @@ function seed(db: FakeDb) {
   )
 }
 
-const svcOf = (db: FakeDb) =>
-  new PricingGrayReleaseService(db.prisma, new PricingPublishingService(db.prisma))
+/**
+ * 灰度 + 发布 + 计价共享同一个 PricingService 实例（真实单例语义）：
+ * 用例 8 断言「rollback 后同一实例立即回 global 价」——旧写法用
+ * `new PricingService(db.prisma)` 造新实例绕开缓存，把「写路径没清缓存」
+ * 这个真缺陷一起掩盖了（终审 Important I3）。这里必须复用单例。
+ */
+function harnessOf(db: FakeDb) {
+  const pricing = new PricingService(db.prisma)
+  const publishing = new PricingPublishingService(db.prisma, pricing)
+  return { pricing, publishing, gray: new PricingGrayReleaseService(db.prisma, publishing, pricing) }
+}
+
+const svcOf = (db: FakeDb) => harnessOf(db).gray
 
 describe('PricingGrayReleaseService.previewWhitelist', () => {
   it('用例 1：换行/逗号/空格切分 + 去重；命中/未命中显式返回', async () => {
@@ -429,14 +445,14 @@ describe('PricingGrayReleaseService.promote / rollback', () => {
     await expect(svc.promote('nope')).rejects.toBeInstanceOf(NotFoundException)
   })
 
-  it('用例 8：rollback——release 置 rolled_back + audit；名单用户 quote 立即回 global 值', async () => {
+  it('用例 8：rollback——release 置 rolled_back + audit；同一单例的名单用户 quote 立即回 global 值', async () => {
     const db = new FakeDb()
     seed(db)
-    const svc = svcOf(db)
+    const { pricing, gray: svc } = harnessOf(db)
     const out = await svc.createRelease({ versionId: 'plv-v2', phones: ['13800000001'] })
 
     // 灰度窗口内：名单用户走灰度价 8
-    const grayQuote = await new PricingService(db.prisma).quote({ capability: 'text' }, 'u1')
+    const grayQuote = await pricing.quote({ capability: 'text' }, 'u1')
     expect(grayQuote).toEqual({ credits: 8, ruleVersion: 'v2', grayReleaseId: out.releaseId })
 
     await svc.rollback(out.releaseId)
@@ -445,8 +461,9 @@ describe('PricingGrayReleaseService.promote / rollback', () => {
     expect(db.auditLogs).toHaveLength(2)
     expect(db.auditLogs[1]).toMatchObject({ actor: 'admin', action: 'pricing-gray.rollback' })
 
-    // rollback 后（新 PricingService 实例 = 无缓存）：名单用户回 global 价 5，无 grayReleaseId
-    const globalQuote = await new PricingService(db.prisma).quote({ capability: 'text' }, 'u1')
+    // 关键：复用同一单例（缓存未过期，TTL 30s）——写路径必须 invalidate，
+    // 否则关停后仍按灰度价 8 错扣最长 30s（旧写法造新实例绕开缓存，掩盖了该缺陷）。
+    const globalQuote = await pricing.quote({ capability: 'text' }, 'u1')
     expect(globalQuote).toEqual({ credits: 5, ruleVersion: 'v1' })
     expect(Object.keys(globalQuote)).not.toContain('grayReleaseId')
 
@@ -455,5 +472,21 @@ describe('PricingGrayReleaseService.promote / rollback', () => {
 
     // 未知 release → 404
     await expect(svc.rollback('nope')).rejects.toBeInstanceOf(NotFoundException)
+  })
+
+  it('用例 9：promote 后同一单例的名单用户不再走灰度价（转正 = 回 global 解析）', async () => {
+    const db = new FakeDb()
+    seed(db)
+    const { pricing, gray: svc } = harnessOf(db)
+    const out = await svc.createRelease({ versionId: 'plv-v2', phones: ['13800000001'] })
+
+    expect(await pricing.quote({ capability: 'text' }, 'u1')).toMatchObject({ credits: 8, grayReleaseId: out.releaseId })
+
+    await svc.promote(out.releaseId)
+
+    // v2 已是全局 active（8），名单用户解析路径回global（无grayReleaseId 键）
+    const after = await pricing.quote({ capability: 'text' }, 'u1')
+    expect(after).toEqual({ credits: 8, ruleVersion: 'v2' })
+    expect(Object.keys(after)).not.toContain('grayReleaseId')
   })
 })

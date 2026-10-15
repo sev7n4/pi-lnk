@@ -17,6 +17,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { PricingPublishingService } from './pricing-publishing.service'
+import { PricingService } from './pricing.service'
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -52,6 +53,7 @@ export class PricingGrayReleaseService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     private readonly publishing: PricingPublishingService,
+    private readonly pricing: PricingService,
   ) {}
 
   /** 名单预解析：token 原样精确匹配 User.phone，命中/未命中都显式返回。 */
@@ -97,12 +99,14 @@ export class PricingGrayReleaseService {
       )
     }
 
-    const existing = await this.prisma.pricingGrayRelease.findFirst({ where: { status: 'active' } })
-    if (existing) {
-      throw new ConflictException(`已存在进行中的灰度发布 ${existing.id}（单一 active 灰度约束）`)
-    }
-
     const releaseId = await this.prisma.$transaction(async (tx) => {
+      // 单一 active 灰度的检查与创建同处事务首行（终审 Minor M3：原先查在事务外、
+      // 建在事务内，并发 createRelease 可建出两个 active 灰度）。检查只此一处，
+      // 不在事务外留重复副本——两处判定会各自漂移。
+      const active = await tx.pricingGrayRelease.findFirst({ where: { status: 'active' } })
+      if (active) {
+        throw new ConflictException(`已存在进行中的灰度发布 ${active.id}（单一 active 灰度约束）`)
+      }
       const release = await tx.pricingGrayRelease.create({
         data: {
           versionId: version.id,
@@ -135,6 +139,9 @@ export class PricingGrayReleaseService {
       return release.id
     })
 
+    // 灰度缓存失效：创建前 quote 很可能已把「无 active 灰度」这一null 结果缓存
+    // 30s，不清则名单用户在灰度已生效后最长 30s 仍按 global 价扣（同 I3 家族）。
+    this.pricing.invalidate()
     return { releaseId, version: version.version, hits: hits.length, window: { startsAt, endsAt } }
   }
 
@@ -253,6 +260,9 @@ export class PricingGrayReleaseService {
         },
       })
     })
+    // publish 已清一次缓存，但灰度快照可能在这两笔事务之间被 quote 重新填上
+    // （此刻 release 仍是 active）⇒ 转正后再清一次，确保名单用户立即回global 解析。
+    this.pricing.invalidate()
     return { version }
   }
 
@@ -277,6 +287,9 @@ export class PricingGrayReleaseService {
         },
       })
     })
+    // 关停后立即清灰度缓存：名单用户下一笔报价就回 global 价，不再按灰度价错扣
+    // 最长 30s（终审 Important I3）。UI 文案已同步为「约 30s 内」（保守上限）。
+    this.pricing.invalidate()
   }
 
   private async matchPhones(tokens: string[]): Promise<WhitelistPreview> {

@@ -140,7 +140,9 @@ async function promote(id: string) {
 async function rollbackRelease(id: string) {
   actionError.value = ''
   try {
-    await ElMessageBox.confirm('关停后名单用户立即回到全局价目，确认关停？', '关停确认', {
+    // 文案与实现对齐：服务端 gray rollback 成功后已 invalidate 计价缓存，名单用户
+    // 下一笔报价即回global；「约 30s 内」是保守上限（缓存 TTL），不承诺「立即」。
+    await ElMessageBox.confirm('关停后名单用户约 30s 内回到全局价目，确认关停？', '关停确认', {
       type: 'warning',
       confirmButtonText: '关停',
       cancelButtonText: '取消',
