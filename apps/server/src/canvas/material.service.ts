@@ -833,11 +833,13 @@ export class MaterialService {
     const meta = parseMeta(material.metadata)
     if (!alreadyRefunded(meta)) {
       let cost: number
+      let grayReleaseId: string | undefined
       if (typeof meta.chargedPoints === 'number') {
         cost = meta.chargedPoints
       } else {
         const fallbackQuote = await this.platformFallbackQuote(material.type, meta, userId)
         cost = fallbackQuote.credits
+        grayReleaseId = fallbackQuote.grayReleaseId
       }
       await this.points.refund(
         userId,
@@ -846,6 +848,8 @@ export class MaterialService {
         refundMeta(materialPointCategory(material.type), 'cancelled_refund', {
           model: typeof meta.model === 'string' ? meta.model : null,
           generationId: material.id,
+          // 与 consume 路径同纪律：global quote 时键不出现（灰度报告 refundCount 口径）
+          ...(grayReleaseId ? { grayReleaseId } : {}),
         }),
       )
     }

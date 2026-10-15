@@ -71,6 +71,7 @@ describe('StudioService BYOK fallback_pending', () => {
   let pointsConsume: ReturnType<typeof vi.fn>
   let pointsRefund: ReturnType<typeof vi.fn>
   let providerChannelFindUnique: ReturnType<typeof vi.fn>
+  let pricingMock: ReturnType<typeof createPricingMock>
   let stored: Record<string, unknown>
 
   beforeEach(async () => {
@@ -78,6 +79,7 @@ describe('StudioService BYOK fallback_pending', () => {
     stored = {}
     pointsConsume = vi.fn(async () => {})
     pointsRefund = vi.fn(async () => {})
+    pricingMock = createPricingMock()
     // B3：audio 平台回退 confirm 前查平台镜像做 availability 校验（S2-3 补口子）。
     // 默认无镜像行（undefined）→ 校验放行，既有用例行为不变。
     providerChannelFindUnique = vi.fn(async () => undefined)
@@ -105,7 +107,7 @@ describe('StudioService BYOK fallback_pending', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         StudioService,
-        { provide: PricingService, useValue: createPricingMock() },
+        { provide: PricingService, useValue: pricingMock },
         {
           provide: PointsService,
           useValue: {
@@ -658,6 +660,50 @@ describe('StudioService BYOK fallback_pending', () => {
     const result = await svc.cancelPlatformFallback('u1', 'g1')
     expect(result.status).toBe('failed')
     expect(pointsRefund).not.toHaveBeenCalled()
+  })
+
+  // P1-a 收尾包：取消退款流水落 grayReleaseId（灰度报告 refundCount 口径）。
+  // meta 无 chargedPoints ⇒ 走 platformFallbackQuote 路径，退款载荷取 quote 的灰度标记。
+  it('cancel-platform-fallback: 灰度 quote → 退款流水带 grayReleaseId', async () => {
+    stored = {
+      id: 'g1',
+      type: 'image',
+      status: 'fallback_pending',
+      metadata: JSON.stringify({ channelId: 'ch_user', failureClass: 'upstream_5xx' }),
+    }
+    pricingMock.quote.mockResolvedValue({
+      credits: 10,
+      ruleVersion: 'v2-launch',
+      grayReleaseId: 'gray-rel-1',
+    })
+
+    await svc.cancelPlatformFallback('u1', 'g1')
+
+    expect(pointsRefund).toHaveBeenCalledTimes(1)
+    const refundMeta = pointsRefund.mock.calls[0]![3] as Record<string, unknown>
+    expect(refundMeta).toMatchObject({
+      kind: 'refund',
+      category: 'image',
+      status: 'cancelled_refund',
+      grayReleaseId: 'gray-rel-1',
+    })
+  })
+
+  it('cancel-platform-fallback: global quote → 退款流水无 grayReleaseId 键（键不出现纪律）', async () => {
+    stored = {
+      id: 'g1',
+      type: 'image',
+      status: 'fallback_pending',
+      metadata: JSON.stringify({ channelId: 'ch_user', failureClass: 'upstream_5xx' }),
+    }
+    pricingMock.quote.mockResolvedValue({ credits: 10, ruleVersion: 'v2-launch' })
+
+    await svc.cancelPlatformFallback('u1', 'g1')
+
+    expect(pointsRefund).toHaveBeenCalledTimes(1)
+    const refundMeta = pointsRefund.mock.calls[0]![3] as Record<string, unknown>
+    expect(refundMeta).toMatchObject({ kind: 'refund', category: 'image', status: 'cancelled_refund' })
+    expect(refundMeta).not.toHaveProperty('grayReleaseId')
   })
 
   it('cancelGeneration on generating video → refund once and failed metadata', async () => {
