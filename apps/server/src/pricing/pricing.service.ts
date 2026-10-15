@@ -276,6 +276,47 @@ export class PricingService implements OnModuleInit {
     }
   }
 
+  /**
+   * P2 T8：当前 active 版本的文本 token 反比率 map（公开端点 GET /api/pricing/active
+   * 的数据源，前端徽标展示用，无敏感字段）。matchKey `text:<model>:<spec>` 三行一组
+   * 组装 `{ [model]: {in, cache?, out} }`；modelKey 小写规范化（T4 评审遗留——发布侧
+   * 大小写笔误不外泄）。空态（无 active 版本 / 无 token 行）返回空对象，永不 throw。
+   */
+  async getActiveTextTokenRatios(): Promise<Record<string, { in: number; cache?: number; out: number }>> {
+    try {
+      const table = await this.loadActiveTable()
+      if (!table) return {}
+      const rows: Record<string, { in?: number; cache?: number; out?: number }> = {}
+      for (const [key, credits] of table.entries) {
+        if (!key.startsWith('text:')) continue
+        const rest = key.slice('text:'.length)
+        const sep = rest.lastIndexOf(':')
+        if (sep <= 0) continue
+        const spec = rest.slice(sep + 1)
+        if (spec !== 'in' && spec !== 'cache' && spec !== 'out') continue
+        if (!isPositiveRatio(credits)) continue
+        const model = rest.slice(0, sep).toLowerCase()
+        ;(rows[model] ??= {})[spec] = credits
+      }
+      // 与 quoteTextTokens 同语义：in/out 两行齐备才成组（out 缺行 = 数据事故不外泄）；
+      // cache 行缺是受支持形态（step-2-16k 上游未公布）——键不出现纪律。
+      const ratios: Record<string, { in: number; cache?: number; out: number }> = {}
+      for (const [model, row] of Object.entries(rows)) {
+        if (!isPositiveRatio(row.in) || !isPositiveRatio(row.out)) continue
+        const entry: { in: number; cache?: number; out: number } = { in: row.in, out: row.out }
+        if (isPositiveRatio(row.cache)) entry.cache = row.cache
+        ratios[model] = entry
+      }
+      return ratios
+    } catch (err) {
+      console.warn(
+        '[pricing] 活动价目读取失败 — 返回空 map：',
+        err instanceof Error ? err.message : err,
+      )
+      return {}
+    }
+  }
+
   /** global 表（无 active 版本抛错 → 由 quoteTextTokens 的 catch 落 degraded）。 */
   private async requireGlobalTable(): Promise<PriceTable> {
     const table = await this.loadActiveTable()

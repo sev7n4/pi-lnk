@@ -79,3 +79,17 @@ describe('PromptDockPanel 不再内嵌生成结果卡（2026-10-08 下线）', (
     expect(wrapper.findComponent({ name: 'DockGenerateButton' }).exists()).toBe(true)
   })
 })
+
+/**
+ * P2 T8 · spec §6.7：文本徽标改「⚡N积分起」口径，面板调用点传 variant="from"。
+ */
+describe('PromptDockPanel 徽标 variant=from（P2 T8）', () => {
+  it('积分徽标传 variant="from" 且 credits 为 floor 1', () => {
+    const wrapper = mountPanel(createNode({ prompt: '生成一份商业品牌分镜表' }))
+    const badge = wrapper.findComponent({ name: 'DockCreditBadge' })
+    expect(badge.exists()).toBe(true)
+    expect(badge.props('variant')).toBe('from')
+    expect(badge.props('credits')).toBe(1)
+  })
+})
+
