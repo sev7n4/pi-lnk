@@ -63,31 +63,43 @@ describe('seedPricing against real SQLite', () => {
     expect(rates).toBeGreaterThanOrEqual(15)
   })
 
-  it('archives any other active version when re-seeding (单一 active 不变量)', async () => {
-    // 预置第二个 active 版本——静态断言 active.length === 1 覆盖不到的分叉：
-    // seedPricing 的 updateMany 归档分支（seed-pricing.ts 末段）零覆盖，
-    // Task 5 PricingService 只读 THE active 版本，该不变量是承重的。
+  it('单active 不变量（承重，勿删）：已有其它 active 版本时 seed 拒绝播种，不造第二个 active', async () => {
+    // P1-a 删掉了原「归档非 v1 的 active 版本」updateMany（归档运营版本状态属越权），
+    // 但删掉后seed 只保证 v1 自身幂等 —— 若库里已有别的 active 版本，重跑 seed 会
+    // 造出第二个 active，而 loadActiveTable 用无序 findFirst，取到哪个不确定
+    // ⇒ 扣费金额随机漂。改为 fail-closed：拒绝并报错，改价/发布走发布流。
     await prisma.priceListVersion.create({
-      data: { version: 'v9-other-active', status: 'active', note: '覆盖归档分支：非 v1 的 active 版本', publishedAt: new Date() },
+      data: { version: 'v9-other-active', status: 'active', note: '运营发布流建出的版本', publishedAt: new Date() },
     })
-    const preActive = await prisma.priceListVersion.findMany({ where: { status: 'active' } })
-    expect(preActive.length).toBe(2)
 
     const beforeEntries = await prisma.priceListEntry.count({
       where: { version: { version: PRICING_VERSION_V1 } },
     })
 
-    const seeded = await seedPricing(prisma)
+    const err = await seedPricing(prisma).catch((e) => e as Error)
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toContain('v9-other-active')
+    expect(err.message).toContain('拒绝造第二个 active')
 
+    // 既有状态零变化：其它 active 不被 seed 越权归档，v1 条目数不变
     const other = await prisma.priceListVersion.findUnique({ where: { version: 'v9-other-active' } })
-    expect(other?.status).toBe('archived')
-    const postActive = await prisma.priceListVersion.findMany({ where: { status: 'active' } })
-    expect(postActive.length).toBe(1)
-    expect(postActive[0]!.version).toBe(PRICING_VERSION_V1)
+    expect(other?.status).toBe('active')
     const v1Entries = await prisma.priceListEntry.count({
       where: { version: { version: PRICING_VERSION_V1 } },
     })
     expect(v1Entries).toBe(beforeEntries)
-    expect(seeded.entries).toBe(beforeEntries)
-  }, 180_000) // 同首个 it：318 档 upsert 一轮超 vitest 默认 5s testTimeout；本机高负载下 pnpm exec 之外 seed 本身也慢
+  }, 180_000) // 同首个 it：本机高负载下 318 档 upsert 一轮超 vitest 默认 5s testTimeout
+
+  it('幂等：把别的 active 撤下后重跑 seed 仍成功且 v1 自身幂等（拒绝逻辑不误伤正常重跑）', async () => {
+    await prisma.priceListVersion.update({
+      where: { version: 'v9-other-active' },
+      data: { status: 'archived' },
+    })
+    const before = await prisma.priceListEntry.count({
+      where: { version: { version: PRICING_VERSION_V1 } },
+    })
+    const seeded = await seedPricing(prisma)
+    expect(seeded.entries).toBe(before)
+    expect(seeded.version).toBe(PRICING_VERSION_V1)
+  }, 180_000)
 })

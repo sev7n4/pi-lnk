@@ -601,37 +601,40 @@ export class StudioService {
     )
   }
 
-  private async platformFallbackQuote(type: string, meta: Record<string, unknown>): Promise<PricingQuote> {
+  private async platformFallbackQuote(type: string, meta: Record<string, unknown>, userId: string): Promise<PricingQuote> {
     if (type === 'text' || type === 'prompt') {
-      return this.pricing.quote({ capability: 'text' })
+      return this.pricing.quote({ capability: 'text' }, userId)
     }
     // ⚠️ 保持 legacy 语义：平台回退的 audio 恒按 voice 5 分计（哪怕原记录是 music）
-    if (type === 'audio') return this.pricing.quote({ capability: 'audio', audioKind: 'voice' })
+    if (type === 'audio') return this.pricing.quote({ capability: 'audio', audioKind: 'voice' }, userId)
     if (type === 'image') {
       const count = Number(meta.count ?? 1) || 1
-      return this.pricing.quote({ capability: 'image', count })
+      return this.pricing.quote({ capability: 'image', count }, userId)
     }
     if (type === 'video') {
-      return this.pricing.quote({
-        capability: 'video',
-        duration: Number(meta.duration ?? 5),
-        modelKey:
-          (typeof meta.modelKey === 'string' && meta.modelKey) ||
-          (typeof meta.originalModel === 'string' && meta.originalModel) ||
-          undefined,
-        resolution: typeof meta.resolution === 'string' ? meta.resolution : undefined,
-        videoMode: typeof meta.videoMode === 'string' ? meta.videoMode : undefined,
-        referenceImageCount: typeof meta.referenceImageCount === 'number'
-          ? meta.referenceImageCount
-          : Array.isArray(meta.referenceImages)
-            ? meta.referenceImages.length
-            : undefined,
-        referenceVideoCount: typeof meta.referenceVideoCount === 'number'
-          ? meta.referenceVideoCount
-          : Array.isArray(meta.referenceVideos)
-            ? meta.referenceVideos.length
-            : undefined,
-      })
+      return this.pricing.quote(
+        {
+          capability: 'video',
+          duration: Number(meta.duration ?? 5),
+          modelKey:
+            (typeof meta.modelKey === 'string' && meta.modelKey) ||
+            (typeof meta.originalModel === 'string' && meta.originalModel) ||
+            undefined,
+          resolution: typeof meta.resolution === 'string' ? meta.resolution : undefined,
+          videoMode: typeof meta.videoMode === 'string' ? meta.videoMode : undefined,
+          referenceImageCount: typeof meta.referenceImageCount === 'number'
+            ? meta.referenceImageCount
+            : Array.isArray(meta.referenceImages)
+              ? meta.referenceImages.length
+              : undefined,
+          referenceVideoCount: typeof meta.referenceVideoCount === 'number'
+            ? meta.referenceVideoCount
+            : Array.isArray(meta.referenceVideos)
+              ? meta.referenceVideos.length
+              : undefined,
+        },
+        userId,
+      )
     }
     throw new BadRequestException('不支持的生成类型')
   }
@@ -762,7 +765,7 @@ export class StudioService {
      */
     nodeContext?: { selectionDigest?: string; canvasSummary?: string },
   ) {
-    const quote = await this.pricing.quote({ capability: 'text' })
+    const quote = await this.pricing.quote({ capability: 'text' }, userId)
     const cost = quote.credits
     const chargeReason = '文本生成'
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
@@ -814,7 +817,12 @@ export class StudioService {
         userId,
         cost,
         chargeReason,
-        consumeMeta('text', { model: model ?? null, generationId: record.id, ruleVersion: quote.ruleVersion }),
+        consumeMeta('text', {
+          model: model ?? null,
+          generationId: record.id,
+          ruleVersion: quote.ruleVersion,
+          ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
+        }),
       )
     } catch (err) {
       await this.prisma.generationRecord
@@ -927,7 +935,7 @@ export class StudioService {
     const referenceImages = extractReferenceImages(refs)
     const trimmed = resolvePromptGenerateText(prompt, referenceImages)
     if (!trimmed) throw new BadRequestException('prompt 不能为空')
-    const quote = await this.pricing.quote({ capability: 'text' })
+    const quote = await this.pricing.quote({ capability: 'text' }, userId)
     const cost = quote.credits
     const chargeReason = '提示词模式生成'
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
@@ -970,7 +978,12 @@ export class StudioService {
         userId,
         cost,
         chargeReason,
-        consumeMeta('text', { model: model ?? null, generationId: record.id, ruleVersion: quote.ruleVersion }),
+        consumeMeta('text', {
+          model: model ?? null,
+          generationId: record.id,
+          ruleVersion: quote.ruleVersion,
+          ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
+        }),
       )
     } catch (err) {
       await this.prisma.generationRecord
@@ -1201,7 +1214,7 @@ export class StudioService {
   ) {
     const n = Math.max(1, Math.min(4, Number(count) || 1))
     // 诊断 B4：定价按分辨率分级（1K=10 / 2K=15 / 4K=20 每张），单一真源在 shared
-    const quote = await this.pricing.quote({ capability: 'image', count: n, resolution })
+    const quote = await this.pricing.quote({ capability: 'image', count: n, resolution }, userId)
     const cost = quote.credits
     const chargeReason = '图像生成'
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
@@ -1277,7 +1290,12 @@ export class StudioService {
         userId,
         cost,
         chargeReason,
-        consumeMeta('image', { model: model ?? null, generationId: record.id, ruleVersion: quote.ruleVersion }),
+        consumeMeta('image', {
+          model: model ?? null,
+          generationId: record.id,
+          ruleVersion: quote.ruleVersion,
+          ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
+        }),
       )
     } catch (err) {
       await this.prisma.generationRecord
@@ -1412,7 +1430,7 @@ export class StudioService {
     cancel?: CancelFlag,
     scope?: CanvasGenerationScope,
   ) {
-    const quote = await this.pricing.quote({ capability: 'image_variant' })
+    const quote = await this.pricing.quote({ capability: 'image_variant' }, userId)
     const cost = quote.credits
     const chargeReason = '图像变体'
     const combined = basePrompt ? `${basePrompt}。变体要求：${prompt}` : prompt
@@ -1442,7 +1460,12 @@ export class StudioService {
         userId,
         cost,
         chargeReason,
-        consumeMeta('image', { model: model ?? null, generationId: record.id, ruleVersion: quote.ruleVersion }),
+        consumeMeta('image', {
+          model: model ?? null,
+          generationId: record.id,
+          ruleVersion: quote.ruleVersion,
+          ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
+        }),
       )
     } catch (err) {
       await this.prisma.generationRecord
@@ -1586,7 +1609,7 @@ export class StudioService {
         )
       }
     }
-    const quote = await this.pricing.quote({ capability: 'image_edit', modelKey: editModelKey })
+    const quote = await this.pricing.quote({ capability: 'image_edit', modelKey: editModelKey }, userId)
     const cost = quote.credits
 
     let base: Buffer
@@ -1696,7 +1719,12 @@ export class StudioService {
         userId,
         cost,
         chargeReason,
-        consumeMeta('image', { model: editModelKey, generationId: record.id, ruleVersion: quote.ruleVersion }),
+        consumeMeta('image', {
+          model: editModelKey,
+          generationId: record.id,
+          ruleVersion: quote.ruleVersion,
+          ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
+        }),
       )
     } catch (err) {
       await this.prisma.generationRecord
@@ -2225,15 +2253,18 @@ export class StudioService {
         }
       }
     }
-    const videoQuote = await this.pricing.quote({
-      capability: 'video',
-      modelKey: model,
-      resolution,
-      duration,
-      videoMode: resolvedVideoMode,
-      referenceImageCount: referenceBundle.images.length,
-      referenceVideoCount: referenceBundle.videos.length,
-    })
+    const videoQuote = await this.pricing.quote(
+      {
+        capability: 'video',
+        modelKey: model,
+        resolution,
+        duration,
+        videoMode: resolvedVideoMode,
+        referenceImageCount: referenceBundle.images.length,
+        referenceVideoCount: referenceBundle.videos.length,
+      },
+      userId,
+    )
     const durationCredits = videoQuote.credits
     const chargeReason = '视频生成'
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'video')
@@ -2366,7 +2397,12 @@ export class StudioService {
         userId,
         durationCredits,
         chargeReason,
-        consumeMeta('video', { model: model ?? null, generationId: record.id, ruleVersion: videoQuote.ruleVersion }),
+        consumeMeta('video', {
+          model: model ?? null,
+          generationId: record.id,
+          ruleVersion: videoQuote.ruleVersion,
+          ...(videoQuote.grayReleaseId ? { grayReleaseId: videoQuote.grayReleaseId } : {}),
+        }),
       )
     } catch (err) {
       await this.prisma.generationRecord
@@ -2419,19 +2455,27 @@ export class StudioService {
     const kind: AudioKind = audioKindOf(
       getModelEntryFromRows(currentCatalogEntries(), resolved.modelName) ?? { modality: 'audio' },
     )
-    const quote = await this.pricing.quote({
-      capability: 'audio',
-      // AudioKind（'voice'|'design'|'music'）归一为 AudioPriceKind（'voice'|'music'）：
-      // 与 legacy 计价分支逐字同果——music 15 分、voice/design 5 分（pricing.core.ts legacyPriceOf audio 分支）
-      audioKind: kind === 'music' ? 'music' : 'voice',
-    })
+    const quote = await this.pricing.quote(
+      {
+        capability: 'audio',
+        // AudioKind（'voice'|'design'|'music'）归一为 AudioPriceKind（'voice'|'music'）：
+        // 与 legacy 计价分支逐字同果——music 15 分、voice/design 5 分（pricing.core.ts legacyPriceOf audio 分支）
+        audioKind: kind === 'music' ? 'music' : 'voice',
+      },
+      userId,
+    )
     const cost = quote.credits
     const chargeReason = kind === 'music' ? '音频生成-音乐' : '音频生成'
     await this.points.consume(
       userId,
       cost,
       chargeReason,
-      consumeMeta('audio', { model: options.model ?? null, generationId: null, ruleVersion: quote.ruleVersion }),
+      consumeMeta('audio', {
+        model: options.model ?? null,
+        generationId: null,
+        ruleVersion: quote.ruleVersion,
+        ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
+      }),
     )
     const { mergedText, skippedMerge } = await this.resolveMergedPrompt(
       text,
@@ -2753,7 +2797,7 @@ export class StudioService {
       throw new BadRequestException('当前状态不可确认平台回退')
     }
     const meta = parseMeta(record.metadata)
-    const fallbackQuote = await this.platformFallbackQuote(record.type, meta)
+    const fallbackQuote = await this.platformFallbackQuote(record.type, meta, userId)
     const platformCost = fallbackQuote.credits
     const pointCategory = studioPointCategory(record.type)
     const pointExtra = {
@@ -2764,7 +2808,11 @@ export class StudioService {
       userId,
       platformCost,
       '平台回退生成',
-      consumeMeta(pointCategory, { ...pointExtra, ruleVersion: fallbackQuote.ruleVersion }),
+      consumeMeta(pointCategory, {
+        ...pointExtra,
+        ruleVersion: fallbackQuote.ruleVersion,
+        ...(fallbackQuote.grayReleaseId ? { grayReleaseId: fallbackQuote.grayReleaseId } : {}),
+      }),
     )
     const chargedMeta = { ...meta, chargedPoints: platformCost, priorByokRefunded: true }
 
@@ -3077,10 +3125,13 @@ export class StudioService {
     }
     const meta = parseMeta(record.metadata)
     if (!alreadyRefunded(meta)) {
-      const cost =
-        typeof meta.chargedPoints === 'number'
-          ? meta.chargedPoints
-          : (await this.platformFallbackQuote(record.type, meta)).credits
+      let cost: number
+      if (typeof meta.chargedPoints === 'number') {
+        cost = meta.chargedPoints
+      } else {
+        const fallbackQuote = await this.platformFallbackQuote(record.type, meta, userId)
+        cost = fallbackQuote.credits
+      }
       await this.points.refund(
         userId,
         cost,

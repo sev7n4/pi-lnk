@@ -4,8 +4,8 @@
  * v1 = legacy-equivalent：逐档调 legacyPriceOf 落显式值——表与常量**同源同值**，
  * 这是「等价迁移」的定义。P1 起改价走运营发布流（§8.4），本脚本退役为历史工具。
  *
- * boot 时若无 active 版本，PricingService 会调用本函数自愈（P0 专属便利，
- * 见 pricing.service.ts 注释）；手动执行：`pnpm --filter @lnkpi/server db:seed:pricing`。
+ * P1-a 起 boot 不再自播种（发布流接管，见 pricing.service.ts）：本函数退役为
+ * 手动工具；手动执行：`pnpm --filter @lnkpi/server db:seed:pricing`。
  *
  * 位置说明：实现从 prisma/seed-pricing.ts 迁至 src/pricing/——seed 逻辑消费
  * pricing.core/pricing.space，属定价域；且 src 外文件无法被 pricing.service.ts
@@ -43,6 +43,20 @@ export const SEED_COST_RATES = [
 export async function seedPricing(prisma: PrismaClient): Promise<{ version: string; entries: number }> {
   const space = enumeratePricingSpace()
   if (space.length === 0) throw new Error('seedPricing: 枚举空间为空——拒绝写空价目表（空集假绿防线）')
+
+  // 单active 不变量（承重，勿删）：本函数把 v1 upsert 成 active。若库里已有**其它**
+  // active 版本（P1-a 发布流建出来的运营版本），继续 upsert 会造出第二个 active，
+  // 而 loadActiveTable 用无序 findFirst，取到哪个不确定 ⇒ 扣费金额随机漂。
+  // P1-a 已删除「归档其余 active」的 updateMany（越权改运营版本状态），改为
+  // **拒绝并报错**：改价/发布一律走发布流。
+  const otherActive = await prisma.priceListVersion.findFirst({
+    where: { status: 'active', version: { not: PRICING_VERSION_V1 } },
+  })
+  if (otherActive) {
+    throw new Error(
+      `seedPricing: 库中已有其它 active 价目表版本 ${otherActive.version}（${otherActive.id}）——拒绝造第二个 active。请走运营发布流（pricing-publishing.publish / rollback）管理版本状态。`,
+    )
+  }
 
   const version = await prisma.priceListVersion.upsert({
     where: { version: PRICING_VERSION_V1 },
@@ -83,10 +97,7 @@ export async function seedPricing(prisma: PrismaClient): Promise<{ version: stri
     create: { phase: 'launch', anchorCents: 1, marginBp: 11000 },
   })
 
-  // P0 单一 active 版本：其余一律归档（P1 发布流接管后删除本行）
-  await prisma.priceListVersion.updateMany({
-    where: { status: 'active', version: { not: PRICING_VERSION_V1 } },
-    data: { status: 'archived' },
-  })
+  // P0 遗物：发布流接管后移除（原「单一 active 版本：其余一律归档」updateMany）——
+  // 归档运营版本状态属越权，改为上方事务前的前置检查：已有其它 active ⇒ 拒绝播种。
   return { version: PRICING_VERSION_V1, entries }
 }

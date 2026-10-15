@@ -175,6 +175,89 @@ export type AuditLogRow = {
 
 export type AuditLogPage = { rows: AuditLogRow[]; total: number; page: number; pageSize: number }
 
+// ---- P1-a T8：价目发布流 + 灰度发布（与 pricing-publishing/pricing-gray controller 对齐）----
+
+export type AdminPriceListVersion = {
+  id: string
+  version: string
+  status: string
+  note: string | null
+  entryCount: number
+  publishedAt: string | null
+  createdAt: string
+}
+
+export type AdminPublishEntry = {
+  matchKey: string
+  capability: string
+  credits: number
+  basis?: string
+  costRateId?: string | null
+}
+
+export type AdminDraftView = {
+  id: string
+  version: string
+  status: string
+  note: string | null
+  entries: AdminPublishEntry[]
+}
+
+/**
+ * 与 PricingPublishingService.DiffSummary 对齐；floorViolations/missingCost/noCostCoverage 前端需标红/标注。
+ * 无 removed 字段：服务端 upsertEntries 不提供删条目能力，removed 恒 0（死计数已删）。
+ */
+export type AdminDiffSummary = {
+  draftVersion: string
+  activeVersion: string | null
+  added: number
+  changed: number
+  unchanged: number
+  maxIncrease: { matchKey: string; from: number; to: number; pct: number } | null
+  maxDecrease: { matchKey: string; from: number; to: number; pct: number } | null
+  floorViolations: { matchKey: string; credits: number; floor: number }[]
+  missingCost: string[]
+  noCostCoverage: string[]
+}
+
+export type AdminGrayRelease = {
+  id: string
+  status: string
+  version: string
+  hits: number
+  startsAt: string
+  endsAt: string
+  note: string | null
+}
+
+export type AdminGrayPreview = {
+  hits: { userId: string; phone: string }[]
+  misses: string[]
+}
+
+/** txAmountByCategory 含 refund 行金额（前端直接展示，不扣回） */
+export type AdminGrayReport = {
+  releaseId: string
+  version: string
+  status: string
+  hits: number
+  txCount: number
+  txAmountByCategory: Record<string, number>
+  refundCount: number
+  byUser: Array<{ userId: string; consumeCount: number; consumeTotal: number }>
+}
+
+export type AdminGrayCreateInput = {
+  versionId: string
+  /** 粘贴文本（任意分隔符），服务端切分/去重 */
+  rawInput?: string
+  /** 或直接给号码数组（二选一） */
+  phones?: string[]
+  startsAt?: string
+  endsAt?: string
+  note?: string
+}
+
 /** automation job 摘要（GET /admin/automations 返回的运营侧子集；C5 P0 只读+trigger）。 */
 export type AutomationJobSummary = {
   id: string
@@ -267,4 +350,47 @@ export const adminApi = {
 
   listAuditLogs: (params?: { action?: string; resource?: string; page?: number; pageSize?: number }) =>
     unwrap<AuditLogPage>(adminHttp.get('/admin/audit-logs', { params: params ?? {} })),
+
+  // ---- P1-a T8：价目发布流（/admin/pricing/versions，全部挂 AdminTokenGuard）----
+  pricingVersions: {
+    list: (): Promise<AdminPriceListVersion[]> => unwrap(adminHttp.get('/admin/pricing/versions')),
+
+    createDraft: (version: string, note: string): Promise<{ id: string; version: string; entries: number }> =>
+      unwrap(adminHttp.post('/admin/pricing/versions/draft', { version, note })),
+
+    get: (id: string): Promise<AdminDraftView> =>
+      unwrap(adminHttp.get(`/admin/pricing/versions/${encodeURIComponent(id)}`)),
+
+    putEntries: (id: string, entries: AdminPublishEntry[]): Promise<{ written: number }> =>
+      unwrap(adminHttp.put(`/admin/pricing/versions/${encodeURIComponent(id)}/entries`, { entries })),
+
+    diff: (id: string): Promise<AdminDiffSummary> =>
+      unwrap(adminHttp.get(`/admin/pricing/versions/${encodeURIComponent(id)}/diff`)),
+
+    publish: (id: string): Promise<{ version: string }> =>
+      unwrap(adminHttp.post(`/admin/pricing/versions/${encodeURIComponent(id)}/publish`)),
+
+    rollback: (): Promise<{ version: string }> =>
+      unwrap(adminHttp.post('/admin/pricing/versions/rollback')),
+  },
+
+  // ---- P1-a T8：白名单灰度发布（/admin/pricing/gray）----
+  pricingGray: {
+    preview: (rawInput: string): Promise<AdminGrayPreview> =>
+      unwrap(adminHttp.post('/admin/pricing/gray/preview', { rawInput })),
+
+    create: (input: AdminGrayCreateInput): Promise<{ releaseId: string; version: string; hits: number; window: { startsAt: string; endsAt: string } }> =>
+      unwrap(adminHttp.post('/admin/pricing/gray', input)),
+
+    list: (): Promise<AdminGrayRelease[]> => unwrap(adminHttp.get('/admin/pricing/gray')),
+
+    report: (id: string): Promise<AdminGrayReport> =>
+      unwrap(adminHttp.get(`/admin/pricing/gray/${encodeURIComponent(id)}/report`)),
+
+    promote: (id: string): Promise<{ version: string }> =>
+      unwrap(adminHttp.post(`/admin/pricing/gray/${encodeURIComponent(id)}/promote`)),
+
+    rollback: (id: string): Promise<void> =>
+      unwrap(adminHttp.post(`/admin/pricing/gray/${encodeURIComponent(id)}/rollback`)),
+  },
 }

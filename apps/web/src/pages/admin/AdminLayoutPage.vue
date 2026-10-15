@@ -55,6 +55,8 @@ async function submitToken() {
         <el-menu-item index="/admin/routes">上游路由</el-menu-item>
         <el-menu-item index="/admin/health">健康探活</el-menu-item>
         <el-menu-item index="/admin/pricing">渠道定价</el-menu-item>
+        <el-menu-item index="/admin/pricing-versions">价目发布流</el-menu-item>
+        <el-menu-item index="/admin/gray-release">灰度发布</el-menu-item>
         <el-menu-item index="/admin/audit">审计日志</el-menu-item>
         <el-menu-item index="/admin/guide">使用说明</el-menu-item>
       </el-menu>

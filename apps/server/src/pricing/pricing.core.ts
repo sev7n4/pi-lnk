@@ -35,6 +35,8 @@ export interface PricingQuery {
 export interface PricingQuote {
   credits: number
   ruleVersion: string
+  /** 灰度命中时的 release id；global/兜底路径为 undefined（条件写入账本，避免破坏既有断言） */
+  grayReleaseId?: string
 }
 
 /** 走常量兜底时落账的 ruleVersion 字面量（与表版本区分，便于审计「这笔钱哪来的」）。 */

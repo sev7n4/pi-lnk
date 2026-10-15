@@ -5,10 +5,13 @@ import { ModelCatalogAdminController, ModelDefaultsAdminController } from './mod
 import { ModelHealthAdminController } from './model-health.controller'
 import { ModelOpsAdminController } from './model-ops.controller'
 import { PlatformChannelAdminController } from './platform-channel.controller'
+import { PricingPublishingController } from './pricing-publishing.controller'
+import { PricingGrayController } from './pricing-gray.controller'
 import { UpstreamProbeAdminController } from './upstream-probe-admin.controller'
 import { UpstreamRoutesAdminController } from './upstream-routes.controller'
 import { AutomationAdminController } from './automation-admin.controller'
 import { AutomationModule } from '../automation/automation.module'
+import { PricingModule } from '../pricing/pricing.module'
 
 /**
  * S1-1 admin 模块：共享密钥（Bearer LNKPI_ADMIN_TOKEN）鉴权的运维端点。
@@ -19,9 +22,11 @@ import { AutomationModule } from '../automation/automation.module'
  * C5 P0：automation 只读 + trigger 端点（scheduler 由 AutomationModule 提供）。
  * model-ops Task 1：model-defaults 切默认端点（PUT，X-Confirm 428 + 审计 + bump）。
  * model-ops Task 2：model-ops onboard/offboard 原子编排（dryRun 披露 + X-Confirm 执行态）。
+ * P1-a T4：pricing/versions 发布流端点（draft/diff/publish/rollback，PricingModule 提供发布服务）。
+ * P1-a T5：pricing/gray 白名单灰度端点（preview/create/list/report/promote/rollback）。
  */
 @Module({
-  imports: [AutomationModule],
+  imports: [AutomationModule, PricingModule],
   controllers: [
     AuditLogsAdminController,
     UpstreamProbeAdminController,
@@ -31,6 +36,8 @@ import { AutomationModule } from '../automation/automation.module'
     ModelOpsAdminController,
     UpstreamRoutesAdminController,
     PlatformChannelAdminController,
+    PricingPublishingController,
+    PricingGrayController,
     AutomationAdminController,
   ],
   providers: [AdminTokenGuard],

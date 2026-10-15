@@ -32,21 +32,24 @@ export class SceneComposerService {
     return session
   }
 
-  private async itemQuote(item: SceneComposerBatchItem): Promise<PricingQuote> {
+  private async itemQuote(item: SceneComposerBatchItem, userId: string): Promise<PricingQuote> {
     if (item.mediaType === 'video') {
       const bundle = buildVideoReferenceBundle(item.refs ?? [])
-      return this.pricing.quote({
-        capability: 'video',
-        modelKey: item.model,
-        duration: item.duration ?? 5,
-        resolution: item.resolution,
-        referenceImageCount: bundle.images.length,
-        referenceVideoCount: bundle.videos.length,
-      })
+      return this.pricing.quote(
+        {
+          capability: 'video',
+          modelKey: item.model,
+          duration: item.duration ?? 5,
+          resolution: item.resolution,
+          referenceImageCount: bundle.images.length,
+          referenceVideoCount: bundle.videos.length,
+        },
+        userId,
+      )
     }
     // 图像平铺 10 分：quote 只传 capability + count，不传 resolution/modelKey
     // （legacyPriceOf({capability:'image',count:1}) → 1K 因子 = 10，与原 return 10 等价）
-    return this.pricing.quote({ capability: 'image', count: 1 })
+    return this.pricing.quote({ capability: 'image', count: 1 }, userId)
   }
 
   private async assertShotInSession(shotId: string, sessionId: string) {
@@ -123,19 +126,30 @@ export class SceneComposerService {
 
     this.assertNoBlobRefsInBatch(dto.items)
 
-    const quotes = await Promise.all(dto.items.map((item) => this.itemQuote(item)))
+    const quotes = await Promise.all(dto.items.map((item) => this.itemQuote(item, userId)))
     const total = quotes.reduce((sum, q) => sum + q.credits, 0)
     // 同一 batch 内 ruleVersion 不一致（表命中与常量兜底混排）时保守记 null，不谎报版本来源
     const ruleVersion =
       quotes.length > 0 && quotes.every((q) => q.ruleVersion === quotes[0].ruleVersion)
         ? quotes[0].ruleVersion
         : null
+    // 灰度混排裁定 T6-b：批内全部 item 命中同一 grayReleaseId 才落账；
+    // 任一不同/未命中/空批 → 不带键（走 global 口径），与 ruleVersion 混排保守 null 同构
+    const grayReleaseId =
+      quotes.length > 0 &&
+      quotes.every((q) => q.grayReleaseId && q.grayReleaseId === quotes[0].grayReleaseId)
+        ? quotes[0].grayReleaseId
+        : undefined
     if (total > 0) {
       await this.points.consume(
         userId,
         total,
         `导演台批量生成 ×${dto.items.length}`,
-        consumeMeta('other', { generationId: null, ruleVersion }),
+        consumeMeta('other', {
+          generationId: null,
+          ruleVersion,
+          ...(grayReleaseId ? { grayReleaseId } : {}),
+        }),
       )
     }
 

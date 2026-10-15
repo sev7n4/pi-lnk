@@ -156,6 +156,7 @@ model PointTransaction {
   generationId String?
   balanceAfter Int?
   ruleVersion String?
+  grayReleaseId String?
   createdAt    DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -521,6 +522,7 @@ model PriceListVersion {
   createdAt   DateTime         @default(now())
   publishedAt DateTime?
   entries     PriceListEntry[]
+  grayReleases PricingGrayRelease[]
 }
 
 model PriceListEntry {
@@ -558,4 +560,30 @@ model MarginPolicy {
   marginBp            Int      @default(11000)
   capabilityOverrides String? // JSON，如 {"video":11000}；P1 重定价消费
   createdAt           DateTime @default(now())
+}
+
+// ── 白名单灰度发布（P1-a · 2026-10-14-p1a-pricing-publishing-gray-release）──
+model PricingGrayRelease {
+  id        String   @id @default(cuid())
+  versionId String
+  version   PriceListVersion @relation(fields: [versionId], references: [id])
+  status    String   @default("active") // active | promoted | rolled_back | expired
+  startsAt  DateTime
+  endsAt    DateTime
+  createdBy String   @default("admin")
+  note      String?
+  createdAt DateTime @default(now())
+  whitelist PricingGrayWhitelist[]
+  @@index([status, endsAt])
+}
+
+model PricingGrayWhitelist {
+  id        String             @id @default(cuid())
+  releaseId String
+  release   PricingGrayRelease @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  userId    String
+  phone     String
+  note      String?
+  @@unique([releaseId, userId])
+  @@index([userId])
 }
