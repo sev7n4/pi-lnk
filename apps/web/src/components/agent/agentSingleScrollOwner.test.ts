@@ -39,10 +39,15 @@ function runningThinking(): TimelinePart {
  *
  * ⚠️ 这几个断言涉及的组件注释里**正面记录了被删除的历史**（含 `max-h-40`、
  * `DENSE_MAX_HEIGHT`、`max-height` 等字面量），全文匹配会把注释当代码 ⇒ 假红。
+ *
  * 三种注释形态都要剔：
- *   ① `//` 单行（TS/JS）
- *   ② `/* … */` 块（行首 `*` 为续行）
- *   ③ `<!-- … -->`（Vue 模板里的 HTML 注释——**最容易漏，曾因此 CI 假红一次**）
+ *   ① 双斜杠单行（TS/JS）
+ *   ② 块注释（行首星号为续行）
+ *   ③ Vue 模板里的 HTML 注释（可跨行，**最容易漏，曾因此 CI 假红一次**）
+ *
+ * ⛔ 本注释内**不得出现任何注释终止符字面量**：写了会让注释提前闭合，
+ * 解析器把后续代码当注释内容，报错行号指向毫不相干的位置（TS1127 / Unterminated
+ * template literal），极易误判成别的问题。
  */
 function stripComments(src: string): string {
   return src
