@@ -101,6 +101,8 @@ const router = createRouter({
         { path: 'routes', name: 'admin-routes', component: () => import('@/pages/admin/AdminRoutesPage.vue') },
         { path: 'health', name: 'admin-health', component: () => import('@/pages/admin/AdminHealthPage.vue') },
         { path: 'pricing', name: 'admin-pricing', component: () => import('@/pages/admin/AdminPricingPage.vue') },
+        { path: 'pricing-versions', name: 'admin-pricing-versions', component: () => import('@/pages/admin/AdminPricingVersionsPage.vue') },
+        { path: 'gray-release', name: 'admin-gray-release', component: () => import('@/pages/admin/AdminGrayReleasePage.vue') },
         { path: 'audit', name: 'admin-audit', component: () => import('@/pages/admin/AdminAuditPage.vue') },
         { path: 'guide', name: 'admin-guide', component: () => import('@/pages/admin/AdminGuidePage.vue') },
       ],
