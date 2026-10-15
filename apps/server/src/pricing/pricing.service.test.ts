@@ -278,7 +278,7 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
     expect(count).toHaveBeenCalledWith({ where: { versionId: 'plv1' } })
   })
 
-  it('用例 8：无 active 版本 → degraded=true（自愈已删，不再播种）', async () => {
+  it('用例 8：无 active 版本 → degraded=true（boot 不再自播种）', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { prisma, findFirst } = fakePrisma(null)
     const svc = new PricingService(prisma)
@@ -289,5 +289,109 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
       credits: 15,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
     })
+  })
+
+  it('用例 9（C2 自愈）：boot 无 active 版本降级 → 运行中装上 active 版本 → quote 自动恢复，无需重启', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 可变的 active 版本来源：boot 时空，之后运营经发布流建出版本
+    let active: { id: string; version: string; status: string; entries: { matchKey: string; credits: number }[] } | null =
+      null
+    const prisma = {
+      priceListVersion: {
+        findFirst: vi.fn(async () => active),
+      },
+      priceListEntry: { count: vi.fn(async () => 0) },
+      pricingGrayRelease: { findFirst: vi.fn(async () => null) },
+      $transaction: vi.fn(async (ops: Array<Promise<number>>) => Promise.all(ops)),
+    } as unknown as PrismaService
+
+    const svc = new PricingService(prisma)
+    await svc.onModuleInit()
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
+      credits: 5,
+      ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+    })
+
+    // 运维事后经发布流装上一个 active 版本。degraded 曾是永久闩锁，必须重启进程；
+    // 发布流的所有写路径（publish/rollback/灰度）成功后都会 invalidate()，
+    // invalidate 同时解除自愈探测节流 ⇒ 下一笔报价立即接管新表。
+    active = {
+      id: 'plv1',
+      version: V,
+      status: 'active',
+      entries: [{ matchKey: 'text', credits: 5 }],
+    }
+    svc.invalidate()
+
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({ credits: 5, ruleVersion: V })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('已从降级恢复'))
+
+    // 恢复是持久的：后续报价继续走表，不会退回兜底
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({ credits: 5, ruleVersion: V })
+    err.mockRestore()
+    warn.mockRestore()
+  })
+
+  it('用例 9b（C2 自愈边界）：绕过发布流直接改库时，恢复延迟上限 = 一个缓存 TTL（30s）', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let active: { id: string; version: string; status: string; entries: { matchKey: string; credits: number }[] } | null =
+      null
+    const prisma = {
+      priceListVersion: { findFirst: vi.fn(async () => active) },
+      priceListEntry: { count: vi.fn(async () => 0) },
+      pricingGrayRelease: { findFirst: vi.fn(async () => null) },
+      $transaction: vi.fn(async (ops: Array<Promise<number>>) => Promise.all(ops)),
+    } as unknown as PrismaService
+
+    const svc = new PricingService(prisma)
+    await svc.onModuleInit()
+    // 这笔降级报价会把自愈探测节流一个 TTL
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
+      credits: 5,
+      ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+    })
+
+    //绕过发布流直接改库（无invalidate）：仍在 30s 探测窗口内 ⇒ 本笔仍兜底。
+    // 这是刻意封顶：降级期间每次 quote 打库会把最热的路径变成 DB-bound。
+    // 所有受支持的建版本路径都会 invalidate()，因此真实运维流程零延迟。
+    active = { id: 'plv1', version: V, status: 'active', entries: [{ matchKey: 'text', credits: 5 }] }
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
+      credits: 5,
+      ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+    })
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('已从降级恢复'))
+    err.mockRestore()
+    warn.mockRestore()
+  })
+
+  it('用例 10（C2 边界）：自检失配的降级不可自愈（表在库里也不被信）', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 全legacy-equivalent 但值失配 ⇒ 自检降级；表一直查得到
+    const { prisma, findFirst } = fakePrisma(entryMap({ text: 99 }))
+    const svc = new PricingService(prisma)
+    await svc.onModuleInit()
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
+      credits: 5,
+      ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+    })
+    expect(findFirst).toHaveBeenCalledTimes(1) // 不为自愈额外查库
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('已从降级恢复'))
+    err.mockRestore()
+    warn.mockRestore()
+  })
+
+  it('用例 11（I3）：invalidate() 清缓存，下一笔 quote 立即重查表', async () => {
+    const { prisma, findFirst } = fakePrisma(entryMap({ text: 5 }))
+    const svc = new PricingService(prisma)
+    await svc.quote({ capability: 'text' })
+    await svc.quote({ capability: 'text' })
+    expect(findFirst).toHaveBeenCalledTimes(1)
+
+    svc.invalidate()
+    await svc.quote({ capability: 'text' })
+    expect(findFirst).toHaveBeenCalledTimes(2)
   })
 })

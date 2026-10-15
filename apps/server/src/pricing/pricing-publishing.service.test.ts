@@ -1,7 +1,8 @@
 import 'reflect-metadata'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BadRequestException } from '@nestjs/common'
-import { PricingPublishingService } from './pricing-publishing.service'
+import { DEFAULT_OPS_BASIS, PricingPublishingService } from './pricing-publishing.service'
+import { PricingService } from './pricing.service'
 import type { PrismaService } from '../prisma/prisma.service'
 
 /**
@@ -209,7 +210,7 @@ function seedBaseline(db: FakeDb) {
   return v1
 }
 
-const svcOf = (db: FakeDb) => new PricingPublishingService(db.prisma)
+const svcOf = (db: FakeDb) => new PricingPublishingService(db.prisma, new PricingService(db.prisma))
 
 describe('PricingPublishingService.createDraftFromActive', () => {
   it('用例 1：复制条数 = active 条数；basis/costRateId 逐字保留；重名/空 version → 400', async () => {
@@ -259,10 +260,36 @@ describe('PricingPublishingService.upsertEntries', () => {
     // 非法值未落库
     expect((await svc.getDraft(draft.id))!.entries.find((e) => e.matchKey === 'text')!.credits).toBe(6)
   })
+
+  it('用例 2b：C1——未显式给 basis 的改价条目落ops-modified（绝不 legacy-equivalent）', async () => {
+    const db = new FakeDb()
+    seedBaseline(db)
+    const svc = svcOf(db)
+    const draft = await svc.createDraftFromActive('v2', '')
+
+    await svc.upsertEntries(draft.id, [
+      { matchKey: 'text', capability: 'text', credits: 8 }, // 缺 basis ⇒ 运营改价
+      { matchKey: 'audio:music', capability: 'audio', credits: 15 }, // 新增，缺 basis
+    ])
+
+    const got = await svc.getDraft(draft.id)
+    expect(got!.entries.find((e) => e.matchKey === 'text')!.basis).toBe(DEFAULT_OPS_BASIS)
+    expect(got!.entries.find((e) => e.matchKey === 'audio:music')!.basis).toBe(DEFAULT_OPS_BASIS)
+    // 缺省值绝不能是 legacy-equivalent：否则发布后 active 版本 legacyRows===totalRows
+    // ⇒ 重启走全网等价自检 ⇒ 该行失配 ⇒ degraded=true ⇒ 运营改的价被静默丢弃。
+    expect(DEFAULT_OPS_BASIS).not.toBe('legacy-equivalent')
+
+    // 显式给的 basis 逐字保留（种子路径 launch-reprice / 显式 legacy-equivalent 不受影响）
+    await svc.upsertEntries(draft.id, [
+      { matchKey: 'image', capability: 'image', credits: 22, basis: 'launch-reprice', costRateId: 'cr_image' },
+    ])
+    const got2 = await svc.getDraft(draft.id)
+    expect(got2!.entries.find((e) => e.matchKey === 'image')!.basis).toBe('launch-reprice')
+  })
 })
 
 describe('PricingPublishingService.diffSummary', () => {
-  it('用例 3：added/changed 计数 + maxIncrease pct + noCostCoverage 标注 + 地板违规只算不抛', async () => {
+  it('用例 3：added/changed 计数 + maxIncrease pct + 全表 noCostCoverage 标注 + 地板违规只算不抛', async () => {
     const db = new FakeDb()
     seedBaseline(db)
     const svc = svcOf(db)
@@ -282,17 +309,46 @@ describe('PricingPublishingService.diffSummary', () => {
     expect(d.draftVersion).toBe('v2')
     expect(d.activeVersion).toBe('v1')
     expect(d.added).toBe(1)
-    expect(d.removed).toBe(0)
+    // removed 已删（死计数）：upsertEntries 不提供删条目能力，该计数恒0
+    expect(Object.keys(d)).not.toContain('removed')
     expect(d.changed).toBe(3)
     expect(d.unchanged).toBe(0)
     expect(d.maxIncrease).toMatchObject({ matchKey: 'text', from: 5, to: 8, pct: 0.6 })
-    expect(d.maxDecrease?.matchKey).toBe('image') // -0.5 降幅 > video 的 -0.333
+    expect(d.maxDecrease?.matchKey).toBe('image') // -0.5降幅 > video 的 -0.333
     expect(d.maxDecrease?.from).toBe(20)
     expect(d.maxDecrease?.to).toBe(10)
-    // image 挂了 costRateId → 只有 video:default 属于无成本覆盖的 changed 条目
-    expect(d.noCostCoverage).toEqual(['video:default'])
+    // 全表口径无成本覆盖（终审 I4）：text/image 挂了 costRateId → 不列；
+    // video:default（改过）与 audio:music（新增）无 costRateId → 都必须列出。
+    // 旧口径只在 changed 分支采集，audio:music 这类新增条目会被漏掉。
+    expect(d.noCostCoverage).toEqual(['video:default', 'audio:music'])
     expect(d.floorViolations).toEqual([{ matchKey: 'text', credits: 8, floor: 11 }])
     expect(d.missingCost).toEqual([])
+  })
+
+  it('用例 3b：未改动的无 costRateId 条目也进 noCostCoverage（v1 4s 档口径，I4 核心）', async () => {
+    const db = new FakeDb()
+    const v1 = seedBaseline(db)
+    // v1 加一条 unchanged 且无 costRateId 的条目（模拟 D2 的 4s 档）
+    db.entries.push({
+      id: 'e4',
+      versionId: v1.id,
+      matchKey: 'video:4s',
+      capability: 'video',
+      credits: 30,
+      basis: 'legacy-equivalent',
+      costRateId: null,
+    })
+    const svc = svcOf(db)
+    const draft = await svc.createDraftFromActive('v2', '只改别的档')
+    await svc.upsertEntries(draft.id, [{ matchKey: 'text', capability: 'text', credits: 6 }])
+
+    const d = await svc.diffSummary(draft.id)
+    expect(d.changed).toBe(1)
+    expect(d.unchanged).toBe(3)
+    // video:4s credits 没变（unchanged）却仍未挂 costRateId → 必须出现在审批视野里，
+    // 否则审批人只看到「地板违规 0 条」，误以为全部条目过了地板校验。
+    expect(d.noCostCoverage).toContain('video:4s')
+    expect(d.noCostCoverage).toContain('text')
   })
 })
 
@@ -423,5 +479,48 @@ describe('PricingPublishingService.rollback', () => {
     const svc2 = svcOf(db2)
     await expect(svc2.rollback()).rejects.toBeInstanceOf(BadRequestException)
     expect(db2.versions.find((v) => v.version === 'v1')!.status).toBe('active')
+  })
+
+  it('用例 9（I3）：publish/rollback 后同一 PricingService 单例立即按新 active 计价（缓存未过期）', async () => {
+    // 计价侧 30s 缓存若不被写路径失效，发布/回滚后仍按旧价扣费最多 30s。
+    // 断言必须复用同一单例——造新实例会绕开缓存，把缺陷一起掩盖（终审 I3）。
+    const db = new FakeDb()
+    seedBaseline(db)
+    const pricing = new PricingService(db.prisma)
+    const svc = new PricingPublishingService(db.prisma, pricing)
+
+    expect(await pricing.quote({ capability: 'text' })).toEqual({ credits: 5, ruleVersion: 'v1' })
+
+    const draft = await svc.createDraftFromActive('v2', '运营改价')
+    await svc.upsertEntries(draft.id, [{ matchKey: 'text', capability: 'text', credits: 9 }])
+    await svc.publish(draft.id)
+    // 同一单例、缓存 TTL 未过：新价立即生效（不是 v1 的 5）
+    expect(await pricing.quote({ capability: 'text' })).toEqual({ credits: 9, ruleVersion: 'v2' })
+
+    await svc.rollback()
+    expect(await pricing.quote({ capability: 'text' })).toEqual({ credits: 5, ruleVersion: 'v1' })
+  })
+
+  it('用例 10（I3）：publish 抛错（地板违规）时不动缓存，报价保持旧价', async () => {
+    const db = new FakeDb()
+    seedBaseline(db)
+    const pricing = new PricingService(db.prisma)
+    const spy = vi.spyOn(pricing, 'invalidate')
+    const svc = new PricingPublishingService(db.prisma, pricing)
+
+    expect(await pricing.quote({ capability: 'text' })).toEqual({ credits: 5, ruleVersion: 'v1' })
+    spy.mockClear()
+
+    const draft = await svc.createDraftFromActive('v2', '跌破地板')
+    await svc.upsertEntries(draft.id, [
+      // text 挂 cr_text：floor = ceil(0.1 × 105) = 11，credits=5 < 11 → 违规
+      { matchKey: 'text', capability: 'text', credits: 5, basis: 'cost-plus', costRateId: 'cr_text' },
+    ])
+    await expect(svc.publish(draft.id)).rejects.toBeInstanceOf(BadRequestException)
+
+    // 事务未提交 ⇒ 不得invalidate（否则把一次失败发布当成成功变更，丢弃本可用的缓存）
+    expect(spy).not.toHaveBeenCalled()
+    expect(await pricing.quote({ capability: 'text' })).toEqual({ credits: 5, ruleVersion: 'v1' })
+    spy.mockRestore()
   })
 })

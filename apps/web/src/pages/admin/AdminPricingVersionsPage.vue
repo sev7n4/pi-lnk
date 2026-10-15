@@ -93,7 +93,11 @@ async function saveEntries() {
       actionError.value = `${e.matchKey}.credits 必须是正整数，收到: ${raw}`
       return
     }
-    entries.push({ ...e, credits: n })
+    // 「改过价」必须显式回传 basis='ops-modified'（不是沿用原basis）：
+    // 改过的条目若仍带 legacy-equivalent 落库，发布后重启会走全网等价自检并失配
+    // ⇒ degraded=true ⇒ 运营改的价被静默丢弃（终审 Critical C1）。语义互斥：
+    // 等价于 legacy 与 运营改过价 不可能同时成立。
+    entries.push({ ...e, credits: n, basis: e.credits === n ? e.basis : 'ops-modified' })
   }
   savingEntries.value = true
   try {
@@ -262,7 +266,7 @@ defineExpose({
           影响面：{{ diff.draftVersion }}（draft）vs {{ diff.activeVersion ?? '（无 active 基线）' }}
         </p>
         <p class="mb-1 text-fg-2">
-          新增 {{ diff.added }} / 删除 {{ diff.removed }} / 变更 {{ diff.changed }} / 不变 {{ diff.unchanged }}
+          新增 {{ diff.added }} / 变更 {{ diff.changed }} / 不变 {{ diff.unchanged }}
         </p>
         <p class="mb-1 text-fg-2">
           最大涨幅：<template v-if="diff.maxIncrease">{{ diff.maxIncrease.matchKey }} {{ diff.maxIncrease.from }} → {{ diff.maxIncrease.to }}（+{{ (diff.maxIncrease.pct * 100).toFixed(1) }}%）</template><template v-else>无</template>
@@ -278,9 +282,9 @@ defineExpose({
           成本费率缺失（发布时跳过地板并告警）：{{ diff.missingCost.join(', ') }}
         </p>
         <p v-if="diff.noCostCoverage.length > 0" class="mb-1 text-warning" data-test="no-cost-coverage">
-          无成本覆盖（地板跳过标注）：{{ diff.noCostCoverage.join(', ') }}
+          无成本覆盖 {{ diff.noCostCoverage.length }} 条（无 costRateId，未做地板校验）：{{ diff.noCostCoverage.join(', ') }}
         </p>
-        <p v-if="diff.floorViolations.length === 0 && diff.missingCost.length === 0" class="text-fg-3">无地板违规、无成本费率缺失</p>
+        <p v-if="diff.floorViolations.length === 0 && diff.missingCost.length === 0 && diff.noCostCoverage.length === 0" class="text-fg-3">无地板违规、无成本费率缺失、无成本覆盖</p>
       </div>
     </div>
   </section>

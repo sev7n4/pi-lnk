@@ -187,12 +187,14 @@ export type AdminDraftView = {
   entries: AdminPublishEntry[]
 }
 
-/** 与 PricingPublishingService.DiffSummary 对齐；floorViolations/missingCost/noCostCoverage 前端需标红/标注 */
+/**
+ * 与 PricingPublishingService.DiffSummary 对齐；floorViolations/missingCost/noCostCoverage 前端需标红/标注。
+ * 无 removed 字段：服务端 upsertEntries 不提供删条目能力，removed 恒 0（死计数已删）。
+ */
 export type AdminDiffSummary = {
   draftVersion: string
   activeVersion: string | null
   added: number
-  removed: number
   changed: number
   unchanged: number
   maxIncrease: { matchKey: string; from: number; to: number; pct: number } | null

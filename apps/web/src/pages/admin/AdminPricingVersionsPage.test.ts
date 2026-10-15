@@ -70,7 +70,6 @@ const diffData = (over: Record<string, unknown> = {}) => ({
   draftVersion: '2026.10-A',
   activeVersion: '2026.09-B',
   added: 1,
-  removed: 0,
   changed: 2,
   unchanged: 3,
   maxIncrease: { matchKey: 'gpt-4o', from: 100, to: 150, pct: 0.5 },
@@ -174,8 +173,11 @@ describe('AdminPricingVersionsPage', () => {
     expect(putEntries).toHaveBeenCalledWith(
       'v-1',
       expect.arrayContaining([
-        expect.objectContaining({ matchKey: 'gpt-4o', credits: 120 }),
-        expect.objectContaining({ matchKey: 'claude', credits: 50 }),
+        // 改过价（100→120）的条目必须显式带 basis='ops-modified'（终审 C1）：
+        // 沿用 legacy-equivalent 会让发布后的重启走等价自检并把运营改的价丢弃。
+        expect.objectContaining({ matchKey: 'gpt-4o', credits: 120, basis: 'ops-modified' }),
+        // 未改动的条目保留原 basis（逐字回传，不误标）
+        expect.objectContaining({ matchKey: 'claude', credits: 50, basis: 'legacy-equivalent' }),
       ]),
     )
   })
@@ -202,6 +204,9 @@ describe('AdminPricingVersionsPage', () => {
     expect(w.text()).toContain('成本费率缺失')
     expect(w.text()).toContain('m-x')
     expect(w.text()).toContain('无成本覆盖')
+    // 全表口径：展示条数，让审批人知道「未做地板校验」的覆盖面（终审 I4）
+    expect(w.text()).toContain('无成本覆盖 1 条')
+    expect(w.text()).not.toContain('删除 0')
     // 标红防线：diff 面板内存在 danger 文本节点（先断言节点数，避免 findAll 空转成空壳断言）
     const dangerNodes = w.findAll('[data-test="floor-violations"], [data-test="missing-cost"]')
     expect(dangerNodes).toHaveLength(2)

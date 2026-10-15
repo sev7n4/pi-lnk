@@ -12,6 +12,10 @@
  * 告警 + 全量兜底。启动自检条件化——active 版本全部 legacy-equivalent 才做
  * 全网等价自检（v1 路径不放松）；混入运营定价（basis ≠ legacy-equivalent）
  * 则跳过等价自检，避免运营价目上线即被误杀降级。
+ *
+ * degraded 不是 boot 期永久闩锁：运营随后经发布流建出 active 版本时自愈
+ * （loadActiveTable 命中即清 degraded + warn，见 C2）。否则「改价不发版」在
+ * 运行中的进程里失效，必须重启才恢复——那正是发布流要消灭的运维动作。
  */
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
@@ -49,8 +53,33 @@ export class PricingService implements OnModuleInit {
   private cache: PriceTable | null = null
   private grayCache: GrayTable | null = null
   private degraded = false
+  /**
+   * degraded 是否可自愈：仅「boot 时无 active 版本」这一成因置true。
+   * 自愈成功后连同本标记一并复位（终审 Critical C2）。
+   *
+   * 其余降级成因（零条目 / 自检失配 / 自检异常）**不可**自愈——那些 active 版本
+   * 本身就不该被信（等价自检失配意味着表与常量口径已经分叉），让它们被「查到就
+   * 恢复」会直接绕过 P0 地基的自检防线。
+   */
+  private degradedHealable = false
+  /** 上次自愈探测时间（throttle）：degraded 期间每次 quote 都打 DB 太贵。 */
+  private lastSelfHealAt: number | null = null
 
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  /**
+   * 发布/回滚/灰度关停后由写路径显式清缓存。
+   *
+   * 缓存 TTL 30s 是为「读多写少」的热路径省DB 往返，不是「改了价最长 30s 才生效」
+   * 的承诺——紧急回滚/关停场景下继续错扣最多 30s 是可避免的（终审 Important I3）。
+   */
+  invalidate(): void {
+    this.cache = null
+    this.grayCache = null
+    // 写路径刚变更过 active 版本：解除自愈探测节流，下一笔 quote 立刻复核
+    // （否则降级进程刚被 publish 救活却还要再等一个 TTL 才认新表）。
+    this.lastSelfHealAt = null
+  }
 
   async onModuleInit(): Promise<void> {
     if (process.env.PRICING_SOURCE === 'constants') {
@@ -62,6 +91,7 @@ export class PricingService implements OnModuleInit {
       if (!table) {
         // P1-a 起 boot 不再自播种（发布流接管）：无版本 = 告警 + 全量兜底。
         this.degraded = true
+        this.degradedHealable = true // 运营随后经发布流建版本 ⇒ 可自愈（见 loadActiveTable）
         console.error('[pricing] 无 active 价目表版本 — 已降级常量兜底（P1 起不再自播种，请走运营发布流）')
         return
       }
@@ -111,8 +141,18 @@ export class PricingService implements OnModuleInit {
    */
   async quote(q: PricingQuery, userId?: string): Promise<PricingQuote> {
     const legacy = legacyPriceOf(q)
-    if (this.degraded || process.env.PRICING_SOURCE === 'constants') {
+    if (process.env.PRICING_SOURCE === 'constants') {
       return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK }
+    }
+    if (this.degraded) {
+      // 短路前先试一次自愈探测：degraded 因「boot 无 active 版本」而设时，
+      // 运营随后经发布流建出的版本应当立即接管，无需重启进程。探测节流到
+      // CACHE_TTL_MS（降级期间每笔报价都打 DB 太贵，且 active 版本出现后
+      // loadActiveTable 会顺带把 degraded 清掉）。
+      await this.trySelfHeal()
+      if (this.degraded) {
+        return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK }
+      }
     }
     try {
       const key = buildMatchKey(q)
@@ -143,6 +183,23 @@ export class PricingService implements OnModuleInit {
     }
   }
 
+  /**
+   * degraded 期间的主动恢复探测：查一次 active 版本，命中即由 loadActiveTable
+   * 复位 degraded（warn 记录）。节流 CACHE_TTL_MS；DB 异常吞掉——降级状态不变，
+   * quote 继续走常量兜底。
+   */
+  private async trySelfHeal(): Promise<void> {
+    if (!this.degraded || !this.degradedHealable) return
+    const now = Date.now()
+    if (this.lastSelfHealAt !== null && now - this.lastSelfHealAt < CACHE_TTL_MS) return
+    this.lastSelfHealAt = now
+    try {
+      await this.loadActiveTable()
+    } catch (err) {
+      console.warn('[pricing] 降级恢复探测失败（继续常量兜底）：', err instanceof Error ? err.message : err)
+    }
+  }
+
   private async loadActiveTable(): Promise<PriceTable | null> {
     if (this.cache && Date.now() - this.cache.loadedAt < CACHE_TTL_MS) return this.cache
     const version = await this.prisma.priceListVersion.findFirst({
@@ -156,6 +213,15 @@ export class PricingService implements OnModuleInit {
     const entries = new Map<string, number>()
     for (const e of version.entries) entries.set(e.matchKey, e.credits)
     this.cache = { id: version.id, version: version.version, entries, loadedAt: Date.now() }
+    // 自愈：boot 时因「无 active 版本」降级的进程，运行中经发布流建出版本后
+    // 到这里就能恢复——不必重启（终审 Critical C2：degraded 曾是永久闩锁，
+    // 使「改价不发版」在运行中的进程失效，而发布成功/审计有记录/价格不生效
+    // 且无任何提示）。仅可自愈的降级才复位，自检失配等降级刻意保持闩锁。
+    if (this.degraded && this.degradedHealable) {
+      this.degraded = false
+      this.degradedHealable = false
+      console.warn(`[pricing] 已从降级恢复（检测到 active 价目表版本 ${version.version}）`)
+    }
     return this.cache
   }
 

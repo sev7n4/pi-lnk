@@ -14,15 +14,21 @@
  */
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { PricingService } from './pricing.service'
 
 /** 成本地板系数：costYuan（元）× 100（分/credit）× 1.05（毛利锚）= 105 */
 const FLOOR_MULTIPLIER = 105
 
+/**
+ * 草案 vs active 的对比摘要。
+ *
+ * 无 removed 计数：upsertEntries 不提供删条目能力（「active 有、draft 没有」
+ * 永不成立），该四计数之一恒为 0 的死代码已按终审 T2③ 删除（YAGNI）。
+ */
 export interface DiffSummary {
   draftVersion: string
   activeVersion: string | null
   added: number
-  removed: number
   changed: number
   unchanged: number
   maxIncrease: { matchKey: string; from: number; to: number; pct: number } | null
@@ -30,9 +36,29 @@ export interface DiffSummary {
   floorViolations: { matchKey: string; credits: number; floor: number }[]
   /** 有 costRateId 引用但 CostRate 行缺失（发布时按跳过地板处理并告警） */
   missingCost: string[]
-  /** 无 costRateId 的 changed 条目（地板跳过标注） */
+  /**
+   * 全表口径的无 costRateId 条目（未做地板校验）。
+   *
+   * 不限 changed 分支：v1 的 4s 档本来就没 costRateId（D2），运营日常路径
+   * 「复制 active 建草案 + 手工改价」改完仍是 null——若只在 changed 分支采集，
+   * 审批人只看到「地板违规 0 条」，看不到任何无成本覆盖提示，易被误当成已校验。
+   */
   noCostCoverage: string[]
 }
+
+/**
+ * 运营改价缺省 basis。
+ *
+ * 「等价于 legacy 常量」与「运营改过价」是互斥语义：经发布流 upsert 的条目属于
+ * 后者，缺省必须是 ops-modified。若缺省成legacy-equivalent，改价条目仍带
+ * legacy-equivalent 落库 → 发布后 active 版本满足 `legacyRows === totalRows`
+ * → 重启走全网等价自检 → 该条目与 legacyPriceOf 失配 → degraded=true → 全站回落
+ * 常量兜底，运营改的价被静默丢弃（终审Critical C1）。
+ *
+ * 种子路径（seed-pricing-v2-draft.ts显式写 launch-reprice / legacy-equivalent）
+ * 不经本缺省，不受影响。
+ */
+export const DEFAULT_OPS_BASIS = 'ops-modified'
 
 export interface PublishEntryInput {
   matchKey: string
@@ -52,7 +78,12 @@ interface EntryLike {
 
 @Injectable()
 export class PricingPublishingService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  // 单向注入 PricingService（写路径 → 计价缓存）。反向不注入：PricingService 不
+  // 依赖发布流，双向会成 Nest 循环依赖。
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    private readonly pricing: PricingService,
+  ) {}
 
   /** 从当前 active 版本复制全部 entries（含 basis/costRateId）建新 draft。 */
   async createDraftFromActive(
@@ -167,7 +198,7 @@ export class PricingPublishingService {
         update: {
           capability: e.capability,
           credits: e.credits,
-          basis: e.basis ?? 'legacy-equivalent',
+          basis: e.basis ?? DEFAULT_OPS_BASIS,
           costRateId: e.costRateId ?? null,
         },
         create: {
@@ -175,7 +206,7 @@ export class PricingPublishingService {
           matchKey: e.matchKey,
           capability: e.capability,
           credits: e.credits,
-          basis: e.basis ?? 'legacy-equivalent',
+          basis: e.basis ?? DEFAULT_OPS_BASIS,
           costRateId: e.costRateId ?? null,
         },
       })
@@ -198,14 +229,17 @@ export class PricingPublishingService {
     const activeMap = new Map((active?.entries ?? []).map((e: EntryLike) => [e.matchKey, e]))
 
     let added = 0
-    let removed = 0
     let changed = 0
     let unchanged = 0
     let maxIncrease: DiffSummary['maxIncrease'] = null
     let maxDecrease: DiffSummary['maxDecrease'] = null
-    const noCostCoverage: string[] = []
 
+    // 无成本覆盖走全表口径（不限 changed 分支，见 DiffSummary.noCostCoverage 注释）：
+    // v1 的 4s 档本就没 costRateId，运营改价路径下改完仍是 null，只在 changed 分支
+    // 采集会让这类条目从审批视野里消失。
+    const noCostCoverage: string[] = []
     for (const [key, de] of draftMap) {
+      if (!de.costRateId) noCostCoverage.push(key)
       const ae = activeMap.get(key)
       if (!ae) {
         added++
@@ -227,10 +261,6 @@ export class PricingPublishingService {
           maxDecrease = { matchKey: key, from: ae.credits, to: de.credits, pct }
         }
       }
-      if (!de.costRateId) noCostCoverage.push(key)
-    }
-    for (const key of activeMap.keys()) {
-      if (!draftMap.has(key)) removed++
     }
 
     const { floorViolations, missingCost } = await this.checkFloors(draft.entries as EntryLike[], (m) =>
@@ -241,7 +271,6 @@ export class PricingPublishingService {
       draftVersion: draft.version,
       activeVersion: active?.version ?? null,
       added,
-      removed,
       changed,
       unchanged,
       maxIncrease,
@@ -258,7 +287,11 @@ export class PricingPublishingService {
    * 旧 active→archived → audit。任一步 throw ⇒ 整个事务回滚，状态零变化。
    */
   async publish(draftId: string): Promise<{ version: string }> {
-    return this.prisma.$transaction(async (tx) => {
+    const out = await this.prisma.$transaction(async (tx) => {
+      // 单一 active 不变量的观察点与写入点同处一个事务首行（终审 Minor M3：
+      // 查在事务外、建在事务内，并发 publish 可建出两个 active，而 loadActiveTable
+      // 用无序 findFirst 取到哪个不确定）。
+      const oldActive = await tx.priceListVersion.findFirst({ where: { status: 'active' } })
       const draft = await tx.priceListVersion.findUnique({
         where: { id: draftId },
         include: { entries: true },
@@ -280,6 +313,14 @@ export class PricingPublishingService {
           `[pricing-publishing] publish ${draft.version}: ${missingCost.length} 条 costRate 引用缺失，已跳过地板校验: ${missingCost.join(',')}`,
         )
       }
+      // 无成本覆盖（全表口径）：不阻断发布，但必须留痕——否则「无地板违规」这条
+      // console/UI 提示会被读成「全部条目都过了地板校验」。
+      const uncovered = (draft.entries as EntryLike[]).filter((e) => !e.costRateId)
+      if (uncovered.length > 0) {
+        console.warn(
+          `[pricing-publishing] publish ${draft.version}: ${uncovered.length}/${draft.entries.length} 条无成本覆盖（未做地板校验）`,
+        )
+      }
       if (floorViolations.length > 0) {
         const detail = floorViolations
           .map((v) => `${v.matchKey} credits=${v.credits} < floor=${v.floor}`)
@@ -287,7 +328,6 @@ export class PricingPublishingService {
         throw new BadRequestException(`地板校验失败 ${floorViolations.length} 条: ${detail}`)
       }
 
-      const oldActive = await tx.priceListVersion.findFirst({ where: { status: 'active' } })
       await tx.priceListVersion.updateMany({
         where: { status: 'active', id: { not: draft.id } },
         data: { status: 'archived' },
@@ -315,6 +355,10 @@ export class PricingPublishingService {
       })
       return { version: published.version }
     })
+    // 提交成功后清计价缓存：新 active 版本立即对 quote 生效（否则最长 30s 继续
+    // 按旧价扣费；终审 Important I3）。事务 throw 时不会走到这里⇒ 失败不改缓存。
+    this.pricing.invalidate()
+    return out
   }
 
   /**
@@ -322,7 +366,7 @@ export class PricingPublishingService {
    * 无 active 或无可回滚目标 → 400。
    */
   async rollback(): Promise<{ version: string }> {
-    return this.prisma.$transaction(async (tx) => {
+    const out = await this.prisma.$transaction(async (tx) => {
       const current = await tx.priceListVersion.findFirst({ where: { status: 'active' } })
       if (!current) {
         throw new BadRequestException('无可回滚目标：当前无 active 价目表版本')
@@ -354,6 +398,9 @@ export class PricingPublishingService {
       })
       return { version: restored.version }
     })
+    // 同 publish：回滚后立即清缓存，否则最长 30s 仍按被回滚的价扣费。
+    this.pricing.invalidate()
+    return out
   }
 
   /**
