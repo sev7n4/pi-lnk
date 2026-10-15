@@ -39,8 +39,22 @@ export const SEED_COST_RATES = [
   { channel: 'platform', modelKey: 'step-tts-mini', spec: 'per_100_chars', unit: 'per_call', costYuan: 0.009 },
   { channel: 'platform', modelKey: 'stepaudio-3-tts', spec: 'per_100_chars', unit: 'per_call', costYuan: 0.025 },
   { channel: 'platform', modelKey: 'minimax-speech-2.8-hd', spec: 'per_100_chars', unit: 'per_call', costYuan: 0.0715, note: '超价格地板，仅 BYOK' },
-  { channel: 'platform', modelKey: 'step-3.5-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 0.7 },
-  { channel: 'platform', modelKey: 'step-3.5-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 2.1 },
+  // 文本模型成本行（spec §2.4 挂牌价，P2 token 精确计费 T1 补录）：in/out/cache
+  // 三 spec 键供 Task 4 反比率换算与 degraded 消费；step-2-16k 上游未公布 cache 价，不落行。
+  { channel: 'platform', modelKey: 'step-3.5-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 0.7, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-3.5-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 2.1, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-3.5-flash', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.14, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-3.7-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 1.35, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-3.7-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 8.1, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-3.7-flash', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.27, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-2-16k', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 6, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-2-16k', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 18, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-5-preview', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 7, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-5-preview', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 20, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'step-5-preview', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.7, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'minimax-m2.7', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 2.15, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'minimax-m2.7', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 8.58, note: 'spec §2.4 挂牌价' },
+  { channel: 'platform', modelKey: 'minimax-m2.7', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.44, note: '推算：in×1.9/9.3，P2 渠道对账校准' },
   { channel: 'platform', modelKey: 'stepaudio-3-music', spec: 'per_song', unit: 'per_call', costYuan: 0, note: '限免窗口，watchWindow' },
 ] as const
 

@@ -60,7 +60,7 @@ describe('seedPricing against real SQLite', () => {
     expect(policy?.marginBp).toBe(11000)
     expect(policy?.anchorCents).toBe(1)
     const rates = await prisma.costRate.count()
-    expect(rates).toBeGreaterThanOrEqual(20) // 18 原始行 + 4s 推算 2 行（2026-10-15 收尾包）
+    expect(rates).toBeGreaterThanOrEqual(32) // 18 原始行 + 4s 推算 2 行（2026-10-15 收尾包）+ P2 T1 文本成本 12 行净增（brief 14 行口径中 step-3.5-flash in/out 两行 P0 已在，见下用例）
     // 4s 推算行内容锚（spec §6.2：vendor 无 4s SKU，按 5s 锚点×4/5 线性推算，
     // P2 渠道对账以真实账单校准）
     const r768p4s = await prisma.costRate.findUnique({
@@ -73,6 +73,33 @@ describe('seedPricing against real SQLite', () => {
     })
     expect(r2k4s?.costYuan).toBe(3.72) // 4.65 × 4/5
     expect(r2k4s?.note).toContain('推算')
+  })
+
+  it('文本 5 模型成本行：in/out 全量 + cache 4 行（step-2-16k 上游未公布）', async () => {
+    const rows = await prisma.costRate.findMany({
+      where: {
+        channel: 'platform',
+        modelKey: { in: ['step-3.5-flash', 'step-3.7-flash', 'step-2-16k', 'step-5-preview', 'minimax-m2.7'] },
+      },
+    })
+    const by = new Map(rows.map((r) => [`${r.modelKey}:${r.spec}`, r.costYuan]))
+    // in/out（spec §2.4 挂牌价）
+    expect(by.get('step-3.5-flash:per_1m_tokens_in')).toBe(0.7)
+    expect(by.get('step-3.5-flash:per_1m_tokens_out')).toBe(2.1)
+    expect(by.get('step-3.7-flash:per_1m_tokens_in')).toBe(1.35)
+    expect(by.get('step-3.7-flash:per_1m_tokens_out')).toBe(8.1)
+    expect(by.get('step-2-16k:per_1m_tokens_in')).toBe(6)
+    expect(by.get('step-2-16k:per_1m_tokens_out')).toBe(18)
+    expect(by.get('step-5-preview:per_1m_tokens_in')).toBe(7)
+    expect(by.get('step-5-preview:per_1m_tokens_out')).toBe(20)
+    expect(by.get('minimax-m2.7:per_1m_tokens_in')).toBe(2.15)
+    expect(by.get('minimax-m2.7:per_1m_tokens_out')).toBe(8.58)
+    // cache（§2.4 挂牌 / M2.7 系推算：in成本 × 1.9K/9.3K ≈ 0.44）
+    expect(by.get('step-3.5-flash:per_1m_tokens_cache')).toBe(0.14)
+    expect(by.get('step-3.7-flash:per_1m_tokens_cache')).toBe(0.27)
+    expect(by.get('step-5-preview:per_1m_tokens_cache')).toBe(0.7)
+    expect(by.get('minimax-m2.7:per_1m_tokens_cache')).toBe(0.44)
+    expect(by.has('step-2-16k:per_1m_tokens_cache')).toBe(false) // 上游未公布
   })
 
   it('单active 不变量（承重，勿删）：已有其它 active 版本时 seed 拒绝播种，不造第二个 active', async () => {
