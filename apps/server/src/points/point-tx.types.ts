@@ -1,8 +1,14 @@
-export type PointKind = 'consume' | 'refund' | 'grant'
+export type PointKind = 'consume' | 'refund' | 'grant' | 'freeze' | 'release'
 
 export type PointCategory = 'text' | 'image' | 'audio' | 'video' | 'other'
 
-export type PointTxStatus = 'success' | 'failed_refund' | 'cancelled_refund' | 'byok_refund'
+export type PointTxStatus =
+  | 'success'
+  | 'failed_refund'
+  | 'cancelled_refund'
+  | 'byok_refund'
+  | 'held'
+  | 'released'
 
 export interface PointTxMeta {
   kind: PointKind
@@ -14,6 +20,8 @@ export interface PointTxMeta {
   ruleVersion?: string | null
   /** 灰度命中时的 release id（undefined = 走 global，不写库——保持既有断言逐字不变） */
   grayReleaseId?: string | null
+  /** 关联冻结单 id（P2 token 计费 freeze/settle 链路透传；PointTransaction 无对应列，不落库） */
+  holdId?: string
 }
 
 export function consumeMeta(
