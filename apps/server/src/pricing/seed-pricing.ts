@@ -28,6 +28,10 @@ export const SEED_COST_RATES = [
   { channel: 'platform', modelKey: 'gpt-image-2', spec: '4K', unit: 'per_image', costYuan: 2.93 },
   { channel: 'platform', modelKey: 'minimax-h3', spec: '768p:5s', unit: 'per_video', costYuan: 2.86 },
   { channel: 'platform', modelKey: 'minimax-h3', spec: '2k:5s', unit: 'per_video', costYuan: 4.65 },
+  // 4s 档推算行（spec §6.2）：vendor 无 4s SKU，按 5s 锚点线性推算（×4/5）——
+  // 推算口径，P2 渠道对账校准时以真实账单校准。
+  { channel: 'platform', modelKey: 'minimax-h3', spec: '768p:4s', unit: 'per_video', costYuan: 2.288, note: '5s 锚点×4/5 线性推算，P2 渠道对账以真实账单校准' },
+  { channel: 'platform', modelKey: 'minimax-h3', spec: '2k:4s', unit: 'per_video', costYuan: 3.72, note: '5s 锚点×4/5 线性推算，P2 渠道对账以真实账单校准' },
   { channel: 'platform', modelKey: 'minimax-h3', spec: '768p:10s', unit: 'per_video', costYuan: 5.72 },
   { channel: 'platform', modelKey: 'minimax-h3', spec: '768p:15s', unit: 'per_video', costYuan: 8.58 },
   { channel: 'platform', modelKey: 'h3-max', spec: '480p:5s', unit: 'per_video', costYuan: 1.79, note: 'fal 路线待渠道账单实测' },

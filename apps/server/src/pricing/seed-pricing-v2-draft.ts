@@ -16,10 +16,11 @@
  *    参考档：v2base + (v1ref − v1base)（加价项保留——spec §6.6）。
  * ③ 其余全部档位：逐字复制 v1 值（legacyPriceOf 同源，不从库读 v1），basis='legacy-equivalent'。
  *
- * costRateId 挂接规则：image 全挂；video 768p/2k 挂家族 5s 锚点行——但 4s 档不挂
- * （上游无 4s 成本行，锚点行是 5s 成本，发布流地板 ceil(costYuan×105)=301 > 4s 售价
- * 252，挂上会让 publish 硬 400，草案永远发不出去；不挂则走 diffSummary
- * noCostCoverage 标注，这是 Task 2 的既有出口）。
+ * costRateId 挂接规则：image 全挂；video 768p/2k 按时长挂对应 CostRate 行——
+ * ≥5s 挂 5s 锚点行，4s 挂 4s 推算行（2026-10-15 收尾包补录：vendor 无 4s SKU，
+ * 按 5s 锚点×4/5 线性推算，P2 渠道对账以真实账单校准；此前 4s 不挂行走
+ * noCostCoverage 标注，补录后地板校验恢复：768p 4s 售价 252 ≥ ceil(2.288×105)=241、
+ * 2k 4s 售价 410 ≥ ceil(3.72×105)=391）。
  */
 import { BadRequestException } from '@nestjs/common'
 import type { PrismaClient } from '@prisma/client'
@@ -89,6 +90,8 @@ const REQUIRED_RATES = [
   { modelKey: 'gpt-image-2', spec: '4K' },
   { modelKey: 'minimax-h3', spec: '768p:5s' },
   { modelKey: 'minimax-h3', spec: '2k:5s' },
+  { modelKey: 'minimax-h3', spec: '768p:4s' },
+  { modelKey: 'minimax-h3', spec: '2k:4s' },
 ] as const
 
 export async function seedPricingV2Draft(
@@ -158,8 +161,10 @@ export async function seedPricingV2Draft(
         credits = v2base
       }
       basis = 'launch-reprice'
-      // 4s 档不挂锚点行（见文件头 costRateId 挂接规则）
-      if (d >= ANCHOR_DURATION_S) costRateId = rate.id
+      // 按时长挂对应 CostRate 行（见文件头 costRateId 挂接规则）：≥5s 挂 5s 锚点行，
+      // 4s 挂 4s 推算行（成本=perSec×4，与售价同源 ⇒ 地板自检恒过）
+      costRateId =
+        d >= ANCHOR_DURATION_S ? rate.id : rateMap.get(`minimax-h3:${res}:4s`)!.id
     } else {
       // ③ 其余全部档位：逐字复制 v1 值（legacyPriceOf 同源，不从库读 v1——种子可在空库跑）
       credits = legacyPriceOf(q)

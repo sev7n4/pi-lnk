@@ -122,13 +122,18 @@ describe('seedPricingV2Draft against real SQLite', () => {
     expect(vid768!.costRateId).toBe(await rateIdOf('minimax-h3', '768p:5s'))
     const vid2k = await entryOf('video:minimax-h3:2k:5:-:ri0:rv0')
     expect(vid2k!.costRateId).toBe(await rateIdOf('minimax-h3', '2k:5s'))
-    // 4s 档改价但不挂 costRateId：锚点行（5s 成本）地板 ceil(2.86×105)=301 > 4s 售价 252，
-    // 挂上会让发布流 checkFloors（挂接行成本口径）硬 400——上游无 4s 成本行，
-    // 4s 档走 diffSummary noCostCoverage 标注（Task 2 既有出口）
+    // 4s 档挂 4s 推算 CostRate 行（2026-10-15 收尾包补录：5s 锚点×4/5 线性推算，
+    // P2 渠道对账以真实账单校准）：售价与成本同源（perSec×4），地板自检恢复——
+    // 768p 4s：ceil(2.288×110)=252 ≥ ceil(2.288×105)=241 ✓
     const vid4s = await entryOf('video:minimax-h3:768p:4:-:ri0:rv0')
     expect(vid4s!.basis).toBe('launch-reprice')
-    expect(vid4s!.credits).toBe(252) // ceil(0.572×4×110)
-    expect(vid4s!.costRateId).toBeNull()
+    expect(vid4s!.credits).toBe(252) // ceil(0.572×4×110) = ceil(2.288×110)
+    expect(vid4s!.costRateId).toBe(await rateIdOf('minimax-h3', '768p:4s'))
+    // 2k 4s：ceil(0.93×4×110)=ceil(3.72×110)=410 ≥ ceil(3.72×105)=391 ✓
+    const vid2k4s = await entryOf('video:minimax-h3:2k:4:-:ri0:rv0')
+    expect(vid2k4s!.basis).toBe('launch-reprice')
+    expect(vid2k4s!.credits).toBe(410)
+    expect(vid2k4s!.costRateId).toBe(await rateIdOf('minimax-h3', '2k:4s'))
 
     // ── 断言 3：ref 加价 delta 保留（逐档：v2ref − v2base === v1ref − v1base）──
     const refQueries = space.filter(
@@ -181,6 +186,14 @@ describe('seedPricingV2Draft against real SQLite', () => {
       const floor = Math.ceil(rateCost.get(r.costRateId!)! * 105)
       expect(r.credits, r.matchKey).toBeGreaterThanOrEqual(floor)
     }
+    // 地板验算补 4s 两条（收尾包补录的显式锚）：推算行成本下地板自动恢复——
+    // 768p 4s：252 ≥ ceil(2.288×105)=241；2k 4s：410 ≥ ceil(3.72×105)=391
+    const floor4s768 = Math.ceil(2.288 * 105)
+    expect(floor4s768).toBe(241)
+    expect(vid4s!.credits).toBeGreaterThanOrEqual(floor4s768)
+    const floor4s2k = Math.ceil(3.72 * 105)
+    expect(floor4s2k).toBe(391)
+    expect(vid2k4s!.credits).toBeGreaterThanOrEqual(floor4s2k)
 
     // ── perSec 上游线性一致性（brief：与 10s/15s 行反推差 ≤ 0.001）──
     // 2k 上游官方价仅 5s 锚点行（无 10s/15s CostRate），无反推校验对象
@@ -242,9 +255,10 @@ describe('seedPricingV2Draft against real SQLite', () => {
       { matchKey: 'video:minimax-h3:768p:5:-:ri0:rv0', capability: 'video', credits: 250, basis: 'launch-reprice', costRateId: 'rate-768p5s' },
     ]
     expect(() => assertLaunchFloor(bad, rates)).toThrow(/地板/)
-    // 无 costRateId 条目跳过地板（4s 档 / legacy-equivalent 的既有出口）
+    // 无 costRateId 条目跳过地板（legacy-equivalent 的既有出口；4s 档已补录推算行，
+    // 2026-10-15 起挂行过地板，不再走此出口）
     const skipped: PlannedEntry[] = [
-      { matchKey: 'video:minimax-h3:768p:4:-:ri0:rv0', capability: 'video', credits: 1, basis: 'launch-reprice', costRateId: null },
+      { matchKey: 'video:default', capability: 'video', credits: 1, basis: 'legacy-equivalent', costRateId: null },
     ]
     expect(() => assertLaunchFloor(skipped, rates)).not.toThrow()
   })
