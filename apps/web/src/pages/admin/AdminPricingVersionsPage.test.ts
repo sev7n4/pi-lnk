@@ -202,8 +202,9 @@ describe('AdminPricingVersionsPage', () => {
     expect(w.text()).toContain('成本费率缺失')
     expect(w.text()).toContain('m-x')
     expect(w.text()).toContain('无成本覆盖')
-    // 标红防线：diff 面板内存在 danger 文本节点
+    // 标红防线：diff 面板内存在 danger 文本节点（先断言节点数，避免 findAll 空转成空壳断言）
     const dangerNodes = w.findAll('[data-test="floor-violations"], [data-test="missing-cost"]')
+    expect(dangerNodes).toHaveLength(2)
     for (const n of dangerNodes) {
       expect(n.classes()).toContain('text-danger')
     }

@@ -206,7 +206,7 @@ defineExpose({
       <h1 class="text-base font-semibold text-fg">价目版本发布流</h1>
       <span class="text-sm text-fg-3">当前 active：{{ activeVersion ?? '（无）' }}</span>
       <el-button :loading="loading" @click="reload">刷新</el-button>
-      <el-button type="danger" plain @click="rollback">回滚</el-button>
+      <el-button type="danger" plain :disabled="!activeVersion" @click="rollback">回滚</el-button>
     </header>
     <p v-if="actionError" class="mb-2 rounded border border-danger-border bg-danger-bg p-2 text-sm text-danger">{{ actionError }}</p>
 

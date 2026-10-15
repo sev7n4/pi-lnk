@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   adminApi,
@@ -41,6 +41,11 @@ const report = ref<AdminGrayReport | null>(null)
 const canCreate = computed(
   () => preview.value !== null && preview.value.hits.length > 0 && formVersionId.value !== '',
 )
+
+// 预览态失效：名单或版本一变，陈旧命中数立即作废（否则面板显示旧命中数、按钮仍可点 → 服务端 400）
+watch([formRawInput, formVersionId], () => {
+  preview.value = null
+})
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof AdminApiError ? err.message : fallback
@@ -263,7 +268,7 @@ defineExpose({
         <p class="mb-1"><span class="text-fg-3">releaseId：</span>{{ report.releaseId }}</p>
         <p class="mb-1"><span class="text-fg-3">版本：</span>{{ report.version }}（{{ report.status }}）</p>
         <p class="mb-1"><span class="text-fg-3">命中数：</span>{{ report.hits }}</p>
-        <p class="mb-1"><span class="text-fg-3">交易笔数：</span>{{ report.txCount }}（退款 {{ report.refundCount }} 笔）</p>
+        <p class="mb-1"><span class="text-fg-3">交易笔数（含退款）：</span>{{ report.txCount }} / 退款 {{ report.refundCount }} 笔</p>
         <p class="mb-1">
           <span class="text-fg-3">分目录金额（含 refund 行）：</span>
           <template v-if="Object.keys(report.txAmountByCategory).length > 0">
