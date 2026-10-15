@@ -40,7 +40,7 @@ function stripComments(src: string): string {
 
 describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）', () => {
   it('① live 态对话内容全部在主滚动流内：提示条模板位置在输入区之前', () => {
-    const rail = readFileSync(sideRail)
+    const rail = sideRail // ① 已是 readFileSync 的文件内容，勿再当路径读（CI 曾因此假红）
     const iScroll = rail.indexOf('agent-chat-scroll')
     const iWait = rail.indexOf('data-testid="propose-wait-hint"')
     const iAsk = rail.indexOf('<AskUserCard')
