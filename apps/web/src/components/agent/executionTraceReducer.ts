@@ -66,14 +66,18 @@ export interface ExecutionTraceState {
     estimatedCredits?: number
   }
   /** P2 T7：turn_settled 结算明细（turn_settled 事件覆盖写入，replay 幂等）。
-   * Task 6 事件三形态：正常 {credits, breakdown?, ruleVersion?} / degraded
+   * 事件四形态：正常 {credits, breakdown?, tokens?, ruleVersion?} / degraded
    * {credits, degraded:true} / released {released:true}（预扣全退）。
-   * 键不出现纪律：credits/breakdown/ruleVersion/degraded/released 仅在服务端
-   * 下发该键时携带（条件展开），缺省段由 turnSettledText 按形态兜底。 */
+   * 终审 I-1 双口径分离：breakdown = 积分成分（个位，计费口径 cacheWrite 并入
+   * in），tokens = 原始 token 数（千级，展示口径 in/cacheRead/out 直取）——
+   * 渲染只读 tokens.*，formatTokens 语义归位；breakdown 留事件供未来展开。
+   * 键不出现纪律：credits/breakdown/tokens/ruleVersion/degraded/released 仅在
+   * 服务端下发该键时携带（条件展开），缺省段由 turnSettledText 按形态兜底。 */
   settled?: {
     holdId: string
     credits?: number
     breakdown?: { in: number; cache: number; out: number }
+    tokens?: { in: number; cache: number; out: number }
     ruleVersion?: string
     degraded?: boolean
     released?: boolean
@@ -511,6 +515,7 @@ export function applyTurnSettled(
     holdId: string
     credits?: number
     breakdown?: { in: number; cache: number; out: number }
+    tokens?: { in: number; cache: number; out: number }
     ruleVersion?: string
     degraded?: boolean
     released?: boolean
@@ -522,6 +527,7 @@ export function applyTurnSettled(
       ? { credits: data.credits }
       : {}),
     ...(data.breakdown ? { breakdown: { ...data.breakdown } } : {}),
+    ...(data.tokens ? { tokens: { ...data.tokens } } : {}),
     ...(data.ruleVersion ? { ruleVersion: data.ruleVersion } : {}),
     ...(data.degraded === true ? { degraded: true } : {}),
     ...(data.released === true ? { released: true } : {}),
@@ -531,7 +537,9 @@ export function applyTurnSettled(
 /** P2 T7：settled 段文案——turnSummaryLine 摘要段与 turnStatusBar 状态行**共用**
  * 这一个生成器（文案单源，不许复制两份）。
  * released →「预扣已退回」（预扣全退不显示负数）；degraded →「已结算 -N 积分（按成本估算）」；
- * 正常 →「已结算 -N 积分（输入 X.Xk · 缓存 X.Xk · 输出 X.Xk）」；
+ * 正常 →「已结算 -N 积分（输入 X.Xk · 缓存 X.Xk · 输出 X.Xk）」——按 **tokens**（原始
+ * token 数）渲染，formatTokens 语义归位（终审 I-1：breakdown 是积分成分，个位数被
+ * 当 token 渲染会失真，绝不再读它出文案；缺 tokens 键的旧形状回退无 token 段）。
  * 差额规则：reducer 已跟踪 estimatedCredits（applyTurnUsage），|实际 − 预估| ≥ 2 积分
  * 时追加「（预估 M）」。非 settled 回合 / credits 缺失（异常形态）返回 null。 */
 export function turnSettledText(trace: ExecutionTraceState | undefined | null): string | null {
@@ -542,8 +550,8 @@ export function turnSettledText(trace: ExecutionTraceState | undefined | null): 
   let text: string
   if (settled.degraded) {
     text = `已结算 -${settled.credits} 积分（按成本估算）`
-  } else if (settled.breakdown) {
-    text = `已结算 -${settled.credits} 积分（输入 ${formatTokens(settled.breakdown.in)} · 缓存 ${formatTokens(settled.breakdown.cache)} · 输出 ${formatTokens(settled.breakdown.out)}）`
+  } else if (settled.tokens) {
+    text = `已结算 -${settled.credits} 积分（输入 ${formatTokens(settled.tokens.in)} · 缓存 ${formatTokens(settled.tokens.cache)} · 输出 ${formatTokens(settled.tokens.out)}）`
   } else {
     text = `已结算 -${settled.credits} 积分`
   }
