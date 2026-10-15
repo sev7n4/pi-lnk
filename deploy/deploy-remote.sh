@@ -39,6 +39,19 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
     curl -fsS "http://127.0.0.1:5100/api/health" | head -c 200
     echo ""
     echo "部署完成 (IMAGE_TAG=$IMAGE_TAG, registry=${IMAGE_REPO})"
+    # 服务齐全性门禁（2026-10-15 抠图 502 事故：本脚本此前只 up api，永远发现不了 matting/segment 缺失）。
+    # guard 缺失 ⇒ 只打 WARN 不阻断；reconcile 顺手补齐缺失服务；verify 结果进部署日志。
+    # ⚠️ 故意不因 verify 失败而 exit 1：部署主目标是 api 新版本，guard cron 每分钟还会继续 reconcile。
+    if [ -x /usr/local/sbin/lnkpi-service-guard.sh ]; then
+      /usr/local/sbin/lnkpi-service-guard.sh || true
+      if /usr/local/sbin/lnkpi-service-guard.sh --verify; then
+        echo "service-guard --verify: api/matting/segment 全部在位"
+      else
+        echo "WARN: service-guard --verify 未通过（详情 /var/log/lnkpi-service-guard.log），cron 将继续 reconcile"
+      fi
+    else
+      echo "WARN: /usr/local/sbin/lnkpi-service-guard.sh 未安装，跳过服务齐全性门禁（见 docs/ops/RUNBOOK-service-guard.md）"
+    fi
     exit 0
   fi
   echo "health attempt $i failed, retry..."

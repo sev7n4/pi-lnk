@@ -125,6 +125,19 @@ p.providerChannel.update({ where: { id: 'platform' }, data: { baseUrl: url } })
   .catch((err) => { console.error(err); process.exit(1); });
 " >>"$LOG_FILE" 2>&1 || log "WARN: platform baseUrl sync failed (non-fatal)"
 
+    # 服务齐全性门禁（2026-10-15 抠图 502 事故：本脚本此前只 up api，永远发现不了 matting/segment 缺失）。
+    # reconcile 顺手补齐缺失服务；verify 结果进部署日志，失败不阻断（guard cron 每分钟继续 reconcile）。
+    if [ -x /usr/local/sbin/lnkpi-service-guard.sh ]; then
+      /usr/local/sbin/lnkpi-service-guard.sh >>"$LOG_FILE" 2>&1 || log "WARN: service-guard reconcile 报错（非致命）"
+      if /usr/local/sbin/lnkpi-service-guard.sh --verify >>"$LOG_FILE" 2>&1; then
+        log "service-guard --verify: api/matting/segment 全部在位"
+      else
+        log "WARN: service-guard --verify 未通过（详情 $LOG_FILE），cron 将继续 reconcile"
+      fi
+    else
+      log "WARN: /usr/local/sbin/lnkpi-service-guard.sh 未安装，跳过服务齐全性门禁（见 docs/ops/RUNBOOK-service-guard.md）"
+    fi
+
     set_status success
     log "部署完成 (IMAGE=${LNKPI_API_IMAGE})"
     exit 0

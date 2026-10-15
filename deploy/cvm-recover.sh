@@ -53,6 +53,11 @@ for i in 1 2 3 4 5; do
     curl -fsS "http://127.0.0.1:${API_PORT}/api/health" | head -c 200
     echo ""
     log "recover: API healthy"
+    # 服务齐全性门禁（2026-10-15 抠图 502 事故：本脚本此前只 up api，永远发现不了 matting/segment 缺失）
+    if [ -x /usr/local/sbin/lnkpi-service-guard.sh ]; then
+      /usr/local/sbin/lnkpi-service-guard.sh || true
+      /usr/local/sbin/lnkpi-service-guard.sh --verify || log "WARN: service-guard --verify 未通过，cron 将继续 reconcile"
+    fi
     exit 0
   fi
   log "health attempt $i failed"
