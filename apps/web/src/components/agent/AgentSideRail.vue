@@ -1077,6 +1077,12 @@ function onInputDockPointerDown(event: PointerEvent) {
   pickMode.deactivate()
 }
 
+/** dock 指针入口：pickMode 失活（既有）+ 移动端长按说话（二次重构） */
+function onDockPointerDown(event: PointerEvent) {
+  onInputDockPointerDown(event)
+  onComposerPointerDown(event)
+}
+
 async function addFiles(files: FileList | File[]) {
   if (props.readOnly || !files.length) return
 
@@ -1555,39 +1561,71 @@ function toggleVoice() {
   })
 }
 
-/* ---- 移动端按住说话（微信式，2026-10-15 移动端重构） ----
- * 无独立麦克风按钮：语音能力内嵌进输入区本体 —— 文字模式下输入框照常，
- * 通过「+」菜单切到语音模式后，输入框整体替换为「按住 说话」按钮。
- * 按住开始识别（实时 interim 显示），松开停止并自动发送；上滑取消。
+/* ---- 移动端 composer 三态（2026-10-15 二次重构，对齐 WorkBuddy） ----
+ * 收缩态1-文字模式：单行「+ | 输入 | 锚发送」，无参数行、无麦克风图标。
+ * 收缩态2-语音模式：**长按 composer 卡片 ≈400ms** 进入录音（微信式「按住说话」），
+ *   不设独立麦克风按钮，也不设 + 子菜单入口；实时 interim 显示，松开自动发送，上滑取消。
+ * 伸展态：输入框聚焦或有内容时展开参数行（+ 在底行最左、模型芯片、锚发送在右）。
  * 桌面端不受影响，仍走 DockMicButton 的 toggleVoice。 */
-const voiceMode = ref(false)
+const composerExpanded = ref(false)
 const holdActive = ref(false)
 const voiceInterim = ref('')
 const voiceFinalText = ref('')
 const voiceCancelled = ref(false)
 const voiceStartY = ref(0)
+const voiceStartX = ref(0)
+const voiceElapsedSec = ref(0)
+const composerDockRef = ref<HTMLElement | null>(null)
+/** 长按→录音 的延时器；pointerup 先到就只是普通点按 */
+let holdTimer: number | null = null
+let holdCardEl: HTMLElement | null = null
+let holdPointerId: number | null = null
+let voiceTicker: number | null = null
 /** 按住会话令牌：release 的 600ms 收口定时器只对自己的会话生效，
  *  防止「松开→立刻再按住」时旧定时器把新一轮 interim 当成上一轮结果误发 */
 let voiceSession = 0
 
-function toggleVoiceMode() {
-  attachMenuOpen.value = false
-  if (voiceMode.value) {
-    if (holdActive.value) releaseVoice(true)
-    voiceMode.value = false
-    return
-  }
-  if (!speech.supported) {
-    ElMessage.warning('当前浏览器不支持语音识别')
-    return
-  }
-  voiceMode.value = true
+// 输入框被程序填充（如待发消息取回）时自动进入伸展态
+watch(input, (v) => {
+  if (isMobileLayout.value && v.trim()) composerExpanded.value = true
+})
+
+function onComposerFocusIn() {
+  if (isMobileLayout.value) composerExpanded.value = true
 }
 
-function pressVoice(e: PointerEvent) {
+function onComposerFocusOut(e: FocusEvent) {
+  if (!isMobileLayout.value) return
+  const next = e.relatedTarget as Node | null
+  if (next && composerDockRef.value?.contains(next)) return // 焦点仍在卡内（如点模型菜单）
+  // 延迟收起：给「聚焦丢失但有交互意图」的场景留窗口；有内容则保持伸展
+  window.setTimeout(() => {
+    if (!input.value.trim() && !holdActive.value) composerExpanded.value = false
+  }, 150)
+}
+
+/** 长按卡片进入录音。pointerdown 目标是按钮一律不触发；
+ *  目标是输入框时仅空输入可触发（避免与长按选词冲突）。仅收缩态可触发。 */
+function onComposerPointerDown(e: PointerEvent) {
+  if (!isMobileLayout.value || composerExpanded.value) return
   if (holdActive.value || props.readOnly || isUploading.value) return
-  voiceSession += 1
+  if (!speech.supported) return
+  const target = e.target as HTMLElement | null
+  const onInteractive = !!target?.closest('button, a, [role="button"], input, textarea')
+  if (onInteractive && input.value.trim()) return // 输入框有内容时，长按留给文本选择
+  voiceStartX.value = e.clientX
   voiceStartY.value = e.clientY
+  holdCardEl = e.currentTarget as HTMLElement | null
+  holdPointerId = e.pointerId
+  const session = ++voiceSession
+  holdTimer = window.setTimeout(() => {
+    holdTimer = null
+    beginHoldTalk(session)
+  }, 400)
+}
+
+function beginHoldTalk(session: number) {
+  if (session !== voiceSession) return
   voiceInterim.value = ''
   voiceFinalText.value = ''
   voiceCancelled.value = false
@@ -1600,19 +1638,65 @@ function pressVoice(e: PointerEvent) {
     return
   }
   holdActive.value = true
+  navigator.vibrate?.(15) // 微信式触觉反馈（不支持时静默）
+  ;(document.activeElement as HTMLElement | null)?.blur?.() // 防键盘弹出
+  try {
+    holdCardEl?.setPointerCapture?.(holdPointerId ?? 0) // 手指漂移也持续收到 move/up
+  } catch {
+    /* 指针已释放等场景忽略 */
+  }
+  voiceElapsedSec.value = 0
+  voiceTicker = window.setInterval(() => {
+    voiceElapsedSec.value += 1
+  }, 1000)
 }
 
-/** 上滑 >70px 进入「松开取消」，滑回 40px 内可撤销（对齐微信手感） */
-function onVoicePointerMove(e: PointerEvent) {
+function onComposerPointerMove(e: PointerEvent) {
+  if (holdTimer !== null) {
+    // 触发前就大幅移动 = 滚动手势，取消长按
+    if (Math.abs(e.clientY - voiceStartY.value) > 10 || Math.abs(e.clientX - voiceStartX.value) > 10) {
+      window.clearTimeout(holdTimer)
+      holdTimer = null
+    }
+    return
+  }
   if (!holdActive.value) return
+  // 上滑 >70px 进入「松开取消」，滑回 40px 内可撤销（对齐微信手感）
   const dy = voiceStartY.value - e.clientY
   if (!voiceCancelled.value && dy > 70) voiceCancelled.value = true
   else if (voiceCancelled.value && dy < 40) voiceCancelled.value = false
 }
 
+function onComposerPointerUp(e: PointerEvent) {
+  if (holdTimer !== null) {
+    // 普通点按（未达长按时长）：点在卡片空白处则展开为伸展态
+    window.clearTimeout(holdTimer)
+    holdTimer = null
+    const target = e.target as HTMLElement | null
+    if (isMobileLayout.value && !composerExpanded.value
+      && !target?.closest('button, a, [role="button"], input, textarea')) {
+      composerExpanded.value = true
+    }
+    return
+  }
+  if (holdActive.value) releaseVoice(voiceCancelled.value)
+}
+
+function onComposerPointerCancel() {
+  if (holdTimer !== null) {
+    window.clearTimeout(holdTimer)
+    holdTimer = null
+  }
+  if (holdActive.value) releaseVoice(true)
+}
+
 function releaseVoice(cancelled: boolean) {
   if (!holdActive.value) return
   holdActive.value = false
+  if (voiceTicker !== null) {
+    window.clearInterval(voiceTicker)
+    voiceTicker = null
+  }
   speech.stop()
   const session = voiceSession
   // 识别引擎的末段 final result 在 stop() 之后才回调，等 600ms 收口再取全文
@@ -1623,14 +1707,18 @@ function releaseVoice(cancelled: boolean) {
     voiceFinalText.value = ''
     if (cancelled || !text) return
     if (agent.isStreaming) {
-      // 流式中不自动发送（send() 此时语义是「停止生成」），填入输入框回到文字模式由用户确认
+      // 流式中不自动发送（send() 此时语义是「停止生成」），填入输入框展开伸展态由用户确认
       input.value = text
-      voiceMode.value = false
+      composerExpanded.value = true
       return
     }
     input.value = text
     void send()
   }, 600)
+}
+
+function formatRecTime(total: number): string {
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
 function authHeaders(): Record<string, string> {
@@ -3339,14 +3427,25 @@ defineExpose({
             <!-- 2026-10-15（治理 2/2）：dock 不再承载对话内容与滚动——
                  live 时间线 / 提示卡 / ask 卡已移回上方主滚动流；这里只剩 composer 与其周边固定件。 -->
             <div
+              ref="composerDockRef"
               class="agent-input-dock"
               :class="{
                 'is-drop-target': isDragOver,
+                'is-mobile-collapsed': isMobileLayout && !composerExpanded && !holdActive,
+                'is-mobile-expanded': isMobileLayout && composerExpanded,
+                'is-holding': holdActive,
+                'is-cancel': holdActive && voiceCancelled,
               }"
+              data-testid="agent-input-dock"
               @dragover.prevent="onDragOver"
               @dragleave.prevent="onDragLeave"
               @drop.prevent="onDrop"
-              @pointerdown="onInputDockPointerDown"
+              @pointerdown="onDockPointerDown"
+              @pointermove="onComposerPointerMove"
+              @pointerup="onComposerPointerUp"
+              @pointercancel="onComposerPointerCancel"
+              @focusin="onComposerFocusIn"
+              @focusout="onComposerFocusOut"
             >
               <div
                 v-if="showHistoryReattachCoachmark"
@@ -3466,32 +3565,26 @@ defineExpose({
                   @mention="insertRefMention"
                   @reorder="sidebar.reorder"
                 />
-                <!-- 移动端语音模式：输入框整体替换为「按住 说话」——
-                     语音与文字共用同一控件位，无独立麦克风按钮（2026-10-15 移动端重构） -->
-                <div
-                  v-if="isMobileLayout && voiceMode && !readOnly"
-                  class="agent-hold-talk"
-                  :class="{ 'is-holding': holdActive, 'is-cancel': holdActive && voiceCancelled }"
-                  role="button"
-                  tabindex="0"
-                  aria-label="按住说话，松开发送，上滑取消"
-                  data-testid="agent-hold-talk"
-                  @pointerdown.prevent="pressVoice"
-                  @pointermove="onVoicePointerMove"
-                  @pointerup="releaseVoice(voiceCancelled)"
-                  @pointercancel="releaseVoice(true)"
-                  @keydown.enter.prevent="toggleVoiceMode"
-                >
-                  <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
-                    <rect x="9" y="2" width="6" height="12" rx="3" />
-                    <path stroke-linecap="round" d="M5 10a7 7 0 0 0 14 0" />
-                    <path stroke-linecap="round" d="M12 17v5" />
-                  </svg>
-                  <span v-if="holdActive && voiceCancelled" class="agent-hold-talk__text">松开取消</span>
-                  <span v-else-if="holdActive && (voiceFinalText || voiceInterim)" class="agent-hold-talk__text">{{ voiceFinalText + voiceInterim }}</span>
-                  <span v-else-if="holdActive" class="agent-hold-talk__text">正在聆听…</span>
-                  <span v-else class="agent-hold-talk__text">按住 说话</span>
-                </div>
+                <!-- 收缩态2-语音模式：长按 composer 卡片进入的录音态。
+                     无独立麦克风按钮、无 + 子菜单入口（2026-10-15 二次重构） -->
+                <template v-if="isMobileLayout && holdActive">
+                  <div class="agent-composer-rec" data-testid="agent-voice-recording">
+                    <span class="agent-composer-rec__mic" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
+                        <rect x="9" y="2" width="6" height="12" rx="3" />
+                        <path stroke-linecap="round" d="M5 10a7 7 0 0 0 14 0" />
+                        <path stroke-linecap="round" d="M12 17v5" />
+                      </svg>
+                    </span>
+                    <span class="agent-composer-rec__text">
+                      {{ voiceCancelled ? '松开取消' : (voiceFinalText + voiceInterim || '正在聆听…') }}
+                    </span>
+                    <span class="agent-composer-rec__time">{{ formatRecTime(voiceElapsedSec) }}</span>
+                  </div>
+                  <p class="agent-composer-rec__hint" :class="{ 'is-cancel': voiceCancelled }">
+                    {{ voiceCancelled ? '已取消 · 松开放弃' : '松开发送 · 上滑取消' }}
+                  </p>
+                </template>
                 <div v-else class="agent-composer__input-wrap">
                 <MentionInput
                   ref="composerRef"
@@ -3502,12 +3595,12 @@ defineExpose({
                     ? (isMobileLayout ? '输入消息，发送加入待发队列…' : '输入消息，回车加入待发队列…')
                     : inputPlaceholder"
                   :disabled="readOnly || isUploading"
-                  :leading-inset="readOnly ? 0 : COMPOSER_PICK_INSET"
+                  :leading-inset="readOnly || isMobileLayout ? 0 : COMPOSER_PICK_INSET"
                   submit-on-enter
                   @submit="onComposerSubmit"
                 />
                   <button
-                    v-if="!readOnly"
+                    v-if="!readOnly && !isMobileLayout"
                     type="button"
                     class="composer-canvas-pick-btn"
                     :class="{ 'is-active': pickMode.active.value, 'is-hint': showPickHint }"
@@ -3532,8 +3625,10 @@ defineExpose({
               >
 
               <div class="agent-dock-actions">
-                <div class="agent-dock-params">
-                  <div ref="attachMenuRef" class="agent-attach-menu relative">
+                <!-- 「+」提升为 actions 首子元素（2026-10-15 二次重构，对齐 WorkBuddy 红批注
+                     「+号移到左边」）：移动端伸展态位于底行最左；收缩态经 display:contents
+                     单行化后位于输入框左侧。桌面视觉顺序不变（原本就是 params 第一位）。 -->
+                <div ref="attachMenuRef" class="agent-attach-menu relative">
                     <button
                       type="button"
                       class="dock-ghost-ctl flex h-8 w-8 items-center justify-center rounded-lg"
@@ -3551,24 +3646,6 @@ defineExpose({
                       class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[220px] rounded-xl py-1"
                       @click.stop
                     >
-                      <!-- 移动端语音输入入口：按住说话模式与文字模式在此切换，
-                           不设独立麦克风按钮（2026-10-15 移动端重构） -->
-                      <button
-                        v-if="isMobileLayout && speech.supported"
-                        type="button"
-                        class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
-                        data-testid="voice-mode-toggle"
-                        @click="toggleVoiceMode"
-                      >
-                        <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                            <rect x="9" y="2" width="6" height="12" rx="3" />
-                            <path stroke-linecap="round" d="M5 10a7 7 0 0 0 14 0" />
-                            <path stroke-linecap="round" d="M12 17v5" />
-                          </svg>
-                        </span>
-                        <span>{{ voiceMode ? '键盘输入' : '语音输入 · 按住说话' }}</span>
-                      </button>
                       <button
                         type="button"
                         class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
@@ -3606,8 +3683,9 @@ defineExpose({
                         <span>从画布选节点</span>
                       </button>
                     </div>
-                  </div>
+                </div>
 
+                <div class="agent-dock-params">
                   <UniversalModelSelector v-model="planningModel" type="text" ghost />
 
                   <div
@@ -3707,7 +3785,7 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-primary">
-                  <!-- 移动端无独立麦克风按钮：语音走「按住 说话」模式（+ 菜单切换） -->
+                  <!-- 移动端无独立麦克风按钮：语音 = 长按 composer 卡片（收缩态2） -->
                   <DockMicButton
                     v-if="!isMobileLayout"
                     :listening="speech.listening.value"
@@ -4465,48 +4543,133 @@ defineExpose({
   min-width: 0;
 }
 
-/* ---- 移动端按住说话（微信式语音输入） ---- */
-.agent-hold-talk {
+/* ---- 移动端 composer 三态（2026-10-15 二次重构，对齐 WorkBuddy） ----
+ * 收缩态1：单行「+ | 输入 | 锚发送」；伸展态：文案区在上、参数行在下（+ 最左）；
+ * 收缩态2：长按卡片进入的录音态（.agent-composer-rec）。 */
+.agent-input-dock.is-mobile-collapsed {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  /* 长按说话的手势面：卡片自身禁掉滚动手势接管，否则按住时 pointermove/up 被浏览器打断 */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* dock-actions 摊平进收缩态单行：DOM 顺序 composer → attach → params → primary，
+ * 用 order 排成 attach(+) → composer(输入) → primary(锚)；params（模型/深度思考/技能）收缩态不显示 */
+.agent-input-dock.is-mobile-collapsed .agent-dock-actions {
+  display: contents;
+}
+
+.agent-input-dock.is-mobile-collapsed .agent-attach-menu {
+  order: 0;
+  flex-shrink: 0;
+}
+
+.agent-input-dock.is-mobile-collapsed .agent-composer {
+  order: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 收缩态保持严格单行：提示行隐去（引用条 AgentRefStrip 保留，属有效内容） */
+.agent-input-dock.is-mobile-collapsed .agent-composer-reattach-hint,
+.agent-input-dock.is-mobile-collapsed .agent-composer-attachment-hint {
+  display: none;
+}
+
+.agent-input-dock.is-mobile-collapsed .agent-dock-params {
+  display: none;
+}
+
+.agent-input-dock.is-mobile-collapsed .agent-dock-primary {
+  order: 2;
+  flex-shrink: 0;
+  margin-left: 0;
+}
+
+/* 录音中：卡片描边随状态走（紫=聆听 / 红=上滑取消）；参数行一并隐去，卡片只剩录音 UI */
+.agent-input-dock.is-holding .agent-dock-actions {
+  display: none;
+}
+
+.agent-input-dock.is-holding {
+  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-glass-border));
+}
+
+.agent-input-dock.is-holding.is-cancel {
+  border-color: color-mix(in srgb, var(--neo-danger) 45%, var(--neo-glass-border));
+}
+
+.agent-composer-rec {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  min-height: 44px; /* 触控目标下限 --lnk-touch-target */
-  padding: 8px 12px;
-  border: 1px solid var(--neo-border);
-  border-radius: 12px;
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-primary);
-  font-size: 14px;
-  cursor: pointer;
+  min-height: 36px;
+  padding: 4px 2px;
   user-select: none;
   -webkit-user-select: none;
-  /* 按住期间禁止页面滚动手势接管指针，否则 pointermove/up 会被浏览器打断 */
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
 }
 
-.agent-hold-talk.is-holding {
-  background: color-mix(in srgb, var(--neo-hi-bg) 16%, var(--neo-hover-bg));
-  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-border));
+.agent-composer-rec__mic {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--neo-hi-bg) 18%, var(--neo-hover-bg));
+  color: var(--neo-hi-text);
+  animation: agent-rec-pulse 1.2s ease-in-out infinite;
 }
 
-.agent-hold-talk.is-cancel {
+.agent-input-dock.is-cancel .agent-composer-rec__mic {
   color: var(--neo-danger);
-  border-color: color-mix(in srgb, var(--neo-danger) 45%, var(--neo-border));
-  background: color-mix(in srgb, var(--neo-danger) 10%, var(--neo-hover-bg));
+  background: color-mix(in srgb, var(--neo-danger) 14%, var(--neo-hover-bg));
+  animation: none;
 }
 
-.agent-hold-talk__text {
-  max-width: 100%;
+.agent-composer-rec__text {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--neo-text-primary);
+}
+
+.agent-composer-rec__time {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--neo-text-muted);
+}
+
+.agent-composer-rec__hint {
+  margin: 2px 2px 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--neo-text-muted);
+}
+
+.agent-composer-rec__hint.is-cancel {
+  color: var(--neo-danger);
+}
+
+@keyframes agent-rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 .composer-canvas-pick-btn {
