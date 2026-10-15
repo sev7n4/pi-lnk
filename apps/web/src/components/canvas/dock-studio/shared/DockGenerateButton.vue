@@ -42,13 +42,18 @@ const emit = defineEmits<{
       height="14"
       fill="none"
       stroke="currentColor"
-      stroke-width="2.5"
+      stroke-width="2"
       stroke-linecap="round"
       stroke-linejoin="round"
       aria-hidden="true"
     >
-      <path d="M12 19V5" />
-      <path d="m5 12 7-7 7 7" />
+      <!-- 锚 = 生成（设计系统 §1.5.3「锚就是生成按钮」）：锚头（环）朝上，
+           读作向上箭头/发送方向，同时是墨鱼 π 品牌符号。
+           线宽 2（原箭头 2.5）：环 r=2.4 在 14px 渲染下 2.5 会把环孔糊死 -->
+      <circle cx="12" cy="5" r="2.4" />
+      <path d="M12 7.4V19" />
+      <path d="M8 11h8" />
+      <path d="M5 13a7 7 0 0 0 14 0" />
     </svg>
   </button>
 </template>
