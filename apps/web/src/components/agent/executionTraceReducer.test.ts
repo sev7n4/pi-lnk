@@ -249,6 +249,36 @@ describe('applyTurnUsage + turnSummaryLine（P1 摘要行）', () => {
     ])
     expect(replayed.usage).toEqual({ inputTokens: 664, outputTokens: 211, cost: 0.00016469 })
   })
+
+  it('P2 T5: usage 带 cache tokens → 透传写入；摘要合计 = input+cacheRead+cacheWrite+output（总量不缩水）', () => {
+    const trace = createExecutionTrace()
+    applyTurnUsage(trace, { inputTokens: 100, cacheReadTokens: 200, cacheWriteTokens: 50, outputTokens: 30 })
+    expect(trace.usage).toEqual({
+      inputTokens: 100,
+      cacheReadTokens: 200,
+      cacheWriteTokens: 50,
+      outputTokens: 30,
+    })
+    expect(turnSummaryLine(trace)).toContain('消耗 380 tokens')
+  })
+
+  it('P2 T5: replay 透传 cache 字段；旧形态 turn_usage（无 cache 字段）不炸、cache 键不出现', () => {
+    const replayed = replayExecutionTraceEvents([
+      { type: 'turn_usage', data: { inputTokens: 100, cacheReadTokens: 200, cacheWriteTokens: 50, outputTokens: 30 } },
+    ])
+    expect(replayed.usage).toEqual({
+      inputTokens: 100,
+      cacheReadTokens: 200,
+      cacheWriteTokens: 50,
+      outputTokens: 30,
+    })
+
+    const legacy = replayExecutionTraceEvents([
+      { type: 'turn_usage', data: { inputTokens: 100, outputTokens: 30 } },
+    ])
+    expect(legacy.usage).toEqual({ inputTokens: 100, outputTokens: 30 })
+    expect(turnSummaryLine(legacy)).toContain('消耗 130 tokens')
+  })
 })
 
 describe('applyToolCall isError（P0 工具失败标红）', () => {

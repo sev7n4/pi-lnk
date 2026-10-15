@@ -80,7 +80,7 @@ export interface TurnTimeline {
   turnStartedAt: number
   turnEndedAt?: number
   /** Q2（2026-10-14）：estimatedCredits = 服务端预估积分（MarginPolicy+FX 折算，纯展示）。 */
-  usage?: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }
+  usage?: TimelineUsage
   /**
    * 2026-10-14（生产实证）：上游 thinking done 事件曾以**累积快照**下发（每段带此前
    * 全部段全文，4 段 len 220/758/822/963 同 head）。服务端已修（accumulator 段间重置），
@@ -91,7 +91,15 @@ export interface TurnTimeline {
   lastRawThinking?: string
 }
 
-export type TimelineUsage = { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }
+export type TimelineUsage = {
+  inputTokens: number
+  outputTokens: number
+  /** P2 T5：cache 三列分开（inputTokens = 纯 input）；旧落库事件无 cache 字段 → 键不出现。 */
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  cost?: number
+  estimatedCredits?: number
+}
 
 export type TimelineEvent =
   | { type: 'text_delta'; data: { text: string } }
@@ -453,6 +461,12 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       timeline.usage = {
         inputTokens: u.inputTokens,
         outputTokens: u.outputTokens,
+        ...(typeof u.cacheReadTokens === 'number' && Number.isFinite(u.cacheReadTokens)
+          ? { cacheReadTokens: u.cacheReadTokens }
+          : {}),
+        ...(typeof u.cacheWriteTokens === 'number' && Number.isFinite(u.cacheWriteTokens)
+          ? { cacheWriteTokens: u.cacheWriteTokens }
+          : {}),
         ...(typeof u.cost === 'number' && Number.isFinite(u.cost) ? { cost: u.cost } : {}),
         ...(typeof (u as { estimatedCredits?: number }).estimatedCredits === 'number' &&
         Number.isFinite((u as { estimatedCredits?: number }).estimatedCredits)
@@ -626,7 +640,13 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
     segments.push(`用时 ${formatDuration(timeline.turnEndedAt - timeline.turnStartedAt)}`)
   }
   if (timeline.usage) {
-    const tokens = timeline.usage.inputTokens + timeline.usage.outputTokens
+    // P2 T5：inputTokens 已收窄为纯 input，合计 = in + cacheRead + cacheWrite + out
+    // （旧事件无 cache 字段 → 0 兜底），用户可见总量不缩水。
+    const tokens =
+      timeline.usage.inputTokens +
+      (timeline.usage.cacheReadTokens ?? 0) +
+      (timeline.usage.cacheWriteTokens ?? 0) +
+      timeline.usage.outputTokens
     const tokenStr = tokens < 1000 ? `${tokens}` : `${(Math.round(tokens / 100) / 10).toFixed(1)}k`
     segments.push(`消耗 ${tokenStr} tokens`)
     // Q2（2026-10-14）：摘要把消耗收敛到**积分**单一口径（与项目计费体系一致）——

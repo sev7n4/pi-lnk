@@ -54,8 +54,17 @@ export interface ExecutionTraceState {
   totalMs?: number
   /** P1 回合 token 实耗（turn_usage 事件覆盖写入，replay 幂等）。
    * cost：服务端 pi-events createUsageAccumulator 折叠的 usage.cost 总额
-   * （渠道未配 pricing 时字段不出现——0 视为「未计费」不携带）。 */
-  usage?: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }
+   * （渠道未配 pricing 时字段不出现——0 视为「未计费」不携带）。
+   * P2 T5：cacheReadTokens/cacheWriteTokens 三列分开（inputTokens = 纯 input）；
+   * 旧落库事件无 cache 字段 → 键不出现，摘要合计按 0 兜底。 */
+  usage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    cost?: number
+    estimatedCredits?: number
+  }
 }
 
 let stepCounter = 0
@@ -446,14 +455,28 @@ export function visibleStepCount(trace: ExecutionTraceState): number {
 
 /** P1：turn_usage 事件写入（重复调用覆盖不叠加——replay/多事件幂等）。
  * cost 仅在合法有限数时透传（P1 cost 接线：渠道 models[].pricing → vendor
- * calculateCost → 服务端 turn_usage.cost；未配价 = 字段不出现，行为不变）。 */
+ * calculateCost → 服务端 turn_usage.cost；未配价 = 字段不出现，行为不变）。
+ * P2 T5：cacheReadTokens/cacheWriteTokens 同款条件透传（旧事件无字段 → 键不出现）。 */
 export function applyTurnUsage(
   trace: ExecutionTraceState,
-  usage: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number },
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    cost?: number
+    estimatedCredits?: number
+  },
 ) {
   trace.usage = {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    ...(typeof usage.cacheReadTokens === 'number' && Number.isFinite(usage.cacheReadTokens)
+      ? { cacheReadTokens: usage.cacheReadTokens }
+      : {}),
+    ...(typeof usage.cacheWriteTokens === 'number' && Number.isFinite(usage.cacheWriteTokens)
+      ? { cacheWriteTokens: usage.cacheWriteTokens }
+      : {}),
     ...(typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
     ...(typeof usage.estimatedCredits === 'number' && Number.isFinite(usage.estimatedCredits)
       ? { estimatedCredits: usage.estimatedCredits }
@@ -492,9 +515,14 @@ export function turnSummaryLine(trace: ExecutionTraceState): string | null {
   if (imageCount > 0) segments.push(`提议生成 ${imageCount} 张`)
   if (trace.totalMs != null) segments.push(`用时 ${formatDuration(trace.totalMs)}`)
   if (trace.usage) {
-    segments.push(
-      `消耗 ${formatTokens(trace.usage.inputTokens + trace.usage.outputTokens)} tokens`,
-    )
+    // P2 T5：inputTokens 已收窄为纯 input，合计 = in + cacheRead + cacheWrite + out
+    // （旧事件无 cache 字段 → 0 兜底），用户可见总量不缩水。
+    const totalTokens =
+      trace.usage.inputTokens +
+      (trace.usage.cacheReadTokens ?? 0) +
+      (trace.usage.cacheWriteTokens ?? 0) +
+      trace.usage.outputTokens
+    segments.push(`消耗 ${formatTokens(totalTokens)} tokens`)
     // P1 cost 展示（最后一厘米）：费率单位跟随渠道 pricing 配置，此处不带货币符号。
     if (trace.usage.cost != null) {
       segments.push(`费用 ≈${Number(trace.usage.cost.toPrecision(3))}`)
@@ -551,7 +579,16 @@ export function replayExecutionTraceEvents(
         applyThinking(trace, event.data as { status: string; summary?: string })
         break
       case 'turn_usage':
-        applyTurnUsage(trace, event.data as { inputTokens: number; outputTokens: number; cost?: number })
+        applyTurnUsage(
+          trace,
+          event.data as {
+            inputTokens: number
+            outputTokens: number
+            cacheReadTokens?: number
+            cacheWriteTokens?: number
+            cost?: number
+          },
+        )
         break
       case 'explore':
         applyExplore(trace, event.data as Parameters<typeof applyExplore>[1])

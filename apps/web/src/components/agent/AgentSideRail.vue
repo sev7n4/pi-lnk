@@ -2476,7 +2476,16 @@ function handleEvent(event: { type: string; data: unknown }) {
       scrollToBottom()
       break
     case 'turn_usage':
-      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number })
+      agent.trackTurnUsage(
+        event.data as {
+          inputTokens: number
+          outputTokens: number
+          cacheReadTokens?: number
+          cacheWriteTokens?: number
+          cost?: number
+          estimatedCredits?: number
+        },
+      )
       break
     case 'usage_delta':
       // Q2（2026-10-14）：实时预估积分快照（transient）→ 状态行 running 段「预估 -N积分」

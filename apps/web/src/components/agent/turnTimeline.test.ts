@@ -4,6 +4,7 @@ import {
   createTurnTimeline,
   finalizeTurnTimeline,
   replayTimelineEvents,
+  summarizeTimeline,
   type TimelineEvent,
   type TimelinePart,
   type TurnTimeline,
@@ -152,6 +153,22 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
       expect(last.text).toContain('tokens')
       expect(last.text).not.toContain('积分')
     }
+  })
+
+  it('P2 T5：turn_usage 带 cache tokens → usage 透传 + 摘要合计 = input+cache+output（总量不缩水）；旧形态（无 cache 字段）不炸', () => {
+    const tl = feed([
+      { type: 'turn_usage', data: { inputTokens: 100, cacheReadTokens: 200, cacheWriteTokens: 50, outputTokens: 30 } },
+    ])
+    expect(tl.usage).toEqual({
+      inputTokens: 100,
+      cacheReadTokens: 200,
+      cacheWriteTokens: 50,
+      outputTokens: 30,
+    })
+    expect(summarizeTimeline(tl)).toContain('消耗 380 tokens')
+
+    const legacy = feed([{ type: 'turn_usage', data: { inputTokens: 100, outputTokens: 50 } }])
+    expect(summarizeTimeline(legacy)).toContain('消耗 150 tokens')
   })
 
   it('一致性：live feed 与 replay 同一事件序列 ⇒ parts.kind 序列逐项相等（消除双源漂移）', () => {

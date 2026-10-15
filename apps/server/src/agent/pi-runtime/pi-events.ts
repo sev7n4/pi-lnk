@@ -602,8 +602,11 @@ export function createTextSegmentPersister(push: (type: string, data: unknown) =
 }
 
 export interface TurnUsage {
-
+	/** 纯 input（P2 T5 语义收窄：不再折叠 cacheRead/cacheWrite）。 */
 	inputTokens: number;
+	/** P2 T5（token 精确计费）：cache 三列分开保留，旧事件无 cache 字段 → 缺省 0。 */
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
 	outputTokens: number;
 	/** 本回合 cost 总额（USD，vendor calculateCost 产物四字段求和）。> 0 才携带——
 	 *  费率未配置时上游给 0，不带字段以与「未配费率」区分（审计 P0-③）。 */
@@ -625,14 +628,21 @@ function extractUsageDelta(event: PiRuntimeEvent): TurnUsage | null {
 	}).message?.usage;
 	if (!usage || typeof usage !== "object") return null;
 	const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
-	// 口径对齐 vendor models.ts:892 calculateCost：inputTokens = input + cacheRead + cacheWrite
-	const inputTokens = num(usage.input) + num(usage.cacheRead) + num(usage.cacheWrite);
+	// P2 T5（token 精确计费）：vendor 原始 tokens 四列直取（vendor types.ts usage），
+	// 不再折叠 cacheRead/cacheWrite 进 input——双比率结算（Task 6）需要分项真值。
+	const inputTokens = num(usage.input);
 	const c = usage.cost;
 	const cost =
 		c && typeof c === "object"
 			? num(c.input) + num(c.output) + num(c.cacheRead) + num(c.cacheWrite)
 			: undefined;
-	return { inputTokens, outputTokens: num(usage.output), ...(cost !== undefined ? { cost } : {}) };
+	return {
+		inputTokens,
+		cacheReadTokens: num(usage.cacheRead),
+		cacheWriteTokens: num(usage.cacheWrite),
+		outputTokens: num(usage.output),
+		...(cost !== undefined ? { cost } : {}),
+	};
 }
 
 /** P1 状态行：message_end.usage 逐条累积，agent_end 前折叠为一次 turn_usage 事件。
@@ -650,12 +660,20 @@ export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => 
 	feed(event: PiRuntimeEvent): UiEvent | null;
 } {
 	let input = 0;
+	let cacheRead = 0;
+	let cacheWrite = 0;
 	let output = 0;
 	let cost: number | undefined;
 	let seenUsage = false;
 	const creditsOf = (): number | null => {
 		if (!estimateCredits) return null;
-		const totals: TurnUsage = { inputTokens: input, outputTokens: output, ...(cost !== undefined ? { cost } : {}) };
+		const totals: TurnUsage = {
+			inputTokens: input,
+			cacheReadTokens: cacheRead,
+			cacheWriteTokens: cacheWrite,
+			outputTokens: output,
+			...(cost !== undefined ? { cost } : {}),
+		};
 		const v = estimateCredits(totals);
 		return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 	};
@@ -665,6 +683,8 @@ export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => 
 			if (delta) {
 				seenUsage = true;
 				input += delta.inputTokens;
+				cacheRead += delta.cacheReadTokens;
+				cacheWrite += delta.cacheWriteTokens;
 				output += delta.outputTokens;
 				if (delta.cost !== undefined) {
 					cost = (cost ?? 0) + delta.cost;
@@ -675,7 +695,14 @@ export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => 
 				if (est !== null) {
 					return {
 						type: "usage_delta",
-						data: { inputTokens: input, outputTokens: output, estimatedCredits: est, transient: true },
+						data: {
+							inputTokens: input,
+							cacheReadTokens: cacheRead,
+							cacheWriteTokens: cacheWrite,
+							outputTokens: output,
+							estimatedCredits: est,
+							transient: true,
+						},
 						seq: event.seq,
 					};
 				}
@@ -688,6 +715,8 @@ export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => 
 					type: "turn_usage",
 					data: {
 						inputTokens: input,
+						cacheReadTokens: cacheRead,
+						cacheWriteTokens: cacheWrite,
 						outputTokens: output,
 						...(cost && cost > 0 ? { cost } : {}),
 						...(est !== null ? { estimatedCredits: est } : {}),

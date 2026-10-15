@@ -230,12 +230,16 @@ describe("turn_usage（P1 状态行）", () => {
 			data: { message: usage ? { usage } : {} },
 		}) as never;
 
-	it("T3-1: 多条 message_end 累积（inputTokens=input+cacheRead+cacheWrite），agent_end 触发一次", () => {
+	// P2 T5：inputTokens 语义收窄为纯 input，cacheRead/cacheWrite 三列分开（不再折叠）
+	it("T3-1: 多条 message_end 累积（四列直取：input 纯 input，cache 分列），agent_end 触发一次", () => {
 		const acc = createUsageAccumulator();
 		expect(acc.feed(msgEnd({ input: 100, cacheRead: 40, cacheWrite: 10, output: 20 }))).toBeNull();
 		expect(acc.feed(msgEnd({ input: 50, output: 30 }))).toBeNull();
 		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
-		expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 200, outputTokens: 50 } });
+		expect(done).toEqual({
+			type: "turn_usage",
+			data: { inputTokens: 150, cacheReadTokens: 40, cacheWriteTokens: 10, outputTokens: 50 },
+		});
 	});
 
 	it("T3-2: 从未出现 usage → agent_end 不发 turn_usage；出现过 usage → 全零也发", () => {
@@ -246,7 +250,7 @@ describe("turn_usage（P1 状态行）", () => {
 		accZero.feed(msgEnd({ input: 0, output: 0 }));
 		expect(accZero.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
 			type: "turn_usage",
-			data: { inputTokens: 0, outputTokens: 0 },
+			data: { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
 		});
 	});
 
@@ -289,14 +293,72 @@ describe("usage_delta / estimatedCredits（Q2 2026-10-14 积分预估展示）",
 		accNoCb.feed(msgEnd({ input: 100, output: 10, cost: { input: 0.4, output: 0.1 } }));
 		expect(accNoCb.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
 			type: "turn_usage",
-			data: { inputTokens: 100, outputTokens: 10, cost: 0.5 },
+			data: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10, cost: 0.5 },
 		});
 		const accZero = createUsageAccumulator(estimate);
 		accZero.feed(msgEnd({ input: 100, output: 10 })); // 无 cost
 		expect(accZero.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
 			type: "turn_usage",
-			data: { inputTokens: 100, outputTokens: 10 },
+			data: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 },
 		});
+	});
+});
+
+describe("turn_usage cache tokens 三列（P2 T5 token 精确计费）", () => {
+	const msgEnd = (usage: Record<string, unknown>) =>
+		({
+			type: "message_end",
+			ts: 1,
+			data: { message: { usage } },
+		}) as never;
+
+	it("T5-①: message_end 带 cache usage → turn_usage 四列直取（input 纯 input，不折叠 cache）", () => {
+		const acc = createUsageAccumulator();
+		acc.feed(msgEnd({ input: 100, cacheRead: 200, cacheWrite: 50, output: 30 }));
+		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never) as {
+			type: string;
+			data: Record<string, unknown>;
+		} | null;
+		expect(done?.type).toBe("turn_usage");
+		expect(done?.data).toEqual({
+			inputTokens: 100,
+			cacheReadTokens: 200,
+			cacheWriteTokens: 50,
+			outputTokens: 30,
+		});
+	});
+
+	it("T5-②: 旧形态事件（无 cache 字段）→ cache 列缺省 0，不炸", () => {
+		const acc = createUsageAccumulator();
+		acc.feed(msgEnd({ input: 100, output: 20 }));
+		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never) as {
+			type: string;
+			data: Record<string, unknown>;
+		} | null;
+		expect(done?.data).toEqual({
+			inputTokens: 100,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 20,
+		});
+	});
+
+	it("T5-③: cost 求和口径不变（回归锚：四分项求和，含 cache 分项）", () => {
+		const acc = createUsageAccumulator();
+		acc.feed(
+			msgEnd({
+				input: 100,
+				cacheRead: 200,
+				cacheWrite: 50,
+				output: 30,
+				cost: { input: 0.01, cacheRead: 0.002, cacheWrite: 0.001, output: 0.007 },
+			}),
+		);
+		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never) as {
+			type: string;
+			data: Record<string, unknown>;
+		} | null;
+		expect(done?.data.cost).toBeCloseTo(0.02, 12);
 	});
 });
 
@@ -517,7 +579,7 @@ describe("turn_usage cost（审计 P0-③）", () => {
 		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
 		expect(done).toEqual({
 			type: "turn_usage",
-			data: { inputTokens: 150, outputTokens: 50, cost: 1 },
+			data: { inputTokens: 150, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 50, cost: 1 },
 		});
 	});
 
@@ -525,7 +587,10 @@ describe("turn_usage cost（审计 P0-③）", () => {
 		const acc = createUsageAccumulator();
 		acc.feed(msgEnd({ input: 100, output: 20 }));
 		const done = acc.feed({ type: "agent_end", ts: 1, data: {} } as never);
-		expect(done).toEqual({ type: "turn_usage", data: { inputTokens: 100, outputTokens: 20 } });
+		expect(done).toEqual({
+			type: "turn_usage",
+			data: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 20 },
+		});
 	});
 });
 

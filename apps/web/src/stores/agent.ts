@@ -413,8 +413,16 @@ export const useAgentStore = defineStore('agent', () => {
 
   /** P1：turn_usage 事件落 trace（摘要行数据源），沿 thinking 同款接线。
    * cost：渠道配了 pricing 时服务端折叠的 usage.cost 总额（可选透传）。
-   * estimatedCredits：Q2 服务端预估积分（MarginPolicy+FX 折算，纯展示）；回合结束清实时态。 */
-  function trackTurnUsage(data: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }) {
+   * estimatedCredits：Q2 服务端预估积分（MarginPolicy+FX 折算，纯展示）；回合结束清实时态。
+   * P2 T5：cacheReadTokens/cacheWriteTokens 三列分开透传（旧事件无字段 → 键不出现）。 */
+  function trackTurnUsage(data: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    cost?: number
+    estimatedCredits?: number
+  }) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyTurnUsage(last.executionTrace, data)
