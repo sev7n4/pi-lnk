@@ -60,7 +60,19 @@ describe('seedPricing against real SQLite', () => {
     expect(policy?.marginBp).toBe(11000)
     expect(policy?.anchorCents).toBe(1)
     const rates = await prisma.costRate.count()
-    expect(rates).toBeGreaterThanOrEqual(15)
+    expect(rates).toBeGreaterThanOrEqual(20) // 18 原始行 + 4s 推算 2 行（2026-10-15 收尾包）
+    // 4s 推算行内容锚（spec §6.2：vendor 无 4s SKU，按 5s 锚点×4/5 线性推算，
+    // P2 渠道对账以真实账单校准）
+    const r768p4s = await prisma.costRate.findUnique({
+      where: { channel_modelKey_spec: { channel: 'platform', modelKey: 'minimax-h3', spec: '768p:4s' } },
+    })
+    expect(r768p4s?.costYuan).toBe(2.288) // 2.86 × 4/5
+    expect(r768p4s?.note).toContain('推算')
+    const r2k4s = await prisma.costRate.findUnique({
+      where: { channel_modelKey_spec: { channel: 'platform', modelKey: 'minimax-h3', spec: '2k:4s' } },
+    })
+    expect(r2k4s?.costYuan).toBe(3.72) // 4.65 × 4/5
+    expect(r2k4s?.note).toContain('推算')
   })
 
   it('单active 不变量（承重，勿删）：已有其它 active 版本时 seed 拒绝播种，不造第二个 active', async () => {

@@ -3126,11 +3126,13 @@ export class StudioService {
     const meta = parseMeta(record.metadata)
     if (!alreadyRefunded(meta)) {
       let cost: number
+      let grayReleaseId: string | undefined
       if (typeof meta.chargedPoints === 'number') {
         cost = meta.chargedPoints
       } else {
         const fallbackQuote = await this.platformFallbackQuote(record.type, meta, userId)
         cost = fallbackQuote.credits
+        grayReleaseId = fallbackQuote.grayReleaseId
       }
       await this.points.refund(
         userId,
@@ -3139,6 +3141,8 @@ export class StudioService {
         refundMeta(studioPointCategory(record.type), 'cancelled_refund', {
           model: record.model ?? null,
           generationId: record.id,
+          // 与 consume 路径同纪律：global quote 时键不出现（灰度报告 refundCount 口径）
+          ...(grayReleaseId ? { grayReleaseId } : {}),
         }),
       )
     }
