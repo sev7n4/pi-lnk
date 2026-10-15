@@ -227,6 +227,21 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({ credits: 5, ruleVersion: V })
   })
 
+  it('⑦cacheWrite 并入 in 项计费（终审 C-2）：cacheWrite 1000 / rIn 1000 → in 项 +1', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    // 基线（无 cacheWrite）：credits 8 = in 3 + cache 3 + out 2
+    const base = await svc.quoteTextTokens(undefined, 'step-3.5-flash', USAGE)
+    expect(base.breakdown).toEqual({ in: 3, cache: 3, out: 2 })
+    // +cacheWrite 1000：in 项 ceil((2001+1000)/1000)=4（+1），cache/out 不动
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', {
+      ...USAGE,
+      cacheWriteTokens: 1000,
+    })
+    expect(q.credits).toBe(9)
+    expect(q.breakdown).toEqual({ in: 4, cache: 3, out: 2 })
+  })
+
   it('⑥DB 抛错 → USD 兜底不 throw + warn', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { prisma } = fakePrisma(null, { throws: true })

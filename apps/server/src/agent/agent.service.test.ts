@@ -652,20 +652,26 @@ describe('AgentService turn billing (P2 T6)', () => {
     process.env.TEXT_TOKEN_BILLING = 'on'
     const events = await runTurn()
 
-    // 预扣额 = ceil(quote(典型回合 8K in + 0.5K out).credits × 1.2) = ceil(3×1.2) = 4
+    // 预扣额 = ceil(quote(典型回合 8K in + 0.8K cacheWrite + 0.5K out).credits × 1.2) = ceil(3×1.2) = 4
     expect(freeze).toHaveBeenCalledTimes(1)
     expect(freeze).toHaveBeenCalledWith('u1', 4, '对话回合预扣')
     // modelKey 入口 toLowerCase 规范化：dock 传 'STEP-3.5-Flash' → quote 收 'step-3.5-flash'
     // （runTurn 未传 model → 回落用户默认文本模型，mock 为空 → ''；此处直接断言 quote 入参形状）
     const preCall = quoteTextTokens.mock.calls[0]?.[2] as Record<string, unknown>
-    expect(preCall).toMatchObject({ inputTokens: 8000, cacheReadTokens: 0, outputTokens: 500 })
-    // 结算 quote：turn_usage 折叠值直取 + costUsd=cost
+    expect(preCall).toMatchObject({
+      inputTokens: 8000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 800, // 终审 C-2：典型回合含缓存写入
+      outputTokens: 500,
+    })
+    // 结算 quote：turn_usage 折叠值直取 + costUsd=cost + cacheWrite 透传（并入 in 项计费）
     expect(quoteTextTokens).toHaveBeenCalledTimes(2)
     const settleCall = quoteTextTokens.mock.calls[1]
     expect(settleCall?.[0]).toBe('u1')
     expect(settleCall?.[2]).toMatchObject({
       inputTokens: 8000,
       cacheReadTokens: 0,
+      cacheWriteTokens: 0,
       outputTokens: 500,
       costUsd: 0.02,
     })
@@ -684,11 +690,60 @@ describe('AgentService turn billing (P2 T6)', () => {
     const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
       (e) => e.type === 'turn_settled',
     )
+    // 终审 I-1：tokens = 原始 token 数（展示口径，千级）；breakdown = 积分成分（个位）
     expect(settled?.data).toEqual({
       holdId: 'hold-1',
       credits: 3,
       breakdown: { in: 2, cache: 0, out: 1 },
+      tokens: { in: 8000, cache: 0, out: 500 },
       ruleVersion: 'price-v2',
+    })
+    expect(events[events.length - 1]?.type).toBe('done')
+  })
+
+  it('①c cacheWrite 结算透传 + turn_settled.tokens 原始 token 明细（终审 C-2/I-1）', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      msgEndWithUsage({
+        input: 8000,
+        cacheRead: 300,
+        cacheWrite: 800,
+        output: 500,
+        cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+      }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')) {
+      events.push(event)
+    }
+
+    // 预扣典型口径含 cacheWrite 800（典型回合含缓存写入，与 settle 计费口径同构）
+    expect(quoteTextTokens.mock.calls[0]?.[2]).toMatchObject({
+      inputTokens: 8000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 800,
+      outputTokens: 500,
+    })
+    // 结算 usage：cacheWriteTokens 透传（quoteTextTokens 并入 in 项计费）
+    expect(quoteTextTokens.mock.calls[1]?.[2]).toMatchObject({
+      inputTokens: 8000,
+      cacheReadTokens: 300,
+      cacheWriteTokens: 800,
+      outputTokens: 500,
+    })
+    // tokens = 原始 token 数（in=inputTokens / cache=cacheRead / out=output，千级展示口径）
+    const meta = assistantMetadata()
+    const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
+      (e) => e.type === 'turn_settled',
+    )
+    expect(settled?.data).toMatchObject({
+      credits: 3,
+      breakdown: { in: 2, cache: 0, out: 1 },
+      tokens: { in: 8000, cache: 300, out: 500 },
     })
     expect(events[events.length - 1]?.type).toBe('done')
   })

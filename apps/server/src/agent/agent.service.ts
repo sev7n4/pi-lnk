@@ -1559,6 +1559,7 @@ export class AgentService {
       const usage = (usageEv?.data ?? {}) as {
         inputTokens?: number
         cacheReadTokens?: number
+        cacheWriteTokens?: number
         outputTokens?: number
         cost?: number
       }
@@ -1575,11 +1576,13 @@ export class AgentService {
         pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
       } else {
         try {
-          // credits 来自实际 usage（turn_usage 折叠值：in/cacheRead/out 直取，
-          // costUsd 传 cost——缺行 USD 兜底时尽量真实，缺 costUsd 兜底只结 1 分）。
+          // credits 来自实际 usage（turn_usage 折叠值直取，cacheWrite 并入 in 项
+          // 计费——终审 C-2；costUsd 传 cost——缺行 USD 兜底时尽量真实，缺 costUsd
+          // 兜底只结 1 分）。
           const quote = await this.pricing.quoteTextTokens(userId, billingModelKey, {
             inputTokens: usage.inputTokens ?? 0,
             cacheReadTokens: usage.cacheReadTokens ?? 0,
+            cacheWriteTokens: usage.cacheWriteTokens ?? 0,
             outputTokens: usage.outputTokens ?? 0,
             ...(usage.cost !== undefined ? { costUsd: usage.cost } : {}),
           })
@@ -1602,6 +1605,14 @@ export class AgentService {
               holdId: billingHold.id,
               credits: settled.settled,
               ruleVersion: quote.ruleVersion,
+              // 终审 I-1：tokens = 原始 token 数（展示口径，千级；与计费口径
+              // cacheWrite 并入 in 可不同——此为 turn_usage 四列直取）。
+              // breakdown（积分成分，个位）留事件供未来展开，前端不再按它渲染。
+              tokens: {
+                in: usage.inputTokens ?? 0,
+                cache: usage.cacheReadTokens ?? 0,
+                out: usage.outputTokens ?? 0,
+              },
               // 键不出现：breakdown 仅价目口径携带；degraded 仅 USD 兜底场景携带
               ...(quote.breakdown ? { breakdown: quote.breakdown } : { degraded: true }),
             })
@@ -1753,9 +1764,14 @@ export class AgentService {
       return {}
     }
     try {
+      // 典型回合口径（终审 C-2 修订）：8K in + 0.8K cacheWrite + 0.5K out ——
+      // 真实回合普遍含缓存写入（system prompt 折叠），预扣口径与结算计费口径同构
+      // （cacheWrite 并入 in 项）。costUsd 不传：回合发起时 vendor cost 尚不可得
+      // （cost 只在 message_end 后产出），传猜测值反而失真——degraded 时接受 min1 兜底。
       const quote = await this.pricing.quoteTextTokens(userId, modelKey, {
         inputTokens: 8000,
         cacheReadTokens: 0,
+        cacheWriteTokens: 800,
         outputTokens: 500,
       })
       const holdAmount = Math.max(1, Math.ceil(quote.credits * 1.2))

@@ -207,7 +207,14 @@ export class PricingService implements OnModuleInit {
   async quoteTextTokens(
     userId: string | undefined,
     modelKey: string,
-    usage: { inputTokens: number; cacheReadTokens: number; outputTokens: number; costUsd?: number },
+    usage: {
+      inputTokens: number
+      cacheReadTokens: number
+      /** 终审 C-2：T5 后四列独立，cacheWrite 不再被上游折入 input——此处并入 in 项计费。 */
+      cacheWriteTokens?: number
+      outputTokens: number
+      costUsd?: number
+    },
   ): Promise<PricingQuote & { breakdown?: { in: number; cache: number; out: number } }> {
     try {
       const model = String(modelKey || '').toLowerCase()
@@ -254,9 +261,14 @@ export class PricingService implements OnModuleInit {
         // 三行齐才走价目口径：in/out 缺行 = 数据事故 → degraded
         return await this.degradedTextTokenQuote(usage)
       }
-      // cache 行缺（step-2-16k 上游未公布）→ cache tokens 并入 in 项
+      // cache 行缺（step-2-16k 上游未公布）→ cacheRead tokens 并入 in 项；
+      // cacheWrite 恒并入 in 项（终审 C-2，与「cache 并入 in」同形态）——
+      // breakdown.in 即含 cacheWrite 部分。
       const hasCache = isPositiveRatio(rCache)
-      const inTokens = positiveTokens(usage.inputTokens) + (hasCache ? 0 : positiveTokens(usage.cacheReadTokens))
+      const inTokens =
+        positiveTokens(usage.inputTokens) +
+        positiveTokens(usage.cacheWriteTokens ?? 0) +
+        (hasCache ? 0 : positiveTokens(usage.cacheReadTokens))
       const bIn = Math.ceil(inTokens / rIn)
       const bCache = hasCache ? Math.ceil(positiveTokens(usage.cacheReadTokens) / rCache) : 0
       const bOut = Math.ceil(positiveTokens(usage.outputTokens) / rOut)
