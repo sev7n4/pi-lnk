@@ -37,16 +37,20 @@ function runningThinking(): TimelinePart {
 /**
  * 剔除注释行，只留真实代码。
  *
- * ⚠️ 这几个断言的本组件注释里**正面记录了被删除的历史**（含 `max-h-40`、
- * `DENSE_MAX_HEIGHT`、`rootStyle` 等字面量），全文匹配会把注释当代码 ⇒ 假红。
- * 剔除规则：`//` 开头、`*` 开头（块注释续行）、以及块注释的起止行。
+ * ⚠️ 这几个断言涉及的组件注释里**正面记录了被删除的历史**（含 `max-h-40`、
+ * `DENSE_MAX_HEIGHT`、`max-height` 等字面量），全文匹配会把注释当代码 ⇒ 假红。
+ * 三种注释形态都要剔：
+ *   ① `//` 单行（TS/JS）
+ *   ② `/* … */` 块（行首 `*` 为续行）
+ *   ③ `<!-- … -->`（Vue 模板里的 HTML 注释——**最容易漏，曾因此 CI 假红一次**）
  */
 function stripComments(src: string): string {
   return src
+    .replace(/<!--[\s\S]*?-->/g, '') // ③ Vue 模板 HTML 注释（可跨行）
     .split('\n')
     .filter((line) => {
       const t = line.trim()
-      return !t.startsWith('//') && !t.startsWith('/*') && !t.startsWith('*') && t !== '*/'
+      return !t.startsWith('//') && !t.startsWith('/*') && !t.startsWith('*')
     })
     .join('\n')
 }
