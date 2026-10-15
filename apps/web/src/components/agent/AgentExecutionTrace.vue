@@ -148,16 +148,16 @@ const phaseBadge = computed(() => {
     <div v-if="expanded" class="mt-1 space-y-2 pl-4">
       <section v-if="stepCount > 0" data-testid="operation-section">
         <p class="mb-1 text-[10px] font-medium text-[var(--neo-text-muted)]">操作明细</p>
-        <!-- 2026-10-09 修「展开操作明细后历史滚动被锁死」：dense（钉底活体）展开态给步骤 <ul>
-             加 max-height + overflow-y:auto + overscroll-behavior:contain。
-             ⚠️ 只挂 dense：气泡形态的 trace 本就在可滚消息列表里，再加内层滚动会双层滚。
-             没有这个上限时长 thinking detail（whitespace-pre-wrap）会无限撑高 dock（shrink-0、
-             `--scrollable` 修饰只挂 hasDockPresentation=showCancelledCallout，正常回合恒 false），
-             把 chat-wrap（flex-1 min-h-0）挤到 0 高 ⇒ 历史列表不可见/不可滚 + 折叠头行命中区被顶飞。 -->
+        <!-- 2026-10-15（三滚动条治理）：dense（钉底活体）展开态**不再加**内层 max-height/overflow。
+             此前此处有 `max-height: min(46vh,420px); overflow-y:auto`，但它的前提
+             「dock 外层 `--scrollable` 只挂 hasCancelledCallout=showCancelledCallout，正常回合恒 false」
+             已被 #416 推翻 —— `hasDockPresentation` 现在把 liveTimeline / proposeWait / ask 卡都计入，
+             dock 外层对**所有**活跃展示态恒限高且自带滚动。
+             ⇒ 内层这条是纯冗余嵌套，与 AgentTurnTimeline(dense) 的旧限高一起构成多条滚动条。
+             非 dense（气泡内）形态本就不加（气泡在可滚消息列表里）；现在两种形态口径一致。 -->
         <ul
           class="space-y-0.5"
           data-testid="operation-steps"
-          :style="dense ? 'max-height: min(46vh, 420px); overflow-y: auto; overscroll-behavior: contain;' : undefined"
         >
           <li
             v-for="(step, i) in trace.steps"

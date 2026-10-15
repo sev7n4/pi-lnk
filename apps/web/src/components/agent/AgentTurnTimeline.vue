@@ -14,7 +14,7 @@
  *   failed 出内联重试入口（D2）+ 错误文案；点击/定位复用现有画布能力
  * - notice：按 tone 着色；error 带重试按钮
  */
-import { computed, shallowReactive, type CSSProperties } from 'vue'
+import { computed, shallowReactive } from 'vue'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
 import { presentToolStep } from '@/components/agent/toolPresentation'
@@ -161,40 +161,29 @@ function onThinkingToggle(part: ThinkingPart, nativeOpen: boolean): void {
 }
 
 /**
- * 钉底（dense）内容高度上限。与 `AgentExecutionTrace(dense)` 的步骤 `<ul>` 同口径
- * （min(46vh, 420px)），避免同一 dock 里两种限高值。
+ * 容器：dense（活体钉底）只收紧行距与字号；**不再自带 max-height / overflow-y**。
  *
- * ⚠️ 这是**第二道防线**，不是唯一防线：dock 容器 `.agent-input-area--scrollable`
- * （`AgentSideRail.vue` 的 `hasDockPresentation` 门控）才是主防线。
- * 2026-10-09 只给 `AgentExecutionTrace(dense)` 加了上限、未覆盖本组件，
- * 而阻塞期实际走的正是本组件 ⇒ 限高缺失 ⇒ 历史滚动被锁死（2026-10-14 复发）。
- * 两处都要在：主防线保证 dock 整体不被撑破，本兜底保证单个组件先在自己内部滚。
+ * 2026-10-15（三滚动条治理）：此前本组件在 dense 态给根节点加 `max-height: min(46vh,420px)`
+ * + `overflow-y:auto`，与 dock 外层 `.agent-dock-scroll--scrollable`（`min(42vh,400px)`）
+ * **构成两层嵌套滚动**；叠加 thinking running 块的 `max-h-40 overflow-y-auto`，
+ * 流式回合里同时出现三条竖直滚动条。
+ *
+ * 那道「第二道防线」的前提是「dock 外层限高只认已取消态」——该前提已被
+ * #416 推翻：`hasDockPresentation` 现在把 liveTimeline / proposeWait / ask 卡
+ * 都计入，外层对**所有**活跃展示态恒限高。
+ * ⇒ 内层限高是纯冗余嵌套，主防线已覆盖它。删除不会回归 #416 的「历史滑不动」。
  */
-const DENSE_MAX_HEIGHT = 'min(46vh, 420px)'
 
-/** 容器：dense（活体钉底）收紧行距与字号并限高；其余完全一致（同一套 parts 渲染）。 */
+/** 容器：dense（活体钉底）收紧行距与字号；其余完全一致（同一套 parts 渲染）。 */
 const rootClass = computed(() =>
   props.dense
     ? 'agent-turn-timeline agent-turn-timeline--dense flex flex-col gap-0.5 text-[10px] leading-snug'
     : 'agent-turn-timeline flex flex-col gap-1 text-[11px] leading-snug',
 )
-
-const rootStyle = computed<CSSProperties | undefined>(() =>
-  props.dense
-    ? {
-        'max-height': DENSE_MAX_HEIGHT,
-        // ⚠️ 必须写 CSSProperties 而非让TS 推断成 `{ 'overflow-y': string }`：
-        // Vue 的 StyleValue 要求 OverflowY 字面量类型，string 会报 TS2322（CI 实测）。
-        overflowY: 'auto',
-        // contain：到边界不链式滚动外层历史列表（避免"滚到头就带动整页"的错位手感）
-        overscrollBehavior: 'contain',
-      }
-    : undefined,
-)
 </script>
 
 <template>
-  <div v-if="hasContent" :class="rootClass" :style="rootStyle">
+  <div v-if="hasContent" :class="rootClass">
     <template v-for="part in parts" :key="part.id">
       <!-- thinking：折叠契约（2026-10-14）——展示默认值（running 展开 / done 收起）仅在
            用户未表达意图时生效；用户点过后由 @toggle 记录意图，后续 patch 不再改写。
@@ -216,7 +205,6 @@ const rootStyle = computed<CSSProperties | undefined>(() =>
         </summary>
         <p
           class="mt-1 whitespace-pre-wrap text-[var(--neo-text-secondary)]"
-          :class="part.status === 'running' ? 'max-h-40 overflow-y-auto' : ''"
         >{{ collapseBlankRuns(part.text) }}<span v-if="part.status === 'running'" class="animate-pulse">▊</span></p>
       </details>
 
