@@ -4,6 +4,8 @@ import { CanvasModule } from '../canvas/canvas.module'
 import { ProviderModule } from '../provider/provider.module'
 import { SessionsModule } from '../sessions/sessions.module'
 import { StudioModule } from '../studio/studio.module'
+import { PointsModule } from '../points/points.module'
+import { PricingModule } from '../pricing/pricing.module'
 import { AgentCanvasToolsController } from './agent-canvas-tools.controller'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
@@ -19,7 +21,16 @@ import {
 } from './generation-recovery/generation-recovery.service'
 
 @Module({
-  imports: [CanvasModule, ProviderModule, SessionsModule, StudioModule, AssetsModule],
+  imports: [
+    CanvasModule,
+    ProviderModule,
+    SessionsModule,
+    StudioModule,
+    AssetsModule,
+    // P2 T6（token 精确计费）：回合预扣/结算依赖（AgentService 构造 @Optional 注入）
+    PointsModule,
+    PricingModule,
+  ],
   controllers: [AgentController, AgentCanvasToolsController],
   providers: [
     AgentService,

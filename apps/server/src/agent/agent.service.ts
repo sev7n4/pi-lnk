@@ -67,6 +67,9 @@ import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
+import { PointsService } from '../points/points.service'
+import { PricingService } from '../pricing/pricing.service'
+import type { PointTxMeta } from '../points/point-tx.types'
 
 /** #12：pi 每轮的画布上下文（P0-① 起全部经 prompt 的 turnContext 逐轮透传，不再随会话创建注入）。 */
 export interface PiCanvasContext {
@@ -124,6 +127,14 @@ export function deriveLinkedOutputs(actions: CanvasAction[]): LinkedCanvasOutput
     }))
 }
 
+/** P2 T6：回合预扣单的结构子集（freeze 返回的 PointHold 只消费这几个字段）。 */
+interface TurnPointHold {
+  id: string
+  amount: number
+  status: string
+  createdAt: Date
+}
+
 @Injectable()
 export class AgentService {
   constructor(
@@ -143,6 +154,14 @@ export class AgentService {
     @Optional()
     @Inject(AgentMemoryService)
     private readonly agentMemory?: AgentMemoryService,
+    // P2 T6（token 精确计费）：回合预扣/结算依赖。@Optional 保持既有测试与
+    // 未装配 Points/Pricing 模块的调用路径零破坏（flag off 时完全不可达）。
+    @Optional()
+    @Inject(PointsService)
+    private readonly points?: PointsService,
+    @Optional()
+    @Inject(PricingService)
+    private readonly pricing?: PricingService,
   ) {}
 
   /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
@@ -250,10 +269,17 @@ export class AgentService {
      * SEL-REF：指代信号（本轮画布选中的节点 id 集合）。
      * ⛔ 追加在参数表**末尾**：本方法有 ~40 处按位置调用的测试，中间插入会移位，
      * 且 `refOrder` / `mentionedKeys` 同为 `string[]` ⇒ 错位不会报错、只会静默错值。
-     * `focusNodeId` 由它派生（见调用方），不再由前端单独给。
-     */
-    selectedNodeIds?: string[],
-  ): AsyncGenerator<AgentStreamEvent> {
+   * `focusNodeId` 由它派生（见调用方），不再由前端单独给。
+   */
+  selectedNodeIds?: string[],
+  /**
+   * P2 T6（token 精确计费）：run 发起方标识。`'automation'` = automation 触发的
+   * run（无用户交互）——预扣失败降级为不预扣照常执行 + warn，绝不阻塞自动化
+   * （Review Focus 4）；缺省 `'user'` = 用户 run，预扣被拒（余额不足）→ 402 语义拒绝。
+   * ⚠️ 追加在参数表**末尾**：本方法有 ~40 处按位置调用的测试，中间插入会移位。
+   */
+  billingSource?: 'user' | 'automation',
+): AsyncGenerator<AgentStreamEvent> {
     // Register idempotency key (if provided) before starting
     if (idempotencyKey) {
       await this.registerIdempotencyKey(idempotencyKey, sessionId, threadId || sessionId)
@@ -398,6 +424,8 @@ export class AgentService {
         skillId,
         // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
         model,
+        // P2 T6：run 发起方标识透传（预扣失败的用户 run 拒绝 / automation run 降级）
+        billingSource,
       )) {
         if (event.type === 'text_delta') {
           assistantText += (event.data as { text: string }).text
@@ -1040,7 +1068,40 @@ export class AgentService {
     skillId?: string,
     // K-1：dock 模型选择（BYOK 渠道）→ resolvePiSessionLlm → create body 的 llm 字段
     model?: string,
+    // P2 T6：run 发起方标识（'automation' 预扣失败降级照常执行；缺省用户 run）
+    billingSource: 'user' | 'automation' = 'user',
   ): AsyncGenerator<AgentStreamEvent> {
+    // ── P2 T6（token 精确计费）：回合发起预扣 ──
+    // flag 门禁：TEXT_TOKEN_BILLING 仅 'on' 启用；off 时零预扣零结算（Q2 展示预估照旧，
+    // 回归判据——既有测试零改动的根基）。归属 = run（Q2 拍板）：本方法即一个 run，
+    // steer 并入当前 run 不新扣；drain/followUp/automation 派生 run 各自预扣结算。
+    const billingEnabled = process.env.TEXT_TOKEN_BILLING === 'on' && Boolean(userId)
+    let billingHold: TurnPointHold | undefined
+    let billingModelKey = ''
+    if (billingEnabled) {
+      // modelKey 从回合参数取（dock/BYOK 选择），空则回落用户默认文本模型（与
+      // directImageModel 同一解析），入口处 toLowerCase 规范化。quote 永不 throw。
+      billingModelKey = (
+        model?.trim() ||
+        (await this.loadDefaultTextModel(userId as string).catch(() => undefined)) ||
+        ''
+      ).toLowerCase()
+      const frozen = await this.freezeTurnHold(userId as string, billingModelKey, billingSource)
+      billingHold = frozen.hold
+      if (!billingHold && frozen.rejected) {
+        // 用户 run 预扣被拒（余额不足）→ 402 语义拒绝，回合不发起（与 studio
+        // 「先扣后退」一致）。automation run 已在 freezeTurnHold 内降级，不会走到这。
+        yield {
+          type: 'error',
+          data: {
+            message: '积分不足，请充值后重试。',
+            error_type: 'insufficient_credits',
+          },
+        } as AgentStreamEvent
+        yield { type: 'done', data: {} }
+        return
+      }
+    }
     // K-1：BYOK 覆盖必须在 create 之前解析（会话创建即装配模型，中途不可换）
     const llm = await this.resolvePiSessionLlm(userId, model)
     // T1 多模态直通（spec §3.1）：视觉模型 + 图片附件 → base64 images + [In=] 标记。
@@ -1322,6 +1383,9 @@ export class AgentService {
       return ev
     }
     let done = false
+    // P2 T6：本轮以 error 事件收束 → 收尾走 release 全退（hold 泄漏双保险之一，
+    // Review Focus 1）；agent_end 正常收束 → settleFromHold 按实际 usage 结算。
+    let runFailed = false
     // 正文分段落库（2026-10-14）：任何非文本 trace 事件落库前先 flush，text 事件 seq
     // 恒小于边界事件 ⇒ 前端重放时正文按真实时序归位（修「正文整体跑到工具行上面」）。
     const textPersister = createTextSegmentPersister((type, data) => pushTraceEvent(type, data))
@@ -1331,6 +1395,7 @@ export class AgentService {
         if (streamClosed || !event) break
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true
+          runFailed = event.type === 'error'
         }
         // 失败透传（item 2）+ 可观测性（item 3）：本轮以错误结束 → 分类后下发结构化 error 事件，
         // 前端接住后既在对话内追加 ⚠️，又在 dock 上沿弹「充值提醒」类窄卡片。
@@ -1472,6 +1537,88 @@ export class AgentService {
     }
 
     const effectiveThreadId = threadId?.trim() || sessionId
+    // ── P2 T6（token 精确计费）：收尾结算（finalizeTurn 前，turn_settled 须随
+    // executionEvents 落进 assistant metadata）。全链路 try/catch 包裹——计费故障
+    // 绝不打断对话：结算失败 → release 全退 + warn，hold 泄漏双保险之二。
+    if (billingEnabled && billingHold && this.points && this.pricing) {
+      const usageEv = [...executionEvents].reverse().find((e) => e.type === 'turn_usage')
+      const usage = (usageEv?.data ?? {}) as {
+        inputTokens?: number
+        cacheReadTokens?: number
+        outputTokens?: number
+        cost?: number
+      }
+      if (runFailed) {
+        // error 路径：release 全退 + turn_settled {released: true}（键不出现纪律）
+        try {
+          await this.points.release(billingHold.id, '对话回合异常全退')
+        } catch (err) {
+          this.piLogger.warn(
+            `turn hold release failed (hold=${billingHold.id}): ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+        pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+      } else {
+        try {
+          // credits 来自实际 usage（turn_usage 折叠值：in/cacheRead/out 直取，
+          // costUsd 传 cost——缺行 USD 兜底时尽量真实，缺 costUsd 兜底只结 1 分）。
+          const quote = await this.pricing.quoteTextTokens(userId, billingModelKey, {
+            inputTokens: usage.inputTokens ?? 0,
+            cacheReadTokens: usage.cacheReadTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0,
+            ...(usage.cost !== undefined ? { costUsd: usage.cost } : {}),
+          })
+          const credits = Math.max(1, Math.ceil(quote.credits))
+          try {
+            const settled = await this.points.settleFromHold(
+              billingHold.id,
+              credits,
+              '对话回合结算',
+              {
+                kind: 'consume',
+                category: 'text',
+                model: billingModelKey,
+                ruleVersion: quote.ruleVersion,
+                ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
+              } satisfies PointTxMeta,
+            )
+            pushTraceEvent('turn_settled', {
+              holdId: billingHold.id,
+              credits: settled.settled,
+              ruleVersion: quote.ruleVersion,
+              // 键不出现：breakdown 仅价目口径携带；degraded 仅 USD 兜底场景携带
+              ...(quote.breakdown ? { breakdown: quote.breakdown } : { degraded: true }),
+            })
+          } catch (err) {
+            // settle 抛 409 等 → release 全退 + warn（幂等由 points 层 exactly-once 守卫）
+            this.piLogger.warn(
+              `turn settle failed (hold=${billingHold.id}): ${err instanceof Error ? err.message : String(err)} — release 全退`,
+            )
+            try {
+              await this.points.release(billingHold.id, '对话回合结算失败全退')
+            } catch (releaseErr) {
+              this.piLogger.warn(
+                `turn hold release failed (hold=${billingHold.id}): ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
+              )
+            }
+            pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+          }
+        } catch (err) {
+          // quote 异常（quoteTextTokens 承诺永不 throw，此处为纵深防御）→ release 全退
+          this.piLogger.warn(
+            `turn quote failed (hold=${billingHold.id}): ${err instanceof Error ? err.message : String(err)} — release 全退`,
+          )
+          try {
+            await this.points.release(billingHold.id, '对话回合计价失败全退')
+          } catch (releaseErr) {
+            this.piLogger.warn(
+              `turn hold release failed (hold=${billingHold.id}): ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
+            )
+          }
+          pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+        }
+      }
+    }
     await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
       // Nest internal tools already wrote Session.canvasData; skip re-apply to avoid duplicate add_node
       rewriteCanvasData: false,
@@ -1550,6 +1697,49 @@ export class AgentService {
       }
     } finally {
       cancel()
+    }
+  }
+
+  /**
+   * P2 T6：回合预扣。hold = ceil(quoteTextTokens(典型回合 8K in + 0.5K out).credits × 1.2)
+   * （spec §6.5 典型回合口径）。全部 try/catch 包裹——计费故障绝不打断对话：
+   *  - freeze 抛「可用积分不足」（业务拒绝）→ user run 返回 {rejected: true} 由调用方
+   *    402 语义拒绝 / automation run 降级 warn；
+   *  - 其余异常（DB 等）→ 降级不预扣照常执行 + warn（billing bug 不杀对话）。
+   * hold 为 undefined = 本 run 无预扣（被拒或降级），以 rejected 区分。
+   */
+  private async freezeTurnHold(
+    userId: string,
+    modelKey: string,
+    billingSource: 'user' | 'automation',
+  ): Promise<{ hold?: TurnPointHold; rejected?: boolean }> {
+    if (!this.points || !this.pricing) {
+      this.piLogger.warn('text billing enabled but points/pricing service missing — skip freeze')
+      return {}
+    }
+    try {
+      const quote = await this.pricing.quoteTextTokens(userId, modelKey, {
+        inputTokens: 8000,
+        cacheReadTokens: 0,
+        outputTokens: 500,
+      })
+      const holdAmount = Math.max(1, Math.ceil(quote.credits * 1.2))
+      return { hold: await this.points.freeze(userId, holdAmount, '对话回合预扣') }
+    } catch (err) {
+      const isInsufficient =
+        err instanceof BadRequestException && (err.message ?? '').includes('积分不足')
+      if (billingSource === 'automation') {
+        // automation run 预扣失败（含余额不足）→ 降级不预扣照常执行 + warn（不阻塞自动化）
+        this.piLogger.warn(
+          `[automation run] 预扣失败，降级照常执行: ${err instanceof Error ? err.message : String(err)}`,
+        )
+        return {}
+      }
+      if (isInsufficient) return { rejected: true }
+      this.piLogger.warn(
+        `turn freeze failed (fail-open): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return {}
     }
   }
 
