@@ -11,21 +11,33 @@ import type { ExecutionTraceState } from './executionTraceReducer'
  * 原始事故（2026-10-09 → 2026-10-14 复发）：展开的步骤 `<ul>` 无上限，长 thinking detail
  * 无限撑高 dock（shrink-0）⇒ `chat-wrap`(flex-1 min-h-0) 压到 0 高 ⇒ 历史既看不见也滑不动。
  *
- * ⚠️ 2026-10-15 治理：防线**从组件内层移到 dock 外层**。
- *   上一版修法给 `AgentExecutionTrace(dense)` 的 `<ul>` 加 max-height（当时 dock 外层
- *   `--scrollable` 只认已取消态，正常流式回合恒 false ⇒ 内层是唯一防线）。
- *   #416 已把 `hasDockPresentation` 扩成结构不变量（liveTimeline / proposeWait / ask 卡
- *   都计入），dock 外层对所有活跃展示态恒限高 ⇒ 内层限高成为**冗余嵌套**，
- *   与 AgentTurnTimeline(dense) 的旧限高一起在流式回合里叠出三条竖直滚动条。
+ * 治理脉络：
+ *   1/2（#421）：防线从组件内层移到 dock 外层（当时 dock 是第二滚动上下文）。
+ *   2/2（本 PR）：**dock 滚动上下文整体删除**——live 态对话内容移回主滚动流，
+ *   限高收回到 dense 卡片根（`.agent-trace--dense`，唯一允许的内嵌滚动）。
+ *   「历史滑不动」在流内结构下不复存在：内容全在 flex-1 滚动区里，
+ *   再长也只是让滚动区变长，不会挤压其他区域。
  *
- * 本测试因此锁「**限高防线存在于 dock 外层**」+「组件内层不再有嵌套滚动」两条：
- *   - 前者防 #416 同类复发（历史滑不动）；
- *   - 后者防三滚动条复发（嵌套滚动）。
- * 上一轮的回归测试只锁「单个组件的 style 字符串」，新组件一诞生就绕过它（复发即证据），
- * 所以本文件同时静态读 AgentSideRail.vue 断言主防线仍在。
+ * 本测试因此锁三条 2/2 不变量：
+ *   - dock 外层滚动容器必须已删除（防第二滚动上下文复发）；
+ *   - dense 卡片根限高必须存在（内容超长时的唯一防线）；
+ *   - 步骤 `<ul>` 不再挂内层滚动（卡片内再嵌套即复发三滚动条）。
  */
 
 const sideRail = readFileSync(resolve(__dirname, 'AgentSideRail.vue'), 'utf8')
+const traceSrc = readFileSync(resolve(__dirname, 'AgentExecutionTrace.vue'), 'utf8')
+
+/** 剔除三种注释形态（TS 单行 / 块注释 / Vue 模板 HTML 注释），防「注释里记录被删历史」假红。 */
+function stripComments(src: string): string {
+  return src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim()
+      return !t.startsWith('//') && !t.startsWith('/*') && !t.startsWith('*')
+    })
+    .join('\n')
+}
 
 function traceWithLongThinking(): ExecutionTraceState {
   const longDetail = Array.from({ length: 40 }, (_, i) => `思考第 ${i + 1} 行：这是一段很长的模型思考内容，模拟流式 thinking 持续输出 1 分多钟的体量。`).join('\n')
@@ -40,20 +52,30 @@ function traceWithLongThinking(): ExecutionTraceState {
   }
 }
 
-describe('AgentExecutionTrace — 展开限高防线在 dock 外层，组件内层不再嵌套滚动', () => {
-  it('主防线：dock 外层 .agent-dock-scroll--scrollable 限高仍在（防 #416 历史锁死复发）', () => {
-    expect(sideRail, 'AgentSideRail 必须保留 dock 外层限高类').toContain('.agent-dock-scroll--scrollable')
+describe('AgentExecutionTrace — 滚动上下文唯一（2/2），dense 限高收回卡片根', () => {
+  it('dock 外层滚动容器已删除（2/2：live 内容移回主滚动流，防第二滚动上下文复发）', () => {
+    const rail = stripComments(sideRail)
+    expect(rail, '.agent-dock-scroll 系列必须从模板与 CSS 中完全删除').not.toMatch(/agent-dock-scroll/)
     expect(
-      sideRail,
-      'dock 外层限高必须真的带 max-height（否则 dock 会被撑爆、历史滑不动）',
-    ).toMatch(/agent-dock-scroll--scrollable[\s\S]{0,200}max-height/)
-    expect(
-      sideRail,
-      '主防线门控必须把 liveTimeline 计入（阻塞期钉底内容无上限会撑爆滚动区）',
-    ).toMatch(/const hasDockPresentation = computed\([\s\S]{0,400}?liveTimeline/)
+      rail,
+      '主滚动容器 .agent-chat-scroll 必须仍在（唯一滚动上下文）',
+    ).toMatch(/agent-chat-scroll/)
   })
 
-  it('dense 展开态：步骤 <ul> 不再加内层 max-height/overflow（dock 外层已限高，内层是冗余嵌套）', () => {
+  it('dense 卡片根限高成对存在（内容超长时的唯一防线，防 #416 同类「撑爆」复发）', () => {
+    // 选择器侧：根节点 dense 时挂 --dense 类
+    expect(
+      traceSrc,
+      'dense 根必须挂 agent-trace--dense 类',
+    ).toMatch(/agent-trace--dense/)
+    // 规则侧：组件自身 scoped style 有限高（放父级 scoped 换父即静默失效）
+    const m = stripComments(traceSrc).match(/\.agent-trace--dense \{([\s\S]*?)\}/)
+    expect(m, '限高规则必须在组件自身 style 块').toBeTruthy()
+    expect(m![1], '规则体必须含 max-height').toMatch(/max-height/)
+    expect(m![1], '规则体必须含 overflow-y:auto').toMatch(/overflow-y:\s*auto/)
+  })
+
+  it('dense 展开态：步骤 <ul> 不挂内层 max-height/overflow（卡片根已限高，再内滚即嵌套复发）', () => {
     const w = mount(AgentExecutionTrace, {
       props: { trace: traceWithLongThinking(), streaming: true, dense: true, collapsed: false },
     })
@@ -62,11 +84,12 @@ describe('AgentExecutionTrace — 展开限高防线在 dock 外层，组件内�
     // 有效性断言（防空集假绿）：ul 确实渲染了步骤
     expect(w.findAll('[data-testid="operation-step"]').length).toBeGreaterThan(0)
     const style = ul.attributes('style') ?? ''
-    expect(style, `dense 步骤 <ul> 不应再自带 max-height（主防线在 dock 外层）；实际 style=${style}`).not.toContain('max-height')
-    expect(style, `dense 步骤 <ul> 不应再自带 overflow-y（否则与 dock 外层构成嵌套滚动=三滚动条）；实际 style=${style}`).not.toMatch(/overflow-y/)
+    const cls = ul.attributes('class') ?? ''
+    expect(style, `dense 步骤 <ul> 不应自带 max-height 内联样式；实际 style=${style}`).not.toContain('max-height')
+    expect(cls, `dense 步骤 <ul> 不应挂 max-h 溢出类；实际 class=${cls}`).not.toMatch(/max-h-|overflow/)
   })
 
-  it('非 dense（气泡内）展开态：同样不加 max-height（气泡在可滚消息列表里，两形态口径一致）', () => {
+  it('非 dense（气泡内）展开态：同样不加 max-height（气泡跟随主滚动流，两形态口径一致）', () => {
     const w = mount(AgentExecutionTrace, {
       props: { trace: traceWithLongThinking(), streaming: false, collapsed: false },
     })
@@ -75,7 +98,9 @@ describe('AgentExecutionTrace — 展开限高防线在 dock 外层，组件内�
     // 有效性断言：确实展开了、且有步骤
     expect(w.findAll('[data-testid="operation-step"]').length).toBeGreaterThan(0)
     const style = ul.attributes('style') ?? ''
+    const cls = ul.attributes('class') ?? ''
     expect(style, `气泡形态不该加 max-height（否则双层滚）；实际 style=${style}`).not.toContain('max-height')
+    expect(cls, `气泡形态不该挂溢出类；实际 class=${cls}`).not.toMatch(/max-h-|overflow/)
   })
 
   it('collapsed 态：不渲染 operation-section（头行之外无展开内容）', () => {

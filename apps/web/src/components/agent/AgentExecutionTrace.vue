@@ -129,7 +129,7 @@ const phaseBadge = computed(() => {
   <div
     v-if="showTrace"
     class="agent-trace"
-    :class="dense ? 'mb-1' : 'mt-1.5 border-t border-overlay/10 pt-1.5'"
+    :class="dense ? 'agent-trace--dense mb-1' : 'mt-1.5 border-t border-overlay/10 pt-1.5'"
   >
     <button
       type="button"
@@ -148,13 +148,10 @@ const phaseBadge = computed(() => {
     <div v-if="expanded" class="mt-1 space-y-2 pl-4">
       <section v-if="stepCount > 0" data-testid="operation-section">
         <p class="mb-1 text-[10px] font-medium text-[var(--neo-text-muted)]">操作明细</p>
-        <!-- 2026-10-15（三滚动条治理）：dense（钉底活体）展开态**不再加**内层 max-height/overflow。
-             此前此处有 `max-height: min(46vh,420px); overflow-y:auto`，但它的前提
-             「dock 外层 `--scrollable` 只挂 hasCancelledCallout=showCancelledCallout，正常回合恒 false」
-             已被 #416 推翻 —— `hasDockPresentation` 现在把 liveTimeline / proposeWait / ask 卡都计入，
-             dock 外层对**所有**活跃展示态恒限高且自带滚动。
-             ⇒ 内层这条是纯冗余嵌套，与 AgentTurnTimeline(dense) 的旧限高一起构成多条滚动条。
-             非 dense（气泡内）形态本就不加（气泡在可滚消息列表里）；现在两种形态口径一致。 -->
+        <!-- 2026-10-15（三滚动条治理 2/2）：dense 展开态的步骤 <ul> 仍不加内层滚动——
+             限高在**卡片根** `.agent-trace--dense`（唯一允许的内嵌滚动，dock 外层已删除）。
+             步骤 <ul> 再加就是卡片内第二层嵌套滚动（治理 1/2 删掉的三滚动条第三条）。
+             非 dense（气泡内）形态本就不加（气泡在主滚动流里），两种形态口径一致。 -->
         <ul
           class="space-y-0.5"
           data-testid="operation-steps"
@@ -198,6 +195,15 @@ const phaseBadge = computed(() => {
 </template>
 
 <style scoped>
+/* 2026-10-15（三滚动条治理 2/2）：dense（live 活体）根的限高滚动——与
+ * AgentTurnTimeline 的 .agent-turn-timeline--dense 同口径（唯一允许的内嵌滚动）。
+ * 规则放本组件而非父级 scoped，避免依赖「子组件根带父 scope attr」的隐式命中。 */
+.agent-trace--dense {
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* P1 动效节拍：步骤 stagger 入场（delay 由行内 style 按 i*60ms 注入，上限 600ms） */
 .agent-trace-step {
   animation: agent-trace-step-in 0.22s ease-out both;
