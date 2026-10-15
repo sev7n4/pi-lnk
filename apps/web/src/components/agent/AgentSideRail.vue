@@ -3329,24 +3329,27 @@ defineExpose({
               </p>
               <div class="flex items-start gap-2">
                 <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
-                <!-- 传送门：整句可点（键盘可达 + aria-label）；hover 下划线给「可点」暗示 -->
-                <button
-                  v-if="proposeWait.nodeId"
-                  type="button"
-                  class="flex-1 cursor-pointer rounded text-left leading-relaxed underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-                  data-testid="propose-wait-locate"
-                  aria-label="点击定位到画布上待确认的节点"
-                  @click="locateProposeNode"
-                >
-                  已提议生成，等你确认：<span class="font-semibold">点击定位节点 ↗</span> 随后到画布对应节点点「生成」，确认后本轮自动继续。
-                </button>
-                <p v-else class="flex-1 leading-relaxed">
-                  已提议生成，等你确认：请到画布上对应节点点「生成」，确认后本轮会自动继续。
+                <p class="flex-1 leading-relaxed">
+                  点👉🏻图标锚定画布「查看提示词」
                 </p>
               </div>
               <div class="mt-1.5 flex items-center gap-1.5">
                 <button
                   v-if="proposeWait.nodeId"
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-white px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                  data-testid="propose-wait-locate"
+                  aria-label="点击定位到画布上待确认的节点"
+                  @click="locateProposeNode"
+                >
+                  <!-- 定位锚图标：标准定位/瞄准字形（品牌 45° 定位锚 PNG 未入库，先用内联 SVG；要品牌对角字形再落库替换） -->
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                  </svg>
+                  <span>定位</span>
+                </button>
+                <button
                   type="button"
                   class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
                   data-testid="propose-wait-cancel"
@@ -3785,9 +3788,8 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-primary">
-                  <!-- 移动端无独立麦克风按钮：语音 = 长按 composer 卡片（收缩态2） -->
+                  <!-- 还原收缩态麦克风图标：移动端点按麦克风 + 长按录音双通道（#423 原始设计） -->
                   <DockMicButton
-                    v-if="!isMobileLayout"
                     :listening="speech.listening.value"
                     :disabled="agent.isStreaming || isUploading"
                     @toggle="toggleVoice"
