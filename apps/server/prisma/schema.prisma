@@ -14,6 +14,7 @@ model User {
   nickname   String
   avatar     String?
   points     Int                @default(1000)
+  pointsFrozen Int              @default(0) // P2 token 计费：回合预扣冻结额
   membership String             @default("free")
   createdAt  DateTime           @default(now())
   inviteCode       String?  @unique
@@ -27,6 +28,7 @@ model User {
   stories    Story[]
   generations GenerationRecord[]
   pointTransactions PointTransaction[]
+  holds             PointHold[]
   providerChannels ProviderChannel[]
   aiPreferences    UserAiPreferences?
   webdavConfig     UserWebdavConfig?
@@ -586,4 +588,23 @@ model PricingGrayWhitelist {
   note      String?
   @@unique([releaseId, userId])
   @@index([userId])
+}
+
+// ── P2 token 精确计费（2026-10-15-p2-token-precise-billing）──
+// PointHold：回合预扣冻结单。回合发起先冻结积分（User.pointsFrozen），结算时
+// 按实际用量 settle（差额自然留在余额），error/超时由 releaseExpiredHolds 全退防泄漏。
+// status: held（冻结中）| settled（已结算）| released（已释放）
+model PointHold {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  amount         Int
+  status         String    @default("held") // held | settled | released
+  settledCredits Int?
+  reason         String?
+  createdAt      DateTime  @default(now())
+  settledAt      DateTime?
+
+  @@index([userId, status])
+  @@index([status, createdAt])
 }

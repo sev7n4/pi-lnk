@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { estimateAudioCredits, estimateVideoCredits } from './credits'
+import { estimateAudioCredits, estimateTextCredits, estimateVideoCredits } from './credits'
 import { clampVideoDuration } from '@lnkpi/shared'
 
 describe('estimateVideoCredits tiers', () => {
@@ -20,6 +20,17 @@ describe('clampVideoDuration', () => {
     expect(clampVideoDuration('x')).toBe(5)
     expect(clampVideoDuration(15, { max: 12 })).toBe(12)
     expect(clampVideoDuration(3, { min: 4, max: 12 })).toBe(4)
+  })
+})
+
+/**
+ * P2 T8 · spec §6.7：文本徽标改「⚡1积分起」后，estimateTextCredits 语义从
+ * 「固定 5」改为「floor 1」（token 计费下限）。既有用例无文本锚，此处追加
+ * 新语义断言（原「恒 5」无显式回归测试，无需改动）。
+ */
+describe('estimateTextCredits（P2 T8 · spec §6.7）', () => {
+  it('floor 1：token 计费下限，返回 1', () => {
+    expect(estimateTextCredits()).toBe(1)
   })
 })
 

@@ -225,7 +225,7 @@ function onRefMention(refKey: string) {
           :disabled="readonly"
           @toggle="toggleVoice"
         />
-        <DockCreditBadge :credits="credits" />
+        <DockCreditBadge :credits="credits" variant="from" />
         <DockGenerateButton
           :generating="generating"
           :disabled="!generating && !prompt.trim()"

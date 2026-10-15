@@ -98,7 +98,7 @@ import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.v
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
-import { hasFailedTraceStep, turnSummaryLine } from '@/components/agent/executionTraceReducer'
+import { hasFailedTraceStep, turnSettledText, turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
@@ -829,6 +829,9 @@ const turnStatus = computed(() => {
     // Q2：本回合实时预估积分（usage_delta 逐段覆盖；null 时状态行不拼预估尾巴）
     estimatedCredits: agent.liveEstimatedCredits,
     lastFailed,
+    // P2 T7：settled 收口态——文案与气泡摘要共用 reducer turnSettledText（单源），
+    // 状态行只切 mode（'settled'），不复制文案。failed 优先（error 路径 released 显示失败原因）。
+    settledText: turnSettledText(lastAssistantMessage.value?.executionTrace),
   })
 })
 /**
@@ -2476,11 +2479,27 @@ function handleEvent(event: { type: string; data: unknown }) {
       scrollToBottom()
       break
     case 'turn_usage':
-      agent.trackTurnUsage(event.data as { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number })
+      agent.trackTurnUsage(
+        event.data as {
+          inputTokens: number
+          outputTokens: number
+          cacheReadTokens?: number
+          cacheWriteTokens?: number
+          cost?: number
+          estimatedCredits?: number
+        },
+      )
       break
     case 'usage_delta':
       // Q2（2026-10-14）：实时预估积分快照（transient）→ 状态行 running 段「预估 -N积分」
       agent.trackUsageDelta(event.data as { estimatedCredits?: number })
+      break
+    case 'turn_settled':
+      // P2 T7：结算明细 → trace.settled（settled 态摘要/状态行数据源）+ 余额刷新。
+      // 事件经既有 executionEvents 重放通道持久化，刷新后由 loadHistory 重放还原。
+      agent.trackTurnSettled(
+        event.data as Parameters<typeof agent.trackTurnSettled>[0],
+      )
       break
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])

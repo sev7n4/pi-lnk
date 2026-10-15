@@ -54,8 +54,34 @@ export interface ExecutionTraceState {
   totalMs?: number
   /** P1 回合 token 实耗（turn_usage 事件覆盖写入，replay 幂等）。
    * cost：服务端 pi-events createUsageAccumulator 折叠的 usage.cost 总额
-   * （渠道未配 pricing 时字段不出现——0 视为「未计费」不携带）。 */
-  usage?: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }
+   * （渠道未配 pricing 时字段不出现——0 视为「未计费」不携带）。
+   * P2 T5：cacheReadTokens/cacheWriteTokens 三列分开（inputTokens = 纯 input）；
+   * 旧落库事件无 cache 字段 → 键不出现，摘要合计按 0 兜底。 */
+  usage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    cost?: number
+    estimatedCredits?: number
+  }
+  /** P2 T7：turn_settled 结算明细（turn_settled 事件覆盖写入，replay 幂等）。
+   * 事件四形态：正常 {credits, breakdown?, tokens?, ruleVersion?} / degraded
+   * {credits, degraded:true} / released {released:true}（预扣全退）。
+   * 终审 I-1 双口径分离：breakdown = 积分成分（个位，计费口径 cacheWrite 并入
+   * in），tokens = 原始 token 数（千级，展示口径 in/cacheRead/out 直取）——
+   * 渲染只读 tokens.*，formatTokens 语义归位；breakdown 留事件供未来展开。
+   * 键不出现纪律：credits/breakdown/tokens/ruleVersion/degraded/released 仅在
+   * 服务端下发该键时携带（条件展开），缺省段由 turnSettledText 按形态兜底。 */
+  settled?: {
+    holdId: string
+    credits?: number
+    breakdown?: { in: number; cache: number; out: number }
+    tokens?: { in: number; cache: number; out: number }
+    ruleVersion?: string
+    degraded?: boolean
+    released?: boolean
+  }
 }
 
 let stepCounter = 0
@@ -446,14 +472,28 @@ export function visibleStepCount(trace: ExecutionTraceState): number {
 
 /** P1：turn_usage 事件写入（重复调用覆盖不叠加——replay/多事件幂等）。
  * cost 仅在合法有限数时透传（P1 cost 接线：渠道 models[].pricing → vendor
- * calculateCost → 服务端 turn_usage.cost；未配价 = 字段不出现，行为不变）。 */
+ * calculateCost → 服务端 turn_usage.cost；未配价 = 字段不出现，行为不变）。
+ * P2 T5：cacheReadTokens/cacheWriteTokens 同款条件透传（旧事件无字段 → 键不出现）。 */
 export function applyTurnUsage(
   trace: ExecutionTraceState,
-  usage: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number },
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    cost?: number
+    estimatedCredits?: number
+  },
 ) {
   trace.usage = {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    ...(typeof usage.cacheReadTokens === 'number' && Number.isFinite(usage.cacheReadTokens)
+      ? { cacheReadTokens: usage.cacheReadTokens }
+      : {}),
+    ...(typeof usage.cacheWriteTokens === 'number' && Number.isFinite(usage.cacheWriteTokens)
+      ? { cacheWriteTokens: usage.cacheWriteTokens }
+      : {}),
     ...(typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
     ...(typeof usage.estimatedCredits === 'number' && Number.isFinite(usage.estimatedCredits)
       ? { estimatedCredits: usage.estimatedCredits }
@@ -465,6 +505,65 @@ export function applyTurnUsage(
 function formatTokens(total: number): string {
   if (total < 1000) return `${total}`
   return `${(Math.round(total / 100) / 10).toFixed(1)}k`
+}
+
+/** P2 T7：turn_settled 事件写入（重复调用覆盖不叠加——replay/重复事件幂等）。
+ * 键不出现纪律照 applyTurnUsage 同款条件展开（服务端 Task 6 条件下发）。 */
+export function applyTurnSettled(
+  trace: ExecutionTraceState,
+  data: {
+    holdId: string
+    credits?: number
+    breakdown?: { in: number; cache: number; out: number }
+    tokens?: { in: number; cache: number; out: number }
+    ruleVersion?: string
+    degraded?: boolean
+    released?: boolean
+  },
+) {
+  trace.settled = {
+    holdId: data.holdId,
+    ...(typeof data.credits === 'number' && Number.isFinite(data.credits)
+      ? { credits: data.credits }
+      : {}),
+    ...(data.breakdown ? { breakdown: { ...data.breakdown } } : {}),
+    ...(data.tokens ? { tokens: { ...data.tokens } } : {}),
+    ...(data.ruleVersion ? { ruleVersion: data.ruleVersion } : {}),
+    ...(data.degraded === true ? { degraded: true } : {}),
+    ...(data.released === true ? { released: true } : {}),
+  }
+}
+
+/** P2 T7：settled 段文案——turnSummaryLine 摘要段与 turnStatusBar 状态行**共用**
+ * 这一个生成器（文案单源，不许复制两份）。
+ * released →「预扣已退回」（预扣全退不显示负数）；degraded →「已结算 -N 积分（按成本估算）」；
+ * 正常 →「已结算 -N 积分（输入 X.Xk · 缓存 X.Xk · 输出 X.Xk）」——按 **tokens**（原始
+ * token 数）渲染，formatTokens 语义归位（终审 I-1：breakdown 是积分成分，个位数被
+ * 当 token 渲染会失真，绝不再读它出文案；缺 tokens 键的旧形状回退无 token 段）。
+ * 差额规则：reducer 已跟踪 estimatedCredits（applyTurnUsage），|实际 − 预估| ≥ 2 积分
+ * 时追加「（预估 M）」。非 settled 回合 / credits 缺失（异常形态）返回 null。 */
+export function turnSettledText(trace: ExecutionTraceState | undefined | null): string | null {
+  const settled = trace?.settled
+  if (!settled) return null
+  if (settled.released) return '预扣已退回'
+  if (typeof settled.credits !== 'number' || !Number.isFinite(settled.credits)) return null
+  let text: string
+  if (settled.degraded) {
+    text = `已结算 -${settled.credits} 积分（按成本估算）`
+  } else if (settled.tokens) {
+    text = `已结算 -${settled.credits} 积分（输入 ${formatTokens(settled.tokens.in)} · 缓存 ${formatTokens(settled.tokens.cache)} · 输出 ${formatTokens(settled.tokens.out)}）`
+  } else {
+    text = `已结算 -${settled.credits} 积分`
+  }
+  const estimated = trace.usage?.estimatedCredits
+  if (
+    typeof estimated === 'number'
+    && Number.isFinite(estimated)
+    && Math.abs(settled.credits - estimated) >= 2
+  ) {
+    text += `（预估 ${Math.ceil(estimated)}）`
+  }
+  return text
 }
 
 /** 从 propose_generation 步骤解析张数：args「N 个节点」数字优先，缺省计 1。 */
@@ -492,14 +591,22 @@ export function turnSummaryLine(trace: ExecutionTraceState): string | null {
   if (imageCount > 0) segments.push(`提议生成 ${imageCount} 张`)
   if (trace.totalMs != null) segments.push(`用时 ${formatDuration(trace.totalMs)}`)
   if (trace.usage) {
-    segments.push(
-      `消耗 ${formatTokens(trace.usage.inputTokens + trace.usage.outputTokens)} tokens`,
-    )
+    // P2 T5：inputTokens 已收窄为纯 input，合计 = in + cacheRead + cacheWrite + out
+    // （旧事件无 cache 字段 → 0 兜底），用户可见总量不缩水。
+    const totalTokens =
+      trace.usage.inputTokens +
+      (trace.usage.cacheReadTokens ?? 0) +
+      (trace.usage.cacheWriteTokens ?? 0) +
+      trace.usage.outputTokens
+    segments.push(`消耗 ${formatTokens(totalTokens)} tokens`)
     // P1 cost 展示（最后一厘米）：费率单位跟随渠道 pricing 配置，此处不带货币符号。
     if (trace.usage.cost != null) {
       segments.push(`费用 ≈${Number(trace.usage.cost.toPrecision(3))}`)
     }
   }
+  // P2 T7：settled 段（与状态行共用 turnSettledText，文案单源）。
+  const settledText = turnSettledText(trace)
+  if (settledText) segments.push(settledText)
   return segments.length > 0 ? segments.join(' · ') : null
 }
 
@@ -551,7 +658,20 @@ export function replayExecutionTraceEvents(
         applyThinking(trace, event.data as { status: string; summary?: string })
         break
       case 'turn_usage':
-        applyTurnUsage(trace, event.data as { inputTokens: number; outputTokens: number; cost?: number })
+        applyTurnUsage(
+          trace,
+          event.data as {
+            inputTokens: number
+            outputTokens: number
+            cacheReadTokens?: number
+            cacheWriteTokens?: number
+            cost?: number
+          },
+        )
+        break
+      case 'turn_settled':
+        // P2 T7：结算明细随既有 executionEvents 重放通道还原（覆盖写入，幂等）。
+        applyTurnSettled(trace, event.data as Parameters<typeof applyTurnSettled>[1])
         break
       case 'explore':
         applyExplore(trace, event.data as Parameters<typeof applyExplore>[1])

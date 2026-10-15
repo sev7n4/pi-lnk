@@ -12,8 +12,13 @@ const MUSIC_AUDIO_CREDITS = 15
 
 export type CreditGenerationType = keyof typeof BASE_GENERATION_CREDITS
 
+/**
+ * 文本积分估算（P2 · spec §6.7）：agent 对话文本已改 token 计费，生成前无法
+ * 精确（输出长度未知），徽标语义从「固定 5」改为「floor 1」——单次至少 1 积分。
+ * 配合 DockCreditBadge variant="from" 显示「⚡1积分起」。
+ */
 export function estimateTextCredits(): number {
-  return BASE_GENERATION_CREDITS.text
+  return 1
 }
 
 /**

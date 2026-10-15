@@ -110,6 +110,32 @@ describe('turnStatusLine（P0 两行状态行）', () => {
   })
 })
 
+describe('turnStatusLine（P2 T7 settled 收口态）', () => {
+  const t0 = 4_000_000
+  const settledText = '已结算 -8 积分（输入 3.0k · 缓存 0 · 输出 400）'
+  it('非流式 + settledText → mode settled，文案单源透传', () => {
+    expect(
+      turnStatusLine({ isStreaming: false, turnStartedAt: t0, now: t0, waiting: false, settledText }),
+    ).toEqual({ text: settledText, mode: 'settled' })
+  })
+  it('failed 优先于 settled（error 路径 released 不覆盖失败原因）', () => {
+    expect(
+      turnStatusLine({
+        isStreaming: false, turnStartedAt: t0, now: t0, waiting: false,
+        lastFailed: '上游响应超时', settledText: '预扣已退回',
+      }),
+    ).toEqual({ text: '生成失败 · 上游响应超时', mode: 'failed' })
+  })
+  it('非流式无失败无 settledText → null（回归不变）', () => {
+    expect(turnStatusLine({ isStreaming: false, turnStartedAt: t0, now: t0, waiting: false, settledText: null })).toBeNull()
+  })
+  it('streaming 中无视 settledText（running 语义不变）', () => {
+    expect(
+      turnStatusLine({ isStreaming: true, turnStartedAt: t0, now: t0 + 3000, waiting: false, settledText }),
+    ).toEqual({ text: '生成回复中 · 3s', mode: 'running' })
+  })
+})
+
 describe('failureReason（P1 失败人话）', () => {
   it('状态码与超时映射；未知兜底', () => {
     expect(failureReason({ status: 402 })).toBe('渠道余额不足')

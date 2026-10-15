@@ -21,14 +21,29 @@ import { Inject, Injectable, OnModuleInit } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import {
   RULE_VERSION_CONSTANTS_FALLBACK,
+  TEXT_TOKEN_MODELS,
   buildMatchKey,
+  buildTextTokenMatchKey,
+  estimateCreditsFromUsdCost,
   legacyPriceOf,
+  resolveFxUsdCny,
   type PricingQuery,
   type PricingQuote,
+  type TextTokenSpec,
 } from './pricing.core'
 import { enumeratePricingSpace } from './pricing.space'
 
 const CACHE_TTL_MS = 30_000
+
+/** token 数规范：非有限/负数按 0（usage 来自 vendor 折叠，绝不因脏值 NaN 计价）。 */
+function positiveTokens(n: number): number {
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/** 反比率行有效性：正有限数（缺行 = undefined、脏值 0/NaN 都不算比率）。 */
+function isPositiveRatio(v: number | undefined): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0
+}
 
 interface PriceTable {
   id: string
@@ -180,6 +195,173 @@ export class PricingService implements OnModuleInit {
         err instanceof Error ? err.message : err,
       )
       return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK }
+    }
+  }
+
+  // —— P2 T4：文本 token 反比率计价（Task 6 回合结算消费）——
+
+  /**
+   * P2 文本 token 计费的 usage 口径。costUsd = vendor usage.cost 求和（Task 6 传入），
+   * 仅 degraded 兜底消费；计划原文表述为「usage.cost 求和」，落为可选字段。
+   */
+  async quoteTextTokens(
+    userId: string | undefined,
+    modelKey: string,
+    usage: {
+      inputTokens: number
+      cacheReadTokens: number
+      /** 终审 C-2：T5 后四列独立，cacheWrite 不再被上游折入 input——此处并入 in 项计费。 */
+      cacheWriteTokens?: number
+      outputTokens: number
+      costUsd?: number
+    },
+  ): Promise<PricingQuote & { breakdown?: { in: number; cache: number; out: number } }> {
+    try {
+      const model = String(modelKey || '').toLowerCase()
+      // token 行无 legacy 常量可兜（constants 旁路/未知模型都直接落 USD 成本兜底）
+      if (process.env.PRICING_SOURCE === 'constants' || !TEXT_TOKEN_MODELS.includes(model)) {
+        return await this.degradedTextTokenQuote(usage)
+      }
+      // 与 quote() 同构的 degraded 短路 + 自愈探测
+      if (this.degraded) {
+        await this.trySelfHeal()
+        if (this.degraded) return await this.degradedTextTokenQuote(usage)
+      }
+      const keyOf = (spec: TextTokenSpec) => buildTextTokenMatchKey(model, spec)
+      // 解析顺序与 quote() 同构：灰度名单命中优先 → global；灰度缺 in/out 行
+      // 视为数据事故整组落 global（cache 行缺是受支持形态，见下）。
+      let entries: Map<string, number>
+      let ruleVersion: string
+      let grayReleaseId: string | undefined
+      const gray = userId ? await this.loadGrayTable() : null
+      if (userId && gray && gray.whitelist.has(userId)) {
+        const gi = gray.entries.get(keyOf('in'))
+        const go = gray.entries.get(keyOf('out'))
+        if (gi !== undefined && go !== undefined) {
+          entries = gray.entries
+          ruleVersion = gray.version
+          grayReleaseId = gray.releaseId
+        } else {
+          console.warn(
+            `[pricing] 灰度表缺文本 token 行 ${keyOf('in')}/${keyOf('out')}（release ${gray.releaseId}）— 落 global`,
+          )
+          const table = await this.requireGlobalTable()
+          entries = table.entries
+          ruleVersion = table.version
+        }
+      } else {
+        const table = await this.requireGlobalTable()
+        entries = table.entries
+        ruleVersion = table.version
+      }
+      const rIn = entries.get(keyOf('in'))
+      const rOut = entries.get(keyOf('out'))
+      const rCache = entries.get(keyOf('cache'))
+      if (!isPositiveRatio(rIn) || !isPositiveRatio(rOut)) {
+        // 三行齐才走价目口径：in/out 缺行 = 数据事故 → degraded
+        return await this.degradedTextTokenQuote(usage)
+      }
+      // cache 行缺（step-2-16k 上游未公布）→ cacheRead tokens 并入 in 项；
+      // cacheWrite 恒并入 in 项（终审 C-2，与「cache 并入 in」同形态）——
+      // breakdown.in 即含 cacheWrite 部分。
+      const hasCache = isPositiveRatio(rCache)
+      const inTokens =
+        positiveTokens(usage.inputTokens) +
+        positiveTokens(usage.cacheWriteTokens ?? 0) +
+        (hasCache ? 0 : positiveTokens(usage.cacheReadTokens))
+      const bIn = Math.ceil(inTokens / rIn)
+      const bCache = hasCache ? Math.ceil(positiveTokens(usage.cacheReadTokens) / rCache) : 0
+      const bOut = Math.ceil(positiveTokens(usage.outputTokens) / rOut)
+      const quote: PricingQuote & { breakdown: { in: number; cache: number; out: number } } = {
+        credits: Math.max(1, bIn + bCache + bOut),
+        ruleVersion,
+        breakdown: { in: bIn, cache: bCache, out: bOut },
+      }
+      if (grayReleaseId) quote.grayReleaseId = grayReleaseId // 条件写入（键不出现纪律）
+      return quote
+    } catch (err) {
+      console.warn(
+        '[pricing] 文本 token 计价异常 — 落 USD 成本兜底：',
+        err instanceof Error ? err.message : err,
+      )
+      return this.degradedTextTokenQuote(usage)
+    }
+  }
+
+  /**
+   * P2 T8：当前 active 版本的文本 token 反比率 map（公开端点 GET /api/pricing/active
+   * 的数据源，前端徽标展示用，无敏感字段）。matchKey `text:<model>:<spec>` 三行一组
+   * 组装 `{ [model]: {in, cache?, out} }`；modelKey 小写规范化（T4 评审遗留——发布侧
+   * 大小写笔误不外泄）。空态（无 active 版本 / 无 token 行）返回空对象，永不 throw。
+   */
+  async getActiveTextTokenRatios(): Promise<Record<string, { in: number; cache?: number; out: number }>> {
+    try {
+      const table = await this.loadActiveTable()
+      if (!table) return {}
+      const rows: Record<string, { in?: number; cache?: number; out?: number }> = {}
+      for (const [key, credits] of table.entries) {
+        if (!key.startsWith('text:')) continue
+        const rest = key.slice('text:'.length)
+        const sep = rest.lastIndexOf(':')
+        if (sep <= 0) continue
+        const spec = rest.slice(sep + 1)
+        if (spec !== 'in' && spec !== 'cache' && spec !== 'out') continue
+        if (!isPositiveRatio(credits)) continue
+        const model = rest.slice(0, sep).toLowerCase()
+        ;(rows[model] ??= {})[spec] = credits
+      }
+      // 与 quoteTextTokens 同语义：in/out 两行齐备才成组（out 缺行 = 数据事故不外泄）；
+      // cache 行缺是受支持形态（step-2-16k 上游未公布）——键不出现纪律。
+      const ratios: Record<string, { in: number; cache?: number; out: number }> = {}
+      for (const [model, row] of Object.entries(rows)) {
+        if (!isPositiveRatio(row.in) || !isPositiveRatio(row.out)) continue
+        const entry: { in: number; cache?: number; out: number } = { in: row.in, out: row.out }
+        if (isPositiveRatio(row.cache)) entry.cache = row.cache
+        ratios[model] = entry
+      }
+      return ratios
+    } catch (err) {
+      console.warn(
+        '[pricing] 活动价目读取失败 — 返回空 map：',
+        err instanceof Error ? err.message : err,
+      )
+      return {}
+    }
+  }
+
+  /** global 表（无 active 版本抛错 → 由 quoteTextTokens 的 catch 落 degraded）。 */
+  private async requireGlobalTable(): Promise<PriceTable> {
+    const table = await this.loadActiveTable()
+    if (!table) throw new Error('no active price list version')
+    return table
+  }
+
+  /**
+   * degraded 兜底（Q2 展示预估同款公式）：usage.costUsd（vendor cost 求和）× FX
+   * × 当前生效阶段 marginBp。marginBp 照 agent.service Q2 预估的防御读模式
+   * （mock 替身缺 marginPolicy / 表读失败都不炸，缺省 11000bp）。min 1。
+   */
+  private async degradedTextTokenQuote(usage: {
+    costUsd?: number
+  }): Promise<PricingQuote> {
+    const [marginBp, fxUsdCny] = await Promise.all([
+      this.readCurrentMarginBp(),
+      Promise.resolve(resolveFxUsdCny(process.env as NodeJS.ProcessEnv)),
+    ])
+    const costUsd = positiveTokens(usage.costUsd ?? 0)
+    return {
+      credits: Math.max(1, estimateCreditsFromUsdCost(costUsd, marginBp, fxUsdCny)),
+      ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+    }
+  }
+
+  /** MarginPolicy 当前生效系数（防御读，缺省 11000bp——与 agent.service readMarginBp 同源同缺省）。 */
+  private async readCurrentMarginBp(): Promise<number> {
+    try {
+      const row = await this.prisma?.marginPolicy?.findFirst?.({ orderBy: { createdAt: 'desc' } })
+      return typeof row?.marginBp === 'number' && row.marginBp > 0 ? row.marginBp : 11000
+    } catch {
+      return 11000
     }
   }
 

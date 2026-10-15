@@ -1,9 +1,10 @@
 import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { BadRequestException } from '@nestjs/common'
+import { BadRequestException, ConflictException } from '@nestjs/common'
 import type { CanvasAction, SidebarAttachment } from '@lnkpi/shared'
 import { AgentService, deriveLinkedOutputs, buildTurnMetadata } from './agent.service'
 import { piEvent, stubPiClient } from './agent.test-utils'
+import { InsufficientPointsError } from '../points/points.service'
 
 describe('deriveLinkedOutputs', () => {
   it('maps add_node actions to linked outputs', () => {
@@ -539,5 +540,384 @@ describe('AgentService checkRuntimeHealth', () => {
 
     expect(await service.checkRuntimeHealth()).toEqual({ ok: false })
     expect(piSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ── P2 T6（token 精确计费）：回合预扣 + 结算 + turn_settled 事件 ──
+// 照既有 mock 桩模式：points/pricing 服务整体 mock，pi-runtime 走 stubPiClient。
+describe('AgentService turn billing (P2 T6)', () => {
+  const agentMessageCreate = vi.fn()
+  const agentThreadFindUnique = vi.fn()
+  const agentThreadUpsert = vi.fn()
+  const agentThreadUpdate = vi.fn()
+  const freeze = vi.fn()
+  const settleFromHold = vi.fn()
+  const release = vi.fn()
+  const quoteTextTokens = vi.fn()
+
+  const msgEndWithUsage = (usage: Record<string, unknown>) =>
+    piEvent('message_end', { message: { usage } })
+
+  let service: AgentService
+
+  const buildService = () => {
+    service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findMany: vi.fn().mockResolvedValue([]) },
+        agentThread: {
+          findUnique: agentThreadFindUnique,
+          upsert: agentThreadUpsert,
+          update: agentThreadUpdate,
+        },
+        session: {
+          findUnique: vi.fn().mockResolvedValue({ id: 's1', canvasData: null }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        idempotencyRecord: {
+          create: vi.fn().mockResolvedValue({}),
+          findUnique: vi.fn().mockResolvedValue(null),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { create: vi.fn() } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+      undefined,
+      undefined,
+      undefined,
+      // P2 T6：points / pricing 服务替身（@Optional 注入，位置参数第 8/9 位）
+      { freeze, settleFromHold, release } as never,
+      { quoteTextTokens } as never,
+    )
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env.PI_RUNTIME_MODE = 'active'
+    delete process.env.PI_RUNTIME_URL
+    delete process.env.TEXT_TOKEN_BILLING
+
+    agentMessageCreate.mockResolvedValue({})
+    agentThreadFindUnique.mockResolvedValue({ id: 's1:thread-a' })
+    agentThreadUpsert.mockResolvedValue({})
+    agentThreadUpdate.mockResolvedValue({})
+    freeze.mockResolvedValue({ id: 'hold-1', amount: 4, status: 'held', createdAt: new Date() })
+    settleFromHold.mockResolvedValue({ settled: 3, released: 0 })
+    release.mockResolvedValue(undefined)
+    quoteTextTokens.mockResolvedValue({
+      credits: 3,
+      ruleVersion: 'price-v2',
+      breakdown: { in: 2, cache: 0, out: 1 },
+    })
+    buildService()
+  })
+
+  afterEach(() => {
+    delete process.env.TEXT_TOKEN_BILLING
+  })
+
+  /** 驱动一轮成功回合（带 usage 的 message_end + agent_end）。 */
+  const runTurn = async (...rest: unknown[]) => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      msgEndWithUsage({
+        input: 8000,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 500,
+        cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+      }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')) {
+      events.push(event)
+    }
+    void rest
+    return events
+  }
+
+  const assistantMetadata = (): Record<string, unknown> => {
+    const call = agentMessageCreate.mock.calls
+      .map((c) => (c[0] as { data: { role: string; metadata: string | null } }).data)
+      .find((d) => d.role === 'assistant')
+    expect(call).toBeDefined()
+    return call?.metadata ? (JSON.parse(call.metadata) as Record<string, unknown>) : {}
+  }
+
+  it('① flag on + 余额足：预扣 ceil(典型×1.2) + 按实际 usage 结算 + turn_settled 事件', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    const events = await runTurn()
+
+    // 预扣额 = ceil(quote(典型回合 8K in + 0.8K cacheWrite + 0.5K out).credits × 1.2) = ceil(3×1.2) = 4
+    expect(freeze).toHaveBeenCalledTimes(1)
+    expect(freeze).toHaveBeenCalledWith('u1', 4, '对话回合预扣')
+    // modelKey 入口 toLowerCase 规范化：dock 传 'STEP-3.5-Flash' → quote 收 'step-3.5-flash'
+    // （runTurn 未传 model → 回落用户默认文本模型，mock 为空 → ''；此处直接断言 quote 入参形状）
+    const preCall = quoteTextTokens.mock.calls[0]?.[2] as Record<string, unknown>
+    expect(preCall).toMatchObject({
+      inputTokens: 8000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 800, // 终审 C-2：典型回合含缓存写入
+      outputTokens: 500,
+    })
+    // 结算 quote：turn_usage 折叠值直取 + costUsd=cost + cacheWrite 透传（并入 in 项计费）
+    expect(quoteTextTokens).toHaveBeenCalledTimes(2)
+    const settleCall = quoteTextTokens.mock.calls[1]
+    expect(settleCall?.[0]).toBe('u1')
+    expect(settleCall?.[2]).toMatchObject({
+      inputTokens: 8000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 500,
+      costUsd: 0.02,
+    })
+    expect(settleFromHold).toHaveBeenCalledTimes(1)
+    expect(settleFromHold).toHaveBeenCalledWith(
+      'hold-1',
+      3,
+      '对话回合结算',
+      expect.objectContaining({
+        category: 'text',
+        ruleVersion: 'price-v2',
+      }),
+    )
+    // turn_settled 落 metadata.executionEvents；键不出现：非 degraded 不带 degraded 键
+    const meta = assistantMetadata()
+    const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
+      (e) => e.type === 'turn_settled',
+    )
+    // 终审 I-1：tokens = 原始 token 数（展示口径，千级）；breakdown = 积分成分（个位）
+    expect(settled?.data).toEqual({
+      holdId: 'hold-1',
+      credits: 3,
+      breakdown: { in: 2, cache: 0, out: 1 },
+      tokens: { in: 8000, cache: 0, out: 500 },
+      ruleVersion: 'price-v2',
+    })
+    expect(events[events.length - 1]?.type).toBe('done')
+  })
+
+  it('①c cacheWrite 结算透传 + turn_settled.tokens 原始 token 明细（终审 C-2/I-1）', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      msgEndWithUsage({
+        input: 8000,
+        cacheRead: 300,
+        cacheWrite: 800,
+        output: 500,
+        cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+      }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')) {
+      events.push(event)
+    }
+
+    // 预扣典型口径含 cacheWrite 800（典型回合含缓存写入，与 settle 计费口径同构）
+    expect(quoteTextTokens.mock.calls[0]?.[2]).toMatchObject({
+      inputTokens: 8000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 800,
+      outputTokens: 500,
+    })
+    // 结算 usage：cacheWriteTokens 透传（quoteTextTokens 并入 in 项计费）
+    expect(quoteTextTokens.mock.calls[1]?.[2]).toMatchObject({
+      inputTokens: 8000,
+      cacheReadTokens: 300,
+      cacheWriteTokens: 800,
+      outputTokens: 500,
+    })
+    // tokens = 原始 token 数（in=inputTokens / cache=cacheRead / out=output，千级展示口径）
+    const meta = assistantMetadata()
+    const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
+      (e) => e.type === 'turn_settled',
+    )
+    expect(settled?.data).toMatchObject({
+      credits: 3,
+      breakdown: { in: 2, cache: 0, out: 1 },
+      tokens: { in: 8000, cache: 300, out: 500 },
+    })
+    expect(events[events.length - 1]?.type).toBe('done')
+  })
+
+  it('①b 预扣 quote 用回合参数 model（toLowerCase 规范化）', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    // streamConversation 第 7 个位置参数 = model
+    for await (const _event of service.streamConversation(
+      's1',
+      'hi',
+      'u1',
+      's1:thread-a',
+      undefined,
+      undefined,
+      'STEP-3.5-Flash',
+    )) {
+      // drain
+    }
+    expect(quoteTextTokens.mock.calls[0]?.[1]).toBe('step-3.5-flash')
+    expect(freeze).toHaveBeenCalledWith('u1', 4, '对话回合预扣')
+  })
+
+  it('② 用户 run 余额不足 → 402 语义拒绝，回合不发起', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    // F1（P2 T6 修复轮）：分类必须走 instanceof InsufficientPointsError，不得字符串匹配。
+    // 防回退锚：桩的 message 与 points 层真实文案（'可用积分不足'）完全不同——
+    // 若回归为 message.includes('积分不足') 判定，此用例会 fail-open（免费执行）而非拒绝。
+    const insufficient = new InsufficientPointsError()
+    Object.defineProperty(insufficient, 'message', { value: 'NO_BALANCE_LEFT_AT_ALL' })
+    freeze.mockRejectedValue(insufficient)
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')) {
+      events.push(event)
+    }
+
+    const err = events.find((e) => e.type === 'error')
+    expect(err?.data).toMatchObject({
+      message: '积分不足，请充值后重试。',
+      error_type: 'insufficient_credits',
+    })
+    expect(events[events.length - 1]?.type).toBe('done')
+    // 回合未发起：会话创建与 prompt 均未发生
+    expect(pi.createSession).not.toHaveBeenCalled()
+    expect(pi.prompt).not.toHaveBeenCalled()
+    expect(settleFromHold).not.toHaveBeenCalled()
+  })
+
+  it('③ error 路径 → release 全退 + turn_settled {released: true}，不走 settle', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      msgEndWithUsage({ input: 100, cacheRead: 0, cacheWrite: 0, output: 20 }),
+      piEvent('error', { error: { message: 'upstream down' } }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')) {
+      events.push(event)
+    }
+
+    expect(events.some((e) => e.type === 'error')).toBe(true)
+    expect(settleFromHold).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith('hold-1', '对话回合异常全退')
+    const meta = assistantMetadata()
+    const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
+      (e) => e.type === 'turn_settled',
+    )
+    // 键不出现：released 场景只带 holdId + released
+    expect(settled?.data).toEqual({ holdId: 'hold-1', released: true })
+  })
+
+  it('③b settle 抛 409 → release 兜底 + turn_settled {released: true}', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    settleFromHold.mockRejectedValue(new ConflictException('积分状态异常，结算中止'))
+    await runTurn()
+
+    expect(settleFromHold).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith('hold-1', '对话回合结算失败全退')
+    const meta = assistantMetadata()
+    const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
+      (e) => e.type === 'turn_settled',
+    )
+    expect(settled?.data).toEqual({ holdId: 'hold-1', released: true })
+  })
+
+  it('⑥ 消费方提前 .return()（generator 中断）→ hold 即时 release，不走 settle', async () => {
+    // F2（P2 T6 修复轮）：前端 abort SSE → 消费方 .return() → 生成器收束，
+    // 尾部结算块不可达 → 修复前 hold 滞留至 reaper 30min；修复后 finally 即时全退。
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      msgEndWithUsage({ input: 8000, cacheRead: 0, cacheWrite: 0, output: 500 }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const gen = service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    // 模拟前端 abort：SSE 桥接层对生成器调 .return()，finally 兜底释放
+    await gen.return(undefined)
+
+    expect(settleFromHold).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith('hold-1', '回合中断，预扣全退')
+    // 中断路径 finalizeTurn 不可达：assistant 消息不落库（turn_settled 只进内存
+    // executionEvents，外部可观测信号即 release 调用本身）
+    const assistantCall = agentMessageCreate.mock.calls
+      .map((c) => (c[0] as { data: { role: string } }).data)
+      .find((d) => d.role === 'assistant')
+    expect(assistantCall).toBeUndefined()
+  })
+
+  it('④ flag off → 零预扣零结算（回归锚：Q2 行为逐字节不变）', async () => {
+    await runTurn()
+
+    expect(freeze).not.toHaveBeenCalled()
+    expect(quoteTextTokens).not.toHaveBeenCalled()
+    expect(settleFromHold).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+    const meta = assistantMetadata()
+    const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
+      (e) => e.type === 'turn_settled',
+    )
+    expect(settled).toBeUndefined()
+  })
+
+  it('⑤ automation run 预扣失败 → 降级不预扣照常执行 + warn', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    freeze.mockRejectedValue(new BadRequestException('可用积分不足'))
+    const pi = stubPiClient([
+      msgEndWithUsage({ input: 100, cacheRead: 0, cacheWrite: 0, output: 20 }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    // billingSource 作为末位参数透传（automation 触发方标识）
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation(
+      's1',
+      'hi',
+      'u1',
+      's1:thread-a',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'automation',
+    )) {
+      events.push(event)
+    }
+
+    expect(freeze).toHaveBeenCalledTimes(1)
+    // 无 402 拒绝：回合照常发起并完成
+    expect(events.some((e) => e.type === 'error' && (e.data as { error_type?: string }).error_type === 'insufficient_credits')).toBe(false)
+    expect(pi.prompt).toHaveBeenCalledTimes(1)
+    expect(events[events.length - 1]?.type).toBe('done')
+    expect(settleFromHold).not.toHaveBeenCalled()
   })
 })

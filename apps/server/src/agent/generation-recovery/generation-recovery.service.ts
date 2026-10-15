@@ -20,6 +20,22 @@ export interface RecoveryAgentPort {
     message: string,
     userId?: string,
     threadId?: string,
+    // ⚠️ 位置参数签名对齐 agent.service.streamConversation（16 参，终审 I-2）：
+    // billingSource 落在**末位**，中间 11 个本端口未消费的参数必须显式占位
+    // undefined——若只声明 4 参短签名，多传的实参会错位绑到 idempotencyKey。
+    idempotencyKey?: string,
+    skillId?: string,
+    model?: string,
+    focusNodeId?: string,
+    attachments?: unknown[],
+    refOrder?: string[],
+    mentionedKeys?: string[],
+    thinking?: boolean,
+    thinkingEffort?: string,
+    branchFromEntryId?: string,
+    selectedNodeIds?: string[],
+    /** 'automation' = 回注 run（预扣失败降级照常执行，不被 402 静默吞）。 */
+    billingSource?: 'user' | 'automation',
   ): AsyncGenerator<unknown>
 }
 
@@ -106,8 +122,27 @@ export class GenerationRecoveryService {
     text: string,
   ): Promise<void> {
     try {
-      // ⚠️ 位置参数签名（agent.service.ts:222）：(sessionId, userMessage, userId, threadId)。
-      const stream = this.agent.streamConversation(sessionId, text, userId, threadId ?? undefined)
+      // ⚠️ 位置参数签名（agent.service.ts:244，16 参）：中间 11 个未消费参数显式
+      // 占位 undefined，billingSource='automation' 落末位（终审 I-2）——drain 回注
+      // run 预扣失败时降级照常执行，不再被 402 静默吞。
+      const stream = this.agent.streamConversation(
+        sessionId,
+        text,
+        userId,
+        threadId ?? undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'automation',
+      )
       for await (const _event of stream) {
         // 宿主无 SSE 调用方：事件由前端 runs/events 旁听流消费（见上），此处只驱动。
       }

@@ -22,6 +22,7 @@ import {
   applyTextReplaceStage,
   applyThinking,
   applyToolCall,
+  applyTurnSettled,
   applyTurnUsage,
   createExecutionTrace,
   finalizeExecutionTrace,
@@ -40,6 +41,7 @@ import {
 } from '@/components/agent/turnTimeline'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
+import { useAuthStore } from '@/stores/auth'
 
 export interface AgentStreamMessage {
   id: string
@@ -413,13 +415,38 @@ export const useAgentStore = defineStore('agent', () => {
 
   /** P1：turn_usage 事件落 trace（摘要行数据源），沿 thinking 同款接线。
    * cost：渠道配了 pricing 时服务端折叠的 usage.cost 总额（可选透传）。
-   * estimatedCredits：Q2 服务端预估积分（MarginPolicy+FX 折算，纯展示）；回合结束清实时态。 */
-  function trackTurnUsage(data: { inputTokens: number; outputTokens: number; cost?: number; estimatedCredits?: number }) {
+   * estimatedCredits：Q2 服务端预估积分（MarginPolicy+FX 折算，纯展示）；回合结束清实时态。
+   * P2 T5：cacheReadTokens/cacheWriteTokens 三列分开透传（旧事件无字段 → 键不出现）。 */
+  function trackTurnUsage(data: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    cost?: number
+    estimatedCredits?: number
+  }) {
     ensureExecutionTrace()
     const last = lastAssistant()
     if (last?.executionTrace) applyTurnUsage(last.executionTrace, data)
     feedTimeline({ type: 'turn_usage', data })
     liveEstimatedCredits.value = null
+  }
+
+  /** P2 T7：turn_settled 事件落 trace（settled 态摘要行/状态行数据源），沿 turn_usage 同款接线。
+   * live 通道同时触发余额刷新（auth.refreshPoints 现成方法，内部吞错——计费展示绝不打断回合）。
+   * settled 数据随既有 executionEvents 重放通道持久化（重放由 loadHistory 消费）。 */
+  function trackTurnSettled(data: {
+    holdId: string
+    credits?: number
+    breakdown?: { in: number; cache: number; out: number }
+    ruleVersion?: string
+    degraded?: boolean
+    released?: boolean
+  }) {
+    ensureExecutionTrace()
+    const last = lastAssistant()
+    if (last?.executionTrace) applyTurnSettled(last.executionTrace, data)
+    void useAuthStore().refreshPoints()
   }
 
   /** Q2：usage_delta（transient 实时预估快照）→ 状态行 running 段「预估 -N积分」。
@@ -557,6 +584,7 @@ export const useAgentStore = defineStore('agent', () => {
       turnEndedAt: raw.turnEndedAt,
       totalMs: raw.totalMs,
       usage: raw.usage,
+      settled: raw.settled,
     }
   }
 
@@ -570,8 +598,14 @@ export const useAgentStore = defineStore('agent', () => {
    * 签名对齐真实契约，函数体那句断言才可以删。
    */
   function loadHistory(history: PersistedAgentMessage[]) {
+    // P2 T7：重放通道含 turn_settled 回合 → 余额刷新一次（live 通道在 trackTurnSettled 触发；
+    // 此处兜页面刷新/历史加载后 AccountPointsPill 与最近一次结算不同步的场景）。
+    let historyHasSettled = false
     messages.value = history.map((persisted) => {
       const meta = parseMessageMetadata(persisted.metadata)
+      if (meta?.executionEvents?.some((e) => e?.type === 'turn_settled')) {
+        historyHasSettled = true
+      }
       let executionTrace = restoreExecutionTrace(meta)
       if (!executionTrace && meta?.executionEvents?.length) {
         executionTrace = replayExecutionTraceEvents(meta.executionEvents)
@@ -619,6 +653,7 @@ export const useAgentStore = defineStore('agent', () => {
         timeline,
       }
     })
+    if (historyHasSettled) void useAuthStore().refreshPoints()
   }
 
   /** P1 状态行：SSE error 事件 / 请求异常时置位本回合失败态（新回合由 addUserMessage 重置）。 */
@@ -683,6 +718,7 @@ export const useAgentStore = defineStore('agent', () => {
     requestAgentDiagnose,
     consumePendingDiagnosticText,
     trackTurnUsage,
+    trackTurnSettled,
     trackUsageDelta,
     trackWaitingUser,
     finishStreaming,

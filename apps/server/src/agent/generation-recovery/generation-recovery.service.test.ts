@@ -48,6 +48,18 @@ describe('GenerationRecoveryService.handleGenerationFailed', () => {
     expect(calls[0][2]).toBe('user-1')
   })
 
+  it('drain 回注 run 传 billingSource=automation（终审 I-2：预扣失败降级照常执行，不被 402 静默吞）', async () => {
+    recordSessionSeen('thread-1')
+    const agent = makeAgent()
+    const svc = new GenerationRecoveryService(agent as never)
+    await svc.handleGenerationFailed(failInput)
+    const calls = (agent as never as { streamConversation: { mock: { calls: unknown[][] } } })
+      .streamConversation.mock.calls
+    expect(calls.length).toBe(1)
+    // billingSource 落在末位（第 16 个位置参数）——回注 run = automation 触发
+    expect(calls[0][15]).toBe('automation')
+  })
+
   it('活跃 run → 走 followUp，且不碰 streamConversation', async () => {
     recordSessionSeen('thread-1')
     const agent = makeAgent()

@@ -14,6 +14,7 @@ function fakePrisma(
     counts?: { legacyRows: number; totalRows: number }
     grayRelease?: Record<string, unknown> | null
     grayThrows?: boolean
+    marginBp?: number
   } = {},
 ) {
   const findFirst = vi.fn(async () => {
@@ -41,6 +42,11 @@ function fakePrisma(
       priceListVersion: { findFirst },
       priceListEntry: { count },
       pricingGrayRelease: { findFirst: grayFindFirst },
+      // P2 T4：marginBp 防御读桩（quoteTextTokens degraded 路径）；不传则 mock 缺
+      // marginPolicy —— 与 agent.service 手写局部 mock 同形态，走缺省 11000bp。
+      ...(opts.marginBp !== undefined
+        ? { marginPolicy: { findFirst: vi.fn(async () => ({ marginBp: opts.marginBp })) } }
+        : {}),
       $transaction,
     } as unknown as PrismaService,
     findFirst,
@@ -126,6 +132,177 @@ describe('PricingService.quote', () => {
     await svc.quote({ capability: 'text' })
     await svc.quote({ capability: 'text' })
     expect(findFirst).toHaveBeenCalledTimes(1)
+  })
+})
+
+// —— P2 T4：quoteTextTokens（文本 token 反比率计价，Task 6 结算消费）——
+
+describe('PricingService.quoteTextTokens（P2 T4）', () => {
+  // mock 反比率行（brief Step 1 ① 固定数字）：rIn=1000 / rCache=5000 / rOut=500
+  const TOKEN_RATIOS = {
+    'text:step-3.5-flash:in': 1000,
+    'text:step-3.5-flash:cache': 5000,
+    'text:step-3.5-flash:out': 500,
+  }
+  const USAGE = { inputTokens: 2001, cacheReadTokens: 10001, outputTokens: 999 }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.PRICING_SOURCE
+  })
+
+  it('①三行齐：ceil(in/rIn)+ceil(cache/rCache)+ceil(out/rOut)，带 breakdown 与表版本', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', USAGE)
+    expect(q.credits).toBe(8) // ceil(2001/1000)=3 + ceil(10001/5000)=3 + ceil(999/500)=2
+    expect(q.breakdown).toEqual({ in: 3, cache: 3, out: 2 })
+    expect(q.ruleVersion).toBe(V)
+    // global 路径不含 grayReleaseId 键（与 quote 等价性锚同纪律）
+    expect(Object.keys(q)).not.toContain('grayReleaseId')
+  })
+
+  it('②cache 行缺（step-2-16k 形态）→ cache tokens 并入 in 项', async () => {
+    const { prisma } = fakePrisma(
+      entryMap({ 'text:step-3.5-flash:in': 1000, 'text:step-3.5-flash:out': 500 }),
+    )
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', USAGE)
+    expect(q.credits).toBe(15) // ceil((2001+10001)/1000)=13 + ceil(999/500)=2
+    expect(q.breakdown).toEqual({ in: 13, cache: 0, out: 2 })
+  })
+
+  it('③未知模型 → USD 兜底（缺省 marginBp 11000 + FX），不 throw、breakdown 键不出现', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5 }))
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'gpt-unknown-x', {
+      ...USAGE,
+      costUsd: 0.01,
+    })
+    expect(q.credits).toBe(8) // ceil(0.01 × 7.2 × 110)
+    expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
+    expect(q.breakdown).toBeUndefined()
+    expect(Object.keys(q)).not.toContain('breakdown')
+  })
+
+  it('③b：无 costUsd 也兜底不 throw（min 1）', async () => {
+    const { prisma } = fakePrisma(null)
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'gpt-unknown-x', {
+      inputTokens: 1,
+      cacheReadTokens: 1,
+      outputTokens: 1,
+    })
+    expect(q.credits).toBe(1)
+    expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
+  })
+
+  it('③c：marginBp 取当前生效阶段现算（12000bp 桩 → 9 分）', async () => {
+    const { prisma } = fakePrisma(null, { marginBp: 12000 })
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'gpt-unknown-x', {
+      inputTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      costUsd: 0.01,
+    })
+    expect(q.credits).toBe(9) // ceil(0.01 × 7.2 × 120)
+  })
+
+  it('④min 1：零用量走价目口径仍得 1 分', async () => {
+    const { prisma } = fakePrisma(entryMap({ ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', {
+      inputTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+    })
+    expect(q.credits).toBe(1)
+    expect(q.breakdown).toEqual({ in: 0, cache: 0, out: 0 })
+  })
+
+  it('⑤回归锚：text 单行 matchKey 不受 token 行影响', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({ credits: 5, ruleVersion: V })
+  })
+
+  it('⑦cacheWrite 并入 in 项计费（终审 C-2）：cacheWrite 1000 / rIn 1000 → in 项 +1', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    // 基线（无 cacheWrite）：credits 8 = in 3 + cache 3 + out 2
+    const base = await svc.quoteTextTokens(undefined, 'step-3.5-flash', USAGE)
+    expect(base.breakdown).toEqual({ in: 3, cache: 3, out: 2 })
+    // +cacheWrite 1000：in 项 ceil((2001+1000)/1000)=4（+1），cache/out 不动
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', {
+      ...USAGE,
+      cacheWriteTokens: 1000,
+    })
+    expect(q.credits).toBe(9)
+    expect(q.breakdown).toEqual({ in: 4, cache: 3, out: 2 })
+  })
+
+  it('⑥DB 抛错 → USD 兜底不 throw + warn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { prisma } = fakePrisma(null, { throws: true })
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', {
+      inputTokens: 10,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      costUsd: 0.01,
+    })
+    expect(q.credits).toBe(8)
+    expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('⑥b：in/out 行缺 → 三行不齐走 USD 兜底（cache 缺行才是受支持形态）', async () => {
+    const { prisma } = fakePrisma(entryMap({ 'text:step-3.5-flash:in': 1000 })) // out 缺
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', {
+      inputTokens: 10,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      costUsd: 0.01,
+    })
+    expect(q.credits).toBe(8)
+    expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
+    expect(q.breakdown).toBeUndefined()
+  })
+
+  it('⑥c：灰度名单命中 → 灰度比率行 + grayReleaseId（与 quote 两参语义一致）', async () => {
+    const { prisma } = fakePrisma(entryMap({ ...TOKEN_RATIOS }), {
+      grayRelease: grayRelease({
+        version: {
+          version: GRAY_V,
+          entries: [
+            { matchKey: 'text:step-3.5-flash:in', credits: 2000 },
+            { matchKey: 'text:step-3.5-flash:cache', credits: 5000 },
+            { matchKey: 'text:step-3.5-flash:out', credits: 500 },
+          ],
+        },
+      }),
+    })
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens('u1', 'step-3.5-flash', USAGE)
+    expect(q.credits).toBe(7) // ceil(2001/2000)=2 + ceil(10001/5000)=3 + ceil(999/500)=2
+    expect(q.ruleVersion).toBe(GRAY_V)
+    expect(q.grayReleaseId).toBe(GRAY_ID)
+  })
+
+  it('⑥d：PRICING_SOURCE=constants 旁路 → USD 兜底（token 行无 legacy 常量）', async () => {
+    process.env.PRICING_SOURCE = 'constants'
+    const { prisma } = fakePrisma(entryMap({ ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', {
+      inputTokens: 10,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      costUsd: 0.01,
+    })
+    expect(q.credits).toBe(8)
+    expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
   })
 })
 
