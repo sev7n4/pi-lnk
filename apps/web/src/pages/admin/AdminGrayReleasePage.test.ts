@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ElementPlus from 'element-plus'
@@ -95,6 +96,12 @@ function createBtn(w: ReturnType<typeof mount>) {
   return w.find('[data-test="create-btn"]')
 }
 
+function previewBtn(w: ReturnType<typeof mount>) {
+  const btn = w.findAll('button').find((b) => b.text().includes('预览命中'))
+  if (!btn) throw new Error('未找到「预览命中」按钮')
+  return btn
+}
+
 describe('AdminGrayReleasePage', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -162,6 +169,82 @@ describe('AdminGrayReleasePage', () => {
     await vm.loadPreview()
     await flushPromises()
     expect((createBtn(w).element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('防误伤：真实顺序（选版本 → 填名单 → 点预览）仍可创建，预览态不被误清', async () => {
+    grayList.mockResolvedValue([])
+    listVersions.mockResolvedValue([draftRow(), draftRow({ id: 'v-2', version: '2026.10-B' })])
+    grayPreview.mockResolvedValue({ hits: [{ userId: 'u-1', phone: '13800000001' }], misses: ['13800000002'] })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as PageVm
+
+    // 真实用户顺序：先选 draft 版本，再填名单
+    vm.formVersionId = 'v-1'
+    vm.formRawInput = '13800000001, 13800000002'
+    await nextTick()
+
+    // 预览必须是最后一个动作（watch 只在名单/版本「变化时」清 preview）
+    await previewBtn(w).trigger('click')
+    await flushPromises()
+
+    expect(grayPreview).toHaveBeenCalledWith('13800000001, 13800000002')
+    expect(vm.preview).not.toBeNull()
+    expect(vm.canCreate).toBe(true)
+    expect((createBtn(w).element as HTMLButtonElement).disabled).toBe(false)
+    expect(w.find('[data-test="preview-panel"]').text()).toContain('命中 1 人')
+  })
+
+  it('防线：预览有命中后改名单 → 预览态立即作废、创建按钮回禁用', async () => {
+    grayList.mockResolvedValue([])
+    listVersions.mockResolvedValue([draftRow()])
+    grayPreview.mockResolvedValue({ hits: [{ userId: 'u-1', phone: '13800000001' }], misses: [] })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as PageVm
+    vm.formVersionId = 'v-1'
+
+    // 名单 A → 预览 → 可创建
+    vm.formRawInput = '13800000001'
+    await nextTick()
+    await vm.loadPreview()
+    await flushPromises()
+    expect(vm.preview).not.toBeNull()
+    expect(vm.canCreate).toBe(true)
+    expect((createBtn(w).element as HTMLButtonElement).disabled).toBe(false)
+
+    // 名单 A 改成名单 B（未预览过）→ 陈旧命中数必须作废，否则面板显示旧命中数且按钮仍可点 → 服务端 400
+    vm.formRawInput = '13800000009'
+    await nextTick()
+
+    expect(vm.preview).toBeNull()
+    expect(vm.canCreate).toBe(false)
+    expect((createBtn(w).element as HTMLButtonElement).disabled).toBe(true)
+    expect(w.find('[data-test="preview-panel"]').exists()).toBe(false)
+  })
+
+  it('防线：预览有命中后改版本 → 预览态同样作废、创建按钮回禁用', async () => {
+    grayList.mockResolvedValue([])
+    listVersions.mockResolvedValue([draftRow(), draftRow({ id: 'v-2', version: '2026.10-B' })])
+    grayPreview.mockResolvedValue({ hits: [{ userId: 'u-1', phone: '13800000001' }], misses: [] })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as PageVm
+    vm.formRawInput = '13800000001'
+    await nextTick()
+    vm.formVersionId = 'v-1'
+    await nextTick()
+    await vm.loadPreview()
+    await flushPromises()
+    expect(vm.canCreate).toBe(true)
+
+    // 换到另一个 draft 版本 → 针对 v-1 的命中数对新版本无效
+    vm.formVersionId = 'v-2'
+    await nextTick()
+
+    expect(vm.preview).toBeNull()
+    expect(vm.canCreate).toBe(false)
+    expect((createBtn(w).element as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('创建灰度：POST rawInput/窗口，成功后刷新并重置预览', async () => {
