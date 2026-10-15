@@ -318,6 +318,13 @@ model PriceListVersion {     // L3：价目表版本（发布物）
 - 一次用户交互（含内部多轮工具调用）= **一个结算单**，不逐工具扣；
 - 循环执行确认时暂停不计费（对齐 WorkBuddy）；选择终止时已产生未出答案的部分进入退费评估（reaper exactly-once 退款范式复用）。
 
+> **2026-10-15 实施拍板（P2 启动，计划 `docs/superpowers/plans/2026-10-15-p2-token-precise-billing.md`）**：
+> ① **反比率按当前生效阶段现算**（上线时为拉新期 1.1×）——毛利烘在比率里，价目表保持定价唯一真相源；阶段切换时经发布流重发布新比率。本节上表数字为**成长期 2.5× 参照口径**，非上线值。
+> ② 「一次用户交互一个结算单」工程化为「**一个 run 一个结算单**」：steer 插话并入当前 run（天然满足同交互语义）；drain / followUp / automation 派生的 run **各自预扣结算**（可审计、无跨 run 归属判定）。预扣额 = 典型回合（8K in + 0.5K out）× 1.2；**automation run 预扣失败降级为不预扣照常执行 + warn**（不阻塞自动化）。
+> ③ 反比率行形态：价目表行 `matchKey = text:<modelKey>:in | :cache | :out`，`credits` 存「tokens / 积分」整数（行方案零迁移；毛利随阶段经发布流重算）。`text` 单行**保留**——studio 文本直生/提示词模式继续按次计费，其 token 口径迁移为后续独立计划。
+> ④ 上线形态：`TEXT_TOKEN_BILLING` flag **默认 off**（合并部署后零行为变化，Q2 展示预估维持现状）→ 生产回归 → 灰度开启 → 观察四指标（预扣失败率 / hold 泄漏 / 结算延迟 / 预估偏差）一周后固化 on。
+> ⑤ 计费公式：`credits = ceil(inputTokens/rIn) + ceil(cacheReadTokens/rCache) + ceil(outputTokens/rOut)`（cacheWrite 由上游折入 input 口径；模型无 cache 行则 cache tokens 并入 in 项）；任何缺失走 USD 成本兜底，**quote 永不 throw**。
+
 ### 6.6 档位映射（对现有常量的替换关系）
 
 - 图片：`BASE_IMAGE_CREDITS=10 × FACTORS` → 直接查 (model, resolution) 成本表；
