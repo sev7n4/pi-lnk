@@ -1,8 +1,18 @@
-import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common'
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+} from '@nestjs/common'
 import { PointHold, Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import type { PointTxMeta } from './point-tx.types'
 import { mapReasonToPointFields } from './reason-map'
+
+/** reaper 扫描周期（终审 C-1）：10 分钟一轮，窗口 30min 由 releaseExpiredHolds 缺省承担。 */
+const HOLD_REAPER_INTERVAL_MS = 10 * 60_000
 
 /**
  * 余额不足专用异常（P2 T6 修复轮 F1）：调用方以 instanceof 做「余额不足」分类
@@ -17,8 +27,41 @@ export class InsufficientPointsError extends BadRequestException {
 }
 
 @Injectable()
-export class PointsService {
+export class PointsService implements OnApplicationBootstrap, OnApplicationShutdown {
+  private reaperTimer: NodeJS.Timeout | undefined
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  /**
+   * 兜底 reaper 定时接线（P2 终审 C-1）：崩溃 hold 泄漏的唯一兜底。
+   *
+   * 除进程崩溃外的全部 run 终止路径（settle / error release / 中断 finally /
+   * 结算失败 release）已在调用方闭合，但进程崩溃时这些路径全部不可达——
+   * 冻结额将永久滞留（用户余额永久变少）。本定时器与 TEXT_TOKEN_BILLING
+   * flag **无关**：余额卫生，off 也跑。
+   *
+   * 故障纪律：sweep 任何异常只 warn，绝不冒泡（定时器故障不得影响业务）；
+   * 本轮失败下个周期自然重试。
+   */
+  onApplicationBootstrap(): void {
+    this.reaperTimer = setInterval(() => {
+      this.releaseExpiredHolds().catch((err: unknown) => {
+        console.warn(
+          '[points] 过期 hold 兜底 sweep 失败（下个周期重试）：',
+          err instanceof Error ? err.message : err,
+        )
+      })
+    }, HOLD_REAPER_INTERVAL_MS)
+    // 不阻止进程退出
+    this.reaperTimer.unref?.()
+  }
+
+  onApplicationShutdown(): void {
+    if (this.reaperTimer) {
+      clearInterval(this.reaperTimer)
+      this.reaperTimer = undefined
+    }
+  }
 
   async consume(userId: string, cost: number, reason: string, meta?: PointTxMeta): Promise<void> {
     if (cost <= 0) return
@@ -227,20 +270,29 @@ export class PointsService {
    * 已终结的 hold 幂等 no-op。
    */
   async release(holdId: string, reason: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    await this.releaseOnce(holdId, reason)
+  }
+
+  /**
+   * release 的可观测变体：返回是否发生了真实状态迁移（held → released）。
+   * sweep（releaseExpiredHolds）据此计数——幂等 no-op 不计数（终审 C-1，
+   * T3 deferred 的「过报无害」计数语义修正为「实际 released 数」）。
+   */
+  private async releaseOnce(holdId: string, reason: string): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
       const hold = await tx.pointHold.findUnique({ where: { id: holdId } })
       if (!hold) {
         throw new ConflictException('冻结单不存在')
       }
       if (hold.status !== 'held') {
-        return
+        return false
       }
       const marked = await tx.pointHold.updateMany({
         where: { id: holdId, status: 'held' },
         data: { status: 'released' },
       })
       if (marked.count === 0) {
-        return
+        return false
       }
       await tx.user.updateMany({
         where: { id: hold.userId },
@@ -265,12 +317,17 @@ export class PointsService {
           ruleVersion: null,
         },
       })
+      return true
     })
   }
 
   /**
    * 兜底 reaper：释放超时未结算的 hold（防 hold 泄漏——进程崩溃/回调丢失时
    * 冻结额永不解冻导致用户余额永久变少）。复用 release 的幂等语义。
+   *
+   * 返回值 = **实际 released 数**（终审 C-1）：幂等 no-op（扫描与释放间隙被
+   * settle/release 抢先终结）不计数；单笔异常只 warn 不阻塞其余笔（下个周期
+   * 自然重试），异常绝不冒泡到调用方定时器。
    */
   async releaseExpiredHolds(olderThanMs = 30 * 60_000): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMs)
@@ -280,8 +337,16 @@ export class PointsService {
     })
     let released = 0
     for (const hold of expired) {
-      await this.release(hold.id, '冻结超时自动释放')
-      released += 1
+      try {
+        if (await this.releaseOnce(hold.id, '冻结超时自动释放')) {
+          released += 1
+        }
+      } catch (err) {
+        console.warn(
+          `[points] 过期 hold 释放失败（hold=${hold.id}，下个周期重试）：`,
+          err instanceof Error ? err.message : err,
+        )
+      }
     }
     return released
   }

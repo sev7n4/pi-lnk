@@ -631,4 +631,157 @@ describe('PointsService 冻结三原语（P2 T3）', () => {
     expect(state.points).toBe(100) // points 余额不变
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(BadRequestException)
   })
+
+  it('releaseExpiredHolds 计数语义 = 实际 released 数：扫描命中 2 笔、1 笔已被并发 settle → 返回 1 且对已终结笔零动账（T3 deferred 终审 C-1 修正）', async () => {
+    const findMany = vi.fn(async () => [{ id: 'h-a' }, { id: 'h-b' }])
+    const holdFindUnique = vi.fn(async (args: { where: { id: string } }) =>
+      args.where.id === 'h-a'
+        ? { id: 'h-a', userId: 'u1', amount: 10, status: 'settled', settledCredits: 3 }
+        : { id: 'h-b', userId: 'u1', amount: 10, status: 'held', settledCredits: null },
+    )
+    const holdUpdateMany = vi.fn(async () => ({ count: 1 }))
+    const userUpdateMany = vi.fn(async () => ({ count: 1 }))
+    const createTx = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: 'pt1', ...args.data }))
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        user: { findUnique: vi.fn(), updateMany: userUpdateMany },
+        pointHold: { findUnique: holdFindUnique, updateMany: holdUpdateMany },
+        pointTransaction: { create: createTx },
+      }),
+    )
+    const svc = await compile({ $transaction, pointHold: { findMany } })
+
+    expect(await svc.releaseExpiredHolds(1000)).toBe(1)
+    // 幂等 no-op 不计数也不动账：只有 h-b 真实迁移
+    expect(userUpdateMany).toHaveBeenCalledTimes(1)
+    expect(createTx).toHaveBeenCalledTimes(1)
+  })
+
+  it('sweep 集成式：构造超期 hold → sweep → hold released + pointsFrozen 回落', async () => {
+    // 状态化桩模拟 DB 行：pointsFrozen=10、hold held → sweep 后回落 0
+    const state = { pointsFrozen: 10, holdStatus: 'held' }
+    const findMany = vi.fn(async () => [{ id: 'h1' }])
+    const holdFindUnique = vi.fn(async () => ({
+      id: 'h1',
+      userId: 'u1',
+      amount: 10,
+      status: state.holdStatus,
+      settledCredits: null,
+    }))
+    const holdUpdateMany = vi.fn(async () => {
+      state.holdStatus = 'released'
+      return { count: 1 }
+    })
+    const userUpdateMany = vi.fn(async (args: {
+      data: { pointsFrozen?: { decrement?: number } }
+    }) => {
+      if (args.data.pointsFrozen?.decrement) state.pointsFrozen -= args.data.pointsFrozen.decrement
+      return { count: 1 }
+    })
+    const createTx = vi.fn(async () => ({ id: 'pt1' }))
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        user: { findUnique: vi.fn(async () => ({ points: 100 })), updateMany: userUpdateMany },
+        pointHold: { findUnique: holdFindUnique, updateMany: holdUpdateMany },
+        pointTransaction: { create: createTx },
+      }),
+    )
+    const svc = await compile({ $transaction, pointHold: { findMany } })
+
+    expect(await svc.releaseExpiredHolds(1000)).toBe(1)
+    expect(state.holdStatus).toBe('released')
+    expect(state.pointsFrozen).toBe(0)
+  })
+
+  it('单笔 release 抛错不阻塞其余笔（下个周期重试），其余笔照常迁移', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const findMany = vi.fn(async () => [{ id: 'h-bad' }, { id: 'h-good' }])
+    const holdFindUnique = vi.fn(async (args: { where: { id: string } }) =>
+      args.where.id === 'h-bad'
+        ? null // 并发被删 → release 抛 409
+        : { id: 'h-good', userId: 'u1', amount: 10, status: 'held', settledCredits: null },
+    )
+    const holdUpdateMany = vi.fn(async () => ({ count: 1 }))
+    const userUpdateMany = vi.fn(async () => ({ count: 1 }))
+    const createTx = vi.fn(async () => ({ id: 'pt1' }))
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        user: { findUnique: vi.fn(), updateMany: userUpdateMany },
+        pointHold: { findUnique: holdFindUnique, updateMany: holdUpdateMany },
+        pointTransaction: { create: createTx },
+      }),
+    )
+    const svc = await compile({ $transaction, pointHold: { findMany } })
+
+    expect(await svc.releaseExpiredHolds(1000)).toBe(1)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})
+
+describe('PointsService reaper 接线（P2 终审 C-1：崩溃 hold 泄漏唯一兜底）', () => {
+  const compile = async (prisma: Record<string, unknown>) => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [PointsService, { provide: PrismaService, useValue: prisma }],
+    }).compile()
+    return moduleRef.get(PointsService)
+  }
+
+  it('onApplicationBootstrap 注册 10min interval（unref 不阻退出）→ tick 触发默认窗口 sweep；sweep 异常不冒泡', async () => {
+    const findMany = vi.fn(async () => [])
+    const svc = await compile({ pointHold: { findMany } })
+    const unref = vi.fn()
+    const setIntervalSpy = vi
+      .spyOn(global, 'setInterval')
+      .mockImplementation((() => ({ unref })) as never)
+    const clearIntervalSpy = vi
+      .spyOn(global, 'clearInterval')
+      .mockImplementation((() => undefined) as never)
+    try {
+      svc.onApplicationBootstrap()
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1)
+      const [cb, ms] = setIntervalSpy.mock.calls[0] as [() => void, number]
+      expect(ms).toBe(10 * 60_000)
+      expect(unref).toHaveBeenCalled()
+
+      // tick：正常路径触发默认 30min 窗口 sweep
+      cb()
+      await new Promise((r) => setTimeout(r, 0))
+      expect(findMany).toHaveBeenCalledTimes(1)
+      expect(findMany.mock.calls[0][0].where.createdAt.lt).toBeInstanceOf(Date)
+
+      // tick：sweep reject 被吞（不冒泡成 unhandled rejection / 不抛出定时器外）
+      findMany.mockRejectedValueOnce(new Error('db down'))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      expect(() => cb()).not.toThrow()
+      await new Promise((r) => setTimeout(r, 0))
+      expect(findMany).toHaveBeenCalledTimes(2)
+      expect(warn).toHaveBeenCalled()
+      warn.mockRestore()
+    } finally {
+      setIntervalSpy.mockRestore()
+      clearIntervalSpy.mockRestore()
+    }
+  })
+
+  it('onApplicationShutdown 清 interval（幂等：未 boot 先 shutdown 也不抛）', async () => {
+    const svc = await compile({ pointHold: { findMany: vi.fn(async () => []) } })
+    const setIntervalSpy = vi
+      .spyOn(global, 'setInterval')
+      .mockImplementation((() => ({ unref: vi.fn() })) as never)
+    const clearIntervalSpy = vi
+      .spyOn(global, 'clearInterval')
+      .mockImplementation((() => undefined) as never)
+    try {
+      expect(() => svc.onApplicationShutdown()).not.toThrow()
+      svc.onApplicationBootstrap()
+      svc.onApplicationShutdown()
+      expect(clearIntervalSpy).toHaveBeenCalledTimes(1)
+      svc.onApplicationShutdown() // 幂等：重复 shutdown 不重复 clear
+      expect(clearIntervalSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      setIntervalSpy.mockRestore()
+      clearIntervalSpy.mockRestore()
+    }
+  })
 })
