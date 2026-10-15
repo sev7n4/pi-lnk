@@ -4,6 +4,18 @@ import { PrismaService } from '../prisma/prisma.service'
 import type { PointTxMeta } from './point-tx.types'
 import { mapReasonToPointFields } from './reason-map'
 
+/**
+ * 余额不足专用异常（P2 T6 修复轮 F1）：调用方以 instanceof 做「余额不足」分类
+ * （如 agent 层 fail-open vs 402 拒绝），取代 message 字符串匹配——points 层改文案
+ * 不再造成静默失配。仅 freeze 抛出；consume 的既有文案被大量测试断言，保持不动。
+ */
+export class InsufficientPointsError extends BadRequestException {
+  readonly code = 'INSUFFICIENT_POINTS'
+  constructor() {
+    super('可用积分不足')
+  }
+}
+
 @Injectable()
 export class PointsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -105,14 +117,14 @@ export class PointsService {
         select: { points: true, pointsFrozen: true },
       })
       if (!user || user.points - user.pointsFrozen < amount) {
-        throw new BadRequestException('可用积分不足')
+        throw new InsufficientPointsError()
       }
       const updated = await tx.user.updateMany({
         where: { id: userId, points: { gte: user.pointsFrozen + amount } },
         data: { pointsFrozen: { increment: amount } },
       })
       if (updated.count === 0) {
-        throw new BadRequestException('可用积分不足')
+        throw new InsufficientPointsError()
       }
       const hold = await tx.pointHold.create({
         data: { userId, amount, status: 'held', reason },

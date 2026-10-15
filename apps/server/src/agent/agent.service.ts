@@ -67,7 +67,7 @@ import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
-import { PointsService } from '../points/points.service'
+import { InsufficientPointsError, PointsService } from '../points/points.service'
 import { PricingService } from '../pricing/pricing.service'
 import type { PointTxMeta } from '../points/point-tx.types'
 
@@ -1078,6 +1078,9 @@ export class AgentService {
     const billingEnabled = process.env.TEXT_TOKEN_BILLING === 'on' && Boolean(userId)
     let billingHold: TurnPointHold | undefined
     let billingModelKey = ''
+    // F2（P2 T6 修复轮）：hold 未终结标志。settle/release 成功后置 false；finally
+    // 据此判「hold 仍在手」兜底全退，保证终结路径恰一次（error 分支与 finally 二选一）。
+    let holdOpen = false
     if (billingEnabled) {
       // modelKey 从回合参数取（dock/BYOK 选择），空则回落用户默认文本模型（与
       // directImageModel 同一解析），入口处 toLowerCase 规范化。quote 永不 throw。
@@ -1088,6 +1091,7 @@ export class AgentService {
       ).toLowerCase()
       const frozen = await this.freezeTurnHold(userId as string, billingModelKey, billingSource)
       billingHold = frozen.hold
+      holdOpen = Boolean(billingHold)
       if (!billingHold && frozen.rejected) {
         // 用户 run 预扣被拒（余额不足）→ 402 语义拒绝，回合不发起（与 studio
         // 「先扣后退」一致）。automation run 已在 freezeTurnHold 内降级，不会走到这。
@@ -1102,6 +1106,35 @@ export class AgentService {
         return
       }
     }
+    // ── F2（P2 T6 修复轮）：trace 基础设施声明上移 ──
+    // 原声明位置在首个流外 yield（selection_binding）之后；消费方在该 yield 处
+    // abort 时 finally 会引用它们 → TDZ ReferenceError。上移后 finally 全程可用。
+    const executionEvents: PersistedExecutionEvent[] = []
+    // P2-3：落库事件显式带 seq/ts/messageIndex（数组下标即序，seq 冗余但抗裁剪；
+    // messageIndex 以 message_end 分段，供时间线还原「多段叙述各自成块」的块归属）。
+    let traceSeq = 0
+    let traceMessageIndex = 0
+    const pushTraceEvent = (type: string, data: unknown): PersistedExecutionEvent => {
+      if (type !== 'text') textPersister.flush()
+      traceSeq += 1
+      const ev: PersistedExecutionEvent = {
+        type,
+        data,
+        seq: traceSeq,
+        ts: Date.now(),
+        messageIndex: traceMessageIndex,
+      }
+      executionEvents.push(ev)
+      return ev
+    }
+    // 正文分段落库（2026-10-14）：任何非文本 trace 事件落库前先 flush，text 事件 seq
+    // 恒小于边界事件 ⇒ 前端重放时正文按真实时序归位（修「正文整体跑到工具行上面」）。
+    const textPersister = createTextSegmentPersister((type, data) => pushTraceEvent(type, data))
+    // ── F2：hold 生命周期 try/finally 收口 ──
+    // 消费方 abort（SSE 断开 → .return()）或迭代异常时，生成器尾部结算块不可达
+    // → hold 滞留至 reaper 30min。freeze 之后整个 run 体包进 try/finally：
+    // 正常收束时结算块已置 holdOpen=false → finally no-op；中断 → 即时全退。
+    try {
     // K-1：BYOK 覆盖必须在 create 之前解析（会话创建即装配模型，中途不可换）
     const llm = await this.resolvePiSessionLlm(userId, model)
     // T1 多模态直通（spec §3.1）：视觉模型 + 图片附件 → base64 images + [In=] 标记。
@@ -1364,31 +1397,12 @@ export class AgentService {
     const estimateTurnCredits = (totals: { cost?: number }): number | null =>
       totals.cost && totals.cost > 0 ? estimateCreditsFromUsdCost(totals.cost, marginBp, fxUsdCny) : null
     const usageAccumulator = createUsageAccumulator(estimateTurnCredits)
-    const executionEvents: PersistedExecutionEvent[] = []
-    // P2-3：落库事件显式带 seq/ts/messageIndex（数组下标即序，seq 冗余但抗裁剪；
-    // messageIndex 以 message_end 分段，供时间线还原「多段叙述各自成块」的块归属）。
-    let traceSeq = 0
-    let traceMessageIndex = 0
-    const pushTraceEvent = (type: string, data: unknown): PersistedExecutionEvent => {
-      if (type !== 'text') textPersister.flush()
-      traceSeq += 1
-      const ev: PersistedExecutionEvent = {
-        type,
-        data,
-        seq: traceSeq,
-        ts: Date.now(),
-        messageIndex: traceMessageIndex,
-      }
-      executionEvents.push(ev)
-      return ev
-    }
+    // （F2：executionEvents / traceSeq / traceMessageIndex / pushTraceEvent /
+    // textPersister 已上移到本生成器 try 之前，见 freeze 块后的收口注释。）
     let done = false
     // P2 T6：本轮以 error 事件收束 → 收尾走 release 全退（hold 泄漏双保险之一，
     // Review Focus 1）；agent_end 正常收束 → settleFromHold 按实际 usage 结算。
     let runFailed = false
-    // 正文分段落库（2026-10-14）：任何非文本 trace 事件落库前先 flush，text 事件 seq
-    // 恒小于边界事件 ⇒ 前端重放时正文按真实时序归位（修「正文整体跑到工具行上面」）。
-    const textPersister = createTextSegmentPersister((type, data) => pushTraceEvent(type, data))
     try {
       while (!done) {
         const { value: event, done: streamClosed } = await iterator.next()
@@ -1552,6 +1566,7 @@ export class AgentService {
         // error 路径：release 全退 + turn_settled {released: true}（键不出现纪律）
         try {
           await this.points.release(billingHold.id, '对话回合异常全退')
+          holdOpen = false
         } catch (err) {
           this.piLogger.warn(
             `turn hold release failed (hold=${billingHold.id}): ${err instanceof Error ? err.message : String(err)}`,
@@ -1582,6 +1597,7 @@ export class AgentService {
                 ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
               } satisfies PointTxMeta,
             )
+            holdOpen = false
             pushTraceEvent('turn_settled', {
               holdId: billingHold.id,
               credits: settled.settled,
@@ -1596,6 +1612,7 @@ export class AgentService {
             )
             try {
               await this.points.release(billingHold.id, '对话回合结算失败全退')
+              holdOpen = false
             } catch (releaseErr) {
               this.piLogger.warn(
                 `turn hold release failed (hold=${billingHold.id}): ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
@@ -1610,6 +1627,7 @@ export class AgentService {
           )
           try {
             await this.points.release(billingHold.id, '对话回合计价失败全退')
+            holdOpen = false
           } catch (releaseErr) {
             this.piLogger.warn(
               `turn hold release failed (hold=${billingHold.id}): ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
@@ -1627,6 +1645,23 @@ export class AgentService {
       linkedOutputs: deriveLinkedOutputs(canvasActions),
       metadata: buildTurnMetadata({ executionEvents }),
     })
+    } finally {
+      // ── F2：hold 生命周期兜底（恰一次）──
+      // holdOpen=true = 本 run 持有 hold 且 settle/release 均未成功——正常收束时
+      // 结算块已置 false → no-op；消费方 abort（.return()）/迭代异常 → 此处即时
+      // release 全退，不再等 reaper 30min。turn_settled 只进内存 executionEvents
+      // （中断路径 finalizeTurn 不可达，不落库），可观测信号即 release 本身。
+      if (holdOpen && billingHold && this.points) {
+        try {
+          await this.points.release(billingHold.id, '回合中断，预扣全退')
+        } catch (err) {
+          this.piLogger.warn(
+            `turn hold release failed (hold=${billingHold.id}): ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+        pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+      }
+    }
   }
   /**
    * 确保 pi 会话存在。P0-① 起 create 是幂等的（同会话键复用），重建由 pi-runtime
@@ -1726,8 +1761,9 @@ export class AgentService {
       const holdAmount = Math.max(1, Math.ceil(quote.credits * 1.2))
       return { hold: await this.points.freeze(userId, holdAmount, '对话回合预扣') }
     } catch (err) {
-      const isInsufficient =
-        err instanceof BadRequestException && (err.message ?? '').includes('积分不足')
+      // F1（P2 T6 修复轮）：余额不足分类走专用异常 instanceof，去掉 message 字符串
+      // 耦合——points 层改文案不再造成静默失配（失配方向 = 用户 run fail-open 免费执行）
+      const isInsufficient = err instanceof InsufficientPointsError
       if (billingSource === 'automation') {
         // automation run 预扣失败（含余额不足）→ 降级不预扣照常执行 + warn（不阻塞自动化）
         this.piLogger.warn(

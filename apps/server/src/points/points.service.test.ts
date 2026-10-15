@@ -2,7 +2,7 @@ import 'reflect-metadata'
 import { BadRequestException, ConflictException } from '@nestjs/common'
 import { describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
-import { PointsService } from './points.service'
+import { PointsService, InsufficientPointsError } from './points.service'
 import { PrismaService } from '../prisma/prisma.service'
 
 describe('PointsService', () => {
@@ -316,6 +316,11 @@ describe('PointsService 冻结三原语（P2 T3）', () => {
 
     await expect(svc.freeze('u1', 30, '文本回合预扣冻结')).rejects.toThrow('可用积分不足')
     await expect(svc.freeze('u1', 30, '文本回合预扣冻结')).rejects.toBeInstanceOf(BadRequestException)
+    // F1（P2 T6 修复轮）：余额不足必须抛专用异常——agent 层以 instanceof 分类
+    // （fail-open vs 402 拒绝），不得依赖 message 字符串匹配
+    await expect(svc.freeze('u1', 30, '文本回合预扣冻结')).rejects.toBeInstanceOf(
+      InsufficientPointsError,
+    )
     expect(updateMany).not.toHaveBeenCalled()
     expect(createHold).not.toHaveBeenCalled()
     expect(createTx).not.toHaveBeenCalled()

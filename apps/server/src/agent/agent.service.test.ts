@@ -4,6 +4,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common'
 import type { CanvasAction, SidebarAttachment } from '@lnkpi/shared'
 import { AgentService, deriveLinkedOutputs, buildTurnMetadata } from './agent.service'
 import { piEvent, stubPiClient } from './agent.test-utils'
+import { InsufficientPointsError } from '../points/points.service'
 
 describe('deriveLinkedOutputs', () => {
   it('maps add_node actions to linked outputs', () => {
@@ -716,7 +717,12 @@ describe('AgentService turn billing (P2 T6)', () => {
   it('② 用户 run 余额不足 → 402 语义拒绝，回合不发起', async () => {
     process.env.TEXT_TOKEN_BILLING = 'on'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    freeze.mockRejectedValue(new BadRequestException('可用积分不足'))
+    // F1（P2 T6 修复轮）：分类必须走 instanceof InsufficientPointsError，不得字符串匹配。
+    // 防回退锚：桩的 message 与 points 层真实文案（'可用积分不足'）完全不同——
+    // 若回归为 message.includes('积分不足') 判定，此用例会 fail-open（免费执行）而非拒绝。
+    const insufficient = new InsufficientPointsError()
+    Object.defineProperty(insufficient, 'message', { value: 'NO_BALANCE_LEFT_AT_ALL' })
+    freeze.mockRejectedValue(insufficient)
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
@@ -775,6 +781,34 @@ describe('AgentService turn billing (P2 T6)', () => {
       (e) => e.type === 'turn_settled',
     )
     expect(settled?.data).toEqual({ holdId: 'hold-1', released: true })
+  })
+
+  it('⑥ 消费方提前 .return()（generator 中断）→ hold 即时 release，不走 settle', async () => {
+    // F2（P2 T6 修复轮）：前端 abort SSE → 消费方 .return() → 生成器收束，
+    // 尾部结算块不可达 → 修复前 hold 滞留至 reaper 30min；修复后 finally 即时全退。
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      msgEndWithUsage({ input: 8000, cacheRead: 0, cacheWrite: 0, output: 500 }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const gen = service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    // 模拟前端 abort：SSE 桥接层对生成器调 .return()，finally 兜底释放
+    await gen.return(undefined)
+
+    expect(settleFromHold).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith('hold-1', '回合中断，预扣全退')
+    // 中断路径 finalizeTurn 不可达：assistant 消息不落库（turn_settled 只进内存
+    // executionEvents，外部可观测信号即 release 调用本身）
+    const assistantCall = agentMessageCreate.mock.calls
+      .map((c) => (c[0] as { data: { role: string } }).data)
+      .find((d) => d.role === 'assistant')
+    expect(assistantCall).toBeUndefined()
   })
 
   it('④ flag off → 零预扣零结算（回归锚：Q2 行为逐字节不变）', async () => {
