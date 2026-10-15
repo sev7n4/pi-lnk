@@ -3809,13 +3809,18 @@ defineExpose({
   background: var(--lnk-warning-bg-hover);
 }
 
-/* ---- 消息列表 ---- */
+/* ---- 消息列表 ----
+ * ⚠️ 2026-10-15（三滚动条治理）：此处原有 `flex: 1 1 45%` + `min-height: min(360px, 52%)`。
+ * ① 冲突：scoped 选择器带 [data-v-x] 属性，特异性高于模板上的 Tailwind `flex-1 min-h-0`
+ *    ⇒ 那两个类是**死类**，`min-h-0`（滚动容器正确收缩的前提）实际从未生效。
+ * ② 危害：`min-height: min(360px, 52%)` 给滚动容器设了硬下限，即使内容很少也强行占高，
+ *    挤压下方 dock；与 dock 的限高不变量叠加，加剧多滚动条与布局抖动。
+ * ⇒ 只保留布局必需项（flex 列 + gap）；伸缩与收缩交给模板的 flex-1 min-h-0 单一来源。
+ */
 .agent-chat-scroll {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  flex: 1 1 45%;
-  min-height: min(360px, 52%);
 }
 
 /* ---- 回到底部浮标（回看历史时出现） ---- */
