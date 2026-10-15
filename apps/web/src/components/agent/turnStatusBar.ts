@@ -34,13 +34,19 @@ export interface TurnStatusLineInput {
    * 设计锚：积分字重 < 动词、同句非竖线 —— 用「·」弱分隔（与秒数同款式）。
    */
   estimatedCredits?: number | null
+  /**
+   * P2 T7：settled 段文案（reducer `turnSettledText` 产出——摘要行与状态行**共用**
+   * 同一生成器，文案单源）。非流式且无失败时以 settled 态收口显示；failed 优先
+   * （error 路径的 released 不覆盖失败原因，「预扣已退回」落在气泡摘要段）。
+   */
+  settledText?: string | null
 }
 
 export type TurnStatusLine = {
   text: string
   /** 次行信息（倒计时 / 后续提示）；undefined 时模板不渲染次行。 */
   hint?: string
-  mode: 'running' | 'waiting' | 'failed'
+  mode: 'running' | 'waiting' | 'failed' | 'settled'
 } | null
 
 /** 缺省活动主语：注册表与 trace 都拿不到人话时的兜底，禁止把内部工具名吐给用户（决策 5）。 */
@@ -90,6 +96,9 @@ export function turnStatusLine(input: TurnStatusLineInput): TurnStatusLine {
     return { text: `${subject} · ${seconds}s${estimateSuffix(input.estimatedCredits)}`, mode: 'running' }
   }
   if (input.lastFailed) return { text: `生成失败 · ${input.lastFailed}`, mode: 'failed' }
+  // P2 T7：回合结算收口——settledText 由 AgentSideRail 从 reducer turnSettledText 取得
+  //（与气泡摘要同源），此处只做态切换，不复制文案。
+  if (input.settledText) return { text: input.settledText, mode: 'settled' }
   return null
 }
 

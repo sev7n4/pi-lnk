@@ -7,11 +7,13 @@ import {
   applyTextReplaceStage,
   applyThinking,
   applyToolCall,
+  applyTurnSettled,
   applyTurnUsage,
   createExecutionTrace,
   finalizeExecutionTrace,
   hasFailedTraceStep,
   replayExecutionTraceEvents,
+  turnSettledText,
   turnSummaryLine,
 } from '@/components/agent/executionTraceReducer'
 import { labelFromTextReplace } from '@/components/agent/executionStepLabels'
@@ -278,6 +280,106 @@ describe('applyTurnUsage + turnSummaryLine（P1 摘要行）', () => {
     ])
     expect(legacy.usage).toEqual({ inputTokens: 100, outputTokens: 30 })
     expect(turnSummaryLine(legacy)).toContain('消耗 130 tokens')
+  })
+})
+
+describe('applyTurnSettled + turnSummaryLine settled 段（P2 T7）', () => {
+  it('T7-1: 正常 settled → 「已结算 -N 积分（输入 X.Xk · 缓存 X.Xk · 输出 X.Xk）」', () => {
+    const trace = createExecutionTrace()
+    applyTurnUsage(trace, { inputTokens: 3000, outputTokens: 400, estimatedCredits: 8 })
+    applyTurnSettled(trace, { holdId: 'h1', credits: 8, breakdown: { in: 3000, cache: 0, out: 400 } })
+    expect(turnSettledText(trace)).toBe(
+      '已结算 -8 积分（输入 3.0k · 缓存 0 · 输出 400）',
+    )
+    expect(turnSummaryLine(trace)).toContain(
+      '已结算 -8 积分（输入 3.0k · 缓存 0 · 输出 400）',
+    )
+  })
+
+  it('T7-2: degraded（无 breakdown）→ 「已结算 -N 积分（按成本估算）」', () => {
+    const trace = createExecutionTrace()
+    applyTurnUsage(trace, { inputTokens: 8000, outputTokens: 500 })
+    applyTurnSettled(trace, { holdId: 'h2', credits: 5, ruleVersion: 'constants-fallback', degraded: true })
+    expect(trace.settled).toEqual({
+      holdId: 'h2',
+      credits: 5,
+      ruleVersion: 'constants-fallback',
+      degraded: true,
+    })
+    expect(turnSettledText(trace)).toBe('已结算 -5 积分（按成本估算）')
+  })
+
+  it('T7-3: released（回合中断/失败预扣全退）→ 「预扣已退回」，不显示负数', () => {
+    const trace = createExecutionTrace()
+    applyTurnSettled(trace, { holdId: 'h3', released: true })
+    expect(trace.settled).toEqual({ holdId: 'h3', released: true })
+    expect(turnSettledText(trace)).toBe('预扣已退回')
+    expect(turnSettledText(trace)).not.toContain('积分')
+  })
+
+  it('T7-4: 差额规则：|实际 − 预估| ≥ 2 → 追加「（预估 M）」；< 2 或无预估 → 不追加', () => {
+    const diff = createExecutionTrace()
+    applyTurnUsage(diff, { inputTokens: 100, outputTokens: 20, estimatedCredits: 12 })
+    applyTurnSettled(diff, { holdId: 'h4', credits: 8, breakdown: { in: 100, cache: 0, out: 20 } })
+    expect(turnSettledText(diff)).toBe(
+      '已结算 -8 积分（输入 100 · 缓存 0 · 输出 20）（预估 12）',
+    )
+
+    const close = createExecutionTrace()
+    applyTurnUsage(close, { inputTokens: 100, outputTokens: 20, estimatedCredits: 9 })
+    applyTurnSettled(close, { holdId: 'h5', credits: 8, breakdown: { in: 100, cache: 0, out: 20 } })
+    expect(turnSettledText(close)).not.toContain('预估')
+
+    const noEstimate = createExecutionTrace()
+    applyTurnUsage(noEstimate, { inputTokens: 100, outputTokens: 20 })
+    applyTurnSettled(noEstimate, { holdId: 'h6', credits: 8, breakdown: { in: 100, cache: 0, out: 20 } })
+    expect(turnSettledText(noEstimate)).not.toContain('预估')
+  })
+
+  it('T7-5: 覆盖幂等（重复调用不叠加）+ 键不出现纪律（breakdown/degraded 缺省键不写入）', () => {
+    const trace = createExecutionTrace()
+    applyTurnSettled(trace, { holdId: 'h7', credits: 8, breakdown: { in: 100, cache: 0, out: 20 } })
+    applyTurnSettled(trace, { holdId: 'h7', credits: 8, breakdown: { in: 100, cache: 0, out: 20 } })
+    expect(trace.settled).toEqual({
+      holdId: 'h7',
+      credits: 8,
+      breakdown: { in: 100, cache: 0, out: 20 },
+    })
+
+    const bare = createExecutionTrace()
+    applyTurnSettled(bare, { holdId: 'h8', released: true })
+    expect('credits' in (bare.settled ?? {})).toBe(false)
+    expect('breakdown' in (bare.settled ?? {})).toBe(false)
+    expect('degraded' in (bare.settled ?? {})).toBe(false)
+  })
+
+  it('T7-6: replay 透传 turn_settled；旧事件流（无 turn_settled）settled 键不出现、摘要无已结算段', () => {
+    const replayed = replayExecutionTraceEvents([
+      { type: 'turn_usage', data: { inputTokens: 3000, outputTokens: 400, estimatedCredits: 8 } },
+      { type: 'turn_settled', data: { holdId: 'h9', credits: 8, breakdown: { in: 3000, cache: 0, out: 400 } } },
+    ])
+    expect(replayed.settled).toEqual({
+      holdId: 'h9',
+      credits: 8,
+      breakdown: { in: 3000, cache: 0, out: 400 },
+    })
+    expect(turnSummaryLine(replayed)).toContain('已结算 -8 积分')
+
+    const legacy = replayExecutionTraceEvents([
+      { type: 'turn_usage', data: { inputTokens: 500, outputTokens: 100 } },
+    ])
+    expect(legacy.settled).toBeUndefined()
+    expect(turnSummaryLine(legacy)).not.toContain('已结算')
+  })
+
+  it('T7-7: released 态摘要段不产生负数积分文案', () => {
+    const trace = replayExecutionTraceEvents([
+      { type: 'turn_usage', data: { inputTokens: 500, outputTokens: 100 } },
+      { type: 'turn_settled', data: { holdId: 'h10', released: true } },
+    ])
+    const line = turnSummaryLine(trace)
+    expect(line).toContain('预扣已退回')
+    expect(line).not.toContain('-')
   })
 })
 

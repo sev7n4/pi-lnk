@@ -65,6 +65,19 @@ export interface ExecutionTraceState {
     cost?: number
     estimatedCredits?: number
   }
+  /** P2 T7：turn_settled 结算明细（turn_settled 事件覆盖写入，replay 幂等）。
+   * Task 6 事件三形态：正常 {credits, breakdown?, ruleVersion?} / degraded
+   * {credits, degraded:true} / released {released:true}（预扣全退）。
+   * 键不出现纪律：credits/breakdown/ruleVersion/degraded/released 仅在服务端
+   * 下发该键时携带（条件展开），缺省段由 turnSettledText 按形态兜底。 */
+  settled?: {
+    holdId: string
+    credits?: number
+    breakdown?: { in: number; cache: number; out: number }
+    ruleVersion?: string
+    degraded?: boolean
+    released?: boolean
+  }
 }
 
 let stepCounter = 0
@@ -490,6 +503,61 @@ function formatTokens(total: number): string {
   return `${(Math.round(total / 100) / 10).toFixed(1)}k`
 }
 
+/** P2 T7：turn_settled 事件写入（重复调用覆盖不叠加——replay/重复事件幂等）。
+ * 键不出现纪律照 applyTurnUsage 同款条件展开（服务端 Task 6 条件下发）。 */
+export function applyTurnSettled(
+  trace: ExecutionTraceState,
+  data: {
+    holdId: string
+    credits?: number
+    breakdown?: { in: number; cache: number; out: number }
+    ruleVersion?: string
+    degraded?: boolean
+    released?: boolean
+  },
+) {
+  trace.settled = {
+    holdId: data.holdId,
+    ...(typeof data.credits === 'number' && Number.isFinite(data.credits)
+      ? { credits: data.credits }
+      : {}),
+    ...(data.breakdown ? { breakdown: { ...data.breakdown } } : {}),
+    ...(data.ruleVersion ? { ruleVersion: data.ruleVersion } : {}),
+    ...(data.degraded === true ? { degraded: true } : {}),
+    ...(data.released === true ? { released: true } : {}),
+  }
+}
+
+/** P2 T7：settled 段文案——turnSummaryLine 摘要段与 turnStatusBar 状态行**共用**
+ * 这一个生成器（文案单源，不许复制两份）。
+ * released →「预扣已退回」（预扣全退不显示负数）；degraded →「已结算 -N 积分（按成本估算）」；
+ * 正常 →「已结算 -N 积分（输入 X.Xk · 缓存 X.Xk · 输出 X.Xk）」；
+ * 差额规则：reducer 已跟踪 estimatedCredits（applyTurnUsage），|实际 − 预估| ≥ 2 积分
+ * 时追加「（预估 M）」。非 settled 回合 / credits 缺失（异常形态）返回 null。 */
+export function turnSettledText(trace: ExecutionTraceState | undefined | null): string | null {
+  const settled = trace?.settled
+  if (!settled) return null
+  if (settled.released) return '预扣已退回'
+  if (typeof settled.credits !== 'number' || !Number.isFinite(settled.credits)) return null
+  let text: string
+  if (settled.degraded) {
+    text = `已结算 -${settled.credits} 积分（按成本估算）`
+  } else if (settled.breakdown) {
+    text = `已结算 -${settled.credits} 积分（输入 ${formatTokens(settled.breakdown.in)} · 缓存 ${formatTokens(settled.breakdown.cache)} · 输出 ${formatTokens(settled.breakdown.out)}）`
+  } else {
+    text = `已结算 -${settled.credits} 积分`
+  }
+  const estimated = trace.usage?.estimatedCredits
+  if (
+    typeof estimated === 'number'
+    && Number.isFinite(estimated)
+    && Math.abs(settled.credits - estimated) >= 2
+  ) {
+    text += `（预估 ${Math.ceil(estimated)}）`
+  }
+  return text
+}
+
 /** 从 propose_generation 步骤解析张数：args「N 个节点」数字优先，缺省计 1。 */
 function proposeCount(step: ExecutionStep): number {
   const args = step.meta?.args ?? (() => {
@@ -528,6 +596,9 @@ export function turnSummaryLine(trace: ExecutionTraceState): string | null {
       segments.push(`费用 ≈${Number(trace.usage.cost.toPrecision(3))}`)
     }
   }
+  // P2 T7：settled 段（与状态行共用 turnSettledText，文案单源）。
+  const settledText = turnSettledText(trace)
+  if (settledText) segments.push(settledText)
   return segments.length > 0 ? segments.join(' · ') : null
 }
 
@@ -589,6 +660,10 @@ export function replayExecutionTraceEvents(
             cost?: number
           },
         )
+        break
+      case 'turn_settled':
+        // P2 T7：结算明细随既有 executionEvents 重放通道还原（覆盖写入，幂等）。
+        applyTurnSettled(trace, event.data as Parameters<typeof applyTurnSettled>[1])
         break
       case 'explore':
         applyExplore(trace, event.data as Parameters<typeof applyExplore>[1])
