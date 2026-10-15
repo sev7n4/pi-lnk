@@ -1195,7 +1195,9 @@ const activeSkillId = ref<string | null>(null)
 const activeSkill = computed(() => getAgentSkill(activeSkillId.value))
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
 const skillButtonLabel = computed(() => activeSkill.value?.label ?? '技能')
-const inputPlaceholder = computed(() => agentInputPlaceholder(activeSkill.value))
+const inputPlaceholder = computed(() =>
+  agentInputPlaceholder(activeSkill.value, { mobile: isMobileLayout.value }),
+)
 const showProductVisualEmptyState = computed(
   () =>
     isProductVisualSkill.value
@@ -1565,6 +1567,84 @@ function toggleVoice() {
       input.value = input.value ? `${input.value} ${text}` : text
     }
   })
+}
+
+/* ---- 移动端按住说话（微信式，2026-10-15 移动端重构） ----
+ * 无独立麦克风按钮：语音能力内嵌进输入区本体 —— 文字模式下输入框照常，
+ * 通过「+」菜单切到语音模式后，输入框整体替换为「按住 说话」按钮。
+ * 按住开始识别（实时 interim 显示），松开停止并自动发送；上滑取消。
+ * 桌面端不受影响，仍走 DockMicButton 的 toggleVoice。 */
+const voiceMode = ref(false)
+const holdActive = ref(false)
+const voiceInterim = ref('')
+const voiceFinalText = ref('')
+const voiceCancelled = ref(false)
+const voiceStartY = ref(0)
+/** 按住会话令牌：release 的 600ms 收口定时器只对自己的会话生效，
+ *  防止「松开→立刻再按住」时旧定时器把新一轮 interim 当成上一轮结果误发 */
+let voiceSession = 0
+
+function toggleVoiceMode() {
+  attachMenuOpen.value = false
+  if (voiceMode.value) {
+    if (holdActive.value) releaseVoice(true)
+    voiceMode.value = false
+    return
+  }
+  if (!speech.supported) {
+    ElMessage.warning('当前浏览器不支持语音识别')
+    return
+  }
+  voiceMode.value = true
+}
+
+function pressVoice(e: PointerEvent) {
+  if (holdActive.value || props.readOnly || isUploading.value) return
+  voiceSession += 1
+  voiceStartY.value = e.clientY
+  voiceInterim.value = ''
+  voiceFinalText.value = ''
+  voiceCancelled.value = false
+  const started = speech.start((text, isFinal) => {
+    if (isFinal) voiceFinalText.value = voiceFinalText.value ? `${voiceFinalText.value} ${text}` : text
+    else voiceInterim.value = text
+  })
+  if (!started) {
+    ElMessage.warning('当前浏览器不支持语音识别')
+    return
+  }
+  holdActive.value = true
+}
+
+/** 上滑 >70px 进入「松开取消」，滑回 40px 内可撤销（对齐微信手感） */
+function onVoicePointerMove(e: PointerEvent) {
+  if (!holdActive.value) return
+  const dy = voiceStartY.value - e.clientY
+  if (!voiceCancelled.value && dy > 70) voiceCancelled.value = true
+  else if (voiceCancelled.value && dy < 40) voiceCancelled.value = false
+}
+
+function releaseVoice(cancelled: boolean) {
+  if (!holdActive.value) return
+  holdActive.value = false
+  speech.stop()
+  const session = voiceSession
+  // 识别引擎的末段 final result 在 stop() 之后才回调，等 600ms 收口再取全文
+  window.setTimeout(() => {
+    if (session !== voiceSession) return // 已进入新一次按住，本会话作废
+    const text = (voiceFinalText.value || voiceInterim.value).trim()
+    voiceInterim.value = ''
+    voiceFinalText.value = ''
+    if (cancelled || !text) return
+    if (agent.isStreaming) {
+      // 流式中不自动发送（send() 此时语义是「停止生成」），填入输入框回到文字模式由用户确认
+      input.value = text
+      voiceMode.value = false
+      return
+    }
+    input.value = text
+    void send()
+  }, 600)
 }
 
 function authHeaders(): Record<string, string> {
@@ -2704,7 +2784,8 @@ defineExpose({
           >
             <div class="flex min-w-0 items-center gap-2">
               <NeoAgentLogo size="xs" active />
-              <p class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
+              <!-- 移动端：头像即品牌 logo，不再重复「lnk·π agent」文字（2026-10-15 移动端重构） -->
+              <p v-if="!isMobileLayout" class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
             </div>
             <div class="flex items-center gap-0.5">
               <!-- 新建 agent 会话 -->
@@ -2751,21 +2832,6 @@ defineExpose({
                   </p>
                 </div>
               </div>
-
-              <!-- 移动端：退回画布，露出下方 VueFlow -->
-              <button
-                v-if="isMobileLayout"
-                type="button"
-                class="agent-view-canvas-btn flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium"
-                title="看画布"
-                @click="closePanel"
-              >
-                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <path stroke-linecap="round" d="M3 9h18M9 3v18" opacity="0.45" />
-                </svg>
-                看画布
-              </button>
 
               <!-- 浮动窗口切换：面板脱离/停靠侧栏 -->
               <button
@@ -3401,13 +3467,41 @@ defineExpose({
                   @mention="insertRefMention"
                   @reorder="sidebar.reorder"
                 />
-                <div class="agent-composer__input-wrap">
+                <!-- 移动端语音模式：输入框整体替换为「按住 说话」——
+                     语音与文字共用同一控件位，无独立麦克风按钮（2026-10-15 移动端重构） -->
+                <div
+                  v-if="isMobileLayout && voiceMode && !readOnly"
+                  class="agent-hold-talk"
+                  :class="{ 'is-holding': holdActive, 'is-cancel': holdActive && voiceCancelled }"
+                  role="button"
+                  tabindex="0"
+                  aria-label="按住说话，松开发送，上滑取消"
+                  data-testid="agent-hold-talk"
+                  @pointerdown.prevent="pressVoice"
+                  @pointermove="onVoicePointerMove"
+                  @pointerup="releaseVoice(voiceCancelled)"
+                  @pointercancel="releaseVoice(true)"
+                  @keydown.enter.prevent="toggleVoiceMode"
+                >
+                  <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+                    <rect x="9" y="2" width="6" height="12" rx="3" />
+                    <path stroke-linecap="round" d="M5 10a7 7 0 0 0 14 0" />
+                    <path stroke-linecap="round" d="M12 17v5" />
+                  </svg>
+                  <span v-if="holdActive && voiceCancelled" class="agent-hold-talk__text">松开取消</span>
+                  <span v-else-if="holdActive && (voiceFinalText || voiceInterim)" class="agent-hold-talk__text">{{ voiceFinalText + voiceInterim }}</span>
+                  <span v-else-if="holdActive" class="agent-hold-talk__text">正在聆听…</span>
+                  <span v-else class="agent-hold-talk__text">按住 说话</span>
+                </div>
+                <div v-else class="agent-composer__input-wrap">
                 <MentionInput
                   ref="composerRef"
                   v-model="input"
                   class="agent-composer__mention w-full"
                   :mentions="mentionOptions"
-                  :placeholder="agent.isStreaming ? '输入消息，回车加入待发队列…' : inputPlaceholder"
+                  :placeholder="agent.isStreaming
+                    ? (isMobileLayout ? '输入消息，发送加入待发队列…' : '输入消息，回车加入待发队列…')
+                    : inputPlaceholder"
                   :disabled="readOnly || isUploading"
                   :leading-inset="readOnly ? 0 : COMPOSER_PICK_INSET"
                   submit-on-enter
@@ -3458,6 +3552,24 @@ defineExpose({
                       class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[220px] rounded-xl py-1"
                       @click.stop
                     >
+                      <!-- 移动端语音输入入口：按住说话模式与文字模式在此切换，
+                           不设独立麦克风按钮（2026-10-15 移动端重构） -->
+                      <button
+                        v-if="isMobileLayout && speech.supported"
+                        type="button"
+                        class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
+                        data-testid="voice-mode-toggle"
+                        @click="toggleVoiceMode"
+                      >
+                        <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
+                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                            <rect x="9" y="2" width="6" height="12" rx="3" />
+                            <path stroke-linecap="round" d="M5 10a7 7 0 0 0 14 0" />
+                            <path stroke-linecap="round" d="M12 17v5" />
+                          </svg>
+                        </span>
+                        <span>{{ voiceMode ? '键盘输入' : '语音输入 · 按住说话' }}</span>
+                      </button>
                       <button
                         type="button"
                         class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
@@ -3596,7 +3708,9 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-primary">
+                  <!-- 移动端无独立麦克风按钮：语音走「按住 说话」模式（+ 菜单切换） -->
                   <DockMicButton
+                    v-if="!isMobileLayout"
                     :listening="speech.listening.value"
                     :disabled="agent.isStreaming || isUploading"
                     @toggle="toggleVoice"
@@ -3695,7 +3809,11 @@ defineExpose({
 .agent-panel-mobile-sheet {
   position: fixed;
   z-index: 70;
-  top: max(44px, env(safe-area-inset-top, 0px));
+  /* 顶部对齐屏幕上沿：env() 直接跟随安全区，Android inset=0 时零空隙。
+     ⛔ 曾写 max(44px, env(...))：44px 是给旧版应用头留的位，Android（inset=0）
+     会被垫出一条 44px 空带——移动端 sheet 是全屏模式，自带关闭按钮，不再让位。
+     iOS 状态栏区域由 env(safe-area-inset-top) 本身让开，面板内容从状态栏下方开始。 */
+  top: env(safe-area-inset-top, 0px);
   right: 0;
   bottom: 0;
   left: 0;
@@ -3711,14 +3829,9 @@ defineExpose({
   overflow: hidden;
 }
 
-.agent-view-canvas-btn {
-  color: var(--neo-hi-text);
-  background: color-mix(in srgb, var(--neo-hi-bg) 72%, transparent);
-  transition: background 0.15s ease;
-}
-
-.agent-view-canvas-btn:hover {
-  background: var(--neo-hi-bg);
+/* 全面屏底部 home indicator：输入 dock 抬离屏幕下沿（Android inset=0 时无副作用） */
+.agent-panel-mobile-sheet .agent-input-dock {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* ---- 左边缘拖拉调宽 ---- */
@@ -4354,6 +4467,50 @@ defineExpose({
 
 .agent-composer__mention {
   min-width: 0;
+}
+
+/* ---- 移动端按住说话（微信式语音输入） ---- */
+.agent-hold-talk {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px; /* 触控目标下限 --lnk-touch-target */
+  padding: 8px 12px;
+  border: 1px solid var(--neo-border);
+  border-radius: 12px;
+  background: var(--neo-hover-bg);
+  color: var(--neo-text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  /* 按住期间禁止页面滚动手势接管指针，否则 pointermove/up 会被浏览器打断 */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.agent-hold-talk.is-holding {
+  background: color-mix(in srgb, var(--neo-hi-bg) 16%, var(--neo-hover-bg));
+  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-border));
+}
+
+.agent-hold-talk.is-cancel {
+  color: var(--neo-danger);
+  border-color: color-mix(in srgb, var(--neo-danger) 45%, var(--neo-border));
+  background: color-mix(in srgb, var(--neo-danger) 10%, var(--neo-hover-bg));
+}
+
+.agent-hold-talk__text {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-canvas-pick-btn {

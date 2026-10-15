@@ -36,7 +36,9 @@
       })()
     </script>
     <link rel="icon" type="image/png" href="/brand/mascot-logo.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：让 env(safe-area-inset-*) 在 iOS 全面屏上生效；
+         缺了它 inset 恒为 0，移动端 sheet 的安全区补偿全部失效 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="超创平台 - AI 无限画布创作工作流，支持 AI 图像、视频生成与漫剧制作" />
     <title>超创平台 - AI 无限画布创作</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
