@@ -198,6 +198,19 @@ stdout 为空 → `grep -c` 输出 0 ⇒ 看起来"符号不存在"，实际是*
 `runtime-deploy.yml` **不会自动跑** —— CI 全绿但线上没有任何变化。
 这三类改动合并后必须手工发一次，且 **tag = master 的 commit 短 SHA**（非语义版号）。
 
+### 测试纪律：本地跳全量，以 CI 为准
+
+**本节只是指针，细则与 SSOT 在 [`docs/agent/delivery.md`](./docs/agent/delivery.md) 的「本地测试纪律」**
+——改动请改那里，不要在这里维护第二份（两份必然漂移）。
+
+三条最常踩的：
+
+1. **全量是 CI 的活，本机不跑**。已核实：根 `test` = `pnpm -r --if-present test`，workspace 含 `apps/*`，
+   `apps/web` 的 `test` = `vitest run` ⇒ `ci.yml` 的 `pnpm test` **已含 web 全量**，本地再跑是重复劳动。
+2. **本机超时 ≠ 测试失败**。4 核 + 多窗口下 web vitest 极慢（单文件 39s 未结束、4 文件 8 分钟），
+   这是环境天花板不是代码问题，**不得据此判定回归**。要判回归跑定向用例或看 CI。
+3. **本地绿 ≠ CI 绿**：本地读工作区文件、CI 读提交内容 ⇒ **push 前 `git status --short` 必须为空**。
+
 ## 你的角色与边界
 
 **关于「身份」的一句说明**：本文件不定义人格（沟通语气、主动性偏好）——那属于宿主层配置，

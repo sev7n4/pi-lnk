@@ -86,6 +86,10 @@ rmdir docs/<已删目录>           # 清空后残留的空目录
 1. **默认跑变更相关测试，不跑全量**：
    - server：`pnpm test:server:changed`（相对 origin/master 的变更用例）；聚焦时单文件 —— `pnpm --filter @lnkpi/server exec vitest run src/agent/<file>.test.ts`
    - pi-runtime：`pnpm test:runtime`；单文件 `node --import tsx --test src/<file>.test.ts`（在 `services/pi-runtime/` 下）
+   - **web（2026-10-15 补，此前漏列 ⇒ 本机反复跑 web 全量是超载主因）**：
+     定向 `cd apps/web && ./node_modules/.bin/vitest run <文件路径>`；**不要在 worktree 里跑**（见第 6 条）。
+     实测：未改动的 master 上单个 `AgentSideRail.dockLayout.test.ts` 跑满 39s 未结束；
+     4 文件定向批次耗时 8 分钟，`environment` 阶段独占 937s ⇒ 本机不具备跑 web 全量的条件。
 2. **全量 `pnpm test` 是 CI 的活**。位置：`ci.yml` 的 **`Build monorepo`** job → step `Unit and integration tests`（`ci.yml:74` 的 `pnpm test`）—— **不是**独立 test job。`gh pr checks` 只列 3 个 job（Verify spec figures / Build monorepo / Build API Docker image），看不到测试但它确实跑在里面，核实要下钻 step：
    ```
    gh run view <id> --json jobs --jq '.jobs[] | .name as $n | .steps[] | "\($n) :: \(.name) :: \(.conclusion)"'
@@ -97,6 +101,15 @@ rmdir docs/<已删目录>           # 清空后残留的空目录
 3. **不要本机同时跑 server 与 pi-runtime 两套全量** —— 资源竞争会 SIGKILL(137)，出现假失败
 4. vitest 本地已限 **2 fork**（`apps/server/vitest.config.ts`，CI 不限速）—— 给多 agent 并存留余量，不要调回去
 5. worktree 首次跑测试前：`pnpm install --frozen-lockfile` + `pnpm --filter @lnkpi/server exec prisma generate`（否则 vitest 报 `.prisma/client` 缺失）
+6. ⚠️ **worktree 里 vitest 会额外变慢**（2026-10-15 实测）：`.worktrees/<name>/apps/web/node_modules`
+   只能是软链主仓的目录（`ln -sfn /abs/path .../apps/web/node_modules`），vitest 在跨目录软链下要额外做
+   依赖图解析与去重，是 4 核机器上的主要耗时来源 ⇒ **优先在主仓路径跑定向测试**。
+   （软链法本身仍有效，不必改成真目录安装；真要装全量请留给 CI。）
+7. ⚠️ **本地超时 ≠ 测试失败**：本机 dock 相关测试 wall-clock 超 5s 恒超时（master 同款代码同样超时），
+   **不得据此判定回归**。要判回归，跑定向用例或以 CI 为准。
+8. ⚠️ **本地绿 ≠ CI 绿**：本地 vitest / tsc 读**工作区文件**，CI 读**提交内容**；
+   工作区有未提交改动时两边结论可以相反（TS5097 即由此而来：本地过、CI 挂）
+   ⇒ **push 前 `git status --short` 必须为空**。
 
 > 测试文件规模会变，**要数字时实测 `find <dir> -name '*.test.ts' | wc -l`，别抄本文档的旧数字**。
 > 本文档正文不写会漂移的计数（测试文件数、文档份数、清单长度）——需要规模感时给获取命令。
