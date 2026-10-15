@@ -108,7 +108,7 @@ export function buildMatchKey(q: PricingQuery): string {
 
 /**
  * 文本 token 反比率行（P2 · spec §6.5）：`text:<modelKey>:in|cache|out` 三行一组，
- * credits 存反比率整数 `r = floor(1e6 / (costYuan × 100 × marginBp / 100))`。
+ * credits 存反比率整数 `r = floor(1e6 / (costYuan × marginBp / 100))（等价于 floor(1e6 × 100 / (costYuan × marginBp))；勿写成 costYuan × 100 × marginBp——会差 100×）`。
  */
 export type TextTokenSpec = 'in' | 'cache' | 'out'
 

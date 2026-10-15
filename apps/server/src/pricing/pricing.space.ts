@@ -83,7 +83,7 @@ const TEXT_TOKEN_MODELS_WITH_CACHE: readonly string[] = [
  * 反比率行没有 legacy 常量、只进新版本（v1 不重播——Global Constraints 生命线）。
  * 消费者（v2 草案种子/发布流）参照既有 image/video 行的挂法：按 (modelKey, spec)
  * 查 CostRate `per_1m_tokens_*` 行，用
- * `r = floor(1e6 / (costYuan × 100 × marginBp / 100))` 现算反比率并挂 costRateId
+ * `r = floor(1e6 / (costYuan × marginBp / 100))（等价于 floor(1e6 × 100 / (costYuan × marginBp))；勿写成 costYuan × 100 × marginBp——会差 100×）` 现算反比率并挂 costRateId
  * （basis='launch-reprice'，marginBp 取当前生效阶段，缺省 11000bp）。
  */
 export function enumerateTextTokenRows(): TextTokenRowSpec[] {
