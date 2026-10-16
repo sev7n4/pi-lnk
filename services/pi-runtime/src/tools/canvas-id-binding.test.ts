@@ -180,4 +180,46 @@ describe("canvas-id-binding: 钩子注册与 kill switch（spec P1b）", () => {
 		} as never);
 		assert.equal(out, undefined);
 	});
+
+	it("终审 I1：rewrite/block 落 console.warn 观测（含 runId/toolName/from→to/reason），返回值不变", async () => {
+		resetIdBindingForTest();
+		const { harness, handlers } = stubHarness();
+		registerCanvasIdBindingHooks(harness);
+		const beforeTool = handlers.get("before_tool")!;
+		const warns: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (...parts: unknown[]) => {
+			warns.push(parts.map(String).join(" "));
+		};
+		try {
+			// rewrite 分支：观测触发且 {args} 返回值逐字节不变
+			recordUpsertedNode("r13", upsertContent("image-13"));
+			const rewritten = (await beforeTool({
+				runId: "r13",
+				toolName: "propose_generation",
+				args: { node_id: "image-old" },
+			} as never)) as { args?: Record<string, unknown> };
+			assert.deepEqual(rewritten, { args: { node_id: "image-13" } });
+			assert.equal(warns.length, 1);
+			assert.ok(warns[0].startsWith("[pi-runtime] canvas-id-binding rewrite:"));
+			assert.ok(warns[0].includes("runId=r13") && warns[0].includes("toolName=propose_generation"));
+			assert.ok(warns[0].includes("image-old") && warns[0].includes("→ image-13"));
+
+			// block 分支（多 upsert 无法消歧）：观测触发且 block 返回值不变
+			recordUpsertedNode("r14", upsertContent("image-a"));
+			recordUpsertedNode("r14", upsertContent("image-b"));
+			const blocked = (await beforeTool({
+				runId: "r14",
+				toolName: "set_node_generation_params",
+				args: { node_id: "image-a" },
+			} as never)) as { block?: { reason: string } };
+			assert.ok(blocked?.block?.reason);
+			assert.equal(warns.length, 2);
+			assert.ok(warns[1].startsWith("[pi-runtime] canvas-id-binding block:"));
+			assert.ok(warns[1].includes("runId=r14") && warns[1].includes("reason="));
+		} finally {
+			console.warn = originalWarn;
+			resetIdBindingForTest();
+		}
+	});
 });

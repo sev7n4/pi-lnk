@@ -28,7 +28,12 @@ import { canvasIdBindingEnabled } from "../runtime-config.js";
 const BINDING_TARGETS = new Set(["set_node_generation_params", "propose_generation"]);
 const UPSERT_TOOL = "upsert_media_node";
 
-/** 同批窗口：runId → 本窗口内成功 upsert 返回的 nodeId 列表（length>1 = 无法消歧）。 */
+/**
+ * 同批窗口：runId → 本窗口内成功 upsert 返回的 nodeId 列表（length>1 = 无法消歧）。
+ * 已知泄漏路径（终审 I1，容忍不建清理）：run 在 upsert after_tool 之后、下一次
+ * before_request 之前被 abort ⇒ 该 runId 条目残留至进程退出；runId 为 uuidv7 全程唯一，
+ * 残留条目永不命中后续裁决，惰性无害。
+ */
 const windows = new Map<string, string[]>();
 
 /** 测试隔离：清空全部窗口。 */
@@ -123,9 +128,18 @@ export function registerCanvasIdBindingHooks(harness: AgentHarness<LnkpiToolCont
 		if (d.kind === "rewrite") {
 			// event.args 是 Record<string, JsonValue>；仅替换 node_id，其余字段原样保留
 			// （applyBeforeToolDecision 会按工具 schema 重校验整个替换参，非法即 fail-closed）。
+			// 终审 I1 观测：重写是模型不可见的静默纠偏，留灰度回滚判定的唯一痕迹（fail-soft，不影响返回值）。
+			console.warn(
+				`[pi-runtime] canvas-id-binding rewrite: runId=${event.runId} toolName=${event.toolName} node_id ${event.args?.["node_id"]} → ${d.nodeId}`,
+			);
 			return { args: { ...event.args, node_id: d.nodeId } };
 		}
-		if (d.kind === "block") return { block: { reason: d.reason } };
+		if (d.kind === "block") {
+			console.warn(
+				`[pi-runtime] canvas-id-binding block: runId=${event.runId} toolName=${event.toolName} reason=${d.reason}`,
+			);
+			return { block: { reason: d.reason } };
+		}
 		return undefined;
 	});
 	harness.hooks.on("before_request", async (event) => {

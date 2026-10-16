@@ -98,7 +98,10 @@ run_canvas_plan({ ops: [                     ◀── Phase 2 暂缓（多操�
 
 ───────────────────────────────────────────
 Phase 1 主修复（原生三原语，与 Phase 2 并存、先落地，正确性与零重试均由其达成）：
-   • 写工具定义加 executionMode:"sequential"  → 同批写调用服务端串行（原生，仿 todo.ts:97）
+   • 串行化落在 run 级：session-manager 接线 `AgentHarness.create` options `toolExecution:"sequential"`
+       （harness 运行时栈不消费 per-tool executionMode——源码实证 harness/runtime/harness.js:46 默认 "parallel"、
+       per-tool 字段仅低层 agent-loop 消费；run 级声明见 agent-harness.d.ts:632。三工具 per-tool 声明保留 =
+       P1-A 验收 + 意图文档化，上游 harness 消费后自然生效）
        （串行是捕获/注入的前置：只有 upsert 先执行并 finalize（after_tool 已跑），后续 set/propose 的 before_tool 才能读到记录 id）
    • after_tool 钩子捕获：upsert_media_node 成功 → 从 result content/details 解析 nodeId，
        以 runId 为键开「同批窗口」暂存（窗口在下次 before_request 关闭 = 对齐单条 assistant 消息批次；
@@ -128,7 +131,7 @@ Phase 1 主修复（原生三原语，与 Phase 2 并存、先落地，正确性
 
 ### 4.1 Phase 1 — 主修复（**本规格批准后可执行**）
 
-- **P1a 写工具串行化**：给 `upsert_media_node` / `set_node_generation_params` / `propose_generation` 三工具定义加 `executionMode:"sequential"`（仿 `todo.ts:97`）。任何含这些写工具的批次整体串行 → create 返回真实 id 后 set/propose 才跑。**（串行是 P1b 校验的前置：只有 create 先执行并落 id，before_tool 校验 set/propose 时才能拿到正确 id；并行下三钩子并发触发、id 尚未产生，校验无从谈起。）**
+- **P1a 写工具串行化（run 级接线）**：session-manager 在 `AgentHarness.create` options 传 **run 级** `toolExecution:"sequential"`（三工具定义的 per-tool `executionMode:"sequential"` 保留——P1-A 验收 + 意图文档化）。**为何 run 级**：harness 运行时栈不消费 per-tool executionMode（源码实证 pi-agent-core `harness/runtime/harness.js:46` 默认 `"parallel"`、`harness/agent-harness.d.ts:632` 才是 run 级消费点；per-tool 字段仅低层 agent-loop 读取，harness 栈下为死配置）→ 串行必须由 session-manager 接线在 create options 落地。任何含写工具的 run 内批次整体串行 → create 返回真实 id 后 set/propose 才跑。**（串行是 P1b 校验的前置：只有 create 先执行并落 id，before_tool 校验 set/propose 时才能拿到正确 id；并行下三钩子并发触发、id 尚未产生，校验无从谈起。）**
 - **P1b 同批依赖 id 自动注入（原生 `after_tool` 捕获 + `before_tool` 重写，Phase 1 正确性锚点，零重试）**：
   - **捕获**：`after_tool` 钩子（挂载点范式同 `index.ts:188`，新增独立注册，复用 `plan-gate-wiring.ts:37` 闭包模式）在 `upsert_media_node` 成功后从 `event.content`/`event.details` 解析返回 `nodeId`，以 **`event.runId` 为键开「同批窗口」暂存，窗口在下一次 `before_request` 关闭**——精确对齐「同一条 assistant 消息的批次」（`HookInvocation` 原生携带 `runId`/`lane`，无需 `Map<sessionId>`；⚠️ 不能只按 runId 作用域：一个 run 可跨多条消息，后一条消息合法提名旧节点会被误重写）。
   - **重写（主路径）**：`before_tool` 钩子对 `set_node_generation_params` / `propose_generation`：若同批窗口内已有 upsert 记录且 `args.node_id` ≠ 该 id → 返回 `{ args: { ...event.args, node_id: <记录 id> } }`；harness 按工具 schema **重校验**替换参后以正确 id 执行（源码 `applyBeforeToolDecision` 实证）。模型侧无感知、零重试轮。
@@ -185,8 +188,8 @@ Phase 1 主修复（原生三原语，与 Phase 2 并存、先落地，正确性
 
 | 风险 | 缓解 |
 |------|------|
-| P1a 串行化降低写工具吞吐 | 写工具本就不该并行；正确性 ≫ 吞吐；仅写工具批次串行，读工具仍可并行 |
-| P1b 重写掩盖模型真实意图（如同批多节点 create 被强制绑到单一 id） | 同批 >1 upsert 时**不做猜测性重写**，退化为 fail-closed block + actionable error（列出各候选 id）+ 模型自纠（≤3 轮）+ 灰度 |
+| P1a 串行化降低写工具吞吐 | 写工具本就不该并行；正确性 ≫ 吞吐。**如实代价：串行落在 run 级 ⇒ 本 run 全部批次（含读工具）串行**；极端序 [propose 阻塞确认, read] 的读会等确认/超时——代价已接受（正确性 ≫ 吞吐） |
+| P1b 重写掩盖模型真实意图（如同批多节点 create 被强制绑到单一 id） | 同批 >1 upsert 时**不做猜测性重写**，退化为 fail-closed block + actionable error（列出各候选 id）+ 模型自纠（≤3 轮）+ 灰度；rewrite/block 均落 `console.warn`（`[pi-runtime] canvas-id-binding …`，含 runId/toolName/from→to/reason）供灰度回滚判定 |
 | Phase 2 wrapper 复用原子逻辑导致行为漂移 | H1 锁死原子工具契约；wrapper 单测断言每步返回与直调原子工具一致 |
 | chain 工具内 `propose_generation` 阻塞导致 wrapper 长驻 | wrapper 在 propose 步骤返回 pending 结果即结束，确认由既有人机交互流程承接（H4） |
 | `guideSceneId` 仍可能传错 | P1-E 文案引导 + P2-E skill 修正；属独立小问题，不阻塞主修复 |
