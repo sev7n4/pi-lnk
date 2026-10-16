@@ -14,6 +14,7 @@ import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 import { clearPlanRunFlag } from "./gate/plan-gate.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
+import { registerCanvasIdBindingHooks } from "./tools/canvas-id-binding.js";
 import { SubagentCoordinator } from "./gate/subagent.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
@@ -88,6 +89,12 @@ const manager = new SessionManager(
 			gateStore.resetSession(sessionId);
 			// hook 层共用的运行时开关：一次解析，避免每个 hook / 每次工具调用重复读 env。
 			const hookCfg = loadRuntimeConfig(process.env);
+			// Canvas 写链 id 结构性绑定（spec 2026-10-16 §4.1 P1b，事故 cmv95a7sd000fqh01k1za6w1g）。
+			// ⭐ 注册序即正确性（HookMap 多 listener 链式 replace，后注册者看到前者的 patch）：
+			// ① after_tool 先于下方既有 after_tool —— 捕获要看到未截断全文；
+			// ② before_tool 先于下方 plan-gate / generation-gate —— gate 的 Nest 存在性校验
+			//    验的才是重写后的正确 id（旧 id 可能 404 造成误导性拦截）。
+			registerCanvasIdBindingHooks(harness);
 			harness.hooks.on("after_tool", async (event) => {
 				if (event.toolName === "propose_generation" && !event.isError) {
 					// args / details 是 JsonValue，上游不保证结构。不再 as 强转：形态不符时
