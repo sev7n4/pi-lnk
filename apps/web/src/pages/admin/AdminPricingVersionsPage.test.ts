@@ -187,7 +187,10 @@ describe('AdminPricingVersionsPage', () => {
     getDraft.mockResolvedValue({ id: 'v-1', version: '2026.10-A', status: 'draft', note: 'n', entries: [entry()] })
     diffSummary.mockResolvedValue(
       diffData({
-        floorViolations: [{ matchKey: 'gpt-4o', credits: 100, floor: 105 }],
+        floorViolations: [
+          { matchKey: 'gpt-4o', credits: 100, limit: 105, kind: 'min' },
+          { matchKey: 'text:step-2-16k:out', credits: 60000, limit: 95238, kind: 'max' },
+        ],
         missingCost: ['m-x'],
         noCostCoverage: ['gpt-4o'],
       }),
@@ -198,9 +201,12 @@ describe('AdminPricingVersionsPage', () => {
     await vm.openDraft('v-1')
     await vm.loadDiff()
     await flushPromises()
-    expect(w.text()).toContain('地板违规 1 条')
+    expect(w.text()).toContain('地板违规 2 条')
     expect(w.text()).toContain('credits=100')
     expect(w.text()).toContain('floor=105')
+    expect(w.text()).toContain('text:step-2-16k:out')
+    expect(w.text()).toContain('credits=60000')
+    expect(w.text()).toContain('ceiling=95238')
     expect(w.text()).toContain('成本费率缺失')
     expect(w.text()).toContain('m-x')
     expect(w.text()).toContain('无成本覆盖')

@@ -276,7 +276,7 @@ defineExpose({
         </p>
         <p v-if="diff.floorViolations.length > 0" class="mb-1 text-danger" data-test="floor-violations">
           地板违规 {{ diff.floorViolations.length }} 条：
-          <span v-for="v in diff.floorViolations" :key="v.matchKey" class="mr-2">{{ v.matchKey }} credits={{ v.credits }} &lt; floor={{ v.floor }}</span>
+          <span v-for="v in diff.floorViolations" :key="v.matchKey" class="mr-2">{{ v.matchKey }} credits={{ v.credits }} {{ v.kind === 'max' ? '>' : '<' }} {{ v.kind === 'max' ? 'ceiling' : 'floor' }}={{ v.limit }}</span>
         </p>
         <p v-if="diff.missingCost.length > 0" class="mb-1 text-danger" data-test="missing-cost">
           成本费率缺失（发布时跳过地板并告警）：{{ diff.missingCost.join(', ') }}

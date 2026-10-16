@@ -11,6 +11,7 @@ import {
   buildTextTokenMatchKey,
   canonicalImageResolution,
   canonicalVideoResolution,
+  checkCostFloor,
   legacyPriceOf,
   videoPriceFamily,
 } from './pricing.core'
@@ -219,14 +220,13 @@ describe('seedPricingV2Draft against real SQLite', () => {
     expect((await entryOf('text:agnes-3.0-flash:out'))!.credits).toBe(757) // floor(1e6/(12×110))
     expect((await entryOf('text:agnes-2.0-flash:cache'))!.credits).toBe(30303) // floor(1e6/(0.3×110))
 
-    // ── 断言 7（正向）：有 costRateId 者全部过地板 credits ≥ ceil(costYuan×105) ──
-    // （token 反比率行除外：credits 存 r=tokens/credit 反比率，非售价——量纲不适用，
-    // 成本覆盖由构造保证 marginBp 11000 > 105，与 assertLaunchFloor 的 text 跳出同据）
+    // ── 断言 7（正向）：有 costRateId 的条目全部过地板（委托 checkCostFloor：价格行判
+    // 下限、token 反比率行判上限，同源「收入 ≥ 成本×1.05」）。种子 r 按 marginBp=11000 现算
+    // ⇒ 110>105 ⇒ 必过；此断言与 assertLaunchFloor 共用同一判定，杜绝带病草案。
     const rates = await prisma.costRate.findMany()
     const rateCost = new Map(rates.map((r) => [r.id, r.costYuan]))
-    for (const r of rows.filter((x) => x.costRateId && x.capability !== 'text')) {
-      const floor = Math.ceil(rateCost.get(r.costRateId!)! * 105)
-      expect(r.credits, r.matchKey).toBeGreaterThanOrEqual(floor)
+    for (const r of rows.filter((x) => x.costRateId)) {
+      expect(checkCostFloor(r, rateCost.get(r.costRateId!)), `地板校验 ${r.matchKey}`).toBeNull()
     }
     // 地板验算补 4s 两条（收尾包补录的显式锚）：推算行成本下地板自动恢复——
     // 768p 4s：252 ≥ ceil(2.288×105)=241；2k 4s：410 ≥ ceil(3.72×105)=391
@@ -296,18 +296,24 @@ describe('seedPricingV2Draft against real SQLite', () => {
     const bad: PlannedEntry[] = [
       { matchKey: 'video:minimax-h3:768p:5:-:ri0:rv0', capability: 'video', credits: 250, basis: 'launch-reprice', costRateId: 'rate-768p5s' },
     ]
-    expect(() => assertLaunchFloor(bad, rates)).toThrow(/地板/)
+    expect(() => assertLaunchFloor(bad, rates)).toThrow(/floor|地板/)
     // 无 costRateId 条目跳过地板（legacy-equivalent 的既有出口；4s 档已补录推算行，
     // 2026-10-15 起挂行过地板，不再走此出口）
     const skipped: PlannedEntry[] = [
       { matchKey: 'video:default', capability: 'video', credits: 1, basis: 'legacy-equivalent', costRateId: null },
     ]
     expect(() => assertLaunchFloor(skipped, rates)).not.toThrow()
-    // P2 M-4：token 行跳过地板（量纲：credits=r=tokens/credit 反比率，非售价——
-    // r 由 costYuan×marginBp 反推，marginBp 11000 > 105 ⇒ 成本覆盖由构造保证）
+    // P2 M-4：token 反比率行现也走地板校验，但判的是上限（kind='max'）：credits=r 是
+    // tokens/credit 反比率，r 越大单价越便宜、毛利越薄；r ≤ floor(1e6/(costYuan×105)) 才合规。
+    // costYuan=2.86 ⇒ ceiling=floor(1e6/(2.86×105))=3329；r=505 ≤ 3329 ⇒ 合规。
     const token: PlannedEntry[] = [
       { matchKey: 'text:step-2-16k:out', capability: 'text', credits: 505, basis: 'launch-reprice', costRateId: 'rate-768p5s' },
     ]
     expect(() => assertLaunchFloor(token, rates)).not.toThrow()
+    // r 越过上限 ⇒ 触发 kind='max' 违规（价格行是 kind='min' 跌破下限）
+    const tokenBad: PlannedEntry[] = [
+      { matchKey: 'text:step-2-16k:out', capability: 'text', credits: 4000, basis: 'launch-reprice', costRateId: 'rate-768p5s' },
+    ]
+    expect(() => assertLaunchFloor(tokenBad, rates)).toThrow(/ceiling|地板/)
   })
 })

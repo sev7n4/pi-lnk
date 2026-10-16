@@ -36,6 +36,7 @@ import {
   canonicalImageCount,
   canonicalImageResolution,
   canonicalVideoResolution,
+  checkCostFloor,
   computeCreditsFromCost,
   legacyPriceOf,
   videoPriceFamily,
@@ -50,9 +51,6 @@ export const V2_DRAFT_NOTE =
 
 /** 拉新期毛利系数（spec §5.1：marginBp 11000 = ×1.10），与 MarginPolicy.launch 同源。 */
 const LAUNCH_MARGIN_BP = 11000
-
-/** 发布价格地板乘数（spec §10：成本 × 1.05，积分口径 = ×105）。与 pricing-publishing.service 同数。 */
-const FLOOR_MULTIPLIER = 105
 
 /** video 锚点行时长（CostRate spec '768p:5s' / '2k:5s'）。 */
 const ANCHOR_DURATION_S = 5
@@ -77,18 +75,17 @@ export function assertLaunchFloor(
 ): void {
   for (const e of entries) {
     if (!e.costRateId) continue
-    // P2 M-4：token 行 credits 存的是 r（tokens/credit 反比率），不是售价——
-    // 「售价 ≥ 成本地板」量纲不适用；其成本覆盖由构造保证（r 由 costYuan×marginBp
-    // 反推，marginBp 11000 > FLOOR_MULTIPLIER 105 ⇒ 每 credit 收入恒 ≥ 成本）。
-    if (e.capability === 'text') continue
     const costYuan = rateCostById.get(e.costRateId)
     if (costYuan === undefined) {
       throw new Error(`seedPricingV2Draft: 地板校验缺 CostRate 行 ${e.costRateId}（${e.matchKey}）`)
     }
-    const floor = Math.ceil(costYuan * FLOOR_MULTIPLIER)
-    if (e.credits < floor) {
+    // 价格行判下限、token 反比率行判上限（同一条「收入 ≥ 成本 × 1.05」的两种量纲展开，
+    // 委托 pricing.core.checkCostFloor）。种子按 marginBp=11000 现算 r ⇒ 110>105 ⇒ 必过，
+    // 此防线防的是未来映射改动（折扣/封顶/换锚）把带病条目混进草案。
+    const v = checkCostFloor(e, costYuan)
+    if (v) {
       throw new Error(
-        `seedPricingV2Draft: 地板校验失败 ${e.matchKey}=${e.credits} < ceil(${costYuan}×105)=${floor}——不许带病草案进审批`,
+        `seedPricingV2Draft: 地板校验失败 ${v.matchKey}=${v.credits} ${v.kind === 'max' ? '>' : '<'} ${v.kind === 'max' ? 'ceiling' : 'floor'}=${v.limit}——不许带病草案进审批`,
       )
     }
   }

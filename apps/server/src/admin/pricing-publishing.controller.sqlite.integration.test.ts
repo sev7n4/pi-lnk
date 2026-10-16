@@ -238,7 +238,7 @@ describe('PricingPublishingController（P1-a T4）', () => {
       await service.upsertEntries(draft.id, [{ matchKey: 'm-a', capability: 'text', credits: 50, costRateId: rate.id }])
       // 预览：diffSummary 披露违规但不抛
       const preview = await controller.diff(draft.id)
-      expect(preview.data.floorViolations).toEqual([{ matchKey: 'm-a', credits: 50, floor: 105 }])
+      expect(preview.data.floorViolations).toEqual([{ matchKey: 'm-a', credits: 50, limit: 105, kind: 'min' }])
       // 发布：400 拒绝
       await expect(controller.publish(draft.id)).rejects.toThrow(BadRequestException)
       expect((await prisma.priceListVersion.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe('draft')

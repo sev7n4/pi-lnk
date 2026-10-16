@@ -7,17 +7,16 @@
  * 语义要点：
  * - publish 全程单 $transaction：draft→active+publishedAt、旧 active→archived、地板校验、
  *   audit 全在事务内；地板违规/空 draft 在事务内 throw ⇒ 状态零变化（任意时刻至多一个 active）。
- * - 地板只约束有 costRateId 的条目：credits < ceil(costYuan × 105) → 400 附违规清单；
+ * - 地板只约束有 costRateId 的条目，判定委托 pricing.core.checkCostFloor——价格行判下限、
+ *   token 反比率行判上限（同一条「收入 ≥ 成本 × 1.05」的两种量纲展开）→ 400 附违规清单；
  *   costRateId 引用的 CostRate 行缺失 → 跳过地板并记入 missingCost（返回/告警中体现）。
  * - diffSummary 是预览用途，地板违规只算不抛。
  * - rollback：当前 active → archived；「publishedAt 最新且非当前 active 的 archived」→ active。
  */
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { checkCostFloor, type FloorViolation } from './pricing.core'
 import { PricingService } from './pricing.service'
-
-/** 成本地板系数：costYuan（元）× 100（分/credit）× 1.05（毛利锚）= 105 */
-const FLOOR_MULTIPLIER = 105
 
 /**
  * 草案 vs active 的对比摘要。
@@ -33,7 +32,7 @@ export interface DiffSummary {
   unchanged: number
   maxIncrease: { matchKey: string; from: number; to: number; pct: number } | null
   maxDecrease: { matchKey: string; from: number; to: number; pct: number } | null
-  floorViolations: { matchKey: string; credits: number; floor: number }[]
+  floorViolations: FloorViolation[]
   /** 有 costRateId 引用但 CostRate 行缺失（发布时按跳过地板处理并告警） */
   missingCost: string[]
   /**
@@ -323,7 +322,10 @@ export class PricingPublishingService {
       }
       if (floorViolations.length > 0) {
         const detail = floorViolations
-          .map((v) => `${v.matchKey} credits=${v.credits} < floor=${v.floor}`)
+          .map(
+            (v) =>
+              `${v.matchKey} credits=${v.credits} ${v.kind === 'max' ? '>' : '<'} ${v.kind === 'max' ? 'ceiling' : 'floor'}=${v.limit}`,
+          )
           .join('; ')
         throw new BadRequestException(`地板校验失败 ${floorViolations.length} 条: ${detail}`)
       }
@@ -404,17 +406,18 @@ export class PricingPublishingService {
   }
 
   /**
-   * 地板校验：仅对有 costRateId 的条目；CostRate 行缺失 → missingCost（跳过地板）；
-   * credits < ceil(costYuan × 105) → floorViolations。
+   * 地板校验：仅对有 costRateId 的条目；CostRate 行缺失 → missingCost（跳过地板，
+   * 由上层告警）；其余委托 pricing.core.checkCostFloor——价格行判下限、token 反比率
+   * 行判上限（同一条「收入 ≥ 成本 × 1.05」的两种量纲展开）。
    */
   private async checkFloors(
     entries: EntryLike[],
     findRates: (ids: string[]) => Promise<Array<{ id: string; costYuan: number }>>,
   ): Promise<{
-    floorViolations: { matchKey: string; credits: number; floor: number }[]
+    floorViolations: FloorViolation[]
     missingCost: string[]
   }> {
-    const floorViolations: { matchKey: string; credits: number; floor: number }[] = []
+    const floorViolations: FloorViolation[] = []
     const missingCost: string[] = []
     const rateIds = [...new Set(entries.filter((e) => e.costRateId).map((e) => e.costRateId as string))]
     const rates = rateIds.length > 0 ? await findRates(rateIds) : []
@@ -426,10 +429,8 @@ export class PricingPublishingService {
         missingCost.push(e.matchKey)
         continue
       }
-      const floor = Math.ceil(rate.costYuan * FLOOR_MULTIPLIER)
-      if (e.credits < floor) {
-        floorViolations.push({ matchKey: e.matchKey, credits: e.credits, floor })
-      }
+      const v = checkCostFloor(e, rate.costYuan)
+      if (v) floorViolations.push(v)
     }
     return { floorViolations, missingCost }
   }
