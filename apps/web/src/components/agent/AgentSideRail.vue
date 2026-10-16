@@ -116,6 +116,7 @@ import {
   describeActivity,
   describeRuntimeActivity,
 } from '@/components/agent/activityLine'
+import { buildStatusLine } from '@/components/agent/composer/statusLine'
 import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
@@ -845,6 +846,34 @@ const turnStatus = computed(() => {
     settledText: turnSettledText(lastAssistantMessage.value?.executionTrace),
   })
 })
+/**
+ * P1-3.1：composer 生成中状态行（composer-status-line）数据模型。
+ * 数据源全部复用现状，**不新增 store 状态**：
+ * - phase：执行轨迹聚合的「正在做什么」人话（runtime activity 优先，回落 trace 最新一步；
+ *   与 turnStatus 同源，决策 3/5：绝不把内部工具名吐给用户）。
+ * - progress / eta：现链路只有已耗时（turnStartedAt→elapsed），无「完成比例 / 剩余时长」
+ *   数据源 → 传 null：进度条走不确定态、ETA 段隐藏（成本未知 → 隐藏而非置零）。
+ * - points：Q2 liveEstimatedCredits（usage_delta 实时预估，#415 口径，回合结束清位）；
+ *   ≤0 / 缺失视为成本未知 → null 隐藏。
+ */
+const composerStatus = computed(() =>
+  buildStatusLine({
+    phase:
+      describeRuntimeActivity(agent.activity) ??
+      describeActivity(lastAssistantMessage.value?.executionTrace?.steps),
+    progressRatio: null,
+    etaSeconds: null,
+    points:
+      agent.liveEstimatedCredits != null && agent.liveEstimatedCredits > 0
+        ? agent.liveEstimatedCredits
+        : null,
+  }),
+)
+const composerProgressPct = computed(() =>
+  composerStatus.value.progress == null
+    ? null
+    : `${Math.round(composerStatus.value.progress * 100)}%`,
+)
 /**
  * 阻塞等待 propose_generation（2026-10-01）：确认动作只存在于画布节点，
  * 聊天侧必须明示「去哪确认 + 一键定位」，否则用户只看到转圈无从下手。
@@ -3541,6 +3570,30 @@ defineExpose({
           <div class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1">
             <!-- 2026-10-15（治理 2/2）：dock 不再承载对话内容与滚动——
                  live 时间线 / 提示卡 / ask 卡已移回上方主滚动流；这里只剩 composer 与其周边固定件。 -->
+            <!-- P1-3.1：生成中状态行——输入区上方、ref 芯片层之上，≤24px。
+                 左=阶段文案（执行轨迹聚合）、中=细进度条（无比例源 → 不确定态）、
+                 右=预估剩余时长 + 本轮预估积分（成本未知段隐藏）。
+                 停止键仍在 DockGenerateButton 同一槽位切换（P1-3.2 保护项，不动坐标）。 -->
+            <div
+              v-if="agent.isStreaming"
+              class="composer-status-line"
+              role="status"
+              aria-live="polite"
+            >
+              <span class="composer-status-phase">{{ composerStatus.phase }}</span>
+              <span
+                class="composer-status-track"
+                :class="{ 'is-indeterminate': composerProgressPct === null }"
+                aria-hidden="true"
+              >
+                <span
+                  class="composer-status-fill"
+                  :style="composerProgressPct ? { width: composerProgressPct } : undefined"
+                />
+              </span>
+              <span v-if="composerStatus.eta" class="composer-status-eta">{{ composerStatus.eta }}</span>
+              <span v-if="composerStatus.points" class="composer-status-points">{{ composerStatus.points }}</span>
+            </div>
             <div
               ref="composerDockRef"
               class="agent-input-dock"
@@ -4522,6 +4575,59 @@ defineExpose({
 .agent-turn--user:hover .agent-msg-actions,
 .agent-bubble-user:hover ~ .agent-msg-actions {
   opacity: 1;
+}
+
+/* ---- P1-3.1：生成中状态行（输入区上方 ≤24px；只用 --lnk-* L2 令牌） ---- */
+.composer-status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  margin: 0 2px 2px;
+  overflow: hidden;
+  font-size: var(--lnk-text-2xs);
+  line-height: 16px;
+  color: var(--lnk-text-muted);
+}
+
+.composer-status-phase {
+  flex: none;
+  white-space: nowrap;
+}
+
+.composer-status-track {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--lnk-ink-200);
+}
+
+.composer-status-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 2px;
+  background: var(--lnk-accent);
+  transition: width 0.3s var(--lnk-ease-standard, ease);
+}
+
+/* 无完成比例数据源 → 不确定态（扫动），绝不渲染假进度 */
+.composer-status-track.is-indeterminate .composer-status-fill {
+  width: 30%;
+  animation: composer-status-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes composer-status-sweep {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
 }
 
 /* ---- 底部输入 dock（对齐 dock-studio 毛玻璃） ---- */
