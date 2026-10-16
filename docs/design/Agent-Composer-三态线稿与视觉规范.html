@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agent Composer 三态线稿与视觉规范（落地基准）</title>
+<style>
+  /* ===== 本文档自身消费的令牌：全部取自 apps/web/src/styles/design-tokens.css 实测值 ===== */
+  :root{
+    /* L2 语义 · 浅色 */
+    --surface-canvas:#eef0f5; --surface-sunken:#e6e9f0; --surface-base:#ffffff; --surface-raised:#ffffff;
+    --text-primary:#1f2430; --text-secondary:#4a5364; --text-muted:#5a6478; --text-disabled:#9aa3b2;
+    --border-subtle:rgba(23,25,35,.10); --border-default:rgba(23,25,35,.14); --border-strong:rgba(23,25,35,.22);
+    --border-focus:#5b4ce6;
+    --accent:#5b4ce6; --accent-hover:#4a3bc4; --accent-text:#4a3bc4; --accent-subtle:rgba(91,76,230,.12);
+    --danger:#dc2626; --text-on-accent:#ffffff;
+    --shadow-md:0 8px 24px rgba(23,25,35,.12),0 2px 6px rgba(23,25,35,.06);
+    --shadow-sm:0 2px 6px rgba(23,25,35,.08);
+    /* L1 复用 */
+    --ink-50:#f7f8fa; --ink-200:#e2e5ec; --ink-300:#c9ced6;
+    /* 尺寸/动效令牌 */
+    --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-xl:16px; --radius-full:9999px;
+    --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px;
+    --text-2xs:11px; --text-xs:12px; --text-sm:13px; --text-base:14px; --text-md:16px; --text-lg:18px; --text-xl:20px; --text-2xl:24px;
+    --dur-instant:100ms; --dur-fast:150ms; --dur-base:200ms; --dur-slow:320ms;
+    --ease-decelerate:cubic-bezier(.16,1,.3,1); --ease-standard:cubic-bezier(.2,0,.2,1);
+  }
+  body[data-theme="dark"]{
+    --surface-canvas:#131318; --surface-sunken:#0e0e12; --surface-base:#1a1a21; --surface-raised:#1f2430;
+    --text-primary:#f4f4f8; --text-secondary:#b9bdc9; --text-muted:#949aa8; --text-disabled:#6b7180;
+    --border-subtle:rgba(255,255,255,.08); --border-default:rgba(255,255,255,.12); --border-strong:rgba(255,255,255,.18);
+    --border-focus:#8a7dff;
+    --accent:#6d5dfc; --accent-hover:#5b4ce6; --accent-text:#a89dff; --accent-subtle:rgba(109,93,252,.16);
+    --shadow-md:0 8px 24px rgba(0,0,0,.46),0 2px 6px rgba(0,0,0,.3);
+    --shadow-sm:0 2px 6px rgba(0,0,0,.42);
+    --ink-50:#232833; --ink-200:#333a48; --ink-300:#4a5364;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface-canvas);color:var(--text-primary);
+    font-family:'Inter','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+    font-size:var(--text-base);line-height:1.6;padding:32px 24px 80px}
+  h1{font-size:var(--text-2xl);line-height:1.25;margin:0 0 6px;font-weight:700}
+  h2{font-size:var(--text-xl);margin:44px 0 4px;font-weight:600;scroll-margin-top:16px}
+  h3{font-size:var(--text-md);margin:20px 0 8px;font-weight:600}
+  .sub{color:var(--text-muted);font-size:var(--text-sm);margin:0 0 8px;max-width:860px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}
+  .meta span{font-size:var(--text-2xs);color:var(--text-secondary);border:1px solid var(--border-default);border-radius:var(--radius-full);padding:2px 10px}
+  .wrap{max-width:1080px;margin:0 auto}
+  .theme-btn{position:fixed;top:16px;right:16px;z-index:9;border:1px solid var(--border-strong);background:var(--surface-raised);
+    color:var(--text-primary);border-radius:var(--radius-full);padding:6px 14px;font-size:var(--text-xs);cursor:pointer;
+    box-shadow:var(--shadow-sm);transition:transform var(--dur-instant) var(--ease-standard)}
+  .theme-btn:hover{transform:translateY(-1px)}
+  /* 文档卡片 */
+  .doc{background:var(--surface-base);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:var(--space-4);margin:10px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-4)}
+  @media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr}}
+  table{border-collapse:collapse;width:100%;font-size:var(--text-sm)}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border-subtle);vertical-align:top}
+  th{color:var(--text-muted);font-weight:500;font-size:var(--text-xs)}
+  code,.tok{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:var(--text-xs);
+    background:var(--accent-subtle);color:var(--accent-text);border-radius:var(--radius-sm);padding:1px 6px}
+  /* ===== 线稿标注 ===== */
+  .stage{background:var(--surface-sunken);border:1px dashed var(--border-default);border-radius:var(--radius-lg);
+    padding:var(--space-4);position:relative;overflow:visible}
+  .callout{position:absolute;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.3;color:var(--accent-text);
+    background:var(--surface-base);border:1px dashed var(--accent);border-radius:var(--radius-sm);padding:1px 6px;z-index:3;white-space:nowrap}
+  /* ===== PC composer 线稿组件（消费同一套令牌）===== */
+  .pc-card{background:var(--surface-raised);border:1.5px solid var(--border-default);border-radius:var(--radius-xl);
+    box-shadow:var(--shadow-md);padding:var(--space-3);position:relative;max-width:500px;transition:border-color var(--dur-fast) var(--ease-standard)}
+  .pc-card:focus-within{border-color:var(--border-focus);box-shadow:var(--shadow-md),0 0 0 2px var(--accent-subtle)}
+  .persona{font-size:var(--text-sm);color:var(--text-secondary);margin:0 0 var(--space-3)}
+  .sample-chips{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:0 0 var(--space-3)}
+  .sample-chips .chip{font-size:var(--text-sm);color:var(--text-secondary);background:var(--surface-raised);
+    border:1px solid var(--border-default);border-radius:var(--radius-full);padding:5px 12px;cursor:pointer;
+    transition:border-color var(--dur-fast),color var(--dur-fast)}
+  .sample-chips .chip:hover{border-color:var(--border-strong);color:var(--text-primary)}
+  .pc-text{min-height:96px;font-size:var(--text-base);line-height:22px;color:var(--text-primary);padding:var(--space-1) var(--space-2)}
+  .pc-text.empty{color:var(--text-muted)}
+  .refstrip{display:flex;gap:var(--space-2);flex-wrap:wrap;margin:0 0 var(--space-2)}
+  .refchip{display:inline-flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--text-secondary);
+    background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:3px 8px}
+  .refchip .thumb{width:18px;height:18px;border-radius:4px;background:var(--ink-300);display:inline-block}
+  .refchip .x{color:var(--text-muted);cursor:pointer}
+  .ctrl-row{display:flex;align-items:center;gap:var(--space-1);padding-top:var(--space-2);border-top:1px solid var(--border-subtle)}
+  .ghost{width:32px;height:32px;border:none;background:transparent;border-radius:var(--radius-md);cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);position:relative;
+    transition:color var(--dur-fast) var(--ease-standard),transform var(--dur-instant) var(--ease-standard)}
+  .ghost:hover{color:var(--text-primary)}
+  .ghost:active{transform:scale(.96)}
+  .ghost:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px}
+  .ghost.send{color:var(--accent-text)}
+  .ghost.send.ready:hover{color:var(--accent-hover)}
+  .ghost.send.disabled{color:var(--text-disabled);cursor:not-allowed}
+  .ghost .lbl{font-size:var(--text-xs)}
+  .ghost.stop{width:32px;height:32px;border-radius:var(--radius-sm);background:var(--danger);color:var(--text-on-accent)}
+  .ghost.model{width:auto;padding:0 8px;gap:4px}
+  /* ◎ 左顶点锚定：圆心与 composer 左顶点重合 */
+  .corner-anchor{position:absolute;top:0;left:0;width:22px;height:22px;border-radius:var(--radius-full);
+    transform:translate(-50%,-50%);border:none;background:transparent;color:var(--accent-text);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;font-size:var(--text-sm);font-weight:600;
+    transition:color var(--dur-fast)}
+  .corner-anchor:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px}
+  /* 状态行（系统层） */
+  .status-line{display:flex;align-items:center;gap:var(--space-2);height:24px;margin:0 2px var(--space-2);
+    font-size:var(--text-2xs);color:var(--text-muted)}
+  .status-line .bar-track{flex:1;height:3px;border-radius:var(--radius-full);background:var(--ink-200);overflow:hidden}
+  .status-line .bar-fill{width:62%;height:100%;border-radius:inherit;background:var(--accent);animation:ind 1.6s var(--ease-standard) infinite}
+  @keyframes ind{0%{margin-left:-30%}100%{margin-left:100%}}
+  .interject{display:flex;gap:var(--space-2);margin:0 2px var(--space-2)}
+  .interject .iopt{font-size:var(--text-2xs);color:var(--text-secondary);border:1px solid var(--border-default);
+    border-radius:var(--radius-full);padding:2px 10px;background:transparent;cursor:pointer}
+  /* ===== 移动端线稿 ===== */
+  .phone{width:340px;margin:0 auto;background:var(--surface-canvas);border:1.5px solid var(--border-strong);
+    border-radius:28px;padding:14px 12px 8px;position:relative;min-height:300px;display:flex;flex-direction:column}
+  .phone .canvas-hint{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);
+    font-size:var(--text-xs);border:1px dashed var(--border-default);border-radius:var(--radius-md);margin-bottom:var(--space-3);min-height:120px}
+  .m-status{height:24px;display:flex;align-items:center;gap:6px;font-size:var(--text-2xs);color:var(--text-muted);margin:0 4px 6px}
+  .m-status .bar-track{flex:1;height:3px;border-radius:var(--radius-full);background:var(--ink-200)}
+  .m-status .bar-fill{width:55%;height:100%;border-radius:inherit;background:var(--accent)}
+  .m-bar{background:var(--surface-raised);border:1.5px solid var(--border-default);border-radius:var(--radius-full);
+    box-shadow:var(--shadow-sm);padding:0 var(--space-2);min-height:48px;display:flex;align-items:center;gap:var(--space-1);position:relative}
+  .m-bar.stacked{border-radius:20px;flex-direction:column;align-items:stretch;padding:6px 8px;gap:4px;min-height:0}
+  .m-bar:focus-within{border-color:var(--border-focus);box-shadow:var(--shadow-sm),0 0 0 2px var(--accent-subtle)}
+  .m-line{display:flex;align-items:center;gap:var(--space-1);position:relative;min-height:34px}
+  .m-hint{flex:1;color:var(--text-muted);font-size:var(--text-base);padding-left:2px}
+  .m-text{flex:1;color:var(--text-primary);font-size:var(--text-base)}
+  .caret{display:inline-block;width:1.5px;height:18px;background:var(--accent);vertical-align:-3px;margin-right:1px}
+  .m-ghost{min-width:44px;min-height:44px;border:none;background:transparent;border-radius:var(--radius-md);cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);position:relative;
+    transition:color var(--dur-fast)}
+  .m-ghost:hover{color:var(--text-primary)}
+  .m-ghost:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px}
+  .m-ghost.send{color:var(--accent-text)}
+  .m-ghost.stop{color:var(--danger)}
+  .m-ghost.stop .sq{width:14px;height:14px;border-radius:3px;background:var(--danger)}
+  .m-plus{color:var(--text-secondary)}
+  /* ◎ 移动端左顶点 */
+  .m-corner{position:absolute;top:0;left:0;width:22px;height:22px;border-radius:var(--radius-full);
+    transform:translate(-50%,-50%);border:none;background:transparent;color:var(--accent-text);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;font-size:var(--text-sm);font-weight:600}
+  .m-chiprow{display:flex;gap:6px;align-items:center;padding:0 2px 2px}
+  /* 空态 ◎ 隐藏示意 */
+  .ghost-off{position:absolute;top:0;left:0;width:22px;height:22px;border-radius:var(--radius-full);transform:translate(-50%,-50%);
+    border:1px dashed var(--border-strong);opacity:.45}
+  /* DO/DONT */
+  .dd{border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);font-size:var(--text-sm);margin:8px 0}
+  .dd.do{border:1px solid rgba(22,163,74,.4);background:rgba(22,163,74,.07)}
+  .dd.dont{border:1px solid rgba(220,38,38,.35);background:rgba(220,38,38,.06)}
+  .dd b{display:block;margin-bottom:2px}
+  .dd.do b{color:#15803d}.dd.dont b{color:#b3261e}
+  /* 清单 */
+  .check{list-style:none;padding:0;margin:0}
+  .check li{padding:6px 0 6px 26px;position:relative;border-bottom:1px dashed var(--border-subtle);font-size:var(--text-sm)}
+  .check li::before{content:"☐";position:absolute;left:2px;color:var(--accent-text)}
+  .check li .ref{color:var(--text-muted);font-size:var(--text-2xs)}
+  .toc{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0}
+  .toc a{font-size:var(--text-xs);color:var(--accent-text);text-decoration:none;border:1px solid var(--border-default);
+    border-radius:var(--radius-full);padding:3px 12px;background:var(--surface-base)}
+  .toc a:hover{border-color:var(--border-strong)}
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body data-theme="light">
+<button class="theme-btn" onclick="const b=document.body;b.dataset.theme=b.dataset.theme==='dark'?'light':'dark';this.textContent=b.dataset.theme==='dark'?'☀ 浅色':'☾ 深色'">☾ 深色</button>
+
+<div class="wrap">
+  <h1>Agent Composer 三态线稿与视觉规范</h1>
+  <p class="sub">本文档是《Agent Composer UI-UX 整改规格》v0.5.3 的<b>落地视觉基准</b>：把 §5.1 / §5.2 / §5.5 的文字判据渲染为可直接对照实现的高保真线稿，并给出令牌映射、组件规格、动效与遵循清单。</p>
+  <div class="meta">
+    <span>基准规格 v0.5.3-draft</span><span>基准代码 e6116e10</span><span>设计体系 墨流 Ink Flow</span><span>令牌 SSOT design-tokens.css</span><span>双主题一等公民</span>
+  </div>
+  <nav class="toc">
+    <a href="#s0">0 使用说明</a><a href="#s1">1 令牌映射</a><a href="#s2">2 PC 线稿</a><a href="#s3">3 移动端线稿</a><a href="#s4">4 组件规格</a><a href="#s5">5 状态与动效</a><a href="#s6">6 遵循清单</a>
+  </nav>
+
+  <h2 id="s0">0 · 使用说明（先读）</h2>
+  <div class="grid2">
+    <div class="doc">
+      <h3>文档定位</h3>
+      <p style="font-size:var(--text-sm);margin:0">线稿中的<b>布局、尺寸、令牌、状态</b>是落地对照基准；文案与图标为示意。冲突裁决顺序：<b>规格文字判据 &gt; 本线稿 &gt; 个人审美</b>。验收走查以「截图 ↔ 线稿」并排比对。</p>
+    </div>
+    <div class="doc">
+      <h3>两层契约（规格 §2 原则 7 / §5.5）</h3>
+      <p style="font-size:var(--text-sm);margin:0">composer = <b>单一干净表面</b>（PC 整卡 / 移动端单条），文本直接落表面、<b>无内嵌输入框描边</b>；表面内 = 草稿（ref 芯片 + 文本）+ 无背景 ghost 控件；表面上方 = 仅系统层（状态行 / 插话选项 / PC 首屏样例 chips）。focus 以<b>表面边框 → border-focus + ring</b> 表达。</p>
+    </div>
+  </div>
+
+  <h2 id="s1">1 · 令牌映射（composer 只允许消费这些）</h2>
+  <div class="doc">
+    <table>
+      <tr><th style="width:26%">用途</th><th style="width:34%">令牌（L2 语义）</th><th>说明</th></tr>
+      <tr><td>composer 表面（卡/条）</td><td><code>--lnk-surface-raised</code></td><td>深 <code>#1f2430</code> / 浅 <code>#ffffff</code>，成对</td></tr>
+      <tr><td>画布/页面底</td><td><code>--lnk-surface-canvas</code></td><td>深 <code>#131318</code> / 浅 <code>#eef0f5</code></td></tr>
+      <tr><td>芯片/凹陷面</td><td><code>--lnk-surface-sunken</code></td><td>ref 芯片底、样例 chip 底可用</td></tr>
+      <tr><td>主文本 / 次文本 / 弱文本</td><td><code>--lnk-text-primary</code> / <code>-secondary</code> / <code>-muted</code></td><td>实色，浅 4.90:1 / 深 5.50:1（P0-2 达标档）；禁 rgba 文字</td></tr>
+      <tr><td>边框（静默/默认/强）</td><td><code>--lnk-border-subtle / -default / -strong</code></td><td>表面描边用 default</td></tr>
+      <tr><td>focus 环</td><td><code>--lnk-border-focus</code> + <code>--lnk-accent-subtle</code></td><td>outline 2px offset 2px；禁 outline:none</td></tr>
+      <tr><td>品牌强调（发送/链接）</td><td><code>--lnk-accent-text</code> / <code>--lnk-accent-hover</code></td><td>ghost 控件用「字色档」不上底色</td></tr>
+      <tr><td>停止（唯一强调色例外）</td><td><code>--lnk-red-600</code> + <code>--lnk-text-on-accent</code></td><td>仅生成态停止块可填充</td></tr>
+      <tr><td>圆角</td><td><code>--lnk-radius-xl(16)</code> 卡 / <code>-md(8)</code> 控件 / <code>-full</code> 移动条</td><td>禁魔法值</td></tr>
+      <tr><td>间距</td><td><code>--lnk-space-1..6</code>（4/8/12/16/20/24）</td><td>8pt 网格</td></tr>
+      <tr><td>字号/行高</td><td><code>--lnk-text-2xs(11)/xs(12)/sm(13)/base(14)</code></td><td>状态行 2xs，正文 base；禁 px 直写</td></tr>
+      <tr><td>动效</td><td><code>--lnk-duration-instant/fast/base</code> + <code>--lnk-ease-decelerate</code></td><td>见 §5；prefers-reduced-motion 全关</td></tr>
+      <tr><td>阴影</td><td><code>--lnk-shadow-md</code>（PC 卡）/ <code>-sm</code>（移动条）</td><td>深浅成对，禁硬编码 rgba 黑投影（P0-3）</td></tr>
+    </table>
+    <p style="font-size:var(--text-xs);color:var(--text-muted);margin:8px 0 0">⛔ 硬约束：composer 内禁新增 hex / rgba / text-white / bg-[#]；只允许 L2/L3 语义令牌；每个 L2 深浅同名成对。守卫：<code>design-token.test.ts</code> + <code>theme-usage.test.ts</code>（棘轮）。</p>
+  </div>
+
+  <h2 id="s2">2 · PC 三态线稿（右栏 500px，B6）</h2>
+
+  <h3>① 空闲（首屏）</h3>
+  <div class="stage">
+    <span class="callout" style="top:6px;right:8px">样例 chips = 系统层·浮起</span>
+    <span class="callout" style="bottom:118px;left:8px">文本直接落卡面·无内嵌描边</span>
+    <span class="callout" style="bottom:52px;right:8px">A级 ghost 32×32·无背景</span>
+    <div class="pc-card">
+      <span class="ghost-off" title="◎ 空态隐藏"></span>
+      <p class="persona">我是 π —— 可以引用画布节点，帮你生成与迭代视觉内容。</p>
+      <div class="sample-chips">
+        <button class="chip">把首页 hero 重画成电商横幅</button>
+        <button class="chip">给选中的图做三张变体</button>
+        <button class="chip">按这份 SKU 卡出详情页</button>
+        <button class="chip">把这轮产出拼成对比图</button>
+      </div>
+      <div class="pc-text empty">描述你的想法，或 @ 引用画布节点…</div>
+      <div class="ctrl-row">
+        <button class="ghost" aria-label="更多：本地上传 / 资产库 / 参数预设">＋</button>
+        <button class="ghost model" aria-label="选择模型">自动 ⌄</button>
+        <button class="ghost" aria-label="按住说话">🎙</button>
+        <span style="flex:1"></span>
+        <button class="ghost send disabled" aria-label="发送（禁用）" disabled>↑</button>
+      </div>
+    </div>
+  </div>
+  <ul class="check" style="margin:10px 0 0">
+    <li>persona 一行轻量（P1-1.3），无 hero 大块；样例 chips 4 条按画布状态动态选（P1-1.1），点击<b>填充不发送</b>（P1-1.2）</li>
+    <li>◎ 空态隐藏（虚线圈示意位置）；键入 <code>@</code> 仍打开选择器（P1-2.3）</li>
+    <li>发送禁用至有内容；C 级收进 <code>＋</code> 抽屉（P1-2.1）</li>
+  </ul>
+
+  <h3>② 输入</h3>
+  <div class="stage">
+    <span class="callout" style="top:86px;left:8px">◎ 圆心=卡左顶点·22px</span>
+    <span class="callout" style="top:8px;right:8px">ref 芯片 = 草稿·卡内文本上方</span>
+    <span class="callout" style="bottom:6px;left:8px">focus：卡边框→border-focus + ring</span>
+    <div class="pc-card" style="border-color:var(--border-focus);box-shadow:var(--shadow-md),0 0 0 2px var(--accent-subtle)">
+      <span class="corner-anchor" aria-label="引用画布节点">@</span>
+      <div class="refstrip">
+        <span class="refchip"><span class="thumb"></span>产品渲染图<span class="x">✕</span></span>
+        <span class="refchip"><span class="thumb"></span>SKU 卡片<span class="x">✕</span></span>
+      </div>
+      <div class="pc-text">帮我给这张图做一版竖排排版，<span class="caret"></span></div>
+      <div class="ctrl-row">
+        <button class="ghost" aria-label="更多">＋</button>
+        <button class="ghost model" aria-label="选择模型">GLM ⌄</button>
+        <button class="ghost" aria-label="按住说话">🎙</button>
+        <button class="ghost" style="width:auto;padding:0 8px" aria-label="思考档位：标准">思考·标准 ⌄</button>
+        <span style="flex:1"></span>
+        <button class="ghost send ready" aria-label="发送">↑</button>
+      </div>
+    </div>
+  </div>
+  <ul class="check" style="margin:10px 0 0">
+    <li>卡形态恒定：文本区 3 行起 / ≤200px（B7）；◎ 出现在左顶点、衔接光标（P1-2.3）</li>
+    <li>ref 芯片（AgentRefStrip）在卡<b>内</b>、文本上方：可拖排序 / 可移除（保护项 §6）</li>
+    <li>B 级思考 chip 仅非默认值出现，ghost 无背景（P1-2.2）</li>
+  </ul>
+
+  <h3>③ 生成中</h3>
+  <div class="stage">
+    <span class="callout" style="top:8px;right:8px">状态行≤24px·系统层</span>
+    <span class="callout" style="bottom:56px;right:8px">停止=发送原位·唯一填充</span>
+    <div class="pc-card">
+      <span class="corner-anchor" aria-label="引用画布节点">@</span>
+      <div class="status-line">
+        <span>生成中 · 排版变体</span><span class="bar-track"><span class="bar-fill"></span></span><span>约 40s · 8 积分</span>
+      </div>
+      <div class="refstrip"><span class="refchip"><span class="thumb"></span>产品渲染图</span></div>
+      <div class="pc-text empty">输入消息…加入待发队列</div>
+      <div class="ctrl-row">
+        <button class="ghost" aria-label="更多">＋</button>
+        <button class="ghost model" aria-label="选择模型">GLM ⌄</button>
+        <button class="ghost" aria-label="按住说话">🎙</button>
+        <span style="flex:1"></span>
+        <button class="ghost stop" aria-label="停止生成"><span style="width:12px;height:12px;border-radius:2px;background:currentColor;display:inline-block"></span></button>
+      </div>
+    </div>
+    <div class="interject" style="max-width:500px;margin-top:8px">
+      <button class="iopt">立即插话</button><button class="iopt">等它跑完</button>
+    </div>
+  </div>
+  <ul class="check" style="margin:10px 0 0">
+    <li>状态行：阶段 / 细进度 / 预估时长 + 积分（成本未知不显示，P1-3.1）</li>
+    <li>停止键与发送同坐标同层级（P1-3.2）；红色块为唯一强调色例外</li>
+    <li>插话轻选项在卡上方，不挤压输入区（保护项：流式插话队列）</li>
+  </ul>
+
+  <h2 id="s3">3 · 移动端三态线稿（375 基准）</h2>
+
+  <div class="grid3">
+    <div>
+      <h3>① 空闲</h3>
+      <div class="stage">
+        <span class="callout" style="bottom:64px;right:6px">命中44·视觉24</span>
+        <div class="phone">
+          <div class="canvas-hint">画布（露出上半·可点·无遮罩）</div>
+          <div class="m-bar">
+            <span class="ghost-off"></span>
+            <button class="m-ghost m-plus" aria-label="更多">＋</button>
+            <span class="m-hint">按住说话 · 点按输入</span>
+          </div>
+          <div style="height:10px"></div>
+        </div>
+      </div>
+      <ul class="check" style="margin:8px 0 0">
+        <li>单一裸条：条内仅 <code>＋</code> 1 个控件 + 提示（P1-5.3）</li>
+        <li>按住=语音 ASR 填入后切输入态（不自动提交）；点按=切输入态（P2-2.2）</li>
+        <li>◎ 空态隐藏；模型/发送不常驻</li>
+      </ul>
+    </div>
+    <div>
+      <h3>② 输入</h3>
+      <div class="stage">
+        <span class="callout" style="top:150px;left:6px">◎ 左顶点</span>
+        <div class="phone">
+          <div class="canvas-hint" style="min-height:80px">画布</div>
+          <div class="m-bar stacked">
+            <span class="m-corner" aria-label="引用画布节点">@</span>
+            <div class="m-chiprow">
+              <span class="refchip"><span class="thumb"></span>产品渲染图<span class="x">✕</span></span>
+            </div>
+            <div class="m-line">
+              <button class="m-ghost m-plus" aria-label="更多">＋</button>
+              <span class="m-text">排版一下这张图<span class="caret"></span></span>
+              <button class="m-ghost" aria-label="选择模型">⌄</button>
+              <button class="m-ghost send" aria-label="发送">↑</button>
+            </div>
+          </div>
+          <div style="height:10px"></div>
+        </div>
+      </div>
+      <ul class="check" style="margin:8px 0 0">
+        <li>同一条：芯片行（草稿·条内）+ 输入行，条随内容生长（两层契约）</li>
+        <li>条上控件 = ＋/模型/发送 3 个（P1-5.4），均 ghost 无背景</li>
+        <li>软键盘升起不使条变形（P1-5.1）；命中区 ≥44（P0-4.1）</li>
+      </ul>
+    </div>
+    <div>
+      <h3>③ 生成中</h3>
+      <div class="stage">
+        <span class="callout" style="top:96px;right:6px">状态行≤24px</span>
+        <div class="phone">
+          <div class="canvas-hint" style="min-height:80px">画布</div>
+          <div class="m-status"><span>生成中 · 62%</span><span class="bar-track"><span class="bar-fill" style="width:55%;animation:none"></span></span><span>约 40s</span></div>
+          <div class="m-bar stacked">
+            <span class="m-corner" aria-label="引用画布节点">@</span>
+            <div class="m-chiprow"><span class="refchip"><span class="thumb"></span>产品渲染图</span></div>
+            <div class="m-line">
+              <button class="m-ghost m-plus" aria-label="更多">＋</button>
+              <span class="m-hint">输入消息…加入待发队列</span>
+              <button class="m-ghost" aria-label="选择模型">⌄</button>
+              <button class="m-ghost stop" aria-label="停止生成"><span class="sq"></span></button>
+            </div>
+          </div>
+          <div class="interject" style="margin:6px 4px 0">
+            <button class="iopt">立即插话</button><button class="iopt">等它跑完</button>
+          </div>
+          <div style="height:6px"></div>
+        </div>
+      </div>
+      <ul class="check" style="margin:8px 0 0">
+        <li>不升屏、贴底裸条，画布仍可见（P1-5.1）</li>
+        <li>停止=发送原位（P1-3.2）；插话选项在条上方</li>
+        <li>若有 ref 芯片仍居条内草稿区</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2 id="s4">4 · 组件规格明细</h2>
+  <div class="doc">
+    <table>
+      <tr><th>组件</th><th>尺寸 / 令牌</th><th>状态</th><th>可达性</th></tr>
+      <tr>
+        <td><b>composer 表面</b>（PC 卡 / 移动条）</td>
+        <td>PC：<code>radius-xl</code> <code>surface-raised</code> <code>border-default</code> <code>shadow-md</code> padding <code>space-3</code>；移动：<code>radius-full</code> <code>shadow-sm</code> 高 48（堆叠态圆角 20）</td>
+        <td>focus-within：border→<code>border-focus</code> + 2px <code>accent-subtle</code> ring</td>
+        <td>容器 <code>role="group" aria-label="消息输入"</code></td>
+      </tr>
+      <tr>
+        <td><b>文本区</b></td>
+        <td>直接落表面，无描边；PC min 96 / max 200（B7、P2-3.2）；<code>text-base/22</code></td>
+        <td>placeholder = <code>text-muted</code>；生成态换排队语义文案（P0-1.2）</td>
+        <td>PC Enter 发送 / Shift+Enter 换行；移动仅按钮发送（P0-1.1）</td>
+      </tr>
+      <tr>
+        <td><b>ghost 控件</b>（＋/模型/🎙/发送/思考chip）</td>
+        <td>PC 32×32 / 移动 44×44 命中（视觉 24，透明 padding）；<code>radius-md</code>；色 <code>text-muted</code></td>
+        <td>hover→<code>text-primary</code>；active scale .96；发送就绪 <code>accent-text</code>；禁用 <code>text-disabled</code>；<b>任何状态不加底色</b></td>
+        <td>每个都有 <code>aria-label</code>（B19 只修 1 处 → 全覆盖）；<code>:focus-visible</code> ring</td>
+      </tr>
+      <tr>
+        <td><b>◎ 画布节点引用</b></td>
+        <td>22px 视觉圆，圆心 = 表面左顶点（translate(-50%,-50%)）；命中 PC 32 / 移动 44；色 <code>accent-text</code> 无底</td>
+        <td>输入/生成态可见；空态隐藏（透明度 0 + pointer-events none，保留 <code>@</code> 键盘路径）</td>
+        <td><code>aria-label="引用画布节点"</code>；点开的选择器用 listbox 语义（P2-4.1 同源）</td>
+      </tr>
+      <tr>
+        <td><b>停止块</b></td>
+        <td>32×32（PC）/ 44 命中（移动，视觉 14 方块）；<code>red-600</code> 填充 + <code>text-on-accent</code>；<code>radius-sm</code></td>
+        <td>生成态替换发送，坐标/层级不变（P1-3.2）</td>
+        <td><code>aria-label="停止生成"</code>；<code>aria-live="polite"</code> 播报阶段变化</td>
+      </tr>
+      <tr>
+        <td><b>ref 芯片</b>（草稿层）</td>
+        <td>高 24；<code>surface-sunken</code> 底 + <code>border-subtle</code> + <code>radius-sm</code>；缩略图 18×18 <code>radius-xs</code></td>
+        <td>hover 边框→<code>border-strong</code>；拖拽中 shadow-md + scale 1.02</td>
+        <td>移除钮 <code>aria-label="移除引用 X"</code>；芯片行 <code>role="list"</code></td>
+      </tr>
+      <tr>
+        <td><b>状态行</b>（系统层）</td>
+        <td>≤24px；<code>text-2xs</code> <code>text-muted</code>；进度条 3px <code>accent</code></td>
+        <td>不确定态用 indeterminate 动画；成本未知则隐藏对应段（P1-3.1）</td>
+        <td><code>role="status" aria-live="polite"</code></td>
+      </tr>
+      <tr>
+        <td><b>样例 chips / 插话选项</b>（系统层）</td>
+        <td>高 28；<code>surface-raised</code>（样例）/透明（插话）+ <code>border-default</code>；<code>radius-full</code> <code>text-sm</code></td>
+        <td>hover 边框→<code>border-strong</code> 字→primary；点击填充不发送</td>
+        <td>样例容器 <code>role="listbox"</code> 或按钮组 + 方向键</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2 id="s5">5 · 状态切换与动效</h2>
+  <div class="doc">
+    <table>
+      <tr><th>切换</th><th>变化</th><th>规格</th></tr>
+      <tr><td>空闲 → 输入</td><td>提示文字→光标；◎ 淡入；移动端条生长出芯片行</td><td><code>duration-base(200ms)</code> + <code>ease-decelerate</code>；◎ opacity 0→1 + scale .8→1；条高用 grid-rows 过渡，禁 height 魔法数</td></tr>
+      <tr><td>输入 → 生成中</td><td>发送→停止交叉替换；状态行滑入</td><td>按钮 crossfade <code>duration-instant(100ms)</code>；状态行 translateY(-6px)→0 + fade <code>duration-base</code></td></tr>
+      <tr><td>生成中 → 完成/失败</td><td>停止→发送恢复；状态行移除</td><td>反向同参数；产出收据行出现（P1-4.1，另属消息流）</td></tr>
+      <tr><td>按住说话（移动空闲）</td><td>条边框→<code>border-focus</code> + 电平呼吸</td><td>录音时长/电平反馈；上滑取消；<b>reduced-motion 下只变边框色不脉冲</b></td></tr>
+      <tr><td>全局</td><td>—</td><td>只动 <code>transform / opacity</code>；<code>@media (prefers-reduced-motion: reduce)</code> 全部禁用（本文档已内置示例）</td></tr>
+    </table>
+  </div>
+
+  <h2 id="s6">6 · 落地遵循清单（走查逐项打勾）</h2>
+  <div class="grid2">
+    <div class="doc">
+      <h3>结构红线</h3>
+      <ul class="check">
+        <li>composer 是<b>单一表面</b>：无内嵌输入框描边、无内部分区/嵌套面板 <span class="ref">§2 原则 7</span></li>
+        <li>移动端 <code>＋</code> 在条<b>内</b>左侧；无条外独立按钮、无独立控制行 <span class="ref">P1-5.3/5.4</span></li>
+        <li>ref 芯片在表面<b>内</b>文本上方；状态行/样例/插话在表面<b>上方</b> <span class="ref">两层契约 §5.5</span></li>
+        <li>composer 区段无 hover-only 选点球；◎ 三态按门控可见 <span class="ref">P1-2.3</span></li>
+        <li>C 抽屉（＋内）= 本地上传/资产库/参数预设，<b>不含</b>画布选节点 <span class="ref">P1-2.1</span></li>
+        <li>停止键与发送同坐标同层级 <span class="ref">P1-3.2</span></li>
+      </ul>
+    </div>
+    <div class="doc">
+      <h3>视觉红线</h3>
+      <ul class="check">
+        <li>ghost 控件任何状态<b>不加底色</b>（唯一填充 = 停止红块）<span class="ref">§2 原则 7</span></li>
+        <li>零新增 hex / rgba / text-white / bg-[#]；只消费 <code>--lnk-*</code> L2/L3 <span class="ref">P1-6.1</span></li>
+        <li>每个 L2 令牌深浅同名成对；文字色一律实色 <span class="ref">design-token.test.ts</span></li>
+        <li>文字对比度：muted 档浅 ≥4.5:1 / 深 ≥4.5:1（用 <code>-secondary</code>/-muted 实色档）<span class="ref">P0-2</span></li>
+        <li>阴影走 <code>--lnk-shadow-*</code>，浅色无硬黑投影 <span class="ref">P0-3</span></li>
+        <li>字号/间距/圆角全部令牌化，无 10/11px 裸值（状态行用 <code>text-2xs</code>）<span class="ref">P0-2.2</span></li>
+      </ul>
+    </div>
+    <div class="doc">
+      <h3>交互红线</h3>
+      <ul class="check">
+        <li>移动端主控件命中 ≥44（视觉不变，透明 padding 撑）<span class="ref">P0-4.1/4.2</span></li>
+        <li>键盘契约：PC Enter 发送；移动回车换行、仅按钮发送；占位符不提键盘 <span class="ref">P0-1</span></li>
+        <li>语音仅空闲态：按住条=录音、松开填入不提交、上滑取消；输入态无长按语音 <span class="ref">P2-2.2 / §5.2</span></li>
+        <li>◎ 独立命中区：点击 ◎ 不触发条的语音/切态手势 <span class="ref">P1-2.3 实现注记</span></li>
+        <li>所有图标按钮有 aria-label；focus-visible 有 ring；mention 菜单 listbox 语义 <span class="ref">B19 / P2-4.1</span></li>
+        <li>流式插话队列 / 引用芯片拖排 / 双主题 / 停止块四保护项能力不削弱 <span class="ref">§6</span></li>
+      </ul>
+    </div>
+    <div class="doc">
+      <h3>DO / DON'T 速查</h3>
+      <div class="dd do"><b>✓ DO</b>focus 用表面 border→border-focus + ring；hover 用颜色变化；条/卡随内容生长。</div>
+      <div class="dd do"><b>✓ DO</b> ◎ 用绝对定位圆心钉在左顶点，并给 ≥44 透明命中区。</div>
+      <div class="dd dont"><b>✗ DON'T</b>给 ghost 控件加 hover 底色块、把发送做成实心按钮——破坏「无背景」契约。</div>
+      <div class="dd dont"><b>✗ DON'T</b>把 ref 芯片放回浮层、或在卡内再画一个带描边的输入框——两层契约破坏。</div>
+      <div class="dd dont"><b>✗ DON'T</b>为省事用 <code>left/top</code> 动画或无限脉冲——掉帧且违反 reduced-motion。</div>
+    </div>
+  </div>
+
+  <p class="sub" style="margin-top:28px">本文档由规格 v0.5.3-draft 派生；规格文字判据更新时，先改规格、再同步本线稿。线稿内示例令牌值直接取自 <code>apps/web/src/styles/design-tokens.css</code>（深浅成对），可在浏览器中切换右上角按钮核对双主题表现。</p>
+</div>
+</body>
+</html>

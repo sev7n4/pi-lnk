@@ -68,7 +68,8 @@ function setHealth(rows: ModelHealthSummary['rows'] | null, generatedAt = '2026-
 }
 
 async function openDropdown(wrapper: ReturnType<typeof mount>) {
-  await wrapper.get('button[title="文本模型"]').trigger('click')
+  // P2-6.1：title 变为「文本模型 · 完整模型名」，用前缀匹配保留模态断言
+  await wrapper.get('button[title^="文本模型"]').trigger('click')
 }
 
 describe('UniversalModelSelector', () => {
@@ -89,7 +90,7 @@ describe('UniversalModelSelector', () => {
       props: { modelValue: visionImageModel, type: 'image' },
     })
 
-    await wrapper.get('button[title="图像模型"]').trigger('click')
+    await wrapper.get('button[title^="图像模型"]').trigger('click')
     expect(wrapper.text()).not.toContain('可识图')
   })
 })
@@ -104,7 +105,7 @@ describe('UniversalModelSelector 音频按 kind 过滤', () => {
   }
 
   async function openAudioDropdown(wrapper: ReturnType<typeof mount>) {
-    await wrapper.get('button[title="音频模型"]').trigger('click')
+    await wrapper.get('button[title^="音频模型"]').trigger('click')
   }
 
   /** 只取下拉候选列表的文本（不含「当前模型已停用」那一条头部）。 */

@@ -61,10 +61,12 @@
   --neo-hover-bg: rgba(255, 255, 255, 0.06);
   --neo-active-bg: rgba(255, 255, 255, 0.1);
 
-  /* ---- 文字 ---- */
+  /* ---- 文字 ----
+     P0-2.3（2026-10-16）：text/ink/fg 类令牌禁止 rgba 定义（text-token-guard.test.ts 守卫）。
+     原 rgba 值一律换成在其主背景上的**有效合成色**（视觉不变），muted 升为实色引用保对比度。 */
   --neo-text-primary: #f4f4f8;
-  --neo-text-secondary: rgba(244, 244, 248, 0.62);
-  --neo-text-muted: rgba(244, 244, 248, 0.4);
+  --neo-text-secondary: #9f9fa3; /* 原 rgba(244,244,248,.62) 压 #131318 合成；7.02:1 */
+  --neo-text-muted: var(--lnk-ink-400); /* #9aa3b2，7.28:1（P0-2.1 深色档） */
   --neo-text-invert: #16161c;
   /* 兼容别名：部分组件（宫格下拉 / 节点 overlay 等）按 --neo-text 消费，
      缺定义会让 color-mix(var(--neo-text)…) 整条声明失效 → 背景透明不可见（2026-09-24） */
@@ -93,8 +95,8 @@
   --neo-node-selected-ring: rgba(255, 255, 255, 1);
   --neo-node-title-color: #fff;
   --neo-node-icon-color: rgba(255, 255, 255, 0.85);
-  --neo-node-text: rgba(255, 255, 255, 0.85);
-  --neo-node-text-muted: rgba(255, 255, 255, 0.5);
+  --neo-node-text: #dddddf;     /* P0-2.3：原 rgba(255,255,255,.85) 压节点底 #202027 合成；12.03:1 */
+  --neo-node-text-muted: #8f8f93; /* P0-2.3：原 rgba(255,255,255,.5) 合成；5.06:1 */
 
   /* ---- 连线 ---- */
   --neo-edge: rgba(148, 151, 180, 0.3);
@@ -144,7 +146,7 @@
 
   /* ---- Agent 对话气泡（与用户/助手差异化；避免纯白底吞没白图引用） ---- */
   --agent-user-bg: linear-gradient(160deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.06) 100%);
-  --agent-user-text: rgba(255, 255, 255, 0.9);
+  --agent-user-text: #eaeaea; /* P0-2.3：原 rgba(255,255,255,.9) 压气泡底 #2b2b2f 合成；11.76:1 */
   --agent-user-border: rgba(255, 255, 255, 0.1);
   --agent-user-shadow: none;
   --agent-user-media-bg: rgba(255, 255, 255, 0.12);
@@ -221,8 +223,8 @@
   /* ⛔ = palette TEXT_FILL（#33414D on #FFFFFF ≥ 4.5:1，WCAG AA §4.2(3)）。
      保持与下方 secondary/muted 同源于 rgb(23,25,35) 的冷灰体系。 */
   --neo-text-primary: #33414D;
-  --neo-text-secondary: rgba(23, 25, 35, 0.64);
-  --neo-text-muted: rgba(23, 25, 35, 0.42);
+  --neo-text-secondary: #64666f; /* P0-2.3：原 rgba(23,25,35,.64) 压 #eef0f5 合成；5.02:1 / 白卡 5.72:1 */
+  --neo-text-muted: var(--lnk-ink-600); /* #5a6478，5.22:1（P0-2.1 浅色档） */
   --neo-text-invert: #ffffff;
   --neo-text: var(--neo-text-primary);
 
@@ -239,8 +241,8 @@
   --neo-node-selected-ring: rgba(23, 25, 35, 0.9);
   --neo-node-title-color: #1f2430;
   --neo-node-icon-color: rgba(24, 24, 30, 0.8);
-  --neo-node-text: rgba(23, 25, 35, 0.85);
-  --neo-node-text-muted: rgba(23, 25, 35, 0.5);
+  --neo-node-text: #3a3c44;     /* P0-2.3：原 rgba(23,25,35,.85) 压白卡合成；11.00:1 */
+  --neo-node-text-muted: #8b8c91; /* P0-2.3：原 rgba(23,25,35,.5) 合成；3.36:1（维持原有效对比，非正文辅助标注） */
 
   /* ---- 强调色层（§4.2(1)）----
      ⛔ 与 palette.ts 的 SEVERITY 逐字节一致。

@@ -18,7 +18,8 @@ import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
-import { resolveMessageOutputs } from '@/components/agent/agentCanvasOutputs'
+import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
+import { buildTurnReceipt } from './composer/turnReceipt'
 import { acceptedHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
 import {
@@ -94,6 +95,18 @@ import {
   getAgentSkill,
 } from '@/constants/agentSkillMap'
 import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
+import {
+  buildDraftFromUtterance,
+  selectExampleUtterances,
+  type CanvasPhase,
+  type UtterancePool,
+} from './composer/exampleUtterances'
+import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
+import { shouldShowModelChip } from './composer/modelSkillDedup'
+import { skillMenuMode } from './composer/skillMenuMode'
+import { barShape } from './composer/mobileBarLayout'
+import { classifyGesture, HOLD_MS, CANCEL_SWIPE_PX } from './composer/holdGesture'
+import { useMicLevel } from '@/composables/useMicLevel'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
@@ -108,6 +121,7 @@ import {
   describeActivity,
   describeRuntimeActivity,
 } from '@/components/agent/activityLine'
+import { buildStatusLine } from '@/components/agent/composer/statusLine'
 import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
@@ -233,6 +247,17 @@ function markQueueApplied() {
 const editingMessageId = ref<string | null>(null)
 const editingDraft = ref('')
 const composerRef = ref<InstanceType<typeof MentionInput> | null>(null)
+
+/** P2-1.1 输入预测上下文：近期可见 user/assistant 文本（cap 20），供 MentionInput ghost 建议 */
+const predictionHistory = computed(() =>
+  agent.messages
+    .slice(-20)
+    .map((msg) =>
+      msg.role === 'assistant' ? visibleAssistantContent(msg) : visibleUserContent(msg),
+    )
+    .map((text) => text.trim())
+    .filter(Boolean),
+)
 
 // PR1「让 Agent 诊断」：诊断抽屉按钮写入预填文案后，这里消费并落到 composer（不自动发送，
 // 等用户显式点发送表达意图）。与既有 mention/插话槽位同款预填模式（见下方 insertText）。
@@ -583,24 +608,23 @@ const showHistoryReattachCoachmark = computed(
   () => !props.readOnly && !historyReattachHintSeen.value && threadHasReattachableHistory.value,
 )
 
-const showComposerReattachHint = computed(
-  () =>
-    !props.readOnly
-    && pendingAttachmentItems.value.length === 0
-    && !input.value.trim()
-    && threadHasReattachableHistory.value,
-)
+// P1-7.1 引导收敛：composer 区唯一可见引导 = 上方 coachmark（localStorage 首次门控，
+// 移动端/桌面共享）；reattach 提示行与 attachment 提示行已删除（与 coachmark 重复，
+// 控件自解释），pick-tip 已随 Task 6 移除。
 
 const pendingAttachmentItems = computed(() =>
   makeAttachmentItems(sidebar.pendingAttachments.value, sidebar.assignRefKeys()),
 )
 
-const showPickHint = computed(
-  () => !props.readOnly && pendingAttachmentItems.value.length === 0 && !pickMode.active.value,
-)
-
 /** 输入框左上角 🎯 圆心重合时的文字起始内边距（半径 + 小间距） */
 const COMPOSER_PICK_INSET = 18
+
+/** ◎ 空闲态（P1-2.3）：无草稿文本且未在流式生成 —— composer 的第一屏/空态 */
+const isIdle = computed(() => input.value.trim() === '' && !agent.isStreaming)
+/** ◎ mention 菜单开态（P1-2.3）：取 MentionInput expose 的真实 showMenu（defineExpose 的 ref 保持响应式） */
+const mentionMenuOpen = computed(() => composerRef.value?.showMenu === true)
+/** ◎ 可见性门控（P1-2.3）：空态隐藏；输入/生成态可见；空态键入 @ 打开 mention 菜单时立即显示 */
+const canvasRefEntryVisible = computed(() => !props.readOnly && (!isIdle.value || mentionMenuOpen.value))
 
 const mentionOptions = computed((): MentionOption[] =>
   pendingAttachmentItems.value.map(({ refKey, attachment }) => ({
@@ -732,6 +756,47 @@ const assistantOutputsById = computed(() => {
 const forceChoiceOpen = ref(false)
 const forceChoiceKind = ref<ForceChoiceKind | null>(null)
 
+/**
+ * P1-4.1：回合产出收据行（消息流末尾、产出卡片之后；composer 侧入口，不重构消息渲染本体）。
+ *
+ * 数据源（best-effort 口径，记录于此）：与该轮 AgentCanvasOutputs 产出卡片**同源** ——
+ * 最后一条 assistant 消息经 resolveMessageOutputs 解析出的产物数，即 producedCount。
+ * 不另造统计通道，避免与卡片各说各话。
+ *
+ * 显隐：仅当回合已收束（非 streaming）且该轮确有产物时出现；
+ * 末条不是收束的 assistant 消息（如用户刚发言）不显示，收据只贴最近一轮。
+ * ⚠️ 不用 showTaskCard 做隐藏门（review round 1 F1）：taskProgress.items 在回合收束时
+ * **不会清空**（只在下次发送/切会话/loadHistory/新会话时清），发过 task 事件的轮次
+ * showTaskCard 会一直为 true，用它当门会让这些轮次的收据永远不出现。
+ * 收据与任务进度卡并存是可接受的（模板上收据渲染在其后）。
+ */
+const TURN_UNDO_DISABLED_TITLE = '需 runtime 批量移除工具，见 ADR'
+
+const lastTurnReceipt = computed(() => {
+  if (agent.isStreaming) return null
+  const last = agent.messages[agent.messages.length - 1]
+  if (!last || last.role !== 'assistant' || last.streaming) return null
+  const outputs = assistantOutputsById.value.get(last.id) ?? []
+  if (outputs.length === 0) return null
+  return {
+    ...buildTurnReceipt({ producedCount: outputs.length }),
+    /** 与 AgentCanvasOutputs 的「定位全部」同口径：只带可定位（done/failed）的节点。 */
+    focusNodeIds: locatableNodeIds(outputs),
+  }
+})
+
+/** summary 去掉尾部「定位到画布」后的前缀；动作词由模板单独渲染成 focus-all 按钮。 */
+const lastTurnReceiptLead = computed(() =>
+  lastTurnReceipt.value ? lastTurnReceipt.value.summary.replace(' · 定位到画布', '') : '',
+)
+
+function onReceiptFocusAll() {
+  // review round 1 F2：无可定位节点时早退，避免向 CanvasPage 派发空 focus-all
+  // 触发「当前画布中没有找到对应节点」的误导 toast（对齐 AgentCanvasOutputs 的空集纪律）。
+  if (!lastTurnReceipt.value || lastTurnReceipt.value.focusNodeIds.length === 0) return
+  onFocusAll(lastTurnReceipt.value.focusNodeIds)
+}
+
 const taskRecordPolling = useGenerationPolling((results) => {
   for (const { task, record } of results) {
     taskProgress.value = applyPollRecordToTask(
@@ -834,6 +899,34 @@ const turnStatus = computed(() => {
     settledText: turnSettledText(lastAssistantMessage.value?.executionTrace),
   })
 })
+/**
+ * P1-3.1：composer 生成中状态行（composer-status-line）数据模型。
+ * 数据源全部复用现状，**不新增 store 状态**：
+ * - phase：执行轨迹聚合的「正在做什么」人话（runtime activity 优先，回落 trace 最新一步；
+ *   与 turnStatus 同源，决策 3/5：绝不把内部工具名吐给用户）。
+ * - progress / eta：现链路只有已耗时（turnStartedAt→elapsed），无「完成比例 / 剩余时长」
+ *   数据源 → 传 null：进度条走不确定态、ETA 段隐藏（成本未知 → 隐藏而非置零）。
+ * - points：Q2 liveEstimatedCredits（usage_delta 实时预估，#415 口径，回合结束清位）；
+ *   ≤0 / 缺失视为成本未知 → null 隐藏。
+ */
+const composerStatus = computed(() =>
+  buildStatusLine({
+    phase:
+      describeRuntimeActivity(agent.activity) ??
+      describeActivity(lastAssistantMessage.value?.executionTrace?.steps),
+    progressRatio: null,
+    etaSeconds: null,
+    points:
+      agent.liveEstimatedCredits != null && agent.liveEstimatedCredits > 0
+        ? agent.liveEstimatedCredits
+        : null,
+  }),
+)
+const composerProgressPct = computed(() =>
+  composerStatus.value.progress == null
+    ? null
+    : `${Math.round(composerStatus.value.progress * 100)}%`,
+)
 /**
  * 阻塞等待 propose_generation（2026-10-01）：确认动作只存在于画布节点，
  * 聊天侧必须明示「去哪确认 + 一键定位」，否则用户只看到转圈无从下手。
@@ -1059,31 +1152,19 @@ function pickAssetLibrary() {
   assetPickerOpen.value = true
 }
 
-function pickCanvasFromMenu() {
-  attachMenuOpen.value = false
-  onStartCanvasPick()
-}
-
-function onCanvasRefPickToggle() {
+/** ◎ P1-2.3：pick 开关（原 onCanvasRefPickToggle 改名），全文件唯一调用点是角落按钮 composer-canvas-ref-btn */
+function toggleCanvasRefPick() {
   emit('canvasRefPickToggle')
 }
 
-function onStartCanvasPick() {
-  if (!pickMode.active.value) emit('canvasRefPickToggle')
-}
-
+/** dock 指针入口：pickMode 失活（既有）。移动端条级手势（onBarPointerDown）绑在
+ *  composer-bare-bar 自身，不再走 dock 入口（P1-5 三态共条重构）。 */
 function onInputDockPointerDown(event: PointerEvent) {
   if (!pickMode.active.value) return
   const target = event.target as Element
-  if (target.closest('.composer-canvas-pick-btn')) return
+  if (target.closest('.composer-canvas-ref-btn')) return
   if (target.closest('.agent-attach-menu')) return
   pickMode.deactivate()
-}
-
-/** dock 指针入口：pickMode 失活（既有）+ 移动端长按说话（二次重构） */
-function onDockPointerDown(event: PointerEvent) {
-  onInputDockPointerDown(event)
-  onComposerPointerDown(event)
 }
 
 async function addFiles(files: FileList | File[]) {
@@ -1126,16 +1207,17 @@ const open = ref(false)
 /** 浮动窗口模式：面板脱离侧栏，悬浮在画布上，可拖拽 */
 const floating = ref(false)
 
+/**
+ * 移动端（P1-5）：底部裸条**常驻**——画布始终露出且可点（无 sheet / 无遮罩），
+ * composer 不再是「打开的面板」，所以移动端恒 open（fab 随之退役，见模板）。
+ * immediate：isMobileLayout 初值在 setup 阶段即由 matchMedia 同步给出。
+ */
 watch(isMobileLayout, (mobile) => {
-  if (mobile) floating.value = false
-})
-
-watch(
-  () => pickMode.active.value,
-  (active) => {
-    if (active && isMobileLayout.value && open.value) closePanel()
-  },
-)
+  if (mobile) {
+    floating.value = false
+    open.value = true
+  }
+}, { immediate: true })
 
 /* ---- 宽度：默认可容纳 dock 底部参数一排，支持拖拉调宽 ---- */
 const PANEL_MIN_W = 420
@@ -1152,8 +1234,6 @@ const dragging = ref(false)
 function clamp(v: number, min: number, max: number) {
   return Math.min(Math.max(v, min), max)
 }
-
-const speech = useSpeechRecognition()
 
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
 const planningModel = ref(preferences.value?.defaultTextModel ?? '')
@@ -1185,13 +1265,39 @@ function setPlanningThinkingEffort(effort: 'high' | 'max') {
   planningThinking.value = true
 }
 
+/* P1-2.1：思考档位三档（标准/深入/极限）写回原状态通道：标准→关、深入→high、极限→max。
+ * B 级 chip 仅非默认档常驻（裁决 fix-1）；默认档经 C 抽屉「思考档位」入口进入同一 popover。ghost 无背景。 */
+const thinkingMenuOpen = ref(false)
+const thinkingMenuRef = ref<HTMLElement | null>(null)
+useClickOutside(thinkingMenuRef, () => {
+  thinkingMenuOpen.value = false
+})
+
+function toggleThinkingMenu() {
+  thinkingMenuOpen.value = !thinkingMenuOpen.value
+}
+
+const currentThinkingLevel = computed<ThinkingLevel>(() => {
+  if (!planningThinking.value) return '标准'
+  return planningThinkingEffort.value === 'max' ? '极限' : '深入'
+})
+
+function setPlanningThinkingLevel(level: ThinkingLevel) {
+  thinkingMenuOpen.value = false
+  if (level === '标准') {
+    setPlanningThinking(false)
+    return
+  }
+  setPlanningThinkingEffort(level === '极限' ? 'max' : 'high')
+}
+
 /* ---- 技能选择（显式 Skill；默认自动 / 平台路由） ---- */
 const activeSkillId = ref<string | null>(null)
 const activeSkill = computed(() => getAgentSkill(activeSkillId.value))
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
 const skillButtonLabel = computed(() => activeSkill.value?.label ?? '技能')
 const inputPlaceholder = computed(() =>
-  agentInputPlaceholder(activeSkill.value, { mobile: isMobileLayout.value }),
+  agentInputPlaceholder(activeSkill.value),
 )
 const showProductVisualEmptyState = computed(
   () =>
@@ -1199,11 +1305,17 @@ const showProductVisualEmptyState = computed(
     && !props.readOnly
     && !agent.messages.some((m) => m.role === 'user'),
 )
-const showProductVisualAttachmentHint = computed(
-  () => isProductVisualSkill.value && !props.readOnly,
-)
 const skillMenuOpen = ref(false)
 const skillMenuRef = ref<HTMLElement | null>(null)
+// P2-5.1 技能降级：技能少时 chip 直选（点击循环 自动↔技能），多时才展开菜单
+const composerSkillMenuMode = computed(() => skillMenuMode(AGENT_SKILLS.length))
+function onSkillTriggerClick() {
+  if (composerSkillMenuMode.value === 'chip') {
+    activeSkillId.value = activeSkillId.value === null ? (AGENT_SKILLS[0]?.id ?? null) : null
+    return
+  }
+  skillMenuOpen.value = !skillMenuOpen.value
+}
 useClickOutside(skillMenuRef, () => {
   skillMenuOpen.value = false
 })
@@ -1316,13 +1428,14 @@ function openPanel() {
 }
 
 function closePanel() {
+  // P1-5：移动端裸条常驻、无「收起」形态（fab 已退役），closePanel 仅桌面有意义
+  if (isMobileLayout.value) return
   open.value = false
   emit('expandedChange', false)
 }
 
 function onFocusNode(nodeId: string) {
   emit('focusNode', nodeId)
-  if (isMobileLayout.value) closePanel()
 }
 
 // ── 执行过程折叠状态（2026-10-07 修「打开后没法收起」）──────────────────
@@ -1355,7 +1468,6 @@ function onToggleLiveTrace(collapsed: boolean) {
 
 function onFocusAll(nodeIds: string[]) {
   emit('focusAll', nodeIds)
-  if (isMobileLayout.value) closePanel()
 }
 
 function onExportPack(
@@ -1552,41 +1664,28 @@ async function loadHistory() {
   scrollToBottom(true)
 }
 
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (isFinal) {
-      input.value = input.value ? `${input.value} ${text}` : text
-    }
-  })
-}
+/* ---- P2-2 按住说话（Task 13 重接 ASR；录音 UI agent-composer-rec 沿用）----
+ * 分类判据 = holdGesture.classifyGesture（tap/hold/cancel 单一来源）。
+ * 录音本体 = useSpeechRecognition（Web Speech），电平反馈 = useMicLevel（可选，失败静默）。
+ * 松开：转写填入输入框并切输入态（不自动提交，可继续编辑）。
+ * PC（P2-2.1）与移动条（P2-2.2）共用 beginHoldTalk / releaseVoice 会话。 */
+const speech = useSpeechRecognition()
+const micLevel = useMicLevel()
+const voiceLevel = micLevel.level
 
-/* ---- 移动端 composer 三态（2026-10-15 二次重构，对齐 WorkBuddy） ----
- * 收缩态1-文字模式：单行「+ | 输入 | 锚发送」，无参数行、无麦克风图标。
- * 收缩态2-语音模式：**长按 composer 卡片 ≈400ms** 进入录音（微信式「按住说话」），
- *   不设独立麦克风按钮，也不设 + 子菜单入口；实时 interim 显示，松开自动发送，上滑取消。
- * 伸展态：输入框聚焦或有内容时展开参数行（+ 在底行最左、模型芯片、锚发送在右）。
- * 桌面端不受影响，仍走 DockMicButton 的 toggleVoice。 */
+
+/* ---- 移动端裸条状态（P1-5，2026-10-16 三态共条重构） ----
+ * 旧「收缩/伸展 + 长按卡片录音」形态随全屏 sheet 一并退役；Task 13 已在 onComposerHold
+ * 发射点重接 ASR，录音 UI（agent-composer-rec）复用。PC 走 DockMicButton press-and-hold。 */
 const composerExpanded = ref(false)
 const holdActive = ref(false)
 const voiceInterim = ref('')
 const voiceFinalText = ref('')
 const voiceCancelled = ref(false)
-const voiceStartY = ref(0)
-const voiceStartX = ref(0)
 const voiceElapsedSec = ref(0)
 const composerDockRef = ref<HTMLElement | null>(null)
-/** 长按→录音 的延时器；pointerup 先到就只是普通点按 */
-let holdTimer: number | null = null
-let holdCardEl: HTMLElement | null = null
-let holdPointerId: number | null = null
-let voiceTicker: number | null = null
-/** 按住会话令牌：release 的 600ms 收口定时器只对自己的会话生效，
- *  防止「松开→立刻再按住」时旧定时器把新一轮 interim 当成上一轮结果误发 */
 let voiceSession = 0
+let voiceTicker: number | null = null
 
 // 输入框被程序填充（如待发消息取回）时自动进入伸展态
 watch(input, (v) => {
@@ -1607,28 +1706,42 @@ function onComposerFocusOut(e: FocusEvent) {
   }, 150)
 }
 
-/** 长按卡片进入录音。pointerdown 目标是按钮一律不触发；
- *  目标是输入框时仅空输入可触发（避免与长按选词冲突）。仅收缩态可触发。 */
-function onComposerPointerDown(e: PointerEvent) {
-  if (!isMobileLayout.value || composerExpanded.value) return
-  if (holdActive.value || props.readOnly || isUploading.value) return
-  if (!speech.supported) return
-  const target = e.target as HTMLElement | null
-  const onInteractive = !!target?.closest('button, a, [role="button"], input, textarea')
-  if (onInteractive && input.value.trim()) return // 输入框有内容时，长按留给文本选择
-  voiceStartX.value = e.clientX
-  voiceStartY.value = e.clientY
-  holdCardEl = e.currentTarget as HTMLElement | null
-  holdPointerId = e.pointerId
-  const session = ++voiceSession
-  holdTimer = window.setTimeout(() => {
-    holdTimer = null
-    beginHoldTalk(session)
-  }, 400)
+/* ---- P1-5 移动端裸条三态（barShape 单源路由） ----
+ * idle：条内仅 ＋ + 「按住说话 · 点按输入」提示（P1-5.3）；stacked/queued 见 mobileBarLayout.ts。
+ * 伸展态（点按后）在 barShape 上仍属 idle 形态（无芯片、非生成），但渲染输入行。 */
+const mobileBarShape = computed(() =>
+  barShape({ hasRefs: pendingAttachmentItems.value.length > 0, isStreaming: agent.isStreaming }),
+)
+const mobileBarIdle = computed(
+  () =>
+    isMobileLayout.value &&
+    mobileBarShape.value === 'idle' &&
+    !composerExpanded.value &&
+    !holdActive.value,
+)
+
+/* ---- P1-5.3 条级手势（P2-2.2 Task 13 完整版）----
+ * pointerdown 记起点并 setPointerCapture（T10 评审项：拖出条不丢 pointerup）；
+ * 300ms 计时器触发录音（hold 期间持续收 move 累计 dy，上滑 ≥ CANCEL_SWIPE_PX 预置取消）；
+ * pointerup 用 classifyGesture({durationMs, dy}) 统一分派：
+ *   tap → 切输入态；hold → 松开转写填入（不自动提交）；cancel → 丢弃。
+ * 子控件（＋/◎/模型/发送）命中一律不触发条手势（P1-5.3 判据，closest 排除 + 子控件 .stop）。 */
+let barHoldTimer: number | null = null
+let barGestureStartAt = 0
+let barGestureStartY = 0
+let barGestureDy = 0 // clientY - startY，上滑为负
+
+/** 按住说话发射点（Task 10 预留）：接 ASR 会话 + 时长/电平反馈。 */
+function onComposerHold() {
+  beginHoldTalk()
 }
 
-function beginHoldTalk(session: number) {
-  if (session !== voiceSession) return
+function beginHoldTalk() {
+  if (!speech.supported) {
+    ElMessage.warning('当前浏览器不支持语音识别')
+    return
+  }
+  voiceSession += 1
   voiceInterim.value = ''
   voiceFinalText.value = ''
   voiceCancelled.value = false
@@ -1643,56 +1756,14 @@ function beginHoldTalk(session: number) {
   holdActive.value = true
   navigator.vibrate?.(15) // 微信式触觉反馈（不支持时静默）
   ;(document.activeElement as HTMLElement | null)?.blur?.() // 防键盘弹出
-  try {
-    holdCardEl?.setPointerCapture?.(holdPointerId ?? 0) // 手指漂移也持续收到 move/up
-  } catch {
-    /* 指针已释放等场景忽略 */
-  }
+  void micLevel.start() // 电平反馈（拒绝授权/不支持时 level 恒 0，不影响主链路）
   voiceElapsedSec.value = 0
   voiceTicker = window.setInterval(() => {
     voiceElapsedSec.value += 1
   }, 1000)
 }
 
-function onComposerPointerMove(e: PointerEvent) {
-  if (holdTimer !== null) {
-    // 触发前就大幅移动 = 滚动手势，取消长按
-    if (Math.abs(e.clientY - voiceStartY.value) > 10 || Math.abs(e.clientX - voiceStartX.value) > 10) {
-      window.clearTimeout(holdTimer)
-      holdTimer = null
-    }
-    return
-  }
-  if (!holdActive.value) return
-  // 上滑 >70px 进入「松开取消」，滑回 40px 内可撤销（对齐微信手感）
-  const dy = voiceStartY.value - e.clientY
-  if (!voiceCancelled.value && dy > 70) voiceCancelled.value = true
-  else if (voiceCancelled.value && dy < 40) voiceCancelled.value = false
-}
-
-function onComposerPointerUp(e: PointerEvent) {
-  if (holdTimer !== null) {
-    // 普通点按（未达长按时长）：点在卡片空白处则展开为伸展态
-    window.clearTimeout(holdTimer)
-    holdTimer = null
-    const target = e.target as HTMLElement | null
-    if (isMobileLayout.value && !composerExpanded.value
-      && !target?.closest('button, a, [role="button"], input, textarea')) {
-      composerExpanded.value = true
-    }
-    return
-  }
-  if (holdActive.value) releaseVoice(voiceCancelled.value)
-}
-
-function onComposerPointerCancel() {
-  if (holdTimer !== null) {
-    window.clearTimeout(holdTimer)
-    holdTimer = null
-  }
-  if (holdActive.value) releaseVoice(true)
-}
-
+/** 松开录音：cancelled=上滑取消/指针打断。转写填入输入框并切输入态，不自动提交。 */
 function releaseVoice(cancelled: boolean) {
   if (!holdActive.value) return
   holdActive.value = false
@@ -1701,6 +1772,7 @@ function releaseVoice(cancelled: boolean) {
     voiceTicker = null
   }
   speech.stop()
+  micLevel.stop()
   const session = voiceSession
   // 识别引擎的末段 final result 在 stop() 之后才回调，等 600ms 收口再取全文
   window.setTimeout(() => {
@@ -1709,15 +1781,87 @@ function releaseVoice(cancelled: boolean) {
     voiceInterim.value = ''
     voiceFinalText.value = ''
     if (cancelled || !text) return
-    if (agent.isStreaming) {
-      // 流式中不自动发送（send() 此时语义是「停止生成」），填入输入框展开伸展态由用户确认
-      input.value = text
-      composerExpanded.value = true
-      return
-    }
-    input.value = text
-    void send()
+    // P2-2：不自动提交，切输入态让用户继续编辑
+    input.value = input.value ? `${input.value} ${text}` : text
+    composerExpanded.value = true
+    void nextTick(() => composerRef.value?.focus())
   }, 600)
+}
+
+function onBarGestureOnChild(e: PointerEvent): boolean {
+  const target = e.target as HTMLElement | null
+  return !!target?.closest('button, a, [role="button"], input, textarea')
+}
+
+function releaseBarCapture(e: PointerEvent) {
+  try {
+    ;(e.currentTarget as HTMLElement | null)?.releasePointerCapture?.(e.pointerId)
+  } catch {
+    /* 指针已释放等场景忽略 */
+  }
+}
+
+function onBarPointerDown(e: PointerEvent) {
+  if (!mobileBarIdle.value || props.readOnly) return
+  if (onBarGestureOnChild(e)) return
+  barGestureStartAt = Date.now()
+  barGestureStartY = e.clientY
+  barGestureDy = 0
+  // T10 评审项：拖出条后 move/up 仍派发到条上，录音态上滑取消才可用
+  try {
+    ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
+  } catch {
+    /* ignore */
+  }
+  barHoldTimer = window.setTimeout(() => {
+    barHoldTimer = null
+    onComposerHold()
+  }, HOLD_MS)
+}
+
+function onBarPointerMove(e: PointerEvent) {
+  if (barHoldTimer !== null) {
+    // 触发前就大幅移动 = 滚动手势，撤销待定按住
+    if (Math.abs(e.clientY - barGestureStartY) > 10) {
+      window.clearTimeout(barHoldTimer)
+      barHoldTimer = null
+      releaseBarCapture(e)
+    }
+    return
+  }
+  if (!holdActive.value) return
+  barGestureDy = e.clientY - barGestureStartY
+  // 上滑 ≥ CANCEL_SWIPE_PX 预置「松开取消」，滑回 20px 内可撤销（微信手感）
+  if (!voiceCancelled.value && barGestureDy <= -CANCEL_SWIPE_PX) voiceCancelled.value = true
+  else if (voiceCancelled.value && barGestureDy > -(CANCEL_SWIPE_PX - 20)) voiceCancelled.value = false
+}
+
+function onBarPointerUp(e: PointerEvent) {
+  releaseBarCapture(e)
+  const durationMs = Date.now() - barGestureStartAt
+  if (barHoldTimer !== null) {
+    // hold 计时未到 = 按 classifyGesture 正式分派（tap 切输入态）
+    window.clearTimeout(barHoldTimer)
+    barHoldTimer = null
+    if (onBarGestureOnChild(e)) return
+    if (classifyGesture({ durationMs, dy: barGestureDy }) === 'tap') {
+      composerExpanded.value = true
+      void nextTick(() => composerRef.value?.focus())
+    }
+    return
+  }
+  if (holdActive.value) {
+    releaseVoice(classifyGesture({ durationMs, dy: barGestureDy }) === 'cancel')
+  }
+}
+
+function onBarPointerCancel(e: PointerEvent) {
+  releaseBarCapture(e)
+  if (barHoldTimer !== null) {
+    window.clearTimeout(barHoldTimer)
+    barHoldTimer = null
+  }
+  if (holdActive.value) releaseVoice(true)
 }
 
 function formatRecTime(total: number): string {
@@ -1881,6 +2025,55 @@ async function onForceChoiceAction(message: string) {
 function fillExampleUtterance(text: string) {
   if (props.readOnly || agent.isStreaming) return
   input.value = text
+  nextTick(() => composerRef.value?.focus())
+}
+
+/**
+ * P1-1.1：首屏通用样例池 —— 按画布相（空画布 / 有选中 / 有产物）给出 ≤4 条样例。
+ * 空画布条目复用产品视觉分支（PRODUCT_VISUAL_GUIDANCE）的口吻，但改写为通用短句。
+ */
+const EXAMPLE_UTTERANCE_POOL: UtterancePool = {
+  empty: [
+    '这是我们的大闸蟹礼盒，帮我做一套电商包装推广图：主视觉 + 结构图 + 送礼场景，风格喜庆高级',
+    '用这张产品实拍图出电商主图和两张生活场景图，突出产品卖点和质感',
+    '画一个产品落地页 hero 区块，标题「把灵感变成图像」，配一张氛围插图',
+    '新建一个文字节点，帮我先把创意思路列成大纲',
+  ],
+  selection: [
+    '把选中的节点重画成扁平插画风',
+    '基于选中节点再出两张风格变体',
+    '给选中节点补一段详情页文案',
+  ],
+  artifact: [
+    '把当前产物改成竖版海报构图',
+    '基于当前产物再生成一张深色背景版本',
+    '为当前产物配一段电商卖点文案',
+  ],
+}
+
+/** 画布相派生：选中优先（selection），其次看是否有已产出物（artifact），否则空画布（empty）。 */
+const currentCanvasPhase = computed<CanvasPhase>(() => {
+  if (props.selectedNodeIds?.length || props.selectedNode) return 'selection'
+  const nodes = props.canvasNodes ?? []
+  const hasArtifact = nodes.some((n) => {
+    const data = n.data ?? {}
+    return (typeof data.url === 'string' && !!data.url)
+      || (typeof data.content === 'string' && !!data.content.trim())
+  })
+  return hasArtifact ? 'artifact' : 'empty'
+})
+
+const exampleUtterances = computed(() =>
+  selectExampleUtterances(currentCanvasPhase.value, EXAMPLE_UTTERANCE_POOL),
+)
+
+/**
+ * P1-1.2：样例 chips 点击只填充输入框（focus + 可编辑草稿），绝不自动提交 ——
+ * 发送意图必须由用户显式表达。与 fillExampleUtterance 同款预填模式。
+ */
+function fillFromUtterance(u: string) {
+  if (props.readOnly || agent.isStreaming) return
+  input.value = buildDraftFromUtterance(u)
   nextTick(() => composerRef.value?.focus())
 }
 
@@ -2832,13 +3025,12 @@ defineExpose({
     :style="{ width: asidePanelWidth }"
   >
     <div class="flex h-full min-h-0">
-      <!-- 收缩态：右下角 agent logo 悬浮按钮 -->
+      <!-- 收缩态：右下角 agent logo 悬浮按钮（移动端裸条常驻，fab 仅桌面收缩态） -->
       <Teleport to="body">
         <button
           v-if="!open && !pickModeActive"
           type="button"
           class="agent-fab"
-          :class="{ 'agent-fab-mobile': isMobileLayout }"
           title="打开 AI 助手"
           @click="openPanel"
         >
@@ -2846,23 +3038,13 @@ defineExpose({
         </button>
       </Teleport>
 
-      <!-- 移动端遮罩：点按退回画布 -->
-      <Teleport to="body">
-        <div
-          v-if="open && isMobileLayout"
-          class="agent-mobile-backdrop"
-          aria-hidden="true"
-          @click="closePanel"
-        />
-      </Teleport>
-
-      <!-- 面板：侧栏内嵌 or 浮动窗口 or 移动端全屏 sheet（Teleport 到 body） -->
+      <!-- 面板：侧栏内嵌 or 浮动窗口 or 移动端贴底裸条容器（Teleport 到 body） -->
       <Teleport to="body" :disabled="!panelTeleported">
         <div
           v-show="open"
           class="agent-panel-shell flex min-h-0 h-full min-w-0 flex-col overflow-hidden"
           :class="[
-            isMobileLayout ? 'agent-panel-mobile-sheet' : floating ? 'agent-panel-floating' : 'agent-panel-inline flex-1',
+            isMobileLayout ? 'agent-panel-mobile-dock' : floating ? 'agent-panel-floating' : 'agent-panel-inline flex-1',
             { 'is-dragging': dragging },
           ]"
           :style="floating && !isMobileLayout ? {
@@ -2879,7 +3061,9 @@ defineExpose({
             @mousedown="startResize"
           />
 
-          <!-- 顶栏：logo + 新建 / 历史 / 浮窗切换 / 收起（浮窗模式可按住拖动） -->
+          <!-- 顶栏：logo + 新建 / 历史 / 浮窗切换 / 收起（浮窗模式可按住拖动）。
+               P1-5 fix-1：移动端保留（新建对话 / 会话历史入口随贴底容器常驻，
+               收起 / 浮窗为桌面专属按钮移动端隐藏；startDrag 移动端本身 no-op） -->
           <div
             class="agent-panel-header flex items-center justify-between px-3 py-2"
             :class="floating && !isMobileLayout ? 'cursor-move' : ''"
@@ -2917,20 +3101,20 @@ defineExpose({
                   class="neo-popover absolute right-0 top-full z-20 mt-1.5 max-h-[280px] w-[240px] overflow-y-auto rounded-xl py-1"
                   @click.stop
                 >
-                  <p class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--neo-text-muted)]">对话历史</p>
+                  <p class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--lnk-text-muted)]">对话历史</p>
                   <button
                     v-for="thread in threads"
                     :key="thread.id"
                     type="button"
                     class="neo-popover-item block w-full px-3 py-2 text-left text-xs"
-                    :class="thread.id === agentThreadId ? '!bg-[var(--neo-hi-bg)] !text-[var(--neo-hi-text)] shadow-[var(--neo-hi-shadow)]' : ''"
+                    :class="thread.id === agentThreadId ? '!bg-[var(--lnk-hi-bg)] !text-[var(--lnk-hi-text)] shadow-[var(--lnk-hi-shadow)]' : ''"
                     :title="thread.title"
                     @click="selectThread(thread.id)"
                   >
                     <span class="block truncate font-medium">{{ thread.title }}</span>
                     <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
                   </button>
-                  <p v-if="!threads.length" class="px-3 py-4 text-center text-[11px] text-[var(--neo-text-muted)]">
+                  <p v-if="!threads.length" class="px-3 py-4 text-center text-[11px] text-[var(--lnk-text-muted)]">
                     暂无对话记录
                   </p>
                 </div>
@@ -2959,8 +3143,8 @@ defineExpose({
                 </svg>
               </button>
 
-              <!-- 收起：回到右下角 logo -->
-              <button type="button" class="agent-head-btn" title="收起助手" @click="closePanel">
+              <!-- 收起：回到右下角 logo（桌面专属；移动端裸条常驻无「收起」形态） -->
+              <button v-if="!isMobileLayout" type="button" class="agent-head-btn" title="收起助手" @click="closePanel">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M18 6 6 18" />
                 </svg>
@@ -2986,7 +3170,10 @@ defineExpose({
 
           <!-- 不可达 / 重连提示已迁至 dockNotice（见 syncRuntimeNotice）；不再在面板内渲染横幅 -->
 
-          <!-- 消息列表（外层 wrap 只用于定位「回到底部」浮标，不改变原滚动容器结构） -->
+          <!-- 消息列表（外层 wrap 只用于定位「回到底部」浮标，不改变原滚动容器结构）。
+               P1-5 fix-1：移动端对话流回归贴底容器（spec §1 消息流渲染不在整改范围、
+               spec §5.2 只要求 composer 脱离全屏 sheet）；移动端经 max-height ≈40vh
+               限高滚动，画布仍露出上半（P1-5.1）。渲染样式桌面/移动同源，不做重排。 -->
           <div class="agent-chat-wrap relative flex min-h-0 flex-1 flex-col">
             <div
               ref="chatContainer"
@@ -3010,9 +3197,24 @@ defineExpose({
                 </button>
               </div>
             </div>
-            <div v-else-if="!agent.messages.length" class="agent-empty px-3 py-10 text-center">
-              <p class="text-sm">描述你的创意</p>
-              <p class="mt-1 text-[11px] opacity-70">我会驱动画布创建节点、连线与生成任务</p>
+            <!-- P1-1：通用首屏 —— persona 压成一行轻量文案（P1-1.3），视觉重心让给
+                 4 条按画布相选取的样例 chips（P1-1.1）；点击 chips 只填充输入框（P1-1.2）。 -->
+            <div v-else-if="!agent.messages.length" class="agent-empty agent-composer-firstscreen px-3 pb-2 pt-6">
+              <p class="agent-composer-persona text-center text-[12px] leading-relaxed" data-testid="agent-persona-line">
+                lnk·π 助手 · 说一句创意，我来画
+              </p>
+              <div class="agent-example-chips mt-3 flex flex-wrap justify-center gap-2">
+                <button
+                  v-for="u in exampleUtterances"
+                  :key="u"
+                  type="button"
+                  class="agent-example-chip rounded-lg border px-3 py-1.5 text-left text-[12px] leading-snug"
+                  data-testid="agent-example-chip"
+                  @click="fillFromUtterance(u)"
+                >
+                  {{ u }}
+                </button>
+              </div>
             </div>
             <div
               v-for="msg in agent.messages"
@@ -3145,7 +3347,7 @@ defineExpose({
                 <p
                   v-if="msg.role === 'assistant' && !turnTimelineOn && !msg.streaming && msg.executionTrace && bubbleSummaryLine(msg)"
                   data-testid="turn-summary-line"
-                  class="mt-1 pl-4 text-[10px] text-[var(--neo-text-muted)]"
+                  class="mt-1 pl-4 text-[10px] text-[var(--lnk-text-muted)]"
                 >
                   {{ bubbleSummaryLine(msg) }}
                 </p>
@@ -3297,6 +3499,41 @@ defineExpose({
                 </div>
               </div>
             </div>
+            <!-- P1-4.1：回合产出收据行 —— 消息流末尾（产出卡片之后）、composer 侧入口。
+                 不重构消息渲染本体（Out of Scope §1）。文案由 composer/turnReceipt.ts 纯模块给出：
+                 「定位到画布」复用既有 focus-all 事件（同 AgentCanvasOutputs 的 locatableNodeIds 口径）；
+                 「全部保留」= 当前行为（无操作确认态）；
+                 「撤销本轮」在 runtime 批量移除工具落地前 disabled（评估见 docs/adr/0010）。 -->
+            <div
+              v-if="lastTurnReceipt"
+              class="agent-turn-receipt"
+              data-testid="turn-receipt"
+            >
+              <span class="agent-turn-receipt__summary">
+                {{ lastTurnReceiptLead }}
+                <span class="agent-turn-receipt__dot">·</span>
+                <button
+                  type="button"
+                  class="agent-turn-receipt__link"
+                  data-testid="turn-receipt-focus"
+                  @click="onReceiptFocusAll"
+                >定位到画布</button>
+              </span>
+              <span class="agent-turn-receipt__actions">
+                <button
+                  type="button"
+                  class="agent-turn-receipt__btn"
+                  data-testid="turn-receipt-keep-all"
+                >{{ lastTurnReceipt.keepAll }}</button>
+                <button
+                  type="button"
+                  class="agent-turn-receipt__btn"
+                  data-testid="turn-receipt-undo"
+                  disabled
+                  :title="TURN_UNDO_DISABLED_TITLE"
+                >{{ lastTurnReceipt.undoTurn }}</button>
+              </span>
+            </div>
             <AgentTaskProgressCard
               v-if="showTaskCardAtComposer"
               class="mx-3"
@@ -3338,86 +3575,10 @@ defineExpose({
              Q2（2026-10-15）传送门升级：整句文案即「点击定位节点」传送门——点击文案本身
              就把视口送到画布节点（fitView + 定位闪烁），不再让定位能力藏在句尾小按钮里
              （用户反馈：「升级点击定位节点传送门」）。无 nodeId 时降级为纯文本。 -->
-            <div
-              v-if="proposeWait"
-              class="mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
-              data-testid="propose-wait-hint"
-            >
-              <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--neo-text-muted)' }">
-                ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
-              </p>
-              <div class="flex items-start gap-2">
-                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
-                <p class="flex-1 leading-relaxed">
-                  点👉🏻图标锚定画布「查看提示词」
-                </p>
-              </div>
-              <div class="mt-1.5 flex items-center gap-1.5">
-                <button
-                  v-if="proposeWait.nodeId"
-                  type="button"
-                  class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-white px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-                  data-testid="propose-wait-locate"
-                  aria-label="点击定位到画布上待确认的节点"
-                  @click="locateProposeNode"
-                >
-                  <!-- 定位锚图标：标准定位/瞄准字形（品牌 45° 定位锚 PNG 未入库，先用内联 SVG；要品牌对角字形再落库替换） -->
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-                  </svg>
-                  <span>定位</span>
-                </button>
-                <button
-                  type="button"
-                  class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-                  data-testid="propose-wait-cancel"
-                  @click="cancelBlockingPropose"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-            <p
-              v-if="turnStatus"
-              class="agent-turn-status mx-0.5 mb-1 text-[11px]"
-              :class="`agent-turn-status--${turnStatus.mode}`"
-              data-testid="turn-status-line"
-            >
-              {{ turnStatus.text }}
-              <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
-            </p>
-            <!-- ask_user 卡片贴 composer（2026-10-14）：原挂在消息滚动容器末尾，P2 时间线
-                 钉底后气泡内近空，卡片被视觉孤立到列表顶部、与「等待你确认」状态行/输入框
-                 隔了整个 live 区。移到 dock 区状态行之下 —— 等待态的唯一交互面贴输入框；
-                 pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。 -->
-            <AskUserCard
-              v-if="pendingAskUser.length && lastMessageIsAssistant"
-              class="mx-0.5 mb-2"
-              :questions="pendingAskUser"
-              @submit="onAskSubmit"
-              @cancel="onAskCancel"
-            />
-            <div
-              v-if="showCancelledCallout"
-              class="mb-2 px-0.5"
-              data-testid="run-cancelled-callout"
-            >
-              <p
-                class="mb-2 rounded-lg border border-[var(--neo-border)] bg-[var(--neo-panel)] px-2 py-1.5 text-xs leading-relaxed text-[var(--neo-text-secondary)]"
-              >
-                {{ cancelledCalloutText }}
-              </p>
-              <button
-                type="button"
-                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-                data-testid="new-task-chip"
-                :disabled="agent.isStreaming || isUploading"
-                @click="startNewTask()"
-              >
-                发起新任务
-              </button>
-            </div>
+            <!--
+              P1-5 移动端裸条形态：等待/收口系统层（proposeWait 提示 / 旧状态行 waiting·failed·settled /
+              ask_user 卡 / 取消提示）已移出 chat-wrap（其下、输入区之上）——移动端不渲染对话流，
+              但这些阻塞交互必须贴条可达；桌面视觉位置不变。门控决策注释随内容一并搬移。 -->
             <!--
               侧栏门控/确认卡已全量下线（2026-10-06 决策）：以下旧分支被删除 ——
               retake 提示、图片质检门、宏观方案卡、方案多选卡、定稿交付卡、shot/topo/copy
@@ -3444,28 +3605,128 @@ defineExpose({
             </button>
           </div>
 
+          <!-- 等待/收口系统层（P1-5 自 chat-wrap 移出）：桌面 = 输入区正上方原位；
+               移动端 = 贴底容器内、裸条上方的系统层（阻塞交互贴条可达） -->
+          <div
+            v-if="proposeWait"
+            class="mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
+            data-testid="propose-wait-hint"
+          >
+            <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--lnk-text-muted)' }">
+              ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
+            </p>
+            <div class="flex items-start gap-2">
+              <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
+              <p class="flex-1 leading-relaxed">
+                点👉🏻图标锚定画布「查看提示词」
+              </p>
+            </div>
+            <div class="mt-1.5 flex items-center gap-1.5">
+              <button
+                v-if="proposeWait.nodeId"
+                type="button"
+                class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-white px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                data-testid="propose-wait-locate"
+                aria-label="点击定位到画布上待确认的节点"
+                @click="locateProposeNode"
+              >
+                <!-- 定位锚图标：标准定位/瞄准字形（品牌 45° 定位锚 PNG 未入库，先用内联 SVG；要品牌对角字形再落库替换） -->
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                </svg>
+                <span>定位</span>
+              </button>
+              <button
+                type="button"
+                class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                data-testid="propose-wait-cancel"
+                @click="cancelBlockingPropose"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+          <!-- P1-3.1 双显修复（T8 review 裁决）：流式 running 态由 composer-status-line
+               独占播报；本行只保留 waiting / failed / settled 态，避免阶段+积分双重显示 -->
+          <p
+            v-if="turnStatus && !(agent.isStreaming && turnStatus.mode === 'running')"
+            class="agent-turn-status mx-0.5 mb-1 text-[11px]"
+            :class="`agent-turn-status--${turnStatus.mode}`"
+            data-testid="turn-status-line"
+          >
+            {{ turnStatus.text }}
+            <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
+          </p>
+          <!-- ask_user 卡片贴 composer（2026-10-14，P1-5 移出 chat-wrap）：等待态的唯一交互面贴输入框；
+               pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。 -->
+          <AskUserCard
+            v-if="pendingAskUser.length && lastMessageIsAssistant"
+            class="mx-0.5 mb-2"
+            :questions="pendingAskUser"
+            @submit="onAskSubmit"
+            @cancel="onAskCancel"
+          />
+          <div
+            v-if="showCancelledCallout"
+            class="mb-2 px-0.5"
+            data-testid="run-cancelled-callout"
+          >
+            <p
+              class="mb-2 rounded-lg border border-[var(--lnk-border-subtle)] bg-[var(--lnk-surface-raised)] px-2 py-1.5 text-xs leading-relaxed text-[var(--lnk-text-secondary)]"
+            >
+              {{ cancelledCalloutText }}
+            </p>
+            <button
+              type="button"
+              class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
+              data-testid="new-task-chip"
+              :disabled="agent.isStreaming || isUploading"
+              @click="startNewTask()"
+            >
+              发起新任务
+            </button>
+          </div>
+
           <!-- 底部输入 dock：与节点 dock-studio 同款毛玻璃 -->
           <div class="agent-input-area shrink-0 px-2.5 pb-2.5 pt-1">
             <!-- 2026-10-15（治理 2/2）：dock 不再承载对话内容与滚动——
                  live 时间线 / 提示卡 / ask 卡已移回上方主滚动流；这里只剩 composer 与其周边固定件。 -->
+            <!-- P1-3.1：生成中状态行——输入区上方、ref 芯片层之上，≤24px。
+                 左=阶段文案（执行轨迹聚合）、中=细进度条（无比例源 → 不确定态）、
+                 右=预估剩余时长 + 本轮预估积分（成本未知段隐藏）。
+                 停止键仍在 DockGenerateButton 同一槽位切换（P1-3.2 保护项，不动坐标）。 -->
+            <div
+              v-if="agent.isStreaming"
+              class="composer-status-line"
+              role="status"
+              aria-live="polite"
+            >
+              <span class="composer-status-phase">{{ composerStatus.phase }}</span>
+              <span
+                class="composer-status-track"
+                :class="{ 'is-indeterminate': composerProgressPct === null }"
+                aria-hidden="true"
+              >
+                <span
+                  class="composer-status-fill"
+                  :style="composerProgressPct ? { width: composerProgressPct } : undefined"
+                />
+              </span>
+              <span v-if="composerStatus.eta" class="composer-status-eta">{{ composerStatus.eta }}</span>
+              <span v-if="composerStatus.points" class="composer-status-points">{{ composerStatus.points }}</span>
+            </div>
             <div
               ref="composerDockRef"
               class="agent-input-dock"
               :class="{
                 'is-drop-target': isDragOver,
-                'is-mobile-collapsed': isMobileLayout && !composerExpanded && !holdActive,
-                'is-mobile-expanded': isMobileLayout && composerExpanded,
-                'is-holding': holdActive,
-                'is-cancel': holdActive && voiceCancelled,
               }"
               data-testid="agent-input-dock"
               @dragover.prevent="onDragOver"
               @dragleave.prevent="onDragLeave"
               @drop.prevent="onDrop"
-              @pointerdown="onDockPointerDown"
-              @pointermove="onComposerPointerMove"
-              @pointerup="onComposerPointerUp"
-              @pointercancel="onComposerPointerCancel"
+              @pointerdown="onInputDockPointerDown"
               @focusin="onComposerFocusIn"
               @focusout="onComposerFocusOut"
             >
@@ -3474,7 +3735,7 @@ defineExpose({
                 class="agent-history-coachmark mx-0.5 mb-2 flex items-start gap-2 rounded-xl border px-3 py-2 text-[11px] leading-snug"
                 role="status"
               >
-                <span class="min-w-0 flex-1 text-[var(--neo-text-secondary)]">
+                <span class="min-w-0 flex-1 text-[var(--lnk-text-secondary)]">
                   点击历史消息中的 ↺ 引用可再次加入输入框；点消息右下角的 ↺ 可一键带回提示词与全部引用。
                 </span>
                 <button
@@ -3496,10 +3757,10 @@ defineExpose({
                 v-if="queued"
                 class="agent-queued-bubble mx-3 mb-2 rounded-lg border px-3 py-2"
                 :class="queued.state === 'failed'
-                  ? 'border-[var(--neo-danger)]/40 bg-[var(--neo-danger)]/10'
+                  ? 'border-[var(--lnk-error)]/40 bg-[var(--lnk-error)]/10'
                   : queued.state === 'pending'
-                    ? 'border-[var(--neo-accent)]/40 bg-[var(--neo-accent)]/10'
-                    : 'border-[var(--neo-success)]/40 bg-[var(--neo-success)]/10'"
+                    ? 'border-[var(--lnk-accent)]/40 bg-[var(--lnk-accent)]/10'
+                    : 'border-[var(--lnk-success)]/40 bg-[var(--lnk-success)]/10'"
                 :data-queue-state="queued.state"
                 :data-queue-intent="queued.intent ?? ''"
               >
@@ -3507,10 +3768,10 @@ defineExpose({
                   <span
                     class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
                     :class="queued.state === 'failed'
-                      ? 'bg-[var(--neo-danger)]/20 text-[var(--neo-danger)]'
+                      ? 'bg-[var(--lnk-error)]/20 text-[var(--lnk-error)]'
                       : queued.state === 'pending'
-                        ? 'bg-[var(--neo-accent)]/20 text-[var(--neo-accent)]'
-                        : 'bg-[var(--neo-success)]/20 text-[var(--neo-success)]'"
+                        ? 'bg-[var(--lnk-accent)]/20 text-[var(--lnk-accent)]'
+                        : 'bg-[var(--lnk-success)]/20 text-[var(--lnk-success)]'"
                   >
                     {{
                       queued.state === 'pending'
@@ -3522,11 +3783,11 @@ defineExpose({
                             : '已入队'
                     }}
                   </span>
-                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--neo-text)]">{{ queued.text }}</p>
+                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--lnk-text-primary)]">{{ queued.text }}</p>
                 </div>
                 <p
                   v-if="queued.hint"
-                  class="mt-1 text-[11px] leading-snug text-[var(--neo-text-muted)]"
+                  class="mt-1 text-[11px] leading-snug text-[var(--lnk-text-muted)]"
                   data-testid="queued-hint"
                 >
                   {{ queued.hint }}
@@ -3540,7 +3801,7 @@ defineExpose({
                     -->
                     <p
                       v-if="pendingAskBlocking"
-                      class="w-full text-[11px] leading-snug text-[var(--neo-text-muted)]"
+                      class="w-full text-[11px] leading-snug text-[var(--lnk-text-muted)]"
                       data-testid="queued-ask-blocked-hint"
                     >
                       agent 正在等你作答 · 下面这两条都会排在你答完这张卡之后（建议先答这张卡）
@@ -3564,20 +3825,30 @@ defineExpose({
                   </template>
                 </div>
               </div>
+              <!-- P1-5 移动端底部裸条（三态共条）：
+                   本容器桌面端 display:contents（dock 内布局零改动）；移动端成为贴底裸条表面，
+                   内部经 CSS 摊平为 [芯片行?][＋/文本/模型⌄/发送]。系统层（composer-status-line /
+                   插话选项）在本条上方；文本直接落条内（无内嵌输入框）；◎ 锚条左顶点。 -->
+              <div
+                class="composer-bare-bar"
+                role="group"
+                aria-label="消息输入"
+                :class="{
+                  'is-stacked': mobileBarShape === 'stacked',
+                  'is-idle': mobileBarIdle,
+                  'is-holding': holdActive,
+                  'is-cancel': holdActive && voiceCancelled,
+                }"
+                data-testid="composer-bare-bar"
+                @pointerdown="onBarPointerDown"
+                @pointermove="onBarPointerMove"
+                @pointerup="onBarPointerUp"
+                @pointercancel="onBarPointerCancel"
+              >
+                <!-- P1-5.3 判据锚：条内控件 = ＋（aria-label="更多"）/ ◎（左顶点）/ 模型⌄ / 发送，
+                     均 ghost 无背景；空闲态条内仅 ＋ + 「按住说话 · 点按输入」提示；
+                     条级手势排除子控件命中（pointerdown/up closest 排除 + 子控件 @click.stop） -->
               <div class="agent-composer">
-                <p
-                  v-if="showComposerReattachHint"
-                  class="agent-composer-reattach-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--neo-text-muted)]"
-                >
-                  点击上方历史消息中的 ↺ 引用，或消息右下角的 ↺，可再次加入本次对话
-                </p>
-                <p
-                  v-if="showProductVisualAttachmentHint && !pendingAttachmentItems.length"
-                  class="agent-composer-attachment-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--neo-text-muted)]"
-                  data-testid="pv-attachment-hint"
-                >
-                  {{ PRODUCT_VISUAL_GUIDANCE.attachmentHint }}
-                </p>
                 <AgentRefStrip
                   v-if="pendingAttachmentItems.length"
                   class="agent-composer__refs"
@@ -3587,8 +3858,7 @@ defineExpose({
                   @mention="insertRefMention"
                   @reorder="sidebar.reorder"
                 />
-                <!-- 收缩态2-语音模式：长按 composer 卡片进入的录音态。
-                     无独立麦克风按钮、无 + 子菜单入口（2026-10-15 二次重构） -->
+                <!-- 录音态（P2-2.2/Task 13 接 onComposerHold 后可达）：复用既有 agent-composer-rec -->
                 <template v-if="isMobileLayout && holdActive">
                   <div class="agent-composer-rec" data-testid="agent-voice-recording">
                     <span class="agent-composer-rec__mic" aria-hidden="true">
@@ -3600,6 +3870,12 @@ defineExpose({
                     </span>
                     <span class="agent-composer-rec__text">
                       {{ voiceCancelled ? '松开取消' : (voiceFinalText + voiceInterim || '正在聆听…') }}
+                    </span>
+                    <span class="agent-composer-rec__level" aria-hidden="true">
+                      <span
+                        class="agent-composer-rec__level-fill"
+                        :style="{ transform: `scaleX(${Math.max(0.08, Math.min(1, voiceLevel))})` }"
+                      />
                     </span>
                     <span class="agent-composer-rec__time">{{ formatRecTime(voiceElapsedSec) }}</span>
                   </div>
@@ -3614,28 +3890,30 @@ defineExpose({
                   class="agent-composer__mention w-full"
                   :mentions="mentionOptions"
                   :placeholder="agent.isStreaming
-                    ? (isMobileLayout ? '输入消息，发送加入待发队列…' : '输入消息，回车加入待发队列…')
+                    ? '输入消息…加入待发队列'
                     : inputPlaceholder"
                   :disabled="readOnly || isUploading"
                   :leading-inset="readOnly || isMobileLayout ? 0 : COMPOSER_PICK_INSET"
+                  :mobile-enter-newline="isMobileLayout"
+                  :prediction-history="predictionHistory"
                   submit-on-enter
                   @submit="onComposerSubmit"
                 />
                   <button
-                    v-if="!readOnly && !isMobileLayout"
+                    v-if="canvasRefEntryVisible"
                     type="button"
-                    class="composer-canvas-pick-btn"
-                    :class="{ 'is-active': pickMode.active.value, 'is-hint': showPickHint }"
+                    class="composer-canvas-ref-btn agent-hit-expand"
+                    :class="{ 'is-active': pickMode.active.value }"
                     :disabled="isUploading"
-                    aria-label="从画布选节点作引用"
-                    @click.stop="onCanvasRefPickToggle"
+                    data-hit="l"
+                    aria-label="引用画布节点"
+                    @click.stop="toggleCanvasRefPick"
                   >
-                    <span class="composer-canvas-pick-btn__halo" aria-hidden="true" />
-                    <span class="composer-canvas-pick-btn__lens" aria-hidden="true" />
-                    <CanvasRefTargetIcon :size="14" :filled="pickMode.active.value" class="composer-canvas-pick-btn__icon" />
-                    <span class="composer-canvas-pick-tip">从画布选节点作引用</span>
+                    <CanvasRefTargetIcon :size="14" :filled="pickMode.active.value" />
                   </button>
                 </div>
+                <!-- P1-5.3 空闲态 affordance：纯 span 提示（非 placeholder）；桌面恒不渲染 -->
+                <span v-if="mobileBarIdle" class="composer-bar-hint">按住说话 · 点按输入</span>
               </div>
               <input
                 ref="fileInputRef"
@@ -3653,11 +3931,13 @@ defineExpose({
                 <div ref="attachMenuRef" class="agent-attach-menu relative">
                     <button
                       type="button"
-                      class="dock-ghost-ctl flex h-8 w-8 items-center justify-center rounded-lg"
+                      class="dock-ghost-ctl agent-hit-expand flex h-8 w-8 items-center justify-center rounded-lg"
+                      aria-label="更多"
+                      data-hit="l"
                       :class="{ 'is-open': attachMenuOpen }"
                       :disabled="readOnly || isUploading"
                       :title="readOnly ? '只读画布不能添加参考素材' : '添加引用素材'"
-                      @click="toggleAttachMenu"
+                      @click.stop="toggleAttachMenu"
                     >
                       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
                         <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -3694,56 +3974,73 @@ defineExpose({
                         </span>
                         <span>我的资产库</span>
                       </button>
+                      <!-- P1-2.4 裁决 fix-1：C 抽屉「思考档位」= 参数预设槽位，与 B chip 共用同一 popover/状态 -->
                       <button
+                        v-if="showPlanningThinkingControls"
                         type="button"
                         class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
-                        @click="pickCanvasFromMenu"
+                        @click="attachMenuOpen = false; toggleThinkingMenu()"
                       >
                         <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                          <CanvasRefTargetIcon :size="14" />
+                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                            <path stroke-linecap="round" d="M4 8h8M20 8h-4M4 16h4M20 16h-8" />
+                            <circle cx="14" cy="8" r="2" />
+                            <circle cx="10" cy="16" r="2" />
+                          </svg>
                         </span>
-                        <span>从画布选节点</span>
+                        <span>思考档位</span>
                       </button>
                     </div>
                 </div>
 
                 <div class="agent-dock-params">
-                  <UniversalModelSelector v-model="planningModel" type="text" ghost />
+                  <UniversalModelSelector
+                    v-if="shouldShowModelChip(activeSkillId)"
+                    v-model="planningModel"
+                    type="text"
+                    ghost
+                    class="agent-model-hit"
+                  />
 
+                  <!-- P1-2.1：B 级 chip 仅非默认档常驻；默认档经 C 抽屉「思考档位」进入同一 popover，写回原状态通道
+                       （agent-dock-thinking：移动端裸条按 spec §5.5 只留 +/模型/发送，此槽位 CSS 隐藏） -->
                   <div
-                    v-if="showPlanningThinkingControls"
-                    class="flex items-center gap-1.5 rounded-lg border border-overlay/10 bg-overlay/5 px-2 py-1"
+                    v-if="showPlanningThinkingControls || thinkingMenuOpen"
+                    ref="thinkingMenuRef"
+                    class="agent-dock-thinking relative"
                   >
                     <button
+                      v-if="currentThinkingLevel !== '标准'"
                       type="button"
-                      class="dock-seg-btn rounded-md px-1.5 py-1"
-                      :class="{ 'is-on': planningThinking }"
+                      class="dock-ghost-ctl flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs"
+                      :class="{ 'is-open': thinkingMenuOpen }"
                       :disabled="props.readOnly"
-                      title="深度思考（DeepSeek V4）"
-                      @click="setPlanningThinking(!planningThinking)"
+                      title="思考档位"
+                      @click="toggleThinkingMenu"
                     >
-                      深度思考 {{ planningThinking ? '开' : '关' }}
+                      <span>{{ levelLabel(currentThinkingLevel) }}</span>
+                      <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
                     </button>
-                    <template v-if="planningThinking">
+                    <div
+                      v-if="thinkingMenuOpen"
+                      class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[132px] rounded-xl py-1"
+                      @click.stop
+                    >
                       <button
+                        v-for="lv in THINKING_LEVELS"
+                        :key="lv"
                         type="button"
-                        class="dock-seg-btn"
-                        :class="{ 'is-on': planningThinkingEffort === 'high' }"
+                        class="neo-popover-item flex w-full items-center justify-between px-3 py-2 text-left text-xs"
+                        :class="{ 'is-selected': lv === currentThinkingLevel }"
                         :disabled="props.readOnly"
-                        @click="setPlanningThinkingEffort('high')"
+                        @click="setPlanningThinkingLevel(lv)"
                       >
-                        high
+                        <span>{{ lv }}</span>
+                        <span v-if="lv === currentThinkingLevel" class="opacity-60">✓</span>
                       </button>
-                      <button
-                        type="button"
-                        class="dock-seg-btn"
-                        :class="{ 'is-on': planningThinkingEffort === 'max' }"
-                        :disabled="props.readOnly"
-                        @click="setPlanningThinkingEffort('max')"
-                      >
-                        max
-                      </button>
-                    </template>
+                    </div>
                   </div>
 
                   <div ref="skillMenuRef" class="relative">
@@ -3751,8 +4048,10 @@ defineExpose({
                     type="button"
                     class="agent-skill-trigger dock-ghost-ctl flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs"
                     :class="{ 'is-open': skillMenuOpen, 'has-value': activeSkillId !== null }"
-                    title="技能"
-                    @click="skillMenuOpen = !skillMenuOpen"
+                    :title="composerSkillMenuMode === 'chip'
+                      ? (activeSkillId === null ? '技能：当前自动路由，点按切换' : '技能：点按切回自动路由')
+                      : '技能'"
+                    @click="onSkillTriggerClick"
                   >
                     <span class="agent-skill-trigger__icon" aria-hidden="true">
                       <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
@@ -3762,7 +4061,7 @@ defineExpose({
                     <span class="max-w-[72px] truncate font-medium">{{ skillButtonLabel }}</span>
                   </button>
                   <div
-                    v-if="skillMenuOpen"
+                    v-if="skillMenuOpen && composerSkillMenuMode === 'menu'"
                     class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[240px] rounded-xl py-1"
                     @click.stop
                   >
@@ -3782,7 +4081,7 @@ defineExpose({
                         <span class="block truncate text-[10px] opacity-60">平台路由，单张/图生图优先</span>
                       </span>
                     </button>
-                    <div class="mx-3 my-1 border-t border-[var(--neo-border)] opacity-40" />
+                    <div class="mx-3 my-1 border-t border-[var(--lnk-border-subtle)] opacity-40" />
                     <button
                       v-for="skill in AGENT_SKILLS"
                       :key="skill.id"
@@ -3807,11 +4106,16 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-primary">
-                  <!-- 还原收缩态麦克风图标：移动端点按麦克风 + 长按录音双通道（#423 原始设计） -->
+                  <!-- P2-2.1：麦克风改 press-and-hold——press 开始、release 转写填入（不自动提交）、上滑取消 -->
                   <DockMicButton
+                    press-and-hold
                     :listening="speech.listening.value"
+                    :duration-sec="voiceElapsedSec"
+                    :level="voiceLevel"
                     :disabled="agent.isStreaming || isUploading"
-                    @toggle="toggleVoice"
+                    @holdstart="beginHoldTalk"
+                    @holdend="releaseVoice(false)"
+                    @holdcancel="releaseVoice(true)"
                   />
                   <DockGenerateButton
                     :generating="agent.isStreaming"
@@ -3820,6 +4124,8 @@ defineExpose({
                   />
                 </div>
               </div>
+              </div>
+              <!-- /composer-bare-bar -->
             </div>
           </div>
         </div>
@@ -3837,12 +4143,12 @@ defineExpose({
 <style scoped>
 .agent-side-rail {
   position: relative;
-  background: var(--neo-bg);
+  background: var(--lnk-surface-canvas);
   transition: width 0.3s ease, background 0.25s ease;
 }
 
 .agent-side-rail.is-docked-open {
-  border-left: 1px solid var(--neo-border);
+  border-left: 1px solid var(--lnk-border-subtle);
 }
 
 .agent-side-rail.is-resizing {
@@ -3866,24 +4172,10 @@ defineExpose({
   transform: scale(1.08);
 }
 
-.agent-fab-mobile {
-  right: 16px;
-  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
-}
-
-.agent-mobile-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 64;
-  background: rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-}
-
 /* ---- 面板外壳 ---- */
 .agent-panel-inline {
   position: relative;
-  background: var(--neo-bg);
+  background: var(--lnk-surface-canvas);
 }
 
 .agent-panel-floating {
@@ -3891,10 +4183,10 @@ defineExpose({
   z-index: 60;
   height: min(680px, calc(100vh - 72px));
   max-width: calc(100vw - 32px);
-  border: 1px solid var(--neo-glass-border);
+  border: 1px solid var(--lnk-border-default);
   border-radius: 20px;
-  background: var(--neo-popover-bg);
-  box-shadow: var(--neo-popover-shadow);
+  background: var(--lnk-surface-overlay);
+  box-shadow: var(--lnk-shadow-lg);
   backdrop-filter: blur(28px) saturate(1.4);
   -webkit-backdrop-filter: blur(28px) saturate(1.4);
   overflow: hidden;
@@ -3904,32 +4196,69 @@ defineExpose({
   user-select: none;
 }
 
-.agent-panel-mobile-sheet {
+/* ---- P1-5 移动端贴底裸条容器（替代全屏 sheet）----
+ * 面板不再是一张卡：容器透明、不挡画布（pointer-events 穿透空区），
+ * 内部 = 系统层（状态行 / 插话选项，仅生成态）+ composer-bare-bar 一条贴底。
+ * 画布始终露出上半且可点（P1-5.1/5.2），全面屏底部 home indicator 由
+ * env(safe-area-inset-bottom) 让位（Android inset=0 时无副作用）。 */
+/* 复合选择器压过模板上的 Tailwind h-full / overflow-hidden 工具类 */
+.agent-panel-mobile-dock.agent-panel-shell {
   position: fixed;
+  bottom: env(safe-area-inset-bottom, 0px);
+  right: 12px;
+  left: 12px;
   z-index: 70;
-  /* 顶部对齐屏幕上沿：env() 直接跟随安全区，Android inset=0 时零空隙。
-     ⛔ 曾写 max(44px, env(...))：44px 是给旧版应用头留的位，Android（inset=0）
-     会被垫出一条 44px 空带——移动端 sheet 是全屏模式，自带关闭按钮，不再让位。
-     iOS 状态栏区域由 env(safe-area-inset-top) 本身让开，面板内容从状态栏下方开始。 */
-  top: env(safe-area-inset-top, 0px);
-  right: 0;
-  bottom: 0;
-  left: 0;
   height: auto;
   max-height: none;
-  border: 1px solid var(--neo-glass-border);
-  border-bottom: none;
-  border-radius: 20px 20px 0 0;
-  background: var(--neo-popover-bg);
-  box-shadow: var(--neo-popover-shadow);
-  backdrop-filter: blur(28px) saturate(1.4);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
-  overflow: hidden;
+  overflow: visible;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
 }
 
-/* 全面屏底部 home indicator：输入 dock 抬离屏幕下沿（Android inset=0 时无副作用） */
-.agent-panel-mobile-sheet .agent-input-dock {
-  margin-bottom: env(safe-area-inset-bottom, 0px);
+.agent-panel-mobile-dock > * {
+  pointer-events: auto;
+}
+
+/* 系统层不承载卡片视觉：dock 只做布局容器，表面只有裸条一条 */
+.agent-panel-mobile-dock .agent-input-dock {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.agent-panel-mobile-dock .agent-input-dock::before {
+  display: none;
+}
+
+.agent-panel-mobile-dock .agent-input-area {
+  padding: 0;
+}
+
+/* P1-5 fix-1：顶栏在移动端收为 slim 行（新建/历史入口），桌面顶栏样式不动 */
+.agent-panel-mobile-dock .agent-panel-header {
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+  border-bottom: none;
+}
+
+/* P1-5 fix-2：历史 popover 在贴底容器内改为向上展开——顶栏贴视口底，向下开
+   会随容器高度（会话短时更矮）超出视口底、历史不可达；桌面 popover 行为不变
+   （本规则仅在 .agent-panel-mobile-dock 作用域内生效，压过模板 top-full/mt-1.5） */
+.agent-panel-mobile-dock .agent-panel-header .neo-popover {
+  top: auto;
+  bottom: calc(100% + var(--lnk-space-1));
+  margin-top: 0;
+}
+
+/* P1-5 fix-1：移动端对话流限高滚动——画布始终露出上半（P1-5.1），不遮罩不加 sheet */
+.agent-panel-mobile-dock .agent-chat-wrap {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: 40vh;
 }
 
 /* ---- 左边缘拖拉调宽 ---- */
@@ -3955,7 +4284,7 @@ defineExpose({
 }
 
 .agent-resize-handle:hover::after {
-  background: color-mix(in srgb, var(--neo-hi-text) 35%, transparent);
+  background: color-mix(in srgb, var(--lnk-hi-text) 35%, transparent);
 }
 
 .agent-panel-floating .agent-resize-handle {
@@ -3963,11 +4292,11 @@ defineExpose({
 }
 
 .agent-panel-header {
-  border-bottom: 1px solid var(--neo-border);
+  border-bottom: 1px solid var(--lnk-border-subtle);
 }
 
 .agent-subtitle {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-head-btn {
@@ -3977,19 +4306,19 @@ defineExpose({
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
 
 .agent-head-btn:hover {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-primary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-primary);
 }
 
 .agent-head-btn.is-active {
-  background: var(--neo-hi-bg);
-  color: var(--neo-hi-text);
-  box-shadow: var(--neo-hi-shadow);
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-hi-text);
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-readonly-btn {
@@ -3999,7 +4328,7 @@ defineExpose({
   border: 1px solid var(--lnk-warning-border);
   background: rgba(0, 0, 0, 0.15);
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1.4;
   color: var(--lnk-warning);
   transition: background 0.15s ease, border-color 0.15s ease;
@@ -4046,10 +4375,10 @@ defineExpose({
   height: 28px;
   padding: 0 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1;
-  color: var(--neo-hi-text);
-  background: color-mix(in srgb, var(--neo-hi-bg) 88%, transparent);
+  color: var(--lnk-hi-text);
+  background: color-mix(in srgb, var(--lnk-hi-bg) 88%, transparent);
   box-shadow: var(--lnk-shadow-md);
   backdrop-filter: blur(8px);
   transition: background 0.15s ease, transform 0.15s ease;
@@ -4057,7 +4386,7 @@ defineExpose({
 }
 
 .agent-jump-latest:hover {
-  background: var(--neo-hi-bg);
+  background: var(--lnk-hi-bg);
   transform: translateY(-1px);
 }
 
@@ -4102,24 +4431,121 @@ defineExpose({
 }
 
 .agent-empty {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-pv-example-btn {
-  border-color: var(--neo-border);
-  background: var(--neo-panel);
-  color: var(--neo-text-secondary);
+  border-color: var(--lnk-border-subtle);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .agent-pv-example-btn:hover {
-  border-color: var(--neo-accent, var(--neo-border));
-  background: color-mix(in srgb, var(--neo-panel) 92%, var(--neo-accent, #888) 8%);
+  border-color: var(--lnk-accent, var(--lnk-border-subtle));
+  background: color-mix(in srgb, var(--lnk-surface-raised) 92%, var(--lnk-accent, #888) 8%);
 }
 
-.agent-composer-attachment-hint {
-  border-left: 2px solid var(--neo-border);
-  padding-left: 8px;
+/*
+ * P1-1：首屏通用样例 chips —— ghost 样式，仅用 --lnk-* L2 令牌。
+ * 样例属系统层内容而非控件：surface-raised 底 + border-default 描边
+ * 是线框指南 §4 对样例 chips 的许可组合；不引入 hex/rgba。
+ */
+.agent-example-chip {
+  border-color: var(--lnk-border-default);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.agent-example-chip:hover {
+  border-color: var(--lnk-border-strong);
+  color: var(--lnk-text-primary);
+}
+
+.agent-example-chip:focus-visible {
+  outline: none;
+  border-color: var(--lnk-border-focus);
+}
+
+/*
+ * P1-4.1：回合产出收据行 —— 消息流末尾的轻量汇总条。
+ * 仅消费 --lnk-* L2 令牌（禁新增 hex，design-token.test.ts 守卫）。
+ * 文本按钮沿用 ghost 组合（surface-raised 底 + border-default 描边），
+ * 与样例 chips 同一许可组合（线框指南 §4）。
+ */
+.agent-turn-receipt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lnk-space-2);
+  margin: var(--lnk-space-1) var(--lnk-space-3) 0;
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+  border: 1px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-md);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-text-muted);
+}
+
+.agent-turn-receipt__dot {
+  margin: 0 var(--lnk-space-1);
+  color: var(--lnk-text-muted);
+}
+
+.agent-turn-receipt__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--lnk-text-secondary);
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.agent-turn-receipt__link:hover {
+  color: var(--lnk-text-primary);
+}
+
+.agent-turn-receipt__link:focus-visible {
+  outline: none;
+  color: var(--lnk-text-primary);
+}
+
+.agent-turn-receipt__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lnk-space-2);
+  flex-shrink: 0;
+}
+
+.agent-turn-receipt__btn {
+  padding: 0 var(--lnk-space-2);
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.agent-turn-receipt__btn:hover {
+  border-color: var(--lnk-border-strong);
+  color: var(--lnk-text-primary);
+}
+
+.agent-turn-receipt__btn:focus-visible {
+  outline: none;
+  border-color: var(--lnk-border-focus);
+}
+
+.agent-turn-receipt__btn:disabled {
+  border-color: var(--lnk-border-subtle);
+  color: var(--lnk-text-disabled);
+  cursor: not-allowed;
 }
 
 .agent-bubble-user {
@@ -4217,13 +4643,13 @@ defineExpose({
 }
 
 .agent-msg-action-btn:hover {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-primary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-primary);
 }
 
 .agent-msg-action-btn.is-active {
-  background: var(--neo-active-bg);
-  color: var(--neo-text-primary);
+  background: var(--lnk-pressed-overlay);
+  color: var(--lnk-text-primary);
 }
 
 /* 用户气泡内引用 chip：棋盘底 + 描边，白/浅图也能辨认 */
@@ -4262,24 +4688,19 @@ defineExpose({
    该入口收敛为 .agent-msg-action-btn 图标按钮，与 编辑/复制 共用同一套样式。 */
 
 .agent-history-coachmark {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 14%, var(--neo-border));
-  background: color-mix(in srgb, var(--neo-hi-bg) 8%, var(--neo-hover-bg));
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 14%, var(--lnk-border-subtle));
+  background: color-mix(in srgb, var(--lnk-hi-bg) 8%, var(--lnk-hover-overlay));
 }
 
 .agent-history-coachmark__dismiss {
-  border: 1px solid var(--neo-border);
-  background: var(--neo-hi-bg);
-  color: var(--neo-hi-text);
-  box-shadow: var(--neo-hi-shadow);
-}
-
-.agent-composer-reattach-hint {
-  border-left: 2px solid color-mix(in srgb, var(--neo-hi-text) 18%, transparent);
-  padding-left: 8px;
+  border: 1px solid var(--lnk-border-subtle);
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-hi-text);
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-tools {
-  border-top: 1px solid var(--neo-border);
+  border-top: 1px solid var(--lnk-border-subtle);
 }
 
 /* ---- 流式中待发消息气泡（排队，抄 WorkBuddy） ---- */
@@ -4292,38 +4713,38 @@ defineExpose({
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ⚠️ 别用 --neo-hi-bg 配 --neo-text：--neo-hi-bg 深主题是纯白 #ffffff、浅主题是深色 #17181d，
-   而 --neo-text 深主题近白、浅主题近黑 —— 「底色与字色同向」，两个主题都会把字吞掉。
-   中性高亮控件的正确配对是 --neo-hi-bg 配 --neo-hi-text；这里次级动作不用高亮块，
+/* ⚠️ 别用 --lnk-hi-bg 配 --lnk-text-primary：--lnk-hi-bg 深主题是纯白 #ffffff、浅主题是深色 #17181d，
+   而 --lnk-text-primary 深主题近白、浅主题近黑 —— 「底色与字色同向」，两个主题都会把字吞掉。
+   中性高亮控件的正确配对是 --lnk-hi-bg 配 --lnk-hi-text；这里次级动作不用高亮块，
    改用 surface 底 + 主文字色（两个主题都保证对比度）。 */
 .queued-act {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  border: 1px solid var(--neo-border-strong);
+  border: 1px solid var(--lnk-border-strong);
   border-radius: 999px;
-  background: var(--neo-surface-elevated);
+  background: var(--lnk-surface-raised);
   padding: 2px 9px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1.5;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .queued-act:hover {
-  background: color-mix(in srgb, var(--neo-text-primary) 12%, var(--neo-surface-elevated));
-  border-color: color-mix(in srgb, var(--neo-text-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--lnk-text-primary) 12%, var(--lnk-surface-raised));
+  border-color: color-mix(in srgb, var(--lnk-text-primary) 28%, transparent);
 }
 
 .queued-act--primary {
-  border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
-  /* --neo-accent 是固定紫 #6d5dfc，深底上对比度不够；--neo-accent-text 深底亮紫 / 浅底深紫 */
-  color: var(--neo-accent-text);
-  background: color-mix(in srgb, var(--neo-accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--lnk-accent) 45%, transparent);
+  /* --lnk-accent 是固定紫 #6d5dfc，深底上对比度不够；--lnk-accent-text 深底亮紫 / 浅底深紫 */
+  color: var(--lnk-accent-text);
+  background: color-mix(in srgb, var(--lnk-accent) 10%, transparent);
 }
 
 .queued-act--primary:hover {
-  background: color-mix(in srgb, var(--neo-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--lnk-accent) 18%, transparent);
 }
 
 /* ---- 已发送用户消息就地二次编辑（同一张用户卡片的编辑态，不是另一张卡） ----
@@ -4344,7 +4765,7 @@ defineExpose({
   color: inherit;
 }
 
-/* 提示语取用户气泡自己的文字色（而非全局 --neo-text-muted）：
+/* 提示语取用户气泡自己的文字色（而非全局 --lnk-text-muted）：
  * 它落在 --agent-user-bg 上，跟随气泡的明暗才不会有对比度缺口。 */
 .agent-edit-hint {
   color: color-mix(in srgb, var(--agent-user-text) 62%, transparent);
@@ -4359,38 +4780,91 @@ defineExpose({
   margin-top: 8px;
 }
 
-/* 同上：次级按钮不能用 --neo-hi-bg + --neo-text 的同向配色（白底白字 / 深底深字） */
+/* 同上：次级按钮不能用 --lnk-hi-bg + --lnk-text-primary 的同向配色（白底白字 / 深底深字） */
 .agent-edit-btn {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
-  border: 1px solid var(--neo-border-strong);
+  border: 1px solid var(--lnk-border-strong);
   border-radius: 999px;
-  background: var(--neo-surface-elevated);
+  background: var(--lnk-surface-raised);
   padding: 2px 12px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1.6;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .agent-edit-btn:hover {
-  background: color-mix(in srgb, var(--neo-text-primary) 12%, var(--neo-surface-elevated));
+  background: color-mix(in srgb, var(--lnk-text-primary) 12%, var(--lnk-surface-raised));
 }
 
 .agent-edit-btn--primary {
-  border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
-  color: var(--neo-accent-text);
-  background: color-mix(in srgb, var(--neo-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--lnk-accent) 45%, transparent);
+  color: var(--lnk-accent-text);
+  background: color-mix(in srgb, var(--lnk-accent) 12%, transparent);
 }
 
 .agent-edit-btn--primary:hover {
-  background: color-mix(in srgb, var(--neo-accent) 20%, transparent);
+  background: color-mix(in srgb, var(--lnk-accent) 20%, transparent);
 }
 
 .agent-turn--user:hover .agent-msg-actions,
 .agent-bubble-user:hover ~ .agent-msg-actions {
   opacity: 1;
+}
+
+/* ---- P1-3.1：生成中状态行（输入区上方 ≤24px；只用 --lnk-* L2 令牌） ---- */
+.composer-status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  margin: 0 2px 2px;
+  overflow: hidden;
+  font-size: var(--lnk-text-2xs);
+  line-height: 16px;
+  color: var(--lnk-text-muted);
+}
+
+.composer-status-phase {
+  flex: none;
+  white-space: nowrap;
+}
+
+.composer-status-track {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--lnk-ink-200);
+}
+
+.composer-status-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 2px;
+  background: var(--lnk-accent);
+  transition: width 0.3s var(--lnk-ease-standard, ease);
+}
+
+/* 无完成比例数据源 → 不确定态（扫动），绝不渲染假进度 */
+.composer-status-track.is-indeterminate .composer-status-fill {
+  width: 30%;
+  animation: composer-status-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes composer-status-sweep {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
 }
 
 /* ---- 底部输入 dock（对齐 dock-studio 毛玻璃） ---- */
@@ -4402,16 +4876,12 @@ defineExpose({
   gap: 6px;
   padding: 10px 12px;
   overflow: visible;
-  border: 1px solid var(--neo-glass-border);
+  border: 1px solid var(--lnk-border-default);
   border-radius: 18px;
-  background: var(--neo-glass-bg);
-  backdrop-filter: blur(var(--neo-glass-blur)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--neo-glass-blur)) saturate(1.5);
-  box-shadow:
-    0 20px 44px rgba(0, 0, 0, 0.42),
-    0 2px 6px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgb(var(--lnk-overlay-rgb) / 0.14),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  background: var(--lnk-surface-glass);
+  backdrop-filter: blur(var(--lnk-glass-blur)) saturate(1.5);
+  -webkit-backdrop-filter: blur(var(--lnk-glass-blur)) saturate(1.5);
+  box-shadow: var(--lnk-shadow-xl);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -4423,41 +4893,24 @@ defineExpose({
   left: 20px;
   height: 1px;
   pointer-events: none;
-  background: linear-gradient(90deg, transparent, var(--neo-glass-topline), transparent);
+  background: linear-gradient(90deg, transparent, var(--lnk-glass-topline), transparent);
 }
 
 .agent-input-dock:focus-within {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 28%, var(--neo-glass-border));
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 28%, var(--lnk-border-default));
   box-shadow:
-    0 20px 44px rgba(0, 0, 0, 0.42),
-    0 2px 6px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgb(var(--lnk-overlay-rgb) / 0.14),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
-    0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 14%, transparent);
+    var(--lnk-shadow-xl),
+    0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 14%, transparent);
 }
 
 .agent-input-dock.is-drop-target {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-border));
-  background: var(--neo-hover-bg);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 18%, transparent);
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 35%, var(--lnk-border-subtle));
+  background: var(--lnk-hover-overlay);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 18%, transparent);
 }
 
-.agent-prompt-field {
-  width: 100%;
-  min-height: 76px;
-  max-height: 180px;
-  resize: none;
-  border: none;
-  background: transparent;
-  outline: none;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--neo-text-primary);
-}
-
-.agent-prompt-field::placeholder {
-  color: var(--neo-text-muted);
-}
+/* .agent-prompt-field 死样式（含 76px 旧高度）已随 P2-3 删除：
+   输入框高度唯一口径 = MentionInput 的 min-h-[96px]（B7）。 */
 
 .agent-dock-actions {
   display: flex;
@@ -4484,48 +4937,48 @@ defineExpose({
 }
 
 .agent-skill-icon {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-secondary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-secondary);
   transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .agent-skill-trigger__icon {
   display: inline-flex;
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
   transition: color 0.15s ease;
 }
 
 .agent-skill-trigger:hover .agent-skill-trigger__icon,
 .agent-skill-trigger.is-open .agent-skill-trigger__icon {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 
 .agent-skill-trigger.has-value {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 12%, var(--neo-border));
-  background: color-mix(in srgb, var(--neo-hi-bg) 10%, var(--neo-hover-bg));
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 12%, var(--lnk-border-subtle));
+  background: color-mix(in srgb, var(--lnk-hi-bg) 10%, var(--lnk-hover-overlay));
 }
 
 .agent-skill-trigger.has-value .agent-skill-trigger__icon {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 
 .agent-popover-skill-item.is-selected {
-  background: var(--neo-hi-bg) !important;
-  color: var(--neo-hi-text) !important;
-  box-shadow: var(--neo-hi-shadow);
+  background: var(--lnk-hi-bg) !important;
+  color: var(--lnk-hi-text) !important;
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-popover-skill-item.is-selected .agent-skill-icon {
-  background: color-mix(in srgb, var(--neo-hi-text) 10%, transparent);
-  color: var(--neo-hi-text);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--neo-hi-text) 12%, transparent);
+  background: color-mix(in srgb, var(--lnk-hi-text) 10%, transparent);
+  color: var(--lnk-hi-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lnk-hi-text) 12%, transparent);
 }
 
 .agent-preset-primary {
-  background: var(--neo-hi-bg) !important;
-  color: var(--neo-hi-text) !important;
+  background: var(--lnk-hi-bg) !important;
+  color: var(--lnk-hi-text) !important;
   border-color: transparent !important;
-  box-shadow: var(--neo-hi-shadow);
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-preset-primary:hover:not(:disabled) {
@@ -4534,7 +4987,7 @@ defineExpose({
 
 /* ---- P1 回合状态行 ---- */
 .agent-turn-status {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-turn-status--failed {
@@ -4542,7 +4995,7 @@ defineExpose({
 }
 
 .agent-turn-status--waiting {
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
 }
 
 .agent-composer {
@@ -4564,63 +5017,193 @@ defineExpose({
   min-width: 0;
 }
 
-/* ---- 移动端 composer 三态（2026-10-15 二次重构，对齐 WorkBuddy） ----
- * 收缩态1：单行「+ | 输入 | 锚发送」；伸展态：文案区在上、参数行在下（+ 最左）；
- * 收缩态2：长按卡片进入的录音态（.agent-composer-rec）。 */
-.agent-input-dock.is-mobile-collapsed {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  /* 长按说话的手势面：卡片自身禁掉滚动手势接管，否则按住时 pointermove/up 被浏览器打断 */
-  touch-action: none;
-  -webkit-touch-callout: none;
-  -webkit-tap-highlight-color: transparent;
+/* ---- P0-4 移动端命中区扩展（视觉尺寸不变，基线 B8: 24/28/32） ----
+ * 透明 ::after 外扩可点区域：24px 控件（mic，data-hit="m"）→ inset -10px 凑满 44px；
+ * 28/32px 控件（generate 锚 / ＋ / 模型 chip，data-hit="l"）→ inset -8px。
+ * 仅 ≤767px 生效，桌面命中区与视觉完全不变。 */
+.agent-hit-expand {
+  position: relative;
 }
 
-/* dock-actions 摊平进收缩态单行：DOM 顺序 composer → attach → params → primary，
- * 用 order 排成 attach(+) → composer(输入) → primary(锚)；params（模型/深度思考/技能）收缩态不显示 */
-.agent-input-dock.is-mobile-collapsed .agent-dock-actions {
+.agent-hit-expand::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+/* 模型 chip：触发按钮在 UniversalModelSelector 组件内部，class 落在组件根 wrapper 上，
+ * 需 :deep 穿透把同一扩展挂到真实按钮 */
+.agent-model-hit > :deep(button) {
+  position: relative;
+}
+
+.agent-model-hit > :deep(button)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+@media (max-width: 767px) {
+  .agent-hit-expand[data-hit='m']::after {
+    inset: -10px; /* 24px → 44px */
+  }
+
+  .agent-hit-expand[data-hit='l']::after {
+    inset: -8px; /* 28/32px → 44px+ */
+  }
+
+  .agent-model-hit > :deep(button)::after {
+    inset: -8px;
+  }
+}
+
+/* ---- P1-5 移动端底部裸条（三态共条，对齐线稿 §3） ----
+ * 桌面：.composer-bare-bar 仅是 display:contents 的透明容器 —— dock 内布局零改动。
+ * 移动端（.agent-panel-mobile-dock 作用域）：容器成为裸条表面，内部摊平为
+ *   [ref 芯片行?] + [＋ / 文本 / 模型⌄ / 发送]（stacked 双行、idle/queued 单行）。
+ * idle：条内仅 ＋ + 「按住说话 · 点按输入」提示（P1-5.3），radius-full、min-height 48；
+ * queued（生成中无引用）：占位「输入消息…加入待发队列」+ 发送槽位换停止（P1-3.2）。
+ * 表面 = surface-raised + border-default + shadow-sm；文本直接落条内，无内嵌输入框；
+ * ◎ absolute 锚条左顶点（.composer-canvas-ref-btn 既有 translate(-50%,-50%) 规则不变，
+ *   移动端把 .agent-composer__input-wrap 改 static，让条成为 ○ 的包含块）。 */
+.composer-bare-bar {
   display: contents;
 }
 
-.agent-input-dock.is-mobile-collapsed .agent-attach-menu {
-  order: 0;
+/* 复合选择器压过模板上的 Tailwind 工具类；仅移动端 shell 内生效 */
+.agent-panel-mobile-dock .composer-bare-bar {
+  position: relative;
+  /* P2-2.2 上滑取消：条面垂直手势归应用（按住录音中浏览器不得接管为滚动） */
+  touch-action: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lnk-space-1);
+  min-height: 48px;
+  padding: 0 var(--lnk-space-2);
+  border: 1.5px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  box-shadow: var(--lnk-shadow-sm);
+  transition:
+    border-color var(--lnk-duration-fast) var(--lnk-ease-standard),
+    box-shadow var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+
+.agent-panel-mobile-dock .composer-bare-bar:focus-within {
+  border-color: var(--lnk-border-focus);
+  box-shadow: var(--lnk-shadow-sm), 0 0 0 2px var(--lnk-accent-subtle);
+}
+
+/* 空闲态手势面：条自身禁掉滚动手势接管，否则按住时 pointermove/up 被浏览器打断 */
+.agent-panel-mobile-dock .composer-bare-bar.is-idle {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+/* stacked：芯片行独占一行（basis 100% 强制换行），输入行 ＋/文本/模型⌄/发送 */
+.agent-panel-mobile-dock .composer-bare-bar.is-stacked {
+  border-radius: var(--lnk-radius-xl);
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+}
+
+/* 摊平 agent-composer / dock-actions：同一套 DOM，桌面/移动两种编排 */
+.agent-panel-mobile-dock .composer-bare-bar .agent-composer,
+.agent-panel-mobile-dock .composer-bare-bar .agent-dock-actions {
+  display: contents;
+}
+
+.agent-panel-mobile-dock .composer-bare-bar .agent-composer__refs {
+  order: -2;
+  flex: 1 1 100%;
+  margin-bottom: 0;
+}
+
+.agent-panel-mobile-dock .composer-bare-bar .agent-attach-menu {
+  order: -1;
   flex-shrink: 0;
 }
 
-.agent-input-dock.is-mobile-collapsed .agent-composer {
-  order: 1;
+.agent-panel-mobile-dock .composer-bare-bar .agent-composer__input-wrap {
+  order: 0;
+  position: static; /* 让 ◎ 的包含块上移到裸条（左顶点锚定） */
+  display: flex;
+  align-items: center;
   flex: 1 1 auto;
   min-width: 0;
 }
 
-/* 收缩态保持严格单行：提示行隐去（引用条 AgentRefStrip 保留，属有效内容） */
-.agent-input-dock.is-mobile-collapsed .agent-composer-reattach-hint,
-.agent-input-dock.is-mobile-collapsed .agent-composer-attachment-hint {
-  display: none;
+.agent-panel-mobile-dock .composer-bare-bar .agent-composer__mention {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.agent-input-dock.is-mobile-collapsed .agent-dock-params {
-  display: none;
+.agent-panel-mobile-dock .composer-bare-bar .agent-dock-params {
+  order: 1;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
 }
 
-.agent-input-dock.is-mobile-collapsed .agent-dock-primary {
+.agent-panel-mobile-dock .composer-bare-bar .agent-dock-primary {
   order: 2;
   flex-shrink: 0;
   margin-left: 0;
 }
 
-/* 录音中：卡片描边随状态走（紫=聆听 / 红=上滑取消）；参数行一并隐去，卡片只剩录音 UI */
-.agent-input-dock.is-holding .agent-dock-actions {
+/* 空闲态：条内只留 ＋ + 提示（P1-5.3：不常驻模型/发送/独立 mic） */
+.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-composer__input-wrap,
+.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-params,
+.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary {
   display: none;
 }
 
-.agent-input-dock.is-holding {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-glass-border));
+/* 输入/生成态：条上控件 = ＋/模型/发送 3 个（spec §5.5）——思考槽位、技能、独立 mic 隐藏 */
+.agent-panel-mobile-dock .composer-bare-bar .agent-dock-thinking,
+.agent-panel-mobile-dock .composer-bare-bar .agent-skill-trigger,
+.agent-panel-mobile-dock .composer-bare-bar .dock-mic-btn {
+  display: none;
 }
 
-.agent-input-dock.is-holding.is-cancel {
-  border-color: color-mix(in srgb, var(--neo-danger) 45%, var(--neo-glass-border));
+/* 空闲 affordance：纯文本提示（非 placeholder），与条内 ＋ 同行 */
+.agent-panel-mobile-dock .composer-bar-hint {
+  order: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 2px;
+  font-size: var(--lnk-text-base);
+  line-height: var(--lnk-lh-base);
+  color: var(--lnk-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 条内文本直接落表面（两层契约）：压掉 MentionInput 桌面卡的 96px 高度档，
+ * 对齐线稿 m-line（min 34）与 m-text（text-base/22）；
+ * ◎ 空态隐藏由 canvasRefEntryVisible 门控，文本行起点由条内 ＋ 占位让位（无重叠） */
+.agent-panel-mobile-dock .composer-bare-bar :deep(.mention-input-backdrop),
+.agent-panel-mobile-dock .composer-bare-bar :deep(.mention-input-field),
+.agent-panel-mobile-dock .composer-bare-bar :deep(.mention-input-ghost) {
+  min-height: 34px;
+  max-height: 120px;
+  padding: 4px 2px;
+  font-size: var(--lnk-text-base);
+  line-height: var(--lnk-lh-base);
+}
+
+/* 录音中：条描边随状态走（accent=聆听 / red=上滑取消） */
+.agent-panel-mobile-dock .composer-bare-bar.is-holding {
+  border-color: color-mix(in srgb, var(--lnk-accent-text) 45%, var(--lnk-border-default));
+}
+
+.agent-panel-mobile-dock .composer-bare-bar.is-holding.is-cancel {
+  border-color: color-mix(in srgb, var(--lnk-red-600) 55%, var(--lnk-border-default));
 }
 
 .agent-composer-rec {
@@ -4642,15 +5225,36 @@ defineExpose({
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--neo-hi-bg) 18%, var(--neo-hover-bg));
-  color: var(--neo-hi-text);
+  background: color-mix(in srgb, var(--lnk-hi-bg) 18%, var(--lnk-hover-overlay));
+  color: var(--lnk-hi-text);
   animation: agent-rec-pulse 1.2s ease-in-out infinite;
 }
 
-.agent-input-dock.is-cancel .agent-composer-rec__mic {
-  color: var(--neo-danger);
-  background: color-mix(in srgb, var(--neo-danger) 14%, var(--neo-hover-bg));
+/* P2-2.2 上滑取消：mic 变红停脉冲（is-cancel 绑在 composer-bare-bar 上） */
+.composer-bare-bar.is-cancel .agent-composer-rec__mic {
+  color: var(--lnk-error);
+  background: color-mix(in srgb, var(--lnk-error) 14%, var(--lnk-hover-overlay));
   animation: none;
+}
+
+/* P2-2.2 电平反馈：细条随 micLevel 横向伸缩（transform，无布局抖动） */
+.agent-composer-rec__level {
+  flex-shrink: 0;
+  width: 36px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lnk-accent-text) 25%, transparent);
+}
+
+.agent-composer-rec__level-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0.08);
+  border-radius: inherit;
+  background: var(--lnk-accent-text);
 }
 
 .agent-composer-rec__text {
@@ -4660,27 +5264,27 @@ defineExpose({
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  font-size: 13px;
+  font-size: var(--lnk-text-sm);
   line-height: 1.5;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 
 .agent-composer-rec__time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   font-variant-numeric: tabular-nums;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-composer-rec__hint {
   margin: 2px 2px 0;
   text-align: center;
-  font-size: 10px;
-  color: var(--neo-text-muted);
+  font-size: var(--lnk-text-2xs); /* P0-2.2：原 10px 引导档升 2xs(11px) */
+  color: var(--lnk-text-muted);
 }
 
 .agent-composer-rec__hint.is-cancel {
-  color: var(--neo-danger);
+  color: var(--lnk-error);
 }
 
 @keyframes agent-rec-pulse {
@@ -4693,7 +5297,17 @@ defineExpose({
   }
 }
 
-.composer-canvas-pick-btn {
+/* P2-2.2 约束：prefers-reduced-motion 下录音反馈不脉冲（边框/图标均静态呈现） */
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer-rec__mic {
+    animation: none;
+  }
+}
+
+/* ◎ P1-2.3 ghost 入口：22px 视觉、无玻璃底（透明背景/无边框），圆心 = 表面左顶点；
+ * PC 命中 32px（透明 ::after inset -5px）；≤767px 由 .agent-hit-expand[data-hit='l'] 扩到 44px。
+ * 仅 color 过渡 —— 退役 hover-only 球的全部 halo/lens/光效。 */
+.composer-canvas-ref-btn {
   position: absolute;
   top: 0;
   left: 0;
@@ -4701,178 +5315,37 @@ defineExpose({
   isolation: isolate;
   overflow: visible;
   display: flex;
-  width: 28px;
-  height: 28px;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border: 1px solid var(--neo-glass-border);
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at 28% 22%, rgb(var(--lnk-overlay-rgb) / 0.24) 0%, transparent 46%),
-    var(--neo-glass-lite-bg);
-  color: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(var(--neo-glass-lite-blur)) saturate(1.4);
-  -webkit-backdrop-filter: blur(var(--neo-glass-lite-blur)) saturate(1.4);
-  box-shadow:
-    var(--neo-glass-lite-shadow),
-    var(--lnk-shadow-md);
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: transparent;
+  color: var(--lnk-accent-text);
   transform: translate(-50%, -50%);
-  transition:
-    background 0.22s ease,
-    border-color 0.22s ease,
-    color 0.22s ease,
-    box-shadow 0.22s ease,
-    transform 0.14s cubic-bezier(0.34, 1.2, 0.64, 1);
+  transition: color var(--lnk-duration-fast) var(--lnk-ease-standard);
+  cursor: pointer;
 }
 
-.composer-canvas-pick-btn__halo {
+.composer-canvas-ref-btn::after {
+  content: '';
   position: absolute;
-  inset: -4px;
-  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.07);
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0.55;
-  transition: opacity 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
-}
-
-.composer-canvas-pick-btn__lens {
-  position: absolute;
-  inset: 1px;
-  border-radius: inherit;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 90% 70% at 24% 18%, rgb(var(--lnk-overlay-rgb) / 0.16) 0%, transparent 52%),
-    radial-gradient(ellipse 55% 45% at 78% 88%, rgb(var(--lnk-overlay-rgb) / 0.05) 0%, transparent 48%);
-  opacity: 0.9;
-  transition: opacity 0.22s ease, background 0.22s ease;
-}
-
-.composer-canvas-pick-btn__icon {
-  position: relative;
-  z-index: 1;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
-  transition: filter 0.22s ease, transform 0.14s ease;
-}
-
-.composer-canvas-pick-btn:hover:not(:disabled):not(.is-active) {
-  border-color: var(--neo-glass-border-hover);
-  color: #fff;
-  transform: translate(-50%, -50%) scale(1.05);
-  box-shadow:
-    var(--neo-glass-lite-shadow),
-    var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn:hover:not(:disabled):not(.is-active) .composer-canvas-pick-btn__halo {
-  opacity: 0.85;
-  border-color: rgb(var(--lnk-overlay-rgb) / 0.12);
-}
-
-.composer-canvas-pick-btn:active:not(:disabled):not(.is-active) {
-  transform: translate(-50%, -50%) scale(0.94);
-}
-
-.composer-canvas-pick-btn.is-active {
-  border-color: rgb(var(--lnk-overlay-rgb) / 0.92);
-  background:
-    radial-gradient(circle at 30% 24%, rgb(var(--lnk-overlay-rgb) / 0.95) 0%, transparent 46%),
-    linear-gradient(165deg, #ffffff 0%, #f3f3f6 48%, #e6e6ec 100%);
-  color: var(--neo-hi-text);
-  box-shadow:
-    var(--neo-hi-shadow),
-    0 0 0 1px rgb(var(--lnk-overlay-rgb) / 0.55),
-    var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn.is-active .composer-canvas-pick-btn__halo {
   inset: -5px;
-  border-color: rgb(var(--lnk-overlay-rgb) / 0.42);
-  opacity: 1;
-  animation: composer-pick-target-ring 1.75s ease-out infinite;
 }
 
-.composer-canvas-pick-btn.is-active .composer-canvas-pick-btn__lens {
-  background:
-    radial-gradient(ellipse 85% 65% at 28% 22%, rgb(var(--lnk-overlay-rgb) / 0.72) 0%, transparent 54%),
-    radial-gradient(ellipse 50% 40% at 72% 82%, rgb(var(--lnk-overlay-rgb) / 0.18) 0%, transparent 50%);
-  opacity: 1;
+.composer-canvas-ref-btn:hover {
+  color: var(--lnk-accent-hover);
 }
 
-.composer-canvas-pick-btn.is-active .composer-canvas-pick-btn__icon {
-  filter: none;
-}
-
-.composer-canvas-pick-btn.is-active:active:not(:disabled) {
-  transform: translate(-50%, -50%) scale(0.96);
-  box-shadow:
-    var(--neo-hi-shadow),
-    0 0 0 2px rgb(var(--lnk-overlay-rgb) / 0.45),
-    var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn.is-hint:not(.is-active) .composer-canvas-pick-btn__halo {
-  animation: composer-pick-halo-breathe 2.6s ease-in-out infinite;
-}
-
-:global(:root[data-theme='light']) .composer-canvas-pick-btn:not(.is-active) {
-  color: var(--neo-text-secondary);
-}
-
-:global(:root[data-theme='light']) .composer-canvas-pick-btn.is-active {
-  color: var(--neo-hi-text);
-}
-
-.composer-canvas-pick-tip {
-  position: absolute;
-  bottom: calc(100% + 7px);
-  left: 50%;
-  z-index: 5;
-  padding: 4px 8px;
-  border: 1px solid var(--neo-border);
-  border-radius: 8px;
-  background: var(--neo-surface-elevated);
-  font-size: 10px;
-  line-height: 1.3;
-  white-space: nowrap;
-  color: var(--neo-text-secondary);
-  pointer-events: none;
-  opacity: 0;
-  transform: translateX(-50%) translateY(2px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  box-shadow: var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn:hover:not(:disabled) .composer-canvas-pick-tip,
-.composer-canvas-pick-btn:focus-visible .composer-canvas-pick-tip {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+.composer-canvas-ref-btn:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
 }
 
 .agent-attach-icon {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-secondary);
-}
-
-@keyframes composer-pick-halo-breathe {
-  0%, 100% {
-    opacity: 0.42;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.92;
-    transform: scale(1.06);
-  }
-}
-
-@keyframes composer-pick-target-ring {
-  0% {
-    opacity: 0.85;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.42);
-  }
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-secondary);
 }
 </style>

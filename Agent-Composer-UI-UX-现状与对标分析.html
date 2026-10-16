@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lnk π · Agent Composer UI/UX 现状与对标分析</title>
+<style>
+  :root{
+    --ink-0:#ffffff; --ink-50:#f7f8fa; --ink-100:#eef0f5; --ink-200:#e2e5ec;
+    --ink-300:#c9ced6; --ink-400:#9aa3b2; --ink-500:#7a8391; --ink-600:#5a6478;
+    --ink-700:#4a5364; --ink-800:#33414d; --ink-900:#1f2430; --ink-950:#1a1a21;
+    --purple:#6d5dfc; --purple-dark:#4a3bc4; --purple-soft:#f4f2ff;
+    --cyan:#22d3ee; --amber:#f59e0b;
+    --danger:#d92d20; --danger-soft:#fef3f2; --ok:#039855; --ok-soft:#ecfdf3;
+    --warn:#b54708; --warn-soft:#fffaeb;
+    --text:var(--ink-800); --text-strong:var(--ink-950); --text-muted:var(--ink-600);
+    --bg:var(--ink-100); --surface:#ffffff; --surface-2:var(--ink-50);
+    --border:var(--ink-200); --border-strong:var(--ink-300);
+    --radius:14px; --radius-sm:9px;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:15px/1.72 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:48px 24px 96px;
+  }
+  .wrap{max-width:1080px;margin:0 auto}
+
+  /* ---------- 头部 ---------- */
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-500);font-weight:600}
+  h1{font-size:34px;line-height:1.28;margin:10px 0 14px;color:var(--text-strong);letter-spacing:-.015em;font-weight:700}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+  .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 11px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
+  .tag::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--purple)}
+  .tag.plain::before{display:none}
+  .lede{font-size:17px;line-height:1.8;color:var(--ink-700);background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--purple);border-radius:var(--radius);padding:20px 24px;margin:0 0 44px}
+  .lede b{color:var(--text-strong)}
+
+  h2{font-size:22px;margin:56px 0 6px;color:var(--text-strong);letter-spacing:-.01em;font-weight:700;display:flex;align-items:baseline;gap:10px}
+  h2 .n{font-size:13px;font-weight:600;color:var(--purple-dark);font-family:var(--mono);letter-spacing:0}
+  h2+.sub{color:var(--ink-500);font-size:13.5px;margin:0 0 20px}
+  h3{font-size:16px;margin:34px 0 10px;color:var(--text-strong);font-weight:650}
+  h4{font-size:14px;margin:22px 0 8px;color:var(--ink-700);font-weight:650}
+  p{margin:0 0 12px}
+  ul,ol{margin:0 0 14px;padding-left:22px}
+  li{margin:5px 0}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--ink-100);border:1px solid var(--ink-200);border-radius:5px;padding:1.5px 5px;color:var(--ink-800)}
+  pre{font-family:var(--mono);font-size:12.5px;line-height:1.65;background:var(--ink-950);color:#e6e8ef;border-radius:var(--radius-sm);padding:14px 16px;overflow-x:auto;margin:0 0 14px}
+  pre code{background:none;border:none;color:inherit;padding:0}
+  .path{font-family:var(--mono);font-size:12.5px;color:var(--purple-dark);background:var(--purple-soft);border:1px solid #ddd6ff;border-radius:5px;padding:1.5px 6px;word-break:break-all}
+
+  /* ---------- 卡片 ---------- */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;margin:0 0 14px}
+  .card h4{margin-top:0}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  @media(max-width:820px){.g2,.g3{grid-template-columns:1fr}}
+
+  /* ---------- 结论卡 ---------- */
+  .findings{counter-reset:f;display:grid;gap:10px;margin:0 0 10px}
+  .finding{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:15px 18px 15px 56px;position:relative}
+  .finding::before{counter-increment:f;content:counter(f);position:absolute;left:18px;top:15px;width:24px;height:24px;border-radius:50%;background:var(--purple-soft);color:var(--purple-dark);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+  .finding b{color:var(--text-strong)}
+  .finding .why{display:block;color:var(--ink-600);font-size:13px;margin-top:3px}
+
+  /* ---------- 表格 ---------- */
+  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin:0 0 18px;font-size:13.5px}
+  caption{caption-side:top;text-align:left;font-size:12.5px;color:var(--ink-500);padding:0 0 8px}
+  th,td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+  th{background:var(--ink-50);font-weight:650;font-size:12.5px;color:var(--ink-700);white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+  .tbl-wrap{overflow-x:auto}
+  .hi{color:var(--purple-dark);font-weight:650}
+
+  /* ---------- 严重度徽章 ---------- */
+  .sev{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;font-family:var(--mono);padding:2px 8px;border-radius:6px;letter-spacing:.02em}
+  .sev.p0{background:var(--danger-soft);color:var(--danger);border:1px solid #fda29b}
+  .sev.p1{background:var(--warn-soft);color:var(--warn);border:1px solid #fec84b}
+  .sev.p2{background:var(--ok-soft);color:var(--ok);border:1px solid #a6f4c5}
+
+  /* ---------- 差距条目 ---------- */
+  .gap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin:0 0 14px;overflow:hidden}
+  .gap>.head{display:flex;align-items:flex-start;gap:10px;padding:15px 20px 12px;border-bottom:1px solid var(--border)}
+  .gap>.head .t{font-weight:650;color:var(--text-strong);font-size:15px;line-height:1.5}
+  .gap>.body{padding:14px 20px 4px}
+  .gap .row{display:grid;grid-template-columns:76px 1fr;gap:12px;margin:0 0 11px;font-size:13.5px}
+  .gap .row>.k{font-size:11.5px;font-weight:700;color:var(--ink-500);letter-spacing:.08em;text-transform:uppercase;padding-top:2px}
+  .gap .row>.v{min-width:0}
+  .gap .row>.v strong{color:var(--text-strong)}
+
+  /* ---------- 代码证据块 ---------- */
+  .ev{font-family:var(--mono);font-size:12px;background:var(--ink-50);border:1px solid var(--border);border-left:2px solid var(--ink-300);border-radius:6px;padding:9px 12px;margin:8px 0 12px;color:var(--ink-700);white-space:pre-wrap;word-break:break-word}
+
+  /* ---------- 线框图 ---------- */
+  .mockrow{display:flex;gap:18px;flex-wrap:wrap;margin:18px 0 8px}
+  .mock{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;flex:0 0 auto}
+  .mock .lbl{font-size:11.5px;font-weight:700;color:var(--ink-500);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;display:flex;justify-content:space-between;gap:10px}
+  .phone{width:236px;height:400px;border:1px solid var(--border-strong);border-radius:22px;background:var(--ink-50);position:relative;overflow:hidden;display:flex;flex-direction:column}
+  .phone .bar{height:20px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--ink-400)}
+  .phone .stage{flex:1;min-height:0;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+  .phone .foot{flex:0 0 auto;padding:8px 10px 10px}
+  .panel{width:300px;height:400px;border:1px solid var(--border-strong);border-radius:12px;background:var(--ink-50);display:flex;flex-direction:column;overflow:hidden}
+  .panel .hd{height:30px;flex:0 0 auto;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;padding:0 9px;background:var(--surface)}
+  .panel .hd .dot{width:8px;height:8px;border-radius:50%;background:var(--purple)}
+  .panel .hd .ttl{font-size:9.5px;color:var(--ink-500)}
+
+  .wline{height:7px;border-radius:4px;background:var(--ink-200)}
+  .wline.s{width:52%} .wline.m{width:72%} .wline.l{width:90%}
+  .chip-row{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{font-size:8.5px;line-height:1.5;padding:3px 7px;border-radius:999px;background:var(--surface);border:1px solid var(--border-strong);color:var(--ink-600);white-space:nowrap}
+  .chip.on{background:var(--purple-soft);border-color:#cbc2ff;color:var(--purple-dark);font-weight:650}
+  .chip.tiny{padding:2px 5px;font-size:8px}
+  .ibox{background:var(--surface);border:1px solid var(--border-strong);border-radius:9px;padding:7px 8px;display:flex;flex-direction:column;gap:6px}
+  .ibox.sm{border-radius:8px;padding:6px 7px}
+  .ibox.tall{min-height:64px}
+  .crow{display:flex;align-items:center;gap:4px}
+  .crow.between{justify-content:space-between}
+  .spacer{flex:1}
+  .icirc{width:16px;height:16px;border-radius:50%;flex:0 0 auto;border:1px solid var(--border-strong);background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--ink-500)}
+  .icirc.dark{background:var(--ink-900);border-color:var(--ink-900);color:#fff;font-size:7px}
+  .icirc.big{width:20px;height:20px}
+  .icirc.pick{position:absolute;left:-1px;top:2px;background:var(--surface);border-color:var(--purple);color:var(--purple-dark);box-shadow:0 0 0 2px #e6e1ff}
+  .iboxwrap{position:relative;padding-left:8px}
+  .txtfill{font-size:10px;color:var(--ink-800);line-height:1.45}
+  .note{font-size:11px;color:var(--ink-500);line-height:1.6;margin-top:8px;max-width:250px}
+  .ph{font-size:9.5px;color:var(--ink-600);line-height:1.5}
+  .ghost{height:16px;border-radius:999px;background:linear-gradient(90deg,var(--ink-200),var(--ink-100));opacity:.75}
+  .emptyhero{display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 0 6px}
+  .heroavatar{width:34px;height:34px;border-radius:50%;background:var(--purple-soft);border:1px solid #cbc2ff;display:flex;align-items:center;justify-content:center;font-size:13px}
+  .herotxt{font-size:10px;color:var(--ink-500);text-align:center;line-height:1.5}
+  .herotxt b{color:var(--ink-800);font-size:12px;display:block;font-weight:700}
+  .statbar{border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);padding:6px 8px;display:flex;flex-direction:column;gap:5px}
+  .prog{height:4px;border-radius:999px;background:var(--ink-200);overflow:hidden}
+  .prog i{display:block;height:100%;width:46%;background:var(--purple);border-radius:999px}
+  .micro{font-size:8.5px;color:var(--ink-600);display:flex;justify-content:space-between;gap:6px}
+
+  /* ---------- 对比条 ---------- */
+  .cmpbar{display:flex;align-items:center;gap:8px;margin:4px 0 10px;font-size:12.5px}
+  .cmpbar .track{flex:1;height:20px;border-radius:6px;background:var(--ink-100);border:1px solid var(--border);display:flex;overflow:hidden;font-size:11px;font-family:var(--mono)}
+  .cmpbar .seg{display:flex;align-items:center;justify-content:center;color:#fff;font-weight:650}
+  .seg.neo{background:var(--ink-600)}
+  .seg.lnk{background:var(--purple)}
+  .cmpbar .lg{display:flex;gap:12px;font-size:11.5px;color:var(--ink-600)}
+  .sw{display:inline-flex;align-items:center;gap:5px}
+  .sw i{width:9px;height:9px;border-radius:3px;display:inline-block}
+
+  /* ---------- 收尾 ---------- */
+  .callout{background:var(--purple-soft);border:1px solid #ddd6ff;border-radius:var(--radius);padding:18px 22px;margin:18px 0}
+  .callout.warn{background:var(--warn-soft);border-color:#fec84b}
+  .callout.ok{background:var(--ok-soft);border-color:#a6f4c5}
+  .callout h4{margin-top:0}
+  .callout p:last-child{margin-bottom:0}
+  hr{border:none;border-top:1px solid var(--border);margin:48px 0}
+  .foot{font-size:12.5px;color:var(--ink-500);text-align:center;margin-top:56px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kicker">Design Review · lnk π Canvas Agent</div>
+  <h1>Agent Composer 的 UI/UX 现状与对标分析</h1>
+  <div class="meta">
+    <span class="tag">对标：Muse · Dots · WorkBuddy 小程序</span>
+    <span class="tag plain">代码基线 master <code>e6116e10</code></span>
+    <span class="tag plain">2026-10-15</span>
+  </div>
+
+  <p class="lede">
+    <b>一句话结论：</b>lnk π 的 composer 在「<b>功能完备度</b>」上已经领先同级产品——插话队列、引用芯片、画布选点、双层 mention 高亮这些能力，WorkBuddy 小程序没有，Muse 也没有。
+    但它缺的是<b>「少即是多」的取舍</b>：一个 420–760px 的面板里塞了最多 9 个同级可交互控件，首屏空态只有两行灰字，提示文案的对比度只有 <b>2.59:1</b>，
+    并且它<b>整体没有接入本项目的设计体系</b>（157 处 <code>--neo-*</code> vs 43 处 <code>--lnk-*</code>）。
+    对比 Muse / Dots / WorkBuddy 小程序三家，差距不在能力，在<b>「分层、克制、可被看见」</b>这三件事上。
+  </p>
+
+  <!-- ============================================================ -->
+  <h2><span class="n">01</span>七个结论</h2>
+  <p class="sub">按「离用户最近」排序，每条都在下面第 3 节给出代码证据。</p>
+
+  <div class="findings">
+    <div class="finding"><b>键盘契约自相矛盾</b><span class="why">占位符写着「Cmd/Ctrl + Enter 发送」，而输入框实际是 <code>submit-on-enter</code>——回车就发。移动端软键盘下这是直接误发。</span></div>
+    <div class="finding"><b>提示文字被令牌吞掉了</b><span class="why"><code>--neo-text-muted</code> 是 rgba 透明度色，实测浅色主题 <b>2.59:1</b>、深色 <b>3.60:1</b>，却专门用在 10px 的引导文案上。低于 AA，等于没有提示。</span></div>
+    <div class="finding"><b>浅色主题下输入框是「重黑投影」</b><span class="why">输入 dock 的阴影硬编码 <code>rgba(0,0,0,.42)/(.3)</code>，只有深色一套、无浅色覆盖。这是 composer 里唯一没有被主题化的视觉量。</span></div>
+    <div class="finding"><b>首屏空态等于零</b><span class="why">面板没有消息时只有两行灰字（「描述你的创意」+ 副标题）。没有样例、没有可点入口、没有人格。而样例能力已经存在于产品视觉技能分支里。</span></div>
+    <div class="finding"><b>一行里 9 个同级控件，没有分层</b><span class="why">附件、模型、深度思考（开关+high/max）、技能、画布选点、麦克风、发送全在一行且视觉权重相近。WorkBuddy 小程序同一位置只有 4 个，Dots 是 1 个输入框加 0 个参数。</span></div>
+    <div class="finding"><b>「生成中」是一段视觉空白</b><span class="why">发送键变方形停止块（这点做得好），但没有预估时长、没有进度、没有产物落点预览。Muse 有状态面板，Dots 有 Activity 面板。</span></div>
+    <div class="finding"><b>设计体系对 composer 没有约束力</b><span class="why">墨流 Ink Flow 的 <code>--lnk-*</code> L1/L2/L3 体系覆盖不到 agent 面板；<code>neowow-tokens.css</code> 只反向引用 <code>--lnk-*</code> 6 次。任何主题/密度调整都要改两处。</span></div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="n">02</span>现状盘点：composer 到底长什么样</h2>
+  <p class="sub">全部为代码事实，可逐条复核（第 6 节附取证命令）。</p>
+
+  <h3>2.1 组件构成</h3>
+  <div class="tbl-wrap">
+  <table>
+    <caption>lnk π agent composer 的物理组成</caption>
+    <thead><tr><th>角色</th><th>文件</th><th>规模</th><th>关键事实</th></tr></thead>
+    <tbody>
+      <tr><td>面板 + 输入 dock + 消息区 + 空态</td><td class="path">components/agent/AgentSideRail.vue</td><td class="num">4508 行</td><td>单个 SFC 同时承担面板外壳、消息渲染、输入 dock、四个 popover、17 个 CSS 块</td></tr>
+      <tr><td>输入控件</td><td class="path">components/canvas/MentionInput.vue</td><td class="num">248 行</td><td>双层实现：半透明 textarea + 同步滚动的 backdrop 高亮层（mention 染色）</td></tr>
+      <tr><td>发送 / 停止键</td><td class="path">components/canvas/dock-studio/shared/DockGenerateButton.vue</td><td class="num">105 行</td><td>28px 圆形；生成中切换为方形停止块</td></tr>
+      <tr><td>语音输入</td><td class="path">components/canvas/dock-studio/shared/DockMicButton.vue</td><td class="num">82 行</td><td>24px、无底色图标；点击式 ASR 开关，非按住说话</td></tr>
+      <tr><td>移动端断点</td><td class="path">composables/useAgentMobileLayout.ts</td><td class="num">31 行</td><td>767px 单断言；移动端面板 Teleport 成全屏 sheet</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>2.2 结构解剖</h3>
+  <div class="mockrow">
+    <div class="mock">
+      <div class="lbl"><span>桌面 · 伸展态（面板 420–760px）</span></div>
+      <div class="panel">
+        <div class="hd"><span class="dot"></span><span class="ttl">lnk·π agent</span><span class="spacer"></span><span class="icirc" style="width:12px;height:12px">+</span><span class="icirc" style="width:12px;height:12px">↺</span><span class="icirc" style="width:12px;height:12px">▣</span></div>
+        <div style="flex:1;min-height:0;padding:10px;display:flex;flex-direction:column;gap:7px">
+          <div class="wline m"></div><div class="wline l"></div><div class="wline s"></div>
+        </div>
+        <div style="flex:0 0 auto;padding:0 8px 10px">
+          <div class="ibox" style="border-radius:12px;gap:6px">
+            <div style="position:relative">
+              <div class="crow" style="gap:4px;align-items:flex-start">
+                <span class="icirc pick" style="position:relative;left:0;top:6px">◎</span>
+                <div style="flex:1;padding-left:12px">
+                  <div class="ph" style="font-size:9.5px">描述需求，@ 引用素材，Cmd/Ctrl + Enter 发送…</div>
+                </div>
+              </div>
+            </div>
+            <div style="border-top:1px dashed var(--border);margin:1px 0"></div>
+            <div class="crow" style="gap:3px">
+              <span class="icirc">+</span>
+              <span class="chip tiny">Step-5-P…⌄</span>
+              <span class="chip tiny">深度思考 关</span>
+              <span class="chip tiny">✦ 自动⌄</span>
+              <span class="spacer"></span>
+              <span class="icirc">🎙</span>
+              <span class="icirc dark big">↑</span>
+            </div>
+          </div>
+          <div class="note">单行参数区 = 附件 · 模型 · 思考开关 · 技能；主行 = 语音 · 发送。<br>悬浮的 ◎ 是「从画布选节点」按钮，绝对定位在输入框左上角外侧。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mock">
+      <div class="lbl"><span>移动端 · 全屏 sheet（&lt;768px）</span></div>
+      <div class="phone">
+        <div class="bar">状态栏</div>
+        <div class="stage">
+          <div class="crow between"><span class="icirc" style="width:10px;height:10px"></span><span style="font-size:8.5px;color:var(--ink-500)">对话 ｜ 看画布</span><span class="icirc" style="width:10px;height:10px"></span></div>
+          <div class="wline m" style="margin-top:6px"></div><div class="wline l"></div><div class="wline s"></div>
+        </div>
+        <div class="foot">
+          <div class="ibox" style="border-radius:12px">
+            <div class="ph">描述需求，@ 引用素材…</div>
+            <div class="crow" style="gap:3px">
+              <span class="icirc">+</span><span class="chip tiny">模型⌄</span><span class="chip tiny">思考</span>
+              <span class="spacer"></span><span class="icirc">🎙</span><span class="icirc dark big">↑</span>
+            </div>
+          </div>
+          <div class="note" style="text-align:center">面板遮住整块画布，需点「看画布」退回。<br>参数行 <code>flex-wrap</code>，窄屏会折行。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>2.3 量化现状</h3>
+  <div class="tbl-wrap">
+  <table>
+    <caption>可实测的数值。左侧为当前值，右侧为对标三家后的目标带。</caption>
+    <thead><tr><th>维度</th><th>当前实测</th><th>证据</th><th>目标</th></tr></thead>
+    <tbody>
+      <tr><td>面板宽度</td><td class="num">默认 500 / 最小 420 / 最大 760</td><td class="path">AgentSideRail.vue:1128-1131</td><td>保持（合理）</td></tr>
+      <tr><td>输入框最小高度</td><td class="num">96px（<code>rows=4</code>）</td><td class="path">MentionInput.vue:165,179,217</td><td>≥ 3 行自适应，收起态单行</td></tr>
+      <tr><td>输入框最大高度</td><td class="num">200px（超出即内部滚动）</td><td class="path">MentionInput.vue:218</td><td>保持</td></tr>
+      <tr><td>参数行控件数（最大）</td><td class="num">9</td><td class="path">AgentSideRail.vue:3416-3584</td><td class="hi">≤ 4 常驻 + 抽屉</td></tr>
+      <tr><td>触控目标</td><td class="num">24 / 28 / 32px</td><td class="path">DockMicButton:42-43、DockGenerateButton:59-60</td><td class="hi">≥ 44px</td></tr>
+      <tr><td>任意值字号</td><td class="num">31 处（10px×11、11px×15、12px×3、13px×2）</td><td class="path">AgentSideRail.vue 全文件</td><td>收敛为 5 档字阶令牌</td></tr>
+      <tr><td>提示文字对比度</td><td class="num">浅 2.59:1 / 深 3.60:1</td><td class="path">neowow-tokens.css:67,225</td><td class="hi">≥ 4.5:1</td></tr>
+      <tr><td>设计令牌归属</td><td class="num">--neo-* ×157 vs --lnk-* ×43</td><td class="path">AgentSideRail.vue</td><td class="hi">--lnk-* L2/L3 为主</td></tr>
+      <tr><td>composer 内 aria-label</td><td class="num">1 个（仅画布选点球）</td><td class="path">AgentSideRail.vue:3397（区段 3251–3585 内唯一一处）</td><td>mention 列表补 listbox 语义</td></tr>
+      <tr><td>引导文案层数</td><td class="num">4 层</td><td>reattach hint / attachment hint / coachmark / hover tip</td><td class="hi">≤ 1 层</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="n">03</span>对标：三家产品的 composer 范式</h2>
+  <p class="sub">三者代表三条互斥的路线。lnk π 目前哪一条都不是——它在做「全都要」。</p>
+
+  <div class="grid g3">
+    <div class="card">
+      <h4>Muse <span style="font-weight:400;color:var(--ink-500);font-size:12px">AI MIDI composer</span></h4>
+      <p style="font-size:13.5px"><b>路线：单入口 + 专家面板。</b>主界面「只有一个输入框」，参数收进可开合的分区面板（生成组件 / 生成类型 / MIDI 控制 / 输出控制 / 状态 / 预估）。</p>
+      <ul style="font-size:13px">
+        <li>输入框下方左侧是<b>模型下拉</b>（明示在用哪个模型），右侧圆形生成键</li>
+        <li><b>生成中再点即取消</b>（与 lnk π 的方形停止块同构）</li>
+        <li>过程以极简单色行呈现：<code>Thought for 3 seconds</code> / <code>&gt; Reading track: Lead</code></li>
+        <li>产出用<b>内联批注</b>收口：<code>+16 −0</code> + <b>Undo / Keep</b> 逐条 + <b>Undo all / Keep all</b></li>
+        <li><b>HQ Mode</b> 把「更慢但更好」做成显式选项，并标注 2× credits</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Dots <span style="font-weight:400;color:var(--ink-500);font-size:12px">OpenAI 常驻 agent</span></h4>
+      <p style="font-size:13.5px"><b>路线：极简到反直觉。</b>官方形态是「左边 agent 列表、右边活动串、底部一个输入框」。</p>
+      <ul style="font-size:13px">
+        <li><b>刻意不暴露模型选择与推理强度</b>——就一个输入框。这是取舍，不是缺失</li>
+        <li><b>单一持续会话</b>，不鼓励按话题新建窗口（对应 lnk π 的「新建对话」按钮语义相反）</li>
+        <li>信息挪到<b>另一个平面</b>：点 agent 头像才展开活动 / 输出 / 云电脑面板</li>
+        <li>人格化通过<b>可定制外观</b>（形状、颜色、眼睛、配饰）建立，不靠首屏大字</li>
+        <li>配套 Codex 的 <b>Composer Predictions</b>：输入框内灰字预测下一句，Tab 接受、可改再发</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>WorkBuddy 小程序 <span style="font-weight:400;color:var(--ink-500);font-size:12px">移动端</span></h4>
+      <p style="font-size:13.5px"><b>路线：形态随意图切换。</b>截图给出的收缩态 / 伸展态是两个<b>不同的交互模型</b>，不是同一个输入框的两种宽度。</p>
+      <ul style="font-size:13px">
+        <li><b>收缩态</b>：整条「按住说话」，左侧九宫格、右侧 <code>+</code>。语音是一等公民</li>
+        <li><b>伸展态</b>：文本行 + 一行 4 控件（语音 / 模型档位 <code>Step-5-P…⌄</code> / <code>+</code> / 深色圆形发送）</li>
+        <li><b>首屏</b>：吉祥物 + 「WorkBuddy，我帮你」大字 + 4 条建议 chips + 「换一换」+ 顶部 banner</li>
+        <li>底部 Tab 栏常驻（任务 / 定时任务 / 发现 / 我的）——输入条属于页面，不属于会话</li>
+        <li>纯浅色单主题、大圆角、无边框白底卡片</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>3.1 对标矩阵</h3>
+  <div class="tbl-wrap">
+  <table>
+    <caption>同一维度横向对齐。「—」表示该产品在同一平面上没有对应物。</caption>
+    <thead>
+      <tr><th>维度</th><th>Muse</th><th>Dots</th><th>WorkBuddy 小程序</th><th>lnk π 当前</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>输入框数量</b></td><td>1（对话即全部）</td><td>1（每 dot 一个）</td><td>1（页面级）</td><td>1（画布内 1 个 agent 面板）</td>
+      </tr>
+      <tr>
+        <td><b>模型可见性</b></td><td>明示下拉，可换</td><td class="hi">刻意隐藏</td><td>折叠为单档位 chip</td><td>常驻 ghost 下拉 + 独立「技能=自动路由」菜单，<b>两个决定模型的地方并存</b></td>
+      </tr>
+      <tr>
+        <td><b>参数位置</b></td><td>分层：主输入 vs 专家面板</td><td>不存在</td><td>1 行 4 控件</td><td class="hi">单行最多 9 控件，同权并列</td>
+      </tr>
+      <tr>
+        <td><b>形态切换</b></td><td>面板开合</td><td>无（恒定极简）</td><td class="hi">收缩态 / 伸展态两套交互模型</td><td>仅开 / 关；收缩态 = 一个悬浮 logo 圆钮</td>
+      </tr>
+      <tr>
+        <td><b>语音</b></td><td>无</td><td>可打电话（语音全模态）</td><td class="hi">按住说话，占满整条</td><td>24px 图标，点击开关 ASR</td>
+      </tr>
+      <tr>
+        <td><b>空态 / 首屏</b></td><td>示例 prompt 直接写在输入框 placeholder 里</td><td>无引导（人格替代引导）</td><td class="hi">吉祥物 + 大字 + 4 chips + 换一换</td><td>两行灰字；样例能力只在产品视觉技能分支里存在</td>
+      </tr>
+      <tr>
+        <td><b>生成中</b></td><td>状态面板：预估时长 + 实时进度 + 完成后产物命名；<b>HQ Mode</b> 显式标注 2× 成本</td><td>活动面板（点头像进入）</td><td>—</td><td>发送键变停止块；无预估 / 无进度 / 无成本提示</td>
+      </tr>
+      <tr>
+        <td><b>过程透明度</b></td><td>单色极简行：<code>Thought for 3s</code> / <code>&gt; Reading track</code></td><td>活动串</td><td>—</td><td class="hi">执行轨迹 + 回合时间线（相对丰富，含 400ms 节流思考流式）</td>
+      </tr>
+      <tr>
+        <td><b>产出确认</b></td><td class="hi">内联 <code>+16 −0</code> + Undo/Keep 逐条 + Undo all/Keep all</td><td>审查 / 追问 / 停止</td><td>—</td><td>产物落画布节点；composer 内无逐条接受/撤销位</td>
+      </tr>
+      <tr>
+        <td><b>输入预测</b></td><td>—</td><td class="hi">灰字预测 + Tab 接受（Codex Composer Predictions）</td><td>—</td><td>无</td>
+      </tr>
+      <tr>
+        <td><b>人格化</b></td><td>无</td><td>可定制外观（形状 / 颜色 / 眼睛 / 配饰）</td><td>吉祥物 + 固定话术「我帮你」</td><td>NeoAgentLogo 图形标 + 顶部 11px 副标题 <code>lnk·π agent</code></td>
+      </tr>
+      <tr>
+        <td><b>主题</b></td><td>深色单主题</td><td>跟随系统</td><td>浅色单主题</td><td class="hi">深 / 浅双主题（<b>这是优势</b>，但 composer 未完整接入）</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <h4>矩阵读法</h4>
+    <p>Muse 用<b>分层</b>消化复杂度，Dots 用<b>转移平面</b>（信息挪到头像面板）消化复杂度，WorkBuddy 小程序用<b>形态切换</b>消化复杂度。
+    三家都在做同一件事：<b>让当前这一刻只需要一个决定</b>。</p>
+    <p>lnk π 现在是<b>把所有决定同时摊在 500px 宽的一行里</b>——能力最全，认知成本也最高。</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="n">04</span>差距清单</h2>
+  <p class="sub">按「不修会不会伤到基本可用性」排序。每条给出代码证据与建议，不写无法落地的形容词。</p>
+
+  <!-- P0 -->
+  <h3>P0 · 基本可用性与正确性</h3>
+
+  <div class="gap">
+    <div class="head"><span class="sev p0">P0</span><span class="t">键盘契约自相矛盾：文案说 Cmd/Ctrl+Enter，行为是 Enter</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">默认占位符由常量给出，明写「Cmd/Ctrl + Enter 发送」；同一控件在流式态的占位符又写「回车加入待发队列」。而 <code>MentionInput</code> 收到 <code>submit-on-enter</code> 后，<b>裸 Enter 即发送</b>（仅 Shift+Enter 换行）。</div></div>
+      <div class="ev">constants/agentSkillMap.ts:30
+  export const AGENT_INPUT_PLACEHOLDER_AUTO =
+    '描述需求，@ 引用素材，Cmd/Ctrl + Enter 发送…'
+
+components/agent/AgentSideRail.vue:3385-3388
+  :placeholder="agent.isStreaming ? '输入消息，回车加入待发队列…' : inputPlaceholder"
+  submit-on-enter
+
+components/canvas/MentionInput.vue:146-150
+  if (props.submitOnEnter) { if (e.shiftKey) return; e.preventDefault(); emit('submit') }</div>
+      <div class="row"><div class="k">差距</div><div class="v">同一个控件在两处给出<b>不同的键盘契约</b>，且二者都与真实行为不一致。桌面端用户按提示按 Cmd+Enter 会得到一次空提交或重复提交；移动端软键盘的回车键会直接发出未完成的句子。</div></div>
+      <div class="row"><div class="k">对标</div><div class="v">Muse / Dots / WorkBuddy 小程序三家都用「按钮发送」作为唯一确定路径，回车语义从不写进 placeholder。WorkBuddy 小程序干脆把它变成「按住说话」。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">统一为 <b>Enter 发送 / Shift+Enter 换行（桌面）</b>，移动端 <b>回车换行、只由按钮发送</b>；placeholder 不再描述键盘，改为描述<b>能做什么</b>（Muse 的做法：<code>Compose MIDI, explore theory, discover new ideas…</code>）。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p0">P0</span><span class="t">提示文字对比度 2.59:1 — 低于 AA，且用在 10px 上</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v"><code>--neo-text-muted</code> 是 <b>rgba 透明度文字色</b>，违反本项目设计令牌硬规则第 3 条（「文字色一律用实色 hex，禁止用 rgba 透明度当文字色」）。实测对比度：浅色主题 <b>2.59:1</b>、深色 <b>3.60:1</b>。而它恰好被用在 composer 最需要被读到的地方：10px 的引用提示、素材提示、回合摘要、输入占位符。</div></div>
+      <div class="ev">styles/neowow-tokens.css
+  深色:67   --neo-text-muted: rgba(244, 244, 248, 0.4);
+  浅色:225  --neo-text-muted: rgba(23, 25, 35, 0.42);
+
+实测（WCAG 相对亮度公式，脚本见第 6 节）
+  浅色 合成 #949699 on #eef0f5 → 2.59:1   ✗
+  浅色 合成 #9e9ea3 on #ffffff → 2.67:1   ✗
+  深色 合成 #6d6d72 on #131318 → 3.60:1   ✗
+
+对照：--neo-text-secondary（同为 rgba）浅 5.02:1 / 深 7.02:1 ✓
+      --neo-accent-text  浅 #5b4ce6 = 5.09:1 / 深 #a89dff = 7.88:1 ✓
+⇒ 只有 muted 一档是坏的。</div>
+      <div class="row"><div class="k">差距</div><div class="v">10–11px 的字号本就处在可读性下沿，再叠加 2.6:1 的对比度，等于把「引导」和「状态」全部变成背景噪点。这也是本报告里唯一一条<b>可以量化证明用户看不清</b>的问题。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">把 <code>--neo-text-muted</code> 换成实色：浅色用 <code>--lnk-ink-600 #5a6478</code>（实测 <b>5.22:1</b>），深色用 <code>--lnk-ink-400 #9aa3b2</code>（实测 <b>7.28:1</b>）。同时把 10px 的引导文案提到 11.5px 并减少条数（见 P1-4）。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p0">P0</span><span class="t">浅色主题下，输入 dock 用深色硬编码阴影</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">输入 dock 的阴影是四层硬编码值，其中两层是纯黑大半径投影；<code>:focus-within</code> 把同一串值又抄了一遍，<b>没有任何浅色主题覆盖</b>。dock 的背景（<code>--neo-glass-bg</code>）本身是双主题成对定义的，唯独阴影不是。</div></div>
+      <div class="ev">AgentSideRail.vue:4169-4174（.agent-input-dock）
+  box-shadow:
+    0 20px 44px rgba(0, 0, 0, 0.42),
+    0 2px 6px   rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgb(var(--lnk-overlay-rgb) / 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+
+全文件搜 .agent-input-dock：只在 4156/4177/4188/4198 定义，
+无 [:root[data-theme='light']] 覆盖块（对照：.composer-canvas-pick-btn 在 4448 有覆盖）。</div>
+      <div class="row"><div class="k">差距</div><div class="v">浅色主题下面板底色是 <code>#eef0f5</code>，上面压一层 42% 纯黑 44px 半径的投影，观感是「浮起来的黑板」。深色主题里这是对的，浅色主题里它把整个 dock 的层级说反了——输入区看起来比消息区更高、更重。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">抽出 <code>--neo-glass-shadow</code> 并在深浅两块同名成对：深色保留现值的强度，浅色换成 <code>0 8px 24px color-mix(in srgb, var(--lnk-ink-900), 12% transparent)</code> 一类的轻投影。守卫侧：这是 <code>design-token.test.ts</code> 自然能覆盖的形状（成对性），补一条即可，不需要新机制。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p0">P0</span><span class="t">触控目标 24/28px，移动端大面积低于 44pt</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">发送 28px、语音 24px、面板图标按钮 28px、画布选点 28px、附件 32px。移动端全屏 sheet 里这些尺寸一个没变。</div></div>
+      <div class="ev">DockMicButton.vue:42-43        width:24px; height:24px
+DockGenerateButton.vue:59-60   width:28px; height:28px
+AgentSideRail.vue:4334-4335    .composer-canvas-pick-btn  28×28
+AgentSideRail.vue:3738-3740    .agent-head-btn            28×28</div>
+      <div class="row"><div class="k">差距</div><div class="v">iOS HIG 44pt / Material 48dp 是下限而非建议。移动端「语音 + 发送」这两个最常点的目标只有 24 与 28，且相邻间距 8px——误触率会直接吃掉语音功能的可用性。</div></div>
+      <div class="row"><div class="k">对标</div><div class="v">WorkBuddy 小程序的发送键是明显 ≥44px 的深色圆形，语音占满整条。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">移动端把发送/语音提到 44px（视觉尺寸可保持 28，用透明扩边把命中区撑到 44），并在 <code>useAgentMobileLayout</code> 生效时给 dock 加一档 <code>--composer-ctl-size</code> 变量。桌面端可保持现状。</div></div>
+    </div>
+  </div>
+
+  <!-- P1 -->
+  <h3>P1 · 体验高度</h3>
+
+  <div class="gap">
+    <div class="head"><span class="sev p1">P1</span><span class="t">首屏空态等于零：有样例能力，没有样例入口</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">无消息时只渲染两行 <code>&lt;p&gt;</code>。同文件的「产品视觉」技能分支里已经有一套 <code>exampleUtterance</code> 按钮组（label + 两行示例文案，点击即填充输入框）——<b>能力已存在，只是没有推广到通用首屏</b>。</div></div>
+      <div class="ev">AgentSideRail.vue:2826-2829（通用空态，全部内容）
+  &lt;div v-else-if="!agent.messages.length" class="agent-empty px-3 py-10 text-center"&gt;
+    &lt;p class="text-sm"&gt;描述你的创意&lt;/p&gt;
+    &lt;p class="mt-1 text-[11px] opacity-70"&gt;我会驱动画布创建节点、连线与生成任务&lt;/p&gt;
+  &lt;/div&gt;
+
+AgentSideRail.vue:2809-2824（产品视觉分支才有样例按钮）
+  PRODUCT_VISUAL_GUIDANCE.exampleUtterances → fillExampleUtterance(example.text)</div>
+      <div class="row"><div class="k">差距</div><div class="v">lnk π 的输入范式与普通 chat 不同：它的输出是<b>画布上的一张图/一串节点</b>，用户的第一句话必须同时指定「做什么」和「什么样的」——这是最难的第一句话。首屏两行灰字没有承担任何降低这层门槛的责任。对比 WorkBuddy 小程序的 4 条 chips + 「换一换」，差距不是美化程度，是<b>有没有替用户开口</b>。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">把 <code>exampleUtterances</code> 从技能分支提升为通用首屏能力，按「当前画布状态」动态选 4 条（空画布 / 有选中节点 / 有产物），每条点击后<b>不是直接发送</b>而是填充输入框（保留改写余地）。这正是 Muse 的「模板 → 专家面板」两步法的前端半部。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p1">P1</span><span class="t">单行 9 控件，没有主次分层</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">输入 dock 的参数区在同一行里并排：附件 <code>+</code>、模型选择器、深度思考开关（关/开 + high + max 共 3 个可点片段）、技能菜单；主行再放语音与发送。加上绝对定位悬在输入框左上角的画布选点球，与 ref 芯片条，一屏最多 9 个同级可交互元素。</div></div>
+      <div class="ev">AgentSideRail.vue:3416-3584   .agent-dock-params / .agent-dock-primary
+  附件(h-8 w-8=32) · UniversalModelSelector(ghost) · 深度思考开关组(3 片段) · 技能菜单
+  .agent-dock-primary: DockMicButton(24) · DockGenerateButton(28)
+AgentSideRail.vue:4334-4350   .composer-canvas-pick-btn 绝对定位 translate(-50%,-50%)</div>
+      <div class="row"><div class="k">差距</div><div class="v">三处具体问题：<b>①</b>「深度思考 开/关」+ 裸英文 <code>high</code>/<code>max</code> 是同一条连续光谱被切成三个按钮，术语未本地化也未设计；<b>②</b>模型选择器与技能菜单都能决定用哪个模型（技能里写着「平台路由，单张/图生图优先」），两个入口语义重叠；<b>③</b>画布选点球悬在输入框角上，仅 hover 才显示 tooltip（<code>.composer-canvas-pick-tip</code>），不 hover 时它是一个无法自解释的装饰球。而它其实是本项目最有价值的能力之一。</div></div>
+      <div class="row"><div class="k">对标</div><div class="v">Muse 把同类参数收进可开合的「专家面板」分 6 区；Dots 一个都不留；WorkBuddy 小程序留 4 个且模型折叠为一档 chip。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">按 A/B/C 三级分层（第 5 节给完整方案）：<br><b>A 级常驻</b>（每轮都用）：附件、模型、发送；<br><b>B 级 chip 化</b>（有值才占位）：技能、思考强度——把「深度思考 关」+ high + max 收成一个 <code>思考·高 ⌄</code> 单 chip，点开才展开档位；<br><b>C 级抽屉</b>：画布选点、语音、参数预设，收进输入框左侧的 <code>+</code> 菜单；画布选点同时保留一个<b>更小的、在输入框内的</b> @ 提示入口。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p1">P1</span><span class="t">「生成中」是一段视觉空白：没有时长、没有进度、没有成本</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">生成中把发送键换成方形停止块（这是对的做法，比 spinner 明确），但 composer 里没有任何时间与成本信息。输入框只是换了个 placeholder 文案。生成失败的恢复链路（PR3）做得很扎实，成功路径却没有对等的信息面。</div></div>
+      <div class="ev">DockGenerateButton.vue:27-37
+  &lt;!-- Stop square while generating — clearer cancel affordance than a spinner-only control --&gt;
+AgentSideRail.vue:3385  占位符切为「输入消息，回车加入待发队列…」（唯一的生成中状态表达）</div>
+      <div class="row"><div class="k">差距</div><div class="v">Muse 的 M4L 面板给出<b>预估时长 → 实时状态 → 完成后产物命名</b>三段式，并把 HQ Mode 的 2× credits 直接写在选项上；Dots 把这一切放进 Activity 面板。<b>而这个项目其实已经有全部原材料</b>：流式 SSE、400ms 节流的思考快照、执行轨迹、积分折算（<code>MarginPolicy + FX</code> 只读折算已在 #415 落地）。缺的只是在 composer 里给它们一个位置。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">生成中把输入框<b>上方</b>让出一条 24px 的状态行（不是下方，下方已有排队槽）：左端是当前阶段文案（复用执行轨迹的 phase 聚合），中段是细进度条或不确定态扫描，右端是预估剩余 + 本轮预估积分（沿用 #415 的口径，成本未知则不显示）。停止按钮位置不变——取消入口不该在生成中移动。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p1">P1</span><span class="t">缺少「产出确认」在 composer 侧的对位</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">产物落到画布节点上，composer 只负责「发起」。画布侧有节点的生成按钮与 <code>proposeWait</code> 传送门（#420），但输入区没有「本轮产出了什么、要不要保留」的收口语义。</div></div>
+      <div class="ev">AgentSideRail.vue:3243-3250（注释）确认入口收敛为两处：
+  「画布节点「生成」按钮（propose 阻塞等待）与 直接输入文字」</div>
+      <div class="row"><div class="k">差距</div><div class="v">Muse 用 <code>+16 −0</code> + 逐条 Undo/Keep + 批量 Undo all/Keep all 把「AI 给的方案」变成一次<b>可撤销的提议</b>。lnk π 的画布本身就是产物容器，比 Muse 更有条件做这件事——用户的重心在画布上，但输入的连续性在 composer 上。当前两者之间没有桥。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">在 composer 的消息流末尾增加一行<b>产出收据</b>：<code>本轮产出 3 张 · 定位到画布</code> + 「全部保留 / 撤销本轮」两个动作。「定位到画布」可直接复用已有的 <code>focus-all</code> 事件；「撤销本轮」需要一个新的运行时工具来批量移除本轮节点——<b>本轮盘点未在 <code>apps/web/src</code> 找到现成的节点批量移除入口</b>（<code>grep -rln "deleteNode\|removeNode"</code> 无命中），因此这条建议含一个待确认的工程前置项。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p1">P1</span><span class="t">移动端形态错配：面板遮住画布，但画布才是产物</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">断点 767px；移动端把面板 Teleport 成全屏 sheet（<code>top: max(44px, safe-area)</code>，圆角 20/20/0/0），并加一层遮罩，需要点顶部「看画布」才能退回。</div></div>
+      <div class="ev">useAgentMobileLayout.ts:4    AGENT_MOBILE_MAX_WIDTH_PX = 767
+AgentSideRail.vue:3670-3687  .agent-panel-mobile-sheet { top:max(44px,safe-area); ... }
+AgentSideRail.vue:2738-2750  「看画布」按钮（仅 isMobileLayout 时渲染）</div>
+      <div class="row"><div class="k">差距</div><div class="v">这是「chat 优先」的移动端假设。但 lnk π 的价值主张是画布产出——用户在手机上看的是<b>图</b>不是字。全屏 sheet + 遮罩把唯一的产出面盖住了，而 WorkBuddy 小程序是反过来的：输入条属于页面底部，页面主体始终可见（并且它有底部 Tab 常驻，输入条不抢占导航）。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">移动端改成<b>底部抽屉</b>：默认收起为一条输入条（对齐 WorkBuddy 小程序的伸展态：单行输入 + 4 控件），向上拖拽或打字时才升为半屏（≤55vh）抽屉，画布始终露出上半。<b>不要遮罩</b>——画布需要能被看见和点击。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p1">P1</span><span class="t">设计体系没有覆盖 composer（两套令牌并行）</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">composer 所在文件里 <code>--neo-*</code> 出现 157 次、<code>--lnk-*</code> 43 次；<code>neowow-tokens.css</code> 只反向引用 <code>var(--lnk-*)</code> 6 次；<code>main.css</code> 的 base 层（<code>body</code> 底色、全局 <code>border-color</code>、滚动条）也仍走 <code>--neo-*</code>。</div></div>
+      <div class="ev">AgentSideRail.vue         --neo-* ×157   --lnk-* ×43
+styles/neowow-tokens.css  var(--lnk-*) ×6
+styles/main.css:6-30      @import 顺序 design-tokens → neowow-tokens → neo-node
+                          @layer base { * { border-color: var(--neo-border) }
+                                        body { background-color: var(--neo-bg) } }</div>
+      <div class="row"><div class="k">差距</div><div class="v">AGENTS.md 规定「令牌 SSOT 是 <code>design-tokens.css</code>，组件只允许消费 L2/L3，禁止新增 hex / rgba」。composer 事实上活在旧层里，因此：<code>--neo-text-muted</code> 的 rgba 问题（P0-2）能长期存在；任意值字号 31 处无人拦；无字阶令牌；<code>design-token.test.ts</code> 的守卫（成对性 / 对比度 / 引用完整性）对 composer <b>结构性不生效</b>。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">不必一次性迁移（改造面过大）。<b>按文件收敛</b>：新增/修改 composer 样式时只允许用 <code>--lnk-*</code> L2/L3；同时加一条棘轮测试——记录 <code>--neo-*</code> 在 <code>components/agent/**</code> 的当前计数（157），只允许下降。这与仓库已有的 <code>theme-usage-baseline.json</code> 棘轮机制是同一形状，成本很低。</div></div>
+    </div>
+  </div>
+
+  <div class="gap">
+    <div class="head"><span class="sev p1">P1</span><span class="t">引导靠四层文案补结构，而不是让结构自解释</span></div>
+    <div class="body">
+      <div class="row"><div class="k">现状</div><div class="v">composer 一处叠了四层说明文字：引用回挂提示、素材提示、历史引用引导卡（coachmark）、画布选点 hover tip；字号分别是 10px / 10px / 11px / 10px，前两者用的都是 P0-2 里那档 2.59:1 的 muted 色。</div></div>
+      <div class="ev">AgentSideRail.vue:3357-3362  .agent-composer-reattach-hint  text-[10px] muted
+AgentSideRail.vue:3363-3369  .agent-composer-attachment-hint text-[10px] muted
+AgentSideRail.vue:3261-3276  .agent-history-coachmark        text-[11px]
+AgentSideRail.vue:4456-4480  .composer-canvas-pick-tip（hover 才出现）</div>
+      <div class="row"><div class="k">差距</div><div class="v">四层文案说明的是四件本应<b>看得见</b>的事。尤其是画布选点：有能力、有动效（呼吸 halo + 目标环 keyframes），却把解释放在 hover tip 里——这是一个「已经做得很用心但没人知道」的功能。</div></div>
+      <div class="row"><div class="k">建议</div><div class="v">每引入一层文案之前，先问「这个控件能不能自己说清楚」。画布选点：给它一个常驻文字标签（在 C 级抽屉里则是完整一行 <code>◎ 从画布选节点作引用</code>），而不是悬停提示。coachmark 只在首次出现一次，之后靠控件本身表达。</div></div>
+    </div>
+  </div>
+
+  <!-- P2 -->
+  <h3>P2 · 提升项</h3>
+
+  <div class="grid g2">
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="sev p2">P2</span><h4 style="margin:0">输入预测（Composer Predictions）</h4></div>
+      <p style="font-size:13.5px">Codex 已在输入框内用灰字预测下一句、Tab 接受、可改再发。本项目做这件事的上下文其实更足：有完整会话历史、有执行轨迹、有本轮 ref 芯片状态。<b>冷启动成本高的输入框，最该有预测。</b></p>
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="sev p2">P2</span><h4 style="margin:0">语音从「点击开关」升级为「按住说话」</h4></div>
+      <p style="font-size:13.5px">现在是一个 24px 的开关图标。<code>.dock-mic-btn.is-listening</code> 只有 1.2s 透明度脉冲作为反馈，没有录音时长、电平、可取消滑动。<b>能力在，形态没给。</b></p>
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="sev p2">P2</span><h4 style="margin:0">死样式与尺寸口径未收敛</h4></div>
+      <p style="font-size:13.5px"><code>.agent-prompt-field</code> 在 CSS 出现 2 次、模板 0 次，是一个死块；它的 <code>min-height: 76px</code> 与实际生效的 96px 冲突，说明输入框高度曾有两套口径。守卫 <code>dead-styles.test.ts</code> 目前只是 1 个选择器的棘轮，不覆盖这类漏删。</p>
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="sev p2">P2</span><h4 style="margin:0">mention 菜单缺少列表语义</h4></div>
+      <p style="font-size:13.5px"><code>@</code> 候选是一个 <code>&lt;ul&gt;</code> + <code>mousedown</code> 选词，没有 listbox / option 语义、没有 <code>aria-activedescendant</code>。键盘上下键能走（<code>ArrowUp/Down</code> 已实现），但屏幕阅读器无法播报当前项。</p>
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="sev p2">P2</span><h4 style="margin:0">技能菜单：1 个技能 + 「自动」</h4></div>
+      <p style="font-size:13.5px"><code>AGENT_SKILLS</code> 当前只有 1 条（实物产品视觉出图）。一个下拉菜单承载 2 个选项，交互成本大于收益。建议降级为 ref 芯片旁的 chip，菜单保留给 ≥4 项时。</p>
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><span class="sev p2">P2</span><h4 style="margin:0">术语与本地化</h4></div>
+      <p style="font-size:13.5px">「深度思考 开/关」+ 裸英文 <code>high</code> / <code>max</code> 三个按钮；模型 chip 显示 <code>Step-5-P…</code>。中英混排在同一行、同一控件内，且 truncate 后无法辨认。需要一套统一的档位命名（如 思考·标准 / 思考·深入 / 思考·极限）。</p>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="n">05</span>重设计方案：三态 composer</h2>
+  <p class="sub">核心动作只有一个：<b>把「同时做 9 个决定」改成「每个时刻只做一个决定」</b>。三家的解法不同，但那句话是共同的。</p>
+
+  <h3>5.1 状态机</h3>
+  <div class="mockrow">
+    <div class="mock">
+      <div class="lbl"><span>① 空闲态 · 首屏</span><span style="color:var(--purple-dark)">新增</span></div>
+      <div class="panel">
+        <div class="hd"><span class="dot"></span><span class="ttl">lnk·π agent</span></div>
+        <div style="flex:1;min-height:0;padding:8px 10px">
+          <div class="emptyhero">
+            <div class="heroavatar">π</div>
+            <div class="herotxt"><b>想画点什么？</b>我会把它变成画布上的节点</div>
+          </div>
+          <div class="chip-row" style="margin-top:6px">
+            <span class="chip">把这张图改成皮克斯风格</span>
+            <span class="chip">按这段话拆 4 格分镜</span>
+          </div>
+          <div class="chip-row" style="margin-top:4px">
+            <span class="chip">给选中节点做 3 个变体</span>
+            <span class="chip on">换一换</span>
+          </div>
+        </div>
+        <div style="flex:0 0 auto;padding:0 8px 10px">
+          <div class="ibox sm">
+            <div class="ph">描述你的创意，@ 引用素材</div>
+            <div class="crow" style="gap:4px">
+              <span class="icirc">+</span><span class="chip tiny">模型⌄</span>
+              <span class="spacer"></span><span class="icirc">🎙</span><span class="icirc dark big">↑</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="note">样例按画布状态动态选 4 条；点击<b>填充而非发送</b>。人格由 π 标 + 一句话承担，不用大标题。</div>
+    </div>
+
+    <div class="mock">
+      <div class="lbl"><span>② 输入态 · 分层</span><span style="color:var(--purple-dark)">改造</span></div>
+      <div class="panel">
+        <div class="hd"><span class="dot"></span><span class="ttl">lnk·π agent</span></div>
+        <div style="flex:1;min-height:0;padding:10px;display:flex;flex-direction:column;gap:6px;justify-content:flex-end">
+          <div class="chip-row"><span class="chip">📎 参考图 ×2 ⨯</span></div>
+        </div>
+        <div style="flex:0 0 auto;padding:0 8px 10px">
+          <div class="ibox">
+            <div class="txtfill">帮我把这张图改成皮克斯风格，保留构图</div>
+            <div class="crow" style="gap:4px;border-top:1px dashed var(--border);padding-top:5px">
+              <span class="icirc">+</span>
+              <span class="chip tiny on">思考·深入 ⌄</span>
+              <span class="chip tiny">模型⌄</span>
+              <span class="spacer"></span><span class="icirc">🎙</span><span class="icirc dark big">↑</span>
+            </div>
+          </div>
+          <div class="note"><b>A 级常驻</b>：+ / 模型 / 语音 / 发送。<br><b>B 级</b>：仅当有非默认值时才出现 chip（思考档位）。<br><b>C 级</b>收进 <code>+</code>：本地上传 · 资产库 · 从画布选节点 · 参数预设。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mock">
+      <div class="lbl"><span>③ 生成态 · 状态行</span><span style="color:var(--purple-dark)">新增</span></div>
+      <div class="panel">
+        <div class="hd"><span class="dot"></span><span class="ttl">lnk·π agent</span></div>
+        <div style="flex:1;min-height:0;padding:10px;display:flex;flex-direction:column;gap:7px">
+          <div class="wline m"></div><div class="wline l"></div>
+        </div>
+        <div style="flex:0 0 auto;padding:0 8px 10px;display:flex;flex-direction:column;gap:6px">
+          <div class="statbar">
+            <div class="micro"><span>正在生成 2/3 张 · 分镜 3</span><span>约 18s · ≈12 积分</span></div>
+            <div class="prog"><i></i></div>
+          </div>
+          <div class="ibox sm">
+            <div class="ph">输入消息，Enter 加入待发队列…</div>
+            <div class="crow" style="gap:4px">
+              <span class="icirc dark big" style="background:var(--danger);border-color:var(--danger)">■</span>
+              <span class="chip tiny">立即插话</span><span class="chip tiny">等它跑完</span>
+              <span class="spacer"></span>
+            </div>
+          </div>
+          <div class="note">停止键<b>位置不变</b>（生成中取消入口不该移动）。状态行在上、排队槽在下，两者不争位。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>5.2 三态对照</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th></th><th>空闲</th><th>输入</th><th>生成中</th></tr></thead>
+    <tbody>
+      <tr><td><b>输入框</b></td><td>单行，placeholder 描述能做什么</td><td>3 行起自适应，最大 200px（保持）</td><td>不变，但 placeholder 只说排队语义</td></tr>
+      <tr><td><b>参数区</b></td><td>A 级 4 个</td><td>A 级 + 有值的 B 级 chip</td><td>折叠为 A 级；B 级暂时隐藏（本轮不可改）</td></tr>
+      <tr><td><b>新增信息面</b></td><td>样例 chips（按画布状态选）</td><td>ref 芯片条（已有）</td><td>状态行：阶段 / 进度 / 预估时长 / 预估积分</td></tr>
+      <tr><td><b>主按钮</b></td><td>发送（禁用，直到有内容）</td><td>发送</td><td>停止（<b>同位置</b>）</td></tr>
+      <tr><td><b>移动端</b></td><td>页面底部单行输入条，画布可见</td><td>拖拽升为 ≤55vh 抽屉，<b>无遮罩</b></td><td>状态行贴在输入条上方，画布仍可见</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>5.3 令牌与对比度修复（可直接落盘的补丁清单）</h3>
+  <div class="tbl-wrap">
+  <table>
+    <caption>所有建议值都经过对比度实测，见第 6 节脚本。</caption>
+    <thead><tr><th>项</th><th>当前</th><th>建议</th><th>实测对比度</th></tr></thead>
+    <tbody>
+      <tr><td>提示文字（浅）</td><td class="num">rgba(23,25,35,.42)</td><td class="num">#5a6478（= --lnk-ink-600）</td><td class="num" style="color:var(--purple-dark)">2.59 → <b>5.22</b> ✓</td></tr>
+      <tr><td>提示文字（深）</td><td class="num">rgba(244,244,248,.4)</td><td class="num">#9aa3b2（= --lnk-ink-400）</td><td class="num" style="color:var(--purple-dark)">3.60 → <b>7.28</b> ✓</td></tr>
+      <tr><td>次要文字（浅）</td><td class="num">rgba(23,25,35,.64) = 5.02</td><td class="num">#4a5364（= --lnk-ink-700）</td><td class="num">5.02 → <b>6.79</b> ✓</td></tr>
+      <tr><td>输入 dock 阴影</td><td class="num">rgba(0,0,0,.42) 硬编码</td><td class="num">抽 --neo-glass-shadow，深浅成对</td><td class="num">—</td></tr>
+      <tr><td>引导文案字号</td><td class="num">10px</td><td class="num">11.5px，且条数从 4 降到 ≤1</td><td class="num">—</td></tr>
+      <tr><td>移动端控件命中区</td><td class="num">24 / 28px</td><td class="num">≥ 44px（视觉尺寸不变，扩透明边）</td><td class="num">—</td></tr>
+      <tr><td>任意值字号</td><td class="num">31 处</td><td class="num">收敛为 5 档字阶令牌</td><td class="num">—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="n">06</span>不建议动的部分</h2>
+  <p class="sub">这次盘点也发现了明显高于对标产品的模块。改版时不要顺手抹平它们。</p>
+
+  <div class="callout ok">
+    <h4>1 · 流式插话队列（queued bubble）</h4>
+    <p>把「打断」拆成 <b>steer（run 内下一个 turn 边界接住，事件流不断）</b> 与 <b>followUp（本轮收尾边界接住，人可以走开）</b>，并明确二者互斥、不做自动派发；四态（待发 / 未送达 / 已接住 / 已入队）+ 「取回内容」。
+    <b>Muse 没有对等物，Dots 的「审查 / 追问 / 停止」也没到这个粒度。</b>这是本项目 composer 里最成熟的一块，对标产品反而不如它。</p>
+  </div>
+  <div class="callout ok">
+    <h4>2 · 双主题支持</h4>
+    <p>三家对标产品都是单主题（Muse 深色、WorkBuddy 小程序浅色）。lnk π 有完整的深/浅成对令牌与守卫测试。这是结构性优势——要修的是 composer 没接进来，不是这套机制本身。</p>
+  </div>
+  <div class="callout ok">
+    <h4>3 · 生成中把发送键换成方形停止块</h4>
+    <p>代码注释里写得很清楚：<code>clearer cancel affordance than a spinner-only control</code>。Muse 的做法（同一个按钮再点即取消）本质相同。保持。</p>
+  </div>
+  <div class="callout ok">
+    <h4>4 · 引用芯片（AgentRefStrip）与双层 mention 高亮</h4>
+    <p>芯片可拖拽排序、可移除、可 @ 插入；mention 用同步滚动的 backdrop 层做染色高亮。<b>WorkBuddy 小程序没有这个能力，Muse 也没有。</b>问题是它没有被放在首屏可见的位置，需要的是「给位置」而不是「重做」。</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2><span class="n">07</span>附：取证与复算</h2>
+  <p class="sub">本报告所有断言都可复现。以下命令在仓库根执行（macOS 下用 Grep 工具替代 shell grep，见项目备忘的沙箱归因）。</p>
+
+  <h4>令牌归属计数</h4>
+  <pre><code>grep -o -- "--neo-[a-z-]*"  apps/web/src/components/agent/AgentSideRail.vue | wc -l   # 157
+grep -o -- "--lnk-[a-z0-9-]*" apps/web/src/components/agent/AgentSideRail.vue | wc -l # 43
+grep -c "var(--lnk-" apps/web/src/styles/neowow-tokens.css                            # 6</code></pre>
+
+  <h4>死样式与尺寸口径</h4>
+  <pre><code>grep -c "agent-prompt-field" apps/web/src/components/agent/AgentSideRail.vue  # 2
+# 两处均为 CSS（4204 定义 / 4217 ::placeholder），模板引用 0 ⇒ 死块</code></pre>
+
+  <h4>键盘契约</h4>
+  <pre><code>grep -n "AGENT_INPUT_PLACEHOLDER_AUTO" -A2 apps/web/src/constants/agentSkillMap.ts
+grep -n "submitOnEnter" -A6 apps/web/src/components/canvas/MentionInput.vue</code></pre>
+
+  <h4>对比度复算（WCAG 2.x 相对亮度）</h4>
+  <p style="font-size:13px">执行后应得到：浅色 muted <b>2.59</b>、深色 muted <b>3.60</b>；建议值 #5a6478 → <b>5.22</b>、#9aa3b2 → <b>7.28</b>。</p>
+  <pre><code>node -e '
+const lin=c=>{c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
+const L=([r,g,b])=>0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b);
+const over=(fg,a,bg)=>fg.map((c,i)=>Math.round(c*a+bg[i]*(1-a)));
+const R=(a,b)=>{const l1=L(a),l2=L(b),[hi,lo]=l1>l2?[l1,l2]:[l2,l1];return((hi+0.05)/(lo+0.05)).toFixed(2)};
+const bgL=[0xee,0xf0,0xf5], bgD=[0x13,0x13,0x18];
+console.log("浅 muted", R(over([23,25,35],0.42,bgL), bgL));
+console.log("深 muted", R(over([244,244,248],0.40,bgD), bgD));
+console.log("建议浅", R([0x5a,0x64,0x78], bgL));
+console.log("建议深", R([0x9a,0xa3,0xb2], bgD));
+'</code></pre>
+
+  <h4>设计令牌硬规则出处</h4>
+  <pre><code>apps/web/src/styles/design-tokens.css:1-30
+  「3. 文字色一律用实色 hex，禁止用 rgba 透明度当文字色
+    —— 透明度文字的对比度随所在表面变化，无法被单一令牌保证。」</code></pre>
+
+  <div class="callout warn">
+    <h4>时效性说明</h4>
+    <p>本报告基于 master <code>e6116e10</code> 的工作区文件。盘点当天同日流水显示，另有一路并行改动正在做「<b>移动端收缩态底部栏的麦克风</b>」（≤767px、未聚焦时出现，worktree 内 dev server 已实测）——即本报告第 2.3 节「收缩态 = 一个悬浮 logo 圆钮」的<b>移动端部分即将过期</b>，届时移动端形态建议（P1-5 底部抽屉）需要按新形态重新评估。</p>
+  </div>
+
+  <div class="callout warn">
+    <h4>对标资料的边界</h4>
+    <p>Muse（muse.art）与 Dots（OpenAI 常驻 agent）的对比依据是产品公开形态、官方器件说明与可公开检索的实测描述，<b>不是逐像素设计稿</b>；WorkBuddy 小程序部分依据本轮的收缩态 / 伸展态两张截图。<br>
+    凡涉及具体尺寸、间距、动效曲线的对标结论，本报告只写<b>范式级</b>判断，不写数值——那是需要拿到真实界面才能下的结论。</p>
+  </div>
+
+  <hr>
+  <div class="foot">
+    基于 master <code>e6116e10</code> 的代码现状 · 2026-10-15<br>
+    所有行号与计数均由第 7 节命令复算得出
+  </div>
+</div>
+</body>
+</html>
