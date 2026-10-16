@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { splitRefMentions } from '@/composables/useRefMentions'
+import { acceptPrediction, buildGhostPrediction } from '@/components/agent/composer/prediction'
 
 export interface MentionOption {
   id: string
@@ -19,6 +20,8 @@ const props = defineProps<{
   submitOnEnter?: boolean
   /** 移动端：Enter 仅换行，永不提交（桌面行为不受影响） */
   mobileEnterNewline?: boolean
+  /** P2-1.1 输入预测上下文：近期 user/assistant 文本（AgentSideRail 传入，cap ~20） */
+  predictionHistory?: string[]
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [v: string]; submit: [] }>()
@@ -37,6 +40,25 @@ function optionId(idx: number): string {
 }
 
 const highlightSegments = computed(() => splitRefMentions(props.modelValue))
+
+// P2-1.1 ghost 预测：纯函数计算建议；Esc 关闭后随再次输入重置
+const ghostDismissed = ref(false)
+const ghostRef = ref<HTMLDivElement>()
+
+const ghostPrediction = computed(() => {
+  const refs = splitRefMentions(props.modelValue)
+    .filter((s) => s.kind === 'mention')
+    .map((s) => s.value)
+  return buildGhostPrediction({
+    draft: props.modelValue,
+    history: props.predictionHistory ?? [],
+    refs,
+  })
+})
+
+const ghostVisible = computed(() =>
+  Boolean(ghostPrediction.value) && !ghostDismissed.value && !showMenu.value && !props.disabled,
+)
 
 const fieldInsetStyle = computed(() =>
   props.leadingInset && props.leadingInset > 0
@@ -58,6 +80,11 @@ function updateValue(value: string) {
 function syncBackdropScroll() {
   const el = textareaRef.value
   const backdrop = backdropRef.value
+  const ghost = ghostRef.value
+  if (ghost) {
+    ghost.scrollTop = el?.scrollTop ?? 0
+    ghost.scrollLeft = el?.scrollLeft ?? 0
+  }
   if (!el || !backdrop) return
   backdrop.scrollTop = el.scrollTop
   backdrop.scrollLeft = el.scrollLeft
@@ -81,6 +108,7 @@ function detectMention(el: HTMLTextAreaElement) {
 function onInput(e: Event) {
   const el = e.target as HTMLTextAreaElement
   updateValue(el.value)
+  ghostDismissed.value = false
   detectMention(el)
   syncBackdropScroll()
 }
@@ -131,6 +159,28 @@ function focus() {
 // 供 AgentSideRail 的 canvasRefEntryVisible 在「空态键入 @」时立即显示入口
 defineExpose({ focus, insertText, showMenu })
 
+/** P2-1.1：Tab 接受 ghost —— 拼接后即可继续编辑（就是普通 draft 文本） */
+function acceptGhost() {
+  const ghost = ghostPrediction.value
+  if (!ghost) return
+  const next = acceptPrediction(props.modelValue, ghost)
+  ghostDismissed.value = false
+  updateValue(next)
+  requestAnimationFrame(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(next.length, next.length)
+    syncBackdropScroll()
+  })
+}
+
+/** P2-1.1：Esc 关闭当前 ghost（不插入），不冒泡以免关闭父级 dock */
+function dismissGhost() {
+  if (!ghostVisible.value) return
+  ghostDismissed.value = true
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (showMenu.value && filteredMentions.value.length) {
     if (e.key === 'ArrowDown') {
@@ -147,6 +197,19 @@ function onKeydown(e: KeyboardEvent) {
       e.stopPropagation()
       showMenu.value = false
     }
+    return
+  }
+
+  // P2-1.1 ghost 预测分支（仅菜单未开时；菜单分支的 Tab 仍选中 mention）
+  if (e.key === 'Tab' && ghostVisible.value) {
+    e.preventDefault()
+    acceptGhost()
+    return
+  }
+  if (e.key === 'Escape' && ghostVisible.value) {
+    e.preventDefault()
+    e.stopPropagation()
+    dismissGhost()
     return
   }
 
@@ -182,6 +245,15 @@ function onKeydown(e: KeyboardEvent) {
         </template>
         <span v-if="!modelValue">&nbsp;</span>
       </div>
+
+      <!-- P2-1.1 ghost 预测层：绝对定位不参与布局；草稿部分透明仅显示灰色接续 -->
+      <div
+        v-if="ghostVisible && ghostPrediction"
+        ref="ghostRef"
+        class="mention-input-ghost input-field min-h-[96px] w-full whitespace-pre-wrap break-words text-sm leading-[1.5]"
+        :style="fieldInsetStyle"
+        aria-hidden="true"
+      ><span class="mention-input-ghost__draft">{{ modelValue }}</span><span class="mention-input-ghost__text">{{ ghostPrediction }}</span></div>
 
       <textarea
         ref="textareaRef"
@@ -259,5 +331,19 @@ function onKeydown(e: KeyboardEvent) {
   inset: 0;
   background: transparent !important;
   box-shadow: none !important;
+}
+
+/* P2-1.1 ghost 预测层：绝对定位于输入壳内，不占布局（不破坏移动端 bare-bar 行高） */
+.mention-input-ghost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border: none;
+  color: var(--lnk-text-muted);
+}
+
+.mention-input-ghost__draft {
+  visibility: hidden;
 }
 </style>

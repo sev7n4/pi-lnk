@@ -51,6 +51,68 @@ describe('MentionInput keyboard contract (P0-1.1)', () => {
   })
 })
 
+describe('MentionInput ghost prediction (P2-1.1)', () => {
+  const HISTORY = ['帮我生成三张变体', '画一张水彩风格的猫']
+
+  function mountWith(draft: string, history: string[] = HISTORY) {
+    return mount(MentionInput, {
+      props: {
+        modelValue: draft,
+        mentions: [],
+        submitOnEnter: true,
+        predictionHistory: history,
+      },
+    })
+  }
+
+  it('renders aria-hidden ghost layer for a matching draft prefix', async () => {
+    const w = mountWith('帮我')
+    await w.vm.$nextTick()
+    const ghost = w.find('.mention-input-ghost')
+    expect(ghost.exists()).toBe(true)
+    expect(ghost.attributes('aria-hidden')).toBe('true')
+    expect(ghost.text()).toContain('生成三张变体')
+  })
+
+  it('no prediction context → layer hidden', () => {
+    const w = mountWith('帮我', [])
+    expect(w.find('.mention-input-ghost').exists()).toBe(false)
+  })
+
+  it('Tab accepts ghost onto draft (non-menu branch)', async () => {
+    const w = mountWith('帮我')
+    const ta = w.get('textarea')
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    ta.element.dispatchEvent(ev)
+    await w.vm.$nextTick()
+    expect(ev.defaultPrevented).toBe(true)
+    expect(w.emitted('update:modelValue')?.at(-1)).toEqual(['帮我生成三张变体'])
+    // 模拟父级 v-model 回写后，已接管的 draft 不再产生 ghost（历史条目 == draft → null）
+    await w.setProps({ modelValue: '帮我生成三张变体' })
+    expect(w.find('.mention-input-ghost').exists()).toBe(false)
+  })
+
+  it('Escape dismisses ghost without inserting', async () => {
+    const w = mountWith('帮我')
+    const ta = w.get('textarea')
+    const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    ta.element.dispatchEvent(ev)
+    await w.vm.$nextTick()
+    expect(ev.defaultPrevented).toBe(true)
+    expect(w.find('.mention-input-ghost').exists()).toBe(false)
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('Tab without prediction is left to the browser', () => {
+    const w = mountWith('不存在的前缀', HISTORY)
+    const ta = w.get('textarea')
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    ta.element.dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(false)
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+  })
+})
+
 describe('MentionInput listbox semantics (P2-4.1)', () => {
   it('mention candidates use listbox semantics (P2-4.1)', async () => {
     const w = mount(MentionInput, { props: { modelValue: '@', mentions: [{ id: 'ref-1', label: '参考图' }] } })

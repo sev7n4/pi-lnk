@@ -248,6 +248,17 @@ const editingMessageId = ref<string | null>(null)
 const editingDraft = ref('')
 const composerRef = ref<InstanceType<typeof MentionInput> | null>(null)
 
+/** P2-1.1 输入预测上下文：近期可见 user/assistant 文本（cap 20），供 MentionInput ghost 建议 */
+const predictionHistory = computed(() =>
+  agent.messages
+    .slice(-20)
+    .map((msg) =>
+      msg.role === 'assistant' ? visibleAssistantContent(msg) : visibleUserContent(msg),
+    )
+    .map((text) => text.trim())
+    .filter(Boolean),
+)
+
 // PR1「让 Agent 诊断」：诊断抽屉按钮写入预填文案后，这里消费并落到 composer（不自动发送，
 // 等用户显式点发送表达意图）。与既有 mention/插话槽位同款预填模式（见下方 insertText）。
 watch(
@@ -3884,6 +3895,7 @@ defineExpose({
                   :disabled="readOnly || isUploading"
                   :leading-inset="readOnly || isMobileLayout ? 0 : COMPOSER_PICK_INSET"
                   :mobile-enter-newline="isMobileLayout"
+                  :prediction-history="predictionHistory"
                   submit-on-enter
                   @submit="onComposerSubmit"
                 />
