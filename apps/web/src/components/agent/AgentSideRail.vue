@@ -4132,6 +4132,15 @@ defineExpose({
   border-bottom: none;
 }
 
+/* P1-5 fix-2：历史 popover 在贴底容器内改为向上展开——顶栏贴视口底，向下开
+   会随容器高度（会话短时更矮）超出视口底、历史不可达；桌面 popover 行为不变
+   （本规则仅在 .agent-panel-mobile-dock 作用域内生效，压过模板 top-full/mt-1.5） */
+.agent-panel-mobile-dock .agent-panel-header .neo-popover {
+  top: auto;
+  bottom: calc(100% + var(--lnk-space-1));
+  margin-top: 0;
+}
+
 /* P1-5 fix-1：移动端对话流限高滚动——画布始终露出上半（P1-5.1），不遮罩不加 sheet */
 .agent-panel-mobile-dock .agent-chat-wrap {
   flex: 0 0 auto;
