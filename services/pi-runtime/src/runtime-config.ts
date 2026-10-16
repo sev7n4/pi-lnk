@@ -291,3 +291,9 @@ export function turnBudget(raw: string | undefined): number | "off" {
 export function planGateEnabled(env: Record<string, string | undefined> = process.env): boolean {
 	return parseBool(env.PI_RUNTIME_PLAN_GATE, true);
 }
+
+/** Canvas 写链 id 绑定开关（spec 2026-10-16 §4.1 P1b）：off = 三钩子不注册，逐字节旧行为。
+ * 已知降级：回到「模型文本搬运 id」旧风险，仅紧急止血用（回滚出口，仿 plan-gate 终审 Critical #1）。 */
+export function canvasIdBindingEnabled(env: Record<string, string | undefined> = process.env): boolean {
+	return parseBool(env.PI_RUNTIME_CANVAS_ID_BINDING, true);
+}

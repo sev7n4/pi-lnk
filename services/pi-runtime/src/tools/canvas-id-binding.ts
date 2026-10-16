@@ -22,6 +22,7 @@
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import type { LnkpiToolContext } from "./types.js";
 import { readRecord, readStringField } from "../hook-contract.js";
+import { canvasIdBindingEnabled } from "../runtime-config.js";
 
 /** 重写目标工具（spec P1b 范围锁定；set_node_text 等不扩——YAGNI，spec §2.2）。 */
 const BINDING_TARGETS = new Set(["set_node_generation_params", "propose_generation"]);
@@ -102,4 +103,33 @@ export function decideBinding(toolName: string, args: unknown, runId: string): B
 	}
 	if (current.value === created) return { kind: "passthrough" };
 	return { kind: "rewrite", nodeId: created };
+}
+
+/**
+ * 三钩子注册（index.ts onSessionCreated 顶部唯一接线点；kill switch off ⇒ 不注册）。
+ * 注册顺序约束见文件头注释：调用方必须把本函数放在既有 after_tool（截断/纠偏）与
+ * plan-gate / generation-gate 注册之前。
+ */
+export function registerCanvasIdBindingHooks(harness: AgentHarness<LnkpiToolContext>): void {
+	if (!canvasIdBindingEnabled()) return;
+	harness.hooks.on("after_tool", async (event) => {
+		if (event.toolName === UPSERT_TOOL && !event.isError) {
+			recordUpsertedNode(event.runId, event.content);
+		}
+		return undefined; // 只捕获不改写：content patch（截断/纠偏）归 index.ts 既有 listener
+	});
+	harness.hooks.on("before_tool", async (event) => {
+		const d = decideBinding(event.toolName, event.args, event.runId);
+		if (d.kind === "rewrite") {
+			// event.args 是 Record<string, JsonValue>；仅替换 node_id，其余字段原样保留
+			// （applyBeforeToolDecision 会按工具 schema 重校验整个替换参，非法即 fail-closed）。
+			return { args: { ...event.args, node_id: d.nodeId } };
+		}
+		if (d.kind === "block") return { block: { reason: d.reason } };
+		return undefined;
+	});
+	harness.hooks.on("before_request", async (event) => {
+		closeBindingWindow(event.runId);
+		return undefined;
+	});
 }
