@@ -27,11 +27,12 @@ function countNeoTokens(dir: string): number {
 }
 
 // Task 11 实施前实测 379（AgentSideRail.vue 141 处已全部迁 --lnk-*，本批 -141）。
-// 清扫后实测 238。只允许下调。
-const NEO_BASELINE = 238
+// 清扫后实测 238；Task 15 门禁期复测 231（Task 12 删死样式顺带清掉 7 处）。只允许下调。
+// 注：fs 递归扫描在并行负载下曾被 5s 默认超时误杀（Task 12 遗留），显式放宽到 15s。
+const NEO_BASELINE = 231
 
 describe('--neo-* usage ratchet (P1-6.2 / B12)', () => {
-  it('count in components/agent only decreases', () => {
+  it('count in components/agent only decreases', { timeout: 15_000 }, () => {
     expect(countNeoTokens(here)).toBeLessThanOrEqual(NEO_BASELINE)
   })
 })
