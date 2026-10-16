@@ -28,9 +28,16 @@ function seqEvent(type: string, data: unknown, seq: number): PiRuntimeEvent {
   return { type, ts: 1_700_000_000_000, seq, data } as PiRuntimeEvent
 }
 
+/** 带回合身份的事件（PR2：runtime 透传 operationId 后的形态）。 */
+function ridEvent(type: string, data: unknown, runId: string, seq = 1): PiRuntimeEvent {
+  return { type, ts: 1_700_000_000_000, seq, runId, data } as PiRuntimeEvent
+}
+
 describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）', () => {
   const agentMessageCreate = vi.fn()
   const agentMessageFindMany = vi.fn()
+  /** PR2：回合唯一性的读侧判据（`(threadId, runId)` 查存在）。 */
+  const agentMessageFindFirst = vi.fn()
   const agentThreadFindUnique = vi.fn()
   const agentThreadUpsert = vi.fn()
   const agentThreadUpdate = vi.fn()
@@ -49,6 +56,7 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     for (const spy of [
       agentMessageCreate,
       agentMessageFindMany,
+      agentMessageFindFirst,
       agentThreadFindUnique,
       agentThreadUpsert,
       agentThreadUpdate,
@@ -59,6 +67,7 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     }
     agentMessageCreate.mockResolvedValue({})
     agentMessageFindMany.mockResolvedValue([])
+    agentMessageFindFirst.mockResolvedValue(null)
     agentThreadFindUnique.mockResolvedValue(null)
     agentThreadUpsert.mockResolvedValue({})
     agentThreadUpdate.mockResolvedValue({})
@@ -67,7 +76,11 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: {
+          create: agentMessageCreate,
+          findMany: agentMessageFindMany,
+          findFirst: agentMessageFindFirst,
+        },
         agentThread: {
           findUnique: agentThreadFindUnique,
           upsert: agentThreadUpsert,
@@ -96,6 +109,12 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
       const arg = c[0] as { data?: { role?: string } }
       return arg?.data?.role === 'assistant'
     })
+  }
+
+  /** 取出最后一次助手落库的 metadata（已 JSON 解析）。 */
+  function lastAssistantMetadata(): Record<string, unknown> {
+    const call = assistantCreates().at(-1)?.[0] as { data: { metadata?: string } }
+    return JSON.parse(call?.data?.metadata ?? '{}') as Record<string, unknown>
   }
 
   /** 跑一轮，返回 (客户端桩, 收到的 SSE 事件)。 */
@@ -197,5 +216,73 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     // gSeq 来自 pi-runtime 的全局序号（本例 4242），不是 Nest 每条流从 1 起的局部 seq。
     expect(toolCall?.gSeq).toBe(4242)
     expect(toolCall?.seq).toBe(1)
+  }, 120_000)
+
+  // ─────────────── PR2 · 立身份（回合唯一性 + 账本完整性）───────────────
+
+  it('E：owner 落库必须写 runId —— 它是「一次 run 一条账」唯一键的一半', async () => {
+    await runTurn([
+      ridEvent('agent_start', {}, 'run-77'),
+      piEvent('message_update', { event: { type: 'text_delta', delta: '好' } }),
+      ridEvent('agent_end', { status: 'completed' }, 'run-77'),
+    ])
+
+    const call = assistantCreates().at(-1)?.[0] as { data: { runId?: string } }
+    expect(call?.data?.runId).toBe('run-77')
+  }, 120_000)
+
+  it('F（唯一性）：同 (threadId, runId) 已有记账行 ⇒ 本条 no-op 且不再写画布产出', async () => {
+    // 模拟「第二个写者」：上游 409 判定之外仍走到落库的漏网者（断线重连补发 /
+    // generation-recovery 的 drain / 任何未来的第三写者）。
+    agentMessageFindFirst.mockResolvedValue({ id: 'm-owner-already-there' })
+
+    await runTurn([
+      ridEvent('agent_start', {}, 'run-77'),
+      piEvent('message_update', { event: { type: 'text_delta', delta: '好' } }),
+      ridEvent('agent_end', { status: 'completed' }, 'run-77'),
+    ])
+
+    expect(agentMessageFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { threadId: 't1', runId: 'run-77' } }),
+    )
+    expect(assistantCreates()).toHaveLength(0)
+  }, 120_000)
+
+  it('G（N4）：没捕获到 run 起点 ⇒ 账本标 partial + gapFrom，不冒充全量', async () => {
+    // 切片形态：首事件就是孤儿 tool_result（生产漂移签名），没有 agent_start。
+    await runTurn([
+      ridEvent(
+        'tool_execution_start',
+        { toolCallId: 'c1', toolName: 'propose_generation', args: {} },
+        'run-77',
+        4242,
+      ),
+      ridEvent('agent_end', { status: 'completed' }, 'run-77', 4300),
+    ])
+
+    const meta = lastAssistantMetadata()
+    expect(meta.partial).toBe(true)
+    expect(meta.gapFrom).toBe(4242)
+  }, 120_000)
+
+  it('G（对照）：捕获到 run 起点 ⇒ 不落 partial/gapFrom 两个键（键不出现纪律）', async () => {
+    await runTurn([
+      ridEvent('agent_start', {}, 'run-77', 4200),
+      ridEvent('tool_execution_start', { toolCallId: 'c1', toolName: 't', args: {} }, 'run-77', 4242),
+      ridEvent('agent_end', { status: 'completed' }, 'run-77', 4300),
+    ])
+
+    const meta = lastAssistantMetadata()
+    expect('partial' in meta).toBe(false)
+    expect('gapFrom' in meta).toBe(false)
+  }, 120_000)
+
+  it('F（边界）：runtime 未透传 runId（滚动升级窗口）⇒ 退回旧行为，照常落库', async () => {
+    await runTurn([...TYPICAL_TURN])
+
+    expect(agentMessageFindFirst).not.toHaveBeenCalled()
+    const call = assistantCreates().at(-1)?.[0] as { data: { runId?: string } }
+    expect(call?.data?.runId).toBeNull()
+    expect(assistantCreates()).toHaveLength(1)
   }, 120_000)
 })

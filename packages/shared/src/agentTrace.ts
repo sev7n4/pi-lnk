@@ -38,6 +38,19 @@ export interface AgentMessageMetadata {
   executionTrace?: ExecutionTraceState
   presentation?: Record<string, unknown>
   executionEvents?: PersistedExecutionEvent[]
+  /**
+   * TURN-IDENTITY PR2：本条账本**不完整**（捕获窗口没覆盖 run 起点）。
+   *
+   * 真值 =「本流没看到 `agent_start` 却有后续事件」——订阅切片 / 断线重连从半路
+   * 接入时的形态。落库**必须**标出来：不标的话，前端拿一条残缺账本重放，
+   * 会把孤儿 `tool_result` 渲染成一条无头工具行并顶在思考之前（原漂移事故）。
+   * 反过来，**绝不允许**用补齐/插值去把 partial 抹平——那是冒充全量（N4）。
+   */
+  partial?: boolean
+  /** 缺口起点：本流捕获到的首个全局序号（此序号之前的事件没被看到）。仅 `partial` 时携带。 */
+  gapFrom?: number
+  /** PR4 历史修复：本行被判定为影子行时指向 owner 消息 id；读取出口据此过滤。 */
+  supersededBy?: string
 }
 
 export type ExecutionEventKind =

@@ -271,8 +271,23 @@ model AgentMessage {
   linkedOutputs String?
   /** JSON: AgentMessageMetadata */
   metadata      String?
+  /**
+   * 回合身份（上游 pi-runtime 的 operationId，随 `run_start` 事件下发）。
+   *
+   * 2026-10-17（回合身份与单一写者）：与 `threadId` 组成唯一键，把「同一次 run
+   * 只落一条助手消息」从**各端默契**升级为**数据库不变式**。此前靠默契的结果是
+   * 生产实证同一次 run 落 4 条正文完全相同的助手消息（订阅切片各记一本账）。
+   *
+   * 可空是刻意的：pi-runtime 未透传身份时（滚动升级窗口）与全部存量行都是 NULL，
+   * 而 SQLite 下 NULL 互不冲突 ⇒ **存量零回填、迁移纯 additive、可原样回滚**。
+   */
+  runId         String?
   createdAt     DateTime    @default(now())
 
+  /// 回合唯一性不变式：同一 thread 里同一 run 至多一条消息。
+  /// 落库走 upsert（先到先得），后来者命中即 no-op —— 即便上游 409 判定漏了、
+  /// 或出现第三个写者（generation-recovery 的 drain），也无法再写进重复行。
+  @@unique([threadId, runId])
   @@index([threadId, createdAt])
   @@index([sessionId, threadId, createdAt])
 }

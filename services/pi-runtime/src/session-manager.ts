@@ -153,6 +153,20 @@ export interface NormalizedEvent {
 	ts: number;
 	/** 会话内单调递增（从 0 起），SSE id 帧与客户端增量重连的 offset（P0-③）。 */
 	seq: number;
+	/**
+	 * 回合身份（上游 operationId，随 `run_start` 携带；run 结束即失效）。
+	 *
+	 * 存在理由（2026-10-17 回合身份与单一写者）：下游（Nest）一次 run 会被 N 条
+	 * 订阅流各记一本账（生产实证：同秒落 4 条正文相同的助手消息），根因是**流的
+	 * 局部 seq 各自从 1 起**，谁都分不清「这是同一 run 的两个切片」还是「两个 run」。
+	 * 只有把上游权威的 operationId 透下去，下游才能用 `(threadId, runId)` 唯一索引
+	 * 把「同一次 run 只有一条助手消息」变成**数据库不变式**而非各端默契。
+	 *
+	 * ⚠️ 取值优先级见 `dispatch`：`evt.runId ?? entry.currentRunId` —— 上游只在
+	 * run_start / turn_start 等少数事件上带 runId（vendor 侧该字段是 optional），
+	 * 逐事件不兜就会大量事件缺身份。
+	 */
+	runId?: string;
 	data: unknown;
 }
 
@@ -235,11 +249,18 @@ interface SessionEntry {
 	/**
 	 * 当前滞留在 vendor lane inbox 里的队列标签（由 `queue_update` 事件维护全量快照）。
 	 *
-	 * 存在理由：vendor **不会**自动排空 idle 队列（`docs/work-packages/05-direct-durable-drive.md:69`
-	 * 原话 "There is no terminal drain"）。用户在 run 结束后插话，消息会一直睡到下一次
-	 * `accept()`；本字段就是「要不要替用户开一轮去接住它」的判据。
+	queue_update 之外另有一条 lock 事件，落盘队列与内存状态可能不一致；故本字段只作
+	 * **尽力而为**的提示（用于「要不要替用户开一轮」的判定），不作为强不变式。
 	 */
 	queued: Set<QueuedKind>;
+	/**
+	 * 当前在跑 run 的身份（上游 operationId），由 `run_start` 置、`run_end` 清。
+	 *
+	 * 用途只有一个：给 `dispatch` 里**不带 runId 的事件**兜底打戳（vendor 只在
+	 * run_start / turn_start 等少数事件上带该字段）。纯内存、重启即失——它是「当前
+	 * run」而非「历史 run」，重启后本来就没有在跑的 run 可标识。
+	 */
+	currentRunId?: string;
 	/** 排空 in-flight 守卫：防止 run 收尾 drain 与新 prompt 撞车时重复 accept。 */
 	draining?: boolean;
 	/** 当前 run 的取消函数（withCancel 产出）；run 结束后清空。用户点「停止」时调用。 */
@@ -1311,6 +1332,8 @@ export class SessionManager {
 				if (harnessType === "run_start") {
 					// C2 turnBudget：开新计数窗口（重置 count/warned/settled，spec §3.1）。
 					turnBudgetRunStart(entry.turnBudget, evt.runId ?? "");
+					// 回合身份：本 run 内所有事件都戳这个 id（下游据此做「一次 run 一条账」）。
+					entry.currentRunId = evt.runId;
 				}
 				if (harnessType === "run_end") {
 					// P0.5：vendor 把 LLM 上游失败物化成正常结算的 run（见
@@ -1318,6 +1341,9 @@ export class SessionManager {
 					this.observeLlmRunOutcome(entry, evt);
 					// C2 turnBudget：关计数窗口（下一 run 的 run_start 会重置，此处保底）。
 					turnBudgetRunEnd(entry.turnBudget);
+					// run 已结束 ⇒ 之后到达的事件（如收尾后的 compaction）不该再挂这个身份，
+					// 否则下游会把它们并进刚结束的那一轮账里。
+					entry.currentRunId = undefined;
 				}
 					if (harnessType === "tool_start") {
 						this.dispatchActivity(entry, evt);
@@ -1366,6 +1392,9 @@ export class SessionManager {
 						type: sseType,
 						lane: evt.lane,
 						ts: Date.now(),
+						// 事件自带身份优先；`run_end` 必须显式带上（它在上面的分支里
+						// 已经把 entry.currentRunId 清了，不带就丢身份）。
+						runId: evt.runId,
 						// ⑦：图只进模型上下文，SSE/缓冲副本剥离（无图时原引用返回）
 						data: TOOL_RESULT_EVENT_TYPES.has(harnessType) ? stripImageBlocks(evt) : evt,
 					});
@@ -2628,7 +2657,11 @@ export class SessionManager {
 
 	/** seq 由本方法独占分配；调用方只提供无 seq 的事件骨架。 */
 	private dispatch(entry: SessionEntry, event: Omit<NormalizedEvent, "seq">): void {
-		const withSeq = { ...event, seq: entry.nextSeq++ };
+		// 与 `seq` 同层打戳：事件自带 runId 优先（vendor 只在少数事件上带），
+		// 否则落回「当前在跑的 run」。放在 dispatch 而不是每个调用点，是为了让
+		// waiting_user / recovery / activity 这些**宿主侧合成事件**也拿到身份——
+		// 它们同样属于当前 run，缺了会让下游的账本出现「无归属段」。
+		const withSeq = { ...event, seq: entry.nextSeq++, runId: event.runId ?? entry.currentRunId };
 		entry.buffer.push(withSeq);
 		if (entry.buffer.length > BUFFER_LIMIT) {
 			const dropped = entry.buffer.shift();

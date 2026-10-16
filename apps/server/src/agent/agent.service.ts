@@ -28,6 +28,11 @@ import { MaterialService } from '../canvas/material.service'
 import { ShotService } from '../canvas/shot.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+import {
+  isLedgerComplete,
+  ledgerGapFrom,
+  type LedgerCapture,
+} from './turn-ledger'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
 import { resolveRuleGroups } from './pi-runtime/rule-groups'
@@ -108,11 +113,23 @@ export function buildTurnMetadata(input: {
   presentation?: Record<string, unknown>
   executionTrace?: ExecutionTraceState
   executionEvents?: PersistedExecutionEvent[]
+  /**
+   * TURN-IDENTITY PR2：账本不完整（本流没捕获到 run 起点）。
+   *
+   * 键不出现纪律：完整时**不写** `partial` / `gapFrom` 两个键（老消息因此零变化），
+   * 只有残缺才落 `partial:true`，`gapFrom` 仅在序号已知时附带。
+   */
+  partial?: boolean
+  gapFrom?: number
 }): AgentMessageMetadata | undefined {
   const metadata: AgentMessageMetadata = {}
   if (input.executionTrace) metadata.executionTrace = input.executionTrace
   if (input.presentation) metadata.presentation = input.presentation
   if (input.executionEvents?.length) metadata.executionEvents = input.executionEvents
+  if (input.partial) {
+    metadata.partial = true
+    if (input.gapFrom !== undefined) metadata.gapFrom = input.gapFrom
+  }
   return Object.keys(metadata).length ? metadata : undefined
 }
 
@@ -125,6 +142,17 @@ export function deriveLinkedOutputs(actions: CanvasAction[]): LinkedCanvasOutput
       nodeType: String(a.payload.nodeType || 'image'),
       status: 'done' as const,
     }))
+}
+
+/**
+ * Prisma 唯一约束冲突（P2002）——`(threadId, runId)` 唯一索引的裁决信号。
+ *
+ * 为什么要按 code 判而不是 catch-all：这里的语义是「已有人在跑的这个 run 上记过账」，
+ * 与「数据库整体不可用 / 字段写错」是两件事。混在一起 catch 会让真正的落库故障
+ * 被静默降级成「反正有 owner 记了」——那正是本次事故的家族形态（失败被降级成成功）。
+ */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002'
 }
 
 /** P2 T6：回合预扣单的结构子集（freeze 返回的 PointHold 只消费这几个字段）。 */
@@ -1438,6 +1466,14 @@ export class AgentService {
     // （F2：executionEvents / traceSeq / traceMessageIndex / pushTraceEvent /
     // textPersister 已上移到本生成器 try 之前，见 freeze 块后的收口注释。）
     let done = false
+    // ── TURN-IDENTITY PR2：回合身份 + 账本捕获状态 ──
+    // `turnRunId` 是落库唯一键的一半（另一半是 threadId）：runtime 已透传（Task 7）
+    // 时每条事件都带它，取**最后出现的非空值**（run 内恒定，跨 run 才变）。
+    // `sawRunStart` / `firstSeq` 是账本完整性的因果围栏：没看到 `agent_start`
+    // 却有后续事件 = 本流从半路接入（订阅切片 / 断线重连），产出的是残缺账本。
+    let turnRunId: string | undefined
+    let sawRunStart = false
+    let firstSeq: number | undefined
     // P2 T6：本轮以 error 事件收束 → 收尾走 release 全退（hold 泄漏双保险之一，
     // Review Focus 1）；agent_end 正常收束 → settleFromHold 按实际 usage 结算。
     let runFailed = false
@@ -1447,6 +1483,9 @@ export class AgentService {
         if (streamClosed || !event) break
         // P0-1：本轮落库事件共享这个事件的全局 seq（见 pushTraceEvent 的 gSeq）。
         currentPiEvent = event
+        if (event.runId) turnRunId = event.runId
+        if (event.type === 'agent_start') sawRunStart = true
+        if (firstSeq === undefined && typeof event.seq === 'number') firstSeq = event.seq
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true
           runFailed = event.type === 'error'
@@ -1696,13 +1735,30 @@ export class AgentService {
     // 但**不写助手消息**。唯一性最终由 PR2 的 `(threadId, runId)` 唯一索引兜底；
     // 这里先掐掉「同一 run 被 N 条流各记一本账」的源头。
     if (turnRole === 'owner') {
+      // 账本完整性：判据是**因果围栏**（是否看到 run 起点），不是内容指纹——
+      // 同一句话 5 分钟后重发是合法新回合，用指纹判会把合法回合误标残缺（N5）。
+      const capture: LedgerCapture = {
+        sawRunStart,
+        firstSeq,
+        eventCount: executionEvents.length,
+      }
+      const partial = !isLedgerComplete(capture)
+      if (partial) {
+        this.piLogger.warn(
+          `persist_ordinal_gap key=${sessionKey} runId=${turnRunId ?? 'unknown'} gapFrom=${firstSeq ?? 'unknown'} — 本流从半路接入，账本标 partial（不冒充全量）`,
+        )
+      }
       await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
         // Nest internal tools already wrote Session.canvasData; skip re-apply to avoid duplicate add_node
         rewriteCanvasData: false,
         // 退役对齐：老 LangGraph 路径（streamFromRuntime）同样传 deriveLinkedOutputs，
         // pi 路径此前漏了这一项 → 助手消息的「产出」挂件为空。老路径已删，此处补回对等语义。
         linkedOutputs: deriveLinkedOutputs(canvasActions),
-        metadata: buildTurnMetadata({ executionEvents }),
+        metadata: buildTurnMetadata({
+          executionEvents,
+          ...(partial ? { partial: true, gapFrom: ledgerGapFrom(capture) } : {}),
+        }),
+        runId: turnRunId,
       })
     } else {
       // shadow：事件已全程转发给前端（进度可见），到此为止——同一次 run 只记一本账。
@@ -1849,14 +1905,63 @@ export class AgentService {
     }
   }
 
+  /**
+   * 同 `(threadId, runId)` 是否**已经**有记账行（PR2 唯一性的读侧判据）。
+   *
+   * ⚠️ fail-open：查询异常一律**放行**（返回 false，让落库照旧）。理由与 PR1 的
+   * 409 判定一致——查不到就让整轮消息不落库，比重复一条更糟。
+   * 真正的裁决者是唯一索引（`create` 的 P2002 兜底），本方法只负责**提前说清
+   * 发生了什么**（日志语义比「唯一约束冲突」好排查）。
+   *
+   * `findFirst` 而非复合键 `findUnique`：单测的 prisma 替身是手写局部对象，
+   * 未必实现复合唯一键的入参形态（历史教训：mock 缺键时 `.catch()` 挂不上，
+   * 直接 TypeError 打挂整个回合）。
+   */
+  private async findTurnByRunId(threadId: string, runId: string): Promise<boolean> {
+    try {
+      const row = await this.prisma?.agentMessage?.findFirst?.({
+        where: { threadId, runId },
+        select: { id: true },
+      })
+      return Boolean(row)
+    } catch (err) {
+      this.piLogger.warn(
+        `turn runId lookup failed (fail-open, thread=${threadId}, runId=${runId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+      return false
+    }
+  }
+
   private async finalizeTurn(
     sessionId: string,
     threadId: string,
     userId: string | undefined,
     assistantText: string,
     canvasActions: CanvasAction[],
-    opts: { rewriteCanvasData: boolean; linkedOutputs?: LinkedCanvasOutput[]; metadata?: AgentMessageMetadata },
+    opts: {
+      rewriteCanvasData: boolean
+      linkedOutputs?: LinkedCanvasOutput[]
+      metadata?: AgentMessageMetadata
+      /**
+       * 回合身份（pi-runtime operationId）。PR2 起它是**落库唯一键的一半**：
+       * 同 `(threadId, runId)` 已存在 ⇒ 已有 owner 记过账，本条 no-op。
+       * 未透传（老 runtime 滚动窗口）时为 undefined ⇒ 退回「无条件写」的旧行为。
+       */
+      runId?: string
+    },
   ) {
+    // ── TURN-IDENTITY PR2：先到先得的唯一性 ──
+    // 上游 409 判定（PR1）已挡掉绝大多数重复写者，但**挡不住全部**：断线重连补发、
+    // generation-recovery 的 drain、以及任何未来的第三个写者都可能带着同一个
+    // runId 走到这里。唯一索引是**最后一道**不变式——不是靠各端默契，而是靠数据库。
+    if (opts.runId && (await this.findTurnByRunId(threadId, opts.runId))) {
+      this.piLogger.warn(
+        `duplicate_turn_persist blocked (thread=${threadId}, runId=${opts.runId}) — 已有 owner 记账，本条 no-op`,
+      )
+      return
+    }
     const shouldPersistAssistant = Boolean(
       assistantText || opts.metadata?.presentation || opts.metadata?.executionEvents?.length,
     )
@@ -1871,17 +1976,31 @@ export class AgentService {
       // 空 content 不影响 `shouldPersistAssistant` 的判定：那条走的是原始 assistantText
       // 与 metadata，presentation / executionEvents 才是这些行必须落库的原因。
       const content = normalizeAssistantText(assistantText)
-      await this.prisma.agentMessage.create({
-        data: {
-          sessionId,
-          threadId,
-          role: 'assistant',
-          content,
-          toolCalls: canvasActions.length ? JSON.stringify(canvasActions) : null,
-          linkedOutputs: opts.linkedOutputs?.length ? JSON.stringify(opts.linkedOutputs) : null,
-          metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
-        },
-      })
+      try {
+        await this.prisma.agentMessage.create({
+          data: {
+            sessionId,
+            threadId,
+            role: 'assistant',
+            content,
+            toolCalls: canvasActions.length ? JSON.stringify(canvasActions) : null,
+            linkedOutputs: opts.linkedOutputs?.length ? JSON.stringify(opts.linkedOutputs) : null,
+            metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
+            // 回合身份：落库即成为唯一键的一半（NULL 时唯一索引不生效，等价旧行为）。
+            runId: opts.runId ?? null,
+          },
+        })
+      } catch (err) {
+        // 竞态兜底：上面的查存在与这里的 create 之间仍可能被另一条流抢先。
+        // 唯一索引是唯一的裁决者——命中即说明 owner 已记账，本条安静 no-op。
+        if (isUniqueViolation(err)) {
+          this.piLogger.warn(
+            `duplicate_turn_persist blocked by unique index (thread=${threadId}, runId=${opts.runId}) — 本条 no-op`,
+          )
+          return
+        }
+        throw err
+      }
       await this.prisma.agentThread.update({
         where: { id: threadId },
         data: { updatedAt: new Date() },

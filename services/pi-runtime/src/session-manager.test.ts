@@ -593,6 +593,88 @@ describe("SessionManager 事件 seq 与增量重放（P0-③）", () => {
 });
 
 /**
+ * 回合身份透传（2026-10-17，回合身份与单一写者 · Task 7）。
+ *
+ * 为什么必须测：下游（Nest）靠 `runId` 做「同一次 run 只记一本账」的唯一键。
+ * 这里一旦漏戳或不清理，下游拿到的就是 undefined，唯一索引退化成永不命中——
+ * 而**退化是静默的**（只是不再去重），与事故前的症状完全一致，不钉测试永远发现不了。
+ */
+describe("SessionManager 回合身份 runId 透传", () => {
+	/** 与 P0-③ 同款替身，但事件载荷带 `runId`（vendor 侧该字段 optional）。 */
+	function makeRunIdHarnessFactory() {
+		const handlers = new Map<string, (evt: { lane?: string; runId?: string }) => void>();
+		const fakeHarnessFactory = async () => ({
+			harness: {
+				events: {
+					on: (type: string, handler: (evt: { lane?: string; runId?: string }) => void) => {
+						handlers.set(String(type), handler);
+						return () => {};
+					},
+				},
+				lane: async () => ({ prompt: async () => ({ ok: true }) }),
+				close: async () => {},
+			},
+		}) as never;
+		return { handlers, fakeHarnessFactory };
+	}
+
+	it("run 内事件一律戳上本 run 的 id（含 vendor 不带 runId 的事件）", async () => {
+		const { handlers, fakeHarnessFactory } = makeRunIdHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-rid-1", {});
+		const seen: Array<{ type: string; runId?: string }> = [];
+		sm.subscribe("s-rid-1", (e) => seen.push({ type: e.type, runId: e.runId }));
+
+		handlers.get("run_start")?.({ lane: "main", runId: "run-A" }); // 唯一携带者
+		// 关键：tool_start / message_update 在 vendor 侧**不带** runId，
+		// 必须靠 dispatch 的 currentRunId 兜底，否则下游账本出现「无归属段」。
+		handlers.get("tool_start")?.({ lane: "main" });
+		handlers.get("message_update")?.({ lane: "main" });
+
+		// tool_start 会**额外**派生一条 activity（同帧），故共 4 条。
+		assert.deepEqual(
+			seen.map((e) => e.runId),
+			["run-A", "run-A", "run-A", "run-A"],
+			"同一 run 内所有事件必须共享同一身份",
+		);
+	});
+
+	it("run_end 后事件不再挂上一个 run 的身份（否则并进刚结束那轮的账）", async () => {
+		const { handlers, fakeHarnessFactory } = makeRunIdHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-rid-2", {});
+		const seen: Array<{ type: string; runId?: string }> = [];
+		sm.subscribe("s-rid-2", (e) => seen.push({ type: e.type, runId: e.runId }));
+
+		handlers.get("run_start")?.({ lane: "main", runId: "run-A" });
+		handlers.get("run_end")?.({ lane: "main", runId: "run-A" });
+		handlers.get("compaction_start")?.({ lane: "main" }); // run 后的压缩，不该挂 run-A
+
+		assert.equal(seen[1]?.runId, "run-A", "run_end 自身仍属本 run");
+		assert.equal(seen[2]?.runId, undefined, "run 结束后的事件不得再挂旧身份");
+	});
+
+	it("相邻两轮各自携带本轮 id（换 run 即换身份）", async () => {
+		const { handlers, fakeHarnessFactory } = makeRunIdHarnessFactory();
+		const sm = new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+		await sm.create("s-rid-3", {});
+		const seen: Array<{ type: string; runId?: string }> = [];
+		sm.subscribe("s-rid-3", (e) => seen.push({ type: e.type, runId: e.runId }));
+
+		handlers.get("run_start")?.({ lane: "main", runId: "run-A" });
+		handlers.get("run_end")?.({ lane: "main", runId: "run-A" });
+		handlers.get("run_start")?.({ lane: "main", runId: "run-B" });
+		handlers.get("turn_start")?.({ lane: "main" });
+
+		assert.deepEqual(
+			seen.map((e) => e.runId),
+			["run-A", "run-A", "run-B", "run-B"],
+			"两轮必须可区分——可区分才谈得上「一次 run 一条账」",
+		);
+	});
+});
+
+/**
  * 阻塞等待可见化（2026-10-01 生产事故修复）：等待**开始**就要把 `waiting_user` 送到前端。
  * 反例：等 tool_result 再反推「等待中」——阻塞模式下 result 要等等待结束才发，
  * 前端整段等待期只能显示「生成回复中 · Ns」（= 用户看到的卡死）。
