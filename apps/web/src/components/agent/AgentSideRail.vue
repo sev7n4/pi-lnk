@@ -4000,7 +4000,7 @@ defineExpose({
   border: 1px solid var(--lnk-warning-border);
   background: rgba(0, 0, 0, 0.15);
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1.4;
   color: var(--lnk-warning);
   transition: background 0.15s ease, border-color 0.15s ease;
@@ -4047,7 +4047,7 @@ defineExpose({
   height: 28px;
   padding: 0 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1;
   color: var(--neo-hi-text);
   background: color-mix(in srgb, var(--neo-hi-bg) 88%, transparent);
@@ -4305,7 +4305,7 @@ defineExpose({
   border-radius: 999px;
   background: var(--neo-surface-elevated);
   padding: 2px 9px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1.5;
   color: var(--neo-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -4369,7 +4369,7 @@ defineExpose({
   border-radius: 999px;
   background: var(--neo-surface-elevated);
   padding: 2px 12px;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   line-height: 1.6;
   color: var(--neo-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -4451,7 +4451,7 @@ defineExpose({
   border: none;
   background: transparent;
   outline: none;
-  font-size: 13px;
+  font-size: var(--lnk-text-sm);
   line-height: 1.55;
   color: var(--neo-text-primary);
 }
@@ -4661,14 +4661,14 @@ defineExpose({
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  font-size: 13px;
+  font-size: var(--lnk-text-sm);
   line-height: 1.5;
   color: var(--neo-text-primary);
 }
 
 .agent-composer-rec__time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   font-variant-numeric: tabular-nums;
   color: var(--neo-text-muted);
 }
@@ -4676,7 +4676,7 @@ defineExpose({
 .agent-composer-rec__hint {
   margin: 2px 2px 0;
   text-align: center;
-  font-size: 10px;
+  font-size: var(--lnk-text-2xs); /* P0-2.2：原 10px 引导档升 2xs(11px) */
   color: var(--neo-text-muted);
 }
 
@@ -4833,7 +4833,7 @@ defineExpose({
   border: 1px solid var(--neo-border);
   border-radius: 8px;
   background: var(--neo-surface-elevated);
-  font-size: 10px;
+  font-size: var(--lnk-text-2xs); /* P0-2.2：原 10px 引导档升 2xs(11px) */
   line-height: 1.3;
   white-space: nowrap;
   color: var(--neo-text-secondary);
