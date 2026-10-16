@@ -2706,6 +2706,15 @@ function handleEvent(event: { type: string; data: unknown }) {
       if (Array.isArray(data?.nodes)) agent.confirmSelectionBinding(data.nodes)
       break
     }
+    // TURN-IDENTITY PR3：本回合发言被服务端结构化拒绝（409/LaneBusy 的语义化形态）。
+    // 这是止血兜底的「最后一环」——把「已并入进行中的任务 / 当前无法插话」明确告诉用户，
+    // 而不是让界面停在转圈、最后冒出一个别人的回答（这正是漂移事故下用户侧的困惑来源）。
+    // 拒绝**不得**退化成新开一轮（对齐 Codex NotSubmittedReason）：不落库、不新建气泡。
+    case 'turn_not_submitted': {
+      const d = event.data as { reason?: 'not_idle' | 'not_steerable' }
+      agent.setTurnRefusal(d.reason === 'not_steerable' ? 'not_steerable' : 'not_idle')
+      break
+    }
     case 'canvas_command': {
       const cmd = event.data as {
         type: string
@@ -3579,6 +3588,31 @@ defineExpose({
               P1-5 移动端裸条形态：等待/收口系统层（proposeWait 提示 / 旧状态行 waiting·failed·settled /
               ask_user 卡 / 取消提示）已移出 chat-wrap（其下、输入区之上）——移动端不渲染对话流，
               但这些阻塞交互必须贴条可达；桌面视觉位置不变。门控决策注释随内容一并搬移。 -->
+
+<!-- TURN-IDENTITY PR3：发言被服务端结构化拒绝（409/LaneBusy 语义化）时的确定性反馈。
+                 不假装已受理、不新建气泡，只把原因说清，让用户知道「为什么没发出去」。 -->
+            <div
+              v-if="agent.turnRefusal"
+              class="mx-0.5 mb-2 rounded-lg border border-warning-border bg-warning-bg px-2 py-1.5 text-xs leading-relaxed"
+              data-testid="turn-refusal-callout"
+            >
+              <p class="font-medium text-warning">
+                {{ agent.turnRefusal === 'not_steerable' ? '当前任务无法插话' : '你的消息已并入进行中的任务' }}
+              </p>
+              <p class="mt-0.5 opacity-80">
+                {{ agent.turnRefusal === 'not_steerable' ? '请等待其完成后再试。' : '无需重复发送，进度会随当前回合继续。' }}
+              </p>
+              <button
+                type="button"
+                class="mt-1 rounded border border-warning-border bg-white px-2 py-0.5 text-[11px] font-medium text-warning hover:bg-warning-bg-hover"
+                data-testid="turn-refusal-dismiss"
+                @click="agent.setTurnRefusal(null)"
+              >
+                知道了
+              </button>
+            </div>
+            
+
             <!--
               侧栏门控/确认卡已全量下线（2026-10-06 决策）：以下旧分支被删除 ——
               retake 提示、图片质检门、宏观方案卡、方案多选卡、定稿交付卡、shot/topo/copy

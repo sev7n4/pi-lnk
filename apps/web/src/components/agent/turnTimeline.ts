@@ -390,14 +390,22 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         if (resultSummary) existing.resultSummary = resultSummary
         return
       }
-      timeline.parts.push({
-        kind: 'tool',
-        id: d.toolCallId ? `tool:${d.toolCallId}` : nextPartId('tool'),
-        toolName: name,
-        status: d.isError ? 'failed' : 'done',
-        isError: d.isError === true,
-        resultSummary,
-      })
+      // ── TURN-IDENTITY PR3（孤儿降级）──
+      // 没有前置 `tool_call` 的 `tool_result` = **本流从半路接入**（订阅切片 / 断线
+      // 重连 / 老落库数据缺头）。此前这里 `parts.push` 一条工具行 ⇒ 它成为 `parts[0]`
+      // ⇒ 「提议生成」卡片顶到思考和工具消息之前（生产漂移事故的直接成因）。
+      //
+      // 正确做法不是「想办法排到后面」（排序修不好：它是**缺失**，不是错位），
+      // 而是**如实说缺**：出一条 notice，不伪造工具行（N4：不冒充全量）。
+      const orphanNoticeId = `notice:orphan-tool:${d.toolCallId ?? name}`
+      if (!timeline.parts.some((p) => p.kind === 'notice' && p.id === orphanNoticeId)) {
+        timeline.parts.push({
+          kind: 'notice',
+          id: orphanNoticeId,
+          text: '本轮前半段事件未捕获（中途接入/历史缺失）',
+          tone: 'info',
+        })
+      }
       return
     }
     case 'canvas_action': {
@@ -674,6 +682,11 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
 export function replayTimelineEvents(
   events: Array<{ type: string; data: unknown; seq?: number; gSeq?: number }>,
   bodyText?: string,
+  /**
+   * TURN-IDENTITY PR3：`metadata.partial` —— 服务端判定本条账本**不完整**
+   * （本流没捕获到 run 起点）。真值 = 因果围栏，不用内容指纹（N5）。
+   */
+  opts?: { partial?: boolean },
 ): TurnTimeline {
   const sortKey = (e: { seq?: number; gSeq?: number }): number => (e.gSeq ?? e.seq) as number
   const ordered = events.every((e) => typeof sortKey(e) === 'number')
@@ -690,6 +703,16 @@ export function replayTimelineEvents(
       id: nextPartId('text'),
       text: bodyText,
       status: 'done',
+    })
+  }
+  if (opts?.partial) {
+    // 缺口标注置顶：让用户第一眼就知道「这一轮的前半段不在库里」，
+    // 而不是看到一条没头没尾的工具结果以为是完整过程。
+    timeline.parts.unshift({
+      kind: 'notice',
+      id: 'notice:partial-ledger',
+      text: '本轮前半段事件未捕获（中途接入）',
+      tone: 'info',
     })
   }
   finalizeTurnTimeline(timeline)

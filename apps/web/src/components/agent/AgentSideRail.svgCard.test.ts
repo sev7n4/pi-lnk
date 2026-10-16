@@ -303,3 +303,45 @@ describe('AgentSideRail：svg_card 轮次的气泡门禁', () => {
     expect(w.findComponent(AgentSvgCard).exists()).toBe(false)
   })
 })
+
+/**
+ * TURN-IDENTITY PR3：发言被服务端结构化拒绝（409/LaneBusy 语义化）的确定性反馈。
+ * 锁两件事：① store.turnRefusal 被正确置位（reason 区分）；② 拒绝**不得**退化成新开一轮
+ * （对齐 Codex NotSubmittedReason：被拒的提交不能变成一条新消息）。UI 文案与「知道了」清除
+ * 走真实模板渲染断言。
+ */
+describe('AgentSideRail：turn_not_submitted 结构化拒绝反馈', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('not_idle：标记 turnRefusal 且渲染拒绝条，不新建气泡', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    ;(w.vm as unknown as RailVm).handleEvent({
+      type: 'turn_not_submitted',
+      data: { reason: 'not_idle' },
+    })
+    await flushPromises()
+
+    expect(agent.turnRefusal).toBe('not_idle')
+    expect(w.find('[data-testid="turn-refusal-callout"]').exists()).toBe(true)
+    expect(w.text()).toContain('已并入进行中的任务')
+    // 拒绝不得退化成新开一轮（否则会制造第二次「沉默」）
+    expect(agent.messages.filter((m) => m.role === 'assistant').length).toBe(0)
+  })
+
+  it('not_steerable：文案区分，且「知道了」可清除瞬时态', async () => {
+    const w = await mountRail()
+    const agent = useAgentStore()
+    ;(w.vm as unknown as RailVm).handleEvent({
+      type: 'turn_not_submitted',
+      data: { reason: 'not_steerable' },
+    })
+    await flushPromises()
+    expect(agent.turnRefusal).toBe('not_steerable')
+    expect(w.text()).toContain('当前任务无法插话')
+
+    await w.find('[data-testid="turn-refusal-dismiss"]').trigger('click')
+    expect(agent.turnRefusal).toBeNull()
+    expect(w.find('[data-testid="turn-refusal-callout"]').exists()).toBe(false)
+  })
+})

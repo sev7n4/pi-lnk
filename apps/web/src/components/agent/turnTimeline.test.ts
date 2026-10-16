@@ -69,6 +69,47 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(art.status).toBe('done')
   })
 
+  it('TURN-IDENTITY PR3：孤儿 tool_result（无前置 tool_call）⇒ 出 notice，不伪造工具行', () => {
+    // 生产漂移签名：订阅切片的首事件就是 tool_result，此前被 push 成 parts[0]
+    // ⇒「提议生成」卡片顶到思考和工具消息之前。
+    const tl = feed([
+      { type: 'tool_result', data: { toolCallId: 'c9', name: 'propose_generation', result: {} } },
+      { type: 'thinking', data: { status: 'running' } },
+      { type: 'thinking', data: { status: 'done', summary: '思考' } },
+    ])
+
+    expect(byKind(tl, 'tool')).toHaveLength(0)
+    const notices = byKind(tl, 'notice')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].tone).toBe('info')
+    // 关键：不再占据首位（卡片漂移的直接成因）
+    expect(kinds(tl)[0]).not.toBe('tool')
+  })
+
+  it('TURN-IDENTITY PR3：重复孤儿 tool_result 只出一条 notice（不刷屏）', () => {
+    const tl = feed([
+      { type: 'tool_result', data: { toolCallId: 'c9', name: 'propose_generation', result: {} } },
+      { type: 'tool_result', data: { toolCallId: 'c9', name: 'propose_generation', result: {} } },
+    ])
+    expect(byKind(tl, 'notice')).toHaveLength(1)
+  })
+
+  it('TURN-IDENTITY PR3：partial 账本重放 ⇒ 顶部置一条缺口标注（不冒充完整过程）', () => {
+    const events: TimelineEvent[] = [
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'propose_generation', args: {} } },
+      { type: 'tool_result', data: { toolCallId: 'c1', name: 'propose_generation', result: {} } },
+    ]
+    const tl = replayTimelineEvents(events as never[], '正文', { partial: true })
+    expect(tl.parts[0]?.kind).toBe('notice')
+    expect((tl.parts[0] as { text?: string }).text).toContain('前半段')
+
+    // 对照：不传 partial ⇒ 不出**缺口**标注（键不出现纪律）
+    // （回合收尾本身可能产生别的 notice，故只锁「缺口文案」这一条）
+    const plain = replayTimelineEvents(events as never[], '正文')
+    const gapNotices = byKind(plain, 'notice').filter((n) => n.text.includes('前半段'))
+    expect(gapNotices).toHaveLength(0)
+  })
+
   it('反例锁：首事件是工具 ⇒ 首块 kind !== thinking（unshift 不复活）', () => {
     const tl = feed([
       { type: 'tool_call', data: { toolCallId: 'c1', name: 'get_canvas_summary' } },

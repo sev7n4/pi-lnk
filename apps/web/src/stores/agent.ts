@@ -144,8 +144,23 @@ export const useAgentStore = defineStore('agent', () => {
   const recovering = ref(false)
   /** P1 状态行：最近一次 text_delta 时间戳（waiting 文本静默 ≥2s 判定用） */
   const lastTextDeltaAt = ref(0)
+  /**
+   * TURN-IDENTITY PR3：本回合发言**没有被受理**（服务端结构化拒绝 `turn_not_submitted`）。
+   *
+   * 存在理由：409（上游 LaneBusy）此前被 Nest 静默吞掉，用户看到的是「消息发出去了、
+   * 界面在转圈、最后冒出一个别人的回答」。现在服务端把拒绝结构化下发，前端就必须
+   * **把状态说清楚**——「已并入进行中的任务」与「当前无法插话」是两种截然不同的
+   * 用户预期，混成一句「处理中」等于没说。
+   *
+   * 瞬时态：新回合开始（`addUserMessage`）时清位，不会跨回合误显示。
+   */
+  const turnRefusal = ref<'not_idle' | 'not_steerable' | null>(null)
   /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
   const turnError = ref<unknown>(null)
+
+  function setTurnRefusal(reason: 'not_idle' | 'not_steerable' | null) {
+    turnRefusal.value = reason
+  }
   /**
    * PR1「让 Agent 诊断」：诊断抽屉点按钮后由 CanvasPage provide 写入预填文案，
    * AgentSideRail 消费后写入 composer 并聚焦（**不自动发送**——发送是用户显式意图）。
@@ -180,6 +195,8 @@ export const useAgentStore = defineStore('agent', () => {
     recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
+    // TURN-IDENTITY PR3：新回合开始清掉「发言被拒」瞬时态，避免跨回合误显示
+    turnRefusal.value = null
     messages.value.push({
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -493,6 +510,8 @@ export const useAgentStore = defineStore('agent', () => {
     blockingWait.value = null
     // 回合结束同样无「恢复中」（P2：瞬时态不跨回合残留）
     recovering.value = false
+    // TURN-IDENTITY PR3：发言被拒的瞬时态也不跨回合残留
+    turnRefusal.value = null
   }
 
   /**
@@ -615,7 +634,11 @@ export const useAgentStore = defineStore('agent', () => {
       // text_delta，用正文补一个 done 文本块，避免时间线缺正文）。flag 关闭时不构建。
       let timeline: TurnTimeline | undefined
       if (isFeatureOn('turn_timeline') && meta?.executionEvents?.length) {
-        timeline = replayTimelineEvents(meta.executionEvents, persisted.content)
+        // TURN-IDENTITY PR3：`partial` 是服务端判定的「账本不完整」（本流没捕获到
+        // run 起点）⇒ 重放时置顶一条缺口标注，不让残缺过程冒充完整过程。
+        timeline = replayTimelineEvents(meta.executionEvents, persisted.content, {
+          partial: meta.partial === true,
+        })
       }
       // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在
       // metadata.executionEvents 里（服务端 buildTurnMetadata 不写 metadata.presentation），
@@ -681,6 +704,7 @@ export const useAgentStore = defineStore('agent', () => {
     recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
+    turnRefusal.value = null
   }
 
   return {
@@ -693,6 +717,8 @@ export const useAgentStore = defineStore('agent', () => {
     recovering,
     lastTextDeltaAt,
     turnError,
+    turnRefusal,
+    setTurnRefusal,
     setBlockingWait,
     setActivity,
     setRecovering,
