@@ -94,6 +94,12 @@ import {
   getAgentSkill,
 } from '@/constants/agentSkillMap'
 import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
+import {
+  buildDraftFromUtterance,
+  selectExampleUtterances,
+  type CanvasPhase,
+  type UtterancePool,
+} from './composer/exampleUtterances'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
@@ -1884,6 +1890,55 @@ function fillExampleUtterance(text: string) {
   nextTick(() => composerRef.value?.focus())
 }
 
+/**
+ * P1-1.1：首屏通用样例池 —— 按画布相（空画布 / 有选中 / 有产物）给出 ≤4 条样例。
+ * 空画布条目复用产品视觉分支（PRODUCT_VISUAL_GUIDANCE）的口吻，但改写为通用短句。
+ */
+const EXAMPLE_UTTERANCE_POOL: UtterancePool = {
+  empty: [
+    '这是我们的大闸蟹礼盒，帮我做一套电商包装推广图：主视觉 + 结构图 + 送礼场景，风格喜庆高级',
+    '用这张产品实拍图出电商主图和两张生活场景图，突出产品卖点和质感',
+    '画一个产品落地页 hero 区块，标题「把灵感变成图像」，配一张氛围插图',
+    '新建一个文字节点，帮我先把创意思路列成大纲',
+  ],
+  selection: [
+    '把选中的节点重画成扁平插画风',
+    '基于选中节点再出两张风格变体',
+    '给选中节点补一段详情页文案',
+  ],
+  artifact: [
+    '把当前产物改成竖版海报构图',
+    '基于当前产物再生成一张深色背景版本',
+    '为当前产物配一段电商卖点文案',
+  ],
+}
+
+/** 画布相派生：选中优先（selection），其次看是否有已产出物（artifact），否则空画布（empty）。 */
+const currentCanvasPhase = computed<CanvasPhase>(() => {
+  if (props.selectedNodeIds?.length || props.selectedNode) return 'selection'
+  const nodes = props.canvasNodes ?? []
+  const hasArtifact = nodes.some((n) => {
+    const data = n.data ?? {}
+    return (typeof data.url === 'string' && !!data.url)
+      || (typeof data.content === 'string' && !!data.content.trim())
+  })
+  return hasArtifact ? 'artifact' : 'empty'
+})
+
+const exampleUtterances = computed(() =>
+  selectExampleUtterances(currentCanvasPhase.value, EXAMPLE_UTTERANCE_POOL),
+)
+
+/**
+ * P1-1.2：样例 chips 点击只填充输入框（focus + 可编辑草稿），绝不自动提交 ——
+ * 发送意图必须由用户显式表达。与 fillExampleUtterance 同款预填模式。
+ */
+function fillFromUtterance(u: string) {
+  if (props.readOnly || agent.isStreaming) return
+  input.value = buildDraftFromUtterance(u)
+  nextTick(() => composerRef.value?.focus())
+}
+
 async function startNewTask() {
   if (agent.isStreaming || isUploading.value) return
   await sendMessage('__new_task__')
@@ -3010,9 +3065,24 @@ defineExpose({
                 </button>
               </div>
             </div>
-            <div v-else-if="!agent.messages.length" class="agent-empty px-3 py-10 text-center">
-              <p class="text-sm">描述你的创意</p>
-              <p class="mt-1 text-[11px] opacity-70">我会驱动画布创建节点、连线与生成任务</p>
+            <!-- P1-1：通用首屏 —— persona 压成一行轻量文案（P1-1.3），视觉重心让给
+                 4 条按画布相选取的样例 chips（P1-1.1）；点击 chips 只填充输入框（P1-1.2）。 -->
+            <div v-else-if="!agent.messages.length" class="agent-empty agent-composer-firstscreen px-3 pb-2 pt-6">
+              <p class="agent-composer-persona text-center text-[12px] leading-relaxed" data-testid="agent-persona-line">
+                lnk·π 助手 · 说一句创意，我来画
+              </p>
+              <div class="agent-example-chips mt-3 flex flex-wrap justify-center gap-2">
+                <button
+                  v-for="u in exampleUtterances"
+                  :key="u"
+                  type="button"
+                  class="agent-example-chip rounded-lg border px-3 py-1.5 text-left text-[12px] leading-snug"
+                  data-testid="agent-example-chip"
+                  @click="fillFromUtterance(u)"
+                >
+                  {{ u }}
+                </button>
+              </div>
             </div>
             <div
               v-for="msg in agent.messages"
@@ -4117,6 +4187,28 @@ defineExpose({
 .agent-pv-example-btn:hover {
   border-color: var(--neo-accent, var(--neo-border));
   background: color-mix(in srgb, var(--neo-panel) 92%, var(--neo-accent, #888) 8%);
+}
+
+/*
+ * P1-1：首屏通用样例 chips —— ghost 样式，仅用 --lnk-* L2 令牌。
+ * 样例属系统层内容而非控件：surface-raised 底 + border-default 描边
+ * 是线框指南 §4 对样例 chips 的许可组合；不引入 hex/rgba。
+ */
+.agent-example-chip {
+  border-color: var(--lnk-border-default);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.agent-example-chip:hover {
+  border-color: var(--lnk-border-strong);
+  color: var(--lnk-text-primary);
+}
+
+.agent-example-chip:focus-visible {
+  outline: none;
+  border-color: var(--lnk-border-focus);
 }
 
 .agent-composer-attachment-hint {
