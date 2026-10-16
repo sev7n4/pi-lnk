@@ -18,7 +18,8 @@ import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
-import { resolveMessageOutputs } from '@/components/agent/agentCanvasOutputs'
+import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
+import { buildTurnReceipt } from './composer/turnReceipt'
 import { acceptedHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
 import {
@@ -743,6 +744,40 @@ const assistantOutputsById = computed(() => {
 })
 const forceChoiceOpen = ref(false)
 const forceChoiceKind = ref<ForceChoiceKind | null>(null)
+
+/**
+ * P1-4.1：回合产出收据行（消息流末尾、产出卡片之后；composer 侧入口，不重构消息渲染本体）。
+ *
+ * 数据源（best-effort 口径，记录于此）：与该轮 AgentCanvasOutputs 产出卡片**同源** ——
+ * 最后一条 assistant 消息经 resolveMessageOutputs 解析出的产物数，即 producedCount。
+ * 不另造统计通道，避免与卡片各说各话。
+ *
+ * 显隐：仅当回合已收束（非 streaming、无任务卡）且该轮确有产物时出现；
+ * 末条不是收束的 assistant 消息（如用户刚发言）不显示，收据只贴最近一轮。
+ */
+const TURN_UNDO_DISABLED_TITLE = '需 runtime 批量移除工具，见 ADR'
+
+const lastTurnReceipt = computed(() => {
+  if (agent.isStreaming || showTaskCard.value) return null
+  const last = agent.messages[agent.messages.length - 1]
+  if (!last || last.role !== 'assistant' || last.streaming) return null
+  const outputs = assistantOutputsById.value.get(last.id) ?? []
+  if (outputs.length === 0) return null
+  return {
+    ...buildTurnReceipt({ producedCount: outputs.length }),
+    /** 与 AgentCanvasOutputs 的「定位全部」同口径：只带可定位（done/failed）的节点。 */
+    focusNodeIds: locatableNodeIds(outputs),
+  }
+})
+
+/** summary 去掉尾部「定位到画布」后的前缀；动作词由模板单独渲染成 focus-all 按钮。 */
+const lastTurnReceiptLead = computed(() =>
+  lastTurnReceipt.value ? lastTurnReceipt.value.summary.replace(' · 定位到画布', '') : '',
+)
+
+function onReceiptFocusAll() {
+  if (lastTurnReceipt.value) onFocusAll(lastTurnReceipt.value.focusNodeIds)
+}
 
 const taskRecordPolling = useGenerationPolling((results) => {
   for (const { task, record } of results) {
@@ -3419,6 +3454,41 @@ defineExpose({
                 </div>
               </div>
             </div>
+            <!-- P1-4.1：回合产出收据行 —— 消息流末尾（产出卡片之后）、composer 侧入口。
+                 不重构消息渲染本体（Out of Scope §1）。文案由 composer/turnReceipt.ts 纯模块给出：
+                 「定位到画布」复用既有 focus-all 事件（同 AgentCanvasOutputs 的 locatableNodeIds 口径）；
+                 「全部保留」= 当前行为（无操作确认态）；
+                 「撤销本轮」在 runtime 批量移除工具落地前 disabled（评估见 docs/adr/0010）。 -->
+            <div
+              v-if="lastTurnReceipt"
+              class="agent-turn-receipt"
+              data-testid="turn-receipt"
+            >
+              <span class="agent-turn-receipt__summary">
+                {{ lastTurnReceiptLead }}
+                <span class="agent-turn-receipt__dot">·</span>
+                <button
+                  type="button"
+                  class="agent-turn-receipt__link"
+                  data-testid="turn-receipt-focus"
+                  @click="onReceiptFocusAll"
+                >定位到画布</button>
+              </span>
+              <span class="agent-turn-receipt__actions">
+                <button
+                  type="button"
+                  class="agent-turn-receipt__btn"
+                  data-testid="turn-receipt-keep-all"
+                >{{ lastTurnReceipt.keepAll }}</button>
+                <button
+                  type="button"
+                  class="agent-turn-receipt__btn"
+                  data-testid="turn-receipt-undo"
+                  disabled
+                  :title="TURN_UNDO_DISABLED_TITLE"
+                >{{ lastTurnReceipt.undoTurn }}</button>
+              </span>
+            </div>
             <AgentTaskProgressCard
               v-if="showTaskCardAtComposer"
               class="mx-3"
@@ -4299,6 +4369,86 @@ defineExpose({
 .agent-example-chip:focus-visible {
   outline: none;
   border-color: var(--lnk-border-focus);
+}
+
+/*
+ * P1-4.1：回合产出收据行 —— 消息流末尾的轻量汇总条。
+ * 仅消费 --lnk-* L2 令牌（禁新增 hex，design-token.test.ts 守卫）。
+ * 文本按钮沿用 ghost 组合（surface-raised 底 + border-default 描边），
+ * 与样例 chips 同一许可组合（线框指南 §4）。
+ */
+.agent-turn-receipt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lnk-space-2);
+  margin: var(--lnk-space-1) var(--lnk-space-3) 0;
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+  border: 1px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-md);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-text-muted);
+}
+
+.agent-turn-receipt__dot {
+  margin: 0 var(--lnk-space-1);
+  color: var(--lnk-text-muted);
+}
+
+.agent-turn-receipt__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--lnk-text-secondary);
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.agent-turn-receipt__link:hover {
+  color: var(--lnk-text-primary);
+}
+
+.agent-turn-receipt__link:focus-visible {
+  outline: none;
+  color: var(--lnk-text-primary);
+}
+
+.agent-turn-receipt__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lnk-space-2);
+  flex-shrink: 0;
+}
+
+.agent-turn-receipt__btn {
+  padding: 0 var(--lnk-space-2);
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.agent-turn-receipt__btn:hover {
+  border-color: var(--lnk-border-strong);
+  color: var(--lnk-text-primary);
+}
+
+.agent-turn-receipt__btn:focus-visible {
+  outline: none;
+  border-color: var(--lnk-border-focus);
+}
+
+.agent-turn-receipt__btn:disabled {
+  border-color: var(--lnk-border-subtle);
+  color: var(--lnk-text-disabled);
+  cursor: not-allowed;
 }
 
 .agent-composer-attachment-hint {
