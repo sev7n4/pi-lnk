@@ -14,6 +14,9 @@ describe('buildStatusLine (P1-3.1)', () => {
     expect(m.eta).toBeNull()
     expect(m.points).toBeNull()
   })
+  it('points 按 #415 口径向上取整（F3：7.3 → 8 积分）', () => {
+    expect(buildStatusLine({ phase: '生成中', points: 7.3 }).points).toBe('8 积分')
+  })
 })
 
 /** P1-3.2 保护项 fs 断言：停止键（DockGenerateButton 同槽位切换）不得被状态行挤动。 */
@@ -23,7 +26,9 @@ const sideRail = readFileSync(resolve(here, '../AgentSideRail.vue'), 'utf8')
 describe('composer-status-line 模板结构（fs 守卫）', () => {
   it('状态行存在于 AgentSideRail 模板，且位于输入 dock 之上', () => {
     expect(sideRail).toMatch(/class="composer-status-line"/)
-    const iStatus = sideRail.indexOf('composer-status-line')
+    // F1（review round 1）：必须用模板 class 绑定定位——裸搜 'composer-status-line'
+    // 会命中 script 注释（~:850），断言空转为真。
+    const iStatus = sideRail.indexOf('class="composer-status-line"')
     const iDock = sideRail.indexOf('data-testid="agent-input-dock"')
     expect(iStatus).toBeGreaterThan(-1)
     expect(iDock).toBeGreaterThan(-1)
