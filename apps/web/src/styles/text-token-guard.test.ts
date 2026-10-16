@@ -39,7 +39,8 @@ describe('dock shadow tokenized (P0-3.2)', () => {
     const sfc = readFileSync(join(HERE, '../components/agent/AgentSideRail.vue'), 'utf8')
     expect(sfc).not.toContain('rgba(0, 0, 0, 0.42)')
     expect(sfc).not.toContain('rgba(0, 0, 0, 0.3)')
-    expect(sfc).toContain('var(--neo-glass-shadow)')
+    // P1-6（Task 11）：AgentSideRail 毛玻璃 dock 已迁到 --lnk-shadow-xl（原 --neo-glass-shadow）
+    expect(sfc).toContain('var(--lnk-shadow-xl)')
   })
   it('--neo-glass-shadow is paired across themes', () => {
     const css = readFileSync(join(STYLES, 'neowow-tokens.css'), 'utf8')

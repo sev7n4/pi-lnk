@@ -2990,20 +2990,20 @@ defineExpose({
                   class="neo-popover absolute right-0 top-full z-20 mt-1.5 max-h-[280px] w-[240px] overflow-y-auto rounded-xl py-1"
                   @click.stop
                 >
-                  <p class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--neo-text-muted)]">对话历史</p>
+                  <p class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--lnk-text-muted)]">对话历史</p>
                   <button
                     v-for="thread in threads"
                     :key="thread.id"
                     type="button"
                     class="neo-popover-item block w-full px-3 py-2 text-left text-xs"
-                    :class="thread.id === agentThreadId ? '!bg-[var(--neo-hi-bg)] !text-[var(--neo-hi-text)] shadow-[var(--neo-hi-shadow)]' : ''"
+                    :class="thread.id === agentThreadId ? '!bg-[var(--lnk-hi-bg)] !text-[var(--lnk-hi-text)] shadow-[var(--lnk-hi-shadow)]' : ''"
                     :title="thread.title"
                     @click="selectThread(thread.id)"
                   >
                     <span class="block truncate font-medium">{{ thread.title }}</span>
                     <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
                   </button>
-                  <p v-if="!threads.length" class="px-3 py-4 text-center text-[11px] text-[var(--neo-text-muted)]">
+                  <p v-if="!threads.length" class="px-3 py-4 text-center text-[11px] text-[var(--lnk-text-muted)]">
                     暂无对话记录
                   </p>
                 </div>
@@ -3236,7 +3236,7 @@ defineExpose({
                 <p
                   v-if="msg.role === 'assistant' && !turnTimelineOn && !msg.streaming && msg.executionTrace && bubbleSummaryLine(msg)"
                   data-testid="turn-summary-line"
-                  class="mt-1 pl-4 text-[10px] text-[var(--neo-text-muted)]"
+                  class="mt-1 pl-4 text-[10px] text-[var(--lnk-text-muted)]"
                 >
                   {{ bubbleSummaryLine(msg) }}
                 </p>
@@ -3501,7 +3501,7 @@ defineExpose({
             class="mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
             data-testid="propose-wait-hint"
           >
-            <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--neo-text-muted)' }">
+            <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--lnk-text-muted)' }">
               ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
             </p>
             <div class="flex items-start gap-2">
@@ -3562,7 +3562,7 @@ defineExpose({
             data-testid="run-cancelled-callout"
           >
             <p
-              class="mb-2 rounded-lg border border-[var(--neo-border)] bg-[var(--neo-panel)] px-2 py-1.5 text-xs leading-relaxed text-[var(--neo-text-secondary)]"
+              class="mb-2 rounded-lg border border-[var(--lnk-border-subtle)] bg-[var(--lnk-surface-raised)] px-2 py-1.5 text-xs leading-relaxed text-[var(--lnk-text-secondary)]"
             >
               {{ cancelledCalloutText }}
             </p>
@@ -3624,7 +3624,7 @@ defineExpose({
                 class="agent-history-coachmark mx-0.5 mb-2 flex items-start gap-2 rounded-xl border px-3 py-2 text-[11px] leading-snug"
                 role="status"
               >
-                <span class="min-w-0 flex-1 text-[var(--neo-text-secondary)]">
+                <span class="min-w-0 flex-1 text-[var(--lnk-text-secondary)]">
                   点击历史消息中的 ↺ 引用可再次加入输入框；点消息右下角的 ↺ 可一键带回提示词与全部引用。
                 </span>
                 <button
@@ -3646,10 +3646,10 @@ defineExpose({
                 v-if="queued"
                 class="agent-queued-bubble mx-3 mb-2 rounded-lg border px-3 py-2"
                 :class="queued.state === 'failed'
-                  ? 'border-[var(--neo-danger)]/40 bg-[var(--neo-danger)]/10'
+                  ? 'border-[var(--lnk-error)]/40 bg-[var(--lnk-error)]/10'
                   : queued.state === 'pending'
-                    ? 'border-[var(--neo-accent)]/40 bg-[var(--neo-accent)]/10'
-                    : 'border-[var(--neo-success)]/40 bg-[var(--neo-success)]/10'"
+                    ? 'border-[var(--lnk-accent)]/40 bg-[var(--lnk-accent)]/10'
+                    : 'border-[var(--lnk-success)]/40 bg-[var(--lnk-success)]/10'"
                 :data-queue-state="queued.state"
                 :data-queue-intent="queued.intent ?? ''"
               >
@@ -3657,10 +3657,10 @@ defineExpose({
                   <span
                     class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
                     :class="queued.state === 'failed'
-                      ? 'bg-[var(--neo-danger)]/20 text-[var(--neo-danger)]'
+                      ? 'bg-[var(--lnk-error)]/20 text-[var(--lnk-error)]'
                       : queued.state === 'pending'
-                        ? 'bg-[var(--neo-accent)]/20 text-[var(--neo-accent)]'
-                        : 'bg-[var(--neo-success)]/20 text-[var(--neo-success)]'"
+                        ? 'bg-[var(--lnk-accent)]/20 text-[var(--lnk-accent)]'
+                        : 'bg-[var(--lnk-success)]/20 text-[var(--lnk-success)]'"
                   >
                     {{
                       queued.state === 'pending'
@@ -3672,11 +3672,11 @@ defineExpose({
                             : '已入队'
                     }}
                   </span>
-                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--neo-text)]">{{ queued.text }}</p>
+                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--lnk-text-primary)]">{{ queued.text }}</p>
                 </div>
                 <p
                   v-if="queued.hint"
-                  class="mt-1 text-[11px] leading-snug text-[var(--neo-text-muted)]"
+                  class="mt-1 text-[11px] leading-snug text-[var(--lnk-text-muted)]"
                   data-testid="queued-hint"
                 >
                   {{ queued.hint }}
@@ -3690,7 +3690,7 @@ defineExpose({
                     -->
                     <p
                       v-if="pendingAskBlocking"
-                      class="w-full text-[11px] leading-snug text-[var(--neo-text-muted)]"
+                      class="w-full text-[11px] leading-snug text-[var(--lnk-text-muted)]"
                       data-testid="queued-ask-blocked-hint"
                     >
                       agent 正在等你作答 · 下面这两条都会排在你答完这张卡之后（建议先答这张卡）
@@ -3739,13 +3739,13 @@ defineExpose({
               <div class="agent-composer">
                 <p
                   v-if="showComposerReattachHint"
-                  class="agent-composer-reattach-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--neo-text-muted)]"
+                  class="agent-composer-reattach-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--lnk-text-muted)]"
                 >
                   点击上方历史消息中的 ↺ 引用，或消息右下角的 ↺，可再次加入本次对话
                 </p>
                 <p
                   v-if="showProductVisualAttachmentHint && !pendingAttachmentItems.length"
-                  class="agent-composer-attachment-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--neo-text-muted)]"
+                  class="agent-composer-attachment-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--lnk-text-muted)]"
                   data-testid="pv-attachment-hint"
                 >
                   {{ PRODUCT_VISUAL_GUIDANCE.attachmentHint }}
@@ -3973,7 +3973,7 @@ defineExpose({
                         <span class="block truncate text-[10px] opacity-60">平台路由，单张/图生图优先</span>
                       </span>
                     </button>
-                    <div class="mx-3 my-1 border-t border-[var(--neo-border)] opacity-40" />
+                    <div class="mx-3 my-1 border-t border-[var(--lnk-border-subtle)] opacity-40" />
                     <button
                       v-for="skill in AGENT_SKILLS"
                       :key="skill.id"
@@ -4030,12 +4030,12 @@ defineExpose({
 <style scoped>
 .agent-side-rail {
   position: relative;
-  background: var(--neo-bg);
+  background: var(--lnk-surface-canvas);
   transition: width 0.3s ease, background 0.25s ease;
 }
 
 .agent-side-rail.is-docked-open {
-  border-left: 1px solid var(--neo-border);
+  border-left: 1px solid var(--lnk-border-subtle);
 }
 
 .agent-side-rail.is-resizing {
@@ -4062,7 +4062,7 @@ defineExpose({
 /* ---- 面板外壳 ---- */
 .agent-panel-inline {
   position: relative;
-  background: var(--neo-bg);
+  background: var(--lnk-surface-canvas);
 }
 
 .agent-panel-floating {
@@ -4070,10 +4070,10 @@ defineExpose({
   z-index: 60;
   height: min(680px, calc(100vh - 72px));
   max-width: calc(100vw - 32px);
-  border: 1px solid var(--neo-glass-border);
+  border: 1px solid var(--lnk-border-default);
   border-radius: 20px;
-  background: var(--neo-popover-bg);
-  box-shadow: var(--neo-popover-shadow);
+  background: var(--lnk-surface-overlay);
+  box-shadow: var(--lnk-shadow-lg);
   backdrop-filter: blur(28px) saturate(1.4);
   -webkit-backdrop-filter: blur(28px) saturate(1.4);
   overflow: hidden;
@@ -4171,7 +4171,7 @@ defineExpose({
 }
 
 .agent-resize-handle:hover::after {
-  background: color-mix(in srgb, var(--neo-hi-text) 35%, transparent);
+  background: color-mix(in srgb, var(--lnk-hi-text) 35%, transparent);
 }
 
 .agent-panel-floating .agent-resize-handle {
@@ -4179,11 +4179,11 @@ defineExpose({
 }
 
 .agent-panel-header {
-  border-bottom: 1px solid var(--neo-border);
+  border-bottom: 1px solid var(--lnk-border-subtle);
 }
 
 .agent-subtitle {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-head-btn {
@@ -4193,19 +4193,19 @@ defineExpose({
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
 
 .agent-head-btn:hover {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-primary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-primary);
 }
 
 .agent-head-btn.is-active {
-  background: var(--neo-hi-bg);
-  color: var(--neo-hi-text);
-  box-shadow: var(--neo-hi-shadow);
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-hi-text);
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-readonly-btn {
@@ -4264,8 +4264,8 @@ defineExpose({
   border-radius: 999px;
   font-size: var(--lnk-text-2xs);
   line-height: 1;
-  color: var(--neo-hi-text);
-  background: color-mix(in srgb, var(--neo-hi-bg) 88%, transparent);
+  color: var(--lnk-hi-text);
+  background: color-mix(in srgb, var(--lnk-hi-bg) 88%, transparent);
   box-shadow: var(--lnk-shadow-md);
   backdrop-filter: blur(8px);
   transition: background 0.15s ease, transform 0.15s ease;
@@ -4273,7 +4273,7 @@ defineExpose({
 }
 
 .agent-jump-latest:hover {
-  background: var(--neo-hi-bg);
+  background: var(--lnk-hi-bg);
   transform: translateY(-1px);
 }
 
@@ -4318,19 +4318,19 @@ defineExpose({
 }
 
 .agent-empty {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-pv-example-btn {
-  border-color: var(--neo-border);
-  background: var(--neo-panel);
-  color: var(--neo-text-secondary);
+  border-color: var(--lnk-border-subtle);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .agent-pv-example-btn:hover {
-  border-color: var(--neo-accent, var(--neo-border));
-  background: color-mix(in srgb, var(--neo-panel) 92%, var(--neo-accent, #888) 8%);
+  border-color: var(--lnk-accent, var(--lnk-border-subtle));
+  background: color-mix(in srgb, var(--lnk-surface-raised) 92%, var(--lnk-accent, #888) 8%);
 }
 
 /*
@@ -4436,7 +4436,7 @@ defineExpose({
 }
 
 .agent-composer-attachment-hint {
-  border-left: 2px solid var(--neo-border);
+  border-left: 2px solid var(--lnk-border-subtle);
   padding-left: 8px;
 }
 
@@ -4535,13 +4535,13 @@ defineExpose({
 }
 
 .agent-msg-action-btn:hover {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-primary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-primary);
 }
 
 .agent-msg-action-btn.is-active {
-  background: var(--neo-active-bg);
-  color: var(--neo-text-primary);
+  background: var(--lnk-pressed-overlay);
+  color: var(--lnk-text-primary);
 }
 
 /* 用户气泡内引用 chip：棋盘底 + 描边，白/浅图也能辨认 */
@@ -4580,24 +4580,24 @@ defineExpose({
    该入口收敛为 .agent-msg-action-btn 图标按钮，与 编辑/复制 共用同一套样式。 */
 
 .agent-history-coachmark {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 14%, var(--neo-border));
-  background: color-mix(in srgb, var(--neo-hi-bg) 8%, var(--neo-hover-bg));
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 14%, var(--lnk-border-subtle));
+  background: color-mix(in srgb, var(--lnk-hi-bg) 8%, var(--lnk-hover-overlay));
 }
 
 .agent-history-coachmark__dismiss {
-  border: 1px solid var(--neo-border);
-  background: var(--neo-hi-bg);
-  color: var(--neo-hi-text);
-  box-shadow: var(--neo-hi-shadow);
+  border: 1px solid var(--lnk-border-subtle);
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-hi-text);
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-composer-reattach-hint {
-  border-left: 2px solid color-mix(in srgb, var(--neo-hi-text) 18%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--lnk-hi-text) 18%, transparent);
   padding-left: 8px;
 }
 
 .agent-tools {
-  border-top: 1px solid var(--neo-border);
+  border-top: 1px solid var(--lnk-border-subtle);
 }
 
 /* ---- 流式中待发消息气泡（排队，抄 WorkBuddy） ---- */
@@ -4610,38 +4610,38 @@ defineExpose({
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ⚠️ 别用 --neo-hi-bg 配 --neo-text：--neo-hi-bg 深主题是纯白 #ffffff、浅主题是深色 #17181d，
-   而 --neo-text 深主题近白、浅主题近黑 —— 「底色与字色同向」，两个主题都会把字吞掉。
-   中性高亮控件的正确配对是 --neo-hi-bg 配 --neo-hi-text；这里次级动作不用高亮块，
+/* ⚠️ 别用 --lnk-hi-bg 配 --lnk-text-primary：--lnk-hi-bg 深主题是纯白 #ffffff、浅主题是深色 #17181d，
+   而 --lnk-text-primary 深主题近白、浅主题近黑 —— 「底色与字色同向」，两个主题都会把字吞掉。
+   中性高亮控件的正确配对是 --lnk-hi-bg 配 --lnk-hi-text；这里次级动作不用高亮块，
    改用 surface 底 + 主文字色（两个主题都保证对比度）。 */
 .queued-act {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  border: 1px solid var(--neo-border-strong);
+  border: 1px solid var(--lnk-border-strong);
   border-radius: 999px;
-  background: var(--neo-surface-elevated);
+  background: var(--lnk-surface-raised);
   padding: 2px 9px;
   font-size: var(--lnk-text-2xs);
   line-height: 1.5;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .queued-act:hover {
-  background: color-mix(in srgb, var(--neo-text-primary) 12%, var(--neo-surface-elevated));
-  border-color: color-mix(in srgb, var(--neo-text-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--lnk-text-primary) 12%, var(--lnk-surface-raised));
+  border-color: color-mix(in srgb, var(--lnk-text-primary) 28%, transparent);
 }
 
 .queued-act--primary {
-  border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
-  /* --neo-accent 是固定紫 #6d5dfc，深底上对比度不够；--neo-accent-text 深底亮紫 / 浅底深紫 */
-  color: var(--neo-accent-text);
-  background: color-mix(in srgb, var(--neo-accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--lnk-accent) 45%, transparent);
+  /* --lnk-accent 是固定紫 #6d5dfc，深底上对比度不够；--lnk-accent-text 深底亮紫 / 浅底深紫 */
+  color: var(--lnk-accent-text);
+  background: color-mix(in srgb, var(--lnk-accent) 10%, transparent);
 }
 
 .queued-act--primary:hover {
-  background: color-mix(in srgb, var(--neo-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--lnk-accent) 18%, transparent);
 }
 
 /* ---- 已发送用户消息就地二次编辑（同一张用户卡片的编辑态，不是另一张卡） ----
@@ -4662,7 +4662,7 @@ defineExpose({
   color: inherit;
 }
 
-/* 提示语取用户气泡自己的文字色（而非全局 --neo-text-muted）：
+/* 提示语取用户气泡自己的文字色（而非全局 --lnk-text-muted）：
  * 它落在 --agent-user-bg 上，跟随气泡的明暗才不会有对比度缺口。 */
 .agent-edit-hint {
   color: color-mix(in srgb, var(--agent-user-text) 62%, transparent);
@@ -4677,33 +4677,33 @@ defineExpose({
   margin-top: 8px;
 }
 
-/* 同上：次级按钮不能用 --neo-hi-bg + --neo-text 的同向配色（白底白字 / 深底深字） */
+/* 同上：次级按钮不能用 --lnk-hi-bg + --lnk-text-primary 的同向配色（白底白字 / 深底深字） */
 .agent-edit-btn {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
-  border: 1px solid var(--neo-border-strong);
+  border: 1px solid var(--lnk-border-strong);
   border-radius: 999px;
-  background: var(--neo-surface-elevated);
+  background: var(--lnk-surface-raised);
   padding: 2px 12px;
   font-size: var(--lnk-text-2xs);
   line-height: 1.6;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .agent-edit-btn:hover {
-  background: color-mix(in srgb, var(--neo-text-primary) 12%, var(--neo-surface-elevated));
+  background: color-mix(in srgb, var(--lnk-text-primary) 12%, var(--lnk-surface-raised));
 }
 
 .agent-edit-btn--primary {
-  border-color: color-mix(in srgb, var(--neo-accent) 45%, transparent);
-  color: var(--neo-accent-text);
-  background: color-mix(in srgb, var(--neo-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--lnk-accent) 45%, transparent);
+  color: var(--lnk-accent-text);
+  background: color-mix(in srgb, var(--lnk-accent) 12%, transparent);
 }
 
 .agent-edit-btn--primary:hover {
-  background: color-mix(in srgb, var(--neo-accent) 20%, transparent);
+  background: color-mix(in srgb, var(--lnk-accent) 20%, transparent);
 }
 
 .agent-turn--user:hover .agent-msg-actions,
@@ -4773,12 +4773,12 @@ defineExpose({
   gap: 6px;
   padding: 10px 12px;
   overflow: visible;
-  border: 1px solid var(--neo-glass-border);
+  border: 1px solid var(--lnk-border-default);
   border-radius: 18px;
-  background: var(--neo-glass-bg);
-  backdrop-filter: blur(var(--neo-glass-blur)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--neo-glass-blur)) saturate(1.5);
-  box-shadow: var(--neo-glass-shadow);
+  background: var(--lnk-surface-glass);
+  backdrop-filter: blur(var(--lnk-glass-blur)) saturate(1.5);
+  -webkit-backdrop-filter: blur(var(--lnk-glass-blur)) saturate(1.5);
+  box-shadow: var(--lnk-shadow-xl);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -4790,20 +4790,20 @@ defineExpose({
   left: 20px;
   height: 1px;
   pointer-events: none;
-  background: linear-gradient(90deg, transparent, var(--neo-glass-topline), transparent);
+  background: linear-gradient(90deg, transparent, var(--lnk-glass-topline), transparent);
 }
 
 .agent-input-dock:focus-within {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 28%, var(--neo-glass-border));
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 28%, var(--lnk-border-default));
   box-shadow:
-    var(--neo-glass-shadow),
-    0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 14%, transparent);
+    var(--lnk-shadow-xl),
+    0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 14%, transparent);
 }
 
 .agent-input-dock.is-drop-target {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-border));
-  background: var(--neo-hover-bg);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 18%, transparent);
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 35%, var(--lnk-border-subtle));
+  background: var(--lnk-hover-overlay);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 18%, transparent);
 }
 
 .agent-prompt-field {
@@ -4816,11 +4816,11 @@ defineExpose({
   outline: none;
   font-size: var(--lnk-text-sm);
   line-height: 1.55;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 
 .agent-prompt-field::placeholder {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-dock-actions {
@@ -4848,48 +4848,48 @@ defineExpose({
 }
 
 .agent-skill-icon {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-secondary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-secondary);
   transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .agent-skill-trigger__icon {
   display: inline-flex;
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
   transition: color 0.15s ease;
 }
 
 .agent-skill-trigger:hover .agent-skill-trigger__icon,
 .agent-skill-trigger.is-open .agent-skill-trigger__icon {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 
 .agent-skill-trigger.has-value {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 12%, var(--neo-border));
-  background: color-mix(in srgb, var(--neo-hi-bg) 10%, var(--neo-hover-bg));
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 12%, var(--lnk-border-subtle));
+  background: color-mix(in srgb, var(--lnk-hi-bg) 10%, var(--lnk-hover-overlay));
 }
 
 .agent-skill-trigger.has-value .agent-skill-trigger__icon {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 
 .agent-popover-skill-item.is-selected {
-  background: var(--neo-hi-bg) !important;
-  color: var(--neo-hi-text) !important;
-  box-shadow: var(--neo-hi-shadow);
+  background: var(--lnk-hi-bg) !important;
+  color: var(--lnk-hi-text) !important;
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-popover-skill-item.is-selected .agent-skill-icon {
-  background: color-mix(in srgb, var(--neo-hi-text) 10%, transparent);
-  color: var(--neo-hi-text);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--neo-hi-text) 12%, transparent);
+  background: color-mix(in srgb, var(--lnk-hi-text) 10%, transparent);
+  color: var(--lnk-hi-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lnk-hi-text) 12%, transparent);
 }
 
 .agent-preset-primary {
-  background: var(--neo-hi-bg) !important;
-  color: var(--neo-hi-text) !important;
+  background: var(--lnk-hi-bg) !important;
+  color: var(--lnk-hi-text) !important;
   border-color: transparent !important;
-  box-shadow: var(--neo-hi-shadow);
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-preset-primary:hover:not(:disabled) {
@@ -4898,7 +4898,7 @@ defineExpose({
 
 /* ---- P1 回合状态行 ---- */
 .agent-turn-status {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-turn-status--failed {
@@ -4906,7 +4906,7 @@ defineExpose({
 }
 
 .agent-turn-status--waiting {
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
 }
 
 .agent-composer {
@@ -5139,14 +5139,14 @@ defineExpose({
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--neo-hi-bg) 18%, var(--neo-hover-bg));
-  color: var(--neo-hi-text);
+  background: color-mix(in srgb, var(--lnk-hi-bg) 18%, var(--lnk-hover-overlay));
+  color: var(--lnk-hi-text);
   animation: agent-rec-pulse 1.2s ease-in-out infinite;
 }
 
 .agent-input-dock.is-cancel .agent-composer-rec__mic {
-  color: var(--neo-danger);
-  background: color-mix(in srgb, var(--neo-danger) 14%, var(--neo-hover-bg));
+  color: var(--lnk-error);
+  background: color-mix(in srgb, var(--lnk-error) 14%, var(--lnk-hover-overlay));
   animation: none;
 }
 
@@ -5159,25 +5159,25 @@ defineExpose({
   -webkit-box-orient: vertical;
   font-size: var(--lnk-text-sm);
   line-height: 1.5;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 
 .agent-composer-rec__time {
   flex-shrink: 0;
   font-size: var(--lnk-text-2xs);
   font-variant-numeric: tabular-nums;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-composer-rec__hint {
   margin: 2px 2px 0;
   text-align: center;
   font-size: var(--lnk-text-2xs); /* P0-2.2：原 10px 引导档升 2xs(11px) */
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 
 .agent-composer-rec__hint.is-cancel {
-  color: var(--neo-danger);
+  color: var(--lnk-error);
 }
 
 @keyframes agent-rec-pulse {
@@ -5231,7 +5231,7 @@ defineExpose({
 }
 
 .agent-attach-icon {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-secondary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-secondary);
 }
 </style>

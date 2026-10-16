@@ -201,6 +201,9 @@
     180deg, rgba(255, 255, 255, 0.06) 0%, rgba(14, 14, 18, 0.46) 45%,
     rgba(14, 14, 18, 0.62) 100%
   );
+  /* 毛玻璃配件（P1-6 自 --neo-glass-blur/topline 迁移）：模糊半径主题无关，双主题同值 */
+  --lnk-glass-blur: 18px;
+  --lnk-glass-topline: rgba(255, 255, 255, 0.32);
 
   /* 文字：全部实色，最差表面对比度见注释 */
   --lnk-text-primary: #f4f4f8;   /* 14.15:1 AAA */
@@ -262,6 +265,11 @@
   --lnk-hover-overlay: rgba(255, 255, 255, 0.06);
   --lnk-pressed-overlay: rgba(255, 255, 255, 0.1);
   --lnk-selected-overlay: rgba(255, 255, 255, 0.14);
+  /* 中性高亮控件（滑条 / 选中 pill，P1-6 自 --neo-hi-* 迁移）：
+     深色主题白底深字；文字为实色 hex（text-token-guard 硬规则 3） */
+  --lnk-hi-bg: #ffffff;
+  --lnk-hi-text: #17181d;
+  --lnk-hi-shadow: 0 2px 10px rgba(0, 0, 0, 0.32), 0 0 14px rgba(255, 255, 255, 0.22);
   --lnk-scrim: rgba(10, 10, 14, 0.62);
 
   /* 跨主题叠加通道：深=白，浅=黑。配合 Tailwind <alpha-value> 让 bg-white/X 这类
@@ -307,6 +315,9 @@
     180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.44) 50%,
     rgba(248, 249, 253, 0.56) 100%
   );
+  /* 毛玻璃配件（与深色块成对）：浅色下顶线提亮到近白才可见 */
+  --lnk-glass-blur: 18px;
+  --lnk-glass-topline: rgba(255, 255, 255, 0.95);
 
   --lnk-text-primary: var(--lnk-ink-900);   /* 12.77:1 AAA */
   --lnk-text-secondary: var(--lnk-ink-700); /*  6.37:1 AA  */
@@ -354,6 +365,10 @@
   --lnk-hover-overlay: rgba(23, 25, 35, 0.05);
   --lnk-pressed-overlay: rgba(23, 25, 35, 0.09);
   --lnk-selected-overlay: rgba(23, 25, 35, 0.12);
+  /* 中性高亮控件（与深色块成对）：浅色主题下白色高亮不可见，反转为深底白字 */
+  --lnk-hi-bg: #17181d;
+  --lnk-hi-text: #ffffff;
+  --lnk-hi-shadow: 0 2px 10px rgba(23, 25, 35, 0.28);
   --lnk-scrim: rgba(23, 25, 35, 0.34);
 
   --lnk-overlay-rgb: 0 0 0;
