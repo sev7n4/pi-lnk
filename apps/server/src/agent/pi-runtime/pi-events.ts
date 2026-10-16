@@ -18,6 +18,12 @@ export interface PiRuntimeEvent<T = unknown> {
 	ts: number;
 	/** 会话内单调 seq（pi-runtime P0-③ 起在 data 内携带，供诊断与增量重连对照）。 */
 	seq?: number;
+	/**
+	 * 回合身份（上游 operationId，随 run_start 携带）。
+	 * 2026-10-17（回合身份与单一写者 spec）：runtime 侧未透传前恒为 undefined；
+	 * Nest 落库据此写 `AgentMessage.runId`，是「同一次 run 只有一条助手消息」的身份来源。
+	 */
+	runId?: string;
 	data: T;
 }
 
@@ -55,6 +61,8 @@ export interface UiEvent<T = unknown> {
 	 * 测试用 `toEqual({type,data})` 精确比对，带 ts 会破坏；P1 前端真正按序插入时再补并同步改测试。
 	 */
 	seq?: number;
+	/** 同 `seq`：回合身份透传（runtime 未携带时 undefined，`toEqual` 忽略，零回归）。 */
+	runId?: string;
 }
 
 /**
@@ -112,7 +120,12 @@ export function extractTextEnd(event: PiRuntimeEvent): string | null {
 export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 	// P0（agent-turn-timeline-design §5 P0-3）：统一把服务端 seq 透传到 UiEvent，
 	// 供 P1 按 seq 稳定插入。seq 可选，未携带时为 undefined（toEqual 忽略，零回归）。
-	const ui = (type: string, data: unknown): UiEvent => ({ type, data, seq: event.seq });
+	const ui = (type: string, data: unknown): UiEvent => ({
+		type,
+		data,
+		seq: event.seq,
+		runId: event.runId,
+	});
 
 	const delta = extractTextDelta(event);
 	if (delta !== null) {

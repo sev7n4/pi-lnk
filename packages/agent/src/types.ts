@@ -75,6 +75,15 @@ export interface AgentStreamEvent {
     // data: { nodes: Array<{ id, type, title }> } —— 只有收到它，前端才显示指代回执；
     // 缺省即代表服务端没注入（开关关闭 / 节点全失效），此时**不得**显示「已绑定」。
     | 'selection_binding'
+    // TURN-IDENTITY（回合身份 / 单一写者）：本轮提交**未被接受**的结构化拒绝。
+    // data: { reason: 'not_idle' | 'not_steerable' }
+    //   · not_idle       —— 该会话已有 run 在跑（pi-runtime 409 / 上游 LaneBusy），
+    //                        本次发言已并入在跑的 run；本流降级为旁听（转发不落库）。
+    //   · not_steerable  —— 想并入但队列也塞不进去（会话已回收 / runtime 异常），
+    //                        发言可能丢失，UI 须明确告知而不是假装已受理。
+    // 对齐 Codex `NotSubmittedReason`：被拒绝的提交**不得**退化成一个新回合。
+    // 409 是传输层信号，语义太薄（UI 拿不到 reason 就没法分文案），故显式下发。
+    | 'turn_not_submitted'
     | 'done'
     | 'error'
   data: unknown

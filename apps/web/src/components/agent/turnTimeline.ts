@@ -664,13 +664,20 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
  *
  * P2-3：落库事件带 `seq`（1 起单调）时**先按 seq 稳定排序**再回放——数组下标本就是序，
  * 但 seq 能在「数组被裁剪/合并/跨消息拼接」后仍还原真实发生顺序；老消息无 seq 则维持原序（兼容不破）。
+ *
+ * TURN-IDENTITY P0-1：排序键改 **gSeq 优先**。
+ * ⚠️ 局部 `seq` 是 Nest **每条流各自从 1 起**的计数——同一 run 的订阅切片里它也是 1..N，
+ * 于是「切片顺序看着单调、实则错误」：这正是孤儿 `tool_result` 能把「提议生成」卡片
+ * 伪装成合法顺序、顶在思考和工具消息之前的机理。`gSeq` 是 pi-runtime 的会话级全局序号，
+ * 与 `afterSeq` 同编号空间，跨流可比。存量消息无 `gSeq` ⇒ 回退 `seq`，兼容不破。
  */
 export function replayTimelineEvents(
-  events: Array<{ type: string; data: unknown; seq?: number }>,
+  events: Array<{ type: string; data: unknown; seq?: number; gSeq?: number }>,
   bodyText?: string,
 ): TurnTimeline {
-  const ordered = events.every((e) => typeof e.seq === 'number')
-    ? [...events].sort((a, b) => (a.seq as number) - (b.seq as number))
+  const sortKey = (e: { seq?: number; gSeq?: number }): number => (e.gSeq ?? e.seq) as number
+  const ordered = events.every((e) => typeof sortKey(e) === 'number')
+    ? [...events].sort((a, b) => sortKey(a) - sortKey(b))
     : events
   const timeline = createTurnTimeline()
   for (const event of ordered) {
