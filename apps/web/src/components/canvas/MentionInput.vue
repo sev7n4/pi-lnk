@@ -17,6 +17,8 @@ const props = defineProps<{
   leadingInset?: number
   /** Enter 发送；Shift+Enter 换行（Agent 侧栏等对话场景） */
   submitOnEnter?: boolean
+  /** 移动端：Enter 仅换行，永不提交（桌面行为不受影响） */
+  mobileEnterNewline?: boolean
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [v: string]; submit: [] }>()
@@ -143,7 +145,7 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key !== 'Enter') return
 
   const cmdEnter = e.metaKey || e.ctrlKey
-  if (props.submitOnEnter) {
+  if (props.submitOnEnter && !props.mobileEnterNewline) {
     if (e.shiftKey) return
     e.preventDefault()
     emit('submit')

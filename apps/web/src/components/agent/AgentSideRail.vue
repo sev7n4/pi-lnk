@@ -1191,7 +1191,7 @@ const activeSkill = computed(() => getAgentSkill(activeSkillId.value))
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
 const skillButtonLabel = computed(() => activeSkill.value?.label ?? '技能')
 const inputPlaceholder = computed(() =>
-  agentInputPlaceholder(activeSkill.value, { mobile: isMobileLayout.value }),
+  agentInputPlaceholder(activeSkill.value),
 )
 const showProductVisualEmptyState = computed(
   () =>
@@ -3614,10 +3614,11 @@ defineExpose({
                   class="agent-composer__mention w-full"
                   :mentions="mentionOptions"
                   :placeholder="agent.isStreaming
-                    ? (isMobileLayout ? '输入消息，发送加入待发队列…' : '输入消息，回车加入待发队列…')
+                    ? '输入消息…加入待发队列'
                     : inputPlaceholder"
                   :disabled="readOnly || isUploading"
                   :leading-inset="readOnly || isMobileLayout ? 0 : COMPOSER_PICK_INSET"
+                  :mobile-enter-newline="isMobileLayout"
                   submit-on-enter
                   @submit="onComposerSubmit"
                 />

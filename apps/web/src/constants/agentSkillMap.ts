@@ -29,16 +29,9 @@ export function getAgentSkill(id: string | null | undefined): AgentSkillDef | un
 }
 
 export const AGENT_INPUT_PLACEHOLDER_AUTO =
-  '描述需求，@ 引用素材，Cmd/Ctrl + Enter 发送…'
+  '描述你的想法，或 @ 引用画布节点…'
 
-export function agentInputPlaceholder(
-  skill: AgentSkillDef | undefined,
-  opts: { mobile?: boolean } = {},
-): string {
-  // 移动端没有物理键盘快捷键，不出现「Cmd/Ctrl + Enter 发送」桌面措辞（2026-10-15 移动端重构）
-  if (opts.mobile) {
-    return skill ? `已选技能「${skill.label}」— 描述编排需求` : '描述需求，@ 引用素材'
-  }
+export function agentInputPlaceholder(skill: AgentSkillDef | undefined): string {
   if (!skill) return AGENT_INPUT_PLACEHOLDER_AUTO
-  return `已选技能「${skill.label}」— 描述编排需求，Cmd/Ctrl + Enter 发送…`
+  return `已选技能「${skill.label}」— 描述编排需求，@ 引用画布节点…`
 }

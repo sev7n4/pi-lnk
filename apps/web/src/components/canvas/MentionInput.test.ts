@@ -25,3 +25,28 @@ describe('MentionInput', () => {
     expect(wrapper.find('ul').exists()).toBe(false)
   })
 })
+
+function pressEnter(wrapper: ReturnType<typeof mount>) {
+  const ta = wrapper.get('textarea')
+  const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+  ta.element.dispatchEvent(ev)
+  return ev
+}
+
+describe('MentionInput keyboard contract (P0-1.1)', () => {
+  it('desktop: Enter submits when submitOnEnter', async () => {
+    const w = mount(MentionInput, { props: { modelValue: 'a', mentions: [], submitOnEnter: true } })
+    const ev = pressEnter(w)
+    await w.vm.$nextTick()
+    expect(w.emitted('submit')).toHaveLength(1)
+    expect(ev.defaultPrevented).toBe(true)
+  })
+
+  it('mobile: Enter inserts newline, never submits (mobileEnterNewline)', async () => {
+    const w = mount(MentionInput, { props: { modelValue: 'a', mentions: [], submitOnEnter: true, mobileEnterNewline: true } })
+    const ev = pressEnter(w)
+    await w.vm.$nextTick()
+    expect(w.emitted('submit')).toBeUndefined()
+    expect(ev.defaultPrevented).toBe(false) // 不阻止默认 → textarea 正常换行
+  })
+})
