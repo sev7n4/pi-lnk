@@ -73,6 +73,10 @@ const TEXT_TOKEN_MODELS_WITH_CACHE: readonly string[] = [
   'step-3.7-flash',
   'step-5-preview',
   'minimax-m2.7',
+  // agnes 三档暂定均支持 cache（PROVISIONAL；上游对账以真实账单校准）
+  'agnes-2.0-flash',
+  'agnes-2.5-flash',
+  'agnes-3.0-flash',
 ]
 
 /**

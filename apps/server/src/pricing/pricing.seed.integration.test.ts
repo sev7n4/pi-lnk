@@ -60,7 +60,7 @@ describe('seedPricing against real SQLite', () => {
     expect(policy?.marginBp).toBe(11000)
     expect(policy?.anchorCents).toBe(1)
     const rates = await prisma.costRate.count()
-    expect(rates).toBeGreaterThanOrEqual(32) // 18 原始行 + 4s 推算 2 行（2026-10-15 收尾包）+ P2 T1 文本成本 12 行净增（brief 14 行口径中 step-3.5-flash in/out 两行 P0 已在，见下用例）
+    expect(rates).toBeGreaterThanOrEqual(41) // 18 原始行 + 4s 推算 2 行（2026-10-15 收尾包）+ P2 T1 文本成本 14 行 + agnes 三档 9 行（PROVISIONAL）
     // 4s 推算行内容锚（spec §6.2：vendor 无 4s SKU，按 5s 锚点×4/5 线性推算，
     // P2 渠道对账以真实账单校准）
     const r768p4s = await prisma.costRate.findUnique({
@@ -75,11 +75,22 @@ describe('seedPricing against real SQLite', () => {
     expect(r2k4s?.note).toContain('推算')
   })
 
-  it('文本 5 模型成本行：in/out 全量 + cache 4 行（step-2-16k 上游未公布）', async () => {
+  it('文本 8 模型成本行：in/out 全量 + cache 7 行（step-2-16k 上游未公布；含 agnes 三档 PROVISIONAL）', async () => {
     const rows = await prisma.costRate.findMany({
       where: {
         channel: 'platform',
-        modelKey: { in: ['step-3.5-flash', 'step-3.7-flash', 'step-2-16k', 'step-5-preview', 'minimax-m2.7'] },
+        modelKey: {
+          in: [
+            'step-3.5-flash',
+            'step-3.7-flash',
+            'step-2-16k',
+            'step-5-preview',
+            'minimax-m2.7',
+            'agnes-2.0-flash',
+            'agnes-2.5-flash',
+            'agnes-3.0-flash',
+          ],
+        },
       },
     })
     const by = new Map(rows.map((r) => [`${r.modelKey}:${r.spec}`, r.costYuan]))
@@ -100,6 +111,16 @@ describe('seedPricing against real SQLite', () => {
     expect(by.get('step-5-preview:per_1m_tokens_cache')).toBe(0.7)
     expect(by.get('minimax-m2.7:per_1m_tokens_cache')).toBe(0.44)
     expect(by.has('step-2-16k:per_1m_tokens_cache')).toBe(false) // 上游未公布
+    // agnes 文本渠道（PROVISIONAL 中档方案B，待上游渠道定价打通后修正）
+    expect(by.get('agnes-2.0-flash:per_1m_tokens_in')).toBe(1.5)
+    expect(by.get('agnes-2.0-flash:per_1m_tokens_out')).toBe(4.5)
+    expect(by.get('agnes-2.0-flash:per_1m_tokens_cache')).toBe(0.3)
+    expect(by.get('agnes-2.5-flash:per_1m_tokens_in')).toBe(2.5)
+    expect(by.get('agnes-2.5-flash:per_1m_tokens_out')).toBe(7.5)
+    expect(by.get('agnes-2.5-flash:per_1m_tokens_cache')).toBe(0.5)
+    expect(by.get('agnes-3.0-flash:per_1m_tokens_in')).toBe(4.0)
+    expect(by.get('agnes-3.0-flash:per_1m_tokens_out')).toBe(12.0)
+    expect(by.get('agnes-3.0-flash:per_1m_tokens_cache')).toBe(0.8)
   })
 
   it('单active 不变量（承重，勿删）：已有其它 active 版本时 seed 拒绝播种，不造第二个 active', async () => {

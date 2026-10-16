@@ -55,6 +55,26 @@ export const SEED_COST_RATES = [
   { channel: 'platform', modelKey: 'minimax-m2.7', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 2.15, note: 'spec §2.4 挂牌价' },
   { channel: 'platform', modelKey: 'minimax-m2.7', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 8.58, note: 'spec §2.4 挂牌价' },
   { channel: 'platform', modelKey: 'minimax-m2.7', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.44, note: '推算：in×1.9/9.3，P2 渠道对账校准' },
+  // —— agnes 文本渠道成本行（PROVISIONAL 暂定价，非真实成本）——
+  // 平台侧在用的 agnes 文本渠道（apihub.agnes-ai.cn）此前**未**进入 RMB 台账：成本只存在于
+  // pi-runtime 的 USD 环境变量（AGNES_COST_*_PER_M，且为单 variant 通用值，非 2.0/2.5/3.0
+  // 拆分），与 apps/server 的 RMB CostRate 不互通（断点 A）。本补录按 P2 已上线 seed 模式落行，
+  // 使 quoteTextTokens 对 agnes 走精确路径而非 USD 兜底。
+  // ⚠️ 数值为**暂定阶梯价**：待「上游渠道定价全链路」单独立项打通后，以真实 RMB/1M 成本配置
+  // 覆盖（届时只改本块 costYuan + 由 TEXT_TOKEN_MODELS 派生的反比率行，逻辑无需动）。
+  // 拟定 3 套阶梯方案（单位 RMB / 每百万 token，out≈in×3、cache≈in×0.2）：
+  //   方案A 低档：2.0=1.0/3.0/0.2 · 2.5=1.5/4.5/0.3 · 3.0=2.5/7.5/0.5
+  //   方案B 中档（★已采用）：2.0=1.5/4.5/0.3 · 2.5=2.5/7.5/0.5 · 3.0=4.0/12.0/0.8
+  //   方案C 高档：2.0=3.0/9.0/0.6 · 2.5=5.0/15.0/1.0 · 3.0=8.0/24.0/1.6
+  { channel: 'platform', modelKey: 'agnes-2.0-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 1.5, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-2.0-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 4.5, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-2.0-flash', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.3, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-2.5-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 2.5, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-2.5-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 7.5, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-2.5-flash', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.5, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-3.0-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', costYuan: 4.0, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-3.0-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', costYuan: 12.0, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
+  { channel: 'platform', modelKey: 'agnes-3.0-flash', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', costYuan: 0.8, note: 'PROVISIONAL 暂定中档(方案B)——上游渠道定价打通后以真实 RMB/1M 修正' },
   { channel: 'platform', modelKey: 'stepaudio-3-music', spec: 'per_song', unit: 'per_call', costYuan: 0, note: '限免窗口，watchWindow' },
 ] as const
 
