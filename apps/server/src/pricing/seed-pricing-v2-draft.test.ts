@@ -82,11 +82,11 @@ describe('seedPricingV2Draft against real SQLite', () => {
     expect(result.version).toBe(PRICING_VERSION_V2_DRAFT)
 
     // ── 断言 1：变更计数精确（期望值现场从枚举空间算，不硬编码）──
-    // P2 M-4：token 反比率行 14 行（5 模型 in/out + 4 cache，16k 无 cache 行）
+    // P2 M-4：token 反比率行 23 行（8 模型 in/out + 7 cache：16k 无 cache；agnes 三档均含 cache）
     // 也走 launch-reprice ⇒ 计入 changed；copied 仍只含 legacy 等价行
     const remapped = space.filter(isRemapped).length
     const tokenRowCount = enumerateTextTokenRows().length
-    expect(tokenRowCount).toBe(14)
+    expect(tokenRowCount).toBe(23)
     expect(result.changed).toBe(remapped + tokenRowCount)
     expect(result.copied).toBe(space.length - remapped)
 
@@ -212,6 +212,12 @@ describe('seedPricingV2Draft against real SQLite', () => {
     expect((await entryOf('text:step-3.5-flash:out'))!.credits).toBe(4329) // floor(1e6/(2.1×110))
     expect((await entryOf('text:step-2-16k:out'))!.credits).toBe(505) // floor(1e6/(18×110))
     expect(await entryOf('text:step-2-16k:cache')).toBeNull()
+    // agnes 三档（PROVISIONAL 中档方案B）抽样精确锚：r=floor(1e6/(costYuan×110))
+    expect((await entryOf('text:agnes-2.0-flash:in'))!.credits).toBe(6060) // floor(1e6/(1.5×110))
+    expect((await entryOf('text:agnes-2.5-flash:in'))!.credits).toBe(3636) // floor(1e6/(2.5×110))
+    expect((await entryOf('text:agnes-2.5-flash:out'))!.credits).toBe(1212) // floor(1e6/(7.5×110))
+    expect((await entryOf('text:agnes-3.0-flash:out'))!.credits).toBe(757) // floor(1e6/(12×110))
+    expect((await entryOf('text:agnes-2.0-flash:cache'))!.credits).toBe(30303) // floor(1e6/(0.3×110))
 
     // ── 断言 7（正向）：有 costRateId 者全部过地板 credits ≥ ceil(costYuan×105) ──
     // （token 反比率行除外：credits 存 r=tokens/credit 反比率，非售价——量纲不适用，

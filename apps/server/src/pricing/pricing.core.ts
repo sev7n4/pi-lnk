@@ -122,6 +122,12 @@ export const TEXT_TOKEN_MODELS: readonly string[] = [
   'step-2-16k',
   'step-5-preview',
   'minimax-m2.7',
+  // agnes 文本渠道（PROVISIONAL 暂定）：平台在用的 agnes-2.0/2.5/3.0-flash 此前未进 RMB
+  // 台账，quoteTextTokens 对它们会走 USD 兜底；补入后走精确 token 反比率。成本数值待
+  // 「上游渠道定价全链路」立项打通后以真实 RMB/1M 覆盖（仅改 seed 成本行即可）。
+  'agnes-2.0-flash',
+  'agnes-2.5-flash',
+  'agnes-3.0-flash',
 ]
 
 /**

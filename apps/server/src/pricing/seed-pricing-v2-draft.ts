@@ -15,8 +15,8 @@
  *    基础档：computeCreditsFromCost(perSec × d, 11000)，perSec 用 5s 锚点行现算；
  *    参考档：v2base + (v1ref − v1base)（加价项保留——spec §6.6）。
  * ③ 其余全部档位：逐字复制 v1 值（legacyPriceOf 同源，不从库读 v1），basis='legacy-equivalent'。
- * ④ 文本 token 反比率行（P2 §6.5 · M-4 补接）：enumerateTextTokenRows() 14 行
- *    （5 模型 in/out + 4 cache，step-2-16k 无 cache 行不枚举），反比率
+ * ④ 文本 token 反比率行（P2 §6.5 · M-4 补接）：enumerateTextTokenRows() 23 行
+ *    （8 模型 in/out + 7 cache：step-2-16k 无 cache 行；agnes 三档均含 cache），反比率
  *    r = floor(1e6/(costYuan×marginBp/100)) 现算（勿写 costYuan×100×marginBp——差 100×），
  *    挂 per_1m_tokens_* CostRate 行，basis='launch-reprice'——与 quoteTextTokens
  *    的除数同源同值（quote 按 ceil(tokens/r) 计费）。
