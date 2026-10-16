@@ -14,13 +14,5 @@ export function barShape(input: { hasRefs: boolean; isStreaming: boolean }): Mob
   return input.hasRefs ? 'stacked' : 'idle'
 }
 
-/**
- * P1-5.3 条级手势阈值（Task 13 提供 classifyGesture 正式实现前的内联常量）：
- * 按住 ≥300ms 进入 hold（Task 13 接 ASR 录音）；否则视为 tap（切输入态）。
- */
-export const COMPOSER_HOLD_MS = 300
-
-/** 条级手势分类：按住时长达阈值 = hold（录音），否则 tap（切输入态）。 */
-export function classifyGesture(heldMs: number, thresholdMs = COMPOSER_HOLD_MS): 'tap' | 'hold' {
-  return heldMs >= thresholdMs ? 'hold' : 'tap'
-}
+/* 条级手势分类已上收至 ./holdGesture（Task 13 单一来源：HOLD_MS / CANCEL_SWIPE_PX /
+ * classifyGesture），本模块只保留 bar 形态路由。 */

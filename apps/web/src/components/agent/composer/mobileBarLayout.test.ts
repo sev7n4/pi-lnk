@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { barShape, classifyGesture, COMPOSER_HOLD_MS } from './mobileBarLayout'
+import { barShape } from './mobileBarLayout'
 
 describe('barShape (P1-5 two-layer contract)', () => {
   it('idle: single bar, only ＋ inside', () => {
@@ -14,14 +14,5 @@ describe('barShape (P1-5 two-layer contract)', () => {
   })
 })
 
-describe('classifyGesture (P1-5.3 bar-level tap vs hold)', () => {
-  it('tap below threshold, hold at/above threshold', () => {
-    expect(classifyGesture(0)).toBe('tap')
-    expect(classifyGesture(COMPOSER_HOLD_MS - 1)).toBe('tap')
-    expect(classifyGesture(COMPOSER_HOLD_MS)).toBe('hold')
-    expect(classifyGesture(1200)).toBe('hold')
-  })
-  it('threshold is the 300ms inline constant reserved for Task 13 (ASR wiring)', () => {
-    expect(COMPOSER_HOLD_MS).toBe(300)
-  })
-})
+// classifyGesture（tap/hold/cancel）自 Task 13 起由 ./holdGesture 单源提供，
+// 测试随之迁移到 holdGesture.test.ts；本文件只守 barShape。

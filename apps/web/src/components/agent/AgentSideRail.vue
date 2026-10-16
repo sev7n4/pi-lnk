@@ -104,7 +104,9 @@ import {
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { skillMenuMode } from './composer/skillMenuMode'
-import { barShape, classifyGesture, COMPOSER_HOLD_MS } from './composer/mobileBarLayout'
+import { barShape } from './composer/mobileBarLayout'
+import { classifyGesture, HOLD_MS, CANCEL_SWIPE_PX } from './composer/holdGesture'
+import { useMicLevel } from '@/composables/useMicLevel'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
@@ -1222,8 +1224,6 @@ function clamp(v: number, min: number, max: number) {
   return Math.min(Math.max(v, min), max)
 }
 
-const speech = useSpeechRecognition()
-
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
 const planningModel = ref(preferences.value?.defaultTextModel ?? '')
 /** PI 链路深度思考：默认关，Dock 可开（与文本节点对齐）。
@@ -1653,22 +1653,19 @@ async function loadHistory() {
   scrollToBottom(true)
 }
 
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (isFinal) {
-      input.value = input.value ? `${input.value} ${text}` : text
-    }
-  })
-}
+/* ---- P2-2 按住说话（Task 13 重接 ASR；录音 UI agent-composer-rec 沿用）----
+ * 分类判据 = holdGesture.classifyGesture（tap/hold/cancel 单一来源）。
+ * 录音本体 = useSpeechRecognition（Web Speech），电平反馈 = useMicLevel（可选，失败静默）。
+ * 松开：转写填入输入框并切输入态（不自动提交，可继续编辑）。
+ * PC（P2-2.1）与移动条（P2-2.2）共用 beginHoldTalk / releaseVoice 会话。 */
+const speech = useSpeechRecognition()
+const micLevel = useMicLevel()
+const voiceLevel = micLevel.level
+
 
 /* ---- 移动端裸条状态（P1-5，2026-10-16 三态共条重构） ----
- * 旧「收缩/伸展 + 长按卡片录音」形态随全屏 sheet 一并退役（Task 13 会按
- * onComposerHold 发射点重接 ASR，录音 UI（agent-composer-rec）保留为接线目标）。
- * 桌面端不受影响，仍走 DockMicButton 的 toggleVoice。 */
+ * 旧「收缩/伸展 + 长按卡片录音」形态随全屏 sheet 一并退役；Task 13 已在 onComposerHold
+ * 发射点重接 ASR，录音 UI（agent-composer-rec）复用。PC 走 DockMicButton press-and-hold。 */
 const composerExpanded = ref(false)
 const holdActive = ref(false)
 const voiceInterim = ref('')
@@ -1676,6 +1673,8 @@ const voiceFinalText = ref('')
 const voiceCancelled = ref(false)
 const voiceElapsedSec = ref(0)
 const composerDockRef = ref<HTMLElement | null>(null)
+let voiceSession = 0
+let voiceTicker: number | null = null
 
 // 输入框被程序填充（如待发消息取回）时自动进入伸展态
 watch(input, (v) => {
@@ -1710,16 +1709,72 @@ const mobileBarIdle = computed(
     !holdActive.value,
 )
 
-/* ---- P1-5.3 条级手势：点按=切输入态，按住 ≥300ms=onComposerHold（Task 13 接语音）。
- * 判据（P1-5.3）：子控件（＋/◎/模型/发送）命中一律不触发条手势——pointerdown/up 都用
- * closest 排除按钮命中，且子控件 click 均 .stop。 */
+/* ---- P1-5.3 条级手势（P2-2.2 Task 13 完整版）----
+ * pointerdown 记起点并 setPointerCapture（T10 评审项：拖出条不丢 pointerup）；
+ * 300ms 计时器触发录音（hold 期间持续收 move 累计 dy，上滑 ≥ CANCEL_SWIPE_PX 预置取消）；
+ * pointerup 用 classifyGesture({durationMs, dy}) 统一分派：
+ *   tap → 切输入态；hold → 松开转写填入（不自动提交）；cancel → 丢弃。
+ * 子控件（＋/◎/模型/发送）命中一律不触发条手势（P1-5.3 判据，closest 排除 + 子控件 .stop）。 */
 let barHoldTimer: number | null = null
 let barGestureStartAt = 0
+let barGestureStartY = 0
+let barGestureDy = 0 // clientY - startY，上滑为负
 
-/** 按住说话发射点：Task 13 在此接 ASR（录音时长/电平/上滑取消复用 agent-composer-rec UI）。
- * 当前为空实现发射点（brief 指定）， hold 尚不产生任何副作用。 */
+/** 按住说话发射点（Task 10 预留）：接 ASR 会话 + 时长/电平反馈。 */
 function onComposerHold() {
-  /* Task 13（P2-2.2）接线点：beginHoldTalk / releaseVoice 逻辑见 git 历史 */
+  beginHoldTalk()
+}
+
+function beginHoldTalk() {
+  if (!speech.supported) {
+    ElMessage.warning('当前浏览器不支持语音识别')
+    return
+  }
+  voiceSession += 1
+  voiceInterim.value = ''
+  voiceFinalText.value = ''
+  voiceCancelled.value = false
+  const started = speech.start((text, isFinal) => {
+    if (isFinal) voiceFinalText.value = voiceFinalText.value ? `${voiceFinalText.value} ${text}` : text
+    else voiceInterim.value = text
+  })
+  if (!started) {
+    ElMessage.warning('当前浏览器不支持语音识别')
+    return
+  }
+  holdActive.value = true
+  navigator.vibrate?.(15) // 微信式触觉反馈（不支持时静默）
+  ;(document.activeElement as HTMLElement | null)?.blur?.() // 防键盘弹出
+  void micLevel.start() // 电平反馈（拒绝授权/不支持时 level 恒 0，不影响主链路）
+  voiceElapsedSec.value = 0
+  voiceTicker = window.setInterval(() => {
+    voiceElapsedSec.value += 1
+  }, 1000)
+}
+
+/** 松开录音：cancelled=上滑取消/指针打断。转写填入输入框并切输入态，不自动提交。 */
+function releaseVoice(cancelled: boolean) {
+  if (!holdActive.value) return
+  holdActive.value = false
+  if (voiceTicker !== null) {
+    window.clearInterval(voiceTicker)
+    voiceTicker = null
+  }
+  speech.stop()
+  micLevel.stop()
+  const session = voiceSession
+  // 识别引擎的末段 final result 在 stop() 之后才回调，等 600ms 收口再取全文
+  window.setTimeout(() => {
+    if (session !== voiceSession) return // 已进入新一次按住，本会话作废
+    const text = (voiceFinalText.value || voiceInterim.value).trim()
+    voiceInterim.value = ''
+    voiceFinalText.value = ''
+    if (cancelled || !text) return
+    // P2-2：不自动提交，切输入态让用户继续编辑
+    input.value = input.value ? `${input.value} ${text}` : text
+    composerExpanded.value = true
+    void nextTick(() => composerRef.value?.focus())
+  }, 600)
 }
 
 function onBarGestureOnChild(e: PointerEvent): boolean {
@@ -1727,33 +1782,75 @@ function onBarGestureOnChild(e: PointerEvent): boolean {
   return !!target?.closest('button, a, [role="button"], input, textarea')
 }
 
+function releaseBarCapture(e: PointerEvent) {
+  try {
+    ;(e.currentTarget as HTMLElement | null)?.releasePointerCapture?.(e.pointerId)
+  } catch {
+    /* 指针已释放等场景忽略 */
+  }
+}
+
 function onBarPointerDown(e: PointerEvent) {
   if (!mobileBarIdle.value || props.readOnly) return
   if (onBarGestureOnChild(e)) return
   barGestureStartAt = Date.now()
+  barGestureStartY = e.clientY
+  barGestureDy = 0
+  // T10 评审项：拖出条后 move/up 仍派发到条上，录音态上滑取消才可用
+  try {
+    ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
+  } catch {
+    /* ignore */
+  }
   barHoldTimer = window.setTimeout(() => {
     barHoldTimer = null
     onComposerHold()
-  }, COMPOSER_HOLD_MS)
+  }, HOLD_MS)
+}
+
+function onBarPointerMove(e: PointerEvent) {
+  if (barHoldTimer !== null) {
+    // 触发前就大幅移动 = 滚动手势，撤销待定按住
+    if (Math.abs(e.clientY - barGestureStartY) > 10) {
+      window.clearTimeout(barHoldTimer)
+      barHoldTimer = null
+      releaseBarCapture(e)
+    }
+    return
+  }
+  if (!holdActive.value) return
+  barGestureDy = e.clientY - barGestureStartY
+  // 上滑 ≥ CANCEL_SWIPE_PX 预置「松开取消」，滑回 20px 内可撤销（微信手感）
+  if (!voiceCancelled.value && barGestureDy <= -CANCEL_SWIPE_PX) voiceCancelled.value = true
+  else if (voiceCancelled.value && barGestureDy > -(CANCEL_SWIPE_PX - 20)) voiceCancelled.value = false
 }
 
 function onBarPointerUp(e: PointerEvent) {
-  if (barHoldTimer === null) return // hold 已触发或非空闲态按下
-  window.clearTimeout(barHoldTimer)
-  barHoldTimer = null
-  if (onBarGestureOnChild(e)) return
-  // 未达 hold 阈值 = 点按 → 切输入态并聚焦（classifyGesture 为 Task 13 的正式分派器）
-  if (classifyGesture(Date.now() - barGestureStartAt) === 'tap') {
-    composerExpanded.value = true
-    void nextTick(() => composerRef.value?.focus())
+  releaseBarCapture(e)
+  const durationMs = Date.now() - barGestureStartAt
+  if (barHoldTimer !== null) {
+    // hold 计时未到 = 按 classifyGesture 正式分派（tap 切输入态）
+    window.clearTimeout(barHoldTimer)
+    barHoldTimer = null
+    if (onBarGestureOnChild(e)) return
+    if (classifyGesture({ durationMs, dy: barGestureDy }) === 'tap') {
+      composerExpanded.value = true
+      void nextTick(() => composerRef.value?.focus())
+    }
+    return
+  }
+  if (holdActive.value) {
+    releaseVoice(classifyGesture({ durationMs, dy: barGestureDy }) === 'cancel')
   }
 }
 
-function onBarPointerCancel() {
+function onBarPointerCancel(e: PointerEvent) {
+  releaseBarCapture(e)
   if (barHoldTimer !== null) {
     window.clearTimeout(barHoldTimer)
     barHoldTimer = null
   }
+  if (holdActive.value) releaseVoice(true)
 }
 
 function formatRecTime(total: number): string {
@@ -3733,6 +3830,7 @@ defineExpose({
                 }"
                 data-testid="composer-bare-bar"
                 @pointerdown="onBarPointerDown"
+                @pointermove="onBarPointerMove"
                 @pointerup="onBarPointerUp"
                 @pointercancel="onBarPointerCancel"
               >
@@ -3761,6 +3859,12 @@ defineExpose({
                     </span>
                     <span class="agent-composer-rec__text">
                       {{ voiceCancelled ? '松开取消' : (voiceFinalText + voiceInterim || '正在聆听…') }}
+                    </span>
+                    <span class="agent-composer-rec__level" aria-hidden="true">
+                      <span
+                        class="agent-composer-rec__level-fill"
+                        :style="{ transform: `scaleX(${Math.max(0.08, Math.min(1, voiceLevel))})` }"
+                      />
                     </span>
                     <span class="agent-composer-rec__time">{{ formatRecTime(voiceElapsedSec) }}</span>
                   </div>
@@ -3990,11 +4094,16 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-primary">
-                  <!-- 还原收缩态麦克风图标：移动端点按麦克风 + 长按录音双通道（#423 原始设计） -->
+                  <!-- P2-2.1：麦克风改 press-and-hold——press 开始、release 转写填入（不自动提交）、上滑取消 -->
                   <DockMicButton
+                    press-and-hold
                     :listening="speech.listening.value"
+                    :duration-sec="voiceElapsedSec"
+                    :level="voiceLevel"
                     :disabled="agent.isStreaming || isUploading"
-                    @toggle="toggleVoice"
+                    @holdstart="beginHoldTalk"
+                    @holdend="releaseVoice(false)"
+                    @holdcancel="releaseVoice(true)"
                   />
                   <DockGenerateButton
                     :generating="agent.isStreaming"
@@ -4954,6 +5063,8 @@ defineExpose({
 /* 复合选择器压过模板上的 Tailwind 工具类；仅移动端 shell 内生效 */
 .agent-panel-mobile-dock .composer-bare-bar {
   position: relative;
+  /* P2-2.2 上滑取消：条面垂直手势归应用（按住录音中浏览器不得接管为滚动） */
+  touch-action: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5106,10 +5217,31 @@ defineExpose({
   animation: agent-rec-pulse 1.2s ease-in-out infinite;
 }
 
-.agent-input-dock.is-cancel .agent-composer-rec__mic {
+/* P2-2.2 上滑取消：mic 变红停脉冲（is-cancel 绑在 composer-bare-bar 上） */
+.composer-bare-bar.is-cancel .agent-composer-rec__mic {
   color: var(--lnk-error);
   background: color-mix(in srgb, var(--lnk-error) 14%, var(--lnk-hover-overlay));
   animation: none;
+}
+
+/* P2-2.2 电平反馈：细条随 micLevel 横向伸缩（transform，无布局抖动） */
+.agent-composer-rec__level {
+  flex-shrink: 0;
+  width: 36px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lnk-accent-text) 25%, transparent);
+}
+
+.agent-composer-rec__level-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0.08);
+  border-radius: inherit;
+  background: var(--lnk-accent-text);
 }
 
 .agent-composer-rec__text {
@@ -5149,6 +5281,13 @@ defineExpose({
   }
   50% {
     opacity: 0.55;
+  }
+}
+
+/* P2-2.2 约束：prefers-reduced-motion 下录音反馈不脉冲（边框/图标均静态呈现） */
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer-rec__mic {
+    animation: none;
   }
 }
 
