@@ -145,6 +145,7 @@ export function createCanvasWriteTools(
 			...write,
 			name: "upsert_media_node",
 			label: "新建/更新媒体节点",
+			executionMode: "sequential", // P1a（spec 2026-10-16）：同批写调用串行，create 先 finalize 落 id
 			description:
 				"Create or update a single media node (image|video|text|audio) with a prompt. Does not start generation — use propose_generation after the node is ready. " +
 				"For video nodes with reference image(s), the prompt must describe ONLY motion (one camera move + one subject action + ambient secondary motion + prohibitions). Do NOT restate the frame's static appearance — the reference image already defines it.",
@@ -277,6 +278,7 @@ export function createCanvasWriteTools(
 			...write,
 			name: "set_node_generation_params",
 			label: "配生成参数",
+			executionMode: "sequential", // P1a（spec 2026-10-16）：与 upsert/propose 同批时按序执行
 			description:
 				"Prefill the generation parameters shown at the bottom of a node's dock (aspect ratio, resolution, count, video duration, audio voice/speed...) so the user does not have to pick them. Call this AFTER upsert_media_node and BEFORE propose_generation. " +
 				"How to choose values: infer from the stated purpose, target platform and template conventions, and load the matching skill first when one covers this domain. " +
@@ -387,6 +389,7 @@ export function createCanvasWriteTools(
 			...write,
 			name: "propose_generation",
 			label: "提议生成",
+			executionMode: "sequential", // P1a（spec 2026-10-16）：同批写调用串行，见 P1b 捕获时序
 			description:
 				"Mark a media node pending user confirm for generation. Never calls run_*; wait for the user to confirm in the UI.",
 			parameters: Type.Object({ node_id: Type.String({ description: "Canvas node id" }) }),

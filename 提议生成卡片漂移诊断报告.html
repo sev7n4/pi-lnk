@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-lnk 「提议生成卡片漂移」架构级根因与工程方案（v2）</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1f2c; --ink2:#4a5160; --ink3:#7a8190;
+    --line:#e3e6ec; --line2:#d4d8e0;
+    --red:#c0392b; --red-bg:#fdecea; --red-line:#f5c6c0;
+    --green:#1f8a4c; --green-bg:#e6f4ec; --green-line:#bfe3cc;
+    --amber:#b8860b; --amber-bg:#fdf6e3; --amber-line:#f0d9a0;
+    --blue:#2563a8; --blue-bg:#e8f1fa; --blue-line:#c2dcef;
+    --purple:#6b3fa0; --purple-bg:#f0e9f7; --purple-line:#d8c7ea;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:24px}
+  header h1{margin:0 0 6px;font-size:25px;font-weight:700;letter-spacing:-.3px}
+  header .meta{color:var(--ink2);font-size:13px}
+  header .meta b{color:var(--ink)}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 18px;margin-bottom:28px;font-size:14px}
+  .toc b{color:var(--ink)}
+  .toc a{color:var(--blue);text-decoration:none;margin-right:14px;display:inline-block}
+  .toc a:hover{text-decoration:underline}
+  h2{font-size:20px;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line2)}
+  h3{font-size:16px;margin:22px 0 8px}
+  h4{font-size:14.5px;margin:16px 0 6px;color:var(--ink2)}
+  p{margin:8px 0}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+    background:#eef1f5;border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#333a48}
+  pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+    background:#f4f6f9;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;line-height:1.55}
+  pre .c{color:#8a919e}
+  pre .k{color:#6b3fa0;font-weight:600}
+  pre .s{color:#1f8a4c}
+  pre .r{color:#c0392b;font-weight:600}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f0f2f6;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  .box{border-radius:8px;padding:12px 16px;margin:14px 0;border:1px solid}
+  .box .t{font-weight:700;margin-bottom:4px}
+  .box p{margin:4px 0}
+  .box.red{background:var(--red-bg);border-color:var(--red-line)} .box.red .t{color:var(--red)}
+  .box.green{background:var(--green-bg);border-color:var(--green-line)} .box.green .t{color:var(--green)}
+  .box.amber{background:var(--amber-bg);border-color:var(--amber-line)} .box.amber .t{color:var(--amber)}
+  .box.blue{background:var(--blue-bg);border-color:var(--blue-line)} .box.blue .t{color:var(--blue)}
+  .box.purple{background:var(--purple-bg);border-color:var(--purple-line)} .box.purple .t{color:var(--purple)}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;border-radius:4px;padding:1px 7px;margin-right:6px;border:1px solid}
+  .tag.red{background:var(--red-bg);color:var(--red);border-color:var(--red-line)}
+  .tag.green{background:var(--green-bg);color:var(--green);border-color:var(--green-line)}
+  .tag.amber{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-line)}
+  .tag.blue{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-line)}
+  .tag.purple{background:var(--purple-bg);color:var(--purple);border-color:var(--purple-line)}
+  .tl{border-left:3px solid var(--line2);margin:14px 0 14px 6px;padding-left:18px}
+  .tl .ev{position:relative;margin:0 0 10px}
+  .tl .ev b{color:var(--ink)}
+  .tl .ev .ts{color:var(--ink3);font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+  .kv{font-size:13px;color:var(--ink2)}
+  .kv b{color:var(--ink)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+  .card h4{margin-top:0}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+  .strike{text-decoration:line-through;color:var(--ink3)}
+  footer{margin-top:48px;border-top:1px solid var(--line2);padding-top:14px;color:var(--ink3);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>「提议生成卡片漂移」— 架构级根因与工程方案 <span style="font-size:14px;color:var(--ink3);font-weight:400">v2（复核版）</span></h1>
+  <div class="meta">
+    画布 <b>cmv9hmpph001qoa017y9rv312</b> · 线程 <b>…:mv9hmr9k-b9chac902</b> ·
+    取证时间 <b>2026-10-16</b> · 上游基线 <b>pi v0.85.1（vendor <span class="mono">d981de1</span>）</b><br>
+    取证面：生产 SQLite 快照 · pi-runtime 实时事件缓冲 · 生产前端 bundle 逆向 · 仓库源码 · vendor 上游源码 · 生态实践对标
+  </div>
+</header>
+
+<div class="toc">
+  <b>目录</b>
+  <a href="#s0">0. 本轮复核：结论修正</a>
+  <a href="#s1">1. 证据链</a>
+  <a href="#s2">2. 上游能力盘点</a>
+  <a href="#s3">3. 架构缺陷分层</a>
+  <a href="#s4">4. 反模式清单</a>
+  <a href="#s5">5. 工程方案</a>
+  <a href="#s6">6. 验收判据</a>
+  <a href="#s7">7. 影响面与排期</a>
+</div>
+
+<!-- ============ 0 ============ -->
+<h2 id="s0">0. 本轮复核：对上一版结论的修正与加固</h2>
+
+<p>上一版结论是「一次 run 被 4 条流并发消费 → 事件切片被各自落库」。本轮按<b>先证伪再采信</b>重跑，结论在<b>因果主链上成立</b>，但有两处必须修正，且根因要再往下挖一层。</p>
+
+<table>
+  <tr><th style="width:30%">上一版说法</th><th style="width:12%">复核结果</th><th>修正</th></tr>
+  <tr>
+    <td>4 条消息各自带一个「事件窗口切片」</td>
+    <td><span class="tag green">证实</span></td>
+    <td>已升级为数学实证：切片是完整回合事件序列的<b>子序列</b>（54/55、15/16 匹配），ts 起点晚于回合起点、终点与回合终点同一时刻。</td>
+  </tr>
+  <tr>
+    <td>切片导致「卡片被 unshift 到顶部」</td>
+    <td><span class="tag amber">修正</span></td>
+    <td>前端用的是 <code>parts.push</code>（<span class="mono">turnTimeline.ts:345</span>）。卡片之所以在最前面，是因为<b>切片的首个事件就是孤儿 <code>tool_result</code></b>，此时 parts 为空，push 后即为 parts[0]——是「第一个落地」而非「被插队」。</td>
+  </tr>
+  <tr>
+    <td>根因 = 用户重复发送</td>
+    <td><span class="tag red">降级为诱因</span></td>
+    <td>重复发送只是<b>触发条件</b>。真正的根因是<b>系统缺少「回合身份」这一层抽象</b>：回合 = 一次 HTTP 流（隐式），而上游权威的回合 = <code>runId</code>。缺了它，任何第二个订阅者（刷新页面、新标签页、recovery 排空）都会复制出一条独立回合。</td>
+  </tr>
+</table>
+
+<div class="box red">
+  <div class="t">一句话根因（v2）</div>
+  <p>我们把<b>「一条 SSE 订阅」当成了「一个回合」</b>，而上游 <code>runId</code> 这一等身份在归一化时被丢弃；于是同一 run 的多个订阅者各自持有一个<b>按订阅起点切出来的残缺事件集</b>，并各自落库成独立的助手消息。残缺集的<b>首事件是孤儿 <code>tool_result</code></b>，被前端渲染成时间线第一项——即「提议生成卡片漂到思考之前」。</p>
+</div>
+
+<!-- ============ 1 ============ -->
+<h2 id="s1">1. 证据链（四重取证交叉验证）</h2>
+
+<h3>1.1 生产库：同正文 · 同秒 · 事件集是子序列</h3>
+
+<p>该线程在 <span class="mono">1792069341707~710</span>（3 毫秒内）落库 4 条 assistant 消息：</p>
+
+<table>
+  <tr><th>消息</th><th>事件数</th><th>首事件</th><th>ts 区间（起点滞后）</th><th>与完整回合的子序列匹配</th><th>正文</th></tr>
+  <tr><td class="mono">…jtdsa</td><td>72</td><td><span class="tag green">thinking</span></td><td>回合起点 → 终点</td><td>—（完整回合）</td><td rowspan="4">4 条<b>完全相同</b>，均 105 字符</td></tr>
+  <tr><td class="mono">…jtdsb</td><td>55</td><td><span class="tag red">tool_result{propose_generation}</span></td><td>滞后 <b>+294s</b></td><td><b>54/55</b></td></tr>
+  <tr><td class="mono">…jtdsc</td><td>16</td><td><span class="tag red">tool_result{propose_generation}</span></td><td>滞后 <b>+1520s</b></td><td><b>15/16</b></td></tr>
+  <tr><td class="mono">…jtdsd</td><td>16</td><td><span class="tag red">tool_result{propose_generation}</span></td><td>滞后 <b>+1520s</b></td><td><b>15/16</b></td></tr>
+</table>
+
+<div class="box blue">
+  <div class="t">为什么正文一致而事件集不同？</div>
+  <p>正文累积走 <code>text_delta</code>（<span class="mono">agent.service.ts:1428</span>），集中发生在 run 的<b>尾段</b>——4 条流都活到了结尾，所以拿到同一份正文。事件累积走<b>订阅窗口</b>，起点各异，所以是残缺集。这一「一半全量、一半切片」的形态，正是缺陷的指纹：它不是「重复生成了 4 次」，而是<b>同一次生成被记了 4 本账</b>。</p>
+</div>
+
+<h3>1.2 代码：409→steer 之后，流并没有终止</h3>
+
+<pre><span class="c">// apps/server/src/agent/agent.service.ts:1248-1279</span>
+<span class="k">void</span> client.prompt(sessionKey, ...)          <span class="c">// fire-and-forget，不等结果</span>
+  .catch(<span class="k">async</span> (err) =&gt; {
+    <span class="k">if</span> (status !== <span class="s">409</span>) { warn; <span class="k">return</span> }
+    <span class="k">await</span> client.steer(sessionKey, promptText, <span class="s">"main"</span>, { turnContext })  <span class="c">// 并入在跑的 run</span>
+  })
+<span class="c">// ⚠️ 无论上面走哪条分支，下面都继续执行：</span>
+<span class="k">let</span> assistantText = <span class="s">''</span>; <span class="k">const</span> executionEvents = []      <span class="c">// :1306</span>
+<span class="k">while</span> (!done) { ... 累积 ... }                          <span class="c">// :1329</span>
+<span class="k">await</span> this.finalizeTurn(...)                            <span class="c">// :1475 —— 每条流都落库</span></pre>
+
+<p><b>语义错位</b>：上游 <code>steer</code> 的含义是「把这句话<b>并入正在跑的那个 run</b>」（<span class="mono">session-manager.ts:2084-2118</span>，durable inbox）。但 Nest 这边，发起 steer 的这条 HTTP 流<b>仍然把自己当作一个独立回合</b>，继续旁听并在 <code>agent_end</code> 时落库。结果：1 个 run → N 条流 → N 条消息。</p>
+
+<h3>1.3 运行时：live 订阅 = 窗口切片（设计如此）</h3>
+
+<p><span class="mono">app.ts:436-437</span> 的注释自陈：<b>「<code>agent.service.ts</code> 的两处生产调用都传 <code>{ live: true }</code> ⇒ 首连走 <code>from=now</code>」</b>——即<b>不重放、只收订阅之后的事件</b>。这正是切片的生产机制。而 <span class="mono">app.ts:429-443</span> 也已经识别到 buffer 淘汰会造成「断头的流」，但刻意不回 409，只加了 <code>droppedFromSeq</code> 供观测——<b>缺陷已知但未闭环</b>。</p>
+
+<h3>1.4 前端：孤儿事件被当成完整事实</h3>
+
+<pre><span class="c">// apps/web/src/components/agent/turnTimeline.ts:326-353（生产 bundle 逆向已核对同构）</span>
+<span class="k">case</span> <span class="s">'tool_result'</span>: {
+  <span class="k">const</span> existing = <span class="c">/* 找同 id 或同名 running 的 tool part */</span>
+  <span class="k">if</span> (existing) { existing.status = ...; <span class="k">return</span> }
+  timeline.parts.<span class="r">push</span>({ kind: <span class="s">'tool'</span>, toolName: name, status: <span class="s">'done'</span>, ... })
+}</pre>
+
+<p>切片的首事件是孤儿 <code>tool_result</code>（它的 <code>tool_call</code> 在几分钟前、落在上一个窗口里），找不到前置 → push 进空数组 → 成为 <code>parts[0]</code> → 渲染成时间线第一行的「🖼️ 提议生成」。而 <code>replayTimelineEvents</code> 按 seq 保序重放，<b>刷新后永久复现</b>——这就是用户说的「E 之前几个历史记录都有这个问题」。</p>
+
+<!-- ============ 2 ============ -->
+<h2 id="s2">2. 上游 pi-agent 能力盘点：哪些我们没吃满</h2>
+
+<p>关键前提：pi-runtime <b>已经在用</b>上游能力（<span class="mono">package.json</span> 固定 <span class="mono">@earendil-works/pi-agent-core@0.85.1</span>，<span class="mono">session-manager.ts</span> 直接 import <code>AgentHarness</code> / <code>AgentLane</code> / <code>JsonlSessionRepo</code>）。所以这不是「没接上游」，而是<b>接了但只用了六成</b>。</p>
+
+<table>
+  <tr><th style="width:22%">上游已有能力</th><th style="width:30%">上游出处</th><th style="width:14%">我们</th><th>缺口后果</th></tr>
+  <tr>
+    <td><b>runId / operationId</b>：run 是一等身份，事件自带</td>
+    <td><span class="mono">lane.ts:667</span> <code>{type:"run_start", runId: operationId}</code>；<span class="mono">restore.ts:137-161</span> 从持久化恢复 operation</td>
+    <td><span class="tag red">丢弃</span></td>
+    <td><code>NormalizedEvent</code> 只有 <code>type/lane/ts/seq/data</code>（<span class="mono">session-manager.ts:150-157</span>），<b>runId 在归一化时被丢掉</b>（内部 turnBudget 用了 <code>evt.runId</code>，却没透传）。落库事件 <code>PersistedExecutionEvent</code> 同样无 runId。→ <b>回合失去主键，无法去重/归并</b>。</td>
+  </tr>
+  <tr>
+    <td><b>steer / followUp</b>：run 进行中输入的官方通道（durable inbox）</td>
+    <td><span class="mono">lane.ts:145-173</span> steeringMode/followUpMode；<span class="mono">session-manager.ts:2099-2118</span></td>
+    <td><span class="tag amber">半用</span></td>
+    <td>通道接了，但 Nest 在用它之后<b>仍把本次 HTTP 流当新回合</b>。且上游注释自陈：propose/ask_user 阻塞期<b>连 checkpoint 边界都没有</b>（<span class="mono">session-manager.ts:2093-2096</span>）→ steer 也要等到阻塞结束才被消费。</td>
+  </tr>
+  <tr>
+    <td><b>SessionRouter</b>：托管 session + 多客户端 attachment（compute once, deliver many）</td>
+    <td><span class="mono">server/src/session-router.ts:22-29, 62-72</span>：<code>HostedSession{attachments: Set&lt;ClientAttachment&gt;}</code>、<code>attachClient/detachClient</code></td>
+    <td><span class="tag red">未用</span></td>
+    <td>我们在 Nest 层<b>没有 fan-out 层</b>：每个订阅者都被当成回合发起者。上游的模型里，detach 绝不等于 cancel。</td>
+  </tr>
+  <tr>
+    <td><b>transcript / entry_added / commit.seqs</b>：可重放的持久化账本</td>
+    <td><span class="mono">runtime/transcript.ts:23-48</span>；<span class="mono">session/commit.ts</span>；<span class="mono">JsonlSessionRepo</span></td>
+    <td><span class="tag red">未用</span></td>
+    <td>落库只依赖「订阅窗口」，<b>不去 transcript 补全</b>。上游的账本是权威 SSOT，我们的却是二手转述。</td>
+  </tr>
+  <tr>
+    <td><b>单一权威写者</b>（设计公理）</td>
+    <td><span class="mono">docs/mobile-handoff/01-delta/delta.md</span>：「since there is exactly one authoritative writer」；<span class="mono">lane.ts:386</span>「the Drive continuation remains the sole top-level state writer」</td>
+    <td><span class="tag red">违反</span></td>
+    <td>我们有 N 个写者（N 条流各自 <code>finalizeTurn</code>），且互相不知道对方存在。</td>
+  </tr>
+  <tr>
+    <td><b>LaneBusy</b>：run 在跑时的显式拒绝</td>
+    <td><span class="mono">compaction-check.ts</span> import <code>LaneBusy</code>；<span class="mono">app.ts:211-215</span> → 409</td>
+    <td><span class="tag green">已用</span></td>
+    <td>409 本身是对的，错的是 Nest 收到 409 之后的行为。</td>
+  </tr>
+</table>
+
+<!-- ============ 3 ============ -->
+<h2 id="s3">3. 架构缺陷分层诊断</h2>
+
+<div class="grid">
+  <div class="card">
+    <h4>A · 数据模型层 <span class="tag red">根</span></h4>
+    <p><b>回合无身份。</b><code>PersistedExecutionEvent = {type, data, seq, ts, messageIndex}</code>——没有 runId、没有 streamId、没有完整性标记。<code>seq</code> 还是<b>每条流各自从 1 开始</b>的局部计数（<span class="mono">agent.service.ts:1309</span>），因此不同流的事件<b>无法归并</b>。回合边界因此退化为「一次 HTTP 连接的生命周期」。</p>
+  </div>
+  <div class="card">
+    <h4>B · 传输层 <span class="tag red">根</span></h4>
+    <p><b>订阅即切片。</b>生产一律 <code>live:true</code>（<code>from=now</code>），不重放；buffer 还会淘汰（<code>droppedFromSeq</code>）。没有「缺口标记」下发给消费方，消费方<b>无从知道自己是残缺的</b>。</p>
+  </div>
+  <div class="card">
+    <h4>C · 落库层 <span class="tag red">根</span></h4>
+    <p><b>无单一写者。</b>每条流独立 <code>finalizeTurn</code>，无 runId 幂等。上游公理被违反，直接产物就是 4 条同正文消息。</p>
+  </div>
+  <div class="card">
+    <h4>D · 渲染层 <span class="tag amber">放大器</span></h4>
+    <p><b>残缺被当完整。</b>孤儿 <code>tool_result</code> 被 push 成 parts[0]；重放按 seq 保序 ⇒ 残缺顺序被固化进历史，刷新可复现。</p>
+  </div>
+  <div class="card">
+    <h4>E · 产品交互层 <span class="tag amber">触发源</span></h4>
+    <p><b>阻塞期零出口。</b>propose_generation 阻塞最长 300s；等待态<b>仅由 dock 状态行渲染</b>（<span class="mono">turnTimeline.test.ts:231</span>），无确认卡；且上游 steer 在阻塞期也消费不到。用户唯一能做的动作就是<b>重发</b>——即触发本缺陷的唯一入口。</p>
+  </div>
+  <div class="card">
+    <h4>F · 门控层 <span class="tag amber">帮凶</span></h4>
+    <p><b>前端 <code>isStreaming</code> 是每页面内存态</b>，刷新/新标签页即失效；幂等键 <code>buildIdempotencyKey</code> 每次带 <code>Date.now()+random</code>（<span class="mono">streamRecovery.ts</span>），对重复发送<b>零防护</b>。</p>
+  </div>
+</div>
+
+<div class="box amber">
+  <div class="t">因果链（从触发到表象）</div>
+  <p>E（阻塞期无出口）→ 用户重发 → prompt 撞 409 → Nest 转 steer 但<b>流不终止</b>（F 门控失效放行）→ B（live 订阅只收窗口内事件）→ A（无 runId 可归并）+ C（每条流各自落库）→ 残缺事件集入库 → D（孤儿 tool_result 成为 parts[0]）→ <b>卡片漂移，刷新后永久复现</b>。</p>
+  <p><b>治理要义</b>：只修 D 是治标（卡片不漂了，但库里仍是 4 本烂账）；只修 F 是转移（用户发不出去了，但刷新页面仍会复制回合）。<b>必须先立 A（回合身份）+ C（单一写者）+ B（账本可补全），D/F/E 才有意义。</b></p>
+</div>
+
+<!-- ============ 4 ============ -->
+<h2 id="s4">4. 行业反模式对照</h2>
+
+<table>
+  <tr><th style="width:26%">生态共识（行业实践）</th><th style="width:14%">我们</th><th>具体表现</th></tr>
+  <tr>
+    <td>run 是资源：<code>202 Accepted + Location: /v1/runs/{id}</code>；客户端 attach/detach，<b>detach 永不 cancel</b>；流按 seq 可重放</td>
+    <td><span class="tag red">违反</span></td>
+    <td>没有 run 资源概念，「开流」隐式等于「开回合」。</td>
+  </tr>
+  <tr>
+    <td><b>single-flight / brokered fan-out</b>：一次计算、多路分发；行业数据显示 5–12% 的 LLM 调用由「刷新页面 / 切换设备」重复触发</td>
+    <td><span class="tag red">违反</span></td>
+    <td>N 条流 = N 份账；上游 <code>SessionRouter</code> 的 attachment 模型本可直接提供 fan-out。</td>
+  </tr>
+  <tr>
+    <td>幂等键<b>由内容确定性派生</b>；「uuid/时间戳当幂等键比没有更糟，因为重试会生成新键」</td>
+    <td><span class="tag red">违反</span></td>
+    <td><code>buildIdempotencyKey</code> 含 <code>Date.now()+random</code>。</td>
+  </tr>
+  <tr>
+    <td>事件<b>幂等且带稳定 item ID</b>；重放是重建状态而非破坏状态</td>
+    <td><span class="tag amber">部分</span></td>
+    <td><code>tool_result</code> 有 callId 兜底，但孤儿场景直接 push 新 part。</td>
+  </tr>
+  <tr>
+    <td><b>Never treat "stream closed" as "run finished"</b>；重连拿不到完整重放时返回 <b>gap marker</b> + snapshot，UI 诚实重绘</td>
+    <td><span class="tag red">违反</span></td>
+    <td><code>agent_end</code> 即落库，无缺口概念；UI 把残缺当完整渲染。</td>
+  </tr>
+  <tr>
+    <td>「不要把流工具结果的断言提前」——只在工具真正返回后才声明结果</td>
+    <td><span class="tag green">符合</span></td>
+    <td>本项无问题，列出以说明不是全盘否定。</td>
+  </tr>
+</table>
+
+<!-- ============ 5 ============ -->
+<h2 id="s5">5. 工程型方案</h2>
+
+<div class="box purple">
+  <div class="t">唯一架构原则</div>
+  <p><b>回合 = run（上游 <code>runId</code>），不是一次 HTTP 流。</b>「计算一次、分发多路、单一写者、账本可补全」——这四条全部是上游已提供的语义，我们只需要在适配层<b>停止与之对抗</b>，而不是自研一套。</p>
+</div>
+
+<h3>P0-1 · 补 runId 透传（pi-runtime，约 1 处改动，整条链的钥匙）</h3>
+<p><span class="mono">services/pi-runtime/src/session-manager.ts:150</span> 给 <code>NormalizedEvent</code> 加 <code>runId?: string</code>；<span class="mono">:2623 dispatch()</span> 与 <span class="mono">:1282 attachEvents()</span> 在归一化时带上（上游事件本就有 <code>runId</code>，仅透传）。<code>app.ts:420</code> 的 SSE 帧无需改结构（已在 <code>data</code> 里）。</p>
+<pre><span class="k">export interface</span> NormalizedEvent {
+  type: NormalizedEventType; lane?: string; ts: number; seq: number; data: unknown;
+  <span class="r">runId?: string;</span>  <span class="c">// ← 上游 run_start/run_end 及 in-run 事件本就携带，此前被丢弃</span>
+}</pre>
+<p class="kv"><b>验收</b>：新回合的 SSE 帧里 <code>run_start</code> 事件带 runId，且同回合后续所有事件 runId 一致。这是后面三条的前置。</p>
+
+<h3>P0-2 · 单一写者：只有 owner 流持账本（Nest）</h3>
+<p><span class="mono">apps/server/src/agent/agent.service.ts:1248-1279</span>：<code>prompt</code> 的<b>结果必须被 await 判定</b>，而不是 fire-and-forget 后用 catch 兜底。</p>
+<pre><span class="k">const</span> accepted = <span class="k">await</span> client.prompt(...).then(() =&gt; <span class="s">true</span>).catch(e =&gt; e.status === <span class="s">409</span> ? <span class="s">false</span> : <span class="k">throw</span> e)
+<span class="k">const</span> role = accepted ? <span class="s">'owner'</span> : <span class="s">'shadow'</span>      <span class="c">// 409 ⇒ 本流只是旁听者</span>
+<span class="k">if</span> (!accepted) <span class="k">await</span> client.steer(sessionKey, promptText, <span class="s">"main"</span>, { turnContext })
+<span class="c">// … 事件照常转发给前端（UI 体验不变）…</span>
+<span class="k">if</span> (role === <span class="s">'owner'</span>) <span class="k">await</span> this.finalizeTurn(...)  <span class="c">// ← 只有 owner 落库</span></pre>
+<p class="kv"><b>为什么这是正解</b>：与上游语义一致——steer 的含义就是「并入在跑的 run」，那么发起 steer 的连接自然<b>不是</b>一个新回合。同时 <code>/pending</code> 端点已在生产可用，shadow 流可据此立即给前端「已并入进行中的任务」的确定性反馈，而非静默旁听。</p>
+
+<h3>P0-3 · 落库以 runId 为幂等键（Nest + 数据模型）</h3>
+<p><code>PersistedExecutionEvent</code> 增 <code>runId</code>；<code>AgentMessage.metadata</code> 增 <code>runId</code> / <code>partial</code>。<code>finalizeTurn</code>（<span class="mono">:1556</span>）落库前按 <code>(threadId, runId)</code> 查重：已存在则 <b>UPDATE</b> 事件集而非 INSERT。</p>
+<p class="kv"><b>价值</b>：即使未来出现未预料的第二写者（recovery 排空、多标签页），也<b>不可能再产生重复消息</b>——从「靠约定保证唯一」升级为「靠主键保证唯一」。这是把 P0-2 的契约固化进数据模型。</p>
+
+<h3>P0-4 · 账本可补全：落库前用 transcript 补齐全量（根治切片）</h3>
+<p>owner 流在 <code>agent_end</code> 后、<code>finalizeTurn</code> 前，用订阅起点 <code>lastEventId</code> 向 pi-runtime 拉<b>该 runId 的完整事件</b>（pi-runtime 已有 <code>subscribe(afterSeq)</code> 重放 + <code>isReplayComplete</code> 判据，<span class="mono">session-manager.ts:171-176</span>），替代「只用自己窗口内的事件」。</p>
+<ul>
+  <li>重放完整 ⇒ 落库全量账本，历史渲染与实时渲染一致；</li>
+  <li>重放不完整（buffer 已淘汰）⇒ 落库带 <code>partial:true</code> + <code>gapFrom</code>，前端按缺口渲染（见 P1-2）。<b>不假装有全量</b>。</li>
+</ul>
+<p class="kv"><b>这一步是「治本」的关键</b>：它让账本来源从「二手转述（订阅窗口）」回到「一手账本（上游 transcript/事件日志）」，切片问题从根上消失，而不只是不再重复。</p>
+
+<h3>P1-1 · 阻塞期给出口（消除触发源）</h3>
+<p>把 propose_generation 的等待语义对齐 ask_user 已有的交互形态：等待期前端出<b>确认卡</b>（复用 <code>pendingAskUser</code> 交互位 + <code>waiting_user{nodeId}</code> 已下发的定位信息），用户点「确认 / 取消 / 改需求」→ 走已存在的 <code>/answers</code>（<code>decision: decline</code> 或 answers）。上游 <code>PendingToolRegistry</code> 已支持 <code>answered/timeout/aborted</code> 三态与 resolve 不 reject 的铁律（<span class="mono">pending-registry.ts:13-17</span>），无需改上游。</p>
+<p class="kv"><b>顺带修掉一个更深的坑</b>：上游注释已指出阻塞期没有 checkpoint 边界 ⇒ <b>steer 也要等到阻塞结束</b>（<span class="mono">session-manager.ts:2093-2096</span>）。所以「用户插话」在阻塞期只能靠 <code>/answers</code>，不能靠 steer。这一点必须在前端交互上体现，否则会出现「提示已收到但迟迟不动」的二次失信。</p>
+
+<h3>P1-2 · 前端诚实降级（渲染层）</h3>
+<ul>
+  <li>孤儿 <code>tool_result</code> 且时间线无前置 → 渲染为「<b>本轮前半段事件未捕获</b>」的 notice，而不是一个「已完成」的工具行（<span class="mono">turnTimeline.ts:345</span>）。</li>
+  <li><code>partial:true</code> 的回合在历史渲染时顶部标注，不假装完整。</li>
+  <li>发送门控改为<b>服务端权威</b>：发送前探 thread 活跃 run（可用 <code>/pending</code> + 新增轻量 state），取代纯内存 <code>isStreaming</code>。</li>
+</ul>
+
+<h3>P1-3 · 幂等键改为内容派生</h3>
+<p><code>buildIdempotencyKey</code>（<span class="mono">streamRecovery.ts</span>）改为 <code>hash(threadId + 消息正文 + 附件指纹)</code> + 短 TTL，同内容重复提交命中缓存，直接返回「已并入进行中的回合」。</p>
+
+<h3>P2 · 观测（让同类缺陷自己冒出来）</h3>
+<p>四个计数器：<code>shadow_stream_count</code>（409 后仍开流的次数）、<code>duplicate_turn_persist</code>（同 runId 二次落库尝试）、<code>orphan_tool_result</code>（孤儿结果数）、<code>replay_gap</code>（重放不完整次数）。<b>前两个应恒为 0</b>，非 0 即回归。</p>
+
+<div class="box green">
+  <div class="t">明确<b>不做</b>的事（避免重复造轮子）</div>
+  <p>① 不自研事件总线/去重框架——用上游 <code>runId</code> + 现有 SSE <code>id</code> 帧；② 不自研 fan-out broker——P0-2/3 已达成「计算一次、单一写者」，无需引入 Redis Streams；③ 不改上游 vendor 源码（<span class="mono">VENDORED.md</span> 纪律：只读镜像，适配上推 L2）；④ 不靠前端判断去重——前端只做降级呈现，唯一性由数据模型保证。</p>
+</div>
+
+<!-- ============ 6 ============ -->
+<h2 id="s6">6. 验收判据（可直接执行）</h2>
+
+<pre><span class="c"># ① 重复落库是否归零（应无输出）</span>
+sqlite3 lnkpi.db <span class="s">"SELECT threadId, substr(createdAt,1,10) s, COUNT(*) n FROM AgentMessage
+  WHERE role='assistant' GROUP BY threadId, s HAVING n &gt; 1;"</span>
+
+<span class="c"># ② 漂移签名是否归零（同正文 + 首事件非 thinking 的条数）</span>
+<span class="c">#   判据：assistant 消息 metadata.executionEvents[0].type ∈ {thinking,text} 占比 → 100%</span>
+
+<span class="c"># ③ runId 透传是否生效</span>
+curl -N <span class="s">"http://172.20.0.1:30100/sessions/&lt;threadKey&gt;/events?from=now"</span> | grep <span class="s">'"runId"'</span>
+
+<span class="c"># ④ 回归用例（必须真跑一次阻塞场景）</span>
+<span class="c">#   回合进行中 → 在 propose 等待期内发送第二条消息 → 期望：库内仅 1 条 assistant，</span>
+<span class="c">#   且第二条在 UI 上有「已并入进行中的任务」的确定性反馈（不是静默）。</span></pre>
+
+<div class="box amber">
+  <div class="t">历史数据修复</div>
+  <p>已污染的 3 条（<span class="mono">…jtdsb / …jtdsc / …jtdsd</span>）及全库同签名记录需一次性清理：保留 owner（首事件为 thinking 的那条），删除同 run 的影子消息，并重建被误挂的 <code>linkedOutputs</code>。清理前先备份，且该操作应在 P0 上线后进行，避免边修边产生新的。</p>
+</div>
+
+<!-- ============ 7 ============ -->
+<h2 id="s7">7. 影响面与排期建议</h2>
+
+<table>
+  <tr><th style="width:20%">项</th><th>现状</th></tr>
+  <tr><td>影响面</td><td>最近 400 条带 <code>executionEvents</code> 的助手消息中 <b>69 条</b>带漂移签名；多线程出现同秒重复落库 2~5 条。<b>系统性，非个案。</b></td></tr>
+  <tr><td>附带损伤</td><td>steer 兜底把重复消息灌进模型上下文（模型 thinking 原话「用户重复了…」），回合被反复拖长；本画布一个回合跑了约 25 分钟。</td></tr>
+  <tr><td>另需收编</td><td>生产 <code>GENERATION_RECOVERY_ENABLED=true</code>，recovery 的 <code>drainConversation</code> 也走完整 <code>streamConversation</code>（订阅 + 落库），是<b>第三条潜在写者</b>，需与 P0-2/3 一并纳入 runId 幂等。</td></tr>
+  <tr><td>排期</td><td>P0-1 → P0-2 → P0-3（同一 PR，互相咬合）→ P0-4 → 历史数据修复 → P1-1（产品交互，可并行）→ P1-2/3 → P2。</td></tr>
+  <tr><td>门禁</td><td>按项目纪律：合并前用真实生产 env 跑一次启动冒烟（<code>/api/health</code> 200），并在预发真跑一遍「阻塞期重发」回归。</td></tr>
+</table>
+
+<footer>
+  报告基于生产取证 + 上游源码 + 生态实践三方交叉验证生成。所有结论均给出可复现判据，未采信任何单方推断。<br>
+  上游基线：vendor/earendil-works/pi v0.85.1（VENDORED.md 声明为只读镜像，适配一律上推 L2/L3）。
+</footer>
+
+</div>
+</body>
+</html>

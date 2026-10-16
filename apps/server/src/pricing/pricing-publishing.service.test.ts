@@ -321,7 +321,7 @@ describe('PricingPublishingService.diffSummary', () => {
     // video:default（改过）与 audio:music（新增）无 costRateId → 都必须列出。
     // 旧口径只在 changed 分支采集，audio:music 这类新增条目会被漏掉。
     expect(d.noCostCoverage).toEqual(['video:default', 'audio:music'])
-    expect(d.floorViolations).toEqual([{ matchKey: 'text', credits: 8, floor: 11 }])
+    expect(d.floorViolations).toEqual([{ matchKey: 'text', credits: 8, limit: 11, kind: 'min' }])
     expect(d.missingCost).toEqual([])
   })
 
@@ -418,6 +418,41 @@ describe('PricingPublishingService.publish', () => {
     expect(db.versions.find((v) => v.version === 'v1')!.status).toBe('active')
     expect(db.versions.find((v) => v.version === 'v2')!.publishedAt).toBeNull()
     expect(db.auditLogs).toHaveLength(0)
+  })
+
+  it('用例 6b：token 反比率行越上限（r 过大）→ 400 ceiling 违规且状态零变化', async () => {
+    const db = new FakeDb()
+    seedBaseline(db)
+    const svc = svcOf(db)
+    const draft = await svc.createDraftFromActive('v2', '含 token 越上限')
+    await svc.upsertEntries(draft.id, [
+      // text:step-2-16k:out 挂 cr_text(costYuan=0.1) ⇒ ceiling=floor(1e6/(0.1×105))=95238；
+      // r=100000 > 95238 ⇒ kind='max' 触顶违规（不能用价格行下限去卡反比率行）。
+      { matchKey: 'text:step-2-16k:out', capability: 'text', credits: 100000, basis: 'launch-reprice', costRateId: 'cr_text' },
+    ])
+
+    const err = await svc.publish(draft.id).catch((e) => e)
+    expect(err).toBeInstanceOf(BadRequestException)
+    expect(err.message).toContain('text:step-2-16k:out')
+    expect(err.message).toContain('ceiling')
+
+    // 状态零变化
+    expect(db.versions.find((v) => v.version === 'v2')!.status).toBe('draft')
+    expect(db.versions.find((v) => v.version === 'v1')!.status).toBe('active')
+    expect(db.auditLogs).toHaveLength(0)
+  })
+
+  it('用例 6c：token 反比率行合规（r 在上限内）→ 正常发布（不再误报地板）', async () => {
+    const db = new FakeDb()
+    seedBaseline(db)
+    const svc = svcOf(db)
+    const draft = await svc.createDraftFromActive('v2', '含 token 合规行')
+    await svc.upsertEntries(draft.id, [
+      // r=505 ≤ ceiling=95238 ⇒ 合规
+      { matchKey: 'text:step-2-16k:out', capability: 'text', credits: 505, basis: 'launch-reprice', costRateId: 'cr_text' },
+    ])
+    await expect(svc.publish(draft.id)).resolves.toEqual({ version: 'v2' })
+    expect(db.versions.find((v) => v.version === 'v2')!.status).toBe('active')
   })
 })
 

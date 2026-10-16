@@ -1059,6 +1059,13 @@ export class SessionManager {
 				}),
 				systemPrompt: () => this.composeEntryAndObserve(entry),
 				thinkingLevel,
+				// 终审 C1（spec 2026-10-16-canvas-write-tool-chain-design.md §4.1 P1a）：run 级串行是
+				// canvas-id-binding 捕获/重写的时序前置——harness 运行时栈不消费 per-tool executionMode
+				// （该字段仅低层 agent-loop 读取，源码实证 pi-agent-core harness/runtime/harness.js:46
+				// 默认 "parallel"、harness/agent-harness.d.ts:632 才有 run 级 toolExecution），per-tool
+				// 声明是死配置。代价 = 本 run 全部工具批次（含读工具）串行；正确性 ≫ 吞吐（规格风险表已接受）。
+				// 注意：此设置不受 canvas id binding kill switch 影响——串行恒开。
+				toolExecution: "sequential",
 				// steering / followUp 队列模式（2026-10-02）：此前这两个值只在 configmap 里
 				// 写过、没人读（死配置），harness 实际吃的是 vendor 默认 "all"。
 				steeringMode: this.config.steeringMode,

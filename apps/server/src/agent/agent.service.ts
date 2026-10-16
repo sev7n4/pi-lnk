@@ -1114,6 +1114,11 @@ export class AgentService {
     // messageIndex 以 message_end 分段，供时间线还原「多段叙述各自成块」的块归属）。
     let traceSeq = 0
     let traceMessageIndex = 0
+    // TURN-IDENTITY P0-1：当前正在处理的 pi 事件（供 pushTraceEvent 取**会话级全局 seq**）。
+    // 为什么不逐个给 pushTraceEvent 加参数：它有 11 个调用点，逐个透传会把改动面扩散到
+    // 每段事件提取逻辑里，而这些逻辑本身并不关心 seq。改成由事件循环在每轮开头赋值、
+    // pushTraceEvent 只读 —— 单线程生成器内无并发写，语义是明确的「当前事件」。
+    let currentPiEvent: PiRuntimeEvent | undefined
     const pushTraceEvent = (type: string, data: unknown): PersistedExecutionEvent => {
       if (type !== 'text') textPersister.flush()
       traceSeq += 1
@@ -1121,6 +1126,9 @@ export class AgentService {
         type,
         data,
         seq: traceSeq,
+        // P0-1：全局 seq 与 pi-runtime 的 afterSeq / lastEventId 同编号空间；
+        // 缺省（旧 runtime / 非流式合成事件）时消费端回退局部 seq。
+        gSeq: currentPiEvent?.seq,
         ts: Date.now(),
         messageIndex: traceMessageIndex,
       }
@@ -1339,38 +1347,68 @@ export class AgentService {
     const promptTextWithMarkers = directImages
       ? `${promptText}\n${directImages.markers.join(' ')}`
       : promptText
-    void client
-      .prompt(sessionKey, promptTextWithMarkers, "main", {
+    // ── TURN-IDENTITY P0-2（回合身份 / 单一写者）：写者身份由 prompt 结果判定 ──
+    //
+    // 原实现是 `void client.prompt(...).catch(...)` —— **发射后不管**：409 被 catch
+    // 吞掉后，这条流并不终止，继续旁听在跑的 run，跑到 agent_end 时**自己也
+    // finalizeTurn 落库**。于是同一次 run 被 N 条流各记一本账（生产实证：同秒落
+    // 4 条助手消息、正文完全相同；后 3 条的事件集是完整回合的**子序列**——起点
+    // 滞后、终点同刻 ⇒ 订阅切片。切片首事件是孤儿 tool_result，前端 `parts.push`
+    // 把它变成 parts[0] ⇒「提议生成」卡片顶到思考和工具消息之前）。
+    //
+    // 对齐 Codex `NotSubmittedReason`：被拒绝的提交 **不得** 退化成一个新回合。
+    // 409 = 上游 LaneBusy（NotIdle）= 现成的 writer_lock ⇒ 本流转 **shadow**：
+    // 事件照常转发（用户照样看到在跑的进度），但不结算、不落库。
+    //
+    // ⚠️ 为什么这里可以安全地 await：`client.prompt` 是「接受即返回」（pi-runtime
+    // 内 `void lane.prompt(...)` 后立刻回 202），**不会**等到 run 结束；且订阅在
+    // 上面已先建立（`live:true` from=now），等待期间到达的事件由 iteratePiEvents
+    // 的内存队列承接 ⇒ 既拿到了确定的身份，又不丢首事件。
+    /** owner = 本流发起了 run（唯一落库者）；shadow = 并入在跑的 run（只转发）。 */
+    let turnRole: 'owner' | 'shadow' = 'owner'
+    let turnRefusalReason: 'not_idle' | 'not_steerable' = 'not_idle'
+    try {
+      await client.prompt(sessionKey, promptTextWithMarkers, "main", {
         forceSkills,
         turnContext,
         images: directImages?.images,
       })
-      .catch(async (err: unknown) => {
-        // 原本这里是一个空 catch（注释写「prompt 失败会以 error 事件形式出现」）——
-        // 那只对 503/上游错误成立：pi-runtime 会把 error 写进 SSE，前端看得见。
-        // 但对 **409 不成立**：prompt 根本没进去，会话在跑，SSE 里不会有任何东西，
-        // 于是「用户发了、世界没反应」是彻底静默的，而它恰恰是这条链路最常见的失败。
-        const message = err instanceof Error ? err.message : String(err)
-        const status = (err as { status?: number } | undefined)?.status
-        if (status !== 409) {
-          // 上游错误：照旧交给 SSE 的 error 事件，此处不另起一轮
-          this.piLogger.warn(`pi prompt failed (key=${sessionKey}): ${message}`)
-          return
-        }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      const status = (err as { status?: number } | undefined)?.status
+      if (status !== 409) {
+        // 上游错误：照旧交给 SSE 的 error 事件，此处不另起一轮。
+        // ⚠️ 刻意**不**置 shadow：网络超时等场景下 run 可能其实已被接受，
+        // 若把唯一写者误判成旁听 ⇒ 整轮消息彻底不落库（那比重复更糟）。
+        this.piLogger.warn(`pi prompt failed (key=${sessionKey}): ${message}`)
+      } else {
         // 409 = 上一轮还在跑。用户这次发言不该蒸发 → 改走 steer 队列（durable 落盘），
         // 由当前 run 的下一个 turn 边界接住。此前这条分支是 `catch(() => {})`，静默丢消息。
+        turnRole = 'shadow'
+        turnRefusalReason = 'not_idle'
+        this.piLogger.warn(
+          `turn_not_submitted{reason=not_idle} key=${sessionKey} — 本流转旁听（同 run 由 owner 流记账）`,
+        )
         try {
           await client.steer(sessionKey, promptText, "main", { turnContext })
         } catch (steerErr: unknown) {
           // 队列也塞不进去（会话已被回收 / runtime 侧异常）：必须留痕，
           // 否则「消息既不回答也不报错」会成为查不掉的黑洞。
+          turnRefusalReason = 'not_steerable'
           this.piLogger.warn(
             `pi steer fallback failed (key=${sessionKey}): ${
               steerErr instanceof Error ? steerErr.message : String(steerErr)
             }`,
           )
         }
-      })
+        // 结构化拒绝：409 是传输层信号，语义太薄，UI 拿不到 reason 就分不出
+        //「已并入 / 当前不可插话」两种文案。前端收到它才显示「已并入进行中的任务」。
+        yield {
+          type: 'turn_not_submitted',
+          data: { reason: turnRefusalReason },
+        } as AgentStreamEvent
+      }
+    }
 
     let assistantText = ''
     const canvasActions: CanvasAction[] = []
@@ -1407,6 +1445,8 @@ export class AgentService {
       while (!done) {
         const { value: event, done: streamClosed } = await iterator.next()
         if (streamClosed || !event) break
+        // P0-1：本轮落库事件共享这个事件的全局 seq（见 pushTraceEvent 的 gSeq）。
+        currentPiEvent = event
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true
           runFailed = event.type === 'error'
@@ -1554,7 +1594,10 @@ export class AgentService {
     // ── P2 T6（token 精确计费）：收尾结算（finalizeTurn 前，turn_settled 须随
     // executionEvents 落进 assistant metadata）。全链路 try/catch 包裹——计费故障
     // 绝不打断对话：结算失败 → release 全退 + warn，hold 泄漏双保险之二。
-    if (billingEnabled && billingHold && this.points && this.pricing) {
+    // TURN-IDENTITY P0-2：shadow 流（409 并入在跑的 run）**不参与结算** —— 它没有
+    // 发起 run，没有可归因的 usage；扣它等于对同一次生成重复收费。
+    // hold 由下面的 finally 兜底全退（holdOpen 仍为 true ⇒ release 恰一次）。
+    if (turnRole === 'owner' && billingEnabled && billingHold && this.points && this.pricing) {
       const usageEv = [...executionEvents].reverse().find((e) => e.type === 'turn_usage')
       const usage = (usageEv?.data ?? {}) as {
         inputTokens?: number
@@ -1648,14 +1691,25 @@ export class AgentService {
         }
       }
     }
-    await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
-      // Nest internal tools already wrote Session.canvasData; skip re-apply to avoid duplicate add_node
-      rewriteCanvasData: false,
-      // 退役对齐：老 LangGraph 路径（streamFromRuntime）同样传 deriveLinkedOutputs，
-      // pi 路径此前漏了这一项 → 助手消息的「产出」挂件为空。老路径已删，此处补回对等语义。
-      linkedOutputs: deriveLinkedOutputs(canvasActions),
-      metadata: buildTurnMetadata({ executionEvents }),
-    })
+    // ── TURN-IDENTITY P0-2：只有 owner 落库 ──
+    // shadow 流（409 并入在跑的 run）到此为止：事件已全程转发给前端（进度可见），
+    // 但**不写助手消息**。唯一性最终由 PR2 的 `(threadId, runId)` 唯一索引兜底；
+    // 这里先掐掉「同一 run 被 N 条流各记一本账」的源头。
+    if (turnRole === 'owner') {
+      await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
+        // Nest internal tools already wrote Session.canvasData; skip re-apply to avoid duplicate add_node
+        rewriteCanvasData: false,
+        // 退役对齐：老 LangGraph 路径（streamFromRuntime）同样传 deriveLinkedOutputs，
+        // pi 路径此前漏了这一项 → 助手消息的「产出」挂件为空。老路径已删，此处补回对等语义。
+        linkedOutputs: deriveLinkedOutputs(canvasActions),
+        metadata: buildTurnMetadata({ executionEvents }),
+      })
+    } else {
+      // shadow：事件已全程转发给前端（进度可见），到此为止——同一次 run 只记一本账。
+      this.piLogger.warn(
+        `turn persist skipped (role=shadow, reason=${turnRefusalReason}, key=${sessionKey}) — 已并入在跑的 run，由 owner 流记账`,
+      )
+    }
     } finally {
       // ── F2：hold 生命周期兜底（恰一次）──
       // holdOpen=true = 本 run 持有 hold 且 settle/release 均未成功——正常收束时

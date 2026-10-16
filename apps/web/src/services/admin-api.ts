@@ -215,7 +215,8 @@ export type AdminDiffSummary = {
   unchanged: number
   maxIncrease: { matchKey: string; from: number; to: number; pct: number } | null
   maxDecrease: { matchKey: string; from: number; to: number; pct: number } | null
-  floorViolations: { matchKey: string; credits: number; floor: number }[]
+  /** kind='min'：价格行跌破下限（limit=floor）；kind='max'：token 反比率行超过上限（limit=ceiling）。 */
+  floorViolations: { matchKey: string; credits: number; limit: number; kind: 'min' | 'max' }[]
   missingCost: string[]
   noCostCoverage: string[]
 }

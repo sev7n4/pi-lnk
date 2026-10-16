@@ -110,7 +110,13 @@ export function buildMatchKey(q: PricingQuery): string {
  * 文本 token 反比率行（P2 · spec §6.5）：`text:<modelKey>:in|cache|out` 三行一组，
  * credits 存反比率整数 `r = floor(1e6 / (costYuan × marginBp / 100))（等价于 floor(1e6 × 100 / (costYuan × marginBp))；勿写成 costYuan × 100 × marginBp——会差 100×）`。
  */
-export type TextTokenSpec = 'in' | 'cache' | 'out'
+const TEXT_TOKEN_SPECS = ['in', 'cache', 'out'] as const
+
+/**
+ * 反比率行的 spec 全集。类型（本别名）与判据正则（TEXT_TOKEN_KEY_PATTERN）同源于
+ * 上面的 TEXT_TOKEN_SPECS——新增 spec 只改一处。
+ */
+export type TextTokenSpec = (typeof TEXT_TOKEN_SPECS)[number]
 
 /**
  * 文本 token 计费的 5 个模型键（P2，与 CostRate `per_1m_tokens_*` 行同键：
@@ -122,6 +128,12 @@ export const TEXT_TOKEN_MODELS: readonly string[] = [
   'step-2-16k',
   'step-5-preview',
   'minimax-m2.7',
+  // agnes 文本渠道（PROVISIONAL 暂定）：平台在用的 agnes-2.0/2.5/3.0-flash 此前未进 RMB
+  // 台账，quoteTextTokens 对它们会走 USD 兜底；补入后走精确 token 反比率。成本数值待
+  // 「上游渠道定价全链路」立项打通后以真实 RMB/1M 覆盖（仅改 seed 成本行即可）。
+  'agnes-2.0-flash',
+  'agnes-2.5-flash',
+  'agnes-3.0-flash',
 ]
 
 /**
@@ -130,6 +142,57 @@ export const TEXT_TOKEN_MODELS: readonly string[] = [
  */
 export function buildTextTokenMatchKey(modelKey: string, spec: TextTokenSpec): string {
   return `text:${modelKey}:${spec}`
+}
+
+/**
+ * 反比率行匹配键正则（与 TEXT_TOKEN_SPECS 同源：新增 spec 只改 TEXT_TOKEN_SPECS 一处，
+ * 正则会自动覆盖）。判别「价格行」（`text` 单价行 / `image:*` / `video:*` …）与「token 反比率行」
+ * （`text:<model>:<spec>`）的唯一可靠键形判据——两者 capability 都可能是 'text'，不能靠它分。
+ */
+export const TEXT_TOKEN_KEY_PATTERN = /^text:[^:]+:(in|cache|out)$/
+
+/** 是否文本 token 反比率行（键形 `text:<model>:<spec>`）。 */
+export function isTextTokenMatchKey(matchKey: string): boolean {
+  return TEXT_TOKEN_KEY_PATTERN.test(matchKey)
+}
+
+/** 地板违规项（价格行跌破下限 / 反比率行超过上限）。kind 供前端区分 floor/ceiling 渲染。 */
+export interface FloorViolation {
+  matchKey: string
+  credits: number
+  /** 临界值：kind='min' 为下限（floor）；kind='max' 为上限（ceiling）。 */
+  limit: number
+  kind: 'min' | 'max'
+}
+
+/** 地板毛利系数（×1.05，spec §10）。价格行下限与反比率行上限同源同一因子。 */
+const FLOOR_MULTIPLIER = 105
+
+/**
+ * 统一地板校验（价格行 + 反比率行同源），发布流与种子两处共用。
+ *
+ * 价格行（非 `text:<model>:<spec>`）：售价 credits ≥ ceil(costYuan × 1.05) ⇒ kind='min'。
+ *
+ * 反比率行（`text:<model>:<spec>`）：credits=r（每 credit=r tokens）。计费 charge=ceil(tokens/r)
+ * credit，每 credit 成本 = r × costYuan / 1e6 元；收入=0.01 元/credit。「收入 ≥ 成本×1.05」
+ * 在 T=r 取等 ⇒ r × costYuan × 1.05 ≤ 1e4 ⇔ r ≤ floor(1e6/(costYuan×105)) ⇒ kind='max'。
+ * 种子按 marginBp=11000（×1.10）现算 r ⇒ 110>105 ⇒ 任何种子行必过；本函数防的是未来映射
+ * 改动（折扣/封顶/换锚）把带病条目混进草案/发布。
+ *
+ * costRateId 缺失或 costYuan 未知 ⇒ 返回 null（缺失成本不在地板判定内，由 missingCost 另行报告）。
+ */
+export function checkCostFloor(
+  e: { matchKey: string; credits: number; costRateId: string | null },
+  costYuan: number | undefined,
+): FloorViolation | null {
+  if (!e.costRateId) return null
+  if (costYuan === undefined) return null
+  if (isTextTokenMatchKey(e.matchKey)) {
+    const limit = Math.floor(1_000_000 / (costYuan * FLOOR_MULTIPLIER))
+    return e.credits > limit ? { matchKey: e.matchKey, credits: e.credits, limit, kind: 'max' } : null
+  }
+  const limit = Math.ceil(costYuan * FLOOR_MULTIPLIER)
+  return e.credits < limit ? { matchKey: e.matchKey, credits: e.credits, limit, kind: 'min' } : null
 }
 
 /** 现行常量行为（= 迁移前的代码路径）。任何查询都可求值，用于兜底与金标准比对。 */

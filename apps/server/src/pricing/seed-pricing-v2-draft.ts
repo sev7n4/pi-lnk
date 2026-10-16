@@ -15,6 +15,11 @@
  *    基础档：computeCreditsFromCost(perSec × d, 11000)，perSec 用 5s 锚点行现算；
  *    参考档：v2base + (v1ref − v1base)（加价项保留——spec §6.6）。
  * ③ 其余全部档位：逐字复制 v1 值（legacyPriceOf 同源，不从库读 v1），basis='legacy-equivalent'。
+ * ④ 文本 token 反比率行（P2 §6.5 · M-4 补接）：enumerateTextTokenRows() 23 行
+ *    （8 模型 in/out + 7 cache：step-2-16k 无 cache 行；agnes 三档均含 cache），反比率
+ *    r = floor(1e6/(costYuan×marginBp/100)) 现算（勿写 costYuan×100×marginBp——差 100×），
+ *    挂 per_1m_tokens_* CostRate 行，basis='launch-reprice'——与 quoteTextTokens
+ *    的除数同源同值（quote 按 ceil(tokens/r) 计费）。
  *
  * costRateId 挂接规则：image 全挂；video 768p/2k 按时长挂对应 CostRate 行——
  * ≥5s 挂 5s 锚点行，4s 挂 4s 推算行（2026-10-15 收尾包补录：vendor 无 4s SKU，
@@ -27,25 +32,25 @@ import type { PrismaClient } from '@prisma/client'
 import type { PrismaService } from '../prisma/prisma.service'
 import {
   buildMatchKey,
+  buildTextTokenMatchKey,
   canonicalImageCount,
   canonicalImageResolution,
   canonicalVideoResolution,
+  checkCostFloor,
   computeCreditsFromCost,
   legacyPriceOf,
   videoPriceFamily,
 } from './pricing.core'
 import type { PricingCapability } from './pricing.core'
-import { enumeratePricingSpace } from './pricing.space'
+import { enumeratePricingSpace, enumerateTextTokenRows } from './pricing.space'
 
 export const PRICING_VERSION_V2_DRAFT = 'v2-launch'
 
-export const V2_DRAFT_NOTE = 'P1 拉新期价目草案（spec §6/§7 拍板值，发布须走 §8.4 审批流 + §8.5 灰度）'
+export const V2_DRAFT_NOTE =
+  'P1 拉新期价目草案（spec §6/§7 拍板值 + P2 §6.5 文本 token 反比率行；发布须走 §8.4 审批流 + §8.5 灰度）'
 
 /** 拉新期毛利系数（spec §5.1：marginBp 11000 = ×1.10），与 MarginPolicy.launch 同源。 */
 const LAUNCH_MARGIN_BP = 11000
-
-/** 发布价格地板乘数（spec §10：成本 × 1.05，积分口径 = ×105）。与 pricing-publishing.service 同数。 */
-const FLOOR_MULTIPLIER = 105
 
 /** video 锚点行时长（CostRate spec '768p:5s' / '2k:5s'）。 */
 const ANCHOR_DURATION_S = 5
@@ -74,10 +79,13 @@ export function assertLaunchFloor(
     if (costYuan === undefined) {
       throw new Error(`seedPricingV2Draft: 地板校验缺 CostRate 行 ${e.costRateId}（${e.matchKey}）`)
     }
-    const floor = Math.ceil(costYuan * FLOOR_MULTIPLIER)
-    if (e.credits < floor) {
+    // 价格行判下限、token 反比率行判上限（同一条「收入 ≥ 成本 × 1.05」的两种量纲展开，
+    // 委托 pricing.core.checkCostFloor）。种子按 marginBp=11000 现算 r ⇒ 110>105 ⇒ 必过，
+    // 此防线防的是未来映射改动（折扣/封顶/换锚）把带病条目混进草案。
+    const v = checkCostFloor(e, costYuan)
+    if (v) {
       throw new Error(
-        `seedPricingV2Draft: 地板校验失败 ${e.matchKey}=${e.credits} < ceil(${costYuan}×105)=${floor}——不许带病草案进审批`,
+        `seedPricingV2Draft: 地板校验失败 ${v.matchKey}=${v.credits} ${v.kind === 'max' ? '>' : '<'} ${v.kind === 'max' ? 'ceiling' : 'floor'}=${v.limit}——不许带病草案进审批`,
       )
     }
   }
@@ -93,6 +101,12 @@ const REQUIRED_RATES = [
   { modelKey: 'minimax-h3', spec: '768p:4s' },
   { modelKey: 'minimax-h3', spec: '2k:4s' },
 ] as const
+
+/** P2 M-4：token 反比率行的成本行守卫（同源派生自枚举，16k cache 行天然不在）。 */
+const REQUIRED_TOKEN_RATES = enumerateTextTokenRows().map((t) => ({
+  modelKey: t.modelKey,
+  spec: `per_1m_tokens_${t.spec}`,
+}))
 
 export async function seedPricingV2Draft(
   prisma: PrismaClient | PrismaService,
@@ -112,7 +126,13 @@ export async function seedPricingV2Draft(
   }
 
   const rates = await prisma.costRate.findMany({
-    where: { OR: REQUIRED_RATES.map((k) => ({ channel: 'platform', modelKey: k.modelKey, spec: k.spec })) },
+    where: {
+      OR: [...REQUIRED_RATES, ...REQUIRED_TOKEN_RATES].map((k) => ({
+        channel: 'platform',
+        modelKey: k.modelKey,
+        spec: k.spec,
+      })),
+    },
   })
   const rateMap = new Map(rates.map((r) => [`${r.modelKey}:${r.spec}`, r]))
   for (const k of REQUIRED_RATES) {
@@ -175,6 +195,21 @@ export async function seedPricingV2Draft(
       throw new Error(`seedPricingV2Draft: 非法积分值 ${matchKey} → ${credits}`)
     }
     planned.push({ matchKey, capability: q.capability, credits, basis, costRateId })
+  }
+
+  // ④ 文本 token 反比率行（P2 §6.5 · M-4）：credits 存 r（tokens/credit），
+  // quoteTextTokens 按 ceil(tokens/r) 计费——两端口径同源同值。
+  // 地板自检对 token 行平凡成立（r ≥ ceil(cost×105) 量纲不同但方向恒安全）。
+  for (const t of enumerateTextTokenRows()) {
+    const rate = rateMap.get(`${t.modelKey}:per_1m_tokens_${t.spec}`)!
+    const r = Math.floor(1e6 / (rate.costYuan * LAUNCH_MARGIN_BP / 100))
+    planned.push({
+      matchKey: buildTextTokenMatchKey(t.modelKey, t.spec),
+      capability: 'text',
+      credits: r,
+      basis: 'launch-reprice',
+      costRateId: rate.id,
+    })
   }
 
   // 地板自检：写库前完成全部映射与校验（违规即 throw ⇒ 零落库，不留半成品草案）

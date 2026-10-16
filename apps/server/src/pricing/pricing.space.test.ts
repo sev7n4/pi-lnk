@@ -58,11 +58,15 @@ describe('enumerateTextTokenRows（P2 T4：文本 token 反比率行）', () => 
       'step-2-16k',
       'step-5-preview',
       'minimax-m2.7',
+      // agnes 文本渠道（PROVISIONAL 暂定，待上游渠道定价打通后修正）
+      'agnes-2.0-flash',
+      'agnes-2.5-flash',
+      'agnes-3.0-flash',
     ])
   })
 
-  it('5 模型 × in/out 全量 + cache 4 行 = 14 行（step-2-16k 上游未公布 cache，不枚举）', () => {
-    expect(rows.length).toBe(14)
+  it('8 模型 × in/out 全量 + cache 7 行 = 23 行（step-2-16k 上游未公布 cache；agnes 三档均含 cache）', () => {
+    expect(rows.length).toBe(23)
     for (const modelKey of TEXT_TOKEN_MODELS) {
       expect(keys, modelKey).toContain(buildTextTokenMatchKey(modelKey, 'in'))
       expect(keys, modelKey).toContain(buildTextTokenMatchKey(modelKey, 'out'))
@@ -71,6 +75,9 @@ describe('enumerateTextTokenRows（P2 T4：文本 token 反比率行）', () => 
     expect(keys).toContain('text:step-3.7-flash:cache')
     expect(keys).toContain('text:step-5-preview:cache')
     expect(keys).toContain('text:minimax-m2.7:cache')
+    expect(keys).toContain('text:agnes-2.0-flash:cache')
+    expect(keys).toContain('text:agnes-2.5-flash:cache')
+    expect(keys).toContain('text:agnes-3.0-flash:cache')
     expect(keys).not.toContain('text:step-2-16k:cache')
   })
 
