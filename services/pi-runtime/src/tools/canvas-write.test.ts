@@ -1139,3 +1139,14 @@ describe("canvas-write: RB-D9 指标发射", () => {
 		assert.equal(missingRefs, 1);
 	});
 });
+
+describe("canvas-write: 写工具串行化（spec 2026-10-16 P1-A）", () => {
+	it("upsert_media_node / set_node_generation_params / propose_generation 声明 executionMode=sequential", () => {
+		const { client } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		for (const name of ["upsert_media_node", "set_node_generation_params", "propose_generation"]) {
+			const tool = findTool(tools, name);
+			assert.equal(tool.executionMode, "sequential", `${name} 必须串行（同批写调用 create 先 finalize，P1b 捕获时序的前提）`);
+		}
+	});
+});
