@@ -33,3 +33,16 @@ describe('composer arbitrary font sizes collapsed (P0-2.2 / B15)', () => {
     expect(hits).toEqual([])
   })
 })
+
+describe('dock shadow tokenized (P0-3.2)', () => {
+  it('AgentSideRail has no hardcoded black dock shadows', () => {
+    const sfc = readFileSync(join(HERE, '../components/agent/AgentSideRail.vue'), 'utf8')
+    expect(sfc).not.toContain('rgba(0, 0, 0, 0.42)')
+    expect(sfc).not.toContain('rgba(0, 0, 0, 0.3)')
+    expect(sfc).toContain('var(--neo-glass-shadow)')
+  })
+  it('--neo-glass-shadow is paired across themes', () => {
+    const css = readFileSync(join(STYLES, 'neowow-tokens.css'), 'utf8')
+    expect(css.match(/--neo-glass-shadow:/g)?.length).toBeGreaterThanOrEqual(2)
+  })
+})

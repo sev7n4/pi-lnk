@@ -4408,11 +4408,7 @@ defineExpose({
   background: var(--neo-glass-bg);
   backdrop-filter: blur(var(--neo-glass-blur)) saturate(1.5);
   -webkit-backdrop-filter: blur(var(--neo-glass-blur)) saturate(1.5);
-  box-shadow:
-    0 20px 44px rgba(0, 0, 0, 0.42),
-    0 2px 6px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgb(var(--lnk-overlay-rgb) / 0.14),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  box-shadow: var(--neo-glass-shadow);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -4430,10 +4426,7 @@ defineExpose({
 .agent-input-dock:focus-within {
   border-color: color-mix(in srgb, var(--neo-hi-text) 28%, var(--neo-glass-border));
   box-shadow:
-    0 20px 44px rgba(0, 0, 0, 0.42),
-    0 2px 6px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgb(var(--lnk-overlay-rgb) / 0.14),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    var(--neo-glass-shadow),
     0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 14%, transparent);
 }
 
