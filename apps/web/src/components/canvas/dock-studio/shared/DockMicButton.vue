@@ -12,7 +12,8 @@ const emit = defineEmits<{
 <template>
   <button
     type="button"
-    class="dock-mic-btn"
+    class="dock-mic-btn agent-hit-expand"
+    data-hit="m"
     :class="{ 'is-listening': listening }"
     title="语音输入"
     aria-label="语音输入"

@@ -17,7 +17,8 @@ const emit = defineEmits<{
 <template>
   <button
     type="button"
-    class="dock-generate-btn"
+    class="dock-generate-btn agent-hit-expand"
+    data-hit="l"
     :class="[`dock-generate-btn--${size}`, { 'is-generating': generating }]"
     :disabled="disabled"
     :title="title ?? (generating ? '点击取消生成' : '生成')"

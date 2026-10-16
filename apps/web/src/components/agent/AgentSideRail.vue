@@ -3654,7 +3654,8 @@ defineExpose({
                 <div ref="attachMenuRef" class="agent-attach-menu relative">
                     <button
                       type="button"
-                      class="dock-ghost-ctl flex h-8 w-8 items-center justify-center rounded-lg"
+                      class="dock-ghost-ctl agent-hit-expand flex h-8 w-8 items-center justify-center rounded-lg"
+                      data-hit="l"
                       :class="{ 'is-open': attachMenuOpen }"
                       :disabled="readOnly || isUploading"
                       :title="readOnly ? '只读画布不能添加参考素材' : '添加引用素材'"
@@ -3709,7 +3710,7 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-params">
-                  <UniversalModelSelector v-model="planningModel" type="text" ghost />
+                  <UniversalModelSelector v-model="planningModel" type="text" ghost class="agent-model-hit" />
 
                   <div
                     v-if="showPlanningThinkingControls"
@@ -4556,6 +4557,48 @@ defineExpose({
 
 .agent-composer__mention {
   min-width: 0;
+}
+
+/* ---- P0-4 移动端命中区扩展（视觉尺寸不变，基线 B8: 24/28/32） ----
+ * 透明 ::after 外扩可点区域：24px 控件（mic，data-hit="m"）→ inset -10px 凑满 44px；
+ * 28/32px 控件（generate 锚 / ＋ / 模型 chip，data-hit="l"）→ inset -8px。
+ * 仅 ≤767px 生效，桌面命中区与视觉完全不变。 */
+.agent-hit-expand {
+  position: relative;
+}
+
+.agent-hit-expand::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+/* 模型 chip：触发按钮在 UniversalModelSelector 组件内部，class 落在组件根 wrapper 上，
+ * 需 :deep 穿透把同一扩展挂到真实按钮 */
+.agent-model-hit > :deep(button) {
+  position: relative;
+}
+
+.agent-model-hit > :deep(button)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+@media (max-width: 767px) {
+  .agent-hit-expand[data-hit='m']::after {
+    inset: -10px; /* 24px → 44px */
+  }
+
+  .agent-hit-expand[data-hit='l']::after {
+    inset: -8px; /* 28/32px → 44px+ */
+  }
+
+  .agent-model-hit > :deep(button)::after {
+    inset: -8px;
+  }
 }
 
 /* ---- 移动端 composer 三态（2026-10-15 二次重构，对齐 WorkBuddy） ----
