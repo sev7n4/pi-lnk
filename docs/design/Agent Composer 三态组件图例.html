@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agent Composer 三态可见组件图例（PC / 移动端）</title>
+<style>
+  :root{
+    --bg:#f4f5f9; --panel:#ffffff; --ink:#1f2430; --muted:#6b7280;
+    --line:#d8dce6; --canvas:#eef1f7; --canvas-line:#c8cfdd;
+    --accent:#3b6ef5; --stop:#e5484d; --chip:#f0f2f8; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    padding:28px 22px 60px;line-height:1.5}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 20px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 22px;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:16px;height:16px;border-radius:5px;border:1.5px solid var(--accent);background:transparent;display:inline-block}
+  .sw.fill{background:var(--accent);border-color:var(--accent)}
+  .sw.stop{background:var(--stop);border-color:var(--stop)}
+  .sw.canvas{background:var(--canvas);border-color:var(--canvas-line)}
+  .sw.up{background:var(--chip);border-color:var(--line)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:1080px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:0 1px 2px rgba(20,30,60,.04)}
+  .card h2{font-size:15px;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+  .card h2 .tag{font-size:11px;font-weight:600;color:#fff;background:var(--accent);border-radius:999px;padding:2px 8px}
+  .card .state{font-size:12px;color:var(--muted);margin:0 0 12px}
+  /* canvas strip */
+  .canvas{height:54px;border:1px dashed var(--canvas-line);background:var(--canvas);border-radius:10px;
+    display:flex;align-items:center;justify-content:center;color:#8a93a8;font-size:11.5px;margin-bottom:12px;position:relative}
+  .canvas .badge{position:absolute;right:8px;top:6px;font-size:10px;color:#9aa3b2;background:#fff;border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+  /* composer surfaces */
+  .pc-card{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fbfcfe}
+  .dock{border:1px solid var(--line);border-radius:9px;min-height:40px;padding:8px 10px;color:var(--muted);font-size:12px;position:relative;
+    display:flex;align-items:center;gap:8px;background:#fff}
+  .ctrl-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .bar{border:1px solid var(--line);border-radius:999px;height:46px;display:flex;align-items:center;gap:8px;
+    padding:0 12px;background:#fff;position:relative}
+  /* ghost control = no background */
+  .ctrl{border:1.5px solid var(--accent);color:var(--accent);background:transparent;border-radius:8px;
+    min-width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;padding:0 8px}
+  .ctrl.sm{height:26px;min-width:26px;font-size:11px;border-radius:7px}
+  .ctrl.icon{border-radius:50%}
+  .ctrl.stop{background:var(--stop);border-color:var(--stop);color:#fff}
+  .ctrl.muted{border-color:var(--muted);color:var(--muted)}
+  .text-hint{color:#9aa3b2;font-size:12px;flex:1}
+  .bar.multi{height:auto;flex-direction:column;align-items:stretch;gap:6px;border-radius:16px;padding:8px 12px}
+  .bar-line{display:flex;align-items:center;gap:8px;position:relative}
+  .chips-in{display:flex;gap:6px;flex-wrap:wrap}
+  .refchip{font-size:11px;background:var(--chip);border:1px solid var(--line);border-radius:7px;padding:3px 8px;color:#3a4150;display:inline-flex;align-items:center;gap:4px}
+  /* corner anchor icon (◎) at left vertex */
+  .corner{position:absolute;left:-9px;top:-9px;width:22px;height:22px;border-radius:50%;
+    border:1.5px solid var(--accent);color:var(--accent);background:transparent;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+  .hidden-tag{display:inline-block;margin-top:8px;font-size:11px;color:#b0b6c2;border:1px dashed #cfd5e2;border-radius:6px;padding:1px 7px}
+  /* above content layers */
+  .above{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+  .layer{font-size:11px;color:var(--muted);background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:6px 9px}
+  .layer.ref::before{content:"ref 芯片条 · ";}
+  .layer.chips::before{content:"样例 chips · ";}
+  .layer.status::before{content:"状态行 · ";}
+  .layer.opt::before{content:"轻选项 · ";}
+  .caption{margin-top:12px;font-size:11.5px;color:var(--muted);border-top:1px dashed var(--line);padding-top:9px}
+  .caption b{color:var(--ink)}
+  .foot{margin-top:26px;font-size:11.5px;color:var(--muted);max-width:1080px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <h1>Agent Composer 三态可见组件图例</h1>
+  <p class="sub">PC / 移动端 × 空闲 / 输入 / 生成中 —— 对应规格 §5.5。composer 表面上的控件均为<b>无背景 ghost 控件</b>；虚线圆（◎）为左顶点锚定的画布节点引用入口，按态门控可见。<b>ref 芯片 = 草稿内容，位于 composer 表面内部（输入文本上方）</b>；上方仅浮起系统层（状态行 / 样例 chips / 插话选项）。</p>
+
+  <div class="legend">
+    <span><i class="sw"></i> 无背景控件（＋/模型/发送/◎/🎙）</span>
+    <span><i class="sw fill"></i> 普通填充（示意非本规范）</span>
+    <span><i class="sw stop"></i> 停止红块（唯一强调色例外）</span>
+    <span><i class="sw canvas"></i> 画布（露出上半）</span>
+    <span><i class="sw up"></i> 草稿芯片（表面内）与上方系统层</span>
+  </div>
+
+  <div class="grid">
+
+    <!-- PC ① 空闲 -->
+    <div class="card">
+      <h2><span class="tag">PC</span> ① 空闲（首屏）</h2>
+      <p class="state">单一 composer 卡片：输入 dock + A 级控制行（单卡无内部分区）</p>
+      <div class="canvas">画布（露出上半、可点）<span class="badge">无遮罩</span></div>
+      <div class="pc-card">
+        <div class="dock">描述你的想法，或 @ 引用画布节点…</div>
+        <div class="ctrl-row">
+          <span class="ctrl">＋</span>
+          <span class="ctrl muted">模型⌄</span>
+          <span class="ctrl icon muted">🎙</span>
+          <span class="ctrl muted">↑发送</span>
+        </div>
+      </div>
+      <div class="above">
+        <div class="layer chips">一行轻量人格文案；4 条动态样例 chips（按画布状态）</div>
+      </div>
+      <div class="hidden-tag">◎ 空态隐藏（键入 @ 仍可触达）</div>
+      <p class="caption"><b>表面控件（无背景）：</b>＋/模型⌄/🎙/↑发送　<b>上方浮层：</b>人格文案+样例 chips　<b>隐藏：</b>◎、B 级思考 chip、C 级抽屉内容</p>
+    </div>
+
+    <!-- PC ② 输入 -->
+    <div class="card">
+      <h2><span class="tag">PC</span> ② 输入</h2>
+      <p class="state">同卡片形态恒定；左顶点 ◎ 出现</p>
+      <div class="canvas">画布（露出上半、可点）<span class="badge">无遮罩</span></div>
+      <div class="pc-card">
+        <div class="chips-in"><span class="refchip">🖼 产品渲染图</span><span class="refchip">📦 SKU 卡片</span></div>
+        <div class="dock">帮我给这张图做个排版 <span class="corner">◎</span></div>
+        <div class="ctrl-row">
+          <span class="ctrl">＋</span>
+          <span class="ctrl muted">模型⌄</span>
+          <span class="ctrl icon muted">🎙</span>
+          <span class="ctrl">↑发送</span>
+        </div>
+      </div>
+      <p class="caption"><b>表面控件（无背景）：</b>＋/模型⌄/🎙/↑发送/◎(左顶点)；仅非默认值时 B 级思考 chip 居控制行　<b>卡内草稿：</b>ref 芯片条（输入文本上方，AgentRefStrip，可拖排/移除）　<b>上方浮层：</b>无　<b>隐藏：</b>样例 chips 让位输入、C 级抽屉内容</p>
+    </div>
+
+    <!-- PC ③ 生成中 -->
+    <div class="card">
+      <h2><span class="tag">PC</span> ③ 生成中</h2>
+      <p class="state">同卡片形态恒定；发送位变停止红块；◎ 仍可见（可中途插话加引用）</p>
+      <div class="canvas">画布（露出上半、可点）<span class="badge">无遮罩</span></div>
+      <div class="pc-card">
+        <div class="chips-in"><span class="refchip">🖼 产品渲染图</span></div>
+        <div class="dock">输入消息…加入待发队列 <span class="corner">◎</span></div>
+        <div class="ctrl-row">
+          <span class="ctrl">＋</span>
+          <span class="ctrl muted">模型⌄</span>
+          <span class="ctrl icon muted">🎙</span>
+          <span class="ctrl stop">■停止</span>
+        </div>
+      </div>
+      <div class="above">
+        <div class="layer status">阶段文案 / 进度条 / 预估时长 + 本轮积分</div>
+        <div class="layer opt">立即插话 / 等它跑完</div>
+      </div>
+      <p class="caption"><b>表面控件（无背景）：</b>＋/模型⌄/🎙/停止(红块,原位)/◎(左顶点)　<b>卡内草稿：</b>中途插话新加 ref 芯片同样入卡内　<b>上方浮层：</b>≤24px 状态行 + 轻选项　<b>隐藏：</b>样例 chips、C 级抽屉内容</p>
+    </div>
+
+    <!-- 移动端 ① 空闲 -->
+    <div class="card">
+      <h2><span class="tag" style="background:#0a8f5b">移动端</span> ① 空闲</h2>
+      <p class="state">单一干净裸条（无嵌套视觉）；＋ 在条内左侧；无独立控制行</p>
+      <div class="canvas">画布（露出上半、可点）<span class="badge">无 hero / 无遮罩</span></div>
+      <div class="bar">
+        <span class="ctrl sm">＋</span>
+        <span class="text-hint">按住说话（点按切输入态）</span>
+      </div>
+      <div class="hidden-tag">◎ 空态隐藏（键入 @ 仍可触达）· 模型/发送不常驻</div>
+      <p class="caption"><b>表面控件（无背景）：</b>仅 ＋（条内）1 个 + 「按住说话」提示（无图标）　<b>上方浮层：</b>画布（不堆样例）　<b>隐藏：</b>◎、模型/发送、独立 mic（移动端无）</p>
+    </div>
+
+    <!-- 移动端 ② 输入 -->
+    <div class="card">
+      <h2><span class="tag" style="background:#0a8f5b">移动端</span> ② 输入</h2>
+      <p class="state">同一条裸条；＋/◎/模型/发送 同处条内、均无背景；无独立控制行</p>
+      <div class="canvas">画布（露出上半、可点）<span class="badge">无遮罩</span></div>
+      <div class="bar multi">
+        <div class="chips-in"><span class="refchip">🖼 产品渲染图</span></div>
+        <div class="bar-line">
+          <span class="ctrl sm">＋</span>
+          <span class="corner">◎</span>
+          <span class="text-hint" style="color:#1f2430">排版一下这张图</span>
+          <span class="ctrl sm muted">模型⌄</span>
+          <span class="ctrl sm">↑</span>
+        </div>
+      </div>
+      <p class="caption"><b>表面控件（无背景）：</b>＋(左内)/◎(左顶点)/模型⌄(右)/↑发送(右)　<b>条内草稿：</b>ref 芯片（输入文字上方，条随内容生长）　<b>上方浮层：</b>无（软键盘升起）　<b>隐藏：</b>独立 mic、C 级抽屉（收进条内 ＋）</p>
+    </div>
+
+    <!-- 移动端 ③ 生成中 -->
+    <div class="card">
+      <h2><span class="tag" style="background:#0a8f5b">移动端</span> ③ 生成中</h2>
+      <p class="state">同一条裸条；发送位变停止红块（原位）；◎ 仍可见</p>
+      <div class="canvas">画布（露出上半、可点）<span class="badge">无遮罩</span></div>
+      <div class="bar multi">
+        <div class="chips-in"><span class="refchip">🖼 产品渲染图</span></div>
+        <div class="bar-line">
+          <span class="ctrl sm">＋</span>
+          <span class="corner">◎</span>
+          <span class="text-hint">输入消息…加入待发队列</span>
+          <span class="ctrl sm muted">模型⌄</span>
+          <span class="ctrl sm stop">■</span>
+        </div>
+      </div>
+      <div class="above">
+        <div class="layer status">阶段 / 进度 / 时长 + 积分</div>
+        <div class="layer opt">立即插话 / 等它跑完</div>
+      </div>
+      <p class="caption"><b>表面控件（无背景）：</b>＋(左内)/◎(左顶点)/模型⌄(右)/停止(红块,原位)　<b>条内草稿：</b>若有 ref 芯片仍居条内　<b>上方浮层：</b>≤24px 状态行 + 轻选项　<b>隐藏：</b>独立 mic、C 级抽屉</p>
+    </div>
+
+  </div>
+
+  <p class="foot">
+    说明：本图例为规格 §5.5 的可视化附件。所有 composer 表面上的控件（＋/模型/语音/发送/◎）均按 §2 原则 7 为<b>无背景 ghost 控件</b>，不引入内部嵌套面板。<b>两层契约</b>：composer 表面<b>内</b> = 草稿内容（ref 芯片 + 输入文本，芯片行位于文本上方、无独立面板背景，表面随内容生长）；表面<b>上方</b> = 仅系统层（生成状态行、插话轻选项、PC 首屏样例 chips）。红色「停止」块为生成态唯一强调色例外。移动端「＋」置于条内左侧（非条外独立按钮），整条视觉即「一个 composer 条 + 其上几个组件」。◎ 在输入/生成态可见、空态隐藏（键入 @ 任意态仍可触达）。
+  </p>
+</body>
+</html>
