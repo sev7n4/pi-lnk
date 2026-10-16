@@ -277,7 +277,11 @@ export function validateGenerationParams(input: {
     // guideSceneId：三模态通用，且必须是注册表里真实存在的 id（不接受模型编造）
     if (key === 'guideSceneId') {
       if (typeof value !== 'string' || !getGenerationScene(value.trim())) {
-        return { ok: false, reason: `unknown guideSceneId "${String(value)}"`, allowed }
+        return {
+          ok: false,
+          reason: `unknown guideSceneId "${String(value)}" — call list_generation_scenes to get a valid scene id; if no scene matches, omit guide_scene_id`,
+          allowed,
+        }
       }
       data.guideSceneId = value.trim()
       applied.push(key)
