@@ -300,7 +300,8 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .mention-input-backdrop,
-.mention-input-field {
+.mention-input-field,
+.mention-input-ghost {
   min-height: 96px;
   max-height: 200px;
   padding: 0.375rem 0.25rem;
@@ -340,6 +341,7 @@ function onKeydown(e: KeyboardEvent) {
   pointer-events: none;
   overflow: hidden;
   border: none;
+  background: transparent;
   color: var(--lnk-text-muted);
 }
 

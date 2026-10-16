@@ -1,5 +1,8 @@
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { fileURLToPath } from 'node:url'
 import MentionInput from './MentionInput.vue'
 
 describe('MentionInput', () => {
@@ -110,6 +113,32 @@ describe('MentionInput ghost prediction (P2-1.1)', () => {
     ta.element.dispatchEvent(ev)
     expect(ev.defaultPrevented).toBe(false)
     expect(w.emitted('update:modelValue')).toBeUndefined()
+  })
+})
+
+describe('MentionInput ghost layer CSS contract (P2-1.1 review fix)', () => {
+  // vitest ESM 下 import.meta.url 非 file:// scheme，沿用 bareBar 测试的 dirname 模式
+  const here = dirname(fileURLToPath(import.meta.url))
+  const source = readFileSync(join(here, 'MentionInput.vue'), 'utf8')
+  const railSource = readFileSync(join(here, '../agent/AgentSideRail.vue'), 'utf8')
+
+  it('scoped padding override groups ghost with backdrop/field (续写对齐契约)', () => {
+    expect(source).toMatch(
+      /\.mention-input-backdrop,\s*\n\.mention-input-field,\s*\n\.mention-input-ghost\s*\{[^}]*padding:/,
+    )
+  })
+
+  it('ghost layer background is transparent (不染色/不遮挡 mention 高亮层)', () => {
+    // 选择器组尾行与独立规则都以 `.mention-input-ghost {` 开头；
+    // 含 background: transparent 的块只可能是独立 ghost 规则
+    const rule = source.match(/\.mention-input-ghost\s*\{[^}]*background: transparent[^}]*\}/)
+    expect(rule?.[0]).toContain('color: var(--lnk-text-muted)')
+  })
+
+  it('mobile bare-bar :deep() override includes ghost (不撑破 34px 行)', () => {
+    expect(railSource).toMatch(
+      /:deep\(\.mention-input-field\),\s*\n[^{]*:deep\(\.mention-input-ghost\)\s*\{[^}]*min-height: 34px/,
+    )
   })
 })
 

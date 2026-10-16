@@ -5188,7 +5188,8 @@ defineExpose({
  * 对齐线稿 m-line（min 34）与 m-text（text-base/22）；
  * ◎ 空态隐藏由 canvasRefEntryVisible 门控，文本行起点由条内 ＋ 占位让位（无重叠） */
 .agent-panel-mobile-dock .composer-bare-bar :deep(.mention-input-backdrop),
-.agent-panel-mobile-dock .composer-bare-bar :deep(.mention-input-field) {
+.agent-panel-mobile-dock .composer-bare-bar :deep(.mention-input-field),
+.agent-panel-mobile-dock .composer-bare-bar :deep(.mention-input-ghost) {
   min-height: 34px;
   max-height: 120px;
   padding: 4px 2px;
