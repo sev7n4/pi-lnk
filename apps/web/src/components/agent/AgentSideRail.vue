@@ -2951,9 +2951,9 @@ defineExpose({
           />
 
           <!-- 顶栏：logo + 新建 / 历史 / 浮窗切换 / 收起（浮窗模式可按住拖动）。
-               移动端裸条形态无顶栏（spec §5.2：条上方仅系统层；P1-5.2 fab/入口重评） -->
+               P1-5 fix-1：移动端保留（新建对话 / 会话历史入口随贴底容器常驻，
+               收起 / 浮窗为桌面专属按钮移动端隐藏；startDrag 移动端本身 no-op） -->
           <div
-            v-if="!isMobileLayout"
             class="agent-panel-header flex items-center justify-between px-3 py-2"
             :class="floating && !isMobileLayout ? 'cursor-move' : ''"
             @mousedown="startDrag"
@@ -3032,8 +3032,8 @@ defineExpose({
                 </svg>
               </button>
 
-              <!-- 收起：回到右下角 logo -->
-              <button type="button" class="agent-head-btn" title="收起助手" @click="closePanel">
+              <!-- 收起：回到右下角 logo（桌面专属；移动端裸条常驻无「收起」形态） -->
+              <button v-if="!isMobileLayout" type="button" class="agent-head-btn" title="收起助手" @click="closePanel">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M18 6 6 18" />
                 </svg>
@@ -3060,8 +3060,10 @@ defineExpose({
           <!-- 不可达 / 重连提示已迁至 dockNotice（见 syncRuntimeNotice）；不再在面板内渲染横幅 -->
 
           <!-- 消息列表（外层 wrap 只用于定位「回到底部」浮标，不改变原滚动容器结构）。
-               移动端裸条形态不渲染对话流（spec §5.2 ①：画布即内容、无 hero/样例浮层） -->
-          <div v-if="!isMobileLayout" class="agent-chat-wrap relative flex min-h-0 flex-1 flex-col">
+               P1-5 fix-1：移动端对话流回归贴底容器（spec §1 消息流渲染不在整改范围、
+               spec §5.2 只要求 composer 脱离全屏 sheet）；移动端经 max-height ≈40vh
+               限高滚动，画布仍露出上半（P1-5.1）。渲染样式桌面/移动同源，不做重排。 -->
+          <div class="agent-chat-wrap relative flex min-h-0 flex-1 flex-col">
             <div
               ref="chatContainer"
               class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3"
@@ -4122,6 +4124,19 @@ defineExpose({
 
 .agent-panel-mobile-dock .agent-input-area {
   padding: 0;
+}
+
+/* P1-5 fix-1：顶栏在移动端收为 slim 行（新建/历史入口），桌面顶栏样式不动 */
+.agent-panel-mobile-dock .agent-panel-header {
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+  border-bottom: none;
+}
+
+/* P1-5 fix-1：移动端对话流限高滚动——画布始终露出上半（P1-5.1），不遮罩不加 sheet */
+.agent-panel-mobile-dock .agent-chat-wrap {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: 40vh;
 }
 
 /* ---- 左边缘拖拉调宽 ---- */
