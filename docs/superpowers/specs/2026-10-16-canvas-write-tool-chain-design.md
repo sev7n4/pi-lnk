@@ -163,7 +163,7 @@ Phase 1 主修复（原生三原语，与 Phase 2 并存、先落地，正确性
 | ID | 检查 | 唯一期望 |
 |----|------|----------|
 | **P1-A** | 三写工具定义含 `executionMode:"sequential"` | 与 `todo.ts:97` 同款声明；pi-runtime 单测/配置断言 |
-| **P1-B** | 同批含写工具的调用 | create 返回真实 id 后 set/propose 才执行（服务端串行） |
+| **P1-B** | 同批含写工具的调用 | create 返回真实 id 后 set/propose 才执行（run 级 `toolExecution:"sequential"` 串行——harness 栈不消费 per-tool `executionMode`，见 P1a 与风险表） |
 | **P1-C** | 同批依赖注入：同批窗口内含 `upsert_media_node` 时，`set`/`propose` 的 `node_id` ≠ 该 upsert 返回 id | 以正确 id **重写 args** 后执行（零重试）；harness 按 schema 重校验（`applyBeforeToolDecision`）；无重试轮 |
 | **P1-D** | 兜底与放行规则 | args 无 node_id/重写校验失败/同批多 upsert → fail-closed actionable error；同批窗口关闭时指向已存在旧节点放行（合法用户点名，**后续消息不误重写**） |
 | **P1-E** | `unknown guideSceneId` 错误文案 | 含「调用 `list_generation_scenes` 取合法 id；无匹配则省略 `guide_scene_id`」 |
@@ -211,7 +211,7 @@ Phase 1 主修复（原生三原语，与 Phase 2 并存、先落地，正确性
 | chain 工具最终命名（`run_canvas_plan` vs `delegate_canvas_ops`） | **Phase 2 plan 前**（writing-plans 阶段钉死） |
 | wrapper 复用原子逻辑的具体抽函数方式（共享函数 vs 直接调用内部 service） | Phase 2 plan |
 | Phase 3 是否随本规格一并排期 | 另开 plan（本规格不强制） |
-| `delegate_task`/`pi-fabric`/`fabric_exec` 是否在本仓库 vendored 副本（或 npm `@earendil-works/*`）中存在可引入 | **写计划前核实**（已初查：`vendor/earendil-works/pi` 仅含 `subagent` 例子、npm 仅 `pi-agent-core`/`chord`/`pi-ai`/`pi-telemetry`；三字符串零命中）。若上游确有会话内 composition 原语，应替换 Phase 2 自研实现 |
+| `delegate_task`/`pi-fabric`/`fabric_exec` 是否在本仓库 vendored 副本（或 npm `@earendil-works/*`）中存在可引入 | **已核实（2026-10-16）**：`vendor/earendil-works/pi` 全树 + npm 侧（仅 `pi-agent-core`/`chord`/`pi-ai`/`pi-telemetry`）三字符串零命中；唯一 chain 范式 = `subagent` 例子（跨进程 agent 委派、`{previous}` 文本传递，对会话内 id 绑定形态不符）。⇒ Phase 2 自研实现仍成立；若上游未来落地**会话内** composition 原语，替换评估再开 |
 
 ---
 
