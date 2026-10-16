@@ -8,13 +8,14 @@ import { BadRequestException } from '@nestjs/common'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   buildMatchKey,
+  buildTextTokenMatchKey,
   canonicalImageResolution,
   canonicalVideoResolution,
   legacyPriceOf,
   videoPriceFamily,
 } from './pricing.core'
 import type { PricingQuery } from './pricing.core'
-import { enumeratePricingSpace } from './pricing.space'
+import { enumeratePricingSpace, enumerateTextTokenRows } from './pricing.space'
 import { assertLaunchFloor, PRICING_VERSION_V2_DRAFT, seedPricingV2Draft } from './seed-pricing-v2-draft'
 import type { PlannedEntry } from './seed-pricing-v2-draft'
 import { seedPricing } from '../../prisma/seed-pricing'
@@ -39,7 +40,7 @@ describe('seedPricingV2Draft against real SQLite', () => {
   let dir: string
   let prisma: PrismaClient
   let v2VersionId: string
-  let entryOf: (matchKey: string) => Promise<{ credits: number; basis: string; costRateId: string | null } | null>
+  let entryOf: (matchKey: string) => Promise<{ credits: number; basis: string; capability: string; costRateId: string | null } | null>
   let rateIdOf: (modelKey: string, spec: string) => Promise<string>
 
   beforeAll(() => {
@@ -55,7 +56,7 @@ describe('seedPricingV2Draft against real SQLite', () => {
       const row = await prisma.priceListEntry.findUnique({
         where: { versionId_matchKey: { versionId: v2VersionId, matchKey } },
       })
-      return row ? { credits: row.credits, basis: row.basis, costRateId: row.costRateId } : null
+      return row ? { credits: row.credits, basis: row.basis, capability: row.capability, costRateId: row.costRateId } : null
     }
     rateIdOf = async (modelKey, spec) => {
       const row = await prisma.costRate.findUnique({
@@ -81,9 +82,13 @@ describe('seedPricingV2Draft against real SQLite', () => {
     expect(result.version).toBe(PRICING_VERSION_V2_DRAFT)
 
     // ── 断言 1：变更计数精确（期望值现场从枚举空间算，不硬编码）──
-    const expectedChanged = space.filter(isRemapped).length
-    expect(result.changed).toBe(expectedChanged)
-    expect(result.copied).toBe(space.length - expectedChanged)
+    // P2 M-4：token 反比率行 14 行（5 模型 in/out + 4 cache，16k 无 cache 行）
+    // 也走 launch-reprice ⇒ 计入 changed；copied 仍只含 legacy 等价行
+    const remapped = space.filter(isRemapped).length
+    const tokenRowCount = enumerateTextTokenRows().length
+    expect(tokenRowCount).toBe(14)
+    expect(result.changed).toBe(remapped + tokenRowCount)
+    expect(result.copied).toBe(space.length - remapped)
 
     const v2 = await prisma.priceListVersion.findUnique({ where: { version: PRICING_VERSION_V2_DRAFT } })
     expect(v2).toBeDefined()
@@ -96,7 +101,7 @@ describe('seedPricingV2Draft against real SQLite', () => {
     expect(v1?.status).toBe('active')
 
     const rows = await prisma.priceListEntry.findMany({ where: { versionId: v2VersionId } })
-    expect(rows.length).toBe(space.length)
+    expect(rows.length).toBe(space.length + tokenRowCount)
 
     // ── 断言 2：抽样值（computeCreditsFromCost 口径）──
     // image（锚 CostRate 现算，不硬编码 33/66/322）：
@@ -179,10 +184,41 @@ describe('seedPricingV2Draft against real SQLite', () => {
       )
     }
 
+    // ── 断言 8（P2 M-4）：文本 token 反比率行入库——quoteTextTokens 的价目来源 ──
+    // 结构：14 行全 attach CostRate、capability='text'、basis='launch-reprice'；
+    // 值：与 quote 侧除数同源复算 r = floor(1e6/(costYuan×marginBp/100))，marginBp=11000
+    for (const t of enumerateTextTokenRows()) {
+      const key = buildTextTokenMatchKey(t.modelKey, t.spec)
+      const row = (await entryOf(key))!
+      expect(row, key).not.toBeNull()
+      const rate = await prisma.costRate.findUnique({
+        where: {
+          channel_modelKey_spec: {
+            channel: 'platform',
+            modelKey: t.modelKey,
+            spec: `per_1m_tokens_${t.spec}`,
+          },
+        },
+      })
+      expect(rate, `CostRate ${t.modelKey}:per_1m_tokens_${t.spec}`).not.toBeNull()
+      expect(row.capability, key).toBe('text')
+      expect(row.basis, key).toBe('launch-reprice')
+      expect(row.costRateId, key).toBe(rate!.id)
+      // 同源复算（勿写 costYuan × 100 × marginBp——差 100×，见 T4 erratum）
+      expect(row.credits, key).toBe(Math.floor(1_000_000 / (rate!.costYuan * 110)))
+    }
+    // 抽样精确锚（T4 评审验算值）：3.5-flash in=12987 / out=4329；16k 无 cache 行不枚举
+    expect((await entryOf('text:step-3.5-flash:in'))!.credits).toBe(12987) // floor(1e6/(0.7×110))
+    expect((await entryOf('text:step-3.5-flash:out'))!.credits).toBe(4329) // floor(1e6/(2.1×110))
+    expect((await entryOf('text:step-2-16k:out'))!.credits).toBe(505) // floor(1e6/(18×110))
+    expect(await entryOf('text:step-2-16k:cache')).toBeNull()
+
     // ── 断言 7（正向）：有 costRateId 者全部过地板 credits ≥ ceil(costYuan×105) ──
+    // （token 反比率行除外：credits 存 r=tokens/credit 反比率，非售价——量纲不适用，
+    // 成本覆盖由构造保证 marginBp 11000 > 105，与 assertLaunchFloor 的 text 跳出同据）
     const rates = await prisma.costRate.findMany()
     const rateCost = new Map(rates.map((r) => [r.id, r.costYuan]))
-    for (const r of rows.filter((x) => x.costRateId)) {
+    for (const r of rows.filter((x) => x.costRateId && x.capability !== 'text')) {
       const floor = Math.ceil(rateCost.get(r.costRateId!)! * 105)
       expect(r.credits, r.matchKey).toBeGreaterThanOrEqual(floor)
     }
@@ -209,7 +245,7 @@ describe('seedPricingV2Draft against real SQLite', () => {
     const perSec = a5!.costYuan / 5
     expect(Math.abs(perSec - a10!.costYuan / 10)).toBeLessThanOrEqual(0.001)
     expect(Math.abs(perSec - a15!.costYuan / 15)).toBeLessThanOrEqual(0.001)
-  }, 240_000) // 318 档（enumeratePricingSpace 实测值，同 pricing.equivalence 的 tripwire）× seedPricing + seedPricingV2Draft 两轮 upsert，同 P0 集成测试放宽超时
+  }, 240_000) // 332 档（enumeratePricingSpace 318 + token 反比率 14）× seedPricing + seedPricingV2Draft 两轮 upsert，同 P0 集成测试放宽超时
 
   it('幂等：同名 draft 重跑重新 upsert 全部条目，计数与值不变', async () => {
     const before = await prisma.priceListEntry.count({
@@ -261,5 +297,11 @@ describe('seedPricingV2Draft against real SQLite', () => {
       { matchKey: 'video:default', capability: 'video', credits: 1, basis: 'legacy-equivalent', costRateId: null },
     ]
     expect(() => assertLaunchFloor(skipped, rates)).not.toThrow()
+    // P2 M-4：token 行跳过地板（量纲：credits=r=tokens/credit 反比率，非售价——
+    // r 由 costYuan×marginBp 反推，marginBp 11000 > 105 ⇒ 成本覆盖由构造保证）
+    const token: PlannedEntry[] = [
+      { matchKey: 'text:step-2-16k:out', capability: 'text', credits: 505, basis: 'launch-reprice', costRateId: 'rate-768p5s' },
+    ]
+    expect(() => assertLaunchFloor(token, rates)).not.toThrow()
   })
 })
