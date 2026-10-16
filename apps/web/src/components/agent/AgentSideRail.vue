@@ -601,12 +601,15 @@ const pendingAttachmentItems = computed(() =>
   makeAttachmentItems(sidebar.pendingAttachments.value, sidebar.assignRefKeys()),
 )
 
-const showPickHint = computed(
-  () => !props.readOnly && pendingAttachmentItems.value.length === 0 && !pickMode.active.value,
-)
-
 /** 输入框左上角 🎯 圆心重合时的文字起始内边距（半径 + 小间距） */
 const COMPOSER_PICK_INSET = 18
+
+/** ◎ 空闲态（P1-2.3）：无草稿文本且未在流式生成 —— composer 的第一屏/空态 */
+const isIdle = computed(() => input.value.trim() === '' && !agent.isStreaming)
+/** ◎ mention 菜单开态（P1-2.3）：取 MentionInput expose 的真实 showMenu（defineExpose 的 ref 保持响应式） */
+const mentionMenuOpen = computed(() => composerRef.value?.showMenu === true)
+/** ◎ 可见性门控（P1-2.3）：空态隐藏；输入/生成态可见；空态键入 @ 打开 mention 菜单时立即显示 */
+const canvasRefEntryVisible = computed(() => !props.readOnly && (!isIdle.value || mentionMenuOpen.value))
 
 const mentionOptions = computed((): MentionOption[] =>
   pendingAttachmentItems.value.map(({ refKey, attachment }) => ({
@@ -1070,7 +1073,8 @@ function pickCanvasFromMenu() {
   onStartCanvasPick()
 }
 
-function onCanvasRefPickToggle() {
+/** ◎ P1-2.3：pick 开关（原 onCanvasRefPickToggle 改名），全文件唯一调用点是角落按钮 composer-canvas-ref-btn */
+function toggleCanvasRefPick() {
   emit('canvasRefPickToggle')
 }
 
@@ -1081,7 +1085,7 @@ function onStartCanvasPick() {
 function onInputDockPointerDown(event: PointerEvent) {
   if (!pickMode.active.value) return
   const target = event.target as Element
-  if (target.closest('.composer-canvas-pick-btn')) return
+  if (target.closest('.composer-canvas-ref-btn')) return
   if (target.closest('.agent-attach-menu')) return
   pickMode.deactivate()
 }
@@ -3693,18 +3697,16 @@ defineExpose({
                   @submit="onComposerSubmit"
                 />
                   <button
-                    v-if="!readOnly && !isMobileLayout"
+                    v-if="canvasRefEntryVisible"
                     type="button"
-                    class="composer-canvas-pick-btn"
-                    :class="{ 'is-active': pickMode.active.value, 'is-hint': showPickHint }"
+                    class="composer-canvas-ref-btn agent-hit-expand"
+                    :class="{ 'is-active': pickMode.active.value }"
                     :disabled="isUploading"
-                    aria-label="从画布选节点作引用"
-                    @click.stop="onCanvasRefPickToggle"
+                    data-hit="l"
+                    aria-label="引用画布节点"
+                    @click.stop="toggleCanvasRefPick"
                   >
-                    <span class="composer-canvas-pick-btn__halo" aria-hidden="true" />
-                    <span class="composer-canvas-pick-btn__lens" aria-hidden="true" />
-                    <CanvasRefTargetIcon :size="14" :filled="pickMode.active.value" class="composer-canvas-pick-btn__icon" />
-                    <span class="composer-canvas-pick-tip">从画布选节点作引用</span>
+                    <CanvasRefTargetIcon :size="14" :filled="pickMode.active.value" />
                   </button>
                 </div>
               </div>
@@ -4822,7 +4824,10 @@ defineExpose({
   }
 }
 
-.composer-canvas-pick-btn {
+/* ◎ P1-2.3 ghost 入口：22px 视觉、无玻璃底（透明背景/无边框），圆心 = 表面左顶点；
+ * PC 命中 32px（透明 ::after inset -5px）；≤767px 由 .agent-hit-expand[data-hit='l'] 扩到 44px。
+ * 仅 color 过渡 —— 退役 hover-only 球的全部 halo/lens/光效。 */
+.composer-canvas-ref-btn {
   position: absolute;
   top: 0;
   left: 0;
@@ -4830,178 +4835,37 @@ defineExpose({
   isolation: isolate;
   overflow: visible;
   display: flex;
-  width: 28px;
-  height: 28px;
   align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border: 1px solid var(--neo-glass-border);
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at 28% 22%, rgb(var(--lnk-overlay-rgb) / 0.24) 0%, transparent 46%),
-    var(--neo-glass-lite-bg);
-  color: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(var(--neo-glass-lite-blur)) saturate(1.4);
-  -webkit-backdrop-filter: blur(var(--neo-glass-lite-blur)) saturate(1.4);
-  box-shadow:
-    var(--neo-glass-lite-shadow),
-    var(--lnk-shadow-md);
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: transparent;
+  color: var(--lnk-accent-text);
   transform: translate(-50%, -50%);
-  transition:
-    background 0.22s ease,
-    border-color 0.22s ease,
-    color 0.22s ease,
-    box-shadow 0.22s ease,
-    transform 0.14s cubic-bezier(0.34, 1.2, 0.64, 1);
+  transition: color var(--lnk-duration-fast) var(--lnk-ease-standard);
+  cursor: pointer;
 }
 
-.composer-canvas-pick-btn__halo {
+.composer-canvas-ref-btn::after {
+  content: '';
   position: absolute;
-  inset: -4px;
-  border: 1px solid rgb(var(--lnk-overlay-rgb) / 0.07);
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0.55;
-  transition: opacity 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
-}
-
-.composer-canvas-pick-btn__lens {
-  position: absolute;
-  inset: 1px;
-  border-radius: inherit;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 90% 70% at 24% 18%, rgb(var(--lnk-overlay-rgb) / 0.16) 0%, transparent 52%),
-    radial-gradient(ellipse 55% 45% at 78% 88%, rgb(var(--lnk-overlay-rgb) / 0.05) 0%, transparent 48%);
-  opacity: 0.9;
-  transition: opacity 0.22s ease, background 0.22s ease;
-}
-
-.composer-canvas-pick-btn__icon {
-  position: relative;
-  z-index: 1;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
-  transition: filter 0.22s ease, transform 0.14s ease;
-}
-
-.composer-canvas-pick-btn:hover:not(:disabled):not(.is-active) {
-  border-color: var(--neo-glass-border-hover);
-  color: #fff;
-  transform: translate(-50%, -50%) scale(1.05);
-  box-shadow:
-    var(--neo-glass-lite-shadow),
-    var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn:hover:not(:disabled):not(.is-active) .composer-canvas-pick-btn__halo {
-  opacity: 0.85;
-  border-color: rgb(var(--lnk-overlay-rgb) / 0.12);
-}
-
-.composer-canvas-pick-btn:active:not(:disabled):not(.is-active) {
-  transform: translate(-50%, -50%) scale(0.94);
-}
-
-.composer-canvas-pick-btn.is-active {
-  border-color: rgb(var(--lnk-overlay-rgb) / 0.92);
-  background:
-    radial-gradient(circle at 30% 24%, rgb(var(--lnk-overlay-rgb) / 0.95) 0%, transparent 46%),
-    linear-gradient(165deg, #ffffff 0%, #f3f3f6 48%, #e6e6ec 100%);
-  color: var(--neo-hi-text);
-  box-shadow:
-    var(--neo-hi-shadow),
-    0 0 0 1px rgb(var(--lnk-overlay-rgb) / 0.55),
-    var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn.is-active .composer-canvas-pick-btn__halo {
   inset: -5px;
-  border-color: rgb(var(--lnk-overlay-rgb) / 0.42);
-  opacity: 1;
-  animation: composer-pick-target-ring 1.75s ease-out infinite;
 }
 
-.composer-canvas-pick-btn.is-active .composer-canvas-pick-btn__lens {
-  background:
-    radial-gradient(ellipse 85% 65% at 28% 22%, rgb(var(--lnk-overlay-rgb) / 0.72) 0%, transparent 54%),
-    radial-gradient(ellipse 50% 40% at 72% 82%, rgb(var(--lnk-overlay-rgb) / 0.18) 0%, transparent 50%);
-  opacity: 1;
+.composer-canvas-ref-btn:hover {
+  color: var(--lnk-accent-hover);
 }
 
-.composer-canvas-pick-btn.is-active .composer-canvas-pick-btn__icon {
-  filter: none;
-}
-
-.composer-canvas-pick-btn.is-active:active:not(:disabled) {
-  transform: translate(-50%, -50%) scale(0.96);
-  box-shadow:
-    var(--neo-hi-shadow),
-    0 0 0 2px rgb(var(--lnk-overlay-rgb) / 0.45),
-    var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn.is-hint:not(.is-active) .composer-canvas-pick-btn__halo {
-  animation: composer-pick-halo-breathe 2.6s ease-in-out infinite;
-}
-
-:global(:root[data-theme='light']) .composer-canvas-pick-btn:not(.is-active) {
-  color: var(--neo-text-secondary);
-}
-
-:global(:root[data-theme='light']) .composer-canvas-pick-btn.is-active {
-  color: var(--neo-hi-text);
-}
-
-.composer-canvas-pick-tip {
-  position: absolute;
-  bottom: calc(100% + 7px);
-  left: 50%;
-  z-index: 5;
-  padding: 4px 8px;
-  border: 1px solid var(--neo-border);
-  border-radius: 8px;
-  background: var(--neo-surface-elevated);
-  font-size: var(--lnk-text-2xs); /* P0-2.2：原 10px 引导档升 2xs(11px) */
-  line-height: 1.3;
-  white-space: nowrap;
-  color: var(--neo-text-secondary);
-  pointer-events: none;
-  opacity: 0;
-  transform: translateX(-50%) translateY(2px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  box-shadow: var(--lnk-shadow-md);
-}
-
-.composer-canvas-pick-btn:hover:not(:disabled) .composer-canvas-pick-tip,
-.composer-canvas-pick-btn:focus-visible .composer-canvas-pick-tip {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+.composer-canvas-ref-btn:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
 }
 
 .agent-attach-icon {
   background: var(--neo-hover-bg);
   color: var(--neo-text-secondary);
-}
-
-@keyframes composer-pick-halo-breathe {
-  0%, 100% {
-    opacity: 0.42;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.92;
-    transform: scale(1.06);
-  }
-}
-
-@keyframes composer-pick-target-ring {
-  0% {
-    opacity: 0.85;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.42);
-  }
 }
 </style>

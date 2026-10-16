@@ -121,7 +121,9 @@ function focus() {
   textareaRef.value?.focus()
 }
 
-defineExpose({ focus, insertText })
+// P1-2.3：expose 真实菜单开态（ref 经 defineExpose 自动解包且保持响应式），
+// 供 AgentSideRail 的 canvasRefEntryVisible 在「空态键入 @」时立即显示入口
+defineExpose({ focus, insertText, showMenu })
 
 function onKeydown(e: KeyboardEvent) {
   if (showMenu.value && filteredMentions.value.length) {
