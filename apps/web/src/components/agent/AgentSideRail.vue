@@ -752,13 +752,17 @@ const forceChoiceKind = ref<ForceChoiceKind | null>(null)
  * 最后一条 assistant 消息经 resolveMessageOutputs 解析出的产物数，即 producedCount。
  * 不另造统计通道，避免与卡片各说各话。
  *
- * 显隐：仅当回合已收束（非 streaming、无任务卡）且该轮确有产物时出现；
+ * 显隐：仅当回合已收束（非 streaming）且该轮确有产物时出现；
  * 末条不是收束的 assistant 消息（如用户刚发言）不显示，收据只贴最近一轮。
+ * ⚠️ 不用 showTaskCard 做隐藏门（review round 1 F1）：taskProgress.items 在回合收束时
+ * **不会清空**（只在下次发送/切会话/loadHistory/新会话时清），发过 task 事件的轮次
+ * showTaskCard 会一直为 true，用它当门会让这些轮次的收据永远不出现。
+ * 收据与任务进度卡并存是可接受的（模板上收据渲染在其后）。
  */
 const TURN_UNDO_DISABLED_TITLE = '需 runtime 批量移除工具，见 ADR'
 
 const lastTurnReceipt = computed(() => {
-  if (agent.isStreaming || showTaskCard.value) return null
+  if (agent.isStreaming) return null
   const last = agent.messages[agent.messages.length - 1]
   if (!last || last.role !== 'assistant' || last.streaming) return null
   const outputs = assistantOutputsById.value.get(last.id) ?? []
@@ -776,7 +780,10 @@ const lastTurnReceiptLead = computed(() =>
 )
 
 function onReceiptFocusAll() {
-  if (lastTurnReceipt.value) onFocusAll(lastTurnReceipt.value.focusNodeIds)
+  // review round 1 F2：无可定位节点时早退，避免向 CanvasPage 派发空 focus-all
+  // 触发「当前画布中没有找到对应节点」的误导 toast（对齐 AgentCanvasOutputs 的空集纪律）。
+  if (!lastTurnReceipt.value || lastTurnReceipt.value.focusNodeIds.length === 0) return
+  onFocusAll(lastTurnReceipt.value.focusNodeIds)
 }
 
 const taskRecordPolling = useGenerationPolling((results) => {
