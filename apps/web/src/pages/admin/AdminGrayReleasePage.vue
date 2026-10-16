@@ -25,8 +25,9 @@ const drafts = ref<AdminPriceListVersion[]>([])
 const formVersionId = ref('')
 const formRawInput = ref('')
 const formNote = ref('')
-const formStartsAt = ref('')
-const formEndsAt = ref('')
+// 日期时间选择器的值：ISO 字符串（value-format 产出）；清空时 Element Plus 置 null
+const formStartsAt = ref<string | null>('')
+const formEndsAt = ref<string | null>('')
 
 // 预览命中（创建前置）
 const preview = ref<AdminGrayPreview | null>(null)
@@ -37,10 +38,22 @@ const creating = ref(false)
 const reportVisible = ref(false)
 const report = ref<AdminGrayReport | null>(null)
 
+/** 仅 draft 可灰度（后端 createRelease 硬校验 status==='draft'）；无 draft 时下拉禁用 + 空态提示 */
+const hasDraft = computed(() => drafts.value.length > 0)
+
 /** 防线：必须已预览且命中 > 0 且已选版本，才允许创建 */
 const canCreate = computed(
   () => preview.value !== null && preview.value.hits.length > 0 && formVersionId.value !== '',
 )
+
+/** 创建禁用原因：按钮禁用时给出明确指引，避免「禁止符号无解释」的空转 */
+const createDisabledReason = computed(() => {
+  if (!hasDraft.value) return '当前无 draft 版本可灰度——灰度对象必须是 draft（草案）'
+  if (formVersionId.value === '') return '请先选择灰度版本'
+  if (preview.value === null) return '请粘贴名单并点「预览命中」'
+  if (preview.value.hits.length === 0) return '名单 0 命中，创建已禁用（空集假绿防线）'
+  return ''
+})
 
 // 预览态失效：名单或版本一变，陈旧命中数立即作废（否则面板显示旧命中数、按钮仍可点 → 服务端 400）
 watch([formRawInput, formVersionId], () => {
@@ -49,6 +62,12 @@ watch([formRawInput, formVersionId], () => {
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof AdminApiError ? err.message : fallback
+}
+
+/** 日期选择器清空时值为 null；统一归一：空串/null → undefined（后端默认 now / +7 天） */
+function normDate(v: string | null): string | undefined {
+  const s = typeof v === 'string' ? v.trim() : ''
+  return s === '' ? undefined : s
 }
 
 async function reload() {
@@ -89,8 +108,8 @@ async function createGray() {
     const created = await adminApi.pricingGray.create({
       versionId: formVersionId.value,
       rawInput: formRawInput.value,
-      startsAt: formStartsAt.value.trim() === '' ? undefined : formStartsAt.value,
-      endsAt: formEndsAt.value.trim() === '' ? undefined : formEndsAt.value,
+      startsAt: normDate(formStartsAt.value),
+      endsAt: normDate(formEndsAt.value),
       note: formNote.value.trim() === '' ? undefined : formNote.value,
     })
     ElMessage.success(`灰度已创建：${created.releaseId}（${created.hits} 人命中，按 ${created.version} 计价）`)
@@ -186,6 +205,8 @@ defineExpose({
   preview,
   report,
   canCreate,
+  hasDraft,
+  createDisabledReason,
   actionError,
 })
 </script>
@@ -202,9 +223,17 @@ defineExpose({
     <div class="mb-3 rounded border border-line-subtle bg-surface-base p-3">
       <div class="mb-2 flex items-center gap-2">
         <span class="text-sm text-fg-2">灰度版本（仅 draft）：</span>
-        <el-select v-model="formVersionId" placeholder="选择 draft 版本" class="w-64">
+        <el-select
+          v-model="formVersionId"
+          placeholder="选择 draft 版本"
+          class="w-64"
+          :disabled="!hasDraft"
+        >
           <el-option v-for="v in drafts" :key="v.id" :label="`${v.version}（${v.entryCount} 条）`" :value="v.id" />
         </el-select>
+        <span v-if="!hasDraft" class="text-sm text-warning" data-test="no-draft-hint">
+          当前无 draft 版本——灰度对象必须是 draft（草案）。请先在「价目发布流」页复制 active 建草案；发布后 draft 会被消耗，无法再对该版本灰度。
+        </span>
       </div>
       <el-input
         v-model="formRawInput"
@@ -214,8 +243,20 @@ defineExpose({
         class="mb-2"
       />
       <div class="mb-2 flex items-center gap-2">
-        <el-input v-model="formStartsAt" placeholder="开始时间 ISO（可选，默认现在）" class="w-64" />
-        <el-input v-model="formEndsAt" placeholder="结束时间 ISO（可选，默认 +7 天）" class="w-64" />
+        <el-date-picker
+          v-model="formStartsAt"
+          type="datetime"
+          placeholder="开始时间（可选，默认现在）"
+          value-format="YYYY-MM-DDTHH:mm:ss.SSSZ"
+          class="w-64"
+        />
+        <el-date-picker
+          v-model="formEndsAt"
+          type="datetime"
+          placeholder="结束时间（可选，默认 +7 天）"
+          value-format="YYYY-MM-DDTHH:mm:ss.SSSZ"
+          class="w-64"
+        />
         <el-input v-model="formNote" placeholder="备注（可选）" class="w-48" />
         <el-button :loading="previewLoading" @click="loadPreview">预览命中</el-button>
         <el-button
@@ -226,6 +267,7 @@ defineExpose({
           @click="createGray"
         >创建灰度</el-button>
       </div>
+      <p v-if="!canCreate" class="text-sm text-fg-3" data-test="create-disabled-reason">{{ createDisabledReason }}</p>
 
       <!-- 预览结果：N 命中 / M 未命中显式展示，未命中号码逐个列出 -->
       <div v-if="preview" class="text-sm" data-test="preview-panel">

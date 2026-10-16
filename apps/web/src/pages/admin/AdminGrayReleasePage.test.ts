@@ -330,4 +330,49 @@ describe('AdminGrayReleasePage', () => {
     expect(msg).toContain('30s')
     expect(msg).not.toContain('立即回到全局价目')
   })
+
+  it('无 draft 版本：下拉禁用 + 显式空态提示 + 创建禁用原因指向 draft', async () => {
+    grayList.mockResolvedValue([])
+    // 只有 active / archived，没有 draft（如已发布后 draft 被消耗）
+    listVersions.mockResolvedValue([draftRow({ status: 'active' }), draftRow({ id: 'v-2', status: 'archived' })])
+    const w = mountPage()
+    await flushPromises()
+    expect(w.find('[data-test="no-draft-hint"]').exists()).toBe(true)
+    expect(w.find('[data-test="no-draft-hint"]').text()).toContain('无 draft')
+    expect((createBtn(w).element as HTMLButtonElement).disabled).toBe(true)
+    expect(w.find('[data-test="create-disabled-reason"]').text()).toContain('draft')
+  })
+
+  it('创建禁用原因随状态变化：未选版本 → 未预览 → 0 命中', async () => {
+    grayList.mockResolvedValue([])
+    listVersions.mockResolvedValue([draftRow()])
+    grayPreview.mockResolvedValue({ hits: [], misses: ['13800000002'] })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as PageVm
+    // 有 draft 但未选版本
+    expect(w.find('[data-test="create-disabled-reason"]').text()).toContain('选择灰度版本')
+    vm.formVersionId = 'v-1'
+    await nextTick()
+    // 已选版本但未预览
+    expect(w.find('[data-test="create-disabled-reason"]').text()).toContain('预览命中')
+    // 预览 0 命中
+    vm.formRawInput = '13800000002'
+    await vm.loadPreview()
+    await flushPromises()
+    expect(w.find('[data-test="create-disabled-reason"]').text()).toContain('0 命中')
+  })
+
+  it('窗口字段为日期时间选择器（不再手填 ISO）', async () => {
+    grayList.mockResolvedValue([])
+    listVersions.mockResolvedValue([draftRow()])
+    const w = mountPage()
+    await flushPromises()
+    // el-date-picker 不向下透传 data-test（Element Plus 多根），改用渲染类断言
+    const editors = w.findAll('.el-date-editor')
+    expect(editors).toHaveLength(2)
+    // 回归：不再是纯文本 el-input 手填 ISO（旧 placeholder 含「ISO」字样）
+    const isoInputs = w.findAll('input').filter((i) => (i.attributes('placeholder') ?? '').includes('ISO'))
+    expect(isoInputs).toHaveLength(0)
+  })
 })
