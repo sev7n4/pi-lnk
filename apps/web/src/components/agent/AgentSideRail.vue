@@ -1188,13 +1188,17 @@ function setPlanningThinkingEffort(effort: 'high' | 'max') {
   planningThinking.value = true
 }
 
-/* P1-2.1：单 chip「思考·标准 ⌄」三档（标准/深入/极限），
- * 写回原状态通道：标准→关、深入→high、极限→max。ghost 无背景。 */
+/* P1-2.1：思考档位三档（标准/深入/极限）写回原状态通道：标准→关、深入→high、极限→max。
+ * B 级 chip 仅非默认档常驻（裁决 fix-1）；默认档经 C 抽屉「思考档位」入口进入同一 popover。ghost 无背景。 */
 const thinkingMenuOpen = ref(false)
 const thinkingMenuRef = ref<HTMLElement | null>(null)
 useClickOutside(thinkingMenuRef, () => {
   thinkingMenuOpen.value = false
 })
+
+function toggleThinkingMenu() {
+  thinkingMenuOpen.value = !thinkingMenuOpen.value
+}
 
 const currentThinkingLevel = computed<ThinkingLevel>(() => {
   if (!planningThinking.value) return '标准'
@@ -3783,6 +3787,22 @@ defineExpose({
                         </span>
                         <span>我的资产库</span>
                       </button>
+                      <!-- P1-2.4 裁决 fix-1：C 抽屉「思考档位」= 参数预设槽位，与 B chip 共用同一 popover/状态 -->
+                      <button
+                        v-if="showPlanningThinkingControls"
+                        type="button"
+                        class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
+                        @click="attachMenuOpen = false; toggleThinkingMenu()"
+                      >
+                        <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
+                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                            <path stroke-linecap="round" d="M4 8h8M20 8h-4M4 16h4M20 16h-8" />
+                            <circle cx="14" cy="8" r="2" />
+                            <circle cx="10" cy="16" r="2" />
+                          </svg>
+                        </span>
+                        <span>思考档位</span>
+                      </button>
                     </div>
                 </div>
 
@@ -3795,19 +3815,20 @@ defineExpose({
                     class="agent-model-hit"
                   />
 
-                  <!-- P1-2.1：三按钮收敛为单 ghost chip「思考·标准 ⌄」，点开展开三档写回原状态通道 -->
+                  <!-- P1-2.1：B 级 chip 仅非默认档常驻；默认档经 C 抽屉「思考档位」进入同一 popover，写回原状态通道 -->
                   <div
-                    v-if="showPlanningThinkingControls"
+                    v-if="showPlanningThinkingControls || thinkingMenuOpen"
                     ref="thinkingMenuRef"
                     class="relative"
                   >
                     <button
+                      v-if="currentThinkingLevel !== '标准'"
                       type="button"
                       class="dock-ghost-ctl flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs"
                       :class="{ 'is-open': thinkingMenuOpen }"
                       :disabled="props.readOnly"
                       title="思考档位"
-                      @click="thinkingMenuOpen = !thinkingMenuOpen"
+                      @click="toggleThinkingMenu"
                     >
                       <span>{{ levelLabel(currentThinkingLevel) }}</span>
                       <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
