@@ -30,6 +30,12 @@ const filterText = ref('')
 const selectedIndex = ref(0)
 const mentionStart = ref(-1)
 
+/** P2-4.1 listbox 语义：选项 id 与 aria-activedescendant 跟随高亮项 */
+const MENTION_LISTBOX_ID = 'mention-candidate-listbox'
+function optionId(idx: number): string {
+  return `${MENTION_LISTBOX_ID}-opt-${idx}`
+}
+
 const highlightSegments = computed(() => splitRefMentions(props.modelValue))
 
 const fieldInsetStyle = computed(() =>
@@ -194,11 +200,16 @@ function onKeydown(e: KeyboardEvent) {
 
     <ul
       v-if="showMenu && filteredMentions.length"
+      role="listbox"
+      :aria-activedescendant="optionId(selectedIndex)"
       class="neo-popover absolute bottom-full left-0 z-20 mb-1 max-h-48 w-full overflow-y-auto rounded-xl py-1"
     >
       <li
         v-for="(item, idx) in filteredMentions"
+        :id="optionId(idx)"
         :key="item.id"
+        role="option"
+        :aria-selected="idx === selectedIndex"
         class="neo-popover-item cursor-pointer px-3 py-2 text-sm"
         :class="idx === selectedIndex ? '!bg-[var(--neo-hi-bg)] !text-[var(--neo-hi-text)]' : ''"
         @mousedown.prevent="insertMention(item)"

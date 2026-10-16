@@ -103,6 +103,7 @@ import {
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
+import { skillMenuMode } from './composer/skillMenuMode'
 import { barShape, classifyGesture, COMPOSER_HOLD_MS } from './composer/mobileBarLayout'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
@@ -594,13 +595,9 @@ const showHistoryReattachCoachmark = computed(
   () => !props.readOnly && !historyReattachHintSeen.value && threadHasReattachableHistory.value,
 )
 
-const showComposerReattachHint = computed(
-  () =>
-    !props.readOnly
-    && pendingAttachmentItems.value.length === 0
-    && !input.value.trim()
-    && threadHasReattachableHistory.value,
-)
+// P1-7.1 引导收敛：composer 区唯一可见引导 = 上方 coachmark（localStorage 首次门控，
+// 移动端/桌面共享）；reattach 提示行与 attachment 提示行已删除（与 coachmark 重复，
+// 控件自解释），pick-tip 已随 Task 6 移除。
 
 const pendingAttachmentItems = computed(() =>
   makeAttachmentItems(sidebar.pendingAttachments.value, sidebar.assignRefKeys()),
@@ -1297,11 +1294,17 @@ const showProductVisualEmptyState = computed(
     && !props.readOnly
     && !agent.messages.some((m) => m.role === 'user'),
 )
-const showProductVisualAttachmentHint = computed(
-  () => isProductVisualSkill.value && !props.readOnly,
-)
 const skillMenuOpen = ref(false)
 const skillMenuRef = ref<HTMLElement | null>(null)
+// P2-5.1 技能降级：技能少时 chip 直选（点击循环 自动↔技能），多时才展开菜单
+const composerSkillMenuMode = computed(() => skillMenuMode(AGENT_SKILLS.length))
+function onSkillTriggerClick() {
+  if (composerSkillMenuMode.value === 'chip') {
+    activeSkillId.value = activeSkillId.value === null ? (AGENT_SKILLS[0]?.id ?? null) : null
+    return
+  }
+  skillMenuOpen.value = !skillMenuOpen.value
+}
 useClickOutside(skillMenuRef, () => {
   skillMenuOpen.value = false
 })
@@ -3737,19 +3740,6 @@ defineExpose({
                      均 ghost 无背景；空闲态条内仅 ＋ + 「按住说话 · 点按输入」提示；
                      条级手势排除子控件命中（pointerdown/up closest 排除 + 子控件 @click.stop） -->
               <div class="agent-composer">
-                <p
-                  v-if="showComposerReattachHint"
-                  class="agent-composer-reattach-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--lnk-text-muted)]"
-                >
-                  点击上方历史消息中的 ↺ 引用，或消息右下角的 ↺，可再次加入本次对话
-                </p>
-                <p
-                  v-if="showProductVisualAttachmentHint && !pendingAttachmentItems.length"
-                  class="agent-composer-attachment-hint mb-1.5 px-0.5 text-[10px] leading-snug text-[var(--lnk-text-muted)]"
-                  data-testid="pv-attachment-hint"
-                >
-                  {{ PRODUCT_VISUAL_GUIDANCE.attachmentHint }}
-                </p>
                 <AgentRefStrip
                   v-if="pendingAttachmentItems.length"
                   class="agent-composer__refs"
@@ -3942,8 +3932,10 @@ defineExpose({
                     type="button"
                     class="agent-skill-trigger dock-ghost-ctl flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs"
                     :class="{ 'is-open': skillMenuOpen, 'has-value': activeSkillId !== null }"
-                    title="技能"
-                    @click="skillMenuOpen = !skillMenuOpen"
+                    :title="composerSkillMenuMode === 'chip'
+                      ? (activeSkillId === null ? '技能：当前自动路由，点按切换' : '技能：点按切回自动路由')
+                      : '技能'"
+                    @click="onSkillTriggerClick"
                   >
                     <span class="agent-skill-trigger__icon" aria-hidden="true">
                       <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
@@ -3953,7 +3945,7 @@ defineExpose({
                     <span class="max-w-[72px] truncate font-medium">{{ skillButtonLabel }}</span>
                   </button>
                   <div
-                    v-if="skillMenuOpen"
+                    v-if="skillMenuOpen && composerSkillMenuMode === 'menu'"
                     class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[240px] rounded-xl py-1"
                     @click.stop
                   >
@@ -4435,11 +4427,6 @@ defineExpose({
   cursor: not-allowed;
 }
 
-.agent-composer-attachment-hint {
-  border-left: 2px solid var(--lnk-border-subtle);
-  padding-left: 8px;
-}
-
 .agent-bubble-user {
   max-width: 88%;
   border: 1px solid var(--agent-user-border);
@@ -4589,11 +4576,6 @@ defineExpose({
   background: var(--lnk-hi-bg);
   color: var(--lnk-hi-text);
   box-shadow: var(--lnk-hi-shadow);
-}
-
-.agent-composer-reattach-hint {
-  border-left: 2px solid color-mix(in srgb, var(--lnk-hi-text) 18%, transparent);
-  padding-left: 8px;
 }
 
 .agent-tools {
@@ -4806,22 +4788,8 @@ defineExpose({
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 18%, transparent);
 }
 
-.agent-prompt-field {
-  width: 100%;
-  min-height: 76px;
-  max-height: 180px;
-  resize: none;
-  border: none;
-  background: transparent;
-  outline: none;
-  font-size: var(--lnk-text-sm);
-  line-height: 1.55;
-  color: var(--lnk-text-primary);
-}
-
-.agent-prompt-field::placeholder {
-  color: var(--lnk-text-muted);
-}
+/* .agent-prompt-field 死样式（含 76px 旧高度）已随 P2-3 删除：
+   输入框高度唯一口径 = MentionInput 的 min-h-[96px]（B7）。 */
 
 .agent-dock-actions {
   display: flex;
@@ -5076,12 +5044,6 @@ defineExpose({
 .agent-panel-mobile-dock .composer-bare-bar .agent-dock-thinking,
 .agent-panel-mobile-dock .composer-bare-bar .agent-skill-trigger,
 .agent-panel-mobile-dock .composer-bare-bar .dock-mic-btn {
-  display: none;
-}
-
-/* 单行提示行（桌面卡内提示不适用于裸条） */
-.agent-panel-mobile-dock .composer-bare-bar .agent-composer-reattach-hint,
-.agent-panel-mobile-dock .composer-bare-bar .agent-composer-attachment-hint {
   display: none;
 }
 

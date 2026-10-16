@@ -4,3 +4,11 @@
 export function shouldShowModelChip(selectedSkillId: string | null): boolean {
   return selectedSkillId == null
 }
+
+/**
+ * P2-6.1 模型 chip 文案本地化截断：超长取 `slice(0, max) + '…'`，
+ * 完整名由调用方放进 `title` tooltip。
+ */
+export function friendlyModelName(raw: string, max = 12): string {
+  return raw.length > max ? `${raw.slice(0, max)}…` : raw
+}

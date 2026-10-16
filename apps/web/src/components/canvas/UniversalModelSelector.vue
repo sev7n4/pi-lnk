@@ -5,6 +5,7 @@ import type { AudioKind, GenerationType } from '@lnkpi/shared'
 import { decodeChannelModel, modelOptionName } from '@lnkpi/shared'
 import { type StudioModality } from '@/constants/studioModels'
 import { audioKindOfModelValue } from '@/constants/dockAudio'
+import { friendlyModelName } from '@/components/agent/composer/modelSkillDedup'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import {
@@ -128,8 +129,15 @@ const current = computed((): SelectorModelOption | undefined => {
   return selectableOptions.value[0]
 })
 
+// P2-6.1：chip 文案截断（模型名 >12 字符取前 12 + '…'），完整名进按钮 title tooltip
 const currentLabel = computed(() => {
   if (!current.value) return '...'
+  const base = `${friendlyModelName(current.value.name)}（${current.value.channelName}）`
+  return current.value.disabled ? `${base} · 已停用` : base
+})
+
+const currentFullLabel = computed(() => {
+  if (!current.value) return undefined
   const base = `${current.value.name}（${current.value.channelName}）`
   return current.value.disabled ? `${base} · 已停用` : base
 })
@@ -179,7 +187,7 @@ function unavailableTitle(): string {
       type="button"
       class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs"
       :class="[ghost ? 'dock-ghost-ctl' : 'neo-ctl', open ? 'is-open' : '']"
-      :title="typeTitle"
+      :title="currentFullLabel ? `${typeTitle} · ${currentFullLabel}` : typeTitle"
       @click="open = !open"
     >
       <DockTypeIcon :icon="typeIcon" :size="13" class="opacity-60" />

@@ -50,3 +50,37 @@ describe('MentionInput keyboard contract (P0-1.1)', () => {
     expect(ev.defaultPrevented).toBe(false) // 不阻止默认 → textarea 正常换行
   })
 })
+
+describe('MentionInput listbox semantics (P2-4.1)', () => {
+  it('mention candidates use listbox semantics (P2-4.1)', async () => {
+    const w = mount(MentionInput, { props: { modelValue: '@', mentions: [{ id: 'ref-1', label: '参考图' }] } })
+    await w.get('textarea').trigger('input')
+    await w.vm.$nextTick()
+    const list = w.find('ul')
+    expect(list.exists()).toBe(true)
+    expect(list.attributes('role')).toBe('listbox')
+    expect(w.find('ul li').attributes('role')).toBe('option')
+  })
+
+  it('aria-activedescendant follows the highlighted option', async () => {
+    const w = mount(MentionInput, {
+      props: {
+        modelValue: '@',
+        mentions: [
+          { id: 'ref-1', label: '参考图' },
+          { id: 'ref-2', label: '参考图二' },
+        ],
+      },
+    })
+    await w.get('textarea').trigger('input')
+    await w.vm.$nextTick()
+    const list = w.find('ul')
+    const firstId = w.findAll('ul li')[0].attributes('id')
+    expect(list.attributes('aria-activedescendant')).toBe(firstId)
+
+    await w.get('textarea').trigger('keydown', { key: 'ArrowDown' })
+    await w.vm.$nextTick()
+    const secondId = w.findAll('ul li')[1].attributes('id')
+    expect(list.attributes('aria-activedescendant')).toBe(secondId)
+  })
+})
