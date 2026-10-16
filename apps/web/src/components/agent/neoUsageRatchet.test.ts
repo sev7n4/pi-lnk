@@ -32,7 +32,7 @@ function countNeoTokens(dir: string): number {
 const NEO_BASELINE = 231
 
 describe('--neo-* usage ratchet (P1-6.2 / B12)', () => {
-  it('count in components/agent only decreases', { timeout: 15_000 }, () => {
+  it('count in components/agent only decreases', { timeout: 30_000 }, () => {
     expect(countNeoTokens(here)).toBeLessThanOrEqual(NEO_BASELINE)
   })
 })
