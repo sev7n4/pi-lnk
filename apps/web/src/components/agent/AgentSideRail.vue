@@ -100,6 +100,8 @@ import {
   type CanvasPhase,
   type UtterancePool,
 } from './composer/exampleUtterances'
+import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
+import { shouldShowModelChip } from './composer/modelSkillDedup'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
@@ -1068,18 +1070,9 @@ function pickAssetLibrary() {
   assetPickerOpen.value = true
 }
 
-function pickCanvasFromMenu() {
-  attachMenuOpen.value = false
-  onStartCanvasPick()
-}
-
 /** ◎ P1-2.3：pick 开关（原 onCanvasRefPickToggle 改名），全文件唯一调用点是角落按钮 composer-canvas-ref-btn */
 function toggleCanvasRefPick() {
   emit('canvasRefPickToggle')
-}
-
-function onStartCanvasPick() {
-  if (!pickMode.active.value) emit('canvasRefPickToggle')
 }
 
 function onInputDockPointerDown(event: PointerEvent) {
@@ -1193,6 +1186,28 @@ function setPlanningThinking(enabled: boolean) {
 function setPlanningThinkingEffort(effort: 'high' | 'max') {
   planningThinkingEffort.value = effort
   planningThinking.value = true
+}
+
+/* P1-2.1：单 chip「思考·标准 ⌄」三档（标准/深入/极限），
+ * 写回原状态通道：标准→关、深入→high、极限→max。ghost 无背景。 */
+const thinkingMenuOpen = ref(false)
+const thinkingMenuRef = ref<HTMLElement | null>(null)
+useClickOutside(thinkingMenuRef, () => {
+  thinkingMenuOpen.value = false
+})
+
+const currentThinkingLevel = computed<ThinkingLevel>(() => {
+  if (!planningThinking.value) return '标准'
+  return planningThinkingEffort.value === 'max' ? '极限' : '深入'
+})
+
+function setPlanningThinkingLevel(level: ThinkingLevel) {
+  thinkingMenuOpen.value = false
+  if (level === '标准') {
+    setPlanningThinking(false)
+    return
+  }
+  setPlanningThinkingEffort(level === '极限' ? 'max' : 'high')
 }
 
 /* ---- 技能选择（显式 Skill；默认自动 / 平台路由） ---- */
@@ -3768,56 +3783,55 @@ defineExpose({
                         </span>
                         <span>我的资产库</span>
                       </button>
-                      <button
-                        type="button"
-                        class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
-                        @click="pickCanvasFromMenu"
-                      >
-                        <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                          <CanvasRefTargetIcon :size="14" />
-                        </span>
-                        <span>从画布选节点</span>
-                      </button>
                     </div>
                 </div>
 
                 <div class="agent-dock-params">
-                  <UniversalModelSelector v-model="planningModel" type="text" ghost class="agent-model-hit" />
+                  <UniversalModelSelector
+                    v-if="shouldShowModelChip(activeSkillId)"
+                    v-model="planningModel"
+                    type="text"
+                    ghost
+                    class="agent-model-hit"
+                  />
 
+                  <!-- P1-2.1：三按钮收敛为单 ghost chip「思考·标准 ⌄」，点开展开三档写回原状态通道 -->
                   <div
                     v-if="showPlanningThinkingControls"
-                    class="flex items-center gap-1.5 rounded-lg border border-overlay/10 bg-overlay/5 px-2 py-1"
+                    ref="thinkingMenuRef"
+                    class="relative"
                   >
                     <button
                       type="button"
-                      class="dock-seg-btn rounded-md px-1.5 py-1"
-                      :class="{ 'is-on': planningThinking }"
+                      class="dock-ghost-ctl flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs"
+                      :class="{ 'is-open': thinkingMenuOpen }"
                       :disabled="props.readOnly"
-                      title="深度思考（DeepSeek V4）"
-                      @click="setPlanningThinking(!planningThinking)"
+                      title="思考档位"
+                      @click="thinkingMenuOpen = !thinkingMenuOpen"
                     >
-                      深度思考 {{ planningThinking ? '开' : '关' }}
+                      <span>{{ levelLabel(currentThinkingLevel) }}</span>
+                      <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
                     </button>
-                    <template v-if="planningThinking">
+                    <div
+                      v-if="thinkingMenuOpen"
+                      class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[132px] rounded-xl py-1"
+                      @click.stop
+                    >
                       <button
+                        v-for="lv in THINKING_LEVELS"
+                        :key="lv"
                         type="button"
-                        class="dock-seg-btn"
-                        :class="{ 'is-on': planningThinkingEffort === 'high' }"
+                        class="neo-popover-item flex w-full items-center justify-between px-3 py-2 text-left text-xs"
+                        :class="{ 'is-selected': lv === currentThinkingLevel }"
                         :disabled="props.readOnly"
-                        @click="setPlanningThinkingEffort('high')"
+                        @click="setPlanningThinkingLevel(lv)"
                       >
-                        high
+                        <span>{{ lv }}</span>
+                        <span v-if="lv === currentThinkingLevel" class="opacity-60">✓</span>
                       </button>
-                      <button
-                        type="button"
-                        class="dock-seg-btn"
-                        :class="{ 'is-on': planningThinkingEffort === 'max' }"
-                        :disabled="props.readOnly"
-                        @click="setPlanningThinkingEffort('max')"
-                      >
-                        max
-                      </button>
-                    </template>
+                    </div>
                   </div>
 
                   <div ref="skillMenuRef" class="relative">
