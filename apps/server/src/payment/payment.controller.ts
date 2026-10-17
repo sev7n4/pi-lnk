@@ -16,14 +16,26 @@ export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
   /**
-   * 创建支付订单（需登录）。返回支付宝收银台跳转 URL。
-   * body: { plan: 'pro' | 'studio' }
+   * 创建支付订单（需登录）。返回支付凭据：
+   * - channel 缺省/'page'：payUrl（收银台跳转，支持账号密码登录付款）
+   * - channel='qrcode'：qrCode（支付宝 App 扫码即付）
+   * body: { plan: 'pro' | 'studio', channel?: 'page' | 'qrcode' }
    */
   @Post('order')
   @UseGuards(AuthGuard)
-  async createOrder(@Req() req: { user: { sub: string } }, @Body() body: { plan?: string }) {
+  async createOrder(
+    @Req() req: { user: { sub: string } },
+    @Body() body: { plan?: string; channel?: string },
+  ) {
     if (!body?.plan) throw new BadRequestException('缺少套餐参数')
-    const data = await this.paymentService.createOrder(req.user.sub, body.plan)
+    if (body.channel && body.channel !== 'page' && body.channel !== 'qrcode') {
+      throw new BadRequestException('channel 仅支持 page | qrcode')
+    }
+    const data = await this.paymentService.createOrder(
+      req.user.sub,
+      body.plan,
+      body.channel === 'qrcode' ? 'qrcode' : 'page',
+    )
     return { code: 0, message: 'ok', data }
   }
 
