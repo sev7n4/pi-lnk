@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { createSign, generateKeyPairSync } from 'node:crypto'
+import { createSign, createVerify, generateKeyPairSync } from 'node:crypto'
 import {
   AlipayAdapter,
   alipayTimestamp,
@@ -9,8 +9,10 @@ import {
 
 /**
  * RSA2 签名/验签正确性（无 DB 纯函数测试）。
- * 用「支付宝官方签名规则」（排除 sign/sign_type，字典序拼接，RSA-SHA256）手工构造
- * 合法/伪造回调，验证 AlipayAdapter.verifyCallback 的判定，防止自造签名规则偏离官方。
+ * 两种口径（勿混淆）：
+ * - 异步通知验签（verifyCallback）：除 sign/sign_type 外字典序拼接（官方 rsaCheckV1）；
+ * - 网关请求签名（createCharge/queryTrade）：只排除 sign，sign_type 参与签名
+ *   （2026-10-17 沙箱 invalid-signature 调试页回显实证，见回归测试）。
  */
 describe('AlipayAdapter RSA2 验签', () => {
   let appPrivateKeyPem: string
@@ -119,6 +121,37 @@ describe('AlipayAdapter RSA2 验签', () => {
     expect(biz.out_trade_no).toBe('order-xyz')
     expect(biz.total_amount).toBe('99.00') // 9900 分 → 99.00 元
     expect(biz.product_code).toBe('FAST_INSTANT_TRADE_PAY')
+  })
+
+  it('请求签名串必须包含 sign_type（网关验签口径）——回归测试', async () => {
+    // 2026-10-17 生产事故：签名串误排除 sign_type → 沙箱网关 isv.invalid-signature。
+    // 支付宝调试页回显的验签串包含 sign_type=RSA2 ⇒ 请求侧签名内容 = 除 sign 外全部参数。
+    const { payUrl } = await adapter.createCharge({
+      orderId: 'order-sign-type',
+      amountFen: 100,
+      subject: '回归',
+    })
+    const q = new URL(payUrl).searchParams
+    const signed: Record<string, string> = {}
+    for (const [k, v] of q) if (k !== 'sign') signed[k] = v
+    const content = Object.keys(signed)
+      .sort()
+      .map((k) => `${k}=${signed[k]}`)
+      .join('&')
+    // 用支付宝视角验证：包含 sign_type 的串必须验签通过
+    const pubPem = `-----BEGIN PUBLIC KEY-----\n${(appPublicKeyPemRaw.match(/.{1,64}/g) ?? []).join('\n')}\n-----END PUBLIC KEY-----`
+    expect(
+      createVerify('RSA-SHA256').update(content, 'utf8').verify(pubPem, q.get('sign')!, 'base64'),
+    ).toBe(true)
+    // 反向断言：排除 sign_type 的串必须验签失败（钉死旧错误不再回归）
+    const withoutSignType = Object.keys(signed)
+      .filter((k) => k !== 'sign_type')
+      .sort()
+      .map((k) => `${k}=${signed[k]}`)
+      .join('&')
+    expect(
+      createVerify('RSA-SHA256').update(withoutSignType, 'utf8').verify(pubPem, q.get('sign')!, 'base64'),
+    ).toBe(false)
   })
 
   it('构造时拒绝不可加载的密钥（配置错误启动即暴露）', () => {
