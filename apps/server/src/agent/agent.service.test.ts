@@ -179,8 +179,10 @@ describe('AgentService streamConversation', () => {
               {
                 type: 'add_node',
                 payload: {
-                  id: 'prompt-1',
-                  nodeType: 'prompt',
+                  id: 'text-1',
+                  // 2026-10-17 prompt 节点下线：fixture 由 nodeType 'prompt' 改 'text'——
+                  // 'prompt' 已退出 NODE_TYPES 白名单，画布动作会被契约校验静默丢弃。
+                  nodeType: 'text',
                   data: { prompt: '方案' },
                   position: { x: 0, y: 0 },
                 },
@@ -222,9 +224,9 @@ describe('AgentService streamConversation', () => {
         role: 'assistant',
         linkedOutputs: JSON.stringify([
           {
-            nodeId: 'prompt-1',
+            nodeId: 'text-1',
             title: '方案',
-            nodeType: 'prompt',
+            nodeType: 'text',
             status: 'done',
           },
         ]),
