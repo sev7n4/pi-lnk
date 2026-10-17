@@ -129,14 +129,6 @@ export const useAgentStore = defineStore('agent', () => {
     deadlineAt?: number
   } | null>(null)
   /**
-   * P1「正在做什么」（决策 8）：runtime 在每个工具**起手**时下发的 `activity` 事件载荷。
-   *
-   * 与 trace 最新一步的分工：trace 走 SSE 的 tool_call/tool_result 反推，长工具期间会停在
-   * 上一步的措辞；activity 由 runtime 在起手瞬间下发，状态行能立刻换词。
-   * 两者取其一即可，前端「有 activity 就用 activity」—— activity 更实时。
-   */
-  const activity = ref<{ toolName?: string; done?: number; total?: number } | null>(null)
-  /**
    * P2「会话恢复中」：vendor `retry_scheduled{recovery:true}` 标记经 recovery 事件透传。
    * 瞬时态——真实进度事件（activity/tool_call）或回合结束（agent_end/error）清位，
    * 由组件层事件开关维护，这里只存值；状态行据此显示「会话恢复中」而非「上游响应超时」。
@@ -191,7 +183,6 @@ export const useAgentStore = defineStore('agent', () => {
     // 新回合开始：重置回合级状态行信号（propose 置位 / 阻塞等待 / 恢复态 / 文本时间戳 / 失败态）
     proposePendingConfirm.value = false
     blockingWait.value = null
-    activity.value = null
     recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
@@ -534,16 +525,6 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  /**
-   * `activity` 事件落点（决策 8）：只收中文翻译需要的原始数据，**不在这里翻中文**。
-   * 中文由组件层 `describeRuntimeActivity` 查 `TOOL_PRESENTATION` 目录出（决策 7：
-   * agent 只声明意图、措辞归客户端），避免 store 里塞文案。
-   * 空工具名一律清位——宁可回落 trace 旧措辞，也不要在状态行吐出空字。
-   */
-  function setActivity(next: { toolName?: string; done?: number; total?: number } | null) {
-    activity.value = next?.toolName ? { ...next } : null
-  }
-
   /** P2：recovery 事件落点——置位/清位「会话恢复中」（清位由组件层在真实进度事件里调用）。 */
   function setRecovering(next: boolean) {
     recovering.value = next
@@ -700,7 +681,6 @@ export const useAgentStore = defineStore('agent', () => {
     messages.value = []
     proposePendingConfirm.value = false
     blockingWait.value = null
-    activity.value = null
     recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
@@ -713,14 +693,12 @@ export const useAgentStore = defineStore('agent', () => {
     liveEstimatedCredits,
     proposePendingConfirm,
     blockingWait,
-    activity,
     recovering,
     lastTextDeltaAt,
     turnError,
     turnRefusal,
     setTurnRefusal,
     setBlockingWait,
-    setActivity,
     setRecovering,
     addUserMessage,
     confirmSelectionBinding,

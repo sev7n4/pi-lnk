@@ -117,10 +117,7 @@ import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
 import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
 import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
-import {
-  describeActivity,
-  describeRuntimeActivity,
-} from '@/components/agent/activityLine'
+import { describeActivity } from '@/components/agent/activityLine'
 import { buildStatusLine } from '@/components/agent/composer/statusLine'
 import { ElMessage } from 'element-plus'
 
@@ -874,12 +871,9 @@ const turnStatus = computed(() => {
     blockingWait: agent.blockingWait,
   })
   const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
-  // 「正在做什么」：优先 runtime 下发的 activity（P1 决策 8）；当前轮没有则拿 trace 最新一步人话；
-  // 都拿不到时 turnStatusLine 内部降级为「处理中」，绝不把内部工具名吐给用户（决策 3 / 5）。
-  // runtime activity 更实时（工具起手即到），拿不到才回落到 trace 最新一步的人话
-  const traceActivity =
-    describeRuntimeActivity(agent.activity) ??
-    describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
+  // 「正在做什么」：唯一数据源 = executionTrace 最新一步人话（浮层与对话流同源，见边界设计）；
+  // 拿不到时 turnStatusLine 内部降级为「处理中」，绝不把内部工具名吐给用户（决策 3 / 5）。
+  const traceActivity = describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
   return turnStatusLine({
     isStreaming: agent.isStreaming,
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
@@ -911,9 +905,7 @@ const turnStatus = computed(() => {
  */
 const composerStatus = computed(() =>
   buildStatusLine({
-    phase:
-      describeRuntimeActivity(agent.activity) ??
-      describeActivity(lastAssistantMessage.value?.executionTrace?.steps),
+    phase: describeActivity(lastAssistantMessage.value?.executionTrace?.steps),
     progressRatio: null,
     etaSeconds: null,
     points:
@@ -2620,8 +2612,6 @@ function handleEvent(event: { type: string; data: unknown }) {
       // 中文在组件层查 TOOL_PRESENTATION 出（决策 7：runtime 只声明意图、不塞文案）。
       // P2：真实活动到达 = 恢复结束（清「会话恢复中」瞬时态）。
       agent.setRecovering(false)
-      const d = event.data as { toolName?: string; done?: number; total?: number };
-      agent.setActivity({ toolName: d.toolName, done: d.done, total: d.total });
       break;
     }
     case 'recovery': {
@@ -2634,8 +2624,7 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'pi_compaction': {
       // 审计 #6：压缩对用户可见。开始→状态行「压缩上下文」；结束（completed/
       // declined/aborted/failed 一律）→清除。成败不在此处报错（metrics 观测口径）。
-      const d = event.data as { phase?: string } | undefined;
-      agent.setActivity(d?.phase === 'start' ? { toolName: 'compaction' } : null);
+      // 压缩审计原经 runtime activity 落状态行（已随该路径移除）；其余由 metrics 观测。
       break;
     }
     case 'tool_result': {
@@ -3604,7 +3593,7 @@ defineExpose({
               </p>
               <button
                 type="button"
-                class="mt-1 rounded border border-warning-border bg-white px-2 py-0.5 text-[11px] font-medium text-warning hover:bg-warning-bg-hover"
+                class="mt-1 rounded border border-warning-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-warning hover:bg-warning-bg-hover"
                 data-testid="turn-refusal-dismiss"
                 @click="agent.setTurnRefusal(null)"
               >
@@ -3659,7 +3648,7 @@ defineExpose({
               <button
                 v-if="proposeWait.nodeId"
                 type="button"
-                class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-white px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-elevated px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
                 data-testid="propose-wait-locate"
                 aria-label="点击定位到画布上待确认的节点"
                 @click="locateProposeNode"
@@ -3673,7 +3662,7 @@ defineExpose({
               </button>
               <button
                 type="button"
-                class="rounded-lg border border-warning-border bg-white px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                class="rounded-lg border border-warning-border bg-elevated px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
                 data-testid="propose-wait-cancel"
                 @click="cancelBlockingPropose"
               >
