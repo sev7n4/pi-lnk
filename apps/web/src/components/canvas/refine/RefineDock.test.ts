@@ -110,8 +110,8 @@ describe('RefineDock', () => {
 
     const busy = mountDock({ prompt: 'x', busy: true }).find('[data-testid="dock-run"]')
     expect(busy.attributes('disabled')).toBeDefined()
-    // 禁用态保形：生成中仍有停止方块 SVG（禁止退化为无图标白矩形）
-    expect(busy.find('svg').exists()).toBe(true)
+    // 禁用态保形：busy 仅禁用（未接 generating，无停止方块），锚 glyph 仍在（禁止退化为无图标白矩形）
+    expect(busy.find('.dock-generate-btn__glyph').exists()).toBe(true)
   })
 
   it('应用到节点只在 canApply 时出现', () => {
