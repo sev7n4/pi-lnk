@@ -1627,8 +1627,15 @@ export class AgentService {
         }
         // 执行事件持久化收集（刷新后前端可恢复执行过程）；canvas_action 已在
         // extractCanvasActions 循环内同步入 canvasActions/executionEvents，
-        // mapPiEventToUiEvent 不产出该类型
-        if (ui.type === 'tool_call' || ui.type === 'tool_result') {
+        // mapPiEventToUiEvent 不产出该类型。
+        // node_status（2026-10-18 回合挂住等终态）：生产实证漏入库——实时 SSE 走
+        // 全量 ui yield 没问题，但这里只通用收集 tool_call/tool_result ⇒ 刷新后
+        // 历史回合重放拿不到生成终态（TRACE_PERSIST 白名单早有它，是提取分支漏接）。
+        if (
+          ui.type === 'tool_call' ||
+          ui.type === 'tool_result' ||
+          ui.type === 'node_status'
+        ) {
           pushTraceEvent(ui.type, ui.data)
         }
         // P2-3：message_end 是「一条 assistant 消息的权威收束」⇒ 其后的执行事件归属下一段，
