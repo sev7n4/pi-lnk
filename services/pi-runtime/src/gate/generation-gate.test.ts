@@ -52,7 +52,7 @@ function fakeClient(response: unknown, opts: { throwOnPost?: boolean } = {}) {
 }
 
 test("non-gated tools pass without any check", async () => {
-	const r = await checkGenerationGate(new GenerationGateStore(), fakeClient(null), "s", "upsert_prompt_node", {});
+	const r = await checkGenerationGate(new GenerationGateStore(), fakeClient(null), "s", "upsert_media_node", {});
 	assert.deepEqual(r, { allowed: true });
 });
 

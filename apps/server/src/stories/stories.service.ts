@@ -13,14 +13,17 @@ export class StoriesService {
   }
 
   async create(userId: string, data: { title: string; synopsis?: string; episodeCount?: number }) {
+    // 2026-10-17 prompt 节点下线（PR feat/prompt-node-decommission）：剧集种子节点
+    // 由 prompt-1（type:'prompt'）改为 text-1（type:'text'）——prompt 节点已退出
+    // NODE_TYPES 白名单与创建入口，种子若继续种 prompt 会被画布动作链路静默丢弃。
     const session = await this.prisma.session.create({
       data: {
         userId,
         title: data.title,
         canvasData: JSON.stringify({
           nodes: [{
-            id: 'prompt-1',
-            type: 'prompt',
+            id: 'text-1',
+            type: 'text',
             position: { x: 250, y: 100 },
             data: { prompt: data.synopsis ?? data.title },
           }],

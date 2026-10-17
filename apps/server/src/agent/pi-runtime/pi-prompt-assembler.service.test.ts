@@ -184,7 +184,7 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 		const prompt = await asm.assembleStatic({ ruleGroups: ["core", "writeTools"] });
 		expect(prompt.includes("禁止调用任何 run_*")).toBe(true);
 		expect(prompt.includes("fallback_pending")).toBe(false);
-		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(false);
+		expect(prompt.includes("11. run_image/video/text/audio_generation")).toBe(false);
 	});
 
 	it("genTools 启用：规则 3' 替换原文，注入规则 11/12/13 与 cancel_generation", async () => {
@@ -195,7 +195,7 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 		// r3' 只剩声称黑名单；确认门语义由同组规则 11 全量承接，两条都要在。
 		expect(prompt.includes("也不要假装已出图")).toBe(true);
 		expect(prompt.includes("仅对已 propose_generation 且用户明确同意")).toBe(true);
-		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
+		expect(prompt.includes("11. run_image/video/text/audio_generation")).toBe(true);
 		expect(prompt.includes("12. run_* 返回 timeout")).toBe(true);
 		expect(prompt.includes("fallback_pending")).toBe(true);
 		expect(prompt.includes("cancel_generation")).toBe(true);
@@ -215,7 +215,7 @@ describe("genTools 规则组（B-5 生成闭环）", () => {
 	it("genTools 单独启用（无 writeTools）：第 10 条守卫仍在", async () => {
 		const asm = makeAssembler({ nodes: [] });
 		const prompt = await asm.assembleStatic({ ruleGroups: ["core", "genTools"] });
-		expect(prompt.includes("11. run_image/video/text/prompt/audio_generation")).toBe(true);
+		expect(prompt.includes("11. run_image/video/text/audio_generation")).toBe(true);
 		expect(prompt.includes("写操作尚未开放")).toBe(true);
 	});
 });
@@ -465,6 +465,11 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * core 693 不变、core+writeTools 2637→2648（Δ=+11）、core+genTools 1091 不变、
 	 * 全组合 3035→3046（Δ=+11），余量 3200−3046=**154**。
 	 *
+	 * 2026-10-17 prompt 节点下线（v1.5.0）：gen_tool_policy 规则 11 工具清单
+	 * run_image/video/text/prompt/audio_generation → run_image/video/text/audio_generation，
+	 * core 693 不变、core+writeTools 2648 不变、core+genTools 1091→1084（Δ=−7）、
+	 * 全组合 3046→3039（Δ=−7），余量 3200−3039=**161**。
+	 *
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
@@ -472,8 +477,8 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	const BASELINE: Record<string, number> = {
 		core: 693,
 		"core+writeTools": 2648,
-		"core+genTools": 1091,
-		"core+writeTools+genTools": 3046,
+		"core+genTools": 1084,
+		"core+writeTools+genTools": 3039,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -493,9 +498,11 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 2026-10-13 规则 4 收紧（v1.6.0）：attachments 省略入文，3051→3035（余量 149→165）。
 		// 2026-10-15 规则 15 收紧（v1.7.0）：正文不复述节点参数入文（同规则压字补偿），
 		// 3035→3046（余量 165→154）。
+		// 2026-10-17 prompt 节点下线（v1.5.0）：gen_tool_policy 规则 11 删 prompt 工具，
+		// 3046→3039（余量 154→161）。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(154);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(161);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
@@ -503,14 +510,14 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		const on = renderStaticFallback(["core", "writeTools", "genTools"]);
 		expect(on).toContain("已 propose_generation 且用户明确同意");
 		// 同组必须注入规则 11/12/13（否则上面那句可能来自别处）
-		expect(on).toContain("11. run_image/video/text/prompt/audio_generation");
+		expect(on).toContain("11. run_image/video/text/audio_generation");
 	});
 
 	it("case1b：genTools 未启用时改为「禁止调用任何 run_*」", () => {
 		const off = renderStaticFallback(["core", "writeTools"]);
 		expect(off).toContain("禁止调用任何 run_*");
 		// 未启用 ⇒ 生成闭环规则 11/12/13 不该出现
-		expect(off).not.toContain("11. run_image/video/text/prompt/audio_generation");
+		expect(off).not.toContain("11. run_image/video/text/audio_generation");
 	});
 
 	it("case1c：两版互斥——不会同时出现（反例对照：正例证明判据会命中，反例证明不是恒真）", () => {
@@ -553,7 +560,7 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		expect(renderStaticFallback(["core", "writeTools", "genTools"])).not.toContain("仅开放只读查询工具");
 		// 且守卫位置在生成规则之后（core → GEN → GUARD 的push 顺序）
 		const t = renderStaticFallback(["core", "genTools"]);
-		expect(t.indexOf("11. run_image/video/text/prompt/audio_generation")).toBeLessThan(
+		expect(t.indexOf("11. run_image/video/text/audio_generation")).toBeLessThan(
 			t.indexOf(RULE_10_WRITE_GUARD),
 		);
 	});

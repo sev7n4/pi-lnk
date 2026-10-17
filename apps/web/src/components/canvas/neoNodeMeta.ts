@@ -9,6 +9,7 @@ export interface NeoNodeMeta {
 }
 
 export const NEO_NODE_META: Record<string, NeoNodeMeta> = {
+  // 🔴 2026-10-17 prompt 节点下线：条目仅为存量渲染兜底保留（创建入口已删、生产数据已清空）。
   prompt: { label: '提示词', variant: 'node-prompt', icon: 'prompt', defaultWidth: 280, defaultHeight: 120 },
   text: { label: '文本', variant: 'node-text', icon: 'text', defaultWidth: 280, defaultHeight: 160 },
   image: { label: '图片', variant: 'node-image', icon: 'image', defaultWidth: 280, defaultHeight: 280 },

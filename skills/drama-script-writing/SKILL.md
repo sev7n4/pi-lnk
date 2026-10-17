@@ -1,7 +1,7 @@
 ---
 name: drama-script-writing
 version: "0.1.1"
-description: 短剧/漫剧原创 IP 剧本创作。当用户要求写剧本、短剧脚本、分集大纲、故事梗概、分集梗概、台词、反转设计、钩子设计、把创意改编成短剧，或提到剧本、编剧、脚本、logline、故事线、集数规划时使用。产出文本剧本与大纲（画布 prompt 节点）；分镜拆解与视频提示词不在范围。
+description: 短剧/漫剧原创 IP 剧本创作。当用户要求写剧本、短剧脚本、分集大纲、故事梗概、分集梗概、台词、反转设计、钩子设计、把创意改编成短剧，或提到剧本、编剧、脚本、logline、故事线、集数规划时使用。产出文本剧本与大纲（画布文本节点）；分镜拆解与视频提示词不在范围。
 ---
 
 # 短剧/漫剧原创 IP 剧本创作
@@ -71,7 +71,7 @@ description: 短剧/漫剧原创 IP 剧本创作。当用户要求写剧本、�
 
 ## 输出物分层（画布节点）
 
-用 `upsert_prompt_node` 建节点（`prompt` 作节点标题、`content` 为正文，Markdown 可）：
+用 `upsert_media_node`（`target_type` 传 `text`）建文本节点（`prompt` 作节点标题、`content` 为正文，Markdown 可）：
 
 | 层 | 节点 | 标题示例 |
 |---|---|---|
@@ -149,4 +149,4 @@ description: 短剧/漫剧原创 IP 剧本创作。当用户要求写剧本、�
   - 全格式覆盖与人物设计（性格 / 动机 / 成长弧光 / 反差异质）、结构大纲 + 场景拆解分层借鉴 Shanyin-ai/shanyin-screenwriting-master（MIT，466★）
   - 短剧行业结构规范（单集 60–90 秒 ≈ 150–220 字、3 秒冲突锚定、15 秒升级、每 30 秒悬念、40 秒反转、结尾钩子、四段循环、一卡 8–12 集 / 二卡 26–30 集、四类反转轮换）取自短剧编剧实战方法论与踩坑数据
   - 新增原创 IP 红线与 Gate 1 原创性（不得换名复刻、不得真实人物 / 品牌、合规红线拒绝）
-  - 画布工具链：`upsert_prompt_node` / `set_node_text` / `connect_nodes` / `arrange_nodes(along_edges)`；IP bible 走 `save_memory` / `recall_memory`
+  - 画布工具链：`upsert_media_node`（target_type=text）/ `set_node_text` / `connect_nodes` / `arrange_nodes(along_edges)`；IP bible 走 `save_memory` / `recall_memory`

@@ -19,8 +19,6 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
 
 // Import all Zod schemas
 import {
-  UpsertPromptNodeRequestSchema,
-  UpsertPromptNodeResponseSchema,
   GetNodeRequestSchema,
   GetNodeResponseSchema,
   GetCanvasSummaryRequestSchema,
@@ -81,10 +79,7 @@ interface ContractMapping {
 }
 
 const CONTRACTS: Record<string, { request: ContractMapping; response: ContractMapping }> = {
-  upsert_prompt_node: {
-    request: { tsSchema: UpsertPromptNodeRequestSchema, pyModel: 'UpsertPromptNodeRequest' },
-    response: { tsSchema: UpsertPromptNodeResponseSchema, pyModel: 'UpsertPromptNodeResponse' },
-  },
+  // 被删历史（2026-10-17 prompt 节点下线）：upsert_prompt_node 契约条目曾在此。
   get_node: {
     request: { tsSchema: GetNodeRequestSchema, pyModel: 'GetNodeRequest' },
     response: { tsSchema: GetNodeResponseSchema, pyModel: 'GetNodeResponse' },

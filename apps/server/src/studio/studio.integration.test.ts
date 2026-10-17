@@ -654,54 +654,6 @@ describe('StudioService integration (provider params)', () => {
       expect.objectContaining({ model: 'agnes-2.0-flash' }),
     )
   })
-
-  it('passes inlined image refs to generatePromptFromUserInput', async () => {
-    const refUrl = 'https://example.com/bottle.jpg'
-    const record = await svc.generatePrompt(
-      'u1',
-      '写主图提示词',
-      'agnes-2.0-flash',
-      undefined,
-      undefined,
-      undefined,
-      [{ refKey: 'I1', mediaType: 'image', url: refUrl }],
-      ['I1'],
-    )
-    expect(inlineUpstreamReferenceImages).toHaveBeenCalledWith([refUrl])
-    expect(generatePromptFromUserInput).toHaveBeenCalledWith(
-      '写主图提示词',
-      expect.objectContaining({
-        model: 'agnes-2.0-flash',
-        referenceImages: [refUrl],
-        mentionedKeys: ['I1'],
-      }),
-    )
-    const meta = JSON.parse(String(record.metadata))
-    expect(meta.visionUsed).toBe(true)
-    expect(meta.referenceImages).toEqual([refUrl])
-  })
-
-  it('allows empty prompt when prompt node has image refs', async () => {
-    await svc.generatePrompt(
-      'u1',
-      '  ',
-      'agnes-2.0-flash',
-      undefined,
-      undefined,
-      undefined,
-      [{ refKey: 'I1', mediaType: 'image', url: 'https://example.com/bottle.jpg' }],
-    )
-    expect(generatePromptFromUserInput).toHaveBeenCalledWith(
-      '请基于参考图生成结构化提示词',
-      expect.objectContaining({
-        referenceImages: ['https://example.com/bottle.jpg'],
-      }),
-    )
-  })
-
-  it('still rejects empty prompt without image refs', async () => {
-    await expect(svc.generatePrompt('u1', '')).rejects.toBeInstanceOf(BadRequestException)
-  })
 })
 
 describe('StudioService text record-first ledger alignment', () => {

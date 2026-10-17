@@ -37,7 +37,6 @@ describe('AgentCanvasToolsService', () => {
   const generateImage = vi.fn()
   const generateVideo = vi.fn()
   const generateText = vi.fn()
-  const generatePrompt = vi.fn()
   const generateAudio = vi.fn()
   const expandPromptContent = vi.fn()
   const getGeneration = vi.fn()
@@ -109,11 +108,6 @@ describe('AgentCanvasToolsService', () => {
       id: 'gen-t1',
       status: 'completed',
       metadata: JSON.stringify({ text: '买它！限时优惠。' }),
-    })
-    generatePrompt.mockResolvedValue({
-      id: 'gen-p1',
-      status: 'completed',
-      metadata: JSON.stringify({ mode: 'image_prompt_multi_style', content: '扩写后的 prompt...' }),
     })
     expandPromptContent.mockResolvedValue({
       mode: 'character_turnaround',
@@ -220,7 +214,6 @@ describe('AgentCanvasToolsService', () => {
             generateImage,
             generateVideo,
             generateText,
-            generatePrompt,
             generateAudio,
             getGeneration,
             expandPromptContent,
@@ -259,47 +252,6 @@ describe('AgentCanvasToolsService', () => {
     // Speed up polling in unit tests
     svc.pollIntervalMs = 1
     svc.pollTimeoutMs = 50
-  })
-
-  it('upsertPromptNode creates prompt node and returns add_node action', async () => {
-    const result = await svc.upsertPromptNode({
-      sessionId: 's1',
-      userId: 'u1',
-      prompt: '卫生洁具营销',
-      content: '# 方案\n...',
-    })
-    expect(result.nodeId).toBeTruthy()
-    expect(result.actions.some((a) => a.type === 'add_node')).toBe(true)
-    expect(sessionUpdate).toHaveBeenCalled()
-    expect(canvas.nodes).toHaveLength(1)
-    expect(canvas.nodes[0].type).toBe('prompt')
-    expect(canvas.nodes[0].data.prompt).toBe('卫生洁具营销')
-    expect(canvas.nodes[0].data.content).toBe('# 方案\n...')
-  })
-
-  it('upsertPromptNode updates existing prompt node', async () => {
-    canvas = {
-      nodes: [
-        {
-          id: 'prompt-1',
-          type: 'prompt',
-          position: { x: 0, y: 0 },
-          data: { prompt: 'old', content: 'old' },
-        },
-      ],
-      edges: [],
-    }
-    const result = await svc.upsertPromptNode({
-      sessionId: 's1',
-      userId: 'u1',
-      nodeId: 'prompt-1',
-      prompt: 'new prompt',
-      content: 'new content',
-    })
-    expect(result.nodeId).toBe('prompt-1')
-    expect(result.actions.some((a) => a.type === 'update_node')).toBe(true)
-    expect(canvas.nodes[0].data.prompt).toBe('new prompt')
-    expect(canvas.nodes[0].data.content).toBe('new content')
   })
 
   it('getNode returns node snapshot', async () => {
@@ -720,76 +672,6 @@ describe('AgentCanvasToolsService', () => {
     expect(nodeContext?.canvasSummary).toContain('画布共 1 个节点')
   })
 
-  it('runPromptGeneration writes content and promptMode', async () => {
-    canvas = {
-      nodes: [
-        {
-          id: 'prm-1',
-          type: 'prompt',
-          position: { x: 0, y: 0 },
-          data: { prompt: '蓝牙耳机白底图', status: 'draft' },
-        },
-      ],
-      edges: [],
-    }
-    const result = await svc.runPromptGeneration({
-      sessionId: 's1',
-      userId: 'u1',
-      nodeId: 'prm-1',
-    })
-    expect(generatePrompt).toHaveBeenCalled()
-    expect(result.status).toBe('completed')
-    expect(canvas.nodes[0].data.content).toBe('扩写后的 prompt...')
-    expect(canvas.nodes[0].data.promptMode).toBe('image_prompt_multi_style')
-  })
-
-  it('runPromptGeneration forwards local image refs to studio.generatePrompt', async () => {
-    canvas = {
-      nodes: [
-        {
-          id: 'prm-2',
-          type: 'prompt',
-          position: { x: 0, y: 0 },
-          data: {
-            prompt: '按图写提示词',
-            status: 'draft',
-            localRefs: [
-              {
-                id: 'att-1',
-                mediaType: 'image',
-                sourceKind: 'upload',
-                label: 'bottle.jpg',
-                url: 'https://cdn.example/bottle.jpg',
-              },
-            ],
-            refOrder: ['att-1'],
-          },
-        },
-      ],
-      edges: [],
-    }
-    await svc.runPromptGeneration({
-      sessionId: 's1',
-      userId: 'u1',
-      nodeId: 'prm-2',
-    })
-    expect(generatePrompt).toHaveBeenCalledWith(
-      'u1',
-      '按图写提示词',
-      expect.anything(),
-      undefined,
-      expect.objectContaining({ sessionId: 's1', nodeId: 'prm-2' }),
-      undefined,
-      expect.arrayContaining([
-        expect.objectContaining({
-          mediaType: 'image',
-          url: 'https://cdn.example/bottle.jpg',
-        }),
-      ]),
-      undefined,
-    )
-  })
-
   it('runAudioGeneration writes url and completed status', async () => {
     canvas = {
       nodes: [
@@ -1178,11 +1060,11 @@ describe('AgentCanvasToolsService', () => {
 
   it('write paths reject when session.userId mismatches input.userId', async () => {
     await expect(
-      svc.upsertPromptNode({
+      svc.upsertMediaNode({
         sessionId: 's1',
         userId: 'other-user',
+        targetType: 'text',
         prompt: 'x',
-        content: 'y',
       }),
     ).rejects.toBeInstanceOf(ForbiddenException)
 
@@ -1452,12 +1334,12 @@ describe('AgentCanvasToolsService', () => {
       ).rejects.toThrow(/staged actions pending/i)
     })
 
-    it('upsertPromptNode with stage does not mutate canvasData', async () => {
+    it('upsertMediaNode with stage does not mutate canvasData', async () => {
       canvas = {
         nodes: [
           {
             id: 'plan-1',
-            type: 'prompt',
+            type: 'text',
             position: { x: 0, y: 0 },
             data: { prompt: 'old', content: 'old', title: 'old' },
           },
@@ -1472,12 +1354,12 @@ describe('AgentCanvasToolsService', () => {
         stagedActions: null,
         stagedAt: null,
       }))
-      await svc.upsertPromptNode({
+      await svc.upsertMediaNode({
         sessionId: 's1',
         userId: 'u1',
         nodeId: 'plan-1',
+        targetType: 'text',
         prompt: '营销方案',
-        content: 'new draft',
         stage: true,
       })
       expect(canvas.nodes[0].data.content).toBe('old')

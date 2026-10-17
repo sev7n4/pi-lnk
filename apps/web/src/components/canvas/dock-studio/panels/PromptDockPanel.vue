@@ -1,34 +1,20 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed } from 'vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
 import type { MentionOption } from '@/components/canvas/MentionInput.vue'
-import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
+import type { NodeRef } from '@/composables/useNodeRefs'
 import DockToolbarShell from '@/components/canvas/dock-studio/shared/DockToolbarShell.vue'
-import DockPromptSection from '@/components/canvas/dock-studio/shared/DockPromptSection.vue'
-import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
-import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
-import DockCreditBadge from '@/components/canvas/dock-studio/shared/DockCreditBadge.vue'
-import DockRefStrip from '@/components/canvas/dock-studio/shared/DockRefStrip.vue'
-import GuidePickerPopover from '@/components/canvas/dock-studio/shared/GuidePickerPopover.vue'
-import { estimateTextCredits } from '@/constants/credits'
-import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
-import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
-import { resolveGenerationModel } from '@/constants/studioModels'
-import { isNodeGenerating } from '@/constants/dockStudio'
-import {
-  PROMPT_MODE_LABELS,
-  defaultGuideCapabilities,
-  getGenerationScene,
-} from '@lnkpi/shared'
-import { applyGuideSceneToPrompt, clearGuideScene } from './guideSceneApply'
-import { useDockLocalImageUpload } from '@/components/canvas/dock-studio/shared/useDockLocalImageUpload'
+import { PROMPT_MODE_LABELS } from '@lnkpi/shared'
 
+/**
+ * 🔴 2026-10-17 prompt 节点下线：本面板降级为**存量只读查看器**。
+ * 曾在此的编辑/生成能力（DockPromptSection 输入、模型选择、场景模板、语音、
+ * 引用上传、DockGenerateButton 生成触发）随 prompt 节点退役一并移除——
+ * 创建入口已删、生成端点已删（studio.generatePrompt / run_prompt_generation）。
+ * 生产画布已无 prompt 节点；此面板仅为意外残留的历史节点兜底展示。
+ */
 const MODE_LABELS = PROMPT_MODE_LABELS
-
-const { getConfig } = useModelProviderSettings()
 
 const props = defineProps<{
   node: EditableFlowNode
@@ -39,233 +25,66 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  patch: [patch: Record<string, unknown>]
-  generate: []
   close: []
   removeRef: [ref: NodeRef]
 }>()
 
-const prompt = ref('')
-const textModel = ref(getConfig('text').model)
-
-const speech = useSpeechRecognition()
-const promptSectionRef = ref<InstanceType<typeof DockPromptSection> | null>(null)
-const {
-  inputRef: refInput,
-  uploading: refUploading,
-  uploadError: refUploadError,
-  pick: pickReferenceImage,
-  onFileChange: onRefFileChange,
-} = useDockLocalImageUpload({
-  getExistingLocalRefs: () => (props.node.data?.localRefs as LocalRefBinding[]) ?? [],
-  onPatch: (patch) => emit('patch', patch),
-})
-const guidePickerOpen = ref(false)
-const readonly = computed(() => isNodeGenerating(props.node.data?.status) || !!props.generating)
-const promptMode = computed(() => {
-  const mode = props.node.data?.promptMode
-  return mode ? String(mode) : ''
-})
+const promptText = computed(() => String(props.node.data?.prompt ?? ''))
 
 const promptModeLabel = computed(() => {
-  const mode = promptMode.value
-  return mode ? (MODE_LABELS[mode] ?? mode) : ''
+  const mode = props.node.data?.promptMode
+  return mode ? (MODE_LABELS[String(mode)] ?? String(mode)) : ''
 })
 
 const textRefs = computed(() => (props.refs ?? []).filter((ref) => ref.mediaType === 'text'))
-// Prompt dock only stamps guide ids; it does not generate images itself.
-const guideCapabilities = {
-  ...defaultGuideCapabilities(),
-  transparentBackground: true,
-}
-const activeGuideSceneId = computed(() => {
-  const id = props.node.data?.guideSceneId
-  return typeof id === 'string' && id.trim() ? id.trim() : ''
-})
-const activeGuideScene = computed(() =>
-  activeGuideSceneId.value ? getGenerationScene(activeGuideSceneId.value) ?? null : null,
-)
-
-function onSelectGuideScene(sceneId: string) {
-  if (readonly.value) return
-  const result = applyGuideSceneToPrompt({ sceneId, currentPrompt: prompt.value })
-  prompt.value = result.prompt
-  emit('patch', { prompt: result.prompt, guideSceneId: result.guideSceneId })
-  if (!result.didPrefill) {
-    ElMessage.info(`已套用「${result.label}」场景约束（未改写现有提示词）`)
-  }
-}
-
-function onClearGuideScene() {
-  if (readonly.value) return
-  emit('patch', clearGuideScene())
-}
-
-function selectGuideScene(sceneId: string) {
-  onSelectGuideScene(sceneId)
-  guidePickerOpen.value = false
-}
-
-function clearSelectedGuideScene() {
-  onClearGuideScene()
-  guidePickerOpen.value = false
-}
-
-function syncFromNode() {
-  const data = props.node.data ?? {}
-  prompt.value = String(data.prompt ?? '')
-  textModel.value = resolveGenerationModel('text', data.textModel as string | undefined)
-}
-
-watch(() => props.node, syncFromNode, { immediate: true, deep: true })
-
-watch(
-  textRefs,
-  (refs) => {
-    if (prompt.value.trim()) return
-    const data = props.node.data ?? {}
-    if (data.promptPrefillFromRefId) return
-
-    const textRef = refs.find((ref) => ref.payload.text || ref.preview)
-    if (!textRef) return
-
-    const raw = textRef.payload.text ?? textRef.preview
-    const summary = raw.length > 80 ? `${raw.slice(0, 77)}...` : raw
-    if (!summary.trim()) return
-
-    prompt.value = summary
-    emit('patch', { prompt: summary, promptPrefillFromRefId: textRef.refId })
-  },
-  { immediate: true, deep: true },
-)
-
-function onPromptInput(value: string) {
-  prompt.value = value
-  emit('patch', { prompt: value })
-}
-
-function onGenerate() {
-  emit('patch', { prompt: prompt.value, textModel: textModel.value })
-  emit('generate')
-}
-
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (isFinal) {
-      const next = prompt.value ? `${prompt.value} ${text}` : text
-      onPromptInput(next)
-    }
-  })
-}
-
-function onRefReorder(refIds: string[]) {
-  emit('patch', { refOrder: refIds })
-}
-
-function onRefRemove(ref: NodeRef) {
-  emit('removeRef', ref)
-}
-
-function onRefMention(refKey: string) {
-  promptSectionRef.value?.insertRefMention(refKey)
-}
 </script>
 
 <template>
   <DockToolbarShell type="prompt" :show-close="false" @close="emit('close')">
-    <template #header-end>
-      <div class="relative">
-        <button
-          type="button"
-          class="dock-guide-scene-btn relative"
-          :class="{ 'is-guide-active': activeGuideSceneId }"
-          :disabled="readonly"
-          aria-label="场景模板"
-          :title="activeGuideScene?.label ?? '场景模板'"
-          :aria-expanded="guidePickerOpen"
-          @click="guidePickerOpen = !guidePickerOpen"
-        >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-            <rect x="4" y="4" width="6" height="6" rx="1" />
-            <rect x="14" y="4" width="6" height="6" rx="1" />
-            <rect x="4" y="14" width="6" height="6" rx="1" />
-            <rect x="14" y="14" width="6" height="6" rx="1" />
-          </svg>
-          <span class="dock-guide-scene-btn__label">{{ activeGuideScene?.label ?? '场景模板' }}</span>
-          <span
-            v-if="activeGuideSceneId"
-            class="dock-guide-scene-btn__dot"
-            aria-hidden="true"
-          />
-        </button>
-        <GuidePickerPopover
-          mode="generation_scene"
-          :active-id="activeGuideSceneId || null"
-          :capabilities="guideCapabilities"
-          :open="guidePickerOpen"
-          placement="above-end"
-          @select="selectGuideScene"
-          @clear="clearSelectedGuideScene"
-          @close="guidePickerOpen = false"
-        />
-      </div>
-    </template>
-
     <DockRefStrip
-      :refs="refs ?? []"
-      show-add-upload
-      :add-upload-disabled="readonly"
-      :add-upload-busy="refUploading"
-      @reorder="onRefReorder"
-      @remove="onRefRemove"
-      @mention="onRefMention"
-      @add-upload="pickReferenceImage"
-    />
-    <input ref="refInput" type="file" accept="image/*" class="hidden" @change="onRefFileChange">
-    <p v-if="refUploadError" class="mx-3 mb-1 text-[10px] text-danger">{{ refUploadError }}</p>
-
-    <DockPromptSection
-      ref="promptSectionRef"
-      :model-value="prompt"
-      :mentions="mentions"
-      placeholder="描述创作需求，生成结构化提示词..."
-      @update:model-value="onPromptInput"
-      @submit="onGenerate"
+      v-if="textRefs.length"
+      :refs="textRefs"
+      @remove="emit('removeRef', $event)"
     />
 
-    <!-- 生成结果预览卡已于 2026-10-08 下线：节点卡已展示同一份 preview，
-         dock 的职责只是「参数 + 动作」，结果展示交给画布与双击打开的沉浸编辑层。 -->
+    <div class="legacy-prompt-view">
+      <p class="legacy-prompt-view__hint">提示词节点已下线；此为历史节点的只读视图，新建文案请使用文本节点。</p>
+      <p v-if="promptText" class="legacy-prompt-view__text">{{ promptText }}</p>
+      <p v-else class="legacy-prompt-view__empty">（无内容）</p>
+    </div>
 
     <div class="bottom-toolbar-actions flex-wrap">
-      <UniversalModelSelector
-        v-model="textModel"
-        type="text"
-        @update:model-value="emit('patch', { textModel: $event })"
-      />
       <span
         v-if="promptModeLabel"
         class="rounded-md bg-fuchsia-500/15 px-2 py-0.5 text-[10px] text-fuchsia-300"
       >
         {{ promptModeLabel }}
       </span>
-
-      <div class="ml-auto flex items-center gap-2">
-        <DockMicButton
-          :listening="speech.listening.value"
-          :disabled="readonly"
-          @toggle="toggleVoice"
-        />
-        <DockCreditBadge :credits="estimateTextCredits()" variant="from" />
-        <DockGenerateButton
-          :generating="generating"
-          :disabled="!generating && !prompt.trim()"
-          @generate="onGenerate"
-        />
-      </div>
     </div>
   </DockToolbarShell>
 </template>
+
+<style scoped>
+.legacy-prompt-view {
+  margin: 0 12px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--lnk-border-subtle, rgba(148, 163, 184, 0.25));
+  padding: 10px 12px;
+}
+.legacy-prompt-view__hint {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--lnk-text-secondary, #94a3b8);
+  margin-bottom: 8px;
+}
+.legacy-prompt-view__text {
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.legacy-prompt-view__empty {
+  font-size: 12px;
+  color: var(--lnk-text-tertiary, #64748b);
+}
+</style>

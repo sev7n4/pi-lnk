@@ -58,7 +58,6 @@ const ALL_NAMES = [
 	"save_memory",
 	// write 核心链路
 	"upsert_media_node",
-	"upsert_prompt_node",
 	"set_node_text",
 	"update_node",
 	"connect_nodes",
@@ -79,7 +78,6 @@ const ALL_NAMES = [
 	"run_image_generation",
 	"run_video_generation",
 	"run_text_generation",
-	"run_prompt_generation",
 	"run_audio_generation",
 	"cancel_generation",
 	// 交互与元

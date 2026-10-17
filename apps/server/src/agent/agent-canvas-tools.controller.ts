@@ -8,30 +8,10 @@ import { CompositionService, type PreviewCompositionInput } from './composition.
 import { WorkflowRecipeService } from './workflow-recipe.service'
 import { AgentMemoryService, type AgentMemoryScope, type AgentMemoryScopeFilter } from './agent-memory.service'
 
-class UpsertPromptNodeDto {
-  @IsString()
-  sessionId!: string
-
-  @IsString()
-  userId!: string
-
-  @IsOptional()
-  @IsString()
-  nodeId?: string
-
-  @IsString()
-  prompt!: string
-
-  @IsString()
-  content!: string
-
-  @IsOptional()
-  position?: { x: number; y: number }
-
-  @IsOptional()
-  @IsBoolean()
-  stage?: boolean
-}
+// 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+// UpsertPromptNodeDto（sessionId/userId/nodeId/prompt/content/position/stage）与
+// upsert-prompt-node 端点曾在此；随 prompt 节点下线整链移除（pi-runtime upsert_prompt_node
+// 工具同批删）。文案节点写入统一走 upsert-media-node(targetType="text")。
 
 class UpsertMediaNodeDto {
   @IsString()
@@ -156,10 +136,6 @@ class BatchNodeItemDto {
   @IsOptional()
   @IsString()
   referenceImageUrl?: string
-
-  @IsOptional()
-  @IsString()
-  promptMode?: string
 
   @IsOptional()
   @IsString()
@@ -1125,11 +1101,8 @@ export class AgentCanvasToolsController {
     @Inject(AgentMemoryService) private readonly memory: AgentMemoryService,
   ) {}
 
-  @Post('upsert-prompt-node')
-  async upsertPromptNode(@Body() dto: UpsertPromptNodeDto) {
-    const data = await this.tools.upsertPromptNode(dto)
-    return { code: 0, message: 'ok', data }
-  }
+  // 被删历史（2026-10-17 prompt 节点下线）：@Post('upsert-prompt-node') 端点
+  // （→ tools.upsertPromptNode）曾在此；pi-runtime upsert_prompt_node 工具同批删。
 
   @Post('upsert-media-node')
   async upsertMediaNode(@Body() dto: UpsertMediaNodeDto) {
@@ -1315,11 +1288,10 @@ export class AgentCanvasToolsController {
     return { code: 0, message: 'ok', data }
   }
 
-  @Post('run-prompt-generation')
-  async runPromptGeneration(@Body() dto: RunImageGenerationDto) {
-    const data = await this.tools.runPromptGeneration(dto)
-    return { code: 0, message: 'ok', data }
-  }
+  // 被删历史（2026-10-17 prompt 节点下线）：@Post('run-prompt-generation') 端点
+  // （→ tools.runPromptGeneration）曾在此；pi-runtime run_prompt_generation 工具、
+  // studio.generatePrompt 同批删。turnaround/四格产品图走 start-image-generation 内的
+  // expandPromptContent，不经此端点。
 
   @Post('run-audio-generation')
   async runAudioGeneration(@Body() dto: RunAudioGenerationDto) {

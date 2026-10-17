@@ -77,7 +77,9 @@ export function applyActionsToFlow(
         } else {
           newNodes.push({
             id: nodeId,
-            type: p.nodeType ?? 'prompt',
+            // 2026-10-17 prompt 节点下线：兜底默认值 'prompt' → 'text'
+            // （仅对导入 workflow 包缺 nodeType 的脏数据生效；新建路径均显式带类型）。
+            type: p.nodeType ?? 'text',
             position: pos,
             data: p.data ?? {},
           })
@@ -175,7 +177,8 @@ export function flowToCanvasData(
   const data: CanvasData = {
     nodes: nodes.map((n) => ({
       id: n.id,
-      type: (n.type ?? 'prompt') as CanvasData['nodes'][0]['type'],
+      // 2026-10-17 prompt 节点下线：兜底默认值 'prompt' → 'text'（见上方 add 路径同款注释）。
+      type: (n.type ?? 'text') as CanvasData['nodes'][0]['type'],
       position: n.position,
       data: n.data,
     })),

@@ -31,7 +31,9 @@ export function applyCanvasActions(data: CanvasData, actions: CanvasAction[]): C
         } else {
           result.nodes.push({
             id: p.id,
-            type: (p.nodeType ?? 'prompt') as CanvasData['nodes'][0]['type'],
+            // 2026-10-17 prompt 节点下线：兜底默认值 'prompt' → 'text'
+            // （仅对导入 workflow 包缺 nodeType 的脏数据生效；新建路径均显式带类型）。
+            type: (p.nodeType ?? 'text') as CanvasData['nodes'][0]['type'],
             position: pos,
             data: p.data ?? {},
           })

@@ -70,7 +70,7 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 			"只要用户的意图是调整布局或顺序，就用本工具，不要只读画布就作答。" +
 			"mode=grid 用于无顺序关系的集合；mode=along_edges 用于有向关系（如分镜引用链、大纲→分集）。" +
 			"完成后视口自动平移到这些节点，并返回已排列数、未找到的 id、along_edges 是否降级为 grid（degraded）。" +
-			"【何时不该用】要改节点文字用 set_node_text；要新建节点用 upsert_prompt_node / upsert_media_node；" +
+			"【何时不该用】要改节点文字用 set_node_text；要新建节点用 upsert_media_node；" +
 			"只想查看有多少节点或当前布局用 get_canvas_summary / get_canvas_layout——" +
 			"「看一眼」不要触发重排，除非用户明确要求整理或排列。",
 

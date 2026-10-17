@@ -60,7 +60,7 @@ export const GATED_TOOLS: ReadonlySet<string> = new Set([
 	"run_image_generation",
 	"run_video_generation",
 	"run_text_generation",
-	"run_prompt_generation",
+	// 被删历史（2026-10-17 prompt 节点下线）："run_prompt_generation" 曾在本门禁集合。
 	"run_audio_generation",
 ]);
 

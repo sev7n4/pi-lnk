@@ -922,176 +922,13 @@ export class StudioService {
     }
   }
 
-  async generatePrompt(
-    userId: string,
-    prompt: string,
-    model?: string,
-    cancel?: CancelFlag,
-    scope?: CanvasGenerationScope,
-    guideSceneId?: string,
-    refs?: StudioRefInput[],
-    mentionedKeys?: string[],
-  ) {
-    const referenceImages = extractReferenceImages(refs)
-    const trimmed = resolvePromptGenerateText(prompt, referenceImages)
-    if (!trimmed) throw new BadRequestException('prompt 不能为空')
-    const quote = await this.pricing.quote({ capability: 'text' }, userId)
-    const cost = quote.credits
-    const chargeReason = '提示词模式生成'
-    const resolved = await this.resolver.resolveForGeneration(userId, model, 'text')
-    const { modelKey: resolvedKey, entry, fallback } = resolveModelKey('text', resolved.modelName)
-    const gatewayModelId =
-      resolved.source === 'user' ? resolved.modelName : entry.gatewayModelId
-    const storeModel = resolved.source === 'user' ? model ?? resolvedKey : resolvedKey
-    const creds = textGenCreds(resolved, model)
-    const baseMeta = {
-      modelKey: resolvedKey,
-      gatewayModelId,
-      channelId: resolved.channelId,
-      refsCount: refs?.length ?? 0,
-      visionUsed: false,
-      referenceImages,
-      ...(fallback && resolved.source === 'platform' ? { modelFallback: true } : {}),
-      ...(guideSceneId ? { guideSceneId } : {}),
-      ...(mentionedKeys?.length ? { mentionedKeys } : {}),
-    }
-
-    // 账本对账（G3 归零复查 2026-10-10）：generatePrompt 原为「先扣费后建记录」，
-    // consume/refund 的 generationId 写死 null，成功/失败的 GenerationRecord 后置创建
-    // 永远无法与积分交易关联（生产实测 15 笔 consume + 15 笔 refund 全 NULL，
-    // 15 条 type='prompt' 记录零关联孤儿）。改造为 record-first，与 generateText /
-    // generateImage 主路径同构：先建 generating 占位再扣费，扣费失败立即删占位。
-    const record = await this.prisma.generationRecord.create({
-      data: {
-        userId,
-        type: 'prompt',
-        prompt: trimmed,
-        model: storeModel,
-        url: null,
-        status: 'generating',
-        metadata: JSON.stringify(applyChargeMeta({ ...baseMeta }, cost)),
-        ...withCanvasScope(scope),
-      },
-    })
-    try {
-      await this.points.consume(
-        userId,
-        cost,
-        chargeReason,
-        consumeMeta('text', {
-          model: model ?? null,
-          generationId: record.id,
-          ruleVersion: quote.ruleVersion,
-          ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
-        }),
-      )
-    } catch (err) {
-      await this.prisma.generationRecord
-        .delete({ where: { id: record.id } })
-        .catch(() => undefined)
-      throw err
-    }
-
-    try {
-      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
-        throw new Error('missing api key')
-      }
-      const providerRefs = referenceImages.length
-        ? await inlineUpstreamReferenceImages(referenceImages)
-        : referenceImages
-      const { mode, content, visionUsed } = await generatePromptFromUserInput(trimmed, {
-        model: gatewayModelId,
-        apiKey: creds.apiKey,
-        baseUrl: creds.baseUrl,
-        guideSceneId,
-        referenceImages: providerRefs,
-        mentionedKeys,
-      })
-      if (cancel?.isCancelled()) {
-        await this.points.refund(
-          userId,
-          cost,
-          `${chargeReason}-取消退款`,
-          refundMeta('text', 'cancelled_refund', {
-            model: resolved.modelName,
-            generationId: record.id,
-          }),
-        )
-        await this.prisma.generationRecord.update({
-          where: { id: record.id },
-          data: {
-            status: 'failed',
-            metadata: JSON.stringify(
-              applyRefundMeta(applyChargeMeta({ ...baseMeta }, cost), cost, 'cancelled'),
-            ),
-          },
-        })
-        throwCancelledException(cost)
-      }
-      return this.prisma.generationRecord.update({
-        where: { id: record.id },
-        data: {
-          url: null,
-          status: 'completed',
-          metadata: JSON.stringify(
-            applyChargeMeta({ ...baseMeta, mode, content, visionUsed }, cost),
-          ),
-        },
-      })
-    } catch (err) {
-      if (isCancelledException(err)) throw err
-      if (resolved.source !== 'user') {
-        await this.points.refund(
-          userId,
-          cost,
-          `${chargeReason}-失败退款`,
-          refundMeta('text', 'failed_refund', {
-            model: resolved.modelName,
-            generationId: record.id,
-          }),
-        )
-        const failedMeta = applyFailureDiagnosticMeta(
-          applyRefundMeta(applyChargeMeta({ ...baseMeta }, cost), cost, 'platform_failed'),
-          err,
-        )
-        await this.prisma.generationRecord.update({
-          where: { id: record.id },
-          data: {
-            status: 'failed',
-            metadata: JSON.stringify(failedMeta),
-          },
-        })
-        throwGenerationFailure({
-          userMessage: String(failedMeta.userMessage ?? '生成失败'),
-          errorCode: failedMeta.errorCode as ErrorCode,
-          taskId: record.id,
-          refundedPoints: cost,
-        })
-      }
-      await this.points.refund(
-        userId,
-        cost,
-        `${chargeReason}-BYOK失败退款`,
-        refundMeta('text', 'byok_refund', {
-          model: resolved.modelName,
-          generationId: record.id,
-        }),
-      )
-      return this.prisma.generationRecord.update({
-        where: { id: record.id },
-        data: {
-          url: null,
-          status: 'fallback_pending',
-          metadata: JSON.stringify(
-            this.byokPendingMeta(resolved, err, cost, {
-              originalModel: model,
-              ...baseMeta,
-            }),
-          ),
-        },
-      })
-    }
-  }
+  // 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+  // generatePrompt（提示词模式生成主链：quote → record-first 占位 → consume →
+  // generatePromptFromUserInput → completed/fallback_pending/failed）曾定义于此
+  // （studio.controller.ts POST /studio/prompt/generate、agent-canvas-tools
+  // runPromptGeneration、pi-runtime run_prompt_generation 同批删）。
+  // ⚠️ 下方 expandPromptContent 是 turnaround/四格产品图管线唯一入口，必须保留；
+  // confirmPlatformFallback 内 record.type==='prompt' 的历史兜底分支同样保留（K7 账目兼容）。
 
   /** Expand user prompt via prompt-modes (no separate charge; used by turnaround image pipeline). */
   async expandPromptContent(
@@ -2898,6 +2735,9 @@ export class StudioService {
         let text: string
         let promptMeta: Record<string, unknown> = {}
         if (record.type === 'prompt') {
+          // legacy（2026-10-17 prompt 节点下线）：type='prompt' 记录不再新增，
+          // 但存量历史记录（K7 账目）的 BYOK 平台兜底仍在此路径重跑，
+          // generatePromptFromUserInput（prompt-modes）随之保留。
           const guideSceneId =
             typeof meta.guideSceneId === 'string' && meta.guideSceneId.trim()
               ? meta.guideSceneId.trim()

@@ -716,21 +716,10 @@ function parseRecordText(metadata: string | null | undefined, prompt: string): s
   }
 }
 
-function parseRecordPromptContent(
-  metadata: string | null | undefined,
-  prompt: string,
-): { content: string; mode: string | null } {
-  if (!metadata) return { content: prompt, mode: null }
-  try {
-    const meta = JSON.parse(metadata) as { content?: string; mode?: string; text?: string }
-    return {
-      content: meta.content ?? meta.text ?? prompt,
-      mode: meta.mode ?? null,
-    }
-  } catch {
-    return { content: prompt, mode: null }
-  }
-}
+// 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+// parseRecordPromptContent（解析 prompt 生成记录的 metadata.content/mode/text，
+// runPromptGeneration 消费）曾定义于此；随 prompt 生成链路整链移除。
+// ⚠️ parseRecordText 保留——run_text_generation 仍在用，别顺手删错。
 
 function modalityDefaults(nodeType: NodeType | string, prefs: AccountGenPrefs): Record<string, unknown> {
   switch (nodeType) {
@@ -860,56 +849,11 @@ export class AgentCanvasToolsService {
     }
   }
 
-  async upsertPromptNode(input: {
-    sessionId: string
-    userId: string
-    nodeId?: string
-    prompt: string
-    content: string
-    position?: { x: number; y: number }
-    stage?: boolean
-  }): Promise<{ nodeId: string; actions: CanvasAction[] }> {
-    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
-    const existing = input.nodeId
-      ? canvas.nodes.find((n) => n.id === input.nodeId)
-      : undefined
-
-    if (existing) {
-      const actions: CanvasAction[] = [
-        {
-          type: 'update_node',
-          payload: {
-            id: existing.id,
-            data: { prompt: input.prompt, content: input.content, title: input.prompt },
-          },
-        },
-      ]
-      await this.applyOrStage(input.sessionId, actions, input.stage)
-      return { nodeId: existing.id, actions }
-    }
-
-    const nodeId = input.nodeId ?? nextNodeId('prompt')
-    const col = canvas.nodes.length
-    const position = input.position ?? { x: 80 + col * GRID_X, y: 80 }
-    const actions: CanvasAction[] = [
-      {
-        type: 'add_node',
-        payload: {
-          id: nodeId,
-          nodeType: 'prompt',
-          position,
-          data: {
-            prompt: input.prompt,
-            content: input.content,
-            title: input.prompt,
-            status: 'draft',
-          },
-        },
-      },
-    ]
-    await this.applyOrStage(input.sessionId, actions, input.stage)
-      return { nodeId, actions }
-  }
+  // 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+  // upsertPromptNode（全量覆盖语义：prompt/content/title 一起写；新建时
+  // nextNodeId('prompt') + nodeType:'prompt'）曾定义于此。随 prompt 节点
+  // 下线整链移除（controller 端点 + pi-runtime upsert_prompt_node 工具同批删）；
+  // 文案节点写入统一走 upsertMediaNode(targetType='text')。
 
   async getNode(
     input: { sessionId: string; nodeId: string },
@@ -972,7 +916,6 @@ export class AgentCanvasToolsService {
       }
       videoMode?: string
       referenceImageUrl?: string
-      promptMode?: string
       guideSceneId?: string
       guideEditIntentId?: string
     }>
@@ -1013,7 +956,6 @@ export class AgentCanvasToolsService {
       }
       if (item.videoMode) nodeData.videoMode = item.videoMode
       if (item.referenceImageUrl) nodeData.referenceImageUrl = item.referenceImageUrl
-      if (item.promptMode) nodeData.promptMode = item.promptMode
       if (item.guideSceneId) nodeData.guideSceneId = item.guideSceneId
       if (item.guideEditIntentId) nodeData.guideEditIntentId = item.guideEditIntentId
       actions.push({
@@ -2111,100 +2053,12 @@ export class AgentCanvasToolsService {
     }
   }
 
-  async runPromptGeneration(input: {
-    sessionId: string
-    userId: string
-    nodeId: string
-  }): Promise<{
-    status: string
-    generationRecordId?: string
-    actions: CanvasAction[]
-    promptMode?: string | null
-    completionSummary?: string
-  }> {
-    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
-    const node = canvas.nodes.find((n) => n.id === input.nodeId)
-    if (!node) throw new NotFoundException('节点不存在')
-
-    const prompt = String(node.data?.prompt ?? '').trim()
-    const refs = toStudioRefs(node, canvas)
-    const hasImageRef = refs.some((r) => r.mediaType === 'image' && Boolean(r.url?.trim()))
-    if (!prompt && !hasImageRef) throw new NotFoundException('节点缺少 prompt')
-
-    const started: CanvasAction[] = [
-      {
-        type: 'update_node',
-        payload: {
-          id: input.nodeId,
-          data: {
-            status: 'generating',
-            generationStartedAt: new Date().toISOString(),
-          },
-        },
-      },
-    ]
-    await this.persist(input.sessionId, started)
-    const allActions = [...started]
-
-    try {
-      const prefs = await this.loadAccountGenPrefs(input.userId)
-      const model = pickString(node.data?.textModel, prefs.defaultTextModel) || undefined
-      const guideSceneId = pickString(node.data?.guideSceneId, '') || undefined
-      const record = await this.studio.generatePrompt(
-        input.userId,
-        prompt,
-        model,
-        undefined,
-        { sessionId: input.sessionId, nodeId: input.nodeId },
-        guideSceneId,
-        refs,
-        Array.isArray(node.data?.mentionedKeys)
-          ? (node.data.mentionedKeys as string[])
-          : undefined,
-      )
-      const recordId = record.id
-      const parsed = parseRecordPromptContent(record.metadata, prompt)
-      const finishData: Record<string, unknown> = {
-        status: 'completed',
-        content: parsed.content,
-        generationRecordId: recordId,
-        errorMessage: null,
-      }
-      if (parsed.mode) finishData.promptMode = parsed.mode
-      const existingGuideScene = pickString(node.data?.guideSceneId, '')
-      if (existingGuideScene) finishData.guideSceneId = existingGuideScene
-      const existingGuideEdit = pickString(node.data?.guideEditIntentId, '')
-      if (existingGuideEdit) finishData.guideEditIntentId = existingGuideEdit
-      const finishActions: CanvasAction[] = [
-        { type: 'update_node', payload: { id: input.nodeId, data: finishData } },
-      ]
-      await this.persist(input.sessionId, finishActions)
-      allActions.push(...finishActions)
-      const completionSummary = summarizePromptCompletion(parsed.mode, parsed.content)
-      return {
-        status: 'completed',
-        generationRecordId: recordId,
-        actions: allActions,
-        promptMode: parsed.mode,
-        completionSummary: completionSummary ?? undefined,
-      }
-    } catch (err) {
-      if (err instanceof ForbiddenException || err instanceof NotFoundException) throw err
-      const errorMessage = err instanceof Error ? err.message : '提示词生成失败'
-      const errorActions: CanvasAction[] = [
-        {
-          type: 'update_node',
-          payload: {
-            id: input.nodeId,
-            data: { status: 'error', errorMessage },
-          },
-        },
-      ]
-      await this.persist(input.sessionId, errorActions)
-      allActions.push(...errorActions)
-      return { status: 'error', actions: allActions }
-    }
-  }
+  // 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+  // runPromptGeneration（读 node.data.prompt → studio.generatePrompt →
+  // parseRecordPromptContent 落 content/promptMode/generationRecordId）曾定义于此。
+  // 随 prompt 生成链路整链移除（controller 端点 + pi-runtime run_prompt_generation
+  // 工具 + studio.generatePrompt 同批删）。⚠️ turnaround/四格产品图在
+  // startImageGeneration 内直接走 expandPromptContent，不经此方法。
 
   /**
    * 音频生成（voice / design / music 三分类）。

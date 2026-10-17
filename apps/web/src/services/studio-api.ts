@@ -182,27 +182,6 @@ export const studioApi = {
       },
       { timeout: thinking ? 300_000 : 180_000, signal },
     ),
-  generatePrompt: (
-    prompt: string,
-    model?: string,
-    signal?: AbortSignal,
-    scope?: CanvasGenerationScope,
-    guideSceneId?: string,
-    refs?: StudioRefPayload[],
-    mentionedKeys?: string[],
-  ) =>
-    api.post<{ data: GenerationRecord }>(
-      '/studio/prompt/generate',
-      {
-        prompt,
-        model,
-        refs,
-        mentionedKeys,
-        ...scopeBody(scope),
-        ...(guideSceneId ? { guideSceneId } : {}),
-      },
-      { timeout: 180_000, signal },
-    ),
   generateVideo: (
     prompt: string,
     model?: string,

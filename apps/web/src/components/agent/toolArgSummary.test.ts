@@ -34,7 +34,6 @@ describe('summarizeToolArgs 全量扩面（P1#3）', () => {
   it('写类工具摘要', () => {
     expect(summarizeToolArgs('set_node_text', { node_id: 'n1', text: '标题文案' })).toContain('标题文案')
     expect(summarizeToolArgs('connect_nodes', { edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }] })).toBe('2 条连线')
-    expect(summarizeToolArgs('upsert_prompt_node', { title: '方案' })).toBe('方案')
     expect(summarizeToolArgs('duplicate_node', { title: '副本' })).toBe('副本')
     expect(summarizeToolArgs('grid_slice_image', { node_id: 'img1' })).toBe('img1')
   })

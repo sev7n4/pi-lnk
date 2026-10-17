@@ -25,7 +25,6 @@ vi.mock('@/services/studio-api', () => ({
     startVideoGeneration: vi.fn(),
     generateAudio: vi.fn(),
     generateText: vi.fn(),
-    generatePrompt: vi.fn(),
     confirmPlatformFallback: vi.fn(),
     cancelPlatformFallback: vi.fn(),
     cancelGeneration: vi.fn(),
@@ -1763,80 +1762,6 @@ describe('useNodeGeneration', () => {
     expect(canvasApi.generateImage).not.toHaveBeenCalled()
   })
 
-  it('forwards guideSceneId from prompt node data to generatePrompt', async () => {
-    vi.mocked(studioApi.generatePrompt).mockResolvedValue(
-      mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          type: 'prompt',
-          id: 'prompt-rec-1',
-          url: null,
-        },
-      }),
-    )
-    const node = createNode('prompt', {
-      prompt: 'expand this',
-      guideSceneId: 'g3_exact_text',
-      textModel: encodeChannelModel('platform', defaultModelKey('text')),
-    })
-    const { api } = createDeps([node])
-
-    await api.generateForNode(node)
-
-    expect(studioApi.generatePrompt).toHaveBeenCalledWith(
-      'expand this',
-      encodeChannelModel('platform', defaultModelKey('text')),
-      expect.any(AbortSignal),
-      canvasScope('prompt-1'),
-      'g3_exact_text',
-      [],
-      [],
-    )
-  })
-
-  it('forwards image refs from prompt node to generatePrompt', async () => {
-    vi.mocked(studioApi.generatePrompt).mockResolvedValue(
-      mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          type: 'prompt',
-          id: 'prompt-rec-2',
-          url: null,
-        },
-      }),
-    )
-    const node = createNode('prompt', {
-      prompt: '按参考图写提示词',
-      textModel: encodeChannelModel('platform', defaultModelKey('text')),
-      localRefs: [
-        {
-          id: 'ref-1',
-          mediaType: 'image',
-          sourceKind: 'upload',
-          label: 'bottle.jpg',
-          url: 'https://example.com/bottle.jpg',
-        },
-      ],
-      refOrder: ['ref-1'],
-    })
-    const { api } = createDeps([node])
-    await api.generateForNode(node)
-    expect(studioApi.generatePrompt).toHaveBeenCalledWith(
-      '按参考图写提示词',
-      encodeChannelModel('platform', defaultModelKey('text')),
-      expect.any(AbortSignal),
-      canvasScope('prompt-1'),
-      undefined,
-      expect.arrayContaining([
-        expect.objectContaining({
-          mediaType: 'image',
-          url: 'https://example.com/bottle.jpg',
-        }),
-      ]),
-      expect.any(Array),
-    )
-  })
-
   it('generates ordered composition run group when clicking a member', async () => {
     const i0 = createNode('image', { prompt: 'I0' }, 'image-i0')
     const look0 = createNode('image', { prompt: 'LOOK0' }, 'image-look-0')
@@ -2076,36 +2001,6 @@ describe('useNodeGeneration', () => {
       expect.any(AbortSignal),
       canvasScope('image-other'),
     )
-  })
-
-  it('allows prompt generate with image refs and empty prompt', async () => {
-    vi.mocked(studioApi.generatePrompt).mockResolvedValue(
-      mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          type: 'prompt',
-          id: 'prompt-rec-3',
-          url: null,
-        },
-      }),
-    )
-    const node = createNode('prompt', {
-      prompt: '',
-      textModel: encodeChannelModel('platform', defaultModelKey('text')),
-      localRefs: [
-        {
-          id: 'ref-1',
-          mediaType: 'image',
-          sourceKind: 'upload',
-          label: 'bottle.jpg',
-          url: 'https://example.com/bottle.jpg',
-        },
-      ],
-      refOrder: ['ref-1'],
-    })
-    const { api } = createDeps([node])
-    await api.generateForNode(node)
-    expect(studioApi.generatePrompt).toHaveBeenCalled()
   })
 
   it('2e.1: pending_confirm image without imageModel still starts studio generate', async () => {

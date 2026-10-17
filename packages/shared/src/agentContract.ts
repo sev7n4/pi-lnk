@@ -38,9 +38,11 @@ export type CanvasActionType = z.infer<typeof CanvasActionTypeSchema>
  *
  * ⚠️ 仍**有意**不支持：mediaInput / videoComposition / worldModel——三者当前无实际需求
  * （项目未商业化、无对应流量），等出现实际需求时再补。补之前这三类画布动作仍会被静默丢弃。
+ *
+ * 2026-10-17 下线 `prompt`（提示词节点，PR feat/prompt-node-decommission）：存量画布数据
+ * 里的 prompt 节点仍按字符串分发渲染（Phase 3 冻结只读），但新画布动作不再接纳该类型。
  */
 export const NODE_TYPES = [
-  'prompt',
   'image',
   'video',
   'audio',
@@ -88,26 +90,12 @@ export interface CanvasActionApplier {
 }
 
 // ============================================================
-// upsert_prompt_node
+// 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+// upsert_prompt_node 契约（UpsertPromptNodeRequestSchema / ResponseSchema，
+// 字段 sessionId/userId/prompt/content/nodeId/stage → nodeId/actions）
+// 曾定义于此；随 prompt 节点下线整链移除（pi-runtime 工具 + Nest 端点 +
+// studio.generatePrompt 同批删）。文案节点写入统一走 upsert_media_node。
 // ============================================================
-
-export const UpsertPromptNodeRequestSchema = z.object({
-  sessionId: z.string(),
-  userId: z.string(),
-  prompt: z.string(),
-  content: z.string(),
-  nodeId: z.string().optional(),
-  stage: z.boolean().optional(),
-})
-
-export type UpsertPromptNodeRequest = z.infer<typeof UpsertPromptNodeRequestSchema>
-
-export const UpsertPromptNodeResponseSchema = z.object({
-  nodeId: z.string(),
-  actions: z.array(CanvasActionSchema),
-})
-
-export type UpsertPromptNodeResponse = z.infer<typeof UpsertPromptNodeResponseSchema>
 
 // ============================================================
 // get_node

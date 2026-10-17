@@ -107,40 +107,10 @@ export function createCanvasWriteTools(
 	const onProposeMissingRefs = opts.onProposeMissingRefs;
 	const onNestZodReject = opts.onNestZodReject;
 	const tools: LnkpiTool[] = [
-		{
-			...write,
-			name: "upsert_prompt_node",
-			label: "新建/更新提示词节点",
-			description:
-				"Create or update a prompt (text) node. prompt doubles as the node title; content is the node body. FULL-OVERWRITE semantics: with node_id both prompt and content replace the node's text (partial updates use set_node_text).",
-			parameters: Type.Object({
-				prompt: Type.String({ description: "用户短需求原文，作 prompt 节点标题" }),
-				content: Type.String({
-					description:
-						"节点正文。人物多视图类（三视图/模特图/角色设定图/多视图/模特定妆图/四视图）须按内置 character_turnaround 模版输出单段中文生图提示词；营销方案等可输出 Markdown。",
-				}),
-				node_id: Type.Optional(Type.String({ description: "Existing node id to update" })),
-			}),
-			execute: async (_id, p: { prompt: string; content: string; node_id?: string }, _u, tc: LnkpiToolContext) => {
-				// 全量覆盖语义锁定（③ 后续裁决：有意不与 set_node_text 合并）——
-				// Nest upsertPromptNode 带 nodeId 时 prompt/content/title 一起覆盖，不保留未传字段。
-				// harness 不做 schema 校验，缺参必须在此 fail-closed，否则静默丢字段。
-				if (!p.prompt || !p.content) {
-					throw new Error(
-						"upsert_prompt_node requires BOTH prompt and content (full overwrite; for partial updates use set_node_text)",
-					);
-				}
-				if (!tc.userId) throw new Error("upsert_prompt_node requires userId in toolContext");
-				const body: Record<string, unknown> = {
-					sessionId: tc.sessionId,
-					userId: tc.userId,
-					prompt: p.prompt,
-					content: p.content,
-				};
-				setIfPresent(body, "nodeId", p.node_id);
-				return withWriteSignal(await client.post("/agent/internal/upsert-prompt-node", body), 1);
-			},
-		},
+		// 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+		// upsert_prompt_node（"新建/更新提示词节点" → /agent/internal/upsert-prompt-node）
+		// 曾定义于此（全量覆盖语义：prompt+content 双必填）。随 prompt 节点下线整链移除；
+		// 文案写入统一走 upsert_media_node(target_type="text") / set_node_text。
 		{
 			...write,
 			name: "upsert_media_node",
@@ -178,11 +148,11 @@ export function createCanvasWriteTools(
 			name: "set_node_text",
 			label: "改节点文本",
 			description:
-				"Update prompt and/or content text on an EXISTING node (at least one of prompt/content; passing both updates both). For creating nodes use upsert_media_node / upsert_prompt_node instead.",
+				"Update prompt and/or content text on an EXISTING node (at least one of prompt/content; passing both updates both). For creating nodes use upsert_media_node instead.",
 			parameters: Type.Object({
 				node_id: Type.String({ description: "Canvas node id" }),
 				prompt: Type.Optional(
-					Type.String({ description: "New prompt text (generation prompt; doubles as prompt-node title)" }),
+					Type.String({ description: "New prompt text (generation prompt; doubles as node title)" }),
 				),
 				content: Type.Optional(Type.String({ description: "New node content text" })),
 			}),

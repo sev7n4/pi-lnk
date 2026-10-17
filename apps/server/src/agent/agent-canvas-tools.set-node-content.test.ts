@@ -56,7 +56,6 @@ describe('setNodeContent —— 媒体节点拒收 content（P1-1）', () => {
             generateImage: vi.fn(),
             generateVideo: vi.fn(),
             generateText: vi.fn(),
-            generatePrompt: vi.fn(),
             generateAudio: vi.fn(),
             getGeneration: vi.fn(),
             expandPromptContent: vi.fn(),

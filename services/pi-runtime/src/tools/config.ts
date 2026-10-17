@@ -18,7 +18,7 @@ export const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
 	"/agent/internal/run-image-generation": 210_000,
 	"/agent/internal/wait-image-generation": 210_000,
 	"/agent/internal/run-text-generation": 210_000,
-	"/agent/internal/run-prompt-generation": 210_000,
+	// 被删历史（2026-10-17 prompt 节点下线）："/agent/internal/run-prompt-generation": 210_000 曾在此。
 	// music 实测约 70s、官方 1–3 分钟；同步链路最坏情况（voice 1000 字切分多段串联）也需余量 ⇒ 330s。
 	// 与 video 的 690s 同族（都是端点内阻塞，pi 侧无 wait_* 工具）。
 	"/agent/internal/run-audio-generation": 330_000,
