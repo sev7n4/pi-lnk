@@ -1,4 +1,5 @@
 import { Inject, Injectable, BadRequestException } from '@nestjs/common'
+import { Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { PointsRangeKey, resolvePointsRange } from '../points/points-range'
 import { computePointsInsights, shanghaiDayKey, type PointsInsights } from '../points/points-insights'
@@ -82,6 +83,11 @@ export class MembershipService {
 
   getPlans() {
     return PLANS
+  }
+
+  /** 按 id 查套餐定义（支付下单用）。 */
+  getPlan(plan: string) {
+    return PLANS.find((p) => p.id === plan)
   }
 
   async getPoints(userId: string) {
@@ -173,12 +179,69 @@ export class MembershipService {
     return { points: user.points, added: bonus }
   }
 
-  async upgrade(userId: string, plan: string) {
+  /**
+   * 支付成功入账（风险 #2）：发放套餐积分 + 升级 membership + 写 purchased 池流水。
+   * ⚠️ 幂等锚点：同一 orderId 只允许一条 purchased 流水（grantPaidPlan 内部守卫），
+   * 因此回调（PaymentService.settlePaidOrder）与 upgrade 兜底可安全重复调用。
+   * tx 变体供支付回调整合进同一事务（避免嵌套交互事务）。
+   */
+  async grantPaidPlanTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    plan: string,
+    orderId: string,
+    now: Date = new Date(),
+  ) {
     const selected = PLANS.find((p) => p.id === plan)
     if (!selected || plan === 'free') throw new BadRequestException('无效套餐')
-    // 资损止血 F2：付费套餐必须先完成支付，禁止免费发点。
-    // 真实支付闭环（Order/Payment/Subscription）见风险 #2 立项；落地后此处改为校验已支付订单再发放额度。
-    throw new BadRequestException('支付功能未接入：升级需先完成支付后再领取积分')
+    const already = await tx.pointTransaction.findFirst({
+      where: { orderId, pool: 'purchased' },
+    })
+    if (already) {
+      // 幂等：该订单权益已发放（回调与兜底路径重复调用）。返回当前状态而非报错——
+      // 客户端重试/兜底语义下「已入账」不是失败；守卫仍保证绝不二次发分。
+      const current = await tx.user.findUnique({ where: { id: userId } })
+      return { membership: current?.membership ?? plan, points: current?.points ?? 0 }
+    }
+    const updated = await tx.user.update({
+      where: { id: userId },
+      data: { membership: plan, points: { increment: selected.points } },
+    })
+    await tx.pointTransaction.create({
+      data: {
+        userId,
+        amount: selected.points,
+        reason: `购买 ${selected.name}`,
+        kind: 'grant',
+        category: 'other',
+        status: null,
+        balanceAfter: updated.points,
+        pool: 'purchased', // 支付购买池（多池记账）
+        orderId,
+        expiresAt: null, // 套餐积分暂不设有效期（过期策略待产品定义）
+      },
+    })
+    return { membership: updated.membership, points: updated.points }
+  }
+
+  async grantPaidPlan(userId: string, plan: string, orderId: string, now: Date = new Date()) {
+    return this.prisma.$transaction((tx) => this.grantPaidPlanTx(tx, userId, plan, orderId, now))
+  }
+
+  /**
+   * 升级套餐（风险 #2：必须持有已支付订单）。
+   * 主入账路径是支付宝异步通知回调；本方法是前端付款跳回后的兜底确认
+   * （幂等守卫保证与回调不会重复发分）。
+   */
+  async upgrade(userId: string, plan: string, orderId?: string) {
+    const selected = PLANS.find((p) => p.id === plan)
+    if (!selected || plan === 'free') throw new BadRequestException('无效套餐')
+    if (!orderId) throw new BadRequestException('缺少支付订单：请先完成支付')
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } })
+    if (!order || order.userId !== userId) throw new BadRequestException('订单不存在')
+    if (order.plan !== plan) throw new BadRequestException('订单与套餐不匹配')
+    if (order.status !== 'PAID') throw new BadRequestException('支付订单未完成')
+    return this.grantPaidPlan(userId, plan, orderId)
   }
 
   async pointsSummary(userId: string, range: PointsRangeKey): Promise<PointsSummaryDto> {

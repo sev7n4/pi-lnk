@@ -8,6 +8,11 @@ import { MembershipService, PointCategory, PointKind } from './membership.servic
 class UpgradeDto {
   @IsString()
   plan!: string
+
+  /// 风险 #2：升级必须持有已支付订单（Order.status=PAID）。
+  /// 订单由 POST /payment/order 创建并经支付宝回调/查单入账。
+  @IsString()
+  orderId!: string
 }
 
 function parseRange(range: string): PointsRangeKey {
@@ -60,7 +65,8 @@ export class MembershipController {
   @Post('upgrade')
   @UseGuards(AuthGuard)
   async upgrade(@Req() req: { user: { sub: string } }, @Body() dto: UpgradeDto) {
-    const data = await this.membershipService.upgrade(req.user.sub, dto.plan)
+    // 资损安全：仅校验已支付订单后发放（F2 失败闭合在支付闭环落地后按订单校验解除）。
+    const data = await this.membershipService.upgrade(req.user.sub, dto.plan, dto.orderId)
     return { code: 0, message: 'ok', data }
   }
 

@@ -57,9 +57,9 @@ describe('MembershipService billing stop-bleed against real SQLite', () => {
     expect(second.points).toBe(1200)
   })
 
-  it('F2: 付费套餐未接支付——拒绝且不发放任何积分', async () => {
+  it('F2: 无支付订单的升级——拒绝且不发放任何积分（风险 #2 落地后改为订单校验）', async () => {
     const before = await prisma.user.findUnique({ where: { id: 'u-bleed' } })
-    await expect(service.upgrade('u-bleed', 'pro')).rejects.toThrow(/支付功能未接入/)
+    await expect(service.upgrade('u-bleed', 'pro')).rejects.toThrow(/缺少支付订单/)
     const after = await prisma.user.findUnique({ where: { id: 'u-bleed' } })
     // 积分不变、会员等级不变
     expect(after?.points).toBe(before?.points)
