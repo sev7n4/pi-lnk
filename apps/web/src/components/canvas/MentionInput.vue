@@ -240,7 +240,7 @@ function onKeydown(e: KeyboardEvent) {
         aria-hidden="true"
       >
         <template v-for="(segment, idx) in highlightSegments" :key="idx">
-          <span v-if="segment.kind === 'mention'" class="font-medium text-[var(--neo-accent-text)]">{{ segment.value }}</span>
+          <span v-if="segment.kind === 'mention'" class="font-medium text-[var(--lnk-accent-text)]">{{ segment.value }}</span>
           <span v-else>{{ segment.value }}</span>
         </template>
         <span v-if="!modelValue">&nbsp;</span>
@@ -258,10 +258,11 @@ function onKeydown(e: KeyboardEvent) {
       <textarea
         ref="textareaRef"
         :value="modelValue"
-        class="mention-input-field input-field min-h-[96px] w-full resize-none text-sm leading-[1.5] !text-transparent caret-[var(--neo-text-primary)]"
+        class="mention-input-field input-field min-h-[96px] w-full resize-none text-sm leading-[1.5] !text-transparent caret-[var(--lnk-text-primary)]"
         :style="fieldInsetStyle"
         rows="4"
         :placeholder="placeholder ?? '描述你想要生成的内容，@ 引用节点...'"
+        :aria-label="placeholder ?? '内容输入'"
         :disabled="disabled"
         @input="onInput"
         @keydown="onKeydown"
@@ -283,7 +284,7 @@ function onKeydown(e: KeyboardEvent) {
         role="option"
         :aria-selected="idx === selectedIndex"
         class="neo-popover-item cursor-pointer px-3 py-2 text-sm"
-        :class="idx === selectedIndex ? '!bg-[var(--neo-hi-bg)] !text-[var(--neo-hi-text)]' : ''"
+        :class="idx === selectedIndex ? '!bg-[var(--lnk-hi-bg)] !text-[var(--lnk-hi-text)]' : ''"
         @mousedown.prevent="insertMention(item)"
       >
         <span class="opacity-50">@</span>{{ item.label }}
@@ -309,7 +310,7 @@ function onKeydown(e: KeyboardEvent) {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: var(--lnk-border-default) transparent;
 }
 
 .mention-input-backdrop::-webkit-scrollbar,

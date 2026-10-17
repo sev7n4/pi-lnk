@@ -36,26 +36,9 @@ const emit = defineEmits<{
     >
       <rect x="6" y="6" width="12" height="12" rx="1.5" />
     </svg>
-    <svg
-      v-else
-      viewBox="0 0 24 24"
-      width="14"
-      height="14"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      <!-- 锚 = 生成（设计系统 §1.5.3「锚就是生成按钮」）：锚头（环）朝上，
-           读作向上箭头/发送方向，同时是墨鱼 π 品牌符号。
-           线宽 2（原箭头 2.5）：环 r=2.4 在 14px 渲染下 2.5 会把环孔糊死 -->
-      <circle cx="12" cy="5" r="2.4" />
-      <path d="M12 7.4V19" />
-      <path d="M8 11h8" />
-      <path d="M5 13a7 7 0 0 0 14 0" />
-    </svg>
+    <!-- 2026-10-18：生成锚品牌 glyph（用户供图抠像素材）。
+         mask + currentColor ⇒ 深浅主题 / hover / disabled 全部自动跟随文字色 -->
+    <span v-else class="dock-generate-btn__glyph" aria-hidden="true" />
   </button>
 </template>
 
@@ -69,16 +52,26 @@ const emit = defineEmits<{
   justify-content: center;
   border: none;
   border-radius: 999px;
-  background: var(--neo-hi-bg);
-  color: var(--neo-hi-text);
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-hi-text);
   cursor: pointer;
   pointer-events: auto;
-  box-shadow: var(--neo-hi-shadow);
+  box-shadow: var(--lnk-hi-shadow);
   transition:
     transform 0.15s ease,
     opacity 0.15s ease,
     filter 0.15s ease,
     box-shadow 0.15s ease;
+}
+
+/* 生成锚 glyph（源 94×106）：currentColor 上色 + mask 成形 */
+.dock-generate-btn__glyph {
+  display: block;
+  width: 15px;
+  height: 17px;
+  background: currentColor;
+  -webkit-mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
+  mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
 }
 
 .dock-generate-btn:hover:not(:disabled) {
@@ -92,12 +85,12 @@ const emit = defineEmits<{
 }
 
 .dock-generate-btn.is-generating {
-  background: var(--neo-surface-elevated);
-  color: var(--neo-text-primary);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-primary);
   opacity: 1 !important;
   pointer-events: auto !important;
   cursor: pointer;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--neo-hi-text) 18%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 18%, transparent);
 }
 
 .dock-generate-btn.is-generating:hover:not(:disabled) {
