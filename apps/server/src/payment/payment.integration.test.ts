@@ -26,15 +26,23 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
   class FakePaymentAdapter implements PaymentAdapter {
     readonly channel = 'alipay'
     createChargeCalls: ChargeRequest[] = []
+    createQrChargeCalls: ChargeRequest[] = []
     verifyCallbackCalls: Record<string, string>[] = []
     queryTradeCalls: string[] = []
     /// 可编排的响应
     nextVerify: CallbackVerifyResult | null = null
     nextQueryPaid = false
+    nextQrCode: string | null = null
 
     async createCharge(req: ChargeRequest) {
       this.createChargeCalls.push(req)
       return { payUrl: `https://openapi.alipaydev.com/gateway.do?fake=1&out_trade_no=${req.orderId}` }
+    }
+
+    async createQrCharge(req: ChargeRequest) {
+      this.createQrChargeCalls.push(req)
+      if (this.nextQrCode === null) throw new Error('precreate 渠道拒绝（未编排）')
+      return { qrCode: this.nextQrCode }
     }
 
     verifyCallback(params: Record<string, string>) {
@@ -74,10 +82,12 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     await prisma.order.deleteMany()
     await prisma.user.deleteMany()
     fake.createChargeCalls = []
+    fake.createQrChargeCalls = []
     fake.verifyCallbackCalls = []
     fake.queryTradeCalls = []
     fake.nextVerify = null
     fake.nextQueryPaid = false
+    fake.nextQrCode = null
   })
 
   async function seedUser(id: string, points = 1000) {
@@ -98,6 +108,30 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     const order = await prisma.order.findUnique({ where: { id: result.orderId } })
     expect(order?.status).toBe('PENDING')
     expect(order?.amount).toBe(9900)
+  })
+
+  it('createOrder channel=qrcode：返回二维码串且不走收银台路径', async () => {
+    await seedUser('u-pay-qr')
+    fake.nextQrCode = 'https://qr.alipay.com/bax000000000001'
+    const result = await service.createOrder('u-pay-qr', 'pro', 'qrcode')
+
+    expect(result.qrCode).toBe('https://qr.alipay.com/bax000000000001')
+    expect(result.amountFen).toBe(9900)
+    expect(result.payUrl).toBeUndefined()
+    expect(fake.createQrChargeCalls[0]).toMatchObject({ orderId: result.orderId, amountFen: 9900 })
+    expect(fake.createChargeCalls).toHaveLength(0) // 不应同时发起收银台下单
+
+    const order = await prisma.order.findUnique({ where: { id: result.orderId } })
+    expect(order?.status).toBe('PENDING')
+  })
+
+  it('createOrder channel=qrcode 且渠道拒绝 → 响亮失败（订单不落库成功假象）', async () => {
+    await seedUser('u-pay-qr-fail')
+    fake.nextQrCode = null // 未编排 = precreate 抛错
+    await expect(service.createOrder('u-pay-qr-fail', 'pro', 'qrcode')).rejects.toThrow()
+    // 订单已创建但无凭据；PENDING 未付——不存在「已付」假象
+    const orders = await prisma.order.findMany({ where: { userId: 'u-pay-qr-fail' } })
+    expect(orders.every((o) => o.status === 'PENDING')).toBe(true)
   })
 
   it('回调验签通过且金额匹配 → 入账发分（purchased 池 + orderId）', async () => {

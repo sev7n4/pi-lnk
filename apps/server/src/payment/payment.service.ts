@@ -29,8 +29,12 @@ export class PaymentService {
     private readonly membership: MembershipService,
   ) {}
 
-  /** 创建订单并返回支付宝收银台跳转 URL（电脑网站支付 page.pay）。 */
-  async createOrder(userId: string, plan: string) {
+  /**
+   * 创建订单并返回支付凭据。
+   * channel='page'（默认）：电脑网站支付收银台跳转 URL（支持账号密码登录付款）。
+   * channel='qrcode'：当面扫码预下单，返回二维码串（支付宝 App 扫码即付，一步到位）。
+   */
+  async createOrder(userId: string, plan: string, channel: 'page' | 'qrcode' = 'page') {
     const selected = this.membership.getPlan(plan)
     if (!selected || plan === 'free') throw new BadRequestException('无效套餐')
     const amountFen = selected.price * 100 // price 单位元 → 分（Int）
@@ -42,6 +46,10 @@ export class PaymentService {
       amountFen,
       subject: `lnk π ${selected.name}`,
       body: `升级 ${selected.name}，到账 ${selected.points} 积分`,
+    }
+    if (channel === 'qrcode') {
+      const { qrCode } = await this.adapter.createQrCharge(charge)
+      return { orderId: order.id, qrCode, amountFen }
     }
     const { payUrl } = await this.adapter.createCharge(charge)
     return { orderId: order.id, payUrl, amountFen }

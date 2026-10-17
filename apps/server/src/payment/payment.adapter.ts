@@ -26,6 +26,11 @@ export interface ChargeResult {
   payUrl: string
 }
 
+export interface QrChargeResult {
+  /** 当面扫码（precreate）：二维码内容串，前端渲染成 QR 图。 */
+  qrCode: string
+}
+
 export interface CallbackVerifyResult {
   /** out_trade_no（我方订单 id）。 */
   orderId: string
@@ -40,6 +45,13 @@ export interface CallbackVerifyResult {
 export interface PaymentAdapter {
   readonly channel: string
   createCharge(req: ChargeRequest): Promise<ChargeResult>
+  /**
+   * 当面扫码预下单（alipay.trade.precreate）：返回二维码串。
+   * 用户用支付宝 App（沙箱用沙箱 App）扫码即付——比收银台登录少两步。
+   * 沙箱 buyer 场景 code 可能返回 10000 + qr_code；失败/验签不过必须抛错（响亮失败），
+   * 严禁静默降级成「看似成功但没有二维码」。
+   */
+  createQrCharge(req: ChargeRequest): Promise<QrChargeResult>
   /** 验签 + 解析异步通知；验签失败/字段缺失返回 null（调用方必须按失败处理）。 */
   verifyCallback(params: Record<string, string>): CallbackVerifyResult | null
   /** 主动查单（回调丢失补偿）：返回该订单在渠道的真实状态。 */
@@ -192,6 +204,55 @@ export class AlipayAdapter implements PaymentAdapter {
       .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
       .join('&')
     return { payUrl: `${this.cfg.gateway}?${query}` }
+  }
+
+  async createQrCharge(req: ChargeRequest): Promise<QrChargeResult> {
+    const biz: Record<string, string> = {
+      out_trade_no: req.orderId,
+      total_amount: fenToYuan(req.amountFen),
+      subject: req.subject,
+    }
+    if (req.body) biz.body = req.body
+
+    const params: Record<string, string> = {
+      app_id: this.cfg.appId,
+      method: 'alipay.trade.precreate',
+      charset: 'utf-8',
+      format: 'JSON',
+      sign_type: 'RSA2',
+      timestamp: alipayTimestamp(),
+      version: '1.0',
+      notify_url: this.cfg.notifyUrl,
+      biz_content: JSON.stringify(biz),
+    }
+    params.sign = this.sign(sortedQuery(params, false))
+
+    let json: Record<string, unknown>
+    try {
+      const res = await fetch(this.cfg.gateway, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(params).toString(),
+        signal: AbortSignal.timeout(15000),
+      })
+      json = (await res.json()) as Record<string, unknown>
+    } catch (err) {
+      throw new Error(`precreate 网关请求失败: ${(err as Error).message}`)
+    }
+    const r = json.alipay_trade_precreate_response
+    if (!r || typeof r !== 'object') throw new Error('precreate 响应缺失业务体')
+    const resp = r as Record<string, unknown>
+    // 响应验签：与 queryTrade 同一口径——不验签的预下单响应不可信。
+    if (!verifyResponseSign(resp, json.sign, normalizeKey(this.cfg.alipayPublicKey, 'public'))) {
+      throw new Error('precreate 响应验签失败')
+    }
+    if (resp.code !== '10000') {
+      throw new Error(`precreate 渠道拒绝: code=${resp.code} msg=${resp.msg ?? '?'} sub_msg=${resp.sub_msg ?? '-'}`)
+    }
+    if (typeof resp.qr_code !== 'string' || !resp.qr_code) {
+      throw new Error('precreate 响应缺失 qr_code')
+    }
+    return { qrCode: resp.qr_code }
   }
 
   verifyCallback(params: Record<string, string>): CallbackVerifyResult | null {
