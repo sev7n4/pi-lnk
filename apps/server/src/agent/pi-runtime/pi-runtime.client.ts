@@ -74,6 +74,23 @@ export interface PiRetentionState {
 	keyToolConclusions?: string[];
 }
 
+/** lane.watch 快照投影（与 pi-runtime `LaneSnapshotProjection` 结构对齐；
+ *  独立声明避免跨服务类型依赖。仅取重连对账所需的状态面。 */
+export interface PiLaneSnapshot {
+	lane: string;
+	tipId: string | null;
+	faulted: boolean;
+	operation: null | {
+		id: string;
+		kind: string;
+		status: string;
+		startedAt: number;
+		runningTools: Array<{ toolCallId: string; toolName: string; isError?: boolean }>;
+	};
+	queues: Array<{ kind: string; text?: string }>;
+	transcriptTail: Array<{ seq: number; id: string; type: string; role?: string; text?: string; stopReason?: string }>;
+}
+
 /** K-1：会话级 LLM 覆盖（BYOK）。与 pi-runtime `SessionLlmOverride` 同构。
  * apiKey 明文仅在 Nest→pi-runtime 的 loopback/内网请求体中出现，不落盘、不入日志。 */
 export interface PiSessionLlmOverride {
@@ -358,6 +375,48 @@ export class PiRuntimeClient {
 	}
 
 	/**
+	 * 回合外生成终态通报（2026-10-18 上游对齐，Nest→lane followUp）。
+	 * 通报不走 QUEUE_MARK：载荷是结构化事实字段，通报文案由 pi-runtime 侧拼装
+	 * （SessionManager.notifyGenerationTerminal），与用户 followup 语义隔离。
+	 */
+	async notifyGeneration(
+		sessionId: string,
+		payload: {
+			nodeId: string;
+			status: "completed" | "failed";
+			recordId?: string;
+			kind?: string;
+			url?: string;
+			error?: string;
+		},
+	): Promise<{ delivered: boolean; reason?: string }> {
+		const { status, body } = await this.request<{ delivered?: boolean; reason?: string; error?: string }>(
+			`/sessions/${encodeURIComponent(sessionId)}/notify-generation`,
+			{ method: "POST", body: JSON.stringify(payload) },
+		);
+		if (status >= 400 || body?.error) {
+			throw new PiRuntimeError(body?.error ?? `notifyGeneration failed: HTTP ${status}`, status);
+		}
+		return { delivered: body?.delivered === true, ...(body?.reason ? { reason: body.reason } : {}) };
+	}
+
+	/**
+	 * lane.watch 快照（2026-10-18 上游对齐，快照重连）。GET /sessions/:id/snapshot，
+	 * 404 抛 PiRuntimeError（会话不存在）。
+	 */
+	async snapshot(sessionId: string): Promise<PiLaneSnapshot> {
+		const { status, body } = await this.request<PiLaneSnapshot & { error?: string }>(
+			`/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+			{ method: "GET" },
+		);
+		if (status === 404) throw new PiRuntimeError("snapshot: session not found", 404);
+		if (status >= 400 || !body || body.error) {
+			throw new PiRuntimeError(body?.error ?? `snapshot failed: HTTP ${status}`, status);
+		}
+		return body;
+	}
+
+	/**
 	 * 中断会话当前正在跑的 run（前端「停止」按钮走这条）。
 	 * 会话保留——用户可接着发新消息；pi-runtime 侧无活跃 run 时 skipped=true。
 	 */
@@ -432,6 +491,10 @@ export class PiRuntimeClient {
 		void (async () => {
 			let lastEventId: string | undefined;
 			let backoff = 250;
+			// 快照 resync 后强制转 live（上游范式「快照+增量」）：重放型消费者的
+			// afterSeq=-1 在残缺 buffer 上必然再 409（`-1 >= droppedFromSeq` 恒假），
+			// 不强制会掉进「409→快照→409」死循环。
+			let forceLive = false;
 			// 预算按「连续失败窗口」计（终审修复）：连接成功即清零。若从订阅起点绝对计时，
 			// 健康运行 >120s 的长任务断线后将零次重连——恰是本特性最需要覆盖的场景。
 			let firstFailureAt: number | undefined;
@@ -441,7 +504,7 @@ export class PiRuntimeClient {
 				const query =
 					lastEventId !== undefined
 						? `lastEventId=${encodeURIComponent(lastEventId)}`
-						: opts?.live
+						: opts?.live || forceLive
 							? "from=now"
 							: "";
 				const url =
@@ -452,19 +515,32 @@ export class PiRuntimeClient {
 					if (res.status === 404) {
 						throw new PiRuntimeError("streamEvents: session not found", 404);
 					}
-					// T1：重放窗口已过期（服务端 buffer 溢出后淘汰了我们要的事件）⇒ **终止，不重连**。
-					//
-					// ⛔ 为什么不能落进下面的 `!res.ok`：那会 throw 进指数退避，而重连请求
-					// **仍带同一个 lastEventId** ⇒ 服务端**必然再次 409** ⇒ 空转到
-					// `RECONNECT_BUDGET_MS`(120s) 耗尽。即「重试一个必然失败的请求」，
-					// 期间本轮内容完全拿不到——比直接失败更糟。
-					//
-					// 语义上它与 404 同属「重连无意义」：404 是会话没了，409 是事件没了。
-					// 上层收到 `status=409` 可据此改走全量重建（当前 `agent.service.ts`
-					// 两处 onError 都只关闭流，重建通路待定）。
-					if (res.status === 409) {
-						throw new PiRuntimeError("streamEvents: replay window expired", 409);
+				// T1：重放窗口已过期（服务端 buffer 溢出后淘汰了我们要的事件）。
+				//
+				// ⛔ 为什么不能落进下面的 `!res.ok`：那会 throw 进指数退避，而重连请求
+				// **仍带同一个 lastEventId** ⇒ 服务端**必然再次 409** ⇒ 空转到
+				// `RECONNECT_BUDGET_MS`(120s) 耗尽。即「重试一个必然失败的请求」，
+				// 期间本轮内容完全拿不到——比直接失败更糟。
+				//
+				// ⭐ 2026-10-18 上游对齐（快照重连）：不再终止，改走上游范式
+				// （vendor lane.ts:1705-1726 / events.ts:165-230）——「一次 lane.watch 快照
+				// + 之后增量事件」替代「重放已淘汰的事件」。合成一条 `snapshot` resync
+				// 事件交给上层（mapPiEventToUiEvent → ui("snapshot")，前端按 type 分支消费），
+				// 随后清掉 lastEventId 继续订阅：live 消费者转 from=now（不重放旧 buffer），
+				// 重放型消费者退化为全量 buffer 重放（优于断流）。快照也失败（会话消失/
+				// 旧版 pi-runtime 无端点 404）→ 维持原语义：onError(409) 立即终止。
+				if (res.status === 409) {
+					try {
+						const snap = await this.snapshot(sessionId);
+						onEvent({ type: "snapshot", ts: Date.now(), data: snap } as PiRuntimeEvent);
+					} catch {
+						onError?.(new PiRuntimeError("streamEvents: replay window expired", 409));
+						return;
 					}
+					lastEventId = undefined;
+					forceLive = true;
+					continue;
+				}
 					if (!res.ok || !res.body) {
 						throw new PiRuntimeError(`streamEvents failed: HTTP ${res.status}`, res.status);
 					}
@@ -486,8 +562,8 @@ export class PiRuntimeClient {
 					return; // body clean end = 会话删除/turn 结束：不重连
 				} catch (err) {
 					if (controller.signal.aborted) return;
-					// 404 会话没了/ 409 重放窗口已过期：**两者重连都无意义**，立即终止并上报。
-					// 404 是既有行为；409 是 T1 新增（见上方 throw 处注释）。
+					// 404 会话没了 / 409 快照 resync 也失败（旧版 pi-runtime 无快照端点）：
+					// **两者重连都无意义**，立即终止并上报。
 					if (err instanceof PiRuntimeError && (err.status === 404 || err.status === 409)) {
 						onError?.(err);
 						return;

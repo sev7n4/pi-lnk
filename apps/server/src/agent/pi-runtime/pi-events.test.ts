@@ -5,6 +5,7 @@ import {
 	createUsageAccumulator,
 	extractCanvasActions,
 	extractCanvasCommands,
+	extractGenerationProgress,
 	extractTaskEvents,
 	extractTextEnd,
 	mapPiEventToUiEvent,
@@ -729,5 +730,60 @@ describe("extractTaskEvents（C1：todo_write diff → task_list/task_update 派
 
 	it("空 diff（无变化）→ 空（不打扰前端）", () => {
 		expect(extractTaskEvents(mkEnd({ todo: { snapshot: [], diff: { updates: [] } } }))).toEqual([]);
+	});
+});
+
+describe("2026-10-18 上游对齐：generation_progress 派生 / snapshot 透传", () => {
+	const base = (type: string, data: unknown, seq = 1) => ({ type, seq, ts: 1, data } as never);
+
+	it("tool_execution_update 且 details.generating ⇒ 派生 generation_progress（nodeId + elapsedMs）", () => {
+		const evt = base("tool_execution_update", {
+			toolCallId: "tc1",
+			partialResult: { content: [], details: { ok: true, generating: true, nodeId: "n1", elapsedSec: 42 } },
+		});
+		const out = mapPiEventToUiEvent(evt);
+		expect(out?.type).toBe("generation_progress");
+		expect(out?.data).toEqual({ nodeId: "n1", elapsedMs: 42_000 });
+	});
+
+	it("非 generating 的 tool_execution_update（ask_user 卡片等）不派生进度", () => {
+		const evt = base("tool_execution_update", {
+			toolCallId: "tc1",
+			partialResult: { content: [], details: { canvasCommands: [{ type: "ask_user", callId: "c1" }] } },
+		});
+		const out = mapPiEventToUiEvent(evt);
+		// default pi_ 前缀透传（canvasCommands 派生由 extractCanvasCommands 单独处理）
+		expect(out?.type).toBe("pi_tool_execution_update");
+	});
+
+	it("snapshot 事件裁剪透传（runningTools 只留 toolName、tail 截 6 条）", () => {
+		const tail = Array.from({ length: 10 }, (_, i) => ({ seq: i + 1, id: `e${i}`, type: "message", role: "user", text: `m${i}` }));
+		const evt = base("snapshot", {
+			lane: "main",
+			tipId: "t",
+			faulted: false,
+			operation: { id: "o", kind: "run", status: "running", startedAt: 1, runningTools: [{ toolCallId: "t1", toolName: "run_video_generation" }] },
+			queues: [{ kind: "followUp" }, { kind: "steer" }],
+			transcriptTail: tail,
+		});
+		const out = mapPiEventToUiEvent(evt);
+		expect(out?.type).toBe("snapshot");
+		const data = out!.data as { operation: { runningTools: Array<{ toolName: string }> }; queuedCount: number; tail: unknown[] };
+		expect(data.operation.runningTools).toEqual([{ toolName: "run_video_generation" }]);
+		expect(data.queuedCount).toBe(2);
+		expect(data.tail).toHaveLength(6);
+	});
+
+	it("extractGenerationProgress：elapsedSec 缺省 → 0；nodeId 缺失 → null", () => {
+		expect(
+			extractGenerationProgress(base("tool_execution_update", {
+				partialResult: { details: { generating: true } },
+			})),
+		).toBeNull();
+		expect(
+			extractGenerationProgress(base("tool_execution_update", {
+				partialResult: { details: { generating: true, nodeId: "n" } },
+			})),
+		).toEqual({ nodeId: "n", elapsedMs: 0 });
 	});
 });

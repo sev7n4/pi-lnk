@@ -14,7 +14,12 @@ import { PendingToolRegistry } from "./pending-registry.js";
 const okFactory = (async () => ({
 	harness: {
 		events: { on: () => () => {} },
-		lane: async () => ({ prompt: async () => ({ ok: true }), setThinkingLevel: async () => {} }),
+		lane: async () => ({
+			prompt: async () => ({ ok: true }),
+			setThinkingLevel: async () => {},
+			// notify-generation 通报复用 manager.followUp（2026-10-18 上游对齐）
+			followUp: async () => ({ ok: true }),
+		}),
 		close: async () => {},
 	},
 })) as never;
@@ -985,6 +990,134 @@ describe("POST /internal/memory-suppress", () => {
 				await app.inject({ method: "POST", url: "/internal/memory-suppress", payload: { memoryId: uid(), reason: "b" } });
 				const body2 = (await app.inject({ method: "GET", url: "/metrics" })).body;
 				assert.match(body2, /pi_runtime_memory_suppressed_total 2\n/);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+describe("POST /sessions/:id/notify-generation（回合外生成终态通报，2026-10-18 上游对齐）", () => {
+	it("无等待者 → 200 delivered:true（通报入 followUp 队列 + idle drain 兜底）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app, manager } = makeApp(root);
+			try {
+				await manager.create("thread-ng-1", { canvasSessionId: "canvas-ng" });
+				const res = await app.inject({
+					method: "POST",
+					url: "/sessions/thread-ng-1/notify-generation",
+					payload: { nodeId: "node-v", status: "completed", kind: "视频", url: "https://x/v.mp4" },
+				});
+				assert.equal(res.statusCode, 200);
+				assert.deepEqual(res.json(), { delivered: true });
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("节点仍被工具等待 → 200 delivered:false tool-wait-active（抑制，不进队列）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app, manager } = makeApp(root);
+			try {
+				await manager.create("thread-ng-2", { canvasSessionId: "canvas-ng" });
+				const unregister = manager.registerGenerationWait("canvas-ng", "node-v");
+				const res = await app.inject({
+					method: "POST",
+					url: "/sessions/thread-ng-2/notify-generation",
+					payload: { nodeId: "node-v", status: "failed", error: "boom" },
+				});
+				assert.equal(res.statusCode, 200);
+				assert.deepEqual(res.json(), { delivered: false, reason: "tool-wait-active" });
+				unregister();
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("缺 nodeId / 非法 status → 400；会话不存在 → 404", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app, manager } = makeApp(root);
+			try {
+				await manager.create("thread-ng-3", { canvasSessionId: "canvas-ng" });
+				const missing = await app.inject({
+					method: "POST",
+					url: "/sessions/thread-ng-3/notify-generation",
+					payload: { status: "completed" },
+				});
+				assert.equal(missing.statusCode, 400);
+				const badStatus = await app.inject({
+					method: "POST",
+					url: "/sessions/thread-ng-3/notify-generation",
+					payload: { nodeId: "n", status: "generating" },
+				});
+				assert.equal(badStatus.statusCode, 400);
+				const notFound = await app.inject({
+					method: "POST",
+					url: "/sessions/thread-missing/notify-generation",
+					payload: { nodeId: "n", status: "completed" },
+				});
+				assert.equal(notFound.statusCode, 404);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+});
+
+describe("GET /sessions/:id/snapshot（lane.watch 快照端点，2026-10-18 上游对齐）", () => {
+	it("会话不存在 → 404", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			try {
+				const res = await app.inject({ method: "GET", url: "/sessions/thread-missing/snapshot" });
+				assert.equal(res.statusCode, 404);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("活跃会话 → 200 快照投影（lane/tipId/transcriptTail 形状 + 取完即退订）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			let unsubscribed = false;
+			const factory = (async () => ({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({
+						prompt: async () => ({ ok: true }),
+						setThinkingLevel: async () => {},
+						watch: async () => ({
+							snapshot: {
+								lane: "main",
+								tipId: "tip-1",
+								faulted: false,
+								operation: null,
+								queues: [],
+								transcript: [
+									{ seq: 1, id: "e1", type: "message", message: { role: "user", content: [{ type: "text", text: "画一只猫" }] } },
+								],
+							},
+							unsubscribe: () => {
+								unsubscribed = true;
+							},
+						}),
+					}),
+					close: async () => {},
+				},
+			})) as never;
+			const { app, manager } = makeApp(root, factory);
+			try {
+				await manager.create("thread-snap", {});
+				const res = await app.inject({ method: "GET", url: "/sessions/thread-snap/snapshot" });
+				assert.equal(res.statusCode, 200);
+				const body = res.json() as { lane: string; tipId: string; transcriptTail: Array<{ seq: number; text?: string }> };
+				assert.equal(body.lane, "main");
+				assert.equal(body.tipId, "tip-1");
+				assert.equal(body.transcriptTail[0]?.text, "画一只猫");
+				// 快照取完即退订（不泄漏 watcher）
+				assert.equal(unsubscribed, true);
 			} finally {
 				await app.close();
 			}

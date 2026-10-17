@@ -608,6 +608,29 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		assert.equal(reg.hasPending("s1"), false);
 	});
 
+	// ── 生成终态等待登记（2026-10-18 上游对齐）─────────────────────────────
+
+	it("终态等待期登记节点：onRegisterGenerationWait 确认后注册、等待收尾必解绑（异常收尾也解）", async () => {
+		const reg = new PendingToolRegistry();
+		const calls: Array<{ sid: string; node: string; phase: string }> = [];
+		const client = fakeNestClient(["generating"]);
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 2,
+			genTerminalWaitMs: 25,
+			onRegisterGenerationWait: (sid, node) => {
+				calls.push({ sid, node, phase: "register" });
+				return () => calls.push({ sid, node, phase: "unregister" });
+			},
+		}).filter((t) => t.name === "propose_generation");
+		const result = await run(propose, { node_id: "n1" });
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		assert.deepEqual(calls, [
+			{ sid: "s1", node: "n1", phase: "register" },
+			{ sid: "s1", node: "n1", phase: "unregister" },
+		]);
+	});
+
 	// ── 回合挂住等终态（2026-10-18，上游对齐）─────────────────────────────
 
 	it("终态等待：generating→completed+url ⇒ 广播 node_status generating/done，结果带 generation，文案报完成", async () => {

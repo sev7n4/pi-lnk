@@ -39,6 +39,9 @@ export function resolveToolsWithClient(
 		coordinator?: SubagentCoordinator;
 		/** node_status 广播（2026-10-18 回合挂住等终态）：index.ts 接线到 SessionManager.dispatchNodeStatus。 */
 		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
+		/** 生成终态等待登记（2026-10-18 上游对齐）：接线到 SessionManager.registerGenerationWait。
+		 *  返回解绑函数，工具在 finally 里调用；notify-generation 通报据此抑制/放行。 */
+		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
 	} = {},
 ): { tools: LnkpiTool[]; client: NestClient | null; registry: PendingToolRegistry | null } {
 	const cfg = loadNestConfig();
@@ -93,11 +96,12 @@ export function resolveToolsWithClient(
 			onProposeMissingRefs: () => metrics.observeProposeMissingRefs(),
 			onNestZodReject: (endpoint) => metrics.observeNestZodReject(endpoint),
 			onNodeStatus: deps.onNodeStatus,
+			onRegisterGenerationWait: deps.onRegisterGenerationWait,
 		}),
 		...buildUiCommandTools(),
 		...buildAskUserTools(deps.registry),
 		...buildArrangeNodesTools(client),
-		...buildGenerationTools(client, { onNodeStatus: deps.onNodeStatus }),
+		...buildGenerationTools(client, { onNodeStatus: deps.onNodeStatus, onRegisterGenerationWait: deps.onRegisterGenerationWait }),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),
 		...buildReadDocumentTools(),

@@ -51,7 +51,14 @@ export type PiEventType =
 	| "compaction"
 	/** P2：vendor「调度恢复中」标记（retry_scheduled{recovery:true}）透传——前端据此显示
 	 *  「会话恢复中」而非「上游响应超时」。 */
-	| "recovery";
+	| "recovery"
+	/** 生成等待进度（2026-10-18 上游对齐）：run_* / propose 阻塞期 onUpdate 全量快照
+	 *  （tool_execution_update 载荷 details.generating）派生，非持久化（不进 TRACE 白名单），
+	 *  前端用于产物行「已等待」活体显示。 */
+	| "generation_progress"
+	/** lane.watch 快照（2026-10-18 上游对齐）：SSE 409「重放窗口过期」时客户端抓快照
+	 *  合成的 resync 事件（不再 120s 空转后静默断流），透传快照投影。 */
+	| "snapshot";
 
 /** 现有 UI 事件（消费端实测子集；其余事件类型保持 passthrough） */
 export interface UiEvent<T = unknown> {
@@ -134,6 +141,14 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 	const delta = extractTextDelta(event);
 	if (delta !== null) {
 		return ui("text_delta", { text: delta });
+	}
+
+	// 生成等待进度派生（2026-10-18 上游对齐）：run_* / propose 阻塞期的 onUpdate 全量快照
+	// 经 tool_execution_update 到达，details.generating 即「这是进度拍而非增量 delta」的
+	// 判据（ask_user 卡片走 details.canvasCommands，同通道不同键，天然不撞）。
+	const progress = extractGenerationProgress(event);
+	if (progress) {
+		return ui("generation_progress", progress);
 	}
 
 	switch (event.type) {
@@ -244,9 +259,49 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 			// 「上游响应超时」，等于这条白接了（同 activity/waiting_user 的既有裁决）。
 			return ui("recovery", {});
 		}
+		case "snapshot": {
+			// lane.watch 快照 resync（2026-10-18 上游对齐）：SSE 409 重放窗口过期时由客户端
+			// 合成（不再终止断流）。不走 default 的 `pi_` 前缀——前端按 type 分支消费，
+			// 加前缀会被静默丢弃。载荷裁剪：只透传重连对账所需的状态面。
+			const d = (event.data ?? {}) as {
+				operation?: { status?: string; runningTools?: Array<{ toolName?: string }> } | null;
+				queues?: Array<{ kind?: string }>;
+				transcriptTail?: Array<{ seq?: number; role?: string; text?: string }>;
+			};
+			return ui("snapshot", {
+				operation: d.operation
+					? {
+							status: d.operation.status,
+							runningTools: (d.operation.runningTools ?? []).map((t) => ({ toolName: t.toolName })),
+						}
+					: null,
+				queuedCount: d.queues?.length ?? 0,
+				tail: (d.transcriptTail ?? []).slice(-6),
+			});
+		}
 		default:
 			return ui(`pi_${event.type}`, event.data);
 	}
+}
+
+/**
+ * 生成等待进度提取（2026-10-18 上游对齐）：tool_execution_update 载荷
+ * partialResult.details.generating === true 即 run_* / propose 阻塞期的进度拍
+ * （services/pi-runtime/src/tools/progress-ticker.ts 发射，形状契约两端共守）。
+ */
+export function extractGenerationProgress(event: PiRuntimeEvent): {
+	nodeId: string;
+	elapsedMs: number;
+} | null {
+	if (event.type !== "tool_execution_update") return null;
+	const d = event.data as {
+		partialResult?: { details?: { generating?: unknown; nodeId?: unknown; elapsedSec?: unknown } };
+	};
+	const details = d.partialResult?.details;
+	if (details?.generating !== true) return null;
+	if (typeof details.nodeId !== "string" || !details.nodeId) return null;
+	const elapsedSec = typeof details.elapsedSec === "number" ? details.elapsedSec : 0;
+	return { nodeId: details.nodeId, elapsedMs: Math.max(0, Math.round(elapsedSec * 1000)) };
 }
 
 /**

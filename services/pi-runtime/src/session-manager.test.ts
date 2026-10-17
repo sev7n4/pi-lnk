@@ -10,6 +10,7 @@ import {
 	toSessionKey,
 	appendPromptBlocks,
 	isReplayComplete,
+	projectLaneSnapshot,
 } from "./session-manager.js";
 import type { SessionLlmOverride } from "./model-assembly.js";
 import { Metrics } from "./metrics.js";
@@ -1603,5 +1604,158 @@ describe("appendPromptBlocks 幂等（评审 finding 1：fork 重复拼块）", 
 	});
 	it("base 为空时只返回非空块", () => {
 		assert.equal(appendPromptBlocks("", ["B1"]), "B1");
+	});
+});
+
+describe("生成终态等待登记与回合外通报（2026-10-18 上游对齐）", () => {
+	let followUpCalls: Array<{ text: string }>;
+	let promptCalls: number;
+	function smWithLanes() {
+		followUpCalls = [];
+		promptCalls = 0;
+		const fakeHarnessFactory = async () =>
+			({
+				harness: {
+					events: { on: () => () => {} },
+					lane: async () => ({
+						prompt: async () => {
+							promptCalls += 1;
+							return { ok: true };
+						},
+						followUp: async (text: string) => {
+							followUpCalls.push({ text });
+							return { ok: true };
+						},
+						watch: async () => ({
+							snapshot: {},
+							unsubscribe: () => {},
+						}),
+					}),
+					close: async () => {},
+				},
+			}) as never;
+		return new SessionManager([], "", undefined, fakeHarnessFactory, undefined, undefined, testConfig());
+	}
+
+	it("registerGenerationWait：集合语义幂等登记，解绑后清空（含空集删键）", async () => {
+		const sm = smWithLanes();
+		const un1 = sm.registerGenerationWait("canvas-w", "node-a");
+		assert.equal(sm.hasGenerationWait("canvas-w", "node-a"), true);
+		const un2 = sm.registerGenerationWait("canvas-w", "node-a"); // 重复登记幂等
+		un1();
+		assert.equal(sm.hasGenerationWait("canvas-w", "node-a"), true); // 还有一层持有
+		un2();
+		assert.equal(sm.hasGenerationWait("canvas-w", "node-a"), false);
+		un1(); // 解绑函数重复调用无害
+		assert.equal(sm.hasGenerationWait("canvas-w", "node-a"), false);
+	});
+
+	it("notifyGenerationTerminal：节点仍被工具等待 ⇒ 抑制（不进 followUp 队列）", async () => {
+		const sm = smWithLanes();
+		await sm.create("thread-ntf-1", { canvasSessionId: "canvas-ntf" });
+		const unregister = sm.registerGenerationWait("canvas-ntf", "node-9");
+		const result = await sm.notifyGenerationTerminal("thread-ntf-1", {
+			nodeId: "node-9",
+			status: "completed",
+			url: "https://x/done.png",
+		});
+		assert.deepEqual(result, { delivered: false, reason: "tool-wait-active" });
+		assert.equal(followUpCalls.length, 0);
+		unregister();
+	});
+
+	it("notifyGenerationTerminal：无等待者 ⇒ followUp 入队 + idle drain 兜底开一轮", async () => {
+		const sm = smWithLanes();
+		await sm.create("thread-ntf-2", { canvasSessionId: "canvas-ntf" });
+		const result = await sm.notifyGenerationTerminal("thread-ntf-2", {
+			nodeId: "node-9",
+			status: "failed",
+			error: "upstream 5xx",
+			kind: "视频",
+		});
+		assert.deepEqual(result, { delivered: true });
+		assert.equal(followUpCalls.length, 1);
+		assert.match(followUpCalls[0]!.text, /node-9/);
+		assert.match(followUpCalls[0]!.text, /失败/);
+		assert.match(followUpCalls[0]!.text, /upstream 5xx/);
+		// idle（prompting=false）⇒ followUp 内的 drainQueued 空 prompt 兜底被触发
+		assert.equal(promptCalls >= 1, true);
+	});
+
+	it("notifyGenerationTerminal：会话不存在抛 NotFoundError（Nest 侧 fail-soft）", async () => {
+		const sm = smWithLanes();
+		await assert.rejects(
+			() => sm.notifyGenerationTerminal("thread-missing", { nodeId: "n", status: "completed" }),
+			NotFoundError,
+		);
+	});
+});
+
+describe("projectLaneSnapshot（lane.watch 快照投影，2026-10-18 上游对齐）", () => {
+	it("message/compaction 条目取文本，runningTools/queues 裁剪成可序列化形态", () => {
+		const longText = "x".repeat(500);
+		const snap = {
+			lane: "main",
+			tipId: "tip-1",
+			faulted: false,
+			operation: {
+				id: "op-1",
+				kind: "run",
+				status: "running",
+				startedAt: 123,
+				fromTipId: null,
+				runningTools: [
+					{ status: "running", toolCallId: "tc-1", toolName: "run_video_generation", args: {} },
+					{ status: "settled", toolCallId: "tc-2", toolName: "ask_user", args: {}, result: {}, isError: true },
+				],
+			},
+			queues: [
+				{ entryId: "q1", kind: "followUp", type: "message", message: { role: "user", content: [{ type: "text", text: "排队消息" }] } },
+				{ entryId: "q2", kind: "write", type: "custom", customType: "pi.pending.entry" },
+			],
+			transcript: [
+				{ seq: 1, id: "e1", type: "message", message: { role: "user", content: [{ type: "text", text: "画一只猫" }] } },
+				{ seq: 2, id: "e2", type: "message", message: { role: "assistant", content: [{ type: "text", text: longText }], stopReason: "toolUse" } },
+				{ seq: 3, id: "e3", type: "compaction", summary: "压缩摘要" },
+				{ seq: 4, id: "e4", type: "custom", customType: "pi.pending.entry" },
+			],
+		} as never;
+		const out = projectLaneSnapshot(snap);
+		assert.equal(out.lane, "main");
+		assert.equal(out.tipId, "tip-1");
+		assert.equal(out.operation?.runningTools.length, 2);
+		assert.deepEqual(out.operation?.runningTools[0], { toolCallId: "tc-1", toolName: "run_video_generation" });
+		// settled + isError 才标 isError；running 不标
+		assert.deepEqual(out.operation?.runningTools[1], { toolCallId: "tc-2", toolName: "ask_user", isError: true });
+		assert.equal(out.queues[0]?.kind, "followUp");
+		assert.equal(out.queues[0]?.text, "排队消息");
+		assert.deepEqual(out.queues[1], { kind: "write" });
+		// transcriptTail：user 全文 / assistant 截断到 400+省略号 / compaction 取 summary / custom 无文本
+		assert.deepEqual(
+			{ seq: out.transcriptTail[0]?.seq, role: out.transcriptTail[0]?.role, text: out.transcriptTail[0]?.text },
+			{ seq: 1, role: "user", text: "画一只猫" },
+		);
+		assert.equal(out.transcriptTail[1]?.text?.length, 401); // 400 + "…"
+		assert.equal(out.transcriptTail[1]?.text?.endsWith("…"), true);
+		assert.equal(out.transcriptTail[1]?.stopReason, "toolUse");
+		assert.deepEqual(
+			{ type: out.transcriptTail[2]?.type, text: out.transcriptTail[2]?.text },
+			{ type: "compaction", text: "压缩摘要" },
+		);
+		assert.equal(out.transcriptTail[3]?.type, "custom");
+		assert.equal(out.transcriptTail[3]?.text, undefined);
+	});
+
+	it("transcript 超长只取尾部 16 条（快照不透传整份 transcript）", () => {
+		const entries = Array.from({ length: 30 }, (_, i) => ({
+			seq: i + 1,
+			id: `e${i + 1}`,
+			type: "message",
+			message: { role: "user", content: [{ type: "text", text: `msg-${i + 1}` }] },
+		}));
+		const out = projectLaneSnapshot({ lane: "main", tipId: null, faulted: false, operation: null, queues: [], transcript: entries } as never);
+		assert.equal(out.transcriptTail.length, 16);
+		assert.equal(out.transcriptTail[0]?.seq, 15);
+		assert.equal(out.transcriptTail[15]?.seq, 30);
 	});
 });

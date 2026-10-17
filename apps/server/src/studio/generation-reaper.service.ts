@@ -10,6 +10,12 @@ import {
 } from '../points/charge-session'
 import { studioPointCategory } from '../points/point-categories'
 import { refundMeta } from '../points/point-tx.types'
+import { PiRuntimeClient } from '../agent/pi-runtime/pi-runtime.client'
+import {
+  notifyLateGenerationTerminals,
+  piLateNotifyEnabled,
+  type LateNotifyPrisma,
+} from '../agent/pi-runtime/late-generation-notify'
 
 /**
  * 回收范围（走 detached 结算的图片侧 + 视频侧 + 文本侧记录）。
@@ -224,6 +230,27 @@ export class GenerationReaperService implements OnModuleInit {
       )
     } else if (reason === 'startup') {
       this.logger.log('[startup] 无卡死图片/视频/文本侧生成记录')
+    }
+
+    // 回合外生成终态通报（2026-10-18 上游对齐，Nest→lane followUp）：
+    // 扫「最近落终态 + 有画布会话 + 未通报」的记录 → pi-runtime notify-generation
+    // （工具仍在等 ⇒ 抑制；否则入 lane followUp，模型主动向用户简报）。
+    // 通报失败/未启用不影响回收主链路（fail-soft，下一轮巡检重试）。
+    if (piLateNotifyEnabled()) {
+      try {
+        const client = new PiRuntimeClient({ baseUrl: process.env.PI_RUNTIME_URL!.trim() })
+        // 结构子集注入：Prisma 泛型签名比窄接口宽，显式收窄（select 字段已在模块内对齐）
+        const notified = await notifyLateGenerationTerminals(
+          this.prisma as unknown as LateNotifyPrisma,
+          client,
+          this.logger,
+        )
+        if (notified > 0) {
+          this.logger.log(`[${reason}] 回合外生成终态通报已处理 ${notified} 条`)
+        }
+      } catch (err) {
+        this.logger.warn(`[${reason}] 回合外终态通报扫描失败（不影响回收）: ${errMessage(err)}`)
+      }
     }
     return reaped
   }

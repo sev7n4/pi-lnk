@@ -23,6 +23,8 @@ import { fetchImageAsBlock, isImageRefineEnabled, type ImageBlock } from "./imag
 import { resultWithActions } from "./result-with-actions.js";
 // 工具结果质量信号（spec 2026-10-12 §2.2/§3）：_signal 注入 + GenDetails 必填字段。
 import { signalFromUpstream, withSignal, type ToolResultSignal } from "./result-signal.js";
+// onUpdate 进度 ticker（2026-10-18 上游对齐）：与 canvas-write 终态等待共用一份发射形状。
+import { startGenerationProgressTicker } from "./progress-ticker.js";
 
 /** Nest run / wait 响应的 used 回读（agent-canvas-tools.service.ts ImageGenUsedParams）。 */
 type NestUsedParams = {
@@ -91,7 +93,13 @@ function withImageRefine(
 
 export function createGenerationTools(
 	client: NestClient,
-	deps: { fetchImpl?: typeof fetch; onNodeStatus?: (sessionId: string, data: NodeStatusData) => void } = {},
+	deps: {
+		fetchImpl?: typeof fetch;
+		onNodeStatus?: (sessionId: string, data: NodeStatusData) => void;
+		/** 生成终态等待登记（2026-10-18 上游对齐）：config.ts 接线到 SessionManager。
+		 *  返回解绑函数；工具 finally 必须调用，否则该节点被 notify-generation 永久抑制。 */
+		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
+	} = {},
 ): LnkpiTool[] {
 	const gen = { tier: "gen" as const };
 	/** node_status 广播（2026-10-18）：run_* 持有期起手发 generating，终态从结果正据映射。
@@ -101,6 +109,32 @@ export function createGenerationTools(
 			deps.onNodeStatus?.(tc.sessionId, data);
 		} catch {
 			/* 观察者不得污染工具主链路 */
+		}
+	};
+	/** 阻塞期 onUpdate 进度通道与等待登记（2026-10-18 上游对齐）：
+	 *  实现抽到 tools/progress-ticker.ts（与 propose 终态等待共用发射形状），此处只留
+	 *  fail-soft 包装——进度/登记都是纯观测面，任何异常不得污染生成主链路。 */
+	const startProgressTicker = (
+		onUpdate: Parameters<typeof startGenerationProgressTicker>[0],
+		nodeId: string,
+	): (() => void) => startGenerationProgressTicker(onUpdate, nodeId);
+	/** 生成等待期登记（2026-10-18 上游对齐）：notify-generation 通报的抑制判据。
+	 *  fail-soft：登记失败只损失「通报抑制」，绝不影响生成主链路。 */
+	const withGenerationWait = async <T>(tc: LnkpiToolContext, nodeId: string, run: () => Promise<T>): Promise<T> => {
+		let unregister: (() => void) | undefined;
+		try {
+			unregister = deps.onRegisterGenerationWait?.(tc.sessionId, nodeId);
+		} catch {
+			/* 登记是纯观测面 */
+		}
+		try {
+			return await run();
+		} finally {
+			try {
+				unregister?.();
+			} catch {
+				/* 解绑同理 */
+			}
 		}
 	};
 	/** 结果 → 终态正据映射（保守口径，与前端 mapNodeStatus 对齐）：有 url 才 done；
@@ -136,7 +170,7 @@ export function createGenerationTools(
 		execute: async (
 			_id,
 			p: { node_id: string },
-			_u,
+			onUpdate,
 			tc: LnkpiToolContext,
 			_invocation,
 			context: Context,
@@ -147,11 +181,20 @@ export function createGenerationTools(
 			emitNodeStatus(tc, { nodeId: p.node_id, status: "generating" });
 			// P0-②：run abort 时 gate signal 触发 context.abortSignal → fetch 立即中断，
 			// 工具以 error result 收尾（用户取消的 error 事件由 SessionManager.userAborted 抑制）
-			const data = (await client.post(
-				path,
-				{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
-				{ signal: context?.abortSignal ?? undefined },
-			)) as { url?: string } & Record<string, unknown>;
+			const data = await withGenerationWait(tc, p.node_id, async () => {
+				// onUpdate 进度通道（2026-10-18 上游对齐）：阻塞期 30s 一拍全量快照 + checkpoint，
+				// stall watchdog 活性证据 + durable 恢复检查点（见 startProgressTicker 注）。
+				const stopTicker = startProgressTicker(onUpdate, p.node_id);
+				try {
+					return (await client.post(
+						path,
+						{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
+						{ signal: context?.abortSignal ?? undefined },
+					)) as { url?: string } & Record<string, unknown>;
+				} finally {
+					stopTicker();
+				}
+			});
 			emitTerminalFromResult(tc, p.node_id, data);
 			const base = withGenSignal(data);
 			// 视觉自评闭环（spec 2026-09-29 §4.2）只回流 run_image_generation；其余 run_* 形态不变
@@ -249,7 +292,7 @@ export function createGenerationTools(
 					lyrics?: string
 					instrumental?: boolean
 				},
-				_u,
+				onUpdate,
 				tc: LnkpiToolContext,
 				_invocation,
 				context: Context,
@@ -275,9 +318,16 @@ export function createGenerationTools(
 				] as const) {
 					if (p[key] !== undefined) body[key] = p[key];
 				}
-				const data = (await client.post("/agent/internal/run-audio-generation", body, {
-					signal: context?.abortSignal ?? undefined,
-				})) as { url?: string } & Record<string, unknown>;
+				const data = await withGenerationWait(tc, p.node_id, async () => {
+					const stopTicker = startProgressTicker(onUpdate, p.node_id);
+					try {
+						return (await client.post("/agent/internal/run-audio-generation", body, {
+							signal: context?.abortSignal ?? undefined,
+						})) as { url?: string } & Record<string, unknown>;
+					} finally {
+						stopTicker();
+					}
+				});
 				emitTerminalFromResult(tc, p.node_id, data);
 				return withGenSignal(data);
 			},
