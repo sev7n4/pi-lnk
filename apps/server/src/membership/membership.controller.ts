@@ -41,6 +41,15 @@ export class MembershipController {
     return { code: 0, message: 'ok', data }
   }
 
+  @Get('points-breakdown')
+  @UseGuards(AuthGuard)
+  async getPointsBreakdown(@Req() req: { user: { sub: string } }) {
+    // 多池记账：按 purchased/granted/subscription 汇总可用余额（扣除已过期正额）。
+    // 只读聚合，与 getPoints（User.points 单一权威余额）并存，不改动计费扣减链路。
+    const data = await this.membershipService.getPointsBreakdown(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
   @Post('claim-daily')
   @UseGuards(AuthGuard)
   async claimDaily(@Req() req: { user: { sub: string } }) {

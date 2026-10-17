@@ -24,6 +24,9 @@ import {
 
 export type PointKind = 'consume' | 'refund' | 'grant'
 export type PointCategory = 'text' | 'image' | 'audio' | 'video' | 'other'
+/// 多池记账的池类型（spec 2026-10-13-billing-points-system-design §多池）。
+/// purchased=支付购买（可设有效期）· granted=赠送/签到（默认，存量数据归此池）· subscription=订阅赠送。
+export type PointPool = 'purchased' | 'granted' | 'subscription'
 
 export interface PointTxDto {
   id: string
@@ -36,7 +39,24 @@ export interface PointTxDto {
   model: string | null
   generationId: string | null
   balanceAfter: number | null
+  pool: string
+  expiresAt: Date | null
+  orderId: string | null
   createdAt: Date
+}
+
+/// 单池余额分解：total=净额（含消费/退款）、available=可用（扣除已过期正额）、expired=已过期正额。
+export interface PointsPoolBreakdownDto {
+  total: number
+  available: number
+  expired: number
+}
+
+/// 按池余额分解（只读聚合，不改动 User.points 结算链路）。
+export interface PointsBreakdownDto {
+  totalAvailable: number
+  expiredTotal: number
+  pools: Record<PointPool, PointsPoolBreakdownDto>
 }
 
 export interface PointsSummaryDto {
@@ -70,6 +90,51 @@ export class MembershipService {
     return { points: user.points, membership: user.membership }
   }
 
+  /// 按池余额分解（多池记账 · 只读聚合）。不改动 User.points 单一权威余额与计费扣减链路，
+  /// 仅从 PointTransaction 账本按 pool 汇总，供前端展示与对账。
+  /// - total(pool)：该池全部变动净额（grant/consume/refund 相加）。
+  /// - expired(pool)：该池中「已到期且为正额」的部分（仅 grant 可带 expiresAt；消费为负恒 NULL 不计入）。
+  /// - available(pool)：total − expired（到期部分不计入可用余额，但保留账本供对账）。
+  async getPointsBreakdown(userId: string, now: Date = new Date()): Promise<PointsBreakdownDto> {
+    const [totalRows, expiredRows] = await Promise.all([
+      this.prisma.pointTransaction.groupBy({
+        by: ['pool'],
+        where: { userId },
+        _sum: { amount: true },
+      }),
+      this.prisma.pointTransaction.groupBy({
+        by: ['pool'],
+        where: { userId, amount: { gt: 0 }, expiresAt: { lt: now } },
+        _sum: { amount: true },
+      }),
+    ])
+
+    const pools: Record<PointPool, PointsPoolBreakdownDto> = {
+      purchased: { total: 0, available: 0, expired: 0 },
+      granted: { total: 0, available: 0, expired: 0 },
+      subscription: { total: 0, available: 0, expired: 0 },
+    }
+    for (const row of totalRows) {
+      const pool = row.pool as PointPool
+      if (pool in pools) pools[pool].total = row._sum.amount ?? 0
+    }
+    let expiredTotal = 0
+    for (const row of expiredRows) {
+      const pool = row.pool as PointPool
+      if (pool in pools) {
+        const expired = row._sum.amount ?? 0
+        pools[pool].expired = expired
+        expiredTotal += expired
+      }
+    }
+    for (const pool of Object.keys(pools) as PointPool[]) {
+      pools[pool].available = pools[pool].total - pools[pool].expired
+    }
+    const totalAvailable =
+      pools.purchased.available + pools.granted.available + pools.subscription.available
+    return { totalAvailable, expiredTotal, pools }
+  }
+
   async claimDaily(userId: string, now: Date = new Date()) {
     const bonus = 100
     // 资损止血 F1：按上海自然日幂等，防止脚本重复调用刷分
@@ -100,6 +165,7 @@ export class MembershipService {
           category: 'other',
           status: null,
           balanceAfter: updated.points,
+          pool: 'granted', // 每日签到属赠送池（多池记账）
         },
       })
       return updated
