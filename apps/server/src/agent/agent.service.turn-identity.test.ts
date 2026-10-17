@@ -21,6 +21,7 @@ import 'reflect-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService } from './agent.service'
 import { piEvent, stubPiClient } from './agent.test-utils'
+import type { PiClientStub } from './agent.test-utils'
 import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 
 /** 带全局 seq 的事件（pi-runtime 的 `entry.nextSeq++`，与 afterSeq 同编号空间）。 */
@@ -31,6 +32,46 @@ function seqEvent(type: string, data: unknown, seq: number): PiRuntimeEvent {
 /** 带回合身份的事件（PR2：runtime 透传 operationId 后的形态）。 */
 function ridEvent(type: string, data: unknown, runId: string, seq = 1): PiRuntimeEvent {
   return { type, ts: 1_700_000_000_000, seq, runId, data } as PiRuntimeEvent
+}
+
+/**
+ * 复现「订阅晚于 prompt」竞态的桩（生产 partial 账本的根因）。
+ *
+ * 语义对齐 pi-runtime 的 `streamEvents({ live:true })` = `from=now`：
+ * **只有在订阅建立之后到达的事件才会被投递**；订阅建立前发出的事件一律丢弃
+ * （from=now 从不重放历史缓冲）。run 的起点事件（agent_start）由 `prompt` 触发发出，
+ * 于是「订阅是否早于 prompt」直接决定 agent_start 会不会丢：
+ *   - 若 `streamEvents` 在 `prompt` 之后才被调用（= 惰性 async generator 的真 bug）
+ *     ⇒ agent_start 在订阅建立前已发出 ⇒ 永久丢失 ⇒ 账本 partial；
+ *   - 订阅先于 prompt 建立 ⇒ agent_start 被接住 ⇒ 账本完整。
+ *
+ * 后续事件（thinking / tool / agent_end）延后到下一 tick 发出，保证两种代码路径下流都能收口。
+ */
+function stubPiClientRace(): PiClientStub {
+  const base = stubPiClient([])
+  let onEvent: ((e: PiRuntimeEvent) => void) | null = null
+  let active = false
+  const deliver = (e: PiRuntimeEvent) => {
+    if (active && onEvent) onEvent(e)
+  }
+  base.prompt = vi.fn(async () => {
+    // run 起点在 prompt 这一刻发出：此刻订阅若尚未建立 ⇒ agent_start 丢（from=now 不重放）。
+    deliver(ridEvent('agent_start', {}, 'run-77', 4200))
+    // 其余事件稍后到达（订阅此时应已建立）⇒ 正常收到，保证消费循环能收到 agent_end 收口。
+    setTimeout(() => {
+      deliver(ridEvent('tool_execution_start', { toolCallId: 'c1', toolName: 'propose_generation', args: {} }, 'run-77', 4242))
+      deliver(ridEvent('agent_end', { status: 'completed' }, 'run-77', 4300))
+    }, 5)
+    return undefined as never
+  }) as never
+  base.streamEvents = vi.fn((_sessionId: string, cb: (e: PiRuntimeEvent) => void) => {
+    onEvent = cb
+    active = true
+    return () => {
+      active = false
+    }
+  }) as never
+  return base
 }
 
 describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）', () => {
@@ -284,5 +325,29 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     const call = assistantCreates().at(-1)?.[0] as { data: { runId?: string } }
     expect(call?.data?.runId).toBeNull()
     expect(assistantCreates()).toHaveLength(1)
+  }, 120_000)
+
+  it('H（根因锁）：订阅必须早于 prompt —— agent_start 不得因「订阅晚于 run 起点」而丢失', async () => {
+    // 复现生产 partial 账本根因：iteratePiEvents 若是惰性 async generator，
+    // streamEvents 会推迟到首个 .next()（消费循环里）才调用，晚于 await client.prompt
+    // ⇒ agent_start 在订阅建立前已发出，from=now 又不重放 ⇒ 每轮都丢起点、标 partial，
+    // 残尾首事件常是孤儿 tool_result ⇒ 前端「提议生成」卡片顶到思考/工具之前。
+    const pi = stubPiClientRace()
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const out: Array<{ type: string; data?: unknown }> = []
+    for await (const e of service.streamConversation('s1', '生成一只小乌龟', 'u1', 't1')) {
+      out.push(e)
+    }
+
+    // owner 正常落库（唯一写者）。
+    expect(assistantCreates()).toHaveLength(1)
+    const meta = lastAssistantMetadata()
+    // agent_start 被捕获 ⇒ 账本完整：不落 partial / gapFrom（键不出现纪律）。
+    expect(meta.partial).toBeFalsy()
+    expect('gapFrom' in meta).toBe(false)
+    // runId 仍照常落库（PR2 唯一键的一半不受影响）。
+    const call = assistantCreates().at(-1)?.[0] as { data: { runId?: string } }
+    expect(call?.data?.runId).toBe('run-77')
   }, 120_000)
 })

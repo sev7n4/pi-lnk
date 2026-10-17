@@ -1354,7 +1354,10 @@ export class AgentService {
       )
     }
     const events = this.iteratePiEvents(client, sessionKey)
-    // 先订阅再 prompt，避免首事件竞态（SSE 缓冲重放兜底）
+    // 先订阅再 prompt：iteratePiEvents 是 **eager** 的（streamEvents 在返回前就调用），
+    // 订阅先于下面的 await client.prompt 建立 ⇒ agent_start 落在订阅窗口内、from=now 也收得到
+    // （首事件不丢；⚠️ 若把 iteratePiEvents 改回惰性 async generator，此保证立即失效——
+    // 见其内部注释与 turn-identity 测试 H 用例）。
     const iterator = events[Symbol.asyncIterator]()
     // 可观测性专项 ④ + P1 skillId 转接：文本 /skill 命令优先，dock skillId 兜底；未知名 fail-soft 原文发送。
     // listSkills 仅在可能需要校验时调用（有命令或有 skillId），失败降级 null（fail-soft）
@@ -1639,8 +1642,10 @@ export class AgentService {
     } finally {
       textPersister.flush() // 回合收尾：残留正文段（尾段后无边界事件时）落库
       // P0-①：会话跨轮保留（历史即上下文），回收由 pi-runtime 的 TTL / 磁盘 LRU 负责。
-      // 这里只退订本轮订阅（触发 iteratePiEvents 的 finally → client.cancel）。
-      await iterator.return(undefined).catch(() => {})
+      // 这里只退订本轮订阅（触发 iteratePiEvents 的 doCancel → client.cancel）。
+      // 注意：iteratePiEvents 现在返回 AsyncIterableIterator，其 `return` 在类型上是可选的，
+      // 故用可选调用（运行期恒存在，见 iteratePiEvents 内部实现）。
+      await iterator.return?.(undefined)?.catch(() => {})
     }
 
     const effectiveThreadId = threadId?.trim() || sessionId
@@ -1829,11 +1834,22 @@ export class AgentService {
     })
   }
 
-  /** 把回调式 SSE 订阅桥接为 async generator（供 for-await 消费，结束自动退订）。 */
-  private async *iteratePiEvents(
+  /**
+   * 把回调式 SSE 订阅桥接为 async iterator（供 for-await / 手写 .next() 消费，结束自动退订）。
+   *
+   * ⭐ **必须 eager 订阅**：本方法是**普通函数**，`streamEvents` 在返回 iterator 之前就调用。
+   * 曾经它是 `async *`（惰性生成器）—— 函数体要等**首个 `.next()`** 才执行，而调用处
+   * （streamConversation）首个 `.next()` 在消费循环里、**晚于** `await client.prompt(...)`：
+   * run 起点 `agent_start` 在订阅建立前就已发出，`{ live:true }`（from=now）又不重放历史缓冲
+   * ⇒ `agent_start` 永久丢失、每轮账本被标 `partial`（残尾首事件常是孤儿 tool_result ⇒ 前端
+   * 「提议生成」卡片顶到思考/工具消息之前 —— 生产画布 cmvbqb9km001jmr0160w3ffnk 实证）。
+   * 「先订阅再 prompt」的意图正是被惰性求值击穿的，故改为 eager（回归锁见
+   * agent.service.turn-identity.test.ts 的「H 订阅必须早于 prompt」用例）。
+   */
+  private iteratePiEvents(
     client: PiRuntimeClient,
     sessionId: string,
-  ): AsyncGenerator<PiRuntimeEvent> {
+  ): AsyncIterableIterator<PiRuntimeEvent> {
     const queue: PiRuntimeEvent[] = []
     let wake: (() => void) | null = null
     let closed = false
@@ -1854,19 +1870,34 @@ export class AgentService {
       // → 本轮在 ~100ms 内被上一轮回答顶替（生产六步 CRUD 实证）。
       { live: true },
     )
-    try {
-      while (true) {
-        if (queue.length === 0) {
-          if (closed) break
+    // cancel 恰一次：自然收口（closed）/ 提前 return() 两条路都走这里，重复调用无害化。
+    let cancelled = false
+    const doCancel = () => {
+      if (!cancelled) {
+        cancelled = true
+        cancel()
+      }
+    }
+    return {
+      next: async (): Promise<IteratorResult<PiRuntimeEvent>> => {
+        while (queue.length === 0) {
+          if (closed) {
+            doCancel()
+            return { value: undefined as never, done: true }
+          }
           await new Promise<void>((resolve) => {
             wake = resolve
           })
-          continue
         }
-        yield queue.shift() as PiRuntimeEvent
-      }
-    } finally {
-      cancel()
+        return { value: queue.shift() as PiRuntimeEvent, done: false }
+      },
+      return: async (): Promise<IteratorResult<PiRuntimeEvent>> => {
+        doCancel()
+        return { value: undefined as never, done: true }
+      },
+      [Symbol.asyncIterator](): AsyncIterableIterator<PiRuntimeEvent> {
+        return this
+      },
     }
   }
 
