@@ -207,11 +207,12 @@ const rootClass = computed(() =>
         >{{ collapseBlankRuns(part.text) }}<span v-if="part.status === 'running'" class="animate-pulse">▊</span></p>
       </details>
 
-      <!-- text -->
+      <!-- text：dense 不限行（2026-10-17）——原 line-clamp-3 让流式期间只看 3 行、
+           收束后气泡接管才显全文，用户感知「整回合结束才一次性吐出」。dense 根本就有
+           min(46vh,420px) 限高内滚（见下方 <style>），超长自行滚动，无需截断兜底。 -->
       <p
         v-else-if="part.kind === 'text'"
         class="whitespace-pre-wrap text-[var(--neo-fg)]"
-        :class="dense ? 'line-clamp-3' : ''"
       >{{ collapseBlankRuns(part.text) }}<span v-if="isStreamingCursor(part)" class="animate-pulse">▊</span></p>
 
       <!-- tool：有 resultSummary 才包 details（可展开看结果）；
