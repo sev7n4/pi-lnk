@@ -162,6 +162,27 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
     expect(Object.keys(q)).not.toContain('grayReleaseId')
   })
 
+  it('①b：渠道前缀 key（platform::step-3.5-flash）归一后与裸 key 完全同结果（防静默降级）', async () => {
+    // 生产 modelKey 带渠道前缀（普通用户默认 platform::agnes-2.5-flash 等）。若不剥前缀，
+    // TEXT_TOKEN_MODELS.includes 判否 → 落 USD 兜底（constants-fallback），精确 token 计费
+    // 对普通用户静默失效（P2 上线生产验证实测 Bug）。此处锁定：prefixed == bare。
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'platform::step-3.5-flash', USAGE)
+    expect(q.credits).toBe(8) // 与裸 key ① 完全一致：ceil(2001/1000)+ceil(10001/5000)+ceil(999/500)
+    expect(q.breakdown).toEqual({ in: 3, cache: 3, out: 2 })
+    expect(q.ruleVersion).toBe(V)
+    expect(Object.keys(q)).not.toContain('grayReleaseId')
+  })
+
+  it('①c：BYOK 渠道前缀 key（ch_x::step-3.5-flash）同样归一走精确 token 行', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'ch_byok_1::step-3.5-flash', USAGE)
+    expect(q.credits).toBe(8)
+    expect(q.ruleVersion).toBe(V)
+  })
+
   it('②cache 行缺（step-2-16k 形态）→ cache tokens 并入 in 项', async () => {
     const { prisma } = fakePrisma(
       entryMap({ 'text:step-3.5-flash:in': 1000, 'text:step-3.5-flash:out': 500 }),

@@ -18,6 +18,7 @@
  * 运行中的进程里失效，必须重启才恢复——那正是发布流要消灭的运维动作。
  */
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common'
+import { modelOptionName } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import {
   RULE_VERSION_CONSTANTS_FALLBACK,
@@ -217,7 +218,12 @@ export class PricingService implements OnModuleInit {
     },
   ): Promise<PricingQuote & { breakdown?: { in: number; cache: number; out: number } }> {
     try {
-      const model = String(modelKey || '').toLowerCase()
+      // 归一：剥掉渠道前缀（`platform::` / `ch_xxx::`）——token 反比率表按**裸模型名**
+      // 索引，而生产传入的 modelKey 带渠道前缀（如 `platform::agnes-2.5-flash`）。
+      // 不剥会漏配 token 行、`TEXT_TOKEN_MODELS.includes` 判否，从而**静默落 USD 兜底**
+      // （P2 上线生产验证实测：prefixed key → constants-fallback，精确计费对普通用户失效）。
+      // modelOptionName 对无前缀裸 key 是恒等，不影响既有调用方。
+      const model = modelOptionName(String(modelKey || '')).trim().toLowerCase()
       // token 行无 legacy 常量可兜（constants 旁路/未知模型都直接落 USD 成本兜底）
       if (process.env.PRICING_SOURCE === 'constants' || !TEXT_TOKEN_MODELS.includes(model)) {
         return await this.degradedTextTokenQuote(usage)
