@@ -15,6 +15,7 @@ model User {
   avatar     String?
   points     Int                @default(1000)
   pointsFrozen Int              @default(0) // P2 token 计费：回合预扣冻结额
+  lastDailyClaimAt DateTime?    // P0 止血：每日签到幂等，记录上次领取时间（实际 UTC ms）
   membership String             @default("free")
   createdAt  DateTime           @default(now())
   inviteCode       String?  @unique
