@@ -1641,6 +1641,36 @@ async function handleAgentActions(actions: unknown[]) {
   // 用本地旧图 + 部分 action 回写会抹掉追加拆图节点。
 }
 
+// ⭐ 2026-10-18 修复：回合结束后只有 60s 有限对账轮询（handleAgentTurnComplete，
+// 15×4s），而上游生成实测可 >8min（生产案例：t2i 16:55:40 发起、url 17:03:52 才落
+// canvasData）⇒ url 到达时对账窗口已关，时间线产物行永远停在「待确认」。
+// 改为长活监听：watch 节点「终态签名」（id+status+url+有无 content——只读生成相关
+// 字段，拖拽/视口变化不触发），节流转交 rail 对账；SideRail.reconcileFromNodes
+// 按 mapNodeStatus「有正据才动」口径幂等回填，重复触发无害。
+// 附带修掉：刷新页面后历史回合的 pending 产物行（loadSession 首次写入签名即触发）。
+let railReconcileTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleRailReconcile() {
+  if (railReconcileTimer !== null) return
+  railReconcileTimer = setTimeout(() => {
+    railReconcileTimer = null
+    const snap = nodes.value.map((n) => ({
+      id: n.id,
+      type: n.type,
+      data: (n.data || {}) as Record<string, unknown>,
+    }))
+    agentRailRef.value?.reconcileFromNodes?.(snap)
+  }, 2500)
+}
+const railReconcileSignature = computed(() =>
+  nodes.value
+    .map((n) => {
+      const d = (n.data || {}) as Record<string, unknown>
+      return `${n.id}:${String(d.status ?? '')}:${typeof d.url === 'string' ? d.url : ''}:${d.content ? 1 : 0}`
+    })
+    .join('|'),
+)
+watch(railReconcileSignature, scheduleRailReconcile)
+
 async function handleAgentTurnComplete() {
   await loadSession()
   await nextTick()
