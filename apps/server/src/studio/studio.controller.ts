@@ -232,29 +232,9 @@ class GenerateTextDto extends CanvasScopeFields {
   thinkingEffort?: 'high' | 'max'
 }
 
-class GeneratePromptDto extends CanvasScopeFields {
-  @IsString()
-  prompt!: string
-
-  @IsOptional()
-  @IsString()
-  model?: string
-
-  @IsOptional()
-  @IsString()
-  guideSceneId?: string
-
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => StudioRefDto)
-  refs?: StudioRefDto[]
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  mentionedKeys?: string[]
-}
+// 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+// GeneratePromptDto（prompt/model/guideSceneId/refs/mentionedKeys）与
+// @Post('prompt/generate') 端点曾定义于此；studio.service 的 generatePrompt 同批删。
 
 class ImageVariationDto extends CanvasScopeFields {
   @IsString()
@@ -479,25 +459,10 @@ export class StudioController {
     return { code: 0, message: 'ok', data }
   }
 
-  @Post('prompt/generate')
-  @UseGuards(AuthGuard)
-  async generatePrompt(
-    @Req() req: { user: { sub: string }; on(event: string, cb: () => void): void; aborted?: boolean },
-    @Body() dto: GeneratePromptDto,
-  ) {
-    const cancel = createCancelFlag(req)
-    const data = await this.studioService.generatePrompt(
-      req.user.sub,
-      dto.prompt,
-      dto.model,
-      cancel,
-      { sessionId: dto.sessionId, nodeId: dto.nodeId },
-      dto.guideSceneId,
-      dto.refs,
-      dto.mentionedKeys,
-    )
-    return { code: 0, message: 'ok', data }
-  }
+  // 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+  // @Post('prompt/generate')（→ studioService.generatePrompt，GeneratePromptDto：
+  // prompt/model/guideSceneId/refs/mentionedKeys/sessionId/nodeId）曾定义于此；
+  // studio.service 的 generatePrompt 同批删。文案生成走 text/generate。
 
   @Post('image/variation')
   @UseGuards(AuthGuard)

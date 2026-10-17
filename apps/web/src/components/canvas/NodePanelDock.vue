@@ -8,7 +8,7 @@ import { useClickOutside } from '@/composables/useClickOutside'
 
 export type DockNodeType =
   | 'text'
-  | 'prompt'
+  // 被删历史（2026-10-17 prompt 节点下线）：'prompt' 曾在本联合类型中。
   | 'image'
   | 'video'
   | 'audio'

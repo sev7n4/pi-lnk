@@ -236,7 +236,8 @@ export async function exportWorkflowPackage(
     const doc = buildWorkflowDocument({
       nodes: scopedNodes.map((n) => ({
         id: n.id,
-        type: String(n.type ?? 'prompt'),
+        // 2026-10-17 prompt 节点下线：兜底默认值 'prompt' → 'text'（导出快照口径）。
+        type: String(n.type ?? 'text'),
         position: n.position,
         ...(n.parentId !== undefined ? { parentId: n.parentId } : {}),
         ...(n.parentNode !== undefined ? { parentNode: n.parentNode } : {}),

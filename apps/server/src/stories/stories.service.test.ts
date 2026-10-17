@@ -20,8 +20,8 @@ function makeModule() {
   return { sessionCreate, storyCreate, moduleRef }
 }
 
-describe('StoriesService.create —— 剧集画布仍种提示词节点（spec 场景 C，回归锁）', () => {
-  it('把 synopsis 种成 prompt-1（本包不允许被「统一成空画布」误伤）', async () => {
+describe('StoriesService.create —— 剧集画布仍种开篇文本节点（spec 场景 C，回归锁）', () => {
+  it('把 synopsis 种成 text-1（2026-10-17 prompt 节点下线：种子由 prompt-1 改 text-1，本包不允许被「统一成空画布」误伤）', async () => {
     const { sessionCreate, moduleRef } = makeModule()
     const svc = (await moduleRef.compile()).get(StoriesService)
 
@@ -30,8 +30,8 @@ describe('StoriesService.create —— 剧集画布仍种提示词节点（spec 
     const canvasData = sessionCreate.mock.calls[0][0].data.canvasData as string
     const parsed = JSON.parse(canvasData) as { nodes: Array<{ id: string; type: string; data: { prompt: string } }> }
     expect(parsed.nodes).toHaveLength(1)
-    expect(parsed.nodes[0].id).toBe('prompt-1')
-    expect(parsed.nodes[0].type).toBe('prompt')
+    expect(parsed.nodes[0].id).toBe('text-1')
+    expect(parsed.nodes[0].type).toBe('text')
     expect(parsed.nodes[0].data.prompt).toBe('三集悬疑剧')
   })
 

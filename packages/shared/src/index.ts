@@ -1,8 +1,10 @@
 export type WorkType = 'canvas' | 'shortfilm'
 
 /** 与 agentContract 的 NODE_TYPES 保持一致（改一处必须改另一处，否则画布动作会被静默丢弃）。
- *  2026-09-28 补入 `audio`；mediaInput / videoComposition / worldModel 当前无需求，有意不列。 */
-export type NodeType = 'prompt' | 'image' | 'video' | 'audio' | 'text' | 'group' | 'shot' | 'sceneComposer'
+ *  2026-09-28 补入 `audio`；mediaInput / videoComposition / worldModel 当前无需求，有意不列。
+ *  2026-10-17 下线 `prompt`（提示词节点，PR feat/prompt-node-decommission）——存量画布
+ *  里的 prompt 节点数据仍在 JSON 中（运行时按字符串分发渲染），但联合类型与白名单不再接纳。 */
+export type NodeType = 'image' | 'video' | 'audio' | 'text' | 'group' | 'shot' | 'sceneComposer'
 
 export * from './randomId'
 export * from './generationTimeoutBudget'

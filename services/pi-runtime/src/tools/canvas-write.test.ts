@@ -39,33 +39,6 @@ async function run(
 }
 
 describe("canvas-write: body 形态与条件字段", () => {
-	it("upsert_prompt_node 发 userId/prompt/content，nodeId 仅非空才发", async () => {
-		const { client, calls } = makeClient();
-		const tools = createCanvasWriteTools(client);
-		const tool = findTool(tools, "upsert_prompt_node");
-		await run(tool, { prompt: "P", content: "C" });
-		assert.equal(calls[0].path, "/agent/internal/upsert-prompt-node");
-		assert.deepEqual(calls[0].body, { sessionId: "s1", userId: "u1", prompt: "P", content: "C" });
-
-		await run(tool, { prompt: "P", content: "C", node_id: "n1" });
-		assert.deepEqual(calls[1].body, {
-			sessionId: "s1",
-			userId: "u1",
-			prompt: "P",
-			content: "C",
-			nodeId: "n1",
-		});
-	});
-
-	it("upsert_prompt_node 全量覆盖语义锁定：缺任一字段 fail-closed 不打 Nest（有意不与 set_node_text 合并的裁决依据）", async () => {
-		const { client, calls } = makeClient();
-		const tools = createCanvasWriteTools(client);
-		const tool = findTool(tools, "upsert_prompt_node");
-		await assert.rejects(run(tool, { prompt: "P" } as never), /BOTH prompt and content/);
-		await assert.rejects(run(tool, { content: "C" } as never), /BOTH prompt and content/);
-		assert.equal(calls.length, 0);
-	});
-
 	it("upsert_media_node 走 targetType；title/nodeId 条件发", async () => {
 		const { client, calls } = makeClient();
 		const tools = createCanvasWriteTools(client);
@@ -246,10 +219,10 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.equal(calls.length, 1);
 	});
 
-	it("默认注册 14 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent", () => {
+	it("默认注册 13 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent（2026-10-17 prompt 节点下线 14→13）", () => {
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		assert.equal(tools.length, 14);
+		assert.equal(tools.length, 13);
 		const tiers = Object.fromEntries(tools.map((t) => [t.name, t.tier]));
 		assert.equal(tiers.connect_nodes, "graph_batch");
 		assert.equal(tiers.upsert_media_node, "write_light");
@@ -257,9 +230,10 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.ok(!tools.some((t) => t.name === "introduce_nodes_to_agent"), "deferred 工具默认不暴露");
 		assert.ok(!tools.some((t) => t.name === "set_node_prompt"), "set_node_prompt 已并入 set_node_text");
 		assert.ok(!tools.some((t) => t.name === "set_node_content"), "set_node_content 已并入 set_node_text");
+		assert.ok(!tools.some((t) => t.name === "upsert_prompt_node"), "upsert_prompt_node 随 prompt 节点下线删除");
 
 		const withDeferred = createCanvasWriteTools(client, { includeDeferred: true });
-		assert.equal(withDeferred.length, 15);
+		assert.equal(withDeferred.length, 14);
 		assert.ok(withDeferred.some((t) => t.name === "introduce_nodes_to_agent"));
 	});
 });
@@ -410,7 +384,6 @@ describe("set_node_generation_params（2026-10-03 生成参数预填）", () => 
  */
 describe("canvas-write: 全部写工具都推 details.actions（实时通道回归锁）", () => {
 	const WRITE_TOOLS = [
-		"upsert_prompt_node",
 		"upsert_media_node",
 		"set_node_text",
 		"attach_refs",
@@ -428,7 +401,6 @@ describe("canvas-write: 全部写工具都推 details.actions（实时通道回�
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
 		const params: Record<string, unknown> = {
-			upsert_prompt_node: { prompt: "P", content: "C" },
 			upsert_media_node: { target_type: "image", prompt: "P" },
 			set_node_text: { node_id: "n1", prompt: "P" },
 			attach_refs: { node_id: "n1", ref_order: ["i1"] },
@@ -709,9 +681,9 @@ describe("canvas-write: _signal + affectedCount 契约", () => {
 	it("写工具 details._signal 存在且 actions/affectedCount 保留", async () => {
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		const res = await run(findTool(tools, "upsert_prompt_node"), {
+		const res = await run(findTool(tools, "upsert_media_node"), {
+			target_type: "image",
 			prompt: "p",
-			content: "c",
 		});
 		const d = res.details as Record<string, unknown>;
 		assert.equal((d._signal as { status: string }).status, "ok");

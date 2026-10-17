@@ -30,7 +30,7 @@ import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
 import { useShotPolling } from '@/composables/useShotPolling'
-import { useGenerationPolling, parseRecordPromptContent, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
+import { useGenerationPolling, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
 import { buildNodeMediaInfoSummary, buildMaterialMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
 import { useGenerationFailureToast, shouldToastForFailure } from '@/composables/useGenerationFailureToast'
 import type { GenerationRecord } from '@/services/studio-api'
@@ -701,10 +701,6 @@ const generationPolling = useGenerationPolling((results) => {
       }
       if (record.type === 'text') {
         patch.content = parseRecordText(record)
-      } else if (record.type === 'prompt') {
-        const parsed = parseRecordPromptContent(record)
-        patch.content = parsed.content
-        patch.promptMode = parsed.mode
       } else if (urls.length) {
         patch.images = urls
       }
@@ -761,7 +757,6 @@ function startPollingForGeneratingRecords() {
       n.type !== 'video' &&
       n.type !== 'image' &&
       n.type !== 'text' &&
-      n.type !== 'prompt' &&
       n.type !== 'audio'
     ) {
       continue
@@ -1296,6 +1291,7 @@ function handleSelectionBatchStop() {
 }
 
 const nodeTypes = {
+  // 🔴 2026-10-17 prompt 节点下线：渲染分支仅为存量兜底保留（无创建入口；Dock 已降级只读）。
   prompt: CanvasNodePrompt,
   image: CanvasNodeImage,
   video: CanvasNodeVideo,
@@ -1401,9 +1397,9 @@ function createNodeAt(type: DockNodeType, position: { x: number; y: number }) {
     case 'text':
       id = addNode('text', { content: '', status: 'idle', textModel }, { position })
       break
-    case 'prompt':
-      id = addNode('prompt', { prompt: '', label: '提示词', status: 'idle', textModel }, { position })
-      break
+    // 被删历史（2026-10-17 prompt 节点下线）：case 'prompt'
+    // （addNode('prompt', { prompt: '', label: '提示词', status: 'idle', textModel })）
+    // 曾在此；创建菜单项已同步移除。
     case 'image':
       id = addNode(
         'image',
@@ -4645,14 +4641,8 @@ function buildStudioRecordPatch(
     generationRecordId: record.id,
     errorMessage: status === NODE_GENERATION_STATUS.error ? '图像生成未完成或超时' : null,
   }
-  if (record.type === 'text' || record.type === 'prompt') {
-    if (record.type === 'prompt') {
-      const parsed = parseRecordPromptContent(record)
-      patch.content = parsed.content
-      patch.promptMode = parsed.mode
-    } else {
-      patch.content = parseRecordText(record)
-    }
+  if (record.type === 'text') {
+    patch.content = parseRecordText(record)
   } else {
     const urls = parseRecordUrls(record)
     if (urls.length) {

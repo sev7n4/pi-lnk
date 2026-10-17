@@ -26,7 +26,7 @@ function fakeClient() {
 	};
 }
 
-test("six gen/lifecycle tools registered with tiers", () => {
+test("five gen/lifecycle tools registered with tiers", () => {
 	const tools = createGenerationTools(fakeClient() as never);
 	assert.deepEqual(
 		tools.map((t) => t.name),
@@ -34,12 +34,11 @@ test("six gen/lifecycle tools registered with tiers", () => {
 			"run_image_generation",
 			"run_video_generation",
 			"run_text_generation",
-			"run_prompt_generation",
 			"run_audio_generation",
 			"cancel_generation",
 		],
 	);
-	assert.deepEqual(tools.map((t) => t.tier), ["gen", "gen", "gen", "gen", "gen", "lifecycle"]);
+	assert.deepEqual(tools.map((t) => t.tier), ["gen", "gen", "gen", "gen", "lifecycle"]);
 });
 
 test("run_audio_generation 把 kind 与内联参数透传到 Nest（不要求先写节点）", async () => {

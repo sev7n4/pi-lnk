@@ -90,7 +90,8 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"save_memory",
 	// write 核心链路（prompt 规则 4/5 逐字引用，不可延迟）
 	"upsert_media_node",
-	"upsert_prompt_node",
+	// 被删历史（2026-10-17 prompt 节点下线）：upsert_prompt_node 曾常驻于此（注释内不得出现带引号的工具名，
+	// 否则 verify-tool-tiering 的名单解析会把注释当成 Set 成员报幽灵项）。
 	"set_node_text",
 	"update_node",
 	"connect_nodes",
@@ -134,7 +135,7 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"run_image_generation",
 	"run_video_generation",
 	"run_text_generation",
-	"run_prompt_generation",
+	// 被删历史（2026-10-17 prompt 节点下线）：run_prompt_generation 曾常驻于此（不带引号，理由同上）。
 	"run_audio_generation",
 	"cancel_generation",
 	// 交互与元

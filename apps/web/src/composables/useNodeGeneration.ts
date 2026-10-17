@@ -21,7 +21,6 @@ import {
 } from '@/composables/useUpstreamNodeContext'
 import { resolveNodeRefs, type LocalRefBinding } from '@/composables/useNodeRefs'
 import {
-  parseRecordPromptContent,
   parseRecordText,
   parseRecordUrl,
   parseRecordUrls,
@@ -628,16 +627,10 @@ async function cancelRemoteGeneration(
         errorMessage: null,
         generationRecordId: record.id,
       }
-      if (record.type === 'text' || record.type === 'prompt') {
-        if (record.type === 'prompt') {
-          const parsed = parseRecordPromptContent(record)
-          patch.content = parsed.content
-          patch.promptMode = parsed.mode
-        } else {
-          const content = parseRecordText(record)
-          patch.content = content
-          // Keep dock prompt intact — result lives on the node card via `content`.
-        }
+      if (record.type === 'text') {
+        const content = parseRecordText(record)
+        patch.content = content
+        // Keep dock prompt intact — result lives on the node card via `content`.
       } else {
         patch.url = urls[0] ?? parseRecordUrl(record)
         if (urls.length) patch.images = urls
@@ -894,10 +887,7 @@ async function cancelRemoteGeneration(
     const refs = resolveStudioRefs(node, deps.nodes.value, deps.edges.value)
     const mentionedKeys = parseRefMentions(local)
     if (!deps.requireLogin()) return
-    if (nodeType === 'prompt') {
-      const hasImageRef = refs.some((r) => r.mediaType === 'image' && Boolean(r.url?.trim()))
-      if (!local && !hasImageRef) return
-    } else if (nodeType !== 'sceneComposer' && !local && !refs.length) {
+    if (nodeType !== 'sceneComposer' && !local && !refs.length) {
       const hasTextP = nodeType === 'video' && deps.nodes.value.some((n) => n.id === 'text-p')
       if (!hasTextP) return
     }
@@ -928,29 +918,6 @@ async function cancelRemoteGeneration(
       // Phase 2c.1: dock / confirm generate start clears pending_confirm SSOT.
       if (String(data.status ?? '') === 'pending_confirm') {
         deps.patchNodeData(node.id, { status: NODE_GENERATION_STATUS.draft })
-      }
-
-      if (nodeType === 'prompt') {
-        deps.patchNodeData(node.id, { ...startedAtPatch(), status: NODE_GENERATION_STATUS.generating })
-        const guideSceneId =
-          typeof data.guideSceneId === 'string' && data.guideSceneId.trim()
-            ? data.guideSceneId.trim()
-            : undefined
-        const { data: res } = await studioApi.generatePrompt(
-          local,
-          resolveGenerationModel('text', data.textModel as string | undefined),
-          signal,
-          canvasScope(node.id),
-          guideSceneId,
-          refs,
-          mentionedKeys,
-        )
-        if (signal.aborted) return
-        // Bump record id before resolve — otherwise poll gate treats the new
-        // result as stale when the node still holds a prior failed recordId.
-        deps.patchNodeData(node.id, { generationRecordId: res.data.id })
-        await resolveStudioRecord(node.id, res.data)
-        return
       }
 
       if (nodeType === 'text') {

@@ -160,12 +160,11 @@ export function createGenerationTools(
 			"Run text generation for a canvas media node (writes generated copy into node content). Requires pending confirmation.",
 			"/agent/internal/run-text-generation",
 		),
-		runTool(
-			"run_prompt_generation",
-			"执行提示词生成",
-			"Run prompt generation for a canvas media node (writes generation prompt into node). Requires pending confirmation.",
-			"/agent/internal/run-prompt-generation",
-		),
+		// 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
+		// run_prompt_generation（"执行提示词生成" → /agent/internal/run-prompt-generation）
+		// 曾以 runTool 同形态定义于此；随 prompt 节点下线整链移除（服务端端点、
+		// Nest service 方法、studio.generatePrompt 同批删）。turnaround/四格产品图管线
+		// 走 expandPromptContent，不经此工具，不受影响。
 		{
 			...gen,
 			name: "run_audio_generation",

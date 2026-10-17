@@ -22,7 +22,6 @@ export function summarizeToolArgs(name: string, args: unknown): string | undefin
     }
     case 'cancel_generation':
       return typeof a.node_id === 'string' && a.node_id ? a.node_id.slice(0, ARGS_SUMMARY_MAX) : undefined
-    case 'upsert_prompt_node':
     case 'get_node':
     case 'duplicate_node':
       return typeof a.title === 'string' && a.title ? a.title.slice(0, ARGS_SUMMARY_MAX)

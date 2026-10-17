@@ -61,7 +61,6 @@ describe('AgentCanvasToolsService.applySidebarAttachments', () => {
             generateImage: vi.fn(),
             generateVideo: vi.fn(),
             generateText: vi.fn(),
-            generatePrompt: vi.fn(),
             generateAudio: vi.fn(),
             getGeneration: vi.fn(),
             expandPromptContent: vi.fn(),

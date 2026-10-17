@@ -7,7 +7,8 @@ export const EDITABLE_NODE_TYPES = new Set([
   'audio',
   'sceneComposer',
   'shot',
-  'prompt',
+  // 被删历史（2026-10-17 prompt 节点下线）：'prompt' 曾在本集合中
+  // （存量 prompt 节点随之退出 Dock 编辑入口，卡片只读——Phase 3 冻结）。
   'mediaInput',
   'videoComposition',
 ])

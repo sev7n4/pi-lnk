@@ -10,7 +10,7 @@ describe('applyCanvasActions', () => {
       createdAt: '2026-09-16T00:00:00.000Z',
     }
     const data: CanvasData = {
-      nodes: [{ id: 'n1', type: 'prompt', position: { x: 0, y: 0 }, data: { prompt: 'old' } }],
+      nodes: [{ id: 'n1', type: 'text', position: { x: 0, y: 0 }, data: { prompt: 'old' } }],
       edges: [],
       viewport: { x: 10, y: 20, zoom: 1 },
       compositionRunGroup: group,

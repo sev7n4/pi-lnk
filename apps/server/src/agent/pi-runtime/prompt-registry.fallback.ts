@@ -53,7 +53,7 @@ export const WRITE_TOOLS_RULES = `4. 用户要创建媒体节点或明确「生�
  * 14 已被 sidebar_vision.tail 占用，取下一空号。规则 9 不拷贝 = roadmap D4。
  * 压缩说明：L6 预算余量个位数，加 23 时同步压缩 11/12/13 措辞（语义不变，省 56 字符）。
  */
-export const GEN_TOOLS_RULES = `11. run_image/video/text/prompt/audio_generation 仅对已 propose_generation 且用户明确同意的节点调用（系统强制校验 pending_confirm）。禁用 run_* 或文生图提示词冒充放大/超分。
+export const GEN_TOOLS_RULES = `11. run_image/video/text/audio_generation 仅对已 propose_generation 且用户明确同意的节点调用（系统强制校验 pending_confirm）。禁用 run_* 或文生图提示词冒充放大/超分。
 12. run_* 返回 timeout：如实说未完成，可再查生成状态；fallback_pending：引导用户画布确认平台兜底，不声称成败、不自重试、不调不存在工具；failed/error：简要说明+下一步，禁虚构 url。
 13. 用户要取消：调用 cancel_generation（优先 generation_record_id，否则 node_id 取画布摘要），如实转述；仅 generating 可取消，其余如实说明。
 23. run_audio_generation 按 kind 分三类：voice 配音朗读、design 多角色台词+音效、music 配乐/BGM；选错分类或无该分类模型时如实说明，禁冒充。`;

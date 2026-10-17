@@ -21,13 +21,13 @@ description: 从剧本解析提取分镜提示词与参考对象（角色/场景
 
 ## 输入契约（开工前先取）
 
-- **剧本**：画布上的 prompt 节点（先 tool_search 搜「画布」加载概览工具取节点清单 / 读节点正文）；无剧本时先转 drama-script-writing
+- **剧本**：画布上的文本节点（先 tool_search 搜「画布」加载概览工具取节点清单 / 读节点正文）；无剧本时先转 drama-script-writing
 - **IP bible**：`recall_memory` 取 logline / 主角三角 / 人物名录 / 世界观要点——**别让用户重述已知信息**
 - **已有资产**：画布上已有的角色图 / 场景图 / 道具图 / 音频节点；查到节点 id 才能在绑定阶段引用
 
 ## 阶段一：资产解析（Asset Breakdown）
 
-从剧本逐集提取四类资产，产出一张**资产表**（写成 prompt 节点，标题 `资产表 · <剧名>`）：
+从剧本逐集提取四类资产，产出一张**资产表**（写成文本节点，标题 `资产表 · <剧名>`）：
 
 | 类别 | 提取内容 | 分类 |
 |---|---|---|
@@ -147,4 +147,4 @@ description: 从剧本解析提取分镜提示词与参考对象（角色/场景
   - 景别（ECU→EWS）/ 角度（平视·高角·低角·鸟瞰·荷兰角·OTS）/ 运动（static·pan·tilt·dolly·truck·crane·zoom·handheld）/ 转场术语与 180° 轴线、视线匹配、Match on Action、屏幕方向规则借鉴 101-skills/storyboard-creation 与影视分镜通行规范
   - Shot ID / Beat / Blocking / Audio / 连续性锚点字段表、"连续性锚点必须写进每条 prompt（不假设模型记得前镜）"、参考六类路由（构图/连续性/负面参考…）、禁止克隆在世艺术家与版权角色借鉴 storyboard-previsualization（calesthio generative-media-skills）
   - hero prop / action prop / set dressing 道具分类借鉴 a5c-ai world-building；J-cut / L-cut 音画关系与静默点设计取自影视剪辑规范
-  - 画布工具链：`upsert_prompt_node`（资产表）/ `upsert_media_node`（image·audio 分镜与音轨）/ `attach_refs` / `apply_sidebar_attachments` / `connect_nodes` / `arrange_nodes(along_edges)` / `propose_generation` / `focus_node`；跨会话走 `save_memory` / `recall_memory`
+  - 画布工具链：`upsert_media_node`（资产表 target_type=text；image·audio 分镜与音轨）/ `attach_refs` / `apply_sidebar_attachments` / `connect_nodes` / `arrange_nodes(along_edges)` / `propose_generation` / `focus_node`；跨会话走 `save_memory` / `recall_memory`
