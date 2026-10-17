@@ -30,12 +30,18 @@ import {
   applyTaskEvent,
   applyPollRecordToTask,
   emptyTaskProgress,
+  mapRecordStatusToTaskStatus,
   seedTaskProgressFromEvents,
   type AgentTaskProgressState,
 } from '@/components/agent/agentTaskProgress'
-import { useGenerationPolling, type GenerationPollTask } from '@/composables/useGenerationPolling'
+import {
+  parseRecordUrl,
+  useGenerationPolling,
+  type GenerationPollTask,
+} from '@/composables/useGenerationPolling'
 import { useAgentStream } from '@/composables/useAgentStream'
 import {
+  mapNodeStatus,
   reconcileTaskProgress,
   shouldFinishTaskCard,
   synthesizeSummary,
@@ -801,6 +807,16 @@ const taskRecordPolling = useGenerationPolling((results) => {
       task.nodeId,
       record.status,
     )
+    // 回填时间线（2026-10-17 产物体验补全）：`node_status` SSE 无生产者，回合流关闭后
+    // 才完成的生成只有轮询能拿到权威终态 ⇒ 经此喂回 artifact part（翻 done/failed）。
+    // 产物行不再永远「待确认/生成中」，定位按钮（done/failed 才出）与缩略图随之出现；
+    // done 且有媒体地址时直存 part.url（回填判定按产物归属回合，不污染新回合）。
+    const mapped = mapRecordStatusToTaskStatus(record.status)
+    agent.backfillTimelineNodeStatus({
+      nodeId: task.nodeId,
+      status: mapped === 'needs_user' ? 'pending' : mapped,
+      url: mapped === 'done' ? parseRecordUrl(record) || undefined : undefined,
+    })
   }
 })
 
@@ -2967,6 +2983,35 @@ function jumpToLatest() {
 }
 
 function reconcileFromNodes(rawNodes: CanvasNodeLike[]) {
+  // 画布状态 → 时间线产物回填（2026-10-17 第二通道）。
+  // ⚠️ 必须在 taskProgress 早退**之前**：propose 单发等无 task 事件的流程
+  // taskProgress.items 为空，但节点终态只在画布对账处可见。
+  // 口径复用 mapNodeStatus（W11「有正据才动」）：无 url/内容/明确状态值的节点
+  // （含未确认的 propose 节点）保持原状，不会被误翻 done。
+  // 归属预筛：先收集时间线已持有的 artifact nodeId，避免对用户手建节点做全量消息回填空转。
+  if (rawNodes.length) {
+    const owned = new Set<string>()
+    for (const m of agent.messages) {
+      if (m.role !== 'assistant' || !m.timeline) continue
+      for (const p of m.timeline.parts) {
+        if (p.kind === 'artifact') owned.add(p.nodeId)
+      }
+    }
+    if (owned.size) {
+      for (const n of rawNodes) {
+        if (!owned.has(n.id)) continue
+        const probe = mapNodeStatus(n, { id: '', title: '', status: 'pending' })
+        if (probe === 'pending') continue
+        const nodeUrl =
+          typeof n.data?.url === 'string' && n.data.url ? n.data.url : undefined
+        agent.backfillTimelineNodeStatus({
+          nodeId: n.id,
+          status: probe === 'needs_user' ? 'pending' : probe,
+          url: probe === 'done' ? nodeUrl : undefined,
+        })
+      }
+    }
+  }
   if (!taskProgress.value.items.length) return
   let next = reconcileTaskProgress(taskProgress.value, rawNodes)
   // W11: canvas generationRecordId → start poll for matching task items

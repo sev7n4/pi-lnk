@@ -65,6 +65,12 @@ export type TimelinePart =
       title: string
       status: 'pending' | 'running' | 'done' | 'failed'
       errorText?: string
+      /**
+       * 产物媒体地址（2026-10-17 晚到回填）：node_status 事件可携带、渲染层缩略图**优先**
+       * 用它，resolveNodeUrl（画布节点查找）只作兜底 —— 回合流关闭后完成的生成，
+       * 画布节点可能尚未同步/已换页，直存 url 才能让缩略图稳定出现。
+       */
+      url?: string
     }
   | {
       kind: 'notice'
@@ -441,12 +447,17 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
     case 'node_status': {
       const d = event.data
       const status = nodeStatusToArtifact(d.status)
+      // url 语义分叉：非 failed 态 = 媒体地址（直存 part.url）；failed 态沿用既有语义
+      // （url 兼作错误文案，见下方 errorText）——回填方对 failed 只传错误语义或不传。
+      const mediaUrl =
+        d.status !== 'failed' && typeof d.url === 'string' && d.url ? d.url : undefined
       const existing = timeline.parts.find(
         (p): p is Extract<TimelinePart, { kind: 'artifact' }> =>
           p.kind === 'artifact' && p.nodeId === d.nodeId,
       )
       if (existing) {
         existing.status = status
+        if (mediaUrl) existing.url = mediaUrl
         if (d.status === 'failed') {
           existing.errorText = typeof d.url === 'string' && d.url ? d.url : '生成失败，可重试'
         }
@@ -460,6 +471,7 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         nodeType: 'image',
         title: '未命名',
         status,
+        url: mediaUrl,
         errorText: d.status === 'failed' ? '生成失败，可重试' : undefined,
       })
       return
@@ -611,7 +623,7 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
 /** artifact 按 nodeId upsert（D1：一次节点 = 一个 part）。 */
 function upsertArtifact(
   timeline: TurnTimeline,
-  data: { nodeId: string; nodeType: string; title: string; status: 'pending' | 'running' | 'done' | 'failed'; errorText?: string },
+  data: { nodeId: string; nodeType: string; title: string; status: 'pending' | 'running' | 'done' | 'failed'; errorText?: string; url?: string },
 ): void {
   const existing = timeline.parts.find(
     (p): p is Extract<TimelinePart, { kind: 'artifact' }> =>
@@ -619,6 +631,7 @@ function upsertArtifact(
   )
   if (existing) {
     existing.status = data.status
+    if (data.url) existing.url = data.url
     if (data.title && existing.title === '未命名') existing.title = data.title
     if (data.status === 'failed') existing.errorText = data.errorText ?? '生成失败，可重试'
     return
@@ -630,6 +643,7 @@ function upsertArtifact(
     nodeType: data.nodeType,
     title: data.title,
     status: data.status,
+    url: data.url,
     errorText: data.status === 'failed' ? (data.errorText ?? '生成失败，可重试') : undefined,
   })
 }
@@ -656,26 +670,52 @@ export function finalizeTurnTimeline(timeline: TurnTimeline): void {
   }
   const summary = summarizeTimeline(timeline)
   if (summary) {
+    // 稳定 id（2026-10-17）：晚到回填（refreshTimelineSummary）要能**按 id 精确找到**
+    // 这条摘要 notice 原地刷新文案。与孤儿降级（notice:orphan-tool:*）、partial 围栏
+    // （notice:partial-ledger）、等待（notice:waiting）同属冒号式稳定 id 家族，
+    // 与 nextPartId 计数式 id 区分开。
     timeline.parts.push({
       kind: 'notice',
-      id: nextPartId('notice'),
+      id: 'notice:turn-summary',
       text: summary,
       tone: 'info',
     })
   }
 }
 
+/**
+ * 晚到回填后的摘要刷新（2026-10-17 产物体验补全）。
+ *
+ * finalizeTurnTimeline 在回合收束时把摘要 notice 追加在末尾，其统计是**当时的快照**——
+ * 「生成晚于回合收束完成」时（异步图片/视频常见），artifact 事后才翻 done，
+ * 「已生成 N 个产物」会少计。轮询回填终态后调用本函数按稳定 id 找到摘要 notice
+ * 原地重算文案；未收束（无 turnEndedAt）或摘要 notice 不存在时静默跳过。
+ */
+export function refreshTimelineSummary(timeline: TurnTimeline): void {
+  if (timeline.turnEndedAt == null) return
+  const summaryNotice = timeline.parts.find(
+    (p): p is Extract<TimelinePart, { kind: 'notice' }> =>
+      p.kind === 'notice' && p.id === 'notice:turn-summary',
+  )
+  if (!summaryNotice) return
+  const summary = summarizeTimeline(timeline)
+  if (summary) summaryNotice.text = summary
+}
+
 /** 摘要文案（复用 turnSummaryLine 的口径，但数据源是 parts）。 */
 export function summarizeTimeline(timeline: TurnTimeline): string | null {
-  const nodeCount = timeline.parts.filter(
-    (p) => p.kind === 'canvas' || (p.kind === 'artifact' && p.status === 'done'),
+  // 产物口径（2026-10-17 用户裁定）：只统计**生成的内容**（done 的 artifact part =
+  // 文本/图片/视频/音频节点）。连线/移除/视口/explore 等画布过程动作是「过程」不是
+  // 「产物」——旧口径把 canvas part 一并计入，一条连线会被算成「已创建 1 个节点」。
+  const productCount = timeline.parts.filter(
+    (p) => p.kind === 'artifact' && p.status === 'done',
   ).length
   const proposeSteps = timeline.parts.filter(
     (p) => p.kind === 'tool' && p.toolName === 'propose_generation',
   )
   const imageCount = proposeSteps.length
   const segments: string[] = []
-  if (nodeCount > 0) segments.push(`已创建 ${nodeCount} 个节点`)
+  if (productCount > 0) segments.push(`已生成 ${productCount} 个产物`)
   if (imageCount > 0) segments.push(`提议生成 ${imageCount} 张`)
   if (timeline.turnEndedAt != null) {
     segments.push(`用时 ${formatDuration(timeline.turnEndedAt - timeline.turnStartedAt)}`)

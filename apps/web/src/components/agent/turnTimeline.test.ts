@@ -3,6 +3,7 @@ import {
   applyTimelineEvent,
   createTurnTimeline,
   finalizeTurnTimeline,
+  refreshTimelineSummary,
   replayTimelineEvents,
   summarizeTimeline,
   type TimelineEvent,
@@ -486,5 +487,106 @@ describe('P2 — 落库 seq 排序 + 缩略图/失败态（设计 §5-P2）', ()
     // lastRawThinking：2026-10-14 累积快照差分游标（replay 内存态，不落库、不进事件契约）
     expect(Object.keys(tl).sort()).toEqual(['lastRawThinking', 'parts', 'turnStartedAt'])
     expect(kinds(tl)).toEqual(['thinking', 'artifact'])
+  })
+})
+
+describe('turnTimeline — 晚到生成状态回填（2026-10-17 产物体验补全）', () => {
+  it('node_status done 携带 url ⇒ 直存 artifact part.url（缩略图不依赖画布节点查找）', () => {
+    const tl = feed([
+      addNode('n1', 'image', '海报'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'generating' } },
+      { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://cdn/a.png' } },
+    ])
+    const art = byKind(tl, 'artifact')[0]
+    expect(art.status).toBe('done')
+    expect(art.url).toBe('https://cdn/a.png')
+  })
+
+  it('failed 态不把 url 存成媒体地址（url 沿用既有「错误文案」语义）', () => {
+    const tl = feed([
+      addNode('n1'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'failed', url: '渠道超时' } },
+    ])
+    const art = byKind(tl, 'artifact')[0]
+    expect(art.status).toBe('failed')
+    expect(art.url).toBeUndefined()
+    expect(art.errorText).toBe('渠道超时')
+  })
+
+  it('node_status 无前置 add_node 的占位 artifact 也带 url', () => {
+    const tl = feed([
+      { type: 'node_status', data: { nodeId: 'n9', status: 'done', url: 'https://cdn/b.png' } },
+    ])
+    const art = byKind(tl, 'artifact')[0]
+    expect(art.status).toBe('done')
+    expect(art.url).toBe('https://cdn/b.png')
+  })
+
+  it('⭐ 回合收束后回填翻 done：refreshTimelineSummary 原地刷新摘要 notice（产物计数 0→1）', () => {
+    const tl = feed([addNode('n1')])
+    finalizeTurnTimeline(tl)
+    const summaryNotice = tl.parts.find(
+      (p): p is Extract<TimelinePart, { kind: 'notice' }> => p.id === 'notice:turn-summary',
+    )
+    expect(summaryNotice, 'finalize 追加的摘要 notice 用稳定 id').toBeTruthy()
+    expect(summaryNotice!.text, 'pending 不计入产物').not.toContain('已生成')
+
+    // 轮询回填终态（产物晚于回合收束完成）⇒ 摘要随之补计
+    applyTimelineEvent(tl, {
+      type: 'node_status',
+      data: { nodeId: 'n1', status: 'done', url: 'https://cdn/a.png' },
+    })
+    refreshTimelineSummary(tl)
+    expect(summaryNotice!.text).toContain('已生成 1 个产物')
+  })
+
+  it('⭐ 产物口径（2026-10-17 用户裁定）：连线等画布过程动作不是产物，不进摘要统计', () => {
+    const tl = feed([
+      addNode('n1'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://x/a.png' } },
+      // 画布过程动作：连线（旧口径会被 canvas part 计数成「节点」）
+      { type: 'canvas_action', data: { type: 'add_edge', payload: { id: 'e1', source: 'n1', target: 'n2' } } as never },
+      { type: 'canvas_action', data: { type: 'set_viewport', payload: { viewport: { x: 0, y: 0, zoom: 1 } } } as never },
+    ])
+    finalizeTurnTimeline(tl)
+    // 连线/视口仍作为过程行存在（时间线 = 过程视图），但摘要只数产物
+    expect(byKind(tl, 'canvas')).toHaveLength(2)
+    const summaryNotice = tl.parts.find(
+      (p): p is Extract<TimelinePart, { kind: 'notice' }> => p.id === 'notice:turn-summary',
+    )
+    expect(summaryNotice!.text).toContain('已生成 1 个产物')
+    expect(summaryNotice!.text).not.toContain('2 个产物')
+    expect(summaryNotice!.text).not.toContain('节点')
+  })
+
+  it('refreshTimelineSummary 不动无关 notice：未收束 / 摘要 notice 不存在时静默跳过', () => {
+    // 未收束：turnEndedAt 为空 ⇒ 不刷
+    const live = feed([addNode('n1')])
+    applyTimelineEvent(live, {
+      type: 'node_status',
+      data: { nodeId: 'n1', status: 'done', url: 'https://cdn/a.png' },
+    })
+    expect(() => refreshTimelineSummary(live)).not.toThrow()
+    expect(live.parts.some((p) => p.kind === 'notice' && p.id === 'notice:turn-summary')).toBe(false)
+
+    // 已收束但摘要 notice 缺席（summarize 为 null 的空回合）⇒ 不崩、不新增
+    const empty = createTurnTimeline()
+    finalizeTurnTimeline(empty)
+    const count = empty.parts.length
+    refreshTimelineSummary(empty)
+    expect(empty.parts).toHaveLength(count)
+  })
+
+  it('finalize 的摘要 notice 稳定 id 与 waiting/孤儿/partial notice 不冲突', () => {
+    const tl = feed([
+      addNode('n1'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://x/a.png' } },
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation' } },
+    ])
+    finalizeTurnTimeline(tl)
+    const ids = byKind(tl, 'notice').map((n) => n.id)
+    expect(ids).toContain('notice:waiting')
+    expect(ids).toContain('notice:turn-summary')
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })
