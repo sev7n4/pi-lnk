@@ -160,10 +160,21 @@ model PointTransaction {
   balanceAfter Int?
   ruleVersion String?
   grayReleaseId String?
+  /// 多池记账（spec 2026-10-13-billing-points-system-design §多池）：
+  /// 该笔积分变动归属的池。purchased=支付购买（可设有效期）、granted=赠送/签到（默认）、
+  /// subscription=订阅赠送。存量行迁移默认 'granted'（历史无池概念，且当前无 purchased/subscription 流水）。
+  /// 结算路径仍以 User.points 为单一权威余额；本字段服务审计/按池汇总，不改动计费扣减链路。
+  pool         String   @default("granted")
+  /// 有效期截止（UTC ms）；仅部分 grant 有值（如购买积分包）。到期后不计入可用余额，
+  /// 但保留在账本供对账。到期自动扣减 User.points 属后续（当前无 expiresAt 流水，暂无到期项）。
+  expiresAt    DateTime?
+  /// 关联支付订单 id（purchased 池溯源用；支付闭环落地后由 Order 填充）。无支付时为 NULL。
+  orderId      String?
   createdAt    DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([userId, kind, category, createdAt])
+  @@index([userId, pool])
 }
 
 model GenerationRecord {

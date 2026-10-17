@@ -148,6 +148,7 @@ describe('MembershipService', () => {
         category: 'other',
         status: null,
         balanceAfter: 1100,
+        pool: 'granted', // 多池记账：每日签到归赠送池
       },
     })
   })
