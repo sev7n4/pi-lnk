@@ -79,10 +79,20 @@ function normalizeKey(raw: string, type: 'private' | 'public'): string {
   return `${header}\n${body.match(/.{1,64}/g)!.join('\n')}\n${footer}`
 }
 
-/** 参数按 key 字典序拼接（排除空值与 sign 家族），与支付宝开放规范一致。 */
-function sortedQuery(params: Record<string, string | undefined>): string {
+/**
+ * 参数按 key 字典序拼接（排除空值）。
+ * - excludeSignType=true：异步通知验签口径（官方 rsaCheckV1：除 sign、sign_type）。
+ * - excludeSignType=false：网关请求签名口径（page.pay / 网关 API：只排除 sign，
+ *   sign_type 参与签名）。⚠️ 实证：2026-10-17 沙箱网关 invalid-signature 调试页
+ *   回显的验签串包含 sign_type=RSA2；此前把两者都排除导致验签必败（本地签/验
+ *   同用一套错误规则而自洽，单测抓不住）。
+ */
+function sortedQuery(
+  params: Record<string, string | undefined>,
+  excludeSignType: boolean,
+): string {
   return Object.keys(params)
-    .filter((k) => k !== 'sign' && k !== 'sign_type')
+    .filter((k) => k !== 'sign' && (!excludeSignType || k !== 'sign_type'))
     .filter((k) => params[k] !== undefined && params[k] !== '')
     .sort()
     .map((k) => `${k}=${params[k]}`)
@@ -100,9 +110,9 @@ export function alipayTimestamp(now: Date = new Date()): string {
 
 /**
  * 验签网关 JSON 响应（alipay.*.response 对象内容，已 JSON 解析）。
- * 规则与请求侧一致：除 sign/sign_type 外全字段字典序拼接；字符串值为原文
- * （JSON 解析后已去引号），数字为十进制表示。响应不验签 = 查单补偿路径
- * 可被伪造「已付款」欺骗入账（资损链路，零信任）。
+ * 口径：除 sign 外全字段字典序拼接（响应体无 sign_type 字段，排除与否等价）；
+ * 字符串值为原文（JSON 解析后已去引号），数字为十进制表示。响应不验签 =
+ * 查单补偿路径可被伪造「已付款」欺骗入账（资损链路，零信任）。
  */
 export function verifyResponseSign(
   res: Record<string, unknown>,
@@ -175,7 +185,7 @@ export class AlipayAdapter implements PaymentAdapter {
       return_url: this.cfg.returnUrl,
       biz_content: JSON.stringify(biz),
     }
-    params.sign = this.sign(sortedQuery(params))
+    params.sign = this.sign(sortedQuery(params, false))
     // page.pay 为 GET 跳转：参数整体 URL 编码后拼接网关。
     const query = Object.keys(params)
       .sort()
@@ -216,7 +226,7 @@ export class AlipayAdapter implements PaymentAdapter {
       version: '1.0',
       biz_content: biz,
     }
-    params.sign = this.sign(sortedQuery(params))
+    params.sign = this.sign(sortedQuery(params, false))
     let json: Record<string, unknown>
     try {
       const res = await fetch(this.cfg.gateway, {
@@ -248,9 +258,9 @@ export class AlipayAdapter implements PaymentAdapter {
   private verifySign(params: Record<string, string>): boolean {
     const sign = params.sign
     if (!sign) return false
-    // 验签内容：除 sign/sign_type 外全部参数（已 URL 解码后的值）字典序拼接。
+    // 验签内容：异步通知口径——除 sign/sign_type 外全部参数（已 URL 解码后的值）字典序拼接。
     return createVerify('RSA-SHA256')
-      .update(sortedQuery(params), 'utf8')
+      .update(sortedQuery(params, true), 'utf8')
       .verify(normalizeKey(this.cfg.alipayPublicKey, 'public'), sign, 'base64')
   }
 }
