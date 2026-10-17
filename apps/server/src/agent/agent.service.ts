@@ -239,7 +239,21 @@ export class AgentService {
       orderBy: { createdAt: 'desc' },
       take: limit,
     })
-    return rows.reverse()
+    // Task 14（repair-duplicate-turns.ts）历史重复回合软标记：被取代的 assistant
+    // 行（metadata.supersededBy 非空）不再返回，由 owner 行承载展示，避免重复气泡。
+    const visible = rows.filter((r) => {
+      if (r.role !== 'assistant') return true
+      let supersededBy: unknown
+      try {
+        const parsed = r.metadata ? JSON.parse(r.metadata) : null
+        supersededBy =
+          parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).supersededBy : null
+      } catch {
+        supersededBy = null
+      }
+      return !supersededBy
+    })
+    return visible.reverse()
   }
 
   async listThreads(sessionId: string) {
