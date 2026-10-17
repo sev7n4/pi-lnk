@@ -118,6 +118,59 @@ describe('AgentService messages & threads', () => {
     expect(rows[99].content).toBe('msg-120')
   })
 
+  it('getMessages hides assistant rows soft-marked via metadata.supersededBy', async () => {
+    const owner = {
+      id: 'owner1',
+      sessionId: 's1',
+      threadId: 's1:abc',
+      role: 'assistant',
+      content: '完整回合',
+      createdAt: new Date('2026-01-01T00:00:02Z'),
+      metadata: null,
+    }
+    const shadow = {
+      id: 'shadow1',
+      sessionId: 's1',
+      threadId: 's1:abc',
+      role: 'assistant',
+      content: '重复片段',
+      createdAt: new Date('2026-01-01T00:00:01Z'),
+      metadata: JSON.stringify({ supersededBy: 'owner1' }),
+    }
+    const userMsg = {
+      id: 'u1',
+      sessionId: 's1',
+      threadId: 's1:abc',
+      role: 'user',
+      content: '提问',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      metadata: null,
+    }
+    // 模拟 DB 的 desc 返回顺序（新→旧）
+    agentMessageFindMany.mockResolvedValue([owner, shadow, userMsg])
+
+    const rows = await service.getMessages('s1', 's1:abc', 100)
+
+    // user 行 + owner 行返回；被软标记的 shadow 不返回
+    expect(rows.map((r) => r.id)).toEqual(['u1', 'owner1'])
+  })
+
+  it('getMessages does not hide assistant rows with malformed metadata', async () => {
+    const broken = {
+      id: 'b1',
+      sessionId: 's1',
+      threadId: 's1:abc',
+      role: 'assistant',
+      content: '正文',
+      createdAt: new Date('2026-01-01T00:00:01Z'),
+      metadata: '{not-valid-json',
+    }
+    agentMessageFindMany.mockResolvedValue([broken])
+
+    const rows = await service.getMessages('s1', 's1:abc', 100)
+    expect(rows.map((r) => r.id)).toEqual(['b1'])
+  })
+
   it('listThreads orders by updatedAt desc and takes 50', async () => {
     const threads = [
       { id: 's1:a', sessionId: 's1', title: 'A', updatedAt: new Date('2026-01-03') },
