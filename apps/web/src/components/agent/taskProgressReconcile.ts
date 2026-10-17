@@ -6,7 +6,15 @@ export type CanvasNodeLike = {
   data?: Record<string, unknown> | null
 }
 
-function mapNodeStatus(node: CanvasNodeLike, item: AgentTaskItem): TaskItemStatus {
+/**
+ * 画布节点状态 → 任务态映射（W11 口径：**有正据才动**）。
+ *
+ * 「正据」= url / 文本内容 / 明确的 completed|error|failed|generating 状态值；
+ * 无证据返回 item.status 原样（绝不凭空翻 done —— 未确认的 propose 节点
+ * （无 status/url）不会被误判）。2026-10-17 起同时被时间线产物回填
+ * （AgentSideRail reconcileFromNodes 第二通道）复用，保证两处口径单源。
+ */
+export function mapNodeStatus(node: CanvasNodeLike, item: AgentTaskItem): TaskItemStatus {
   const data = node.data || {}
   const status = String(data.status || '')
   const url = typeof data.url === 'string' ? data.url : ''

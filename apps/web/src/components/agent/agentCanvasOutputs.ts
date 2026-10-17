@@ -80,6 +80,11 @@ function titleFromStepLabel(label: string): string {
 function stepToOutput(step: ExecutionStep): LinkedCanvasOutput | null {
   const nodeId = step.meta?.nodeId
   if (!nodeId) return null
+  // 产物口径（2026-10-17 用户裁定）：产物 = 生成的文本/图片/视频/音频节点。
+  // 画布过程动作（连线 add_edge→「连接画布节点」、移除、视口、更新写回）不是产物，
+  // 即使带 nodeId 也不得映射成产物卡片 —— canvasActionLabel 的节点创建恒以「添加」
+  // 开头，以此为判定锚（与 turnSummaryLine 的旧口径一致）。
+  if (step.kind === 'canvas' && !step.label.startsWith('添加')) return null
   const status = mapTraceStatus(step.status)
   if (!status) return null
   if (!['node_gen', 'canvas', 'task'].includes(step.kind) && !step.meta?.nodeId) return null

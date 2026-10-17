@@ -40,9 +40,15 @@ const emit = defineEmits<{
 }>()
 
 const VIDEO_URL_RE = /\.(mp4|webm|mov)(\?|$)/i
+/** 音频扩展名：音频 url 不能塞 <img>（裂图），回退 DockTypeIcon 类型图标。 */
+const AUDIO_URL_RE = /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i
 
 function isVideoUrl(url: string): boolean {
   return VIDEO_URL_RE.test(url)
+}
+
+function isAudioUrl(url: string): boolean {
+  return AUDIO_URL_RE.test(url)
 }
 
 /**
@@ -68,6 +74,10 @@ function toolIcon(p: Extract<TimelinePart, { kind: 'tool' }>): string {
 }
 
 function artifactUrl(p: Extract<TimelinePart, { kind: 'artifact' }>): string | undefined {
+  // 2026-10-17（晚到回填体验补全）：优先用事件/轮询回填**直存**的 part.url ——
+  // 回合流关闭后完成的生成，画布节点可能尚未同步/已换页，resolveNodeUrl
+  // （画布节点查找）拿不到；直存 url 才能让缩略图稳定出现。查找只作兜底。
+  if (typeof p.url === 'string' && p.url) return p.url
   const url = props.resolveNodeUrl?.(p.nodeId)
   return typeof url === 'string' && url ? url : undefined
 }
@@ -271,9 +281,11 @@ const rootClass = computed(() =>
           class="w-3 shrink-0 text-center"
           :class="part.status === 'failed' ? 'text-danger' : 'text-[var(--neo-text-muted)]'"
         >{{ statusIcon(part.status) }}</span>
+        <!-- 缩略图（2026-10-17 增强）：h-7→h-9 提升产物可感知度；音频 url 不进 <img>/<video>
+            （裂图），回退 DockTypeIcon 类型图标。 -->
         <span
-          v-if="part.status === 'done' && artifactUrl(part)"
-          class="relative block h-7 w-7 shrink-0 overflow-hidden rounded border border-[var(--neo-border)]"
+          v-if="part.status === 'done' && artifactUrl(part) && !isAudioUrl(artifactUrl(part)!)"
+          class="relative block h-9 w-9 shrink-0 overflow-hidden rounded border border-[var(--neo-border)]"
         >
           <video
             v-if="isVideoUrl(artifactUrl(part)!)"

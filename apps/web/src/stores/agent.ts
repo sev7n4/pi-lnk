@@ -35,6 +35,7 @@ import {
   applyTimelineEvent,
   createTurnTimeline,
   finalizeTurnTimeline,
+  refreshTimelineSummary,
   replayTimelineEvents,
   type TimelineEvent,
   type TurnTimeline,
@@ -377,6 +378,39 @@ export const useAgentStore = defineStore('agent', () => {
     feedTimeline({ type: 'node_status', data })
   }
 
+  /**
+   * 晚到生成状态回填时间线（2026-10-17 产物体验补全）。
+   *
+   * 背景：`node_status` SSE 事件当前**无服务端生产者**；回合流关闭后仍在生成的异步任务
+   * （图片/视频常见），其终态没有任何通道进入时间线 ⇒ artifact part 永远停在
+   * pending/running（无缩略图、无定位按钮）——这是「回合结束后产物消失」的根因之一。
+   * useGenerationPolling 拿到权威终态后经本方法回填。
+   *
+   * 归属判定（关键）：从最新往回找「timeline 已持有该 nodeId artifact part」的
+   * assistant 消息——产物归属**发起回合**，而非回填时刻恰好最后一条消息
+   * （用户可能已经又发了新回合，回填绝不能污染新回合的时间线）。
+   * 找不到归属就不伪造（N4：不冒充全量），静默跳过。
+   */
+  function backfillTimelineNodeStatus(data: { nodeId: string; status: string; url?: string }) {
+    if (!isFeatureOn('turn_timeline')) return
+    if (!data?.nodeId || !data.status) return
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (!m || m.role !== 'assistant' || !m.timeline) continue
+      const owns = m.timeline.parts.some(
+        (p) => p.kind === 'artifact' && p.nodeId === data.nodeId,
+      )
+      if (!owns) continue
+      applyTimelineEvent(m.timeline, {
+        type: 'node_status',
+        data: { nodeId: data.nodeId, status: data.status, url: data.url },
+      })
+      // 回合已收束 ⇒ 摘要 notice 的统计快照过期，随之原地刷新（「已生成 N 个产物」补计）
+      refreshTimelineSummary(m.timeline)
+      return
+    }
+  }
+
   function trackTaskUpdate(data: {
     id: string
     status: string
@@ -710,6 +744,7 @@ export const useAgentStore = defineStore('agent', () => {
     beginToolCall,
     endToolCall,
     trackNodeStatus,
+    backfillTimelineNodeStatus,
     trackTaskUpdate,
     trackStep,
     trackPhaseHint,

@@ -45,6 +45,28 @@ describe('buildCanvasOutputs', () => {
     expect(out).toHaveLength(2)
     expect(out.map((o) => o.nodeId).sort()).toEqual(['n1', 'n2'])
   })
+
+  it('⭐ 产物口径（2026-10-17 用户裁定）：连线/移除/视口等画布过程动作不是产物', () => {
+    // add_edge 的 canvas step 带 meta.nodeId（payload.id），旧实现会把它映射成产物卡片
+    const out = buildCanvasOutputs({
+      traceSteps: [
+        {
+          id: 's1',
+          kind: 'canvas',
+          label: '添加视频节点「开场」',
+          status: 'done',
+          meta: { nodeId: 'n1' },
+        },
+        { id: 's2', kind: 'canvas', label: '连接画布节点', status: 'done', meta: { nodeId: 'e1' } },
+        { id: 's3', kind: 'canvas', label: '移除连线', status: 'done', meta: { nodeId: 'e2' } },
+        { id: 's4', kind: 'canvas', label: '调整画布视图', status: 'done' },
+        { id: 's5', kind: 'canvas', label: '更新节点「开场」', status: 'done', meta: { nodeId: 'n1' } },
+      ],
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0].nodeId).toBe('n1')
+    expect(out[0].nodeType).toBe('video')
+  })
 })
 
 describe('shouldCollapseOutputs', () => {
