@@ -2587,6 +2587,13 @@ function handleEvent(event: { type: string; data: unknown }) {
         reason?: string
       }
       if (d.status === 'resolved' || !d.toolName) {
+        // ⭐ 2026-10-17 生产复测发现（PR #449 伴生）：resolved 只清状态行位、没喂时间线，
+        // 时间线 notice 永远停在「等待…」翻不成「已继续执行」（模型层 applyTimelineEvent 的
+        // resolved upsert 契约存在但没人调用）。补喂 resolved；`!d.toolName`（无状态清位）
+        // 不喂——喂了会被 applyTimelineEvent 当 waiting 重新 upsert，反把 notice 复活。
+        if (d.status === 'resolved') {
+          agent.trackWaitingUser({ status: 'resolved', toolName: d.toolName })
+        }
         agent.setBlockingWait(null)
       } else {
         // timeoutMs 是等待总时长（线上 300000）：以收到事件的时刻为起点算取消时刻，前端倒计时才有可比性
