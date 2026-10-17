@@ -41,6 +41,10 @@ export type PiEventType =
 	| "error"
 	/** 阻塞式确认工具（ask_user / propose_generation）等待生命周期（2026-10-01）。 */
 	| "waiting_user"
+	/** 画布节点生成状态（2026-10-18 回合挂住等终态）：propose 等待期 / run_* 持有期由
+	 *  pi-runtime 宿主侧合成。映射为同名 UI 事件后，TRACE_PERSIST 白名单（已含
+	 *  node_status）自动落 executionEvents，前端 trackNodeStatus 翻时间线产物行。 */
+	| "node_status"
 	/** 「正在做什么」（决策 8）：工具起手即发，人话由客户端目录翻译，runtime 只给工具名。 */
 	| "activity"
 	/** 上下文压缩起止（审计 #6）：vendor compaction_start/end 归一，payload 由 Nest 归一为 phase。 */
@@ -190,6 +194,24 @@ export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 				timeoutMs: d.timeoutMs,
 				nodeId: d.nodeId,
 				reason: d.reason,
+			});
+		}
+		case "node_status": {
+			// 画布节点生成状态（2026-10-18 回合挂住等终态）：不走 default 的 `pi_` 前缀——
+			// 前端按 type 分支消费（AgentSideRail case 'node_status' → trackNodeStatus），
+			// 加前缀会被静默丢弃（同 waiting_user/activity 的既有裁决）。
+			// 载荷白名单透传：nodeId/status/url/error 均为前端时间线产物行消费字段。
+			const d = event.data as {
+				nodeId?: string;
+				status?: string;
+				url?: string;
+				error?: string;
+			};
+			return ui("node_status", {
+				nodeId: d.nodeId,
+				status: d.status,
+				url: d.url,
+				error: d.error,
 			});
 		}
 		case "activity": {

@@ -61,7 +61,16 @@ const registry = new PendingToolRegistry({
 // C4：spawn_subagent ↔ SessionManager 的解耦中转（PendingToolRegistry 同款装配顺序）：
 // 同一实例两处共享——工具域（spawn 工具 tryRun）、manager 构造后 attach(runSubagent 实现)。
 const subagentCoordinator = new SubagentCoordinator();
-const { tools, client: nestClient } = resolveToolsWithClient(metrics, { registry, coordinator: subagentCoordinator });
+const { tools, client: nestClient } = resolveToolsWithClient(metrics, {
+	registry,
+	coordinator: subagentCoordinator,
+	// node_status 广播（2026-10-18 回合挂住等终态）：propose_generation 终态等待期 /
+	// run_* 持有期由工具域按画布会话 id 上行，经 manager 反查 pi 会话派发 SSE。
+	// manager 在下方构造——回调运行时才解引用，装配顺序与 registry.onWaitStart 同款。
+	onNodeStatus: (sessionId, data) => {
+		manager.dispatchNodeStatus(sessionId, data);
+	},
+});
 
 // D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。
 // 目录缺失/为空时 indexBlock=""、tools=[]，会话行为与未配置 skills 逐字节一致。

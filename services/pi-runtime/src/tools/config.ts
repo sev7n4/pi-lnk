@@ -34,7 +34,12 @@ export function resolveTools(metrics: Metrics): LnkpiTool[] {
  * deps.registry（2026-09-30-ask-user-blocking B-1）：阻塞式确认类工具的等待注册表，透传给 ask_user。 */
 export function resolveToolsWithClient(
 	metrics: Metrics,
-	deps: { registry?: PendingToolRegistry; coordinator?: SubagentCoordinator } = {},
+	deps: {
+		registry?: PendingToolRegistry;
+		coordinator?: SubagentCoordinator;
+		/** node_status 广播（2026-10-18 回合挂住等终态）：index.ts 接线到 SessionManager.dispatchNodeStatus。 */
+		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
+	} = {},
 ): { tools: LnkpiTool[]; client: NestClient | null; registry: PendingToolRegistry | null } {
 	const cfg = loadNestConfig();
 	if (!cfg) {
@@ -87,11 +92,12 @@ export function resolveToolsWithClient(
 			onSidebarRefBind: (outcome) => metrics.observeSidebarRefBind(outcome),
 			onProposeMissingRefs: () => metrics.observeProposeMissingRefs(),
 			onNestZodReject: (endpoint) => metrics.observeNestZodReject(endpoint),
+			onNodeStatus: deps.onNodeStatus,
 		}),
 		...buildUiCommandTools(),
 		...buildAskUserTools(deps.registry),
 		...buildArrangeNodesTools(client),
-		...buildGenerationTools(client),
+		...buildGenerationTools(client, { onNodeStatus: deps.onNodeStatus }),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),
 		...buildReadDocumentTools(),

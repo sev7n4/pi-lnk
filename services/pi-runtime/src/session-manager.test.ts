@@ -731,6 +731,24 @@ describe("SessionManager.dispatchWaitingUser（阻塞等待广播）", () => {
 		assert.deepEqual(seen, ["waiting_user"]);
 	});
 
+	it("dispatchNodeStatus：按画布会话 id 命中并派发 node_status（载荷白名单透传）", async () => {
+		const sm = smWithSession();
+		await sm.create("thread-ns", { canvasSessionId: "canvas-ns" });
+		const seen: Array<{ type: string; data: unknown }> = [];
+		sm.subscribe("thread-ns", (e) => seen.push({ type: e.type, data: e.data }));
+		const hits = sm.dispatchNodeStatus("canvas-ns", {
+			nodeId: "node-7",
+			status: "done",
+			url: "https://x/a.png",
+		});
+		assert.equal(hits, 1);
+		assert.equal(seen.length, 1);
+		assert.equal(seen[0]?.type, "node_status");
+		assert.deepEqual(seen[0]?.data, { nodeId: "node-7", status: "done", url: "https://x/a.png" });
+		// 无匹配会话静默（同 dispatchWaitingUser 契约）：不抛错、返回 0
+		assert.equal(sm.dispatchNodeStatus("canvas-missing", { nodeId: "n", status: "generating" }), 0);
+	});
+
 	it("未建 canvasSessionId 时回落 pi 会话键；无匹配会话静默返回 0（不抛错）", async () => {
 		const sm = smWithSession();
 		await sm.create("thread-3", {}); // 无 canvasSessionId → 键回落 pi 会话键（= entry.id，哈希后的键）

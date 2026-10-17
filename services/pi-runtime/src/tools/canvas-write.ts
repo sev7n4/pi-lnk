@@ -11,11 +11,104 @@ import type { NestClient } from "./nest-client.js";
 import type { SidebarAttachment } from "./types.js";
 import { extractActions, resultWithActions } from "./result-with-actions.js";
 import { signalFromUpstream, withSignal } from "./result-signal.js";
-import { askUserBlocking, askUserTimeoutMs } from "../runtime-config.js";
+import { askUserBlocking, askUserTimeoutMs, genTerminalWaitMs } from "../runtime-config.js";
+import type { NodeStatusData } from "../session-manager.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
+
+/** 生成终态等待的产出（propose_generation 确认后挂住期的结果）。 */
+export type GenerationTerminalOutcome = {
+	status: "completed" | "failed" | "timeout";
+	/** completed 时的产物 url（媒体）；文本节点可能无 url（内容在节点 data.content）。 */
+	url?: string;
+	/** failed 时的人类可读原因（节点 errorMessage 原样透传）。 */
+	error?: string;
+};
+
+/**
+ * 生成终态等待（2026-10-18 回合挂住等终态，上游对齐 vendor「工具 promise 不 settle
+ * 则 run 不结束」模型）：确认只证明「生成已启动」，本循环继续持有工具 promise 轮询
+ * get-node 至终态，期间经 onNodeStatus 广播 generating→done/failed（SSE node_status，
+ * 前端 trackNodeStatus 现成；服务端持久化白名单已含 node_status）。
+ *
+ * 终态判定沿用确认臂的「正证据」纪律：completed/error 必须伴随**新**生成证据
+ * （recordId 相对快照变化 / startedAt 前进 / 曾见 generating）才算本次生成的终态——
+ * 旧终态残留（2026-10-12 事故形态：stale 全量 PUT 盖回 completed）绝不表决。
+ * done 必须有正据（url 或文本 content）才下发，口径与前端 mapNodeStatus 单源对齐。
+ *
+ * 超限 / 中止 / 节点消失 → `{status:"timeout"}` 收尾：生成继续在 Nest 侧跑，
+ * 产物终态由前端画布对账兜底（AgentSideRail reconcileFromNodes，#452/#454）。
+ */
+async function waitForGenerationTerminal(
+	client: NestClient,
+	p: { sessionId: string; nodeId: string },
+	opts: { pollMs?: number; capMs: number; onNodeStatus?: (data: NodeStatusData) => void },
+	context: Context,
+	snap: { recordId?: string; startedAtMs: number },
+): Promise<GenerationTerminalOutcome> {
+	const POLL_MS = opts.pollMs ?? 2_000;
+	const deadline = Date.now() + opts.capMs;
+	let sawGenerating = false;
+	let generatingEmitted = false;
+	while (Date.now() < deadline) {
+		context?.abortSignal?.throwIfAborted();
+		await new Promise((r) => setTimeout(r, POLL_MS));
+		let data:
+			| {
+					status?: unknown;
+					url?: unknown;
+					content?: unknown;
+					errorMessage?: unknown;
+					generationRecordId?: unknown;
+					generationStartedAt?: unknown;
+			  }
+			| undefined;
+		try {
+			const node = await client.post("/agent/internal/get-node", {
+				sessionId: p.sessionId,
+				nodeId: p.nodeId,
+			});
+			data = (node as { data?: typeof data } | null)?.data;
+		} catch (err) {
+			// 404 = 节点确定性消失（用户删除/取消）⇒ 生成去无人区，按 timeout 收尾不留悬挂等待
+			if (err instanceof NestToolError && err.kind === "http" && err.status === 404) {
+				return { status: "timeout" };
+			}
+			continue; // 其余查询失败容忍瞬时错误（同确认臂口径，上限兜底）
+		}
+		const status = String(data?.status ?? "");
+		const recId = typeof data?.generationRecordId === "string" ? data.generationRecordId : undefined;
+		const startedAtMs = Date.parse(String(data?.generationStartedAt ?? ""));
+		const fresh =
+			(!!recId && recId !== snap.recordId) ||
+			(Number.isFinite(startedAtMs) && startedAtMs > snap.startedAtMs);
+		if (status === "generating") {
+			sawGenerating = true;
+			if (!generatingEmitted) {
+				generatingEmitted = true;
+				opts.onNodeStatus?.({ nodeId: p.nodeId, status: "generating" });
+			}
+			continue;
+		}
+		const terminal =
+			status === "completed" ? "completed" : status === "error" || status === "failed" ? "failed" : undefined;
+		if (!terminal) continue;
+		if (!(fresh || sawGenerating)) continue; // 旧终态残留：不是本次生成的终态
+		const url = typeof data?.url === "string" && data.url ? data.url : undefined;
+		const content = typeof data?.content === "string" ? data.content.trim() : "";
+		if (terminal === "completed") {
+			if (!url && !content) continue; // completed 无正据 = 未定态，绝不下发无据 done
+			opts.onNodeStatus?.({ nodeId: p.nodeId, status: "done", url });
+			return { status: "completed", url };
+		}
+		const error = typeof data?.errorMessage === "string" && data.errorMessage ? data.errorMessage : undefined;
+		opts.onNodeStatus?.({ nodeId: p.nodeId, status: "failed", error });
+		return { status: "failed", error };
+	}
+	return { status: "timeout" };
+}
 
 /**
  * 无 actions 语义的直出文本（仅用于短路分支，如 apply_sidebar_attachments 的
@@ -98,6 +191,10 @@ export function createCanvasWriteTools(
 		onSidebarRefBind?: (outcome: "ok" | "invalid_params" | "upstream_error" | "short_circuit") => void;
 		onProposeMissingRefs?: () => void;
 		onNestZodReject?: (endpoint: string) => void;
+		/** node_status 广播（2026-10-18 回合挂住等终态）：config.ts 接线到 SessionManager.dispatchNodeStatus。 */
+		onNodeStatus?: (sessionId: string, data: NodeStatusData) => void;
+		/** 终态等待上限（仅测试注入；缺省读 genTerminalWaitMs()，默认 13min）。 */
+		genTerminalWaitMs?: number;
 	} = {},
 ): LnkpiTool[] {
 	const write = { tier: "write_light" as const };
@@ -561,27 +658,49 @@ export function createCanvasWriteTools(
 						},
 					};
 				}
-				const withActions = withWriteSignal(base, 1);
-				// 2026-10-13 契约修复：confirmed 必须带证据来源——此前 /answers 真确认与轮询
-				// 推断产出的结果逐字节相同，模型无法区分「用户真确认」与「状态被读到」。
-				return {
-					...withActions,
-					details: { ...withActions.details, confirmed: true, reason: outcome.reason },
-					content: [{
-						type: "text",
-						// Finding 1：前端画布确认会清 pending_confirm 并自起生成 → 生成已在跑，
-						// 文案不得诱导模型调用 run_*（会被 gate runs===0 + SSOT 拦截）。
-						text: JSON.stringify({
-							ok: true,
-							confirmed: true,
-							reason: outcome.reason,
-							message:
-								outcome.reason === "answered"
-									? "用户已在画布确认，生成已由画布启动；不要对该节点调用 run_*，可继续对话或处理其他任务。"
-									: "检测到该节点已在画布侧启动生成（有新生成证据）；不要对该节点调用 run_*，可继续对话或处理其他任务。",
-						}),
-					}],
-				};
+				// ⭐ 2026-10-18 回合挂住等终态（上游对齐）：确认（answered / 画布自起生成）只证明
+			// 「生成已启动」。此处继续持有工具 promise 轮询至生成终态并把结果交还模型——
+			// SSE 不提前关，node_status 终态在回合内流出，前端产物行翻 done 不再依赖回合后的
+			// 有限对账窗口（生产实证 2026-10-17：t2i 8min 落地 vs 60s 窗口，产物行永远「待确认」）。
+			// 超限/中止按 timeout 收尾（生成继续在 Nest 侧跑，前端画布对账兜底），行为可回退：
+			// PI_RUNTIME_GEN_TERMINAL_WAIT_MS 极小值即近似旧行为。
+			const capMs = opts.genTerminalWaitMs ?? genTerminalWaitMs();
+			const genOutcome = await waitForGenerationTerminal(
+				client,
+				{ sessionId: tc.sessionId, nodeId: p.node_id },
+				{
+					pollMs: opts.pollMs,
+					capMs,
+					onNodeStatus: opts.onNodeStatus
+						? (data) => opts.onNodeStatus?.(tc.sessionId, data)
+						: undefined,
+				},
+				context,
+				{ recordId: snapRecordId, startedAtMs: snapStartedAtMs },
+			);
+			const withActions = withWriteSignal(base, 1);
+			const genMessage =
+				genOutcome.status === "completed"
+					? `生成已完成${genOutcome.url ? `（url: ${genOutcome.url}）` : ""}；可向用户报告产物已就绪。`
+					: genOutcome.status === "failed"
+						? `生成失败${genOutcome.error ? `：${genOutcome.error}` : ""}；请如实告知用户，不要声称已出图。`
+						: `生成仍在进行（已等待 ${Math.round(capMs / 60_000)} 分钟），本回合先继续；完成后产物状态会随画布同步。不要声称已完成，也不要对该节点调用 run_*。`;
+			return {
+				...withActions,
+				details: { ...withActions.details, confirmed: true, reason: outcome.reason, generation: genOutcome },
+				content: [{
+					type: "text",
+					// Finding 1：前端画布确认会清 pending_confirm 并自起生成 → 生成已在跑，
+					// 文案不得诱导模型调用 run_*（会被 gate runs===0 + SSOT 拦截）。
+					text: JSON.stringify({
+						ok: true,
+						confirmed: true,
+						reason: outcome.reason,
+						generation: genOutcome,
+						message: genMessage,
+					}),
+				}],
+			};
 			},
 		},
 		{

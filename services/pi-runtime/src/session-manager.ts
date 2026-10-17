@@ -119,7 +119,11 @@ export type NormalizedEventType =
 	| "activity"
 	/** P2：vendor 把「调度恢复中」显式标记（`retry_scheduled{recovery:true}`，仅 branch_summary
 	 *  重试一处带）——与真上游超时区分。仅 recovery 时下发，普通重试不下发，避免误报。 */
-	| "recovery";
+	| "recovery"
+	/** 画布节点生成状态（2026-10-18 回合挂住等终态）：propose_generation 阻塞等待期 /
+	 *  run_* 工具持有期由宿主侧合成，让「生成中→终态」在回合收束前经 SSE 流出。
+	 *  服务端持久化白名单（TRACE_PERSIST_EVENT_TYPES）与前端 trackNodeStatus 均已就位。 */
+	| "node_status";
 
 /** `activity` 事件载荷。
  *
@@ -145,6 +149,18 @@ export interface WaitingUserData {
 	nodeId?: string;
 	/** resolved 的原因（answered / timeout / aborted）；waiting 时省略。 */
 	reason?: "answered" | "timeout" | "aborted";
+}
+
+/** `node_status` 事件载荷：单个画布媒体节点的生成状态迁移（宿主侧合成）。
+ *  口径与前端 `mapNodeStatus`「有正据才动」对齐——`done` 必须带 url（或文本内容），
+ *  无正据不下发，避免前端把未确认 propose 节点误翻终态。 */
+export interface NodeStatusData {
+	nodeId: string;
+	status: "generating" | "done" | "failed";
+	/** done 时的产物 url（媒体）——前端缩略图/定位按钮的数据源。 */
+	url?: string;
+	/** failed 时的人类可读原因（取自节点 errorMessage，截断由前端负责）。 */
+	error?: string;
 }
 
 export interface NormalizedEvent {
@@ -1886,7 +1902,34 @@ export class SessionManager {
 		for (const entry of this.sessions.values()) {
 			const key = entry.canvasSessionId ?? entry.id;
 			if (key !== canvasSessionId) continue;
+			// 宿主侧合成事件也是会话活性证据（2026-10-18）：resolved 尤其重要——
+			// answered 后进入终态等待，若生成从未启动则整段无 harness 事件，
+			// 不刷新进度戳会被 stall watchdog（15min）在终态等待 cap 前误杀。
+			entry.lastProgressAt = Date.now();
 			this.dispatch(entry, { type: "waiting_user", ts: Date.now(), data });
+			hits += 1;
+		}
+		return hits;
+	}
+
+	/**
+	 * 画布节点生成状态广播（2026-10-18 回合挂住等终态）：按**画布会话 id** 广播
+	 * `node_status` 事件，反向查找语义与 dispatchWaitingUser 完全一致。
+	 *
+	 * 为什么在这里刷新 `lastProgressAt`：终态等待期（propose 确认后 / run_* 阻塞中）
+	 * 没有任何 harness 事件（工具 promise 未 settle、无 onUpdate），stall watchdog
+	 * （默认 15min）只认 harness 事件刷新的进度戳——宿主侧合成事件就是「这条会话
+	 * 还活着」的领域证据，逐次刷新之，避免长生成被看护误杀。
+	 *
+	 * @returns 命中的会话数（诊断用）
+	 */
+	dispatchNodeStatus(canvasSessionId: string, data: NodeStatusData): number {
+		let hits = 0;
+		for (const entry of this.sessions.values()) {
+			const key = entry.canvasSessionId ?? entry.id;
+			if (key !== canvasSessionId) continue;
+			entry.lastProgressAt = Date.now();
+			this.dispatch(entry, { type: "node_status", ts: Date.now(), data });
 			hits += 1;
 		}
 		return hits;
