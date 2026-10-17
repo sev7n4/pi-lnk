@@ -9,10 +9,11 @@ describe('MembershipService', () => {
   const findFirst = vi.fn()
   const groupBy = vi.fn()
   const userUpdate = vi.fn()
+  const userFindUnique = vi.fn()
   const transactionCreate = vi.fn()
   const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
     fn({
-      user: { update: userUpdate },
+      user: { findUnique: userFindUnique, update: userUpdate },
       pointTransaction: { create: transactionCreate },
     }),
   )
@@ -21,6 +22,7 @@ describe('MembershipService', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    userFindUnique.mockResolvedValue({ id: 'u1', lastDailyClaimAt: null })
     const moduleRef = await Test.createTestingModule({
       providers: [
         MembershipService,
@@ -150,25 +152,13 @@ describe('MembershipService', () => {
     })
   })
 
-  it('writes structured grant fields when upgrading a plan', async () => {
+  it('rejects free upgrade without payment (资损止血 F2：关闭免费发点)', async () => {
     userUpdate.mockResolvedValue({ points: 6000, membership: 'pro' })
     transactionCreate.mockResolvedValue({ id: 'tx1' })
 
-    const result = await service.upgrade('u1', 'pro')
-
-    expect(result.points).toBe(6000)
-    expect(result.membership).toBe('pro')
-    expect(transactionCreate).toHaveBeenCalledWith({
-      data: {
-        userId: 'u1',
-        amount: 5000,
-        reason: '升级 专业版',
-        kind: 'grant',
-        category: 'other',
-        status: null,
-        balanceAfter: 6000,
-      },
-    })
+    await expect(service.upgrade('u1', 'pro')).rejects.toThrow(/支付功能未接入/)
+    expect(userUpdate).not.toHaveBeenCalled()
+    expect(transactionCreate).not.toHaveBeenCalled()
   })
 
   it('returns lifetime overview and sparse heatmap days from raw daily rows', async () => {

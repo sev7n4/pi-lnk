@@ -1,7 +1,7 @@
 import { Inject, Injectable, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { PointsRangeKey, resolvePointsRange } from '../points/points-range'
-import { computePointsInsights, type PointsInsights } from '../points/points-insights'
+import { computePointsInsights, shanghaiDayKey, type PointsInsights } from '../points/points-insights'
 import {
   parseShanghaiDay,
   resolveHeatmapRange,
@@ -70,12 +70,26 @@ export class MembershipService {
     return { points: user.points, membership: user.membership }
   }
 
-  async claimDaily(userId: string) {
+  async claimDaily(userId: string, now: Date = new Date()) {
     const bonus = 100
+    // 资损止血 F1：按上海自然日幂等，防止脚本重复调用刷分
+    const dayKey = shanghaiDayKey(now)
+    const day = parseShanghaiDay(dayKey)
+    if (!day) throw new BadRequestException('日期解析失败')
+    const { from: dayStart, next: dayEnd } = day
     const user = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findUnique({ where: { id: userId } })
+      if (!existing) throw new BadRequestException('用户不存在')
+      if (
+        existing.lastDailyClaimAt &&
+        existing.lastDailyClaimAt >= dayStart &&
+        existing.lastDailyClaimAt < dayEnd
+      ) {
+        throw new BadRequestException('今日已签到')
+      }
       const updated = await tx.user.update({
         where: { id: userId },
-        data: { points: { increment: bonus } },
+        data: { points: { increment: bonus }, lastDailyClaimAt: now },
       })
       await tx.pointTransaction.create({
         data: {
@@ -96,29 +110,9 @@ export class MembershipService {
   async upgrade(userId: string, plan: string) {
     const selected = PLANS.find((p) => p.id === plan)
     if (!selected || plan === 'free') throw new BadRequestException('无效套餐')
-
-    const user = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: userId },
-        data: {
-          membership: plan,
-          points: { increment: selected.points },
-        },
-      })
-      await tx.pointTransaction.create({
-        data: {
-          userId,
-          amount: selected.points,
-          reason: `升级 ${selected.name}`,
-          kind: 'grant',
-          category: 'other',
-          status: null,
-          balanceAfter: updated.points,
-        },
-      })
-      return updated
-    })
-    return { membership: user.membership, points: user.points, plan: selected }
+    // 资损止血 F2：付费套餐必须先完成支付，禁止免费发点。
+    // 真实支付闭环（Order/Payment/Subscription）见风险 #2 立项；落地后此处改为校验已支付订单再发放额度。
+    throw new BadRequestException('支付功能未接入：升级需先完成支付后再领取积分')
   }
 
   async pointsSummary(userId: string, range: PointsRangeKey): Promise<PointsSummaryDto> {
