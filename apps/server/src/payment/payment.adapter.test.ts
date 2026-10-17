@@ -14,6 +14,7 @@ import {
  */
 describe('AlipayAdapter RSA2 验签', () => {
   let appPrivateKeyPem: string
+  let appPublicKeyPemRaw: string
   let adapter: AlipayAdapter
 
   beforeAll(() => {
@@ -23,6 +24,9 @@ describe('AlipayAdapter RSA2 验签', () => {
       publicKeyEncoding: { type: 'spki', format: 'pem' },
     })
     appPrivateKeyPem = privateKey
+    appPublicKeyPemRaw = publicKey
+      .replace(/-----(BEGIN|END)[^-]*-----/g, '')
+      .replace(/\s+/g, '')
     const cfg: AlipayConfig = {
       appId: '2021000000000001',
       privateKey,
@@ -129,6 +133,38 @@ describe('AlipayAdapter RSA2 验签', () => {
           returnUrl: '',
         }),
     ).toThrow()
+  })
+
+  it('接受开放平台风格的裸 base64 密钥（无 PEM 头，PKCS#8/SPKI DER）', async () => {
+    // 支付宝控制台导出的「应用私钥/支付宝公钥」即裸 base64（MIIEvg.../MIIBIj...）。
+    const rawPrivate = appPrivateKeyPem
+      .replace(/-----(BEGIN|END)[^-]*-----/g, '')
+      .replace(/\s+/g, '')
+    const rawPublic = appPublicKeyPemRaw
+    const cfg: AlipayConfig = {
+      appId: '2021000000000001',
+      privateKey: rawPrivate,
+      alipayPublicKey: rawPublic,
+      gateway: 'https://openapi.alipaydev.com/gateway.do',
+      notifyUrl: '',
+      returnUrl: '',
+    }
+    const rawAdapter = new AlipayAdapter(cfg)
+    const params = validCallbackParams()
+    params.sign = createSign('RSA-SHA256')
+      .update(
+        Object.keys(params)
+          .filter((k) => k !== 'sign' && k !== 'sign_type')
+          .sort()
+          .map((k) => `${k}=${params[k]}`)
+          .join('&'),
+        'utf8',
+      )
+      .sign(appPrivateKeyPem, 'base64')
+    expect(rawAdapter.verifyCallback(params)).not.toBeNull()
+    // 裸 base64 私钥签出的 URL 同样可用
+    const { payUrl } = await rawAdapter.createCharge({ orderId: 'o1', amountFen: 100, subject: 's' })
+    expect(payUrl).toContain('sign=')
   })
 })
 
