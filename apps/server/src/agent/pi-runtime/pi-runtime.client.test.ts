@@ -568,7 +568,7 @@ describe("P0-③ streamEvents 断线重连", () => {
 	});
 
 	/**
-	 * T1 客户端适配：服务端报 409「重放窗口已过期」时**立即终止**，不���避重连。
+	 * T1 客户端适配（2026-10-18 升级为快照 resync）：409 时先抓快照转 live，快照也不可得才**立即终止**，不���避重连。
 	 *
 	 * 背景（PR #156 留下的闭环）：服务端 `buffer` 溢出后 `shift()` 丢最旧事件，
 	 * 客户端要的 `lastEventId` 若早于丢弃水位，重放必然残缺。服务端对此回
@@ -581,12 +581,14 @@ describe("P0-③ streamEvents 断线重连", () => {
 	 *
 	 * 本例的断言要点：`calls === 1`（只请求一次，没进退避循环）+ `errors` 恰好 1 条。
 	 */
-	it("409 立即终止不重连（重放窗口已过期，重试必然再 409）", async () => {
+	it("409 先试快照 resync；快照也不可得才立即终止（不进退避循环）", async () => {
 		let calls = 0;
+		const urls: string[] = [];
 		const client = new PiRuntimeClient({
 			baseUrl: "http://pi",
-			fetchImpl: (async () => {
+			fetchImpl: (async (url: string) => {
 				calls++;
+				urls.push(String(url));
 				return new Response(
 					JSON.stringify({
 						error: "replay window expired",
@@ -603,15 +605,18 @@ describe("P0-③ streamEvents 断线重连", () => {
 		const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e));
 		await new Promise((r) => setTimeout(r, 50));
 		cancel();
-		// ⭐ 核心断言：只请求了**一次** —— 若落进退避重连，50ms 内 calls 会 ≥ 2
-		expect(calls).toBe(1);
+		// ⭐ 核心断言：恰好两次请求（/events 409 → /snapshot 也 409 ⇒ 快照 resync 不可得才收口）
+		expect(calls).toBe(2);
+		expect(urls[0]).toContain("/events");
+		expect(urls[1]).toContain("/snapshot");
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toBeInstanceOf(PiRuntimeError);
 		expect((errors[0] as PiRuntimeError).status).toBe(409);
 	});
 
 	/**
-	 * 回归锁：409 **不重连**，但**也不能把错误吞掉**——
+	 * 回归锁（2026-10-18 快照 resync 升级后）：409 且快照也不可得时 **不重连**，
+	 * 但**也不能把错误吞掉**——
 	 * 必须以 `onError` 上报，让上层有机会走全量重建。
 	 * （与 `body clean end` 的语义区别：那条是正常终态、不报错。）
 	 */
@@ -948,5 +953,112 @@ describe("T1 prompt 顶层 images 直通", () => {
 		await client.prompt("s1", "你好");
 		const body = JSON.parse(String(calls[0].init.body));
 		expect(body.images).toBeUndefined();
+	});
+});
+
+describe("2026-10-18 上游对齐：notifyGeneration / snapshot / 409 快照 resync", () => {
+	it("notifyGeneration POST 结构化载荷并透传 delivered/reason", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ delivered: false, reason: "tool-wait-active" }), { status: 200 });
+			}) as typeof fetch,
+		});
+		const out = await client.notifyGeneration("s1", { nodeId: "n1", status: "completed", kind: "视频" });
+		expect(out).toEqual({ delivered: false, reason: "tool-wait-active" });
+		expect(calls[0].url).toContain("/sessions/s1/notify-generation");
+		const body = JSON.parse(String(calls[0].init.body));
+		expect(body).toMatchObject({ nodeId: "n1", status: "completed", kind: "视频" });
+	});
+
+	it("notifyGeneration 非 2xx 抛 PiRuntimeError", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async () => new Response(JSON.stringify({ error: "nodeId is required" }), { status: 400 })) as typeof fetch,
+		});
+		await expect(client.notifyGeneration("s1", { nodeId: "", status: "completed" })).rejects.toThrow(/nodeId/);
+	});
+
+	it("snapshot GET /sessions/:id/snapshot；404 抛 PiRuntimeError(404)", async () => {
+		const snap = { lane: "main", tipId: null, faulted: false, operation: null, queues: [], transcriptTail: [] };
+		const ok = new Response(JSON.stringify(snap), { status: 200 });
+		const client = new PiRuntimeClient({ baseUrl: "http://x", fetchImpl: (async () => ok) as typeof fetch });
+		await expect(client.snapshot("s1")).resolves.toMatchObject({ lane: "main" });
+
+		const notFound = new Response(JSON.stringify({ error: "session not found" }), { status: 404 });
+		const client2 = new PiRuntimeClient({ baseUrl: "http://x", fetchImpl: (async () => notFound) as typeof fetch });
+		await expect(client2.snapshot("s1")).rejects.toMatchObject({ status: 404 });
+	});
+
+	it("streamEvents 409 → 抓快照合成 snapshot 事件 → 强制 from=now 转 live（不再终止）", async () => {
+		const calls: Array<string> = [];
+		const enc = new TextEncoder();
+		const snap = {
+			lane: "main",
+			tipId: "tip-1",
+			faulted: false,
+			operation: { id: "op1", kind: "run", status: "running", startedAt: 1, runningTools: [{ toolCallId: "t1", toolName: "run_video_generation" }] },
+			queues: [],
+			transcriptTail: [{ seq: 3, id: "e3", type: "message", role: "assistant", text: "生成中" }],
+		};
+		let eventsCall = 0;
+		const fetchImpl = (async (url: string) => {
+			calls.push(String(url));
+			if (String(url).includes("/snapshot")) {
+				return new Response(JSON.stringify(snap), { status: 200 });
+			}
+			eventsCall += 1;
+			if (eventsCall === 1) {
+				return new Response(JSON.stringify({ error: "replay window expired" }), { status: 409 });
+			}
+			// 第二次 /events（from=now）：推一条事件后保持流（由 cancel 收口）
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(
+						enc.encode(`event: node_status\ndata: ${JSON.stringify({ type: "node_status", seq: 9, ts: 1, data: { nodeId: "n", status: "done" } })}\n\n`),
+					);
+				},
+			});
+			return new Response(body, { status: 200 });
+		}) as typeof fetch;
+		const client = new PiRuntimeClient({ baseUrl: "http://x", fetchImpl });
+		const seen: Array<{ type: string; data?: unknown }> = [];
+		let err: unknown;
+		const cancel = client.streamEvents(
+			"s1",
+			(e) => seen.push({ type: e.type, data: e.data }),
+			(e) => {
+				err = e;
+			},
+			{ live: true },
+		);
+		await new Promise((r) => setTimeout(r, 120));
+		cancel();
+		expect(err).toBeUndefined();
+		// 事件序列：先 snapshot resync，随后 live 增量
+		expect(seen[0]?.type).toBe("snapshot");
+		expect((seen[0]!.data as { operation: { runningTools: unknown[] } }).operation.runningTools).toHaveLength(1);
+		expect(seen.some((s) => s.type === "node_status")).toBe(true);
+		// 第一次 /events 带 from=now（live 首连），第二次也是 from=now（forceLive，无 lastEventId）
+		expect(calls.filter((u) => u.includes("/events")).every((u) => u.includes("from=now"))).toBe(true);
+		expect(calls.some((u) => u.includes("/snapshot"))).toBe(true);
+	});
+
+	it("streamEvents 409 且快照也失败 → 维持原语义 onError(409) 立即终止", async () => {
+		const fetchImpl = (async (url: string) => {
+			return new Response(JSON.stringify({ error: "x" }), { status: 404 });
+		}) as typeof fetch;
+		const client = new PiRuntimeClient({ baseUrl: "http://x", fetchImpl });
+		let err: unknown;
+		const done = new Promise<void>((resolve) => {
+			client.streamEvents("s1", () => {}, (e) => {
+				err = e;
+				resolve();
+			});
+		});
+		await done;
+		expect((err as { status?: number }).status).toBe(404);
 	});
 });

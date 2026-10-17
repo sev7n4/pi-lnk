@@ -2670,6 +2670,13 @@ function handleEvent(event: { type: string; data: unknown }) {
       agent.trackNodeStatus(data)
       break
     }
+    case 'generation_progress': {
+      // 上游对齐①：run_* onUpdate 进度通道（30s 一拍 checkpoint）→ 产物行
+      // 「生成中 · Xs」活体计时。不落库、单调不减（turnTimeline reducer 保证）。
+      const data = event.data as { nodeId: string; elapsedMs: number }
+      agent.trackGenerationProgress(data)
+      break
+    }
     case 'step':
       agent.trackStep(event.data as Parameters<typeof agent.trackStep>[0])
       // 治理 2/2：live trace 步骤已入主滚动流（同 tool_call 口径）

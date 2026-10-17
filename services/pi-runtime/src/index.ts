@@ -70,6 +70,9 @@ const { tools, client: nestClient } = resolveToolsWithClient(metrics, {
 	onNodeStatus: (sessionId, data) => {
 		manager.dispatchNodeStatus(sessionId, data);
 	},
+	// 生成终态等待登记（2026-10-18 上游对齐）：run_*/propose 等待期登记节点，
+	// notify-generation 通报据此抑制（等待者自己交还终态）；解绑由工具 finally 调。
+	onRegisterGenerationWait: (sessionId, nodeId) => manager.registerGenerationWait(sessionId, nodeId),
 });
 
 // D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。

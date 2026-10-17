@@ -379,6 +379,30 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   /**
+   * 生成等待进度（2026-10-18 上游对齐）：run_* / propose 阻塞期的 onUpdate 快照
+   * 经 tool_execution_update 派生为 generation_progress，落到持有该 nodeId 的
+   * timeline artifact part 上（归属判定同 backfillTimelineNodeStatus：从最新往回找，
+   * 找不到不伪造）。非终态事件，不刷新摘要快照。
+   */
+  function trackGenerationProgress(data: { nodeId?: string; elapsedMs?: number }) {
+    if (!isFeatureOn('turn_timeline')) return
+    if (!data?.nodeId || typeof data.elapsedMs !== 'number') return
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (!m || m.role !== 'assistant' || !m.timeline) continue
+      const owns = m.timeline.parts.some(
+        (p) => p.kind === 'artifact' && p.nodeId === data.nodeId,
+      )
+      if (!owns) continue
+      applyTimelineEvent(m.timeline, {
+        type: 'generation_progress',
+        data: { nodeId: data.nodeId, elapsedMs: data.elapsedMs },
+      })
+      return
+    }
+  }
+
+  /**
    * 晚到生成状态回填时间线（2026-10-17 产物体验补全）。
    *
    * 背景：`node_status` SSE 事件当前**无服务端生产者**；回合流关闭后仍在生成的异步任务
@@ -744,6 +768,7 @@ export const useAgentStore = defineStore('agent', () => {
     beginToolCall,
     endToolCall,
     trackNodeStatus,
+    trackGenerationProgress,
     backfillTimelineNodeStatus,
     trackTaskUpdate,
     trackStep,

@@ -52,6 +52,7 @@ export function buildCanvasWriteTools(
 		onProposeMissingRefs?: () => void;
 		onNestZodReject?: (endpoint: string) => void;
 		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
+		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
 		genTerminalWaitMs?: number;
 	},
 ): LnkpiTool[] {
@@ -86,7 +87,10 @@ export function buildArrangeNodesTools(client?: NestClient): LnkpiTool[] {
  */
 export function buildGenerationTools(
 	client: NestClient,
-	deps?: { onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void },
+	deps?: {
+		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
+		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
+	},
 ): LnkpiTool[] {
 	return createGenerationTools(client, deps);
 }

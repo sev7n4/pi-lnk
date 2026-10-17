@@ -6,8 +6,12 @@ import type { LnkpiToolContext } from "./types.js";
 const tc: LnkpiToolContext = { sessionId: "s1", userId: "u1" };
 
 /** 对齐 harness execute 六参签名（同 ui-command.test.ts 的调用方式）。 */
-function run(tool: NonNullable<ReturnType<typeof createGenerationTools>[number]>, params: unknown) {
-	return tool.execute!("tc1", params as never, () => {}, tc as never, {} as never, undefined as never);
+function run(
+	tool: NonNullable<ReturnType<typeof createGenerationTools>[number]>,
+	params: unknown,
+	onUpdate: Parameters<NonNullable<ReturnType<typeof createGenerationTools>[number]>["execute"]>[2] = () => {},
+) {
+	return tool.execute!("tc1", params as never, onUpdate, tc as never, {} as never, undefined as never);
 }
 
 function fakeClient() {
@@ -345,6 +349,50 @@ test("run_image_generation 起手广播 generating、完成按 url 正据广播 
 			{ sid: "s1", nodeId: "n1", status: "done", url: "https://x/y.png" },
 		],
 	);
+});
+
+test("阻塞期等待登记：onRegisterGenerationWait 起手注册、finally 必解绑（2026-10-18 上游对齐）", async () => {
+	const calls: Array<{ sid: string; node: string; phase: string }> = [];
+	const client = { post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }) };
+	const tools = createGenerationTools(client as never, {
+		onRegisterGenerationWait: (sid, node) => {
+			calls.push({ sid, node, phase: "register" });
+			return () => calls.push({ sid, node, phase: "unregister" });
+		},
+	});
+	await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n1" });
+	assert.deepEqual(calls, [
+		{ sid: "s1", node: "n1", phase: "register" },
+		{ sid: "s1", node: "n1", phase: "unregister" },
+	]);
+});
+
+test("onRegisterGenerationWait 注册抛错不影响工具结果（登记是纯观测面）", async () => {
+	const client = { post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }) };
+	const tools = createGenerationTools(client as never, {
+		onRegisterGenerationWait: () => {
+			throw new Error("registry boom");
+		},
+	});
+	const result = await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n1" });
+	// 工具结果形状等同正常路径（withGenSignal：content 带正据 url、details.actions 数组在位）
+	assert.match(String((result.content as Array<{ text: string }>)[0].text), /https:\/\/x\/y\.png/);
+	assert.ok(Array.isArray((result.details as { actions: unknown[] }).actions));
+});
+
+test("onUpdate 提供时不启动也永不炸主链路（progress-ticker 自己吞错，这里验证直通路径）", async () => {
+	let updateCalls = 0;
+	const client = { post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }) };
+	const tools = createGenerationTools(client as never, {});
+	const tool = tools.find((t) => t.name === "run_video_generation")!;
+	// onUpdate 为抛错回调：30s 内不发射（本用例即时完成）⇒ 不炸即通过；
+	// 发射吞错由 progress-ticker.test.ts 单测锁定。
+	const result = await run(tool, { node_id: "n1" }, () => {
+		updateCalls += 1;
+		throw new Error("update boom");
+	});
+	assert.match(String((result.content as Array<{ text: string }>)[0].text), /https:\/\/x\/y\.png/);
+	assert.equal(updateCalls, 0); // 即时完成路径零发射
 });
 
 test("timeout / fallback_pending 不是终态：不下发 node_status 终态（保守口径）", async () => {

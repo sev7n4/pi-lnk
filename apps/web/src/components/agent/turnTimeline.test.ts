@@ -590,3 +590,56 @@ describe('turnTimeline — 晚到生成状态回填（2026-10-17 产物体验补
     expect(new Set(ids).size).toBe(ids.length)
   })
 })
+
+describe('generation_progress — run_* / propose 阻塞期活体进度（2026-10-18 上游对齐①）', () => {
+  it('running 产物收进度拍 ⇒ progressElapsedMs 更新；终态后收拍不复活（status 守卫）', () => {
+    const tl = feed([
+      addNode('n1', 'image', '圣诞帽'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'generating' } },
+      { type: 'generation_progress', data: { nodeId: 'n1', elapsedMs: 30_000 } },
+    ])
+    const art = byKind(tl, 'artifact')[0]
+    expect(art.status).toBe('running')
+    expect(art.progressElapsedMs).toBe(30_000)
+
+    // 终态后到达的迟到进度拍：不回改 done 态、不写 progressElapsedMs
+    applyTimelineEvent(tl, { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://cdn/a.png' } })
+    applyTimelineEvent(tl, { type: 'generation_progress', data: { nodeId: 'n1', elapsedMs: 60_000 } })
+    expect(art.status).toBe('done')
+    expect(art.progressElapsedMs).toBe(30_000)
+  })
+
+  it('单调不减：晚到旧拍不回退新拍（SSE 重连补发/乱序防护）', () => {
+    const tl = feed([
+      addNode('n1'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'generating' } },
+      { type: 'generation_progress', data: { nodeId: 'n1', elapsedMs: 90_000 } },
+      { type: 'generation_progress', data: { nodeId: 'n1', elapsedMs: 30_000 } },
+    ])
+    expect(byKind(tl, 'artifact')[0].progressElapsedMs).toBe(90_000)
+  })
+
+  it('无前置 add_node / 非 running 态 / 非法 elapsedMs ⇒ 静默忽略不建 part', () => {
+    // 无 artifact：进度拍不新建 part（part 由 canvas_action/node_status 负责）
+    const orphan = feed([{ type: 'generation_progress', data: { nodeId: 'ghost', elapsedMs: 1000 } }])
+    expect(orphan.parts).toHaveLength(0)
+
+    // pending 态（仅 add_node、未开始生成）：不写
+    const pending = feed([addNode('n2'), { type: 'generation_progress', data: { nodeId: 'n2', elapsedMs: 1000 } }])
+    expect(byKind(pending, 'artifact')[0].progressElapsedMs).toBeUndefined()
+
+    // 非法数值：NaN/负数/Infinity 不写
+    const tl = feed([addNode('n3'), { type: 'node_status', data: { nodeId: 'n3', status: 'generating' } }])
+    for (const bad of [Number.NaN, -5, Number.POSITIVE_INFINITY]) {
+      applyTimelineEvent(tl, { type: 'generation_progress', data: { nodeId: 'n3', elapsedMs: bad } })
+    }
+    expect(byKind(tl, 'artifact')[0].progressElapsedMs).toBeUndefined()
+  })
+
+  it('进度拍不改变 parts 结构（活体显示专用，不新增不删除）', () => {
+    const tl = feed([addNode('n1'), { type: 'node_status', data: { nodeId: 'n1', status: 'generating' } }])
+    const before = kinds(tl)
+    applyTimelineEvent(tl, { type: 'generation_progress', data: { nodeId: 'n1', elapsedMs: 45_000 } })
+    expect(kinds(tl)).toEqual(before)
+  })
+})

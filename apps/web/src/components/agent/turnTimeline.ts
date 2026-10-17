@@ -71,6 +71,12 @@ export type TimelinePart =
        * 画布节点可能尚未同步/已换页，直存 url 才能让缩略图稳定出现。
        */
       url?: string
+      /**
+       * 生成等待进度（2026-10-18 上游对齐）：generation_progress 事件携带的已等待时长，
+       * 仅 running 态渲染「生成中 · X」；不落库（executionEvents 白名单不含），刷新后由
+       * 下一拍进度事件重建。单调不减（旧拍晚到不回退）。
+       */
+      progressElapsedMs?: number
     }
   | {
       kind: 'notice'
@@ -123,6 +129,12 @@ export type TimelineEvent =
     }
   | { type: 'canvas_action'; data: CanvasAction }
   | { type: 'node_status'; data: { nodeId: string; status: string; url?: string } }
+  | {
+      /** 生成等待进度（2026-10-18 上游对齐）：run_* / propose 阻塞期 onUpdate 快照派生，
+       *  非持久化、活体显示专用（见 artifact part.progressElapsedMs 注）。 */
+      type: 'generation_progress'
+      data: { nodeId: string; elapsedMs: number }
+    }
   | { type: 'turn_usage'; data: TimelineUsage & { estimatedCredits?: number } }
   | {
       type: 'waiting_user'
@@ -474,6 +486,20 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         url: mediaUrl,
         errorText: d.status === 'failed' ? '生成失败，可重试' : undefined,
       })
+      return
+    }
+    case 'generation_progress': {
+      // 生成等待进度（2026-10-18 上游对齐）：只活体显示，不落库（刷新后由下一拍重建）。
+      // 单调不减：SSE 重连补发/乱序时旧拍不得回退新拍。终态（node_status done/failed）
+      // 后到达的进度拍自然失效（part.status 非 running 不渲染）。
+      const d = event.data
+      const part = timeline.parts.find(
+        (p): p is Extract<TimelinePart, { kind: 'artifact' }> =>
+          p.kind === 'artifact' && p.nodeId === d.nodeId,
+      )
+      if (!part || part.status !== 'running') return
+      if (typeof d.elapsedMs !== 'number' || !Number.isFinite(d.elapsedMs) || d.elapsedMs < 0) return
+      part.progressElapsedMs = Math.max(part.progressElapsedMs ?? 0, Math.round(d.elapsedMs))
       return
     }
     case 'turn_usage': {

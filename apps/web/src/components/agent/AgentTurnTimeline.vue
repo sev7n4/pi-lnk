@@ -82,6 +82,17 @@ function artifactUrl(p: Extract<TimelinePart, { kind: 'artifact' }>): string | u
   return typeof url === 'string' && url ? url : undefined
 }
 
+/** 生成等待时长后缀（2026-10-18 上游对齐）：progressElapsedMs 在位时出「 · Xm Ys」。
+ *  进度拍 30s 一帧，分钟级生成下用户能看到活体计时而非永久的「生成中…」。 */
+function elapsedLabel(p: Extract<TimelinePart, { kind: 'artifact' }>): string {
+  const ms = p.progressElapsedMs
+  if (p.status !== 'running' || typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '…'
+  const totalSec = Math.round(ms / 1000)
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  return min > 0 ? ` · ${min}m${String(sec).padStart(2, '0')}s` : ` · ${sec}s`
+}
+
 function statusIcon(status: string): string {
   switch (status) {
     case 'done':
@@ -310,7 +321,7 @@ const rootClass = computed(() =>
         <span
           v-if="part.status === 'running' || part.status === 'pending'"
           class="shrink-0 text-[10px] text-[var(--neo-text-muted)] animate-pulse"
-        >{{ part.status === 'pending' ? '待确认' : '生成中…' }}</span>
+        >{{ part.status === 'pending' ? '待确认' : `生成中${elapsedLabel(part)}` }}</span>
         <CanvasLocateButton
           v-if="part.status === 'done' || part.status === 'failed'"
           title="在画布中定位"

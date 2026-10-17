@@ -23,6 +23,7 @@ import {
 	type AgentLane,
 	type Context,
 	type JsonlSessionMetadata,
+	type LaneSnapshot,
 	type OpenOperation,
 	type QueueMode,
 	type Session,
@@ -161,6 +162,126 @@ export interface NodeStatusData {
 	url?: string;
 	/** failed 时的人类可读原因（取自节点 errorMessage，截断由前端负责）。 */
 	error?: string;
+}
+
+/** 回合外生成终态通报（2026-10-18 上游对齐，Nest→lane followUp）。
+ *  Nest 侧（generation-reaper 巡检）发现某条生成在**回合已经不在等待**时才落终态
+ *  （propose 终态等待 13min cap 超限 / run_* HTTP 阻塞返回 timeout 后生成才完成），
+ *  经 POST /sessions/:id/notify-generation 送到这里；宿主裁决：工具仍在等 ⇒ 抑制
+ *  （等待者自己会把终态交还模型），否则入 lane followUp 队列——idle 时由 drainQueued
+ *  空 prompt 兜底立刻开一轮，模型主动向用户简报（上游 followUp 语义，boundary.ts:106）。 */
+export interface GenerationTerminalNotice {
+	nodeId: string;
+	/** 生成记录 id（Nest 侧去重键；宿主不再重复判重）。 */
+	recordId?: string;
+	/** 生成类型（image/video/text/audio），用于通报文案。 */
+	kind?: string;
+	status: "completed" | "failed";
+	/** completed 时的产物 url（若有）。 */
+	url?: string;
+	/** failed 时的人类可读原因。 */
+	error?: string;
+}
+
+/** `lane.watch()` 快照的可序列化投影（2026-10-18 上游对齐，快照重连）。
+ *  上游 `WatchHandle<LaneSnapshot>`（agent-harness.ts:181/228）的宿主裁剪版：
+ *  只保留 Nest 重连恢复所需的状态面（在跑工具 / 队列积压 / transcript 尾部），
+ *  绝不透传整份 transcript（体积与敏感面都不必要）。 */
+export interface LaneSnapshotProjection {
+	lane: string;
+	tipId: string | null;
+	faulted: boolean;
+	operation: null | {
+		id: string;
+		kind: "run" | "compaction" | "navigation";
+		status: string;
+		startedAt: number;
+		runningTools: Array<{ toolCallId: string; toolName: string; isError?: boolean }>;
+	};
+	queues: Array<{ kind: string; text?: string }>;
+	/** transcript 尾部（最旧→最新，最多 16 条）：role/摘要文本，供 Nest 409 重连时对账。 */
+	transcriptTail: Array<{
+		seq: number;
+		id: string;
+		type: string;
+		role?: string;
+		text?: string;
+		stopReason?: string;
+	}>;
+}
+
+const TRANSCRIPT_TAIL_LIMIT = 16;
+const SNAPSHOT_TEXT_LIMIT = 400;
+
+/** 从 vendor AgentMessage 的 content 块里抽纯文本（防御式：结构漂移时返回 undefined）。 */
+function messageTextOf(message: unknown): string | undefined {
+	if (!message || typeof message !== "object") return undefined;
+	const content = (message as { content?: unknown }).content;
+	if (!Array.isArray(content)) return undefined;
+	const parts: string[] = [];
+	for (const block of content) {
+		if (block && typeof block === "object" && (block as { type?: unknown }).type === "text") {
+			const text = (block as { text?: unknown }).text;
+			if (typeof text === "string") parts.push(text);
+		}
+	}
+	const joined = parts.join("\n").trim();
+	if (!joined) return undefined;
+	return joined.length > SNAPSHOT_TEXT_LIMIT ? `${joined.slice(0, SNAPSHOT_TEXT_LIMIT)}…` : joined;
+}
+
+/** LaneSnapshot → 可序列化投影（纯函数，测试直测）。 */
+export function projectLaneSnapshot(snap: LaneSnapshot): LaneSnapshotProjection {
+	const tail = snap.transcript.slice(-TRANSCRIPT_TAIL_LIMIT).map((entry) => {
+		const base = { seq: entry.seq, id: entry.id, type: entry.type };
+		if (entry.type === "message") {
+			const message = (entry as { message?: unknown }).message as
+				| { role?: unknown; stopReason?: unknown }
+				| undefined;
+			return {
+				...base,
+				...(typeof message?.role === "string" ? { role: message.role } : {}),
+				...(typeof message?.stopReason === "string" ? { stopReason: message.stopReason } : {}),
+				...(messageTextOf((entry as { message?: unknown }).message) !== undefined
+					? { text: messageTextOf((entry as { message?: unknown }).message) }
+					: {}),
+			};
+		}
+		if (entry.type === "compaction" || entry.type === "branch_summary") {
+			const summary = (entry as { summary?: unknown }).summary;
+			return {
+				...base,
+				...(typeof summary === "string" && summary
+					? { text: summary.length > SNAPSHOT_TEXT_LIMIT ? `${summary.slice(0, SNAPSHOT_TEXT_LIMIT)}…` : summary }
+					: {}),
+			};
+		}
+		return { ...base, ...((entry as { customType?: unknown }).customType ? { role: String((entry as { customType?: unknown }).customType) } : {}) };
+	});
+	return {
+		lane: snap.lane,
+		tipId: snap.tipId,
+		faulted: snap.faulted === true,
+		operation: snap.operation
+			? {
+					id: snap.operation.id,
+					kind: snap.operation.kind,
+					status: String(snap.operation.status),
+					startedAt: snap.operation.startedAt,
+					runningTools: (snap.operation.runningTools ?? []).map((t) => ({
+						toolCallId: t.toolCallId,
+						toolName: t.toolName,
+						...(t.status === "settled" && t.isError ? { isError: true } : {}),
+					})),
+				}
+			: null,
+		queues: (snap.queues ?? []).map((q) =>
+			q.type === "message"
+				? { kind: q.kind, ...(messageTextOf(q.message) !== undefined ? { text: messageTextOf(q.message) } : {}) }
+				: { kind: q.kind },
+		),
+		transcriptTail: tail,
+	};
 }
 
 export interface NormalizedEvent {
@@ -788,6 +909,10 @@ export function resolveThinkingLevel(level?: string): ThinkingLevel {
 
 export class SessionManager {
 	private readonly sessions = new Map<string, SessionEntry>();
+	/** 生成终态等待登记表（2026-10-18 上游对齐）：键 = 画布会话 id，值 = nodeId → 持有计数
+	 *  （propose 终态等待 / run_* HTTP 阻塞可对同一节点叠加）。notify-generation 通报据此
+	 *  裁决「抑制还是 followUp」——等待者自己会把终态交还模型，重复通报只会多啰嗦一轮。 */
+	private readonly generationWaits = new Map<string, Map<string, number>>();
 	/** 在途 create（按会话键）：并发同键共享同一次 build（防句柄泄漏，见 create 注释）。 */
 	private readonly creating = new Map<string, Promise<CreateResult>>();
 	private readonly context: Context = BACKGROUND_CONTEXT;
@@ -1933,6 +2058,98 @@ export class SessionManager {
 			hits += 1;
 		}
 		return hits;
+	}
+
+	/**
+	 * 登记一次「工具正在等待该节点的生成终态」（2026-10-18 上游对齐）。
+	 *
+	 * 调用方 = 生成等待工具本体（generation.ts run_* / canvas-write.ts 终态等待），
+	 * 持有期 = 从「确认生成已启动」到「工具 promise settle」。重复登记同节点是集合语义
+	 * （幂等）；返回的解绑函数**必须**在 finally 里调用，泄漏会让 notify-generation
+	 * 对该节点永久抑制。
+	 *
+	 * @returns 解绑函数（重复调用无害）
+	 */
+	registerGenerationWait(canvasSessionId: string, nodeId: string): () => void {
+		// 计数语义：同节点可被多层等待叠加（run_* 与 propose 等待重叠 / 重试），
+		// 解绑按计数递减——先解绑的层不得误删仍在持有的层（测试锁定该次序）。
+		let counts = this.generationWaits.get(canvasSessionId);
+		if (!counts) {
+			counts = new Map<string, number>();
+			this.generationWaits.set(canvasSessionId, counts);
+		}
+		counts.set(nodeId, (counts.get(nodeId) ?? 0) + 1);
+		let unregistered = false;
+		return () => {
+			if (unregistered) return;
+			unregistered = true;
+			const current = this.generationWaits.get(canvasSessionId);
+			if (!current) return;
+			const left = (current.get(nodeId) ?? 1) - 1;
+			if (left <= 0) current.delete(nodeId);
+			else current.set(nodeId, left);
+			if (current.size === 0) this.generationWaits.delete(canvasSessionId);
+		};
+	}
+
+	/** 该节点是否正被工具等待（诊断用；notify-generation 内部同键判据）。 */
+	hasGenerationWait(canvasSessionId: string, nodeId: string): boolean {
+		return (this.generationWaits.get(canvasSessionId)?.get(nodeId) ?? 0) > 0;
+	}
+
+	/**
+	 * 回合外生成终态通报（Nest→lane followUp，上游对齐 vendor followUp 语义）。
+	 *
+	 * 裁决：该节点仍有工具等待 ⇒ 抑制（`delivered:false`，等待者会把终态交还模型）；
+	 * 否则把通报写进 lane followUp 队列——run 在跑时由收尾边界消费（boundary.ts:106，
+	 * 同 run 续跑一代）；idle 时由 `followUp` 内的 `drainQueued` 空 prompt 兜底立刻开一轮，
+	 * 模型据此主动向用户简报。通报文案在本方法拼装（Nest 只传事实字段，不传文案）。
+	 *
+	 * @throws NotFoundError 会话不存在（Nest 侧 fail-soft 吞掉即可）
+	 */
+	async notifyGenerationTerminal(
+		threadKey: string,
+		data: GenerationTerminalNotice,
+	): Promise<{ delivered: boolean; reason?: string }> {
+		const entry = this.require(threadKey);
+		const canvasId = entry.canvasSessionId ?? entry.id;
+		if (this.hasGenerationWait(canvasId, data.nodeId)) {
+			return { delivered: false, reason: "tool-wait-active" };
+		}
+		const kindLabel = data.kind ?? "生成";
+		const stateLine =
+			data.status === "completed"
+				? `已完成${data.url ? `，产物 url：${data.url}` : ""}`
+				: `失败${data.error ? `，原因：${data.error}` : ""}`;
+		const text =
+			`[系统通报 · 回合外生成终态] 画布节点 ${data.nodeId} 的${kindLabel}生成${stateLine}。` +
+			"这条生成是在本回合之外落定终态的：请先用画布工具核实节点当前状态，再向用户一句话简报结果；" +
+			"不要重新触发生成，也不要虚构产物内容。";
+		await this.followUp(threadKey, text);
+		return { delivered: true };
+	}
+
+	/**
+	 * lane.watch() 快照（2026-10-18 上游对齐，快照重连）。
+	 *
+	 * 上游范式（lane.ts:1705-1726）：`watch()` 返回的 `WatchHandle` 自带**完整快照**
+	 * （transcript + 在跑 operation（含 runningTools 的 partial result）+ inbox 队列），
+	 * 重连/追赶用「一次快照 + 之后增量事件」替代「事件重放」。这里取一次快照即退订，
+	 * 投影成可序列化形态供 GET /sessions/:id/snapshot（Nest 在 SSE 409「重放窗口过期」
+	 * 时抓取，合成 resync 事件后转 live，不再 120s 空转后静默断流）。
+	 *
+	 * @returns 快照投影；会话不存在返回 undefined（端点据此 404）
+	 */
+	async snapshot(threadKey: string): Promise<LaneSnapshotProjection | undefined> {
+		const entry = this.sessions.get(toSessionKey(threadKey));
+		if (!entry) return undefined;
+		const lane = await entry.harness.lane(MAIN_LANE, this.context);
+		const watcher = await lane.watch(this.context);
+		try {
+			return projectLaneSnapshot(watcher.snapshot);
+		} finally {
+			watcher.unsubscribe();
+		}
 	}
 
 	/**

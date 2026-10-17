@@ -15,6 +15,7 @@ import { askUserBlocking, askUserTimeoutMs, genTerminalWaitMs } from "../runtime
 import type { NodeStatusData } from "../session-manager.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
+import { startGenerationProgressTicker } from "./progress-ticker.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
 
@@ -44,7 +45,14 @@ export type GenerationTerminalOutcome = {
 async function waitForGenerationTerminal(
 	client: NestClient,
 	p: { sessionId: string; nodeId: string },
-	opts: { pollMs?: number; capMs: number; onNodeStatus?: (data: NodeStatusData) => void },
+	opts: {
+		pollMs?: number;
+		capMs: number;
+		onNodeStatus?: (data: NodeStatusData) => void;
+		/** onUpdate 进度通道（2026-10-18 上游对齐）：轮询期 30s 一拍全量快照 + checkpoint
+		 *  （stall watchdog 活性证据 + durable 恢复检查点），发射形状见 tools/progress-ticker.ts。 */
+		onUpdate?: Parameters<typeof startGenerationProgressTicker>[0];
+	},
 	context: Context,
 	snap: { recordId?: string; startedAtMs: number },
 ): Promise<GenerationTerminalOutcome> {
@@ -52,62 +60,67 @@ async function waitForGenerationTerminal(
 	const deadline = Date.now() + opts.capMs;
 	let sawGenerating = false;
 	let generatingEmitted = false;
-	while (Date.now() < deadline) {
-		context?.abortSignal?.throwIfAborted();
-		await new Promise((r) => setTimeout(r, POLL_MS));
-		let data:
-			| {
-					status?: unknown;
-					url?: unknown;
-					content?: unknown;
-					errorMessage?: unknown;
-					generationRecordId?: unknown;
-					generationStartedAt?: unknown;
-			  }
-			| undefined;
-		try {
-			const node = await client.post("/agent/internal/get-node", {
-				sessionId: p.sessionId,
-				nodeId: p.nodeId,
-			});
-			data = (node as { data?: typeof data } | null)?.data;
-		} catch (err) {
-			// 404 = 节点确定性消失（用户删除/取消）⇒ 生成去无人区，按 timeout 收尾不留悬挂等待
-			if (err instanceof NestToolError && err.kind === "http" && err.status === 404) {
-				return { status: "timeout" };
+	const stopTicker = startGenerationProgressTicker(opts.onUpdate, p.nodeId);
+	try {
+		while (Date.now() < deadline) {
+			context?.abortSignal?.throwIfAborted();
+			await new Promise((r) => setTimeout(r, POLL_MS));
+			let data:
+				| {
+						status?: unknown;
+						url?: unknown;
+						content?: unknown;
+						errorMessage?: unknown;
+						generationRecordId?: unknown;
+						generationStartedAt?: unknown;
+				  }
+				| undefined;
+			try {
+				const node = await client.post("/agent/internal/get-node", {
+					sessionId: p.sessionId,
+					nodeId: p.nodeId,
+				});
+				data = (node as { data?: typeof data } | null)?.data;
+			} catch (err) {
+				// 404 = 节点确定性消失（用户删除/取消）⇒ 生成去无人区，按 timeout 收尾不留悬挂等待
+				if (err instanceof NestToolError && err.kind === "http" && err.status === 404) {
+					return { status: "timeout" };
+				}
+				continue; // 其余查询失败容忍瞬时错误（同确认臂口径，上限兜底）
 			}
-			continue; // 其余查询失败容忍瞬时错误（同确认臂口径，上限兜底）
-		}
-		const status = String(data?.status ?? "");
-		const recId = typeof data?.generationRecordId === "string" ? data.generationRecordId : undefined;
-		const startedAtMs = Date.parse(String(data?.generationStartedAt ?? ""));
-		const fresh =
-			(!!recId && recId !== snap.recordId) ||
-			(Number.isFinite(startedAtMs) && startedAtMs > snap.startedAtMs);
-		if (status === "generating") {
-			sawGenerating = true;
-			if (!generatingEmitted) {
-				generatingEmitted = true;
-				opts.onNodeStatus?.({ nodeId: p.nodeId, status: "generating" });
+			const status = String(data?.status ?? "");
+			const recId = typeof data?.generationRecordId === "string" ? data.generationRecordId : undefined;
+			const startedAtMs = Date.parse(String(data?.generationStartedAt ?? ""));
+			const fresh =
+				(!!recId && recId !== snap.recordId) ||
+				(Number.isFinite(startedAtMs) && startedAtMs > snap.startedAtMs);
+			if (status === "generating") {
+				sawGenerating = true;
+				if (!generatingEmitted) {
+					generatingEmitted = true;
+					opts.onNodeStatus?.({ nodeId: p.nodeId, status: "generating" });
+				}
+				continue;
 			}
-			continue;
+			const terminal =
+				status === "completed" ? "completed" : status === "error" || status === "failed" ? "failed" : undefined;
+			if (!terminal) continue;
+			if (!(fresh || sawGenerating)) continue; // 旧终态残留：不是本次生成的终态
+			const url = typeof data?.url === "string" && data.url ? data.url : undefined;
+			const content = typeof data?.content === "string" ? data.content.trim() : "";
+			if (terminal === "completed") {
+				if (!url && !content) continue; // completed 无正据 = 未定态，绝不下发无据 done
+				opts.onNodeStatus?.({ nodeId: p.nodeId, status: "done", url });
+				return { status: "completed", url };
+			}
+			const error = typeof data?.errorMessage === "string" && data.errorMessage ? data.errorMessage : undefined;
+			opts.onNodeStatus?.({ nodeId: p.nodeId, status: "failed", error });
+			return { status: "failed", error };
 		}
-		const terminal =
-			status === "completed" ? "completed" : status === "error" || status === "failed" ? "failed" : undefined;
-		if (!terminal) continue;
-		if (!(fresh || sawGenerating)) continue; // 旧终态残留：不是本次生成的终态
-		const url = typeof data?.url === "string" && data.url ? data.url : undefined;
-		const content = typeof data?.content === "string" ? data.content.trim() : "";
-		if (terminal === "completed") {
-			if (!url && !content) continue; // completed 无正据 = 未定态，绝不下发无据 done
-			opts.onNodeStatus?.({ nodeId: p.nodeId, status: "done", url });
-			return { status: "completed", url };
-		}
-		const error = typeof data?.errorMessage === "string" && data.errorMessage ? data.errorMessage : undefined;
-		opts.onNodeStatus?.({ nodeId: p.nodeId, status: "failed", error });
-		return { status: "failed", error };
+		return { status: "timeout" };
+	} finally {
+		stopTicker();
 	}
-	return { status: "timeout" };
 }
 
 /**
@@ -193,6 +206,8 @@ export function createCanvasWriteTools(
 		onNestZodReject?: (endpoint: string) => void;
 		/** node_status 广播（2026-10-18 回合挂住等终态）：config.ts 接线到 SessionManager.dispatchNodeStatus。 */
 		onNodeStatus?: (sessionId: string, data: NodeStatusData) => void;
+		/** 生成终态等待登记（2026-10-18 上游对齐）：接线到 SessionManager.registerGenerationWait。 */
+		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
 		/** 终态等待上限（仅测试注入；缺省读 genTerminalWaitMs()，默认 13min）。 */
 		genTerminalWaitMs?: number;
 	} = {},
@@ -463,7 +478,7 @@ export function createCanvasWriteTools(
 			execute: async (
 				id,
 				p: { node_id: string },
-				_u,
+				onUpdate,
 				tc: LnkpiToolContext,
 				_invocation,
 				context: Context,
@@ -665,19 +680,37 @@ export function createCanvasWriteTools(
 			// 超限/中止按 timeout 收尾（生成继续在 Nest 侧跑，前端画布对账兜底），行为可回退：
 			// PI_RUNTIME_GEN_TERMINAL_WAIT_MS 极小值即近似旧行为。
 			const capMs = opts.genTerminalWaitMs ?? genTerminalWaitMs();
-			const genOutcome = await waitForGenerationTerminal(
-				client,
-				{ sessionId: tc.sessionId, nodeId: p.node_id },
-				{
-					pollMs: opts.pollMs,
-					capMs,
-					onNodeStatus: opts.onNodeStatus
-						? (data) => opts.onNodeStatus?.(tc.sessionId, data)
-						: undefined,
-				},
-				context,
-				{ recordId: snapRecordId, startedAtMs: snapStartedAtMs },
-			);
+			// 等待期登记（2026-10-18 上游对齐）：notify-generation 通报据此抑制——
+			// 本工具自己会把终态交还模型，重复通报只会多啰嗦一轮。finally 必解绑。
+			let unregisterWait: (() => void) | undefined;
+			try {
+				unregisterWait = opts.onRegisterGenerationWait?.(tc.sessionId, p.node_id);
+			} catch {
+				/* 登记是纯观测面 */
+			}
+			let genOutcome: GenerationTerminalOutcome;
+			try {
+				genOutcome = await waitForGenerationTerminal(
+					client,
+					{ sessionId: tc.sessionId, nodeId: p.node_id },
+					{
+						pollMs: opts.pollMs,
+						capMs,
+						onNodeStatus: opts.onNodeStatus
+							? (data) => opts.onNodeStatus?.(tc.sessionId, data)
+							: undefined,
+						onUpdate,
+					},
+					context,
+					{ recordId: snapRecordId, startedAtMs: snapStartedAtMs },
+				);
+			} finally {
+				try {
+					unregisterWait?.();
+				} catch {
+					/* 解绑同理 */
+				}
+			}
 			const withActions = withWriteSignal(base, 1);
 			const genMessage =
 				genOutcome.status === "completed"

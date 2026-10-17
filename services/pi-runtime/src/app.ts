@@ -304,6 +304,62 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	});
 
 	/**
+	 * 回合外生成终态通报（2026-10-18 上游对齐，Nest→lane followUp）。
+	 *
+	 * Nest 侧 generation-reaper 巡检发现「生成在回合不再等待后才落终态」时打到这里；
+	 * 宿主裁决见 `SessionManager.notifyGenerationTerminal`：工具仍持有等待 ⇒ 抑制，
+	 * 否则入 lane followUp（idle 由 drainQueued 空 prompt 兜底立刻开一轮播报）。
+	 * 无鉴权：与 /steer /followup 同一信任边界（K3s 内网）。
+	 */
+	app.post<{
+		Params: { sessionId: string };
+		Body: {
+			nodeId?: string;
+			recordId?: string;
+			kind?: string;
+			status?: string;
+			url?: string;
+			error?: string;
+		};
+	}>("/sessions/:sessionId/notify-generation", async (request, reply) => {
+		const { sessionId } = request.params;
+		const nodeId = typeof request.body?.nodeId === "string" ? request.body.nodeId.trim() : "";
+		const status = request.body?.status;
+		if (!nodeId) return reply.code(400).send({ error: "nodeId is required" });
+		if (status !== "completed" && status !== "failed") {
+			return reply.code(400).send({ error: "status must be 'completed' | 'failed'" });
+		}
+		try {
+			const result = await manager.notifyGenerationTerminal(sessionId, {
+				nodeId,
+				status,
+				...(typeof request.body?.recordId === "string" && request.body.recordId
+					? { recordId: request.body.recordId }
+					: {}),
+				...(typeof request.body?.kind === "string" && request.body.kind ? { kind: request.body.kind } : {}),
+				...(typeof request.body?.url === "string" && request.body.url ? { url: request.body.url } : {}),
+				...(typeof request.body?.error === "string" && request.body.error ? { error: request.body.error } : {}),
+			});
+			metrics.observeQueueOp("enqueue", "followUp", result.delivered ? "ok" : "rejected");
+			return reply.send(result);
+		} catch (err) {
+			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			return reply.code(503).send({ error: (err as Error).message });
+		}
+	});
+
+	/**
+	 * lane.watch() 快照（2026-10-18 上游对齐，快照重连）。Nest 在 SSE 409
+	 * 「重放窗口过期」时抓取本端点，合成 resync 事件后转 live —— 上游范式
+	 * （lane.ts:1705-1726）「一次快照 + 之后增量」替代「重放已淘汰的事件」。
+	 */
+	app.get<{ Params: { sessionId: string } }>("/sessions/:sessionId/snapshot", async (request, reply) => {
+		const snap = await manager.snapshot(request.params.sessionId);
+		if (!snap) return reply.code(404).send({ error: "session not found" });
+		return reply.send(snap);
+	});
+
+	/**
 	 * 中断该会话当前正在跑的 run（前端「停止」按钮）。
 	 * 会话本身保留——用户可接着发新消息；无活跃 run 时 skipped=true，
 	 * 前端据此提示「已断开回复，后台可能仍在收尾」。
