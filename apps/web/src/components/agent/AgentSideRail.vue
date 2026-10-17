@@ -5106,7 +5106,7 @@ defineExpose({
 }
 
 /* ---- 2026-10-18 composer 单卡化（对齐 WorkBuddy composer 观感）----
- * MentionInput 自带的全局 .input-field（--neo-hover-bg 灰底 + 描边 + rounded-xl）
+ * MentionInput 自带的全局 .input-field（legacy 灰底令牌 + 描边 + rounded-xl）
  * 在 dock 内形成「白卡包灰卡」双层；这里把 backdrop/field/ghost 三层摊平，
  * 视觉上只剩 .agent-input-dock 一张干净矩形（裸 DOM 感）。
  * 仅在 agent dock 作用域生效，不影响 NodeEditorToolbar / dock-studio 面板的 MentionInput。
