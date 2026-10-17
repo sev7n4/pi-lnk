@@ -153,11 +153,11 @@ describe('MembershipService', () => {
     })
   })
 
-  it('rejects free upgrade without payment (资损止血 F2：关闭免费发点)', async () => {
+  it('rejects upgrade without a paid order (风险 #2：必须持有已支付订单)', async () => {
     userUpdate.mockResolvedValue({ points: 6000, membership: 'pro' })
     transactionCreate.mockResolvedValue({ id: 'tx1' })
 
-    await expect(service.upgrade('u1', 'pro')).rejects.toThrow(/支付功能未接入/)
+    await expect(service.upgrade('u1', 'pro')).rejects.toThrow(/缺少支付订单/)
     expect(userUpdate).not.toHaveBeenCalled()
     expect(transactionCreate).not.toHaveBeenCalled()
   })

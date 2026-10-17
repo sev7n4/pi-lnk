@@ -8,6 +8,7 @@ import { WorksModule } from './works/works.module'
 import { AgentModule } from './agent/agent.module'
 import { CanvasModule } from './canvas/canvas.module'
 import { MembershipModule } from './membership/membership.module'
+import { PaymentModule } from './payment/payment.module'
 import { PrismaModule } from './prisma/prisma.module'
 import { StoriesModule } from './stories/stories.module'
 import { StudioModule } from './studio/studio.module'
@@ -30,6 +31,7 @@ import { StorageModule } from './storage/storage.module'
     CanvasModule,
     UsersModule,
     MembershipModule,
+    PaymentModule,
     StudioModule,
     StoriesModule,
     UploadModule,

@@ -30,6 +30,7 @@ model User {
   generations GenerationRecord[]
   pointTransactions PointTransaction[]
   holds             PointHold[]
+  orders            Order[]
   providerChannels ProviderChannel[]
   aiPreferences    UserAiPreferences?
   webdavConfig     UserWebdavConfig?
@@ -175,6 +176,42 @@ model PointTransaction {
   @@index([userId, createdAt])
   @@index([userId, kind, category, createdAt])
   @@index([userId, pool])
+}
+
+// 支付订单（风险 #2：真实支付闭环）。一次性购买语义：升级 pro/studio 套餐 / 购买积分包。
+// 金额单位「分」（Int），杜绝浮点误差；支付宝 total_amount 由分→元字符串转换在 adapter 内完成。
+// status 机：PENDING → PAID（回调验签通过，CAS 唯一入口）/ CLOSED（超时未付，定时或手动关单）。
+// ⚠️ 严禁任何「未校验 Payment 即发分」路径：入账唯一入口是 Payment 回调（验签 + CAS）。
+model Order {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan      String // pro | studio | points-<pkg>（与 membership PLANS 对齐）
+  amount    Int // 单位：分
+  status    String    @default("PENDING") // PENDING | PAID | CLOSED | REFUNDED
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  payments  Payment[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// 支付记录（幂等锚点：orderId @unique —— 同一订单只允许一条支付记录、只结算一次）。
+// raw 存支付宝异步通知原始报文（JSON），供对账/纠纷取证。
+model Payment {
+  id             String   @id @default(cuid())
+  orderId        String   @unique
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  channel        String // alipay（后续可扩展 wechat/stripe）
+  channelTradeNo String? // 支付宝交易号 trade_no
+  status         String   @default("PENDING") // PENDING | SUCCESS | FAILED
+  raw            String? // 回调原始报文 JSON
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([orderId])
 }
 
 model GenerationRecord {
