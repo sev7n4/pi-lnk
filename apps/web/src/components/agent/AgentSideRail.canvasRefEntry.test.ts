@@ -16,12 +16,16 @@ describe('canvas ref entry as first-class citizen (P1-2.3)', () => {
     expect(sfc).toContain('aria-label="引用画布节点"')       // 新入口存在
     expect(sfc).toContain('composer-canvas-ref-btn')
   })
-  it('ghost: corner button has no glass background, anchored at vertex', () => {
+  it('ghost: corner button is a muted disc anchored at vertex (gray ghost / lit active)', () => {
     const rule = sfc.match(/\.composer-canvas-ref-btn\s*\{[^}]*\}/)?.[0] ?? ''
     expect(rule).not.toContain('--neo-glass')
-    expect(rule).toContain('background: transparent')
-    expect(rule).toContain('translate(-50%, -50%)')
+    // 幽灵态 = 中灰盘 + hi-text 锚（2026-10-18 用户裁决「幽灵灰盘、激活点亮」）
+    expect(rule).toContain('color-mix(in srgb, var(--lnk-text-muted) 60%, var(--lnk-surface-base))')
+    expect(rule).toContain('var(--lnk-hi-text)')
+    expect(rule).toContain('translate(-65%, -65%)')
     expect(rule).toContain('width: 22px')
+    // 激活（pick 模式）= 盘点亮成 hi-bg + 辉光
+    expect(sfc).toMatch(/\.composer-canvas-ref-btn\.is-active\s*\{[^}]*var\(--lnk-hi-bg\)/)
   })
   it('visibility gated: hidden in idle, visible in input/generating', () => {
     // 明确符号断言（比脆弱的位置正则更稳）：computed 名 + 模板绑定

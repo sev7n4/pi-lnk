@@ -24,8 +24,10 @@ describe('mobile hit target expansion (P0-4)', () => {
   it('AgentSideRail defines the media-scoped expansion', () => {
     const sfc = read('../../../agent/AgentSideRail.vue')
     expect(sfc).toContain('.agent-hit-expand')
-    expect(sfc).toMatch(/@media\s*\(max-width:\s*767px\)[\s\S]{0,400}inset:\s*-8px/)
+    // 2026-10-18 裸条两行化：m 档保持四向 -10px；l 档/模型 chip 改只横向外扩
+    // （inset: -2px -8px）——垂直方向不越过行间距，防点输入误触模型 chip。
     expect(sfc).toMatch(/@media\s*\(max-width:\s*767px\)[\s\S]{0,400}inset:\s*-10px/)
+    expect(sfc).toMatch(/@media\s*\(max-width:\s*767px\)[\s\S]{0,500}inset:\s*-2px -8px/)
   })
   it('visual sizes unchanged (B8: 24/28/32)', () => {
     expect(read('./DockMicButton.vue')).toMatch(/width:\s*24px/)

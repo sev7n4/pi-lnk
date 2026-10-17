@@ -114,7 +114,6 @@ import { barShape } from './composer/mobileBarLayout'
 import { classifyGesture, HOLD_MS, CANCEL_SWIPE_PX } from './composer/holdGesture'
 import { useMicLevel } from '@/composables/useMicLevel'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
-import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
 import { hasFailedTraceStep, turnSettledText, turnSummaryLine } from '@/components/agent/executionTraceReducer'
@@ -622,12 +621,10 @@ const pendingAttachmentItems = computed(() =>
 /** 输入框左上角 🎯 圆心重合时的文字起始内边距（半径 + 小间距） */
 const COMPOSER_PICK_INSET = 18
 
-/** ◎ 空闲态（P1-2.3）：无草稿文本且未在流式生成 —— composer 的第一屏/空态 */
-const isIdle = computed(() => input.value.trim() === '' && !agent.isStreaming)
-/** ◎ mention 菜单开态（P1-2.3）：取 MentionInput expose 的真实 showMenu（defineExpose 的 ref 保持响应式） */
-const mentionMenuOpen = computed(() => composerRef.value?.showMenu === true)
-/** ◎ 可见性门控（P1-2.3）：空态隐藏；输入/生成态可见；空态键入 @ 打开 mention 菜单时立即显示 */
-const canvasRefEntryVisible = computed(() => !props.readOnly && (!isIdle.value || mentionMenuOpen.value))
+/** ◎ 可见性门控（2026-10-18 终版）：只要可交互就常驻可见——灰幽灵是 composer 的
+ * 常驻工具（用户裁决「幽灵态灰色效果没出来」＝空态看不到图标，门控放开）；
+ * readOnly 隐藏。激活高亮由 is-active 承担。 */
+const canvasRefEntryVisible = computed(() => !props.readOnly)
 
 const mentionOptions = computed((): MentionOption[] =>
   pendingAttachmentItems.value.map(({ refKey, attachment }) => ({
@@ -1686,6 +1683,9 @@ const voiceLevel = micLevel.level
  * 旧「收缩/伸展 + 长按卡片录音」形态随全屏 sheet 一并退役；Task 13 已在 onComposerHold
  * 发射点重接 ASR，录音 UI（agent-composer-rec）复用。PC 走 DockMicButton press-and-hold。 */
 const composerExpanded = ref(false)
+/* 2026-10-18 ③ ◎ 引用入口门控：聚焦即算「进入输入态」，◎ 立即可见（PC/移动通用），
+ * 不再等用户敲出第一个字。 */
+const composerFocused = ref(false)
 const holdActive = ref(false)
 const voiceInterim = ref('')
 const voiceFinalText = ref('')
@@ -1701,13 +1701,16 @@ watch(input, (v) => {
 })
 
 function onComposerFocusIn() {
+  composerFocused.value = true
   if (isMobileLayout.value) composerExpanded.value = true
 }
 
 function onComposerFocusOut(e: FocusEvent) {
-  if (!isMobileLayout.value) return
+  // ③ 焦点只在真正离开卡内时才清（点模型 chip 等卡内控件不算离开，否则 ◎ 闪烁熄灭）
   const next = e.relatedTarget as Node | null
-  if (next && composerDockRef.value?.contains(next)) return // 焦点仍在卡内（如点模型菜单）
+  if (next && composerDockRef.value?.contains(next)) return
+  composerFocused.value = false
+  if (!isMobileLayout.value) return
   // 延迟收起：给「聚焦丢失但有交互意图」的场景留窗口；有内容则保持伸展
   window.setTimeout(() => {
     if (!input.value.trim() && !holdActive.value) composerExpanded.value = false
@@ -3705,11 +3708,9 @@ defineExpose({
                 aria-label="点击定位到画布上待确认的节点"
                 @click="locateProposeNode"
               >
-                <!-- 定位锚图标：标准定位/瞄准字形（品牌 45° 定位锚 PNG 未入库，先用内联 SVG；要品牌对角字形再落库替换） -->
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-                </svg>
+                <!-- 定位锚图标（2026-10-18）：品牌 45° 定位锚 glyph + 幽灵盘，与 composer ◎ 同款两态——
+                     幽灵 = 中灰盘 + hi-text 锚；hover/聚焦点亮 = hi-bg 盘 + 辉光 -->
+                <span class="propose-locate-disc" aria-hidden="true" />
                 <span>定位</span>
               </button>
               <button
@@ -3807,7 +3808,7 @@ defineExpose({
             >
               <div
                 v-if="showHistoryReattachCoachmark"
-                class="agent-history-coachmark mx-0.5 mb-2 flex items-start gap-2 rounded-xl border px-3 py-2 text-[11px] leading-snug"
+                class="agent-history-coachmark mx-0.5 mb-2 flex items-start gap-2 rounded-lg border-l-[3px] px-3 py-2 text-[11px] leading-snug"
                 role="status"
               >
                 <span class="min-w-0 flex-1 text-[var(--lnk-text-secondary)]">
@@ -3830,12 +3831,12 @@ defineExpose({
               -->
               <div
                 v-if="queued"
-                class="agent-queued-bubble mx-3 mb-2 rounded-lg border px-3 py-2"
+                class="agent-queued-bubble mx-3 mb-2 rounded-lg border-l-[3px] px-3 py-2"
                 :class="queued.state === 'failed'
-                  ? 'border-[var(--lnk-error)]/40 bg-[var(--lnk-error)]/10'
+                  ? 'border-l-[var(--lnk-error)]/60 bg-[var(--lnk-error)]/10'
                   : queued.state === 'pending'
-                    ? 'border-[var(--lnk-accent)]/40 bg-[var(--lnk-accent)]/10'
-                    : 'border-[var(--lnk-success)]/40 bg-[var(--lnk-success)]/10'"
+                    ? 'border-l-[var(--lnk-accent)]/60 bg-[var(--lnk-accent)]/10'
+                    : 'border-l-[var(--lnk-success)]/60 bg-[var(--lnk-success)]/10'"
                 :data-queue-state="queued.state"
                 :data-queue-intent="queued.intent ?? ''"
               >
@@ -3913,6 +3914,9 @@ defineExpose({
                   'is-idle': mobileBarIdle,
                   'is-holding': holdActive,
                   'is-cancel': holdActive && voiceCancelled,
+                  /* 2026-10-18：空草稿（无文本且非生成中）隐藏模型 chip——用户裁决：
+                     点 ＋ 加引用切入输入态后，一个字没打也不该看到模型选择器 */
+                  'is-empty-draft': !input.trim() && !agent.isStreaming,
                 }"
                 data-testid="composer-bare-bar"
                 @pointerdown="onBarPointerDown"
@@ -3959,16 +3963,22 @@ defineExpose({
                   </p>
                 </template>
                 <div v-else class="agent-composer__input-wrap">
+                <!-- 2026-10-18 修 B：leading-inset 跟随 ◎ 可见性（两端统一）——
+                     原 PC 恒 18px（◎ 藏着也缩进）、移动端恒 0（◎ 压住行首字符）。
+                     ⑥ 画布点选模式：placeholder 承载跨容器引导（点 ◎ 后视线还在 composer，
+                     不提示就不知道下一步去画布点节点；退出模式自动还原） -->
                 <MentionInput
                   ref="composerRef"
                   v-model="input"
                   class="agent-composer__mention w-full"
                   :mentions="mentionOptions"
-                  :placeholder="agent.isStreaming
-                    ? '输入消息…加入待发队列'
-                    : inputPlaceholder"
+                  :placeholder="pickMode.active.value
+                    ? '在画布上点选要引用的节点 · 再点 ◎ 取消'
+                    : agent.isStreaming
+                      ? '输入消息…加入待发队列'
+                      : inputPlaceholder"
                   :disabled="readOnly || isUploading"
-                  :leading-inset="readOnly || isMobileLayout ? 0 : COMPOSER_PICK_INSET"
+                  :leading-inset="readOnly || isUploading || !canvasRefEntryVisible ? 0 : COMPOSER_PICK_INSET"
                   :mobile-enter-newline="isMobileLayout"
                   :prediction-history="predictionHistory"
                   submit-on-enter
@@ -3984,7 +3994,9 @@ defineExpose({
                     aria-label="引用画布节点"
                     @click.stop="toggleCanvasRefPick"
                   >
-                    <CanvasRefTargetIcon :size="14" :filled="pickMode.active.value" />
+                    <!-- 2026-10-18：定位锚品牌 glyph（用户供图抠像素材），mask + currentColor 主题自适应；
+                         is-active 高亮由按钮 color（accent）自动传导 -->
+                    <span class="composer-locate-glyph" aria-hidden="true" />
                   </button>
                 </div>
                 <!-- P1-5.3 空闲态 affordance：纯 span 提示（非 placeholder）；桌面恒不渲染 -->
@@ -4195,6 +4207,7 @@ defineExpose({
                   <DockGenerateButton
                     :generating="agent.isStreaming"
                     :disabled="isUploading || (!agent.isStreaming && !canSubmitComposer)"
+                    :title="agent.isStreaming ? '停止生成' : 'Enter 发送 · Shift+Enter 换行'"
                     @generate="send"
                   />
                 </div>
@@ -5092,6 +5105,27 @@ defineExpose({
   min-width: 0;
 }
 
+/* ---- 2026-10-18 composer 单卡化（对齐 WorkBuddy composer 观感）----
+ * MentionInput 自带的全局 .input-field（legacy 灰底令牌 + 描边 + rounded-xl）
+ * 在 dock 内形成「白卡包灰卡」双层；这里把 backdrop/field/ghost 三层摊平，
+ * 视觉上只剩 .agent-input-dock 一张干净矩形（裸 DOM 感）。
+ * 仅在 agent dock 作用域生效，不影响 NodeEditorToolbar / dock-studio 面板的 MentionInput。
+ * 移动端 .agent-input-dock 已被摊平为透明容器（:4248），裸条 .composer-bare-bar
+ * 是唯一表面，本规则同样生效 ⇒ 条内文本直接落在药丸上，无内嵌输入框。 */
+.agent-input-dock :deep(.mention-input-backdrop),
+.agent-input-dock :deep(.mention-input-field),
+.agent-input-dock :deep(.mention-input-ghost) {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.agent-input-dock :deep(.mention-input-field):focus {
+  border: none;
+  box-shadow: none;
+}
+
 /* ---- P0-4 移动端命中区扩展（视觉尺寸不变，基线 B8: 24/28/32） ----
  * 透明 ::after 外扩可点区域：24px 控件（mic，data-hit="m"）→ inset -10px 凑满 44px；
  * 28/32px 控件（generate 锚 / ＋ / 模型 chip，data-hit="l"）→ inset -8px。
@@ -5125,12 +5159,15 @@ defineExpose({
     inset: -10px; /* 24px → 44px */
   }
 
+  /* 2026-10-18 ①：裸条两行化后，控件行紧贴输入文本行——命中区若垂直外扩 8px
+   * 会侵入文本行，点输入实际点中模型 chip 的隐形命中区。改只横向外扩（44px 宽、
+   * 原高 ±2px），垂直方向不越过 4px 行间距。 */
   .agent-hit-expand[data-hit='l']::after {
-    inset: -8px; /* 28/32px → 44px+ */
+    inset: -2px -8px;
   }
 
   .agent-model-hit > :deep(button)::after {
-    inset: -8px;
+    inset: -2px -8px;
   }
 }
 
@@ -5147,7 +5184,9 @@ defineExpose({
   display: contents;
 }
 
-/* 复合选择器压过模板上的 Tailwind 工具类；仅移动端 shell 内生效 */
+/* 复合选择器压过模板上的 Tailwind 工具类；仅移动端 shell 内生效。
+ * 2026-10-18：输入态/生成态对齐 PC——矩形倒角（radius-xl），胶囊(radius-full)
+ * 只留给空闲态（.is-idle）；focus 描边用中性 hi-text（PC 同款），不再用品牌紫。 */
 .agent-panel-mobile-dock .composer-bare-bar {
   position: relative;
   /* P2-2.2 上滑取消：条面垂直手势归应用（按住录音中浏览器不得接管为滚动） */
@@ -5157,19 +5196,30 @@ defineExpose({
   align-items: center;
   gap: var(--lnk-space-1);
   min-height: 48px;
-  padding: 0 var(--lnk-space-2);
-  border: 1.5px solid var(--lnk-border-default);
-  border-radius: var(--lnk-radius-full);
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-xl);
   background: var(--lnk-surface-raised);
   box-shadow: var(--lnk-shadow-sm);
   transition:
     border-color var(--lnk-duration-fast) var(--lnk-ease-standard),
-    box-shadow var(--lnk-duration-fast) var(--lnk-ease-standard);
+    box-shadow var(--lnk-duration-fast) var(--lnk-ease-standard),
+    border-radius 150ms var(--lnk-ease-standard),
+    padding 150ms var(--lnk-ease-standard);
+}
+
+/* ④ reduced-motion：状态形变动画全部关闭，保留瞬切 */
+@media (prefers-reduced-motion: reduce) {
+  .agent-panel-mobile-dock .composer-bare-bar {
+    transition: none;
+  }
 }
 
 .agent-panel-mobile-dock .composer-bare-bar:focus-within {
-  border-color: var(--lnk-border-focus);
-  box-shadow: var(--lnk-shadow-sm), 0 0 0 2px var(--lnk-accent-subtle);
+  border-color: color-mix(in srgb, var(--lnk-hi-text) 28%, var(--lnk-border-default));
+  box-shadow:
+    var(--lnk-shadow-sm),
+    0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 14%, transparent);
 }
 
 /* 空闲态手势面：条自身禁掉滚动手势接管，否则按住时 pointermove/up 被浏览器打断 */
@@ -5178,11 +5228,13 @@ defineExpose({
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
   cursor: pointer;
+  border-radius: var(--lnk-radius-full);
+  padding: 0 var(--lnk-space-2);
 }
 
-/* stacked：芯片行独占一行（basis 100% 强制换行），输入行 ＋/文本/模型⌄/发送 */
+/* stacked：芯片行独占一行（basis 100% 强制换行），输入行 ＋/文本/模型⌄/发送
+ * （圆角已随基础样式改为矩形倒角，无需再覆盖） */
 .agent-panel-mobile-dock .composer-bare-bar.is-stacked {
-  border-radius: var(--lnk-radius-xl);
   padding: var(--lnk-space-1) var(--lnk-space-2);
 }
 
@@ -5198,8 +5250,12 @@ defineExpose({
   margin-bottom: 0;
 }
 
+/* 2026-10-18 确定性两行布局（对齐 PC 卡结构）：
+ * 行0 = 引用芯片行（有芯片时，basis 100% 独占）；行1 = 输入文本（basis 100% 独占）；
+ * 行2 = ＋ / 模型⌄ / 发送。修复：摊平 flex-wrap 下各控件按内容宽度自由折行，
+ * 窄屏下 ＋ 被挤成独占一行、其余控件再挤一行，布局散架。 */
 .agent-panel-mobile-dock .composer-bare-bar .agent-attach-menu {
-  order: -1;
+  order: 1;
   flex-shrink: 0;
 }
 
@@ -5208,7 +5264,7 @@ defineExpose({
   position: static; /* 让 ◎ 的包含块上移到裸条（左顶点锚定） */
   display: flex;
   align-items: center;
-  flex: 1 1 auto;
+  flex: 1 1 100%; /* 独占一行 */
   min-width: 0;
 }
 
@@ -5218,17 +5274,24 @@ defineExpose({
 }
 
 .agent-panel-mobile-dock .composer-bare-bar .agent-dock-params {
-  order: 1;
+  order: 2;
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 auto; /* 占满剩余宽度，把发送推到行尾 */
   flex-wrap: nowrap;
   align-items: center;
+  min-width: 0;
 }
 
 .agent-panel-mobile-dock .composer-bare-bar .agent-dock-primary {
-  order: 2;
+  order: 3;
   flex-shrink: 0;
-  margin-left: 0;
+  /* 不再覆盖 base 的 margin-left:auto——空草稿隐藏模型 chip 后，
+     发送靠它推到行尾（有 chip 时 params flex:1 已占满，auto 无副作用） */
+}
+
+/* 2026-10-18：空草稿（无文本且非生成中）隐藏模型 chip（用户裁决，见模板 is-empty-draft） */
+.agent-panel-mobile-dock .composer-bare-bar.is-empty-draft .agent-dock-params {
+  display: none;
 }
 
 /* 空闲态：条内只留 ＋ + 提示（P1-5.3：不常驻模型/发送/独立 mic） */
@@ -5245,9 +5308,9 @@ defineExpose({
   display: none;
 }
 
-/* 空闲 affordance：纯文本提示（非 placeholder），与条内 ＋ 同行 */
+/* 空闲 affordance：纯文本提示（非 placeholder），与条内 ＋ 同行（＋ order 1 在前） */
 .agent-panel-mobile-dock .composer-bar-hint {
-  order: 0;
+  order: 2;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -5275,6 +5338,19 @@ defineExpose({
 /* 录音中：条描边随状态走（accent=聆听 / red=上滑取消） */
 .agent-panel-mobile-dock .composer-bare-bar.is-holding {
   border-color: color-mix(in srgb, var(--lnk-accent-text) 45%, var(--lnk-border-default));
+}
+
+/* 2026-10-18 ②：录音态条内只留 [录音行][提示行] 两行——＋/模型/发送 一律隐藏
+ * （此前按住后 is-idle 解除，三个控件全部回场挤在提示旁，布局散架） */
+.agent-panel-mobile-dock .composer-bare-bar.is-holding .agent-attach-menu,
+.agent-panel-mobile-dock .composer-bare-bar.is-holding .agent-dock-params,
+.agent-panel-mobile-dock .composer-bare-bar.is-holding .agent-dock-primary {
+  display: none;
+}
+
+.agent-panel-mobile-dock .composer-bare-bar .agent-composer-rec,
+.agent-panel-mobile-dock .composer-bare-bar .agent-composer-rec__hint {
+  flex: 1 1 100%; /* 各独占一行 */
 }
 
 .agent-panel-mobile-dock .composer-bare-bar.is-holding.is-cancel {
@@ -5379,9 +5455,12 @@ defineExpose({
   }
 }
 
-/* ◎ P1-2.3 ghost 入口：22px 视觉、无玻璃底（透明背景/无边框），圆心 = 表面左顶点；
- * PC 命中 32px（透明 ::after inset -5px）；≤767px 由 .agent-hit-expand[data-hit='l'] 扩到 44px。
- * 仅 color 过渡 —— 退役 hover-only 球的全部 halo/lens/光效。 */
+/* ◎ 定位锚入口（2026-10-18 用户裁决「幽灵灰盘、激活点亮」）：
+ * 幽灵态 = 中灰圆盘（text-muted 与 surface-base 60% 混合，双主题自动取中灰）
+ *   + hi-text glyph（深色下深锚 / 浅色下白锚，与发送键 glyph 同源反转）+ shadow-xs；
+ * 激活（pick 模式 is-active）= 盘点亮成 hi-bg（glyph 仍 hi-text）+ hi-shadow 辉光。
+ * 22px、translate(-65%,-65%) 约 2/3 露出卡外（「顶点长锚角」）；
+ * PC 命中 32px（透明 ::after inset -5px）；≤767px 扩到 44px。 */
 .composer-canvas-ref-btn {
   position: absolute;
   top: 0;
@@ -5397,11 +5476,40 @@ defineExpose({
   padding: 0;
   border: none;
   border-radius: var(--lnk-radius-full);
-  background: transparent;
-  color: var(--lnk-accent-text);
-  transform: translate(-50%, -50%);
-  transition: color var(--lnk-duration-fast) var(--lnk-ease-standard);
+  background: color-mix(in srgb, var(--lnk-text-muted) 60%, var(--lnk-surface-base));
+  color: var(--lnk-hi-text);
+  box-shadow: var(--lnk-shadow-xs);
+  transform: translate(-65%, -65%);
+  transition:
+    color var(--lnk-duration-fast) var(--lnk-ease-standard),
+    background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
   cursor: pointer;
+}
+
+/* 激活（pick 模式）= 点亮：hi-bg 盘 + hi-text glyph + hi-shadow 辉光 */
+.composer-canvas-ref-btn.is-active {
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-hi-text);
+  box-shadow: var(--lnk-hi-shadow);
+}
+
+.composer-canvas-ref-btn:hover {
+  filter: brightness(1.08);
+}
+
+.composer-canvas-ref-btn.is-active:hover {
+  filter: brightness(1.06);
+}
+
+/* 定位锚 glyph（源 93×93，素材已镜像为指向左 45°）：
+ * 与生成锚完全相同的处理——纯 currentColor 继承按钮色 + mask 成形，无环无特殊配色。 */
+.composer-locate-glyph {
+  display: block;
+  width: 15px;
+  height: 15px;
+  background: currentColor;
+  -webkit-mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
+  mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
 }
 
 .composer-canvas-ref-btn::after {
@@ -5410,13 +5518,44 @@ defineExpose({
   inset: -5px;
 }
 
-.composer-canvas-ref-btn:hover {
-  color: var(--lnk-accent-hover);
-}
-
 .composer-canvas-ref-btn:focus-visible {
   outline: 2px solid var(--lnk-border-focus);
   outline-offset: 2px;
+}
+
+/* 提议生成卡片「定位」按钮的锚盘（2026-10-18）：与 composer ◎ 同款幽灵/点亮两态。
+ * 幽灵 = 中灰盘（text-muted⊕surface-base）+ hi-text 锚 + shadow-xs；
+ * hover/聚焦点亮 = hi-bg 盘（glyph 仍 hi-text）+ hi-shadow 辉光。 */
+.propose-locate-disc {
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: var(--lnk-radius-full);
+  background: color-mix(in srgb, var(--lnk-text-muted) 60%, var(--lnk-surface-base));
+  color: var(--lnk-hi-text);
+  box-shadow: var(--lnk-shadow-xs);
+  transition: background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+
+/* mask 裁 border 陷阱：盘与 glyph 必须分层（::before 承载 glyph） */
+.propose-locate-disc::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 11px;
+  height: 11px;
+  background: currentColor;
+  -webkit-mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
+  mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
+}
+
+[data-testid='propose-wait-locate']:hover .propose-locate-disc,
+[data-testid='propose-wait-locate']:focus-visible .propose-locate-disc {
+  background: var(--lnk-hi-bg);
+  box-shadow: var(--lnk-hi-shadow);
 }
 
 .agent-attach-icon {

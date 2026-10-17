@@ -132,7 +132,7 @@ function onChipMention(refKey: string) {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-color: var(--lnk-border-default) transparent;
 }
 
 .agent-ref-strip__scroll::-webkit-scrollbar {

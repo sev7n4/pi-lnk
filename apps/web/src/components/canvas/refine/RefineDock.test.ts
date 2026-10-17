@@ -97,20 +97,21 @@ describe('RefineDock', () => {
     expect(w.emitted('run')).toHaveLength(1)
   })
 
-  it('主 CTA：圆形箭头按钮，aria-label 为「精修」；可点时 emit run，busy 时禁用', async () => {
+  it('主 CTA：圆形锚徽按钮，aria-label 为「精修」；可点时 emit run，busy 时禁用', async () => {
     const w = mountDock({ prompt: 'x' })
     const btn = w.find('[data-testid="dock-run"]')
     expect(btn.classes()).toContain('dock-generate-btn')
     expect(btn.attributes('aria-label')).toBe('精修')
     expect(btn.attributes('title')).toBe('精修')
-    expect(btn.find('svg').exists()).toBe(true)
+    // 默认态 = 品牌生成锚 glyph（mask span，2026-10-18 替换手绘箭头 SVG）
+    expect(btn.find('.dock-generate-btn__glyph').exists()).toBe(true)
     await btn.trigger('click')
     expect(w.emitted('run')).toHaveLength(1)
 
     const busy = mountDock({ prompt: 'x', busy: true }).find('[data-testid="dock-run"]')
     expect(busy.attributes('disabled')).toBeDefined()
-    // 禁用态保形：仍有箭头图标（禁止退化为无图标白矩形）
-    expect(busy.find('svg').exists()).toBe(true)
+    // 禁用态保形：busy 仅禁用（未接 generating，无停止方块），锚 glyph 仍在（禁止退化为无图标白矩形）
+    expect(busy.find('.dock-generate-btn__glyph').exists()).toBe(true)
   })
 
   it('应用到节点只在 canApply 时出现', () => {
