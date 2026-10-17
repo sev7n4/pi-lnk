@@ -24,10 +24,12 @@
 
 1. 登录 [支付宝开放平台](https://open.alipay.com/) → 进入 **沙箱控制台**（开发者中心 → 沙箱）。
 2. 选择/创建应用，记录：
-   - **APPID**（沙箱版，形如 `2021000xxxxxxxxx`）
-   - **应用私钥**（「查看」可复制；RSA2，2048 位。也可用官方密钥工具本地生成后上传应用公钥换取）
-   - **支付宝公钥**（注意：不是「应用公钥」。上传应用公钥后平台返回的才是支付宝公钥）
+   - **APPID**（沙箱版，形如 `2021000xxxxxxxxx` 或 `902100xxxxxxxx`——两种前缀均为沙箱 APPID）
+   - **应用私钥**（「查看」可复制；RSA2，2048 位。控制台导出格式为**裸 base64**（`MIIEvg...` 开头，无 PEM 头）——`normalizeKey` 已兼容，直接粘贴即可。也可用官方密钥工具本地生成后上传应用公钥换取）
+   - **支付宝公钥**（注意：不是「应用公钥」。上传应用公钥后平台返回的才是支付宝公钥；同样为裸 base64，`MIIBIj...` 开头）
 3. 记录 **沙箱买家账号**（买家信息：账号 + 登录密码 + 支付密码，用于沙箱收银台登录付款）。
+   - ⚠️ 买家账号**只在沙箱控制台可见**，不存在于任何 `.env`/代码库（已实测全盘检索确认）。
+   - 备选：沙箱收银台登录页支持自助注册新买家账号（沙箱验证码规则开放），无现成账号时可现场注册。
 4. 电脑网站支付（`alipay.trade.page.pay`）在沙箱默认可用，无需额外开通产品。
 
 > ⚠️ 密钥只进服务端 `.env`，严禁进仓库/前端/日志（资损红线）。
@@ -36,17 +38,18 @@
 
 ```bash
 # —— 支付宝沙箱（风险 #2 第一阶段）——
-ALIPAY_APP_ID=2021000xxxxxxxxx
-ALIPAY_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEv...（应用私钥全文，\n 为字面换行）\n-----END PRIVATE KEY-----"
-ALIPAY_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nMIIBI...（支付宝公钥全文）\n-----END PUBLIC KEY-----"
+ALIPAY_APP_ID=902100xxxxxxxx            # 沙箱 APPID（控制台复制）
+ALIPAY_PRIVATE_KEY=MIIEvg...            # 应用私钥：裸 base64 单行直贴（无 PEM 头亦可，normalizeKey 归一化）
+ALIPAY_PUBLIC_KEY=MIIBIj...             # 支付宝公钥：裸 base64 单行直贴
 ALIPAY_GATEWAY=https://openapi.alipaydev.com/gateway.do
 ALIPAY_NOTIFY_URL=http://119.29.173.89:5100/api/payment/callback/alipay
-ALIPAY_RETURN_URL=https://<前端域名>/pay/return
+ALIPAY_RETURN_URL=https://lnkpi-web.vercel.app/   # 前端域名（已实测 200）；支付落地页为后续 PR，暂落首页
 ```
 
 要点：
+- **密钥格式**：控制台导出的「应用私钥/支付宝公钥」均为**裸 base64**（无 `-----BEGIN-----` 头）。`normalizeKey` 自动包 PEM 头，直贴即可；带 PEM 头的输入同样兼容。
 - **notify_url 必须公网可达**：CVM `119.29.173.89:5100` 已实测公网 200（见 §5）。
-- **return_url 指向前端**（Vercel 域名），用户付款后浏览器落点；前端落地后调 `GET /api/payment/order/:id` 确认到账。
+- **return_url 指向前端**（`lnkpi-web.vercel.app`，2026-07 E2E 记录域名，仍实测 200），用户付款后浏览器落点；前端落地后调 `GET /api/payment/order/:id` 确认到账。
 - 未配置时支付端点返回「支付渠道未配置」，**不阻塞服务启动、不静默假成功**（显式失败设计）。
 - 容器访问 `alipaydev.com`（国内域名）若走代理会慢/失败 ⇒ 确认容器 `NO_PROXY` 豁免 `alipaydev.com,.alipaydev.com`（与既有 `.bigmodel.cn` 豁免同思路），改后 `compose up -d --no-build api` + `docker exec lnkpi-api env | grep -i no_proxy` 验证。
 
@@ -72,7 +75,10 @@ ALIPAY_RETURN_URL=https://<前端域名>/pay/return
 ## 5. 已验证事实（2026-10-17 实测）
 
 - `http://119.29.173.89:5100/api/health` 公网返回 200（notify_url 链路前提成立）。
-- RSA2 签名/验签单测 7/7：按「支付宝官方签名规则」（排除 sign/sign_type 字典序拼接 + RSA-SHA256）构造的合法通知被接受；篡改金额/缺 sign/串 app_id 均拒绝。
+- `https://lnkpi-web.vercel.app` 返回 200（return_url 落点有效）。
+- RSA2 签名/验签单测 **14/14**：按「支付宝官方签名规则」（排除 sign/sign_type 字典序拼接 + RSA-SHA256）构造的合法通知被接受；篡改金额/缺 sign/串 app_id 均拒绝；**裸 base64（控制台导出格式）密钥**可直接构造 adapter 并签名验签。
+- 东八区时间戳：`timestamp` 显式 +8h（UTC 直出会触发 `isv.invalid-timestamp`），跨日边界有用例覆盖。
+- 网关响应验签：查单补偿路径对 `alipay_trade_query_response` 验签（防伪造「已付款」），15s 超时、网络故障按未付处理（宁可漏放不可错放）。
 - 真实 SQLite 集成测试 12/12：入账、重复回调幂等、验签失败拒绝、金额不符拒绝、未知订单拒绝、查单补偿入账、双路径不重复发分、upgrade 三拒绝、越权拒绝、未付通知零入账。
 
 ## 6. 生产切换清单（沙箱通过后）
