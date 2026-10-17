@@ -484,9 +484,42 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       return
     }
     case 'waiting_user': {
-      // 2026-10-14（生产反馈「等待你在画布上确认生成 重复」）：等待态**只由 dock 状态行渲染**
-      // （turnStatusBar resolveWaiting，含「还剩 N 分钟自动取消」倒计时），时间线不再产 notice ——
-      // D3「一处渲染/单一焦点」。事件本身保留在流里（落库/重放兼容），此处直接吞掉。
+      // 2026-10-17（恢复可见化，双粒度）：等待态在时间线里恢复**单条 upsert** notice——
+      // 本 notice 回答「对话流为什么空了/在等什么」（原因），倒计时仍只在 dock 状态行
+      // （turnStatusBar waitHint「还剩 N 分钟自动取消」）⇒ 两处文案不重复、各司其职。
+      // 历史：10-14 曾因「等待你在画布上确认生成 重复」整体下线本 notice（D3 一处渲染），
+      // 但状态行在 composer 角上，用户盯消息流时那 ~300s 阻塞期形同「死了」（生产投诉）。
+      // 单条 upsert（稳定 id；resolved 只改文案、不新增不删除）既复现可见性，又不重犯重复。
+      const d = event.data
+      const waitingNoticeId = 'notice:waiting'
+      const findWaitingNotice = () =>
+        timeline.parts.find(
+          (p): p is Extract<TimelinePart, { kind: 'notice' }> =>
+            p.kind === 'notice' && p.id === waitingNoticeId,
+        )
+      if (d.status === 'resolved') {
+        // 解除：同一条改文案（⏸→·），留着说明「刚才那段空白在等什么」
+        const existing = findWaitingNotice()
+        if (existing) {
+          existing.text = '已继续执行'
+          existing.tone = 'info'
+        }
+        return
+      }
+      const text =
+        d.toolName === 'propose_generation'
+          ? '等待你在画布上确认生成，确认后继续输出'
+          : d.reason
+            ? `等待你确认：${d.reason}`
+            : '等待你确认后继续'
+      const existing = findWaitingNotice()
+      if (existing) {
+        // 等待事件重复到达（重放/多段等待）只改文案，绝不追加第二条（10-14 反馈不回归）
+        existing.text = text
+        existing.tone = 'warn'
+        return
+      }
+      timeline.parts.push({ kind: 'notice', id: waitingNoticeId, text, tone: 'warn' })
       return
     }
     case 'error': {

@@ -58,6 +58,13 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(byKind(tl, 'artifact')).toHaveLength(1)
     expect(byKind(tl, 'text')).toHaveLength(1)
 
+    // 2026-10-17：waiting_user 恢复单条 notice（双粒度：原因在 notice，倒计时在 dock 状态行）
+    const waitingNotices = byKind(tl, 'notice')
+    expect(waitingNotices).toHaveLength(1)
+    expect(waitingNotices[0].id).toBe('notice:waiting')
+    expect(waitingNotices[0].text).toBe('等待你在画布上确认生成，确认后继续输出')
+    expect(waitingNotices[0].tone).toBe('warn')
+
     // 交错成立：第 2 段思考 出现在 第 1 个工具之后（unshift 不复活的证据）
     const firstToolIdx = k.indexOf('tool')
     const secondThinkingIdx = tl.parts.findIndex((p) => p.kind === 'thinking' && p.status === 'done' && p.text === '再建节点')
@@ -307,14 +314,58 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(kinds(tl)[1]).toBe('tool')
   })
 
-  it('waiting_user 不产任何 part（2026-10-14：等待态由 dock 状态行单一渲染，时间线不再重复）', () => {
+  it('⭐ 2026-10-17 双粒度：waiting_user 产单条 notice（稳定 id upsert，重复 waiting 不追加）', () => {
     const tl = feed([
       { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
       { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
+      // 重复 waiting（重放/多段等待）：只改文案，绝不刷屏（10-14「重复」反馈不回归）
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
+    ])
+    const notices = byKind(tl, 'notice')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].id).toBe('notice:waiting')
+    expect(notices[0].text).toBe('等待你在画布上确认生成，确认后继续输出')
+    expect(notices[0].tone).toBe('warn')
+  })
+
+  it('⭐ resolved 只改同一条 notice 文案（不新增不删除；⏸→· 表等待已解除）', () => {
+    const tl = feed([
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
+    ])
+    const notices = byKind(tl, 'notice')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].text).toBe('已继续执行')
+    expect(notices[0].tone).toBe('info')
+  })
+
+  it('ask_user 形态：reason 进 notice 文案（toolName 缺失也可见）', () => {
+    const tl = feed([
       { type: 'waiting_user', data: { status: 'waiting', reason: '请选择风格' } },
+    ])
+    const notices = byKind(tl, 'notice')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].text).toBe('等待你确认：请选择风格')
+  })
+
+  it('resolved 先于 waiting（乱序/重放）：无 notice 可改时不新建', () => {
+    const tl = feed([
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
     ])
     expect(byKind(tl, 'notice')).toHaveLength(0)
     expect(tl.parts).toHaveLength(0)
+  })
+
+  it('⭐ 重放（历史 executionEvents）兼容：waiting→resolved 序列收口为一条 info notice', () => {
+    const tl = replayTimelineEvents([
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
+    ] as never[])
+    // 只锁等待 notice 这一条（replay 末尾还可能追加回合摘要 notice，互不干扰）
+    const waiting = byKind(tl, 'notice').filter((n) => n.id === 'notice:waiting')
+    expect(waiting).toHaveLength(1)
+    expect(waiting[0].text).toBe('已继续执行')
+    expect(waiting[0].tone).toBe('info')
   })
 
   it('⭐ 2026-10-14 累积快照差分：存量 done.summary 带前文时按前缀差分出段增量，不再整段重复', () => {
