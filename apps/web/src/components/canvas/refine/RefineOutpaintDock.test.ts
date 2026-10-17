@@ -39,7 +39,8 @@ describe('RefineOutpaintDock', () => {
     const cta = w.find('[data-testid="outpaint-dock-cta"]')
     expect(cta.attributes('disabled')).toBeDefined()
     expect(w.find('[data-testid="outpaint-dock-guard"]').text()).toContain('先拖动')
-    expect(cta.find('svg').exists()).toBe(true)
+    // 默认态 = 品牌生成锚 glyph（mask span）；禁用态同样保形
+    expect(cta.find('.dock-generate-btn__glyph').exists()).toBe(true)
   })
 
   it('busy：CTA 禁用且退出按钮变为取消（emit cancel 而非 exit）', async () => {
