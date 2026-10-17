@@ -326,3 +326,52 @@ test("run_audio_generation details._signal + used（model/kind/voice）", async 
 	assert.equal(d.modelUsed, "platform::tts-1");
 	assert.deepEqual(d.generationParams, { kind: "voice", voice: "female-shaonv" });
 });
+
+// ── node_status 广播（2026-10-18 回合挂住等终态）─────────────────────────
+
+test("run_image_generation 起手广播 generating、完成按 url 正据广播 done", async () => {
+	const seen: Array<{ sessionId: string; data: { nodeId: string; status: string; url?: string } }> = [];
+	const client = {
+		post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }),
+	};
+	const tools = createGenerationTools(client as never, {
+		onNodeStatus: (sessionId, data) => seen.push({ sessionId, data }),
+	});
+	await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n1" });
+	assert.deepEqual(
+		seen.map((s) => ({ sid: s.sessionId, ...s.data })),
+		[
+			{ sid: "s1", nodeId: "n1", status: "generating" },
+			{ sid: "s1", nodeId: "n1", status: "done", url: "https://x/y.png" },
+		],
+	);
+});
+
+test("timeout / fallback_pending 不是终态：不下发 node_status 终态（保守口径）", async () => {
+	for (const status of ["timeout", "fallback_pending"]) {
+		const seen: Array<{ status: string }> = [];
+		const client = { post: async () => ({ status, actions: [] }) };
+		const tools = createGenerationTools(client as never, {
+			onNodeStatus: (_sid, d) => seen.push({ status: d.status }),
+		});
+		await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n1" });
+		assert.deepEqual(seen, [{ status: "generating" }], `status=${status} 不得产生终态广播`);
+	}
+});
+
+test("failed 结果（errorMessage 正据）广播 failed；onNodeStatus 抛错被 fail-soft 吞掉不污染工具结果", async () => {
+	const seen: Array<{ status: string; error?: string }> = [];
+	const client = { post: async () => ({ status: "failed", errorMessage: "boom", actions: [] }) };
+	const tools = createGenerationTools(client as never, {
+		onNodeStatus: (_sid, d) => {
+			seen.push({ status: d.status, error: d.error });
+			if (seen.length === 2) throw new Error("observer boom");
+		},
+	});
+	const res = await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n1" });
+	assert.deepEqual(seen, [
+		{ status: "generating", error: undefined },
+		{ status: "failed", error: "boom" },
+	]);
+	assert.ok(res.details, "观察者抛错不影响工具结果返回");
+});

@@ -453,7 +453,11 @@ describe("canvas-write: 全部写工具都推 details.actions（实时通道回�
 import { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
 
-type PollRead = string | { status: string; generationRecordId?: string; generationStartedAt?: string };
+// 2026-10-18 回合挂住等终态：确认路径的**旧**用例没有终态等待预算注入 ⇒ 文件级给
+// 极小上限，避免旧用例挂进默认 13min 等待（新用例用 opts.genTerminalWaitMs 显式注入）。
+process.env.PI_RUNTIME_GEN_TERMINAL_WAIT_MS = "30";
+
+type PollRead = string | { status: string; generationRecordId?: string; generationStartedAt?: string; url?: string; errorMessage?: string; content?: string };
 
 /**
  * propose 专用 mock：propose-generation 恒成功。
@@ -578,8 +582,9 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		assert.equal(details.confirmed, true);
 		assert.equal(details.reason, "generating");
 		const text = String((result.content as Array<{ text: string }>)[0].text);
-		// 轮询正证据路径（非 /answers）→ 文案按证据来源区分（2026-10-13 契约修复）
-		assert.match(text, /已在画布侧启动生成/);
+		// 2026-10-18 回合挂住等终态：确认后进入终态等待，轮询序列耗尽 clamp 在 generating
+		// ⇒ cap 超限收尾，文案不再有「已在画布侧启动生成」的即时返回措辞。
+		assert.match(text, /生成仍在进行/);
 		assert.match(text, /不要对该节点调用 run_\*/);
 	});
 
@@ -598,8 +603,108 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		const result = await pending;
 		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
 		const text = String((result.content as Array<{ text: string }>)[0].text);
-		assert.match(text, /生成已由画布启动/);
+		// 2026-10-18 终态等待：answered 后无生成证据 ⇒ cap 超限 timeout 收尾（不再是即时「已启动」）
+		assert.match(text, /生成仍在进行/);
 		assert.equal(reg.hasPending("s1"), false);
+	});
+
+	// ── 回合挂住等终态（2026-10-18，上游对齐）─────────────────────────────
+
+	it("终态等待：generating→completed+url ⇒ 广播 node_status generating/done，结果带 generation，文案报完成", async () => {
+		const reg = new PendingToolRegistry();
+		const events: Array<{ status: string; url?: string; error?: string }> = [];
+		const client = fakeNestClient(
+			[
+				"generating", // 确认臂：正证据 → confirmed
+				"generating", // 终态等待首拍：广播 generating
+				{ status: "completed", url: "https://x/a.png", generationRecordId: "rec-new" }, // 终态
+			],
+			{ snapshotRecordId: "rec-old" },
+		);
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 2,
+			genTerminalWaitMs: 2_000,
+			onNodeStatus: (_sid, d) => events.push({ status: d.status, url: d.url, error: d.error }),
+		}).filter((t) => t.name === "propose_generation");
+		const result = await run(propose, { node_id: "n1" });
+		const details = result.details as { confirmed?: boolean; generation?: { status: string; url?: string } };
+		assert.equal(details.confirmed, true);
+		assert.deepEqual(events, [
+			{ status: "generating", url: undefined, error: undefined },
+			{ status: "done", url: "https://x/a.png", error: undefined },
+		]);
+		assert.equal(details.generation?.status, "completed");
+		assert.equal(details.generation?.url, "https://x/a.png");
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /生成已完成/);
+	});
+
+	it("超限收尾：持续 generating 至 cap ⇒ generation.status=timeout，只广播一次 generating，不伪造终态", async () => {
+		const reg = new PendingToolRegistry();
+		const events: Array<{ status: string }> = [];
+		const client = fakeNestClient(["generating"]);
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 2,
+			genTerminalWaitMs: 25,
+			onNodeStatus: (_sid, d) => events.push({ status: d.status }),
+		}).filter((t) => t.name === "propose_generation");
+		const result = await run(propose, { node_id: "n1" });
+		const details = result.details as { confirmed?: boolean; generation?: { status: string } };
+		assert.equal(details.confirmed, true);
+		assert.equal(details.generation?.status, "timeout");
+		assert.deepEqual(events, [{ status: "generating" }]);
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /生成仍在进行/);
+		assert.match(text, /不要声称已完成/);
+	});
+
+	it("failed 终态：errorMessage 透传广播 failed，文案禁称已出图", async () => {
+		const reg = new PendingToolRegistry();
+		const events: Array<{ status: string; error?: string }> = [];
+		const client = fakeNestClient(
+			[{ status: "failed", errorMessage: "upstream 500", generationRecordId: "rec-new" }],
+			{ snapshotRecordId: "rec-old" },
+		);
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 2,
+			genTerminalWaitMs: 2_000,
+			onNodeStatus: (_sid, d) => events.push({ status: d.status, error: d.error }),
+		}).filter((t) => t.name === "propose_generation");
+		const result = await run(propose, { node_id: "n1" });
+		const details = result.details as { confirmed?: boolean; generation?: { status: string; error?: string } };
+		assert.equal(details.confirmed, true);
+		assert.deepEqual(events, [{ status: "failed", error: "upstream 500" }]);
+		assert.equal(details.generation?.status, "failed");
+		assert.equal(details.generation?.error, "upstream 500");
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /生成失败/);
+		assert.match(text, /不要声称已出图/);
+	});
+
+	it("旧终态残留：completed 无新生成证据 ⇒ 绝不下发 done（2026-10-12 事故形态在终态等待期的同构回归锁）", async () => {
+		const reg = new PendingToolRegistry();
+		const events: Array<{ status: string }> = [];
+		// confirmed 经 answered 收口（无新生成证据路径），终态等待读到 stale completed
+		const client = fakeNestClient([{ status: "completed", generationRecordId: "rec-old" }], {
+			snapshotRecordId: "rec-old",
+		});
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 2,
+			genTerminalWaitMs: 25,
+			onNodeStatus: (_sid, d) => events.push({ status: d.status }),
+		}).filter((t) => t.name === "propose_generation");
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		assert.deepEqual(events, [], "stale completed 无正据 ⇒ 不广播 done");
+		const details = result.details as { generation?: { status: string } };
+		assert.equal(details.generation?.status, "timeout");
 	});
 
 	it("取消路径：连续两次轮询停 draft（用户 clear-propose）→ confirmed=false reason=rejected", async () => {

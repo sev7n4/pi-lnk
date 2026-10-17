@@ -51,6 +51,8 @@ export function buildCanvasWriteTools(
 		onSidebarRefBind?: (outcome: "ok" | "invalid_params" | "upstream_error" | "short_circuit") => void;
 		onProposeMissingRefs?: () => void;
 		onNestZodReject?: (endpoint: string) => void;
+		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
+		genTerminalWaitMs?: number;
 	},
 ): LnkpiTool[] {
 	return createCanvasWriteTools(client, { registry, ...hooks });
@@ -82,8 +84,11 @@ export function buildArrangeNodesTools(client?: NestClient): LnkpiTool[] {
  * B-5/B-3 批次：5 个 run_* 生成工具（tier=gen）+ cancel_generation（tier=lifecycle）。
  * HITL 由 before_tool Gate 强制（generation-gate.ts），工具本身不含门禁逻辑。
  */
-export function buildGenerationTools(client: NestClient): LnkpiTool[] {
-	return createGenerationTools(client);
+export function buildGenerationTools(
+	client: NestClient,
+	deps?: { onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void },
+): LnkpiTool[] {
+	return createGenerationTools(client, deps);
 }
 
 /**

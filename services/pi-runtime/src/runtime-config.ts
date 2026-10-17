@@ -276,6 +276,17 @@ export function askUserTimeoutMs(env: Record<string, string | undefined> = proce
 	return parsePositiveInt(env.ASK_USER_TIMEOUT_MS, 300_000);
 }
 
+/**
+ * 生成终态等待上限（2026-10-18 回合挂住等终态）：propose_generation 确认后继续
+ * 持有工具 promise 轮询至生成终态的时长上限。默认 13min——覆盖视频 Nest 侧实测
+ * 最坏 ~11min，且**必须小于 stall watchdog 阈值（默认 15min）**：等待期无 harness
+ * 事件，进度戳只由 node_status 派发刷新（见 dispatchNodeStatus），超限会被看护误杀。
+ * ⚠️ helm 部署必须 --set-string（科学计数法事故，同 ASK_USER_TIMEOUT_MS）。
+ */
+export function genTerminalWaitMs(env: Record<string, string | undefined> = process.env): number {
+	return parsePositiveInt(env.PI_RUNTIME_GEN_TERMINAL_WAIT_MS, 780_000);
+}
+
 /** C2 turnBudget（spec docs/superpowers/specs/2026-10-10-turn-budget-design.md §3.4）。
  * 正整数 = per-run 轮次预算；字面量 off（大小写不敏感）= 整体关闭（不计数/warn/硬停）。
  * 延续 C1/C3 kill switch 惯例：只做整体开关，无半开语义。非法值回落默认。 */

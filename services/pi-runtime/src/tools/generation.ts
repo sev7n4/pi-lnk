@@ -16,6 +16,7 @@ import { Type } from "typebox";
 import type { Context } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
+import type { NodeStatusData } from "../session-manager.js";
 import { fetchImageAsBlock, isImageRefineEnabled, type ImageBlock } from "./image-refine.js";
 // B-5：Nest 返回的 CanvasAction[] 进 details.actions，由 Nest pi-events 派生 canvas_action SSE。
 // helper 已抽到 result-with-actions.ts（canvas-write / delete-nodes / 本文件共用一份）。
@@ -90,9 +91,33 @@ function withImageRefine(
 
 export function createGenerationTools(
 	client: NestClient,
-	deps: { fetchImpl?: typeof fetch } = {},
+	deps: { fetchImpl?: typeof fetch; onNodeStatus?: (sessionId: string, data: NodeStatusData) => void } = {},
 ): LnkpiTool[] {
 	const gen = { tier: "gen" as const };
+	/** node_status 广播（2026-10-18）：run_* 持有期起手发 generating，终态从结果正据映射。
+	 *  fail-soft：广播炸了不影响工具结果（与 onProposeOutcome 同纪律）。 */
+	const emitNodeStatus = (tc: LnkpiToolContext, data: NodeStatusData) => {
+		try {
+			deps.onNodeStatus?.(tc.sessionId, data);
+		} catch {
+			/* 观察者不得污染工具主链路 */
+		}
+	};
+	/** 结果 → 终态正据映射（保守口径，与前端 mapNodeStatus 对齐）：有 url 才 done；
+	 *  timeout / fallback_pending 不是终态（生成可能仍在跑/等确认），不下发。 */
+	const emitTerminalFromResult = (tc: LnkpiToolContext, nodeId: string, data: Record<string, unknown>) => {
+		const url = typeof data.url === "string" && data.url ? data.url : undefined;
+		if (url) {
+			emitNodeStatus(tc, { nodeId, status: "done", url });
+			return;
+		}
+		const status = String(data.status ?? "");
+		const error = typeof data.errorMessage === "string" && data.errorMessage ? data.errorMessage : undefined;
+		if (status === "error" || status === "failed" || error) {
+			emitNodeStatus(tc, { nodeId, status: "failed", error });
+		}
+		// timeout / fallback_pending / 其他：保持 generating 语义（不下发终态）
+	};
 	const runTool = (
 		name: string,
 		label: string,
@@ -117,6 +142,9 @@ export function createGenerationTools(
 			context: Context,
 		) => {
 			if (!tc.userId) throw new Error(`${name} requires userId in toolContext`);
+			// node_status：起手即 generating（回合挂住等终态，2026-10-18）——阻塞等待期
+			// 前端产物行从「待确认」翻「生成中」，SSE 心跳语义兼喂 stall watchdog 进度戳。
+			emitNodeStatus(tc, { nodeId: p.node_id, status: "generating" });
 			// P0-②：run abort 时 gate signal 触发 context.abortSignal → fetch 立即中断，
 			// 工具以 error result 收尾（用户取消的 error 事件由 SessionManager.userAborted 抑制）
 			const data = (await client.post(
@@ -124,6 +152,7 @@ export function createGenerationTools(
 				{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
 				{ signal: context?.abortSignal ?? undefined },
 			)) as { url?: string } & Record<string, unknown>;
+			emitTerminalFromResult(tc, p.node_id, data);
 			const base = withGenSignal(data);
 			// 视觉自评闭环（spec 2026-09-29 §4.2）只回流 run_image_generation；其余 run_* 形态不变
 			if (name !== "run_image_generation") return base;
@@ -226,6 +255,7 @@ export function createGenerationTools(
 				context: Context,
 			) => {
 				if (!tc.userId) throw new Error("run_audio_generation requires userId in toolContext");
+				emitNodeStatus(tc, { nodeId: p.node_id, status: "generating" });
 				// 只把调用方真的给了的字段发出去：缺省 = 沿用节点上的参数（存量语义逐字节不变）。
 				const body: Record<string, unknown> = {
 					sessionId: tc.sessionId,
@@ -248,6 +278,7 @@ export function createGenerationTools(
 				const data = (await client.post("/agent/internal/run-audio-generation", body, {
 					signal: context?.abortSignal ?? undefined,
 				})) as { url?: string } & Record<string, unknown>;
+				emitTerminalFromResult(tc, p.node_id, data);
 				return withGenSignal(data);
 			},
 		},

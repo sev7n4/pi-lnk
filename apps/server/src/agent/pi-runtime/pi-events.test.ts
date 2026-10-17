@@ -102,6 +102,24 @@ describe("extractCanvasCommands（UI_COMMAND → canvas_command 派生）", () =
 		expect(ui?.type).toBe("tool_result");
 	});
 
+	it("node_status 同名映射（2026-10-18 回合挂住等终态）：不走 pi_ 前缀，载荷白名单透传", () => {
+		const ui = mapPiEventToUiEvent({
+			type: "node_status",
+			ts: Date.now(),
+			data: { nodeId: "n1", status: "done", url: "https://x/a.png" },
+		} as never);
+		expect(ui?.type).toBe("node_status");
+		expect(ui?.data).toEqual({ nodeId: "n1", status: "done", url: "https://x/a.png" });
+
+		const gen = mapPiEventToUiEvent({
+			type: "node_status",
+			ts: Date.now(),
+			data: { nodeId: "n2", status: "generating" },
+		} as never);
+		expect(gen?.type).toBe("node_status");
+		expect(gen?.seq).toBeUndefined(); // 上游未携带 seq 时透传 undefined（toEqual 忽略语义对齐）
+	});
+
 	it("tool_call/tool_result 携带老契约 name 字段（前端读 data.name，缺失渲染为「调用 undefined」）", () => {
 		const call = mapPiEventToUiEvent({
 			type: "tool_execution_start",
