@@ -89,6 +89,50 @@ function sortedQuery(params: Record<string, string | undefined>): string {
     .join('&')
 }
 
+/**
+ * 支付宝要求「yyyy-MM-dd HH:mm:ss」且为**东八区**时间。
+ * toISOString() 是 UTC——与北京时间差 8 小时会超出容忍窗口触发
+ * isv.invalid-timestamp。这里显式 +8h。
+ */
+export function alipayTimestamp(now: Date = new Date()): string {
+  return new Date(now.getTime() + 8 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 19)
+}
+
+/**
+ * 验签网关 JSON 响应（alipay.*.response 对象内容，已 JSON 解析）。
+ * 规则与请求侧一致：除 sign/sign_type 外全字段字典序拼接；字符串值为原文
+ * （JSON 解析后已去引号），数字为十进制表示。响应不验签 = 查单补偿路径
+ * 可被伪造「已付款」欺骗入账（资损链路，零信任）。
+ */
+export function verifyResponseSign(
+  res: Record<string, unknown>,
+  sign: unknown,
+  alipayPublicKeyPem: string,
+): boolean {
+  if (typeof sign !== 'string' || !sign) return false
+  const content = Object.keys(res)
+    .filter((k) => k !== 'sign' && k !== 'sign_type')
+    .sort()
+    .map((k) => {
+      const v = res[k]
+      const s =
+        v === null || v === undefined
+          ? ''
+          : typeof v === 'object'
+            ? JSON.stringify(v)
+            : String(v)
+      return `${k}=${s}`
+    })
+    .join('&')
+  try {
+    return createVerify('RSA-SHA256')
+      .update(content, 'utf8')
+      .verify(alipayPublicKeyPem, sign, 'base64')
+  } catch {
+    return false
+  }
+}
+
 /** 分 → 元字符串（两位小数），支付宝 total_amount 口径。 */
 export function fenToYuan(amountFen: number): string {
   return (amountFen / 100).toFixed(2)
@@ -125,7 +169,7 @@ export class AlipayAdapter implements PaymentAdapter {
       charset: 'utf-8',
       format: 'JSON',
       sign_type: 'RSA2',
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      timestamp: alipayTimestamp(),
       version: '1.0',
       notify_url: this.cfg.notifyUrl,
       return_url: this.cfg.returnUrl,
@@ -168,28 +212,33 @@ export class AlipayAdapter implements PaymentAdapter {
       charset: 'utf-8',
       format: 'JSON',
       sign_type: 'RSA2',
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      timestamp: alipayTimestamp(),
       version: '1.0',
       biz_content: biz,
     }
     params.sign = this.sign(sortedQuery(params))
-    const res = await fetch(this.cfg.gateway, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(params).toString(),
-    })
-    const json = (await res.json()) as {
-      alipay_trade_query_response?: {
-        code?: string
-        trade_status?: string
-        trade_no?: string
-        out_trade_no?: string
-      }
+    let json: Record<string, unknown>
+    try {
+      const res = await fetch(this.cfg.gateway, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(params).toString(),
+        signal: AbortSignal.timeout(15000),
+      })
+      json = (await res.json()) as Record<string, unknown>
+    } catch {
+      return { paid: false } // 网络故障不当已付（宁可漏放，不可错放）
     }
     const r = json.alipay_trade_query_response
-    if (!r || r.code !== '10000') return { paid: false }
-    const paid = r.trade_status === 'TRADE_SUCCESS' || r.trade_status === 'TRADE_FINISHED'
-    return { paid, channelTradeNo: r.trade_no }
+    if (!r || typeof r !== 'object') return { paid: false }
+    const resp = r as Record<string, unknown>
+    // 响应验签：不验签的查单补偿可被伪造响应欺骗入账。
+    if (!verifyResponseSign(resp, json.sign, normalizeKey(this.cfg.alipayPublicKey, 'public'))) {
+      return { paid: false }
+    }
+    if (resp.code !== '10000') return { paid: false }
+    const paid = resp.trade_status === 'TRADE_SUCCESS' || resp.trade_status === 'TRADE_FINISHED'
+    return { paid, channelTradeNo: typeof resp.trade_no === 'string' ? resp.trade_no : undefined }
   }
 
   private sign(content: string): string {

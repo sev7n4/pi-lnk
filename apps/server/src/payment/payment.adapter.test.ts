@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { createSign, generateKeyPairSync } from 'node:crypto'
-import { AlipayAdapter, type AlipayConfig } from './payment.adapter'
+import {
+  AlipayAdapter,
+  alipayTimestamp,
+  verifyResponseSign,
+  type AlipayConfig,
+} from './payment.adapter'
 
 /**
  * RSA2 签名/验签正确性（无 DB 纯函数测试）。
@@ -124,5 +129,84 @@ describe('AlipayAdapter RSA2 验签', () => {
           returnUrl: '',
         }),
     ).toThrow()
+  })
+})
+
+describe('alipayTimestamp 东八区', () => {
+  it('UTC 15:00 → 北京时间 23:00（防 isv.invalid-timestamp）', () => {
+    const utc = new Date('2026-10-17T15:00:00.000Z')
+    expect(alipayTimestamp(utc)).toBe('2026-10-17 23:00:00')
+  })
+
+  it('跨日边界正确（UTC 16:30 → 北京次日 00:30）', () => {
+    const utc = new Date('2026-10-17T16:30:00.000Z')
+    expect(alipayTimestamp(utc)).toBe('2026-10-18 00:30:00')
+  })
+})
+
+describe('verifyResponseSign 网关响应验签', () => {
+  let appPrivateKeyPem: string
+  let alipayPublicKeyPem: string
+
+  beforeAll(() => {
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    })
+    appPrivateKeyPem = privateKey
+    alipayPublicKeyPem = publicKey
+  })
+
+  function signResponse(res: Record<string, unknown>): string {
+    const content = Object.keys(res)
+      .filter((k) => k !== 'sign' && k !== 'sign_type')
+      .sort()
+      .map((k) => {
+        const v = res[k]
+        const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+        return `${k}=${s}`
+      })
+      .join('&')
+    return createSign('RSA-SHA256').update(content, 'utf8').sign(appPrivateKeyPem, 'base64')
+  }
+
+  function paidResponse(): Record<string, unknown> {
+    return {
+      code: '10000',
+      msg: 'Success',
+      buyer_logon_id: 'buy***@sandbox.com',
+      trade_status: 'TRADE_SUCCESS',
+      out_trade_no: 'order-abc',
+      trade_no: '202610172200001234',
+      total_amount: '99.00',
+    }
+  }
+
+  it('接受合法签名的已付响应', () => {
+    const res = paidResponse()
+    const sign = signResponse(res)
+    expect(verifyResponseSign(res, sign, alipayPublicKeyPem)).toBe(true)
+  })
+
+  it('拒绝被篡改 trade_status 的响应（把未付响应伪造成已付）', () => {
+    const wait = paidResponse()
+    wait.trade_status = 'WAIT_BUYER_PAY'
+    const sign = signResponse(wait) // 支付宝对「未付」状态签名
+    const forged = paidResponse() // 攻击者把状态改成已付，签名照抄
+    expect(verifyResponseSign(forged, sign, alipayPublicKeyPem)).toBe(false)
+  })
+
+  it('拒绝缺失/非字符串 sign', () => {
+    const res = paidResponse()
+    expect(verifyResponseSign(res, undefined, alipayPublicKeyPem)).toBe(false)
+    expect(verifyResponseSign(res, '', alipayPublicKeyPem)).toBe(false)
+  })
+
+  it('数字字段按十进制参与验签（code=10000）', () => {
+    const res = paidResponse()
+    res.code = 10000 // JSON 数字形态（非字符串）也应通过
+    const sign = signResponse(res)
+    expect(verifyResponseSign(res, sign, alipayPublicKeyPem)).toBe(true)
   })
 })
