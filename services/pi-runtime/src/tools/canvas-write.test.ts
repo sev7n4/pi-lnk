@@ -683,6 +683,40 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		assert.match(text, /不要声称已完成/);
 	});
 
+	it("进度 ticker 接线：generating 等待期经 onUpdate 每拍全量快照 + checkpoint（feature ① 画布链路活性证据）", async () => {
+		const reg = new PendingToolRegistry();
+		const updates: Array<{ details: any; checkpoint: boolean }> = [];
+		const client = fakeNestClient(["generating"]);
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 2,
+			genTerminalWaitMs: 120,
+			tickerIntervalMs: 5,
+		}).filter((t) => t.name === "propose_generation");
+		// 不经由 run()（其 onUpdate 为 no-op）；直接喂 recording onUpdate
+		const result = await propose.execute!(
+			"tc1",
+			{ node_id: "n1" },
+			(partial: any, meta: any) => updates.push({ details: partial.details, checkpoint: meta?.checkpoint === true }),
+			CTX,
+			{} as never,
+			undefined as never,
+		);
+		const details = result.details as { confirmed?: boolean; generation?: { status: string } };
+		assert.equal(details.confirmed, true);
+		assert.equal(details.generation?.status, "timeout"); // 全程 generating 至 cap
+		// ticker 至少发射一拍，且每拍均为 generating 全量快照 + checkpoint
+		assert.ok(updates.length >= 1, `进度 ticker 应至少发射一拍，实际 ${updates.length}`);
+		for (const u of updates) {
+			assert.equal(u.details.generating, true);
+			assert.equal(u.checkpoint, true);
+		}
+		// 快照携带 nodeId 路由键与 elapsedSec
+		const first = updates[0].details as { nodeId?: string; elapsedSec?: number };
+		assert.equal(first.nodeId, "n1");
+		assert.ok(typeof first.elapsedSec === "number" && first.elapsedSec >= 0);
+	});
+
 	it("failed 终态：errorMessage 透传广播 failed，文案禁称已出图", async () => {
 		const reg = new PendingToolRegistry();
 		const events: Array<{ status: string; error?: string }> = [];
