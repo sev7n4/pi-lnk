@@ -1,23 +1,21 @@
 <script setup lang="ts">
 /** 移动端应用骨架 · 发现页签（2026-10-18 IA v3，整页照抄 WorkBuddy 截图3）：
- * 资料库 / 专家(置灰) / 技能(置灰) / 连接器(置灰) / 项目(=工作台列表)。
- * PR1 仅落地骨架与可行入口；专家/技能/连接器待后续开发置灰。 */
+ * 资料库 / 专家(置灰) / 技能(置灰) / 连接器(置灰) / 项目空间(置灰预留)。
+ * 2026-10-19 用户裁决：资料库 = 画布上的资产库内容（切对话页签直开资产库选择器）；
+ * 「项目」改名「项目空间」——后续用户存储资料的云空间，预留不开放，不链接主页。 */
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 
 const emit = defineEmits<{
-  /** 资料库 → 切回画布页签（资产库面板在画布侧，PR2 打开直连） */
+  /** 资料库 → 宿主切回【对话】页签并直开资产库选择器（即画布资产库内容） */
   'goto-canvas': []
 }>()
-
-const router = useRouter()
 
 const rows = [
   { key: 'assets', label: '资料库', icon: 'book', enabled: true },
   { key: 'experts', label: '专家', icon: 'experts', enabled: false },
   { key: 'skills', label: '技能', icon: 'skills', enabled: false },
   { key: 'connectors', label: '连接器', icon: 'connectors', enabled: false },
-  { key: 'projects', label: '项目', icon: 'projects', enabled: true },
+  { key: 'projects', label: '项目空间', icon: 'projects', enabled: false, hint: '即将开放' },
 ] as const
 
 const activeKey = ref<string | null>(null)
@@ -26,10 +24,6 @@ function onRow(key: (typeof rows)[number]['key']) {
   activeKey.value = key
   if (key === 'assets') {
     emit('goto-canvas')
-    return
-  }
-  if (key === 'projects') {
-    void router.push('/workflow')
   }
 }
 </script>
@@ -75,6 +69,7 @@ function onRow(key: (typeof rows)[number]['key']) {
           </svg>
         </span>
         <span class="row-label">{{ row.label }}</span>
+        <span v-if="'hint' in row && row.hint" class="row-hint">{{ row.hint }}</span>
         <svg v-if="row.enabled" class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
           <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
         </svg>
@@ -145,6 +140,11 @@ function onRow(key: (typeof rows)[number]['key']) {
 
 .row-label {
   flex: 1 1 auto;
+}
+
+.row-hint {
+  font-size: var(--lnk-text-xs, 12px);
+  color: var(--lnk-text-muted);
 }
 
 .row-chevron {

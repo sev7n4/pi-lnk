@@ -8,6 +8,8 @@ import { api } from '@/services/api'
 import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
+import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 import CreativeLauncher from '@/components/workflow/CreativeLauncher.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
@@ -20,6 +22,36 @@ import type { Session } from '@lnkpi/shared'
 const router = useRouter()
 const auth = useAuthStore()
 useSessionRedirect()
+
+/** IA v3.1（2026-10-19 用户裁决）：移动端初始化入口 =【对话】页 + 默认项目。
+ *  移动端访问主站 /workflow：有项目 → 整页进最近项目（list 按 updatedAt desc）；
+ *  无项目 → 静默新建默认空白项目再进入（1 画布，CanvasPage 挂载后 bootstrapThread
+ *  自动建首个对话）。未登录/网络失败留在主站不打断。 */
+const { isMobileLayout } = useAgentMobileLayout()
+let mobileEntryDispatched = false
+watch(
+  isMobileLayout,
+  (mobile) => {
+    if (!mobile || mobileEntryDispatched) return
+    mobileEntryDispatched = true
+    void (async () => {
+      try {
+        const res = await canvasApi.list()
+        const list = (res.data?.data ?? []) as Array<{ id: string }>
+        if (list.length) {
+          window.location.assign(`/workflow/${list[0].id}`)
+          return
+        }
+        const created = await canvasApi.create()
+        const createdId = (created.data?.data as { id?: string } | undefined)?.id
+        if (createdId) window.location.assign(`/workflow/${createdId}`)
+      } catch {
+        /* 留在主站 */
+      }
+    })()
+  },
+  { immediate: true },
+)
 
 const prompt = ref('')
 const works = ref<Work[]>([])

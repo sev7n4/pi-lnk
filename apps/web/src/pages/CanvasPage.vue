@@ -80,6 +80,7 @@ import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
 import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
 import ProfilePane from '@/components/mobile/ProfilePane.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
+import MobileCanvasTopControls from '@/components/canvas/MobileCanvasTopControls.vue'
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
 import ByokFallbackConfirmDialog from '@/components/canvas/ByokFallbackConfirmDialog.vue'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
@@ -4761,6 +4762,16 @@ function onMobileTabChange(tab: MobileAppTab) {
     mobileCanvasImm.value = false
   }
 }
+
+/** IA v3.1（2026-10-19 用户裁决）：发现页「资料库」= 画布上的资产库内容——
+ *  切回【对话】页签（composer 所在）后直开资产库选择器；选择器挂在 composer
+ *  面板内，先确保面板展开。 */
+async function openAssetLibraryFromDiscover() {
+  onMobileTabChange('chat')
+  await nextTick()
+  agentRailRef.value?.openPanel()
+  agentRailRef.value?.openAssetLibrary()
+}
 /** 移动端画布视图 + studio dock 展开（选中了可编辑节点）：composer 让位——SSE 对话流收起，
  *  dock 抬高到贴底容器之上（--lnk-agent-dock-h，见 AgentSideRail / DockStudioToolbar）。
  *  提议生成卡片点定位 → 自动拾取节点 → dock 展开供检查/修改提示词，就是这条链路的目标态。 */
@@ -5119,13 +5130,23 @@ onUnmounted(() => {
             :target-y="connectPicker.y"
           />
 
-          <Panel position="bottom-left" class="canvas-panel-bottom-left">
+          <!-- PC 左下视口工具条：移动端隐藏（由 MobileCanvasTopControls 顶部胶囊接管） -->
+          <Panel v-if="!isMobileLayout" position="bottom-left" class="canvas-panel-bottom-left">
             <CanvasBottomLeftControls
               :settings="viewportSettings"
               :nodes="minimapNodeList"
               @update:settings="patchViewportSettings"
               @cycle-minimap="cycleMinimap"
             />
+          </Panel>
+
+          <!-- IA v3.1：移动端画布页签顶部胶囊——小地图 + 缩放 + 适应（顶栏正下方） -->
+          <Panel
+            v-if="isMobileLayout && mobileAppTab === 'canvas'"
+            position="top-right"
+            class="canvas-panel-mobile-top"
+          >
+            <MobileCanvasTopControls />
           </Panel>
         </VueFlow>
         <PlayCanvasView v-else class="h-full" :nodes="playCanvasNodes" />
@@ -5306,8 +5327,7 @@ onUnmounted(() => {
          fixed 定位组件，挂载在容器外避免被画布 transform 影响避让计算。 -->
     <MobileTopBar
       v-if="isMobileLayout"
-      :title="sessionTitle"
-      @update:title="sessionTitle = $event"
+      :tab="mobileAppTab"
       @open-drawer="agentRailRef?.openSessionDrawer()"
       @save="saveCanvas"
       @storyboard="showStoryboard = true"
@@ -5317,7 +5337,7 @@ onUnmounted(() => {
     />
     <DiscoverPane
       v-if="isMobileLayout && mobileAppTab === 'discover'"
-      @goto-canvas="onMobileTabChange('canvas')"
+      @goto-canvas="openAssetLibraryFromDiscover"
     />
     <ProfilePane
       v-if="isMobileLayout && mobileAppTab === 'mine'"
@@ -5386,6 +5406,14 @@ onUnmounted(() => {
   margin: 0 0 12px 8px;
   width: auto !important;
   max-width: none !important;
+}
+
+/* 移动端顶部视口胶囊：顶栏（z-85 悬浮全屏）正下方让位 */
+:deep(.canvas-panel-mobile-top) {
+  margin: calc(var(--lnk-topbar-h, 44px) + 10px) 10px 0 0;
+  width: auto !important;
+  max-width: none !important;
+  z-index: 60;
 }
 
 :deep(.vue-flow__selection),
