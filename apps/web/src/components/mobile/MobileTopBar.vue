@@ -110,9 +110,10 @@ onUnmounted(() => {
   height: calc(44px + env(safe-area-inset-top, 0px));
   padding: env(safe-area-inset-top, 0px) 10px 0;
   background: var(--lnk-surface-overlay);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 0.5px solid var(--lnk-border-subtle);
+  transform: translateZ(0);
 }
 
 .bar-btn {
@@ -125,12 +126,14 @@ onUnmounted(() => {
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: var(--lnk-text, #1c1c22);
+  color: var(--lnk-text-primary);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .bar-btn:active {
-  background: color-mix(in srgb, var(--lnk-text, #1c1c22) 8%, transparent);
+  background: color-mix(in srgb, var(--lnk-text-primary) 8%, transparent);
 }
 
 .bar-btn svg {
@@ -143,7 +146,7 @@ onUnmounted(() => {
   min-width: 0;
   border: none;
   background: transparent;
-  color: var(--lnk-text, #1c1c22);
+  color: var(--lnk-text-primary);
   font-size: 14px;
   font-weight: 500;
   text-align: center;
@@ -158,8 +161,8 @@ onUnmounted(() => {
   min-width: 140px;
   padding: 4px 0;
   border-radius: 12px;
-  background: var(--lnk-surface-raised, #fff);
-  border: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  background: var(--lnk-surface-raised);
+  border: 0.5px solid var(--lnk-border-subtle);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
@@ -169,13 +172,13 @@ onUnmounted(() => {
   padding: 8px 14px;
   border: none;
   background: transparent;
-  color: var(--lnk-text, #1c1c22);
+  color: var(--lnk-text-primary);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
 }
 
 .bar-menu-item:active {
-  background: color-mix(in srgb, var(--lnk-text, #1c1c22) 8%, transparent);
+  background: color-mix(in srgb, var(--lnk-text-primary) 8%, transparent);
 }
 </style>

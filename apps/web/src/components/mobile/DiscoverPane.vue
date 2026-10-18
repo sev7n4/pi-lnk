@@ -104,13 +104,24 @@ function onRow(key: (typeof rows)[number]['key']) {
   align-items: center;
   gap: 12px;
   padding: 15px 14px;
-  border: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  border: 0.5px solid var(--lnk-border-subtle);
   border-radius: 14px;
-  background: var(--lnk-surface-raised, #fff);
-  color: var(--lnk-text, #1c1c22);
-  font-size: 14px;
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-base, 14px);
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--lnk-duration-fast, 120ms) var(--lnk-ease-standard, ease);
+}
+
+.row-item:active {
+  background: var(--lnk-accent-subtle);
+}
+
+.row-item.is-disabled:active {
+  background: var(--lnk-surface-raised);
 }
 
 .row-item.is-disabled {
