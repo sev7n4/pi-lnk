@@ -4524,7 +4524,7 @@ defineExpose({
 .agent-panel-mobile-dock.is-conversation-view.agent-panel-shell {
   top: 0;
   padding-top: env(safe-area-inset-top, 0px);
-  background: var(--neo-bg);
+  background: var(--lnk-surface-canvas);
   pointer-events: auto;
 }
 
