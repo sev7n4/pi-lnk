@@ -3,7 +3,8 @@ import { createSign, createVerify, generateKeyPairSync } from 'node:crypto'
 import {
   AlipayAdapter,
   alipayTimestamp,
-  verifyResponseSign,
+  extractRawResponseNode,
+  verifyResponseSignRaw,
   type AlipayConfig,
 } from './payment.adapter'
 
@@ -240,14 +241,11 @@ describe('createQrCharge 当面扫码预下单（alipay.trade.precreate）', () 
     vi.unstubAllGlobals()
   })
 
-  /// 用「支付宝私钥」签 precreate 响应（口径同 verifyResponseSign）。
+  /// 用「支付宝私钥」签 precreate 响应——**原始节点文本**口径（官方）。
   function signPrecreateResponse(res: Record<string, unknown>): string {
-    const content = Object.keys(res)
-      .filter((k) => k !== 'sign' && k !== 'sign_type')
-      .sort()
-      .map((k) => `${k}=${res[k]}`)
-      .join('&')
-    return createSign('RSA-SHA256').update(content, 'utf8').sign(appPrivateKeyPem, 'base64')
+    return createSign('RSA-SHA256')
+      .update(JSON.stringify(res), 'utf8')
+      .sign(appPrivateKeyPem, 'base64')
   }
 
   function mockFetchWith(body: Record<string, unknown>) {
@@ -300,7 +298,7 @@ describe('createQrCharge 当面扫码预下单（alipay.trade.precreate）', () 
   })
 })
 
-describe('verifyResponseSign 网关响应验签', () => {
+describe('网关响应验签（原始节点文本口径）', () => {
   let appPrivateKeyPem: string
   let alipayPublicKeyPem: string
 
@@ -314,17 +312,8 @@ describe('verifyResponseSign 网关响应验签', () => {
     alipayPublicKeyPem = publicKey
   })
 
-  function signResponse(res: Record<string, unknown>): string {
-    const content = Object.keys(res)
-      .filter((k) => k !== 'sign' && k !== 'sign_type')
-      .sort()
-      .map((k) => {
-        const v = res[k]
-        const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
-        return `${k}=${s}`
-      })
-      .join('&')
-    return createSign('RSA-SHA256').update(content, 'utf8').sign(appPrivateKeyPem, 'base64')
+  function signRaw(rawNode: string): string {
+    return createSign('RSA-SHA256').update(rawNode, 'utf8').sign(appPrivateKeyPem, 'base64')
   }
 
   function paidResponse(): Record<string, unknown> {
@@ -339,30 +328,42 @@ describe('verifyResponseSign 网关响应验签', () => {
     }
   }
 
-  it('接受合法签名的已付响应', () => {
-    const res = paidResponse()
-    const sign = signResponse(res)
-    expect(verifyResponseSign(res, sign, alipayPublicKeyPem)).toBe(true)
+  function wrapRaw(res: Record<string, unknown>): string {
+    // 模拟支付宝响应：response 节点原样嵌入（键序即对象键序，不做重排）
+    return `{"alipay_trade_query_response":${JSON.stringify(res)},"sign":"SIGN_HERE"}`
+  }
+
+  it('extractRawResponseNode：从原始报文截取 response 节点原文（含嵌套与转义）', () => {
+    const raw = `{"alipay_trade_query_response":{"a":"x\\"y{z}","b":{"n":1}},"sign":"s"}`
+    const node = extractRawResponseNode(raw, 'alipay_trade_query_response')
+    expect(node).toBe('{"a":"x\\"y{z}","b":{"n":1}}')
+    expect(extractRawResponseNode('{"other":{}}', 'alipay_trade_query_response')).toBeNull()
   })
 
-  it('拒绝被篡改 trade_status 的响应（把未付响应伪造成已付）', () => {
-    const wait = paidResponse()
-    wait.trade_status = 'WAIT_BUYER_PAY'
-    const sign = signResponse(wait) // 支付宝对「未付」状态签名
-    const forged = paidResponse() // 攻击者把状态改成已付，签名照抄
-    expect(verifyResponseSign(forged, sign, alipayPublicKeyPem)).toBe(false)
+  it('接受合法签名的已付响应（原文口径，键序不重排）', () => {
+    const raw = wrapRaw(paidResponse())
+    const node = extractRawResponseNode(raw, 'alipay_trade_query_response')!
+    expect(verifyResponseSignRaw(node, signRaw(node), alipayPublicKeyPem)).toBe(true)
+  })
+
+  it('拒绝被篡改的响应原文（签名对应原文，改动后必败）', () => {
+    const res = paidResponse()
+    const node = JSON.stringify(res)
+    const tampered = JSON.stringify({ ...res, total_amount: '0.01' })
+    expect(node).not.toBe(tampered)
+    expect(verifyResponseSignRaw(tampered, signRaw(node), alipayPublicKeyPem)).toBe(false)
   })
 
   it('拒绝缺失/非字符串 sign', () => {
-    const res = paidResponse()
-    expect(verifyResponseSign(res, undefined, alipayPublicKeyPem)).toBe(false)
-    expect(verifyResponseSign(res, '', alipayPublicKeyPem)).toBe(false)
+    const node = extractRawResponseNode(wrapRaw(paidResponse()), 'alipay_trade_query_response')!
+    expect(verifyResponseSignRaw(node, undefined, alipayPublicKeyPem)).toBe(false)
+    expect(verifyResponseSignRaw(node, '', alipayPublicKeyPem)).toBe(false)
   })
 
-  it('数字字段按十进制参与验签（code=10000）', () => {
-    const res = paidResponse()
-    res.code = 10000 // JSON 数字形态（非字符串）也应通过
-    const sign = signResponse(res)
-    expect(verifyResponseSign(res, sign, alipayPublicKeyPem)).toBe(true)
+  it('中文字段按原文参与验签（JSON 内联 unicode 不重编码）', () => {
+    const raw = `{"alipay_trade_query_response":{"code":"10000","subject":"lnk π 专业版"},"sign":"S"}`
+    const node = extractRawResponseNode(raw, 'alipay_trade_query_response')!
+    expect(node).toBe('{"code":"10000","subject":"lnk π 专业版"}')
+    expect(verifyResponseSignRaw(node, signRaw(node), alipayPublicKeyPem)).toBe(true)
   })
 })

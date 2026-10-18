@@ -121,34 +121,56 @@ export function alipayTimestamp(now: Date = new Date()): string {
 }
 
 /**
- * 验签网关 JSON 响应（alipay.*.response 对象内容，已 JSON 解析）。
- * 口径：除 sign 外全字段字典序拼接（响应体无 sign_type 字段，排除与否等价）；
- * 字符串值为原文（JSON 解析后已去引号），数字为十进制表示。响应不验签 =
- * 查单补偿路径可被伪造「已付款」欺骗入账（资损链路，零信任）。
+ * 从网关原始响应文本中截取 response 节点的**原文**子串（官方验签口径）。
+ * ⚠️ 官方规则：sign 是对「响应报文中 response 节点的 JSON 原文字符串」签的——
+ * 重新序列化（键序/空格/unicode 转义）任何一点不一致都会验签必败。
+ * 2026-10-18 生产实证：precreate 响应验签失败即此坑（本地签/验同用自造
+ * 序列化而自洽，真实支付宝 JSON 才暴露）。
+ * 实现：定位 `<nodeName>":` 后第一个 `{`，做括号配对截取（字符串字面量内的
+ * 引号/转义已由 JSON 语法保证，只统计不在字符串内的花括号）。
  */
-export function verifyResponseSign(
-  res: Record<string, unknown>,
+export function extractRawResponseNode(raw: string, nodeName: string): string | null {
+  const keyIdx = raw.indexOf(`"${nodeName}"`)
+  if (keyIdx < 0) return null
+  const colonIdx = raw.indexOf(':', keyIdx + nodeName.length + 2)
+  if (colonIdx < 0) return null
+  let i = colonIdx + 1
+  while (i < raw.length && raw[i] !== '{') i++
+  if (i >= raw.length) return null
+  let depth = 0
+  let inStr = false
+  let escaped = false
+  for (; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inStr) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') inStr = true
+    else if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return raw.slice(raw.indexOf('{', colonIdx + 1), i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * 验签网关 JSON 响应——**原始节点文本**口径（官方）。
+ * 响应不验签 = 查单/预下单路径可被伪造响应欺骗（资损链路，零信任）。
+ */
+export function verifyResponseSignRaw(
+  rawNodeText: string,
   sign: unknown,
   alipayPublicKeyPem: string,
 ): boolean {
   if (typeof sign !== 'string' || !sign) return false
-  const content = Object.keys(res)
-    .filter((k) => k !== 'sign' && k !== 'sign_type')
-    .sort()
-    .map((k) => {
-      const v = res[k]
-      const s =
-        v === null || v === undefined
-          ? ''
-          : typeof v === 'object'
-            ? JSON.stringify(v)
-            : String(v)
-      return `${k}=${s}`
-    })
-    .join('&')
   try {
     return createVerify('RSA-SHA256')
-      .update(content, 'utf8')
+      .update(rawNodeText, 'utf8')
       .verify(alipayPublicKeyPem, sign, 'base64')
   } catch {
     return false
@@ -227,7 +249,7 @@ export class AlipayAdapter implements PaymentAdapter {
     }
     params.sign = this.sign(sortedQuery(params, false))
 
-    let json: Record<string, unknown>
+    let rawText: string
     try {
       const res = await fetch(this.cfg.gateway, {
         method: 'POST',
@@ -235,15 +257,25 @@ export class AlipayAdapter implements PaymentAdapter {
         body: new URLSearchParams(params).toString(),
         signal: AbortSignal.timeout(15000),
       })
-      json = (await res.json()) as Record<string, unknown>
+      rawText = await res.text()
     } catch (err) {
       throw new Error(`precreate 网关请求失败: ${(err as Error).message}`)
+    }
+    let json: Record<string, unknown>
+    try {
+      json = JSON.parse(rawText) as Record<string, unknown>
+    } catch {
+      throw new Error('precreate 响应非法 JSON')
     }
     const r = json.alipay_trade_precreate_response
     if (!r || typeof r !== 'object') throw new Error('precreate 响应缺失业务体')
     const resp = r as Record<string, unknown>
-    // 响应验签：与 queryTrade 同一口径——不验签的预下单响应不可信。
-    if (!verifyResponseSign(resp, json.sign, normalizeKey(this.cfg.alipayPublicKey, 'public'))) {
+    // 响应验签（原始节点文本口径，见 extractRawResponseNode）：不验签的预下单响应不可信。
+    const rawNode = extractRawResponseNode(rawText, 'alipay_trade_precreate_response')
+    if (
+      !rawNode ||
+      !verifyResponseSignRaw(rawNode, json.sign, normalizeKey(this.cfg.alipayPublicKey, 'public'))
+    ) {
       throw new Error('precreate 响应验签失败')
     }
     if (resp.code !== '10000') {
@@ -288,7 +320,7 @@ export class AlipayAdapter implements PaymentAdapter {
       biz_content: biz,
     }
     params.sign = this.sign(sortedQuery(params, false))
-    let json: Record<string, unknown>
+    let rawText: string
     try {
       const res = await fetch(this.cfg.gateway, {
         method: 'POST',
@@ -296,15 +328,25 @@ export class AlipayAdapter implements PaymentAdapter {
         body: new URLSearchParams(params).toString(),
         signal: AbortSignal.timeout(15000),
       })
-      json = (await res.json()) as Record<string, unknown>
+      rawText = await res.text()
     } catch {
       return { paid: false } // 网络故障不当已付（宁可漏放，不可错放）
+    }
+    let json: Record<string, unknown>
+    try {
+      json = JSON.parse(rawText) as Record<string, unknown>
+    } catch {
+      return { paid: false }
     }
     const r = json.alipay_trade_query_response
     if (!r || typeof r !== 'object') return { paid: false }
     const resp = r as Record<string, unknown>
-    // 响应验签：不验签的查单补偿可被伪造响应欺骗入账。
-    if (!verifyResponseSign(resp, json.sign, normalizeKey(this.cfg.alipayPublicKey, 'public'))) {
+    // 响应验签（原始节点文本口径）：不验签的查单补偿可被伪造响应欺骗入账。
+    const rawNode = extractRawResponseNode(rawText, 'alipay_trade_query_response')
+    if (
+      !rawNode ||
+      !verifyResponseSignRaw(rawNode, json.sign, normalizeKey(this.cfg.alipayPublicKey, 'public'))
+    ) {
       return { paid: false }
     }
     if (resp.code !== '10000') return { paid: false }
