@@ -66,8 +66,8 @@ describe('mapReasonToPointFields', () => {
     })
   })
 
-  it('maps 升级 专业版 to grant/other', () => {
-    expect(mapReasonToPointFields('升级 专业版', 5000)).toEqual({
+  it('maps 升级 标准版 to grant/other', () => {
+    expect(mapReasonToPointFields('升级 标准版', 5000)).toEqual({
       kind: 'grant',
       category: 'other',
       status: null,

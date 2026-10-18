@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import { BRAND_LOGO_URL } from '@/constants/brand'
+import { membershipLabel as membershipLabelFn } from '@/services/users-api'
 
 const emit = defineEmits<{
   'open-membership': []
@@ -18,10 +19,7 @@ const router = useRouter()
 
 const nickname = computed(() => auth.user?.nickname || '未登录')
 
-const membershipLabel = computed(() => {
-  const m = auth.user?.membership
-  return m === 'pro' ? '专业版' : m === 'studio' ? '工作室版' : '免费版'
-})
+const membershipLabel = computed(() => membershipLabelFn(auth.user?.membership))
 
 function backToWorkbench() {
   void router.push('/workflow')

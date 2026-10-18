@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { paymentApi, type TopupOptions, type TopupTier } from '@/services/payment-api'
-import { membershipApi } from '@/services/users-api'
+import { membershipApi, membershipLabel as membershipLabelFn } from '@/services/users-api'
 import { useAuthStore } from '@/stores/auth'
 import QrPayPanel from './QrPayPanel.vue'
 
@@ -45,9 +45,7 @@ const TIER_TAGS: Record<number, string> = {
   10000: '重度使用',
 }
 
-const membershipLabel = computed(() =>
-  membership.value === 'pro' ? '专业版' : membership.value === 'studio' ? '工作室版' : '免费版',
-)
+const membershipLabel = computed(() => membershipLabelFn(membership.value))
 
 /** 自定义金额（元）→ 分；非法输入返回 null。 */
 const customFen = computed<number | null>(() => {

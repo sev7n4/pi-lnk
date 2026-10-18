@@ -109,7 +109,7 @@ describe('AlipayAdapter RSA2 验签', () => {
     const { payUrl } = await adapter.createCharge({
       orderId: 'order-xyz',
       amountFen: 9900,
-      subject: 'lnk π 专业版',
+      subject: 'lnk π 标准版',
     })
     const url = new URL(payUrl)
     expect(url.origin + url.pathname).toBe('https://openapi.alipaydev.com/gateway.do')

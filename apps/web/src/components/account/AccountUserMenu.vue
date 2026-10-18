@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { BRAND_LOGO_URL } from '@/constants/brand'
+import { membershipLabel as membershipLabelOf } from '@/services/users-api'
 
 const { compact = false } = defineProps<{
   compact?: boolean
@@ -39,8 +40,7 @@ function logout() {
   auth.logout()
 }
 
-const membershipLabel = (value?: string) =>
-  value === 'pro' ? '专业版' : value === 'studio' ? '工作室版' : '免费版'
+const membershipLabel = (value?: string) => membershipLabelOf(value)
 </script>
 
 <template>

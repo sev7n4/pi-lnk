@@ -71,10 +71,16 @@ export interface PointsSummaryDto {
   insights: PointsInsights
 }
 
+/// 方案丙（2026-10-18）：个人四档纯积分模型。
+/// 四档共享同一套创作能力，仅 premium/flagship 额外含「优先队列」软权益。
+/// points = 基础(basic) + 赠送(bonus) 的合计到账积分（grantPaidPlanTx 按 points 发放）。
+/// free 为默认档（不可购买）；experience/standard/premium/flagship 为可购买档。
 const PLANS = [
-  { id: 'free', name: '免费版', points: 1000, price: 0, features: ['每日 100 积分', '基础模型'] },
-  { id: 'pro', name: '专业版', points: 5000, price: 99, features: ['每日 500 积分', '高级模型', '优先队列'] },
-  { id: 'studio', name: '工作室版', points: 20000, price: 299, features: ['无限画布', '全模型', '团队协作'] },
+  { id: 'free', name: '免费版', points: 1000, price: 0, features: ['每日 100 积分'] },
+  { id: 'experience', name: '体验版', price: 29, points: 3000, basic: 2000, bonus: 1000, features: ['每日 100 积分'] },
+  { id: 'standard', name: '标准版', price: 99, points: 11000, basic: 5000, bonus: 6000, features: ['每日 100 积分'] },
+  { id: 'premium', name: '高级版', price: 199, points: 25000, basic: 10000, bonus: 15000, features: ['每日 100 积分', '优先队列'], recommended: true },
+  { id: 'flagship', name: '旗舰版', price: 499, points: 70000, basic: 25000, bonus: 45000, features: ['每日 100 积分', '优先队列'] },
 ]
 
 /**
