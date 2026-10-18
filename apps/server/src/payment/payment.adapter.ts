@@ -185,7 +185,7 @@ export function fenToYuan(amountFen: number): string {
 /**
  * 网关 POST 公共头。⚠️ 必须显式带 charset=UTF-8：
  * 2026-10-18 生产实证——网关按 **Content-Type 的 charset**（而非请求里的
- * charset 参数）解码 POST 体；不带时 UTF-8 中文（如 subject「专业版」）被
+ * charset 参数）解码 POST 体；不带时 UTF-8 中文（如 subject「标准版」）被
  * 按 GBK 解码 → 签名内容错乱 → isv.invalid-signature（纯 ASCII 请求不受
  * 影响所以单测/首探全绿，中文订单才暴露）。
  */

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { Work } from '@lnkpi/shared'
-import { usersApi } from '@/services/users-api'
+import { usersApi, membershipLabel } from '@/services/users-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 
 const route = useRoute()
@@ -63,7 +63,7 @@ function viewShare(workId: string) {
           <h1 class="text-2xl font-semibold">{{ profile.user.nickname }}</h1>
           <p class="mt-1 text-sm text-fg-3">
             {{ profile.user.workCount }} 作品 ·
-            {{ profile.user.membership === 'pro' ? '专业版' : profile.user.membership === 'studio' ? '工作室版' : '免费版' }}
+            {{ membershipLabel(profile.user.membership) }}
           </p>
         </div>
       </header>

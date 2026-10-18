@@ -7,7 +7,7 @@ import UsageHeatmap from '@/components/usage/UsageHeatmap.vue'
 import UsageOverviewCards from '@/components/usage/UsageOverviewCards.vue'
 import UsageTrend from '@/components/usage/UsageTrend.vue'
 import { useAuthStore } from '@/stores/auth'
-import { membershipApi } from '@/services/users-api'
+import { membershipApi, membershipLabel as planMembershipLabel } from '@/services/users-api'
 import { api } from '@/services/api'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { BRAND_LOGO_URL } from '@/constants/brand'
@@ -69,12 +69,7 @@ function bumpAllDaysFetchGeneration() {
   return allDaysFetchGeneration
 }
 
-const membershipLabel = computed(() => {
-  const m = profile.value?.membership
-  if (m === 'pro') return '专业版'
-  if (m === 'studio') return '工作室版'
-  return '免费版'
-})
+const membershipLabel = computed(() => planMembershipLabel(profile.value?.membership))
 
 const isFreeMembership = computed(() => !profile.value?.membership || profile.value.membership === 'free')
 

@@ -96,9 +96,9 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     })
   }
 
-  it('createOrder：创建 PENDING 订单并产出收银台 URL（pro = 9900 分）', async () => {
+  it('createOrder：创建 PENDING 订单并产出收银台 URL（standard = 9900 分）', async () => {
     await seedUser('u-pay-1')
-    const result = await service.createOrder('u-pay-1', 'pro')
+    const result = await service.createOrder('u-pay-1', 'standard')
 
     expect(result.orderId).toBeTruthy()
     expect(result.amountFen).toBe(9900)
@@ -113,7 +113,7 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
   it('createOrder channel=qrcode：返回二维码串且不走收银台路径', async () => {
     await seedUser('u-pay-qr')
     fake.nextQrCode = 'https://qr.alipay.com/bax000000000001'
-    const result = await service.createOrder('u-pay-qr', 'pro', 'qrcode')
+    const result = await service.createOrder('u-pay-qr', 'standard', 'qrcode')
 
     expect(result.qrCode).toBe('https://qr.alipay.com/bax000000000001')
     expect(result.amountFen).toBe(9900)
@@ -128,7 +128,7 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
   it('createOrder channel=qrcode 且渠道拒绝 → 响亮失败（订单不落库成功假象）', async () => {
     await seedUser('u-pay-qr-fail')
     fake.nextQrCode = null // 未编排 = precreate 抛错
-    await expect(service.createOrder('u-pay-qr-fail', 'pro', 'qrcode')).rejects.toThrow()
+    await expect(service.createOrder('u-pay-qr-fail', 'standard', 'qrcode')).rejects.toThrow()
     // 订单已创建但无凭据；PENDING 未付——不存在「已付」假象
     const orders = await prisma.order.findMany({ where: { userId: 'u-pay-qr-fail' } })
     expect(orders.every((o) => o.status === 'PENDING')).toBe(true)
@@ -136,7 +136,7 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
 
   it('回调验签通过且金额匹配 → 入账发分（purchased 池 + orderId）', async () => {
     await seedUser('u-pay-2')
-    const { orderId } = await service.createOrder('u-pay-2', 'pro')
+    const { orderId } = await service.createOrder('u-pay-2', 'standard')
     fake.nextVerify = {
       orderId,
       channelTradeNo: '202610172200001234',
@@ -152,11 +152,11 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     expect(order?.paidAt).toBeTruthy()
 
     const user = await prisma.user.findUnique({ where: { id: 'u-pay-2' } })
-    expect(user?.points).toBe(6000) // 1000 + 5000
-    expect(user?.membership).toBe('pro')
+    expect(user?.points).toBe(12000) // 1000 + 11000
+    expect(user?.membership).toBe('standard')
 
     const tx = await prisma.pointTransaction.findFirst({ where: { orderId } })
-    expect(tx).toMatchObject({ pool: 'purchased', amount: 5000, kind: 'grant', orderId })
+    expect(tx).toMatchObject({ pool: 'purchased', amount: 11000, kind: 'grant', orderId })
 
     const payment = await prisma.payment.findUnique({ where: { orderId } })
     expect(payment?.status).toBe('SUCCESS')
@@ -165,7 +165,7 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
 
   it('重复回调 → CAS 幂等，不重复发分', async () => {
     await seedUser('u-pay-3')
-    const { orderId } = await service.createOrder('u-pay-3', 'pro')
+    const { orderId } = await service.createOrder('u-pay-3', 'standard')
     fake.nextVerify = { orderId, channelTradeNo: 'tn-1', paid: true, amountFen: 9900 }
 
     expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('success')
@@ -174,14 +174,14 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('success')
 
     const user = await prisma.user.findUnique({ where: { id: 'u-pay-3' } })
-    expect(user?.points).toBe(6000) // 仍只发一次
+    expect(user?.points).toBe(12000) // 仍只发一次
     const txs = await prisma.pointTransaction.findMany({ where: { orderId } })
     expect(txs).toHaveLength(1)
   })
 
   it('验签失败（伪造通知）→ fail 且零入账', async () => {
     await seedUser('u-pay-4')
-    const { orderId } = await service.createOrder('u-pay-4', 'pro')
+    const { orderId } = await service.createOrder('u-pay-4', 'standard')
     fake.nextVerify = null // 验签不通过
 
     expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('fail')
@@ -193,7 +193,7 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
 
   it('回调金额与订单金额不符 → fail 且零入账（防篡改）', async () => {
     await seedUser('u-pay-5')
-    const { orderId } = await service.createOrder('u-pay-5', 'studio') // 29900 分
+    const { orderId } = await service.createOrder('u-pay-5', 'flagship') // 49900 分
     fake.nextVerify = { orderId, channelTradeNo: 'tn-2', paid: true, amountFen: 1 } // 1 分
 
     expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('fail')
@@ -210,7 +210,7 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
 
   it('PENDING 订单查询触发主动查单补偿 → 渠道已付则同路径入账', async () => {
     await seedUser('u-pay-6')
-    const { orderId } = await service.createOrder('u-pay-6', 'pro')
+    const { orderId } = await service.createOrder('u-pay-6', 'standard')
     fake.nextQueryPaid = true
 
     const dto = await service.getOrderForUser('u-pay-6', orderId)
@@ -218,12 +218,12 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     expect(fake.queryTradeCalls).toContain(orderId)
 
     const user = await prisma.user.findUnique({ where: { id: 'u-pay-6' } })
-    expect(user?.points).toBe(6000)
+    expect(user?.points).toBe(12000)
   })
 
   it('查单补偿后再来回调 → 不重复发分（双路径共享 CAS）', async () => {
     await seedUser('u-pay-7')
-    const { orderId } = await service.createOrder('u-pay-7', 'pro')
+    const { orderId } = await service.createOrder('u-pay-7', 'standard')
     fake.nextQueryPaid = true
     await service.getOrderForUser('u-pay-7', orderId) // 查单入账
 
@@ -231,26 +231,26 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('success')
 
     const user = await prisma.user.findUnique({ where: { id: 'u-pay-7' } })
-    expect(user?.points).toBe(6000)
+    expect(user?.points).toBe(12000)
     const txs = await prisma.pointTransaction.findMany({ where: { orderId } })
     expect(txs).toHaveLength(1)
   })
 
   it('upgrade：未支付订单拒绝；已支付订单幂等确认不重复发分', async () => {
     await seedUser('u-pay-8')
-    const { orderId } = await service.createOrder('u-pay-8', 'pro')
+    const { orderId } = await service.createOrder('u-pay-8', 'standard')
 
     // 未支付 → 拒绝
     await expect(service.getOrderForUser('u-pay-8', orderId)).resolves.toMatchObject({ status: 'PENDING' })
-    await expect(membership.upgrade('u-pay-8', 'pro', orderId)).rejects.toThrow(/支付订单未完成/)
+    await expect(membership.upgrade('u-pay-8', 'standard', orderId)).rejects.toThrow(/支付订单未完成/)
 
     // 入账（回调）
     fake.nextVerify = { orderId, channelTradeNo: 'tn-8', paid: true, amountFen: 9900 }
     await service.handleAlipayCallback({ out_trade_no: orderId })
 
     // 兜底确认 → 幂等（已入账守卫）
-    const result = await membership.upgrade('u-pay-8', 'pro', orderId)
-    expect(result.points).toBe(6000)
+    const result = await membership.upgrade('u-pay-8', 'standard', orderId)
+    expect(result.points).toBe(12000)
     const txs = await prisma.pointTransaction.findMany({ where: { orderId } })
     expect(txs).toHaveLength(1)
   })
@@ -258,12 +258,12 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
   it('upgrade：他人订单 / 缺失订单 / 套餐不匹配均拒绝', async () => {
     await seedUser('u-pay-9')
     await seedUser('u-attacker')
-    const { orderId } = await service.createOrder('u-pay-9', 'pro')
+    const { orderId } = await service.createOrder('u-pay-9', 'standard')
     fake.nextVerify = { orderId, channelTradeNo: 'tn-9', paid: true, amountFen: 9900 }
     await service.handleAlipayCallback({ out_trade_no: orderId })
 
-    await expect(membership.upgrade('u-attacker', 'pro', orderId)).rejects.toThrow(/订单不存在/)
-    await expect(membership.upgrade('u-pay-9', 'studio', orderId)).rejects.toThrow(/订单与套餐不匹配/)
+    await expect(membership.upgrade('u-attacker', 'standard', orderId)).rejects.toThrow(/订单不存在/)
+    await expect(membership.upgrade('u-pay-9', 'flagship', orderId)).rejects.toThrow(/订单与套餐不匹配/)
     const attacker = await prisma.user.findUnique({ where: { id: 'u-attacker' } })
     expect(attacker?.points).toBe(1000)
     expect(attacker?.membership).toBe('free')
@@ -272,13 +272,13 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
   it('getOrderForUser：他人订单拒绝（越权防护）', async () => {
     await seedUser('u-pay-10')
     await seedUser('u-other')
-    const { orderId } = await service.createOrder('u-pay-10', 'pro')
+    const { orderId } = await service.createOrder('u-pay-10', 'standard')
     await expect(service.getOrderForUser('u-other', orderId)).rejects.toThrow(/订单不存在/)
   })
 
   it('未付款类通知（WAIT_BUYER_PAY）→ success 但零入账', async () => {
     await seedUser('u-pay-11')
-    const { orderId } = await service.createOrder('u-pay-11', 'pro')
+    const { orderId } = await service.createOrder('u-pay-11', 'standard')
     fake.nextVerify = { orderId, channelTradeNo: 'tn-11', paid: false, amountFen: 9900 }
 
     expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('success')

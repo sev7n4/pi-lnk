@@ -45,7 +45,7 @@ export const paymentApi = {
   /** 创建积分充值订单（amountFen 单位分，¥5–¥10,000）。 */
   createTopup: (amountFen: number, channel: PayChannel = 'qrcode') =>
     api.post<{ data: PayOrderResult }>('/payment/topup', { amountFen, channel }),
-  /** 创建套餐订阅订单（plan: pro | studio）。 */
+  /** 创建套餐订阅订单（plan: experience | standard | premium | flagship）。 */
   createSubscriptionOrder: (plan: string, channel: PayChannel = 'qrcode') =>
     api.post<{ data: PayOrderResult }>('/payment/order', { plan, channel }),
   /** 查询订单状态（服务端对 PENDING 订单自动做渠道查单补偿）。 */

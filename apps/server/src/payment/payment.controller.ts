@@ -19,7 +19,7 @@ export class PaymentController {
    * 创建支付订单（需登录）。返回支付凭据：
    * - channel 缺省/'page'：payUrl（收银台跳转，支持账号密码登录付款）
    * - channel='qrcode'：qrCode（支付宝 App 扫码即付）
-   * body: { plan: 'pro' | 'studio', channel?: 'page' | 'qrcode' }
+   * body: { plan: 'experience' | 'standard' | 'premium' | 'flagship', channel?: 'page' | 'qrcode' }
    */
   @Post('order')
   @UseGuards(AuthGuard)

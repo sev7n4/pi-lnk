@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { membershipApi, type MembershipPlan } from '@/services/users-api'
+import { membershipApi, membershipLabel, type MembershipPlan } from '@/services/users-api'
 import { paymentApi } from '@/services/payment-api'
 import { useAuthStore } from '@/stores/auth'
 import QrPayPanel from './QrPayPanel.vue'
@@ -20,6 +20,8 @@ const view = ref<'select' | 'pay'>('select')
 const payPlan = ref<MembershipPlan | null>(null)
 const payOrderId = ref('')
 const payQrCode = ref('')
+/// 可购买档位（排除默认免费档，方案丙四档纯积分模型）。
+const purchasablePlans = computed(() => plans.value.filter((p) => p.id !== 'free'))
 
 const visible = computed({
   get: () => props.modelValue,
@@ -152,7 +154,7 @@ function onPlanPayFailed(reason: string) {
             {{ points }}
           </p>
           <p class="mt-1 text-xs text-fg-2">
-            会员：{{ membership === 'pro' ? '专业版' : membership === 'studio' ? '工作室版' : '免费版' }}
+            会员：{{ membershipLabel(membership) }}
           </p>
           <el-button class="membership-claim-btn mt-3" size="small" :loading="loading" @click="claimDaily">
             领取每日积分 (+100)
@@ -161,10 +163,10 @@ function onPlanPayFailed(reason: string) {
 
         <div class="grid gap-3 sm:grid-cols-3">
           <div
-            v-for="plan in plans"
-            :key="plan.id"
-            class="membership-plan rounded-xl border p-4"
-            :class="membership === plan.id ? 'is-current' : ''"
+          v-for="plan in purchasablePlans"
+          :key="plan.id"
+          class="membership-plan rounded-xl border p-4"
+          :class="membership === plan.id ? 'is-current' : ''"
           >
             <h3 class="font-medium" style="color: var(--neo-text-primary)">{{ plan.name }}</h3>
             <p class="mt-1 text-lg" style="color: var(--neo-text-primary)">{{ plan.price ? `¥${plan.price}/月` : '免费' }}</p>

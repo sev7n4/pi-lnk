@@ -24,6 +24,23 @@ export interface MembershipPlan {
   points: number
   price: number
   features: string[]
+  basic?: number
+  bonus?: number
+  recommended?: boolean
+}
+
+/// 会员档位中文标签（与后端 membership.service.ts PLANS 对齐 · 方案丙四档）。
+export const MEMBERSHIP_LABELS: Record<string, string> = {
+  free: '免费版',
+  experience: '体验版',
+  standard: '标准版',
+  premium: '高级版',
+  flagship: '旗舰版',
+}
+
+export function membershipLabel(id?: string | null): string {
+  if (id && MEMBERSHIP_LABELS[id]) return MEMBERSHIP_LABELS[id]
+  return MEMBERSHIP_LABELS.free
 }
 
 export type PointsRangeKey = '7d' | 'month' | 'all'

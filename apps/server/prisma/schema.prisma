@@ -186,7 +186,7 @@ model Order {
   id        String    @id @default(cuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plan      String // subscription: pro | studio · topup: 'topup'
+  plan      String // subscription: experience | standard | premium | flagship · topup: 'topup' · points-<pkg>（与 membership PLANS 对齐）
   kind      String    @default("subscription") // subscription=套餐订阅 | topup=积分充值
   points    Int? // topup：发放总积分（基础+赠送）；subscription 为 NULL
   amount    Int // 单位：分
