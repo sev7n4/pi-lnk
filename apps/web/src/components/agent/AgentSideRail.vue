@@ -177,6 +177,8 @@ const emit = defineEmits<{
   openCanvasView: []
   /** 全局传送门（画布侧浮动实例）点击：回对话视图。门穿越两模式，是同一颗组件的两个锚位 */
   openConversationView: []
+  /** IA v3：会话抽屉「新建会话」——通知宿主回落【对话】页签（新建 = 全新对话，不留在画布） */
+  sessionCreated: []
   /** Phase 2b: confirm propose_generation → dock generateForNode(nodeId) */
   generateNode: [nodeId: string]
   /** Phase 2b: cancel propose → clear pending_confirm on canvas node */
@@ -3183,7 +3185,7 @@ defineExpose({
               <button
                 type="button"
                 class="session-drawer__new"
-                @click="newAgentSession(); closeSessionDrawer()"
+                @click="newAgentSession(); closeSessionDrawer(); emit('sessionCreated')"
               >
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
                   <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -4174,6 +4176,17 @@ defineExpose({
                         <path stroke-linecap="round" d="M12 5v14M5 12h14" />
                       </svg>
                     </button>
+                    <!-- 2026-10-19 真机修复：＋卡「点空白收不拢」——卡内 padding/间隙也是
+                         attachMenuRef 后代，click-outside 判内不关。移动端加全屏透明遮罩
+                         （z 低于卡 30、高于裸条其余部分），点遮罩必收，时灵时不灵根除。
+                         仅移动 dock 显示（桌面 floating 面板 overflow:hidden 会裁切固定遮罩）。 -->
+                    <div
+                      v-if="attachMenuOpen"
+                      class="attach-menu-backdrop"
+                      aria-hidden="true"
+                      @pointerdown.stop="attachMenuOpen = false"
+                      @click.stop
+                    />
                     <div
                       v-if="attachMenuOpen"
                       class="neo-popover attach-card absolute bottom-full left-0 z-30 mb-1 w-[272px] rounded-2xl p-2"
@@ -4666,10 +4679,10 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 12px 14px;
-  border: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  border: 0.5px solid var(--lnk-border-subtle);
   border-radius: 12px;
-  background: var(--lnk-surface-raised, #fff);
-  color: var(--lnk-text);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-primary);
   font-size: var(--lnk-text-sm, 13px);
   font-weight: 500;
   cursor: pointer;
@@ -4690,14 +4703,14 @@ defineExpose({
   border: 0.5px solid transparent;
   border-radius: 12px;
   background: transparent;
-  color: var(--lnk-text);
+  color: var(--lnk-text-primary);
   text-align: left;
   cursor: pointer;
 }
 
 .session-drawer__item.is-current {
-  border-color: var(--lnk-border, rgba(128, 128, 128, 0.25));
-  background: var(--lnk-surface-raised, #fff);
+  border-color: var(--lnk-border-subtle);
+  background: var(--lnk-surface-raised);
 }
 
 .session-drawer__empty {
@@ -4729,12 +4742,12 @@ defineExpose({
 
 /* 「＋」附件卡（照竞品卡片）：四瓦片 浅底/按下反馈 */
 .attach-tile {
-  color: var(--lnk-text);
+  color: var(--lnk-text-primary);
   background: var(--lnk-hover-overlay);
   transition: background 0.15s ease, opacity 0.15s ease;
 }
 .attach-tile:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--lnk-text) 10%, transparent);
+  background: color-mix(in srgb, var(--lnk-text-primary) 10%, transparent);
 }
 .attach-tile:disabled {
   cursor: not-allowed;
@@ -5599,6 +5612,21 @@ defineExpose({
   }
 }
 
+/* ＋卡全屏透明遮罩（2026-10-19 真机修复「点空白收不拢」）：
+ * 仅移动 dock 显示——桌面 floating 面板 overflow:hidden 会把 fixed 遮罩裁进面板。
+ * z 25：低于卡（30）高于裸条其余控件；dock 整体 z-70 < 页签 z-80，页签不受遮罩影响。 */
+.attach-menu-backdrop {
+  display: none;
+}
+
+.agent-panel-mobile-dock .attach-menu-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  background: transparent;
+}
+
 .agent-panel-mobile-dock .composer-bare-bar .agent-composer__input-wrap {
   order: 0;
   position: static; /* 让 ◎ 的包含块上移到裸条（左顶点锚定） */
@@ -5843,9 +5871,13 @@ defineExpose({
 
 /* 2026-10-18 真机反馈：移动端 -65% 偏离顶点太远——圆心与裸条左顶点重合（半露）；
  * PC 端维持 -65%（「顶点长锚角」观感）不变。
+ * 2026-10-19 真机反馈②：composer full-bleed 后顶点距屏缘仅 12px，-50% 圆心让圆左缘
+ * 距屏 1px——曲面屏上「溢出屏幕」观感。left:4px 把圆心内移到距屏 17px（圆左缘 6px），
+ * 垂直仍骑缝在条顶边（半露进流区，dock overflow:visible 不裁切）。
  * ⭐ 必须排在基础规则之后：canvasRefEntry 契约测试用首个 `.{类名}{` 正则取幽灵态规则，
  *   覆盖规则在前会被误当基础规则（transform-only）而假红。 */
 .agent-panel-mobile-dock .composer-canvas-ref-btn {
+  left: 4px;
   transform: translate(-50%, -50%);
 }
 

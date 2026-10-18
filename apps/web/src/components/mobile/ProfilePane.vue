@@ -114,12 +114,15 @@ function backToWorkbench() {
   align-items: center;
   gap: 12px;
   padding: 16px 14px;
-  border: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  border: 0.5px solid var(--lnk-border-subtle);
   border-radius: 14px;
-  background: var(--lnk-surface-raised, #fff);
-  color: var(--lnk-text, #1c1c22);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-primary);
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--lnk-duration-fast, 120ms) var(--lnk-ease-standard, ease);
 }
 
 .account-avatar {
@@ -128,18 +131,18 @@ function backToWorkbench() {
   border-radius: 999px;
   object-fit: contain;
   padding: 2px;
-  background: color-mix(in srgb, var(--lnk-text, #1c1c22) 6%, transparent);
+  background: color-mix(in srgb, var(--lnk-text-primary) 6%, transparent);
 }
 
 .account-name {
   flex: 1 1 auto;
-  font-size: 15px;
+  font-size: var(--lnk-text-md, 16px);
   font-weight: 500;
 }
 
 .login-hint {
-  font-size: 12px;
-  color: var(--lnk-text-muted, #888);
+  font-size: var(--lnk-text-xs, 12px);
+  color: var(--lnk-text-muted);
 }
 
 .row-group {
@@ -154,11 +157,11 @@ function backToWorkbench() {
   gap: 10px;
   width: 100%;
   padding: 14px;
-  border: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  border: 0.5px solid var(--lnk-border-subtle);
   border-radius: 14px;
-  background: var(--lnk-surface-raised, #fff);
-  color: var(--lnk-text, #1c1c22);
-  font-size: 14px;
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-base, 14px);
   cursor: pointer;
 }
 
@@ -171,8 +174,8 @@ function backToWorkbench() {
 }
 
 .row-value {
-  font-size: 13px;
-  color: var(--lnk-text-muted, #888);
+  font-size: var(--lnk-text-sm, 13px);
+  color: var(--lnk-text-muted);
 }
 
 .row-chevron {
@@ -188,11 +191,11 @@ function backToWorkbench() {
 .logout-btn {
   margin-top: 8px;
   padding: 13px;
-  border: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  border: 0.5px solid var(--lnk-border-subtle);
   border-radius: 14px;
-  background: var(--lnk-surface-raised, #fff);
-  color: #d5453c;
-  font-size: 14px;
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-error);
+  font-size: var(--lnk-text-base, 14px);
   cursor: pointer;
 }
 </style>

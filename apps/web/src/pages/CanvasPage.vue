@@ -5291,6 +5291,7 @@ onUnmounted(() => {
         @arrange-nodes="handleArrangeNodes"
         @import-node-graph="handleImportNodeGraph"
         @canvas-ref-pick-toggle="handleCanvasRefPickToggle"
+        @session-created="onMobileTabChange('chat')"
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"
         @clear-propose-generation="handleClearProposeGeneration"

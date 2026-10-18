@@ -72,6 +72,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 2026-10-19 真机修复：
+ * ① 令牌纠错——--lnk-text/--lnk-border 是不存在的幽灵名，深色下 fallback 深字配深底 = 看不见。
+ *    默认灰 = --lnk-text-muted，激活高亮 = --lnk-accent-text（双主题成对紫）。
+ * ② 触控——touch-action: manipulation 消除 iOS 双击缩放判定的 ~300ms 点击延迟
+ *    （页签「时灵时不灵」的主因），:active 即时反馈让每次点按都有响应感。
+ * ③ 性能——translateZ(0) 提升合成层，backdrop-filter 不再逐帧重采样画布。 */
 .mobile-tab-bar {
   position: fixed;
   left: 0;
@@ -83,9 +89,10 @@ onUnmounted(() => {
   height: calc(56px + env(safe-area-inset-bottom, 0px));
   padding: 0 8px env(safe-area-inset-bottom, 0px);
   background: var(--lnk-surface-overlay);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-top: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 0.5px solid var(--lnk-border-subtle);
+  transform: translateZ(0);
 }
 
 .tab-item {
@@ -97,13 +104,20 @@ onUnmounted(() => {
   gap: 2px;
   border: none;
   background: transparent;
-  color: var(--lnk-text-muted, #888);
+  color: var(--lnk-text-muted);
   cursor: pointer;
   padding: 4px 0 2px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--lnk-duration-fast, 120ms) var(--lnk-ease-standard, ease);
+}
+
+.tab-item:active {
+  color: var(--lnk-accent-text);
 }
 
 .tab-item.is-active {
-  color: var(--lnk-text, #1c1c22);
+  color: var(--lnk-accent-text);
 }
 
 .tab-icon {
@@ -138,7 +152,7 @@ onUnmounted(() => {
 
 .tab-item.is-active .door-halo {
   opacity: 1;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lnk-text, #1c1c22) 12%, transparent);
+  box-shadow: 0 0 0 3px var(--lnk-accent-subtle);
 }
 
 .door-disc {
