@@ -1,16 +1,18 @@
 <script setup lang="ts">
-/** 移动端应用骨架 · 顶栏三区（2026-10-18 IA v3，抄 WorkBuddy）：
- * [≡ 会话抽屉] [会话标题·点按重命名] [⋯ 画布管理菜单]。
- * 头像位不抄（「我的」页签已覆盖）。挂载时发布 --lnk-topbar-h 供各面板避让。 */
-import { onMounted, onUnmounted, ref } from 'vue'
+/** 移动端应用骨架 · 顶栏（2026-10-19 IA v3.1 对话驱动叙事）：
+ * 【对话】页签 = [≡ 会话抽屉]（抽屉唯一入口，含项目卡片）；
+ * 【画布】页签 = [⋯ 画布管理菜单]（保存/分镜板/发布/导入/导出）；
+ * 【发现】【我的】= 透明占位（保持 --lnk-topbar-h 高度一致，不放任何入口）。
+ * 2026-10-19 用户裁决：顶栏「未命名画布」标题输入整体移除——对话驱动叙事下
+ * 顶栏不放画布名；项目重命名入口在抽屉项目卡片菜单。 */
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useClickOutside } from '@/composables/useClickOutside'
 
 const props = defineProps<{
-  title: string
+  tab: 'chat' | 'canvas' | 'discover' | 'mine'
 }>()
 
 const emit = defineEmits<{
-  'update:title': [value: string]
   'open-drawer': []
   save: []
   storyboard: []
@@ -21,6 +23,8 @@ const emit = defineEmits<{
 
 const menuOpen = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
+
+const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
 
 function closeMenu() {
   menuOpen.value = false
@@ -54,11 +58,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="mobile-top-bar">
+  <header class="mobile-top-bar" :class="{ 'is-ghost': isGhost }">
+    <!-- 对话页签：≡ 会话抽屉（唯一入口） -->
     <button
+      v-if="props.tab === 'chat'"
       type="button"
       class="bar-btn"
-      aria-label="会话抽屉"
+      aria-label="会话与项目"
       @click="emit('open-drawer')"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
@@ -66,14 +72,8 @@ onUnmounted(() => {
       </svg>
     </button>
 
-    <input
-      :value="props.title"
-      class="bar-title"
-      aria-label="会话标题"
-      @input="emit('update:title', ($event.target as HTMLInputElement).value)"
-    >
-
-    <div ref="menuRef" class="relative">
+    <!-- 画布页签：右端 ⋯ 画布管理菜单 -->
+    <div v-if="props.tab === 'canvas'" ref="menuRef" class="menu-anchor">
       <button
         type="button"
         class="bar-btn"
@@ -106,6 +106,7 @@ onUnmounted(() => {
   z-index: 85;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   height: calc(44px + env(safe-area-inset-top, 0px));
   padding: env(safe-area-inset-top, 0px) 10px 0;
@@ -114,6 +115,15 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 0.5px solid var(--lnk-border-subtle);
   transform: translateZ(0);
+}
+
+/* 发现/我的：透明占位——只撑高度，不放入口、不挡视觉 */
+.mobile-top-bar.is-ghost {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom-color: transparent;
+  pointer-events: none;
 }
 
 .bar-btn {
@@ -141,16 +151,8 @@ onUnmounted(() => {
   height: 19px;
 }
 
-.bar-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  color: var(--lnk-text-primary);
-  font-size: 14px;
-  font-weight: 500;
-  text-align: center;
-  text-overflow: ellipsis;
+.menu-anchor {
+  position: relative;
 }
 
 .bar-menu {
@@ -173,7 +175,7 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   color: var(--lnk-text-primary);
-  font-size: 12px;
+  font-size: var(--lnk-text-xs, 12px);
   text-align: left;
   cursor: pointer;
 }

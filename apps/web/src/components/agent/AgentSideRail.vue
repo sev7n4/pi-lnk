@@ -123,7 +123,8 @@ import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agen
 import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
 import { describeActivity } from '@/components/agent/activityLine'
 import { buildStatusLine } from '@/components/agent/composer/statusLine'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { canvasApi } from '@/services/canvas-api'
 
 interface AgentThreadRow {
   id: string
@@ -3130,9 +3131,87 @@ function reconcileFromNodes(rawNodes: CanvasNodeLike[]) {
 const sessionDrawerOpen = ref(false)
 function openSessionDrawer() {
   sessionDrawerOpen.value = true
+  void loadProjects()
 }
 function closeSessionDrawer() {
   sessionDrawerOpen.value = false
+}
+
+/** IA v3.1（2026-10-19 用户裁决）：抽屉 = 对话 + 项目双区，「对话住在项目里」。
+ *  一个项目 = 1 画布 + N 对话（threadId = canvasId:后缀，代码事实）。
+ *  新建项目 = 新建画布 + 首个对话（进入后 bootstrapThread 自动建线程）；
+ *  项目卡片点击 = 整页跳 /workflow/:id——CanvasPage 无 sessionId watch，整页跳最稳，
+ *  落【对话】页签看对话内容，用户可手工切画布查看。
+ *  管理（打开/重命名）入口在卡片上；删除后端暂无端点、发布属当前项目顶栏 ⋯ 能力。 */
+interface ProjectCard {
+  id: string
+  title: string
+  updatedAt: string
+}
+const projects = ref<ProjectCard[]>([])
+const projectsLoading = ref(false)
+async function loadProjects() {
+  if (projectsLoading.value) return
+  projectsLoading.value = true
+  try {
+    const res = await canvasApi.list()
+    projects.value = (res.data?.data ?? []) as ProjectCard[]
+  } catch {
+    /* 拉取失败不打断会话流：项目区留空即可 */
+  } finally {
+    projectsLoading.value = false
+  }
+}
+function openProject(id: string) {
+  closeSessionDrawer()
+  window.location.assign(`/workflow/${id}`)
+}
+async function newProject() {
+  try {
+    const res = await canvasApi.create()
+    const created = res.data?.data as { id?: string } | undefined
+    if (!created?.id) throw new Error('no id')
+    window.location.assign(`/workflow/${created.id}`)
+  } catch {
+    ElMessage.error('新建项目失败，请重试')
+  }
+}
+async function renameProject(project: ProjectCard) {
+  try {
+    const { value } = await ElMessageBox.prompt('项目名称', '重命名项目', {
+      inputValue: project.title,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputPattern: /\S+/,
+      inputErrorMessage: '名称不能为空',
+    })
+    const title = value.trim()
+    await canvasApi.update(project.id, { title })
+    project.title = title
+    ElMessage.success('已重命名')
+  } catch {
+    /* 取消/失败静默 */
+  }
+}
+
+/** 删除项目（与主页「我的画布」同源：DELETE /sessions/:id）。不可恢复，二次确认。 */
+async function deleteProject(project: ProjectCard) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${project.title || '未命名项目'}」？此操作不可恢复。`,
+      '删除项目',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await sessionsApi.remove(project.id)
+    projects.value = projects.value.filter((p) => p.id !== project.id)
+    ElMessage.success('已删除')
+  } catch {
+    ElMessage.error('删除失败，请稍后重试')
+  }
 }
 
 /** 页签是全局导航（IA v3）：遮罩只盖到页签上沿，页签任何时候都可点；
@@ -3146,6 +3225,8 @@ watch(
 
 defineExpose({
   openSessionDrawer,
+  /** IA v3.1：发现页「资料库」直通——切回对话页签后由宿主调用，打开资产库选择器 */
+  openAssetLibrary: pickAssetLibrary,
   openPanel,
   closePanel,
   setComposerInput,
@@ -3204,6 +3285,54 @@ defineExpose({
                 </svg>
                 新建对话
               </button>
+              <button
+                type="button"
+                class="session-drawer__new"
+                @click="newProject()"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z" />
+                  <path stroke-linecap="round" d="M12 8.5v7M8.5 12h7" />
+                </svg>
+                新建项目
+              </button>
+              <p class="session-drawer__caption">项目</p>
+              <div
+                v-for="project in projects"
+                :key="project.id"
+                class="project-card"
+                :class="{ 'is-current': project.id === sessionId }"
+              >
+                <button
+                  type="button"
+                  class="project-card__main"
+                  @click="openProject(project.id)"
+                >
+                  <span class="block truncate text-xs font-medium">{{ project.title || '未命名项目' }}</span>
+                  <span class="block text-[10px] opacity-60">{{ formatSessionTime(project.updatedAt) }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="project-card__more"
+                  aria-label="重命名项目"
+                  @click.stop="renameProject(project)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.5 5.5 4 4L8 20H4v-4L14.5 5.5Z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="project-card__more is-danger"
+                  aria-label="删除项目"
+                  @click.stop="deleteProject(project)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7m3 0-.7 12a2 2 0 0 1-2 1.9H9.2a2 2 0 0 1-2-1.9L6.5 7" />
+                  </svg>
+                </button>
+              </div>
+              <p v-if="!projects.length && !projectsLoading" class="session-drawer__empty">暂无项目</p>
               <p class="session-drawer__caption">历史会话</p>
               <button
                 v-for="thread in threads"
@@ -4713,6 +4842,67 @@ defineExpose({
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--lnk-text-muted);
+}
+
+/* 项目卡片（IA v3.1）：主区点击=打开项目，右侧笔形=重命名 */
+.project-card {
+  display: flex;
+  align-items: stretch;
+  border: 0.5px solid var(--lnk-border-subtle);
+  border-radius: 12px;
+  background: var(--lnk-surface-raised);
+  overflow: hidden;
+}
+
+.project-card.is-current {
+  border-color: var(--lnk-accent-border, var(--lnk-border-subtle));
+}
+
+.project-card__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 4px 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--lnk-text-primary);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.project-card__main:active {
+  background: var(--lnk-accent-subtle);
+}
+
+.project-card__more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--lnk-text-muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.project-card__more:active {
+  background: color-mix(in srgb, var(--lnk-text-primary) 8%, transparent);
+}
+
+.project-card__more svg {
+  width: 15px;
+  height: 15px;
+}
+
+.project-card__more.is-danger {
+  color: var(--lnk-error);
 }
 
 .session-drawer__item {
