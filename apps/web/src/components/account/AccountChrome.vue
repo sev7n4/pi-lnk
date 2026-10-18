@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import AccountPointsPill from '@/components/account/AccountPointsPill.vue'
 import AccountUserMenu from '@/components/account/AccountUserMenu.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
+import TopupModal from '@/components/membership/TopupModal.vue'
 
 defineOptions({ inheritAttrs: false })
 
@@ -18,9 +19,14 @@ withDefaults(defineProps<{
 
 const auth = useAuthStore()
 const showMembership = ref(false)
+const showTopup = ref(false)
 
 function openMembership() {
   showMembership.value = true
+}
+
+function openTopup() {
+  showTopup.value = true
 }
 </script>
 
@@ -28,9 +34,10 @@ function openMembership() {
   <template v-if="auth.isLoggedIn">
     <div class="flex items-center gap-2" :class="[rootClass, $attrs.class]">
       <AccountPointsPill @click="openMembership" />
-      <AccountUserMenu :compact="compact" @open-membership="openMembership" />
+      <AccountUserMenu :compact="compact" @open-topup="openTopup" />
     </div>
     <MembershipModal v-if="ownsModal" v-model="showMembership" />
+    <TopupModal v-if="ownsModal" v-model="showTopup" />
   </template>
   <button
     v-else
