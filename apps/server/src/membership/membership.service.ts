@@ -77,6 +77,35 @@ const PLANS = [
   { id: 'studio', name: '工作室版', points: 20000, price: 299, features: ['无限画布', '全模型', '团队协作'] },
 ]
 
+/**
+ * 积分充值档位（amountFen 单位：分）。基础汇率 1 元 = 100 积分，
+ * 赠送随档位阶梯递增（0%/10%/15%/20%/30%）；自定义金额走基础汇率无赠送。
+ */
+export const TOPUP_TIERS = [
+  { amountFen: 1000, bonusPoints: 0 }, // ¥10 → 1,000
+  { amountFen: 2000, bonusPoints: 200 }, // ¥20 → 2,200
+  { amountFen: 3000, bonusPoints: 450 }, // ¥30 → 3,450
+  { amountFen: 5000, bonusPoints: 1000 }, // ¥50 → 6,000
+  { amountFen: 10000, bonusPoints: 3000 }, // ¥100 → 13,000
+] as const
+
+export const TOPUP_CUSTOM_MIN_FEN = 500 // 自定义起充 ¥5
+export const TOPUP_CUSTOM_MAX_FEN = 1_000_000 // 自定义上限 ¥10,000
+export const TOPUP_POINTS_PER_FEN = 1 // 基础汇率：1 分 = 1 积分（= 100 积分/元）
+export const TOPUP_EXPIRY_DAYS = 365 // 充值积分有效期：1 年
+
+/** 充值积分解析：档位命中带赠送，否则按基础汇率（含自定义金额与未命中金额）。 */
+export function resolveTopupPoints(amountFen: number): {
+  basePoints: number
+  bonusPoints: number
+  totalPoints: number
+} {
+  const tier = TOPUP_TIERS.find((t) => t.amountFen === amountFen)
+  const basePoints = amountFen * TOPUP_POINTS_PER_FEN
+  const bonusPoints = tier?.bonusPoints ?? 0
+  return { basePoints, bonusPoints, totalPoints: basePoints + bonusPoints }
+}
+
 @Injectable()
 export class MembershipService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -226,6 +255,65 @@ export class MembershipService {
 
   async grantPaidPlan(userId: string, plan: string, orderId: string, now: Date = new Date()) {
     return this.prisma.$transaction((tx) => this.grantPaidPlanTx(tx, userId, plan, orderId, now))
+  }
+
+  /**
+   * 积分充值入账（不含会员变更）：发放总积分（基础+赠送）到 purchased 池，1 年有效期。
+   * ⚠️ 幂等锚点与 grantPaidPlanTx 同构：同一 orderId 只允许一条 purchased 流水。
+   * 有效期为账本级（PointTransaction.expiresAt）：到期后 points-breakdown 的 available
+   * 自动扣减，不回改 User.points —— 与 #446 多池机制一致。
+   */
+  async grantTopupTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    totalPoints: number,
+    orderId: string,
+    now: Date = new Date(),
+  ) {
+    if (!Number.isInteger(totalPoints) || totalPoints <= 0) {
+      throw new BadRequestException('充值积分数额无效')
+    }
+    const already = await tx.pointTransaction.findFirst({
+      where: { orderId, pool: 'purchased' },
+    })
+    if (already) {
+      const current = await tx.user.findUnique({ where: { id: userId } })
+      return { membership: current?.membership ?? 'free', points: current?.points ?? 0 }
+    }
+    const expiresAt = new Date(now.getTime() + TOPUP_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
+    const updated = await tx.user.update({
+      where: { id: userId },
+      data: { points: { increment: totalPoints } },
+    })
+    await tx.pointTransaction.create({
+      data: {
+        userId,
+        amount: totalPoints,
+        reason: '积分充值',
+        kind: 'grant',
+        category: 'other',
+        status: null,
+        balanceAfter: updated.points,
+        pool: 'purchased', // 支付购买池（多池记账）
+        orderId,
+        expiresAt, // 充值积分 1 年有效期（账本级过期）
+      },
+    })
+    return { membership: updated.membership, points: updated.points }
+  }
+
+  /** 充值档位配置（前端瓦片渲染单一真源）。 */
+  topupOptions() {
+    return {
+      tiers: TOPUP_TIERS.map((t) => {
+        const { basePoints, bonusPoints, totalPoints } = resolveTopupPoints(t.amountFen)
+        return { amountFen: t.amountFen, basePoints, bonusPoints, totalPoints }
+      }),
+      customMinFen: TOPUP_CUSTOM_MIN_FEN,
+      customMaxFen: TOPUP_CUSTOM_MAX_FEN,
+      pointsPerFen: TOPUP_POINTS_PER_FEN,
+      expiryDays: TOPUP_EXPIRY_DAYS,
+    }
   }
 
   /**

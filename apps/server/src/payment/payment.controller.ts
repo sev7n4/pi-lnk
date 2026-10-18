@@ -40,6 +40,40 @@ export class PaymentController {
   }
 
   /**
+   * 积分充值档位配置（免登录，静态配置）。前端瓦片渲染单一真源：
+   * tiers[{amountFen, basePoints, bonusPoints, totalPoints}] + customMinFen/customMaxFen/pointsPerFen/expiryDays。
+   */
+  @Get('topup/options')
+  topupOptions() {
+    return { code: 0, message: 'ok', data: this.paymentService.topupOptions() }
+  }
+
+  /**
+   * 创建积分充值订单（需登录）。¥5–¥10,000：档位金额带赠送、自定义按基础汇率（1 分 = 1 积分）。
+   * channel 语义与 /payment/order 一致：缺省/'page' 返回 payUrl，'qrcode' 返回 qrCode。
+   * body: { amountFen: number, channel?: 'page' | 'qrcode' }
+   */
+  @Post('topup')
+  @UseGuards(AuthGuard)
+  async createTopup(
+    @Req() req: { user: { sub: string } },
+    @Body() body: { amountFen?: number; channel?: string },
+  ) {
+    if (typeof body?.amountFen !== 'number' || !Number.isInteger(body.amountFen)) {
+      throw new BadRequestException('缺少充值金额（amountFen，单位分）')
+    }
+    if (body.channel && body.channel !== 'page' && body.channel !== 'qrcode') {
+      throw new BadRequestException('channel 仅支持 page | qrcode')
+    }
+    const data = await this.paymentService.createTopup(
+      req.user.sub,
+      body.amountFen,
+      body.channel === 'qrcode' ? 'qrcode' : 'page',
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  /**
    * 查询订单状态（需登录，限本人）。PENDING 订单服务端会自动做一次渠道查单补偿。
    */
   @Get('order/:id')

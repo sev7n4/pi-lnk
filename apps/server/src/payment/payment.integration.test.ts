@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
-import { MembershipService } from '../membership/membership.service'
+import { MembershipService, resolveTopupPoints } from '../membership/membership.service'
 import { PaymentService } from './payment.service'
 import type { PaymentAdapter, ChargeRequest, CallbackVerifyResult } from './payment.adapter'
 
@@ -286,5 +286,105 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     expect(order?.status).toBe('PENDING')
     const user = await prisma.user.findUnique({ where: { id: 'u-pay-11' } })
     expect(user?.points).toBe(1000)
+  })
+
+  it('topup：档位 ¥50 下单 → kind=topup + points=6000（含赠送），qrcode 返回凭据', async () => {
+    await seedUser('u-topup-1')
+    fake.nextQrCode = 'https://qr.alipay.com/bax000000000topup'
+    const result = await service.createTopup('u-topup-1', 5000, 'qrcode')
+
+    expect(result.amountFen).toBe(5000)
+    expect(result.qrCode).toBe('https://qr.alipay.com/bax000000000topup')
+    expect(fake.createQrChargeCalls[0]).toMatchObject({ orderId: result.orderId, amountFen: 5000 })
+
+    const order = await prisma.order.findUnique({ where: { id: result.orderId } })
+    expect(order?.kind).toBe('topup')
+    expect(order?.plan).toBe('topup')
+    expect(order?.points).toBe(6000) // 5000 基础 + 1000 赠送
+    expect(order?.status).toBe('PENDING')
+  })
+
+  it('topup：自定义金额按基础汇率（1 分 = 1 积分，无赠送）', async () => {
+    await seedUser('u-topup-2')
+    const result = await service.createTopup('u-topup-2', 1234)
+    const order = await prisma.order.findUnique({ where: { id: result.orderId } })
+    expect(order?.points).toBe(1234)
+    expect(order?.kind).toBe('topup')
+  })
+
+  it('topup：金额校验（低于 ¥5 / 超上限 / 非整数均拒绝）', async () => {
+    await seedUser('u-topup-3')
+    await expect(service.createTopup('u-topup-3', 400)).rejects.toThrow(/最低/)
+    await expect(service.createTopup('u-topup-3', 1_000_001)).rejects.toThrow(/上限/)
+    await expect(service.createTopup('u-topup-3', 500.5)).rejects.toThrow(/无效/)
+    expect(await prisma.order.count({ where: { userId: 'u-topup-3' } })).toBe(0)
+  })
+
+  it('topup：回调入账 → 仅发积分（purchased 池 + 1 年有效期），不改会员', async () => {
+    await seedUser('u-topup-4')
+    const { orderId } = await service.createTopup('u-topup-4', 1000) // ¥10 → 1,000 无赠送
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-topup-1', paid: true, amountFen: 1000 }
+
+    const before = Date.now()
+    expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('success')
+
+    const user = await prisma.user.findUnique({ where: { id: 'u-topup-4' } })
+    expect(user?.points).toBe(2000) // 1000 + 1000
+    expect(user?.membership).toBe('free') // 充值不改会员档位
+
+    const tx = await prisma.pointTransaction.findFirst({ where: { orderId } })
+    expect(tx).toMatchObject({ pool: 'purchased', amount: 1000, kind: 'grant', orderId })
+    // 有效期 = 入账时刻 + 365 天（±1 分钟容差）
+    const expectedExpiry = before + 365 * 24 * 60 * 60 * 1000
+    expect(Math.abs(tx!.expiresAt!.getTime() - expectedExpiry)).toBeLessThan(60_000)
+
+    const payment = await prisma.payment.findUnique({ where: { orderId } })
+    expect(payment?.status).toBe('SUCCESS')
+  })
+
+  it('topup：重复回调 + 查单补偿 → CAS 幂等不重复发分', async () => {
+    await seedUser('u-topup-5')
+    const { orderId } = await service.createTopup('u-topup-5', 10000) // ¥100 → 13,000
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-topup-2', paid: true, amountFen: 10000 }
+
+    expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('success')
+    expect(await service.handleAlipayCallback({ out_trade_no: orderId })).toBe('success')
+
+    // 查单补偿路径再入账一次（订单已 PAID，不会再触发，但守卫必须兜住）
+    const dto = await service.getOrderForUser('u-topup-5', orderId)
+    expect(dto.status).toBe('PAID')
+
+    const user = await prisma.user.findUnique({ where: { id: 'u-topup-5' } })
+    expect(user?.points).toBe(14000) // 1000 + 13000，仍只发一次
+    const txs = await prisma.pointTransaction.findMany({ where: { orderId } })
+    expect(txs).toHaveLength(1)
+  })
+
+  it('topup：查单补偿路径可直接入账（PENDING 订单）', async () => {
+    await seedUser('u-topup-6')
+    const { orderId } = await service.createTopup('u-topup-6', 2000) // ¥20 → 2,200
+    fake.nextQueryPaid = true
+
+    const dto = await service.getOrderForUser('u-topup-6', orderId)
+    expect(dto.status).toBe('PAID')
+
+    const user = await prisma.user.findUnique({ where: { id: 'u-topup-6' } })
+    expect(user?.points).toBe(3200) // 1000 + 2200
+    expect(user?.membership).toBe('free')
+  })
+
+  it('topup：resolveTopupPoints 档位映射正确', async () => {
+    const cases: Array<[number, number]> = [
+      [1000, 1000],
+      [2000, 2200],
+      [3000, 3450],
+      [5000, 6000],
+      [10000, 13000],
+      [500, 500], // 自定义无赠送
+      [9999, 9999],
+    ]
+    for (const [fen, total] of cases) {
+      expect(resolveTopupPoints(fen).totalPoints).toBe(total)
+    }
   })
 })
