@@ -5,9 +5,14 @@
  * introduce_nodes_to_agent 属老链路 DEFERRED_TOOL_NAMES：默认不暴露（includeDeferred 显式开启）。
  */
 import { Type } from "typebox";
-import type { Context } from "@earendil-works/pi-agent-core";
+import type { Context, AgentHarnessToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import type { NestClient } from "./nest-client.js";
+// 生成等待期 onUpdate 进度 ticker（2026-10-18 上游对齐）：与 generation.ts 的 run_* 共用
+// 同一发射形状（Nest pi-events 按 details.generating 派生 generation_progress）。画布真实链路
+// 走 propose_generation → 等用户确认 → studio 管线，run_* 在画布流程里不触发，故此处必须接线，
+// 否则「生成中 · Xs」在画布生成期间永远不发（feature ① 断点）。
+import { startGenerationProgressTicker } from "./progress-ticker.js";
 import type { SidebarAttachment } from "./types.js";
 import { extractActions, resultWithActions } from "./result-with-actions.js";
 import { signalFromUpstream, withSignal } from "./result-signal.js";
@@ -15,7 +20,6 @@ import { askUserBlocking, askUserTimeoutMs, genTerminalWaitMs } from "../runtime
 import type { NodeStatusData } from "../session-manager.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
-import { startGenerationProgressTicker } from "./progress-ticker.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
 
@@ -52,6 +56,8 @@ async function waitForGenerationTerminal(
 		/** onUpdate 进度通道（2026-10-18 上游对齐）：轮询期 30s 一拍全量快照 + checkpoint
 		 *  （stall watchdog 活性证据 + durable 恢复检查点），发射形状见 tools/progress-ticker.ts。 */
 		onUpdate?: Parameters<typeof startGenerationProgressTicker>[0];
+		/** 进度 ticker 发射间隔（仅测试注入；生产缺省 30s，见 progress-ticker.ts GENERATION_PROGRESS_INTERVAL_MS）。 */
+		tickerIntervalMs?: number;
 	},
 	context: Context,
 	snap: { recordId?: string; startedAtMs: number },
@@ -60,7 +66,7 @@ async function waitForGenerationTerminal(
 	const deadline = Date.now() + opts.capMs;
 	let sawGenerating = false;
 	let generatingEmitted = false;
-	const stopTicker = startGenerationProgressTicker(opts.onUpdate, p.nodeId);
+	const stopTicker = startGenerationProgressTicker(opts.onUpdate, p.nodeId, opts.tickerIntervalMs);
 	try {
 		while (Date.now() < deadline) {
 			context?.abortSignal?.throwIfAborted();
@@ -210,6 +216,8 @@ export function createCanvasWriteTools(
 		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
 		/** 终态等待上限（仅测试注入；缺省读 genTerminalWaitMs()，默认 13min）。 */
 		genTerminalWaitMs?: number;
+		/** 进度 ticker 发射间隔（仅测试注入；生产缺省 30s，见 progress-ticker.ts）。 */
+		tickerIntervalMs?: number;
 	} = {},
 ): LnkpiTool[] {
 	const write = { tier: "write_light" as const };
@@ -700,6 +708,7 @@ export function createCanvasWriteTools(
 							? (data) => opts.onNodeStatus?.(tc.sessionId, data)
 							: undefined,
 						onUpdate,
+						tickerIntervalMs: opts.tickerIntervalMs,
 					},
 					context,
 					{ recordId: snapRecordId, startedAtMs: snapStartedAtMs },
