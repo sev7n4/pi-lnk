@@ -10,7 +10,7 @@ const { compact = false } = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'open-membership': []
+  'open-topup': []
 }>()
 
 const auth = useAuthStore()
@@ -29,9 +29,9 @@ function openProfile() {
   void router.push({ path: '/profile', query: { tab: 'account' } })
 }
 
-function openMembership() {
+function openTopup() {
   closeMenu()
-  emit('open-membership')
+  emit('open-topup')
 }
 
 function logout() {
@@ -86,7 +86,7 @@ const membershipLabel = (value?: string) =>
           type="button"
           class="mt-2.5 flex w-full items-center justify-between rounded-lg bg-overlay/12 text-[11px] text-fg transition hover:bg-overlay/20"
           :class="compact ? 'px-2 py-1' : 'px-2.5 py-1.5'"
-          @click="openMembership"
+          @click="openTopup"
         >
           <span class="flex items-center gap-1">
             <svg class="h-3 w-3 text-[var(--neo-warm)]" viewBox="0 0 24 24" fill="currentColor">
