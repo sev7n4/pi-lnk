@@ -75,6 +75,10 @@ import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
+import MobileTabBar, { type MobileAppTab } from '@/components/mobile/MobileTabBar.vue'
+import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
+import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
+import ProfilePane from '@/components/mobile/ProfilePane.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
 import ByokFallbackConfirmDialog from '@/components/canvas/ByokFallbackConfirmDialog.vue'
@@ -1758,10 +1762,11 @@ async function focusNodeById(id: string) {
     ElMessage.warning('当前画布中没有找到对应节点')
     return
   }
-  // 移动端：定位 = 用户显式要看画布 ⇒ 切到画布视图（带 composer 同屏态，非纯画布）
+  // 移动端：定位 = 用户显式要看画布 ⇒ 切到画布页签（composer 同屏窗态，非纯画布）
   if (isMobileLayout.value) {
     mobileCanvasView.value = true
     mobileCanvasImm.value = false
+    mobileAppTab.value = 'canvas'
   }
   selectOnlyNode(id)
   await nextTick()
@@ -1779,6 +1784,7 @@ async function focusNodesByIds(ids: string[]) {
   if (isMobileLayout.value) {
     mobileCanvasView.value = true
     mobileCanvasImm.value = false
+    mobileAppTab.value = 'canvas'
   }
   selectOnlyNode(valid[0])
   await nextTick()
@@ -4180,10 +4186,11 @@ function handleCanvasRefPickToggle() {
     return
   }
   // 移动端：◎ 定位锚 = 显式进画布（对话视图下画布隐藏，拾取必须在画布上完成）；
-  // 带 composer 同屏态（窗），非传送门的纯画布
+  // 带 composer 同屏态（窗），非页签点入的纯画布
   if (isMobileLayout.value) {
     mobileCanvasView.value = true
     mobileCanvasImm.value = false
+    mobileAppTab.value = 'canvas'
   }
   if (!isMobileLayout.value) {
     agentRailRef.value?.openPanel()
@@ -4739,6 +4746,21 @@ const mobileCanvasView = ref(false)
 /** 纯画布满屏态（2026-10-18 用户裁决）：传送门进入 = 画布独占（composer/SSE 全隐）；
  *  ◎ 定位锚 / 提议卡定位进入 = 画布 + composer（+SSE）同屏。两态共用 mobileCanvasView。 */
 const mobileCanvasImm = ref(false)
+/** 移动端应用页签（IA v3，抄 WorkBuddy 壳）：对话 / 画布 / 发现 / 我的。
+ *  「门」由画布页签继承（图标=传送门章鱼+光环，固定位零跳变）——切页签即切模式。
+ *  窗 A/B（◎ 定位锚 / SSE 定位）= 切到画布页签 + composer 同屏（imm=false）。 */
+const mobileAppTab = ref<MobileAppTab>('chat')
+function onMobileTabChange(tab: MobileAppTab) {
+  mobileAppTab.value = tab
+  if (tab === 'canvas') {
+    // 页签点画布 = 门语义：纯画布满屏（composer/SSE 收起）
+    mobileCanvasView.value = true
+    mobileCanvasImm.value = true
+  } else if (tab === 'chat') {
+    mobileCanvasView.value = false
+    mobileCanvasImm.value = false
+  }
+}
 /** 移动端画布视图 + studio dock 展开（选中了可编辑节点）：composer 让位——SSE 对话流收起，
  *  dock 抬高到贴底容器之上（--lnk-agent-dock-h，见 AgentSideRail / DockStudioToolbar）。
  *  提议生成卡片点定位 → 自动拾取节点 → dock 展开供检查/修改提示词，就是这条链路的目标态。 */
@@ -4778,9 +4800,10 @@ watch(
       pendingExclusiveSelectId = null
     }
     if (prev && !active && isMobileLayout.value) {
-      // 引用拾取结束 ⇒ 从画布视图回到对话视图（composer 面板随贴底容器回归）
+      // 引用拾取结束 ⇒ 回到对话页签（composer 面板随贴底容器回归）
       mobileCanvasView.value = false
       mobileCanvasImm.value = false
+      mobileAppTab.value = 'chat'
       nextTick(() => agentRailRef.value?.openPanel())
     }
   },
@@ -4925,7 +4948,7 @@ onUnmounted(() => {
           @done="pickMode.deactivate()"
         />
         <CanvasFloatingChrome
-          v-if="!canvasChromeHidden"
+          v-if="!canvasChromeHidden && !isMobileLayout"
           :title="sessionTitle"
           :saving="saving"
           @update:title="sessionTitle = $event"
@@ -5184,7 +5207,9 @@ onUnmounted(() => {
           @history-retry="handleHistoryRetry"
         />
 
-        <div v-if="!canvasChromeHidden" class="pointer-events-none absolute right-3 top-3 z-[50] flex items-center gap-2">
+        <!-- IA v3：移动端由 MobileTopBar/MobileTabBar 接管全局导航，
+             画布内右上角主题/账号簇只属桌面态（低频入口归「我的」页）。 -->
+        <div v-if="!canvasChromeHidden && !isMobileLayout" class="pointer-events-none absolute right-3 top-3 z-[50] flex items-center gap-2">
           <!-- 沉浸画布没有 AppHeader，主题入口必须保留在这里；
                实现与 header 共用 `ThemeToggle`，不再内联一份 svg。
                `canvas-theme-toggle` 类名保留：既有样式/选择器依赖它。 -->
@@ -5244,15 +5269,13 @@ onUnmounted(() => {
              ⇒ `v-if` 会让侧栏**根本不挂载** ⇒ 历史数据永不加载 ⇒ 图为空。
            ✅ 用 CSS `hidden`（保持挂载与数据加载，只是不占布局），图表数据照常复原。 -->
       <AgentSideRail
-        :class="graphOnly ? 'hidden' : ''"
+        :class="graphOnly ? 'hidden' : (isMobileLayout && (mobileAppTab === 'discover' || mobileAppTab === 'mine') ? 'hidden' : '')"
         ref="agentRailRef"
         :session-id="sessionId"
         :read-only="agentReadOnly"
         :mobile-canvas-view="mobileCanvasView"
         :mobile-canvas-imm="mobileCanvasImm"
         :studio-dock-open="mobileStudioDockOpen"
-        @open-canvas-view="mobileCanvasView = true; mobileCanvasImm = true"
-        @open-conversation-view="mobileCanvasView = false; mobileCanvasImm = false"
         :selected-node-id="selectedNodeId"
         :selected-node-ids="multiSelectedIds.length ? multiSelectedIds : (selectedNodeId ? [selectedNodeId] : [])"
         :selected-node="selectedNode"
@@ -5276,6 +5299,34 @@ onUnmounted(() => {
         :can-open="canOpenAgentPanel"
       />
     </div>
+
+    <!--ⓘ 移动端应用骨架（IA v3）：顶栏三区 + 底部四页签 + 发现/我的两页。
+         fixed 定位组件，挂载在容器外避免被画布 transform 影响避让计算。 -->
+    <MobileTopBar
+      v-if="isMobileLayout"
+      :title="sessionTitle"
+      @update:title="sessionTitle = $event"
+      @open-drawer="agentRailRef?.openSessionDrawer()"
+      @save="saveCanvas"
+      @storyboard="showStoryboard = true"
+      @publish="openPublish"
+      @import-workflow="openWorkflowImportPicker"
+      @export-workflow="handleExportPack([], 'full_package')"
+    />
+    <DiscoverPane
+      v-if="isMobileLayout && mobileAppTab === 'discover'"
+      @goto-canvas="onMobileTabChange('canvas')"
+    />
+    <ProfilePane
+      v-if="isMobileLayout && mobileAppTab === 'mine'"
+      @open-membership="showMembership = true"
+      @open-model-settings="showModelSettings = true"
+    />
+    <MobileTabBar
+      v-if="isMobileLayout"
+      :active="mobileAppTab"
+      @change="onMobileTabChange"
+    />
 
     <MembershipModal v-model="showMembership" />
     <ProviderConfigDialog v-model="showModelSettings" />

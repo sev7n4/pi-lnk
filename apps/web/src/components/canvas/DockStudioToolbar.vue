@@ -230,7 +230,8 @@ onUnmounted(() => {
  * 方案 A 后 has-studio-dock 态 composer 面板整体隐藏 → 变量趋 0，dock 自然落底。 */
 @media (max-width: 767px) {
   .dock-studio-toolbar {
-    bottom: calc(var(--lnk-agent-dock-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
+    /* IA v3：底栏之上还有四页签（MobileTabBar 发布 --lnk-tabbar-h），一并清位。 */
+    bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
   }
 }
 </style>

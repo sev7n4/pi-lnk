@@ -3121,7 +3121,17 @@ function reconcileFromNodes(rawNodes: CanvasNodeLike[]) {
   taskProgress.value = next
 }
 
+/** 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起——历史会话 + 新建对话（原顶栏入口的全屏形态） */
+const sessionDrawerOpen = ref(false)
+function openSessionDrawer() {
+  sessionDrawerOpen.value = true
+}
+function closeSessionDrawer() {
+  sessionDrawerOpen.value = false
+}
+
 defineExpose({
+  openSessionDrawer,
   openPanel,
   closePanel,
   setComposerInput,
@@ -3165,6 +3175,39 @@ defineExpose({
         </button>
       </Teleport>
 
+      <!-- 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起；历史会话 + 新建对话（原顶栏入口的全屏形态） -->
+      <Teleport to="body">
+        <Transition name="session-drawer">
+          <div v-if="sessionDrawerOpen" class="session-drawer-layer" @click.self="closeSessionDrawer">
+            <div class="session-drawer" role="dialog" aria-label="会话列表">
+              <button
+                type="button"
+                class="session-drawer__new"
+                @click="newAgentSession(); closeSessionDrawer()"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+                </svg>
+                新建对话
+              </button>
+              <p class="session-drawer__caption">历史会话</p>
+              <button
+                v-for="thread in threads"
+                :key="thread.id"
+                type="button"
+                class="session-drawer__item"
+                :class="{ 'is-current': thread.id === agentThreadId }"
+                @click="selectThread(thread.id); closeSessionDrawer()"
+              >
+                <span class="block truncate text-xs font-medium">{{ thread.title }}</span>
+                <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
+              </button>
+              <p v-if="!threads.length" class="session-drawer__empty">暂无历史会话</p>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
+
       <!-- 面板：侧栏内嵌 or 浮动窗口 or 移动端贴底裸条容器（Teleport 到 body） -->
       <Teleport to="body" :disabled="!panelTeleported">
         <div
@@ -3199,20 +3242,9 @@ defineExpose({
             @mousedown="startResize"
           />
 
-          <!-- 全局传送门·画布侧锚位（2026-10-18 用户裁决）：同一颗门组件穿越对话/画布两模式——
-               对话模式锚在顶栏头像位，画布模式浮在画布左上（chrome 行下方），点击回对话。
-               「← 对话」pill 已废弃（门职责收编）。拾取模式让位（pick bar 自带回程）。 -->
-          <button
-            v-if="isMobileLayout && mobileCanvasView && !pickModeActive"
-            type="button"
-            class="agent-portal-door agent-portal-door--float"
-            title="回到对话"
-            @click="emit('openConversationView')"
-          >
-            <span class="agent-portal-door__halo" aria-hidden="true" />
-            <NeoAgentLogo size="xs" active />
-          </button>
-
+          <!-- 全局传送门已退役（2026-10-18 IA v3）：门入底部页签「画布」（章鱼+光环固定位），
+               模式切换 = 页签切换；旧顶栏门/浮动锚随之删除。
+               「← 对话」pill 更早退役（门职责收编）。拾取模式让位（pick bar 自带回程）。 -->
           <!-- 顶栏：logo + 新建 / 历史 / 浮窗切换 / 收起（浮窗模式可按住拖动）。
                P1-5 fix-1：移动端保留（新建对话 / 会话历史入口随贴底容器常驻，
                收起 / 浮窗为桌面专属按钮移动端隐藏；startDrag 移动端本身 no-op） -->
@@ -3222,21 +3254,11 @@ defineExpose({
             @mousedown="startDrag"
           >
             <div class="flex min-w-0 items-center gap-2">
-              <!-- 移动端「传送门」（2026-10-18 用户裁决）：章鱼头像位即对话→画布的门——
-                   保留头像自带的旋转光环 + 半透明特效（传送门意境）；画布视图换回纯 logo，
-                   画布侧零遮挡。桌面端维持纯 logo。 -->
-              <button
-                v-if="isMobileLayout && !mobileCanvasView"
-                type="button"
-                class="agent-portal-door"
-                title="进入画布"
-                @click="emit('openCanvasView')"
-              >
-                <span class="agent-portal-door__halo" aria-hidden="true" />
-                <NeoAgentLogo size="xs" active />
-              </button>
-              <NeoAgentLogo v-else size="xs" active />
-              <!-- 移动端：头像即品牌 logo，不再重复「lnk·π agent」文字（2026-10-15 移动端重构） -->
+              <!-- 顶栏传送门已退役（IA v3）：门入底部页签；移动端顶栏由 MobileTopBar 接管，
+                   本 header 在移动端 CSS 隐藏（.agent-panel-mobile-dock .agent-panel-header）。
+                   桌面端维持纯 logo。 -->
+              <NeoAgentLogo size="xs" active />
+              <!-- 移动端「传送门」（2026-10-15 移动端重构）：头像即品牌 logo，不再重复「lnk·π agent」文字 -->
               <p v-if="!isMobileLayout" class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
             </div>
             <div class="flex items-center gap-0.5">
@@ -4459,7 +4481,8 @@ defineExpose({
 /* 复合选择器压过模板上的 Tailwind h-full / overflow-hidden 工具类 */
 .agent-panel-mobile-dock.agent-panel-shell {
   position: fixed;
-  bottom: env(safe-area-inset-bottom, 0px);
+  /* IA v3：底部页签常驻（--lnk-tabbar-h 由 MobileTabBar 发布），composer 让出页签高度 */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--lnk-tabbar-h, 0px));
   right: 12px;
   left: 12px;
   z-index: 70;
@@ -4500,6 +4523,12 @@ defineExpose({
   border-bottom: none;
 }
 
+/* IA v3：移动端顶栏由 MobileTopBar（≡ / 标题 / ⋯）接管，本 header 整体隐藏——
+   历史入口迁会话抽屉、门入底部页签（见 MobileTabBar） */
+.agent-panel-mobile-dock .agent-panel-header {
+  display: none;
+}
+
 /* P1-5 fix-2：历史 popover 在贴底容器内改为向上展开——顶栏贴视口底，向下开
    会随容器高度（会话短时更矮）超出视口底、历史不可达；桌面 popover 行为不变
    （本规则仅在 .agent-panel-mobile-dock 作用域内生效，压过模板 top-full/mt-1.5） */
@@ -4523,13 +4552,14 @@ defineExpose({
  * 本块只改「布局壳」：贴底容器升为整页不透明面板，composer/裸条内部样式零改动。
  * ⭐ 全屏出血（full-bleed）：基准贴底壳是 left/right:12px 的悬浮条（给窗态画布留边），
  * 对话态必须四边归零 + bottom 改 0、安全区下沉为 padding-bottom，否则面板四周
- * 透出画布 = 「对话模式页面没满屏」（2026-10-18 用户截图复现）。 */
+ * 透出画布 = 「对话模式页面没满屏」（2026-10-18 用户截图复现）。
+ * IA v3：bottom 让出底部页签（--lnk-tabbar-h）；顶部让出 MobileTopBar（--lnk-topbar-h）。 */
 .agent-panel-mobile-dock.is-conversation-view.agent-panel-shell {
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--lnk-tabbar-h, 0px);
   left: 0;
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--lnk-topbar-h, 44px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
   background: var(--lnk-surface-canvas);
   pointer-events: auto;
@@ -4609,52 +4639,92 @@ defineExpose({
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-/* 移动端「传送门」（2026-10-18 用户裁决）：章鱼头像位 = 对话→画布的门。
-   特效语义照搬原头像：旋转光环（conic 扫光）+ 半透明玻璃底，「传送门」意境；
-   画布视图 v-if 摘除换回纯 logo，画布侧零遮挡。 */
-.agent-portal-door {
-  position: relative;
-  display: flex;
-  width: 36px;
-  height: 36px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--lnk-surface-overlay);
-  isolation: isolate;
-  transition: transform 0.2s var(--lnk-ease-standard, ease);
-}
-.agent-portal-door:active {
-  transform: scale(0.94);
-}
-.agent-portal-door__halo {
-  position: absolute;
-  inset: -3px;
-  z-index: -1;
-  border-radius: 999px;
-  background: conic-gradient(from 0deg, transparent 0% 68%, var(--lnk-hi-bg) 86%, transparent 100%);
-  opacity: 0.85;
-  animation: portal-spin 2.8s linear infinite;
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
-}
-@keyframes portal-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .agent-portal-door__halo {
-    animation: none;
-  }
+/* ---- 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起，历史会话 + 新建对话 ---- */
+.session-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(0, 0, 0, 0.35);
 }
 
-/* 全局传送门·画布侧浮动锚位：画布左上（chrome 行下方避让），点击回对话 */
-.agent-portal-door--float {
-  position: fixed;
-  top: 56px;
-  left: 12px;
-  z-index: 55;
+.session-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(78vw, 320px);
+  padding: calc(env(safe-area-inset-top, 0px) + 14px) 12px calc(env(safe-area-inset-bottom, 0px) + 14px);
+  background: var(--lnk-surface-canvas);
+  overflow-y: auto;
+}
+
+.session-drawer__new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 0.5px solid var(--lnk-border, rgba(128, 128, 128, 0.25));
+  border-radius: 12px;
+  background: var(--lnk-surface-raised, #fff);
+  color: var(--lnk-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.session-drawer__caption {
+  padding: 6px 4px 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lnk-text-muted);
+}
+
+.session-drawer__item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0.5px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--lnk-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-drawer__item.is-current {
+  border-color: var(--lnk-border, rgba(128, 128, 128, 0.25));
+  background: var(--lnk-surface-raised, #fff);
+}
+
+.session-drawer__empty {
+  padding: 18px 4px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--lnk-text-muted);
+}
+
+.session-drawer-enter-active,
+.session-drawer-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.session-drawer-enter-active .session-drawer,
+.session-drawer-leave-active .session-drawer {
+  transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.session-drawer-enter-from,
+.session-drawer-leave-to {
+  opacity: 0;
+}
+
+.session-drawer-enter-from .session-drawer,
+.session-drawer-leave-to .session-drawer {
+  transform: translateX(-100%);
 }
 
 /* 「＋」附件卡（照竞品卡片）：四瓦片 浅底/按下反馈 */
