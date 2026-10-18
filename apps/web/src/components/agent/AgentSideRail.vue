@@ -4520,10 +4520,17 @@ defineExpose({
  * 空态/输入态/生成态默认整页 = SSE 对话流 + composer，画布隐藏（CanvasPage 把画布区
  * visibility:hidden，保持挂载与视口测量，切回画布视图 fitView 立即可用）。
  * 仅两种动作进入画布视图：对话流内点定位（产物/提议生成卡）、composer ◎ 定位锚。
- * 本块只改「布局壳」：贴底容器升为整页不透明面板，composer/裸条内部样式零改动。 */
+ * 本块只改「布局壳」：贴底容器升为整页不透明面板，composer/裸条内部样式零改动。
+ * ⭐ 全屏出血（full-bleed）：基准贴底壳是 left/right:12px 的悬浮条（给窗态画布留边），
+ * 对话态必须四边归零 + bottom 改 0、安全区下沉为 padding-bottom，否则面板四周
+ * 透出画布 = 「对话模式页面没满屏」（2026-10-18 用户截图复现）。 */
 .agent-panel-mobile-dock.is-conversation-view.agent-panel-shell {
   top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   background: var(--lnk-surface-canvas);
   pointer-events: auto;
 }
