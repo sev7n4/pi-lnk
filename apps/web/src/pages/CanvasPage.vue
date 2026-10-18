@@ -5275,6 +5275,7 @@ onUnmounted(() => {
         :read-only="agentReadOnly"
         :mobile-canvas-view="mobileCanvasView"
         :mobile-canvas-imm="mobileCanvasImm"
+        :mobile-app-tab="mobileAppTab"
         :studio-dock-open="mobileStudioDockOpen"
         :selected-node-id="selectedNodeId"
         :selected-node-ids="multiSelectedIds.length ? multiSelectedIds : (selectedNodeId ? [selectedNodeId] : [])"

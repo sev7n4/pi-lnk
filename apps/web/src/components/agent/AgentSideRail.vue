@@ -158,6 +158,9 @@ const props = defineProps<{
   /** 移动端画布视图 + studio dock 展开（画布选中了可编辑节点）：SSE 对话流收起让位，
    *  并经 --lnk-agent-dock-h 把容器实测高度发布给 DockStudioToolbar 抬高避让。 */
   studioDockOpen?: boolean
+  /** IA v3：当前页签（chat/canvas/discover/mine）。页签是全局导航——抽屉遮罩避开页签区，
+   *  页签变化时自动关抽屉（2026-10-19 真机反馈：抽屉开着点页签「失灵」，实为遮罩吞点击）。 */
+  mobileAppTab?: string
 }>()
 
 const emit = defineEmits<{
@@ -3132,6 +3135,15 @@ function closeSessionDrawer() {
   sessionDrawerOpen.value = false
 }
 
+/** 页签是全局导航（IA v3）：遮罩只盖到页签上沿，页签任何时候都可点；
+ * tab 一变即收抽屉，避免「抽屉开着切了页签、面板还挂在上面」。 */
+watch(
+  () => props.mobileAppTab,
+  (tab, prev) => {
+    if (tab !== prev && sessionDrawerOpen.value) closeSessionDrawer()
+  },
+)
+
 defineExpose({
   openSessionDrawer,
   openPanel,
@@ -4653,9 +4665,16 @@ defineExpose({
 }
 
 /* ---- 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起，历史会话 + 新建对话 ---- */
+/* 2026-10-19 真机反馈：「页签失灵」实锤场景之一——抽屉遮罩 inset:0 盖住页签（z95>80），
+ * 点页签只触发遮罩 @click.self 关抽屉、页签不切，第二次点才生效。
+ * 遮罩 bottom 避开页签区（--lnk-tabbar-h 由 MobileTabBar 发布），页签任何时候可点；
+ * tab 变化经 mobileAppTab prop watch 自动收抽屉。 */
 .session-drawer-layer {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: var(--lnk-tabbar-h, 0px);
   z-index: 95;
   background: rgba(0, 0, 0, 0.35);
 }
