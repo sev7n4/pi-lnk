@@ -260,14 +260,18 @@ describe('createQrCharge 当面扫码预下单（alipay.trade.precreate）', () 
     expect(qrCode).toBe('https://qr.alipay.com/bax123')
   })
 
-  it('请求签名串包含 sign_type（与 page.pay 同一网关口径）', async () => {
+  it('请求头必须带 charset=UTF-8 且签名串包含 sign_type（网关口径）——回归测试', async () => {
+    // 2026-10-18 生产实证：网关按 Content-Type 的 charset 解码 POST 体，
+    // 不带 charset 时中文 subject 被 GBK 解码 → isv.invalid-signature。
     const res = { code: '10000', msg: 'Success', out_trade_no: 'o', qr_code: 'q' }
     mockFetchWith({ alipay_trade_precreate_response: res, sign: signPrecreateResponse(res) })
     await adapter.createQrCharge({ orderId: 'o', amountFen: 100, subject: 's' })
 
     const fetchMock = vi.mocked(globalThis.fetch)
     const called = fetchMock.mock.calls[0]
-    const sent = new URLSearchParams(String(called[1] && (called[1] as RequestInit).body))
+    const headers = (called[1] as RequestInit).headers as Record<string, string>
+    expect(headers['Content-Type']).toContain('charset=UTF-8')
+    const sent = new URLSearchParams(String((called[1] as RequestInit).body))
     expect(sent.get('method')).toBe('alipay.trade.precreate')
     const signed: Record<string, string> = {}
     for (const [k, v] of sent) if (k !== 'sign') signed[k] = v
@@ -285,8 +289,8 @@ describe('createQrCharge 当面扫码预下单（alipay.trade.precreate）', () 
     await expect(adapter.createQrCharge({ orderId: 'o', amountFen: 100, subject: 's' })).rejects.toThrow('验签失败')
   })
 
-  it('渠道拒绝（code!=10000）→ 抛错并携带错误码', async () => {
-    const res = { code: '40004', msg: 'Business Failed', sub_code: 'ACQ.INVALID_PARAMETER' }
+  it('渠道拒绝（code!=10000）→ 抛错并携带错误码（不误报验签失败）', async () => {
+    const res = { code: '40004', msg: 'Business Failed', sub_code: 'ACQ.TRADE_NOT_EXIST' }
     mockFetchWith({ alipay_trade_precreate_response: res, sign: signPrecreateResponse(res) })
     await expect(adapter.createQrCharge({ orderId: 'o', amountFen: 100, subject: 's' })).rejects.toThrow('40004')
   })

@@ -182,6 +182,34 @@ export function fenToYuan(amountFen: number): string {
   return (amountFen / 100).toFixed(2)
 }
 
+/**
+ * 网关 POST 公共头。⚠️ 必须显式带 charset=UTF-8：
+ * 2026-10-18 生产实证——网关按 **Content-Type 的 charset**（而非请求里的
+ * charset 参数）解码 POST 体；不带时 UTF-8 中文（如 subject「专业版」）被
+ * 按 GBK 解码 → 签名内容错乱 → isv.invalid-signature（纯 ASCII 请求不受
+ * 影响所以单测/首探全绿，中文订单才暴露）。
+ */
+const GATEWAY_HEADERS: Record<string, string> = {
+  'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+}
+
+/**
+ * 读取网关响应为文本。网关错误页常为 `text/html;charset=GBK`，而
+ * Response.text() 恒按 UTF-8 解码 → 中文错误信息乱码且原文验签必败。
+ * 这里按响应头 charset 解码（不识别则回退 utf-8）。
+ */
+async function readGatewayText(res: Response): Promise<string> {
+  const buf = await res.arrayBuffer()
+  const m = /charset=([\w-]+)/i.exec(res.headers.get('content-type') ?? '')
+  let dec: TextDecoder
+  try {
+    dec = new TextDecoder(m?.[1] ?? 'utf-8')
+  } catch {
+    dec = new TextDecoder('utf-8')
+  }
+  return dec.decode(buf)
+}
+
 /** 元字符串 → 分（整数，四舍五入到分）。 */
 export function yuanToFen(yuan: string): number {
   const n = Number(yuan)
@@ -253,11 +281,11 @@ export class AlipayAdapter implements PaymentAdapter {
     try {
       const res = await fetch(this.cfg.gateway, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: GATEWAY_HEADERS,
         body: new URLSearchParams(params).toString(),
         signal: AbortSignal.timeout(15000),
       })
-      rawText = await res.text()
+      rawText = await readGatewayText(res)
     } catch (err) {
       throw new Error(`precreate 网关请求失败: ${(err as Error).message}`)
     }
@@ -270,16 +298,20 @@ export class AlipayAdapter implements PaymentAdapter {
     const r = json.alipay_trade_precreate_response
     if (!r || typeof r !== 'object') throw new Error('precreate 响应缺失业务体')
     const resp = r as Record<string, unknown>
-    // 响应验签（原始节点文本口径，见 extractRawResponseNode）：不验签的预下单响应不可信。
+    if (resp.code !== '10000') {
+      // 渠道拒绝：错误响应不驱动任何资损决策，直接报渠道语义（不验签）。
+      throw new Error(
+        `precreate 渠道拒绝: code=${resp.code} msg=${resp.msg ?? '?'} sub_code=${resp.sub_code ?? '-'} sub_msg=${resp.sub_msg ?? '-'}`,
+      )
+    }
+    // 成功响应必须验签（原始节点文本口径，见 extractRawResponseNode）：不验签的
+    // 预下单响应可被伪造二维码/金额（资损链路，零信任）。
     const rawNode = extractRawResponseNode(rawText, 'alipay_trade_precreate_response')
     if (
       !rawNode ||
       !verifyResponseSignRaw(rawNode, json.sign, normalizeKey(this.cfg.alipayPublicKey, 'public'))
     ) {
       throw new Error('precreate 响应验签失败')
-    }
-    if (resp.code !== '10000') {
-      throw new Error(`precreate 渠道拒绝: code=${resp.code} msg=${resp.msg ?? '?'} sub_msg=${resp.sub_msg ?? '-'}`)
     }
     if (typeof resp.qr_code !== 'string' || !resp.qr_code) {
       throw new Error('precreate 响应缺失 qr_code')
@@ -324,11 +356,11 @@ export class AlipayAdapter implements PaymentAdapter {
     try {
       const res = await fetch(this.cfg.gateway, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: GATEWAY_HEADERS,
         body: new URLSearchParams(params).toString(),
         signal: AbortSignal.timeout(15000),
       })
-      rawText = await res.text()
+      rawText = await readGatewayText(res)
     } catch {
       return { paid: false } // 网络故障不当已付（宁可漏放，不可错放）
     }
@@ -341,7 +373,8 @@ export class AlipayAdapter implements PaymentAdapter {
     const r = json.alipay_trade_query_response
     if (!r || typeof r !== 'object') return { paid: false }
     const resp = r as Record<string, unknown>
-    // 响应验签（原始节点文本口径）：不验签的查单补偿可被伪造响应欺骗入账。
+    if (resp.code !== '10000') return { paid: false } // 查无此交易等：不当已付
+    // 已付判定驱动资损 → 该响应必须验签（原始节点文本口径）。
     const rawNode = extractRawResponseNode(rawText, 'alipay_trade_query_response')
     if (
       !rawNode ||
@@ -349,7 +382,6 @@ export class AlipayAdapter implements PaymentAdapter {
     ) {
       return { paid: false }
     }
-    if (resp.code !== '10000') return { paid: false }
     const paid = resp.trade_status === 'TRADE_SUCCESS' || resp.trade_status === 'TRADE_FINISHED'
     return { paid, channelTradeNo: typeof resp.trade_no === 'string' ? resp.trade_no : undefined }
   }
