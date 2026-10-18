@@ -1,5 +1,7 @@
 /**
- * 选中浮层（SelectionActionBar）的纯函数模型，web 本地、无框架依赖。
+ * 选中节点快捷工具的纯函数模型，web 本地、无框架依赖。
+ * 2026-10-18 信息架构收敛（方案 A）：工具行从节点上沿浮层（SelectionActionBar，已退役）
+ * 迁入 studio dock 顶部（DockStudioToolbar），随选中上下文唯一呈现。
  */
 
 export interface SelectionToolDef {
@@ -8,35 +10,11 @@ export interface SelectionToolDef {
   icon: string
   /** 完整名称：title / aria-label / tooltip 用 */
   title: string
-  /** 浮层按钮短文案（2026-09-24 用户要求图标+文字，尽量两字） */
+  /** 按钮短文案（2026-09-24 用户要求图标+文字，尽量两字） */
   label: string
   disabled: boolean
   disabledReason?: string
   group: 'ai' | 'file'
-}
-
-export interface Box {
-  x: number
-  y: number
-  w: number
-  h: number
-}
-
-/**
- * 反缩放系数：精确抵消 viewport zoom 对浮层的拉伸（2026-09-22 用户验收修订）。
- * 不再 clamp 到 [0.8, 1.2]：钳制会让浮层屏幕尺寸随缩放漂移（zoom 0.5 时只有
- * 恒定值的 60%），与 MultiSelectToolbar（屏幕坐标、恒定大小）观感不一致。
- * 精确 1/zoom 后 bar 屏幕宽度恒等于 BAR_WIDTH_PX，与框选多节点菜单完全等宽。
- */
-export function exactCounterScale(zoom: number): number {
-  return 1 / zoom
-}
-
-/**
- * 越界翻转判定：bar（屏幕坐标）越过视口上沿时翻转到节点下方。
- */
-export function resolveBarPlacement(barBox: Box, viewportBox: Box): 'top' | 'bottom' {
-  return barBox.y <= viewportBox.y ? 'bottom' : 'top'
 }
 
 /**

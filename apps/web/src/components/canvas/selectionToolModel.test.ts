@@ -1,31 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSelectionTools, exactCounterScale, resolveBarPlacement } from './selectionToolModel'
-
-describe('exactCounterScale', () => {
-  it('returns the exact inverse of zoom（2026-09-22 修订：不再 clamp，屏幕尺寸恒定）', () => {
-    expect(exactCounterScale(0.2)).toBeCloseTo(5)
-    expect(exactCounterScale(1)).toBe(1)
-    expect(exactCounterScale(4)).toBeCloseTo(0.25)
-  })
-
-  it('mid-range zooms pass through as 1/zoom', () => {
-    expect(exactCounterScale(0.9)).toBeCloseTo(1 / 0.9)
-    expect(exactCounterScale(1.1)).toBeCloseTo(1 / 1.1)
-  })
-})
-
-describe('resolveBarPlacement', () => {
-  const viewport = { x: 0, y: 0, w: 1200, h: 800 }
-
-  it('returns top when bar fits inside the viewport', () => {
-    expect(resolveBarPlacement({ x: 500, y: 100, w: 200, h: 32 }, viewport)).toBe('top')
-  })
-
-  it('returns bottom when bar would cross the viewport top edge', () => {
-    expect(resolveBarPlacement({ x: 500, y: -10, w: 200, h: 32 }, viewport)).toBe('bottom')
-    expect(resolveBarPlacement({ x: 500, y: 0, w: 200, h: 32 }, viewport)).toBe('bottom')
-  })
-})
+import { buildSelectionTools } from './selectionToolModel'
 
 describe('buildSelectionTools', () => {
   it('orders ai tools before file tools with 精修 enabled', () => {

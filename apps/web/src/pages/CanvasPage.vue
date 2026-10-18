@@ -157,7 +157,6 @@ import RefineWorkbench from '@/components/canvas/refine/RefineWorkbench.vue'
 import MediaPreviewOverlay from '@/components/canvas/MediaPreviewOverlay.vue'
 import MediaInspectorDrawer from '@/components/media/MediaInspectorDrawer.vue'
 import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
-import SelectionActionBar from '@/components/canvas/SelectionActionBar.vue'
 import NodeCropOverlay from '@/components/canvas/NodeCropOverlay.vue'
 import NodeOutpaintOverlay from '@/components/canvas/NodeOutpaintOverlay.vue'
 import NodeInpaintOverlay from '@/components/canvas/NodeInpaintOverlay.vue'
@@ -1759,6 +1758,11 @@ async function focusNodeById(id: string) {
     ElMessage.warning('当前画布中没有找到对应节点')
     return
   }
+  // 移动端：定位 = 用户显式要看画布 ⇒ 切到画布视图（带 composer 同屏态，非纯画布）
+  if (isMobileLayout.value) {
+    mobileCanvasView.value = true
+    mobileCanvasImm.value = false
+  }
   selectOnlyNode(id)
   await nextTick()
   await vueFlowRef.value?.fitView({ nodes: [id], padding: 0.45, duration: 320, maxZoom: 1.05 })
@@ -1772,6 +1776,10 @@ async function focusNodesByIds(ids: string[]) {
     return
   }
   if (valid.length === 1) return focusNodeById(valid[0])
+  if (isMobileLayout.value) {
+    mobileCanvasView.value = true
+    mobileCanvasImm.value = false
+  }
   selectOnlyNode(valid[0])
   await nextTick()
   await vueFlowRef.value?.fitView({ nodes: valid, padding: 0.55, duration: 360, maxZoom: 1.0 })
@@ -1877,6 +1885,13 @@ function syncMultiSelectionFromNodes() {
  */
 function onNodesChange(changes: NodeChange[]) {
   if (!changes.length) return
+
+  // 引用拾取模式（2026-10-18 方案 A 裁决）：吞掉全部 select 变更——点节点只做「选为引用」，
+  // 不落画布选中态。否则选中 → studio dock / 快捷工具行弹出，与拾取流互相踩（三带叠罗汉扳机）。
+  if (pickMode.active.value) {
+    changes = changes.filter((change) => change.type !== 'select')
+    if (!changes.length) return
+  }
 
   let next = nodes.value
   let changed = false
@@ -4164,6 +4179,12 @@ function handleCanvasRefPickToggle() {
     pickMode.deactivate()
     return
   }
+  // 移动端：◎ 定位锚 = 显式进画布（对话视图下画布隐藏，拾取必须在画布上完成）；
+  // 带 composer 同屏态（窗），非传送门的纯画布
+  if (isMobileLayout.value) {
+    mobileCanvasView.value = true
+    mobileCanvasImm.value = false
+  }
   if (!isMobileLayout.value) {
     agentRailRef.value?.openPanel()
   }
@@ -4710,6 +4731,25 @@ const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
 const { isMobileLayout } = useAgentMobileLayout()
 const agentPanelExpanded = ref(false)
+/** 移动端画布视图（2026-10-18 信息架构裁决）：默认 false = 对话视图（SSE 对话流 + composer
+ *  常驻整页，画布隐藏）。进入画布仅两条路：对话流内点定位（focusNode 系列、handleHistoryLocate）、
+ *  composer ◎ 定位锚（引用拾取）；退出 = 拾取结束（watch）或画布上的「返回对话」按钮。
+ *  桌面端恒 false，不参与。 */
+const mobileCanvasView = ref(false)
+/** 纯画布满屏态（2026-10-18 用户裁决）：传送门进入 = 画布独占（composer/SSE 全隐）；
+ *  ◎ 定位锚 / 提议卡定位进入 = 画布 + composer（+SSE）同屏。两态共用 mobileCanvasView。 */
+const mobileCanvasImm = ref(false)
+/** 移动端画布视图 + studio dock 展开（选中了可编辑节点）：composer 让位——SSE 对话流收起，
+ *  dock 抬高到贴底容器之上（--lnk-agent-dock-h，见 AgentSideRail / DockStudioToolbar）。
+ *  提议生成卡片点定位 → 自动拾取节点 → dock 展开供检查/修改提示词，就是这条链路的目标态。 */
+const mobileStudioDockOpen = computed(
+  () =>
+    isMobileLayout.value &&
+    mobileCanvasView.value &&
+    !!editorNode.value &&
+    !refinePanelNode.value &&
+    !gridSlicePanelNode.value,
+)
 function onAgentExpandedChange(expanded: boolean) {
   agentPanelExpanded.value = expanded
 }
@@ -4730,7 +4770,17 @@ function canOpenAgentPanel(): boolean {
 watch(
   () => pickMode.active.value,
   (active, prev) => {
+    if (!prev && active) {
+      // 进入拾取：清空画布既有选中（handleCanvasRefPickToggle 已同步完成「预加入引用」），
+      // studio dock / 工具行随选中消失，拾取态 = 纯净点选。
+      clearSelection()
+      multiSelectedIds.value = []
+      pendingExclusiveSelectId = null
+    }
     if (prev && !active && isMobileLayout.value) {
+      // 引用拾取结束 ⇒ 从画布视图回到对话视图（composer 面板随贴底容器回归）
+      mobileCanvasView.value = false
+      mobileCanvasImm.value = false
       nextTick(() => agentRailRef.value?.openPanel())
     }
   },
@@ -4829,7 +4879,10 @@ onUnmounted(() => {
       <div
         ref="canvasAreaRef"
         class="relative min-h-0 min-w-0 flex-1"
-        :class="{ 'canvas-ref-pick-mode': pickMode.active.value }"
+        :class="{
+          'canvas-ref-pick-mode': pickMode.active.value,
+          'mobile-canvas-veiled': isMobileLayout && !mobileCanvasView,
+        }"
       >
         <!--全屏图视图（2026-07-24 改版）：`?graph=1`（由卡片「新窗口打开」进入）。
              ⭐ **不透明**底色（覆盖层曾用 `/97` + blur，导致透出主画布 —— 用户反馈"背景透明的"）。
@@ -4970,28 +5023,6 @@ onUnmounted(() => {
             :progress="selectionBatchApi.progress.value"
             @stop="handleSelectionBatchStop"
           />
-          <SelectionActionBar
-            v-if="selectionActionBarNode"
-            :node="selectionActionBarNode as FlowNode"
-            :grid-slice="Boolean(selectionGridSliceNode)"
-            :grid-slice-loading="gridSliceBusy"
-            :grid-slice-disabled="gridSliceEntryDisabled"
-            :grid-slice-disabled-title="gridSliceDisabledTitle"
-            :grid-slice-image="gridSliceImageSize"
-            :has-url="Boolean(selectionActionBarNode?.data?.url)"
-            :matting-busy="mattingBusy"
-            @edit="openRefineForSelected"
-            @matting="selectionActionBarNode && handleFloatingMatting(selectionActionBarNode)"
-            @crop="selectionActionBarNode && handleFloatingCropStart(selectionActionBarNode)"
-            @outpaint="selectionActionBarNode && handleFloatingOutpaintStart(selectionActionBarNode)"
-            @inpaint="selectionActionBarNode && handleFloatingInpaintStart(selectionActionBarNode)"
-            @element-edit="selectionActionBarNode && handleFloatingElementEditStart(selectionActionBarNode)"
-            @annotate="selectionActionBarNode && handleFloatingAnnotateStart(selectionActionBarNode)"
-            @slice="handleGridSliceSlice"
-            @open-custom="handleGridSliceOpenCustom"
-            @download="selectionActionBarNode && downloadNodeImage(selectionActionBarNode.id)"
-            @save-asset="selectionActionBarNode && saveNodeAsset(selectionActionBarNode.id)"
-          />
           <NodeCropOverlay
             v-if="nodeCropNode"
             :node="nodeCropNode as FlowNode"
@@ -5108,6 +5139,14 @@ onUnmounted(() => {
           :mentions="mentionOptions"
           :generating="selectedNodeGenerating"
           :scale="viewportSettings.bottomToolbarScale"
+          :tool-row-visible="!!selectionActionBarNode"
+          :grid-slice="Boolean(selectionGridSliceNode)"
+          :grid-slice-loading="gridSliceBusy"
+          :grid-slice-disabled="gridSliceEntryDisabled"
+          :grid-slice-disabled-title="gridSliceDisabledTitle"
+          :grid-slice-image="gridSliceImageSize"
+          :has-url="Boolean(selectionActionBarNode?.data?.url)"
+          :matting-busy="mattingBusy"
           @patch="patchSelectedNode"
           @remove-ref="handleRemoveRef"
           @generate="handleNodeGenerate"
@@ -5120,6 +5159,17 @@ onUnmounted(() => {
           @continue-shot="handleContinueShot"
           @close="onPaneClick"
           @refine="openRefineForSelected"
+          @edit="openRefineForSelected"
+          @matting="editorNode && handleFloatingMatting(editorNode)"
+          @crop="editorNode && handleFloatingCropStart(editorNode)"
+          @outpaint="editorNode && handleFloatingOutpaintStart(editorNode)"
+          @inpaint="editorNode && handleFloatingInpaintStart(editorNode)"
+          @element-edit="editorNode && handleFloatingElementEditStart(editorNode)"
+          @annotate="editorNode && handleFloatingAnnotateStart(editorNode)"
+          @slice="handleGridSliceSlice"
+          @open-custom="handleGridSliceOpenCustom"
+          @download="editorNode && downloadNodeImage(editorNode.id)"
+          @save-asset="editorNode && saveNodeAsset(editorNode.id)"
         />
 
         <DockNoticeLayer />
@@ -5198,6 +5248,11 @@ onUnmounted(() => {
         ref="agentRailRef"
         :session-id="sessionId"
         :read-only="agentReadOnly"
+        :mobile-canvas-view="mobileCanvasView"
+        :mobile-canvas-imm="mobileCanvasImm"
+        :studio-dock-open="mobileStudioDockOpen"
+        @open-canvas-view="mobileCanvasView = true; mobileCanvasImm = true"
+        @open-conversation-view="mobileCanvasView = false; mobileCanvasImm = false"
         :selected-node-id="selectedNodeId"
         :selected-node-ids="multiSelectedIds.length ? multiSelectedIds : (selectedNodeId ? [selectedNodeId] : [])"
         :selected-node="selectedNode"
@@ -5294,4 +5349,12 @@ onUnmounted(() => {
 :deep(.vue-flow__handle.neo-flow-handle) {
   cursor: crosshair;
 }
+
+/* ---- 移动端对话视图：画布隐藏但保持挂载（2026-10-18 信息架构裁决）----
+ * ⛔ 不用 display:none / v-if：VueFlow 视口测量会失效（同 ?graph=1 的坑），
+ * visibility:hidden 保持布局与 ResizeObserver，切回画布视图 fitView 立即可用。 */
+.mobile-canvas-veiled {
+  visibility: hidden;
+}
+
 </style>

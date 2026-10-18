@@ -49,6 +49,11 @@ const tooltip = computed(() => {
           @input="emit('update:title', ($event.target as HTMLInputElement).value)"
         >
       </div>
+      <!-- header 中段插槽（2026-10-18 方案 A）：选中节点快捷工具行落位处——
+           图标底部压在 header 下沿，不新增行高，dock 总高度与缩略图态持平 -->
+      <div class="flex min-w-0 flex-1 items-center mx-1">
+        <slot name="header-mid" />
+      </div>
       <div class="bottom-toolbar-header-end flex items-center gap-1">
         <slot name="header-end" />
         <button

@@ -74,4 +74,12 @@ const emit = defineEmits<{
 .canvas-ref-pick-bar__esc {
   flex-shrink: 0;
 }
+
+/* 移动端：下移避让 CanvasFloatingChrome 标题行（z-50 在本层 z-45 之上，
+ * top:12 会把「点选节点加入引用」提示压在标题胶囊后面只露出「完成 Esc」） */
+@media (max-width: 767px) {
+  .canvas-ref-pick-bar {
+    top: 56px;
+  }
+}
 </style>

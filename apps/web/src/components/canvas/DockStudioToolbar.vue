@@ -4,10 +4,12 @@ import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
 import type { MentionOption } from '@/components/canvas/MentionInput.vue'
 import DockStudioRouter from '@/components/canvas/dock-studio/DockStudioRouter.vue'
 import { EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import { isNodeGenerating } from '@/constants/dockStudio'
 import type { CompositionTrack } from '@/utils/compositionUpstream'
 import type { NodeRef } from '@/composables/useNodeRefs'
+import { buildSelectionTools, type SelectionToolDef } from './selectionToolModel'
+import { DOCK_TOOL_ROW_KEY } from './dock-studio/shared/dockToolRowContext'
 
 const props = withDefaults(defineProps<{
   node: EditableFlowNode | null
@@ -19,9 +21,28 @@ const props = withDefaults(defineProps<{
   scale?: number
   /** 收缩态（节点编辑浮层激活时）：收起 dock 只留底部触发热区，悬停展开、划走收回（2026-09-25 用户拍板）。 */
   collapsed?: boolean
+  /** ---- 选中节点快捷工具行（2026-10-18 方案 A：节点上沿浮层退役并入此处）---- */
+  toolRowVisible?: boolean
+  gridSlice?: boolean
+  gridSliceLoading?: boolean
+  gridSliceDisabled?: boolean
+  gridSliceDisabledTitle?: string
+  /** 宫格切分原图像素尺寸；用于 64px 单格下限禁用判定 */
+  gridSliceImage?: { width: number; height: number } | null
+  /** 文件组（下载/存库）是否可用：节点有可访问的 url 时为真 */
+  hasUrl?: boolean
+  /** 一键抠图进行中：matting 按钮禁用 + loading（防重入） */
+  mattingBusy?: boolean
 }>(), {
   generating: false,
   collapsed: false,
+  toolRowVisible: false,
+  gridSlice: false,
+  gridSliceLoading: false,
+  gridSliceDisabled: false,
+  gridSliceDisabledTitle: '',
+  hasUrl: false,
+  mattingBusy: false,
 })
 
 const emit = defineEmits<{
@@ -37,6 +58,18 @@ const emit = defineEmits<{
   export: []
   continueShot: []
   refine: []
+  /** ---- 快捷工具行 ---- */
+  edit: []
+  slice: [cols: number, rows: number]
+  'open-custom': []
+  download: []
+  'save-asset': []
+  matting: []
+  crop: []
+  outpaint: []
+  inpaint: []
+  'element-edit': []
+  annotate: []
 }>()
 
 /** 悬停展开（仅收缩态有意义；生成中/锁定态不收缩） */
@@ -64,6 +97,43 @@ const dockLocked = computed(() => {
   if (props.generating) return true
   const status = props.node?.data?.status
   return isNodeGenerating(status) || status === 'uploading'
+})
+
+/** 快捷工具编排：config 驱动 + 抠图进行中禁用（与旧 SelectionActionBar 行为一致） */
+const tools = computed(() =>
+  buildSelectionTools({ hasUrl: Boolean(props.hasUrl) }).map((tool) =>
+    tool.id === 'matting' && props.mattingBusy
+      ? { ...tool, disabled: true, disabledReason: '抠图进行中' }
+      : tool,
+  ),
+)
+
+function onToolClick(tool: SelectionToolDef) {
+  if (tool.disabled) return
+  if (tool.id === 'refine') emit('edit')
+  else if (tool.id === 'matting') emit('matting')
+  else if (tool.id === 'crop') emit('crop')
+  else if (tool.id === 'outpaint') emit('outpaint')
+  else if (tool.id === 'inpaint') emit('inpaint')
+  else if (tool.id === 'element-edit') emit('element-edit')
+  else if (tool.id === 'annotate') emit('annotate')
+  else if (tool.id === 'download') emit('download')
+  else if (tool.id === 'save-asset') emit('save-asset')
+}
+
+/** 工具行数据/动作下发：ImageDockPanel 在 dock 卡 header 中段渲染（inject 消费） */
+provide(DOCK_TOOL_ROW_KEY, {
+  visible: computed(() => props.toolRowVisible && !collapsedNow.value),
+  tools,
+  gridSlice: computed(() => props.gridSlice),
+  gridSliceLoading: computed(() => props.gridSliceLoading),
+  gridSliceDisabled: computed(() => props.gridSliceDisabled),
+  gridSliceDisabledTitle: computed(() => props.gridSliceDisabledTitle),
+  gridSliceImage: computed(() => props.gridSliceImage ?? null),
+  mattingBusy: computed(() => props.mattingBusy),
+  onToolClick,
+  onSlice: (cols: number, rows: number) => emit('slice', cols, rows),
+  onOpenCustom: () => emit('open-custom'),
 })
 
 function handleDockEscape(event: KeyboardEvent) {
@@ -151,5 +221,16 @@ onUnmounted(() => {
 .dock-studio-hit:hover .dock-studio-hit__pill {
   width: 56px;
   background: color-mix(in srgb, var(--neo-text) 48%, transparent);
+}
+
+/* ---- 移动端：抬高到 composer 贴底容器之上（2026-10-18 真机反馈）----
+ * 画布视图下 composer（SSE 流 + 裸条）fixed 贴底 z-70，本 dock bottom-3 z-45 会被盖住。
+ * AgentSideRail 用 ResizeObserver 把贴底容器实测高度发布为 --lnk-agent-dock-h
+ * （键盘/参数行变化自动跟随），这里按它清位；桌面端变量恒 0 → 维持 bottom-3 原位。
+ * 方案 A 后 has-studio-dock 态 composer 面板整体隐藏 → 变量趋 0，dock 自然落底。 */
+@media (max-width: 767px) {
+  .dock-studio-toolbar {
+    bottom: calc(var(--lnk-agent-dock-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
+  }
 }
 </style>

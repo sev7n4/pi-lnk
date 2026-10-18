@@ -7,7 +7,9 @@ withDefaults(defineProps<{
   size?: 'sm' | 'md' | 'lg'
   /** 主 CTA 文案（动词 + 对象，§4.2 不变量 5）；缺省沿用生成/取消生成 */
   label?: string
-}>(), { size: 'sm' })
+  /** glyph 档位：anchor 生成锚（默认，生成类 CTA）/ send 发送箭头（composer 发送键，2026-10-18 用户裁决） */
+  glyph?: 'anchor' | 'send'
+}>(), { size: 'sm', glyph: 'anchor' })
 
 const emit = defineEmits<{
   generate: []
@@ -38,7 +40,12 @@ const emit = defineEmits<{
     </svg>
     <!-- 2026-10-18：生成锚品牌 glyph（用户供图抠像素材）。
          mask + currentColor ⇒ 深浅主题 / hover / disabled 全部自动跟随文字色 -->
-    <span v-else class="dock-generate-btn__glyph" aria-hidden="true" />
+    <span
+      v-else
+      class="dock-generate-btn__glyph"
+      :class="{ 'dock-generate-btn__glyph--send': glyph === 'send' }"
+      aria-hidden="true"
+    />
   </button>
 </template>
 
@@ -72,6 +79,14 @@ const emit = defineEmits<{
   background: currentColor;
   -webkit-mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
   mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
+}
+
+/* 发送箭头 glyph（源 33×31，用户截图抠图）：composer 发送键专用档 */
+.dock-generate-btn__glyph--send {
+  width: 16px;
+  height: 15px;
+  -webkit-mask-image: url('@/assets/icons/send-arrow.png');
+  mask-image: url('@/assets/icons/send-arrow.png');
 }
 
 .dock-generate-btn:hover:not(:disabled) {
