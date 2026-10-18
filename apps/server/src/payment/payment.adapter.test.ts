@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { createSign, createVerify, generateKeyPairSync } from 'node:crypto'
 import {
   AlipayAdapter,
@@ -210,6 +210,93 @@ describe('alipayTimestamp 东八区', () => {
   it('跨日边界正确（UTC 16:30 → 北京次日 00:30）', () => {
     const utc = new Date('2026-10-17T16:30:00.000Z')
     expect(alipayTimestamp(utc)).toBe('2026-10-18 00:30:00')
+  })
+})
+
+describe('createQrCharge 当面扫码预下单（alipay.trade.precreate）', () => {
+  let appPrivateKeyPem: string
+  let appPublicKeyPemRaw: string
+  let adapter: AlipayAdapter
+
+  beforeAll(() => {
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    })
+    appPrivateKeyPem = privateKey
+    appPublicKeyPemRaw = publicKey.replace(/-----(BEGIN|END)[^-]*-----/g, '').replace(/\s+/g, '')
+    adapter = new AlipayAdapter({
+      appId: '2021000000000001',
+      privateKey,
+      alipayPublicKey: publicKey, // 测试里「支付宝公钥」即同一对公钥
+      gateway: 'https://openapi.alipaydev.com/gateway.do',
+      notifyUrl: 'https://example.com/api/payment/callback/alipay',
+      returnUrl: 'https://example.com/pay/return',
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /// 用「支付宝私钥」签 precreate 响应（口径同 verifyResponseSign）。
+  function signPrecreateResponse(res: Record<string, unknown>): string {
+    const content = Object.keys(res)
+      .filter((k) => k !== 'sign' && k !== 'sign_type')
+      .sort()
+      .map((k) => `${k}=${res[k]}`)
+      .join('&')
+    return createSign('RSA-SHA256').update(content, 'utf8').sign(appPrivateKeyPem, 'base64')
+  }
+
+  function mockFetchWith(body: Record<string, unknown>) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })))
+  }
+
+  it('合法签名响应 → 返回 qr_code', async () => {
+    const res = { code: '10000', msg: 'Success', out_trade_no: 'order-qr', qr_code: 'https://qr.alipay.com/bax123' }
+    mockFetchWith({ alipay_trade_precreate_response: res, sign: signPrecreateResponse(res) })
+
+    const { qrCode } = await adapter.createQrCharge({ orderId: 'order-qr', amountFen: 9900, subject: 's' })
+    expect(qrCode).toBe('https://qr.alipay.com/bax123')
+  })
+
+  it('请求签名串包含 sign_type（与 page.pay 同一网关口径）', async () => {
+    const res = { code: '10000', msg: 'Success', out_trade_no: 'o', qr_code: 'q' }
+    mockFetchWith({ alipay_trade_precreate_response: res, sign: signPrecreateResponse(res) })
+    await adapter.createQrCharge({ orderId: 'o', amountFen: 100, subject: 's' })
+
+    const fetchMock = vi.mocked(globalThis.fetch)
+    const called = fetchMock.mock.calls[0]
+    const sent = new URLSearchParams(String(called[1] && (called[1] as RequestInit).body))
+    expect(sent.get('method')).toBe('alipay.trade.precreate')
+    const signed: Record<string, string> = {}
+    for (const [k, v] of sent) if (k !== 'sign') signed[k] = v
+    const content = Object.keys(signed).sort().map((k) => `${k}=${signed[k]}`).join('&')
+    const pubPem = `-----BEGIN PUBLIC KEY-----\n${(appPublicKeyPemRaw.match(/.{1,64}/g) ?? []).join('\n')}\n-----END PUBLIC KEY-----`
+    // 用支付宝视角验证请求签名（含 sign_type 的串必须验签通过——与 page.pay 回归同口径）
+    expect(
+      createVerify('RSA-SHA256').update(content, 'utf8').verify(pubPem, sent.get('sign')!, 'base64'),
+    ).toBe(true)
+  })
+
+  it('响应验签失败 → 抛错（不返回假二维码）', async () => {
+    const res = { code: '10000', msg: 'Success', out_trade_no: 'o', qr_code: 'q' }
+    mockFetchWith({ alipay_trade_precreate_response: res, sign: ' forging' })
+    await expect(adapter.createQrCharge({ orderId: 'o', amountFen: 100, subject: 's' })).rejects.toThrow('验签失败')
+  })
+
+  it('渠道拒绝（code!=10000）→ 抛错并携带错误码', async () => {
+    const res = { code: '40004', msg: 'Business Failed', sub_code: 'ACQ.INVALID_PARAMETER' }
+    mockFetchWith({ alipay_trade_precreate_response: res, sign: signPrecreateResponse(res) })
+    await expect(adapter.createQrCharge({ orderId: 'o', amountFen: 100, subject: 's' })).rejects.toThrow('40004')
+  })
+
+  it('成功响应但缺 qr_code → 抛错', async () => {
+    const res = { code: '10000', msg: 'Success', out_trade_no: 'o' }
+    mockFetchWith({ alipay_trade_precreate_response: res, sign: signPrecreateResponse(res) })
+    await expect(adapter.createQrCharge({ orderId: 'o', amountFen: 100, subject: 's' })).rejects.toThrow('qr_code')
   })
 })
 
