@@ -4670,14 +4670,14 @@ defineExpose({
   border-radius: 12px;
   background: var(--lnk-surface-raised, #fff);
   color: var(--lnk-text);
-  font-size: 13px;
+  font-size: var(--lnk-text-sm, 13px);
   font-weight: 500;
   cursor: pointer;
 }
 
 .session-drawer__caption {
   padding: 6px 4px 0;
-  font-size: 10px;
+  font-size: var(--lnk-text-xs, 12px);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--lnk-text-muted);
@@ -4702,7 +4702,7 @@ defineExpose({
 
 .session-drawer__empty {
   padding: 18px 4px;
-  font-size: 11px;
+  font-size: var(--lnk-text-xs, 12px);
   text-align: center;
   color: var(--lnk-text-muted);
 }
