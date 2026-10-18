@@ -109,7 +109,6 @@ import {
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
-import { skillMenuMode } from './composer/skillMenuMode'
 import { barShape } from './composer/mobileBarLayout'
 import { classifyGesture, HOLD_MS, CANCEL_SWIPE_PX } from './composer/holdGesture'
 import { useMicLevel } from '@/composables/useMicLevel'
@@ -149,6 +148,16 @@ const props = defineProps<{
   /** Phase 2c.1: canvas nodes for pending_confirm SSOT chip recover */
   canvasNodes?: CanvasNodeLike[] | null
   canOpen?: () => boolean
+  /** 移动端画布视图（2026-10-18 信息架构裁决）：false = 对话视图（整页 SSE 对话流 + composer，
+   *  画布隐藏）；true = 画布视图（现状贴底裸条浮在画布上）。由 CanvasPage 持有真相，
+   *  进入画布 = 对话流点定位 / composer ◎ 定位锚；退出 = 引用拾取结束或画布上的返回按钮。 */
+  mobileCanvasView?: boolean
+  /** 移动端纯画布满屏态（2026-10-18 用户裁决）：经传送门进入——画布独占整屏，composer/SSE/顶栏全隐；
+   *  经定位/◎拾取进入的画布态（composer+SSE 同屏）此值为 false。由 CanvasPage 持有真相。 */
+  mobileCanvasImm?: boolean
+  /** 移动端画布视图 + studio dock 展开（画布选中了可编辑节点）：SSE 对话流收起让位，
+   *  并经 --lnk-agent-dock-h 把容器实测高度发布给 DockStudioToolbar 抬高避让。 */
+  studioDockOpen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -164,6 +173,10 @@ const emit = defineEmits<{
   expandedChange: [expanded: boolean]
   /** 切换画布引用 Pick 模式（由 CanvasPage 处理选中 seed） */
   canvasRefPickToggle: []
+  /** 移动端「门」：对话视图 → 画布视图一键切换（纯看画布，不进拾取——拾取是 ◎ 定位锚那扇「窗」） */
+  openCanvasView: []
+  /** 全局传送门（画布侧浮动实例）点击：回对话视图。门穿越两模式，是同一颗组件的两个锚位 */
+  openConversationView: []
   /** Phase 2b: confirm propose_generation → dock generateForNode(nodeId) */
   generateNode: [nodeId: string]
   /** Phase 2b: cancel propose → clear pending_confirm on canvas node */
@@ -188,6 +201,38 @@ const pickModeActive = pickMode.active
 const { isMobileLayout } = useAgentMobileLayout()
 
 const panelTeleported = computed(() => floating.value || isMobileLayout.value)
+
+/* ---- 移动端贴底容器高度发布（studio dock 避让用）----
+ * DockStudioToolbar 在移动端画布视图需要抬高到本容器之上（否则 dock 与 SSE 流/裸条重叠），
+ * 它消费 --lnk-agent-dock-h；这里用 ResizeObserver 把容器实测高度发布为该变量——
+ * 键盘弹出、参数行展开、系统层(状态行/插话选项)出现等高度变化自动跟随，不写魔法数。
+ * 桌面端不观测（变量恒 0），dock 维持 bottom-3 原位。 */
+const panelShellRef = ref<HTMLElement | null>(null)
+let mobileDockRO: ResizeObserver | null = null
+function ensureMobileDockRO() {
+  if (!isMobileLayout.value || mobileDockRO) return
+  mobileDockRO = new ResizeObserver((entries) => {
+    const height = entries[0]?.contentRect.height ?? 0
+    document.documentElement.style.setProperty('--lnk-agent-dock-h', `${Math.max(0, Math.round(height))}px`)
+  })
+  // 移动端首载时 watch(immediate) 先于模板挂载，ref 可能还是 null ⇒ onMounted 再兜底补挂
+  if (panelShellRef.value) mobileDockRO.observe(panelShellRef.value)
+}
+watch(isMobileLayout, (mobile) => {
+  if (mobile) {
+    ensureMobileDockRO()
+  } else if (mobileDockRO) {
+    mobileDockRO.disconnect()
+    mobileDockRO = null
+    document.documentElement.style.setProperty('--lnk-agent-dock-h', '0px')
+  }
+}, { immediate: true })
+onMounted(ensureMobileDockRO)
+onUnmounted(() => {
+  mobileDockRO?.disconnect()
+  mobileDockRO = null
+})
+
 const asidePanelWidth = computed(() => {
   if (!open.value || floating.value || isMobileLayout.value) return '0px'
   return `${panelWidth.value}px`
@@ -273,6 +318,8 @@ watch(
   },
 )
 const fileInputRef = ref<HTMLInputElement | null>(null)
+/** 拍照瓦片专用：capture 直调相机（移动端）， accept 限图片 */
+const cameraInputRef = ref<HTMLInputElement | null>(null)
 const chatContainer = ref<HTMLElement>()
 const sidebar = useSidebarAttachments()
 const isUploading = ref(false)
@@ -1121,12 +1168,6 @@ const canSubmitComposer = computed(() =>
   Boolean(input.value.trim() || sidebar.pendingAttachments.value.length),
 )
 
-function openFilePicker() {
-  if (!props.readOnly && !isUploading.value) {
-    fileInputRef.value?.click()
-  }
-}
-
 function addAssetReference(attachment: SidebarAttachment) {
   if (props.readOnly) return
   sidebar.addFromPayload(attachment)
@@ -1147,9 +1188,26 @@ function toggleAttachMenu() {
   attachMenuOpen.value = !attachMenuOpen.value
 }
 
-function pickLocalUpload() {
+/** 「＋」附件卡（2026-10-18 照竞品重构：三瓦片 拍照/图片/添加文件 + 行 专家/技能/连接器）。
+ *  单一 file input 复用：图片走 accept=image/*，文件走不限类型；拍照走带 capture 的独立 input。 */
+function pickImage() {
   attachMenuOpen.value = false
-  openFilePicker()
+  if (props.readOnly || isUploading.value || !fileInputRef.value) return
+  fileInputRef.value.accept = 'image/*'
+  fileInputRef.value.click()
+}
+
+function pickFile() {
+  attachMenuOpen.value = false
+  if (props.readOnly || isUploading.value || !fileInputRef.value) return
+  fileInputRef.value.accept = ''
+  fileInputRef.value.click()
+}
+
+function pickCamera() {
+  attachMenuOpen.value = false
+  if (props.readOnly || isUploading.value) return
+  cameraInputRef.value?.click()
 }
 
 function pickAssetLibrary() {
@@ -1296,11 +1354,13 @@ function setPlanningThinkingLevel(level: ThinkingLevel) {
   setPlanningThinkingEffort(level === '极限' ? 'max' : 'high')
 }
 
-/* ---- 技能选择（显式 Skill；默认自动 / 平台路由） ---- */
+/* ---- 技能选择（显式 Skill；默认自动 / 平台路由）----
+ * 2026-10-18：技能入口收敛为「＋」一级菜单（技能父项），展开下一级才列出 自动/已安装技能；
+ * 选中即关闭菜单并写回 activeSkillId。原 composer 独立 chip（P2-5.1 skillMenuMode）已退役。 */
 const activeSkillId = ref<string | null>(null)
+const skillSubmenuOpen = ref(false)
 const activeSkill = computed(() => getAgentSkill(activeSkillId.value))
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
-const skillButtonLabel = computed(() => activeSkill.value?.label ?? '技能')
 const inputPlaceholder = computed(() =>
   agentInputPlaceholder(activeSkill.value),
 )
@@ -1310,20 +1370,6 @@ const showProductVisualEmptyState = computed(
     && !props.readOnly
     && !agent.messages.some((m) => m.role === 'user'),
 )
-const skillMenuOpen = ref(false)
-const skillMenuRef = ref<HTMLElement | null>(null)
-// P2-5.1 技能降级：技能少时 chip 直选（点击循环 自动↔技能），多时才展开菜单
-const composerSkillMenuMode = computed(() => skillMenuMode(AGENT_SKILLS.length))
-function onSkillTriggerClick() {
-  if (composerSkillMenuMode.value === 'chip') {
-    activeSkillId.value = activeSkillId.value === null ? (AGENT_SKILLS[0]?.id ?? null) : null
-    return
-  }
-  skillMenuOpen.value = !skillMenuOpen.value
-}
-useClickOutside(skillMenuRef, () => {
-  skillMenuOpen.value = false
-})
 
 /* ---- 对话 thread 列表 ---- */
 const historyOpen = ref(false)
@@ -1713,7 +1759,15 @@ function onComposerFocusOut(e: FocusEvent) {
   if (!isMobileLayout.value) return
   // 延迟收起：给「聚焦丢失但有交互意图」的场景留窗口；有内容则保持伸展
   window.setTimeout(() => {
-    if (!input.value.trim() && !holdActive.value) composerExpanded.value = false
+    if (input.value.trim() || holdActive.value) return
+    // 真机兜底：点按进入输入态的短窗口内丢焦（OEM 合成事件变体），不收起、重试聚焦一次
+    //（仅一次，防窗口期误抢用户后续点击；重试失败则保持展开，用户直接点 textarea 原生聚焦）
+    if (Date.now() - barTapIntentAt < 400 && !barTapRefocusUsed) {
+      barTapRefocusUsed = true
+      void nextTick(() => composerRef.value?.focus())
+      return
+    }
+    composerExpanded.value = false
   }, 150)
 }
 
@@ -1741,6 +1795,8 @@ let barHoldTimer: number | null = null
 let barGestureStartAt = 0
 let barGestureStartY = 0
 let barGestureDy = 0 // clientY - startY，上滑为负
+let barTapIntentAt = 0 // 最近一次 tap 切输入态的时间戳（丢焦兜底窗口判据）
+let barTapRefocusUsed = false // 兜底重聚焦只允许一次，防止窗口期误抢用户后续点击的焦点
 
 /** 按住说话发射点（Task 10 预留）：接 ASR 会话 + 时长/电平反馈。 */
 function onComposerHold() {
@@ -1804,6 +1860,15 @@ function onBarGestureOnChild(e: PointerEvent): boolean {
   return !!target?.closest('button, a, [role="button"], input, textarea')
 }
 
+/** 2026-10-18 真机修复（空态点按瞬跳回）：touch 结束后浏览器合成 mousedown，
+ * target 是 touchstart 命中的条面/提示 span（展开后 span 已移除 → 重定向到非焦点化 div），
+ * 其默认动作会抢走 tap 刚聚焦的 textarea ⇒ focusout ⇒ 150ms 后收起 = 「展开瞬跳回」。
+ * 仅对非子控件命中的合成 mousedown preventDefault（textarea/按钮直点不受影响）。 */
+function onBarMouseDown(e: MouseEvent) {
+  if (onBarGestureOnChild(e as unknown as PointerEvent)) return
+  e.preventDefault()
+}
+
 function releaseBarCapture(e: PointerEvent) {
   try {
     ;(e.currentTarget as HTMLElement | null)?.releasePointerCapture?.(e.pointerId)
@@ -1857,6 +1922,8 @@ function onBarPointerUp(e: PointerEvent) {
     if (onBarGestureOnChild(e)) return
     if (classifyGesture({ durationMs, dy: barGestureDy }) === 'tap') {
       composerExpanded.value = true
+      barTapIntentAt = Date.now()
+      barTapRefocusUsed = false
       void nextTick(() => composerRef.value?.focus())
     }
     return
@@ -3102,10 +3169,21 @@ defineExpose({
       <Teleport to="body" :disabled="!panelTeleported">
         <div
           v-show="open"
+          ref="panelShellRef"
           class="agent-panel-shell flex min-h-0 h-full min-w-0 flex-col overflow-hidden"
           :class="[
-            isMobileLayout ? 'agent-panel-mobile-dock' : floating ? 'agent-panel-floating' : 'agent-panel-inline flex-1',
-            { 'is-dragging': dragging },
+            isMobileLayout
+              ? mobileCanvasView
+                ? 'agent-panel-mobile-dock is-canvas-view'
+                : 'agent-panel-mobile-dock is-conversation-view'
+              : floating
+                ? 'agent-panel-floating'
+                : 'agent-panel-inline flex-1',
+            {
+              'is-dragging': dragging,
+              'has-studio-dock': studioDockOpen,
+              'is-canvas-imm': mobileCanvasImm,
+            },
           ]"
           :style="floating && !isMobileLayout ? {
             left: `${floatPos.x}px`,
@@ -3121,6 +3199,20 @@ defineExpose({
             @mousedown="startResize"
           />
 
+          <!-- 全局传送门·画布侧锚位（2026-10-18 用户裁决）：同一颗门组件穿越对话/画布两模式——
+               对话模式锚在顶栏头像位，画布模式浮在画布左上（chrome 行下方），点击回对话。
+               「← 对话」pill 已废弃（门职责收编）。拾取模式让位（pick bar 自带回程）。 -->
+          <button
+            v-if="isMobileLayout && mobileCanvasView && !pickModeActive"
+            type="button"
+            class="agent-portal-door agent-portal-door--float"
+            title="回到对话"
+            @click="emit('openConversationView')"
+          >
+            <span class="agent-portal-door__halo" aria-hidden="true" />
+            <NeoAgentLogo size="xs" active />
+          </button>
+
           <!-- 顶栏：logo + 新建 / 历史 / 浮窗切换 / 收起（浮窗模式可按住拖动）。
                P1-5 fix-1：移动端保留（新建对话 / 会话历史入口随贴底容器常驻，
                收起 / 浮窗为桌面专属按钮移动端隐藏；startDrag 移动端本身 no-op） -->
@@ -3130,7 +3222,20 @@ defineExpose({
             @mousedown="startDrag"
           >
             <div class="flex min-w-0 items-center gap-2">
-              <NeoAgentLogo size="xs" active />
+              <!-- 移动端「传送门」（2026-10-18 用户裁决）：章鱼头像位即对话→画布的门——
+                   保留头像自带的旋转光环 + 半透明特效（传送门意境）；画布视图换回纯 logo，
+                   画布侧零遮挡。桌面端维持纯 logo。 -->
+              <button
+                v-if="isMobileLayout && !mobileCanvasView"
+                type="button"
+                class="agent-portal-door"
+                title="进入画布"
+                @click="emit('openCanvasView')"
+              >
+                <span class="agent-portal-door__halo" aria-hidden="true" />
+                <NeoAgentLogo size="xs" active />
+              </button>
+              <NeoAgentLogo v-else size="xs" active />
               <!-- 移动端：头像即品牌 logo，不再重复「lnk·π agent」文字（2026-10-15 移动端重构） -->
               <p v-if="!isMobileLayout" class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
             </div>
@@ -3930,6 +4035,7 @@ defineExpose({
                 @pointermove="onBarPointerMove"
                 @pointerup="onBarPointerUp"
                 @pointercancel="onBarPointerCancel"
+                @mousedown="onBarMouseDown"
               >
                 <!-- P1-5.3 判据锚：条内控件 = ＋（aria-label="更多"）/ ◎（左顶点）/ 模型⌄ / 发送，
                      均 ghost 无背景；空闲态条内仅 ＋ + 「按住说话 · 点按输入」提示；
@@ -4017,6 +4123,15 @@ defineExpose({
                 :disabled="readOnly || isUploading"
                 @change="onFileChange"
               >
+              <input
+                ref="cameraInputRef"
+                type="file"
+                class="sr-only"
+                accept="image/*"
+                capture="environment"
+                :disabled="readOnly || isUploading"
+                @change="onFileChange"
+              >
 
               <div class="agent-dock-actions">
                 <!-- 「+」提升为 actions 首子元素（2026-10-15 二次重构，对齐 WorkBuddy 红批注
@@ -4039,51 +4154,156 @@ defineExpose({
                     </button>
                     <div
                       v-if="attachMenuOpen"
-                      class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[220px] rounded-xl py-1"
+                      class="neo-popover attach-card absolute bottom-full left-0 z-30 mb-1 w-[272px] rounded-2xl p-2"
                       @click.stop
                     >
-                      <button
-                        type="button"
-                        class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
-                        @click="pickLocalUpload"
-                      >
-                        <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0l-4 4m4-4l4 4" />
-                            <path stroke-linecap="round" d="M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1" />
+                      <!-- 四瓦片（2026-10-18 照竞品卡片，用户裁决资产库升瓦片）：拍照 / 图片 / 添加文件 / 资产库 -->
+                      <div class="mb-1.5 grid grid-cols-4 gap-1.5">
+                        <button
+                          type="button"
+                          class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
+                          :disabled="readOnly || isUploading"
+                          @click="pickCamera"
+                        >
+                          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.5 6.5 10 4.5h4l1.5 2H19a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17V8A1.5 1.5 0 0 1 5 6.5h3.5Z" />
+                            <circle cx="12" cy="12.5" r="3.2" />
                           </svg>
-                        </span>
-                        <span>本地上传</span>
-                      </button>
-                      <button
-                        type="button"
-                        class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
-                        @click="pickAssetLibrary"
-                      >
-                        <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                          <span class="text-[11px] font-medium leading-none">拍照</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
+                          :disabled="readOnly || isUploading"
+                          @click="pickImage"
+                        >
+                          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
+                            <rect x="3.5" y="5" width="17" height="14" rx="2" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m6.5 16.5 4-4.5 3 3.5 2-2.5 2 3.5" />
+                            <circle cx="15.3" cy="9.2" r="1.1" fill="currentColor" stroke="none" />
+                          </svg>
+                          <span class="text-[11px] font-medium leading-none">图片</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
+                          :disabled="readOnly || isUploading"
+                          @click="pickFile"
+                        >
+                          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M20 11.5 12.6 19a4.6 4.6 0 0 1-6.5-6.5l7.6-7.6a3.07 3.07 0 0 1 4.34 4.34l-7.6 7.6a1.54 1.54 0 0 1-2.17-2.17l7.02-7.02" />
+                          </svg>
+                          <span class="text-[11px] font-medium leading-none">添加文件</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
+                          :disabled="readOnly || isUploading"
+                          @click="pickAssetLibrary"
+                        >
+                          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
                             <rect x="3" y="5" width="18" height="14" rx="2" />
                             <path stroke-linecap="round" d="M3 9h18M8 5V3m8 2V3" />
                           </svg>
-                        </span>
-                        <span>我的资产库</span>
-                      </button>
-                      <!-- P1-2.4 裁决 fix-1：C 抽屉「思考档位」= 参数预设槽位，与 B chip 共用同一 popover/状态 -->
+                          <span class="text-[11px] font-medium leading-none">资产库</span>
+                        </button>
+                      </div>
+
+                      <div class="mx-1 my-1 border-t border-[var(--lnk-border-subtle)] opacity-40" />
+
+                      <!-- 行区（照竞品）：专家（置灰待开发）/ 技能 / 连接器（置灰待开发） -->
                       <button
-                        v-if="showPlanningThinkingControls"
                         type="button"
-                        class="neo-popover-item flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs"
-                        @click="attachMenuOpen = false; toggleThinkingMenu()"
+                        class="neo-popover-item flex w-full items-center gap-2.5 px-2.5 py-2.5 text-left text-xs opacity-40"
+                        disabled
+                        title="待后续开发"
                       >
                         <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
                           <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                            <path stroke-linecap="round" d="M4 8h8M20 8h-4M4 16h4M20 16h-8" />
-                            <circle cx="14" cy="8" r="2" />
-                            <circle cx="10" cy="16" r="2" />
+                            <circle cx="12" cy="8.5" r="3.5" />
+                            <path stroke-linecap="round" d="M5 19.5c1.6-3 4-4.5 7-4.5s5.4 1.5 7 4.5" />
                           </svg>
                         </span>
-                        <span>思考档位</span>
+                        <span class="flex-1">专家</span>
+                        <svg viewBox="0 0 24 24" class="h-3 w-3 shrink-0 opacity-60" fill="none" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" />
+                        </svg>
                       </button>
+                      <button
+                        type="button"
+                        class="neo-popover-item flex w-full items-center gap-2.5 px-2.5 py-2.5 text-left text-xs"
+                        :class="{ 'is-open': skillSubmenuOpen }"
+                        @click="skillSubmenuOpen = !skillSubmenuOpen"
+                      >
+                        <span class="agent-skill-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
+                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                          </svg>
+                        </span>
+                        <span class="flex-1">技能</span>
+                        <span class="max-w-[92px] truncate text-[10px] opacity-60">{{ activeSkill?.label || '自动' }}</span>
+                        <svg viewBox="0 0 24 24" class="h-3 w-3 shrink-0 opacity-60 transition-transform" :class="{ 'rotate-90': skillSubmenuOpen }" fill="none" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" />
+                        </svg>
+                      </button>
+                      <div
+                        v-if="skillSubmenuOpen"
+                        class="skill-submenu ml-4 border-l border-[var(--lnk-border-subtle)] pl-1"
+                      >
+                        <button
+                          type="button"
+                          class="neo-popover-item agent-popover-skill-item flex w-full items-start gap-2 px-3 py-2 text-left"
+                          :class="{ 'is-selected': activeSkillId === null }"
+                          @click="activeSkillId = null; attachMenuOpen = false"
+                        >
+                          <span class="agent-skill-icon mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
+                            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                            </svg>
+                          </span>
+                          <span class="min-w-0">
+                            <span class="text-xs font-medium">自动</span>
+                            <span class="block truncate text-[10px] opacity-60">平台路由，单张/图生图优先</span>
+                          </span>
+                        </button>
+                        <button
+                          v-for="skill in AGENT_SKILLS"
+                          :key="skill.id"
+                          type="button"
+                          class="neo-popover-item agent-popover-skill-item flex w-full items-start gap-2 px-3 py-2 text-left"
+                          :class="{ 'is-selected': skill.id === activeSkillId }"
+                          @click="activeSkillId = skill.id; attachMenuOpen = false"
+                        >
+                          <span class="agent-skill-icon mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
+                            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                            </svg>
+                          </span>
+                          <span class="min-w-0">
+                            <span class="text-xs font-medium">{{ skill.label }}</span>
+                            <span class="block truncate text-[10px] opacity-60">{{ skill.desc }}</span>
+                          </span>
+                        </button>
+                        <p v-if="!AGENT_SKILLS.length" class="px-3 py-2 text-[10px] opacity-50">暂无已安装技能</p>
+                      </div>
+                      <button
+                        type="button"
+                        class="neo-popover-item flex w-full items-center gap-2.5 px-2.5 py-2.5 text-left text-xs opacity-40"
+                        disabled
+                        title="待后续开发"
+                      >
+                        <span class="agent-attach-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
+                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 14.5 5.6 18.4a2.7 2.7 0 0 1-3.8-3.8l4.5-4.5M14.5 9.5l3.9-3.9a2.7 2.7 0 0 1 3.8 3.8l-4.5 4.5M8 16l8-8" />
+                          </svg>
+                        </span>
+                        <span class="flex-1">连接器</span>
+                        <svg viewBox="0 0 24 24" class="h-3 w-3 shrink-0 opacity-60" fill="none" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" />
+                        </svg>
+                      </button>
+                      <!-- 2026-10-18 用户裁决：「思考档位」属于不同模型展开的二级功能，移出本卡
+                           （非默认档仍有 params 行 B chip 常驻；标准档切档入口随模型二级功能后续接入） -->
                     </div>
                 </div>
 
@@ -4136,67 +4356,6 @@ defineExpose({
                       </button>
                     </div>
                   </div>
-
-                  <div ref="skillMenuRef" class="relative">
-                  <button
-                    type="button"
-                    class="agent-skill-trigger dock-ghost-ctl flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs"
-                    :class="{ 'is-open': skillMenuOpen, 'has-value': activeSkillId !== null }"
-                    :title="composerSkillMenuMode === 'chip'
-                      ? (activeSkillId === null ? '技能：当前自动路由，点按切换' : '技能：点按切回自动路由')
-                      : '技能'"
-                    @click="onSkillTriggerClick"
-                  >
-                    <span class="agent-skill-trigger__icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM16.5 6.75h.008v.008H16.5V6.75z" />
-                      </svg>
-                    </span>
-                    <span class="max-w-[72px] truncate font-medium">{{ skillButtonLabel }}</span>
-                  </button>
-                  <div
-                    v-if="skillMenuOpen && composerSkillMenuMode === 'menu'"
-                    class="neo-popover absolute bottom-full left-0 z-30 mb-1 w-[240px] rounded-xl py-1"
-                    @click.stop
-                  >
-                    <button
-                      type="button"
-                      class="neo-popover-item agent-popover-skill-item flex w-full items-start gap-2 px-3 py-2 text-left"
-                      :class="{ 'is-selected': activeSkillId === null }"
-                      @click="activeSkillId = null; skillMenuOpen = false"
-                    >
-                      <span class="agent-skill-icon mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
-                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-                        </svg>
-                      </span>
-                      <span class="min-w-0">
-                        <span class="text-xs font-medium">自动</span>
-                        <span class="block truncate text-[10px] opacity-60">平台路由，单张/图生图优先</span>
-                      </span>
-                    </button>
-                    <div class="mx-3 my-1 border-t border-[var(--lnk-border-subtle)] opacity-40" />
-                    <button
-                      v-for="skill in AGENT_SKILLS"
-                      :key="skill.id"
-                      type="button"
-                      class="neo-popover-item agent-popover-skill-item flex w-full items-start gap-2 px-3 py-2 text-left"
-                      :class="{ 'is-selected': skill.id === activeSkillId }"
-                      @click="activeSkillId = skill.id; skillMenuOpen = false"
-                    >
-                      <span class="agent-skill-icon mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
-                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                        </svg>
-                      </span>
-                      <span class="min-w-0">
-                        <span class="text-xs font-medium">{{ skill.label }}</span>
-                        <span class="block truncate text-[10px] opacity-60">{{ skill.desc }}</span>
-                      </span>
-                    </button>
-                    <p v-if="!AGENT_SKILLS.length" class="px-3 py-2 text-[10px] opacity-50">暂无已安装技能</p>
-                  </div>
-                </div>
                 </div>
 
                 <div class="agent-dock-primary">
@@ -4212,6 +4371,7 @@ defineExpose({
                     @holdcancel="releaseVoice(true)"
                   />
                   <DockGenerateButton
+                    glyph="send"
                     :generating="agent.isStreaming"
                     :disabled="isUploading || (!agent.isStreaming && !canSubmitComposer)"
                     :title="agent.isStreaming ? '停止生成' : 'Enter 发送 · Shift+Enter 换行'"
@@ -4356,6 +4516,43 @@ defineExpose({
   max-height: 40vh;
 }
 
+/* ---- 移动端对话视图（2026-10-18 信息架构裁决）----
+ * 空态/输入态/生成态默认整页 = SSE 对话流 + composer，画布隐藏（CanvasPage 把画布区
+ * visibility:hidden，保持挂载与视口测量，切回画布视图 fitView 立即可用）。
+ * 仅两种动作进入画布视图：对话流内点定位（产物/提议生成卡）、composer ◎ 定位锚。
+ * 本块只改「布局壳」：贴底容器升为整页不透明面板，composer/裸条内部样式零改动。 */
+.agent-panel-mobile-dock.is-conversation-view.agent-panel-shell {
+  top: 0;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: var(--lnk-surface-canvas);
+  pointer-events: auto;
+}
+
+.agent-panel-mobile-dock.is-conversation-view .agent-chat-wrap {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+/* 对话视图里顶栏在页面顶部 → 历史 popover 恢复向下展开（覆盖贴底态的向上展开规则） */
+.agent-panel-mobile-dock.is-conversation-view .agent-panel-header .neo-popover {
+  top: calc(100% + var(--lnk-space-1));
+  bottom: auto;
+}
+
+/* ---- 画布视图 · composer 让位（2026-10-18 方案 A / 纯画布态）----
+ * has-studio-dock（dock 展开）与 is-canvas-imm（传送门进入的纯画布满屏）同一处理：
+ * 顶栏 + SSE 对话流 + 裸条全部收起 → 容器高度趋 0，DockStudioToolbar 按
+ * --lnk-agent-dock-h 清位后自然落底独占。返回对话走全局传送门（浮动锚位）。
+ * 取消选中 / 门回对话 ⇒ 类摘除 ⇒ 原样回归。 */
+.agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-panel-header,
+.agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-chat-wrap,
+.agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-input-dock,
+.agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-panel-header,
+.agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-chat-wrap,
+.agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-input-dock {
+  display: none;
+}
+
 /* ---- 左边缘拖拉调宽 ---- */
 .agent-resize-handle {
   position: absolute;
@@ -4403,6 +4600,68 @@ defineExpose({
   border-radius: 8px;
   color: var(--lnk-text-muted);
   transition: background 0.15s ease, color 0.15s ease;
+}
+
+/* 移动端「传送门」（2026-10-18 用户裁决）：章鱼头像位 = 对话→画布的门。
+   特效语义照搬原头像：旋转光环（conic 扫光）+ 半透明玻璃底，「传送门」意境；
+   画布视图 v-if 摘除换回纯 logo，画布侧零遮挡。 */
+.agent-portal-door {
+  position: relative;
+  display: flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--lnk-surface-overlay);
+  isolation: isolate;
+  transition: transform 0.2s var(--lnk-ease-standard, ease);
+}
+.agent-portal-door:active {
+  transform: scale(0.94);
+}
+.agent-portal-door__halo {
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: 999px;
+  background: conic-gradient(from 0deg, transparent 0% 68%, var(--lnk-hi-bg) 86%, transparent 100%);
+  opacity: 0.85;
+  animation: portal-spin 2.8s linear infinite;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 1.5px));
+}
+@keyframes portal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-portal-door__halo {
+    animation: none;
+  }
+}
+
+/* 全局传送门·画布侧浮动锚位：画布左上（chrome 行下方避让），点击回对话 */
+.agent-portal-door--float {
+  position: fixed;
+  top: 56px;
+  left: 12px;
+  z-index: 55;
+}
+
+/* 「＋」附件卡（照竞品卡片）：四瓦片 浅底/按下反馈 */
+.attach-tile {
+  color: var(--lnk-text);
+  background: var(--lnk-hover-overlay);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.attach-tile:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--lnk-text) 10%, transparent);
+}
+.attach-tile:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .agent-head-btn:hover {
@@ -5037,25 +5296,7 @@ defineExpose({
   transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.agent-skill-trigger__icon {
-  display: inline-flex;
-  color: var(--lnk-text-secondary);
-  transition: color 0.15s ease;
-}
-
-.agent-skill-trigger:hover .agent-skill-trigger__icon,
-.agent-skill-trigger.is-open .agent-skill-trigger__icon {
-  color: var(--lnk-text-primary);
-}
-
-.agent-skill-trigger.has-value {
-  border-color: color-mix(in srgb, var(--lnk-hi-text) 12%, var(--lnk-border-subtle));
-  background: color-mix(in srgb, var(--lnk-hi-bg) 10%, var(--lnk-hover-overlay));
-}
-
-.agent-skill-trigger.has-value .agent-skill-trigger__icon {
-  color: var(--lnk-text-primary);
-}
+/* 2026-10-18：独立技能 chip 退役（入口收敛进「＋」菜单），.agent-skill-trigger* 规则随之删除 */
 
 .agent-popover-skill-item.is-selected {
   background: var(--lnk-hi-bg) !important;
@@ -5266,6 +5507,21 @@ defineExpose({
   flex-shrink: 0;
 }
 
+/* 附件卡移动端拉满裸条宽度 + 拉到底完全盖住 composer（2026-10-18 用户裁决）：
+ * fixed 贴视口底（panel shell 无 transform，fixed 即视口系），圆角朝上、safe-area 内垫，
+ * 自然高度即可整片盖住裸条。点击卡内 stopPropagation；条外点击走既有 click-outside 关闭。 */
+@media (max-width: 767px) {
+  .agent-panel-mobile-dock .attach-card {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 0;
+    width: auto;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 .agent-panel-mobile-dock .composer-bare-bar .agent-composer__input-wrap {
   order: 0;
   position: static; /* 让 ◎ 的包含块上移到裸条（左顶点锚定） */
@@ -5308,9 +5564,9 @@ defineExpose({
   display: none;
 }
 
-/* 输入/生成态：条上控件 = ＋/模型/发送 3 个（spec §5.5）——思考槽位、技能、独立 mic 隐藏 */
+/* 输入/生成态：条上控件 = ＋/模型/发送 3 个（spec §5.5）——思考槽位、独立 mic 隐藏
+ *（技能入口已收敛进「＋」菜单，原 .agent-skill-trigger 隐藏规则随之删除） */
 .agent-panel-mobile-dock .composer-bare-bar .agent-dock-thinking,
-.agent-panel-mobile-dock .composer-bare-bar .agent-skill-trigger,
 .agent-panel-mobile-dock .composer-bare-bar .dock-mic-btn {
   display: none;
 }
@@ -5506,6 +5762,14 @@ defineExpose({
 
 .composer-canvas-ref-btn.is-active:hover {
   filter: brightness(1.06);
+}
+
+/* 2026-10-18 真机反馈：移动端 -65% 偏离顶点太远——圆心与裸条左顶点重合（半露）；
+ * PC 端维持 -65%（「顶点长锚角」观感）不变。
+ * ⭐ 必须排在基础规则之后：canvasRefEntry 契约测试用首个 `.{类名}{` 正则取幽灵态规则，
+ *   覆盖规则在前会被误当基础规则（transform-only）而假红。 */
+.agent-panel-mobile-dock .composer-canvas-ref-btn {
+  transform: translate(-50%, -50%);
 }
 
 /* 定位锚 glyph（源 93×93，素材已镜像为指向左 45°）：

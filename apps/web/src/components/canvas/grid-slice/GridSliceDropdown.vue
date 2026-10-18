@@ -266,14 +266,17 @@ onUnmounted(() => {
   padding: 0.375rem 0.5rem;
   font-size: 11px;
   line-height: 1.25;
-  color: var(--neo-text);
-  transition: background 0.15s ease, opacity 0.15s ease;
+  /* 幽灵态 = 中灰（2026-10-18 用户裁决，与同排工具行一致）：默认不抢视线 */
+  color: var(--neo-text-secondary);
+  transition: color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
   white-space: nowrap;
 }
 /* 图标 + 文字常显（2026-09-24 用户要求：上沿菜单按钮统一图标+文字）；loading 时文案换为进度提示 */
 .toolbar-action .label { display: inline; }
 .toolbar-action.is-loading .label { display: inline; }
-.toolbar-action:hover:not(:disabled) {
+.toolbar-action:hover:not(:disabled),
+.toolbar-action:focus-visible {
+  color: var(--neo-text);
   background: color-mix(in srgb, var(--neo-text) 8%, transparent);
 }
 .toolbar-action:disabled {

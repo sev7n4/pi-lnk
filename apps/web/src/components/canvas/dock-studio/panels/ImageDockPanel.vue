@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
@@ -11,6 +11,8 @@ import ImageParamsSelector, {
   type ImageResolution,
 } from '@/components/canvas/ImageParamsSelector.vue'
 import DockToolbarShell from '@/components/canvas/dock-studio/shared/DockToolbarShell.vue'
+import GridSliceDropdown from '@/components/canvas/grid-slice/GridSliceDropdown.vue'
+import { DOCK_TOOL_ROW_KEY, DOCK_TOOL_ROW_DEFAULT, DOCK_TOOL_ICONS } from '@/components/canvas/dock-studio/shared/dockToolRowContext'
 import DockPromptSection from '@/components/canvas/dock-studio/shared/DockPromptSection.vue'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
 import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
@@ -60,6 +62,8 @@ const emit = defineEmits<{
 }>()
 
 const prompt = ref('')
+/** 选中节点快捷工具行（DockStudioToolbar provide，见 dockToolRowContext.ts） */
+const toolRow = inject(DOCK_TOOL_ROW_KEY, DOCK_TOOL_ROW_DEFAULT)
 const imageModel = ref(getConfig('image').model)
 const imageAspect = ref<ImageAspectRatio>('16:9')
 const imageResolution = ref<ImageResolution>('1K')
@@ -268,6 +272,59 @@ function toggleVoice() {
 
 <template>
   <DockToolbarShell type="image" :show-close="false" @close="emit('close')">
+    <template #header-mid>
+      <!-- 选中节点快捷工具行（2026-10-18 方案 A：节点上沿 SelectionActionBar 退役并入）：
+           收进 dock 卡 header 中段，图标底部不超出 header 下沿（缩略图态等高约束）。 -->
+      <div
+        v-if="toolRow.visible.value"
+        class="dock-tool-row"
+        data-testid="dock-tool-row"
+        @click.stop
+      >
+        <GridSliceDropdown
+          v-if="toolRow.gridSlice.value"
+          :disabled="toolRow.gridSliceDisabled.value"
+          :loading="toolRow.gridSliceLoading.value"
+          :disabled-title="toolRow.gridSliceDisabledTitle.value"
+          :image="toolRow.gridSliceImage.value"
+          @slice="toolRow.onSlice"
+          @open-custom="toolRow.onOpenCustom"
+        />
+        <span v-if="toolRow.gridSlice.value" class="dock-tool-row__divider" aria-hidden="true" />
+        <template v-for="(tool, index) in toolRow.tools.value" :key="tool.id">
+          <span
+            v-if="index > 0 && toolRow.tools.value[index - 1].group !== tool.group"
+            class="dock-tool-row__divider"
+            aria-hidden="true"
+          />
+          <button
+            type="button"
+            class="dock-tool-row__action"
+            :class="{ 'is-loading': tool.id === 'matting' && toolRow.mattingBusy.value }"
+            :data-action="tool.id"
+            :title="tool.disabled ? (tool.disabledReason ?? tool.title) : tool.title"
+            :aria-label="tool.title"
+            :disabled="tool.disabled"
+            @click="toolRow.onToolClick(tool)"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              :class="{ 'animate-spin': tool.id === 'matting' && toolRow.mattingBusy.value }"
+              v-html="DOCK_TOOL_ICONS[tool.icon]"
+            />
+            <span class="label">{{ tool.label }}</span>
+          </button>
+        </template>
+      </div>
+    </template>
     <template #header-end>
       <div class="relative">
         <button
@@ -367,3 +424,59 @@ function toggleVoice() {
     </div>
   </DockToolbarShell>
 </template>
+
+<style scoped>
+/* 选中节点快捷工具行（2026-10-18 方案 A）：header 中段单行，溢出横向滚动不出卡 */
+.dock-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.5rem;
+}
+.dock-tool-row::-webkit-scrollbar {
+  display: none;
+}
+.dock-tool-row__divider {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  margin: 0 0.25rem;
+  background: currentColor;
+  opacity: 0.1;
+}
+.dock-tool-row__action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 11px;
+  line-height: 1.25;
+  /* 幽灵态 = 中灰（2026-10-18 用户裁决，与定位锚同一交互语言）：默认不抢视线 */
+  color: var(--neo-text-secondary);
+  transition: color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+.dock-tool-row__action:hover:not(:disabled),
+.dock-tool-row__action:focus-visible {
+  /* 激活 = 仅悬停/聚焦点亮：字色升满亮 + 底色轻提 */
+  color: var(--neo-text);
+  background: color-mix(in srgb, var(--neo-text) 8%, transparent);
+}
+.dock-tool-row__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.dock-tool-row__action.is-loading {
+  opacity: 0.6;
+}
+.dock-tool-row__action .label {
+  display: inline;
+}
+</style>

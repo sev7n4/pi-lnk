@@ -402,16 +402,21 @@
   transform: scale(1);
 }
 
-.neo-node-external-title:hover .neo-node-agent-add--title,
-.neo-node-agent-add--title:hover {
-  border-color: var(--neo-border);
-  background: var(--neo-hover-bg);
+/* 「加入 Agent 引用」图标交互模型（2026-10-18 产品裁决）：
+   ① 幽灵态 —— 节点 hover/选中时显形，muted 灰 glyph + 透明底（不随节点选中点亮）；
+   ② 激活态 —— 仅鼠标移到图标本身上（:hover / :focus-visible）才「点亮」：
+     实心 hi-bg 盘 + hi-text 锚 + hi-shadow 辉光（与 composer 定位锚激活态同配方）。
+     ⚠️ hi-text / hi-shadow 必须与 hi-bg 盘配对使用：深色主题 hi-text 是近黑色，
+     脱离实心亮盘单用会隐形，hi-shadow 白辉光落在半透明底上会呈糊状光晕（用户实测踩坑）。
+   ③ 点击 —— 加入 Agent 引用。
+   注意：外部标题条 hover（重命名意图）不点亮图标；hover 不做分数缩放
+   （scale(1.05) 会对 mask PNG 非整数重采样导致 glyph 发虚）。 */
+.neo-node-agent-add--title:hover,
+.neo-node-agent-add--title:focus-visible {
+  border-color: transparent;
+  background: var(--neo-hi-bg);
   color: var(--neo-hi-text);
   box-shadow: var(--neo-hi-shadow);
-}
-
-.neo-node-agent-add--title:hover {
-  transform: scale(1.05);
 }
 
 .neo-node.selected {

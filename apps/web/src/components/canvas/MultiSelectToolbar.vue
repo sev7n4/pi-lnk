@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { GROUP_COLOR_KEYS } from './groupColors'
+import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 
 const props = defineProps<{
   selectedIds: string[]
@@ -388,9 +389,7 @@ onUnmounted(() => {
         title="加入 Agent 引用"
         @click="emit('addAgentRef')"
       >
-        <svg viewBox="0 0 16 16" class="ico" aria-hidden="true">
-          <path d="M8 1.5 9.7 6.3 14.5 8 9.7 9.7 8 14.5 6.3 9.7 1.5 8 6.3 6.3z" fill="currentColor" stroke="none" />
-        </svg>
+        <CanvasRefTargetIcon :size="18" />
       </button>
       <div
         v-if="selectedIds.length >= 2"
