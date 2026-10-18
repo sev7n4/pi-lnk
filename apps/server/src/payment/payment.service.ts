@@ -2,6 +2,11 @@ import { Injectable, Inject, BadRequestException, Logger } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { MembershipService } from '../membership/membership.service'
 import {
+  TOPUP_CUSTOM_MAX_FEN,
+  TOPUP_CUSTOM_MIN_FEN,
+  resolveTopupPoints,
+} from '../membership/membership.service'
+import {
   PAYMENT_ADAPTER,
   PaymentAdapter,
   type ChargeRequest,
@@ -47,12 +52,48 @@ export class PaymentService {
       subject: `lnk π ${selected.name}`,
       body: `升级 ${selected.name}，到账 ${selected.points} 积分`,
     }
+    return this.createChargeForOrder(order.id, amountFen, charge, channel)
+  }
+
+  /**
+   * 创建积分充值订单（kind='topup'）：¥5–¥10,000，档位金额带赠送、自定义按基础汇率。
+   * 结算仅发积分（1 年有效期，purchased 池），不改会员档位。
+   */
+  async createTopup(userId: string, amountFen: number, channel: 'page' | 'qrcode' = 'page') {
+    if (!Number.isInteger(amountFen)) throw new BadRequestException('充值金额无效')
+    if (amountFen < TOPUP_CUSTOM_MIN_FEN) throw new BadRequestException('充值金额最低 ¥5')
+    if (amountFen > TOPUP_CUSTOM_MAX_FEN) throw new BadRequestException('充值金额超出上限')
+    const { totalPoints } = resolveTopupPoints(amountFen)
+    const order = await this.prisma.order.create({
+      data: { userId, plan: 'topup', kind: 'topup', points: totalPoints, amount: amountFen },
+    })
+    const charge: ChargeRequest = {
+      orderId: order.id,
+      amountFen,
+      subject: 'lnk π 积分充值',
+      body: `充值 ${totalPoints} 积分`,
+    }
+    return this.createChargeForOrder(order.id, amountFen, charge, channel)
+  }
+
+  /** 按渠道发起下单：qrcode 返回二维码串，page 返回收银台跳转 URL。 */
+  private async createChargeForOrder(
+    orderId: string,
+    amountFen: number,
+    charge: ChargeRequest,
+    channel: 'page' | 'qrcode',
+  ) {
     if (channel === 'qrcode') {
       const { qrCode } = await this.adapter.createQrCharge(charge)
-      return { orderId: order.id, qrCode, amountFen }
+      return { orderId, qrCode, amountFen }
     }
     const { payUrl } = await this.adapter.createCharge(charge)
-    return { orderId: order.id, payUrl, amountFen }
+    return { orderId, payUrl, amountFen }
+  }
+
+  /** 充值档位配置（前端瓦片渲染单一真源）。 */
+  topupOptions() {
+    return this.membership.topupOptions()
   }
 
   /**
@@ -138,7 +179,12 @@ export class PaymentService {
             raw: JSON.stringify(rawParams),
           },
         })
-        await this.membership.grantPaidPlanTx(tx, order.userId, order.plan, order.id)
+        // 按 Order.kind 分流入账：topup 仅发积分（1 年有效期），subscription 发套餐积分+升档。
+        if (order.kind === 'topup') {
+          await this.membership.grantTopupTx(tx, order.userId, order.points ?? 0, order.id)
+        } else {
+          await this.membership.grantPaidPlanTx(tx, order.userId, order.plan, order.id)
+        }
         this.logger.log(`订单入账成功: order=${order.id} plan=${order.plan} amount=${order.amount}`)
       })
       return 'success'
@@ -152,6 +198,8 @@ export class PaymentService {
   private toOrderDto(order: {
     id: string
     plan: string
+    kind: string
+    points: number | null
     amount: number
     status: string
     paidAt: Date | null
@@ -160,6 +208,8 @@ export class PaymentService {
     return {
       id: order.id,
       plan: order.plan,
+      kind: order.kind,
+      points: order.points,
       amountFen: order.amount,
       status: order.status,
       paidAt: order.paidAt,
