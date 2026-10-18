@@ -9,6 +9,7 @@ const { transactions } = vi.hoisted(() => ({
 
 vi.mock('@/services/users-api', () => ({
   membershipApi: { transactions: (...args: unknown[]) => transactions(...args) },
+  membershipLabel: vi.fn(() => '免费版'),
 }))
 
 const consumeDay: UsageDayPoint = {

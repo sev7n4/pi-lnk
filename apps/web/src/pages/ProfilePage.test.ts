@@ -36,6 +36,7 @@ vi.mock('@/services/users-api', () => ({
     usageDays: (...args: unknown[]) => membershipMocks.usageDays(...args),
     transactions: (...args: unknown[]) => membershipMocks.transactions(...args),
   },
+  membershipLabel: vi.fn(() => '免费版'),
 }))
 
 vi.mock('@/components/membership/MembershipModal.vue', () => ({

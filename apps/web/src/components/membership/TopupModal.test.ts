@@ -38,6 +38,7 @@ vi.mock('@/services/users-api', () => ({
     claimDaily: vi.fn(),
     upgrade: vi.fn(),
   },
+  membershipLabel: vi.fn(() => '免费版'),
 }))
 
 vi.mock('qrcode', () => ({
