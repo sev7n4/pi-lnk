@@ -4539,17 +4539,17 @@ defineExpose({
   bottom: auto;
 }
 
-/* ---- 画布视图 · composer 让位（2026-10-18 方案 A / 纯画布态）----
- * has-studio-dock（dock 展开）与 is-canvas-imm（传送门进入的纯画布满屏）同一处理：
- * 顶栏 + SSE 对话流 + 裸条全部收起 → 容器高度趋 0，DockStudioToolbar 按
- * --lnk-agent-dock-h 清位后自然落底独占。返回对话走全局传送门（浮动锚位）。
- * 取消选中 / 门回对话 ⇒ 类摘除 ⇒ 原样回归。 */
-.agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-panel-header,
-.agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-chat-wrap,
-.agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-input-dock,
-.agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-panel-header,
-.agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-chat-wrap,
-.agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-input-dock {
+/* ---- 画布视图 · 对话 chrome 一律不同屏（2026-10-18 二次裁决）----
+ * 语义收口：顶栏（新建/历史头像）与 SSE 对话流只属于「对话模式」。画布视图两态——
+ *   门进入 = 纯画布满屏（is-canvas-imm，连 composer 一起收）
+ *   窗 A/B 进入 = 画布 + composer（composer 保留，供定位引图后继续输入）
+ * 两条入口对 header / chat-wrap 的处理一致：display:none。
+ * composer（裸条）仅在「纯画布满屏 / dock 展开」时收起。
+ * 类摘除（门回对话 / 取消选中）⇒ 原样回归。 */
+.agent-panel-mobile-dock.is-canvas-view .agent-panel-header,
+.agent-panel-mobile-dock.is-canvas-view .agent-chat-wrap,
+.agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-input-dock,
+.agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-input-dock {
   display: none;
 }
 
