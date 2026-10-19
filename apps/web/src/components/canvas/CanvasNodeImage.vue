@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
+import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
 import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import { resolveImageNodeDisplaySize } from '@/components/canvas/mediaNodeDisplaySize'
@@ -11,7 +12,7 @@ import { useRoute } from 'vue-router'
 import { useNodeMediaUpload } from '@/composables/useNodeMediaUpload'
 import { useMediaInspector, type NodeMediaInfoSummary } from '@/composables/useMediaInspector'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
-import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
+import { NODE_GENERATION_STATUS, NODE_PENDING_CONFIRM_STATUS } from '@/constants/dockStudio'
 
 const props = defineProps<{
   id: string
@@ -54,6 +55,8 @@ const displayUrl = computed(() => resolveMediaUrl(String(props.data.url ?? '')))
 const showMediaSummary = computed(() => Boolean(props.data.url && props.data.mediaInfo))
 const showInspectorBtn = computed(() => Boolean(props.data.generationRecordId))
 const isCompleted = computed(() => props.data.status === NODE_GENERATION_STATUS.completed)
+/** ADR-0011：待确认态（dock 已门控）⇒ 节点本体改渲染提示词摘要，不给上传入口 */
+const isPendingConfirm = computed(() => props.data.status === NODE_PENDING_CONFIRM_STATUS)
 /** 节点尺寸跟随素材比例（长边 280 包络；nodeSize 扩图链路优先，probe 真实比例次之） */
 const displaySize = computed(() => resolveImageNodeDisplaySize(props.data as Record<string, unknown>))
 useNodeMediaInfoFooter({
@@ -182,30 +185,35 @@ function openMediaInspector(e?: Event) {
         }"
       >
         <div class="neo-placeholder-content">
-          <button
-            v-if="data.status !== 'generating' && data.status !== 'uploading'"
-            type="button"
-            class="neo-node-upload-btn nodrag"
-            title="上传图片"
-            @pointerdown.stop
-            @mousedown.stop
-            @click.stop="openPicker"
-          >
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
-          <span class="neo-placeholder-text">
-            {{
-              data.status === 'uploading'
-                ? `上传中 ${data.uploadProgress ?? 0}%`
-                : data.status === 'generating'
-                  ? '生成中...'
-                  : '上传或等待生成'
-            }}
-          </span>
+          <!-- ADR-0011 决定 1：待确认态渲染提示词摘要（dock 已对该态门控，摘要必须回到节点本体）。
+               其余状态维持「上传 / 等待生成」占位。 -->
+          <NodePendingPrompt :prompt="data.prompt" :label="data.label" :status="data.status" />
+          <template v-if="!isPendingConfirm">
+            <button
+              v-if="data.status !== 'generating' && data.status !== 'uploading'"
+              type="button"
+              class="neo-node-upload-btn nodrag"
+              title="上传图片"
+              @pointerdown.stop
+              @mousedown.stop
+              @click.stop="openPicker"
+            >
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </button>
+            <span class="neo-placeholder-text">
+              {{
+                data.status === 'uploading'
+                  ? `上传中 ${data.uploadProgress ?? 0}%`
+                  : data.status === 'generating'
+                    ? '生成中...'
+                    : '上传或等待生成'
+              }}
+            </span>
+          </template>
           <NodeStatusInfoButton
             v-if="showInspectorBtn"
             :status="data.status"

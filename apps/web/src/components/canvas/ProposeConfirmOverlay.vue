@@ -42,15 +42,29 @@ const { viewport, nodes: flowNodes } = useVueFlow()
 /** 浮层估算高度（px，屏幕空间）：上方翻转判定用（条高 ~32 + 上下留白）。 */
 const BAR_HEIGHT = 40
 const EDGE_MARGIN = 8
+/**
+ * 浮层半宽（px）：横向钳位用。条是「圆点 + 待确认 + 三按钮」的 max-content 宽条
+ * （≈280px），节点贴屏幕边缘时按半宽把锚点拉回视口内，避免整条溢出屏幕。
+ * 取估算常量而非实测 DOM：钳位只需「不出界」，差几十像素不影响可点性。
+ */
+const BAR_HALF_WIDTH = 150
 
-/** 屏幕空间锚点：默认节点上方；上方空间不足（贴顶 / 缩小）翻转到下方。 */
+/**
+ * 屏幕空间锚点：默认节点上方；上方空间不足（贴顶 / 缩小）翻转到下方。
+ *
+ * ⚠️ 横向必须钳位：外层是 `absolute` + `translate(-50%)`，可用宽度 = 从锚点到容器右缘。
+ * 节点在画布中线时可用宽约半屏，而条本身更宽 ⇒ flex 子项被压缩、中文逐字换行
+ * （2026-10-20 真机截图复现：确认/编辑/取消 竖排成三列字）。钳位 + max-content 双保险。
+ */
 const layout = computed<{ anchor: 'above' | 'below'; x: number; y: number } | null>(() => {
   const node = props.node
   if (!node?.id) return null
   const frame = getSelectionFrame(flowNodes.value, [node.id])
   if (!frame) return null
   const zoom = viewport.value.zoom
-  const x = frame.centerX * zoom + viewport.value.x
+  const rawX = frame.centerX * zoom + viewport.value.x
+  const viewWidth = typeof window === 'undefined' ? Number.POSITIVE_INFINITY : window.innerWidth
+  const x = Math.min(Math.max(rawX, BAR_HALF_WIDTH + EDGE_MARGIN), viewWidth - BAR_HALF_WIDTH - EDGE_MARGIN)
   const aboveTop = frame.minY * zoom + viewport.value.y - BAR_HEIGHT - EDGE_MARGIN
   if (aboveTop >= EDGE_MARGIN) return { anchor: 'above', x, y: aboveTop }
   return { anchor: 'below', x, y: frame.bottomY * zoom + viewport.value.y }
@@ -76,7 +90,7 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
 <template>
   <div
     v-if="visible && layout"
-    class="propose-confirm-overlay pointer-events-none absolute z-[47]"
+    class="propose-confirm-overlay pointer-events-none absolute z-[47] w-max"
     :data-anchor="layout.anchor"
     data-testid="propose-confirm-overlay"
     :style="{
@@ -86,14 +100,14 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
     }"
   >
     <div
-      class="propose-confirm-bar neo-chrome pointer-events-auto flex items-center gap-1.5 rounded-xl px-2 py-1.5"
+      class="propose-confirm-bar neo-chrome pointer-events-auto flex w-max items-center gap-1.5 rounded-xl px-2 py-1.5"
       @click.stop
     >
       <span class="propose-confirm-dot" aria-hidden="true" />
       <span class="propose-confirm-label">待确认</span>
       <button
         type="button"
-        class="propose-confirm-btn accent"
+        class="propose-confirm-btn accent shrink-0 whitespace-nowrap"
         data-testid="propose-confirm-confirm"
         aria-label="确认生成"
         title="按提议的提示词与参数开始生成"
@@ -106,7 +120,7 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
       </button>
       <button
         type="button"
-        class="propose-confirm-btn"
+        class="propose-confirm-btn shrink-0 whitespace-nowrap"
         data-testid="propose-confirm-edit"
         aria-label="编辑提示词"
         title="修改提示词 / 参数后再确认"
@@ -119,7 +133,7 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
       </button>
       <button
         type="button"
-        class="propose-confirm-btn"
+        class="propose-confirm-btn shrink-0 whitespace-nowrap"
         data-testid="propose-confirm-cancel"
         aria-label="取消生成提议"
         title="拒绝这次生成提议（节点回到草稿，对话继续）"
@@ -146,6 +160,8 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
   background: var(--lnk-warning);
 }
 .propose-confirm-label {
+  flex: none;
+  white-space: nowrap;
   padding: 0 2px;
   font-size: 12px;
   color: var(--lnk-text-muted);
