@@ -130,6 +130,30 @@ describe('CanvasGroupOverlay：信息条外沿化（拆内嵌小卡）', () => {
     expect(w.emitted('rename')![0]).toEqual(['group-1', '新名字'])
     w.unmount()
   })
+
+  it('draggable=false（移动端）时不启动拖动、不发 move', async () => {
+    const w = mount(CanvasGroupOverlay, { props: { groups: [group()], selectedGroupId: null, draggable: false } })
+    const handle = w.find('.group-drag-handle')
+    expect(handle.classes()).not.toContain('is-draggable')
+    // ⚠️ jsdom 的 MouseEvent 属性只读 ⇒ 不用 test-utils 的 trigger 传参，
+    // 直接派发带坐标的原生事件（button=0 才会进入拖动分支）。
+    const el = handle.element as HTMLElement
+    const down = new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 })
+    el.dispatchEvent(down)
+    el.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 80, clientY: 40 }))
+    await w.vm.$nextTick()
+    expect(w.emitted('move'), '禁拖时不得产生 move（否则会与长按手势打架）').toBeFalsy()
+    w.unmount()
+
+    const on = mount(CanvasGroupOverlay, { props: { groups: [group()], selectedGroupId: null, draggable: true } })
+    expect(on.find('.group-drag-handle').classes()).toContain('is-draggable')
+    const onEl = on.find('.group-drag-handle').element as HTMLElement
+    onEl.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    onEl.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 80, clientY: 40 }))
+    await on.vm.$nextTick()
+    expect(on.emitted('move')).toBeTruthy()
+    on.unmount()
+  })
 })
 
 describe('CanvasGroupOverlay：色卡注入与默认去紫', () => {

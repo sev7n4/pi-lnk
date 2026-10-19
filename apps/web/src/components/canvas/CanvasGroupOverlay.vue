@@ -14,9 +14,15 @@ import { useVueFlow } from '@vue-flow/core'
 import type { CanvasGroup } from '@lnkpi/shared'
 import { normalizeGroupColorKey } from './groupColors'
 
-defineProps<{
+const props = defineProps<{
   groups: CanvasGroup[]
   selectedGroupId?: string | null
+  /**
+   * 是否允许拖标题条移动整组（2026-10-20）。
+   * 移动端传 false：pointer 拖动会与长按手势/多选手势打架，
+   * 移动端的多选动作条也还没有分组入口（PR3 才补动作）。
+   */
+  draggable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -48,6 +54,7 @@ function boxStyle(group: CanvasGroup) {
 const dragging = ref<{ groupId: string; startX: number; startY: number } | null>(null)
 
 function onTitlePointerDown(event: PointerEvent, groupId: string) {
+  if (!props.draggable) return
   if (event.button !== 0) return
   emit('select', groupId)
   dragging.value = { groupId, startX: event.clientX, startY: event.clientY }
@@ -107,6 +114,7 @@ function commitRename() {
       <div
         class="group-drag-handle"
         @pointerdown.stop="onTitlePointerDown($event, group.id)"
+        :class="{ 'is-draggable': draggable }"
         @pointermove.stop="onTitlePointerMove"
         @pointerup.stop="onTitlePointerUp"
         @pointercancel.stop="onTitlePointerUp"
@@ -162,7 +170,6 @@ function commitRename() {
    整条可拖（= 整组平移），双击标题区可重命名。 */
 .group-drag-handle {
   pointer-events: auto;
-  cursor: grab;
   position: absolute;
   top: -32px;
   left: 0;
@@ -174,7 +181,11 @@ function commitRename() {
   min-height: 26px;
 }
 
-.group-drag-handle:active {
+.group-drag-handle.is-draggable {
+  cursor: grab;
+}
+
+.group-drag-handle.is-draggable:active {
   cursor: grabbing;
 }
 
