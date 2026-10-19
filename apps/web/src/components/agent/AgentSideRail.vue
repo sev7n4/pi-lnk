@@ -3232,11 +3232,12 @@ async function deleteProject(project: ProjectCard) {
 }
 
 /** 页签是全局导航（IA v3）：遮罩只盖到页签上沿，页签任何时候都可点；
- * tab 一变即收抽屉，避免「抽屉开着切了页签、面板还挂在上面」。 */
+ * tab 一变即收抽屉/历史面板，避免「面板开着切了页签、面板还挂在上面」。 */
 watch(
   () => props.mobileAppTab,
   (tab, prev) => {
     if (tab !== prev && sessionDrawerOpen.value) closeSessionDrawer()
+    if (tab !== prev && mobileThreadHistoryOpen.value) closeThreadHistory()
   },
 )
 
@@ -4837,7 +4838,8 @@ defineExpose({
   top: 0;
   left: 0;
   right: 0;
-  bottom: var(--lnk-tabbar-h, 0px);
+  /* 兜底 56px = 页签基础高度：变量未发布时也不得回落成盖住页签 */
+  bottom: var(--lnk-tabbar-h, 56px);
   z-index: 95;
   background: rgba(0, 0, 0, 0.35);
 }
@@ -4970,10 +4972,17 @@ defineExpose({
   color: var(--lnk-error);
 }
 
-/* 对话历史面板（IA v3.2）：对话页右上角 🕘 唤起；与抽屉同族视觉，z 序高于抽屉 */
+/* 对话历史面板（IA v3.2）：对话页右上角 🕘 唤起；与抽屉同族视觉，z 序高于抽屉。
+ * 2026-10-19 真机反馈：「页签失灵」实锤场景之二——本遮罩 inset:0 盖住页签（z96>80），
+ * 点页签只触发 @click.self 关面板、页签不切，第二次点才生效（抽屉遮罩同族 bug 的漏网之鱼）。
+ * 遮罩 bottom 同抽屉遮罩让开页签区，页签任何时候可点。 */
 .thread-history-layer {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* 兜底 56px = 页签基础高度：变量未发布时也不得回落成盖住页签 */
+  bottom: var(--lnk-tabbar-h, 56px);
   z-index: 96;
   background: rgba(0, 0, 0, 0.35);
 }
