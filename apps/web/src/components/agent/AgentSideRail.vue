@@ -3165,6 +3165,20 @@ interface ProjectCard {
 const projects = ref<ProjectCard[]>([])
 const projectsLoading = ref(false)
 const projectsError = ref(false)
+/** 抽屉项目预览条数（2026-10-19 用户裁决）：默认只露最近 8 个，其余收进「展开更多」。
+ *  数字依据（截图实测）：抽屉首屏列表区 ≈ 590 CSS px（微信 webview，safe-area=0），
+ *  项目卡 60px/条（卡体 52 + flex gap 8）⇒ 8 条 = 480px，「展开更多」按钮与第 8 条
+ *  同屏可见、不需滚动即发现；Safari 带安全区时首屏更矮，8 仍是安全值。
+ *  列表按 updatedAt desc 返回（canvas.service.list orderBy）⇒ 前 8 = 最近 8 个。
+ *  一次点击展开全部（数据已在前端，无分页请求）；再点「收起」回预览态。 */
+const PROJECTS_PREVIEW_COUNT = 8
+const projectsExpanded = ref(false)
+const visibleProjects = computed(() =>
+  projectsExpanded.value ? projects.value : projects.value.slice(0, PROJECTS_PREVIEW_COUNT),
+)
+function toggleProjectsExpanded() {
+  projectsExpanded.value = !projectsExpanded.value
+}
 async function loadProjects() {
   if (projectsLoading.value) return
   projectsLoading.value = true
@@ -3315,7 +3329,7 @@ defineExpose({
               </button>
               <p class="session-drawer__caption">项目</p>
               <div
-                v-for="project in projects"
+                v-for="project in visibleProjects"
                 :key="project.id"
                 class="project-card"
                 :class="{ 'is-current': project.id === sessionId }"
@@ -3349,6 +3363,17 @@ defineExpose({
                   </svg>
                 </button>
               </div>
+              <!-- 「展开更多 / 收起」（2026-10-19 用户裁决）：默认预览最近 8 条，
+                    按钮与第 8 条同屏不折叠；剩余计数随列表长度实时变化。
+                    加载中/失败态不显示（那时没有可展开的稳定列表）。 -->
+              <button
+                v-if="!projectsLoading && !projectsError && projects.length > PROJECTS_PREVIEW_COUNT"
+                type="button"
+                class="session-drawer__expand"
+                @click="toggleProjectsExpanded"
+              >
+                {{ projectsExpanded ? '收起' : `展开更多（还有 ${projects.length - PROJECTS_PREVIEW_COUNT} 个）` }}
+              </button>
               <p v-if="projectsLoading" class="session-drawer__empty">项目加载中…</p>
               <p v-else-if="projectsError" class="session-drawer__empty">
                 项目加载失败
@@ -5054,6 +5079,27 @@ defineExpose({
   font-size: var(--lnk-text-xs, 12px);
   text-align: center;
   color: var(--lnk-text-muted);
+}
+
+/* 「展开更多 / 收起」（2026-10-19 用户裁决）：项目预览的折叠控制——轻量文字按钮，
+ * 不抢项目卡的视觉；与第 8 条同屏可见（默认预览 8 条的几何依据见
+ * PROJECTS_PREVIEW_COUNT 注释）。:active 用 accent 文字色给触控反馈。 */
+.session-drawer__expand {
+  display: block;
+  width: 100%;
+  padding: 10px 4px;
+  border: none;
+  background: transparent;
+  color: var(--lnk-text-muted);
+  font-size: var(--lnk-text-xs, 12px);
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.session-drawer__expand:active {
+  color: var(--lnk-accent-text);
 }
 
 .session-drawer-enter-active,
