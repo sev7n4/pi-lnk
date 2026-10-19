@@ -530,7 +530,15 @@ export const useAgentStore = defineStore('agent', () => {
     feedTimeline({ type: 'explore', data })
   }
 
-  /** P1：waiting_user → 时间线 warn notice（设计 §10；D1 定位卡之外的时间线提示）。 */
+  /**
+   * P1：waiting_user → 时间线 warn notice（设计 §10；D1 定位卡之外的时间线提示）。
+   *
+   * ADR-0011 T8（2026-10-20）：本事件是**阻塞态**（内核把决策权交回 host，等用户），
+   * 与工具产出事件不同类；上游等价物为 `ui_prompt_start` / `ui_prompt_end`
+   * （vendor coding-agent `core/extensions/types.ts:745-759`）。渲染落点由 ADR-0011
+   * 收敛为**单一锚定表面**：propose 类阻塞的确认面在画布节点内联（ProposeConfirmOverlay），
+   * 对话流只保留只读 notice。传输名不改（见 turnTimeline.ts 同名事件的注）。
+   */
   function trackWaitingUser(data: { status?: string; toolName?: string; nodeId?: string; reason?: string }) {
     feedTimeline({ type: 'waiting_user', data })
   }

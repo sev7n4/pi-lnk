@@ -4818,8 +4818,8 @@ defineExpose({
 
 /* ---- 画布视图 · 对话 chrome 一律不同屏（2026-10-18 二次裁决）----
  * 语义收口：顶栏（新建/历史头像）与 SSE 对话流只属于「对话模式」。画布视图两态——
- *   门进入 = 纯画布满屏（is-canvas-imm，连 composer 一起收）
- *   窗 A/B 进入 = 画布 + composer（composer 保留，供定位引图后继续输入）
+ *   纯画布满屏（is-canvas-imm：传送门 / 页签点入，以及 ADR-0011 T6 的「定位到待确认节点」）
+ *   窗态（◎ 定位锚与其余定位：composer 保留，供定位引图后继续输入）
  * 两条入口对 header / chat-wrap 的处理一致：display:none。
  * composer（裸条）仅在「纯画布满屏 / dock 展开」时收起。
  * 类摘除（门回对话 / 取消选中）⇒ 原样回归。 */

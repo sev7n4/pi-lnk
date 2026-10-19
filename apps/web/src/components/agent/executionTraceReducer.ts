@@ -9,6 +9,16 @@ import {
 } from '@/components/agent/executionStepLabels'
 import type { AgentPresentationEnvelope, NodeGraphBodyPayload } from '@/components/agent/presentation/types'
 
+/**
+ * 执行轨迹步骤状态。
+ *
+ * ⚠️ `waiting_user` 与其余状态**不同类**（ADR-0011 T8，2026-10-20 协议语义对齐）：
+ * 其余是「工具产出 / 进度」（pending→running→done/failed，可自行推进），
+ * `waiting_user` 是**阻塞态**——run 停在这里等 host 把决策交回用户，语义等价于上游
+ * coding-agent 的 `ui_prompt_start/end`（`core/extensions/types.ts:745-759`）：
+ * 把「正在等用户」建模成事件，而不是让 host 从工具结果反推。
+ * 渲染落点（唯一锚定表面）见 ProposeConfirmOverlay / ADR-0011。
+ */
 export type ExecutionStepStatus =
   | 'pending'
   | 'running'
