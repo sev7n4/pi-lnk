@@ -513,8 +513,8 @@ const ICONS: Record<string, string> = {
 
 <style>
 .membership-dialog .el-dialog {
-  background: var(--neo-surface-card);
-  border: 1px solid var(--neo-border);
+  background: var(--lnk-surface-base);
+  border: 1px solid var(--lnk-border-subtle);
   border-radius: var(--lnk-radius-xl);
   max-width: calc(100vw - 32px);
   max-height: 88vh;
@@ -547,35 +547,35 @@ const ICONS: Record<string, string> = {
   font-family: var(--lnk-font-display);
   font-size: 22px;
   font-weight: 700;
-  color: var(--neo-accent-text);
+  color: var(--lnk-accent-text);
   line-height: 1;
 }
 .membership-dialog .hd-title {
   font-size: 20px;
   font-weight: 700;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 .membership-dialog .hd-current {
   font-size: var(--lnk-text-xs);
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
   white-space: nowrap;
 }
 /* 退订入口（换购前置动作，一个用户同时只持有一个套餐） */
 .membership-dialog .hd-cancel {
-  border: 1px solid var(--neo-border);
+  border: 1px solid var(--lnk-border-subtle);
   border-radius: var(--lnk-radius-full);
   background: none;
   padding: 3px 10px;
   font-size: var(--lnk-text-2xs);
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
   cursor: pointer;
   white-space: nowrap;
   transition: color var(--lnk-duration-fast) var(--lnk-ease-standard),
     border-color var(--lnk-duration-fast) var(--lnk-ease-standard);
 }
 .membership-dialog .hd-cancel:hover:not(:disabled) {
-  color: var(--neo-text-primary);
-  border-color: var(--neo-border-strong);
+  color: var(--lnk-text-primary);
+  border-color: var(--lnk-border-strong);
 }
 .membership-dialog .hd-cancel:disabled {
   opacity: 0.55;
@@ -597,12 +597,12 @@ const ICONS: Record<string, string> = {
   gap: var(--lnk-space-2);
   padding: 4px 8px 4px 12px;
   border-radius: var(--lnk-radius-full);
-  background: var(--neo-warm-soft);
+  background: var(--lnk-credit-soft);
 }
 .membership-dialog .hd-bolt {
   width: 14px;
   height: 14px;
-  color: var(--neo-warm);
+  color: var(--lnk-credit);
   flex-shrink: 0;
 }
 .membership-dialog .hd-bolt svg {
@@ -613,17 +613,17 @@ const ICONS: Record<string, string> = {
 .membership-dialog .hd-num {
   font-size: var(--lnk-text-base);
   font-weight: 700;
-  color: var(--neo-warm);
+  color: var(--lnk-credit);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .membership-dialog .hd-claim {
-  --el-button-bg-color: var(--neo-surface-elevated);
-  --el-button-border-color: var(--neo-border);
-  --el-button-text-color: var(--neo-text-secondary);
-  --el-button-hover-bg-color: var(--neo-hover-bg);
-  --el-button-hover-border-color: var(--neo-border-strong);
-  --el-button-hover-text-color: var(--neo-text-primary);
+  --el-button-bg-color: var(--lnk-surface-raised);
+  --el-button-border-color: var(--lnk-border-subtle);
+  --el-button-text-color: var(--lnk-text-secondary);
+  --el-button-hover-bg-color: var(--lnk-hover-overlay);
+  --el-button-hover-border-color: var(--lnk-border-strong);
+  --el-button-hover-text-color: var(--lnk-text-primary);
 }
 /* 已领取终态：按钮本身变成「已完成」的绿色态，而不是点了才弹一句底部小字 */
 .membership-dialog .hd-claim.is-claimed.el-button {
@@ -644,10 +644,10 @@ const ICONS: Record<string, string> = {
   margin: 0;
   font-size: var(--lnk-text-xs);
   line-height: 1.7;
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
 }
 .membership-dialog .sub b {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
   font-weight: 600;
 }
 
@@ -673,9 +673,9 @@ const ICONS: Record<string, string> = {
   display: flex;
   flex-direction: column;
   padding: 18px 16px 16px;
-  border: 1px solid var(--neo-border);
+  border: 1px solid var(--lnk-border-subtle);
   border-radius: var(--lnk-radius-lg);
-  background: var(--neo-surface-elevated);
+  background: var(--lnk-surface-raised);
   transition: border-color var(--lnk-duration-fast) var(--lnk-ease-standard),
     transform var(--lnk-duration-fast) var(--lnk-ease-standard),
     box-shadow var(--lnk-duration-fast) var(--lnk-ease-standard),
@@ -688,7 +688,7 @@ const ICONS: Record<string, string> = {
 /* hover 必须明显强于推荐档的常驻态——否则推荐卡的紫边 + glow 会把 hover 反馈
    整个吃掉，鼠标滑过其它卡「毫无反应」（明暗两套主题下都是如此）。 */
 .membership-dialog .plan.is-actionable:hover {
-  border-color: var(--neo-accent);
+  border-color: var(--lnk-accent);
   box-shadow: var(--lnk-accent-glow), var(--lnk-shadow-md);
   transform: translateY(-4px);
 }
@@ -698,7 +698,7 @@ const ICONS: Record<string, string> = {
   cursor: pointer;
 }
 .membership-dialog .plan.is-locked:hover {
-  border-color: var(--neo-border-strong);
+  border-color: var(--lnk-border-strong);
   transform: translateY(-2px);
   box-shadow: var(--lnk-shadow-sm);
 }
@@ -708,19 +708,19 @@ const ICONS: Record<string, string> = {
 }
 /* 键盘聚焦（按钮在卡内）时的可达性环 */
 .membership-dialog .plan:focus-within {
-  border-color: var(--neo-accent-border);
+  border-color: var(--lnk-accent-border);
 }
 .membership-dialog .plan.is-recommended {
-  border-color: var(--neo-accent-border);
+  border-color: var(--lnk-accent-border);
   box-shadow: var(--lnk-accent-glow);
 }
 .membership-dialog .plan.is-current {
-  border-color: var(--neo-accent-border);
-  background: var(--neo-accent-soft);
+  border-color: var(--lnk-accent-border);
+  background: var(--lnk-accent-subtle);
 }
 /* 点击后、下单异步间隙的选中环 */
 .membership-dialog .plan.is-selected {
-  border-color: var(--neo-accent);
+  border-color: var(--lnk-accent);
   box-shadow: var(--lnk-accent-glow);
 }
 /* 点击不可购卡片的抖动反馈：让「点了没反应」变成「点了有回应」 */
@@ -750,16 +750,16 @@ const ICONS: Record<string, string> = {
   color: var(--lnk-text-on-accent);
 }
 .membership-dialog .badge-reco {
-  background: var(--neo-accent);
+  background: var(--lnk-accent);
 }
 .membership-dialog .badge-current {
-  background: var(--neo-accent-strong);
+  background: var(--lnk-accent-strong);
 }
 .membership-dialog .plan-name {
   margin: 0;
   font-size: var(--lnk-text-md);
   font-weight: 700;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 .membership-dialog .plan-sub {
   display: flex;
@@ -768,27 +768,27 @@ const ICONS: Record<string, string> = {
   gap: 5px;
   margin: 6px 0 0;
   font-size: var(--lnk-text-xs);
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
 }
 .membership-dialog .plan-bolt {
   width: 13px;
   height: 13px;
   align-self: center;
-  color: var(--neo-warm);
+  color: var(--lnk-credit);
   flex-shrink: 0;
 }
 .membership-dialog .plan-sub b {
   font-size: var(--lnk-text-lg);
   font-weight: 700;
-  color: var(--neo-warm);
+  color: var(--lnk-credit);
   font-variant-numeric: tabular-nums;
 }
 .membership-dialog .plan-sub-tail {
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
 }
 .membership-dialog .divider {
   border: none;
-  border-top: 1px solid var(--neo-border);
+  border-top: 1px solid var(--lnk-border-subtle);
   margin: 12px 0;
 }
 .membership-dialog .rows {
@@ -806,13 +806,13 @@ const ICONS: Record<string, string> = {
   gap: 7px;
   font-size: var(--lnk-text-xs);
   line-height: 1.5;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 .membership-dialog .row-icon {
   width: 14px;
   height: 14px;
   margin-top: 2px;
-  color: var(--neo-accent-text);
+  color: var(--lnk-accent-text);
   flex-shrink: 0;
 }
 .membership-dialog .row-icon svg {
@@ -832,19 +832,19 @@ const ICONS: Record<string, string> = {
   margin-top: 1px;
 }
 .membership-dialog .tag-basic {
-  color: var(--neo-accent-text);
-  background: var(--neo-accent-soft);
+  color: var(--lnk-accent-text);
+  background: var(--lnk-accent-subtle);
 }
 .membership-dialog .tag-bonus {
-  color: var(--neo-warm);
-  background: var(--neo-warm-soft);
+  color: var(--lnk-credit);
+  background: var(--lnk-credit-soft);
 }
 
 /* ---- 卡片底部价格 + CTA ---- */
 .membership-dialog .plan-foot {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px dashed var(--neo-border);
+  border-top: 1px dashed var(--lnk-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -860,12 +860,12 @@ const ICONS: Record<string, string> = {
 .membership-dialog .plan-price-num {
   font-size: var(--lnk-text-xl);
   font-weight: 700;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
   font-variant-numeric: tabular-nums;
 }
 .membership-dialog .plan-price-unit {
   font-size: var(--lnk-text-2xs);
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
   white-space: nowrap;
 }
 .membership-dialog .plan-cta.el-button {
@@ -873,33 +873,33 @@ const ICONS: Record<string, string> = {
 }
 /* 推荐档 CTA：主色实心，视觉主次的最强音 */
 .membership-dialog .plan-cta--primary.el-button {
-  --el-button-bg-color: var(--neo-accent);
-  --el-button-border-color: var(--neo-accent);
+  --el-button-bg-color: var(--lnk-accent);
+  --el-button-border-color: var(--lnk-accent);
   --el-button-text-color: var(--lnk-text-on-accent);
-  --el-button-hover-bg-color: var(--neo-accent-hover);
-  --el-button-hover-border-color: var(--neo-accent-hover);
+  --el-button-hover-bg-color: var(--lnk-accent-hover);
+  --el-button-hover-border-color: var(--lnk-accent-hover);
   --el-button-hover-text-color: var(--lnk-text-on-accent);
 }
 /* 其余可升级档 CTA：次级描边，不与推荐档抢焦点 */
 .membership-dialog .plan-cta--ghost.el-button {
   --el-button-bg-color: transparent;
-  --el-button-border-color: var(--neo-accent-border);
-  --el-button-text-color: var(--neo-accent-text);
-  --el-button-hover-bg-color: var(--neo-accent-soft);
-  --el-button-hover-border-color: var(--neo-accent);
-  --el-button-hover-text-color: var(--neo-accent-text);
+  --el-button-border-color: var(--lnk-accent-border);
+  --el-button-text-color: var(--lnk-accent-text);
+  --el-button-hover-bg-color: var(--lnk-accent-subtle);
+  --el-button-hover-border-color: var(--lnk-accent);
+  --el-button-hover-text-color: var(--lnk-accent-text);
 }
 .membership-dialog .plan-cta-current {
   flex-shrink: 0;
   font-size: var(--lnk-text-xs);
   font-weight: 600;
-  color: var(--neo-accent-text);
+  color: var(--lnk-accent-text);
 }
 .membership-dialog .plan-cta-locked {
   flex-shrink: 0;
   font-size: var(--lnk-text-xs);
   font-weight: 500;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
   white-space: nowrap;
 }
 
@@ -907,17 +907,17 @@ const ICONS: Record<string, string> = {
   margin: 0;
   text-align: center;
   font-size: var(--lnk-text-xs);
-  color: var(--neo-accent-text);
+  color: var(--lnk-accent-text);
 }
 .membership-dialog .footnote {
   margin-top: 2px;
   text-align: center;
   font-size: var(--lnk-text-2xs);
   line-height: 1.9;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 .membership-dialog .footnote b {
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
   font-weight: 600;
 }
 
@@ -929,11 +929,11 @@ const ICONS: Record<string, string> = {
   padding: 0;
   cursor: pointer;
   font-size: var(--lnk-text-xs);
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
   transition: color var(--lnk-duration-fast) var(--lnk-ease-standard);
 }
 .membership-dialog .back:hover {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 .membership-dialog .pay-head {
   display: flex;
@@ -942,32 +942,32 @@ const ICONS: Record<string, string> = {
   flex-wrap: wrap;
   gap: var(--lnk-space-3);
   padding: 14px 16px;
-  border: 1px solid var(--neo-border);
+  border: 1px solid var(--lnk-border-subtle);
   border-radius: var(--lnk-radius-lg);
-  background: var(--neo-surface-elevated);
+  background: var(--lnk-surface-raised);
 }
 .membership-dialog .pay-head-name {
   font-size: var(--lnk-text-base);
   font-weight: 600;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 .membership-dialog .pay-head-sub {
   margin-left: 10px;
   font-size: var(--lnk-text-2xs);
   font-weight: 400;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 .membership-dialog .pay-head-price {
   font-size: var(--lnk-text-2xl);
   font-weight: 700;
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .membership-dialog .pay-head-unit {
   font-size: var(--lnk-text-xs);
   font-weight: 400;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 .membership-dialog .agree {
   display: flex;
@@ -975,7 +975,7 @@ const ICONS: Record<string, string> = {
   gap: 7px;
   font-size: var(--lnk-text-2xs);
   line-height: 1.6;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 .membership-dialog .agree-dot {
   width: 14px;
@@ -997,6 +997,6 @@ const ICONS: Record<string, string> = {
 .membership-dialog .login-hint {
   padding: 40px 0;
   text-align: center;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 </style>

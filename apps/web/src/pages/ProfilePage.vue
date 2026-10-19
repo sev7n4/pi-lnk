@@ -253,7 +253,7 @@ onMounted(() => {
 
       <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-6">
         <p class="text-sm text-fg-3">创作能量</p>
-        <p class="mt-2 text-3xl font-semibold tabular-nums text-[var(--neo-warm)]">{{ profile.points ?? 0 }}</p>
+        <p class="mt-2 text-3xl font-semibold tabular-nums text-[var(--lnk-credit)]">{{ profile.points ?? 0 }}</p>
         <p v-if="isFreeMembership" class="mt-3 text-xs text-fg-3">开通会员，获得更多积分与高级能力</p>
         <div class="mt-4 flex gap-3">
           <button type="button" class="flex-1 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-black" @click="showTopup = true">
@@ -346,6 +346,6 @@ onMounted(() => {
 
 <style scoped>
 .profile-avatar {
-  background: var(--neo-brand-gradient);
+  background: var(--lnk-accent-gradient);
 }
 </style>
