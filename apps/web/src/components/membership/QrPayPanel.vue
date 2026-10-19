@@ -105,18 +105,15 @@ defineExpose({ stopPolling })
 </template>
 
 <style scoped>
-/* 令牌纪律（2026-10-19）：已迁到 --lnk-* 语义令牌。 */
 .qr-pay-panel {
-  background: var(--lnk-surface-raised);
-  border: 1px solid var(--lnk-border-subtle);
+  background: var(--neo-surface-elevated);
+  border: 1px solid var(--neo-border);
 }
-/* ⛔ 二维码 quiet zone 规范要求浅色底，深色主题下也必须保持白底——
-   这不是漏迁移的硬编码白，换成任何深色底都会直接扫不出。 */
 .qr-box {
   background: #fff;
 }
 .paid-hint {
-  color: var(--lnk-accent-text);
-  background: var(--lnk-accent-subtle);
+  color: var(--neo-accent-text);
+  background: var(--neo-accent-soft);
 }
 </style>

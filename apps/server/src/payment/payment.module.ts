@@ -19,6 +19,17 @@ function alipayConfigFromEnv(): AlipayConfig | null {
     gateway: process.env.ALIPAY_GATEWAY ?? 'https://openapi.alipaydev.com/gateway.do',
     notifyUrl: process.env.ALIPAY_NOTIFY_URL ?? '',
     returnUrl: process.env.ALIPAY_RETURN_URL ?? '',
+    // 周期扣款（自动续费）：默认关闭 ⇒ 手动续期模式。
+    // 生产启用只需替换 env（无需改代码、无需重新构建）：
+    //   ALIPAY_AGREEMENT_ENABLED=1
+    //   ALIPAY_AGREEMENT_PRODUCT_CODE / ALIPAY_AGREEMENT_PERSONAL_PRODUCT_CODE
+    //   ALIPAY_AGREEMENT_SIGN_SCENE（必须与商户签约产品合约里的场景一致）
+    // ⚠️ 支付宝「周期扣款不支持沙箱调试」⇒ 沙箱下即使置 1 也会失败，
+    //    签约链路必须在生产灰度验证。
+    agreementEnabled: process.env.ALIPAY_AGREEMENT_ENABLED === '1',
+    agreementProductCode: process.env.ALIPAY_AGREEMENT_PRODUCT_CODE,
+    agreementPersonalProductCode: process.env.ALIPAY_AGREEMENT_PERSONAL_PRODUCT_CODE,
+    agreementSignScene: process.env.ALIPAY_AGREEMENT_SIGN_SCENE,
   }
 }
 
@@ -42,6 +53,13 @@ function alipayConfigFromEnv(): AlipayConfig | null {
             },
             verifyCallback: () => null,
             queryTrade: async () => ({ paid: false }),
+            // 渠道未配置 ⇒ 签约能力一并视为不可用（业务侧走手动续期）
+            agreementSupported: false,
+            createAgreementSign: async () => {
+              throw new Error('支付渠道未配置，无法签约')
+            },
+            unsignAgreement: async () => ({ unsubscribed: false }),
+            queryAgreement: async () => ({}),
           }
         }
         return new AlipayAdapter(cfg)

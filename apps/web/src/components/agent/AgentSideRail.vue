@@ -3127,8 +3127,7 @@ function reconcileFromNodes(rawNodes: CanvasNodeLike[]) {
   taskProgress.value = next
 }
 
-/** 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起——纯项目世界（新建项目 + 项目卡片）。
- * 新建对话/历史对话已升为对话页右上角图标（IA v3.2），不再经抽屉。 */
+/** 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起——历史会话 + 新建对话（原顶栏入口的全屏形态） */
 const sessionDrawerOpen = ref(false)
 function openSessionDrawer() {
   sessionDrawerOpen.value = true
@@ -3138,25 +3137,12 @@ function closeSessionDrawer() {
   sessionDrawerOpen.value = false
 }
 
-/** IA v3.2：移动端「对话历史」面板（🕘 唤起）——复用 threads/fetchThreads/selectThread，
- * 独立于 PC 面板头部 popover（移动端头部被 CSS 隐藏）。 */
-const mobileThreadHistoryOpen = ref(false)
-async function openThreadHistory() {
-  mobileThreadHistoryOpen.value = true
-  await fetchThreads()
-}
-function closeThreadHistory() {
-  mobileThreadHistoryOpen.value = false
-}
-
-/** IA v3.2（2026-10-19 用户拍板）：抽屉 = 项目世界（容器层）——只放
- *  [新建项目] + 项目卡片（打开/重命名/删除）。
- * 新建对话/历史对话已升为对话页右上角常驻图标（MobileTopBar → newAgentSession /
- * openThreadHistory），抽屉不再混入对话层职责。
- * 2026-10-19 兜底：list 曾在 CVM 旧接口返回 2.4MB（165 项目×完整 canvasData），
- * 弱网/代理路径下 body 永不落地 ⇒ axios promise 不 settle ⇒ 「项目加载中」转不完。
- * 双保险：请求级 15s 超时 + 失败态重试按钮（后端 select 瘦身已随本分支修复）。 */
-const PROJECT_LIST_TIMEOUT_MS = 15_000
+/** IA v3.1（2026-10-19 用户裁决）：抽屉 = 对话 + 项目双区，「对话住在项目里」。
+ *  一个项目 = 1 画布 + N 对话（threadId = canvasId:后缀，代码事实）。
+ *  新建项目 = 新建画布 + 首个对话（进入后 bootstrapThread 自动建线程）；
+ *  项目卡片点击 = 整页跳 /workflow/:id——CanvasPage 无 sessionId watch，整页跳最稳，
+ *  落【对话】页签看对话内容，用户可手工切画布查看。
+ *  管理（打开/重命名）入口在卡片上；删除后端暂无端点、发布属当前项目顶栏 ⋯ 能力。 */
 interface ProjectCard {
   id: string
   title: string
@@ -3164,17 +3150,14 @@ interface ProjectCard {
 }
 const projects = ref<ProjectCard[]>([])
 const projectsLoading = ref(false)
-const projectsError = ref(false)
 async function loadProjects() {
   if (projectsLoading.value) return
   projectsLoading.value = true
-  projectsError.value = false
   try {
-    const res = await canvasApi.list({ timeout: PROJECT_LIST_TIMEOUT_MS })
+    const res = await canvasApi.list()
     projects.value = (res.data?.data ?? []) as ProjectCard[]
   } catch {
-    /* 拉取失败显式暴露重试入口，绝不留无限 loading */
-    projectsError.value = true
+    /* 拉取失败不打断会话流：项目区留空即可 */
   } finally {
     projectsLoading.value = false
   }
@@ -3242,10 +3225,6 @@ watch(
 
 defineExpose({
   openSessionDrawer,
-  /** IA v3.2：MobileTopBar 右上角 + / 🕘 —— 新对话（当前项目上下文）/ 对话历史面板 */
-  newAgentSession,
-  openThreadHistory,
-  closeThreadHistory,
   /** IA v3.1：发现页「资料库」直通——切回对话页签后由宿主调用，打开资产库选择器 */
   openAssetLibrary: pickAssetLibrary,
   openPanel,
@@ -3291,26 +3270,31 @@ defineExpose({
         </button>
       </Teleport>
 
-      <!-- 项目抽屉（IA v3.2）：移动端顶栏 ≡ 唤起——纯项目世界（新建项目 + 项目卡片增删改查）。
-           对话层职责（新建对话/历史对话）已升为对话页右上角图标，抽屉不再混入。 -->
+      <!-- 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起；历史会话 + 新建对话（原顶栏入口的全屏形态） -->
       <Teleport to="body">
         <Transition name="session-drawer">
           <div v-if="sessionDrawerOpen" class="session-drawer-layer" @click.self="closeSessionDrawer">
-            <div class="session-drawer" role="dialog" aria-label="项目列表">
-              <!-- 「新建项目」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。
-                   与 MobileTopBar 顶栏「新建对话」同族 create-card（scoped 样式各自定义）。
-                   整卡可点；圆盘是装饰 span（按钮内不嵌按钮）。 -->
+            <div class="session-drawer" role="dialog" aria-label="会话列表">
               <button
                 type="button"
-                class="create-card"
+                class="session-drawer__new"
+                @click="newAgentSession(); closeSessionDrawer(); emit('sessionCreated')"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+                </svg>
+                新建对话
+              </button>
+              <button
+                type="button"
+                class="session-drawer__new"
                 @click="newProject()"
               >
-                <span class="create-card__label">新建项目</span>
-                <span class="create-card__disc" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25">
-                    <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-                  </svg>
-                </span>
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z" />
+                  <path stroke-linecap="round" d="M12 8.5v7M8.5 12h7" />
+                </svg>
+                新建项目
               </button>
               <p class="session-drawer__caption">项目</p>
               <div
@@ -3348,41 +3332,23 @@ defineExpose({
                   </svg>
                 </button>
               </div>
-              <p v-if="projectsLoading" class="session-drawer__empty">项目加载中…</p>
-              <p v-else-if="projectsError" class="session-drawer__empty">
-                项目加载失败
-                <button type="button" class="session-drawer__retry" @click="loadProjects">重试</button>
-              </p>
-              <p v-else-if="!projects.length" class="session-drawer__empty">暂无项目</p>
+              <p v-if="!projects.length && !projectsLoading" class="session-drawer__empty">暂无项目</p>
+              <p class="session-drawer__caption">历史会话</p>
+              <button
+                v-for="thread in threads"
+                :key="thread.id"
+                type="button"
+                class="session-drawer__item"
+                :class="{ 'is-current': thread.id === agentThreadId }"
+                @click="selectThread(thread.id); closeSessionDrawer()"
+              >
+                <span class="block truncate text-xs font-medium">{{ thread.title }}</span>
+                <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
+              </button>
+              <p v-if="!threads.length" class="session-drawer__empty">暂无历史会话</p>
             </div>
           </div>
         </Transition>
-      </Teleport>
-
-      <!-- 对话历史面板（IA v3.2）：移动端对话页右上角 🕘 唤起——当前项目下的对话切换。
-           与 PC 面板头部 popover 同源（threads/fetchThreads/selectThread），移动端头部被 CSS 隐藏故独立成面层。 -->
-      <Teleport to="body">
-        <div
-          v-if="isMobileLayout && mobileThreadHistoryOpen"
-          class="thread-history-layer"
-          @click.self="closeThreadHistory"
-        >
-          <div class="thread-history-sheet" role="dialog" aria-label="对话历史">
-            <p class="session-drawer__caption">对话历史</p>
-            <button
-              v-for="thread in threads"
-              :key="thread.id"
-              type="button"
-              class="thread-history-item"
-              :class="{ 'is-current': thread.id === agentThreadId }"
-              @click="selectThread(thread.id); closeThreadHistory()"
-            >
-              <span class="block truncate text-xs font-medium">{{ thread.title }}</span>
-              <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
-            </button>
-            <p v-if="!threads.length" class="session-drawer__empty">暂无对话记录</p>
-          </div>
-        </div>
       </Teleport>
 
       <!-- 面板：侧栏内嵌 or 浮动窗口 or 移动端贴底裸条容器（Teleport 到 body） -->
@@ -4856,17 +4822,11 @@ defineExpose({
   overflow-y: auto;
 }
 
-/* 「新建」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。
- * 圆盘 = accent 渐变实底 + on-accent 白加号（--lnk-text-on-accent 两主题均 #fff，
- * 白字写在令牌里合法；圆盘与项目卡右侧图标按钮同列 rhythm）。
- * 顶栏「新建对话」= 同族 create-card--bar（MobileTopBar.vue 各自 scoped 定义）。 */
-.create-card {
+.session-drawer__new {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  width: 100%;
-  padding: 12px 12px 12px 14px;
+  padding: 12px 14px;
   border: 0.5px solid var(--lnk-border-subtle);
   border-radius: 12px;
   background: var(--lnk-surface-raised);
@@ -4874,29 +4834,6 @@ defineExpose({
   font-size: var(--lnk-text-sm, 13px);
   font-weight: 500;
   cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.create-card:active {
-  background: var(--lnk-accent-subtle);
-}
-
-.create-card__disc {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--lnk-accent-gradient);
-  color: var(--lnk-text-on-accent);
-}
-
-.create-card__disc svg {
-  width: 15px;
-  height: 15px;
 }
 
 .session-drawer__caption {
@@ -4918,9 +4855,7 @@ defineExpose({
 }
 
 .project-card.is-current {
-  /* --lnk-accent-border 已在 design-tokens.css 双主题定义（2026-10-19 补令牌），
-     不再写 var() fallback——fallback 会把「引用未定义令牌」静默降级成另一个值。 */
-  border-color: var(--lnk-accent-border);
+  border-color: var(--lnk-accent-border, var(--lnk-border-subtle));
 }
 
 .project-card__main {
@@ -4970,32 +4905,7 @@ defineExpose({
   color: var(--lnk-error);
 }
 
-/* 对话历史面板（IA v3.2）：对话页右上角 🕘 唤起；与抽屉同族视觉，z 序高于抽屉 */
-.thread-history-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 96;
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.thread-history-sheet {
-  position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 52px);
-  right: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(72vw, 260px);
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 12px;
-  border: 0.5px solid var(--lnk-border-subtle);
-  border-radius: 12px;
-  background: var(--lnk-surface-canvas);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-.thread-history-item {
+.session-drawer__item {
   display: block;
   width: 100%;
   padding: 10px 12px;
@@ -5007,20 +4917,9 @@ defineExpose({
   cursor: pointer;
 }
 
-.thread-history-item.is-current {
+.session-drawer__item.is-current {
   border-color: var(--lnk-border-subtle);
   background: var(--lnk-surface-raised);
-}
-
-.session-drawer__retry {
-  margin-left: 6px;
-  padding: 2px 10px;
-  border: 0.5px solid var(--lnk-border-subtle);
-  border-radius: 999px;
-  background: var(--lnk-surface-raised);
-  color: var(--lnk-accent-text);
-  font-size: var(--lnk-text-xs, 12px);
-  cursor: pointer;
 }
 
 .session-drawer__empty {

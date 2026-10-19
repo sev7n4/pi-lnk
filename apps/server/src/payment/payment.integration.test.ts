@@ -6,8 +6,13 @@ import { join, resolve } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { MembershipService, resolveTopupPoints } from '../membership/membership.service'
-import { PaymentService } from './payment.service'
-import type { PaymentAdapter, ChargeRequest, CallbackVerifyResult } from './payment.adapter'
+import { PaymentService, clampAlipayExecuteDate } from './payment.service'
+import type {
+  PaymentAdapter,
+  ChargeRequest,
+  CallbackVerifyResult,
+  AgreementSignRequest,
+} from './payment.adapter'
 
 const serverRoot = resolve(__dirname, '../..')
 
@@ -33,6 +38,35 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     nextVerify: CallbackVerifyResult | null = null
     nextQueryPaid = false
     nextQrCode: string | null = null
+    // ── 周期扣款（沙箱不支持，默认关闭；测试按需开启并编排） ──
+    agreementSupported = false
+    createAgreementSignCalls: AgreementSignRequest[] = []
+    unsignAgreementCalls: string[] = []
+    queryAgreementCalls: string[] = []
+    nextSignUrl: string | null = null
+    nextAgreementNo: string | null = null
+    nextAgreementStatus: string | null = null
+    nextUnsignError: string | null = null
+
+    async createAgreementSign(req: AgreementSignRequest) {
+      this.createAgreementSignCalls.push(req)
+      if (this.nextSignUrl === null) throw new Error('precreate 渠道拒绝（未编排）')
+      return { signUrl: this.nextSignUrl }
+    }
+
+    async unsignAgreement(agreementNo: string) {
+      this.unsignAgreementCalls.push(agreementNo)
+      if (this.nextUnsignError) throw new Error(this.nextUnsignError)
+      return { unsubscribed: true }
+    }
+
+    async queryAgreement(externalAgreementNo: string) {
+      this.queryAgreementCalls.push(externalAgreementNo)
+      return {
+        agreementNo: this.nextAgreementNo ?? undefined,
+        status: this.nextAgreementStatus ?? undefined,
+      }
+    }
 
     async createCharge(req: ChargeRequest) {
       this.createChargeCalls.push(req)
@@ -88,6 +122,14 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     fake.nextVerify = null
     fake.nextQueryPaid = false
     fake.nextQrCode = null
+    fake.agreementSupported = false
+    fake.createAgreementSignCalls = []
+    fake.unsignAgreementCalls = []
+    fake.queryAgreementCalls = []
+    fake.nextSignUrl = null
+    fake.nextAgreementNo = null
+    fake.nextAgreementStatus = null
+    fake.nextUnsignError = null
   })
 
   async function seedUser(id: string, points = 1000, membership = 'free') {
@@ -620,5 +662,108 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     expect(res).toMatchObject({ membership: 'free', changed: true })
     expect((await membership.getPoints('u-sub-8')).membership).toBe('free')
     expect((await membership.getSubscription('u-sub-8'))?.status).toBe('expired')
+  })
+
+  // ── 自动续费（周期扣款）编排 ──────────────────────────────────────────────
+  async function subscribe(userId: string, plan = 'standard') {
+    const { orderId } = await service.createOrder(userId, plan)
+    const amountFen = plan === 'premium' ? 19900 : 9900
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-auto', paid: true, amountFen }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+  }
+
+  it('未开启周期扣款：能力=false，签约/确认响亮失败（不谎称已开通）', async () => {
+    await seedUser('u-ar-1')
+    await subscribe('u-ar-1')
+    expect(service.autoRenewCapability()).toEqual({ supported: false })
+    await expect(service.createAutoRenewSign('u-ar-1')).rejects.toThrow(/未开通/)
+    await expect(service.confirmAutoRenew('u-ar-1')).rejects.toThrow(/未开通/)
+  })
+
+  it('未订阅任何套餐时不能签约', async () => {
+    await seedUser('u-ar-2')
+    fake.agreementSupported = true
+    await expect(service.createAutoRenewSign('u-ar-2')).rejects.toThrow(/未订阅/)
+  })
+
+  it('开启后生成签约链接：首次扣款日钳到 28 号以内', async () => {
+    await seedUser('u-ar-3')
+    await subscribe('u-ar-3', 'premium')
+    fake.agreementSupported = true
+    fake.nextSignUrl = 'https://openapi.alipay.com/gateway.do?method=alipay.user.agreement.page.sign'
+
+    const res = await service.createAutoRenewSign('u-ar-3')
+    expect(res.signUrl).toContain('alipay.user.agreement.page.sign')
+    expect(res.executeTime).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(Number(res.executeTime.slice(8, 10))).toBeLessThanOrEqual(28)
+
+    const req = fake.createAgreementSignCalls[0]
+    expect(req.periodType).toBe('MONTH')
+    expect(req.period).toBe(1)
+    expect(req.amountYuan).toBe(199)
+    expect(req.externalAgreementNo.startsWith('lnkpi')).toBe(true)
+    expect(req.externalAgreementNo.length).toBeLessThanOrEqual(32)
+  })
+
+  it('clampAlipayExecuteDate：超过 28 号一律钳到 28，按东八区日历日', () => {
+    // 2026-01-31T16:00Z = 北京时间 2026-02-01 00:00 → 日历日跨月，应输出 2 月
+    expect(clampAlipayExecuteDate(new Date('2026-01-31T16:00:00Z'))).toBe('2026-02-01')
+    // 3/31、5/31 均钳到 28 号（支付宝 MONTH 硬约束）
+    expect(clampAlipayExecuteDate(new Date('2026-03-31T04:00:00Z'))).toBe('2026-03-28')
+    expect(clampAlipayExecuteDate(new Date('2026-05-31T04:00:00Z'))).toBe('2026-05-28')
+    // ≤28 号原样保留
+    expect(clampAlipayExecuteDate(new Date('2026-06-15T04:00:00Z'))).toBe('2026-06-15')
+  })
+
+  it('签约回跳确认：以渠道查询结果落库 agreementNo（不信前端回传）', async () => {
+    await seedUser('u-ar-4')
+    await subscribe('u-ar-4')
+    fake.agreementSupported = true
+    fake.nextAgreementNo = '2026092000000001'
+    fake.nextAgreementStatus = 'NORMAL'
+
+    const res = await service.confirmAutoRenew('u-ar-4')
+    expect(res.agreementNo).toBe('2026092000000001')
+    const dto = await membership.getSubscription('u-ar-4')
+    expect(dto?.agreementBound).toBe(true)
+  })
+
+  it('取消自动续期：先渠道解约再改本地（顺序不可反）', async () => {
+    await seedUser('u-ar-5')
+    await subscribe('u-ar-5')
+    fake.agreementSupported = true
+    fake.nextAgreementNo = '2026092000000002'
+    await service.confirmAutoRenew('u-ar-5')
+
+    const res = await service.cancelAutoRenew('u-ar-5')
+    expect(fake.unsignAgreementCalls).toEqual(['2026092000000002']) // 渠道先动
+    expect(res.changed).toBe(true)
+    const dto = await membership.getSubscription('u-ar-5')
+    expect(dto?.cancelAtPeriodEnd).toBe(true)
+    // 当前仍可用
+    expect((await membership.getPoints('u-ar-5')).membership).toBe('standard')
+  })
+
+  it('渠道解约失败 → 本地状态不动（不能出现「以为取消了其实还在扣款」）', async () => {
+    await seedUser('u-ar-6')
+    await subscribe('u-ar-6')
+    fake.agreementSupported = true
+    fake.nextAgreementNo = '2026092000000003'
+    await service.confirmAutoRenew('u-ar-6')
+
+    fake.nextUnsignError = 'SYSTEM_ERROR'
+    await expect(service.cancelAutoRenew('u-ar-6')).rejects.toThrow(/SYSTEM_ERROR/)
+    const dto = await membership.getSubscription('u-ar-6')
+    expect(dto?.cancelAtPeriodEnd).toBe(false) // 本地未被改动
+  })
+
+  it('手动续期模式（无签约号）：取消自动续期不调渠道，只改本地', async () => {
+    await seedUser('u-ar-7')
+    await subscribe('u-ar-7')
+    fake.agreementSupported = true // 能力开着但用户没签约
+
+    const res = await service.cancelAutoRenew('u-ar-7')
+    expect(fake.unsignAgreementCalls).toEqual([])
+    expect(res.changed).toBe(true)
   })
 })
