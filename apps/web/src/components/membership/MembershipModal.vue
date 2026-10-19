@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
-import { membershipApi, membershipLabel, type MembershipPlan } from '@/services/users-api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { membershipApi, membershipLabel, subscriptionLabel, type MembershipPlan } from '@/services/users-api'
 import { paymentApi } from '@/services/payment-api'
 import { useAuthStore } from '@/stores/auth'
 import QrPayPanel from './QrPayPanel.vue'
@@ -44,6 +44,8 @@ const nudgePlanId = ref('')
 let nudgeTimer: number | undefined
 /// 退订请求进行中（防重复提交）。
 const canceling = ref(false)
+/// 今日每日签到是否已领取（按钮终态用，避免靠失败提示告知用户）。
+const claimedToday = ref(false)
 
 /** select=套餐列表 · pay=扫码支付 */
 const view = ref<'select' | 'pay'>('select')
@@ -77,6 +79,7 @@ async function loadData() {
   plans.value = plansRes.data.data
   points.value = pointsRes.data.data.points
   membership.value = pointsRes.data.data.membership
+  claimedToday.value = pointsRes.data.data.claimedToday
 }
 
 watch(() => props.modelValue, (open) => {
@@ -98,15 +101,18 @@ onMounted(() => {
 })
 
 async function claimDaily() {
+  if (loading.value || claimedToday.value) return
   loading.value = true
-  message.value = ''
   try {
     const { data } = await membershipApi.claimDaily()
     points.value = data.data.points
     auth.setPoints(data.data.points)
-    message.value = `已领取 ${data.data.added} 积分`
+    claimedToday.value = true
+    ElMessage.success(`已领取 +${data.data.added} 积分`)
   } catch {
-    message.value = '今日已签到'
+    // 已被并发/先前领取：直接切终态，不让用户以为按钮坏了
+    claimedToday.value = true
+    ElMessage.info('今日已领取')
   } finally {
     loading.value = false
   }
@@ -128,10 +134,15 @@ async function onPlanClick(plan: MembershipPlan) {
     await startPlanPay(plan)
     return
   }
-  message.value =
-    kind === 'current'
-      ? '你正在使用该套餐'
-      : `需先退订当前套餐（${membershipLabel(membership.value)}）才能订购新套餐`
+  // 锁定/当前档：用 Toast 提示（底部小字太隐蔽，用户会以为系统坏了），
+  // 锁定档再叠加一次卡片抖动，双通道反馈。
+  if (kind === 'current') {
+    ElMessage.info(`你正在使用「${subscriptionLabel(membership.value)}」`)
+    return
+  }
+  ElMessage.warning(
+    `「${plan.name}」需先退订当前套餐（${membershipLabel(membership.value)}）后才能订购——一个用户同时只能持有一个套餐`,
+  )
   nudgePlanId.value = plan.id
   window.clearTimeout(nudgeTimer)
   nudgeTimer = window.setTimeout(() => {
@@ -295,7 +306,7 @@ const ICONS: Record<string, string> = {
         <div class="hd-brand">
           <span class="hd-pi">π</span>
           <span class="hd-title">套餐</span>
-          <span class="hd-current">当前套餐：{{ membershipLabel(membership) }}</span>
+          <span class="hd-current">当前套餐：{{ subscriptionLabel(membership) }}</span>
           <button
             v-if="hasActivePlan"
             type="button"
@@ -313,11 +324,13 @@ const ICONS: Record<string, string> = {
           <span class="hd-num">{{ points.toLocaleString() }}</span>
           <el-button
             class="hd-claim"
+            :class="{ 'is-claimed': claimedToday }"
             size="small"
             :loading="loading"
+            :disabled="claimedToday"
             @click="claimDaily"
           >
-            领取 +100
+            {{ claimedToday ? '今日已领取' : '领取 +100' }}
           </el-button>
         </div>
       </div>
@@ -547,6 +560,15 @@ const ICONS: Record<string, string> = {
   --el-button-hover-border-color: var(--neo-border-strong);
   --el-button-hover-text-color: var(--neo-text-primary);
 }
+/* 已领取终态：按钮本身变成「已完成」的绿色态，而不是点了才弹一句底部小字 */
+.membership-dialog .hd-claim.is-claimed.el-button {
+  --el-button-bg-color: var(--lnk-success-bg);
+  --el-button-border-color: var(--lnk-success-border);
+  --el-button-text-color: var(--lnk-success);
+  --el-button-disabled-bg-color: var(--lnk-success-bg);
+  --el-button-disabled-border-color: var(--lnk-success-border);
+  --el-button-disabled-text-color: var(--lnk-success);
+}
 
 .membership-dialog .body {
   display: flex;
@@ -594,11 +616,23 @@ const ICONS: Record<string, string> = {
     box-shadow var(--lnk-duration-fast) var(--lnk-ease-standard),
     opacity var(--lnk-duration-fast) var(--lnk-ease-standard);
 }
-/* 仅「可升级」卡是可点热区：指针 + 悬停抬升 */
+/* 仅「可购买」卡是可点热区：指针 + 悬停抬升 */
 .membership-dialog .plan.is-actionable {
   cursor: pointer;
 }
+/* hover 必须明显强于推荐档的常驻态——否则推荐卡的紫边 + glow 会把 hover 反馈
+   整个吃掉，鼠标滑过其它卡「毫无反应」（明暗两套主题下都是如此）。 */
 .membership-dialog .plan.is-actionable:hover {
+  border-color: var(--neo-accent);
+  box-shadow: var(--lnk-accent-glow), var(--lnk-shadow-md);
+  transform: translateY(-4px);
+}
+/* 锁定卡（需先退订）同样可点（点击给出解释），hover 只做轻微回应，不给主色，
+   避免暗示「可以买」。 */
+.membership-dialog .plan.is-locked {
+  cursor: pointer;
+}
+.membership-dialog .plan.is-locked:hover {
   border-color: var(--neo-border-strong);
   transform: translateY(-2px);
   box-shadow: var(--lnk-shadow-sm);
@@ -612,7 +646,7 @@ const ICONS: Record<string, string> = {
   border-color: var(--neo-accent-border);
 }
 .membership-dialog .plan.is-recommended {
-  border: 2px solid var(--neo-accent);
+  border-color: var(--neo-accent-border);
   box-shadow: var(--lnk-accent-glow);
 }
 .membership-dialog .plan.is-current {
