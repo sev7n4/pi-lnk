@@ -137,6 +137,19 @@ export type TimelineEvent =
     }
   | { type: 'turn_usage'; data: TimelineUsage & { estimatedCredits?: number } }
   | {
+      /**
+       * 阻塞态事件（ADR-0011 T8，2026-10-20 协议语义对齐）。
+       *
+       * 与工具产出（`tool_result` / `canvas_action` / `node_status`）是**两类不同事件**：
+       * 本事件表示「内核已把决策权交回 host，正在等用户」，不是一个待渲染的工具结果。
+       * 上游等价物是 coding-agent 的 `ui_prompt_start` / `ui_prompt_end`
+       * （`vendor/earendil-works/pi/packages/coding-agent/src/core/extensions/types.ts:745-759`），
+       * 同一语义角色：**事件化建模「正在等用户」**，而非让 host 从工具结果里推断。
+       *
+       * ⚠️ 传输层名字保留 `waiting_user`（SSE 契约 + 既有 reducer / 快照均按此名），
+       * 只对齐**语义与角色**，不 wire-level 改名——改名要动协议与回放快照，代价大于收益。
+       * 上游对照与渲染落点见 docs/superpowers/specs/2026-10-19-propose-confirm-single-surface-design.md §7。
+       */
       type: 'waiting_user'
       data: { status?: string; toolName?: string; nodeId?: string; reason?: string }
     }

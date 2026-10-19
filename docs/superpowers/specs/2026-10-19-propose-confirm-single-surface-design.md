@@ -168,3 +168,28 @@ T10（验收）最后
   - 取消入口泛化：`AgentSideRail.cancelBlockingPropose` → `cancelProposeForNode(nodeId?)`（nodeId 与等待不一致安全 no-op），defineExpose 给 CanvasPage；与侧栏取消同函数同语义。
   - 判据收敛：`isPendingConfirmNode` / `NODE_PENDING_CONFIRM_STATUS` 落 `@/constants/dockStudio`（与 isNodeGenerating 同家），替换 CanvasPage 内联判据意图；MultiSelectToolbar blockedTitle 与 CanvasPage ElMessage 的「请先在侧栏确认生成」文案随确认面迁移改为「在节点上确认生成」。
   - 测试：`dockStudio.test.ts` 补 isPendingConfirmNode 三态；`ProposeConfirmOverlay.test.ts` 4 例（三动作 emit / 非待确认不渲染 / above-below 翻转）。CanvasPage 级挂载测试超本机 vitest 天花板（既有纪律：全量 web 测试归 CI）。
+- 2026-10-20（T6/T7/T8 收尾）：T6 窗态纪律——`focusNodeById` / `focusNodesByIds` 改为「定位到**待确认**节点 ⇒ 纯画布满屏（`mobileCanvasImm=true`，composer/SSE 全收）」，其余定位（含 ◎ 定位锚）维持窗态；判据复用 `isPendingConfirmNode`。**不改 wire 命名**：`handleCanvasRefPickToggle`（◎ 定位锚）保持窗态是 2026-10-18 裁决，propose 定位改纯画布才是 ADR-0011 决定 4 的增量。T7 三窗态矩阵见下表（回归待人工）。T8 见 §7。
+
+---
+
+## 7. 协议语义对照（T8：`waiting_user` ↔ 上游 `ui_prompt`）
+
+**结论：语义与角色对齐，wire 命名不改。** 改名要动 SSE 契约 + reducer + 回放快照，代价大于收益（ADR-0011 决定 6 本身也标注「低成本、可选」）。
+
+| 角色 | 上游 coding-agent | 本仓（传输名保留） | 渲染落点（ADR-0011 后唯一锚定表面） |
+|---|---|---|---|
+| 「正在等用户」开始 | `ui_prompt_start` | 时间线事件 `waiting_user`（`status:'waiting'`）+ 轨迹步骤 `ExecutionStepStatus='waiting_user'` | propose → 画布节点内联确认面（`ProposeConfirmOverlay`）；对话流只读 notice |
+| 「正在等用户」结束 | `ui_prompt_end` | 同名事件 `status:'resolved'`（+ `POST /answers` 确定性信号） | 节点状态 `pending_confirm → draft/generating`，确认面自动消失 |
+| 工具产出 | tool result / `registerTool.renderResult` | `tool_result` / `canvas_action` / `node_status` 时间线事件 | 对话流 artifact 日志（只读）+ 画布节点本体 |
+| 阻塞确认的 host 原生表面 | `ui.confirm / select / input`（`ExtensionAPI`） | 画布节点内联确认面（自建 host） | 节点即确认面（ADR-0011 决定 1） |
+
+**关键区分（此前被混为一谈）**：`waiting_user` 是**阻塞态**（run 停在原地等用户），不是「工具还没跑完」；把它当工具产出渲染，就会出现 ADR-0011 记录的三重并存表面。代码注释落点：`turnTimeline.ts` 事件联合类型、`stores/agent.ts#trackWaitingUser`、`executionTraceReducer.ts#ExecutionStepStatus`。
+
+### 7.1 移动端三窗态矩阵（T7 回归用）
+
+| 入口 | `mobileCanvasView` | `mobileCanvasImm` | composer | 适用场景 |
+|---|---|---|---|---|
+| 页签「画布」/ 传送门 | true | **true** | 收起 | 主动进画布浏览 |
+| ◎ 定位锚（引用拾取） | true | false | 保留 | 拾取引图后继续输入（2026-10-18 裁决） |
+| **定位到待确认节点**（T6 新增） | true | **true** | 收起 | 去画布看 / 改提示词再确认，零遮挡 |
+| 其余定位（历史 / 发布弹窗 / 批量） | true | false | 保留 | 定位后可能继续对话 |

@@ -1821,14 +1821,18 @@ function triggerLocateFlash(ids: string[]) {
 async function focusNodeById(id: string) {
   // 2026-10-01 修：节点尚未上屏（或已被删除）时点击定位是静默 no-op，
   // 必须给出与 focusNodesByIds 一致的提示，让定位失败可感知。
-  if (!nodes.value.some((n) => n.id === id)) {
+  const target = nodes.value.find((n) => n.id === id)
+  if (!target) {
     ElMessage.warning('当前画布中没有找到对应节点')
     return
   }
-  // 移动端：定位 = 用户显式要看画布 ⇒ 切到画布页签（composer 同屏窗态，非纯画布）
+  // 移动端：定位 = 用户显式要看画布 ⇒ 切到画布页签。
+  // ADR-0011 T6（2026-10-20）：定位到**待确认**节点时进**纯画布满屏**（composer / SSE 全收）——
+  // 此刻用户意图是「去画布上看 / 改提示词再确认」，不该与对话流同屏抢版面；其余定位仍走
+  // 窗态（composer 同屏，供定位引图后继续输入，2026-10-18 裁决）。
   if (isMobileLayout.value) {
     mobileCanvasView.value = true
-    mobileCanvasImm.value = false
+    mobileCanvasImm.value = isPendingConfirmNode(target as { data?: { status?: unknown } | undefined })
     mobileAppTab.value = 'canvas'
   }
   selectOnlyNode(id)
@@ -1846,7 +1850,12 @@ async function focusNodesByIds(ids: string[]) {
   if (valid.length === 1) return focusNodeById(valid[0])
   if (isMobileLayout.value) {
     mobileCanvasView.value = true
-    mobileCanvasImm.value = false
+    // ADR-0011 T6：批量定位里含待确认节点 ⇒ 同纯画布满屏（与单节点判据一致）
+    mobileCanvasImm.value = valid.some((vid) =>
+      isPendingConfirmNode(
+        nodes.value.find((n) => n.id === vid) as { data?: { status?: unknown } | undefined },
+      ),
+    )
     mobileAppTab.value = 'canvas'
   }
   selectOnlyNode(valid[0])
@@ -4918,8 +4927,9 @@ const agentPanelExpanded = ref(false)
  *  composer ◎ 定位锚（引用拾取）；退出 = 拾取结束（watch）或画布上的「返回对话」按钮。
  *  桌面端恒 false，不参与。 */
 const mobileCanvasView = ref(false)
-/** 纯画布满屏态（2026-10-18 用户裁决）：传送门进入 = 画布独占（composer/SSE 全隐）；
- *  ◎ 定位锚 / 提议卡定位进入 = 画布 + composer（+SSE）同屏。两态共用 mobileCanvasView。 */
+/** 纯画布满屏态：传送门 / 页签点入，以及**定位到待确认节点**（ADR-0011 T6，2026-10-20）
+ *  = 画布独占（composer/SSE 全隐）；◎ 定位锚与其余定位进入 = 画布 + composer（+SSE）同屏。
+ *  两态共用 mobileCanvasView，imm 只决定 composer 是否收起（SSE 在画布视图恒收）。 */
 const mobileCanvasImm = ref(false)
 /** 移动端应用页签（IA v3，抄 WorkBuddy 壳）：对话 / 画布 / 发现 / 我的。
  *  「门」由画布页签继承（图标=传送门章鱼+光环，固定位零跳变）——切页签即切模式。

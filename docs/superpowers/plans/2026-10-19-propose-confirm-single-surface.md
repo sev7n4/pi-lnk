@@ -36,12 +36,12 @@
 
 ## Phase 3 — 窗态纪律（从对话定位进入画布）
 
-- [ ] **T6 "定位/查看"进入画布 = 纯画布态**：从对话流点 propose 卡的"定位"按钮（或对话流定位锚）进入画布，走 `mobileCanvasView` 的"页签点入"语义（composer / SSE 收起），而非窗 B 同屏——避免对话卡与画布节点同屏再次出现双可操作表面。仅在用户显式要在画布上继续聊天才开 composer 同屏。
-- [ ] **T7 移动端窗态回归**：核对窗 A（◎ 定位锚）/ 窗 B（提议卡定位）/ 纯画布页签三态在改造后的表现，确保 propose 场景走纯画布态。
+- [x] **T6 "定位/查看"进入画布 = 纯画布态**（2026-10-20）：`focusNodeById` / `focusNodesByIds` 改为「定位到**待确认**节点 ⇒ `mobileCanvasImm=true`（纯画布满屏，composer/SSE 全收）」，判据复用 `isPendingConfirmNode`；其余定位（含 ◎ 定位锚 `handleCanvasRefPickToggle`，2026-10-18 裁决）维持窗态。实现取「状态驱动」而非改 emit 签名——`focusNodeById` 有 12 处调用方（含建节点后自动聚焦等非「用户要看画布」场景），全改会误伤。
+- [~] **T7 移动端窗态回归**（2026-10-20）：三窗态矩阵已写入设计稿 §7.1（入口 × view/imm × composer），代码路径逐条核对通过；**真机回归待人工**（提议态定位是否零遮挡、◎ 定位锚是否仍保留 composer）。
 
 ## Phase 4 — 协议语义对齐（低成本可选）
 
-- [ ] **T8 `waiting_user` ↔ `ui_prompt` 语义对齐**：在文档 / 注释层把"阻塞态（`waiting_user`）vs 工具产出"区分清楚，命名与上游 `ui_prompt_start/end`（`coding-agent/types.ts:745-759`）对齐；前端确认面复用节点组件而非另起一套卡片。不改变自有的画布 host，仅做命名 / 注释收敛。
+- [x] **T8 `waiting_user` ↔ `ui_prompt` 语义对齐**（2026-10-20）：设计稿新增 §7 对照表（上游 `ui_prompt_start/end` ↔ 本仓事件/轨迹状态 ↔ 渲染落点）；代码注释落 `turnTimeline.ts` 事件联合类型、`stores/agent.ts#trackWaitingUser`、`executionTraceReducer.ts#ExecutionStepStatus`——统一写明「阻塞态 ≠ 工具产出」。**wire 命名刻意不改**（SSE 契约 + 回放快照，改名代价大于收益，符合 ADR-0011 决定 6「低成本、可选」的定位）。
 
 ## Phase 5 — 测试与验收
 
