@@ -8,10 +8,6 @@ import PromptDockPanel from '@/components/canvas/dock-studio/panels/PromptDockPa
 import ImageDockPanel from '@/components/canvas/dock-studio/panels/ImageDockPanel.vue'
 import VideoDockPanel from '@/components/canvas/dock-studio/panels/VideoDockPanel.vue'
 import AudioDockPanel from '@/components/canvas/dock-studio/panels/AudioDockPanel.vue'
-import ShotDockPanel from '@/components/canvas/dock-studio/panels/ShotDockPanel.vue'
-import MediaInputDockPanel from '@/components/canvas/dock-studio/panels/MediaInputDockPanel.vue'
-import SceneComposerDockPanel from '@/components/canvas/dock-studio/panels/SceneComposerDockPanel.vue'
-import VideoCompositionDockPanel from '@/components/canvas/dock-studio/panels/VideoCompositionDockPanel.vue'
 import LegacyDockPanel from '@/components/canvas/dock-studio/panels/LegacyDockPanel.vue'
 import { isNodeGenerating } from '@/constants/dockStudio'
 import type { CompositionTrack } from '@/utils/compositionUpstream'
@@ -31,12 +27,6 @@ const emit = defineEmits<{
   removeRef: [ref: NodeRef]
   generate: []
   close: []
-  upload: [file: File]
-  convert: [targetType: 'image' | 'video' | 'audio']
-  save: []
-  expand: []
-  batchGenerate: []
-  export: []
   continueShot: []
   refine: []
 }>()
@@ -122,53 +112,6 @@ const panelBindings = {
     @remove-ref="panelBindings.removeRef"
     @generate="panelBindings.generate"
     @close="panelBindings.close"
-  />
-  <ShotDockPanel
-    v-else-if="node && nodeType === 'shot'"
-    :node="node"
-    :upstream="upstream"
-    :mentions="mentions"
-    :generating="generating"
-    :readonly="dockReadonly"
-    @patch="panelBindings.patch"
-    @generate="panelBindings.generate"
-    @close="panelBindings.close"
-  />
-  <MediaInputDockPanel
-    v-else-if="node && nodeType === 'mediaInput'"
-    :node="node"
-    :upstream="upstream"
-    :mentions="mentions"
-    :generating="generating"
-    :readonly="dockReadonly"
-    @patch="panelBindings.patch"
-    @upload="emit('upload', $event)"
-    @convert="emit('convert', $event)"
-    @close="panelBindings.close"
-  />
-  <SceneComposerDockPanel
-    v-else-if="node && nodeType === 'sceneComposer'"
-    :node="node"
-    :upstream="upstream"
-    :mentions="mentions"
-    :generating="generating"
-    :readonly="dockReadonly"
-    @patch="panelBindings.patch"
-    @save="emit('save')"
-    @expand="emit('expand')"
-    @batch-generate="emit('batchGenerate')"
-    @close="panelBindings.close"
-  />
-  <VideoCompositionDockPanel
-    v-else-if="node && nodeType === 'videoComposition'"
-    :node="node"
-    :upstream="upstream"
-    :tracks="compositionTracks ?? []"
-    :generating="generating"
-    :readonly="dockReadonly"
-    @patch="panelBindings.patch"
-    @close="panelBindings.close"
-    @export="emit('export')"
   />
   <LegacyDockPanel
     v-else-if="node"

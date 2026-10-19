@@ -18,7 +18,7 @@ describe('shouldConfirmDirectGenerateWithoutRefs', () => {
     expect(shouldConfirmDirectGenerateWithoutRefs({ nodeType: 'video', refCount: 0, sidebarImageCount: 2 })).toBe(true)
   })
   it('非 image/video 节点不确认（Ruling 2 前端镜像）', () => {
-    for (const t of ['text', 'prompt', 'audio', 'shot', 'sceneComposer']) {
+    for (const t of ['text', 'prompt', 'audio']) {
       expect(shouldConfirmDirectGenerateWithoutRefs({ nodeType: t, refCount: 0, sidebarImageCount: 1 })).toBe(false)
     }
   })

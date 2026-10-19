@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, defineAsyncComponent, nextTick, provide, watch, h, type Ref } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick, provide, watch, h, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   VueFlow,
@@ -22,16 +22,15 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
 import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult } from '@lnkpi/shared'
-import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, getGroupChildIds, type GroupChildNode } from '@lnkpi/shared'
+import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError } from '@lnkpi/shared'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
-import { useShotPolling } from '@/composables/useShotPolling'
 import { useGenerationPolling, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
-import { buildNodeMediaInfoSummary, buildMaterialMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
+import { buildNodeMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
 import { useGenerationFailureToast, shouldToastForFailure } from '@/composables/useGenerationFailureToast'
 import type { GenerationRecord } from '@/services/studio-api'
 import {
@@ -42,10 +41,8 @@ import {
 import { useSelectionGenerate } from '@/composables/useSelectionGenerate'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { type CompositionRunGroup } from '@/composables/compositionRunGroup'
-import { createInitialSceneComposerNodeData } from '@/utils/sceneComposer'
 import { studioApi } from '@/services/studio-api'
 import { canvasApi } from '@/services/canvas-api'
-import { resolveCompositionTracks, mergeCompositionTracks, compositionTracksToNodePatch } from '@/utils/compositionUpstream'
 import { resolveUpstreamContext } from '@/composables/useUpstreamNodeContext'
 import { resolveNodeRefs, type LocalRefBinding, type NodeRef } from '@/composables/useNodeRefs'
 import {
@@ -60,13 +57,7 @@ import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
 import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
 import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
 import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
-import CanvasNodeShot from '@/components/canvas/CanvasNodeShot.vue'
-import CanvasNodeGroup from '@/components/canvas/CanvasNodeGroup.vue'
 import CanvasNodeAudio from '@/components/canvas/CanvasNodeAudio.vue'
-import CanvasNodeDirector from '@/components/canvas/CanvasNodeDirector.vue'
-import CanvasNodeMediaInput from '@/components/canvas/CanvasNodeMediaInput.vue'
-import CanvasNodeVideoComposition from '@/components/canvas/CanvasNodeVideoComposition.vue'
-import CanvasNodeWorldModel from '@/components/canvas/CanvasNodeWorldModel.vue'
 import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
@@ -112,21 +103,24 @@ import { computeNewNodePosition, snapToGrid } from '@/composables/useCanvasNodeP
 import {
   applyArrangeLayout,
   applySnapOnRelease,
-  createGroupFromNodes,
+  createGroupFromSelection,
+  detachNodesFromGroups,
   getNodeSize,
   getSelectionBounds,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
-  nextGroupTitle,
-  resizeGroupToFitChildren,
-  restoreGroupHierarchy,
-  syncGroupsToFitChildren,
-  ungroupNodes,
+  moveGroupWithChildren,
+  patchGroupColorKey,
+  renameGroup,
+  syncGroupsToChildren,
+  ungroupById,
+  type CanvasGroup,
   type FlowNode,
 } from '@/composables/useCanvasGrouping'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import MultiSelectToolbarOverlay from '@/components/canvas/MultiSelectToolbarOverlay.vue'
 import ProposeConfirmOverlay from '@/components/canvas/ProposeConfirmOverlay.vue'
+import CanvasGroupOverlay from '@/components/canvas/CanvasGroupOverlay.vue'
 import SelectionBatchProgressCard from '@/components/canvas/SelectionBatchProgressCard.vue'
 import MultiSelectConnectOverlay from '@/components/canvas/MultiSelectConnectOverlay.vue'
 import BatchConnectPickerLine from '@/components/canvas/BatchConnectPickerLine.vue'
@@ -150,7 +144,7 @@ import {
   type WorkflowExportMode,
 } from '@/composables/useWorkflowExchange'
 import { fitImportedViewport } from '@/composables/fitImportedViewport'
-import { fileToPersistedPayload, inferMediaInputKind, persistMediaUrl } from '@/composables/useMediaUpload'
+import { fileToPersistedPayload, persistMediaUrl } from '@/composables/useMediaUpload'
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
   CANVAS_MULTI_SELECT_ACTIVE_KEY,
@@ -206,7 +200,6 @@ import {
   resolveDuplicateSourceIds,
   type DuplicateEdgeMode,
 } from '@/utils/duplicateCanvasSubgraph'
-import StoryboardDialog, { type StoryboardShot } from '@/components/canvas/StoryboardDialog.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
 import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
@@ -216,10 +209,6 @@ import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canv
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
 import { buildPollingFailurePatch } from '@/utils/generationDiagnostic'
-
-const PlayCanvasView = defineAsyncComponent(
-  () => import('@/canvas/playcanvas/PlayCanvasView.vue'),
-)
 
 const route = useRoute()
 const router = useRouter()
@@ -310,8 +299,6 @@ const agentReadOnly = computed(
   () => !!auth.user?.id && !!sessionOwnerId.value && auth.user.id !== sessionOwnerId.value,
 )
 const saving = ref(false)
-const canvasMode = ref<'vueflow' | 'playcanvas'>('vueflow')
-const showStoryboard = ref(false)
 const showPublish = ref(false)
 const showModelSettings = ref(false)
 const contextMenu = ref<{
@@ -465,9 +452,7 @@ const blankNodePicker = ref<{ x: number; y: number } | null>(null)
 const selectedEdgeId = ref<string | null>(null)
 const selectedEdgePos = ref({ x: 0, y: 0 })
 const batchConnectPicker = ref<{ sourceIds: string[]; x: number; y: number } | null>(null)
-const mediaInputRef = ref<HTMLInputElement | null>(null)
 const workflowImportInputRef = ref<HTMLInputElement | null>(null)
-const pendingMediaPos = ref<{ x: number; y: number } | null>(null)
 
 const { getConfig: getProviderConfig } = useModelProviderSettings()
 
@@ -553,7 +538,8 @@ watch(
   },
 )
 
-const canvasInteractionEnabled = computed(() => canvasMode.value === 'vueflow' && !viewportSettings.value.viewLocked)
+// 2026-10-19：3D worldModel 与 PlayCanvas 评估模式下线，画布只剩 vueflow 一种。
+const canvasInteractionEnabled = computed(() => !viewportSettings.value.viewLocked)
 
 const canvasEdgeStyle = computed(() => {
   const s = viewportSettings.value
@@ -596,16 +582,6 @@ async function invokeFallbackPendingFromPoll(
   }
 }
 
-function findLinkedMediaNodeId(shotId: string, materialId: string): string {
-  if (nodes.value.some((n) => n.id === materialId)) return materialId
-  for (const e of edges.value) {
-    if (e.source !== shotId) continue
-    const target = nodes.value.find((n) => n.id === e.target)
-    if (target && (target.type === 'image' || target.type === 'video')) return target.id
-  }
-  return materialId
-}
-
 function parseFallbackMessage(metadata?: string | null): string | undefined {
   if (!metadata) return undefined
   try {
@@ -615,76 +591,6 @@ function parseFallbackMessage(metadata?: string | null): string | undefined {
     return undefined
   }
 }
-
-/** Cancelled (draft) nodes must ignore late poll writes. */
-function acceptsPollWrite(status: unknown): boolean {
-  return isNodeGenerating(status) || status === 'pending'
-}
-
-const shotPolling = useShotPolling((shots) => {
-  for (const shot of shots) {
-    const shotNode = nodes.value.find((n) => n.id === shot.id)
-    if (!acceptsPollWrite(shotNode?.data?.status)) continue
-    for (const material of shot.materials) {
-      if (material.status === NODE_GENERATION_STATUS.fallback_pending) {
-        const nodeId = findLinkedMediaNodeId(shot.id, material.id)
-        const childNode = nodes.value.find((n) => n.id === nodeId)
-        if (!acceptsPollWrite(childNode?.data?.status)) continue
-        patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.fallback_pending })
-        void invokeFallbackPendingFromPoll('material', material.id, nodeId)
-        continue
-      }
-      if (material.status === 'failed') {
-        const nodeId = findLinkedMediaNodeId(shot.id, material.id)
-        const childNode = nodes.value.find((n) => n.id === nodeId)
-        const failurePatch = buildPollingFailurePatch({
-          metadata: (material as { metadata?: string | null }).metadata,
-          materialId: material.id,
-        })
-        if (childNode && acceptsPollWrite(childNode.data?.status)) {
-          patchNodeData(nodeId, failurePatch)
-        }
-        if (acceptsPollWrite(shotNode?.data?.status)) {
-          patchNodeData(shot.id, failurePatch)
-        }
-        void auth.refreshPoints()
-        continue
-      }
-    }
-    const material = shot.materials.find((m) => m.status === 'completed' && m.url)
-    if (!material) continue
-    patchNodeData(shot.id, { status: NODE_GENERATION_STATUS.completed, coverUrl: material.url })
-    for (const n of nodes.value) {
-      if (n.type !== 'image' && n.type !== 'video') continue
-      let linked = false
-      for (const e of edges.value) {
-        if (e.source === shot.id && e.target === n.id) {
-          linked = true
-          break
-        }
-      }
-      if (linked) {
-        if (!acceptsPollWrite(n.data?.status)) continue
-        const nodePatch: Record<string, unknown> = {
-          url: material.url,
-          status: NODE_GENERATION_STATUS.completed,
-        }
-        if (n.type === 'video') {
-          const lastFrameUrl = parseRecordLastFrameUrl(material as { metadata?: string | null })
-          if (lastFrameUrl) nodePatch.lastFrameUrl = lastFrameUrl
-        }
-        const mediaSummary = buildMaterialMediaInfoSummary({
-          type: n.type === 'video' ? 'video' : material.type ?? 'image',
-          metadata: (material as { metadata?: string | null }).metadata,
-        })
-        if (mediaSummary) nodePatch.mediaInfo = mediaSummary
-        nodePatch.materialId = material.id
-        patchNodeData(n.id, nodePatch)
-      }
-    }
-  }
-  void saveCanvas()
-})
 
 const generationPolling = useGenerationPolling((results) => {
   for (const { task, record } of results) {
@@ -761,16 +667,6 @@ const generationPolling = useGenerationPolling((results) => {
   },
 )
 
-function startPollingForGeneratingShots() {
-  const generatingIds: string[] = []
-  for (const n of nodes.value) {
-    if (n.type === 'shot' && (n.data as Record<string, unknown>).status === 'generating') {
-      generatingIds.push(n.id)
-    }
-  }
-  if (generatingIds.length) shotPolling.start(generatingIds)
-}
-
 function startPollingForGeneratingRecords() {
   const tasks: GenerationPollTask[] = []
   for (const n of nodes.value) {
@@ -792,32 +688,6 @@ function startPollingForGeneratingRecords() {
   }
   if (tasks.length) generationPolling.start(tasks)
 }
-
-const playCanvasNodes = computed((): Array<{ id: string; type: string; position: { x: number; y: number }; data: Record<string, unknown> }> =>
-  nodes.value.map((n) => ({
-    id: n.id,
-    type: String(n.type),
-    position: n.position,
-    data: n.data as Record<string, unknown>,
-  })),
-)
-
-const storyboardShots = computed((): StoryboardShot[] => {
-  const out: StoryboardShot[] = []
-  for (const n of nodes.value) {
-    if (n.type !== 'shot') continue
-    const data = n.data as Record<string, unknown>
-    out.push({
-      id: n.id,
-      title: String(data.title ?? '未命名分镜'),
-      prompt: data.prompt as string | undefined,
-      status: data.status as string | undefined,
-      coverUrl: data.coverUrl as string | undefined,
-      order: typeof data.order === 'number' ? data.order : out.length,
-    })
-  }
-  return out.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-})
 
 const editorNode = computed((): EditableFlowNode | null => {
   if (multiSelectedIds.value.length !== 1) return null
@@ -1068,32 +938,6 @@ const mentionOptions = computed((): Array<{ id: string; label: string; type: str
   return out
 })
 
-const editorCompositionTracks = computed(() => {
-  const node = editorNode.value
-  if (!node || node.type !== 'videoComposition') return []
-  const live = resolveCompositionTracks(node.id, nodes.value, edges.value)
-  const data = node.data ?? {}
-  return mergeCompositionTracks(
-    live,
-    data.tracks as import('@/utils/compositionUpstream').CompositionTrackRecord[] | undefined,
-    data.trackOrder as string[] | undefined,
-  )
-})
-
-const multiSelectCanUngroup = computed(() => {
-  if (multiSelectedIds.value.length !== 1) return false
-  const node = findNodeById(multiSelectedIds.value[0])
-  return node?.type === 'group'
-})
-
-/** 单选分组时的当前色（工具条色点高亮用；非分组/多选 = 无，落默认 neutral） */
-const multiSelectGroupColorKey = computed(() => {
-  if (!multiSelectCanUngroup.value) return null
-  const node = findNodeById(multiSelectedIds.value[0])
-  const key = (node?.data as Record<string, unknown> | undefined)?.colorKey
-  return typeof key === 'string' ? key : null
-})
-
 const multiSelectCanGenerateVideo = computed(() => {
   if (multiSelectedIds.value.length < 2) return false
   let hasText = false
@@ -1107,13 +951,117 @@ const multiSelectCanGenerateVideo = computed(() => {
       const url = String((node.data as Record<string, unknown>).url ?? '').trim()
       if (url) hasImage = true
     }
-    if (type === 'mediaInput') {
-      const url = String((node.data as Record<string, unknown>).url ?? '').trim()
-      if (url) hasImage = true
-    }
   }
   return hasText && hasImage
 })
+
+// ── 分组（2026-10-20 侧车化：分组不再是节点，存 canvasData.groups）──────
+/** 画布分组（overlay 渲染）。子节点一律绝对坐标，无 parentNode 语义。 */
+const groups = ref<CanvasGroup[]>([])
+/** 当前选中的分组（点分组标题条选中；工具条据此显示解组 + 色卡）。 */
+const selectedGroupId = ref<string | null>(null)
+
+/** 单选一个分组时，工具条展示解组/色卡（复用旧 canUngroup 语义）。 */
+const multiSelectCanUngroup = computed(() => Boolean(selectedGroupId.value))
+
+/** 当前分组色（工具条色点高亮用；非分组 = null，落默认 neutral）。 */
+const multiSelectGroupColorKey = computed(() => {
+  const id = selectedGroupId.value
+  if (!id) return null
+  const key = groups.value.find((g) => g.id === id)?.colorKey
+  return typeof key === 'string' ? key : null
+})
+
+/** 选中的分组 id 供工具条定位（分组 id 不是节点 id，单独占一个槽位）。 */
+const toolbarSelectionIds = computed<string[]>(() =>
+  selectedGroupId.value ? [selectedGroupId.value] : multiSelectedIds.value,
+)
+
+/** 选中分组的外框（工具条定位锚点；分组不是节点，取不到节点包围盒）。 */
+const selectedGroupRect = computed(() => {
+  const id = selectedGroupId.value
+  if (!id) return null
+  const group = groups.value.find((g) => g.id === id)
+  if (!group) return null
+  return { position: group.position, size: group.size }
+})
+
+/** 框选多个节点 → 打组。 */
+function handleGroupSelection() {
+  if (multiSelectedIds.value.length < 2) return
+  const result = createGroupFromSelection(
+    groups.value,
+    nodes.value as unknown as FlowNode[],
+    multiSelectedIds.value,
+  )
+  if (!result) {
+    ElMessage.info('所选节点不足 2 个未分组节点，无法打组')
+    return
+  }
+  groups.value = result.groups
+  selectedGroupId.value = result.group.id
+  multiSelectedIds.value = []
+  clearSelection()
+  persistUserEdit()
+}
+
+/** 解组：只移除分组框，子节点保持原坐标。 */
+function handleUngroupSelection() {
+  const id = selectedGroupId.value
+  if (!id) return
+  groups.value = ungroupById(groups.value, id)
+  selectedGroupId.value = null
+  persistUserEdit()
+}
+
+/** 分组背景色（null = 复位默认中性）。 */
+function handleGroupColorSelection(key: string | null) {
+  const id = selectedGroupId.value
+  if (!id) return
+  groups.value = patchGroupColorKey(groups.value, id, key)
+  persistUserEdit()
+}
+
+/** 拖分组框 → 整组平移（子节点跟着走）。拖动中不落库，松手才存。 */
+function handleGroupMove(groupId: string, delta: { x: number; y: number }) {
+  const moved = moveGroupWithChildren(
+    groups.value,
+    nodes.value as unknown as FlowNode[],
+    groupId,
+    delta,
+  )
+  groups.value = moved.groups
+  nodes.value = moved.nodes as EditableFlowNode[]
+}
+
+/** 拖动结束：落库（拖动过程中不落库，避免每帧写接口）。 */
+function handleGroupMoveEnd() {
+  persistUserEdit()
+}
+
+/** 双击分组标题条重命名。 */
+function handleGroupRename(groupId: string, title: string) {
+  groups.value = renameGroup(groups.value, groupId, title)
+  persistUserEdit()
+}
+
+/** 点分组标题条：选中该分组并清掉节点多选。 */
+function handleGroupSelect(groupId: string) {
+  selectedGroupId.value = groupId
+  multiSelectedIds.value = []
+  clearSelection()
+}
+
+/** 节点被删后从分组里摘掉；不足 2 个的分组自动解散。 */
+function forgetGroupsForRemovedNodes(removedIds: Iterable<string>) {
+  groups.value = detachNodesFromGroups(groups.value, removedIds)
+}
+
+/** 子节点位置/尺寸变化后重算分组外框（拖拽结束、加载完成都调；幂等）。 */
+function syncGroupRects() {
+  if (!groups.value.length) return
+  groups.value = syncGroupsToChildren(groups.value, nodes.value as unknown as FlowNode[])
+}
 
 // 派生：plan（懒计算，仅当选区 ≥ 2 时）
 // meta 同时承载 regenerate 版 plan 与整批阻断态（pending_confirm / 24 上限），
@@ -1197,21 +1145,12 @@ const multiSelectBatchMeta = computed<MultiSelectBatchMeta | null>(() => {
   }
 })
 
-/** 选区内（含 group 展开）pending_confirm 节点计数，用于阻断态提示。 */
+/** 选区内 pending_confirm 节点计数，用于阻断态提示。 */
 function countPendingInSelection(): number {
   let count = 0
   for (const id of multiSelectedIds.value) {
     const node = findNodeById(id)
     if (!node) continue
-    const type = String(node.type ?? '')
-    if (type === 'group') {
-      const childIds = getGroupChildIds(nodes.value as unknown as GroupChildNode[], id)
-      for (const cid of childIds) {
-        const child = findNodeById(cid)
-        if (child && String((child.data as Record<string, unknown> | undefined)?.status ?? '') === 'pending_confirm') count++
-      }
-      continue
-    }
     if (String((node.data as Record<string, unknown> | undefined)?.status ?? '') === 'pending_confirm') count++
   }
   return count
@@ -1338,13 +1277,6 @@ function handleSelectionBatchBlocked(reason: 'pending_confirm' | 'limit_24' | 'm
   if (reason === 'missing_prompt') {
     ElMessage.warning('选区节点均未写提示词且无可用上游输出，已定位第一个问题节点')
     const problemId = multiSelectedIds.value
-      .flatMap(id => {
-        const node = findNodeById(id)
-        if (node && String(node.type ?? '') === 'group') {
-          return getGroupChildIds(nodes.value as unknown as GroupChildNode[], id)
-        }
-        return [id]
-      })
       .find(id => !nodeHasAttemptableInput(id))
     if (problemId) selectOnlyNode(problemId)
     return
@@ -1362,13 +1294,7 @@ const nodeTypes = {
   image: CanvasNodeImage,
   video: CanvasNodeVideo,
   text: CanvasNodeText,
-  shot: CanvasNodeShot,
-  group: CanvasNodeGroup,
   audio: CanvasNodeAudio,
-  sceneComposer: CanvasNodeDirector,
-  mediaInput: CanvasNodeMediaInput,
-  videoComposition: CanvasNodeVideoComposition,
-  worldModel: CanvasNodeWorldModel,
 }
 
 function onConnect(connection: Connection) {
@@ -1503,28 +1429,6 @@ function createNodeAt(type: DockNodeType, position: { x: number; y: number }) {
         },
         { position },
       )
-      break
-    case 'sceneComposer':
-      id = addNode('sceneComposer', createInitialSceneComposerNodeData(), { position })
-      break
-    case 'group':
-      id = addNode('group', { title: nextGroupTitle(nodes.value), childIds: [] }, { position })
-      break
-    case 'mediaInput':
-      id = addNode('mediaInput', { url: '', status: 'idle', title: '媒体输入', fileName: '' }, { position })
-      break
-    case 'videoComposition':
-      id = addNode(
-        'videoComposition',
-        { title: '视频合成', clipCount: 0, tracks: [], trackOrder: [], status: 'draft' },
-        { position },
-      )
-      break
-    case 'worldModel':
-      id = addNode('worldModel', { title: '3D 世界', prompt: '', status: 'beta' }, { position })
-      break
-    case 'shot':
-      id = addNode('shot', { title: '新分镜', prompt: '', status: 'draft', order: storyboardShots.value.length }, { position })
       break
     default:
       return null
@@ -1662,7 +1566,8 @@ function handleImportNodeGraph(payload: {
 }) {
   const OFFSET = { x: 120, y: 120 }
   for (const raw of payload.nodes) {
-    const nodeType = raw.type === 'group' ? 'group' : (raw.type ?? 'text')
+    // 2026-10-19 节点下线：group 已退出节点类型联合，导入时回退为 text 占位。
+    const nodeType = raw.type === 'group' ? 'text' : (raw.type ?? 'text')
     addNode(
       nodeType,
       { title: raw.title ?? raw.id, text: raw.title ?? raw.id, importedFrom: 'node_graph' },
@@ -1686,6 +1591,8 @@ async function handleAgentActions(actions: unknown[]) {
   )
   nodes.value = result.nodes as unknown as EditableFlowNode[]
   edges.value = result.edges as unknown as CanvasEdge[]
+  // 分组是侧车：agent 可能删/移节点 ⇒ 对齐分组（摘掉已删子节点、重算外框）。
+  syncGroupRects()
   // set_viewport action：把模型指定的视口落到位（与 panViewport 同款的防御式取用）
   if (result.viewport) {
     const flow = vueFlowRef.value as {
@@ -1696,7 +1603,6 @@ async function handleAgentActions(actions: unknown[]) {
     } | null
     flow?.setViewport?.(result.viewport, { duration: 300 })
   }
-  startPollingForGeneratingShots()
   // Fix #3: also start generation polling so any record-id-bearing nodes
   // (status:generating now) get polled to terminal state.
   startPollingForGeneratingRecords()
@@ -1802,14 +1708,6 @@ const locateFlashNodeIds = ref<Set<string>>(new Set())
 
 /** 拖拽开始时的 dragItems 位置快照（id → position），松手吸附算平移量用 */
 let dragStartPositions = new Map<string, { x: number; y: number }>()
-
-/** 拖拽中临时抬升过 z-index 的节点（分组 + 其子节点），松手时还原 */
-let dragLiftedNodeIds = new Set<string>()
-
-/** 分组静态 z 序：分组 0、子节点 1（子节点压分组盒体）；拖拽中临时抬到 5/6 */
-const GROUP_Z_BASE = 0
-const GROUP_CHILD_Z = 1
-const GROUP_DRAG_Z = 5
 
 function triggerLocateFlash(ids: string[]) {
   locateFlashNodeIds.value = new Set(ids)
@@ -2028,18 +1926,6 @@ function onSelectionEnd() {
 }
 
 /**
- * vue-flow 测量完成后精修分组尺寸（刷新加载自愈的第二步）：
- * restoreGroupHierarchy 用兜底尺寸表估算了 group 尺寸，子节点真实
- * dimensions 就绪后按包围盒重算，保证 group 恰好包住子节点。
- */
-function onNodesInitialized() {
-  const synced = syncGroupsToFitChildren(nodes.value as unknown as FlowNode[])
-  if (synced !== (nodes.value as unknown as FlowNode[])) {
-    nodes.value = synced as EditableFlowNode[]
-  }
-}
-
-/**
  * 拖拽开始：快照所有 dragItems 的位置（供松手吸附算平移量用）。
  * vue-flow 的 dragItems 只含被抓节点与同批多选兄弟；已选父节点的子节点
  * 不在其中（相对坐标不变、随父移动），不该被平移。
@@ -2052,30 +1938,6 @@ function onNodeDragStart(event: NodeDragEvent) {
   for (const n of event.nodes) {
     dragStartPositions.set(n.id, { x: n.position.x, y: n.position.y })
   }
-  dragLiftedNodeIds = new Set()
-  for (const n of event.nodes) {
-    if (n.type !== 'group') continue
-    const group = nodes.value.find((x) => x.id === n.id)
-    if (!group) continue
-    group.zIndex = GROUP_DRAG_Z
-    dragLiftedNodeIds.add(group.id)
-    for (const child of nodes.value) {
-      if (child.parentNode === group.id) {
-        child.zIndex = GROUP_DRAG_Z + 1
-        dragLiftedNodeIds.add(child.id)
-      }
-    }
-  }
-}
-
-/** 还原拖拽中临时抬升的 z 序（分组回 0、子节点回 1） */
-function restoreDraggedZIndex() {
-  for (const id of dragLiftedNodeIds) {
-    const node = nodes.value.find((x) => x.id === id)
-    if (!node) continue
-    node.zIndex = node.parentNode ? GROUP_CHILD_Z : GROUP_Z_BASE
-  }
-  dragLiftedNodeIds = new Set()
 }
 
 /**
@@ -2100,10 +1962,8 @@ function onNodeDragStop(event: NodeDragEvent) {
     }, 500)
   }
   dragStartPositions = new Map()
-  restoreDraggedZIndex()
-  if (node.parentNode) {
-    nodes.value = resizeGroupToFitChildren(nodes.value as unknown as FlowNode[], node.parentNode) as EditableFlowNode[]
-  }
+  // 分组框跟着子节点走：拖完重算外框（分组是侧车，不吃 VueFlow 的 parentNode）。
+  syncGroupRects()
   persistUserEdit()
 }
 
@@ -2141,6 +2001,8 @@ function onNodeClick(event: NodeMouseEvent) {
 
   const mouse = event.event as MouseEvent
   const multi = mouse.shiftKey || mouse.metaKey || mouse.ctrlKey
+  // 点节点 = 退出分组选中态（分组工具条与节点工具条互斥，避免两个都挂着）。
+  selectedGroupId.value = null
   if (!multi) {
     // 单击独占选中，避免「拖出下游后源+目标双选 → dock 不出现 / 出现多选 +」
     selectOnlyNode(event.node.id)
@@ -2151,54 +2013,11 @@ function onNodeClick(event: NodeMouseEvent) {
   closeContextMenu()
 }
 
-function handleGroupSelection() {
-  const result = createGroupFromNodes(
-    nodes.value as unknown as FlowNode[],
-    multiSelectedIds.value,
-  )
-  if (!result) return
-  nodes.value = result.nodes as unknown as EditableFlowNode[]
-  selectOnlyNode(result.groupId)
-  void nextTick().then(() => {
-    vueFlowRef.value?.updateNodeInternals?.()
-  })
-  persistUserEdit()
-}
-
-function handleUngroupById(groupId: string) {
-  const next = ungroupNodes(nodes.value as unknown as FlowNode[], groupId)
-  if (!next) return
-  nodes.value = next as EditableFlowNode[]
-  multiSelectedIds.value = []
-  clearSelection()
-  persistUserEdit()
-}
-
-function handleUngroupSelection() {
-  if (multiSelectedIds.value.length !== 1) return
-  handleUngroupById(multiSelectedIds.value[0])
-}
-
-/** P3 2026-10-12：分组色卡选择（null = 复位默认中性）。 */
-function handleGroupColorSelection(key: string | null) {
-  if (multiSelectedIds.value.length !== 1) return
-  const node = findNodeById(multiSelectedIds.value[0])
-  if (!node || node.type !== 'group') return
-  patchNodeData(node.id, { colorKey: key ?? undefined })
-  persistUserEdit()
-}
-
 function handleDeleteSelection() {
   const ids = [...multiSelectedIds.value]
   const toRemove = new Set<string>()
   for (const id of ids) {
     toRemove.add(id)
-    const node = findNodeById(id)
-    if (node?.type === 'group') {
-      for (const child of nodes.value) {
-        if (child.parentNode === id) toRemove.add(child.id)
-      }
-    }
   }
   rememberGenerationFieldsBeforeRemove(toRemove)
   const nextNodes: EditableFlowNode[] = []
@@ -2211,6 +2030,8 @@ function handleDeleteSelection() {
     if (!toRemove.has(edge.source) && !toRemove.has(edge.target)) nextEdges.push(edge)
   }
   edges.value = nextEdges
+  // 分组是侧车：被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
+  forgetGroupsForRemovedNodes(toRemove)
   multiSelectedIds.value = []
   clearSelection()
   persistUserEdit()
@@ -2279,7 +2100,7 @@ function pickImageSourceNode(selected: EditableFlowNode[]) {
     const type = String(node.type ?? '')
     const data = node.data as Record<string, unknown>
     const url = String(data.url ?? '').trim()
-    if ((type === 'image' || type === 'mediaInput') && url) return node
+    if (type === 'image' && url) return node
   }
   return null
 }
@@ -2336,6 +2157,8 @@ function onPaneClick() {
   exitMultiSelectMode()
   pendingExclusiveSelectId = null
   multiSelectedIds.value = []
+  // 点空白 = 取消分组选中（否则分组工具条会一直挂着）。
+  selectedGroupId.value = null
   selectedEdgeId.value = null
   clearSelection()
   closeContextMenu()
@@ -2813,82 +2636,6 @@ async function handleDockFileDrop(file: File) {
   }
 }
 
-async function onMediaFileSelected(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  const pos = pendingMediaPos.value ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-  pendingMediaPos.value = null
-  await ingestMediaFile(file, pos)
-}
-
-async function handleMediaInputUpload(file: File) {
-  const node = editorNode.value
-  if (!node || node.type !== 'mediaInput') return
-  patchNodeData(node.id, {
-    status: 'uploading',
-    uploadProgress: 0,
-    errorMessage: undefined,
-    errorCode: undefined,
-  })
-  try {
-    const payload = await fileToPersistedPayload(file, {
-      onProgress: (p) => patchNodeData(node.id, { uploadProgress: p }),
-    })
-    if (payload.kind === 'other' || payload.kind === 'text') return
-    const mediaKind = inferMediaInputKind(payload.mimeType, payload.url)
-    patchNodeData(node.id, {
-      url: payload.url,
-      fileName: payload.fileName,
-      mimeType: payload.mimeType,
-      mediaKind,
-      title: payload.fileName.replace(/\.[^.]+$/, '') || payload.fileName,
-      status: 'completed',
-      uploadProgress: undefined,
-    })
-    await saveCanvas()
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : '上传失败'
-    patchNodeData(node.id, {
-      status: 'error',
-      errorMessage: msg,
-      errorCode: 'upload_required',
-      uploadProgress: undefined,
-    })
-  }
-}
-
-async function handleMediaInputConvert(targetType: 'image' | 'video' | 'audio') {
-  const node = editorNode.value
-  if (!node || node.type !== 'mediaInput') return
-  const data = node.data as Record<string, unknown>
-  const url = String(data.url ?? '').trim()
-  if (!url) return
-
-  const title = String(data.title ?? data.fileName ?? '素材')
-  const childId = addNode(targetType, {
-    url,
-    status: 'completed',
-    title,
-    fileName: data.fileName,
-    mimeType: data.mimeType,
-    prompt: '',
-    ...(targetType === 'image' ? { imageModel: getProviderConfig('image').model } : {}),
-    ...(targetType === 'video' ? { videoModel: getProviderConfig('video').model } : {}),
-  }, {
-    position: { x: node.position.x + 300, y: node.position.y },
-  })
-  addEdge({
-    id: `e-${node.id}-${childId}`,
-    source: node.id,
-    target: childId,
-  })
-  selectOnlyNode(childId)
-  await persistUserEditAsync()
-  await focusNodeById(childId)
-}
-
 async function handleContinueShot() {
   const node = editorNode.value
   if (!node || node.type !== 'video') return
@@ -3108,9 +2855,6 @@ async function onWorkflowImportSelected(event: Event) {
         for (const e of mergeEdges) {
           edges.value.push({ id: e.id, source: e.source, target: e.target })
         }
-        // 工作流交换格式不携带 group 尺寸（style）——按 childIds 估算回填，
-        // 测量就绪后由 onNodesInitialized 精修（幂等，不影响既有节点）。
-        nodes.value = restoreGroupHierarchy(nodes.value)
         persistUserEdit()
       },
     })
@@ -3251,7 +2995,7 @@ function seedRefineIfNeeded(node: EditableFlowNode) {
   const data = (node.data ?? {}) as Record<string, unknown>
   const state = imageVersionStateFromData(data)
   if (!state.url || (state.imageVersions?.length ?? 0) > 0) return
-  const source = node.type === 'mediaInput' || !state.generationRecordId ? 'upload' : 'generate'
+  const source = !state.generationRecordId ? 'upload' : 'generate'
   const seeded = seedImageVersions(state, { source })
   patchNodeData(node.id, {
     currentVersionId: seeded.currentVersionId,
@@ -4221,34 +3965,6 @@ async function handleClearProposeGeneration(nodeId: string) {
   }
 }
 
-async function handleSceneComposerSave() {
-  await debouncedNodePatch.flush()
-  const node = editorNode.value
-  if (!node || node.type !== 'sceneComposer') return
-  await saveSceneComposer(node)
-}
-
-async function handleSceneComposerExpand() {
-  await debouncedNodePatch.flush()
-  const node = editorNode.value
-  if (!node || node.type !== 'sceneComposer') return
-  await expandSceneComposer(node)
-}
-
-async function handleSceneComposerBatchGenerate() {
-  await debouncedNodePatch.flush()
-  const node = editorNode.value
-  if (!node || node.type !== 'sceneComposer') return
-  await batchGenerateSceneComposer(node)
-}
-
-async function handleVideoCompositionExport() {
-  await debouncedNodePatch.flush()
-  const node = editorNode.value
-  if (!node || node.type !== 'videoComposition') return
-  await exportVideoComposition(node, editorCompositionTracks.value)
-}
-
 function getEventCoords(event: MouseEvent | TouchEvent) {
   if ('clientX' in event) {
     return { x: event.clientX, y: event.clientY }
@@ -4484,36 +4200,14 @@ function handleContextAction(action: string) {
 
   if (action === 'delete' && menu.nodeId) {
     const toRemove = new Set<string>([menu.nodeId])
-    const node = findNodeById(menu.nodeId)
-    if (node?.type === 'group') {
-      for (const child of nodes.value) {
-        if (child.parentNode === menu.nodeId) toRemove.add(child.id)
-      }
-    }
     rememberGenerationFieldsBeforeRemove(toRemove)
     nodes.value = nodes.value.filter((entry) => !toRemove.has(entry.id))
     edges.value = edges.value.filter((edge) => !toRemove.has(edge.source) && !toRemove.has(edge.target))
+    // 分组是侧车：被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
+    forgetGroupsForRemovedNodes(toRemove)
     persistUserEdit()
     return
   }
-
-  if (action === 'ungroup' && menu.nodeId) {
-    handleUngroupById(menu.nodeId)
-  }
-}
-
-function handleStoryboardUpdated(shots: StoryboardShot[]) {
-  for (const shot of shots) {
-    const node = findNodeById(shot.id)
-    if (!node) continue
-    node.data = {
-      ...(node.data as Record<string, unknown>),
-      title: shot.title,
-      prompt: shot.prompt,
-      order: shot.order,
-    }
-  }
-  persistUserEdit()
 }
 
 function openPublish() {
@@ -4563,6 +4257,8 @@ async function saveCanvas() {
         current: compositionRunGroup.value,
         lastKnown: lastKnownCompositionRunGroup.value,
         server: serverGroup,
+        // 分组侧车随画布一起落库（分组不是节点）。
+        groups: groups.value,
       }),
     )
     if (canvasData.compositionRunGroup) {
@@ -4590,10 +4286,6 @@ const {
   cancelGeneration,
   generateForNode,
   waitForRunGroupMemberSettled,
-  saveSceneComposer,
-  expandSceneComposer,
-  batchGenerateSceneComposer,
-  exportVideoComposition,
   onFallbackPending,
 } = useNodeGeneration({
   nodes,
@@ -4610,10 +4302,8 @@ const {
     }
     return true
   },
-  startShotPolling: (ids) => shotPolling.start(ids),
   startGenerationPolling: (tasks) => generationPolling.start(tasks),
   stopGenerationPolling: (nodeId) => generationPolling.removeByNodeId(nodeId),
-  stopShotPolling: (id) => shotPolling.removeById(id),
   resolveProviderModels: () => ({
     text: getProviderConfig('text').model,
     image: getProviderConfig('image').model,
@@ -4624,7 +4314,6 @@ const {
   onInsufficientPoints: () => {
     showMembership.value = true
   },
-  compositionRunGroup,
 })
 
 function retryNodeGeneration(nodeId: string, overrides?: CanvasNodeRetryOverrides) {
@@ -4632,7 +4321,7 @@ function retryNodeGeneration(nodeId: string, overrides?: CanvasNodeRetryOverride
   if (!node) return
   const data = node.data ?? {}
   const prompt = String(data.prompt ?? '').trim()
-  if (!prompt && String(node.type) !== 'sceneComposer') {
+  if (!prompt) {
     patchNodeData(nodeId, {
       status: NODE_GENERATION_STATUS.error,
       errorMessage: '请先填写提示词',
@@ -4684,22 +4373,6 @@ const debouncedNodePatch = useDebouncedNodePatch(
   },
 )
 
-watch(
-  editorCompositionTracks,
-  (tracks) => {
-    const node = editorNode.value
-    if (!node || node.type !== 'videoComposition') return
-    const patch = compositionTracksToNodePatch(tracks)
-    const data = node.data ?? {}
-    const sameCount = data.clipCount === patch.clipCount
-    const sameTracks = JSON.stringify(data.tracks ?? []) === JSON.stringify(patch.tracks)
-    const sameOrder = JSON.stringify(data.trackOrder ?? []) === JSON.stringify(patch.trackOrder)
-    if (sameCount && sameTracks && sameOrder) return
-    debouncedNodePatch.patchNode(node.id, patch)
-  },
-  { deep: true },
-)
-
 function nextNodeCounterFromNodes(list: EditableFlowNode[]) {
   let max = 0
   for (const node of list) {
@@ -4736,7 +4409,12 @@ async function loadSession() {
       data: {
         title: string
         userId?: string
-        canvasData?: { nodes: Node[]; edges: Edge[]; compositionRunGroup?: CompositionRunGroup }
+        canvasData?: {
+          nodes: Node[]
+          edges: Edge[]
+          compositionRunGroup?: CompositionRunGroup
+          groups?: CanvasGroup[]
+        }
       }
     }>(
       `/sessions/${sessionId.value}`,
@@ -4752,11 +4430,9 @@ async function loadSession() {
       const serverNodes = dedupeNodesById(
         data.data.canvasData.nodes as EditableFlowNode[],
       )
-      nodes.value = restoreGroupHierarchy(
-        (nodes.value.length
-          ? mergeCanvasNodesFromServer(nodes.value, serverNodes)
-          : serverNodes) as EditableFlowNode[],
-      )
+      nodes.value = (nodes.value.length
+        ? mergeCanvasNodesFromServer(nodes.value, serverNodes)
+        : serverNodes) as EditableFlowNode[]
       edges.value = hydrateCanvasEdges(
         (data.data.canvasData.edges ?? []) as CanvasEdge[],
         nodes.value,
@@ -4764,6 +4440,12 @@ async function loadSession() {
       nodeCounter = nextNodeCounterFromNodes(nodes.value)
       compositionRunGroup.value = data.data.canvasData.compositionRunGroup ?? null
       lastKnownCompositionRunGroup.value = data.data.canvasData.compositionRunGroup ?? null
+      // 分组侧车：按当前节点对齐一次（存量脏数据在此自愈）。
+      groups.value = syncGroupsToChildren(
+        data.data.canvasData.groups ?? [],
+        nodes.value as unknown as FlowNode[],
+      )
+      selectedGroupId.value = null
     } else {
       // 空画布就是空画布：不再伪造 prompt-1 占位节点（2026-09-29 拍板，spec 场景 A）。
       // 伪造节点会让用户以为「画布上本来就有东西」，且一旦拖动就会触发 saveCanvas()
@@ -4773,6 +4455,8 @@ async function loadSession() {
       nodeCounter = 0
       compositionRunGroup.value = null
       lastKnownCompositionRunGroup.value = null
+      groups.value = []
+      selectedGroupId.value = null
     }
   } catch {
     // 同样不再伪造 prompt-1 占位节点：那是本地假数据，用户一旦拖动就会触发
@@ -4783,6 +4467,8 @@ async function loadSession() {
     nodeCounter = 0
     compositionRunGroup.value = null
     lastKnownCompositionRunGroup.value = null
+    groups.value = []
+    selectedGroupId.value = null
     ElMessage.error('画布加载失败，请刷新重试')
   }
   generationFieldsCache.clear()
@@ -4791,7 +4477,6 @@ async function loadSession() {
   }
   canvasUndo.clear()
   canvasUndo.commitAfterChange()
-  startPollingForGeneratingShots()
   startPollingForGeneratingRecords()
   // Fix #2: Reconcile any media nodes whose session canvasData is missing
   // generationRecordId / url — fetch their Studio records and re-apply.
@@ -5272,7 +4957,6 @@ onUnmounted(() => {
           :saving="saving"
           @update:title="sessionTitle = $event"
           @save="saveCanvas"
-          @storyboard="showStoryboard = true"
           @publish="openPublish"
           @import-workflow="openWorkflowImportPicker"
           @export-workflow="handleExportPack([], 'full_package')"
@@ -5286,7 +4970,6 @@ onUnmounted(() => {
         />
 
         <VueFlow
-          v-if="canvasMode === 'vueflow'"
           ref="vueFlowRef"
           :nodes="flowNodes"
           :edges="flowEdges"
@@ -5320,7 +5003,6 @@ onUnmounted(() => {
           @connect-end="onConnectEnd"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
-          @nodes-initialized="onNodesInitialized"
           @selection-end="onSelectionEnd"
           @node-click="onNodeClick"
           @node-drag-start="onNodeDragStart"
@@ -5339,14 +5021,25 @@ onUnmounted(() => {
             :color="effectiveGridColor"
           />
 
+          <CanvasGroupOverlay
+            :groups="groups"
+            :selected-group-id="selectedGroupId"
+            :draggable="!isMobileLayout"
+            @select="handleGroupSelect"
+            @move="handleGroupMove"
+            @move-end="handleGroupMoveEnd"
+            @rename="handleGroupRename"
+          />
+
           <!-- PC 多选工具条：移动端多选态（D-4）改由 MobileMultiSelectBar 承载，
                过渡期非模式态仍走本组件（与重构前一致） -->
           <MultiSelectToolbarOverlay
             v-if="!isMobileLayout || !mobileMultiSelectActive"
-            :selected-ids="multiSelectedIds"
+            :selected-ids="toolbarSelectionIds"
             :can-generate-video="multiSelectCanGenerateVideo"
             :can-ungroup="multiSelectCanUngroup"
             :group-color-key="multiSelectGroupColorKey"
+            :group-rect="selectedGroupRect"
             :selection-batch="selectionBatchProp"
             @group="handleGroupSelection"
             @ungroup="handleUngroupSelection"
@@ -5471,7 +5164,6 @@ onUnmounted(() => {
             <MobileCanvasTopControls />
           </Panel>
         </VueFlow>
-        <PlayCanvasView v-else class="h-full" :nodes="playCanvasNodes" />
 
         <!-- PR2 空态引导（V-3）：空画布首进画布页签的指引文案；pointer-events-none
              不挡平移/缩放手势。S0 纯画布无底部条，文案切到「切对话页」指引。 -->
@@ -5514,7 +5206,6 @@ onUnmounted(() => {
           :node="editorNode"
           :upstream="editorUpstream"
           :refs="selectedRefs"
-          :composition-tracks="editorCompositionTracks"
           :mentions="mentionOptions"
           :generating="selectedNodeGenerating"
           :scale="viewportSettings.bottomToolbarScale"
@@ -5529,12 +5220,6 @@ onUnmounted(() => {
           @patch="patchSelectedNode"
           @remove-ref="handleRemoveRef"
           @generate="handleNodeGenerate"
-          @save="handleSceneComposerSave"
-          @expand="handleSceneComposerExpand"
-          @batch-generate="handleSceneComposerBatchGenerate"
-          @export="handleVideoCompositionExport"
-          @upload="handleMediaInputUpload"
-          @convert="handleMediaInputConvert"
           @continue-shot="handleContinueShot"
           @close="onPaneClick"
           @refine="openRefineForSelected"
@@ -5577,14 +5262,6 @@ onUnmounted(() => {
           />
           <CanvasAccountChrome />
         </div>
-
-        <input
-          ref="mediaInputRef"
-          type="file"
-          accept="image/*,video/*,audio/*,text/*,.txt,.md,.json,.csv"
-          class="hidden"
-          @change="onMediaFileSelected"
-        >
 
         <input
           ref="workflowImportInputRef"
@@ -5672,7 +5349,6 @@ onUnmounted(() => {
       @new-chat="agentRailRef?.newAgentSession()"
       @open-history="agentRailRef?.openThreadHistory()"
       @save="saveCanvas"
-      @storyboard="showStoryboard = true"
       @publish="openPublish"
       @import-workflow="openWorkflowImportPicker"
       @export-workflow="handleExportPack([], 'full_package')"
@@ -5730,12 +5406,6 @@ onUnmounted(() => {
       :loading="fallbackDialog.loading"
       @confirm="onFallbackDialogConfirm"
       @cancel="onFallbackDialogCancel"
-    />
-    <StoryboardDialog
-      v-model="showStoryboard"
-      :shots="storyboardShots"
-      :session-id="sessionId"
-      @updated="handleStoryboardUpdated"
     />
     <PublishNeoTVDialog
       v-model="showPublish"

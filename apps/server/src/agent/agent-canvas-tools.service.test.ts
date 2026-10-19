@@ -1549,7 +1549,6 @@ describe('AgentCanvasToolsService', () => {
       expect(layout.nodes[0]?.id).toBe('img-1')
       expect(layout.nodes[0]?.size.w).toBeGreaterThan(0)
       expect(layout.nodes[0]?.absolutePosition).toEqual(layout.nodes[0]?.position)
-      expect(layout.groups).toEqual([])
     })
 
     it('duplicateNode copies selected nodes without edges by default', async () => {
@@ -1781,64 +1780,32 @@ describe('AgentCanvasToolsService', () => {
       expect(caps.supportedModes).toEqual([])
     })
 
-    it('getImageEditCapabilities allows image mediaInput', async () => {
+    it('getImageEditCapabilities rejects video and audio nodes even with a url', async () => {
       canvas = {
         nodes: [
-          {
-            id: 'media-1',
-            type: 'mediaInput',
-            position: { x: 0, y: 0 },
-            data: { url: 'https://x/a.png', mediaKind: 'image' },
-          },
+          { id: 'vid-1', type: 'video', position: { x: 0, y: 0 }, data: { url: 'https://x/a.mp4' } },
+          { id: 'aud-1', type: 'audio', position: { x: 0, y: 0 }, data: { url: 'https://x/a.mp3' } },
         ],
         edges: [],
       }
-      const caps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'media-1' })
-      expect(caps.canEdit).toBe(true)
-      expect(caps.supportedModes).toEqual(['inpaint'])
-    })
-
-    it('getImageEditCapabilities allows mediaInput with image mimeType', async () => {
-      canvas = {
-        nodes: [
-          {
-            id: 'media-2',
-            type: 'mediaInput',
-            position: { x: 0, y: 0 },
-            data: { url: 'https://x/a.png', mimeType: 'image/png' },
-          },
-        ],
-        edges: [],
-      }
-      const caps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'media-2' })
-      expect(caps.canEdit).toBe(true)
-      expect(caps.supportedModes).toEqual(['inpaint'])
-    })
-
-    it('getImageEditCapabilities rejects video and audio mediaInput even with a url', async () => {
-      canvas = {
-        nodes: [
-          {
-            id: 'vid-in',
-            type: 'mediaInput',
-            position: { x: 0, y: 0 },
-            data: { url: 'https://x/a.mp4', mediaKind: 'video' },
-          },
-          {
-            id: 'aud-in',
-            type: 'mediaInput',
-            position: { x: 0, y: 0 },
-            data: { url: 'https://x/a.mp3', mediaKind: 'audio', mimeType: 'audio/mpeg' },
-          },
-        ],
-        edges: [],
-      }
-      const videoCaps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'vid-in' })
-      const audioCaps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'aud-in' })
+      const videoCaps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'vid-1' })
+      const audioCaps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'aud-1' })
       expect(videoCaps.canEdit).toBe(false)
       expect(videoCaps.supportedModes).toEqual([])
       expect(audioCaps.canEdit).toBe(false)
       expect(audioCaps.supportedModes).toEqual([])
+    })
+
+    it('getImageEditCapabilities rejects retired mediaInput nodes (2026-10-19)', async () => {
+      canvas = {
+        nodes: [
+          { id: 'media-1', type: 'mediaInput', position: { x: 0, y: 0 }, data: { url: 'https://x/a.png', mediaKind: 'image' } },
+        ],
+        edges: [],
+      }
+      const caps = await svc.getImageEditCapabilities({ sessionId: 's1', nodeId: 'media-1' })
+      expect(caps.canEdit).toBe(false)
+      expect(caps.supportedModes).toEqual([])
     })
   })
 
@@ -1852,42 +1819,6 @@ describe('AgentCanvasToolsService', () => {
         ],
         edges: [],
       }
-    })
-
-    it('groupNodes persists a group with child parentNode links', async () => {
-      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-      const result = await svc.groupNodes({
-        sessionId: 's1',
-        userId: 'u1',
-        nodeIds: ['img-1', 'txt-1'],
-        title: 'Block A',
-      })
-      expect(result.groupId).toBe('group-1700000000000')
-      const group = canvas.nodes.find((n) => n.id === result.groupId)
-      expect(group?.type).toBe('group')
-      expect(group?.data?.title).toBe('Block A')
-      expect(canvas.nodes.find((n) => n.id === 'img-1')?.parentNode).toBe(result.groupId)
-      expect(canvas.nodes.find((n) => n.id === 'txt-1')?.parentNode).toBe(result.groupId)
-      vi.restoreAllMocks()
-    })
-
-    it('ungroupNode restores flat coordinates and removes the group node', async () => {
-      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-      const grouped = await svc.groupNodes({
-        sessionId: 's1',
-        userId: 'u1',
-        nodeIds: ['img-1', 'txt-1'],
-      })
-      await svc.ungroupNode({
-        sessionId: 's1',
-        userId: 'u1',
-        groupId: grouped.groupId,
-      })
-      expect(canvas.nodes.some((n) => n.id === grouped.groupId)).toBe(false)
-      expect(canvas.nodes.find((n) => n.id === 'img-1')?.position).toEqual({ x: 100, y: 100 })
-      expect(canvas.nodes.find((n) => n.id === 'txt-1')?.position).toEqual({ x: 420, y: 160 })
-      expect(canvas.nodes.find((n) => n.id === 'img-1')?.parentNode).toBeUndefined()
-      vi.restoreAllMocks()
     })
 
     it('arrangeNodesGrid repositions selected nodes on canvas', async () => {
@@ -1914,22 +1845,17 @@ describe('AgentCanvasToolsService', () => {
       expect(canvas.nodes.find((n) => n.id === 'img-1')?.position).toEqual({ x: 300, y: 400 })
     })
 
-    it('applyLayoutOps runs group then grid atomically', async () => {
-      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_001)
+    it('applyLayoutOps runs grid then move atomically', async () => {
       const result = await svc.applyLayoutOps({
         sessionId: 's1',
         userId: 'u1',
         ops: [
-          { op: 'group', nodeIds: ['img-1', 'txt-1'], title: 'Workflow block' },
+          { op: 'arrange_grid', nodeIds: ['img-1', 'txt-1'], gap: 20 },
           { op: 'move', items: [{ nodeId: 'vid-1', x: 900, y: 900 }] },
         ],
       })
-      expect(result.results).toHaveLength(2)
-      expect(result.results[0]?.op).toBe('group')
-      expect(result.layout.groups).toHaveLength(1)
-      expect(canvas.nodes.find((n) => n.id === 'img-1')?.parentNode).toBeTruthy()
+      expect(result.results.map((r) => r.op)).toEqual(['arrange_grid', 'move'])
       expect(canvas.nodes.find((n) => n.id === 'vid-1')?.position).toEqual({ x: 900, y: 900 })
-      vi.restoreAllMocks()
     })
   })
 
@@ -2930,7 +2856,6 @@ describe('AgentCanvasToolsService', () => {
       const empty = await svc.getCanvasLayout({ sessionId: 's1' })
       expect(empty.edges).toEqual([])
       expect(empty.nodes).toEqual([])
-      expect(empty.groups).toEqual([])
     })
 
     it('edges 只回三元组（不泄漏边上的其它字段）', async () => {

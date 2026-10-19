@@ -877,6 +877,21 @@ class UngroupNodeDto {
   groupId!: string
 }
 
+class SetGroupColorDto {
+  @IsString()
+  sessionId!: string
+
+  @IsString()
+  userId!: string
+
+  @IsString()
+  groupId!: string
+
+  /** null/'' = 复位默认中性色（分组色卡 8 键由前端定义，服务端只存键）。 */
+  @IsOptional()
+  colorKey?: string | null
+}
+
 class ArrangeNodesGridDto {
   @IsString()
   sessionId!: string
@@ -1459,6 +1474,17 @@ export class AgentCanvasToolsController {
   @Post('ungroup-node')
   async ungroupNode(@Body() dto: UngroupNodeDto) {
     const data = await this.tools.ungroupNode(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('set-group-color')
+  async setGroupColor(@Body() dto: SetGroupColorDto) {
+    const data = await this.tools.setGroupColor({
+      sessionId: dto.sessionId,
+      userId: dto.userId,
+      groupId: dto.groupId,
+      colorKey: dto.colorKey ?? null,
+    })
     return { code: 0, message: 'ok', data }
   }
 

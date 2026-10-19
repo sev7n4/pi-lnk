@@ -23,7 +23,8 @@ describe('along-edges on write paths (Hybrid)', () => {
 
   it('importWorkflow default path calls layoutNodesAlongEdges', () => {
     // arrangeAlongEdges:false skip path is covered by service tests, not this source scan
-    expect(sliceFn('importWorkflow', 'groupNodes')).toMatch(/layoutNodesAlongEdges/)
+    // 边界函数用 importWorkflow 之后的下一个方法（groupNodes 已在其之前，见 2026-10-20 侧车化）
+    expect(sliceFn('importWorkflow', 'arrangeNodesGrid')).toMatch(/layoutNodesAlongEdges/)
   })
 
   it('addNodesBatch does not arrange', () => {

@@ -25,7 +25,6 @@ import {
   type StudioModality,
 } from '@lnkpi/shared'
 import { MaterialService } from '../canvas/material.service'
-import { ShotService } from '../canvas/shot.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import {
@@ -167,7 +166,6 @@ interface TurnPointHold {
 export class AgentService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(ShotService) private readonly shotService: ShotService,
     @Inject(MaterialService) private readonly materialService: MaterialService,
     @Inject(ProviderResolverService) private readonly providerResolver: ProviderResolverService,
     // F4：去掉 @Optional——module 已提供 AgentCanvasToolsService，DI 缺失应 fail-fast
@@ -2082,17 +2080,6 @@ export class AgentService {
     for (const action of actions) {
       if (action.type !== 'add_node') continue
       const { payload } = action
-
-      if (payload.nodeType === 'shot') {
-        await this.shotService.create(sessionId, {
-          id: payload.id,
-          title: payload.data?.title as string | undefined,
-          prompt: payload.data?.prompt as string | undefined,
-          positionX: payload.position?.x,
-          positionY: payload.position?.y,
-          status: (payload.data?.status as string) ?? 'draft',
-        })
-      }
 
       if (payload.nodeType === 'image' && payload.parentShotId) {
         await this.materialService.createFromAgent({

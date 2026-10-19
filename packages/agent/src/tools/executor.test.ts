@@ -95,13 +95,15 @@ describe('applyCanvasActions', () => {
   it('add_node 命中已存在节点 → parentShot 边不重复追加', () => {
     const data: CanvasData = {
       nodes: [
-        { id: 'shot-1', type: 'shot', position: { x: 0, y: 0 }, data: {} },
+        // 2026-10-19 shot 节点下线：parentShotId 的「上游节点」改用 image 表达
+        // （断言意图不变——指向已存在的节点时不得重复追加边）。
+        { id: 'up-1', type: 'image', position: { x: 0, y: 0 }, data: {} },
         { id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: {} },
       ],
-      edges: [{ id: 'e-shot-1-n1', source: 'shot-1', target: 'n1' }],
+      edges: [{ id: 'e-up-1-n1', source: 'up-1', target: 'n1' }],
     }
     const result = applyCanvasActions(data, [
-      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', parentShotId: 'shot-1' } },
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', parentShotId: 'up-1' } },
     ])
     expect(result.nodes).toHaveLength(2)
     expect(result.edges).toHaveLength(1)

@@ -1,14 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   applyLayoutOps,
-  createGroupFromNodes,
   getAbsolutePosition,
   getNodeSize,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
   moveNodes,
   type LayoutNode,
-  ungroupNode,
 } from './canvas-layout.util'
 
 function node(
@@ -64,12 +62,13 @@ describe('canvas-layout.util', () => {
       expect(getAbsolutePosition(nodes[0]!, nodes)).toEqual({ x: 100, y: 50 })
     })
 
-    it('accumulates parent offsets for nested groups', () => {
+    it('accumulates offsets along a nested parentNode chain', () => {
+      // 存量画布仍可能带 parentNode（VueFlow 通用机制），绝对坐标解析不能因 group 下线而失效。
       const nodes = [
-        node('g1', 'group', 200, 100),
-        node('a', 'image', 40, 30, { parentNode: 'g1' }),
-        node('g2', 'group', 10, 20, { parentNode: 'g1' }),
-        node('b', 'text', 5, 5, { parentNode: 'g2' }),
+        node('p1', 'image', 200, 100),
+        node('a', 'image', 40, 30, { parentNode: 'p1' }),
+        node('p2', 'image', 10, 20, { parentNode: 'p1' }),
+        node('b', 'text', 5, 5, { parentNode: 'p2' }),
       ]
       expect(getAbsolutePosition(nodes[1]!, nodes)).toEqual({ x: 240, y: 130 })
       expect(getAbsolutePosition(nodes[3]!, nodes)).toEqual({ x: 215, y: 125 })
@@ -81,104 +80,11 @@ describe('canvas-layout.util', () => {
     })
   })
 
-  describe('createGroupFromNodes', () => {
-    beforeEach(() => {
-      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-    })
-
-    afterEach(() => {
-      vi.restoreAllMocks()
-    })
-
-    it('returns null when fewer than two eligible nodes', () => {
-      const nodes = [node('a', 'image', 0, 0)]
-      expect(createGroupFromNodes(nodes, ['a'])).toBeNull()
-      expect(createGroupFromNodes(nodes, ['missing', 'a'])).toBeNull()
-    })
-
-    it('ignores nodes already in a group or group nodes', () => {
-      const nodes = [
-        node('a', 'image', 0, 0),
-        node('b', 'text', 300, 0, { parentNode: 'existing-group' }),
-        node('g', 'group', 0, 0),
-      ]
-      expect(createGroupFromNodes(nodes, ['a', 'b'])).toBeNull()
-      expect(createGroupFromNodes(nodes, ['a', 'g'])).toBeNull()
-    })
-
-    it('wraps nodes in a padded group with relative child positions', () => {
-      const nodes = [
-        node('a', 'image', 100, 100),
-        node('b', 'text', 420, 160),
-      ]
-
-      const result = createGroupFromNodes(nodes, ['a', 'b'], 'Campaign block')
-      expect(result).not.toBeNull()
-
-      const { groupId, nodes: next } = result!
-      expect(groupId).toBe('group-1700000000000')
-
-      const group = next.find((n) => n.id === groupId)
-      expect(group?.type).toBe('group')
-      expect(group?.data?.title).toBe('Campaign block')
-      expect(group?.style).toEqual({ width: 760, height: 440 })
-      expect(group?.position).toEqual({ x: 20, y: 20 })
-
-      const childA = next.find((n) => n.id === 'a')
-      const childB = next.find((n) => n.id === 'b')
-      expect(childA?.parentNode).toBe(groupId)
-      expect(childB?.parentNode).toBe(groupId)
-      expect(childA?.position).toEqual({ x: 80, y: 80 })
-      expect(childB?.position).toEqual({ x: 400, y: 140 })
-    })
-  })
-
-  describe('ungroupNode', () => {
-    it('dissolves group and restores absolute positions for children', () => {
-      const grouped = createGroupFromNodes(
-        [node('a', 'image', 50, 80), node('b', 'text', 360, 120)],
-        ['a', 'b'],
-      )
-      expect(grouped).not.toBeNull()
-
-      const ungrouped = ungroupNode(grouped!.nodes, grouped!.groupId)
-      expect(ungrouped.some((n) => n.id === grouped!.groupId)).toBe(false)
-      expect(ungrouped.find((n) => n.id === 'a')?.position).toEqual({ x: 50, y: 80 })
-      expect(ungrouped.find((n) => n.id === 'b')?.position).toEqual({ x: 360, y: 120 })
-      expect(ungrouped.find((n) => n.id === 'a')?.parentNode).toBeUndefined()
-    })
-
-    it('uses childIds from group data when present', () => {
-      const nodes: LayoutNode[] = [
-        {
-          id: 'g1',
-          type: 'group',
-          position: { x: 0, y: 0 },
-          data: { childIds: ['a'] },
-        },
-        node('a', 'image', 25, 35, { parentNode: 'g1', extent: 'parent' }),
-        node('b', 'text', 500, 500),
-      ]
-
-      const ungrouped = ungroupNode(nodes, 'g1')
-      expect(ungrouped.find((n) => n.id === 'a')?.position).toEqual({ x: 25, y: 35 })
-      expect(ungrouped.find((n) => n.id === 'b')?.position).toEqual({ x: 500, y: 500 })
-    })
-  })
-
   describe('layoutNodesInGrid', () => {
     it('returns input unchanged when fewer than two layout targets', () => {
       const nodes = [node('a', 'image', 10, 10)]
       expect(layoutNodesInGrid(nodes, ['a'])).toBe(nodes)
       expect(layoutNodesInGrid(nodes, ['a', 'missing'])).toBe(nodes)
-    })
-
-    it('ignores group nodes in the selection', () => {
-      const nodes = [
-        node('a', 'image', 0, 0),
-        node('g', 'group', 100, 100),
-      ]
-      expect(layoutNodesInGrid(nodes, ['a', 'g'])).toBe(nodes)
     })
 
     it('arranges root nodes in a sqrt grid anchored at selection bounding-box origin', () => {
@@ -200,28 +106,23 @@ describe('canvas-layout.util', () => {
       expect(byId.d).toEqual({ x: 200 + 280 + 20, y: 50 + 120 + 20 })
     })
 
-    it('updates relative positions for nodes inside a parent group', () => {
-      const grouped = createGroupFromNodes(
-        [node('a', 'image', 0, 0), node('b', 'text', 400, 0), node('c', 'video', 0, 400)],
-        ['a', 'b', 'c'],
-      )
-      expect(grouped).not.toBeNull()
+    it('updates relative positions for nodes nested under a parent', () => {
+      const base = [
+        node('parent', 'image', 100, 50),
+        node('a', 'image', 40, 30, { parentNode: 'parent' }),
+        node('b', 'text', 360, 30, { parentNode: 'parent' }),
+      ]
 
-      const next = layoutNodesInGrid(grouped!.nodes, ['a', 'b', 'c'], 10)
-      const group = next.find((n) => n.id === grouped!.groupId)!
-      const groupAbs = getAbsolutePosition(group, next)
+      const next = layoutNodesInGrid(base, ['a', 'b'], 10)
+      const parentAbs = getAbsolutePosition(next.find((n) => n.id === 'parent')!, next)
 
-      for (const id of ['a', 'b', 'c']) {
+      for (const id of ['a', 'b']) {
         const child = next.find((n) => n.id === id)!
         const abs = getAbsolutePosition(child, next)
-        expect(child.parentNode).toBe(grouped!.groupId)
-        expect(child.position.x).toBe(abs.x - groupAbs.x)
-        expect(child.position.y).toBe(abs.y - groupAbs.y)
+        expect(child.parentNode).toBe('parent')
+        expect(child.position.x).toBe(abs.x - parentAbs.x)
+        expect(child.position.y).toBe(abs.y - parentAbs.y)
       }
-
-      const absA = getAbsolutePosition(next.find((n) => n.id === 'a')!, next)
-      const absB = getAbsolutePosition(next.find((n) => n.id === 'b')!, next)
-      expect(absB.x - absA.x).toBe(280 + 10)
     })
   })
 
@@ -237,16 +138,13 @@ describe('canvas-layout.util', () => {
     })
 
     it('converts absolute coordinates to parent-relative positions', () => {
-      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-      const grouped = createGroupFromNodes(
-        [node('a', 'image', 100, 100), node('b', 'text', 400, 100)],
-        ['a', 'b'],
-      )!
-      const { nodes: next } = moveNodes(grouped.nodes, [{ nodeId: 'a', x: 300, y: 300 }])
+      const nodes = [
+        node('parent', 'image', 100, 100),
+        node('a', 'image', 40, 30, { parentNode: 'parent' }),
+      ]
+      const { nodes: next } = moveNodes(nodes, [{ nodeId: 'a', x: 300, y: 300 }])
       const child = next.find((n) => n.id === 'a')!
-      const abs = getAbsolutePosition(child, next)
-      expect(abs).toEqual({ x: 300, y: 300 })
-      vi.restoreAllMocks()
+      expect(getAbsolutePosition(child, next)).toEqual({ x: 300, y: 300 })
     })
   })
 
@@ -310,29 +208,35 @@ describe('canvas-layout.util', () => {
   })
 
   describe('applyLayoutOps', () => {
-    beforeEach(() => {
-      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-    })
-
-    afterEach(() => {
-      vi.restoreAllMocks()
-    })
-
-    it('chains group, grid, and ungroup', () => {
+    it('chains grid and move (group/ungroup ops retired 2026-10-19)', () => {
       const base = [node('a', 'image', 0, 0), node('b', 'text', 400, 0), node('c', 'video', 0, 400)]
       const { nodes, results } = applyLayoutOps(base, [
-        { op: 'group', nodeIds: ['a', 'b'], title: 'Pair' },
         { op: 'arrange_grid', nodeIds: ['c'], gap: 20 },
         { op: 'move', items: [{ nodeId: 'c', x: 800, y: 800 }] },
       ])
-      expect(results.map((r) => r.op)).toEqual(['group', 'arrange_grid', 'move'])
-      expect(nodes.some((n) => n.type === 'group')).toBe(true)
+      expect(results.map((r) => r.op)).toEqual(['arrange_grid', 'move'])
       expect(nodes.find((n) => n.id === 'c')?.position).toEqual({ x: 800, y: 800 })
+    })
 
-      const group = nodes.find((n) => n.type === 'group')!
-      const ungrouped = applyLayoutOps(nodes, [{ op: 'ungroup', groupId: group.id }])
-      expect(ungrouped.results[0]?.op).toBe('ungroup')
-      expect(ungrouped.nodes.some((n) => n.id === group.id)).toBe(false)
+    it('group/ungroup ops round-trip through the sidecar (2026-10-20)', () => {
+      const base = [node('a', 'image', 0, 0), node('b', 'text', 400, 0)]
+      const grouped = applyLayoutOps(base, [{ op: 'group', nodeIds: ['a', 'b'], title: 'Pair' }])
+      expect(grouped.results[0]?.op).toBe('group')
+      expect(grouped.groups).toHaveLength(1)
+      const groupId = grouped.groups[0]!.id
+      expect(grouped.groups[0]!.childIds).toEqual(['a', 'b'])
+      // 分组不再是节点：nodes 里不应凭空多出一个 group 节点
+      expect(grouped.nodes).toHaveLength(2)
+
+      const ungrouped = applyLayoutOps(grouped.nodes, [{ op: 'ungroup', groupId }], [], grouped.groups)
+      expect(ungrouped.groups).toEqual([])
+      expect(ungrouped.nodes.map((n) => n.id)).toEqual(['a', 'b'])
+    })
+
+    it('rejects a group op on fewer than 2 ungrouped nodes', () => {
+      const base = [node('a', 'image', 0, 0), node('b', 'text', 400, 0)]
+      expect(() => applyLayoutOps(base, [{ op: 'group', nodeIds: ['a'] }])).toThrow(/at least 2/)
+      expect(() => applyLayoutOps(base, [{ op: 'ungroup', groupId: 'g-missing' }])).toThrow(/group not found/)
     })
 
     it('arrange_along_edges uses provided edges', () => {

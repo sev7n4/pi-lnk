@@ -41,15 +41,15 @@ export type CanvasActionType = z.infer<typeof CanvasActionTypeSchema>
  *
  * 2026-10-17 下线 `prompt`（提示词节点，PR feat/prompt-node-decommission）：存量画布数据
  * 里的 prompt 节点仍按字符串分发渲染（Phase 3 冻结只读），但新画布动作不再接纳该类型。
+ *
+ * 2026-10-19 下线 `group` / `shot` / `sceneComposer`（分组 / 分镜 / 导演台）节点：同上，
+ * 新画布动作不再接纳这三类类型，存量节点仅走运行时兜底渲染。
  */
 export const NODE_TYPES = [
   'image',
   'video',
   'audio',
   'text',
-  'group',
-  'shot',
-  'sceneComposer',
 ] as const
 
 export const CanvasActionSchema = z.object({

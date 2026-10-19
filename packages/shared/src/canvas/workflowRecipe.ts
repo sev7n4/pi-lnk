@@ -26,9 +26,6 @@ const recipeNodeTypeSchema = z.enum([
   'image',
   'video',
   'text',
-  'group',
-  'shot',
-  'sceneComposer',
 ])
 
 const recipeNodeSchema = z.object({

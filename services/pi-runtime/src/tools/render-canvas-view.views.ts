@@ -467,7 +467,7 @@ function statusLegend(nodes: readonly GvNode[]): Array<{ label: string; palette:
 		const s = n.status ?? "未标状态";
 		if (!seen.includes(s)) seen.push(s);
 	}
-	return seen.map((label) => ({ label, palette: NODE_PALETTE[label === "未标状态" ? "default" : "group"] }));
+	return seen.map((label) => ({ label, palette: NODE_PALETTE.default }));
 }
 
 function groupLegend(nodes: readonly GvNode[], by: "parentNode"): Array<{ label: string; palette: Palette }> {
@@ -476,7 +476,7 @@ function groupLegend(nodes: readonly GvNode[], by: "parentNode"): Array<{ label:
 		const s = String(n[by] ?? "未归类");
 		if (!seen.includes(s)) seen.push(s);
 	}
-	return seen.slice(0, 6).map((label) => ({ label, palette: NODE_PALETTE.group }));
+	return seen.slice(0, 6).map((label) => ({ label, palette: NODE_PALETTE.default }));
 }
 
 // ══════════════════════════════════════════════════════════

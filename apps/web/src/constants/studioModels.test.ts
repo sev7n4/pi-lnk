@@ -21,7 +21,7 @@ import {
 } from './studioModels'
 
 // 本文件是「resolveGenerationModel 改为委托 shared 的 normalizeModelRef」的行为回归锁。
-// 改动前它无测试，而消费方有 9 处（useNodeGeneration / sceneComposer / 6 个 DockPanel），
+// 改动前它无测试，而消费方有 9 处（useNodeGeneration / 节点 DockPanel 等），
 // 一旦归一语义漂移就会表现为「节点芯片显示错模型」，故必须锁住。
 describe('resolveGenerationModel', () => {
   it('已编码 ref（BYOK 渠道）原样返回，不被改写成 platform', () => {

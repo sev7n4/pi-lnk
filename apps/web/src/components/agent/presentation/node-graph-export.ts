@@ -32,7 +32,6 @@ interface GraphNode {
 	type?: string;
 	title?: string;
 	position?: { x: number; y: number };
-	groupId?: string;
 	status?: string;
 }
 interface GraphEdge {
@@ -47,7 +46,6 @@ const TYPE_STYLE: Record<string, { label: string; icon: string; color: string }>
 	audio: { label: "音频", icon: "♪", color: "#BA7517" },
 	text: { label: "文本", icon: "¶", color: "#1D9E75" },
 	table: { label: "表格", icon: "▦", color: "#378ADD" },
-	group: { label: "分组", icon: "▢", color: "#888780" },
 };
 const NEUTRAL = { label: "节点", icon: "⬦", color: "#888780" };
 
@@ -107,8 +105,7 @@ export function buildNodeGraphHtml(
 			const sy = (s.position.y ?? 0) + 48;
 			const tx = t.position.x ?? 0;
 			const ty = (t.position.y ?? 0) + 48;
-			const dashed = s.type === "group" || t.type === "group" ? ` stroke-dasharray="5 4"` : "";
-			return `<line x1="${sx}" y1="${sy}" x2="${tx}" y2="${ty}" stroke="#b4b2a9" stroke-width="1.6"${dashed} />`;
+			return `<line x1="${sx}" y1="${sy}" x2="${tx}" y2="${ty}" stroke="#b4b2a9" stroke-width="1.6" />`;
 		})
 		.join("\n");
 

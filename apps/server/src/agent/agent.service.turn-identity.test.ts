@@ -130,7 +130,6 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
         session: { findUnique: sessionFindUnique, update: sessionUpdate },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )

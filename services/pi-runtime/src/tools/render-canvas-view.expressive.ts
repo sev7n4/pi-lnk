@@ -64,7 +64,6 @@ export const NODE_PALETTE: Record<string, Palette> = {
 	video: { fill: "#FCEBEB", stroke: "#E24B4A", strong: "#F09595" },
 	audio: { fill: "#FAEEDA", stroke: "#BA7517", strong: "#EF9F27" },
 	doc: { fill: "#E6F1FB", stroke: "#378ADD", strong: "#85B7EB" },
-	group: { fill: "#F1EFE8", stroke: "#888780", strong: "#B4B2A9" },
 	default: { fill: "#F1EFE8", stroke: "#888780", strong: "#D3D1C7" },
 };
 

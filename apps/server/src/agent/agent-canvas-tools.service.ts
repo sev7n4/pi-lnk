@@ -52,17 +52,19 @@ import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.servi
 import { currentCatalogEntries } from '../provider/model-catalog-store'
 import {
   applyLayoutOps,
-  createGroupFromNodes,
+  createGroupFromSelection,
   getAbsolutePosition,
   getNodeSize,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
   moveNodes,
-  summarizeLayoutGroups,
+  summarizeGroups,
+  syncGroupsToChildren,
+  ungroupById,
+  type CanvasGroup,
   type CanvasLayoutOp,
   type CanvasLayoutOpResult,
   type LayoutNode,
-  ungroupNode,
 } from './canvas-layout.util'
 
 const GRID_X = 280
@@ -503,7 +505,7 @@ function nodeToAgentAttachment(node: CanvasNode): SidebarAttachment | null {
   if (t === 'text' || t === 'prompt') mediaType = 'text'
   else if (t === 'video') mediaType = 'video'
   else if (t === 'audio') mediaType = 'audio'
-  else if (t === 'image' || t === 'mediaInput') mediaType = 'image'
+  else if (t === 'image') mediaType = 'image'
   else if (text && !url) mediaType = 'text'
   else if (!url) return null
 
@@ -519,7 +521,7 @@ function nodeToAgentAttachment(node: CanvasNode): SidebarAttachment | null {
 }
 
 function assetKindFromNodeType(type: string): 'image' | 'video' | 'audio' | null {
-  if (type === 'image' || type === 'mediaInput') return 'image'
+  if (type === 'image') return 'image'
   if (type === 'video') return 'video'
   if (type === 'audio') return 'audio'
   return null
@@ -760,15 +762,8 @@ function modalityDefaults(nodeType: NodeType | string, prefs: AccountGenPrefs): 
 
 function canEditImageNodeType(input: {
   type: string
-  mediaKind?: unknown
-  mimeType?: unknown
 }): boolean {
-  if (input.type === 'image') return true
-  if (input.type !== 'mediaInput') return false
-  const kind = String(input.mediaKind ?? '').toLowerCase()
-  if (kind === 'image') return true
-  const mime = String(input.mimeType ?? '').toLowerCase()
-  return mime.startsWith('image/')
+  return input.type === 'image'
 }
 
 /**
@@ -1604,7 +1599,8 @@ export class AgentCanvasToolsService {
         continue
       }
 
-      const nodeType = attachment.mediaType === 'text' ? 'text' : 'mediaInput'
+      // 2026-10-19 mediaInput 下线：附件按媒体类型直落对应节点（image/video/audio/text）。
+      const nodeType = attachment.mediaType
       const nodeId = nextNodeId(nodeType)
       const positionIndex = baseIndex + actions.length
       const position = {
@@ -1622,7 +1618,6 @@ export class AgentCanvasToolsService {
           : {
               title: attachment.label,
               url: attachment.url ?? '',
-              mediaKind: attachment.mediaType,
               status: 'completed',
             }
 
@@ -2588,6 +2583,57 @@ export class AgentCanvasToolsService {
     }
   }
 
+  /**
+   * 打组（2026-10-20 侧车化）：分组不再是节点，落 `canvasData.groups`。
+   * 资格：≥2 个未分组节点；子节点保持绝对坐标不变。
+   */
+  async groupNodes(input: {
+    sessionId: string
+    userId: string
+    nodeIds: string[]
+    title?: string
+  }): Promise<{ groupId: string; childIds: string[]; actions: CanvasAction[] }> {
+    await this.loadOwnedSession(input.sessionId, input.userId)
+    const { canvas } = await this.loadSession(input.sessionId)
+    const before = canvas.nodes as LayoutNode[]
+    const result = createGroupFromSelection(canvas.groups ?? [], before, input.nodeIds, input.title)
+    if (!result) throw new BadRequestException('至少需要 2 个未分组节点才能打组')
+    await this.persistCanvasGroups(input.sessionId, result.groups)
+    return { groupId: result.group.id, childIds: result.group.childIds, actions: [] }
+  }
+
+  /** 解组：只移除分组框，子节点保持原坐标。 */
+  async ungroupNode(input: {
+    sessionId: string
+    userId: string
+    groupId: string
+  }): Promise<{ childIds: string[]; actions: CanvasAction[] }> {
+    await this.loadOwnedSession(input.sessionId, input.userId)
+    const { canvas } = await this.loadSession(input.sessionId)
+    const target = (canvas.groups ?? []).find((g) => g.id === input.groupId)
+    if (!target) throw new NotFoundException('分组不存在')
+    await this.persistCanvasGroups(input.sessionId, ungroupById(canvas.groups ?? [], input.groupId))
+    return { childIds: [...target.childIds], actions: [] }
+  }
+
+  /** 分组背景色（null = 复位默认中性）。 */
+  async setGroupColor(input: {
+    sessionId: string
+    userId: string
+    groupId: string
+    colorKey: string | null
+  }): Promise<{ actions: CanvasAction[] }> {
+    await this.loadOwnedSession(input.sessionId, input.userId)
+    const { canvas } = await this.loadSession(input.sessionId)
+    const groups = canvas.groups ?? []
+    if (!groups.some((g) => g.id === input.groupId)) throw new NotFoundException('分组不存在')
+    const next = groups.map((g) =>
+      g.id === input.groupId ? { ...g, colorKey: input.colorKey ?? undefined } : g,
+    )
+    await this.persistCanvasGroups(input.sessionId, next)
+    return { actions: [] }
+  }
+
   async getCanvasLayout(input: { sessionId: string }): Promise<{
     nodes: Array<{
       id: string
@@ -2599,13 +2645,7 @@ export class AgentCanvasToolsService {
       size: { w: number; h: number }
       parentNode?: string
     }>
-    groups: Array<{
-      id: string
-      title: string
-      childIds: string[]
-      position: { x: number; y: number }
-      size: { w: number; h: number }
-    }>
+    groups: Array<{ id: string; title: string; childIds: string[] }>
     edges: Array<{ id: string; source: string; target: string }>
   }> {
     const { canvas } = await this.loadSession(input.sessionId)
@@ -2625,7 +2665,7 @@ export class AgentCanvasToolsService {
     })
     return {
       nodes,
-      groups: summarizeLayoutGroups(layoutNodes),
+      groups: summarizeGroups(syncGroupsToChildren(canvas.groups ?? [], layoutNodes)),
       edges: canvas.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
     }
   }
@@ -2691,7 +2731,8 @@ export class AgentCanvasToolsService {
   }): Promise<{ nodeId: string; actions: CanvasAction[] }> {
     await this.loadOwnedSession(input.sessionId, input.userId)
     const { canvas } = await this.loadSession(input.sessionId)
-    const nodeType = input.mediaType === 'image' ? 'mediaInput' : input.mediaType
+    // 2026-10-19 mediaInput 下线：图片直落 image 节点（视频/音频节点本就直接用自身类型）
+    const nodeType = input.mediaType
     const nodeId = nextNodeId(nodeType)
     const position =
       input.position ?? {
@@ -2949,34 +2990,6 @@ export class AgentCanvasToolsService {
     }
   }
 
-  async groupNodes(input: {
-    sessionId: string
-    userId: string
-    nodeIds: string[]
-    title?: string
-  }): Promise<{ groupId: string; actions: CanvasAction[] }> {
-    await this.loadOwnedSession(input.sessionId, input.userId)
-    const { canvas } = await this.loadSession(input.sessionId)
-    const before = canvas.nodes as LayoutNode[]
-    const result = createGroupFromNodes(before, input.nodeIds, input.title)
-    if (!result) throw new BadRequestException('至少需要 2 个可分组节点')
-    await this.persistLayoutNodes(input.sessionId, result.nodes)
-    return { groupId: result.groupId, actions: [] }
-  }
-
-  async ungroupNode(input: {
-    sessionId: string
-    userId: string
-    groupId: string
-  }): Promise<{ actions: CanvasAction[] }> {
-    await this.loadOwnedSession(input.sessionId, input.userId)
-    const { canvas } = await this.loadSession(input.sessionId)
-    const before = canvas.nodes as LayoutNode[]
-    const after = ungroupNode(before, input.groupId)
-    await this.persistLayoutNodes(input.sessionId, after)
-    return { actions: [] }
-  }
-
   async arrangeNodesGrid(input: {
     sessionId: string
     userId: string
@@ -3038,13 +3051,20 @@ export class AgentCanvasToolsService {
     const { canvas } = await this.loadSession(input.sessionId)
     const before = canvas.nodes as LayoutNode[]
     let after: LayoutNode[]
+    let afterGroups: CanvasGroup[]
     let results: CanvasLayoutOpResult[]
     try {
-      ;({ nodes: after, results } = applyLayoutOps(before, input.ops, canvas.edges ?? []))
+      ;({ nodes: after, groups: afterGroups, results } = applyLayoutOps(
+        before,
+        input.ops,
+        canvas.edges ?? [],
+        canvas.groups ?? [],
+      ))
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : '布局操作失败')
     }
     await this.persistLayoutNodes(input.sessionId, after)
+    await this.persistCanvasGroups(input.sessionId, afterGroups)
     const layout = await this.getCanvasLayout({ sessionId: input.sessionId })
     return { results, layout, actions: [] }
   }
@@ -3061,11 +3081,8 @@ export class AgentCanvasToolsService {
     const node = await this.getNode({ sessionId: input.sessionId, nodeId: input.nodeId })
     const nodeType = String(node.type ?? '')
     const url = String(node.data?.url ?? '').trim()
-    const canEdit = Boolean(url) && canEditImageNodeType({
-      type: nodeType,
-      mediaKind: node.data?.mediaKind,
-      mimeType: node.data?.mimeType,
-    })
+    // 2026-10-19 mediaInput 下线：可编辑判定只看节点类型是否为 image。
+    const canEdit = Boolean(url) && canEditImageNodeType({ type: nodeType })
     return {
       canEdit,
       nodeType,
@@ -3563,6 +3580,35 @@ export class AgentCanvasToolsService {
         data: { canvasData: JSON.stringify(canvas) },
       })
       return canvas
+    })
+  }
+
+  /**
+   * 原子写分组侧车（2026-10-20 分组不再是节点，改存 `canvasData.groups`）。
+   * 空数组 = 落库时删掉该字段，保持旧 payload 形状。
+   */
+  private async persistCanvasGroups(sessionId: string, groups: CanvasGroup[]): Promise<CanvasData> {
+    await this.expireStaleStage(sessionId)
+    return this.prisma.$transaction(async (tx) => {
+      const session = await tx.session.findUnique({
+        where: { id: sessionId },
+        select: { canvasData: true, stagedActions: true },
+      })
+      if (!session) throw new NotFoundException('会话不存在')
+      if (session.stagedActions) {
+        throw new ConflictException(
+          'Canvas has staged actions pending commit; call commitStage or rollbackStage first',
+        )
+      }
+      const current = parseCanvas(session.canvasData)
+      const updated: CanvasData = { ...current }
+      if (groups.length > 0) updated.groups = groups;
+      else delete updated.groups
+      await tx.session.update({
+        where: { id: sessionId },
+        data: { canvasData: JSON.stringify(updated) },
+      })
+      return updated
     })
   }
 

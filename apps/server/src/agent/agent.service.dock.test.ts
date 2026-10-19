@@ -54,7 +54,6 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
           findUnique: userAiPreferencesFindUnique,
         },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration } as never,
     )

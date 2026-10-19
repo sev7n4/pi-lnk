@@ -23,9 +23,7 @@ const emit = defineEmits<{
 
 const visible = ref(true)
 
-const showUpstreamDuplicate = computed(
-  () => props.nodeType !== 'group' && Boolean(props.nodeId),
-)
+const showUpstreamDuplicate = computed(() => Boolean(props.nodeId))
 
 const showEditImage = computed(
   () =>
@@ -108,15 +106,7 @@ const sheetItems = computed<SheetItem[]>(() => {
     <button v-if="showImageFileActions" class="neo-popover-item block w-full px-4 py-2 text-left text-xs" @click="run('save-asset')">存入资产库</button>
 
     <button
-      v-if="nodeType === 'group'"
-      class="neo-popover-item block w-full px-4 py-2 text-left text-xs"
-      @click="run('ungroup')"
-    >
-      解组
-    </button>
-
-    <button
-      v-if="nodeId && nodeType !== 'group'"
+      v-if="nodeId"
       class="neo-popover-item block w-full px-4 py-2 text-left text-xs"
       @click="run('add-agent-ref')"
     >
@@ -124,7 +114,7 @@ const sheetItems = computed<SheetItem[]>(() => {
     </button>
 
     <button
-      v-if="nodeId && nodeType !== 'group'"
+      v-if="nodeId"
       class="neo-popover-item block w-full px-4 py-2 text-left text-xs"
       @click="run('duplicate')"
     >

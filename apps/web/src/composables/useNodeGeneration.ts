@@ -1,7 +1,6 @@
 import { ref, type Ref } from 'vue'
 import {
   audioKindOf,
-  resolveCompositionVideoPrompt,
   type AudioKind,
   type VideoSettings,
 } from '@lnkpi/shared'
@@ -36,16 +35,6 @@ import {
   resolveGenerationModel,
   type StudioModality,
 } from '@/constants/studioModels'
-import type { CompositionTrack } from '@/utils/compositionUpstream'
-import { applyTrackOrder } from '@/utils/compositionUpstream'
-import {
-  buildBatchGenerateItems,
-  expandSceneComposerGraph,
-  readSceneComposerFromNode,
-  resolveCanvasImageParams,
-  resolveCanvasVideoParams,
-  sceneComposerToNodePatch,
-} from '@/utils/sceneComposer'
 import {
   extractRefundedPointsFromError,
   formatCancelledMessage,
@@ -55,11 +44,6 @@ import {
   parseShortGenerationError,
 } from '@/utils/generationDiagnostic'
 import { useAuthStore } from '@/stores/auth'
-import {
-  compositionGenerateIdsForClick,
-  type CompositionRunGroup,
-} from '@/composables/compositionRunGroup'
-
 export type FallbackConfirmDecision = 'confirm' | 'cancel'
 
 export interface FallbackPendingRequest {
@@ -78,15 +62,12 @@ export interface NodeGenerationDeps {
   addEdge: (edge: CanvasEdgeLike & { id: string; style?: Record<string, string | number> }) => void
   saveCanvas: () => Promise<void>
   requireLogin: () => boolean
-  startShotPolling: (shotIds: string[]) => void
   startGenerationPolling: (tasks: GenerationPollTask[]) => void
   stopGenerationPolling?: (nodeId: string) => void
-  stopShotPolling?: (nodeId: string) => void
   resolveProviderModels: () => { image: string; video: string; text: string }
   requestFallbackConfirm?: (req: FallbackPendingRequest) => Promise<FallbackConfirmDecision>
   isModelSelectable?: (modality: StudioModality, model: string) => boolean
   onInsufficientPoints?: () => void
-  compositionRunGroup?: Ref<CompositionRunGroup | null | undefined>
 }
 
 /** Node still accepts poll / resolve writes (not cancelled to draft). */
@@ -178,31 +159,6 @@ export function findNodeById(nodes: EditableFlowNode[], id: string) {
     if (node.id === id) return node
   }
   return null
-}
-
-function findIncomingEdge(edges: CanvasEdgeLike[], targetId: string) {
-  for (const edge of edges) {
-    if (edge.target === targetId) return edge
-  }
-  return null
-}
-
-function findShotMediaChild(
-  nodes: EditableFlowNode[],
-  edges: CanvasEdgeLike[],
-  shotId: string,
-  childType: string,
-): EditableFlowNode | null {
-  for (const edge of edges) {
-    if (edge.source !== shotId) continue
-    const target = findNodeById(nodes, edge.target)
-    if (target?.type === childType) return target
-  }
-  return null
-}
-
-function shotHasChildType(nodes: EditableFlowNode[], edges: CanvasEdgeLike[], shotId: string, childType: string) {
-  return findShotMediaChild(nodes, edges, shotId, childType) !== null
 }
 
 function parseConfirmMessage(metadata?: string | null): string | undefined {
@@ -320,26 +276,6 @@ function collectCancelTargets(nodeId: string): {
 
   const materialId = resolveMaterialId(node)
   if (materialId) materialIds.add(materialId)
-
-  if (node.type === 'shot') {
-    for (const edge of deps.edges.value) {
-      if (edge.source !== nodeId) continue
-      const child = findNodeById(deps.nodes.value, edge.target)
-      if (!child || (child.type !== 'image' && child.type !== 'video')) continue
-      const childMaterialId = resolveMaterialId(child)
-      if (childMaterialId) materialIds.add(childMaterialId)
-    }
-  }
-
-  if (node.type === 'image' || node.type === 'video') {
-    const linkedShotEdge = findIncomingEdge(deps.edges.value, nodeId)
-    const shotId = linkedShotEdge?.source
-    const shotNode = shotId ? findNodeById(deps.nodes.value, shotId) : null
-    if (shotNode?.type === 'shot' && shotId) {
-      const shotMaterialId = resolveMaterialId(shotNode)
-      if (shotMaterialId) materialIds.add(shotMaterialId)
-    }
-  }
 
   return { recordIds: [...recordIds], materialIds: [...materialIds] }
 }
@@ -476,51 +412,10 @@ async function cancelRemoteGeneration(
       abortByNodeId.delete(nodeId)
     }
     deps.stopGenerationPolling?.(nodeId)
-    deps.stopShotPolling?.(nodeId)
     const node = findNodeById(deps.nodes.value, nodeId)
     const fallbackPendingNodes: EditableFlowNode[] = []
     if (node?.data?.status === NODE_GENERATION_STATUS.fallback_pending) {
       fallbackPendingNodes.push(node)
-    }
-    if (node && (node.type === 'image' || node.type === 'video')) {
-      const linkedShotEdge = findIncomingEdge(deps.edges.value, nodeId)
-      const shotId = linkedShotEdge?.source
-      const shotNode = shotId ? findNodeById(deps.nodes.value, shotId) : null
-      if (shotNode?.type === 'shot' && shotId) {
-        deps.stopShotPolling?.(shotId)
-        if (shotNode.data?.status === NODE_GENERATION_STATUS.fallback_pending) {
-          fallbackPendingNodes.push(shotNode)
-        } else {
-          deps.patchNodeData(shotId, {
-            status: NODE_GENERATION_STATUS.draft,
-            errorMessage: formatCancelledMessage(),
-          })
-        }
-        markIdle(shotId)
-      }
-    }
-    if (node?.type === 'shot') {
-      for (const edge of deps.edges.value) {
-        if (edge.source !== nodeId) continue
-        const child = findNodeById(deps.nodes.value, edge.target)
-        if (!child || (child.type !== 'image' && child.type !== 'video')) continue
-        if (!isNodeGenerating(child.data?.status)) continue
-        deps.stopGenerationPolling?.(child.id)
-        const childAc = abortByNodeId.get(child.id)
-        if (childAc) {
-          childAc.abort()
-          abortByNodeId.delete(child.id)
-        }
-        markIdle(child.id)
-        if (child.data?.status === NODE_GENERATION_STATUS.fallback_pending) {
-          fallbackPendingNodes.push(child)
-        } else {
-          deps.patchNodeData(child.id, {
-            status: NODE_GENERATION_STATUS.draft,
-            errorMessage: formatCancelledMessage(),
-          })
-        }
-      }
     }
     markIdle(nodeId)
     syncGeneratingFlag()
@@ -714,29 +609,6 @@ async function cancelRemoteGeneration(
     return { sessionId: deps.sessionId.value, nodeId }
   }
 
-  function compositionVideoCanvas() {
-    return {
-      nodes: deps.nodes.value.map((n) => ({
-        id: n.id,
-        type: String(n.type ?? ''),
-        data: n.data,
-      })),
-      compositionRunGroup: deps.compositionRunGroup?.value ?? undefined,
-    }
-  }
-
-  function applyLiveCompositionVideoPrompt(videoNodeId: string): string | null {
-    const resolved = resolveCompositionVideoPrompt(compositionVideoCanvas(), videoNodeId)
-    if ('error' in resolved) {
-      deps.patchNodeData(videoNodeId, {
-        status: NODE_GENERATION_STATUS.error,
-        errorMessage: '分镜还是空的，写好后再生成视频。',
-      })
-      return null
-    }
-    return resolved.prompt
-  }
-
   function isRunGroupFailureStatus(status: unknown): boolean {
     return (
       status === NODE_GENERATION_STATUS.error ||
@@ -838,46 +710,6 @@ async function cancelRemoteGeneration(
         cancelGeneration(node.id)
         return
       }
-      const ids = compositionGenerateIdsForClick(node.id, {
-        nodes: deps.nodes.value.map((n) => ({
-          id: n.id,
-          type: String(n.type ?? ''),
-          data: n.data,
-        })),
-        edges: deps.edges.value,
-        compositionRunGroup: deps.compositionRunGroup?.value ?? undefined,
-      })
-      if (!ids.length) return
-      if (ids.length !== 1 || ids[0] !== node.id) {
-        for (const id of ids) {
-          const member = findNodeById(deps.nodes.value, id)
-          if (!member) continue
-          const alreadyInFlight =
-            isNodeBusy(member.id) ||
-            isDockGenerateBusy(member.data?.status) ||
-            member.data?.status === NODE_GENERATION_STATUS.fallback_pending
-          if (!alreadyInFlight) {
-            await generateForNode(member, { asRunGroupMember: true })
-          }
-          const settled = await waitForRunGroupMemberSettled(id)
-          if (settled !== 'ok') return
-        }
-        return
-      }
-    }
-
-    if (!opts?.asRunGroupMember) {
-      if (isNodeBusy(node.id)) {
-        cancelGeneration(node.id)
-        return
-      }
-      if (
-        isDockGenerateBusy(node.data?.status)
-        && node.data?.status !== NODE_GENERATION_STATUS.fallback_pending
-      ) {
-        cancelGeneration(node.id)
-        return
-      }
     }
 
     const data = node.data ?? {}
@@ -887,7 +719,7 @@ async function cancelRemoteGeneration(
     const refs = resolveStudioRefs(node, deps.nodes.value, deps.edges.value)
     const mentionedKeys = parseRefMentions(local)
     if (!deps.requireLogin()) return
-    if (nodeType !== 'sceneComposer' && !local && !refs.length) {
+    if (!local && !refs.length) {
       const hasTextP = nodeType === 'video' && deps.nodes.value.some((n) => n.id === 'text-p')
       if (!hasTextP) return
     }
@@ -992,18 +824,9 @@ async function cancelRemoteGeneration(
         return
       }
 
-      if (nodeType === 'sceneComposer') {
-        await saveSceneComposer(node)
-        return
-      }
-
       if (nodeType === 'image' || nodeType === 'video') {
         await generateImageOrVideo(node, local, data, upstream, refs, mentionedKeys, signal)
         return
-      }
-
-      if (nodeType === 'shot') {
-        await generateShot(node, local, data, signal)
       }
     } catch (err) {
       if (signal.aborted) {
@@ -1029,11 +852,7 @@ async function cancelRemoteGeneration(
     signal?: AbortSignal,
   ) {
     const nodeType = String(node.type)
-    const linkedShotEdge = findIncomingEdge(deps.edges.value, node.id)
-    const shotId = linkedShotEdge?.source
-    const shotNode = shotId ? findNodeById(deps.nodes.value, shotId) : null
     const refImage = firstImageRefUrl(refs) || mergeReferenceImageUrl(data, upstream)
-    let requestPrompt = prompt
 
     if (nodeType === 'video') {
       const audioOnlyError = audioOnlyVideoRefError(refs, refImage)
@@ -1044,44 +863,6 @@ async function cancelRemoteGeneration(
         })
         return
       }
-      const livePrompt = applyLiveCompositionVideoPrompt(node.id)
-      if (livePrompt === null) return
-      requestPrompt = livePrompt
-    }
-
-    if (shotNode?.type === 'shot' && shotId) {
-      deps.patchNodeData(node.id, {
-        ...startedAtPatch(),
-        status: NODE_GENERATION_STATUS.generating,
-        prompt,
-      })
-      deps.patchNodeData(shotId, {
-        ...startedAtPatch(),
-        status: NODE_GENERATION_STATUS.generating,
-        prompt,
-      })
-      if (nodeType === 'video') {
-        const params = resolveCanvasVideoParams(data)
-        const { data: matRes } = await canvasApi.generateVideo(shotId, requestPrompt, {
-          ...params,
-          refs,
-          mentionedKeys,
-          referenceImageUrl: refImage || undefined,
-        })
-        const materialId = (matRes.data as { id: string }).id
-        deps.patchNodeData(node.id, { materialId })
-        deps.patchNodeData(shotId, { materialId })
-      } else {
-        const params = resolveCanvasImageParams(data)
-        const { data: matRes } = await canvasApi.generateImage(shotId, prompt, { ...params, refs, mentionedKeys })
-        const materialId = (matRes.data as { id: string }).id
-        deps.patchNodeData(node.id, { materialId })
-        deps.patchNodeData(shotId, { materialId })
-      }
-      if (signal?.aborted || !nodeAcceptsWrite(node.id) || !nodeAcceptsWrite(shotId)) return
-      deps.startShotPolling([shotId])
-      await deps.saveCanvas()
-      return
     }
 
     deps.patchNodeData(node.id, {
@@ -1123,7 +904,7 @@ async function cancelRemoteGeneration(
       typeof seedRaw === 'number' && Number.isFinite(seedRaw) ? Math.trunc(seedRaw) : undefined
     const negativePrompt = String(data.negativePrompt ?? '').trim() || undefined
     const { data: res } = await studioApi.startVideoGeneration(
-      requestPrompt,
+      prompt,
       resolveGenerationModel('video', data.videoModel as string | undefined),
       settings?.duration,
       settings?.aspectRatio,
@@ -1165,8 +946,6 @@ async function cancelRemoteGeneration(
       await canvasApi.confirmMaterialPlatformFallback(materialId)
       if (!nodeAcceptsWrite(nodeId)) return
       deps.patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.generating })
-      const shotEdge = findIncomingEdge(deps.edges.value, nodeId)
-      if (shotEdge?.source) deps.startShotPolling([shotEdge.source])
       return
     }
 
@@ -1178,7 +957,7 @@ async function cancelRemoteGeneration(
     })
   }
 
-  /** Exposed for CanvasPage shot/generation polling when status becomes fallback_pending */
+  /** Exposed for CanvasPage generation polling when status becomes fallback_pending */
   async function onFallbackPending(
     kind: 'studio' | 'material',
     id: string,
@@ -1210,282 +989,6 @@ async function cancelRemoteGeneration(
     }
   }
 
-  async function generateShot(
-    node: EditableFlowNode,
-    prompt: string,
-    data: Record<string, unknown>,
-    signal?: AbortSignal,
-  ) {
-    const refs = resolveStudioRefs(node, deps.nodes.value, deps.edges.value)
-    const mentionedKeys = parseRefMentions(prompt)
-    deps.patchNodeData(node.id, {
-      ...startedAtPatch(),
-      status: NODE_GENERATION_STATUS.generating,
-      prompt,
-    })
-    const title = String(data.title ?? (prompt.slice(0, 24) || '新分镜'))
-    try {
-      await canvasApi.editShot(node.id, { title, prompt })
-    } catch {
-      if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
-      const shotRes = await canvasApi.createShot(deps.sessionId.value, { title, prompt })
-      const shot = shotRes.data.data as { id: string }
-      if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
-      if (shot.id !== node.id) {
-        deps.patchNodeData(node.id, {
-          ...startedAtPatch(),
-          title,
-          prompt,
-          status: NODE_GENERATION_STATUS.generating,
-        })
-      }
-    }
-
-    if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
-
-    const hasVideoChild = shotHasChildType(deps.nodes.value, deps.edges.value, node.id, 'video')
-    const hasImageChild = shotHasChildType(deps.nodes.value, deps.edges.value, node.id, 'image')
-    const mode = String(data.shotGenerateMode ?? 'auto')
-
-    const shouldGenerateVideo = mode === 'video' || (mode === 'auto' && hasVideoChild)
-    const shouldGenerateImage = mode === 'image' || (mode === 'auto' && hasImageChild && !shouldGenerateVideo)
-
-    if (shouldGenerateVideo) {
-      const childNode = findShotMediaChild(deps.nodes.value, deps.edges.value, node.id, 'video')
-      const params = resolveCanvasVideoParams(childNode?.data ?? {})
-      const referenceImageUrl =
-        firstImageRefUrl(refs)
-        || String(childNode?.data?.referenceImageUrl ?? '').trim()
-        || undefined
-      const { data: matRes } = await canvasApi.generateVideo(node.id, prompt, {
-        ...params,
-        refs,
-        mentionedKeys,
-        referenceImageUrl,
-      })
-      const materialId = (matRes.data as { id: string }).id
-      deps.patchNodeData(node.id, { materialId })
-      if (childNode) deps.patchNodeData(childNode.id, { materialId })
-    } else if (shouldGenerateImage) {
-      const childNode = findShotMediaChild(deps.nodes.value, deps.edges.value, node.id, 'image')
-      const params = resolveCanvasImageParams(childNode?.data ?? {})
-      const { data: matRes } = await canvasApi.generateImage(node.id, prompt, { ...params, refs, mentionedKeys })
-      const materialId = (matRes.data as { id: string }).id
-      deps.patchNodeData(node.id, { materialId })
-      if (childNode) deps.patchNodeData(childNode.id, { materialId })
-    } else {
-      const params = resolveCanvasImageParams({})
-      const matRes = await canvasApi.generateImage(node.id, prompt, { ...params, refs, mentionedKeys })
-      if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
-      const material = matRes.data.data as { id: string }
-      deps.patchNodeData(node.id, { materialId: material.id })
-      deps.addNode('image', {
-        url: '',
-        ...startedAtPatch(),
-        status: NODE_GENERATION_STATUS.generating,
-        prompt,
-        materialId: material.id,
-      }, {
-        id: material.id,
-        position: { x: node.position.x + 280, y: node.position.y },
-      })
-      deps.addEdge({
-        id: `e-${node.id}-${material.id}`,
-        source: node.id,
-        target: material.id,
-        style: { stroke: '#6366f1' },
-      })
-    }
-    if (signal?.aborted || !nodeAcceptsWrite(node.id)) return
-    deps.startShotPolling([node.id])
-    await deps.saveCanvas()
-  }
-
-  async function saveSceneComposer(node: EditableFlowNode) {
-    if (!deps.requireLogin()) return
-    const payload = readSceneComposerFromNode(node)
-    const patch = sceneComposerToNodePatch(payload)
-    deps.patchNodeData(node.id, { ...patch, status: NODE_GENERATION_STATUS.draft })
-    await canvasApi.saveSceneComposer({
-      sessionId: deps.sessionId.value,
-      composerNodeId: node.id,
-      title: payload.title,
-      prompt: payload.prompt,
-      scenes: payload.scenes,
-    })
-    await deps.saveCanvas()
-  }
-
-  async function expandSceneComposer(node: EditableFlowNode) {
-    if (!deps.requireLogin()) return
-    if (isNodeBusy(node.id)) {
-      cancelGeneration(node.id)
-      return
-    }
-    const signal = beginNodeWork(node.id)
-    try {
-      const current = readSceneComposerFromNode(node)
-      const models = deps.resolveProviderModels()
-      const expanded = expandSceneComposerGraph(node, current, {
-        nodes: deps.nodes.value,
-        addNode: deps.addNode,
-        addEdge: deps.addEdge,
-        imageModel: models.image,
-        videoModel: models.video,
-      })
-      const patch = sceneComposerToNodePatch(expanded)
-      deps.patchNodeData(node.id, { ...patch, status: NODE_GENERATION_STATUS.draft })
-      await canvasApi.saveSceneComposer({
-        sessionId: deps.sessionId.value,
-        composerNodeId: node.id,
-        title: expanded.title,
-        prompt: expanded.prompt,
-        scenes: expanded.scenes,
-      })
-      await deps.saveCanvas()
-    } catch (err) {
-      if (signal.aborted) {
-        patchGenerationError(node.id, err, signal)
-        return
-      }
-      if (isAbortError(err)) return
-      patchGenerationError(node.id, err, signal)
-    } finally {
-      endNodeWork(node.id, signal)
-      refreshPointsAfterGeneration()
-    }
-  }
-
-  async function batchGenerateSceneComposer(node: EditableFlowNode) {
-    if (!deps.requireLogin()) return
-    if (isNodeBusy(node.id)) {
-      cancelGeneration(node.id)
-      return
-    }
-    if (
-      isDockGenerateBusy(node.data?.status)
-      && node.data?.status !== NODE_GENERATION_STATUS.fallback_pending
-    ) {
-      cancelGeneration(node.id)
-      return
-    }
-    await cancelPendingFallbackBeforeGenerate(node)
-    const signal = beginNodeWork(node.id)
-    try {
-      const payload = readSceneComposerFromNode(node)
-      const items = buildBatchGenerateItems(payload, {
-        nodes: deps.nodes.value,
-        edges: deps.edges.value,
-        composerNodeId: node.id,
-      })
-      if (!items.length) return
-
-      for (const item of items) {
-        const itemBlobError = blobReferenceError(item.refs ?? [], {})
-        if (itemBlobError) {
-          deps.patchNodeData(node.id, {
-            status: NODE_GENERATION_STATUS.error,
-            errorMessage: itemBlobError,
-            errorCode: 'upload_required',
-          })
-          return
-        }
-      }
-
-      deps.patchNodeData(node.id, { ...startedAtPatch(), status: NODE_GENERATION_STATUS.generating })
-      for (const item of items) {
-        deps.patchNodeData(item.shotNodeId, {
-          ...startedAtPatch(),
-          status: NODE_GENERATION_STATUS.generating,
-          prompt: item.prompt,
-        })
-      }
-
-      await canvasApi.batchGenerateSceneComposer({
-        sessionId: deps.sessionId.value,
-        composerNodeId: node.id,
-        items,
-      })
-
-      if (
-        signal.aborted
-        || !nodeAcceptsWrite(node.id)
-        || items.some((item) => !nodeAcceptsWrite(item.shotNodeId))
-      ) {
-        return
-      }
-      deps.startShotPolling(items.map((item) => item.shotNodeId))
-      deps.patchNodeData(node.id, { status: NODE_GENERATION_STATUS.generating })
-      await deps.saveCanvas()
-    } catch (err) {
-      if (signal.aborted) {
-        patchGenerationError(node.id, err, signal)
-        return
-      }
-      if (isAbortError(err)) return
-      patchGenerationError(node.id, err, signal)
-    } finally {
-      endNodeWork(node.id, signal)
-      refreshPointsAfterGeneration()
-    }
-  }
-
-  async function exportVideoComposition(node: EditableFlowNode, tracks: CompositionTrack[]) {
-    if (!deps.requireLogin()) return
-    if (isNodeBusy(node.id)) {
-      cancelGeneration(node.id)
-      return
-    }
-    if (
-      isDockGenerateBusy(node.data?.status)
-      && node.data?.status !== NODE_GENERATION_STATUS.fallback_pending
-    ) {
-      cancelGeneration(node.id)
-      return
-    }
-    const ordered = applyTrackOrder(tracks, node.data?.trackOrder as string[] | undefined)
-    const exportTracks = ordered.filter((track) => track.url.trim())
-    if (!exportTracks.length) return
-
-    await cancelPendingFallbackBeforeGenerate(node)
-    const signal = beginNodeWork(node.id)
-    try {
-      deps.patchNodeData(node.id, { status: NODE_GENERATION_STATUS.generating })
-      const { data: res } = await canvasApi.exportVideoComposition({
-        sessionId: deps.sessionId.value,
-        compositionNodeId: node.id,
-        title: String(node.data?.title ?? '视频合成'),
-        tracks: exportTracks.map((track) => ({
-          nodeId: track.nodeId,
-          type: track.type,
-          title: track.title,
-          url: track.url,
-          durationSec: track.durationSec,
-          startSec: track.startSec,
-        })),
-      })
-      if (signal.aborted) return
-      const result = res.data as { url: string; durationSec: number }
-      deps.patchNodeData(node.id, {
-        url: result.url,
-        exportDurationSec: result.durationSec,
-        status: NODE_GENERATION_STATUS.completed,
-        exportedAt: new Date().toISOString(),
-      })
-      await deps.saveCanvas()
-    } catch (err) {
-      if (signal.aborted) {
-        patchGenerationError(node.id, err, signal)
-        return
-      }
-      if (isAbortError(err)) return
-      patchGenerationError(node.id, err, signal)
-    } finally {
-      endNodeWork(node.id, signal)
-      refreshPointsAfterGeneration()
-    }
-  }
-
   return {
     generating,
     isNodeBusy,
@@ -1495,10 +998,6 @@ async function cancelRemoteGeneration(
     // ⚠️ 仅供测试断言 U6 接线点②（「completed 但无产物」应判 error）。
     // 生产代码不消费它—— 与 `waitForRunGroupMemberSettled` 一样是既有导出。
     applyStudioRecordForTest: applyStudioRecord,
-    saveSceneComposer,
-    expandSceneComposer,
-    batchGenerateSceneComposer,
-    exportVideoComposition,
     onFallbackPending,
   }
 }

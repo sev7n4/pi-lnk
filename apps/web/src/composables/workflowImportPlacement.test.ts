@@ -74,7 +74,7 @@ describe('workflowImportPlacement', () => {
 
   it('keeps child relative coords out of translation input roots', () => {
     const nodes = [
-      { id: 'g', type: 'group', position: { x: 10, y: 10 } },
+      { id: 'g', position: { x: 10, y: 10 } },
       { id: 'c', position: { x: 5, y: 5 }, parentNode: 'g' },
     ]
     const box = unionNodeBBox(nodes)!

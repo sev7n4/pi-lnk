@@ -2,7 +2,6 @@ import JSZip from 'jszip'
 import { ElMessage } from 'element-plus'
 import {
   buildWorkflowDocument,
-  getGroupChildIds,
   remapWorkflowIds,
   validateWorkflow,
   type MediaIndexEntry,
@@ -173,15 +172,7 @@ function toMergeNodes(
 
 function expandExportNodeIds(nodes: WorkflowExportNode[], selectedIds: string[]): string[] {
   if (!selectedIds.length) return nodes.map((n) => n.id)
-  const set = new Set(selectedIds)
-  for (const id of [...set]) {
-    const node = nodes.find((entry) => entry.id === id)
-    if (node?.type !== 'group') continue
-    for (const childId of getGroupChildIds(nodes, id)) {
-      set.add(childId)
-    }
-  }
-  return [...set]
+  return [...selectedIds]
 }
 
 function toastExportResult(mediaOk: number, mediaFail: number) {

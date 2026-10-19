@@ -1396,8 +1396,9 @@
   pointer-events: none;
 }
 
-/* 分组容器（P3 2026-10-12 重构）：
-   - 背景与虚线边全部从 --neo-group-accent（由 CanvasNodeGroup 按 colorKey
+/* 分组容器（P3 2026-10-12 重构；2026-10-20 分组侧车化后由 CanvasGroupOverlay
+   渲染，类名沿用未改）：
+   - 背景与虚线边全部从 --neo-group-accent（由 CanvasGroupOverlay 按 colorKey
      注入，默认 neutral 中性灰）color-mix 派生 —— 默认与画布仅数个百分点的
      明度差，「有差异、不强占主视线」；不再使用品牌紫 rgba 硬编码。
    - 信息条（.group-drag-handle，组件内 scoped）无底无框贴上沿。 */

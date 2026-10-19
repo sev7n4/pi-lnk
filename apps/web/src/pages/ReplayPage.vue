@@ -12,7 +12,6 @@ import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
 import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
 import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
 import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
-import CanvasNodeShot from '@/components/canvas/CanvasNodeShot.vue'
 
 interface AgentMessage {
   id: string
@@ -55,7 +54,6 @@ const nodeTypes = {
   image: CanvasNodeImage,
   video: CanvasNodeVideo,
   text: CanvasNodeText,
-  shot: CanvasNodeShot,
 }
 
 function rebuildCanvas(upToStep: number) {

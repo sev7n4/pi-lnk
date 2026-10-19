@@ -11,7 +11,7 @@ export interface CanvasEdgeLike {
 export interface UpstreamNodeContext {
   /** 来自上游 text / prompt 节点的合并文案 */
   textPrompt: string
-  /** 来自上游 image / mediaInput 的参考图 URL */
+  /** 来自上游 image 的参考图 URL */
   referenceImageUrl: string
   /** 提供参考图的节点 id（若有） */
   referenceImageNodeId: string | null

@@ -1,5 +1,6 @@
 import type { CanvasNode } from '@lnkpi/shared'
 
+/** 分组框相对子节点包围盒的留白（与 web 端 GROUP_PADDING 同值，视觉一致）。 */
 export const GROUP_PADDING = 80
 
 export type LayoutNode = CanvasNode & {
@@ -19,12 +20,6 @@ const NODE_SIZES: Record<string, { w: number; h: number }> = {
   // 视频：长边基准 320（尺寸随比例 contain，包络 320×320）
   video: { w: 320, h: 320 },
   audio: { w: 280, h: 140 },
-  sceneComposer: { w: 280, h: 280 },
-  shot: { w: 280, h: 280 },
-  mediaInput: { w: 280, h: 280 },
-  videoComposition: { w: 280, h: 200 },
-  worldModel: { w: 280, h: 280 },
-  group: { w: 280, h: 160 },
   prompt: { w: 280, h: 120 },
 }
 
@@ -69,106 +64,6 @@ export function getAbsolutePosition(node: LayoutNode, nodes: LayoutNode[]): { x:
     parentId = parent.parentNode
   }
   return { x, y }
-}
-
-function countGroups(nodes: LayoutNode[]): number {
-  return nodes.filter((n) => n.type === 'group').length
-}
-
-export function createGroupFromNodes(
-  nodes: LayoutNode[],
-  selectedIds: string[],
-  groupTitle?: string,
-): { nodes: LayoutNode[]; groupId: string } | null {
-  const eligible = selectedIds
-    .map((id) => nodes.find((n) => n.id === id))
-    .filter((n): n is LayoutNode => Boolean(n && n.type !== 'group' && !n.parentNode))
-  if (eligible.length < 2) return null
-
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const node of eligible) {
-    const abs = getAbsolutePosition(node, nodes)
-    const { w, h } = getNodeSize(node)
-    minX = Math.min(minX, abs.x)
-    minY = Math.min(minY, abs.y)
-    maxX = Math.max(maxX, abs.x + w)
-    maxY = Math.max(maxY, abs.y + h)
-  }
-
-  const groupId = `group-${Date.now()}`
-  const groupX = minX - GROUP_PADDING
-  const groupY = minY - GROUP_PADDING
-  const groupW = maxX - minX + GROUP_PADDING * 2
-  const groupH = maxY - minY + GROUP_PADDING * 2
-
-  const next: LayoutNode[] = nodes.map((n) => ({
-    ...n,
-    data: { ...(n.data ?? {}) },
-  }))
-
-  next.push({
-    id: groupId,
-    type: 'group',
-    position: { x: groupX, y: groupY },
-    style: { width: groupW, height: groupH },
-    data: {
-      title: groupTitle ?? `分组 ${countGroups(next)}`,
-      childIds: eligible.map((n) => n.id),
-    },
-    draggable: true,
-    selectable: true,
-    zIndex: 0,
-  } as LayoutNode)
-
-  for (const node of eligible) {
-    const abs = getAbsolutePosition(node, nodes)
-    const idx = next.findIndex((n) => n.id === node.id)
-    if (idx < 0) continue
-    next[idx] = {
-      ...next[idx]!,
-      parentNode: groupId,
-      extent: 'parent',
-      expandParent: true,
-      draggable: true,
-      selectable: true,
-      position: { x: abs.x - groupX, y: abs.y - groupY },
-      zIndex: 1,
-    }
-  }
-
-  return { nodes: next, groupId }
-}
-
-function getGroupChildIds(nodes: LayoutNode[], groupId: string): string[] {
-  const group = nodes.find((n) => n.id === groupId)
-  const fromData = group?.data?.childIds
-  if (Array.isArray(fromData) && fromData.length) {
-    return fromData.map(String)
-  }
-  return nodes.filter((n) => n.parentNode === groupId).map((n) => n.id)
-}
-
-export function ungroupNode(nodes: LayoutNode[], groupId: string): LayoutNode[] {
-  const childIdSet = new Set(getGroupChildIds(nodes, groupId))
-  const next: LayoutNode[] = []
-  for (const node of nodes) {
-    if (node.id === groupId) continue
-    if (node.parentNode === groupId || childIdSet.has(node.id)) {
-      const abs = getAbsolutePosition(node, nodes)
-      const { parentNode: _p, extent: _e, expandParent: _x, ...rest } = node
-      next.push({
-        ...rest,
-        position: { x: abs.x, y: abs.y },
-        zIndex: undefined,
-      })
-      continue
-    }
-    next.push({ ...node })
-  }
-  return next
 }
 
 function updateNodePosition(nodes: LayoutNode[], id: string, pos: { x: number; y: number }) {
@@ -276,7 +171,7 @@ export function layoutNodesAlongEdges(
   const selected = new Set(selectedIds)
   const targets: LayoutNode[] = []
   for (const n of nodes) {
-    if (selected.has(n.id) && n.type !== 'group') targets.push(n)
+    if (selected.has(n.id)) targets.push(n)
   }
   if (targets.length < 2) return nodes
 
@@ -364,7 +259,7 @@ export function layoutNodesInGrid(
   gap = 40,
 ): LayoutNode[] {
   const selected = new Set(selectedIds)
-  const targets = nodes.filter((n) => selected.has(n.id) && n.type !== 'group')
+  const targets = nodes.filter((n) => selected.has(n.id))
   if (targets.length < 2) return nodes
 
   const cols = Math.ceil(Math.sqrt(targets.length))
@@ -447,26 +342,30 @@ export function applyLayoutOps(
   nodes: LayoutNode[],
   ops: CanvasLayoutOp[],
   edges: LayoutEdge[] = [],
-): { nodes: LayoutNode[]; results: CanvasLayoutOpResult[] } {
+  groups: CanvasGroup[] = [],
+): { nodes: LayoutNode[]; groups: CanvasGroup[]; results: CanvasLayoutOpResult[] } {
   let current = nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } }))
+  let currentGroups = groups.map((g) => ({ ...g, childIds: [...g.childIds] }))
   const results: CanvasLayoutOpResult[] = []
 
   for (const op of ops) {
     switch (op.op) {
       case 'group': {
-        const grouped = createGroupFromNodes(current, op.nodeIds, op.title)
+        // 2026-10-20：分组落 sidecar（不再是节点）。
+        const grouped = createGroupFromSelection(currentGroups, current, op.nodeIds, op.title);
         if (!grouped) {
-          throw new Error(`group requires at least 2 eligible nodes: ${op.nodeIds.join(', ')}`)
+          throw new Error(`group requires at least 2 ungrouped nodes: ${op.nodeIds.join(', ')}`);
         }
-        current = grouped.nodes
-        results.push({ op: 'group', groupId: grouped.groupId, nodeIds: op.nodeIds })
-        break
+        currentGroups = grouped.groups;
+        results.push({ op: 'group', groupId: grouped.group.id, nodeIds: grouped.group.childIds });
+        break;
       }
       case 'ungroup': {
-        const childIds = getGroupChildIds(current, op.groupId)
-        current = ungroupNode(current, op.groupId)
-        results.push({ op: 'ungroup', groupId: op.groupId, nodeIds: childIds })
-        break
+        const target = currentGroups.find((g) => g.id === op.groupId);
+        if (!target) throw new Error(`group not found: ${op.groupId}`);
+        currentGroups = ungroupById(currentGroups, op.groupId);
+        results.push({ op: 'ungroup', groupId: op.groupId, nodeIds: [...target.childIds] });
+        break;
       }
       case 'arrange_grid': {
         current = layoutNodesInGrid(current, op.nodeIds, op.gap ?? 40)
@@ -491,27 +390,110 @@ export function applyLayoutOps(
     }
   }
 
-  return { nodes: current, results }
+  return { nodes: current, groups: currentGroups, results }
 }
 
-export function summarizeLayoutGroups(nodes: LayoutNode[]): Array<{
-  id: string
-  title: string
-  childIds: string[]
-  position: { x: number; y: number }
-  size: { w: number; h: number }
+
+// ══════════════════════════════════════════════════════════
+// 分组（2026-10-20 侧车化）
+//
+// 分组曾以 `group` 节点承载；现改为 `CanvasData.groups` 侧车：
+// - 分组框不是节点（不进 node-types / agent 节点白名单）；
+// - 子节点 position 一律画布绝对坐标；
+// - web 端同一套语义在 `apps/web/src/composables/useCanvasGrouping.ts`，两侧保持一致。
+// ══════════════════════════════════════════════════════════
+
+export type { CanvasGroup } from '@lnkpi/shared';
+import type { CanvasGroup } from '@lnkpi/shared';
+
+/** 分组序号标题（`分组 N`）。 */
+export function nextGroupTitle(groups: CanvasGroup[]): string {
+	return `分组 ${groups.length + 1}`;
+}
+
+/** 由子节点包围盒算分组外框（绝对坐标 + padding）；不足 2 个子节点返回 null。 */
+export function groupRectForChildren(
+	nodes: LayoutNode[],
+	childIds: string[],
+	padding = GROUP_PADDING,
+): { position: { x: number; y: number }; size: { width: number; height: number } } | null {
+	if (childIds.length < 2) return null;
+	let minX = Infinity;
+	let minY = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	for (const id of childIds) {
+		const node = nodes.find((n) => n.id === id);
+		if (!node) continue;
+		const abs = getAbsolutePosition(node, nodes);
+		const { w, h } = getNodeSize(node);
+		minX = Math.min(minX, abs.x);
+		minY = Math.min(minY, abs.y);
+		maxX = Math.max(maxX, abs.x + w);
+		maxY = Math.max(maxY, abs.y + h);
+	}
+	if (!Number.isFinite(minX)) return null;
+	return {
+		position: { x: minX - padding, y: minY - padding },
+		size: { width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 },
+	};
+}
+
+/** 打组：≥2 个未分组节点才成立（一个节点只进一个分组，避免嵌套歧义）。 */
+export function createGroupFromSelection(
+	groups: CanvasGroup[],
+	nodes: LayoutNode[],
+	selectedIds: string[],
+	title?: string,
+): { groups: CanvasGroup[]; group: CanvasGroup } | null {
+	const grouped = new Set(groups.flatMap((g) => g.childIds));
+	const childIds = selectedIds.filter((id) => {
+		const node = nodes.find((n) => n.id === id);
+		return Boolean(node) && !grouped.has(id);
+	});
+	const rect = groupRectForChildren(nodes, childIds);
+	if (!rect || childIds.length < 2) return null;
+	const group: CanvasGroup = {
+		id: `group-${Date.now().toString(36)}`,
+		title: title?.trim() || nextGroupTitle(groups),
+		childIds,
+		...rect,
+	};
+	return { groups: [...groups, group], group };
+}
+
+/** 解组：移除分组框，子节点保持各自绝对坐标不动。 */
+export function ungroupById(groups: CanvasGroup[], groupId: string): CanvasGroup[] {
+	return groups.filter((g) => g.id !== groupId);
+}
+
+/** 改分组背景色（null = 复位默认中性）。 */
+export function patchGroupColorKey(
+	groups: CanvasGroup[],
+	groupId: string,
+	colorKey: string | null,
+): CanvasGroup[] {
+	return groups.map((g) => (g.id === groupId ? { ...g, colorKey: colorKey ?? undefined } : g));
+}
+
+/** 与画布现状对齐：子节点被删/被挪后重算外框；不足 2 个的分组自动解散。 */
+export function syncGroupsToChildren(groups: CanvasGroup[], nodes: LayoutNode[]): CanvasGroup[] {
+	const out: CanvasGroup[] = [];
+	for (const g of groups) {
+		const childIds = g.childIds.filter((id) => nodes.some((n) => n.id === id));
+		if (childIds.length < 2) continue;
+		const rect = groupRectForChildren(nodes, childIds);
+		if (!rect) continue;
+		out.push({ ...g, childIds, ...rect });
+	}
+	return out;
+}
+
+/** 分组摘要（工具结果回给 agent：有哪些组、含哪些节点）。 */
+export function summarizeGroups(groups: CanvasGroup[]): Array<{
+	id: string;
+	title: string;
+	childIds: string[];
 }> {
-  return nodes
-    .filter((n) => n.type === 'group')
-    .map((group) => {
-      const childIds = getGroupChildIds(nodes, group.id)
-      const { w, h } = getNodeSize(group)
-      return {
-        id: group.id,
-        title: String(group.data?.title ?? '分组'),
-        childIds,
-        position: group.position,
-        size: { w, h },
-      }
-    })
+	return groups.map((g) => ({ id: g.id, title: g.title, childIds: g.childIds }));
 }

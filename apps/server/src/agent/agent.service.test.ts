@@ -139,7 +139,6 @@ describe('AgentService streamConversation', () => {
           findUnique: vi.fn().mockResolvedValue(null),
         },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -399,7 +398,6 @@ describe('AgentService idempotency', () => {
           findUnique: vi.fn().mockResolvedValue(null),
         },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -507,7 +505,6 @@ describe('AgentService checkRuntimeHealth', () => {
           findUnique: vi.fn().mockResolvedValue(null),
         },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -583,7 +580,6 @@ describe('AgentService turn billing (P2 T6)', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
       undefined,

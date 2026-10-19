@@ -10,6 +10,11 @@ const props = defineProps<{
   canUngroup?: boolean
   /** 当前分组色（透传给工具条色点高亮） */
   groupColorKey?: string | null
+  /**
+   * 选中分组的外框（画布绝对坐标）。
+   * 分组不再是节点 ⇒ 工具条不能按节点包围盒定位，改用分组矩形底边居中。
+   */
+  groupRect?: { position: { x: number; y: number }; size: { width: number; height: number } } | null
   selectionBatch?: {
     runCount: number
     regenCount?: number
@@ -46,6 +51,17 @@ function updatePosition() {
     return
   }
   if (props.canUngroup && props.selectedIds.length === 1) {
+    // 2026-10-20 分组侧车化：分组 id 不是节点 id，取不到节点包围盒 ⇒ 用分组矩形
+    // （画布绝对坐标）定位，挂在分组框底边居中。
+    const rect = props.groupRect
+    if (rect) {
+      const zoom = viewport.value.zoom
+      screenPosition.value = {
+        x: (rect.position.x + rect.size.width / 2) * zoom + viewport.value.x,
+        y: (rect.position.y + rect.size.height) * zoom + viewport.value.y,
+      }
+      return
+    }
     const bounds = getSelectionBounds(flowNodes.value, props.selectedIds)
     if (!bounds) {
       screenPosition.value = null
@@ -82,6 +98,7 @@ function scheduleUpdate() {
 
 watch(() => props.selectedIds, scheduleUpdate, { deep: true })
 watch(() => props.canUngroup, scheduleUpdate)
+watch(() => props.groupRect, scheduleUpdate, { deep: true })
 watch(viewport, scheduleUpdate, { deep: true })
 watch(flowNodes, scheduleUpdate, { deep: true })
 

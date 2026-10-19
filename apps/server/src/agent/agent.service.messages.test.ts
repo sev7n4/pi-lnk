@@ -74,7 +74,6 @@ describe('AgentService messages & threads', () => {
           findUnique: vi.fn().mockResolvedValue(null),
         },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )

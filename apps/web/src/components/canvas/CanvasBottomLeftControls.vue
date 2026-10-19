@@ -40,12 +40,6 @@ const typeLabels: Record<string, string> = {
   image: '图片',
   video: '视频',
   audio: '音频',
-  sceneComposer: '导演台',
-  mediaInput: '媒体输入',
-  videoComposition: '视频合成',
-  worldModel: '3D World',
-  shot: '分镜',
-  group: '分组',
   prompt: '提示词',
 }
 

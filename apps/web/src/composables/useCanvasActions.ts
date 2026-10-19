@@ -171,6 +171,8 @@ export function flowToCanvasData(
   extras?: {
     compositionRunGroup?: CanvasData['compositionRunGroup']
     previousCanvas?: Pick<CanvasData, 'compositionRunGroup'>
+    /** 2026-10-20 分组侧车（分组不再是节点，单列一份随画布落库）。 */
+    groups?: CanvasData['groups']
   },
 ): CanvasData {
   const ids = new Set(nodes.map((n) => n.id))
@@ -195,12 +197,17 @@ export function flowToCanvasData(
   if (group) {
     data.compositionRunGroup = group
   }
+  // 分组侧车：只在非空时落库（空画布不写空数组，保持旧 payload 形状）。
+  if (extras?.groups && extras.groups.length > 0) {
+    data.groups = extras.groups
+  }
   return data
 }
 
 export type CanvasSaveExtras = {
   compositionRunGroup?: CanvasData['compositionRunGroup']
   previousCanvas?: Pick<CanvasData, 'compositionRunGroup'>
+  groups?: CanvasData['groups']
 }
 
 /** Prefer in-memory extras; if both are empty, keep a server-side compositionRunGroup. */
@@ -208,10 +215,12 @@ export function extrasForCanvasSave(input: {
   current?: CanvasData['compositionRunGroup'] | null
   lastKnown?: CanvasData['compositionRunGroup'] | null
   server?: CanvasData['compositionRunGroup'] | null
+  groups?: CanvasData['groups'] | null
 }): CanvasSaveExtras {
   const extras: CanvasSaveExtras = {}
   if (input.current) extras.compositionRunGroup = input.current
   const previous = input.lastKnown ?? input.server ?? undefined
   if (previous) extras.previousCanvas = { compositionRunGroup: previous }
+  if (input.groups && input.groups.length > 0) extras.groups = input.groups
   return extras
 }

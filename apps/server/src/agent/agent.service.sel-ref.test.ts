@@ -16,7 +16,6 @@ describe('AgentService selectionRefEnabled（R-S9 开关）', () => {
     process.env.PI_RUNTIME_MODE = 'active'
     service = new AgentService(
       { agentMessage: { create: vi.fn(), findMany: vi.fn().mockResolvedValue([]) } } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )

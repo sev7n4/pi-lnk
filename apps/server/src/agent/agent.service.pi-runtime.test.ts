@@ -68,7 +68,6 @@ describe('AgentService pi-runtime switch (B4)', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -805,7 +804,6 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
       {
@@ -1302,7 +1300,6 @@ describe('AgentService B-2 ruleGroups + minors', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
       { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
@@ -1356,7 +1353,6 @@ describe('AgentService B-2 ruleGroups + minors', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
       { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
@@ -1405,7 +1401,6 @@ describe('AgentService B-2 ruleGroups + minors', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
       { getCanvasSummary: vi.fn().mockResolvedValue({ nodes: [] }) } as never,
@@ -1427,7 +1422,6 @@ describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
   function createService() {
     return new AgentService(
       {} as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -1514,7 +1508,6 @@ describe('AgentService.steerPiRun（2026-10-02 steering/followUp 双模式闭环
   function createService() {
     return new AgentService(
       {} as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -1603,7 +1596,6 @@ describe('T1 多模态直通组装（Nest → pi-runtime prompt 顶层 images）
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -1718,7 +1710,6 @@ describe('Q2 落库 content 归一化（finalizeTurn 实际写库值）', () => 
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -1801,7 +1792,6 @@ describe('svg_card 落库 executionEvents（刷新恢复通道）', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -2004,7 +1994,6 @@ describe('SEL-REF · C2：旧客户端 focusNodeId 的迁移期回落', () => {
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
@@ -2103,7 +2092,6 @@ describe('SEL-REF · C1：selection_binding 事件只在真注入时下发', () 
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
-      { create: vi.fn() } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
       {

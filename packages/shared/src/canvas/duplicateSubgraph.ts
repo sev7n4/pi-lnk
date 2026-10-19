@@ -1,5 +1,3 @@
-import { getGroupChildIds } from './groupChildIds'
-
 export interface DuplicateCanvasNode {
   id: string
   type?: string
@@ -58,16 +56,9 @@ function defaultCreateNodeId(type: string): string {
   return `${type}-dup-${Date.now()}-${duplicateCounter}`
 }
 
-function expandGroupClosure(nodes: DuplicateCanvasNode[], ids: string[]): string[] {
-  const set = new Set(ids)
-  for (const id of [...set]) {
-    const node = nodes.find((entry) => entry.id === id)
-    if (node?.type !== 'group') continue
-    for (const childId of getGroupChildIds(nodes, id)) {
-      set.add(childId)
-    }
-  }
-  return [...set]
+function expandGroupClosure(_nodes: DuplicateCanvasNode[], ids: string[]): string[] {
+  // 分组节点已下线（2026-10-19），不再展开子节点闭包。
+  return [...new Set(ids)]
 }
 
 export function resolveDuplicateSourceIds(
@@ -114,20 +105,6 @@ export function sanitizeNodeDataForDuplicate(
   return next
 }
 
-function remapGroupChildIds(
-  data: Record<string, unknown>,
-  idMap: Map<string, string>,
-): Record<string, unknown> {
-  const childIds = data.childIds
-  if (!Array.isArray(childIds)) return data
-  return {
-    ...data,
-    childIds: childIds
-      .map((id) => (typeof id === 'string' ? idMap.get(id) ?? id : id))
-      .filter((id): id is string => typeof id === 'string'),
-  }
-}
-
 export function duplicateSubgraph(
   nodes: DuplicateCanvasNode[],
   edges: DuplicateCanvasEdge[],
@@ -162,26 +139,10 @@ export function duplicateSubgraph(
         x: node.position.x + offset.x,
         y: node.position.y + offset.y,
       },
-      data:
-        node.type === 'group'
-          ? remapGroupChildIds(sanitized, idMap)
-          : sanitized,
+      data: sanitized,
       ...(remappedParent ? { parentNode: remappedParent } : {}),
       selected: false,
     })
-  }
-
-  // Second pass: ensure group childIds only reference copied children
-  for (const node of newNodes) {
-    if (node.type !== 'group') continue
-    const data = node.data as { childIds?: string[] }
-    if (!Array.isArray(data.childIds)) continue
-    node.data = {
-      ...data,
-      childIds: data.childIds.filter((childId) =>
-        newNodes.some((copy) => copy.id === childId),
-      ),
-    }
   }
 
   const newEdges: DuplicateCanvasEdge[] = []

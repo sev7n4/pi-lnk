@@ -321,7 +321,9 @@ describe('applyDelta extras', () => {
         {
           key: 'scene',
           title: '场景',
-          type: 'sceneComposer',
+          // 运行时脏数据：非 planner 类型（sceneComposer 已于 2026-10-19 下线，
+          // 类型层已收窄，这里用 cast 模拟老数据 / 外部脏输入 ⇒ 仍须被 strip）。
+          type: 'sceneComposer' as unknown as 'video',
           role: 'downstream',
           dependsOn: ['product_turnaround'],
           autoGenerate: false,

@@ -43,11 +43,3 @@ export async function fileToPersistedPayload(
   }
   return payload
 }
-
-export type MediaInputKind = 'image' | 'video' | 'audio'
-
-export function inferMediaInputKind(mimeType: string, url: string): MediaInputKind {
-  if (mimeType.startsWith('video/') || /\.(mp4|webm|mov)(\?|$)/i.test(url)) return 'video'
-  if (mimeType.startsWith('audio/') || /\.(mp3|wav|ogg|m4a)(\?|$)/i.test(url)) return 'audio'
-  return 'image'
-}

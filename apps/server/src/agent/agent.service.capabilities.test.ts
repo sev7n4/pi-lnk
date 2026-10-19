@@ -16,7 +16,6 @@ const CAPABILITY_ENV_KEYS = [...OBJECT_STORAGE_ENV_KEYS] as const
 function createAgentService() {
   return new AgentService(
     {} as never,
-    { create: vi.fn() } as never,
     { createFromAgent: vi.fn() } as never,
     { resolveForGeneration: vi.fn() } as never,
   )

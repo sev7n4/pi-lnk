@@ -5,7 +5,7 @@ type CanvasNodeLike = {
   data?: { url?: string; coverUrl?: string }
 }
 
-const MEDIA_NODE_TYPES = new Set(['image', 'video', 'mediaInput', 'shot'])
+const MEDIA_NODE_TYPES = new Set(['image', 'video'])
 
 export function extractSessionCover(session: Session): { url: string; kind: 'image' | 'video' } | null {
   const nodes = (session.canvasData?.nodes ?? []) as CanvasNodeLike[]
