@@ -74,6 +74,7 @@ import MobileMultiSelectBar from '@/components/mobile/MobileMultiSelectBar.vue'
 import MobileCanvasCreateFab from '@/components/mobile/MobileCanvasCreateFab.vue'
 import MobileCreateSheet from '@/components/mobile/MobileCreateSheet.vue'
 import MobileTaskSheet from '@/components/mobile/MobileTaskSheet.vue'
+import MobileSaveStatus from '@/components/mobile/MobileSaveStatus.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
 import AccountPanel from '@/components/account/AccountPanel.vue'
 import UsagePanel from '@/components/usage/UsagePanel.vue'
@@ -299,6 +300,8 @@ const agentReadOnly = computed(
   () => !!auth.user?.id && !!sessionOwnerId.value && auth.user.id !== sessionOwnerId.value,
 )
 const saving = ref(false)
+/** PR4（I-8）：上次保存完成时间，供移动端自动保存状态行显示「已保存 HH:mm」 */
+const lastSavedAt = ref<number | null>(null)
 const showPublish = ref(false)
 const showModelSettings = ref(false)
 const contextMenu = ref<{
@@ -4274,6 +4277,9 @@ async function saveCanvas() {
       title: sessionTitle.value,
       canvasData,
     })
+    // PR4（I-8）：状态行显示「已保存 HH:mm」。只在真正落库成功后打点——
+    // 失败路径（含 demo mode 吞异常）不打点，否则会显示一个假的成功时间。
+    lastSavedAt.value = Date.now()
   } catch {
     // demo mode
   } finally {
@@ -5155,13 +5161,17 @@ onUnmounted(() => {
             />
           </Panel>
 
-          <!-- IA v3.1：移动端画布页签顶部胶囊——小地图 + 缩放 + 适应（顶栏正下方） -->
+          <!-- IA v3.1：移动端画布页签顶部胶囊——小地图 + 缩放 + 适应（顶栏正下方）。
+     PR4：小地图开关改走画布设置 minimapExpanded（与 PC 同源、跨端一致、随设置持久化）。 -->
           <Panel
             v-if="isMobileLayout && mobileAppTab === 'canvas'"
             position="top-right"
             class="canvas-panel-mobile-top"
           >
-            <MobileCanvasTopControls />
+            <MobileCanvasTopControls
+              :minimap-expanded="viewportSettings.minimapExpanded"
+              @toggle-minimap="cycleMinimap"
+            />
           </Panel>
         </VueFlow>
 
@@ -5348,11 +5358,20 @@ onUnmounted(() => {
       @open-drawer="agentRailRef?.openSessionDrawer()"
       @new-chat="agentRailRef?.newAgentSession()"
       @open-history="agentRailRef?.openThreadHistory()"
-      @save="saveCanvas"
+      @storyboard="showStoryboard = true"
       @publish="openPublish"
       @import-workflow="openWorkflowImportPicker"
       @export-workflow="handleExportPack([], 'full_package')"
+      @export-workflow-light="handleExportPack([], 'lightweight')"
       @open-tasks="showMobileTaskSheet = true"
+    />
+    <!-- PR4（I-8）：自动保存状态行——替掉顶栏「保存画布」菜单项，如实告知保存中/上次时间；
+         点按仍可手动存一次（能力不删，只是不再占菜单一位）。 -->
+    <MobileSaveStatus
+      v-if="isMobileLayout && mobileAppTab === 'canvas' && !mobileMultiSelectActive"
+      :saving="saving"
+      :saved-at="lastSavedAt"
+      @save="saveCanvas"
     />
     <DiscoverPane
       v-if="isMobileLayout && mobileAppTab === 'discover'"

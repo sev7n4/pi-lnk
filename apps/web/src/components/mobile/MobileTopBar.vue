@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /** 移动端应用骨架 · 顶栏（2026-10-19 IA v3.2 对话驱动叙事）：
  * 【对话】页签 = [≡ 左上·项目抽屉] [积分] [+ 新对话] [🕘 历史对话]（右侧）；
- * 【画布】页签 = [积分] [⋯ 画布管理菜单（任务动态项：有任务才出现，见 D-2 入口收敛）]；
+ * 【画布】页签 = [积分] [⋯ 画布管理菜单（任务动态项：有任务才出现；PR4 起按频次重排，
+ *   「保存画布」移除改自动保存状态行，导出带二级）]；
  * 【发现】【我的】= 透明占位（保持 --lnk-topbar-h 高度一致，不放任何入口）。
  * 2026-10-19 用户裁决：顶栏「未命名画布」标题输入整体移除——对话驱动叙事下
  * 顶栏不放画布名；项目重命名入口在抽屉项目卡片菜单。
@@ -24,17 +25,19 @@ const emit = defineEmits<{
   'open-drawer': []
   'new-chat': []
   'open-history': []
-  save: []
   storyboard: []
   publish: []
   'import-workflow': []
   'export-workflow': []
+  /** PR4：导出二级——轻量包（不含媒体） */
+  'export-workflow-light': []
   'open-tasks': []
 }>()
 
 const auth = useAuthStore()
 
 const menuOpen = ref(false)
+const exportOpen = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
 
 const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
@@ -51,22 +54,25 @@ const showPoints = computed(() => auth.isLoggedIn)
 
 function closeMenu() {
   menuOpen.value = false
+  exportOpen.value = false
 }
 
 useClickOutside(menuRef, closeMenu)
 
 function toggleMenu() {
   menuOpen.value = !menuOpen.value
+  if (!menuOpen.value) exportOpen.value = false
 }
 
-function onMenuItem(action: 'save' | 'storyboard' | 'publish' | 'import' | 'export' | 'task') {
+function onMenuItem(action: 'storyboard' | 'publish' | 'import' | 'export' | 'export-light' | 'task') {
   menuOpen.value = false
-  if (action === 'save') emit('save')
-  else if (action === 'storyboard') emit('storyboard')
+  exportOpen.value = false
+  if (action === 'storyboard') emit('storyboard')
   else if (action === 'publish') emit('publish')
   else if (action === 'import') emit('import-workflow')
-  else if (action === 'task') emit('open-tasks')
-  else emit('export-workflow')
+  else if (action === 'export') emit('export-workflow')
+  else if (action === 'export-light') emit('export-workflow-light')
+  else emit('open-tasks')
 }
 
 onMounted(() => {
@@ -169,11 +175,28 @@ onUnmounted(() => {
           >
             {{ taskItemLabel }}
           </button>
-          <button type="button" class="bar-menu-item" @click="onMenuItem('save')">保存画布</button>
-          <button type="button" class="bar-menu-item" @click="onMenuItem('storyboard')">分镜板</button>
+          <!-- PR4（设计 §4.1）：按移动频次重排 ——发布 / 分镜 / 导出（默认完整包，
+               轻量与媒体清单进二级）/ 导入；「保存画布」移除（移动端本就是自动保存，
+               状态行 MobileSaveStatus 如实告知，点按仍可手动存）。 -->
           <button type="button" class="bar-menu-item" @click="onMenuItem('publish')">发布作品</button>
+          <button type="button" class="bar-menu-item" @click="onMenuItem('storyboard')">分镜板</button>
+          <button
+            type="button"
+            class="bar-menu-item bar-menu-item--parent"
+            data-testid="bar-menu-export"
+            :aria-expanded="exportOpen"
+            @click.stop="exportOpen = !exportOpen"
+          >
+            <span>导出工作流</span>
+            <svg class="bar-menu-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          <div v-if="exportOpen" class="bar-menu-sub" data-testid="bar-menu-export-sub">
+            <button type="button" class="bar-menu-item" @click="onMenuItem('export')">完整工作流包</button>
+            <button type="button" class="bar-menu-item" @click="onMenuItem('export-light')">轻量包（不含媒体）</button>
+          </div>
           <button type="button" class="bar-menu-item" @click="onMenuItem('import')">导入工作流</button>
-          <button type="button" class="bar-menu-item" @click="onMenuItem('export')">导出工作流</button>
         </div>
       </div>
     </div>
@@ -349,6 +372,8 @@ onUnmounted(() => {
   width: 100%;
   min-height: var(--lnk-touch-target);
   align-items: center;
+  justify-content: space-between;
+  gap: var(--lnk-space-2);
   padding: 0 14px;
   border: none;
   background: transparent;
@@ -358,6 +383,20 @@ onUnmounted(() => {
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* 导出二级：缩进 + 左侧细线，视觉上从属于父项（PR4） */
+.bar-menu-sub {
+  margin: 2px 0 2px 10px;
+  padding-left: 6px;
+  border-left: 1px solid var(--lnk-border-subtle);
+}
+
+.bar-menu-chevron {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--lnk-text-muted);
 }
 
 .bar-menu-item:active {

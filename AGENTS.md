@@ -35,6 +35,26 @@
 **改这些章节名必须同步改引用方**，否则静默断链。`pnpm verify-claims` 会校验这一点
 （判据 2 扫的是**整个规范体系**，不只是本文件 —— 所以下沉到 `docs/agent/` 也算在位）。
 
+### 移动端呈现（改动 `apps/web` 移动端分支前必读，2026-10-20 PR4 立规）
+
+移动端画布页重构（方案 `docs/design/2026-10-19-mobile-canvas-ux-redesign.md`）落地后，
+「移动端要不要改」这个判断必须有据可依，否则会在 PC 组件里长出补丁式媒体查询。四条规则：
+
+1. **移动端编排只有一个所有者**：`components/mobile/` 下的壳层（`MobileCanvasShell`，PR5 落地）。
+   页面级组件（`CanvasPage.vue` 等）**不再新增** `isMobileLayout` 条件分支；移动端形态差异
+   收敛到壳边界。已有分支在 PR5 逐个搬迁，搬迁前改动要先问「这属于壳还是局部能力差异」。
+2. **组件内允许的只有局部响应式差异**（走 `useAgentMobileLayout()`），且**禁止在 PC 组件里
+   新增 767px media query 补丁**。现存三处是历史遗留（`DockStudioToolbar` 清位、
+   `CanvasRefPickOverlay`、`AgentSideRail`），随各自下次改动上收。
+3. **断点语义是二维的**：形态（`conversation / canvas-window / canvas-full`）× 能力集
+   （`longPress / hover / finePointer / keyboardHint`）。手势分流消费「形态」，触控降级消费
+   「能力集」。别把「视口窄」直接等同于「无 hover / 无键盘」——平板与折叠屏窗口会骗过单布尔判断。
+4. **新增移动端专用呈现必须落 `components/mobile/` 或 `*Mobile*` 命名**，与 PC 组件对望；
+   抽壳之前先确认它不是「壳的编排逻辑」（那种应该进壳，而不是新组件）。
+
+配套判据：`CanvasPage.gestureWiring.test.ts`（手势单一出处）、`CanvasPage.mobileEntryWiring.test.ts`
+（入口收敛）、`CanvasPage.mobileSelectionWiring.test.ts`（多选接线）三份静态契约把上述规则钉在代码里。
+
 ## 项目目标
 
 **打造以 `pi-agent-core` 为内核的 canvas agent，驱动画布的超创平台 lnk π。**
