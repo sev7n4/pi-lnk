@@ -51,4 +51,17 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
     expect(sfc).toContain('mobileThreadHistoryOpen.value) closeThreadHistory()')
     expect(sfc).toContain('sessionDrawerOpen.value) closeSessionDrawer()')
   })
+
+  it('发现/我的页签：贴底容器（Teleport 到 body）自身隐藏，整页不得盖住页签页', () => {
+    // 回归 2026-10-20：dialog 的 aside hidden 管不到 Teleport 内容，z 又高于 main.z-10，
+    // 从对话/画布切到发现/我的会整页覆盖或裸露状态行。由容器自身 v-show 收口。
+    expect(sfc).toContain('v-show="open && !railHiddenByTab"')
+    expect(sfc).toContain('mobileAppTab === \'discover\' || props.mobileAppTab === \'mine\'')
+  })
+
+  it('画布视图：收口状态行与对话 chrome 一律不同屏', () => {
+    // 回归 2026-10-20：隐藏清单曾漏 .agent-turn-status，导致画布（尤其 imm）状态行裸露。
+    const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-turn-status')
+    expect(block).toContain('display: none')
+  })
 })
