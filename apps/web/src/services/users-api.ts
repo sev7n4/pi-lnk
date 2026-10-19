@@ -43,6 +43,15 @@ export function membershipLabel(id?: string | null): string {
   return MEMBERSHIP_LABELS.free
 }
 
+/**
+ * 「订阅口径」档位文案：**免费版不是套餐**，未订阅时一律说「未订阅」。
+ * 套餐页头部 / 我的订阅卡 / 我的页订阅行都用它，避免出现「当前套餐：免费版」这种
+ * 把默认档当套餐说的错位措辞。
+ */
+export function subscriptionLabel(id?: string | null): string {
+  return id && id !== 'free' && MEMBERSHIP_LABELS[id] ? MEMBERSHIP_LABELS[id] : '未订阅'
+}
+
 export type PointsRangeKey = '7d' | 'month' | 'all'
 export type PointKind = 'consume' | 'refund' | 'grant'
 export type PointCategory = 'text' | 'image' | 'audio' | 'video' | 'other'
@@ -128,7 +137,8 @@ export interface UsageDaysResponse {
 
 export const membershipApi = {
   getPlans: () => api.get<{ data: MembershipPlan[] }>('/membership/plans'),
-  getPoints: () => api.get<{ data: { points: number; membership: string } }>('/membership/points'),
+  getPoints: () =>
+    api.get<{ data: { points: number; membership: string; claimedToday: boolean } }>('/membership/points'),
   claimDaily: () => api.post<{ data: { points: number; added: number } }>('/membership/claim-daily'),
   upgrade: (plan: string) => api.post<{ data: { membership: string; points: number } }>('/membership/upgrade', { plan }),
   /// 退订当前套餐（一个用户同时只持有一个套餐 → 换购前必须先退订）。

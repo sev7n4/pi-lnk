@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import MembershipModal from './MembershipModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { MembershipPlan } from '@/services/users-api'
@@ -16,8 +16,8 @@ const PLANS_FIXTURE = vi.hoisted((): MembershipPlan[] => [
   { id: 'flagship', name: '旗舰版', points: 70000, price: 499, basic: 25000, bonus: 45000, features: ['每日 100 积分', '优先队列'] },
 ])
 
-/// 可变测试状态：当前档位 / 积分，按用例改写。
-const state = vi.hoisted(() => ({ membership: 'premium', points: 116365 }))
+/// 可变测试状态：当前档位 / 积分 / 今日是否已签到，按用例改写。
+const state = vi.hoisted(() => ({ membership: 'premium', points: 116365, claimedToday: false }))
 
 const paymentMocks = vi.hoisted(() => ({
   createSubscriptionOrder: vi.fn(async () => ({ data: { data: { orderId: 'o1', qrCode: 'qr-x' } } })),
@@ -32,12 +32,17 @@ const membershipMocks = vi.hoisted(() => ({
 vi.mock('@/services/users-api', () => ({
   membershipApi: {
     getPlans: vi.fn(async () => ({ data: { data: PLANS_FIXTURE } })),
-    getPoints: vi.fn(async () => ({ data: { data: { points: state.points, membership: state.membership } } })),
-    claimDaily: vi.fn(),
+    getPoints: vi.fn(async () => ({
+      data: { data: { points: state.points, membership: state.membership, claimedToday: state.claimedToday } },
+    })),
+    claimDaily: vi.fn(async () => ({ data: { data: { points: state.points + 100, added: 100 } } })),
     upgrade: vi.fn(),
     cancelSubscription: membershipMocks.cancelSubscription,
   },
   membershipLabel: vi.fn((id?: string) => PLANS_FIXTURE.find((p) => p.id === id)?.name ?? '免费版'),
+  subscriptionLabel: vi.fn(
+    (id?: string) => (id && id !== 'free' ? PLANS_FIXTURE.find((p) => p.id === id)?.name : undefined) ?? '未订阅',
+  ),
 }))
 
 vi.mock('@/services/payment-api', () => ({
@@ -86,7 +91,17 @@ beforeEach(() => {
   paymentMocks.createSubscriptionOrder.mockClear()
   membershipMocks.cancelSubscription.mockClear()
   state.points = 116365
+  state.claimedToday = false
 })
+
+/// Toast 反馈是锁定/当前档点击的唯一可见反馈（底部小字太隐蔽），统一打桩断言。
+function spyMessage() {
+  return {
+    warning: vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never),
+    info: vi.spyOn(ElMessage, 'info').mockImplementation(() => undefined as never),
+    success: vi.spyOn(ElMessage, 'success').mockImplementation(() => undefined as never),
+  }
+}
 
 describe('MembershipModal', () => {
   it('enables append-to-body so canvas chrome cannot trap dialog clicks', () => {
@@ -194,7 +209,8 @@ describe('MembershipModal', () => {
     wrapper.unmount()
   })
 
-  it('点击需退订的卡片：给出提示+抖动，且不产生订单', async () => {
+  it('点击需退订的卡片：Toast 明确提示 + 抖动，且不产生订单', async () => {
+    const msg = spyMessage()
     const wrapper = mountAs('premium')
     await flushPromises()
 
@@ -204,15 +220,20 @@ describe('MembershipModal', () => {
 
     expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
     expect(wrapper.find('.pay-head').exists()).toBe(false)
-    // 关键回归：必须指向「先退订」而不是静默无反应
-    expect(wrapper.find('.msg').text()).toContain('需先退订')
-    expect(wrapper.find('.msg').text()).toContain('高级版')
+    // 关键回归：反馈必须显著——Toast 文案点明「需先退订 + 当前档 + 单套餐规则」
+    expect(msg.warning).toHaveBeenCalledTimes(1)
+    const text = String(msg.warning.mock.calls[0][0])
+    expect(text).toContain('标准版')
+    expect(text).toContain('需先退订')
+    expect(text).toContain('高级版')
+    expect(text).toContain('只能持有一个套餐')
     expect(standard.classes()).toContain('is-nudge')
 
     wrapper.unmount()
   })
 
-  it('点击当前档卡片：提示正在使用，不产生订单', async () => {
+  it('点击当前档卡片：Toast 提示正在使用，不产生订单', async () => {
+    const msg = spyMessage()
     const wrapper = mountAs('premium')
     await flushPromises()
 
@@ -221,12 +242,14 @@ describe('MembershipModal', () => {
     await flushPromises()
 
     expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
-    expect(wrapper.find('.msg').text()).toContain('正在使用该套餐')
+    expect(msg.info).toHaveBeenCalledTimes(1)
+    expect(String(msg.info.mock.calls[0][0])).toContain('高级版')
 
     wrapper.unmount()
   })
 
-  it('顶档（旗舰版）用户：每张卡都有反馈，全程零订单', async () => {
+  it('顶档（旗舰版）用户：每张卡都有 Toast 反馈，全程零订单', async () => {
+    const msg = spyMessage()
     const wrapper = mountAs('flagship')
     await flushPromises()
 
@@ -234,14 +257,57 @@ describe('MembershipModal', () => {
       const card = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === name)!
       await card.trigger('click')
       await flushPromises()
-      expect(wrapper.find('.msg').text()).toContain('需先退订')
     }
     const current = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === '旗舰版')!
     await current.trigger('click')
     await flushPromises()
-    expect(wrapper.find('.msg').text()).toContain('正在使用该套餐')
 
+    // 3 张锁定卡各 warn 一次 + 当前档 info 一次
+    expect(msg.warning).toHaveBeenCalledTimes(3)
+    expect(msg.info).toHaveBeenCalledTimes(1)
     expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('未订阅时头部说「未订阅」而不是「当前套餐：免费版」', async () => {
+    const wrapper = mountAs('free')
+    await flushPromises()
+
+    const head = wrapper.find('.hd-current').text()
+    expect(head).toContain('未订阅')
+    expect(head).not.toContain('免费版')
+    expect(wrapper.text()).not.toContain('免费版')
+
+    wrapper.unmount()
+  })
+
+  it('今日已领取：按钮显示终态且不可再点', async () => {
+    state.claimedToday = true
+    const wrapper = mountAs('free')
+    await flushPromises()
+
+    const claim = wrapper.find('.hd-claim')
+    expect(claim.text()).toContain('今日已领取')
+    expect(claim.classes()).toContain('is-claimed')
+    expect(claim.attributes('disabled')).toBeDefined()
+
+    wrapper.unmount()
+  })
+
+  it('领取成功：Toast 反馈 + 按钮切终态', async () => {
+    const msg = spyMessage()
+    const wrapper = mountAs('free')
+    await flushPromises()
+
+    expect(wrapper.find('.hd-claim').text()).toContain('领取 +100')
+    await wrapper.find('.hd-claim').trigger('click')
+    await flushPromises()
+
+    expect(msg.success).toHaveBeenCalledTimes(1)
+    expect(String(msg.success.mock.calls[0][0])).toContain('100')
+    expect(wrapper.find('.hd-claim').text()).toContain('今日已领取')
+
     wrapper.unmount()
   })
 
@@ -255,8 +321,9 @@ describe('MembershipModal', () => {
 
     expect(confirmSpy).toHaveBeenCalledTimes(1)
     expect(membershipMocks.cancelSubscription).toHaveBeenCalledTimes(1)
-    // 档位清空 → 头部显示免费版、退订入口消失
-    expect(wrapper.find('.hd-current').text()).toContain('免费版')
+    // 档位清空 → 头部说「未订阅」、退订入口消失
+    expect(wrapper.find('.hd-current').text()).toContain('未订阅')
+    expect(wrapper.find('.hd-current').text()).not.toContain('免费版')
     expect(wrapper.find('.hd-cancel').exists()).toBe(false)
     // 四档恢复可购买
     expect(wrapper.findAll('.plan-cta')).toHaveLength(4)
