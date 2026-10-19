@@ -20,7 +20,7 @@ vi.mock('@/components/canvas/CanvasAssetPanel.vue', () => ({
   default: {
     name: 'CanvasAssetPanelStub',
     emits: ['apply', 'add-to-agent'],
-    setup(_, { emit }) {
+    setup(_props: Record<string, unknown>, { emit }: { emit: (event: string, payload: unknown) => void }) {
       return () =>
         h(
           'button',

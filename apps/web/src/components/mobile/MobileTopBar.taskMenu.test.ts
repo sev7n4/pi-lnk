@@ -1,7 +1,7 @@
 // MobileTopBar 画布态 ⋯ 菜单任务动态项（2026-10-19 D-2 入口收敛）：
 // 无任务不出现；运行中/排队带计数；点按 emit open-tasks；对话页签永不出现。
 // 触控契约（菜单项 44px / bar-btn 隐形热区）走静态断言。
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { readFileSync } from 'node:fs'
