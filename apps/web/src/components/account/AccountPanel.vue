@@ -9,9 +9,10 @@
  *
  * 视觉：与 SubscriptionPanel / PointsPanel 同构（同一套卡片 + 令牌），保持风格一致。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
-import { subscriptionLabel } from '@/services/users-api'
+import { membershipApi, subscriptionLabel } from '@/services/users-api'
 import { BRAND_LOGO_URL } from '@/constants/brand'
 
 const auth = useAuthStore()
@@ -37,12 +38,74 @@ function formatDate(iso: string): string {
   ).padStart(2, '0')}`
 }
 const createdAt = computed(() => (auth.user?.createdAt ? formatDate(auth.user.createdAt) : '—'))
+
+/// ── 头像上传（最简实现）──
+const fileInput = ref<HTMLInputElement | null>(null)
+const uploading = ref(false)
+
+function pickAvatar() {
+  fileInput.value?.click()
+}
+
+async function onAvatarPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 允许连续选同一文件再次触发
+  if (!file || uploading.value) return
+  if (!file.type.startsWith('image/')) {
+    ElMessage.error('请选择图片文件')
+    return
+  }
+  uploading.value = true
+  try {
+    const dataUrl = await compressImage(file)
+    const { data } = await membershipApi.updateAvatar(dataUrl)
+    if (auth.user) auth.user.avatar = data.data.avatar ?? undefined
+    ElMessage.success('头像已更新')
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg ?? '头像上传失败，请重试')
+  } finally {
+    uploading.value = false
+  }
+}
+
+/**
+ * 压缩到 256×256 再上传：原图动辄几 MB，data URL 一次请求扛不住；
+ * 顺带统一输出 jpeg，避免把 HEIC 之类浏览器读不了的格式传上去。
+ */
+function compressImage(file: File, size = 256): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.onload = () => {
+      const img = new Image()
+      img.onerror = () => reject(new Error('图片解析失败'))
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = size
+        canvas.height = size
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return reject(new Error('canvas 不可用'))
+        const side = Math.min(img.width, img.height) // 居中裁剪成正方形，避免拉伸变形
+        ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size)
+        resolve(canvas.toDataURL('image/jpeg', 0.85))
+      }
+      img.src = String(reader.result)
+    }
+    reader.readAsDataURL(file)
+  })
+}
 </script>
 
 <template>
   <div class="acc-panel">
     <section class="acc-card acc-card--id">
-      <img :src="avatarUrl" alt="" class="acc-avatar" draggable="false">
+      <button type="button" class="acc-avatar-btn" :disabled="uploading" @click="pickAvatar">
+        <img :src="avatarUrl" alt="" class="acc-avatar" draggable="false">
+        <span class="acc-avatar-mask">{{ uploading ? '上传中' : '更换' }}</span>
+      </button>
+      <input ref="fileInput" type="file" accept="image/*" class="acc-file" @change="onAvatarPicked">
       <div class="acc-id-text">
         <p class="acc-name">{{ nickname }}</p>
         <p class="acc-sub">{{ maskedPhone }}</p>
@@ -83,9 +146,6 @@ const createdAt = computed(() => (auth.user?.createdAt ? formatDate(auth.user.cr
       </div>
     </section>
 
-    <p class="acc-note">
-      如需修改手机号或昵称，请联系官方客服（sev7nseason@outlook.com）处理。
-    </p>
   </div>
 </template>
 
@@ -111,6 +171,36 @@ const createdAt = computed(() => (auth.user?.createdAt ? formatDate(auth.user.cr
   flex-direction: row;
   align-items: center;
   gap: var(--lnk-space-3);
+}
+.acc-avatar-btn {
+  position: relative;
+  border: none;
+  padding: 0;
+  border-radius: var(--lnk-radius-full);
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 0;
+}
+.acc-avatar-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--lnk-text-2xs);
+  line-height: 1.2;
+  color: var(--lnk-text-on-accent);
+  background: rgb(0 0 0 / 45%);
+  opacity: 0;
+  transition: opacity var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.acc-avatar-btn:hover .acc-avatar-mask,
+.acc-avatar-btn:focus-visible .acc-avatar-mask {
+  opacity: 1;
+}
+.acc-file {
+  display: none;
 }
 .acc-avatar {
   width: 48px;
@@ -169,11 +259,5 @@ const createdAt = computed(() => (auth.user?.createdAt ? formatDate(auth.user.cr
 .acc-mono {
   font-family: var(--lnk-font-mono, ui-monospace, monospace);
   font-size: var(--lnk-text-2xs);
-}
-.acc-note {
-  margin: 0;
-  font-size: var(--lnk-text-2xs);
-  line-height: 1.8;
-  color: var(--lnk-text-muted);
 }
 </style>

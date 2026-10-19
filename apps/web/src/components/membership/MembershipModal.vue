@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { membershipApi, membershipLabel, subscriptionLabel, type MembershipPlan, type SubscriptionDto } from '@/services/users-api'
 import { paymentApi } from '@/services/payment-api'
 import { useAuthStore } from '@/stores/auth'
@@ -41,6 +41,70 @@ const selectedPlanId = ref('')
 /// 被点击但不可购买的档位 id（抖动反馈用，600ms 后自动清除）。
 const nudgePlanId = ref('')
 let nudgeTimer: number | undefined
+/// 退订请求进行中（防重复提交）。
+const canceling = ref(false)
+
+/** 优先透传后端 message（如渠道解约失败），兜底通用文案。 */
+function readApiError(err: unknown, fallback: string): string {
+  const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+  return typeof msg === 'string' && msg ? msg : fallback
+}
+
+/**
+ * 取消自动续费（≠ 立即退订）：停止未来续费，**当前周期内继续可用**，到期才失效。
+ * 服务端先渠道解约再改本地，失败时本地状态不动 —— 这里如实报错，不谎称已取消。
+ */
+async function confirmCancelAutoRenew() {
+  if (canceling.value || !subscription.value) return
+  const expiresAt = formatDate(subscription.value.periodEnd)
+  try {
+    await ElMessageBox.confirm(
+      `取消后「${membershipLabel(membership.value)}」在 ${expiresAt} 前仍可正常使用，到期后不再自动续费。`,
+      '确认取消自动续费？',
+      { confirmButtonText: '确认取消', cancelButtonText: '再想想', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  canceling.value = true
+  try {
+    await paymentApi.cancelAutoRenew()
+    await loadData()
+    ElMessage.success(`已取消自动续费，可使用至 ${expiresAt}`)
+  } catch (err) {
+    ElMessage.error(readApiError(err, '取消失败，请稍后重试'))
+  } finally {
+    canceling.value = false
+  }
+}
+
+/**
+ * 立即退订：放弃剩余权益、立刻回到未订阅 —— 「一个用户同时只持有一个套餐」的换购前置。
+ * 与取消自动续费分成两个按钮：前者保权益、后者换档位，合成一个会让用户误判损失。
+ */
+async function confirmCancelNow() {
+  if (canceling.value) return
+  const name = membershipLabel(membership.value)
+  try {
+    await ElMessageBox.confirm(
+      `退订后立即失去「${name}」权益，剩余周期不退款（积分保留）。退订后才能订购其它套餐。`,
+      '确认立即退订？',
+      { confirmButtonText: '确认退订', cancelButtonText: '再想想', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  canceling.value = true
+  try {
+    await membershipApi.cancelSubscription()
+    await loadData()
+    ElMessage.success('已退订，现在可以选择其它套餐')
+  } catch (err) {
+    ElMessage.error(readApiError(err, '退订失败，请稍后重试'))
+  } finally {
+    canceling.value = false
+  }
+}
 /// 今日每日签到是否已领取（按钮终态用，避免靠失败提示告知用户）。
 /// 当前订阅快照（到期时间/是否已取消续费），驱动「取消自动续期」的准确话术。
 const subscription = ref<SubscriptionDto | null>(null)
@@ -369,6 +433,30 @@ const ICONS: Record<string, string> = {
               <!-- 已持其它付费档：需先退订（一个用户同时只持有一个套餐） -->
               <span v-else class="plan-cta-locked">需先退订</span>
             </div>
+
+            <!--
+              当前套餐卡片底部的订阅管理入口（位置由用户截图裁决：随卡片走，不占头部）。
+              两个动作语义不同必须分开：取消自动续费=保权益到到期；立即退订=放弃剩余权益换购。
+              @click.stop 防止冒泡触发整卡下单。
+            -->
+            <div v-if="membership === plan.id" class="plan-manage">
+              <button
+                type="button"
+                class="plan-manage-btn"
+                :disabled="canceling"
+                @click.stop="confirmCancelAutoRenew"
+              >
+                {{ canceling ? '处理中…' : '取消自动续费' }}
+              </button>
+              <button
+                type="button"
+                class="plan-manage-btn plan-manage-btn--danger"
+                :disabled="canceling"
+                @click.stop="confirmCancelNow"
+              >
+                立即退订
+              </button>
+            </div>
           </article>
         </div>
 
@@ -542,6 +630,35 @@ const ICONS: Record<string, string> = {
     grid-template-columns: 1fr;
   }
 }
+.membership-dialog .plan-manage {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.membership-dialog .plan-manage-btn {
+  flex: 1 1 auto;
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-elevated);
+  padding: 6px 10px;
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.membership-dialog .plan-manage-btn:hover:not(:disabled) {
+  color: var(--lnk-text-primary);
+  border-color: var(--lnk-border-strong);
+}
+.membership-dialog .plan-manage-btn--danger {
+  color: var(--lnk-danger, var(--lnk-text-secondary));
+}
+.membership-dialog .plan-manage-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .membership-dialog .plan {
   position: relative;
   display: flex;

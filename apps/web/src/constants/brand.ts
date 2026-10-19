@@ -9,6 +9,7 @@ export const TERMS_PATH = '/terms'
 export const PRIVACY_PATH = '/privacy'
 /**
  * 官网地址（移动端「进入官方」入口）。
- * ⚠️ 仓库内无权威来源，此处取文档中出现过的域名；如与实际官网不符，改这一行即可。
+ * ⛔ 暂留空：地址尚未确定，先做**预留** —— 留空时点击提示「官网即将上线」，
+ * 不用占位域名把人导向 404。定下来后填这里即可，调用方无需改动。
  */
-export const OFFICIAL_SITE_URL = 'https://www.lnkpi.net'
+export const OFFICIAL_SITE_URL = ''

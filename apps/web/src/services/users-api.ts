@@ -173,6 +173,8 @@ export const membershipApi = {
     api.post<{ data: { membership: string; points: number; changed: boolean } }>('/membership/cancel-subscription'),
   /// 订阅快照：当前档位 / 周期 / 到期 / 是否已取消续期。
   getSubscription: () => api.get<{ data: SubscriptionDto | null }>('/membership/subscription'),
+  /// 上传/替换头像：前端压缩后的 data URL（png/jpeg/webp）。
+  updateAvatar: (dataUrl: string) => api.post<{ data: { avatar: string | null } }>('/auth/avatar', { dataUrl }),
   /// 积分按池分解（多池记账）。后端早已提供，此前前端零封装。
   pointsBreakdown: () => api.get<{ data: PointsBreakdown }>('/membership/points-breakdown'),
   /// 取消自动续期（当前周期内仍可用，到期后失效）。

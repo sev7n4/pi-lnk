@@ -4,6 +4,7 @@
  * （点击展开二级卡片：外观 + 模型配置，后续二级项在此追加）/ 进入官方 / 退出登录。
  * 砍：成长计划、券码、下载电脑版、关注服务号（本项目不存在）。 */
 import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import TopupModal from '@/components/membership/TopupModal.vue'
@@ -33,8 +34,15 @@ const showTopup = ref(false)
 /** 设置二级卡片展开态（后续二级项在此追加） */
 const settingsOpen = ref(false)
 
-/** 进入官方：新窗口打开官网，避免用户离开当前创作上下文 */
+/**
+ * 进入官方：官网地址尚未确定（OFFICIAL_SITE_URL 预留为空）。
+ * 留空时如实提示「即将上线」，不用占位域名把人导向 404；地址定下来后直接生效。
+ */
 function openOfficialSite() {
+  if (!OFFICIAL_SITE_URL) {
+    ElMessage.info('官网即将上线')
+    return
+  }
   window.open(OFFICIAL_SITE_URL, '_blank', 'noopener,noreferrer')
 }
 </script>
@@ -89,8 +97,9 @@ function openOfficialSite() {
       </button>
     </div>
 
-    <!-- 设置：一级卡片 → 展开二级卡片（2026-10-19 用户裁决；后续二级项在此追加） -->
-    <div class="row-group">
+    <!-- 设置：一级卡片 → 展开二级卡片（2026-10-19 用户裁决；后续二级项在此追加）。
+         账号相关设置，仅登录后可见 —— 登出后不应出现（用户裁决）。 -->
+    <div v-if="auth.isLoggedIn" class="row-group">
       <button
         type="button"
         class="row-item"
@@ -124,8 +133,8 @@ function openOfficialSite() {
       </div>
     </div>
 
-    <div class="row-group">
-      <!-- 进入官方（2026-10-19 用户裁决：原「返回工作台」改为跳转官网主页） -->
+    <div v-if="auth.isLoggedIn" class="row-group">
+      <!-- 进入官方（2026-10-19 用户裁决：原「返回工作台」改为官网入口，地址预留中） -->
       <button type="button" class="row-item" @click="openOfficialSite">
         <span class="row-label">进入官方</span>
         <svg class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">

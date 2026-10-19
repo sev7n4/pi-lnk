@@ -1,18 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TopupModal from '@/components/membership/TopupModal.vue'
-import UsageDayTable from '@/components/usage/UsageDayTable.vue'
-import UsageHeatmap from '@/components/usage/UsageHeatmap.vue'
-import UsageOverviewCards from '@/components/usage/UsageOverviewCards.vue'
-import UsageTrend from '@/components/usage/UsageTrend.vue'
+import UsagePanel from '@/components/usage/UsagePanel.vue'
 import { useAuthStore } from '@/stores/auth'
-import { membershipApi, subscriptionLabel } from '@/services/users-api'
+import { subscriptionLabel } from '@/services/users-api'
 import { api } from '@/services/api'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { BRAND_LOGO_URL } from '@/constants/brand'
 import type { User } from '@lnkpi/shared'
-import type { UsageDaysResponse, UsageOverviewResponse, UsageTrendRangeKey } from '@/services/users-api'
 
 const router = useRouter()
 const route = useRoute()
@@ -36,38 +32,8 @@ function closeProfile() {
 }
 
 const profile = ref<User | null>(null)
-const usage = ref<UsageOverviewResponse | null>(null)
-const usageDays = ref<UsageDaysResponse | null>(null)
-const usageAllDays = ref<UsageDaysResponse | null>(null)
-const usageRange = ref<UsageTrendRangeKey>('7d')
-const usageError = ref('')
-const daysError = ref('')
-const allDaysError = ref('')
-const usageLoading = ref(false)
-const daysLoading = ref(false)
-const allDaysLoading = ref(false)
 const showTopup = ref(false)
 const inviteCopied = ref(false)
-
-/** Independent generations; stale overview / days responses are discarded. */
-let usageFetchGeneration = 0
-let daysFetchGeneration = 0
-let allDaysFetchGeneration = 0
-
-function bumpUsageFetchGeneration() {
-  usageFetchGeneration += 1
-  return usageFetchGeneration
-}
-
-function bumpDaysFetchGeneration() {
-  daysFetchGeneration += 1
-  return daysFetchGeneration
-}
-
-function bumpAllDaysFetchGeneration() {
-  allDaysFetchGeneration += 1
-  return allDaysFetchGeneration
-}
 
 /// 账号徽章同样用订阅口径：免费版不是套餐，未订阅一律说「未订阅」。
 const membershipLabel = computed(() => subscriptionLabel(profile.value?.membership))
@@ -93,78 +59,6 @@ async function copyInvite() {
   }
 }
 
-async function loadUsage() {
-  const gen = bumpUsageFetchGeneration()
-  usageLoading.value = true
-  usageError.value = ''
-  try {
-    const response = await membershipApi.usage()
-    if (gen !== usageFetchGeneration) return
-    usage.value = response.data.data
-  } catch {
-    if (gen !== usageFetchGeneration) return
-    usageError.value = '用量总览加载失败，请稍后重试'
-  } finally {
-    if (gen === usageFetchGeneration) {
-      usageLoading.value = false
-    }
-  }
-}
-
-async function loadUsageDays() {
-  const gen = bumpDaysFetchGeneration()
-  daysLoading.value = true
-  daysError.value = ''
-  try {
-    const response = await membershipApi.usageDays(usageRange.value)
-    if (gen !== daysFetchGeneration) return
-    usageDays.value = response.data.data
-  } catch {
-    if (gen !== daysFetchGeneration) return
-    daysError.value = '用量趋势加载失败，请稍后重试'
-  } finally {
-    if (gen === daysFetchGeneration) {
-      daysLoading.value = false
-    }
-  }
-}
-
-async function loadUsageAllDays() {
-  const gen = bumpAllDaysFetchGeneration()
-  allDaysLoading.value = true
-  allDaysError.value = ''
-  try {
-    const response = await membershipApi.usageDays('all')
-    if (gen !== allDaysFetchGeneration) return
-    usageAllDays.value = response.data.data
-  } catch {
-    if (gen !== allDaysFetchGeneration) return
-    allDaysError.value = '用量明细加载失败，请稍后重试'
-  } finally {
-    if (gen === allDaysFetchGeneration) {
-      allDaysLoading.value = false
-    }
-  }
-}
-
-const daysViewLoading = computed(
-  () => daysLoading.value || (!usageDays.value && !daysError.value),
-)
-
-const allDaysViewLoading = computed(
-  () => allDaysLoading.value || (!usageAllDays.value && !allDaysError.value),
-)
-
-const tableTotals = computed(() => ({
-  generationCount: usage.value?.overview.generationCount ?? 0,
-  netConsumed: usage.value?.overview.netConsumedTotal ?? 0,
-  byCategory: usage.value?.overview.byCategory ?? { text: 0, image: 0, audio: 0, video: 0 },
-}))
-
-const usageViewLoading = computed(
-  () => usageLoading.value || (!usage.value && !usageError.value),
-)
-
 async function loadProfile() {
   try {
     const { data } = await api.get<{ data: User }>('/auth/profile')
@@ -175,31 +69,12 @@ async function loadProfile() {
   }
 }
 
-function loadBillingUsage() {
-  void loadUsage()
-  void loadUsageDays()
-  void loadUsageAllDays()
-}
-
-watch(activeTab, (tab) => {
-  if (tab === 'billing') {
-    loadBillingUsage()
-  }
-})
-
-watch(usageRange, () => {
-  void loadUsageDays()
-})
-
 onMounted(() => {
   if (!auth.isLoggedIn) {
     auth.openLogin()
     return
   }
   void loadProfile()
-  if (activeTab.value === 'billing') {
-    loadBillingUsage()
-  }
 })
 </script>
 
@@ -299,45 +174,8 @@ onMounted(() => {
       </section>
     </div>
 
-    <div v-if="activeTab === 'billing'" class="space-y-4">
-      <div v-if="usageError" class="rounded-2xl border border-danger-border p-6 text-sm text-danger">
-        {{ usageError }}
-        <button type="button" class="ml-2 underline" @click="loadUsage">重新加载</button>
-      </div>
-      <UsageOverviewCards v-else-if="usage" :overview="usage.overview" />
-      <div v-else class="h-28 animate-pulse rounded-2xl bg-overlay/5" />
-
-      <UsageHeatmap
-        v-if="usage && !usageError"
-        :from="usage.heatmap.from"
-        :to="usage.heatmap.to"
-        :active-days="usage.heatmap.activeDays"
-        :days="usage.heatmap.days"
-      />
-      <div v-else-if="usageViewLoading" class="h-48 animate-pulse rounded-2xl bg-overlay/5" />
-
-      <div v-if="daysError" class="rounded-2xl border border-danger-border p-6 text-sm text-danger">
-        {{ daysError }}
-        <button type="button" class="ml-2 underline" @click="loadUsageDays">重新加载</button>
-      </div>
-      <UsageTrend
-        v-else
-        :range="usageRange"
-        :days="usageDays?.days ?? []"
-        :loading="daysViewLoading"
-        @update:range="usageRange = $event"
-      />
-
-      <div v-if="allDaysError" class="rounded-2xl border border-danger-border p-6 text-sm text-danger">
-        {{ allDaysError }}
-        <button type="button" class="ml-2 underline" @click="loadUsageAllDays">重新加载</button>
-      </div>
-      <UsageDayTable
-        v-else
-        :days="usageAllDays?.days ?? []"
-        :loading="allDaysViewLoading"
-        :totals="tableTotals"
-      />
+    <div v-if="activeTab === 'billing'">
+      <UsagePanel />
     </div>
 
     <TopupModal v-model="showTopup" />
