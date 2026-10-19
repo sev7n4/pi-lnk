@@ -23,6 +23,8 @@
 | [0007-deploy-tag-equals-commit-sha.md](./0007-deploy-tag-equals-commit-sha.md) | Accepted | 镜像 tag = master commit 短 sha，停用语义版号 |
 | [0008-docs-index-over-doc-edits.md](./0008-docs-index-over-doc-edits.md) | Accepted | 283 份历史文档只建索引不改正文 |
 | [0009-vendor-capability-first.md](./0009-vendor-capability-first.md) | Accepted | pi-runtime 开发必须先查 vendor 能力面，禁止自研等价物 |
+| [0010-agent-turn-undo-runtime-tool.md](./0010-agent-turn-undo-runtime-tool.md) | 待立项评审 | 回合级撤销需 runtime 批量移除工具，只评估不拍板 |
+| [0011-propose-confirm-single-surface.md](./0011-propose-confirm-single-surface.md) | Accepted | 提议确认收敛为单一锚定表面（节点即确认面），对齐上游 host-owns-UI，dock 按状态门控 |
 
 ## 模板
 
