@@ -6,7 +6,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
+import { Readable } from 'stream'
 import { PrismaService } from '../prisma/prisma.service'
+import { STORAGE_ADAPTER } from '../storage/storage.adapter'
+import type { StorageAdapter } from '../storage/storage.adapter'
 import { CaptchaService } from './captcha.service'
 import { InviteService } from './invite.service'
 import { generateInviteCode } from './invite-code'
@@ -15,6 +18,16 @@ import { generateInviteCode } from './invite-code'
 type AuthSmsMode = 'fixed' | 'real'
 
 const ENSURE_CODE_RETRIES = 8
+
+/** 头像允许的 MIME 与 data URL 形态（最小实现，不引 multipart）。 */
+const AVATAR_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+}
+const AVATAR_DATA_URL_RE = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/
+/** base64 上限 ≈ 768KB 二进制，够一张 256×256 压缩图，也拦得住把原图整张塞进来。 */
+const AVATAR_MAX_BASE64 = 1_000_000
 
 type SessionUser = {
   id: string
@@ -46,7 +59,40 @@ export class AuthService {
     @Inject(JwtService) private readonly jwt: JwtService,
     @Inject(CaptchaService) private readonly captcha: CaptchaService,
     @Inject(InviteService) private readonly invite: InviteService,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
+
+  /**
+   * 更新头像（最小实现：前端压缩后传 data URL，服务端落盘并回写 avatar）。
+   *
+   * 为什么不用 multipart：本仓上传基建是「预签名直传」，头像这种小图再走一套
+   * 预签名流程不划算；data URL 一次请求搞定，代价是请求体更大，已用体积上限兜住。
+   */
+  async updateAvatar(userId: string, dataUrl: string) {
+    const matched = AVATAR_DATA_URL_RE.exec(dataUrl.trim())
+    if (!matched) throw new BadRequestException('头像格式不正确（需png/jpeg/webp 的 base64 data URL）')
+    const mime = matched[1]
+    const base64 = matched[2]
+    if (base64.length > AVATAR_MAX_BASE64) {
+      throw new BadRequestException('头像过大，请压缩后再上传')
+    }
+    const buffer = Buffer.from(base64, 'base64')
+    if (buffer.length === 0) throw new BadRequestException('头像内容为空')
+    // 只保留一个稳定文件名 ⇒ 再次上传即覆盖，避免旧头像文件堆积在磁盘上
+    const key = `users/${userId}/avatars/avatar.${AVATAR_MIME[mime]}`
+    const { publicUrl } = await this.storage.putStream({
+      key,
+      body: Readable.from(buffer),
+      contentType: mime,
+      contentLength: buffer.length,
+    })
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: publicUrl },
+      select: { avatar: true },
+    })
+    return { avatar: user.avatar }
+  }
 
   private get smsMode(): AuthSmsMode {
     return process.env.AUTH_SMS_MODE === 'real' ? 'real' : 'fixed'

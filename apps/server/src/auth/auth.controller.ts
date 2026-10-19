@@ -22,6 +22,13 @@ class CaptchaVerifyDto {
   offsetX!: number
 }
 
+class UpdateAvatarDto {
+  /** 前端 canvas 压缩后的 data URL（png/jpeg/webp，base64）。 */
+  @IsString()
+  @MaxLength(1_400_000)
+  dataUrl!: string
+}
+
 class LoginDto {
   @IsString()
   @Matches(/^1\d{10}$/)
@@ -99,6 +106,14 @@ export class AuthController {
   @UseGuards(AuthGuard)
   async profile(@Req() req: { user: { sub: string } }) {
     const data = await this.authService.getProfile(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** 上传/替换头像（需登录）：前端压缩后的 data URL，落盘后回写 user.avatar。 */
+  @Post('avatar')
+  @UseGuards(AuthGuard)
+  async updateAvatar(@Req() req: { user: { sub: string } }, @Body() body: UpdateAvatarDto) {
+    const data = await this.authService.updateAvatar(req.user.sub, body.dataUrl)
     return { code: 0, message: 'ok', data }
   }
 }

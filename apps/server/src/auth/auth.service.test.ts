@@ -3,9 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common'
 import { AuthService } from './auth.service'
 import { CaptchaService } from './captcha.service'
+import type { StorageAdapter } from '../storage/storage.adapter'
 import { InviteService } from './invite.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { JwtService } from '@nestjs/jwt'
+
+/// 头像上传用的存储适配器桩（只断言调用契约，不碰磁盘）
+const putStream = vi.fn(async () => ({ publicUrl: '/api/uploads/u1/avatars/avatar.jpg' }))
+const mockStorage = () => ({ putStream })
 
 function mockInvite() {
   return {
@@ -20,6 +25,7 @@ describe('AuthService.sendCode captcha modes', () => {
   let captcha: CaptchaService
   const create = vi.fn()
 
+
   beforeEach(() => {
     vi.clearAllMocks()
     process.env.AUTH_SMS_MODE = 'fixed'
@@ -29,6 +35,7 @@ describe('AuthService.sendCode captcha modes', () => {
       {} as JwtService,
       captcha,
       mockInvite() as unknown as InviteService,
+      mockStorage() as unknown as StorageAdapter,
     )
   })
 
@@ -93,6 +100,7 @@ describe('AuthService.login/register', () => {
       jwt as unknown as JwtService,
       new CaptchaService(),
       invite as unknown as InviteService,
+      mockStorage() as unknown as StorageAdapter,
     )
   })
 
@@ -171,3 +179,52 @@ describe('AuthService.login/register', () => {
   })
 })
 
+// ── 头像上传（最简实现：data URL → 存储 → 回写 user.avatar）────────────────
+describe('AuthService.updateAvatar', () => {
+  const prisma = {
+    user: { update: vi.fn(async () => ({ avatar: '/api/uploads/u1/avatars/avatar.jpg' })) },
+  }
+  const service = new AuthService(
+    prisma as unknown as PrismaService,
+    {} as JwtService,
+    new CaptchaService(),
+    {} as unknown as InviteService,
+    { putStream } as unknown as StorageAdapter,
+  )
+  const PNG_1PX =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+
+  beforeEach(() => {
+    putStream.mockClear()
+    prisma.user.update.mockClear()
+  })
+
+  it('合法 data URL：落盘并回写 avatar', async () => {
+    const res = await service.updateAvatar('u1', PNG_1PX)
+    expect(res.avatar).toBe('/api/uploads/u1/avatars/avatar.jpg')
+    expect(putStream).toHaveBeenCalledTimes(1)
+    const input = putStream.mock.calls[0][0]
+    expect(input.key).toBe('users/u1/avatars/avatar.png')
+    expect(input.contentType).toBe('image/png')
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'u1' }, data: { avatar: '/api/uploads/u1/avatars/avatar.jpg' } }),
+    )
+  })
+
+  it('非图片 / 非 data URL 一律拒绝，且不落盘', async () => {
+    await expect(service.updateAvatar('u1', 'https://evil.example/a.png')).rejects.toBeInstanceOf(
+      BadRequestException,
+    )
+    await expect(service.updateAvatar('u1', 'data:text/html;base64,PHNjcmlwdD4=')).rejects.toBeInstanceOf(
+      BadRequestException,
+    )
+    expect(putStream).not.toHaveBeenCalled()
+    expect(prisma.user.update).not.toHaveBeenCalled()
+  })
+
+  it('超体积拒绝（防把整张原图塞进 data URL）', async () => {
+    const huge = `data:image/png;base64,${'A'.repeat(1_000_001)}`
+    await expect(service.updateAvatar('u1', huge)).rejects.toBeInstanceOf(BadRequestException)
+    expect(putStream).not.toHaveBeenCalled()
+  })
+})

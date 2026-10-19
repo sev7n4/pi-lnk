@@ -81,6 +81,7 @@ import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
 import ProfilePane from '@/components/mobile/ProfilePane.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
 import AccountPanel from '@/components/account/AccountPanel.vue'
+import UsagePanel from '@/components/usage/UsagePanel.vue'
 import SubscriptionPanel from '@/components/membership/SubscriptionPanel.vue'
 import TopupModal from '@/components/membership/TopupModal.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
@@ -4824,7 +4825,7 @@ const mobileAppTab = ref<MobileAppTab>('chat')
  * 内容组件与 PC 路由页共用同一份，这里只管移动端外壳与打开/关闭。
  * 用 local state 而非路由：移动端四页签本就不走 router（见 mobileAppTab）。
  */
-type MobileAccountPane = '' | 'points' | 'subscription' | 'account'
+type MobileAccountPane = '' | 'points' | 'subscription' | 'account' | 'usage'
 const mobileAccountPane = ref<MobileAccountPane>('')
 const showMobileTopup = ref(false)
 const showMobilePlans = ref(false)
@@ -4833,7 +4834,21 @@ const MOBILE_ACCOUNT_TITLES: Record<Exclude<MobileAccountPane, ''>, string> = {
   points: '我的积分',
   subscription: '我的订阅',
   account: '账号信息',
+  usage: '用量明细',
 }
+
+/**
+ * 移动端登录成功后落到「对话」页（空态对话 / 进入一个项目），而不是继续停在「我的」。
+ * 理由：刚完成登录的用户接下来要的是开始创作，把他留在设置页是错位的落点。
+ */
+watch(
+  () => auth.isLoggedIn,
+  (loggedIn) => {
+    if (!loggedIn || !isMobileLayout.value) return
+    closeMobileAccountPane()
+    if (mobileAppTab.value === 'mine') mobileAppTab.value = 'chat'
+  },
+)
 
 function openMobileAccountPane(pane: Exclude<MobileAccountPane, ''>) {
   mobileAccountPane.value = pane
@@ -5475,8 +5490,10 @@ onUnmounted(() => {
         <PointsPanel
           v-else-if="mobileAccountPane === 'points'"
           @open-topup="showMobileTopup = true"
-          @open-usage="closeMobileAccountPane()"
+          @open-usage="openMobileAccountPane('usage')"
         />
+        <!-- 用量明细：与 PC 个人中心「用量」页同一个 UsagePanel，不另造数据口径 -->
+        <UsagePanel v-else-if="mobileAccountPane === 'usage'" />
         <SubscriptionPanel v-else @open-plans="openMobilePlans" />
       </div>
       <TopupModal v-if="isMobileLayout" v-model="showMobileTopup" />
