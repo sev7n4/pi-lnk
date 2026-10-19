@@ -5329,8 +5329,6 @@ onUnmounted(() => {
       v-if="isMobileLayout"
       :tab="mobileAppTab"
       @open-drawer="agentRailRef?.openSessionDrawer()"
-      @new-chat="agentRailRef?.newAgentSession()"
-      @open-history="agentRailRef?.openThreadHistory()"
       @save="saveCanvas"
       @storyboard="showStoryboard = true"
       @publish="openPublish"

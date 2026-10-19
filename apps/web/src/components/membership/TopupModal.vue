@@ -194,8 +194,7 @@ function onPayFailed(reason: string) {
           @click="selectSlot(String(tier.amountFen))"
         >
           <p class="flex items-baseline gap-1 text-xl font-semibold text-fg">
-            <!-- 闪电=积分语义：text-credit（--lnk-credit，仅积分/消耗），替代旧 --neo-warm -->
-            <svg class="h-4 w-4 self-center text-credit" viewBox="0 0 24 24" fill="currentColor">
+            <svg class="h-4 w-4 self-center text-[var(--neo-warm)]" viewBox="0 0 24 24" fill="currentColor">
               <path d="M13 2 4.5 13.5h5.6L11 22l8.5-11.5h-5.6L13 2z" />
             </svg>
             {{ tier.totalPoints.toLocaleString() }}
@@ -275,54 +274,48 @@ function onPayFailed(reason: string) {
 </template>
 
 <style>
-/* 令牌纪律（2026-10-19）：本家族已全量迁到 --lnk-* 语义令牌（墨流 Ink Flow v2）。
- * ⛔ 事故记录：原 .topup-pay-btn 用 --neo-accent-text 当前景色——该令牌语义是
- *   「表面上的紫字」，而浅色主题它恰为 #5b4ce6，与按钮底色 --neo-accent
- *   （= --lnk-purple-600 = #5b4ce6）同色 ⇒ 字/底同色全隐形（深色主题
- *   #a89dff on #6d5dfc 也只有 1.87:1）。实心 accent 底上的前景只有一个合法值：
- *   var(--lnk-text-on-accent)（白，5.80:1，见 design-tokens.css 注释）。 */
 .topup-dialog .el-dialog {
-  background: var(--lnk-surface-base);
-  border: 1px solid var(--lnk-border-subtle);
+  background: var(--neo-surface-card);
+  border: 1px solid var(--neo-border);
   border-radius: 16px;
 }
 .topup-dialog .el-dialog__title {
-  color: var(--lnk-text-primary);
+  color: var(--neo-text-primary);
 }
 .topup-tile {
-  border-color: var(--lnk-border-subtle);
-  background: var(--lnk-surface-raised);
+  border-color: var(--neo-border);
+  background: var(--neo-surface-elevated);
   cursor: pointer;
 }
 .topup-tile:hover {
-  border-color: var(--lnk-accent-border);
+  border-color: var(--neo-accent-border);
 }
 .topup-tile.is-selected {
-  border-color: var(--lnk-accent-border);
-  background: var(--lnk-accent-subtle);
-  box-shadow: 0 0 0 1px var(--lnk-accent-border);
+  border-color: var(--neo-accent-border);
+  background: var(--neo-accent-soft);
+  box-shadow: 0 0 0 1px var(--neo-accent-border);
 }
 .topup-pay-btn {
-  background: var(--lnk-accent);
-  color: var(--lnk-text-on-accent);
+  background: var(--neo-accent);
+  color: var(--neo-accent-text);
 }
 .topup-pay-btn:hover:not(:disabled) {
-  background: var(--lnk-accent-hover);
+  background: var(--neo-accent-hover);
 }
 .topup-pay-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 .custom-input {
-  background: var(--lnk-surface-raised);
-  border-color: var(--lnk-border-subtle);
+  background: var(--neo-surface-elevated);
+  border-color: var(--neo-border);
 }
 .custom-input:focus {
   outline: none;
-  border-color: var(--lnk-accent-border);
+  border-color: var(--neo-accent-border);
 }
 .paid-hint {
-  color: var(--lnk-accent-text);
-  background: var(--lnk-accent-subtle);
+  color: var(--neo-accent-text);
+  background: var(--neo-accent-soft);
 }
 </style>

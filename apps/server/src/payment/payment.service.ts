@@ -24,6 +24,24 @@ import {
  *    构成双重幂等锚点；任何一层发现重复都拒绝而非再发。
  * 4. 金额不符（回调金额 ≠ 订单金额）一律拒绝入账并告警。
  */
+/**
+ * 周期扣款首次扣款日：取订阅周期截止日，**钳到 28 号**。
+ *
+ * 支付宝硬约束：period_type=MONTH 时 execute_time 不得超过 28 号
+ * （否则 2 月/小月无对应日，签约会被直接拒绝）。东八区日历日口径。
+ */
+export function clampAlipayExecuteDate(periodEnd: Date): string {
+  const sh = new Date(periodEnd.getTime() + 8 * 3600 * 1000)
+  const day = Math.min(sh.getUTCDate(), 28)
+  const mm = String(sh.getUTCMonth() + 1).padStart(2, '0')
+  return `${sh.getUTCFullYear()}-${mm}-${String(day).padStart(2, '0')}`
+}
+
+/** 商户侧签约号：订阅 id 派生，≤32 位字母数字，且可由订阅行反推。 */
+function externalAgreementNoFor(subscriptionId: string): string {
+  return `lnkpi${subscriptionId}`.slice(0, 32)
+}
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name)
@@ -105,6 +123,68 @@ export class PaymentService {
   /** 充值档位配置（前端瓦片渲染单一真源）。 */
   topupOptions() {
     return this.membership.topupOptions()
+  }
+
+  // ── 自动续费（周期扣款）编排 ──────────────────────────────────────────────
+  // 编排放在支付服务而非会员服务：会员模块被支付模块 import，反向注入会成 DI 环
+  // （本仓踩过构造器实例化环：进程静默 exit 0）。渠道能力全部经 PaymentAdapter，
+  // 未开启 ALIPAY_AGREEMENT_ENABLED 时下面三个方法一律响亮失败，业务侧走手动续期。
+
+  /** 能力探测：前端据此决定是否展示「开通自动续费」入口。 */
+  autoRenewCapability() {
+    return { supported: this.adapter.agreementSupported === true }
+  }
+
+  /** 生成签约跳转 URL（用户在支付宝页面完成签约）。 */
+  async createAutoRenewSign(userId: string) {
+    if (!this.adapter.agreementSupported) {
+      throw new BadRequestException('自动续费签约未开通（当前为手动续期模式）')
+    }
+    const sub = await this.membership.getLiveSubscriptionRecord(userId)
+    if (!sub) throw new BadRequestException('未订阅任何套餐，无法开通自动续费')
+    const plan = this.membership.getPlan(sub.plan)
+    if (!plan) throw new BadRequestException('无效套餐')
+    const executeTime = clampAlipayExecuteDate(sub.periodEnd)
+    const { signUrl } = await this.adapter.createAgreementSign({
+      externalAgreementNo: externalAgreementNoFor(sub.id),
+      amountYuan: plan.price,
+      periodType: 'MONTH',
+      period: 1,
+      executeTime,
+      subject: `lnk π ${plan.name} 连续包月`,
+    })
+    return { signUrl, executeTime }
+  }
+
+  /**
+   * 用户从支付宝签约页回跳后确认：向渠道查真实签约号并落库。
+   * ⚠️ 不信任前端回传的 agreement_no——一律以渠道查询结果为准（防伪造绑定）。
+   */
+  async confirmAutoRenew(userId: string) {
+    if (!this.adapter.agreementSupported) {
+      throw new BadRequestException('自动续费签约未开通（当前为手动续期模式）')
+    }
+    const sub = await this.membership.getLiveSubscriptionRecord(userId)
+    if (!sub) throw new BadRequestException('未订阅任何套餐，无法绑定签约')
+    const { agreementNo, status } = await this.adapter.queryAgreement(
+      externalAgreementNoFor(sub.id),
+    )
+    if (!agreementNo) throw new BadRequestException('未查询到签约记录，请确认已在支付宝完成签约')
+    await this.membership.attachAgreement(userId, agreementNo)
+    return { agreementNo, status }
+  }
+
+  /**
+   * 取消自动续期：**先渠道解约、再改本地**。
+   * 顺序不能反：本地标记成功而渠道仍在扣款 = 用户以为已取消却被继续扣款（投诉 + 资损）。
+   * 无签约记录（手动续期模式）或协议早已不存在时，只改本地。
+   */
+  async cancelAutoRenew(userId: string) {
+    const sub = await this.membership.getLiveSubscriptionRecord(userId)
+    if (sub?.agreementNo && this.adapter.agreementSupported) {
+      await this.adapter.unsignAgreement(sub.agreementNo) // 失败直接抛，本地状态不动
+    }
+    return this.membership.cancelAutoRenew(userId)
   }
 
   /**

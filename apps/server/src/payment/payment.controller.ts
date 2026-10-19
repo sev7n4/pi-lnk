@@ -39,6 +39,40 @@ export class PaymentController {
     return { code: 0, message: 'ok', data }
   }
 
+  // ── 自动续费（周期扣款）───────────────────────────────────────────────────
+  // ⚠️ 支付宝周期扣款不支持沙箱 ⇒ 能力默认关闭（ALIPAY_AGREEMENT_ENABLED=1 才开）。
+  // 未开启时前端展示「手动续期」口径，不谎称已开通自动续费。
+
+  /** 能力探测（免登录）：前端据此决定是否展示「开通自动续费」入口。 */
+  @Get('auto-renew/capability')
+  autoRenewCapability() {
+    return { code: 0, message: 'ok', data: this.paymentService.autoRenewCapability() }
+  }
+
+  /** 生成签约跳转 URL（需登录、需已订阅）。 */
+  @Post('auto-renew/sign')
+  @UseGuards(AuthGuard)
+  async createAutoRenewSign(@Req() req: { user: { sub: string } }) {
+    const data = await this.paymentService.createAutoRenewSign(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** 签约回跳后确认（需登录）：向渠道查真实签约号并落库。 */
+  @Post('auto-renew/confirm')
+  @UseGuards(AuthGuard)
+  async confirmAutoRenew(@Req() req: { user: { sub: string } }) {
+    const data = await this.paymentService.confirmAutoRenew(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** 取消自动续期（需登录）：先渠道解约再改本地，当前周期内仍可用。 */
+  @Post('auto-renew/cancel')
+  @UseGuards(AuthGuard)
+  async cancelAutoRenew(@Req() req: { user: { sub: string } }) {
+    const data = await this.paymentService.cancelAutoRenew(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
   /**
    * 积分充值档位配置（免登录，静态配置）。前端瓦片渲染单一真源：
    * tiers[{amountFen, basePoints, bonusPoints, totalPoints}] + customMinFen/customMaxFen/pointsPerFen/expiryDays。

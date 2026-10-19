@@ -376,6 +376,21 @@ export class MembershipService {
     return { ...sub, status: 'expired' }
   }
 
+  /**
+   * 取当前生效中的订阅**原始行**（供支付/签约编排用；对外展示请用 getSubscription 的 DTO）。
+   */
+  async getLiveSubscriptionRecord(userId: string, now: Date = new Date()) {
+    await this.expireSubscriptionIfDue(userId, now)
+    return this.prisma.subscription.findFirst({ where: { userId, status: { in: LIVE_SUB_STATUS } } })
+  }
+
+  /** 记录支付宝周期扣款签约号（用户完成签约后回跳确认时写入）。 */
+  async attachAgreement(userId: string, agreementNo: string, now: Date = new Date()) {
+    const sub = await this.getLiveSubscriptionRecord(userId, now)
+    if (!sub) throw new BadRequestException('未订阅任何套餐，无法绑定签约')
+    return this.prisma.subscription.update({ where: { id: sub.id }, data: { agreementNo } })
+  }
+
   /** 订阅快照（供「我的订阅」页 / 套餐页展示）。无订阅返回 null。 */
   async getSubscription(userId: string, now: Date = new Date()): Promise<SubscriptionDto | null> {
     await this.expireSubscriptionIfDue(userId, now)
