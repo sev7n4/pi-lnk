@@ -1006,7 +1006,7 @@ function handleGroupSelection() {
 }
 
 /** 解组：只移除分组框，子节点保持原坐标。 */
-function handleUngroupSelectedGroup() {
+function handleUngroupSelection() {
   const id = selectedGroupId.value
   if (!id) return
   groups.value = ungroupById(groups.value, id)
@@ -5042,7 +5042,7 @@ onUnmounted(() => {
             :group-rect="selectedGroupRect"
             :selection-batch="selectionBatchProp"
             @group="handleGroupSelection"
-            @ungroup="handleUngroupSelectedGroup"
+            @ungroup="handleUngroupSelection"
             @group-color="handleGroupColorSelection"
             @delete="handleDeleteSelection"
             @layout="handleLayoutSelection"
