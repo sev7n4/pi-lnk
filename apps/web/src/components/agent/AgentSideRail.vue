@@ -992,6 +992,13 @@ const composerProgressPct = computed(() =>
 const proposeWait = computed(() =>
   agent.blockingWait?.toolName === 'propose_generation' ? agent.blockingWait : null,
 )
+/**
+ * ADR-0011（2026-10-19）：画布上下文 = 已切到画布视图（mobileCanvasView 由 CanvasPage 持真相）。
+ * 此上下文下对话流提议卡降权为**只读提示**——确认 / 取消迁移到节点内联面（T1）/ dock，
+ * 避免同一 pending_confirm 态在「对话卡 + 画布节点 + dock」三处各挂一份可操作入口（三带叠罗汉）。
+ * 纯对话视图（mobileCanvasView=false，含桌面）维持可操作卡不变（与 2026-10-06「两处确认入口」拍板一致）。
+ */
+const proposeWaitInCanvas = computed(() => props.mobileCanvasView === true)
 // RB-D6②：本轮存在 failed 步骤 ⇒ dock 确认区持久警示（把红色 ✗ 与确认决策连起来）。
 const turnHasFailedStep = computed(() => hasFailedTraceStep(lastAssistantMessage.value?.executionTrace?.steps))
 // P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：等待结束信号。
@@ -4007,10 +4014,13 @@ defineExpose({
             <div class="flex items-start gap-2">
               <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
               <p class="flex-1 leading-relaxed">
-                点👉🏻图标锚定画布「查看提示词」
+                <template v-if="proposeWaitInCanvas">已在画布上待确认：查看 / 修改提示词后，在节点上点「确认生成」</template>
+                <template v-else>点👉🏻图标锚定画布「查看提示词」</template>
               </p>
             </div>
-            <div class="mt-1.5 flex items-center gap-1.5">
+            <!-- ADR-0011（2026-10-19）：画布上下文降权为只读——定位 / 取消按钮收起，
+                 确认 / 取消归节点内联面，避免对话流与画布节点双份可操作入口。纯对话视图保留原操作。 -->
+            <div v-if="!proposeWaitInCanvas" class="mt-1.5 flex items-center gap-1.5" data-testid="propose-wait-actions">
               <button
                 v-if="proposeWait.nodeId"
                 type="button"

@@ -4799,7 +4799,10 @@ async function openAssetLibraryFromDiscover() {
 }
 /** 移动端画布视图 + studio dock 展开（选中了可编辑节点）：composer 让位——SSE 对话流收起，
  *  dock 抬高到贴底容器之上（--lnk-agent-dock-h，见 AgentSideRail / DockStudioToolbar）。
- *  提议生成卡片点定位 → 自动拾取节点 → dock 展开供检查/修改提示词，就是这条链路的目标态。 */
+ *  ADR-0011（2026-10-19）：pending_confirm 态**不**计入 dock 展开——该态主交互是节点内联
+ *  「确认 / 取消」，dock 自动弹会与节点 / 对话只读提示三带叠罗汉互相遮挡。仅「生成完成 →
+ *  用户主动选中」或明确编辑意图才开 dock（门控落点见 T4：desktop DockStudioToolbar v-if
+ *  + 本 mobileStudioDockOpen 一并按 isPendingConfirmNode 收敛）。 */
 const mobileStudioDockOpen = computed(
   () =>
     isMobileLayout.value &&
