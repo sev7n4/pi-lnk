@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { membershipApi, membershipLabel, type MembershipPlan } from '@/services/users-api'
 import { paymentApi } from '@/services/payment-api'
 import { useAuthStore } from '@/stores/auth'
@@ -16,12 +17,12 @@ import QrPayPanel from './QrPayPanel.vue'
  *   去重的是真正冗余的部分——「有效期」不在每个积分行重复（脚注说一次）、续费规则不在
  *   每卡重复（脚注说一次）、.sub 与脚注不再用近乎相同的句子说两遍。
  *
- * 交互（2026-10-19）：
- *   - 整卡可点（点价格/积分/空白都能触发升级），按钮仅作视觉与键盘可达入口；
- *   - 按「档位方向」渲染 CTA：高于当前=立即升级 / 等于=当前套餐 / 低于=低于当前套餐（禁购，
- *     因后端 grantPaidPlanTx 无条件覆盖 membership，买低档=静默降级）；
- *   - 点击即时选中反馈 + 仅被点卡片按钮转圈（payingPlanId），按压 :active 反馈；
- *   - 三个分支都必须有可见反馈：升级=进入支付 / 当前=提示 / 低于=提示+抖动（禁止静默无反应）。
+ * 交互（2026-10-19 定稿）：
+ *   - 【一个用户同时只持有一个套餐】换购必须先退订——免费档可直接购买任一档位；已持付费档时
+ *     其余档位一律「需先退订」，弹窗头部提供退订入口（后端 createOrder 同规则拦截，
+ *     grantPaidPlanTx 兜底不覆盖他人档位）。
+ *   - 整卡可点（点价格/积分/空白都触发），按钮仅作视觉与键盘可达入口；
+ *   - 三个分支都有可见反馈：可购=进入支付 / 当前=提示 / 需退订=提示+抖动（禁止静默无反应）。
  * 令牌纪律：只用 --neo-* / --lnk-* 语义令牌，不引入裸 hex/rgba（theme-usage 棘轮）。
  */
 
@@ -41,6 +42,8 @@ const selectedPlanId = ref('')
 /// 被点击但不可购买的档位 id（抖动反馈用，600ms 后自动清除）。
 const nudgePlanId = ref('')
 let nudgeTimer: number | undefined
+/// 退订请求进行中（防重复提交）。
+const canceling = ref(false)
 
 /** select=套餐列表 · pay=扫码支付 */
 const view = ref<'select' | 'pay'>('select')
@@ -50,23 +53,14 @@ const payQrCode = ref('')
 /// 可购买档位（排除默认免费档，方案丙四档纯积分模型）。
 const purchasablePlans = computed(() => plans.value.filter((p) => p.id !== 'free'))
 
-/// 档位排序（升级/降级判定）：free=0 … flagship=4。
-const TIER_RANK: Record<string, number> = {
-  free: 0,
-  experience: 1,
-  standard: 2,
-  premium: 3,
-  flagship: 4,
-}
-function tierRank(id?: string): number {
-  return id != null ? TIER_RANK[id] ?? 0 : 0
-}
+/// 是否已持有付费套餐（一个用户同时只持有一个套餐）：已持有时其余档位需先退订。
+const hasActivePlan = computed(() => membership.value !== 'free')
 
-/// 单卡 CTA 形态：upgrade=可升级 / current=当前档 / lower=低于当前档（禁购，防降级）。
-type CtaKind = 'upgrade' | 'current' | 'lower'
+/// 单卡 CTA 形态：buy=可直接购买（当前免费）/ current=当前档 / locked=需先退订（已持其它付费档）。
+type CtaKind = 'buy' | 'current' | 'locked'
 function ctaKind(plan: MembershipPlan): CtaKind {
   if (plan.id === membership.value) return 'current'
-  return tierRank(plan.id) < tierRank(membership.value) ? 'lower' : 'upgrade'
+  return hasActivePlan.value ? 'locked' : 'buy'
 }
 
 const visible = computed({
@@ -128,13 +122,16 @@ async function claimDaily() {
  * 观感等于「点击没反应」。
  */
 async function onPlanClick(plan: MembershipPlan) {
-  if (loading.value) return
+  if (loading.value || canceling.value) return
   const kind = ctaKind(plan)
-  if (kind === 'upgrade') {
+  if (kind === 'buy') {
     await startPlanPay(plan)
     return
   }
-  message.value = kind === 'current' ? '你正在使用该套餐' : '该套餐低于当前套餐，暂不支持购买'
+  message.value =
+    kind === 'current'
+      ? '你正在使用该套餐'
+      : `需先退订当前套餐（${membershipLabel(membership.value)}）才能订购新套餐`
   nudgePlanId.value = plan.id
   window.clearTimeout(nudgeTimer)
   nudgeTimer = window.setTimeout(() => {
@@ -143,13 +140,46 @@ async function onPlanClick(plan: MembershipPlan) {
 }
 
 /**
- * 升级 = 真实支付下单（支付宝扫码）。入账以异步回调为准；
+ * 退订当前套餐（二次确认后调后端）：放弃档位权益、积分保留、不退款。
+ * 退订成功后即可自由选择其它档位——这是「一个用户同时只持有一个套餐」的换购路径。
+ */
+async function confirmCancel() {
+  if (canceling.value) return
+  try {
+    await ElMessageBox.confirm(
+      `退订后立即失去「${membershipLabel(membership.value)}」权益，剩余周期不退款；积分保留。退订后可重新选择其它套餐。`,
+      '确认退订当前套餐？',
+      { confirmButtonText: '确认退订', cancelButtonText: '再想想', type: 'warning' },
+    )
+  } catch {
+    return // 用户点了「再想想」
+  }
+  canceling.value = true
+  message.value = ''
+  try {
+    const { data } = await membershipApi.cancelSubscription()
+    membership.value = data.data.membership
+    points.value = data.data.points
+    if (auth.user) {
+      auth.user.membership = data.data.membership
+      auth.user.points = data.data.points
+    }
+    message.value = '已退订，现在可以选择其它套餐'
+  } catch {
+    message.value = '退订失败，请稍后重试'
+  } finally {
+    canceling.value = false
+  }
+}
+
+/**
+ * 购买 = 真实支付下单（支付宝扫码）。入账以异步回调为准；
  * PAID 后刷新积分与会员档位（服务端 settlePaidOrder 已完成发放）。
- * 仅「高于当前档」可到达此处（入口分流见 onPlanClick）；保留防御性守卫。
+ * 仅「可直接购买」档位可到达此处（入口分流见 onPlanClick）；保留防御性守卫。
  */
 async function startPlanPay(plan: MembershipPlan) {
   if (loading.value) return
-  if (ctaKind(plan) !== 'upgrade') return
+  if (ctaKind(plan) !== 'buy') return
   loading.value = true
   payingPlanId.value = plan.id
   selectedPlanId.value = plan.id
@@ -266,6 +296,15 @@ const ICONS: Record<string, string> = {
           <span class="hd-pi">π</span>
           <span class="hd-title">套餐</span>
           <span class="hd-current">当前套餐：{{ membershipLabel(membership) }}</span>
+          <button
+            v-if="hasActivePlan"
+            type="button"
+            class="hd-cancel"
+            :disabled="canceling"
+            @click="confirmCancel"
+          >
+            {{ canceling ? '退订中…' : '退订当前套餐' }}
+          </button>
         </div>
         <div class="hd-points">
           <span class="hd-bolt" aria-hidden="true">
@@ -335,8 +374,8 @@ const ICONS: Record<string, string> = {
               'is-current': membership === plan.id,
               'is-selected': selectedPlanId === plan.id,
               'is-nudge': nudgePlanId === plan.id,
-              'is-actionable': ctaKind(plan) === 'upgrade',
-              'is-lower': ctaKind(plan) === 'lower',
+              'is-actionable': ctaKind(plan) === 'buy',
+              'is-locked': ctaKind(plan) === 'locked',
             }"
             @click="onPlanClick(plan)"
           >
@@ -373,20 +412,20 @@ const ICONS: Record<string, string> = {
                 <span class="plan-price-num">¥{{ plan.price }}</span>
                 <span class="plan-price-unit">/月</span>
               </div>
-              <!-- 高于当前档：可升级。推荐档用主色实心，其余次级描边，形成主次 -->
+              <!-- 可直接购买（当前免费档）：推荐档主色实心，其余次级描边，形成主次 -->
               <el-button
-                v-if="ctaKind(plan) === 'upgrade'"
+                v-if="ctaKind(plan) === 'buy'"
                 class="plan-cta"
                 :class="plan.recommended ? 'plan-cta--primary' : 'plan-cta--ghost'"
                 type="primary"
                 :loading="payingPlanId === plan.id"
               >
-                立即升级
+                立即购买
               </el-button>
               <!-- 当前档 -->
               <span v-else-if="ctaKind(plan) === 'current'" class="plan-cta-current">当前套餐</span>
-              <!-- 低于当前档：禁购（后端会静默降级），弱化提示 -->
-              <span v-else class="plan-cta-lower">低于当前套餐</span>
+              <!-- 已持其它付费档：需先退订（一个用户同时只持有一个套餐） -->
+              <span v-else class="plan-cta-locked">需先退订</span>
             </div>
           </article>
         </div>
@@ -396,7 +435,7 @@ const ICONS: Record<string, string> = {
         <p v-if="message" class="msg">{{ message }}</p>
 
         <footer class="footnote">
-          出图、出视频、写文案、配音均消耗积分，额度用尽当月暂停生成、次月恢复；积分 = 每月基础 + 每月赠送，有效期 1 个月，当月未用完不结转。套餐为连续包月，到期自动续费，可随时取消。
+          出图、出视频、写文案、配音均消耗积分，额度用尽当月暂停生成、次月恢复；积分 = 每月基础 + 每月赠送，有效期 1 个月，当月未用完不结转。套餐为连续包月，到期自动续费，可随时取消。一个用户同时只持有一个套餐，换购需先退订。
         </footer>
       </template>
     </div>
@@ -452,6 +491,27 @@ const ICONS: Record<string, string> = {
   font-size: var(--lnk-text-xs);
   color: var(--neo-text-secondary);
   white-space: nowrap;
+}
+/* 退订入口（换购前置动作，一个用户同时只持有一个套餐） */
+.membership-dialog .hd-cancel {
+  border: 1px solid var(--neo-border);
+  border-radius: var(--lnk-radius-full);
+  background: none;
+  padding: 3px 10px;
+  font-size: var(--lnk-text-2xs);
+  color: var(--neo-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--lnk-duration-fast) var(--lnk-ease-standard),
+    border-color var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.membership-dialog .hd-cancel:hover:not(:disabled) {
+  color: var(--neo-text-primary);
+  border-color: var(--neo-border-strong);
+}
+.membership-dialog .hd-cancel:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .membership-dialog .hd-points {
   display: flex;
@@ -575,8 +635,8 @@ const ICONS: Record<string, string> = {
 .membership-dialog .plan.is-nudge {
   animation: membership-plan-nudge 0.32s var(--lnk-ease-standard);
 }
-/* 低于当前档：弱化，暗示不可操作 */
-.membership-dialog .plan.is-lower {
+/* 已持其它付费档（需先退订）：弱化，暗示不可直接购买 */
+.membership-dialog .plan.is-locked {
   opacity: 0.62;
 }
 .membership-dialog .badge {
@@ -736,7 +796,7 @@ const ICONS: Record<string, string> = {
   font-weight: 600;
   color: var(--neo-accent-text);
 }
-.membership-dialog .plan-cta-lower {
+.membership-dialog .plan-cta-locked {
   flex-shrink: 0;
   font-size: var(--lnk-text-xs);
   font-weight: 500;

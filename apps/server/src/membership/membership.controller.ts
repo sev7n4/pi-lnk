@@ -70,6 +70,14 @@ export class MembershipController {
     return { code: 0, message: 'ok', data }
   }
 
+  /// 退订当前套餐：「一个用户同时只持有一个套餐」的换购前置动作（放弃档位，积分保留）。
+  @Post('cancel-subscription')
+  @UseGuards(AuthGuard)
+  async cancelSubscription(@Req() req: { user: { sub: string } }) {
+    const data = await this.membershipService.cancelSubscription(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
   @Get('transactions')
   @UseGuards(AuthGuard)
   async transactions(

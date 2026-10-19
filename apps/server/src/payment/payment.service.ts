@@ -42,6 +42,17 @@ export class PaymentService {
   async createOrder(userId: string, plan: string, channel: 'page' | 'qrcode' = 'page') {
     const selected = this.membership.getPlan(plan)
     if (!selected || plan === 'free') throw new BadRequestException('无效套餐')
+    // 【一个用户同时只持有一个套餐】已有付费套餐时只允许续费同档，换购必须先退订。
+    // ⚠️ 不能拦「≤」：连续包月每月一笔同档订单，拦了等于把自动续费整片打死。
+    // 这里拦的是「持有其它付费档 + 买不同档」= 静默降级/换档。
+    const holder = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { membership: true },
+    })
+    const heldPlan = holder?.membership ?? 'free'
+    if (heldPlan !== 'free' && heldPlan !== plan) {
+      throw new BadRequestException('你已持有其他套餐，需先退订后才能订购新套餐')
+    }
     const amountFen = selected.price * 100 // price 单位元 → 分（Int）
     const order = await this.prisma.order.create({
       data: { userId, plan, amount: amountFen },

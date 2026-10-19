@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
+import { ElMessageBox } from 'element-plus'
 import MembershipModal from './MembershipModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { MembershipPlan } from '@/services/users-api'
@@ -22,12 +23,19 @@ const paymentMocks = vi.hoisted(() => ({
   createSubscriptionOrder: vi.fn(async () => ({ data: { data: { orderId: 'o1', qrCode: 'qr-x' } } })),
 }))
 
+const membershipMocks = vi.hoisted(() => ({
+  cancelSubscription: vi.fn(async () => ({
+    data: { data: { membership: 'free', points: 116365, changed: true } },
+  })),
+}))
+
 vi.mock('@/services/users-api', () => ({
   membershipApi: {
     getPlans: vi.fn(async () => ({ data: { data: PLANS_FIXTURE } })),
     getPoints: vi.fn(async () => ({ data: { data: { points: state.points, membership: state.membership } } })),
     claimDaily: vi.fn(),
     upgrade: vi.fn(),
+    cancelSubscription: membershipMocks.cancelSubscription,
   },
   membershipLabel: vi.fn((id?: string) => PLANS_FIXTURE.find((p) => p.id === id)?.name ?? '免费版'),
 }))
@@ -76,6 +84,7 @@ function mountAs(membership: string) {
 
 beforeEach(() => {
   paymentMocks.createSubscriptionOrder.mockClear()
+  membershipMocks.cancelSubscription.mockClear()
   state.points = 116365
 })
 
@@ -129,67 +138,63 @@ describe('MembershipModal', () => {
     wrapper.unmount()
   })
 
-  it('shows recommended badge + solid CTA on the recommended tier for a free user', async () => {
+  it('免费档用户：四档全部可直接购买，推荐档主色实心、其余次级描边', async () => {
     const wrapper = mountAs('free')
     await flushPromises()
 
     const recoCard = wrapper.findAll('.plan').find((c) => c.classes().includes('is-recommended'))
     expect(recoCard).toBeTruthy()
     expect(recoCard!.find('.badge-reco').text()).toBe('推荐')
-    // free 用户：四档全是可升级；推荐档(premium)CTA 走主色实心
     expect(recoCard!.find('.plan-cta').classes()).toContain('plan-cta--primary')
-    // 其余可升级档走次级描边
+    expect(recoCard!.find('.plan-cta').text()).toBe('立即购买')
     expect(wrapper.findAll('.plan-cta--ghost')).toHaveLength(3)
-    // 没有当前档 / 低于当前档
+    // 无当前档 / 无锁定档
     expect(wrapper.findAll('.plan-cta-current')).toHaveLength(0)
-    expect(wrapper.findAll('.plan-cta-lower')).toHaveLength(0)
+    expect(wrapper.findAll('.plan-cta-locked')).toHaveLength(0)
+    // 免费档没有退订入口
+    expect(wrapper.find('.hd-cancel').exists()).toBe(false)
 
     wrapper.unmount()
   })
 
-  it('blocks downgrade: premium user sees only flagship upgradable, lower tiers disabled', async () => {
+  it('已持付费档：仅当前档可识别，其余三档「需先退订」且提供退订入口', async () => {
     const wrapper = mountAs('premium')
     await flushPromises()
 
     const cards = wrapper.findAll('.plan')
     const byName = (name: string) => cards.find((c) => c.find('.plan-name').text() === name)!
 
-    // 高于当前档 → 可升级 CTA
-    expect(byName('旗舰版').find('.plan-cta').exists()).toBe(true)
-    // 当前档 → 当前套餐
+    // 当前档
     expect(byName('高级版').find('.plan-cta-current').text()).toBe('当前套餐')
-    expect(byName('高级版').find('.plan-cta').exists()).toBe(false)
-    // 低于当前档 → 禁购提示，且没有可点 CTA
-    expect(byName('体验版').find('.plan-cta-lower').text()).toBe('低于当前套餐')
-    expect(byName('体验版').find('.plan-cta').exists()).toBe(false)
-    expect(byName('标准版').find('.plan-cta-lower').exists()).toBe(true)
-
-    // 计数：1 可升级 / 1 当前 / 2 低于
-    expect(wrapper.findAll('.plan-cta')).toHaveLength(1)
-    expect(wrapper.findAll('.plan-cta-current')).toHaveLength(1)
-    expect(wrapper.findAll('.plan-cta-lower')).toHaveLength(2)
+    // 其余三档（含更高的旗舰版）一律需先退订——一个用户同时只持有一个套餐
+    for (const name of ['体验版', '标准版', '旗舰版']) {
+      expect(byName(name).find('.plan-cta-locked').text()).toBe('需先退订')
+      expect(byName(name).find('.plan-cta').exists()).toBe(false)
+    }
+    expect(wrapper.findAll('.plan-cta-locked')).toHaveLength(3)
+    expect(wrapper.findAll('.plan-cta')).toHaveLength(0)
+    // 退订入口存在
+    expect(wrapper.find('.hd-cancel').exists()).toBe(true)
 
     wrapper.unmount()
   })
 
-  it('clicking an upgradable card orders payment and opens the pay view', async () => {
+  it('点击可购买卡片下单并进入扫码支付视图（整卡热区）', async () => {
     const wrapper = mountAs('free')
     await flushPromises()
 
     const flagship = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === '旗舰版')!
-    // 点击卡片本体（非按钮）也应触发升级
     await flagship.trigger('click')
     await flushPromises()
 
     expect(paymentMocks.createSubscriptionOrder).toHaveBeenCalledWith('flagship', 'qrcode')
-    // 进入扫码支付视图
     expect(wrapper.find('.pay-head').exists()).toBe(true)
     expect(wrapper.find('.qr-stub').exists()).toBe(true)
 
     wrapper.unmount()
   })
 
-  it('clicking a lower-tier card does NOT create an order, and gives visible feedback (no silent no-op)', async () => {
+  it('点击需退订的卡片：给出提示+抖动，且不产生订单', async () => {
     const wrapper = mountAs('premium')
     await flushPromises()
 
@@ -199,14 +204,15 @@ describe('MembershipModal', () => {
 
     expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
     expect(wrapper.find('.pay-head').exists()).toBe(false)
-    // 关键回归：不能静默无反应——必须出现提示文案 + 抖动反馈
-    expect(wrapper.find('.msg').text()).toContain('暂不支持购买')
+    // 关键回归：必须指向「先退订」而不是静默无反应
+    expect(wrapper.find('.msg').text()).toContain('需先退订')
+    expect(wrapper.find('.msg').text()).toContain('高级版')
     expect(standard.classes()).toContain('is-nudge')
 
     wrapper.unmount()
   })
 
-  it('clicking the current-tier card shows "in use" feedback, no order', async () => {
+  it('点击当前档卡片：提示正在使用，不产生订单', async () => {
     const wrapper = mountAs('premium')
     await flushPromises()
 
@@ -220,8 +226,7 @@ describe('MembershipModal', () => {
     wrapper.unmount()
   })
 
-  it('top-tier (flagship) user: every card responds, none silently inert', async () => {
-    // 复现线上反馈：旗舰版用户点任何卡都石沉大海（四卡全是低于当前档）
+  it('顶档（旗舰版）用户：每张卡都有反馈，全程零订单', async () => {
     const wrapper = mountAs('flagship')
     await flushPromises()
 
@@ -229,18 +234,52 @@ describe('MembershipModal', () => {
       const card = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === name)!
       await card.trigger('click')
       await flushPromises()
-      expect(wrapper.find('.msg').text()).toContain('暂不支持购买')
-      expect(card.classes()).toContain('is-nudge')
+      expect(wrapper.find('.msg').text()).toContain('需先退订')
     }
-    // 当前档（旗舰版本身）
     const current = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === '旗舰版')!
     await current.trigger('click')
     await flushPromises()
     expect(wrapper.find('.msg').text()).toContain('正在使用该套餐')
 
-    // 全程不应产生任何订单
     expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
+  it('退订：二次确认后清档，其余档位恢复可购买', async () => {
+    const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const wrapper = mountAs('premium')
+    await flushPromises()
+
+    await wrapper.find('.hd-cancel').trigger('click')
+    await flushPromises()
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(membershipMocks.cancelSubscription).toHaveBeenCalledTimes(1)
+    // 档位清空 → 头部显示免费版、退订入口消失
+    expect(wrapper.find('.hd-current').text()).toContain('免费版')
+    expect(wrapper.find('.hd-cancel').exists()).toBe(false)
+    // 四档恢复可购买
+    expect(wrapper.findAll('.plan-cta')).toHaveLength(4)
+    expect(wrapper.findAll('.plan-cta-locked')).toHaveLength(0)
+    expect(wrapper.find('.msg').text()).toContain('已退订')
+
+    confirmSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('退订确认被取消：不调用接口，档位保持不变', async () => {
+    const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel' as never)
+    const wrapper = mountAs('premium')
+    await flushPromises()
+
+    await wrapper.find('.hd-cancel').trigger('click')
+    await flushPromises()
+
+    expect(membershipMocks.cancelSubscription).not.toHaveBeenCalled()
+    expect(wrapper.find('.hd-current').text()).toContain('高级版')
+    expect(wrapper.find('.hd-cancel').exists()).toBe(true)
+
+    confirmSpy.mockRestore()
     wrapper.unmount()
   })
 
@@ -266,6 +305,8 @@ describe('MembershipModal', () => {
     // 到期/续费规则在脚注只说一次
     expect(foot).toContain('当月未用完不结转')
     expect(foot).toContain('连续包月')
+    // 单套餐规则写进脚注
+    expect(foot).toContain('一个用户同时只持有一个套餐')
 
     wrapper.unmount()
   })
