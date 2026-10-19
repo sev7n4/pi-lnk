@@ -90,9 +90,9 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     fake.nextQrCode = null
   })
 
-  async function seedUser(id: string, points = 1000) {
+  async function seedUser(id: string, points = 1000, membership = 'free') {
     return prisma.user.create({
-      data: { id, phone: `p-${id}`, nickname: id, points, membership: 'free' },
+      data: { id, phone: `p-${id}`, nickname: id, points, membership },
     })
   }
 
@@ -386,5 +386,64 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     for (const [fen, total] of cases) {
       expect(resolveTopupPoints(fen).totalPoints).toBe(total)
     }
+  })
+
+  // ── 一个用户同时只持有一个套餐（换购必须先退订）────────────────────────────
+  it('已持付费档 + 买不同档 → 建单拒绝（换购必须先退订），零订单落库', async () => {
+    await seedUser('u-single-1', 1000, 'premium')
+    await expect(service.createOrder('u-single-1', 'flagship')).rejects.toThrow(/退订/)
+    await expect(service.createOrder('u-single-1', 'standard')).rejects.toThrow(/退订/)
+
+    const orders = await prisma.order.findMany({ where: { userId: 'u-single-1' } })
+    expect(orders).toHaveLength(0)
+    expect(fake.createChargeCalls).toHaveLength(0)
+    expect(fake.createQrChargeCalls).toHaveLength(0)
+
+    const user = await prisma.user.findUnique({ where: { id: 'u-single-1' } })
+    expect(user?.membership).toBe('premium')
+  })
+
+  it('已持付费档 + 买同档 → 放行（连续包月每月一笔同档续费订单）', async () => {
+    await seedUser('u-single-2', 1000, 'premium')
+    const result = await service.createOrder('u-single-2', 'premium')
+    expect(result.orderId).toBeTruthy()
+    expect(result.amountFen).toBe(19900)
+  })
+
+  it('入账兜底：已持 premium 时结算 standard 订单 → 不覆盖档位、积分照发（不吞已付款）', async () => {
+    // 模拟竞态：订单在 free 时创建，付款前用户又买了 premium
+    await seedUser('u-single-3', 1000, 'free')
+    const order = await prisma.order.create({
+      data: { userId: 'u-single-3', plan: 'standard', amount: 9900, status: 'PAID', paidAt: new Date() },
+    })
+    await prisma.user.update({ where: { id: 'u-single-3' }, data: { membership: 'premium' } })
+
+    const result = await membership.grantPaidPlan('u-single-3', 'standard', order.id)
+    expect(result.membership).toBe('premium') // 保住更高档，绝不静默降级
+    expect(result.points).toBe(12000) // 1000 + 11000，积分照发
+
+    const user = await prisma.user.findUnique({ where: { id: 'u-single-3' } })
+    expect(user?.membership).toBe('premium')
+    expect(user?.points).toBe(12000)
+  })
+
+  it('退订：清档位、积分保留；重复退订幂等', async () => {
+    await seedUser('u-cancel-1', 5000, 'flagship')
+
+    const first = await membership.cancelSubscription('u-cancel-1')
+    expect(first).toMatchObject({ membership: 'free', changed: true })
+    expect(first.points).toBe(5000) // 积分保留
+
+    const second = await membership.cancelSubscription('u-cancel-1')
+    expect(second).toMatchObject({ membership: 'free', changed: false })
+  })
+
+  it('退订后可正常建单换购（原阻塞路径解除）', async () => {
+    await seedUser('u-cancel-2', 1000, 'standard')
+    await expect(service.createOrder('u-cancel-2', 'flagship')).rejects.toThrow(/退订/)
+
+    await membership.cancelSubscription('u-cancel-2')
+    const result = await service.createOrder('u-cancel-2', 'flagship')
+    expect(result.orderId).toBeTruthy()
   })
 })

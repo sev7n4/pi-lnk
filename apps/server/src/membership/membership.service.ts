@@ -1,4 +1,4 @@
-import { Inject, Injectable, BadRequestException } from '@nestjs/common'
+import { Inject, Injectable, BadRequestException, NotFoundException } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { PointsRangeKey, resolvePointsRange } from '../points/points-range'
@@ -125,10 +125,19 @@ export class MembershipService {
     return PLANS.find((p) => p.id === plan)
   }
 
-  async getPoints(userId: string) {
+  async getPoints(userId: string, now: Date = new Date()) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (!user) throw new BadRequestException('用户不存在')
-    return { points: user.points, membership: user.membership }
+    // 今日是否已领取每日签到（按上海自然日，与 claimDaily 幂等口径一致）。
+    // 前端据此把按钮切到「今日已领取」终态，而不是等点击失败后弹一句不显眼的提示。
+    const day = parseShanghaiDay(shanghaiDayKey(now))
+    const claimedToday = Boolean(
+      day &&
+        user.lastDailyClaimAt &&
+        user.lastDailyClaimAt >= day.from &&
+        user.lastDailyClaimAt < day.next,
+    )
+    return { points: user.points, membership: user.membership, claimedToday }
   }
 
   /// 按池余额分解（多池记账 · 只读聚合）。不改动 User.points 单一权威余额与计费扣减链路，
@@ -238,9 +247,21 @@ export class MembershipService {
       const current = await tx.user.findUnique({ where: { id: userId } })
       return { membership: current?.membership ?? plan, points: current?.points ?? 0 }
     }
+    // 【一个用户同时只持有一个套餐】仅「当前免费」或「续费同档」才允许改写 membership。
+    // 其它情况（下单后用户又购入别的档位）保留现有档位——绝不静默降级/换档；
+    // 但积分照发：用户已付款，吞掉即资损（换购请先退订，见 cancelSubscription）。
+    const current = await tx.user.findUnique({
+      where: { id: userId },
+      select: { membership: true },
+    })
+    const heldPlan = current?.membership ?? 'free'
+    const canSwitchPlan = heldPlan === 'free' || heldPlan === plan
     const updated = await tx.user.update({
       where: { id: userId },
-      data: { membership: plan, points: { increment: selected.points } },
+      data: {
+        ...(canSwitchPlan ? { membership: plan } : {}),
+        points: { increment: selected.points },
+      },
     })
     await tx.pointTransaction.create({
       data: {
@@ -261,6 +282,30 @@ export class MembershipService {
 
   async grantPaidPlan(userId: string, plan: string, orderId: string, now: Date = new Date()) {
     return this.prisma.$transaction((tx) => this.grantPaidPlanTx(tx, userId, plan, orderId, now))
+  }
+
+  /**
+   * 退订当前套餐（membership → free）——「一个用户同时只持有一个套餐」的换购前置动作。
+   *
+   * 语义：退订即**放弃当前档位权益**，积分按账本多池规则保留（不清零），已支付订单不退款。
+   * 幂等：已是免费档时 changed=false 直接返回当前状态（重复点击不报错）。
+   * ⚠️ 自动续费目前只停留在文案层（无签约记录、无周期扣款），故退订仅改档位；
+   *    待接入支付宝签约解约时，这里必须同步调用渠道侧解约，否则会被渠道继续扣款。
+   */
+  async cancelSubscription(userId: string) {
+    const current = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { membership: true, points: true },
+    })
+    if (!current) throw new NotFoundException('用户不存在')
+    if (current.membership === 'free') {
+      return { membership: 'free', points: current.points, changed: false }
+    }
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { membership: 'free' },
+    })
+    return { membership: updated.membership, points: updated.points, changed: true }
   }
 
   /**
