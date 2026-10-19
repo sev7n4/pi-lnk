@@ -3297,16 +3297,20 @@ defineExpose({
         <Transition name="session-drawer">
           <div v-if="sessionDrawerOpen" class="session-drawer-layer" @click.self="closeSessionDrawer">
             <div class="session-drawer" role="dialog" aria-label="项目列表">
+              <!-- 「新建项目」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。
+                   与 MobileTopBar 顶栏「新建对话」同族 create-card（scoped 样式各自定义）。
+                   整卡可点；圆盘是装饰 span（按钮内不嵌按钮）。 -->
               <button
                 type="button"
-                class="session-drawer__new"
+                class="create-card"
                 @click="newProject()"
               >
-                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z" />
-                  <path stroke-linecap="round" d="M12 8.5v7M8.5 12h7" />
-                </svg>
-                新建项目
+                <span class="create-card__label">新建项目</span>
+                <span class="create-card__disc" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25">
+                    <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+                  </svg>
+                </span>
               </button>
               <p class="session-drawer__caption">项目</p>
               <div
@@ -4852,11 +4856,17 @@ defineExpose({
   overflow-y: auto;
 }
 
-.session-drawer__new {
+/* 「新建」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。
+ * 圆盘 = accent 渐变实底 + on-accent 白加号（--lnk-text-on-accent 两主题均 #fff，
+ * 白字写在令牌里合法；圆盘与项目卡右侧图标按钮同列 rhythm）。
+ * 顶栏「新建对话」= 同族 create-card--bar（MobileTopBar.vue 各自 scoped 定义）。 */
+.create-card {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 12px 14px;
+  width: 100%;
+  padding: 12px 12px 12px 14px;
   border: 0.5px solid var(--lnk-border-subtle);
   border-radius: 12px;
   background: var(--lnk-surface-raised);
@@ -4864,6 +4874,29 @@ defineExpose({
   font-size: var(--lnk-text-sm, 13px);
   font-weight: 500;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.create-card:active {
+  background: var(--lnk-accent-subtle);
+}
+
+.create-card__disc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--lnk-accent-gradient);
+  color: var(--lnk-text-on-accent);
+}
+
+.create-card__disc svg {
+  width: 15px;
+  height: 15px;
 }
 
 .session-drawer__caption {

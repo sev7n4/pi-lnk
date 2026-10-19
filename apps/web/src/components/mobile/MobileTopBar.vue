@@ -104,15 +104,20 @@ onUnmounted(() => {
       </span>
 
       <template v-if="props.tab === 'chat'">
+        <!-- 「新建对话」卡（IA v3.3，2026-10-19 用户裁决）：与抽屉「新建项目」
+             同族 create-card 的顶栏紧凑变体——胶囊承托 + 右侧小圆盘加号。 -->
         <button
           type="button"
-          class="bar-btn"
-          aria-label="新建对话"
+          class="create-card create-card--bar"
+          title="新建对话"
           @click="emit('new-chat')"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-            <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-          </svg>
+          <span class="create-card__label">新建对话</span>
+          <span class="create-card__disc" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+            </svg>
+          </span>
         </button>
         <button
           type="button"
@@ -208,8 +213,55 @@ onUnmounted(() => {
 .bar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   margin-left: auto;
+}
+
+/* 「新建对话」卡：create-card 家族的顶栏紧凑变体（抽屉「新建项目」同族，
+ * AgentSideRail.vue 各自 scoped 定义）。胶囊承托文字 + accent 圆盘白加号，
+ * 与积分胶囊、🕘 图标按钮在 44px 顶栏内纵向居中对齐。 */
+.create-card--bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0 4px 0 11px;
+  border: 0.5px solid var(--lnk-border-subtle);
+  border-radius: 999px;
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.create-card--bar:active {
+  background: var(--lnk-accent-subtle);
+}
+
+.create-card--bar .create-card__label {
+  white-space: nowrap;
+}
+
+.create-card--bar .create-card__disc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--lnk-accent-gradient);
+  color: var(--lnk-text-on-accent);
+}
+
+.create-card--bar .create-card__disc svg {
+  width: 11px;
+  height: 11px;
 }
 
 /* 全局积分胶囊：对话/画布双页可见，登录态才渲染 */
@@ -218,7 +270,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   height: 26px;
-  margin-right: 4px;
+  margin-right: 2px;
   padding: 0 9px 0 7px;
   border-radius: 999px;
   border: 0.5px solid var(--lnk-border-subtle);
