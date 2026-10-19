@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// 被删历史（2026-10-20）：菜单项「分镜板」曾在此并 emit('storyboard')；
+// #494 下线分镜节点并删除 StoryboardDialog 后 CanvasPage 已无该监听 ⇒ 死入口移除。
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useClickOutside } from '@/composables/useClickOutside'
@@ -11,7 +13,6 @@ defineProps<{
 const emit = defineEmits<{
   'update:title': [value: string]
   save: []
-  storyboard: []
   publish: []
   importWorkflow: []
   exportWorkflow: []
@@ -73,13 +74,6 @@ useClickOutside(menuRef, closeMenu)
             @click="emit('save'); closeMenu()"
           >
             {{ saving ? '保存中...' : '保存画布' }}
-          </button>
-          <button
-            type="button"
-            class="neo-popover-item flex w-full px-3 py-2 text-left text-xs"
-            @click="emit('storyboard'); closeMenu()"
-          >
-            分镜板
           </button>
           <button
             type="button"

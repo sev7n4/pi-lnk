@@ -17,14 +17,16 @@ function mountChrome() {
 }
 
 describe('CanvasFloatingChrome：导入/导出迁入「...」菜单', () => {
-  it('有效性前置：菜单默认收起，展开后含保存/分镜板/发布（既有项不回归）', async () => {
+  it('有效性前置：菜单默认收起，展开后含保存/发布（既有项不回归）', async () => {
     const w = mountChrome()
     expect(w.find('.neo-popover').exists()).toBe(false)
     await w.find('.chrome-more-btn').trigger('click')
     const text = w.find('.neo-popover').text()
-    for (const item of ['保存画布', '分镜板', '发布作品']) {
+    for (const item of ['保存画布', '发布作品']) {
       expect(text).toContain(item)
     }
+    // #494 下线分镜节点 + 删除 StoryboardDialog ⇒ 「分镜板」是点了没反应的死入口
+    expect(text).not.toContain('分镜板')
     w.unmount()
   })
 
