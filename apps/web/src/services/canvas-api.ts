@@ -1,4 +1,5 @@
 import { api } from './api'
+import type { AxiosRequestConfig } from 'axios'
 import type { GenerationDiagnostic, GenerationRefPayload, VideoSettings } from '@lnkpi/shared'
 import type {
   SceneComposerBatchGenerateRequest,
@@ -7,7 +8,8 @@ import type {
 } from '@lnkpi/shared'
 
 export const canvasApi = {
-  list: () => api.get('/agent/canvas/list'),
+  /** config 仅在项目抽屉调用处带 15s 超时（弱网兜底，见 AgentSideRail.loadProjects） */
+  list: (config?: AxiosRequestConfig) => api.get('/agent/canvas/list', config),
   create: (title?: string) => api.post('/agent/canvas/create', { title }),
   update: (id: string, data: { title?: string; canvasData?: unknown }) =>
     api.put('/agent/canvas/update', { id, ...data }),

@@ -226,12 +226,19 @@
   --lnk-accent-active: var(--lnk-purple-700);
   --lnk-accent-text: var(--lnk-purple-300); /* 表面上的紫字/链接，与按钮底色分开 */
   --lnk-accent-subtle: rgba(109, 93, 252, 0.16);
+  /* 选中/描边档：选中态边框（原 --neo-accent-border 平移，值不变）。
+     ⛔ 不是文字色：禁止当 foreground 压在 accent 底上（白字只有 text-on-accent）。 */
+  --lnk-accent-border: rgba(109, 93, 252, 0.4);
+  /* 实心徽章底（原 --neo-accent-strong 平移，值 #5b4ce6 不变）：「当前套餐」徽章等
+     实心 accent 场景；上面只放 --lnk-text-on-accent 白字，禁拿 accent-text 当前景。 */
+  --lnk-accent-strong: var(--lnk-purple-600);
   --lnk-accent-glow: 0 4px 16px rgba(109, 93, 252, 0.32);
   --lnk-accent-gradient: linear-gradient(135deg, #6d5dfc 0%, #8a5cf6 55%, #b45cf0 100%);
 
   /* 单语义强调色 */
   --lnk-energy: var(--lnk-cyan-400);  /* 仅：连线 / 能量流动 */
   --lnk-credit: var(--lnk-amber-400); /* 仅：积分 / 消耗 */
+  --lnk-credit-soft: rgba(245, 158, 11, 0.16); /* 积分柔底（原 --neo-warm-soft 平移） */
 
   /* 状态 */
   --lnk-success: var(--lnk-green-400);
@@ -335,11 +342,14 @@
   --lnk-accent-active: var(--lnk-purple-800);
   --lnk-accent-text: var(--lnk-purple-700);
   --lnk-accent-subtle: rgba(91, 76, 230, 0.12);
+  --lnk-accent-border: rgba(91, 76, 230, 0.75);
+  --lnk-accent-strong: var(--lnk-purple-800); /* 实心徽章底（原 --neo-accent-strong 平移） */
   --lnk-accent-glow: 0 4px 16px rgba(91, 76, 230, 0.24);
   --lnk-accent-gradient: linear-gradient(135deg, #6d5dfc 0%, #8a5cf6 55%, #b45cf0 100%);
 
   --lnk-energy: var(--lnk-cyan-700);  /* 浅底需更深的青 */
   --lnk-credit: var(--lnk-amber-800); /* 浅底需更深的琥珀 */
+  --lnk-credit-soft: rgba(138, 82, 0, 0.12); /* 积分柔底（原 --neo-warm-soft 平移） */
 
   --lnk-success: var(--lnk-green-800);
   --lnk-warning: var(--lnk-amber-800);
