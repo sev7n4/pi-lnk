@@ -125,10 +125,19 @@ export class MembershipService {
     return PLANS.find((p) => p.id === plan)
   }
 
-  async getPoints(userId: string) {
+  async getPoints(userId: string, now: Date = new Date()) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (!user) throw new BadRequestException('用户不存在')
-    return { points: user.points, membership: user.membership }
+    // 今日是否已领取每日签到（按上海自然日，与 claimDaily 幂等口径一致）。
+    // 前端据此把按钮切到「今日已领取」终态，而不是等点击失败后弹一句不显眼的提示。
+    const day = parseShanghaiDay(shanghaiDayKey(now))
+    const claimedToday = Boolean(
+      day &&
+        user.lastDailyClaimAt &&
+        user.lastDailyClaimAt >= day.from &&
+        user.lastDailyClaimAt < day.next,
+    )
+    return { points: user.points, membership: user.membership, claimedToday }
   }
 
   /// 按池余额分解（多池记账 · 只读聚合）。不改动 User.points 单一权威余额与计费扣减链路，
