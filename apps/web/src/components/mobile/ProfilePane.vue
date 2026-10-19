@@ -9,11 +9,14 @@ import { useAuthStore } from '@/stores/auth'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import TopupModal from '@/components/membership/TopupModal.vue'
 import { BRAND_LOGO_URL } from '@/constants/brand'
-import { membershipLabel as membershipLabelFn } from '@/services/users-api'
+import { subscriptionLabel } from '@/services/users-api'
 
 const emit = defineEmits<{
   'open-membership': []
   'open-model-settings': []
+  /** 我的积分 / 我的订阅：移动端 pane（与 PC 路由页共用同一面板组件） */
+  'open-points': []
+  'open-subscription': []
 }>()
 
 const auth = useAuthStore()
@@ -21,7 +24,8 @@ const router = useRouter()
 
 const nickname = computed(() => auth.user?.nickname || '未登录')
 
-const membershipLabel = computed(() => membershipLabelFn(auth.user?.membership))
+/** 订阅口径：未订阅说「未订阅」（免费版不是套餐）。 */
+const membershipLabel = computed(() => subscriptionLabel(auth.user?.membership))
 
 /** 积分充值（2026-10-19 用户裁决补入口）：TopupModal 直连，6 档瓦片 + 自定义 */
 const showTopup = ref(false)
@@ -48,15 +52,23 @@ function backToWorkbench() {
     </button>
 
     <div v-if="auth.isLoggedIn" class="row-group">
-      <!-- 我的积分：账户信息（余额）→ 会员与用量面板 -->
-      <button type="button" class="row-item" @click="emit('open-membership')">
+      <!-- 我的积分 → 积分页（余额/进度/明细/充值；2026-10-19 从套餐弹窗拆出，此前积分入口误开会员面板） -->
+      <button type="button" class="row-item" @click="emit('open-points')">
         <span class="row-label">我的积分</span>
         <span class="row-value tabular-nums">{{ auth.user?.points ?? 0 }}</span>
         <svg class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
           <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
         </svg>
       </button>
-      <!-- 套餐订阅：当前订阅套餐 → 会员面板 -->
+      <!-- 我的订阅 → 订阅页（订阅方案/到期时间/取消自动续费/查看所有方案） -->
+      <button type="button" class="row-item" @click="emit('open-subscription')">
+        <span class="row-label">我的订阅</span>
+        <span class="row-value">{{ membershipLabel }}</span>
+        <svg class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
+        </svg>
+      </button>
+      <!-- 套餐订阅：当前订阅套餐 → 会员面板（购买/管理方案） -->
       <button type="button" class="row-item" @click="emit('open-membership')">
         <span class="row-label">套餐订阅</span>
         <span class="row-value">{{ membershipLabel }}</span>

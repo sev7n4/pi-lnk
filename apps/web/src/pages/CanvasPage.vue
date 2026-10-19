@@ -79,6 +79,9 @@ import MobileTabBar, { type MobileAppTab } from '@/components/mobile/MobileTabBa
 import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
 import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
 import ProfilePane from '@/components/mobile/ProfilePane.vue'
+import PointsPanel from '@/components/points/PointsPanel.vue'
+import SubscriptionPanel from '@/components/membership/SubscriptionPanel.vue'
+import TopupModal from '@/components/membership/TopupModal.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
 import MobileCanvasTopControls from '@/components/canvas/MobileCanvasTopControls.vue'
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
@@ -4751,6 +4754,28 @@ const mobileCanvasImm = ref(false)
  *  「门」由画布页签继承（图标=传送门章鱼+光环，固定位零跳变）——切页签即切模式。
  *  窗 A/B（◎ 定位锚 / SSE 定位）= 切到画布页签 + composer 同屏（imm=false）。 */
 const mobileAppTab = ref<MobileAppTab>('chat')
+
+/**
+ * 移动端「我的」二级面板（2026-10-19 新增：我的积分 / 我的订阅）。
+ * 内容组件与 PC 路由页共用同一份，这里只管移动端外壳与打开/关闭。
+ * 用 local state 而非路由：移动端四页签本就不走 router（见 mobileAppTab）。
+ */
+type MobileAccountPane = '' | 'points' | 'subscription'
+const mobileAccountPane = ref<MobileAccountPane>('')
+const showMobileTopup = ref(false)
+const showMobilePlans = ref(false)
+
+function openMobileAccountPane(pane: Exclude<MobileAccountPane, ''>) {
+  mobileAccountPane.value = pane
+}
+function closeMobileAccountPane() {
+  mobileAccountPane.value = ''
+  showMobileTopup.value = false
+  showMobilePlans.value = false
+}
+function openMobilePlans() {
+  showMobilePlans.value = true
+}
 function onMobileTabChange(tab: MobileAppTab) {
   mobileAppTab.value = tab
   if (tab === 'canvas') {
@@ -5343,7 +5368,29 @@ onUnmounted(() => {
       v-if="isMobileLayout && mobileAppTab === 'mine'"
       @open-membership="showMembership = true"
       @open-model-settings="showModelSettings = true"
+      @open-points="openMobileAccountPane('points')"
+      @open-subscription="openMobileAccountPane('subscription')"
     />
+    <!--
+      移动端「我的积分 / 我的订阅」二级 pane：内容复用与 PC 路由页**同一份**面板组件，
+      这里只提供移动端外壳（顶部返回栏 + 全屏滚动）。
+    -->
+    <div v-if="isMobileLayout && mobileAccountPane" class="mobile-account-pane">
+      <div class="mobile-account-head">
+        <button type="button" class="mobile-account-back" @click="closeMobileAccountPane">‹ 返回</button>
+        <h2 class="mobile-account-title">{{ mobileAccountPane === 'points' ? '我的积分' : '我的订阅' }}</h2>
+      </div>
+      <div class="mobile-account-body">
+        <PointsPanel
+          v-if="mobileAccountPane === 'points'"
+          @open-topup="showMobileTopup = true"
+          @open-usage="closeMobileAccountPane()"
+        />
+        <SubscriptionPanel v-else @open-plans="openMobilePlans" />
+      </div>
+      <TopupModal v-if="isMobileLayout" v-model="showMobileTopup" />
+      <MembershipModal v-if="isMobileLayout" v-model="showMobilePlans" />
+    </div>
     <MobileTabBar
       v-if="isMobileLayout"
       :active="mobileAppTab"
@@ -5397,6 +5444,42 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 移动端「我的积分 / 我的订阅」二级 pane 外壳（内容由共享面板渲染） */
+.mobile-account-pane {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: var(--lnk-surface-canvas);
+  padding: calc(var(--lnk-space-4) + env(safe-area-inset-top)) var(--lnk-pad-card)
+    calc(var(--lnk-space-6) + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+.mobile-account-head {
+  display: flex;
+  align-items: center;
+  gap: var(--lnk-space-3);
+  margin-bottom: var(--lnk-space-4);
+}
+.mobile-account-back {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: var(--lnk-text-sm);
+  color: var(--lnk-text-secondary);
+}
+.mobile-account-title {
+  margin: 0;
+  font-size: var(--lnk-text-lg);
+  font-weight: 700;
+  color: var(--lnk-text-primary);
+}
+.mobile-account-body {
+  flex: 1;
+}
+
 .canvas-flow {
   background: var(--neo-bg);
   transition: background 0.25s ease;

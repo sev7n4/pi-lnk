@@ -1,4 +1,5 @@
 import { api } from './api'
+import type { SubscriptionDto } from './users-api'
 
 /** 充值档位（服务端单一真源，GET /payment/topup/options 下发）。 */
 export interface TopupTier {
@@ -50,4 +51,20 @@ export const paymentApi = {
     api.post<{ data: PayOrderResult }>('/payment/order', { plan, channel }),
   /** 查询订单状态（服务端对 PENDING 订单自动做渠道查单补偿）。 */
   getOrder: (orderId: string) => api.get<{ data: PayOrderStatus }>(`/payment/order/${orderId}`),
+  // ── 自动续费（支付宝周期扣款）───────────────────────────────────────────
+  // ⚠️ 渠道能力默认关闭（生产 env 未开 = 手动续期模式），前端据此决定是否展示入口，
+  // 绝不展示「已开通自动续费」这种不成立的状态。
+  /** 能力探测（免登录）。 */
+  autoRenewCapability: () => api.get<{ data: { supported: boolean } }>('/payment/auto-renew/capability'),
+  /** 生成支付宝签约跳转 URL（需已订阅）。 */
+  createAutoRenewSign: () =>
+    api.post<{ data: { signUrl: string; executeTime: string } }>('/payment/auto-renew/sign'),
+  /** 签约回跳后确认（服务端向渠道查真实签约号后落库）。 */
+  confirmAutoRenew: () =>
+    api.post<{ data: { agreementNo: string; status?: string } }>('/payment/auto-renew/confirm'),
+  /** 取消自动续期：服务端先渠道解约再改本地，当前周期内仍可用。 */
+  cancelAutoRenew: () =>
+    api.post<{ data: { changed: boolean; subscription: SubscriptionDto | null } }>(
+      '/payment/auto-renew/cancel',
+    ),
 }
