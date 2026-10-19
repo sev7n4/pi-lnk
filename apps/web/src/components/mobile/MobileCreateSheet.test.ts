@@ -10,6 +10,7 @@ import { h } from 'vue'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CANVAS_DOCK_MENU_ITEMS } from '@/components/canvas/canvasDockMenu'
 import MobileCreateSheet from './MobileCreateSheet.vue'
 
 const { assetStubEmit } = vi.hoisted(() => ({
@@ -56,15 +57,18 @@ beforeEach(() => {
 })
 
 describe('MobileCreateSheet（PR2 新建收敛）', () => {
-  it('一级视图：资产库瓦片 + 4 类生成节点宫格（与竖轨同源）', () => {
+  it('一级视图：资产库瓦片 + 与竖轨同源的节点宫格', () => {
     mountSheet()
     expect(q('[data-testid="mcs-asset-tile"]')).not.toBeNull()
     const items = qa('[data-testid="mcs-grid"] .mcs-grid-item')
-    // 2026-10-19 节点下线：创建菜单收敛到 4 类生成节点（导演台/媒体输入/视频合成/
-    // 3D World/分镜/分组已退出创建菜单，存量节点走兜底渲染）。
-    expect(items).toHaveLength(4)
-    const types = items.map((el) => el.getAttribute('data-type'))
-    expect(types).toEqual(expect.arrayContaining(['text', 'image', 'video', 'audio']))
+    // ⚠️ 不钉死具体数量：节点下线是产品决策（2026-10-19 prompt → 4 类生成节点；
+    // 2026-10-20 #494 导演台/媒体输入/视频合成/3D world/分镜下线 + 分组侧车化），
+    // 那是数据源的变化、不是本组件回归。契约是「宫格与 CANVAS_DOCK_MENU_ITEMS
+    // 一一对应」，数量随数据源走。
+    expect(items).toHaveLength(CANVAS_DOCK_MENU_ITEMS.length)
+    expect(items.map((el) => el.getAttribute('data-type')).sort()).toEqual(
+      CANVAS_DOCK_MENU_ITEMS.map((item) => item.type).sort(),
+    )
   })
 
   it('点宫格项 → emit create(type)（走竖轨同一条创建链路）', async () => {
