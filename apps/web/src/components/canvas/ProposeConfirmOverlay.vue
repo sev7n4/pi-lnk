@@ -132,8 +132,9 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
 </template>
 
 <style scoped>
-/* 视觉语言对齐 MultiSelectToolbar（同族浮层）：neo-chrome 底 + --neo-* 令牌，
-   颜色不新增 hex/rgba（theme-usage 棘轮 + design-token 纪律）。 */
+/* 视觉语言对齐 MultiSelectToolbar（同族浮层：neo-chrome 底 + 同尺度按钮），
+   颜色一律消费 --lnk-* 语义令牌（design-tokens.css）——neoUsageRatchet 棘轮
+   钉死「新代码不许再消费旧 --neo-* 体系」，组件内零 hex/rgba。 */
 .propose-confirm-bar {
   box-shadow: var(--lnk-shadow-md);
 }
@@ -147,7 +148,7 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
 .propose-confirm-label {
   padding: 0 2px;
   font-size: 12px;
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 .propose-confirm-btn {
   display: inline-flex;
@@ -159,20 +160,20 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
   border-radius: 8px;
   background: transparent;
   font-size: 12px;
-  color: var(--neo-text-secondary);
+  color: var(--lnk-text-secondary);
   cursor: pointer;
   transition: background 0.14s ease, color 0.14s ease;
 }
 .propose-confirm-btn:hover {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-primary);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-primary);
 }
 .propose-confirm-btn.accent {
-  color: var(--neo-accent-text);
+  color: var(--lnk-accent-text);
 }
 .propose-confirm-btn.accent:hover {
-  background: var(--neo-accent-soft);
-  color: var(--neo-accent-text);
+  background: var(--lnk-accent-subtle);
+  color: var(--lnk-accent-text);
 }
 .propose-confirm-ico {
   display: block;
