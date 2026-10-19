@@ -69,6 +69,12 @@ describe('mobile session drawer: project preview wiring (default 8 + expand more
 
 // ---- 数据通路（挂载级）：抽屉开的瞬间项目卡必须真的渲染出来 ----
 // 样式契约防「压扁」，这里防「压根没渲染」——两者都发生过用户可见的「清单看不到」。
+//
+// ⚠️ 本 describe 与下方「预览条数」describe 的 5 条用例都真实 mount 整个 AgentSideRail
+// （+ memory-history router + flushPromises）。master 15:20 那次绿时本文件 10 条共
+// 5352ms——正压 vitest 默认 5s 线；PR #490 新增 5 个测试文件抬高并发后必红
+// （实测唯一失败项，其余 2156 项全绿）。统一显式 30s，不碰全局 testTimeout。
+const MOUNT_TIMEOUT = 30_000
 
 /** 项目 fixtures 可变（预览条数测试需要不同总量）；默认 3 个（既有数据通路用例） */
 let projectFixtures: { id: string; title: string; updatedAt: string }[] = [
@@ -166,28 +172,33 @@ describe('mobile session drawer: project list data path', () => {
     document.body.innerHTML = ''
   })
 
-  it('openSessionDrawer renders one card per project (title fallback + is-current accent)', async () => {
-    const w = await mountRail()
-    w.vm.openSessionDrawer()
-    const { flushPromises } = await import('@vue/test-utils')
-    await flushPromises()
+  // 挂载级用例：显式 30s（理由见文件中部 MOUNT_TIMEOUT 注释）
+  it(
+    'openSessionDrawer renders one card per project (title fallback + is-current accent)',
+    async () => {
+      const w = await mountRail()
+      w.vm.openSessionDrawer()
+      const { flushPromises } = await import('@vue/test-utils')
+      await flushPromises()
 
-    // 抽屉 Teleport 到 body——查询 document 而非 wrapper
-    const cards = document.body.querySelectorAll('.project-card')
-    expect(cards.length).toBe(3)
-    expect(cards[0].textContent).toContain('漫剧主线')
-    expect(cards[1].textContent).toContain('产品图实验')
-    // 空标题走「未命名项目」兜底
-    expect(cards[2].textContent).toContain('未命名项目')
-    // 当前项目卡带 is-current（accent 边框）
-    expect(cards[0].classList.contains('is-current')).toBe(true)
-    expect(cards[1].classList.contains('is-current')).toBe(false)
-    // 每卡都有可操作入口（打开 + 重命名 + 删除）——细线态下这些全被裁没
-    expect(document.body.querySelectorAll('.project-card__main').length).toBe(3)
-    expect(document.body.querySelectorAll('.project-card__more').length).toBe(6)
-    // ≤ 预览条数：不出现「展开更多」（无更多可展开）
-    expect(document.body.querySelector('.session-drawer__expand')).toBeNull()
-  })
+      // 抽屉 Teleport 到 body——查询 document 而非 wrapper
+      const cards = document.body.querySelectorAll('.project-card')
+      expect(cards.length).toBe(3)
+      expect(cards[0].textContent).toContain('漫剧主线')
+      expect(cards[1].textContent).toContain('产品图实验')
+      // 空标题走「未命名项目」兜底
+      expect(cards[2].textContent).toContain('未命名项目')
+      // 当前项目卡带 is-current（accent 边框）
+      expect(cards[0].classList.contains('is-current')).toBe(true)
+      expect(cards[1].classList.contains('is-current')).toBe(false)
+      // 每卡都有可操作入口（打开 + 重命名 + 删除）——细线态下这些全被裁没
+      expect(document.body.querySelectorAll('.project-card__main').length).toBe(3)
+      expect(document.body.querySelectorAll('.project-card__more').length).toBe(6)
+      // ≤ 预览条数：不出现「展开更多」（无更多可展开）
+      expect(document.body.querySelector('.session-drawer__expand')).toBeNull()
+    },
+    MOUNT_TIMEOUT,
+  )
 })
 
 // ---- 项目预览条数（2026-10-19 用户裁决：默认 8 条 + 展开更多）----
@@ -213,41 +224,57 @@ describe('mobile session drawer: project preview cap + expand more', () => {
     return w
   }
 
-  it('default preview shows only the first 8 (most recent) with a counted expand button', async () => {
-    await openDrawerWith(30)
-    const cards = document.body.querySelectorAll('.project-card')
-    expect(cards.length).toBe(8)
-    // 前 8 = 最新 8 条（fixtures 按 updatedAt 递减生成）
-    expect(cards[0].textContent).toContain('项目 0')
-    expect(cards[7].textContent).toContain('项目 7')
-    const btn = document.body.querySelector('.session-drawer__expand')
-    expect(btn).not.toBeNull()
-    expect(btn?.textContent).toContain('展开更多（还有 22 个）')
-  })
+  it(
+    'default preview shows only the first 8 (most recent) with a counted expand button',
+    async () => {
+      await openDrawerWith(30)
+      const cards = document.body.querySelectorAll('.project-card')
+      expect(cards.length).toBe(8)
+      // 前 8 = 最新 8 条（fixtures 按 updatedAt 递减生成）
+      expect(cards[0].textContent).toContain('项目 0')
+      expect(cards[7].textContent).toContain('项目 7')
+      const btn = document.body.querySelector('.session-drawer__expand')
+      expect(btn).not.toBeNull()
+      expect(btn?.textContent).toContain('展开更多（还有 22 个）')
+    },
+    MOUNT_TIMEOUT,
+  )
 
-  it('clicking expand shows all projects; clicking again collapses back to 8', async () => {
-    await openDrawerWith(30)
-    const btn = document.body.querySelector('.session-drawer__expand') as HTMLButtonElement
-    btn.click()
-    await (await import('@vue/test-utils')).flushPromises()
-    expect(document.body.querySelectorAll('.project-card').length).toBe(30)
-    expect(document.body.querySelector('.session-drawer__expand')?.textContent).toContain('收起')
+  it(
+    'clicking expand shows all projects; clicking again collapses back to 8',
+    async () => {
+      await openDrawerWith(30)
+      const btn = document.body.querySelector('.session-drawer__expand') as HTMLButtonElement
+      btn.click()
+      await (await import('@vue/test-utils')).flushPromises()
+      expect(document.body.querySelectorAll('.project-card').length).toBe(30)
+      expect(document.body.querySelector('.session-drawer__expand')?.textContent).toContain('收起')
 
-    ;(document.body.querySelector('.session-drawer__expand') as HTMLButtonElement).click()
-    await (await import('@vue/test-utils')).flushPromises()
-    expect(document.body.querySelectorAll('.project-card').length).toBe(8)
-    expect(document.body.querySelector('.session-drawer__expand')?.textContent).toContain('展开更多')
-  })
+      ;(document.body.querySelector('.session-drawer__expand') as HTMLButtonElement).click()
+      await (await import('@vue/test-utils')).flushPromises()
+      expect(document.body.querySelectorAll('.project-card').length).toBe(8)
+      expect(document.body.querySelector('.session-drawer__expand')?.textContent).toContain('展开更多')
+    },
+    MOUNT_TIMEOUT,
+  )
 
-  it('boundary: exactly 8 projects → no expand button (nothing hidden)', async () => {
-    await openDrawerWith(8)
-    expect(document.body.querySelectorAll('.project-card').length).toBe(8)
-    expect(document.body.querySelector('.session-drawer__expand')).toBeNull()
-  })
+  it(
+    'boundary: exactly 8 projects → no expand button (nothing hidden)',
+    async () => {
+      await openDrawerWith(8)
+      expect(document.body.querySelectorAll('.project-card').length).toBe(8)
+      expect(document.body.querySelector('.session-drawer__expand')).toBeNull()
+    },
+    MOUNT_TIMEOUT,
+  )
 
-  it('boundary: 9 projects → button says 还有 1 个', async () => {
-    await openDrawerWith(9)
-    expect(document.body.querySelectorAll('.project-card').length).toBe(8)
-    expect(document.body.querySelector('.session-drawer__expand')?.textContent).toContain('还有 1 个')
-  })
+  it(
+    'boundary: 9 projects → button says 还有 1 个',
+    async () => {
+      await openDrawerWith(9)
+      expect(document.body.querySelectorAll('.project-card').length).toBe(8)
+      expect(document.body.querySelector('.session-drawer__expand')?.textContent).toContain('还有 1 个')
+    },
+    MOUNT_TIMEOUT,
+  )
 })
