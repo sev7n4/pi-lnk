@@ -123,13 +123,6 @@ function openOfficialSite() {
         </button>
       </div>
     </div>
-      <button type="button" class="row-item" @click="emit('open-model-settings')">
-        <span class="row-label">模型服务配置</span>
-        <svg class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-          <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
-        </svg>
-      </button>
-    </div>
 
     <div class="row-group">
       <!-- 进入官方（2026-10-19 用户裁决：原「返回工作台」改为跳转官网主页） -->
