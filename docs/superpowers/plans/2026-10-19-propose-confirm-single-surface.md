@@ -46,12 +46,13 @@
 ## Phase 5 — 测试与验收
 
 - [x] **T9 单测补强**（2026-10-19，按本机纪律分批）：`AgentSideRail.proposeReadonly.test.ts`（T2 三态）、`dockStudio.test.ts` 补 `isPendingConfirmNode`（T4 判据）、`ProposeConfirmOverlay.test.ts` 4 例（T1 三动作 emit / 非待确认不渲染 / above-below 翻转）——本地全绿。`CanvasPage` 级挂测（dock 门控 + 浮层集成）超本机 vitest 天花板，按既有纪律交 CI 全量 web 测试；`proposeWaitActions.test.ts` 回归护栏不动（`/answers` 契约未改）。
-- [ ] **T10 验收判据（全部满足才算闭环）**：
-  1. 画布窗态（含从对话定位进入）**零遮挡**：节点 `pending_confirm` 时看不到对话流可操作提议卡叠在画布上；
-  2. 节点 `pending_confirm` 时 studio dock **不会自动弹出**；
-  3. 对话流里 propose 表现为**只读日志**，不再有第二个可操作确认入口；
-  4. 确认仍走 `POST /answers` 确定性信号，生产无"虚假确认 / 误判取消"回归（复用 2026-10-06 规格判据）；
-  5. 移动端三窗态表现正确。
+- [~] **T10 验收判据（资产级已验，交互项待人工冒烟）**（2026-10-19 上线：master `5c81d911`，deploy 39268123182 success）：
+  1. 画布窗态**零遮挡**：代码侧达成（对话卡 T2 只读 + dock T4 门控 + 节点浮层 T1），待人工在提议态截图确认；
+  2. `pending_confirm` 时 studio dock **不自动弹出**：代码侧达成（桌面 v-if + 移动 `mobileStudioDockOpen` 双门控），待人工确认；
+  3. 对话流 propose 表现为**只读日志**：代码侧达成（纯对话视图仍保留可操作卡，2026-10-06 拍板），待人工确认；
+  4. 确认仍走 `POST /answers` 确定性信号：✅ 已验（confirm/cancel/edit 三路径全部同源复用 `confirmProposeWait` / `cancelProposeForNode`；`/answers` 契约与 stale-draft 守卫零改动，CI 3 轮全绿）；
+  5. 移动端三窗态表现正确：待人工回归（T6/T7 窗态纪律本身仍未收口，见下）。
+  - 生产取证：入口 chunk `index-bycYtjHS.js` → `index-CDrSLx70.js`（旧两枚均 404）；`CanvasPage-C5qU5PIE.js` 含 `propose-confirm-overlay` + 三 testid + 「确认生成」；`CanvasPage-DSYCsVdU.css` 含 propose-confirm-btn/dot/label；`/api/health` 200。
 
 ---
 
