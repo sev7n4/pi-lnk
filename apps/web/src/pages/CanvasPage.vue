@@ -80,6 +80,7 @@ import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
 import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
 import ProfilePane from '@/components/mobile/ProfilePane.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
+import AccountPanel from '@/components/account/AccountPanel.vue'
 import SubscriptionPanel from '@/components/membership/SubscriptionPanel.vue'
 import TopupModal from '@/components/membership/TopupModal.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
@@ -4760,10 +4761,16 @@ const mobileAppTab = ref<MobileAppTab>('chat')
  * 内容组件与 PC 路由页共用同一份，这里只管移动端外壳与打开/关闭。
  * 用 local state 而非路由：移动端四页签本就不走 router（见 mobileAppTab）。
  */
-type MobileAccountPane = '' | 'points' | 'subscription'
+type MobileAccountPane = '' | 'points' | 'subscription' | 'account'
 const mobileAccountPane = ref<MobileAccountPane>('')
 const showMobileTopup = ref(false)
 const showMobilePlans = ref(false)
+
+const MOBILE_ACCOUNT_TITLES: Record<Exclude<MobileAccountPane, ''>, string> = {
+  points: '我的积分',
+  subscription: '我的订阅',
+  account: '账号信息',
+}
 
 function openMobileAccountPane(pane: Exclude<MobileAccountPane, ''>) {
   mobileAccountPane.value = pane
@@ -5372,6 +5379,7 @@ onUnmounted(() => {
       @open-model-settings="showModelSettings = true"
       @open-points="openMobileAccountPane('points')"
       @open-subscription="openMobileAccountPane('subscription')"
+      @open-account="openMobileAccountPane('account')"
     />
     <!--
       移动端「我的积分 / 我的订阅」二级 pane：内容复用与 PC 路由页**同一份**面板组件，
@@ -5379,12 +5387,16 @@ onUnmounted(() => {
     -->
     <div v-if="isMobileLayout && mobileAccountPane" class="mobile-account-pane">
       <div class="mobile-account-head">
-        <button type="button" class="mobile-account-back" @click="closeMobileAccountPane">‹ 返回</button>
-        <h2 class="mobile-account-title">{{ mobileAccountPane === 'points' ? '我的积分' : '我的订阅' }}</h2>
+        <button type="button" class="mobile-account-back" @click="closeMobileAccountPane">返回</button>
+        <h2 class="mobile-account-title">{{ MOBILE_ACCOUNT_TITLES[mobileAccountPane] }}</h2>
+        <button type="button" class="mobile-account-close" aria-label="关闭" @click="closeMobileAccountPane">
+          ×
+        </button>
       </div>
       <div class="mobile-account-body">
+        <AccountPanel v-if="mobileAccountPane === 'account'" />
         <PointsPanel
-          v-if="mobileAccountPane === 'points'"
+          v-else-if="mobileAccountPane === 'points'"
           @open-topup="showMobileTopup = true"
           @open-usage="closeMobileAccountPane()"
         />
@@ -5450,6 +5462,10 @@ onUnmounted(() => {
 .mobile-account-pane {
   position: fixed;
   inset: 0;
+  width: 100%;
+  max-width: 100vw;
+  box-sizing: border-box;
+  overflow-x: hidden;
   z-index: 90;
   display: flex;
   flex-direction: column;
@@ -5471,15 +5487,32 @@ onUnmounted(() => {
   cursor: pointer;
   font-size: var(--lnk-text-sm);
   color: var(--lnk-text-secondary);
+  flex-shrink: 0;
 }
 .mobile-account-title {
   margin: 0;
   font-size: var(--lnk-text-lg);
   font-weight: 700;
   color: var(--lnk-text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mobile-account-body {
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+.mobile-account-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--lnk-text-muted);
+  cursor: pointer;
 }
 
 .canvas-flow {

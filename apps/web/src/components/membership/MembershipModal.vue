@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { membershipApi, membershipLabel, subscriptionLabel, type MembershipPlan, type SubscriptionDto } from '@/services/users-api'
 import { paymentApi } from '@/services/payment-api'
 import { useAuthStore } from '@/stores/auth'
@@ -31,7 +31,6 @@ const emit = defineEmits<{ 'update:modelValue': [v: boolean] }>()
 
 const auth = useAuthStore()
 const plans = ref<MembershipPlan[]>([])
-const points = ref(0)
 const membership = ref('free')
 const loading = ref(false)
 const message = ref('')
@@ -42,10 +41,7 @@ const selectedPlanId = ref('')
 /// 被点击但不可购买的档位 id（抖动反馈用，600ms 后自动清除）。
 const nudgePlanId = ref('')
 let nudgeTimer: number | undefined
-/// 退订请求进行中（防重复提交）。
-const canceling = ref(false)
 /// 今日每日签到是否已领取（按钮终态用，避免靠失败提示告知用户）。
-const claimedToday = ref(false)
 /// 当前订阅快照（到期时间/是否已取消续费），驱动「取消自动续期」的准确话术。
 const subscription = ref<SubscriptionDto | null>(null)
 
@@ -53,12 +49,6 @@ const subscription = ref<SubscriptionDto | null>(null)
 function formatDate(iso: string): string {
   const d = new Date(new Date(iso).getTime() + 8 * 3600 * 1000)
   return `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
-}
-
-/// 优先透传后端 message（如「请先退订」「渠道解约失败」），兜底通用文案。
-function readApiError(err: unknown, fallback: string): string {
-  const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-  return typeof msg === 'string' && msg ? msg : fallback
 }
 
 /** select=套餐列表 · pay=扫码支付 */
@@ -91,9 +81,7 @@ async function loadData() {
     membershipApi.getPoints(),
   ])
   plans.value = plansRes.data.data
-  points.value = pointsRes.data.data.points
   membership.value = pointsRes.data.data.membership
-  claimedToday.value = pointsRes.data.data.claimedToday
   // 订阅快照：仅在已持付费档时拉取（未订阅无行，省一次请求）
   subscription.value = membership.value === 'free' ? null : (await membershipApi.getSubscription()).data.data
 }
@@ -116,24 +104,6 @@ onMounted(() => {
   if (props.modelValue) void loadData()
 })
 
-async function claimDaily() {
-  if (loading.value || claimedToday.value) return
-  loading.value = true
-  try {
-    const { data } = await membershipApi.claimDaily()
-    points.value = data.data.points
-    auth.setPoints(data.data.points)
-    claimedToday.value = true
-    ElMessage.success(`已领取 +${data.data.added} 积分`)
-  } catch {
-    // 已被并发/先前领取：直接切终态，不让用户以为按钮坏了
-    claimedToday.value = true
-    ElMessage.info('今日已领取')
-  } finally {
-    loading.value = false
-  }
-}
-
 /**
  * 卡片点击（整卡热区）的唯一入口——按「档位方向」分流，三个分支都必须有可见反馈：
  *   - 高于当前 → startPlanPay 进入扫码支付下单；
@@ -144,7 +114,7 @@ async function claimDaily() {
  * 观感等于「点击没反应」。
  */
 async function onPlanClick(plan: MembershipPlan) {
-  if (loading.value || canceling.value) return
+  if (loading.value) return
   const kind = ctaKind(plan)
   if (kind === 'buy') {
     await startPlanPay(plan)
@@ -169,64 +139,6 @@ async function onPlanClick(plan: MembershipPlan) {
   nudgeTimer = window.setTimeout(() => {
     nudgePlanId.value = ''
   }, 600)
-}
-
-/**
- * 取消自动续期（≠ 立即退订）：仅停止未来续费，**当前周期内继续可用**，到期才失效。
- * 服务端先渠道解约再改本地，所以失败时本地状态不动 —— 这里如实报错，不谎称已取消。
- */
-async function confirmCancelAutoRenew() {
-  if (canceling.value) return
-  const expiresAt = subscription.value ? formatDate(subscription.value.periodEnd) : ''
-  try {
-    await ElMessageBox.confirm(
-      expiresAt
-        ? `取消后「${membershipLabel(membership.value)}」在 ${expiresAt} 前仍可正常使用，到期后不再自动续费。`
-        : '取消后将不再自动续费，当前周期内仍可正常使用。',
-      '确认取消自动续费？',
-      { confirmButtonText: '确认取消', cancelButtonText: '再想想', type: 'warning' },
-    )
-  } catch {
-    return // 用户点了「再想想」
-  }
-  canceling.value = true
-  try {
-    await paymentApi.cancelAutoRenew()
-    await loadData()
-    ElMessage.success(expiresAt ? `已取消自动续费，可使用至 ${expiresAt}` : '已取消自动续费')
-  } catch (err) {
-    ElMessage.error(readApiError(err, '取消失败，请稍后重试'))
-  } finally {
-    canceling.value = false
-  }
-}
-
-/**
- * 立即退订（放弃剩余权益、立刻回到未订阅）——「一个用户同时只持有一个套餐」的换购前置。
- * 与取消自动续期分两个按钮：前者保权益，后者换档位。合并成一个语义会让用户误判损失。
- */
-async function confirmCancelNow() {
-  if (canceling.value) return
-  const name = membershipLabel(membership.value)
-  try {
-    await ElMessageBox.confirm(
-      `退订后立即失去「${name}」权益，剩余周期不退款（积分保留）。退订后才能订购其它套餐。`,
-      '确认立即退订？',
-      { confirmButtonText: '确认退订', cancelButtonText: '再想想', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  canceling.value = true
-  try {
-    await membershipApi.cancelSubscription()
-    await loadData()
-    ElMessage.success('已退订，现在可以选择其它套餐')
-  } catch (err) {
-    ElMessage.error(readApiError(err, '退订失败，请稍后重试'))
-  } finally {
-    canceling.value = false
-  }
 }
 
 /**
@@ -259,7 +171,6 @@ async function startPlanPay(plan: MembershipPlan) {
 async function onPlanPaid() {
   try {
     const { data } = await membershipApi.getPoints()
-    points.value = data.data.points
     membership.value = data.data.membership
     if (auth.user) {
       auth.user.points = data.data.points
@@ -352,41 +263,7 @@ const ICONS: Record<string, string> = {
         <div class="hd-brand">
           <span class="hd-pi">π</span>
           <span class="hd-title">套餐</span>
-          <span class="hd-current">当前套餐：{{ subscriptionLabel(membership) }}</span>
-          <button
-            v-if="hasActivePlan"
-            type="button"
-            class="hd-cancel"
-            :disabled="canceling"
-            @click="confirmCancelAutoRenew"
-          >
-            {{ canceling ? '处理中…' : '取消自动续费' }}
-          </button>
-          <button
-            v-if="hasActivePlan"
-            type="button"
-            class="hd-cancel hd-cancel--danger"
-            :disabled="canceling"
-            @click="confirmCancelNow"
-          >
-            立即退订
-          </button>
-        </div>
-        <div class="hd-points">
-          <span class="hd-bolt" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4.5 13.5h5.6L11 22l8.5-11.5h-5.6L13 2z" /></svg>
-          </span>
-          <span class="hd-num">{{ points.toLocaleString() }}</span>
-          <el-button
-            class="hd-claim"
-            :class="{ 'is-claimed': claimedToday }"
-            size="small"
-            :loading="loading"
-            :disabled="claimedToday"
-            @click="claimDaily"
-          >
-            {{ claimedToday ? '今日已领取' : '领取 +100' }}
-          </el-button>
+          <span class="hd-current">{{ subscriptionLabel(membership) }}</span>
         </div>
       </div>
     </template>
@@ -428,9 +305,6 @@ const ICONS: Record<string, string> = {
 
       <!-- 套餐列表视图 -->
       <template v-else>
-        <p class="sub">
-          四档套餐<b>共享同一套创作能力</b>，差异只在每月创作额度（基础 + 赠送）。
-        </p>
 
         <div class="plans">
           <article
@@ -448,8 +322,8 @@ const ICONS: Record<string, string> = {
             @click="onPlanClick(plan)"
           >
             <!-- 当前套餐角标优先于推荐角标：你已在推荐档时，标明「当前套餐」比「推荐」更有用 -->
-            <span v-if="membership === plan.id" class="badge badge-current">当前套餐</span>
-            <span v-else-if="plan.recommended" class="badge badge-reco">推荐</span>
+            <!-- 「当前套餐」角标已移除（头部已显示当前档，重复占位） -->
+            <span v-if="plan.recommended && membership !== plan.id" class="badge badge-reco">推荐</span>
 
             <h3 class="plan-name">{{ plan.name }}</h3>
             <p class="plan-sub">
