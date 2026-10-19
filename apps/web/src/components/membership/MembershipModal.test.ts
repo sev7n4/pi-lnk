@@ -189,7 +189,7 @@ describe('MembershipModal', () => {
     wrapper.unmount()
   })
 
-  it('clicking a lower-tier card does NOT create an order (no silent downgrade)', async () => {
+  it('clicking a lower-tier card does NOT create an order, and gives visible feedback (no silent no-op)', async () => {
     const wrapper = mountAs('premium')
     await flushPromises()
 
@@ -199,6 +199,47 @@ describe('MembershipModal', () => {
 
     expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
     expect(wrapper.find('.pay-head').exists()).toBe(false)
+    // 关键回归：不能静默无反应——必须出现提示文案 + 抖动反馈
+    expect(wrapper.find('.msg').text()).toContain('暂不支持购买')
+    expect(standard.classes()).toContain('is-nudge')
+
+    wrapper.unmount()
+  })
+
+  it('clicking the current-tier card shows "in use" feedback, no order', async () => {
+    const wrapper = mountAs('premium')
+    await flushPromises()
+
+    const premium = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === '高级版')!
+    await premium.trigger('click')
+    await flushPromises()
+
+    expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
+    expect(wrapper.find('.msg').text()).toContain('正在使用该套餐')
+
+    wrapper.unmount()
+  })
+
+  it('top-tier (flagship) user: every card responds, none silently inert', async () => {
+    // 复现线上反馈：旗舰版用户点任何卡都石沉大海（四卡全是低于当前档）
+    const wrapper = mountAs('flagship')
+    await flushPromises()
+
+    for (const name of ['体验版', '标准版', '高级版']) {
+      const card = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === name)!
+      await card.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.msg').text()).toContain('暂不支持购买')
+      expect(card.classes()).toContain('is-nudge')
+    }
+    // 当前档（旗舰版本身）
+    const current = wrapper.findAll('.plan').find((c) => c.find('.plan-name').text() === '旗舰版')!
+    await current.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.msg').text()).toContain('正在使用该套餐')
+
+    // 全程不应产生任何订单
+    expect(paymentMocks.createSubscriptionOrder).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })
