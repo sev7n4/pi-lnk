@@ -5,12 +5,9 @@ export const EDITABLE_NODE_TYPES = new Set([
   'image',
   'video',
   'audio',
-  'sceneComposer',
-  'shot',
   // 被删历史（2026-10-17 prompt 节点下线）：'prompt' 曾在本集合中
   // （存量 prompt 节点随之退出 Dock 编辑入口，卡片只读——Phase 3 冻结）。
-  'mediaInput',
-  'videoComposition',
+  // 2026-10-19 节点下线：导演台 / 媒体输入 / 视频合成 / 分镜 退出编辑集合。
 ])
 
 /** 使用独立 Dock Panel 的节点 */
@@ -19,10 +16,6 @@ export const DOCK_PANEL_NODE_TYPES = {
   image: 'image',
   video: 'video',
   audio: 'audio',
-  shot: 'shot',
-  mediaInput: 'mediaInput',
-  sceneComposer: 'sceneComposer',
-  videoComposition: 'videoComposition',
 } as const
 
 export type DockPanelNodeType = keyof typeof DOCK_PANEL_NODE_TYPES

@@ -220,11 +220,11 @@ describe('AgentCanvasToolsService.applySidebarAttachments', () => {
     expect(result.sourceNodeIds[0]).toBe('src-1')
 
     const mediaAction = result.actions[0]
-    expect(mediaAction.payload.nodeType).toBe('mediaInput')
+    // 2026-10-19 mediaInput 下线：侧栏图片附件直落 image 节点（按媒体类型建节点）。
+    expect(mediaAction.payload.nodeType).toBe('image')
     expect(mediaAction.payload.data).toMatchObject({
       title: 'product.jpg',
       url: 'https://cdn.example.com/product.jpg',
-      mediaKind: 'image',
       status: 'completed',
     })
 

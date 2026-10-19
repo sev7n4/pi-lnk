@@ -3,7 +3,6 @@
  * 纯函数；无副作用；不依赖 web/vue。
  */
 
-import { getGroupChildIds, type GroupChildNode } from './groupChildIds'
 export class SelectionBatchLimitError extends Error {
   readonly code = 'SelectionBatchLimitError'
   constructor(public readonly actualCount: number) {
@@ -59,7 +58,7 @@ export interface PlanSelectionGenerateResult {
 }
 
 const UNSUPPORTED_TYPES = new Set(['mediaInput', 'sceneComposer', 'videoComposition', 'worldModel', 'group'])
-const SUPPORTED_TYPES = new Set(['image', 'video', 'audio', 'prompt', 'text', 'shot'])
+const SUPPORTED_TYPES = new Set(['image', 'video', 'audio', 'prompt', 'text'])
 
 interface RawNode { id: string; type: string; parentNode?: string; data?: Record<string, unknown> }
 
@@ -67,7 +66,6 @@ function expandSelection(
   selectedIds: string[],
   nodes: ReadonlyArray<RawNode>,
   skip: SkipReason[],
-  groupExpanded: PlanSelectionGenerateResult['groupExpanded'],
 ): RawNode[] {
   const nodeById = new Map(nodes.map(n => [n.id, n]))
   const result: RawNode[] = []
@@ -78,16 +76,7 @@ function expandSelection(
       skip.push({ nodeId: id, reason: 'node_disappeared' })
       continue
     }
-    if (node.type === 'group') {
-      const childIds = getGroupChildIds(nodes as GroupChildNode[], id)
-      groupExpanded.push({ groupId: id, childIds })
-      skip.push({ nodeId: id, reason: 'unsupported_type', type: node.type })
-      for (const cid of childIds) {
-        const child = nodeById.get(cid)
-        if (child) result.push(child)
-        else skip.push({ nodeId: cid, reason: 'node_disappeared' })
-      }
-    } else if (UNSUPPORTED_TYPES.has(node.type)) {
+    if (UNSUPPORTED_TYPES.has(node.type)) {
       skip.push({ nodeId: id, reason: 'unsupported_type', type: node.type })
     } else if (SUPPORTED_TYPES.has(node.type)) {
       result.push(node)
@@ -170,8 +159,7 @@ function kahnTopologicalSort(
 
 export function planSelectionGenerate(input: PlanSelectionGenerateInput): PlanSelectionGenerateResult {
   const skip: SkipReason[] = []
-  const groupExpanded: PlanSelectionGenerateResult['groupExpanded'] = []
-  const candidates = expandSelection(input.selectedIds, input.canvas.nodes, skip, groupExpanded)
+  const candidates = expandSelection(input.selectedIds, input.canvas.nodes, skip)
 
   // pending_confirm 整批拒绝（SB-D3 / §4.3 #2）
   const pending = candidates.filter(n => String(n.data?.status ?? '') === 'pending_confirm')
@@ -215,5 +203,6 @@ export function planSelectionGenerate(input: PlanSelectionGenerateInput): PlanSe
   const finalToRun = toRun.filter(n => !inFlightDownstream.has(n.id))
 
   const { run, blockedBy } = kahnTopologicalSort(finalToRun, input.canvas.edges)
-  return { run, skip, blockedBy, groupExpanded }
+  // 2026-10-19 group 节点下线：groupExpanded 契约字段保留但恒为空（无分区展开）。
+  return { run, skip, blockedBy, groupExpanded: [] }
 }

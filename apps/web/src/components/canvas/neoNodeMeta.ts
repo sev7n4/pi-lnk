@@ -3,7 +3,7 @@ export type NeoNodeStatus = 'idle' | 'running' | 'success' | 'error'
 export interface NeoNodeMeta {
   label: string
   variant: string
-  icon: 'prompt' | 'text' | 'image' | 'video' | 'audio' | 'input' | 'shot' | 'director' | 'composition' | 'world' | 'group'
+  icon: 'prompt' | 'text' | 'image' | 'video' | 'audio'
   defaultWidth: number
   defaultHeight: number
 }
@@ -16,12 +16,8 @@ export const NEO_NODE_META: Record<string, NeoNodeMeta> = {
   /** 视频：默认 1:1 兜底 320×320（长边基准 320，尺寸随 videoSettings/mediaInfo 比例推导） */
   video: { label: '视频', variant: 'node-video', icon: 'video', defaultWidth: 320, defaultHeight: 320 },
   audio: { label: '音频', variant: 'node-audio', icon: 'audio', defaultWidth: 280, defaultHeight: 140 },
-  mediaInput: { label: '媒体输入', variant: 'node-input', icon: 'input', defaultWidth: 280, defaultHeight: 280 },
-  shot: { label: '分镜', variant: 'node-generation', icon: 'shot', defaultWidth: 280, defaultHeight: 280 },
-  sceneComposer: { label: '导演台', variant: 'node-generation', icon: 'director', defaultWidth: 280, defaultHeight: 280 },
-  videoComposition: { label: '视频合成', variant: 'node-generation', icon: 'composition', defaultWidth: 280, defaultHeight: 200 },
-  worldModel: { label: '3D World', variant: 'node-generation', icon: 'world', defaultWidth: 280, defaultHeight: 280 },
-  group: { label: '分组', variant: 'node-group', icon: 'group', defaultWidth: 280, defaultHeight: 160 },
+  // 2026-10-19 节点下线：mediaInput / shot / sceneComposer / videoComposition / worldModel / group
+  // 已退出创建与编辑入口（存量节点仅走兜底渲染，见 getNeoNodeMeta 兜底分支）。
 }
 
 export function getNeoNodeMeta(type: string): NeoNodeMeta {

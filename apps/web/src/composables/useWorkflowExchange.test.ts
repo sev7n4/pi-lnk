@@ -174,48 +174,6 @@ describe('exportWorkflowPackage', () => {
     expect(downloadMediaPackage).toHaveBeenCalledOnce()
     expect(fetchMediaBlobMock).not.toHaveBeenCalled()
   })
-
-  it('media_list_only expands selected group to child ids', async () => {
-    await exportWorkflowPackage({
-      nodes: [
-        {
-          id: 'group-1',
-          type: 'group',
-          position: { x: 0, y: 0 },
-          data: { title: 'pack' },
-        },
-        {
-          id: 'image-1',
-          type: 'image',
-          position: { x: 10, y: 10 },
-          parentNode: 'group-1',
-          data: { url: 'https://cdn.example/a.png' },
-        },
-        {
-          id: 'prompt-1',
-          type: 'prompt',
-          position: { x: 20, y: 10 },
-          parentNode: 'group-1',
-          data: { prompt: 'hi' },
-        },
-        {
-          id: 'image-outside',
-          type: 'image',
-          position: { x: 200, y: 0 },
-          data: { url: 'https://cdn.example/b.png' },
-        },
-      ],
-      edges: [],
-      selectedIds: ['group-1'],
-      sessionId: 'sess-1',
-      exportMode: 'media_list_only',
-    })
-
-    expect(downloadMediaPackage).toHaveBeenCalledOnce()
-    const passedIds = vi.mocked(downloadMediaPackage).mock.calls[0][1] as string[]
-    expect(passedIds).toEqual(expect.arrayContaining(['group-1', 'image-1', 'prompt-1']))
-    expect(passedIds).not.toContain('image-outside')
-  })
 })
 
 describe('importWorkflowPackage', () => {

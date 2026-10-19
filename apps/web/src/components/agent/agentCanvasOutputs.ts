@@ -65,7 +65,6 @@ function inferNodeTypeFromStep(step: ExecutionStep): string {
     if (label.includes('视频')) return 'video'
     if (label.includes('音频')) return 'audio'
     if (label.includes('文案') || label.includes('文本') || label.includes('方案')) return 'text'
-    if (label.includes('分镜')) return 'shot'
   }
   return 'image'
 }

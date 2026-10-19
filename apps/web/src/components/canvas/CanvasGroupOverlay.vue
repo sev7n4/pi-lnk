@@ -1,0 +1,231 @@
+<script setup lang="ts">
+/**
+ * 画布分组框（2026-10-20 侧车化）。
+ *
+ * ⚠️ 分组**不是节点**：本组件渲染在 `CanvasData.groups` 侧车数据上，位于 VueFlow
+ * 之下层（z-index 0），只有标题条可交互（框体 `pointer-events: none`，与旧
+ * `CanvasNodeGroup` 一致）—— 否则整块框会吃掉子节点的点击。
+ *
+ * 坐标系：容器复用 VueFlow 的 viewport 变换（translate + scale），
+ * 框体用画布绝对坐标定位，与 `CanvasGroup.position` 直接对应。
+ */
+import { computed, nextTick, ref } from 'vue'
+import { useVueFlow } from '@vue-flow/core'
+import type { CanvasGroup } from '@lnkpi/shared'
+import { normalizeGroupColorKey } from './groupColors'
+
+defineProps<{
+  groups: CanvasGroup[]
+  selectedGroupId?: string | null
+}>()
+
+const emit = defineEmits<{
+  select: [groupId: string]
+  move: [groupId: string, delta: { x: number; y: number }]
+  /** 拖动结束（此时才落库：拖动过程中每帧都写会打爆保存接口）。 */
+  'move-end': [groupId: string]
+  rename: [groupId: string, title: string]
+}>()
+
+// viewport 由 VueFlow 自身提供（组件是 <VueFlow> 的子节点，共享同一 store）。
+const { viewport } = useVueFlow()
+
+const viewportStyle = computed(() => ({
+  transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
+}))
+
+function boxStyle(group: CanvasGroup) {
+  return {
+    transform: `translate(${group.position.x}px, ${group.position.y}px)`,
+    width: `${group.size.width}px`,
+    height: `${group.size.height}px`,
+    // 色值本体在 `--neo-group-*` 令牌（两主题成对定义），组件内无字面 hex。
+    '--neo-group-accent': `var(--neo-group-${normalizeGroupColorKey(group.colorKey)})`,
+  }
+}
+
+// ── 拖拽（标题条）────────────────────────────────────────
+const dragging = ref<{ groupId: string; startX: number; startY: number } | null>(null)
+
+function onTitlePointerDown(event: PointerEvent, groupId: string) {
+  if (event.button !== 0) return
+  emit('select', groupId)
+  dragging.value = { groupId, startX: event.clientX, startY: event.clientY }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+
+function onTitlePointerMove(event: PointerEvent) {
+  const drag = dragging.value
+  if (!drag) return
+  const zoom = viewport.value.zoom || 1
+  const dx = (event.clientX - drag.startX) / zoom
+  const dy = (event.clientY - drag.startY) / zoom
+  if (dx === 0 && dy === 0) return
+  drag.startX = event.clientX
+  drag.startY = event.clientY
+  emit('move', drag.groupId, { x: dx, y: dy })
+}
+
+function onTitlePointerUp(event: PointerEvent) {
+  const drag = dragging.value
+  if (!drag) return
+  const el = event.currentTarget as HTMLElement
+  if (el.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId)
+  dragging.value = null
+  emit('move-end', drag.groupId)
+}
+
+// ── 重命名（双击标题）─────────────────────────────────────
+const renamingId = ref<string | null>(null)
+const renameDraft = ref('')
+const renameInputRef = ref<HTMLInputElement | null>(null)
+
+function startRename(group: CanvasGroup) {
+  renamingId.value = group.id
+  renameDraft.value = group.title
+  void nextTick(() => renameInputRef.value?.select())
+}
+
+function commitRename() {
+  const id = renamingId.value
+  if (!id) return
+  const title = renameDraft.value.trim()
+  renamingId.value = null
+  if (title) emit('rename', id, title)
+}
+</script>
+
+<template>
+  <div class="canvas-group-layer" :style="viewportStyle">
+    <div
+      v-for="group in groups"
+      :key="group.id"
+      class="group-node-wrapper"
+      :class="{ 'is-active': selectedGroupId === group.id }"
+      :style="boxStyle(group)"
+    >
+      <div
+        class="group-drag-handle"
+        @pointerdown.stop="onTitlePointerDown($event, group.id)"
+        @pointermove.stop="onTitlePointerMove"
+        @pointerup.stop="onTitlePointerUp"
+        @pointercancel.stop="onTitlePointerUp"
+        @dblclick.stop="startRename(group)"
+      >
+        <input
+          v-if="renamingId === group.id"
+          ref="renameInputRef"
+          v-model="renameDraft"
+          class="group-rename-input"
+          placeholder="分组名称"
+          @keydown.enter.stop="commitRename"
+          @keydown.esc.stop="renamingId = null"
+          @blur="commitRename"
+          @click.stop
+          @pointerdown.stop
+        >
+        <template v-else>
+          <span class="group-title-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="2" />
+              <rect x="13" y="3.5" width="7.5" height="7.5" rx="2" />
+              <rect x="3.5" y="13" width="7.5" height="7.5" rx="2" />
+              <rect x="13" y="13" width="7.5" height="7.5" rx="2" />
+            </svg>
+          </span>
+          <h4 class="group-title">{{ group.title }}</h4>
+          <span class="group-meta">{{ group.childIds.length }} 个节点</span>
+        </template>
+      </div>
+      <div class="group-node-container" />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.canvas-group-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.group-node-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* 标题条：贴分组框上沿（与图片/视频节点的 .neo-node-external-title 同位同字体）。
+   整条可拖（= 整组平移），双击标题区可重命名。 */
+.group-drag-handle {
+  pointer-events: auto;
+  cursor: grab;
+  position: absolute;
+  top: -32px;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.group-drag-handle:active {
+  cursor: grabbing;
+}
+
+.group-drag-handle:hover .group-title {
+  color: var(--neo-node-text);
+}
+
+.group-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  align-self: center;
+  color: var(--neo-group-accent);
+  transition: color 0.15s ease;
+}
+
+.group-title-icon svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
+.group-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--neo-node-title-color);
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.group-meta {
+  font-size: 11px;
+  color: var(--neo-node-text-muted);
+  opacity: 0.75;
+}
+
+.group-rename-input {
+  width: 100%;
+  border: 1px solid var(--neo-border-strong);
+  border-radius: 6px;
+  background: var(--neo-hover-bg);
+  padding: 1px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--neo-node-text);
+  outline: none;
+}
+
+.group-rename-input:focus {
+  border-color: var(--neo-accent);
+}
+</style>

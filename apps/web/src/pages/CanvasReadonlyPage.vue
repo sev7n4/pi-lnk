@@ -13,13 +13,7 @@ import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
 import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
 import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
 import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
-import CanvasNodeShot from '@/components/canvas/CanvasNodeShot.vue'
-import CanvasNodeGroup from '@/components/canvas/CanvasNodeGroup.vue'
 import CanvasNodeAudio from '@/components/canvas/CanvasNodeAudio.vue'
-import CanvasNodeDirector from '@/components/canvas/CanvasNodeDirector.vue'
-import CanvasNodeMediaInput from '@/components/canvas/CanvasNodeMediaInput.vue'
-import CanvasNodeVideoComposition from '@/components/canvas/CanvasNodeVideoComposition.vue'
-import CanvasNodeWorldModel from '@/components/canvas/CanvasNodeWorldModel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,13 +31,7 @@ const nodeTypes = {
   image: CanvasNodeImage,
   video: CanvasNodeVideo,
   text: CanvasNodeText,
-  shot: CanvasNodeShot,
-  group: CanvasNodeGroup,
   audio: CanvasNodeAudio,
-  director: CanvasNodeDirector,
-  mediaInput: CanvasNodeMediaInput,
-  videoComposition: CanvasNodeVideoComposition,
-  worldModel: CanvasNodeWorldModel,
 }
 
 onMounted(async () => {

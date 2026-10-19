@@ -457,6 +457,7 @@ onUnmounted(() => {
         </div>
       </div>
       <button
+        v-if="!canUngroup"
         type="button"
         class="toolbar-action danger"
         aria-label="删除"

@@ -22,13 +22,7 @@ export function canOpenRefineForNode(input: {
   mediaKind?: string | null
   mimeType?: string | null
 }): boolean {
-  const type = String(input.type ?? '')
-  if (type === 'image') return true
-  if (type !== 'mediaInput') return false
-  const kind = String(input.mediaKind ?? '').toLowerCase()
-  if (kind === 'image') return true
-  const mime = String(input.mimeType ?? '').toLowerCase()
-  return mime.startsWith('image/')
+  return String(input.type ?? '') === 'image'
 }
 
 export function canOpenNodeImageEdit(status: unknown): boolean {

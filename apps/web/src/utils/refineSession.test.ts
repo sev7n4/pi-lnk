@@ -83,24 +83,16 @@ describe('canOpenRefineForNode', () => {
     expect(canOpenRefineForNode({ type: 'image' })).toBe(true)
   })
 
-  it('allows mediaInput when mediaKind is image', () => {
-    expect(canOpenRefineForNode({ type: 'mediaInput', mediaKind: 'image' })).toBe(true)
-  })
-
-  it('allows mediaInput when mimeType is an image', () => {
-    expect(canOpenRefineForNode({ type: 'mediaInput', mimeType: 'image/png' })).toBe(true)
-  })
-
-  it('rejects video and audio mediaInput even when a url exists', () => {
-    expect(canOpenRefineForNode({ type: 'mediaInput', mediaKind: 'video' })).toBe(false)
-    expect(canOpenRefineForNode({ type: 'mediaInput', mediaKind: 'audio' })).toBe(false)
-    expect(canOpenRefineForNode({ type: 'mediaInput', mimeType: 'video/mp4' })).toBe(false)
-    expect(canOpenRefineForNode({ type: 'mediaInput', mimeType: 'audio/mpeg' })).toBe(false)
+  it('rejects decommissioned mediaInput even with image mediaKind', () => {
+    // 2026-10-19 mediaInput 节点下线：仅 image 节点可打开精修。
+    expect(canOpenRefineForNode({ type: 'mediaInput', mediaKind: 'image' })).toBe(false)
+    expect(canOpenRefineForNode({ type: 'mediaInput', mimeType: 'image/png' })).toBe(false)
   })
 
   it('rejects other node types', () => {
     expect(canOpenRefineForNode({ type: 'video' })).toBe(false)
     expect(canOpenRefineForNode({ type: 'text' })).toBe(false)
+    expect(canOpenRefineForNode({ type: 'audio' })).toBe(false)
   })
 })
 

@@ -6,7 +6,6 @@ import { AgentService } from './agent.service'
 function createService() {
   return new AgentService(
     {} as never,
-    { create: vi.fn() } as never,
     { createFromAgent: vi.fn() } as never,
     { resolveForGeneration: vi.fn() } as never,
   )

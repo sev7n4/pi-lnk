@@ -34,13 +34,6 @@ vi.mock('@/services/studio-api', () => ({
 
 vi.mock('@/services/canvas-api', () => ({
   canvasApi: {
-    generateImage: vi.fn(),
-    generateVideo: vi.fn(),
-    editShot: vi.fn(),
-    createShot: vi.fn(),
-    saveSceneComposer: vi.fn(),
-    batchGenerateSceneComposer: vi.fn(),
-    exportVideoComposition: vi.fn(),
     confirmMaterialPlatformFallback: vi.fn(),
     cancelMaterialPlatformFallback: vi.fn(),
     cancelMaterial: vi.fn(),
@@ -80,7 +73,6 @@ function createDeps(nodes: EditableFlowNode[], overrides: Record<string, unknown
   })
   const saveCanvas = vi.fn(async () => {})
   const requireLogin = vi.fn(() => true)
-  const startShotPolling = vi.fn()
   const startGenerationPolling = vi.fn()
   const resolveProviderModels = vi.fn(() => ({
     image: encodeChannelModel('platform', 'default-image-model'),
@@ -99,7 +91,6 @@ function createDeps(nodes: EditableFlowNode[], overrides: Record<string, unknown
     addEdge: vi.fn(),
     saveCanvas,
     requireLogin,
-    startShotPolling,
     startGenerationPolling,
     resolveProviderModels,
     requestFallbackConfirm,
@@ -671,110 +662,6 @@ describe('useNodeGeneration', () => {
     }))
   })
 
-  it('passes shot-linked image child params to canvasApi.generateImage', async () => {
-    const shot = createNode('shot', { title: 'Shot', prompt: 'sunset' }, 'shot-1')
-    const image = createNode('image', {
-      prompt: 'sunset',
-      imageModel: encodeChannelModel('platform', 'navo-pro'),
-      imageAspect: '9:16',
-      imageResolution: '2K',
-    }, 'image-1')
-    const { api, deps } = createDeps([shot, image])
-    deps.edges.value = [{ id: 'e1', source: 'shot-1', target: 'image-1' }]
-    vi.mocked(canvasApi.generateImage).mockResolvedValue(mockAxiosResponse({ data: {} }))
-
-    await api.generateForNode(image)
-
-    expect(canvasApi.generateImage).toHaveBeenCalledWith('shot-1', 'sunset', {
-      model: encodeChannelModel('platform', 'navo-pro'),
-      aspectRatio: '9:16',
-      resolution: '2K',
-      count: 1,
-      refs: [],
-      mentionedKeys: [],
-    })
-    expect(studioApi.generateImage).not.toHaveBeenCalled()
-    expect(deps.startShotPolling).toHaveBeenCalledWith(['shot-1'])
-  })
-
-  it('shot-linked image sends media local prompt and refs, not canvasPrompt', async () => {
-    const textUpstream = createNode('text', { content: 'upstream style', prompt: 'upstream style' }, 'text-1')
-    const shot = createNode('shot', { title: 'Shot', prompt: 'shot prompt' }, 'shot-1')
-    const image = createNode('image', {
-      prompt: '',
-      imageModel: 'navo-pro',
-      imageAspect: '9:16',
-      imageResolution: '2K',
-    }, 'image-1')
-    const { api, deps } = createDeps([textUpstream, shot, image])
-    deps.edges.value = [
-      { id: 'e-shot-image', source: 'shot-1', target: 'image-1' },
-      { id: 'e-text-image', source: 'text-1', target: 'image-1' },
-    ]
-    vi.mocked(canvasApi.generateImage).mockResolvedValue(mockAxiosResponse({ data: {} }))
-
-    await api.generateForNode(image)
-
-    expect(canvasApi.generateImage).toHaveBeenCalledWith(
-      'shot-1',
-      '',
-      expect.objectContaining({
-        refs: expect.arrayContaining([
-          expect.objectContaining({ refKey: 'T1', mediaType: 'text', text: 'upstream style' }),
-        ]),
-        mentionedKeys: [],
-      }),
-    )
-    expect(canvasApi.generateImage).not.toHaveBeenCalledWith('shot-1', 'upstream style', expect.anything())
-  })
-
-  it('blocks canvas image when blob ref present', async () => {
-    const refNode = createNode('image', { url: 'blob:http://localhost/ref-456' }, 'ref-1')
-    const shot = createNode('shot', { title: 'Shot', prompt: 'sunset' }, 'shot-1')
-    const image = createNode('image', {
-      prompt: 'sunset',
-      localRefs: [{ id: 'r1', mediaType: 'image', sourceKind: 'upload', label: 'ref', url: 'blob:http://localhost/ref-456' }],
-      refOrder: ['r1'],
-    }, 'image-1')
-    const { api, deps } = createDeps([refNode, shot, image])
-    deps.edges.value = [{ id: 'e1', source: 'shot-1', target: 'image-1' }]
-
-    await api.generateForNode(image)
-
-    expect(canvasApi.generateImage).not.toHaveBeenCalled()
-    expect(deps.patchNodeData).toHaveBeenCalledWith('image-1', expect.objectContaining({
-      status: NODE_GENERATION_STATUS.error,
-      errorMessage: expect.stringContaining('未上传成功'),
-      errorCode: 'upload_required',
-    }))
-  })
-
-  it('generateShot uses shot local prompt with shot refs', async () => {
-    const textUpstream = createNode('text', { content: 'cinematic', prompt: 'cinematic' }, 'text-1')
-    const shot = createNode('shot', {
-      title: 'Shot',
-      prompt: 'local shot @T1',
-      shotGenerateMode: 'image',
-    }, 'shot-1')
-    const { api, deps } = createDeps([textUpstream, shot])
-    deps.edges.value = [{ id: 'e-text-shot', source: 'text-1', target: 'shot-1' }]
-    vi.mocked(canvasApi.editShot).mockResolvedValue(mockAxiosResponse({ data: {} }))
-    vi.mocked(canvasApi.generateImage).mockResolvedValue(mockAxiosResponse({ data: {} }))
-
-    await api.generateForNode(shot)
-
-    expect(canvasApi.generateImage).toHaveBeenCalledWith(
-      'shot-1',
-      'local shot @T1',
-      expect.objectContaining({
-        refs: expect.arrayContaining([
-          expect.objectContaining({ refKey: 'T1', mediaType: 'text', text: 'cinematic' }),
-        ]),
-        mentionedKeys: ['T1'],
-      }),
-    )
-  })
-
   it('applyStudioRecord persists lastFrameUrl from completed video record metadata', async () => {
     const node = createNode('video', {
       prompt: 'motion scene',
@@ -855,128 +742,6 @@ describe('useNodeGeneration', () => {
     const finalPatch = patchCalls[patchCalls.length - 1]?.[1] as Record<string, unknown> | undefined
     expect(finalPatch?.referenceImageUrl).toBeUndefined()
     expect(finalPatch?.generationRecordId).toBe('rec-video-1')
-  })
-
-  it('passes shot-linked video child params to canvasApi.generateVideo', async () => {
-    const shot = createNode('shot', { title: 'Shot', prompt: 'motion' }, 'shot-1')
-    const video = createNode('video', {
-      prompt: 'motion',
-      videoModel: encodeChannelModel('platform', 'happyhose-1.1'),
-      referenceImageUrl: 'https://example.com/node-ref.png',
-      videoSettings: {
-        duration: 10,
-        aspectRatio: '9:16',
-        resolution: '1080p',
-        crop: 'center',
-      },
-    }, 'video-1')
-    const { api, deps } = createDeps([shot, video])
-    deps.edges.value = [{ id: 'e1', source: 'shot-1', target: 'video-1' }]
-    vi.mocked(canvasApi.generateVideo).mockResolvedValue(mockAxiosResponse({ data: {} }))
-
-    await api.generateForNode(video)
-
-    expect(canvasApi.generateVideo).toHaveBeenCalledWith('shot-1', 'motion', {
-      model: encodeChannelModel('platform', 'happyhose-1.1'),
-      duration: 10,
-      aspectRatio: '9:16',
-      resolution: '1080p',
-      crop: 'center',
-      generateAudio: true,
-      refs: [],
-      mentionedKeys: [],
-      referenceImageUrl: 'https://example.com/node-ref.png',
-    })
-    expect(studioApi.generateVideo).not.toHaveBeenCalled()
-    expect(deps.startShotPolling).toHaveBeenCalledWith(['shot-1'])
-  })
-
-  it('canvas video generate reads live text-p instead of video snapshot', async () => {
-    const video = createNode('video', {
-      prompt: 'OLD',
-      videoSettings: { duration: 15, aspectRatio: '16:9', resolution: '720p', crop: 'none' },
-    }, 'video-v')
-    const textP = createNode('text', { prompt: 'NEW SCRIPT' }, 'text-p')
-    const i0 = createNode('image', { prompt: 'I0', url: 'https://example.com/i0.png' }, 'image-i0')
-    const look = createNode('image', { prompt: 'LOOK', url: 'https://example.com/look.png' }, 'image-look-0')
-    const compositionRunGroup = ref({
-      nodeIds: ['image-i0', 'image-look-0', 'text-p', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api } = createDeps([i0, look, textP, video], { compositionRunGroup })
-    vi.mocked(studioApi.startVideoGeneration).mockResolvedValue(
-      mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          type: 'video',
-          id: 'rec-video-p',
-          status: 'generating',
-          generationStartedAt: '2026-08-14T12:00:00.000Z',
-        },
-      }),
-    )
-
-    await api.generateForNode(video)
-
-    expect(vi.mocked(studioApi.startVideoGeneration).mock.calls[0]?.[0]).toBe('NEW SCRIPT')
-  })
-
-  it('blocks video generate when text-p is empty', async () => {
-    const video = createNode('video', {
-      prompt: 'OLD',
-      videoSettings: { duration: 15, aspectRatio: '16:9', resolution: '720p', crop: 'none' },
-    }, 'video-v')
-    const textP = createNode('text', { prompt: '   ' }, 'text-p')
-    const compositionRunGroup = ref({
-      nodeIds: ['text-p', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api, deps } = createDeps([textP, video], { compositionRunGroup })
-
-    await api.generateForNode(video)
-
-    expect(studioApi.startVideoGeneration).not.toHaveBeenCalled()
-    expect(canvasApi.generateVideo).not.toHaveBeenCalled()
-    expect(deps.patchNodeData).toHaveBeenCalledWith('video-v', {
-      status: NODE_GENERATION_STATUS.error,
-      errorMessage: '分镜还是空的，写好后再生成视频。',
-    })
-  })
-
-  it('shot-linked video generate reads live text-p prompt', async () => {
-    const shot = createNode('shot', { title: 'Shot', prompt: 'OLD' }, 'shot-1')
-    const video = createNode('video', {
-      prompt: 'OLD',
-      videoModel: encodeChannelModel('platform', 'happyhose-1.1'),
-      videoSettings: {
-        duration: 10,
-        aspectRatio: '9:16',
-        resolution: '1080p',
-        crop: 'center',
-      },
-    }, 'video-v')
-    const textP = createNode('text', { prompt: 'NEW SCRIPT' }, 'text-p')
-    const compositionRunGroup = ref({
-      nodeIds: ['text-p', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api, deps } = createDeps([shot, video, textP], { compositionRunGroup })
-    deps.edges.value = [{ id: 'e1', source: 'shot-1', target: 'video-v' }]
-    vi.mocked(canvasApi.generateVideo).mockResolvedValue(mockAxiosResponse({ data: { id: 'mat-1' } }))
-
-    await api.generateForNode(video)
-
-    expect(canvasApi.generateVideo).toHaveBeenCalledWith(
-      'shot-1',
-      'NEW SCRIPT',
-      expect.objectContaining({
-        model: encodeChannelModel('platform', 'happyhose-1.1'),
-      }),
-    )
-    expect(studioApi.startVideoGeneration).not.toHaveBeenCalled()
   })
 
   it('text generate writes result to content without overwriting prompt', async () => {
@@ -1091,15 +856,14 @@ describe('useNodeGeneration', () => {
     await pending
   })
 
-  it('cancelGeneration stops generation and shot polling', async () => {
+  it('cancelGeneration stops generation polling', async () => {
     const stopGenerationPolling = vi.fn()
-    const stopShotPolling = vi.fn()
     const node = createNode('image', {
       prompt: 'x',
       status: NODE_GENERATION_STATUS.generating,
       generationRecordId: 'rec-cancel-1',
     }, 'img-1')
-    const { api } = createDeps([node], { stopGenerationPolling, stopShotPolling })
+    const { api } = createDeps([node], { stopGenerationPolling })
     vi.mocked(studioApi.cancelGeneration).mockResolvedValue(
       mockAxiosResponse({
         data: {
@@ -1116,7 +880,6 @@ describe('useNodeGeneration', () => {
     await vi.waitFor(() => expect(studioApi.cancelGeneration).toHaveBeenCalledWith('rec-cancel-1'))
 
     expect(stopGenerationPolling).toHaveBeenCalledWith('img-1')
-    expect(stopShotPolling).toHaveBeenCalledWith('img-1')
   })
 
   it('cancelGeneration on fallback_pending calls cancelPlatformFallback and sets error', async () => {
@@ -1292,36 +1055,6 @@ describe('useNodeGeneration', () => {
     expect(api.isNodeBusy(node.id)).toBe(false)
   })
 
-  it('cancels prior material fallback before starting a new shot-linked generation', async () => {
-    const order: string[] = []
-    vi.mocked(canvasApi.cancelMaterialPlatformFallback).mockImplementation(async () => {
-      order.push('cancel')
-      return mockAxiosResponse({ data: { id: 'mat-old', status: 'failed' } }) as never
-    })
-    vi.mocked(canvasApi.generateImage).mockImplementation(async () => {
-      order.push('generate')
-      return mockAxiosResponse({ data: { id: 'mat-new' } })
-    })
-    const shot = createNode('shot', { prompt: 'regenerate' }, 'shot-regenerate')
-    const image = createNode('image', {
-      status: NODE_GENERATION_STATUS.fallback_pending,
-      materialId: 'mat-old',
-      prompt: 'regenerate',
-    }, 'image-material-regenerate')
-    const { api, deps } = createDeps([shot, image])
-    deps.edges.value = [{
-      id: 'e-regenerate',
-      source: 'shot-regenerate',
-      target: 'image-material-regenerate',
-    }]
-
-    await api.generateForNode(image)
-
-    expect(order).toEqual(['cancel', 'generate'])
-    expect(image.data?.status).toBe(NODE_GENERATION_STATUS.generating)
-    expect(image.data?.materialId).toBe('mat-new')
-  })
-
   it('cancelGeneration on material fallback_pending calls cancelMaterialPlatformFallback and sets error', async () => {
     vi.mocked(canvasApi.cancelMaterialPlatformFallback).mockResolvedValue(
       mockAxiosResponse({ data: { id: 'mat-fb-cancel', status: 'failed' } }),
@@ -1349,114 +1082,6 @@ describe('useNodeGeneration', () => {
         errorMessage: expect.stringMatching(/已取消/),
       }),
     )
-  })
-
-  it('cancelGeneration on shot cancels fallback_pending media child via platform fallback API', async () => {
-    vi.mocked(canvasApi.cancelMaterialPlatformFallback).mockResolvedValue(
-      mockAxiosResponse({ data: { id: 'mat-child-fb', status: 'failed' } }),
-    )
-    const shot = createNode('shot', {
-      status: NODE_GENERATION_STATUS.generating,
-      materialId: 'mat-child-fb',
-    }, 'shot-fb')
-    const child = createNode('video', {
-      status: NODE_GENERATION_STATUS.fallback_pending,
-      materialId: 'mat-child-fb',
-    }, 'video-child-fb')
-    const { api, deps } = createDeps([shot, child])
-    deps.edges.value = [{ id: 'e-fb', source: 'shot-fb', target: 'video-child-fb' }]
-
-    api.cancelGeneration('shot-fb')
-    await vi.waitFor(() =>
-      expect(canvasApi.cancelMaterialPlatformFallback).toHaveBeenCalledWith('mat-child-fb'),
-    )
-
-    expect(canvasApi.cancelMaterial).not.toHaveBeenCalled()
-    expect(deps.patchNodeData).toHaveBeenCalledWith(
-      'video-child-fb',
-      expect.objectContaining({
-        status: NODE_GENERATION_STATUS.error,
-        errorMessage: expect.stringMatching(/已取消/),
-      }),
-    )
-  })
-
-  it('cancelGeneration stops linked shot polling for shot-linked media', () => {
-    const stopShotPolling = vi.fn()
-    const shot = createNode('shot', {
-      title: 'Shot',
-      status: NODE_GENERATION_STATUS.generating,
-    }, 'shot-1')
-    const image = createNode('image', {
-      prompt: 'x',
-      status: NODE_GENERATION_STATUS.generating,
-    }, 'image-1')
-    const { api, deps } = createDeps([shot, image], { stopShotPolling })
-    deps.edges.value = [{ id: 'e1', source: 'shot-1', target: 'image-1' }]
-
-    api.cancelGeneration('image-1')
-
-    expect(stopShotPolling).toHaveBeenCalledWith('image-1')
-    expect(stopShotPolling).toHaveBeenCalledWith('shot-1')
-    expect(deps.patchNodeData).toHaveBeenCalledWith(
-      'shot-1',
-      expect.objectContaining({
-        status: NODE_GENERATION_STATUS.draft,
-        errorMessage: '已取消',
-      }),
-    )
-    expect(shot.data?.status).toBe(NODE_GENERATION_STATUS.draft)
-  })
-
-  it('does not addNode after cancel during no-child generateShot hang', async () => {
-    let resolveHang!: (v: unknown) => void
-    const hang = new Promise((r) => { resolveHang = r })
-    vi.mocked(canvasApi.editShot).mockResolvedValue(mockAxiosResponse({ data: {} }))
-    vi.mocked(canvasApi.generateImage).mockImplementationOnce(() => hang as never)
-
-    // auto mode + no media children → else branch that addNode/addEdge
-    const shot = createNode('shot', { title: 'Shot', prompt: 'lonely', shotGenerateMode: 'auto' }, 'shot-1')
-    const { api, deps } = createDeps([shot])
-
-    const pending = api.generateForNode(shot)
-    await Promise.resolve()
-    await Promise.resolve()
-
-    api.cancelGeneration('shot-1')
-    expect(shot.data?.status).toBe(NODE_GENERATION_STATUS.draft)
-
-    resolveHang(mockAxiosResponse({ data: { data: { id: 'mat-late' } } }))
-    await pending
-
-    expect(deps.addNode).not.toHaveBeenCalled()
-    expect(deps.addEdge).not.toHaveBeenCalled()
-    expect(deps.startShotPolling).not.toHaveBeenCalled()
-  })
-
-  it('does not restart shot polling after cancel during shot-linked generate hang', async () => {
-    let resolveHang!: (v: unknown) => void
-    const hang = new Promise((r) => { resolveHang = r })
-    vi.mocked(canvasApi.generateImage).mockImplementationOnce(() => hang as never)
-
-    const shot = createNode('shot', { title: 'Shot', prompt: 'sunset' }, 'shot-1')
-    const image = createNode('image', { prompt: 'sunset' }, 'image-1')
-    const stopShotPolling = vi.fn()
-    const { api, deps } = createDeps([shot, image], { stopShotPolling })
-    deps.edges.value = [{ id: 'e1', source: 'shot-1', target: 'image-1' }]
-
-    const pending = api.generateForNode(image)
-    await Promise.resolve()
-    expect(deps.startShotPolling).not.toHaveBeenCalled()
-
-    api.cancelGeneration('image-1')
-    expect(stopShotPolling).toHaveBeenCalledWith('shot-1')
-    expect(shot.data?.status).toBe(NODE_GENERATION_STATUS.draft)
-    expect(image.data?.status).toBe(NODE_GENERATION_STATUS.draft)
-
-    resolveHang(mockAxiosResponse({ data: {} }))
-    await pending
-
-    expect(deps.startShotPolling).not.toHaveBeenCalled()
   })
 
   it('does not write fallback error after cancel during confirm dialog', async () => {
@@ -1718,24 +1343,6 @@ describe('useNodeGeneration', () => {
     expect(mockRefreshPoints).toHaveBeenCalled()
   })
 
-  it('uses catalog defaults for generateShot when media child is missing', async () => {
-    const shot = createNode('shot', { title: 'Shot', prompt: 'fallback', shotGenerateMode: 'image' }, 'shot-1')
-    const { api } = createDeps([shot])
-    vi.mocked(canvasApi.editShot).mockResolvedValue(mockAxiosResponse({ data: {} }))
-    vi.mocked(canvasApi.generateImage).mockResolvedValue(mockAxiosResponse({ data: {} }))
-
-    await api.generateForNode(shot)
-
-    expect(canvasApi.generateImage).toHaveBeenCalledWith('shot-1', 'fallback', {
-      model: encodeChannelModel('platform', defaultModelKey('image')),
-      aspectRatio: '16:9',
-      resolution: '1K',
-      count: 1,
-      refs: [],
-      mentionedKeys: [],
-    })
-  })
-
   it('keeps independent studio image path on studioApi', async () => {
     const node = createNode('image', {
       prompt: 'standalone cat',
@@ -1758,248 +1365,6 @@ describe('useNodeGeneration', () => {
       2,
       expect.any(AbortSignal),
       canvasScope('image-1'),
-    )
-    expect(canvasApi.generateImage).not.toHaveBeenCalled()
-  })
-
-  it('generates ordered composition run group when clicking a member', async () => {
-    const i0 = createNode('image', { prompt: 'I0' }, 'image-i0')
-    const look0 = createNode('image', { prompt: 'LOOK0' }, 'image-look-0')
-    const look1 = createNode('image', { prompt: 'LOOK1' }, 'image-look-1')
-    const textP = createNode('text', { prompt: 'NEW SCRIPT' }, 'text-p')
-    const video = createNode('video', {
-      prompt: 'OLD',
-      videoSettings: { duration: 15, aspectRatio: '16:9', resolution: '720p', crop: 'none' },
-    }, 'video-v')
-    const order: string[] = []
-    vi.mocked(studioApi.generateImage).mockImplementation(async (prompt) => {
-      order.push(`image:${prompt}`)
-      return mockAxiosResponse({ data: { ...completedRecord, id: `rec-${prompt}` } })
-    })
-    vi.mocked(studioApi.startVideoGeneration).mockImplementation(async (prompt) => {
-      order.push(`video:${prompt}`)
-      return mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          type: 'video',
-          id: 'rec-video-group',
-          status: 'generating',
-          generationStartedAt: '2026-08-14T12:00:00.000Z',
-        },
-      })
-    })
-    const compositionRunGroup = ref({
-      nodeIds: ['image-i0', 'image-look-0', 'image-look-1', 'text-p', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api, deps } = createDeps([i0, look0, look1, textP, video], { compositionRunGroup })
-    deps.edges.value = [
-      { id: 'e-i0-l0', source: 'image-i0', target: 'image-look-0' },
-      { id: 'e-i0-l1', source: 'image-i0', target: 'image-look-1' },
-      { id: 'e-l0-v', source: 'image-look-0', target: 'video-v' },
-      { id: 'e-l1-v', source: 'image-look-1', target: 'video-v' },
-      { id: 'e-p-v', source: 'text-p', target: 'video-v' },
-    ]
-
-    await api.generateForNode(video)
-
-    expect(order).toEqual(['image:I0', 'image:LOOK0', 'image:LOOK1', 'video:NEW SCRIPT'])
-    expect(studioApi.generateText).not.toHaveBeenCalled()
-  })
-
-  it('does not continue downstream when a run-group member fails', async () => {
-    const i0 = createNode('image', { prompt: 'I0' }, 'image-i0')
-    const look0 = createNode('image', { prompt: 'LOOK0' }, 'image-look-0')
-    const video = createNode('video', {
-      prompt: 'OLD',
-      videoSettings: { duration: 15, aspectRatio: '16:9', resolution: '720p', crop: 'none' },
-    }, 'video-v')
-    vi.mocked(studioApi.generateImage).mockRejectedValue({
-      response: { data: { message: 'I0 failed' } },
-    })
-    const compositionRunGroup = ref({
-      nodeIds: ['image-i0', 'image-look-0', 'text-p', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api } = createDeps(
-      [i0, look0, createNode('text', { prompt: 'SCRIPT' }, 'text-p'), video],
-      { compositionRunGroup },
-    )
-
-    await api.generateForNode(look0)
-
-    expect(studioApi.generateImage).toHaveBeenCalledTimes(1)
-    expect(studioApi.startVideoGeneration).not.toHaveBeenCalled()
-    expect(i0.data?.status).toBe(NODE_GENERATION_STATUS.error)
-  })
-
-  it('does not start look generate while I0 studio status is still generating', async () => {
-    const i0 = createNode('image', { prompt: 'I0' }, 'image-i0')
-    const look0 = createNode('image', { prompt: 'LOOK0' }, 'image-look-0')
-    const video = createNode('video', {
-      prompt: 'OLD',
-      videoSettings: { duration: 15, aspectRatio: '16:9', resolution: '720p', crop: 'none' },
-    }, 'video-v')
-    const order: string[] = []
-    let releaseI0!: (record: typeof completedRecord) => void
-    const i0Terminal = new Promise<typeof completedRecord>((resolve) => {
-      releaseI0 = resolve
-    })
-    vi.mocked(studioApi.generateImage).mockImplementation(async (prompt) => {
-      order.push(`image:${prompt}`)
-      if (prompt === 'I0') {
-        return mockAxiosResponse({
-          data: {
-            ...completedRecord,
-            id: 'rec-i0-poll',
-            prompt: 'I0',
-            status: NODE_GENERATION_STATUS.generating,
-            url: null,
-          },
-        })
-      }
-      return mockAxiosResponse({
-        data: { ...completedRecord, id: `rec-${prompt}`, prompt },
-      })
-    })
-    vi.mocked(studioApi.getGeneration).mockImplementation(async (id) => {
-      if (id === 'rec-i0-poll') {
-        const record = await i0Terminal
-        return mockAxiosResponse({ data: record })
-      }
-      return mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          id,
-          status: NODE_GENERATION_STATUS.completed,
-          url: 'https://example.com/out.png',
-        },
-      })
-    })
-    vi.mocked(studioApi.startVideoGeneration).mockImplementation(async (prompt) => {
-      order.push(`video:${prompt}`)
-      return mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          type: 'video',
-          id: 'rec-video-group',
-          status: NODE_GENERATION_STATUS.generating,
-          generationStartedAt: '2026-08-14T12:00:00.000Z',
-        },
-      })
-    })
-    const compositionRunGroup = ref({
-      nodeIds: ['image-i0', 'image-look-0', 'text-p', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api, deps } = createDeps(
-      [i0, look0, createNode('text', { prompt: 'SCRIPT' }, 'text-p'), video],
-      { compositionRunGroup },
-    )
-    deps.edges.value = [
-      { id: 'e-i0-l0', source: 'image-i0', target: 'image-look-0' },
-      { id: 'e-l0-v', source: 'image-look-0', target: 'video-v' },
-      { id: 'e-p-v', source: 'text-p', target: 'video-v' },
-    ]
-
-    const run = api.generateForNode(look0)
-    await vi.waitFor(() => expect(order).toEqual(['image:I0']))
-    expect(studioApi.generateImage).toHaveBeenCalledTimes(1)
-    expect(studioApi.startVideoGeneration).not.toHaveBeenCalled()
-
-    releaseI0({
-      ...completedRecord,
-      id: 'rec-i0-poll',
-      prompt: 'I0',
-      status: NODE_GENERATION_STATUS.completed,
-      url: 'https://example.com/i0.png',
-    })
-    await run
-
-    expect(order).toEqual(['image:I0', 'image:LOOK0', 'video:SCRIPT'])
-    expect(i0.data?.status).toBe(NODE_GENERATION_STATUS.completed)
-  })
-
-  it('does not start looks when I0 poll ends failed', async () => {
-    const i0 = createNode('image', { prompt: 'I0' }, 'image-i0')
-    const look0 = createNode('image', { prompt: 'LOOK0' }, 'image-look-0')
-    const video = createNode('video', {
-      prompt: 'OLD',
-      videoSettings: { duration: 15, aspectRatio: '16:9', resolution: '720p', crop: 'none' },
-    }, 'video-v')
-    const order: string[] = []
-    vi.mocked(studioApi.generateImage).mockImplementation(async (prompt) => {
-      order.push(`image:${prompt}`)
-      if (prompt === 'I0') {
-        return mockAxiosResponse({
-          data: {
-            ...completedRecord,
-            id: 'rec-i0-fail',
-            prompt: 'I0',
-            status: NODE_GENERATION_STATUS.generating,
-            url: null,
-          },
-        })
-      }
-      return mockAxiosResponse({
-        data: { ...completedRecord, id: `rec-${prompt}`, prompt },
-      })
-    })
-    vi.mocked(studioApi.getGeneration).mockResolvedValue(
-      mockAxiosResponse({
-        data: {
-          ...completedRecord,
-          id: 'rec-i0-fail',
-          prompt: 'I0',
-          status: NODE_GENERATION_STATUS.failed,
-          url: null,
-        },
-      }),
-    )
-    const compositionRunGroup = ref({
-      nodeIds: ['image-i0', 'image-look-0', 'text-p', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api } = createDeps(
-      [i0, look0, createNode('text', { prompt: 'SCRIPT' }, 'text-p'), video],
-      { compositionRunGroup },
-    )
-
-    await api.generateForNode(look0)
-
-    expect(order).toEqual(['image:I0'])
-    expect(studioApi.generateImage).toHaveBeenCalledTimes(1)
-    expect(studioApi.startVideoGeneration).not.toHaveBeenCalled()
-    expect(i0.data?.status).toBe(NODE_GENERATION_STATUS.error)
-  })
-
-  it('keeps single-node generate when click is outside the run group', async () => {
-    const grouped = createNode('image', { prompt: 'I0' }, 'image-i0')
-    const other = createNode('image', { prompt: 'solo' }, 'image-other')
-    const compositionRunGroup = ref({
-      nodeIds: ['image-i0', 'video-v'],
-      dumpHash: 'h',
-      createdAt: '2026-09-16T00:00:00.000Z',
-    })
-    const { api } = createDeps([grouped, other], { compositionRunGroup })
-
-    await api.generateForNode(other)
-
-    expect(studioApi.generateImage).toHaveBeenCalledTimes(1)
-    expect(studioApi.generateImage).toHaveBeenCalledWith(
-      'solo',
-      expect.any(String),
-      expect.any(String),
-      [],
-      [],
-      expect.any(String),
-      expect.any(Number),
-      expect.any(AbortSignal),
-      canvasScope('image-other'),
     )
   })
 

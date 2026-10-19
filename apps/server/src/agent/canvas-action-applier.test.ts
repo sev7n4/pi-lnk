@@ -9,7 +9,6 @@ import { defaultCanvasActionApplier } from './canvas-action-applier'
 function createService(applier?: CanvasActionApplier) {
   return new AgentService(
     {} as never,
-    { create: vi.fn() } as never,
     { createFromAgent: vi.fn() } as never,
     { resolveForGeneration: vi.fn() } as never,
     undefined,

@@ -12,12 +12,7 @@ export type DockNodeType =
   | 'image'
   | 'video'
   | 'audio'
-  | 'sceneComposer'
-  | 'mediaInput'
-  | 'videoComposition'
-  | 'worldModel'
-  | 'group'
-  | 'shot'
+  // 2026-10-19 节点下线：sceneComposer / mediaInput / videoComposition / worldModel / group / shot 退出联合类型。
 
 const emit = defineEmits<{
   add: [type: DockNodeType]

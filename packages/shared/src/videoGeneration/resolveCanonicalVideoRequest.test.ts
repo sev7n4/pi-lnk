@@ -80,7 +80,7 @@ describe('resolveCanonicalVideoRequest', () => {
     expect(req.mentionedKeys).toEqual(['I1'])
   })
 
-  it('path3b: campaign mediaInput edge → same canonical url as localRefs', () => {
+  it('path3b: campaign upstream image edge → same canonical url as localRefs', () => {
     const localReq = resolveCanonicalVideoRequest({
       node: {
         ...baseVideoNode,
@@ -98,11 +98,13 @@ describe('resolveCanonicalVideoRequest', () => {
       canvas: {
         nodes: [
           baseVideoNode,
+          // 2026-10-19 mediaInput 下线：上游边改由 image 节点承担（断言意图不变——
+          // 「边上的上游节点带的 url」与 localRefs 解析出同一个 canonical url）。
           {
             id: 'm1',
-            type: 'mediaInput',
+            type: 'image',
             position: { x: 0, y: 0 },
-            data: { url: IMG, mediaKind: 'image' },
+            data: { url: IMG },
           },
         ],
         edges: [{ id: 'e1', source: 'm1', target: 'v1' }],

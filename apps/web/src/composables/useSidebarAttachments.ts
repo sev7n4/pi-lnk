@@ -54,7 +54,7 @@ export function nodeToSidebarAttachment(node: FocusNodeLike): SidebarAttachment 
   if (t === 'text' || t === 'prompt') mediaType = 'text'
   else if (t === 'video') mediaType = 'video'
   else if (t === 'audio') mediaType = 'audio'
-  else if (t === 'image' || t === 'mediaInput') mediaType = 'image'
+  else if (t === 'image') mediaType = 'image'
   else if (text && !url) mediaType = 'text'
   else if (!url) return null
 

@@ -1,6 +1,5 @@
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
-import { inferMediaInputKind } from '@/composables/useMediaUpload'
 
 export type CompositionTrackType = 'video' | 'audio'
 
@@ -43,12 +42,6 @@ function inferNodeTrackType(node: EditableFlowNode): CompositionTrackType | null
   const type = String(node.type ?? '')
   if (type === 'video') return 'video'
   if (type === 'audio') return 'audio'
-  if (type === 'mediaInput') {
-    const data = node.data ?? {}
-    const kindFromData = data.mediaKind as 'image' | 'video' | 'audio' | undefined
-    const kind = kindFromData ?? inferMediaInputKind(String(data.mimeType ?? ''), String(data.url ?? ''))
-    if (kind === 'video' || kind === 'audio') return kind
-  }
   return null
 }
 

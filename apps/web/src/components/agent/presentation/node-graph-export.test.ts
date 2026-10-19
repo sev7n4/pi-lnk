@@ -9,7 +9,7 @@ import { buildNodeGraphHtml, escapeHtml, nodeGraphFileName } from './node-graph-
 const NODES = [
 	{ id: 'img-1', type: 'image', title: '镜头1 · 雨夜街道', position: { x: 0, y: 0 } },
 	{ id: 'img-2', type: 'text', title: '旁白', position: { x: 240, y: 0 } },
-	{ id: 'grp-1', type: 'group', title: '第一幕', position: { x: 240, y: 160 } },
+	{ id: 'grp-1', type: 'audio', title: '第一幕', position: { x: 240, y: 160 } },
 ]
 const EDGES = [
 	{ source: 'img-1', target: 'img-2' },

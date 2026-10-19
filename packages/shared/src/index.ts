@@ -3,12 +3,13 @@ export type WorkType = 'canvas' | 'shortfilm'
 /** 与 agentContract 的 NODE_TYPES 保持一致（改一处必须改另一处，否则画布动作会被静默丢弃）。
  *  2026-09-28 补入 `audio`；mediaInput / videoComposition / worldModel 当前无需求，有意不列。
  *  2026-10-17 下线 `prompt`（提示词节点，PR feat/prompt-node-decommission）——存量画布
- *  里的 prompt 节点数据仍在 JSON 中（运行时按字符串分发渲染），但联合类型与白名单不再接纳。 */
-export type NodeType = 'image' | 'video' | 'audio' | 'text' | 'group' | 'shot' | 'sceneComposer'
+ *  里的 prompt 节点数据仍在 JSON 中（运行时按字符串分发渲染），但联合类型与白名单不再接纳。
+ *  2026-10-19 下线 `group` / `shot` / `sceneComposer`（分组 / 分镜 / 导演台）节点：联合类型与白名单不再接纳，
+ *  存量节点仅走运行时兜底渲染。 */
+export type NodeType = 'image' | 'video' | 'audio' | 'text'
 
 export * from './randomId'
 export * from './generationTimeoutBudget'
-export * from './canvas/groupChildIds'
 export * from './canvas/selectionDigest'
 export * from './canvas/duplicateSubgraph'
 export * from './canvas/duplicateToCanvasActions'
@@ -25,8 +26,6 @@ export * from './canvas/compositionExpand'
 export * from './canvas/compositionLint'
 export * from './canvas/compositionVideo'
 export * from './canvas/selectionBatchGenerate'
-export * from './sceneComposer'
-export * from './videoComposition'
 export * from './nodeRefs'
 export * from './imageParams'
 export * from './imageModelProfiles'
@@ -163,10 +162,30 @@ export interface CanvasEdge {
   target: string
 }
 
+/**
+ * 画布分组（2026-10-20）。
+ *
+ * ⚠️ **不再是节点类型**：分组曾以 `group` 节点承载（`CanvasNode` + `parentNode`），
+ * 现改为 `CanvasData.groups` 侧车结构 —— 分组框由画布 overlay 渲染，不占节点位、
+ * 不进 agent 节点白名单。`childIds` 为绝对坐标语义（子节点 position 不再相对父）。
+ */
+export interface CanvasGroup {
+  id: string
+  title: string
+  /** 8 色卡键；缺省 = neutral（中性灰）。色值本体在 `--neo-group-*` 令牌。 */
+  colorKey?: string
+  childIds: string[]
+  /** 画布绝对坐标下的外框（含 padding）。 */
+  position: { x: number; y: number }
+  size: { width: number; height: number }
+}
+
 export interface CanvasData {
   nodes: CanvasNode[]
   edges: CanvasEdge[]
   viewport?: { x: number; y: number; zoom: number }
+  /** 分组侧车（overlay 渲染，非节点）。存量 group 节点不在此列。 */
+  groups?: CanvasGroup[]
   compositionRunGroup?: { nodeIds: string[]; dumpHash: string; createdAt: string }
 }
 

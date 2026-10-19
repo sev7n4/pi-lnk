@@ -28,7 +28,7 @@
 import type { SvgCardPayload } from "./types-payload.js";
 
 /** 画布节点类型（与前端 `canvasNodes` 的 `type` 对齐，取值来自 `get-canvas-layout`）。 */
-export type NodeGraphNodeType = "image" | "text" | "video" | "audio" | "group" | "table" | (string & {});
+export type NodeGraphNodeType = "image" | "text" | "video" | "audio" | "table" | (string & {});
 
 /** 单个节点。字段名沿用 `get-canvas-layout` 的原样，**不做重命名**（少一层翻译=少一处错）。 */
 export interface NodeGraphNode {

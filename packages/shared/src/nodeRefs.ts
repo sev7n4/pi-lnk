@@ -105,7 +105,7 @@ function resolveEdgeRef(
     }
   }
 
-  if (type === 'image' || type === 'mediaInput') {
+  if (type === 'image') {
     const url = resolveImageUrlFromNode(data)
     return {
       refId,

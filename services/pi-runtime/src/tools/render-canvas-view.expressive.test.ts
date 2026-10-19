@@ -152,8 +152,8 @@ describe("排序：业务逻辑关联优先，数字字母次之", () => {
 // ══════════════════════════════════════════════
 describe("语义色：按节点类型映射且必须白名单", () => {
 	it("palette 至少覆盖 prompt/image/video 三类且互不相同", () => {
-		// ⚠️ 排除中性档（group/default 同为灰是**刻意**的：没有类型信息 ⇒ 不该被着色）
-		const kinds = Object.keys(NODE_PALETTE).filter((k) => k !== "group" && k !== "default");
+		// ⚠️ 排除中性档（default 为灰是**刻意**的：没有类型信息 ⇒ 不该被着色）
+		const kinds = Object.keys(NODE_PALETTE).filter((k) => k !== "default");
 		for (const k of ["prompt", "image", "video"]) {
 			assert.ok(kinds.includes(k), `缺少 ${k} 的配色`);
 		}

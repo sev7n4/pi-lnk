@@ -1,9 +1,4 @@
 import type { Node } from '@vue-flow/core'
-import { getGroupChildIds } from '@lnkpi/shared'
-
-export { getGroupChildIds }
-
-export const GROUP_PADDING = 80
 
 type FlowNode = Node & { dimensions?: { width?: number; height?: number } }
 
@@ -15,12 +10,6 @@ const NODE_SIZES: Record<string, { w: number; h: number }> = {
   // 视频：长边基准 320（尺寸随比例 contain，包络 320×320）
   video: { w: 320, h: 320 },
   audio: { w: 280, h: 140 },
-  sceneComposer: { w: 280, h: 280 },
-  shot: { w: 280, h: 280 },
-  mediaInput: { w: 280, h: 280 },
-  videoComposition: { w: 280, h: 200 },
-  worldModel: { w: 280, h: 280 },
-  group: { w: 280, h: 160 },
   prompt: { w: 280, h: 120 },
 }
 
@@ -51,306 +40,6 @@ export function getAbsolutePosition(node: FlowNode, nodes: FlowNode[]) {
     parentId = parent.parentNode
   }
   return { x, y }
-}
-
-export function createGroupFromNodes(
-  nodes: FlowNode[],
-  selectedIds: string[],
-  groupTitle?: string,
-): { nodes: FlowNode[]; groupId: string } | null {
-  const eligible: FlowNode[] = []
-  for (const id of selectedIds) {
-    for (const node of nodes) {
-      if (node.id === id && node.type !== 'group' && !node.parentNode) {
-        eligible.push(node)
-        break
-      }
-    }
-  }
-  if (eligible.length < 2) return null
-
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-
-  for (const node of eligible) {
-    const abs = getAbsolutePosition(node, nodes)
-    const { w, h } = getNodeSize(node)
-    minX = Math.min(minX, abs.x)
-    minY = Math.min(minY, abs.y)
-    maxX = Math.max(maxX, abs.x + w)
-    maxY = Math.max(maxY, abs.y + h)
-  }
-
-  const groupId = `group-${Date.now()}`
-  const groupX = minX - GROUP_PADDING
-  const groupY = minY - GROUP_PADDING
-  const groupW = maxX - minX + GROUP_PADDING * 2
-  const groupH = maxY - minY + GROUP_PADDING * 2
-
-  const next: FlowNode[] = nodes.map((n) => ({
-    ...n,
-    data: { ...((n.data ?? {}) as Record<string, unknown>) },
-  }))
-
-  next.push({
-    id: groupId,
-    type: 'group',
-    position: { x: groupX, y: groupY },
-    style: { width: `${groupW}px`, height: `${groupH}px` },
-    data: {
-      title: groupTitle ?? nextGroupTitle(next),
-      childIds: eligible.map((n) => n.id),
-    },
-    draggable: true,
-    selectable: true,
-    zIndex: 0,
-  } as FlowNode)
-
-  for (const node of eligible) {
-    const abs = getAbsolutePosition(node, nodes)
-    for (let i = 0; i < next.length; i += 1) {
-      if (next[i]?.id !== node.id) continue
-      next[i] = {
-        ...next[i]!,
-        parentNode: groupId,
-        extent: 'parent',
-        expandParent: true,
-        draggable: true,
-        selectable: true,
-        position: { x: abs.x - groupX, y: abs.y - groupY },
-        zIndex: 1,
-      }
-      break
-    }
-  }
-
-  return { nodes: next, groupId }
-}
-
-export function resizeGroupToFitChildren(nodes: FlowNode[], groupId: string): FlowNode[] {
-  const groupIndex = nodes.findIndex((n) => n.id === groupId && n.type === 'group')
-  if (groupIndex < 0) return nodes
-
-  const children = nodes.filter((n) => n.parentNode === groupId)
-  if (!children.length) return nodes
-
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-
-  for (const child of children) {
-    const { w, h } = getNodeSize(child)
-    minX = Math.min(minX, child.position.x)
-    minY = Math.min(minY, child.position.y)
-    maxX = Math.max(maxX, child.position.x + w)
-    maxY = Math.max(maxY, child.position.y + h)
-  }
-
-  if (!Number.isFinite(minX)) return nodes
-
-  const pad = GROUP_PADDING
-  const offsetX = minX - pad
-  const offsetY = minY - pad
-  const group = nodes[groupIndex]!
-  const nextGroupX = group.position.x + offsetX
-  const nextGroupY = group.position.y + offsetY
-  const nextGroupW = maxX - minX + pad * 2
-  const nextGroupH = maxY - minY + pad * 2
-
-  return nodes.map((node) => {
-    if (node.id === groupId) {
-      return {
-        ...node,
-        position: { x: nextGroupX, y: nextGroupY },
-        style: {
-          ...(typeof node.style === 'object' ? node.style : {}),
-          width: `${nextGroupW}px`,
-          height: `${nextGroupH}px`,
-        },
-        data: {
-          ...((node.data ?? {}) as Record<string, unknown>),
-          childIds: children.map((child) => child.id),
-        },
-      }
-    }
-    if (node.parentNode === groupId) {
-      return {
-        ...node,
-        position: {
-          x: node.position.x - offsetX,
-          y: node.position.y - offsetY,
-        },
-      }
-    }
-    return node
-  })
-}
-
-/**
- * 刷新加载自愈：持久化（flowToCanvasData）只存 id/type/position/data，
- * group 的 style 尺寸与子节点的 parentNode 父子关系全被丢弃 —— 刷新后
- * group 塌缩成 CSS 最小尺寸小卡，子节点的相对坐标被当绝对坐标渲染（整组散架）。
- *
- * 本函数从 group.data.childIds 重建：子节点回填 parentNode/extent/zIndex，
- * group 回填 zIndex 并按「子节点相对包围盒 + 兜底尺寸表」估算尺寸。
- * 子节点存的坐标本就是相对 group 的，关系一回填位置即归位；尺寸在
- * vue-flow 测量完成后由 syncGroupsToFitChildren 精修。对已完好的画布幂等。
- *
- * 2026-10-12 拖拽修复：不再回填 `dragHandle` —— 见下方 nextGroupTitle 注释
- * 同源的「分组只能抓 26px 外沿标题条」问题；分组与普通节点一致整盒可拖。
- */
-export function restoreGroupHierarchy<T extends FlowNode>(nodes: T[]): T[] {
-  const childIdsOf = (n: FlowNode): string[] => {
-    const raw = (n.data as Record<string, unknown> | undefined)?.childIds
-    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : []
-  }
-  const hasGroup = nodes.some((n) => n.type === 'group' && childIdsOf(n).length > 0)
-  if (!hasGroup) return nodes
-
-  const next = nodes.map((n) => ({ ...n }))
-
-  // 1) 子节点回填父子关系（幂等：已挂对的子节点跳过）
-  for (const g of next) {
-    if (g.type !== 'group') continue
-    for (const cid of childIdsOf(g)) {
-      const child = next.find((n) => n.id === cid)
-      if (!child || child.type === 'group' || child.parentNode === g.id) continue
-      child.parentNode = g.id
-      child.extent = 'parent'
-      child.expandParent = true
-      child.zIndex = 1
-      child.draggable = true
-      child.selectable = true
-    }
-  }
-
-  // 2) group 本体回填属性；尺寸 = 子节点相对包围盒（dimensions 缺失时落兜底尺寸表）
-  const estimateSize = (g: FlowNode): { w: number; h: number } | null => {
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (const cid of childIdsOf(g)) {
-      const child = next.find((n) => n.id === cid)
-      if (!child || child.type === 'group' || child.parentNode !== g.id) continue
-      const { w, h } = getNodeSize(child)
-      minX = Math.min(minX, child.position.x)
-      minY = Math.min(minY, child.position.y)
-      maxX = Math.max(maxX, child.position.x + w)
-      maxY = Math.max(maxY, child.position.y + h)
-    }
-    if (!Number.isFinite(minX)) return null
-    return {
-      w: maxX - minX + GROUP_PADDING * 2,
-      h: maxY - minY + GROUP_PADDING * 2,
-    }
-  }
-
-  return next.map((node) => {
-    if (node.type !== 'group') return node
-    const size = estimateSize(node)
-    if (!size) return node
-    return {
-      ...node,
-      draggable: true,
-      selectable: true,
-      zIndex: 0,
-      style: {
-        ...(typeof node.style === 'object' && node.style ? node.style : {}),
-        width: `${size.w}px`,
-        height: `${size.h}px`,
-      },
-    }
-  })
-}
-
-/**
- * vue-flow 测量完成（nodes-initialized）后的精修：按真实 dimensions 重算分组尺寸。
- * 已贴合（±1px）的分组跳过，返回原数组引用 —— 幂等，避免无谓的 nodes 引用抖动。
- */
-export function syncGroupsToFitChildren(nodes: FlowNode[]): FlowNode[] {
-  let next = nodes
-  for (const g of nodes) {
-    if (g.type !== 'group') continue
-    const children = next.filter((n) => n.parentNode === g.id)
-    if (!children.length) continue
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (const child of children) {
-      const { w, h } = getNodeSize(child)
-      minX = Math.min(minX, child.position.x)
-      minY = Math.min(minY, child.position.y)
-      maxX = Math.max(maxX, child.position.x + w)
-      maxY = Math.max(maxY, child.position.y + h)
-    }
-    if (!Number.isFinite(minX)) continue
-    const wantW = maxX - minX + GROUP_PADDING * 2
-    const wantH = maxY - minY + GROUP_PADDING * 2
-    const cur = typeof g.style === 'object' && g.style ? g.style : undefined
-    const curW = Number.parseFloat(String(cur?.width ?? ''))
-    const curH = Number.parseFloat(String(cur?.height ?? ''))
-    if (
-      Number.isFinite(curW) && Math.abs(curW - wantW) <= 1 &&
-      Number.isFinite(curH) && Math.abs(curH - wantH) <= 1
-    ) continue
-    next = resizeGroupToFitChildren(next, g.id)
-  }
-  return next
-}
-
-export function ungroupNodes(nodes: FlowNode[], groupId: string): FlowNode[] | null {
-  const group = nodes.find((n) => n.id === groupId && n.type === 'group')
-  if (!group) return null
-
-  const childIdSet = new Set(getGroupChildIds(nodes, groupId))
-
-  const next: FlowNode[] = []
-  for (const node of nodes) {
-    if (node.id === groupId) continue
-    if (node.parentNode === groupId || childIdSet.has(node.id)) {
-      const abs = getAbsolutePosition(node, nodes)
-      const {
-        parentNode: _parentNode,
-        extent: _extent,
-        expandParent: _expandParent,
-        ...rest
-      } = node as FlowNode & { expandParent?: boolean }
-      next.push({
-        ...rest,
-        position: { x: abs.x, y: abs.y },
-        zIndex: undefined,
-      })
-      continue
-    }
-    next.push({ ...node })
-  }
-
-  return next
-}
-
-/**
- * 分组命名：取最小的未被占用的正整数（"分组 1"起）。
- *
- * 旧口径 `分组 ${countGroups(next)}` 按「当前分组总数」计数 —— 取消分组或
- * 删除分组会让总数回落，再次建组即重名（生产实测：画布上 4 个分组里两个叫
- * 「分组 1」；且首个分组叫「分组 0」，与 addNode 空组路径的 +1 口径不一致）。
- * 新口径扫描现存分组 title 占位、取最小空位 ⇒ 任何创建/删除时序都不会重名。
- */
-export function nextGroupTitle(nodes: FlowNode[]): string {
-  const taken = new Set<string>()
-  for (const n of nodes) {
-    if (n.type !== 'group') continue
-    const title = (n.data as Record<string, unknown> | undefined)?.title
-    if (typeof title === 'string' && title) taken.add(title)
-  }
-  let i = 1
-  while (taken.has(`分组 ${i}`)) i += 1
-  return `分组 ${i}`
 }
 
 /**
@@ -386,7 +75,7 @@ export function layoutNodesInGrid(nodes: FlowNode[], selectedIds: string[], gap 
   const selected = new Set(selectedIds)
   const targets: FlowNode[] = []
   for (const n of nodes) {
-    if (selected.has(n.id) && n.type !== 'group') targets.push(n)
+    if (selected.has(n.id)) targets.push(n)
   }
   if (targets.length < 2) return nodes
 
@@ -535,7 +224,7 @@ export function layoutNodesAlongEdges(
   const selected = new Set(selectedIds)
   const targets: FlowNode[] = []
   for (const n of nodes) {
-    if (selected.has(n.id) && n.type !== 'group') targets.push(n)
+    if (selected.has(n.id)) targets.push(n)
   }
   if (targets.length < 2) return nodes
 
@@ -687,4 +376,160 @@ export function getSelectionFrame(nodes: FlowNode[], selectedIds: string[]) {
     connectX: maxX,
     connectY: (minY + maxY) / 2,
   }
+}
+
+// ══════════════════════════════════════════════════════════
+// 分组（2026-10-20 侧车化）
+//
+// 分组曾以 `group` 节点承载；现改为 `CanvasData.groups` 侧车 + overlay 渲染：
+// - 分组框**不是节点**，不进 node-types、不占节点位、不进 agent 节点白名单；
+// - 子节点 position 一律画布绝对坐标（不再有 parentNode 相对语义）；
+// - 纯函数全部在此，CanvasPage 只做状态与事件接线。
+// ══════════════════════════════════════════════════════════
+
+/** 分组框相对子节点包围盒的留白（与旧 GROUP_PADDING 同值，保持视觉一致）。 */
+export const GROUP_PADDING = 80
+
+export type { CanvasGroup } from '@lnkpi/shared'
+import type { CanvasGroup } from '@lnkpi/shared'
+
+/** 分组序号标题（`分组 N`），N = 现有分组数 + 1。 */
+export function nextGroupTitle(groups: CanvasGroup[]): string {
+  return `分组 ${groups.length + 1}`
+}
+
+/**
+ * 由子节点包围盒算分组外框（绝对坐标 + padding）。
+ * 子节点不足 2 个时返回 null（打组最少 2 个）。
+ */
+export function groupRectForChildren(
+  nodes: FlowNode[],
+  childIds: string[],
+  padding = GROUP_PADDING,
+): { position: { x: number; y: number }; size: { width: number; height: number } } | null {
+  if (childIds.length < 2) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const id of childIds) {
+    const node = nodes.find((n) => n.id === id)
+    if (!node) continue
+    const abs = getAbsolutePosition(node, nodes)
+    const { w, h } = getNodeSize(node)
+    minX = Math.min(minX, abs.x)
+    minY = Math.min(minY, abs.y)
+    maxX = Math.max(maxX, abs.x + w)
+    maxY = Math.max(maxY, abs.y + h)
+  }
+  if (!Number.isFinite(minX)) return null
+  return {
+    position: { x: minX - padding, y: minY - padding },
+    size: { width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 },
+  }
+}
+
+/**
+ * 框选多个节点 → 打组。
+ * 资格：节点存在、尚未属于任何分组（一个节点只进一个分组，避免嵌套歧义）。
+ */
+export function createGroupFromSelection(
+  groups: CanvasGroup[],
+  nodes: FlowNode[],
+  selectedIds: string[],
+  title?: string,
+): { groups: CanvasGroup[]; group: CanvasGroup } | null {
+  const grouped = new Set(groups.flatMap((g) => g.childIds))
+  const childIds = selectedIds.filter((id) => {
+    const node = nodes.find((n) => n.id === id)
+    return Boolean(node) && !grouped.has(id)
+  })
+  const rect = groupRectForChildren(nodes, childIds)
+  if (!rect || childIds.length < 2) return null
+
+  const group: CanvasGroup = {
+    id: `group-${Date.now().toString(36)}`,
+    title: title?.trim() || nextGroupTitle(groups),
+    childIds,
+    ...rect,
+  }
+  return { groups: [...groups, group], group }
+}
+
+/** 解组：移除分组框，子节点保持各自绝对坐标不动。 */
+export function ungroupById(groups: CanvasGroup[], groupId: string): CanvasGroup[] {
+  return groups.filter((g) => g.id !== groupId)
+}
+
+/** 改分组背景色（key 取 groupColors 的 8 色卡）。 */
+export function patchGroupColorKey(
+  groups: CanvasGroup[],
+  groupId: string,
+  colorKey: string | null,
+): CanvasGroup[] {
+  return groups.map((g) =>
+    g.id === groupId ? { ...g, colorKey: colorKey ?? undefined } : g,
+  )
+}
+
+/** 重命名分组。 */
+export function renameGroup(groups: CanvasGroup[], groupId: string, title: string): CanvasGroup[] {
+  const trimmed = title.trim()
+  if (!trimmed) return groups
+  return groups.map((g) => (g.id === groupId ? { ...g, title: trimmed } : g))
+}
+
+/**
+ * 拖分组框 → 整组平移（子节点跟着走）。
+ * 返回新 groups 与新 nodes（不原地改）。
+ */
+export function moveGroupWithChildren(
+  groups: CanvasGroup[],
+  nodes: FlowNode[],
+  groupId: string,
+  delta: { x: number; y: number },
+): { groups: CanvasGroup[]; nodes: FlowNode[] } {
+  const group = groups.find((g) => g.id === groupId)
+  if (!group || (delta.x === 0 && delta.y === 0)) return { groups, nodes }
+  const childSet = new Set(group.childIds)
+  const nextNodes = nodes.map((n) =>
+    childSet.has(n.id)
+      ? { ...n, position: { x: n.position.x + delta.x, y: n.position.y + delta.y } }
+      : n,
+  )
+  const nextGroups = groups.map((g) =>
+    g.id === groupId
+      ? {
+          ...g,
+          position: { x: g.position.x + delta.x, y: g.position.y + delta.y },
+          size: { ...g.size },
+        }
+      : g,
+  )
+  return { groups: nextGroups, nodes: nextNodes }
+}
+
+/**
+ * 与画布现状对齐：子节点被删/被拖走后重算外框，子节点不足 2 个的分组自动解散。
+ * 拖拽结束、加载完成、删节点后都应调用（幂等）。
+ */
+export function syncGroupsToChildren(groups: CanvasGroup[], nodes: FlowNode[]): CanvasGroup[] {
+  const out: CanvasGroup[] = []
+  for (const g of groups) {
+    const childIds = g.childIds.filter((id) => nodes.some((n) => n.id === id))
+    if (childIds.length < 2) continue
+    const rect = groupRectForChildren(nodes, childIds)
+    if (!rect) continue
+    out.push({ ...g, childIds, ...rect })
+  }
+  return out
+}
+
+/** 节点被删除后把它从所属分组摘掉（返回新 groups）。 */
+export function detachNodesFromGroups(groups: CanvasGroup[], nodeIds: Iterable<string>): CanvasGroup[] {
+  const removed = new Set(nodeIds)
+  if (removed.size === 0) return groups
+  return groups
+    .map((g) => ({ ...g, childIds: g.childIds.filter((id) => !removed.has(id)) }))
+    .filter((g) => g.childIds.length >= 2)
 }

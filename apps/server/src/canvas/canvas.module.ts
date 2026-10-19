@@ -8,26 +8,11 @@ import { MediaProbeModule } from '../media/media-probe.module'
 import { CanvasController } from './canvas.controller'
 import { CanvasService } from './canvas.service'
 import { MaterialService } from './material.service'
-import { SceneComposerService } from './scene-composer.service'
-import { ShotService } from './shot.service'
-import { VideoCompositionService } from './video-composition.service'
 
 @Module({
   imports: [UploadModule, PointsModule, PricingModule, ProviderModule, MediaProbeModule, StudioModule],
   controllers: [CanvasController],
-  providers: [
-    CanvasService,
-    ShotService,
-    MaterialService,
-    SceneComposerService,
-    VideoCompositionService,
-  ],
-  exports: [
-    CanvasService,
-    ShotService,
-    MaterialService,
-    SceneComposerService,
-    VideoCompositionService,
-  ],
+  providers: [CanvasService, MaterialService],
+  exports: [CanvasService, MaterialService],
 })
 export class CanvasModule {}
