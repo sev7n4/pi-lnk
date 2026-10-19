@@ -58,7 +58,8 @@ function onTitlePointerDown(event: PointerEvent, groupId: string) {
   if (event.button !== 0) return
   emit('select', groupId)
   dragging.value = { groupId, startX: event.clientX, startY: event.clientY }
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  // setPointerCapture 在 jsdom 等无头环境不存在，真机有 ⇒ 判空后安全跳过。
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
 }
 
 function onTitlePointerMove(event: PointerEvent) {
@@ -90,7 +91,8 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
 function startRename(group: CanvasGroup) {
   renamingId.value = group.id
   renameDraft.value = group.title
-  void nextTick(() => renameInputRef.value?.select())
+  // select() 在 jsdom 等无头环境不存在，真机有 ⇒ 判空后安全跳过。
+  void nextTick(() => renameInputRef.value?.select?.())
 }
 
 function commitRename() {

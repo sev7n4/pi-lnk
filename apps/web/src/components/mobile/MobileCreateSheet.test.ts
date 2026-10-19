@@ -1,5 +1,5 @@
 // 移动端「新建」全宽 sheet（2026-10-19 D-2）：
-// ① 一级视图 = 资产库通栏瓦片 + 10 类节点宫格（CANVAS_DOCK_MENU_ITEMS 单一出处）；
+// ① 一级视图 = 资产库通栏瓦片 + 4 类生成节点宫格（CANVAS_DOCK_MENU_ITEMS 单一出处）；
 // ② 资产库瓦片 → sheet 内二级视图（CanvasAssetPanel 面板本体复用，仅换容器）；
 // ③ 选中即创建/插入并关闭；遮罩/关闭钮仅收起不触发动作。
 // 注：sheet 走 Teleport to body —— 查询落在 document.body；CanvasAssetPanel 被
@@ -56,14 +56,15 @@ beforeEach(() => {
 })
 
 describe('MobileCreateSheet（PR2 新建收敛）', () => {
-  it('一级视图：资产库瓦片 + 10 类节点宫格（与竖轨同源）', () => {
+  it('一级视图：资产库瓦片 + 4 类生成节点宫格（与竖轨同源）', () => {
     mountSheet()
     expect(q('[data-testid="mcs-asset-tile"]')).not.toBeNull()
     const items = qa('[data-testid="mcs-grid"] .mcs-grid-item')
-    expect(items).toHaveLength(10)
-    // 分镜/分组等低频项也在宫格内（I-1：10 类节点可达）
-    expect(items.map((el) => el.getAttribute('data-type'))).toContain('shot')
-    expect(items.map((el) => el.getAttribute('data-type'))).toContain('group')
+    // 2026-10-19 节点下线：创建菜单收敛到 4 类生成节点（导演台/媒体输入/视频合成/
+    // 3D World/分镜/分组已退出创建菜单，存量节点走兜底渲染）。
+    expect(items).toHaveLength(4)
+    const types = items.map((el) => el.getAttribute('data-type'))
+    expect(types).toEqual(expect.arrayContaining(['text', 'image', 'video', 'audio']))
   })
 
   it('点宫格项 → emit create(type)（走竖轨同一条创建链路）', async () => {

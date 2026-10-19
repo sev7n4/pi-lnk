@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 移动端「新建」全宽 sheet（2026-10-19 D-2）：＋FAB 的展开态。
  *  结构（设计 4.2）：顶部通栏瓦片「资产库」（插入节点语义，sheet 内二级视图，
- *  面板本体复用 CanvasAssetPanel）+ 2 列宫格 10 类节点（数据与 PC 竖轨
+ *  面板本体复用 CanvasAssetPanel）+ 2 列宫格 4 类生成节点（数据与 PC 竖轨
  *  同源 CANVAS_DOCK_MENU_ITEMS，单一出处）。选中即创建并关闭。
  *  资产库「加入引用」语义与 composer＋ 区分：此处仅插入节点。 */
 import { computed, ref } from 'vue'
@@ -55,7 +55,7 @@ function onAssetAddToAgent(asset: CanvasAssetItem) {
       </div>
     </div>
 
-    <!-- 一级视图：资产库瓦片 + 10 类节点宫格 -->
+    <!-- 一级视图：资产库瓦片 + 4 类生成节点宫格 -->
     <template v-else>
       <button
         type="button"
