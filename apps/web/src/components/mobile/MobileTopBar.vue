@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 移动端应用骨架 · 顶栏（2026-10-19 IA v3.2 对话驱动叙事）：
  * 【对话】页签 = [≡ 左上·项目抽屉] [积分] [+ 新对话] [🕘 历史对话]（右侧）；
- * 【画布】页签 = [积分] [⋯ 画布管理菜单]；
+ * 【画布】页签 = [积分] [⋯ 画布管理菜单（任务动态项：有任务才出现，见 D-2 入口收敛）]；
  * 【发现】【我的】= 透明占位（保持 --lnk-topbar-h 高度一致，不放任何入口）。
  * 2026-10-19 用户裁决：顶栏「未命名画布」标题输入整体移除——对话驱动叙事下
  * 顶栏不放画布名；项目重命名入口在抽屉项目卡片菜单。
@@ -14,6 +14,10 @@ import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{
   tab: 'chat' | 'canvas' | 'discover' | 'mine'
+  /** 画布页签：运行中/排队中的任务数（顶栏 ⋯ 动态项徽标） */
+  taskActiveCount?: number
+  /** 画布页签：是否存在任何任务记录（无任务时动态项不出现） */
+  hasTaskHistory?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -25,6 +29,7 @@ const emit = defineEmits<{
   publish: []
   'import-workflow': []
   'export-workflow': []
+  'open-tasks': []
 }>()
 
 const auth = useAuthStore()
@@ -33,6 +38,12 @@ const menuOpen = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
 
 const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
+
+/** 任务动态项（D-2 入口收敛）：有任务才出现；运行中/排队带计数徽标 */
+const showTaskItem = computed(() => props.tab === 'canvas' && props.hasTaskHistory === true)
+const taskItemLabel = computed(() =>
+  props.taskActiveCount && props.taskActiveCount > 0 ? `任务（${props.taskActiveCount}）` : '任务',
+)
 
 /** 全局积分：登录态才显示（对话页/画布页都要能看见余额） */
 const pointsText = computed(() => (auth.user?.points ?? 0).toLocaleString('en-US'))
@@ -48,12 +59,13 @@ function toggleMenu() {
   menuOpen.value = !menuOpen.value
 }
 
-function onMenuItem(action: 'save' | 'storyboard' | 'publish' | 'import' | 'export') {
+function onMenuItem(action: 'save' | 'storyboard' | 'publish' | 'import' | 'export' | 'task') {
   menuOpen.value = false
   if (action === 'save') emit('save')
   else if (action === 'storyboard') emit('storyboard')
   else if (action === 'publish') emit('publish')
   else if (action === 'import') emit('import-workflow')
+  else if (action === 'task') emit('open-tasks')
   else emit('export-workflow')
 }
 
@@ -147,6 +159,16 @@ onUnmounted(() => {
           </svg>
         </button>
         <div v-if="menuOpen" class="bar-menu" @click.stop>
+          <!-- 任务（D-2）：从竖轨移入的动态项，有任务才出现 -->
+          <button
+            v-if="showTaskItem"
+            type="button"
+            class="bar-menu-item"
+            data-testid="bar-menu-task"
+            @click="onMenuItem('task')"
+          >
+            {{ taskItemLabel }}
+          </button>
           <button type="button" class="bar-menu-item" @click="onMenuItem('save')">保存画布</button>
           <button type="button" class="bar-menu-item" @click="onMenuItem('storyboard')">分镜板</button>
           <button type="button" class="bar-menu-item" @click="onMenuItem('publish')">发布作品</button>
@@ -195,6 +217,7 @@ onUnmounted(() => {
 }
 
 .bar-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -208,6 +231,13 @@ onUnmounted(() => {
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* 34px 视觉钮 + 隐形 44px 热区（T-6，与 agent-hit-expand 同模式） */
+.bar-btn::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 
 .bar-actions {
@@ -315,15 +345,19 @@ onUnmounted(() => {
 }
 
 .bar-menu-item {
-  display: block;
+  display: flex;
   width: 100%;
-  padding: 8px 14px;
+  min-height: var(--lnk-touch-target);
+  align-items: center;
+  padding: 0 14px;
   border: none;
   background: transparent;
   color: var(--lnk-text-primary);
   font-size: var(--lnk-text-xs, 12px);
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .bar-menu-item:active {

@@ -80,6 +80,9 @@ import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
 import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
 import ProfilePane from '@/components/mobile/ProfilePane.vue'
 import MobileMultiSelectBar from '@/components/mobile/MobileMultiSelectBar.vue'
+import MobileCanvasCreateFab from '@/components/mobile/MobileCanvasCreateFab.vue'
+import MobileCreateSheet from '@/components/mobile/MobileCreateSheet.vue'
+import MobileTaskSheet from '@/components/mobile/MobileTaskSheet.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
 import AccountPanel from '@/components/account/AccountPanel.vue'
 import UsagePanel from '@/components/usage/UsagePanel.vue'
@@ -4964,6 +4967,83 @@ function closeMobileAccountPane() {
 function openMobilePlans() {
   showMobilePlans.value = true
 }
+
+/**
+ * PR2 新建收敛（D-2）：移动端摘除左侧竖轨（NodePanelDock）后的入口承载。
+ *   ＋FAB → MobileCreateSheet（全宽：资产库瓦片 + 10 类节点宫格，数据同源竖轨）；
+ *   任务 → 顶栏 ⋯ 动态项 → MobileTaskSheet（CanvasTaskHistoryPanel 面板本体复用）；
+ *   模型设置收敛到「我的」页（ProfilePane open-model-settings，画布内不再有入口）。
+ */
+const showMobileCreateSheet = ref(false)
+const showMobileTaskSheet = ref(false)
+
+/** 顶栏 ⋯ 任务动态项：活跃 = 排队/生成中/待确认（与 CanvasTaskHistoryPanel 的
+ *  lifecycle todo/doing 分组同口径）；无任何任务记录时菜单项不出现（设计 4.5）。 */
+const TASK_ACTIVE_STATUSES = new Set(['pending', 'generating', 'fallback_pending', 'processing', 'running'])
+const mobileTaskActiveCount = ref(0)
+const mobileTaskHasHistory = ref(false)
+let mobileTaskPollTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadMobileTaskCount() {
+  if (!sessionId.value) {
+    mobileTaskActiveCount.value = 0
+    mobileTaskHasHistory.value = false
+    return
+  }
+  try {
+    const { data } = await studioApi.listGenerations({ sessionId: sessionId.value })
+    const records: GenerationRecord[] = data.data ?? []
+    mobileTaskActiveCount.value = records.filter((r) => TASK_ACTIVE_STATUSES.has(r.status)).length
+    mobileTaskHasHistory.value = records.length > 0
+  } catch {
+    /* 计数失败不打扰画布：保持旧值，下个轮询周期重试 */
+  }
+}
+
+function startMobileTaskPolling() {
+  stopMobileTaskPolling()
+  void loadMobileTaskCount()
+  mobileTaskPollTimer = setInterval(() => void loadMobileTaskCount(), 15_000)
+}
+
+function stopMobileTaskPolling() {
+  if (mobileTaskPollTimer) {
+    clearInterval(mobileTaskPollTimer)
+    mobileTaskPollTimer = null
+  }
+}
+
+watch(
+  [isMobileLayout, () => mobileAppTab.value, () => sessionId.value],
+  ([mobile, tab]) => {
+    if (mobile && tab === 'canvas') startMobileTaskPolling()
+    else stopMobileTaskPolling()
+  },
+  { immediate: true },
+)
+
+/** ＋FAB 新建 sheet：节点类型走竖轨同一条创建链路（handleDockAdd） */
+function handleMobileCreate(type: DockNodeType) {
+  handleDockAdd(type)
+  showMobileCreateSheet.value = false
+}
+function handleMobileAssetApply(asset: CanvasAssetItem) {
+  handleAssetApply(asset)
+  showMobileCreateSheet.value = false
+}
+function handleMobileAssetAddToAgent(asset: CanvasAssetItem) {
+  handleAssetAddToAgent(asset)
+  showMobileCreateSheet.value = false
+}
+function handleMobileTaskLocate(payload: { recordId: string; nodeId?: string | null }) {
+  void handleHistoryLocate(payload)
+  showMobileTaskSheet.value = false
+}
+function handleMobileTaskRetry(nodeId: string) {
+  handleHistoryRetry(nodeId)
+  showMobileTaskSheet.value = false
+}
+
 function onMobileTabChange(tab: MobileAppTab) {
   mobileAppTab.value = tab
   if (tab === 'canvas') {
@@ -5121,6 +5201,7 @@ onUnmounted(() => {
   if (pickModeKeydownHandler) {
     window.removeEventListener('keydown', pickModeKeydownHandler)
   }
+  stopMobileTaskPolling()
 })
 </script>
 
@@ -5382,6 +5463,19 @@ onUnmounted(() => {
         </VueFlow>
         <PlayCanvasView v-else class="h-full" :nodes="playCanvasNodes" />
 
+        <!-- PR2 空态引导（V-3）：空画布首进画布页签的指引文案；pointer-events-none
+             不挡平移/缩放手势。S0 纯画布无底部条，文案切到「切对话页」指引。 -->
+        <div
+          v-if="isMobileLayout && mobileAppTab === 'canvas' && !nodes.length"
+          class="mobile-canvas-empty"
+          data-testid="mobile-canvas-empty"
+        >
+          <p class="mobile-canvas-empty__main">画布还是空的</p>
+          <p class="mobile-canvas-empty__sub">
+            {{ mobileCanvasImm ? '点左下 ＋ 新建节点；想交给 AI，先切到对话页' : '点 ＋ 新建节点，或按住底部条说话' }}
+          </p>
+        </div>
+
         <RefineWorkbench
           v-if="refinePanelNode"
           :node-id="refinePanelNode.id"
@@ -5449,8 +5543,11 @@ onUnmounted(() => {
 
         <DockNoticeLayer />
 
+        <!-- PC 左侧竖轨（D-2）：移动端摘除——hover 唤出/268px 弹出/常驻开关全是
+             鼠标遗产；新建收敛为 ＋FAB 全宽 sheet，资产库进 sheet 顶部瓦片，
+             任务进顶栏 ⋯ 动态项，模型设置归「我的」页。 -->
         <NodePanelDock
-          v-if="!canvasChromeHidden"
+          v-if="!canvasChromeHidden && !isMobileLayout"
           @add="handleDockAdd"
           @open-settings="showModelSettings = true"
           @asset-apply="handleAssetApply"
@@ -5559,6 +5656,8 @@ onUnmounted(() => {
     <MobileTopBar
       v-if="isMobileLayout"
       :tab="mobileAppTab"
+      :task-active-count="mobileTaskActiveCount"
+      :has-task-history="mobileTaskHasHistory"
       @open-drawer="agentRailRef?.openSessionDrawer()"
       @new-chat="agentRailRef?.newAgentSession()"
       @open-history="agentRailRef?.openThreadHistory()"
@@ -5567,6 +5666,7 @@ onUnmounted(() => {
       @publish="openPublish"
       @import-workflow="openWorkflowImportPicker"
       @export-workflow="handleExportPack([], 'full_package')"
+      @open-tasks="showMobileTaskSheet = true"
     />
     <DiscoverPane
       v-if="isMobileLayout && mobileAppTab === 'discover'"
@@ -5663,10 +5763,57 @@ onUnmounted(() => {
       :count="multiSelectedIds.length"
       @done="exitMultiSelectMode"
     />
+    <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet；
+         任务 sheet 由顶栏 ⋯ 动态项打开。清位公式与动作条一致（dock/tabbar 之上）。 -->
+    <MobileCanvasCreateFab
+      v-if="isMobileLayout && mobileAppTab === 'canvas' && !canvasChromeHidden"
+      :breathe="!nodes.length"
+      @click="showMobileCreateSheet = true"
+    />
+    <MobileCreateSheet
+      v-if="showMobileCreateSheet"
+      @create="handleMobileCreate"
+      @asset-apply="handleMobileAssetApply"
+      @asset-add-to-agent="handleMobileAssetAddToAgent"
+      @close="showMobileCreateSheet = false"
+    />
+    <MobileTaskSheet
+      v-if="showMobileTaskSheet"
+      @locate="handleMobileTaskLocate"
+      @retry="handleMobileTaskRetry"
+      @close="showMobileTaskSheet = false"
+    />
   </div>
 </template>
 
 <style scoped>
+/* PR2 空态引导（V-3）：居中弱提示，pointer-events-none 不挡画布手势 */
+.mobile-canvas-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lnk-space-2);
+  padding: 0 var(--lnk-space-8);
+  pointer-events: none;
+  text-align: center;
+}
+
+.mobile-canvas-empty__main {
+  font-size: var(--lnk-text-md);
+  font-weight: var(--lnk-weight-semibold);
+  color: var(--lnk-text-secondary);
+}
+
+.mobile-canvas-empty__sub {
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-text-muted);
+  line-height: var(--lnk-lh-xs);
+}
+
 /* 移动端「我的积分 / 我的订阅」二级 pane 外壳（内容由共享面板渲染） */
 .mobile-account-pane {
   position: fixed;
