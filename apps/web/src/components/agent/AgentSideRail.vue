@@ -959,6 +959,34 @@ const turnStatus = computed(() => {
     settledText: turnSettledText(lastAssistantMessage.value?.executionTrace),
   })
 })
+
+/**
+ * IA v3.2（2026-10-20 修复）：发现/我的页签与对话回合无关——移动端整条 dock（含状态行）
+ * 必须彻底隐藏。否则 Teleport 到 body 的容器（z 高于 App.vue 的 `main.z-10`）会盖住发现/我的页：
+ * 从对话页切过去会整页覆盖、从画布页切过去只剩裸露的状态行漂浮。
+ * 注意：CanvasPage 给 `<aside>` 加的 hidden 类对 Teleport 内容无效，这里由容器自身收口。
+ */
+const railHiddenByTab = computed(
+  () => isMobileLayout.value && (props.mobileAppTab === 'discover' || props.mobileAppTab === 'mine'),
+)
+
+/**
+ * P2 T7 退场设计（2026-10-20 修复）：settled 收口态是「最后一眼」，结算信息已在气泡摘要
+ * 同源落点，状态行允许被 dismiss；新回合开始 / 新一轮结算自动复位，避免永久常驻。
+ */
+const settledDismissed = ref(false)
+watch(
+  () => agent.isStreaming,
+  (streaming) => {
+    if (streaming) settledDismissed.value = false
+  },
+)
+watch(
+  () => turnStatus.value?.mode,
+  (mode, prev) => {
+    if (mode === 'settled' && prev !== 'settled') settledDismissed.value = false
+  },
+)
 /**
  * P1-3.1：composer 生成中状态行（composer-status-line）数据模型。
  * 数据源全部复用现状，**不新增 store 状态**：
@@ -3437,7 +3465,7 @@ defineExpose({
       <!-- 面板：侧栏内嵌 or 浮动窗口 or 移动端贴底裸条容器（Teleport 到 body） -->
       <Teleport to="body" :disabled="!panelTeleported">
         <div
-          v-show="open"
+          v-show="open && !railHiddenByTab"
           ref="panelShellRef"
           class="agent-panel-shell flex min-h-0 h-full min-w-0 flex-col overflow-hidden"
           :class="[
@@ -4088,14 +4116,24 @@ defineExpose({
           </div>
           <!-- P1-3.1 双显修复（T8 review 裁决）：流式 running 态由 composer-status-line
                独占播报；本行只保留 waiting / failed / settled 态，避免阶段+积分双重显示 -->
+          <!-- 2026-10-20：settled 收口态可 dismiss（气泡摘要保留同源落点）；dismiss 后
+               仅本轮隐藏，新回合 / 新一轮结算自动复位（见 settledDismissed watch） -->
           <p
-            v-if="turnStatus && !(agent.isStreaming && turnStatus.mode === 'running')"
+            v-if="turnStatus && !(agent.isStreaming && turnStatus.mode === 'running') && !(turnStatus.mode === 'settled' && settledDismissed)"
             class="agent-turn-status mx-0.5 mb-1 text-[11px]"
             :class="`agent-turn-status--${turnStatus.mode}`"
             data-testid="turn-status-line"
           >
             {{ turnStatus.text }}
             <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
+            <button
+              v-if="turnStatus.mode === 'settled'"
+              type="button"
+              class="agent-turn-status-dismiss"
+              aria-label="隐藏结算信息"
+              data-testid="turn-status-dismiss"
+              @click="settledDismissed = true"
+            >×</button>
           </p>
           <!-- ask_user 卡片贴 composer（2026-10-14，P1-5 移出 chat-wrap）：等待态的唯一交互面贴输入框；
                pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。 -->
@@ -4822,9 +4860,12 @@ defineExpose({
  *   窗态（◎ 定位锚与其余定位：composer 保留，供定位引图后继续输入）
  * 两条入口对 header / chat-wrap 的处理一致：display:none。
  * composer（裸条）仅在「纯画布满屏 / dock 展开」时收起。
- * 类摘除（门回对话 / 取消选中）⇒ 原样回归。 */
+ * 类摘除（门回对话 / 取消选中）⇒ 原样回归。
+ * ⭐ 2026-10-20 补齐：收口状态行（.agent-turn-status）同样属对话回合，画布视图一律不同屏
+ *   —— 此前隐藏清单漏了它，导致画布视图（尤其 imm）下状态行在透明容器里裸露。 */
 .agent-panel-mobile-dock.is-canvas-view .agent-panel-header,
 .agent-panel-mobile-dock.is-canvas-view .agent-chat-wrap,
+.agent-panel-mobile-dock.is-canvas-view .agent-turn-status,
 .agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-input-dock,
 .agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-input-dock {
   display: none;
@@ -5822,6 +5863,8 @@ defineExpose({
 /* ---- P1 回合状态行 ---- */
 .agent-turn-status {
   color: var(--lnk-text-muted);
+  display: flex;
+  align-items: center;
 }
 
 .agent-turn-status--failed {
@@ -5830,6 +5873,23 @@ defineExpose({
 
 .agent-turn-status--waiting {
   color: var(--lnk-text-secondary);
+}
+
+/* 2026-10-20：settled 收口态的 dismiss 入口——结算信息已在气泡同源落点，状态行可隐藏 */
+.agent-turn-status-dismiss {
+  margin-left: 4px;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--lnk-text-muted);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.agent-turn-status-dismiss:hover {
+  color: var(--lnk-text-primary);
 }
 
 .agent-composer {
