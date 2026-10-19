@@ -5021,9 +5021,10 @@ onUnmounted(() => {
             :color="effectiveGridColor"
           />
 
-<CanvasGroupOverlay
+          <CanvasGroupOverlay
             :groups="groups"
             :selected-group-id="selectedGroupId"
+            :draggable="!isMobileLayout"
             @select="handleGroupSelect"
             @move="handleGroupMove"
             @move-end="handleGroupMoveEnd"
