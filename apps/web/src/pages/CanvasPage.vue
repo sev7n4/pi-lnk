@@ -5767,11 +5767,29 @@ onUnmounted(() => {
       @action="handleContextAction"
       @close="closeContextMenu"
     />
-    <!-- 移动端多选态动作条（D-4，PR1 骨架：已选 N + 完成；PR3 补批量生成/更多 sheet） -->
+    <!-- 移动端多选态动作条（S3 / D-4，PR3 完整版）：已选 N ｜ 批量生成 / 停止 ｜
+         重新生成 ｜ 更多 ⋯（9 项 sheet）｜ 完成。处理器与 PC 工具条同一批，
+         批量派生口径同源 useSelectionBatchActions。 -->
     <MobileMultiSelectBar
       v-if="isMobileLayout && mobileMultiSelectActive"
       :count="multiSelectedIds.length"
+      :selection-batch="selectionBatchProp"
+      :can-ungroup="multiSelectCanUngroup"
+      :group-color-key="multiSelectGroupColorKey"
       @done="exitMultiSelectMode"
+      @generate="handleSelectionBatchGenerate"
+      @regenerate="handleSelectionBatchRegenerate"
+      @stop="handleSelectionBatchStop"
+      @blocked-hint="handleSelectionBatchBlocked"
+      @group="handleGroupSelection"
+      @ungroup="handleUngroupSelection"
+      @group-color="handleGroupColorSelection"
+      @duplicate="handleKeyboardDuplicate"
+      @duplicate-upstream="handleToolbarDuplicateUpstream"
+      @add-agent-ref="handleAddToAgentRefs()"
+      @layout="handleLayoutSelection"
+      @download="handlePackageDownload"
+      @delete="handleDeleteSelection"
     />
     <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet；
          任务 sheet 由顶栏 ⋯ 动态项打开。清位公式与动作条一致（dock/tabbar 之上）。 -->

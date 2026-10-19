@@ -4,7 +4,9 @@ import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
 import type { MentionOption } from '@/components/canvas/MentionInput.vue'
 import DockStudioRouter from '@/components/canvas/dock-studio/DockStudioRouter.vue'
 import { EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
-import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
+import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { useDockCollapseState } from '@/composables/useDockCollapseState'
+import { computed, onMounted, onUnmounted, provide } from 'vue'
 import { isNodeGenerating } from '@/constants/dockStudio'
 import type { CompositionTrack } from '@/utils/compositionUpstream'
 import type { NodeRef } from '@/composables/useNodeRefs'
@@ -72,11 +74,17 @@ const emit = defineEmits<{
   annotate: []
 }>()
 
-/** 悬停展开（仅收缩态有意义；生成中/锁定态不收缩） */
-const hoverOpen = ref(false)
-
-/** 收缩生效条件：宿主要求收缩 && 非生成中 && 未被悬停展开 */
-const collapsedNow = computed(() => props.collapsed && !props.generating && !hoverOpen.value)
+/**
+ * 收缩态状态机（2026-10-20 PR3 / D-7）：PC = 悬停展开 / 划走收回（逐字保留）；
+ * 移动端 = 触屏无 hover ⇒ 底部把手指条 tap 切换折叠/展开（同 iOS 抽屉把手）。
+ * 两通道按断点互斥，见 `useDockCollapseState`。
+ */
+const { isMobileLayout } = useAgentMobileLayout()
+const { hoverOpen, collapsedNow, onCollapsedHit, collapseByTap } = useDockCollapseState({
+  collapsed: computed(() => props.collapsed),
+  generating: computed(() => props.generating),
+  isMobile: isMobileLayout,
+})
 
 const visible = computed(() => {
   if (!props.node) return false
@@ -99,13 +107,17 @@ const dockLocked = computed(() => {
   return isNodeGenerating(status) || status === 'uploading'
 })
 
-/** 快捷工具编排：config 驱动 + 抠图进行中禁用（与旧 SelectionActionBar 行为一致） */
+/** 快捷工具编排：config 驱动 + 抠图进行中禁用（与旧 SelectionActionBar 行为一致）。
+ *  移动端隐藏「旋转/翻转」——它恒为 disabled（能力包未点亮），占着 44px 横滑位
+ * 只会让人反复点不动（PR3 / I-7）；PC 保留原样。 */
 const tools = computed(() =>
-  buildSelectionTools({ hasUrl: Boolean(props.hasUrl) }).map((tool) =>
-    tool.id === 'matting' && props.mattingBusy
-      ? { ...tool, disabled: true, disabledReason: '抠图进行中' }
-      : tool,
-  ),
+  buildSelectionTools({ hasUrl: Boolean(props.hasUrl) })
+    .filter((tool) => !(isMobileLayout.value && tool.id === 'rotate'))
+    .map((tool) =>
+      tool.id === 'matting' && props.mattingBusy
+        ? { ...tool, disabled: true, disabledReason: '抠图进行中' }
+        : tool,
+    ),
 )
 
 function onToolClick(tool: SelectionToolDef) {
@@ -157,16 +169,22 @@ onUnmounted(() => {
       class="dock-studio-toolbar pointer-events-none absolute inset-x-0 bottom-3 z-[45] flex justify-center px-4"
       :class="{ 'is-dock-locked': dockLocked }"
     >
-      <!-- 收缩态：底部触发热区（悬停展开）+ 呼吸指示点 -->
+      <!-- 收缩态：底部把手热区。PC = 悬停展开（逐字保留）；移动端 = tap 切换 -->
       <div
         v-if="collapsedNow"
         class="dock-studio-hit pointer-events-auto absolute inset-x-0 -bottom-1 flex h-8 items-end justify-center"
         data-testid="dock-hit"
+        role="button"
+        tabindex="0"
+        :aria-label="isMobileLayout ? '展开节点工具条' : '展开节点工具条（悬停）'"
         @mouseenter="hoverOpen = true"
+        @click="onCollapsedHit"
+        @keydown.enter.prevent="onCollapsedHit"
+        @keydown.space.prevent="onCollapsedHit"
       >
         <span class="dock-studio-hit__pill" aria-hidden="true" />
       </div>
-      <!-- 展开态（常态 / 收缩态被悬停展开）：划走（鼠标离开 dock 卡）自动收回 -->
+      <!-- 展开态（常态 / 收缩态被展开）：PC 划走鼠标收回；移动端底部把手 tap 收起 -->
       <div
         v-else
         class="pointer-events-none flex w-full justify-center"
@@ -193,6 +211,16 @@ onUnmounted(() => {
             @continue-shot="emit('continueShot')"
             @refine="emit('refine')"
           />
+          <button
+            v-if="isMobileLayout && !generating"
+            type="button"
+            class="dock-studio-collapse"
+            data-testid="dock-collapse"
+            aria-label="收起节点工具条"
+            @click="collapseByTap"
+          >
+            <span class="dock-studio-hit__pill" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </div>
@@ -221,6 +249,25 @@ onUnmounted(() => {
 .dock-studio-hit:hover .dock-studio-hit__pill {
   width: 56px;
   background: color-mix(in srgb, var(--neo-text) 48%, transparent);
+}
+
+/* 移动端展开态的收起把手（tap 收起，对称于收缩态的展开把手） */
+.dock-studio-collapse {
+  display: flex;
+  width: 100%;
+  min-height: var(--lnk-touch-target);
+  align-items: flex-end;
+  justify-content: center;
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dock-studio-collapse .dock-studio-hit__pill {
+  margin-bottom: 2px;
 }
 
 /* ---- 移动端：抬高到 composer 贴底容器之上（2026-10-18 真机反馈）----
