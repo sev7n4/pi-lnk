@@ -4858,6 +4858,17 @@ defineExpose({
   overflow-y: auto;
 }
 
+/* ⛔ 2026-10-19 真机事故（移动端抽屉「项目清单看不到」）：抽屉是**定高** flex 列容器
+ * （position:absolute; top:0; bottom:0），项目卡又带 overflow:hidden ⇒ 按 flex 规范
+ * §4.5「自动最小尺寸」对 overflow≠visible 的项归零 ⇒ flex-shrink 合法地把卡片压到 0。
+ * 账号项目数一超出视口（实测 165 项），全部项目卡被压成 ~1px 细线：只剩 0.5px 边框
+ * + 8px gap，标题/时间/图标/卡片底色全被裁掉，抽屉沦为一条永远滚不完的「细线带」。
+ * create-card/caption 只因 overflow 可见才靠 min-height:auto 侥幸幸存，不可依赖。
+ * ⇒ 抽屉直接子项一律不许收缩；溢出交给抽屉自身的 overflow-y:auto 滚动。 */
+.session-drawer > * {
+  flex-shrink: 0;
+}
+
 /* 「新建」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。
  * 圆盘 = accent 渐变实底 + on-accent 白加号（--lnk-text-on-accent 两主题均 #fff，
  * 白字写在令牌里合法；圆盘与项目卡右侧图标按钮同列 rhythm）。
@@ -5002,6 +5013,12 @@ defineExpose({
   border-radius: 12px;
   background: var(--lnk-surface-canvas);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* 同 .session-drawer > *：定高/限高 flex 列容器里子项一律不许收缩，
+ * 防「overflow:hidden 子项被压成细线」事故家族复发（2026-10-19 抽屉事故同款机理）。 */
+.thread-history-sheet > * {
+  flex-shrink: 0;
 }
 
 .thread-history-item {
