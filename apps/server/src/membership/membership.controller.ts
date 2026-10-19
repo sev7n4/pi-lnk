@@ -78,6 +78,22 @@ export class MembershipController {
     return { code: 0, message: 'ok', data }
   }
 
+  /// 订阅快照（当前档位/周期/到期/是否已取消续期）——「我的订阅」页数据源。
+  @Get('subscription')
+  @UseGuards(AuthGuard)
+  async subscription(@Req() req: { user: { sub: string } }) {
+    const data = await this.membershipService.getSubscription(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /// 取消自动续期（≠ 立即退订）：当前周期内继续可用，到期后惰性失效。
+  @Post('cancel-auto-renew')
+  @UseGuards(AuthGuard)
+  async cancelAutoRenew(@Req() req: { user: { sub: string } }) {
+    const data = await this.membershipService.cancelAutoRenew(req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
   @Get('transactions')
   @UseGuards(AuthGuard)
   async transactions(

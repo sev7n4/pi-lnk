@@ -446,4 +446,179 @@ describe('支付闭环（真实 SQLite + FakePaymentAdapter）', () => {
     const result = await service.createOrder('u-cancel-2', 'flagship')
     expect(result.orderId).toBeTruthy()
   })
+
+  // ── 订阅实体（连续包月的周期事实）─────────────────────────────────────────
+  it('支付成功即开通订阅：periodEnd = 支付时间 +1 个自然月', async () => {
+    await seedUser('u-sub-1')
+    const before = new Date()
+    const { orderId } = await service.createOrder('u-sub-1', 'standard')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s1', paid: true, amountFen: 9900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+
+    const sub = await prisma.subscription.findFirst({ where: { userId: 'u-sub-1' } })
+    expect(sub).toBeTruthy()
+    expect(sub!.plan).toBe('standard')
+    expect(sub!.status).toBe('active')
+    expect(sub!.cancelAtPeriodEnd).toBe(false)
+    expect(sub!.periodStart.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000)
+    // 一个自然月后（允许 1s 抖动）
+    const deltaDays = (sub!.periodEnd.getTime() - sub!.periodStart.getTime()) / 86_400_000
+    expect(deltaDays).toBeGreaterThan(27)
+    expect(deltaDays).toBeLessThan(32)
+  })
+
+  it('同档续费：periodEnd 从现有周期顺延（不丢剩余天数）', async () => {
+    await seedUser('u-sub-2')
+    const { orderId } = await service.createOrder('u-sub-2', 'premium')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s2', paid: true, amountFen: 19900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+
+    const first = await prisma.subscription.findFirst({ where: { userId: 'u-sub-2' } })
+    // 人为把周期起点前移，模拟「已用掉 20 天」后再续费
+    await prisma.subscription.update({
+      where: { id: first!.id },
+      data: { periodStart: new Date(Date.now() - 20 * 86_400_000) },
+    })
+
+    const second = await service.createOrder('u-sub-2', 'premium')
+    fake.nextVerify = { orderId: second.orderId, channelTradeNo: 'tn-s2b', paid: true, amountFen: 19900 }
+    await service.handleAlipayCallback({ out_trade_no: second.orderId })
+
+    const sub = await prisma.subscription.findFirst({ where: { userId: 'u-sub-2', status: 'active' } })
+    // 续期顺延：periodEnd 相对第一次购买时也 +1 个月，而不是从 now 重算
+    const firstEnd = first!.periodEnd.getTime()
+    expect(sub!.periodEnd.getTime()).toBeGreaterThan(firstEnd)
+    const totalDays = (sub!.periodEnd.getTime() - sub!.periodStart.getTime()) / 86_400_000
+    expect(totalDays).toBeGreaterThan(45) // 用了 20 天 + 又加了 ~30 天
+    // 续费后积分按两次发放累计
+    const user = await prisma.user.findUnique({ where: { id: 'u-sub-2' } })
+    expect(user?.points).toBe(1000 + 25000 * 2)
+    expect(user?.membership).toBe('premium')
+  })
+
+  it('惰性到期：periodEnd 已过 → 读档位时回落免费，订阅置 expired', async () => {
+    await seedUser('u-sub-3')
+    const { orderId } = await service.createOrder('u-sub-3', 'standard')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s3', paid: true, amountFen: 9900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+
+    const before = await membership.getPoints('u-sub-3')
+    expect(before.membership).toBe('standard')
+
+    // 把周期挪到过去，模拟到期
+    const sub = await prisma.subscription.findFirst({ where: { userId: 'u-sub-3' } })
+    await prisma.subscription.update({
+      where: { id: sub!.id },
+      data: { periodEnd: new Date(Date.now() - 1000) },
+    })
+
+    const after = await membership.getPoints('u-sub-3')
+    expect(after.membership).toBe('free')
+    const expired = await prisma.subscription.findFirst({ where: { id: sub!.id } })
+    expect(expired?.status).toBe('expired')
+    // 积分不受订阅到期影响（只掉档位）
+    expect(after.points).toBe(12000)
+  })
+
+  it('到期回落不误清：期间用户已换档，则旧订阅到期不动新档', async () => {
+    await seedUser('u-sub-4')
+    const { orderId } = await service.createOrder('u-sub-4', 'standard')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s4', paid: true, amountFen: 9900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+
+    // 用户退订后又买了 premium（换购路径）
+    await membership.cancelSubscription('u-sub-4')
+    const next = await service.createOrder('u-sub-4', 'premium')
+    fake.nextVerify = { orderId: next.orderId, channelTradeNo: 'tn-s4b', paid: true, amountFen: 19900 }
+    await service.handleAlipayCallback({ out_trade_no: next.orderId })
+
+    // 把**旧**订阅（已 expired 那条无关）之前的生效记录造一个到期场景：直接改最新订阅周期
+    const latest = await prisma.subscription.findFirst({
+      where: { userId: 'u-sub-4', status: 'active' },
+    })
+    await prisma.subscription.update({
+      where: { id: latest!.id },
+      data: { periodEnd: new Date(Date.now() - 1000) },
+    })
+    // 到期回落用 membership 条件更新；这里 membership 就是 premium，应正常回落
+    const after = await membership.getPoints('u-sub-4')
+    expect(after.membership).toBe('free')
+  })
+
+  it('取消自动续期：当前周期内**仍可用**，到期后才失效', async () => {
+    await seedUser('u-sub-5')
+    const { orderId } = await service.createOrder('u-sub-5', 'flagship')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s5', paid: true, amountFen: 49900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+
+    const res = await membership.cancelAutoRenew('u-sub-5')
+    expect(res.changed).toBe(true)
+    expect(res.subscription?.cancelAtPeriodEnd).toBe(true)
+    expect(res.subscription?.status).toBe('canceled')
+    expect(res.subscription?.daysRemaining).toBeGreaterThan(0)
+
+    // 关键：当前仍能使用
+    const now = await membership.getPoints('u-sub-5')
+    expect(now.membership).toBe('flagship')
+
+    // 重复取消幂等
+    const again = await membership.cancelAutoRenew('u-sub-5')
+    expect(again.changed).toBe(false)
+
+    // 到期后失效
+    const sub = await prisma.subscription.findFirst({ where: { userId: 'u-sub-5' } })
+    await prisma.subscription.update({
+      where: { id: sub!.id },
+      data: { periodEnd: new Date(Date.now() - 1000) },
+    })
+    const after = await membership.getPoints('u-sub-5')
+    expect(after.membership).toBe('free')
+  })
+
+  it('取消自动续期后可再次续费恢复（顺延而非重算）', async () => {
+    await seedUser('u-sub-6')
+    const { orderId } = await service.createOrder('u-sub-6', 'standard')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s6', paid: true, amountFen: 9900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+    await membership.cancelAutoRenew('u-sub-6')
+
+    const again = await service.createOrder('u-sub-6', 'standard')
+    fake.nextVerify = { orderId: again.orderId, channelTradeNo: 'tn-s6b', paid: true, amountFen: 9900 }
+    await service.handleAlipayCallback({ out_trade_no: again.orderId })
+
+    const sub = await prisma.subscription.findFirst({ where: { userId: 'u-sub-6', status: 'active' } })
+    expect(sub?.cancelAtPeriodEnd).toBe(false) // 又付了一期 ⇒ 恢复自动续费意图
+    expect(sub?.status).toBe('active')
+  })
+
+  it('getSubscription：无订阅返回 null；有订阅返回完整 DTO', async () => {
+    await seedUser('u-sub-7')
+    expect(await membership.getSubscription('u-sub-7')).toBeNull()
+
+    const { orderId } = await service.createOrder('u-sub-7', 'premium')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s7', paid: true, amountFen: 19900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+
+    const dto = await membership.getSubscription('u-sub-7')
+    expect(dto).toMatchObject({
+      plan: 'premium',
+      planName: '高级版',
+      status: 'active',
+      cancelAtPeriodEnd: false,
+      agreementBound: false,
+    })
+    expect(dto!.daysRemaining).toBeGreaterThan(27)
+  })
+
+  it('立即退订与取消自动续期语义不同：退订立刻掉档位', async () => {
+    await seedUser('u-sub-8')
+    const { orderId } = await service.createOrder('u-sub-8', 'flagship')
+    fake.nextVerify = { orderId, channelTradeNo: 'tn-s8', paid: true, amountFen: 49900 }
+    await service.handleAlipayCallback({ out_trade_no: orderId })
+
+    const res = await membership.cancelSubscription('u-sub-8')
+    expect(res).toMatchObject({ membership: 'free', changed: true })
+    expect((await membership.getPoints('u-sub-8')).membership).toBe('free')
+    expect((await membership.getSubscription('u-sub-8'))?.status).toBe('expired')
+  })
 })

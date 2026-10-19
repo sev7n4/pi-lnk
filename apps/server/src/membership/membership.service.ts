@@ -112,6 +112,32 @@ export function resolveTopupPoints(amountFen: number): {
   return { basePoints, bonusPoints, totalPoints: basePoints + bonusPoints }
 }
 
+/**
+ * 订阅周期推进：按「自然月」顺延，并处理月末溢出（1/31 + 1 月不能变成 3/3）。
+ * 连续包月的用户预期是「下个月的同一天」，所以用日历月而非固定 30 天。
+ */
+export function addSubscriptionMonth(from: Date): Date {
+  const next = new Date(from)
+  const day = next.getDate()
+  next.setMonth(next.getMonth() + 1)
+  if (next.getDate() < day) next.setDate(0) // 溢出回退到目标月最后一天
+  return next
+}
+
+/// 订阅可处于「未失效」的状态：active=生效中；canceled=已取消续期（**到期前仍可用**）。
+const LIVE_SUB_STATUS = ['active', 'canceled']
+
+export interface SubscriptionDto {
+  plan: string
+  planName: string
+  status: string
+  periodStart: string
+  periodEnd: string
+  cancelAtPeriodEnd: boolean
+  agreementBound: boolean
+  daysRemaining: number
+}
+
 @Injectable()
 export class MembershipService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -126,6 +152,8 @@ export class MembershipService {
   }
 
   async getPoints(userId: string, now: Date = new Date()) {
+    // 读前先收敛到期（惰性）：订阅过期后档位应回落免费，否则会员标签会一直挂着
+    await this.expireSubscriptionIfDue(userId, now)
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (!user) throw new BadRequestException('用户不存在')
     // 今日是否已领取每日签到（按上海自然日，与 claimDaily 幂等口径一致）。
@@ -277,6 +305,9 @@ export class MembershipService {
         expiresAt: null, // 套餐积分暂不设有效期（过期策略待产品定义）
       },
     })
+    // 支付成功即开通/续期订阅（连续包月的周期事实来源）。
+    // ⚠️ 仅在确实持有该档时写订阅：竞态下用户已换到别的档位时，不得给别人的档续期。
+    if (canSwitchPlan) await this.activateSubscriptionTx(tx, userId, plan, now)
     return { membership: updated.membership, points: updated.points }
   }
 
@@ -285,19 +316,134 @@ export class MembershipService {
   }
 
   /**
-   * 退订当前套餐（membership → free）——「一个用户同时只持有一个套餐」的换购前置动作。
+   * 支付成功 → 开通或续期订阅（连续包月）。
+   *
+   * 同档续费：从**现有 periodEnd 顺延**（而非从 now 起算），否则用户提前续费会白丢剩余天数。
+   * 已过期则从 now 重新起算。换档：旧订阅作废、新档从 now 起算（正常路径下换购须先退订，
+   * 这里只是防越权直调 API 的兜底）。
+   */
+  async activateSubscriptionTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    plan: string,
+    now: Date = new Date(),
+  ) {
+    const existing = await tx.subscription.findFirst({
+      where: { userId, status: { in: LIVE_SUB_STATUS } },
+    })
+    if (existing && existing.plan === plan && existing.periodEnd > now) {
+      return tx.subscription.update({
+        where: { id: existing.id },
+        data: {
+          periodEnd: addSubscriptionMonth(existing.periodEnd),
+          status: 'active',
+          // 用户又付了一期 ⇒ 视为恢复自动续费意图
+          cancelAtPeriodEnd: false,
+          canceledAt: null,
+        },
+      })
+    }
+    if (existing) {
+      await tx.subscription.update({ where: { id: existing.id }, data: { status: 'expired' } })
+    }
+    return tx.subscription.create({
+      data: {
+        userId,
+        plan,
+        status: 'active',
+        periodStart: now,
+        periodEnd: addSubscriptionMonth(now),
+      },
+    })
+  }
+
+  /**
+   * 惰性到期：periodEnd 已过且未续费 ⇒ 订阅置 expired，档位回落 free。
+   *
+   * 读时收敛（不依赖定时任务）：任何读档位/读订阅的入口都先过一遍。
+   * 回落用 updateMany + membership 条件，**期间若用户已换档/退订则不误清**。
+   */
+  private async expireSubscriptionIfDue(userId: string, now: Date) {
+    const sub = await this.prisma.subscription.findFirst({
+      where: { userId, status: { in: LIVE_SUB_STATUS } },
+    })
+    if (!sub || sub.periodEnd > now) return sub
+    await this.prisma.subscription.update({ where: { id: sub.id }, data: { status: 'expired' } })
+    await this.prisma.user.updateMany({
+      where: { id: userId, membership: sub.plan },
+      data: { membership: 'free' },
+    })
+    return { ...sub, status: 'expired' }
+  }
+
+  /** 订阅快照（供「我的订阅」页 / 套餐页展示）。无订阅返回 null。 */
+  async getSubscription(userId: string, now: Date = new Date()): Promise<SubscriptionDto | null> {
+    await this.expireSubscriptionIfDue(userId, now)
+    const sub = await this.prisma.subscription.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    })
+    if (!sub) return null
+    const planName = PLANS.find((p) => p.id === sub.plan)?.name ?? sub.plan
+    const msLeft = sub.periodEnd.getTime() - now.getTime()
+    return {
+      plan: sub.plan,
+      planName,
+      status: sub.status,
+      periodStart: sub.periodStart.toISOString(),
+      periodEnd: sub.periodEnd.toISOString(),
+      cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+      agreementBound: Boolean(sub.agreementNo),
+      daysRemaining: sub.status === 'expired' ? 0 : Math.max(0, Math.ceil(msLeft / 86_400_000)),
+    }
+  }
+
+  /**
+   * 取消自动续期（≠ 立即退订）：标记 cancelAtPeriodEnd，**当前周期内继续可用**，
+   * 到期后惰性失效。这才是用户在订阅页点的那个动作。
+   */
+  async cancelAutoRenew(userId: string, now: Date = new Date()) {
+    await this.expireSubscriptionIfDue(userId, now)
+    const sub = await this.prisma.subscription.findFirst({
+      where: { userId, status: { in: LIVE_SUB_STATUS } },
+    })
+    if (!sub) return { changed: false, subscription: await this.getSubscription(userId, now) }
+    if (sub.cancelAtPeriodEnd) {
+      return { changed: false, subscription: await this.getSubscription(userId, now) }
+    }
+    await this.prisma.subscription.update({
+      where: { id: sub.id },
+      data: { cancelAtPeriodEnd: true, status: 'canceled', canceledAt: now },
+    })
+    return { changed: true, subscription: await this.getSubscription(userId, now) }
+  }
+
+  /**
+   * 退订当前套餐（立即生效，放弃剩余权益）——「一个用户同时只持有一个套餐」的换购前置动作。
    *
    * 语义：退订即**放弃当前档位权益**，积分按账本多池规则保留（不清零），已支付订单不退款。
    * 幂等：已是免费档时 changed=false 直接返回当前状态（重复点击不报错）。
-   * ⚠️ 自动续费目前只停留在文案层（无签约记录、无周期扣款），故退订仅改档位；
-   *    待接入支付宝签约解约时，这里必须同步调用渠道侧解约，否则会被渠道继续扣款。
+   * ⚠️ 与 cancelAutoRenew 的区别：这里是**立即失效**（换购用），
+   *    取消自动续费则到期前仍可用（用户诉求里的「当前还能使用」）。
+   * ⚠️ 自动续费渠道解约尚未接入（支付宝签约在后续 PR）：接入后此处必须同步调渠道解约，
+   *    否则渠道会继续扣款而本地已失效。
    */
   async cancelSubscription(userId: string) {
+    await this.expireSubscriptionIfDue(userId, new Date())
     const current = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { membership: true, points: true },
     })
     if (!current) throw new NotFoundException('用户不存在')
+    const live = await this.prisma.subscription.findFirst({
+      where: { userId, status: { in: LIVE_SUB_STATUS } },
+    })
+    if (live) {
+      await this.prisma.subscription.update({
+        where: { id: live.id },
+        data: { status: 'expired', cancelAtPeriodEnd: true, canceledAt: new Date() },
+      })
+    }
     if (current.membership === 'free') {
       return { membership: 'free', points: current.points, changed: false }
     }

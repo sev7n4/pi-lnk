@@ -31,11 +31,37 @@ model User {
   pointTransactions PointTransaction[]
   holds             PointHold[]
   orders            Order[]
+  subscriptions     Subscription[]
   providerChannels ProviderChannel[]
   aiPreferences    UserAiPreferences?
   webdavConfig     UserWebdavConfig?
   assets           UserAsset[]
   workflowRecipes  UserWorkflowRecipe[]
+}
+
+/// 订阅（连续包月）——「一个用户同时只持有一个套餐」的权威周期事实。
+///
+/// User.membership 只是「当前档位」的快查字段；周期、到期、是否已取消续期一律以本表为准：
+///   - periodEnd 之前档位有效；到期后惰性失效（读时降级，见 membership.service）。
+///   - cancelAtPeriodEnd=true = 已取消自动续期，**到期前仍可继续使用**（≠ 立即退订）。
+///   - 续期成功 = 同档订单再次支付成功，periodEnd 顺延一个月（而非覆盖）。
+/// 历史订单在 Order 表；一个用户只保留一条「当前订阅」，避免多活订阅并存导致权益歧义。
+model Subscription {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan              String // experience | standard | premium | flagship（与 membership PLANS 对齐）
+  status            String    @default("active") // active=生效中 | canceled=已取消续期（到期前仍可用） | expired=已到期或已退订
+  periodStart       DateTime // 本周期起点（首次支付时间）
+  periodEnd         DateTime // 本周期截止（续期顺延；到期即失效）
+  cancelAtPeriodEnd Boolean   @default(false) // 取消自动续期标记（周期扣款签约是否已解约见 agreementNo）
+  agreementNo       String? // 支付宝周期扣款签约号；未签约为 NULL（手动续期模式）
+  canceledAt        DateTime? // 取消续期操作时间
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId, status])
+  @@index([periodEnd])
 }
 
 model InviteRedemption {

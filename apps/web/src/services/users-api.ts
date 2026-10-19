@@ -53,6 +53,19 @@ export function subscriptionLabel(id?: string | null): string {
 }
 
 export type PointsRangeKey = '7d' | 'month' | 'all'
+
+/// 订阅快照（后端 SubscriptionDto）：连续包月的周期事实。
+/// status: active=生效中 · canceled=已取消续期（到期前仍可用）· expired=已到期/已退订。
+export interface SubscriptionDto {
+  plan: string
+  planName: string
+  status: string
+  periodStart: string
+  periodEnd: string
+  cancelAtPeriodEnd: boolean
+  agreementBound: boolean
+  daysRemaining: number
+}
 export type PointKind = 'consume' | 'refund' | 'grant'
 export type PointCategory = 'text' | 'image' | 'audio' | 'video' | 'other'
 
@@ -141,9 +154,14 @@ export const membershipApi = {
     api.get<{ data: { points: number; membership: string; claimedToday: boolean } }>('/membership/points'),
   claimDaily: () => api.post<{ data: { points: number; added: number } }>('/membership/claim-daily'),
   upgrade: (plan: string) => api.post<{ data: { membership: string; points: number } }>('/membership/upgrade', { plan }),
-  /// 退订当前套餐（一个用户同时只持有一个套餐 → 换购前必须先退订）。
+  /// 退订当前套餐（立即失效，换购前置）。
   cancelSubscription: () =>
     api.post<{ data: { membership: string; points: number; changed: boolean } }>('/membership/cancel-subscription'),
+  /// 订阅快照：当前档位 / 周期 / 到期 / 是否已取消续期。
+  getSubscription: () => api.get<{ data: SubscriptionDto | null }>('/membership/subscription'),
+  /// 取消自动续期（当前周期内仍可用，到期后失效）。
+  cancelAutoRenew: () =>
+    api.post<{ data: { changed: boolean; subscription: SubscriptionDto | null } }>('/membership/cancel-auto-renew'),
   transactions: (params?: {
     range?: PointsRangeKey
     kind?: PointKind
