@@ -54,3 +54,25 @@ export function isNodeGenerating(status: unknown): boolean {
 export function isDockGenerateBusy(status: unknown): boolean {
   return status === NODE_GENERATION_STATUS.generating
 }
+
+/**
+ * ADR-0011（2026-10-19）：propose 待确认阻塞态。它**不在** NODE_GENERATION_STATUS
+ * 枚举里——不是生成态，而是「agent 已提议、等待用户在画布节点上确认/取消」的阻塞态
+ * （由 propose 流程经 update_node 写入，见 proposeWaitActions.ts）。
+ */
+export const NODE_PENDING_CONFIRM_STATUS = 'pending_confirm'
+
+/**
+ * ADR-0011 T4：节点是否处于待确认态（dock 门控 / 节点内联确认面的唯一判据）。
+ *
+ * 收敛前该判据内联散落于 CanvasPage（countPendingInSelection /
+ * handleSelectionBatchBlocked / mobileStudioDockOpen 门控意图）——单表面原则要求
+ * 「谁是 pending_confirm」全局同一答案，故收口为函数。宽松入参类型同时兼容
+ * EditableFlowNode / FlowNode / { data } 字面量。
+ */
+export function isPendingConfirmNode(
+  node: { data?: { status?: unknown } | undefined } | null | undefined,
+): boolean {
+  if (!node) return false
+  return String(node.data?.status ?? '') === NODE_PENDING_CONFIRM_STATUS
+}

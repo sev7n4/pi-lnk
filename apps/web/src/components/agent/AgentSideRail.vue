@@ -992,6 +992,13 @@ const composerProgressPct = computed(() =>
 const proposeWait = computed(() =>
   agent.blockingWait?.toolName === 'propose_generation' ? agent.blockingWait : null,
 )
+/**
+ * ADR-0011（2026-10-19）：画布上下文 = 已切到画布视图（mobileCanvasView 由 CanvasPage 持真相）。
+ * 此上下文下对话流提议卡降权为**只读提示**——确认 / 取消迁移到节点内联面（T1）/ dock，
+ * 避免同一 pending_confirm 态在「对话卡 + 画布节点 + dock」三处各挂一份可操作入口（三带叠罗汉）。
+ * 纯对话视图（mobileCanvasView=false，含桌面）维持可操作卡不变（与 2026-10-06「两处确认入口」拍板一致）。
+ */
+const proposeWaitInCanvas = computed(() => props.mobileCanvasView === true)
 // RB-D6②：本轮存在 failed 步骤 ⇒ dock 确认区持久警示（把红色 ✗ 与确认决策连起来）。
 const turnHasFailedStep = computed(() => hasFailedTraceStep(lastAssistantMessage.value?.executionTrace?.steps))
 // P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：等待结束信号。
@@ -1015,11 +1022,20 @@ function locateProposeNode() {
  * 模型反而不知道，回「请你在画布节点上点一下确认」。现在先显式 `decline`
  * （registry → aborted ⇒ tool result reason=aborted），再清画布 SSOT；
  * 前者失败不阻断后者（轮询兜底仍在，且画布状态必须收敛）。
+ *
+ * ADR-0011 T1（2026-10-19）：泛化为**节点级**入口——画布节点内联确认面
+ * （ProposeConfirmOverlay）的「取消」与侧栏琥珀卡共用本函数、同一语义。
+ * nodeId 缺省 = 侧栏卡语义（当前阻塞等待所属节点，与原 cancelBlockingPropose 一致）；
+ * 传入 nodeId = 画布节点语义，与当前等待的 nodeId 不一致时**安全 no-op**
+ * （浮层竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
  */
-async function cancelBlockingPropose() {
-  const nodeId = resolveProposeCancelNodeId(agent.blockingWait)
-  if (!nodeId) return
-  const callId = resolveProposeCancelCallId(agent.blockingWait)
+async function cancelProposeForNode(nodeId?: string) {
+  const wait = agent.blockingWait
+  if (!wait || wait.toolName !== 'propose_generation') return
+  const waitNodeId = resolveProposeCancelNodeId(wait)
+  if (!waitNodeId) return
+  if (nodeId && waitNodeId !== nodeId) return
+  const callId = resolveProposeCancelCallId(wait)
   if (callId) {
     try {
       await submitAnswers(
@@ -1036,7 +1052,12 @@ async function cancelBlockingPropose() {
       // 幂等端点：失败说明网络/鉴权异常，画布侧仍要收敛（轮询兜底会判 rejected）
     }
   }
-  emit('clearProposeGeneration', nodeId)
+  emit('clearProposeGeneration', waitNodeId)
+}
+
+/** 侧栏琥珀卡取消入口（ADR-0011 后画布上下文已只读，此入口仅存于纯对话视图）。 */
+function cancelBlockingPropose() {
+  return cancelProposeForNode()
 }
 
 /**
@@ -3270,6 +3291,8 @@ defineExpose({
   reconcileFromNodes,
   /** L1：画布/dock 点生成时显式确认 propose 等待（answered），不再靠 SSOT 时序推断 */
   confirmProposeWait,
+  /** ADR-0011 T1：画布节点内联确认面的取消入口（与侧栏 cancelBlockingPropose 同源同语义） */
+  cancelProposeForNode,
   addFromCanvasNodes: (nodes: FocusNodeLike[]): CanvasRefAddResult => {
     const result = sidebar.addFromCanvasNodesDetailed(nodes)
     if (result.added < nodes.length && nodes.length === 1) {
@@ -4033,10 +4056,13 @@ defineExpose({
             <div class="flex items-start gap-2">
               <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
               <p class="flex-1 leading-relaxed">
-                点👉🏻图标锚定画布「查看提示词」
+                <template v-if="proposeWaitInCanvas">已在画布上待确认：查看 / 修改提示词后，在节点上点「确认生成」</template>
+                <template v-else>点👉🏻图标锚定画布「查看提示词」</template>
               </p>
             </div>
-            <div class="mt-1.5 flex items-center gap-1.5">
+            <!-- ADR-0011（2026-10-19）：画布上下文降权为只读——定位 / 取消按钮收起，
+                 确认 / 取消归节点内联面，避免对话流与画布节点双份可操作入口。纯对话视图保留原操作。 -->
+            <div v-if="!proposeWaitInCanvas" class="mt-1.5 flex items-center gap-1.5" data-testid="propose-wait-actions">
               <button
                 v-if="proposeWait.nodeId"
                 type="button"

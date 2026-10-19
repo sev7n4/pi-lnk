@@ -136,7 +136,7 @@ function onMissingClick() {
 
 const blockedTitle = computed(() => {
   if (batchBlocked.value === 'pending_confirm') {
-    return '选区包含待确认节点，点击定位；请先在侧栏确认生成'
+    return '选区包含待确认节点，点击定位；请在节点上确认生成'
   }
   if (batchBlocked.value === 'limit_24') {
     return '选区可执行节点超过 24 个上限，请减少选区后重试'
