@@ -5358,7 +5358,6 @@ onUnmounted(() => {
       @open-drawer="agentRailRef?.openSessionDrawer()"
       @new-chat="agentRailRef?.newAgentSession()"
       @open-history="agentRailRef?.openThreadHistory()"
-      @storyboard="showStoryboard = true"
       @publish="openPublish"
       @import-workflow="openWorkflowImportPicker"
       @export-workflow="handleExportPack([], 'full_package')"

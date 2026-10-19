@@ -56,7 +56,11 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     expect(topBarCode).not.toMatch(/action === 'save'/)
     // 有效性配对：菜单里确实还有其它项（防空集假绿）
     expect(topBarCode).toContain('发布作品')
-    expect(stripComments(page)).not.toMatch(/<MobileTopBar[\s\S]*?@save="saveCanvas"/)
+    // 只扫 MobileTopBar 开标签本身——跨标签的非贪婪匹配会命中后面别的组件（PC
+    // CanvasFloatingChrome 仍有 @save），那是另一个组件的合法接线。
+    const topBarTag = stripComments(page).match(/<MobileTopBar[\s\S]*?\/>/)?.[0] ?? ''
+    expect(topBarTag, '必须能定位 MobileTopBar 开标签').toContain('MobileTopBar')
+    expect(topBarTag).not.toContain('@save=')
   })
 
   it('保存时间只在真正落库成功后打点（不在 finally 的失败路径）', () => {
@@ -71,14 +75,15 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
   it('⋯ 菜单按频次重排 + 导出二级（完整包 / 轻量包）', () => {
     const menu = stripComments(topBar).match(/<div v-if="menuOpen"[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? ''
     expect(menu).toContain('发布作品')
-    expect(menu).toContain('分镜板')
     expect(menu).toContain('导入工作流')
+    // 分镜板已随 #494 分镜节点下线而退役（StoryboardDialog 删除）⇒ 不得留死入口
+    expect(menu).not.toContain('分镜板')
+    expect(stripComments(topBar)).not.toContain('storyboard')
     expect(menu).toContain('data-testid="bar-menu-export"')
     expect(menu).toContain('bar-menu-export-sub')
     expect(menu).toContain('轻量包（不含媒体）')
-    // 顺序：发布 → 分镜 → 导出 → 导入
-    expect(menu.indexOf('发布作品')).toBeLessThan(menu.indexOf('分镜板'))
-    expect(menu.indexOf('分镜板')).toBeLessThan(menu.indexOf('bar-menu-export"'))
+    // 顺序：发布 → 导出 → 导入
+    expect(menu.indexOf('发布作品')).toBeLessThan(menu.indexOf('bar-menu-export"'))
     expect(menu.indexOf('bar-menu-export"')).toBeLessThan(menu.indexOf('导入工作流'))
     // 接线：轻量包走 handleExportPack([], 'lightweight')
     expect(page).toContain(`@export-workflow-light="handleExportPack([], 'lightweight')"`)

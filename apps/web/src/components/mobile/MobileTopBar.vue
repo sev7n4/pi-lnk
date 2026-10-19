@@ -25,7 +25,6 @@ const emit = defineEmits<{
   'open-drawer': []
   'new-chat': []
   'open-history': []
-  storyboard: []
   publish: []
   'import-workflow': []
   'export-workflow': []
@@ -64,11 +63,10 @@ function toggleMenu() {
   if (!menuOpen.value) exportOpen.value = false
 }
 
-function onMenuItem(action: 'storyboard' | 'publish' | 'import' | 'export' | 'export-light' | 'task') {
+function onMenuItem(action: 'publish' | 'import' | 'export' | 'export-light' | 'task') {
   menuOpen.value = false
   exportOpen.value = false
-  if (action === 'storyboard') emit('storyboard')
-  else if (action === 'publish') emit('publish')
+  if (action === 'publish') emit('publish')
   else if (action === 'import') emit('import-workflow')
   else if (action === 'export') emit('export-workflow')
   else if (action === 'export-light') emit('export-workflow-light')
@@ -179,7 +177,6 @@ onUnmounted(() => {
                轻量与媒体清单进二级）/ 导入；「保存画布」移除（移动端本就是自动保存，
                状态行 MobileSaveStatus 如实告知，点按仍可手动存）。 -->
           <button type="button" class="bar-menu-item" @click="onMenuItem('publish')">发布作品</button>
-          <button type="button" class="bar-menu-item" @click="onMenuItem('storyboard')">分镜板</button>
           <button
             type="button"
             class="bar-menu-item bar-menu-item--parent"
