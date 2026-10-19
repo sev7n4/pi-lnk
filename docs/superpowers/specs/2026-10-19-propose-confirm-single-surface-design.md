@@ -170,6 +170,11 @@ T10（验收）最后
   - 测试：`dockStudio.test.ts` 补 isPendingConfirmNode 三态；`ProposeConfirmOverlay.test.ts` 4 例（三动作 emit / 非待确认不渲染 / above-below 翻转）。CanvasPage 级挂载测试超本机 vitest 天花板（既有纪律：全量 web 测试归 CI）。
 - 2026-10-20（T6/T7/T8 收尾）：T6 窗态纪律——`focusNodeById` / `focusNodesByIds` 改为「定位到**待确认**节点 ⇒ 纯画布满屏（`mobileCanvasImm=true`，composer/SSE 全收）」，其余定位（含 ◎ 定位锚）维持窗态；判据复用 `isPendingConfirmNode`。**不改 wire 命名**：`handleCanvasRefPickToggle`（◎ 定位锚）保持窗态是 2026-10-18 裁决，propose 定位改纯画布才是 ADR-0011 决定 4 的增量。T7 三窗态矩阵见下表（回归待人工）。T8 见 §7。
 
+- 2026-10-20（真机截图复核 → 补齐决定 1）：移动端截图复现两处问题，均已修：
+  - **浮层按钮竖排**：`ProposeConfirmOverlay` 外层是 `absolute` + `translate(-50%)`，可用宽度 = 锚点到容器右缘；节点在中线时可用宽约半屏 < 条宽 ⇒ flex 子项被压缩、中文逐字换行（确认/编辑/取消竖成三列字）。修法三层：`w-max`（外层 + 条）+ 按钮/标签 `shrink-0 whitespace-nowrap` + **横向钳位**（`BAR_HALF_WIDTH=150` 把锚点拉回视口内）。
+  - **待确认节点是空卡（决定 1 未落地）**：T4 门控 dock 后，dock 里的提示词编辑区不再随选中弹出，而节点本体只有「上传或等待生成」占位 ⇒ 用户在画布上**看不到提议的提示词**，「先看后确认」链路断掉。补 `NodePendingPrompt.vue`（共享组件，image/video/audio 三处占位块接入）：待确认态渲染「待确认」徽标 + 提示词正文（5 行截断）+ 可选 label + 「可在提示词卡片上『编辑』后确认」提示；只读摘要不就地编辑（编辑统一走浮层「编辑」→ dock，避免两套编辑语义）。参数（比例/分辨率/张数）仍由 dock 设置面板承载，不在节点重复。
+  - 澄清（非 bug）：`propose-wait-hint` 横幅在画布视图可见是 **P1-5 设计使然**（等待/收口系统层刻意移出 chat-wrap，见 `AgentSideRail.vue:4046`），不是 SSE 漏出。
+
 ---
 
 ## 7. 协议语义对照（T8：`waiting_user` ↔ 上游 `ui_prompt`）

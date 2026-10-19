@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
+import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
 import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
@@ -9,7 +10,7 @@ import { resolveMediaUrl } from '@/services/api-base'
 import { useNodeMediaUpload } from '@/composables/useNodeMediaUpload'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
 import { useMediaInspector, type NodeMediaInfoSummary } from '@/composables/useMediaInspector'
-import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
+import { NODE_GENERATION_STATUS, NODE_PENDING_CONFIRM_STATUS } from '@/constants/dockStudio'
 import { downloadMediaFile, isUpstreamMediaUrl, mediaDownloadName, UPSTREAM_MEDIA_DOWNLOAD_HINT } from '@/composables/useCanvasMedia'
 import { saveAssetToLibrary } from '@/composables/useAssetLibrary'
 
@@ -50,6 +51,8 @@ const { openInspector } = useMediaInspector()
 const displayUrl = computed(() => resolveMediaUrl(String(props.data.url ?? '')))
 const showInspectorBtn = computed(() => Boolean(props.data.generationRecordId))
 const isCompleted = computed(() => props.data.status === NODE_GENERATION_STATUS.completed)
+/** ADR-0011：待确认态（dock 已门控）⇒ 节点本体改渲染提示词摘要，不给上传入口 */
+const isPendingConfirm = computed(() => props.data.status === NODE_PENDING_CONFIRM_STATUS)
 const downloadTitle = computed(() =>
   isUpstreamMediaUrl(String(props.data.url ?? ''))
     ? UPSTREAM_MEDIA_DOWNLOAD_HINT
@@ -208,30 +211,34 @@ function openMediaInspector(e?: Event) {
         }"
       >
         <div class="neo-placeholder-content">
-          <button
-            v-if="data.status !== 'generating' && data.status !== 'uploading'"
-            type="button"
-            class="neo-node-upload-btn nodrag"
-            title="上传音频"
-            @pointerdown.stop
-            @mousedown.stop
-            @click.stop="openPicker"
-          >
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
-          <span class="neo-placeholder-text">
-            {{
-              data.status === 'uploading'
-                ? `上传中 ${data.uploadProgress ?? 0}%`
-                : data.status === 'generating'
-                  ? '生成中...'
-                  : '上传或等待生成'
-            }}
-          </span>
+          <!-- ADR-0011 决定 1：待确认态渲染提示词摘要（dock 已对该态门控） -->
+          <NodePendingPrompt :prompt="data.prompt" :label="data.label" :status="data.status" />
+          <template v-if="!isPendingConfirm">
+            <button
+              v-if="data.status !== 'generating' && data.status !== 'uploading'"
+              type="button"
+              class="neo-node-upload-btn nodrag"
+              title="上传音频"
+              @pointerdown.stop
+              @mousedown.stop
+              @click.stop="openPicker"
+            >
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </button>
+            <span class="neo-placeholder-text">
+              {{
+                data.status === 'uploading'
+                  ? `上传中 ${data.uploadProgress ?? 0}%`
+                  : data.status === 'generating'
+                    ? '生成中...'
+                    : '上传或等待生成'
+              }}
+            </span>
+          </template>
           <NodeStatusInfoButton
             v-if="showInspectorBtn"
             :status="data.status"
