@@ -148,7 +148,8 @@ function onPlanPayFailed(reason: string) {
         <div class="membership-hero relative overflow-hidden rounded-xl p-4">
           <p class="text-xs text-fg-2">当前积分</p>
           <p class="mt-0.5 flex items-baseline gap-1.5 text-3xl font-semibold text-fg">
-            <svg class="h-5 w-5 self-center text-[var(--neo-warm)]" viewBox="0 0 24 24" fill="currentColor">
+            <!-- 闪电=积分语义：text-credit（--lnk-credit），替代旧 --neo-warm -->
+            <svg class="h-5 w-5 self-center text-credit" viewBox="0 0 24 24" fill="currentColor">
               <path d="M13 2 4.5 13.5h5.6L11 22l8.5-11.5h-5.6L13 2z" />
             </svg>
             {{ points }}
@@ -168,9 +169,9 @@ function onPlanPayFailed(reason: string) {
           class="membership-plan rounded-xl border p-4"
           :class="membership === plan.id ? 'is-current' : ''"
           >
-            <h3 class="font-medium" style="color: var(--neo-text-primary)">{{ plan.name }}</h3>
-            <p class="mt-1 text-lg" style="color: var(--neo-text-primary)">{{ plan.price ? `¥${plan.price}/月` : '免费' }}</p>
-            <ul class="mt-2 space-y-1 text-[11px]" style="color: var(--neo-text-muted)">
+            <h3 class="font-medium text-fg">{{ plan.name }}</h3>
+            <p class="mt-1 text-lg text-fg">{{ plan.price ? `¥${plan.price}/月` : '免费' }}</p>
+            <ul class="mt-2 space-y-1 text-[11px] text-fg-3">
               <li v-for="f in plan.features" :key="f">· {{ f }}</li>
             </ul>
             <el-button
@@ -185,25 +186,28 @@ function onPlanPayFailed(reason: string) {
             </el-button>
           </div>
         </div>
-        <p v-if="message" class="text-sm" style="color: var(--neo-accent-text)">{{ message }}</p>
+        <p v-if="message" class="text-sm text-fg-accent">{{ message }}</p>
       </template>
     </div>
-    <p v-else class="py-8 text-center" style="color: var(--neo-text-muted)">请先登录</p>
+    <p v-else class="py-8 text-center text-fg-3">请先登录</p>
   </el-dialog>
 </template>
 
 <style>
+/* 令牌纪律（2026-10-19）：已从 --neo-* 全量迁到 --lnk-*（墨流 Ink Flow v2）。
+ * 渐变 hero 上的半透明白按钮用 --lnk-text-on-accent + color-mix 表达
+ * （该令牌双主题恒白，渐变底上要的就是白，不走会翻转的 overlay 通道）。 */
 .membership-dialog .el-dialog {
-  background: var(--neo-surface-card);
-  border: 1px solid var(--neo-border);
+  background: var(--lnk-surface-base);
+  border: 1px solid var(--lnk-border-subtle);
   border-radius: 16px;
 }
 .membership-dialog .el-dialog__title {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 .membership-hero {
-  background: var(--neo-brand-gradient);
-  box-shadow: 0 8px 24px rgba(109, 93, 252, 0.28);
+  background: var(--lnk-accent-gradient);
+  box-shadow: var(--lnk-accent-glow);
 }
 .membership-hero::after {
   content: '';
@@ -217,25 +221,25 @@ function onPlanPayFailed(reason: string) {
   pointer-events: none;
 }
 .membership-claim-btn {
-  --el-button-bg-color: rgba(255, 255, 255, 0.16);
-  --el-button-border-color: rgba(255, 255, 255, 0.3);
-  --el-button-text-color: #fff;
-  --el-button-hover-bg-color: rgba(255, 255, 255, 0.26);
-  --el-button-hover-border-color: rgba(255, 255, 255, 0.4);
-  --el-button-hover-text-color: #fff;
+  --el-button-bg-color: color-mix(in srgb, var(--lnk-text-on-accent) 16%, transparent);
+  --el-button-border-color: color-mix(in srgb, var(--lnk-text-on-accent) 30%, transparent);
+  --el-button-text-color: var(--lnk-text-on-accent);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--lnk-text-on-accent) 26%, transparent);
+  --el-button-hover-border-color: color-mix(in srgb, var(--lnk-text-on-accent) 40%, transparent);
+  --el-button-hover-text-color: var(--lnk-text-on-accent);
 }
 .membership-plan {
-  border-color: var(--neo-border);
-  background: var(--neo-surface-elevated);
+  border-color: var(--lnk-border-subtle);
+  background: var(--lnk-surface-raised);
 }
 .membership-plan.is-current {
-  border-color: var(--neo-accent-border);
-  background: var(--neo-accent-soft);
+  border-color: var(--lnk-accent-border);
+  background: var(--lnk-accent-subtle);
 }
 .membership-dialog .el-button--primary {
-  --el-button-bg-color: var(--neo-accent);
-  --el-button-border-color: var(--neo-accent);
-  --el-button-hover-bg-color: var(--neo-accent-hover);
-  --el-button-hover-border-color: var(--neo-accent-hover);
+  --el-button-bg-color: var(--lnk-accent);
+  --el-button-border-color: var(--lnk-accent);
+  --el-button-hover-bg-color: var(--lnk-accent-hover);
+  --el-button-hover-border-color: var(--lnk-accent-hover);
 }
 </style>

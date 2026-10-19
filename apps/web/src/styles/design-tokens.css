@@ -226,6 +226,9 @@
   --lnk-accent-active: var(--lnk-purple-700);
   --lnk-accent-text: var(--lnk-purple-300); /* 表面上的紫字/链接，与按钮底色分开 */
   --lnk-accent-subtle: rgba(109, 93, 252, 0.16);
+  /* 选中/描边档：选中态边框（原 --neo-accent-border 平移，值不变）。
+     ⛔ 不是文字色：禁止当 foreground 压在 accent 底上（白字只有 text-on-accent）。 */
+  --lnk-accent-border: rgba(109, 93, 252, 0.4);
   --lnk-accent-glow: 0 4px 16px rgba(109, 93, 252, 0.32);
   --lnk-accent-gradient: linear-gradient(135deg, #6d5dfc 0%, #8a5cf6 55%, #b45cf0 100%);
 
@@ -335,6 +338,7 @@
   --lnk-accent-active: var(--lnk-purple-800);
   --lnk-accent-text: var(--lnk-purple-700);
   --lnk-accent-subtle: rgba(91, 76, 230, 0.12);
+  --lnk-accent-border: rgba(91, 76, 230, 0.75);
   --lnk-accent-glow: 0 4px 16px rgba(91, 76, 230, 0.24);
   --lnk-accent-gradient: linear-gradient(135deg, #6d5dfc 0%, #8a5cf6 55%, #b45cf0 100%);
 

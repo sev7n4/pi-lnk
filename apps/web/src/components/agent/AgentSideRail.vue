@@ -4918,7 +4918,9 @@ defineExpose({
 }
 
 .project-card.is-current {
-  border-color: var(--lnk-accent-border, var(--lnk-border-subtle));
+  /* --lnk-accent-border 已在 design-tokens.css 双主题定义（2026-10-19 补令牌），
+     不再写 var() fallback——fallback 会把「引用未定义令牌」静默降级成另一个值。 */
+  border-color: var(--lnk-accent-border);
 }
 
 .project-card__main {
