@@ -20,7 +20,8 @@ import QrPayPanel from './QrPayPanel.vue'
  *   - 整卡可点（点价格/积分/空白都能触发升级），按钮仅作视觉与键盘可达入口；
  *   - 按「档位方向」渲染 CTA：高于当前=立即升级 / 等于=当前套餐 / 低于=低于当前套餐（禁购，
  *     因后端 grantPaidPlanTx 无条件覆盖 membership，买低档=静默降级）；
- *   - 点击即时选中反馈 + 仅被点卡片按钮转圈（payingPlanId），按压 :active 反馈。
+ *   - 点击即时选中反馈 + 仅被点卡片按钮转圈（payingPlanId），按压 :active 反馈；
+ *   - 三个分支都必须有可见反馈：升级=进入支付 / 当前=提示 / 低于=提示+抖动（禁止静默无反应）。
  * 令牌纪律：只用 --neo-* / --lnk-* 语义令牌，不引入裸 hex/rgba（theme-usage 棘轮）。
  */
 
@@ -37,6 +38,9 @@ const message = ref('')
 const payingPlanId = ref('')
 /// 被点击选中的档位 id（下单异步间隙的即时选中反馈）。
 const selectedPlanId = ref('')
+/// 被点击但不可购买的档位 id（抖动反馈用，600ms 后自动清除）。
+const nudgePlanId = ref('')
+let nudgeTimer: number | undefined
 
 /** select=套餐列表 · pay=扫码支付 */
 const view = ref<'select' | 'pay'>('select')
@@ -88,6 +92,8 @@ watch(() => props.modelValue, (open) => {
     payQrCode.value = ''
     selectedPlanId.value = ''
     payingPlanId.value = ''
+    window.clearTimeout(nudgeTimer)
+    nudgePlanId.value = ''
     message.value = ''
     void loadData()
   }
@@ -113,9 +119,33 @@ async function claimDaily() {
 }
 
 /**
+ * 卡片点击（整卡热区）的唯一入口——按「档位方向」分流，三个分支都必须有可见反馈：
+ *   - 高于当前 → startPlanPay 进入扫码支付下单；
+ *   - 等于当前 → 提示「正在使用该套餐」；
+ *   - 低于当前 → 提示「暂不支持购买」+ 卡片抖动（后端 grantPaidPlanTx 无条件覆盖
+ *     membership，买低档 = 静默降级，必须拦）。
+ * 2026-10-19 修复：此前低于/当前档是静默 return，顶档用户点任何卡都石沉大海，
+ * 观感等于「点击没反应」。
+ */
+async function onPlanClick(plan: MembershipPlan) {
+  if (loading.value) return
+  const kind = ctaKind(plan)
+  if (kind === 'upgrade') {
+    await startPlanPay(plan)
+    return
+  }
+  message.value = kind === 'current' ? '你正在使用该套餐' : '该套餐低于当前套餐，暂不支持购买'
+  nudgePlanId.value = plan.id
+  window.clearTimeout(nudgeTimer)
+  nudgeTimer = window.setTimeout(() => {
+    nudgePlanId.value = ''
+  }, 600)
+}
+
+/**
  * 升级 = 真实支付下单（支付宝扫码）。入账以异步回调为准；
  * PAID 后刷新积分与会员档位（服务端 settlePaidOrder 已完成发放）。
- * 守卫：仅「高于当前档」可下单；当前档/低于当前档点击无副作用（防静默降级）。
+ * 仅「高于当前档」可到达此处（入口分流见 onPlanClick）；保留防御性守卫。
  */
 async function startPlanPay(plan: MembershipPlan) {
   if (loading.value) return
@@ -304,10 +334,11 @@ const ICONS: Record<string, string> = {
               'is-recommended': plan.recommended,
               'is-current': membership === plan.id,
               'is-selected': selectedPlanId === plan.id,
+              'is-nudge': nudgePlanId === plan.id,
               'is-actionable': ctaKind(plan) === 'upgrade',
               'is-lower': ctaKind(plan) === 'lower',
             }"
-            @click="startPlanPay(plan)"
+            @click="onPlanClick(plan)"
           >
             <!-- 当前套餐角标优先于推荐角标：你已在推荐档时，标明「当前套餐」比「推荐」更有用 -->
             <span v-if="membership === plan.id" class="badge badge-current">当前套餐</span>
@@ -532,6 +563,17 @@ const ICONS: Record<string, string> = {
 .membership-dialog .plan.is-selected {
   border-color: var(--neo-accent);
   box-shadow: var(--lnk-accent-glow);
+}
+/* 点击不可购卡片的抖动反馈：让「点了没反应」变成「点了有回应」 */
+@keyframes membership-plan-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+.membership-dialog .plan.is-nudge {
+  animation: membership-plan-nudge 0.32s var(--lnk-ease-standard);
 }
 /* 低于当前档：弱化，暗示不可操作 */
 .membership-dialog .plan.is-lower {
