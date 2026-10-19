@@ -161,3 +161,10 @@ T10（验收）最后
 ## 6. 实现记录
 
 - 2026-10-19：建立本文；核对确认机制真相（§2），确立 T1→T4 强依赖；修正 plan 中 T2/T3 描述（timeline 已是只读 artifact，无需结构性降权）。
+- 2026-10-19（PR #485）：T2/T5/T9 安全切片上线——`AgentSideRail` 画布上下文只读 + CanvasPage 注释收敛 + `AgentSideRail.proposeReadonly.test.ts`。
+- 2026-10-19（T1/T4，本次）：
+  - **T1 落点修正**：spec 原首选「复用 SelectionActionBar」不可行——`selectionActionBarNode` 要求 `data.url` 非空（`:881`），pending_confirm 节点无产物，天然互斥。实际落地为**专用节点锚定浮层** `ProposeConfirmOverlay.vue`（屏幕空间，默认锚节点上方、贴顶翻转下方，`data-anchor` 可测；定位走 computed，不引入 raf/resize）。**驱动信号用「画布上 status=pending_confirm 的节点」而非选中态**——「节点即确认面」不需要用户先选中再找确认入口。
+  - **T4 设计修正（重要）**：ADR 决定 3 若按字面「pending_confirm 时 dock 一律不弹」，会堵死「改提示词后再确认」用例（dock 是唯一提示词编辑器）。落地为**门控自动弹出 + 保留显式编辑意图**：`dockGatedByPendingConfirm = isPendingConfirmNode(editorNode) && !proposeConfirmEditIntent`；浮层「编辑」按钮置意图并选中节点 ⇒ dock 开门，改完仍走 dock 生成按钮 → `confirmProposeWait` → `/answers`（同一路径，不新造第二套确认语义）。意图在节点离开待确认态或选中切离时收回（双 watcher），防粘滞。
+  - 取消入口泛化：`AgentSideRail.cancelBlockingPropose` → `cancelProposeForNode(nodeId?)`（nodeId 与等待不一致安全 no-op），defineExpose 给 CanvasPage；与侧栏取消同函数同语义。
+  - 判据收敛：`isPendingConfirmNode` / `NODE_PENDING_CONFIRM_STATUS` 落 `@/constants/dockStudio`（与 isNodeGenerating 同家），替换 CanvasPage 内联判据意图；MultiSelectToolbar blockedTitle 与 CanvasPage ElMessage 的「请先在侧栏确认生成」文案随确认面迁移改为「在节点上确认生成」。
+  - 测试：`dockStudio.test.ts` 补 isPendingConfirmNode 三态；`ProposeConfirmOverlay.test.ts` 4 例（三动作 emit / 非待确认不渲染 / above-below 翻转）。CanvasPage 级挂载测试超本机 vitest 天花板（既有纪律：全量 web 测试归 CI）。

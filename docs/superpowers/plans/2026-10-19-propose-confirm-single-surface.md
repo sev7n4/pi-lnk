@@ -25,14 +25,14 @@
 
 ## Phase 1 — 节点即确认面（核心）
 
-- [ ] **T1 核对并补全 `pending_confirm` 节点内联确认面**：确认 `CanvasNodeImage.vue`（及同类可生成节点）在 `data.status==='pending_confirm'` 时已内联渲染提示词摘要 + 参数（比例 / 分辨率 / 张数）+ 「确认 / 取消」且点击走 `useNodeGeneration` 的 clear-pending + `/answers`。缺哪块补哪块（截图已证明该面基本存在，核对边界即可）。
-- [ ] **T2 对话流 propose 卡在画布上下文降权**：`AgentSideRail.vue` 的 `proposeWait` 浮层（约 `:3997-4030`，含"定位 / 取消"按钮）在"画布可见上下文"下不再作为可操作浮层；改为只读提示（"已在画布上待确认：节点 X"）。纯对话视图保持原有可操作卡不变。判定上下文可用 `mobileCanvasView` / 画布可见标志。
-- [ ] **T3 `turnTimeline.ts` propose 步骤角色降级**：把 `propose_generation` 在对话时间线里的呈现从"可操作步骤"降级为"只读摘要"（"已提议生成：N 个节点"），与 T2 同源。同步 `toolPresentation.ts` 的 `propose_generation` verb 文案若需区分可操作/只读两态。
+- [x] **T1 核对并补全 `pending_confirm` 节点内联确认面**（2026-10-19 落地）：核对结论——`CanvasNodeImage` 等节点本体**没有**内联确认面（确认入口实际在 dock 生成按钮），且 `selectionActionBarNode` 要求 url 非空复用不了。落地为专用节点锚定浮层 `ProposeConfirmOverlay.vue`（屏幕空间、上方锚点+贴顶翻转、由「画布上 pending_confirm 节点」驱动而非选中态），确认走 `handleAgentGenerateNode`（同 dock 路径）、取消走 `AgentSideRail.cancelProposeForNode`（新增 expose，与侧栏同源）。落点修正详见 spec §6。
+- [x] **T2 对话流 propose 卡在画布上下文降权**（2026-10-19，PR #485）：`AgentSideRail` propose-wait-hint 在 `mobileCanvasView=true` 时定位 / 取消按钮收起、正文改「已在画布上待确认……在节点上点确认生成」；纯对话视图（含桌面）维持可操作卡。测试 `AgentSideRail.proposeReadonly.test.ts`。
+- [x] **T3 `turnTimeline.ts` propose 步骤角色降级**（2026-10-19）：核对后 timeline 内 propose 早已是只读 artifact 日志（`canvas_action add_node → upsertArtifact`）+ waiting notice，无需结构性降权；本轮只做文案一致性收敛——MultiSelectToolbar blockedTitle 与 CanvasPage ElMessage 的「请先在侧栏确认生成」随确认面迁移改为「在节点上确认生成」。
 
 ## Phase 2 — dock 按状态门控（消除三带叠罗汉）
 
-- [ ] **T4 `CanvasPage.vue:839` 选中态加 pending_confirm 前置**：节点被选中时，若 `data.status==='pending_confirm'`，**不触发** studio dock 自动弹出（`:839` 的"单击图片节点 dock 正常弹出"逻辑加状态门控）。确认 / 取消为该态主交互。
-- [ ] **T5 dock 打开时机收敛**：仅当节点 `done`（生成完成）或明确的编辑意图（如点"重绘 / 扩图"等快捷工具）才打开 dock。`CanvasPage.vue:1900` 注释的"三带叠罗汉扳机"应随之消除——补一条注释说明门控已落地。
+- [x] **T4 `CanvasPage.vue:839` 选中态加 pending_confirm 前置**（2026-10-19）：桌面 dock `v-if` 与移动 `mobileStudioDockOpen` 两处一并门控（`dockGatedByPendingConfirm = isPendingConfirmNode(editorNode) && !proposeConfirmEditIntent`）。设计修正：ADR 决定 3 字面执行会堵死「改提示词后再确认」，故保留**显式编辑意图**覆盖——节点浮层「编辑」按钮置意图并选中节点，dock 开门，改完仍走 dock 生成按钮 → `confirmProposeWait` → `/answers`；意图随节点离开待确认态 / 选中切离收回（双 watcher）。判据收敛为 `isPendingConfirmNode`（`@/constants/dockStudio`）。
+- [x] **T5 dock 打开时机收敛**（2026-10-19）：`mobileStudioDockOpen` 上方旧目标态注释已改录门控意图（PR #485）；`:1941`「三带叠罗汉扳机」处补注「propose 态已由 T4 门控消除」。
 
 ## Phase 3 — 窗态纪律（从对话定位进入画布）
 
@@ -45,7 +45,7 @@
 
 ## Phase 5 — 测试与验收
 
-- [ ] **T9 单测补强**：`turnTimeline.test.ts`（propose 降级为只读摘要）、`AgentSideRail`（画布上下文下降权）、`CanvasPage`（pending_confirm 不弹 dock 的门控）、`proposeWaitActions.test.ts`（确认仍走 `/answers` 确定性信号不被破坏）。
+- [x] **T9 单测补强**（2026-10-19，按本机纪律分批）：`AgentSideRail.proposeReadonly.test.ts`（T2 三态）、`dockStudio.test.ts` 补 `isPendingConfirmNode`（T4 判据）、`ProposeConfirmOverlay.test.ts` 4 例（T1 三动作 emit / 非待确认不渲染 / above-below 翻转）——本地全绿。`CanvasPage` 级挂测（dock 门控 + 浮层集成）超本机 vitest 天花板，按既有纪律交 CI 全量 web 测试；`proposeWaitActions.test.ts` 回归护栏不动（`/answers` 契约未改）。
 - [ ] **T10 验收判据（全部满足才算闭环）**：
   1. 画布窗态（含从对话定位进入）**零遮挡**：节点 `pending_confirm` 时看不到对话流可操作提议卡叠在画布上；
   2. 节点 `pending_confirm` 时 studio dock **不会自动弹出**；

@@ -1022,11 +1022,20 @@ function locateProposeNode() {
  * 模型反而不知道，回「请你在画布节点上点一下确认」。现在先显式 `decline`
  * （registry → aborted ⇒ tool result reason=aborted），再清画布 SSOT；
  * 前者失败不阻断后者（轮询兜底仍在，且画布状态必须收敛）。
+ *
+ * ADR-0011 T1（2026-10-19）：泛化为**节点级**入口——画布节点内联确认面
+ * （ProposeConfirmOverlay）的「取消」与侧栏琥珀卡共用本函数、同一语义。
+ * nodeId 缺省 = 侧栏卡语义（当前阻塞等待所属节点，与原 cancelBlockingPropose 一致）；
+ * 传入 nodeId = 画布节点语义，与当前等待的 nodeId 不一致时**安全 no-op**
+ * （浮层竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
  */
-async function cancelBlockingPropose() {
-  const nodeId = resolveProposeCancelNodeId(agent.blockingWait)
-  if (!nodeId) return
-  const callId = resolveProposeCancelCallId(agent.blockingWait)
+async function cancelProposeForNode(nodeId?: string) {
+  const wait = agent.blockingWait
+  if (!wait || wait.toolName !== 'propose_generation') return
+  const waitNodeId = resolveProposeCancelNodeId(wait)
+  if (!waitNodeId) return
+  if (nodeId && waitNodeId !== nodeId) return
+  const callId = resolveProposeCancelCallId(wait)
   if (callId) {
     try {
       await submitAnswers(
@@ -1043,7 +1052,12 @@ async function cancelBlockingPropose() {
       // 幂等端点：失败说明网络/鉴权异常，画布侧仍要收敛（轮询兜底会判 rejected）
     }
   }
-  emit('clearProposeGeneration', nodeId)
+  emit('clearProposeGeneration', waitNodeId)
+}
+
+/** 侧栏琥珀卡取消入口（ADR-0011 后画布上下文已只读，此入口仅存于纯对话视图）。 */
+function cancelBlockingPropose() {
+  return cancelProposeForNode()
 }
 
 /**
@@ -3262,6 +3276,8 @@ defineExpose({
   reconcileFromNodes,
   /** L1：画布/dock 点生成时显式确认 propose 等待（answered），不再靠 SSOT 时序推断 */
   confirmProposeWait,
+  /** ADR-0011 T1：画布节点内联确认面的取消入口（与侧栏 cancelBlockingPropose 同源同语义） */
+  cancelProposeForNode,
   addFromCanvasNodes: (nodes: FocusNodeLike[]): CanvasRefAddResult => {
     const result = sidebar.addFromCanvasNodesDetailed(nodes)
     if (result.added < nodes.length && nodes.length === 1) {
