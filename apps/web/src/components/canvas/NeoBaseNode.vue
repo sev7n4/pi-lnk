@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, ref } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import { Handle, Position, useNode } from '@vue-flow/core'
 import {
   getNeoNodeMeta,
@@ -7,7 +7,19 @@ import {
   resolveNeoNodeTitle,
   type NeoNodeStatus,
 } from '@/components/canvas/neoNodeMeta'
-import { CANVAS_NODE_ADD_AGENT_KEY, CANVAS_NODE_LOCATE_FLASH_KEY, CANVAS_NODE_RENAME_KEY, CANVAS_REF_PICK_ACTIVE_KEY, CANVAS_REF_PICK_NODE_IDS_KEY, CANVAS_REF_PICK_REJECT_KEY } from '@/composables/canvasNodeActions'
+import { useLongPress } from '@/composables/useLongPress'
+import {
+  CANVAS_MULTI_SELECT_ACTIVE_KEY,
+  CANVAS_NODE_ADD_AGENT_KEY,
+  CANVAS_NODE_CLICK_GUARD_KEY,
+  CANVAS_NODE_LOCATE_FLASH_KEY,
+  CANVAS_NODE_OPEN_CONTEXT_MENU_KEY,
+  CANVAS_NODE_RENAME_KEY,
+  CANVAS_NODE_RENAME_REQUEST_KEY,
+  CANVAS_REF_PICK_ACTIVE_KEY,
+  CANVAS_REF_PICK_NODE_IDS_KEY,
+  CANVAS_REF_PICK_REJECT_KEY,
+} from '@/composables/canvasNodeActions'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
 
 const props = withDefaults(
@@ -52,6 +64,9 @@ const shellStyle = computed(() => {
 const { id: nodeId } = useNode()
 const renameNode = inject(CANVAS_NODE_RENAME_KEY, null)
 const addToAgent = inject(CANVAS_NODE_ADD_AGENT_KEY, null)
+const openContextMenu = inject(CANVAS_NODE_OPEN_CONTEXT_MENU_KEY, null)
+const clickGuard = inject(CANVAS_NODE_CLICK_GUARD_KEY, null)
+const multiSelectActive = inject(CANVAS_MULTI_SELECT_ACTIVE_KEY, ref(false))
 const pickActive = inject(CANVAS_REF_PICK_ACTIVE_KEY, ref(false))
 const pickedNodeIds = inject(CANVAS_REF_PICK_NODE_IDS_KEY, ref(new Set<string>()))
 const pickRejectNodeId = inject(CANVAS_REF_PICK_REJECT_KEY, ref<string | null>(null))
@@ -100,10 +115,27 @@ function cancelRename() {
   isRenaming.value = false
 }
 
+/** 行内重命名请求（D-6）：长按 sheet「重命名」→ 页面级置 nodeId → 本节点打开输入态 */
+const renameRequest = inject(CANVAS_NODE_RENAME_REQUEST_KEY, ref<string | null>(null))
+watch(renameRequest, (id) => {
+  if (id && id === nodeId) {
+    renameRequest.value = null
+    startRename()
+  }
+})
+
 function onAddToAgent(event: MouseEvent) {
   event.stopPropagation()
   addToAgent?.(nodeId)
 }
+
+/** 长按节点（2026-10-19 D-6）：统一上下文 sheet 入口，与 PC 右键菜单同源。
+ *  触发即标记 click 抑制窗——避免「长按出菜单 → 松手又选中节点打开 dock」。 */
+const { bindings: longPressBindings } = useLongPress(() => {
+  if (!openContextMenu) return
+  clickGuard?.markSuppressed()
+  openContextMenu(nodeId)
+})
 </script>
 
 <template>
@@ -116,10 +148,21 @@ function onAddToAgent(event: MouseEvent) {
       'is-ref-pick-active': pickActive,
       'is-ref-pick-marked': isPickMarked,
       'is-ref-pick-reject': isPickReject,
+      'is-multi-selected': multiSelectActive && selected,
     }"
+    @touchstart="longPressBindings.onTouchstart"
+    @touchmove="longPressBindings.onTouchmove"
+    @touchend="longPressBindings.onTouchend"
+    @touchcancel="longPressBindings.onTouchcancel"
     @mouseenter="setHovered(true)"
     @mouseleave="setHovered(false)"
   >
+    <!-- 多选模式勾选徽标（D-4）：仅在应用层多选态显示，PC 不渲染 -->
+    <span v-if="multiSelectActive && selected" class="neo-node-multi-badge" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4">
+        <path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </span>
     <div
       class="neo-node-external-title"
       @dblclick.stop="startRename"

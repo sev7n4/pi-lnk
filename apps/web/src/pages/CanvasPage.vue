@@ -79,6 +79,7 @@ import MobileTabBar, { type MobileAppTab } from '@/components/mobile/MobileTabBa
 import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
 import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
 import ProfilePane from '@/components/mobile/ProfilePane.vue'
+import MobileMultiSelectBar from '@/components/mobile/MobileMultiSelectBar.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
 import AccountPanel from '@/components/account/AccountPanel.vue'
 import UsagePanel from '@/components/usage/UsagePanel.vue'
@@ -149,11 +150,15 @@ import { fitImportedViewport } from '@/composables/fitImportedViewport'
 import { fileToPersistedPayload, inferMediaInputKind, persistMediaUrl } from '@/composables/useMediaUpload'
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
+  CANVAS_MULTI_SELECT_ACTIVE_KEY,
   CANVAS_NODE_ADD_AGENT_KEY,
   CANVAS_NODE_CANCEL_KEY,
+  CANVAS_NODE_CLICK_GUARD_KEY,
   CANVAS_NODE_LOCATE_FLASH_KEY,
+  CANVAS_NODE_OPEN_CONTEXT_MENU_KEY,
   CANVAS_NODE_PATCH_KEY,
   CANVAS_NODE_RENAME_KEY,
+  CANVAS_NODE_RENAME_REQUEST_KEY,
   CANVAS_NODE_RETRY_KEY,
   CANVAS_AGENT_DIAGNOSE_KEY,
   CANVAS_REF_PICK_ACTIVE_KEY,
@@ -163,11 +168,13 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { useViewportGestures } from '@/composables/useViewportGestures'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
 import RefineWorkbench from '@/components/canvas/refine/RefineWorkbench.vue'
 import MediaPreviewOverlay from '@/components/canvas/MediaPreviewOverlay.vue'
 import MediaInspectorDrawer from '@/components/media/MediaInspectorDrawer.vue'
 import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
+import { resolveNeoNodeTitle } from '@/components/canvas/neoNodeMeta'
 import NodeCropOverlay from '@/components/canvas/NodeCropOverlay.vue'
 import NodeOutpaintOverlay from '@/components/canvas/NodeOutpaintOverlay.vue'
 import NodeInpaintOverlay from '@/components/canvas/NodeInpaintOverlay.vue'
@@ -309,6 +316,7 @@ const contextMenu = ref<{
   y: number
   nodeId?: string
   nodeType?: string
+  nodeTitle?: string
   hasUrl?: boolean
   mediaKind?: string
   mimeType?: string
@@ -810,6 +818,8 @@ const storyboardShots = computed((): StoryboardShot[] => {
 
 const editorNode = computed((): EditableFlowNode | null => {
   if (multiSelectedIds.value.length !== 1) return null
+  // 多选模式（D-4）：S2/S3 互斥——多选态不弹单节点 dock
+  if (mobileMultiSelectActive.value) return null
   const id = multiSelectedIds.value[0]
   for (const node of nodes.value) {
     if (node.id !== id) continue
@@ -919,6 +929,8 @@ const selectionActionBarNode = computed((): EditableFlowNode | null => {
   if (refinePanelNode.value || gridSlicePanelNode.value) return null
   if (nodeCropNodeId.value || nodeOutpaintNodeId.value || nodeInpaintNodeId.value || nodeElementEditNodeId.value) return null
   if (multiSelectedIds.value.length !== 1) return null
+  // 多选模式（D-4）：S2/S3 互斥——多选态不出单选工具行
+  if (mobileMultiSelectActive.value) return null
   const node = findNodeById(multiSelectedIds.value[0])
   if (!node) return null
   const data = (node.data ?? {}) as Record<string, unknown>
@@ -2084,6 +2096,9 @@ function onNodeDragStop(event: NodeDragEvent) {
 }
 
 function onNodeClick(event: NodeMouseEvent) {
+  // 长按抑制窗（D-6）：长按出上下文菜单后松手的合成 click 直接吞掉
+  if (Date.now() < clickSuppressUntil.value) return
+
   if (pickMode.active.value) {
     const nodeId = event.node.id
     const node = findNodeById(nodeId)
@@ -2103,6 +2118,12 @@ function onNodeClick(event: NodeMouseEvent) {
     } else if (result.duplicate) {
       ElMessage.info('该节点已在引用中')
     }
+    return
+  }
+
+  // 多选模式（D-4）：点选切换；不开单节点 dock（S2/S3 互斥）
+  if (mobileMultiSelectActive.value) {
+    toggleNodeInMultiSelect(event.node.id)
     return
   }
 
@@ -2299,6 +2320,8 @@ async function handleGenerateVideoFromSelection() {
 
 function onPaneClick() {
   if (applyRefineSelectionDecision(null) === 'block') return
+  // 多选模式（D-4）：点空白 = 退出 S3（连同清除选择）
+  exitMultiSelectMode()
   pendingExclusiveSelectId = null
   multiSelectedIds.value = []
   selectedEdgeId.value = null
@@ -2355,6 +2378,68 @@ provide(CANVAS_NODE_PATCH_KEY, patchNodeMediaById)
 provide(CANVAS_NODE_ADD_AGENT_KEY, (nodeId: string) => {
   handleAddToAgentRefs([nodeId])
 })
+
+/** 长按节点 → 统一上下文菜单（D-6）：移动端出底部动作 sheet，PC 仍走右键小浮层 */
+provide(CANVAS_NODE_OPEN_CONTEXT_MENU_KEY, (nodeId: string) => {
+  const node = findNodeById(nodeId)
+  if (!node) return
+  const data = (node.data ?? {}) as Record<string, unknown>
+  contextMenu.value = {
+    x: 0,
+    y: 0,
+    nodeId,
+    nodeType: String(node.type ?? ''),
+    nodeTitle: resolveNeoNodeTitle(String(node.type ?? ''), data),
+    hasUrl: Boolean(String(data.url ?? '').trim()),
+    mediaKind: typeof data.mediaKind === 'string' ? data.mediaKind : undefined,
+    mimeType: typeof data.mimeType === 'string' ? data.mimeType : undefined,
+  }
+})
+
+/** 长按 click 抑制窗（D-6）：节点长按触发后 350ms 内的合成 click 由页面级 @node-click 吞掉 */
+const clickSuppressUntil = ref(0)
+provide(CANVAS_NODE_CLICK_GUARD_KEY, {
+  markSuppressed: () => {
+    clickSuppressUntil.value = Date.now() + 350
+  },
+  shouldSuppress: () => Date.now() < clickSuppressUntil.value,
+})
+
+/**
+ * 移动端多选模式（D-4）：长按节点 → 上下文 sheet「多选」进入；此后点选切换、
+ * 已选节点带勾选徽标；点空白退出。与 S2 单节点 dock 互斥（editorNode /
+ * selectionActionBarNode 在该态返回 null），vue-flow 内部选中态关闭
+ * （nodes-selectable=false），选择完全由应用层驱动。
+ */
+const mobileMultiSelectActive = ref(false)
+provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)
+
+const renameRequestNodeId = ref<string | null>(null)
+provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
+
+function enterMultiSelectMode(seedId: string) {
+  mobileMultiSelectActive.value = true
+  selectNodeIds([seedId])
+}
+
+function exitMultiSelectMode() {
+  if (!mobileMultiSelectActive.value) return
+  mobileMultiSelectActive.value = false
+  multiSelectedIds.value = []
+  clearSelection()
+}
+
+function toggleNodeInMultiSelect(id: string) {
+  const set = new Set(multiSelectedIds.value)
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  pendingExclusiveSelectId = null
+  nodes.value = nodes.value.map((node) => {
+    const selected = set.has(node.id)
+    return node.selected === selected ? node : { ...node, selected }
+  })
+  syncMultiSelectionFromNodes()
+}
 
 function resolveDropPosition(clientPos: { x: number; y: number }, nodeType: string) {
   const flowPoint = screenToFlowPoint(clientPos.x, clientPos.y)
@@ -4336,6 +4421,18 @@ function handleContextAction(action: string) {
   contextMenu.value = null
   if (!menu) return
 
+  if (action === 'rename' && menu.nodeId) {
+    // 打开行内重命名输入（与 PC dblclick 同一个输入框；D-6）
+    renameRequestNodeId.value = menu.nodeId
+    return
+  }
+
+  if (action === 'multi-select' && menu.nodeId) {
+    // 进入多选模式（D-4）：以长按节点为种子
+    enterMultiSelectMode(menu.nodeId)
+    return
+  }
+
   if (action === 'add-agent-ref') {
     const ids = multiSelectedIds.value.length
       ? [...multiSelectedIds.value]
@@ -4806,6 +4903,12 @@ const canvasAreaRef = ref<HTMLElement | null>(null)
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
 const { isMobileLayout } = useAgentMobileLayout()
+/** P0-1（2026-10-19）：VueFlow 手势配置单一出处——移动端单指平移/双指缩放（断点分流），
+ *  PC 逐字保持 [1,2] 中右键平移 + 左键框选。推敲见 useViewportGestures.ts 头部注释。 */
+const viewportGestures = useViewportGestures(
+  isMobileLayout,
+  computed(() => viewportSettings.value.viewLocked),
+)
 const agentPanelExpanded = ref(false)
 /** 移动端画布视图（2026-10-18 信息架构裁决）：默认 false = 对话视图（SSE 对话流 + composer
  *  常驻整页，画布隐藏）。进入画布仅两条路：对话流内点定位（focusNode 系列、handleHistoryLocate）、
@@ -5101,12 +5204,13 @@ onUnmounted(() => {
           :default-viewport="{ zoom: 0.8, x: 0, y: 0 }"
           :min-zoom="0.1"
           :max-zoom="2"
-          :nodes-selectable="!viewportSettings.viewLocked"
+          :nodes-selectable="!viewportSettings.viewLocked && !mobileMultiSelectActive"
           :elements-selectable="!viewportSettings.viewLocked"
           :select-nodes-on-drag="false"
-          :selection-key-code="viewportSettings.viewLocked ? null : true"
-          :pan-on-drag="viewportSettings.viewLocked ? false : [1, 2]"
-          :pan-on-scroll="!viewportSettings.viewLocked"
+          :selection-key-code="viewportGestures.selectionKeyCode"
+          :pan-on-drag="viewportGestures.panOnDrag"
+          :pan-on-scroll="viewportGestures.panOnScroll"
+          :zoom-on-pinch="viewportGestures.zoomOnPinch"
           :pan-activation-key-code="viewportSettings.viewLocked ? null : 'Space'"
           :zoom-on-scroll="!viewportSettings.viewLocked"
           :nodes-draggable="!viewportSettings.viewLocked"
@@ -5144,7 +5248,10 @@ onUnmounted(() => {
             :color="effectiveGridColor"
           />
 
+          <!-- PC 多选工具条：移动端多选态（D-4）改由 MobileMultiSelectBar 承载，
+               过渡期非模式态仍走本组件（与重构前一致） -->
           <MultiSelectToolbarOverlay
+            v-if="!isMobileLayout || !mobileMultiSelectActive"
             :selected-ids="multiSelectedIds"
             :can-generate-video="multiSelectCanGenerateVideo"
             :can-ungroup="multiSelectCanUngroup"
@@ -5535,9 +5642,11 @@ onUnmounted(() => {
       :y="contextMenu.y"
       :node-id="contextMenu.nodeId"
       :node-type="contextMenu.nodeType"
+      :node-title="contextMenu.nodeTitle"
       :has-url="contextMenu.hasUrl"
       :media-kind="contextMenu.mediaKind"
       :mime-type="contextMenu.mimeType"
+      :mobile="isMobileLayout"
       :multi-selected-count="
         contextMenu.nodeId &&
         multiSelectedIds.includes(contextMenu.nodeId) &&
@@ -5547,6 +5656,12 @@ onUnmounted(() => {
       "
       @action="handleContextAction"
       @close="closeContextMenu"
+    />
+    <!-- 移动端多选态动作条（D-4，PR1 骨架：已选 N + 完成；PR3 补批量生成/更多 sheet） -->
+    <MobileMultiSelectBar
+      v-if="isMobileLayout && mobileMultiSelectActive"
+      :count="multiSelectedIds.length"
+      @done="exitMultiSelectMode"
     />
   </div>
 </template>

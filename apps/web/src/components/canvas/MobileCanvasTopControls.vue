@@ -113,7 +113,7 @@ function onMapToggle() {
   display: flex;
   align-items: center;
   gap: 1px;
-  height: 36px;
+  height: 40px;
   padding: 0 4px;
   border-radius: 999px;
   background: var(--neo-hover-bg);
@@ -125,11 +125,12 @@ function onMapToggle() {
 }
 
 .pill-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   border: none;
   border-radius: 999px;
@@ -141,6 +142,14 @@ function onMapToggle() {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   transition: background 0.15s ease, color 0.15s ease;
+}
+
+/* 触控达标（2026-10-19 PR1，D-7）：34px 视觉 + ::after 外扩至 44px 命中 */
+.pill-btn::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 999px;
 }
 
 .pill-btn:active {

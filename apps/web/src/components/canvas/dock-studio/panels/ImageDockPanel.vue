@@ -479,4 +479,18 @@ function toggleVoice() {
 .dock-tool-row__action .label {
   display: inline;
 }
+
+/* ---- 移动端触控达标（2026-10-19 PR1，D-7）：工具行动作 44px 最小高度 ----
+ * 仅 ≤767px；横向滚动 + scroll-snap 沿用既有 overflow-x:auto。 */
+@media (max-width: 767px) {
+  .dock-tool-row__action {
+    min-height: 44px;
+    padding: 0.4rem 0.6rem;
+    scroll-snap-align: start;
+  }
+
+  .dock-tool-row {
+    scroll-snap-type: x proximity;
+  }
+}
 </style>
