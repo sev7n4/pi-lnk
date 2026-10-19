@@ -131,6 +131,9 @@ export const membershipApi = {
   getPoints: () => api.get<{ data: { points: number; membership: string } }>('/membership/points'),
   claimDaily: () => api.post<{ data: { points: number; added: number } }>('/membership/claim-daily'),
   upgrade: (plan: string) => api.post<{ data: { membership: string; points: number } }>('/membership/upgrade', { plan }),
+  /// 退订当前套餐（一个用户同时只持有一个套餐 → 换购前必须先退订）。
+  cancelSubscription: () =>
+    api.post<{ data: { membership: string; points: number; changed: boolean } }>('/membership/cancel-subscription'),
   transactions: (params?: {
     range?: PointsRangeKey
     kind?: PointKind
