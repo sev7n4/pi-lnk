@@ -9,11 +9,24 @@
  * 池明细只作为下方解释性信息出现。
  */
 import { computed, onMounted, ref } from 'vue'
-import { membershipApi, type PointsBreakdown } from '@/services/users-api'
+import { ElMessage } from 'element-plus'
+import {
+  membershipApi,
+  type PointsBreakdown,
+  type UsageDaysResponse,
+} from '@/services/users-api'
+import { useAuthStore } from '@/stores/auth'
 
 const emit = defineEmits<{ 'open-usage': []; 'open-topup': [] }>()
 
+const auth = useAuthStore()
 const points = ref(0)
+const usageDays = ref<UsageDaysResponse | null>(null)
+/// 今日每日签到是否已领取（卡片右上角领用区的终态）。
+const claimedToday = ref(false)
+const claiming = ref(false)
+/// 明细展开（移动端用日粒度列表，避免直接塞桌面端宽表格导致横向溢出）。
+const showUsage = ref(false)
 const monthlyUsed = ref(0)
 const breakdown = ref<PointsBreakdown | null>(null)
 const loading = ref(false)
@@ -23,6 +36,13 @@ const usedRatio = computed(() => {
   if (total <= 0) return 0
   return Math.min(100, Math.round((monthlyUsed.value / total) * 100))
 })
+
+/// 有消耗的日期（倒序），移动端明细列表的数据源。
+const usageRows = computed(() =>
+  (usageDays.value?.days ?? [])
+    .filter((d) => (d.netConsumed ?? 0) !== 0 || (d.generationCount ?? 0) !== 0)
+    .slice(0, 30),
+)
 
 const POOL_LABELS: Record<string, string> = {
   purchased: '购买获得',
@@ -47,12 +67,43 @@ async function load() {
       membershipApi.pointsSummary('month'),
     ])
     points.value = pRes.data.data.points
+    claimedToday.value = pRes.data.data.claimedToday
     breakdown.value = bRes.data.data
     monthlyUsed.value = sRes.data.data.insights?.netConsumedTotal ?? 0
   } catch {
     // 读失败保持既有值，不清零（避免闪一下 0 积分）
   } finally {
     loading.value = false
+  }
+}
+
+async function loadUsage() {
+  try {
+    usageDays.value = (await membershipApi.usageDays('month')).data.data
+  } catch {
+    usageDays.value = null
+  }
+}
+
+async function toggleUsage() {
+  showUsage.value = !showUsage.value
+  if (showUsage.value && !usageDays.value) await loadUsage()
+}
+
+async function claimDaily() {
+  if (claiming.value || claimedToday.value) return
+  claiming.value = true
+  try {
+    const { data } = await membershipApi.claimDaily()
+    points.value = data.data.points
+    auth.setPoints(data.data.points)
+    claimedToday.value = true
+    ElMessage.success(`已领取 +${data.data.added} 积分`)
+  } catch {
+    claimedToday.value = true
+    ElMessage.info('今日已领取')
+  } finally {
+    claiming.value = false
   }
 }
 
@@ -63,9 +114,22 @@ defineExpose({ reload: load })
 <template>
   <div class="pt-panel">
     <div class="pt-card">
-      <p class="pt-label">可用积分</p>
-      <p class="pt-value">{{ points.toLocaleString() }}</p>
-
+      <!-- 卡片右上角：积分余额 + 每日签到领用（自套餐页迁来，一个信息只出现一处） -->
+      <div class="pt-card-top">
+        <div class="pt-balance">
+          <p class="pt-label">可用积分</p>
+          <p class="pt-value">{{ points.toLocaleString() }}</p>
+        </div>
+        <button
+          type="button"
+          class="pt-claim"
+          :class="{ 'is-claimed': claimedToday }"
+          :disabled="claiming || claimedToday"
+          @click="claimDaily"
+        >
+          {{ claimedToday ? '今日已领取' : claiming ? '领取中…' : '领取 +100' }}
+        </button>
+      </div>
       <div class="pt-bar" role="img" aria-label="本月已用与当前可用积分占比">
         <div class="pt-bar-used" :style="{ width: `${usedRatio}%` }" />
       </div>
@@ -75,8 +139,20 @@ defineExpose({ reload: load })
       </div>
 
       <div class="pt-actions">
-        <button type="button" class="pt-btn" @click="emit('open-usage')">明细</button>
+        <button type="button" class="pt-btn" @click="toggleUsage">
+          {{ showUsage ? '收起明细' : '明细' }}
+        </button>
         <button type="button" class="pt-btn pt-btn--primary" @click="emit('open-topup')">充值</button>
+      </div>
+      <!-- 明细：移动端友好的日粒度列表（桌面端宽表格在窄屏会横向溢出，故不复用） -->
+      <div v-if="showUsage" class="pt-usage">
+        <p v-if="!usageRows.length" class="pt-empty">本月暂无用量记录</p>
+        <div v-for="row in usageRows" :key="row.date" class="pt-usage-row">
+          <span class="pt-usage-date">{{ row.date }}</span>
+          <span class="pt-usage-meta">{{ row.generationCount ?? 0 }} 次生成</span>
+          <span class="pt-usage-val tabular-nums">-{{ (row.netConsumed ?? 0).toLocaleString() }}</span>
+        </div>
+        <button type="button" class="pt-more" @click="emit('open-usage')">查看完整用量报表</button>
       </div>
     </div>
 
@@ -112,6 +188,76 @@ defineExpose({ reload: load })
   border: 1px solid var(--lnk-border-default);
   border-radius: var(--lnk-radius-xl);
   background: var(--lnk-surface-raised);
+}
+.pt-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--lnk-space-3);
+  flex-wrap: wrap;
+}
+.pt-balance {
+  min-width: 0;
+}
+.pt-claim {
+  flex-shrink: 0;
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-elevated);
+  padding: 6px 14px;
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pt-claim.is-claimed {
+  color: var(--lnk-success);
+  background: var(--lnk-success-bg);
+  border-color: var(--lnk-success-border);
+  cursor: default;
+}
+.pt-usage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lnk-space-1);
+  padding-top: var(--lnk-space-3);
+  border-top: 1px solid var(--lnk-border-subtle);
+}
+.pt-usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lnk-space-2);
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-secondary);
+}
+.pt-usage-date {
+  flex-shrink: 0;
+}
+.pt-usage-meta {
+  flex: 1;
+  text-align: right;
+  color: var(--lnk-text-muted);
+}
+.pt-usage-val {
+  flex-shrink: 0;
+  color: var(--lnk-text-primary);
+  font-weight: 600;
+}
+.pt-more {
+  margin-top: var(--lnk-space-2);
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-accent);
+  cursor: pointer;
+}
+.pt-empty {
+  margin: 0;
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-muted);
 }
 .pt-label {
   margin: 0;
