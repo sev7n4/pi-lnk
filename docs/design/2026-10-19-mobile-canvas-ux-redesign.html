@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>移动端画布页 UI/UX 重构 · 线稿与视觉规范</title>
+<style>
+  /* ===== 本文档自身消费的令牌：全部取自 apps/web/src/styles/design-tokens.css 实测值 ===== */
+  :root{
+    --surface-canvas:#eef0f5; --surface-sunken:#e6e9f0; --surface-base:#ffffff; --surface-raised:#ffffff;
+    --text-primary:#1f2430; --text-secondary:#4a5364; --text-muted:#5a6478; --text-disabled:#9aa3b2;
+    --border-subtle:rgba(23,25,35,.10); --border-default:rgba(23,25,35,.14); --border-strong:rgba(23,25,35,.22);
+    --border-focus:#5b4ce6;
+    --accent:#5b4ce6; --accent-hover:#4a3bc4; --accent-text:#4a3bc4; --accent-subtle:rgba(91,76,230,.12);
+    --danger:#dc2626; --warn:#b45309; --text-on-accent:#ffffff;
+    --shadow-md:0 8px 24px rgba(23,25,35,.12),0 2px 6px rgba(23,25,35,.06);
+    --ink-50:#f7f8fa; --ink-100:#eef0f5; --ink-200:#e2e5ec; --ink-300:#c9ced6;
+    --energy:#0891b2; --credit:#b45309;
+    --radius-lg:12px; --radius-full:9999px;
+    --text-2xs:11px; --text-xs:12px; --text-sm:13px; --text-base:14px; --text-md:16px; --text-lg:18px; --text-xl:20px; --text-2xl:24px;
+  }
+  body[data-theme="dark"]{
+    --surface-canvas:#131318; --surface-sunken:#0e0e12; --surface-base:#1a1a21; --surface-raised:#1f2430;
+    --text-primary:#f4f4f8; --text-secondary:#b9bdc9; --text-muted:#949aa8; --text-disabled:#6b7180;
+    --border-subtle:rgba(255,255,255,.08); --border-default:rgba(255,255,255,.12); --border-strong:rgba(255,255,255,.18);
+    --accent:#6d5dfc; --accent-hover:#5b4ce6; --accent-text:#a89dff; --accent-subtle:rgba(109,93,252,.16);
+    --ink-50:#232833; --ink-100:#1f2430; --ink-200:#333a48; --ink-300:#4a5364;
+    --energy:#22d3ee; --credit:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface-canvas);color:var(--text-primary);
+    font-family:'Inter','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+    font-size:var(--text-base);line-height:1.6;padding:32px 24px 80px}
+  h1{font-size:var(--text-2xl);line-height:1.25;margin:0 0 6px;font-weight:700}
+  h2{font-size:var(--text-xl);margin:48px 0 4px;font-weight:600;scroll-margin-top:16px}
+  p.sub{color:var(--text-muted);font-size:var(--text-sm);margin:0 0 12px;max-width:880px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+  .meta span{font-size:var(--text-2xs);color:var(--text-secondary);border:1px solid var(--border-default);border-radius:var(--radius-full);padding:2px 10px}
+  .wrap{max-width:1120px;margin:0 auto}
+  .theme-btn{position:fixed;top:16px;right:16px;z-index:9;border:1px solid var(--border-strong);background:var(--surface-raised);
+    color:var(--text-primary);border-radius:var(--radius-full);padding:6px 14px;font-size:var(--text-xs);cursor:pointer}
+  .grid{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+  figure{margin:0;display:flex;flex-direction:column;gap:8px;width:340px}
+  figcaption{font-size:var(--text-xs);color:var(--text-secondary);line-height:1.5}
+  figcaption b{color:var(--text-primary)}
+  .tag{display:inline-block;font-size:10px;padding:1px 8px;border-radius:var(--radius-full);border:1px solid var(--border-default);color:var(--text-secondary);margin-right:6px;vertical-align:1px}
+  .tag.bad{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
+  .tag.good{color:var(--accent-text);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+  table{border-collapse:collapse;width:100%;font-size:var(--text-sm);margin:12px 0 8px}
+  th,td{border:1px solid var(--border-subtle);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--surface-raised);font-weight:600;font-size:var(--text-xs)}
+  td.num{white-space:nowrap;color:var(--text-muted);font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:0 8px;border-radius:var(--radius-full);font-size:var(--text-2xs);line-height:18px}
+  .pill.del{background:color-mix(in srgb,var(--danger) 14%,transparent);color:var(--danger)}
+  .pill.mov{background:color-mix(in srgb,var(--credit) 16%,transparent);color:var(--credit)}
+  .pill.mod{background:var(--accent-subtle);color:var(--accent-text)}
+  .pill.keep2{background:color-mix(in srgb,var(--energy) 14%,transparent);color:var(--energy)}
+  .note{background:var(--surface-raised);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:12px 16px;font-size:var(--text-sm);color:var(--text-secondary);max-width:880px;margin:12px 0}
+  .note b{color:var(--text-primary)}
+  code{font-family:ui-monospace,SFMono,Menro,Menlo,Consolas,monospace;font-size:12px;background:var(--ink-100);border-radius:4px;padding:1px 5px}
+  svg text{font-family:'Inter','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif}
+</style>
+</head>
+<body>
+<button class="theme-btn" id="tbtn">切换主题</button>
+<div class="wrap">
+
+<h1>移动端画布页 UI/UX 重构 · 线稿与视觉规范</h1>
+<p class="sub">配套主文档：<code>docs/design/2026-10-19-mobile-canvas-ux-redesign.md</code>；配对方案：<code>docs/design/2026-10-19-mobile-conversation-ux-redesign.md</code>（对话页，共享 useLongPress / --lnk-hit-min / 断点拆分）。本文件只放「看得见的部分」：现状痛点标注、目标六态线稿、手势地图、前后控件清单。所有消费令牌均取自 <code>apps/web/src/styles/design-tokens.css</code> 实测值；标注 ①—⑫ 与主文档 §1.4 问题编号一一对应。</p>
+<div class="meta">
+  <span>Draft · 待评审</span><span>≤767px 画布页签</span><span>基线 d6cb79ce（2026-10-19）</span><span>PC 端不动</span>
+</div>
+
+<!-- ==================== 1. 现状 ==================== -->
+<h2>1. 现状：PC 按钮原样上移的两个现场</h2>
+<p class="sub">左：画布态——左侧竖轨五钮常驻（hover 才肯藏的「常驻/隐藏」对触屏无意义）、右上视口胶囊、底部 composer。右：多选态——贴选区下沿一字排开 13 个 30px 图标钮，分组色/布局/导出还是 hover 下拉。</p>
+<div class="grid">
+
+<figure>
+<svg viewBox="0 0 340 700" width="340" height="700" role="img" aria-label="现状画布态">
+  <rect x="1" y="1" width="338" height="638" rx="28" stroke-width="1.5" style="fill:var(--surface-canvas);stroke:var(--border-strong)"/>
+  <rect x="120" y="10" width="100" height="8" rx="4" style="fill:var(--ink-300)"/>
+  <rect x="1" y="24" width="338" height="44" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="284" y="50" font-size="12" style="fill:var(--text-secondary)" text-anchor="end">1,280 ◎</text>
+  <circle cx="306" cy="46" r="9" style="fill:var(--accent-subtle)"/>
+  <text x="306" y="50" font-size="11" style="fill:var(--accent-text)" text-anchor="middle">⋯</text>
+  <!-- 视口胶囊 -->
+  <rect x="196" y="80" width="132" height="30" rx="15" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="210" y="99" font-size="11" style="fill:var(--text-muted)">▦</text>
+  <text x="232" y="99" font-size="11" style="fill:var(--text-muted)">−</text>
+  <text x="256" y="99" font-size="11" style="fill:var(--text-muted)">100%</text>
+  <text x="286" y="99" font-size="11" style="fill:var(--text-muted)">+</text>
+  <text x="314" y="99" font-size="11" style="fill:var(--text-muted)">⤢</text>
+  <!-- 左侧竖轨 -->
+  <rect x="10" y="80" width="58" height="250" rx="14" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <circle cx="39" cy="104" r="15" style="fill:var(--accent)"/>
+  <text x="39" y="109" font-size="15" fill="#ffffff" text-anchor="middle">＋</text>
+  <text x="39" y="132" font-size="9" style="fill:var(--text-primary)" text-anchor="middle">添加</text>
+  <circle cx="39" cy="158" r="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+  <text x="39" y="162" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">▤</text>
+  <text x="39" y="182" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">资产库</text>
+  <circle cx="39" cy="204" r="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+  <text x="39" y="208" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">☰</text>
+  <text x="39" y="228" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">任务</text>
+  <line x1="22" y1="238" x2="56" y2="238" style="stroke:var(--border-subtle)"/>
+  <circle cx="39" cy="252" r="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+  <text x="39" y="256" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">⚙</text>
+  <text x="39" y="276" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">设置</text>
+  <line x1="22" y1="286" x2="56" y2="286" style="stroke:var(--border-subtle)"/>
+  <circle cx="39" cy="300" r="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+  <text x="39" y="304" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">◉</text>
+  <text x="39" y="324" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">常驻</text>
+  <!-- 添加菜单弹出 -->
+  <rect x="72" y="80" width="252" height="150" rx="12" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="84" y="98" font-size="9" style="fill:var(--text-muted)">添加节点</text>
+  <g font-size="9" style="fill:var(--text-secondary)">
+    <rect x="80" y="106" width="236" height="22" rx="6" style="fill:var(--ink-100)"/><text x="88" y="121">文本 · 脚本、广告词、品牌文案</text>
+    <rect x="80" y="132" width="236" height="22" rx="6" style="fill:var(--ink-100)"/><text x="88" y="147">图片 · AI 图像生成</text>
+    <rect x="80" y="158" width="236" height="22" rx="6" style="fill:var(--ink-100)"/><text x="88" y="173">视频 · 文生视频 / 图生视频</text>
+    <rect x="80" y="184" width="236" height="22" rx="6" style="fill:var(--ink-100)"/><text x="88" y="199">导演台 / 媒体输入 / 合成 / 3D…</text>
+  </g>
+  <!-- 节点 -->
+  <rect x="96" y="300" width="110" height="64" rx="10" style="fill:var(--ink-100);stroke:var(--border-default)"/>
+  <text x="106" y="318" font-size="10" style="fill:var(--text-primary)">图片节点</text>
+  <rect x="106" y="328" width="90" height="26" rx="4" style="fill:var(--ink-200)"/>
+  <text x="108" y="344" font-size="8" style="fill:var(--text-muted)">◎ 加入引用</text>
+  <rect x="212" y="392" width="110" height="56" rx="10" style="fill:var(--ink-100);stroke:var(--border-default)"/>
+  <text x="222" y="410" font-size="10" style="fill:var(--text-primary)">视频节点</text>
+  <rect x="222" y="420" width="90" height="18" rx="4" style="fill:var(--ink-200)"/>
+  <path d="M206 332 C 214 332 208 372 212 392" style="stroke:var(--energy)" stroke-width="1.5" fill="none"/>
+  <!-- composer -->
+  <rect x="12" y="548" width="316" height="44" rx="22" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="30" y="574" font-size="13" style="fill:var(--text-muted)">＋</text>
+  <text x="56" y="574" font-size="11" style="fill:var(--text-disabled)">按住说话 · 点按输入</text>
+  <text x="300" y="574" font-size="12" style="fill:var(--text-muted)">⌄</text>
+  <circle cx="318" cy="570" r="9" style="fill:var(--accent)"/>
+  <text x="318" y="574" font-size="10" fill="#ffffff" text-anchor="middle">↑</text>
+  <!-- 页签 -->
+  <rect x="1" y="596" width="338" height="43" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <g font-size="9" style="fill:var(--text-muted)" text-anchor="middle">
+    <text x="51" y="620">对话</text>
+    <circle cx="127" cy="610" r="7" fill="none" style="stroke:var(--accent-text)"/>
+    <circle cx="127" cy="610" r="2.6" style="fill:var(--accent-text)"/>
+    <text x="127" y="630" style="fill:var(--accent-text)">画布</text>
+    <text x="204" y="620">发现</text>
+    <text x="281" y="620">我的</text>
+  </g>
+  <!-- 标注区 -->
+  <g font-size="9" style="fill:var(--danger)">
+    <text x="8" y="660">① 单指拖空白=框选，不能平移；双指不能缩放</text>
+    <text x="8" y="674">   （d3-zoom filter 拒触屏，P0-1）</text>
+    <text x="8" y="690">② 竖轨五钮常驻左缘，hover 唤出 + 268px 弹出遮 71% 屏宽</text>
+  </g>
+  <g font-size="9" style="fill:var(--danger)">
+    <text x="8" y="470">③ 添加/资产/任务/设置四个 PC 弹出面板原样上移，无 sheet 化</text>
+    <text x="8" y="484">⑥ 视口胶囊 30px 钮 + 旧 --neo-* 令牌，与顶栏同屏两套表面语言</text>
+    <text x="8" y="498">⑨ 引用钮 13px、重命名仅 dblclick——移动端等于没有</text>
+  </g>
+</svg>
+<figcaption><b>现状 A · 画布态</b><br/><span class="tag bad">P0-2</span><span class="tag bad">P0-1</span><span class="tag bad">P2</span>竖轨 + 弹出菜单 + 视口胶囊 + composer + 页签。左缘被 PC 遗产永久占据。</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 340 700" width="340" height="700" role="img" aria-label="现状多选态">
+  <rect x="1" y="1" width="338" height="638" rx="28" stroke-width="1.5" style="fill:var(--surface-canvas);stroke:var(--border-strong)"/>
+  <rect x="120" y="10" width="100" height="8" rx="4" style="fill:var(--ink-300)"/>
+  <rect x="1" y="24" width="338" height="44" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="284" y="50" font-size="12" style="fill:var(--text-secondary)" text-anchor="end">1,280 ◎</text>
+  <!-- 两个选中节点 -->
+  <rect x="60" y="120" width="120" height="70" rx="10" stroke-width="1.5" style="fill:var(--ink-100);stroke:var(--accent)"/>
+  <text x="70" y="138" font-size="10" style="fill:var(--text-primary)">图片 A</text>
+  <rect x="70" y="148" width="100" height="30" rx="4" style="fill:var(--ink-200)"/>
+  <rect x="170" y="150" width="120" height="70" rx="10" stroke-width="1.5" style="fill:var(--ink-100);stroke:var(--accent)"/>
+  <text x="180" y="168" font-size="10" style="fill:var(--text-primary)">图片 B</text>
+  <rect x="180" y="178" width="100" height="30" rx="4" style="fill:var(--ink-200)"/>
+  <path d="M180 155 L170 155" style="stroke:var(--energy)" stroke-width="1.5"/>
+  <!-- 多选工具条 -->
+  <rect x="30" y="250" width="280" height="46" rx="10" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="42" y="277" font-size="10" style="fill:var(--text-muted)">已选 2</text>
+  <g style="fill:var(--text-secondary)" font-size="9" text-anchor="middle">
+    <rect x="78" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><text x="91" y="277">▶</text>
+    <rect x="108" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><text x="121" y="277">⚡2</text>
+    <rect x="138" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><text x="151" y="277">↻</text>
+    <rect x="168" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><circle cx="181" cy="273" r="6" style="fill:var(--ink-300)"/>
+    <rect x="198" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><text x="211" y="277">⤢</text>
+    <rect x="228" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><text x="241" y="277">⧉</text>
+    <rect x="258" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><text x="271" y="277">◎</text>
+    <rect x="288" y="258" width="26" height="30" rx="6" style="fill:var(--ink-100)"/><text x="301" y="277">▦</text>
+  </g>
+  <text x="42" y="318" font-size="9" style="fill:var(--text-disabled)">＋布局 ⌄ · 导出 ⌄ · 删除（同条第三屏）</text>
+  <!-- 分组色 hover 下拉 -->
+  <rect x="150" y="300" width="120" height="34" rx="8" stroke-dasharray="3 2" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <circle cx="166" cy="317" r="5" style="fill:var(--ink-300)"/>
+  <circle cx="182" cy="317" r="5" fill="#8a7dff"/>
+  <circle cx="198" cy="317" r="5" fill="#22d3ee"/>
+  <circle cx="214" cy="317" r="5" fill="#f59e0b"/>
+  <circle cx="230" cy="317" r="5" fill="#f87171"/>
+  <circle cx="246" cy="317" r="5" fill="#4ade80"/>
+  <text x="150" y="352" font-size="9" style="fill:var(--danger)">hover 才展开 · 色点 18px×scale.7≈12px</text>
+  <!-- composer -->
+  <rect x="12" y="548" width="316" height="44" rx="22" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="30" y="574" font-size="13" style="fill:var(--text-muted)">＋</text>
+  <text x="56" y="574" font-size="11" style="fill:var(--text-disabled)">输入消息…加入待发队列</text>
+  <rect x="1" y="596" width="338" height="43" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <g font-size="9" style="fill:var(--text-muted)" text-anchor="middle">
+    <text x="51" y="620">对话</text>
+    <text x="127" y="620" style="fill:var(--accent-text)">画布</text>
+    <text x="204" y="620">发现</text>
+    <text x="281" y="620">我的</text>
+  </g>
+  <!-- 标注区 -->
+  <g font-size="9" style="fill:var(--danger)">
+    <text x="8" y="656">④ 13 个 30px 图标钮（&lt;44px 标准），一字排开到第三屏</text>
+    <text x="8" y="670">⑤ 分组色 hover 下拉：触屏不可达</text>
+    <text x="8" y="684">⑥ 布局/导出菜单向下开：贴选区下沿，近屏底必溢出</text>
+    <text x="8" y="698">⑦ 绝对定位贴选区：靠屏缘即横向裁剪</text>
+  </g>
+  <g font-size="9" style="fill:var(--danger)">
+    <text x="8" y="386">⑧ 多选只能靠拖拽框选——而单指拖拽已被框选占用</text>
+    <text x="8" y="400">   （与平移互斥，移动端无显式多选入口）</text>
+  </g>
+</svg>
+<figcaption><b>现状 B · 多选态</b><br/><span class="tag bad">P0-3</span>PC 工具条贴选区下沿；最多 13 钮 + 2 个 hover 下拉 + 1 个色板。</figcaption>
+</figure>
+
+</div>
+
+<!-- ==================== 2. 目标 ==================== -->
+<h2>2. 目标：六态线稿</h2>
+<p class="sub">三区结构不变（全局壳 / 画布世界 / composer 脊柱）。变化：左缘竖轨 → 左下 ＋ FAB + 全宽新建 sheet；多选工具条 → 底部动作条 + 更多 sheet；长按 → 44px 上下文 sheet；视口胶囊换肤 <code>--lnk-*</code>。</p>
+<div class="grid">
+
+<figure>
+<svg viewBox="0 0 340 700" width="340" height="700" role="img" aria-label="目标 S1 画布加composer">
+  <rect x="1" y="1" width="338" height="638" rx="28" stroke-width="1.5" style="fill:var(--surface-canvas);stroke:var(--border-strong)"/>
+  <rect x="120" y="10" width="100" height="8" rx="4" style="fill:var(--ink-300)"/>
+  <rect x="1" y="24" width="338" height="44" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="284" y="50" font-size="12" style="fill:var(--text-secondary)" text-anchor="end">1,280 ◎</text>
+  <circle cx="306" cy="46" r="9" style="fill:var(--accent-subtle)"/>
+  <text x="306" y="50" font-size="11" style="fill:var(--accent-text)" text-anchor="middle">⋯</text>
+  <!-- 视口胶囊（新令牌） -->
+  <rect x="196" y="80" width="132" height="40" rx="20" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="210" y="104" font-size="12" style="fill:var(--text-secondary)">▦</text>
+  <text x="234" y="104" font-size="12" style="fill:var(--text-secondary)">−</text>
+  <text x="258" y="104" font-size="11" style="fill:var(--text-secondary)">100%</text>
+  <text x="288" y="104" font-size="12" style="fill:var(--text-secondary)">+</text>
+  <text x="314" y="104" font-size="12" style="fill:var(--text-secondary)">⤢</text>
+  <!-- 节点 -->
+  <rect x="70" y="180" width="120" height="70" rx="10" style="fill:var(--ink-100);stroke:var(--border-default)"/>
+  <text x="80" y="198" font-size="10" style="fill:var(--text-primary)">图片节点</text>
+  <rect x="80" y="208" width="100" height="30" rx="4" style="fill:var(--ink-200)"/>
+  <text x="82" y="264" font-size="8" style="fill:var(--text-muted)">已自动保存 · 12:04</text>
+  <rect x="180" y="250" width="120" height="64" rx="10" style="fill:var(--ink-100);stroke:var(--border-default)"/>
+  <text x="190" y="268" font-size="10" style="fill:var(--text-primary)">视频节点</text>
+  <rect x="190" y="278" width="100" height="24" rx="4" style="fill:var(--ink-200)"/>
+  <path d="M190 215 C 196 215 184 235 180 250" style="stroke:var(--energy)" stroke-width="1.5" fill="none"/>
+  <!-- FAB -->
+  <circle cx="52" cy="486" r="24" style="fill:var(--accent)"/>
+  <text x="52" y="493" font-size="20" fill="#ffffff" text-anchor="middle">＋</text>
+  <text x="52" y="526" font-size="8" style="fill:var(--text-muted)" text-anchor="middle">新建</text>
+  <!-- composer -->
+  <rect x="12" y="548" width="316" height="44" rx="22" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="30" y="574" font-size="14" style="fill:var(--text-secondary)">＋</text>
+  <circle cx="58" cy="570" r="9" style="fill:var(--accent-subtle)"/>
+  <text x="58" y="574" font-size="10" style="fill:var(--accent-text)" text-anchor="middle">◎</text>
+  <text x="76" y="574" font-size="11" style="fill:var(--text-disabled)">按住说话 · 点按输入</text>
+  <text x="300" y="574" font-size="12" style="fill:var(--text-muted)">⌄</text>
+  <circle cx="318" cy="570" r="10" style="fill:var(--accent)"/>
+  <text x="318" y="574" font-size="10" fill="#ffffff" text-anchor="middle">↑</text>
+  <rect x="1" y="596" width="338" height="43" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <g font-size="9" style="fill:var(--text-muted)" text-anchor="middle">
+    <text x="51" y="620">对话</text>
+    <circle cx="127" cy="610" r="7" fill="none" style="stroke:var(--accent-text)"/>
+    <circle cx="127" cy="610" r="2.6" style="fill:var(--accent-text)"/>
+    <text x="127" y="630" style="fill:var(--accent-text)">画布</text>
+    <text x="204" y="620">发现</text>
+    <text x="281" y="620">我的</text>
+  </g>
+  <g font-size="9" style="fill:var(--accent-text)">
+    <text x="88" y="430">✓ 左缘竖轨已拆除，画布全宽可用</text>
+    <text x="88" y="444">✓ ＋FAB = 唯一「新建」入口（48px）</text>
+    <text x="88" y="458">✓ 单指拖=平移 · 双指=缩放 · 长按=菜单</text>
+    <text x="88" y="472">✓ 自动保存状态行取代手动「保存画布」</text>
+  </g>
+</svg>
+<figcaption><b>S1 画布 + composer（默认态）</b><br/><span class="tag good">D-2</span><span class="tag good">D-3</span>顶栏积分/⋯、视口胶囊、FAB、composer、页签五件套，其余全是画布。</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 340 700" width="340" height="700" role="img" aria-label="目标 新建sheet">
+  <rect x="1" y="1" width="338" height="638" rx="28" stroke-width="1.5" style="fill:var(--surface-canvas);stroke:var(--border-strong)"/>
+  <rect x="120" y="10" width="100" height="8" rx="4" style="fill:var(--ink-300)"/>
+  <rect x="1" y="24" width="338" height="44" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <rect x="1" y="68" width="338" height="572" style="fill:var(--surface-sunken)" opacity="0.72"/>
+  <!-- sheet -->
+  <rect x="1" y="330" width="338" height="256" rx="20" style="fill:var(--surface-raised)"/>
+  <rect x="141" y="338" width="58" height="4" rx="2" style="fill:var(--ink-300)"/>
+  <text x="16" y="366" font-size="13" font-weight="600" style="fill:var(--text-primary)">新建</text>
+  <text x="324" y="366" font-size="11" style="fill:var(--text-muted)" text-anchor="end">取消</text>
+  <!-- 资产库通栏 -->
+  <rect x="12" y="378" width="316" height="52" rx="12" style="fill:var(--accent-subtle);stroke:var(--border-subtle)"/>
+  <circle cx="40" cy="404" r="14" style="fill:var(--accent)"/>
+  <text x="40" y="409" font-size="12" fill="#ffffff" text-anchor="middle">▤</text>
+  <text x="62" y="400" font-size="12" style="fill:var(--text-primary)">资产库</text>
+  <text x="62" y="416" font-size="9" style="fill:var(--text-secondary)">从已有素材插入画布节点</text>
+  <text x="316" y="408" font-size="12" style="fill:var(--text-muted)" text-anchor="end">›</text>
+  <!-- 宫格 -->
+  <g font-size="10">
+    <rect x="12" y="440" width="100" height="56" rx="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+    <circle cx="36" cy="462" r="10" fill="#38bdf8" opacity="0.25"/>
+    <text x="36" y="466" font-size="10" fill="#0ea5e9" text-anchor="middle">T</text>
+    <text x="54" y="460" style="fill:var(--text-primary)">文本</text>
+    <text x="54" y="474" font-size="8" style="fill:var(--text-muted)">文案脚本</text>
+    <rect x="118" y="440" width="100" height="56" rx="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+    <circle cx="142" cy="462" r="10" fill="#34d399" opacity="0.25"/>
+    <text x="142" y="466" font-size="10" fill="#10b981" text-anchor="middle">▣</text>
+    <text x="160" y="460" style="fill:var(--text-primary)">图片</text>
+    <text x="160" y="474" font-size="8" style="fill:var(--text-muted)">AI 图像</text>
+    <rect x="224" y="440" width="104" height="56" rx="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+    <circle cx="248" cy="462" r="10" fill="#a78bfa" opacity="0.25"/>
+    <text x="248" y="466" font-size="10" fill="#8b5cf6" text-anchor="middle">▶</text>
+    <text x="266" y="460" style="fill:var(--text-primary)">视频</text>
+    <text x="266" y="474" font-size="8" style="fill:var(--text-muted)">文/图生视频</text>
+    <rect x="12" y="502" width="100" height="56" rx="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+    <circle cx="36" cy="524" r="10" fill="#22d3ee" opacity="0.25"/>
+    <text x="36" y="528" font-size="10" fill="#0891b2" text-anchor="middle">♪</text>
+    <text x="54" y="522" style="fill:var(--text-primary)">音频</text>
+    <text x="54" y="536" font-size="8" style="fill:var(--text-muted)">配音旁白</text>
+    <rect x="118" y="502" width="100" height="56" rx="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+    <circle cx="142" cy="524" r="10" fill="#fbbf24" opacity="0.25"/>
+    <text x="142" y="528" font-size="10" fill="#b45309" text-anchor="middle">▦</text>
+    <text x="160" y="522" style="fill:var(--text-primary)">导演台</text>
+    <text x="160" y="536" font-size="8" style="fill:var(--text-muted)">场景编排</text>
+    <rect x="224" y="502" width="104" height="56" rx="12" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+    <circle cx="248" cy="524" r="10" fill="#f472b6" opacity="0.25"/>
+    <text x="248" y="528" font-size="10" fill="#db2777" text-anchor="middle">↑</text>
+    <text x="266" y="522" style="fill:var(--text-primary)">媒体输入</text>
+    <text x="266" y="536" font-size="8" style="fill:var(--text-muted)">上传素材</text>
+  </g>
+  <text x="170" y="574" font-size="9" style="fill:var(--text-muted)" text-anchor="middle">合成 / 3D World / 分镜 / 分组 — 同栅格继续（56px 行高 · 44px 热区）</text>
+  <rect x="1" y="596" width="338" height="43" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <g font-size="9" style="fill:var(--text-muted)" text-anchor="middle">
+    <text x="51" y="620">对话</text><text x="127" y="620" style="fill:var(--accent-text)">画布</text>
+    <text x="204" y="620">发现</text><text x="281" y="620">我的</text>
+  </g>
+  <g font-size="9" style="fill:var(--accent-text)">
+    <text x="12" y="656">✓ 全宽 bottom sheet 取代 268px 弹出菜单</text>
+    <text x="12" y="670">✓ 资产库为通栏首瓦片（插入节点语义）</text>
+    <text x="12" y="684">✓ 拖拽把手 + 遮罩点按收起；56px 行高</text>
+  </g>
+</svg>
+<figcaption><b>＋FAB → 新建 sheet</b><br/><span class="tag good">D-2</span>取代左侧竖轨「添加」；10 类节点 2 列宫格 + 资产库通栏。</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 340 700" width="340" height="700" role="img" aria-label="目标 S3 多选动作条">
+  <rect x="1" y="1" width="338" height="638" rx="28" stroke-width="1.5" style="fill:var(--surface-canvas);stroke:var(--border-strong)"/>
+  <rect x="120" y="10" width="100" height="8" rx="4" style="fill:var(--ink-300)"/>
+  <rect x="1" y="24" width="338" height="44" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="284" y="50" font-size="12" style="fill:var(--text-secondary)" text-anchor="end">1,280 ◎</text>
+  <!-- 已选节点 + 勾选徽标 -->
+  <rect x="60" y="120" width="120" height="70" rx="10" stroke-width="1.5" style="fill:var(--ink-100);stroke:var(--accent)"/>
+  <text x="70" y="138" font-size="10" style="fill:var(--text-primary)">图片 A</text>
+  <circle cx="170" cy="128" r="9" style="fill:var(--accent)"/>
+  <text x="170" y="132" font-size="10" fill="#ffffff" text-anchor="middle">✓</text>
+  <rect x="170" y="150" width="120" height="70" rx="10" stroke-width="1.5" style="fill:var(--ink-100);stroke:var(--accent)"/>
+  <text x="180" y="168" font-size="10" style="fill:var(--text-primary)">图片 B</text>
+  <circle cx="280" cy="158" r="9" style="fill:var(--accent)"/>
+  <text x="280" y="162" font-size="10" fill="#ffffff" text-anchor="middle">✓</text>
+  <text x="150" y="262" font-size="9" style="fill:var(--accent-text)" text-anchor="middle">多选模式 · 点按节点切换 · 拖空白仍可平移</text>
+  <!-- 底部动作条 -->
+  <rect x="12" y="470" width="316" height="56" rx="16" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="28" y="503" font-size="13" font-weight="600" style="fill:var(--text-primary)">已选 2</text>
+  <rect x="92" y="482" width="120" height="32" rx="16" style="fill:var(--accent)"/>
+  <text x="152" y="503" font-size="12" fill="#ffffff" text-anchor="middle">⚡ 批量生成 2</text>
+  <rect x="224" y="482" width="44" height="32" rx="16" style="fill:var(--ink-100);stroke:var(--border-subtle)"/>
+  <text x="246" y="503" font-size="13" style="fill:var(--text-secondary)" text-anchor="middle">⋯</text>
+  <text x="286" y="503" font-size="11" style="fill:var(--text-muted)" text-anchor="middle">完成</text>
+  <!-- composer -->
+  <rect x="12" y="548" width="316" height="44" rx="22" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="30" y="574" font-size="14" style="fill:var(--text-secondary)">＋</text>
+  <text x="56" y="574" font-size="11" style="fill:var(--text-disabled)">按住说话 · 点按输入</text>
+  <rect x="1" y="596" width="338" height="43" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <g font-size="9" style="fill:var(--text-muted)" text-anchor="middle">
+    <text x="51" y="620">对话</text><text x="127" y="620" style="fill:var(--accent-text)">画布</text>
+    <text x="204" y="620">发现</text><text x="281" y="620">我的</text>
+  </g>
+  <g font-size="9" style="fill:var(--accent-text)">
+    <text x="12" y="656">✓ 底部固定动作条：不贴选区、不溢屏、不裁剪</text>
+    <text x="12" y="670">✓ 13 钮 → 3 钮 +「更多」sheet（分组/解组/副本/</text>
+    <text x="12" y="684">   含上游/加引用/布局/导出/删除 + 8 色 44px 网格）</text>
+  </g>
+</svg>
+<figcaption><b>S3 多选态</b><br/><span class="tag good">D-4</span>长按节点 →「多选」进入；动作条贴底固定；「更多」收纳全部低频项。</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 340 700" width="340" height="700" role="img" aria-label="目标 长按上下文sheet">
+  <rect x="1" y="1" width="338" height="638" rx="28" stroke-width="1.5" style="fill:var(--surface-canvas);stroke:var(--border-strong)"/>
+  <rect x="120" y="10" width="100" height="8" rx="4" style="fill:var(--ink-300)"/>
+  <rect x="1" y="24" width="338" height="44" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <rect x="1" y="68" width="338" height="572" style="fill:var(--surface-sunken)" opacity="0.72"/>
+  <!-- 被长按的节点 -->
+  <rect x="110" y="200" width="120" height="70" rx="10" stroke-width="1.5" style="fill:var(--ink-100);stroke:var(--accent)"/>
+  <text x="120" y="218" font-size="10" style="fill:var(--text-primary)">图片节点</text>
+  <text x="120" y="248" font-size="8" style="fill:var(--text-muted)">长按 200ms</text>
+  <!-- sheet -->
+  <rect x="1" y="376" width="338" height="212" rx="20" style="fill:var(--surface-raised)"/>
+  <rect x="141" y="384" width="58" height="4" rx="2" style="fill:var(--ink-300)"/>
+  <text x="16" y="408" font-size="12" font-weight="600" style="fill:var(--text-primary)">图片节点</text>
+  <g font-size="12">
+    <text x="24" y="428" style="fill:var(--text-primary)">✎ 重命名</text>
+    <text x="24" y="451" style="fill:var(--text-primary)">◎ 加入 Agent 引用</text>
+    <text x="24" y="474" style="fill:var(--text-primary)">▣ 编辑图像</text>
+    <text x="24" y="497" style="fill:var(--text-primary)">↓ 下载图片</text>
+    <text x="24" y="520" style="fill:var(--text-primary)">▤ 存入资产库</text>
+    <text x="24" y="543" style="fill:var(--text-primary)">⧉ 新建副本</text>
+    <text x="24" y="566" style="fill:var(--danger)">🗑 删除节点</text>
+  </g>
+  <text x="170" y="584" font-size="8" style="fill:var(--text-muted)" text-anchor="middle">解组 / 副本（含上游）按节点类型出现</text>
+  <rect x="1" y="596" width="338" height="43" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <g font-size="9" style="fill:var(--text-muted)" text-anchor="middle">
+    <text x="51" y="620">对话</text><text x="127" y="620" style="fill:var(--accent-text)">画布</text>
+    <text x="204" y="620">发现</text><text x="281" y="620">我的</text>
+  </g>
+  <g font-size="9" style="fill:var(--accent-text)">
+    <text x="12" y="656">✓ 44px 行高；补「重命名」（移动端此前无法重命名）</text>
+    <text x="12" y="670">✓ 「多选」入口在 sheet 首行右侧</text>
+  </g>
+</svg>
+<figcaption><b>长按 → 上下文 sheet</b><br/><span class="tag good">D-6</span>统一节点级操作入口；dblclick 重命名仅 PC 保留。</figcaption>
+</figure>
+
+</div>
+
+<!-- ==================== 3. 手势地图 ==================== -->
+<h2>3. 手势地图（按断点分流）</h2>
+<p class="sub">P0-1 的根因：<code>pan-on-drag=[1,2]</code> 让 d3-zoom filter 拒掉所有触屏 touchstart（TouchEvent 无 <code>button</code> 字段）。修复 = 移动端 <code>panOnDrag=true</code> + 应用层多选模式，PC 逐字不变。</p>
+<svg viewBox="0 0 1000 300" width="100%" style="max-width:1000px" role="img" aria-label="手势地图">
+  <text x="20" y="30" font-size="13" font-weight="600" style="fill:var(--text-primary)">手势</text>
+  <text x="240" y="30" font-size="13" font-weight="600" style="fill:var(--text-primary)">移动端（新定义）</text>
+  <text x="620" y="30" font-size="13" font-weight="600" style="fill:var(--text-primary)">PC（现状不动）</text>
+  <line x1="20" y1="40" x2="980" y2="40" style="stroke:var(--border-subtle)"/>
+  <g font-size="12">
+    <text x="20" y="70" style="fill:var(--text-secondary)">单指拖空白</text>
+    <text x="240" y="70" font-weight="600" style="fill:var(--accent-text)">平移画布（跟手）</text>
+    <text x="620" y="70" style="fill:var(--text-muted)">左键 = 框选；中/右键/Space+拖 = 平移</text>
+    <line x1="20" y1="84" x2="980" y2="84" style="stroke:var(--border-subtle)"/>
+    <text x="20" y="108" style="fill:var(--text-secondary)">双指捏合</text>
+    <text x="240" y="108" font-weight="600" style="fill:var(--accent-text)">缩放（双指中心为锚）</text>
+    <text x="620" y="108" style="fill:var(--text-muted)">滚轮 / ctrl+滚轮</text>
+    <line x1="20" y1="122" x2="980" y2="122" style="stroke:var(--border-subtle)"/>
+    <text x="20" y="146" style="fill:var(--text-secondary)">单指点节点</text>
+    <text x="240" y="146" style="fill:var(--text-primary)">选中 → S2 底部 dock</text>
+    <text x="620" y="146" style="fill:var(--text-muted)">同</text>
+    <line x1="20" y1="160" x2="980" y2="160" style="stroke:var(--border-subtle)"/>
+    <text x="20" y="184" style="fill:var(--text-secondary)">长按节点</text>
+    <text x="240" y="184" font-weight="600" style="fill:var(--accent-text)">上下文 sheet（含重命名 / 多选）</text>
+    <text x="620" y="184" style="fill:var(--text-muted)">右键菜单（现状）</text>
+    <line x1="20" y1="198" x2="980" y2="198" style="stroke:var(--border-subtle)"/>
+    <text x="20" y="222" style="fill:var(--text-secondary)">多选</text>
+    <text x="240" y="222" font-weight="600" style="fill:var(--accent-text)">长按 →「多选」模式 → 点选切换</text>
+    <text x="620" y="222" style="fill:var(--text-muted)">Shift/⌘ 点选 + 左键框选</text>
+    <line x1="20" y1="236" x2="980" y2="236" style="stroke:var(--border-subtle)"/>
+    <text x="20" y="260" style="fill:var(--text-secondary)">双击节点</text>
+    <text x="240" y="260" style="fill:var(--text-muted)">（空）— 重命名走长按</text>
+    <text x="620" y="260" style="fill:var(--text-muted)">重命名（保留）</text>
+  </g>
+  <text x="20" y="288" font-size="11" style="fill:var(--text-muted)">实现：VueFlow props 由 useViewportGestures(isMobileLayout) 单一出处产出；多选不依赖 selectionKeyCode 框选。</text>
+</svg>
+
+<!-- ==================== 4. 前后清单 ==================== -->
+<h2>4. 前后控件清单（画布页签）</h2>
+<p class="sub">①—⑫ 编号与 §1 现状标注图对应。「删/移/并/改/留」与主文档 §5 减法清单一致。</p>
+<table>
+  <thead><tr><th style="width:26px">#</th><th>控件 / 语义</th><th style="width:150px">现状</th><th style="width:180px">目标</th><th style="width:64px">动作</th></tr></thead>
+  <tbody>
+    <tr><td class="num">1</td><td>顶栏 ⋯ 菜单（保存/分镜/发布/导入/导出）</td><td>五项平铺，手动保存</td><td>发布 › 分镜板 › 导出 › 导入；保存改自动状态行</td><td><span class="pill mod">改</span></td></tr>
+    <tr><td class="num">2</td><td>左侧竖轨（添加/资产库/任务/设置/常驻）</td><td>hover 唤出 + 268px 弹出</td><td>拆除；新建走 ＋FAB sheet</td><td><span class="pill del">删</span></td></tr>
+    <tr><td class="num">3</td><td>资产库</td><td>3 入口（竖轨 / ＋瓦片 / 发现）</td><td>＋sheet 通栏瓦片（插入）＋ composer＋（引用）＋ 发现（浏览）</td><td><span class="pill mod">并</span></td></tr>
+    <tr><td class="num">4</td><td>任务面板</td><td>竖轨弹出</td><td>顶栏 ⋯ 动态项「任务（N）」</td><td><span class="pill mov">移</span></td></tr>
+    <tr><td class="num">5</td><td>模型设置</td><td>竖轨 + 我的</td><td>只留「我的」</td><td><span class="pill mov">移</span></td></tr>
+    <tr><td class="num">6</td><td>视口胶囊（小地图/缩放/适应）</td><td>30px 钮 + --neo-* 令牌</td><td>34px 钮 + --lnk-* + 160×104 小地图</td><td><span class="pill mod">改</span></td></tr>
+    <tr><td class="num">7</td><td>多选工具条 13 钮</td><td>贴选区 30px 图标 + hover 下拉</td><td>底部动作条（3 钮）+ 更多 sheet（9 项）</td><td><span class="pill mod">改</span></td></tr>
+    <tr><td class="num">8</td><td>分组色</td><td>hover 下拉 8 色点</td><td>更多 sheet 内 8 色 44px 网格</td><td><span class="pill mod">改</span></td></tr>
+    <tr><td class="num">9</td><td>节点重命名</td><td>仅 dblclick</td><td>长按 sheet「重命名」（dblclick 仅 PC）</td><td><span class="pill mod">改</span></td></tr>
+    <tr><td class="num">10</td><td>节点引用钮</td><td>13px</td><td>32px 热区</td><td><span class="pill mod">改</span></td></tr>
+    <tr><td class="num">11</td><td>dock 收缩态</td><td>hover 展开</td><td>tap 折叠/展开（把手条）</td><td><span class="pill mod">改</span></td></tr>
+    <tr><td class="num">12</td><td>composer / 页签 / 顶栏 / 全屏工作台</td><td>IA v3.2 已定稿</td><td>不动（composer 仅热区微调）</td><td><span class="pill keep2">留</span></td></tr>
+  </tbody>
+</table>
+
+<div class="note"><b>顺手删除的死代码（零引用）：</b><code>CanvasZoomBar.vue</code> · <code>GenerationBar.vue</code> · <code>CanvasStatus.vue</code>。</div>
+
+<!-- ==================== 5. 架构 ==================== -->
+<h2>5. 架构落点</h2>
+<p class="sub">壳层重构、数据层不动。三层改动 + 两条治理规则，详见主文档 §6。</p>
+<svg viewBox="0 0 1000 250" width="100%" style="max-width:1000px" role="img" aria-label="架构分层图">
+  <rect x="20" y="20" width="460" height="120" rx="12" style="fill:var(--accent-subtle);stroke:var(--accent)"/>
+  <text x="36" y="44" font-size="13" font-weight="600" style="fill:var(--text-primary)">MobileCanvasShell（新增 · 唯一移动端编排所有者）</text>
+  <g font-size="11" style="fill:var(--text-secondary)">
+    <rect x="36" y="56" width="130" height="26" rx="13" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+    <text x="101" y="73" text-anchor="middle">＋FAB + 新建 sheet</text>
+    <rect x="174" y="56" width="130" height="26" rx="13" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+    <text x="239" y="73" text-anchor="middle">多选动作条 + 更多</text>
+    <rect x="36" y="90" width="130" height="26" rx="13" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+    <text x="101" y="107" text-anchor="middle">长按上下文 sheet</text>
+    <rect x="174" y="90" width="130" height="26" rx="13" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+    <text x="239" y="107" text-anchor="middle">任务动态项 / 空态</text>
+    <rect x="312" y="56" width="152" height="60" rx="8" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+    <text x="388" y="82" text-anchor="middle">useViewportGestures</text>
+    <text x="388" y="98" text-anchor="middle">（手势 props 单一出处）</text>
+  </g>
+  <text x="36" y="132" font-size="10" style="fill:var(--text-muted)">CanvasPage 模板 8+ 处 isMobileLayout 分支收敛为壳边界一处</text>
+  <rect x="520" y="20" width="460" height="120" rx="12" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="536" y="44" font-size="13" font-weight="600" style="fill:var(--text-primary)">复用不动（只换承载容器：弹出 → sheet）</text>
+  <g font-size="11" style="fill:var(--text-secondary)">
+    <rect x="536" y="56" width="200" height="26" rx="13" style="fill:var(--ink-100)"/>
+    <text x="636" y="73" text-anchor="middle">CanvasAssetPanel / TaskHistory</text>
+    <rect x="536" y="90" width="200" height="26" rx="13" style="fill:var(--ink-100)"/>
+    <text x="636" y="107" text-anchor="middle">DockStudioRouter / 各 DockPanel</text>
+    <rect x="748" y="56" width="216" height="26" rx="13" style="fill:var(--ink-100)"/>
+    <text x="856" y="73" text-anchor="middle">composer 状态机（PR#478）</text>
+    <rect x="748" y="90" width="216" height="26" rx="13" style="fill:var(--ink-100)"/>
+    <text x="856" y="107" text-anchor="middle">VueFlow 数据 / 撤销栈 / 服务层</text>
+  </g>
+  <rect x="20" y="160" width="960" height="70" rx="12" style="fill:var(--surface-raised);stroke:var(--border-subtle)"/>
+  <text x="36" y="184" font-size="12" font-weight="600" style="fill:var(--text-primary)">治理规则（写入 AGENTS.md 前端节）</text>
+  <g font-size="11" style="fill:var(--text-secondary)">
+    <text x="36" y="206">① 移动端编排只归 MobileCanvasShell；页面级组件不再新增 isMobileLayout 条件；禁止 PC 组件内新增 767px media query 补丁（现存三处随重构评估上收）</text>
+    <text x="36" y="224">② 新增移动端专用呈现必须落 components/mobile/ 或 *Mobile* 命名；令牌只消费 --lnk-* L2/L3，深浅成对（design-token.test.ts 守卫）</text>
+  </g>
+</svg>
+
+<p class="sub" style="margin-top:36px">分期：PR1 触控地基（含 P0-1 真机复测）→ PR2 新建收敛 → PR3 多选与 dock → PR4 视觉与卫生 → PR5 壳层抽取。每 PR 真机走查（iOS Safari + Android Chrome），走查表见主文档 §8。</p>
+
+</div>
+<script>
+  var b=document.getElementById('tbtn');
+  b.addEventListener('click',function(){
+    var d=document.body.getAttribute('data-theme')==='dark';
+    document.body.setAttribute('data-theme', d?'light':'dark');
+  });
+  document.body.setAttribute('data-theme', matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+</script>
+</body>
+</html>

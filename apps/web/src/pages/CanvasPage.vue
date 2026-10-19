@@ -79,6 +79,10 @@ import MobileTabBar, { type MobileAppTab } from '@/components/mobile/MobileTabBa
 import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
 import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
 import ProfilePane from '@/components/mobile/ProfilePane.vue'
+import MobileMultiSelectBar from '@/components/mobile/MobileMultiSelectBar.vue'
+import MobileCanvasCreateFab from '@/components/mobile/MobileCanvasCreateFab.vue'
+import MobileCreateSheet from '@/components/mobile/MobileCreateSheet.vue'
+import MobileTaskSheet from '@/components/mobile/MobileTaskSheet.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
 import AccountPanel from '@/components/account/AccountPanel.vue'
 import UsagePanel from '@/components/usage/UsagePanel.vue'
@@ -149,11 +153,15 @@ import { fitImportedViewport } from '@/composables/fitImportedViewport'
 import { fileToPersistedPayload, inferMediaInputKind, persistMediaUrl } from '@/composables/useMediaUpload'
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
+  CANVAS_MULTI_SELECT_ACTIVE_KEY,
   CANVAS_NODE_ADD_AGENT_KEY,
   CANVAS_NODE_CANCEL_KEY,
+  CANVAS_NODE_CLICK_GUARD_KEY,
   CANVAS_NODE_LOCATE_FLASH_KEY,
+  CANVAS_NODE_OPEN_CONTEXT_MENU_KEY,
   CANVAS_NODE_PATCH_KEY,
   CANVAS_NODE_RENAME_KEY,
+  CANVAS_NODE_RENAME_REQUEST_KEY,
   CANVAS_NODE_RETRY_KEY,
   CANVAS_AGENT_DIAGNOSE_KEY,
   CANVAS_REF_PICK_ACTIVE_KEY,
@@ -163,11 +171,13 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { useViewportGestures } from '@/composables/useViewportGestures'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
 import RefineWorkbench from '@/components/canvas/refine/RefineWorkbench.vue'
 import MediaPreviewOverlay from '@/components/canvas/MediaPreviewOverlay.vue'
 import MediaInspectorDrawer from '@/components/media/MediaInspectorDrawer.vue'
 import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
+import { resolveNeoNodeTitle } from '@/components/canvas/neoNodeMeta'
 import NodeCropOverlay from '@/components/canvas/NodeCropOverlay.vue'
 import NodeOutpaintOverlay from '@/components/canvas/NodeOutpaintOverlay.vue'
 import NodeInpaintOverlay from '@/components/canvas/NodeInpaintOverlay.vue'
@@ -309,6 +319,7 @@ const contextMenu = ref<{
   y: number
   nodeId?: string
   nodeType?: string
+  nodeTitle?: string
   hasUrl?: boolean
   mediaKind?: string
   mimeType?: string
@@ -810,6 +821,8 @@ const storyboardShots = computed((): StoryboardShot[] => {
 
 const editorNode = computed((): EditableFlowNode | null => {
   if (multiSelectedIds.value.length !== 1) return null
+  // 多选模式（D-4）：S2/S3 互斥——多选态不弹单节点 dock
+  if (mobileMultiSelectActive.value) return null
   const id = multiSelectedIds.value[0]
   for (const node of nodes.value) {
     if (node.id !== id) continue
@@ -919,6 +932,8 @@ const selectionActionBarNode = computed((): EditableFlowNode | null => {
   if (refinePanelNode.value || gridSlicePanelNode.value) return null
   if (nodeCropNodeId.value || nodeOutpaintNodeId.value || nodeInpaintNodeId.value || nodeElementEditNodeId.value) return null
   if (multiSelectedIds.value.length !== 1) return null
+  // 多选模式（D-4）：S2/S3 互斥——多选态不出单选工具行
+  if (mobileMultiSelectActive.value) return null
   const node = findNodeById(multiSelectedIds.value[0])
   if (!node) return null
   const data = (node.data ?? {}) as Record<string, unknown>
@@ -2084,6 +2099,9 @@ function onNodeDragStop(event: NodeDragEvent) {
 }
 
 function onNodeClick(event: NodeMouseEvent) {
+  // 长按抑制窗（D-6）：长按出上下文菜单后松手的合成 click 直接吞掉
+  if (Date.now() < clickSuppressUntil.value) return
+
   if (pickMode.active.value) {
     const nodeId = event.node.id
     const node = findNodeById(nodeId)
@@ -2103,6 +2121,12 @@ function onNodeClick(event: NodeMouseEvent) {
     } else if (result.duplicate) {
       ElMessage.info('该节点已在引用中')
     }
+    return
+  }
+
+  // 多选模式（D-4）：点选切换；不开单节点 dock（S2/S3 互斥）
+  if (mobileMultiSelectActive.value) {
+    toggleNodeInMultiSelect(event.node.id)
     return
   }
 
@@ -2299,6 +2323,8 @@ async function handleGenerateVideoFromSelection() {
 
 function onPaneClick() {
   if (applyRefineSelectionDecision(null) === 'block') return
+  // 多选模式（D-4）：点空白 = 退出 S3（连同清除选择）
+  exitMultiSelectMode()
   pendingExclusiveSelectId = null
   multiSelectedIds.value = []
   selectedEdgeId.value = null
@@ -2355,6 +2381,68 @@ provide(CANVAS_NODE_PATCH_KEY, patchNodeMediaById)
 provide(CANVAS_NODE_ADD_AGENT_KEY, (nodeId: string) => {
   handleAddToAgentRefs([nodeId])
 })
+
+/** 长按节点 → 统一上下文菜单（D-6）：移动端出底部动作 sheet，PC 仍走右键小浮层 */
+provide(CANVAS_NODE_OPEN_CONTEXT_MENU_KEY, (nodeId: string) => {
+  const node = findNodeById(nodeId)
+  if (!node) return
+  const data = (node.data ?? {}) as Record<string, unknown>
+  contextMenu.value = {
+    x: 0,
+    y: 0,
+    nodeId,
+    nodeType: String(node.type ?? ''),
+    nodeTitle: resolveNeoNodeTitle(String(node.type ?? ''), data),
+    hasUrl: Boolean(String(data.url ?? '').trim()),
+    mediaKind: typeof data.mediaKind === 'string' ? data.mediaKind : undefined,
+    mimeType: typeof data.mimeType === 'string' ? data.mimeType : undefined,
+  }
+})
+
+/** 长按 click 抑制窗（D-6）：节点长按触发后 350ms 内的合成 click 由页面级 @node-click 吞掉 */
+const clickSuppressUntil = ref(0)
+provide(CANVAS_NODE_CLICK_GUARD_KEY, {
+  markSuppressed: () => {
+    clickSuppressUntil.value = Date.now() + 350
+  },
+  shouldSuppress: () => Date.now() < clickSuppressUntil.value,
+})
+
+/**
+ * 移动端多选模式（D-4）：长按节点 → 上下文 sheet「多选」进入；此后点选切换、
+ * 已选节点带勾选徽标；点空白退出。与 S2 单节点 dock 互斥（editorNode /
+ * selectionActionBarNode 在该态返回 null），vue-flow 内部选中态关闭
+ * （nodes-selectable=false），选择完全由应用层驱动。
+ */
+const mobileMultiSelectActive = ref(false)
+provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)
+
+const renameRequestNodeId = ref<string | null>(null)
+provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
+
+function enterMultiSelectMode(seedId: string) {
+  mobileMultiSelectActive.value = true
+  selectNodeIds([seedId])
+}
+
+function exitMultiSelectMode() {
+  if (!mobileMultiSelectActive.value) return
+  mobileMultiSelectActive.value = false
+  multiSelectedIds.value = []
+  clearSelection()
+}
+
+function toggleNodeInMultiSelect(id: string) {
+  const set = new Set(multiSelectedIds.value)
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  pendingExclusiveSelectId = null
+  nodes.value = nodes.value.map((node) => {
+    const selected = set.has(node.id)
+    return node.selected === selected ? node : { ...node, selected }
+  })
+  syncMultiSelectionFromNodes()
+}
 
 function resolveDropPosition(clientPos: { x: number; y: number }, nodeType: string) {
   const flowPoint = screenToFlowPoint(clientPos.x, clientPos.y)
@@ -4336,6 +4424,18 @@ function handleContextAction(action: string) {
   contextMenu.value = null
   if (!menu) return
 
+  if (action === 'rename' && menu.nodeId) {
+    // 打开行内重命名输入（与 PC dblclick 同一个输入框；D-6）
+    renameRequestNodeId.value = menu.nodeId
+    return
+  }
+
+  if (action === 'multi-select' && menu.nodeId) {
+    // 进入多选模式（D-4）：以长按节点为种子
+    enterMultiSelectMode(menu.nodeId)
+    return
+  }
+
   if (action === 'add-agent-ref') {
     const ids = multiSelectedIds.value.length
       ? [...multiSelectedIds.value]
@@ -4806,6 +4906,12 @@ const canvasAreaRef = ref<HTMLElement | null>(null)
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
 const { isMobileLayout } = useAgentMobileLayout()
+/** P0-1（2026-10-19）：VueFlow 手势配置单一出处——移动端单指平移/双指缩放（断点分流），
+ *  PC 逐字保持 [1,2] 中右键平移 + 左键框选。推敲见 useViewportGestures.ts 头部注释。 */
+const viewportGestures = useViewportGestures(
+  isMobileLayout,
+  computed(() => viewportSettings.value.viewLocked),
+)
 const agentPanelExpanded = ref(false)
 /** 移动端画布视图（2026-10-18 信息架构裁决）：默认 false = 对话视图（SSE 对话流 + composer
  *  常驻整页，画布隐藏）。进入画布仅两条路：对话流内点定位（focusNode 系列、handleHistoryLocate）、
@@ -4861,6 +4967,83 @@ function closeMobileAccountPane() {
 function openMobilePlans() {
   showMobilePlans.value = true
 }
+
+/**
+ * PR2 新建收敛（D-2）：移动端摘除左侧竖轨（NodePanelDock）后的入口承载。
+ *   ＋FAB → MobileCreateSheet（全宽：资产库瓦片 + 10 类节点宫格，数据同源竖轨）；
+ *   任务 → 顶栏 ⋯ 动态项 → MobileTaskSheet（CanvasTaskHistoryPanel 面板本体复用）；
+ *   模型设置收敛到「我的」页（ProfilePane open-model-settings，画布内不再有入口）。
+ */
+const showMobileCreateSheet = ref(false)
+const showMobileTaskSheet = ref(false)
+
+/** 顶栏 ⋯ 任务动态项：活跃 = 排队/生成中/待确认（与 CanvasTaskHistoryPanel 的
+ *  lifecycle todo/doing 分组同口径）；无任何任务记录时菜单项不出现（设计 4.5）。 */
+const TASK_ACTIVE_STATUSES = new Set(['pending', 'generating', 'fallback_pending', 'processing', 'running'])
+const mobileTaskActiveCount = ref(0)
+const mobileTaskHasHistory = ref(false)
+let mobileTaskPollTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadMobileTaskCount() {
+  if (!sessionId.value) {
+    mobileTaskActiveCount.value = 0
+    mobileTaskHasHistory.value = false
+    return
+  }
+  try {
+    const { data } = await studioApi.listGenerations({ sessionId: sessionId.value })
+    const records: GenerationRecord[] = data.data ?? []
+    mobileTaskActiveCount.value = records.filter((r) => TASK_ACTIVE_STATUSES.has(r.status)).length
+    mobileTaskHasHistory.value = records.length > 0
+  } catch {
+    /* 计数失败不打扰画布：保持旧值，下个轮询周期重试 */
+  }
+}
+
+function startMobileTaskPolling() {
+  stopMobileTaskPolling()
+  void loadMobileTaskCount()
+  mobileTaskPollTimer = setInterval(() => void loadMobileTaskCount(), 15_000)
+}
+
+function stopMobileTaskPolling() {
+  if (mobileTaskPollTimer) {
+    clearInterval(mobileTaskPollTimer)
+    mobileTaskPollTimer = null
+  }
+}
+
+watch(
+  [isMobileLayout, () => mobileAppTab.value, () => sessionId.value],
+  ([mobile, tab]) => {
+    if (mobile && tab === 'canvas') startMobileTaskPolling()
+    else stopMobileTaskPolling()
+  },
+  { immediate: true },
+)
+
+/** ＋FAB 新建 sheet：节点类型走竖轨同一条创建链路（handleDockAdd） */
+function handleMobileCreate(type: DockNodeType) {
+  handleDockAdd(type)
+  showMobileCreateSheet.value = false
+}
+function handleMobileAssetApply(asset: CanvasAssetItem) {
+  handleAssetApply(asset)
+  showMobileCreateSheet.value = false
+}
+function handleMobileAssetAddToAgent(asset: CanvasAssetItem) {
+  handleAssetAddToAgent(asset)
+  showMobileCreateSheet.value = false
+}
+function handleMobileTaskLocate(payload: { recordId: string; nodeId?: string | null }) {
+  void handleHistoryLocate(payload)
+  showMobileTaskSheet.value = false
+}
+function handleMobileTaskRetry(nodeId: string) {
+  handleHistoryRetry(nodeId)
+  showMobileTaskSheet.value = false
+}
+
 function onMobileTabChange(tab: MobileAppTab) {
   mobileAppTab.value = tab
   if (tab === 'canvas') {
@@ -5018,6 +5201,7 @@ onUnmounted(() => {
   if (pickModeKeydownHandler) {
     window.removeEventListener('keydown', pickModeKeydownHandler)
   }
+  stopMobileTaskPolling()
 })
 </script>
 
@@ -5101,12 +5285,13 @@ onUnmounted(() => {
           :default-viewport="{ zoom: 0.8, x: 0, y: 0 }"
           :min-zoom="0.1"
           :max-zoom="2"
-          :nodes-selectable="!viewportSettings.viewLocked"
+          :nodes-selectable="!viewportSettings.viewLocked && !mobileMultiSelectActive"
           :elements-selectable="!viewportSettings.viewLocked"
           :select-nodes-on-drag="false"
-          :selection-key-code="viewportSettings.viewLocked ? null : true"
-          :pan-on-drag="viewportSettings.viewLocked ? false : [1, 2]"
-          :pan-on-scroll="!viewportSettings.viewLocked"
+          :selection-key-code="viewportGestures.selectionKeyCode"
+          :pan-on-drag="viewportGestures.panOnDrag"
+          :pan-on-scroll="viewportGestures.panOnScroll"
+          :zoom-on-pinch="viewportGestures.zoomOnPinch"
           :pan-activation-key-code="viewportSettings.viewLocked ? null : 'Space'"
           :zoom-on-scroll="!viewportSettings.viewLocked"
           :nodes-draggable="!viewportSettings.viewLocked"
@@ -5144,7 +5329,10 @@ onUnmounted(() => {
             :color="effectiveGridColor"
           />
 
+          <!-- PC 多选工具条：移动端多选态（D-4）改由 MobileMultiSelectBar 承载，
+               过渡期非模式态仍走本组件（与重构前一致） -->
           <MultiSelectToolbarOverlay
+            v-if="!isMobileLayout || !mobileMultiSelectActive"
             :selected-ids="multiSelectedIds"
             :can-generate-video="multiSelectCanGenerateVideo"
             :can-ungroup="multiSelectCanUngroup"
@@ -5275,6 +5463,19 @@ onUnmounted(() => {
         </VueFlow>
         <PlayCanvasView v-else class="h-full" :nodes="playCanvasNodes" />
 
+        <!-- PR2 空态引导（V-3）：空画布首进画布页签的指引文案；pointer-events-none
+             不挡平移/缩放手势。S0 纯画布无底部条，文案切到「切对话页」指引。 -->
+        <div
+          v-if="isMobileLayout && mobileAppTab === 'canvas' && !nodes.length"
+          class="mobile-canvas-empty"
+          data-testid="mobile-canvas-empty"
+        >
+          <p class="mobile-canvas-empty__main">画布还是空的</p>
+          <p class="mobile-canvas-empty__sub">
+            {{ mobileCanvasImm ? '点左下 ＋ 新建节点；想交给 AI，先切到对话页' : '点 ＋ 新建节点，或按住底部条说话' }}
+          </p>
+        </div>
+
         <RefineWorkbench
           v-if="refinePanelNode"
           :node-id="refinePanelNode.id"
@@ -5342,8 +5543,11 @@ onUnmounted(() => {
 
         <DockNoticeLayer />
 
+        <!-- PC 左侧竖轨（D-2）：移动端摘除——hover 唤出/268px 弹出/常驻开关全是
+             鼠标遗产；新建收敛为 ＋FAB 全宽 sheet，资产库进 sheet 顶部瓦片，
+             任务进顶栏 ⋯ 动态项，模型设置归「我的」页。 -->
         <NodePanelDock
-          v-if="!canvasChromeHidden"
+          v-if="!canvasChromeHidden && !isMobileLayout"
           @add="handleDockAdd"
           @open-settings="showModelSettings = true"
           @asset-apply="handleAssetApply"
@@ -5452,6 +5656,8 @@ onUnmounted(() => {
     <MobileTopBar
       v-if="isMobileLayout"
       :tab="mobileAppTab"
+      :task-active-count="mobileTaskActiveCount"
+      :has-task-history="mobileTaskHasHistory"
       @open-drawer="agentRailRef?.openSessionDrawer()"
       @new-chat="agentRailRef?.newAgentSession()"
       @open-history="agentRailRef?.openThreadHistory()"
@@ -5460,6 +5666,7 @@ onUnmounted(() => {
       @publish="openPublish"
       @import-workflow="openWorkflowImportPicker"
       @export-workflow="handleExportPack([], 'full_package')"
+      @open-tasks="showMobileTaskSheet = true"
     />
     <DiscoverPane
       v-if="isMobileLayout && mobileAppTab === 'discover'"
@@ -5535,9 +5742,11 @@ onUnmounted(() => {
       :y="contextMenu.y"
       :node-id="contextMenu.nodeId"
       :node-type="contextMenu.nodeType"
+      :node-title="contextMenu.nodeTitle"
       :has-url="contextMenu.hasUrl"
       :media-kind="contextMenu.mediaKind"
       :mime-type="contextMenu.mimeType"
+      :mobile="isMobileLayout"
       :multi-selected-count="
         contextMenu.nodeId &&
         multiSelectedIds.includes(contextMenu.nodeId) &&
@@ -5548,10 +5757,63 @@ onUnmounted(() => {
       @action="handleContextAction"
       @close="closeContextMenu"
     />
+    <!-- 移动端多选态动作条（D-4，PR1 骨架：已选 N + 完成；PR3 补批量生成/更多 sheet） -->
+    <MobileMultiSelectBar
+      v-if="isMobileLayout && mobileMultiSelectActive"
+      :count="multiSelectedIds.length"
+      @done="exitMultiSelectMode"
+    />
+    <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet；
+         任务 sheet 由顶栏 ⋯ 动态项打开。清位公式与动作条一致（dock/tabbar 之上）。 -->
+    <MobileCanvasCreateFab
+      v-if="isMobileLayout && mobileAppTab === 'canvas' && !canvasChromeHidden"
+      :breathe="!nodes.length"
+      @click="showMobileCreateSheet = true"
+    />
+    <MobileCreateSheet
+      v-if="showMobileCreateSheet"
+      @create="handleMobileCreate"
+      @asset-apply="handleMobileAssetApply"
+      @asset-add-to-agent="handleMobileAssetAddToAgent"
+      @close="showMobileCreateSheet = false"
+    />
+    <MobileTaskSheet
+      v-if="showMobileTaskSheet"
+      @locate="handleMobileTaskLocate"
+      @retry="handleMobileTaskRetry"
+      @close="showMobileTaskSheet = false"
+    />
   </div>
 </template>
 
 <style scoped>
+/* PR2 空态引导（V-3）：居中弱提示，pointer-events-none 不挡画布手势 */
+.mobile-canvas-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lnk-space-2);
+  padding: 0 var(--lnk-space-8);
+  pointer-events: none;
+  text-align: center;
+}
+
+.mobile-canvas-empty__main {
+  font-size: var(--lnk-text-md);
+  font-weight: var(--lnk-weight-semibold);
+  color: var(--lnk-text-secondary);
+}
+
+.mobile-canvas-empty__sub {
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-text-muted);
+  line-height: var(--lnk-lh-xs);
+}
+
 /* 移动端「我的积分 / 我的订阅」二级 pane 外壳（内容由共享面板渲染） */
 .mobile-account-pane {
   position: fixed;

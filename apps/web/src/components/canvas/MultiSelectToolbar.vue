@@ -647,4 +647,45 @@ onUnmounted(() => {
   border-color: var(--neo-accent);
   box-shadow: 0 0 0 1px var(--neo-accent);
 }
+
+/* ---- 移动端触控达标（2026-10-19 PR1，D-7）----
+ * 仅 ≤767px：动作钮 44×44；分组色下拉从「hover 横条」网格化为 44px 色板
+ * （PR3 起整体迁入多选「更多」sheet，此处为过渡态保底）。PC 视觉零变化。 */
+@media (max-width: 767px) {
+  .toolbar-action {
+    padding: 13px; /* 18px 图标 + 26px padding = 44px 命中盒 */
+  }
+
+  .group-color-trigger {
+    width: 44px;
+    height: 44px;
+  }
+
+  .group-color-trigger-core {
+    width: 20px;
+    height: 20px;
+  }
+
+  .group-color-dropdown {
+    padding: 10px;
+  }
+
+  .group-color-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 44px);
+    gap: 8px;
+  }
+
+  .group-color-dot {
+    width: 44px;
+    height: 44px;
+    transform: none;
+    border-radius: 12px;
+  }
+
+  .group-color-strip:hover .group-color-dot,
+  .group-color-strip:hover .group-color-dot:hover {
+    transform: none;
+  }
+}
 </style>

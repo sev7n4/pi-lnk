@@ -423,6 +423,60 @@
   box-shadow: 0 0 0 1px var(--neo-node-selected-ring);
 }
 
+/* 多选模式勾选徽标（2026-10-19 D-4）：仅应用层多选态渲染（PC 无此态），
+   徽标本身不抢触摸（pointer-events:none），点按仍走节点切换选中。 */
+.neo-node-multi-badge {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: var(--lnk-accent);
+  color: var(--lnk-text-on-accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
+.neo-node-multi-badge svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ---- 移动端触控适配（2026-10-19 PR1：44px 热区 + 长按手势卫生）----
+ * 节点内控件生活在画布空间（随视口缩放），热区按画布空间像素计：
+ * 引用钮 28px 视觉 + ::after 外扩至 44px 画布空间热区。 */
+@media (max-width: 767px) {
+  .neo-node-wrapper {
+    /* 禁原生长按 callout / 文本选择——否则 iOS 长按节点弹系统菜单盖住上下文 sheet */
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  .neo-node-rename-input {
+    /* 重命名输入框保留文本选择（user-select:none 的例外） */
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .neo-node-agent-add--title {
+    position: relative;
+    width: 28px;
+    height: 28px;
+  }
+
+  .neo-node-agent-add--title::after {
+    content: '';
+    position: absolute;
+    inset: -8px; /* 28px → 44px 热区 */
+    border-radius: 9999px;
+  }
+}
+
 .neo-node-locate-flash {
   animation: neo-node-locate-flash 1.2s ease-out 1;
 }
