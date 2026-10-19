@@ -65,7 +65,11 @@ const visible = computed(() => {
 
 function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
   const id = props.node?.id
-  if (id) emit(kind, id)
+  if (!id) return
+  // 显式分支：Vue 类型化 emit 是逐事件重载，传联合值不匹配（CI vue-tsc 实测）
+  if (kind === 'confirm') emit('confirm', id)
+  else if (kind === 'cancel') emit('cancel', id)
+  else emit('edit', id)
 }
 </script>
 
