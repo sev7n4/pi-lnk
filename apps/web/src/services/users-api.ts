@@ -52,6 +52,20 @@ export function subscriptionLabel(id?: string | null): string {
   return id && id !== 'free' && MEMBERSHIP_LABELS[id] ? MEMBERSHIP_LABELS[id] : '未订阅'
 }
 
+/// 按池余额分解（多池记账只读聚合）：totalAvailable=可用合计；pools 三个池各自
+/// total/available/expired。⚠️ 与 getPoints().points 口径不同：后者是 User.points
+/// 单一权威余额、不回改过期部分，前端展示需明确用哪个口径，否则会出现「余额 X ≠ 池合计 Y」。
+export interface PointsPoolBreakdown {
+  total: number
+  available: number
+  expired: number
+}
+export interface PointsBreakdown {
+  totalAvailable: number
+  expiredTotal: number
+  pools: Record<'purchased' | 'granted' | 'subscription', PointsPoolBreakdown>
+}
+
 export type PointsRangeKey = '7d' | 'month' | 'all'
 
 /// 订阅快照（后端 SubscriptionDto）：连续包月的周期事实。
@@ -159,6 +173,8 @@ export const membershipApi = {
     api.post<{ data: { membership: string; points: number; changed: boolean } }>('/membership/cancel-subscription'),
   /// 订阅快照：当前档位 / 周期 / 到期 / 是否已取消续期。
   getSubscription: () => api.get<{ data: SubscriptionDto | null }>('/membership/subscription'),
+  /// 积分按池分解（多池记账）。后端早已提供，此前前端零封装。
+  pointsBreakdown: () => api.get<{ data: PointsBreakdown }>('/membership/points-breakdown'),
   /// 取消自动续期（当前周期内仍可用，到期后失效）。
   cancelAutoRenew: () =>
     api.post<{ data: { changed: boolean; subscription: SubscriptionDto | null } }>('/membership/cancel-auto-renew'),

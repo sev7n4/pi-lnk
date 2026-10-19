@@ -63,6 +63,17 @@ const router = createRouter({
       component: () => import('@/pages/ProfilePage.vue'),
     },
     {
+      // 我的订阅 / 我的积分：PC 外壳页；内容与移动端共用同一面板组件（只差导航壳）
+      path: '/subscription',
+      name: 'subscription',
+      component: () => import('@/pages/SubscriptionPage.vue'),
+    },
+    {
+      path: '/points',
+      name: 'points',
+      component: () => import('@/pages/PointsPage.vue'),
+    },
+    {
       path: '/video-studio',
       name: 'video-studio',
       component: () => import('@/pages/studios/VideoStudioPage.vue'),

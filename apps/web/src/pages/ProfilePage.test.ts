@@ -37,10 +37,16 @@ vi.mock('@/services/users-api', () => ({
     transactions: (...args: unknown[]) => membershipMocks.transactions(...args),
   },
   membershipLabel: vi.fn(() => '免费版'),
+  // 账号徽章改用订阅口径（未订阅说「未订阅」）——mock 必须跟着补，否则组件调用 undefined 直接崩
+  subscriptionLabel: vi.fn(() => '未订阅'),
 }))
 
 vi.mock('@/components/membership/MembershipModal.vue', () => ({
   default: { template: '<div class="membership-modal-stub" />' },
+}))
+
+vi.mock('@/components/membership/TopupModal.vue', () => ({
+  default: { template: '<div class="topup-modal-stub" />' },
 }))
 
 const usagePayload = {

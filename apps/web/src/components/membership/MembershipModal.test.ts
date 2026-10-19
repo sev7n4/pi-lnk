@@ -19,13 +19,30 @@ const PLANS_FIXTURE = vi.hoisted((): MembershipPlan[] => [
 /// 可变测试状态：当前档位 / 积分 / 今日是否已签到，按用例改写。
 const state = vi.hoisted(() => ({ membership: 'premium', points: 116365, claimedToday: false }))
 
-const paymentMocks = vi.hoisted(() => ({
-  createSubscriptionOrder: vi.fn(async () => ({ data: { data: { orderId: 'o1', qrCode: 'qr-x' } } })),
+/// 订阅快照夹具：到期日固定在 20 天后（避免依赖真实时钟导致用例抖动）。
+const SUBSCRIPTION_FIXTURE = vi.hoisted(() => ({
+  plan: 'premium',
+  planName: '高级版',
+  status: 'active',
+  periodStart: '2026-10-01T00:00:00.000Z',
+  periodEnd: '2026-11-01T00:00:00.000Z',
+  cancelAtPeriodEnd: false,
+  agreementBound: false,
+  daysRemaining: 20,
 }))
 
 const membershipMocks = vi.hoisted(() => ({
-  cancelSubscription: vi.fn(async () => ({
-    data: { data: { membership: 'free', points: 116365, changed: true } },
+  cancelSubscription: vi.fn(async () => {
+    // 立即退订后服务端已清档：让随后的 getPoints 反映真实状态
+    state.membership = 'free'
+    return { data: { data: { membership: 'free', points: state.points, changed: true } } }
+  }),
+}))
+
+const paymentMocks = vi.hoisted(() => ({
+  createSubscriptionOrder: vi.fn(async () => ({ data: { data: { orderId: 'o1', qrCode: 'qr-x' } } })),
+  cancelAutoRenew: vi.fn(async () => ({
+    data: { data: { changed: true, subscription: { ...SUBSCRIPTION_FIXTURE, cancelAtPeriodEnd: true, status: 'canceled' } } },
   })),
 }))
 
@@ -38,6 +55,7 @@ vi.mock('@/services/users-api', () => ({
     claimDaily: vi.fn(async () => ({ data: { data: { points: state.points + 100, added: 100 } } })),
     upgrade: vi.fn(),
     cancelSubscription: membershipMocks.cancelSubscription,
+    getSubscription: vi.fn(async () => ({ data: { data: SUBSCRIPTION_FIXTURE } })),
   },
   membershipLabel: vi.fn((id?: string) => PLANS_FIXTURE.find((p) => p.id === id)?.name ?? '免费版'),
   subscriptionLabel: vi.fn(
@@ -48,6 +66,7 @@ vi.mock('@/services/users-api', () => ({
 vi.mock('@/services/payment-api', () => ({
   paymentApi: {
     createSubscriptionOrder: paymentMocks.createSubscriptionOrder,
+    cancelAutoRenew: paymentMocks.cancelAutoRenew,
     getOrder: vi.fn(),
   },
 }))
@@ -89,6 +108,7 @@ function mountAs(membership: string) {
 
 beforeEach(() => {
   paymentMocks.createSubscriptionOrder.mockClear()
+  paymentMocks.cancelAutoRenew.mockClear()
   membershipMocks.cancelSubscription.mockClear()
   state.points = 116365
   state.claimedToday = false
@@ -311,7 +331,8 @@ describe('MembershipModal', () => {
     wrapper.unmount()
   })
 
-  it('退订：二次确认后清档，其余档位恢复可购买', async () => {
+  it('取消自动续费：走 cancelAutoRenew，**当前档保持不变**（≠ 退订）', async () => {
+    const msg = spyMessage()
     const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     const wrapper = mountAs('premium')
     await flushPromises()
@@ -320,21 +341,45 @@ describe('MembershipModal', () => {
     await flushPromises()
 
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(membershipMocks.cancelSubscription).toHaveBeenCalledTimes(1)
-    // 档位清空 → 头部说「未订阅」、退订入口消失
-    expect(wrapper.find('.hd-current').text()).toContain('未订阅')
-    expect(wrapper.find('.hd-current').text()).not.toContain('免费版')
-    expect(wrapper.find('.hd-cancel').exists()).toBe(false)
-    // 四档恢复可购买
-    expect(wrapper.findAll('.plan-cta')).toHaveLength(4)
-    expect(wrapper.findAll('.plan-cta-locked')).toHaveLength(0)
-    expect(wrapper.find('.msg').text()).toContain('已退订')
+    expect(paymentMocks.cancelAutoRenew).toHaveBeenCalledTimes(1)
+    // 关键：取消续费不是退订，档位与入口都还在
+    expect(membershipMocks.cancelSubscription).not.toHaveBeenCalled()
+    expect(wrapper.find('.hd-current').text()).toContain('高级版')
+    expect(wrapper.find('.hd-cancel').exists()).toBe(true)
+    expect(String(msg.success.mock.calls[0][0])).toContain('已取消自动续费')
+    expect(String(msg.success.mock.calls[0][0])).toContain('可使用至')
 
     confirmSpy.mockRestore()
     wrapper.unmount()
   })
 
-  it('退订确认被取消：不调用接口，档位保持不变', async () => {
+  it('立即退订：清档后其余档位恢复可购买', async () => {
+    const msg = spyMessage()
+    const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const wrapper = mountAs('premium')
+    await flushPromises()
+
+    await wrapper.find('.hd-cancel--danger').trigger('click')
+    await flushPromises()
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(membershipMocks.cancelSubscription).toHaveBeenCalledTimes(1)
+    expect(paymentMocks.cancelAutoRenew).not.toHaveBeenCalled()
+    // 档位清空 → 头部说「未订阅」、两个退订入口都消失
+    expect(wrapper.find('.hd-current').text()).toContain('未订阅')
+    expect(wrapper.find('.hd-current').text()).not.toContain('免费版')
+    expect(wrapper.find('.hd-cancel').exists()).toBe(false)
+    expect(wrapper.find('.hd-cancel--danger').exists()).toBe(false)
+    // 四档恢复可购买
+    expect(wrapper.findAll('.plan-cta')).toHaveLength(4)
+    expect(wrapper.findAll('.plan-cta-locked')).toHaveLength(0)
+    expect(String(msg.success.mock.calls[0][0])).toContain('已退订')
+
+    confirmSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('确认框被取消：不调用任何退订接口，档位保持不变', async () => {
     const confirmSpy = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel' as never)
     const wrapper = mountAs('premium')
     await flushPromises()
@@ -342,6 +387,7 @@ describe('MembershipModal', () => {
     await wrapper.find('.hd-cancel').trigger('click')
     await flushPromises()
 
+    expect(paymentMocks.cancelAutoRenew).not.toHaveBeenCalled()
     expect(membershipMocks.cancelSubscription).not.toHaveBeenCalled()
     expect(wrapper.find('.hd-current').text()).toContain('高级版')
     expect(wrapper.find('.hd-cancel').exists()).toBe(true)

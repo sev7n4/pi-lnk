@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import MembershipModal from '@/components/membership/MembershipModal.vue'
+import TopupModal from '@/components/membership/TopupModal.vue'
 import UsageDayTable from '@/components/usage/UsageDayTable.vue'
 import UsageHeatmap from '@/components/usage/UsageHeatmap.vue'
 import UsageOverviewCards from '@/components/usage/UsageOverviewCards.vue'
 import UsageTrend from '@/components/usage/UsageTrend.vue'
 import { useAuthStore } from '@/stores/auth'
-import { membershipApi, membershipLabel as planMembershipLabel } from '@/services/users-api'
+import { membershipApi, subscriptionLabel } from '@/services/users-api'
 import { api } from '@/services/api'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { BRAND_LOGO_URL } from '@/constants/brand'
@@ -46,7 +46,7 @@ const allDaysError = ref('')
 const usageLoading = ref(false)
 const daysLoading = ref(false)
 const allDaysLoading = ref(false)
-const showMembership = ref(false)
+const showTopup = ref(false)
 const inviteCopied = ref(false)
 
 /** Independent generations; stale overview / days responses are discarded. */
@@ -69,9 +69,15 @@ function bumpAllDaysFetchGeneration() {
   return allDaysFetchGeneration
 }
 
-const membershipLabel = computed(() => planMembershipLabel(profile.value?.membership))
+/// 账号徽章同样用订阅口径：免费版不是套餐，未订阅一律说「未订阅」。
+const membershipLabel = computed(() => subscriptionLabel(profile.value?.membership))
 
 const isFreeMembership = computed(() => !profile.value?.membership || profile.value.membership === 'free')
+
+/// 订阅口径：未订阅说「未订阅」（免费版不是套餐），不出现「当前套餐：免费版」。
+const subscriptionText = computed(() =>
+  isFreeMembership.value ? '升级会员' : '管理会员',
+)
 
 async function copyInvite() {
   const code = profile.value?.inviteCode
@@ -250,11 +256,28 @@ onMounted(() => {
         <p class="mt-2 text-3xl font-semibold tabular-nums text-[var(--neo-warm)]">{{ profile.points ?? 0 }}</p>
         <p v-if="isFreeMembership" class="mt-3 text-xs text-fg-3">开通会员，获得更多积分与高级能力</p>
         <div class="mt-4 flex gap-3">
-          <button type="button" class="flex-1 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-black" @click="showMembership = true">
+          <button type="button" class="flex-1 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-black" @click="showTopup = true">
             充值
           </button>
-          <button type="button" class="flex-1 rounded-xl border border-overlay/15 px-4 py-2.5 text-sm text-fg" @click="showMembership = true">
-            {{ isFreeMembership ? '升级会员' : '管理会员' }}
+          <button type="button" class="flex-1 rounded-xl border border-overlay/15 px-4 py-2.5 text-sm text-fg" @click="router.push('/subscription')">
+            {{ subscriptionText }}
+          </button>
+        </div>
+        <!-- 我的订阅 / 我的积分：PC 与移动端共用同一面板组件，这里只做入口 -->
+        <div class="mt-3 flex gap-3">
+          <button
+            type="button"
+            class="flex-1 rounded-xl border border-overlay/15 px-4 py-2 text-xs text-fg-2 transition hover:text-fg"
+            @click="router.push('/subscription')"
+          >
+            我的订阅
+          </button>
+          <button
+            type="button"
+            class="flex-1 rounded-xl border border-overlay/15 px-4 py-2 text-xs text-fg-2 transition hover:text-fg"
+            @click="router.push('/points')"
+          >
+            我的积分
           </button>
         </div>
       </section>
@@ -317,7 +340,7 @@ onMounted(() => {
       />
     </div>
 
-    <MembershipModal v-model="showMembership" />
+    <TopupModal v-model="showTopup" />
   </div>
 </template>
 
