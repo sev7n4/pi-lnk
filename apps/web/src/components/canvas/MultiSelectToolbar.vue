@@ -2,6 +2,10 @@
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { GROUP_COLOR_KEYS } from './groupColors'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
+import {
+  useSelectionBatchActions,
+  type SelectionBatchState,
+} from '@/composables/useSelectionBatchActions'
 
 const props = defineProps<{
   selectedIds: string[]
@@ -10,17 +14,7 @@ const props = defineProps<{
   canUngroup?: boolean
   /** 当前分组色（host 传入用于高亮活跃色点；缺省 = neutral 默认色） */
   groupColorKey?: string | null
-  selectionBatch?: {
-    runCount: number
-    /** 已完成节点的可重新生成数量（planner regenerate 模式） */
-    regenCount?: number
-    state: 'idle' | 'running' | 'stopping' | 'done'
-    /** 整批阻断态：任一 pending_confirm、超过 24 上限、或纯缺提示词选区 */
-    blocked?: 'pending_confirm' | 'limit_24' | 'missing_prompt'
-    blockedCount?: number
-    /** 缺提示词（无可尝试输入）节点数 */
-    missingCount?: number
-  }
+  selectionBatch?: SelectionBatchState
 }>()
 
 const emit = defineEmits<{
@@ -107,24 +101,21 @@ function onRegenClick() {
   }
 }
 
-const batchBlocked = computed(() => props.selectionBatch?.blocked ?? null)
-const batchBlockedCount = computed(() => props.selectionBatch?.blockedCount ?? 0)
-const batchRunCount = computed(() => props.selectionBatch?.runCount ?? 0)
-const batchRegenCount = computed(() => props.selectionBatch?.regenCount ?? 0)
-const batchMissingCount = computed(() => props.selectionBatch?.missingCount ?? 0)
-const batchRunning = computed(() => props.selectionBatch?.state === 'running' || props.selectionBatch?.state === 'stopping')
-// 纯缺提示词选区：无可执行、无可重生成、无其他阻断 → 用「缺提示词」替代静默的「生成 · 0」
-const showMissingButton = computed(() =>
-  batchMissingCount.value > 0
-  && batchRunCount.value === 0
-  && batchRegenCount.value === 0
-  && !batchBlocked.value,
-)
-const showGenerateButton = computed(() =>
-  batchRunCount.value > 0
-  || (batchRegenCount.value === 0 && !batchBlocked.value && !showMissingButton.value),
-)
-const showRegenButton = computed(() => batchRegenCount.value > 0 && !batchBlocked.value)
+/**
+ * 批量派生（能否生成 / 可重生成 / 纯缺词 / 整批阻断 / 运行中）统一走
+ * `useSelectionBatchActions`（2026-10-20 PR3）——移动端 S3 底部动作条消费同一份，
+ * 避免两端漂移。PC 渲染不变。
+ */
+const batch = useSelectionBatchActions(() => props.selectionBatch)
+const batchBlocked = computed(() => batch.blocked.value)
+const batchBlockedCount = computed(() => batch.blockedCount.value)
+const batchRunCount = computed(() => batch.runCount.value)
+const batchRegenCount = computed(() => batch.regenCount.value)
+const batchMissingCount = computed(() => batch.missingCount.value)
+const batchRunning = computed(() => batch.running.value)
+const showMissingButton = computed(() => batch.showMissingButton.value)
+const showGenerateButton = computed(() => batch.showGenerateButton.value)
+const showRegenButton = computed(() => batch.showRegenButton.value)
 
 function onBlockedClick() {
   if (batchBlocked.value) emit('blockedHint', batchBlocked.value)
@@ -134,17 +125,8 @@ function onMissingClick() {
   emit('blockedHint', 'missing_prompt')
 }
 
-const blockedTitle = computed(() => {
-  if (batchBlocked.value === 'pending_confirm') {
-    return '选区包含待确认节点，点击定位；请在节点上确认生成'
-  }
-  if (batchBlocked.value === 'limit_24') {
-    return '选区可执行节点超过 24 个上限，请减少选区后重试'
-  }
-  return ''
-})
-
-const missingTitle = '选区节点均未写提示词且无可用上游输出，点击定位第一个问题节点'
+const blockedTitle = computed(() => batch.blockedTitle.value)
+const missingTitle = batch.missingTitle
 
 function onExport(mode: 'full_package' | 'lightweight' | 'media_list_only') {
   exportMenuOpen.value = false

@@ -33,11 +33,37 @@ const title = computed(() => {
 })
 </script>
 
+<style scoped>
+/* 移动端（≤767px，2026-10-20 PR3）：进度卡 fixed 居中会顶在 tabbar 上方，且
+ * w-56 固定宽在 360px 机型上贴边 ⇒ 改为视口内 -12px 边距 + 清位公式，停止钮
+ * 补到 44px 触控。PC 尺寸逐字不变。 */
+@media (max-width: 767px) {
+  .batch-progress-card {
+    left: 12px;
+    right: 12px;
+    bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
+    width: auto;
+    max-width: none;
+    transform: none;
+    padding: var(--lnk-space-3);
+  }
+
+  .batch-progress-bar {
+    width: 100%;
+  }
+
+  .batch-progress-stop {
+    min-height: var(--lnk-touch-target);
+    padding: 0 var(--lnk-space-3);
+  }
+}
+</style>
+
 <template>
   <div
     v-if="visible"
     data-testid="batch-progress-card"
-    class="neo-chrome pointer-events-auto fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-xl px-4 py-3"
+    class="batch-progress-card neo-chrome pointer-events-auto fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-xl px-4 py-3"
     role="status"
   >
     <div class="flex items-center gap-3">
@@ -50,13 +76,13 @@ const title = computed(() => {
         v-if="state === 'running'"
         type="button"
         data-testid="batch-progress-stop"
-        class="rounded-lg border border-[var(--neo-border)] px-2 py-1 text-[11px] text-[var(--neo-text-secondary)] transition hover:text-[var(--neo-text-primary)]"
+        class="batch-progress-stop rounded-lg border border-[var(--neo-border)] px-2 py-1 text-[11px] text-[var(--neo-text-secondary)] transition hover:text-[var(--neo-text-primary)]"
         @click="emit('stop')"
       >
         停止
       </button>
     </div>
-    <div class="mt-2 h-1 w-56 overflow-hidden rounded-full bg-[var(--neo-hover-bg)]">
+    <div class="batch-progress-bar mt-2 h-1 w-56 overflow-hidden rounded-full bg-[var(--neo-hover-bg)]">
       <div
         data-testid="batch-progress-bar"
         class="h-full rounded-full bg-[var(--neo-accent-text)] transition-all duration-300"

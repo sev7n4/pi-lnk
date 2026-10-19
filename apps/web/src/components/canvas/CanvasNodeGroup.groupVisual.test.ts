@@ -192,17 +192,25 @@ describe('CanvasNodeGroup：色卡注入与默认去紫', () => {
     expect(titleScope, 'muted 灰不得回潮').not.toContain('--neo-node-text-muted')
   })
 
-  it('色卡令牌两主题成对：neowow-tokens 深浅块各有 8 个 --neo-group-*，且为复测校准档', () => {
-    const css = readFileSync(join(WEB, 'src', 'styles', 'neowow-tokens.css'), 'utf8')
+  it('色卡令牌两主题成对：design-tokens 深浅块各有 8 个 --lnk-group-*，且为复测校准档', () => {
+    // 2026-10-20 PR3：色值真源迁入 design-tokens.css 的 --lnk-group-*（新组件零 --neo-*），
+    // neowow-tokens 的 --neo-group-* 降级为别名。本测试盯**值**不盯文件位置：
+    // 校准档从新真源读，并配对断言旧名确为别名（防止有人把两份真源又拆开）。
+    const css = readFileSync(join(WEB, 'src', 'styles', 'design-tokens.css'), 'utf8')
     const at = css.indexOf(":root[data-theme='light']")
     expect(at, '找不到浅色块').toBeGreaterThan(0)
-    const count = (scope: string) => (scope.match(/--neo-group-[a-z]+:/g) ?? []).length
+    const count = (scope: string) => (scope.match(/--lnk-group-[a-z]+:/g) ?? []).length
     expect(count(css.slice(0, at))).toBe(8)
     expect(count(css.slice(at))).toBe(8)
     // 校准值钉死：深色档提亮 / 浅色档加深（2026-10-12 复测，用户实测旧值太淡）
-    const dark = css.match(/--neo-group-neutral:\s*(#[0-9a-fA-F]+)/)?.[1]
-    const light = css.slice(at).match(/--neo-group-neutral:\s*(#[0-9a-fA-F]+)/)?.[1]
+    const dark = css.match(/--lnk-group-neutral:\s*(#[0-9a-fA-F]+)/)?.[1]
+    const light = css.slice(at).match(/--lnk-group-neutral:\s*(#[0-9a-fA-F]+)/)?.[1]
     expect(dark).toBe('#6b7080')
     expect(light).toBe('#b9bfd0')
+
+    // 旧名必须是别名而非第二份真源
+    const neo = readFileSync(join(WEB, 'src', 'styles', 'neowow-tokens.css'), 'utf8')
+    expect(neo).toMatch(/--neo-group-neutral:\s*var\(--lnk-group-neutral\)/)
+    expect(neo).not.toMatch(/--neo-group-[a-z]+:\s*#[0-9a-fA-F]+/)
   })
 })

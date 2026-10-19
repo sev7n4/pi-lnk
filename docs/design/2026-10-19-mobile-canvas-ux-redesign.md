@@ -1,6 +1,6 @@
 # 移动端画布页 UI/UX 重构设计方案
 
-> 状态：**已批准（2026-10-19）— 分期实施中**；PR1 触控地基 + PR2 新建收敛已落地（手势分流 / 长按 sheet / 44px / 多选模式 / 竖轨摘除 / ＋FAB 新建 sheet / 任务动态项 / 空态），PR3-5 按 §7 推进
+> 状态：**已批准（2026-10-19）— 分期实施中**；PR1 触控地基 + PR2 新建收敛已合并上线（master `8e6ec51b`），PR3 多选与 dock 实施中（底部动作条 + 更多 sheet + dock tap 化），PR4-5 按 §7 推进
 > 范围：**≤767px 画布页签的页面结构 / 操作按钮 / 手势模型 / 视觉规范 / 架构分层**。PC 端形态不动。
 > 上游：IA v3.2（PR #478，#482）+ [移动端 Composer/画布/SSE 边界规格](../superpowers/specs/2026-10-17-mobile-composer-sse-boundary-design.md)（composer 条形态已定稿，本方案不改其内部）
 > 配对：[移动端对话页 UI/UX 优化设计方案](./2026-10-19-mobile-conversation-ux-redesign.md)（同批；共享 `useLongPress` / `--lnk-hit-min` / 断点「形态 × 能力」拆分，两份的 D 编号互相引用）

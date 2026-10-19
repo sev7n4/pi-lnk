@@ -240,6 +240,18 @@
   --lnk-credit: var(--lnk-amber-400); /* 仅：积分 / 消耗 */
   --lnk-credit-soft: rgba(245, 158, 11, 0.16); /* 积分柔底（原 --neo-warm-soft 平移） */
 
+  /* 分组背景色卡（2026-10-20 PR3 移动端色板接入）：色值真源在此（低饱和 8 档，
+     默认 neutral 刻意避开品牌紫）；neowow-tokens.css 的 --neo-group-* 已降级为
+     指向本组的别名，新组件一律消费 --lnk-group-*（棘轮只减不增）。 */
+  --lnk-group-neutral: #6b7080;
+  --lnk-group-moss: #4f7a5f;
+  --lnk-group-dusk: #5472a8;
+  --lnk-group-clay: #a3854a;
+  --lnk-group-celadon: #4a8b99;
+  --lnk-group-graphite: #5a6070;
+  --lnk-group-rose: #a56479;
+  --lnk-group-plum: #7a68a8;
+
   /* 状态 */
   --lnk-success: var(--lnk-green-400);
   --lnk-warning: var(--lnk-amber-400);
@@ -350,6 +362,16 @@
   --lnk-energy: var(--lnk-cyan-700);  /* 浅底需更深的青 */
   --lnk-credit: var(--lnk-amber-800); /* 浅底需更深的琥珀 */
   --lnk-credit-soft: rgba(138, 82, 0, 0.12); /* 积分柔底（原 --neo-warm-soft 平移） */
+
+  /* 分组色卡·浅色档（2026-10-12 复测整体加深一档保对比度；与深色块成对） */
+  --lnk-group-neutral: #b9bfd0;
+  --lnk-group-moss: #a9c4ae;
+  --lnk-group-dusk: #a8bde0;
+  --lnk-group-clay: #d0b98c;
+  --lnk-group-celadon: #9cc3cc;
+  --lnk-group-graphite: #b0b5c2;
+  --lnk-group-rose: #d8aab6;
+  --lnk-group-plum: #bfaede;
 
   --lnk-success: var(--lnk-green-800);
   --lnk-warning: var(--lnk-amber-800);
