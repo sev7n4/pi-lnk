@@ -169,6 +169,14 @@ export const QUEUE_MARK: Record<"steer" | "followup", string> = {
 	followup: "[用户补充 · 将在本轮收尾后接上]",
 };
 
+/**
+ * 撤回已入队消息的三种结局（2026-10-20，照搬 vendor `CancelQueuedResult.kind`）。
+ *
+ * ⭐ `already_consumed` 是**必须如实透传**的那一支：它表示消息已被 turn 边界取走、
+ * 真的进了对话历史，此刻撤回已晚。折成布尔会让 UI 显示「已撤回」而内容其实还在。
+ */
+export type QueueCancelOutcome = "cancelled" | "already_consumed" | "not_found";
+
 export class PiRuntimeError extends Error {
 	constructor(
 		message: string,
@@ -285,14 +293,14 @@ export class PiRuntimeClient {
 	 * 与 `prompt()` 的差别是**失败语义**：`prompt()` 撞 busy 会 409 抛错，而插话恰恰是在
 	 * 「上一轮还在跑」这个前提下才需要它 —— 所以这里入队失败就抛，由调用方决定怎么收。
 	 *
-	 * @returns `queued: true`（已进 vendor 队列，durable 落盘）
+	 * @returns `queued: true` + `entryId`（撤回键；`entryId` 缺失时为 undefined，见queue()）
 	 */
 	async steer(
 		sessionId: string,
 		text: string,
 		lane = "main",
 		opts?: { turnContext?: PiTurnContext },
-	): Promise<{ queued: boolean }> {
+	): Promise<{ queued: boolean; entryId?: string }> {
 		return this.queue(sessionId, text, "steer", lane, opts);
 	}
 
@@ -302,8 +310,36 @@ export class PiRuntimeClient {
 		text: string,
 		lane = "main",
 		opts?: { turnContext?: PiTurnContext },
-	): Promise<{ queued: boolean }> {
+	): Promise<{ queued: boolean; entryId?: string }> {
 		return this.queue(sessionId, text, "followup", lane, opts);
+	}
+
+	/**
+	 * 撤回单条已入队的插话（2026-10-20，对齐 vendor `AgentLane.cancelQueued`）。
+	 *
+	 * ⚠️ `outcome` 必须原样传给前端，**不能折成布尔**：`already_consumed` 意味着那条消息
+	 * 已经进了对话历史（撤回晚了），此时前端该收起撤回按钮；折成 true/false 会让 UI 假装撤回成功。
+	 */
+	async cancelQueued(
+		sessionId: string,
+		entryId: string,
+		lane = "main",
+	): Promise<{ outcome: QueueCancelOutcome }> {
+		const { status, body } = await this.request<{
+			outcome?: QueueCancelOutcome;
+			error?: string;
+		}>(`/sessions/${encodeURIComponent(sessionId)}/queue/cancel`, {
+			method: "POST",
+			body: JSON.stringify({ entryId, lane }),
+		});
+		if (status >= 400 || body?.error) {
+			throw new PiRuntimeError(body?.error ?? `queue/cancel failed: HTTP ${status}`, status);
+		}
+		if (body?.outcome !== "cancelled" && body?.outcome !== "already_consumed" && body?.outcome !== "not_found") {
+			// 响应形状不认识 ⇒ 绝不静默当成功（撤回是「移除用户内容」的动作，宁可报错）
+			throw new PiRuntimeError(`queue/cancel: unknown outcome ${String(body?.outcome)}`, 502);
+		}
+		return { outcome: body.outcome };
 	}
 
 	private async queue(
@@ -312,22 +348,24 @@ export class PiRuntimeClient {
 		path: "steer" | "followup",
 		lane: string,
 		opts?: { turnContext?: PiTurnContext },
-	): Promise<{ queued: boolean }> {
-		const { status, body } = await this.request<{ queued?: boolean; error?: string }>(
-			`/sessions/${encodeURIComponent(sessionId)}/${path}`,
-			{
-				method: "POST",
-				body: JSON.stringify({
-					text: QUEUE_MARK[path] + "\n" + text,
-					lane,
-					...(opts?.turnContext ? { turnContext: opts.turnContext } : {}),
-				}),
-			},
-		);
+	): Promise<{ queued: boolean; entryId?: string }> {
+		const { status, body } = await this.request<{
+			queued?: boolean;
+			entryId?: string;
+			error?: string;
+		}>(`/sessions/${encodeURIComponent(sessionId)}/${path}`, {
+			method: "POST",
+			body: JSON.stringify({
+				text: QUEUE_MARK[path] + "\n" + text,
+				lane,
+				...(opts?.turnContext ? { turnContext: opts.turnContext } : {}),
+			}),
+		});
 		if (status >= 400 || body?.error) {
 			throw new PiRuntimeError(body?.error ?? `${path} failed: HTTP ${status}`, status);
 		}
-		return { queued: body?.queued !== false };
+		// entryId 缺失不回退成空串：上层据此判定「这条撤不回来」，与「撤成功」区分开
+		return { queued: body?.queued !== false, entryId: body?.entryId };
 	}
 
 	/**

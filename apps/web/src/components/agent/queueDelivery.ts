@@ -58,6 +58,26 @@ export function acceptedHint(intent: "steer" | "followup", blockedByAsk: boolean
     : '会在本轮收尾时接住，你现在可以先走开'
 }
 
+/**
+ * 撤回已入队消息的三种结局（2026-10-20，照搬 vendor `CancelQueuedResult.kind`）。
+ *
+ * ⭐ 与服务端 `QueueCancelOutcome` 同名同义 —— 前端**照抄**而不是自己另立一套，
+ * 避免两边枚举漂移（这类漂移是静默的：多一个值就永远走不到那个分支）。
+ */
+export type QueueCancelOutcome = "cancelled" | "already_consumed" | "not_found";
+
+/** 入队成功后的撤回按钮文案：三态各有不同的诚实说法。 */
+export function cancelOutcomeHint(outcome: QueueCancelOutcome): string {
+  switch (outcome) {
+    case "cancelled":
+      return '已撤回 · 这条不会进入本轮回答'
+    case "already_consumed":
+      return '撤回失败 · agent 已经接住这条了（内容已在对话里）'
+    default:
+      return '撤回失败 · 队列里已找不到这条（可能进程重启过）'
+  }
+}
+
 export function parseQueueDelivery(input: QueueDeliveryInput): QueueDeliveryResult {
   const { ok, status, body } = input
   if (!ok) {

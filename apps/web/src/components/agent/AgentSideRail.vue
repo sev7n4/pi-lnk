@@ -20,7 +20,8 @@ import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
 import { buildTurnReceipt } from './composer/turnReceipt'
-import { acceptedHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
+import { acceptedHint, cancelOutcomeHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
+import type { QueueCancelOutcome } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
 import {
   cancelAgentRun,
@@ -280,6 +281,11 @@ interface QueuedSlot {
   state: QueueState
   /** 成功/失败原因，直接显示在气泡上，不做 toast（流式中弹窗会打断阅读） */
   hint: string
+  /**
+   * vendor 队列里的条目 id = **撤回键**（2026-10-20）。
+   * undefined = 尚未入队（pending/failed）或服务端没回传（老版本）⇒ 不能真撤回。
+   */
+  entryId?: string
 }
 const queued = ref<QueuedSlot | null>(null)
 /**
@@ -2110,6 +2116,10 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
     if (!verdict.delivered) {
       throw new Error(verdict.reason)
     }
+    // ⭐ 收回 entryId（2026-10-20）：服务端把它当成撤回键回传。存进槽位，
+    // 「放弃 / 取回内容」才可能真的从 vendor 队列里撤掉这条（此前只清前端）。
+    const outer = body as { data?: { entryId?: string } } | null
+    slot.entryId = typeof outer?.data?.entryId === 'string' ? outer.data.entryId : undefined
     slot.state = 'accepted'
     // 有未作答的卡时不能说「已并入当前回答」——本轮此刻正在等用户选一个答案，
     // 没有「当前回答」可言（见 pendingAskBlocking 注释）
@@ -2121,6 +2131,59 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
   } catch (err) {
     slot.state = 'failed'
     slot.hint = err instanceof Error ? err.message : '投递失败'
+    return false
+  }
+}
+
+/**
+ * 从 vendor 队列撤回已入队的这条（2026-10-20，对齐上游 `AgentLane.cancelQueued`）。
+ *
+ * ⚠️ 三态必须分开处理，不能一律当成功：
+ * - `cancelled`       真撤回了；
+ * - `already_consumed`已被 turn 边界取走 ⇒ 内容**已在对话历史里**，撤回已晚；
+ * - `not_found`       队列里没有（进程重启 / lane 回收）。
+ *
+ * 后两种都收掉气泡（用户目的达成：不想让它生效），但 `already_consumed` 必须**如实告知**，
+ * 否则用户以为撤回成功、下一轮却又看见它冒出来。
+ *
+ * 撤回失败（网络/服务不可用）时**保留气泡**：此时服务端那条还在，假装撤回是更糟的谎报。
+ */
+async function withdrawQueued(): Promise<boolean> {
+  const slot = queued.value
+  if (!slot) return false
+  if (!slot.entryId) {
+    // 没拿到 entryId（老服务端 / 入队响应缺字段）：只能收掉前端槽位，如实说明撤不干净
+    if (slot.state !== 'pending' && slot.state !== 'failed') {
+      ElMessage.info('这条已送达，收回不了 —— 撤回需要入队时拿到的凭据（当前服务端版本暂不支持）')
+    }
+    dismissQueued()
+    return false
+  }
+  try {
+    const res = await fetch(apiUrl('/api/agent/runs/queue/cancel'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        sessionId: props.sessionId,
+        threadId: agentThreadId.value,
+        entryId: slot.entryId,
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+    const body: unknown = await res.json().catch(() => null)
+    if (!parseQueueDelivery({ ok: res.ok, status: res.status, body }).delivered) {
+      throw new Error('撤回请求未被接受')
+    }
+    const outcome =
+      (body as { data?: { outcome?: QueueCancelOutcome } } | null)?.data?.outcome ?? 'not_found'
+    if (outcome === 'already_consumed') {
+      ElMessage.info(cancelOutcomeHint('already_consumed'))
+    }
+    dismissQueued()
+    return outcome === 'cancelled'
+  } catch (err) {
+    // 失败时**不收气泡**：服务端那条还在，假装撤回会让用户以为撤掉了
+    ElMessage.error(err instanceof Error ? err.message : '撤回失败，请重试')
     return false
   }
 }
@@ -2157,11 +2220,24 @@ function dismissQueued() {
   queued.value = null
 }
 
-/** ✎ 取回内容：把消息退回输入框（不另开卡片），投递未成功时这是唯一的挽回入口 */
-function requeueQueued() {
+/**
+ * ✎ 取回内容：把消息退回输入框（不另开卡片），投递未成功时这是唯一的挽回入口。
+ *
+ * ⚠️ 2026-10-20：已入队的槽位取回时**必须先真撤回**，否则服务端那条还在队列里，
+ * 用户把同一句话改一改再发，就会同时存在两条（一条还在队列里偷偷生效）。
+ * pending / failed 态本来就没入队，直接退文字即可。
+ */
+async function requeueQueued() {
   const slot = queued.value
   if (!slot) return
-  input.value = slot.text
+  const wasDelivered = slot.entryId !== undefined
+  const text = slot.text
+  if (wasDelivered) {
+    await withdrawQueued()
+  }
+  // withdrawQueued 失败时它保留气泡 ⇒ 这里不再覆写，避免与失败态抢同一个槽位
+  if (queued.value && queued.value !== slot) return
+  input.value = text
   dismissQueued()
   nextTick(() => composerRef.value?.focus())
 }
@@ -4310,6 +4386,20 @@ defineExpose({
                   <template v-else>
                     <button v-if="queued.state === 'failed'" type="button" class="queued-act queued-act--primary" @click="requeueQueued">
                       ✎ 取回内容
+                    </button>
+                    <!--
+                      2026-10-20：已入队（accepted/applied）时「知道了」只是收起气泡，
+                      另给一个**真撤回**入口 —— 此前「放弃」只清前端槽位，服务端那条仍在队列里
+                      照常被消费。撤回只在拿到 entryId 时给，否则就是骗人的按钮。
+                    -->
+                    <button
+                      v-if="queued.entryId && queued.state !== 'applied'"
+                      type="button"
+                      class="queued-act"
+                      data-testid="queued-withdraw"
+                      @click="withdrawQueued"
+                    >
+                      ↩︎ 撤回
                     </button>
                     <button type="button" class="queued-act" @click="dismissQueued">
                       {{ queued.state === 'accepted' || queued.state === 'applied' ? '知道了' : '放弃' }}

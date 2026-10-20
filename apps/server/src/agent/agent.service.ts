@@ -50,6 +50,7 @@ import {
   type PiPromptInfo,
   type PiRetentionState,
   type PiSessionLlmOverride,
+  type QueueCancelOutcome,
 } from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability, resolveVisionInputSupport } from '../provider/model-capability'
 import { resolveChannelModelCost } from '../provider/model-cost'
@@ -661,7 +662,7 @@ export class AgentService {
     sessionId: string
     threadId?: string
     text: string
-  }): Promise<{ queued: boolean }> {
+  }): Promise<{ queued: boolean; entryId?: string }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { queued: false }
     const sessionKey = input.threadId?.trim() || input.sessionId
@@ -688,11 +689,31 @@ export class AgentService {
     sessionId: string
     threadId?: string
     text: string
-  }): Promise<{ queued: boolean }> {
+  }): Promise<{ queued: boolean; entryId?: string }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { queued: false }
     const sessionKey = input.threadId?.trim() || input.sessionId
     return this.createPiRuntimeClient(piUrl).followUp(sessionKey, input.text)
+  }
+
+  /**
+   * 撤回单条已入队的插话（2026-10-20）：让前端气泡的「放弃 / 取回内容」真正生效。
+   *
+   * 此前这两个按钮只清前端 `queued.value`，服务端那条仍在 vendor inbox 里照常被消费
+   * —— 用户以为撤回了，实际它还会插进 agent 上下文（对齐 vendor `AgentLane.cancelQueued`）。
+   *
+   * ⚠️ 维护态（`piUrl` 为空）返回 `not_found` 而不是抛错：语义是「这条已经不在队列里了」，
+   * 与前端「放弃」按钮的期望一致（把气泡收掉）。
+   */
+  async cancelQueuedPiRun(input: {
+    sessionId: string
+    threadId?: string
+    entryId: string
+  }): Promise<{ outcome: QueueCancelOutcome }> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return { outcome: 'not_found' }
+    const sessionKey = input.threadId?.trim() || input.sessionId
+    return this.createPiRuntimeClient(piUrl).cancelQueued(sessionKey, input.entryId)
   }
 
   /**
