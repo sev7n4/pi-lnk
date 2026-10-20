@@ -190,6 +190,20 @@ export interface RecoveredQueueItem {
 	text: string;
 }
 
+/**
+ * 插话/尾随消息**自带**的上下文（2026-10-20 P1-1）。
+ *
+ * ⚠️ **刻意与会话级 `turnContext` 分开**：那是「每轮整体覆盖」语义，插话发生在别人那轮
+ * 正在跑的时候，用它会冲掉在跑那轮的动态上下文。本通道只随**这一条队列消息**下发，
+ * 由 pi-runtime 拼进该消息文本 —— 语义上「这条消息引用了这些素材/选中了这些节点」。
+ *
+ * 内容与正常发送同源（同一批 builder），避免两套口径漂移。
+ */
+export interface PiQueueContext {
+  /** 上下文块（侧栏参考素材 / 画布选中摘要），按序拼进消息文本。 */
+  blocks: string[]
+}
+
 export class PiRuntimeError extends Error {
 	constructor(
 		message: string,
@@ -312,7 +326,12 @@ export class PiRuntimeClient {
 		sessionId: string,
 		text: string,
 		lane = "main",
-		opts?: { turnContext?: PiTurnContext },
+		opts?: {
+			turnContext?: PiTurnContext
+			queueContext?: PiQueueContext
+			/** P1-2：多模态直通（与 prompt 顶层 images 同形状）。 */
+			images?: Array<{ name: string; mimeType: string; data: string }>
+		},
 	): Promise<{ queued: boolean; entryId?: string }> {
 		return this.queue(sessionId, text, "steer", lane, opts);
 	}
@@ -322,7 +341,12 @@ export class PiRuntimeClient {
 		sessionId: string,
 		text: string,
 		lane = "main",
-		opts?: { turnContext?: PiTurnContext },
+		opts?: {
+			turnContext?: PiTurnContext
+			queueContext?: PiQueueContext
+			/** P1-2：同 steer。 */
+			images?: Array<{ name: string; mimeType: string; data: string }>
+		},
 	): Promise<{ queued: boolean; entryId?: string }> {
 		return this.queue(sessionId, text, "followup", lane, opts);
 	}
@@ -360,7 +384,12 @@ export class PiRuntimeClient {
 		text: string,
 		path: "steer" | "followup",
 		lane: string,
-		opts?: { turnContext?: PiTurnContext },
+		opts?: {
+			turnContext?: PiTurnContext
+			queueContext?: PiQueueContext
+			/** P1-2：多模态直通，与 prompt 的顶层 images 同形状（base64，无 data: 前缀）。 */
+			images?: Array<{ name: string; mimeType: string; data: string }>
+		},
 	): Promise<{ queued: boolean; entryId?: string }> {
 		const { status, body } = await this.request<{
 			queued?: boolean;
@@ -372,6 +401,12 @@ export class PiRuntimeClient {
 				text: QUEUE_MARK[path] + "\n" + text,
 				lane,
 				...(opts?.turnContext ? { turnContext: opts.turnContext } : {}),
+				// ⭐ P1-1：这条队列消息自带的上下文（参考素材 / 画布选中摘要）。
+				// ⚠️ 与 `turnContext` 是**两个独立通道**：后者是会话级覆盖写（会冲掉在跑那轮），
+				// 前者只随本条消息走。
+				...(opts?.queueContext ? { queueContext: opts.queueContext } : {}),
+				// ⭐ P1-2：插话带图（vendor lane.steer 第二参本就收 ImageContent[]）。
+				...(opts?.images?.length ? { images: opts.images } : {}),
 			}),
 		});
 		if (status >= 400 || body?.error) {

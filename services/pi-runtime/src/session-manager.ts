@@ -435,6 +435,35 @@ export function toRecoveredQueueItems(
 	return out;
 }
 
+/**
+ * 插话/尾随消息**自带**的上下文（2026-10-20 P1-1）。
+ *
+ * ⚠️ **刻意与会话级 `turnContext` 分开**：那是「每轮整体覆盖」语义，而插话发生在
+ * **别人那一轮正在跑**的时候 —— 用它会冲掉在跑那轮的动态上下文（`setTurnContext` 是覆盖写）。
+ * 本通道只随**这一条队列消息**下发，由 `withQueueContext` 拼进该消息文本。
+ *
+ * 内容与正常发送同源（同一批 builder），避免两套口径漂移。
+ */
+export interface QueueContext {
+	/** 上下文块（侧栏参考素材 / 画布选中摘要），按序拼进消息文本。 */
+	blocks: string[];
+}
+
+/**
+ * 把队列消息自带的上下文块拼进消息文本。
+ *
+ * 为什么拼进**文本**而不是走 `turnContext`：见 `QueueContext` 的说明 —— 会话级上下文是
+ * 覆盖写，插话时用它会冲掉在跑那轮的动态上下文。文本是**消息级**的，天然只作用于这一条。
+ *
+ * 拼在**用户原话之后**（而不是之前）：上下文是对「这句话」的注解，放前面会让模型
+ * 先读注解再读问题，反而稀释了用户原话。空块/无上下文 ⇒ 原样返回（不添任何标记）。
+ */
+export function withQueueContext(text: string, context?: QueueContext): string {
+	const blocks = (context?.blocks ?? []).map((b) => b.trim()).filter(Boolean);
+	if (!blocks.length) return text;
+	return `${text}\n\n${blocks.join("\n\n")}`;
+}
+
 interface SessionEntry {
 	id: string;
 	harness: AgentHarness<LnkpiToolContext>;
@@ -2459,13 +2488,23 @@ export class SessionManager {
 		threadKey: string,
 		text: string,
 		laneName = MAIN_LANE,
-		opts?: { turnContext?: TurnContext },
+		opts?: { turnContext?: TurnContext; queueContext?: QueueContext; images?: DirectImage[] },
 	): Promise<{ queued: true; entryId: string }> {
 		const entry = this.require(threadKey);
 		const trimmed = text.trim();
 		if (!trimmed) throw new InvalidInputError("steer requires a non-empty text");
 		const lane = await entry.harness.lane(laneName, this.context);
-		const res = await lane.steer(trimmed, undefined, this.context);
+		const payload = withQueueContext(trimmed, opts?.queueContext);
+		// ⭐ P1-2（2026-10-20）：插话带图 —— vendor `lane.steer` 第二参本就是
+		// `ImageContent[] | undefined`（lane.ts:1418），此前恒传 undefined ⇒「对着这张图说」
+		// 场景下 agent 收不到图。门控与主链路 prompt 同款（directImages !== false），
+		// 绝不发空数组（Review Focus 1）。
+		const directImages = this.config.directImages === false ? undefined : toImageContents(opts?.images);
+		if (directImages) {
+			const tokensEst = (opts?.images ?? []).reduce((acc, img) => acc + estimateImageTokens(img.data ?? ""), 0);
+			this.metrics?.observeDirectImage("sent", tokensEst);
+		}
+		const res = await lane.steer(payload, directImages, this.context);
 		if (!res.ok) throw new QueueRejectedError(entry.id, `steer: ${describeQueueError(res.error)}`);
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
 		entry.lastActivityAt = Date.now();
@@ -2523,13 +2562,20 @@ export class SessionManager {
 		threadKey: string,
 		text: string,
 		laneName = MAIN_LANE,
-		opts?: { turnContext?: TurnContext },
+		opts?: { turnContext?: TurnContext; queueContext?: QueueContext; images?: DirectImage[] },
 	): Promise<{ queued: true; entryId: string }> {
 		const entry = this.require(threadKey);
 		const trimmed = text.trim();
 		if (!trimmed) throw new InvalidInputError("followUp requires a non-empty text");
 		const lane = await entry.harness.lane(laneName, this.context);
-		const res = await lane.followUp(trimmed, undefined, this.context);
+		const payload = withQueueContext(trimmed, opts?.queueContext);
+		// ⭐ P1-2：与 steer 同款带图通道（见 steer 内注释）。
+		const directImages = this.config.directImages === false ? undefined : toImageContents(opts?.images);
+		if (directImages) {
+			const tokensEst = (opts?.images ?? []).reduce((acc, img) => acc + estimateImageTokens(img.data ?? ""), 0);
+			this.metrics?.observeDirectImage("sent", tokensEst);
+		}
+		const res = await lane.followUp(payload, directImages, this.context);
 		if (!res.ok) throw new QueueRejectedError(entry.id, `followUp: ${describeQueueError(res.error)}`);
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
 		entry.lastActivityAt = Date.now();

@@ -51,7 +51,51 @@ describe('AgentController runs/followup（followUp 队列，2026-10-02）', () =
 
     const res = await ctrl.followUpRun({ sessionId: 's1', threadId: 'tid-1', text: '跑完再说' }, req)
     expect(res).toEqual({ code: 0, message: 'ok', data: { queued: true } })
-    expect(followUpPiRun).toHaveBeenCalledWith({ sessionId: 's1', threadId: 'tid-1', text: '跑完再说' })
+    expect(followUpPiRun).toHaveBeenCalledWith({
+      sessionId: 's1',
+      threadId: 'tid-1',
+      text: '跑完再说',
+      userId: 'u1',
+    })
+  })
+
+  /**
+   * P1（2026-10-20）：插话要能带得动参考素材与指代芯片 —— 之前只有「正常发送」走
+   * `buildQueueContext`/`buildQueueDirectImages`，插话路径拿不到图，插话后 agent 成了瞎子。
+   * 这里钉住的是「DTO 有什么就往下传什么」，内容怎么拼是 service 的事。
+   */
+  it('带参考素材 / 指代芯片 / 选中态 / model 时一并发给 service', async () => {
+    const followUpPiRun = vi.fn().mockResolvedValue({ queued: true })
+    const ctrl = new AgentController(
+      { followUpPiRun } as unknown as AgentService,
+      { findOne: vi.fn().mockResolvedValue({ id: 's1' }) } as unknown as SessionsService,
+      {} as never,
+    )
+
+    await ctrl.followUpRun(
+      {
+        sessionId: 's1',
+        threadId: 'tid-1',
+        text: '跑完再说',
+        attachments: [{ id: 'a1', kind: 'image', name: 'a.png', url: 'https://x/a.png' }],
+        refOrder: ['a1'],
+        mentionedKeys: ['@主线'],
+        selectedNodeIds: ['n1'],
+        model: 'glm-4.6v',
+      } as never,
+      req,
+    )
+    expect(followUpPiRun).toHaveBeenCalledWith({
+      sessionId: 's1',
+      threadId: 'tid-1',
+      text: '跑完再说',
+      userId: 'u1',
+      attachments: [{ id: 'a1', kind: 'image', name: 'a.png', url: 'https://x/a.png' }],
+      refOrder: ['a1'],
+      mentionedKeys: ['@主线'],
+      selectedNodeIds: ['n1'],
+      model: 'glm-4.6v',
+    })
   })
 
   it('归属校验失败 → 冒泡，绝不替别人排队', async () => {
@@ -99,7 +143,13 @@ describe('AgentController runs/steer（steering 队列，2026-10-02）', () => {
     const res = await ctrl.steerRun({ sessionId: 's1', threadId: 'tid-1', text: '插话' }, req)
     expect(res).toEqual({ code: 0, message: 'ok', data: { queued: true } })
     expect(findOne).toHaveBeenCalledWith('s1', 'u1')
-    expect(steerPiRun).toHaveBeenCalledWith({ sessionId: 's1', threadId: 'tid-1', text: '插话' })
+    // userId 与归属校验用的是同一个 `req.user.sub`：插话要按「人」做 vision 门控与计费
+    expect(steerPiRun).toHaveBeenCalledWith({
+      sessionId: 's1',
+      threadId: 'tid-1',
+      text: '插话',
+      userId: 'u1',
+    })
   })
 
   it('未传 threadId 时传 undefined（让 service 自行回落 sessionId）', async () => {
@@ -111,7 +161,12 @@ describe('AgentController runs/steer（steering 队列，2026-10-02）', () => {
     )
 
     await ctrl.steerRun({ sessionId: 's1', text: '插话' }, req)
-    expect(steerPiRun).toHaveBeenCalledWith({ sessionId: 's1', threadId: undefined, text: '插话' })
+    expect(steerPiRun).toHaveBeenCalledWith({
+      sessionId: 's1',
+      threadId: undefined,
+      text: '插话',
+      userId: 'u1',
+    })
   })
 
   it('归属校验失败（他人会话）→ 冒泡，绝不把消息塞进别人的跑着的那轮', async () => {
