@@ -277,6 +277,8 @@ type QueueIntent = 'steer' | 'followup'
  */
 type QueueState = 'pending' | 'accepted' | 'applied' | 'failed'
 interface QueuedSlot {
+  /** 槽位本地 id（仅用于 v-for 的 key 与逐条操作定位，与服务端 entryId 无关）。 */
+  id: string
   text: string
   intent: QueueIntent | null // pending 态尚未决定走哪条通道
   state: QueueState
@@ -313,7 +315,21 @@ interface QueuedSlot {
    */
   model?: string
 }
-const queued = ref<QueuedSlot | null>(null)
+/**
+ * ⭐ 2026-10-21 P2：**多槽位**。服务端（`lane` inbox）本来就支持同时挂多条，
+ * 此前前端只有一个槽位 ⇒ 连发第 2 条插话时**第 1 条文字当场消失且无处可寻**
+ * （服务端那条还在，会照常被消费 —— 用户以为没发出去）。
+ *
+ * 上限不是服务端限制，是 UI 卫生：气泡堆叠太多会顶掉对话阅读区，
+ * 且「想插话」的真实场景一次也就一两条。满了就拒绝挂起并如实告知（草稿保留）。
+ */
+const MAX_QUEUED_SLOTS = 5
+const queuedSlots = ref<QueuedSlot[]>([])
+let slotSeq = 0
+function nextSlotId(): string {
+  slotSeq += 1
+  return `q-${slotSeq}`
+}
 /**
  * 「agent 已经接住」的确定性事件（2026-10-02）。
  *
@@ -324,9 +340,12 @@ const queued = ref<QueuedSlot | null>(null)
  */
 const QUEUE_APPLIED_EVENTS = new Set(['thinking', 'text_delta', 'tool_call', 'activity'])
 function markQueueApplied() {
-  if (!queued.value || queued.value.state !== 'accepted') return
-  queued.value.state = 'applied'
-  queued.value.hint = '已接住 · agent 正在处理你的补充'
+  // 多槽位：只推进**最早**那条还没被接住的（FIFO，与服务端消费顺序同向）。
+  // 后面几条仍停在 accepted —— 它们确实还没被处理，说「已接住」是撒谎。
+  const slot = queuedSlots.value.find((s) => s.state === 'accepted')
+  if (!slot) return
+  slot.state = 'applied'
+  slot.hint = '已接住 · agent 正在处理你的补充'
 }
 /** 已发送用户消息的就地二次编辑：正在编辑的消息 id */
 const editingMessageId = ref<string | null>(null)
@@ -736,7 +755,7 @@ const showTaskCard = computed(() => taskProgress.value.items.length > 0)
  * canShowMessageActions 用来判定「本轮是否活跃」，不能被排队状态带偏，否则会在排队期间
  * 把本轮消息的操作按钮提前放出来。
  */
-const showTaskCardAtComposer = computed(() => showTaskCard.value && !queued.value)
+const showTaskCardAtComposer = computed(() => showTaskCard.value && queuedSlots.value.length === 0)
 
 const lastAssistantMessageId = computed(() =>
   [...agent.messages].reverse().find((m) => m.role === 'assistant')?.id,
@@ -2133,11 +2152,11 @@ async function send() {
  */
 const pendingAskBlocking = computed(() => pendingAskUser.value.length > 0)
 
-async function deliverQueued(intent: QueueIntent): Promise<boolean> {
-  const slot = queued.value
-  if (!slot || slot.text.trim() === '' || slot.state !== 'pending') return false
-  slot.state = 'pending'
-  slot.hint = ''
+async function deliverQueued(intent: QueueIntent, slot?: QueuedSlot): Promise<boolean> {
+  const target = slot ?? queuedSlots.value.find((s) => s.state === 'pending')
+  if (!target || target.text.trim() === '' || target.state !== 'pending') return false
+  target.state = 'pending'
+  target.hint = ''
   const endpoint = intent === 'steer' ? '/api/agent/runs/steer' : '/api/agent/runs/followup'
   try {
     const res = await fetch(apiUrl(endpoint), {
@@ -2146,16 +2165,16 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
       body: JSON.stringify({
         sessionId: props.sessionId,
         threadId: agentThreadId.value,
-        text: slot.text,
+        text: target.text,
         // ⭐ 2026-10-20 P1-1：带上挂起时冻结的参考素材与画布选中态。
         // 此前插话只发 text ⇒ 「指着一张图插话」时 agent 收不到图、收不到「这个」指谁。
         // ⚠️ 缺省即不传（不是传空数组）：服务端据此区分「本条没有参考」与「老前端不会带」。
-        ...(slot.attachments?.length ? { attachments: slot.attachments } : {}),
-        ...(slot.refOrder?.length ? { refOrder: slot.refOrder } : {}),
-        ...(slot.mentionedKeys?.length ? { mentionedKeys: slot.mentionedKeys } : {}),
-        ...(slot.selectionNodeIds?.length ? { selectedNodeIds: slot.selectionNodeIds } : {}),
+        ...(target.attachments?.length ? { attachments: target.attachments } : {}),
+        ...(target.refOrder?.length ? { refOrder: target.refOrder } : {}),
+        ...(target.mentionedKeys?.length ? { mentionedKeys: target.mentionedKeys } : {}),
+        ...(target.selectionNodeIds?.length ? { selectedNodeIds: target.selectionNodeIds } : {}),
         // ⭐ P1-2：composer 模型随消息冻结（Nest 据此做 vision 门控组装直通图片）。
-        ...(slot.model?.trim() ? { model: slot.model } : {}),
+        ...(target.model?.trim() ? { model: target.model } : {}),
       }),
       signal: AbortSignal.timeout(5000),
     })
@@ -2167,18 +2186,18 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
     // ⭐ 收回 entryId（2026-10-20）：服务端把它当成撤回键回传。存进槽位，
     // 「放弃 / 取回内容」才可能真的从 vendor 队列里撤掉这条（此前只清前端）。
     const outer = body as { data?: { entryId?: string } } | null
-    slot.entryId = typeof outer?.data?.entryId === 'string' ? outer.data.entryId : undefined
-    slot.state = 'accepted'
+    target.entryId = typeof outer?.data?.entryId === 'string' ? outer.data.entryId : undefined
+    target.state = 'accepted'
     // 有未作答的卡时不能说「已并入当前回答」——本轮此刻正在等用户选一个答案，
     // 没有「当前回答」可言（见 pendingAskBlocking 注释）
-    slot.hint = acceptedHint(intent, pendingAskUser.value.length > 0)
+    target.hint = acceptedHint(intent, pendingAskUser.value.length > 0)
     // ⚠️ 刻意不再自动收起（原来 2.6s 后自己消失）：agent 从入队到首字常 20~40s，
     // 期间气泡若消失，用户会误以为消息丢了。这里常驻，收到 QUEUE_APPLIED_EVENTS 再推进到
     // 「已接住」，最终由用户点「知道了」收起。
     return true
   } catch (err) {
-    slot.state = 'failed'
-    slot.hint = err instanceof Error ? err.message : '投递失败'
+    target.state = 'failed'
+    target.hint = err instanceof Error ? err.message : '投递失败'
     return false
   }
 }
@@ -2196,15 +2215,15 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
  *
  * 撤回失败（网络/服务不可用）时**保留气泡**：此时服务端那条还在，假装撤回是更糟的谎报。
  */
-async function withdrawQueued(): Promise<boolean> {
-  const slot = queued.value
-  if (!slot) return false
-  if (!slot.entryId) {
+async function withdrawQueued(slot?: QueuedSlot): Promise<boolean> {
+  const target = slot ?? queuedSlots.value.find((s) => s.entryId !== undefined)
+  if (!target) return false
+  if (!target.entryId) {
     // 没拿到 entryId（老服务端 / 入队响应缺字段）：只能收掉前端槽位，如实说明撤不干净
-    if (slot.state !== 'pending' && slot.state !== 'failed') {
+    if (target.state !== 'pending' && target.state !== 'failed') {
       ElMessage.info('这条已送达，收回不了 —— 撤回需要入队时拿到的凭据（当前服务端版本暂不支持）')
     }
-    dismissQueued()
+    dismissQueued(target)
     return false
   }
   try {
@@ -2214,7 +2233,7 @@ async function withdrawQueued(): Promise<boolean> {
       body: JSON.stringify({
         sessionId: props.sessionId,
         threadId: agentThreadId.value,
-        entryId: slot.entryId,
+        entryId: target.entryId,
       }),
       signal: AbortSignal.timeout(5000),
     })
@@ -2227,7 +2246,7 @@ async function withdrawQueued(): Promise<boolean> {
     if (outcome === 'already_consumed') {
       ElMessage.info(cancelOutcomeHint('already_consumed'))
     }
-    dismissQueued()
+    dismissQueued(target)
     return outcome === 'cancelled'
   } catch (err) {
     // 失败时**不收气泡**：服务端那条还在，假装撤回会让用户以为撤掉了
@@ -2248,6 +2267,11 @@ async function withdrawQueued(): Promise<boolean> {
 async function queueDraftAsPending(): Promise<boolean> {
   const text = input.value
   if (!text.trim()) return false
+  // ⭐ 槽位已满 ⇒ **不吞草稿**：清空输入框却挂不上去，等于又一次「消息凭空消失」。
+  if (queuedSlots.value.length >= MAX_QUEUED_SLOTS) {
+    ElMessage.warning(`最多同时排 ${MAX_QUEUED_SLOTS} 条补充，先处理掉一条再发`)
+    return false
+  }
   input.value = ''
   // 冻结参考素材（芯片）与画布选中态 —— 与 sendMessage 同一口径
   const { attachments: pendingAttachments, refOrder: pendingRefOrder } = sidebar.toPayload()
@@ -2256,16 +2280,20 @@ async function queueDraftAsPending(): Promise<boolean> {
   const selectionNodeIds = props.selectedNodeIds?.length ? props.selectedNodeIds.slice() : []
   // P1-2：composer 当前模型随消息冻结（Nest 据此做 vision 门控组装直通图片）
   const model = planningModel.value?.trim() || undefined
-  queued.value = {
-    text,
-    intent: null,
-    state: 'pending',
-    hint: '',
-    ...(attachments.length ? { attachments, refOrder: pendingRefOrder } : {}),
-    ...(mentionedKeys.length ? { mentionedKeys } : {}),
-    ...(selectionNodeIds.length ? { selectionNodeIds } : {}),
-    ...(model ? { model } : {}),
-  }
+  queuedSlots.value = [
+    ...queuedSlots.value,
+    {
+      id: nextSlotId(),
+      text,
+      intent: null,
+      state: 'pending',
+      hint: '',
+      ...(attachments.length ? { attachments, refOrder: pendingRefOrder } : {}),
+      ...(mentionedKeys.length ? { mentionedKeys } : {}),
+      ...(selectionNodeIds.length ? { selectionNodeIds } : {}),
+      ...(model ? { model } : {}),
+    },
+  ]
   // 素材已随消息冻结 ⇒ 清掉侧栏的待发芯片，避免下一条消息重复带上同一批
   if (attachments.length) sidebar.clear()
   await nextTick()
@@ -2286,8 +2314,13 @@ async function onComposerSubmit() {
   await send()
 }
 
-function dismissQueued() {
-  queued.value = null
+function dismissQueued(slot?: QueuedSlot) {
+  // 多槽位：给了目标就只收这一条；没给（兼容旧调用 / 键盘路径）收最早那条。
+  if (!slot) {
+    queuedSlots.value = queuedSlots.value.slice(1)
+    return
+  }
+  queuedSlots.value = queuedSlots.value.filter((s) => s.id !== slot.id)
 }
 
 /**
@@ -2297,18 +2330,20 @@ function dismissQueued() {
  * 用户把同一句话改一改再发，就会同时存在两条（一条还在队列里偷偷生效）。
  * pending / failed 态本来就没入队，直接退文字即可。
  */
-async function requeueQueued() {
-  const slot = queued.value
-  if (!slot) return
-  const wasDelivered = slot.entryId !== undefined
-  const text = slot.text
+async function requeueQueued(slot?: QueuedSlot) {
+  const target = slot ?? queuedSlots.value[0]
+  if (!target) return
+  const wasDelivered = target.entryId !== undefined
+  const text = target.text
   if (wasDelivered) {
-    await withdrawQueued()
+    await withdrawQueued(target)
   }
-  // withdrawQueued 失败时它保留气泡 ⇒ 这里不再覆写，避免与失败态抢同一个槽位
-  if (queued.value && queued.value !== slot) return
-  input.value = text
-  dismissQueued()
+  // withdrawQueued 失败时它保留气泡（该槽位仍在 queuedSlots 里）⇒ 这里不再覆写，
+  // 避免与失败态抢同一个槽位 / 把别人那条退回输入框。
+  if (!queuedSlots.value.some((s) => s.id === target.id)) return
+  // 已有草稿时不覆盖：与 abort 回灌同款语义，把取回的文字追加在后面
+  input.value = input.value.trim() ? `${input.value.trim()}\n\n${text}` : text
+  dismissQueued(target)
   nextTick(() => composerRef.value?.focus())
 }
 
@@ -4405,47 +4440,52 @@ defineExpose({
                 applied = agent 已开口/动手（由 QUEUE_APPLIED_EVENTS 推进，替代原先让模型复述一句的做法）；
                 failed = 入队失败，文字保留在槽位里，只能「取回输入框」或「放弃」。
               -->
+              <!--
+                ⭐ 多槽位（2026-10-21 P2）：每条插话/尾随各一个气泡，按挂起顺序排列。
+                单槽位时代连发第 2 条会把第 1 条文字**当场丢掉**（服务端那条还在、照常被消费）。
+                :key 用槽位本地 id（非 entryId —— pending 态还没有 entryId）。
+              -->
+              <template v-for="slot in queuedSlots" :key="slot.id">
               <div
-                v-if="queued"
                 class="agent-queued-bubble mx-3 mb-2 rounded-lg border-l-[3px] px-3 py-2"
-                :class="queued.state === 'failed'
+                :class="slot.state === 'failed'
                   ? 'border-l-[var(--lnk-error)]/60 bg-[var(--lnk-error)]/10'
-                  : queued.state === 'pending'
+                  : slot.state === 'pending'
                     ? 'border-l-[var(--lnk-accent)]/60 bg-[var(--lnk-accent)]/10'
                     : 'border-l-[var(--lnk-success)]/60 bg-[var(--lnk-success)]/10'"
-                :data-queue-state="queued.state"
-                :data-queue-intent="queued.intent ?? ''"
+                :data-queue-state="slot.state"
+                :data-queue-intent="slot.intent ?? ''"
               >
                 <div class="flex items-start gap-2">
                   <span
                     class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                    :class="queued.state === 'failed'
+                    :class="slot.state === 'failed'
                       ? 'bg-[var(--lnk-error)]/20 text-[var(--lnk-error)]'
-                      : queued.state === 'pending'
+                      : slot.state === 'pending'
                         ? 'bg-[var(--lnk-accent)]/20 text-[var(--lnk-accent)]'
                         : 'bg-[var(--lnk-success)]/20 text-[var(--lnk-success)]'"
                   >
                     {{
-                      queued.state === 'pending'
+                      slot.state === 'pending'
                         ? '待发'
-                        : queued.state === 'failed'
+                        : slot.state === 'failed'
                           ? '未送达'
-                          : queued.state === 'applied'
+                          : slot.state === 'applied'
                             ? '已接住'
                             : '已入队'
                     }}
                   </span>
-                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--lnk-text-primary)]">{{ queued.text }}</p>
+                  <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[var(--lnk-text-primary)]">{{ slot.text }}</p>
                 </div>
                 <p
-                  v-if="queued.hint"
+                  v-if="slot.hint"
                   class="mt-1 text-[11px] leading-snug text-[var(--lnk-text-muted)]"
                   data-testid="queued-hint"
                 >
-                  {{ queued.hint }}
+                  {{ slot.hint }}
                 </p>
                 <div class="mt-1.5 flex flex-wrap items-center gap-2">
-                  <template v-if="queued.state === 'pending'">
+                  <template v-if="slot.state === 'pending'">
                     <!--
                       有未作答的卡时，两条动作都还是能点的（用户可能就是想在选之前补一句），
                       但必须把「会排在你的答案之后」说在前面 —— 否则点下去得到的是
@@ -4458,17 +4498,17 @@ defineExpose({
                     >
                       agent 正在等你作答 · 下面这两条都会排在你答完这张卡之后（建议先答这张卡）
                     </p>
-                    <button type="button" class="queued-act queued-act--primary" @click="deliverQueued('steer')">
+                    <button type="button" class="queued-act queued-act--primary" @click="deliverQueued('steer', slot)">
                       ⏵ 立即插话{{ pendingAskBlocking ? '（答完这张卡后接）' : '' }}
                     </button>
-                    <button type="button" class="queued-act" @click="deliverQueued('followup')">
+                    <button type="button" class="queued-act" @click="deliverQueued('followup', slot)">
                       🕒 等它跑完再说
                     </button>
-                    <button type="button" class="queued-act" @click="requeueQueued">✎ 取回内容</button>
-                    <button type="button" class="queued-act" @click="dismissQueued">🗑 放弃</button>
+                    <button type="button" class="queued-act" @click="requeueQueued(slot)">✎ 取回内容</button>
+                    <button type="button" class="queued-act" @click="dismissQueued(slot)">🗑 放弃</button>
                   </template>
                   <template v-else>
-                    <button v-if="queued.state === 'failed'" type="button" class="queued-act queued-act--primary" @click="requeueQueued">
+                    <button v-if="slot.state === 'failed'" type="button" class="queued-act queued-act--primary" @click="requeueQueued(slot)">
                       ✎ 取回内容
                     </button>
                     <!--
@@ -4477,20 +4517,21 @@ defineExpose({
                       照常被消费。撤回只在拿到 entryId 时给，否则就是骗人的按钮。
                     -->
                     <button
-                      v-if="queued.entryId && queued.state !== 'applied'"
+                      v-if="slot.entryId && slot.state !== 'applied'"
                       type="button"
                       class="queued-act"
                       data-testid="queued-withdraw"
-                      @click="withdrawQueued"
+                      @click="withdrawQueued(slot)"
                     >
                       ↩︎ 撤回
                     </button>
-                    <button type="button" class="queued-act" @click="dismissQueued">
-                      {{ queued.state === 'accepted' || queued.state === 'applied' ? '知道了' : '放弃' }}
+                    <button type="button" class="queued-act" @click="dismissQueued(slot)">
+                      {{ slot.state === 'accepted' || slot.state === 'applied' ? '知道了' : '放弃' }}
                     </button>
                   </template>
                 </div>
               </div>
+              </template>
               <!-- P1-5 移动端底部裸条（三态共条）：
                    本容器桌面端 display:contents（dock 内布局零改动）；移动端成为贴底裸条表面，
                    内部经 CSS 摊平为 [芯片行?][＋/文本/模型⌄/发送]。系统层（composer-status-line /

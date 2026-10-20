@@ -14,7 +14,13 @@ import { describe, expect, it } from 'vitest'
 const here = dirname(fileURLToPath(import.meta.url))
 const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
 
-/** 花括号配平提取函数全文；缺失即 throw（保持非空类型，免得一处处 `!` 断言）。 */
+/**
+ * 花括号配平提取函数全文；缺失即 throw（保持非空类型，免得一处处 `!` 断言）。
+ *
+ * ⚠️ **签名按前缀匹配，不锁完整形参表**（2026-10-21 P2 教训）：多槽位改造给
+ * withdrawQueued/requeueQueued/deliverQueued 都加了 slot 形参，锁死完整签名会让
+ * 「签名演进」把守卫全打红 —— 而契约（端点、顺序、门控）其实一点没变。
+ */
 function requireFnBody(signature: string): string {
   const start = sfc.indexOf(signature)
   if (start === -1) throw new Error(`未找到函数：${signature}`)
@@ -35,7 +41,7 @@ function requireFnBody(signature: string): string {
 
 describe('插话撤回接线（P0）', () => {
   it('withdrawQueued 真的打服务端撤回端点，不是只清前端', () => {
-    const body = requireFnBody('async function withdrawQueued()')
+    const body = requireFnBody('async function withdrawQueued(')
 
     // 有效性配对：确实调了服务端端点。⚠️ 必须匹配 `await fetch(apiUrl(...` 的**完整调用形态**，
     // 不能只 contains 端点串 —— 否则把调用藏进 `if (false)` 后面也照样通过（变异实测过）。
@@ -47,7 +53,8 @@ describe('插话撤回接线（P0）', () => {
     // 撤回失败必须**保留气泡**（服务端那条还在，假装撤回是更糟的谎报）
     expect(body).toMatch(/catch[\s\S]*ElMessage\.error/)
     const catchAt = body.indexOf('catch')
-    const dismissAt = body.indexOf('dismissQueued()')
+    // 多槽位后收气泡是「只收这一条」，调用形态是 dismissQueued(target)
+    const dismissAt = body.indexOf('dismissQueued(')
     expect(
       catchAt,
       'withdrawQueued 没有失败分支 —— 撤回失败时前端会假装撤回成功',
@@ -56,18 +63,18 @@ describe('插话撤回接线（P0）', () => {
   })
 
   it('已入队的取回必须先撤回（否则同句话会同时存在两条）', () => {
-    const body = requireFnBody('async function requeueQueued()')
+    const body = requireFnBody('async function requeueQueued(')
 
     // 有效性配对：先判断是否已入队
     expect(body).toContain('entryId')
-    expect(body).toContain('withdrawQueued()')
+    expect(body).toContain('withdrawQueued(')
     // 撤回调用必须在写入 input 之前
-    expect(body.indexOf('withdrawQueued()')).toBeLessThan(body.indexOf('input.value ='))
+    expect(body.indexOf('withdrawQueued(')).toBeLessThan(body.indexOf('input.value ='))
   })
 
   it('entryId 由入队响应提取并落进槽位（撤回键的来源）', () => {
-    const deliver = requireFnBody('async function deliverQueued(intent: QueueIntent)')
-    expect(deliver).toContain('slot.entryId')
+    const deliver = requireFnBody('async function deliverQueued(')
+    expect(deliver).toMatch(/\.entryId\s*=/)
 
     const slot = /interface QueuedSlot \{[\s\S]*?\n\}/.exec(sfc)
     expect(slot, '未找到 QueuedSlot 接口').toBeTruthy()
@@ -80,12 +87,12 @@ describe('插话撤回接线（P0）', () => {
       .slice(sfc.indexOf('<template>'), sfc.lastIndexOf('</template>'))
       .replace(/<!--[\s\S]*?-->/g, '')
     expect(tpl).toContain('withdrawQueued')
-    // 出现条件必须带 entryId 门控
-    expect(tpl).toMatch(/v-if="queued\.entryId[^"]*"[\s\S]{0,200}@click="withdrawQueued"/)
+    // 出现条件必须带 entryId 门控（多槽位后是 slot.entryId）
+    expect(tpl).toMatch(/v-if="slot\.entryId[^"]*"[\s\S]{0,200}@click="withdrawQueued\(slot\)"/)
   })
 
   it('already_consumed 必须如实告知，不得当成撤回成功', () => {
-    const body = requireFnBody('async function withdrawQueued()')
+    const body = requireFnBody('async function withdrawQueued(')
     expect(body).toContain('already_consumed')
     // 撤回成功与否以 outcome 判定，不是「请求没报错就算成功」
     expect(body).toMatch(/outcome\s*===\s*'cancelled'/)
