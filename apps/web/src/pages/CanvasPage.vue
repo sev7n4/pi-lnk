@@ -21,7 +21,7 @@ import { Background } from '@vue-flow/background'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
-import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult } from '@lnkpi/shared'
+import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult, CanvasGroup } from '@lnkpi/shared'
 import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError } from '@lnkpi/shared'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
@@ -94,23 +94,24 @@ import {
   applyArrangeLayout,
   applySnapOnRelease,
   createGroupFromSelection,
-  detachNodesFromGroups,
+  detachNodesFromGroupNodes,
+  foldGroups,
   getNodeSize,
   getSelectionBounds,
+  isGroupNode,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
-  moveGroupWithChildren,
-  patchGroupColorKey,
-  renameGroup,
-  syncGroupsToChildren,
+  materializeGroups,
+  patchGroupNodeData,
+  releaseNodesFromGroups,
+  syncGroupsToFitChildren,
   ungroupById,
-  type CanvasGroup,
   type FlowNode,
 } from '@/composables/useCanvasGrouping'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import MultiSelectToolbarOverlay from '@/components/canvas/MultiSelectToolbarOverlay.vue'
 import ProposeConfirmOverlay from '@/components/canvas/ProposeConfirmOverlay.vue'
-import CanvasGroupOverlay from '@/components/canvas/CanvasGroupOverlay.vue'
+import CanvasNodeGroup from '@/components/canvas/CanvasNodeGroup.vue'
 import SelectionBatchProgressCard from '@/components/canvas/SelectionBatchProgressCard.vue'
 import MultiSelectConnectOverlay from '@/components/canvas/MultiSelectConnectOverlay.vue'
 import BatchConnectPickerLine from '@/components/canvas/BatchConnectPickerLine.vue'
@@ -947,11 +948,20 @@ const multiSelectCanGenerateVideo = computed(() => {
   return hasText && hasImage
 })
 
-// ── 分组（2026-10-20 侧车化：分组不再是节点，存 canvasData.groups）──────
-/** 画布分组（overlay 渲染）。子节点一律绝对坐标，无 parentNode 语义。 */
-const groups = ref<CanvasGroup[]>([])
-/** 当前选中的分组（点分组标题条选中；工具条据此显示解组 + 色卡）。 */
-const selectedGroupId = ref<string | null>(null)
+// ── 分组（2026-10-21 回归原生节点形态）──────────────────────────
+//
+// 分组在工作内存里是 `type:'group'` 的 vue-flow 节点（`nodeTypes.group`），
+// 父子关系靠 parentNode + extent:'parent' + expandParent ⇒ 整框可拖、单击选中、
+// 层级与命中测试全部由库提供，不再自研 overlay。
+//
+// **落库格式一行不改**：保存时 foldGroups() 把 group 节点折叠回
+// `CanvasData.groups` + 子节点绝对坐标；加载时 materializeGroups() 反向物化。
+// ⇒ `groups` 不再是第二份真值（消除了 #494 以来 nodes ⇄ groups 互相同步的漂移面），
+// 也永远不会出现「group 节点被写进 canvasData.nodes」。
+/** 当前选中的分组（点框即选中；工具条据此显示解组 + 色卡）。 */
+const selectedGroupId = computed<string | null>(
+  () => nodes.value.find((n) => n.selected && isGroupNode(n as unknown as FlowNode))?.id ?? null,
+)
 
 /** 单选一个分组时，工具条展示解组/色卡（复用旧 canUngroup 语义）。 */
 const multiSelectCanUngroup = computed(() => Boolean(selectedGroupId.value))
@@ -960,23 +970,24 @@ const multiSelectCanUngroup = computed(() => Boolean(selectedGroupId.value))
 const multiSelectGroupColorKey = computed(() => {
   const id = selectedGroupId.value
   if (!id) return null
-  const key = groups.value.find((g) => g.id === id)?.colorKey
+  const key = nodes.value.find((n) => n.id === id)?.data?.colorKey
   return typeof key === 'string' ? key : null
 })
 
-/** 选中的分组 id 供工具条定位（分组 id 不是节点 id，单独占一个槽位）。 */
+/** 分组选中态优先（分组 id 也是节点 id，但工具条语义不同：解组 + 色卡）。 */
 const toolbarSelectionIds = computed<string[]>(() =>
   selectedGroupId.value ? [selectedGroupId.value] : multiSelectedIds.value,
 )
 
-/** 选中分组的外框（工具条定位锚点；分组不是节点，取不到节点包围盒）。 */
-const selectedGroupRect = computed(() => {
-  const id = selectedGroupId.value
-  if (!id) return null
-  const group = groups.value.find((g) => g.id === id)
-  if (!group) return null
-  return { position: group.position, size: group.size }
-})
+/** 打组后只留分组自身选中（清掉子节点多选，工具条才不会同时弹两套动作）。 */
+function selectOnlyGroup(groupId: string) {
+  nodes.value = nodes.value.map((n) => ({
+    ...n,
+    selected: n.id === groupId,
+  }))
+  multiSelectedIds.value = []
+  clearSelection()
+}
 
 /** 框选多个节点 → 打组。每条路径都必须给反馈（静默 = 用户读成「打组失败」）。 */
 function handleGroupSelection() {
@@ -985,36 +996,37 @@ function handleGroupSelection() {
     return
   }
   const picked = multiSelectedIds.value.length
-  const result = createGroupFromSelection(
-    groups.value,
-    nodes.value as unknown as FlowNode[],
-    multiSelectedIds.value,
-  )
+  const result = createGroupFromSelection(flowNodes.value, multiSelectedIds.value)
   if (!result) {
     ElMessage.info('请先框选至少 2 个节点再打组')
     return
   }
-  groups.value = result.groups
-  selectedGroupId.value = result.group.id
-  multiSelectedIds.value = []
-  clearSelection()
+  nodes.value = result.nodes as EditableFlowNode[]
+  selectOnlyGroup(result.groupId)
   persistUserEdit()
   // 分组框可能很大（子节点分散），明确告诉用户发生了什么、框里会有什么。
+  const title = String(nodes.value.find((n) => n.id === result.groupId)?.data?.title ?? '未命名分组')
   if (result.mode === 'reselect') {
-    ElMessage.info(`所选 ${picked} 个节点已在「${result.group.title}」中，已为你选中该分组`)
+    ElMessage.info(`所选 ${picked} 个节点已在「${title}」中，已为你选中该分组`)
   } else if (result.mode === 'merged') {
-    ElMessage.success(`已把所选 ${result.group.childIds.length} 个节点归并为「${result.group.title}」`)
+    ElMessage.success(`已把所选 ${result.childIds.length} 个节点归并为「${title}」`)
   } else {
-    ElMessage.success(`已打组「${result.group.title}」，含 ${result.group.childIds.length} 个节点`)
+    ElMessage.success(`已打组「${title}」，含 ${result.childIds.length} 个节点`)
   }
 }
 
-/** 解组：只移除分组框，子节点保持原坐标。 */
+/**
+ * 解组：只移除分组框，子节点保持原坐标。
+ * 框不存在时静默返回 —— 调用方（工具条 / 快捷键）不该因此报「解组失败」。
+ */
 function handleUngroupSelection(id?: string) {
   const targetId = id ?? selectedGroupId.value
   if (!targetId) return
-  groups.value = ungroupById(groups.value, targetId)
-  if (selectedGroupId.value === targetId) selectedGroupId.value = null
+  const next = ungroupById(flowNodes.value, targetId)
+  if (!next) return
+  nodes.value = next as EditableFlowNode[]
+  multiSelectedIds.value = []
+  clearSelection()
   persistUserEdit()
 }
 
@@ -1022,50 +1034,66 @@ function handleUngroupSelection(id?: string) {
 function handleGroupColorSelection(key: string | null) {
   const id = selectedGroupId.value
   if (!id) return
-  groups.value = patchGroupColorKey(groups.value, id, key)
+  nodes.value = patchGroupNodeData(flowNodes.value, id, { colorKey: key }) as EditableFlowNode[]
   persistUserEdit()
 }
 
-/** 拖分组框 → 整组平移（子节点跟着走）。拖动中不落库，松手才存。 */
-function handleGroupMove(groupId: string, delta: { x: number; y: number }) {
-  const moved = moveGroupWithChildren(
-    groups.value,
-    nodes.value as unknown as FlowNode[],
-    groupId,
-    delta,
-  )
-  groups.value = moved.groups
-  nodes.value = moved.nodes as EditableFlowNode[]
-}
-
-/** 拖动结束：落库（拖动过程中不落库，避免每帧写接口）。 */
-function handleGroupMoveEnd() {
-  persistUserEdit()
-}
-
-/** 双击分组标题条重命名。 */
-function handleGroupRename(groupId: string, title: string) {
-  groups.value = renameGroup(groups.value, groupId, title)
-  persistUserEdit()
-}
-
-/** 点分组标题条：选中该分组并清掉节点多选。 */
-function handleGroupSelect(groupId: string) {
-  selectedGroupId.value = groupId
-  multiSelectedIds.value = []
-  clearSelection()
-}
-
-/** 节点被删后从分组里摘掉；不足 2 个的分组自动解散。 */
+/**
+ * 节点被删后收拾分组：把被删节点放出来，剩余不足 2 个的分组自动解散。
+ * 注意顺序：**先删节点再收拾分组**，否则绝对坐标会算在已经不存在的节点上。
+ */
 function forgetGroupsForRemovedNodes(removedIds: Iterable<string>) {
-  groups.value = detachNodesFromGroups(groups.value, removedIds)
+  nodes.value = detachNodesFromGroupNodes(flowNodes.value, removedIds) as EditableFlowNode[]
 }
 
-/** 子节点位置/尺寸变化后重算分组外框（拖拽结束、加载完成都调；幂等）。 */
-function syncGroupRects() {
-  if (!groups.value.length) return
-  groups.value = syncGroupsToChildren(groups.value, nodes.value as unknown as FlowNode[])
+/** 子节点位置/尺寸变化后把分组框贴回包围盒（拖拽结束、加载完成都调；幂等）。 */
+function fitGroups() {
+  nodes.value = syncGroupsToFitChildren(flowNodes.value) as EditableFlowNode[]
 }
+
+/**
+ * 分组选中态是从 `node.selected` 派生的（不是独立 ref），所以「退出分组选中」
+ * = 把分组节点的 selected 打掉。没有分组被选中时零扰动（不改 nodes 引用）。
+ */
+function clearGroupSelection() {
+  const hasSelectedGroup = nodes.value.some(
+    (n) => n.selected && isGroupNode(n as unknown as FlowNode),
+  )
+  if (!hasSelectedGroup) return
+  nodes.value = nodes.value.map((n) =>
+    n.selected && isGroupNode(n as unknown as FlowNode) ? { ...n, selected: false } : n,
+  )
+}
+
+/**
+ * 与画布现状对齐：父分组已不存在的子节点回顶层（自愈 agent 删节点 / 存量脏数据），
+ * 再把每个分组框贴回子节点包围盒。幂等。
+ */
+function reconcileGroups() {
+  const present = new Set(nodes.value.map((n) => n.id))
+  const orphans = nodes.value
+    .filter((n) => n.parentNode && !present.has(n.parentNode))
+    .map((n) => n.id)
+  if (orphans.length > 0) {
+    nodes.value = releaseNodesFromGroups(flowNodes.value, orphans) as EditableFlowNode[]
+  }
+  fitGroups()
+}
+
+/**
+ * 移动端不拖分组框（GC4）：整块框在触屏上会吃掉平移/长按手势。
+ * PC 端整框可拖是本批的核心诉求，所以这里按布局而不是按能力关。
+ * 无分组节点 / 已经是目标值时零扰动（不改 nodes 引用）。
+ */
+function applyGroupDraggable(mobile: boolean) {
+  const wants = !mobile
+  const groups = nodes.value.filter((n) => isGroupNode(n as unknown as FlowNode))
+  if (groups.length === 0 || groups.every((n) => n.draggable === wants)) return
+  nodes.value = nodes.value.map((n) =>
+    isGroupNode(n as unknown as FlowNode) ? { ...n, draggable: wants } : n,
+  )
+}
+
 
 // 派生：plan（懒计算，仅当选区 ≥ 2 时）
 // meta 同时承载 regenerate 版 plan 与整批阻断态（pending_confirm / 24 上限），
@@ -1299,6 +1327,9 @@ const nodeTypes = {
   video: CanvasNodeVideo,
   text: CanvasNodeText,
   audio: CanvasNodeAudio,
+  // 2026-10-21 分组回归原生节点形态：整框可拖 / 单击选中由 vue-flow 提供。
+  // ⛔ 它只在内存里存在，保存时会被 foldGroups 折叠回 canvasData.groups。
+  group: CanvasNodeGroup,
 }
 
 function onConnect(connection: Connection) {
@@ -1595,8 +1626,8 @@ async function handleAgentActions(actions: unknown[]) {
   )
   nodes.value = result.nodes as unknown as EditableFlowNode[]
   edges.value = result.edges as unknown as CanvasEdge[]
-  // 分组是侧车：agent 可能删/移节点 ⇒ 对齐分组（摘掉已删子节点、重算外框）。
-  syncGroupRects()
+  // 分组是节点：agent 可能删/移节点 ⇒ 对齐分组（孤儿回顶层、框贴回包围盒）。
+  reconcileGroups()
   // set_viewport action：把模型指定的视口落到位（与 panViewport 同款的防御式取用）
   if (result.viewport) {
     const flow = vueFlowRef.value as {
@@ -1847,7 +1878,10 @@ function syncMultiSelectionFromNodes() {
   }
   const ids: string[] = []
   for (const node of nodes.value) {
-    if (node.selected) ids.push(node.id)
+    // 分组节点不进「节点选中」语义：它驱动的是分组工具条（解组 + 色卡）。
+    // 塞进 selectedNodeId 会让 dock / studio 尝试打开一个 neoNodeMeta 里
+    // 已不存在的 `group` 面板（表现为点一下分组弹出一个空白面板）。
+    if (node.selected && !isGroupNode(node as unknown as FlowNode)) ids.push(node.id)
   }
   multiSelectedIds.value = ids
   if (ids.length === 1) {
@@ -1966,8 +2000,8 @@ function onNodeDragStop(event: NodeDragEvent) {
     }, 500)
   }
   dragStartPositions = new Map()
-  // 分组框跟着子节点走：拖完重算外框（分组是侧车，不吃 VueFlow 的 parentNode）。
-  syncGroupRects()
+  // 分组是 vue-flow 父节点：拖子节点到边缘会 expandParent 撑大框 ⇒ 拖完贴回包围盒。
+  fitGroups()
   persistUserEdit()
 }
 
@@ -2006,7 +2040,7 @@ function onNodeClick(event: NodeMouseEvent) {
   const mouse = event.event as MouseEvent
   const multi = mouse.shiftKey || mouse.metaKey || mouse.ctrlKey
   // 点节点 = 退出分组选中态（分组工具条与节点工具条互斥，避免两个都挂着）。
-  selectedGroupId.value = null
+  clearGroupSelection()
   if (!multi) {
     // 单击独占选中，避免「拖出下游后源+目标双选 → dock 不出现 / 出现多选 +」
     selectOnlyNode(event.node.id)
@@ -2017,24 +2051,31 @@ function onNodeClick(event: NodeMouseEvent) {
   closeContextMenu()
 }
 
+/**
+ * 删除选区。
+ *
+ * 分组走「解组」语义而不是级联删除：vue-flow 移除父节点**不会**连带处理子节点，
+ * 直接删 group 节点会让子节点 parentNode 悬空（坐标退化成相对值、整组错位）。
+ * 产品语义也一直是「删框留节点」，所以这里先 ungroup 再删其余节点。
+ */
 function handleDeleteSelection() {
   const ids = [...multiSelectedIds.value]
-  const toRemove = new Set<string>()
-  for (const id of ids) {
-    toRemove.add(id)
+  const isGroup = (id: string) =>
+    isGroupNode(nodes.value.find((n) => n.id === id) as unknown as FlowNode)
+  const groupIds = ids.filter(isGroup)
+  let working = flowNodes.value
+  for (const groupId of groupIds) {
+    working = ungroupById(working, groupId) ?? working
   }
+  const toRemove = new Set(ids.filter((id) => !groupIds.includes(id)))
   rememberGenerationFieldsBeforeRemove(toRemove)
-  const nextNodes: EditableFlowNode[] = []
-  for (const node of nodes.value) {
-    if (!toRemove.has(node.id)) nextNodes.push(node)
-  }
-  nodes.value = nextNodes
+  nodes.value = working.filter((n) => !toRemove.has(n.id)) as EditableFlowNode[]
   const nextEdges: CanvasEdge[] = []
   for (const edge of edges.value) {
     if (!toRemove.has(edge.source) && !toRemove.has(edge.target)) nextEdges.push(edge)
   }
   edges.value = nextEdges
-  // 分组是侧车：被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
+  // 被删节点要从分组里摘掉，剩余不足 2 个的分组自动解散。
   forgetGroupsForRemovedNodes(toRemove)
   multiSelectedIds.value = []
   clearSelection()
@@ -2162,7 +2203,7 @@ function onPaneClick() {
   pendingExclusiveSelectId = null
   multiSelectedIds.value = []
   // 点空白 = 取消分组选中（否则分组工具条会一直挂着）。
-  selectedGroupId.value = null
+  clearGroupSelection()
   selectedEdgeId.value = null
   clearSelection()
   closeContextMenu()
@@ -4203,11 +4244,16 @@ function handleContextAction(action: string) {
   }
 
   if (action === 'delete' && menu.nodeId) {
+    // 分组节点 = 解组（留节点）；其余节点真删
+    if (isGroupNode(nodes.value.find((n) => n.id === menu.nodeId) as unknown as FlowNode)) {
+      handleUngroupSelection(menu.nodeId)
+      return
+    }
     const toRemove = new Set<string>([menu.nodeId])
     rememberGenerationFieldsBeforeRemove(toRemove)
     nodes.value = nodes.value.filter((entry) => !toRemove.has(entry.id))
     edges.value = edges.value.filter((edge) => !toRemove.has(edge.source) && !toRemove.has(edge.target))
-    // 分组是侧车：被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
+    // 被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
     forgetGroupsForRemovedNodes(toRemove)
     persistUserEdit()
     return
@@ -4254,15 +4300,17 @@ async function saveCanvas() {
         // demo mode
       }
     }
+    // ⛔ group 节点只在内存里存在：落库前必须 fold —— canvasData.nodes 里
+    // 永远不出现 type:'group'，分组以 canvasData.groups 侧车 + 子节点绝对坐标持久化。
+    const folded = foldGroups(nodes.value as unknown as FlowNode[])
     const canvasData = flowToCanvasData(
-      nodes.value as unknown as import('@/composables/useCanvasActions').FlowNode[],
+      folded.nodes as unknown as import('@/composables/useCanvasActions').FlowNode[],
       edges.value as unknown as import('@/composables/useCanvasActions').FlowEdge[],
       extrasForCanvasSave({
         current: compositionRunGroup.value,
         lastKnown: lastKnownCompositionRunGroup.value,
         server: serverGroup,
-        // 分组侧车随画布一起落库（分组不是节点）。
-        groups: groups.value,
+        groups: folded.groups,
       }),
     )
     if (canvasData.compositionRunGroup) {
@@ -4447,12 +4495,14 @@ async function loadSession() {
       nodeCounter = nextNodeCounterFromNodes(nodes.value)
       compositionRunGroup.value = data.data.canvasData.compositionRunGroup ?? null
       lastKnownCompositionRunGroup.value = data.data.canvasData.compositionRunGroup ?? null
-      // 分组侧车：按当前节点对齐一次（存量脏数据在此自愈）。
-      groups.value = syncGroupsToChildren(
-        data.data.canvasData.groups ?? [],
+      // 分组物化：canvasData.groups → vue-flow 父节点（子节点坐标转相对）。
+      // 存量脏数据（size 为 0 / childIds 指向已删节点）在这里 fail-open 自愈。
+      nodes.value = materializeGroups(
         nodes.value as unknown as FlowNode[],
-      )
-      selectedGroupId.value = null
+        data.data.canvasData.groups ?? [],
+      ) as EditableFlowNode[]
+      reconcileGroups()
+      applyGroupDraggable(isMobileLayout.value)
     } else {
       // 空画布就是空画布：不再伪造 prompt-1 占位节点（2026-09-29 拍板，spec 场景 A）。
       // 伪造节点会让用户以为「画布上本来就有东西」，且一旦拖动就会触发 saveCanvas()
@@ -4462,8 +4512,6 @@ async function loadSession() {
       nodeCounter = 0
       compositionRunGroup.value = null
       lastKnownCompositionRunGroup.value = null
-      groups.value = []
-      selectedGroupId.value = null
     }
   } catch {
     // 同样不再伪造 prompt-1 占位节点：那是本地假数据，用户一旦拖动就会触发
@@ -4474,8 +4522,6 @@ async function loadSession() {
     nodeCounter = 0
     compositionRunGroup.value = null
     lastKnownCompositionRunGroup.value = null
-    groups.value = []
-    selectedGroupId.value = null
     ElMessage.error('画布加载失败，请刷新重试')
   }
   generationFieldsCache.clear()
@@ -4607,6 +4653,11 @@ const canvasAreaRef = ref<HTMLElement | null>(null)
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
 const { isMobileLayout } = useAgentMobileLayout()
+
+// 分组框的 draggable 随布局切换（GC4）：PC 整框可拖是本批的核心诉求；
+// 移动端整块框会吃掉平移/长按手势，所以关掉（沿用侧车时代的口径）。
+// 加载路径在物化后显式调一次 applyGroupDraggable（materialize 默认 draggable:true）。
+watch(isMobileLayout, (mobile) => applyGroupDraggable(mobile))
 /** P0-1（2026-10-19）：VueFlow 手势配置单一出处——移动端单指平移/双指缩放（断点分流），
  *  PC 逐字保持 [1,2] 中右键平移 + 左键框选。推敲见 useViewportGestures.ts 头部注释。 */
 const viewportGestures = useViewportGestures(
@@ -4929,17 +4980,8 @@ onUnmounted(() => {
             :color="effectiveGridColor"
           />
 
-          <CanvasGroupOverlay
-            :groups="groups"
-            :selected-group-id="selectedGroupId"
-            :draggable="!isMobileLayout"
-            :nodes="nodes"
-            @select="handleGroupSelect"
-            @move="handleGroupMove"
-            @move-end="handleGroupMoveEnd"
-            @rename="handleGroupRename"
-            @ungroup="handleUngroupSelection"
-          />
+          <!-- 分组不再有 overlay：它是 nodeTypes.group 渲染的普通 vue-flow 节点，
+               与其它节点共用选中 / 拖动 / 层级 / 裁剪（见 CanvasNodeGroup.vue）。 -->
 
           <!-- PC 多选工具条：移动端多选态（D-4）改由 MobileMultiSelectBar 承载，
                过渡期非模式态仍走本组件（与重构前一致） -->
@@ -4949,7 +4991,6 @@ onUnmounted(() => {
             :can-generate-video="multiSelectCanGenerateVideo"
             :can-ungroup="multiSelectCanUngroup"
             :group-color-key="multiSelectGroupColorKey"
-            :group-rect="selectedGroupRect"
             :selection-batch="selectionBatchProp"
             @group="handleGroupSelection"
             @ungroup="handleUngroupSelection"

@@ -12,6 +12,16 @@ export interface EditableFlowNode {
   expandParent?: boolean
   /** 分组 stacking：group=0 / 子节点=1 / 拖拽中临时抬升（见 CanvasPage onNodeDragStart） */
   zIndex?: number
+  /**
+   * 分组框尺寸（`type:'group'` 专用）：物化时按 CanvasGroup.size 写死，
+   * vue-flow 测量前也能撑出正确外框；测量后 dimensions 才是权威值。
+   */
+  style?: Record<string, string>
+  /** 逐节点拖拽开关（移动端关掉分组框拖拽，见 CanvasPage applyGroupDraggable） */
+  draggable?: boolean
+  selectable?: boolean
+  /** vue-flow 测量结果（由库回填，只读） */
+  dimensions?: { width?: number; height?: number }
 }
 
 export function useSelectedNodeEditor(nodes: Ref<EditableFlowNode[]>) {

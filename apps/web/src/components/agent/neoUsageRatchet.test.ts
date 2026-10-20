@@ -45,8 +45,13 @@ function countNeoTokens(dir: string): number {
 // 注：fs 递归扫描在并行负载下曾被 5s 默认超时误杀（Task 12 遗留），显式放宽到 30s。
 const NEO_BASELINE = 231
 
-// 全仓基线 = 2026-10-19 支付家族迁移后实测（剥注释口径 1557）。只允许下调。
-const NEO_TOTAL_BASELINE = 1557
+// 全仓基线 = 2026-10-19 支付家族迁移后实测（剥注释口径 1557）。
+// 2026-10-21 分组回归原生节点形态清扫到 1513（-44）：删掉 CanvasGroupOverlay.vue
+// （--neo-group-* 消费 3 处）+ neo-node.css 分组兜底改 --lnk-*（-2）+ 新写的
+// CanvasNodeGroup.vue 零 --neo-*。按棘轮协议「有意清扫即同步下调基线」，
+// 不下调的话这 44 的余量会被后续 PR 静默花掉。
+// 注：fs 递归扫描在并行负载下曾被 5s 默认超时误杀（Task 12 遗留），显式放宽到 30s。
+const NEO_TOTAL_BASELINE = 1513
 
 describe('--neo-* usage ratchet (P1-6.2 / B12)', () => {
   it('count in components/agent only decreases', { timeout: 30_000 }, () => {

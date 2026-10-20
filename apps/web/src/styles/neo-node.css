@@ -1396,22 +1396,25 @@
   pointer-events: none;
 }
 
-/* 分组容器（P3 2026-10-12 重构；2026-10-20 分组侧车化后由 CanvasGroupOverlay
-   渲染，类名沿用未改）：
-   - 背景与虚线边全部从 --neo-group-accent（由 CanvasGroupOverlay 按 colorKey
+/* 分组容器（P3 2026-10-12 重构；2026-10-21 分组回归原生节点形态后由
+   CanvasNodeGroup.vue 作为 `type:'group'` 节点渲染，类名沿用未改）：
+   - 背景与虚线边全部从 --group-accent（由 CanvasNodeGroup.vue 按 colorKey
      注入，默认 neutral 中性灰）color-mix 派生 —— 默认与画布仅数个百分点的
      明度差，「有差异、不强占主视线」；不再使用品牌紫 rgba 硬编码。
-   - 信息条（.group-drag-handle，组件内 scoped）无底无框贴上沿。 */
+   - 信息条（.group-drag-handle，组件内 scoped）无底无框贴上沿。
+   - pointer-events:none 只作用在容器本体：**外层 .group-node-wrapper 照常吃指针**
+     （整框可拖 / 单击选中由 vue-flow 提供），子节点因此仍可各自点中。 */
 .group-node-container {
-  /* 分组强调色收敛到局部变量：--neo-group-accent 由 CanvasGroupOverlay 按 colorKey
-     注入（真源已是 --lnk-group-*，旧名是别名），此处只取一次、下面多处复用。 */
-  --group-accent: var(--neo-group-accent, var(--neo-group-neutral));
+  /* 分组强调色收敛到局部变量：--group-accent 由 CanvasNodeGroup.vue 按 colorKey
+     注入（真源是 design-tokens.css 的 --lnk-group-*），此处只取一次、下面多处复用。
+     兜底值同步用 --lnk-*：旧名 --neo-group-* 只是别名，且棘轮只减不增。 */
+  --group-accent: var(--lnk-group-accent, var(--lnk-group-neutral));
   z-index: 0;
   min-width: 280px;
   min-height: 160px;
   padding: 12px;
   /* 常态要「可辨但不抢主视线」：虚线边 70% + 12% 底 + 外环，避免被误认成框选 marquee。
-     令牌本身两档提亮/加深（见 neowow-tokens.css 分组色卡注释）。 */
+     令牌本身两档提亮/加深（见 design-tokens.css 分组色卡）。 */
   border: 2px dashed color-mix(in srgb, var(--group-accent) 70%, transparent);
   border-radius: 20px;
   background: color-mix(in srgb, var(--group-accent) 12%, transparent);

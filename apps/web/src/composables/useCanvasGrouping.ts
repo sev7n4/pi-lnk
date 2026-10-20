@@ -393,246 +393,551 @@ export const GROUP_PADDING = 80
 export type { CanvasGroup } from '@lnkpi/shared'
 import type { CanvasGroup } from '@lnkpi/shared'
 
-/** 分组序号标题（`分组 N`），N = 现有分组数 + 1。 */
-export function nextGroupTitle(groups: CanvasGroup[]): string {
-  return `分组 ${groups.length + 1}`
+// ── 运行态分组操作（2026-10-21 分组原生节点形态）────────────────
+//
+// 分组在工作内存里是 `type:'group'` 的 vue-flow 节点，父子关系靠 parentNode；
+// 落库时才折叠回 `CanvasGroup[]`（见 foldGroups）。以下全部是对 nodes 的纯函数。
+
+/** 分组节点的直接子节点。 */
+function childrenOf(nodes: FlowNode[], groupId: string): FlowNode[] {
+  return nodes.filter((n) => n.parentNode === groupId)
+}
+
+/** 清掉一个节点的父子字段并把坐标写成给定的绝对值。 */
+function toTopLevel(node: FlowNode, abs: { x: number; y: number }): FlowNode {
+  const {
+    parentNode: _parentNode,
+    extent: _extent,
+    expandParent: _expandParent,
+    zIndex: _zIndex,
+    ...rest
+  } = node as FlowNode & { expandParent?: boolean }
+  return { ...rest, position: { x: abs.x, y: abs.y } } as FlowNode
 }
 
 /**
- * 由子节点包围盒算分组外框（绝对坐标 + padding）。
- * 子节点不足 2 个时返回 null（打组最少 2 个）。
+ * 把一批节点从所属分组里「放出来」（节点本身保留，只是不再归属任何分组）。
+ *
+ * 分组余下子节点不足 2 个 ⇒ 该分组就地解散（与 #494 侧车时代的自愈语义一致：
+ * 单成员的分组对用户没有意义）。被解散分组的幸存子节点同样回顶层、坐标转绝对。
+ *
+ * ⚠️ 绝对坐标必须在**父分组仍在数组里**时算完 —— 先删父再算会让 parentNode 链
+ * 断掉、绝对坐标退化成相对坐标（表现为「解组后整组散架」）。
  */
-export function groupRectForChildren(
+export function releaseNodesFromGroups(nodes: FlowNode[], ids: Iterable<string>): FlowNode[] {
+  const releasing = new Set(ids)
+  const groups = nodes.filter(isGroupNode)
+  if (groups.length === 0 || releasing.size === 0) return nodes
+
+  const dissolved = new Set<string>()
+  const shrink = new Map<string, string[]>()
+  for (const g of groups) {
+    const kids = childrenOf(nodes, g.id)
+    if (!kids.some((k) => releasing.has(k.id))) continue
+    const rest = kids.filter((k) => !releasing.has(k.id))
+    if (rest.length < 2) dissolved.add(g.id)
+    else shrink.set(g.id, rest.map((k) => k.id))
+  }
+  if (dissolved.size === 0 && shrink.size === 0) return nodes
+
+  // 解散分组下的所有子节点都要回顶层：被放出来的 + 幸存下来的
+  const release = new Map<string, { x: number; y: number }>()
+  for (const g of groups) {
+    if (!dissolved.has(g.id)) continue
+    for (const kid of childrenOf(nodes, g.id)) {
+      if (releasing.has(kid.id)) continue
+      release.set(kid.id, getAbsolutePosition(kid, nodes))
+    }
+  }
+
+  return nodes
+    .filter((n) => !dissolved.has(n.id))
+    .map((n) => {
+      if (isGroupNode(n) && shrink.has(n.id)) {
+        return {
+          ...n,
+          data: {
+            ...((n.data ?? {}) as Record<string, unknown>),
+            childIds: shrink.get(n.id),
+          },
+        } as FlowNode
+      }
+      if (releasing.has(n.id)) return toTopLevel(n, getAbsolutePosition(n, nodes))
+      const abs = release.get(n.id)
+      return abs ? toTopLevel(n, abs) : n
+    })
+}
+
+/**
+ * 节点被删除后收拾分组：把 removedIds 放出来（连带解散被摘空的分组），再把它们移除。
+ * 幂等：空 removals 直接返回原数组引用。
+ */
+export function detachNodesFromGroupNodes(
   nodes: FlowNode[],
-  childIds: string[],
-  padding = GROUP_PADDING,
-): { position: { x: number; y: number }; size: { width: number; height: number } } | null {
+  removedIds: Iterable<string>,
+): FlowNode[] {
+  const removed = new Set(removedIds)
+  if (removed.size === 0) return nodes
+  return releaseNodesFromGroups(nodes, removed).filter((n) => !removed.has(n.id))
+}
+
+/**
+ * 解组：移除分组框，子节点保留在原位（坐标回绝对）。
+ * groupId 不是分组节点时返回 null（调用方据此不给「解组」反馈）。
+ */
+export function ungroupById(nodes: FlowNode[], groupId: string): FlowNode[] | null {
+  const group = nodes.find((n) => n.id === groupId && isGroupNode(n))
+  if (!group) return null
+  const absById = new Map(
+    childrenOf(nodes, groupId).map((k) => [k.id, getAbsolutePosition(k, nodes)] as const),
+  )
+  return nodes
+    .filter((n) => n.id !== groupId)
+    .map((n) => {
+      const abs = absById.get(n.id)
+      return abs ? toTopLevel(n, abs) : n
+    })
+}
+
+/** 改分组标题 / 背景色（colorKey=null 表示复位默认中性）。目标不存在 ⇒ 原样返回。 */
+export function patchGroupNodeData(
+  nodes: FlowNode[],
+  groupId: string,
+  patch: { title?: string; colorKey?: string | null },
+): FlowNode[] {
+  if (!nodes.some((n) => n.id === groupId && isGroupNode(n))) return nodes
+  return nodes.map((n) => {
+    if (n.id !== groupId) return n
+    const data = { ...((n.data ?? {}) as Record<string, unknown>) }
+    if (patch.title !== undefined) data.title = patch.title
+    if (patch.colorKey !== undefined) {
+      if (patch.colorKey === null) delete data.colorKey
+      else data.colorKey = patch.colorKey
+    }
+    return { ...n, data } as FlowNode
+  })
+}
+
+/**
+ * 分组序号标题：扫描现存分组 title 取**最小空位**（`分组 1` 起）。
+ *
+ * 不用「分组总数 + 1」：删组会让总数回落，再次建组即重名（生产实测：4 个分组
+ * 里两个叫「分组 1」，且首个分组叫「分组 0」）。最小空位口径对任意增删时序都成立。
+ */
+export function nextGroupTitle(nodes: FlowNode[]): string {
+  const taken = new Set<string>()
+  for (const n of nodes) {
+    if (!isGroupNode(n)) continue
+    const title = (n.data as Record<string, unknown> | undefined)?.title
+    if (typeof title === 'string' && title) taken.add(title)
+  }
+  let i = 1
+  while (taken.has(`分组 ${i}`)) i += 1
+  return `分组 ${i}`
+}
+
+/** 打组结果：mode 供调用方给出准确反馈（UI 层必须据此提示，否则「没反应」会被误读为失败）。 */
+export type GroupFromSelectionResult = {
+  nodes: FlowNode[]
+  groupId: string
+  /** reselect=所选节点本就同属一个分组（仅选中它）；merged=从旧分组摘出后归并成新分组。 */
+  mode: 'created' | 'reselect' | 'merged'
+  childIds: string[]
+}
+
+/**
+ * 框选多个节点 → 打组。可用节点不足 2 个时返回 null。
+ *
+ * 容错语义（保留 #494 的口径，避免「明明已打组却报失败」的困惑）：
+ * - 所选节点全部已属于【同一个】现存分组 ⇒ 视为重选该分组（不新建、不改写）；
+ * - 选中的节点横跨多个分组 / 部分已分组 ⇒ 先把这些节点从原分组放出来，再整体归并。
+ */
+export function createGroupFromSelection(
+  nodes: FlowNode[],
+  selectedIds: string[],
+  title?: string,
+): GroupFromSelectionResult | null {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const selected = selectedIds.filter((id) => {
+    const n = byId.get(id)
+    if (!n) return false
+    return !isGroupNode(n)
+  })
+  if (selected.length < 2) return null
+
+  const groupIds = new Set(nodes.filter(isGroupNode).map((n) => n.id))
+  const ownerOf = (id: string): string | undefined => {
+    const parentId = byId.get(id)?.parentNode
+    return parentId && groupIds.has(parentId) ? parentId : undefined
+  }
+  const touched = Array.from(
+    new Set(selected.map(ownerOf).filter((x): x is string => Boolean(x))),
+  )
+  if (touched.length === 1 && selected.every((id) => ownerOf(id) === touched[0])) {
+    const groupId = touched[0]!
+    return {
+      nodes,
+      groupId,
+      mode: 'reselect',
+      childIds: childrenOf(nodes, groupId).map((n) => n.id),
+    }
+  }
+
+  let working = nodes
+  let merged = false
+  let childIds = selected.filter((id) => !ownerOf(id))
+  if (childIds.length < 2) {
+    merged = touched.length > 0
+    // 归并路径：把选中节点从原分组放出来（节点本身保留），再整体建一个新组
+    working = releaseNodesFromGroups(nodes, selected)
+    childIds = selected
+  }
   if (childIds.length < 2) return null
+
+  const workingById = new Map(working.map((n) => [n.id, n]))
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
   let maxY = -Infinity
   for (const id of childIds) {
-    const node = nodes.find((n) => n.id === id)
-    if (!node) continue
-    const abs = getAbsolutePosition(node, nodes)
-    const { w, h } = getNodeSize(node)
+    const child = workingById.get(id)!
+    const abs = getAbsolutePosition(child, working)
+    const { w, h } = getNodeSize(child)
     minX = Math.min(minX, abs.x)
     minY = Math.min(minY, abs.y)
     maxX = Math.max(maxX, abs.x + w)
     maxY = Math.max(maxY, abs.y + h)
   }
   if (!Number.isFinite(minX)) return null
+
+  const gx = minX - GROUP_PADDING
+  const gy = minY - GROUP_PADDING
+  const groupId = `group-${Date.now().toString(36)}`
+  const groupNode = {
+    id: groupId,
+    type: GROUP_NODE_TYPE,
+    position: { x: gx, y: gy },
+    style: {
+      width: `${maxX - minX + GROUP_PADDING * 2}px`,
+      height: `${maxY - minY + GROUP_PADDING * 2}px`,
+    },
+    data: { title: title?.trim() || nextGroupTitle(working), childIds: [...childIds] },
+    draggable: true,
+    selectable: true,
+    zIndex: 0,
+  } as unknown as FlowNode
+
+  const patched = new Map<string, FlowNode>()
+  for (const id of childIds) {
+    const child = workingById.get(id)!
+    const abs = getAbsolutePosition(child, working)
+    patched.set(id, {
+      ...child,
+      parentNode: groupId,
+      extent: 'parent',
+      expandParent: true,
+      zIndex: 1,
+      position: { x: abs.x - gx, y: abs.y - gy },
+    } as unknown as FlowNode)
+  }
+
   return {
-    position: { x: minX - padding, y: minY - padding },
-    size: { width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 },
+    nodes: [...working.map((n) => patched.get(n.id) ?? n), groupNode],
+    groupId,
+    mode: merged ? 'merged' : 'created',
+    childIds: [...childIds],
   }
-}
-
-/** 打组结果：mode 供调用方给出准确反馈（UI 层必须据此提示，否则「没反应」会被误读为失败）。 */
-export type GroupFromSelectionResult = {
-  groups: CanvasGroup[]
-  group: CanvasGroup
-  /** reselect=所选节点本就同属一个分组（仅选中它）；merged=从旧分组摘出后归并成新分组。 */
-  mode: 'created' | 'reselect' | 'merged'
 }
 
 /**
- * 框选多个节点 → 打组。返回 null 表示确实无法打组（< 2 个可用节点）。
- *
- * 容错语义（避免「明明已打组却报失败」的困惑）：
- * - 选中的节点全部已属于【同一个】现存分组 ⇒ 视为重选该分组（groups 不变，返回它）。
- * - 选中节点横跨多个分组 / 部分已分组 ⇒ 先把这些节点从其原分组摘出，再整体归并成新分组。
- * - 其余情况：取「未分组的选中节点」打组；不足 2 个才返回 null。
+ * 按子节点包围盒重算单个分组框（+GROUP_PADDING 留白），并把子节点相对坐标同步
+ * 平移，使每个子节点的**绝对位置保持不变** —— 框变大只是「让位」，不是搬东西。
+ * 目标不是分组节点 / 无子节点 ⇒ 原样返回。
  */
-export function createGroupFromSelection(
-  groups: CanvasGroup[],
-  nodes: FlowNode[],
-  selectedIds: string[],
-  title?: string,
-): GroupFromSelectionResult | null {
-  const groupedByNode = new Map<string, string[]>()
-  for (const g of groups) for (const id of g.childIds) {
-    if (!groupedByNode.has(id)) groupedByNode.set(id, [])
-    groupedByNode.get(id)!.push(g.id)
-  }
-  const ownersOf = (id: string) => groupedByNode.get(id) ?? []
+export function resizeGroupToFitChildren(nodes: FlowNode[], groupId: string): FlowNode[] {
+  const target = nodes.find((n) => n.id === groupId && isGroupNode(n))
+  if (!target) return nodes
+  const kids = childrenOf(nodes, groupId)
+  if (kids.length === 0) return nodes
 
-  // 全部选中节点都属同一现存分组 ⇒ 直接重选该分组（不新建、不改写）。
-  const touchedGroups = Array.from(
-    new Set(selectedIds.flatMap((id) => ownersOf(id))),
-  )
-  if (
-    touchedGroups.length === 1 &&
-    selectedIds.every((id) => ownersOf(id).includes(touchedGroups[0]))
-  ) {
-    const existing = groups.find((g) => g.id === touchedGroups[0])
-    if (existing) return { groups, group: existing, mode: 'reselect' }
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const kid of kids) {
+    const { w, h } = getNodeSize(kid)
+    minX = Math.min(minX, kid.position.x)
+    minY = Math.min(minY, kid.position.y)
+    maxX = Math.max(maxX, kid.position.x + w)
+    maxY = Math.max(maxY, kid.position.y + h)
   }
+  if (!Number.isFinite(minX)) return nodes
 
-  // 取「未分组」的选中节点；若没有，则把这些节点先从原分组摘出，再整体归并。
-  let childIds = selectedIds.filter((id) => {
-    const node = nodes.find((n) => n.id === id)
-    return Boolean(node) && ownersOf(id).length === 0
-  })
-  let nextGroups = groups
-  let merged = false
-  if (childIds.length < 2 && selectedIds.length >= 2) {
-    const detached = detachNodesFromGroups(groups, selectedIds)
-    if (detached.length !== groups.length) {
-      nextGroups = detached
-      merged = true
+  const pad = GROUP_PADDING
+  const offsetX = minX - pad
+  const offsetY = minY - pad
+  const wantW = `${maxX - minX + pad * 2}px`
+  const wantH = `${maxY - minY + pad * 2}px`
+
+  return nodes.map((n) => {
+    if (n.id === groupId) {
+      const style = (
+        typeof n.style === 'object' && n.style ? n.style : {}
+      ) as Record<string, unknown>
+      return {
+        ...n,
+        position: { x: n.position.x + offsetX, y: n.position.y + offsetY },
+        style: { ...style, width: wantW, height: wantH },
+        data: {
+          ...((n.data ?? {}) as Record<string, unknown>),
+          childIds: kids.map((k) => k.id),
+        },
+      } as FlowNode
     }
-    childIds = selectedIds.filter((id) => nodes.some((n) => n.id === id))
-  }
-
-  const rect = groupRectForChildren(nodes, childIds)
-  if (!rect || childIds.length < 2) return null
-
-  const group: CanvasGroup = {
-    id: `group-${Date.now().toString(36)}`,
-    title: title?.trim() || nextGroupTitle(nextGroups),
-    childIds,
-    ...rect,
-  }
-  return { groups: [...nextGroups, group], group, mode: merged ? 'merged' : 'created' }
-}
-
-/** 解组：移除分组框，子节点保持各自绝对坐标不动。 */
-export function ungroupById(groups: CanvasGroup[], groupId: string): CanvasGroup[] {
-  return groups.filter((g) => g.id !== groupId)
-}
-
-/** 改分组背景色（key 取 groupColors 的 8 色卡）。 */
-export function patchGroupColorKey(
-  groups: CanvasGroup[],
-  groupId: string,
-  colorKey: string | null,
-): CanvasGroup[] {
-  return groups.map((g) =>
-    g.id === groupId ? { ...g, colorKey: colorKey ?? undefined } : g,
-  )
-}
-
-/** 重命名分组。 */
-export function renameGroup(groups: CanvasGroup[], groupId: string, title: string): CanvasGroup[] {
-  const trimmed = title.trim()
-  if (!trimmed) return groups
-  return groups.map((g) => (g.id === groupId ? { ...g, title: trimmed } : g))
+    if (n.parentNode === groupId) {
+      return {
+        ...n,
+        position: { x: n.position.x - offsetX, y: n.position.y - offsetY },
+      } as FlowNode
+    }
+    return n
+  })
 }
 
 /**
- * 拖分组框 → 整组平移（子节点跟着走）。
- * 返回新 groups 与新 nodes（不原地改）。
+ * 拖拽结束 / 加载测量后统一把分组框贴回子节点包围盒。
+ * 已贴合（±1px）的分组跳过并返回**原数组引用** —— 幂等，避免无谓的 nodes 引用抖动。
  */
-export function moveGroupWithChildren(
-  groups: CanvasGroup[],
+export function syncGroupsToFitChildren(nodes: FlowNode[]): FlowNode[] {
+  let next = nodes
+  for (const g of nodes) {
+    if (!isGroupNode(g)) continue
+    const kids = childrenOf(next, g.id)
+    if (kids.length === 0) continue
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const kid of kids) {
+      const { w, h } = getNodeSize(kid)
+      minX = Math.min(minX, kid.position.x)
+      minY = Math.min(minY, kid.position.y)
+      maxX = Math.max(maxX, kid.position.x + w)
+      maxY = Math.max(maxY, kid.position.y + h)
+    }
+    if (!Number.isFinite(minX)) continue
+    const cur = groupNodeSize(g)
+    const wantW = maxX - minX + GROUP_PADDING * 2
+    const wantH = maxY - minY + GROUP_PADDING * 2
+    if (Math.abs(cur.width - wantW) <= 1 && Math.abs(cur.height - wantH) <= 1) continue
+    next = resizeGroupToFitChildren(next, g.id)
+  }
+  return next
+}
+
+
+// ══════════════════════════════════════════════════════════
+// 分组原生节点形态（2026-10-21）：渲染层回归 vue-flow 父子节点
+//
+// #494 把分组改成 overlay 侧车后，PC 端只能点 26px 的小胶囊交互，且 overlay
+// 手搓的 viewport 变换层上挂着 `overflow:hidden` —— 按元素本地流空间裁剪，
+// 映射到屏幕后 ≠ 可见区 ⇒ 拖动时框被「塞进信封」式淹没。本段把渲染层改回
+// 原生 `parentNode` + `extent:'parent'` + `expandParent`，交互全部由库提供。
+//
+// **持久化格式一行不改**：加载时 materializeGroups 物化成父节点（子节点坐标
+// 转相对），保存时 foldGroups 折叠回 `CanvasGroup[]` + 子节点绝对坐标。
+// ⇒ group 节点只在内存里存在，任何落库路径都必须先 fold。
+// ══════════════════════════════════════════════════════════
+
+/** 分组作为 vue-flow 节点时的 type（仅内存态，CanvasData.nodes 里永不出现）。 */
+export const GROUP_NODE_TYPE = 'group'
+
+export function isGroupNode(node: FlowNode): boolean {
+  return String(node.type ?? '') === GROUP_NODE_TYPE
+}
+
+/**
+ * group 节点尺寸：style（物化时写死的权威值，vue-flow 测量前也准）
+ * → dimensions（测量后）→ 兜底 280×160。解析失败一律兜底，绝不返回 NaN
+ * （NaN 会一路渗进 CSS `style`，框直接消失）。
+ */
+export function groupNodeSize(node: FlowNode): { width: number; height: number } {
+  const style = (
+    typeof node.style === 'object' && node.style ? node.style : {}
+  ) as Record<string, unknown>
+  const sw = Number.parseFloat(String(style.width ?? ''))
+  const sh = Number.parseFloat(String(style.height ?? ''))
+  if (Number.isFinite(sw) && sw > 0 && Number.isFinite(sh) && sh > 0) {
+    return { width: sw, height: sh }
+  }
+  const dw = node.dimensions?.width
+  const dh = node.dimensions?.height
+  if (typeof dw === 'number' && dw > 0 && typeof dh === 'number' && dh > 0) {
+    return { width: dw, height: dh }
+  }
+  return { width: 280, height: 160 }
+}
+
+/** 正数解析器：`0 / NaN / undefined / 脏字符串` 一律判为无效（交给调用方兜底）。 */
+function positiveNumber(raw: unknown): number | null {
+  const n = typeof raw === 'number' ? raw : Number.parseFloat(String(raw ?? ''))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * 加载边界：把 `CanvasData.groups` 物化成 vue-flow 父子节点。
+ *
+ * - 每个 CanvasGroup → 一个 `type:'group'` 节点（`zIndex:0`、`style` 写死尺寸）；
+ * - childIds 里的节点 → `parentNode` + `extent:'parent'` + `expandParent:true`
+ *   + `zIndex:1`，`position` 改为**相对父节点**（vue-flow 父子坐标系语义）。
+ *
+ * fail-open 纪律（存量脏数据不得让画布白屏）：
+ * - `size` 为 0/NaN/缺失 ⇒ 回退「子节点包围盒 + GROUP_PADDING」；
+ * - `childIds` 指向不存在的节点 ⇒ 静默丢弃；有效子节点 < 2 ⇒ 整个分组不物化；
+ * - **不支持嵌套分组**：childIds 里的 group 节点被跳过；同一节点被两个分组点名
+ *   时只归第一个（后到的整组因可用子节点不足而自然跳过）。
+ *
+ * 幂等前提：入参最好是刚落库、尚未物化过的节点数组；已存在的 group 节点会被
+ * 剔除，其子节点的 parentNode 一并清干净（避免同 id 出现两个节点）。
+ */
+export function materializeGroups(
   nodes: FlowNode[],
-  groupId: string,
-  delta: { x: number; y: number },
-): { groups: CanvasGroup[]; nodes: FlowNode[] } {
-  const group = groups.find((g) => g.id === groupId)
-  if (!group || (delta.x === 0 && delta.y === 0)) return { groups, nodes }
-  const childSet = new Set(group.childIds)
-  const nextNodes = nodes.map((n) =>
-    childSet.has(n.id)
-      ? { ...n, position: { x: n.position.x + delta.x, y: n.position.y + delta.y } }
-      : n,
-  )
-  const nextGroups = groups.map((g) =>
-    g.id === groupId
-      ? {
-          ...g,
-          position: { x: g.position.x + delta.x, y: g.position.y + delta.y },
-          size: { ...g.size },
-        }
-      : g,
-  )
-  return { groups: nextGroups, nodes: nextNodes }
-}
+  groups: CanvasGroup[] | undefined,
+): FlowNode[] {
+  if (!Array.isArray(groups) || groups.length === 0) return nodes
 
-/**
- * 与画布现状对齐：子节点被删/被拖走后重算外框，子节点不足 2 个的分组自动解散。
- * 拖拽结束、加载完成、删节点后都应调用（幂等）。
- */
-export function syncGroupsToChildren(groups: CanvasGroup[], nodes: FlowNode[]): CanvasGroup[] {
-  const out: CanvasGroup[] = []
+  const staleGroupIds = new Set(nodes.filter(isGroupNode).map((n) => n.id))
+  const flat: FlowNode[] = nodes
+    .filter((n) => !isGroupNode(n))
+    .map((n) =>
+      n.parentNode && staleGroupIds.has(n.parentNode)
+        ? ({
+            ...n,
+            parentNode: undefined,
+            extent: undefined,
+            expandParent: undefined,
+          } as unknown as FlowNode)
+        : n,
+    )
+  const byId = new Map(flat.map((n) => [n.id, n]))
+
+  const claimed = new Set<string>()
+  const groupNodes: FlowNode[] = []
+  const patched = new Map<string, FlowNode>()
+
   for (const g of groups) {
-    const childIds = g.childIds.filter((id) => nodes.some((n) => n.id === id))
+    if (!g || typeof g.id !== 'string' || !g.id) continue
+    const childIds = (Array.isArray(g.childIds) ? g.childIds : []).filter((id) => {
+      if (claimed.has(id)) return false
+      const child = byId.get(id)
+      if (!child) return false
+      return !isGroupNode(child)
+    })
     if (childIds.length < 2) continue
-    const rect = groupRectForChildren(nodes, childIds)
-    if (!rect) continue
-    out.push({ ...g, childIds, ...rect })
+    for (const id of childIds) claimed.add(id)
+
+    // 子节点包围盒（绝对坐标）——脏 size 的兜底来源
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const id of childIds) {
+      const child = byId.get(id)!
+      // 注意用 nodes（而非 flat）算绝对：存量数据里子节点可能仍挂在旧父节点下
+      const abs = getAbsolutePosition(child, nodes)
+      const { w, h } = getNodeSize(child)
+      minX = Math.min(minX, abs.x)
+      minY = Math.min(minY, abs.y)
+      maxX = Math.max(maxX, abs.x + w)
+      maxY = Math.max(maxY, abs.y + h)
+    }
+    if (!Number.isFinite(minX)) continue
+
+    const width = positiveNumber(g.size?.width) ?? (maxX - minX + GROUP_PADDING * 2)
+    const height = positiveNumber(g.size?.height) ?? (maxY - minY + GROUP_PADDING * 2)
+    const gx =
+      Number.isFinite(g.position?.x) && Number.isFinite(g.position?.y)
+        ? { x: g.position.x, y: g.position.y }
+        : { x: minX - GROUP_PADDING, y: minY - GROUP_PADDING }
+
+    groupNodes.push({
+      id: g.id,
+      type: GROUP_NODE_TYPE,
+      position: { x: gx.x, y: gx.y },
+      style: { width: `${width}px`, height: `${height}px` },
+      data: {
+        title: typeof g.title === 'string' && g.title ? g.title : '未命名分组',
+        childIds: [...childIds],
+        ...(typeof g.colorKey === 'string' && g.colorKey ? { colorKey: g.colorKey } : {}),
+      },
+      draggable: true,
+      selectable: true,
+      zIndex: 0,
+    } as unknown as FlowNode)
+
+    for (const id of childIds) {
+      const child = byId.get(id)!
+      const abs = getAbsolutePosition(child, nodes)
+      patched.set(id, {
+        ...child,
+        parentNode: g.id,
+        extent: 'parent',
+        expandParent: true,
+        zIndex: 1,
+        position: { x: abs.x - gx.x, y: abs.y - gx.y },
+      } as unknown as FlowNode)
+    }
   }
-  return out
+
+  if (groupNodes.length === 0) return flat
+  return [...flat.map((n) => patched.get(n.id) ?? n), ...groupNodes]
 }
-
-/** 节点被删除后把它从所属分组摘掉（返回新 groups）。 */
-export function detachNodesFromGroups(groups: CanvasGroup[], nodeIds: Iterable<string>): CanvasGroup[] {
-  const removed = new Set(nodeIds)
-  if (removed.size === 0) return groups
-  return groups
-    .map((g) => ({ ...g, childIds: g.childIds.filter((id) => !removed.has(id)) }))
-    .filter((g) => g.childIds.length >= 2)
-}
-
-// ── 巨型分组的 chip 视口钳制（2026-10-20，v2 屏幕坐标版）────
-//
-// 分组可以比可视画布还大（子节点分散，或把整屏节点打成一个组）。此时框的
-// 四条边全部落在可视区外 / 被应用骨架裁掉，默认挂在框左上外沿的标题 chip
-// 也在可视区外 ⇒ 用户只剩一层 12% 底色罩住整个画布，没有任何「这是一个
-// 分组」的可见锚点（感知为「画布多了一层/有遮挡」，也无法选中/解组/重命名）。
-//
-// v2（同日迭代）：#510 曾把 chip 钳到 vue-flow pane 左上角，但画布是
-// **全区域铺底 + 悬浮组件（顶栏/左栏/dock 不透明浮层）压在其上**的布局 ⇒
-// pane 左上角正好被悬浮层盖住，chip 依然不可见。改为：chip teleport 到
-// body、position:fixed 按屏幕坐标定位（逃出 pane 裁剪与悬浮层遮挡，z 高于
-// 悬浮件），钳制目标改为「窗口 ∩ 框可见范围」。
-
-/** chip 屏幕尺寸估计（图标+标题+计数+解组钮，含内边距），钳制用无需精确。 */
-const CHIP_SCREEN_W = 160
-const CHIP_SCREEN_H = 30
-/** 窗口边缘留白。 */
-const CHIP_MARGIN = 8
 
 /**
- * 计算 chip 的屏幕定位（position:fixed 的 left/top，window 坐标）。
- * 框与窗口无可见交集、或窗口尺寸/zoom 非法 ⇒ null（调用方隐藏 chip——
- * 框本身不可见时，锚点也无从谈起）。
- * 框可见但顶缘/左缘出界时，chip 沿框可见区钳回屏内；框完全可见时返回
- * 默认位（框顶外沿 -32*zoom、左对齐框左缘），视觉与旧节点形态一致。纯函数。
+ * 保存边界：把运行态（group 父节点 + 子节点相对坐标）折叠回持久化形态。
+ *
+ * - `nodes` 里剔除全部 group 节点，子节点**坐标回绝对**并清掉
+ *   parentNode/extent/expandParent（残留会让下次加载把绝对坐标当相对坐标渲染，
+ *   表现为「整组散架」）；
+ * - `groups` 由 group 节点与真实父子关系重建；无有效子节点的分组不落库。
+ *
+ * 无 group 节点时返回原数组引用（零扰动）。
  */
-export function clampGroupChipToViewport(
-  rect: { position: { x: number; y: number }; size: { width: number; height: number } },
-  viewport: { x: number; y: number; zoom: number },
-  windowSize: { width: number; height: number },
-): { left: number; top: number } | null {
-  const zoom = viewport.zoom
-  if (!(zoom > 0) || !(windowSize.width > 0) || !(windowSize.height > 0)) return null
-  const frameX = viewport.x + rect.position.x * zoom
-  const frameY = viewport.y + rect.position.y * zoom
-  const frameRight = frameX + rect.size.width * zoom
-  const frameBottom = frameY + rect.size.height * zoom
-  // 框与窗口完全无交集（含被 margin 吃掉的贴边情形）⇒ 框本身不可见，无从钳起
-  if (
-    frameRight <= CHIP_MARGIN ||
-    frameX >= windowSize.width - CHIP_MARGIN ||
-    frameBottom <= CHIP_MARGIN ||
-    frameY >= windowSize.height - CHIP_MARGIN
-  ) {
-    return null
+export function foldGroups(nodes: FlowNode[]): { nodes: FlowNode[]; groups: CanvasGroup[] } {
+  const groupNodes = nodes.filter(isGroupNode)
+  if (groupNodes.length === 0) return { nodes, groups: [] }
+
+  const groups: CanvasGroup[] = []
+  for (const g of groupNodes) {
+    const children = nodes.filter((n) => n.parentNode === g.id)
+    if (children.length === 0) continue
+    const { width, height } = groupNodeSize(g)
+    const data = (g.data ?? {}) as Record<string, unknown>
+    const title = data.title
+    const colorKey = data.colorKey
+    groups.push({
+      id: g.id,
+      title: typeof title === 'string' && title ? title : '未命名分组',
+      ...(typeof colorKey === 'string' && colorKey ? { colorKey } : {}),
+      childIds: children.map((c) => c.id),
+      position: { x: g.position.x, y: g.position.y },
+      size: { width, height },
+    })
   }
-  // 框与窗口交集的右/下界（screen px）；chip 只在该界内钳制。
-  // 注意下界不钳到框顶（frameY）：chip 挂框顶外沿是设计位，只要还在屏内就保留。
-  const visRight = Math.min(frameRight, windowSize.width - CHIP_MARGIN)
-  const visBottom = Math.min(frameBottom, windowSize.height - CHIP_MARGIN)
-  const top = Math.min(
-    Math.max(frameY - 32 * zoom, CHIP_MARGIN),
-    Math.max(visBottom - CHIP_SCREEN_H, CHIP_MARGIN),
-  )
-  const left = Math.min(
-    Math.max(frameX, CHIP_MARGIN),
-    Math.max(visRight - CHIP_SCREEN_W, CHIP_MARGIN),
-  )
-  return { left, top }
+
+  const nextNodes = nodes
+    .filter((n) => !isGroupNode(n))
+    .map((n) => {
+      if (!n.parentNode) return n
+      const abs = getAbsolutePosition(n, nodes)
+      const {
+        parentNode: _parentNode,
+        extent: _extent,
+        expandParent: _expandParent,
+        ...rest
+      } = n as FlowNode & { expandParent?: boolean }
+      return { ...rest, position: { x: abs.x, y: abs.y }, zIndex: undefined } as FlowNode
+    })
+
+  return { nodes: nextNodes, groups }
 }
