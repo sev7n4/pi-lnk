@@ -1,0 +1,115 @@
+import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { mount } from '@vue/test-utils'
+import type { Session } from '@lnkpi/shared'
+import SessionCard from './SessionCard.vue'
+
+// 注意：SFC 的 <style scoped> 不进 wrapper.html()，令牌断言必须读源码
+const HERE = dirname(fileURLToPath(import.meta.url))
+const SRC = readFileSync(join(HERE, 'SessionCard.vue'), 'utf8')
+
+function makeSession(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's_1',
+    title: '我的画布',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+    ...overrides,
+  } as Session
+}
+
+function mountCard(props: Partial<Session> = {}, extra: Record<string, unknown> = {}) {
+  return mount(SessionCard, {
+    props: { session: makeSession(props), ...extra },
+  })
+}
+
+describe('SessionCard 令牌迁移（P1：--neo-* → --lnk-*）', () => {
+  it('组件源码里 --neo-* 已清零', () => {
+    const neoHits = SRC.match(/--neo-[a-z0-9-]+/g) ?? []
+    expect(neoHits, `仍有旧令牌：${[...new Set(neoHits)].join(', ')}`).toHaveLength(0)
+  })
+
+  it('卡片边框与底色改用 --lnk-border-subtle / --lnk-surface-base', () => {
+    expect(SRC).toContain('var(--lnk-border-subtle)')
+    expect(SRC).toContain('var(--lnk-surface-base)')
+  })
+
+  it('hover 态用 accent 通道（--lnk-accent）表达高亮，不再用 --lnk-hi-text', () => {
+    expect(SRC).toContain('var(--lnk-accent)')
+    expect(SRC).not.toContain('--lnk-hi-text')
+  })
+
+  it('选中态用 --lnk-accent + --lnk-accent-subtle', () => {
+    expect(SRC).toContain('var(--lnk-accent-subtle)')
+  })
+
+  it('弹出菜单改用 --lnk-surface-overlay 语义键（旧 .neo-popover 类不再出现）', () => {
+    expect(SRC).toContain('var(--lnk-surface-overlay)')
+    expect(SRC).not.toContain('neo-popover')
+  })
+
+  it('保留既有阴影令牌 --lnk-shadow-md', () => {
+    expect(SRC).toContain('var(--lnk-shadow-md)')
+  })
+})
+
+describe('SessionCard 行为不变量（迁移不许回归）', () => {
+  it('点击卡片 emit open（管理态外）', async () => {
+    const wrapper = mountCard()
+    await wrapper.find('.session-card-body').trigger('click')
+    expect(wrapper.emitted('open')).toHaveLength(1)
+  })
+
+  it('管理态点击 emit toggleSelect 而非 open', async () => {
+    const wrapper = mountCard({}, { manageMode: true })
+    await wrapper.find('.session-card-body').trigger('click')
+    expect(wrapper.emitted('toggleSelect')).toHaveLength(1)
+    expect(wrapper.emitted('open')).toBeUndefined()
+  })
+
+  it('菜单三项分别 emit rename / duplicate / delete', async () => {
+    const wrapper = mountCard({}, { menuOpen: true })
+    const items = wrapper.findAll('.session-card-menu-anchor button')
+    // 更多按钮（toggleMenu）+ 三项菜单
+    expect(items.length).toBeGreaterThanOrEqual(4)
+    await items[1]!.trigger('click')
+    await items[2]!.trigger('click')
+    await items[3]!.trigger('click')
+    expect(wrapper.emitted('rename')).toHaveLength(1)
+    expect(wrapper.emitted('duplicate')).toHaveLength(1)
+    expect(wrapper.emitted('delete')).toHaveLength(1)
+  })
+
+  it('管理态才渲染勾选框', () => {
+    expect(mountCard().find('input[type="checkbox"]').exists()).toBe(false)
+    expect(mountCard({}, { manageMode: true }).find('input[type="checkbox"]').exists()).toBe(true)
+  })
+
+  it('有封面时渲染 img（canvasData 是对象不是 JSON 字符串）', () => {
+    // 回归点：曾把canvasData 当字符串序列化，导致封面永远取不到 → 全落兜底
+    const wrapper = mountCard({
+      canvasData: { nodes: [{ id: 'n1', type: 'image', data: { url: 'https://cdn/a.png' } }] },
+    } as Partial<Session>)
+    expect(wrapper.html()).toContain('https://cdn/a.png')
+    expect(wrapper.find('[data-testid="brand-pattern"]').exists()).toBe(false)
+  })
+
+  it('视频封面走 <video> 而非 <img>', () => {
+    const wrapper = mountCard({
+      canvasData: { nodes: [{ id: 'n1', type: 'video', data: { url: 'https://cdn/a.mp4' } }] },
+    } as Partial<Session>)
+    expect(wrapper.find('video').exists()).toBe(true)
+  })
+
+  it('无封面时落品牌纹样兜底（不再是灰色占位块）', () => {
+    const wrapper = mountCard()
+    expect(wrapper.find('[data-testid="brand-pattern"]').exists()).toBe(true)
+  })
+
+  it('标题为空时回落「未命名画布」', () => {
+    const wrapper = mountCard({ title: '' })
+    expect(wrapper.text()).toContain('未命名画布')
+  })
+})
