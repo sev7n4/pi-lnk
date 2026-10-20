@@ -304,11 +304,12 @@ export class Metrics {
 	 * - `cancel`  + already_consumed = 撤回晚了，消息已被 turn 边界取走（**撤回率的口径**：
 	 *   这个值高说明「放弃」按钮点得太晚，是 UX 问题而非故障）
 	 * - `cancel`  + not_found       = entryId 不存在（lane 被回收 / 进程重启）
+	 * - `abort`   + recovered       = abort 把队列内容吐回给上层（否则用户消息静默消失）
 	 */
 	observeQueueOp(
-		op: "enqueue" | "drain" | "cancel",
+		op: "enqueue" | "drain" | "cancel" | "abort",
 		kind: "steer" | "followUp" | "queued",
-		outcome: "ok" | "rejected" | "busy" | "empty" | "cancelled" | "already_consumed" | "not_found",
+		outcome: "ok" | "rejected" | "busy" | "empty" | "cancelled" | "already_consumed" | "not_found" | "recovered",
 	): void {
 		const key = `${op}|${kind}|${outcome}`;
 		this.queueOps.set(key, (this.queueOps.get(key) ?? 0) + 1);
@@ -605,7 +606,7 @@ export class Metrics {
 		}
 
 		lines.push(
-			"# HELP pi_runtime_queue_ops_total Queue operations (enqueue/drain/cancel) by kind and result.",
+			"# HELP pi_runtime_queue_ops_total Queue operations (enqueue/drain/cancel/abort) by kind and result.",
 		);
 		lines.push("# TYPE pi_runtime_queue_ops_total counter");
 		for (const [key, count] of [...this.queueOps.entries()].sort()) {

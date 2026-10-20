@@ -391,12 +391,28 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	 * 中断该会话当前正在跑的 run（前端「停止」按钮）。
 	 * 会话本身保留——用户可接着发新消息；无活跃 run 时 skipped=true，
 	 * 前端据此提示「已断开回复，后台可能仍在收尾」。
+	 *
+	 * ⭐ **2026-10-20：`recovered` 透出被 abort 吐回的队列内容**。
+	 * vendor 的 `requestOperationAbort` 会把 inbox 里的 steer/followUp **删掉**
+	 * （pending entry 也没了，不可恢复），但把内容返给调用方。我们此前丢弃了它 ⇒
+	 * 用户插队的消息在孤儿/看护结算路径上静默消失。现在原样透出，由 Nest 传给前端，
+	 * 前端把它放回输入框（对齐上游 coding-agent 的 `clearQueue()` 行为）。
+	 *
+	 * ⚠️ 正常取消（用户点停止、run 正在跑）走 context cancel，**不删队列** ⇒ `recovered` 为空数组。
+	 * 非空 ⇒ 确实有消息被销毁了，上层必须把它还给用户，不能当无事发生。
 	 */
 	app.post<{ Params: { sessionId: string } }>("/sessions/:sessionId/abort", async (request, reply) => {
 		const { sessionId } = request.params;
-		const aborted = await manager.abort(sessionId);
-		app.log.info({ sessionId, aborted }, "abort requested");
-		return reply.send({ ok: aborted, skipped: !aborted });
+		const result = await manager.abort(sessionId);
+		app.log.info(
+			{ sessionId, aborted: result.aborted, recoveredCount: result.recovered.length },
+			"abort requested",
+		);
+		return reply.send({
+			ok: result.aborted,
+			skipped: !result.aborted,
+			recovered: result.recovered,
+		});
 	});
 
 	/**

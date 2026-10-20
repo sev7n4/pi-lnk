@@ -24,26 +24,26 @@ function stubPi(svc: AgentService, url: string | null, client: unknown) {
 describe('AgentService.cancelRun（前端「停止」→ pi-runtime abort）', () => {
   it('转发到 pi-runtime 的 abortRun', async () => {
     const svc = createService()
-    const abortRun = vi.fn(async () => ({ ok: true, skipped: false }))
+    const abortRun = vi.fn(async () => ({ ok: true, skipped: false, recovered: [] }))
     stubPi(svc, 'http://pi-runtime', { abortRun })
 
     const result = await svc.cancelRun({ sessionId: 's1' })
-    expect(result).toEqual({ ok: true, skipped: false })
+    expect(result).toEqual({ ok: true, skipped: false, recovered: [] })
     expect(abortRun).toHaveBeenCalledWith('s1')
   })
 
   it('pi-runtime 无活跃 run 时透传 skipped（前端提示「已断开回复」）', async () => {
     const svc = createService()
-    stubPi(svc, 'http://pi-runtime', { abortRun: async () => ({ ok: false, skipped: true }) })
+    stubPi(svc, 'http://pi-runtime', { abortRun: async () => ({ ok: false, skipped: true, recovered: [] }) })
 
-    expect(await svc.cancelRun({ sessionId: 's1' })).toEqual({ ok: false, skipped: true })
+    expect(await svc.cancelRun({ sessionId: 's1' })).toEqual({ ok: false, skipped: true, recovered: [] })
   })
 
   it('未配置 pi-runtime URL 时返回 skipped，不抛（前端降级为仅断开 SSE）', async () => {
     const svc = createService()
     stubPi(svc, null, { abortRun: async () => ({ ok: true, skipped: false }) })
 
-    expect(await svc.cancelRun({ sessionId: 's1' })).toEqual({ ok: false, skipped: true })
+    expect(await svc.cancelRun({ sessionId: 's1' })).toEqual({ ok: false, skipped: true, recovered: [] })
   })
 
   it('P0-①：中断目标 = 对话键（threadId），与 chat 的会话键一致', async () => {

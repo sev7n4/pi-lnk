@@ -23,6 +23,7 @@ import {
 	type AgentLane,
 	type Context,
 	type JsonlSessionMetadata,
+	type AgentMessage,
 	type LaneSnapshot,
 	type OpenOperation,
 	type QueueMode,
@@ -373,6 +374,66 @@ type ToolLikeEvent = {
  * `write` 是 vendor 内部写入，不进用户队列口径。
  */
 export type QueuedKind = "steer" | "followUp" | "nextRun";
+
+/**
+ * abort 时被 vendor 从 inbox 移除、并由 `AbortRequestResult` 吐回给我们的队列消息（2026-10-20）。
+ *
+ * vendor 的 `requestOperationAbort`（`harness/runtime/lane.ts:1047-1089`）会**删掉**
+ * 这些条目的 pending entry（不可恢复），但把消息内容返给调用方 —— 上游 coding-agent
+ * 的 `clearQueue()` 就是拿它把队列内容放回编辑器的。我们此前丢弃了该返回值 ⇒
+ * 用户插队的消息在孤儿/看护结算路径上静默消失。
+ */
+export interface RecoveredQueueItem {
+	/** 原队列标签：插话 / 尾随指令。 */
+	kind: "steer" | "followUp";
+	/** 消息文本（从 vendor 的 AgentMessage 里取出的纯文本部分）。 */
+	text: string;
+}
+
+/**
+ * 从 vendor 的 `AgentMessage[]` 抽出可回灌给用户的纯文本。
+ *
+ * ⚠️ `AgentMessage` 是**联合类型**（user / assistant / bashExecution / custom /
+ * branchSummary / compactionSummary …），只有 `role: "user"` 那支有 `content` 数组。
+ * 队列里入队的**一定是 user 消息**（`lane.ts` 的 `enqueue` 构造 `{role:"user"}`），
+ * 但类型系统不知道这件事 ⇒ 这里显式按 role 收窄，其余变体跳过。
+ *
+ * 只取 text 段：vendor 的 `content` 是 `TextContent | ImageContent` 数组，
+ * 图片段没有可直接回灌的形态（上游 coding-agent 的 clearQueue 也只回灌文本）。
+ * 空文本的消息**保留但标空**（上层据此知道「有条消息但没有文字」），不静默丢弃 ——
+ * 丢弃就是数据丢失的另一种形态。
+ */
+export function toRecoveredQueueItems(
+	steer: readonly AgentMessage[] | undefined,
+	followUp: readonly AgentMessage[] | undefined,
+): RecoveredQueueItem[] {
+	const out: RecoveredQueueItem[] = [];
+	// ⚠️ 防御 `?? []`：vendor 的 AbortRequestResult 恒带两组（lane.ts:1043/1078），
+	// 但 fake lane / 上游漂移都可能缺键 —— 这里抛 TypeError 会把整个 force 分支
+	// 打进 catch，`drive` 都不会执行（CI 实测：stall watchdog 3 例红）。
+	const push = (kind: "steer" | "followUp", messages?: readonly AgentMessage[]) => {
+		for (const message of messages ?? []) {
+			// 联合类型收窄：只有 user 消息带 content
+			if (message.role !== "user") continue;
+			const content = message.content;
+			// ⚠️ `content` 有两种形态：纯字符串，或 `TextContent | ImageContent` 数组。
+			// 队列里通常是数组，但类型允许字符串 ⇒ 两种都要处理（漏一个就是「取不到文字」）。
+			const text =
+				typeof content === "string"
+					? content
+					: (content ?? [])
+							.filter(
+								(part): part is { type: "text"; text: string } => part.type === "text",
+							)
+							.map((part) => part.text)
+							.join("");
+			out.push({ kind, text });
+		}
+	};
+	push("steer", steer);
+	push("followUp", followUp);
+	return out;
+}
 
 interface SessionEntry {
 	id: string;
@@ -1803,7 +1864,9 @@ export class SessionManager {
 		);
 		void this.forceSettleLaneOperation(entry)
 			.then((settled) => {
-				if (settled) entry.prompting = false;
+				// ⚠️ 返回值是对象（{aborted, recovered}）不是 boolean：恒真值判断会把
+				// 「结算失败」也当成成功清掉 prompting，必须显式看 .aborted。
+				if (settled.aborted) entry.prompting = false;
 			})
 			.catch(() => {});
 		return true;
@@ -2660,16 +2723,26 @@ export class SessionManager {
 	 * `reconcileOperation → recoverCancelledAssistantEffect` 把它结算掉：既取消、又释放锁。
 	 *
 	 * 保持 fail-soft：force 分支任何异常都只 warn 并返回 false，绝不让「停止」变成 500。
+	 *
+	 * ⭐ **2026-10-20：返回被 abort 吐回的队列内容**（`recovered`）。
+	 * vendor 的 `requestOperationAbort`（`harness/runtime/lane.ts:1047-1089`）在中止时会把
+	 * inbox 里的 steer/followUp **移除并删除其 pending entry**，但把内容经
+	 * `AbortRequestResult.steer/followUp` 返给调用方 —— 上游 coding-agent 的 `clearQueue()`
+	 * 就是拿它把队列内容放回编辑器的。我们此前**丢弃**了该返回值 ⇒ 用户插队的消息在
+	 * 孤儿/看护结算路径上**静默消失**。现在原样透出，由上层决定怎么还给用户。
 	 */
-	async abort(threadKey: string): Promise<boolean> {
+	async abort(threadKey: string): Promise<{ aborted: boolean; recovered: RecoveredQueueItem[] }> {
 		const entry = this.sessions.get(toSessionKey(threadKey));
 		if (entry) this.pendingRegistry?.abortAll(entry.canvasSessionId ?? entry.id);
-		if (!entry) return false;
+		if (!entry) return { aborted: false, recovered: [] };
 		if (entry.cancelRun) {
 			entry.userAborted = true;
 			entry.cancelRun("user_cancel");
 			entry.cancelRun = undefined;
-			return true;
+			// ⚠️ 正常取消走 context cancel（`entry.cancelRun`），**不走** vendor 的
+			// `requestOperationAbort` ⇒ 队列内容不会被移除，这里也就没有可吐回的。
+			// 只有 force 分支（lane 上钉着孤儿 operation）会真删 inbox。
+			return { aborted: true, recovered: [] };
 		}
 		return await this.forceSettleLaneOperation(entry);
 	}
@@ -2677,33 +2750,49 @@ export class SessionManager {
 	/**
 	 * force 分支：lane 上确有孤儿 operation 时结算它并返回 true；没有则返回 false
 	 * （= 真没东西可停，语义与旧实现一致，前端提示「后台可能仍在收尾」）。
+	 *
+	 * ⭐ 同时回收被 abort 吐回的队列内容（见 `abort()` 的说明）：`requestAbort` 的返回值
+	 * 里有 `steer`/`followUp` 两组消息，此前被丢弃 ⇒ 用户插队的消息静默消失。
 	 */
-	private async forceSettleLaneOperation(entry: SessionEntry): Promise<boolean> {
+	private async forceSettleLaneOperation(
+		entry: SessionEntry,
+	): Promise<{ aborted: boolean; recovered: RecoveredQueueItem[] }> {
 		try {
 			const lane = await entry.harness.lane(MAIN_LANE, this.context);
 			const execution = await lane.inspectExecution(this.context);
 			const current = execution.current;
-			if (!current) return false;
-			await lane.requestAbort(current.id, this.context);
+			if (!current) return { aborted: false, recovered: [] };
+			const abortResult = await lane.requestAbort(current.id, this.context);
+			const recovered = abortResult.ok
+				? toRecoveredQueueItems(abortResult.value.steer, abortResult.value.followUp)
+				: [];
 			const result = await lane.drive({ operationId: current.id }, this.context);
 			if (!result.ok) {
 				console.warn(
 					`[pi-runtime] force abort could not settle orphan: session=${entry.id} ` +
 						`operation=${current.id} error=${String(result.error)}`,
 				);
-				return false;
+				return { aborted: false, recovered };
+			}
+			if (recovered.length > 0) {
+				// 队列内容被 vendor 移除了 ⇒ 必须让上层知道，否则用户的消息凭空消失
+				console.warn(
+					`[pi-runtime] force abort recovered ${recovered.length} queued message(s): ` +
+						`session=${entry.id} operation=${current.id}`,
+				);
+				this.metrics?.observeQueueOp("abort", "queued", "recovered");
 			}
 			console.warn(
 				`[pi-runtime] force abort settled orphan operation: session=${entry.id} ` +
 					`operation=${current.id} kind=${current.kind} outcome=${result.value.kind}`,
 			);
-			return true;
+			return { aborted: true, recovered };
 		} catch (err) {
 			console.warn(
 				`[pi-runtime] force abort threw (fail-soft): session=${entry.id}: ` +
 					`${err instanceof Error ? err.message : String(err)}`,
 			);
-			return false;
+			return { aborted: false, recovered: [] };
 		}
 	}
 

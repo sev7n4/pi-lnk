@@ -177,6 +177,19 @@ export const QUEUE_MARK: Record<"steer" | "followup", string> = {
  */
 export type QueueCancelOutcome = "cancelled" | "already_consumed" | "not_found";
 
+/**
+ * abort 时被 vendor 从 inbox 移除、并由 `AbortRequestResult` 吐回给我们的队列消息（2026-10-20）。
+ *
+ * 用途：用户在 turn 期间插队的消息，若被 abort 销毁，**内容必须还给用户**（放回输入框），
+ * 否则就是静默的数据丢失 —— 队列里的东西没了，用户毫不知情。
+ */
+export interface RecoveredQueueItem {
+	/** 原队列标签：插话 / 尾随指令。 */
+	kind: "steer" | "followUp";
+	/** 消息文本。 */
+	text: string;
+}
+
 export class PiRuntimeError extends Error {
 	constructor(
 		message: string,
@@ -457,16 +470,38 @@ export class PiRuntimeClient {
 	/**
 	 * 中断会话当前正在跑的 run（前端「停止」按钮走这条）。
 	 * 会话保留——用户可接着发新消息；pi-runtime 侧无活跃 run 时 skipped=true。
+	 *
+	 * ⭐ **2026-10-20：`recovered` 透出被 abort 吐回的队列内容**。
+	 * vendor 的 `requestOperationAbort` 会把 inbox 里的 steer/followUp 删掉（不可恢复），
+	 * 但把内容返给调用方。我们此前丢弃了它 ⇒ 用户插队的消息在孤儿/看护结算路径上静默消失。
+	 * 现在原样透出，由前端放回输入框（对齐上游 coding-agent 的 `clearQueue()`）。
+	 *
+	 * ⚠️ 老 runtime 不返回该字段 ⇒ `recovered` 退化为空数组（向后兼容，不是错误）。
 	 */
-	async abortRun(sessionId: string): Promise<{ ok: boolean; skipped: boolean }> {
-		const { status, body } = await this.request<{ ok?: boolean; skipped?: boolean }>(
-			`/sessions/${encodeURIComponent(sessionId)}/abort`,
-			{ method: "POST" },
-		);
+	async abortRun(
+		sessionId: string,
+	): Promise<{ ok: boolean; skipped: boolean; recovered: RecoveredQueueItem[] }> {
+		const { status, body } = await this.request<{
+			ok?: boolean;
+			skipped?: boolean;
+			recovered?: RecoveredQueueItem[];
+		}>(`/sessions/${encodeURIComponent(sessionId)}/abort`, { method: "POST" });
 		if (status >= 400) {
 			throw new PiRuntimeError(`abortRun failed: HTTP ${status}`, status);
 		}
-		return { ok: body?.ok === true, skipped: body?.skipped === true };
+		return {
+			ok: body?.ok === true,
+			skipped: body?.skipped === true,
+			// 只放行结构合法的项：kind 必须是两值之一，text 必须是字符串。
+			// 形状不对的（老版本/未来版本）一律丢弃，避免把脏数据塞进用户输入框。
+			recovered: Array.isArray(body?.recovered)
+				? body.recovered.filter(
+						(item): item is RecoveredQueueItem =>
+							typeof item?.text === "string" &&
+							(item.kind === "steer" || item.kind === "followUp"),
+					)
+				: [],
+		};
 	}
 
 	/** B-2：向阻塞中的确认类工具提交用户回答（幂等；未知/已清理 callId 返回 deduped=true）。 */

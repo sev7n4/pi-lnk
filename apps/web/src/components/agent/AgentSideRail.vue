@@ -26,6 +26,7 @@ import type { AgentStreamMessage } from '@/stores/agent'
 import {
   cancelAgentRun,
   cancelledCalloutTextFromProgress,
+  recoveredQueueText,
 } from '@/components/agent/cancelAgentRun'
 import {
   applyTaskEvent,
@@ -2018,7 +2019,7 @@ function authHeaders(): Record<string, string> {
 async function cancelActiveStream() {
   if (!agent.isStreaming) return
   runCancelled.value = true
-  const { apiOk, completedTasks, totalTasks } = await cancelAgentRun({
+  const { apiOk, completedTasks, totalTasks, recovered } = await cancelAgentRun({
     threadId: agentThreadId.value,
     sessionId: props.sessionId,
     abort: () => {
@@ -2038,6 +2039,19 @@ async function cancelActiveStream() {
       }),
   })
   cancelledProgressText.value = cancelledCalloutTextFromProgress(completedTasks, totalTasks)
+
+  // ⭐ 2026-10-20：abort 可能把用户插队的消息**销毁**（vendor 的 requestOperationAbort
+  // 会删 inbox 条目且不可恢复），但把内容吐回给我们 ⇒ 必须还给用户，否则就是静默的数据丢失。
+  // 回灌到输入框（对齐上游 coding-agent 的 clearQueue：把队列内容放回编辑器）。
+  const recoveredText = recoveredQueueText(recovered)
+  if (recoveredText) {
+    // 已有草稿时不覆盖：把还原内容追加在后面，两段都用分隔线隔开
+    const existing = input.value.trim()
+    input.value = existing ? `${existing}\n\n${recoveredText}` : recoveredText
+    nextTick(() => composerRef.value?.focus())
+    ElMessage.warning('你插队的补充被中断操作清掉了，已放回输入框')
+  }
+
   ElMessage.info(apiOk ? '已停止当前任务，您可以发送新需求' : '已断开回复，后台可能仍在收尾')
   if (apiOk) await refreshThreadCheckpoint()
 }
