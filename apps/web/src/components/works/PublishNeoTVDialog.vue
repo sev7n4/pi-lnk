@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { WORK_CATEGORIES } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import { worksApi } from '@/services/works-api'
 import { resolveMediaUrl } from '@/services/api-base'
@@ -36,7 +35,10 @@ const visible = computed({
 })
 
 const title = ref('')
-const category = ref('精选作品')
+// 2026-10-21 P1：原 `category` 是「分类下拉」，随分类口径切type 维度后
+// 下拉失去意义（分类已由 type 决定）。字段语义改为「可选合集名」自由文本，
+// 故连变量名一起改，避免旧语义留在代码里误导下一个人。
+const seriesName = ref('')
 const selectedSessionId = ref('')
 const primaryNodeId = ref('')
 const primaryNodes = ref<PrimaryNodeOption[]>([])
@@ -83,7 +85,7 @@ watch(
   (open) => {
     if (open) {
       title.value = props.defaultTitle ?? '未命名作品'
-      category.value = '精选作品'
+      seriesName.value = ''
       selectedSessionId.value = props.sessionId ?? props.sessions?.[0]?.id ?? ''
       error.value = ''
       success.value = false
@@ -124,7 +126,10 @@ async function handlePublish() {
     await worksApi.publish({
       sessionId: sid,
       title: title.value.trim(),
-      category: category.value,
+      // 关键：空串必须转 undefined —— DTO 里 category?: string 可选，
+      // 但 '' ≠未传；直接传 '' 会给作品留一个空合集名，后续按 category
+      // 非空做系列分组时会误命中。undefined 才能让整个键在序列化时消失。
+      category: seriesName.value.trim() || undefined,
       primaryNodeId: primaryNodeId.value,
     })
     success.value = true
@@ -167,15 +172,8 @@ async function handlePublish() {
         <el-input v-model="title" placeholder="输入作品标题" />
       </div>
       <div>
-        <label class="mb-1 block text-xs text-fg-3">分类</label>
-        <el-select v-model="category" class="w-full">
-          <el-option
-            v-for="cat in WORK_CATEGORIES.filter((c) => c !== '全部')"
-            :key="cat"
-            :label="cat"
-            :value="cat"
-          />
-        </el-select>
+        <label class="mb-1 block text-xs text-fg-3">合集名（可选）</label>
+        <el-input v-model="seriesName" placeholder="留空则不归入合集" maxlength="40" />
       </div>
       <div>
         <label class="mb-1 block text-xs text-fg-3">主成片节点 <span class="text-danger">*</span></label>

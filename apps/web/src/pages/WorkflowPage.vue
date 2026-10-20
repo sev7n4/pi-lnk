@@ -3,7 +3,6 @@ import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Work } from '@lnkpi/shared'
-import { WORK_CATEGORIES } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
@@ -12,7 +11,6 @@ import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
-import CategoryTabs from '@/components/workflow/CategoryTabs.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import SignatureHero from '@/components/workflow/SignatureHero.vue'
 import type { Session } from '@lnkpi/shared'
@@ -53,7 +51,9 @@ watch(
 
 const prompt = ref('')
 const works = ref<Work[]>([])
-const activeCategory = ref('全部')
+// 2026-10-21 P1：主页只留一行精选（4 张），完整作品流移至 /community。
+// 分类筛选（activeCategory）随之撤出——分类维度由 type 决定，属社区页职责。
+const FEATURED_WORKS_COUNT = 4
 const loading = ref(false)
 const showPublish = ref(false)
 const userSessions = ref<Session[]>([])
@@ -64,6 +64,9 @@ const showAllSessions = ref(false)
 const manageSessions = ref(false)
 const selectedSessionIds = ref<string[]>([])
 const DEFAULT_VISIBLE_SESSIONS = 5
+
+// 精选行：只取最新 4 条。「去发现 →」把完整作品流交给 /community。
+const featuredWorks = computed(() => works.value.slice(0, FEATURED_WORKS_COUNT))
 
 const filteredSessions = computed(() => {
   const q = sessionSearch.value.trim().toLowerCase()
@@ -127,9 +130,9 @@ function getMockWorks(): Work[] {
 async function fetchWorks() {
   loading.value = true
   try {
-    const { data } = await api.get<{ data: { items: Work[] } }>('/works', {
-      params: { category: activeCategory.value === '全部' ? undefined : activeCategory.value },
-    })
+    // 2026-10-21 P1：主页不再有分类筛选（分类维度移至 /community），
+    // 故category 参数整体撤掉，只拉默认最新作品供精选行取用。
+    const { data } = await api.get<{ data: { items: Work[] } }>('/works')
     works.value = data.data.items
   } catch {
     works.value = getMockWorks()
@@ -306,11 +309,6 @@ function viewShare(workId: string) {
   router.push(`/share/${workId}`)
 }
 
-function onCategoryChange(cat: string) {
-  activeCategory.value = cat
-  fetchWorks()
-}
-
 async function openPublish() {
   if (!auth.isLoggedIn) {
     auth.openLogin()
@@ -428,22 +426,22 @@ watch(() => auth.isLoggedIn, () => {
     </section>
 
     <section>
-      <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <CategoryTabs
-          :categories="WORK_CATEGORIES"
-          :model-value="activeCategory"
-          @update:model-value="onCategoryChange"
-        />
-        <button class="btn-ghost text-sm" @click="openPublish">发布作品</button>
+      <div class="mb-4 flex items-center justify-between gap-4">
+        <h2 class="text-lg font-semibold text-fg">社区精选</h2>
+        <RouterLink to="/community" class="btn-ghost text-sm">去发现 →</RouterLink>
       </div>
 
-      <div v-if="loading" class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <div v-for="i in 8" :key="i" class="aspect-video animate-pulse rounded-2xl bg-surface-base" />
+      <div
+        v-if="loading"
+        data-testid="home-featured-row"
+        class="grid grid-cols-2 gap-4 lg:grid-cols-4"
+      >
+        <div v-for="i in 4" :key="i" class="aspect-video animate-pulse rounded-2xl bg-surface-base" />
       </div>
 
-      <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div v-else-if="featuredWorks.length" data-testid="home-featured-row" class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <WorkCard
-          v-for="work in works"
+          v-for="work in featuredWorks"
           :key="work.id"
           :work="work"
           @view-work="viewWork"
@@ -452,6 +450,12 @@ watch(() => auth.isLoggedIn, () => {
           @view-author="viewAuthor"
           @view-share="viewShare"
         />
+      </div>
+
+      <p v-else class="py-8 text-center text-sm text-fg-3">社区还没有作品，去发现看看 →</p>
+
+      <div class="mt-4 flex justify-end">
+        <button class="btn-ghost text-sm" @click="openPublish">发布作品</button>
       </div>
     </section>
 
