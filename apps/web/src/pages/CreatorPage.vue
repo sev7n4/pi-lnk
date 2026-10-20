@@ -7,6 +7,7 @@ import { usersApi } from '@/services/users-api'
 import { useAuthStore } from '@/stores/auth'
 import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 import WorkCard from '@/components/works/WorkCard.vue'
+import AppEmptyState from '@/components/common/AppEmptyState.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -294,12 +295,15 @@ function viewShare(workId: string) {
         </div>
       </div>
 
-      <div v-if="!gridWorks.length" class="py-16 text-center">
-        <p class="text-base text-fg">
-          {{ activeTab === '全部' ? '这片海域还没有作品' : `该分组下还没有作品` }}
-        </p>
-        <RouterLink to="/community" class="btn-ghost mt-3 inline-block text-sm">去社区看看</RouterLink>
-      </div>
+      <AppEmptyState v-if="!gridWorks.length" data-testid="creator-empty">
+        {{ activeTab === '全部' ? '这片海域还没有作品' : '该分组下还没有作品' }}
+        <template #desc>
+          {{ activeTab === '全部' ? '成为首位发布作品的访客' : '换个分组看看，或发布你的第一件作品' }}
+        </template>
+        <template #action>
+          <RouterLink to="/community" class="btn-ghost text-sm">去社区看看</RouterLink>
+        </template>
+      </AppEmptyState>
     </template>
 
     <p v-else class="py-16 text-center text-sm text-fg-3">创作者不存在</p>

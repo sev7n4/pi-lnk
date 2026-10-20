@@ -45,4 +45,21 @@ describe('AppEmptyState', () => {
     expect(main.classes()).toContain('text-fg')
     expect(desc.classes()).toContain('text-fg-3')
   })
+
+  it('desc 也可走 prop（静态文案），与 slot 等价', () => {
+    const wrapper = mount(AppEmptyState, {
+      props: { desc: '创建第一张画布，开始创作' },
+      slots: { default: '还没有画布' },
+    })
+    expect(wrapper.text()).toContain('创建第一张画布，开始创作')
+  })
+
+  it('desc slot 优先于 desc prop', () => {
+    const wrapper = mount(AppEmptyState, {
+      props: { desc: 'prop 版' },
+      slots: { default: '主', desc: 'slot 版' },
+    })
+    expect(wrapper.text()).toContain('slot 版')
+    expect(wrapper.text()).not.toContain('prop 版')
+  })
 })

@@ -5,6 +5,7 @@ import type { Work } from '@lnkpi/shared'
 import { WORK_CATEGORIES } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import WorkCard from '@/components/works/WorkCard.vue'
+import AppEmptyState from '@/components/common/AppEmptyState.vue'
 
 const router = useRouter()
 const works = ref<Work[]>([])
@@ -120,8 +121,12 @@ onMounted(fetchWorks)
       />
     </div>
 
-    <div v-else class="py-20 text-center text-fg-3">
-      暂无作品，成为第一个创作者吧
-    </div>
+    <AppEmptyState
+      v-else
+      data-testid="community-empty"
+      :desc="search ? '换个关键词试试' : '成为第一个创作者吧'"
+    >
+      {{ search ? '没有找到相关作品' : '暂无作品' }}
+    </AppEmptyState>
   </div>
 </template>
