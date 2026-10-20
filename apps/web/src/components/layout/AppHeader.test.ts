@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
 import AppHeader from './AppHeader.vue'
 
 const routePath = vi.hoisted(() => ({ value: '/workflow' }))
