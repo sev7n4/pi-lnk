@@ -7,13 +7,32 @@ export interface CreatorProfile {
     nickname: string
     avatar?: string
     workCount: number
+    /** 2026-10-21 P2：关注数 / 关注中人数（公开可见，是创作者身份的一部分） */
+    followersCount: number
+    followingCount: number
+    /** 置顶作品 id（≤2，服务端保证；已按作者选择顺序） */
+    pinnedWorkIds: string[]
     createdAt: string
   }
   works: Work[]
 }
 
+export interface FollowRelation {
+  following: boolean
+  followersCount: number
+}
+
 export const usersApi = {
   getCreator: (id: string) => api.get<{ data: CreatorProfile }>(`/users/${id}`),
+  /// 关注（幂等：重复关注返回成功，不报错）
+  follow: (id: string) => api.post<{ data: FollowRelation }>(`/users/${id}/follow`),
+  /// 取关（幂等：未关注也返回成功态）
+  unfollow: (id: string) => api.delete<{ data: FollowRelation }>(`/users/${id}/follow`),
+  /// 当前登录者是否已关注该创作者
+  relation: (id: string) => api.get<{ data: { following: boolean } }>(`/users/${id}/relation`),
+  /// 设置置顶作品（服务端三重校验：≤2 / 全属本人 / 全部存在）
+  setPinnedWorks: (workIds: string[]) =>
+    api.patch<{ data: { pinnedWorkIds: string[] } }>('/users/me/pinned-works', { workIds }),
 }
 
 export interface MembershipPlan {

@@ -37,6 +37,34 @@ model User {
   webdavConfig     UserWebdavConfig?
   assets           UserAsset[]
   workflowRecipes  UserWorkflowRecipe[]
+  // 2026-10-21 P2：创作者关注关系 + 置顶作品（加法式变更，不动既有字段）
+  //
+  // ⚠️ pinnedWorkIds 用 **JSON 字符串** 而非 `String[]`：SQLite 连接器不支持
+  // 标量列表（Prisma 会报 P1012 "can't be a list"）。序列化约定：
+  // 写入 `JSON.stringify(ids)`，读出 `JSON.parse` 后在服务层校验形状，
+  // 解析失败一律回落空数组（存量脏值不该让创作者页整页崩）。
+  pinnedWorkIds    String             @default("[]")
+  followers        Follow[]           @relation("FollowFollower")
+  following        Follow[]           @relation("FollowFollowing")
+}
+
+/// 关注关系（2026-10-21 P2）——「A 关注 B」的一条边。
+///
+/// 设计要点：
+///   - `@@unique([followerId, followingId])` 让「重复关注」在数据库层被挡住，
+///     服务端捕获 P2002 后转成幂等成功（用户连点两次不该报错）。
+///   - 复合索引按 followingId 建：创作者页要查「谁关注了我」，那是反向查询。
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("FollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("FollowFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followingId])
 }
 
 /// 订阅（连续包月）——「一个用户同时只持有一个套餐」的权威周期事实。
