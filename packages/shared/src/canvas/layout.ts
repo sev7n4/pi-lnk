@@ -19,18 +19,14 @@ export type LayoutNode = CanvasNode & {
   dimensions?: { width?: number; height?: number }
 }
 
+// 逐字上移自 canvas-layout.util.ts（Nest 侧原表即此 5 键；group 等未列类型走 fallback
+// 280×160，与 Nest 既有布局函数行为一致——放置内核不得静默改变排布尺寸）。
 const NODE_SIZES: Record<string, { w: number; h: number }> = {
   text: { w: 280, h: 160 },
   image: { w: 280, h: 280 },
   // 视频：长边基准 320（尺寸随比例 contain，包络 320×320）
   video: { w: 320, h: 320 },
   audio: { w: 280, h: 140 },
-  sceneComposer: { w: 280, h: 280 },
-  shot: { w: 280, h: 280 },
-  mediaInput: { w: 280, h: 280 },
-  videoComposition: { w: 280, h: 200 },
-  worldModel: { w: 280, h: 280 },
-  group: { w: 280, h: 160 },
   prompt: { w: 280, h: 120 },
 }
 
