@@ -1,17 +1,19 @@
 <script setup lang="ts">
 /** 移动端应用骨架 · 顶栏（2026-10-19 IA v3.2 对话驱动叙事）：
- * 【对话】页签 = [≡ 左上·项目抽屉] [积分] [+ 新对话] [🕘 历史对话]（右侧）；
- * 【画布】页签 = [积分] [⋯ 画布管理菜单（任务动态项：有任务才出现；PR4 起按频次重排，
+ * 【对话】页签 = [≡ 左上·项目抽屉] [+ 新对话] [🕘 历史对话]（右侧）；
+ * 【画布】页签 = [⋯ 画布管理菜单（任务动态项：有任务才出现；PR4 起按频次重排，
  *   「保存画布」移除改自动保存状态行，导出带二级）]；
  * 【发现】【我的】= 透明占位（保持 --lnk-topbar-h 高度一致，不放任何入口）。
  * 2026-10-19 用户裁决：顶栏「未命名画布」标题输入整体移除——对话驱动叙事下
  * 顶栏不放画布名；项目重命名入口在抽屉项目卡片菜单。
  * IA v3.2（用户拍板「推荐方案」）：新建对话/历史对话从抽屉移出，升为对话页
  * 右上角常驻图标——抽屉=项目世界（容器层），右上角=当前项目的对话世界
- * （内容层），职责边界一眼可读；全局积分双页签（对话/画布）可见。 */
+ * （内容层），职责边界一眼可读。
+ * 2026-10-21 用户裁决：积分胶囊撤出顶栏（对话/画布双页）——积分是账户属性
+ * 非任务上下文，「我的」页已有同一数字（信息重复）；余额在「我的-我的积分」
+ * 与花销时刻（状态行预估/充值入口）展示。 */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useClickOutside } from '@/composables/useClickOutside'
-import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{
   tab: 'chat' | 'canvas' | 'discover' | 'mine'
@@ -33,8 +35,6 @@ const emit = defineEmits<{
   'open-tasks': []
 }>()
 
-const auth = useAuthStore()
-
 const menuOpen = ref(false)
 const exportOpen = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
@@ -46,10 +46,6 @@ const showTaskItem = computed(() => props.tab === 'canvas' && props.hasTaskHisto
 const taskItemLabel = computed(() =>
   props.taskActiveCount && props.taskActiveCount > 0 ? `任务（${props.taskActiveCount}）` : '任务',
 )
-
-/** 全局积分：登录态才显示（对话页/画布页都要能看见余额） */
-const pointsText = computed(() => (auth.user?.points ?? 0).toLocaleString('en-US'))
-const showPoints = computed(() => auth.isLoggedIn)
 
 function closeMenu() {
   menuOpen.value = false
@@ -105,20 +101,8 @@ onUnmounted(() => {
       </svg>
     </button>
 
-    <!-- 右侧工具簇：积分（双页可见）→ 对话页 +/🕘 ｜ 画布页 ⋯ 菜单 -->
+    <!-- 右侧工具簇：对话页 +/🕘 ｜ 画布页 ⋯ 菜单（积分已撤出，见头部裁决注释） -->
     <div class="bar-actions">
-      <span
-        v-if="showPoints"
-        class="bar-points tabular-nums"
-        :title="`我的积分 ${auth.user?.points ?? 0}`"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
-          <circle cx="12" cy="12" r="8.5" />
-          <path stroke-linecap="round" d="M12 8v8M9.5 10.5h5M9.5 13.5h5" />
-        </svg>
-        {{ pointsText }}
-      </span>
-
       <template v-if="props.tab === 'chat'">
         <!-- 「新建对话」卡（IA v3.3，2026-10-19 用户裁决）：与抽屉「新建项目」
              同族 create-card 的顶栏紧凑变体——胶囊承托 + 右侧小圆盘加号。 -->
@@ -269,7 +253,7 @@ onUnmounted(() => {
 
 /* 「新建对话」卡：create-card 家族的顶栏紧凑变体（抽屉「新建项目」同族，
  * AgentSideRail.vue 各自 scoped 定义）。胶囊承托文字 + accent 圆盘白加号，
- * 与积分胶囊、🕘 图标按钮在 44px 顶栏内纵向居中对齐。 */
+ * 与🕘 图标按钮在 44px 顶栏内纵向居中对齐。 */
 .create-card--bar {
   display: inline-flex;
   align-items: center;
@@ -312,30 +296,6 @@ onUnmounted(() => {
 .create-card--bar .create-card__disc svg {
   width: 11px;
   height: 11px;
-}
-
-/* 全局积分胶囊：对话/画布双页可见，登录态才渲染 */
-.bar-points {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  margin-right: 2px;
-  padding: 0 9px 0 7px;
-  border-radius: 999px;
-  border: 0.5px solid var(--lnk-border-subtle);
-  background: var(--lnk-surface-overlay);
-  color: var(--lnk-text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.bar-points svg {
-  width: 13px;
-  height: 13px;
-  color: var(--lnk-accent-text);
 }
 
 .bar-btn:active {
