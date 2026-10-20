@@ -331,6 +331,18 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 - **偏差 2：空态 `mobile-canvas-empty` 与 VueFlow 内胶囊 `MobileCanvasTopControls` 仍留在 CanvasPage**——二者依赖 VueFlow 内部定位（胶囊包在 `<Panel>` 内、空态 absolute 在 canvasArea 内），搬出壳层会破坏定位；**留待后续定位重构**。
 - 残余 20 处 `isMobileLayout` 全部**非移动端编排**。口径 = CanvasPage 内出现次数（**脚本 8 + 模板 12**）：PC 自身门控 6（模板）／画布世界 4（模板：画布 veil 类、VueFlow 内胶囊、空态、非画布页签时隐藏画布）／共享状态真源消费 3（`mobileStudioDockOpen`、pickMode watch、AgentSideRail `:mobile`）／脚本内行为分流 4（定位⇒纯画布满屏 ADR-0011 ×2、拾取⇒显式进画布、PC 才自动开面板）／壳层唯一挂载点 1／composable 取用与返回 2。
 
+**PR5 收尾修复（#502）——壳层抽取带出的一个真实缺陷**：
+
+- `MobileShellBatchActions.download` 曾被声明为 `() => void`，而 `MobileMultiSelectBar` 的
+  `download` 事件**带 mode 载荷**（`full_package` / `lightweight` / `media_list_only`）⇒ 壳层类型上
+  把载荷丢了，移动端「轻量包 / 媒体清单」**静默退化成默认完整包**（`handlePackageDownload` 的
+  `mode` 形参收不到值 ⇒ 落回默认参数 `full_package`）。已改为显式透传 `$event` 并补齐三值联合
+  类型；`layout` / `groupColor` / `blockedHint` 三个带载荷事件同步改为显式 `$event`。
+- 教训：这类「声明无参 + 实际带载荷」的错配在 TS 里**不报错**（多余实参合法）⇒ 只能靠静态契约
+  拦，已加进 `CanvasPage.mobileSelectionWiring.test.ts`。
+- 另摘除壳层两个未被使用的死 prop（`mobileCanvasView` / `mobileCanvasImm`）：共享状态真源仍在
+  CanvasPage，壳层只订阅真正用到的 `mobileAppTab`。
+
 ### 6.2 isMobileLayout 治理规则（写入 AGENTS.md 前端节）
 
 - 移动端**编排**只归 `MobileCanvasShell` 一个所有者；页面级组件不再新增 `isMobileLayout` 条件

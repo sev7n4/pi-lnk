@@ -14,6 +14,7 @@
  * - 共享状态真源留在 CanvasPage（mobileAppTab / mobileCanvasView / mobileCanvasImm 被
  *   AgentSideRail、mobileStudioDockOpen、focusNodeById、pickMode watch 共用），壳层只
  *   接收并渲染；壳层通过 actions 函数 prop 触发 CanvasPage 核心逻辑，不回写共享状态。
+ *   壳层只订阅它真正用到的状态（mobileAppTab）；view/imm 仍是 CanvasPage 内部状态。
  *
  * 本壳层自身只在 CanvasPage 的 `v-if="isMobileLayout"` 下渲染，内部不再判断断点。
  */
@@ -62,15 +63,19 @@ export interface MobileShellBatchActions {
   duplicateUpstream: () => void
   addAgentRef: () => void
   layout: (mode: 'along_edges' | 'grid') => void
-  download: () => void
+  /**
+   * 导出模式载荷必须透传（'full_package' | 'lightweight' | 'media_list_only'）。
+   * ⚠️ 早先版本把它写成 `() => void`，@download 的 $event 被吞掉 ⇒ 移动端「轻量包 /
+   * 媒体清单」静默退化成默认 full_package（与 master 的 `@download="handlePackageDownload"`
+   * 语义不一致：后者是透传 $event 给 mode 形参的）。
+   */
+  download: (mode: 'full_package' | 'lightweight' | 'media_list_only') => void
   delete: () => void
 }
 
 const props = defineProps<{
-  /** 页签 / 画布视图态——共享真源在 CanvasPage，壳层只接收渲染 */
+  /** 页签——共享真源在 CanvasPage，壳层只接收渲染 */
   mobileAppTab: MobileAppTab
-  mobileCanvasView: boolean
-  mobileCanvasImm: boolean
   /** 自动保存状态行 */
   saving: boolean
   savedAt: number | null
@@ -304,15 +309,15 @@ onUnmounted(() => stopMobileTaskPolling())
     @generate="batchActions.generate"
     @regenerate="batchActions.regenerate"
     @stop="batchActions.stop"
-    @blocked-hint="batchActions.blockedHint"
+    @blocked-hint="batchActions.blockedHint($event)"
     @group="batchActions.group"
     @ungroup="batchActions.ungroup"
-    @group-color="batchActions.groupColor"
+    @group-color="batchActions.groupColor($event)"
     @duplicate="batchActions.duplicate"
     @duplicate-upstream="batchActions.duplicateUpstream"
     @add-agent-ref="batchActions.addAgentRef"
-    @layout="batchActions.layout"
-    @download="batchActions.download"
+    @layout="batchActions.layout($event)"
+    @download="batchActions.download($event)"
     @delete="batchActions.delete"
   />
   <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet -->

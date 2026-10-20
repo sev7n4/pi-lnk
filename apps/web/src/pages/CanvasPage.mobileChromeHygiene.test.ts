@@ -110,6 +110,58 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
   })
 })
 
+// PR5（D-9）治理守卫：移动端编排单一所有者。
+// AGENTS.md「移动端呈现」第 1 条要求「页面级组件不再新增 isMobileLayout 条件分支」，
+// 但那条规则在 PR4 只是「约定」——没有任何机器判据。PR5 抽出壳层后它才第一次可判定：
+// 移动端专属子组件（顶栏 / 页签 / 状态行 / 发现 / 我的 / 账号面板 / ＋FAB / 新建·任务 sheet /
+// 多选动作条）在 CanvasPage 里必须**零**出现，编排只在 MobileCanvasShell 一处。
+describe('PR5 移动端编排单一所有者（壳层）', () => {
+  const page = stripComments(read('./CanvasPage.vue'))
+  const shell = readComponent('mobile/MobileCanvasShell.vue')
+
+  it('CanvasPage 不再直接渲染移动端子组件（编排已上收壳层）', () => {
+    for (const comp of [
+      'MobileTopBar',
+      'MobileTabBar',
+      'MobileSaveStatus',
+      'DiscoverPane',
+      'ProfilePane',
+      'MobileMultiSelectBar',
+      'MobileCanvasCreateFab',
+      'MobileCreateSheet',
+      'MobileTaskSheet',
+    ]) {
+      expect(page, `CanvasPage 不该再直接渲染 <${comp}>`).not.toContain(`<${comp}`)
+    }
+    // 有效性配对：壳层确实渲染了这些组件（防空集假绿）
+    for (const comp of [
+      'MobileTopBar',
+      'MobileTabBar',
+      'MobileSaveStatus',
+      'DiscoverPane',
+      'ProfilePane',
+      'MobileMultiSelectBar',
+      'MobileCanvasCreateFab',
+      'MobileCreateSheet',
+      'MobileTaskSheet',
+    ]) {
+      expect(shell, `壳层必须渲染 <${comp}>`).toContain(`<${comp}`)
+    }
+  })
+
+  it('壳层自身不再判断断点（由 CanvasPage 的 v-if 包裹，内部零 isMobileLayout）', () => {
+    // 壳层只在移动端渲染 ⇒ 内部再判 isMobileLayout 就是「断点判断没有单一所有者」
+    expect(stripComments(shell)).not.toContain('isMobileLayout')
+    expect(stripComments(shell)).not.toContain('useAgentMobileLayout')
+    // 且 CanvasPage 必须以 isMobileLayout 包裹它
+    expect(page).toMatch(/<MobileCanvasShell\s+v-if="isMobileLayout"/)
+  })
+
+  it('壳层零 --neo-*（旧体系棘轮只减不增）', () => {
+    expect(shell).not.toContain('--neo-')
+  })
+})
+
 describe('MobileSaveStatus 行为', () => {
   it('保存中 → 文案「保存中…」且禁用；否则显示已保存时刻', () => {
     const saving = mount(MobileSaveStatus, { props: { saving: true, savedAt: null } })
