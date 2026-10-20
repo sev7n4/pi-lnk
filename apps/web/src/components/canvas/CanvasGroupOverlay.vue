@@ -209,6 +209,16 @@ function commitRename() {
   --group-accent: var(--neo-group-accent, var(--neo-group-neutral));
 }
 
+/* 容器（虚线边框本体，视觉样式在全局 neo-node.css）必须铺满 wrapper：
+   旧节点形态靠模板上的 h-full/w-full 撑满节点盒，侧车化重写模板时丢了这个
+   撑满 ⇒ 容器塌成 min-height:160px 的一条横带、子节点全部「挂在框外」。
+   wrapper 有内联 px 宽高，inset:0 恒等其内容盒（border-box ⇒ 虚线边贴框沿）。 */
+.group-node-container {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+}
+
 /* 标题条：贴分组框上沿（与图片/视频节点的 .neo-node-external-title 同位同字体）。
    整条可拖（= 整组平移），双击标题区可重命名。做成实底 chip：分组框可能很大
    （子节点分散），用户需要一眼看出「这是分组标签」而不是残留的选区。 */

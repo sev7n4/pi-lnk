@@ -116,6 +116,16 @@ describe('CanvasGroupOverlay：信息条外沿化（拆内嵌小卡）', () => {
     w.unmount()
   })
 
+  it('容器必须铺满 wrapper（回归钉子：侧车化丢 h-full/w-full 后塌成 160px 横带，节点全挂框外）', () => {
+    const fs = readFileSync(join(HERE, 'CanvasGroupOverlay.vue'), 'utf8')
+    const scope = fs.match(/(?:^|\n)\.group-node-container\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(scope, '容器应绝对定位铺满 wrapper（inset:0）').toContain('position: absolute')
+    expect(scope).toContain('inset: 0')
+    // 模板层不得再用旧节点形态的 Tailwind 撑满类（铺满职责已收归 scoped，避免双源漂移）
+    expect(fs).not.toMatch(/class="group-node-container[^"]*h-full/)
+    expect(fs).not.toMatch(/class="group-node-container[^"]*w-full/)
+  })
+
   it('信息条无卡感：结构层不再有独立边框/底色类', () => {
     const css = readFileSync(join(WEB, 'src', 'styles', 'neo-node.css'), 'utf8')
     expect(css).not.toContain('rgba(24, 24, 27, 0.72)')
