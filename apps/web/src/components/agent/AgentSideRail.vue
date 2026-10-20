@@ -87,6 +87,8 @@ import {
 // 旧 reconcile 唯一消费点被 thread-state 终态判定替代。函数 + 测试保留以备未来手动重连或
 // 别处复用；本期只删 SideRail 死 import（I-3 fix）。
 import ForceChoiceDialog, { type ForceChoiceKind } from '@/components/agent/ForceChoiceDialog.vue'
+import { classifyRequestError, isNetworkError } from '@/components/agent/networkFault'
+import { useNetworkNotice } from '@/composables/useNetworkNotice'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
 import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
@@ -2397,7 +2399,7 @@ async function createOwnCanvas() {
  * @param branchFromEntryId ③ 重跑：pi 会话内目标消息的 entryId。提供时后端先 fork 出
  *   「截断到该消息之前」的新分支线程，再在新线程上跑本轮（真正的后端线程截断）。
  */
-async function sendMessage(message: string, branchFromEntryId?: string) {
+async function sendMessage(message: string, branchFromEntryId?: string, isRetry = false) {
   // §5.3（③ 已确认）：pending 期间对话输入一律按 answer，自由文本填充首个未答问题。
   // 简化：B-6 卡片在答满后已自动提交消失，pending 存在 = 至少一题未答 → 首个问题即目标
   if (pendingAskUser.value.length > 0) {
@@ -2460,7 +2462,10 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
     scrollToBottom(true)
     return
   }
-  agent.addUserMessage(message, userMessageExtras)
+  // 重试：用户原文已在气泡中，不再重复落一条 user 消息（续跑而非重发）
+  if (!isRetry) {
+    agent.addUserMessage(message, userMessageExtras)
+  }
   sidebar.clear()
   agent.isStreaming = true
   agent.startAssistantMessage()
@@ -2472,6 +2477,11 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
   // Track whether SSE stream ended normally (received [DONE])
   let streamEndedNormally = false
   recoveredPhaseHint.value = null
+  // 新一轮开始：清掉上一轮失败态标记与失败卡（续跑而非重发的前提）
+  lastTurnFailed.value = false
+  dockNotice.dismiss(REQUEST_FAILED_ID)
+  // 记住本轮用户原文，供失败卡「重试」复用（幂等键已保证重试不重复扣积分）
+  if (!isRetry) lastSentMessage.value = message
   runCancelled.value = false
   threadRunState.value = null
   cancelledPresentation.value = null
@@ -2481,35 +2491,51 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
 
   try {
     const token = localStorage.getItem('token')
-    const res = await fetch(apiUrl('/api/agent/chat/conversation'), {
-      method: 'POST',
-      signal: streamAbortController.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        'Idempotency-Key': idempotencyKey,
-      },
-      body: JSON.stringify({
-        sessionId: props.sessionId,
-        message,
-        threadId: agentThreadId.value,
-        skillId: activeSkillId.value ?? undefined,
-        model: planningModel.value || undefined,
-        thinking: showPlanningThinkingControls.value ? planningThinking.value : false,
-        thinkingEffort:
-          showPlanningThinkingControls.value && planningThinking.value
-            ? planningThinkingEffort.value
-            : undefined,
-        // SEL-REF：指代信号是**唯一新增上行字段**；`focusNodeId` 由服务端从它派生
-        // （规格 §5.3），前端不再单独发 —— 双字段各自独立写会静默漂移。
-        selectedNodeIds: bindingIds.length ? bindingIds : undefined,
-        attachments: attachments.length ? attachments : undefined,
-        refOrder: refOrder.length ? refOrder : undefined,
-        mentionedKeys,
-        // ③ 重跑：后端线程截断切点（缺省 = 普通发送，不 fork）
-        branchFromEntryId: branchFromEntryId || undefined,
-      }),
-    })
+    // 连接级错误（无 HTTP 状态）静默自动重试 1 次：移动端网络抖动多在秒级内恢复，
+    // 用户无感即可续上（2026-10-21 决策）。AbortError 与业务级错误不重试。
+    let res: Response | null = null
+    for (let attempt = 0; attempt < CONVERSATION_FETCH_MAX_ATTEMPTS; attempt++) {
+      try {
+        res = await fetch(apiUrl('/api/agent/chat/conversation'), {
+          method: 'POST',
+          signal: streamAbortController.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({
+            sessionId: props.sessionId,
+            message,
+            threadId: agentThreadId.value,
+            skillId: activeSkillId.value ?? undefined,
+            model: planningModel.value || undefined,
+            thinking: showPlanningThinkingControls.value ? planningThinking.value : false,
+            thinkingEffort:
+              showPlanningThinkingControls.value && planningThinking.value
+                ? planningThinkingEffort.value
+                : undefined,
+            // SEL-REF：指代信号是**唯一新增上行字段**；`focusNodeId` 由服务端从它派生
+            // （规格 §5.3），前端不再单独发 —— 双字段各自独立写会静默漂移。
+            selectedNodeIds: bindingIds.length ? bindingIds : undefined,
+            attachments: attachments.length ? attachments : undefined,
+            refOrder: refOrder.length ? refOrder : undefined,
+            mentionedKeys,
+            // ③ 重跑：后端线程截断切点（缺省 = 普通发送，不 fork）
+            branchFromEntryId: branchFromEntryId || undefined,
+          }),
+        })
+        break
+      } catch (fetchErr) {
+        if ((fetchErr as Error)?.name === 'AbortError') throw fetchErr
+        if (isNetworkError(fetchErr) && attempt < CONVERSATION_FETCH_MAX_ATTEMPTS - 1) {
+          await new Promise((r) => setTimeout(r, 1000))
+          continue
+        }
+        throw fetchErr
+      }
+    }
+    if (!res) return
 
     const reader = res.body?.getReader()
     if (!reader) return
@@ -2537,9 +2563,26 @@ async function sendMessage(message: string, branchFromEntryId?: string) {
       }
     }
   } catch (err) {
-    if ((err as Error)?.name !== 'AbortError') {
+    if ((err as Error)?.name === 'AbortError') {
+      // 用户主动取消：不报、不弹卡
+    } else {
+      const cls = classifyRequestError(err)
       agent.markTurnError(err)
-      agent.appendText(`\n\n⚠️ 请求失败: ${err}`)
+      // 气泡只留一行人话摘要，原始技术文案（如 `TypeError: network error`）不再透出
+      agent.appendText(`\n\n⚠️ 生成失败 · ${cls.human}`)
+      lastTurnFailed.value = true
+      // 分流进 dock 三色卡片（单一出口）：连接级=黄卡+重试，业务级=红卡+重试
+      dockNotice.pushNotice({
+        id: REQUEST_FAILED_ID,
+        tone: cls.kind === 'network' ? 'warning' : 'error',
+        title: cls.kind === 'network' ? '网络连接中断' : '生成失败',
+        message:
+          cls.kind === 'network'
+            ? '生成进度已自动保存，可点「重试」继续。'
+            : cls.human,
+        action: { label: '重试', onClick: () => void retryLastTurn() },
+        ttl: 0,
+      })
     }
   } finally {
     agentStream.stop()
@@ -2770,6 +2813,40 @@ async function reconcileLatestAssistant() {
 }
 
 const dockNotice = useDockNoticeStore()
+
+/** 故障卡片 id（请求失败分流 + 恢复时显式清掉） */
+const REQUEST_FAILED_ID = 'request-failed'
+/** 初始 fetch 连接级错误的最大尝试次数（含 1 次静默自动重试） */
+const CONVERSATION_FETCH_MAX_ATTEMPTS = 2
+/** 上一轮是否以失败告终（供「恢复后自动续跑」判定） */
+const lastTurnFailed = ref(false)
+/** 本轮用户原文（失败卡「重试」复用，避免让用户重打） */
+const lastSentMessage = ref('')
+
+/**
+ * 失败卡「重试」：复用上一轮用户原文重发。幂等键已保证重试不重复扣积分；
+ * isRetry 跳过重复落 user 气泡，做到「续跑而非重发」。
+ */
+function retryLastTurn() {
+  const msg = lastSentMessage.value
+  if (!msg) return
+  dockNotice.dismiss(REQUEST_FAILED_ID)
+  void sendMessage(msg, undefined, true)
+}
+
+/**
+ * 网络恢复后自动续跑：仅在上一轮确实失败时才触发，且先清掉失败卡再静默重连。
+ * reconnectStream 走 DB 历史回查（reconcile），不会重发整段 prompt。
+ */
+function resumeAfterRecovery() {
+  if (!lastTurnFailed.value) return
+  lastTurnFailed.value = false
+  dockNotice.dismiss(REQUEST_FAILED_ID)
+  void reconnectStream()
+}
+
+// 挂载连接级故障的主动通知（断网黄卡 / 恢复绿卡 + 自动续跑），见 useNetworkNotice
+useNetworkNotice({ onRecovered: () => resumeAfterRecovery() })
 
 /**
  * 不可达 / 重连提示 → dock 通知卡片（合并原 agent-stream-banner）。
