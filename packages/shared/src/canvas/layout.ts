@@ -8,7 +8,11 @@ import type { CanvasNode } from '../index'
 import { rectsOverlap, type Rect } from './workflowImportPlacement'
 
 /** 画布布局节点：CanvasNode + 分组/样式扩展（逐字上移，Nest 侧 canvas-layout.util.ts re-export 消费）。 */
-export type LayoutNode = CanvasNode & {
+// ⭐ `type` 放宽为 string（Omit 掉 CanvasNode 的 NodeType 收窄）：存量画布 JSON 里仍有已下线
+//   类型的节点（prompt 2026-10-17 / group·shot·sceneComposer 2026-10-19 下线），布局内核必须
+//   能处理它们（走 NODE_SIZES fallback 280×160），不能因类型收窄把它们挡在类型系统外。
+export type LayoutNode = Omit<CanvasNode, 'type'> & {
+  type: string
   parentNode?: string
   style?: Record<string, unknown> | string
   extent?: string
