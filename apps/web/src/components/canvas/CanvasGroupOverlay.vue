@@ -176,6 +176,16 @@ function commitRename() {
         </template>
       </div>
       <div class="group-node-container" />
+      <!-- 四条边的点击热区：框体内部必须 pointer-events:none（否则吃掉子节点点击），
+           但「点边框 = 选中分组」是用户最自然的预期；GROUP_PADDING(80px) 保证边框带是空白区，
+           不会盖住任何子节点。 -->
+      <template v-for="side in (['top', 'right', 'bottom', 'left'] as const)" :key="side">
+        <div
+          class="group-edge-hit"
+          :class="`group-edge-hit--${side}`"
+          @pointerdown.stop="emit('select', group.id)"
+        />
+      </template>
     </div>
   </div>
 </template>
@@ -194,10 +204,14 @@ function commitRename() {
   position: absolute;
   top: 0;
   left: 0;
+  /* 分组强调色只取一次（--neo-group-accent 由 boxStyle 按 colorKey 注入），
+     下面标题条/边框热区各处复用，避免重复消费旧令牌（棘轮只许减）。 */
+  --group-accent: var(--neo-group-accent, var(--neo-group-neutral));
 }
 
 /* 标题条：贴分组框上沿（与图片/视频节点的 .neo-node-external-title 同位同字体）。
-   整条可拖（= 整组平移），双击标题区可重命名。 */
+   整条可拖（= 整组平移），双击标题区可重命名。做成实底 chip：分组框可能很大
+   （子节点分散），用户需要一眼看出「这是分组标签」而不是残留的选区。 */
 .group-drag-handle {
   pointer-events: auto;
   position: absolute;
@@ -206,9 +220,59 @@ function commitRename() {
   right: 0;
   z-index: 1;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   min-height: 26px;
+  width: max-content;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--group-accent) 42%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--group-accent) 18%, var(--lnk-surface-overlay));
+  backdrop-filter: blur(6px);
+}
+
+/* 四边点击热区（仅 12px 宽，落在 80px padding 的空白带内，不遮子节点）。 */
+.group-edge-hit {
+  position: absolute;
+  pointer-events: auto;
+  z-index: 1;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.group-edge-hit--top,
+.group-edge-hit--bottom {
+  left: 0;
+  right: 0;
+  height: 12px;
+}
+
+.group-edge-hit--left,
+.group-edge-hit--right {
+  top: 0;
+  bottom: 0;
+  width: 12px;
+}
+
+.group-edge-hit--top {
+  top: 0;
+}
+
+.group-edge-hit--bottom {
+  bottom: 0;
+}
+
+.group-edge-hit--left {
+  left: 0;
+}
+
+.group-edge-hit--right {
+  right: 0;
+}
+
+.group-edge-hit:hover {
+  background: color-mix(in srgb, var(--group-accent) 26%, transparent);
 }
 
 .group-drag-handle.is-draggable {
@@ -260,7 +324,7 @@ function commitRename() {
   justify-content: center;
   flex: none;
   align-self: center;
-  color: var(--neo-group-accent);
+  color: var(--group-accent);
   transition: color 0.15s ease;
 }
 

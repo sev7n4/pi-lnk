@@ -63,6 +63,21 @@ describe('分组侧车（不再是节点）', () => {
     expect(BASE.some((n) => n.type === 'group')).toBe(false)
   })
 
+  it('打组结果回报 mode：UI 层据此给反馈（静默会被用户读成「打组失败」）', () => {
+    const first = createGroupFromSelection([], BASE, ['a', 'b'])!
+    expect(first.mode).toBe('created')
+
+    // 全在同一分组内 ⇒ reselect（不新建）
+    const again = createGroupFromSelection(first.groups, BASE, ['a', 'b'])!
+    expect(again.mode).toBe('reselect')
+    expect(again.groups).toHaveLength(1)
+
+    // 跨分组（a 已分组 + c 自由）⇒ merged
+    const merged = createGroupFromSelection(first.groups, BASE, ['a', 'c'])!
+    expect(merged.mode).toBe('merged')
+    expect(merged.group.childIds).toEqual(['a', 'c'])
+  })
+
   it('外框 = 子节点包围盒 + padding', () => {
     const rect = groupRectForChildren(BASE, ['a', 'b'])
     expect(rect).not.toBeNull()
