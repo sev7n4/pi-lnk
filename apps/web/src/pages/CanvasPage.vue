@@ -66,20 +66,9 @@ import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
-import MobileTabBar, { type MobileAppTab } from '@/components/mobile/MobileTabBar.vue'
-import MobileTopBar from '@/components/mobile/MobileTopBar.vue'
-import DiscoverPane from '@/components/mobile/DiscoverPane.vue'
-import ProfilePane from '@/components/mobile/ProfilePane.vue'
-import MobileMultiSelectBar from '@/components/mobile/MobileMultiSelectBar.vue'
-import MobileCanvasCreateFab from '@/components/mobile/MobileCanvasCreateFab.vue'
-import MobileCreateSheet from '@/components/mobile/MobileCreateSheet.vue'
-import MobileTaskSheet from '@/components/mobile/MobileTaskSheet.vue'
-import MobileSaveStatus from '@/components/mobile/MobileSaveStatus.vue'
-import PointsPanel from '@/components/points/PointsPanel.vue'
-import AccountPanel from '@/components/account/AccountPanel.vue'
-import UsagePanel from '@/components/usage/UsagePanel.vue'
-import SubscriptionPanel from '@/components/membership/SubscriptionPanel.vue'
-import TopupModal from '@/components/membership/TopupModal.vue'
+import type { MobileAppTab } from '@/components/mobile/MobileTabBar.vue'
+import MobileCanvasShell from '@/components/mobile/MobileCanvasShell.vue'
+import type { MobileShellAgentActions, MobileShellBatchActions } from '@/components/mobile/MobileCanvasShell.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
 import MobileCanvasTopControls from '@/components/canvas/MobileCanvasTopControls.vue'
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
@@ -4627,124 +4616,6 @@ const mobileCanvasImm = ref(false)
  *  窗 A/B（◎ 定位锚 / SSE 定位）= 切到画布页签 + composer 同屏（imm=false）。 */
 const mobileAppTab = ref<MobileAppTab>('chat')
 
-/**
- * 移动端「我的」二级面板（2026-10-19 新增：我的积分 / 我的订阅）。
- * 内容组件与 PC 路由页共用同一份，这里只管移动端外壳与打开/关闭。
- * 用 local state 而非路由：移动端四页签本就不走 router（见 mobileAppTab）。
- */
-type MobileAccountPane = '' | 'points' | 'subscription' | 'account' | 'usage'
-const mobileAccountPane = ref<MobileAccountPane>('')
-const showMobileTopup = ref(false)
-const showMobilePlans = ref(false)
-
-const MOBILE_ACCOUNT_TITLES: Record<Exclude<MobileAccountPane, ''>, string> = {
-  points: '我的积分',
-  subscription: '我的订阅',
-  account: '账号信息',
-  usage: '用量明细',
-}
-
-/**
- * 移动端登录成功后落到「对话」页（空态对话 / 进入一个项目），而不是继续停在「我的」。
- * 理由：刚完成登录的用户接下来要的是开始创作，把他留在设置页是错位的落点。
- */
-watch(
-  () => auth.isLoggedIn,
-  (loggedIn) => {
-    if (!loggedIn || !isMobileLayout.value) return
-    closeMobileAccountPane()
-    if (mobileAppTab.value === 'mine') mobileAppTab.value = 'chat'
-  },
-)
-
-function openMobileAccountPane(pane: Exclude<MobileAccountPane, ''>) {
-  mobileAccountPane.value = pane
-}
-function closeMobileAccountPane() {
-  mobileAccountPane.value = ''
-  showMobileTopup.value = false
-  showMobilePlans.value = false
-}
-function openMobilePlans() {
-  showMobilePlans.value = true
-}
-
-/**
- * PR2 新建收敛（D-2）：移动端摘除左侧竖轨（NodePanelDock）后的入口承载。
- *   ＋FAB → MobileCreateSheet（全宽：资产库瓦片 + 10 类节点宫格，数据同源竖轨）；
- *   任务 → 顶栏 ⋯ 动态项 → MobileTaskSheet（CanvasTaskHistoryPanel 面板本体复用）；
- *   模型设置收敛到「我的」页（ProfilePane open-model-settings，画布内不再有入口）。
- */
-const showMobileCreateSheet = ref(false)
-const showMobileTaskSheet = ref(false)
-
-/** 顶栏 ⋯ 任务动态项：活跃 = 排队/生成中/待确认（与 CanvasTaskHistoryPanel 的
- *  lifecycle todo/doing 分组同口径）；无任何任务记录时菜单项不出现（设计 4.5）。 */
-const TASK_ACTIVE_STATUSES = new Set(['pending', 'generating', 'fallback_pending', 'processing', 'running'])
-const mobileTaskActiveCount = ref(0)
-const mobileTaskHasHistory = ref(false)
-let mobileTaskPollTimer: ReturnType<typeof setInterval> | null = null
-
-async function loadMobileTaskCount() {
-  if (!sessionId.value) {
-    mobileTaskActiveCount.value = 0
-    mobileTaskHasHistory.value = false
-    return
-  }
-  try {
-    const { data } = await studioApi.listGenerations({ sessionId: sessionId.value })
-    const records: GenerationRecord[] = data.data ?? []
-    mobileTaskActiveCount.value = records.filter((r) => TASK_ACTIVE_STATUSES.has(r.status)).length
-    mobileTaskHasHistory.value = records.length > 0
-  } catch {
-    /* 计数失败不打扰画布：保持旧值，下个轮询周期重试 */
-  }
-}
-
-function startMobileTaskPolling() {
-  stopMobileTaskPolling()
-  void loadMobileTaskCount()
-  mobileTaskPollTimer = setInterval(() => void loadMobileTaskCount(), 15_000)
-}
-
-function stopMobileTaskPolling() {
-  if (mobileTaskPollTimer) {
-    clearInterval(mobileTaskPollTimer)
-    mobileTaskPollTimer = null
-  }
-}
-
-watch(
-  [isMobileLayout, () => mobileAppTab.value, () => sessionId.value],
-  ([mobile, tab]) => {
-    if (mobile && tab === 'canvas') startMobileTaskPolling()
-    else stopMobileTaskPolling()
-  },
-  { immediate: true },
-)
-
-/** ＋FAB 新建 sheet：节点类型走竖轨同一条创建链路（handleDockAdd） */
-function handleMobileCreate(type: DockNodeType) {
-  handleDockAdd(type)
-  showMobileCreateSheet.value = false
-}
-function handleMobileAssetApply(asset: CanvasAssetItem) {
-  handleAssetApply(asset)
-  showMobileCreateSheet.value = false
-}
-function handleMobileAssetAddToAgent(asset: CanvasAssetItem) {
-  handleAssetAddToAgent(asset)
-  showMobileCreateSheet.value = false
-}
-function handleMobileTaskLocate(payload: { recordId: string; nodeId?: string | null }) {
-  void handleHistoryLocate(payload)
-  showMobileTaskSheet.value = false
-}
-function handleMobileTaskRetry(nodeId: string) {
-  handleHistoryRetry(nodeId)
-  showMobileTaskSheet.value = false
-}
-
 function onMobileTabChange(tab: MobileAppTab) {
   mobileAppTab.value = tab
   if (tab === 'canvas') {
@@ -4757,14 +4628,34 @@ function onMobileTabChange(tab: MobileAppTab) {
   }
 }
 
-/** IA v3.1（2026-10-19 用户裁决）：发现页「资料库」= 画布上的资产库内容——
- *  切回【对话】页签（composer 所在）后直开资产库选择器；选择器挂在 composer
- *  面板内，先确保面板展开。 */
-async function openAssetLibraryFromDiscover() {
-  onMobileTabChange('chat')
-  await nextTick()
-  agentRailRef.value?.openPanel()
-  agentRailRef.value?.openAssetLibrary()
+/**
+ * PR5（D-9）：移动端壳层桥接——CanvasPage 核心动作以函数集合形式传给 MobileCanvasShell。
+ * 壳层是移动端 UI 唯一所有者，通过 props 触发本页逻辑、不回写共享状态
+ * （mobileAppTab / mobileCanvasView / mobileCanvasImm 真源仍在 CanvasPage，被
+ * AgentSideRail、mobileStudioDockOpen、focusNodeById、pickMode watch 共用）。
+ */
+const agentRailActions: MobileShellAgentActions = {
+  openDrawer: () => agentRailRef.value?.openSessionDrawer(),
+  newChat: () => agentRailRef.value?.newAgentSession(),
+  openHistory: () => agentRailRef.value?.openThreadHistory(),
+  openPanel: () => agentRailRef.value?.openPanel(),
+  openAssetLibrary: () => agentRailRef.value?.openAssetLibrary(),
+}
+const mobileBatchActions: MobileShellBatchActions = {
+  done: exitMultiSelectMode,
+  generate: handleSelectionBatchGenerate,
+  regenerate: handleSelectionBatchRegenerate,
+  stop: handleSelectionBatchStop,
+  blockedHint: handleSelectionBatchBlocked,
+  group: handleGroupSelection,
+  ungroup: handleUngroupSelection,
+  groupColor: handleGroupColorSelection,
+  duplicate: handleKeyboardDuplicate,
+  duplicateUpstream: handleToolbarDuplicateUpstream,
+  addAgentRef: handleAddToAgentRefs,
+  layout: handleLayoutSelection,
+  download: handlePackageDownload,
+  delete: handleDeleteSelection,
 }
 /** 移动端画布视图 + studio dock 展开（选中了可编辑节点）：composer 让位——SSE 对话流收起，
  *  dock 抬高到贴底容器之上（--lnk-agent-dock-h，见 AgentSideRail / DockStudioToolbar）。
@@ -4902,7 +4793,6 @@ onUnmounted(() => {
   if (pickModeKeydownHandler) {
     window.removeEventListener('keydown', pickModeKeydownHandler)
   }
-  stopMobileTaskPolling()
 })
 </script>
 
@@ -5350,70 +5240,38 @@ onUnmounted(() => {
 
     <!--ⓘ 移动端应用骨架（IA v3）：顶栏三区 + 底部四页签 + 发现/我的两页。
          fixed 定位组件，挂载在容器外避免被画布 transform 影响避让计算。 -->
-    <MobileTopBar
+    <!-- PR5（D-9）：移动端导航/面板/状态/入口层收敛到 MobileCanvasShell 单一壳层。
+         画布世界（VueFlow + 胶囊 + 空态）仍在此页承载；胶囊/空态因依赖 VueFlow 内部
+         定位暂留（见 MobileCanvasShell 头部注释与 PR 描述）。 -->
+    <MobileCanvasShell
       v-if="isMobileLayout"
-      :tab="mobileAppTab"
-      :task-active-count="mobileTaskActiveCount"
-      :has-task-history="mobileTaskHasHistory"
-      @open-drawer="agentRailRef?.openSessionDrawer()"
-      @new-chat="agentRailRef?.newAgentSession()"
-      @open-history="agentRailRef?.openThreadHistory()"
-      @publish="openPublish"
-      @import-workflow="openWorkflowImportPicker"
-      @export-workflow="handleExportPack([], 'full_package')"
-      @export-workflow-light="handleExportPack([], 'lightweight')"
-      @open-tasks="showMobileTaskSheet = true"
-    />
-    <!-- PR4（I-8）：自动保存状态行——替掉顶栏「保存画布」菜单项，如实告知保存中/上次时间；
-         点按仍可手动存一次（能力不删，只是不再占菜单一位）。 -->
-    <MobileSaveStatus
-      v-if="isMobileLayout && mobileAppTab === 'canvas' && !mobileMultiSelectActive"
+      :mobile-app-tab="mobileAppTab"
+      :mobile-canvas-view="mobileCanvasView"
+      :mobile-canvas-imm="mobileCanvasImm"
       :saving="saving"
       :saved-at="lastSavedAt"
-      @save="saveCanvas"
-    />
-    <DiscoverPane
-      v-if="isMobileLayout && mobileAppTab === 'discover'"
-      @goto-canvas="openAssetLibraryFromDiscover"
-    />
-    <ProfilePane
-      v-if="isMobileLayout && mobileAppTab === 'mine'"
-      @open-membership="showMembership = true"
-      @open-model-settings="showModelSettings = true"
-      @open-points="openMobileAccountPane('points')"
-      @open-subscription="openMobileAccountPane('subscription')"
-      @open-account="openMobileAccountPane('account')"
-    />
-    <!--
-      移动端「我的积分 / 我的订阅」二级 pane：内容复用与 PC 路由页**同一份**面板组件，
-      这里只提供移动端外壳（顶部返回栏 + 全屏滚动）。
-    -->
-    <div v-if="isMobileLayout && mobileAccountPane" class="mobile-account-pane">
-      <div class="mobile-account-head">
-        <button type="button" class="mobile-account-back" @click="closeMobileAccountPane">返回</button>
-        <h2 class="mobile-account-title">{{ MOBILE_ACCOUNT_TITLES[mobileAccountPane] }}</h2>
-        <button type="button" class="mobile-account-close" aria-label="关闭" @click="closeMobileAccountPane">
-          ×
-        </button>
-      </div>
-      <div class="mobile-account-body">
-        <AccountPanel v-if="mobileAccountPane === 'account'" />
-        <PointsPanel
-          v-else-if="mobileAccountPane === 'points'"
-          @open-topup="showMobileTopup = true"
-          @open-usage="openMobileAccountPane('usage')"
-        />
-        <!-- 用量明细：与 PC 个人中心「用量」页同一个 UsagePanel，不另造数据口径 -->
-        <UsagePanel v-else-if="mobileAccountPane === 'usage'" />
-        <SubscriptionPanel v-else @open-plans="openMobilePlans" />
-      </div>
-      <TopupModal v-if="isMobileLayout" v-model="showMobileTopup" />
-      <MembershipModal v-if="isMobileLayout" v-model="showMobilePlans" />
-    </div>
-    <MobileTabBar
-      v-if="isMobileLayout"
-      :active="mobileAppTab"
-      @change="onMobileTabChange"
+      :has-nodes="!!nodes.length"
+      :multi-select-active="mobileMultiSelectActive"
+      :multi-select-count="multiSelectedIds.length"
+      :selection-batch="selectionBatchProp"
+      :multi-select-can-ungroup="multiSelectCanUngroup"
+      :multi-select-group-color-key="multiSelectGroupColorKey"
+      :session-id="sessionId"
+      :canvas-chrome-hidden="canvasChromeHidden"
+      :on-tab-change="onMobileTabChange"
+      :on-save="saveCanvas"
+      :on-publish="openPublish"
+      :on-import-workflow="openWorkflowImportPicker"
+      :on-export-pack="handleExportPack"
+      :agent-actions="agentRailActions"
+      :dock-add="handleDockAdd"
+      :asset-apply="handleAssetApply"
+      :asset-add-to-agent="handleAssetAddToAgent"
+      :open-membership="() => (showMembership = true)"
+      :open-model-settings="() => (showModelSettings = true)"
+      :history-locate="handleHistoryLocate"
+      :history-retry="handleHistoryRetry"
+      :batch-actions="mobileBatchActions"
     />
 
     <MembershipModal v-model="showMembership" />
@@ -5454,50 +5312,6 @@ onUnmounted(() => {
       "
       @action="handleContextAction"
       @close="closeContextMenu"
-    />
-    <!-- 移动端多选态动作条（S3 / D-4，PR3 完整版）：已选 N ｜ 批量生成 / 停止 ｜
-         重新生成 ｜ 更多 ⋯（9 项 sheet）｜ 完成。处理器与 PC 工具条同一批，
-         批量派生口径同源 useSelectionBatchActions。 -->
-    <MobileMultiSelectBar
-      v-if="isMobileLayout && mobileMultiSelectActive"
-      :count="multiSelectedIds.length"
-      :selection-batch="selectionBatchProp"
-      :can-ungroup="multiSelectCanUngroup"
-      :group-color-key="multiSelectGroupColorKey"
-      @done="exitMultiSelectMode"
-      @generate="handleSelectionBatchGenerate"
-      @regenerate="handleSelectionBatchRegenerate"
-      @stop="handleSelectionBatchStop"
-      @blocked-hint="handleSelectionBatchBlocked"
-      @group="handleGroupSelection"
-      @ungroup="handleUngroupSelection"
-      @group-color="handleGroupColorSelection"
-      @duplicate="handleKeyboardDuplicate"
-      @duplicate-upstream="handleToolbarDuplicateUpstream"
-      @add-agent-ref="handleAddToAgentRefs()"
-      @layout="handleLayoutSelection"
-      @download="handlePackageDownload"
-      @delete="handleDeleteSelection"
-    />
-    <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet；
-         任务 sheet 由顶栏 ⋯ 动态项打开。清位公式与动作条一致（dock/tabbar 之上）。 -->
-    <MobileCanvasCreateFab
-      v-if="isMobileLayout && mobileAppTab === 'canvas' && !canvasChromeHidden"
-      :breathe="!nodes.length"
-      @click="showMobileCreateSheet = true"
-    />
-    <MobileCreateSheet
-      v-if="showMobileCreateSheet"
-      @create="handleMobileCreate"
-      @asset-apply="handleMobileAssetApply"
-      @asset-add-to-agent="handleMobileAssetAddToAgent"
-      @close="showMobileCreateSheet = false"
-    />
-    <MobileTaskSheet
-      v-if="showMobileTaskSheet"
-      @locate="handleMobileTaskLocate"
-      @retry="handleMobileTaskRetry"
-      @close="showMobileTaskSheet = false"
     />
   </div>
 </template>

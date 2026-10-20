@@ -13,29 +13,33 @@ const read = (p: string) => readFileSync(join(here, p), 'utf8')
 
 describe('mobile multi-select & dock wiring (PR3)', () => {
   const page = read('./CanvasPage.vue')
+  // PR5（D-9）：MobileMultiSelectBar 迁入 MobileCanvasShell，处理器经 batchActions 函数集合下发
+  const shell = read('../components/mobile/MobileCanvasShell.vue')
 
   it('移动端动作条接 PC 同一批处理器（不另造一套）', () => {
-    const bar = page.match(/<MobileMultiSelectBar[\s\S]*?\/>/)?.[0] ?? ''
-    expect(bar, 'MobileMultiSelectBar 必须存在').toContain(':selection-batch="selectionBatchProp"')
+    // PR5（D-9）：MobileMultiSelectBar 迁入 MobileCanvasShell，处理器经 batchActions 函数集合下发
+    const bar = shell.match(/<MobileMultiSelectBar[\s\S]*?\/>/)?.[0] ?? ''
+    expect(bar, '壳层必须渲染 MobileMultiSelectBar').toContain(':selection-batch="(selectionBatch as any)"')
     expect(bar).toContain(':can-ungroup="multiSelectCanUngroup"')
     expect(bar).toContain(':group-color-key="multiSelectGroupColorKey"')
     for (const handler of [
-      'handleSelectionBatchGenerate',
-      'handleSelectionBatchRegenerate',
-      'handleSelectionBatchStop',
-      'handleSelectionBatchBlocked',
-      'handleGroupSelection',
-      'handleUngroupSelection',
-      'handleGroupColorSelection',
-      'handleKeyboardDuplicate',
-      'handleToolbarDuplicateUpstream',
-      'handleLayoutSelection',
-      'handlePackageDownload',
-      'handleDeleteSelection',
+      'batchActions.done',
+      'batchActions.generate',
+      'batchActions.regenerate',
+      'batchActions.stop',
+      'batchActions.blockedHint',
+      'batchActions.group',
+      'batchActions.ungroup',
+      'batchActions.groupColor',
+      'batchActions.duplicate',
+      'batchActions.duplicateUpstream',
+      'batchActions.layout',
+      'batchActions.download',
+      'batchActions.delete',
     ]) {
       expect(bar, `缺接线：${handler}`).toContain(handler)
     }
-    // 多选态仍必须摘除 PC 贴选区工具条（两者互斥）
+    // 多选态仍必须摘除 PC 贴选区工具条（两者互斥）——该门控仍在 CanvasPage
     expect(page).toMatch(/v-if="!isMobileLayout \|\| !mobileMultiSelectActive"/)
   })
 

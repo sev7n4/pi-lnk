@@ -12,8 +12,17 @@ import { describe, expect, it } from 'vitest'
 const here = dirname(fileURLToPath(import.meta.url))
 const read = (p: string) => readFileSync(join(here, p), 'utf8')
 
+/** 剥注释后再定位调用位置——注释里出现函数名会让 indexOf 命中叙述文本而非代码
+ *  （迁移说明写进注释是本仓规范，全文扫描断言必假红）。 */
+function stripComments(s: string): string {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/\/\/[^\n]*/g, '')
+}
+
 describe('mobile create-entry convergence wiring (PR2)', () => {
   const page = read('./CanvasPage.vue')
+  // PR5（D-9）：＋FAB / 新建·任务 sheet / 任务轮询 / MobileTopBar 任务动态项接线迁入
+  // MobileCanvasShell，相关断言改读壳层源码。
+  const shell = read('../components/mobile/MobileCanvasShell.vue')
 
   it('竖轨移动端摘除（v-if 串联 !isMobileLayout）', () => {
     const dock = page.match(/<NodePanelDock\s+v-if="[^"]*"\s+@add="handleDockAdd"[\s\S]*?\/>/)?.[0] ?? ''
@@ -25,41 +34,60 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
   })
 
   it('＋FAB 门控：画布页签 + chrome 未隐藏；呼吸联动空画布', () => {
-    expect(page).toMatch(
-      /<MobileCanvasCreateFab\s+v-if="isMobileLayout && mobileAppTab === 'canvas' && !canvasChromeHidden"/,
+    // PR5（D-9）：＋FAB 迁入 MobileCanvasShell（壳层仅移动端渲染，v-if 不带 isMobileLayout）
+    expect(shell).toMatch(
+      /<MobileCanvasCreateFab\s+v-if="mobileAppTab === 'canvas' && !canvasChromeHidden"/,
     )
-    expect(page).toMatch(/:breathe="!nodes\.length"/)
+    expect(shell).toMatch(/:breathe="!hasNodes"/)
   })
 
   it('新建 sheet / 任务 sheet 接线既有处理器', () => {
-    expect(page).toContain('<MobileCreateSheet')
-    expect(page).toContain('@create="handleMobileCreate"')
-    expect(page).toContain('@asset-apply="handleMobileAssetApply"')
-    expect(page).toContain('@asset-add-to-agent="handleMobileAssetAddToAgent"')
-    expect(page).toContain('<MobileTaskSheet')
-    expect(page).toContain('@locate="handleMobileTaskLocate"')
-    expect(page).toContain('@retry="handleMobileTaskRetry"')
-    // 复用而非重造：mobile 处理器内部调竖轨同一条链路
-    const handlers = page.match(/function handleMobileCreate[\s\S]*?function handleMobileTaskRetry[\s\S]*?\n}/)?.[0] ?? ''
-    expect(handlers).toContain('handleDockAdd(type)')
-    expect(handlers).toContain('handleAssetApply(asset)')
-    expect(handlers).toContain('handleAssetAddToAgent(asset)')
-    expect(handlers).toContain('handleHistoryLocate(payload)')
-    expect(handlers).toContain('handleHistoryRetry(nodeId)')
+    // PR5（D-9）：两 sheet 迁入 MobileCanvasShell，处理器经 props 复用而非重造
+    expect(shell).toContain('<MobileCreateSheet')
+    expect(shell).toContain('@create="onMobileCreate"')
+    expect(shell).toContain('@asset-apply="onMobileAssetApply"')
+    expect(shell).toContain('@asset-add-to-agent="onMobileAssetAddToAgent"')
+    expect(shell).toContain('<MobileTaskSheet')
+    expect(shell).toContain('@locate="onMobileTaskLocate"')
+    expect(shell).toContain('@retry="onMobileTaskRetry"')
+    // 复用而非重造：壳层处理器内部调 CanvasPage 同一条链路（经 props 下发）
+    const handlers = shell.match(/function onMobileCreate[\s\S]*?function onMobileTaskRetry[\s\S]*?\n}/)?.[0] ?? ''
+    expect(handlers).toContain('props.dockAdd(type)')
+    expect(handlers).toContain('props.assetApply(asset)')
+    expect(handlers).toContain('props.assetAddToAgent(asset)')
+    expect(handlers).toContain('props.historyLocate(payload)')
+    expect(handlers).toContain('props.historyRetry(nodeId)')
   })
 
   it('MobileTopBar 任务动态项数据接线', () => {
-    expect(page).toContain(':task-active-count="mobileTaskActiveCount"')
-    expect(page).toContain(':has-task-history="mobileTaskHasHistory"')
-    expect(page).toContain('@open-tasks="showMobileTaskSheet = true"')
+    // PR5（D-9）：任务动态项数据接线随 MobileTopBar 迁入 MobileCanvasShell
+    expect(shell).toContain(':task-active-count="mobileTaskActiveCount"')
+    expect(shell).toContain(':has-task-history="mobileTaskHasHistory"')
+    expect(shell).toContain('@open-tasks="showMobileTaskSheet = true"')
   })
 
   it('任务计数轮询：画布页签才跑，卸载即停', () => {
-    expect(page).toContain('function loadMobileTaskCount')
-    expect(page).toContain('function startMobileTaskPolling')
-    expect(page).toContain('function stopMobileTaskPolling')
-    expect(page).toMatch(/onUnmounted\([\s\S]*?stopMobileTaskPolling\(\)/)
-    expect(page).toContain('studioApi.listGenerations({ sessionId: sessionId.value })')
+    // PR5（D-9）：轮询逻辑迁入 MobileCanvasShell
+    expect(shell).toContain('function loadMobileTaskCount')
+    expect(shell).toContain('function startMobileTaskPolling')
+    expect(shell).toContain('function stopMobileTaskPolling')
+    expect(shell).toMatch(/onUnmounted\([\s\S]*?stopMobileTaskPolling\(\)/)
+    expect(shell).toContain('studioApi.listGenerations({ sessionId: props.sessionId })')
+  })
+
+  it('发现页「资料库」：切页签后须等 nextTick 再展开资产库（选择器挂在 composer 面板内）', () => {
+    // 资产库选择器挂在 composer 面板内 ⇒ 面板随页签切换重渲染后才可展开。
+    // 漏掉 nextTick 会让 openAssetLibrary 打在旧树上（静默失效，不报错）。
+    const handler = stripComments(
+      shell.match(/async function onDiscoverGotoCanvas[\s\S]*?\n}/)?.[0] ?? '',
+    )
+    expect(handler, '壳层必须提供 onDiscoverGotoCanvas').toContain('await nextTick()')
+    const tickAt = handler.indexOf('await nextTick()')
+    const openAt = handler.indexOf('props.agentActions.openAssetLibrary')
+    expect(tickAt, '必须先 await nextTick').toBeGreaterThan(-1)
+    expect(openAt, '展开资产库必须排在 nextTick 之后').toBeGreaterThan(tickAt)
+    // 有效性配对：确实调到了 openAssetLibrary（防 indexOf=-1 假绿）
+    expect(openAt).toBeGreaterThan(-1)
   })
 
   it('空态引导：画布页签 + 空 nodes 才显示', () => {
