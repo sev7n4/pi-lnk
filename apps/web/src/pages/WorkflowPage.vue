@@ -12,7 +12,6 @@ import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
-import CarouselBanner from '@/components/workflow/CarouselBanner.vue'
 import CategoryTabs from '@/components/workflow/CategoryTabs.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import SignatureHero from '@/components/workflow/SignatureHero.vue'
@@ -426,10 +425,6 @@ watch(() => auth.isLoggedIn, () => {
       <p v-if="sessionSearch && !filteredSessions.length" class="py-8 text-center text-sm text-[var(--neo-text-muted)]">
         没有匹配的画布
       </p>
-    </section>
-
-    <section class="mb-10">
-      <CarouselBanner />
     </section>
 
     <section>
