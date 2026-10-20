@@ -23,7 +23,9 @@ import {
   validateSidebarAttachments,
   type GenerationType,
   type StudioModality,
+  buildSelectionDigest,
 } from '@lnkpi/shared'
+import { buildSidebarBlock } from './pi-runtime/sidebar-block'
 import { MaterialService } from '../canvas/material.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
@@ -52,6 +54,7 @@ import {
   type PiSessionLlmOverride,
   type QueueCancelOutcome,
   type RecoveredQueueItem,
+  type PiQueueContext,
 } from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability, resolveVisionInputSupport } from '../provider/model-capability'
 import { resolveChannelModelCost } from '../provider/model-cost'
@@ -660,15 +663,42 @@ export class AgentService {
     }
   }
 
+  /**
+   * 用户插话（steering 队列）：run 进行中发言的正道。
+   *
+   * ⭐ **2026-10-20 P1-1：插话也要带参考素材与画布选中态。**
+   * 此前插话**只发 text** ⇒ 「指着一张图插话」时 agent 收不到图、收不到「这个」指谁。
+   * 正常发送（`streamConversation`）走的是完整装配（侧栏块 + 选中摘要 + 焦点派生），
+   * 插话此前完全绕过了它。
+   *
+   * ⚠️ **不复用 `turnContext` 通道**：那条通道是**每轮整体覆盖**语义（`normalizeTurnContext`
+   * 缺省即清空），而插话发生在**别人那一轮正在跑**的时候 —— 用它会把在跑那轮的
+   * 动态上下文冲掉（pi-runtime 的 `setTurnContext` 是覆盖写）。
+   * ⇒ 插话走**独立的** `queueContext`：只带「本条消息自己的」参考素材与选中态，
+   * 由 pi-runtime 拼进**这条队列消息的文本**里，不碰会话级 turn 状态。
+   */
   async steerPiRun(input: {
     sessionId: string
     threadId?: string
     text: string
+    attachments?: SidebarAttachment[]
+    refOrder?: string[]
+    mentionedKeys?: string[]
+    selectedNodeIds?: string[]
+    /** P1-2：vision 门控用（与正常发送的 dto.model 同源，前端 composer 冻结）。 */
+    userId?: string
+    model?: string
   }): Promise<{ queued: boolean; entryId?: string }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { queued: false }
     const sessionKey = input.threadId?.trim() || input.sessionId
-    return this.createPiRuntimeClient(piUrl).steer(sessionKey, input.text)
+    const queueContext = await this.buildQueueContext(input)
+    const directImages = await this.buildQueueDirectImages(input)
+    const text = directImages ? `${input.text}\n${directImages.markers.join(' ')}` : input.text
+    return this.createPiRuntimeClient(piUrl).steer(sessionKey, text, 'main', {
+      queueContext,
+      images: directImages?.images,
+    })
   }
 
   /**
@@ -691,11 +721,98 @@ export class AgentService {
     sessionId: string
     threadId?: string
     text: string
+    attachments?: SidebarAttachment[]
+    refOrder?: string[]
+    mentionedKeys?: string[]
+    selectedNodeIds?: string[]
+    /** P1-2：同 steer。 */
+    userId?: string
+    model?: string
   }): Promise<{ queued: boolean; entryId?: string }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { queued: false }
     const sessionKey = input.threadId?.trim() || input.sessionId
-    return this.createPiRuntimeClient(piUrl).followUp(sessionKey, input.text)
+    const queueContext = await this.buildQueueContext(input)
+    const directImages = await this.buildQueueDirectImages(input)
+    const text = directImages ? `${input.text}\n${directImages.markers.join(' ')}` : input.text
+    return this.createPiRuntimeClient(piUrl).followUp(sessionKey, text, 'main', {
+      queueContext,
+      images: directImages?.images,
+    })
+  }
+
+  /**
+   * 插话/尾随的**多模态直通载荷**（2026-10-20 P1-2）：与正常发送（`streamConversation` 的
+   * T1 直通）同一构造器 `buildDirectImagePayload`，同一 fail-soft 语义 —— 非视觉模型 /
+   * 无图片附件 / 构造失败 ⇒ undefined（退化为纯文本插话，绝不阻断插话本身）。
+   *
+   * `[In=文件名]` 标记并入**消息文本尾部**（与正常发送的 `promptTextWithMarkers` 同口径），
+   * 图片本体经 runtime 队列透传到 `lane.steer` 第二参。
+   *
+   * model 解析：优先用前端 composer 冻结的 `input.model`；缺省回落
+   * `loadDefaultTextModel(userId)`（与正常发送同款兜底）。
+   */
+  private async buildQueueDirectImages(input: {
+    attachments?: SidebarAttachment[]
+    userId?: string
+    model?: string
+  }): Promise<DirectImageBuild | undefined> {
+    if (!input.attachments?.length) return undefined
+    try {
+      const model =
+        input.model?.trim() ||
+        (input.userId
+          ? await this.loadDefaultTextModel(input.userId).catch(() => undefined)
+          : undefined)
+      return await this.createDirectImagePayloadBuilder()({
+        attachments: input.attachments,
+        model,
+      })
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `queue direct image payload build skipped (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return undefined
+    }
+  }
+
+  /**
+   * 插话/尾随的**独立上下文**（2026-10-20 P1-1）：只带这条消息自己的参考素材与选中态。
+   *
+   * ⚠️ **刻意不碰会话级 `turnContext`**：那是「每轮整体覆盖」语义，插话发生在别人那轮
+   * 正在跑的时候，用它会冲掉在跑那轮的动态上下文（`setTurnContext` 是覆盖写）。
+   * 本方法产出的内容只随**这一条队列消息**下发，由 pi-runtime 拼进该消息文本。
+   *
+   * 内容与正常发送同源（复用同一批 builder，避免两套口径）：
+   * - 侧栏参考素材块（`buildSidebarBlock`：I1/T1 编号 + 标签）
+   * - 画布选中摘要（`buildSelectionDigest`：id · type · 标题 + 自解释尾注）
+   *
+   * ⚠️ 选中摘要受 `SEL_REF_ENABLED` 开关约束（与正常发送同口径）：开关关时不拼，
+   * 免得插话路径成为绕过 kill switch 的旁路。
+   */
+  private async buildQueueContext(input: {
+    sessionId: string
+    attachments?: SidebarAttachment[]
+    selectedNodeIds?: string[]
+  }): Promise<PiQueueContext | undefined> {
+    const blocks: string[] = []
+    if (input.attachments?.length) {
+      const block = buildSidebarBlock(input.attachments)
+      if (block) blocks.push(block)
+    }
+    const selectedNodeIds = input.selectedNodeIds ?? []
+    if (selectedNodeIds.length && this.selectionRefEnabled()) {
+      const selRefLookup = await this.buildSelectionLookup(input.sessionId)
+      // 与正常发送同口径（见 streamConversation 的 selRefLookup → selectedNodeLookup 包装）：
+      // buildSelectionDigest 收的是函数，不是 Map。
+      const digest = buildSelectionDigest({
+        nodeIds: selectedNodeIds,
+        lookup: (id) => selRefLookup.get(id),
+      })
+      if (digest) blocks.push(digest)
+    }
+    if (!blocks.length) return undefined
+    return { blocks }
   }
 
   /**

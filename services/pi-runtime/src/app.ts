@@ -19,6 +19,7 @@ import {
 	SessionManager,
 	toSessionKey,
 	type TurnContext,
+	type QueueContext,
 	InvalidInputError,
 	QueueRejectedError,
 } from "./session-manager.js"
@@ -257,7 +258,15 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	 */
 	app.post<{
 		Params: { sessionId: string };
-		Body: { text: string; lane?: string; turnContext?: TurnContext };
+		Body: {
+			text: string;
+			lane?: string;
+			turnContext?: TurnContext;
+			/** P1-1：本条队列消息自带的上下文块（参考素材 / 画布选中摘要）。 */
+			queueContext?: QueueContext;
+			/** P1-2：多模态直通（与 /prompt 顶层 images 同形状、同门控）。 */
+			images?: DirectImage[];
+		};
 	}>("/sessions/:sessionId/steer", async (request, reply) => {
 		const { sessionId } = request.params;
 		const text = typeof request.body?.text === "string" ? request.body.text : "";
@@ -265,6 +274,11 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		try {
 			const result = await manager.steer(sessionId, text, request.body?.lane, {
 				turnContext: request.body?.turnContext,
+				// ⭐ P1-1：这条队列消息自带的上下文（参考素材 / 画布选中摘要）。
+				// 与 `turnContext` 是**两个独立通道**（后者是会话级覆盖写）。
+				queueContext: request.body?.queueContext,
+				// ⭐ P1-2：插话带图（vendor lane.steer 第二参）。
+				images: request.body?.images,
 			});
 			metrics.observeQueueOp("enqueue", "steer", "ok");
 			return reply.code(202).send(result);
@@ -284,7 +298,15 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	 */
 	app.post<{
 		Params: { sessionId: string };
-		Body: { text: string; lane?: string; turnContext?: TurnContext };
+		Body: {
+			text: string;
+			lane?: string;
+			turnContext?: TurnContext;
+			/** P1-1：同 steer。 */
+			queueContext?: QueueContext;
+			/** P1-2：同 steer。 */
+			images?: DirectImage[];
+		};
 	}>("/sessions/:sessionId/followup", async (request, reply) => {
 		const { sessionId } = request.params;
 		const text = typeof request.body?.text === "string" ? request.body.text : "";
@@ -292,6 +314,10 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		try {
 			const result = await manager.followUp(sessionId, text, request.body?.lane, {
 				turnContext: request.body?.turnContext,
+				// ⭐ P1-1：同 steer，本条消息自带的上下文。
+				queueContext: request.body?.queueContext,
+				// ⭐ P1-2：同 steer，插话带图。
+				images: request.body?.images,
 			});
 			metrics.observeQueueOp("enqueue", "followUp", "ok");
 			return reply.code(202).send(result);

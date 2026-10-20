@@ -287,6 +287,31 @@ interface QueuedSlot {
    * undefined = 尚未入队（pending/failed）或服务端没回传（老版本）⇒ 不能真撤回。
    */
   entryId?: string
+  /**
+   * 插话时随消息带上的**参考素材**（2026-10-20 P1-1）。
+   *
+   * 正常发送走 `sendMessage` 会把侧栏附件（引用芯片）冻结进 payload；插话此前**只发 text**
+   * ⇒ 「指着一张图插话」时 agent 收不到图，收不到芯片的指代（I1/I2）。
+   * 这里在**挂起那一刻**冻结（与正常发送同口径：发送瞬间冻结，回执与实际内容一致）。
+   */
+  attachments?: SidebarAttachment[]
+  /** 参考素材顺序（attachment id 列表） */
+  refOrder?: string[]
+  /** 消息内 @ 提及的 refKey */
+  mentionedKeys?: string[]
+  /**
+   * 画布选中态（SEL-REF 指代信号），同样在挂起时冻结。
+   *
+   * 「选中这个节点，再插话说一句」是最自然的组合操作；此前插话不带选中态 ⇒
+   * agent 不知道「这个」指谁。
+   */
+  selectionNodeIds?: string[]
+  /**
+   * composer 当前模型（P1-2 带图通道），同样在挂起时冻结。
+   * Nest 侧用它做 vision 门控（决定图片走直通还是识图兜底）；与正常发送的
+   * `model` 字段同源。缺省 = 不带（Nest 回落 loadDefaultTextModel）。
+   */
+  model?: string
 }
 const queued = ref<QueuedSlot | null>(null)
 /**
@@ -2122,6 +2147,15 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
         sessionId: props.sessionId,
         threadId: agentThreadId.value,
         text: slot.text,
+        // ⭐ 2026-10-20 P1-1：带上挂起时冻结的参考素材与画布选中态。
+        // 此前插话只发 text ⇒ 「指着一张图插话」时 agent 收不到图、收不到「这个」指谁。
+        // ⚠️ 缺省即不传（不是传空数组）：服务端据此区分「本条没有参考」与「老前端不会带」。
+        ...(slot.attachments?.length ? { attachments: slot.attachments } : {}),
+        ...(slot.refOrder?.length ? { refOrder: slot.refOrder } : {}),
+        ...(slot.mentionedKeys?.length ? { mentionedKeys: slot.mentionedKeys } : {}),
+        ...(slot.selectionNodeIds?.length ? { selectedNodeIds: slot.selectionNodeIds } : {}),
+        // ⭐ P1-2：composer 模型随消息冻结（Nest 据此做 vision 门控组装直通图片）。
+        ...(slot.model?.trim() ? { model: slot.model } : {}),
       }),
       signal: AbortSignal.timeout(5000),
     })
@@ -2205,13 +2239,35 @@ async function withdrawQueued(): Promise<boolean> {
 /**
  * 流式中把当前草稿挂成待发气泡（不直接投递，动作权留给用户选 steer/followUp）。
  * 抽取为独立函数，供回车提交与底部按钮两处复用，避免逻辑分叉。
+ *
+ * ⭐ **参考素材与选中态在挂起这一刻冻结**（2026-10-20 P1-1）：与正常发送同口径
+ * （「发送瞬间冻结，回执仍须与实际发出的内容一致」）。用户挂起后可能改选节点/换芯片，
+ * 但那条消息的指代必须是**挂起那一刻**的指代。
  * @returns 是否成功挂起（有内容才挂，空草稿返回 false）。
  */
 async function queueDraftAsPending(): Promise<boolean> {
   const text = input.value
   if (!text.trim()) return false
   input.value = ''
-  queued.value = { text, intent: null, state: 'pending', hint: '' }
+  // 冻结参考素材（芯片）与画布选中态 —— 与 sendMessage 同一口径
+  const { attachments: pendingAttachments, refOrder: pendingRefOrder } = sidebar.toPayload()
+  const attachments = pendingAttachments
+  const mentionedKeys = normalizeMentionedKeys(parseRefMentions(text)) ?? []
+  const selectionNodeIds = props.selectedNodeIds?.length ? props.selectedNodeIds.slice() : []
+  // P1-2：composer 当前模型随消息冻结（Nest 据此做 vision 门控组装直通图片）
+  const model = planningModel.value?.trim() || undefined
+  queued.value = {
+    text,
+    intent: null,
+    state: 'pending',
+    hint: '',
+    ...(attachments.length ? { attachments, refOrder: pendingRefOrder } : {}),
+    ...(mentionedKeys.length ? { mentionedKeys } : {}),
+    ...(selectionNodeIds.length ? { selectionNodeIds } : {}),
+    ...(model ? { model } : {}),
+  }
+  // 素材已随消息冻结 ⇒ 清掉侧栏的待发芯片，避免下一条消息重复带上同一批
+  if (attachments.length) sidebar.clear()
   await nextTick()
   scrollToBottom(true)
   return true

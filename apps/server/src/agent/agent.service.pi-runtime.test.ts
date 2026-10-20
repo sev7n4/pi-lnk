@@ -1529,7 +1529,10 @@ describe('AgentService.steerPiRun（2026-10-02 steering/followUp 双模式闭环
 
     const result = await svc.steerPiRun({ sessionId: 's1', threadId: 'tid-1', text: '插话' })
     expect(result).toEqual({ queued: true })
-    expect(steer).toHaveBeenCalledWith('tid-1', '插话')
+    // ⚠️ 2026-10-20 P1 起 steer 调用带 lane + opts（queueContext/images）两参。
+    // 这里只锁 sessionKey 推导口径（前三参），不锁 opts 形状 —— 形状由
+    // queue-context/带图各自的测试覆盖，避免一处演进处处假红。
+    expect(steer.mock.calls[0]?.slice(0, 3)).toEqual(['tid-1', '插话', 'main'])
   })
 
   it('steer：threadId 空白 / 未传时回落 sessionId（常驻会话必须打中）', async () => {
@@ -1538,7 +1541,8 @@ describe('AgentService.steerPiRun（2026-10-02 steering/followUp 双模式闭环
     stubPi(svc, 'http://pi-runtime', { steer })
 
     await svc.steerPiRun({ sessionId: 's1', threadId: '   ', text: '插话' })
-    expect(steer).toHaveBeenCalledWith('s1', '插话')
+    // 同上方注释：只锁前三参（sessionKey 推导口径），opts 形状不在此处锁定。
+    expect(steer.mock.calls[0]?.slice(0, 3)).toEqual(['s1', '插话', 'main'])
   })
 
   it('steer：PI_RUNTIME_MODE=off（无 url）返回 queued:false 且不打网络', async () => {

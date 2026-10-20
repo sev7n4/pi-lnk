@@ -420,7 +420,20 @@ export class AgentController {
   @Post('runs/steer')
   @UseGuards(AuthGuard)
   async steerRun(
-    @Body() dto: { sessionId: string; threadId?: string; text: string },
+    @Body()
+    dto: {
+      sessionId: string
+      threadId?: string
+      text: string
+      /** 参考素材（2026-10-20 P1-1）：插话也要带得动图与指代芯片 */
+      attachments?: SidebarAttachmentDto[]
+      refOrder?: string[]
+      mentionedKeys?: string[]
+      /** 画布选中态（SEL-REF 指代信号） */
+      selectedNodeIds?: string[]
+      /** P1-2：vision 门控用（composer 当前模型，与正常发送 dto.model 同源） */
+      model?: string
+    },
     @Req() req: Request & { user: { sub: string } },
   ) {
     if (!dto?.text?.trim()) {
@@ -432,6 +445,12 @@ export class AgentController {
       sessionId: dto.sessionId,
       threadId: dto.threadId,
       text: dto.text,
+      attachments: dto.attachments,
+      refOrder: dto.refOrder,
+      mentionedKeys: dto.mentionedKeys,
+      selectedNodeIds: dto.selectedNodeIds,
+      userId: req.user.sub,
+      model: dto.model,
     })
     return { code: 0, message: 'ok', data }
   }
@@ -445,7 +464,19 @@ export class AgentController {
   @Post('runs/followup')
   @UseGuards(AuthGuard)
   async followUpRun(
-    @Body() dto: { sessionId: string; threadId?: string; text: string },
+    @Body()
+    dto: {
+      sessionId: string
+      threadId?: string
+      text: string
+      /** 参考素材（2026-10-20 P1-1）：与 steer 同口径 */
+      attachments?: SidebarAttachmentDto[]
+      refOrder?: string[]
+      mentionedKeys?: string[]
+      selectedNodeIds?: string[]
+      /** P1-2：同 steer。 */
+      model?: string
+    },
     @Req() req: Request & { user: { sub: string } },
   ) {
     if (!dto?.text?.trim()) {
@@ -456,6 +487,12 @@ export class AgentController {
       sessionId: dto.sessionId,
       threadId: dto.threadId,
       text: dto.text,
+      attachments: dto.attachments,
+      refOrder: dto.refOrder,
+      mentionedKeys: dto.mentionedKeys,
+      selectedNodeIds: dto.selectedNodeIds,
+      userId: req.user.sub,
+      model: dto.model,
     })
     return { code: 0, message: 'ok', data }
   }
