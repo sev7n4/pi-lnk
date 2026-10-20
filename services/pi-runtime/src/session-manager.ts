@@ -2397,7 +2397,7 @@ export class SessionManager {
 		text: string,
 		laneName = MAIN_LANE,
 		opts?: { turnContext?: TurnContext },
-	): Promise<{ queued: true }> {
+	): Promise<{ queued: true; entryId: string }> {
 		const entry = this.require(threadKey);
 		const trimmed = text.trim();
 		if (!trimmed) throw new InvalidInputError("steer requires a non-empty text");
@@ -2410,7 +2410,40 @@ export class SessionManager {
 		// run 在跑时不排空：该轮自己的 checkpoint/finish 边界会消费，抢 accept 只会撞 busy。
 		// 入队成功本身就是「有积压」的证据，故不必再看 queue_update 快照。
 		if (!entry.prompting) void this.drainQueued(entry, lane);
-		return { queued: true };
+		// ⭐ 回传 entryId（2026-10-20）：vendor `QueueResult` 自带 `{entryId}`，此前被丢掉 ⇒
+		// 上层想撤回这条消息时没有 key，`lane.cancelQueued(entryId)` 根本调不了。
+		return { queued: true, entryId: res.value.entryId };
+	}
+
+	/**
+	 * 撤回单条已入队的 steer / followUp（2026-10-20，对齐 vendor `AgentLane.cancelQueued`）。
+	 *
+	 * 存在理由：前端气泡上的「🗑 放弃」「✎ 取回内容」此前**只清前端槽位**，服务端那条
+	 * 仍留在 vendor inbox 里、照常被消费 —— 用户以为撤回了，其实它还会插进 agent 上下文。
+	 * 上游 coding-agent 的 `clearQueue()` 就是靠这个能力把队列内容放回编辑器的。
+	 *
+	 * 语义（照搬 vendor `CancelQueuedResult`）：
+	 * - `cancelled`       本次真的撤回；
+	 * - `already_consumed` 已被 turn 边界取走（撤回晚了，内容已在上下文里）；
+	 * - `not_found`       entryId 不存在（进程重启后 lane 被回收等）。
+	 *
+	 * ⚠️ 不做成「静默成功」：`already_consumed` 必须让前端知道，因为那时消息**确实**
+	 * 已经进了对话历史，撤回按钮该消失而不是假装生效。
+	 */
+	async cancelQueued(
+		threadKey: string,
+		entryId: string,
+		laneName = MAIN_LANE,
+	): Promise<{ outcome: "cancelled" | "already_consumed" | "not_found" }> {
+		const entry = this.require(threadKey);
+		const trimmed = entryId.trim();
+		if (!trimmed) throw new InvalidInputError("cancelQueued requires a non-empty entryId");
+		const lane = await entry.harness.lane(laneName, this.context);
+		const res = await lane.cancelQueued(trimmed, this.context);
+		if (!res.ok) {
+			throw new QueueRejectedError(entry.id, `cancelQueued: ${describeQueueError(res.error)}`);
+		}
+		return { outcome: res.value.kind };
 	}
 
 	/**
@@ -2421,14 +2454,14 @@ export class SessionManager {
 	 * 无 trigger 条目时被选中，作用是把**同一次 run** 续跑一代（同 operationId，不是新 run）。
 	 * 所以 run 进行中入 followUp，效果要等到那轮快结束时才出现；想立刻接话请用 `steer`。
 	 *
-	 * @returns `queued: true`
+	 * @returns `queued: true` + `entryId`（撤回键，见 steer 的同款说明）
 	 */
 	async followUp(
 		threadKey: string,
 		text: string,
 		laneName = MAIN_LANE,
 		opts?: { turnContext?: TurnContext },
-	): Promise<{ queued: true }> {
+	): Promise<{ queued: true; entryId: string }> {
 		const entry = this.require(threadKey);
 		const trimmed = text.trim();
 		if (!trimmed) throw new InvalidInputError("followUp requires a non-empty text");
@@ -2438,7 +2471,7 @@ export class SessionManager {
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
 		entry.lastActivityAt = Date.now();
 		if (!entry.prompting) void this.drainQueued(entry, lane);
-		return { queued: true };
+		return { queued: true, entryId: res.value.entryId };
 	}
 
 	/**

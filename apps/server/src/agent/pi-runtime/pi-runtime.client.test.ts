@@ -470,10 +470,56 @@ describe("steer / followUp 队列客户端（2026-10-02 吃满 pi-agent 双模�
 
 	it("202 {queued:true} → 返回 queued:true；缺字段仍视为成功（旧 runtime 容错）", async () => {
 		const h = harness(() => new Response(JSON.stringify({ queued: true }), { status: 202 }));
-		await expect(h.client.steer("s1:t1", "插话")).resolves.toEqual({ queued: true });
+		await expect(h.client.steer("s1:t1", "插话")).resolves.toEqual({
+			queued: true,
+			entryId: undefined,
+		});
 
 		const h2 = harness(() => new Response(JSON.stringify({ accepted: true }), { status: 202 }));
-		await expect(h2.client.followUp("s1:t1", "尾随")).resolves.toEqual({ queued: true });
+		await expect(h2.client.followUp("s1:t1", "尾随")).resolves.toEqual({
+			queued: true,
+			entryId: undefined,
+		});
+	});
+
+	it("⭐ entryId 随入队回传（2026-10-20撤回键）：缺失时是 undefined 而非空串", async () => {
+		const h = harness(() =>
+			new Response(JSON.stringify({ queued: true, entryId: "pe-42" }), { status: 202 }),
+		);
+		await expect(h.client.steer("s1:t1", "插话")).resolves.toEqual({
+			queued: true,
+			entryId: "pe-42",
+		});
+
+		// 空串会被上层当成「有 key」而调撤回 ⇒ 必须原样透传 undefined
+		const h2 = harness(() => new Response(JSON.stringify({ queued: true, entryId: "" }), { status: 202 }));
+		expect((await h2.client.followUp("s1:t1", "尾随")).entryId).toBe("");
+	});
+
+	it("cancelQueued → POST /queue/cancel，outcome 原样透传不折成布尔", async () => {
+		const h = harness(() => new Response(JSON.stringify({ outcome: "cancelled" }), { status: 200 }));
+		await expect(h.client.cancelQueued("s1:t1", "pe-42")).resolves.toEqual({ outcome: "cancelled" });
+		expect(h.calls[0]!.init.method).toBe("POST");
+		expect(String(h.calls[0]!.url)).toContain("/queue/cancel");
+		expect(JSON.parse(String(h.calls[0]!.init.body)).entryId).toBe("pe-42");
+
+		// ⭐ 撤回失败时那一条消息**已在对话历史里**，折成布尔会让 UI 假装撤回成功
+		const consumed = harness(() =>
+			new Response(JSON.stringify({ outcome: "already_consumed" }), { status: 200 }),
+		);
+		await expect(consumed.client.cancelQueued("s1:t1", "pe-42")).resolves.toEqual({
+			outcome: "already_consumed",
+		});
+
+		const missing = harness(() => new Response(JSON.stringify({ outcome: "not_found" }), { status: 200 }));
+		await expect(missing.client.cancelQueued("s1:t1", "pe-42")).resolves.toEqual({
+			outcome: "not_found",
+		});
+	});
+
+	it("cancelQueued 遇到不认识的 outcome → 抛错，绝不静默当成功", async () => {
+		const h = harness(() => new Response(JSON.stringify({ outcome: "whatever" }), { status: 200 }));
+		await expect(h.client.cancelQueued("s1:t1", "pe-42")).rejects.toThrow(/unknown outcome/);
 	});
 
 	it(">=400 或 body.error → 抛 PiRuntimeError（带 status，上层可区分：steer 失败不该伪造成功）", async () => {

@@ -461,6 +461,34 @@ export class AgentController {
   }
 
   /**
+   * 撤回单条已入队的插话（2026-10-20，对齐 vendor `AgentLane.cancelQueued`）。
+   *
+   * 存在理由：气泡上的「🗑 放弃」「✎ 取回内容」此前只清前端槽位，服务端那条仍在 vendor
+   * inbox 里照常被消费 —— 用户以为撤回了，实际它还会插进 agent 上下文。
+   *
+   * ⚠️ `outcome` 必须**原样透传**，不能折成布尔：`already_consumed` 表示那条已经进了对话历史
+   * （撤回晚了），前端要据此收起撤回按钮并如实告知，而不是假装撤回成功。
+   */
+  @Post('runs/queue/cancel')
+  @UseGuards(AuthGuard)
+  async cancelQueuedRun(
+    @Body() dto: { sessionId: string; threadId?: string; entryId: string },
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    if (!dto?.entryId?.trim()) {
+      return { code: 400, message: 'entryId is required', data: null }
+    }
+    // 与 steer/followup 一致：先校验会话归属，避免撤他人的会话
+    await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    const data = await this.agentService.cancelQueuedPiRun({
+      sessionId: dto.sessionId,
+      threadId: dto.threadId,
+      entryId: dto.entryId,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  /**
    * 旁听众管（纯订阅、不触发 run）：给「点了 followUp 就走开」的人一个切回来还能看见的通道。
    *
    * 主 `chat/conversation` 在 `agent_end` 就收尾了，而 followUp 是在**收尾边界之后**才接住、

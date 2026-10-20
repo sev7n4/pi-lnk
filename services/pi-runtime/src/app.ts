@@ -304,6 +304,34 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	});
 
 	/**
+	 * 撤回单条已入队的 steer / followUp（2026-10-20，对齐 vendor `AgentLane.cancelQueued`）。
+	 *
+	 * 此前前端气泡的「放弃 / 取回内容」只清前端槽位，服务端那条仍在 inbox 里照常被消费
+	 * —— 用户以为撤回了，实际它还会插进 agent 上下文。有了这个端点，撤回才真正成立。
+	 *
+	 * 响应 `outcome` 三态**必须如实透传**，尤其 `already_consumed`：那条消息已经进了对话历史，
+	 * 前端据此收起撤回按钮，而不是继续假装能撤。
+	 */
+	app.post<{
+		Params: { sessionId: string };
+		Body: { entryId: string; lane?: string };
+	}>("/sessions/:sessionId/queue/cancel", async (request, reply) => {
+		const { sessionId } = request.params;
+		const entryId = typeof request.body?.entryId === "string" ? request.body.entryId : "";
+		if (!entryId.trim()) return reply.code(400).send({ error: "entryId is required (non-empty)" });
+		try {
+			const result = await manager.cancelQueued(sessionId, entryId, request.body?.lane);
+			metrics.observeQueueOp("cancel", "queued", result.outcome);
+			return reply.code(200).send(result);
+		} catch (err) {
+			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			if (err instanceof InvalidInputError) return reply.code(400).send({ error: err.message });
+			metrics.observeQueueOp("cancel", "queued", "rejected");
+			return reply.code(503).send({ error: (err as Error).message });
+		}
+	});
+
+	/**
 	 * 回合外生成终态通报（2026-10-18 上游对齐，Nest→lane followUp）。
 	 *
 	 * Nest 侧 generation-reaper 巡检发现「生成在回合不再等待后才落终态」时打到这里；

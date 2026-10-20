@@ -300,11 +300,15 @@ export class Metrics {
 	 * - `enqueue` + rejected = vendor 拒收（Closed / 空消息等），需要回溯为什么队列没接住
 	 * - `drain`   + ok       = idle 排空成功接住积压（此前是「发了不理你」的静默丢消息）
 	 * - `drain`   + busy     = 撞上其它 operation（压缩在途），积压保留、等下一次时机
+	 * - `cancel`  + cancelled       = 用户撤回了这条（撤回按钮真的生效）
+	 * - `cancel`  + already_consumed = 撤回晚了，消息已被 turn 边界取走（**撤回率的口径**：
+	 *   这个值高说明「放弃」按钮点得太晚，是 UX 问题而非故障）
+	 * - `cancel`  + not_found       = entryId 不存在（lane 被回收 / 进程重启）
 	 */
 	observeQueueOp(
-		op: "enqueue" | "drain",
-		kind: "steer" | "followUp",
-		outcome: "ok" | "rejected" | "busy" | "empty",
+		op: "enqueue" | "drain" | "cancel",
+		kind: "steer" | "followUp" | "queued",
+		outcome: "ok" | "rejected" | "busy" | "empty" | "cancelled" | "already_consumed" | "not_found",
 	): void {
 		const key = `${op}|${kind}|${outcome}`;
 		this.queueOps.set(key, (this.queueOps.get(key) ?? 0) + 1);
@@ -600,7 +604,9 @@ export class Metrics {
 			lines.push(`pi_runtime_prompt_rejections_total{reason="${esc(reason)}"} ${count}`);
 		}
 
-		lines.push("# HELP pi_runtime_queue_ops_total Queue operations (enqueue/drain) by kind and result.");
+		lines.push(
+			"# HELP pi_runtime_queue_ops_total Queue operations (enqueue/drain/cancel) by kind and result.",
+		);
 		lines.push("# TYPE pi_runtime_queue_ops_total counter");
 		for (const [key, count] of [...this.queueOps.entries()].sort()) {
 			const [op, kind, outcome] = key.split("|");
