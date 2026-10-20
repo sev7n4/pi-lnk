@@ -23,8 +23,7 @@ export class UsersService {
         id: user.id,
         nickname: user.nickname,
         avatar: user.avatar ?? undefined,
-        points: user.points,
-        membership: user.membership,
+        // 公开页不暴露账户体系（points / membership）；workCount 非敏感，保留
         workCount: user._count.works,
         createdAt: user.createdAt.toISOString(),
       },

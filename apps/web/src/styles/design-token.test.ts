@@ -458,7 +458,7 @@ describe('非颜色阶梯', () => {
 
   it('正文行高 ≥1.45，标题行高 ≤1.35', () => {
     const body = ['--lnk-text-2xs', '--lnk-text-xs', '--lnk-text-sm', '--lnk-text-base', '--lnk-text-md']
-    const head = ['--lnk-text-2xl', '--lnk-text-3xl', '--lnk-text-4xl']
+    const head = ['--lnk-text-2xl', '--lnk-text-3xl', '--lnk-text-4xl', '--lnk-text-display-1', '--lnk-text-display-2', '--lnk-text-display-3']
     for (const b of body) {
       const size = num(b)
       const lh = num(b.replace('--lnk-text-', '--lnk-lh-'))
@@ -523,5 +523,38 @@ describe('品牌锚点', () => {
         `白字压 dim/25 × ${stop} 合成底只有 ${ratio.toFixed(2)}:1（hero 压层不足或渐变被改亮）`,
       ).toBeGreaterThanOrEqual(4.5)
     }
+  })
+})
+
+/**
+ * 签名画面令牌：深海墨底三件套。
+ *
+ * 深底是**主题不变式**（两主题同值 #131318），所以「两主题同名成对」照常覆盖；
+ * 但通用最差表面扫描（SURFACES 四表层）管不到它 —— surface-signature 不在那四层里，
+ * 而它又比四表层都更深，若只靠通用扫描，把 on-signature 文字改暗也不会有人拦。
+ * 故这里补一条专用对比度断言。
+ */
+describe('签名画面：深海墨底上的文字', () => {
+  for (const theme of ['dark', 'light'] as const) {
+    for (const token of ['--lnk-text-on-signature', '--lnk-text-on-signature-muted'] as const) {
+      it(`${theme} · ${token} 压 surface-signature ≥ AA 4.5`, () => {
+        const scope = blocks[theme]
+        const fg = resolve(token, scope)
+        const bg = resolve('--lnk-surface-signature', scope)
+        expect(fg, `${theme} 缺 ${token}`).toBeTruthy()
+        expect(bg, `${theme} 缺 --lnk-surface-signature`).toBeTruthy()
+        const c = contrast(fg!, bg!)
+        expect(c, `${theme} ${token} 压深海墨底只有 ${c.toFixed(2)}:1，要求 ≥4.5:1`).toBeGreaterThanOrEqual(4.5)
+      })
+    }
+  }
+
+  it('surface-signature 是主题不变式：深浅两主题同值', () => {
+    const dark = resolve('--lnk-surface-signature', blocks.dark)
+    const light = resolve('--lnk-surface-signature', blocks.light)
+    expect(dark).toBeTruthy()
+    // 签名画面是「三处豁免位」之一：深海墨底不随主题翻转。
+    // 若哪天它开始翻转，首屏在浅色主题下就不再是签名画面了。
+    expect(light, 'surface-signature 必须深浅同值（主题不变式）').toBe(dark)
   })
 })

@@ -228,8 +228,11 @@ IP 形象的原型是墨鱼（cuttlefish）。选它不是因为可爱，是因�
 | `2xl` | 24 / 32 | 1.33 | 700 | 页面标题 |
 | `3xl` | 30 / 38 | 1.27 | 700 | Hero |
 | `4xl` | 36 / 44 | 1.22 | 700 | 展示 |
+| `display-1/2/3` | 48/64 · 56/72 · 64/84 | 1.31–1.33 | 700 | **签名画面展示档**（首屏 / 个人页封面 / 分享页） |
 
 **规则**：正文行高 ≥1.45，标题行高 ≤1.35（中文正文 1.5–1.6 最舒适，故 `sm/base` 取 1.54/1.57）。字重只取 400/500/600/700 四档。
+
+**显示档不接 Major Third 阶梯**：`display-*` 是视觉锚点定档（48/56/64），不是 1.25 等比推导——签名画面的字号要按「首屏唯一主角」的视觉重量选，等比推到第 5 档会得到 56.25px 这种无意义精度。它仍受「标题行高 ≤1.35」约束（实测 1.29–1.33）。
 
 ### 2.6 间距（4px 基准网格）
 
@@ -680,3 +683,4 @@ Tailwind 默认阶梯与令牌命名**不是一一对应**：
 | 2026-10-10 | **P5 border-hover 接线 + F-5 评审材料**：4 处描边按钮/交互元素补 `hover:border-*-border-hover`（EdgeScissorsOverlay 顺带升档）；新增 `F5-brand-color-review.md` —— 品牌蓝/紫 57 处全量分类与三方案收编建议，**待拍板** |
 | 2026-10-11 | **F-5 品牌蓝收编上线（#352）**：indigo 39→2（保画布连线）；`.btn-primary` 实色化；棘轮 brand-blue 21→0/18→2、arbitrary-hex 39→3；守卫 86 条 |
 | 2026-10-11 | **P6 恒黑 dim 通道 + hero 渐变落地**：`--lnk-dim-rgb` 双主题通道 + Tailwind `dim` 键；CarouselBanner → `bg-brand-gradient` + `bg-dim/25` + `text-fg-on`（F-5 全闭环）；4 处模态 dim → `bg-dim/N`；AgentSideRail SCSS amber 6 处 → warning 三件套；彩色内联 75→69（内容性保留裁定落档 §7.2）；守卫 87 条 |
+| 2026-10-20 | **签名画面令牌（主页 × 创作者页重建规格 P0）**：新增 `display-1/2/3` 显示档（48/64 · 56/72 · 64/84，不接 1.25 阶梯）+ `surface-signature` / `text-on-signature(-muted)` 深海墨底三件套（**主题不变式**，两主题同值 `#131318`）；守卫 head 白名单追加三档，新增「签名画面」describe（4 条对比度 + 1 条主题不变式），总计 92 条。规格见 `docs/superpowers/specs/2026-10-20-homepage-creator-signature-design.md` |

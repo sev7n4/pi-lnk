@@ -80,27 +80,32 @@ function onHoverLeave() {
         </span>
       </div>
 
-      <div class="absolute bottom-3 left-3 flex gap-2">
+      <!-- hover / focus-within 才显现：opacity 过渡，不用 v-if、不用 invisible（保住键盘可达） -->
+      <div
+        data-testid="work-cover-actions"
+        class="absolute inset-0 flex items-center justify-center gap-3 bg-dim/40 opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-within:opacity-100"
+      >
         <button
-          class="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium backdrop-blur-sm transition hover:bg-accent-hover"
+          data-testid="work-cover-primary"
+          type="button"
+          class="btn-primary"
           @click.stop="$emit('viewWatch', work.id)"
         >
-          立即观看
+          观看
         </button>
         <button
-          v-if="work.sessionId"
-          class="rounded-lg bg-overlay/10 px-3 py-1.5 text-xs backdrop-blur-sm transition hover:bg-overlay/20"
-          @click.stop="$emit('viewProcess', work.id)"
+          type="button"
+          class="btn-ghost border border-overlay/12"
+          aria-label="分享"
+          @click.stop="$emit('viewShare', work.id)"
         >
-          制作过程
+          <!-- 24 网格 / 1.5px / currentColor（仓库无全局图标组件，本期唯一内联 SVG） -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" stroke-linecap="round" />
+            <path d="M12 15V4m0 0L8 8m4-4 4 4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
         </button>
       </div>
-      <button
-        class="absolute bottom-3 right-3 rounded-lg bg-black/40 px-2 py-1 text-[10px] backdrop-blur-sm transition hover:bg-black/60"
-        @click.stop="$emit('viewShare', work.id)"
-      >
-        分享
-      </button>
     </div>
 
     <div class="p-4">

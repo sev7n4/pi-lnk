@@ -11,12 +11,11 @@ import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
-import CreativeLauncher from '@/components/workflow/CreativeLauncher.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
 import CarouselBanner from '@/components/workflow/CarouselBanner.vue'
 import CategoryTabs from '@/components/workflow/CategoryTabs.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
-import BrandLogo from '@/components/brand/BrandLogo.vue'
+import SignatureHero from '@/components/workflow/SignatureHero.vue'
 import type { Session } from '@lnkpi/shared'
 
 const router = useRouter()
@@ -348,21 +347,12 @@ watch(() => auth.isLoggedIn, () => {
 
 <template>
   <div class="mx-auto max-w-7xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8">
-    <section class="mb-10 text-center sm:mb-12">
-      <div class="mb-4 flex justify-center">
-        <BrandLogo size="xl" />
-      </div>
-      <h1 class="font-display text-2xl font-semibold sm:text-3xl md:text-4xl">
-        {{ greeting }}，今天要做点什么呢？
-      </h1>
-
-      <div class="mx-auto mt-8 max-w-2xl">
-        <CreativeLauncher
-          v-model="prompt"
-          @create="createCanvas"
-          @guide="createCanvas"
-        />
-      </div>
+    <section class="mb-10 sm:mb-12">
+      <SignatureHero
+        v-model="prompt"
+        :greeting="greeting"
+        @create="createCanvas"
+      />
     </section>
 
     <!-- 我的画布：历史画布 + 新建入口 -->
