@@ -441,16 +441,18 @@ export class AgentController {
     }
     // 与 runs/cancel 一致：先校验会话归属，避免往他人的会话队列里塞消息
     await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    // 可选字段只在有值时下发：JSON 序列化本就会丢 undefined，显式条件展开是为了让
+    // 「本次请求到底带了什么」在 payload 上直接可见（也避免下游拿到空数组要再判一次）。
     const data = await this.agentService.steerPiRun({
       sessionId: dto.sessionId,
       threadId: dto.threadId,
       text: dto.text,
-      attachments: dto.attachments,
-      refOrder: dto.refOrder,
-      mentionedKeys: dto.mentionedKeys,
-      selectedNodeIds: dto.selectedNodeIds,
       userId: req.user.sub,
-      model: dto.model,
+      ...(dto.attachments?.length ? { attachments: dto.attachments } : {}),
+      ...(dto.refOrder?.length ? { refOrder: dto.refOrder } : {}),
+      ...(dto.mentionedKeys?.length ? { mentionedKeys: dto.mentionedKeys } : {}),
+      ...(dto.selectedNodeIds?.length ? { selectedNodeIds: dto.selectedNodeIds } : {}),
+      ...(dto.model ? { model: dto.model } : {}),
     })
     return { code: 0, message: 'ok', data }
   }
@@ -483,16 +485,17 @@ export class AgentController {
       return { code: 400, message: 'text is required', data: null }
     }
     await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    // 同 steerRun：可选字段只在有值时下发。
     const data = await this.agentService.followUpPiRun({
       sessionId: dto.sessionId,
       threadId: dto.threadId,
       text: dto.text,
-      attachments: dto.attachments,
-      refOrder: dto.refOrder,
-      mentionedKeys: dto.mentionedKeys,
-      selectedNodeIds: dto.selectedNodeIds,
       userId: req.user.sub,
-      model: dto.model,
+      ...(dto.attachments?.length ? { attachments: dto.attachments } : {}),
+      ...(dto.refOrder?.length ? { refOrder: dto.refOrder } : {}),
+      ...(dto.mentionedKeys?.length ? { mentionedKeys: dto.mentionedKeys } : {}),
+      ...(dto.selectedNodeIds?.length ? { selectedNodeIds: dto.selectedNodeIds } : {}),
+      ...(dto.model ? { model: dto.model } : {}),
     })
     return { code: 0, message: 'ok', data }
   }
