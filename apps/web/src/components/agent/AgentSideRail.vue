@@ -4177,99 +4177,111 @@ defineExpose({
           </div>
 
           <!-- 等待/收口系统层（P1-5 自 chat-wrap 移出）：桌面 = 输入区正上方原位；
-               移动端 = 贴底容器内、裸条上方的系统层（阻塞交互贴条可达） -->
-          <div
-            v-if="proposeWait"
-            class="mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
-            data-testid="propose-wait-hint"
-          >
-            <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--lnk-text-muted)' }">
-              ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
-            </p>
-            <div class="flex items-start gap-2">
-              <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
-              <p class="flex-1 leading-relaxed">
-                <template v-if="proposeWaitInCanvas">已在画布上待确认：查看 / 修改提示词后，在节点上点「确认生成」</template>
-                <template v-else>点👉🏻图标锚定画布「查看提示词」</template>
+               移动端 = 贴底容器内、裸条上方的系统层（阻塞交互贴条可达）。
+               2026-10-21 根治（决策 C）：整层包进 .agent-system-layer 容器——画布视图默认全隐，
+               白名单放行取代逐卡登记（病史：状态行 #496 / ask 卡+取消回执 #516 / 更早
+               railHiddenByTab，三次漏登、每次都要真机截图才发现，失败模式静默）。
+               ⚠️ 新增系统层卡片必须放进本容器：进层即默认安全（画布视图藏）；需要露头的
+               显式加白名单类，漏放行 = 立刻可见的功能缺失，而非看不见的 bug。
+               白名单两类：
+                 canvas-always        画布三态恒显（propose 提示，有画布专属文案）
+                 canvas-with-composer 跟随 composer 可见性（ask_user 卡：窗态显、imm/dock 收起）
+                                      ——pending 期间 composer 自由文本一律按 answer 提交
+                                      （spec §5.3），输入面与阻塞问题永不分离。 -->
+          <div class="agent-system-layer">
+            <div
+              v-if="proposeWait"
+              class="canvas-always mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
+              data-testid="propose-wait-hint"
+            >
+              <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--lnk-text-muted)' }">
+                ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
               </p>
+              <div class="flex items-start gap-2">
+                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
+                <p class="flex-1 leading-relaxed">
+                  <template v-if="proposeWaitInCanvas">已在画布上待确认：查看 / 修改提示词后，在节点上点「确认生成」</template>
+                  <template v-else>点👉🏻图标锚定画布「查看提示词」</template>
+                </p>
+              </div>
+              <!-- ADR-0011（2026-10-19）：画布上下文降权为只读——定位 / 取消按钮收起，
+                   确认 / 取消归节点内联面，避免对话流与画布节点双份可操作入口。纯对话视图保留原操作。 -->
+              <div v-if="!proposeWaitInCanvas" class="mt-1.5 flex items-center gap-1.5" data-testid="propose-wait-actions">
+                <button
+                  v-if="proposeWait.nodeId"
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-elevated px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                  data-testid="propose-wait-locate"
+                  aria-label="点击定位到画布上待确认的节点"
+                  @click="locateProposeNode"
+                >
+                  <!-- 定位锚图标（2026-10-18）：品牌 45° 定位锚 glyph + 幽灵盘，与 composer ◎ 同款两态——
+                       幽灵 = 中灰盘 + hi-text 锚；hover/聚焦点亮 = hi-bg 盘 + 辉光 -->
+                  <span class="propose-locate-disc" aria-hidden="true" />
+                  <span>定位</span>
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg border border-warning-border bg-elevated px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
+                  data-testid="propose-wait-cancel"
+                  @click="cancelBlockingPropose"
+                >
+                  取消
+                </button>
+              </div>
             </div>
-            <!-- ADR-0011（2026-10-19）：画布上下文降权为只读——定位 / 取消按钮收起，
-                 确认 / 取消归节点内联面，避免对话流与画布节点双份可操作入口。纯对话视图保留原操作。 -->
-            <div v-if="!proposeWaitInCanvas" class="mt-1.5 flex items-center gap-1.5" data-testid="propose-wait-actions">
-              <button
-                v-if="proposeWait.nodeId"
-                type="button"
-                class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-elevated px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-                data-testid="propose-wait-locate"
-                aria-label="点击定位到画布上待确认的节点"
-                @click="locateProposeNode"
-              >
-                <!-- 定位锚图标（2026-10-18）：品牌 45° 定位锚 glyph + 幽灵盘，与 composer ◎ 同款两态——
-                     幽灵 = 中灰盘 + hi-text 锚；hover/聚焦点亮 = hi-bg 盘 + 辉光 -->
-                <span class="propose-locate-disc" aria-hidden="true" />
-                <span>定位</span>
-              </button>
-              <button
-                type="button"
-                class="rounded-lg border border-warning-border bg-elevated px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-                data-testid="propose-wait-cancel"
-                @click="cancelBlockingPropose"
-              >
-                取消
-              </button>
-            </div>
-          </div>
-          <!-- P1-3.1 双显修复（T8 review 裁决）：流式 running 态由 composer-status-line
-               独占播报；本行只保留 waiting / failed / settled 态，避免阶段+积分双重显示 -->
-          <!-- 2026-10-20：settled 收口态可 dismiss（气泡摘要保留同源落点）；dismiss 后
-               仅本轮隐藏，新回合 / 新一轮结算自动复位（见 settledDismissed watch） -->
-          <p
-            v-if="turnStatus && !(agent.isStreaming && turnStatus.mode === 'running') && !(turnStatus.mode === 'settled' && settledDismissed)"
-            class="agent-turn-status mx-0.5 mb-1 text-[11px]"
-            :class="`agent-turn-status--${turnStatus.mode}`"
-            data-testid="turn-status-line"
-          >
-            {{ turnStatus.text }}
-            <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
-            <button
-              v-if="turnStatus.mode === 'settled'"
-              type="button"
-              class="agent-turn-status-dismiss"
-              aria-label="隐藏结算信息"
-              data-testid="turn-status-dismiss"
-              @click="settledDismissed = true"
-            >×</button>
-          </p>
-          <!-- ask_user 卡片贴 composer（2026-10-14，P1-5 移出 chat-wrap）：等待态的唯一交互面贴输入框；
-               pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。
-               2026-10-20：卡片经稳定钩子 .agent-ask-layer 纳入画布视图隐藏清单（真机复现：
-               切到画布页签后卡片在透明贴底壳里浮在画布上），见文末 is-canvas-view 规则。 -->
-          <AskUserCard
-            v-if="pendingAskUser.length && lastMessageIsAssistant"
-            class="mx-0.5 mb-2 agent-ask-layer"
-            :questions="pendingAskUser"
-            @submit="onAskSubmit"
-            @cancel="onAskCancel"
-          />
-          <div
-            v-if="showCancelledCallout"
-            class="mb-2 px-0.5 agent-cancelled-layer"
-            data-testid="run-cancelled-callout"
-          >
+            <!-- P1-3.1 双显修复（T8 review 裁决）：流式 running 态由 composer-status-line
+                 独占播报；本行只保留 waiting / failed / settled 态，避免阶段+积分双重显示 -->
+            <!-- 2026-10-20：settled 收口态可 dismiss（气泡摘要保留同源落点）；dismiss 后
+                 仅本轮隐藏，新回合 / 新一轮结算自动复位（见 settledDismissed watch） -->
             <p
-              class="mb-2 rounded-lg border border-[var(--lnk-border-subtle)] bg-[var(--lnk-surface-raised)] px-2 py-1.5 text-xs leading-relaxed text-[var(--lnk-text-secondary)]"
+              v-if="turnStatus && !(agent.isStreaming && turnStatus.mode === 'running') && !(turnStatus.mode === 'settled' && settledDismissed)"
+              class="agent-turn-status mx-0.5 mb-1 text-[11px]"
+              :class="`agent-turn-status--${turnStatus.mode}`"
+              data-testid="turn-status-line"
             >
-              {{ cancelledCalloutText }}
+              {{ turnStatus.text }}
+              <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
+              <button
+                v-if="turnStatus.mode === 'settled'"
+                type="button"
+                class="agent-turn-status-dismiss"
+                aria-label="隐藏结算信息"
+                data-testid="turn-status-dismiss"
+                @click="settledDismissed = true"
+              >×</button>
             </p>
-            <button
-              type="button"
-              class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
-              data-testid="new-task-chip"
-              :disabled="agent.isStreaming || isUploading"
-              @click="startNewTask()"
+            <!-- ask_user 卡片贴 composer（2026-10-14，P1-5 移出 chat-wrap）：等待态的唯一交互面贴输入框；
+                 pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。
+                 2026-10-21：卡片经白名单类 .canvas-with-composer 跟随 composer 可见性——窗态显
+                 （与输入面同屏，杜绝「对着看不见的问题打字」），imm / studio-dock 收起。 -->
+            <AskUserCard
+              v-if="pendingAskUser.length && lastMessageIsAssistant"
+              class="mx-0.5 mb-2 canvas-with-composer"
+              :questions="pendingAskUser"
+              @submit="onAskSubmit"
+              @cancel="onAskCancel"
+            />
+            <div
+              v-if="showCancelledCallout"
+              class="mb-2 px-0.5"
+              data-testid="run-cancelled-callout"
             >
-              发起新任务
-            </button>
+              <p
+                class="mb-2 rounded-lg border border-[var(--lnk-border-subtle)] bg-[var(--lnk-surface-raised)] px-2 py-1.5 text-xs leading-relaxed text-[var(--lnk-text-secondary)]"
+              >
+                {{ cancelledCalloutText }}
+              </p>
+              <button
+                type="button"
+                class="neo-ctl agent-preset-primary rounded-lg px-3 py-1.5 text-xs font-medium"
+                data-testid="new-task-chip"
+                :disabled="agent.isStreaming || isUploading"
+                @click="startNewTask()"
+              >
+                发起新任务
+              </button>
+            </div>
           </div>
 
           <!-- 底部输入 dock：与节点 dock-studio 同款毛玻璃 -->
@@ -4982,20 +4994,35 @@ defineExpose({
  * 两条入口对 header / chat-wrap 的处理一致：display:none。
  * composer（裸条）仅在「纯画布满屏 / dock 展开」时收起。
  * 类摘除（门回对话 / 取消选中）⇒ 原样回归。
- * ⭐ 2026-10-20 补齐：收口状态行（.agent-turn-status）同样属对话回合，画布视图一律不同屏
- *   —— 此前隐藏清单漏了它，导致画布视图（尤其 imm）下状态行在透明容器里裸露。
- * ⭐⭐ 2026-10-20 二次补齐（真机截图复现）：ask_user 卡与「取消」回执卡同在 P1-5 移出的
- *   系统层里，同样漏出——切到画布页签，消息流/输入条被藏，卡片孤悬在画布上。
- *   ⚠️ 本清单是「加法枚举」：新增系统层卡片必须同步来此登记 + mobileMaskTabbar.test.ts
- *   加断言。根治方案（默认全隐 + 白名单放行 propose 提示）见 PR 正文，未落地前以此纪律兜底。 */
+ * 系统层（propose 提示 / 状态行 / ask 卡 / 取消回执）不在此清单——由下方容器规则管辖，
+ * 2026-10-21 起从逐卡登记改为「默认全隐 + 白名单放行」，漏登记不再静默。 */
 .agent-panel-mobile-dock.is-canvas-view .agent-panel-header,
 .agent-panel-mobile-dock.is-canvas-view .agent-chat-wrap,
-.agent-panel-mobile-dock.is-canvas-view .agent-turn-status,
-.agent-panel-mobile-dock.is-canvas-view .agent-ask-layer,
-.agent-panel-mobile-dock.is-canvas-view .agent-cancelled-layer,
 .agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-input-dock,
 .agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-input-dock {
   display: none;
+}
+
+/* ---- 画布视图 · 系统层容器：默认全隐 + 白名单放行（2026-10-21 根治，取代逐卡登记）----
+ * 病史：P1-5 把系统层移出 chat-wrap 后，往上面的清单逐卡登记漏了三次
+ *（状态行 #496 → ask 卡+取消回执 #516 → 更早 railHiddenByTab），失败模式静默，
+ * 每次都要真机截图才发现。现翻转默认值：
+ *   容器在画布视图默认 display:none —— 新卡片进层即安全；
+ *   需要露头的显式加白名单类，漏放行的代价是「立刻可见的功能缺失」。
+ * 白名单两类（特异性均压过容器规则）：
+ *   canvas-always        画布三态恒显：propose 等待提示（待确认状态面，有画布专属文案）
+ *   canvas-with-composer 跟随 composer：ask_user 卡（阻塞交互面）。窗态显——
+ *                         pending 期间 composer 自由文本一律按 answer 提交（spec §5.3），
+ *                         输入面与阻塞问题永不分离；imm / studio-dock 随 composer 收起。
+ * 播报式 chrome（收口状态行 / 取消回执卡）不放行：画布视图全藏（#496/#516 行为不变）。 */
+.agent-panel-mobile-dock.is-canvas-view .agent-system-layer {
+  display: none;
+}
+.agent-panel-mobile-dock.is-canvas-view .agent-system-layer > .canvas-always {
+  display: block;
+}
+.agent-panel-mobile-dock.is-canvas-view:not(.is-canvas-imm):not(.has-studio-dock) .agent-system-layer > .canvas-with-composer {
+  display: block;
 }
 
 /* ---- 左边缘拖拉调宽 ---- */

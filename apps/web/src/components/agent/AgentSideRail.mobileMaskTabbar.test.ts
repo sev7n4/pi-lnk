@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest'
  *
  * 2026-10-20 起范围扩展为「贴底容器跨页签泄漏」家族守卫：
  * 画布/发现/我的页签下，对话 chrome（系统层卡片）不得残留在透明壳里浮在页面上。
+ * 2026-10-21 起第三代形态：系统层容器「默认全隐 + 白名单放行」——断言守护容器规则、
+ * 两个白名单类落位、旧逐卡选择器不得回归、四卡位置不变量。
  *
  * 断言只作用于提取出的 CSS 规则块内部（不含注释），避免「记录被删历史」的
  * 注释文本污染否定断言；每个否定断言都配有块存在性 + 关键属性的有效性断言。
@@ -62,30 +64,45 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
     expect(sfc).toContain('mobileAppTab === \'discover\' || props.mobileAppTab === \'mine\'')
   })
 
-  it('画布视图：收口状态行与对话 chrome 一律不同屏', () => {
-    // 回归 2026-10-20：隐藏清单曾漏 .agent-turn-status，导致画布（尤其 imm）状态行裸露。
-    const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-turn-status')
+  it('画布视图：系统层容器默认全隐（根治：漏登记不再静默）', () => {
+    // 回归 2026-10-21：系统层曾逐卡往 is-canvas-view 清单登记，漏了三次
+    //（#496 状态行 / #516 ask 卡+取消回执 / 更早 railHiddenByTab），失败模式静默、
+    // 每次都要真机截图才发现。现翻转默认值：容器在画布视图默认 display:none——
+    // 新卡片进层即安全；需要露头的显式加白名单类（漏放行 = 立刻可见的功能缺失）。
+    const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-system-layer')
     expect(block).toContain('display: none')
   })
 
-  it('画布视图：ask_user 卡与「取消」回执卡不得浮在画布上（真机复现回归）', () => {
-    // 回归 2026-10-20 真机截图：P1-5 把 ask_user 卡移出 chat-wrap 进系统层后，
-    // 画布视图隐藏清单漏了它——切到画布页签，消息流/输入条被 display:none 藏掉，
-    // 卡片成为透明贴底壳里唯一可见子元素，孤悬在画布上（run-cancelled-callout 同病）。
-    // 双向断言：先钉模板稳定钩子（钩子被改名/删掉时先红，避免 CSS 选择器空转），再钉隐藏规则。
-    expect(sfc).toContain('class="mx-0.5 mb-2 agent-ask-layer"')
-    expect(sfc).toContain('class="mb-2 px-0.5 agent-cancelled-layer"')
-    const askBlock = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-ask-layer')
-    expect(askBlock).toContain('display: none')
-    const cancelledBlock = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-cancelled-layer')
-    expect(cancelledBlock).toContain('display: none')
+  it('画布视图：白名单放行 propose 提示（canvas-always，画布三态恒显）', () => {
+    // propose 等待提示属「待确认状态面」：有画布专属文案（proposeWaitInCanvas），
+    // 画布三态恒显。双向断言：模板类落位 + 放行规则存在（防选择器空转）。
+    expect(sfc).toContain('class="canvas-always mx-0.5 mb-1')
+    const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-system-layer > .canvas-always')
+    expect(block).toContain('display: block')
   })
 
-  it('画布视图：propose 等待提示必须放行（有画布专属文案，不得被隐藏清单误伤）', () => {
-    // propose-wait-hint 是系统层里唯一「画布视图也要可见」的卡片（proposeWaitInCanvas
-    // 文案：「已在画布上待确认…」）。若有人图省事把整个系统层加进隐藏清单，这条会红。
-    const rule = sfc.slice(sfc.indexOf('.agent-panel-mobile-dock.is-canvas-view .agent-panel-header'))
-    expect(rule).not.toContain('.is-canvas-view .propose-wait-hint')
-    expect(sfc).toContain('proposeWaitInCanvas')
+  it('画布视图：白名单放行 ask_user 卡（canvas-with-composer，跟随 composer）', () => {
+    // 窗态（:not imm :not studio-dock）显——pending 期间 composer 自由文本一律按
+    // answer 提交（spec §5.3），输入面与阻塞问题永不分离；imm/dock 随 composer 收起。
+    expect(sfc).toContain('class="mx-0.5 mb-2 canvas-with-composer"')
+    const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view:not(.is-canvas-imm):not(.has-studio-dock) .agent-system-layer > .canvas-with-composer')
+    expect(block).toContain('display: block')
+  })
+
+  it('画布视图：旧逐卡登记模式不得回归（deny-list 只许 header/chat-wrap/composer）', () => {
+    // 防退回加法枚举：状态行/ask 卡/取消回执不得再有独立选择器，一律走容器默认全隐。
+    expect(sfc).not.toContain('.agent-panel-mobile-dock.is-canvas-view .agent-turn-status')
+    expect(sfc).not.toContain('.agent-panel-mobile-dock.is-canvas-view .agent-ask-layer')
+    expect(sfc).not.toContain('.agent-panel-mobile-dock.is-canvas-view .agent-cancelled-layer')
+  })
+
+  it('系统层容器位置不变量：四张卡必须都在容器内', () => {
+    // 新卡片若被加到容器外，画布视图会露头（旧 bug 形态）。容器开标签必须先于全部已知卡片。
+    const open = sfc.indexOf('<div class="agent-system-layer">')
+    expect(open).toBeGreaterThan(0)
+    expect(open).toBeLessThan(sfc.indexOf('data-testid="propose-wait-hint"'))
+    expect(open).toBeLessThan(sfc.indexOf('class="agent-turn-status mx-0.5 mb-1'))
+    expect(open).toBeLessThan(sfc.indexOf('class="mx-0.5 mb-2 canvas-with-composer"'))
+    expect(open).toBeLessThan(sfc.indexOf('data-testid="run-cancelled-callout"'))
   })
 })
