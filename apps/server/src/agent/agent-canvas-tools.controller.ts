@@ -1,8 +1,8 @@
 import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common'
-import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Min, ValidateNested } from 'class-validator'
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Min, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 import { PrismaService } from '../prisma/prisma.service'
-import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+import { AgentCanvasToolsService, BATCH_NODES_MAX } from './agent-canvas-tools.service'
 import { AgentInternalGuard } from './agent-internal.guard'
 import { CompositionService, type PreviewCompositionInput } from './composition.service'
 import { WorkflowRecipeService } from './workflow-recipe.service'
@@ -153,10 +153,20 @@ class AddNodesBatchDto {
   @IsString()
   userId!: string
 
+  /** SP-A：单批节点上限（pi 工具 create_nodes_batch 同值；与先例 connect_nodes ≤20 / delete_nodes ≤50 同模式）。 */
   @IsArray()
+  @ArrayMaxSize(BATCH_NODES_MAX)
   @ValidateNested({ each: true })
   @Type(() => BatchNodeItemDto)
   items!: BatchNodeItemDto[]
+
+  /** SP-A：批内连边（端点为本批 key 或既有节点 id）。上限取节点上限×2 作兜底，合法请求不会被卡。 */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EdgeDto)
+  @ArrayMaxSize(BATCH_NODES_MAX * 2)
+  edges?: EdgeDto[]
 
   @IsOptional()
   @IsBoolean()

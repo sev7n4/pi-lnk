@@ -288,7 +288,7 @@ describe('AgentCanvasToolsService', () => {
     expect(JSON.stringify(summary)).not.toContain('# huge')
   })
 
-  it('addNodesBatch creates skeleton nodes with grid offset and returns key map', async () => {
+  it('addNodesBatch creates skeleton nodes via placement kernel and returns key map', async () => {
     const result = await svc.addNodesBatch({
       sessionId: 's1',
       userId: 'u1',
@@ -302,7 +302,9 @@ describe('AgentCanvasToolsService', () => {
     expect(result.nodes[1].key).toBe('hero_main')
     expect(result.actions.every((a) => a.type === 'add_node')).toBe(true)
     expect(canvas.nodes).toHaveLength(2)
-    expect(canvas.nodes[1].position.x - canvas.nodes[0].position.x).toBe(280)
+    // 放置内核：空画布首批从 (80,80) 链式右向，间距 40（280 宽 + 40）
+    expect(canvas.nodes[0].position).toEqual({ x: 80, y: 80 })
+    expect(canvas.nodes[1].position).toEqual({ x: 400, y: 80 })
   })
 
   it('connectNodes adds edges', async () => {
@@ -2993,5 +2995,119 @@ describe('AgentCanvasToolsService', () => {
     expect(typeof timeoutResult.used?.voice).toBe('string')
   })
 })
+
 })
+
+  describe('addNodesBatch 批量创建与边解析（SP-A）', () => {
+    const batch = (over: Partial<{ items: unknown[]; edges: Array<{ source: string; target: string }> }> = {}) =>
+      svc.addNodesBatch({
+        sessionId: 's1',
+        userId: 'u1',
+        items: [
+          { key: 'a', title: 'A', targetType: 'image', prompt: 'pa' },
+          { key: 'b', title: 'B', targetType: 'image', prompt: 'pb' },
+        ],
+        ...over,
+      } as never)
+
+    it('edges 端点按「本批 key → 既有 id」解析，节点+边同一批 actions', async () => {
+      canvas = {
+        nodes: [{ id: 'image-1', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+        edges: [],
+      }
+      const out = await batch({
+        edges: [
+          { source: 'image-1', target: 'a' }, // 既有 id → 本批 key
+          { source: 'a', target: 'b' }, // 本批 key → 本批 key
+        ],
+      })
+      expect(out.nodes.map((n) => n.key)).toEqual(['a', 'b'])
+      const edgeActions = out.actions.filter((a) => a.type === 'add_edge')
+      expect(edgeActions).toHaveLength(2)
+      const ids = new Set(out.nodes.map((n) => n.nodeId))
+      const sources = edgeActions.map((a) => (a.payload as { source: string }).source)
+      const targets = edgeActions.map((a) => (a.payload as { target: string }).target)
+      expect(sources).toContain('image-1')
+      expect(sources).toContain(out.nodes[0].nodeId)
+      expect(targets).toEqual([out.nodes[0].nodeId, out.nodes[1].nodeId])
+    })
+
+    it('key 与既有 nodeId 撞名时 key 优先（解析序固定，Review#1）', async () => {
+      canvas = {
+        nodes: [{ id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+        edges: [],
+      }
+      const out = await batch({ edges: [{ source: 'a', target: 'b' }] })
+      const edgeActions = out.actions.filter((a) => a.type === 'add_edge')
+      expect(edgeActions).toHaveLength(1)
+      // 'a' 解析为本批新节点（而非画布上同名的旧节点）
+      expect((edgeActions[0].payload as { source: string }).source).toBe(out.nodes[0].nodeId)
+      expect(out.nodes[0].nodeId).not.toBe('a')
+    })
+
+    it('edges 引用不存在的 key/id ⇒ fail-closed 整体 400 且不落库（Review#2）', async () => {
+      canvas = { nodes: [], edges: [] }
+      await expect(() =>
+        batch({ edges: [{ source: 'ghost-key', target: 'a' }] }),
+      ).rejects.toThrow(/ghost-key/)
+      expect(sessionUpdate).not.toHaveBeenCalled()
+      expect(canvas.nodes).toHaveLength(0)
+    })
+
+    it('key 批内重复 / 空 ⇒ 400', async () => {
+      await expect(() =>
+        svc.addNodesBatch({
+          sessionId: 's1',
+          userId: 'u1',
+          items: [
+            { key: 'a', title: 'A', targetType: 'image', prompt: 'pa' },
+            { key: 'a', title: 'A2', targetType: 'image', prompt: 'pa2' },
+          ],
+        } as never),
+      ).rejects.toThrow(/key 重复/)
+      await expect(() =>
+        svc.addNodesBatch({
+          sessionId: 's1',
+          userId: 'u1',
+          items: [{ key: '  ', title: 'A', targetType: 'image', prompt: 'pa' }],
+        } as never),
+      ).rejects.toThrow(/key 不能为空/)
+    })
+
+    it('items 超 BATCH_NODES_MAX ⇒ 400', async () => {
+      const items = Array.from({ length: 13 }, (_, i) => ({
+        key: `k${i}`,
+        title: `T${i}`,
+        targetType: 'image',
+        prompt: 'p',
+      }))
+      await expect(() =>
+        svc.addNodesBatch({ sessionId: 's1', userId: 'u1', items } as never),
+      ).rejects.toThrow(/最多 12/)
+    })
+
+    it('落位走放置内核：空画布首批 = (80,80) 链式，不再用网格取模', async () => {
+      const out = await batch()
+      const positions = out.actions
+        .filter((a) => a.type === 'add_node')
+        .map((a) => (a.payload as { position: { x: number; y: number } }).position)
+      expect(positions).toEqual([
+        { x: 80, y: 80 },
+        { x: 400, y: 80 },
+      ])
+    })
+
+    it('单建 upsertMediaNode 同享放置内核（不传 position 时）', async () => {
+      const out = await svc.upsertMediaNode({
+        sessionId: 's1',
+        userId: 'u1',
+        targetType: 'image',
+        prompt: 'solo',
+      } as never)
+      const position = (
+        out.actions.find((a) => a.type === 'add_node')!.payload as { position: { x: number; y: number } }
+      ).position
+      expect(position).toEqual({ x: 80, y: 80 })
+    })
+  })
 })

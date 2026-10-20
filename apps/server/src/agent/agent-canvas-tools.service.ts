@@ -55,6 +55,7 @@ import {
   createGroupFromSelection,
   getAbsolutePosition,
   getNodeSize,
+  placeBatchNodes,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
   moveNodes,
@@ -69,6 +70,8 @@ import {
 
 const GRID_X = 280
 const GRID_Y = 220
+/** SP-A：addNodesBatch 单批节点上限（pi 工具 create_nodes_batch 同值；tool 层先拦，此处兜底）。 */
+export const BATCH_NODES_MAX = 12
 const DEFAULT_POLL_INTERVAL_MS = 1500
 const DEFAULT_POLL_TIMEOUT_MS = 180_000
 const STAGE_TTL_MS = 30 * 60 * 1000
@@ -914,24 +917,43 @@ export class AgentCanvasToolsService {
       guideSceneId?: string
       guideEditIntentId?: string
     }>
+    /** SP-A：批内连边。端点按「本批 key → 既有节点 id」序解析；未解析 fail-closed 整体 400。 */
+    edges?: Array<{ source: string; target: string }>
     stage?: boolean
   }): Promise<{ nodes: Array<{ key: string; nodeId: string }>; actions: CanvasAction[] }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+
+    // E3：key 批内唯一 + 非空 + 长度上限
+    const seenKeys = new Set<string>()
+    for (const item of input.items) {
+      const key = String(item.key ?? '').trim()
+      if (!key) throw new BadRequestException('items[].key 不能为空')
+      if (key.length > 64) throw new BadRequestException('items[].key 长度不能超过 64')
+      if (seenKeys.has(key)) throw new BadRequestException(`items[].key 重复：${key}`)
+      seenKeys.add(key)
+    }
+    // E2：服务端兜底 cap（pi 工具层已有同款校验，双保险）
+    if (input.items.length > BATCH_NODES_MAX) {
+      throw new BadRequestException(`单批最多 ${BATCH_NODES_MAX} 个节点（got ${input.items.length}）`)
+    }
+
     const prefs = await this.loadAccountGenPrefs(input.userId)
+
+    // 放置内核：一次性算全批（锚点感知 edges 引用的既有节点；本批 key 天然不进锚点统计）
+    const placements = placeBatchNodes(
+      canvas.nodes as LayoutNode[],
+      input.items.map((it) => ({ key: it.key, type: String(it.targetType || 'image') })),
+      input.edges,
+    )
+
     const actions: CanvasAction[] = []
     const mapping: Array<{ key: string; nodeId: string }> = []
-    const baseIndex = canvas.nodes.length
 
     for (let i = 0; i < input.items.length; i++) {
       const item = input.items[i]
       const nodeType = (item.targetType || 'image') as NodeType
       const nodeId = nextNodeId(nodeType)
-      const position =
-        item.position ??
-        {
-          x: 80 + ((baseIndex + i) % 4) * GRID_X,
-          y: 80 + Math.floor((baseIndex + i) / 4) * GRID_Y,
-        }
+      const position = item.position ?? placements.get(item.key) ?? { x: 80, y: 80 }
       const defaults = modalityDefaults(nodeType, prefs)
       const nodeData: Record<string, unknown> = {
         title: item.title,
@@ -963,6 +985,38 @@ export class AgentCanvasToolsService {
         },
       })
       mapping.push({ key: item.key, nodeId })
+    }
+
+    // E1：edges 端点解析（key 优先于既有 id）+ 批内/库内去重 + fail-closed
+    if (input.edges?.length) {
+      const idByKey = new Map(mapping.map((m) => [m.key, m.nodeId]))
+      const nodeIds = new Set(canvas.nodes.map((n) => n.id))
+      const unresolved: string[] = []
+      const seenEdges = new Set<string>()
+      for (const e of input.edges) {
+        const source = idByKey.get(e.source) ?? (nodeIds.has(e.source) ? e.source : null)
+        const target = idByKey.get(e.target) ?? (nodeIds.has(e.target) ? e.target : null)
+        if (!source || !target) {
+          unresolved.push(`${e.source} -> ${e.target}`)
+          continue
+        }
+        const dedupeKey = `${source}->${target}`
+        if (seenEdges.has(dedupeKey)) continue
+        seenEdges.add(dedupeKey)
+        actions.push({
+          type: 'add_edge',
+          payload: {
+            id: edgeId(source, target),
+            source,
+            target,
+          },
+        })
+      }
+      if (unresolved.length > 0) {
+        throw new BadRequestException(
+          `edges 端点无法解析（不在本批 key 也不在画布节点）：${unresolved.join('; ')}`,
+        )
+      }
     }
 
     await this.applyOrStage(input.sessionId, actions, input.stage)
