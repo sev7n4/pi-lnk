@@ -15,7 +15,7 @@
   }
 
   body {
-    min-height: 100vh;
+    min-height: 100dvh; /* dvh：移动端可见视口（100vh 比可见区高约 105px，曾致根容器可滚出偏移） */
     background-color: var(--neo-bg);
     color: var(--neo-text-primary);
   }

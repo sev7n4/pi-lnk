@@ -4809,7 +4809,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="relative h-screen w-full overflow-hidden bg-[var(--neo-bg)]" @click="closeContextMenu">
+  <div class="relative h-[100dvh] w-full overflow-hidden bg-[var(--neo-bg)]" @click="closeContextMenu">
     <div class="flex h-full min-w-0 overflow-hidden">
       <div
         ref="canvasAreaRef"

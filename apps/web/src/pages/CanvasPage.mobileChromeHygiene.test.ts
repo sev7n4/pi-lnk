@@ -233,6 +233,37 @@ describe('移动端底部锚定元素：fixed 贴可见视口（真机走查 202
   })
 })
 
+/**
+ * 根容器 dvh（真机走查 2026-10-20 第二处缺陷类）：
+ * 根容器 `h-screen`（100vh）比移动端可见视口高约 105px（实测 804/699）⇒
+ * ① 文档恒可上滚 105px，锚在容器**顶部**的元素（视口胶囊 Panel top-right）
+ *    随文档滚进地址栏后面「消失」，而顶栏是 fixed 不动 —— 看起来像胶囊无常驻；
+ * ② 空态文字组中心相对可见区偏低约 53px。
+ * 根治 = 全链路 100vh → 100dvh（App 外层 / App 沉浸态 main / CanvasPage 根 /
+ * body min-height），漏一层文档就仍可滚。
+ */
+describe('根容器 dvh：100vh 不得回潮（真机走查 2026-10-20）', () => {
+  const app = readFileSync(join(here, '..', 'App.vue'), 'utf8')
+  const mainCss = readFileSync(join(here, '..', 'styles', 'main.css'), 'utf8')
+  const pageClean = stripComments(read('./CanvasPage.vue'))
+
+  it('App.vue 外层与沉浸态 main 都是 100dvh，零 h-screen', () => {
+    expect(app).toContain('min-h-[100dvh]')
+    expect(app).toContain('h-[100dvh] overflow-hidden')
+    expect(stripComments(app)).not.toMatch(/\bh-screen\b/)
+  })
+
+  it('CanvasPage 根容器是 100dvh，零 h-screen', () => {
+    expect(pageClean).toContain('h-[100dvh] w-full overflow-hidden')
+    expect(pageClean).not.toMatch(/\bh-screen\b/)
+  })
+
+  it('body min-height 是 100dvh（漏这层文档仍可滚 105px）', () => {
+    expect(stripComments(mainCss)).toMatch(/min-height:\s*100dvh/)
+    expect(stripComments(mainCss)).not.toMatch(/min-height:\s*100vh/)
+  })
+})
+
 describe('MobileSaveStatus 行为', () => {
   it('保存中 → 文案「保存中…」且禁用；否则显示已保存时刻', () => {
     const saving = mount(MobileSaveStatus, { props: { saving: true, savedAt: null } })
