@@ -1,69 +1,30 @@
 <script setup lang="ts">
-defineProps<{ modelValue: string }>()
-defineEmits<{ 'update:modelValue': [v: string]; create: []; guide: [] }>()
+/**
+ * tone: 'signature' 用于深海墨底签名画面——placeholder 必须换 on-signature 令牌，
+ * 否则浅色主题下 text-fg-3（深色）压深底会静默不可见（P0 计划 Review Focus #1）。
+ */
+withDefaults(defineProps<{ modelValue: string; tone?: 'default' | 'signature' }>(), {
+  tone: 'default',
+})
+const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
 </script>
 
 <template>
-  <div class="studio-launcher neo-glass-lite rounded-2xl p-2">
-    <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
-      <input
-        :value="modelValue"
-        class="studio-launcher-input flex-1 rounded-xl bg-transparent px-4 py-3 text-sm outline-none"
-        placeholder="说说你的创意，超创帮你在画布上实现 …"
-        @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
-        @keydown.enter="$emit('create')"
-      >
-      <div class="flex shrink-0 gap-2">
-        <button
-          type="button"
-          class="studio-launcher-secondary rounded-xl border px-4 py-2.5 text-sm transition"
-          @click="$emit('guide')"
-        >
-          告诉我你的想法
-        </button>
-        <button
-          type="button"
-          class="studio-launcher-primary rounded-xl px-5 py-2.5 text-sm font-medium transition"
-          @click="$emit('create')"
-        >
-          创建画布
-        </button>
-      </div>
-    </div>
+  <div class="flex items-center gap-2 rounded-lg border border-overlay/12 bg-surface-sunken p-2">
+    <input
+      :value="modelValue"
+      type="text"
+      class="min-w-0 flex-1 bg-transparent px-2 py-2 text-base outline-none focus-visible:ring-2 focus-visible:ring-[var(--lnk-border-focus)]"
+      :class="
+        tone === 'signature'
+          ? 'text-[color:var(--lnk-text-on-signature)] placeholder:text-[color:var(--lnk-text-on-signature-muted)]'
+          : 'text-fg placeholder:text-fg-3'
+      "
+      placeholder="描述你的创意…"
+      aria-label="描述你的创意，按下 Enter 开始创作"
+      @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+      @keydown.enter="emit('create')"
+    />
+    <button type="button" class="btn-primary" @click="emit('create')">开始创作</button>
   </div>
 </template>
-
-<style scoped>
-.studio-launcher {
-  border: 1px solid var(--neo-glass-border);
-  box-shadow: var(--neo-glass-shadow);
-}
-
-.studio-launcher-input {
-  color: var(--neo-text-primary);
-}
-
-.studio-launcher-input::placeholder {
-  color: var(--neo-text-muted);
-}
-
-.studio-launcher-secondary {
-  border-color: var(--neo-border);
-  color: var(--neo-text-secondary);
-}
-
-.studio-launcher-secondary:hover {
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-primary);
-}
-
-.studio-launcher-primary {
-  background: var(--neo-hi-bg);
-  color: var(--neo-hi-text);
-  box-shadow: var(--neo-hi-shadow);
-}
-
-.studio-launcher-primary:hover {
-  filter: brightness(1.06);
-}
-</style>
