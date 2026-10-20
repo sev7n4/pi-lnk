@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import type { Work } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import { sessionsApi } from '@/services/sessions-api'

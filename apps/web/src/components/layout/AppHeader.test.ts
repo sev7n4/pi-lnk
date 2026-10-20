@@ -23,7 +23,7 @@ const stubs = {
 }
 
 function mountHeader() {
-  return mount(AppHeader, { global: { stubs, attachTo: document.body } })
+  return mount(AppHeader, { attachTo: document.body, global: { stubs } })
 }
 
 /** 导航项文案（只取 header 主导航区的按钮/链接，不含下拉面板） */

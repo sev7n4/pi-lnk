@@ -90,7 +90,8 @@ describe('SessionCard 行为不变量（迁移不许回归）', () => {
   it('有封面时渲染 img（canvasData 是对象不是 JSON 字符串）', () => {
     // 回归点：曾把canvasData 当字符串序列化，导致封面永远取不到 → 全落兜底
     const wrapper = mountCard({
-      canvasData: { nodes: [{ id: 'n1', type: 'image', data: { url: 'https://cdn/a.png' } }] },
+      // CanvasData 要求 edges 必填，缺一个字段 vue-tsc -b 就报 TS2352
+      canvasData: { nodes: [{ id: 'n1', type: 'image', data: { url: 'https://cdn/a.png' } }], edges: [] },
     } as Partial<Session>)
     expect(wrapper.html()).toContain('https://cdn/a.png')
     expect(wrapper.find('[data-testid="brand-pattern"]').exists()).toBe(false)
@@ -98,7 +99,7 @@ describe('SessionCard 行为不变量（迁移不许回归）', () => {
 
   it('视频封面走 <video> 而非 <img>', () => {
     const wrapper = mountCard({
-      canvasData: { nodes: [{ id: 'n1', type: 'video', data: { url: 'https://cdn/a.mp4' } }] },
+      canvasData: { nodes: [{ id: 'n1', type: 'video', data: { url: 'https://cdn/a.mp4' } }], edges: [] },
     } as Partial<Session>)
     expect(wrapper.find('video').exists()).toBe(true)
   })

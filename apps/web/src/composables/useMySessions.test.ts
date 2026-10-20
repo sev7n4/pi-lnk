@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import type { Session } from '@lnkpi/shared'
 import { useMySessions } from './useMySessions'
 
 const { sessionsList, sessionsCreate, sessionsUpdate, sessionsDuplicate, sessionsRemove, sessionsRemoveMany, confirmImpl, promptImpl, pushMock, authState } =
@@ -42,8 +43,25 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ get isLoggedIn() { return authState.isLoggedIn }, openLogin: vi.fn() }),
 }))
 
-function makeSessions(n: number) {
-  return Array.from({ length: n }, (_, i) => ({ id: `s${i}`, title: `画布${i}` }))
+// 注意：必须返回完整 Session —— vue-tsc -b 会检查夹具是否满足 Session 类型
+function makeSessions(n: number): Session[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `s${i}`,
+    title: `画布${i}`,
+    userId: 'u_1',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+  }))
+}
+
+function makeSession(id: string, title: string): Session {
+  return {
+    id,
+    title,
+    userId: 'u_1',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+  }
 }
 
 describe('useMySessions', () => {
@@ -152,7 +170,7 @@ describe('useMySessions', () => {
     const s = useMySessions()
     await s.fetch()
     confirmImpl.mockRejectedValue(new Error('cancel'))
-    await s.remove({ id: 's0', title: '画布0' })
+    await s.remove(makeSession('s0', '画布0'))
     expect(sessionsRemove).not.toHaveBeenCalled()
   })
 
@@ -162,7 +180,7 @@ describe('useMySessions', () => {
     await s.fetch()
     confirmImpl.mockResolvedValue(true)
     sessionsRemove.mockResolvedValue({ data: { data: {} } })
-    await s.remove({ id: 's0', title: '画布0' })
+    await s.remove(makeSession('s0', '画布0'))
     expect(sessionsRemove).toHaveBeenCalledWith('s0')
     expect(sessionsList).toHaveBeenCalledTimes(2)
   })
@@ -173,11 +191,11 @@ describe('useMySessions', () => {
     await s.fetch()
     promptImpl.mockResolvedValue({ value: '新名字' })
     sessionsUpdate.mockResolvedValue({ data: { data: {} } })
-    await s.rename({ id: 's0', title: '画布0' })
+    await s.rename(makeSession('s0', '画布0'))
     expect(sessionsUpdate).toHaveBeenCalledWith('s0', { title: '新名字' })
 
     promptImpl.mockResolvedValue({ value: '画布0' })
-    await s.rename({ id: 's0', title: '画布0' })
+    await s.rename(makeSession('s0', '画布0'))
     expect(sessionsUpdate).toHaveBeenCalledTimes(1)
   })
 
@@ -186,7 +204,7 @@ describe('useMySessions', () => {
     const s = useMySessions()
     await s.fetch()
     promptImpl.mockRejectedValue(new Error('cancel'))
-    await s.rename({ id: 's0', title: '画布0' })
+    await s.rename(makeSession('s0', '画布0'))
     expect(sessionsUpdate).not.toHaveBeenCalled()
   })
 
@@ -195,7 +213,7 @@ describe('useMySessions', () => {
     const s = useMySessions()
     await s.fetch()
     sessionsDuplicate.mockResolvedValue({ data: { data: { id: 's_new' } } })
-    await s.duplicate({ id: 's0', title: '画布0' })
+    await s.duplicate(makeSession('s0', '画布0'))
     expect(sessionsDuplicate).toHaveBeenCalledWith('s0')
     expect(pushMock).toHaveBeenCalledWith('/workflow/s_new')
   })
