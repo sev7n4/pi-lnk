@@ -22,11 +22,11 @@ const cards = computed(() => [
 <template>
   <section class="text-fg">
     <h2 class="mb-3 text-sm font-medium">用量总览</h2>
-    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+    <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
       <div
         v-for="card in cards"
         :key="card.label"
-        class="rounded-xl border border-overlay/8 bg-surface-canvas p-4"
+        class="rounded-2xl border border-overlay/8 bg-surface-canvas p-5"
       >
         <p class="text-xs text-fg-3">{{ card.label }}</p>
         <p class="mt-2 text-2xl font-semibold tabular-nums">{{ card.value }}</p>

@@ -30,7 +30,6 @@ function closeProfile() {
   if (window.history.length > 1) router.back()
   else void router.replace('/workflow')
 }
-
 const profile = ref<User | null>(null)
 const showTopup = ref(false)
 const inviteCopied = ref(false)
@@ -80,16 +79,17 @@ onMounted(() => {
 
 <template>
   <div class="mx-auto max-w-6xl px-6 py-10">
-    <div class="mb-6 flex items-center justify-between gap-4">
-      <h1 class="text-2xl font-semibold">个人中心</h1>
+    <!-- P2 Task 5：去弹窗思维 —— 标题行左侧返回，右侧不再有 × -->
+    <div class="mb-6 flex items-center gap-3">
       <button
+        data-testid="profile-back"
         type="button"
-        class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-fg-3 transition hover:bg-overlay/[0.06] hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-        aria-label="关闭"
+        class="btn-ghost -ml-2 shrink-0 px-2 py-1 text-sm"
         @click="closeProfile"
       >
-        ×
+        ← 返回
       </button>
+      <h1 class="font-display text-2xl font-semibold text-fg">个人中心</h1>
     </div>
 
     <div class="mb-6 inline-flex rounded-full border border-overlay/8 bg-surface-canvas p-1">
@@ -126,15 +126,21 @@ onMounted(() => {
         </div>
       </section>
 
+      <!-- 能量为主视觉：display 档大数字，充值/会员为从属动作 -->
       <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-6">
         <p class="text-sm text-fg-3">创作能量</p>
-        <p class="mt-2 text-3xl font-semibold tabular-nums text-[var(--lnk-credit)]">{{ profile.points ?? 0 }}</p>
-        <p v-if="isFreeMembership" class="mt-3 text-xs text-fg-3">开通会员，获得更多积分与高级能力</p>
-        <div class="mt-4 flex gap-3">
-          <button type="button" class="flex-1 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-black" @click="showTopup = true">
+        <p
+          data-testid="profile-points"
+          class="mt-1 font-bold tabular-nums text-[color:var(--lnk-credit)] [font-size:var(--lnk-text-display-1)] [line-height:var(--lnk-lh-display-1)]"
+        >
+          {{ profile.points ?? 0 }}
+        </p>
+        <p v-if="isFreeMembership" class="mt-2 text-xs text-fg-3">开通会员，获得更多积分与高级能力</p>
+        <div class="mt-5 flex gap-3">
+          <button type="button" class="btn-primary flex-1" @click="showTopup = true">
             充值
           </button>
-          <button type="button" class="flex-1 rounded-xl border border-overlay/15 px-4 py-2.5 text-sm text-fg" @click="router.push('/subscription')">
+          <button type="button" class="btn-ghost flex-1" @click="router.push('/subscription')">
             {{ subscriptionText }}
           </button>
         </div>
@@ -157,21 +163,27 @@ onMounted(() => {
         </div>
       </section>
 
-      <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-6">
-        <p class="text-sm text-fg-3">我的邀请码</p>
-        <div class="mt-2 flex items-center gap-3">
-          <code class="text-lg tracking-widest text-fg">{{ profile.inviteCode ?? '—' }}</code>
-          <button
-            type="button"
-            class="shrink-0 rounded-lg border border-overlay/15 px-3 py-1.5 text-xs text-fg-2 transition hover:bg-overlay/[0.06] hover:text-fg disabled:opacity-40"
-            :disabled="!profile.inviteCode"
-            @click="copyInvite"
-          >
-            {{ inviteCopied ? '已复制' : '复制' }}
-          </button>
+      <!-- 邀请码降级：低频操作折叠进原生 details（键盘可达），不再各占一张主卡 -->
+      <details class="rounded-2xl border border-overlay/8 bg-surface-canvas px-6 py-4">
+        <summary class="cursor-pointer list-none text-sm text-fg-2 transition hover:text-fg">
+          邀请与设置
+        </summary>
+        <div data-testid="invite-code-block" class="mt-4">
+          <p class="text-sm text-fg-3">我的邀请码</p>
+          <div class="mt-2 flex items-center gap-3">
+            <code class="text-lg tracking-widest text-fg">{{ profile.inviteCode ?? '—' }}</code>
+            <button
+              type="button"
+              class="shrink-0 rounded-lg border border-overlay/15 px-3 py-1.5 text-xs text-fg-2 transition hover:bg-overlay/[0.06] hover:text-fg disabled:opacity-40"
+              :disabled="!profile.inviteCode"
+              @click="copyInvite"
+            >
+              {{ inviteCopied ? '已复制' : '复制' }}
+            </button>
+          </div>
+          <p class="mt-3 text-sm text-fg-3">已邀请 {{ profile.inviteeCount ?? 0 }} 人</p>
         </div>
-        <p class="mt-3 text-sm text-fg-3">已邀请 {{ profile.inviteeCount ?? 0 }} 人</p>
-      </section>
+      </details>
     </div>
 
     <div v-if="activeTab === 'billing'">

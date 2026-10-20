@@ -167,7 +167,7 @@ defineExpose({ reload })
 .usage-error {
   padding: var(--lnk-pad-card);
   border: 1px solid var(--lnk-danger-border, var(--lnk-border-default));
-  border-radius: var(--lnk-radius-xl);
+  border-radius: var(--lnk-radius-2xl);
   font-size: var(--lnk-text-sm);
   color: var(--lnk-danger, var(--lnk-text-primary));
 }
@@ -178,8 +178,11 @@ defineExpose({ reload })
 }
 .usage-skeleton {
   height: 7rem;
-  border-radius: var(--lnk-radius-xl);
-  background: var(--lnk-surface-sunken);
+  border: 1px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-2xl);
+  /* 与 UsageHeatmap/UsageTrend/UsageDayTable 同一张卡语言（surface-canvas），
+     不用 sunken —— 凹陷面属另一套语义，会让骨架与真卡在暗色下"跳色" */
+  background: var(--lnk-surface-canvas);
 }
 .usage-skeleton--tall {
   height: 12rem;
