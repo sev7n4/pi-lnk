@@ -329,7 +329,7 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 - 壳层已落地 `apps/web/src/components/mobile/MobileCanvasShell.vue`（约 400 行），CanvasPage 以 `v-if="isMobileLayout"` 单点委托；`isMobileLayout` 分支由 **31 处降至 20 处**。
 - **偏差 1：共享状态真源仍留在 CanvasPage**（`mobileAppTab` / `mobileCanvasView` / `mobileCanvasImm` 被 `AgentSideRail`、`mobileStudioDockOpen`、`focusNodeById`、`pickMode` watch 共用）⇒ 壳层经**函数式 actions prop**（`agentActions` / `batchActions` / `onTabChange` …）触发本页逻辑、**不回写共享状态**；未使用插槽——壳层自行渲染其子组件，无内容需回传。
 - **偏差 2：空态 `mobile-canvas-empty` 与 VueFlow 内胶囊 `MobileCanvasTopControls` 仍留在 CanvasPage**——二者依赖 VueFlow 内部定位（胶囊包在 `<Panel>` 内、空态 absolute 在 canvasArea 内），搬出壳层会破坏定位；**留待后续定位重构**。
-- 残余 20 处 `isMobileLayout` 全部**非移动端编排**：PC 自身门控（8）／画布世界（3）／共享状态真源（3）／壳层唯一挂载点（1）。
+- 残余 20 处 `isMobileLayout` 全部**非移动端编排**。口径 = CanvasPage 内出现次数（**脚本 8 + 模板 12**）：PC 自身门控 6（模板）／画布世界 4（模板：画布 veil 类、VueFlow 内胶囊、空态、非画布页签时隐藏画布）／共享状态真源消费 3（`mobileStudioDockOpen`、pickMode watch、AgentSideRail `:mobile`）／脚本内行为分流 4（定位⇒纯画布满屏 ADR-0011 ×2、拾取⇒显式进画布、PC 才自动开面板）／壳层唯一挂载点 1／composable 取用与返回 2。
 
 ### 6.2 isMobileLayout 治理规则（写入 AGENTS.md 前端节）
 
