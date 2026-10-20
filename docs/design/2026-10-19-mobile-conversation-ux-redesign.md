@@ -45,13 +45,44 @@ AgentSideRail.vue（6255 行：script 1-3276 / template 3278-4616 / style 4618-6
 ├─ 四种移动端视觉形态（全部靠 .agent-panel-mobile-dock 类作用域 CSS）
 │   ① is-conversation-view   :4755-4764  整页不透明面板（SSE 流 + composer）
 │   ② is-canvas-view + imm   :4784-4789  纯画布满屏（对话 chrome 全 display:none）
-│   ③ is-canvas-view 窗态    :4766        画布 + composer 同屏（对话流仍 40vh）
+│   ③ is-canvas-view 窗态    :4766        画布 + composer 同屏（顶栏/SSE 流 display:none，#466 裁决）
 │   ④ 基准贴底裸条           :4680-4694  left/right:12px，pointer-events:none
 └─ 移动端专属代码量
    ├─ isMobileLayout 分支：27 处
    ├─ .agent-panel-mobile-dock CSS 规则：54 处
    └─ 移动端专属组件：0 个（MobileTopBar / MobileTabBar / MobileCanvasTopControls 在 components/mobile 与 canvas/，均不属对话页）
 ```
+
+> ⚠️ 2026-10-21 修正：③ 窗态「对话流仍 40vh」是本文成稿时的过时描述。#466（10-18）已裁决
+> 画布视图两态一律隐藏顶栏 + SSE 流（修「窗 A/B 进入画布后 SSE 压画布重叠」），窗态保留的
+> 只有 composer。系统层卡片的可见性契约见 §1.1.1。
+
+### 1.1.1 系统层容器与可见性矩阵（2026-10-21 根治）
+
+```
+.chat-wrap（消息流）之后的「等待/收口系统层」四卡包进 .agent-system-layer 容器：
+  propose 等待提示（canvas-always）｜收口状态行｜ask_user 卡（canvas-with-composer）｜取消回执卡
+画布视图：容器默认 display:none，白名单放行——漏登记的代价从「静默 bug」翻为「可见的功能缺失」。
+```
+
+| chrome 元素 | 所属面 | 对话页签 | 画布·窗态 | 画布·imm / dock |
+|---|---|---|---|---|
+| 顶栏（新建/历史） | 对话模式 | 显 | 藏 | 藏 |
+| SSE 对话流 | 对话模式 | 显 | 藏 | 藏 |
+| composer 裸条 | 输入面 | 显 | 显 | 藏 |
+| ask_user 卡 | 阻塞交互面 | 显 | **显** | 藏 |
+| propose 等待提示 | 待确认状态面 | 显 | 显 | 显 |
+| 收口状态行 | 回合播报 | 显 | 藏 | 藏 |
+| 取消回执卡 | 回合播报 | 显 | 藏 | 藏 |
+
+**可见性规则**：交互式阻塞面（ask_user 卡）跟随 composer——pending 期间 composer 自由文本
+一律按 answer 提交（spec §5.3），输入面与阻塞问题永不分离；播报式 chrome（状态行/取消回执）
+不跟随。propose 提示属待确认状态面，画布三态恒显（有画布专属文案）。
+
+**病史（为何用容器而不是继续往清单里加）**：系统层移出 chat-wrap（P1-5）后逐卡登记漏了
+三次——状态行（#496）、ask 卡+取消回执（#516）、更早的 railHiddenByTab；每次失败模式静默，
+靠真机截图才发现。现由 `mobileMaskTabbar.test.ts` 五条断言守护：容器默认全隐、两个白名单
+落位、旧逐卡选择器不得回归、四卡位置不变量。
 
 ### 1.2 对话页操作按钮全清单（现状）
 
