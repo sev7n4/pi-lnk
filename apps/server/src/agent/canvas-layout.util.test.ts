@@ -29,7 +29,9 @@ describe('canvas-layout.util', () => {
   describe('getNodeSize', () => {
     it('uses type defaults', () => {
       expect(getNodeSize(node('a', 'image', 0, 0))).toEqual({ w: 280, h: 280 })
-      expect(getNodeSize(node('b', 'prompt', 0, 0))).toEqual({ w: 280, h: 120 })
+      // prompt 2026-10-17 下线、group/shot/sceneComposer 2026-10-19 下线 ⇒ 存量历史节点
+      // 与未知类型同走 fallback 280×160（NODE_SIZES 只列当前 NodeType 4 项）
+      expect(getNodeSize(node('b', 'prompt', 0, 0))).toEqual({ w: 280, h: 160 })
       expect(getNodeSize(node('c', 'unknown', 0, 0))).toEqual({ w: 280, h: 160 })
     })
 
@@ -92,7 +94,7 @@ describe('canvas-layout.util', () => {
         node('a', 'image', 200, 100),
         node('b', 'text', 500, 300),
         node('c', 'video', 800, 50),
-        node('d', 'prompt', 900, 900),
+        node('d', 'audio', 900, 900),
       ]
 
       const next = layoutNodesInGrid(nodes, ['a', 'b', 'c', 'd'], 20)
@@ -103,7 +105,7 @@ describe('canvas-layout.util', () => {
       expect(byId.b).toEqual({ x: 200 + 280 + 20, y: 50 })
       // video 包络 320×320（尺寸随比例 contain，见 mediaNodeDisplaySize）
       expect(byId.c).toEqual({ x: 200, y: 50 + 320 + 20 })
-      expect(byId.d).toEqual({ x: 200 + 280 + 20, y: 50 + 120 + 20 })
+      expect(byId.d).toEqual({ x: 200 + 280 + 20, y: 50 + 140 + 20 })
     })
 
     it('updates relative positions for nodes nested under a parent', () => {

@@ -19,15 +19,15 @@ export type LayoutNode = CanvasNode & {
   dimensions?: { width?: number; height?: number }
 }
 
-// 逐字上移自 canvas-layout.util.ts（Nest 侧原表即此 5 键；group 等未列类型走 fallback
-// 280×160，与 Nest 既有布局函数行为一致——放置内核不得静默改变排布尺寸）。
+// 尺寸表仅列当前 NodeType 4 项（image/video/audio/text——2026-10-17 prompt 下线、
+// 2026-10-19 group/shot/sceneComposer 下线，见 shared/src/index.ts 头注）。已下线类型
+// （含存量画布 JSON 里的历史节点）统一走 fallback 280×160，与 Nest 侧既有行为一致。
 const NODE_SIZES: Record<string, { w: number; h: number }> = {
   text: { w: 280, h: 160 },
   image: { w: 280, h: 280 },
   // 视频：长边基准 320（尺寸随比例 contain，包络 320×320）
   video: { w: 320, h: 320 },
   audio: { w: 280, h: 140 },
-  prompt: { w: 280, h: 120 },
 }
 
 function parseStyleSize(style: LayoutNode['style']): { w?: number; h?: number } {
