@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { subscriptionLabel } from '@/services/users-api'
 import { api } from '@/services/api'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
-import { BRAND_LOGO_URL } from '@/constants/brand'
+import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 import type { User } from '@lnkpi/shared'
 
 const router = useRouter()
@@ -108,14 +108,12 @@ onMounted(() => {
     <div v-if="profile && activeTab === 'account'" data-account-cards class="space-y-4">
       <section class="rounded-2xl border border-overlay/8 bg-surface-canvas p-6">
         <div class="flex items-center gap-4">
-          <div class="profile-avatar flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full">
-            <img
-              :src="BRAND_LOGO_URL"
-              alt="用户"
-              class="h-full w-full object-contain p-0.5"
-              draggable="false"
-            >
-          </div>
+          <BrandPatternAvatar
+            :src="profile.avatar"
+            :seed="profile.id"
+            :name="profile.nickname"
+            size="lg"
+          />
           <div class="min-w-0">
             <h2 class="truncate text-lg font-medium">{{ profile.nickname }}</h2>
             <p class="text-sm text-fg-3">{{ profile.phone }}</p>
@@ -193,9 +191,3 @@ onMounted(() => {
     <TopupModal v-model="showTopup" />
   </div>
 </template>
-
-<style scoped>
-.profile-avatar {
-  background: var(--lnk-accent-gradient);
-}
-</style>

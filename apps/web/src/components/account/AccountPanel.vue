@@ -13,15 +13,13 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { membershipApi, subscriptionLabel } from '@/services/users-api'
-import { BRAND_LOGO_URL } from '@/constants/brand'
+import BrandPatternAvatar from './BrandPatternAvatar.vue'
 
 const auth = useAuthStore()
 
 const nickname = computed(() => auth.user?.nickname || '未登录')
 const phone = computed(() => auth.user?.phone || '')
 const accountId = computed(() => auth.user?.id || '')
-/// 用户自定义头像优先，缺省回落品牌吉祥物。
-const avatarUrl = computed(() => auth.user?.avatar || BRAND_LOGO_URL)
 
 /// 手机号脱敏：138****8000。账号信息展示不应泄露完整号码。
 const maskedPhone = computed(() => {
@@ -102,7 +100,13 @@ function compressImage(file: File, size = 256): Promise<string> {
   <div class="acc-panel">
     <section class="acc-card acc-card--id">
       <button type="button" class="acc-avatar-btn" :disabled="uploading" @click="pickAvatar">
-        <img :src="avatarUrl" alt="" class="acc-avatar" draggable="false">
+        <BrandPatternAvatar
+          :src="auth.user?.avatar"
+          :seed="auth.user?.id ?? 'anonymous'"
+          :name="nickname"
+          size="lg"
+          class="acc-avatar"
+        />
         <span class="acc-avatar-mask">{{ uploading ? '上传中' : '更换' }}</span>
       </button>
       <input ref="fileInput" type="file" accept="image/*" class="acc-file" @change="onAvatarPicked">
@@ -203,11 +207,6 @@ function compressImage(file: File, size = 256): Promise<string> {
   display: none;
 }
 .acc-avatar {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--lnk-radius-full);
-  object-fit: contain;
-  background: var(--neo-brand-gradient);
   flex-shrink: 0;
 }
 .acc-id-text {
