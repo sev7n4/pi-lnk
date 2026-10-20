@@ -8,7 +8,8 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import TopupModal from '@/components/membership/TopupModal.vue'
-import { BRAND_LOGO_URL, OFFICIAL_SITE_URL } from '@/constants/brand'
+import { OFFICIAL_SITE_URL } from '@/constants/brand'
+import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 import { subscriptionLabel } from '@/services/users-api'
 
 const emit = defineEmits<{
@@ -55,7 +56,13 @@ function openOfficialSite() {
       class="profile-card account-row"
       @click="auth.isLoggedIn ? emit('open-account') : auth.openLogin()"
     >
-      <img :src="BRAND_LOGO_URL" alt="" class="account-avatar" draggable="false">
+      <BrandPatternAvatar
+        :src="auth.user?.avatar"
+        :seed="auth.user?.id ?? 'anonymous'"
+        :name="nickname"
+        size="lg"
+        class="account-avatar"
+      />
       <span class="account-name">{{ nickname }}</span>
       <svg v-if="auth.isLoggedIn" class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
         <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
@@ -186,12 +193,7 @@ function openOfficialSite() {
 }
 
 .account-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  object-fit: contain;
-  padding: 2px;
-  background: color-mix(in srgb, var(--lnk-text-primary) 6%, transparent);
+  flex-shrink: 0;
 }
 
 .account-name {

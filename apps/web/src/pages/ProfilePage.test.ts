@@ -313,9 +313,36 @@ describe('ProfilePage', () => {
     expect(wrapper.text()).not.toContain('用量趋势加载失败，请稍后重试')
   })
 
-  it('exposes a close control with aria-label 关闭', async () => {
+  it('不存在弹窗思维关闭控件；提供返回链接（P2 Task 5 去弹窗化）', async () => {
     const wrapper = await mountProfile()
 
-    expect(wrapper.find('[aria-label="关闭"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="关闭"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="profile-back"]').exists()).toBe(true)
+  })
+
+  it('只有一个 h1（标题行升级为 h1 层级）', async () => {
+    const wrapper = await mountProfile()
+
+    expect(wrapper.findAll('h1')).toHaveLength(1)
+  })
+
+  it('邀请码降级进「邀请与设置」折叠区（details/summary）', async () => {
+    const wrapper = await mountProfile()
+
+    const details = wrapper.find('details')
+    expect(details.exists()).toBe(true)
+    expect(details.find('summary').text()).toContain('邀请与设置')
+    // 邀请码不再占据独立主卡片
+    expect(wrapper.find('[data-testid="invite-code-block"]').exists()).toBe(true)
+  })
+
+  it('能量数字走 display 排版档（主视觉），仍用 credit 色', async () => {
+    const wrapper = await mountProfile()
+
+    const points = wrapper.find('[data-testid="profile-points"]')
+    expect(points.exists()).toBe(true)
+    // 消费令牌而非硬编码 px（display 档没有 Tailwind 类，只能走任意值语法）
+    expect(points.classes().join(' ')).toContain('--lnk-text-display-1')
+    expect(points.classes().join(' ')).not.toContain('text-6xl')
   })
 })

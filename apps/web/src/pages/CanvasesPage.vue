@@ -5,6 +5,7 @@ import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
 import { useMySessions } from '@/composables/useMySessions'
 import SessionCard from '@/components/workflow/SessionCard.vue'
+import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import type { Session } from '@lnkpi/shared'
 
 /**
@@ -141,16 +142,32 @@ onMounted(() => {
         />
       </div>
 
-      <p
+      <AppEmptyState
         v-else-if="sessions.sessionSearch.value"
-        class="py-8 text-center text-sm text-fg-3"
+        data-testid="canvases-empty-search"
+        desc="换个关键词试试，或清空搜索条件"
       >
         没有匹配的画布
-      </p>
+      </AppEmptyState>
 
-      <p v-else class="py-20 text-center text-sm text-fg-3">
-        还没有画布，去创建一个吧
-      </p>
+      <AppEmptyState
+        v-else
+        data-testid="canvases-empty"
+        desc="创建第一张画布，开始创作"
+      >
+        还没有画布
+        <template #action>
+          <button
+            v-if="auth.isLoggedIn"
+            data-testid="canvases-create"
+            type="button"
+            class="btn-primary text-sm"
+            @click="createCanvas"
+          >
+            新建画布
+          </button>
+        </template>
+      </AppEmptyState>
     </template>
   </div>
 </template>
