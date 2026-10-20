@@ -42,11 +42,25 @@ describe('分组侧车（不再是节点）', () => {
     expect(BASE.some((n) => n.type === 'group')).toBe(false)
   })
 
-  it('打组最少 2 个未分组节点', () => {
+  it('打组最少 2 个可用节点（含已分组节点的容错归并）', () => {
+    // 仅 1 个节点 ⇒ 真不足，返回 null
     expect(createGroupFromSelection([], BASE, ['a'])).toBeNull()
+
     const first = createGroupFromSelection([], BASE, ['a', 'b'])!
-    // 已在分组里的节点不能再次入组（不建嵌套分组）
-    expect(createGroupFromSelection(first.groups, BASE, ['a', 'c'])).toBeNull()
+
+    // 重选【同一个】已存在分组的全部节点 ⇒ 视为重选，不新建（groups 数量不变）
+    const reselect = createGroupFromSelection(first.groups, BASE, ['a', 'b'])!
+    expect(reselect.groups).toHaveLength(1)
+    expect(reselect.group.id).toBe(first.group.id)
+
+    // 选「已在分组里的 a」+「自由的 c」⇒ 把 a、c 从旧分组摘出后整体归并成新分组
+    const merged = createGroupFromSelection(first.groups, BASE, ['a', 'c'])!
+    expect(merged).not.toBeNull()
+    expect(merged!.group.childIds).toEqual(['a', 'c'])
+    // 旧分组（仅剩 b，不足 2 个）已自动解散
+    expect(merged!.groups).toHaveLength(1)
+    expect(merged!.groups[0].id).toBe(merged!.group.id)
+    expect(BASE.some((n) => n.type === 'group')).toBe(false)
   })
 
   it('外框 = 子节点包围盒 + padding', () => {

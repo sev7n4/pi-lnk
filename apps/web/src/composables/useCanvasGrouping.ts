@@ -430,8 +430,12 @@ export function groupRectForChildren(
 }
 
 /**
- * 框选多个节点 → 打组。
- * 资格：节点存在、尚未属于任何分组（一个节点只进一个分组，避免嵌套歧义）。
+ * 框选多个节点 → 打组。返回 null 表示确实无法打组（< 2 个可用节点）。
+ *
+ * 容错语义（避免「明明已打组却报失败」的困惑）：
+ * - 选中的节点全部已属于【同一个】现存分组 ⇒ 视为重选该分组（groups 不变，返回它）。
+ * - 选中节点横跨多个分组 / 部分已分组 ⇒ 先把这些节点从其原分组摘出，再整体归并成新分组。
+ * - 其余情况：取「未分组的选中节点」打组；不足 2 个才返回 null。
  */
 export function createGroupFromSelection(
   groups: CanvasGroup[],
@@ -439,21 +443,47 @@ export function createGroupFromSelection(
   selectedIds: string[],
   title?: string,
 ): { groups: CanvasGroup[]; group: CanvasGroup } | null {
-  const grouped = new Set(groups.flatMap((g) => g.childIds))
-  const childIds = selectedIds.filter((id) => {
+  const groupedByNode = new Map<string, string[]>()
+  for (const g of groups) for (const id of g.childIds) {
+    if (!groupedByNode.has(id)) groupedByNode.set(id, [])
+    groupedByNode.get(id)!.push(g.id)
+  }
+  const ownersOf = (id: string) => groupedByNode.get(id) ?? []
+
+  // 全部选中节点都属同一现存分组 ⇒ 直接重选该分组（不新建、不改写）。
+  const touchedGroups = Array.from(
+    new Set(selectedIds.flatMap((id) => ownersOf(id))),
+  )
+  if (
+    touchedGroups.length === 1 &&
+    selectedIds.every((id) => ownersOf(id).includes(touchedGroups[0]))
+  ) {
+    const existing = groups.find((g) => g.id === touchedGroups[0])
+    if (existing) return { groups, group: existing }
+  }
+
+  // 取「未分组」的选中节点；若没有，则把这些节点先从原分组摘出，再整体归并。
+  let childIds = selectedIds.filter((id) => {
     const node = nodes.find((n) => n.id === id)
-    return Boolean(node) && !grouped.has(id)
+    return Boolean(node) && ownersOf(id).length === 0
   })
+  let nextGroups = groups
+  if (childIds.length < 2 && selectedIds.length >= 2) {
+    const detached = detachNodesFromGroups(groups, selectedIds)
+    if (detached.length !== groups.length) nextGroups = detached
+    childIds = selectedIds.filter((id) => nodes.some((n) => n.id === id))
+  }
+
   const rect = groupRectForChildren(nodes, childIds)
   if (!rect || childIds.length < 2) return null
 
   const group: CanvasGroup = {
     id: `group-${Date.now().toString(36)}`,
-    title: title?.trim() || nextGroupTitle(groups),
+    title: title?.trim() || nextGroupTitle(nextGroups),
     childIds,
     ...rect,
   }
-  return { groups: [...groups, group], group }
+  return { groups: [...nextGroups, group], group }
 }
 
 /** 解组：移除分组框，子节点保持各自绝对坐标不动。 */

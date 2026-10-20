@@ -13,6 +13,7 @@ import { computed, nextTick, ref } from 'vue'
 import { useVueFlow } from '@vue-flow/core'
 import type { CanvasGroup } from '@lnkpi/shared'
 import { normalizeGroupColorKey } from './groupColors'
+import { groupRectForChildren, type FlowNode } from '../../composables/useCanvasGrouping'
 
 const props = defineProps<{
   groups: CanvasGroup[]
@@ -23,6 +24,12 @@ const props = defineProps<{
    * 移动端的多选动作条也还没有分组入口（PR3 才补动作）。
    */
   draggable?: boolean
+  /**
+   * 画布节点（实时坐标）。外框永远按【当前子节点实时包围盒】渲染，
+   * 这样即使 groups 内存的 position/size 是旧落库坐标（节点后来被拖动过），
+   * 框也不会错位——彻底消除「框选矩形位置不对 / 没包住节点」的观感。
+   */
+  nodes?: FlowNode[]
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +38,8 @@ const emit = defineEmits<{
   /** 拖动结束（此时才落库：拖动过程中每帧都写会打爆保存接口）。 */
   'move-end': [groupId: string]
   rename: [groupId: string, title: string]
+  /** 标题条上的 × 解组（移除分组框，子节点保持坐标）。 */
+  ungroup: [groupId: string]
 }>()
 
 // viewport 由 VueFlow 自身提供（组件是 <VueFlow> 的子节点，共享同一 store）。
@@ -40,11 +49,18 @@ const viewportStyle = computed(() => ({
   transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
 }))
 
+/** 实时外框：优先按当前子节点包围盒算；子节点缺失时退回落库坐标。 */
+function displayRect(group: CanvasGroup) {
+  const rect = props.nodes ? groupRectForChildren(props.nodes as FlowNode[], group.childIds) : null
+  return rect ?? { position: group.position, size: group.size }
+}
+
 function boxStyle(group: CanvasGroup) {
+  const rect = displayRect(group)
   return {
-    transform: `translate(${group.position.x}px, ${group.position.y}px)`,
-    width: `${group.size.width}px`,
-    height: `${group.size.height}px`,
+    transform: `translate(${rect.position.x}px, ${rect.position.y}px)`,
+    width: `${rect.size.width}px`,
+    height: `${rect.size.height}px`,
     // 色值本体在 `--neo-group-*` 令牌（两主题成对定义），组件内无字面 hex。
     '--neo-group-accent': `var(--neo-group-${normalizeGroupColorKey(group.colorKey)})`,
   }
@@ -145,6 +161,18 @@ function commitRename() {
           </span>
           <h4 class="group-title">{{ group.title }}</h4>
           <span class="group-meta">{{ group.childIds.length }} 个节点</span>
+          <button
+            type="button"
+            class="group-ungroup-btn"
+            title="解组（移除框，保留节点）"
+            aria-label="解组"
+            @pointerdown.stop
+            @click.stop="emit('ungroup', group.id)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
         </template>
       </div>
       <div class="group-node-container" />
@@ -193,6 +221,37 @@ function commitRename() {
 
 .group-drag-handle:hover .group-title {
   color: var(--neo-node-text);
+}
+
+/* 标题条右侧 × 解组按钮：让分组无需借助浮层工具条即可移除（解决「框删不掉」）。 */
+.group-ungroup-btn {
+  pointer-events: auto;
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.group-ungroup-btn:hover {
+  background: var(--lnk-error-bg);
+  color: var(--lnk-error);
+}
+
+.group-ungroup-btn svg {
+  display: block;
+  width: 13px;
+  height: 13px;
 }
 
 .group-title-icon {

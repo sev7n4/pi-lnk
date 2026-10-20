@@ -998,7 +998,7 @@ function handleGroupSelection() {
     multiSelectedIds.value,
   )
   if (!result) {
-    ElMessage.info('所选节点不足 2 个未分组节点，无法打组')
+    ElMessage.info('请先框选至少 2 个节点再打组')
     return
   }
   groups.value = result.groups
@@ -1009,11 +1009,11 @@ function handleGroupSelection() {
 }
 
 /** 解组：只移除分组框，子节点保持原坐标。 */
-function handleUngroupSelection() {
-  const id = selectedGroupId.value
-  if (!id) return
-  groups.value = ungroupById(groups.value, id)
-  selectedGroupId.value = null
+function handleUngroupSelection(id?: string) {
+  const targetId = id ?? selectedGroupId.value
+  if (!targetId) return
+  groups.value = ungroupById(groups.value, targetId)
+  if (selectedGroupId.value === targetId) selectedGroupId.value = null
   persistUserEdit()
 }
 
@@ -5031,10 +5031,12 @@ onUnmounted(() => {
             :groups="groups"
             :selected-group-id="selectedGroupId"
             :draggable="!isMobileLayout"
+            :nodes="nodes"
             @select="handleGroupSelect"
             @move="handleGroupMove"
             @move-end="handleGroupMoveEnd"
             @rename="handleGroupRename"
+            @ungroup="handleUngroupSelection"
           />
 
           <!-- PC 多选工具条：移动端多选态（D-4）改由 MobileMultiSelectBar 承载，

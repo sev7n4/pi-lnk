@@ -1403,23 +1403,28 @@
      明度差，「有差异、不强占主视线」；不再使用品牌紫 rgba 硬编码。
    - 信息条（.group-drag-handle，组件内 scoped）无底无框贴上沿。 */
 .group-node-container {
+  /* 分组强调色收敛到局部变量：--neo-group-accent 由 CanvasGroupOverlay 按 colorKey
+     注入（真源已是 --lnk-group-*，旧名是别名），此处只取一次、下面多处复用。 */
+  --group-accent: var(--neo-group-accent, var(--neo-group-neutral));
   z-index: 0;
   min-width: 280px;
   min-height: 160px;
   padding: 12px;
-  /* 2026-10-12 复测上调：常态 32%/7% 双主题都太淡（用户实测「释放后看不清」），
-     提到 55%/10%，令牌本身也两档提亮/加深（见 neowow-tokens.css 分组色卡注释） */
-  border: 2px dashed color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 55%, transparent);
+  /* 常态要「可辨但不抢主视线」：虚线边 70% + 12% 底 + 外环，避免被误认成框选 marquee。
+     令牌本身两档提亮/加深（见 neowow-tokens.css 分组色卡注释）。 */
+  border: 2px dashed color-mix(in srgb, var(--group-accent) 70%, transparent);
   border-radius: 20px;
-  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 10%, transparent);
+  background: color-mix(in srgb, var(--group-accent) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--group-accent) 22%, transparent);
   pointer-events: none;
 }
 
 .group-node-wrapper.is-active .group-node-container {
   /* 选中态在常态之上再拉开一档：边更实、底更深、外环更亮 */
-  border-color: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 80%, var(--neo-border-strong));
-  background: color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 16%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neo-group-accent, var(--neo-group-neutral)) 45%, transparent);
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--group-accent) 85%, var(--neo-border-strong));
+  background: color-mix(in srgb, var(--group-accent) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--group-accent) 55%, transparent);
 }
 
 /* ============================================================
