@@ -47,7 +47,11 @@ function group(over: Partial<CanvasGroup> = {}): CanvasGroup {
 }
 
 function mountOverlay(groups: CanvasGroup[], selectedGroupId: string | null = null) {
-  return mount(CanvasGroupOverlay, { props: { groups, selectedGroupId } })
+  // chip 已 teleport 到 body（v2 浮层化）⇒ stub 掉 teleport 让 find 仍走组件子树
+  return mount(CanvasGroupOverlay, {
+    props: { groups, selectedGroupId },
+    global: { stubs: { teleport: true } },
+  })
 }
 
 /**
@@ -65,31 +69,26 @@ describe('CanvasGroupOverlay：标题前分组图标（2026-10-13）', () => {
     vueFlow.state = { viewport: { x: 0, y: 0, zoom: 1 }, dimensions: { width: 0, height: 0 } }
   })
 
-  it('chip 视口钳制：巨型分组（框边全在视口外）⇒ 标题条被钳回屏内且可点', () => {
-    // 生产实况（2026-10-20）：分组 1921×757 @zoom0.554，框顶/左在视口外
-    vueFlow.state = {
-      viewport: { x: 109, y: 72, zoom: 0.554 },
-      dimensions: { width: 1080, height: 428 },
-    }
+  it('chip 浮层（v2）：巨型分组 ⇒ fixed 屏幕锚定、钳回窗口内、z 高于悬浮件', () => {
+    // 生产实况（2026-10-20）：分组 1921×757 @zoom0.554，框顶/左出窗、右被 Agent 栏遮
+    vueFlow.state = { viewport: { x: 109, y: 72, zoom: 0.554 }, dimensions: { width: 0, height: 0 } }
     const w = mountOverlay([group({ position: { x: -208, y: -142 }, size: { width: 1921, height: 757 } })])
     const style = w.find('.group-drag-handle').attributes('style') ?? ''
-    // world 偏移换算回 screen 后必须落在视口内（margin=8）
-    const top = Number(style.match(/top:\s*([-\d.]+)px/)?.[1] ?? NaN)
-    const left = Number(style.match(/left:\s*([-\d.]+)px/)?.[1] ?? NaN)
-    expect(Number.isFinite(top), '应有内联 top 覆写').toBe(true)
-    const screenTop = 72 + (-142 + top) * 0.554
-    const screenLeft = 109 + (-208 + left) * 0.554
-    expect(screenTop).toBeGreaterThanOrEqual(8 - 1e-6)
-    expect(screenLeft).toBeGreaterThanOrEqual(8 - 1e-6)
-    expect(screenTop).toBeLessThan(428)
+    expect(style).toContain('position: fixed')
+    // jsdom 窗口 1024×768：框左 -6.2、顶 -6.6 ⇒ 钳到 margin=8
+    expect(style).toContain('left: 8px')
+    expect(style).toContain('top: 8px')
+    expect(style).toContain('z-index: 80')
+    // teleport 到 body 后继承断掉 ⇒ accent 直取 --lnk-group-* 真源
+    expect(style).toContain('--group-accent: var(--lnk-group-neutral')
     w.unmount()
   })
 
-  it('pane 尺寸未知（jsdom 初始 0）⇒ 不覆写 CSS 默认位（无内联 top/left）', () => {
-    const w = mountOverlay([group()])
+  it('chip 浮层（v2）：框完全出窗 ⇒ display:none（锚点无从谈起）', () => {
+    vueFlow.state = { viewport: { x: 109, y: 900, zoom: 0.554 }, dimensions: { width: 0, height: 0 } }
+    const w = mountOverlay([group({ position: { x: -208, y: -142 }, size: { width: 1921, height: 757 } })])
     const style = w.find('.group-drag-handle').attributes('style') ?? ''
-    expect(style).not.toMatch(/top:/)
-    expect(style).not.toMatch(/left:/)
+    expect(style).toContain('display: none')
     w.unmount()
   })
 
@@ -198,7 +197,8 @@ describe('CanvasGroupOverlay：信息条外沿化（拆内嵌小卡）', () => {
   })
 
   it('draggable=false（移动端）时不启动拖动、不发 move', async () => {
-    const w = mount(CanvasGroupOverlay, { props: { groups: [group()], selectedGroupId: null, draggable: false } })
+    const stubs = { global: { stubs: { teleport: true } } }
+    const w = mount(CanvasGroupOverlay, { props: { groups: [group()], selectedGroupId: null, draggable: false }, ...stubs })
     const handle = w.find('.group-drag-handle')
     expect(handle.classes()).not.toContain('is-draggable')
     // ⚠️ jsdom 的 MouseEvent 属性只读 ⇒ 不用 test-utils 的 trigger 传参，
@@ -211,7 +211,7 @@ describe('CanvasGroupOverlay：信息条外沿化（拆内嵌小卡）', () => {
     expect(w.emitted('move'), '禁拖时不得产生 move（否则会与长按手势打架）').toBeFalsy()
     w.unmount()
 
-    const on = mount(CanvasGroupOverlay, { props: { groups: [group()], selectedGroupId: null, draggable: true } })
+    const on = mount(CanvasGroupOverlay, { props: { groups: [group()], selectedGroupId: null, draggable: true }, ...stubs })
     expect(on.find('.group-drag-handle').classes()).toContain('is-draggable')
     const onEl = on.find('.group-drag-handle').element as HTMLElement
     onEl.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
@@ -319,6 +319,7 @@ describe('CanvasGroupOverlay：色卡注入与默认去紫', () => {
           { id: 'b', type: 'text', position: { x: 400, y: 0 }, data: {} },
         ] as never,
       },
+      global: { stubs: { teleport: true } },
     })
     const btn = w.find('.group-ungroup-btn')
     expect(btn.exists(), '分组框必须自带解组按钮').toBe(true)

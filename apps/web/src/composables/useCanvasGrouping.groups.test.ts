@@ -151,38 +151,32 @@ describe('分组侧车（不再是节点）', () => {
   })
 })
 
-describe('巨型分组的 chip 视口钳制（clampGroupChipToViewport）', () => {
+describe('巨型分组的 chip 视口钳制（clampGroupChipToViewport，v2 屏幕坐标）', () => {
   const rect = { position: { x: -208, y: -142 }, size: { width: 1921, height: 757 } }
 
-  it('框完全可见 ⇒ 返回值恒等于 CSS 默认位（top=-32, left=0），视觉零变化', () => {
+  it('框完全可见 ⇒ 返回默认屏幕位（框顶外沿 -32*zoom、左对齐框左缘）', () => {
     const off = clampGroupChipToViewport(
       { position: { x: 100, y: 100 }, size: { width: 400, height: 300 } },
       { x: 0, y: 0, zoom: 1 },
       { width: 1000, height: 800 },
     )!
-    expect(off.top).toBeCloseTo(-32)
-    expect(off.left).toBeCloseTo(0)
+    expect(off.left).toBe(100)
+    expect(off.top).toBe(68)
   })
 
-  it('比视口大的组（生产案例）⇒ chip 钳回视口内、且以 world 偏移表达', () => {
-    // 生产实况：zoom 0.554，框四边全在视口外/被骨架裁掉
+  it('比视口大的组（生产案例）⇒ chip 钳到窗口 margin 内', () => {
+    // 生产实况：zoom 0.554，框四边全在窗口外/被悬浮组件遮住
     const off = clampGroupChipToViewport(rect, { x: 109, y: 72, zoom: 0.554 }, { width: 1080, height: 428 })!
-    // screen 上框顶在 -6.5、左在 -6.2 ⇒ chip 应钳到 margin=8
-    expect(off.top * 0.554).toBeCloseTo(8 - (72 + -142 * 0.554), 5)
-    expect(off.left * 0.554).toBeCloseTo(8 - (109 + -208 * 0.554), 5)
-    // chip 屏幕位不低于 margin
-    const screenTop = 72 + (-142 + off.top) * 0.554
-    const screenLeft = 109 + (-208 + off.left) * 0.554
-    expect(screenTop).toBeGreaterThanOrEqual(8 - 1e-6)
-    expect(screenLeft).toBeGreaterThanOrEqual(8 - 1e-6)
+    expect(off.left).toBe(8)
+    expect(off.top).toBe(8)
   })
 
-  it('框与视口无交集 ⇒ null（不覆写 CSS 默认位）', () => {
-    expect(clampGroupChipToViewport(rect, { x: 109, y: 800, zoom: 0.554 }, { width: 1080, height: 428 })).toBeNull()
+  it('框与窗口无交集 ⇒ null（调用方隐藏 chip）', () => {
+    expect(clampGroupChipToViewport(rect, { x: 109, y: 900, zoom: 0.554 }, { width: 1080, height: 428 })).toBeNull()
     expect(clampGroupChipToViewport({ position: { x: 2000, y: 0 }, size: { width: 300, height: 300 } }, { x: 0, y: 0, zoom: 1 }, { width: 1000, height: 800 })).toBeNull()
   })
 
-  it('pane 尺寸未知（jsdom 初始 0）或 zoom 非法 ⇒ null，组件退回 CSS 默认位', () => {
+  it('窗口尺寸非法或 zoom 非法 ⇒ null', () => {
     expect(clampGroupChipToViewport(rect, { x: 0, y: 0, zoom: 1 }, { width: 0, height: 0 })).toBeNull()
     expect(clampGroupChipToViewport(rect, { x: 0, y: 0, zoom: 0 }, { width: 1000, height: 800 })).toBeNull()
   })
@@ -193,7 +187,7 @@ describe('巨型分组的 chip 视口钳制（clampGroupChipToViewport）', () =
       { x: 0, y: 0, zoom: 1 },
       { width: 1000, height: 800 },
     )!
-    expect(off.top).toBeCloseTo(-32)
-    expect(off.left).toBeCloseTo(8 - -300)
+    expect(off.top).toBe(68)
+    expect(off.left).toBe(8)
   })
 })
