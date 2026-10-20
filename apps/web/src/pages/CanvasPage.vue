@@ -5248,8 +5248,6 @@ onUnmounted(() => {
     <MobileCanvasShell
       v-if="isMobileLayout"
       :mobile-app-tab="mobileAppTab"
-      :mobile-canvas-view="mobileCanvasView"
-      :mobile-canvas-imm="mobileCanvasImm"
       :saving="saving"
       :saved-at="lastSavedAt"
       :has-nodes="!!nodes.length"

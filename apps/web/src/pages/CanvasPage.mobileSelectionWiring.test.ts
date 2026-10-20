@@ -43,6 +43,25 @@ describe('mobile multi-select & dock wiring (PR3)', () => {
     expect(page).toMatch(/v-if="!isMobileLayout \|\| !mobileMultiSelectActive"/)
   })
 
+  it('带载荷的事件必须显式透传 $event（download 模式不能被吞）', () => {
+    // 回归守卫：PR5 收尾时发现 download 曾被声明成 `download: () => void`，
+    // 壳层类型上把载荷丢了 ⇒ 移动端「轻量包 / 媒体清单」静默退化成默认 full_package
+    // （master 侧是 `@download="handlePackageDownload"`，$event 直传 mode 形参）。
+    // 这类「声明无参 + 实际带载荷」的错配在 TS 里不报错（可选参数/多余实参都合法），
+    // 只能靠静态契约钉住。
+    const bar = shell.match(/<MobileMultiSelectBar[\s\S]*?\/>/)?.[0] ?? ''
+    expect(bar, 'download 必须显式传 $event').toContain('batchActions.download($event)')
+    // 载荷类型三值与 MobileMultiSelectBar / useWorkflowExchange 的 WorkflowExportMode 同源
+    expect(shell).toContain("download: (mode: 'full_package' | 'lightweight' | 'media_list_only') => void")
+    // layout / groupColor / blockedHint 同属带载荷事件，一并禁止裸引用
+    expect(bar).toContain('batchActions.layout($event)')
+    expect(bar).toContain('batchActions.groupColor($event)')
+    expect(bar).toContain('batchActions.blockedHint($event)')
+    // 有效性配对：确实存在这三档导出模式（防空集假绿）
+    const sheet = read('../components/mobile/MobileMultiSelectMoreSheet.vue')
+    expect(sheet).toContain("'media_list_only'")
+  })
+
   it('PC 工具条改走共享派生 composable（口径单一出处）', () => {
     const toolbar = read('../components/canvas/MultiSelectToolbar.vue')
     expect(toolbar).toContain("from '@/composables/useSelectionBatchActions'")
