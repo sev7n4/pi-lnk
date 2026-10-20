@@ -15,51 +15,68 @@ import { dirname, join } from 'node:path'
  */
 const railPath = join(dirname(fileURLToPath(import.meta.url)), 'AgentSideRail.vue')
 
-/** 取第 n 处（0-based）`body: JSON.stringify(` 的对象字面量：按花括号配对，避免固定窗口取错位置。 */
-function nthJsonBody(src: string, n: number): string {
+/** 逐个取出所有 `body: JSON.stringify(` 的对象字面量（按花括号配对，避免固定窗口取错位置）。 */
+function allJsonBodies(src: string): string[] {
   const marker = 'body: JSON.stringify('
+  const out: string[] = []
   let from = 0
-  let start = -1
-  for (let i = 0; i <= n; i++) {
-    start = src.indexOf(marker, from)
-    if (start < 0) throw new Error(`第 ${i + 1} 处 ${marker} 不存在`)
+  for (;;) {
+    const start = src.indexOf(marker, from)
+    if (start < 0) return out
+    const open = src.indexOf('{', start)
+    let depth = 0
+    let end = -1
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === '{') depth++
+      else if (src[i] === '}') {
+        depth--
+        if (depth === 0) {
+          end = i
+          break
+        }
+      }
+    }
+    if (end === -1) throw new Error('对象字面量未闭合')
+    out.push(src.slice(open, end + 1))
     from = start + marker.length
   }
-  const open = src.indexOf('{', start)
-  let depth = 0
-  for (let i = open; i < src.length; i++) {
-    if (src[i] === '{') depth++
-    else if (src[i] === '}') {
-      depth--
-      if (depth === 0) return src.slice(open, i + 1)
-    }
-  }
-  throw new Error('对象字面量未闭合')
 }
 
 describe('SEL-REF · AgentSideRail 上行 payload 形状', () => {
   const src = readFileSync(railPath, 'utf8')
-  // 本文件共 3 处 `body: JSON.stringify(`：0=内部 body 变量，1=queue-delivery 投递，
-  // 2=POST 会话（带 message 的那处）。下面的自检用例会在索引漂移时先失败。
-  const body = nthJsonBody(src, 2)
 
-  it('自检：取到的是会话请求体（含 sessionId 与 message）', () => {
-    expect(body).toContain('sessionId')
-    expect(body).toContain('message')
+  /**
+   * ⭐ 按**内容特征**定位会话请求体，不再用 `nthJsonBody(src, 2)` 这种序号索引。
+   *
+   * 序号索引是**隐式契约**：任何人在前面新增一处 `body: JSON.stringify(`（例如 2026-10-20
+   * 加的撤回请求）都会把后面所有序号顶走 ⇒ 本文件3 个用例如期假红，而被测代码其实没问题。
+   * 特征定位（同时含 `sessionId` 与 `message`）对新增不敏感，且顺带自我验证。
+   */
+  const bodies = allJsonBodies(src)
+  const sessionBody = bodies.find((b) => b.includes('sessionId') && b.includes('message'))
+
+  it('自检：能按特征取到唯一的会话请求体（序号索引已废弃）', () => {
+    expect(
+      sessionBody,
+      `未找到含 sessionId + message 的请求体；现有 ${bodies.length} 处：\n` +
+        bodies.map((b, i) => `  [${i}] ${b.slice(0, 70)}`).join('\n'),
+    ).toBeTruthy()
+    // 唯一性：若多处命中说明特征不够锐利，需要收紧判据
+    expect(bodies.filter((b) => b.includes('sessionId') && b.includes('message'))).toHaveLength(1)
   })
 
   it('payload 含 selectedNodeIds', () => {
-    expect(body).toContain('selectedNodeIds:')
+    expect(sessionBody).toContain('selectedNodeIds:')
   })
 
   it('payload **不再**含 focusNodeId 属性键（规格 §5.3：服务端派生，前端不发）', () => {
     // 行锚定 + 只认「属性键形状」：源码里 explanatory 注释提到过这个名字，
     // 朴素的 not.toContain 会被注释命中（假失败），这里只判代码。
-    expect(body).not.toMatch(/^\s*focusNodeId\s*[?:]/m)
+    expect(sessionBody).not.toMatch(/^\s*focusNodeId\s*[?:]/m)
   })
 
   it('空数组时不下发该键（用 undefined 而非 []，与「传了但为空」可区分）', () => {
-    expect(body).toMatch(/selectedNodeIds:\s*bindingIds\.length\s*\?\s*bindingIds\s*:\s*undefined/)
+    expect(sessionBody).toMatch(/selectedNodeIds:\s*bindingIds\.length\s*\?\s*bindingIds\s*:\s*undefined/)
   })
 })
 
