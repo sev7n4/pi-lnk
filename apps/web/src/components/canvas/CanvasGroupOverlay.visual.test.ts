@@ -190,17 +190,18 @@ describe('CanvasGroupOverlay：色卡注入与默认去紫', () => {
     expect(active).not.toContain('--neo-hi-text')
   })
 
-  it('对比度校准锁（2026-10-12 复测）：常态 55%/10%，选中态 80%/16%/45% 外环', () => {
+  it('对比度校准锁（2026-10-20 上调可见度）：常态 70%/12% + 22% 外环，选中态 85%/18%/55%', () => {
     const css = readFileSync(join(WEB, 'src', 'styles', 'neo-node.css'), 'utf8')
     const block = css.match(/\.group-node-container\s*\{[^}]*\}/)?.[0] ?? ''
-    expect(block).toContain(') 55%, transparent')
-    expect(block).toContain(') 10%, transparent')
+    expect(block).toContain(') 70%, transparent')
+    expect(block).toContain(') 12%, transparent')
+    expect(block).toContain(') 22%, transparent')
     expect(block).not.toContain(') 32%, transparent')
     expect(block).not.toContain(') 7%, transparent')
     const active = css.match(/\.group-node-wrapper\.is-active \.group-node-container\s*\{[^}]*\}/)?.[0] ?? ''
-    expect(active).toContain(') 80%, var(--neo-border-strong)')
-    expect(active).toContain(') 16%, transparent')
-    expect(active).toContain(') 45%, transparent')
+    expect(active).toContain(') 85%, var(--neo-border-strong)')
+    expect(active).toContain(') 18%, transparent')
+    expect(active).toContain(') 55%, transparent')
   })
 
   it('标题外沿化：与图片/视频节点同位同字体（top:-32px · 13px/600 · --neo-node-title-color）', () => {
@@ -240,5 +241,49 @@ describe('CanvasGroupOverlay：色卡注入与默认去紫', () => {
     const neo = readFileSync(join(WEB, 'src', 'styles', 'neowow-tokens.css'), 'utf8')
     expect(neo).toMatch(/--neo-group-neutral:\s*var\(--lnk-group-neutral\)/)
     expect(neo).not.toMatch(/--neo-group-[a-z]+:\s*#[0-9a-fA-F]+/)
+  })
+
+  it('标题条带 × 解组按钮：点击单向 emit ungroup(groupId)，不依赖浮层工具条', async () => {
+    const w = mount(CanvasGroupOverlay, {
+      props: {
+        groups: [group()],
+        selectedGroupId: null,
+        nodes: [
+          { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'text', position: { x: 400, y: 0 }, data: {} },
+        ] as never,
+      },
+    })
+    const btn = w.find('.group-ungroup-btn')
+    expect(btn.exists(), '分组框必须自带解组按钮').toBe(true)
+    await btn.trigger('click')
+    expect(w.emitted('ungroup')).toBeTruthy()
+    expect(w.emitted('ungroup')![0]).toEqual(['group-1'])
+    w.unmount()
+  })
+
+  it('外框始终按实时子节点包围盒渲染（落库坐标陈旧也不错位）', () => {
+    // 子节点在 (0,0)/(400,0)，但 groups 内存的 position/size 是错误旧值（节点已被拖动过）。
+    const stale: CanvasGroup = {
+      ...group(),
+      position: { x: -999, y: -999 },
+      size: { width: 10, height: 10 },
+    }
+    const w = mount(CanvasGroupOverlay, {
+      props: {
+        groups: [stale],
+        selectedGroupId: null,
+        nodes: [
+          { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'text', position: { x: 400, y: 0 }, data: {} },
+        ] as never,
+      },
+    })
+    const wrapper = w.find('.group-node-wrapper')
+    // image 280×280 + text 280×160，padding 80 ⇒ x=-80, y=-80, w=840, h=440
+    expect(wrapper.attributes('style')).toContain('translate(-80px, -80px)')
+    expect(wrapper.attributes('style')).toContain('width: 840px')
+    expect(wrapper.attributes('style')).toContain('height: 440px')
+    w.unmount()
   })
 })
