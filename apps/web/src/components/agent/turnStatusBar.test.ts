@@ -144,6 +144,11 @@ describe('failureReason（P1 失败人话）', () => {
     expect(failureReason(new Error('request timeout'))).toBe('上游响应超时')
     expect(failureReason('boom')).toBe('生成失败，请重试')
   })
+  it('连接级 fetch 失败 → 人话而非原始技术文案（2026-10-21 复盘）', () => {
+    expect(failureReason(new TypeError('NetworkError'))).toBe('网络连接不稳定，请检查网络后重试')
+    // 截图原始文案：TypeError: network error
+    expect(failureReason(new Error('network error'))).toBe('网络连接不稳定，请检查网络后重试')
+  })
 })
 
 describe('turnStatusLine（P2 恢复态：会话恢复中 vs 真上游超时）', () => {

@@ -1,5 +1,7 @@
 /** P1 回合状态行：running 实时秒数 / waiting 收口 / failed 人话摘要。 */
 
+import { isNetworkError } from '@/components/agent/networkFault'
+
 export interface TurnStatusLineInput {
   isStreaming: boolean
   turnStartedAt?: number
@@ -133,6 +135,9 @@ export function failureReason(err: unknown): string {
   if (status === 401) return '渠道密钥无效'
   if (status === 403) return '渠道无权限'
   if (status === 429) return '额度或频率受限'
+  // 连接级失败：fetch 在未拿到任何 HTTP 状态前抛错（移动端网络切换/锁屏/拦截）。
+  // 禁止把 `TypeError: network error` 这类技术原文透给用户（2026-10-21 复盘）。
+  if (isNetworkError(err)) return '网络连接不稳定，请检查网络后重试'
   const msg = String((err as { message?: string } | null)?.message ?? err ?? '')
   if (/timeout|timed?\s*out|abort/i.test(msg)) return '上游响应超时'
   return '生成失败，请重试'
