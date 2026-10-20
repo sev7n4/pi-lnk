@@ -1622,10 +1622,13 @@ describe("生成终态等待登记与回合外通报（2026-10-18 上游对齐�
 							promptCalls += 1;
 							return { ok: true };
 						},
-						followUp: async (text: string) => {
-							followUpCalls.push({ text });
-							return { ok: true };
-						},
+					followUp: async (text: string) => {
+						followUpCalls.push({ text });
+						// ⚠️ 2026-10-20：followUp 现在回传 `entryId`（撤回键，取自 vendor
+						// `QueueResult{entryId}`）⇒ fake lane 必须给 `value`，否则
+						// `res.value.entryId` 抛 TypeError（真实 lane 一定带，见 lane.ts:1434）。
+						return { ok: true, value: { entryId: "fake-ntf-entry" } };
+					},
 						watch: async () => ({
 							snapshot: {},
 							unsubscribe: () => {},
