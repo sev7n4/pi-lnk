@@ -45,9 +45,15 @@ const label = computed(() => {
 
 <style scoped>
 .mobile-save-status {
-  position: absolute;
-  left: 12px;
-  bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
+  /* ⚠️ fixed（**不是** absolute）：同 ＋FAB——absolute 贴 100vh 根容器底边，在带浏览器
+     工具条的真机上整颗掉出可见区（PR4 落地后从未真机验证过）。fixed 贴可见视口底，
+     与页签栏同一坐标系。 */
+  position: fixed;
+  /* 横向让开 ＋FAB：二者曾**完全同位**（同一 left 12px + 同一 bottom 公式）⇒ FAB(z60)
+     会压住状态行(z54)的圆点与首字。68px = FAB 12 + 48 + 8 间距。 */
+  left: 68px;
+  /* +10px = (FAB 48 − 胶囊 28) / 2 ⇒ 与 ＋FAB 垂直居中 */
+  bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px + 10px);
   z-index: 54;
   display: inline-flex;
   min-height: 28px;
