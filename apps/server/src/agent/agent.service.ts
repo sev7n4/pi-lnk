@@ -51,6 +51,7 @@ import {
   type PiRetentionState,
   type PiSessionLlmOverride,
   type QueueCancelOutcome,
+  type RecoveredQueueItem,
 } from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability, resolveVisionInputSupport } from '../provider/model-capability'
 import { resolveChannelModelCost } from '../provider/model-cost'
@@ -580,9 +581,10 @@ export class AgentService {
   async cancelRun(input: {
     sessionId: string
     threadId?: string
-  }): Promise<{ ok: boolean; skipped: boolean }> {
+  }): Promise<{ ok: boolean; skipped: boolean; recovered: RecoveredQueueItem[] }> {
     const piUrl = this.getPiRuntimeUrl()
-    if (!piUrl) return { ok: false, skipped: true }
+    // 维护态：没有 runtime 可中断 ⇒ 没有队列会被销毁 ⇒ 无需回灌任何内容
+    if (!piUrl) return { ok: false, skipped: true, recovered: [] }
     const sessionKey = input.threadId?.trim() || input.sessionId
     return this.createPiRuntimeClient(piUrl).abortRun(sessionKey)
   }
