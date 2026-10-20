@@ -37,7 +37,12 @@ const emit = defineEmits<{
      避让公式（dock-h + tabbar-h + safe-area）才真正成立。 */
   position: fixed;
   left: 12px;
-  bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
+  /* 2026-10-21 真机走查：原公式含 --lnk-agent-dock-h（composer 高度）⇒ 理论落在
+   * 裸条**上方**。实测：画布视图里该变量发布的是"贴底容器"高度（不可靠，常为 0），
+   * ⇒ FAB 掉到裸条同一层，**被裸条盖掉一半**（只剩紫色月牙）。
+   * 现改为：与裸条**并排**（画布视图下裸条左移 56px 让开），FAB 与条同基线、
+   * 贴页签栏之上 ⇒ 不再依赖任何运行时测量变量，落位恒定。 */
+  bottom: calc(var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px));
   z-index: 60;
   display: flex;
   width: 48px;

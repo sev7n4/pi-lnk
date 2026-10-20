@@ -27,7 +27,11 @@ describe('mobile bare bar structure (P1-5)', () => {
     // 存在性配对（防空集假绿）+ 顺序断言（条表面在先、条内 ＋ 在后）
     expect(tpl).toContain('composer-bare-bar')
     expect(tpl).toContain('aria-label="更多"')
-    expect(tpl).toContain('按住说话')
+    // 2026-10-21 真机走查：提示语不再硬编码「按住说话」——该能力在国内 Android
+    // Chrome 多数不可用（Web Speech 依赖 Google 语音服务），恒写等于承诺做不到的事。
+    // ⇒ 文案按能力降级（script 里的 mobileBarIdleHint），模板只渲染它。
+    expect(tpl).toContain('{{ mobileBarIdleHint }}')
+    expect(sfc).toContain('按住说话 · 点按输入')
     expect(tpl.indexOf('composer-bare-bar')).toBeLessThan(tpl.indexOf('aria-label="更多"'))
   })
   it('status line & interject options live ABOVE the bar (system layer)', () => {

@@ -2299,6 +2299,13 @@ const renameRequestNodeId = ref<string | null>(null)
 provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
 
 function enterMultiSelectMode(seedId: string) {
+  // 已在多选态：长按另一节点 = 把它**加入/移出**选区，而不是重置整份选区。
+  // 2026-10-21 真机走查：长按 A → sheet「多选」→ 再长按 B ⇒ 旧行为走
+  // selectNodeIds([B]) → selectOnlyNode(B) ⇒ A 被取消，只剩 B，多选退化成单选。
+  if (mobileMultiSelectActive.value) {
+    toggleNodeInMultiSelect(seedId)
+    return
+  }
   mobileMultiSelectActive.value = true
   selectNodeIds([seedId])
 }
@@ -4721,17 +4728,22 @@ const mobileBatchActions: MobileShellBatchActions = {
   download: handlePackageDownload,
   delete: handleDeleteSelection,
 }
-/** 移动端画布视图 + studio dock 展开（选中了可编辑节点）：composer 让位——SSE 对话流收起，
+/** 移动端 studio dock 的展开态（真源 = DockStudioToolbar 的 tap 通道，向上回报）。
+ *  2026-10-21 用户裁决：从 ＋sheet 创建节点**不再自动弹** dock ⇒ 移动端默认折叠
+ *  （把手 tap 展开），PC 行为逐字不变。 */
+const mobileDockExpanded = ref(false)
+
+/** 移动端画布视图 + studio dock 展开（用户主动 tap 把手）：composer 让位——SSE 对话流收起，
  *  dock 抬高到贴底容器之上（--lnk-agent-dock-h，见 AgentSideRail / DockStudioToolbar）。
  *  ADR-0011（2026-10-19）：pending_confirm 态**不**计入 dock 展开——该态主交互是节点内联
- *  「确认 / 取消」，dock 自动弹会与节点 / 对话只读提示三带叠罗汉互相遮挡。仅「生成完成 →
- *  用户主动选中」或明确编辑意图才开 dock（门控落点见 T4：desktop DockStudioToolbar v-if
- *  + 本 mobileStudioDockOpen 一并按 isPendingConfirmNode 收敛）。 */
+ *  「确认 / 取消」，dock 自动弹会与节点 / 对话只读提示三带叠罗汉互相遮挡。
+ *  ⚠️ 2026-10-21：判据从「有选中节点」改为「**实际展开**」——旧判据让 dock 折叠时
+ *  composer 也跟着收起（has-studio-dock），画布页底部凭空少一条。 */
 const mobileStudioDockOpen = computed(
   () =>
     isMobileLayout.value &&
     mobileCanvasView.value &&
-    !!editorNode.value &&
+    mobileDockExpanded.value &&
     !dockGatedByPendingConfirm.value &&
     !refinePanelNode.value &&
     !gridSlicePanelNode.value,
@@ -5134,7 +5146,7 @@ onUnmounted(() => {
         >
           <p class="mobile-canvas-empty__main">画布还是空的</p>
           <p class="mobile-canvas-empty__sub">
-            {{ mobileCanvasImm ? '点左下 ＋ 新建节点；想交给 AI，先切到对话页' : '点 ＋ 新建节点，或按住底部条说话' }}
+            {{ mobileCanvasImm ? '点左下 ＋ 新建节点；想交给 AI，先切到对话页' : '点 ＋ 新建节点，或点底部条输入' }}
           </p>
         </div>
 
@@ -5162,7 +5174,8 @@ onUnmounted(() => {
         />
         <DockStudioToolbar
           v-if="!refinePanelNode && !gridSlicePanelNode && !dockGatedByPendingConfirm"
-          :collapsed="dockCollapsedByOverlay"
+          :collapsed="dockCollapsedByOverlay || isMobileLayout"
+          @collapse-change="mobileDockExpanded = $event"
           :node="editorNode"
           :upstream="editorUpstream"
           :refs="selectedRefs"
@@ -5316,6 +5329,7 @@ onUnmounted(() => {
       :multi-select-group-color-key="multiSelectGroupColorKey"
       :session-id="sessionId"
       :canvas-chrome-hidden="canvasChromeHidden"
+      :dock-expanded="mobileDockExpanded"
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
       :on-publish="openPublish"
@@ -5361,6 +5375,10 @@ onUnmounted(() => {
       :media-kind="contextMenu.mediaKind"
       :mime-type="contextMenu.mimeType"
       :mobile="isMobileLayout"
+      :multi-select-active="mobileMultiSelectActive"
+      :multi-select-selected="
+        !!contextMenu.nodeId && multiSelectedIds.includes(contextMenu.nodeId)
+      "
       :multi-selected-count="
         contextMenu.nodeId &&
         multiSelectedIds.includes(contextMenu.nodeId) &&

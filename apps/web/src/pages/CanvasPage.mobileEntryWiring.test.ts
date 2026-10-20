@@ -36,8 +36,9 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
   it('＋FAB 门控：画布页签 + chrome 未隐藏；呼吸联动空画布；多选态让位给动作条', () => {
     // PR5（D-9）：＋FAB 迁入 MobileCanvasShell（壳层仅移动端渲染，v-if 不带 isMobileLayout）
     // 2026-10-20 真机走查：多选态须让位给多选动作条（同一底部清位，与状态行同一规则）
+    // 2026-10-21 真机走查：dock 展开时也须让位（dock 面板占满画布底部，FAB 会压其左下角）
     expect(shell).toMatch(
-      /<MobileCanvasCreateFab\s+v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive"/,
+      /<MobileCanvasCreateFab\s+v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive && !dockExpanded"/,
     )
     expect(shell).toMatch(/:breathe="!hasNodes"/)
   })
@@ -94,6 +95,9 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
   it('空态引导：画布页签 + 空 nodes 才显示', () => {
     expect(page).toMatch(/v-if="isMobileLayout && mobileAppTab === 'canvas' && !nodes\.length"/)
     expect(page).toContain('data-testid="mobile-canvas-empty"')
-    expect(page).toContain('按住底部条说话')
+    // 2026-10-21 真机走查：「按住说话」能力在国内 Android 多数不可用 ⇒ 引导文案
+    // 改为「点底部条输入」（诚实降级，不再承诺做不到的事）
+    expect(page).toContain('点底部条输入')
+    expect(page).not.toContain('按住底部条说话')
   })
 })

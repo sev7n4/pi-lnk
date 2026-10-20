@@ -6,7 +6,7 @@ import DockStudioRouter from '@/components/canvas/dock-studio/DockStudioRouter.v
 import { EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useDockCollapseState } from '@/composables/useDockCollapseState'
-import { computed, onMounted, onUnmounted, provide } from 'vue'
+import { computed, onMounted, onUnmounted, provide, watch } from 'vue'
 import { isNodeGenerating } from '@/constants/dockStudio'
 import type { CompositionTrack } from '@/utils/compositionUpstream'
 import type { NodeRef } from '@/composables/useNodeRefs'
@@ -72,6 +72,8 @@ const emit = defineEmits<{
   inpaint: []
   'element-edit': []
   annotate: []
+  /** 移动端 tap 展开态变化（向上回报，供底部元素避让；PC 恒 false） */
+  collapseChange: [expanded: boolean]
 }>()
 
 /**
@@ -80,11 +82,18 @@ const emit = defineEmits<{
  * 两通道按断点互斥，见 `useDockCollapseState`。
  */
 const { isMobileLayout } = useAgentMobileLayout()
-const { hoverOpen, collapsedNow, onCollapsedHit, collapseByTap } = useDockCollapseState({
+const { hoverOpen, collapsedNow, onCollapsedHit, collapseByTap, tapOpen } = useDockCollapseState({
   collapsed: computed(() => props.collapsed),
   generating: computed(() => props.generating),
   isMobile: isMobileLayout,
 })
+
+/**
+ * 移动端展开态向上回报（2026-10-21 真机走查：dock 面板展开时，底部要避让的元素
+ * ＋FAB 才知道该让位——dock 展开是**移动端 tap 通道**独有的状态，父级拿不到，
+ * 只能由这里报上去。PC 恒 false，行为不变）。
+ */
+watch(tapOpen, (open) => emit('collapseChange', open), { immediate: true })
 
 const visible = computed(() => {
   if (!props.node) return false

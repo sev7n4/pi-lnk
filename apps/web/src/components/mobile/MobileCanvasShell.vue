@@ -91,6 +91,9 @@ const props = defineProps<{
   sessionId: string
   /** ＋FAB 隐藏（沉浸画布） */
   canvasChromeHidden: boolean
+  /** 移动端 studio dock 已展开（用户 tap 把手）——dock 面板占满画布底部，
+   *  ＋FAB 让位（否则压在面板左下角） */
+  dockExpanded: boolean
   /** ── 共享动作（CanvasPage 核心逻辑）── */
   onTabChange: (tab: MobileAppTab) => void
   onSave: () => void
@@ -325,7 +328,7 @@ onUnmounted(() => stopMobileTaskPolling())
        多选态不出：多选动作条接管同一条底部清位（与自动保存状态行同一规则），
        否则 FAB 与动作条同位互压。 -->
   <MobileCanvasCreateFab
-    v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive"
+    v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive && !dockExpanded"
     :breathe="!hasNodes"
     @click="showMobileCreateSheet = true"
   />
