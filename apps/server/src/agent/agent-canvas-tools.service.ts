@@ -110,12 +110,15 @@ function parseStagedActions(raw: string | null | undefined): CanvasAction[] {
   }
 }
 
-function nodeTitle(node: CanvasNode): string {
+// 2026-10-21（SP-A）：只读 data，与 node.type 无关——故用结构化最小契约而非 CanvasNode。
+// LayoutNode.type 刻意放宽为 string（存量画布仍有已下线类型节点），若这里要求 CanvasNode
+// 会让布局路径（getCanvasLayout 等）无法把 LayoutNode 传进来。
+function nodeTitle(node: { data?: Record<string, unknown> | null }): string {
   const data = node.data ?? {}
   return String(data.title ?? data.label ?? data.name ?? '').trim()
 }
 
-function nodeStatus(node: CanvasNode): string {
+function nodeStatus(node: { data?: Record<string, unknown> | null }): string {
   return String(node.data?.status ?? 'draft')
 }
 
