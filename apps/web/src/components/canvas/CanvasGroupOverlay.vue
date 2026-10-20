@@ -43,7 +43,7 @@ const emit = defineEmits<{
 }>()
 
 // viewport 由 VueFlow 自身提供（组件是 <VueFlow> 的子节点，共享同一 store）。
-const { viewport, dimensions } = useVueFlow()
+const { viewport } = useVueFlow()
 
 const viewportStyle = computed(() => ({
   transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
@@ -56,24 +56,37 @@ function displayRect(group: CanvasGroup) {
 }
 
 /**
- * chip 视口钳制（2026-10-20）：分组可比视口大，框边与默认 chip 位都会在
- * 视口外/被应用骨架裁掉 ⇒ 把 chip 钳到「框 ∩ 视口」可见区，永远留一个
- * 可点（选中/解组/重命名）的锚点。框完全不可见或 pane 尺寸未知 ⇒ 不覆写。
+ * chip 浮层化（2026-10-20 v2）：巨型分组的框边与默认 chip 位会被悬浮组件
+ * （顶栏/左栏/dock，画布上层的不透明浮层）遮住 ⇒ chip teleport 到 body、
+ * position:fixed 按屏幕坐标定位，钳制在「窗口 ∩ 框可见范围」内（见
+ * clampGroupChipToViewport），z 高于悬浮件 —— 无论分组多大，选中/解组/
+ * 重命名锚点永远可达。框完全出窗 ⇒ display:none（锚点无从谈起）。
+ * accent 直取 --lnk-group-* 真源（teleport 后不再继承 wrapper 注入的别名，
+ * 且新代码一律消费 --lnk-* 语义令牌）。
  */
-const chipOffsets = computed(() => {
-  const map = new Map<string, { top: number; left: number }>()
-  // 防御：pane 尺寸未知（部分测试 mock 只给 viewport）⇒ 钳制函数返回 null，退回 CSS 默认位
-  const pane = dimensions?.value ?? { width: 0, height: 0 }
+const chipStyles = computed(() => {
+  const map = new Map<string, Record<string, string>>()
+  const windowSize = { width: window.innerWidth, height: window.innerHeight }
   for (const group of props.groups) {
-    const offset = clampGroupChipToViewport(displayRect(group), viewport.value, pane)
-    if (offset) map.set(group.id, offset)
+    const pos = clampGroupChipToViewport(displayRect(group), viewport.value, windowSize)
+    map.set(
+      group.id,
+      pos
+        ? {
+            position: 'fixed',
+            left: `${pos.left}px`,
+            top: `${pos.top}px`,
+            'z-index': '80',
+            '--group-accent': `var(--lnk-group-${normalizeGroupColorKey(group.colorKey)}, var(--lnk-group-neutral))`,
+          }
+        : { display: 'none' },
+    )
   }
   return map
 })
 
-function chipStyle(groupId: string) {
-  const offset = chipOffsets.value.get(groupId)
-  return offset ? { top: `${offset.top}px`, left: `${offset.left}px` } : undefined
+function chipStyle(group: CanvasGroup) {
+  return chipStyles.value.get(group.id)
 }
 
 function boxStyle(group: CanvasGroup) {
@@ -143,18 +156,16 @@ function commitRename() {
 
 <template>
   <div class="canvas-group-layer" :style="viewportStyle">
-    <div
-      v-for="group in groups"
-      :key="group.id"
-      class="group-node-wrapper"
-      :class="{ 'is-active': selectedGroupId === group.id }"
-      :style="boxStyle(group)"
-    >
+    <!-- chip 浮层：teleport 到 body + position:fixed（见 chipStyles 注释），
+         摆脱 pane 裁剪与悬浮组件遮挡；交互语义（select/move/rename/ungroup）不变。 -->
+    <Teleport to="body">
       <div
-        class="group-drag-handle"
-        :style="chipStyle(group.id)"
-        @pointerdown.stop="onTitlePointerDown($event, group.id)"
+        v-for="group in groups"
+        :key="group.id"
+        class="group-drag-handle is-screen-anchored"
         :class="{ 'is-draggable': draggable }"
+        :style="chipStyle(group)"
+        @pointerdown.stop="onTitlePointerDown($event, group.id)"
         @pointermove.stop="onTitlePointerMove"
         @pointerup.stop="onTitlePointerUp"
         @pointercancel.stop="onTitlePointerUp"
@@ -197,6 +208,14 @@ function commitRename() {
           </button>
         </template>
       </div>
+    </Teleport>
+    <div
+      v-for="group in groups"
+      :key="group.id"
+      class="group-node-wrapper"
+      :class="{ 'is-active': selectedGroupId === group.id }"
+      :style="boxStyle(group)"
+    >
       <div class="group-node-container" />
       <!-- 四条边的点击热区：框体内部必须 pointer-events:none（否则吃掉子节点点击），
            但「点边框 = 选中分组」是用户最自然的预期；GROUP_PADDING(80px) 保证边框带是空白区，
@@ -309,6 +328,15 @@ function commitRename() {
 
 .group-drag-handle.is-draggable {
   cursor: grab;
+}
+
+/* chip 浮层定位（2026-10-20 v2）：teleport 到 body 后脱离 wrapper 的世界变换，
+   fixed + 内联 left/top（窗口坐标）= 屏幕锚定；z 高于顶栏/侧栏/dock 等悬浮
+   浮层（z-40/z-50 一族），低于 ?graph=1 全屏视图（z-[9000]）。
+   内联样式始终给出 left/top（或 display:none），此处 top/left 仅作语义存档。 */
+.group-drag-handle.is-screen-anchored {
+  position: fixed;
+  z-index: 80;
 }
 
 .group-drag-handle.is-draggable:active {

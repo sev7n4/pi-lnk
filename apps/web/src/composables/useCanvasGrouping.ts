@@ -576,51 +576,56 @@ export function detachNodesFromGroups(groups: CanvasGroup[], nodeIds: Iterable<s
     .filter((g) => g.childIds.length >= 2)
 }
 
-// ── 巨型分组的 chip 视口钳制（2026-10-20）──────────────────
+// ── 巨型分组的 chip 视口钳制（2026-10-20，v2 屏幕坐标版）────
 //
-// 分组可以比视口还大（子节点分散，或把整屏节点打成一个组）。此时框的四条边
-// 全部落在视口外 / 被应用骨架（顶栏/侧栏/dock）裁掉，默认挂在框左上外沿的
-// 标题 chip 也在视口外 ⇒ 用户只剩一层 12% 底色罩住整个画布，没有任何
-// 「这是一个分组」的可见锚点（感知为「画布多了一层/有遮挡」）。
-// 解法：把 chip 钳到「框 ∩ 视口」的可见区内，永远给用户一个可点（选中/解组/
-// 重命名）的锚点。
+// 分组可以比可视画布还大（子节点分散，或把整屏节点打成一个组）。此时框的
+// 四条边全部落在可视区外 / 被应用骨架裁掉，默认挂在框左上外沿的标题 chip
+// 也在可视区外 ⇒ 用户只剩一层 12% 底色罩住整个画布，没有任何「这是一个
+// 分组」的可见锚点（感知为「画布多了一层/有遮挡」，也无法选中/解组/重命名）。
+//
+// v2（同日迭代）：#510 曾把 chip 钳到 vue-flow pane 左上角，但画布是
+// **全区域铺底 + 悬浮组件（顶栏/左栏/dock 不透明浮层）压在其上**的布局 ⇒
+// pane 左上角正好被悬浮层盖住，chip 依然不可见。改为：chip teleport 到
+// body、position:fixed 按屏幕坐标定位（逃出 pane 裁剪与悬浮层遮挡，z 高于
+// 悬浮件），钳制目标改为「窗口 ∩ 框可见范围」。
 
 /** chip 屏幕尺寸估计（图标+标题+计数+解组钮，含内边距），钳制用无需精确。 */
 const CHIP_SCREEN_W = 160
 const CHIP_SCREEN_H = 30
-/** 视口边缘留白。 */
+/** 窗口边缘留白。 */
 const CHIP_MARGIN = 8
 
 /**
- * 计算 chip 相对 wrapper 的 world 偏移（覆盖 CSS 默认 top:-32px/left:0）。
- * 框与视口无可见交集、或 pane 尺寸/zoom 非法 ⇒ null（不覆写 CSS 默认位）。
- * 框可见但顶缘/左缘出界时，chip 沿框可见区钳回屏内；框完全可见时返回值
- * 恒等于 CSS 默认位（-32, 0），视觉零变化。纯函数便于单测。
+ * 计算 chip 的屏幕定位（position:fixed 的 left/top，window 坐标）。
+ * 框与窗口无可见交集、或窗口尺寸/zoom 非法 ⇒ null（调用方隐藏 chip——
+ * 框本身不可见时，锚点也无从谈起）。
+ * 框可见但顶缘/左缘出界时，chip 沿框可见区钳回屏内；框完全可见时返回
+ * 默认位（框顶外沿 -32*zoom、左对齐框左缘），视觉与旧节点形态一致。纯函数。
  */
 export function clampGroupChipToViewport(
   rect: { position: { x: number; y: number }; size: { width: number; height: number } },
   viewport: { x: number; y: number; zoom: number },
-  pane: { width: number; height: number },
-): { top: number; left: number } | null {
+  windowSize: { width: number; height: number },
+): { left: number; top: number } | null {
   const zoom = viewport.zoom
-  if (!(zoom > 0) || !(pane.width > 0) || !(pane.height > 0)) return null
+  if (!(zoom > 0) || !(windowSize.width > 0) || !(windowSize.height > 0)) return null
   const frameX = viewport.x + rect.position.x * zoom
   const frameY = viewport.y + rect.position.y * zoom
   const frameRight = frameX + rect.size.width * zoom
   const frameBottom = frameY + rect.size.height * zoom
-  // 框与视口完全无交集（含被 margin 吃掉的贴边情形）⇒ 框本身不可见，无从钳起
+  // 框与窗口完全无交集（含被 margin 吃掉的贴边情形）⇒ 框本身不可见，无从钳起
   if (
     frameRight <= CHIP_MARGIN ||
-    frameX >= pane.width - CHIP_MARGIN ||
+    frameX >= windowSize.width - CHIP_MARGIN ||
     frameBottom <= CHIP_MARGIN ||
-    frameY >= pane.height - CHIP_MARGIN
+    frameY >= windowSize.height - CHIP_MARGIN
   ) {
     return null
   }
-  // 框与视口交集的右/下界（screen px，pane 坐标）；chip 只在该界内钳制。
+  // 框与窗口交集的右/下界（screen px）；chip 只在该界内钳制。
   // 注意下界不钳到框顶（frameY）：chip 挂框顶外沿是设计位，只要还在屏内就保留。
-  const visRight = Math.min(frameRight, pane.width - CHIP_MARGIN)
-  const visBottom = Math.min(frameBottom, pane.height - CHIP_MARGIN)
+  const visRight = Math.min(frameRight, windowSize.width - CHIP_MARGIN)
+  const visBottom = Math.min(frameBottom, windowSize.height - CHIP_MARGIN)
   const top = Math.min(
     Math.max(frameY - 32 * zoom, CHIP_MARGIN),
     Math.max(visBottom - CHIP_SCREEN_H, CHIP_MARGIN),
@@ -629,5 +634,5 @@ export function clampGroupChipToViewport(
     Math.max(frameX, CHIP_MARGIN),
     Math.max(visRight - CHIP_SCREEN_W, CHIP_MARGIN),
   )
-  return { top: (top - frameY) / zoom, left: (left - frameX) / zoom }
+  return { left, top }
 }
