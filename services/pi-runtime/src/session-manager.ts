@@ -404,12 +404,15 @@ export interface RecoveredQueueItem {
  * 丢弃就是数据丢失的另一种形态。
  */
 export function toRecoveredQueueItems(
-	steer: readonly AgentMessage[],
-	followUp: readonly AgentMessage[],
+	steer: readonly AgentMessage[] | undefined,
+	followUp: readonly AgentMessage[] | undefined,
 ): RecoveredQueueItem[] {
 	const out: RecoveredQueueItem[] = [];
-	const push = (kind: "steer" | "followUp", messages: readonly AgentMessage[]) => {
-		for (const message of messages) {
+	// ⚠️ 防御 `?? []`：vendor 的 AbortRequestResult 恒带两组（lane.ts:1043/1078），
+	// 但 fake lane / 上游漂移都可能缺键 —— 这里抛 TypeError 会把整个 force 分支
+	// 打进 catch，`drive` 都不会执行（CI 实测：stall watchdog 3 例红）。
+	const push = (kind: "steer" | "followUp", messages?: readonly AgentMessage[]) => {
+		for (const message of messages ?? []) {
 			// 联合类型收窄：只有 user 消息带 content
 			if (message.role !== "user") continue;
 			const content = message.content;
@@ -1861,7 +1864,9 @@ export class SessionManager {
 		);
 		void this.forceSettleLaneOperation(entry)
 			.then((settled) => {
-				if (settled) entry.prompting = false;
+				// ⚠️ 返回值是对象（{aborted, recovered}）不是 boolean：恒真值判断会把
+				// 「结算失败」也当成成功清掉 prompting，必须显式看 .aborted。
+				if (settled.aborted) entry.prompting = false;
 			})
 			.catch(() => {});
 		return true;

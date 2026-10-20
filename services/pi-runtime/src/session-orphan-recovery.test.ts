@@ -232,7 +232,7 @@ describe("P0-2 abort() 的 force 语义（无 cancelRun 时也能解锁）", () 
 			});
 			const sm = makeManager(factory, root);
 			await sm.create("s8:t1", { userId: "u1" });
-			assert.equal(await sm.abort("s8:t1"), true);
+			assert.equal((await sm.abort("s8:t1")).aborted, true);
 			assert.deepEqual(probes[0].requestAbortCalls, ["op-stuck"]);
 			assert.deepEqual(probes[0].driveCalls, [{ operationId: "op-stuck" }]);
 		});
@@ -243,7 +243,7 @@ describe("P0-2 abort() 的 force 语义（无 cancelRun 时也能解锁）", () 
 			const { factory, probes } = makeHarnessFactory({ open: [] });
 			const sm = makeManager(factory, root);
 			await sm.create("s9:t1", { userId: "u1" });
-			assert.equal(await sm.abort("s9:t1"), false);
+			assert.equal((await sm.abort("s9:t1")).aborted, false);
 			assert.equal(probes[0].requestAbortCalls.length, 0);
 		});
 	});
@@ -253,7 +253,7 @@ describe("P0-2 abort() 的 force 语义（无 cancelRun 时也能解锁）", () 
 			const { factory } = makeHarnessFactory({ open: [], probe: { inspectThrows: true } });
 			const sm = makeManager(factory, root);
 			await sm.create("s10:t1", { userId: "u1" });
-			assert.equal(await sm.abort("s10:t1"), false);
+			assert.equal((await sm.abort("s10:t1")).aborted, false);
 		});
 	});
 
@@ -261,7 +261,7 @@ describe("P0-2 abort() 的 force 语义（无 cancelRun 时也能解锁）", () 
 		await withTempDataRoot(async (root) => {
 			const { factory } = makeHarnessFactory({ open: [] });
 			const sm = makeManager(factory, root);
-			assert.equal(await sm.abort("nope"), false);
+			assert.equal((await sm.abort("nope")).aborted, false);
 		});
 	});
 });

@@ -421,14 +421,14 @@ describe("SessionManager 用户取消 run（前端「停止」按钮）", () => 
 	it("无活跃 run 时 abort 返回 false（前端按 skipped 提示「已断开回复」）", async () => {
 		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		await sm.create("s-cancel-idle", {});
-		assert.equal(await sm.abort("s-cancel-idle"), false);
+		assert.deepEqual(await sm.abort("s-cancel-idle"), { aborted: false, recovered: [] });
 	});
 
 	it("abort 中断正在跑的 run，且会话保留（用户可接着发消息）", async () => {
 		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
 		await sm.create("s-cancel-run", {});
 		await sm.prompt("s-cancel-run", "hi");
-		assert.equal(await sm.abort("s-cancel-run"), true);
+		assert.deepEqual(await sm.abort("s-cancel-run"), { aborted: true, recovered: [] });
 		assert.equal(sm.hasKey("s-cancel-run"), true);
 	});
 
@@ -438,14 +438,14 @@ describe("SessionManager 用户取消 run（前端「停止」按钮）", () => 
 		const seen: string[] = [];
 		sm.subscribe("s-cancel-noerr", (e) => seen.push(e.type));
 		await sm.prompt("s-cancel-noerr", "hi");
-		assert.equal(await sm.abort("s-cancel-noerr"), true);
+		assert.deepEqual(await sm.abort("s-cancel-noerr"), { aborted: true, recovered: [] });
 		await new Promise((r) => setTimeout(r, 20)); // 等挂起的 promise reject 被 catch 处理
 		assert.deepEqual(seen.filter((t) => t === "error"), []);
 	});
 
 	it("未知 session abort 返回 false（不抛）", async () => {
 		const sm = new SessionManager([], "", undefined, hangingFactory, undefined, undefined, testConfig());
-		assert.equal(await sm.abort("nope"), false);
+		assert.deepEqual(await sm.abort("nope"), { aborted: false, recovered: [] });
 	});
 });
 
@@ -953,7 +953,7 @@ describe("SessionManager run 后压缩触发（诊断 F-01 · 补上缺失的触
 		const mgr = managerWithLane(makeLane(calls, 120_000, gate));
 		await mgr.create("s-compact-abort", {});
 		await mgr.prompt("s-compact-abort", "hi");
-		assert.equal(await mgr.abort("s-compact-abort"), true);
+		assert.deepEqual(await mgr.abort("s-compact-abort"), { aborted: true, recovered: [] });
 		release(undefined);
 		await drain();
 		assert.deepEqual(calls, []);
