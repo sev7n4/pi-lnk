@@ -50,11 +50,15 @@ describe('CanvasGroupOverlay：标题前分组图标（2026-10-13）', () => {
     w.unmount()
   })
 
-  it('图标颜色跟随分组背景色：CSS 消费 --neo-group-accent，svg 用 currentColor 继承', () => {
+  it('图标颜色跟随分组背景色：CSS 消费分组色别名，svg 用 currentColor 继承', () => {
     const fs = readFileSync(join(HERE, 'CanvasGroupOverlay.vue'), 'utf8')
     const iconScope = fs.match(/(?:^|\n)\.group-title-icon\s*\{[^}]*\}/)?.[0] ?? ''
     expect(iconScope, '找不到分组图标规则块').toBeTruthy()
-    expect(iconScope, '图标色应跟随分组色（与色卡当前色一致）').toContain('var(--neo-group-accent)')
+    // 图标消费 --group-accent；该别名在 .group-node-wrapper 上解析为按 colorKey 注入的
+    // --neo-group-accent（见下一断言）——只允许一处真源消费，避免重复计数旧令牌。
+    expect(iconScope, '图标色应跟随分组色（与色卡当前色一致）').toContain('var(--group-accent)')
+    const aliasScope = fs.match(/--group-accent:\s*var\(--neo-group-accent,\s*var\(--neo-group-neutral\)\)/)?.[0] ?? ''
+    expect(aliasScope, '--group-accent 必须解析到按 colorKey 注入的 --neo-group-accent').toBeTruthy()
     const svgTag = fs.match(/<svg[^>]*stroke="currentColor"[^>]*>/)?.[0] ?? ''
     expect(svgTag, '图标 svg 应以 currentColor 描边').toContain('stroke="currentColor"')
     const w = mountOverlay([group({ colorKey: 'moss' })])
@@ -259,6 +263,25 @@ describe('CanvasGroupOverlay：色卡注入与默认去紫', () => {
     await btn.trigger('click')
     expect(w.emitted('ungroup')).toBeTruthy()
     expect(w.emitted('ungroup')![0]).toEqual(['group-1'])
+    w.unmount()
+  })
+
+  it('点框的四条边即可选中分组（框体内部仍不吃子节点点击）', async () => {
+    const w = mount(CanvasGroupOverlay, {
+      props: { groups: [group()], selectedGroupId: null },
+    })
+    // 四条边各一个热区 ⇒ 分组框很大时也能轻松点中，不必去够左上角那条窄标题
+    const edges = w.findAll('.group-edge-hit')
+    expect(edges).toHaveLength(4)
+    for (const e of edges) {
+      expect(e.classes().join(' ')).toMatch(/group-edge-hit--(top|right|bottom|left)/)
+    }
+    await edges[0].trigger('pointerdown')
+    expect(w.emitted('select')).toBeTruthy()
+    expect(w.emitted('select')![0]).toEqual(['group-1'])
+    // 框体本身仍必须是 pointer-events:none（否则会吃掉子节点点击）
+    const fs = readFileSync(join(HERE, 'CanvasGroupOverlay.vue'), 'utf8')
+    expect(fs).not.toMatch(/<div class="group-node-container"[^>]*@/)
     w.unmount()
   })
 

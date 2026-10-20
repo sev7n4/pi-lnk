@@ -429,6 +429,14 @@ export function groupRectForChildren(
   }
 }
 
+/** 打组结果：mode 供调用方给出准确反馈（UI 层必须据此提示，否则「没反应」会被误读为失败）。 */
+export type GroupFromSelectionResult = {
+  groups: CanvasGroup[]
+  group: CanvasGroup
+  /** reselect=所选节点本就同属一个分组（仅选中它）；merged=从旧分组摘出后归并成新分组。 */
+  mode: 'created' | 'reselect' | 'merged'
+}
+
 /**
  * 框选多个节点 → 打组。返回 null 表示确实无法打组（< 2 个可用节点）。
  *
@@ -442,7 +450,7 @@ export function createGroupFromSelection(
   nodes: FlowNode[],
   selectedIds: string[],
   title?: string,
-): { groups: CanvasGroup[]; group: CanvasGroup } | null {
+): GroupFromSelectionResult | null {
   const groupedByNode = new Map<string, string[]>()
   for (const g of groups) for (const id of g.childIds) {
     if (!groupedByNode.has(id)) groupedByNode.set(id, [])
@@ -459,7 +467,7 @@ export function createGroupFromSelection(
     selectedIds.every((id) => ownersOf(id).includes(touchedGroups[0]))
   ) {
     const existing = groups.find((g) => g.id === touchedGroups[0])
-    if (existing) return { groups, group: existing }
+    if (existing) return { groups, group: existing, mode: 'reselect' }
   }
 
   // 取「未分组」的选中节点；若没有，则把这些节点先从原分组摘出，再整体归并。
@@ -468,9 +476,13 @@ export function createGroupFromSelection(
     return Boolean(node) && ownersOf(id).length === 0
   })
   let nextGroups = groups
+  let merged = false
   if (childIds.length < 2 && selectedIds.length >= 2) {
     const detached = detachNodesFromGroups(groups, selectedIds)
-    if (detached.length !== groups.length) nextGroups = detached
+    if (detached.length !== groups.length) {
+      nextGroups = detached
+      merged = true
+    }
     childIds = selectedIds.filter((id) => nodes.some((n) => n.id === id))
   }
 
@@ -483,7 +495,7 @@ export function createGroupFromSelection(
     childIds,
     ...rect,
   }
-  return { groups: [...nextGroups, group], group }
+  return { groups: [...nextGroups, group], group, mode: merged ? 'merged' : 'created' }
 }
 
 /** 解组：移除分组框，子节点保持各自绝对坐标不动。 */

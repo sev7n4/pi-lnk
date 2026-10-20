@@ -978,9 +978,13 @@ const selectedGroupRect = computed(() => {
   return { position: group.position, size: group.size }
 })
 
-/** 框选多个节点 → 打组。 */
+/** 框选多个节点 → 打组。每条路径都必须给反馈（静默 = 用户读成「打组失败」）。 */
 function handleGroupSelection() {
-  if (multiSelectedIds.value.length < 2) return
+  if (multiSelectedIds.value.length < 2) {
+    ElMessage.info('请先框选至少 2 个节点再打组')
+    return
+  }
+  const picked = multiSelectedIds.value.length
   const result = createGroupFromSelection(
     groups.value,
     nodes.value as unknown as FlowNode[],
@@ -995,6 +999,14 @@ function handleGroupSelection() {
   multiSelectedIds.value = []
   clearSelection()
   persistUserEdit()
+  // 分组框可能很大（子节点分散），明确告诉用户发生了什么、框里会有什么。
+  if (result.mode === 'reselect') {
+    ElMessage.info(`所选 ${picked} 个节点已在「${result.group.title}」中，已为你选中该分组`)
+  } else if (result.mode === 'merged') {
+    ElMessage.success(`已把所选 ${result.group.childIds.length} 个节点归并为「${result.group.title}」`)
+  } else {
+    ElMessage.success(`已打组「${result.group.title}」，含 ${result.group.childIds.length} 个节点`)
+  }
 }
 
 /** 解组：只移除分组框，子节点保持原坐标。 */
