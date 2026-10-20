@@ -4241,17 +4241,19 @@ defineExpose({
             >×</button>
           </p>
           <!-- ask_user 卡片贴 composer（2026-10-14，P1-5 移出 chat-wrap）：等待态的唯一交互面贴输入框；
-               pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。 -->
+               pendingAskUser 是 live-only 状态（提交/取消即清），无历史持久化诉求。
+               2026-10-20：卡片经稳定钩子 .agent-ask-layer 纳入画布视图隐藏清单（真机复现：
+               切到画布页签后卡片在透明贴底壳里浮在画布上），见文末 is-canvas-view 规则。 -->
           <AskUserCard
             v-if="pendingAskUser.length && lastMessageIsAssistant"
-            class="mx-0.5 mb-2"
+            class="mx-0.5 mb-2 agent-ask-layer"
             :questions="pendingAskUser"
             @submit="onAskSubmit"
             @cancel="onAskCancel"
           />
           <div
             v-if="showCancelledCallout"
-            class="mb-2 px-0.5"
+            class="mb-2 px-0.5 agent-cancelled-layer"
             data-testid="run-cancelled-callout"
           >
             <p
@@ -4981,10 +4983,16 @@ defineExpose({
  * composer（裸条）仅在「纯画布满屏 / dock 展开」时收起。
  * 类摘除（门回对话 / 取消选中）⇒ 原样回归。
  * ⭐ 2026-10-20 补齐：收口状态行（.agent-turn-status）同样属对话回合，画布视图一律不同屏
- *   —— 此前隐藏清单漏了它，导致画布视图（尤其 imm）下状态行在透明容器里裸露。 */
+ *   —— 此前隐藏清单漏了它，导致画布视图（尤其 imm）下状态行在透明容器里裸露。
+ * ⭐⭐ 2026-10-20 二次补齐（真机截图复现）：ask_user 卡与「取消」回执卡同在 P1-5 移出的
+ *   系统层里，同样漏出——切到画布页签，消息流/输入条被藏，卡片孤悬在画布上。
+ *   ⚠️ 本清单是「加法枚举」：新增系统层卡片必须同步来此登记 + mobileMaskTabbar.test.ts
+ *   加断言。根治方案（默认全隐 + 白名单放行 propose 提示）见 PR 正文，未落地前以此纪律兜底。 */
 .agent-panel-mobile-dock.is-canvas-view .agent-panel-header,
 .agent-panel-mobile-dock.is-canvas-view .agent-chat-wrap,
 .agent-panel-mobile-dock.is-canvas-view .agent-turn-status,
+.agent-panel-mobile-dock.is-canvas-view .agent-ask-layer,
+.agent-panel-mobile-dock.is-canvas-view .agent-cancelled-layer,
 .agent-panel-mobile-dock.is-canvas-view.is-canvas-imm .agent-input-dock,
 .agent-panel-mobile-dock.is-canvas-view.has-studio-dock .agent-input-dock {
   display: none;

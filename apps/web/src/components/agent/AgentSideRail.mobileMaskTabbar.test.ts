@@ -9,6 +9,9 @@ import { describe, expect, it } from 'vitest'
  * 点页签只会触发遮罩 @click.self 自关、不切页签（第一次点没反应、第二次才生效）。
  * 修复方式：遮罩 bottom 让开页签 —— `bottom: var(--lnk-tabbar-h, 56px)`。
  *
+ * 2026-10-20 起范围扩展为「贴底容器跨页签泄漏」家族守卫：
+ * 画布/发现/我的页签下，对话 chrome（系统层卡片）不得残留在透明壳里浮在页面上。
+ *
  * 断言只作用于提取出的 CSS 规则块内部（不含注释），避免「记录被删历史」的
  * 注释文本污染否定断言；每个否定断言都配有块存在性 + 关键属性的有效性断言。
  */
@@ -63,5 +66,26 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
     // 回归 2026-10-20：隐藏清单曾漏 .agent-turn-status，导致画布（尤其 imm）状态行裸露。
     const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-turn-status')
     expect(block).toContain('display: none')
+  })
+
+  it('画布视图：ask_user 卡与「取消」回执卡不得浮在画布上（真机复现回归）', () => {
+    // 回归 2026-10-20 真机截图：P1-5 把 ask_user 卡移出 chat-wrap 进系统层后，
+    // 画布视图隐藏清单漏了它——切到画布页签，消息流/输入条被 display:none 藏掉，
+    // 卡片成为透明贴底壳里唯一可见子元素，孤悬在画布上（run-cancelled-callout 同病）。
+    // 双向断言：先钉模板稳定钩子（钩子被改名/删掉时先红，避免 CSS 选择器空转），再钉隐藏规则。
+    expect(sfc).toContain('class="mx-0.5 mb-2 agent-ask-layer"')
+    expect(sfc).toContain('class="mb-2 px-0.5 agent-cancelled-layer"')
+    const askBlock = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-ask-layer')
+    expect(askBlock).toContain('display: none')
+    const cancelledBlock = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-cancelled-layer')
+    expect(cancelledBlock).toContain('display: none')
+  })
+
+  it('画布视图：propose 等待提示必须放行（有画布专属文案，不得被隐藏清单误伤）', () => {
+    // propose-wait-hint 是系统层里唯一「画布视图也要可见」的卡片（proposeWaitInCanvas
+    // 文案：「已在画布上待确认…」）。若有人图省事把整个系统层加进隐藏清单，这条会红。
+    const rule = sfc.slice(sfc.indexOf('.agent-panel-mobile-dock.is-canvas-view .agent-panel-header'))
+    expect(rule).not.toContain('.is-canvas-view .propose-wait-hint')
+    expect(sfc).toContain('proposeWaitInCanvas')
   })
 })
