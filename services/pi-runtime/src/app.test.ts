@@ -18,7 +18,10 @@ const okFactory = (async () => ({
 			prompt: async () => ({ ok: true }),
 			setThinkingLevel: async () => {},
 			// notify-generation 通报复用 manager.followUp（2026-10-18 上游对齐）
-			followUp: async () => ({ ok: true }),
+			// ⚠️ 2026-10-20：followUp 现在回传 `entryId`（撤回键，来自 vendor
+			// `QueueResult{entryId}`），fake lane 必须给 `value`，否则
+			// `res.value.entryId` 抛 TypeError ⇒ 表现为「通报测试全红」。
+			followUp: async () => ({ ok: true, value: { entryId: "fake-followup-entry" } }),
 		}),
 		close: async () => {},
 	},

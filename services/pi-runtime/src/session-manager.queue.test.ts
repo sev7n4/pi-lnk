@@ -42,6 +42,8 @@ interface LaneCalls {
 	steer: string[];
 	followUp: string[];
 	prompt: string[];
+	/** 撤回调用流水（2026-10-20 接上 vendor `cancelQueued`）。 */
+	cancelQueued: string[];
 	/** 让 `prompt` 永不 settle，用来模拟「run 还在跑」。 */
 	hang?: boolean;
 	/** 让 `steer` 返回拒收，用来模拟 vendor Closed 等。 */
@@ -49,19 +51,29 @@ interface LaneCalls {
 }
 
 function makeFakeLane(calls: LaneCalls) {
+	// ⚠️ 2026-10-20：`steer/followUp` 现在会回传 `entryId`（撤回键，取自 vendor
+	// `QueueResult{entryId}`），所以 fake lane **必须**给出 `value`，否则
+	// `res.value.entryId` 会抛 TypeError —— 表现为「入队测试全红」，很容易误判成
+	// 生产代码坏了（真实 lane 一定带 entryId，见 `harness/runtime/lane.ts:1434` enqueue）。
+	let seq = 0;
+	const enqueued = () => ({ ok: true, value: { entryId: `fake-entry-${++seq}` } });
 	const lane = {
 		steer: async (msg: string) => {
 			calls.steer.push(msg);
-			return calls.rejectSteer ? { ok: false, error: new Error("Closed") } : { ok: true };
+			return calls.rejectSteer ? { ok: false, error: new Error("Closed") } : enqueued();
 		},
 		followUp: async (msg: string) => {
 			calls.followUp.push(msg);
-			return { ok: true };
+			return enqueued();
 		},
 		prompt: async (text?: string) => {
 			calls.prompt.push(text ?? "");
 			if (calls.hang) return new Promise(() => {});
 			return { ok: true };
+		},
+		cancelQueued: async (entryId: string) => {
+			calls.cancelQueued.push(entryId);
+			return { ok: true, value: { kind: "cancelled" as const } };
 		},
 	};
 	return lane;
@@ -82,13 +94,17 @@ function makeManager(calls: LaneCalls) {
 
 describe("steer：用户插话走 vendor steering 队列", () => {
 	it("idle 会话插话：入队 + 自动开一轮接住（vendor 没有 terminal drain）", async () => {
-		const calls: LaneCalls = { steer: [], followUp: [], prompt: [] };
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [] };
 		const sm = makeManager(calls);
 		await sm.create("sq-idle", { userId: "u1" });
 
 		const res = await sm.steer("sq-idle", "换个风格再生成一次");
 
-		assert.deepEqual(res, { queued: true });
+		// 回传体现在带 entryId（撤回键）—— 断言它的**存在性**而非具体值
+		// （fake lane 的 entryId 是自增序号，锁死字面量会在换 mock 时假红）。
+		assert.equal(res.queued, true);
+		assert.equal(typeof res.entryId, "string", "必须回传 entryId，否则上层无法撤回这条");
+		assert.ok(res.entryId.length > 0);
 		assert.deepEqual(calls.steer, ["换个风格再生成一次"]);
 		// 关键：入队之后立刻有人来接（空 prompt 触发 accept 排空积压）
 		await settle();
@@ -96,7 +112,7 @@ describe("steer：用户插话走 vendor steering 队列", () => {
 	});
 
 	it("run 进行中插话：入队但不触发排空（该轮自己的边界会消费它）", async () => {
-		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], hang: true };
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [], hang: true };
 		const sm = makeManager(calls);
 		await sm.create("sq-busy", { userId: "u1" });
 
@@ -106,7 +122,11 @@ describe("steer：用户插话走 vendor steering 队列", () => {
 		assert.ok(calls.prompt.includes("先画一版"));
 
 		const res = await sm.steer("sq-busy", "顺便把背景换成夜景");
-		assert.deepEqual(res, { queued: true });
+		// 回传体现在带 entryId（撤回键）—— 断言它的**存在性**而非具体值
+		// （fake lane 的 entryId 是自增序号，锁死字面量会在换 mock 时假红）。
+		assert.equal(res.queued, true);
+		assert.equal(typeof res.entryId, "string", "必须回传 entryId，否则上层无法撤回这条");
+		assert.ok(res.entryId.length > 0);
 		assert.deepEqual(calls.steer, ["顺便把背景换成夜景"]);
 
 		// 入队≠新开一轮：不该再出现一条 prompt（那会变成两条 run 交错）
@@ -114,7 +134,7 @@ describe("steer：用户插话走 vendor steering 队列", () => {
 	});
 
 	it("空文本按 400 契约拒绝（InvalidInputError），不进 vendor 队列", async () => {
-		const calls: LaneCalls = { steer: [], followUp: [], prompt: [] };
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [] };
 		const sm = makeManager(calls);
 		await sm.create("sq-empty", { userId: "u1" });
 
@@ -125,7 +145,7 @@ describe("steer：用户插话走 vendor steering 队列", () => {
 	});
 
 	it("vendor 拒收时抛 QueueRejectedError（路由层据此映射 503），不静默吞", async () => {
-		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], rejectSteer: true };
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [], rejectSteer: true };
 		const sm = makeManager(calls);
 		await sm.create("sq-reject", { userId: "u1" });
 
@@ -138,7 +158,7 @@ describe("steer：用户插话走 vendor steering 队列", () => {
 	});
 
 	it("会话不存在时 404 契约（NotFoundError 冒泡）", async () => {
-		const calls: LaneCalls = { steer: [], followUp: [], prompt: [] };
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [] };
 		const sm = makeManager(calls);
 		await assert.rejects(() => sm.steer("sq-missing", "hi"));
 	});
@@ -146,15 +166,51 @@ describe("steer：用户插话走 vendor steering 队列", () => {
 
 describe("followUp：尾随指令走 vendor followUp 队列", () => {
 	it("入队的是 followUp 标签，不是 steer", async () => {
-		const calls: LaneCalls = { steer: [], followUp: [], prompt: [] };
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [] };
 		const sm = makeManager(calls);
 		await sm.create("sq-fu", { userId: "u1" });
 
 		const res = await sm.followUp("sq-fu", "然后导出成九宫格");
 
-		assert.deepEqual(res, { queued: true });
+		// 回传体现在带 entryId（撤回键）—— 断言它的**存在性**而非具体值
+		// （fake lane 的 entryId 是自增序号，锁死字面量会在换 mock 时假红）。
+		assert.equal(res.queued, true);
+		assert.equal(typeof res.entryId, "string", "必须回传 entryId，否则上层无法撤回这条");
+		assert.ok(res.entryId.length > 0);
 		assert.deepEqual(calls.followUp, ["然后导出成九宫格"]);
 		assert.deepEqual(calls.steer, [], "followUp 必须走 followUp 通道，混用会让收尾续跑语义失效");
+	});
+});
+
+describe("cancelQueued：撤回单条已入队的插话（2026-10-20）", () => {
+	it("用入队回传的 entryId 撤回，outcome 如实透传", async () => {
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [] };
+		const sm = makeManager(calls);
+		await sm.create("sq-cancel", { userId: "u1" });
+
+		// 先入队拿到 key
+		const enqueued = await sm.steer("sq-cancel", "改成暖色调");
+		assert.equal(typeof enqueued.entryId, "string");
+
+		// 再用它撤回
+		const res = await sm.cancelQueued("sq-cancel", enqueued.entryId);
+
+		assert.deepEqual(res, { outcome: "cancelled" });
+		assert.deepEqual(calls.cancelQueued, [enqueued.entryId], "必须把同一个 entryId 交给 vendor lane");
+	});
+
+	it("空 entryId 报InvalidInputError（路由层据此映射 400）", async () => {
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [] };
+		const sm = makeManager(calls);
+		await sm.create("sq-cancel-bad", { userId: "u1" });
+		await assert.rejects(() => sm.cancelQueued("sq-cancel-bad", "   "), InvalidInputError);
+		assert.deepEqual(calls.cancelQueued, [], "非法输入不该打到 vendor");
+	});
+
+	it("会话不存在时 404 契约（NotFoundError 冒泡）", async () => {
+		const calls: LaneCalls = { steer: [], followUp: [], prompt: [], cancelQueued: [] };
+		const sm = makeManager(calls);
+		await assert.rejects(() => sm.cancelQueued("sq-missing-cancel", "e1"), /not found|session/i);
 	});
 });
 
