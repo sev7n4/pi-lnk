@@ -67,7 +67,7 @@ function openOfficialSite() {
       <!-- 我的积分 → 积分页（余额/进度/明细/充值；2026-10-19 从套餐弹窗拆出，此前积分入口误开会员面板） -->
       <button type="button" class="row-item" @click="emit('open-points')">
         <span class="row-label">我的积分</span>
-        <span class="row-value tabular-nums">{{ auth.user?.points ?? 0 }}</span>
+        <span class="row-value row-value--credit tabular-nums">{{ auth.user?.points ?? 0 }}</span>
         <svg class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
           <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
         </svg>
@@ -255,6 +255,13 @@ function openOfficialSite() {
 .row-value {
   font-size: var(--lnk-text-sm, 13px);
   color: var(--lnk-text-muted);
+}
+
+/* 积分余额：琥珀色（--lnk-credit 单源）+ 加重——顶栏积分胶囊已撤出（2026-10-21
+ * 用户裁决，信息重复），此处是移动端唯一常驻余额展示，需一眼可辨 */
+.row-value--credit {
+  color: var(--lnk-credit);
+  font-weight: var(--lnk-weight-semibold, 600);
 }
 
 .row-chevron {

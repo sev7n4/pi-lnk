@@ -289,8 +289,9 @@ const agentReadOnly = computed(
   () => !!auth.user?.id && !!sessionOwnerId.value && auth.user.id !== sessionOwnerId.value,
 )
 const saving = ref(false)
-/** PR4（I-8）：上次保存完成时间，供移动端自动保存状态行显示「已保存 HH:mm」 */
-const lastSavedAt = ref<number | null>(null)
+/** 2026-10-21 用户裁决：保存状态行改「静默成功，只报异常」——成功态零渲染，
+ *  仅失败点亮红胶囊（点按重试）。自动保存成功不再打时间戳（无消费方）。 */
+const saveFailed = ref(false)
 const showPublish = ref(false)
 const showModelSettings = ref(false)
 const contextMenu = ref<{
@@ -4278,11 +4279,11 @@ async function saveCanvas() {
       title: sessionTitle.value,
       canvasData,
     })
-    // PR4（I-8）：状态行显示「已保存 HH:mm」。只在真正落库成功后打点——
-    // 失败路径（含 demo mode 吞异常）不打点，否则会显示一个假的成功时间。
-    lastSavedAt.value = Date.now()
+    // 只在真正落库成功后清失败位——失败路径（含 demo mode 吞异常）不进这里
+    saveFailed.value = false
   } catch {
     // demo mode
+    saveFailed.value = true
   } finally {
     saving.value = false
   }
@@ -5072,17 +5073,14 @@ onUnmounted(() => {
             />
           </Panel>
 
-          <!-- IA v3.1：移动端画布页签顶部胶囊——小地图 + 缩放 + 适应（顶栏正下方）。
-     PR4：小地图开关改走画布设置 minimapExpanded（与 PC 同源、跨端一致、随设置持久化）。 -->
+          <!-- 2026-10-21 用户裁决：移动端视口控件瘦身为单枚 ⤢ 适应画布——
+     双指捏合已覆盖缩放、小地图低频（PC CanvasBottomLeftControls 保留全量）。 -->
           <Panel
             v-if="isMobileLayout && mobileAppTab === 'canvas'"
             position="top-right"
             class="canvas-panel-mobile-top"
           >
-            <MobileCanvasTopControls
-              :minimap-expanded="viewportSettings.minimapExpanded"
-              @toggle-minimap="cycleMinimap"
-            />
+            <MobileCanvasTopControls />
           </Panel>
         </VueFlow>
 
@@ -5268,7 +5266,7 @@ onUnmounted(() => {
       v-if="isMobileLayout"
       :mobile-app-tab="mobileAppTab"
       :saving="saving"
-      :saved-at="lastSavedAt"
+      :save-failed="saveFailed"
       :has-nodes="!!nodes.length"
       :multi-select-active="mobileMultiSelectActive"
       :multi-select-count="multiSelectedIds.length"

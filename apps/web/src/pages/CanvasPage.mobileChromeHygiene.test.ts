@@ -1,6 +1,6 @@
-// 移动端画布视觉与卫生（2026-10-20 PR4 / I-8 / V-1）：
-// ① 视口胶囊令牌全量 --lnk-*（旧体系棘轮只减不增）+ 小地图 160×104 + 同源持久化接线；
-// ② 自动保存状态行存在，且顶栏 ⋯ 菜单不再有「保存画布」；
+// 移动端画布视觉与卫生（2026-10-20 PR4 / I-8 / V-1；2026-10-21 chrome 减法裁决更新）：
+// ① 视口控件 = 单枚 ⤢ 适应画布（缩放±/%、小地图入口已裁——双指捏合覆盖缩放、小地图低频）；
+// ② 自动保存状态行 = 静默成功只报异常（失败红胶囊可点重试），顶栏 ⋯ 菜单无「保存画布」；
 // ③ ⋯ 菜单按频次重排 + 导出带二级（轻量包）；
 // ④ 三个零引用死代码文件确已删除。
 // jsdom 不计算样式 ⇒ 令牌与尺寸走源码静态契约（同 hitTarget.test.ts 模式）。
@@ -29,31 +29,37 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
   // 以下「移动端子组件接线」断言改读壳层源码（CanvasPage 仅委托该壳层）。
   const shell = readComponent('mobile/MobileCanvasShell.vue')
 
-  it('视口胶囊：零 --neo-*，小地图 160×104，遮罩走 accent 令牌', () => {
+  it('视口控件：单枚 ⤢ 适应画布，零 --neo-*，令牌走 --lnk-*', () => {
     expect(topControls).not.toContain('--neo-')
+    expect(topControls).toContain('aria-label="适应画布"')
+    expect(topControls).toContain('fitView')
     expect(topControls).toContain('var(--lnk-surface-overlay)')
     expect(topControls).toContain('var(--lnk-border-subtle)')
-    expect(topControls).toContain('var(--lnk-accent-subtle)')
-    expect(topControls).toMatch(/width:\s*160px/)
-    expect(topControls).toMatch(/height:\s*104px/)
-    // 旧的 132×88 不得残留
-    expect(topControls).not.toMatch(/width:\s*132px/)
   })
 
-  it('小地图开关与 PC 同源（画布设置 minimapExpanded），不用组件本地态', () => {
-    expect(topControls).toContain("emit('toggle-minimap')")
-    expect(topControls).not.toMatch(/const showMap = ref\(/)
+  it('视口减法（2026-10-21 裁决）：缩放 ±/% 与小地图入口不得回潮', () => {
+    // 小地图：组件不再引用 MiniMap，CanvasPage 不再传开关接线
+    expect(topControls).not.toContain('MiniMap')
+    expect(topControls).not.toContain('toggle-minimap')
     const panel = page.match(/<MobileCanvasTopControls[\s\S]*?\/>/)?.[0] ?? ''
-    expect(panel).toContain(':minimap-expanded="viewportSettings.minimapExpanded"')
-    expect(panel).toContain('@toggle-minimap="cycleMinimap"')
+    expect(panel, '必须能定位视口控件开标签').toContain('<MobileCanvasTopControls')
+    expect(panel).not.toContain('minimap-expanded')
+    expect(panel).not.toContain('@toggle-minimap')
+    // 缩放：±/% 是 PC 心智，移动端双指捏合已覆盖
+    expect(topControls).not.toContain('zoomBy')
+    expect(topControls).not.toContain('zoomPercent')
+    // 有效性配对：PC 端全量视口工具仍在（cycleMinimap 仍有消费方）
+    expect(page).toContain('@cycle-minimap="cycleMinimap"')
   })
 
-  it('自动保存状态行：存在且接 saving/savedAt；顶栏菜单不再有「保存画布」', () => {
+  it('自动保存状态行：静默成功只报异常（接 saving/failed）；顶栏菜单不再有「保存画布」', () => {
     // PR5（D-9）：移动端编排迁入 MobileCanvasShell，CanvasPage 仅以 v-if="isMobileLayout" 委托
     expect(page, 'CanvasPage 必须委托移动端壳层').toContain('<MobileCanvasShell')
     const status = shell.match(/<MobileSaveStatus[\s\S]*?\/>/)?.[0] ?? ''
     expect(status, '壳层必须渲染 MobileSaveStatus').toContain(':saving="saving"')
-    expect(status).toContain(':saved-at="savedAt"')
+    expect(status).toContain(':failed="saveFailed"')
+    // 成功时间戳已随「已保存 HH:mm」胶囊退役，不得回潮
+    expect(status).not.toContain('saved-at')
     // 多选态不出状态行（与动作条抢同一条底部清位）
     expect(status).toContain('!multiSelectActive')
     const topBarCode = stripComments(topBar)
@@ -68,13 +74,25 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     expect(topBarTag).not.toContain('@save=')
   })
 
-  it('保存时间只在真正落库成功后打点（不在 finally 的失败路径）', () => {
+  it('保存失败置位 / 成功清位：saveFailed 只在 api.put 失败路径点亮', () => {
     const save = page.match(/async function saveCanvas\(\)[\s\S]*?\n}/)?.[0] ?? ''
     const putAt = save.indexOf('await api.put(')
-    const stampAt = save.indexOf('lastSavedAt.value = Date.now()')
+    const clearAt = save.indexOf('saveFailed.value = false')
     expect(putAt, 'saveCanvas 里应有 api.put').toBeGreaterThan(0)
-    expect(stampAt, '打点应存在').toBeGreaterThan(putAt)
-    expect(save.slice(putAt, stampAt)).not.toContain('catch')
+    expect(clearAt, '成功路径应清失败位').toBeGreaterThan(putAt)
+    // 清位不得落在 catch 里（否则失败也显示成功）
+    expect(save.slice(putAt, clearAt)).not.toContain('catch')
+    // 失败路径必须置位
+    expect(save).toContain('saveFailed.value = true')
+  })
+
+  it('顶栏积分胶囊已撤出（对话/画布双页）', () => {
+    const topBarCode = stripComments(topBar)
+    expect(topBarCode).not.toContain('bar-points')
+    expect(topBarCode).not.toContain('pointsText')
+    // 有效性配对：顶栏仍有真实入口（对话页新建卡 / 画布页 ⋯ 菜单）
+    expect(topBarCode).toContain('create-card--bar')
+    expect(topBarCode).toContain('画布管理菜单')
   })
 
   it('⋯ 菜单按频次重排 + 导出二级（完整包 / 轻量包）', () => {
@@ -264,23 +282,33 @@ describe('根容器 dvh：100vh 不得回潮（真机走查 2026-10-20）', () =
   })
 })
 
-describe('MobileSaveStatus 行为', () => {
-  it('保存中 → 文案「保存中…」且禁用；否则显示已保存时刻', () => {
-    const saving = mount(MobileSaveStatus, { props: { saving: true, savedAt: null } })
-    expect(saving.find('.mss-label').text()).toBe('保存中…')
-    expect(saving.find('button').attributes('disabled')).toBeDefined()
-    saving.unmount()
-
-    const done = mount(MobileSaveStatus, { props: { saving: false, savedAt: new Date(2026, 0, 2, 15, 4).getTime() } })
-    expect(done.find('.mss-label').text()).toBe('已保存 15:04')
-    expect(done.find('button').attributes('disabled')).toBeUndefined()
-    done.unmount()
+describe('MobileSaveStatus 行为（2026-10-21：静默成功只报异常）', () => {
+  it('成功态（非 saving 非 failed）零渲染', () => {
+    const idle = mount(MobileSaveStatus, { props: { saving: false, failed: false } })
+    expect(idle.find('button').exists()).toBe(false)
+    idle.unmount()
   })
 
-  it('点按 → emit save（能力不删，只是不再占菜单一位）', async () => {
-    const w = mount(MobileSaveStatus, { props: { saving: false, savedAt: 1 } })
-    await w.find('button').trigger('click')
-    expect(w.emitted('save')).toHaveLength(1)
-    w.unmount()
+  it('保存中 → 仅呼吸点（无文字胶囊）且禁用', () => {
+    const saving = mount(MobileSaveStatus, { props: { saving: true, failed: false } })
+    expect(saving.find('button').attributes('disabled')).toBeDefined()
+    expect(saving.find('.mss-dot').exists()).toBe(true)
+    expect(saving.find('.mss-label').exists()).toBe(false)
+    saving.unmount()
+  })
+
+  it('失败 → 红胶囊「未保存 · 点按重试」，点按 emit save（重试能力保留）', async () => {
+    const failed = mount(MobileSaveStatus, { props: { saving: false, failed: true } })
+    expect(failed.find('.mss-label').text()).toBe('未保存 · 点按重试')
+    expect(failed.find('button').attributes('disabled')).toBeUndefined()
+    await failed.find('button').trigger('click')
+    expect(failed.emitted('save')).toHaveLength(1)
+    failed.unmount()
+  })
+
+  it('失败优先于保存中（失败 + saving 同现时仍显失败胶囊，不吞重试入口）', () => {
+    const both = mount(MobileSaveStatus, { props: { saving: true, failed: true } })
+    expect(both.find('.mobile-save-status').classes()).toContain('is-failed')
+    both.unmount()
   })
 })

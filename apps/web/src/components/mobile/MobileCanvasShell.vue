@@ -76,9 +76,9 @@ export interface MobileShellBatchActions {
 const props = defineProps<{
   /** 页签——共享真源在 CanvasPage，壳层只接收渲染 */
   mobileAppTab: MobileAppTab
-  /** 自动保存状态行 */
+  /** 自动保存状态行（2026-10-21 改版：静默成功只报异常） */
   saving: boolean
-  savedAt: number | null
+  saveFailed: boolean
   /** 空画布呼吸引导用 */
   hasNodes: boolean
   /** 多选动作条 */
@@ -252,11 +252,12 @@ onUnmounted(() => stopMobileTaskPolling())
     @export-workflow-light="onExportPack([], 'lightweight')"
     @open-tasks="showMobileTaskSheet = true"
   />
-  <!-- PR4（I-8）：自动保存状态行——替掉顶栏「保存画布」菜单项；多选态不出（与动作条抢位） -->
+  <!-- 2026-10-21：自动保存状态行——静默成功只报异常（失败红胶囊可点重试，保存中仅呼吸点）；
+       多选态不出（与动作条抢位） -->
   <MobileSaveStatus
     v-if="mobileAppTab === 'canvas' && !multiSelectActive"
     :saving="saving"
-    :saved-at="savedAt"
+    :failed="saveFailed"
     @save="onSave"
   />
   <DiscoverPane v-if="mobileAppTab === 'discover'" @goto-canvas="onDiscoverGotoCanvas" />
