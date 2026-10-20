@@ -1,6 +1,6 @@
 # 移动端画布页 UI/UX 重构设计方案
 
-> 状态：**已批准（2026-10-19）— PR1~PR5 代码全部合并上线**；PR1+PR2（#490）、PR3 多选与 dock（#495）、PR4 视觉与卫生（#497）、PR5 壳层抽取（#500）均已上线，PC 端形态零变更。**§8 真机走查仍欠**（合并上线 ≠ 验收完成）；另留 PC「保存画布」菜单项清理（冗余，但需先补状态行再摘）待独立 PR
+> 状态：**已批准（2026-10-19）— PR1~PR5 代码全部合并上线**；PR1+PR2（#490）、PR3 多选与 dock（#495）、PR4 视觉与卫生（#497）、PR5 壳层抽取（#500）+ 收尾（#502）均已上线，PC 端形态零变更。**代码项已无缺口**；未落地条目与裁决状态见 §6.5（PC 工具条底部化 ⏸待裁决、形态×能力集拆分 ⛔被配对方案阻塞）。**§8 真机走查仍欠**（合并上线 ≠ 验收完成）
 > 范围：**≤767px 画布页签的页面结构 / 操作按钮 / 手势模型 / 视觉规范 / 架构分层**。PC 端形态不动。
 > 上游：IA v3.2（PR #478，#482）+ [移动端 Composer/画布/SSE 边界规格](../superpowers/specs/2026-10-17-mobile-composer-sse-boundary-design.md)（composer 条形态已定稿，本方案不改其内部）
 > 配对：[移动端对话页 UI/UX 优化设计方案](./2026-10-19-mobile-conversation-ux-redesign.md)（同批；共享 `useLongPress` / `--lnk-hit-min` / 断点「形态 × 能力」拆分，两份的 D 编号互相引用）
@@ -308,8 +308,8 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 **需要重构（三层）**：
 
 1. **移动端壳层**——新增 `apps/web/src/components/mobile/MobileCanvasShell.vue`：
-   - 拥有：MobileTopBar/MobileTabBar 编排、＋FAB、新建 sheet、多选动作条、任务动态项、空态
-   - CanvasPage 只保留画布世界（VueFlow + 各 overlay + dock），以 props/插槽与壳交互
+   - 拥有：MobileTopBar/MobileTabBar 编排、＋FAB、新建 sheet、多选动作条、任务动态项
+   - CanvasPage 保留画布世界（VueFlow + 各 overlay + dock），以 props/插槽与壳交互；**画布世界 overlay（含视口胶囊、空态 `mobile-canvas-empty`）按此归 CanvasPage**——它们依赖 VueFlow 内部定位（胶囊包在 `<Panel>` 内、空态是 canvasArea 内 `absolute inset:0`），而壳层挂在画布外的 fixed 层，搬入会破坏定位
    - 消灭 CanvasPage 模板内 8+ 处 `isMobileLayout` 分支（收敛为壳边界一处）
 2. **手势配置层**——新增 `useViewportGestures(isMobileLayout)`（或 computed props）：
    - 单一出处产出 VueFlow 的 `panOnDrag / selectionKeyCode / zoomOnPinch / panOnScroll`
@@ -328,27 +328,49 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 
 - 壳层已落地 `apps/web/src/components/mobile/MobileCanvasShell.vue`（约 400 行），CanvasPage 以 `v-if="isMobileLayout"` 单点委托；`isMobileLayout` 分支由 **31 处降至 20 处**。
 - **偏差 1：共享状态真源仍留在 CanvasPage**（`mobileAppTab` / `mobileCanvasView` / `mobileCanvasImm` 被 `AgentSideRail`、`mobileStudioDockOpen`、`focusNodeById`、`pickMode` watch 共用）⇒ 壳层经**函数式 actions prop**（`agentActions` / `batchActions` / `onTabChange` …）触发本页逻辑、**不回写共享状态**；未使用插槽——壳层自行渲染其子组件，无内容需回传。
-- **偏差 2：空态 `mobile-canvas-empty` 与 VueFlow 内胶囊 `MobileCanvasTopControls` 仍留在 CanvasPage**——二者依赖 VueFlow 内部定位（胶囊包在 `<Panel>` 内、空态 absolute 在 canvasArea 内），搬出壳层会破坏定位；**留待后续定位重构**。
+- **形态归属（已按规格归位，非偏差）**：空态 `mobile-canvas-empty` 与 VueFlow 内胶囊 `MobileCanvasTopControls` 属**画布世界 overlay**，由 CanvasPage 承载——二者依赖 VueFlow 内部定位（胶囊包在 `<Panel>` 内、空态是 canvasArea 内 `absolute inset:0`），而壳层挂在画布外的 fixed 层。本节首条「拥有」清单已据此移除「空态」，使规格与实现自洽。
 - 残余 20 处 `isMobileLayout` 全部**非移动端编排**。口径 = CanvasPage 内出现次数（**脚本 8 + 模板 12**）：PC 自身门控 6（模板）／画布世界 4（模板：画布 veil 类、VueFlow 内胶囊、空态、非画布页签时隐藏画布）／共享状态真源消费 3（`mobileStudioDockOpen`、pickMode watch、AgentSideRail `:mobile`）／脚本内行为分流 4（定位⇒纯画布满屏 ADR-0011 ×2、拾取⇒显式进画布、PC 才自动开面板）／壳层唯一挂载点 1／composable 取用与返回 2。
 
-**PR5 收尾修复（#502）——壳层抽取带出的一个真实缺陷**：
+**PR5 收尾修复（#502）——壳层抽取带出的一个类型层缺陷（**非**运行时功能回归）**：
 
 - `MobileShellBatchActions.download` 曾被声明为 `() => void`，而 `MobileMultiSelectBar` 的
-  `download` 事件**带 mode 载荷**（`full_package` / `lightweight` / `media_list_only`）⇒ 壳层类型上
-  把载荷丢了，移动端「轻量包 / 媒体清单」**静默退化成默认完整包**（`handlePackageDownload` 的
-  `mode` 形参收不到值 ⇒ 落回默认参数 `full_package`）。已改为显式透传 `$event` 并补齐三值联合
-  类型；`layout` / `groupColor` / `blockedHint` 三个带载荷事件同步改为显式 `$event`。
-- 教训：这类「声明无参 + 实际带载荷」的错配在 TS 里**不报错**（多余实参合法）⇒ 只能靠静态契约
-  拦，已加进 `CanvasPage.mobileSelectionWiring.test.ts`。
+  `download` 事件**带 mode 载荷**（`full_package` / `lightweight` / `media_list_only`）。已改为显式
+  透传 `$event` 并补齐三值联合类型；`layout` / `groupColor` / `blockedHint` 三个带载荷事件同步
+  改为显式 `$event`。
+- ⚠️ **事实校正（2026-10-20 上线后逐环核对）**：这**不是**运行时载荷丢失，线上从未「静默退化成默认
+  完整包」。已上线版本的实参链路是通的——`MobileMultiSelectMoreSheet` `emit('download', mode)` →
+  `MobileMultiSelectBar` `@download="emit('download', $event)"` → 壳层 `@download="batchActions.download"`
+  （Vue 编译后把 emit 实参透传给 handler）→ bridge `download: handlePackageDownload` →
+  `handlePackageDownload(mode)` → `exportWorkflowPackage({ exportMode: mode })`。
+  原声明 `() => void` 只是**类型层不精确**：TS 允许把「形参更少」的函数赋给 `() => void`（多余实参合法），
+  既不报错也不影响实参传递。修正的价值在于类型准确 + 可被静态契约钉死。
+- 教训：这类「声明无参 + 实际带载荷」的错配**不产生任何运行时症状** ⇒ 判断「是否真丢载荷」必须沿
+  emit→handler 逐环看实参，不能只看接口声明；已加进 `CanvasPage.mobileSelectionWiring.test.ts`。
 - 另摘除壳层两个未被使用的死 prop（`mobileCanvasView` / `mobileCanvasImm`）：共享状态真源仍在
   CanvasPage，壳层只订阅真正用到的 `mobileAppTab`。
+- 治理守卫（`CanvasPage.mobileChromeHygiene.test.ts`）：CanvasPage 零直接渲染移动端子组件、壳层自身零
+  `isMobileLayout`、壳层零 `--neo-*`——把 AGENTS.md「移动端呈现」第 1 条从约定变成机器判据。
 
 ### 6.2 isMobileLayout 治理规则（写入 AGENTS.md 前端节）
 
 - 移动端**编排**只归 `MobileCanvasShell` 一个所有者；页面级组件不再新增 `isMobileLayout` 条件
-- 组件内局部响应式差异允许 `useAgentMobileLayout()`，但**禁止在 PC 组件内新增 767px media query 补丁**（现存三处：DockStudioToolbar 清位、CanvasRefPickOverlay、AgentSideRail——随本次重构评估前两处能否上收壳层）
-- 断点语义与配对方案（对话页 D-7）同一次改造：`useAgentMobileLayout` 从「一个 767px 布尔」拆为**形态**（`conversation / canvas-window / canvas-full`）× **能力集**（`longPress / hover / finePointer / keyboardHint`）两个维度；画布页的手势分流（D-3）消费「形态」，触控降级（D-6/D-7）消费「能力集」
+- 组件内局部响应式差异允许 `useAgentMobileLayout()`，但**禁止在 PC 组件内新增 767px media query 补丁**（**评估已完成，见下**）
 - 新增移动端专用呈现必须落 `components/mobile/` 或 `*Mobile*` 命名，与 PC 组件对望
+
+**media query 上收评估结论（2026-10-20 代码级复核）**：本方案点名的三处**已无 767px media query**——
+`DockStudioToolbar`（清位）与 `AgentSideRail`（composer/抽屉）均已改用 `useAgentMobileLayout()` composable
+（AGENTS.md 允许的「组件内局部响应式差异」通道），`CanvasRefPickOverlay` 已不含任何断点分支。全仓仅剩一处
+`@media (max-width: 767px)`，在 `styles/neo-node.css`（PR1 触控适配：`-webkit-touch-callout: none` /
+`user-select: none` / 44px 画布空间热区）——该类效果**只能由 CSS 承载**（JS 无法设置
+`-webkit-touch-callout`），且断点值与 `design-tokens.css` 的 `--lnk-bp-mobile: 767px` 一致（media query
+不支持 CSS 变量，只能硬编码同一数值）。结论：**禁令未被违反，亦无需再上收**；三处 legacy 标记按 AGENTS.md
+留在「历史遗留，随各自下次改动上收」。
+
+- ⛔ **未落地（被阻塞，见 §6.5）**：断点语义与配对方案（对话页 D-7）**同一次改造**——`useAgentMobileLayout`
+  从「一个 767px 布尔」拆为**形态**（`conversation / canvas-window / canvas-full`）× **能力集**
+  （`longPress / hover / finePointer / keyboardHint`）两个维度；画布页的手势分流（D-3）消费「形态」，
+  触控降级（D-6/D-7）消费「能力集」。**要求保留，但本轮不实施**——能力集 composable 属配对《对话页方案》
+  PR4，而该方案仍是 `Draft — 待评审`；只拆形态侧会留下没有消费者的半成品。
 
 ### 6.3 令牌收敛
 
@@ -367,6 +389,20 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 | 与配对方案（对话页）改动交叉 | 共享三件事只写一份：`useLongPress`、`--lnk-hit-min`、断点拆分；两份方案的 PR5 合成 `MobileAppShell` 时对齐 |
 | 回退 | 每 PR 独立分支；P0 修复可单独 revert；壳层重构前保持旧竖轨代码一版 |
 
+### 6.5 未落地的规格条目与裁决状态（2026-10-20）
+
+本方案**代码项已全部上线**（PR1~PR5 + #502 收尾，均含生产取证）。下列条目**不是漏做**，而是各自有
+阻塞或与规格其他条款冲突，在此登记裁决状态以免被误当作「已完成」：
+
+| 条目 | 出处 | 状态 | 理由与建议 |
+|---|---|---|---|
+| PC `MultiSelectToolbar` 底部化改造 | §6.1③「清除 PC 组件内 hover 依赖」 | ⏸ **待裁决（规格内部冲突）** | 本方案范围行（与配对方案）两处写明「**PC 端形态不动**」，而 §6.1③ 要改 PC 工具条的呈现方式 ⇒ 两条自相矛盾。代码现状：PC 工具条仍是**选区锚定**浮条（`MultiSelectToolbar` 走 `screenPosition` 绝对定位），未底部化。§6.1③ 的另两项（dock 收缩态 tap 化、竖轨摘除）均已上线。**建议**：要么明确豁免范围行、单独立项评审 PC 形态变更；要么把 §6.1③ 该项移出本方案。移动端工具条已底部化（`MobileMultiSelectBar`），故 mobile 侧无缺口。 |
+| `useAgentMobileLayout` 拆「形态 × 能力集」 | §6.2 第 3 条 | ⛔ **被阻塞** | 能力集 composable 属配对《移动端对话页 UI/UX 优化设计方案》**PR4**，而该方案仍是 `Draft — 待评审`（未批准）。只拆形态侧会留下无消费者的半成品，且两份方案要求「共享三件事只写一份」。**建议**：对话页方案评审通过后，按其 PR1→PR4 顺序推进，PR5「壳层合并」时与本方案合流出 `MobileAppShell`，届时一并对齐断点拆分。 |
+
+另记：PC「保存画布」菜单项（`CanvasFloatingChrome`）确认**功能上冗余**（`saveCanvas` 已由数十处 watch /
+出图 / 拖节点 / undo-redo 自动触发，每次编辑自动落库；移动端 PR4 已改用状态行），但它是 PC 端**唯一可见的
+存储指示**，摘除需先补 PC 状态行。因涉及 PC 形态，同属上表第一项的裁决范畴。
+
 ---
 
 ## 7. 分期实施计划
@@ -377,7 +413,7 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 | **PR2 新建收敛** | 摘除移动端竖轨；＋FAB + 新建 sheet；资产库/任务/设置入口收敛；空态 | PR1 | 走查表入口 6 项 | ✅ #490 |
 | **PR3 多选与 dock** | 多选底部动作条 + 更多 sheet；dock 收缩态 tap 化 + 工具行滚动；批量进度卡移动端尺寸 | PR1 | 走查表多选 7 项 | ✅ #495 |
 | **PR4 视觉与卫生** | 视口胶囊令牌迁移；自动保存状态行；⋯ 菜单重排；删死代码；AGENTS.md isMobileLayout 治理规则 | PR2/3 | design-token.test.ts + 走查表视觉 6 项 | ✅ #497 |
-| **PR5 壳层重构** | MobileCanvasShell 抽取；CanvasPage 分支收敛；media query 上收评估 | PR2-4 | 全量回归 + PC 零 diff 走查 | ✅ #500 |
+| **PR5 壳层重构** | MobileCanvasShell 抽取；CanvasPage 分支收敛；media query 上收评估 | PR2-4 | 全量回归 + PC 零 diff 走查 | ✅ #500 + 收尾 #502 |
 
 每 PR 完必须真机走查（iOS Safari + Android Chrome 各一轮），遵循 `docs/agent/delivery.md` 分支纪律。
 
