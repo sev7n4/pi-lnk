@@ -210,22 +210,43 @@ const { isMobileLayout } = useAgentMobileLayout()
 
 const panelTeleported = computed(() => floating.value || isMobileLayout.value)
 
-/* ---- 移动端贴底容器高度发布（studio dock 避让用）----
- * DockStudioToolbar 在移动端画布视图需要抬高到本容器之上（否则 dock 与 SSE 流/裸条重叠），
- * 它消费 --lnk-agent-dock-h；这里用 ResizeObserver 把容器实测高度发布为该变量——
- * 键盘弹出、参数行展开、系统层(状态行/插话选项)出现等高度变化自动跟随，不写魔法数。
- * 桌面端不观测（变量恒 0），dock 维持 bottom-3 原位。 */
+/* ---- 移动端贴底裸条高度发布（studio dock / 底部锚定元素避让用）----
+ * 消费者：DockStudioToolbar（移动端）、MobileCanvasCreateFab、MobileSaveStatus、
+ * MobileMultiSelectBar、SelectionBatchProgressCard —— 它们要避让的是**底部那条
+ * 裸条**（composer 表面），不是整个贴底容器。
+ * ⚠️ 2026-10-21 真机走查：原先发布的是「贴底容器」实测高度——画布视图里容器高度
+ * 不可靠（实测 0），⇒ 所有底部锚定元素集体下移，与裸条**同位互压**（＋FAB 被盖掉
+ * 一半、只剩一个紫色月牙）。改为直接实测裸条本身：裸条是画布视图底部唯一真实表面，
+ * 隐藏时（沉浸态 / dock 展开）高度 0 ⇒ 清位公式自动归位。 */
 const panelShellRef = ref<HTMLElement | null>(null)
+const bareBarRef = ref<HTMLElement | null>(null)
 let mobileDockRO: ResizeObserver | null = null
+function publishMobileDockHeight(height: number) {
+  document.documentElement.style.setProperty(
+    '--lnk-agent-dock-h',
+    `${Math.max(0, Math.round(height))}px`,
+  )
+}
 function ensureMobileDockRO() {
   if (!isMobileLayout.value || mobileDockRO) return
   mobileDockRO = new ResizeObserver((entries) => {
     const height = entries[0]?.contentRect.height ?? 0
-    document.documentElement.style.setProperty('--lnk-agent-dock-h', `${Math.max(0, Math.round(height))}px`)
+    publishMobileDockHeight(height)
   })
   // 移动端首载时 watch(immediate) 先于模板挂载，ref 可能还是 null ⇒ onMounted 再兜底补挂
-  if (panelShellRef.value) mobileDockRO.observe(panelShellRef.value)
+  if (bareBarRef.value) mobileDockRO.observe(bareBarRef.value)
+  else if (panelShellRef.value) mobileDockRO.observe(panelShellRef.value)
 }
+watch(
+  () => bareBarRef.value,
+  (el) => {
+    if (!isMobileLayout.value || !mobileDockRO || !el) return
+    mobileDockRO.disconnect()
+    mobileDockRO.observe(el)
+    publishMobileDockHeight(el.getBoundingClientRect().height)
+  },
+  { immediate: true },
+)
 watch(isMobileLayout, (mobile) => {
   if (mobile) {
     ensureMobileDockRO()
@@ -239,6 +260,7 @@ onMounted(ensureMobileDockRO)
 onUnmounted(() => {
   mobileDockRO?.disconnect()
   mobileDockRO = null
+  publishMobileDockHeight(0)
 })
 
 const asidePanelWidth = computed(() => {
@@ -1873,6 +1895,25 @@ const mobileBarIdle = computed(
     mobileBarShape.value === 'idle' &&
     !composerExpanded.value &&
     !holdActive.value,
+)
+
+/**
+ * 空闲条文案按**能力**降级（2026-10-21 真机走查：用户报「按住说话不可用」）。
+ * 语音识别走 Web Speech API（webkitSpeechRecognition）——国内 Android Chrome
+ * 依赖 Google 语音服务，多数机型直接不可用；此前条上恒写「按住说话」，
+ * 等于承诺一件做不到的事（长按 300ms 后静默失败、零反馈）。
+ * ⇒ 不支持时只承诺「点按输入」，且失败由 speech.errorText 显式提示。
+ */
+const mobileBarIdleHint = computed(() =>
+  speech.supported ? '按住说话 · 点按输入' : '点按输入',
+)
+
+/** 识别失败必须可见（此前 onerror 静默 stop：像坏了，不像不支持） */
+watch(
+  () => speech.errorText.value,
+  (text) => {
+    if (text) ElMessage.warning(text)
+  },
 )
 
 /* ---- P1-5.3 条级手势（P2-2.2 Task 13 完整版）----
@@ -4496,6 +4537,7 @@ defineExpose({
                    内部经 CSS 摊平为 [芯片行?][＋/文本/模型⌄/发送]。系统层（composer-status-line /
                    插话选项）在本条上方；文本直接落条内（无内嵌输入框）；◎ 锚条左顶点。 -->
               <div
+                ref="bareBarRef"
                 class="composer-bare-bar"
                 role="group"
                 aria-label="消息输入"
@@ -4591,7 +4633,7 @@ defineExpose({
                   </button>
                 </div>
                 <!-- P1-5.3 空闲态 affordance：纯 span 提示（非 placeholder）；桌面恒不渲染 -->
-                <span v-if="mobileBarIdle" class="composer-bar-hint">按住说话 · 点按输入</span>
+                <span v-if="mobileBarIdle" class="composer-bar-hint">{{ mobileBarIdleHint }}</span>
               </div>
               <input
                 ref="fileInputRef"
@@ -6198,6 +6240,20 @@ defineExpose({
  *   移动端把 .agent-composer__input-wrap 改 static，让条成为 ○ 的包含块）。 */
 .composer-bare-bar {
   display: contents;
+}
+
+/* 2026-10-21 画布视图（窗态）收敛——真机走查：两个「＋」同屏 + 同位互压
+ * （＋FAB 被裸条盖掉一半，只剩紫色月牙；条内 ＋ 与 FAB 语义不同却长得一样）。
+ * ① 条左移出 ＋FAB 的位置（FAB left 12 / 48px ⇒ 条自 68 起），两者并排成一条
+ *    底部操作带（不再叠压）；② **空闲态**隐藏条内 ＋（画布页的引用入口由
+ *    「长按节点 → 加入 Agent 引用」覆盖，同一语义已有），画布页只剩一个 ＋。
+ *    输入态（伸展后）保留 ＋ —— 那时它是「加参考素材」的主入口。 */
+.agent-panel-mobile-dock.is-canvas-view .composer-bare-bar {
+  margin-left: 56px;
+}
+
+.agent-panel-mobile-dock.is-canvas-view .composer-bare-bar.is-idle .agent-attach-menu {
+  display: none;
 }
 
 /* 复合选择器压过模板上的 Tailwind 工具类；仅移动端 shell 内生效。

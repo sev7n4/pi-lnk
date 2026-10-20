@@ -193,14 +193,24 @@ describe('移动端底部锚定元素：fixed 贴可见视口（真机走查 202
     ] as const) {
       const block = cssBlock(sfc, sel)
       expect(block, `${name} 必须有样式块`).not.toBe('')
-      // 有效性配对：它确实是底部锚定元素（走清位公式）
-      expect(block, `${name} 须是底部锚定（bottom 走清位公式）`).toContain(
-        'bottom: calc(var(--lnk-agent-dock-h',
+      // 有效性配对：它确实是底部锚定元素（bottom 走清位公式，锚在页签栏之上）
+      expect(block, `${name} 须是底部锚定（bottom 走清位公式）`).toMatch(
+        /bottom: calc\(var\(--lnk-(agent-dock-h|tabbar-h)/,
       )
       expect(block, `${name} 必须 fixed 贴可见视口`).toContain('position: fixed')
       expect(block, `${name} 不得回退 absolute（会掉出可见区）`).not.toContain(
         'position: absolute',
       )
+    }
+    // 2026-10-21：＋FAB 与裸条**并排**（不再叠在裸条上方）⇒ FAB 不再消费
+    // --lnk-agent-dock-h（画布视图里该变量发布的是"贴底容器"高度，不可靠 ⇒ 曾把
+    // FAB 压到裸条上只剩一个月牙）。状态行 / 多选动作条仍需让开裸条 ⇒ 仍消费它。
+    expect(cssBlock(fab, '.mobile-create-fab')).not.toContain('--lnk-agent-dock-h')
+    for (const [name, sfc, sel] of [
+      ['保存状态行', status, '.mobile-save-status'],
+      ['多选动作条', bar, '.mobile-multi-select-bar'],
+    ] as const) {
+      expect(cssBlock(sfc, sel), `${name} 须让开裸条`).toContain('--lnk-agent-dock-h')
     }
   })
 

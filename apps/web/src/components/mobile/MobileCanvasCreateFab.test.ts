@@ -23,11 +23,17 @@ describe('MobileCanvasCreateFab（PR2）', () => {
     expect(w2.find('button').classes()).not.toContain('is-breathing')
   })
 
-  it('契约：48px ≥44px、清位公式含 dock/tabbar/safe-area、:active scale(0.92)', () => {
+  it('契约：48px ≥44px、清位公式锚页签栏（tabbar/safe-area）、:active scale(0.92)', () => {
+    // 剥注释再断言（迁移说明写在注释里是规范，否定断言命中注释 = 假红）
     const sfc = readFileSync(join(here, 'MobileCanvasCreateFab.vue'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
     expect(sfc).toMatch(/width:\s*48px/)
     expect(sfc).toMatch(/height:\s*48px/)
-    expect(sfc).toContain('var(--lnk-agent-dock-h, 0px)')
+    // 2026-10-21 真机走查：FAB 与对话裸条**并排**（裸条左移 56px 让开）⇒ 落位只锚
+    // 页签栏 + 安全区；不再消费 --lnk-agent-dock-h（画布视图里它是"贴底容器"高度，
+    // 实测不可靠 ⇒ 曾把 FAB 压到裸条上、只剩一个紫色月牙）。
+    expect(sfc).not.toContain('var(--lnk-agent-dock-h, 0px)')
     expect(sfc).toContain('var(--lnk-tabbar-h, 0px)')
     expect(sfc).toContain('env(safe-area-inset-bottom, 0px)')
     expect(sfc).toMatch(/\.mobile-create-fab:active\s*\{[^}]*scale\(0\.92\)/)

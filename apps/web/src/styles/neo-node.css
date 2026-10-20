@@ -1351,6 +1351,45 @@
   min-height: 96px;
 }
 
+/* ---- 移动端 studio dock 面板收敛（2026-10-21 真机走查）----
+ * ① 底行溢出：窄屏下模型 chip 压不下，右侧动作组（麦克风 / 积分 / 发送）被推出面板
+ *    被裁掉一半（发送钮只剩半只 ⇒ 点不准）。⇒ 模型选择器允许收缩、动作组不许收缩。
+ * ② 面板过高：提示词输入区沿用 PC 口径 min 96 / max 200，键盘弹起时占掉半屏、
+ *    面板顶到接近屏顶。⇒ 移动端收到 56 / 132（约 2~3 行）。
+ * 作用域限定在 dock 面板（.bottom-toolbar-container），不动对话 composer 的输入区。 */
+@media (max-width: 767px) {
+  .bottom-toolbar-actions {
+    gap: 4px;
+  }
+
+  .bottom-toolbar-actions > * {
+    min-width: 0;
+  }
+
+  /* 模型选择器（首个子项）可收缩，内部 ellipsis 生效，把宽度让给右侧动作组 */
+  .bottom-toolbar-actions > *:first-child {
+    flex: 1 1 120px;
+    overflow: hidden;
+  }
+
+  .bottom-toolbar-actions .ml-auto {
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .bottom-toolbar-container .prompt-input-section {
+    min-height: 56px;
+  }
+
+  .bottom-toolbar-container .input-field,
+  .bottom-toolbar-container .mention-input-field,
+  .bottom-toolbar-container .mention-input-backdrop,
+  .bottom-toolbar-container .mention-input-ghost {
+    min-height: 56px !important;
+    max-height: 132px !important;
+  }
+}
+
 .bottom-toolbar-container .input-field {
   min-height: 96px;
   max-height: 200px;

@@ -14,6 +14,14 @@ const props = defineProps<{
   multiSelectedCount?: number
   /** 移动端（≤767px）：渲染为底部动作 sheet（44px 行高）；PC 保持右键小浮层原样 */
   mobile?: boolean
+  /**
+   * 移动端已进入多选态（2026-10-21 真机走查）：sheet 的「多选」项语义随态变化——
+   * 首次 = 进入多选态；已在多选态 = 把该节点**加入/移出**选区（此前文案恒为「多选」，
+   * 行为却是「重置整份选区」，用户长按第二张图时第一张被取消 ⇒ 多选退化成单选）。
+   */
+  multiSelectActive?: boolean
+  /** 该节点当前是否已在多选选区内（决定「加入」还是「移出」） */
+  multiSelectSelected?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +30,16 @@ const emit = defineEmits<{
 }>()
 
 const visible = ref(true)
+
+/**
+ * 「多选」项文案随态变化（2026-10-21 真机走查）：
+ * 未进多选态 = 「多选」（进入多选态）；已在多选态 = 「加入多选」/「移出多选」
+ * （长按第二张图时**加入**选区，而不是重置整份选区）。
+ */
+const multiSelectLabel = computed(() => {
+  if (!props.multiSelectActive) return '多选'
+  return props.multiSelectSelected ? '移出多选' : '加入多选'
+})
 
 const showUpstreamDuplicate = computed(() => Boolean(props.nodeId))
 
@@ -80,7 +98,7 @@ const sheetItems = computed<SheetItem[]>(() => {
   if (showUpstreamDuplicate.value) {
     items.push({ action: 'duplicate-upstream', label: '新建副本（含上游）', icon: 'duplicate-upstream' })
   }
-  items.push({ action: 'multi-select', label: '多选', icon: 'multi-select' })
+  items.push({ action: 'multi-select', label: multiSelectLabel.value, icon: 'multi-select' })
   items.push({ action: 'delete', label: '删除节点', icon: 'delete', danger: true })
   return items
 })
