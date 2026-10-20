@@ -320,9 +320,11 @@ onUnmounted(() => stopMobileTaskPolling())
     @download="batchActions.download($event)"
     @delete="batchActions.delete"
   />
-  <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet -->
+  <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet。
+       多选态不出：多选动作条接管同一条底部清位（与自动保存状态行同一规则），
+       否则 FAB 与动作条同位互压。 -->
   <MobileCanvasCreateFab
-    v-if="mobileAppTab === 'canvas' && !canvasChromeHidden"
+    v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive"
     :breathe="!hasNodes"
     @click="showMobileCreateSheet = true"
   />

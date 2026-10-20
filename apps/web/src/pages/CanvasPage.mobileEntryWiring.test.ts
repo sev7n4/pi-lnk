@@ -33,10 +33,11 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
     expect(dock).toContain('@history-locate="handleHistoryLocate"')
   })
 
-  it('＋FAB 门控：画布页签 + chrome 未隐藏；呼吸联动空画布', () => {
+  it('＋FAB 门控：画布页签 + chrome 未隐藏；呼吸联动空画布；多选态让位给动作条', () => {
     // PR5（D-9）：＋FAB 迁入 MobileCanvasShell（壳层仅移动端渲染，v-if 不带 isMobileLayout）
+    // 2026-10-20 真机走查：多选态须让位给多选动作条（同一底部清位，与状态行同一规则）
     expect(shell).toMatch(
-      /<MobileCanvasCreateFab\s+v-if="mobileAppTab === 'canvas' && !canvasChromeHidden"/,
+      /<MobileCanvasCreateFab\s+v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive"/,
     )
     expect(shell).toMatch(/:breathe="!hasNodes"/)
   })

@@ -157,8 +157,69 @@ describe('PR5 移动端编排单一所有者（壳层）', () => {
     expect(page).toMatch(/<MobileCanvasShell\s+v-if="isMobileLayout"/)
   })
 
-  it('壳层零 --neo-*（旧体系棘轮只减不增）', () => {
+  it('壳层零 --neo-*（旧体系棘轮只增不减）', () => {
     expect(shell).not.toContain('--neo-')
+  })
+})
+
+/**
+ * 真机走查 2026-10-20 抓到的缺陷类（jsdom 无视口 ⇒ CI 全绿也看不见）：
+ * 移动端底部锚定元素若用 `position: absolute` 贴 **100vh 根容器底边**，
+ * 而页签栏 / 顶栏是 `fixed` 贴**可见视口** —— 移动浏览器带地址栏 + 底部工具条时
+ * 100vh 比可见视口高约 105px（真机实测 804 / 699）⇒ 锚底的 absolute 元素
+ * 整颗掉出可见区（＋FAB 不可见 ⇒ 空态文案「点左下 ＋」成死指引；保存状态行、
+ * 多选动作条同理）。
+ */
+describe('移动端底部锚定元素：fixed 贴可见视口（真机走查 2026-10-20）', () => {
+  const fab = readComponent('mobile/MobileCanvasCreateFab.vue')
+  const status = readComponent('mobile/MobileSaveStatus.vue')
+  const bar = readComponent('mobile/MobileMultiSelectBar.vue')
+  const shell = readComponent('mobile/MobileCanvasShell.vue')
+
+  /** 取某选择器的首个样式块（先剥注释，避免注释里的词命中断言） */
+  function cssBlock(sfc: string, selector: string): string {
+    const clean = stripComments(sfc)
+    const idx = clean.indexOf(`${selector} {`)
+    if (idx < 0) return ''
+    return clean.slice(idx, clean.indexOf('}', idx) + 1)
+  }
+
+  it('＋FAB / 保存状态行 / 多选动作条必须是 fixed，不得回退 absolute', () => {
+    for (const [name, sfc, sel] of [
+      ['＋FAB', fab, '.mobile-create-fab'],
+      ['保存状态行', status, '.mobile-save-status'],
+      ['多选动作条', bar, '.mobile-multi-select-bar'],
+    ] as const) {
+      const block = cssBlock(sfc, sel)
+      expect(block, `${name} 必须有样式块`).not.toBe('')
+      // 有效性配对：它确实是底部锚定元素（走清位公式）
+      expect(block, `${name} 须是底部锚定（bottom 走清位公式）`).toContain(
+        'bottom: calc(var(--lnk-agent-dock-h',
+      )
+      expect(block, `${name} 必须 fixed 贴可见视口`).toContain('position: fixed')
+      expect(block, `${name} 不得回退 absolute（会掉出可见区）`).not.toContain(
+        'position: absolute',
+      )
+    }
+  })
+
+  it('＋FAB 与保存状态行不得同位（曾同 left + 同 bottom ⇒ FAB 压住状态行圆点与首字）', () => {
+    const leftOf = (block: string) => block.match(/left:\s*([\d.]+px)/)?.[1]
+    const fabLeft = leftOf(cssBlock(fab, '.mobile-create-fab'))
+    const statusLeft = leftOf(cssBlock(status, '.mobile-save-status'))
+    expect(fabLeft, 'FAB 贴左边 12px').toBe('12px')
+    expect(statusLeft, '状态行须横向让开 FAB（12 + 48 + 8）').toBe('68px')
+    expect(statusLeft, '二者 left 必须不同').not.toBe(fabLeft)
+  })
+
+  it('多选态不出 ＋FAB（多选动作条接管同一条底部清位）', () => {
+    const fabTag = shell.match(/<MobileCanvasCreateFab[\s\S]*?\/>/)?.[0] ?? ''
+    expect(fabTag, '必须能定位 FAB 开标签').toContain('<MobileCanvasCreateFab')
+    expect(fabTag, '多选态须让位给动作条').toContain('!multiSelectActive')
+    // 有效性配对：保存状态行同一规则（两条底部元素不同时出现）
+    const statusTag = shell.match(/<MobileSaveStatus[\s\S]*?\/>/)?.[0] ?? ''
+    expect(statusTag, '必须能定位状态行开标签').toContain('<MobileSaveStatus')
+    expect(statusTag, '状态行同一让位规则').toContain('!multiSelectActive')
   })
 })
 

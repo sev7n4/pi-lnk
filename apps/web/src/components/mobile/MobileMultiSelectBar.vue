@@ -166,7 +166,9 @@ function onWarning() {
 
 <style scoped>
 .mobile-multi-select-bar {
-  position: absolute;
+  /* ⚠️ fixed（**不是** absolute）：同 ＋FAB / 保存状态行——absolute 贴 100vh 根容器底边，
+     在带浏览器工具条的真机上整条掉出可见区（多选动作条不可见 ⇒ I-6 不可达）。 */
+  position: fixed;
   left: 12px;
   right: 12px;
   bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);

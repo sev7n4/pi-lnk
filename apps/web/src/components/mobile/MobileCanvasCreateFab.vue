@@ -30,7 +30,12 @@ const emit = defineEmits<{
 
 <style scoped>
 .mobile-create-fab {
-  position: absolute;
+  /* ⚠️ fixed（**不是** absolute）：页签栏 / 顶栏都是 fixed 贴**可见视口**，而 absolute 会贴
+     100vh 根容器底边——移动浏览器带地址栏 + 底部工具条时 100vh 比可见视口高约 105px
+     （真机实测：100vh 804px / 可见 699px）⇒ 锚底的 absolute 元素整颗掉出可见区，
+     ＋FAB 直接不可见、空态文案「点左下 ＋」变成死指引。改为 fixed 与页签栏同坐标系，
+     避让公式（dock-h + tabbar-h + safe-area）才真正成立。 */
+  position: fixed;
   left: 12px;
   bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px);
   z-index: 60;
