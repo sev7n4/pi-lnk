@@ -490,7 +490,7 @@ describe('非颜色阶梯', () => {
  *    改渐变 = 动品牌资产；不改 = 渐变末端白字低于 AA。
  *    F-5 已处置：`.btn-primary` 改用实色 `var(--lnk-accent)`（白字压实色紫 ≥4.5 AA 达标），
  *    品牌渐变退为「英雄资产」令牌（`bg-brand-gradient`，见 tailwind.config.js），保留此锁以防其再承载小字白标。
- *    P6 已接入唯一合法消费方：hero 大面（CarouselBanner）垫 bg-dim/25 恒黑层承载白字（下方守卫）。
+ *    唯一合法形态：hero 大面 + dim/25 恒黑层（2026-10-20 P1 起不再绑定具名组件，改为纯令牌级契约）。
  *    真正的取舍记在 Design_system.md F-5。
  */
 describe('品牌锚点', () => {
@@ -510,17 +510,17 @@ describe('品牌锚点', () => {
     ).toBeGreaterThanOrEqual(3)
   })
 
-  it('hero 位（CarouselBanner）：白字压 dim/25 恒黑合成底，全渐变 ≥ AA 4.5', () => {
-    // P6 落地：渐变退为英雄资产后，唯一合法的「白字压渐变」消费方是 hero 大面，
-    // 且必须垫 bg-dim/25 恒黑层。此处与 CarouselBanner.vue 的 bg-dim/25 数值耦合——
-    // 若调整压层强度，必须同步改这里。
+  it('hero 位（未来白字压渐变消费方）：白字压 dim/25 恒黑合成底，全渐变 ≥ AA 4.5', () => {
+    // 品牌渐变退为英雄资产后，唯一合法的「白字压渐变」形态是 hero 大面 + dim/25 恒黑层。
+    // 2026-10-20 P1：中部横幅（CarouselBanner）已移除，本断言从「与组件耦合」升级为
+    // 「纯令牌级契约」—— 未来任何 hero 消费方（如首屏签名画面若改用渐变）都必须满足。
     const dim = [0, 0, 0, 0.25] as [number, number, number, number]
     for (const stop of ['#6d5dfc', '#8a5cf6', '#b45cf0']) {
       const bg = compositeOver(dim, stop)
       const ratio = contrast('#ffffff', bg)
       expect(
         ratio,
-        `白字压 dim/25 × ${stop} 合成底只有 ${ratio.toFixed(2)}:1（hero 压层不足或渐变被改亮）`,
+        `白字压 dim/25 × ${stop} 合成底只有 ${ratio.toFixed(2)}:1（压层不足或渐变被改亮）`,
       ).toBeGreaterThanOrEqual(4.5)
     }
   })

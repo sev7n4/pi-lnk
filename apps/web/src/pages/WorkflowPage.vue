@@ -1,19 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Work } from '@lnkpi/shared'
-import { WORK_CATEGORIES } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { useMySessions } from '@/composables/useMySessions'
 import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
-import CarouselBanner from '@/components/workflow/CarouselBanner.vue'
-import CategoryTabs from '@/components/workflow/CategoryTabs.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import SignatureHero from '@/components/workflow/SignatureHero.vue'
 import type { Session } from '@lnkpi/shared'
@@ -54,32 +51,21 @@ watch(
 
 const prompt = ref('')
 const works = ref<Work[]>([])
-const activeCategory = ref('全部')
+// 2026-10-21 P1：主页只留一行精选（4 张），完整作品流移至 /community。
+// 分类筛选（activeCategory）随之撤出——分类维度由 type 决定，属社区页职责。
+const FEATURED_WORKS_COUNT = 4
 const loading = ref(false)
 const showPublish = ref(false)
 const userSessions = ref<Session[]>([])
-const mySessions = ref<Session[]>([])
-const openMenuId = ref<string | null>(null)
-const sessionSearch = ref('')
-const showAllSessions = ref(false)
-const manageSessions = ref(false)
-const selectedSessionIds = ref<string[]>([])
-const DEFAULT_VISIBLE_SESSIONS = 5
 
-const filteredSessions = computed(() => {
-  const q = sessionSearch.value.trim().toLowerCase()
-  if (!q) return mySessions.value
-  return mySessions.value.filter((s) => (s.title || '未命名画布').toLowerCase().includes(q))
-})
+// 2026-10-21 P1：会话管理逻辑整体迁到 composables/useMySessions.ts，
+// 主页只消费 compact 视图（COMPACT_SESSIONS_COUNT 个 + 「查看全部」→ /canvases）。
+const sessions = useMySessions()
+const COMPACT_SESSIONS_COUNT = 5
 
-const visibleSessions = computed(() => {
-  if (showAllSessions.value || sessionSearch.value.trim()) return filteredSessions.value
-  return filteredSessions.value.slice(0, DEFAULT_VISIBLE_SESSIONS)
-})
+// 精选行：只取最新 4 条。「去发现 →」把完整作品流交给 /community。
+const featuredWorks = computed(() => works.value.slice(0, FEATURED_WORKS_COUNT))
 
-const hasMoreSessions = computed(
-  () => !sessionSearch.value.trim() && filteredSessions.value.length > DEFAULT_VISIBLE_SESSIONS,
-)
 const greeting = getGreeting()
 
 function handlePublishLocateNode(payload: { sessionId: string; nodeId: string }) {
@@ -128,137 +114,14 @@ function getMockWorks(): Work[] {
 async function fetchWorks() {
   loading.value = true
   try {
-    const { data } = await api.get<{ data: { items: Work[] } }>('/works', {
-      params: { category: activeCategory.value === '全部' ? undefined : activeCategory.value },
-    })
+    // 2026-10-21 P1：主页不再有分类筛选（分类维度移至 /community），
+    // 故category 参数整体撤掉，只拉默认最新作品供精选行取用。
+    const { data } = await api.get<{ data: { items: Work[] } }>('/works')
     works.value = data.data.items
   } catch {
     works.value = getMockWorks()
   } finally {
     loading.value = false
-  }
-}
-
-async function fetchMySessions() {
-  if (!auth.isLoggedIn) {
-    mySessions.value = []
-    return
-  }
-  try {
-    const { data } = await sessionsApi.list()
-    mySessions.value = data.data
-  } catch {
-    mySessions.value = []
-  }
-}
-
-function toggleMenu(sessionId: string) {
-  openMenuId.value = openMenuId.value === sessionId ? null : sessionId
-}
-
-function closeMenu() {
-  openMenuId.value = null
-}
-
-function toggleManageSessions() {
-  manageSessions.value = !manageSessions.value
-  selectedSessionIds.value = []
-  closeMenu()
-}
-
-function toggleSessionSelect(sessionId: string) {
-  const set = new Set(selectedSessionIds.value)
-  if (set.has(sessionId)) set.delete(sessionId)
-  else set.add(sessionId)
-  selectedSessionIds.value = [...set]
-}
-
-async function batchDeleteSessions() {
-  if (!selectedSessionIds.value.length) return
-  try {
-    await ElMessageBox.confirm(
-      `确定删除选中的 ${selectedSessionIds.value.length} 个画布？此操作不可恢复。`,
-      '批量删除',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    const { data } = await sessionsApi.removeMany(selectedSessionIds.value)
-    await fetchMySessions()
-    selectedSessionIds.value = []
-    manageSessions.value = false
-    ElMessage.success(`已删除 ${data.data.deleted} 个画布`)
-  } catch {
-    ElMessage.error('批量删除失败，请稍后重试')
-  }
-}
-
-function onDocumentPointerDown(event: PointerEvent) {
-  if (!openMenuId.value) return
-  const target = event.target as HTMLElement
-  if (!target.closest('.session-card-menu-anchor')) closeMenu()
-}
-
-async function renameSession(session: Session) {
-  closeMenu()
-  let value: string
-  try {
-    const result = await ElMessageBox.prompt('输入新的画布名称', '重命名', {
-      inputValue: session.title || '未命名画布',
-      inputPattern: /\S/,
-      inputErrorMessage: '名称不能为空',
-      confirmButtonText: '保存',
-      cancelButtonText: '取消',
-    })
-    value = result.value.trim()
-  } catch {
-    return
-  }
-  if (!value || value === session.title) return
-  try {
-    await sessionsApi.update(session.id, { title: value })
-    await fetchMySessions()
-    ElMessage.success('已重命名')
-  } catch {
-    ElMessage.error('重命名失败，请稍后重试')
-  }
-}
-
-async function duplicateSession(session: Session) {
-  closeMenu()
-  try {
-    const { data } = await sessionsApi.duplicate(session.id)
-    await fetchMySessions()
-    ElMessage.success('已复制副本')
-    router.push(`/workflow/${data.data.id}`)
-  } catch {
-    ElMessage.error('复制失败，请稍后重试')
-  }
-}
-
-async function deleteSession(session: Session) {
-  closeMenu()
-  try {
-    await ElMessageBox.confirm(
-      `确定删除「${session.title || '未命名画布'}」？此操作不可恢复。`,
-      '删除画布',
-      {
-        confirmButtonText: '删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-      },
-    )
-  } catch {
-    return
-  }
-  try {
-    await sessionsApi.remove(session.id)
-    await fetchMySessions()
-    ElMessage.success('已删除')
-  } catch {
-    ElMessage.error('删除失败，请稍后重试')
   }
 }
 
@@ -307,11 +170,6 @@ function viewShare(workId: string) {
   router.push(`/share/${workId}`)
 }
 
-function onCategoryChange(cat: string) {
-  activeCategory.value = cat
-  fetchWorks()
-}
-
 async function openPublish() {
   if (!auth.isLoggedIn) {
     auth.openLogin()
@@ -332,17 +190,16 @@ async function openPublish() {
 
 onMounted(() => {
   fetchWorks()
-  void fetchMySessions()
-  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+  // 组合式内部已在 onMounted 里注册 pointerdown 监听并首fetch，此处只需首拉
+  void sessions.fetch()
 })
 
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
-})
-
-watch(() => auth.isLoggedIn, () => {
-  void fetchMySessions()
-})
+watch(
+  () => auth.isLoggedIn,
+  () => {
+    void sessions.fetch()
+  },
+)
 </script>
 
 <template>
@@ -355,100 +212,47 @@ watch(() => auth.isLoggedIn, () => {
       />
     </section>
 
-    <!-- 我的画布：历史画布 + 新建入口 -->
+    <!-- 我的画布：compact 区（2026-10-21 P1 迁出管理器，完整能力见 /canvases） -->
     <section v-if="auth.isLoggedIn" class="mb-12">
-      <div class="mb-4 flex flex-wrap items-center gap-3">
-        <h2 class="text-lg font-semibold text-[var(--neo-text-primary)]">我的画布</h2>
-        <span v-if="mySessions.length" class="text-xs text-[var(--neo-text-muted)]">{{ filteredSessions.length }} 个</span>
-        <span class="flex-1" />
-        <input
-          v-if="mySessions.length"
-          v-model="sessionSearch"
-          type="search"
-          class="w-44 rounded-lg border border-[var(--neo-border)] bg-[var(--neo-hover-bg)] px-2.5 py-1.5 text-xs outline-none focus:border-[var(--neo-accent-border)]"
-          placeholder="搜索画布..."
-        >
-        <button
-          v-if="mySessions.length"
-          type="button"
-          class="rounded-lg px-2.5 py-1.5 text-xs transition"
-          :class="manageSessions ? 'bg-[var(--neo-hi-bg)] text-[var(--neo-hi-text)]' : 'text-[var(--neo-text-muted)] hover:bg-[var(--neo-hover-bg)]'"
-          @click="toggleManageSessions"
-        >
-          {{ manageSessions ? '完成' : '管理' }}
-        </button>
-        <button
-          v-if="manageSessions && selectedSessionIds.length"
-          type="button"
-          class="rounded-lg bg-danger-bg px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger-bg-hover"
-          @click="batchDeleteSessions"
-        >
-          删除选中 ({{ selectedSessionIds.length }})
-        </button>
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <h2 class="text-lg font-semibold text-fg">我的画布</h2>
+        <RouterLink to="/canvases" class="btn-ghost text-sm">查看全部 →</RouterLink>
       </div>
-      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-        <button
-          v-if="!manageSessions"
-          type="button"
-          class="session-create-card flex aspect-[4/3] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed transition"
-          @click="createCanvas"
-        >
-          <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 4v16m8-8H4" />
-          </svg>
-          <span class="text-xs font-medium">新建画布</span>
-        </button>
+      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         <SessionCard
-          v-for="session in visibleSessions"
+          v-for="session in sessions.visibleSessions(COMPACT_SESSIONS_COUNT)"
           :key="session.id"
-          :session="session"
-          :manage-mode="manageSessions"
-          :selected="selectedSessionIds.includes(session.id)"
-          :menu-open="openMenuId === session.id"
           class="session-card-menu-anchor"
+          :session="session"
+          :menu-open="false"
           @open="openCanvas(session.id)"
-          @toggle-menu="toggleMenu(session.id)"
-          @rename="renameSession(session)"
-          @duplicate="duplicateSession(session)"
-          @delete="deleteSession(session)"
-          @toggle-select="toggleSessionSelect(session.id)"
         />
       </div>
-      <div v-if="hasMoreSessions" class="mt-4 text-center">
-        <button
-          type="button"
-          class="rounded-lg px-4 py-2 text-xs text-[var(--neo-text-muted)] transition hover:bg-[var(--neo-hover-bg)] hover:text-[var(--neo-text-primary)]"
-          @click="showAllSessions = !showAllSessions"
-        >
-          {{ showAllSessions ? '收起' : `查看更多（${filteredSessions.length - DEFAULT_VISIBLE_SESSIONS}）` }}
-        </button>
-      </div>
-      <p v-if="sessionSearch && !filteredSessions.length" class="py-8 text-center text-sm text-[var(--neo-text-muted)]">
-        没有匹配的画布
+      <p
+        v-if="!sessions.mySessions.value.length && !sessions.loading.value"
+        class="py-8 text-center text-sm text-fg-3"
+      >
+        还没有画布，去创建一个吧
       </p>
     </section>
 
-    <section class="mb-10">
-      <CarouselBanner />
-    </section>
-
     <section>
-      <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <CategoryTabs
-          :categories="WORK_CATEGORIES"
-          :model-value="activeCategory"
-          @update:model-value="onCategoryChange"
-        />
-        <button class="btn-ghost text-sm" @click="openPublish">发布作品</button>
+      <div class="mb-4 flex items-center justify-between gap-4">
+        <h2 class="text-lg font-semibold text-fg">社区精选</h2>
+        <RouterLink to="/community" class="btn-ghost text-sm">去发现 →</RouterLink>
       </div>
 
-      <div v-if="loading" class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <div v-for="i in 8" :key="i" class="aspect-video animate-pulse rounded-2xl bg-surface-base" />
+      <div
+        v-if="loading"
+        data-testid="home-featured-row"
+        class="grid grid-cols-2 gap-4 lg:grid-cols-4"
+      >
+        <div v-for="i in 4" :key="i" class="aspect-video animate-pulse rounded-2xl bg-surface-base" />
       </div>
 
-      <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div v-else-if="featuredWorks.length" data-testid="home-featured-row" class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <WorkCard
-          v-for="work in works"
+          v-for="work in featuredWorks"
           :key="work.id"
           :work="work"
           @view-work="viewWork"
@@ -457,6 +261,12 @@ watch(() => auth.isLoggedIn, () => {
           @view-author="viewAuthor"
           @view-share="viewShare"
         />
+      </div>
+
+      <p v-else class="py-8 text-center text-sm text-fg-3">社区还没有作品，去发现看看 →</p>
+
+      <div class="mt-4 flex justify-end">
+        <button class="btn-ghost text-sm" @click="openPublish">发布作品</button>
       </div>
     </section>
 
@@ -469,17 +279,3 @@ watch(() => auth.isLoggedIn, () => {
     />
   </div>
 </template>
-
-<style scoped>
-.session-create-card {
-  border-color: var(--neo-border);
-  background: color-mix(in srgb, var(--neo-hover-bg) 40%, transparent);
-  color: var(--neo-text-muted);
-}
-
-.session-create-card:hover {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 35%, var(--neo-border));
-  background: var(--neo-hover-bg);
-  color: var(--neo-hi-text);
-}
-</style>

@@ -207,7 +207,15 @@ export interface GenerationResult {
   error?: string
 }
 
-export const WORK_CATEGORIES = ['全部', '2026-赛事', '精选作品', '短片', '画布'] as const
+/**
+ * 作品分类 = `Work.type` 维度（真实维度），消费方：`GET /works?category=`。
+ *
+ * 2026-10-21 P1：运营位（'2026-赛事'/'精选作品'）移出分类体系——它们是运营标签
+ * 不是作品维度，混进分类会让筛选项语义漂移。`Work.category` 字段的语义随之改为
+ * **可选合集名**（自由文本），不再参与过滤；发布弹窗改为可选输入。
+ * 存量旧值不做数据迁移（避免动生产数据），历史合集展示走P2 创作者页「系列」分组。
+ */
+export const WORK_CATEGORIES = ['全部', '短片', '画布'] as const
 
 export type WorkCategory = (typeof WORK_CATEGORIES)[number]
 

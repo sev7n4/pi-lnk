@@ -4,6 +4,7 @@ import type { Session } from '@lnkpi/shared'
 import { resolveMediaUrl } from '@/services/api-base'
 import { formatSessionTime } from '@/utils/formatSessionTime'
 import { extractSessionCover } from '@/utils/sessionCover'
+import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 
 const props = defineProps<{
   session: Session
@@ -32,12 +33,12 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
   >
     <label
       v-if="manageMode"
-      class="absolute left-2 top-2 z-20 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-overlay/20 bg-black/50"
+      class="absolute left-2 top-2 z-20 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-overlay/20 bg-dim/50"
       @click.stop
     >
       <input
         type="checkbox"
-        class="h-3.5 w-3.5 accent-[var(--neo-accent)]"
+        class="h-3.5 w-3.5 accent-[var(--lnk-accent)]"
         :checked="selected"
         @change="emit('toggleSelect')"
       >
@@ -50,12 +51,12 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
       <button
         v-if="!manageMode"
         type="button"
-        class="flex h-7 w-7 items-center justify-center rounded-lg bg-black/50 text-fg-2 opacity-0 transition hover:bg-black/70 hover:text-fg group-hover:opacity-100"
+        class="flex h-7 w-7 items-center justify-center rounded-lg bg-dim/50 text-fg-2 opacity-0 transition hover:bg-dim/70 hover:text-fg group-hover:opacity-100"
         :class="{ 'opacity-100': menuOpen }"
         title="更多操作"
         @click="emit('toggleMenu')"
       >
-        <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+        <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="5" cy="12" r="2" />
           <circle cx="12" cy="12" r="2" />
           <circle cx="19" cy="12" r="2" />
@@ -63,22 +64,39 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
       </button>
       <div
         v-if="menuOpen"
-        class="neo-popover absolute right-0 top-full mt-1 min-w-[120px] rounded-xl py-1"
+        class="absolute right-0 top-full mt-1 min-w-[120px] overflow-hidden rounded-xl border border-line-subtle py-1 shadow-lg"
+        style="background: var(--lnk-surface-overlay)"
       >
-        <button type="button" class="neo-popover-item flex w-full px-3 py-2 text-left text-xs" @click="emit('rename')">
+        <button
+          type="button"
+          class="flex w-full px-3 py-2 text-left text-xs text-fg-2 transition hover:bg-hover hover:text-fg"
+          @click="emit('rename')"
+        >
           重命名
         </button>
-        <button type="button" class="neo-popover-item flex w-full px-3 py-2 text-left text-xs" @click="emit('duplicate')">
+        <button
+          type="button"
+          class="flex w-full px-3 py-2 text-left text-xs text-fg-2 transition hover:bg-hover hover:text-fg"
+          @click="emit('duplicate')"
+        >
           复制副本
         </button>
-        <button type="button" class="neo-popover-item flex w-full px-3 py-2 text-left text-xs text-danger" @click="emit('delete')">
+        <button
+          type="button"
+          class="flex w-full px-3 py-2 text-left text-xs text-danger transition hover:bg-hover"
+          @click="emit('delete')"
+        >
           删除
         </button>
       </div>
     </div>
 
-    <button type="button" class="flex h-full w-full flex-col" @click="manageMode ? emit('toggleSelect') : emit('open')">
-      <div class="relative min-h-0 flex-1 overflow-hidden bg-[var(--neo-hover-bg)]">
+    <button
+      type="button"
+      class="session-card-body flex h-full w-full flex-col"
+      @click="manageMode ? emit('toggleSelect') : emit('open')"
+    >
+      <div class="relative min-h-0 flex-1 overflow-hidden bg-surface-sunken">
         <img
           v-if="cover?.kind === 'image' && coverUrl"
           :src="coverUrl"
@@ -93,12 +111,11 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
           preload="metadata"
           class="h-full w-full object-cover"
         />
-        <div v-else class="flex h-full w-full items-center justify-center text-[var(--neo-text-muted)]">
-          <svg class="h-8 w-8 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 2h6m-3-3v6" />
-          </svg>
+        <!-- 无封面兜底：品牌纹样（P1：原为 32px 灰 SVG 占位块，视觉上像加载失败） -->
+        <div v-else class="flex h-full w-full items-center justify-center">
+          <BrandPatternAvatar :seed="session.id" :name="session.title || '画布'" size="lg" />
         </div>
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/70 to-transparent" />
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-dim/70 to-transparent" />
       </div>
       <div class="relative z-[1] -mt-6 px-3 pb-2.5 pt-0">
         <p class="truncate text-[13px] font-medium text-fg group-hover:text-fg">
@@ -112,17 +129,18 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
 
 <style scoped>
 .session-card {
-  border-color: var(--neo-border);
-  background: var(--neo-surface-card, #1a1a1a);
+  border-color: var(--lnk-border-subtle);
+  background: var(--lnk-surface-base);
 }
 
 .session-card:hover {
-  border-color: color-mix(in srgb, var(--neo-hi-text) 28%, var(--neo-border));
+  border-color: color-mix(in srgb, var(--lnk-accent) 28%, var(--lnk-border-subtle));
   box-shadow: var(--lnk-shadow-md);
 }
 
 .session-card-selected {
-  border-color: var(--neo-hi-text);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--neo-hi-text) 40%, transparent);
+  border-color: var(--lnk-accent);
+  background: color-mix(in srgb, var(--lnk-accent-subtle) 60%, var(--lnk-surface-base));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--lnk-accent) 40%, transparent);
 }
 </style>

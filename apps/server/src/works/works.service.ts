@@ -17,7 +17,11 @@ export class WorksService {
     const where: Record<string, unknown> = {}
 
     if (params.category && params.category !== '全部') {
-      where.category = params.category
+      // 分类口径 = Work.type 维度（真实维度），不再读 category 字段。
+      // 2026-10-21 P1：运营位（'2026-赛事'/'精选作品'）移出分类体系；category 字段
+      // 语义改为「可选合集名」，不再是过滤来源。未知值一律落画布维度，
+      // 绝不静默变成「无过滤」——那会把筛选失败伪装成「全部」。
+      where.type = params.category === '短片' ? 'shortfilm' : 'canvas'
     }
     if (params.search) {
       where.title = { contains: params.search }

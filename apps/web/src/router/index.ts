@@ -18,6 +18,12 @@ const router = createRouter({
       component: () => import('@/pages/CanvasPage.vue'),
     },
     {
+      // 2026-10-21 P1：画布管理器从主页迁出（主页只留 compact 区5 个 + 查看全部）
+      path: '/canvases',
+      name: 'canvases',
+      component: () => import('@/pages/CanvasesPage.vue'),
+    },
+    {
       path: '/community',
       name: 'community',
       component: () => import('@/pages/CommunityPage.vue'),
