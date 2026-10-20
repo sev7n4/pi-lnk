@@ -1,6 +1,6 @@
 # 移动端画布页 UI/UX 重构设计方案
 
-> 状态：**已批准（2026-10-19）— 分期实施中**；PR1 触控地基 + PR2 新建收敛已合并上线（master `8e6ec51b`），PR3 多选与 dock 实施中（底部动作条 + 更多 sheet + dock tap 化），PR4-5 按 §7 推进
+> 状态：**已批准（2026-10-19）— PR1~PR5 代码全部合并上线**；PR1+PR2（#490）、PR3 多选与 dock（#495）、PR4 视觉与卫生（#497）、PR5 壳层抽取（#500）均已上线，PC 端形态零变更。**§8 真机走查仍欠**（合并上线 ≠ 验收完成）；另留 PC「保存画布」菜单项清理（冗余，但需先补状态行再摘）待独立 PR
 > 范围：**≤767px 画布页签的页面结构 / 操作按钮 / 手势模型 / 视觉规范 / 架构分层**。PC 端形态不动。
 > 上游：IA v3.2（PR #478，#482）+ [移动端 Composer/画布/SSE 边界规格](../superpowers/specs/2026-10-17-mobile-composer-sse-boundary-design.md)（composer 条形态已定稿，本方案不改其内部）
 > 配对：[移动端对话页 UI/UX 优化设计方案](./2026-10-19-mobile-conversation-ux-redesign.md)（同批；共享 `useLongPress` / `--lnk-hit-min` / 断点「形态 × 能力」拆分，两份的 D 编号互相引用）
@@ -324,6 +324,13 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 - CanvasAssetPanel / CanvasTaskHistoryPanel / DockStudioRouter 面板本体（复用，只换承载容器：弹出 → sheet）
 - 积分 / 订阅 / 资产等服务层
 
+**PR5 落地结果（#500）——与本节有两处有意偏差，已确认为最终形态**：
+
+- 壳层已落地 `apps/web/src/components/mobile/MobileCanvasShell.vue`（约 400 行），CanvasPage 以 `v-if="isMobileLayout"` 单点委托；`isMobileLayout` 分支由 **31 处降至 20 处**。
+- **偏差 1：共享状态真源仍留在 CanvasPage**（`mobileAppTab` / `mobileCanvasView` / `mobileCanvasImm` 被 `AgentSideRail`、`mobileStudioDockOpen`、`focusNodeById`、`pickMode` watch 共用）⇒ 壳层经**函数式 actions prop**（`agentActions` / `batchActions` / `onTabChange` …）触发本页逻辑、**不回写共享状态**；未使用插槽——壳层自行渲染其子组件，无内容需回传。
+- **偏差 2：空态 `mobile-canvas-empty` 与 VueFlow 内胶囊 `MobileCanvasTopControls` 仍留在 CanvasPage**——二者依赖 VueFlow 内部定位（胶囊包在 `<Panel>` 内、空态 absolute 在 canvasArea 内），搬出壳层会破坏定位；**留待后续定位重构**。
+- 残余 20 处 `isMobileLayout` 全部**非移动端编排**：PC 自身门控（8）／画布世界（3）／共享状态真源（3）／壳层唯一挂载点（1）。
+
 ### 6.2 isMobileLayout 治理规则（写入 AGENTS.md 前端节）
 
 - 移动端**编排**只归 `MobileCanvasShell` 一个所有者；页面级组件不再新增 `isMobileLayout` 条件
@@ -352,15 +359,17 @@ S2/S3 与 composer 的互斥沿用现状（`has-studio-dock` ⇒ composer 收）
 
 ## 7. 分期实施计划
 
-| PR | 内容 | 依赖 | 验收 |
-|---|---|---|---|
-| **PR1 触控地基** | P0-1 真机复测 + 手势断点分流；44px 达标（多选条/dock 工具行/节点引用钮/视口胶囊）；长按上下文 sheet（补重命名）；composer 热区微调 | 无 | 走查表 §8 触控 8 项 |
-| **PR2 新建收敛** | 摘除移动端竖轨；＋FAB + 新建 sheet；资产库/任务/设置入口收敛；空态 | PR1 | 走查表入口 6 项 |
-| **PR3 多选与 dock** | 多选底部动作条 + 更多 sheet；dock 收缩态 tap 化 + 工具行滚动；批量进度卡移动端尺寸 | PR1 | 走查表多选 7 项 |
-| **PR4 视觉与卫生** | 视口胶囊令牌迁移；自动保存状态行；⋯ 菜单重排；删死代码；AGENTS.md isMobileLayout 治理规则 | PR2/3 | design-token.test.ts + 走查表视觉 6 项 |
-| **PR5 壳层重构** | MobileCanvasShell 抽取；CanvasPage 分支收敛；media query 上收评估 | PR2-4 | 全量回归 + PC 零 diff 走查 |
+| PR | 内容 | 依赖 | 验收 | 上线 |
+|---|---|---|---|---|
+| **PR1 触控地基** | P0-1 真机复测 + 手势断点分流；44px 达标（多选条/dock 工具行/节点引用钮/视口胶囊）；长按上下文 sheet（补重命名）；composer 热区微调 | 无 | 走查表 §8 触控 8 项 | ✅ #490（与 PR2 同 PR） |
+| **PR2 新建收敛** | 摘除移动端竖轨；＋FAB + 新建 sheet；资产库/任务/设置入口收敛；空态 | PR1 | 走查表入口 6 项 | ✅ #490 |
+| **PR3 多选与 dock** | 多选底部动作条 + 更多 sheet；dock 收缩态 tap 化 + 工具行滚动；批量进度卡移动端尺寸 | PR1 | 走查表多选 7 项 | ✅ #495 |
+| **PR4 视觉与卫生** | 视口胶囊令牌迁移；自动保存状态行；⋯ 菜单重排；删死代码；AGENTS.md isMobileLayout 治理规则 | PR2/3 | design-token.test.ts + 走查表视觉 6 项 | ✅ #497 |
+| **PR5 壳层重构** | MobileCanvasShell 抽取；CanvasPage 分支收敛；media query 上收评估 | PR2-4 | 全量回归 + PC 零 diff 走查 | ✅ #500 |
 
 每 PR 完必须真机走查（iOS Safari + Android Chrome 各一轮），遵循 `docs/agent/delivery.md` 分支纪律。
+
+> ⚠️ **合并上线 ≠ 验收完成**：PR1~PR5 均已合并并完成生产取证，但 **§8 真机走查（触控 8 项 / 入口 6 项 / 多选 7 项 / 视觉 6 项）整体仍欠**——尤其 PR5 的壳层收敛改变了移动端全部编排落点，走查须在移动端真机重跑一轮，不可只凭 CI 绿灯判定通过。
 
 ---
 
