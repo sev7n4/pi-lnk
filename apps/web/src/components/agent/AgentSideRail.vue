@@ -1223,6 +1223,9 @@ const canSubmitComposer = computed(() =>
   Boolean(input.value.trim() || sidebar.pendingAttachments.value.length),
 )
 
+// 流式中是否存在可插话的草稿文本：决定底部按钮临时切回发送态（而非停止态）。
+const composerDraftText = computed(() => Boolean(input.value.trim()))
+
 function addAssetReference(attachment: SidebarAttachment) {
   if (props.readOnly) return
   sidebar.addFromPayload(attachment)
@@ -2036,7 +2039,9 @@ async function cancelActiveStream() {
 async function send() {
   if (isUploading.value) return
   if (agent.isStreaming) {
-    // 底部统一按钮在流式中 = 停止。停止后若有待发消息则自动发出（中止即发，抄 WorkBuddy）。
+    // 流式中若有草稿：底部按钮临时呈发送态，点按 = 与回车等价（挂待发气泡），不中断 turn；
+    // 草稿为空才保留停止语义（中止即发，抄 WorkBuddy）。
+    if (await queueDraftAsPending()) return
     await cancelActiveStream()
     return
   }
@@ -2121,18 +2126,28 @@ async function deliverQueued(intent: QueueIntent): Promise<boolean> {
 }
 
 /**
+ * 流式中把当前草稿挂成待发气泡（不直接投递，动作权留给用户选 steer/followUp）。
+ * 抽取为独立函数，供回车提交与底部按钮两处复用，避免逻辑分叉。
+ * @returns 是否成功挂起（有内容才挂，空草稿返回 false）。
+ */
+async function queueDraftAsPending(): Promise<boolean> {
+  const text = input.value
+  if (!text.trim()) return false
+  input.value = ''
+  queued.value = { text, intent: null, state: 'pending', hint: '' }
+  await nextTick()
+  scrollToBottom(true)
+  return true
+}
+
+/**
  * 输入框回车提交。流式中**不自动投递**，只把消息挂进待选气泡，动作权留给用户：
  * steer（立刻接住）与 followUp（收尾接住）是两种送达时机，不能替他默认选一个。
  * 非流式中走正常发送。底部「停止」按钮走 `send()`，二者分离。
  */
 async function onComposerSubmit() {
   if (agent.isStreaming) {
-    const text = input.value
-    if (!text.trim()) return
-    input.value = ''
-    queued.value = { text, intent: null, state: 'pending', hint: '' }
-    await nextTick()
-    scrollToBottom(true)
+    await queueDraftAsPending()
     return
   }
   await send()
@@ -4672,9 +4687,9 @@ defineExpose({
                   />
                   <DockGenerateButton
                     glyph="send"
-                    :generating="agent.isStreaming"
+                    :generating="agent.isStreaming && !composerDraftText"
                     :disabled="isUploading || (!agent.isStreaming && !canSubmitComposer)"
-                    :title="agent.isStreaming ? '停止生成' : 'Enter 发送 · Shift+Enter 换行'"
+                    :title="agent.isStreaming ? (composerDraftText ? '发送插话' : '停止生成') : 'Enter 发送 · Shift+Enter 换行'"
                     @generate="send"
                   />
                 </div>
