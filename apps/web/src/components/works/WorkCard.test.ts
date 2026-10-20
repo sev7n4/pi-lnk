@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import type { Work } from '@lnkpi/shared'
 import WorkCard from './WorkCard.vue'
 
-// type 只能取 'canvas' | 'shortfilm'（WorkType）
-const work = {
+// type 只能取 'canvas' | 'shortfilm'（WorkType）—— 必须显式标注，
+// 否则对象字面量被推断为 { type: string }，vue-tsc -b 会拒绝传给 Work
+const work: Work = {
   id: 'w_1', title: '星海回响', coverUrl: 'https://cdn/x.jpg', type: 'shortfilm',
   authorId: 'u_1', authorName: '墨行者', likes: 12, views: 340,
   createdAt: '2026-10-01T00:00:00.000Z',
