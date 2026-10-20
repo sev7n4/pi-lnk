@@ -1,0 +1,132 @@
+// 移动端 composer「流式中插话」按钮态（2026-10-20 真机故障回归守卫）。
+//
+// 故障：turn 进行中，用户在 composer 输入了补充文字，底部按钮仍恒为「停止」态，
+// 且点击会停掉整个 turn —— 插话（steer / followUp）这条既有链路与按钮完全脱钩。
+//
+// 本守卫锁**契约**（按钮态 = 流式 × 草稿；send() 按草稿分流），不锁某一行字面量：
+// 换写法仍应通过；回退到「只看 isStreaming」/「先取消后挂起」必须红。
+//
+// ⚠️ **不要用「先全局剥注释再全文扫」**：本组件 230KB，JSDoc 里大量 `/* ... *\/`
+// 与 `//` 片段会让朴素正则把真源码一起吃掉（实测 `:generating` 直接消失 ⇒ 假红）。
+// 改为**按目标结构定点提取**（组件标签块 / 花括号配平函数体），天然不受注释影响。
+// 否定断言一律配有效性断言（防空集假绿，见 AGENTS.md 沙箱假阴性纪律）。
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
+
+/** 花括号配平提取函数/方法全文（含签名）。找不到返回 null。 */
+function fnBody(signature: string): string | null {
+  const start = sfc.indexOf(signature)
+  if (start === -1) return null
+  let depth = 0
+  let opened = false
+  for (let i = start + signature.length; i < sfc.length; i++) {
+    const ch = sfc[i]
+    if (ch === '{') {
+      depth++
+      opened = true
+    } else if (ch === '}') {
+      depth--
+      if (opened && depth === 0) return sfc.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * 提取唯一的 <DockGenerateButton ... /> 自闭合标签块。
+ * 找不到 / 找到多处一律 throw（而不是返回 null）——让调用点保持非空类型，
+ * 免得每处都要 `!` 断言把「提取失败」变成静默通过。
+ */
+function generateButtonBlock(): string {
+  const blocks = [...sfc.matchAll(/<DockGenerateButton[\s\S]*?\/>/g)].map((m) => m[0])
+  if (blocks.length !== 1) {
+    throw new Error(`DockGenerateButton 标签块应恰好 1 处，实际 ${blocks.length} 处`)
+  }
+  return blocks[0]!
+}
+
+/** 同理：提取函数体，缺失即 throw。 */
+function requireFnBody(signature: string): string {
+  const body = fnBody(signature)
+  if (body === null) throw new Error(`未找到函数：${signature}`)
+  return body
+}
+
+describe('composer 按钮态随草稿切换（流式中可插话）', () => {
+  it('按钮的 generating 绑定同时受草稿约束，不只看 isStreaming', () => {
+    const btn = generateButtonBlock()
+
+    // 有效性配对：按钮确实绑定在 composer 上（防空集假绿）
+    expect(btn).toContain('@generate="send"')
+    expect(btn).toMatch(/:generating="([^"]*)"/)
+
+    const bound = btn.match(/:generating="([^"]*)"/)![1]!
+
+    // 契约：isStreaming 单独决定字形 = 回退到故障态 ⇒ 必须红。
+    // 允许：isStreaming && !<草稿> / !<草稿> && isStreaming / 三元嵌套（**两种顺序都放行**，
+    // 否则守卫会退化成「锁字面量」，合法改写也假红）。
+    expect(
+      bound,
+      `按钮态只由 isStreaming 决定（:generating="${bound}"）——流式中输入草稿后无法切回发送态，即回归本次修复前的故障`,
+    ).toMatch(
+      /isStreaming\s*&&\s*!\w+|!\w+\s*&&\s*(?:agent\.)?isStreaming|isStreaming\s*\?[^"]*:|!\w+[^"]*&&[^"]*isStreaming/,
+    )
+
+    // 草稿判定必须是「有文本」：只有附件时不该切按钮（附件走不了 steer 文本通道）
+    expect(sfc).toMatch(
+      /const composerDraftText = computed\(\(\) => Boolean\(input\.value\.trim\(\)\)\)/,
+    )
+  })
+
+  it('send() 在流式中分流：先挂待发气泡并短路，无草稿才停 turn', () => {
+    const body = requireFnBody('async function send()')
+
+    // 有效性配对：两条分支都在
+    expect(body).toContain('queueDraftAsPending')
+    expect(body).toContain('cancelActiveStream')
+
+    // 顺序契约：先尝试挂气泡。反序（先 cancel）= 有草稿也会停整轮 = 故障态。
+    const queueAt = body.indexOf('queueDraftAsPending')
+    const cancelAt = body.indexOf('cancelActiveStream')
+    expect(
+      queueAt,
+      'send() 先取消再挂气泡 ⇒ 流式中点按钮仍会停掉整轮 turn（回归本次修复前的故障）',
+    ).toBeLessThan(cancelAt)
+
+    // 挂起成功即短路（否则两条都跑 = 既插话又停 turn）
+    expect(body).toMatch(/if\s*\(\s*await queueDraftAsPending\(\)\s*\)\s*return/)
+  })
+
+  it('回车与按钮共用同一挂起函数（两处逻辑不得分叉）', () => {
+    const submit = requireFnBody('async function onComposerSubmit()')
+    expect(
+      submit,
+      'onComposerSubmit() 未复用 queueDraftAsPending() —— 回车与按钮会分叉出两套挂起逻辑',
+    ).toContain('queueDraftAsPending')
+
+    const queue = requireFnBody('async function queueDraftAsPending()')
+
+    // 只挂起、不投递：steer/followUp 的送达时机必须由用户在气泡上二选一
+    expect(queue).toContain("state: 'pending'")
+    expect(
+      queue,
+      'queueDraftAsPending() 不应直接投递 —— steer/followUp 是两种送达时机，不能替他默认选',
+    ).not.toMatch(/deliverQueued\(|runs\/(steer|followup)/)
+
+    // 空草稿不得吞意图：返回 false，让调用方回退到停止语义
+    expect(queue).toMatch(/if\s*\(\s*!text\.trim\(\)\s*\)\s*return false/)
+  })
+
+  it('流式中按钮 title 如实说明「发送插话」而非「停止」', () => {
+    const btn = generateButtonBlock()
+    const title = btn.match(/:title="([^"]*)"/)
+    expect(title, '发送按钮未绑定 title').toBeTruthy()
+    // 有草稿时不得再宣称「停止生成」——那正是用户点下去才发现点错的原因
+    expect(title![1]).toMatch(/发送插话/)
+  })
+})
