@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 // 可变 mock 帧：默认单节点 200×200 位于 (100,100)——minY=100、bottomY=312（含 +12）、centerX=200
 const frameMock = ref({
@@ -38,6 +43,26 @@ function mountOverlay(props: Record<string, unknown> = {}) {
 }
 
 describe('ProposeConfirmOverlay（ADR-0011 T1 节点内联确认面）', () => {
+  it('T-6 触控：移动端按钮 44px（PC 保持 28px），栏高同步 40→56', () => {
+    // 2026-10-20 真机走查：确认/编辑/取消 三按钮真机实测仅 28px 高 < 44px（T-6 不达标）。
+    // 契约钉死：移动端提至 44px 且栏高常量同步；**PC 基础样式逐字不动**（形态不动纪律）。
+    const sfc = readFileSync(join(here, 'ProposeConfirmOverlay.vue'), 'utf8')
+
+    // ① 移动端媒体查询内按钮 44px
+    expect(sfc, '移动端须把按钮提到 44px').toMatch(
+      /@media \(max-width: 767px\)[\s\S]*?\.propose-confirm-btn \{[\s\S]*?height: 44px/,
+    )
+    // ② PC 基础仍是 28px（有效性配对：确保不是把 PC 也改了）
+    const base = sfc.match(/\.propose-confirm-btn \{[^}]*\}/)?.[0] ?? ''
+    expect(base, 'PC 基础按钮高度须保持 28px').toContain('height: 28px')
+    // ③ 栏高常量随断点切换，且上方翻转判定读的是 computed 值
+    expect(sfc, '移动端栏高常量须为 56').toContain('BAR_HEIGHT_MOBILE = 56')
+    expect(sfc, 'PC 栏高常量须保持 40').toContain('BAR_HEIGHT_PC = 40')
+    expect(sfc, '布局计算须读 BAR_HEIGHT.value（否则移动端留白用错常量）').toContain(
+      'BAR_HEIGHT.value',
+    )
+  })
+
   it('pending_confirm 节点渲染确认 / 编辑 / 取消三动作', () => {
     const wrapper = mountOverlay()
     expect(wrapper.find('[data-testid="propose-confirm-overlay"]').exists()).toBe(true)

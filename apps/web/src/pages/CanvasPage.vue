@@ -4976,7 +4976,14 @@ onUnmounted(() => {
             @cancel="handleProposeConfirmCancel"
             @edit="handleProposeConfirmEdit"
           />
+          <!-- 等确认期不报进度（2026-10-20 真机走查）：此刻批量 state 仍是 running，但
+               0% 且**不会推进**——真正的进度是「等你点确认生成」（AgentSideRail 的
+               propose-wait-hint 已如实说明）。留着卡片有三重害：① 满宽卡片把 ＋FAB 与
+               保存状态行横穿在同一底部带；② 「批量生成中 + 0%」与 toast 的「在节点上点
+               确认生成」自相矛盾（同一画面两个进度信号）；③ 用户误以为还在跑。
+               至多一个待确认节点（propose 阻塞期一次一笔）⇒ 不存在「别的节点仍在跑」。 -->
           <SelectionBatchProgressCard
+            v-if="!proposeConfirmNode"
             :state="selectionBatchApi.state.value"
             :regenerate="lastBatchRegenerate"
             :progress="selectionBatchApi.progress.value"
