@@ -4,8 +4,11 @@ import { api } from '@/services/api'
 import { worksApi } from '@/services/works-api'
 import { resolveMediaUrl } from '@/services/api-base'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
+import { useAuthStore } from '@/stores/auth'
 import MediaPreviewOverlay from '@/components/canvas/MediaPreviewOverlay.vue'
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
+
+const auth = useAuthStore()
 
 const props = defineProps<{
   modelValue: boolean
@@ -134,7 +137,9 @@ async function handlePublish() {
     })
     success.value = true
     emit('published')
-    setTimeout(() => { visible.value = false }, 1200)
+    // 成功区块现在带「查看我的主页」链接，用户需要时间点它——
+    // 1200ms 内根本来不及（且那是给「无后续动作」场景的时长）。
+    setTimeout(() => { visible.value = false }, 4000)
   } catch {
     error.value = '发布失败，请确认已登录、已选择主成片且画布有效'
   } finally {
@@ -152,8 +157,18 @@ async function handlePublish() {
     destroy-on-close
   >
     <div v-if="success" class="py-8 text-center">
-      <p class="text-lg text-fg-accent">发布成功 🎉</p>
+      <p class="text-lg text-fg-accent">发布成功</p>
       <p class="mt-2 text-sm text-fg-3">作品已出现在社区作品流</p>
+      <!-- P2 增长回路：发布是「作品 → 主页 → 关注」链路的起点，
+           这里给一个直达本人主页的入口，别让用户自己找回去的路。 -->
+      <RouterLink
+        v-if="auth.user?.id"
+        :to="`/creator/${auth.user.id}`"
+        data-testid="publish-view-homepage"
+        class="btn-ghost mt-4 inline-block text-sm"
+      >
+        查看我的主页 →
+      </RouterLink>
     </div>
     <form v-else class="space-y-4" @submit.prevent="handlePublish">
       <div v-if="!sessionId && sessions?.length">
@@ -186,6 +201,7 @@ async function handlePublish() {
             v-for="node in primaryNodes"
             :key="node.id"
             :value="node.id"
+            data-testid="primary-node-option"
             class="primary-node-radio !mr-0 !h-auto w-full rounded-lg border border-overlay/8 bg-overlay/[0.03] px-3 py-2"
           >
             <div class="flex w-full min-w-0 items-center gap-3">

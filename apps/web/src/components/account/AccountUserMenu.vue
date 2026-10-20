@@ -3,8 +3,8 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useClickOutside } from '@/composables/useClickOutside'
-import { BRAND_LOGO_URL } from '@/constants/brand'
 import { membershipLabel as membershipLabelOf } from '@/services/users-api'
+import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 
 const { compact = false } = defineProps<{
   compact?: boolean
@@ -30,6 +30,14 @@ function openProfile() {
   void router.push({ path: '/profile', query: { tab: 'account' } })
 }
 
+/** 2026-10-21 P2：增长回路的断点之一——「我的主页」此前无处可去。 */
+function openMyHomepage() {
+  closeMenu()
+  const id = auth.user?.id
+  if (!id) return
+  void router.push(`/creator/${id}`)
+}
+
 function openTopup() {
   closeMenu()
   emit('open-topup')
@@ -47,17 +55,18 @@ const membershipLabel = (value?: string) => membershipLabelOf(value)
   <div ref="menuRef" class="account-user-menu relative">
     <button
       type="button"
-      class="avatar-only neo-chrome flex items-center justify-center rounded-full p-0 transition"
+      class="neo-chrome flex items-center justify-center overflow-hidden rounded-full p-0 transition"
       :class="compact ? 'h-8 w-8' : 'h-9 w-9'"
       :title="auth.user?.nickname"
       @click.stop="menuOpen = !menuOpen"
     >
-      <img
-        :src="BRAND_LOGO_URL"
-        alt="用户"
-        class="h-full w-full rounded-full object-contain p-0.5"
-        draggable="false"
-      >
+      <!-- P2 头像收敛：无头像不再显示公司 logo，改用户专属纹样 -->
+      <BrandPatternAvatar
+        :src="auth.user?.avatar"
+        :seed="auth.user?.id ?? 'guest'"
+        :name="auth.user?.nickname"
+        size="sm"
+      />
     </button>
     <div
       v-if="menuOpen"
@@ -70,12 +79,12 @@ const membershipLabel = (value?: string) => membershipLabelOf(value)
             class="avatar-badge flex shrink-0 items-center justify-center overflow-hidden rounded-full"
             :class="compact ? 'h-8 w-8' : 'h-9 w-9'"
           >
-            <img
-              :src="BRAND_LOGO_URL"
-              alt="用户"
-              class="h-full w-full object-contain p-0.5"
-              draggable="false"
-            >
+            <BrandPatternAvatar
+              :src="auth.user?.avatar"
+              :seed="auth.user?.id ?? 'guest'"
+              :name="auth.user?.nickname"
+              size="sm"
+            />
           </div>
           <div class="min-w-0">
             <p class="truncate text-[13px] font-medium text-fg">{{ auth.user?.nickname }}</p>
@@ -98,6 +107,15 @@ const membershipLabel = (value?: string) => membershipLabelOf(value)
         </button>
       </div>
       <div class="py-1">
+        <button
+          type="button"
+          data-testid="my-homepage"
+          class="neo-popover-item flex w-full px-3 text-left text-xs"
+          :class="compact ? 'py-1.5' : 'py-2'"
+          @click="openMyHomepage"
+        >
+          我的主页
+        </button>
         <button
           type="button"
           class="neo-popover-item flex w-full px-3 text-left text-xs"
@@ -123,10 +141,6 @@ const membershipLabel = (value?: string) => membershipLabelOf(value)
 .avatar-badge {
   background: var(--neo-brand-gradient);
   box-shadow: 0 2px 8px rgba(109, 93, 252, 0.4);
-}
-
-.avatar-only {
-  overflow: hidden;
 }
 
 .user-card-head {
