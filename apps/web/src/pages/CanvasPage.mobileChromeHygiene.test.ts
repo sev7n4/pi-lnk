@@ -25,6 +25,9 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
   const page = read('./CanvasPage.vue')
   const topControls = readComponent('canvas/MobileCanvasTopControls.vue')
   const topBar = readComponent('mobile/MobileTopBar.vue')
+  // PR5（D-9）：移动端导航/面板/状态/入口层收敛到 MobileCanvasShell 单一壳层，
+  // 以下「移动端子组件接线」断言改读壳层源码（CanvasPage 仅委托该壳层）。
+  const shell = readComponent('mobile/MobileCanvasShell.vue')
 
   it('视口胶囊：零 --neo-*，小地图 160×104，遮罩走 accent 令牌', () => {
     expect(topControls).not.toContain('--neo-')
@@ -45,20 +48,22 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     expect(panel).toContain('@toggle-minimap="cycleMinimap"')
   })
 
-  it('自动保存状态行：存在且接 saving/lastSavedAt；顶栏菜单不再有「保存画布」', () => {
-    const status = page.match(/<MobileSaveStatus[\s\S]*?\/>/)?.[0] ?? ''
-    expect(status, '必须渲染 MobileSaveStatus').toContain(':saving="saving"')
-    expect(status).toContain(':saved-at="lastSavedAt"')
+  it('自动保存状态行：存在且接 saving/savedAt；顶栏菜单不再有「保存画布」', () => {
+    // PR5（D-9）：移动端编排迁入 MobileCanvasShell，CanvasPage 仅以 v-if="isMobileLayout" 委托
+    expect(page, 'CanvasPage 必须委托移动端壳层').toContain('<MobileCanvasShell')
+    const status = shell.match(/<MobileSaveStatus[\s\S]*?\/>/)?.[0] ?? ''
+    expect(status, '壳层必须渲染 MobileSaveStatus').toContain(':saving="saving"')
+    expect(status).toContain(':saved-at="savedAt"')
     // 多选态不出状态行（与动作条抢同一条底部清位）
-    expect(status).toContain('!mobileMultiSelectActive')
+    expect(status).toContain('!multiSelectActive')
     const topBarCode = stripComments(topBar)
     expect(topBarCode).not.toContain('保存画布')
     expect(topBarCode).not.toMatch(/action === 'save'/)
     // 有效性配对：菜单里确实还有其它项（防空集假绿）
     expect(topBarCode).toContain('发布作品')
-    // 只扫 MobileTopBar 开标签本身——跨标签的非贪婪匹配会命中后面别的组件（PC
+    // 只扫壳层内 MobileTopBar 开标签本身——跨标签的非贪婪匹配会命中后面别的组件（PC
     // CanvasFloatingChrome 仍有 @save），那是另一个组件的合法接线。
-    const topBarTag = stripComments(page).match(/<MobileTopBar[\s\S]*?\/>/)?.[0] ?? ''
+    const topBarTag = stripComments(shell).match(/<MobileTopBar[\s\S]*?\/>/)?.[0] ?? ''
     expect(topBarTag, '必须能定位 MobileTopBar 开标签').toContain('MobileTopBar')
     expect(topBarTag).not.toContain('@save=')
   })
@@ -85,8 +90,8 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     // 顺序：发布 → 导出 → 导入
     expect(menu.indexOf('发布作品')).toBeLessThan(menu.indexOf('bar-menu-export"'))
     expect(menu.indexOf('bar-menu-export"')).toBeLessThan(menu.indexOf('导入工作流'))
-    // 接线：轻量包走 handleExportPack([], 'lightweight')
-    expect(page).toContain(`@export-workflow-light="handleExportPack([], 'lightweight')"`)
+    // 接线：轻量包走 onExportPack([], 'lightweight')（PR5 迁入 MobileCanvasShell）
+    expect(shell).toContain(`@export-workflow-light="onExportPack([], 'lightweight')"`)
   })
 
   it('三个零引用死代码文件已删除', () => {
