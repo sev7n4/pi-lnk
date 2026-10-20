@@ -175,6 +175,7 @@ describe('移动端底部锚定元素：fixed 贴可见视口（真机走查 202
   const status = readComponent('mobile/MobileSaveStatus.vue')
   const bar = readComponent('mobile/MobileMultiSelectBar.vue')
   const shell = readComponent('mobile/MobileCanvasShell.vue')
+  const page = stripComments(read('./CanvasPage.vue'))
 
   /** 取某选择器的首个样式块（先剥注释，避免注释里的词命中断言） */
   function cssBlock(sfc: string, selector: string): string {
@@ -220,6 +221,15 @@ describe('移动端底部锚定元素：fixed 贴可见视口（真机走查 202
     const statusTag = shell.match(/<MobileSaveStatus[\s\S]*?\/>/)?.[0] ?? ''
     expect(statusTag, '必须能定位状态行开标签').toContain('<MobileSaveStatus')
     expect(statusTag, '状态行同一让位规则').toContain('!multiSelectActive')
+  })
+
+  it('等确认期不显示批量进度卡（0% 且不推进，且满宽卡片会横穿 ＋FAB）', () => {
+    // 2026-10-20 真机走查：节点待确认（等用户点确认）时，批量 state 仍是 running、
+    // 进度 0% 且不会推进，而卡片满宽（left/right 12px）把 ＋FAB 与保存状态行横穿在
+    // 同一底部带；且「批量生成中 0%」与 toast「在节点上点确认生成」自相矛盾。
+    const cardTag = page.match(/<SelectionBatchProgressCard[\s\S]*?\/>/)?.[0] ?? ''
+    expect(cardTag, '必须能定位进度卡开标签').toContain('<SelectionBatchProgressCard')
+    expect(cardTag, '有待确认节点时进度卡须让位').toContain('v-if="!proposeConfirmNode"')
   })
 })
 

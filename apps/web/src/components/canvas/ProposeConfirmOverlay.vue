@@ -19,6 +19,7 @@
 import { computed } from 'vue'
 import { useVueFlow } from '@vue-flow/core'
 import { getSelectionFrame } from '@/composables/useCanvasGrouping'
+import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { NODE_PENDING_CONFIRM_STATUS } from '@/constants/dockStudio'
 
 /** 结构入参：只依赖定位与状态字段，便于单测构造（不拖 EditableFlowNode 全类型）。 */
@@ -38,9 +39,16 @@ const emit = defineEmits<{
 }>()
 
 const { viewport, nodes: flowNodes } = useVueFlow()
+const { isMobileLayout } = useAgentMobileLayout()
 
-/** 浮层估算高度（px，屏幕空间）：上方翻转判定用（条高 ~32 + 上下留白）。 */
-const BAR_HEIGHT = 40
+/**
+ * 浮层估算高度（px，屏幕空间）：上方翻转判定用。
+ * ⚠️ 移动端按钮触控高提到 44px（T-6 走查 2026-10-20：真机实测按钮仅 28px），
+ * 栏高随之 40 → 56；**PC 保持 40**（PC 指针设备，形态逐字不动）。
+ */
+const BAR_HEIGHT_PC = 40
+const BAR_HEIGHT_MOBILE = 56
+const BAR_HEIGHT = computed(() => (isMobileLayout.value ? BAR_HEIGHT_MOBILE : BAR_HEIGHT_PC))
 const EDGE_MARGIN = 8
 /**
  * 浮层半宽（px）：横向钳位用。条是「圆点 + 待确认 + 三按钮」的 max-content 宽条
@@ -65,7 +73,7 @@ const layout = computed<{ anchor: 'above' | 'below'; x: number; y: number } | nu
   const rawX = frame.centerX * zoom + viewport.value.x
   const viewWidth = typeof window === 'undefined' ? Number.POSITIVE_INFINITY : window.innerWidth
   const x = Math.min(Math.max(rawX, BAR_HALF_WIDTH + EDGE_MARGIN), viewWidth - BAR_HALF_WIDTH - EDGE_MARGIN)
-  const aboveTop = frame.minY * zoom + viewport.value.y - BAR_HEIGHT - EDGE_MARGIN
+  const aboveTop = frame.minY * zoom + viewport.value.y - BAR_HEIGHT.value - EDGE_MARGIN
   if (aboveTop >= EDGE_MARGIN) return { anchor: 'above', x, y: aboveTop }
   return { anchor: 'below', x, y: frame.bottomY * zoom + viewport.value.y }
 })
@@ -190,6 +198,16 @@ function emitAction(kind: 'confirm' | 'cancel' | 'edit') {
 .propose-confirm-btn.accent:hover {
   background: var(--lnk-accent-subtle);
   color: var(--lnk-accent-text);
+}
+
+/* T-6 触控达标（2026-10-20 真机走查）：按钮真机实测仅 28px 高 < 44px。
+   仅移动端提至 44px（PC 指针设备保持 28px，形态逐字不动）；
+   栏高随之 40 → 56，与 BAR_HEIGHT_MOBILE 保持一致（上方翻转判定用）。 */
+@media (max-width: 767px) {
+  .propose-confirm-btn {
+    height: 44px;
+    padding: 0 12px;
+  }
 }
 .propose-confirm-ico {
   display: block;
