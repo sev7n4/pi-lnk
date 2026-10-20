@@ -6,8 +6,6 @@ export interface CreatorProfile {
     id: string
     nickname: string
     avatar?: string
-    points: number
-    membership: string
     workCount: number
     createdAt: string
   }
