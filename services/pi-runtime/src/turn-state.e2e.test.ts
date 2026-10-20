@@ -102,7 +102,7 @@ describe("端到端：中断 → 记录 → 下一轮模型能看到（2026-10-2
 			entries,
 			{
 				entryProjectors: {
-					[TURN_STATE_CUSTOM_TYPE]: (entry) =>
+					[TURN_STATE_CUSTOM_TYPE]: (entry: { customType: string; data?: unknown }) =>
 						turnStateProjector({
 							type: "custom",
 							customType: entry.customType,
@@ -151,7 +151,7 @@ describe("端到端：中断 → 记录 → 下一轮模型能看到（2026-10-2
 			entries,
 			{
 				entryProjectors: {
-					[TURN_STATE_CUSTOM_TYPE]: (entry) =>
+					[TURN_STATE_CUSTOM_TYPE]: (entry: { customType: string; data?: unknown }) =>
 						turnStateProjector({
 							type: "custom",
 							customType: entry.customType,
