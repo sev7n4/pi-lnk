@@ -54,7 +54,48 @@ function generateButtonBlock(): string {
 function requireFnBody(signature: string): string {
   const body = fnBody(signature)
   if (body === null) throw new Error(`未找到函数：${signature}`)
-  return body
+  return stripLineComments(body)
+}
+
+/**
+ * 去掉行注释（`//` 到行尾），但**跳过字符串字面量里的 `//`**（如 `'https://'`）。
+ *
+ * ⚠️ 为什么必须剥：断言是对**代码**的断言，不是对注释的断言。
+ * 本组件 230KB，注释里常出现与代码同形的字面量（把旧写法抄进注释做说明）——
+ * 不剥就会被注释命中 ⇒ **正向断言空转**（明明代码已改，断言却因注释而绿）、
+ * **否定断言假红**（2026-10-21 hotfix 实测踩过：注释里抄了
+ * `if (await queueDraftAsPending()) return`，把否定断言打成红）。
+ *
+ * 只在**已定位的单个函数体**上剥（不是全文），并逐字符跟踪引号状态，
+ * 避免把真源码当注释吃掉；引号未闭合时保守地**不剥**（宁可少剥，不可误吃代码）。
+ */
+function stripLineComments(src: string): string {
+  let out = ''
+  let quote: string | null = null
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!
+    if (quote) {
+      out += ch
+      if (ch === '\\') {
+        out += src[++i] ?? ''
+        continue
+      }
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch
+      out += ch
+      continue
+    }
+    if (ch === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') i++
+      out += '\n'
+      continue
+    }
+    out += ch
+  }
+  return out
 }
 
 describe('composer 按钮态随草稿切换（流式中可插话）', () => {
@@ -98,8 +139,28 @@ describe('composer 按钮态随草稿切换（流式中可插话）', () => {
       'send() 先取消再挂气泡 ⇒ 流式中点按钮仍会停掉整轮 turn（回归本次修复前的故障）',
     ).toBeLessThan(cancelAt)
 
-    // 挂起成功即短路（否则两条都跑 = 既插话又停 turn）
-    expect(body).toMatch(/if\s*\(\s*await queueDraftAsPending\(\)\s*\)\s*return/)
+    // ⭐ 2026-10-21 hotfix：boolean 返回值已废止，改为三态。
+    // 契约：**只有 'empty'（根本没有草稿）才允许中止 turn**；'full'（槽位已满）必须分流。
+    // 继续用 boolean 判别 = 把「槽位已满」当成「无草稿」⇒ 排满时点按钮停掉整轮 turn。
+    // （下面用剥过注释的函数体断言 ⇒ 注释里抄旧写法不会干扰）
+    expect(
+      body,
+      'send() 仍用 boolean 返回值决定是否中止 —— 槽位已满（\'full\'）会被当成无草稿，' +
+        '点按钮会停掉正在跑的那一轮 turn',
+    ).not.toMatch(/if\s*\(\s*await queueDraftAsPending\(\)\s*\)\s*return/)
+
+    expect(
+      body,
+      "send() 必须把挂起结果与 'empty' 判别（只有无草稿才中止 turn）",
+    ).toMatch(/!==\s*'empty'|!=\s*'empty'/)
+
+    // 有效性配对：判别发生在中止调用**之前**，否则等于没判别
+    const discAt = body.search(/!==\s*'empty'|!=\s*'empty'/)
+    expect(discAt, "send() 里找不到 'empty' 判别").toBeGreaterThan(-1)
+    expect(
+      discAt,
+      "send() 的 'empty' 判别必须排在 cancelActiveStream() 之前（否则中止先于判别发生）",
+    ).toBeLessThan(cancelAt)
   })
 
   it('回车与按钮共用同一挂起函数（两处逻辑不得分叉）', () => {
@@ -118,8 +179,17 @@ describe('composer 按钮态随草稿切换（流式中可插话）', () => {
       'queueDraftAsPending() 不应直接投递 —— steer/followUp 是两种送达时机，不能替他默认选',
     ).not.toMatch(/deliverQueued\(|runs\/(steer|followup)/)
 
-    // 空草稿不得吞意图：返回 false，让调用方回退到停止语义
-    expect(queue).toMatch(/if\s*\(\s*!text\.trim\(\)\s*\)\s*return false/)
+    // 空草稿不得吞意图：返回 'empty'，让调用方回退到停止语义。
+    // ⭐ 2026-10-21 hotfix：此前是 `return false`，而 boolean 把「无草稿」与「槽位已满」
+    // 混成同一个 false ⇒ 调用方在满槽位时会中止用户正在跑的那一轮 turn。
+    expect(queue).toMatch(/if\s*\(\s*!text\.trim\(\)\s*\)\s*return\s*'empty'/)
+
+    // 槽位已满必须返回**另一个**值（'full'），不能与 'empty' 同形
+    expect(
+      queue,
+      "queueDraftAsPending() 的满槽位出口必须返回 'full'（与 'empty' 分流），" +
+        '否则调用方无法区分「没草稿」与「挂不下」',
+    ).toMatch(/MAX_QUEUED_SLOTS[\s\S]{0,300}?return\s*'full'/)
   })
 
   it('流式中按钮 title 如实说明「发送插话」而非「停止」', () => {

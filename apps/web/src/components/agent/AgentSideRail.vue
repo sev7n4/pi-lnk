@@ -339,6 +339,21 @@ interface QueuedSlot {
    */
   model?: string
 }
+
+/**
+ * 挂起草稿的**结果三态**（2026-10-21 hotfix）。
+ *
+ * ⭐ 此前 `queueDraftAsPending()` 返回 boolean，但有**两个** false 出口：
+ * 「无草稿」与「槽位已满」。调用方（`send()`）把 false 一律当成「没有草稿可挂」，
+ * 于是槽位排满时顺带执行了中止 —— 把用户正在跑的那一轮 turn 停掉，
+ * 恰好是「流式中可插话」这条链路要根治的行为。
+ *
+ * 三态把两种「没挂上」彻底分开：
+ * - `queued`：已挂起（草稿已转入气泡）
+ * - `empty`：**根本没有草稿**（唯一允许中止 turn 的情形）
+ * - `full`：槽位已满（草稿保留 + 如实告知，**不得**中止 turn）
+ */
+type QueueDraftOutcome = 'queued' | 'empty' | 'full'
 /**
  * ⭐ 2026-10-21 P2：**多槽位**。服务端（`lane` inbox）本来就支持同时挂多条，
  * 此前前端只有一个槽位 ⇒ 连发第 2 条插话时**第 1 条文字当场消失且无处可寻**
@@ -2148,7 +2163,16 @@ async function send() {
   if (agent.isStreaming) {
     // 流式中若有草稿：底部按钮临时呈发送态，点按 = 与回车等价（挂待发气泡），不中断 turn；
     // 草稿为空才保留停止语义（中止即发，抄 WorkBuddy）。
-    if (await queueDraftAsPending()) return
+    //
+    // ⭐ 2026-10-21 hotfix：**只有「无草稿」（'empty'）才允许中止 turn**。
+    // 此前这里写的是 `if (await queueDraftAsPending()) return`，把 boolean 的 false
+    // 一律当成「没有草稿可挂」；而 queueDraftAsPending 有**两个** false 出口
+    // （无草稿 / 槽位已满）⇒ 槽位排满时点按钮会顺带把用户正在跑的那一轮停掉 ——
+    // 恰好是「流式中可插话」这条链路要根治的行为。
+    // 现在改成三态：'full'（槽位已满）由 queueDraftAsPending 自己 warning + 保留草稿，
+    // **不**落到中止分支；只有 'empty' 才中止。
+    const outcome = await queueDraftAsPending()
+    if (outcome !== 'empty') return
     await cancelActiveStream()
     return
   }
@@ -2305,15 +2329,15 @@ async function withdrawQueued(slot?: QueuedSlot): Promise<boolean> {
  * ⭐ **参考素材与选中态在挂起这一刻冻结**（2026-10-20 P1-1）：与正常发送同口径
  * （「发送瞬间冻结，回执仍须与实际发出的内容一致」）。用户挂起后可能改选节点/换芯片，
  * 但那条消息的指代必须是**挂起那一刻**的指代。
- * @returns 是否成功挂起（有内容才挂，空草稿返回 false）。
+ * @returns 挂起结果三态（见 {@link QueueDraftOutcome}）。
  */
-async function queueDraftAsPending(): Promise<boolean> {
+async function queueDraftAsPending(): Promise<QueueDraftOutcome> {
   const text = input.value
-  if (!text.trim()) return false
+  if (!text.trim()) return 'empty'
   // ⭐ 槽位已满 ⇒ **不吞草稿**：清空输入框却挂不上去，等于又一次「消息凭空消失」。
   if (queuedSlots.value.length >= MAX_QUEUED_SLOTS) {
     ElMessage.warning(`最多同时排 ${MAX_QUEUED_SLOTS} 条补充，先处理掉一条再发`)
-    return false
+    return 'full'
   }
   input.value = ''
   // 冻结参考素材（芯片）与画布选中态 —— 与 sendMessage 同一口径
@@ -2341,7 +2365,7 @@ async function queueDraftAsPending(): Promise<boolean> {
   if (attachments.length) sidebar.clear()
   await nextTick()
   scrollToBottom(true)
-  return true
+  return 'queued'
 }
 
 /**
