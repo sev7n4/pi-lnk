@@ -34,6 +34,11 @@ import {
   ledgerGapFrom,
   type LedgerCapture,
 } from './turn-ledger'
+import {
+  collectToolAttempts,
+  deriveSteps,
+  shouldRecordTurnState,
+} from './turn-continuity'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
 import { resolveRuleGroups } from './pi-runtime/rule-groups'
@@ -1206,6 +1211,70 @@ export class AgentService {
     }
   }
 
+  /**
+   * 回合连续性：本轮中断时，把「用户要什么 / 做到哪 / 卡在哪」写进 pi transcript。
+   *
+   * ⭐ 为什么必须写进 **pi 侧**而不是 Nest 的 DB：
+   * - 模型只看得到 pi 侧上下文（Nest 的 `AgentMessage` 表**不进 prompt**，
+   *   见 `streamConversation` 里「不再查 AgentMessage 历史喂 prompt」那条注释）；
+   * - 落在 transcript 里 ⇒ 天然参与上游 compaction 的保留机制
+   *   （`CompactionEntry.retainedTail` + `buildContextEntries`），
+   *   不会像「动态块」那样被下一轮覆盖。
+   *
+   * ⛔ fail-soft：任何异常只 warn，绝不影响本轮收尾。
+   */
+  private async recordTurnStateOnInterruption(input: {
+    client: PiRuntimeClient;
+    sessionKey: string;
+    userMessage: string;
+    assistantText: string;
+    executionEvents: readonly { type: string; data?: unknown }[];
+    failed: boolean;
+    userAborted: boolean;
+    /** prompt 是否被 pi 接受。false ⇒ pi 侧整轮不存在（双写分叉形态）。 */
+    promptAccepted?: boolean;
+  }): Promise<void> {
+    try {
+      const attempts = collectToolAttempts(input.executionEvents);
+      if (
+        !shouldRecordTurnState({
+          failed: input.failed,
+          userAborted: input.userAborted,
+          hasAssistantText: Boolean(input.assistantText.trim()),
+          toolCallCount: attempts.length,
+        })
+      ) {
+        return;
+      }
+      const { completedSteps, pendingSteps } = deriveSteps(attempts);
+      // 中断类型分档：
+      // - prompt 未被接受 ⇒ `history_diverged`（Nest 有、pi 无 ⇒ 双写分叉，
+      //   2026-10-21 生产形态）；
+      // - prompt 被接受但 run 失败 ⇒ `upstream_error`（pi 侧有这轮，但
+      //   `isContextMessage` 会把 error/aborted 的 assistant 消息排除出上下文）。
+      const interruption =
+        input.promptAccepted === false ? 'history_diverged' : input.failed ? 'upstream_error' : 'unknown';
+      const recorded = await input.client.recordTurnState(input.sessionKey, {
+        userText: input.userMessage,
+        assistantPartial: input.assistantText,
+        interruption,
+        completedSteps,
+        pendingSteps,
+        at: Date.now(),
+      });
+      this.piLogger.warn(
+        `turn_state_recorded key=${input.sessionKey} recorded=${recorded.recorded} ` +
+          `interruption=${interruption} completed=${completedSteps.length} pending=${pendingSteps.length}`,
+      );
+    } catch (err) {
+      this.piLogger.warn(
+        `turn_state_record failed (fail-soft, key=${input.sessionKey}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   private async collectRetentionState(sessionId: string): Promise<PiRetentionState> {
     try {
       const session = await this.prisma.session.findUnique({
@@ -1550,6 +1619,8 @@ export class AgentService {
     /** owner = 本流发起了 run（唯一落库者）；shadow = 并入在跑的 run（只转发）。 */
     let turnRole: 'owner' | 'shadow' = 'owner'
     let turnRefusalReason: 'not_idle' | 'not_steerable' = 'not_idle'
+    /** prompt 是否被 pi 接受（202）。false ⇒ pi 侧**整轮不存在**（双写分叉）。 */
+    let promptAccepted = true
     try {
       await client.prompt(sessionKey, promptTextWithMarkers, "main", {
         forceSkills,
@@ -1564,6 +1635,22 @@ export class AgentService {
         // ⚠️ 刻意**不**置 shadow：网络超时等场景下 run 可能其实已被接受，
         // 若把唯一写者误判成旁听 ⇒ 整轮消息彻底不落库（那比重复更糟）。
         this.piLogger.warn(`pi prompt failed (key=${sessionKey}): ${message}`)
+        // ⭐ 回合连续性（2026-10-21）：prompt 未被接受 ⇒ **pi 侧整轮不存在**。
+        // 而 Nest 侧 user 消息已落库（`streamConversation` 早于本方法落库）⇒ 双写分叉：
+        // 用户在界面上看得见自己说了什么，模型却从未见过 ⇒ 下一轮说「继续」时
+        // 模型只能靠感知画布猜意图（2026-10-21 生产事故形态）。
+        // 这里立刻把「用户要什么」记进 transcript，让下一轮能接上。
+        promptAccepted = false
+        await this.recordTurnStateOnInterruption({
+          client,
+          sessionKey,
+          userMessage,
+          assistantText: '',
+          executionEvents: [],
+          failed: true,
+          userAborted: false,
+          promptAccepted: false,
+        })
       } else {
         // 409 = 上一轮还在跑。用户这次发言不该蒸发 → 改走 steer 队列（durable 落盘），
         // 由当前 run 的下一个 turn 边界接住。此前这条分支是 `catch(() => {})`，静默丢消息。
@@ -1894,6 +1981,33 @@ export class AgentService {
         }
       }
     }
+    // ── 回合连续性（2026-10-21）：中断轮留下「任务状态」，下一轮模型能看到 ──
+    //
+    // ⭐ 事故形态（2026-10-21 生产取证）：用户「让他们抱在一起」那轮因故障中断，
+    // Nest 侧 AgentMessage 有这条 user 消息，pi 侧 transcript **整轮不存在**；
+    // 20 分钟后用户说「继续」，模型上下文里零线索 ⇒ 只能退化成「感知画布猜意图」。
+    //
+    // 这里在**中断发生的当下**把状态写进 pi transcript（上游 `appendCustomEntry`
+    // ⇒ `lnkpi.turn_state` 自定义条目，由 `entryProjectors` 在后续每轮重新投影）。
+    // 于是下一轮模型能看到「用户要什么 / 做到哪 / 卡在哪」，**不依赖对话历史是否完好**。
+    //
+    // ⛔ 不做「继续」关键词识别：那要猜用户意图，在「接着改那个组件」这类表达上立刻失效。
+    // ⛔ fail-soft：写不进去只 warn ——「记不住上一轮」是降级，「把用户请求打回去」是事故。
+    //
+    // ⚠️ `promptAccepted === false` 时**上面那条 catch 分支已经记过一次** ⇒ 此处跳过，
+    // 否则同一条 user 消息会在 transcript 里落两条状态（模型会看到重复的两段说明）。
+    if (promptAccepted) {
+      await this.recordTurnStateOnInterruption({
+        client,
+        sessionKey,
+        userMessage,
+        assistantText,
+        executionEvents,
+        failed: runFailed,
+        userAborted: false,
+      })
+    }
+
     // ── TURN-IDENTITY P0-2：只有 owner 落库 ──
     // shadow 流（409 并入在跑的 run）到此为止：事件已全程转发给前端（进度可见），
     // 但**不写助手消息**。唯一性最终由 PR2 的 `(threadId, runId)` 唯一索引兜底；
