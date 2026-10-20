@@ -105,6 +105,13 @@
   --lnk-text-3xl: 30px;  --lnk-lh-3xl: 38px;
   --lnk-text-4xl: 36px;  --lnk-lh-4xl: 44px;
 
+  /* ---- 显示档（签名画面专用：首屏 / 个人页封面 / 分享页）----
+     不接 Major Third 阶梯：展示档按视觉锚点定档，行高比锁在 1.29–1.33。
+     守卫 design-token.test.ts 的 head 白名单已同步（标题行高 ≤1.35）。 */
+  --lnk-text-display-1: 48px;  --lnk-lh-display-1: 64px;  /* 1.33 */
+  --lnk-text-display-2: 56px;  --lnk-lh-display-2: 72px;  /* 1.29 */
+  --lnk-text-display-3: 64px;  --lnk-lh-display-3: 84px;  /* 1.31 */
+
   --lnk-weight-regular: 400;
   --lnk-weight-medium: 500;
   --lnk-weight-semibold: 600;
@@ -211,6 +218,12 @@
   --lnk-text-muted: #949aa8;     /*  5.50:1 AA  */
   --lnk-text-disabled: #6b7180;  /* 豁免：仅用于 disabled */
   --lnk-text-on-accent: #ffffff;
+
+  /* 签名画面（三处豁免位之一）：深海墨底不随主题翻转。
+     两主题同值 —— 守卫断言了这条不变式，改任一主题都必须同步改另一个。 */
+  --lnk-surface-signature: var(--lnk-ink-1000);      /* #131318 */
+  --lnk-text-on-signature: #f4f4f8;                  /* 14.15:1 AAA */
+  --lnk-text-on-signature-muted: #b9bdc9;            /*  8.27:1 AAA */
 
   /* 边框 */
   --lnk-border-subtle: rgba(255, 255, 255, 0.08);
@@ -343,6 +356,12 @@
   --lnk-text-muted: var(--lnk-ink-600);     /*  4.90:1 AA  */
   --lnk-text-disabled: var(--lnk-ink-400);
   --lnk-text-on-accent: #ffffff;
+
+  /* 签名画面（三处豁免位之一）：与深色块同值，主题不变式。
+     ⚠️ 这里的文字色是「浅字压深底」，与本节其余「深字压浅底」的走向相反 —— 不是写反了。 */
+  --lnk-surface-signature: var(--lnk-ink-1000);      /* #131318 */
+  --lnk-text-on-signature: #f4f4f8;                  /* 14.15:1 AAA */
+  --lnk-text-on-signature-muted: #b9bdc9;            /*  8.27:1 AAA */
 
   --lnk-border-subtle: rgba(23, 25, 35, 0.1);
   --lnk-border-default: rgba(23, 25, 35, 0.14);
