@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -8,9 +8,29 @@ import type { CanvasGroup } from '@lnkpi/shared'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const WEB = join(HERE, '..', '..', '..')
 
+// 可变的 vue-flow store 影子：chip 视口钳制测试需要在用例内改 viewport/pane 尺寸。
+const vueFlow = vi.hoisted(() => ({
+  state: {
+    viewport: { x: 0, y: 0, zoom: 1 },
+    dimensions: { width: 0, height: 0 },
+  },
+}))
+
 vi.mock('@vue-flow/core', () => ({
   // 分组是 overlay（不是节点）⇒ 不再需要 Handle/useNode，只需 viewport 变换。
-  useVueFlow: () => ({ viewport: { value: { x: 0, y: 0, zoom: 1 } } }),
+  // dimensions=pane 尺寸（jsdom 初始 0 ⇒ chip 钳制退回 CSS 默认位，见 chipStyle 守卫）。
+  useVueFlow: () => ({
+    viewport: {
+      get value() {
+        return vueFlow.state.viewport
+      },
+    },
+    dimensions: {
+      get value() {
+        return vueFlow.state.dimensions
+      },
+    },
+  }),
 }))
 
 import CanvasGroupOverlay from './CanvasGroupOverlay.vue'
@@ -41,6 +61,38 @@ function mountOverlay(groups: CanvasGroup[], selectedGroupId: string | null = nu
  * 以及全局 css 规则层（紫色 rgba 清零 + 容器规则消费 accent 令牌）。
  */
 describe('CanvasGroupOverlay：标题前分组图标（2026-10-13）', () => {
+  beforeEach(() => {
+    vueFlow.state = { viewport: { x: 0, y: 0, zoom: 1 }, dimensions: { width: 0, height: 0 } }
+  })
+
+  it('chip 视口钳制：巨型分组（框边全在视口外）⇒ 标题条被钳回屏内且可点', () => {
+    // 生产实况（2026-10-20）：分组 1921×757 @zoom0.554，框顶/左在视口外
+    vueFlow.state = {
+      viewport: { x: 109, y: 72, zoom: 0.554 },
+      dimensions: { width: 1080, height: 428 },
+    }
+    const w = mountOverlay([group({ position: { x: -208, y: -142 }, size: { width: 1921, height: 757 } })])
+    const style = w.find('.group-drag-handle').attributes('style') ?? ''
+    // world 偏移换算回 screen 后必须落在视口内（margin=8）
+    const top = Number(style.match(/top:\s*([-\d.]+)px/)?.[1] ?? NaN)
+    const left = Number(style.match(/left:\s*([-\d.]+)px/)?.[1] ?? NaN)
+    expect(Number.isFinite(top), '应有内联 top 覆写').toBe(true)
+    const screenTop = 72 + (-142 + top) * 0.554
+    const screenLeft = 109 + (-208 + left) * 0.554
+    expect(screenTop).toBeGreaterThanOrEqual(8 - 1e-6)
+    expect(screenLeft).toBeGreaterThanOrEqual(8 - 1e-6)
+    expect(screenTop).toBeLessThan(428)
+    w.unmount()
+  })
+
+  it('pane 尺寸未知（jsdom 初始 0）⇒ 不覆写 CSS 默认位（无内联 top/left）', () => {
+    const w = mountOverlay([group()])
+    const style = w.find('.group-drag-handle').attributes('style') ?? ''
+    expect(style).not.toMatch(/top:/)
+    expect(style).not.toMatch(/left:/)
+    w.unmount()
+  })
+
   it('有效性前置：标题条渲染分组图标（svg）且无文字徽标', () => {
     const w = mountOverlay([group()])
     const icon = w.find('.group-title-icon')

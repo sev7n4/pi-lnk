@@ -13,7 +13,7 @@ import { computed, nextTick, ref } from 'vue'
 import { useVueFlow } from '@vue-flow/core'
 import type { CanvasGroup } from '@lnkpi/shared'
 import { normalizeGroupColorKey } from './groupColors'
-import { groupRectForChildren, type FlowNode } from '../../composables/useCanvasGrouping'
+import { clampGroupChipToViewport, groupRectForChildren, type FlowNode } from '../../composables/useCanvasGrouping'
 
 const props = defineProps<{
   groups: CanvasGroup[]
@@ -43,7 +43,7 @@ const emit = defineEmits<{
 }>()
 
 // viewport 由 VueFlow 自身提供（组件是 <VueFlow> 的子节点，共享同一 store）。
-const { viewport } = useVueFlow()
+const { viewport, dimensions } = useVueFlow()
 
 const viewportStyle = computed(() => ({
   transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
@@ -53,6 +53,27 @@ const viewportStyle = computed(() => ({
 function displayRect(group: CanvasGroup) {
   const rect = props.nodes ? groupRectForChildren(props.nodes as FlowNode[], group.childIds) : null
   return rect ?? { position: group.position, size: group.size }
+}
+
+/**
+ * chip 视口钳制（2026-10-20）：分组可比视口大，框边与默认 chip 位都会在
+ * 视口外/被应用骨架裁掉 ⇒ 把 chip 钳到「框 ∩ 视口」可见区，永远留一个
+ * 可点（选中/解组/重命名）的锚点。框完全不可见或 pane 尺寸未知 ⇒ 不覆写。
+ */
+const chipOffsets = computed(() => {
+  const map = new Map<string, { top: number; left: number }>()
+  // 防御：pane 尺寸未知（部分测试 mock 只给 viewport）⇒ 钳制函数返回 null，退回 CSS 默认位
+  const pane = dimensions?.value ?? { width: 0, height: 0 }
+  for (const group of props.groups) {
+    const offset = clampGroupChipToViewport(displayRect(group), viewport.value, pane)
+    if (offset) map.set(group.id, offset)
+  }
+  return map
+})
+
+function chipStyle(groupId: string) {
+  const offset = chipOffsets.value.get(groupId)
+  return offset ? { top: `${offset.top}px`, left: `${offset.left}px` } : undefined
 }
 
 function boxStyle(group: CanvasGroup) {
@@ -131,6 +152,7 @@ function commitRename() {
     >
       <div
         class="group-drag-handle"
+        :style="chipStyle(group.id)"
         @pointerdown.stop="onTitlePointerDown($event, group.id)"
         :class="{ 'is-draggable': draggable }"
         @pointermove.stop="onTitlePointerMove"

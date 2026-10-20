@@ -17,6 +17,7 @@ import {
   patchGroupColorKey,
   renameGroup,
   syncGroupsToChildren,
+  clampGroupChipToViewport,
   ungroupById,
   type FlowNode,
 } from './useCanvasGrouping'
@@ -147,5 +148,52 @@ describe('分组侧车（不再是节点）', () => {
     expect(BASE.some((n) => n.id === created.group.id)).toBe(false)
     const asGroup: CanvasGroup = created.group
     expect(asGroup.childIds).not.toContain(asGroup.id)
+  })
+})
+
+describe('巨型分组的 chip 视口钳制（clampGroupChipToViewport）', () => {
+  const rect = { position: { x: -208, y: -142 }, size: { width: 1921, height: 757 } }
+
+  it('框完全可见 ⇒ 返回值恒等于 CSS 默认位（top=-32, left=0），视觉零变化', () => {
+    const off = clampGroupChipToViewport(
+      { position: { x: 100, y: 100 }, size: { width: 400, height: 300 } },
+      { x: 0, y: 0, zoom: 1 },
+      { width: 1000, height: 800 },
+    )!
+    expect(off.top).toBeCloseTo(-32)
+    expect(off.left).toBeCloseTo(0)
+  })
+
+  it('比视口大的组（生产案例）⇒ chip 钳回视口内、且以 world 偏移表达', () => {
+    // 生产实况：zoom 0.554，框四边全在视口外/被骨架裁掉
+    const off = clampGroupChipToViewport(rect, { x: 109, y: 72, zoom: 0.554 }, { width: 1080, height: 428 })!
+    // screen 上框顶在 -6.5、左在 -6.2 ⇒ chip 应钳到 margin=8
+    expect(off.top * 0.554).toBeCloseTo(8 - (72 + -142 * 0.554), 5)
+    expect(off.left * 0.554).toBeCloseTo(8 - (109 + -208 * 0.554), 5)
+    // chip 屏幕位不低于 margin
+    const screenTop = 72 + (-142 + off.top) * 0.554
+    const screenLeft = 109 + (-208 + off.left) * 0.554
+    expect(screenTop).toBeGreaterThanOrEqual(8 - 1e-6)
+    expect(screenLeft).toBeGreaterThanOrEqual(8 - 1e-6)
+  })
+
+  it('框与视口无交集 ⇒ null（不覆写 CSS 默认位）', () => {
+    expect(clampGroupChipToViewport(rect, { x: 109, y: 800, zoom: 0.554 }, { width: 1080, height: 428 })).toBeNull()
+    expect(clampGroupChipToViewport({ position: { x: 2000, y: 0 }, size: { width: 300, height: 300 } }, { x: 0, y: 0, zoom: 1 }, { width: 1000, height: 800 })).toBeNull()
+  })
+
+  it('pane 尺寸未知（jsdom 初始 0）或 zoom 非法 ⇒ null，组件退回 CSS 默认位', () => {
+    expect(clampGroupChipToViewport(rect, { x: 0, y: 0, zoom: 1 }, { width: 0, height: 0 })).toBeNull()
+    expect(clampGroupChipToViewport(rect, { x: 0, y: 0, zoom: 0 }, { width: 1000, height: 800 })).toBeNull()
+  })
+
+  it('框顶可见但左缘出界 ⇒ 只钳 left，top 保持框顶外沿设计位', () => {
+    const off = clampGroupChipToViewport(
+      { position: { x: -300, y: 100 }, size: { width: 900, height: 300 } },
+      { x: 0, y: 0, zoom: 1 },
+      { width: 1000, height: 800 },
+    )!
+    expect(off.top).toBeCloseTo(-32)
+    expect(off.left).toBeCloseTo(8 - -300)
   })
 })
