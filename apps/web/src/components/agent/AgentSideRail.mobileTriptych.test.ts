@@ -33,13 +33,6 @@ function stripComments(src: string): string {
 
 const src = stripComments(rail)
 
-/** 取 `.lnk-triptych` 的样式块（从选择器到本文件末尾，够用且不漏） */
-function styleBlock(selector: string): string {
-  const i = src.indexOf(selector)
-  expect(i, `样式缺失：${selector}`).toBeGreaterThan(-1)
-  return src.slice(i)
-}
-
 /**
  * 只取**这一条**规则的块体（到第一个 `}` 为止）。
  * ⛔ 不能用 styleBlock 那种「切到文件尾」的宽判据：`.lnk-triptych__node` 内部
