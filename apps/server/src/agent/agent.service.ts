@@ -638,8 +638,15 @@ export class AgentService {
    *
    * 漏窗是真实存在但极窄的：drain 派生出的新一代要再走一轮网络 + 模型首字才出第一个事件，
    * 而前端在主流 `finally` 里就已发起旁听请求（毫秒级），赶在它前面的概率可忽略。
+   *
+   * multi-device Task 4：`opts.lastEventId`（**追加在末尾**，参数位置纪律）——
+   * 旁听端断线重连时把浏览器 Last-Event-ID 传进来，pi-runtime 据此增量续传；
+   * 未传维持既有 `live:true`（from=now）语义。服务端闸门（/^\d+$/）在 controller。
    */
-  async *runEventStream(sessionKey: string): AsyncGenerator<AgentStreamEvent> {
+  async *runEventStream(
+    sessionKey: string,
+    opts?: { lastEventId?: string },
+  ): AsyncGenerator<AgentStreamEvent> {
     const piUrl = this.getPiRuntimeUrl()
     // 维护态（PI_RUNTIME_MODE=off / 未配 URL）：旁听无处可挂，直接空流。
     // 刻意不抛错 —— 消费端是「人走开之后切回来才看」的旁路，不该让它在挂载时就炸。
@@ -664,7 +671,8 @@ export class AgentService {
         finished = true
         notify?.()
       },
-      { live: true },
+      // multi-device Task 4：lastEventId 透传（undefined 时 client 走既有 from=now 分支）。
+      { live: true, lastEventId: opts?.lastEventId },
     )
     try {
       while (true) {
