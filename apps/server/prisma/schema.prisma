@@ -425,12 +425,32 @@ model AgentMessage {
    * 而 SQLite 下 NULL 互不冲突 ⇒ **存量零回填、迁移纯 additive、可原样回滚**。
    */
   runId         String?
+  /**
+   * 用户消息的 pi 侧身份（vendor transcript entryId）。
+   *
+   * 2026-10-21（steer 落库 + 统一 user 消息身份）：此前本表**没有任何 user 消息的身份键**
+   * （`runId` 只服务 assistant 的 operationId，user 消息恒为 NULL）⇒
+   *   - 插话（steer/followUp）走队列 API、服务端从不建行 ⇒ **刷新后历史里这条消息直接消失**；
+   *   - 刷新后恢复的历史消息没有 fork 切点 ⇒「③ 重跑」只能降级兜底。
+   *
+   * 来源与**可得时机**：vendor `QueueResult` 在**入队那一刻**就带 `{entryId}`
+   * （`services/pi-runtime/src/session-manager.ts:2517/2583` ——
+   *  `return { queued: true, entryId: res.value.entryId }`；#507 为「撤回」把它接出��，
+   * 此前被丢弃）。正常发送的 entryId 则随 `pi_message_end` 事件下发给前端。
+   * ⇒ 两条路径都能在**发言被持久化的同一时刻**拿到 entryId，落库零竞态、不依赖客户端在线。
+   *
+   * 可空 + 唯一是刻意的：assistant 行与全部存量行都是 NULL，
+   * 而 SQLite 下 NULL 互不冲突 ⇒ **存量零回填、迁移纯 additive、可原样回滚**。
+   */
+  entryId       String?
   createdAt     DateTime    @default(now())
 
   /// 回合唯一性不变式：同一 thread 里同一 run 至多一条消息。
   /// 落库走 upsert（先到先得），后来者命中即 no-op —— 即便上游 409 判定漏了、
   /// 或出现第三个写者（generation-recovery 的 drain），也无法再写进重复行。
   @@unique([threadId, runId])
+  /// user 消息身份键：同一条发言至多一行。消息重放、多次重试都命中即 no-op。
+  @@unique([entryId])
   @@index([threadId, createdAt])
   @@index([sessionId, threadId, createdAt])
 }
