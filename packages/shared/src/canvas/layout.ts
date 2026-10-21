@@ -23,15 +23,22 @@ export type LayoutNode = Omit<CanvasNode, 'type'> & {
   dimensions?: { width?: number; height?: number }
 }
 
-// 尺寸表仅列当前 NodeType 4 项（image/video/audio/text——2026-10-17 prompt 下线、
-// 2026-10-19 group/shot/sceneComposer 下线，见 shared/src/index.ts 头注）。已下线类型
-// （含存量画布 JSON 里的历史节点）统一走 fallback 280×160，与 Nest 侧既有行为一致。
+// 尺寸表 = **实际渲染尺寸**表（量存量节点用），不是「可创建类型」表。
+// ⚠️ 与 `shared/src/index.ts` 的 NodeType 联合（4 项 = 可创建/可新建的类型）**是两个口径**：
+//   NodeType 决定「agent 能建什么」；本表决定「已存在的节点量出来多大」——
+//   下线类型的历史节点仍留在存量画布 JSON 里且**仍在渲染**（neoNodeMeta 的 prompt 高 120），
+//   若按 fallback 280×160 量，放置内核算出的 bbox 会与真实渲染尺寸不符 ⇒ 可能压盖/误避让。
+//   故本表 = 当前 4 项 + 仍在渲染的已下线类型（prompt），与 master 的 Nest 原表逐字一致
+//   （b13750e3 铁律：放置内核不得静默改变排布尺寸；与 web 侧 useCanvasGrouping.ts 同表同值）。
 const NODE_SIZES: Record<string, { w: number; h: number }> = {
   text: { w: 280, h: 160 },
   image: { w: 280, h: 280 },
   // 视频：长边基准 320（尺寸随比例 contain，包络 320×320）
   video: { w: 320, h: 320 },
   audio: { w: 280, h: 140 },
+  // prompt 2026-10-17 下线（创建入口已断），但存量节点仍渲染为 280×120 ⇒ 按真实尺寸量，
+  // 不走 fallback。group/shot/sceneComposer/mediaInput 等无渲染 ⇒ 走 fallback 280×160。
+  prompt: { w: 280, h: 120 },
 }
 
 function parseStyleSize(style: LayoutNode['style']): { w?: number; h?: number } {
