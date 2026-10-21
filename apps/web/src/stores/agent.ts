@@ -736,8 +736,11 @@ export const useAgentStore = defineStore('agent', () => {
       if (isFeatureOn('turn_timeline') && meta?.executionEvents?.length) {
         // TURN-IDENTITY PR3：`partial` 是服务端判定的「账本不完整」（本流没捕获到
         // run 起点）⇒ 重放时置顶一条缺口标注，不让残缺过程冒充完整过程。
+        // D2（multi-device Task 2）：`truncated` 是「尾部未捕获」（本流没等到 agent_end，
+        // pi 侧那轮仍在跑）⇒ 方向与 partial 相反，**分别**标注，不混用。
         timeline = replayTimelineEvents(meta.executionEvents, persisted.content, {
           partial: meta.partial === true,
+          truncated: meta.truncated === true,
         })
       }
       // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在

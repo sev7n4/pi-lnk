@@ -797,8 +797,14 @@ export function replayTimelineEvents(
   /**
    * TURN-IDENTITY PR3：`metadata.partial` —— 服务端判定本条账本**不完整**
    * （本流没捕获到 run 起点）。真值 = 因果围栏，不用内容指纹（N5）。
+   *
+   * D2（multi-device Task 2）：`metadata.truncated` —— 服务端判定本条账本**尾部未捕获**
+   * （本流在权威收束事件 agent_end/error 到达之前就结束了；pi 侧那轮仍在跑、仍会跑完）。
+   *
+   * ⚠️ 两者方向相反、不可混用：`partial` = 头部缺口，`truncated` = 尾部缺口。
+   * 两者可同时为真（两头都不齐）⇒ 读端**必须**能分别看出是哪一头缺。
    */
-  opts?: { partial?: boolean },
+  opts?: { partial?: boolean; truncated?: boolean },
 ): TurnTimeline {
   const sortKey = (e: { seq?: number; gSeq?: number }): number => (e.gSeq ?? e.seq) as number
   const ordered = events.every((e) => typeof sortKey(e) === 'number')
@@ -824,6 +830,16 @@ export function replayTimelineEvents(
       kind: 'notice',
       id: 'notice:partial-ledger',
       text: '本轮前半段事件未捕获（中途接入）',
+      tone: 'info',
+    })
+  }
+  if (opts?.truncated) {
+    // 尾部缺口标注：与上面的头部缺口**分开**标（方向相反，混用会说谎）。
+    // 「本轮没看到生成结束」⇒ 用户看到的是前缀，不能当成完整回答。
+    timeline.parts.unshift({
+      kind: 'notice',
+      id: 'notice:truncated-ledger',
+      text: '本轮未捕获到生成结束（内容可能不完整）',
       tone: 'info',
     })
   }

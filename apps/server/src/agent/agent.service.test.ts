@@ -839,6 +839,16 @@ describe('AgentService turn billing (P2 T6)', () => {
   it('⑥ 消费方提前 .return()（generator 中断）→ hold 即时 release，不走 settle', async () => {
     // F2（P2 T6 修复轮）：前端 abort SSE → 消费方 .return() → 生成器收束，
     // 尾部结算块不可达 → 修复前 hold 滞留至 reaper 30min；修复后 finally 即时全退。
+    //
+    // ⚠️ D2（multi-device Task 2）**修订了本用例的落库断言**（2026-10-21）：
+    // 原断言是「中断路径 finalizeTurn 不可达 ⇒ assistant 消息不落库」——
+    // 那**不是**想要的行为，而是「落库挂在 generator 收尾上」这个缺陷的**症状**。
+    // 生产取证（618.6s 的 run 在 pi transcript 里 completed、Nest 表里 0 行 ⇒
+    // 「有执行、无记录」）证明「不落库」正是要修掉的病。
+    //
+    // ⇒ 修订后：中断路径**仍须落库**（本流手上有什么落什么），并标 truncated
+    // （没见到 agent_end ⇒ 尾部未捕获）。计费断言**一字不改**：
+    // settleFromHold 不可达（无权威 usage）⇒ 走 finally 的 release 全退。
     process.env.TEXT_TOKEN_BILLING = 'on'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([
@@ -856,12 +866,14 @@ describe('AgentService turn billing (P2 T6)', () => {
     expect(settleFromHold).not.toHaveBeenCalled()
     expect(release).toHaveBeenCalledTimes(1)
     expect(release).toHaveBeenCalledWith('hold-1', '回合中断，预扣全退')
-    // 中断路径 finalizeTurn 不可达：assistant 消息不落库（turn_settled 只进内存
-    // executionEvents，外部可观测信号即 release 调用本身）
+    // D2（Task 2）：中断路径**仍须落库**——「Nest 没看到这一轮结束」≠「这一轮没发生」。
+    // 没见到 agent_end ⇒ 落库内容是前缀 ⇒ 必须标 truncated（不冒充完整过程）。
     const assistantCall = agentMessageCreate.mock.calls
-      .map((c) => (c[0] as { data: { role: string } }).data)
+      .map((c) => (c[0] as { data: { role: string; metadata?: string | null } }).data)
       .find((d) => d.role === 'assistant')
-    expect(assistantCall).toBeUndefined()
+    expect(assistantCall, '中断路径仍须落库（否则这轮在历史里彻底消失）').toBeDefined()
+    const meta = assistantCall?.metadata ? JSON.parse(assistantCall.metadata) : null
+    expect(meta?.truncated, '没见到 agent_end ⇒ 必须标 truncated').toBe(true)
   })
 
   it('④ flag off → 零预扣零结算（回归锚：Q2 行为逐字节不变）', async () => {

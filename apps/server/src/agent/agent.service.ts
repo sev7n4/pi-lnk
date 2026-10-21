@@ -131,6 +131,11 @@ export function buildTurnMetadata(input: {
    */
   partial?: boolean
   gapFrom?: number
+  /**
+   * D2（Task 2）：**尾部**截断（消费方断连 ⇒ 只拿到 run 前缀）。
+   * 与 `partial`（头部缺口）方向相反，键不出现纪律相同：完整时**不写**该键。
+   */
+  truncated?: boolean
 }): AgentMessageMetadata | undefined {
   const metadata: AgentMessageMetadata = {}
   if (input.executionTrace) metadata.executionTrace = input.executionTrace
@@ -140,6 +145,7 @@ export function buildTurnMetadata(input: {
     metadata.partial = true
     if (input.gapFrom !== undefined) metadata.gapFrom = input.gapFrom
   }
+  if (input.truncated) metadata.truncated = true
   return Object.keys(metadata).length ? metadata : undefined
 }
 
@@ -1678,6 +1684,33 @@ export class AgentService {
     let turnRefusalReason: 'not_idle' | 'not_steerable' = 'not_idle'
     /** prompt 是否被 pi 接受（202）。false ⇒ pi 侧**整轮不存在**（双写分叉）。 */
     let promptAccepted = true
+    // ── D2（multi-device Task 2）：落库与请求生命周期解耦 ──
+    //
+    // ⛔⛔ 2026-10-21 生产取证推翻了原计划的机制假设（详见 .superpowers/sdd ledger）：
+    // 「nginx 300s 掐断 ⇒ 消费方在 yield 处抛错 ⇒ generator 提前终止」**不成立**——
+    // Node 上 `res.write` 对已销毁的 socket 只返回 false、**不抛错**（实测），
+    // 生产 nginx 日志里该 POST 是 **201 正常完成**（不是 499/504）。
+    //
+    // ⇒ 真正可证的缺陷是：**落库判据依赖「本流是否见到了 agent_end」**。
+    // Nest 侧流提前结束时，权威的 agent_end（+ turn_usage）还没到 ⇒
+    // 「等 agent_end 才落库、没等到就什么都不写」⇒ 整轮在 Nest 侧**零记录**，
+    // 而 pi 侧那轮照跑照完（transcript 里 completed）⇒ 「有执行、无记录」。
+    //
+    // `sawTerminalEvent`：本流是否见到了**权威收束事件**（agent_end 或 error）。
+    // - true  ⇒ 这轮在 pi 侧**已经结束**（成功或失败）⇒ 本流看到的是全部 ⇒ 不标 truncated；
+    // - false ⇒ 这轮在 pi 侧**还在跑**（本流只是提前收尾）⇒ 落库内容是**前缀**，
+    //   尾部未捕获 ⇒ 必须标 truncated（否则读端会把前缀当完整过程重放）。
+    //
+    // ⚠️ `error` 也算收束：run 失败**也是**结束了，不是「尾部缺失」。
+    //   失败轮的账本完整性由 `runFailed` 分支（计费全退）承担，不靠 truncated 表达。
+    let sawTerminalEvent = false
+    // `loopCompletedNaturally` = while 循环自然退出（agent_end / error / 流耗尽）。
+    // 消费方断连触发 `generator.return()` 时，generator 在 `yield` 处被回收、**不会**
+    // 执行循环后的收尾（计费 / 回合状态 / finalizeTurn 落库）→ 整轮助手消息丢失。
+    // 该标志为 false 时由 finally 的 detached settle 接管落库。
+    // `turnSettled` 保证整轮只落库一次（断连与正常路径互斥）。
+    let loopCompletedNaturally = false
+    let turnSettled = false
     try {
       await client.prompt(sessionKey, promptTextWithMarkers, "main", {
         forceSkills,
@@ -1787,6 +1820,9 @@ export class AgentService {
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true
           runFailed = event.type === 'error'
+          // D2（Task 2）：权威收束事件到了 ⇒ 这轮在 pi 侧已结束 ⇒ 本流看到的是全部。
+          // ⚠️ `error` 也算收束（run 失败**也是**结束，不是「尾部缺失」）。
+          sawTerminalEvent = true
         }
         // 失败透传（item 2）+ 可观测性（item 3）：本轮以错误结束 → 分类后下发结构化 error 事件，
         // 前端接住后既在对话内追加 ⚠️，又在 dock 上沿弹「充值提醒」类窄卡片。
@@ -1927,8 +1963,76 @@ export class AgentService {
         }
         yield ui as AgentStreamEvent
       }
+      // D2（Task 2）：只有 while 循环**自然**退出才置 true。消费方断连触发
+      // `generator.return()` 时，generator 在 `yield` 处被回收，本语句不可达 ⇒
+      // loopCompletedNaturally 保持 false，由下方 finally 接管落库。
+      loopCompletedNaturally = true
     } finally {
       textPersister.flush() // 回合收尾：残留正文段（尾段后无边界事件时）落库
+      // D2（Task 2）：落库不得依赖「本流是否见到了 agent_end」。
+      //
+      // ⛔⛔ 生产取证（2026-10-21，见 .superpowers/sdd ledger）推翻了原计划的机制假设：
+      // 「nginx 300s 掐断 ⇒ 消费方在 yield 处抛错 ⇒ generator 提前终止」**不成立**
+      // （Node 上 res.write 对死 socket 只返回 false 不抛错；生产 nginx 日志该 POST 是
+      // **201 正常完成**；同 session 一个 438.1s 的 run 照样落了库）。
+      // ⇒ 真正可证的缺陷是：**Nest 侧 SSE 提前收尾时（~118s），权威的 agent_end 还没到**
+      // （pi 侧那轮继续跑到 618.6s 并 completed）⇒ 旧判据「等到 agent_end 才落库、
+      // 没等到就什么都不写」⇒ 整轮在 Nest 侧零记录 ⇒「有执行、无记录」。
+      //
+      // 因此本分支的语义从「断连兜底」升级为「**本流结束时必落库**」：
+      // 不论是消费方断连（generator.return）、循环内异常、还是流提前耗尽，
+      // 都用**手上已有的一切**落库，并按缺口方向显式标注（truncated = 尾部截断）。
+      //
+      // ⚠️ inline `threadId?.trim() || sessionId` 而非引用下方的 effectiveThreadId，
+      // 否则触发 TDZ（该 const 声明在 try 之后，finally 作用域内尚不可见）。
+      if (!loopCompletedNaturally && turnRole === 'owner' && !turnSettled) {
+        turnSettled = true
+        // 落库内容是**本流结束瞬间的快照**：pi 侧 run 在 Nest 侧收尾后**仍会跑完**
+        // （证据：618.6s 的 run 在 pi transcript 里 completed，而 Nest 表 0 行）。
+        // ⇒ Nest 手上的 executionEvents 只是**前缀**，不冒充全量 ⇒ 必须标「尾部截断」。
+        // 账本围栏（partial/gapFrom）照常算：收尾点可能也在 run 起点之前（那就没有 partial，
+        // 因为 isLedgerComplete 判的是「有事件却没看到 agent_start」）。
+        const capture: LedgerCapture = {
+          sawRunStart,
+          firstSeq,
+          eventCount: executionEvents.length,
+        }
+        const partial = !isLedgerComplete(capture)
+        if (partial) {
+          this.piLogger.warn(
+            `persist_ordinal_gap key=${sessionKey} runId=${turnRunId ?? 'unknown'} gapFrom=${firstSeq ?? 'unknown'} — 本流从半路接入，账本标 partial（不冒充全量）`,
+          )
+        }
+        void this.finalizeTurn(
+          sessionId,
+          threadId?.trim() || sessionId,
+          userId,
+          assistantText,
+          canvasActions,
+          {
+            rewriteCanvasData: false,
+            linkedOutputs: deriveLinkedOutputs(canvasActions),
+            metadata: buildTurnMetadata({
+              executionEvents,
+              partial,
+              gapFrom: ledgerGapFrom(capture),
+              // ⚠️ 只有**真的没见到 agent_end** 才是尾部截断。
+              // 消费方在 agent_end 之后才断连（很常见：最后一帧已到、前端刚好刷新）
+              // ⇒ 本流其实看全了 ⇒ 不能标 truncated（否则谎报缺口）。
+              ...(sawTerminalEvent ? {} : { truncated: true }),
+            }),
+            runId: turnRunId,
+            sawTerminalEvent,
+            runStarted: promptAccepted,
+          },
+        ).catch((err) =>
+          this.piLogger.warn(
+            `detached finalizeTurn failed (key=${sessionKey}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        )
+      }
       // P0-①：会话跨轮保留（历史即上下文），回收由 pi-runtime 的 TTL / 磁盘 LRU 负责。
       // 这里只退订本轮订阅（触发 iteratePiEvents 的 doCancel → client.cancel）。
       // 注意：iteratePiEvents 现在返回 AsyncIterableIterator，其 `return` 在类型上是可选的，
@@ -2080,7 +2184,10 @@ export class AgentService {
     // shadow 流（409 并入在跑的 run）到此为止：事件已全程转发给前端（进度可见），
     // 但**不写助手消息**。唯一性最终由 PR2 的 `(threadId, runId)` 唯一索引兜底；
     // 这里先掐掉「同一 run 被 N 条流各记一本账」的源头。
-    if (turnRole === 'owner') {
+    // D2（Task 2）：断连路径已在上方 finally 里 fire-and-forget 落库并置 turnSettled，
+    // 此处互斥跳过，避免整轮落两次。
+    if (turnRole === 'owner' && !turnSettled) {
+      turnSettled = true
       // 账本完整性：判据是**因果围栏**（是否看到 run 起点），不是内容指纹——
       // 同一句话 5 分钟后重发是合法新回合，用指纹判会把合法回合误标残缺（N5）。
       const capture: LedgerCapture = {
@@ -2103,8 +2210,13 @@ export class AgentService {
         metadata: buildTurnMetadata({
           executionEvents,
           ...(partial ? { partial: true, gapFrom: ledgerGapFrom(capture) } : {}),
+          // D2（Task 2）：本流结束时**没见到 agent_end** ⇒ 这轮在 Nest 侧是个前缀
+          // （pi 侧那轮仍在跑、仍会跑完）⇒ 必须标 truncated，不能冒充全量。
+          ...(sawTerminalEvent ? {} : { truncated: true }),
         }),
         runId: turnRunId,
+        sawTerminalEvent,
+        runStarted: promptAccepted,
       })
     } else {
       // shadow：事件已全程转发给前端（进度可见），到此为止——同一次 run 只记一本账。
@@ -2322,6 +2434,33 @@ export class AgentService {
        * 未透传（老 runtime 滚动窗口）时为 undefined ⇒ 退回「无条件写」的旧行为。
        */
       runId?: string
+      /**
+       * D2（Task 2）：本轮**是否见到权威收束事件**（agent_end）。
+       *
+       * 为什么要单独传：旧的落库判据是「有内容才落库」（`shouldPersistAssistant`），
+       * 而内容只有在 pi 侧 agent_end 前后才齐 ⇒ Nest 侧流提前收尾时
+       * 「本流没见到 agent_end」⇒ 内容为空 ⇒ **整轮零记录**（生产实证：618.6s 的 run
+       * 在 pi transcript 里 completed、Nest 表里 0 行 ⇒「有执行、无记录」）。
+       *
+       * ⇒ false 时**仍须落库**：落一条「本轮已执行但 Nest 未见到收束」的行，
+       * 让这轮在历史里**可查**（spec D2：「执行完成即应有记录」），
+       * 并用 metadata.truncated 显式标注「尾部未捕获」。
+       *
+       * ⚠️ 键不出现纪律：true（见到 agent_end 或 error）时**不写** truncated。
+       */
+      sawTerminalEvent?: boolean
+      /**
+       * D2（Task 2）：本轮**是否真的跑起来了**（prompt 已被 pi 接受）。
+       *
+       * 判据分工（两者缺一不可）：
+       * - `sawTerminalEvent=false` ⇒ Nest 没看到收束（**尾部未捕获**）；
+       * - `runStarted=true`        ⇒ pi 侧确实在跑这轮（**不是「从没发生过」**）。
+       *
+       * 两者皆真 ⇒ 本轮在 pi 侧**确实执行了**，Nest 只是没看全 ⇒ 必须留痕。
+       * 只有 `sawTerminalEvent=false` 而 `runStarted=false`（prompt 被拒/未提交）⇒
+       * pi 侧整轮不存在 ⇒ 不该造一条假记录。
+       */
+      runStarted?: boolean
     },
   ) {
     // ── TURN-IDENTITY PR2：先到先得的唯一性 ──
@@ -2334,9 +2473,30 @@ export class AgentService {
       )
       return
     }
-    const shouldPersistAssistant = Boolean(
+    // D2（Task 2）：落库判据**不得依赖「本流是否见到了 agent_end」**。
+    //
+    // 旧判据 = `Boolean(assistantText || presentation || executionEvents.length)`
+    // （「有内容才落库」）⇒ 内容只有在 agent_end 前后才齐 ⇒ Nest 侧流提前收尾时
+    // 本轮内容为空 ⇒ **整轮零记录**（生产实证：618.6s 的 run 在 pi transcript 里
+    // completed，而 Nest 表里 0 行 ⇒「有执行、无记录」，用户永远看不到这轮）。
+    //
+    // 新判据（三者取或）：
+    // 1. 有内容（正文/展示块/执行事件）⇒ 照旧落库；
+    // 2. 本流没见到收束（sawTerminalEvent=false）**且**这轮确实跑起来了（runStarted=true）
+    //    ⇒ 落一条「本轮已执行但 Nest 未见到收束」的行，让这轮在历史里**可查**
+    //    （spec D2：「执行完成即应有记录」），并由 metadata.truncated 标注「尾部未捕获」；
+    // 3. 其余（既没内容、又没跑起来）⇒ 不落库（不造假记录）。
+    //
+    // ⚠️ ②的落库内容是**前缀快照**（本流手上的一切），不是全量 ⇒ 必须可判读，
+    // 否则读端会把前缀当完整过程重放（比缺行更糟）。
+    const sawTerminalEvent = opts.sawTerminalEvent !== false
+    const runStarted = opts.runStarted === true
+    const hasContent = Boolean(
       assistantText || opts.metadata?.presentation || opts.metadata?.executionEvents?.length,
     )
+    // 未见到收束但**这轮确实在跑** ⇒ 必须留痕（哪怕本流一个字都没收到：
+    // 「Nest 没看到」≠「这轮没发生」，前者是观测缺失，后者是事实缺失）。
+    const shouldPersistAssistant = hasContent || (!sawTerminalEvent && runStarted)
     if (shouldPersistAssistant) {
       // 首尾空行归一化：上游 harness / agnes 网关常在下水前补一串 \n（生产 1.4% 消息命中），
       // 只在落库这一跳清理——逐帧 normalize delta 会把跨 delta 的段落换行吃掉。
