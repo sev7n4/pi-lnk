@@ -100,10 +100,25 @@ type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'
   metadata?: string | null
 }
 
+/**
+ * 本地消息 id 的唯一生成口（multi-device Task 3 · R6）。
+ *
+ * 旧实现 `msg-${Date.now()}` 在**同一毫秒**内多次调用必撞（同 tick 的 user +
+ * assistant 气泡、插话气泡与正常发送同刻），撞 id ⇒ `v-for :key` 重复 ⇒
+ * Vue DOM 复用错位 ⇒ 肉眼「消息顺序乱」。
+ *
+ * ⚠️ 生产是 `http://`（非安全上下文）⇒ `crypto.randomUUID` 不可用（[SecureContext]
+ * 限定）⇒ 兜底分支不是防御性代码，是生产主路径（守卫：agent.messageIdentity.test.ts）。
+ * Task 9 的 `clientId` 复用本函数（plan「Interfaces · Produces」）。
+ */
+export function nextLocalMessageId(): string {
+  return typeof crypto?.randomUUID === 'function'
+    ? `msg-${crypto.randomUUID()}`
+    : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
-  /** 本地消息 id 序号：与 `msg-${Date.now()}` 组合出**唯一** id（见 insertUserMessageBeforeAssistant）。 */
-  let localMsgSeq = 0
   const isStreaming = ref(false)
   /** Q2（2026-10-14）：本回合实时预估积分（usage_delta 事件逐段覆盖，turn 结束清位）。
    * 状态行 running 段「预估 -N积分」数据源；纯展示预估，P2 落账后由 settled 权威值替代。 */
@@ -210,9 +225,7 @@ export const useAgentStore = defineStore('agent', () => {
       }
     }
     const msg: AgentStreamMessage = {
-      // ⚠️ id 必须唯一：插话气泡可能与同毫秒的正常发送撞 `msg-${Date.now()}`。
-      //    撞 id 会让 v-for 的 :key 重复 ⇒ 渲染错乱。
-      id: `msg-${Date.now()}-${localMsgSeq++}`,
+      id: nextLocalMessageId(),
       role: 'user',
       content,
       ...(extras?.entryId ? { entryId: extras.entryId } : {}),
@@ -243,7 +256,7 @@ export const useAgentStore = defineStore('agent', () => {
     // TURN-IDENTITY PR3：新回合开始清掉「发言被拒」瞬时态，避免跨回合误显示
     turnRefusal.value = null
     messages.value.push({
-      id: `msg-${Date.now()}`,
+      id: nextLocalMessageId(),
       role: 'user',
       content,
       attachments: extras?.attachments?.map((attachment) => ({ ...attachment })),
@@ -280,7 +293,7 @@ export const useAgentStore = defineStore('agent', () => {
     // Q2：新回合开始，清掉上一回合的实时预估（状态行只显示本回合消耗）
     liveEstimatedCredits.value = null
     const msg: AgentStreamMessage = {
-      id: `msg-${Date.now()}`,
+      id: nextLocalMessageId(),
       role: 'assistant',
       content: '',
       streaming: true,
