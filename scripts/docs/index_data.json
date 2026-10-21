@@ -1,13 +1,13 @@
 {
- "total": 358,
+ "total": 381,
  "by_status": {
-  "living": 123,
-  "frozen": 229,
+  "living": 134,
+  "frozen": 241,
   "superseded": 6
  },
  "by_topic": {
-  "canvas-tool": 50,
-  "other": 50,
+  "other": 62,
+  "canvas-tool": 59,
   "generation-pipeline": 40,
   "canvas-product": 34,
   "agent-ux": 31,
@@ -19,15 +19,15 @@
   "ui-interaction": 15,
   "memory": 11,
   "vision": 7,
-  "deploy-infra": 4,
-  "prompt-registry": 4,
-  "context-engineering": 3
+  "deploy-infra": 5,
+  "context-engineering": 4,
+  "prompt-registry": 4
  },
  "by_month": {
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 83
+  "2026-10": 106
  },
  "items": [
   {
@@ -1621,6 +1621,105 @@
    "kind": "spec",
    "status": "frozen",
    "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-14-view-canvas-media-design.md",
+   "name": "2026-10-14-view-canvas-media-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-16-canvas-write-tool-chain-design.md",
+   "name": "2026-10-16-canvas-write-tool-chain-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-17-agent-composer-overlay-trace-boundary-design.md",
+   "name": "2026-10-17-agent-composer-overlay-trace-boundary-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-17-agent-turn-identity-codex-review.md",
+   "name": "2026-10-17-agent-turn-identity-codex-review.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-17-agent-turn-identity-design.md",
+   "name": "2026-10-17-agent-turn-identity-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-17-mobile-composer-sse-boundary-design.md",
+   "name": "2026-10-17-mobile-composer-sse-boundary-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-19-propose-confirm-single-surface-design.md",
+   "name": "2026-10-19-propose-confirm-single-surface-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-20-agent-canvas-batch-layout-design.md",
+   "name": "2026-10-20-agent-canvas-batch-layout-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-21-multi-device-consistency-design.md",
+   "name": "2026-10-21-multi-device-consistency-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-21-multi-device-consistency-evidence.md",
+   "name": "2026-10-21-multi-device-consistency-evidence.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-21-turn-continuity-design.md",
+   "name": "2026-10-21-turn-continuity-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
    "topic": "other"
   },
   {
@@ -3226,6 +3325,15 @@
    "topic": "agent-ux"
   },
   {
+   "path": "docs/superpowers/plans/2026-10-14-p1a-pricing-publishing-gray-release.md",
+   "name": "2026-10-14-p1a-pricing-publishing-gray-release.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/plans/2026-10-14-sidebar-ref-bind-pr-b.md",
    "name": "2026-10-14-sidebar-ref-bind-pr-b.md",
    "month": "2026-10",
@@ -3251,6 +3359,105 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-14-view-canvas-media.md",
+   "name": "2026-10-14-view-canvas-media.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-15-p2-token-precise-billing.md",
+   "name": "2026-10-15-p2-token-precise-billing.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "context-engineering"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-16-agent-composer-uiux.md",
+   "name": "2026-10-16-agent-composer-uiux.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-16-canvas-id-binding-phase1.md",
+   "name": "2026-10-16-canvas-id-binding-phase1.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-17-agent-turn-identity-rollout.md",
+   "name": "2026-10-17-agent-turn-identity-rollout.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "deploy-infra"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-17-alipay-sandbox-verification.md",
+   "name": "2026-10-17-alipay-sandbox-verification.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-19-propose-confirm-single-surface.md",
+   "name": "2026-10-19-propose-confirm-single-surface.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-20-agent-canvas-batch-layout.md",
+   "name": "2026-10-20-agent-canvas-batch-layout.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-20-group-native-node.md",
+   "name": "2026-10-20-group-native-node.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-21-multi-device-consistency.md",
+   "name": "2026-10-21-multi-device-consistency.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-21-turn-continuity.md",
+   "name": "2026-10-21-turn-continuity.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
   }
  ]
 }

@@ -63,7 +63,15 @@
 | [`superpowers/specs/2026-10-21-turn-continuity-design.md`](./superpowers/specs/2026-10-21-turn-continuity-design.md) | **回合连续性** —— 故障后用户说「继续」能接上。生产取证（Nest/pi 双写静默分叉）+ 三层根因 + 行业（Codex/Claude Code/WorkBuddy）对标 + 「第四份状态」落 Nest DB（权威）、每轮重算注入动态块、跨压缩走既有 `RetentionState` 通道 | 活资产 —— 产品级交互契约 |
 | [`superpowers/plans/2026-10-21-turn-continuity.md`](./superpowers/plans/2026-10-21-turn-continuity.md) | **回合连续性实施计划** —— 三批（恢复层/双写对账/未完成态可见+自动续跑），含架构修正说明（初版 pi 侧 custom entry 方案的三处不成立）与各批次风险回滚 | 活资产 —— 实现依据 |
 
-> 该规格**不新增 agent 工具**（走每轮动态上下文），因此不阻塞
+| [`superpowers/specs/2026-10-21-multi-device-consistency-design.md`](./superpowers/specs/2026-10-21-multi-device-consistency-design.md) | **多端同会话一致性** —— 手机/PC 同画布的对话记录实时同步 + 并发发起归属。生产取证（样本会话 Nest 表 7 行 vs pi transcript 66 entry / 4 run；**第一个 run 618.6s 成功但零落库**；插话不入表刷新即消失；209 thread 中 29 个 user>assistant）+ 四层拆分（执行/观测/投影/队列）+ vendor `lane.watch()` 等**此前全零使用**的上游原语盘点 + Codex/Claude Code/IM 对标 + 六条可复用判据 D1–D6 | 活资产 —— 产品级交互契约 |
+| [`superpowers/plans/2026-10-21-multi-device-consistency.md`](./superpowers/plans/2026-10-21-multi-device-consistency.md) | **多端同会话一致性实施计划** —— 三批（止血 / 观察-投影-队列结构 / 对账与身份），Task 1 专门复现长任务丢库根因（假设不成立则 P0-2 重评，不基于假设改架构） | 活资产 —— 实现依据 |
+
+> 该规格的两条实证前提已在文首标注：① 长任务丢库**缺一条直接日志**（生产日志已轮转），
+> 须由计划 Task 1 复现；② 插话不入库已有生产实证。
+> ⚠️ **与 PR #534 的边界**：#534（已在 master）做了插话的**前端气泡层**，
+> 本规格 Task 8 只承接其**后端落库**部分，不改 #534 既有实现。
+
+> 该规格**不新增 agent 工具**（走会话级 SSE 与投影面），因此不阻塞
 > `agent/tool-framework-roadmap.html` §4 P1 的常驻集下沉。
 
 ## 保留的目录
