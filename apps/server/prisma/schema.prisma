@@ -283,8 +283,31 @@ model GenerationRecord {
   sessionId String?
   nodeId    String?
   createdAt DateTime @default(now())
+  /**
+   * 记录最后变更时刻（2026-10-21 补列，修既存生产 bug）。
+   *
+   * ⭐ 为什么必须有这一列（不能改用 `createdAt`）：
+   * 本表是**可变**的（`studio.service.ts` 有 40+ 处 update：status 流转、
+   * url 回填、metadata 写入）⇒ `createdAt` ≠ 最后变更时刻。
+   * 而「回合外终态通报」的 reaper 按「**最近 10 分钟内进入终态**」扫
+   * （`late-generation-notify.ts` 的 `where.updatedAt.gte` + `orderBy.updatedAt.asc`，
+   * 注释原话：*"终态后 10min 内必被扫到"*）⇒ 语义**必须**是 updatedAt。
+   *
+   * ⛔ 用 `createdAt` 的后果：一个 3 小时前创建、1 分钟前完成的生成记录
+   * 落在 10min 回看窗**之外** ⇒ 永远扫不到 ⇒ 用户收不到「生成完成」通知
+   * ⇒ 破坏 reaper 的核心保证。
+   *
+   * prisma `@updatedAt` ⇒ create/update 时由**客户端自动**写入 ⇒ 业务代码零改动。
+   */
+  updatedAt DateTime @updatedAt
 
   @@index([userId, sessionId, createdAt])
+  /**
+   * reaper 的扫描索引：按「最后变更」取最近窗口的终态记录。
+   * ⚠️ 与上面的 `[userId, sessionId, createdAt]` **不是**替代关系 ——
+   * 后者服务用户维度的历史列表，前者服务状态流转的时间窗扫描。
+   */
+  @@index([updatedAt])
 }
 
 model Story {
