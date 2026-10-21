@@ -1186,6 +1186,20 @@ const runMemoryInjection = async (items: unknown[], tag: string): Promise<string
   it('P0-①：不再查询历史消息表（持久会话已含历史）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    // ⭐ 精确化（2026-10-21，批次 2 对账落地时）：原判据是「findMany 没被调用」——
+    // 那是**代理判据**，把「不查历史**喂 prompt**」误扩成「完全不碰 AgentMessage 表」
+    // ⇒ 撞上了批次 2 的对账（对账用 findFirst 取**最近一条 user 消息**做**比对**，
+    // 那条内容**不进 prompt**）。
+    //
+    // 新判据锁**真意图**且**更强**：**历史消息的内容没出现在发给 pi 的 prompt 里**。
+    // ⭐ 若有人真的用历史喂 prompt（含用别的取数方式），这条会红 ⇒ 保护力不减。
+    //
+    // 做法：让 findMany 返回一条带**独特标记**的历史 ⇒ 若它进了 prompt 就会被这段抓住。
+    const HISTORY_MARKER = 'HISTORY_SHOULD_NEVER_REACH_PROMPT'
+    agentMessageFindMany.mockResolvedValue([
+      { id: 'h1', sessionId: 's1', threadId: 't1', role: 'user', content: HISTORY_MARKER, createdAt: new Date(0) },
+    ])
+
     const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
     stubAssembler('PROMPT')
@@ -1194,7 +1208,9 @@ const runMemoryInjection = async (items: unknown[], tag: string): Promise<string
       void _event
     }
 
-    expect(agentMessageFindMany).not.toHaveBeenCalled()
+    // 断言：发给 pi 的 prompt（含 turnContext）里没有那段历史
+    const promptArg = pi.prompt.mock.calls.at(-1)?.[0] as unknown
+    expect(JSON.stringify(promptArg ?? {})).not.toContain(HISTORY_MARKER)
     // 本轮消息仍照常落库（DB 侧归属不受影响）
     expect(agentMessageCreate).toHaveBeenCalled()
   })

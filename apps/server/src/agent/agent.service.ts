@@ -40,6 +40,12 @@ import {
   shouldRecordTurnState,
 } from './turn-state-store'
 import { TurnStateService } from './turn-state.service'
+import {
+  reconcileAfterTurn,
+  type ReconcileClient,
+  type ReconcilePrisma,
+  type ReconcileTurnState,
+} from './history-reconciliation'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
 import { resolveRuleGroups } from './pi-runtime/rule-groups'
@@ -1219,6 +1225,29 @@ export class AgentService {
   }
 
   /**
+   * 批次 2：双写对账（发现分叉 + 自愈）—— 薄封装。
+   *
+   * ⭐ 判据与编排都在 `history-reconciliation.ts`（纯函数 + 可注入的编排层）
+   * ⇒ 本方法只负责「把 Nest 的依赖接上去」⇒ 测试不需要构造整个 AgentService。
+   *
+   * ⛔ 不 await（fire-and-forget）：不拖慢 run 收尾；自愈的状态下一轮被注入。
+   */
+  private reconcileHistoryAfterTurn(
+    client: PiRuntimeClient,
+    sessionKey: string,
+    threadId: string | undefined,
+  ): void {
+    void reconcileAfterTurn({
+      prisma: this.prisma as unknown as ReconcilePrisma,
+      client: client as unknown as ReconcileClient,
+      turnState: this.turnState as unknown as ReconcileTurnState | undefined,
+      threadId,
+      sessionKey,
+      logger: { warn: (msg: string) => this.piLogger.warn(msg) },
+    })
+  }
+
+  /**
    * 回合连续性：本轮中断时，把「用户要什么 / 做到哪 / 卡在哪」记进 **Nest DB**
    * （`AgentThread.turnState`，权威副本）。
    *
@@ -2106,6 +2135,17 @@ export class AgentService {
         }),
         runId: turnRunId,
       })
+      // ── 批次 2：双写对账（发现分叉 + 自愈）────────────────────────────
+      //
+      // ⭐ 时机 = **本轮收尾后**（不是下一轮开始前）：此刻本轮的 user 消息已落 pi 侧
+      // ⇒ 可以比对本轮；且**不阻塞**下一轮的 prompt 发出。
+      //
+      // ⭐ 比对对象 = **Nest 侧最近一条 user 消息**（本轮的那条）：
+      // 本轮收尾时它就是最新的一条 ⇒ 与 pi 侧 tail 的最后一条 user 消息对齐。
+      //
+      // ⛔ 不 await（fire-and-forget）：对账是**观测 + 自愈**，不是主链路
+      // ⇒ 不能拖慢 run 收尾。自愈的状态下一轮被动态块注入（晚一轮，可接受）。
+      void this.reconcileHistoryAfterTurn(client, sessionKey, effectiveThreadId)
     } else {
       // shadow：事件已全程转发给前端（进度可见），到此为止——同一次 run 只记一本账。
       this.piLogger.warn(

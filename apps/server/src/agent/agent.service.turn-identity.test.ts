@@ -320,7 +320,15 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
   it('F（边界）：runtime 未透传 runId（滚动升级窗口）⇒ 退回旧行为，照常落库', async () => {
     await runTurn([...TYPICAL_TURN])
 
-    expect(agentMessageFindFirst).not.toHaveBeenCalled()
+    // ⭐ 精确化（2026-10-21，批次 2 对账落地时）：原判据是「findFirst 没被调用」——
+    // 那是**代理判据**，把「不按 (threadId, runId) 查存在」误扩成「完全不碰 findFirst」。
+    // 新判据锁**真意图**：**没有按 runId 查过**（回合唯一性的读侧判据专属）。
+    // ⭐ 批次 2 的对账也用 findFirst（按 threadId+role 取最近一条 user 消息做比对）⇒ 不撞。
+    expect(
+      agentMessageFindFirst.mock.calls.every(
+        ([args]) => !('runId' in ((args as { where?: Record<string, unknown> } | undefined)?.where ?? {})),
+      ),
+    ).toBe(true)
     const call = assistantCreates().at(-1)?.[0] as { data: { runId?: string } }
     expect(call?.data?.runId).toBeNull()
     expect(assistantCreates()).toHaveLength(1)
