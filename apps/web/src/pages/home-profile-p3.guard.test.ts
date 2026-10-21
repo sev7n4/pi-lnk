@@ -24,7 +24,9 @@ const PROFILE = read('ProfilePage.vue')
 const HERO = read('../components/workflow/SignatureHero.vue')
 const WORKFLOW = read('WorkflowPage.vue')
 const SESSION_CARD = read('../components/workflow/SessionCard.vue')
+const WORK_CARD = read('../components/works/WorkCard.vue')
 const COVER_FALLBACK = read('../components/workflow/CanvasCoverFallback.vue')
+const LAUNCHER = read('../components/workflow/CreativeLauncher.vue')
 
 const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1
 
@@ -61,7 +63,9 @@ describe('P3-B 每页恰好一个 <h1>', () => {
   })
 
   it('主页：唯一 h1 来自 SignatureHero，WorkflowPage 自身不产 h1', () => {
-    expect(h1Count(HERO), 'SignatureHero 主标题「想象，落定成图」应为 h1').toBe(1)
+    // 2026-10-22：h1 承载改为品牌 slogan 主行（BRAND_SLOGAN_MAIN）——
+    // 用户裁定去掉旧标题「想象，落定成图」与问候语，slogan 是唯一叙事主角
+    expect(h1Count(HERO), 'SignatureHero 的 slogan 主行应为 h1').toBe(1)
     expect(h1Count(WORKFLOW), 'WorkflowPage 不得自带 h1，否则主页出现两个 h1').toBe(0)
   })
 })
@@ -123,5 +127,81 @@ describe('P3-G 画布兜底 / 标题口径 / 墨圈（走查「没有设计品�
     const util = read('../utils/displayCanvasTitle.test.ts')
     expect(util).toContain('layout-smoke-1792588745')
     expect(util).toContain('未命名画布')
+  })
+})
+
+describe('P3-H 锚是唯一创作入口（走查「入口是锚」轮）', () => {
+  const HERO_SRC = stripComments(HERO)
+  const LAUNCHER_SRC = stripComments(LAUNCHER)
+
+  it('hero 渲染锚入口（data-testid=ink-anchor），旧墨圈 stand-in 已退役', () => {
+    expect(HERO_SRC, '2026-10-21 用户裁定「入口是锚」⇒ hero 必须有锚按钮').toContain(
+      'data-testid="ink-anchor"',
+    )
+    expect(HERO_SRC, '自造 SVG 墨圈是锚资产就绪前的替身，真身到了应退役').not.toContain(
+      'ink-enso',
+    )
+  })
+
+  it('锚用项目既有品牌资产 anchor-generate.png（与画布坞生成按钮同源），不新造图标', () => {
+    expect(HERO_SRC, '锚 glyph 必须走 assets/icons/anchor-generate.png').toContain(
+      'anchor-generate.png',
+    )
+  })
+
+  it('CTA 收敛：signature 与 default 两个 tone 分流明确（运行时无按钮由组件测试兜底）', () => {
+    // 注意：按钮模板在源码中保留（v-if 只是运行时收敛，default tone 合法需要它），
+    // 故此处锁「分流明确」而非「源码无按钮」；signature 运行时无内嵌按钮已由
+    // SignatureHero.test.ts 的 findAll('button') 行为断言覆盖。
+    expect(
+      LAUNCHER_SRC,
+      '输入框一个入口 + 锚一个入口 ⇒ 双 CTA 稀释锚的指引性；按钮应 v-if 收敛',
+    ).toContain('v-if="tone !== \'signature\'"')
+    expect(LAUNCHER_SRC, 'default tone 的「开始创作」按钮不得被误删').toContain('btn-primary')
+  })
+
+  it('锚的脉冲动效受 reduced-motion 守卫（与粒子/墨鱼同一 media 块）', () => {
+    const mediaBlock = HERO_SRC.slice(HERO_SRC.indexOf('@media (prefers-reduced-motion: reduce)'))
+    expect(mediaBlock).toContain('.lnk-anchor__ripple')
+  })
+
+  it('⛔ 底部两口与问候语已去除（用户 2026-10-22 裁定：纯净霸屏）', () => {
+    expect(HERO_SRC, '「灵感 / 我的作品」两口已去掉').not.toContain('to="/community"')
+    expect(HERO_SRC).not.toContain('to="/canvases"')
+    expect(HERO_SRC, '问候语已去掉').not.toContain('data-greeting')
+  })
+
+  it('hero 霸屏铺满：无圆角卡片化 + 首屏高度（用户 2026-10-22 裁定）', () => {
+    // 曾是 max-w-7xl 容器里的 rounded-2xl 卡片 ⇒ 浅色页面底从四边露白
+    expect(HERO_SRC, 'hero 应四边贴视口，不得保留圆角卡片形态').not.toContain('rounded-2xl')
+    expect(HERO_SRC).toContain('lnk-hero-screen')
+    // 首屏高度必须扣掉顶栏（--neo-header-height，主题无关尺寸变量白名单成员）
+    expect(HERO_SRC).toContain('calc(100dvh - var(--neo-header-height))')
+    expect(HERO_SRC).toContain('calc(100vh - var(--neo-header-height))')
+  })
+})
+
+describe('P3-I 媒体卡片语言统一（走查「两区块颜色割裂」轮）', () => {
+  const CARD = stripComments(SESSION_CARD)
+  const WORK = stripComments(WORK_CARD)
+
+  it('画布卡与作品卡共用全局 .lnk-media-card（面 / 描边 / hover 单一真相源）', () => {
+    expect(CARD, 'SessionCard 应挂全局卡片语言').toContain('lnk-media-card')
+    expect(WORK, 'WorkCard 应挂全局卡片语言').toContain('lnk-media-card')
+    // 各自 scoped 不得再写第二套 hover / 面语言（那正是「割裂」的成因）
+    expect(CARD).not.toContain('border-color: var(--lnk-border-subtle)')
+    expect(WORK).not.toContain('hover:border-accent')
+    expect(WORK).not.toContain('hover:shadow-glow')
+  })
+
+  it('⛔ 作品卡封面不得用裸黑（black/xx），遮罩一律走 dim 令牌', () => {
+    expect(WORK, 'black/xx 是硬编码黑；dim 令牌双主题自适应').not.toMatch(/\bblack\/\d/)
+    expect(WORK).toContain('from-dim/80')
+  })
+
+  it('全局卡片语言本体在 main.css（与 btn 系同层 @layer components）', () => {
+    const main = read('../styles/main.css')
+    expect(main).toContain('.lnk-media-card')
+    expect(main).toContain('.lnk-media-card:hover')
   })
 })

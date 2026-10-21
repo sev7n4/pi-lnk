@@ -50,12 +50,12 @@ function onHoverLeave() {
 
 <template>
   <article
-    class="group cursor-pointer overflow-hidden rounded-2xl border border-overlay/[0.08] bg-surface-base transition hover:border-accent hover:shadow-lg hover:shadow-glow"
+    class="lnk-media-card group cursor-pointer overflow-hidden rounded-2xl border transition"
     @click="$emit('viewWork', work.id)"
     @mouseenter="onHoverEnter"
     @mouseleave="onHoverLeave"
   >
-    <div class="relative aspect-video overflow-hidden bg-surface-elevated">
+    <div class="relative aspect-video overflow-hidden bg-surface-sunken">
       <video
         v-if="isVideoPlayback"
         ref="videoRef"
@@ -72,10 +72,10 @@ function onHoverLeave() {
         :alt="work.title"
         class="h-full w-full object-cover transition duration-500 group-hover:scale-105"
       />
-      <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+      <div class="absolute inset-0 bg-gradient-to-t from-dim/80 via-transparent to-transparent" />
 
       <div class="absolute left-3 top-3 flex gap-2">
-        <span class="rounded-md bg-black/50 px-2 py-0.5 text-xs backdrop-blur-sm">
+        <span class="rounded-md bg-dim/50 px-2 py-0.5 text-xs backdrop-blur-sm">
           {{ work.type === 'canvas' ? '画布' : '短片' }}
         </span>
       </div>

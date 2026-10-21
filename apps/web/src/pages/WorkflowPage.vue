@@ -66,8 +66,6 @@ const COMPACT_SESSIONS_COUNT = 5
 // 精选行：只取最新 4 条。「去发现 →」把完整作品流交给 /community。
 const featuredWorks = computed(() => works.value.slice(0, FEATURED_WORKS_COUNT))
 
-const greeting = getGreeting()
-
 function handlePublishLocateNode(payload: { sessionId: string; nodeId: string }) {
   showPublish.value = false
   void router.push({
@@ -75,12 +73,6 @@ function handlePublishLocateNode(payload: { sessionId: string; nodeId: string })
     params: { sessionId: payload.sessionId },
     query: { focusNode: payload.nodeId },
   })
-}
-function getGreeting() {
-  const hour = new Date().getHours()
-  if (hour < 12) return '上午好'
-  if (hour < 18) return '下午好'
-  return '晚上好'
 }
 
 function getMockWorks(): Work[] {
@@ -203,16 +195,13 @@ watch(
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8">
-    <section class="mb-10 sm:mb-12">
-      <SignatureHero
-        v-model="prompt"
-        :greeting="greeting"
-        @create="createCanvas"
-      />
-    </section>
+  <div>
+    <!-- 2026-10-22 用户裁定「霸屏铺满」：hero 是全宽首屏（不再龟缩在 max-w-7xl 卡片里），
+         滚动后才是我的画布 / 社区精选——同一个页面，不是两个页面 -->
+    <SignatureHero v-model="prompt" @create="createCanvas" />
 
-    <!-- 我的画布：compact 区（2026-10-21 P1 迁出管理器，完整能力见 /canvases） -->
+    <div class="mx-auto max-w-7xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8">
+      <!-- 我的画布：compact 区（2026-10-21 P1 迁出管理器，完整能力见 /canvases） -->
     <section v-if="auth.isLoggedIn" class="mb-12">
       <div class="mb-4 flex items-center justify-between gap-3">
         <h2 class="text-lg font-semibold text-fg">我的画布</h2>
@@ -276,5 +265,6 @@ watch(
       @published="fetchWorks"
       @locate-node="handlePublishLocateNode"
     />
+    </div>
   </div>
 </template>

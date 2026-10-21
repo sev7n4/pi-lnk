@@ -29,7 +29,7 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
 
 <template>
   <div
-    class="session-card group relative flex aspect-[4/3] flex-col overflow-hidden rounded-2xl border text-left transition"
+    class="session-card lnk-media-card group relative flex aspect-[4/3] flex-col overflow-hidden rounded-2xl border text-left transition"
     :class="selected ? 'session-card-selected' : ''"
   >
     <label
@@ -130,16 +130,8 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
 </template>
 
 <style scoped>
-.session-card {
-  border-color: var(--lnk-border-subtle);
-  background: var(--lnk-surface-base);
-}
-
-.session-card:hover {
-  border-color: color-mix(in srgb, var(--lnk-accent) 28%, var(--lnk-border-subtle));
-  box-shadow: var(--lnk-shadow-md);
-}
-
+/* 面 / 描边 / hover 已上收全局 .lnk-media-card（2026-10-22 走查轮：与 WorkCard 统一，
+   消除「我的画布 vs 社区精选」同页割裂）。这里只留画布卡特有的 selected 态。 */
 .session-card-selected {
   border-color: var(--lnk-accent);
   background: color-mix(in srgb, var(--lnk-accent-subtle) 60%, var(--lnk-surface-base));

@@ -31,9 +31,14 @@ describe('SessionCard 令牌迁移（P1：--neo-* → --lnk-*）', () => {
     expect(neoHits, `仍有旧令牌：${[...new Set(neoHits)].join(', ')}`).toHaveLength(0)
   })
 
-  it('卡片边框与底色改用 --lnk-border-subtle / --lnk-surface-base', () => {
-    expect(SRC).toContain('var(--lnk-border-subtle)')
-    expect(SRC).toContain('var(--lnk-surface-base)')
+  it('卡片边框与底色走 lnk 令牌（2026-10-22 起经全局 .lnk-media-card 单一真相源）', () => {
+    // 面/描边/hover 语言已上收 main.css 的 .lnk-media-card（与 WorkCard 共用，
+    // 消除「我的画布 vs 社区精选」同页割裂）。SessionCard 侧锁「挂了全局类」，
+    // 令牌本体锁 main.css——守卫随实现的位置走，不扭曲实现。
+    expect(SRC).toContain('lnk-media-card')
+    const main = readFileSync(join(HERE, '../../styles/main.css'), 'utf8')
+    expect(main).toContain('var(--lnk-border-subtle)')
+    expect(main).toContain('var(--lnk-surface-base)')
   })
 
   it('hover 态用 accent 通道（--lnk-accent）表达高亮，不再用 --lnk-hi-text', () => {
@@ -50,8 +55,9 @@ describe('SessionCard 令牌迁移（P1：--neo-* → --lnk-*）', () => {
     expect(SRC).not.toContain('neo-popover')
   })
 
-  it('保留既有阴影令牌 --lnk-shadow-md', () => {
-    expect(SRC).toContain('var(--lnk-shadow-md)')
+  it('hover 阴影保留 --lnk-shadow-md（全局 .lnk-media-card:hover）', () => {
+    const main = readFileSync(join(HERE, '../../styles/main.css'), 'utf8')
+    expect(main).toContain('var(--lnk-shadow-md)')
   })
 })
 
@@ -97,7 +103,7 @@ describe('SessionCard 行为不变量（迁移不许回归）', () => {
       } as unknown as Session['canvasData'],
     } as Partial<Session>)
     expect(wrapper.html()).toContain('https://cdn/a.png')
-    expect(wrapper.find('[data-testid="brand-pattern"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="canvas-cover-fallback"]').exists()).toBe(false)
   })
 
   it('视频封面走 <video> 而非 <img>', () => {
@@ -110,9 +116,9 @@ describe('SessionCard 行为不变量（迁移不许回归）', () => {
     expect(wrapper.find('video').exists()).toBe(true)
   })
 
-  it('无封面时落品牌纹样兜底（不再是灰色占位块）', () => {
+  it('无封面时落画布专属兜底（CanvasCoverFallback 墨点纸纹，不再是灰块/头像位语言）', () => {
     const wrapper = mountCard()
-    expect(wrapper.find('[data-testid="brand-pattern"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="canvas-cover-fallback"]').exists()).toBe(true)
   })
 
   it('标题为空时回落「未命名画布」', () => {
