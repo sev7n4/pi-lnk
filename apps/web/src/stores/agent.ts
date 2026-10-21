@@ -102,6 +102,8 @@ type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'
 
 export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
+  /** 本地消息 id 序号：与 `msg-${Date.now()}` 组合出**唯一** id（见 insertUserMessageBeforeAssistant）。 */
+  let localMsgSeq = 0
   const isStreaming = ref(false)
   /** Q2（2026-10-14）：本回合实时预估积分（usage_delta 事件逐段覆盖，turn 结束清位）。
    * 状态行 running 段「预估 -N积分」数据源；纯展示预估，P2 落账后由 settled 权威值替代。 */
@@ -171,6 +173,57 @@ export const useAgentStore = defineStore('agent', () => {
     if (!last.executionTrace) {
       last.executionTrace = createExecutionTrace()
     }
+  }
+
+  /**
+   * 在**最后一条 assistant 消息之前**插入一条 user 消息。
+   *
+   * 用途（2026-10-21）：插话（steer / followUp）被模型真正消费的那一刻补建用户气泡。
+   * 插话走队列 API，本地**不**插入气泡 ⇒ 模型消费后对话流里会出现
+   * 「用户说了话、却没有用户气泡」的空洞。
+   *
+   * 为什么不能直接用 {@link addUserMessage}：
+   *  ① 它 push 到**末尾** —— 而流式中 assistant 气泡已存在且持续累积正文，
+   *     追加到末尾会让用户气泡排到 assistant **之后**（顺序错乱：模型的回答
+   *     会显示在用户那句话前面）。
+   *  ② 它会**重置回合级瞬态**（propose 置位 / blockingWait / recovering /
+   *     turnError / turnRefusal）—— 插话发生在**本轮中途**，重置这些等于
+   *     把本轮的阻塞等待与失败态一起抹掉。
+   *
+   * 也没有 assistant 气泡可插（极少见：流已断）⇒ 退化为追加到末尾。
+   */
+  function insertUserMessageBeforeAssistant(
+    content: string,
+    extras?: {
+      entryId?: string
+      attachments?: SidebarAttachment[]
+      attachmentRefKeys?: string[]
+      selectionNodeIds?: string[]
+    },
+  ) {
+    let at = messages.value.length
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (m && m.role === 'assistant') {
+        at = i
+        break
+      }
+    }
+    const msg: AgentStreamMessage = {
+      // ⚠️ id 必须唯一：插话气泡可能与同毫秒的正常发送撞 `msg-${Date.now()}`。
+      //    撞 id 会让 v-for 的 :key 重复 ⇒ 渲染错乱。
+      id: `msg-${Date.now()}-${localMsgSeq++}`,
+      role: 'user',
+      content,
+      ...(extras?.entryId ? { entryId: extras.entryId } : {}),
+      ...(extras?.attachments?.length
+        ? { attachments: extras.attachments.map((attachment) => ({ ...attachment })) }
+        : {}),
+      ...(extras?.attachmentRefKeys?.length ? { attachmentRefKeys: [...extras.attachmentRefKeys] } : {}),
+      ...(extras?.selectionNodeIds?.length ? { selectionNodeIds: [...extras.selectionNodeIds] } : {}),
+    }
+    messages.value.splice(at, 0, msg)
+    return msg
   }
 
   function addUserMessage(
@@ -767,6 +820,7 @@ export const useAgentStore = defineStore('agent', () => {
     setBlockingWait,
     setRecovering,
     addUserMessage,
+    insertUserMessageBeforeAssistant,
     confirmSelectionBinding,
     startAssistantMessage,
     setPresentation,

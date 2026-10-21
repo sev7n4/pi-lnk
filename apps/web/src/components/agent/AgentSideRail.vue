@@ -10,6 +10,7 @@ import { normalizeMentionedKeys, SIDEBAR_ATTACHMENT_MAX } from '@lnkpi/shared'
 import { apiUrl } from '@/services/api-base'
 import { sessionsApi } from '@/services/sessions-api'
 import NeoAgentLogo from '@/components/agent/NeoAgentLogo.vue'
+import { applyPiUserMessageEvent } from '@/components/agent/queueBubbleSync'
 import AgentRefStrip from '@/components/agent/AgentRefStrip.vue'
 import AgentSelectionBindingChip from '@/components/agent/AgentSelectionBindingChip.vue'
 import AgentAssetPicker from '@/components/agent/AgentAssetPicker.vue'
@@ -361,6 +362,17 @@ type QueueDraftOutcome = 'queued' | 'empty' | 'full'
  */
 const MAX_QUEUED_SLOTS = 5
 const queuedSlots = ref<QueuedSlot[]>([])
+/**
+ * 前端**自己**提交插话时拿到的队列 entryId 集合（2026-10-21）。
+ *
+ * 用途：pi 侧消费插话时会发 `message_end`，事件里的 entryId 与这里登记的**同一把钥匙**
+ * （vendor 边界提交队列条目写的是 `{ id: item.entryId }`）⇒ 命中即「这是插话」，
+ * 本地没有气泡、需要补建；否则是本轮初始 prompt，挂到本地已有气泡上。
+ *
+ * ⚠️ 登记后**不清除**：「放弃」只收本地气泡，服务端那条仍会被消费，那时仍要补建气泡。
+ * 体积无界增长的风险可忽略（一条插话一个 id，会话级）。
+ */
+const queuedEntryIds = new Set<string>()
 let slotSeq = 0
 function nextSlotId(): string {
   slotSeq += 1
@@ -2115,6 +2127,13 @@ async function deliverQueued(intent: QueueIntent, slot?: QueuedSlot): Promise<bo
     // 「放弃 / 取回内容」才可能真的从 vendor 队列里撤掉这条（此前只清前端）。
     const outer = body as { data?: { entryId?: string } } | null
     target.entryId = typeof outer?.data?.entryId === 'string' ? outer.data.entryId : undefined
+    // ⭐ 2026-10-21：登记这个 entryId —— 它是「这条插话」的**权威身份**，
+    // 也是 pi 侧消费它时 `message_end` 带回来的那个 entryId（vendor 边界提交队列条目
+    // 时写的就是 `{ id: item.entryId }`）⇒ 两者可对上，于是能分清
+    // 「这条是插话（本地没气泡，要补建）」与「这条是本轮初始 prompt（本地已有气泡，挂切点）」。
+    // ⚠️ 登记后**不再移除**：用户点「放弃」只是收掉本地气泡，服务端那条仍会被消费 ——
+    //    那时仍要给它补建气泡，否则模型回答了而用户那句话在对话流里凭空消失。
+    if (target.entryId) queuedEntryIds.add(target.entryId)
     target.state = 'accepted'
     // 有未作答的卡时不能说「已并入当前回答」——本轮此刻正在等用户选一个答案，
     // 没有「当前回答」可言（见 pendingAskBlocking 注释）
@@ -2877,18 +2896,25 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'pi_message_end': {
       // ③ 重跑：捕获 pi 会话内消息的 entryId（pi 原始载荷 `{ message, entryId }`）。
       // 只认 user 消息 —— 它才是「从这条重新生成」的合法 fork 切点。
-      const d = event.data as { entryId?: string; message?: { role?: string } } | null
-      const entryId = typeof d?.entryId === 'string' ? d.entryId : ''
-      if (entryId && d?.message?.role === 'user') {
-        // 落到最后一条 user 消息：本轮刚提交的用户消息即 fork 候选切点
-        for (let i = agent.messages.length - 1; i >= 0; i -= 1) {
-          const m = agent.messages[i]
-          if (m && m.role === 'user') {
-            m.entryId = entryId
-            break
-          }
-        }
-      }
+      //
+      // ⭐ 2026-10-21：插话（steer / followUp）被模型消费时，pi 侧也会发这条事件
+      //    （vendor 边界提交队列条目 ⇒ `{ id: item.entryId }` ⇒ 事件里的 entryId
+      //    就是前端入队时拿到的那个）。此前这里只把 entryId 挂到「最后一条 user 消息」
+      //    上，既**不建气泡**（⇒ 对话流里看不到用户插的话），又**覆盖已有切点**
+      //    （⇒ 上一条消息的「重新生成」会从插话那条分叉）。
+      //    现在交给 queueBubbleSync 判定：插话 ⇒ 补建气泡；初始 prompt ⇒ 挂到本地气泡。
+      applyPiUserMessageEvent(event.data, {
+        messages: agent.messages,
+        queuedEntryIds,
+        slots: queuedSlots.value,
+        insertUserMessage: (text, extras) => {
+          agent.insertUserMessageBeforeAssistant(text, {
+            entryId: extras.entryId,
+            attachments: extras.attachments,
+            selectionNodeIds: extras.selectionNodeIds,
+          })
+        },
+      })
       break
     }
     case 'thread_forked': {
