@@ -1276,7 +1276,8 @@ export class AgentService {
       });
       this.piLogger.warn(
         `turn_state_recorded key=${input.sessionKey} recorded=${recorded === true} ` +
-          `completed=${completedSteps.length} pending=${pendingSteps.length}`,
+          `completed=${completedSteps.length} pending=${pendingSteps.length} ` +
+          `promptAccepted=${input.promptAccepted !== false}`,
       );
     } catch (err) {
       this.piLogger.warn(
@@ -1562,7 +1563,16 @@ export class AgentService {
     // ⚠️ 块首行必须与 `renderTurnStateBlock` 一致（`【上一轮被中断…】`）——
     // `classifyBlock` 靠前缀分类预算档位，改前缀要同步改那边。
     const turnStateBlock = await this.turnState?.renderBlock(sessionKey)
-    if (turnStateBlock) dynamicBlocks.push(turnStateBlock)
+    if (turnStateBlock) {
+      dynamicBlocks.push(turnStateBlock)
+      // ⭐ 可观测性：生产上「这一轮到底有没有注入状态块」是本特性唯一的验证入口
+      // （模型看到什么无法直接观测，只能靠「块是否进了 systemPrompt」+ 用户侧体感）。
+      // 不打这条日志 ⇒ 线上出问题时分不清是「没记录」「没读到」还是「注入了但被截断」。
+      this.piLogger.warn(
+        `turn_state_injected key=${sessionKey} chars=${turnStateBlock.length} ` +
+          `interruption=${/中断类型：([^。]+)/.exec(turnStateBlock)?.[1] ?? 'unknown'}`,
+      )
+    }
     // SEL-REF R-S8 + 评审 C1：回执**必须由服务端确认驱动**。
     // 前端读不到 Nest 的 `SEL_REF_ENABLED`，若它只按「本地冻结的 id 非空」渲染 chip，
     // 则 V1 默认态（off）下用户照样看到「已绑定 N 个选中节点」，而提示词里 0 字节注入
