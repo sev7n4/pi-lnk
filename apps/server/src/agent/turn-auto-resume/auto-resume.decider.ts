@@ -118,3 +118,37 @@ export function decideAutoResume(input: AutoResumeInput): AutoResumeDecision {
   }
   return { path: 'newTurn', reason: 'auto-resume', degraded: false }
 }
+
+
+/**
+ * 触发点的前置判据（纯函数）——「这一轮该不该触发自动续跑」。
+ *
+ * ⭐ 抽成纯函数的原因：这条判据曾经埋在调用点里，导致一个**真实的双派发缺陷**
+ * —— `promptAccepted` 在 409（shadow 流）时**仍为 `true`**
+ * （只有非 409 的 prompt 失败才置 false，见 `agent.service` 的 catch 分支），
+ * ⇒ shadow 流（用户消息并入在跑的 run）与 owner 流**都会**触发
+ * ⇒ 同一件事被派发两次（= 白烧一轮 LLM 额度）。
+ *
+ * ⇒ 判据必须显式包含 `turnRole`：**只有 owner 流**代表「本轮真的跑过并挂了」。
+ *
+ * @param turnRole owner = 本流发起了 run（唯一落库者）；shadow = 并入在跑的 run（只转发）。
+ */
+export function shouldTriggerAutoResume(input: {
+  turnRole: 'owner' | 'shadow'
+  /** prompt 是否被 pi 接受（false ⇒ pi 侧整轮不存在）。 */
+  promptAccepted: boolean
+  /** 本轮是否以错误收束。 */
+  runFailed: boolean
+  /** streamConversation 全管线要求 userId（piEligible 判定）。 */
+  userId?: string
+}): boolean {
+  // ⛔ shadow 流不触发：它没有发起 run，事件只是转发；owner 流会代表同一轮触发。
+  if (input.turnRole !== 'owner') return false
+  // ⛔ prompt 未被接受 ⇒ pi 侧整轮不存在（双写分叉形态）：
+  //    那种情况的恢复手段是批次 2 的**对账自愈**（补进 turnState），
+  //    而**不是**在这里新开一轮（模型压根没收到过这轮 ⇒ 再开一轮也是空转）。
+  if (!input.promptAccepted) return false
+  if (!input.runFailed) return false
+  // ⛔ 缺 userId ⇒ streamConversation 的 piEligible 判定不通过 ⇒ 不派发。
+  return Boolean(input.userId)
+}

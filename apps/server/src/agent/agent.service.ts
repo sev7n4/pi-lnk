@@ -44,6 +44,7 @@ import {
 } from './turn-state-store'
 import { TurnStateService } from './turn-state.service'
 import { TurnAutoResumeService } from './turn-auto-resume/turn-auto-resume.service'
+import { shouldTriggerAutoResume } from './turn-auto-resume/auto-resume.decider'
 import {
   reconcileAfterTurn,
   type ReconcileClient,
@@ -2313,11 +2314,21 @@ export class AgentService {
       //
       // ⛔ 不 await（fire-and-forget）：自动续跑是旁路观察者，
       // 不能拖慢本轮收尾（用户此时可能在等响应）。
-      // ⛔ `userAborted` 恒 false 的语义在下面显式处理（用户取消不是故障）。
-      if (runFailed && userId) {
+      //
+      // ⭐ 判据抽成纯函数 `shouldTriggerAutoResume`（含 `turnRole`）——
+      // 埋在调用点里会踩坑：`promptAccepted` 在 409（shadow 流）时**仍为 true**
+      // ⇒ 只看 promptAccepted 会让 shadow 与 owner **都**触发 ⇒ 双派发。
+      if (
+        shouldTriggerAutoResume({
+          turnRole,
+          promptAccepted,
+          runFailed,
+          userId,
+        })
+      ) {
         void this.maybeAutoResumeTurn({
           sessionId,
-          userId,
+          userId: userId!,
           threadId: effectiveThreadId,
           sessionKey,
           userMessage,
