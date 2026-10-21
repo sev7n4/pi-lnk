@@ -90,6 +90,9 @@ function resolveEdgeRef(
   const data = sourceNode.data ?? {}
   const refId = edge.id
 
+  // `prompt` 已下线（2026-10-17，创建入口已断）；此处保留是「存量冻结只读」所需：
+  // 存量画布的 prompt 节点仍可作为**上游文本源**被引用（生产有 774 条边从 prompt 出发）。
+  // ⛔ 保留 ≠ 允许新建：新建侧由 Nest 的 CREATABLE_NODE_TYPES（4 项）把闸。
   if (type === 'text' || type === 'prompt') {
     const text = resolveTextPayload(data)
     return {
