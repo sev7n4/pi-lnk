@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import MentionInput, { type MentionOption } from '@/components/canvas/MentionInput.vue'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 
 const props = defineProps<{
   node: EditableFlowNode | null
@@ -19,7 +18,6 @@ const emit = defineEmits<{
 const prompt = ref('')
 const title = ref('')
 
-const speech = useSpeechRecognition()
 
 const nodeType = computed(() => String(props.node?.type ?? ''))
 const visible = computed(() => props.node && nodeType.value === 'prompt')
@@ -47,18 +45,6 @@ function onGenerate() {
   emit('generate')
 }
 
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (isFinal) {
-      const next = prompt.value ? `${prompt.value} ${text}` : text
-      onPromptInput(next)
-    }
-  })
-}
 </script>
 
 <template>
@@ -86,16 +72,6 @@ function toggleVoice() {
 
     <div class="bottom-toolbar-actions flex-wrap items-center">
       <div class="ml-auto flex items-center gap-2">
-        <button
-          type="button"
-          class="dock-icon-btn"
-          :class="speech.listening.value ? 'animate-pulse text-danger' : ''"
-          title="语音输入"
-          @click="toggleVoice"
-        >
-          🎤
-        </button>
-
         <button
           type="button"
           class="btn-primary px-4 py-1.5 text-xs"

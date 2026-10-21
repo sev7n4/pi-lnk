@@ -74,7 +74,7 @@ function aspectRect(value: ImageAspectRatio) {
 
     <div
       v-if="open"
-      class="neo-popover absolute bottom-full left-0 z-50 mb-1 w-[264px] rounded-xl p-3"
+      class="neo-popover dock-inline-card absolute bottom-full left-0 z-50 mb-1 w-[264px] rounded-xl p-3"
       @click.stop
     >
       <div class="mb-3">

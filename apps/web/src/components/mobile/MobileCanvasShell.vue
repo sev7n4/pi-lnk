@@ -94,6 +94,9 @@ const props = defineProps<{
   /** 移动端 studio dock 已展开（用户 tap 把手）——dock 面板占满画布底部，
    *  ＋FAB 让位（否则压在面板左下角） */
   dockExpanded: boolean
+  /** 画布视图的「窗态」：composer 空闲条与 FAB 同一基线（见 MobileCanvasCreateFab
+   *  的尺寸计算——48=48 无内缩余量，窗态下 ＋FAB 直接不渲染，由 composer 盖住这一带） */
+  composerVisible: boolean
   /** ── 共享动作（CanvasPage 核心逻辑）── */
   onTabChange: (tab: MobileAppTab) => void
   onSave: () => void
@@ -326,9 +329,18 @@ onUnmounted(() => stopMobileTaskPolling())
   />
   <!-- PR2 新建收敛（D-2）：＋FAB（空画布呼吸引导）→ 全宽新建 sheet。
        多选态不出：多选动作条接管同一条底部清位（与自动保存状态行同一规则），
-       否则 FAB 与动作条同位互压。 -->
+       否则 FAB 与动作条同位互压。
+       窗态不出（2026-10-21 真机走查）：composer 空闲条与 FAB 同一基线、矩形重合，
+       48=48 无内缩余量 ⇒ 位移微调盖不干净；窗态里 FAB 本就不可用（输入会切对话页），
+       由 composer 盖住这一带。纯画布态（composer 收起）才出现。 -->
   <MobileCanvasCreateFab
-    v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive && !dockExpanded"
+    v-if="
+      mobileAppTab === 'canvas' &&
+      !canvasChromeHidden &&
+      !multiSelectActive &&
+      !dockExpanded &&
+      !composerVisible
+    "
     :breathe="!hasNodes"
     @click="showMobileCreateSheet = true"
   />

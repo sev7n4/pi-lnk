@@ -10,11 +10,9 @@ import AudioVoiceSettingsSelector from '@/components/canvas/AudioVoiceSettingsSe
 import DockToolbarShell from '@/components/canvas/dock-studio/shared/DockToolbarShell.vue'
 import DockPromptSection from '@/components/canvas/dock-studio/shared/DockPromptSection.vue'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
-import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
 import DockCreditBadge from '@/components/canvas/dock-studio/shared/DockCreditBadge.vue'
 import DockRefStrip from '@/components/canvas/dock-studio/shared/DockRefStrip.vue'
 import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import {
   AUDIO_KIND_OPTIONS,
   DEFAULT_AUDIO_EMOTION,
@@ -119,7 +117,6 @@ const musicInstrumental = ref(false)
 
 const modelVoices = computed(() => getModelEntry(catalogModelKeyFromValue(audioModel.value))?.voices)
 
-const speech = useSpeechRecognition()
 const promptSectionRef = ref<InstanceType<typeof DockPromptSection> | null>(null)
 const {
   inputRef: refInput,
@@ -305,18 +302,6 @@ function onGenerate() {
   emit('generate')
 }
 
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (isFinal) {
-      const next = prompt.value ? `${prompt.value} ${text}` : text
-      onPromptInput(next)
-    }
-  })
-}
 
 function onRefReorder(refIds: string[]) {
   emit('patch', { refOrder: refIds })
@@ -512,11 +497,6 @@ function onRefMention(refKey: string) {
       </template>
 
       <div class="ml-auto flex items-center gap-2">
-        <DockMicButton
-          :listening="speech.listening.value"
-          :disabled="readonly"
-          @toggle="toggleVoice"
-        />
         <DockCreditBadge :credits="credits" />
         <DockGenerateButton
           :generating="generating"

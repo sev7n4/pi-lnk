@@ -2,7 +2,7 @@
 // 背景：本轮 4 条真机反馈全部落在「jsdom 看不见」的那一类——视口高度、层叠、
 // 选区语义、能力探测。⇒ 用源码静态契约把判据钉死，防回潮。
 // 判据写法沿用本仓既有纪律：否定断言先剥注释 + 限定作用域 + 配有效性断言。
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -77,8 +77,9 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
   const fab = readComponent('mobile/MobileCanvasCreateFab.vue')
   const rail = readComponent('agent/AgentSideRail.vue')
   const railCode = stripComments(rail)
+  const page = read('./CanvasPage.vue')
 
-  it('＋FAB 不再依赖运行时测量变量（落位恒定，与裸条并排）', () => {
+  it('＋FAB 不再依赖运行时测量变量（落位恒定，与 composer 条同基线）', () => {
     // ⚠️ 先剥 CSS 注释：迁移说明写在注释里是规范（否定断言命中注释 = 假红）
     const css = stripComments(fab).match(/\.mobile-create-fab \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(css, '必须能定位 FAB 样式块').not.toBe('')
@@ -87,13 +88,31 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
     expect(css).toContain('left: 12px')
   })
 
-  it('画布视图下裸条左移让开 ＋FAB，且空闲态隐藏条内 ＋（画布页只留一个 ＋）', () => {
-    expect(railCode).toMatch(
-      /\.agent-panel-mobile-dock\.is-canvas-view \.composer-bare-bar\s*\{[^}]*margin-left:\s*56px/,
-    )
-    expect(railCode).toMatch(
-      /\.is-canvas-view \.composer-bare-bar\.is-idle \.agent-attach-menu\s*\{[^}]*display:\s*none/,
-    )
+  it('窗态由 composer 盖住 ＋FAB：裸条保持原宽、FAB 由 composerVisible 门控', () => {
+    // 2026-10-21 真机走查②：上一轮「裸条左移 56px 与 FAB 并排 + 空闲态隐藏条内 ＋」
+    // 已撤销——用户裁决：composer 不得让位变形；窗态里 FAB 本就不可用（输入会切对话页），
+    // 由 composer 盖住这一带（尺寸计算见 MobileCanvasCreateFab 的注释：48=48 无内缩余量）。
+    expect(railCode).not.toMatch(/\.is-canvas-view \.composer-bare-bar\s*\{/)
+    expect(railCode).not.toMatch(/\.is-canvas-view \.composer-bare-bar\.is-idle \.agent-attach-menu/)
+    expect(rail).not.toContain('margin-left: 56px')
+    // 有效性配对：FAB 门控含窗态判据，且判据与 composer 收起条件同源
+    const shell = readComponent('mobile/MobileCanvasShell.vue')
+    expect(shell).toMatch(/<MobileCanvasCreateFab[\s\S]*?!composerVisible/)
+    expect(page).toContain('const mobileCanvasComposerVisible = computed(')
+    expect(page).toContain('!mobileCanvasImm.value')
+    expect(page).toContain(':composer-visible="mobileCanvasComposerVisible"')
+  })
+
+  it('已在画布视图内定位不改入口语义（＋建节点不该把纯画布切成窗态）', () => {
+    const fn = page.match(/async function focusNodeById\([\s\S]*?\n}/)?.[0] ?? ''
+    expect(fn, '必须能定位 focusNodeById').not.toBe('')
+    expect(fn).toContain('const enteringFromConversation = !mobileCanvasView.value')
+    expect(fn).toMatch(/mobileCanvasImm\.value\s*=\s*enteringFromConversation[\s\S]*?:\s*mobileCanvasImm\.value/)
+    // 有效性配对：从对话页进入时仍按待确认判据决定 imm（ADR-0011 T6 未被削弱）
+    expect(fn).toContain('isPendingConfirmNode(')
+    // 批量定位同规则
+    const batch = page.match(/async function focusNodesByIds\([\s\S]*?\n}/)?.[0] ?? ''
+    expect(batch).toContain('const enteringFromConversation = !mobileCanvasView.value')
   })
 
   it('--lnk-agent-dock-h 发布源改为实测裸条（贴底容器高度在画布视图不可靠）', () => {
@@ -104,23 +123,63 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
   })
 })
 
-describe('语音能力诚实化（2026-10-21 真机：按住说话不可用且零反馈）', () => {
+describe('语音识别功能下线（2026-10-21 用户裁决：移动端 + PC 整体删除）', () => {
   const rail = readComponent('agent/AgentSideRail.vue')
-  const speech = read('./../composables/useSpeechRecognition.ts')
+  const railCode = stripComments(rail)
 
-  it('空闲条文案按能力降级（不支持时不承诺「按住说话」）', () => {
-    expect(rail).toContain('mobileBarIdleHint')
-    expect(rail).toMatch(/speech\.supported\s*\?\s*'按住说话 · 点按输入'\s*:\s*'点按输入'/)
-    expect(rail).toContain('{{ mobileBarIdleHint }}')
+  it('裸条文案只承诺「点按输入」，不再出现「按住说话」', () => {
+    expect(rail).toContain('MOBILE_BAR_IDLE_HINT')
+    expect(rail).toContain('{{ MOBILE_BAR_IDLE_HINT }}')
+    // 有效性配对：常量值就是「点按输入」
+    expect(rail).toMatch(/MOBILE_BAR_IDLE_HINT = '点按输入'/)
+    // 剥注释后，模板与脚本都不得再有「按住说话」承诺
+    expect(railCode).not.toContain('按住说话')
   })
 
-  it('识别失败必须可见（onerror 不再静默 stop）', () => {
-    expect(speech).toContain('lastError')
-    expect(speech).toContain('errorText')
-    expect(speech).toMatch(/onerror = \(event\)[\s\S]*?lastError\.value/)
-    // 有效性配对：页面把错误提示出来
-    expect(rail).toContain('speech.errorText.value')
-    expect(rail).toMatch(/ElMessage\.warning\(text\)/)
+  it('语音链路整体退役：识别 composable / 麦克风钮 / 录音态 UI 全部消失', () => {
+    // composable 与组件文件已删除
+    expect(existsSync(join(here, '..', 'composables', 'useSpeechRecognition.ts'))).toBe(false)
+    expect(existsSync(join(here, '..', 'composables', 'useMicLevel.ts'))).toBe(false)
+    expect(
+      existsSync(
+        join(here, '..', 'components', 'canvas', 'dock-studio', 'shared', 'DockMicButton.vue'),
+      ),
+    ).toBe(false)
+    // AgentSideRail：录音态 UI / 状态 / 手势分支全无（剥注释后判）
+    for (const gone of [
+      'DockMicButton',
+      'agent-composer-rec',
+      'holdActive',
+      'beginHoldTalk',
+      'releaseVoice',
+      'onComposerHold',
+      'classifyGesture({ durationMs, dy: barGestureDy })',
+    ]) {
+      expect(railCode, `AgentSideRail 不该再有 ${gone}`).not.toContain(gone)
+    }
+    // 有效性配对：点按切输入态的手势仍在（语音下线不等于把条做成死的）
+    expect(railCode).toContain('composerExpanded.value = true')
+  })
+
+  it('四个 dock 面板与精修 dock 的麦克风钮全部摘除', () => {
+    for (const p of [
+      'canvas/dock-studio/panels/TextDockPanel.vue',
+      'canvas/dock-studio/panels/ImageDockPanel.vue',
+      'canvas/dock-studio/panels/VideoDockPanel.vue',
+      'canvas/dock-studio/panels/AudioDockPanel.vue',
+      'canvas/refine/RefineDock.vue',
+      'canvas/NodeEditorToolbar.vue',
+      'canvas/PromptMarkdownEditor.vue',
+    ]) {
+      const code = stripComments(readComponent(p))
+      expect(code, `${p} 不该再有 DockMicButton`).not.toContain('DockMicButton')
+      expect(code, `${p} 不该再有 useSpeechRecognition`).not.toContain('useSpeechRecognition')
+      expect(code, `${p} 不该再有 toggleVoice`).not.toContain('toggleVoice')
+    }
+    // 有效性配对：面板底行仍在（积分 + 发送没被误删）
+    const image = readComponent('canvas/dock-studio/panels/ImageDockPanel.vue')
+    expect(image).toContain('DockCreditBadge')
+    expect(image).toContain('DockGenerateButton')
   })
 })
 
@@ -139,5 +198,32 @@ describe('移动端 dock 面板布局（2026-10-21 真机：底行被挤压 / �
     expect(block, '必须能定位移动端输入区规则').not.toBe('')
     expect(block).toContain('min-height: 56px !important')
     expect(block).toContain('max-height: 132px !important')
+  })
+
+  it('④底行单排：移动端 flex-wrap 关闭 + 面板通宽', () => {
+    const block = css.match(/@media \(max-width: 767px\) \{[\s\S]*?\.dock-inline-card \{[^}]*\}/)?.[0] ?? ''
+    expect(block, '必须能定位移动端 dock 规则块').not.toBe('')
+    // 单排（模板上是 flex-wrap，窄屏会折成两排）
+    expect(block).toMatch(/\.bottom-toolbar-actions \{[^}]*flex-wrap: nowrap/)
+    // 面板与屏幕同宽（去掉桌面 min-width 口径）
+    expect(block).toMatch(/\.bottom-toolbar-container \{[^}]*width: 100%/)
+    expect(block).toMatch(/\.bottom-toolbar-container \{[^}]*min-width: 0/)
+    // 文本节点的思考组在窄屏隐藏（否则单排放不下）
+    expect(block).toMatch(/\.dock-thinking-group \{[^}]*display: none/)
+    // 有效性配对：PC 侧仍是 wrap（未被移动端规则带跑）
+    expect(css).toMatch(/^\.bottom-toolbar-actions \{[\s\S]{0,200}flex-wrap: wrap/m)
+  })
+
+  it('⑤面板内弹层卡片屏宽自适应（模型 / 尺寸参数）', () => {
+    const block = css.match(/\.dock-inline-card \{[^}]*\}/)?.[0] ?? ''
+    expect(block, '必须有 dock-inline-card 规则').not.toBe('')
+    expect(block).toContain('left: 12px !important')
+    expect(block).toContain('right: 12px')
+    expect(block).toContain('max-height: 48vh')
+    expect(block).toContain('overflow-y: auto')
+    // 两个触发器都挂上了该类（桌面固定宽度 + 贴触发器左缘，窄屏会右溢出）
+    for (const p of ['canvas/UniversalModelSelector.vue', 'canvas/ImageParamsSelector.vue']) {
+      expect(readComponent(p), `${p} 的弹层须挂 dock-inline-card`).toContain('dock-inline-card')
+    }
   })
 })

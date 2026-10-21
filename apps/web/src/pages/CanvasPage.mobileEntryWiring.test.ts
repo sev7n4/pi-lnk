@@ -36,10 +36,21 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
   it('＋FAB 门控：画布页签 + chrome 未隐藏；呼吸联动空画布；多选态让位给动作条', () => {
     // PR5（D-9）：＋FAB 迁入 MobileCanvasShell（壳层仅移动端渲染，v-if 不带 isMobileLayout）
     // 2026-10-20 真机走查：多选态须让位给多选动作条（同一底部清位，与状态行同一规则）
-    // 2026-10-21 真机走查：dock 展开时也须让位（dock 面板占满画布底部，FAB 会压其左下角）
-    expect(shell).toMatch(
-      /<MobileCanvasCreateFab\s+v-if="mobileAppTab === 'canvas' && !canvasChromeHidden && !multiSelectActive && !dockExpanded"/,
-    )
+    // 2026-10-21 真机走查：dock 展开时也须让位（dock 面板占满画布底部，FAB 会压其左下角）；
+    // 窗态（composer 可见）也不出——由 composer 盖住这一带（48=48 无位移余量）
+    // 用「先切出标签块再逐条断言」而非一条大正则：v-if 条件跨行书写，末尾换行会让
+    // 紧邻引号的正则假红（判据：本仓模板条件一律换行书写）。
+    const fabTag = shell.match(/<MobileCanvasCreateFab[\s\S]*?\/>/)?.[0] ?? ''
+    expect(fabTag, '必须能定位 ＋FAB 开标签').toContain('<MobileCanvasCreateFab')
+    for (const cond of [
+      "mobileAppTab === 'canvas'",
+      '!canvasChromeHidden',
+      '!multiSelectActive',
+      '!dockExpanded',
+      '!composerVisible',
+    ]) {
+      expect(fabTag, `＋FAB 门控须含 ${cond}`).toContain(cond)
+    }
     expect(shell).toMatch(/:breathe="!hasNodes"/)
   })
 

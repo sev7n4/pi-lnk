@@ -10,12 +10,10 @@ import {
   resolveImageEditProfile,
 } from '@lnkpi/shared'
 import type { NodeRef } from '@/composables/useNodeRefs'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useClickOutside } from '@/composables/useClickOutside'
 import DockToolbarShell from '@/components/canvas/dock-studio/shared/DockToolbarShell.vue'
 import DockRefStrip from '@/components/canvas/dock-studio/shared/DockRefStrip.vue'
 import DockPromptSection from '@/components/canvas/dock-studio/shared/DockPromptSection.vue'
-import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
 import DockCreditBadge from '@/components/canvas/dock-studio/shared/DockCreditBadge.vue'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
 import GuidePickerPopover from '@/components/canvas/dock-studio/shared/GuidePickerPopover.vue'
@@ -73,7 +71,6 @@ const emit = defineEmits<{
   clearEditIntent: []
 }>()
 
-const speech = useSpeechRecognition()
 const promptSectionRef = ref<InstanceType<typeof DockPromptSection> | null>(null)
 const editIntentAnchorRef = ref<HTMLElement | null>(null)
 const editIntentPickerOpen = ref(false)
@@ -152,13 +149,6 @@ function selectSize(size: string) {
   sizeOpen.value = false
 }
 
-function toggleVoice() {
-  if (speech.listening.value) { speech.stop(); return }
-  speech.start((text, isFinal) => {
-    if (!isFinal) return
-    emit('update:prompt', props.prompt ? `${props.prompt} ${text}` : text)
-  })
-}
 </script>
 
 <template>
@@ -293,7 +283,6 @@ function toggleVoice() {
         </div>
 
         <div class="ml-auto flex items-center gap-2">
-          <DockMicButton :listening="speech.listening.value" :disabled="runDisabled" @toggle="toggleVoice" />
           <DockCreditBadge :credits="creditValue" />
           <DockGenerateButton
             data-testid="dock-run"

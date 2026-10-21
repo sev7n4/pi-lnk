@@ -38,13 +38,7 @@ vi.mock('@/composables/useModelProviderSettings', () => ({
   }),
 }))
 
-vi.mock('@/composables/useSpeechRecognition', () => ({
-  useSpeechRecognition: () => ({
-    listening: ref(false),
-    start: vi.fn(),
-    stop: vi.fn(),
-  }),
-}))
+// 2026-10-21 语音识别下线：原 useSpeechRecognition mock 随之移除
 
 vi.mock('@/components/canvas/dock-studio/shared/useDockLocalImageUpload', () => ({
   useDockLocalImageUpload: () => ({

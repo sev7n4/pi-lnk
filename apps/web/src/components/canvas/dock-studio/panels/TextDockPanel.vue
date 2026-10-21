@@ -7,11 +7,9 @@ import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.v
 import DockToolbarShell from '@/components/canvas/dock-studio/shared/DockToolbarShell.vue'
 import DockPromptSection from '@/components/canvas/dock-studio/shared/DockPromptSection.vue'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
-import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
 import DockCreditBadge from '@/components/canvas/dock-studio/shared/DockCreditBadge.vue'
 import DockRefStrip from '@/components/canvas/dock-studio/shared/DockRefStrip.vue'
 import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import { resolveGenerationModel, isDeepSeekV4Model } from '@/constants/studioModels'
 import { isNodeGenerating } from '@/constants/dockStudio'
@@ -43,7 +41,6 @@ const textThinkingEffort = ref<'high' | 'max'>('high')
 /** One-shot legacy content→prompt seed for the current node visit. */
 const legacySeededForId = ref<string | null>(null)
 
-const speech = useSpeechRecognition()
 const promptSectionRef = ref<InstanceType<typeof DockPromptSection> | null>(null)
 const {
   inputRef: refInput,
@@ -126,18 +123,6 @@ function onGenerate() {
   emit('generate')
 }
 
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (isFinal) {
-      const next = prompt.value ? `${prompt.value} ${text}` : text
-      onPromptInput(next)
-    }
-  })
-}
 
 function onRefReorder(refIds: string[]) {
   emit('patch', { refOrder: refIds })
@@ -184,7 +169,7 @@ function onRefMention(refKey: string) {
       />
       <div
         v-if="showThinkingControls"
-        class="flex items-center gap-1.5 rounded-lg border border-overlay/10 bg-overlay/5 px-2 py-1"
+        class="dock-thinking-group flex items-center gap-1.5 rounded-lg border border-overlay/10 bg-overlay/5 px-2 py-1"
       >
         <button
           type="button"
@@ -220,11 +205,6 @@ function onRefMention(refKey: string) {
       <span class="text-[10px] text-fg-3">{{ wordCount }}</span>
 
       <div class="ml-auto flex items-center gap-2">
-        <DockMicButton
-          :listening="speech.listening.value"
-          :disabled="readonly"
-          @toggle="toggleVoice"
-        />
         <DockCreditBadge :credits="credits" variant="from" />
         <DockGenerateButton
           :generating="generating"

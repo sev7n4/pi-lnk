@@ -1358,8 +1358,49 @@
  *    面板顶到接近屏顶。⇒ 移动端收到 56 / 132（约 2~3 行）。
  * 作用域限定在 dock 面板（.bottom-toolbar-container），不动对话 composer 的输入区。 */
 @media (max-width: 767px) {
+  /* ④ 底行**单排**（2026-10-21 用户裁决）：模板上是 flex-wrap，窄屏下 4~5 项
+   * 被折成两排（模型/尺寸参数/积分/发送 各占一行），视觉上像坏了两行。
+   * 改单排后靠「可收缩 + 内部省略号」腾空间：模型 chip 是唯一可压缩项。
+   * 宽度预算（390px 屏、面板 358、左右内边距 24 ⇒ 可用 334）：
+   *   参数 chip 88 + 积分徽章 72 + 发送 32 + 间隙 3×6=18 = 210 ⇒ 模型余 124px。 */
   .bottom-toolbar-actions {
-    gap: 4px;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  /* ④ 面板与屏幕同宽（去掉 min-width 的桌面口径，铺满 dock 包裹层的内容盒） */
+  .bottom-toolbar-container {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    border-radius: 20px;
+  }
+
+  /* dock 包裹层 px-4 是桌面内缩；移动端收到 8px，让面板更贴屏边 */
+  .dock-studio-toolbar {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  /* ④ 文本节点底行的「深度思考」组（仅 DeepSeek-V4 出现）宽约 150px，
+   * 单排放不下 ⇒ 移动端隐藏（次要开关，PC 保留；思考档位仍可在模型 popover 里改）。 */
+  .bottom-toolbar-actions .dock-thinking-group {
+    display: none;
+  }
+
+  /* ⑤ 面板内弹层卡片（模型 / 尺寸参数）屏宽自适应：
+   * 桌面是 w-[264px] 贴触发器左缘，窄屏下右溢出面板/屏幕。
+   * 移动端改为相对**面板**（position:relative）左右各 12px 铺开，
+   * 高度封顶 48vh + 内部滚动——上拉不会顶出屏幕顶端。 */
+  .dock-inline-card {
+    left: 12px !important;
+    right: 12px;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none;
+    max-height: 48vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .bottom-toolbar-actions > * {

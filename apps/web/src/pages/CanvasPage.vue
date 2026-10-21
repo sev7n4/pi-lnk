@@ -1765,8 +1765,15 @@ async function focusNodeById(id: string) {
   // 此刻用户意图是「去画布上看 / 改提示词再确认」，不该与对话流同屏抢版面；其余定位仍走
   // 窗态（composer 同屏，供定位引图后继续输入，2026-10-18 裁决）。
   if (isMobileLayout.value) {
+    // ⚠️ 2026-10-21 真机走查：入口语义只应在「**从对话页定位进画布**」时决定。
+    // 已在画布视图里再定位（如 ＋sheet 创建节点后的自动聚焦 handleDockAdd →
+    // focusNodeById）时，旧写法无条件重算 imm ⇒ 把纯画布切成窗态，composer 空闲条
+    // 凭空冒出来（用户：「点 ＋ 添加节点时，这个不是窗操作，composer 空闲条不该出现」）。
+    const enteringFromConversation = !mobileCanvasView.value
     mobileCanvasView.value = true
-    mobileCanvasImm.value = isPendingConfirmNode(target as { data?: { status?: unknown } | undefined })
+    mobileCanvasImm.value = enteringFromConversation
+      ? isPendingConfirmNode(target as { data?: { status?: unknown } | undefined })
+      : mobileCanvasImm.value
     mobileAppTab.value = 'canvas'
   }
   selectOnlyNode(id)
@@ -1783,13 +1790,19 @@ async function focusNodesByIds(ids: string[]) {
   }
   if (valid.length === 1) return focusNodeById(valid[0])
   if (isMobileLayout.value) {
+    // 同 focusNodeById：已在画布视图内定位不改入口语义（见该函数注释）
+    const enteringFromConversation = !mobileCanvasView.value
     mobileCanvasView.value = true
     // ADR-0011 T6：批量定位里含待确认节点 ⇒ 同纯画布满屏（与单节点判据一致）
-    mobileCanvasImm.value = valid.some((vid) =>
-      isPendingConfirmNode(
-        nodes.value.find((n) => n.id === vid) as { data?: { status?: unknown } | undefined },
-      ),
-    )
+    mobileCanvasImm.value = enteringFromConversation
+      ? valid.some((vid) =>
+          isPendingConfirmNode(
+            nodes.value.find((n) => n.id === vid) as {
+              data?: { status?: unknown } | undefined
+            },
+          ),
+        )
+      : mobileCanvasImm.value
     mobileAppTab.value = 'canvas'
   }
   selectOnlyNode(valid[0])
@@ -4733,6 +4746,17 @@ const mobileBatchActions: MobileShellBatchActions = {
  *  （把手 tap 展开），PC 行为逐字不变。 */
 const mobileDockExpanded = ref(false)
 
+/**
+ * 画布视图的「窗态」＝ composer 空闲条可见（2026-10-21 真机走查 ①）。
+ * 判定与 AgentSideRail 收起 composer 的条件严格一致（is-canvas-view + 非 imm）：
+ *  窗态下 composer 与 ＋FAB 同一基线、矩形重合（48=48）⇒ 位移微调盖不干净，
+ *  窗态里 FAB 本就不可用（输入会切对话页）⇒ 由 composer 盖住这一带，FAB 不渲染。
+ * 纯画布态（页签点入 / 定位到待确认节点）composer 收起 ⇒ ＋FAB 正常露出。
+ */
+const mobileCanvasComposerVisible = computed(
+  () => isMobileLayout.value && mobileCanvasView.value && !mobileCanvasImm.value,
+)
+
 /** 移动端画布视图 + studio dock 展开（用户主动 tap 把手）：composer 让位——SSE 对话流收起，
  *  dock 抬高到贴底容器之上（--lnk-agent-dock-h，见 AgentSideRail / DockStudioToolbar）。
  *  ADR-0011（2026-10-19）：pending_confirm 态**不**计入 dock 展开——该态主交互是节点内联
@@ -5330,6 +5354,7 @@ onUnmounted(() => {
       :session-id="sessionId"
       :canvas-chrome-hidden="canvasChromeHidden"
       :dock-expanded="mobileDockExpanded"
+      :composer-visible="mobileCanvasComposerVisible"
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
       :on-publish="openPublish"
