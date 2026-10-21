@@ -1485,10 +1485,18 @@
    - pointer-events:none 只作用在容器本体：**外层 .group-node-wrapper 照常吃指针**
      （整框可拖 / 单击选中由 vue-flow 提供），子节点因此仍可各自点中。 */
 .group-node-container {
-  /* 分组强调色收敛到局部变量：--group-accent 由 CanvasNodeGroup.vue 按 colorKey
-     注入（真源是 design-tokens.css 的 --lnk-group-*），此处只取一次、下面多处复用。
-     兜底值同步用 --lnk-*：旧名 --neo-group-* 只是别名，且棘轮只减不增。 */
-  --group-accent: var(--lnk-group-accent, var(--lnk-group-neutral));
+  /* ⛔ 这里**不得**声明 --group-accent（2026-10-21 移除）。
+     注入点在 **wrapper**（CanvasNodeGroup.vue 的 groupStyle 挂根元素），
+     消费点在本子元素上。CSS 规定元素**自身**声明优先于从父级**继承**的同名
+     变量 —— 本规则块曾在开头自己声明一次
+       --group-accent: var(--lnk-group-accent, var(--lnk-group-neutral));
+     于是恒等于「--lnk-group-accent 的值」，而该令牌全仓从未定义 ⇒ 整条
+     var() 引用无效 ⇒ 静默回落到 --lnk-group-neutral
+     ⇒ **用户设任何颜色，框都恒为中性灰**（2026-10-21 用户实测）。
+     而同一时刻标题图标 `.group-title-icon` 变色正常 —— 它是 wrapper 的子元素、
+     container 的**兄弟**，读的是继承值，没被本规则块影响。指纹即
+     「图标变、框不变」。
+     现在改为纯继承（消费点各自带兜底，见下）。 */
   z-index: 0;
   min-width: 280px;
   min-height: 160px;
@@ -1508,19 +1516,19 @@
   padding: 12px;
   /* 常态要「可辨但不抢主视线」：虚线边 70% + 12% 底 + 外环，避免被误认成框选 marquee。
      令牌本身两档提亮/加深（见 design-tokens.css 分组色卡）。 */
-  border: 2px dashed color-mix(in srgb, var(--group-accent) 70%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--group-accent, var(--lnk-group-neutral)) 70%, transparent);
   border-radius: 20px;
-  background: color-mix(in srgb, var(--group-accent) 12%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--group-accent) 22%, transparent);
+  background: color-mix(in srgb, var(--group-accent, var(--lnk-group-neutral)) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--group-accent, var(--lnk-group-neutral)) 22%, transparent);
   pointer-events: none;
 }
 
 .group-node-wrapper.is-active .group-node-container {
   /* 选中态在常态之上再拉开一档：边更实、底更深、外环更亮 */
   border-style: solid;
-  border-color: color-mix(in srgb, var(--group-accent) 85%, var(--neo-border-strong));
-  background: color-mix(in srgb, var(--group-accent) 18%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--group-accent) 55%, transparent);
+  border-color: color-mix(in srgb, var(--group-accent, var(--lnk-group-neutral)) 85%, var(--neo-border-strong));
+  background: color-mix(in srgb, var(--group-accent, var(--lnk-group-neutral)) 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--group-accent, var(--lnk-group-neutral)) 55%, transparent);
 }
 
 /* ============================================================
