@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SignatureHero from './SignatureHero.vue'
 import CreativeLauncher from './CreativeLauncher.vue'
@@ -159,5 +159,52 @@ describe('SignatureHero', () => {
     expect(text).not.toContain('你下指令')
     expect(text).toContain('你说出想法')
     expect(text).toContain('墨鱼替你落墨')
+  })
+
+  it('叙事动线：输入站进三联（stage 同时承载输入框与锚，不再分离）', () => {
+    const wrapper = mountHero()
+    const stage = wrapper.find('.lnk-stage')
+    expect(stage.exists()).toBe(true)
+    // 「对话」（输入框）与「锚」必须在同一舞台容器内——空间即故事
+    expect(stage.findComponent(CreativeLauncher).exists()).toBe(true)
+    expect(stage.find('[data-testid="ink-anchor"]').exists()).toBe(true)
+  })
+
+  it('墨点动效：三颗墨点在锚上落域内，且受 reduced-motion 守卫', () => {
+    const wrapper = mountHero()
+    const drops = wrapper.findAll('.lnk-ink-drop')
+    expect(drops).toHaveLength(3)
+    // 落距与落域高度同源（--lnk-drop-fall），防两处漂移导致墨点落不到锚顶
+    const src = readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8')
+    expect(src).toContain('--lnk-drop-fall')
+    expect(src).toContain('height: var(--lnk-drop-fall)')
+    expect(src).toContain('translate(var(--drop-dx, 0), var(--lnk-drop-fall))')
+    const mediaBlock = src.slice(src.indexOf('@media (prefers-reduced-motion: reduce)'))
+    expect(mediaBlock).toContain('.lnk-ink-drop')
+  })
+
+  it('落款微时刻：点锚即触发 stamp class，600ms 后自摘（连点不卡死）', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountHero()
+      const anchor = wrapper.find('[data-testid="ink-anchor"]')
+      await anchor.trigger('click')
+      expect(wrapper.emitted('create')).toHaveLength(1)
+      expect(anchor.classes()).toContain('lnk-anchor--stamping')
+      vi.advanceTimersByTime(700)
+      await wrapper.vm.$nextTick()
+      expect(anchor.classes()).not.toContain('lnk-anchor--stamping')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('盖章瞬间六颗墨点四散（spark 带各自方向）', () => {
+    const wrapper = mountHero()
+    const sparks = wrapper.findAll('.lnk-anchor__spark')
+    expect(sparks).toHaveLength(6)
+    // 方向必须各自不同，否则六颗墨点会叠成一条线
+    const dirs = sparks.map((s) => s.attributes('style'))
+    expect(new Set(dirs).size).toBe(6)
   })
 })

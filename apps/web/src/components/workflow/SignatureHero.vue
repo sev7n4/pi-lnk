@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import CreativeLauncher from './CreativeLauncher.vue'
 import {
   BRAND_LOGO_URL,
@@ -10,11 +10,11 @@ import {
 
 // 2026-10-21/22 用户两轮裁定：① 问候语与「想象，落定成图」旧标题去掉，品牌 slogan 是唯一
 // 叙事主角（主行即 h1，每页唯一）；② 底部「灵感 / 我的作品」两口去掉；③ 整体放大霸屏。
-// 2026-10-22 第三轮（叙事与仪式感）：④ 墨鱼从右上角孤立角标移入 slogan 字标，
-// 从「吉祥物」变「墨的源头」；⑤ 锚重做为「落款印章」——墨环 + 墨晕 + 内阴线，
-// 退掉「浮起面板」语言（旧黑影 + 白晕读作贴上去的按钮）；⑥ 入口升为「门阶」pill
-// （13px 弱色小字 ⇒ 16px 实色 + 字距 + 细框）；⑦ 主行按 BRAND_SLOGAN_MAIN_ACCENT
-// 切分，唯一强调词上签名面专用紫；⑧ 左右叙事文案归位（产品术语退出品牌诗）。
+// 2026-10-22 第三轮（叙事与仪式感）：④ 墨鱼进 slogan 字标；⑤ 锚=落款印章（墨环+墨晕+
+// 内阴线，禁浮起面板语言）；⑥ 入口=门阶 pill；⑦ slogan 重音；⑧ 文案归位。
+// 第三轮·第二批（动结构）：⑨ 叙事动线重排——输入框进三联左侧（它本来就是「对话」），
+// 左「说」→ 中「锚」→ 右「落」，空间即故事；⑩ 墨点动效（「一点一滴」视觉化）；
+// ⑪ 落款微时刻（点锚 = 盖章：压下回弹 + 墨点四散）。
 const props = defineProps<{ modelValue: string }>()
 const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
 
@@ -29,6 +29,21 @@ const sloganSegments = computed(() => {
     { text: BRAND_SLOGAN_MAIN.slice(idx + BRAND_SLOGAN_MAIN_ACCENT.length), accent: false },
   ]
 })
+
+// 落款微时刻（2026-10-22 用户裁定「点击瞬间是品牌最可被截图的记忆点」）：
+// 点锚 = 盖章——印章压下回弹 + 墨点四散。class 由点击方自摘（600ms），
+// 连点时先清旧定时器再重启，防定时器叠加/class 卡死。
+const stamping = ref(false)
+let stampTimer: number | undefined
+
+function onAnchorClick() {
+  emit('create')
+  stamping.value = true
+  window.clearTimeout(stampTimer)
+  stampTimer = window.setTimeout(() => {
+    stamping.value = false
+  }, 600)
+}
 </script>
 
 <template>
@@ -67,59 +82,75 @@ const sloganSegments = computed(() => {
           >
         </span>
       </div>
-      <!-- 对话侧：composer 只承担输入（signature 模式无内嵌按钮，CTA 收敛到锚） -->
-      <div class="mt-12">
-        <CreativeLauncher
-          :model-value="props.modelValue"
-          tone="signature"
-          @update:model-value="emit('update:modelValue', $event)"
-          @create="emit('create')"
-        />
-      </div>
 
-      <!-- 锚 / 落款印章（用户两轮裁定）：入口是锚，不是按钮文字。
-           左「对话」→ 锚 → 右「画布」：空间即故事，三个动作一次读完。
-           锚 glyph = 品牌生成锚资产（与画布坞 DockGenerateButton 同源），
-           mask + currentColor ⇒ 深浅主题 / hover / disabled 自动跟随 -->
-      <div class="mt-16 grid items-center gap-12 lg:grid-cols-[1fr_auto_1fr] lg:gap-10">
-        <!-- 左：对话（你说出想法） -->
-        <div class="hidden items-center justify-end gap-6 lg:flex">
-          <div class="text-right">
-            <p class="text-[length:var(--lnk-text-lg)] font-medium text-[color:var(--lnk-text-on-signature)]">
-              对话
-            </p>
-            <p class="mt-2 text-[length:var(--lnk-text-base)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)]">
-              你说出想法<br>一囊墨有了方向
-            </p>
+      <!-- 叙事舞台（2026-10-22 用户裁定「空间即故事」）：输入框进三联左侧——它本来
+           就是「对话」，从此不再坐在叙事位 200px 开外。左「说」→ 中「锚」→ 右「落」，
+           一条动线一次读完；移动端自然竖排（输入 → 锚 → 落点注脚），锚+门阶始终首屏可见。 -->
+      <div class="lnk-stage mt-12 grid justify-items-center gap-y-12 lg:grid-cols-[1fr_auto_1fr] lg:items-center lg:gap-x-10">
+        <!-- 左：对话（输入站） -->
+        <div class="flex w-full flex-col items-center gap-3 lg:flex-row lg:items-center lg:justify-end lg:gap-6">
+          <div class="lnk-stage__talk flex w-full max-w-md flex-col items-center gap-3 lg:max-w-none lg:items-end">
+            <div class="hidden text-center lg:block lg:text-right">
+              <p class="text-[length:var(--lnk-text-lg)] font-medium text-[color:var(--lnk-text-on-signature)]">
+                对话
+              </p>
+              <p class="mt-2 text-[length:var(--lnk-text-base)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)]">
+                你说出想法
+              </p>
+            </div>
+            <CreativeLauncher
+              class="w-full"
+              :model-value="props.modelValue"
+              tone="signature"
+              @update:model-value="emit('update:modelValue', $event)"
+              @create="emit('create')"
+            />
           </div>
-          <span class="h-px w-16 bg-gradient-to-l from-overlay/30 to-transparent" aria-hidden="true" />
+          <span class="hidden h-px w-16 shrink-0 bg-gradient-to-l from-overlay/30 to-transparent lg:block" aria-hidden="true" />
         </div>
-        <!-- 中：锚（唯一创作入口）+ 门阶 pill -->
-        <div class="flex flex-col items-center">
+
+        <!-- 中：墨点落域 + 落款印章（唯一创作入口）+ 门阶 pill -->
+        <div class="relative flex flex-col items-center">
+          <!-- 墨点动效（2026-10-22 用户裁定「一点一滴视觉化」）：三颗墨点从 slogan 与锚
+               之间的空域缓慢落入锚顶——literally 把 slogan 演出来。落距与落域高度同源
+               （--lnk-drop-fall），改一处即同步；移动端不占位（锚+门阶保持首屏可见）。 -->
+          <div class="lnk-drop-zone relative w-full" aria-hidden="true">
+            <span class="lnk-ink-drop" style="--drop-dx: -52px; --drop-delay: 0s" />
+            <span class="lnk-ink-drop" style="--drop-dx: 8px; --drop-delay: 1.2s" />
+            <span class="lnk-ink-drop" style="--drop-dx: 60px; --drop-delay: 2.4s" />
+          </div>
           <button
             type="button"
             data-testid="ink-anchor"
             class="lnk-anchor"
+            :class="{ 'lnk-anchor--stamping': stamping }"
             aria-label="点击锚，进入创作"
-            @click="emit('create')"
+            @click="onAnchorClick"
           >
             <span class="lnk-anchor__halo" aria-hidden="true" />
             <span class="lnk-anchor__brush" aria-hidden="true" />
             <span class="lnk-anchor__ripple" aria-hidden="true" />
             <span class="lnk-anchor__ripple lnk-anchor__ripple--delay" aria-hidden="true" />
             <span class="lnk-anchor__glyph" aria-hidden="true" />
+            <!-- 落款微时刻：盖章瞬间六颗墨点四散（方向各自带 --sx/--sy） -->
+            <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: -78px; --sy: -40px" />
+            <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: -30px; --sy: -84px" />
+            <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: 44px; --sy: -70px" />
+            <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: 82px; --sy: -18px" />
+            <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: -64px; --sy: 52px" />
+            <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: 60px; --sy: 58px" />
           </button>
-          <!-- 门阶（2026-10-22 用户裁定「入口升层」）：全页唯一动作入口的标记，
-               从 13px 弱色小字升为 16px 实色 + 字距 + 细框 pill -->
+          <!-- 门阶（2026-10-22 用户裁定「入口升层」）：全页唯一动作入口的标记 -->
           <p class="lnk-anchor__cta mt-7">
             点击锚，进入创作
           </p>
         </div>
-        <!-- 右：画布（墨鱼替你落墨） -->
-        <div class="hidden items-center gap-6 lg:flex">
-          <span class="h-px w-16 bg-gradient-to-r from-overlay/30 to-transparent" aria-hidden="true" />
-          <div class="text-left">
-            <p class="text-[length:var(--lnk-text-lg)] font-medium text-[color:var(--lnk-text-on-signature)]">
+
+        <!-- 右：画布（落点） -->
+        <div class="flex w-full flex-col items-center gap-3 lg:flex-row lg:items-center lg:justify-start lg:gap-6">
+          <span class="hidden h-px w-16 shrink-0 bg-gradient-to-r from-overlay/30 to-transparent lg:block" aria-hidden="true" />
+          <div class="text-center lg:text-left">
+            <p class="hidden text-[length:var(--lnk-text-lg)] font-medium text-[color:var(--lnk-text-on-signature)] lg:block">
               画布
             </p>
             <p class="mt-2 text-[length:var(--lnk-text-base)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)]">
@@ -141,6 +172,8 @@ const sloganSegments = computed(() => {
   align-items: center;
   min-height: calc(100vh - var(--neo-header-height));
   min-height: calc(100dvh - var(--neo-header-height));
+  /* 墨点落距的唯一真相源：落域高度与 keyframe 落距都引用它，改一处即同步 */
+  --lnk-drop-fall: 96px;
 }
 
 /* slogan 唯一重音（2026-10-22 用户裁定）：签名面专用强调紫。
@@ -164,6 +197,52 @@ const sloganSegments = computed(() => {
 /* 墨鱼只借 accent-glow 的一层柔光（令牌成对，无裸 rgba） */
 .lnk-mascot img {
   filter: drop-shadow(var(--lnk-accent-glow));
+}
+
+/* ===== 墨点（2026-10-22 用户裁定「一点一滴视觉化」）=====
+   从落域顶部缓缓落入锚顶，到缘即没（DOM 序在锚之前，被不透明盘面自然吞没）。
+   只动 transform/opacity；reduced-motion 下静止且不可见。 */
+.lnk-drop-zone {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .lnk-drop-zone {
+    display: block;
+    height: var(--lnk-drop-fall);
+  }
+}
+
+.lnk-ink-drop {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 999px;
+  background: var(--lnk-accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: lnk-ink-drop-fall 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation-delay: var(--drop-delay, 0s);
+}
+
+@keyframes lnk-ink-drop-fall {
+  0% {
+    transform: translate(var(--drop-dx, 0), 0) scale(0.45);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.9;
+  }
+  78% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(var(--drop-dx, 0), var(--lnk-drop-fall)) scale(1);
+    opacity: 0;
+  }
 }
 
 /* ===== 锚 / 落款印章 ===== */
@@ -262,6 +341,56 @@ const sloganSegments = computed(() => {
   animation-delay: 1.4s;
 }
 
+/* 落款微时刻（2026-10-22 用户裁定「点击瞬间是品牌最可被截图的记忆点」）：
+   盖章——印章压下（0.9）→ 回弹（1.05）→ 归位；同时六颗墨点四散渐隐。
+   class 由点击方 600ms 自摘（见 script），reduced-motion 下整段静止。 */
+.lnk-anchor--stamping {
+  animation: lnk-anchor-stamp 0.5s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes lnk-anchor-stamp {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(0.9);
+  }
+  70% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.lnk-anchor__spark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 999px;
+  background: var(--lnk-accent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lnk-anchor--stamping .lnk-anchor__spark {
+  animation: lnk-anchor-spark 0.6s ease-out forwards;
+}
+
+@keyframes lnk-anchor-spark {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(var(--sx, 0), var(--sy, 0)) scale(0.2);
+    opacity: 0;
+  }
+}
+
 /* 门阶 pill（2026-10-22 用户裁定「入口升层」）：全页唯一动作入口的标记。
    16px 实色 + 0.18em 字距 + 细框；右内距用 calc 抵掉末字字距，保持视觉居中 */
 .lnk-anchor__cta {
@@ -283,9 +412,19 @@ const sloganSegments = computed(() => {
     animation: none;
   }
 
+  .lnk-ink-drop {
+    animation: none;
+    opacity: 0;
+  }
+
   .lnk-anchor__ripple {
     animation: none;
     opacity: 0;
+  }
+
+  .lnk-anchor--stamping,
+  .lnk-anchor--stamping .lnk-anchor__spark {
+    animation: none;
   }
 }
 

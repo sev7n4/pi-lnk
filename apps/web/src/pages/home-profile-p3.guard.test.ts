@@ -240,3 +240,32 @@ describe('P3-J 签名画面叙事与材质（走查「叙事仪式感」轮，20
     expect(HERO_SRC, '右上角绝对定位角标已退场').not.toContain('right-8 top-8')
   })
 })
+
+describe('P3-K 叙事动线与仪式动效（走查「叙事仪式感」轮·第二批，2026-10-22）', () => {
+  const HERO_SRC = stripComments(HERO)
+
+  it('输入站进三联：stage 承载输入框（空间即故事，不再大宽度孤条）', () => {
+    expect(HERO_SRC, '叙事舞台容器').toContain('lnk-stage')
+    expect(HERO_SRC, '输入站位（左「说」）').toContain('lnk-stage__talk')
+  })
+
+  it('墨点动效：落域 + 三颗墨点 + 落距同源（--lnk-drop-fall）', () => {
+    expect(HERO_SRC).toContain('lnk-drop-zone')
+    expect(HERO_SRC).toContain('lnk-ink-drop')
+    expect(HERO_SRC, '落域高度与 keyframe 落距必须同源，否则墨点落不到锚顶').toContain(
+      '--lnk-drop-fall',
+    )
+  })
+
+  it('落款微时刻：stamp class + 六散 spark 在位', () => {
+    expect(HERO_SRC).toContain('lnk-anchor--stamping')
+    expect(HERO_SRC).toContain('lnk-anchor__spark')
+  })
+
+  it('⛔ 新动效载体全部进 reduced-motion 媒体块（漏守一个都算漏）', () => {
+    const mediaBlock = HERO_SRC.slice(HERO_SRC.indexOf('@media (prefers-reduced-motion: reduce)'))
+    expect(mediaBlock).toContain('.lnk-ink-drop')
+    expect(mediaBlock).toContain('lnk-anchor--stamping')
+    expect(mediaBlock).toContain('animation: none')
+  })
+})
