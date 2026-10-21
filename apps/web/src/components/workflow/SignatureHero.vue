@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import CreativeLauncher from './CreativeLauncher.vue'
-import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 
 // greeting 是必填 prop：时段问候由 WorkflowPage 计算并传入，本组件不做时段判断
 // （避免两处问候逻辑漂移）。字号降级由本组件的 text-sm 承担。
@@ -36,9 +35,38 @@ const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
           @create="emit('create')"
         />
       </div>
-      <!-- 显色时刻：mascot 呼吸 -->
+      <!-- 显色时刻：墨圈呼吸（2026-10-21 走查轮：原为 BrandPatternAvatar 纯紫圆，
+           读作「放错位置的装饰」；改为手笔墨圈——起笔压重、行笔稳、收笔留白） -->
       <div class="mt-8 flex justify-center">
-        <BrandPatternAvatar seed="mascot" name="墨鱼 π" size="lg" class="lnk-mascot" />
+        <span class="lnk-mascot" data-testid="ink-enso" role="img" aria-label="墨流印记">
+          <svg viewBox="0 0 100 100" class="h-16 w-16" fill="none" aria-hidden="true">
+            <!-- 墨圈主体：底部约 80° 留白即「呼吸口」 -->
+            <path
+              d="M 28.15 76.04 A 34 34 0 1 1 71.85 76.04"
+              stroke="var(--lnk-accent)"
+              stroke-width="7"
+              stroke-linecap="round"
+            />
+            <!-- 起笔压重：笔锋落纸的那一段加粗 -->
+            <path
+              d="M 28.15 76.04 A 34 34 0 0 1 16.52 55.90"
+              stroke="var(--lnk-accent)"
+              stroke-width="10.5"
+              stroke-linecap="round"
+            />
+            <!-- 收笔飞白：离锋时甩出的一滴 -->
+            <circle cx="77.9" cy="75.1" r="2.2" fill="var(--lnk-accent)" />
+            <text
+              x="50"
+              y="50"
+              text-anchor="middle"
+              dominant-baseline="central"
+              class="lnk-enso-glyph"
+            >
+              墨
+            </text>
+          </svg>
+        </span>
       </div>
     </div>
   </section>
@@ -55,6 +83,18 @@ const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
 
 .lnk-mascot {
   animation: lnk-mascot-breathe 4s ease-in-out infinite;
+}
+
+/* 墨圈只借 accent-glow 的一层柔光（令牌成对，无裸 rgba） */
+.lnk-mascot svg {
+  filter: drop-shadow(var(--lnk-accent-glow));
+}
+
+.lnk-enso-glyph {
+  fill: var(--lnk-text-on-signature);
+  font-family: var(--lnk-font-display);
+  font-size: 30px;
+  font-weight: var(--lnk-weight-semibold);
 }
 
 /* 动效只三处（规格 §7.4），但每一处都必须能被系统「减少动态效果」停掉 */

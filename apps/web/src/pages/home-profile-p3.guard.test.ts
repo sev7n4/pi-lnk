@@ -23,8 +23,21 @@ const read = (rel: string) => readFileSync(join(HERE, rel), 'utf8')
 const PROFILE = read('ProfilePage.vue')
 const HERO = read('../components/workflow/SignatureHero.vue')
 const WORKFLOW = read('WorkflowPage.vue')
+const SESSION_CARD = read('../components/workflow/SessionCard.vue')
+const COVER_FALLBACK = read('../components/workflow/CanvasCoverFallback.vue')
 
 const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1
+
+/**
+ * 剥注释再断言（项目教训：源码静态断言会被注释命中 ⇒ 假红）。
+ * 历史注释里提到旧组件名/旧写法是正常文档，不应判红；
+ * 但断言「用上了新写法」时也必须剥注释，否则注释里的新名字会造成假绿。
+ */
+const stripComments = (src: string) =>
+  src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:\w])\/\/.*$/gm, '$1')
 
 describe('P3-A 个人中心卡片面令牌（禁 surface-canvas，须 elevated）', () => {
   it('⛔ ProfilePage 不得再用 bg-surface-canvas 作卡片/容器面', () => {
@@ -68,5 +81,40 @@ describe('P3-C 主页两区块栅格统一', () => {
       WORKFLOW,
       '社区精选曾用 grid-cols-2 … lg:grid-cols-4，与我的画布节奏断裂',
     ).not.toContain('grid grid-cols-2 gap-4 lg:grid-cols-4"')
+  })
+})
+
+describe('P3-G 画布兜底 / 标题口径 / 墨圈（走查「没有设计品味」轮）', () => {
+  const CARD = stripComments(SESSION_CARD)
+  const HERO_SRC = stripComments(HERO)
+  const FALLBACK_SRC = stripComments(COVER_FALLBACK)
+
+  it('⛔ 画布兜底不再是用户头像位组件（紫底首字母读作「没加载的用户头像」）', () => {
+    expect(
+      CARD,
+      'BrandPatternAvatar 是头像位语言；画布封面兜底应走 CanvasCoverFallback',
+    ).not.toContain('BrandPatternAvatar')
+    expect(CARD).toContain('CanvasCoverFallback')
+  })
+
+  it('⛔ 冒烟/测试 slug 不得泄漏成卡片标题', () => {
+    expect(CARD, '标题必须过 displayCanvasTitle 口径').toContain('displayCanvasTitle')
+  })
+
+  it('hero 显色时刻是 SVG 墨圈，不再是纯紫圆头像', () => {
+    expect(HERO_SRC, '纯色圆 + 字符读作放错位置的装饰').not.toContain('BrandPatternAvatar')
+    expect(HERO_SRC).toContain('data-testid="ink-enso"')
+  })
+
+  it('兜底组件只消费 lnk-* 令牌（无裸 hex / 无 --neo-* / 无裸 rgba）', () => {
+    expect(FALLBACK_SRC).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+    expect(FALLBACK_SRC).not.toContain('--neo-')
+    expect(FALLBACK_SRC).not.toMatch(/rgba\(\s*\d/)
+  })
+
+  it('displayCanvasTitle 口径本身有单测兜底（防此处假绿）', () => {
+    const util = read('../utils/displayCanvasTitle.test.ts')
+    expect(util).toContain('layout-smoke-1792588745')
+    expect(util).toContain('未命名画布')
   })
 })

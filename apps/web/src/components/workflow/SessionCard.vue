@@ -4,7 +4,8 @@ import type { Session } from '@lnkpi/shared'
 import { resolveMediaUrl } from '@/services/api-base'
 import { formatSessionTime } from '@/utils/formatSessionTime'
 import { extractSessionCover } from '@/utils/sessionCover'
-import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
+import { displayCanvasTitle } from '@/utils/displayCanvasTitle'
+import CanvasCoverFallback from '@/components/workflow/CanvasCoverFallback.vue'
 
 const props = defineProps<{
   session: Session
@@ -111,17 +112,18 @@ const coverUrl = computed(() => (cover.value ? resolveMediaUrl(cover.value.url) 
           preload="metadata"
           class="h-full w-full object-cover"
         />
-        <!-- 无封面兜底：品牌纹样（P1：原为 32px 灰 SVG 占位块，视觉上像加载失败） -->
-        <div v-else class="flex h-full w-full items-center justify-center">
-          <BrandPatternAvatar :seed="session.id" :name="session.title || '画布'" size="lg" />
-        </div>
+        <!-- 无封面兜底：墨点纸纹 + 品牌印记（2026-10-21 走查轮：原为 BrandPatternAvatar
+             紫底首字母——用户头像位的语言，用在画布封面上像「没加载的用户头像」） -->
+        <CanvasCoverFallback v-else :seed="session.id" />
         <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-dim/70 to-transparent" />
       </div>
       <div class="relative z-[1] -mt-6 px-3 pb-2.5 pt-0">
         <p class="truncate text-[13px] font-medium text-fg group-hover:text-fg">
-          {{ session.title || '未命名画布' }}
+          {{ displayCanvasTitle(session.title) }}
         </p>
-        <p class="mt-0.5 text-[10px] text-fg-3">{{ formatSessionTime(session.updatedAt) }}</p>
+        <p class="mt-0.5 text-[length:var(--lnk-text-2xs)] leading-[var(--lnk-lh-2xs)] text-fg-3">
+          {{ formatSessionTime(session.updatedAt) }}
+        </p>
       </div>
     </button>
   </div>
