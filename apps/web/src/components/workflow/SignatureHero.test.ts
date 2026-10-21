@@ -10,6 +10,16 @@ import CreativeLauncher from './CreativeLauncher.vue'
 // 把 URL **对象**传给 Node 的 fileURLToPath 会报 "The URL must be of scheme file"。
 const HERE = dirname(fileURLToPath(import.meta.url))
 
+/**
+ * 剥注释再断言（项目教训：源码静态断言会被注释命中 ⇒ 假红/假绿）。
+ * 尤其「不得出现 X」这类否定断言：注释里解释「为什么不用 X」会把自己判红。
+ */
+const stripComments = (src: string) =>
+  src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:\w])\/\/.*$/gm, '$1')
+
 function mountHero() {
   // 2026-10-22 起 hero 无 RouterLink / 无 greeting prop（用户裁定纯净霸屏），裸挂载即可
   return mount(SignatureHero, {
@@ -110,11 +120,15 @@ describe('SignatureHero', () => {
     expect(mascot.element.tagName).toBe('SPAN')
   })
 
-  it('墨鱼在 slogan 旁构成品牌字标（lnk-hero-lockup），不再是右上角孤立角标', () => {
+  it('墨鱼构成品牌字标：悬在落域顶（墨滴正上方），不再是右上角孤立角标', () => {
     const wrapper = mountHero()
-    const lockup = wrapper.find('.lnk-hero-lockup')
-    expect(lockup.exists()).toBe(true)
-    expect(lockup.find('[data-testid="brand-mascot"]').exists()).toBe(true)
+    // 2026-10-22 起墨鱼不在 lockup 并排位、也不在右上角——它在落域顶，
+    // 与「记住你的模样。」末行、墨滴、锚同一条垂直轴
+    const mascot = wrapper.find('[data-testid="brand-mascot"]')
+    expect(mascot.exists()).toBe(true)
+    expect(mascot.element.closest('.lnk-drop-zone')).toBeTruthy()
+    const src = readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8')
+    expect(src).not.toContain('right-8 top-8')
   })
 
   it('slogan 主行切分渲染后仍等于单一真相源全文，「锚定」是唯一强调词', () => {
@@ -174,11 +188,11 @@ describe('SignatureHero', () => {
     const wrapper = mountHero()
     const drops = wrapper.findAll('.lnk-ink-drop')
     expect(drops).toHaveLength(3)
-    // 落距与落域高度同源（--lnk-drop-fall），防两处漂移导致墨点落不到锚顶
+    // 落域高度与 keyframe 落距同源（--lnk-drop-fall / --lnk-drop-start），防两处漂移
     const src = readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8')
     expect(src).toContain('--lnk-drop-fall')
     expect(src).toContain('height: var(--lnk-drop-fall)')
-    expect(src).toContain('translate(var(--drop-dx, 0), var(--lnk-drop-fall))')
+    expect(src).toContain('calc(var(--lnk-drop-fall) - var(--lnk-drop-start))')
     const mediaBlock = src.slice(src.indexOf('@media (prefers-reduced-motion: reduce)'))
     expect(mediaBlock).toContain('.lnk-ink-drop')
   })
@@ -206,5 +220,104 @@ describe('SignatureHero', () => {
     // 方向必须各自不同，否则六颗墨点会叠成一条线
     const dirs = sparks.map((s) => s.attributes('style'))
     expect(new Set(dirs).size).toBe(6)
+  })
+})
+
+/**
+ * 走查第三轮·第三批（2026-10-22 用户四条反馈）：
+ * ① 墨鱼移到「记住你的模样」前；② 输入框紫环退场；③ 锚外环紫晕减重；④ 墨点改水滴。
+ * 外加本轮用户实测发现的真 bug：锚盘走随主题翻转的 hi 令牌 ⇒ 浅色主题下反色沉进墨底。
+ */
+describe('SignatureHero · 反馈批次（墨鱼归位 / 输入框 / 紫晕 / 水滴）', () => {
+  it('① 墨鱼悬在洒下的墨正上方：落域内、墨滴之前、与锚同轴', () => {
+    const wrapper = mountHero()
+    const mascot = wrapper.find('[data-testid="brand-mascot"]')
+    expect(mascot.exists()).toBe(true)
+    expect(mascot.find('img').attributes('src')).toBe('/brand/mascot-logo.png')
+    // ⭐ 2026-10-22 无头浏览器实测：inline 在句中时图标中心距锚轴恒定 -157.2px
+    //   （1280~1920 四档一致）——「在短语前」与「在墨滴上方」几何上不可兼得。
+    //   故墨鱼悬在落域顶：DOM 序上必须在墨滴**之前**（上下关系由结构保证）。
+    const zone = wrapper.find('.lnk-drop-zone')
+    expect(zone.exists()).toBe(true)
+    expect(zone.find('[data-testid="brand-mascot"]').exists()).toBe(true)
+    const zoneHtml = zone.html()
+    expect(
+      zoneHtml.indexOf('brand-mascot'),
+      '墨鱼必须是落域第一个元素（在墨滴上方）',
+    ).toBeLessThan(zoneHtml.indexOf('lnk-ink-drop'))
+    // 行内留等宽垫片：保住「记住你的模样。」独占居中末行的断行节奏
+    const src = readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8')
+    expect(src).toContain('BRAND_SLOGAN_MAIN_MASCOT_BEFORE')
+    const unitBlock = src.slice(src.indexOf('.lnk-slogan-mascot {'))
+    expect(unitBlock).toContain('white-space: nowrap')
+    expect(src).toContain('lnk-slogan-mascot-gap')
+  })
+
+  it('② 输入框：signature 下紫环退场，聚焦改走中性柔雾（紫只属于锚）', () => {
+    const launcherSrc = stripComments(readFileSync(join(HERE, 'CreativeLauncher.vue'), 'utf8'))
+    const sigBlock = launcherSrc.slice(launcherSrc.indexOf('.lnk-launcher-signature {'))
+    expect(sigBlock, '聚焦必须落在容器上（focus-within），不是 input 的 ring').toContain(':focus-within')
+    expect(sigBlock, '紫 ring 与恒深墨底打架，且抢走锚的专属强调色').not.toContain(
+      '--lnk-border-focus',
+    )
+    // 紫 ring 只保留在 default（浅底）分支做键盘可达性提示
+    expect(launcherSrc).toContain('focus-visible:ring-[var(--lnk-border-focus)]')
+    expect(
+      launcherSrc,
+      'signature 分支不得再挂 focus-visible 紫 ring',
+    ).not.toContain('rounded-xl border-overlay/12 bg-surface-sunken focus-visible')
+  })
+
+  it('③ 锚外环紫晕减重：halo 收小到 -20px 且紫度对折', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    const halo = src.slice(src.indexOf('.lnk-anchor__halo {'))
+    expect(halo).toContain('inset: -20px')
+    expect(halo, '满强度 accent-subtle 会把整颗锚泡在紫里').toContain(
+      'var(--lnk-accent-subtle) 50%',
+    )
+    // 环境光同样收力：28px/26% → 20px/16%
+    const anchorRule = src.slice(src.indexOf('.lnk-anchor {'), src.indexOf('.lnk-anchor:hover'))
+    expect(anchorRule).toContain('0 0 20px')
+    expect(anchorRule).toContain('var(--lnk-accent) 16%')
+  })
+
+  it('④ 墨点是水滴不是圆点：尖头朝上 + 重力加速 + 从墨鱼正下方散开落入锚', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    const dropRule = src.slice(src.indexOf('.lnk-ink-drop {'))
+    expect(dropRule, '0 角是尖头').toContain('border-radius: 0 50% 50% 50%')
+    expect(dropRule, '重力：起步慢越落越快，匀速读不出「滴」').toContain(
+      'cubic-bezier(0.42, 0, 0.85, 0.45)',
+    )
+    const kf = src.slice(src.indexOf('@keyframes lnk-ink-drop-fall'))
+    expect(kf, 'rotate(45deg) 把尖头转到正上方').toContain('rotate(45deg)')
+    expect(kf, '沿屏幕纵向拉长才是水滴').toContain('scale(0.82, 1.22)')
+    // 起点 dx0 ≈ 0（墨鱼正下方），终点 dx1 散开（±48px，落在锚盘上）
+    expect(kf).toContain('translate(var(--drop-dx0, 0), 0)')
+    expect(kf).toContain('var(--drop-dx1')
+    expect(kf, '落距 = 落域高 - 墨滴起点（同源换算，不写第二份数字）').toContain(
+      'calc(var(--lnk-drop-fall) - var(--lnk-drop-start))',
+    )
+  })
+
+  it('墨鱼 → 墨滴 → 锚同轴：三联两侧 minmax(0,1fr)，锚不再偏离 slogan 中轴', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    // 2026-10-22 实测：裸 1fr 的隐式 min 是 min-content，左右列不等宽把锚挤偏 30px
+    expect(
+      src,
+      '两侧轨道必须 minmax(0,1fr) 才能等宽，锚才真正落在 slogan 中轴上',
+    ).toContain('lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]')
+  })
+
+  it('锚盘走印章令牌（主题不变式），不再用随主题翻转的 hi 对', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    expect(src).toContain('var(--lnk-stamp-face-on-signature)')
+    expect(src).toContain('var(--lnk-stamp-ink-on-signature)')
+    // ⛔ hi 对随主题翻转（深主题白底 / 浅主题墨底），压在**不翻转**的恒深签名底上
+    //   ⇒ 浅色主题下盘面翻成近黑 #17181d 压 #131318 ≈1.2:1，整颗锚沉进墨里。
+    expect(src, 'hi-bg 随主题翻转，签名面上禁用').not.toContain('var(--lnk-hi-bg)')
+    expect(src, 'hi-text 随主题翻转，签名面上禁用').not.toContain('var(--lnk-hi-text)')
+    // 内阴线也必须跟着刻痕走，否则浅色主题下会描成白线
+    const anchorRule = src.slice(src.indexOf('.lnk-anchor {'), src.indexOf('.lnk-anchor:hover'))
+    expect(anchorRule).toContain('var(--lnk-stamp-ink-on-signature) 20%')
   })
 })

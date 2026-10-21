@@ -28,6 +28,13 @@ export const BRAND_SLOGAN_MAIN = '墨鱼π，锚定你的创意，一点一滴�
  */
 export const BRAND_SLOGAN_MAIN_ACCENT = '锚定'
 /**
+ * inline 墨鱼位：主行中该词**之前**（2026-10-22 用户裁定「墨鱼放在『记住你的
+ * 模样』前面，位置上给人感觉墨正好从它身上撒下来」）。渲染时与该词粘为
+ * nowrap 一体，不被拆行；必须是 BRAND_SLOGAN_MAIN 的子串——若漂移，
+ * inline 墨鱼会静默消失（单测锁父元素为 h1 兜底）。
+ */
+export const BRAND_SLOGAN_MAIN_MASCOT_BEFORE = '记住你的模样'
+/**
  * 官网地址（移动端「进入官方」入口）。
  * ⛔ 暂留空：地址尚未确定，先做**预留** —— 留空时点击提示「官网即将上线」，
  * 不用占位域名把人导向 404。定下来后填这里即可，调用方无需改动。

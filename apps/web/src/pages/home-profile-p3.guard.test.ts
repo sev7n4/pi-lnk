@@ -27,6 +27,7 @@ const SESSION_CARD = read('../components/workflow/SessionCard.vue')
 const WORK_CARD = read('../components/works/WorkCard.vue')
 const COVER_FALLBACK = read('../components/workflow/CanvasCoverFallback.vue')
 const LAUNCHER = read('../components/workflow/CreativeLauncher.vue')
+const TOKENS = read('../styles/design-tokens.css')
 
 const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1
 
@@ -267,5 +268,91 @@ describe('P3-K 叙事动线与仪式动效（走查「叙事仪式感」轮·第
     expect(mediaBlock).toContain('.lnk-ink-drop')
     expect(mediaBlock).toContain('lnk-anchor--stamping')
     expect(mediaBlock).toContain('animation: none')
+  })
+})
+
+/**
+ * P3-L 走查「叙事仪式感」轮·第三批（2026-10-22 用户四条反馈 + 一个真 bug）
+ *   ① 墨鱼移到「记住你的模样」前（位置上墨正从它身上撒下来）
+ *   ② 输入框重设计：紫环退场（紫只属于锚）
+ *   ③ 锚外环光晕紫度减重
+ *   ④ 墨点改水滴形
+ *   ⭐ 真 bug：锚盘走随主题翻转的 --lnk-hi-bg/--lnk-hi-text，压在**不翻转**的恒深签名
+ *      底上 ⇒ 浅色主题（白天）整颗锚翻成近黑沉进墨里。修复 = 印章令牌（主题不变式）。
+ */
+describe('P3-L 墨鱼归位 / 输入框 / 紫晕减重 / 水滴（走查「叙事仪式感」轮·第三批）', () => {
+  const HERO_SRC = stripComments(HERO)
+  const LAUNCHER_SRC = stripComments(LAUNCHER)
+
+  it('① 墨鱼悬在洒下的墨正上方（落域顶、墨滴之前），行内留等宽垫片保断行节奏', () => {
+    // 2026-10-22 无头浏览器实测：墨鱼 inline 在句中时图标中心距锚轴恒定 -157.2px
+    //（1280~1920 四档一致，居中末行的行首）——「在短语前」与「在墨滴上方」几何上
+    // 不可兼得。故墨鱼悬到落域顶，与墨滴、锚同轴；对位由结构保证，不靠算偏移。
+    const zoneIdx = HERO_SRC.indexOf('class="lnk-drop-zone')
+    const mascotIdx = HERO_SRC.indexOf('data-testid="brand-mascot"')
+    const dropIdx = HERO_SRC.indexOf('class="lnk-ink-drop')
+    expect(zoneIdx, '落域容器在位').toBeGreaterThan(-1)
+    expect(
+      mascotIdx > zoneIdx && mascotIdx < dropIdx,
+      '墨鱼必须在落域内、且 DOM 序在墨滴之前（上下关系由结构保证）',
+    ).toBe(true)
+    expect(HERO_SRC, '墨鱼与所带词必须 nowrap 一体，否则因果被拆行拆断').toContain(
+      'white-space: nowrap',
+    )
+    expect(HERO_SRC, '行内等宽垫片：拿掉后整句可能挤进一行，末行消失').toContain(
+      'lnk-slogan-mascot-gap',
+    )
+    // 位置语义仍来自单一真相源（垫片插在该词之前）
+    expect(HERO_SRC).toContain('BRAND_SLOGAN_MAIN_MASCOT_BEFORE')
+    expect(read('../constants/brand.ts')).toContain(
+      "export const BRAND_SLOGAN_MAIN_MASCOT_BEFORE = '记住你的模样'",
+    )
+    expect(
+      read('../constants/brand.ts'),
+      '该词若不再是主行子串，切分渲染会静默丢掉 inline 墨鱼位',
+    ).toContain('让画布记住你的模样')
+  })
+
+  it('①′ 墨鱼 → 墨滴 → 锚同轴：三联两侧 minmax(0,1fr)，锚真正落在 slogan 中轴', () => {
+    // 2026-10-22 实测：裸 1fr 的隐式 min 是 min-content，左右列不等宽把中列挤偏
+    // 30px（锚 cx 750.1 vs slogan 中轴 720，四档视口一致）
+    expect(
+      HERO_SRC,
+      '两侧轨道必须 minmax(0,1fr) 才能等宽',
+    ).toContain('lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]')
+  })
+
+  it('② signature 输入框：聚焦走容器 focus-within，紫 ring 退场', () => {
+    const sigBlock = LAUNCHER_SRC.slice(LAUNCHER_SRC.indexOf('.lnk-launcher-signature {'))
+    expect(sigBlock).toContain(':focus-within')
+    expect(sigBlock, '紫 ring 抢锚的专属强调色，且与恒深墨底打架').not.toContain(
+      '--lnk-border-focus',
+    )
+  })
+
+  it('③ 锚外环紫晕减重：halo 不再是满强度紫饼', () => {
+    const halo = HERO_SRC.slice(HERO_SRC.indexOf('.lnk-anchor__halo {'))
+    expect(halo).toContain('inset: -20px')
+    expect(halo).toContain('var(--lnk-accent-subtle) 50%')
+  })
+
+  it('④ 墨点是水滴形（尖头朝上 + 拉长），不是圆点', () => {
+    const dropRule = HERO_SRC.slice(HERO_SRC.indexOf('.lnk-ink-drop {'))
+    expect(dropRule).toContain('border-radius: 0 50% 50% 50%')
+    const kf = HERO_SRC.slice(HERO_SRC.indexOf('@keyframes lnk-ink-drop-fall'))
+    expect(kf).toContain('rotate(45deg)')
+    expect(kf).toContain('scale(0.82, 1.22)')
+  })
+
+  it('⭐ 印章配色是主题不变式：hero 与令牌层都禁用随主题翻转的 hi 对', () => {
+    // 令牌层：两个主题块都必须定义这对令牌（且同名，由 design-token.test.ts 锁同值）
+    expect(occurrences(TOKENS, '--lnk-stamp-face-on-signature:'), '深浅两主题各一处').toBe(2)
+    expect(occurrences(TOKENS, '--lnk-stamp-ink-on-signature:'), '深浅两主题各一处').toBe(2)
+    // 消费层：锚盘/刻痕走印章令牌
+    expect(HERO_SRC).toContain('var(--lnk-stamp-face-on-signature)')
+    expect(HERO_SRC).toContain('var(--lnk-stamp-ink-on-signature)')
+    // ⛔ hi 对随主题翻转，压在恒深签名底上 = 浅色主题锚反色沉底
+    expect(HERO_SRC, 'hi-bg 随主题翻转，签名面禁用').not.toContain('var(--lnk-hi-bg)')
+    expect(HERO_SRC, 'hi-text 随主题翻转，签名面禁用').not.toContain('var(--lnk-hi-text)')
   })
 })

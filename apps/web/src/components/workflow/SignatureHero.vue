@@ -6,6 +6,7 @@ import {
   BRAND_SLOGAN_LEAD,
   BRAND_SLOGAN_MAIN,
   BRAND_SLOGAN_MAIN_ACCENT,
+  BRAND_SLOGAN_MAIN_MASCOT_BEFORE,
 } from '@/constants/brand'
 
 // 2026-10-21/22 用户两轮裁定：① 问候语与「想象，落定成图」旧标题去掉，品牌 slogan 是唯一
@@ -15,19 +16,42 @@ import {
 // 第三轮·第二批（动结构）：⑨ 叙事动线重排——输入框进三联左侧（它本来就是「对话」），
 // 左「说」→ 中「锚」→ 右「落」，空间即故事；⑩ 墨点动效（「一点一滴」视觉化）；
 // ⑪ 落款微时刻（点锚 = 盖章：压下回弹 + 墨点四散）。
+// 第三轮·第三批（用户四条反馈）：⑫ 墨鱼对位「洒下的墨」正上方——2026-10-22 无头浏览器
+// 实测：墨鱼 inline 在句中时图标中心距锚轴恒定 -157.2px（1280~1920 四档一致，居中末行
+// 的行首），几何上不可能既「在『记住你的模样』前面」又「在墨滴上方」。改为悬在落域顶：
+// 恰在居中末行「记住你的模样。」正下方、墨滴正上方，「墨从它身上撒下来」由结构保证，
+// 不依赖视口/字体；行内留等宽垫片保住断行节奏。⑬ 输入框重做；⑭ 锚外环紫晕减重；
+// ⑮ 墨点改水滴形。另修：三联两侧 1fr 被 min-content 撑得不均等 ⇒ 锚比 slogan 中轴
+// 偏右 30px（实测 750.1 vs 720）⇒ 改 minmax(0,1fr) 归中。
 const props = defineProps<{ modelValue: string }>()
 const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
 
-// slogan 主行切分：单一真相源是 BRAND_SLOGAN_MAIN 整句，按强调词切段渲染——
+// slogan 主行切分：单一真相源是 BRAND_SLOGAN_MAIN 整句，按标记词切段渲染——
 // 不复制文案，防两处漂移；拼接结果必须等于整句（SignatureHero.test.ts 锁定）。
+// 两处标记：accent（视觉重音）+ mascot（inline 墨鱼位，插在该词之前）。
 const sloganSegments = computed(() => {
-  const idx = BRAND_SLOGAN_MAIN.indexOf(BRAND_SLOGAN_MAIN_ACCENT)
-  if (idx < 0) return [{ text: BRAND_SLOGAN_MAIN, accent: false }]
-  return [
-    { text: BRAND_SLOGAN_MAIN.slice(0, idx), accent: false },
-    { text: BRAND_SLOGAN_MAIN_ACCENT, accent: true },
-    { text: BRAND_SLOGAN_MAIN.slice(idx + BRAND_SLOGAN_MAIN_ACCENT.length), accent: false },
-  ]
+  const marks: { at: number; len: number; accent: boolean; mascot: boolean }[] = []
+  const a = BRAND_SLOGAN_MAIN.indexOf(BRAND_SLOGAN_MAIN_ACCENT)
+  const m = BRAND_SLOGAN_MAIN.indexOf(BRAND_SLOGAN_MAIN_MASCOT_BEFORE)
+  if (a >= 0) {
+    marks.push({ at: a, len: BRAND_SLOGAN_MAIN_ACCENT.length, accent: true, mascot: false })
+  }
+  if (m >= 0) {
+    marks.push({ at: m, len: BRAND_SLOGAN_MAIN_MASCOT_BEFORE.length, accent: false, mascot: true })
+  }
+  if (!marks.length) return [{ text: BRAND_SLOGAN_MAIN, accent: false, mascot: false }]
+  marks.sort((x, y) => x.at - y.at)
+  const out: { text: string; accent: boolean; mascot: boolean }[] = []
+  let cur = 0
+  for (const k of marks) {
+    if (k.at > cur) out.push({ text: BRAND_SLOGAN_MAIN.slice(cur, k.at), accent: false, mascot: false })
+    out.push({ text: BRAND_SLOGAN_MAIN.slice(k.at, k.at + k.len), accent: k.accent, mascot: k.mascot })
+    cur = k.at + k.len
+  }
+  if (cur < BRAND_SLOGAN_MAIN.length) {
+    out.push({ text: BRAND_SLOGAN_MAIN.slice(cur), accent: false, mascot: false })
+  }
+  return out
 })
 
 // 落款微时刻（2026-10-22 用户裁定「点击瞬间是品牌最可被截图的记忆点」）：
@@ -55,38 +79,30 @@ function onAnchorClick() {
     <!-- 墨流粒子：只动 transform/opacity；reduced-motion 下静止 -->
     <div class="lnk-ink-particles pointer-events-none absolute inset-0" aria-hidden="true" />
     <div class="relative mx-auto w-full max-w-4xl text-center">
-      <!-- 品牌字标（2026-10-22 用户裁定「墨鱼入场」）：slogan 右对齐 + 墨鱼在旁，
-           构成「字 + 角色」的品牌签名。墨鱼与导航同源资产（BRAND_LOGO_URL），
-           装饰位不变按钮（单 CTA 纪律）；移动端让位给 slogan 宽度（hidden sm:block）。 -->
-      <div class="lnk-hero-lockup flex items-center justify-center gap-5 sm:gap-6">
-        <div class="min-w-0 text-center sm:text-right">
-          <!-- 品牌 slogan（用户裁定）：双行叙事，先共鸣后承诺；主行即页面唯一 h1。
-               只用 on-signature 实色令牌——品牌渐变禁载小字（F-5 3.67:1 不过 AA） -->
-          <p
-            class="text-[length:var(--lnk-text-md)] leading-[var(--lnk-lh-md)] text-[color:var(--lnk-text-on-signature-muted)] sm:text-[length:var(--lnk-text-lg)] sm:leading-[var(--lnk-lh-lg)]"
-          >
-            {{ BRAND_SLOGAN_LEAD }}
-          </p>
-          <h1
-            class="mt-3 font-bold text-[length:var(--lnk-text-2xl)] leading-[var(--lnk-lh-2xl)] text-[color:var(--lnk-text-on-signature)] sm:text-[length:var(--lnk-text-3xl)] sm:leading-[var(--lnk-lh-3xl)] lg:text-[length:var(--lnk-text-4xl)] lg:leading-[var(--lnk-lh-4xl)]"
-          >
-            <template v-for="(seg, i) in sloganSegments" :key="i"><span v-if="seg.accent" class="lnk-slogan-accent">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>
-          </h1>
-        </div>
-        <span class="lnk-mascot hidden shrink-0 sm:block" data-testid="brand-mascot">
-          <img
-            :src="BRAND_LOGO_URL"
-            alt="墨鱼π 品牌形象"
-            draggable="false"
-            class="h-11 w-11 select-none sm:h-14 sm:w-14"
-          >
-        </span>
+      <!-- 品牌字标（2026-10-22 用户裁定「墨鱼入场」）：墨鱼图标本体悬在落域顶——
+           「记住你的模样。」居中末行的正下方、洒下的墨的正上方，与墨滴、锚同轴；
+           行内只留等宽垫片保断行节奏（见 .lnk-slogan-mascot-gap）。装饰位不变按钮。 -->
+      <div class="lnk-hero-lockup">
+        <!-- 品牌 slogan（用户裁定）：双行叙事，先共鸣后承诺；主行即页面唯一 h1。
+             只用 on-signature 实色令牌——品牌渐变禁载小字（F-5 3.67:1 不过 AA） -->
+        <p
+          class="text-[length:var(--lnk-text-md)] leading-[var(--lnk-lh-md)] text-[color:var(--lnk-text-on-signature-muted)] sm:text-[length:var(--lnk-text-lg)] sm:leading-[var(--lnk-lh-lg)]"
+        >
+          {{ BRAND_SLOGAN_LEAD }}
+        </p>
+        <h1
+          class="mt-3 font-bold text-[length:var(--lnk-text-2xl)] leading-[var(--lnk-lh-2xl)] text-[color:var(--lnk-text-on-signature)] sm:text-[length:var(--lnk-text-3xl)] sm:leading-[var(--lnk-lh-3xl)] lg:text-[length:var(--lnk-text-4xl)] lg:leading-[var(--lnk-lh-4xl)]"
+        >
+          <template v-for="(seg, i) in sloganSegments" :key="i"><span v-if="seg.accent" class="lnk-slogan-accent">{{ seg.text }}</span><span v-else-if="seg.mascot" class="lnk-slogan-mascot"><span class="lnk-slogan-mascot-gap" aria-hidden="true"></span>{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>
+        </h1>
       </div>
 
       <!-- 叙事舞台（2026-10-22 用户裁定「空间即故事」）：输入框进三联左侧——它本来
            就是「对话」，从此不再坐在叙事位 200px 开外。左「说」→ 中「锚」→ 右「落」，
-           一条动线一次读完；移动端自然竖排（输入 → 锚 → 落点注脚），锚+门阶始终首屏可见。 -->
-      <div class="lnk-stage mt-12 grid justify-items-center gap-y-12 lg:grid-cols-[1fr_auto_1fr] lg:items-center lg:gap-x-10">
+           一条动线一次读完；移动端自然竖排（输入 → 锚 → 落点注脚），锚+门阶始终首屏可见。
+           ⚠️ 两侧必须 minmax(0,1fr)：裸 1fr 的隐式 min 是 min-content，左右列内容宽度
+           不等会把中列挤偏——实测锚因此偏离 slogan 中轴 30px（750 vs 720）。 -->
+      <div class="lnk-stage mt-12 grid justify-items-center gap-y-12 lg:mt-0 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-x-10">
         <!-- 左：对话（输入站） -->
         <div class="flex w-full flex-col items-center gap-3 lg:flex-row lg:items-center lg:justify-end lg:gap-6">
           <div class="lnk-stage__talk flex w-full max-w-md flex-col items-center gap-3 lg:max-w-none lg:items-end">
@@ -109,15 +125,25 @@ function onAnchorClick() {
           <span class="hidden h-px w-16 shrink-0 bg-gradient-to-l from-overlay/30 to-transparent lg:block" aria-hidden="true" />
         </div>
 
-        <!-- 中：墨点落域 + 落款印章（唯一创作入口）+ 门阶 pill -->
+        <!-- 中：落域（墨鱼悬顶 + 墨滴散落）+ 落款印章（唯一创作入口）+ 门阶 pill -->
         <div class="relative flex flex-col items-center">
-          <!-- 墨点动效（2026-10-22 用户裁定「一点一滴视觉化」）：三颗墨点从 slogan 与锚
-               之间的空域缓慢落入锚顶——literally 把 slogan 演出来。落距与落域高度同源
-               （--lnk-drop-fall），改一处即同步；移动端不占位（锚+门阶保持首屏可见）。 -->
+          <!-- 墨滴落域（2026-10-22 用户裁定「一点一滴视觉化」+「墨鱼在洒下的墨的上方」）：
+               墨鱼悬在落域顶（恰在居中末行「记住你的模样。」正下方），三颗水滴墨从它身上
+               散开、落入锚顶——墨鱼 → 墨滴 → 锚一条垂直轴，对位由 flex 居中结构保证。
+               落域高度含 stage 在 lg 下的外距（48px 空隙 + 96px 落程），锚的位置不变；
+               移动端不占位（锚+门阶保持首屏可见）。 -->
           <div class="lnk-drop-zone relative w-full" aria-hidden="true">
-            <span class="lnk-ink-drop" style="--drop-dx: -52px; --drop-delay: 0s" />
-            <span class="lnk-ink-drop" style="--drop-dx: 8px; --drop-delay: 1.2s" />
-            <span class="lnk-ink-drop" style="--drop-dx: 60px; --drop-delay: 2.4s" />
+            <span class="lnk-mascot-hang" data-testid="brand-mascot">
+              <img
+                :src="BRAND_LOGO_URL"
+                alt="墨鱼π 品牌形象"
+                draggable="false"
+                class="lnk-mascot lnk-mascot-hang__img"
+              >
+            </span>
+            <span class="lnk-ink-drop" style="--drop-dx0: -10px; --drop-dx1: -40px; --drop-delay: 0s" />
+            <span class="lnk-ink-drop" style="--drop-dx0: 0px; --drop-dx1: 6px; --drop-delay: 1.2s" />
+            <span class="lnk-ink-drop" style="--drop-dx0: 8px; --drop-dx1: 48px; --drop-delay: 2.4s" />
           </div>
           <button
             type="button"
@@ -172,14 +198,31 @@ function onAnchorClick() {
   align-items: center;
   min-height: calc(100vh - var(--neo-header-height));
   min-height: calc(100dvh - var(--neo-header-height));
-  /* 墨点落距的唯一真相源：落域高度与 keyframe 落距都引用它，改一处即同步 */
-  --lnk-drop-fall: 96px;
+  /* 墨滴落域的唯一真相源：落域高度与 keyframe 落距都引用它，改一处即同步。
+     144px = stage 在 lg 下的 48px 空隙 + 96px 落程——落域吃掉空隙后锚的位置不变 */
+  --lnk-drop-fall: 144px;
+  /* 墨滴起点：悬在落域顶的墨鱼（40px）下方，墨从它身上离开的那条线 */
+  --lnk-drop-start: 32px;
 }
 
 /* slogan 唯一重音（2026-10-22 用户裁定）：签名面专用强调紫。
    ⛔ 不用 --lnk-accent-text：它随主题翻转，浅色下是紫 700，压恒深签名底只有 2.4:1 */
 .lnk-slogan-accent {
   color: var(--lnk-accent-on-signature);
+}
+
+/* inline 墨鱼位（2026-10-22 第三批反馈 ① 的落地形态）：墨鱼图标本体已悬到落域顶
+   （「在洒下的墨的上方」，见 .lnk-mascot-hang），行内留一枚**等宽隐形垫片**——
+   ① 保住断行节奏：垫片占位 ≈ 原图标宽度，拿掉后整句可能挤进一行，「记住你的模样。」
+   不再独占居中末行，墨鱼就失去「就在这句话正下方」的邻近性；
+   ② 视觉节奏与用户已认可的版本逐像素一致（原来这里是图标，现在是空位）。 */
+.lnk-slogan-mascot {
+  white-space: nowrap;
+}
+
+.lnk-slogan-mascot-gap {
+  display: inline-block;
+  width: 1.24em;
 }
 
 .lnk-ink-particles {
@@ -190,17 +233,18 @@ function onAnchorClick() {
   animation: lnk-ink-drift 12s ease-in-out infinite alternate;
 }
 
+/* 呼吸 + 一层 accent 柔光（令牌成对，无裸 rgba）。
+   墨鱼悬在落域顶（img 是 block），transform 只对非 inline 生效 ⇒ 动画挂在 img 上。 */
 .lnk-mascot {
   animation: lnk-mascot-breathe 4s ease-in-out infinite;
-}
-
-/* 墨鱼只借 accent-glow 的一层柔光（令牌成对，无裸 rgba） */
-.lnk-mascot img {
   filter: drop-shadow(var(--lnk-accent-glow));
 }
 
-/* ===== 墨点（2026-10-22 用户裁定「一点一滴视觉化」）=====
-   从落域顶部缓缓落入锚顶，到缘即没（DOM 序在锚之前，被不透明盘面自然吞没）。
+/* ===== 墨滴落域（2026-10-22 用户裁定「一点一滴视觉化」）=====
+   墨鱼悬在落域顶，三颗水滴墨从它身上散开、落入锚顶，到缘即没（锚是不透明盘面，
+   DOM 序在落域之后 ⇒ 墨滴被盘面自然吞没）。对位由 flex 居中结构保证，不依赖视口。
+   2026-10-22 第三批反馈 ④：水滴形——尖头朝上（border-radius 的 0 角旋转到正上方），
+   下落途中被重力拉长（scaleY > scaleX）。
    只动 transform/opacity；reduced-motion 下静止且不可见。 */
 .lnk-drop-zone {
   display: none;
@@ -213,34 +257,60 @@ function onAnchorClick() {
   }
 }
 
-.lnk-ink-drop {
+/* 墨鱼悬在洒下的墨正上方：落域顶、水平居中——与墨滴、锚同一条垂直轴。
+   line-height: 0 防止行盒把落域撑高。移动端随落域一起隐藏（墨的故事只在 lg 讲）。 */
+.lnk-mascot-hang {
   position: absolute;
   top: 0;
   left: 50%;
-  width: 7px;
-  height: 7px;
-  margin-left: -3.5px;
-  border-radius: 999px;
+  transform: translateX(-50%);
+  line-height: 0;
+}
+
+.lnk-mascot-hang__img {
+  display: block;
+  width: 40px;
+  height: 40px;
+  user-select: none;
+}
+
+.lnk-ink-drop {
+  position: absolute;
+  top: var(--lnk-drop-start);
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  /* 尖角在左上角；rotate(45deg) 把它转到正上方（0 角 → 屏幕上方），即水滴的头 */
+  border-radius: 0 50% 50% 50%;
   background: var(--lnk-accent);
   opacity: 0;
   pointer-events: none;
-  animation: lnk-ink-drop-fall 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  /* 重力曲线：起步慢、越落越快（不是匀速linear，那读不出「滴」） */
+  animation: lnk-ink-drop-fall 3.6s cubic-bezier(0.42, 0, 0.85, 0.45) infinite;
   animation-delay: var(--drop-delay, 0s);
 }
 
+/* ⚠️ 变换顺序不能改：rotate 在最后（先作用）把尖头转正，scale 在中间按**屏幕**轴向
+   拉长（translate 是纯平移，不改变轴向）⇒ 水滴沿下落方向被抽长，而不是斜着长。
+   起点 dx0 ≈ 0（墨鱼正下方），终点 dx1 散开（±48px，落在锚盘上）——「洒」的扇形
+   在下落中展开，水平漂移 ≤ 48px / 落程 112px ≈ 23°，是「被撒开」不是「被吹斜」。 */
 @keyframes lnk-ink-drop-fall {
   0% {
-    transform: translate(var(--drop-dx, 0), 0) scale(0.45);
+    transform: translate(var(--drop-dx0, 0), 0) scale(0.5) rotate(45deg);
     opacity: 0;
   }
-  12% {
+  10% {
     opacity: 0.9;
   }
-  78% {
+  72% {
     opacity: 0.9;
+  }
+  92% {
+    opacity: 0.5;
   }
   100% {
-    transform: translate(var(--drop-dx, 0), var(--lnk-drop-fall)) scale(1);
+    transform: translate(var(--drop-dx1, var(--drop-dx0, 0)), calc(var(--lnk-drop-fall) - var(--lnk-drop-start))) scale(0.82, 1.22) rotate(45deg);
     opacity: 0;
   }
 }
@@ -255,15 +325,17 @@ function onAnchorClick() {
   place-items: center;
   border: none;
   border-radius: 999px;
-  background: var(--lnk-hi-bg);
-  color: var(--lnk-hi-text);
   /* 2026-10-22 用户裁定「锚是印章，不是贴纸」：
-     ① 铸造就差的内阴线——hi-text 是盘面反向色（深主题深线压白盘 / 浅主题浅线压墨盘），
-        双主题自适应；② 墨色环境光——accent 混色，与墨鱼 drop-shadow 同一紫色家族。
-     旧语言是「浮起面板」：黑影 + 白晕，全页最亮的物体飘在墨上，读作贴上去的按钮。 */
+     ① 铸造就差的内阴线——刻痕色是盘面反向色；② 墨色环境光——accent 混色。
+     旧语言是「浮起面板」：黑影 + 白晕，全页最亮的物体飘在墨上，读作贴上去的按钮。
+     ⛔ 盘面/刻痕必须走 --lnk-stamp-*-on-signature（主题不变式），不能用 --lnk-hi-bg /
+     --lnk-hi-text：那对令牌随主题翻转，压在**不翻转**的恒深签名底上会让锚在浅色
+     主题下翻成近黑盘、整颗沉进墨里（2026-10-22 用户实测「白天应该放白色高亮的」）。 */
+  background: var(--lnk-stamp-face-on-signature);
+  color: var(--lnk-stamp-ink-on-signature);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--lnk-hi-text) 20%, transparent),
-    0 0 28px color-mix(in srgb, var(--lnk-accent) 26%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--lnk-stamp-ink-on-signature) 20%, transparent),
+    0 0 20px color-mix(in srgb, var(--lnk-accent) 16%, transparent);
   cursor: pointer;
   transition:
     transform 0.2s ease,
@@ -273,8 +345,8 @@ function onAnchorClick() {
 .lnk-anchor:hover {
   transform: scale(1.06);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--lnk-hi-text) 30%, transparent),
-    0 0 44px color-mix(in srgb, var(--lnk-accent) 40%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--lnk-stamp-ink-on-signature) 30%, transparent),
+    0 0 32px color-mix(in srgb, var(--lnk-accent) 26%, transparent);
 }
 
 .lnk-anchor:active {
@@ -296,22 +368,25 @@ function onAnchorClick() {
   mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
 }
 
-/* 墨色环境光：accent-subtle 平铺圆（令牌级紫晕，双主题自适应） */
+/* 墨色环境光（2026-10-22 第三批反馈 ③「外环光晕紫色效果偏重」）：
+   平铺圆收小到 -20px，紫度对折（accent-subtle 再混一半透明）——原来 -34px 满强度
+   的紫饼把整颗锚泡在紫里，像开了滤镜；现在只做「墨未干」的一圈薄雾。 */
 .lnk-anchor__halo {
   position: absolute;
-  inset: -34px;
+  inset: -20px;
   border-radius: 999px;
-  background: var(--lnk-accent-subtle);
+  background: color-mix(in srgb, var(--lnk-accent-subtle) 50%, transparent);
   pointer-events: none;
 }
 
 /* 墨环（enso 感）：不对称紫环——上右实、下左淡，一笔扫过的呼吸感。
    ⚠️ 类名不叫 ink-enso：那是锚资产就绪前的自造墨圈替身名，已退役（守卫锁名）。
-   它是真锚资产背后的装饰环，不是替身。 */
+   它是真锚资产背后的装饰环，不是替身。
+   紫度同 ③：强侧由 accent-border 降到 65%，去掉「紫圈描边」的塑料感。 */
 .lnk-anchor__brush {
   position: absolute;
   inset: -15px;
-  border: 1.5px solid var(--lnk-accent-border);
+  border: 1.5px solid color-mix(in srgb, var(--lnk-accent-border) 65%, transparent);
   border-bottom-color: var(--lnk-accent-subtle);
   border-left-color: var(--lnk-accent-subtle);
   border-radius: 999px;
@@ -320,18 +395,19 @@ function onAnchorClick() {
 }
 
 .lnk-anchor:hover .lnk-anchor__brush {
-  border-color: var(--lnk-accent);
+  border-color: color-mix(in srgb, var(--lnk-accent) 65%, transparent);
   border-bottom-color: var(--lnk-accent-border);
   border-left-color: var(--lnk-accent-border);
 }
 
 /* 双层脉冲涟漪：错峰 1.4s，像锚在「呼吸」。
    2026-10-22 材质重做时同步修正：旧实现用恒黑 dim 环，压近黑签名底几乎不可见——
-   「呼吸」的意图没有兑现；改走 accent 实色，扩散渐隐，意图与观感一致。 */
+   「呼吸」的意图没有兑现；改走 accent 实色，扩散渐隐，意图与观感一致。
+   紫度同 ③：65% + 起始 opacity 0.45，脉冲是呼吸不是霓虹。 */
 .lnk-anchor__ripple {
   position: absolute;
   inset: 0;
-  border: 1px solid var(--lnk-accent);
+  border: 1px solid color-mix(in srgb, var(--lnk-accent) 65%, transparent);
   border-radius: 999px;
   pointer-events: none;
   animation: lnk-anchor-pulse 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
@@ -450,7 +526,7 @@ function onAnchorClick() {
 @keyframes lnk-anchor-pulse {
   0% {
     transform: scale(1);
-    opacity: 0.55;
+    opacity: 0.45;
   }
   100% {
     transform: scale(1.85);

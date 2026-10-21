@@ -580,4 +580,40 @@ describe('签名画面：深海墨底上的文字', () => {
       ).toBeGreaterThanOrEqual(4.5)
     }
   })
+
+  /**
+   * 印章（落款锚）配色：2026-10-22 用户实测指出「深色/浅色主题下锚的颜色放反了，
+   * 白天应该放白色高亮的」。根因是锚盘走了 --lnk-hi-bg/--lnk-hi-text 这对
+   * **随主题翻转**的令牌，而签名底是**不翻转**的恒深墨底 ⇒ 浅色主题下盘面翻成近黑，
+   * 整颗锚沉进墨里。故印章配色必须是主题不变式，且与签名底有足够反差。
+   */
+  it('印章配色是主题不变式：盘面恒白、刻痕恒墨（深浅同值）', () => {
+    for (const token of ['--lnk-stamp-face-on-signature', '--lnk-stamp-ink-on-signature'] as const) {
+      const dark = resolve(token, blocks.dark)
+      const light = resolve(token, blocks.light)
+      expect(dark, `深色主题缺 ${token}`).toBeTruthy()
+      expect(light, `浅色主题缺 ${token}`).toBeTruthy()
+      expect(
+        light,
+        `${token} 必须深浅同值（主题不变式）：若随主题翻转，浅色下锚会反色沉进墨底`,
+      ).toBe(dark)
+    }
+    // 刻痕压盘面：印章 glyph 是品牌主标记，必须清晰可读
+    for (const theme of ['dark', 'light'] as const) {
+      const face = resolve('--lnk-stamp-face-on-signature', blocks[theme])!
+      const ink = resolve('--lnk-stamp-ink-on-signature', blocks[theme])!
+      const c = contrast(ink, face)
+      expect(
+        c,
+        `${theme} 印章刻痕压盘面只有 ${c.toFixed(2)}:1，要求 ≥4.5:1`,
+      ).toBeGreaterThanOrEqual(4.5)
+      // 盘面压签名底：这一条正是「颜色放反」的直接守卫——
+      // 若盘面翻成近黑，它与恒深签名底的对比度会塌到 1.2:1 量级而被拦下。
+      const onSig = contrast(face, resolve('--lnk-surface-signature', blocks[theme])!)
+      expect(
+        onSig,
+        `${theme} 印章盘面压签名底只有 ${onSig.toFixed(2)}:1，盘面必须恒白才浮得出墨面`,
+      ).toBeGreaterThanOrEqual(4.5)
+    }
+  })
 })
