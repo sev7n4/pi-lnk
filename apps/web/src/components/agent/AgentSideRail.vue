@@ -95,6 +95,7 @@ import { useSidebarAttachments, assignRefKeysFor, type FocusNodeLike, type Canva
 import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput, { type MentionOption } from '@/components/canvas/MentionInput.vue'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
+import { createFollowUpTailListener } from './follow-up-tail'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
@@ -2609,74 +2610,50 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
 }
 
 /**
- * 旁听「本轮之后」的事件（纯订阅，不发 prompt）。
+ * 旁听「本轮之后」的事件（纯订阅，不发 prompt）——multi-device Task 5 接线层。
  *
- * 只在主流收尾后启动一次，且有硬上限（默认重挂 3 轮 + 每轮 20s）：旁听流本身不是产品主路径，
- * 无限重挂会让每个静默会话都白占一条长连接。收到 `agent_end` **不做收尾**（续跑可能还在路上），
- * 由 idle 计时器自行退出。
+ * 循环 / 退避 / 游标逻辑在 `follow-up-tail.ts`（依赖可注入 ⇒ 重连行为可单测），
+ * 这里只做接线：turn 收尾后 `start()`，页面可见性恢复时 `resume()`，卸载时 `abort()`。
+ *
+ * 行为契约（详见 follow-up-tail.ts 头注释）：
+ *  ① 断线按指数退避重连，且带 `lastEventId` 游标续传（Review Focus #1：只补增量不重放）；
+ *  ② idle 20s 闸门只被业务事件刷新（Task 4 起服务端 15s 心跳不得让静默会话永不断）；
+ *  ③ 404 = 会话已删除不重连；重连预算累计不重置（防「连上即断」死循环）。
  */
-const FOLLOWUP_TAIL_MAX_ROUNDS = 3
-const FOLLOWUP_TAIL_IDLE_MS = 20_000
-let followUpTailRounds = 0
-let followUpTailAbort: AbortController | null = null
+const followUpTail = createFollowUpTailListener({
+  fetchImpl: (url, init) => fetch(url, init),
+  headers: () => authHeaders(),
+  // 每次连接时求值：threadId 可能在会话中途切换（重跑 fork 出新线程）
+  baseUrl: () =>
+    apiUrl(
+      `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
+    ),
+  onTextDelta: (text) => {
+    // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent），
+    // text_delta 增量直接追加到最后一条 assistant 下面 —— 正是「同一段接着写」。
+    agent.appendText(text)
+    scrollToBottom()
+  },
+  onCanvasAction: (data) => emit('canvasActions', [data as never]),
+})
 
-async function listenFollowUpTail(): Promise<void> {
-  followUpTailRounds += 1
-  if (followUpTailRounds > FOLLOWUP_TAIL_MAX_ROUNDS) return
-  followUpTailAbort?.abort()
-  const controller = new AbortController()
-  followUpTailAbort = controller
-  // 手动造 idle 闸门而不用 `AbortSignal.any`：后者要 Chrome 116+/Safari 17.4+，
-  // 本项目其余地方只用到 `AbortSignal.timeout`，别为一个旁听流引入新的兼容面。
-  const idleTimer = setTimeout(() => controller.abort(), FOLLOWUP_TAIL_IDLE_MS)
-  try {
-    const res = await fetch(
-      apiUrl(
-        `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
-      ),
-      {
-        headers: authHeaders(),
-        signal: controller.signal,
-      },
-    )
-    if (!res.ok || !res.body) return
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      let sep: number
-      while ((sep = buffer.indexOf('\n\n')) !== -1) {
-        const raw = buffer.slice(0, sep)
-        buffer = buffer.slice(sep + 2)
-        const line = raw.split('\n').find((l) => l.startsWith('data:'))
-        if (!line) continue
-        let payload: { type: string; data?: unknown } | null = null
-        try {
-          payload = JSON.parse(line.slice(5).trim())
-        } catch {
-          continue
-        }
-        if (!payload) continue
-        // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent），
-        // 所以 text_delta 增量直接追加到最后一条 assistant 下面 —— 正是「同一段接着写」。
-        if (payload.type === 'text_delta') {
-          agent.appendText((payload.data as { text?: string } | undefined)?.text ?? '')
-          scrollToBottom()
-        } else if (payload.type === 'canvas_action') {
-          emit('canvasActions', [payload.data as never])
-        }
-      }
-    }
-  } catch {
-    /* 旁听流断开是常态，不做提示；下一轮 idle 结束或用户主动发送时自愈 */
-  } finally {
-    clearTimeout(idleTimer)
-    followUpTailAbort = null
-  }
+/** turn 收尾后挂旁听：followUp 是收尾边界之后才接住、由 pi-runtime drain 派生的新一代。 */
+function listenFollowUpTail(): Promise<void> {
+  return followUpTail.start()
 }
+
+/** Task 5：页面从后台切回时恢复旁听（idle 直接挂；backoff 中跳过排队；健康流不打断）。 */
+function onFollowUpTailVisibility(): void {
+  if (document.visibilityState === 'visible') void followUpTail.resume()
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', onFollowUpTailVisibility)
+})
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onFollowUpTailVisibility)
+  followUpTail.abort()
+})
 
 async function reconnectStream() {
   if (reconnecting.value) return
