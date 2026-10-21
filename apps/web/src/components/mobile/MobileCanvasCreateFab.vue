@@ -37,11 +37,22 @@ const emit = defineEmits<{
      避让公式（dock-h + tabbar-h + safe-area）才真正成立。 */
   position: fixed;
   left: 12px;
-  /* 2026-10-21 真机走查：原公式含 --lnk-agent-dock-h（composer 高度）⇒ 理论落在
-   * 裸条**上方**。实测：画布视图里该变量发布的是"贴底容器"高度（不可靠，常为 0），
-   * ⇒ FAB 掉到裸条同一层，**被裸条盖掉一半**（只剩紫色月牙）。
-   * 现改为：与裸条**并排**（画布视图下裸条左移 56px 让开），FAB 与条同基线、
-   * 贴页签栏之上 ⇒ 不再依赖任何运行时测量变量，落位恒定。 */
+  /* 2026-10-21 真机走查（定稿）：落位只锚页签栏 + 安全区，与 composer 裸条**同一基线**。
+   *
+   * 尺寸计算（为什么窗态「盖住」而不是「并排/位移微调」）：
+   *   裸条 = composer-bare-bar，min-height 48px、左右各 12px（贴底容器 left/right:12）、
+   *          bottom = safe-area + --lnk-tabbar-h；
+   *   ＋FAB = 48×48、left 12px、bottom 同上基线。
+   *   ⇒ 两者矩形**完全重合**（FAB ⊂ 裸条），横向无内缩余量、竖向余量为 0
+   *      （48 = 48）。所以：
+   *      · 向右位移只能盖住左侧 bleed、盖不住 FAB 自身 box-shadow 的上/左外扩；
+   *      · 向上位移必然从裸条顶边探出（竖向余量为 0）；
+   *      · 想靠位移"完全盖住且无阴影残留"，需裸条 ≥ 48 + 2×8 = 64px（多吃 16px 画布）。
+   *   ⇒ 结论：几何上唯一自洽解 = 窗态（有 composer）下 ＋FAB 不渲染（由壳层 v-if 门控），
+   *      纯画布态（composer 收起）才出现。视觉上正是「被 composer 盖住」，且零残留。
+   *
+   * 另：原公式含 --lnk-agent-dock-h（composer 高度）时该变量在画布视图发布的是
+   * 「贴底容器」高度（不可靠，常为 0）⇒ 曾把 FAB 压到裸条上只剩一个月牙。 */
   bottom: calc(var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px));
   z-index: 60;
   display: flex;

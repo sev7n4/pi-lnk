@@ -77,8 +77,9 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
   const fab = readComponent('mobile/MobileCanvasCreateFab.vue')
   const rail = readComponent('agent/AgentSideRail.vue')
   const railCode = stripComments(rail)
+  const page = read('./CanvasPage.vue')
 
-  it('＋FAB 不再依赖运行时测量变量（落位恒定，与裸条并排）', () => {
+  it('＋FAB 不再依赖运行时测量变量（落位恒定，与 composer 条同基线）', () => {
     // ⚠️ 先剥 CSS 注释：迁移说明写在注释里是规范（否定断言命中注释 = 假红）
     const css = stripComments(fab).match(/\.mobile-create-fab \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(css, '必须能定位 FAB 样式块').not.toBe('')
@@ -87,13 +88,31 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
     expect(css).toContain('left: 12px')
   })
 
-  it('画布视图下裸条左移让开 ＋FAB，且空闲态隐藏条内 ＋（画布页只留一个 ＋）', () => {
-    expect(railCode).toMatch(
-      /\.agent-panel-mobile-dock\.is-canvas-view \.composer-bare-bar\s*\{[^}]*margin-left:\s*56px/,
-    )
-    expect(railCode).toMatch(
-      /\.is-canvas-view \.composer-bare-bar\.is-idle \.agent-attach-menu\s*\{[^}]*display:\s*none/,
-    )
+  it('窗态由 composer 盖住 ＋FAB：裸条保持原宽、FAB 由 composerVisible 门控', () => {
+    // 2026-10-21 真机走查②：上一轮「裸条左移 56px 与 FAB 并排 + 空闲态隐藏条内 ＋」
+    // 已撤销——用户裁决：composer 不得让位变形；窗态里 FAB 本就不可用（输入会切对话页），
+    // 由 composer 盖住这一带（尺寸计算见 MobileCanvasCreateFab 的注释：48=48 无内缩余量）。
+    expect(railCode).not.toMatch(/\.is-canvas-view \.composer-bare-bar\s*\{/)
+    expect(railCode).not.toMatch(/\.is-canvas-view \.composer-bare-bar\.is-idle \.agent-attach-menu/)
+    expect(rail).not.toContain('margin-left: 56px')
+    // 有效性配对：FAB 门控含窗态判据，且判据与 composer 收起条件同源
+    const shell = readComponent('mobile/MobileCanvasShell.vue')
+    expect(shell).toMatch(/<MobileCanvasCreateFab[\s\S]*?!composerVisible/)
+    expect(page).toContain('const mobileCanvasComposerVisible = computed(')
+    expect(page).toContain('!mobileCanvasImm.value')
+    expect(page).toContain(':composer-visible="mobileCanvasComposerVisible"')
+  })
+
+  it('已在画布视图内定位不改入口语义（＋建节点不该把纯画布切成窗态）', () => {
+    const fn = page.match(/async function focusNodeById\([\s\S]*?\n}/)?.[0] ?? ''
+    expect(fn, '必须能定位 focusNodeById').not.toBe('')
+    expect(fn).toContain('const enteringFromConversation = !mobileCanvasView.value')
+    expect(fn).toMatch(/mobileCanvasImm\.value\s*=\s*enteringFromConversation[\s\S]*?:\s*mobileCanvasImm\.value/)
+    // 有效性配对：从对话页进入时仍按待确认判据决定 imm（ADR-0011 T6 未被削弱）
+    expect(fn).toContain('isPendingConfirmNode(')
+    // 批量定位同规则
+    const batch = page.match(/async function focusNodesByIds\([\s\S]*?\n}/)?.[0] ?? ''
+    expect(batch).toContain('const enteringFromConversation = !mobileCanvasView.value')
   })
 
   it('--lnk-agent-dock-h 发布源改为实测裸条（贴底容器高度在画布视图不可靠）', () => {

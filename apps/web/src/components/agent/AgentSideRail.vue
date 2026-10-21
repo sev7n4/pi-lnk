@@ -6384,19 +6384,9 @@ defineExpose({
   display: contents;
 }
 
-/* 2026-10-21 画布视图（窗态）收敛——真机走查：两个「＋」同屏 + 同位互压
- * （＋FAB 被裸条盖掉一半，只剩紫色月牙；条内 ＋ 与 FAB 语义不同却长得一样）。
- * ① 条左移出 ＋FAB 的位置（FAB left 12 / 48px ⇒ 条自 68 起），两者并排成一条
- *    底部操作带（不再叠压）；② **空闲态**隐藏条内 ＋（画布页的引用入口由
- *    「长按节点 → 加入 Agent 引用」覆盖，同一语义已有），画布页只剩一个 ＋。
- *    输入态（伸展后）保留 ＋ —— 那时它是「加参考素材」的主入口。 */
-.agent-panel-mobile-dock.is-canvas-view .composer-bare-bar {
-  margin-left: 56px;
-}
-
-.agent-panel-mobile-dock.is-canvas-view .composer-bare-bar.is-idle .agent-attach-menu {
-  display: none;
-}
+/* 2026-10-21 真机走查（②）撤销上一轮的画布视图收敛：composer 条**保持原宽**——
+ * 窗态下它就是这一带的唯一主角（＋FAB 由它盖住，见 MobileCanvasCreateFab 的落位注释），
+ * 条内 ＋（加参考素材）保留在条左端，正好接替 FAB 的位置 ⇒ 画布页同一时刻只有一个 ＋。 */
 
 /* 复合选择器压过模板上的 Tailwind 工具类；仅移动端 shell 内生效。
  * 2026-10-18：输入态/生成态对齐 PC——矩形倒角（radius-xl），胶囊(radius-full)
