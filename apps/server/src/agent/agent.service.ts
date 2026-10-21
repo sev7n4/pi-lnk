@@ -867,6 +867,9 @@ export class AgentService {
           role: 'user',
           content,
           entryId: entry,
+          // D5：入队落库即「排队中」。终态由消费信号转 false（`queue_update`），
+          // 不转的话用户会永远看到「排队中」（plan Task 8 · Review Focus #3）。
+          queued: true,
         },
         // ⭐ 空操作 = 先到先得：重放/重试/双写都不得覆盖既有行。
         update: {},
