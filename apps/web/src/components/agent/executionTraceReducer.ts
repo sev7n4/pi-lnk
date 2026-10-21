@@ -355,6 +355,10 @@ export function applyNodeStatus(
 ) {
   const label = nodeStatusLabel(data.status)
   const isRunning = data.status === 'generating'
+  // ⚠️ 「未完成」（批次 3.1）不是成功：既不是 running 也不是 completed。
+  // 若当成 done，时间线会显示绿色 ✓ ＝「这步成功了」⇒ 说谎。
+  // 归到 failed（现有档位里唯一表示「没成功」的）⇒ 渲染层按 failed 着色。
+  // （当前后端经 update_node 写画布、不发 node_status 事件 ⇒ 这是防御性分支。）
   const existing = trace.steps.find(
     (s) => s.kind === 'node_gen' && s.meta?.nodeId === data.nodeId && s.status === 'running',
   )
