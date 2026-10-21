@@ -76,7 +76,10 @@ export function createCanvasReadTools(client: NestClient): LnkpiTool[] {
 			name: "get_canvas_summary",
 			label: "画布摘要",
 			description:
-				"Get a lightweight summary of the current canvas (node list with ids, types and counts). Call this first to understand the canvas.",
+				"Get a lightweight summary of the current canvas (node list with ids, types and counts, " +
+				"plus the list of groups with their ids, titles, colors and member nodes). " +
+				"Call this first to understand the canvas. " +
+				"Use the groups[].id value when you need to refer to a group (e.g. to recolor or ungroup it).",
 			parameters: Type.Object({}),
 			execute: async (_id, _p, _u, tc: LnkpiToolContext) => {
 				const data = trimData(await client.post("/agent/internal/get-canvas-summary", { sessionId: tc.sessionId }));

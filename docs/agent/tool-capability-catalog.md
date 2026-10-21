@@ -19,9 +19,9 @@
 
 | 口径 | 数值 | 说明 |
 |---|---|---|
-| 工具总数 | **48** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具） |
-| 实际注册 | **47** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
-| 常驻 / 延迟 | **29 / 19**（2026-10-14 起） | `ALWAYS_ON_TOOL_NAMES` 29 个；其余 19 个延迟（含默认不注册的那 1 个）<br>2026-10-14：`view_canvas_media` 新增常驻（P0 感知闭环，spec 2026-10-14-view-canvas-media-design.md；点名资产 = T2 图片降级占位文案，运行时下发面）。此前：2026-10-06 分级下发实验确认 28/19，详见 §7 |
+| 工具总数 | **53** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具）；口径＝`scripts/verify-tool-tiering.ts` 的扫描方式（`name:` 字面量 + `runTool()` 工厂 + `tool_search`），2026-10-21 实测 |
+| 实际注册 | **52** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
+| 常驻 / 延迟 | **33 / 20**（2026-10-21 起） | `ALWAYS_ON_TOOL_NAMES` 33 个；其余 20 个延迟（含默认不注册的那 1 个）<br>2026-10-21：分组工具组 3 个（`group_nodes` / `ungroup_group` / `set_group_color`）新增常驻——分组是**侧车**不是节点，Agent 无法用 `add_node` 变通，进延迟集就只剩「答做不到」一条路（`tool_search` 触发率实测 0 ⇒ 延迟即不可达）。**三者 prompt-registry/skills 零点名**，属「官方模式：description 承担发现能力」（同 `get_canvas_summary` / `view_canvas_media`）——不占 L6 预算（全仓最紧组合余量仅 75 字符）。此前：2026-10-14 `view_canvas_media` 新增常驻（P0 感知闭环）；2026-10-06 分级下发实验确认 28/19，详见 §7 |
 
 ⚠️ 计数的两个坑（已踩过）：① 5 个 `run_*_generation` 由 `generation.ts:99-128` 的 `runTool(...)` 工厂以**位置参数**构造（`runTool(name, label, description, path)`），`grep 'name: "'` 扫不到 ⇒ 早期漏计成 41；② `focus_node`（单数）与 `focus_nodes`（复数）是两个工具，只差一个字母。
 
@@ -198,6 +198,9 @@ if (addedNames.length !== 0) {
 | 27 | `load_skill` | SK:ecommerce-product-photo | 进入某垂类任务（剧集、电商图…）时加载该 skill 的详细步骤 |
 | 28 | `tool_search` | PR:canvas_daily_ops:12/14 | **现有工具里没有用户要的能力时先搜它**（勿直接答「做不到」） |
 | 29 | `view_canvas_media` | T2 图片降级占位文案（payload-images.ts，运行时下发面）＋工具描述自述；prompt-registry/skills 零点名 | 看**图片像素内容**：用户问「图里有什么/构图如何」、指代图片节点、或上下文占位提示图片被移除后取回（P0 感知闭环，spec 2026-10-14） |
+| 30 | `group_nodes` | （无）⚠️ 官方模式：description 承担发现 | 用户要「把几个节点归到一起/打组/起个名当一个整体管」——**只圈住现有节点，不改坐标**；要排列仍用 `arrange_nodes`。⚠️ 分组不是节点类型，不能用 `add_node` 建组 |
+| 31 | `ungroup_group` | （无）⚠️ 官方模式：description 承担发现 | 用户要「解组/取消分组/把组散开」——**只去框，节点留在画布原位**；要删节点用 `delete_nodes` |
+| 32 | `set_group_color` | （无）⚠️ 官方模式：description 承担发现 | 给分组框换底色（8 键白名单：moss/dusk/clay/celadon/graphite/rose/plum，省略即复位默认灰）；非法色键在**工具侧**就拒 |
 
 ## 5. 目录 — 延迟集（19）
 
@@ -230,18 +233,18 @@ if (addedNames.length !== 0) {
 
 ## 6. 复现命令
 
-在仓库根目录执行（48 个工具名按 §1 口径穷举＝工具总数，含默认不注册的 `introduce_nodes_to_agent` 与 5 个工厂构造的 `run_*`；实际注册数 47）：
+在仓库根目录执行（53 个工具名按 §1 口径穷举＝工具总数，含默认不注册的 `introduce_nodes_to_agent` 与 4 个工厂构造的 `run_*`；实际注册数 52。2026-10-21 分组工具组新增 3 个：`group_nodes` / `ungroup_group` / `set_group_color`）：
 
 ```bash
 TOOLS="apply_asset_to_node apply_sidebar_attachments arrange_nodes ask_user attach_refs \
 cancel_generation connect_nodes delete_nodes duplicate_node focus_node focus_nodes \
 get_canvas_layout get_canvas_summary get_generation_diagnostic get_generation_status get_node \
-grid_slice_image introduce_nodes_to_agent list_generation_scenes list_generation_tasks \
-list_model_options list_user_assets load_skill open_image_editor propose_generation \
+delete_memory grid_slice_image group_nodes introduce_nodes_to_agent list_generation_scenes list_generation_tasks \
+list_model_options list_user_assets load_skill open_image_editor propose_generation propose_plan \
 read_document recall_memory redo remove_edges render_canvas_view save_memory \
-save_node_to_asset_library set_node_generation_params set_node_text tool_search undo \
-update_node upload_media_to_canvas upsert_media_node upsert_prompt_node view_canvas_media web_fetch web_search \
-run_image_generation run_video_generation run_text_generation run_prompt_generation run_audio_generation"
+save_node_to_asset_library set_group_color set_node_generation_params set_node_text spawn_subagent todo_write tool_search undo \
+ungroup_group update_node upload_media_to_canvas upsert_media_node view_canvas_media web_fetch web_search \
+run_image_generation run_video_generation run_text_generation run_audio_generation"
 for t in $TOOLS; do
   hits=$(grep -rlE "\b${t}\b" prompt-registry skills 2>/dev/null | sort | tr '\n' ' ')
   echo "$t :: ${hits:-（无点名）}"

@@ -20,6 +20,12 @@ import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
+// 分组色键白名单（2026-10-21 下沉到 @lnkpi/shared，这里走前端 re-export）。
+// 用在 canvas_command 的 set_group_color 分支做最后一道防线。
+// ⛔ `GROUP_COLOR_KEYS` 的元素类型是字面量联合，`includes` 不接受任意 string ⇒
+// 收窄用 `as GroupColorKey`（与 groupColors.ts 的 normalizeGroupColorKey 同范式；
+// 运行时仍由 includes 真正把关，as 只为过类型系统）。
+import { GROUP_COLOR_KEYS, type GroupColorKey } from '@/components/canvas/groupColors'
 import { buildTurnReceipt } from './composer/turnReceipt'
 import { acceptedHint, cancelOutcomeHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { QueueCancelOutcome } from '@/components/agent/queueDelivery'
@@ -200,6 +206,17 @@ const emit = defineEmits<{
   proposeWaitEnd: []
   /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
   arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
+  /**
+   * 分组工具组（2026-10-21）：Agent 自主打组 / 解组 / 改分组色。
+   *
+   * ⛔ 这三个事件与 `arrangeNodes` 同理，**必须由 CanvasPage 执行**（不能只落库）：
+   * 分组在 vue-flow 活动态是真实节点（parentNode + extent:'parent'），只有页面把
+   * nodes.value 改掉再 persistUserEdit() 才能既进 undo 栈又让用户立刻看见框。
+   * 走服务端端点会让前端内存态与库里分组分叉，用户下一次保存就把分组抹掉。
+   */
+  groupNodes: [payload: { nodeIds: string[]; title?: string; groupId?: string }]
+  ungroupGroup: [groupId: string]
+  setGroupColor: [payload: { groupId: string; colorKey: string | null }]
   /** 「导入到画布」：建成结构化节点组（由 CanvasPage 写 SSOT）。 */
   importNodeGraph: [payload: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphPayload]
 }>()
@@ -3089,6 +3106,8 @@ function handleEvent(event: { type: string; data: unknown }) {
         type: string
         nodeId?: string
         nodeIds?: string[]
+        /** 分组工具组（2026-10-21）：ungroup_group / set_group_color 带 groupId。 */
+        groupId?: string
         exportMode?: 'full_package' | 'lightweight'
         attachments?: SidebarAttachment[]
         mode?: 'grid' | 'along_edges'
@@ -3154,6 +3173,28 @@ function handleEvent(event: { type: string; data: unknown }) {
           gap: cmd.gap ?? 40,
           edges: cmd.edges?.length ? cmd.edges : undefined,
         })
+      } else if (cmd.type === 'group_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
+        // 标题 trim 后空串按无标题处理（与 CanvasPage 的命名口径一致）
+        const gTitle = typeof cmd.title === 'string' && cmd.title.trim() ? cmd.title.trim() : undefined
+        // ⭐ groupId 由 Agent 侧生成并随命令下发（canvas_command 单向无回传，
+        // 前端自生成的 id Agent 拿不到 ⇒ 建组→改色/解组会断链）。
+        // 前端会校验撞号/空串并自行回退 ⇒ 这里原样透传即可。
+        const gId = typeof cmd.groupId === 'string' && cmd.groupId.trim() ? cmd.groupId.trim() : undefined
+        emit('groupNodes', { nodeIds: cmd.nodeIds, ...(gTitle ? { title: gTitle } : {}), ...(gId ? { groupId: gId } : {}) })
+      } else if (cmd.type === 'ungroup_group' && cmd.groupId) {
+        emit('ungroupGroup', cmd.groupId)
+      } else if (cmd.type === 'set_group_color' && cmd.groupId) {
+        // ⛔ 色键最后一道防线：工具侧已按 8 键白名单拒过非法值，这里再收一次。
+        // 理由同 tool 侧注释——非法键若漏到这里，patchGroupNodeData 会照写，
+        // 失败推迟到渲染层且**静默**（normalizeGroupColorKey 落 neutral ⇒ 用户读成
+        // 「设了没反应」，这正是 2026-10-21 修掉的那个缺陷的同构版本）。
+        const rawKey = (cmd as unknown as { colorKey?: string | null }).colorKey
+        const key = rawKey === null || rawKey === undefined || rawKey === '' ? null : rawKey
+        if (key !== null && !GROUP_COLOR_KEYS.includes(key as GroupColorKey)) {
+          console.warn('[canvas_command] 丢弃非法分组色键', key, '可用：', GROUP_COLOR_KEYS.join('/'))
+        } else {
+          emit('setGroupColor', { groupId: cmd.groupId, colorKey: key })
+        }
       } else if (cmd.type === 'introduce_nodes' && cmd.attachments?.length) {
         for (const att of cmd.attachments) {
           if (sidebar.pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) break
