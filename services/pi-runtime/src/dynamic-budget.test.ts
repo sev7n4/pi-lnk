@@ -178,3 +178,86 @@ test("Review Focus #5：内容含「## 长期记忆」字样时的块类型归�
 	assert.equal(classifyBlock("关于长期记忆的讨论：\n正文"), "general");
 });
 
+
+// ── 回合连续性（2026-10-21 修正）────────────────────────────────────────
+// turnstate: shared `renderTurnStateBlock` 首行 `【上一轮被中断…】`
+//
+// ⭐ 这组测试的存在理由：状态块若落进 `general` 档（份额 0 ⇒ 只享 80 字保底），
+// 「用户当时的请求」会被截掉 ⇒ 模型退回「读画布猜意图」= 2026-10-21 事故的形态本身。
+// ⇒ 必须有独立 kind，且截断后**用户请求仍在**。
+
+test("classifyBlock：回合状态块命中 turnstate（不是 general）", () => {
+	assert.equal(classifyBlock("【上一轮被中断，以下是该轮的任务状态】\n用户当时的请求：x"), "turnstate");
+	assert.equal(classifyBlock("  【上一轮被中断，以下是该轮的任务状态】\n前导空白"), "turnstate");
+});
+
+test("turnstate 有独立预算份额（不落 general 的 80 字保底）", () => {
+	const block = "【上一轮被中断，以下是该轮的任务状态】\n用户当时的请求：让他们抱在一起";
+	// totalChars 很小 ⇒ general 档只会留 80 字；turnstate 档应保留整块
+	const r = applyDynamicBudget([block], { totalChars: 4000 });
+	assert.ok(r.blocks[0].includes("让他们抱在一起"), "turnstate 块不该被截到丢请求");
+});
+
+test("turnstate 超限：保头保尾（含用户请求与未完成步骤）+ 尾注", () => {
+	const big =
+		"【上一轮被中断，以下是该轮的任务状态】\n" +
+		"用户当时的请求：让他们抱在一起\n" +
+		"未完成：".concat("run_image_generation ".repeat(400)) +
+		"\n最后一步标记";
+	const r = applyDynamicBudget([big], { totalChars: 4000 }); // turnstate 5% → 200
+	const out = r.blocks[0];
+	assert.ok(out.startsWith("【上一轮被中断"), "必须保头");
+	assert.ok(out.includes("让他们抱在一起"), "必须保住用户请求");
+	assert.ok(out.includes("已截断"), "必须含截断尾注");
+});
+
+test("turnstate 尾注不承诺 read_document（状态块不是附件）", () => {
+	const big = "【上一轮被中断，以下是该轮的任务状态】\n" + "用户当时的请求：x".repeat(2000);
+	const r = applyDynamicBudget([big], { totalChars: 4000 });
+	assert.ok(!r.blocks[0].includes("read_document"));
+});
+
+// ── 回合状态与 todo 清单**互不挤占**（2026-10-21 修正，否决了"复用 todo 档"的方案）──
+//
+// `used[kind]` 按 kind 累加 ⇒ 同 kind 的多个块共享该 kind 份额。
+// 实测：todo 清单 1810 字 + 回合状态 612 字（总预算 48000，5% = 2400 字）——
+//   复用 todo 档 ⇒ 回合块被截到 481 字 ⇒「已完成/未完成/run_image_generation」全丢
+//                ⇒ 模型只知道"用户要什么"、不知道"做到哪" = 事故形态本身；
+//   独立 turnstate 档 ⇒ 回合块 612 字完整保留。
+
+test("回合状态块与 todo 清单互不挤占（独立 kind，各有额度）", () => {
+	const todoBlock =
+		"## 当前任务清单\n" + "- 生成两个角色的合照，检查水彩风格一致性，确认背景与光线\n".repeat(60);
+	const turnBlock =
+		"【上一轮被中断，以下是该轮的任务状态】\n" +
+		"用户当时的请求：让他们抱在一起\n" +
+		"已完成：get_canvas_summary\n" +
+		"未完成：run_image_generation（卡在这一步）\n" +
+		"中断类型：历史记录缺失。";
+
+	assert.equal(classifyBlock(todoBlock), "todo");
+	assert.equal(classifyBlock(turnBlock), "turnstate");
+
+	const r = applyDynamicBudget([todoBlock, turnBlock], { totalChars: 48000 });
+	// 回合块必须完整保留「做到哪 / 卡在哪」
+	assert.ok(r.blocks[1].includes("run_image_generation"), "卡点工具名不能被挤掉");
+	assert.ok(r.blocks[1].includes("未完成"), "未完成步骤不能被挤掉");
+	assert.ok(r.blocks[1].includes("历史记录缺失"), "中断类型不能被挤掉");
+	// 且 todo 块也不该因此被压缩
+	assert.ok(r.blocks[0].includes("确认背景与光线"), "todo 清单不该被挤掉");
+});
+
+test("回合状态块真被截断时，保住块首的「用户请求」+ 留尾注", () => {
+	// 额度真用尽（totalChars 200 ⇒ turnstate cap = max(80, 10) = 80 字）且块够长 ⇒ 必然截断
+	// 判据：块首的「用户当时的请求」必须保住（模型最需要知道"要什么"），
+	//      且截断必须留尾注（否则模型以为块是完整的）。
+	const turnBlock =
+		"【上一轮被中断，以下是该轮的任务状态】\n" +
+		"用户当时的请求：让他们抱在一起\n" +
+		"未完成：run_image_generation\n" +
+		"补充".repeat(100);
+	const r = applyDynamicBudget([turnBlock], { totalChars: 200 });
+	assert.ok(r.blocks[0].includes("上一轮被中断"), "块首必须在");
+	assert.ok(r.blocks[0].includes("让他们抱在一起"), "用户请求必须在（块首优先）");
+	assert.ok(r.blocks[0].includes("已截断"), "截断必须留尾注");
+});

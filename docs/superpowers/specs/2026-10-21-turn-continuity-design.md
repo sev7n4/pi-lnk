@@ -131,32 +131,75 @@ function isContextMessage(message: AgentMessage): boolean {
 
 ## 5. 方案：三层防线
 
-### L-A 恢复层（本次实施）：上游原生扩展点承载「中断轮任务状态」
+> ⚠️ **2026-10-21 修正说明（本节已重写）**
+>
+> 初版（PR #525）把状态写成 pi 侧自定义条目（`appendCustomEntry` + `entryProjectors`）。
+> 自我审查发现**三处不成立**，本节已按修正后的形态重写：
+>
+> 1. **压缩必丢**——`buildContextEntries`（`vendor/…/harness/session/context.ts:10-23`）在有
+>    compaction 时返回 `[compaction, ...compaction之后的entries]` ⇒ compaction **之前**的
+>    自定义条目被丢弃；且 `CompactionEntry.retainedTail: AgentMessage[]`（`types.ts:36`）
+>    **只含 message，不含 custom entry**。
+>    ⇒ 初版所说「写在 transcript 里则天然参与上游 compaction 的保留机制」是**错的**。
+> 2. **第三条真相线**——Nest 已决定「不再查 AgentMessage 历史喂 prompt」
+>    （`agent.service.ts:410`），再加一份 pi 侧状态 = 多一处分叉面。
+> 3. **绕过了宿主既有通道**——跨压缩保留早就有
+>    （`services/pi-runtime/src/compaction-retention.ts` 的 `RetentionState`
+>    → `lane.compact({ customInstructions })` ⇒ 拼进压缩摘要 prompt）。
+>    另开通道违背「吃满上游」的第一步：**先穷尽宿主既有的同类通道**。
+>
+> ⇒ 修正后的形态：**权威在 Nest DB**，pi 侧只改**一处**（见下）。
 
-**做法**：中断发生时，把「用户要什么 / 做到哪 / 卡在哪」作为**自定义条目**写进 pi transcript，
-由上游 `entryProjectors` 在后续每一轮重新投影进模型上下文。
+### L-A 恢复层（本次实施）：Nest 侧权威状态 + 每轮重算注入
+
+**做法**：中断发生时，把「用户要什么 / 做到哪 / 卡在哪」记进 **Nest DB**
+（`AgentThread.turnState`，权威副本）；每轮装配 prompt 时读出、渲染成**动态块**喂给模型。
 
 ```
 Nest（检测到中断）
-  └─ POST /sessions/:id/turn-state
-       └─ pi-runtime: lane.appendCustomEntry("lnkpi.turn_state", state)
-            └─ transcript: CustomEntry{type:"custom", customType, data}
-                 └─ 下一轮 buildSessionContext → entryProjectors["lnkpi.turn_state"]
-                      └─ 投影成 user 消息 → 进模型上下文
+  └─ AgentThread.turnState = { userText, completedSteps, pendingSteps, interruption, at }
+       └─ 下一轮装配 prompt：
+            ├─ 动态块（systemPrompt 尾部）⇒ 模型当轮就看到「上一轮要什么/做到哪/卡在哪」
+            └─ 保留段（RetentionState.keyToolConclusions）⇒ 压缩摘要里也带着
 ```
 
-**为什么选 user 角色**：assistant 消息会被 `isContextMessage` 按 `stopReason` 过滤；
-user 角色 + 无 `stopReason` ⇒ **恒不被过滤**（已由上游真码测试锁定，见 §6）。
+**为什么权威在 Nest**：
+- 模型只看得到 pi 侧上下文 ⇒ 权威必须在能算「这一轮要什么」的地方（Nest）；
+- Nest 侧 DB 天然跨压缩、跨进程、跨 transcript 重建存活；
+- 只有一条真相线 ⇒ 不加剧「Nest 表 vs pi transcript」的双写分叉面。
 
-**为什么不写 Nest 的 DB**：模型只看得到 pi 侧。
-**为什么不用动态块（`dynamicBlocks`）**：动态块每轮被 Nest 整体覆盖（`normalizeTurnContext`），
-活不过下一轮；写在 transcript 里则天然参与上游 compaction 的保留机制。
+**为什么动态块能跨压缩存活**（关键，与 `todo` 块同机制）：
+`assembleDynamicBlocks`（`session-manager.ts:2361-2369`）在**每次 LLM 请求前重新求值**
+systemPrompt ⇒ 压缩后重新组装，块恒在。注释原话：
+*"todo 块在**组装时**从内存 store 实时读取——不进 turn 状态（turn 是 Nest 整体覆盖语义，
+存进去会被下一轮 Nest 载荷冲掉），这才是「跨压缩存活」的实现点"*。
+⇒ turn state 走**同一模式**（状态在 Nest 侧持久，块每轮重算）。
+
+**为什么还要保留段**（两个通道**互补**，不是重复）：
+动态块保证「**下一轮**模型看到」；保留段保证「**压缩摘要里**也带着」——
+因为上游压缩时 `retainedTail` 只留 `AgentMessage`，压缩前的动态块**不在**其中。
+
+**⚠️ pi 侧唯一的一处改动：给动态块加 `turnstate` 预算档位**
+
+`classifyBlock`（`dynamic-budget.ts:50-59`）按块首前缀分档，未识别的落 `general`
+⇒ `general` 份额 **0** ⇒ 只享 `MIN_BLOCK_CHARS = 80` 字符保底。
+状态块全文约 400~2000 字符 ⇒ **「用户当时的请求：让他们抱在一起」会被截掉**
+⇒ 模型看不到用户要什么 ⇒ **退回「读画布猜意图」= 本次事故的形态本身**。
+
+⇒ 与 `todo` 档**完全同构**（既有注释原话：*"任务清单截断=静默丢任务，故给独立 kind
+而非落 general 80 字保底"*）⇒ 给 `turnstate` 独立 kind + 5% 份额（从 canvas 挪出）。
+
+> ⭐ 这是**实施期才发现的缺陷**：初版方案（pi 侧 custom entry）不经过动态块预算，
+> 所以没暴露。改走动态块后才暴露 ⇒ **「同一份状态换通道」会带出新约束**。
+> 已在 `dynamic-budget.test.ts` 钉死（变异实测：去掉 `turnstate` kind ⇒ 测试红）。
 
 ### L-B 事实层：双写对账（后续批次）
 
 给 Nest ↔ pi 的历史加**周期性对账**（例如记录两侧最后一条 user 消息的哈希/序号），
 分叉时**告警**并触发一次状态重放。
 ⇒ 本次不做：需要 pi 侧暴露「本会话 transcript 尾部」查询，成本与收益要单独评估。
+> ⚠️ 批次 2 的对账范围**必须包含 `turn_state`**：它现在是第三条需要校验的状态线
+> （Nest 权威 ⇒ pi 侧投影），若不纳入对账，分叉会静默。
 
 ### L-C 产品层：前端可见的「未完成」（后续批次）
 
@@ -165,42 +208,49 @@ user 角色 + 无 `stopReason` ⇒ **恒不被过滤**（已由上游真码测�
 
 ## 6. 验证
 
-### 6.1 上游链路验证（真实 vendor 代码，非 mock）
+> ⚠️ 本节已按修正后的形态重写（初版的验证是针对 pi 侧 custom entry 方案的）。
 
-`services/pi-runtime/src/turn-state.upstream.test.ts` 用**真实** `buildSessionContext`
-（vendor dist 深路径）验证：
+### 6.1 纯函数测试（shared + Nest）
 
-- 自定义条目被投影进模型上下文；
-- ⭐ **中断轮的 assistant 消息被上游过滤，但状态消息仍在**（关键不变式）；
-- 非本类型条目不投影；坏数据不投影。
+- `packages/shared/src/turnState.ts` + `apps/server/src/agent/turn-state-store.test.ts`：
+  构造 / 渲染 / 指导语措辞纪律 / 保留段摘要 / 容错解析 / 步骤推导 / 中断分档。
+- `apps/server/src/agent/turn-state.service.test.ts`：IO 编排（写进 `AgentThread.turnState`、
+  读出、清除、渲染动态块、渲染保留段），用**假 prisma**（不连真库）。
 
-**变异实测**（证明测试真能证伪）：
+### 6.2 ⭐ 关键不变式的锁定方式
+
+| 不变式 | 怎么锁 |
+|---|---|
+| 状态落在 **Nest DB**（权威） | `turn-state.service.test.ts` 断言 `update` 的 `where.id` 与 `data.turnState` |
+| 状态**跨压缩**存活 | 状态在 DB（不随 transcript 被丢）+ 走**既有** `RetentionState` 通道 ⇒ 压缩摘要里也带着 |
+| 模型**当轮**就看到 | 动态块每轮重算（`assembleDynamicBlocks` 同 `todo` 块机制） |
+| 指导语**不引导模型反推意图** | 断言落在**指导指令**上（`renderTurnStateGuidance`），而非整块文本 |
+| 坏数据**不注入** | `parseTurnState` 返回 undefined ⇒ `renderBlock` 返回 undefined ⇒ 不产出空块 |
+
+**变异实测**（证明断言真能证伪）：
 
 | 变异 | 结果 |
 |---|---|
-| projector 改成 `assistant` + `stopReason:"error"` | `# pass 3 / # fail 2` ⇒ 红 |
-| projector 恒返回 `undefined` | `# pass 2 / # fail 3` ⇒ 红 |
-| 还原 | `# pass 5 / # fail 0` ⇒ 绿 |
-
-### 6.2 纯函数测试
-
-- `services/pi-runtime/src/turn-state.test.ts`：26 例（构造 / 渲染 / 投影 / 容错解析）
-- `apps/server/src/agent/turn-continuity.test.ts`：15 例（步骤推导 / 记录判据 / 工具事件提取）
+| projector 改 `assistant` + `stopReason:"error"`（初版方案） | `# pass 3 / # fail 2` ⇒ 红 |
+| projector 恒返回 `undefined`（初版方案） | `# pass 2 / # fail 3` ⇒ 红 |
+| `deriveSteps` 把失败当已完成 | `4 failed | 11 passed` ⇒ 红 |
+| `shouldRecordTurnState` 恒 false | `2 failed | 13 passed` ⇒ 红 |
 
 ### 6.3 生产观测
 
-新增指标 `pi_runtime_turn_state_records_total{outcome}`（`ok` / `no_session` / `failed`）——
-这是「故障后续跑能否接上」的**先导指标**：
-`failed`/`no_session` 占比升高 ⇒ 越来越多中断轮在下一轮不可见。
+- 指标：Nest 侧 `turn_state_recorded` 日志（记录成功/失败）+ pi 侧**不需要**新指标
+  （初版加的 `pi_runtime_turn_state_records_total` 随方案修正一并撤掉）。
 
 ## 7. 已知边界
 
 - **不覆盖「pi 侧 transcript 整体丢失」**（如会话目录被删、identity 变更触发 rebuilt）：
-  此时 transcript 里没有 `turn_state` 条目可投影。⇒ 需 L-B 对账兜底。
+  此时 pi 侧历史全丢，但 **turn state 在 Nest DB 里仍活** ⇒ 下一轮动态块仍能告诉模型
+  「上一轮要什么」⇒ **本方案对该场景天然更鲁棒**（初版 pi 侧方案会一起丢）。
+  ⇒ 仍需 L-B 对账来发现「历史分了叉」这件事本身。
 - **只记一次**：同一轮不会落两条状态（`promptAccepted` 守卫）。
+- **状态在「成功收尾」后才清除**：若该轮又失败，状态保留 ⇒ 用户再说「继续」时仍能接上。
 - **`userAborted` 当前恒为 `false`**：用户主动取消的路径尚未接入
   （本仓 `abort` 走的是另一条 controller 链路）。
-- **不解决「压缩把状态折掉」**：状态条目的内容是 `CustomEntry`，
-  compaction 的 `retainedTail` 只保留 `AgentMessage`，custom 条目在压缩点**之后**才安全
-  ⇒ 中断状态若发生在压缩前，压缩后可能丢失。**这是已知缺口**，需在 L-B 批次处理
-  （把 turn state 也写进 Nest 侧并在压缩时进 retention 段）。
+- **不解决「压缩把**对话历史**折掉」**：那是上游 compaction 的固有行为
+  （WorkBuddy 的做法是「压缩不删原文 + 把 transcript 路径交给模型」），
+  本方案只保证**任务状态**不被压缩吞掉。

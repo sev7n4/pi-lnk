@@ -564,41 +564,6 @@ export class PiRuntimeClient {
 		return body?.pending ?? null;
 	}
 
-	/**
-	 * 记录「中断轮的任务状态」到 pi transcript（回合连续性，2026-10-21）。
-	 *
-	 * ⭐ 为什么需要这个方法：模型只看得到 pi 侧上下文，而上游 `isContextMessage()`
-	 * 会把 `stopReason ∈ {error,aborted,deferred}` 的 assistant 消息**排除出上下文**；
-	 * 且中断轮在 Nest/pi 双写不一致时可能**整轮不存在**（2026-10-21 生产形态）
-	 * ⇒ 光靠对话历史，故障后模型对「用户要我做什么」零线索，
-	 * 只能退化成「感知画布猜意图」。
-	 *
-	 * ⛔ fail-soft：**绝不抛错**。记不住上一轮是降级，把用户请求打回去是事故。
-	 */
-	async recordTurnState(
-		sessionId: string,
-		state: {
-			userText: string;
-			assistantPartial?: string;
-			interruption?: string;
-			completedSteps?: string[];
-			pendingSteps?: string[];
-			at?: number;
-		},
-	): Promise<{ recorded: boolean }> {
-		try {
-			const { status, body } = await this.request<{ recorded?: boolean; error?: string }>(
-				`/sessions/${encodeURIComponent(sessionId)}/turn-state`,
-				{ method: "POST", body: JSON.stringify(state) },
-			);
-			if (status >= 400 || body?.error) return { recorded: false };
-			return { recorded: body?.recorded === true };
-		} catch {
-			// 传输层失败（runtime 不可达）⇒ 降级：不阻断对话。
-			return { recorded: false };
-		}
-	}
-
 	async deleteSession(sessionId: string): Promise<void> {
 		const { status } = await this.request(`/sessions/${encodeURIComponent(sessionId)}`, {
 			method: "DELETE",

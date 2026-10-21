@@ -15,7 +15,6 @@
  *   - pi_runtime_tool_search_calls_total{outcome}       tool_search 搜索结果计数（hit/miss/empty）
  *   - pi_runtime_skill_loads_total{skill,outcome}       load_skill 按技能名的路由计数（ok/unknown/read_error）
  *   - pi_runtime_queue_ops_total{op,kind,outcome}       steer/followUp 队列操作计数
- *   - pi_runtime_turn_state_records_total{outcome}      中断轮任务状态落盘结果（ok/no_session/failed）
  *   - pi_runtime_pending_ops_total{tool,status}         阻塞等待结算（answered/timeout/aborted）
  *   - pi_runtime_propose_outcome_total{reason}          propose_generation 结算归因（P2，spec 2026-10-13）
  *   - pi_runtime_tool_search_activated_total            经 tool_search 激活的延迟工具数累计
@@ -105,19 +104,6 @@ export class Metrics {
 	 */
 	private sidebarRefBind = new Map<string, number>(); // key: outcome (ok|invalid_params|upstream_error|short_circuit)
 
-	/**
-	 * 回合连续性状态落盘结果（2026-10-21）：key = outcome。
-	 *
-	 * outcome 域：`ok`（已写入 pi transcript）/ `no_session`（会话不在内存，落不了盘）
-	 * / `failed`（写入抛错，fail-soft 吞掉）。
-	 *
-	 * ⭐ 这个指标是「故障后续跑能否接上」的**先导指标**：
-	 * `failed` 或 `no_session` 占比升高 ⇒ 越来越多的中断轮在下一轮不可见
-	 * ⇒ 用户说「继续」时 agent 会退化成「感知画布猜意图」。
-	 * 与 `pi_runtime_llm_failures_total` 分开：那个数的是「模型调用失败」，
-	 * 这个数的是「失败之后状态有没有被记住」——后者才决定续跑能力。
-	 */
-	private turnStateRecords = new Map<string, number>(); // key: outcome (ok|no_session|failed)
 	/** RB-D9：propose_generation 门禁短路累计（RB-D5 missing_refs），gauge 语义恒渲染样本行。 */
 	private proposeMissingRefs = 0;
 	/** RB-D9：运行时观测到的 Nest Zod/校验 400，按 endpoint 分维度（如 apply-sidebar-attachments）。 */
@@ -328,15 +314,6 @@ export class Metrics {
 	): void {
 		const key = `${op}|${kind}|${outcome}`;
 		this.queueOps.set(key, (this.queueOps.get(key) ?? 0) + 1);
-	}
-
-	/**
-	 * 回合连续性状态落盘观测（2026-10-21）。
-	 *
-	 * 口径见 `turnStateRecords` 字段注释：`ok` / `no_session` / `failed`。
-	 */
-	observeTurnStateRecord(outcome: "ok" | "no_session" | "failed"): void {
-		this.turnStateRecords.set(outcome, (this.turnStateRecords.get(outcome) ?? 0) + 1);
 	}
 
 	/**
@@ -638,13 +615,6 @@ export class Metrics {
 			lines.push(`pi_runtime_queue_ops_total{op="${esc(op)}",kind="${esc(kind)}",outcome="${esc(outcome)}"} ${count}`);
 		}
 
-		lines.push(
-			"# HELP pi_runtime_turn_state_records_total Interrupted-turn state persisted into the pi transcript, by outcome.",
-		);
-		lines.push("# TYPE pi_runtime_turn_state_records_total counter");
-		for (const [outcome, count] of [...this.turnStateRecords.entries()].sort()) {
-			lines.push(`pi_runtime_turn_state_records_total{outcome="${esc(outcome)}"} ${count}`);
-		}
 
 	lines.push("# HELP pi_runtime_pending_ops_total Blocking-wait settlements (user answered / timeout / aborted).");
 	lines.push("# TYPE pi_runtime_pending_ops_total counter");

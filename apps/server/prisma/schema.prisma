@@ -355,6 +355,21 @@ model AgentThread {
   sessionId String
   session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   title     String   @default("新对话")
+  /**
+   * 回合连续性状态（JSON 字符串，2026-10-21 回合连续性修正）。
+   *
+   * ⭐ 这是「第四份状态」的**权威副本**（另三份：Nest AgentMessage = 展示层 SSOT、
+   * pi transcript = 模型上下文 SSOT、Session.canvasData = 画布 SSOT）。
+   * 「上一轮任务进行到哪」不属于上面任何一份 ⇒ 必须独立持久。
+   *
+   * ⭐ 为什么挂在**线程**上而不是画布（Session）：一个画布可以有多个对话线程，
+   * 每个线程有各自的上下文与进度 ⇒ 状态是线程级的。
+   *
+   * ⚠️ 可空：绝大多数线程没有未完成状态（NULL = 无）。
+   * 读写约定：写 `JSON.stringify(state)`，读出后 `parseTurnState` 校验形状，
+   * 解析失败回落 undefined（**宁可不注入，也不投坏数据**）。
+   */
+  turnState String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   messages  AgentMessage[]
