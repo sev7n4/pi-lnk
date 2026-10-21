@@ -169,6 +169,9 @@ export class TurnStateService {
 				where: { id: threadId },
 				data: { turnState: null },
 			})
+			// ⭐ 可观测性：区分「清掉了」与「本来就没有」——后者是常态（正常轮次也会走到
+			// 成功收尾的清除分支），不打日志会让「状态没被消费」这件事看不出区别。
+			this.logger.debug(`turn_state_cleared thread=${threadId}`)
 		} catch (err) {
 			this.logger.warn(
 				`turn_state_clear failed (fail-soft, thread=${threadId}): ${
