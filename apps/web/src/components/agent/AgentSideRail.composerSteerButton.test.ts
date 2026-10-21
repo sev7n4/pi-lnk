@@ -14,28 +14,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { requireFnBody } from './sfcSource'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
-
-/** 花括号配平提取函数/方法全文（含签名）。找不到返回 null。 */
-function fnBody(signature: string): string | null {
-  const start = sfc.indexOf(signature)
-  if (start === -1) return null
-  let depth = 0
-  let opened = false
-  for (let i = start + signature.length; i < sfc.length; i++) {
-    const ch = sfc[i]
-    if (ch === '{') {
-      depth++
-      opened = true
-    } else if (ch === '}') {
-      depth--
-      if (opened && depth === 0) return sfc.slice(start, i + 1)
-    }
-  }
-  return null
-}
 
 /**
  * 提取唯一的 <DockGenerateButton ... /> 自闭合标签块。
@@ -48,54 +30,6 @@ function generateButtonBlock(): string {
     throw new Error(`DockGenerateButton 标签块应恰好 1 处，实际 ${blocks.length} 处`)
   }
   return blocks[0]!
-}
-
-/** 同理：提取函数体，缺失即 throw。 */
-function requireFnBody(signature: string): string {
-  const body = fnBody(signature)
-  if (body === null) throw new Error(`未找到函数：${signature}`)
-  return stripLineComments(body)
-}
-
-/**
- * 去掉行注释（`//` 到行尾），但**跳过字符串字面量里的 `//`**（如 `'https://'`）。
- *
- * ⚠️ 为什么必须剥：断言是对**代码**的断言，不是对注释的断言。
- * 本组件 230KB，注释里常出现与代码同形的字面量（把旧写法抄进注释做说明）——
- * 不剥就会被注释命中 ⇒ **正向断言空转**（明明代码已改，断言却因注释而绿）、
- * **否定断言假红**（2026-10-21 hotfix 实测踩过：注释里抄了
- * `if (await queueDraftAsPending()) return`，把否定断言打成红）。
- *
- * 只在**已定位的单个函数体**上剥（不是全文），并逐字符跟踪引号状态，
- * 避免把真源码当注释吃掉；引号未闭合时保守地**不剥**（宁可少剥，不可误吃代码）。
- */
-function stripLineComments(src: string): string {
-  let out = ''
-  let quote: string | null = null
-  for (let i = 0; i < src.length; i++) {
-    const ch = src[i]!
-    if (quote) {
-      out += ch
-      if (ch === '\\') {
-        out += src[++i] ?? ''
-        continue
-      }
-      if (ch === quote) quote = null
-      continue
-    }
-    if (ch === "'" || ch === '"' || ch === '`') {
-      quote = ch
-      out += ch
-      continue
-    }
-    if (ch === '/' && src[i + 1] === '/') {
-      while (i < src.length && src[i] !== '\n') i++
-      out += '\n'
-      continue
-    }
-    out += ch
-  }
-  return out
 }
 
 describe('composer 按钮态随草稿切换（流式中可插话）', () => {
@@ -125,7 +59,7 @@ describe('composer 按钮态随草稿切换（流式中可插话）', () => {
   })
 
   it('send() 在流式中分流：先挂待发气泡并短路，无草稿才停 turn', () => {
-    const body = requireFnBody('async function send()')
+    const body = requireFnBody(sfc, 'async function send()')
 
     // 有效性配对：两条分支都在
     expect(body).toContain('queueDraftAsPending')
@@ -164,13 +98,13 @@ describe('composer 按钮态随草稿切换（流式中可插话）', () => {
   })
 
   it('回车与按钮共用同一挂起函数（两处逻辑不得分叉）', () => {
-    const submit = requireFnBody('async function onComposerSubmit()')
+    const submit = requireFnBody(sfc, 'async function onComposerSubmit()')
     expect(
       submit,
       'onComposerSubmit() 未复用 queueDraftAsPending() —— 回车与按钮会分叉出两套挂起逻辑',
     ).toContain('queueDraftAsPending')
 
-    const queue = requireFnBody('async function queueDraftAsPending()')
+    const queue = requireFnBody(sfc, 'async function queueDraftAsPending()')
 
     // 只挂起、不投递：steer/followUp 的送达时机必须由用户在气泡上二选一
     expect(queue).toContain("state: 'pending'")
