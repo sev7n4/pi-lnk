@@ -366,3 +366,72 @@ export function distributeNodes(nodes: LayoutNode[], ids: string[], axis: 'x' | 
   }
   return out
 }
+
+export interface SnapBox { x: number; y: number; w: number; h: number }
+export interface SnapCandidate { id: string; box: SnapBox; parentId?: string; isSelf?: boolean }
+export interface SnapPrev { horizontal?: { position: number; sourceNodeId: string }; vertical?: { position: number; sourceNodeId: string } }
+export interface SnapResult { horizontal?: { position: number; sourceNodeId: string }; vertical?: { position: number; sourceNodeId: string }; snapped: { x: number; y: number } }
+export const SNAP_RADIUS = 8
+export const SNAP_HYSTERESIS = 0.5
+
+type Orient = 'h' | 'v'
+const SNAP_ANCHORS: Record<string, { o: Orient; resolve: (b: SnapBox) => number }> = {
+  left: { o: 'v', resolve: (b) => b.x },
+  right: { o: 'v', resolve: (b) => b.x + b.w },
+  centerX: { o: 'v', resolve: (b) => b.x + b.w / 2 },
+  top: { o: 'h', resolve: (b) => b.y },
+  bottom: { o: 'h', resolve: (b) => b.y + b.h },
+  centerY: { o: 'h', resolve: (b) => b.y + b.h / 2 },
+}
+
+interface BestV { dist: number; pos: number; id: string; dragOffset: number }
+
+/**
+ * 拖拽智能参考线（移植 React Flow xyflow Helper Lines + manta SpatialIndex 思路）：
+ * - 6 锚点；每个朝向（h/v）在阈值内只取**一条最近线**；
+ * - hysteresis 0.5px：prev 线在 radius+hysteresis 内保持，防抖；
+ * - 跳过 isSelf（调用方已标）；
+ * - 视口裁剪由调用方做（候选只传视口内）。
+ */
+export function computeSnapGuides(
+  dragBox: SnapBox,
+  candidates: SnapCandidate[],
+  opts: { snapRadius?: number; hysteresis?: number; prev?: SnapPrev } = {},
+): SnapResult {
+  const radius = opts.snapRadius ?? SNAP_RADIUS
+  const hys = opts.hysteresis ?? SNAP_HYSTERESIS
+  const dragAnchors = Object.entries(SNAP_ANCHORS).map(([name, a]) => {
+    const pos = a.resolve(dragBox)
+    const off = (a.o === 'v' ? dragBox.x : dragBox.y) - pos
+    return { name, o: a.o, pos, off }
+  })
+  let bestV: (BestV & { o: 'v' }) | undefined
+  let bestH: (BestV & { o: 'h' }) | undefined
+  for (const c of candidates) {
+    if (c.isSelf) continue
+    for (const ca of Object.values(SNAP_ANCHORS)) {
+      const cpos = ca.resolve(c.box)
+      for (const da of dragAnchors) {
+        if (da.o !== ca.o) continue
+        const dist = Math.abs(da.pos - cpos)
+        const prevPos = ca.o === 'v' ? opts.prev?.vertical?.position : opts.prev?.horizontal?.position
+        const keepPrev = prevPos != null && Math.abs(cpos - prevPos) <= hys
+        if (!keepPrev && dist > radius) continue
+        const cur = ca.o === 'v' ? bestV : bestH
+        if (!cur || dist < cur.dist || keepPrev) {
+          const nb = { dist, pos: cpos, id: c.id, dragOffset: da.off }
+          if (ca.o === 'v') bestV = { ...nb, o: 'v' }
+          else bestH = { ...nb, o: 'h' }
+        }
+      }
+    }
+  }
+  const snapped = { x: dragBox.x, y: dragBox.y }
+  if (bestV) snapped.x = bestV.pos - bestV.dragOffset
+  if (bestH) snapped.y = bestH.pos - bestH.dragOffset
+  return {
+    vertical: bestV ? { position: bestV.pos, sourceNodeId: bestV.id } : undefined,
+    horizontal: bestH ? { position: bestH.pos, sourceNodeId: bestH.id } : undefined,
+    snapped,
+  }
+}

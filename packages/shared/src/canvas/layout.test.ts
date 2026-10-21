@@ -224,3 +224,34 @@ describe('distributeNodes', () => {
     expect(distributeNodes(nodes, ['a', 'b'], 'x')).toEqual({})
   })
 })
+
+import { computeSnapGuides } from './layout'
+
+describe('computeSnapGuides', () => {
+  const drag = { x: 95, y: 200, w: 100, h: 50 } // 左缘 95，距候选 left=100 差 5 ≤ 8
+  it('垂直方向最近线命中：被拖左缘吸到候选左缘', () => {
+    const cands = [{ id: 'o', box: { x: 100, y: 0, w: 80, h: 80 } }]
+    const r = computeSnapGuides(drag, cands)
+    expect(r.vertical?.position).toBe(100)
+    expect(r.snapped.x).toBe(100) // 左缘对齐到 100
+    expect(r.snapped.y).toBe(200)
+  })
+  it('无命中返回原位置、无 guide', () => {
+    const cands = [{ id: 'o', box: { x: 500, y: 500, w: 80, h: 80 } }]
+    const r = computeSnapGuides(drag, cands)
+    expect(r.vertical).toBeUndefined(); expect(r.horizontal).toBeUndefined()
+    expect(r.snapped).toEqual({ x: 95, y: 200 })
+  })
+  it('hysteresis：prev 线在半径+0.5 内保持', () => {
+    const cands = [{ id: 'o', box: { x: 100, y: 0, w: 80, h: 80 } }]
+    const r1 = computeSnapGuides(drag, cands)
+    const drag2 = { ...drag, x: 109 } // 距 prev 100 差 9（>8 但 ≤8.5）
+    const r2 = computeSnapGuides(drag2, cands, { prev: { vertical: r1.vertical } })
+    expect(r2.vertical?.position).toBe(100)
+  })
+  it('跳过自身：isSelf 候选不命中', () => {
+    const cands = [{ id: 'self', box: { x: 100, y: 0, w: 80, h: 80 }, isSelf: true }]
+    const r = computeSnapGuides(drag, cands)
+    expect(r.vertical).toBeUndefined()
+  })
+})
