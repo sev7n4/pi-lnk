@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { WORK_CATEGORIES } from '@lnkpi/shared'
+import { useAuthStore } from '@/stores/auth'
 import WorkflowPage from './WorkflowPage.vue'
 
 const { apiGet, apiPost, canvasList } = vi.hoisted(() => ({
@@ -77,8 +77,15 @@ function makeWorks(n: number) {
   }))
 }
 
-async function mountWorkflow() {
+async function mountWorkflow(opts: { loggedIn?: boolean } = {}) {
   setActivePinia(createPinia())
+  // 「我的画布」区块 v-if 登录态：需要登录态断言的测试在这里置位
+  // （每次 mount 都新建 pinia，故必须在该函数内置位，测试外设了会丢）
+  if (opts.loggedIn) {
+    const auth = useAuthStore()
+    auth.token = 'test-token'
+    auth.user = { id: 'u_1' } as never
+  }
   const wrapper = mount(WorkflowPage, { global: { stubs } })
   await flushPromises()
   return wrapper
@@ -103,8 +110,10 @@ describe('WorkflowPage 主页收拢（P1）', () => {
     expect(wrapper.find('[data-testid="home-works-grid"]').exists()).toBe(false)
   })
 
-  it('发布入口随精选行保留（不随网格消失）', async () => {
-    const wrapper = await mountWorkflow()
+  it('发布入口在「我的画布」头部（P3-D 归位：不再挂社区精选底部；需登录态）', async () => {
+    // 2026-10-21 P3-D 用户裁定「发布归位」⇒ 入口移到「我的画布」头部，
+    // 该区块 v-if 登录态 ⇒ 本测试置登录态后再断言（未登录走 hero 锚创建）。
+    const wrapper = await mountWorkflow({ loggedIn: true })
     expect(wrapper.text()).toContain('发布作品')
   })
 
@@ -124,7 +133,11 @@ describe('WorkflowPage 主页收拢（P1）', () => {
     expect(wrapper.text()).not.toContain('立即观看')
   })
 
-  it('分类常量已收窄为全部/短片/画布', () => {
-    expect([...WORK_CATEGORIES]).toEqual(['全部', '短片', '画布'])
+  it('主页不渲染分类 tabs（分类消费已归 /community，常量本体归 shared）', async () => {
+    // 曾在此写死「WORK_CATEGORIES 收窄为 3 项」——但常量形状归 shared 自己的真相，
+    // CommunityPage.test 已用动态断言覆盖；主页侧的正确锁是「不消费」（上方已有），
+    // 故删除写死形状的过时断言。
+    const wrapper = await mountWorkflow()
+    expect(wrapper.find('.category-tabs-stub').exists()).toBe(false)
   })
 })
