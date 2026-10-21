@@ -22,6 +22,15 @@ import type { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
+/** SP-A：create_nodes_batch 单批上限（Nest 侧 BATCH_NODES_MAX 同值；工具层先拦，端点侧兜底）。 */
+const CREATE_NODES_BATCH_MAX_NODES = 12;
+const CREATE_NODES_BATCH_MAX_EDGES = 20;
+/**
+ * SP-A：可批量创建的节点类型（= NodeType 4 项，Nest 侧 CREATABLE_NODE_TYPES 同值）。
+ * 已下线类型（prompt 2026-10-17 / group·shot·sceneComposer 2026-10-19 / mediaInput）
+ * 不得再被生产出来——存量历史节点照常渲染（存量冻结只读），但不能新建。
+ */
+const CREATE_NODES_BATCH_ALLOWED_TYPES: ReadonlySet<string> = new Set(["image", "video", "audio", "text"]);
 
 /** 生成终态等待的产出（propose_generation 确认后挂住期的结果）。 */
 export type GenerationTerminalOutcome = {
@@ -986,6 +995,86 @@ export function createCanvasWriteTools(
 					);
 				}
 				return withWriteSignal(await client.post("/agent/internal/connect-nodes", { sessionId: tc.sessionId, edges: p.edges }), p.edges.length);
+			},
+		},
+		{
+			tier: "graph_batch",
+			name: "create_nodes_batch",
+			label: "批量建节点",
+			description:
+				`Create multiple canvas nodes in one atomic call (draft only, max ${CREATE_NODES_BATCH_MAX_NODES} nodes + ${CREATE_NODES_BATCH_MAX_EDGES} edges per call). ` +
+				"Edges reference nodes in the same batch by their key, or existing nodes by id. " +
+				"Nodes are placed server-side (no coordinates accepted) and laid out in a tidy chain. " +
+				"Does NOT start generation: call propose_generation per node afterwards.",
+			parameters: Type.Object({
+				items: Type.Array(
+					Type.Object({
+						key: Type.String({ description: "Batch-local unique id used to reference this node in edges" }),
+						type: Type.String({ description: "Node type: image | video | text | audio" }),
+						prompt: Type.String({ description: "Node prompt (required)" }),
+						title: Type.Optional(Type.String({ description: "Node title (defaults to prompt)" })),
+					}),
+					{ description: `Nodes to create (max ${CREATE_NODES_BATCH_MAX_NODES})` },
+				),
+				edges: Type.Optional(
+					Type.Array(
+						Type.Object({
+							source: Type.String({ description: "Source: batch key or existing node id" }),
+							target: Type.String({ description: "Target: batch key or existing node id" }),
+						}),
+						{ description: `Directed edges (max ${CREATE_NODES_BATCH_MAX_EDGES}); endpoints resolve batch key first, then existing node id` },
+					),
+				),
+			}),
+			execute: async (
+				_id,
+				p: {
+					items: Array<{ key: string; type: string; prompt: string; title?: string }>;
+					edges?: Array<{ source: string; target: string }>;
+				},
+				_u,
+				tc: LnkpiToolContext,
+			) => {
+				if (!tc.sessionId) throw new Error("create_nodes_batch requires sessionId in toolContext (missing sessionId)");
+				if (!Array.isArray(p.items) || p.items.length === 0) {
+					throw new Error("create_nodes_batch requires at least one item");
+				}
+				if (p.items.length > CREATE_NODES_BATCH_MAX_NODES) {
+					throw new Error(
+						`create_nodes_batch accepts at most ${CREATE_NODES_BATCH_MAX_NODES} nodes per call (got ${p.items.length})`,
+					);
+				}
+				if (p.edges && p.edges.length > CREATE_NODES_BATCH_MAX_EDGES) {
+					throw new Error(
+						`create_nodes_batch accepts at most ${CREATE_NODES_BATCH_MAX_EDGES} edges per call (got ${p.edges.length})`,
+					);
+				}
+				// ⭐ type 白名单（工具层先拦，服务端还有同款兜底）：NodeType 已收敛为 4 项，
+				//   已下线类型（prompt/group/shot/sceneComposer/mediaInput）不得再被生产出来。
+				//   工具描述已写「image | video | text | audio」，此处把它变成真闸门——
+				//   否则模型传错 type 会一路打到服务端才被拒（浪费一轮 + 错误信息绕）。
+				for (const it of p.items) {
+					const t = String(it.type ?? "").trim();
+					if (!CREATE_NODES_BATCH_ALLOWED_TYPES.has(t)) {
+						throw new Error(
+							`create_nodes_batch: unsupported node type "${t}" (allowed: ${[...CREATE_NODES_BATCH_ALLOWED_TYPES].join(", ")})`,
+						);
+					}
+				}
+				return withWriteSignal(
+					await client.post("/agent/internal/add-nodes-batch", {
+						sessionId: tc.sessionId,
+						userId: tc.userId,
+						items: p.items.map((it) => ({
+							key: it.key,
+							title: it.title ?? it.prompt,
+							targetType: it.type,
+							prompt: it.prompt,
+						})),
+						edges: p.edges,
+					}),
+					p.items.length,
+				);
 			},
 		},
 	];

@@ -186,3 +186,31 @@ describe('状态降级守卫（2026-10-01：阻塞 propose 的 stale update_node
     expect(out.nodes[1]?.data.status).toBe('generating')
   })
 })
+
+// SP-A（2026-10-21）：批量创建的混合 actions 必须一次应用齐全——
+// create_nodes_batch 的一批 add_node + add_edge 走同一 SSE flush，
+// 前端批量应用面不得只落节点丢边（否则画布出现孤立节点）。
+describe('SP-A：混合批量 actions 一次应用齐全（create_nodes_batch 回归锁）', () => {
+  it('一批 add_node×2 + add_edge×1 一次应用，节点与边同时到位', () => {
+    const out = applyActionsToFlow([], [], [
+      { type: 'add_node', payload: { id: 'image-1', nodeType: 'image', position: { x: 80, y: 80 }, data: { status: 'draft' } } } as unknown as CanvasAction,
+      { type: 'add_node', payload: { id: 'image-2', nodeType: 'image', position: { x: 400, y: 80 }, data: { status: 'draft' } } } as unknown as CanvasAction,
+      { type: 'add_edge', payload: { id: 'e-1-2', source: 'image-1', target: 'image-2' } } as unknown as CanvasAction,
+    ])
+    expect(out.nodes.map((n) => n.id)).toEqual(expect.arrayContaining(['image-1', 'image-2']))
+    expect(out.edges.map((e) => e.id)).toContain('e-1-2')
+    expect(out.edges[0]!.source).toBe('image-1')
+    expect(out.edges[0]!.target).toBe('image-2')
+  })
+
+  it('重复 id 的 add_node 幂等（重放不产生第二个节点），边不重复追加', () => {
+    const first = applyActionsToFlow([], [], [
+      { type: 'add_node', payload: { id: 'image-1', nodeType: 'image', position: { x: 80, y: 80 }, data: { status: 'draft' } } } as unknown as CanvasAction,
+      { type: 'add_edge', payload: { id: 'e-1-1', source: 'image-1', target: 'image-1' } } as unknown as CanvasAction,
+    ])
+    const replay = applyActionsToFlow(first.nodes, first.edges, [
+      { type: 'add_node', payload: { id: 'image-1', nodeType: 'image', position: { x: 999, y: 999 }, data: { status: 'draft' } } } as unknown as CanvasAction,
+    ])
+    expect(replay.nodes.filter((n) => n.id === 'image-1')).toHaveLength(1)
+  })
+})

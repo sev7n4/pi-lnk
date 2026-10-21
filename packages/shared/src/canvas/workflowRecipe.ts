@@ -15,6 +15,16 @@ export const RECIPE_DATA_KEYS = [
 
 export type RecipeRole = 'seed' | 'turnaround' | 'downstream'
 export type RecipeGenMode = 't2i' | 'i2i' | 'v_ref'
+
+/**
+ * 配方（recipe）里允许的节点类型。
+ *
+ * ⚠️ `prompt` 是**已下线类型**（2026-10-17，画布侧创建入口已断），此处保留是
+ * 「存量冻结只读」的必要条件：用户自建的配方（存量数据）里可能仍有 prompt 节点，
+ * 收窄类型会让这些配方**整个打不开**（validateRecipe 直接抛错）⇒ 存量用户功能损坏。
+ * ⛔ 保留 ≠ 允许新建画布节点：recipe 编译出的 workflow 走 importWorkflow 落库，
+ *   落库侧由 Nest 的 CREATABLE_NODE_TYPES（4 项）把闸；这里只是**读**存量配方的容忍口径。
+ */
 export type PlannerNodeType = 'prompt' | 'image' | 'video' | 'text'
 
 const PLANNER_NODE_TYPES = new Set<PlannerNodeType>(['prompt', 'image', 'video', 'text'])

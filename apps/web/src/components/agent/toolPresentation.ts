@@ -31,6 +31,8 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   upload_media_to_canvas: { icon: '📤', verb: '上传素材' },
   grid_slice_image: { icon: '🔲', verb: '九宫格切图' },
   connect_nodes: { icon: '🔗', verb: '连接节点' },
+  // SP-A（2026-10-21）：批量建节点（一次调用一批，自动排布整齐）
+  create_nodes_batch: { icon: '📐', verb: '批量创建节点' },
   remove_edges: { icon: '🔌', verb: '删除连线' },
   introduce_nodes_to_agent: { icon: '🧲', verb: '引入画布节点' },
   cancel_generation: { icon: '⏹', verb: '取消生成' },

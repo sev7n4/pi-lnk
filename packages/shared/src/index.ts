@@ -1,11 +1,12 @@
 export type WorkType = 'canvas' | 'shortfilm'
 
 /** 与 agentContract 的 NODE_TYPES 保持一致（改一处必须改另一处，否则画布动作会被静默丢弃）。
- *  2026-09-28 补入 `audio`；mediaInput / videoComposition / worldModel 当前无需求，有意不列。
+ *  2026-09-28 补入 `audio`。
  *  2026-10-17 下线 `prompt`（提示词节点，PR feat/prompt-node-decommission）——存量画布
  *  里的 prompt 节点数据仍在 JSON 中（运行时按字符串分发渲染），但联合类型与白名单不再接纳。
  *  2026-10-19 下线 `group` / `shot` / `sceneComposer`（分组 / 分镜 / 导演台）节点：联合类型与白名单不再接纳，
- *  存量节点仅走运行时兜底渲染。 */
+ *  存量节点仅走运行时兜底渲染。
+ *  2026-10-19 下线 `mediaInput`（媒体输入）：附件按媒体类型直落 image/video/audio/text 节点。 */
 export type NodeType = 'image' | 'video' | 'audio' | 'text'
 
 export * from './randomId'
@@ -16,6 +17,7 @@ export * from './canvas/duplicateToCanvasActions'
 export * from './canvas/imageVersions'
 export * from './canvas/workflowExchange'
 export * from './canvas/workflowImportPlacement'
+export * from './canvas/layout'
 export * from './canvas/workflowRecipe'
 export * from './canvas/recipeCatalog'
 export * from './canvas/compositionGold'

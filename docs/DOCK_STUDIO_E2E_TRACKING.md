@@ -1,5 +1,11 @@
 # Dock Studio 端到端业务打通 — 开发跟踪文档
 
+> ⚠️ **2026-10-21 归档说明**：本文跟踪的 sceneComposer（导演台）/ shot（分镜）/ videoComposition（视频合成）
+> 三类节点已于 **2026-10-19 下线**，右侧 nodeType 白名单只余 image/video/audio/text 四项（见
+> `packages/shared/src/agentContract.ts` 头注）。文末 `scripts/p0-production-e2e.sh` 一键回归脚本因依赖
+> `scene-composer/save`、`scene-composer/batch-generate`、`video-composition/export` 三个已删除端点，
+> 已随本次清理移除（git 可回溯）；下文 A3–A5 与 U3–U7 行仅作历史记录保留。
+
 > **对标参考**：[NeoWOW Workflow](https://neowow.cn/workflow?sessionId=2074796563114016768)  
 > **UI 调研**：[NEOWOW_CANVAS_UI_RESEARCH.md](./NEOWOW_CANVAS_UI_RESEARCH.md)（§4.2 BottomToolbarWrapper / NodePanel）  
 > **创建日期**：2026-07-13  
@@ -55,16 +61,14 @@
 | sceneComposer 展开子图 UI | ☐ | 代码 D-4 已落地，浏览器未验 |
 | videoComposition「导出合成」UI | ☐ | API 已验，Dock 按钮浏览器未验 |
 
-**一键 API 回归**：`scripts/p0-production-e2e.sh`（见 §0.5）
+**一键 API 回归**：`scripts/p0-production-e2e.sh` — 已于 2026-10-21 移除（依赖的三个端点随节点下线删除）
 
-### 0.5 P0 生产手测清单（人工 + 脚本）
+### 0.5 P0 生产手测清单（人工）
 
 #### 自动化（API）
 
-```bash
-# 默认打 Vercel 生产；本地 API 可设 BASE_URL=http://127.0.0.1:5100/api
-./scripts/p0-production-e2e.sh
-```
+> 已无可用脚本：原 `./scripts/p0-production-e2e.sh` 覆盖的 A3–A5 端点已下线。保留 A1/A2/A6
+> 三项仍有意义的冒烟请直接用 curl 打 `/auth/login`、`/agent/canvas/create`、`/health`。
 
 | # | 检查项 | 脚本覆盖 |
 |---|--------|---------|
