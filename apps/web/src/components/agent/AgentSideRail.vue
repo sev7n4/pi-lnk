@@ -6769,7 +6769,7 @@ defineExpose({
   align-items: center;
   gap: 4px;
   color: var(--lnk-text-muted);
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
 }
 
 .lnk-triptych__icon {
@@ -6786,7 +6786,7 @@ defineExpose({
   border: 0;
   background: transparent;
   color: var(--lnk-accent);
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
   font-weight: 500;
   cursor: pointer;
 }
@@ -6803,14 +6803,14 @@ defineExpose({
 .lnk-triptych__slogan {
   margin-top: 12px;
   color: var(--lnk-text-secondary);
-  font-size: 12px;
+  font-size: var(--lnk-text-xs);
   line-height: 1.7;
 }
 
 .lnk-triptych__slogan-sub {
   display: block;
   color: var(--lnk-text-muted);
-  font-size: 11px;
+  font-size: var(--lnk-text-2xs);
 }
 
 @media (prefers-reduced-motion: reduce) {

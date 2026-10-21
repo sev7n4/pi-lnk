@@ -98,6 +98,13 @@ describe('AgentSideRail — 移动端三联叙事头', () => {
     expect(src).toContain(':src="BRAND_LOGO_URL"')
   })
 
+  it('字号一律走文本令牌：AgentSideRail 禁 10/11/12/13px 裸字号（CI 实锤过）', () => {
+    // 真事：首版三联写了 font-size: 11px/12px，CI 的 text-token-guard 直接红
+    // （AgentSideRail 全域禁裸字号，必须走 --lnk-text-* 令牌）。
+    const hits = [...rail.matchAll(/font-size:\s*(10|11|12|13)px/g)].map((m) => m[0])
+    expect(hits, `裸字号必须换成 --lnk-text-* 令牌：${hits.join(', ')}`).toEqual([])
+  })
+
   it('墨滴动效受 reduced-motion 守卫（漏守即为无障碍回潮）', () => {
     const media = src.slice(src.indexOf('@media (prefers-reduced-motion: reduce)'))
     expect(media).toContain('.lnk-triptych__drop')
