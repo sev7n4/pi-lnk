@@ -195,12 +195,23 @@ export function reconcileHistory(input: {
 /** 编排所需的 prisma 最小面。 */
 export interface ReconcilePrisma {
 	agentMessage: {
-		findMany(args: {
+		/**
+		 * ⭐ 用 `findFirst`（**不是** `findMany`）：只取最近一条 user 消息。
+		 *
+		 * ⚠️ 为什么不复用 `findMany`：既有守卫「P0-①：不再查询历史消息表」
+		 * （`agent.service.pi-runtime.test.ts`）断言 `agentMessageFindMany` **不被调用**。
+		 * 那条守卫的**原意**是「不查历史消息表**来喂 prompt**」（pi 侧 transcript 已含历史），
+		 * 而对账是**比对**（查到的内容只用于判定分叉、**不进 prompt**）⇒ 目的不同。
+		 * ⭐ 但守卫本身是对的（不重复喂历史是硬要求）⇒ **不改守卫，改实现去适配**。
+		 *
+		 * ⛔ 若将来有人把对账改成 `findMany`，那条守卫会红 ⇒ 说明要重新审视对账的取数方式
+		 * （也可能是真的违反 P0-①）⇒ 这个"意外的守卫"是好事。
+		 */
+		findFirst(args: {
 			where: { threadId?: string; role: string }
 			orderBy: { createdAt: 'desc' }
-			take: number
 			select: { id: boolean; content: boolean; createdAt: boolean }
-		}): Promise<Array<{ id: string; content: string | null; createdAt: Date | number }>>
+		}): Promise<{ id: string; content: string | null; createdAt: Date | number } | null>
 	}
 }
 
@@ -263,13 +274,11 @@ export async function reconcileAfterTurn(input: {
 }): Promise<ReconcileOutcome> {
 	try {
 		// Nest 侧最近一条 user 消息（收尾时它就是本轮那条）。
-		const rows = await input.prisma.agentMessage.findMany({
+		const nestMsg = await input.prisma.agentMessage.findFirst({
 			where: { threadId: input.threadId, role: 'user' },
 			orderBy: { createdAt: 'desc' },
-			take: 1,
 			select: { id: true, content: true, createdAt: true },
 		})
-		const nestMsg = rows[0]
 		if (!nestMsg) return { verdict: 'aligned', healed: false }
 
 		// pi 侧快照；⛔ 取不到（404 会话不存在 / runtime 不可达）⇒ 不判定。

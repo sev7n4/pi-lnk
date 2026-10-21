@@ -169,12 +169,16 @@ describe('reconcileHistory（对账判据）', () => {
 function makePrisma(messages: Array<{ id: string; content: string; createdAt?: Date }>) {
 	return {
 		agentMessage: {
-			findMany: async () =>
-				messages.map((m) => ({
-					id: m.id,
-					content: m.content,
-					createdAt: m.createdAt ?? new Date(1_700_000_000_000),
-				})),
+			// 与实现一致：用 findFirst 取**最近一条**（createdAt 倒序的第一条）
+			findFirst: async () => {
+				const sorted = [...messages].sort(
+					(a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
+				)
+				const m = sorted[0]
+				return m
+					? { id: m.id, content: m.content, createdAt: m.createdAt ?? new Date(1_700_000_000_000) }
+					: null
+			},
 		},
 	}
 }
@@ -305,7 +309,7 @@ describe('reconcileAfterTurn（编排：读 Nest → 调 snapshot → 比对 →
 	it('⛔ prisma 抛错 ⇒ fail-soft（返回、不抛出、不写状态）', async () => {
 		const prisma = {
 			agentMessage: {
-				findMany: async () => {
+				findFirst: async () => {
 					throw new Error('db down')
 				},
 			},
