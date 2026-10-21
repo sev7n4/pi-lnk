@@ -169,7 +169,7 @@ function onRefMention(refKey: string) {
       />
       <div
         v-if="showThinkingControls"
-        class="flex items-center gap-1.5 rounded-lg border border-overlay/10 bg-overlay/5 px-2 py-1"
+        class="dock-thinking-group flex items-center gap-1.5 rounded-lg border border-overlay/10 bg-overlay/5 px-2 py-1"
       >
         <button
           type="button"

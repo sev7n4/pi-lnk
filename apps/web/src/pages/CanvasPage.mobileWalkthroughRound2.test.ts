@@ -199,4 +199,31 @@ describe('移动端 dock 面板布局（2026-10-21 真机：底行被挤压 / �
     expect(block).toContain('min-height: 56px !important')
     expect(block).toContain('max-height: 132px !important')
   })
+
+  it('④底行单排：移动端 flex-wrap 关闭 + 面板通宽', () => {
+    const block = css.match(/@media \(max-width: 767px\) \{[\s\S]*?\.dock-inline-card \{[^}]*\}/)?.[0] ?? ''
+    expect(block, '必须能定位移动端 dock 规则块').not.toBe('')
+    // 单排（模板上是 flex-wrap，窄屏会折成两排）
+    expect(block).toMatch(/\.bottom-toolbar-actions \{[^}]*flex-wrap: nowrap/)
+    // 面板与屏幕同宽（去掉桌面 min-width 口径）
+    expect(block).toMatch(/\.bottom-toolbar-container \{[^}]*width: 100%/)
+    expect(block).toMatch(/\.bottom-toolbar-container \{[^}]*min-width: 0/)
+    // 文本节点的思考组在窄屏隐藏（否则单排放不下）
+    expect(block).toMatch(/\.dock-thinking-group \{[^}]*display: none/)
+    // 有效性配对：PC 侧仍是 wrap（未被移动端规则带跑）
+    expect(css).toMatch(/^\.bottom-toolbar-actions \{[\s\S]{0,200}flex-wrap: wrap/m)
+  })
+
+  it('⑤面板内弹层卡片屏宽自适应（模型 / 尺寸参数）', () => {
+    const block = css.match(/\.dock-inline-card \{[^}]*\}/)?.[0] ?? ''
+    expect(block, '必须有 dock-inline-card 规则').not.toBe('')
+    expect(block).toContain('left: 12px !important')
+    expect(block).toContain('right: 12px')
+    expect(block).toContain('max-height: 48vh')
+    expect(block).toContain('overflow-y: auto')
+    // 两个触发器都挂上了该类（桌面固定宽度 + 贴触发器左缘，窄屏会右溢出）
+    for (const p of ['canvas/UniversalModelSelector.vue', 'canvas/ImageParamsSelector.vue']) {
+      expect(readComponent(p), `${p} 的弹层须挂 dock-inline-card`).toContain('dock-inline-card')
+    }
+  })
 })
