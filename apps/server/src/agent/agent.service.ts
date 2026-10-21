@@ -38,7 +38,8 @@ import {
   collectToolAttempts,
   deriveSteps,
   shouldRecordTurnState,
-} from './turn-continuity'
+} from './turn-state-store'
+import { TurnStateService } from './turn-state.service'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
 import { resolveRuleGroups } from './pi-runtime/rule-groups'
@@ -198,6 +199,12 @@ export class AgentService {
     @Optional()
     @Inject(PricingService)
     private readonly pricing?: PricingService,
+    // 回合连续性（2026-10-21 修正）：「上一轮任务进行到哪」的权威副本存储。
+    // @Optional 保持既有测试与未装配路径零破坏（缺省时回合连续性降级为「不记录」，
+    // 对话照常——「记不住上一轮」是降级，不是事故）。
+    @Optional()
+    @Inject(TurnStateService)
+    private readonly turnState?: TurnStateService,
   ) {}
 
   /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
@@ -1212,21 +1219,28 @@ export class AgentService {
   }
 
   /**
-   * 回合连续性：本轮中断时，把「用户要什么 / 做到哪 / 卡在哪」写进 pi transcript。
+   * 回合连续性：本轮中断时，把「用户要什么 / 做到哪 / 卡在哪」记进 **Nest DB**
+   * （`AgentThread.turnState`，权威副本）。
    *
-   * ⭐ 为什么必须写进 **pi 侧**而不是 Nest 的 DB：
-   * - 模型只看得到 pi 侧上下文（Nest 的 `AgentMessage` 表**不进 prompt**，
-   *   见 `streamConversation` 里「不再查 AgentMessage 历史喂 prompt」那条注释）；
-   * - 落在 transcript 里 ⇒ 天然参与上游 compaction 的保留机制
-   *   （`CompactionEntry.retainedTail` + `buildContextEntries`），
-   *   不会像「动态块」那样被下一轮覆盖。
+   * ⭐ 为什么权威在 Nest 而不是 pi transcript（2026-10-21 自我审查修正了初版）：
+   * - **压缩必丢**：上游 `buildContextEntries`（`vendor/…/harness/session/context.ts:10-23`）
+   *   在有 compaction 时返回 `[compaction, ...compaction之后的entries]`
+   *   ⇒ compaction **之前**的 custom entry 被丢弃；且 `CompactionEntry.retainedTail`
+   *   是 `AgentMessage[]`（`types.ts:36`）⇒ **只含 message**。
+   *   ⇒ 初版「落在 transcript 里天然跨压缩存活」是**错的**。
+   * - **第三条真相线**：Nest 已决定「不再查 AgentMessage 历史喂 prompt」
+   *   ⇒ 再加一份 pi 侧状态 = 多一处分叉面。
+   * - **绕过既有通道**：跨压缩保留早就有（`compaction-retention.ts` 的 `RetentionState`）。
+   *
+   * ⭐ 改走 Nest 后的收益：**pi 侧零改动**（不需 pi-runtime 重新发布），
+   * 且动态块每轮重新求值 ⇒ 跨压缩存活（与 `todo` 块同机制）。
    *
    * ⛔ fail-soft：任何异常只 warn，绝不影响本轮收尾。
    */
   private async recordTurnStateOnInterruption(input: {
-    client: PiRuntimeClient;
     sessionKey: string;
     userMessage: string;
+    userMessageId?: string;
     assistantText: string;
     executionEvents: readonly { type: string; data?: unknown }[];
     failed: boolean;
@@ -1247,24 +1261,22 @@ export class AgentService {
         return;
       }
       const { completedSteps, pendingSteps } = deriveSteps(attempts);
-      // 中断类型分档：
-      // - prompt 未被接受 ⇒ `history_diverged`（Nest 有、pi 无 ⇒ 双写分叉，
-      //   2026-10-21 生产形态）；
-      // - prompt 被接受但 run 失败 ⇒ `upstream_error`（pi 侧有这轮，但
-      //   `isContextMessage` 会把 error/aborted 的 assistant 消息排除出上下文）。
-      const interruption =
-        input.promptAccepted === false ? 'history_diverged' : input.failed ? 'upstream_error' : 'unknown';
-      const recorded = await input.client.recordTurnState(input.sessionKey, {
+      const recorded = await this.turnState?.record({
+        threadId: input.sessionKey,
         userText: input.userMessage,
+        ...(input.userMessageId ? { userMessageId: input.userMessageId } : {}),
         assistantPartial: input.assistantText,
-        interruption,
         completedSteps,
         pendingSteps,
-        at: Date.now(),
+        failed: input.failed,
+        promptAccepted: input.promptAccepted !== false,
+        userAborted: input.userAborted,
+        hasAssistantText: Boolean(input.assistantText.trim()),
+        toolCallCount: attempts.length,
       });
       this.piLogger.warn(
-        `turn_state_recorded key=${input.sessionKey} recorded=${recorded.recorded} ` +
-          `interruption=${interruption} completed=${completedSteps.length} pending=${pendingSteps.length}`,
+        `turn_state_recorded key=${input.sessionKey} recorded=${recorded === true} ` +
+          `completed=${completedSteps.length} pending=${pendingSteps.length}`,
       );
     } catch (err) {
       this.piLogger.warn(
@@ -1275,22 +1287,44 @@ export class AgentService {
     }
   }
 
-  private async collectRetentionState(sessionId: string): Promise<PiRetentionState> {
+  private async collectRetentionState(
+    sessionId: string,
+    threadId?: string,
+  ): Promise<PiRetentionState> {
     try {
       const session = await this.prisma.session.findUnique({
         where: { id: sessionId },
         select: { canvasData: true },
       })
-      if (!session?.canvasData) return {}
-      const parsed = JSON.parse(session.canvasData) as {
-        nodes?: Array<{ id?: unknown; data?: { status?: unknown } }>
+      const retention: PiRetentionState = {}
+      if (session?.canvasData) {
+        const parsed = JSON.parse(session.canvasData) as {
+          nodes?: Array<{ id?: unknown; data?: { status?: unknown } }>
+        }
+        const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : []
+        const pendingConfirmNodeIds = nodes
+          .filter((n) => String(n?.data?.status ?? '') === 'pending_confirm')
+          .map((n) => String(n?.id ?? ''))
+          .filter((id) => id.length > 0)
+        if (pendingConfirmNodeIds.length > 0) retention.pendingConfirmNodeIds = pendingConfirmNodeIds
       }
-      const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : []
-      const pendingConfirmNodeIds = nodes
-        .filter((n) => String(n?.data?.status ?? '') === 'pending_confirm')
-        .map((n) => String(n?.id ?? ''))
-        .filter((id) => id.length > 0)
-      return pendingConfirmNodeIds.length > 0 ? { pendingConfirmNodeIds } : {}
+      // 回合连续性（2026-10-21 修正）：把「上一轮被中断」的状态也带进压缩保留段。
+      //
+      // ⭐ 为什么必须走这里（而不是只靠动态块）：上游压缩时
+      // `buildContextEntries` 只保留 `[compaction, ...compaction之后的entries]`
+      // （`vendor/…/harness/session/context.ts:10-23`）⇒ **压缩前的动态块不在上下文里**。
+      // 动态块保证「下一轮可见」，保留段保证「压缩摘要里也带着」⇒ 两个通道互补。
+      //
+      // ⚠️ 走既有 `RetentionState` 通道（`compaction-retention.ts`）而非另开通道：
+      // 那是上游为「宿主领域状态跨压缩」设计的唯一合法入口
+      // （`lane.compact({ customInstructions })` ⇒ 拼进摘要 prompt，`compaction.ts:567`）。
+      const turnStateLine = threadId
+        ? await this.turnState?.renderRetentionLine(threadId)
+        : undefined
+      if (turnStateLine) {
+        retention.keyToolConclusions = [...(retention.keyToolConclusions ?? []), turnStateLine]
+      }
+      return retention
     } catch (err) {
       this.piLogger?.warn(
         `collectRetentionState failed (fail-soft, 保留段退化为通用兜底): ${
@@ -1516,6 +1550,19 @@ export class AgentService {
       memoryBlock,
     })
     if (visionBlock) dynamicBlocks.push(visionBlock)
+    // 回合连续性（2026-10-21 修正）：把「上一轮被中断」的状态作为动态块喂给模型。
+    //
+    // ⭐ 为什么走动态块（systemPrompt 尾部动态段）而不是 pi 侧 transcript 条目：
+    // - 动态块**每轮重新求值** ⇒ 跨压缩存活（与 `todo` 块同机制，
+    //   `session-manager.ts:2358-2369` 注释：压缩后每次 LLM 请求重新求值 systemPrompt，
+    //   块恒在）⇒ 修掉了初版「custom entry 在 compaction 时被丢弃」的缺陷；
+    // - 权威在 Nest DB ⇒ 只有一条真相线（不加剧双写分叉面）；
+    // - pi 侧**零改动** ⇒ 不需要 pi-runtime 重新发布。
+    //
+    // ⚠️ 块首行必须与 `renderTurnStateBlock` 一致（`【上一轮被中断…】`）——
+    // `classifyBlock` 靠前缀分类预算档位，改前缀要同步改那边。
+    const turnStateBlock = await this.turnState?.renderBlock(sessionKey)
+    if (turnStateBlock) dynamicBlocks.push(turnStateBlock)
     // SEL-REF R-S8 + 评审 C1：回执**必须由服务端确认驱动**。
     // 前端读不到 Nest 的 `SEL_REF_ENABLED`，若它只按「本地冻结的 id 非空」渲染 chip，
     // 则 V1 默认态（off）下用户照样看到「已绑定 N 个选中节点」，而提示词里 0 字节注入
@@ -1591,7 +1638,7 @@ export class AgentService {
       focusNodeId: derivedFocusNodeId,
       // W2①压缩保留段：把「待用户确认的节点」交给 pi-runtime，让它活过上下文压缩。
       // 压缩后模型看不到自己已经propose 过，最典型的后果是重复建节点 + 谎称已生成。
-      retention: await this.collectRetentionState(sessionId),
+      retention: await this.collectRetentionState(sessionId, sessionKey),
       // P0-3 / L-2：每轮带指纹（manifest 的 hash 是本轮拼装结果，跨轮才反映真实在用哪版）。
       promptInfo: this.promptInfoFrom(assembler),
     }
@@ -1639,10 +1686,9 @@ export class AgentService {
         // 而 Nest 侧 user 消息已落库（`streamConversation` 早于本方法落库）⇒ 双写分叉：
         // 用户在界面上看得见自己说了什么，模型却从未见过 ⇒ 下一轮说「继续」时
         // 模型只能靠感知画布猜意图（2026-10-21 生产事故形态）。
-        // 这里立刻把「用户要什么」记进 transcript，让下一轮能接上。
+        // 这里立刻把「用户要什么」记进 Nest（权威副本），下一轮动态块会喂给模型。
         promptAccepted = false
         await this.recordTurnStateOnInterruption({
-          client,
           sessionKey,
           userMessage,
           assistantText: '',
@@ -1987,18 +2033,16 @@ export class AgentService {
     // Nest 侧 AgentMessage 有这条 user 消息，pi 侧 transcript **整轮不存在**；
     // 20 分钟后用户说「继续」，模型上下文里零线索 ⇒ 只能退化成「感知画布猜意图」。
     //
-    // 这里在**中断发生的当下**把状态写进 pi transcript（上游 `appendCustomEntry`
-    // ⇒ `lnkpi.turn_state` 自定义条目，由 `entryProjectors` 在后续每轮重新投影）。
-    // 于是下一轮模型能看到「用户要什么 / 做到哪 / 卡在哪」，**不依赖对话历史是否完好**。
+    // 这里在**中断发生的当下**把状态记进 Nest（`AgentThread.turnState`，权威副本），
+    // 下一轮装配 prompt 时作为动态块喂给模型 ⇒ **不依赖对话历史是否完好**。
     //
     // ⛔ 不做「继续」关键词识别：那要猜用户意图，在「接着改那个组件」这类表达上立刻失效。
     // ⛔ fail-soft：写不进去只 warn ——「记不住上一轮」是降级，「把用户请求打回去」是事故。
     //
     // ⚠️ `promptAccepted === false` 时**上面那条 catch 分支已经记过一次** ⇒ 此处跳过，
-    // 否则同一条 user 消息会在 transcript 里落两条状态（模型会看到重复的两段说明）。
+    // 否则同一条 user 消息会记两遍（模型会看到重复的两段说明）。
     if (promptAccepted) {
       await this.recordTurnStateOnInterruption({
-        client,
         sessionKey,
         userMessage,
         assistantText,
@@ -2006,6 +2050,20 @@ export class AgentService {
         failed: runFailed,
         userAborted: false,
       })
+    } else {
+      // 状态已被消费过（prompt 未被接受 ⇒ 那条消息用户已经看见、也知道失败了）
+      // ⇒ 这里不再重复记录。
+    }
+
+    // ── 回合连续性：状态消费后清除 ──
+    //
+    // ⭐ 清除时机 = **本轮成功收尾之后**（不是「注入后立刻清」）：
+    // 立刻清的话，若这一轮又失败，状态就没了 ⇒ 用户再说「继续」时又失忆。
+    // ⇒ 判据是「问题是否已解决」，不是「是否已展示过」。
+    //
+    // ⚠️ 只在**成功**时清（`!runFailed`）：失败轮刚写进去的状态必须留着。
+    if (promptAccepted && !runFailed) {
+      await this.turnState?.clear(sessionKey)
     }
 
     // ── TURN-IDENTITY P0-2：只有 owner 落库 ──

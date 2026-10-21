@@ -1,0 +1,23 @@
+-- 回合连续性状态（2026-10-21 回合连续性修正，spec 见 docs/superpowers/specs/2026-10-21-turn-continuity-design.md）。
+--
+--   AgentThread.turnState：某个对话线程「上一轮任务进行到哪」的权威副本。
+--
+-- ⚠️ 为什么需要它（它不是「同一份历史存两遍」）：
+--   pi-lnk 已有三份历史/状态载体，但「上一轮做到哪」不属于任何一份：
+--   - Nest AgentMessage 表 = 展示层 SSOT，只有「说了什么」，没有「做到哪」；
+--   - pi 侧 transcript = 模型上下文 SSOT，但上游 isContextMessage 会把
+--     error/aborted 轮排除出上下文，且双写分叉时该轮整轮缺失；
+--   - Session.canvasData = 画布 SSOT，只说「有哪些节点」，不说「用户要什么、卡在哪」。
+--   ⇒ 它必须是独立的第四份状态。
+--
+-- ⚠️ 为什么挂在 AgentThread（线程级）而不是 Session（画布级）：
+--   一个画布可以有多个对话线程，每个线程有各自的上下文与进度 ⇒ 状态是线程级的。
+--
+-- ⚠️ 为什么用 JSON 字符串而非标量列：状态是结构化对象（userText / completedSteps /
+--   pendingSteps / interruption / at / userMessageId），拆成多列会让「加一个字段」变成
+--   一次迁移。读写约定：写 JSON.stringify(state)，读出后 parseTurnState 校验形状，
+--   解析失败回落 undefined（宁可不注入，也不投坏数据）。
+--
+-- 可空：绝大多数线程没有未完成状态（NULL = 无）⇒ 存量零回填、迁移纯 additive、可原样回滚。
+
+ALTER TABLE "AgentThread" ADD COLUMN "turnState" TEXT;

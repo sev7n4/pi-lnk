@@ -60,7 +60,8 @@
 | [`superpowers/specs/2026-10-06-propose-confirm-deterministic-design.md`](./superpowers/specs/2026-10-06-propose-confirm-deterministic-design.md) | **propose 确认的确定性信号** —— 事故复核（点生成被判成取消）+ 确认/取消/超时/中止各自的权威信号表 + L1/L2 落点与回滚 | 活资产 —— 产品级交互契约 |
 | [`superpowers/specs/2026-10-06-audio-node-unified-capability-design.md`](./superpowers/specs/2026-10-06-audio-node-unified-capability-design.md) | **音频节点统一创作能力**——顶层模态不变（图/文/音/视频），音频节点内部分 `voice / design / music` 三类；agent 按需求自主选分类、填参数、产出音频。含平台级 StepFun 通道（阶段 0）与 gen→music 优先顺序 | 活资产 —— 已复核，实施中 |
 | [`superpowers/plans/2026-10-06-audio-node-unified-capability.md`](./superpowers/plans/2026-10-06-audio-node-unified-capability.md) | **音频节点统一创作能力实施计划** —— 11 个 task（平台 StepFun 通道 / AudioKind 元数据 / resolver 分流 / design 同步 / music 异步 / 工具扩展 / 前端三分类 / 治理同步 / 验收），逐 task 带 TDD 步骤、Review Focus 与回滚顺序 | 活资产 —— 实现依据 |
-| [`superpowers/specs/2026-10-21-turn-continuity-design.md`](./superpowers/specs/2026-10-21-turn-continuity-design.md) | **回合连续性** —— 故障后用户说「继续」能接上。生产取证（Nest/pi 双写静默分叉）+ 三层根因 + 行业（Codex/Claude Code/WorkBuddy）对标 + 吃满上游 `appendCustomEntry`/`entryProjectors` 的落地方案 | 活资产 —— 产品级交互契约 |
+| [`superpowers/specs/2026-10-21-turn-continuity-design.md`](./superpowers/specs/2026-10-21-turn-continuity-design.md) | **回合连续性** —— 故障后用户说「继续」能接上。生产取证（Nest/pi 双写静默分叉）+ 三层根因 + 行业（Codex/Claude Code/WorkBuddy）对标 + 「第四份状态」落 Nest DB（权威）、每轮重算注入动态块、跨压缩走既有 `RetentionState` 通道 | 活资产 —— 产品级交互契约 |
+| [`superpowers/plans/2026-10-21-turn-continuity.md`](./superpowers/plans/2026-10-21-turn-continuity.md) | **回合连续性实施计划** —— 三批（恢复层/双写对账/未完成态可见+自动续跑），含架构修正说明（初版 pi 侧 custom entry 方案的三处不成立）与各批次风险回滚 | 活资产 —— 实现依据 |
 
 > 该规格**不新增 agent 工具**（走每轮动态上下文），因此不阻塞
 > `agent/tool-framework-roadmap.html` §4 P1 的常驻集下沉。

@@ -178,3 +178,41 @@ test("Review Focus #5：内容含「## 长期记忆」字样时的块类型归�
 	assert.equal(classifyBlock("关于长期记忆的讨论：\n正文"), "general");
 });
 
+
+// ── 回合连续性（2026-10-21 修正）────────────────────────────────────────
+// turnstate: shared `renderTurnStateBlock` 首行 `【上一轮被中断…】`
+//
+// ⭐ 这组测试的存在理由：状态块若落进 `general` 档（份额 0 ⇒ 只享 80 字保底），
+// 「用户当时的请求」会被截掉 ⇒ 模型退回「读画布猜意图」= 2026-10-21 事故的形态本身。
+// ⇒ 必须有独立 kind，且截断后**用户请求仍在**。
+
+test("classifyBlock：回合状态块命中 turnstate（不是 general）", () => {
+	assert.equal(classifyBlock("【上一轮被中断，以下是该轮的任务状态】\n用户当时的请求：x"), "turnstate");
+	assert.equal(classifyBlock("  【上一轮被中断，以下是该轮的任务状态】\n前导空白"), "turnstate");
+});
+
+test("turnstate 有独立预算份额（不落 general 的 80 字保底）", () => {
+	const block = "【上一轮被中断，以下是该轮的任务状态】\n用户当时的请求：让他们抱在一起";
+	// totalChars 很小 ⇒ general 档只会留 80 字；turnstate 档应保留整块
+	const r = applyDynamicBudget([block], { totalChars: 4000 });
+	assert.ok(r.blocks[0].includes("让他们抱在一起"), "turnstate 块不该被截到丢请求");
+});
+
+test("turnstate 超限：保头保尾（含用户请求与未完成步骤）+ 尾注", () => {
+	const big =
+		"【上一轮被中断，以下是该轮的任务状态】\n" +
+		"用户当时的请求：让他们抱在一起\n" +
+		"未完成：".concat("run_image_generation ".repeat(400)) +
+		"\n最后一步标记";
+	const r = applyDynamicBudget([big], { totalChars: 4000 }); // turnstate 5% → 200
+	const out = r.blocks[0];
+	assert.ok(out.startsWith("【上一轮被中断"), "必须保头");
+	assert.ok(out.includes("让他们抱在一起"), "必须保住用户请求");
+	assert.ok(out.includes("已截断"), "必须含截断尾注");
+});
+
+test("turnstate 尾注不承诺 read_document（状态块不是附件）", () => {
+	const big = "【上一轮被中断，以下是该轮的任务状态】\n" + "用户当时的请求：x".repeat(2000);
+	const r = applyDynamicBudget([big], { totalChars: 4000 });
+	assert.ok(!r.blocks[0].includes("read_document"));
+});

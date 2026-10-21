@@ -19,6 +19,7 @@ import {
   GenerationRecoveryService,
   RECOVERY_AGENT_PORT,
 } from './generation-recovery/generation-recovery.service'
+import { TurnStateService } from './turn-state.service'
 
 @Module({
   imports: [
@@ -39,6 +40,9 @@ import {
     WorkflowRecipeService,
     CompositionService,
     AgentMemoryService,
+    // 回合连续性（2026-10-21 修正）：「上一轮任务进行到哪」的权威副本存储
+    // （AgentThread.turnState）。@Optional 注入 ⇒ 未装配时降级为「不记录」，对话照常。
+    TurnStateService,
     // 生成失败回注（spec §6，PR3）：默认 flag off（GENERATION_RECOVERY_ENABLED），
     // off 时零派发；发射点在 AgentCanvasToolsService.waitVideoGeneration（两处
     // orchestrator 失败终态在此汇出，且本模块已 imports StudioModule，反向注入会成环）。

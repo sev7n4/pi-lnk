@@ -13,17 +13,29 @@
  * general（真未知标记）份额 0：只享 MIN_BLOCK_CHARS 保底，且计 unknown_kind 告警。
  */
 
-export type BlockKind = "canvas" | "vision" | "sidebar" | "memory" | "todo" | "general";
+export type BlockKind =
+	| "canvas"
+	| "vision"
+	| "sidebar"
+	| "memory"
+	| "todo"
+	| "turnstate"
+	| "general";
 
-/** kind → 占总预算比例（canvas 50% + vision 25% + sidebar 10% + memory 10% + todo 5% = 1.0；general 0=只享保底）。
+/** kind → 占总预算比例（canvas 50% + vision 25% + sidebar 10% + memory 10% + todo 5% + turnstate 5% = 1.05；
+ * general 0=只享保底）。
  * todo 5% 从 canvas 挪出（C1 跨压缩任务清单，spec 2026-10-09-task-tool-design.md §3.4；
- * 任务清单截断=静默丢任务，故给独立 kind 而非落 general 80 字保底）。 */
+ * 任务清单截断=静默丢任务，故给独立 kind 而非落 general 80 字保底）。
+ * turnstate 5% 同样从 canvas 挪出（2026-10-21 回合连续性修正）：「上一轮被中断」的状态块
+ * 与 todo 块**同构**——都是「任务进度」，截断 = 静默丢任务 ⇒ 落 general 80 字保底会让
+ * 「用户当时的请求」被截掉 ⇒ 模型退回「读画布猜意图」= 本次事故的形态本身。 */
 const DEFAULT_SHARES: Record<BlockKind, number> = {
 	canvas: 0.5,
 	vision: 0.25,
 	sidebar: 0.1,
 	memory: 0.1,
 	todo: 0.05,
+	turnstate: 0.05,
 	general: 0,
 };
 
@@ -45,6 +57,7 @@ export function truncationNote(kind: BlockKind, n: number): string {
  * - vision: sidebar-vision.ts `【侧栏参考图解析】`（全角括号）
  * - sidebar: sidebar-block.ts `侧栏参考素材：`（I1=... 是块内行格式，不是块首）
  * - memory: agent.service.ts `## 长期记忆（用户历史偏好，供参考）`
+ * - turnstate: shared `renderTurnStateBlock` 首行 `【上一轮被中断…】`（回合连续性，2026-10-21 修正）
  * 未识别 → general（份额 0，只享保底；由调用方计 unknown_kind 告警）。
  */
 export function classifyBlock(block: string): BlockKind {
@@ -55,6 +68,10 @@ export function classifyBlock(block: string): BlockKind {
 	if (t.startsWith("侧栏参考素材")) return "sidebar";
 	if (t.startsWith("## 长期记忆")) return "memory";
 	if (t.startsWith("## 当前任务清单")) return "todo";
+	// 回合连续性（2026-10-21 修正）：「上一轮被中断」的任务状态块。
+	// ⚠️ 前缀必须与 shared 的 `renderTurnStateBlock` 首行一致 ⇒ 改一边必须改另一边
+	// （Nest 侧 `turn-state-store.test.ts` 钉住了这个前缀）。
+	if (t.startsWith("【上一轮被中断")) return "turnstate";
 	return "general";
 }
 
@@ -71,8 +88,8 @@ export interface BudgetResult {
 
 export function applyDynamicBudget(blocks: readonly string[], opts: BudgetOptions): BudgetResult {
 	const shares = { ...DEFAULT_SHARES, ...(opts.shares ?? {}) };
-	const dropped: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, todo: 0, general: 0 };
-	const used: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, todo: 0, general: 0 };
+	const dropped: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, todo: 0, turnstate: 0, general: 0 };
+	const used: Record<BlockKind, number> = { canvas: 0, vision: 0, sidebar: 0, memory: 0, todo: 0, turnstate: 0, general: 0 };
 
 	const out = blocks.map((block) => {
 		if (block.trim().length === 0) return block; // 空块原样（不进预算、不计数）
