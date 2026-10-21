@@ -13,6 +13,7 @@ import { useNodeMediaUpload } from '@/composables/useNodeMediaUpload'
 import { useMediaInspector, type NodeMediaInfoSummary } from '@/composables/useMediaInspector'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
 import { NODE_GENERATION_STATUS, NODE_PENDING_CONFIRM_STATUS } from '@/constants/dockStudio'
+import { nodePlaceholderText } from '@/utils/incompleteNode'
 
 const props = defineProps<{
   id: string
@@ -208,9 +209,7 @@ function openMediaInspector(e?: Event) {
               {{
                 data.status === 'uploading'
                   ? `上传中 ${data.uploadProgress ?? 0}%`
-                  : data.status === 'generating'
-                    ? '生成中...'
-                    : '上传或等待生成'
+                  : nodePlaceholderText(data.status)
               }}
             </span>
           </template>

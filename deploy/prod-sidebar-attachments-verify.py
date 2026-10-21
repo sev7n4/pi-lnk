@@ -298,20 +298,6 @@ def verify_atomic_local_refs(tok: str) -> None:
     )
 
 
-def _seed_image_with_media_edges(canvas: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
-    nodes = canvas.get("nodes") or []
-    edges = canvas.get("edges") or []
-    media_ids = {n["id"] for n in nodes if n.get("type") == "mediaInput"}
-    for node in nodes:
-        if node.get("type") != "image":
-            continue
-        incoming = [e for e in edges if e.get("target") == node.get("id")]
-        media_sources = [str(e.get("source") or "") for e in incoming if str(e.get("source") or "") in media_ids]
-        if media_sources:
-            return node, media_sources
-    return None, []
-
-
 def verify_campaign_orch_clarify_without_skill(tok: str) -> None:
     """P1 AC-04: orchestration utterance + attachment without Skill → clarify_route."""
     sid = http("POST", "/sessions", {"title": f"sidebar-orch-clarify-{int(time.time())}"}, t=tok)["data"]["id"]

@@ -76,7 +76,7 @@ export function createViewCanvasMediaTools(
 					if (NON_IMAGE_TYPES.has(t)) {
 						return viewResult({
 							ok: false,
-							error: `节点 ${nodeId} 是 ${t} 节点，本工具仅支持图片（image/mediaInput）`,
+							error: `节点 ${nodeId} 是 ${t} 节点，本工具仅支持图片（image）`,
 						});
 					}
 					url = String(node?.data?.url ?? "").trim();

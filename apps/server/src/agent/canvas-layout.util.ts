@@ -1,70 +1,13 @@
-import type { CanvasNode } from '@lnkpi/shared'
+// SP-A：布局原语已上移 @lnkpi/shared（packages/shared/src/canvas/layout.ts，放置内核单建/批建同享）。
+// 此处 re-export 保 Nest 侧既有 import 面不变；行为等价由 Task 1 金样测试 + 本文件既有测试锁。
+// 2026-10-21：NODE_SIZES 随上移收敛为当前 NodeType 4 项（image/video/audio/text）——prompt 已于
+// 2026-10-17 下线、group/shot/sceneComposer 于 2026-10-19 下线，存量历史节点统一走 fallback。
+import { getAbsolutePosition, getNodeSize, placeBatchNodes, type LayoutNode } from '@lnkpi/shared'
+
+export { getAbsolutePosition, getNodeSize, placeBatchNodes, type LayoutNode }
 
 /** 分组框相对子节点包围盒的留白（与 web 端 GROUP_PADDING 同值，视觉一致）。 */
 export const GROUP_PADDING = 80
-
-export type LayoutNode = CanvasNode & {
-  parentNode?: string
-  style?: Record<string, unknown> | string
-  extent?: string
-  expandParent?: boolean
-  draggable?: boolean
-  selectable?: boolean
-  zIndex?: number
-  dimensions?: { width?: number; height?: number }
-}
-
-const NODE_SIZES: Record<string, { w: number; h: number }> = {
-  text: { w: 280, h: 160 },
-  image: { w: 280, h: 280 },
-  // 视频：长边基准 320（尺寸随比例 contain，包络 320×320）
-  video: { w: 320, h: 320 },
-  audio: { w: 280, h: 140 },
-  prompt: { w: 280, h: 120 },
-}
-
-function parseStyleSize(style: LayoutNode['style']): { w?: number; h?: number } {
-  if (!style || typeof style === 'string') return {}
-  const width = style.width
-  const height = style.height
-  const w =
-    typeof width === 'number'
-      ? width
-      : typeof width === 'string'
-        ? Number.parseFloat(width)
-        : undefined
-  const h =
-    typeof height === 'number'
-      ? height
-      : typeof height === 'string'
-        ? Number.parseFloat(height)
-        : undefined
-  return { w: Number.isFinite(w) ? w : undefined, h: Number.isFinite(h) ? h : undefined }
-}
-
-export function getNodeSize(node: LayoutNode): { w: number; h: number } {
-  const type = String(node.type ?? '')
-  const fallback = NODE_SIZES[type] ?? { w: 280, h: 160 }
-  const fromStyle = parseStyleSize(node.style)
-  return {
-    w: node.dimensions?.width ?? fromStyle.w ?? fallback.w,
-    h: node.dimensions?.height ?? fromStyle.h ?? fallback.h,
-  }
-}
-
-export function getAbsolutePosition(node: LayoutNode, nodes: LayoutNode[]): { x: number; y: number } {
-  let x = node.position.x
-  let y = node.position.y
-  let parentId = node.parentNode
-  while (parentId) {
-    const parent = nodes.find((n) => n.id === parentId)
-    if (!parent) break
-    x += parent.position.x
-    y += parent.position.y
-    parentId = parent.parentNode
-  }
-  return { x, y }
-}
 
 function updateNodePosition(nodes: LayoutNode[], id: string, pos: { x: number; y: number }) {
   const idx = nodes.findIndex((n) => n.id === id)
@@ -489,11 +432,24 @@ export function syncGroupsToChildren(groups: CanvasGroup[], nodes: LayoutNode[])
 	return out;
 }
 
-/** 分组摘要（工具结果回给 agent：有哪些组、含哪些节点）。 */
+/**
+ * 分组摘要（工具结果回给 agent：有哪些组、含哪些节点、什么颜色）。
+ *
+ * 2026-10-21 补 `colorKey`：此前只返回 `{id,title,childIds}`，Agent 读得到组的存在
+ * 却读不到颜色，于是「把这个组改成红色的」无法落地 —— 既不知道能改成什么色，
+ * 也不知道改完会变成什么。`colorKey` 缺省时**省略该字段**（不塞 neutral），
+ * 以保持与存储形态一致（缺省 = neutral，前端 `normalizeGroupColorKey` 兜底）。
+ */
 export function summarizeGroups(groups: CanvasGroup[]): Array<{
 	id: string;
 	title: string;
 	childIds: string[];
+	colorKey?: string;
 }> {
-	return groups.map((g) => ({ id: g.id, title: g.title, childIds: g.childIds }));
+	return groups.map((g) => ({
+		id: g.id,
+		title: g.title,
+		childIds: g.childIds,
+		...(g.colorKey ? { colorKey: g.colorKey } : {}),
+	}));
 }

@@ -20,6 +20,12 @@ import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
+// 分组色键白名单（2026-10-21 下沉到 @lnkpi/shared，这里走前端 re-export）。
+// 用在 canvas_command 的 set_group_color 分支做最后一道防线。
+// ⛔ `GROUP_COLOR_KEYS` 的元素类型是字面量联合，`includes` 不接受任意 string ⇒
+// 收窄用 `as GroupColorKey`（与 groupColors.ts 的 normalizeGroupColorKey 同范式；
+// 运行时仍由 includes 真正把关，as 只为过类型系统）。
+import { GROUP_COLOR_KEYS, type GroupColorKey } from '@/components/canvas/groupColors'
 import { buildTurnReceipt } from './composer/turnReceipt'
 import { acceptedHint, cancelOutcomeHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { QueueCancelOutcome } from '@/components/agent/queueDelivery'
@@ -201,6 +207,17 @@ const emit = defineEmits<{
   proposeWaitEnd: []
   /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
   arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
+  /**
+   * 分组工具组（2026-10-21）：Agent 自主打组 / 解组 / 改分组色。
+   *
+   * ⛔ 这三个事件与 `arrangeNodes` 同理，**必须由 CanvasPage 执行**（不能只落库）：
+   * 分组在 vue-flow 活动态是真实节点（parentNode + extent:'parent'），只有页面把
+   * nodes.value 改掉再 persistUserEdit() 才能既进 undo 栈又让用户立刻看见框。
+   * 走服务端端点会让前端内存态与库里分组分叉，用户下一次保存就把分组抹掉。
+   */
+  groupNodes: [payload: { nodeIds: string[]; title?: string; groupId?: string }]
+  ungroupGroup: [groupId: string]
+  setGroupColor: [payload: { groupId: string; colorKey: string | null }]
   /** 「导入到画布」：建成结构化节点组（由 CanvasPage 写 SSOT）。 */
   importNodeGraph: [payload: import('@/components/agent/presentation/AgentNodeGraph.vue').GraphPayload]
 }>()
@@ -1734,7 +1751,9 @@ function startResize(event: MouseEvent) {
       floatWidth.value = width
       floatPos.value = { ...floatPos.value, x: floatRight - width }
     } else {
-      panelWidth.value = clamp(window.innerWidth - ev.clientX, PANEL_MIN_W, PANEL_MAX_W)
+      // 桌面 docks 在左侧（CanvasPage 用 flex-row-reverse 把侧栏翻到左）：
+      // 侧栏左缘贴屏幕 x=0，宽度即鼠标到左缘的距离。
+      panelWidth.value = clamp(ev.clientX, PANEL_MIN_W, PANEL_MAX_W)
     }
   }
   const onUp = () => {
@@ -2147,6 +2166,38 @@ async function deliverQueued(intent: QueueIntent, slot?: QueuedSlot): Promise<bo
     target.state = 'failed'
     target.hint = err instanceof Error ? err.message : '投递失败'
     return false
+  }
+}
+
+/**
+ * 把 pi 的 `entryId` 回填到服务端已落库的那条 user 消息上（2026-10-21）。
+ *
+ * ## 为什么需要
+ * 正常发送（`streamConversation`）在调 pi **之前**就落了 user 行，而 `pi.prompt()` 只返回
+ * `{ accepted }`（`pi-runtime/src/session-manager.ts:2370`）⇒ 正常发送的 entryId
+ * **只能从 `pi_message_end` 事件拿**。不回填 ⇒ 刷新后的历史消息没有 fork 切点，
+ * 「③ 重跑」只能降级兜底（这正是 `AgentSideRail` 里「若该消息还没拿到 entryId」那条兜底注释
+ * 所描述的状态）。
+ *
+ * ## 为什么插话不走这里
+ * 插话在**入队那一刻**就由服务端用 entryId 落库了（`persistQueuedUserMessage`）⇒ 无需回填。
+ *
+ * ## 为什么可以静默失败
+ * 这只影响「刷新后能否从这条历史消息重跑」，属于**增强**而非正确性：失败时退化为既有的
+ * 降级兜底，不该打断对话流，也不该弹错（用户在流式中发言，最忌干扰）。
+ */
+async function persistUserEntryId(entryId: string): Promise<void> {
+  const threadId = agentThreadId.value
+  if (!entryId || !threadId) return
+  try {
+    await fetch(apiUrl('/api/agent/chat/user/entry-id'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ sessionId: props.sessionId, threadId, entryId }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // fail-soft：见上方注释。服务端 entryId 唯一索引保证重试/多页签都不会写出重复行。
   }
 }
 
@@ -2891,6 +2942,13 @@ function handleEvent(event: { type: string; data: unknown }) {
             selectionNodeIds: extras.selectionNodeIds,
           })
         },
+        // ⭐ 2026-10-21（统一 user 消息身份）：正常发送的 user 行是在调 pi **之前**落的，
+        // 而 `pi.prompt()` 只回 `{ accepted }` ⇒ entryId 只能从这里回填给服务端，
+        // 否则刷新后的历史消息没有 fork 切点、「③ 重跑」只能降级兜底。
+        // 幂等由服务端唯一索引兜住（多页签各报一次也 no-op）。
+        persistEntryId: (entryId) => {
+          void persistUserEntryId(entryId)
+        },
       })
       break
     }
@@ -3066,6 +3124,8 @@ function handleEvent(event: { type: string; data: unknown }) {
         type: string
         nodeId?: string
         nodeIds?: string[]
+        /** 分组工具组（2026-10-21）：ungroup_group / set_group_color 带 groupId。 */
+        groupId?: string
         exportMode?: 'full_package' | 'lightweight'
         attachments?: SidebarAttachment[]
         mode?: 'grid' | 'along_edges'
@@ -3131,6 +3191,28 @@ function handleEvent(event: { type: string; data: unknown }) {
           gap: cmd.gap ?? 40,
           edges: cmd.edges?.length ? cmd.edges : undefined,
         })
+      } else if (cmd.type === 'group_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
+        // 标题 trim 后空串按无标题处理（与 CanvasPage 的命名口径一致）
+        const gTitle = typeof cmd.title === 'string' && cmd.title.trim() ? cmd.title.trim() : undefined
+        // ⭐ groupId 由 Agent 侧生成并随命令下发（canvas_command 单向无回传，
+        // 前端自生成的 id Agent 拿不到 ⇒ 建组→改色/解组会断链）。
+        // 前端会校验撞号/空串并自行回退 ⇒ 这里原样透传即可。
+        const gId = typeof cmd.groupId === 'string' && cmd.groupId.trim() ? cmd.groupId.trim() : undefined
+        emit('groupNodes', { nodeIds: cmd.nodeIds, ...(gTitle ? { title: gTitle } : {}), ...(gId ? { groupId: gId } : {}) })
+      } else if (cmd.type === 'ungroup_group' && cmd.groupId) {
+        emit('ungroupGroup', cmd.groupId)
+      } else if (cmd.type === 'set_group_color' && cmd.groupId) {
+        // ⛔ 色键最后一道防线：工具侧已按 8 键白名单拒过非法值，这里再收一次。
+        // 理由同 tool 侧注释——非法键若漏到这里，patchGroupNodeData 会照写，
+        // 失败推迟到渲染层且**静默**（normalizeGroupColorKey 落 neutral ⇒ 用户读成
+        // 「设了没反应」，这正是 2026-10-21 修掉的那个缺陷的同构版本）。
+        const rawKey = (cmd as unknown as { colorKey?: string | null }).colorKey
+        const key = rawKey === null || rawKey === undefined || rawKey === '' ? null : rawKey
+        if (key !== null && !GROUP_COLOR_KEYS.includes(key as GroupColorKey)) {
+          console.warn('[canvas_command] 丢弃非法分组色键', key, '可用：', GROUP_COLOR_KEYS.join('/'))
+        } else {
+          emit('setGroupColor', { groupId: cmd.groupId, colorKey: key })
+        }
       } else if (cmd.type === 'introduce_nodes' && cmd.attachments?.length) {
         for (const att of cmd.attachments) {
           if (sidebar.pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) break
@@ -3546,7 +3628,8 @@ defineExpose({
     :style="{ width: asidePanelWidth }"
   >
     <div class="flex h-full min-h-0">
-      <!-- 收缩态：右下角 agent logo 悬浮按钮（移动端裸条常驻，fab 仅桌面收缩态） -->
+      <!-- 收缩态：左下角 agent logo 悬浮按钮（移动端裸条常驻，fab 仅桌面收缩态）。
+           2026-10-22 与画布视口工具条左右互换（侧栏翻左后整体镜像）。 -->
       <Teleport to="body">
         <button
           v-if="!open && !pickModeActive"
@@ -4571,7 +4654,15 @@ defineExpose({
                   @mention="insertRefMention"
                   @reorder="sidebar.reorder"
                 />
-                <div v-else class="agent-composer__input-wrap">
+                <!-- 2026-10-21 修回归：此处**必须无条件渲染**（不得写 v-else）。
+                     #532 下线语音时删除了前面的 `<template v-if="holdActive">` 录音块，
+                     原本与之配对的 v-else 静默改挂到 AgentRefStrip 的
+                     v-if="pendingAttachmentItems.length" 上 ⇒ 只要有引用 chip（画布 ◎ 拾取 /
+                     多选「加入 Agent 引用」），输入行（MentionInput textarea）整行不渲染，
+                     裸条只剩 [芯片行][＋/模型/发送]，用户无法输入文字（stacked 三行布局
+                     见下方 CSS 注释：行0 芯片 / 行1 输入文本 / 行2 控件——行1 必须常在）。
+                     空闲态由 .is-idle 的 display:none 规则隐藏输入行，不依赖本处条件。 -->
+                <div class="agent-composer__input-wrap">
                 <!-- 2026-10-18 修 B：leading-inset 跟随 ◎ 可见性（两端统一）——
                      原 PC 恒 18px（◎ 藏着也缩进）、移动端恒 0（◎ 压住行首字符）。
                      ⑥ 画布点选模式：placeholder 承载跨容器引导（点 ◎ 后视线还在 composer，
@@ -4900,17 +4991,18 @@ defineExpose({
 }
 
 .agent-side-rail.is-docked-open {
-  border-left: 1px solid var(--lnk-border-subtle);
+  /* 桌面并排时侧栏在左侧，分隔线贴着右侧（邻接画布）。 */
+  border-right: 1px solid var(--lnk-border-subtle);
 }
 
 .agent-side-rail.is-resizing {
   transition: none;
 }
 
-/* ---- 收缩态右下角 logo 悬浮按钮 ---- */
+/* ---- 收缩态左下角 logo 悬浮按钮 ---- */
 .agent-fab {
   position: fixed;
-  right: 20px;
+  left: 20px;
   bottom: 20px;
   z-index: 55;
   display: flex;
@@ -5089,12 +5181,14 @@ defineExpose({
   display: block;
 }
 
-/* ---- 左边缘拖拉调宽 ---- */
+/* ---- 右边缘拖拉调宽（侧栏翻到左侧后，手柄贴其右缘邻接画布） ---- */
 .agent-resize-handle {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -3px;
+  /* 侧栏翻到左侧后，手柄贴右缘（邻接画布）。 */
+  right: -3px;
+  left: auto;
   z-index: 5;
   width: 7px;
   cursor: ew-resize;
@@ -5116,7 +5210,9 @@ defineExpose({
 }
 
 .agent-panel-floating .agent-resize-handle {
+  /* 浮窗手柄仍贴左缘，独立于左侧 docks 的 right:-3px。 */
   left: 0;
+  right: auto;
 }
 
 .agent-panel-header {

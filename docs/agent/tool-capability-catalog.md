@@ -19,9 +19,9 @@
 
 | 口径 | 数值 | 说明 |
 |---|---|---|
-| 工具总数 | **48** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具） |
-| 实际注册 | **47** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
-| 常驻 / 延迟 | **29 / 19**（2026-10-14 起） | `ALWAYS_ON_TOOL_NAMES` 29 个；其余 19 个延迟（含默认不注册的那 1 个）<br>2026-10-14：`view_canvas_media` 新增常驻（P0 感知闭环，spec 2026-10-14-view-canvas-media-design.md；点名资产 = T2 图片降级占位文案，运行时下发面）。此前：2026-10-06 分级下发实验确认 28/19，详见 §7 |
+| 工具总数 | **54** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具）；口径＝`scripts/verify-tool-tiering.ts` 的扫描方式（`name:` 字面量 + `runTool()` 工厂 + `tool_search`），2026-10-21 实测 |
+| 实际注册 | **53** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
+| 常驻 / 延迟 | **34 / 20**（2026-10-21 起） | `ALWAYS_ON_TOOL_NAMES` 34 个；其余 20 个延迟（含默认不注册的那 1 个）<br>2026-10-21：SP-A 批量创建 `create_nodes_batch` 新增常驻（43→44）；分组工具组 3 个（`group_nodes` / `ungroup_group` / `set_group_color`）新增常驻——分组是**侧车**不是节点，Agent 无法用 `add_node` 变通，进延迟集就只剩「答做不到」一条路（`tool_search` 触发率实测 0 ⇒ 延迟即不可达）。**三者 prompt-registry/skills 零点名**，属「官方模式：description 承担发现能力」（同 `get_canvas_summary` / `view_canvas_media`）——不占 L6 预算（全仓最紧组合余量仅 75 字符）。此前：2026-10-14 `view_canvas_media` 新增常驻（P0 感知闭环）；2026-10-06 分级下发实验确认 28/19，详见 §7 |
 
 ⚠️ 计数的两个坑（已踩过）：① 5 个 `run_*_generation` 由 `generation.ts:99-128` 的 `runTool(...)` 工厂以**位置参数**构造（`runTool(name, label, description, path)`），`grep 'name: "'` 扫不到 ⇒ 早期漏计成 41；② `focus_node`（单数）与 `focus_nodes`（复数）是两个工具，只差一个字母。
 
@@ -158,11 +158,11 @@ if (addedNames.length !== 0) {
 
 ### 附带：常驻集中「零下发点名」的 2 个工具
 
-`run_text_generation` / `run_prompt_generation` 无任何规则或 skill 点名，仍留在常驻集——这是 `tiering.ts:25` 的**有意豁免**（「run_* / cancel_generation 保留常驻，用户确认后当轮即用，双保险」）。**不算违规**，但登记在此，作为常驻瘦身时的候选（`run_*` 五个里只有这两个零引用）。
+`run_text_generation` 无任何规则或 skill 点名，仍留在常驻集——这是 `tiering.ts:25` 的**有意豁免**（「run_* / cancel_generation 保留常驻，用户确认后当轮即用，双保险」）。**不算违规**，但登记在此，作为常驻瘦身时的候选（`run_*` 里只有它零引用）。<br>⚠️ 2026-10-21 更正：`run_prompt_generation` 已随 prompt 节点下线一并移除，**不再注册**（原 §4/§5 两表都还列着它，是幽灵条目，已删）。
 
 ---
 
-## 4. 目录 — 常驻集（29）
+## 4. 目录 — 常驻集（33）
 
 「点名」列只列**会下发**的来源；`PR:` = prompt-registry 规则，`SK:` = skill（括号内为文件:行）。
 2026-10-06 减点名第一批：原 #1-#8、#12（读类诊断 9 工具）已下沉延迟集，点名同步撤除（规则 20/21/12 改写 + 4 个 skill 撤改）。
@@ -175,33 +175,37 @@ if (addedNames.length !== 0) {
 | 4 | `recall_memory` | SK:drama-*（5 个） | 开新任务前取回该项目/角色的既有约定与偏好 |
 | 5 | `save_memory` | PR:memory_scope.tail:10；SK:drama-*（5 个） | 沉淀跨会话记忆；默认仅本画布，只有偏好/品牌/暗号才 `scope:'user'` |
 | 6 | `upsert_media_node` | PR:media_tool_policy:11-12；SK:drama-*, ecommerce | 要在画布上**新建或更新一个媒体节点**（图/视频/音频） |
-| 7 | `upsert_prompt_node` | SK:drama-script-writing, drama-storyboard | 新建/更新**提示词节点**（剧本、分镜文案） |
-| 8 | `set_node_text` | PR:canvas_view_policy:11, media_tool_policy:11-12；SK:drama-script-writing, ecommerce | 改节点上的文字（改提示词、改文案）——改完即算内容落地 |
-| 9 | `update_node` | SK:drama-audio-design, drama-qc-review | 改节点**非文本属性**（标题、尺寸、状态等） |
-| 10 | `connect_nodes` | PR:media_tool_policy:11-12；SK:drama-*, ecommerce | 建立节点间的因果/引用连线（谁生成谁、谁参考谁） |
-| 11 | `attach_refs` | PR:canvas_daily_ops:13, media_tool_policy:11；SK:drama-*, ecommerce | 把**已有**媒体节点挂成某个节点的参考图 |
-| 12 | `apply_sidebar_attachments` | PR:media_tool_policy:11；SK:drama-*, ecommerce | 把侧栏里用户贴的附件落到指定节点上 |
-| 13 | `propose_generation` | PR:canvas_view_policy:13, gen_tool_policy:11, media_tool_policy:11-13；SK:drama-*, ecommerce（6 个） | **要出图/出视频前的必经一步**：提交生成提议、等用户确认（不可跳过） |
-| 14 | `arrange_nodes` | PR:canvas_daily_ops:11；SK:drama-*, ecommerce（5 个） | 用户说「整理 / 排版 / 按关系展开 / 对齐」——只重排不改内容，别自己算坐标 |
-| 15 | `render_canvas_view` | PR:canvas_view_policy:11-13 | 解释、澄清、汇报类场景要**出一张卡片给用户看**（非仅文本回答） |
-| 16 | `set_node_generation_params` | PR:media_tool_policy:13 | 建节点后**补生成参数**（模型、尺寸、场景）——规则要求「落参数才叫完成」 |
-| 17 | `focus_node`（单数） | SK:drama-audio-design, drama-character-design, drama-motion-video, drama-scene-worldview, drama-storyboard, ecommerce | 出图后定位到**刚生成的那一个**节点做 QA |
-| 18 | `focus_nodes`（复数）⚠️ | **PR:canvas_daily_ops:11**（规则 19） | 把**一批**节点带进视口（「整理/排版」刚排完的场景）。2026-10-06 由延迟集提为常驻，见发现 A |
-| 19 | `remove_edges` | SK:drama-qc-review | 发现**连错**的引用关系时删边（edge id 来自布局读工具，tool_search 搜「画布」加载） |
-| 20 | `run_image_generation` | SK:ecommerce-product-photo | 用户已确认提议后**真正跑图**；`status=timeout` 未完，稍后查 status |
-| 21 | `run_video_generation` | SK:drama-motion-video | 跑视频（最长约 11 min），确认语义同 image |
-| 22 | `run_text_generation` | （无）⚠️ 有意豁免 | 跑文案生成，结果写入节点内容 |
-| 23 | `run_prompt_generation` | （无）⚠️ 有意豁免 | 跑提示词生成，结果写入节点 |
-| 24 | `run_audio_generation` | SK:drama-audio-design, drama-storyboard | 跑 TTS/音频生成，用节点上的音频参数 |
-| 25 | `cancel_generation` | PR:gen_tool_policy:13 | 用户要中止进行中的生成（按 record_id 或 node_id） |
-| 26 | `ask_user` | PR:media_tool_policy:14；SK:drama-*, ecommerce（4 个） | 需要用户拍板/补信息时出选项卡，别替用户猜 |
-| 27 | `load_skill` | SK:ecommerce-product-photo | 进入某垂类任务（剧集、电商图…）时加载该 skill 的详细步骤 |
-| 28 | `tool_search` | PR:canvas_daily_ops:12/14 | **现有工具里没有用户要的能力时先搜它**（勿直接答「做不到」） |
-| 29 | `view_canvas_media` | T2 图片降级占位文案（payload-images.ts，运行时下发面）＋工具描述自述；prompt-registry/skills 零点名 | 看**图片像素内容**：用户问「图里有什么/构图如何」、指代图片节点、或上下文占位提示图片被移除后取回（P0 感知闭环，spec 2026-10-14） |
+| 7 | `set_node_text` | PR:canvas_view_policy:11, media_tool_policy:11-12；SK:drama-script-writing, ecommerce | 改节点上的文字（改提示词、改文案）——改完即算内容落地 |
+| 8 | `update_node` | SK:drama-audio-design, drama-qc-review | 改节点**非文本属性**（标题、尺寸、状态等） |
+| 9 | `connect_nodes` | PR:media_tool_policy:11-12；SK:drama-*, ecommerce | 建立节点间的因果/引用连线（谁生成谁、谁参考谁） |
+| 10 | `attach_refs` | PR:canvas_daily_ops:13, media_tool_policy:11；SK:drama-*, ecommerce | 把**已有**媒体节点挂成某个节点的参考图 |
+| 11 | `apply_sidebar_attachments` | PR:media_tool_policy:11；SK:drama-*, ecommerce | 把侧栏里用户贴的附件落到指定节点上 |
+| 12 | `propose_generation` | PR:canvas_view_policy:13, gen_tool_policy:11, media_tool_policy:11-13；SK:drama-*, ecommerce（6 个） | **要出图/出视频前的必经一步**：提交生成提议、等用户确认（不可跳过） |
+| 13 | `arrange_nodes` | PR:canvas_daily_ops:11；SK:drama-*, ecommerce（5 个） | 用户说「整理 / 排版 / 按关系展开 / 对齐」——只重排不改内容，别自己算坐标 |
+| 14 | `render_canvas_view` | PR:canvas_view_policy:11-13 | 解释、澄清、汇报类场景要**出一张卡片给用户看**（非仅文本回答） |
+| 15 | `set_node_generation_params` | PR:media_tool_policy:13 | 建节点后**补生成参数**（模型、尺寸、场景）——规则要求「落参数才叫完成」 |
+| 16 | `focus_node`（单数） | SK:drama-audio-design, drama-character-design, drama-motion-video, drama-scene-worldview, drama-storyboard, ecommerce | 出图后定位到**刚生成的那一个**节点做 QA |
+| 17 | `focus_nodes`（复数）⚠️ | **PR:canvas_daily_ops:11**（规则 19） | 把**一批**节点带进视口（「整理/排版」刚排完的场景）。2026-10-06 由延迟集提为常驻，见发现 A |
+| 18 | `remove_edges` | SK:drama-qc-review | 发现**连错**的引用关系时删边（edge id 来自布局读工具，tool_search 搜「画布」加载） |
+| 19 | `run_image_generation` | SK:ecommerce-product-photo | 用户已确认提议后**真正跑图**；`status=timeout` 未完，稍后查 status |
+| 20 | `run_video_generation` | SK:drama-motion-video | 跑视频（最长约 11 min），确认语义同 image |
+| 21 | `run_text_generation` | （无）⚠️ 有意豁免 | 跑文案生成，结果写入节点内容 |
+| 22 | `run_audio_generation` | SK:drama-audio-design, drama-storyboard | 跑 TTS/音频生成，用节点上的音频参数 |
+| 23 | `cancel_generation` | PR:gen_tool_policy:13 | 用户要中止进行中的生成（按 record_id 或 node_id） |
+| 24 | `ask_user` | PR:media_tool_policy:14；SK:drama-*, ecommerce（4 个） | 需要用户拍板/补信息时出选项卡，别替用户猜 |
+| 25 | `load_skill` | SK:ecommerce-product-photo | 进入某垂类任务（剧集、电商图…）时加载该 skill 的详细步骤 |
+| 26 | `tool_search` | PR:canvas_daily_ops:12/14 | **现有工具里没有用户要的能力时先搜它**（勿直接答「做不到」） |
+| 27 | `view_canvas_media` | T2 图片降级占位文案（payload-images.ts，运行时下发面）＋工具描述自述；prompt-registry/skills 零点名 | 看**图片像素内容**：用户问「图里有什么/构图如何」、指代图片节点、或上下文占位提示图片被移除后取回（P0 感知闭环，spec 2026-10-14） |
+| 28 | `group_nodes` | （无）⚠️ 官方模式：description 承担发现 | 用户要「把几个节点归到一起/打组/起个名当一个整体管」——**只圈住现有节点，不改坐标**；要排列仍用 `arrange_nodes`。⚠️ 分组不是节点类型，不能用 `add_node` 建组 |
+| 29 | `ungroup_group` | （无）⚠️ 官方模式：description 承担发现 | 用户要「解组/取消分组/把组散开」——**只去框，节点留在画布原位**；要删节点用 `delete_nodes` |
+| 30 | `set_group_color` | （无）⚠️ 官方模式：description 承担发现 | 给分组框换底色（8 键白名单：moss/dusk/clay/celadon/graphite/rose/plum，省略即复位默认灰）；非法色键在**工具侧**就拒 |
+| 31 | `create_nodes_batch` | （无）⚠️ 官方模式：description 承担发现 | 一次原子建多个节点（上限见工具描述）+ 边；节点由服务端布局成整齐链；**不启动生成**（生成要另调 `propose_generation`） |
+| 32 | `propose_plan` | （无）⚠️ 官方模式：description 承担发现 | 把多步执行方案提交用户确认并阻塞等待；用户说「先出方案/先别动手」时必用；确认前禁止写画布或调生成类工具 |
+| 33 | `todo_write` | （无）⚠️ 官方模式：description 承担发现 | 维护多步任务清单（≥3 步）透明化；**全量覆写**（漏发历史项等同删除）、同时至多一项 in_progress、全部完成提交空数组清空 |
 
-## 5. 目录 — 延迟集（19）
+## 5. 目录 — 延迟集（21）
 
-这 19 个的 schema 默认不下发，需要 `tool_search` 命中后才可调用。**全部无下发侧资产点名**，符合判据
+这 21 个的 schema 默认不下发，需要 `tool_search` 命中后才可调用。**全部无下发侧资产点名**，符合判据
 （原第 1 项 `focus_nodes` 因被规则第 19 条点名，已于 2026-10-06 按发现 A 的 A1 方案提为常驻；
 2026-10-06 减点名第一批：下表 #11-#19 为读类诊断工具，**点名已同步撤除**后下沉——规则 20/21/12
 改写为能力描述 + tool_search 指引，4 个 skill 的点名改为搜索话术）。
@@ -227,21 +231,28 @@ if (addedNames.length !== 0) {
 | 17 | `list_user_assets` | 资产库清单 | ~~规则21~~（已撤） | 问「我的素材/资产库里有什么」——搜「资产」 |
 | 18 | `read_document` | 读上传文档 | ~~规则21~~（已撤） | 用户上传参考文档/附件要读全文——搜「文档」 |
 | 19 | `list_model_options` | 模型选项 | ~~SK:drama-audio-design~~（已撤） | 要选生成模型 / 问「有哪些模型」——搜「模型」 |
+| 20 | `delete_memory` | 记忆清理 | 按 id **永久删除**一条记忆（id 从 `recall_memory` 结果取）；不可逆，**仅在用户明确要求忘记时用**；事实变了应改用 `save_memory` 覆盖 |
+| 21 | `spawn_subagent` | 派发子代理 | 把一项**只读调研**交给子代理独立执行（带本对话完整上下文），结束后返回报告；本回合阻塞等待；用于大范围查资料/联网调研 |
 
 ## 6. 复现命令
 
-在仓库根目录执行（48 个工具名按 §1 口径穷举＝工具总数，含默认不注册的 `introduce_nodes_to_agent` 与 5 个工厂构造的 `run_*`；实际注册数 47）：
+在仓库根目录执行（54 个工具名按 §1 口径穷举＝工具总数，含默认不注册的 `introduce_nodes_to_agent` 与 4 个工厂构造的 `run_*`；实际注册数 53。2026-10-21 新增：`create_nodes_batch`（SP-A 批量创建）+ 分组工具组 3 个 `group_nodes` / `ungroup_group` / `set_group_color`）：
 
 ```bash
-TOOLS="apply_asset_to_node apply_sidebar_attachments arrange_nodes ask_user attach_refs \
-cancel_generation connect_nodes delete_nodes duplicate_node focus_node focus_nodes \
-get_canvas_layout get_canvas_summary get_generation_diagnostic get_generation_status get_node \
-grid_slice_image introduce_nodes_to_agent list_generation_scenes list_generation_tasks \
-list_model_options list_user_assets load_skill open_image_editor propose_generation \
-read_document recall_memory redo remove_edges render_canvas_view save_memory \
-save_node_to_asset_library set_node_generation_params set_node_text tool_search undo \
-update_node upload_media_to_canvas upsert_media_node upsert_prompt_node view_canvas_media web_fetch web_search \
-run_image_generation run_video_generation run_text_generation run_prompt_generation run_audio_generation"
+TOOLS="apply_asset_to_node apply_sidebar_attachments arrange_nodes ask_user \
+attach_refs cancel_generation connect_nodes create_nodes_batch \
+delete_memory delete_nodes duplicate_node focus_node \
+focus_nodes get_canvas_layout get_canvas_summary get_generation_diagnostic \
+get_generation_status get_node grid_slice_image group_nodes \
+introduce_nodes_to_agent list_generation_scenes list_generation_tasks list_model_options \
+list_user_assets load_skill open_image_editor propose_generation \
+propose_plan read_document recall_memory redo \
+remove_edges render_canvas_view run_audio_generation run_image_generation \
+run_text_generation run_video_generation save_memory save_node_to_asset_library \
+set_group_color set_node_generation_params set_node_text spawn_subagent \
+todo_write tool_search undo ungroup_group \
+update_node upload_media_to_canvas upsert_media_node view_canvas_media \
+web_fetch web_search"
 for t in $TOOLS; do
   hits=$(grep -rlE "\b${t}\b" prompt-registry skills 2>/dev/null | sort | tr '\n' ' ')
   echo "$t :: ${hits:-（无点名）}"
@@ -261,5 +272,5 @@ done
 | 「延迟 ∩ 点名 = ∅」接 CI 门禁（②） | ✅ **已接**（R5，2026-10-06） | `scripts/verify-tool-tiering.ts` + `pnpm verify-tool-tiering`，已挂进 `ci.yml` 的 `Verify spec figures` job。四条断言：A1 延迟集 ∩（COMPOSED_IDS 内规则 + `skills/*.md`）点名 = ∅（红线）／A2 ALWAYS_ON 无幽灵名／A3 常驻项必须真注册／A4 `focus_node`+`focus_nodes` 双常驻回归锁（这坑踩过两个月）。变异测试：规则点名→红、skill 点名→红、移出 `focus_nodes`→红、加幽灵名→红。当前实测：注册 47 / 常驻 28 / 延迟 19 / **A1 命中 0** |
 | 「叙述代替调用」残余失败形态 | ✅ **用户裁定：保留 + 补观测**（2026-10-06；规则层压缩已落地 #231） | 全量 28 复测 10 轮中 1 例「输出『我先搜索…』却没真调」（约 10-20% 可恢复失败率）。规则 22 追加「宣告要搜的同一轮必须真调 tool_search，禁止只叙述不调用」（+34 字符，L6 全组合 3042→3076，余 124）。⚠️ 按仓库判据这是**概率性缓解**（「模型能复述指令但不会照做」），确定性担保仍以事件层（`tool_start`/`tool_end`）为准。<br>**用户裁定：保留不回滚 + 补观测**（R1 曾把「推进下一步」误读为授权、已如实上报）。观测口径（失败形态两步判定 / H0 / 阈值不拍整数 / **事先写死的回滚条件**）已定于 `docs/ops/prompt-ab-runbook.md`「观测口径」节。回滚 = 规则 22 删该分句 |
 | 观测基线与判据（③） | ✅ **基线已取，判据已定**（2026-10-06 生产 `85dbcb04`） | 实测：`tool_search_calls_total{outcome="hit"}` = **9**、`miss` = 1、`tool_search_activated_total` = **42**、工具调用总数 = **77** ⇒ 触发率 ≈ **11.5%**（10 次搜索 / 87 次相关调用）。被下沉的 9 个读工具**全有真实调用**（`get_canvas_summary` 6 / `list_model_options` 5 / `get_node` 4 / `get_canvas_layout` 3 …）⇒ **功能没断，动机已在真实流量里出现**。<br>**判据必须挂分母**：`rate(pi_runtime_tool_search_calls_total{outcome="hit"}[1h]) / rate(pi_runtime_tool_calls_total[1h]) > 0`；⛔ 不挂 `sessions_active`（瞬时 gauge，=0 不代表没流量，#219 已吃过这个亏）。<br>是否加告警归 R2（`#226` 已有 Actions schedule + PromQL 巡检，R5 不重复造轮子）。<br>⚠️ 残余风险（R1 报）：约 10–20% 轮次「叙述代替调用」⇒ **用户裁定「保留 + 补观测」**（见上行 R1 行）；观测口径已定于 `prompt-ab-runbook.md`「观测口径」节，失败可见、可重跑恢复 |
-| `run_text_generation` / `run_prompt_generation` 是否移出常驻 | R5 | 双保险设计 vs 常驻预算，维持 R5 判 |
+| `run_text_generation` 是否移出常驻 | R5 | 双保险设计 vs 常驻预算，维持 R5 判。（`run_prompt_generation` 已随 prompt 节点下线移除，2026-10-21 从本表与 §4/§5 目录中删除） |
 

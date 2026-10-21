@@ -1,11 +1,12 @@
 export type WorkType = 'canvas' | 'shortfilm'
 
 /** 与 agentContract 的 NODE_TYPES 保持一致（改一处必须改另一处，否则画布动作会被静默丢弃）。
- *  2026-09-28 补入 `audio`；mediaInput / videoComposition / worldModel 当前无需求，有意不列。
+ *  2026-09-28 补入 `audio`。
  *  2026-10-17 下线 `prompt`（提示词节点，PR feat/prompt-node-decommission）——存量画布
  *  里的 prompt 节点数据仍在 JSON 中（运行时按字符串分发渲染），但联合类型与白名单不再接纳。
  *  2026-10-19 下线 `group` / `shot` / `sceneComposer`（分组 / 分镜 / 导演台）节点：联合类型与白名单不再接纳，
- *  存量节点仅走运行时兜底渲染。 */
+ *  存量节点仅走运行时兜底渲染。
+ *  2026-10-19 下线 `mediaInput`（媒体输入）：附件按媒体类型直落 image/video/audio/text 节点。 */
 export type NodeType = 'image' | 'video' | 'audio' | 'text'
 
 export * from './randomId'
@@ -16,6 +17,7 @@ export * from './canvas/duplicateToCanvasActions'
 export * from './canvas/imageVersions'
 export * from './canvas/workflowExchange'
 export * from './canvas/workflowImportPlacement'
+export * from './canvas/layout'
 export * from './canvas/workflowRecipe'
 export * from './canvas/recipeCatalog'
 export * from './canvas/compositionGold'
@@ -45,6 +47,10 @@ export * from './retryRecommendation'
 export * from './publicMediaUrl'
 export * from './upstreamRefInline'
 export * from './agentContract'
+// 分组契约（色卡 8 键白名单 SSOT + CanvasGroup zod + 三个命令请求体），2026-10-21 下沉。
+// 前端 groupColors.ts 的 GROUP_COLOR_KEYS 已改为从此 re-export，不再自有副本 ——
+// 白名单必须在写入口（服务端 setGroupColor）就能拒非法值，而不是等前端渲染层静默落 neutral。
+export * from './canvasGroup'
 export * from './sidebarAttachments'
 export * from './agentIntent'
 export * from './promptContent'
@@ -169,11 +175,15 @@ export interface CanvasEdge {
  * ⚠️ **不再是节点类型**：分组曾以 `group` 节点承载（`CanvasNode` + `parentNode`），
  * 现改为 `CanvasData.groups` 侧车结构 —— 分组框由画布 overlay 渲染，不占节点位、
  * 不进 agent 节点白名单。`childIds` 为绝对坐标语义（子节点 position 不再相对父）。
+ *
+ * 运行时 schema 是 `./canvasGroup` 的 `CanvasGroupSchema`（两者同形，
+ * 由 `canvasGroup.contract.test.ts` 防漂移）。`colorKey` 的 8 键白名单 SSOT
+ * 也在那里（`GROUP_COLOR_KEYS`）。
  */
 export interface CanvasGroup {
   id: string
   title: string
-  /** 8 色卡键；缺省 = neutral（中性灰）。色值本体在 `--neo-group-*` 令牌。 */
+  /** 8 色卡键（`GROUP_COLOR_KEYS`）；缺省 = neutral（中性灰）。色值在 `--lnk-group-*` 令牌。 */
   colorKey?: string
   childIds: string[]
   /** 画布绝对坐标下的外框（含 padding）。 */

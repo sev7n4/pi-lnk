@@ -227,15 +227,32 @@ export function resizeGroupByHandle(
   且常在 5 分钟处报 `[vitest-worker]: Timeout calling "onTaskUpdate"`（**环境噪音，非失败**）。
 
 ### Task 6 — 全量校验
-- [ ] `apps/web` `vue-tsc --noEmit` 零错误
-- [ ] 根 `pnpm build` 全绿
-- [ ] 定向 vitest 全绿
-- [ ] `--neo-*` 棘轮计数（若减少 ⇒ 同步下调基线）
-- [ ] `git status --short` 为空
+- [x] `apps/web` `vue-tsc --noEmit` 零错误
+- [x] 根 `pnpm build` 全绿
+- [x] 定向 vitest 全绿
+- [x] `--neo-*` 棘轮计数（若减少 ⇒ 同步下调基线）
+- [x] `git status --short` 为空
 
 ### Task 7 — PR + 合并 + 部署
-- [ ] 推分支 + 开 PR（四必填项）
-- [ ] 盯 CI 三个 required check
-- [ ] squash 合并
-- [ ] 盯部署 + 生产取证
-- [ ] 清理 worktree / 远端分支
+- [x] 推分支 + 开 PR（四必填项）
+- [x] 盯 CI 三个 required check
+- [x] squash 合并
+- [x] 盯部署 + 生产取证
+- [x] 清理 worktree / 远端分支
+
+## 交付结果（2026-10-21 已上线）
+
+- **PR #535** squash 合并 ⇒ master `39aff272`；CI 三个 check 全绿；部署 run `39551789106` success
+  （`Build API on CVM` 被 paths 过滤 skipped —— 本批只改 web，符合预期）。
+- **生产取证**（`/opt/lnkpi/web/dist/assets/`）：
+  - `CanvasPage-BK2v0S6m.js` 内含 `class:xe(["group-resize-handle nodrag nopan",[`group-resize-handle--${N}`,...]])`、
+    `"data-handle":N`、`"aria-label":`调整分组框尺寸 ${N}``；
+  - `const I6=["nw","n","ne","e","se","s","sw","w"]`（3 处）+ `S6={nw:{west:!0,east:!1...`；
+  - `CanvasPage-CTgc1ipQ.css` 内手柄规则 25 条（`var(--lnk-text-primary)` / `var(--lnk-accent)`）；
+  - `index-BAfcD8SB.css` 内 `.group-node-container{...min-height:160px;width:100%;height:100%;box-sizing:border-box;...}`
+    且 **height 在 min-height 之后**（min-height@114 < height:100%@142）。
+- **对照判据**（防「本来就有的」误判）：`git show fa5baa32:…` 旧版无手柄、旧版 CSS 无
+  `height:100%` / `width:100%` / `box-sizing` ⇒ 生产确实换上了新代码。
+- ⭐ **取证坑（又一次印证）**：`group-resize-handle--${dir}` 是**运行时模板字符串**，
+  产物里没有 `group-resize-handle--nw` 这种字面量 ⇒ 按方向名 grep 必然 0 命中，
+  **不能据此判「没上线」**。正解：grep **属性名 / 中文文案 / 方向数组字面量**。

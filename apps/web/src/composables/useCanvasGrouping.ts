@@ -551,11 +551,19 @@ export type GroupFromSelectionResult = {
  * 容错语义（保留 #494 的口径，避免「明明已打组却报失败」的困惑）：
  * - 所选节点全部已属于【同一个】现存分组 ⇒ 视为重选该分组（不新建、不改写）；
  * - 选中的节点横跨多个分组 / 部分已分组 ⇒ 先把这些节点从原分组放出来，再整体归并。
+ *
+ * ⭐ `groupId`（2026-10-21，Agent 路径）：**由调用方指定分组 id**。
+ * 起因：Agent 建组后必须能立刻用同一个 id 调改色/解组，但 `canvas_command` 是
+ * **单向 SSE 下发**（pi-runtime → Nest → 前端），**没有回传通道** ⇒ 前端自生成的
+ * id（`group-${Date.now().toString(36)}`）Agent 永远拿不到 ⇒ 「建组→改色」断链。
+ * ⇒ Agent 侧先算好 id 随命令下发，前端照用 ⇒ 同一轮内即可继续操作。
+ * 用户手动路径**不传**该参数 ⇒ 沿用原生成逻辑（行为零变化）。
  */
 export function createGroupFromSelection(
   nodes: FlowNode[],
   selectedIds: string[],
   title?: string,
+  groupId?: string,
 ): GroupFromSelectionResult | null {
   const byId = new Map(nodes.map((n) => [n.id, n]))
   const selected = selectedIds.filter((id) => {
@@ -612,9 +620,14 @@ export function createGroupFromSelection(
 
   const gx = minX - GROUP_PADDING
   const gy = minY - GROUP_PADDING
-  const groupId = `group-${Date.now().toString(36)}`
+  // ⚠️ Agent 指定的 id 必须**校验后**才用：空串/与现有节点撞号都不能落，
+  // 否则会覆盖掉真实节点（渲染层按 id 索引，撞号 = 节点凭空消失）。
+  const requestedId = typeof groupId === 'string' ? groupId.trim() : ''
+  const idTaken = requestedId.length > 0 && byId.has(requestedId)
+  const finalGroupId =
+    requestedId.length > 0 && !idTaken ? requestedId : `group-${Date.now().toString(36)}`
   const groupNode = {
-    id: groupId,
+    id: finalGroupId,
     type: GROUP_NODE_TYPE,
     position: { x: gx, y: gy },
     style: {
@@ -633,7 +646,7 @@ export function createGroupFromSelection(
     const abs = getAbsolutePosition(child, working)
     patched.set(id, {
       ...child,
-      parentNode: groupId,
+      parentNode: finalGroupId,
       extent: 'parent',
       expandParent: true,
       zIndex: 1,
@@ -643,7 +656,7 @@ export function createGroupFromSelection(
 
   return {
     nodes: [...working.map((n) => patched.get(n.id) ?? n), groupNode],
-    groupId,
+    groupId: finalGroupId,
     mode: merged ? 'merged' : 'created',
     childIds: [...childIds],
   }

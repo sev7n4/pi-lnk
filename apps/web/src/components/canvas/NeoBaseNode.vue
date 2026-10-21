@@ -21,6 +21,7 @@ import {
   CANVAS_REF_PICK_REJECT_KEY,
 } from '@/composables/canvasNodeActions'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
+import { incompleteBadgeLabel, isIncompleteNode } from '@/utils/incompleteNode'
 
 const props = withDefaults(
   defineProps<{
@@ -51,6 +52,19 @@ const nodeStatus = computed(() => {
   if (props.status) return resolveNeoNodeStatus(String(props.status))
   return resolveNeoNodeStatus(String(props.data?.status ?? ''))
 })
+
+/**
+ * 「未完成」态（批次 3.1）。
+ *
+ * ⭐ 放在**节点公共外壳**这里 ⇒ 一处覆盖全部 10 种节点类型
+ * （image/video/text/audio/shot/director/composition/world/prompt/input）。
+ *
+ * 口径：`data.status === 'incomplete'`（后端在回合中断时写入的事实标记）。
+ * ⚠️ 它**不是**「生成中」：后台生成任务可能仍在跑，但那一轮已中断 ⇒
+ * 展示层要说「未完成」，dock 门控等逻辑仍按非生成态处理。
+ */
+const isIncomplete = computed(() => isIncompleteNode(props.data))
+const incompleteBadge = computed(() => (isIncomplete.value ? incompleteBadgeLabel(props.data) : ''))
 
 const shellStyle = computed(() => {
   const width = props.width ?? meta.value.defaultWidth
@@ -213,6 +227,13 @@ const { bindings: longPressBindings } = useLongPress(() => {
       >
       <span v-else class="neo-node-title min-w-0 flex-1 truncate">{{ displayTitle }}</span>
       <span class="neo-node-status shrink-0" :class="nodeStatus" />
+      <!-- 未完成角标（批次 3.1）：回合中断时该节点没跑完 ⇒ 用户直接看得见「卡在哪」 -->
+      <span
+        v-if="isIncomplete"
+        class="neo-node-incomplete-badge nodrag nopan"
+        data-testid="node-incomplete-badge"
+        :title="incompleteBadge"
+      >{{ incompleteBadge }}</span>
       <button
         v-if="addToAgent"
         type="button"
@@ -228,7 +249,10 @@ const { bindings: longPressBindings } = useLongPress(() => {
 
     <div
       class="neo-node"
-      :class="[meta.variant, { selected, 'neo-node-locate-flash': isLocateFlashing }]"
+      :class="[
+        meta.variant,
+        { selected, 'neo-node-locate-flash': isLocateFlashing, 'neo-node-incomplete': isIncomplete },
+      ]"
       :style="shellStyle"
     >
       <div class="neo-node-content">
@@ -271,3 +295,37 @@ const { bindings: longPressBindings } = useLongPress(() => {
     </Handle>
   </div>
 </template>
+
+<style scoped>
+/*
+ * 批次 3.1：「未完成」态的视觉。
+ *
+ * ⭐ 颜色全部消费 --lnk-* 语义令牌（neoUsageRatchet 棘轮：新代码禁 --neo-*）。
+ * ⚠️ 描边用 **outline** 而不是 border：节点的 border 由各节点自己的卡片样式承担
+ * （`.neo-gen-card` 等），此处加 border 会改变盒模型 → 卡片尺寸跳动。
+ * outline 不参与布局 ⇒ 零位移。
+ */
+.neo-node-incomplete {
+  outline: 1px dashed var(--lnk-warning-border);
+  outline-offset: -1px;
+}
+
+/*
+ * 角标：放在标题行（状态点旁）。
+ * ⚠️ 不放在卡片右上角 —— 那里已被 `.neo-task-chrome`（重试/取消）占据（top:8px; right:8px）。
+ */
+.neo-node-incomplete-badge {
+  flex: none;
+  max-width: 60%;
+  padding: 1px 6px;
+  overflow: hidden;
+  border: 1px solid var(--lnk-warning-border);
+  border-radius: 9999px;
+  background: var(--lnk-warning-bg);
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--lnk-warning);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

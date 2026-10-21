@@ -31,6 +31,8 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   upload_media_to_canvas: { icon: '📤', verb: '上传素材' },
   grid_slice_image: { icon: '🔲', verb: '九宫格切图' },
   connect_nodes: { icon: '🔗', verb: '连接节点' },
+  // SP-A（2026-10-21）：批量建节点（一次调用一批，自动排布整齐）
+  create_nodes_batch: { icon: '📐', verb: '批量创建节点' },
   remove_edges: { icon: '🔌', verb: '删除连线' },
   introduce_nodes_to_agent: { icon: '🧲', verb: '引入画布节点' },
   cancel_generation: { icon: '⏹', verb: '取消生成' },
@@ -49,6 +51,11 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   // 系统级（非工具）：上下文压缩（审计 #6，pi_compaction 事件驱动）
   compaction: { icon: '🗜️', verb: '压缩上下文' },
   arrange_nodes: { icon: '🪟', verb: '整理布局' },
+  // 分组工具组（2026-10-21）：三者都是 ui_command，走 canvas_command 前端执行。
+  // 不登记会落 ⚙ 兜底「调用 group_nodes」，用户读不到人话。
+  group_nodes: { icon: '🗃', verb: '打组' },
+  ungroup_group: { icon: '🗃', verb: '解组' },
+  set_group_color: { icon: '🎨', verb: '改分组色' },
   focus_node: { icon: '🎯', verb: '定位节点' },
   focus_nodes: { icon: '🎯', verb: '定位多个节点' },
   undo: { icon: '↩', verb: '撤销' },

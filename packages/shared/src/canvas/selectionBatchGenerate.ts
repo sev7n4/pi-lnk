@@ -57,6 +57,10 @@ export interface PlanSelectionGenerateResult {
   groupExpanded: Array<{ groupId: string; childIds: string[] }>
 }
 
+// 类型白名单。`prompt` 是**已下线类型**（2026-10-17，创建入口已断），此处保留是
+// 「存量冻结只读」的必要条件：存量画布里仍有 prompt 节点（生产有 517 个），
+// 用户框选它们时应照常进入批量生成队列，而不是被当成 unsupported 静默跳过。
+// ⛔ 保留 ≠ 允许新建：新建侧由 Nest 的 CREATABLE_NODE_TYPES（4 项）把闸。
 const UNSUPPORTED_TYPES = new Set(['mediaInput', 'sceneComposer', 'videoComposition', 'worldModel', 'group'])
 const SUPPORTED_TYPES = new Set(['image', 'video', 'audio', 'prompt', 'text'])
 

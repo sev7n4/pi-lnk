@@ -501,6 +501,40 @@ export class AgentController {
   }
 
   /**
+   * 回填 user 消息的 pi `entryId`（2026-10-21，统一 user 消息身份）。
+   *
+   * ## 为什么需要它
+   * `streamConversation` 在调 pi **之前**就落了 user 行，而 `pi.prompt()` 只返回
+   * `{ accepted }`（`pi-runtime/src/session-manager.ts:2370`）⇒ 正常发送的 entryId
+   * 只能从 `pi_message_end` 事件拿。不回填 ⇒ 刷新后的历史消息没有 fork 切点，
+   * 「③ 重跑」只能降级兜底。
+   *
+   * ## 为什么插话不走这里
+   * 插话入队即回传 entryId，服务端在落库那一刻就写好了（见 `persistQueuedUserMessage`）。
+   *
+   * ## 幂等
+   * 客户端可能在**多个页签**同时收到同一个 `pi_message_end` ⇒ 重复调用是常态。
+   * `entryId` 上有唯一索引，命中已有行即 no-op（见 service 的 `attachUserMessageEntryId`）。
+   */
+  @Post('chat/user/entry-id')
+  @UseGuards(AuthGuard)
+  async attachUserEntryId(
+    @Body() dto: { sessionId: string; threadId: string; entryId: string },
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    if (!dto?.entryId?.trim() || !dto?.threadId?.trim()) {
+      return { code: 400, message: 'threadId and entryId are required', data: null }
+    }
+    await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    const data = await this.agentService.attachUserMessageEntryId({
+      sessionId: dto.sessionId,
+      threadId: dto.threadId,
+      entryId: dto.entryId,
+    })
+    return { code: 0, message: 'ok', data }
+  }
+
+  /**
    * 撤回单条已入队的插话（2026-10-20，对齐 vendor `AgentLane.cancelQueued`）。
    *
    * 存在理由：气泡上的「🗑 放弃」「✎ 取回内容」此前只清前端槽位，服务端那条仍在 vendor

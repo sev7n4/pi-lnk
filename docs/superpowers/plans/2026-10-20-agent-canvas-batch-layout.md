@@ -17,7 +17,7 @@
 - **HN3**：单批 ≤12 节点（`BATCH_NODES_MAX`）、≤20 边（与 `CONNECT_NODES_MAX_EDGES` 同值）；超限工具层抛可操作错误。
 - 草稿-only：节点恒以 `status:'draft'` 创建；不启动生成；逐节点走既有 `propose_generation`。
 - 放置计算只放 Nest 服务层；shared 模块是纯函数（无 IO、无时钟、无随机——确定性可金样测试）。
-- prompt 点名走 `canvas_daily_ops`（加第 23 条，≤30 字符）；同步矩阵三处：disk md + `MANIFEST.yaml` contentHash + `prompt-registry.fallback.ts` 内嵌常量；`pnpm prompt:lint` L7 逐字校验把关（assembler test 的 EXPECTED 是常量引用，自动跟随）。
+- prompt 点名走 `canvas_daily_ops`（加第 23 条，≤30 字符）；同步矩阵**四处**（不是三处）：disk md + `MANIFEST.yaml` contentHash + `prompt-registry.fallback.ts` 内嵌常量 + `prompt-registry/PROMPT_SPEC.md` 的生成块（`node <主仓>/node_modules/tsx/dist/cli.mjs scripts/gen-prompt-spec-map.ts --write`，漏了第 4 处 ⇒ CI `prompt-registry 门禁` 红灯）；`pnpm prompt:lint` L7 逐字校验把关（assembler test 的 EXPECTED 是常量引用，自动跟随）。
 - tiering 注释内**禁出现带引号的工具名**（`verify-tool-tiering` 幽灵项误报）；新工具进 `ALWAYS_ON_TOOL_NAMES`（tiering 铁律：upsert 是部分替代品 ⇒ 必须常驻）。
 - `addNodesBatch` 不得调用 `layoutNodesAlongEdges`（`agent-canvas-tools.no-auto-layout.test.ts:29-31` 源码扫描断言——放置内核不是 along_edges，不违反）。
 - 跨包改动（shared/server/pi-runtime）完成后跑根目录 `pnpm build`；本机 pnpm 走 corepack shim（`PATH=/tmp/pnpm-shim:$PATH`）。
@@ -52,7 +52,7 @@
   - `export function placeBatchNodes(existing: LayoutNode[], items: Array<{ key: string; type: string }>, edges?: Array<{ source: string; target: string }>): Map<string, { x: number; y: number }>`
   - 常数（模块内私有，测试经行为断言不直接引用）：`PLACEMENT_H_GAP=40`、`PLACEMENT_ROW_WIDTH=1120`、`PLACEMENT_COLLISION_PAD=12`、`PLACEMENT_MAX_STEPS=24`、`PLACEMENT_ORIGIN={x:80,y:80}`
 
-- [ ] **Step 1: 写失败测试**（`packages/shared/src/canvas/layout.test.ts`，全文如下）
+- [x] **Step 1: 写失败测试**（`packages/shared/src/canvas/layout.test.ts`，全文如下）
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -221,12 +221,12 @@ describe('上移回归（getNodeSize / getAbsolutePosition 逐字等价）', () 
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd packages/shared && pnpm vitest run src/canvas/layout.test.ts`
 Expected: FAIL——`Cannot find module './layout'`（文件未建）
 
-- [ ] **Step 3: 写实现**（`packages/shared/src/canvas/layout.ts`，全文如下）
+- [x] **Step 3: 写实现**（`packages/shared/src/canvas/layout.ts`，全文如下）
 
 ```ts
 // SP-A（2026-10-20）：批量创建放置内核 + 布局原语上移（自 apps/server/src/agent/canvas-layout.util.ts
@@ -482,7 +482,7 @@ export function placeBatchNodes(
 }
 ```
 
-- [ ] **Step 4: 在 index.ts 追加导出并跑全量 shared 测试**
+- [x] **Step 4: 在 index.ts 追加导出并跑全量 shared 测试**
 
 Edit `packages/shared/src/index.ts`（在 `export * from './canvas/workflowImportPlacement'` 行后加一行）：
 
@@ -493,7 +493,7 @@ export * from './canvas/layout'
 Run: `cd packages/shared && pnpm vitest run`
 Expected: PASS——layout.test.ts 金样 10+2 用例全绿；shared 既有测试零回归（re-export 未动既有导出）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/shared/src/canvas/layout.ts packages/shared/src/canvas/layout.test.ts packages/shared/src/index.ts
@@ -512,12 +512,12 @@ git commit -m "feat(shared): SP-A 放置内核 placeBatchNodes + 布局原语上
 - Consumes: Task 1 产出的 `getNodeSize` / `getAbsolutePosition` / `LayoutNode` / `placeBatchNodes` / `snapToGrid`（from `@lnkpi/shared`）。
 - Produces: `canvas-layout.util.ts` 的既有导出面不变（`GROUP_PADDING`、`createGroupFromNodes`、`ungroupNode`、`layoutNodesAlongEdges`、`layoutNodesInGrid`、`moveNodes`、`applyLayoutOps`、`summarizeLayoutGroups`、`getNodeSize`、`getAbsolutePosition`、`LayoutNode`）——Nest 侧调用方零改动。
 
-- [ ] **Step 1: 改文件头**（先跑一次既有测试拿基线，确认当前全绿）
+- [x] **Step 1: 改文件头**（先跑一次既有测试拿基线，确认当前全绿）
 
 Run: `pnpm --filter @lnkpi/server exec vitest run src/agent/agent-canvas-tools.service.test.ts src/agent/agent-canvas-tools.no-auto-layout.test.ts`
 Expected: PASS（基线；若红先修绿再继续）
 
-- [ ] **Step 2: 应用修改**
+- [x] **Step 2: 应用修改**
 
 Edit `apps/server/src/agent/canvas-layout.util.ts`：
 
@@ -534,12 +534,12 @@ export { getAbsolutePosition, getNodeSize, placeBatchNodes, type LayoutNode }
 
 3. 保留 `GROUP_PADDING`（第 3 行）及其后所有函数原文不动——它们内部对 `getNodeSize` / `getAbsolutePosition` 的同名调用因顶部 import 而继续解析。
 
-- [ ] **Step 3: 跑 server 侧 import 链全量测试**
+- [x] **Step 3: 跑 server 侧 import 链全量测试**
 
 Run: `pnpm --filter @lnkpi/server exec vitest run src/agent/`
 Expected: PASS——含 `agent-canvas-tools.service.test.ts`（import 链重度用户）、`no-auto-layout`、`controller.test.ts`、composition/workflow 相关测试零回归
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/server/src/agent/canvas-layout.util.ts
@@ -559,7 +559,7 @@ git commit -m "refactor(server): canvas-layout.util 切换 shared re-export（SP
 - Consumes: Task 1 的 `placeBatchNodes(existing, items, edges?)` 与 `LayoutNode`；既有 `applyOrStage`（:973 已在用）、`edgeId(source, target)`（connectNodes :1181 在用）、`nextNodeId`、`modalityDefaults`。
 - Produces: `addNodesBatch(input: { sessionId, userId, items: Array<{key,title,targetType,prompt?,position?,...}>, edges?: Array<{source,target}>, stage? }): Promise<{ nodes: Array<{key,nodeId}>, actions: CanvasAction[] }>`——Task 4 的 pi 工具经 `POST /agent/internal/add-nodes-batch` 消费；服务端导出 `export const BATCH_NODES_MAX = 12`。
 
-- [ ] **Step 1: 写失败测试**（在 `agent-canvas-tools.service.test.ts` 的 `describe('AgentCanvasToolsService')` 内追加）
+- [x] **Step 1: 写失败测试**（在 `agent-canvas-tools.service.test.ts` 的 `describe('AgentCanvasToolsService')` 内追加）
 
 ```ts
   describe('addNodesBatch 批量创建与边解析（SP-A）', () => {
@@ -684,12 +684,12 @@ git commit -m "refactor(server): canvas-layout.util 切换 shared re-export（SP
 
 注意：若测试文件顶部未 import `assert`，用既有 import（`vitest` 的 `expect` + `await expect(...).rejects.toThrow(/.../)`）替代 `assert.rejects`——执行时任选一种，全文统一。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `pnpm --filter @lnkpi/server exec vitest run src/agent/agent-canvas-tools.service.test.ts -t "addNodesBatch"`
 Expected: FAIL——`edges` 参数不存在（类型报错或运行时不产 add_edge）；落位断言失败（旧网格公式给 `{x:80,y:80}` 恰好撞对第一个——把「落位」用例的 existing 预置一个节点使旧公式给出 `{x:360,y:80}` 而内核给避碰值，确保红）
 
-- [ ] **Step 3: 实现 service.ts 扩展**
+- [x] **Step 3: 实现 service.ts 扩展**
 
 在 `agent-canvas-tools.service.ts` 常量区（:68-69 `GRID_X`/`GRID_Y` 旁）加：
 
@@ -839,7 +839,7 @@ import { placeBatchNodes, type LayoutNode } from './canvas-layout.util'
 
 （`GRID_X`/`GRID_Y` 常量与 :1611/:2698 两处旧公式**保持不动**——规格 §12 登记的遗留，本任务不扩大改动面。）
 
-- [ ] **Step 4: 实现 controller DTO 扩展**
+- [x] **Step 4: 实现 controller DTO 扩展**
 
 Edit `apps/server/src/agent/agent-canvas-tools.controller.ts`：`AddNodesBatchDto`（:149-164）的 `items` 字段后、`stage` 前插入：
 
@@ -854,12 +854,12 @@ Edit `apps/server/src/agent/agent-canvas-tools.controller.ts`：`AddNodesBatchDt
 
 （`EdgeDto` :166 已定义；`BATCH_NODES_MAX` 从 service import；`@ArrayMaxSize` 若未 import 则从 `class-validator` 补。边数上限取 24 = 节点上限×2，与规格「≤20」的表述差异以工具层 20 为准——DTO 只是兜底不卡合法请求。若评审要求严格 20，改 `@ArrayMaxSize(20)`。）
 
-- [ ] **Step 5: 跑测试确认通过 + 源码扫描回归**
+- [x] **Step 5: 跑测试确认通过 + 源码扫描回归**
 
 Run: `pnpm --filter @lnkpi/server exec vitest run src/agent/agent-canvas-tools.service.test.ts src/agent/agent-canvas-tools.no-auto-layout.test.ts src/agent/agent-canvas-tools.controller.test.ts`
 Expected: PASS——新增 7 用例全绿；`no-auto-layout` 的 `addNodesBatch does not arrange` 继续过（放置内核不是 along_edges）
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/server/src/agent/agent-canvas-tools.service.ts apps/server/src/agent/agent-canvas-tools.controller.ts apps/server/src/agent/agent-canvas-tools.service.test.ts
@@ -880,7 +880,7 @@ git commit -m "feat(server): addNodesBatch 支持 edges 同事务解析 + key �
 - Consumes: Task 3 的 `POST /agent/internal/add-nodes-batch`（body: `{ sessionId, userId, items, edges }`；items 字段 `{key,title,targetType,prompt}`，edges 字段 `{source,target}`）；既有 `withWriteSignal`、`client.post`、`LnkpiToolContext`。
 - Produces: 工具 `create_nodes_batch`（tier `graph_batch`，常驻）；模块常量 `CREATE_NODES_BATCH_MAX_NODES = 12` / `CREATE_NODES_BATCH_MAX_EDGES = 20`（canvas-write.ts 内，`CONNECT_NODES_MAX_EDGES` 同款模式）。
 
-- [ ] **Step 1: 写失败测试**（`services/pi-runtime/src/tools/create-nodes-batch.test.ts`，全文如下）
+- [x] **Step 1: 写失败测试**（`services/pi-runtime/src/tools/create-nodes-batch.test.ts`，全文如下）
 
 ```ts
 import { test } from "node:test";
@@ -995,12 +995,12 @@ test("create_nodes_batch：Nest 返回的 actions 进 details.actions（canvas_a
 
 注：`createCanvasWriteTools` 的实际签名（client/opts 形状）以 `canvas-write.ts` 顶部导出与 `canvas-write.test.ts:4-20` 的既有用法为准；`execute` 的 6 参模式同该文件。若既有工厂不接受 `{ includeDeferred: true }`，按该文件实际第二参调整（工具注册与 includeDeferred 无关时直接传 client）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd services/pi-runtime && pnpm test src/tools/create-nodes-batch.test.ts`
 Expected: FAIL——`tool create_nodes_batch not registered`
 
-- [ ] **Step 3: 实现工具定义**
+- [x] **Step 3: 实现工具定义**
 
 在 `canvas-write.ts` 的 `connect_nodes` 定义（:968-990）之后、数组收尾 `];`（:991）之前插入：
 
@@ -1074,7 +1074,7 @@ const CREATE_NODES_BATCH_MAX_NODES = 12
 const CREATE_NODES_BATCH_MAX_EDGES = 20
 ```
 
-- [ ] **Step 4: tiering 常驻登记**
+- [x] **Step 4: tiering 常驻登记**
 
 Edit `tiering.ts`：在 `"connect_nodes",`（:97）之后加一行（**注释里禁带引号的工具名**——理由写「upsert 是批量创建的部分替代品，铁律：常驻不许给延迟域凑部分答案」）：
 
@@ -1086,7 +1086,7 @@ Edit `tiering.ts`：在 `"connect_nodes",`（:97）之后加一行（**注释里
 
 Edit `tiering.test.ts`：`ALL_NAMES` 的 write 段 `"connect_nodes",`（:63）之后加 `"create_nodes_batch",`；常驻断言数组（:122 `"connect_nodes",` 之后）加 `"create_nodes_batch",`。
 
-- [ ] **Step 5: 跑 pi-runtime 全量测试 + tiering 校验**
+- [x] **Step 5: 跑 pi-runtime 全量测试 + tiering 校验**
 
 Run: `cd services/pi-runtime && pnpm test`
 Expected: PASS——新增 7 用例全绿；tiering 既有断言（常驻名单/幻觉项）零回归
@@ -1094,7 +1094,7 @@ Expected: PASS——新增 7 用例全绿；tiering 既有断言（常驻名单/
 Run: `pnpm verify-tool-tiering`
 Expected: 退出码 0（无幽灵项）
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/pi-runtime/src/tools/canvas-write.ts services/pi-runtime/src/tools/tiering.ts services/pi-runtime/src/tools/tiering.test.ts services/pi-runtime/src/tools/create-nodes-batch.test.ts
@@ -1113,7 +1113,7 @@ git commit -m "feat(runtime): create_nodes_batch 批量创建工具 + tiering �
 - Consumes: 既有 `vueFlowRef.value?.fitView`（`{ nodes: ids, padding, maxZoom, duration }` 用法先例：`composables/fitImportedViewport.ts:73`、`components/canvas/CanvasBottomLeftControls.vue:95`）；既有 `nodes.value`（loadSession 前的本地快照）。
 - Produces: 无新导出（页面内函数改动）。行为契约：本回合新增节点集合非空 ⇒ `fitView({ nodes: 新节点 id 数组, padding: 0.45, maxZoom: 1.05, duration: 360 })`；为空 ⇒ 维持既有 `fitView({ padding: 0.24, duration: 360 })`。
 
-- [ ] **Step 1: 写回归锁测试**（`useCanvasActions.test.ts` 追加；先跑确认现状即绿——这是既有功能的回归锁，不是新功能）
+- [x] **Step 1: 写回归锁测试**（`useCanvasActions.test.ts` 追加；先跑确认现状即绿——这是既有功能的回归锁，不是新功能）
 
 ```ts
   it('批量 actions：混合 add_node + add_edge 一次应用齐全（SP-A 回归锁）', () => {
@@ -1135,7 +1135,7 @@ git commit -m "feat(runtime): create_nodes_batch 批量创建工具 + tiering �
 Run: `pnpm --filter @lnkpi/web exec vitest run src/composables/useCanvasActions.test.ts`
 Expected: PASS（回归锁建基；若红，先查是不是既有失败——与本次改动无关的失败以 CI 为准，记忆纪律）
 
-- [ ] **Step 2: 改 handleAgentTurnComplete**
+- [x] **Step 2: 改 handleAgentTurnComplete**
 
 Edit `apps/web/src/pages/CanvasPage.vue`，将 :1740-1747：
 
@@ -1173,7 +1173,7 @@ async function handleAgentTurnComplete() {
 
 （其余行 :1748-1775 不动。）
 
-- [ ] **Step 3: 跑受影响前端测试 + 类型检查**
+- [x] **Step 3: 跑受影响前端测试 + 类型检查**
 
 Run: `pnpm --filter @lnkpi/web exec vitest run src/composables/useCanvasActions.test.ts src/composables/useCanvasGrouping.restore.test.ts`
 Expected: PASS
@@ -1181,7 +1181,7 @@ Expected: PASS
 Run: `cd apps/web && ./node_modules/.bin/vue-tsc --noEmit -p tsconfig.json`（约 11 分钟，可后台）
 Expected: 零新增错误（改动只碰一个函数，diff 极小）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/web/src/pages/CanvasPage.vue apps/web/src/composables/useCanvasActions.test.ts
@@ -1202,12 +1202,12 @@ git commit -m "feat(web): 回合末有新节点只聚焦新节点，不再无条
 - Consumes: Task 4 的工具名与语义（点名文案）；AGENTS.md prompt 同步矩阵（contentHash = `sha256(body.trimEnd())` 前 12 位）。
 - Produces: L6 组合新增约 30 字符（余量 161 内，`PROMPT_SPEC.md:75` 机检表）；`prompt-lint.yml` 独立流水线门禁通过。
 
-- [ ] **Step 1: 改三处 prompt**
+- [x] **Step 1: 改四处 prompt**
 
-`prompt-registry/rules/canvas_daily_ops.md` 末尾追加：
+`prompt-registry/rules/canvas_daily_ops.md` 末尾追加（**最终落地为 28 字**，见下方「执行台账」第 1 条）：
 
 ```md
-23. 批量建节点（≥2 个）用 create_nodes_batch：items 带 key，edges 用 key 连边；它只建草稿，生成仍逐节点 propose_generation。
+23. 多节点用 create_nodes_batch。
 ```
 
 frontmatter `version: 1.3.0` → `1.4.0`，`updated: 2026-10-06` → `updated: 2026-10-20`。
@@ -1217,10 +1217,17 @@ frontmatter `version: 1.3.0` → `1.4.0`，`updated: 2026-10-06` → `updated: 2
 `prompt-registry.fallback.ts` 的 `CANVAS_DAILY_OPS` 模板字符串内、第 22 条之后追加同款一行（**逐字一致**，L7 校验）：
 
 ```
-23. 批量建节点（≥2 个）用 create_nodes_batch：items 带 key，edges 用 key 连边；它只建草稿，生成仍逐节点 propose_generation。
+23. 多节点用 create_nodes_batch。
 ```
 
-- [ ] **Step 2: 重算 contentHash 并回填**
+⭐ **第 4 处（计划原文漏项，CI 红灯暴露）**：`prompt-registry/PROMPT_SPEC.md` 的两个生成块
+（§3 rule-map + §5 budget-table）由脚本生成，改规则正文后必须重写：
+
+```bash
+node <主仓>/node_modules/tsx/dist/cli.mjs scripts/gen-prompt-spec-map.ts --write
+```
+
+- [x] **Step 2: 重算 contentHash 并回填**
 
 ```bash
 node -e "const fs=require('fs');const body=fs.readFileSync('prompt-registry/rules/canvas_daily_ops.md','utf8').split('---').slice(2).join('---').trimEnd();console.log(require('crypto').createHash('sha256').update(body).digest('hex').slice(0,12))"
@@ -1228,10 +1235,10 @@ node -e "const fs=require('fs');const body=fs.readFileSync('prompt-registry/rule
 
 （若与 MANIFEST 既有算法口径不符，以 `pnpm prompt:lint` 报错信息里的期望值为准回填——L7 会逐字比对磁盘 body 与内嵌常量。）
 
-- [ ] **Step 3: 跑 prompt 校验与全量 build**
+- [x] **Step 3: 跑 prompt 校验与全量 build**
 
 Run: `pnpm prompt:lint`
-Expected: PASS——L6 预算 warning 不触发（新增 ~30 字符 < 161 余量）；L7 磁盘 body == 内嵌常量；contentHash 一致
+Expected: PASS——L6 预算 warning 不触发（最终实测 core+writeTools+genTools=3068、最紧组合 3154，硬线 3200）；L7 磁盘 body == 内嵌常量；contentHash 一致
 
 Run: `pnpm verify-spec-figures`
 Expected: PASS（规格文档已在 PR #515，本任务不改图）
@@ -1239,7 +1246,18 @@ Expected: PASS（规格文档已在 PR #515，本任务不改图）
 Run: `PATH=/tmp/pnpm-shim:$PATH pnpm build`（根目录全量，跨包改动纪律；本机 corepack shim）
 Expected: 全包 build 成功（shared/server/pi-runtime/web 均被本计划触及）
 
-- [ ] **Step 4: Commit + 汇总 PR**
+⭐ **额外必跑（计划原文漏项，CI 红灯暴露）**：改 prompt 正文会改「静态段长度」⇒
+`apps/server/src/agent/pi-runtime/pi-prompt-assembler.service.test.ts` 的**长度基线锁**必红。
+该表有**两处**数字（BASELINE 四组合 + 末尾余量断言），**必须实测**后一并更新：
+
+```bash
+# 实测四组合 + 最紧组合（别手工拼 prompt 段——RULE_10_WRITE_GUARD 仅在无 writeTools 时注入，手拼会算错）
+node <主仓>/node_modules/tsx/dist/cli.mjs -e "import {renderStaticFallback} from '<worktree>/apps/server/src/agent/pi-runtime/prompt-registry.loader'; ..."
+```
+
+Run: `apps/server` **全量** vitest（不是只跑 agent 子集——本地只跑子集是本次 CI 红灯的根因）
+
+- [x] **Step 4: Commit + 汇总 PR**
 
 ```bash
 git add prompt-registry/rules/canvas_daily_ops.md prompt-registry/MANIFEST.yaml apps/server/src/agent/pi-runtime/prompt-registry.fallback.ts
@@ -1276,3 +1294,54 @@ git commit -m "feat(prompt): canvas_daily_ops 第 23 条点名 create_nodes_batc
 - Task 1 Step 4 用 `pnpm vitest run`（shared 包 script）；server 侧用 `pnpm --filter @lnkpi/server exec vitest run <path>`；pi-runtime 用 `pnpm test <path>`（node:test  glob）。
 - Task 3 测试里 `assert.rejects` 若该文件未 import node assert，统一改用 vitest `await expect(...).rejects.toThrow(/…/)`。
 - Task 4 测试的 `createCanvasWriteTools` 第二参形状以 `canvas-write.test.ts` 既有用法为准微调。
+
+---
+
+## 执行台账（2026-10-21 落地时回填）
+
+**产出**：PR #529 `feat(agent): SP-A 批量创建即整齐（create_nodes_batch + 放置内核）`，10 个 commit，base `5d074a24`。
+
+### 提交对应关系
+
+| Task | commit | 说明 |
+|---|---|---|
+| Task 1 | `2ecfbe29` | 放置内核 + 布局原语上移；`b13750e3` 修 NODE_SIZES 逐字上移；`e8487548` 放宽 LayoutNode.type |
+| Task 2 | `0f3c438d` | Nest canvas-layout.util 切 `@lnkpi/shared` re-export |
+| Task 3 | `e8cb73b1` | addNodesBatch 批内连边 + 放置内核接入 |
+| Task 4 | `10bdbb98` | create_nodes_batch 工具 + tiering 常驻登记 |
+| Task 5 | `655aa952` | 回合末有新节点只聚焦新节点 |
+| Task 6 | `58580a6f` | prompt 第 23 条点名；`ab374df5` 工具计数断言同步 |
+| — | `8b025ea2` | 已下线 NodeType 残留收敛（用户追加需求） |
+
+### ⭐ 执行中发现的 3 处偏离与修正（均为「计划本身不完备」而非实现走样）
+
+1. **第 23 条超长，违反 Global Constraints。** 计划 Constraints 写「≤30 字符」，落地写成 60 字
+   ⇒ L6 最紧组合（core+writeTools+genTools+todoTools）被推到 **3186/3200（余量仅 14，贴线）**。
+   修正：压到 28 字（「多节点用 create_nodes_batch。」）。key / 只建草稿的语义本就写在
+   `create_nodes_batch` 的 schema description 里（该工具**常驻** ⇒ schema 恒在上下文），
+   规则正文只留「何时用哪个工具」的指针即可。
+   ⇒ 最终实测：core+writeTools **2677**、全组合 **3068**、最紧组合 **3154（余量 46）**。
+2. **Task 6 Step 2/3 漏了 `gen-prompt-spec-map --write`。** 改了 `rules/*.md` 正文后
+   `prompt-registry/PROMPT_SPEC.md` 的 §3 rule-map + §5 budget-table 标记块会漂移
+   ⇒ CI `prompt-registry 门禁` 报「budget-table 与磁盘不一致，请跑 --write」。
+   ⇒ 计划补一行：改规则正文后必须跑 `node <主仓>/node_modules/tsx/dist/cli.mjs scripts/gen-prompt-spec-map.ts --write`。
+3. **Task 6 Step 3 的「跑全量 build」不足以覆盖 prompt 改动。** 本地只跑了 agent 子集测试
+   （server 161 个）而没跑 apps/server 全量（1987 个）⇒ CI `Build monorepo` 在
+   `pi-prompt-assembler.service.test.ts` 的长度基线锁上红灯（期望 2648 / 实得 2709）。
+   ⇒ 纪律：改 prompt 正文 ⇒ 必须跑 **apps/server 全量 vitest**。
+   ⭐ 该基线锁表有**两处**数字：BASELINE 四组合 + 末尾
+   `expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]).toBe(N)`；
+   改一处忘另一处 ⇒ 又一次红灯。填表必须**实测**（`npx tsx` 直接调 `renderStaticFallback`），
+   别手工拼 prompt 段（`RULE_10_WRITE_GUARD` 仅在无 writeTools 时注入，手拼会算错）。
+
+### ⭐ 执行中自查出并修正的 1 处自身回归（`8b025ea2` 引入）
+
+`8b025ea2` 把 `packages/shared/src/canvas/layout.ts` 的 NODE_SIZES 收敛为「当前 NodeType 4 项」，
+删掉了 `prompt: {w:280,h:120}`，让存量 prompt 节点走 fallback 280×160。其 commit message
+声称「与 Nest 侧既有行为一致」——**该说法不成立**：master 的 Nest 原表 `canvas-layout.util.ts`
+第 23 行仍是 `prompt: { w: 280, h: 120 }`，且 web 侧 `useCanvasGrouping.ts:13` 同为 280×120
+（= `neoNodeMeta.ts` 里 prompt 的真实渲染高度 120）。该改动**静默改变了存量 prompt 节点的排布尺寸**，
+违反 `b13750e3` 自己写下的铁律「放置内核不得静默改变排布尺寸」，且造成 web / server 两侧口径不一致。
+
+⇒ 已修正：NODE_SIZES 恢复 `prompt: {w:280, h:120}`，并把「尺寸表 ≠ 可创建类型表」的口径写进注释。
+**教训：尺寸表（量存量节点）≠ 类型白名单（管生路），两者不可混为一谈。**

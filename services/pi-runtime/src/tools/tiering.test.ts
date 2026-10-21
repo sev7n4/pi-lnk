@@ -61,6 +61,7 @@ const ALL_NAMES = [
 	"set_node_text",
 	"update_node",
 	"connect_nodes",
+	"create_nodes_batch",
 	"attach_refs",
 	"apply_sidebar_attachments",
 	"propose_generation",
@@ -95,6 +96,12 @@ const ALL_NAMES = [
 	"redo",
 	"open_image_editor",
 	"delete_nodes",
+	// 分组工具组（2026-10-21）：**常驻**（tiering.ts 已登记进 ALWAYS_ON）。
+	// 这三个刻意不放「应被延迟」段：分组是侧车不是节点，Agent 无法用 add_node
+	// 变通，进延迟集就只剩「答做不到」一条路。
+	"group_nodes",
+	"ungroup_group",
+	"set_group_color",
 ];
 const fakeTools = () =>
 	ALL_NAMES.map((n) => fakeTool(n, n === "undo" ? "撤销上一步画布操作" : undefined));
@@ -120,6 +127,7 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 			"upsert_media_node",
 			"set_node_text",
 			"connect_nodes",
+			"create_nodes_batch",
 			"apply_sidebar_attachments",
 			"propose_generation",
 			"arrange_nodes",

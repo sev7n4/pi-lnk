@@ -219,12 +219,13 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.equal(calls.length, 1);
 	});
 
-	it("默认注册 13 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent（2026-10-17 prompt 节点下线 14→13）", () => {
+	it("默认注册 14 个写工具，tier 正确；includeDeferred 时含 introduce_nodes_to_agent（2026-10-21 SP-A 批量创建 13→14）", () => {
 		const { client } = makeClient();
 		const tools = createCanvasWriteTools(client);
-		assert.equal(tools.length, 13);
+		assert.equal(tools.length, 14);
 		const tiers = Object.fromEntries(tools.map((t) => [t.name, t.tier]));
 		assert.equal(tiers.connect_nodes, "graph_batch");
+		assert.equal(tiers.create_nodes_batch, "graph_batch");
 		assert.equal(tiers.upsert_media_node, "write_light");
 		assert.equal(tiers.set_node_generation_params, "write_light");
 		assert.ok(!tools.some((t) => t.name === "introduce_nodes_to_agent"), "deferred 工具默认不暴露");
@@ -233,7 +234,7 @@ describe("canvas-write: connect_nodes 与 registry", () => {
 		assert.ok(!tools.some((t) => t.name === "upsert_prompt_node"), "upsert_prompt_node 随 prompt 节点下线删除");
 
 		const withDeferred = createCanvasWriteTools(client, { includeDeferred: true });
-		assert.equal(withDeferred.length, 14);
+		assert.equal(withDeferred.length, 15);
 		assert.ok(withDeferred.some((t) => t.name === "introduce_nodes_to_agent"));
 	});
 });

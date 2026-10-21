@@ -470,15 +470,25 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * core 693 不变、core+writeTools 2648 不变、core+genTools 1091→1084（Δ=−7）、
 	 * 全组合 3046→3039（Δ=−7），余量 3200−3039=**161**。
 	 *
+	 * 2026-10-21 SP-A 第 23 条点名 create_nodes_batch（v1.4.0，canvas_daily_ops）：
+	 * 正文先写成 60 字（「建多节点用 create_nodes_batch（items 带 key，edges 引用 key）；只建草稿。」），
+	 * 实测 core+writeTools 2648→2709（Δ=+61）、全组合 3039→3100（Δ=+61），
+	 * 含 todoTools 的最紧组合达 3186 ⇒ 余量仅 **14**（贴线，且**偏离计划 Global Constraints
+	 * 「第 23 条 ≤30 字符」**）。故压回 28 字（「多节点用 create_nodes_batch。」）——
+	 * key/草稿语义本就写在工具 schema description 里（create_nodes_batch 常驻 ⇒ schema 恒在上下文），
+	 * 规则只留「何时用哪个工具」的指针。最终实测（tsx 在本 worktree 跑 renderStaticFallback）：
+	 * core 693 不变、core+writeTools 2648→2677（Δ=+29）、core+genTools 1084 不变、
+	 * 全组合 3039→3068（Δ=+29），含 todoTools 最紧组合 3068→**3154**，余量 3200−3154=**46**。
+	 *
 	 * ⚠️ 抬 `STATIC_BUDGET_CHARS` 属 `AGENTS.md` 红线第3 条（须人工决策），AI 不得自行改。
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
 	 */
 	const BASELINE: Record<string, number> = {
 		core: 693,
-		"core+writeTools": 2648,
+		"core+writeTools": 2677,
 		"core+genTools": 1084,
-		"core+writeTools+genTools": 3039,
+		"core+writeTools+genTools": 3068,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -500,9 +510,12 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 3035→3046（余量 165→154）。
 		// 2026-10-17 prompt 节点下线（v1.5.0）：gen_tool_policy 规则 11 删 prompt 工具，
 		// 3046→3039（余量 154→161）。
+		// 2026-10-21 SP-A 第 23 条点名 create_nodes_batch（canvas_daily_ops v1.4.0）：
+		// 正文 60 字（Δ=+61）⇒ 3039→3100（余量 161→100），含 todoTools 最紧组合 3186（余量 14，贴线）；
+		// 压回 28 字后 3039→3068（余量 161→132），最紧组合 3154（余量 46）。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(161);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(132);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────
