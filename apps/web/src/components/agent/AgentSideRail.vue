@@ -1750,7 +1750,9 @@ function startResize(event: MouseEvent) {
       floatWidth.value = width
       floatPos.value = { ...floatPos.value, x: floatRight - width }
     } else {
-      panelWidth.value = clamp(window.innerWidth - ev.clientX, PANEL_MIN_W, PANEL_MAX_W)
+      // 桌面 docks 在左侧（CanvasPage 用 flex-row-reverse 把侧栏翻到左）：
+      // 侧栏左缘贴屏幕 x=0，宽度即鼠标到左缘的距离。
+      panelWidth.value = clamp(ev.clientX, PANEL_MIN_W, PANEL_MAX_W)
     }
   }
   const onUp = () => {
@@ -3649,7 +3651,8 @@ defineExpose({
     :style="{ width: asidePanelWidth }"
   >
     <div class="flex h-full min-h-0">
-      <!-- 收缩态：右下角 agent logo 悬浮按钮（移动端裸条常驻，fab 仅桌面收缩态） -->
+      <!-- 收缩态：左下角 agent logo 悬浮按钮（移动端裸条常驻，fab 仅桌面收缩态）。
+           2026-10-22 与画布视口工具条左右互换（侧栏翻左后整体镜像）。 -->
       <Teleport to="body">
         <button
           v-if="!open && !pickModeActive"
@@ -5011,17 +5014,18 @@ defineExpose({
 }
 
 .agent-side-rail.is-docked-open {
-  border-left: 1px solid var(--lnk-border-subtle);
+  /* 桌面并排时侧栏在左侧，分隔线贴着右侧（邻接画布）。 */
+  border-right: 1px solid var(--lnk-border-subtle);
 }
 
 .agent-side-rail.is-resizing {
   transition: none;
 }
 
-/* ---- 收缩态右下角 logo 悬浮按钮 ---- */
+/* ---- 收缩态左下角 logo 悬浮按钮 ---- */
 .agent-fab {
   position: fixed;
-  right: 20px;
+  left: 20px;
   bottom: 20px;
   z-index: 55;
   display: flex;
@@ -5200,12 +5204,14 @@ defineExpose({
   display: block;
 }
 
-/* ---- 左边缘拖拉调宽 ---- */
+/* ---- 右边缘拖拉调宽（侧栏翻到左侧后，手柄贴其右缘邻接画布） ---- */
 .agent-resize-handle {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -3px;
+  /* 侧栏翻到左侧后，手柄贴右缘（邻接画布）。 */
+  right: -3px;
+  left: auto;
   z-index: 5;
   width: 7px;
   cursor: ew-resize;
@@ -5227,7 +5233,9 @@ defineExpose({
 }
 
 .agent-panel-floating .agent-resize-handle {
+  /* 浮窗手柄仍贴左缘，独立于左侧 docks 的 right:-3px。 */
   left: 0;
+  right: auto;
 }
 
 .agent-panel-header {
