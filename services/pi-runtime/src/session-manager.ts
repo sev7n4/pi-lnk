@@ -76,7 +76,6 @@ import {
 	type TurnBudgetState,
 } from "./gate/turn-budget.js";
 import { planGateEnabled } from "./runtime-config.js";
-import { TURN_STATE_CUSTOM_TYPE, turnStateProjector, type TurnState } from "./turn-state.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import type { SkillRegistry } from "./skills/registry.js";
 import { stripImageBlocks } from "./sse-sanitize.js";
@@ -1312,25 +1311,6 @@ export class SessionManager {
 				}),
 				systemPrompt: () => this.composeEntryAndObserve(entry),
 				thinkingLevel,
-				// 回合连续性（2026-10-21）：把持久化的「中断轮任务状态」投影回模型上下文。
-				//
-				// ⭐ 这是上游**原生**扩展点（`harness/runtime/harness.ts:72` → `options.entryProjectors`
-				// → `harness/session/context.ts:55-61` 消费），不是自造管道。
-				// 为什么必须有它：上游 `isContextMessage()`（`context.ts:24-29`）把
-				// `stopReason ∈ {error, aborted, deferred}` 的 assistant 消息**排除出上下文**，
-				// 且中断轮在 Nest/pi 双写不一致时可能整轮不存在
-				// ⇒ 光靠对话历史，模型在故障后对「用户要我做什么」**零线索**。
-				//
-				// 投影成 **user 角色**（不是 assistant）：assistant 会被上面的
-				// `isContextMessage` 按 stopReason 过滤，user 角色 + 无 stopReason ⇒ 恒进上下文。
-				entryProjectors: {
-					[TURN_STATE_CUSTOM_TYPE]: (entry) =>
-						turnStateProjector({
-							type: "custom",
-							customType: entry.customType,
-							data: entry.data,
-						}) as never,
-				},
 				// 终审 C1（spec 2026-10-16-canvas-write-tool-chain-design.md §4.1 P1a）：run 级串行是
 				// canvas-id-binding 捕获/重写的时序前置——harness 运行时栈不消费 per-tool executionMode
 				// （该字段仅低层 agent-loop 读取，源码实证 pi-agent-core harness/runtime/harness.js:46
@@ -2813,55 +2793,6 @@ export class SessionManager {
 		return await this.forceSettleLaneOperation(entry);
 	}
 
-	/**
-	 * 持久化「中断轮的任务状态」（回合连续性，2026-10-21）。
-	 *
-	 * ⭐ 走上游**原生**扩展点：`lane.appendCustomEntry(customType, data, ctx)`
-	 * （`harness/runtime/lane.ts:1919`）⇒ 落盘为 `CustomEntry{type:"custom",customType,data}`，
-	 * 由 `build()` 里注册的 `entryProjectors`（见 `harness/runtime/harness.ts:72`）
-	 * 在**后续每一轮**重新投影进模型上下文（`harness/session/context.ts:55-61`）。
-	 *
-	 * 为什么必须落进 pi 的 transcript 而不是 Nest 的 DB：
-	 * - 模型只看得到 pi 侧上下文（Nest 的 `AgentMessage` 表**不进 prompt**，
-	 *   见 `apps/server/src/agent/agent.service.ts:410`）；
-	 * - 落在 transcript 里 ⇒ 天然参与上游的 compaction 保留机制
-	 *   （`CompactionEntry.retainedTail` + `buildContextEntries`），
-	 *   不会像「动态块」那样被下一轮覆盖。
-	 *
-	 * fail-soft：写不进去只 warn，**绝不**让调用方（Nest）失败——
-	 * 「记不住上一轮」是降级，「把用户请求打回去」是事故。
-	 */
-	async recordTurnState(threadKey: string, state: TurnState): Promise<{ recorded: boolean }> {
-		const entry = this.sessions.get(toSessionKey(threadKey));
-		if (!entry) {
-			this.metrics?.observeTurnStateRecord("no_session");
-			return { recorded: false };
-		}
-		try {
-			const lane = await entry.harness.lane(MAIN_LANE, this.context);
-			await lane.appendCustomEntry(
-				TURN_STATE_CUSTOM_TYPE,
-				{
-					userText: state.userText,
-					assistantPartial: state.assistantPartial,
-					interruption: state.interruption,
-					completedSteps: [...state.completedSteps],
-					pendingSteps: [...state.pendingSteps],
-					at: state.at,
-				} as never,
-				this.context,
-			);
-			this.metrics?.observeTurnStateRecord("ok");
-			return { recorded: true };
-		} catch (err) {
-			this.metrics?.observeTurnStateRecord("failed");
-			console.warn(
-				`[pi-runtime] recordTurnState failed (fail-soft): session=${entry.id} ` +
-					`error=${err instanceof Error ? err.message : String(err)}`,
-			);
-			return { recorded: false };
-		}
-	}
 
 	/**
 	 * force 分支：lane 上确有孤儿 operation 时结算它并返回 true；没有则返回 false

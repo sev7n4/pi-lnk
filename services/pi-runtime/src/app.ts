@@ -27,7 +27,6 @@ import type { DirectImage } from "./direct-images.js";
 import type { PendingToolRegistry } from "./pending-registry.js";
 import { classifyLlmErrorText } from "./tool-error-class.js";
 import { markSuppressed } from "./tools/memory.js";
-import { buildTurnState } from "./turn-state.js";
 
 const HEARTBEAT_MS = 15_000;
 
@@ -358,57 +357,6 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		}
 	});
 
-	/**
-	 * 回合连续性状态落盘（2026-10-21）。
-	 *
-	 * Nest 侧在**检测到上一轮中断**时调用，把「用户要什么 / 做到哪 / 卡在哪」
-	 * 写进 pi 的 transcript（上游 `appendCustomEntry` ⇒ `lnkpi.turn_state` 自定义条目），
-	 * 由 `entryProjectors` 在后续每一轮重新投影进模型上下文。
-	 *
-	 * ⭐ 为什么需要它：模型只看得到 pi 侧上下文，而上游 `isContextMessage()` 会把
-	 * `stopReason ∈ {error,aborted,deferred}` 的 assistant 消息**排除出上下文**；
-	 * 且中断轮在 Nest/pi 双写不一致时可能**整轮不存在**（2026-10-21 生产形态）
-	 * ⇒ 光靠对话历史，故障后模型对「用户要我做什么」零线索，
-	 * 只能退化成「感知画布猜意图」。
-	 *
-	 * 幂等 / fail-soft：写不进去**不报错**（`recorded:false`）——
-	 * 「记不住上一轮」是降级，「把用户请求打回去」是事故。
-	 * 无鉴权：与 /steer /followup 同一信任边界（K3s 内网）。
-	 */
-	app.post<{
-		Params: { sessionId: string };
-		Body: {
-			userText?: string;
-			assistantPartial?: string;
-			interruption?: string;
-			completedSteps?: string[];
-			pendingSteps?: string[];
-			at?: number;
-		};
-	}>("/sessions/:sessionId/turn-state", async (request, reply) => {
-		const { sessionId } = request.params;
-		const body = request.body ?? {};
-		if (typeof body.userText !== "string" || !body.userText.trim()) {
-			return reply.code(400).send({ error: "userText is required (non-empty string)" });
-		}
-		const state = buildTurnState({
-			userText: body.userText,
-			assistantPartial: typeof body.assistantPartial === "string" ? body.assistantPartial : undefined,
-			interruption:
-				body.interruption === "upstream_error" ||
-				body.interruption === "tool_interrupted" ||
-				body.interruption === "session_busy" ||
-				body.interruption === "transport_failed" ||
-				body.interruption === "history_diverged"
-					? body.interruption
-					: "unknown",
-			completedSteps: Array.isArray(body.completedSteps) ? body.completedSteps : undefined,
-			pendingSteps: Array.isArray(body.pendingSteps) ? body.pendingSteps : undefined,
-			at: typeof body.at === "number" ? body.at : Date.now(),
-		});
-		const result = await manager.recordTurnState(sessionId, state);
-		return reply.code(200).send(result);
-	});
 
 	/**
 	 * 回合外生成终态通报（2026-10-18 上游对齐，Nest→lane followUp）。
