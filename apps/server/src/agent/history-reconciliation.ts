@@ -51,6 +51,15 @@
  * ⭐ 刻意**不**为覆盖它引入更激进的判据：误报会导致把正常会话当故障去自愈
  * （自愈有副作用：改写 turn_state）⇒ 宁可漏报一轮。
  *
+ * ## 为什么比对前要剥队列消息的 kind 标签
+ *
+ * steer / followUp 消息在 pi 侧 transcript 里带 `QUEUE_MARK` **行首标签**
+ * （Nest 这一层加的，见 `pi-runtime.client.ts` 的拼接口径），而 Nest
+ * `AgentMessage` 存的是**用户原话**（#542 口径）⇒ 不剥就必然从第 0 字符分叉
+ * ⇒ **假 diverged** ⇒ 自愈写假 turnState。2026-10-22 生产实证：一轮**正常完成**
+ * 的对话被判分叉（thread `cmvi3cvhk…`「画个乌龟」12:49:05），且**每次插话都会触发**。
+ * 剥落在 `stripQueueMarks`（纯函数，与判据同文件 ⇒ 无漂移面）。
+ *
  * ## 自愈方式（分叉被发现之后怎么办）
  *
  * 分叉的实质是「**模型看不到 Nest 侧那条 user 消息**」⇒ 自愈就是
@@ -58,6 +67,11 @@
  * ⇒ 自愈**复用**既有状态线，不新造管道；且 `interruption` 用既有的
  * `history_diverged` 枚举值（语义正对应「Nest 有、pi 无」）。
  */
+
+// ⭐ QUEUE_MARK 从**产生标签的那一层** import（SSOT）：标签是 Nest 的 pi client
+// 拼进去的（`pi-runtime.client.ts`），比对侧要剥的正是它 ⇒ 本地抄一份必有漂移面。
+// ⚠️ 该模块只有 `import type` ⇒ 无运行时依赖、无环（client 不 import 本文件）。
+import { QUEUE_MARK } from './pi-runtime/pi-runtime.client'
 
 /** pi 侧 snapshot 的 transcriptTail 单条（只取对账需要的字段）。 */
 export interface TailEntry {
@@ -140,6 +154,37 @@ export function stripTruncationMark(text: string): string {
 }
 
 /**
+ * 剥掉队列消息（steer / followUp）行首的 kind 标签，返回**用户原话**。
+ *
+ * ⭐ 为什么需要（2026-10-22 生产假阳修复）：
+ * Nest `AgentMessage` 存**用户原话**（#542 口径：落库内容必须是原话），
+ * 而 pi 侧 transcript 里同一条消息被 `QUEUE_MARK` 加了行首标签
+ * （`pi-runtime.client.ts` 拼 `mark + "\n" + text`，加在 Nest 这一层）
+ * ⇒ 不剥就**从第 0 字符分叉** ⇒ 假 `diverged` ⇒ 自愈写假 turnState。
+ *
+ * ⭐ 生产实证：thread `cmvi3cvhk…`「画个乌龟」12:49 轮**正常完成**
+ * （assistant stopReason=stop）却判 diverged——pi seq=357 用户条目 =
+ * `[用户补充 · 插在本轮回答进行中]\n画个乌龟`，Nest 存的是 `画个乌龟`。
+ * **每次插话都会触发** ⇒ 系统性假阳，不是偶发。
+ *
+ * ⛔ 只剥**行首一个**：用户原话自己以标签开头时（极端形态），pi 侧 = 标签 + 原话，
+ * 剥一个恰好回到 Nest 存的原话；多剥会把用户真打的内容吃掉 ⇒ 判据反被放松。
+ *
+ * ⭐ 标签常量直接 import `QUEUE_MARK`（SSOT）—— 本地再抄一份就有漂移面：
+ * 将来改标签文案，比对侧必须同步跟上。
+ */
+export function stripQueueMarks(text: string): string {
+	for (const mark of Object.values(QUEUE_MARK)) {
+		if (!text.startsWith(mark)) continue
+		// client 拼接口径恒为 `mark + "\n" + text` ⇒ 标签后跟一个换行，顺带吃掉
+		// （函数契约自足：「返回用户原话」；调用方另有 trim，双保险）。
+		const rest = text.slice(mark.length)
+		return rest.startsWith('\n') ? rest.slice(1) : rest
+	}
+	return text
+}
+
+/**
  * 对账：Nest 最近一条 user 消息 vs pi 侧 transcriptTail。
  *
  * ⛔ 纯函数、无 IO —— 判据必须与生产链路共用同一份实现，
@@ -170,7 +215,10 @@ export function reconcileHistory(input: {
 		}
 	}
 
-	const piTrimmed = stripTruncationMark(piText.trim())
+	const piRaw = stripTruncationMark(piText.trim())
+	// ⭐ 比对前剥掉队列消息的 kind 标签（steer/followUp）：Nest 存原话、pi 侧带前缀
+	// ⇒ 不剥必假红（2026-10-22 生产实证：正常完成的轮次被自愈写假状态，每次插话都触发）。
+	const piTrimmed = stripQueueMarks(piRaw).trim()
 	const compareLen = Math.min(nestPrefix.length, piTrimmed.length)
 	// ⭐ 比对长度取两侧的**较短者**：pi 侧可能比 Nest 侧短（被截断）⇒
 	// 用 Nest 的全量长度去比会必然不等 ⇒ 假红。
@@ -184,7 +232,8 @@ export function reconcileHistory(input: {
 		detail: {
 			nestMessageId: nest.id,
 			nestPrefix,
-			piText: piTrimmed,
+			// 保留**原始**文本（含标签）——人工排查时要看到 pi 侧到底存了什么
+			piText: piRaw,
 			reason: 'Nest 最近一条 user 消息与 pi 侧 transcriptTail 内的 user 消息前缀不一致',
 		},
 	}

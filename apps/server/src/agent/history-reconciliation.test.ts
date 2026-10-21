@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { QUEUE_MARK } from './pi-runtime/pi-runtime.client'
 import {
 	latestUserText,
 	reconcileAfterTurn,
 	reconcileHistory,
+	stripQueueMarks,
 	stripTruncationMark,
 	RECONCILE_PREFIX_LEN,
 	type TailEntry,
@@ -49,6 +51,32 @@ describe('stripTruncationMark（去 pi 侧截断尾标）', () => {
 
 	it('无 … 不动', () => {
 		expect(stripTruncationMark('abc')).toBe('abc')
+	})
+})
+
+describe('stripQueueMarks（剥队列消息行首 kind 标签）', () => {
+	it('剥 steer 标签（含 client 拼接口径里的那个换行）', () => {
+		// client 拼接口径：`QUEUE_MARK[path] + "\n" + text`（pi-runtime.client.ts:401）
+		expect(stripQueueMarks(`${QUEUE_MARK.steer}\n画个乌龟`)).toBe('画个乌龟')
+	})
+
+	it('剥 followup 标签', () => {
+		expect(stripQueueMarks(`${QUEUE_MARK.followup}\n继续`)).toBe('继续')
+	})
+
+	it('无标签 ⇒ 原样返回', () => {
+		expect(stripQueueMarks('画个乌龟')).toBe('画个乌龟')
+	})
+
+	it('⭐ 只剥一个：用户原话自带标签时，剥完应正好等于 Nest 存的原话', () => {
+		// 极端形态：用户自己打的字以 steer 标签开头，该消息又走了 steer
+		// ⇒ pi 侧 = 标签 + "\n" + （标签 + 原话）；剥一个恰好回到 Nest 存的原话。
+		const userSaid = `${QUEUE_MARK.steer}继续`
+		expect(stripQueueMarks(`${QUEUE_MARK.steer}\n${userSaid}`)).toBe(userSaid)
+	})
+
+	it('标签在行中（不是行首）⇒ 不动', () => {
+		expect(stripQueueMarks(`请${QUEUE_MARK.steer}继续`)).toBe(`请${QUEUE_MARK.steer}继续`)
 	})
 })
 
@@ -160,6 +188,62 @@ describe('reconcileHistory（对账判据）', () => {
 			tail: [userEntry(' 让他们抱在一起 ', 1)],
 		})
 		expect(r.verdict).toBe('aligned')
+	})
+
+	// ── 队列消息 kind 标签（2026-10-22 生产假阳修复）─────────────────────────
+	//
+	// ⭐ 生产实证：thread `cmvi3cvhk…`「画个乌龟」——12:37 用户重发（变 steer），
+	// 12:49 该轮**正常完成**（assistant stopReason=stop），对账却判 `diverged`
+	// 并自愈写了一条**假** turnState（interruption=history_diverged、空 steps）。
+	// 根因：Nest `AgentMessage` 存**用户原话**（#542 口径），pi transcript 里同一条
+	// 消息被 `QUEUE_MARK` 加了行首标签 ⇒ 前缀比对从第 0 字符就分叉。
+	// ⚠️ **每次插话都会触发** ⇒ 这不是偶发，是系统性假阳。
+	it('⭐ 插话（steer）：pi 侧带 kind 标签、Nest 存原话 ⇒ aligned（不假红）', () => {
+		const r = reconcileHistory({
+			nestUserMessage: { id: 'm1', content: '画个乌龟', createdAt: 2 },
+			tail: [userEntry(`${QUEUE_MARK.steer}\n画个乌龟`, 1), assistantEntry('好的', 2)],
+		})
+		expect(r.verdict).toBe('aligned')
+	})
+
+	it('⭐ 尾随（followUp）同理 ⇒ aligned', () => {
+		const r = reconcileHistory({
+			nestUserMessage: { id: 'm1', content: '继续', createdAt: 2 },
+			tail: [userEntry(`${QUEUE_MARK.followup}\n继续`, 1), assistantEntry('好的', 2)],
+		})
+		expect(r.verdict).toBe('aligned')
+	})
+
+	it('⭐ 剥掉标签后内容仍不同 ⇒ diverged（防「无脑剥离」把真分叉判成一致）', () => {
+		const r = reconcileHistory({
+			nestUserMessage: { id: 'm1', content: '画个乌龟', createdAt: 2 },
+			tail: [userEntry(`${QUEUE_MARK.steer}\n画个狗`, 1)],
+		})
+		expect(r.verdict).toBe('diverged')
+		// detail.piText 保留**原始**文本（含标签）——人工排查时要看到 pi 侧到底存了什么
+		expect(r.detail?.piText).toBe(`${QUEUE_MARK.steer}\n画个狗`)
+	})
+
+	it('⭐ 插话标签 + 400 字截断同时存在 ⇒ aligned（生产真实组合：长插话被截断）', () => {
+		// pi 侧 text 按**全文字长**截断（mark + "\n" + body 截到 400 + `…`）
+		// ⇒ 剥标签后剩下的正文仍 ≥ 比对长度 ⇒ 前缀命中。
+		const body = 'A'.repeat(500)
+		const keep = 400 - QUEUE_MARK.steer.length - 1
+		const piTruncated = `${QUEUE_MARK.steer}\n${'A'.repeat(keep)}…`
+		const r = reconcileHistory({
+			nestUserMessage: { id: 'm1', content: body, createdAt: 2 },
+			tail: [userEntry(piTruncated, 1)],
+		})
+		expect(r.verdict).toBe('aligned')
+	})
+
+	it('⭐ 插话消息 + pi 侧确有一条**不同**的旧 user 消息 ⇒ diverged（真分叉不漏）', () => {
+		// 事故原形态：插话根本没到 pi 侧 ⇒ tail 里最近的 user 是更早的轮次
+		const r = reconcileHistory({
+			nestUserMessage: { id: 'm1', content: '画个乌龟', createdAt: 3 },
+			tail: [userEntry('先出章鱼的静帧图', 1), assistantEntry('好的', 2)],
+		})
+		expect(r.verdict).toBe('diverged')
 	})
 })
 
@@ -341,5 +425,49 @@ describe('reconcileAfterTurn（编排：读 Nest → 调 snapshot → 比对 →
 		expect(out.verdict).toBe('diverged')
 		expect(out.healed).toBe(false)
 		expect(warns.some((w) => w.includes('history_diverged'))).toBe(true)
+	})
+
+	it('⭐ 插话（steer）消息 ⇒ aligned 且不写假 turn_state（2026-10-22 生产假阳）', async () => {
+		// 行为级判据落在可观测出口：turnState.record 未被调用 + 无 history_diverged 告警。
+		// 修复前这里会 diverged + 自愈（生产 12:49:05 实证）。
+		const prisma = makePrisma([{ id: 'm1', content: '画个乌龟' }])
+		const client = makeClient([userEntry(`${QUEUE_MARK.steer}\n画个乌龟`, 1), assistantEntry('好的', 2)])
+		const ts = makeTurnState()
+		const warns: string[] = []
+
+		const out = await reconcileAfterTurn({
+			prisma: prisma as never,
+			client: client as never,
+			turnState: ts.store as never,
+			threadId: 't1',
+			sessionKey: 'k1',
+			logger: { warn: (m: string) => warns.push(m) },
+		})
+
+		expect(out.verdict).toBe('aligned')
+		expect(out.healed).toBe(false)
+		expect(ts.records).toHaveLength(0)
+		expect(warns.filter((w) => w.includes('history_diverged'))).toHaveLength(0)
+	})
+
+	it('⭐ 插话消息但 pi 侧最近的 user 是**别的**内容 ⇒ 仍 diverged 仍自愈（写 Nest 原话）', async () => {
+		// 防「剥离修复」把真分叉一起修没：标签只是噪音，内容不符仍是分叉。
+		const prisma = makePrisma([{ id: 'm1', content: '画个乌龟' }])
+		const client = makeClient([userEntry(`${QUEUE_MARK.steer}\n画个狗`, 1)])
+		const ts = makeTurnState()
+
+		const out = await reconcileAfterTurn({
+			prisma: prisma as never,
+			client: client as never,
+			turnState: ts.store as never,
+			threadId: 't1',
+			sessionKey: 'k1',
+			logger,
+		})
+
+		expect(out.verdict).toBe('diverged')
+		expect(out.healed).toBe(true)
+		expect(ts.records).toHaveLength(1)
+		expect(ts.records[0].userText).toBe('画个乌龟')
 	})
 })
