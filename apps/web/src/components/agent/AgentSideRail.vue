@@ -2150,6 +2150,38 @@ async function deliverQueued(intent: QueueIntent, slot?: QueuedSlot): Promise<bo
 }
 
 /**
+ * 把 pi 的 `entryId` 回填到服务端已落库的那条 user 消息上（2026-10-21）。
+ *
+ * ## 为什么需要
+ * 正常发送（`streamConversation`）在调 pi **之前**就落了 user 行，而 `pi.prompt()` 只返回
+ * `{ accepted }`（`pi-runtime/src/session-manager.ts:2370`）⇒ 正常发送的 entryId
+ * **只能从 `pi_message_end` 事件拿**。不回填 ⇒ 刷新后的历史消息没有 fork 切点，
+ * 「③ 重跑」只能降级兜底（这正是 `AgentSideRail` 里「若该消息还没拿到 entryId」那条兜底注释
+ * 所描述的状态）。
+ *
+ * ## 为什么插话不走这里
+ * 插话在**入队那一刻**就由服务端用 entryId 落库了（`persistQueuedUserMessage`）⇒ 无需回填。
+ *
+ * ## 为什么可以静默失败
+ * 这只影响「刷新后能否从这条历史消息重跑」，属于**增强**而非正确性：失败时退化为既有的
+ * 降级兜底，不该打断对话流，也不该弹错（用户在流式中发言，最忌干扰）。
+ */
+async function persistUserEntryId(entryId: string): Promise<void> {
+  const threadId = agentThreadId.value
+  if (!entryId || !threadId) return
+  try {
+    await fetch(apiUrl('/api/agent/chat/user/entry-id'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ sessionId: props.sessionId, threadId, entryId }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // fail-soft：见上方注释。服务端 entryId 唯一索引保证重试/多页签都不会写出重复行。
+  }
+}
+
+/**
  * 从 vendor 队列撤回已入队的这条（2026-10-20，对齐上游 `AgentLane.cancelQueued`）。
  *
  * ⚠️ 三态必须分开处理，不能一律当成功：
@@ -2913,6 +2945,13 @@ function handleEvent(event: { type: string; data: unknown }) {
             attachments: extras.attachments,
             selectionNodeIds: extras.selectionNodeIds,
           })
+        },
+        // ⭐ 2026-10-21（统一 user 消息身份）：正常发送的 user 行是在调 pi **之前**落的，
+        // 而 `pi.prompt()` 只回 `{ accepted }` ⇒ entryId 只能从这里回填给服务端，
+        // 否则刷新后的历史消息没有 fork 切点、「③ 重跑」只能降级兜底。
+        // 幂等由服务端唯一索引兜住（多页签各报一次也 no-op）。
+        persistEntryId: (entryId) => {
+          void persistUserEntryId(entryId)
         },
       })
       break
