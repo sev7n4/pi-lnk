@@ -17,6 +17,9 @@
 import { describe, expect, it } from 'vitest'
 import type { CanvasGroup } from '@lnkpi/shared'
 import {
+  GROUP_HANDLE_DIRS,
+  GROUP_HANDLE_MOVING_EDGES,
+  GROUP_MIN_SIZE,
   GROUP_PADDING,
   createGroupFromSelection,
   detachNodesFromGroupNodes,
@@ -26,6 +29,7 @@ import {
   materializeGroups,
   nextGroupTitle,
   patchGroupNodeData,
+  resizeGroupByHandle,
   resizeGroupToFitChildren,
   syncGroupsToFitChildren,
   ungroupById,
@@ -39,6 +43,11 @@ function node(id: string, type: string, x: number, y: number, extra: Partial<Flo
 /** a: image 280×280 @(100,100)；b: text 280×160 @(600,100) ⇒ 包围盒 x 100..880 / y 100..380 */
 const BASE: FlowNode[] = [node('a', 'image', 100, 100), node('b', 'text', 600, 100)]
 
+/**
+ * 分组 fixture：框 origin (20,20) / 尺寸 **960×440**（⚠️ 期望值必须从这里读，
+ * 不要凭记忆写 —— 本批就因按 940 写期望值而误判实现有 bug）。
+ * 子节点物化后的相对坐标：a(80,80) / b(580,80)（绝对 a(100,100) / b(600,100)）。
+ */
 const GROUP: CanvasGroup = {
   id: 'group-1',
   title: '第一组',
@@ -51,6 +60,17 @@ const byId = (nodes: FlowNode[], id: string) => {
   const found = nodes.find((n) => n.id === id)
   if (!found) throw new Error(`测试样本缺节点 ${id}`)
   return found
+}
+
+/**
+ * 读节点 style 上的 px 尺寸。
+ * `node.style` 的类型是 `Styles | StyleFunc`（vue-flow 允许 style 是函数），
+ * 直接 `g.style?.width` 过不了类型检查 ⇒ 这里先收窄成对象再取值。
+ */
+function stylePx(node: FlowNode, key: 'width' | 'height'): number {
+  const style = node.style
+  if (!style || typeof style !== 'object') return Number.NaN
+  return Number.parseFloat(String((style as Record<string, unknown>)[key]))
 }
 
 describe('分组物化：CanvasData.groups → vue-flow 父节点', () => {
@@ -395,5 +415,111 @@ describe('分组命名：最小空位口径（删组后不重名）', () => {
 
   it('无分组 ⇒ 「分组 1」', () => {
     expect(nextGroupTitle(BASE)).toBe('分组 1')
+  })
+})
+
+// ══════════════════════════════════════════════════════════
+// 分组框 8 方向缩放（2026-10-21 用户实测新增诉求）
+//
+// 语义对齐本项目裁剪 / 扩图（refine/outpaintGeometry.ts）：
+//   - 8 个手柄（4 角 + 4 边），只移动该手柄所在的边，**对边固定**；
+//   - 单边下限 GROUP_MIN_SIZE：框不能缩到比最小尺寸还小；
+//   - **只改框**（style.width/height + position），**子节点绝对位置不动**
+//     （子节点相对坐标随框 origin 平移补偿）—— 与「内容不动、框变」一致。
+// ══════════════════════════════════════════════════════════
+
+describe('分组框 8 方向缩放：几何纯函数', () => {
+  /** 物化后的分组：框 origin (20,20) / 960×440，子节点 a@(80,80) b@(580,80) 相对 */
+  const RESIZABLE = materializeGroups(BASE, [GROUP])
+
+  it('手柄集合 = 4 角 + 4 边，与裁剪/扩图完全一致', () => {
+    expect(GROUP_HANDLE_DIRS).toEqual(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'])
+    expect(GROUP_HANDLE_DIRS).toHaveLength(8)
+  })
+
+  it('每个手柄只动自己所在的边，对边固定', () => {
+    expect(GROUP_HANDLE_MOVING_EDGES.nw).toEqual({ west: true, east: false, north: true, south: false })
+    expect(GROUP_HANDLE_MOVING_EDGES.n).toEqual({ west: false, east: false, north: true, south: false })
+    expect(GROUP_HANDLE_MOVING_EDGES.ne).toEqual({ west: false, east: true, north: true, south: false })
+    expect(GROUP_HANDLE_MOVING_EDGES.e).toEqual({ west: false, east: true, north: false, south: false })
+    expect(GROUP_HANDLE_MOVING_EDGES.se).toEqual({ west: false, east: true, north: false, south: true })
+    expect(GROUP_HANDLE_MOVING_EDGES.s).toEqual({ west: false, east: false, north: false, south: true })
+    expect(GROUP_HANDLE_MOVING_EDGES.sw).toEqual({ west: true, east: false, north: false, south: true })
+    expect(GROUP_HANDLE_MOVING_EDGES.w).toEqual({ west: true, east: false, north: false, south: false })
+  })
+
+  it('拖东边（e）：只加宽，origin 不变', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'e', { dx: 100, dy: 0 })
+    const g = byId(next, 'group-1')
+    expect(g.position).toEqual({ x: 20, y: 20 })
+    expect(g.style).toMatchObject({ width: '1060px', height: '440px' })
+  })
+
+  it('拖西边（w）：origin 左移，宽度反向变化（对边固定 ⇒ 右边不动）', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'w', { dx: -100, dy: 0 })
+    const g = byId(next, 'group-1')
+    // 右边固定：20 + 960 = 980；左边移到 -80 ⇒ 宽 1060
+    expect(g.position).toEqual({ x: -80, y: 20 })
+    expect(g.style).toMatchObject({ width: '1060px', height: '440px' })
+  })
+
+  it('拖北边（n）：只加高，origin 不变', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'n', { dx: 0, dy: -60 })
+    const g = byId(next, 'group-1')
+    expect(g.position).toEqual({ x: 20, y: -40 })
+    expect(g.style).toMatchObject({ width: '960px', height: '500px' })
+  })
+
+  it('拖南边（s）：只加高，origin 不变', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 's', { dx: 0, dy: 60 })
+    const g = byId(next, 'group-1')
+    expect(g.position).toEqual({ x: 20, y: 20 })
+    expect(g.style).toMatchObject({ width: '960px', height: '500px' })
+  })
+
+  it('拖角（se）：两轴同时变，origin 不变', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'se', { dx: 50, dy: 30 })
+    const g = byId(next, 'group-1')
+    expect(g.position).toEqual({ x: 20, y: 20 })
+    expect(g.style).toMatchObject({ width: '1010px', height: '470px' })
+  })
+
+  it('⭐ 子节点绝对位置逐个不变（框变、内容不动）', () => {
+    // 注意：只查**子节点**。group 自身的 origin 本来就该随缩放移动（那正是缩放的含义），
+    // 把 group 也算进来是断言写错 —— 子节点才是「内容不动」的主角。
+    const children = RESIZABLE.filter((n) => n.parentNode === 'group-1')
+    expect(children).toHaveLength(2)
+    const before = children.map((n) => getAbsolutePosition(n, RESIZABLE))
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'nw', { dx: -40, dy: -30 })
+    children.forEach((n, i) => {
+      const after = getAbsolutePosition(byId(next, n.id), next)
+      expect(after).toEqual(before[i])
+    })
+  })
+
+  it('单边下限：缩到 GROUP_MIN_SIZE 以下 ⇒ clamp 到下限，不出负数/零宽', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'e', { dx: -10000, dy: 0 })
+    const g = byId(next, 'group-1')
+    const w = stylePx(g, 'width')
+    expect(w).toBe(GROUP_MIN_SIZE)
+    expect(w).toBeGreaterThan(0)
+  })
+
+  it('两轴同时缩到下限：宽高都 clamp，不出现负值', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'se', { dx: -10000, dy: -10000 })
+    const g = byId(next, 'group-1')
+    expect(stylePx(g, 'width')).toBe(GROUP_MIN_SIZE)
+    expect(stylePx(g, 'height')).toBe(GROUP_MIN_SIZE)
+  })
+
+  it('目标不是分组节点 ⇒ 原样返回（幂等、零扰动）', () => {
+    expect(resizeGroupByHandle(RESIZABLE, 'a', 'e', { dx: 10, dy: 10 })).toBe(RESIZABLE)
+    expect(resizeGroupByHandle(RESIZABLE, 'nope', 'e', { dx: 10, dy: 10 })).toBe(RESIZABLE)
+  })
+
+  it('缩放后 foldGroups 把新尺寸带进 size（持久化格式零改动的关键）', () => {
+    const next = resizeGroupByHandle(RESIZABLE, 'group-1', 'se', { dx: 60, dy: 40 })
+    const folded = foldGroups(next)
+    expect(folded.groups[0].size).toEqual({ width: 1020, height: 480 })
   })
 })

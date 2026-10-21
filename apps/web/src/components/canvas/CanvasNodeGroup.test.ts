@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import { CANVAS_NODE_RENAME_KEY } from '@/composables/canvasNodeActions'
+import { CANVAS_GROUP_RESIZE_KEY, CANVAS_NODE_RENAME_KEY } from '@/composables/canvasNodeActions'
 import CanvasNodeGroup from './CanvasNodeGroup.vue'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -32,14 +32,37 @@ function stripComments(s: string): string {
 }
 const CODE = stripComments(SRC)
 
-vi.mock('@vue-flow/core', () => ({ useNode: () => ({ id: 'group-1' }) }))
+/**
+ * 手柄位移换算要读 zoom；默认 1，缩放相关用例单独覆盖。
+ * 用 vi.hoisted：vi.mock 工厂会被提升到 import 之前，普通 const 那一刻还没初始化。
+ * 组件读的是 `viewport.value.zoom` ⇒ 这里给带 value 的 ref 替身（不依赖 vue）。
+ */
+const { mockViewport } = vi.hoisted(() => ({
+  mockViewport: { value: { x: 0, y: 0, zoom: 1 } },
+}))
 
-function mountGroup(data: Record<string, unknown>, selected = false, renameNode = vi.fn()) {
+vi.mock('@vue-flow/core', () => ({
+  useNode: () => ({ id: 'group-1' }),
+  useVueFlow: () => ({ viewport: mockViewport }),
+}))
+
+function mountGroup(
+  data: Record<string, unknown>,
+  selected = false,
+  renameNode = vi.fn(),
+  resizeGroup: unknown = null,
+) {
   const wrapper = mount(CanvasNodeGroup, {
     props: { data, selected },
-    global: { provide: { [CANVAS_NODE_RENAME_KEY as symbol]: renameNode } },
+    global: {
+      provide: {
+        [CANVAS_NODE_RENAME_KEY as symbol]: renameNode,
+        // 注入的是 Ref（视口运行时会变）⇒ 供一个 ref 替身，不是裸函数
+        ...(resizeGroup ? { [CANVAS_GROUP_RESIZE_KEY as symbol]: { value: resizeGroup } } : {}),
+      },
+    },
   })
-  return { wrapper, renameNode }
+  return { wrapper, renameNode, resizeGroup }
 }
 
 describe('分组节点：色卡注入', () => {
@@ -197,5 +220,156 @@ describe('根因回归：手搓视口变换层不得被引回来', () => {
     expect(page).toContain('group: CanvasNodeGroup')
     // 每份 @vue-flow/core 的节点渲染都只在这一处注册
     expect(page.match(/group:\s*CanvasNodeGroup/g) ?? []).toHaveLength(1)
+  })
+})
+
+describe('根因回归：分组框必须撑满 vue-flow 写在节点上的尺寸', () => {
+  /**
+   * 2026-10-21 用户实测：打组后两个节点明显溢出虚线框下方。
+   *
+   * 根因：`.group-node-container` 是**空 div**（内容全在子节点上），
+   * 块级布局下 width:auto 会撑满父容器（宽度看起来是对的 —— 假象），
+   * 而 height:auto 因内容高度为 0 塌到 min-height:160px ⇒ 框比内容矮一大截。
+   * 实测框宽高比 5.39 ≈ 870/160（应为 870/680），高度被 min-height 吃掉了。
+   *
+   * 框的真实尺寸由 vue-flow 写在节点元素上的 style.width/height 决定
+   * （node.style → getStyle → 节点元素 style），本元素只负责如实地铺出来。
+   */
+  const CSS = readFileSync(join(here, '..', '..', 'styles', 'neo-node.css'), 'utf8')
+
+  function ruleBody(selector: string): string {
+    const i = CSS.indexOf(`${selector} {`)
+    expect(i, `找不到规则 ${selector}`).toBeGreaterThan(-1)
+    const open = CSS.indexOf('{', i)
+    const close = CSS.indexOf('}', open)
+    return CSS.slice(open + 1, close)
+  }
+
+  it('⛔ .group-node-container 必须显式 width: 100% 且 height: 100%', () => {
+    const body = ruleBody('.group-node-container')
+    expect(body).toMatch(/width:\s*100%/)
+    expect(body).toMatch(/height:\s*100%/)
+  })
+
+  it('⛔ 必须显式 box-sizing: border-box（否则 padding+border 会溢出 28px）', () => {
+    const body = ruleBody('.group-node-container')
+    expect(body).toMatch(/box-sizing:\s*border-box/)
+  })
+
+  it('⛔ 撑满规则不能被 min-height 压回去（min-height 只作下限，不能定尺寸）', () => {
+    const body = ruleBody('.group-node-container')
+    // height 声明必须在 min-height 之后（同级后者覆盖前者），否则又塌回 160px
+    expect(body.indexOf('height: 100%')).toBeGreaterThan(body.indexOf('min-height'))
+  })
+})
+
+describe('分组框 8 方向缩放手柄（2026-10-21，与裁剪/扩图同源）', () => {
+  /**
+   * 用户实测诉求原文：「分组框不支持 8 个方向的拖拽可以拉伸或缩小分组框的大小
+   * （和本项目裁剪、扩图的行为一致）」。所以判据钉两件事：
+   * ① 8 个方向**都真实渲染**（data-handle 覆盖全集，不是「渲染了 8 个但都叫 se」）；
+   * ② 拖拽链路真的把 (groupId, dir, delta) 交回页面，且 delta 按 zoom 换算。
+   *
+   * jsdom 事件坐标只读 ⇒ 用 `Event` + defineProperty 造带坐标的 pointer 事件
+   * （同 NodeCropOverlay.test.ts 的 `pointer()` 口径，不依赖 jsdom 的 PointerEvent）。
+   */
+  const DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+
+  function pointer(type: string, x: number, y: number) {
+    const ev = new Event(type, { bubbles: true }) as Event & { clientX: number; clientY: number }
+    Object.defineProperty(ev, 'clientX', { value: x })
+    Object.defineProperty(ev, 'clientY', { value: y })
+    return ev
+  }
+
+  function handles(wrapper: ReturnType<typeof mountGroup>['wrapper']) {
+    return wrapper.findAll('.group-resize-handle')
+  }
+
+  it('选中 ⇒ 恰好 8 个手柄，方向集合与 GROUP_HANDLE_DIRS 一致', () => {
+    const { wrapper } = mountGroup({ title: '第一组' }, true, vi.fn(), vi.fn())
+    const hs = handles(wrapper)
+    expect(hs).toHaveLength(8)
+    expect(hs.map((h) => h.attributes('data-handle')).sort()).toEqual([...DIRS].sort())
+  })
+
+  it('未选中 ⇒ 不渲染手柄（免得整块画布都是抓取点）', () => {
+    const { wrapper } = mountGroup({ title: '第一组' }, false, vi.fn(), vi.fn())
+    expect(handles(wrapper)).toHaveLength(0)
+  })
+
+  it('页面未注入 resizeGroup（移动端 / 只读）⇒ 不渲染手柄', () => {
+    // 组件不自己判断「是不是移动端」——由页面用「不 provide」表达，这是唯一开关
+    const { wrapper } = mountGroup({ title: '第一组' }, true, vi.fn(), null)
+    expect(handles(wrapper)).toHaveLength(0)
+  })
+
+  it('⛔ 手柄必须带 nodrag + nopan（否则会同时拖动整框 / 平移画布）', () => {
+    // vue-flow 的 d3 filter 认这两个类名（noDragClassName / noPanClassName 默认值）
+    const { wrapper } = mountGroup({ title: '第一组' }, true, vi.fn(), vi.fn())
+    for (const h of handles(wrapper)) {
+      expect(h.classes()).toContain('nodrag')
+      expect(h.classes()).toContain('nopan')
+    }
+  })
+
+  it('按下 se 手柄 → 移动 100px → 松手 ⇒ 走 resizeGroup(group-1,"se",{100,0}) 再 (…, null)', async () => {
+    const resizeGroup = vi.fn()
+    const { wrapper } = mountGroup({ title: '第一组' }, true, vi.fn(), resizeGroup)
+    wrapper.find('[data-handle="se"]').element.dispatchEvent(pointer('pointerdown', 500, 500))
+    window.dispatchEvent(pointer('pointermove', 600, 500))
+    expect(resizeGroup).toHaveBeenCalledWith('group-1', 'se', { dx: 100, dy: 0 })
+
+    window.dispatchEvent(new Event('pointerup'))
+    // delta=null 是「拖完了」信号 ⇒ 页面此刻才落库
+    expect(resizeGroup).toHaveBeenLastCalledWith('group-1', 'se', null)
+    expect(resizeGroup).toHaveBeenCalledTimes(2)
+  })
+
+  it('⛔ 位移按 zoom 换算（缩到 0.5 时拖 100px 只算 200 画布 px）', () => {
+    mockViewport.value = { x: 0, y: 0, zoom: 0.5 }
+    try {
+      const resizeGroup = vi.fn()
+      const { wrapper } = mountGroup({ title: '第一组' }, true, vi.fn(), resizeGroup)
+      wrapper.find('[data-handle="e"]').element.dispatchEvent(pointer('pointerdown', 0, 0))
+      window.dispatchEvent(pointer('pointermove', 100, 40))
+      expect(resizeGroup).toHaveBeenCalledWith('group-1', 'e', { dx: 200, dy: 80 })
+    } finally {
+      mockViewport.value = { x: 0, y: 0, zoom: 1 }
+    }
+  })
+
+  it('⛔ 连续移动按「上一帧」为基准累计（不能拿按下点当原点，否则丢首段位移）', () => {
+    const resizeGroup = vi.fn()
+    const { wrapper } = mountGroup({ title: '第一组' }, true, vi.fn(), resizeGroup)
+    wrapper.find('[data-handle="s"]').element.dispatchEvent(pointer('pointerdown', 0, 0))
+    window.dispatchEvent(pointer('pointermove', 30, 10))
+    window.dispatchEvent(pointer('pointermove', 30, 50))
+    expect(resizeGroup).toHaveBeenNthCalledWith(1, 'group-1', 's', { dx: 30, dy: 10 })
+    expect(resizeGroup).toHaveBeenNthCalledWith(2, 'group-1', 's', { dx: 0, dy: 40 })
+  })
+
+  it('⛔ 零位移不回调（避免拖动阈值内的抖动把 nodes 刷一遍）', () => {
+    const resizeGroup = vi.fn()
+    const { wrapper } = mountGroup({ title: '第一组' }, true, vi.fn(), resizeGroup)
+    wrapper.find('[data-handle="n"]').element.dispatchEvent(pointer('pointerdown', 10, 10))
+    window.dispatchEvent(pointer('pointermove', 10, 10))
+    expect(resizeGroup).not.toHaveBeenCalled()
+    window.dispatchEvent(new Event('pointerup'))
+    // 松手仍要报结束（落库时机由页面决定，与是否移动无关）
+    expect(resizeGroup).toHaveBeenCalledWith('group-1', 'n', null)
+  })
+
+  it('⛔ 手柄不得直写 nodes（受控模式唯一真值；必须经注入回调）', () => {
+    // 判据落在 import 面：组件只能拿到 resizeGroup 回调，不得引 store / nodes ref
+    expect(CODE).not.toMatch(/\bflowNodes\b/)
+    expect(CODE).not.toMatch(/nodes\.value\s*=/)
+    expect(CODE).toContain('CANVAS_GROUP_RESIZE_KEY')
+  })
+
+  it('手柄视觉走 --lnk-* 令牌（不得引 --neo-* / 字面 hex）', () => {
+    expect((CODE.match(/--neo-/g) ?? [])).toEqual([])
+    // 已有断言锁「无字面 hex」，这里额外锁手柄确实消费了令牌（不是继承来的默认色）
+    expect(CODE).toMatch(/\.group-resize-handle\s*\{[^}]*var\(--lnk-text-primary\)/s)
   })
 })

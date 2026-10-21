@@ -104,9 +104,11 @@ import {
   materializeGroups,
   patchGroupNodeData,
   releaseNodesFromGroups,
+  resizeGroupByHandle,
   syncGroupsToFitChildren,
   ungroupById,
   type FlowNode,
+  type GroupHandleDir,
 } from '@/composables/useCanvasGrouping'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import MultiSelectToolbarOverlay from '@/components/canvas/MultiSelectToolbarOverlay.vue'
@@ -139,6 +141,7 @@ import { fileToPersistedPayload, persistMediaUrl } from '@/composables/useMediaU
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
   CANVAS_MULTI_SELECT_ACTIVE_KEY,
+  CANVAS_GROUP_RESIZE_KEY,
   CANVAS_NODE_ADD_AGENT_KEY,
   CANVAS_NODE_CANCEL_KEY,
   CANVAS_NODE_CLICK_GUARD_KEY,
@@ -152,6 +155,7 @@ import {
   CANVAS_REF_PICK_ACTIVE_KEY,
   CANVAS_REF_PICK_NODE_IDS_KEY,
   CANVAS_REF_PICK_REJECT_KEY,
+  type CanvasGroupResizeFn,
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
@@ -4679,6 +4683,49 @@ const { isMobileLayout } = useAgentMobileLayout()
 // 移动端整块框会吃掉平移/长按手势，所以关掉（沿用侧车时代的口径）。
 // 加载路径在物化后显式调一次 applyGroupDraggable（materialize 默认 draggable:true）。
 watch(isMobileLayout, (mobile) => applyGroupDraggable(mobile))
+
+/**
+ * 分组框 8 方向缩放（2026-10-21，与裁剪/扩图同源交互；用户实测诉求「和裁剪、扩图的行为一致」）。
+ *
+ * 为什么落在这里：nodes 是受控模式的唯一真值，组件不得直写（契约见
+ * CanvasNodeGroup 的 CANVAS_GROUP_RESIZE_KEY）。几何全在 `resizeGroupByHandle`
+ * （纯函数，由 useCanvasGrouping.native.test.ts 覆盖）：只动该手柄所在边、对边固定、
+ * 单边下限 160px、**子节点绝对位置不变**（框变、内容不动）。
+ *
+ * 落库时机：拖拽过程中**不**写库（每帧一次 PUT 会冲垮 undo 栈和 IO），
+ * 只在 `delta === null`（松手）时persist 一次。
+ *
+ * ⛔ 缩放路径绝不调 fitGroups()：那条通路的语义是「把框贴回子节点包围盒」
+ * （拖子节点 / 加载后用），缩放恰恰要脱离包围盒 —— 调了等于立刻撤销用户的缩放。
+ *
+ * 移动端传 null ⇒ 组件不渲染手柄（与 GC4 同一口径：触屏上整块框的操作权
+ * 归平移 / 长按手势）。用 Ref 而不是 provide 一个值：视口运行时会变，
+ * provide 值会锁死在 setup 那一刻。
+ */
+function handleGroupResize(
+  groupId: string,
+  dir: GroupHandleDir,
+  delta: { dx: number; dy: number } | null,
+) {
+  if (delta) {
+    const current = flowNodes.value as unknown as FlowNode[]
+    const next = resizeGroupByHandle(current, groupId, dir, delta)
+    if (next === current) return
+    nodes.value = next as EditableFlowNode[]
+    return
+  }
+  persistUserEdit()
+}
+
+const groupResizeFn = ref<CanvasGroupResizeFn | null>(null)
+watch(
+  isMobileLayout,
+  (mobile) => {
+    groupResizeFn.value = mobile ? null : handleGroupResize
+  },
+  { immediate: true },
+)
+provide(CANVAS_GROUP_RESIZE_KEY, groupResizeFn)
 /** P0-1（2026-10-19）：VueFlow 手势配置单一出处——移动端单指平移/双指缩放（断点分流），
  *  PC 逐字保持 [1,2] 中右键平移 + 左键框选。推敲见 useViewportGestures.ts 头部注释。 */
 const viewportGestures = useViewportGestures(
