@@ -210,11 +210,13 @@ describe('AgentService streamConversation', () => {
       expect.objectContaining({ userId: 'u1' }),
     )
     // tool_execution_end 同时派生 canvas_action（details.actions）与 tool_result（UI 执行过程）
+    // D4（multi-device Task 6）：流末尾追加 turn_ack（服务端裁定的回合归属，见 conversation-ack.test.ts）
     expect(events.map((e) => e.type)).toEqual([
       'text_delta',
       'canvas_action',
       'tool_result',
       'done',
+      'turn_ack',
     ])
     // pi 路径跳过 canvasData 重写（Nest 内部工具已写）
     expect(sessionUpdate).not.toHaveBeenCalled()
@@ -696,7 +698,9 @@ describe('AgentService turn billing (P2 T6)', () => {
       tokens: { in: 8000, cache: 0, out: 500 },
       ruleVersion: 'price-v2',
     })
-    expect(events[events.length - 1]?.type).toBe('done')
+    // D4（Task 6）：流末尾追加 turn_ack ⇒ 最后一个事件从 done 变为 turn_ack
+    // （done 仍是 pi 回合结束标记，由 agent_end 映射而来，位置不变）。
+    expect(events[events.length - 1]?.type).toBe('turn_ack')
   })
 
   it('①c cacheWrite 结算透传 + turn_settled.tokens 原始 token 明细（终审 C-2/I-1）', async () => {
@@ -743,7 +747,8 @@ describe('AgentService turn billing (P2 T6)', () => {
       breakdown: { in: 2, cache: 0, out: 1 },
       tokens: { in: 8000, cache: 300, out: 500 },
     })
-    expect(events[events.length - 1]?.type).toBe('done')
+    // D4（Task 6）：流末尾追加 turn_ack ⇒ 末事件从 done 变为 turn_ack
+    expect(events[events.length - 1]?.type).toBe('turn_ack')
   })
 
   it('①b 预扣 quote 用回合参数 model（toLowerCase 规范化）', async () => {
@@ -927,7 +932,8 @@ describe('AgentService turn billing (P2 T6)', () => {
     // 无 402 拒绝：回合照常发起并完成
     expect(events.some((e) => e.type === 'error' && (e.data as { error_type?: string }).error_type === 'insufficient_credits')).toBe(false)
     expect(pi.prompt).toHaveBeenCalledTimes(1)
-    expect(events[events.length - 1]?.type).toBe('done')
+    // D4（Task 6）：流末尾追加 turn_ack ⇒ 末事件从 done 变为 turn_ack
+    expect(events[events.length - 1]?.type).toBe('turn_ack')
     expect(settleFromHold).not.toHaveBeenCalled()
   })
 })

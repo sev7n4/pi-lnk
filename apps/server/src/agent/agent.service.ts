@@ -1690,6 +1690,20 @@ export class AgentService {
     /** owner = 本流发起了 run（唯一落库者）；shadow = 并入在跑的 run（只转发）。 */
     let turnRole: 'owner' | 'shadow' = 'owner'
     let turnRefusalReason: 'not_idle' | 'not_steerable' = 'not_idle'
+    /**
+     * D4（multi-device Task 6，spec §5.2）：服务端裁定的回合归属，流末尾经 `turn_ack`
+     * 回传前端（不再让客户端从 409 猜「我的消息到底去哪了」）。
+     * - 'run'      —— 空闲 ⇒ 本流发起新 run（owner）
+     * - 'steer'    —— 409 后并入在跑 run 的 steer 队列（本轮 turn 边界接住）
+     * - 'followup' —— steer 也塞不进去 ⇒ followUp 兜底（收尾边界接住，消息不蒸发）
+     * - undefined  —— 没有可裁定的归属：prompt 非 409 失败（error 事件已告知）/
+     *   steer+followUp 双失败（turn_not_submitted{not_steerable} 已告知）。
+     *   这两种场景再发 ack 就是把「没受理」包装成「受理了」。
+     *
+     * ⚠️ 不变式：turnMode !== 'run' ⇒ turnRefusalReason === 'not_idle'
+     * （not_steerable 只在双失败路径置，而那一条 leave undefined）。
+     */
+    let turnMode: 'run' | 'steer' | 'followup' | undefined
     /** prompt 是否被 pi 接受（202）。false ⇒ pi 侧**整轮不存在**（双写分叉）。 */
     let promptAccepted = true
     // ── D2（multi-device Task 2）：落库与请求生命周期解耦 ──
@@ -1725,6 +1739,8 @@ export class AgentService {
         turnContext,
         images: directImages?.images,
       })
+      // D4（Task 6）：prompt 被接受 ⇒ 本流是新 run 的 owner（唯一落库者）。
+      turnMode = 'run'
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       const status = (err as { status?: number } | undefined)?.status
@@ -1758,18 +1774,36 @@ export class AgentService {
         )
         try {
           await client.steer(sessionKey, promptText, "main", { turnContext })
+          // D4（Task 6）：服务端裁定 = 并入在跑 run 的 steer 队列（本轮 turn 边界接住）。
+          turnMode = 'steer'
         } catch (steerErr: unknown) {
-          // 队列也塞不进去（会话已被回收 / runtime 侧异常）：必须留痕，
-          // 否则「消息既不回答也不报错」会成为查不掉的黑洞。
-          turnRefusalReason = 'not_steerable'
+          // steer 也塞不进去（队列满 / 会话已被回收 / runtime 侧异常）。
+          // D4（Task 6）追加 followUp 兜底：「忙碌且 steer 不可用」时用户发言改走
+          // **收尾边界**（当前 run 跑完后由 vendor 同一次 run 续一代接住）——
+          // plan 模式表「忙碌+队列满 ⇒ followup」。没有这条兜底，队列满时用户消息
+          // 既不入队也不报错，是查不掉的黑洞。
           this.piLogger.warn(
             `pi steer fallback failed (key=${sessionKey}): ${
               steerErr instanceof Error ? steerErr.message : String(steerErr)
-            }`,
+            } — 转 followUp 兜底（收尾边界接住）`,
           )
+          try {
+            await client.followUp(sessionKey, promptText, "main", { turnContext })
+            turnMode = 'followup'
+          } catch (followUpErr: unknown) {
+            // 两条队列都进不去：必须留痕，否则「消息既不回答也不报错」会成为查不掉的黑洞。
+            turnRefusalReason = 'not_steerable'
+            this.piLogger.warn(
+              `pi followUp fallback failed (key=${sessionKey}): ${
+                followUpErr instanceof Error ? followUpErr.message : String(followUpErr)
+              }`,
+            )
+          }
         }
         // 结构化拒绝：409 是传输层信号，语义太薄，UI 拿不到 reason 就分不出
         //「已并入 / 当前不可插话」两种文案。前端收到它才显示「已并入进行中的任务」。
+        // ⚠️ followup 兜底成功时 reason 仍是 not_idle：消息**已受理**（排进收尾边界），
+        // 只是没有新开一轮；steer/followup 的细化由流末尾 turn_ack 承担（D4）。
         yield {
           type: 'turn_not_submitted',
           data: { reason: turnRefusalReason },
@@ -2046,6 +2080,38 @@ export class AgentService {
       // 注意：iteratePiEvents 现在返回 AsyncIterableIterator，其 `return` 在类型上是可选的，
       // 故用可选调用（运行期恒存在，见 iteratePiEvents 内部实现）。
       await iterator.return?.(undefined)?.catch(() => {})
+    }
+
+    // ── D4（multi-device Task 6）：流末尾回传服务端裁定的回合归属 ──
+    //
+    // plan Task 6 Step 3：本期不改「流随请求」形态，只在现有响应里额外回传 mode
+    // （SSE 流末尾的一个 turn_ack 事件，与 turn_not_submitted 并存），
+    // 让前端能对用户说清「已并入进行中的任务」。分两期：先让语义可见，再改传输形态。
+    //
+    // ⚠️ 只在**有归属**时发：prompt 非 409 失败（error 事件已告知）与
+    // steer+followUp 双失败（turn_not_submitted{not_steerable} 已告知）都不发——
+    // 没有裁定结论却回一个 ack，就是把「没受理」包装成「受理了」。
+    // ⚠️ 位置即「自然完成路径」保证：消费方断连触发 generator.return() 时，
+    // generator 在 yield 处被回收，**try/finally 之后的代码一律不可达**
+    // （与 loopCompletedNaturally 的语义同源，见其声明处注释）⇒ 能走到这里
+    // 就说明本轮是看着 agent_end/error/流耗尽收尾的，ack 是给看完整轮的前端的。
+    if (turnMode) {
+      yield {
+        type: 'turn_ack',
+        data: {
+          // runId = 观测值（事件流里最后出现的非空 runId，见循环内 `if (event.runId)`）。
+          // runtime 未透传时**不出现该键**（键不出现纪律）：滚动升级窗口里老 runtime
+          // 没有 runId，编一个假 id 比没有更糟（Task 7 的投影按它查 snapshot，缺了就是缺了）。
+          ...(turnRunId ? { runId: turnRunId } : {}),
+          mode: turnMode,
+          // reason 仅 mode!=='run' 时出现（spec §5.2）：说明为什么不是新开一轮。
+          // 不变式：此处 turnRefusalReason 恒为 'not_idle'（not_steerable 只伴随
+          // turnMode === undefined，那条路径根本不会到这里）。
+          ...(turnMode !== 'run' ? { reason: turnRefusalReason } : {}),
+          // messageId 留待 Task 8（插话落库）：steer/followUp 消息目前只存在于 pi 侧
+          // durable 队列，Nest 侧没有 AgentMessage 行 ⇒ 现在发 id 就是假装已落库。
+        },
+      } as AgentStreamEvent
     }
 
     const effectiveThreadId = threadId?.trim() || sessionId
