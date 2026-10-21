@@ -128,6 +128,15 @@ export const UPDATE_NODE_WRITABLE_FIELDS = ['title', 'imageModel', 'videoModel',
 export type NodeModal = 'image' | 'video' | 'text' | 'audio'
 
 /**
+ * **可新建**的节点类型白名单（= `NodeType` 4 项）。
+ *
+ * 与 `NODE_TYPE_MODEL_FIELD` 的差别：那张表是「存量节点按类型路由模型字段」，含已下线的
+ * `prompt`（存量节点换模型仍要能路由到 textModel）；本表是**生路**闸门——已下线类型一律不得新建。
+ * ⛔ 两张表口径不同是刻意的：存量只读兼容 ≠ 允许再生产。
+ */
+const CREATABLE_NODE_TYPES: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'text'])
+
+/**
  * 节点类型 → 允许写的模型字段与模态。
  * 非此表的类型（group/shot/sceneComposer）**无**模型字段可写；prompt 与 text 共用 textModel。
  */
@@ -938,6 +947,20 @@ export class AgentCanvasToolsService {
     // E2：服务端兜底 cap（pi 工具层已有同款校验，双保险）
     if (input.items.length > BATCH_NODES_MAX) {
       throw new BadRequestException(`单批最多 ${BATCH_NODES_MAX} 个节点（got ${input.items.length}）`)
+    }
+    // ⭐ NodeType 运行时白名单（根治理：防「已下线类型复活」）。
+    //   NodeType 已收敛为 4 项（image/video/audio/text，见 @lnkpi/shared）；prompt(2026-10-17)、
+    //   group/shot/sceneComposer(2026-10-19)、mediaInput 等已下线类型**不得再被生产出来**。
+    //   此前 targetType 只有 TS 断言、无运行时校验 ⇒ 传 'prompt' 会真的落库一个已下线类型的节点。
+    //   ⛔ 本校验只拦**新建**（agent 造节点）；存量画布里已存在的历史节点照常渲染（存量冻结只读）。
+    for (const item of input.items) {
+      const targetType = String(item.targetType ?? '').trim() || 'image'
+      if (!CREATABLE_NODE_TYPES.has(targetType)) {
+        throw new BadRequestException(
+          `targetType "${targetType}" 不可创建：仅支持 ${[...CREATABLE_NODE_TYPES].join('|')}` +
+            '（其余类型已下线；存量历史节点不受影响）',
+        )
+      }
     }
 
     const prefs = await this.loadAccountGenPrefs(input.userId)

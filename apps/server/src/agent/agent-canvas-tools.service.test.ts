@@ -3086,6 +3086,35 @@ describe('AgentCanvasToolsService', () => {
       ).rejects.toThrow(/最多 12/)
     })
 
+    // ⭐ 根治理：NodeType 已收敛为 4 项（image/video/audio/text），已下线类型
+    //   （prompt 2026-10-17 / group·shot·sceneComposer 2026-10-19 / mediaInput 等）
+    //   不得被重新生产出来。此前 targetType 只有 TS 断言、无运行时枚举校验
+    //   ⇒ 传 targetType:'prompt' 会真的落库一个已下线类型的节点。
+    it('targetType 为已下线类型 ⇒ 400 且不落库（防「已下线类型复活」）', async () => {
+      for (const deadType of ['prompt', 'group', 'shot', 'sceneComposer', 'mediaInput']) {
+        await expect(() =>
+          svc.addNodesBatch({
+            sessionId: 's1',
+            userId: 'u1',
+            items: [{ key: 'k', title: 'K', targetType: deadType, prompt: 'p' }],
+          } as never),
+        ).rejects.toThrow(new RegExp(deadType))
+      }
+      expect(sessionUpdate).not.toHaveBeenCalled()
+      expect(canvas.nodes).toHaveLength(0)
+    })
+
+    it('targetType 4 项白名单内 ⇒ 放行', async () => {
+      for (const ok of ['image', 'video', 'audio', 'text']) {
+        const out = await svc.addNodesBatch({
+          sessionId: 's1',
+          userId: 'u1',
+          items: [{ key: `k-${ok}`, title: 'K', targetType: ok, prompt: 'p' }],
+        } as never)
+        expect(out.nodes[0].nodeId.startsWith(`${ok}-`)).toBe(true)
+      }
+    })
+
     it('落位走放置内核：空画布首批 = (80,80) 链式，不再用网格取模', async () => {
       const out = await batch()
       const positions = out.actions

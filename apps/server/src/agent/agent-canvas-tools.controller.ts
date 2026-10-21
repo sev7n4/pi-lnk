@@ -102,8 +102,11 @@ class BatchNodeItemDto {
   @IsString()
   title!: string
 
-  @IsString()
-  targetType!: string
+  // ⭐ 与 UpsertMediaNodeDto 同款：targetType 必须落在 NodeType 4 项内。
+  //   已下线类型（prompt/group/shot/sceneComposer/mediaInput）不得再被生产出来。
+  //   （service 层也有同款运行时校验兜底——DTO 只在走 HTTP 时生效，内部调用绕过 DTO。）
+  @IsIn(['image', 'video', 'audio', 'text'])
+  targetType!: 'image' | 'video' | 'audio' | 'text'
 
   @IsOptional()
   @IsString()

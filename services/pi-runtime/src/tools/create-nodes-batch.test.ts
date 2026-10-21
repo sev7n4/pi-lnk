@@ -94,6 +94,51 @@ test("create_nodes_batch：空 items → 拒绝", async () => {
 	);
 });
 
+test("create_nodes_batch：已下线类型 → 工具层拒绝且不达 Nest（防类型复活）", async () => {
+	const calls: Recorded[] = [];
+	const tools = createCanvasWriteTools(makeClient(calls) as never);
+	const tool = tools.find((t) => t.name === "create_nodes_batch")!;
+	// NodeType 已收敛为 4 项；prompt/group/shot/sceneComposer/mediaInput 均为已下线类型。
+	for (const dead of ["prompt", "group", "shot", "sceneComposer", "mediaInput"]) {
+		await assert.rejects(
+			() =>
+				tool.execute!(
+					"1",
+					{ items: [{ key: "a", type: dead, prompt: "p" }] } as never,
+					undefined as never,
+					CTX,
+					undefined as never,
+					undefined as never,
+				),
+			/unsupported node type/,
+			`type ${dead} must be rejected`,
+		);
+	}
+	assert.equal(calls.length, 0, "must not reach Nest with a decommissioned node type");
+});
+
+test("create_nodes_batch：4 项白名单类型 → 放行", async () => {
+	const calls: Recorded[] = [];
+	const tools = createCanvasWriteTools(makeClient(calls) as never);
+	const tool = tools.find((t) => t.name === "create_nodes_batch")!;
+	await tool.execute!(
+		"1",
+		{
+			items: [
+				{ key: "a", type: "image", prompt: "p" },
+				{ key: "b", type: "video", prompt: "p" },
+				{ key: "c", type: "audio", prompt: "p" },
+				{ key: "d", type: "text", prompt: "p" },
+			],
+		} as never,
+		undefined as never,
+		CTX,
+		undefined as never,
+		undefined as never,
+	);
+	assert.equal(calls.length, 1);
+});
+
 test("create_nodes_batch：toolContext 缺 sessionId → fail-closed（不达 Nest）", async () => {
 	const calls: Recorded[] = [];
 	const tools = createCanvasWriteTools(makeClient(calls) as never);

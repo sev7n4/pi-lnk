@@ -25,6 +25,12 @@ const CONNECT_NODES_MAX_EDGES = 20;
 /** SP-A：create_nodes_batch 单批上限（Nest 侧 BATCH_NODES_MAX 同值；工具层先拦，端点侧兜底）。 */
 const CREATE_NODES_BATCH_MAX_NODES = 12;
 const CREATE_NODES_BATCH_MAX_EDGES = 20;
+/**
+ * SP-A：可批量创建的节点类型（= NodeType 4 项，Nest 侧 CREATABLE_NODE_TYPES 同值）。
+ * 已下线类型（prompt 2026-10-17 / group·shot·sceneComposer 2026-10-19 / mediaInput）
+ * 不得再被生产出来——存量历史节点照常渲染（存量冻结只读），但不能新建。
+ */
+const CREATE_NODES_BATCH_ALLOWED_TYPES: ReadonlySet<string> = new Set(["image", "video", "audio", "text"]);
 
 /** 生成终态等待的产出（propose_generation 确认后挂住期的结果）。 */
 export type GenerationTerminalOutcome = {
@@ -1042,6 +1048,18 @@ export function createCanvasWriteTools(
 					throw new Error(
 						`create_nodes_batch accepts at most ${CREATE_NODES_BATCH_MAX_EDGES} edges per call (got ${p.edges.length})`,
 					);
+				}
+				// ⭐ type 白名单（工具层先拦，服务端还有同款兜底）：NodeType 已收敛为 4 项，
+				//   已下线类型（prompt/group/shot/sceneComposer/mediaInput）不得再被生产出来。
+				//   工具描述已写「image | video | text | audio」，此处把它变成真闸门——
+				//   否则模型传错 type 会一路打到服务端才被拒（浪费一轮 + 错误信息绕）。
+				for (const it of p.items) {
+					const t = String(it.type ?? "").trim();
+					if (!CREATE_NODES_BATCH_ALLOWED_TYPES.has(t)) {
+						throw new Error(
+							`create_nodes_batch: unsupported node type "${t}" (allowed: ${[...CREATE_NODES_BATCH_ALLOWED_TYPES].join(", ")})`,
+						);
+					}
 				}
 				return withWriteSignal(
 					await client.post("/agent/internal/add-nodes-batch", {
