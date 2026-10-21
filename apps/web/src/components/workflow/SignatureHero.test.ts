@@ -109,4 +109,55 @@ describe('SignatureHero', () => {
     expect(mascot.findAll('button')).toHaveLength(0)
     expect(mascot.element.tagName).toBe('SPAN')
   })
+
+  it('墨鱼在 slogan 旁构成品牌字标（lnk-hero-lockup），不再是右上角孤立角标', () => {
+    const wrapper = mountHero()
+    const lockup = wrapper.find('.lnk-hero-lockup')
+    expect(lockup.exists()).toBe(true)
+    expect(lockup.find('[data-testid="brand-mascot"]').exists()).toBe(true)
+  })
+
+  it('slogan 主行切分渲染后仍等于单一真相源全文，「锚定」是唯一强调词', () => {
+    const wrapper = mountHero()
+    const h1 = wrapper.find('h1')
+    // 切分渲染不得改写文案：拼接结果必须逐字等于 BRAND_SLOGAN_MAIN
+    expect(h1.text()).toBe('墨鱼π，锚定你的创意，一点一滴洒在画布，让画布记住你的模样。')
+    const accent = wrapper.find('.lnk-slogan-accent')
+    expect(accent.exists()).toBe(true)
+    expect(accent.text()).toBe('锚定')
+    // 强调色走签名面专用令牌（不是随主题翻转的 accent-text）。
+    // ⚠️ scoped 样式不进 wrapper.html()，必须读源码断言（同文件既有教训）
+    const src = readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8')
+    expect(src).toContain('var(--lnk-accent-on-signature)')
+  })
+
+  it('CTA 是「门阶」pill：16px 实色 on-signature（不再 13px 弱色小字）', () => {
+    const wrapper = mountHero()
+    const cta = wrapper.find('.lnk-anchor__cta')
+    expect(cta.exists()).toBe(true)
+    expect(cta.text()).toBe('点击锚，进入创作')
+    const src = readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8')
+    const ctaBlock = src.slice(src.indexOf('.lnk-anchor__cta {'))
+    expect(ctaBlock).toContain('var(--lnk-text-md)')
+    expect(ctaBlock).toContain('var(--lnk-text-on-signature)')
+  })
+
+  it('锚是印章不是贴纸：浮起面板语言退场，墨环 / 墨晕 / 内阴线上位', () => {
+    const src = readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8')
+    // 旧语言（黑影 + 白晕）已从锚上移除；新材质三件套在位
+    expect(src).not.toContain('var(--lnk-hi-shadow)')
+    expect(src).toContain('lnk-anchor__brush')
+    expect(src).toContain('lnk-anchor__halo')
+    expect(src).toContain('inset 0 0 0 1px')
+  })
+
+  it('⛔ 产品术语退出品牌诗（叙事文案归位）', () => {
+    const wrapper = mountHero()
+    const text = wrapper.text()
+    expect(text).not.toContain('composer')
+    expect(text).not.toContain('Agent 把创作落地')
+    expect(text).not.toContain('你下指令')
+    expect(text).toContain('你说出想法')
+    expect(text).toContain('墨鱼替你落墨')
+  })
 })

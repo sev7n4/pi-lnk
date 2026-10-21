@@ -14,8 +14,8 @@ const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
 
 <template>
   <div
-    class="flex items-center gap-2 rounded-xl border border-overlay/12 bg-surface-sunken p-2"
-    :class="tone === 'signature' ? 'p-3' : ''"
+    class="flex items-center gap-2 rounded-xl border p-2"
+    :class="tone === 'signature' ? 'lnk-launcher-signature p-3' : 'border-overlay/12 bg-surface-sunken'"
   >
     <input
       :value="modelValue"
@@ -41,3 +41,15 @@ const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
     </button>
   </div>
 </template>
+
+<style scoped>
+/* 签名面（深海墨底，主题不变式）上的输入容器：容器面与描边都必须主题不变。
+   2026-10-22 修复前用 bg-surface-sunken + border-overlay/12——两者都随主题翻转，
+   浅色主题下容器翻成浅面 #e6e9f0，而输入文字/placeholder 是不变的 on-signature
+   浅色 ⇒ 白字压浅面（1.05:1）静默不可见。现改走 --lnk-surface-on-signature
+   （恒深井）+ on-signature 混色描边；深色主题下与旧观感一致（ink-1050 同值）。 */
+.lnk-launcher-signature {
+  background: var(--lnk-surface-on-signature);
+  border-color: color-mix(in srgb, var(--lnk-text-on-signature) 14%, transparent);
+}
+</style>

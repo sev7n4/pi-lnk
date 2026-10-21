@@ -536,7 +536,11 @@ describe('品牌锚点', () => {
  */
 describe('签名画面：深海墨底上的文字', () => {
   for (const theme of ['dark', 'light'] as const) {
-    for (const token of ['--lnk-text-on-signature', '--lnk-text-on-signature-muted'] as const) {
+    for (const token of [
+      '--lnk-text-on-signature',
+      '--lnk-text-on-signature-muted',
+      '--lnk-accent-on-signature',
+    ] as const) {
       it(`${theme} · ${token} 压 surface-signature ≥ AA 4.5`, () => {
         const scope = blocks[theme]
         const fg = resolve(token, scope)
@@ -556,5 +560,24 @@ describe('签名画面：深海墨底上的文字', () => {
     // 签名画面是「三处豁免位」之一：深海墨底不随主题翻转。
     // 若哪天它开始翻转，首屏在浅色主题下就不再是签名画面了。
     expect(light, 'surface-signature 必须深浅同值（主题不变式）').toBe(dark)
+  })
+
+  it('签名面上的容器面 surface-on-signature：主题不变式 + 托得起 on-signature 文字', () => {
+    const dark = resolve('--lnk-surface-on-signature', blocks.dark)
+    const light = resolve('--lnk-surface-on-signature', blocks.light)
+    expect(dark, '深色主题缺 --lnk-surface-on-signature').toBeTruthy()
+    expect(light, '浅色主题缺 --lnk-surface-on-signature').toBeTruthy()
+    expect(light, 'surface-on-signature 必须深浅同值（主题不变式）').toBe(dark)
+    // 这条正是「浅色主题下签名输入框白字压浅面静默不可见」的守卫：
+    // 容器面若改成随主题翻转的浅面，on-signature 浅字对比度会跌破 AA 而被拦下。
+    for (const theme of ['dark', 'light'] as const) {
+      const bg = resolve('--lnk-surface-on-signature', blocks[theme])!
+      const fg = resolve('--lnk-text-on-signature', blocks[theme])!
+      const c = contrast(fg, bg)
+      expect(
+        c,
+        `${theme} on-signature 文字压 surface-on-signature 只有 ${c.toFixed(2)}:1，要求 ≥4.5:1`,
+      ).toBeGreaterThanOrEqual(4.5)
+    }
   })
 })

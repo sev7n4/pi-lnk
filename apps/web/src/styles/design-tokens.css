@@ -224,6 +224,14 @@
   --lnk-surface-signature: var(--lnk-ink-1000);      /* #131318 */
   --lnk-text-on-signature: #f4f4f8;                  /* 14.15:1 AAA */
   --lnk-text-on-signature-muted: #b9bdc9;            /*  8.27:1 AAA */
+  /* 签名面专属（主题不变式，随 on-signature 系同值）：
+     ① 强调紫字——签名面上的 slogan 重音。⛔ 不能用 --lnk-accent-text：
+        它随主题翻转（浅色下是紫 700），压恒深签名底只有 2.4:1。
+     ② 容器面——签名面上的输入框等「井」。⛔ 不能用 surface-sunken：
+        它随主题翻转（浅色下是 #e6e9f0 浅面），on-signature 浅字压上去
+        会静默不可见（2026-10-22 修复签名输入框浅色主题 bug 时引入）。 */
+  --lnk-accent-on-signature: var(--lnk-purple-300);
+  --lnk-surface-on-signature: var(--lnk-ink-1050);   /* #0e0e12 */
 
   /* 边框 */
   --lnk-border-subtle: rgba(255, 255, 255, 0.08);
@@ -362,6 +370,9 @@
   --lnk-surface-signature: var(--lnk-ink-1000);      /* #131318 */
   --lnk-text-on-signature: #f4f4f8;                  /* 14.15:1 AAA */
   --lnk-text-on-signature-muted: #b9bdc9;            /*  8.27:1 AAA */
+  /* 签名面专属：与深色块同值，主题不变式（理由见深色块注释）。 */
+  --lnk-accent-on-signature: var(--lnk-purple-300);
+  --lnk-surface-on-signature: var(--lnk-ink-1050);   /* #0e0e12 */
 
   --lnk-border-subtle: rgba(23, 25, 35, 0.1);
   --lnk-border-default: rgba(23, 25, 35, 0.14);

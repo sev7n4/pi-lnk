@@ -205,3 +205,38 @@ describe('P3-I 媒体卡片语言统一（走查「两区块颜色割裂」轮�
     expect(main).toContain('.lnk-media-card:hover')
   })
 })
+
+describe('P3-J 签名画面叙事与材质（走查「叙事仪式感」轮，2026-10-22）', () => {
+  const HERO_SRC = stripComments(HERO)
+  const BRAND = read('../constants/brand.ts')
+
+  it('slogan 重音走单一真相源：hero 引用 BRAND_SLOGAN_MAIN_ACCENT，且该词是主行子串', () => {
+    expect(HERO_SRC, '强调词必须是常量，不是模板里写死的第二份文案').toContain(
+      'BRAND_SLOGAN_MAIN_ACCENT',
+    )
+    expect(BRAND).toContain("export const BRAND_SLOGAN_MAIN_ACCENT = '锚定'")
+    expect(BRAND, '强调词若不再是主行子串，切分渲染会静默丢失重音').toContain('锚定你的创意')
+  })
+
+  it('⛔ 产品术语退出品牌诗（composer / Agent 落地话术 / 旧指令话术）', () => {
+    expect(HERO_SRC).not.toContain('composer')
+    expect(HERO_SRC).not.toContain('Agent 把创作落地')
+    expect(HERO_SRC).not.toContain('你下指令')
+  })
+
+  it('入口升为「门阶」pill：CTA 用 lnk-anchor__cta + 16px 字阶（不再 13px 弱色小字）', () => {
+    expect(HERO_SRC).toContain('lnk-anchor__cta')
+    expect(HERO_SRC).toContain('var(--lnk-text-md)')
+  })
+
+  it('锚是印章不是贴纸：浮起面板语言退场，墨环 / 墨晕 / 内阴线上位', () => {
+    expect(HERO_SRC, '旧「黑影 + 白晕」读作贴上去的按钮').not.toContain('var(--lnk-hi-shadow)')
+    expect(HERO_SRC).toContain('lnk-anchor__brush')
+    expect(HERO_SRC).toContain('lnk-anchor__halo')
+  })
+
+  it('墨鱼π 进 slogan 字标（lnk-hero-lockup），不再是右上角孤立角标', () => {
+    expect(HERO_SRC).toContain('lnk-hero-lockup')
+    expect(HERO_SRC, '右上角绝对定位角标已退场').not.toContain('right-8 top-8')
+  })
+})

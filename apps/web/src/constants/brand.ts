@@ -20,6 +20,14 @@ export const PRIVACY_PATH = '/privacy'
 export const BRAND_SLOGAN_LEAD = '你体内早就有一囊墨，只是…没有找到你的锚。'
 export const BRAND_SLOGAN_MAIN = '墨鱼π，锚定你的创意，一点一滴洒在画布，让画布记住你的模样。'
 /**
+ * 主行中的唯一强调词（2026-10-22 用户裁定「slogan 需要一个视觉重音」）。
+ *
+ * 必须是 BRAND_SLOGAN_MAIN 的**子串**——hero 按它切分渲染（不复制整句，
+ * 防两处漂移）；单测锁定「切分拼接后等于 BRAND_SLOGAN_MAIN」。
+ * 走 --lnk-accent-on-signature（签名面专用强调色，主题不变式）。
+ */
+export const BRAND_SLOGAN_MAIN_ACCENT = '锚定'
+/**
  * 官网地址（移动端「进入官方」入口）。
  * ⛔ 暂留空：地址尚未确定，先做**预留** —— 留空时点击提示「官网即将上线」，
  * 不用占位域名把人导向 404。定下来后填这里即可，调用方无需改动。
