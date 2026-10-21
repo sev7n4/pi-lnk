@@ -7,15 +7,16 @@ import {
 } from '@nestjs/common'
 import type { AgentStreamEvent } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
-import type {
-  AgentMessageMetadata,
-  CanvasAction,
-  CanvasActionApplier,
-  CanvasData,
-  ExecutionTraceState,
-  LinkedCanvasOutput,
-  PersistedExecutionEvent,
-  SidebarAttachment,
+import {
+  describeTurnInterruption,
+  type AgentMessageMetadata,
+  type CanvasAction,
+  type CanvasActionApplier,
+  type CanvasData,
+  type ExecutionTraceState,
+  type LinkedCanvasOutput,
+  type PersistedExecutionEvent,
+  type SidebarAttachment,
 } from '@lnkpi/shared'
 import {
   listModels,
@@ -35,6 +36,7 @@ import {
   type LedgerCapture,
 } from './turn-ledger'
 import {
+  classifyInterruption,
   collectToolAttempts,
   deriveSteps,
   shouldRecordTurnState,
@@ -46,6 +48,7 @@ import {
   type ReconcilePrisma,
   type ReconcileTurnState,
 } from './history-reconciliation'
+import { buildIncompleteNodeActions, collectIncompleteNodeIds } from './incomplete-node'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
 import { resolveRuleGroups } from './pi-runtime/rule-groups'
@@ -2089,6 +2092,33 @@ export class AgentService {
         failed: runFailed,
         userAborted: false,
       })
+      // ── 批次 3.1：把「未完成」标到画布节点上（用户直接看得见）────────────
+      //
+      // ⭐ 走**既有** `update_node` 画布动作 + `finalizeTurn` 的 `canvasActions`
+      // 落库通道 ⇒ **零新增落库路径**（节点 status 的写入散落在 80+ 处，
+      // 但「标记未完成」只需要这一个写入点）。
+      //
+      // ⛔ 只在**真失败**时标：用户主动取消 ≠ agent 故障（那是用户的意图，
+      // 标成「未完成」会误导）。
+      // ⛔ 标不到节点就不标：本轮可能没碰画布（纯聊天）⇒ 宁可不标也不乱标。
+      if (runFailed) {
+        const incompleteNodeIds = collectIncompleteNodeIds(executionEvents)
+        if (incompleteNodeIds.length > 0) {
+          for (const action of buildIncompleteNodeActions({
+            nodeIds: incompleteNodeIds,
+            reason: describeTurnInterruption(
+              classifyInterruption({ failed: true, promptAccepted: true }),
+            ),
+            at: Date.now(),
+          })) {
+            canvasActions.push(action as unknown as CanvasAction)
+          }
+          this.piLogger.warn(
+            `incomplete_nodes_marked key=${sessionKey} nodes=${incompleteNodeIds.length} ` +
+              `ids=${incompleteNodeIds.slice(0, 3).join(',')}`,
+          )
+        }
+      }
     } else {
       // 状态已被消费过（prompt 未被接受 ⇒ 那条消息用户已经看见、也知道失败了）
       // ⇒ 这里不再重复记录。
