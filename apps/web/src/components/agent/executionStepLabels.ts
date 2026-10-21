@@ -67,6 +67,10 @@ export function nodeStatusLabel(status: string): string {
   if (s === 'generating' || s === 'running' || s === 'pending') return '节点出图中'
   if (s === 'completed' || s === 'done' || s === 'success') return '节点出图完成'
   if (s === 'failed' || s === 'error') return '节点出图失败'
+  // 「未完成」（批次 3.1）：防御性分支——当前后端经 update_node 写画布，
+  // 不发 node_status 事件 ⇒ 时间线实际收不到；但一旦有事件源发它，
+  // 至少不要退化成无意义的「节点状态更新」。
+  if (s === 'incomplete') return '节点未完成'
   return '节点状态更新'
 }
 

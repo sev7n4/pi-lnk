@@ -57,6 +57,7 @@ import {
   createGroupFromSelection,
   getAbsolutePosition,
   getNodeSize,
+  placeBatchNodes,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
   moveNodes,
@@ -71,6 +72,8 @@ import {
 
 const GRID_X = 280
 const GRID_Y = 220
+/** SP-A：addNodesBatch 单批节点上限（pi 工具 create_nodes_batch 同值；tool 层先拦，此处兜底）。 */
+export const BATCH_NODES_MAX = 12
 const DEFAULT_POLL_INTERVAL_MS = 1500
 const DEFAULT_POLL_TIMEOUT_MS = 180_000
 const STAGE_TTL_MS = 30 * 60 * 1000
@@ -109,12 +112,15 @@ function parseStagedActions(raw: string | null | undefined): CanvasAction[] {
   }
 }
 
-function nodeTitle(node: CanvasNode): string {
+// 2026-10-21（SP-A）：只读 data，与 node.type 无关——故用结构化最小契约而非 CanvasNode。
+// LayoutNode.type 刻意放宽为 string（存量画布仍有已下线类型节点），若这里要求 CanvasNode
+// 会让布局路径（getCanvasLayout 等）无法把 LayoutNode 传进来。
+function nodeTitle(node: { data?: Record<string, unknown> | null }): string {
   const data = node.data ?? {}
   return String(data.title ?? data.label ?? data.name ?? '').trim()
 }
 
-function nodeStatus(node: CanvasNode): string {
+function nodeStatus(node: { data?: Record<string, unknown> | null }): string {
   return String(node.data?.status ?? 'draft')
 }
 
@@ -122,6 +128,15 @@ function nodeStatus(node: CanvasNode): string {
 export const UPDATE_NODE_WRITABLE_FIELDS = ['title', 'imageModel', 'videoModel', 'textModel', 'audioModel'] as const
 
 export type NodeModal = 'image' | 'video' | 'text' | 'audio'
+
+/**
+ * **可新建**的节点类型白名单（= `NodeType` 4 项）。
+ *
+ * 与 `NODE_TYPE_MODEL_FIELD` 的差别：那张表是「存量节点按类型路由模型字段」，含已下线的
+ * `prompt`（存量节点换模型仍要能路由到 textModel）；本表是**生路**闸门——已下线类型一律不得新建。
+ * ⛔ 两张表口径不同是刻意的：存量只读兼容 ≠ 允许再生产。
+ */
+const CREATABLE_NODE_TYPES: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'text'])
 
 /**
  * 节点类型 → 允许写的模型字段与模态。
@@ -934,24 +949,57 @@ export class AgentCanvasToolsService {
       guideSceneId?: string
       guideEditIntentId?: string
     }>
+    /** SP-A：批内连边。端点按「本批 key → 既有节点 id」序解析；未解析 fail-closed 整体 400。 */
+    edges?: Array<{ source: string; target: string }>
     stage?: boolean
   }): Promise<{ nodes: Array<{ key: string; nodeId: string }>; actions: CanvasAction[] }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+
+    // E3：key 批内唯一 + 非空 + 长度上限
+    const seenKeys = new Set<string>()
+    for (const item of input.items) {
+      const key = String(item.key ?? '').trim()
+      if (!key) throw new BadRequestException('items[].key 不能为空')
+      if (key.length > 64) throw new BadRequestException('items[].key 长度不能超过 64')
+      if (seenKeys.has(key)) throw new BadRequestException(`items[].key 重复：${key}`)
+      seenKeys.add(key)
+    }
+    // E2：服务端兜底 cap（pi 工具层已有同款校验，双保险）
+    if (input.items.length > BATCH_NODES_MAX) {
+      throw new BadRequestException(`单批最多 ${BATCH_NODES_MAX} 个节点（got ${input.items.length}）`)
+    }
+    // ⭐ NodeType 运行时白名单（根治理：防「已下线类型复活」）。
+    //   NodeType 已收敛为 4 项（image/video/audio/text，见 @lnkpi/shared）；prompt(2026-10-17)、
+    //   group/shot/sceneComposer(2026-10-19)、mediaInput 等已下线类型**不得再被生产出来**。
+    //   此前 targetType 只有 TS 断言、无运行时校验 ⇒ 传 'prompt' 会真的落库一个已下线类型的节点。
+    //   ⛔ 本校验只拦**新建**（agent 造节点）；存量画布里已存在的历史节点照常渲染（存量冻结只读）。
+    for (const item of input.items) {
+      const targetType = String(item.targetType ?? '').trim() || 'image'
+      if (!CREATABLE_NODE_TYPES.has(targetType)) {
+        throw new BadRequestException(
+          `targetType "${targetType}" 不可创建：仅支持 ${[...CREATABLE_NODE_TYPES].join('|')}` +
+            '（其余类型已下线；存量历史节点不受影响）',
+        )
+      }
+    }
+
     const prefs = await this.loadAccountGenPrefs(input.userId)
+
+    // 放置内核：一次性算全批（锚点感知 edges 引用的既有节点；本批 key 天然不进锚点统计）
+    const placements = placeBatchNodes(
+      canvas.nodes as LayoutNode[],
+      input.items.map((it) => ({ key: it.key, type: String(it.targetType || 'image') })),
+      input.edges,
+    )
+
     const actions: CanvasAction[] = []
     const mapping: Array<{ key: string; nodeId: string }> = []
-    const baseIndex = canvas.nodes.length
 
     for (let i = 0; i < input.items.length; i++) {
       const item = input.items[i]
       const nodeType = (item.targetType || 'image') as NodeType
       const nodeId = nextNodeId(nodeType)
-      const position =
-        item.position ??
-        {
-          x: 80 + ((baseIndex + i) % 4) * GRID_X,
-          y: 80 + Math.floor((baseIndex + i) / 4) * GRID_Y,
-        }
+      const position = item.position ?? placements.get(item.key) ?? { x: 80, y: 80 }
       const defaults = modalityDefaults(nodeType, prefs)
       const nodeData: Record<string, unknown> = {
         title: item.title,
@@ -983,6 +1031,38 @@ export class AgentCanvasToolsService {
         },
       })
       mapping.push({ key: item.key, nodeId })
+    }
+
+    // E1：edges 端点解析（key 优先于既有 id）+ 批内/库内去重 + fail-closed
+    if (input.edges?.length) {
+      const idByKey = new Map(mapping.map((m) => [m.key, m.nodeId]))
+      const nodeIds = new Set(canvas.nodes.map((n) => n.id))
+      const unresolved: string[] = []
+      const seenEdges = new Set<string>()
+      for (const e of input.edges) {
+        const source = idByKey.get(e.source) ?? (nodeIds.has(e.source) ? e.source : null)
+        const target = idByKey.get(e.target) ?? (nodeIds.has(e.target) ? e.target : null)
+        if (!source || !target) {
+          unresolved.push(`${e.source} -> ${e.target}`)
+          continue
+        }
+        const dedupeKey = `${source}->${target}`
+        if (seenEdges.has(dedupeKey)) continue
+        seenEdges.add(dedupeKey)
+        actions.push({
+          type: 'add_edge',
+          payload: {
+            id: edgeId(source, target),
+            source,
+            target,
+          },
+        })
+      }
+      if (unresolved.length > 0) {
+        throw new BadRequestException(
+          `edges 端点无法解析（不在本批 key 也不在画布节点）：${unresolved.join('; ')}`,
+        )
+      }
     }
 
     await this.applyOrStage(input.sessionId, actions, input.stage)

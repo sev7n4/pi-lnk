@@ -56,4 +56,22 @@ describe('mobile bare bar structure (P1-5)', () => {
     expect(sfc).toContain("from './composer/mobileBarLayout'")
     expect(sfc).toContain('barShape({ hasRefs:')
   })
+  it('input row renders UNCONDITIONALLY — v-else must not pair with the refs strip (2026-10-21 regression)', () => {
+    // #532 下线语音时删除了 `<template v-if="holdActive">` 录音块，input-wrap 上的 v-else
+    // 静默改挂到 AgentRefStrip 的 v-if="pendingAttachmentItems.length" 上 ⇒ 有引用 chip 时
+    // 输入行（MentionInput textarea）整行不渲染，用户无法输入（画布 ◎ 拾取 / 多选加引用后必现）。
+    // 修法 = input-wrap 无条件渲染（空闲态由 .is-idle 的 display:none 隐藏，不靠模板条件）。
+    // 否定断言配肯定断言（fs-scan 配对有效性）：裸条存在 + 输入行无条件存在。
+    expect(tpl).toContain('composer-bare-bar')
+    expect(tpl).toContain('<div class="agent-composer__input-wrap">')
+    // 输入行不得再挂在任何 v-if/v-else 链上：v-else 形态一旦回归即失败
+    expect(tpl).not.toContain('v-else class="agent-composer__input-wrap"')
+    expect(tpl).not.toMatch(/v-if[^>]*class="agent-composer__input-wrap"/)
+    // 有效性：引用芯片行确实在模板里（否则上面的配对是空集假绿）
+    expect(tpl).toContain('v-if="pendingAttachmentItems.length"')
+    // 顺序：AgentRefStrip（芯片行）在前，输入行紧随其后（同贸 agent-composer 容器内）
+    expect(tpl.indexOf('v-if="pendingAttachmentItems.length"')).toBeLessThan(
+      tpl.indexOf('<div class="agent-composer__input-wrap">'),
+    )
+  })
 })

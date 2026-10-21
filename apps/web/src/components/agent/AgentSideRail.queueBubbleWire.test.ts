@@ -58,3 +58,29 @@ describe('插话气泡接线（pi_message_end → 落点判定）', () => {
     expect(sfc).toMatch(/const queuedEntryIds = new Set<string>\(\)/)
   })
 })
+
+describe('user 消息 entryId 回填接线（2026-10-21，统一身份）', () => {
+  it('pi_message_end 分支把 persistEntryId 交给判定模块（由它决定何时回填）', () => {
+    const body = requireFnBody(sfc, "case 'pi_message_end':")
+
+    // 有效性配对
+    expect(body).toContain('applyPiUserMessageEvent')
+    // 回填必须收敛到判定模块一处：它才知道「这条是插话（服务端已落库、不用回填）」
+    // 还是「初始 prompt（服务端那行还没 entryId、要回填）」。
+    expect(
+      body,
+      'pi_message_end 分支没有把 persistEntryId 接进 applyPiUserMessageEvent —— ' +
+        '回填口径会散落到组件里，出现两套规则',
+    ).toContain('persistEntryId')
+  })
+
+  it('回填函数打的是专用端点，且静默失败（不打断对话流）', () => {
+    const body = requireFnBody(sfc, 'async function persistUserEntryId(')
+
+    expect(body).toContain('/api/agent/chat/user/entry-id')
+    // fail-soft：只影响「刷新后能否重跑」这个增强项，不该冒泡打断用户
+    expect(body).toMatch(/catch\s*(\(\s*\))?\s*\{/)
+    // 有效性配对：确实发了请求
+    expect(body).toContain("method: 'POST'")
+  })
+})

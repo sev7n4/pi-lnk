@@ -175,3 +175,84 @@ describe('extractPiUserText —— pi 侧 user 正文抽取', () => {
     expect(extractPiUserText([{ type: 'image', data: 'xxx' }])).toBe('')
   })
 })
+
+describe('persistEntryId —— user 消息 entryId 回填（2026-10-21，统一身份）', () => {
+  /** 造一份最小 deps，回填调用记录到数组里。 */
+  function depsWith(
+    messages: QueueBubbleMessageLike[],
+    queuedEntryIds: string[] = [],
+  ) {
+    const persisted: string[] = []
+    let inserted = 0
+    return {
+      persisted,
+      get inserted() {
+        return inserted
+      },
+      deps: {
+        messages,
+        queuedEntryIds: new Set(queuedEntryIds),
+        slots: [],
+        insertUserMessage: () => {
+          inserted += 1
+        },
+        persistEntryId: (id: string) => persisted.push(id),
+      },
+    }
+  }
+
+  it('初始 prompt（未命中队列集合）⇒ 回填：让服务端那行也拿到 fork 切点', () => {
+    const messages = [msg('user'), msg('assistant')]
+    const h = depsWith(messages)
+
+    applyPiUserMessageEvent(piUserEnd('e-prompt', '生成一只猫'), h.deps)
+
+    expect(h.persisted).toEqual(['e-prompt'])
+    expect(messages[0]?.entryId).toBe('e-prompt')
+  })
+
+  it('⭐ 插话（命中队列集合）⇒ 不回填：服务端入队那一刻已用 entryId 落库', () => {
+    // 变异：若 insert 分支也调 persistEntryId，这条红（等于对同一行重复写）
+    const h = depsWith([msg('assistant')], ['e-queue-1'])
+
+    applyPiUserMessageEvent(piUserEnd('e-queue-1', '再加一只猫'), {
+      ...h.deps,
+      slots: [{ entryId: 'e-queue-1', text: '再加一只猫' }],
+    })
+
+    expect(h.inserted).toBe(1)
+    expect(h.persisted).toEqual([])
+  })
+
+  it('幂等重放（该 entryId 已有本地气泡）⇒ 不插气泡，但仍回填一次（服务端幂等兜住）', () => {
+    const h = depsWith([msg('user', 'e-prompt'), msg('assistant')])
+
+    applyPiUserMessageEvent(piUserEnd('e-prompt', '生成一只猫'), h.deps)
+
+    expect(h.inserted).toBe(0)
+    // 回填照发：服务端 entryId 唯一索引命中即 no-op，重复调用无害；
+    // 而漏发会让「本地这条恰好是服务端唯一线索」的场景回填不上。
+    expect(h.persisted).toEqual(['e-prompt'])
+  })
+
+  it('⭐ 本地那条已被丢弃（无落点、判定 skip）⇒ 仍回填，服务端那行值得认领', () => {
+    const h = depsWith([msg('assistant')])
+
+    applyPiUserMessageEvent(piUserEnd('e-prompt', '生成一只猫'), h.deps)
+
+    expect(h.persisted).toEqual(['e-prompt'])
+  })
+
+  it('deps 未提供 persistEntryId 时不得抛错（可选依赖）', () => {
+    const messages = [msg('user')]
+    expect(() =>
+      applyPiUserMessageEvent(piUserEnd('e-prompt', 'x'), {
+        messages,
+        queuedEntryIds: new Set(),
+        slots: [],
+        insertUserMessage: () => {},
+      }),
+    ).not.toThrow()
+    expect(messages[0]?.entryId).toBe('e-prompt')
+  })
+})

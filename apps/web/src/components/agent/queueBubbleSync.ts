@@ -138,6 +138,24 @@ export interface QueueBubbleDeps {
       selectionNodeIds?: string[]
     },
   ) => void
+  /**
+   * 把 entryId 回填到**服务端已落库**的那条 user 消息上（2026-10-21）。
+   *
+   * ⭐ 为什么只在「非插话」（本轮初始 prompt）时调用：
+   * - 插话/尾随：**服务端在入队那一刻就已用 entryId 落库**（`persistQueuedUserMessage`）
+   *   ⇒ 无需回填，再写就是重复劳动。
+   * - 初始 prompt：`streamConversation` 在调 pi **之前**就落了 user 行，而 `pi.prompt()`
+   *   只返回 `{ accepted }`（`pi-runtime/src/session-manager.ts:2370`）
+   *   ⇒ entryId 只能从这里（`pi_message_end`）拿，必须回填，否则刷新后的历史消息
+   *     没有 fork 切点、「③ 重跑」只能降级兜底。
+   *
+   * ⭐ 刻意**不要求本地存在落点**：本地那条被丢弃/清空时判定会返回 skip，
+   *   但服务端那行仍存在、仍需要 entryId ⇒ 仍要回填。
+   *
+   * 幂等由服务端兜住（entryId 唯一索引，命中即 no-op）⇒ 多页签各报一次、重放
+   * 重复调用都无妨。
+   */
+  persistEntryId?: (entryId: string) => void
 }
 
 /**
@@ -164,8 +182,19 @@ export function applyPiUserMessageEvent(data: unknown, deps: QueueBubbleDeps): v
       ...(slot?.attachments?.length ? { attachments: slot.attachments } : {}),
       ...(slot?.selectionNodeIds?.length ? { selectionNodeIds: slot.selectionNodeIds } : {}),
     })
+    // 插话**不回填**：服务端入队那一刻已用 entryId 落库（`persistQueuedUserMessage`）。
     return
   }
+
+  // 非 insert ⇒ 这是本轮初始 prompt，服务端那行还缺 entryId ⇒ 回填，让刷新后的
+  // 历史消息也带 fork 切点（「③ 重跑」对所有 user 消息一致可用）。
+  //
+  // ⚠️ **刻意不绑在「本地是否找到落点」上**：本地那条被丢弃 / 清空 / 多端不一致时，
+  //    `decideQueueBubbleSync` 会返回 skip（没有可挂的 user 消息），但**服务端那行
+  //    依然存在且依然需要 entryId**。绑在 attach 分支内会让这种场景永远回填不上。
+  // 幂等重放等 skip 情形重复回填也无害：服务端 entryId 唯一索引命中即 no-op。
+  if (entryId) deps.persistEntryId?.(entryId)
+
   if (decision.kind === 'attach') {
     const target = deps.messages[decision.index]
     if (target) target.entryId = entryId

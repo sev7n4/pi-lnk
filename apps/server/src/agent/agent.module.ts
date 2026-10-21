@@ -19,6 +19,10 @@ import {
   GenerationRecoveryService,
   RECOVERY_AGENT_PORT,
 } from './generation-recovery/generation-recovery.service'
+import {
+  AUTO_RESUME_AGENT_PORT,
+  TurnAutoResumeService,
+} from './turn-auto-resume/turn-auto-resume.service'
 import { TurnStateService } from './turn-state.service'
 
 @Module({
@@ -51,6 +55,12 @@ import { TurnStateService } from './turn-state.service'
     // AgentService 类会与 agent.service → agent-canvas-tools → 本文件形成循环 import，
     // 编译产物 DI 拿到 undefined token（#398 部署事故，见 generation-recovery.service.ts 顶部注）。
     { provide: RECOVERY_AGENT_PORT, useExisting: AgentService },
+    // 批次 3.2（对话轮次自动续跑）：默认 flag off（TURN_AUTO_RESUME_ENABLED），
+    // off 时零派发（行为与今天逐字节一致，回滚 = 环境变量一行）。
+    TurnAutoResumeService,
+    // ⚠️ 同样必须经 Symbol 端口绑定 AgentService：直接注入会成 Nest 实例化环
+    // （AgentService → TurnAutoResumeService → port → AgentService）⇒ 进程静默 exit 0。
+    { provide: AUTO_RESUME_AGENT_PORT, useExisting: AgentService },
     // 画布动作落地实现（归属待定的 seam）：换实现只改这一行，调用点零改动
     { provide: CANVAS_ACTION_APPLIER, useValue: defaultCanvasActionApplier },
   ],

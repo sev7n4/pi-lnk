@@ -5,17 +5,19 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common'
+import { ModuleRef } from '@nestjs/core'
 import type { AgentStreamEvent } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
-import type {
-  AgentMessageMetadata,
-  CanvasAction,
-  CanvasActionApplier,
-  CanvasData,
-  ExecutionTraceState,
-  LinkedCanvasOutput,
-  PersistedExecutionEvent,
-  SidebarAttachment,
+import {
+  describeTurnInterruption,
+  type AgentMessageMetadata,
+  type CanvasAction,
+  type CanvasActionApplier,
+  type CanvasData,
+  type ExecutionTraceState,
+  type LinkedCanvasOutput,
+  type PersistedExecutionEvent,
+  type SidebarAttachment,
 } from '@lnkpi/shared'
 import {
   listModels,
@@ -35,17 +37,21 @@ import {
   type LedgerCapture,
 } from './turn-ledger'
 import {
+  classifyInterruption,
   collectToolAttempts,
   deriveSteps,
   shouldRecordTurnState,
 } from './turn-state-store'
 import { TurnStateService } from './turn-state.service'
+import { TurnAutoResumeService } from './turn-auto-resume/turn-auto-resume.service'
+import { shouldTriggerAutoResume } from './turn-auto-resume/auto-resume.decider'
 import {
   reconcileAfterTurn,
   type ReconcileClient,
   type ReconcilePrisma,
   type ReconcileTurnState,
 } from './history-reconciliation'
+import { buildIncompleteNodeActions, collectIncompleteNodeIds } from './incomplete-node'
 import { AgentMemoryService } from './agent-memory.service'
 import { isSuppressed } from './memory-suppression'
 import { resolveRuleGroups } from './pi-runtime/rule-groups'
@@ -211,7 +217,26 @@ export class AgentService {
     @Optional()
     @Inject(TurnStateService)
     private readonly turnState?: TurnStateService,
+    // 批次 3.2（对话轮次自动续跑）：⚠️ 必须经 ModuleRef 运行时惰性解析、**不能构造器注入**。
+    // AgentService → TurnAutoResumeService → AUTO_RESUME_AGENT_PORT → AgentService
+    // 会构成 Nest 实例化环 ⇒ DI 死锁、事件循环耗尽、进程静默 exit 0（#398/#399 部署事故教训）。
+    // ModuleRef 同样 @Optional：单测手工构造不传也零破坏；运行时拿不到 = flag 第二道闸。
+    @Optional()
+    @Inject(ModuleRef)
+    private readonly moduleRef?: ModuleRef,
   ) {}
+
+  /**
+   * 批次 3.2：运行时惰性解析自动续跑服务（构造环见构造器注）。
+   * 解析失败 = 未装配 = 不派发（fail-open）。
+   */
+  private get turnAutoResume(): TurnAutoResumeService | undefined {
+    try {
+      return this.moduleRef?.get(TurnAutoResumeService, { strict: false })
+    } catch {
+      return undefined
+    }
+  }
 
   /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
   private get applier(): CanvasActionApplier {
@@ -694,6 +719,11 @@ export class AgentService {
    * 动态上下文冲掉（pi-runtime 的 `setTurnContext` 是覆盖写）。
    * ⇒ 插话走**独立的** `queueContext`：只带「本条消息自己的」参考素材与选中态，
    * 由 pi-runtime 拼进**这条队列消息的文本**里，不碰会话级 turn 状态。
+   *
+   * ⭐ **2026-10-21：入队成功即落库**（此前从不建 AgentMessage 行 ⇒ 刷新后历史里
+   * 这条插话凭空消失）。幂等键是 pi 在**入队那一刻**就回传的 `entryId`
+   * （`pi-runtime/src/session-manager.ts:2517`，vendor `QueueResult` 自带）。
+   * ⇒ 服务端原子落库、**不依赖客户端在线**，也不必等「消费时补写」。
    */
   async steerPiRun(input: {
     sessionId: string
@@ -713,10 +743,22 @@ export class AgentService {
     const queueContext = await this.buildQueueContext(input)
     const directImages = await this.buildQueueDirectImages(input)
     const text = directImages ? `${input.text}\n${directImages.markers.join(' ')}` : input.text
-    return this.createPiRuntimeClient(piUrl).steer(sessionKey, text, 'main', {
+    const res = await this.createPiRuntimeClient(piUrl).steer(sessionKey, text, 'main', {
       queueContext,
       images: directImages?.images,
     })
+    // ⭐ 2026-10-21：入队成功即落库，键=pi 回传的 entryId（见方法注释）。
+    // 落库用**用户原话**（input.text），不是发给 pi 的 text —— 后者拼了 QUEUE_MARK 与
+    // `[In=…]` 标记，直接存会让刷新后的历史「长出」机器标记（显示层 ≠ 上下文层）。
+    if (res.queued) {
+      await this.persistQueuedUserMessage({
+        sessionId: input.sessionId,
+        threadId: input.threadId,
+        text: input.text,
+        entryId: res.entryId,
+      })
+    }
+    return res
   }
 
   /**
@@ -734,6 +776,8 @@ export class AgentService {
    *
    * 入队成功即返回：真正接住发生在当前 run 的收尾边界，本方法不等待、不开新流
    * （开新流会撞 409，且用户此刻要的是「人走开」而不是「盯着看」）。
+   *
+   * ⭐ 2026-10-21：与 `steerPiRun` 同款**入队即落库**（刷新后历史仍可见这条尾随指令）。
    */
   async followUpPiRun(input: {
     sessionId: string
@@ -753,10 +797,124 @@ export class AgentService {
     const queueContext = await this.buildQueueContext(input)
     const directImages = await this.buildQueueDirectImages(input)
     const text = directImages ? `${input.text}\n${directImages.markers.join(' ')}` : input.text
-    return this.createPiRuntimeClient(piUrl).followUp(sessionKey, text, 'main', {
+    const res = await this.createPiRuntimeClient(piUrl).followUp(sessionKey, text, 'main', {
       queueContext,
       images: directImages?.images,
     })
+    // ⭐ 2026-10-21：与 steerPiRun 同款入队落库（同款理由、同款 fail-soft）。
+    if (res.queued) {
+      await this.persistQueuedUserMessage({
+        sessionId: input.sessionId,
+        threadId: input.threadId,
+        text: input.text,
+        entryId: res.entryId,
+      })
+    }
+    return res
+  }
+
+  /**
+   * 插话 / 尾随**入队即落库**（2026-10-21）：让刷新后的历史仍能看到这条发言。
+   *
+   * ## 为什么在服务端、且在「入队那一刻」
+   * - **在服务端**：若交给客户端在「消费时」补写，则关页面 / 切走 / 断网就丢 ——
+   *   而那条消息可能已被 pi 接住甚至已被回答，丢的恰恰是最该留存的一次发言。
+   * - **在入队那一刻**：pi 的响应已带 `entryId`（vendor `QueueResult`）⇒ 幂等键天然存在，
+   *   落库与「入队成功」在同一次请求里完成 ⇒ 零竞态，也不必引入第二把键（clientMsgId）。
+   *
+   * ## 幂等：唯一索引 + upsert 先到先得
+   * `AgentMessage.entryId` 上有唯一索引（迁移 `20261021153000_*`）。
+   * upsert 的 `update` 是**空操作** ⇒ 重复调用（重试、双写、事件重放）命中即 no-op，
+   * 且**绝不覆盖既有行的 content** —— 「先到先得」，后来的拼装文本进不来。
+   *
+   * ## fail-soft：落库失败绝不阻断插话
+   * 插话本身已经成功入队（pi 已 durable 落盘），此时抛错会让前端以为「没发出去」而重试，
+   * 反而制造重复消息。⇒ 记 warn 后正常返回，丢的那一行由唯一键保证不会变成「重复的行」。
+   */
+  private async persistQueuedUserMessage(input: {
+    sessionId: string
+    threadId?: string
+    text: string
+    entryId?: string
+  }): Promise<void> {
+    const { sessionId, threadId, text, entryId } = input
+    const threadKey = threadId?.trim()
+    if (!threadKey) return // 没有 thread 归属就无法归入历史（与 streamConversation 同口径）
+    const entry = entryId?.trim()
+    if (!entry) return // 无幂等键不落库：宁可少一行，也不造一行可能被重放的重复行
+    const content = sanitizeAgentMessageContent('user', text)
+    if (!content) return // 纯机器载荷（sanitize 判定）不产生用户可见气泡
+    try {
+      await this.prisma.agentMessage.upsert({
+        where: { entryId: entry },
+        create: {
+          sessionId,
+          threadId: threadKey,
+          role: 'user',
+          content,
+          entryId: entry,
+        },
+        // ⭐ 空操作 = 先到先得：重放/重试/双写都不得覆盖既有行。
+        update: {},
+      })
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `queued user message persist skipped (fail-soft, thread=${threadKey}, entryId=${entry}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  /**
+   * 回填 user 消息的 pi `entryId`（2026-10-21，统一 user 消息身份）。
+   *
+   * ## 为什么正常发送需要这一步
+   * `streamConversation` 在**调用 pi 之前**就落了 user 行（此时 pi 还没回任何身份），
+   * 而 `pi.prompt()` 只返回 `{ accepted }`（`pi-runtime/src/session-manager.ts:2370`）
+   * ⇒ 正常发送的 entryId **只能从 `pi_message_end` 事件拿**（事件带 `{ message, entryId }`）。
+   * 不回填 ⇒ 刷新后的历史消息没有 fork 切点，「③ 重跑」只能降级兜底。
+   *
+   * ## 为什么插话不用走这里
+   * 插话入队即回传 entryId（`persistQueuedUserMessage` 已在落库时写好）⇒ 无需事后回填。
+   *
+   * ## 定位口径：thread 内**最后一条还没有 entryId 的 user 行**
+   * 与前端 `AgentSideRail.vue` 的 attach 分支**同一口径**（都取「最后一条尚未被认领的
+   * user 消息」）。⛔ 绝不覆盖已有 entryId —— 那是上一条发言的 fork 切点，
+   * 覆盖它会让「重新生成」从错的地方分叉（PR #534 修的正是这个）。
+   *
+   * 幂等：entryId 上有唯一索引；命中已有行 ⇒ no-op。fail-soft：写不进去也不影响对话。
+   */
+  async attachUserMessageEntryId(input: {
+    sessionId: string
+    threadId: string
+    entryId: string
+  }): Promise<{ attached: boolean }> {
+    const { sessionId, threadId, entryId } = input
+    const threadKey = threadId?.trim()
+    const entry = entryId?.trim()
+    if (!threadKey || !entry) return { attached: false }
+    try {
+      const existing = await this.prisma.agentMessage.findFirst({
+        where: { sessionId, threadId: threadKey, entryId: entry },
+        select: { id: true },
+      })
+      if (existing) return { attached: true } // 幂等：已回填过（重放 / 双端各报一次）
+      const target = await this.prisma.agentMessage.findFirst({
+        where: { sessionId, threadId: threadKey, role: 'user', entryId: null },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      })
+      if (!target) return { attached: false }
+      await this.prisma.agentMessage.update({
+        where: { id: target.id },
+        data: { entryId: entry },
+      })
+      return { attached: true }
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `user message entryId attach skipped (fail-soft, thread=${threadKey}, entryId=${entry}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return { attached: false }
+    }
   }
 
   /**
@@ -1245,6 +1403,65 @@ export class AgentService {
       sessionKey,
       logger: { warn: (msg: string) => this.piLogger.warn(msg) },
     })
+  }
+
+  /**
+   * 批次 3.2：失败后**不等用户**说「继续」，自动新开一轮让模型接着做。
+   *
+   * ## 为什么这样就够（不需要自己造注入内容）
+   *
+   * 批次 1 已把「用户要什么 / 做到哪 / 卡在哪」记进 `turnState`，
+   * 且**下一轮装配时会作为动态块注入**（含「不道歉、不复盘」指导语）。
+   * ⇒ 自动续跑只需**新开一轮**，那一轮自然吃到状态块 ⇒ 模型直接接着做。
+   *
+   * ⛔ **不做**关键词识别「继续」（要猜用户意图，「接着改那个组件」即失效）。
+   * ⛔ **不做** `lane.resume()`（`cmv3zzid` 已证阻塞 612 s）⇒ 只走「新开一轮」。
+   *
+   * ## 门控全在决策器里（`decideAutoResume`）
+   *
+   * - 用户在场 ⇒ 不自动（他会自己说「继续」，别抢）；
+   * - 用户取消 ⇒ 不算故障（由调用方保证 `failed` 口径）；
+   * - 幂等（同一轮只派一次）/ 每会话每小时上限 / 同因连败降级。
+   *
+   * ⛔ fail-soft：任何异常只 warn —— 自动续跑是旁路观察者，
+   * 绝不影响本轮收尾（用户此时可能在等响应）。
+   */
+  private async maybeAutoResumeTurn(input: {
+    sessionId: string
+    userId: string
+    threadId?: string
+    /** pi 侧会话键（threadId 缺省时回落 sessionId）。 */
+    sessionKey: string
+    /** 本轮的用户原话（幂等键的一部分）。 */
+    userMessage: string
+    failed: boolean
+  }): Promise<void> {
+    try {
+      const svc = this.turnAutoResume
+      if (!svc) return
+      // 幂等键 = 会话键 + 本轮用户原话 + 时刻：
+      // ⭐ 同一轮的多次收尾路径（owner/shadow）只会派一次；
+      // 时刻参与是为了「同一句原话在两个不同轮次里」也不互相吞。
+      const turnKey = `${input.sessionKey}:${input.userMessage.slice(0, 80)}:${Date.now()}`
+      const decision = await svc.handleTurnFailed({
+        sessionId: input.sessionId,
+        userId: input.userId,
+        threadId: input.threadId,
+        turnKey,
+        failed: input.failed,
+        interruption: classifyInterruption({ failed: input.failed, promptAccepted: true }),
+      })
+      this.piLogger.warn(
+        `turn_auto_resume key=${input.sessionKey} path=${decision.path} ` +
+          `reason=${decision.reason} degraded=${decision.degraded}`,
+      )
+    } catch (err) {
+      this.piLogger.warn(
+        `turn_auto_resume failed (fail-soft, key=${input.sessionKey}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
   }
 
   /**
@@ -2089,6 +2306,62 @@ export class AgentService {
         failed: runFailed,
         userAborted: false,
       })
+      // ── 批次 3.2：自动续跑（失败不等用户说「继续」）────────────────────
+      //
+      // ⭐ 放在**记录状态之后**：自动续跑新开的那一轮，装配时会读到本轮
+      // 刚记下的 `turnState` ⇒ 那一轮自然吃到「用户要什么 / 做到哪 / 卡在哪」
+      // +「不道歉、不复盘」指导语 ⇒ **本处不需要自己造注入内容**。
+      //
+      // ⛔ 不 await（fire-and-forget）：自动续跑是旁路观察者，
+      // 不能拖慢本轮收尾（用户此时可能在等响应）。
+      //
+      // ⭐ 判据抽成纯函数 `shouldTriggerAutoResume`（含 `turnRole`）——
+      // 埋在调用点里会踩坑：`promptAccepted` 在 409（shadow 流）时**仍为 true**
+      // ⇒ 只看 promptAccepted 会让 shadow 与 owner **都**触发 ⇒ 双派发。
+      if (
+        shouldTriggerAutoResume({
+          turnRole,
+          promptAccepted,
+          runFailed,
+          userId,
+        })
+      ) {
+        void this.maybeAutoResumeTurn({
+          sessionId,
+          userId: userId!,
+          threadId: effectiveThreadId,
+          sessionKey,
+          userMessage,
+          failed: true,
+        })
+      }
+      // ── 批次 3.1：把「未完成」标到画布节点上（用户直接看得见）────────────
+      //
+      // ⭐ 走**既有** `update_node` 画布动作 + `finalizeTurn` 的 `canvasActions`
+      // 落库通道 ⇒ **零新增落库路径**（节点 status 的写入散落在 80+ 处，
+      // 但「标记未完成」只需要这一个写入点）。
+      //
+      // ⛔ 只在**真失败**时标：用户主动取消 ≠ agent 故障（那是用户的意图，
+      // 标成「未完成」会误导）。
+      // ⛔ 标不到节点就不标：本轮可能没碰画布（纯聊天）⇒ 宁可不标也不乱标。
+      if (runFailed) {
+        const incompleteNodeIds = collectIncompleteNodeIds(executionEvents)
+        if (incompleteNodeIds.length > 0) {
+          for (const action of buildIncompleteNodeActions({
+            nodeIds: incompleteNodeIds,
+            reason: describeTurnInterruption(
+              classifyInterruption({ failed: true, promptAccepted: true }),
+            ),
+            at: Date.now(),
+          })) {
+            canvasActions.push(action as unknown as CanvasAction)
+          }
+          this.piLogger.warn(
+            `incomplete_nodes_marked key=${sessionKey} nodes=${incompleteNodeIds.length} ` +
+              `ids=${incompleteNodeIds.slice(0, 3).join(',')}`,
+          )
+        }
+      }
     } else {
       // 状态已被消费过（prompt 未被接受 ⇒ 那条消息用户已经看见、也知道失败了）
       // ⇒ 这里不再重复记录。

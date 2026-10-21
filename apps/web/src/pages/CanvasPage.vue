@@ -1718,12 +1718,20 @@ const railReconcileSignature = computed(() =>
 watch(railReconcileSignature, scheduleRailReconcile)
 
 async function handleAgentTurnComplete() {
+  // SP-A：回拉前快照本地节点 id，回拉后差集即「本回合新节点」
+  const beforeIds = new Set(nodes.value.map((n) => n.id))
   await loadSession()
   await nextTick()
+  const newNodeIds = nodes.value.filter((n) => !beforeIds.has(n.id)).map((n) => n.id)
   try {
-    await vueFlowRef.value?.fitView({ padding: 0.24, duration: 360 })
+    if (newNodeIds.length > 0) {
+      // 有新节点：只把新区域带入视口，不劫持用户的全局缩放（SP-A 规格 §5.4）
+      await vueFlowRef.value?.fitView({ nodes: newNodeIds, padding: 0.45, maxZoom: 1.05, duration: 360 })
+    } else {
+      await vueFlowRef.value?.fitView({ padding: 0.24, duration: 360 })
+    }
   } catch {
-    // ignore
+    // ignore（含组件卸载竞态：vueFlowRef 已置空）
   }
   const snap = nodes.value.map((n) => ({
     id: n.id,

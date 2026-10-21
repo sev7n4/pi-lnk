@@ -95,6 +95,10 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"set_node_text",
 	"update_node",
 	"connect_nodes",
+	// SP-A 批量创建（2026-10-21）：upsert_media_node 常驻且能逐个建节点 ⇒ 按本文件铁律
+	// 「常驻工具不得给延迟工具的领域凑部分答案」必须常驻；prompt canvas_daily_ops
+	// 第 23 条逐字点名。注释内不写带引号的工具名（verify-tool-tiering 会当幽灵项）。
+	"create_nodes_batch",
 	"attach_refs",
 	"apply_sidebar_attachments",
 	"propose_generation",

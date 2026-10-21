@@ -29,6 +29,9 @@ describe('canvas-layout.util', () => {
   describe('getNodeSize', () => {
     it('uses type defaults', () => {
       expect(getNodeSize(node('a', 'image', 0, 0))).toEqual({ w: 280, h: 280 })
+      // prompt 2026-10-17 下线（创建入口已断），但存量节点仍渲染为 280×120 ⇒ 按真实尺寸量。
+      // ⚠️ 尺寸表 ≠ 可创建类型表（NodeType 才是 4 项）：下线类型的历史节点仍在存量画布里，
+      //   按 fallback 280×160 量会让放置内核算出的 bbox 与真实渲染尺寸不符 ⇒ 可能压盖。
       expect(getNodeSize(node('b', 'prompt', 0, 0))).toEqual({ w: 280, h: 120 })
       expect(getNodeSize(node('c', 'unknown', 0, 0))).toEqual({ w: 280, h: 160 })
     })
