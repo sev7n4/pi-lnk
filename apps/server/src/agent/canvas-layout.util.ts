@@ -432,11 +432,24 @@ export function syncGroupsToChildren(groups: CanvasGroup[], nodes: LayoutNode[])
 	return out;
 }
 
-/** 分组摘要（工具结果回给 agent：有哪些组、含哪些节点）。 */
+/**
+ * 分组摘要（工具结果回给 agent：有哪些组、含哪些节点、什么颜色）。
+ *
+ * 2026-10-21 补 `colorKey`：此前只返回 `{id,title,childIds}`，Agent 读得到组的存在
+ * 却读不到颜色，于是「把这个组改成红色的」无法落地 —— 既不知道能改成什么色，
+ * 也不知道改完会变成什么。`colorKey` 缺省时**省略该字段**（不塞 neutral），
+ * 以保持与存储形态一致（缺省 = neutral，前端 `normalizeGroupColorKey` 兜底）。
+ */
 export function summarizeGroups(groups: CanvasGroup[]): Array<{
 	id: string;
 	title: string;
 	childIds: string[];
+	colorKey?: string;
 }> {
-	return groups.map((g) => ({ id: g.id, title: g.title, childIds: g.childIds }));
+	return groups.map((g) => ({
+		id: g.id,
+		title: g.title,
+		childIds: g.childIds,
+		...(g.colorKey ? { colorKey: g.colorKey } : {}),
+	}));
 }

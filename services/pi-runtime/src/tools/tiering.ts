@@ -106,6 +106,19 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// （drama-* / ecommerce-product-photo 都写死 arrange_nodes(along_edges)），
 	// 放进延迟集 = 要靠 tool_search 才能拿到 schema，而工具搜索触发率实测为 0 ⇒ 延迟即不可达。
 	"arrange_nodes",
+	// 分组（2026-10-21）：group_nodes / ungroup_group / set_group_color。
+	// ⭐ 归属理由与 arrange_nodes 不同：arrange_nodes 是被 prompt-registry/skills
+	// **点名**的（规则里出现 ⇒ 必须常驻）；这三个是「**官方模式：description 承担
+	// 发现能力**」—— prompt-registry/skills **零点名**，靠工具 description 自述
+	// 「何时该用」让模型认出来（同 get_canvas_summary / view_canvas_media 的先例）。
+	// ⛔ 不要写「canvas_daily_ops 规则点名这三者」：那份规则文件已被撤回
+	// （L6 静态段预算最紧组合只剩 75 字符 ⇒ 零预算成本方案是「不写规则」）。
+	// ⚠️ 另一层理由：分组是**侧车**而非节点，Agent 无法用 add_node 变通
+	// （group 节点 2026-10-19 已下线且刻意不进 NODE_TYPES）⇒ 这三个工具是
+	// 唯一入口，一旦进延迟集，Agent 面对「打个组」只能答「做不到」，无任何退路。
+	"group_nodes",
+	"ungroup_group",
+	"set_group_color",
 	// present（2026-10-03 spec §5.2）：解释/澄清类高频场景要出图，
 	// 放进延迟集 = 依赖 load_tools 激活，而 load_tools 触发率实测为 0 ⇒ 延迟即不可达。
 	"render_canvas_view",

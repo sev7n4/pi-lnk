@@ -51,6 +51,11 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   // 系统级（非工具）：上下文压缩（审计 #6，pi_compaction 事件驱动）
   compaction: { icon: '🗜️', verb: '压缩上下文' },
   arrange_nodes: { icon: '🪟', verb: '整理布局' },
+  // 分组工具组（2026-10-21）：三者都是 ui_command，走 canvas_command 前端执行。
+  // 不登记会落 ⚙ 兜底「调用 group_nodes」，用户读不到人话。
+  group_nodes: { icon: '🗃', verb: '打组' },
+  ungroup_group: { icon: '🗃', verb: '解组' },
+  set_group_color: { icon: '🎨', verb: '改分组色' },
   focus_node: { icon: '🎯', verb: '定位节点' },
   focus_nodes: { icon: '🎯', verb: '定位多个节点' },
   undo: { icon: '↩', verb: '撤销' },

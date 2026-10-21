@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import { createProposePlanTool } from "./propose-plan.js";
@@ -101,6 +101,9 @@ export function resolveToolsWithClient(
 		...buildUiCommandTools(),
 		...buildAskUserTools(deps.registry),
 		...buildArrangeNodesTools(client),
+		// 分组工具组（2026-10-21）：tier=ui_command，走 canvas_command 前端执行。
+		// ⛔ 不能改走 Nest 端点——saveCanvas 整份覆盖会把 Agent 建的组静默抹掉。
+		...buildCanvasGroupTools(client),
 		...buildGenerationTools(client, { onNodeStatus: deps.onNodeStatus, onRegisterGenerationWait: deps.onRegisterGenerationWait }),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),

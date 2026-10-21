@@ -7,6 +7,7 @@ import { createCanvasWriteTools } from "./canvas-write.js";
 import { createUiCommandTools } from "./ui-command.js";
 import { createAskUserTools } from "./ask-user.js";
 import { createArrangeNodesTools } from "./arrange-nodes.js";
+import { createCanvasGroupTools } from "./canvas-group.js";
 import { createGenerationTools } from "./generation.js";
 import { buildWebTools } from "./web.js";
 import { buildDeleteNodesTools } from "./delete-nodes.js";
@@ -79,6 +80,22 @@ export function buildAskUserTools(registry?: PendingToolRegistry): LnkpiTool[] {
  * `arrange_nodes_<mode>` label 正是 spec §3.2 要消除的基数风险。 */
 export function buildArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 	return createArrangeNodesTools(client);
+}
+
+/**
+ * 分组工具组（2026-10-21）：group_nodes / ungroup_group / set_group_color。
+ *
+ * ⛔ 三个都是 tier=ui_command，**走 canvas_command 前端执行**，不复用服务端已存在的
+ * `/agent/internal/group-nodes` 等端点 —— `saveCanvas()` 是整份替换语义且服务端
+ * 建组不发 SSE，前端内存里永远不会出现该 group 节点 ⇒ 用户下一次编辑就会把
+ * Agent 建的组整份抹掉。详见 canvas-group.ts 文件头的完整推导。
+ *
+ * client 可选注入（L2 只读校验）：有则 execute 内先 get_canvas_layout 校验
+ * node_ids / group_id 真实存在，把 missing / 拒绝理由写回结果让模型能自我纠错。
+ * 与 buildArrangeNodesTools 同款实例，纯读不写。
+ */
+export function buildCanvasGroupTools(client?: NestClient): LnkpiTool[] {
+	return createCanvasGroupTools(client);
 }
 
 /**

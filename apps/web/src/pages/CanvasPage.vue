@@ -995,13 +995,29 @@ function selectOnlyGroup(groupId: string) {
 }
 
 /** 框选多个节点 → 打组。每条路径都必须给反馈（静默 = 用户读成「打组失败」）。 */
-function handleGroupSelection() {
-  if (multiSelectedIds.value.length < 2) {
+/**
+ * 打组。`opts.nodeIds` 为空时用当前多选（用户手动路径）；给了就用它（Agent 路径）。
+ *
+ * 2026-10-21 加 Agent 入口：`group_nodes` 工具下发 canvas_command 后经侧栏
+ * emit 到这里。⭐ 走的是**同一个函数**而非另写一份——Agent 与用户共用一条
+ * 写路径是本设计的核心：活动态 nodes.value 改完 + persistUserEdit()，
+ * 既进 undo 栈又落库，不存在「Agent 改的」与「用户改的」两套真值。
+ */
+function handleGroupSelection(opts?: { nodeIds?: string[]; title?: string; groupId?: string }) {
+  // 他人画布只读：Agent 不得改（与 handleArrangeNodes 同口径）
+  if (opts?.nodeIds?.length && agentReadOnly.value) {
+    ElMessage.warning('此画布属于其他账号，Agent 无法修改分组')
+    return
+  }
+  const ids = opts?.nodeIds?.length ? opts.nodeIds : multiSelectedIds.value
+  if (ids.length < 2) {
     ElMessage.info('请先框选至少 2 个节点再打组')
     return
   }
-  const picked = multiSelectedIds.value.length
-  const result = createGroupFromSelection(flowNodes.value, multiSelectedIds.value)
+  const picked = ids.length
+  // ⭐ groupId 由 Agent 侧生成并下发（canvas_command 单向无回传）⇒ 必须照用，
+  // 否则前端另生成一个 id，Agent 后续的 set_group_color / ungroup_group 就找不到组。
+  const result = createGroupFromSelection(flowNodes.value, ids, opts?.title, opts?.groupId)
   if (!result) {
     ElMessage.info('请先框选至少 2 个节点再打组')
     return
@@ -1035,12 +1051,30 @@ function handleUngroupSelection(id?: string) {
   persistUserEdit()
 }
 
-/** 分组背景色（null = 复位默认中性）。 */
-function handleGroupColorSelection(key: string | null) {
-  const id = selectedGroupId.value
+/**
+ * 分组背景色（null = 复位默认中性）。
+ *
+ * `groupId` 缺省时用当前选中的分组（用户点色卡路径）；给了就用它
+ * （Agent 的 `set_group_color` 路径，2026-10-21）。
+ */
+function handleGroupColorSelection(key: string | null, groupId?: string) {
+  if (groupId && agentReadOnly.value) {
+    ElMessage.warning('此画布属于其他账号，Agent 无法修改分组')
+    return
+  }
+  const id = groupId ?? selectedGroupId.value
   if (!id) return
+  // 目标不存在时**不落库**：patchGroupNodeData 会原样返回，但 persistUserEdit()
+  // 仍会触发一次无谓保存（把整份画布 PUT 出去）。Agent 传了失效 id 时尤其明显
+  // —— 那意味着上一轮建组没生效，再存一次只会把「没改成」固化下来。
+  if (!flowNodes.value.some((n) => n.id === id && isGroupNode(n as unknown as FlowNode))) return
   nodes.value = patchGroupNodeData(flowNodes.value, id, { colorKey: key }) as EditableFlowNode[]
   persistUserEdit()
+  // Agent 路径给一次确认：用户可能没在盯着画布，静默改色会读成「没生效」。
+  if (groupId) {
+    const label = key ?? '默认色'
+    ElMessage.success(`已把分组「${String(nodes.value.find((n) => n.id === id)?.data?.title ?? groupId)}」设为${label}`)
+  }
 }
 
 /**
@@ -5378,6 +5412,9 @@ onUnmounted(() => {
         @redo="handleAgentRedo"
         @open-image-editor="handleAgentOpenImageEditor"
         @arrange-nodes="handleArrangeNodes"
+        @group-nodes="(p) => handleGroupSelection(p)"
+        @ungroup-group="(id) => handleUngroupSelection(id)"
+        @set-group-color="(p) => handleGroupColorSelection(p.colorKey, p.groupId)"
         @import-node-graph="handleImportNodeGraph"
         @canvas-ref-pick-toggle="handleCanvasRefPickToggle"
         @session-created="onMobileTabChange('chat')"
