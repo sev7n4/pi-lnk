@@ -60,11 +60,42 @@ describe('SignatureHero', () => {
     expect(mediaBlock).toContain('animation: none')
   })
 
-  it('问候语是左上角小字，不再是首屏大标题', () => {
+  it('问候语是左上角小字，h1 只属于主标题（每页唯一 h1）', () => {
     const wrapper = mountHero()
-    expect(wrapper.find('h1').exists()).toBe(false)
+    // 问候语本身不是标题元素（P3-B 起主标题「想象，落定成图」升级为 h1，
+    // 本断言从「全页无 h1」的旧结构假设改为「问候语不得占据标题位」）
     const greeting = wrapper.find('[data-greeting]')
+    expect(greeting.element.tagName).toBe('P')
     expect(greeting.text()).toBe('下午好')
     expect(greeting.classes().join(' ')).toContain('text-sm')
+    const h1 = wrapper.find('h1')
+    expect(h1.exists()).toBe(true)
+    expect(h1.text()).toContain('想象，落定成图')
+    expect(wrapper.findAll('h1')).toHaveLength(1)
+  })
+
+  it('品牌 slogan 双行来自 constants/brand 单一真相源', () => {
+    const wrapper = mountHero()
+    const text = wrapper.text()
+    expect(text).toContain('你体内早就有一囊墨，只是…没有找到你的锚。')
+    expect(text).toContain('墨鱼π，锚定你的创意，一点一滴洒在画布，让画布记住你的模样。')
+    // 小字禁走品牌渐变（F-5：渐变末端白字 3.67:1 不过 AA）——只许 on-signature 实色
+    const html = wrapper.html()
+    expect(html).toContain('var(--lnk-text-on-signature-muted)')
+    expect(html).toContain('var(--lnk-text-on-signature)')
+    expect(html).not.toContain('bg-brand-gradient')
+    expect(html).not.toContain('bg-clip-text')
+  })
+
+  it('显色时刻渲染墨鱼π 品牌形象（与导航同源资产，不是按钮）', () => {
+    const wrapper = mountHero()
+    const mascot = wrapper.find('[data-testid="brand-mascot"]')
+    expect(mascot.exists()).toBe(true)
+    const img = mascot.find('img')
+    expect(img.attributes('src')).toBe('/brand/mascot-logo.png')
+    expect(img.attributes('alt')).toBeTruthy()
+    // 装饰位不得变成第二个动作入口（单 CTA 纪律）
+    expect(mascot.findAll('button')).toHaveLength(0)
+    expect(mascot.element.tagName).toBe('SPAN')
   })
 })

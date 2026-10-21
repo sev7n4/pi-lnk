@@ -101,9 +101,16 @@ describe('P3-G 画布兜底 / 标题口径 / 墨圈（走查「没有设计品�
     expect(CARD, '标题必须过 displayCanvasTitle 口径').toContain('displayCanvasTitle')
   })
 
-  it('hero 显色时刻是 SVG 墨圈，不再是纯紫圆头像', () => {
+  it('hero 显色时刻是墨鱼π 品牌形象（BRAND_LOGO_URL 资产），不再是纯紫圆头像', () => {
     expect(HERO_SRC, '纯色圆 + 字符读作放错位置的装饰').not.toContain('BrandPatternAvatar')
-    expect(HERO_SRC).toContain('data-testid="ink-enso"')
+    expect(HERO_SRC).toContain('data-testid="brand-mascot"')
+    expect(HERO_SRC).toContain('BRAND_LOGO_URL')
+  })
+
+  it('slogan 来自 constants/brand 单一真相源，且小字不走品牌渐变（F-5）', () => {
+    expect(HERO_SRC).toContain('BRAND_SLOGAN_MAIN')
+    expect(HERO_SRC).not.toContain('bg-brand-gradient')
+    expect(HERO_SRC).not.toContain('bg-clip-text')
   })
 
   it('兜底组件只消费 lnk-* 令牌（无裸 hex / 无 --neo-* / 无裸 rgba）', () => {
