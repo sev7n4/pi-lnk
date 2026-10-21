@@ -110,6 +110,7 @@ import {
   getAgentSkill,
 } from '@/constants/agentSkillMap'
 import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
+import { BRAND_LOGO_URL } from '@/constants/brand'
 import {
   buildDraftFromUtterance,
   selectExampleUtterances,
@@ -2404,6 +2405,17 @@ function fillFromUtterance(u: string) {
   nextTick(() => composerRef.value?.focus())
 }
 
+/**
+ * 移动端三联：点锚 = **进入输入态**（2026-10-22 用户裁定「暂设为可点」）。
+ * ⛔ 只聚焦、**不提交**：发送意图必须由用户显式表达（与 fillFromUtterance 同款聚焦
+ * 模式），提交仍归 composer 发送键——否则同一屏出现两个「开始创作」入口，
+ * 用户点锚却没发出去会以为坏了。
+ */
+function focusComposerFromTriptych() {
+  if (props.readOnly || agent.isStreaming) return
+  nextTick(() => composerRef.value?.focus())
+}
+
 async function startNewTask() {
   if (agent.isStreaming || isUploading.value) return
   await sendMessage('__new_task__')
@@ -3949,7 +3961,51 @@ defineExpose({
             <!-- P1-1：通用首屏 —— persona 压成一行轻量文案（P1-1.3），视觉重心让给
                  4 条按画布相选取的样例 chips（P1-1.1）；点击 chips 只填充输入框（P1-1.2）。 -->
             <div v-else-if="!agent.messages.length" class="agent-empty agent-composer-firstscreen px-3 pb-2 pt-6">
-              <p class="agent-composer-persona text-center text-[12px] leading-relaxed" data-testid="agent-persona-line">
+              <!-- 移动端叙事头（2026-10-22 用户裁定「窄屏也要讲三联」）：墨鱼 → 墨滴 →
+                   三联（左对话 / 中锚定 / 右画布）。
+                   ⛔ 三联**横向压成一行**——竖排会丢掉「左→中→右」的读序，而那正是这条
+                   动线唯一要传达的东西；窄屏放不下桌面那套（168px 锚），就把三节点压成
+                   一行 56px 高的图标条，锚居中作视觉重心。
+                   ⛔ 点锚**只进输入态、不提交**：发送意图必须由用户显式表达（与
+                   fillFromUtterance 同款聚焦模式），提交仍归 composer 发送键 ⇒ 两个入口不打架。
+                   桌面侧栏窄且已有 persona 行 ⇒ `lg:hidden`，桌面零变化。 -->
+              <div class="lnk-triptych mb-4 lg:hidden" data-testid="mobile-triptych">
+                <img :src="BRAND_LOGO_URL" alt="" class="lnk-triptych__mascot" aria-hidden="true">
+                <span class="lnk-triptych__drop" aria-hidden="true" />
+                <span class="lnk-triptych__drop lnk-triptych__drop--b" aria-hidden="true" />
+                <div class="lnk-triptych__row">
+                  <span class="lnk-triptych__node">
+                    <svg class="lnk-triptych__icon" viewBox="0 0 16 14" aria-hidden="true">
+                      <path d="M2.7 2h10.6v6.4H7.2l-2.9 2.6V8.4H2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+                    </svg>
+                    对话
+                  </span>
+                  <button
+                    type="button"
+                    class="lnk-triptych__anchor"
+                    data-testid="mobile-triptych-anchor"
+                    aria-label="点击锚，开始描述你的创意"
+                    @click="focusComposerFromTriptych"
+                  >
+                    <span class="lnk-triptych__glyph" aria-hidden="true" />
+                    锚定
+                  </button>
+                  <span class="lnk-triptych__node">
+                    <svg class="lnk-triptych__icon" viewBox="0 0 16 14" aria-hidden="true">
+                      <rect x="2.4" y="2.2" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+                      <rect x="8.6" y="2.2" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+                      <rect x="2.4" y="7.8" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+                      <rect x="8.6" y="7.8" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+                    </svg>
+                    画布
+                  </span>
+                </div>
+                <p class="lnk-triptych__slogan">
+                  墨鱼π，锚定你的创意
+                  <span class="lnk-triptych__slogan-sub">一点一滴落在画布</span>
+                </p>
+              </div>
+              <p class="agent-composer-persona hidden text-center text-[12px] leading-relaxed lg:block" data-testid="agent-persona-line">
                 lnk·π 助手 · 说一句创意，我来画
               </p>
               <div class="agent-example-chips mt-3 flex flex-wrap justify-center gap-2">
@@ -6640,5 +6696,127 @@ defineExpose({
 .agent-attach-icon {
   background: var(--lnk-hover-overlay);
   color: var(--lnk-text-secondary);
+}
+
+/* ===== 移动端三联叙事头（2026-10-22 用户裁定「窄屏也要讲三联」）=====
+   ⛔ 令牌纪律：这一块挂在**对话面板**上，而对话面板随主题翻转 ⇒ 只用常规令牌
+   （accent / text-secondary / text-muted），**禁 on-signature 家族**——那是恒深签名面
+   专用，压在翻转面上会重演「颜色放反」那类事故。
+   ⛔ 布局纪律：三联必须横向一行（flex-row），竖排会丢掉「左→中→右」的读序。 */
+.lnk-triptych {
+  position: relative;
+  padding-top: 40px;
+  text-align: center;
+}
+
+.lnk-triptych__mascot {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translateX(-50%);
+  user-select: none;
+}
+
+/* 墨滴：与签名面同款水滴形（尖头朝上 + 重力加速 + 下落拉长），落程压到 34px */
+.lnk-triptych__drop {
+  position: absolute;
+  top: 26px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -10px;
+  border-radius: 0 50% 50% 50%;
+  background: var(--lnk-accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: lnk-triptych-drop 3.6s cubic-bezier(0.42, 0, 0.85, 0.45) infinite;
+}
+
+.lnk-triptych__drop--b {
+  margin-left: 4px;
+  animation-delay: 1.2s;
+}
+
+@keyframes lnk-triptych-drop {
+  0% {
+    transform: translate(0, 0) scale(0.5) rotate(45deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.85;
+  }
+  72% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(0, 34px) scale(0.82, 1.22) rotate(45deg);
+    opacity: 0;
+  }
+}
+
+.lnk-triptych__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.lnk-triptych__node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--lnk-text-muted);
+  font-size: var(--lnk-text-2xs);
+}
+
+.lnk-triptych__icon {
+  width: 18px;
+  height: 16px;
+}
+
+.lnk-triptych__anchor {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lnk-accent);
+  font-size: var(--lnk-text-2xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.lnk-triptych__glyph {
+  display: block;
+  width: 26px;
+  height: 30px;
+  background: currentColor;
+  -webkit-mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
+  mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
+}
+
+.lnk-triptych__slogan {
+  margin-top: 12px;
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-xs);
+  line-height: 1.7;
+}
+
+.lnk-triptych__slogan-sub {
+  display: block;
+  color: var(--lnk-text-muted);
+  font-size: var(--lnk-text-2xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lnk-triptych__drop {
+    animation: none;
+    opacity: 0;
+  }
 }
 </style>
