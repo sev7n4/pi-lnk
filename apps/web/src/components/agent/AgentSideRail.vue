@@ -4633,7 +4633,15 @@ defineExpose({
                   @mention="insertRefMention"
                   @reorder="sidebar.reorder"
                 />
-                <div v-else class="agent-composer__input-wrap">
+                <!-- 2026-10-21 修回归：此处**必须无条件渲染**（不得写 v-else）。
+                     #532 下线语音时删除了前面的 `<template v-if="holdActive">` 录音块，
+                     原本与之配对的 v-else 静默改挂到 AgentRefStrip 的
+                     v-if="pendingAttachmentItems.length" 上 ⇒ 只要有引用 chip（画布 ◎ 拾取 /
+                     多选「加入 Agent 引用」），输入行（MentionInput textarea）整行不渲染，
+                     裸条只剩 [芯片行][＋/模型/发送]，用户无法输入文字（stacked 三行布局
+                     见下方 CSS 注释：行0 芯片 / 行1 输入文本 / 行2 控件——行1 必须常在）。
+                     空闲态由 .is-idle 的 display:none 规则隐藏输入行，不依赖本处条件。 -->
+                <div class="agent-composer__input-wrap">
                 <!-- 2026-10-18 修 B：leading-inset 跟随 ◎ 可见性（两端统一）——
                      原 PC 恒 18px（◎ 藏着也缩进）、移动端恒 0（◎ 压住行首字符）。
                      ⑥ 画布点选模式：placeholder 承载跨容器引导（点 ◎ 后视线还在 composer，
