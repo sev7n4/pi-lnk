@@ -24,7 +24,11 @@
 ### 2.1 本规格做
 
 - 新增 shared 纯函数 `alignNodes` / `distributeNodes` / `computeSnapGuides`（§6）；
-- Nest `applyLayoutOps` 新增 op `align` / `distribute`（复用既有通道，消费 shared 纯函数）；
+- **坐标类变更一律走前端 canvas_command 通道**（已核实：与 `arrange_nodes` / 分组三工具同铁律——
+  CanvasPage 消费命令、用 shared 纯函数算坐标、`setNodes` 后 `persistUserEdit` 落库；
+  直调 Nest 改库会被下一次 `saveCanvas` 整份覆盖，见 `CanvasPage.vue:2162` 注释）。故 **不新增
+  Nest `applyLayoutOps` 的 HTTP op**：用户工具条与 agent 工具都下发同一 `arrange_nodes` canvas_command，
+  `mode` 扩 `'align' | 'distribute'`，由前端执行器分支消费 shared 纯函数；
 - pi 工具 `arrange_nodes` schema 扩 `mode: 'align' | 'distribute'` + 必填参数（不点名 prompt，靠 description 承载发现能力）；
 - 桌面 `MultiSelectToolbar` 增加 align 六向 + distribute H/V 按钮组；
 - 移动端 `MobileMultiSelectMoreSheet` 增加 align 六向（进「更多」sheet）；
@@ -86,16 +90,20 @@
                       │ import             │ import
         ┌─────────────┴──────┐   ┌─────────┴──────────┐
         ▼                    ▼   ▼                     ▼
-  Nest applyLayoutOps     arrange_nodes      apps/web MultiSelectToolbar
-  新 op: align/distribute 工具扩 mode        + MobileMultiSelectMoreSheet
-                                              │
-                                      拖拽拦截（onNodesChange）
-                                      调 computeSnapGuides
-                                      + GuideLines 渲染组件
+  CanvasPage 执行器       arrange_nodes      apps/web MultiSelectToolbar
+  （消费 shared 纯函数）    工具扩 mode        + MobileMultiSelectMoreSheet
+  用户/agent 同 canvas_command          │
+  │                                     │
+  └──────────────┬──────────────────────┘
+                 ▼
+          拖拽拦截（onNodesChange）
+          调 computeSnapGuides
+          + GuideLines 渲染组件
 ```
 
-三层共享同一份几何内核：**用户工具条**与 **agent 工具**走同一条 `applyLayoutOps` 通道
-（与现有「整理布局」下拉同构）；**拖拽参考线**是纯前端实时层，不进 HTTP 通道。
+三层共享同一份几何内核：**用户工具条**与 **agent 工具**走同一条前端 `arrange_nodes` canvas_command
+（与现有「整理布局」下拉、分组三工具同构——坐标变更必须前端执行，避免被 `saveCanvas` 整份覆盖）；
+**拖拽参考线**是纯前端实时层，同样消费 shared 纯函数，不进 HTTP 通道。
 
 ## 6. 原语规格（shared/canvas/layout.ts 扩展）
 
@@ -141,23 +149,31 @@
   ```
 - 若无任何命中，`snapped` 返回原 `dragBox` 左上角，guide 字段缺失。
 
-## 7. 派发通道（与整理布局同构）
+## 7. 派发通道（前端 canvas_command，与 arrange_nodes / 分组工具同铁律）
 
-### 7.1 Nest `applyLayoutOps` 新 op
+> 已回代码核实（`CanvasPage.vue:2162`）：坐标类变更必须在前端执行——画布活动态 `nodes.value`
+> 是真相源，走 Nest 改库会被下一次 `saveCanvas` 整份覆盖。故 align/distribute **不新增 HTTP op**，
+> 复用既有 `arrange_nodes` canvas_command，由前端执行器分支消费 shared 纯函数。
 
-- `canvas-layout.util.ts:applyLayoutOps` 的 `ops` 联合新增 `'align' | 'distribute'`，
-  带 `nodeIds` + `mode`（align）/ `axis`（distribute）；
-- 消费 §6 纯函数；与既有 `group/ungroup/move/grid/along_edges` 同事务、同原子回拉；
-- 既有 `applyLayoutOps` 测试（`canvas-layout.util.test.ts`）继续全绿为门，新增 op 加用例。
+### 7.1 前端执行器分支（CanvasPage + useCanvasGrouping）
+
+- `useCanvasGrouping.applyArrangeLayout` 的 `ArrangeMode` 联合扩 `'align' | 'distribute'`，
+  新增 `AlignRequest { nodeIds; mode:'align'; alignMode: AlignSixWay }` 与
+  `DistributeRequest { nodeIds; mode:'distribute'; axis:'x'|'y' }`；
+- 分支：`align` → 调 shared `alignNodes(nodes, ids, alignMode)`；`distribute` → 调
+  `distributeNodes(nodes, ids, axis)`；结果与 `grid`/`along_edges` 同处理：`setNodes` +
+  `persistUserEdit` + 自动聚焦；
+- `handleArrangeNodes`（CanvasPage:2166）payload 联合扩为四 mode，按 mode 派发到对应纯函数。
 
 ### 7.2 pi 工具 `arrange_nodes` 扩 mode
 
-- `services/pi-runtime/src/tools/`（沿 `#546` 分组工具的注册模式）schema 扩：
-  `mode: enum['grid','along_edges','align','distribute']`，选 `align` 时必填 `alignMode`，
-  选 `distribute` 时必填 `axis`；
+- `services/pi-runtime/src/tools/arrange-nodes.ts` schema 扩：
+  `mode: enum['grid','along_edges','align','distribute']`，选 `align` 时必填 `align_mode`，
+  选 `distribute` 时必填 `axis`；canvasCommand 仍 `type:'arrange_nodes'`（`AgentSideRail` 透传）；
 - **不进 prompt-registry 点名**：description 承担发现能力（先例分组工具），零 L6 预算成本；
-  `tiering.test.ts` 归属登记（`graph_batch` 或既有 tier）；
-- 维持 HN1：agent 仍不传坐标，`alignMode`/`axis` 由模型给语义、坐标后端算。
+  `tiering.test.ts` 归属登记（现有 `ui_command` tier）；
+- 维持 HN1：agent 仍不传坐标，`align_mode`/`axis` 由模型给语义、坐标前端算；
+- `AgentSideRail.vue` 的 `ArrangeRequest` 类型与 `emit('arrangeNodes')` 同步扩联合。
 
 ## 8. 用户侧 UI
 
@@ -165,8 +181,9 @@
 
 - 在现有「打组/解组/整理布局/批量生成/复制/删除」后增设 **align 六向 + distribute H/V**
   按钮组（图标用既有 `src/assets/icons/*.png` mask 资产风格，颜色走 design-token，禁新增 hex）；
-- 点击 → 调 `applyLayoutOps({ops:[{op:'align'|'distribute', nodeIds, ...}]})`（与整理布局同通道），
-  服务端算完回拉；
+- 点击 → emit `align` canvas_command（与整理布局同通道：`MultiSelectToolbar` 的 `layout` emit
+  经 `handleLayoutSelection` → `handleArrangeNodes`，align 走同构的 `handleAlignNodes`），
+  前端用 shared 纯函数算完 `setNodes` + `persistUserEdit`；
 - 守卫：先跑 `design-token.test.ts` + `theme-usage.test.ts`（AGENTS.md 前端铁律）。
 
 ### 8.2 移动端 `MobileMultiSelectMoreSheet.vue`
@@ -196,9 +213,10 @@
 
 ## 10. 变更影响面与同步矩阵
 
-- **改 `applyLayoutOps` op 联合** ⇒ 既有 `applyLayoutOps` 测试（3 处）须全绿；
+- **改 `useCanvasGrouping` 的 `ArrangeMode` 联合 + `handleArrangeNodes` payload 联合** ⇒
+  既有 `useCanvasGrouping.arrange.test.ts` 须全绿 + 新增 align/distribute 分支用例；
 - **改 `arrange_nodes` schema** ⇒ `services/pi-runtime/src/tools/tiering.test.ts` 登记
-  + `tool-capability-catalog.md` 四列更新（归属/点名资产=无，靠 description）；
+  + `arrange-nodes.test.ts` 扩 mode 校验用例；
 - **改 `MultiSelectToolbar` / `MobileMultiSelectMoreSheet` 样式** ⇒ design-token + theme-usage 守卫；
 - **新增 shared 纯函数** ⇒ 既有 `packages/shared` `layout.ts` 测试须全绿 + 新增金样；
 - 不触碰 prompt-registry（align/distribute 不点名，绕过 AGENTS.md §同步矩阵的 6 处同步）。
@@ -217,7 +235,7 @@
 | 层 | 用例 |
 |---|---|
 | packages/shared | `alignNodes` 六向 × 混排尺寸（text/image/video）× 含 parentNode 偏移；`distributeNodes` 等空隙数学（n≥3、n<3 no-op、首尾锚定）；`computeSnapGuides` 6 锚点命中/未命中/单方向最近线/hysteresis/跳过自身与父 |
-| apps/server | `applyLayoutOps` 新 op `align`/`distribute` 单测（与既有 3 处同绿） |
+| apps/web | `useCanvasGrouping.applyArrangeLayout` 扩 `align`/`distribute` 分支（既有 3 处 arrange 用例同绿）；`handleArrangeNodes` payload 联合；`MultiSelectToolbar` align 按钮触发命令；`GuideLines` 渲染；`MobileMultiSelectMoreSheet` 六向入口；design-token + theme-usage 守卫必跑 |
 | services/pi-runtime | `arrange_nodes` schema 校验（mode×必填参数）+ `tiering.test.ts` 归属登记 |
 | apps/web | `MultiSelectToolbar` align 按钮触发 `applyLayoutOps`；`GuideLines` 渲染；`MobileMultiSelectMoreSheet` 六向入口；design-token + theme-usage 守卫必跑 |
 | 全局 | `pnpm build` 六包全绿；`vue-tsc --noEmit`（改 .vue 后必跑，AGENTS.md 铁律） |
