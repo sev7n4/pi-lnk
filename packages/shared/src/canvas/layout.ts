@@ -290,3 +290,48 @@ export function placeBatchNodes(
   }
   return result
 }
+
+export type AlignSixWay = 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+
+/** 节点绝对包围盒（含 parentNode 偏移）；尺寸走既有 getNodeSize。 */
+function absBox(node: LayoutNode, nodes: LayoutNode[]) {
+  const abs = getAbsolutePosition(node, nodes)
+  const { w, h } = getNodeSize(node)
+  return { x: abs.x, y: abs.y, w, h, left: abs.x, right: abs.x + w, top: abs.y, bottom: abs.y + h,
+    cx: abs.x + w / 2, cy: abs.y + h / 2 }
+}
+
+/**
+ * 把 ids 节点按 mode 对齐到选中集极值/中线（Figma 口径）。
+ * 返回**局部坐标**新位置（已减 parent 绝对偏移）；未选中节点不在映射中。
+ * 坐标零模型参与：只重排，不改尺寸/内容（HN1 纪律同构）。
+ */
+export function alignNodes(nodes: LayoutNode[], ids: string[], mode: AlignSixWay): Record<string, { x: number; y: number }> {
+  const sel = nodes.filter((n) => ids.includes(n.id))
+  if (sel.length === 0) return {}
+  const boxes = sel.map((n) => ({ id: n.id, ...absBox(n, nodes) }))
+  let target = 0
+  if (mode === 'left') target = Math.min(...boxes.map((b) => b.left))
+  else if (mode === 'right') target = Math.max(...boxes.map((b) => b.right))
+  else if (mode === 'centerH') target = (Math.min(...boxes.map((b) => b.left)) + Math.max(...boxes.map((b) => b.right))) / 2
+  else if (mode === 'top') target = Math.min(...boxes.map((b) => b.top))
+  else if (mode === 'bottom') target = Math.max(...boxes.map((b) => b.bottom))
+  else if (mode === 'centerV') target = (Math.min(...boxes.map((b) => b.top)) + Math.max(...boxes.map((b) => b.bottom))) / 2
+  const out: Record<string, { x: number; y: number }> = {}
+  for (const b of boxes) {
+    const node = sel.find((n) => n.id === b.id)!
+    const abs = getAbsolutePosition(node, nodes)
+    const offX = abs.x - node.position.x
+    const offY = abs.y - node.position.y
+    let nx = abs.x
+    let ny = abs.y
+    if (mode === 'left') nx = target
+    else if (mode === 'right') nx = target - b.w
+    else if (mode === 'centerH') nx = target - b.w / 2
+    else if (mode === 'top') ny = target
+    else if (mode === 'bottom') ny = target - b.h
+    else if (mode === 'centerV') ny = target - b.h / 2
+    out[b.id] = { x: nx - offX, y: ny - offY }
+  }
+  return out
+}

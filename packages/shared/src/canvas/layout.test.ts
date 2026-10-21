@@ -162,3 +162,40 @@ describe('上移回归（getNodeSize / getAbsolutePosition 逐字等价）', () 
     expect(getAbsolutePosition(nodes[2], nodes)).toEqual({ x: 160, y: 170 })
   })
 })
+
+import { alignNodes, type AlignSixWay } from './layout'
+
+function mk(id: string, x: number, y: number, w = 280, h = 160, parent?: string): LayoutNode {
+  return { id, type: 'text', position: { x, y }, dimensions: { width: w, height: h }, ...(parent ? { parentNode: parent } : {}) } as LayoutNode
+}
+
+describe('alignNodes', () => {
+  it('left：选中集最小左缘对齐', () => {
+    const nodes = [mk('a', 100, 0), mk('b', 300, 0, 280, 280), mk('c', 0, 500)]
+    const r = alignNodes(nodes, ['a', 'b'], 'left')
+    expect(r['a'].x).toBe(100); expect(r['b'].x).toBe(100) // 都移到 a 的左缘
+    expect(r['c']).toBeUndefined()
+  })
+  it('right：最大右缘对齐（b 右缘=580）', () => {
+    const nodes = [mk('a', 100, 0), mk('b', 300, 0, 280, 280)]
+    const r = alignNodes(nodes, ['a', 'b'], 'right')
+    expect(r['a'].x).toBe(580 - 280); expect(r['b'].x).toBe(300)
+  })
+  it('centerH：以选中集水平中轴对齐', () => {
+    const nodes = [mk('a', 100, 0), mk('b', 300, 0, 280, 280)]
+    // 选中集左缘 100 / 右缘 580 → 中轴 340；a 宽 280 → 左缘 200
+    const r = alignNodes(nodes, ['a', 'b'], 'centerH')
+    expect(r['a'].x).toBe(200); expect(r['b'].x).toBe(340 - 140)
+  })
+  it('含 parentNode：结果减回 parent 偏移（parent 在 1000,1000）', () => {
+    const parent = mk('p', 1000, 1000, 600, 600)
+    const child = mk('a', 100, 100, 280, 160, 'p') // 局部 100,100，绝对 1100,1100
+    const nodes = [parent, child]
+    const r = alignNodes(nodes, ['a'], 'left')
+    // 绝对左缘 1100，无他者 ⇒ 目标=1100；局部 = 1100 - (绝对1100 - 局部100) = 100（不变）
+    expect(r['a'].x).toBe(100)
+  })
+  it('空集返回空映射', () => {
+    expect(alignNodes([mk('a', 0, 0)], [], 'left')).toEqual({})
+  })
+})
