@@ -11,12 +11,20 @@
  * 交互分工：
  * - **整框可拖 / 单击选中** —— vue-flow 默认行为（不要设 `dragHandle`，
  *   一设就退回「只能抓标题条」，正是 #494 之前被抱怨的形态）；
+ * - **8 方向缩放** —— 选中后四角 + 四边中点出现手柄，语义与本项目
+ *   裁剪 / 扩图一致（只动该手柄所在边、对边固定、单边下限 160px，见
+ *   `resizeGroupByHandle`）。组件只把指针位移按 zoom 换算后交回页面，
+ *   ⛔ 不直写 nodes（受控模式下 nodes 是唯一真值）；
  * - **重命名** —— 双击外沿标题条（与图片/视频节点的 `.neo-node-external-title` 同位）；
  * - **背景色 / 解组** —— 选中后由 `MultiSelectToolbar` 承载（色卡 + 解组钮）。
  */
-import { computed, inject, nextTick, ref } from 'vue'
-import { useNode } from '@vue-flow/core'
-import { CANVAS_NODE_RENAME_KEY } from '@/composables/canvasNodeActions'
+import { computed, inject, nextTick, onUnmounted, ref } from 'vue'
+import { useNode, useVueFlow } from '@vue-flow/core'
+import {
+  CANVAS_GROUP_RESIZE_KEY,
+  CANVAS_NODE_RENAME_KEY,
+} from '@/composables/canvasNodeActions'
+import { GROUP_HANDLE_DIRS, type GroupHandleDir } from '@/composables/useCanvasGrouping'
 import { normalizeGroupColorKey } from './groupColors'
 
 const props = defineProps<{
@@ -25,7 +33,11 @@ const props = defineProps<{
 }>()
 
 const { id: nodeId } = useNode()
+const { viewport } = useVueFlow()
 const renameNode = inject(CANVAS_NODE_RENAME_KEY, null)
+/** 注入的是 Ref：视口在运行时会变（移动端↔PC），「移动端无手柄」必须跟着变。 */
+const resizeGroupRef = inject(CANVAS_GROUP_RESIZE_KEY, null)
+const resizeGroup = computed(() => resizeGroupRef?.value ?? null)
 const isRenaming = ref(false)
 const renameDraft = ref('')
 const renameInputRef = ref<HTMLInputElement | null>(null)
@@ -54,6 +66,58 @@ function commitRename() {
 const groupStyle = computed(() => ({
   '--group-accent': `var(--lnk-group-${normalizeGroupColorKey(props.data.colorKey)})`,
 }))
+
+// —— 8 方向缩放（2026-10-21）———————————————————————————————
+// 手柄只在「选中 + 页面注入了 resizeGroup」时出现。后者是移动端 / 只读态的
+// 唯一开关：页面不 provide ⇒ 手柄不渲染（对齐「移动端不拖分组框」的决定）。
+//
+// ⛔ `resizeGroup.value` 必须显式解包：`resizeGroup` 是 computed **ref 对象**，
+// `Boolean(ref)` 恒为 true（对象都是真值）⇒ 会把「没注入」也判成可缩放。
+const canResize = computed(() => Boolean(props.selected) && Boolean(resizeGroup.value))
+
+const resizing = ref<{ dir: GroupHandleDir; lastX: number; lastY: number; zoom: number } | null>(null)
+
+function onHandlePointerDown(dir: GroupHandleDir, event: PointerEvent) {
+  const apply = resizeGroup.value
+  if (!apply) return
+  // 手柄在节点盒内：不拦住就会同时触发「整框拖动」+ 画布平移，三个手势打架。
+  // stopPropagation 挡事件冒泡；nodrag/nopan 类是 vue-flow d3 filter 的官方开关
+  // （`noDragClassName`/`noPanClassName` 默认值，@vue-flow/core 1.48 已核）。
+  event.stopPropagation()
+  event.preventDefault()
+  resizing.value = { dir, lastX: event.clientX, lastY: event.clientY, zoom: viewport.value.zoom }
+  window.addEventListener('pointermove', onHandlePointerMove)
+  window.addEventListener('pointerup', onHandlePointerUp)
+}
+
+function onHandlePointerMove(event: PointerEvent) {
+  const state = resizing.value
+  const apply = resizeGroup.value
+  if (!state || !apply) return
+  // 屏幕位移 → 画布坐标位移：缩放 0.5 时拖 100px 只算 50 画布 px，否则框会「跑得比手快」。
+  const zoom = state.zoom > 0 ? state.zoom : 1
+  const dx = (event.clientX - state.lastX) / zoom
+  const dy = (event.clientY - state.lastY) / zoom
+  state.lastX = event.clientX
+  state.lastY = event.clientY
+  if (dx === 0 && dy === 0) return
+  apply(nodeId, state.dir, { dx, dy })
+}
+
+function onHandlePointerUp() {
+  const state = resizing.value
+  const apply = resizeGroup.value
+  resizing.value = null
+  window.removeEventListener('pointermove', onHandlePointerMove)
+  window.removeEventListener('pointerup', onHandlePointerUp)
+  // delta=null 是「拖完了」的信号 ⇒ 页面此刻才落库（拖拽中逐帧写库会冲垮 undo 栈）
+  if (state && apply) apply(nodeId, state.dir, null)
+}
+
+onUnmounted(() => {
+  window.removeEventListener('pointermove', onHandlePointerMove)
+  window.removeEventListener('pointerup', onHandlePointerUp)
+})
 </script>
 
 <template>
@@ -91,6 +155,22 @@ const groupStyle = computed(() => ({
       </template>
     </div>
     <div class="group-node-container" />
+
+    <!-- 8 手柄（4 角 L 形 + 4 边中点条）：外形与裁剪/扩图手柄同款（NodeOutpaintOverlay），
+         交互语义同源：只动该手柄所在边、对边固定。nodrag/nopan 是 vue-flow 的官方
+         拖拽/平移豁免类（noDragClassName / noPanClassName 默认值）。 -->
+    <template v-if="canResize">
+      <button
+        v-for="dir in GROUP_HANDLE_DIRS"
+        :key="dir"
+        type="button"
+        class="group-resize-handle nodrag nopan"
+        :class="[`group-resize-handle--${dir}`, { 'is-corner': dir.length === 2 }]"
+        :data-handle="dir"
+        :aria-label="`调整分组框尺寸 ${dir}`"
+        @pointerdown="onHandlePointerDown(dir, $event)"
+      />
+    </template>
   </div>
 </template>
 
@@ -177,4 +257,79 @@ const groupStyle = computed(() => ({
 .group-rename-input:focus {
   border-color: var(--lnk-accent);
 }
+
+/* —— 8 手柄（与裁剪/扩图同款：四角 L 形括号 + 四边中点条）——
+ * 语义与几何在 useCanvasGrouping.resizeGroupByHandle（只动该边、对边固定）。
+ * 颜色全走 --lnk-* 令牌：手柄要同时压在浅/深两主题的分组底色上都能看见，
+ * 故用 text-primary（近乎白/近乎黑的反差色）而非品牌紫。 */
+.group-resize-handle {
+  position: absolute;
+  z-index: 2;
+  padding: 0;
+  border: none;
+  background: var(--lnk-text-primary);
+  border-radius: 2px;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.group-resize-handle:hover {
+  background: var(--lnk-accent);
+}
+
+/* 四角：L 形括号（外扩 3px，压在框线上） */
+.group-resize-handle.is-corner {
+  width: 18px;
+  height: 18px;
+  background: transparent;
+}
+.group-resize-handle.is-corner::before,
+.group-resize-handle.is-corner::after {
+  content: '';
+  position: absolute;
+  background: var(--lnk-text-primary);
+  border-radius: 2px;
+}
+.group-resize-handle.is-corner:hover::before,
+.group-resize-handle.is-corner:hover::after {
+  background: var(--lnk-accent);
+}
+.group-resize-handle.is-corner::before {
+  width: 18px;
+  height: 3.5px;
+}
+.group-resize-handle.is-corner::after {
+  width: 3.5px;
+  height: 18px;
+}
+.group-resize-handle--nw { left: -3px; top: -3px; cursor: nwse-resize; }
+.group-resize-handle--nw::before { left: 0; top: 0; }
+.group-resize-handle--nw::after { left: 0; top: 0; }
+.group-resize-handle--ne { right: -3px; top: -3px; cursor: nesw-resize; }
+.group-resize-handle--ne::before { right: 0; top: 0; }
+.group-resize-handle--ne::after { right: 0; top: 0; }
+.group-resize-handle--sw { left: -3px; bottom: -3px; cursor: nesw-resize; }
+.group-resize-handle--sw::before { left: 0; bottom: 0; }
+.group-resize-handle--sw::after { left: 0; bottom: 0; }
+.group-resize-handle--se { right: -3px; bottom: -3px; cursor: nwse-resize; }
+.group-resize-handle--se::before { right: 0; bottom: 0; }
+.group-resize-handle--se::after { right: 0; bottom: 0; }
+
+/* 四边中点：短条 */
+.group-resize-handle--n,
+.group-resize-handle--s {
+  width: 22px;
+  height: 5px;
+  cursor: ns-resize;
+}
+.group-resize-handle--n { left: 50%; top: -2.5px; transform: translateX(-50%); }
+.group-resize-handle--s { left: 50%; bottom: -2.5px; transform: translateX(-50%); }
+.group-resize-handle--w,
+.group-resize-handle--e {
+  width: 5px;
+  height: 22px;
+  cursor: ew-resize;
+}
+.group-resize-handle--w { top: 50%; left: -2.5px; transform: translateY(-50%); }
+.group-resize-handle--e { top: 50%; right: -2.5px; transform: translateY(-50%); }
 </style>

@@ -941,3 +941,120 @@ export function foldGroups(nodes: FlowNode[]): { nodes: FlowNode[]; groups: Canv
 
   return { nodes: nextNodes, groups }
 }
+
+// ── 分组框 8 方向缩放（2026-10-21 用户实测新增诉求）────────────────
+//
+// 语义与本项目**裁剪 / 扩图**完全一致（见 refine/outpaintGeometry.ts）：
+//   - 8 个手柄（4 角 + 4 边），**只移动该手柄所在的边，对边固定**；
+//   - 单边下限 GROUP_MIN_SIZE（框不能缩到比最小尺寸还小）；
+//   - **只改框**（style.width/height + position），**子节点绝对位置不动** ——
+//     子节点相对坐标随框的新 origin 平移补偿，「内容不动、框变」。
+//
+// 为什么不用 @vue-flow/node-resizer：官方插件群整体停在 1.x 早期
+// （node-resizer 1.5.1 / background 1.3.2 / controls 1.1.3），而 core 已是 1.48.2；
+// 且它走 dimensions 通道写回，本项目是受控模式（style 为唯一权威），接它要另开通道。
+//
+// 为什么不复用 refine/outpaintGeometry 的常量：那份的 HandleDir 语义绑定「图片像素矩形」
+// （base 是原图、rect 是新画布），与分组框的「画布坐标矩形」不是同一层；此处独立定义，
+// 但**手柄集合与「只动该边、对边固定」的规则刻意与之一致**（用户体验同源）。
+
+/** 分组框缩放手柄方向（4 角 + 4 边）。 */
+export type GroupHandleDir = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+
+/** 手柄渲染顺序（4 角 + 4 边），与裁剪/扩图一致。 */
+export const GROUP_HANDLE_DIRS: GroupHandleDir[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+
+/** 手柄 → 随指针移动的边；未标 true 的边在该手柄拖拽时保持固定（对边固定）。 */
+export const GROUP_HANDLE_MOVING_EDGES: Record<
+  GroupHandleDir,
+  { west: boolean; east: boolean; north: boolean; south: boolean }
+> = {
+  nw: { west: true, east: false, north: true, south: false },
+  n: { west: false, east: false, north: true, south: false },
+  ne: { west: false, east: true, north: true, south: false },
+  e: { west: false, east: true, north: false, south: false },
+  se: { west: false, east: true, north: false, south: true },
+  s: { west: false, east: false, north: false, south: true },
+  sw: { west: true, east: false, north: false, south: true },
+  w: { west: true, east: false, north: false, south: false },
+}
+
+/** 分组框最小边长（画布坐标 px）：再小就没法框住内容了。 */
+export const GROUP_MIN_SIZE = 160
+
+/** 一次拖拽位移（画布坐标 px，调用方已按 zoom 换算）。 */
+export type GroupDragDelta = { dx: number; dy: number }
+
+/**
+ * 按手柄方向缩放分组框。
+ *
+ * 契约：
+ * - 目标不是分组节点 / 框无有效尺寸 ⇒ 原样返回（幂等、零扰动）；
+ * - 缩到 GROUP_MIN_SIZE 以下 ⇒ 该轴 clamp 到下限（不出现 0 / 负宽）；
+ * - **子节点绝对位置逐个不变**（相对坐标随框 origin 平移补偿）；
+ * - 框尺寸写回 `style.width/height`（字符串 px）—— 受控模式下 `style` 才是权威，
+ *   不写 `dimensions`（那是 vue-flow 的测量值，两条通道不能打架）；
+ * - 落库由 `foldGroups` 自动把新尺寸带进 `CanvasGroup.size`（持久化格式零改动）。
+ */
+export function resizeGroupByHandle(
+  nodes: FlowNode[],
+  groupId: string,
+  dir: GroupHandleDir,
+  delta: GroupDragDelta,
+): FlowNode[] {
+  const target = nodes.find((n) => n.id === groupId && isGroupNode(n))
+  if (!target) return nodes
+
+  const cur = groupNodeSize(target)
+  if (!(cur.width > 0) || !(cur.height > 0)) return nodes
+
+  const moving = GROUP_HANDLE_MOVING_EDGES[dir]
+  if (!moving) return nodes
+
+  // 以「四条边」表达当前框：west/east 是 x 坐标，north/south 是 y 坐标。
+  const originX = target.position.x
+  const originY = target.position.y
+  let west = originX
+  let east = originX + cur.width
+  let north = originY
+  let south = originY + cur.height
+
+  if (moving.west) west += delta.dx
+  if (moving.east) east += delta.dx
+  if (moving.north) north += delta.dy
+  if (moving.south) south += delta.dy
+
+  // 单边下限：夹住「正在移动的边」，固定边不跳动（与裁剪/扩图同思路）。
+  if (moving.west) west = Math.min(west, east - GROUP_MIN_SIZE)
+  if (moving.east) east = Math.max(east, west + GROUP_MIN_SIZE)
+  if (moving.north) north = Math.min(north, south - GROUP_MIN_SIZE)
+  if (moving.south) south = Math.max(south, north + GROUP_MIN_SIZE)
+
+  const nextWidth = east - west
+  const nextHeight = south - north
+  if (!(nextWidth > 0) || !(nextHeight > 0)) return nodes
+
+  // 框 origin 变了 ⇒ 子节点相对坐标要同步平移，才能保持**绝对位置不变**。
+  const shiftX = originX - west
+  const shiftY = originY - north
+
+  return nodes.map((n) => {
+    if (n.id === groupId) {
+      const style = (
+        typeof n.style === 'object' && n.style ? n.style : {}
+      ) as Record<string, unknown>
+      return {
+        ...n,
+        position: { x: west, y: north },
+        style: { ...style, width: `${nextWidth}px`, height: `${nextHeight}px` },
+      } as FlowNode
+    }
+    if (n.parentNode === groupId) {
+      return {
+        ...n,
+        position: { x: n.position.x + shiftX, y: n.position.y + shiftY },
+      } as FlowNode
+    }
+    return n
+  })
+}

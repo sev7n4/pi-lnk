@@ -1492,6 +1492,19 @@
   z-index: 0;
   min-width: 280px;
   min-height: 160px;
+  /* ⭐ 2026-10-21 必须显式撑满父级（用户实测：打组后节点溢出到框外）。
+     根因：本元素是**空 div**（内容全在子节点上），块级布局下
+       - width:auto  ⇒ 撑满父容器 ⇒ 宽度看起来是对的（假象）；
+       - height:auto ⇒ 内容高度 0 ⇒ 塌到 min-height:160px ⇒ 框比内容矮一大截。
+     实测：框宽高比 5.39 ≈ 870/160（应为 870/680），高度被 min-height 吃掉了。
+     框的实际尺寸由 vue-flow 写在节点元素上的 style.width/height 决定
+     （node.style → getStyle → 节点元素 style，见 @vue-flow/core 的 getStyle），
+     本元素只需把那个尺寸如实地铺出来。
+     box-sizing 显式声明：Tailwind preflight 已有全局 border-box，但依赖它
+     太脆（preflight 一旦移除，这里会溢出 padding+border 的 28px）。 */
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
   padding: 12px;
   /* 常态要「可辨但不抢主视线」：虚线边 70% + 12% 底 + 外环，避免被误认成框选 marquee。
      令牌本身两档提亮/加深（见 design-tokens.css 分组色卡）。 */

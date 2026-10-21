@@ -1,4 +1,5 @@
 import type { InjectionKey, Ref } from 'vue'
+import type { GroupDragDelta, GroupHandleDir } from './useCanvasGrouping'
 
 export type CanvasNodeRenameFn = (nodeId: string, title: string) => void
 export type CanvasNodePatchFn = (nodeId: string, patch: Record<string, unknown>) => void
@@ -70,3 +71,24 @@ export const CANVAS_NODE_RENAME_REQUEST_KEY: InjectionKey<Ref<string | null>> = 
 export const CANVAS_REF_PICK_ACTIVE_KEY: InjectionKey<Ref<boolean>> = Symbol('canvasRefPickActive')
 export const CANVAS_REF_PICK_NODE_IDS_KEY: InjectionKey<Ref<Set<string>>> = Symbol('canvasRefPickNodeIds')
 export const CANVAS_REF_PICK_REJECT_KEY: InjectionKey<Ref<string | null>> = Symbol('canvasRefPickReject')
+
+/**
+ * 分组框 8 方向缩放（2026-10-21，与裁剪/扩图同源交互）。
+ *
+ * 组件侧只做两件事：把指针位移按 zoom 换算成画布坐标、调本回调把
+ * (groupId, dir, delta) 交回页面。**delta 为 null = 本次拖拽已结束**，
+ * 页面据此落库（拖拽过程中逐帧写库会把 undo 栈和 IO 冲垮）。
+ *
+ * ⛔ 组件不得直写 nodes —— nodes 是受控模式的唯一真值，只有页面能改。
+ *
+ * 之所以包一层 `Ref`：视口在运行时会变（窗口 resize / 移动端↔PC），
+ * 「移动端不给缩放手柄」必须跟着变；provide 一个值就锁死在 setup 那一刻了。
+ * 同 `CANVAS_NODE_LOCATE_FLASH_KEY` 的 Ref 注入形状。
+ */
+export type CanvasGroupResizeFn = (
+  groupId: string,
+  dir: GroupHandleDir,
+  delta: GroupDragDelta | null,
+) => void
+export const CANVAS_GROUP_RESIZE_KEY: InjectionKey<Ref<CanvasGroupResizeFn | null>> =
+  Symbol('canvasGroupResize')
