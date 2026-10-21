@@ -335,3 +335,34 @@ export function alignNodes(nodes: LayoutNode[], ids: string[], mode: AlignSixWay
   }
   return out
 }
+
+/**
+ * 沿 axis 把 ids 节点等空隙分布（Figma "distribute spacing"）：相邻包围盒空隙相等，
+ * 首尾锚定不动。ids.length<3 → no-op 返回空映射。返回局部坐标。
+ */
+export function distributeNodes(nodes: LayoutNode[], ids: string[], axis: 'x' | 'y'): Record<string, { x: number; y: number }> {
+  const sel = nodes.filter((n) => ids.includes(n.id))
+  if (sel.length < 3) return {}
+  const boxes = sel.map((n) => ({ id: n.id, ...absBox(n, nodes) }))
+  const sorted = [...boxes].sort((p, q) => (axis === 'x' ? p.left - q.left : p.top - q.top))
+  const first = sorted[0]
+  const last = sorted[sorted.length - 1]
+  const span = axis === 'x' ? last.right - first.left : last.bottom - first.top
+  const totalSize = sorted.reduce((s, b) => s + (axis === 'x' ? b.w : b.h), 0)
+  const gap = (span - totalSize) / (sorted.length - 1)
+  const out: Record<string, { x: number; y: number }> = {}
+  let cursor = axis === 'x' ? first.left : first.top
+  for (let i = 0; i < sorted.length; i++) {
+    const b = sorted[i]
+    if (i === 0 || i === sorted.length - 1) {
+      cursor += (axis === 'x' ? b.w : b.h) + gap
+      continue
+    }
+    const node = sel.find((n) => n.id === b.id)!
+    const lead = axis === 'x' ? b.left : b.top
+    const delta = cursor - lead
+    out[b.id] = { x: node.position.x + (axis === 'x' ? delta : 0), y: node.position.y + (axis === 'y' ? delta : 0) }
+    cursor += (axis === 'x' ? b.w : b.h) + gap
+  }
+  return out
+}

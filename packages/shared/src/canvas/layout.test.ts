@@ -199,3 +199,28 @@ describe('alignNodes', () => {
     expect(alignNodes([mk('a', 0, 0)], [], 'left')).toEqual({})
   })
 })
+
+import { distributeNodes } from './layout'
+
+describe('distributeNodes', () => {
+  it('x 轴：3 节点等空隙，首尾锚定', () => {
+    // a 左缘 0 宽 100；c 左缘 300 宽 100 ⇒ span 用 right：a.right=100, c.right=400
+    const nodes = [mk('a', 0, 0, 100, 50), mk('b', 120, 0, 100, 50), mk('c', 300, 0, 100, 50)]
+    const r = distributeNodes(nodes, ['a', 'b', 'c'], 'x')
+    // first.left=0, last.right=400, totalW=300, gap=(400-0-300)/2=50
+    // 中间 b 左缘应 = first.left + w_a + gap = 0+100+50 = 150 ⇒ b.x=150
+    expect(r['a']).toBeUndefined() // 首锚定
+    expect(r['c']).toBeUndefined() // 尾锚定
+    expect(r['b'].x).toBe(150)
+  })
+  it('x 轴混宽：按包围盒空隙算', () => {
+    const nodes = [mk('a', 0, 0, 100, 50), mk('b', 200, 0, 200, 50), mk('c', 600, 0, 100, 50)]
+    // first.left=0,last.right=700,totalW=400,gap=(700-400)/2=150 ⇒ b 左缘=0+100+150=250
+    const r = distributeNodes(nodes, ['a', 'b', 'c'], 'x')
+    expect(r['b'].x).toBe(250)
+  })
+  it('<3 节点返回空映射（no-op）', () => {
+    const nodes = [mk('a', 0, 0), mk('b', 100, 0)]
+    expect(distributeNodes(nodes, ['a', 'b'], 'x')).toEqual({})
+  })
+})
