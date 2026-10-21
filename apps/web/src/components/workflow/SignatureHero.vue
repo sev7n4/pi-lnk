@@ -20,11 +20,11 @@ const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
       <p data-greeting class="mb-6 text-left text-sm text-[color:var(--lnk-text-on-signature-muted)]">
         {{ props.greeting }}
       </p>
-      <h2
+      <h1
         class="font-bold text-[length:var(--lnk-text-display-2)] leading-[var(--lnk-lh-display-2)] text-[color:var(--lnk-text-on-signature)]"
       >
         想象，落定成图
-      </h2>
+      </h1>
       <p class="mt-3 text-sm text-[color:var(--lnk-text-on-signature-muted)]">
         一句话，在无限画布上生成图像 · 视频 · 漫剧
       </p>
