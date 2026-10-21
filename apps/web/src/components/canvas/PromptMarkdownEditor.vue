@@ -10,7 +10,6 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { Markdown } from 'tiptap-markdown'
 import type { MarkdownStorage } from 'tiptap-markdown'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import './PromptMarkdownEditor.css'
 
 const props = defineProps<{ visible: boolean; modelValue: string; title?: string }>()
@@ -20,7 +19,6 @@ const emit = defineEmits<{
   save: [string]
 }>()
 
-const speech = useSpeechRecognition()
 const editor = shallowRef<Editor>()
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -70,7 +68,6 @@ watch(
       editor.value?.commands.setContent(props.modelValue || '')
       setTimeout(() => editor.value?.commands.focus('end'), 50)
     } else {
-      speech.stop()
       if (wasVisible) flushSave()
     }
   },
@@ -91,7 +88,6 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 function close() {
-  speech.stop()
   emit('update:visible', false)
 }
 
@@ -99,17 +95,6 @@ function copyAll() {
   void navigator.clipboard.writeText(getMarkdown())
 }
 
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (!isFinal || !editor.value) return
-    editor.value.chain().focus().insertContent(text).run()
-    scheduleSave()
-  })
-}
 
 function isActive(name: string, attrs?: Record<string, unknown>) {
   return editor.value?.isActive(name, attrs) ?? false
@@ -119,7 +104,6 @@ onMounted(() => window.addEventListener('keydown', onKeydown, true))
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown, true)
-  speech.stop()
   if (saveTimer) clearTimeout(saveTimer)
   editor.value?.destroy()
   editor.value = undefined
@@ -228,16 +212,6 @@ onBeforeUnmount(() => {
             </div>
 
             <span class="prompt-md-capsule-divider" aria-hidden="true" />
-
-            <button
-              type="button"
-              class="prompt-md-format-btn"
-              title="语音输入"
-              :class="speech.listening.value ? 'animate-pulse text-danger' : ''"
-              @click="toggleVoice"
-            >
-              🎤
-            </button>
           </div>
         </div>
       </div>

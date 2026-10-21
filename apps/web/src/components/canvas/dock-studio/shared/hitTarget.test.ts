@@ -11,8 +11,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const read = (p: string) => readFileSync(join(here, p), 'utf8')
 
 describe('mobile hit target expansion (P0-4)', () => {
-  it('mic & generate buttons carry the expansion class', () => {
-    expect(read('./DockMicButton.vue')).toMatch(/class="[^"]*agent-hit-expand/)
+  it('generate button carries the expansion class', () => {
+    // 2026-10-21 语音识别下线：麦克风钮（DockMicButton）已删除，其命中区断言随之移除
     expect(read('./DockGenerateButton.vue')).toMatch(/class="[^"]*agent-hit-expand/)
   })
   it('canvas-ref corner button carries the expansion class + l-size hit (P1-2.3)', () => {
@@ -29,8 +29,7 @@ describe('mobile hit target expansion (P0-4)', () => {
     expect(sfc).toMatch(/@media\s*\(max-width:\s*767px\)[\s\S]{0,400}inset:\s*-10px/)
     expect(sfc).toMatch(/@media\s*\(max-width:\s*767px\)[\s\S]{0,500}inset:\s*-2px -8px/)
   })
-  it('visual sizes unchanged (B8: 24/28/32)', () => {
-    expect(read('./DockMicButton.vue')).toMatch(/width:\s*24px/)
+  it('visual sizes unchanged (B8: 28/32)', () => {
     expect(read('./DockGenerateButton.vue')).toMatch(/width:\s*28px/)
   })
 })

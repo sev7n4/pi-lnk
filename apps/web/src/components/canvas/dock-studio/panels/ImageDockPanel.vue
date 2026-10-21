@@ -15,12 +15,10 @@ import GridSliceDropdown from '@/components/canvas/grid-slice/GridSliceDropdown.
 import { DOCK_TOOL_ROW_KEY, DOCK_TOOL_ROW_DEFAULT, DOCK_TOOL_ICONS } from '@/components/canvas/dock-studio/shared/dockToolRowContext'
 import DockPromptSection from '@/components/canvas/dock-studio/shared/DockPromptSection.vue'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
-import DockMicButton from '@/components/canvas/dock-studio/shared/DockMicButton.vue'
 import DockCreditBadge from '@/components/canvas/dock-studio/shared/DockCreditBadge.vue'
 import DockRefStrip from '@/components/canvas/dock-studio/shared/DockRefStrip.vue'
 import GuidePickerPopover from '@/components/canvas/dock-studio/shared/GuidePickerPopover.vue'
 import type { LocalRefBinding, NodeRef } from '@/composables/useNodeRefs'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import {
   catalogModelKeyFromValue,
@@ -89,7 +87,6 @@ const {
   syncReferenceImageUrl: true,
 })
 
-const speech = useSpeechRecognition()
 const readonly = computed(() =>
   isImageDockReadonly({
     parentReadonly: props.readonly,
@@ -256,18 +253,6 @@ function onGenerate() {
   emit('generate')
 }
 
-function toggleVoice() {
-  if (speech.listening.value) {
-    speech.stop()
-    return
-  }
-  speech.start((text, isFinal) => {
-    if (isFinal) {
-      const next = prompt.value ? `${prompt.value} ${text}` : text
-      onPromptInput(next)
-    }
-  })
-}
 </script>
 
 <template>
@@ -409,11 +394,6 @@ function toggleVoice() {
       />
 
       <div class="ml-auto flex items-center gap-2">
-        <DockMicButton
-          :listening="speech.listening.value"
-          :disabled="readonly"
-          @toggle="toggleVoice"
-        />
         <DockCreditBadge :credits="credits" />
         <DockGenerateButton
           :generating="generating"

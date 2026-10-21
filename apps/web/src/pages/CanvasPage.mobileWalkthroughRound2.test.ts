@@ -2,7 +2,7 @@
 // 背景：本轮 4 条真机反馈全部落在「jsdom 看不见」的那一类——视口高度、层叠、
 // 选区语义、能力探测。⇒ 用源码静态契约把判据钉死，防回潮。
 // 判据写法沿用本仓既有纪律：否定断言先剥注释 + 限定作用域 + 配有效性断言。
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -123,23 +123,63 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
   })
 })
 
-describe('语音能力诚实化（2026-10-21 真机：按住说话不可用且零反馈）', () => {
+describe('语音识别功能下线（2026-10-21 用户裁决：移动端 + PC 整体删除）', () => {
   const rail = readComponent('agent/AgentSideRail.vue')
-  const speech = read('./../composables/useSpeechRecognition.ts')
+  const railCode = stripComments(rail)
 
-  it('空闲条文案按能力降级（不支持时不承诺「按住说话」）', () => {
-    expect(rail).toContain('mobileBarIdleHint')
-    expect(rail).toMatch(/speech\.supported\s*\?\s*'按住说话 · 点按输入'\s*:\s*'点按输入'/)
-    expect(rail).toContain('{{ mobileBarIdleHint }}')
+  it('裸条文案只承诺「点按输入」，不再出现「按住说话」', () => {
+    expect(rail).toContain('MOBILE_BAR_IDLE_HINT')
+    expect(rail).toContain('{{ MOBILE_BAR_IDLE_HINT }}')
+    // 有效性配对：常量值就是「点按输入」
+    expect(rail).toMatch(/MOBILE_BAR_IDLE_HINT = '点按输入'/)
+    // 剥注释后，模板与脚本都不得再有「按住说话」承诺
+    expect(railCode).not.toContain('按住说话')
   })
 
-  it('识别失败必须可见（onerror 不再静默 stop）', () => {
-    expect(speech).toContain('lastError')
-    expect(speech).toContain('errorText')
-    expect(speech).toMatch(/onerror = \(event\)[\s\S]*?lastError\.value/)
-    // 有效性配对：页面把错误提示出来
-    expect(rail).toContain('speech.errorText.value')
-    expect(rail).toMatch(/ElMessage\.warning\(text\)/)
+  it('语音链路整体退役：识别 composable / 麦克风钮 / 录音态 UI 全部消失', () => {
+    // composable 与组件文件已删除
+    expect(existsSync(join(here, '..', 'composables', 'useSpeechRecognition.ts'))).toBe(false)
+    expect(existsSync(join(here, '..', 'composables', 'useMicLevel.ts'))).toBe(false)
+    expect(
+      existsSync(
+        join(here, '..', 'components', 'canvas', 'dock-studio', 'shared', 'DockMicButton.vue'),
+      ),
+    ).toBe(false)
+    // AgentSideRail：录音态 UI / 状态 / 手势分支全无（剥注释后判）
+    for (const gone of [
+      'DockMicButton',
+      'agent-composer-rec',
+      'holdActive',
+      'beginHoldTalk',
+      'releaseVoice',
+      'onComposerHold',
+      'classifyGesture({ durationMs, dy: barGestureDy })',
+    ]) {
+      expect(railCode, `AgentSideRail 不该再有 ${gone}`).not.toContain(gone)
+    }
+    // 有效性配对：点按切输入态的手势仍在（语音下线不等于把条做成死的）
+    expect(railCode).toContain('composerExpanded.value = true')
+  })
+
+  it('四个 dock 面板与精修 dock 的麦克风钮全部摘除', () => {
+    for (const p of [
+      'canvas/dock-studio/panels/TextDockPanel.vue',
+      'canvas/dock-studio/panels/ImageDockPanel.vue',
+      'canvas/dock-studio/panels/VideoDockPanel.vue',
+      'canvas/dock-studio/panels/AudioDockPanel.vue',
+      'canvas/refine/RefineDock.vue',
+      'canvas/NodeEditorToolbar.vue',
+      'canvas/PromptMarkdownEditor.vue',
+    ]) {
+      const code = stripComments(readComponent(p))
+      expect(code, `${p} 不该再有 DockMicButton`).not.toContain('DockMicButton')
+      expect(code, `${p} 不该再有 useSpeechRecognition`).not.toContain('useSpeechRecognition')
+      expect(code, `${p} 不该再有 toggleVoice`).not.toContain('toggleVoice')
+    }
+    // 有效性配对：面板底行仍在（积分 + 发送没被误删）
+    const image = readComponent('canvas/dock-studio/panels/ImageDockPanel.vue')
+    expect(image).toContain('DockCreditBadge')
+    expect(image).toContain('DockGenerateButton')
   })
 })
 
