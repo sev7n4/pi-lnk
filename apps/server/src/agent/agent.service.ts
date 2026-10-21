@@ -5,6 +5,7 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common'
+import { ModuleRef } from '@nestjs/core'
 import type { AgentStreamEvent } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import {
@@ -42,6 +43,8 @@ import {
   shouldRecordTurnState,
 } from './turn-state-store'
 import { TurnStateService } from './turn-state.service'
+import { TurnAutoResumeService } from './turn-auto-resume/turn-auto-resume.service'
+import { shouldTriggerAutoResume } from './turn-auto-resume/auto-resume.decider'
 import {
   reconcileAfterTurn,
   type ReconcileClient,
@@ -214,7 +217,26 @@ export class AgentService {
     @Optional()
     @Inject(TurnStateService)
     private readonly turnState?: TurnStateService,
+    // 批次 3.2（对话轮次自动续跑）：⚠️ 必须经 ModuleRef 运行时惰性解析、**不能构造器注入**。
+    // AgentService → TurnAutoResumeService → AUTO_RESUME_AGENT_PORT → AgentService
+    // 会构成 Nest 实例化环 ⇒ DI 死锁、事件循环耗尽、进程静默 exit 0（#398/#399 部署事故教训）。
+    // ModuleRef 同样 @Optional：单测手工构造不传也零破坏；运行时拿不到 = flag 第二道闸。
+    @Optional()
+    @Inject(ModuleRef)
+    private readonly moduleRef?: ModuleRef,
   ) {}
+
+  /**
+   * 批次 3.2：运行时惰性解析自动续跑服务（构造环见构造器注）。
+   * 解析失败 = 未装配 = 不派发（fail-open）。
+   */
+  private get turnAutoResume(): TurnAutoResumeService | undefined {
+    try {
+      return this.moduleRef?.get(TurnAutoResumeService, { strict: false })
+    } catch {
+      return undefined
+    }
+  }
 
   /** 画布动作落地实现：注入优先，缺省回退默认（@lnkpi/agent 的 applyCanvasActions）。 */
   private get applier(): CanvasActionApplier {
@@ -1384,6 +1406,65 @@ export class AgentService {
   }
 
   /**
+   * 批次 3.2：失败后**不等用户**说「继续」，自动新开一轮让模型接着做。
+   *
+   * ## 为什么这样就够（不需要自己造注入内容）
+   *
+   * 批次 1 已把「用户要什么 / 做到哪 / 卡在哪」记进 `turnState`，
+   * 且**下一轮装配时会作为动态块注入**（含「不道歉、不复盘」指导语）。
+   * ⇒ 自动续跑只需**新开一轮**，那一轮自然吃到状态块 ⇒ 模型直接接着做。
+   *
+   * ⛔ **不做**关键词识别「继续」（要猜用户意图，「接着改那个组件」即失效）。
+   * ⛔ **不做** `lane.resume()`（`cmv3zzid` 已证阻塞 612 s）⇒ 只走「新开一轮」。
+   *
+   * ## 门控全在决策器里（`decideAutoResume`）
+   *
+   * - 用户在场 ⇒ 不自动（他会自己说「继续」，别抢）；
+   * - 用户取消 ⇒ 不算故障（由调用方保证 `failed` 口径）；
+   * - 幂等（同一轮只派一次）/ 每会话每小时上限 / 同因连败降级。
+   *
+   * ⛔ fail-soft：任何异常只 warn —— 自动续跑是旁路观察者，
+   * 绝不影响本轮收尾（用户此时可能在等响应）。
+   */
+  private async maybeAutoResumeTurn(input: {
+    sessionId: string
+    userId: string
+    threadId?: string
+    /** pi 侧会话键（threadId 缺省时回落 sessionId）。 */
+    sessionKey: string
+    /** 本轮的用户原话（幂等键的一部分）。 */
+    userMessage: string
+    failed: boolean
+  }): Promise<void> {
+    try {
+      const svc = this.turnAutoResume
+      if (!svc) return
+      // 幂等键 = 会话键 + 本轮用户原话 + 时刻：
+      // ⭐ 同一轮的多次收尾路径（owner/shadow）只会派一次；
+      // 时刻参与是为了「同一句原话在两个不同轮次里」也不互相吞。
+      const turnKey = `${input.sessionKey}:${input.userMessage.slice(0, 80)}:${Date.now()}`
+      const decision = await svc.handleTurnFailed({
+        sessionId: input.sessionId,
+        userId: input.userId,
+        threadId: input.threadId,
+        turnKey,
+        failed: input.failed,
+        interruption: classifyInterruption({ failed: input.failed, promptAccepted: true }),
+      })
+      this.piLogger.warn(
+        `turn_auto_resume key=${input.sessionKey} path=${decision.path} ` +
+          `reason=${decision.reason} degraded=${decision.degraded}`,
+      )
+    } catch (err) {
+      this.piLogger.warn(
+        `turn_auto_resume failed (fail-soft, key=${input.sessionKey}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+  }
+
+  /**
    * 回合连续性：本轮中断时，把「用户要什么 / 做到哪 / 卡在哪」记进 **Nest DB**
    * （`AgentThread.turnState`，权威副本）。
    *
@@ -2225,6 +2306,35 @@ export class AgentService {
         failed: runFailed,
         userAborted: false,
       })
+      // ── 批次 3.2：自动续跑（失败不等用户说「继续」）────────────────────
+      //
+      // ⭐ 放在**记录状态之后**：自动续跑新开的那一轮，装配时会读到本轮
+      // 刚记下的 `turnState` ⇒ 那一轮自然吃到「用户要什么 / 做到哪 / 卡在哪」
+      // +「不道歉、不复盘」指导语 ⇒ **本处不需要自己造注入内容**。
+      //
+      // ⛔ 不 await（fire-and-forget）：自动续跑是旁路观察者，
+      // 不能拖慢本轮收尾（用户此时可能在等响应）。
+      //
+      // ⭐ 判据抽成纯函数 `shouldTriggerAutoResume`（含 `turnRole`）——
+      // 埋在调用点里会踩坑：`promptAccepted` 在 409（shadow 流）时**仍为 true**
+      // ⇒ 只看 promptAccepted 会让 shadow 与 owner **都**触发 ⇒ 双派发。
+      if (
+        shouldTriggerAutoResume({
+          turnRole,
+          promptAccepted,
+          runFailed,
+          userId,
+        })
+      ) {
+        void this.maybeAutoResumeTurn({
+          sessionId,
+          userId: userId!,
+          threadId: effectiveThreadId,
+          sessionKey,
+          userMessage,
+          failed: true,
+        })
+      }
       // ── 批次 3.1：把「未完成」标到画布节点上（用户直接看得见）────────────
       //
       // ⭐ 走**既有** `update_node` 画布动作 + `finalizeTurn` 的 `canvasActions`

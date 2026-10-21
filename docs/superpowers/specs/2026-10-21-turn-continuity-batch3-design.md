@@ -116,7 +116,7 @@ WorkBuddy 在失败时**不等用户**，自动向模型注入：
   批次 1 写的）⇒ 复用，不重写；
 - 带预算的原地重试 ⇒ **本仓已有** `generation-recovery` 派发器形态。
 
-### 复用既有派发器（不新造限流）
+### 复用既有派发器（不新造限流）—— ⭐ 实施后修正
 
 `apps/server/src/agent/generation-recovery/recovery-dispatch.decider.ts` 已有：
 - `hasActiveRun`（不打断正在跑的轮）
@@ -126,6 +126,42 @@ WorkBuddy 在失败时**不等用户**，自动向模型注入：
 - 同因连败降级
 
 ⇒ **把「对话轮次」也纳进同一个决策器**，而不是新造一套。
+
+#### ⭐⭐ 实施修正：**机制复用，判据分开**（2026-10-21）
+
+实际实施时发现：**两个场景的「在线门」语义相反**，不能塞进同一个函数。
+
+| 场景 | 用户在场 | 用户不在场 | 理由 |
+|---|---|---|---|
+| 生成失败回注 | **回注** | skip | 失败要当面告诉用户；人不在时说了也白说 |
+| 对话轮次自动续跑 | **skip** | **续跑** | ⭐ 用户在场时他会自己说「继续」，别抢他的意图 |
+
+⇒ 若塞进同一个 `decideRecoveryDispatch`，那个函数的在线分支会变成「看场景决定」的双态逻辑
+⇒ 既有测试要跟着改，且新增场景时容易踩错分支。
+⇒ **判据独立**（`turn-auto-resume/auto-resume.decider.ts`），但**限流/在线代理/注入通道全复用**。
+
+#### ⭐ 实施发现：不需要自造注入内容
+
+批次 1 的 `renderTurnStateGuidance()`（`packages/shared/src/turnState.ts`）已含
+「不道歉、不复盘」指导语（措辞对齐 WorkBuddy 的 "Resume directly — no apology, no recap"）
+⇒ 自动续跑只需**新开一轮**，那一轮自然吃到 `turnState` 动态块
+⇒ **零新增注入通道**；注入文本只点明「接着做」，**不重复**状态内容
+（重复会让模型以为状态出现两次）。
+
+#### ⭐ 两道防线互补（不是冗余）
+
+- 限流 = **短窗口**（1 小时内最多 1 次）⇒ 防刷屏；
+- 连败 = **长窗口**（同一会话连续 2 次同因失败就停）⇒ 跨过小时额度重置后仍拦得住
+  ⇒ 故障持续时不会每小时自动重试一次。
+
+⭐ 自动续跑的上限取**更严值**（1 次/h vs 回注 2 次/h）：它会**真的再跑一轮 LLM**（消耗额度）。
+
+#### ⭐ DI 破环
+
+`AgentService → TurnAutoResumeService → AUTO_RESUME_AGENT_PORT → AgentService`
+会成 Nest 实例化环 ⇒ 进程静默 exit 0（#398/#399 部署事故教训）。
+⇒ 与 `agent-canvas-tools` 的 `generationRecovery` getter 同款：
+**`ModuleRef` 运行时惰性 get**（`@Optional`，单测手工构造零破坏）。
 
 ### 形态（最小）
 
