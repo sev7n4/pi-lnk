@@ -4987,7 +4987,10 @@ onUnmounted(() => {
 
 <template>
   <div class="relative h-[100dvh] w-full overflow-hidden bg-[var(--neo-bg)]" @click="closeContextMenu">
-    <div class="flex h-full min-w-0 overflow-hidden">
+    <!-- 桌面并排：默认 DOM 顺序是「画布 → Agent 侧栏」，用 flex-row-reverse
+         把侧栏翻到左侧、画布翻到右侧。移动端侧栏被 Teleport 到 body（见 AgentSideRail），
+         本容器只剩画布，reverse 无副作用。 -->
+    <div class="flex h-full min-w-0 overflow-hidden flex-row-reverse">
       <div
         ref="canvasAreaRef"
         class="relative min-h-0 min-w-0 flex-1"
@@ -5229,8 +5232,9 @@ onUnmounted(() => {
             :target-y="connectPicker.y"
           />
 
-          <!-- PC 左下视口工具条：移动端隐藏（由 MobileCanvasTopControls 顶部胶囊接管） -->
-          <Panel v-if="!isMobileLayout" position="bottom-left" class="canvas-panel-bottom-left">
+          <!-- PC 右下视口工具条：移动端隐藏（由 MobileCanvasTopControls 顶部胶囊接管）。
+               2026-10-22 与收缩态 agent FAB 左右互换（侧栏翻左后整体镜像）。 -->
+          <Panel v-if="!isMobileLayout" position="bottom-right" class="canvas-panel-bottom-right">
             <CanvasBottomLeftControls
               :settings="viewportSettings"
               :nodes="minimapNodeList"
@@ -5599,8 +5603,8 @@ onUnmounted(() => {
   transition: background 0.25s ease;
 }
 
-:deep(.canvas-panel-bottom-left) {
-  margin: 0 0 12px 8px;
+:deep(.canvas-panel-bottom-right) {
+  margin: 0 8px 12px 0;
   width: auto !important;
   max-width: none !important;
 }
