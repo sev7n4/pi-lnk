@@ -2158,6 +2158,16 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
 }
 
 /**
+ * arrange 派发的合法取值白名单（执行器侧校验用）。
+ * 派发层 applyArrangeLayout 对畸形 align/distribute 是 no-op（不落 grid 分支，
+ * 否则「对齐」意图会被静默换成「网格重排」），但静默 no-op 在用户看来就是
+ * 「我点了对齐，什么都没发生」⇒ 在执行器这一层显式拦下并给出可见提示。
+ */
+const ARRANGE_MODES: readonly string[] = ['along_edges', 'grid', 'align', 'distribute']
+const ARRANGE_ALIGN_MODES: readonly string[] = ['left', 'centerH', 'right', 'top', 'centerV', 'bottom']
+const ARRANGE_AXES: readonly string[] = ['x', 'y']
+
+/**
  * agent 工具 `arrange_nodes`（SSE canvas_command → AgentSideRail emit）的消费端。
  * 坐标类变更必须在前端执行（画布活动态 nodes.value 是真相源，走 Nest 改库会被下一次
  * saveCanvas 整份覆盖），故这里算完 setNodes 后 persistUserEdit（落 undo 栈 + 存库）。
@@ -2165,15 +2175,40 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
  */
 async function handleArrangeNodes(payload: {
   nodeIds: string[]
-  mode: 'along_edges' | 'grid'
+  mode: 'along_edges' | 'grid' | 'align' | 'distribute'
   gap?: number
   edges?: { source: string; target: string }[]
+  alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+  axis?: 'x' | 'y'
 }) {
   const ids = (payload?.nodeIds ?? []).filter((id) => typeof id === 'string' && id)
   if (ids.length < 2) return
   if (agentReadOnly.value) {
     ElMessage.warning('此画布属于其他账号，Agent 无法整理画布')
     return
+  }
+  // 运行时值来自 agent 自由字符串（mode 已归一，alignMode/axis 未必合法）⇒ 显式校验。
+  // ⚠️ 必须按「原值」比对而非 String() 归一：若 mode 是非字符串（如 ["align"]），
+  // String() 会把它变成 "align" 而放行，但派发层判的是 req.mode === 'align'（假）
+  // ⇒ 会静默落到 grid 分支（对齐意图被换成网格重排）。
+  const mode = payload?.mode
+  if (typeof mode !== 'string' || !ARRANGE_MODES.includes(mode)) {
+    ElMessage.warning('不支持的整理方式')
+    return
+  }
+  if (mode === 'align') {
+    const alignMode = payload?.alignMode
+    if (typeof alignMode !== 'string' || !ARRANGE_ALIGN_MODES.includes(alignMode)) {
+      ElMessage.warning('对齐方式无效，请指定左/中/右/上/中/下')
+      return
+    }
+  }
+  if (mode === 'distribute') {
+    const axis = payload?.axis
+    if (typeof axis !== 'string' || !ARRANGE_AXES.includes(axis)) {
+      ElMessage.warning('分布轴无效，请指定水平(x)或垂直(y)')
+      return
+    }
   }
   const current = nodes.value as unknown as FlowNode[]
   const next = applyArrangeLayout(current, payload, edges.value.map((e) => ({ source: e.source, target: e.target })))
