@@ -1952,6 +1952,22 @@ const mobileBarIdle = computed(
  * 语音识别已于 2026-10-21 整体下线（移动端 + PC），条上不再承诺语音能力。
  */
 
+/**
+ * A1：空态 chips 区固定一位「传图」引导位。
+ *
+ * 为什么必须有它：真实语料里一半依赖素材，而 attachment 相的触发前提是「用户
+ * 已传图」——空态只给不依赖素材的短句，用户根本想不到传图 ⇒ attachment 池一条
+ * 都曝不了光，加了等于白加。
+ *
+ * ⚠️ 它不是金句：不入池、不轮换、点击走 pickImage 而非 fillFromUtterance，
+ * 因此**不计入 golden_quote_picked**（另计 entry_attachment_cta）——否则分不清
+ * 点击率来自金句还是引导位。
+ * 只在 empty 相出现：有素材时 attachment 池本身就是素材话术，再挂「传图」是噪音。
+ */
+const showAttachmentCta = computed(
+  () => !props.readOnly && currentUtterancePhase.value === 'empty',
+)
+
 /* ---- 条级手势（2026-10-21 语音下线）：只保留「点按切输入态」。
  * 语音识别移除后不再有 hold / 上滑取消两种手势分支；拖动（滚动手势）不误触发展开。
  * 子控件（＋/◎/模型/发送）命中一律不触发条手势（closest 排除 + 子控件 .stop）。 */
@@ -4080,6 +4096,17 @@ defineExpose({
                 lnk·π 助手 · 说一句创意，我来画
               </p>
               <div class="agent-example-chips mt-3 flex flex-wrap justify-center gap-2">
+                <!-- A1 传图引导位：不是金句，不计入 golden_quote_picked。
+                     只在 empty 相出现——有素材时 attachment 池已承担素材话术。 -->
+                <button
+                  v-if="showAttachmentCta"
+                  type="button"
+                  class="agent-example-chip agent-example-chip--cta rounded-lg border border-dashed px-3 py-1.5 text-left text-[12px] leading-snug"
+                  data-testid="agent-attachment-cta"
+                  @click="pickImage"
+                >
+                  传一张图再说话
+                </button>
                 <button
                   v-for="u in exampleUtterances"
                   :key="u"
