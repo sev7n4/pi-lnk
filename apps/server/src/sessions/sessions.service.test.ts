@@ -7,7 +7,7 @@ import { SessionsService } from './sessions.service'
 function makeService() {
   const create = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
     id: 's1',
-    title: (data.title as string) ?? '未命名画布',
+    title: (data.title as string) ?? '未命名项目',
     userId: data.userId as string,
     canvasData: (data.canvasData as string | null) ?? null,
     createdAt: new Date('2026-09-29T00:00:00Z'),
@@ -25,13 +25,22 @@ describe('SessionsService.create —— 新建画布不种提示词节点（spec
   it('canvasData 恒为 null（不再种 prompt-1）', async () => {
     const { create, moduleRef } = makeService()
     const svc = (await moduleRef.compile()).get(SessionsService)
-    const out = await svc.create('u1', '未命名画布')
+    const out = await svc.create('u1', '未命名项目')
     expect(create).toHaveBeenCalledOnce()
     const data = create.mock.calls[0][0].data as Record<string, unknown>
     expect(data.canvasData).toBeUndefined()
     expect(JSON.stringify(data)).not.toContain('prompt-1')
     expect(JSON.stringify(data)).not.toContain('描述你的创意场景')
-    expect(out.title).toBe('未命名画布')
+    expect(out.title).toBe('未命名项目')
+  })
+
+  it('不传 title 时默认落库「未命名项目」（IA v4 项目语义；list 兜底据此编号）', async () => {
+    const { create, moduleRef } = makeService()
+    const svc = (await moduleRef.compile()).get(SessionsService)
+    const out = await svc.create('u1')
+    const data = create.mock.calls[0][0].data as Record<string, unknown>
+    expect(data.title).toBe('未命名项目')
+    expect(out.title).toBe('未命名项目')
   })
 
   it('即使调用方仍传第三参（旧签名 prompt），也不再种节点', async () => {
