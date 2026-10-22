@@ -463,10 +463,20 @@
     -webkit-user-select: text;
   }
 
+  /* A1b（2026-10-22）：移动端无 hover ⇒ 引用锚常显。
+     桌面端基线（opacity:0 + pointer-events:none，靠 hover/选中/focus 显形）保持不动。
+     ⚠️ 常显后仍是幽灵态（muted 灰 + 透明底）：不得给它套实心亮盘 ——
+     否则画布上每个节点都亮一个盘，与「节点选中才点亮」的既有语义冲突。
+     ⚠️ 副作用：常显会让下方 ::after 的 44px 热区首次生效（此前被 pointer-events:none
+     连带屏蔽），可能压到节点正文顶部 —— 需实机验证「点/拖正文顶部」不被吞；
+     若误触优先收 inset 到 -4px，不要缩小视觉尺寸（会掉出 44px 触控标准）。 */
   .neo-node-agent-add--title {
     position: relative;
     width: 28px;
     height: 28px;
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
   }
 
   .neo-node-agent-add--title::after {

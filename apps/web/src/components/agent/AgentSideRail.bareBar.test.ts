@@ -27,9 +27,14 @@ describe('mobile bare bar structure (P1-5)', () => {
     // 存在性配对（防空集假绿）+ 顺序断言（条表面在先、条内 ＋ 在后）
     expect(tpl).toContain('composer-bare-bar')
     expect(tpl).toContain('aria-label="更多"')
-    // 2026-10-21：语音识别整体下线（移动端 + PC），条上只承诺「点按输入」
-    expect(tpl).toContain('{{ MOBILE_BAR_IDLE_HINT }}')
-    expect(sfc).toMatch(/MOBILE_BAR_IDLE_HINT = '点按输入'/)
+    // A1（2026-10-22）：裸条提示位改为「轮换当前相的短金句」——不再写死。
+    // 真意图不变的两条不变式：① 提示位仍存在 ② 条上不得承诺已下线的语音能力。
+    // ⚠️ 判据按「行为」写、不按「常量名」写：常量名是可重构的实现细节，锁它会在改实现时假红。
+    expect(tpl).toContain('{{ mobileBarIdleHint }}')
+    expect(sfc).not.toContain('按住说话')
+    // 轮换而非写死：取值来自 BARE_HINT_POOL，且空池兜底是「点按输入」（不是语音文案）
+    expect(sfc).toContain('BARE_HINT_POOL[currentUtterancePhase.value]')
+    expect(sfc).toContain("return '点按输入'")
     expect(tpl.indexOf('composer-bare-bar')).toBeLessThan(tpl.indexOf('aria-label="更多"'))
   })
   it('status line & interject options live ABOVE the bar (system layer)', () => {

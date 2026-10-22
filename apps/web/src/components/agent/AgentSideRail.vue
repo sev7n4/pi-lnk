@@ -113,8 +113,10 @@ import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
 import { BRAND_LOGO_URL } from '@/constants/brand'
 import {
   buildDraftFromUtterance,
+  pickUtteranceContext,
   selectExampleUtterances,
   type CanvasPhase,
+  type UtterancePhase,
   type UtterancePool,
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
@@ -1945,10 +1947,26 @@ const mobileBarIdle = computed(
 )
 
 /**
- * 空闲条文案（2026-10-21 用户裁决：语音识别功能整体下线，移动端 + PC）。
- * 能力本身没了，条上只承诺点按输入。
+ * 空闲条文案不再写死：改为轮换当前相的短金句，见下方 mobileBarIdleHint
+ * （定义在 currentUtterancePhase 之后 —— 它依赖池维度，顺序不能提前）。
+ * 语音识别已于 2026-10-21 整体下线（移动端 + PC），条上不再承诺语音能力。
  */
-const MOBILE_BAR_IDLE_HINT = '点按输入'
+
+/**
+ * A1：空态 chips 区固定一位「传图」引导位。
+ *
+ * 为什么必须有它：真实语料里一半依赖素材，而 attachment 相的触发前提是「用户
+ * 已传图」——空态只给不依赖素材的短句，用户根本想不到传图 ⇒ attachment 池一条
+ * 都曝不了光，加了等于白加。
+ *
+ * ⚠️ 它不是金句：不入池、不轮换、点击走 pickImage 而非 fillFromUtterance，
+ * 因此**不计入 golden_quote_picked**（另计 entry_attachment_cta）——否则分不清
+ * 点击率来自金句还是引导位。
+ * 只在 empty 相出现：有素材时 attachment 池本身就是素材话术，再挂「传图」是噪音。
+ */
+const showAttachmentCta = computed(
+  () => !props.readOnly && currentUtterancePhase.value === 'empty',
+)
 
 /* ---- 条级手势（2026-10-21 语音下线）：只保留「点按切输入态」。
  * 语音识别移除后不再有 hold / 上滑取消两种手势分支；拖动（滚动手势）不误触发展开。
@@ -2357,26 +2375,58 @@ function fillExampleUtterance(text: string) {
 }
 
 /**
- * P1-1.1：首屏通用样例池 —— 按画布相（空画布 / 有选中 / 有产物）给出 ≤4 条样例。
- * 空画布条目复用产品视觉分支（PRODUCT_VISUAL_GUIDANCE）的口吻，但改写为通用短句。
+ * A1：首屏金句池（短句版）—— 按池维度给出 ≤4 条。
+ *
+ * ⚠️ SSOT 是 outputs/移动端入口-金句文案清单.html，本池是副本：改文案先改清单，再同步这里。
+ * 约束（清单 R1/R2/R4）：chips ≤16 汉字 / 裸条 ≤14 汉字 / 禁内部术语 / 禁「：+」清单式句式。
+ * 旧的 40 字长句已废弃 —— 那是需求文档口吻，与本产品「你说一句就够了」的定位相悖。
  */
 const EXAMPLE_UTTERANCE_POOL: UtterancePool = {
   empty: [
-    '这是我们的大闸蟹礼盒，帮我做一套电商包装推广图：主视觉 + 结构图 + 送礼场景，风格喜庆高级',
-    '用这张产品实拍图出电商主图和两张生活场景图，突出产品卖点和质感',
-    '画一个产品落地页 hero 区块，标题「把灵感变成图像」，配一张氛围插图',
-    '新建一个文字节点，帮我先把创意思路列成大纲',
+    '帮我做一套儿童绘本',
+    '帮我创作一首民谣歌曲',
+    '生成人物角色的三视图和场景图',
+    '给我做一套小红书种草视频',
+    '画一座会呼吸的灯塔',
+    '把我的一天画成四格',
+    '出一套生鲜闸蟹快递包装材料',
   ],
   selection: [
-    '把选中的节点重画成扁平插画风',
-    '基于选中节点再出两张风格变体',
-    '给选中节点补一段详情页文案',
+    '把它重画成扁平插画',
+    '再出两张风格变体',
+    '换个季节和光线',
+    '把背景换成纯色',
+  ],
+  attachment: [
+    '让模特换上这件衣服',
+    '用这几张图片作为分镜生成一段视频',
+    '用这个实拍图，出一套电商上架套图',
+    '给这个产品做一套TVC广告视频',
+    '给我这个产品做一套营销推广方案',
   ],
   artifact: [
-    '把当前产物改成竖版海报构图',
-    '基于当前产物再生成一张深色背景版本',
-    '为当前产物配一段电商卖点文案',
+    '再来1套，风格不一样的',
+    '改成竖版海报',
+    '再来一张深色版',
+    '把两张拼成一组',
   ],
+}
+
+/**
+ * 裸条提示位轮换池（≤14 汉字，一行放得下）—— 对应清单里标 data-bare="1" 的条目。
+ * 裸条只有一行，比 chips 更窄，故不是所有 chips 条目都能上裸条。
+ */
+const BARE_HINT_POOL: Record<UtterancePhase, string[]> = {
+  empty: [
+    '画一座会呼吸的灯塔',
+    '把我的一天画成四格',
+    '帮我做一套儿童绘本',
+    '帮我创作一首民谣歌曲',
+    '出一套生鲜闸蟹快递包装材料',
+  ],
+  selection: ['把它重画成扁平插画', '再出两张风格变体', '换个季节和光线', '把背景换成纯色'],
+  attachment: ['让模特换上这件衣服'],
+  artifact: ['再来1套，风格不一样的', '改成竖版海报', '再来一张深色版', '把两张拼成一组'],
 }
 
 /** 画布相派生：选中优先（selection），其次看是否有已产出物（artifact），否则空画布（empty）。 */
@@ -2391,9 +2441,46 @@ const currentCanvasPhase = computed<CanvasPhase>(() => {
   return hasArtifact ? 'artifact' : 'empty'
 })
 
-const exampleUtterances = computed(() =>
-  selectExampleUtterances(currentCanvasPhase.value, EXAMPLE_UTTERANCE_POOL),
+/**
+ * A1 · B′ 决策：池维度 = 画布相 ∪ composer 素材态。
+ * hasAttachments 直接取 pendingAttachmentItems（派生自 sidebar.pendingAttachments）——
+ * 现成信号，零新增状态。attachment 优先级高于任何画布相。
+ */
+const currentUtterancePhase = computed<UtterancePhase>(() =>
+  pickUtteranceContext({
+    phase: currentCanvasPhase.value,
+    hasAttachments: pendingAttachmentItems.value.length > 0,
+  }),
 )
+
+/**
+ * 轮换偏移：池大于展示位时（empty 7 条 > 4 位）必须轮换，否则第 5 条之后永不露出。
+ * 驱动 = 池维度切换（相变 / 挂素材 / 卸素材）。
+ * ⚠️ 定时轮换未做：需要 reduced-motion 守卫 + 聚焦暂停 + 卸载清理，是独立风险面，留 A1 二期。
+ */
+const utteranceRotation = ref(0)
+watch(currentUtterancePhase, () => {
+  utteranceRotation.value += 1
+})
+
+const exampleUtterances = computed(() =>
+  selectExampleUtterances(
+    currentUtterancePhase.value,
+    EXAMPLE_UTTERANCE_POOL,
+    utteranceRotation.value,
+  ),
+)
+
+/**
+ * 空闲条文案（替代固定「点按输入」）：轮换当前相的短句，兼作灵感入口。
+ * 语音识别已于 2026-10-21 整体下线，条上不再承诺语音。
+ */
+const mobileBarIdleHint = computed(() => {
+  const items = BARE_HINT_POOL[currentUtterancePhase.value] ?? []
+  if (!items.length) return '点按输入'
+  const i = utteranceRotation.value % items.length
+  return items[i < 0 ? i + items.length : i]
+})
 
 /**
  * P1-1.2：样例 chips 点击只填充输入框（focus + 可编辑草稿），绝不自动提交 ——
@@ -4009,6 +4096,17 @@ defineExpose({
                 lnk·π 助手 · 说一句创意，我来画
               </p>
               <div class="agent-example-chips mt-3 flex flex-wrap justify-center gap-2">
+                <!-- A1 传图引导位：不是金句，不计入 golden_quote_picked。
+                     只在 empty 相出现——有素材时 attachment 池已承担素材话术。 -->
+                <button
+                  v-if="showAttachmentCta"
+                  type="button"
+                  class="agent-example-chip agent-example-chip--cta rounded-lg border border-dashed px-3 py-1.5 text-left text-[12px] leading-snug"
+                  data-testid="agent-attachment-cta"
+                  @click="pickImage"
+                >
+                  传一张图再说话
+                </button>
                 <button
                   v-for="u in exampleUtterances"
                   :key="u"
@@ -4779,7 +4877,7 @@ defineExpose({
                   </button>
                 </div>
                 <!-- P1-5.3 空闲态 affordance：纯 span 提示（非 placeholder）；桌面恒不渲染 -->
-                <span v-if="mobileBarIdle" class="composer-bar-hint">{{ MOBILE_BAR_IDLE_HINT }}</span>
+                <span v-if="mobileBarIdle" class="composer-bar-hint">{{ mobileBarIdleHint }}</span>
               </div>
               <input
                 ref="fileInputRef"
