@@ -1,5 +1,11 @@
 import type { Node } from '@vue-flow/core'
-import { alignNodes, distributeNodes, type AlignSixWay, type LayoutNode } from '@lnkpi/shared'
+import {
+  alignNodes,
+  distributeNodes,
+  type AlignSixWay,
+  type LayoutNode,
+  type SnapCandidate,
+} from '@lnkpi/shared'
 
 type FlowNode = Node & { dimensions?: { width?: number; height?: number } }
 
@@ -70,6 +76,64 @@ export function applySnapOnRelease(
     const s = dragStarts.get(n.id)
     return s ? { ...n, position: { x: s.x + shiftX, y: s.y + shiftY } } : n
   })
+}
+
+// ══════════════════════════════════════════════════════════
+// 拖拽智能参考线：候选构造（SP-B T9a）
+//
+// `computeSnapGuides`（@lnkpi/shared）只跳过 `isSelf`，**从不读 `parentId`**
+// ⇒「谁配当吸附目标」的全部判定必须在本层做完。
+// ══════════════════════════════════════════════════════════
+
+/** 视口裁剪矩形（flow 坐标）。 */
+export interface SnapBounds {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/** 两个矩形是否相交（贴边也算相交 —— 边界候选仍可能是 8px 内的吸附目标）。 */
+function rectsIntersect(a: SnapBounds, b: SnapBounds): boolean {
+  return a.x <= b.x + b.w && a.x + a.w >= b.x && a.y <= b.y + b.h && a.y + a.h >= b.y
+}
+
+/**
+ * 构造拖拽参考线的吸附候选（box 为 flow 坐标）。
+ *
+ * 排除规则（本层全责）：
+ * 1. **被拖节点自己** —— 它是移动方，不是目标；
+ * 2. **被拖节点的父节点** —— 否则分组会跟父分组互吸（框套框）；
+ * 3. **被拖节点自己的子节点** —— 它们随组一起移动，是「移动目标」而非吸附目标；
+ * 4. **其余一律保留**：⚠️ 被拖节点**没有父节点**时，其他顶层节点必须仍是候选。
+ *    （曾经的缺陷：用 `n.parentNode !== dragged.parentNode` 过滤 ⇒ 两侧都是
+ *    undefined 时把**所有**顶层候选全丢掉 ⇒ 顶层拖拽静默失去吸附能力。）
+ *
+ * 候选的 `parentId` = **该候选节点自己的父节点**（`computeSnapGuides` 不读它，
+ * 仅供调用方/调试判断层级关系；**不是**被拖节点的父节点）。
+ *
+ * `opts.bounds`（可选）：只保留与该矩形相交的候选 —— 规格 §9 的性能护栏
+ * （大画布不扫描全部节点；调用方按「视口 + 边距」传入）。
+ */
+export function buildSnapCandidates(
+  nodes: FlowNode[],
+  dragId: string,
+  opts?: { bounds?: SnapBounds },
+): SnapCandidate[] {
+  const dragged = nodes.find((n) => n.id === dragId)
+  const parentId = dragged?.parentNode
+  const bounds = opts?.bounds
+  const out: SnapCandidate[] = []
+  for (const n of nodes) {
+    if (n.id === dragId) continue // 规则 1
+    if (parentId && n.id === parentId) continue // 规则 2
+    if (n.parentNode === dragId) continue // 规则 3
+    const { w, h } = getNodeSize(n)
+    const box = { x: n.position.x, y: n.position.y, w, h }
+    if (bounds && !rectsIntersect(box, bounds)) continue // 规则 4 之外的性能裁剪
+    out.push({ id: n.id, box, parentId: n.parentNode, isSelf: false })
+  }
+  return out
 }
 
 export function layoutNodesInGrid(nodes: FlowNode[], selectedIds: string[], gap = 40): FlowNode[] {
