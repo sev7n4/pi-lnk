@@ -2,9 +2,9 @@
 import { computed, inject, ref } from 'vue'
 import { useLongPress } from '@/composables/useLongPress'
 import {
-  CANVAS_NODE_OPEN_CONTEXT_MENU_KEY,
+  MOBILE_NODE_ACTION_REQUEST_KEY,
   CANVAS_NODE_CLICK_GUARD_KEY,
-  type CanvasNodeOpenContextMenuFn,
+  type MobileNodeActionRequestFn,
   type CanvasNodeClickGuard,
 } from '@/composables/canvasNodeActions'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
@@ -21,14 +21,17 @@ const emit = defineEmits<{ (e: 'tap'): void }>()
 const cfg = computed(() => nodeTypeConfigs[props.type])
 const badge = computed(() => cfg.value.statusBadge(props.status))
 
-const openContextMenu = inject<CanvasNodeOpenContextMenuFn>(CANVAS_NODE_OPEN_CONTEXT_MENU_KEY, () => {})
+const mobileActionRequest = inject<MobileNodeActionRequestFn>(MOBILE_NODE_ACTION_REQUEST_KEY, () => {})
 const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
-  consumeSuppression: () => false,
+  shouldSuppress: () => false,
   markSuppressed: () => {},
 })
 
 const { bindings } = useLongPress(() => {
-  if (openContextMenu) openContextMenu(props.id ?? '')
+  const id = props.id
+  if (id && mobileActionRequest) {
+    mobileActionRequest({ id, type: props.type, data: props.data })
+  }
 })
 
 const audioEl = ref<HTMLAudioElement | null>(null)
@@ -55,7 +58,7 @@ function onTileClick() {
     toggleAudio()
     return
   }
-  if (clickGuard?.consumeSuppression?.()) return
+  if (clickGuard?.shouldSuppress?.()) return
   emit('tap')
 }
 </script>

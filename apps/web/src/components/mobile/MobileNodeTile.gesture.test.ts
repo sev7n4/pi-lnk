@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MobileNodeTile from './MobileNodeTile.vue'
-import { CANVAS_NODE_OPEN_CONTEXT_MENU_KEY } from '@/composables/canvasNodeActions'
+import { MOBILE_NODE_ACTION_REQUEST_KEY } from '@/composables/canvasNodeActions'
 
 function fireTouch(wrapper: any, type: string) {
   const el = wrapper.element as HTMLElement
@@ -17,16 +17,16 @@ describe('MobileNodeTile gesture', () => {
     expect(w.emitted('tap')).toHaveLength(1)
   })
 
-  it('长按经 useLongPress 打开上下文菜单（不触发 tap）', async () => {
-    const openMenu = vi.fn()
+  it('长按经 useLongPress 请求本端动作 sheet（不触发 tap）', async () => {
+    const request = vi.fn()
     const w = mount(MobileNodeTile, {
-      props: { id: 'n1', type: 'image', data: {} },
-      global: { provide: { [CANVAS_NODE_OPEN_CONTEXT_MENU_KEY as any]: openMenu } },
+      props: { id: 'n1', type: 'image', data: { url: 'x' } },
+      global: { provide: { [MOBILE_NODE_ACTION_REQUEST_KEY as any]: request } },
     })
     fireTouch(w, 'touchstart')
     await new Promise((r) => setTimeout(r, 450))
     fireTouch(w, 'touchend')
-    expect(openMenu).toHaveBeenCalledWith('n1')
+    expect(request).toHaveBeenCalledWith({ id: 'n1', type: 'image', data: { url: 'x' } })
     expect(w.emitted('tap')).toBeFalsy()
   })
 
