@@ -25,6 +25,10 @@ const emit = defineEmits<{
   ungroup: []
   delete: []
   layout: [mode: 'along_edges' | 'grid']
+  /** SP-B 对齐/分布（六向 + 两轴等距）——透传给 CanvasPage 执行。 */
+  align: [payload:
+    | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+    | { kind: 'distribute'; axis: 'x' | 'y' }]
   generateVideo: []
   download: [mode: 'full_package' | 'lightweight' | 'media_list_only']
   addAgentRef: []
@@ -113,6 +117,7 @@ const visible = computed(() => props.selectedIds.length >= 2 || !!props.canUngro
     @ungroup="emit('ungroup')"
     @delete="emit('delete')"
     @layout="emit('layout', $event)"
+    @align="emit('align', $event)"
     @generate-video="emit('generateVideo')"
     @download="emit('download', $event)"
     @add-agent-ref="emit('addAgentRef')"

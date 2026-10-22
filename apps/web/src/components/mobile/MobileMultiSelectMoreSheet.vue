@@ -25,6 +25,10 @@ const emit = defineEmits<{
   duplicateUpstream: []
   addAgentRef: []
   layout: [mode: 'along_edges' | 'grid']
+  /** SP-B 对齐/分布（六向 + 两轴等距）——与 PC 工具条同形状。 */
+  align: [payload:
+    | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+    | { kind: 'distribute'; axis: 'x' | 'y' }]
   download: [mode: 'full_package' | 'lightweight' | 'media_list_only']
   delete: []
   close: []
@@ -74,6 +78,13 @@ function onLayout(mode: 'along_edges' | 'grid') {
   emit('layout', mode)
 }
 
+/** SP-B 对齐/分布：负载形状与 PC 工具条一致（判别联合 kind）。 */
+function onAlign(payload:
+  | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+  | { kind: 'distribute'; axis: 'x' | 'y' }) {
+  emit('align', payload)
+}
+
 function onDownload(mode: 'full_package' | 'lightweight' | 'media_list_only') {
   emit('download', mode)
 }
@@ -120,6 +131,31 @@ function onDelete() {
       </button>
       <button type="button" class="msms-item" data-testid="msms-layout-grid" @click="onLayout('grid')">
         <span class="msms-item__label">自动网格排列</span>
+      </button>
+      <!-- SP-B：对齐六向 + 两轴等距（复用既有 .msms-item，不新增配色） -->
+      <button type="button" class="msms-item" data-testid="msms-align-left" @click="onAlign({ kind: 'align', alignMode: 'left' })">
+        <span class="msms-item__label">左对齐</span>
+      </button>
+      <button type="button" class="msms-item" data-testid="msms-align-centerH" @click="onAlign({ kind: 'align', alignMode: 'centerH' })">
+        <span class="msms-item__label">水平居中</span>
+      </button>
+      <button type="button" class="msms-item" data-testid="msms-align-right" @click="onAlign({ kind: 'align', alignMode: 'right' })">
+        <span class="msms-item__label">右对齐</span>
+      </button>
+      <button type="button" class="msms-item" data-testid="msms-align-top" @click="onAlign({ kind: 'align', alignMode: 'top' })">
+        <span class="msms-item__label">顶对齐</span>
+      </button>
+      <button type="button" class="msms-item" data-testid="msms-align-centerV" @click="onAlign({ kind: 'align', alignMode: 'centerV' })">
+        <span class="msms-item__label">垂直居中</span>
+      </button>
+      <button type="button" class="msms-item" data-testid="msms-align-bottom" @click="onAlign({ kind: 'align', alignMode: 'bottom' })">
+        <span class="msms-item__label">底对齐</span>
+      </button>
+      <button type="button" class="msms-item" data-testid="msms-distribute-x" @click="onAlign({ kind: 'distribute', axis: 'x' })">
+        <span class="msms-item__label">水平等距</span>
+      </button>
+      <button type="button" class="msms-item" data-testid="msms-distribute-y" @click="onAlign({ kind: 'distribute', axis: 'y' })">
+        <span class="msms-item__label">垂直等距</span>
       </button>
     </div>
 

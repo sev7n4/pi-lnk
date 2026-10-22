@@ -64,6 +64,42 @@ describe('MobileMultiSelectMoreSheet（PR3）', () => {
     w.unmount()
   })
 
+  it('SP-B 对齐二级视图：六向对齐 + 两轴等距，emit align（判别联合负载）', async () => {
+    const w = mountSheet()
+    q('[data-testid="msms-layout"]')!.click()
+    await flushPromises()
+
+    for (const id of [
+      'msms-align-left',
+      'msms-align-centerH',
+      'msms-align-right',
+      'msms-align-top',
+      'msms-align-centerV',
+      'msms-align-bottom',
+      'msms-distribute-x',
+      'msms-distribute-y',
+    ]) {
+      expect(q(`[data-testid="${id}"]`), `整理布局视图应有 ${id}`).not.toBeNull()
+    }
+
+    q('[data-testid="msms-align-left"]')!.click()
+    await flushPromises()
+    expect(w.emitted('align')).toEqual([[{ kind: 'align', alignMode: 'left' }]])
+
+    // 回主列表再进，等距走另一个分支
+    q('[data-testid="msms-back"]')!.click()
+    await flushPromises()
+    q('[data-testid="msms-layout"]')!.click()
+    await flushPromises()
+    q('[data-testid="msms-distribute-y"]')!.click()
+    await flushPromises()
+    expect(w.emitted('align')).toEqual([
+      [{ kind: 'align', alignMode: 'left' }],
+      [{ kind: 'distribute', axis: 'y' }],
+    ])
+    w.unmount()
+  })
+
   it('导出二级视图：3 种口径', async () => {
     const w = mountSheet()
     q('[data-testid="msms-export"]')!.click()

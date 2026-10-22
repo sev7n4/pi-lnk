@@ -2235,6 +2235,24 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
 }
 
 /**
+ * SP-B 多选工具条的「对齐/等距」入口（MultiSelectToolbar → Overlay → 这里）。
+ *
+ * 复用 handleArrangeNodes 这条既有执行通道（前端算坐标 + setNodes + persistUserEdit +
+ * 自动聚焦 + 只读守卫 + 畸形请求提示），⛔ 不另起一条落库路径。
+ * 选中集合取 toolbarSelectionIds（与工具条上显示的集合同源；选中分组时只含分组自身）。
+ */
+async function handleAlignSelection(payload:
+  | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+  | { kind: 'distribute'; axis: 'x' | 'y' }) {
+  const nodeIds = toolbarSelectionIds.value
+  if (payload.kind === 'align') {
+    await handleArrangeNodes({ nodeIds, mode: 'align', alignMode: payload.alignMode })
+    return
+  }
+  await handleArrangeNodes({ nodeIds, mode: 'distribute', axis: payload.axis })
+}
+
+/**
  * arrange 派发的合法取值白名单（执行器侧校验用）。
  * 派发层 applyArrangeLayout 对畸形 align/distribute 是 no-op（不落 grid 分支，
  * 否则「对齐」意图会被静默换成「网格重排」），但静默 no-op 在用户看来就是
@@ -4939,6 +4957,8 @@ const mobileBatchActions: MobileShellBatchActions = {
   duplicateUpstream: handleToolbarDuplicateUpstream,
   addAgentRef: handleAddToAgentRefs,
   layout: handleLayoutSelection,
+  /** SP-B 对齐/分布：与 PC 工具条同一个处理器（移动端不另造一套）。 */
+  align: handleAlignSelection,
   download: handlePackageDownload,
   delete: handleDeleteSelection,
 }
@@ -5251,6 +5271,7 @@ onUnmounted(() => {
             @group-color="handleGroupColorSelection"
             @delete="handleDeleteSelection"
             @layout="handleLayoutSelection"
+            @align="handleAlignSelection"
             @generate-video="handleGenerateVideoFromSelection"
             @download="handlePackageDownload"
             @add-agent-ref="handleAddToAgentRefs()"

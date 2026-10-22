@@ -64,6 +64,13 @@ export interface MobileShellBatchActions {
   addAgentRef: () => void
   layout: (mode: 'along_edges' | 'grid') => void
   /**
+   * SP-B 对齐/分布载荷（判别联合）：kind 决定走六向对齐还是两轴等距，
+   * alignMode / axis 必须原样透传（缺了会让「对齐」静默退化成网格重排）。
+   */
+  align: (payload:
+    | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+    | { kind: 'distribute'; axis: 'x' | 'y' }) => void
+  /**
    * 导出模式载荷必须透传（'full_package' | 'lightweight' | 'media_list_only'）。
    * ⚠️ 早先版本把它写成 `() => void`，@download 的 $event 被吞掉 ⇒ 移动端「轻量包 /
    * 媒体清单」静默退化成默认 full_package（与 master 的 `@download="handlePackageDownload"`
@@ -324,6 +331,7 @@ onUnmounted(() => stopMobileTaskPolling())
     @duplicate-upstream="batchActions.duplicateUpstream"
     @add-agent-ref="batchActions.addAgentRef"
     @layout="batchActions.layout($event)"
+    @align="batchActions.align($event)"
     @download="batchActions.download($event)"
     @delete="batchActions.delete"
   />
