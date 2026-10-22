@@ -384,7 +384,7 @@ const SNAP_ANCHORS: Record<string, { o: Orient; resolve: (b: SnapBox) => number 
   centerY: { o: 'h', resolve: (b) => b.y + b.h / 2 },
 }
 
-interface BestV { dist: number; pos: number; id: string; dragOffset: number }
+interface BestV { dist: number; pos: number; id: string; dragOffset: number; isPrev?: boolean }
 
 /**
  * 拖拽智能参考线（移植 React Flow xyflow Helper Lines + manta SpatialIndex 思路）：
@@ -418,8 +418,15 @@ export function computeSnapGuides(
         const keepPrev = prevPos != null && Math.abs(cpos - prevPos) <= hys
         if (!keepPrev && dist > radius) continue
         const cur = ca.o === 'v' ? bestV : bestH
-        if (!cur || dist < cur.dist || keepPrev) {
-          const nb = { dist, pos: cpos, id: c.id, dragOffset: da.off }
+        // 同一根线 ⇒ 取**更近**的拖拽锚点：keepPrev 只保证「这根线被保留」，
+        //   不该把锚点换到更差的配对上（否则节点被拉偏：左缘吸附被 centerX 覆盖）。
+        // 换线 ⇒ 更近的赢；或 prev 线优先于非 prev 线。
+        const sameLine = !!cur && cur.pos === cpos
+        const better =
+          !cur ||
+          (sameLine ? dist < cur.dist : dist < cur.dist || (keepPrev && !cur.isPrev))
+        if (better) {
+          const nb = { dist, pos: cpos, id: c.id, dragOffset: da.off, isPrev: keepPrev }
           if (ca.o === 'v') bestV = { ...nb, o: 'v' }
           else bestH = { ...nb, o: 'h' }
         }
@@ -427,8 +434,10 @@ export function computeSnapGuides(
     }
   }
   const snapped = { x: dragBox.x, y: dragBox.y }
-  if (bestV) snapped.x = bestV.pos - bestV.dragOffset
-  if (bestH) snapped.y = bestH.pos - bestH.dragOffset
+  // 锚点贴到线 cpos ⇒ 新原点 = cpos + off（off = 原点 - 锚点坐标）。
+  // ⛔ 不是 cpos - off：那会把非首要锚点（right/centerX）的配对放到线的错误一侧。
+  if (bestV) snapped.x = bestV.pos + bestV.dragOffset
+  if (bestH) snapped.y = bestH.pos + bestH.dragOffset
   return {
     vertical: bestV ? { position: bestV.pos, sourceNodeId: bestV.id } : undefined,
     horizontal: bestH ? { position: bestH.pos, sourceNodeId: bestH.id } : undefined,

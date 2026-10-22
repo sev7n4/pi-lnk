@@ -254,4 +254,34 @@ describe('computeSnapGuides', () => {
     const r = computeSnapGuides(drag, cands)
     expect(r.vertical).toBeUndefined()
   })
+  it('hysteresis 保线时不得把拖拽锚点换到更差的配对（否则节点被拉偏）', () => {
+    // 被拖左缘 9、候选左缘 0 ⇒ 9px > 半径 8，只能靠 prev 保线。
+    // 保线只保证「这根线还在」，吸附位置必须用**最近**的拖拽锚点（左缘，off=0），
+    // 不能被同线的 centerX 配对覆盖（那会把节点拉到 100 而不是 0）。
+    const cands = [{ id: 'o', box: { x: 0, y: 0, w: 200, h: 100 } }]
+    const r = computeSnapGuides({ x: 9, y: 500, w: 200, h: 100 }, cands, {
+      prev: { vertical: { position: 0, sourceNodeId: 'o' } },
+    })
+    expect(r.vertical?.position).toBe(0)
+    expect(r.snapped.x, '按最近锚点（左缘）吸附到 0').toBe(0)
+  })
+  it('非首要锚点配对：right~right / centerX~centerX 的吸附位置（off≠0）', () => {
+    // ⛔ 回归：off = 原点 - 锚点坐标 ⇒ 新原点 = 线 + off。
+    //   写反成「线 - off」会把节点放到线的错误一侧（right 配对时右缘对不齐）。
+    const r1 = computeSnapGuides(
+      { x: 95, y: 300, w: 100, h: 50 },
+      [{ id: 'c', box: { x: 120, y: 0, w: 80, h: 80 } }],
+    )
+    // 被拖右缘 195、候选右缘 200 ⇒ 拖动后右缘应等于 200 ⇒ 新 x = 100
+    expect(r1.vertical?.position).toBe(200)
+    expect(r1.snapped.x, '右缘对齐到 200 ⇒ 左缘 100').toBe(100)
+
+    const r2 = computeSnapGuides(
+      { x: 95, y: 300, w: 100, h: 50 },
+      [{ id: 'c', box: { x: 0, y: 0, w: 290, h: 80 } }],
+    )
+    // 候选很宽 ⇒ 只有 centerX 配对落在半径内：被拖中心 145、候选中心 145
+    expect(r2.vertical?.position).toBe(145)
+    expect(r2.snapped.x, '中心对齐 145 ⇒ 左缘 95（原地不动）').toBe(95)
+  })
 })
