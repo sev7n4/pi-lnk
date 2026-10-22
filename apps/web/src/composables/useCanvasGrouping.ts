@@ -328,6 +328,9 @@ export interface ArrangeRequest {
  *
  * align / distribute 复用 shared 的纯函数（alignNodes / distributeNodes），
  * 它们返回**局部坐标**（已减 parentNode 偏移）⇒ 可直接写回 FlowNode.position。
+ *
+ * ⚠️ align 缺 alignMode / distribute 缺 axis = **畸形请求 ⇒ no-op**（返回原数组引用），
+ * 绝不落 grid 分支：否则「对齐」意图会被静默换成「网格重排」（另一种会搬动所有节点的动作）。
  */
 export function applyArrangeLayout(
   nodes: FlowNode[],
@@ -337,11 +340,16 @@ export function applyArrangeLayout(
   const ids = (req?.nodeIds ?? []).filter((id) => typeof id === 'string' && id)
   if (ids.length < 2) return nodes
   const gap = typeof req.gap === 'number' && Number.isFinite(req.gap) ? req.gap : 40
-  if (req.mode === 'align' && req.alignMode) {
+  if (req.mode === 'align') {
+    // 缺 alignMode = 畸形请求（规格：align 必带 alignMode）⇒ no-op。
+    // ⚠️ 不得落到末尾的 grid 分支：那会把「对齐」意图静默换成「网格重排」。
+    if (!req.alignMode) return nodes
     const pos = alignNodes(nodes as unknown as LayoutNode[], ids, req.alignMode)
     return nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n))
   }
-  if (req.mode === 'distribute' && req.axis) {
+  if (req.mode === 'distribute') {
+    // 缺 axis 同理：畸形请求 ⇒ no-op（退化 distribute 本身也是 no-op，语义一致）。
+    if (!req.axis) return nodes
     const pos = distributeNodes(nodes as unknown as LayoutNode[], ids, req.axis)
     return nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n))
   }

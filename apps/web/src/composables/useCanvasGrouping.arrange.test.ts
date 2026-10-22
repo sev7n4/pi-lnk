@@ -90,4 +90,19 @@ describe('applyArrangeLayout（arrange_nodes 工具与多选工具栏共用派�
     const next = applyArrangeLayout(nodes, { nodeIds: ['a', 'b', 'c'], mode: 'distribute', axis: 'x' })
     expect(next.find((n) => n.id === 'b')!.position.x).toBe(150)
   })
+
+  it('mode=align 缺 alignMode ⇒ no-op（原数组引用不变，不静默落 grid 重排）', () => {
+    // 畸形请求（规格要求 align 必带 alignMode）⇒ 原样返回，不得换成 grid 重排
+    const nodes = [node('a', 0, 0, 'image', 100, 50), node('b', 300, 0, 'image', 100, 50)]
+    const next = applyArrangeLayout(nodes, { nodeIds: ['a', 'b'], mode: 'align' })
+    // 引用相同 ⇒ 没有新数组、没有新节点对象 ⇒ 坐标必然原封不动
+    expect(next).toBe(nodes)
+  })
+
+  it('mode=distribute 缺 axis ⇒ no-op（原数组引用不变，不静默落 grid 重排）', () => {
+    // 畸形请求（规格要求 distribute 必带 axis）⇒ 原样返回，不得换成 grid 重排
+    const nodes = [node('a', 0, 0, 'image', 100, 50), node('b', 300, 0, 'image', 100, 50)]
+    const next = applyArrangeLayout(nodes, { nodeIds: ['a', 'b'], mode: 'distribute' })
+    expect(next).toBe(nodes)
+  })
 })
