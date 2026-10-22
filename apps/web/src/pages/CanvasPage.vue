@@ -21,8 +21,8 @@ import { Background } from '@vue-flow/background'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
-import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult, CanvasGroup } from '@lnkpi/shared'
-import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError } from '@lnkpi/shared'
+import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult, CanvasGroup, SnapPrev } from '@lnkpi/shared'
+import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, computeSnapGuides } from '@lnkpi/shared'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
@@ -91,9 +91,11 @@ import { computeNewNodePosition, snapToGrid } from '@/composables/useCanvasNodeP
 import {
   applyArrangeLayout,
   applySnapOnRelease,
+  buildSnapCandidates,
   createGroupFromSelection,
   detachNodesFromGroupNodes,
   foldGroups,
+  getAbsolutePosition,
   getNodeSize,
   getSelectionBounds,
   isGroupNode,
@@ -112,6 +114,7 @@ import { useModelProviderSettings } from '@/composables/useModelProviderSettings
 import MultiSelectToolbarOverlay from '@/components/canvas/MultiSelectToolbarOverlay.vue'
 import ProposeConfirmOverlay from '@/components/canvas/ProposeConfirmOverlay.vue'
 import CanvasNodeGroup from '@/components/canvas/CanvasNodeGroup.vue'
+import GuideLines from '@/components/canvas/GuideLines.vue'
 import SelectionBatchProgressCard from '@/components/canvas/SelectionBatchProgressCard.vue'
 import MultiSelectConnectOverlay from '@/components/canvas/MultiSelectConnectOverlay.vue'
 import BatchConnectPickerLine from '@/components/canvas/BatchConnectPickerLine.vue'
@@ -1961,6 +1964,59 @@ function syncMultiSelectionFromNodes() {
  *（带 computedPosition），而我们的 EditableFlowNode 是普通对象，直接 apply 会
  * 静默丢弃拖拽位移 → 鼠标是抓手但节点不动。这里对 plain node 显式应用变更。
  */
+/**
+ * SP-B 拖拽智能参考线：当前命中的参考线。
+ * 存 shared 的 SnapPrev 形状（position + sourceNodeId）——存裸数字会让
+ * computeSnapGuides 读不到 prev.<朝向>.position ⇒ hysteresis 永不触发 ⇒ 线在阈值处闪。
+ */
+const snapGuides = ref<SnapPrev>({})
+/** 参考线在 flow 坐标里的可见范围（供 GuideLines 把线画满可视区，缩放 <1 时也不缺一段）。 */
+const snapBounds = ref<{ x: number; y: number; w: number; h: number } | undefined>(undefined)
+/** 多选拖拽的锚点节点 id：整批按它算同一个吸附量 ⇒ 批内相对阵列不变。 */
+let dragAnchorId: string | null = null
+/** 候选裁剪的视口边距（flow 坐标）：视口外一圈仍参与吸附，避免边缘抖动。 */
+const SNAP_VIEWPORT_MARGIN = 200
+
+/**
+ * 当前视口在 flow 坐标里的可见范围（规格 §9 性能护栏的裁剪基准）。
+ * flow = (screen - translate) / zoom ⇒ 屏幕左上角反投影回 flow 坐标。
+ * 副作用：把结果回填 snapBounds，供 GuideLines 画线时确定可视范围。
+ */
+function snapViewportBounds(): { x: number; y: number; w: number; h: number } {
+  const vp = vueFlowRef.value?.getViewport?.() ?? { x: 0, y: 0, zoom: 1 }
+  const zoom = vp.zoom || 1
+  const rect = (vueFlowRef.value?.$el as HTMLElement | undefined)?.getBoundingClientRect?.()
+  const bounds = {
+    x: -vp.x / zoom - SNAP_VIEWPORT_MARGIN,
+    y: -vp.y / zoom - SNAP_VIEWPORT_MARGIN,
+    w: (rect?.width || 1000) / zoom + SNAP_VIEWPORT_MARGIN * 2,
+    h: (rect?.height || 1000) / zoom + SNAP_VIEWPORT_MARGIN * 2,
+  }
+  snapBounds.value = bounds
+  return bounds
+}
+
+/**
+ * 拖拽吸附计算：**只按锚点算一次**，返回整批要平移的 delta。
+ * 候选走 buildSnapCandidates（排除自身/父/子 + 视口裁剪），几何走 shared 的 computeSnapGuides。
+ * 多选拖拽若逐节点各算各的，会把批内相对阵列扯散 ⇒ 统一按锚点算、整批同移。
+ */
+function computeDragSnapGuides(flow: FlowNode[], anchorId: string): { dx: number; dy: number } {
+  const anchor = flow.find((n) => n.id === anchorId)
+  if (!anchor) return { dx: 0, dy: 0 }
+  // 候选盒归一到 flow 绝对坐标（分组子节点的 position 是父相对）
+  const absNodes: FlowNode[] = flow.map((n) => ({ ...n, position: getAbsolutePosition(n, flow) }))
+  const anchorAbs = getAbsolutePosition(anchor, flow)
+  const { w, h } = getNodeSize(anchor)
+  const cands = buildSnapCandidates(absNodes, anchorId, { bounds: snapViewportBounds() })
+  const res = computeSnapGuides({ x: anchorAbs.x, y: anchorAbs.y, w, h }, cands, { prev: snapGuides.value })
+  const guides: SnapPrev = {}
+  if (res.horizontal) guides.horizontal = { position: res.horizontal.position, sourceNodeId: res.horizontal.sourceNodeId }
+  if (res.vertical) guides.vertical = { position: res.vertical.position, sourceNodeId: res.vertical.sourceNodeId }
+  snapGuides.value = guides
+  return { dx: res.snapped.x - anchorAbs.x, dy: res.snapped.y - anchorAbs.y }
+}
+
 function onNodesChange(changes: NodeChange[]) {
   if (!changes.length) return
 
@@ -1975,10 +2031,13 @@ function onNodesChange(changes: NodeChange[]) {
 
   let next = nodes.value
   let changed = false
+  /** 本次拖拽批里真正发生位移的节点 id（吸附量整批同移时用）。 */
+  const draggedIds = new Set<string>()
 
   for (const change of changes) {
     if (change.type === 'position' && change.position) {
       const pos = change.position
+      if (dragStartPositions.has(change.id)) draggedIds.add(change.id)
       next = next.map((node) =>
         node.id === change.id ? { ...node, position: { x: pos.x, y: pos.y } } : node,
       )
@@ -2008,6 +2067,17 @@ function onNodesChange(changes: NodeChange[]) {
       return node.selected === selected ? node : { ...node, selected }
     })
     changed = true
+  }
+
+  // 拖拽吸附（SP-B）：只按锚点算一次吸附量，整批同移 ⇒ 批内相对阵列不变。
+  // 逐节点各算各的会把多选批的相对间距扯散（与 applySnapOnRelease 的契约相悖）。
+  if (dragAnchorId && draggedIds.has(dragAnchorId)) {
+    const { dx, dy } = computeDragSnapGuides(next as unknown as FlowNode[], dragAnchorId)
+    if (dx !== 0 || dy !== 0) {
+      next = next.map((node) =>
+        draggedIds.has(node.id) ? { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } } : node,
+      )
+    }
   }
 
   if (changed) nodes.value = next
@@ -2040,6 +2110,9 @@ function onNodeDragStart(event: NodeDragEvent) {
   for (const n of event.nodes) {
     dragStartPositions.set(n.id, { x: n.position.x, y: n.position.y })
   }
+  // 新一轮拖拽：清掉上一轮的参考线命中；锚点取 vue-flow 的主节点（缺失时退回批内首个）
+  snapGuides.value = {}
+  dragAnchorId = event.node?.id ?? dragStartPositions.keys().next().value ?? null
 }
 
 /**
@@ -2049,7 +2122,9 @@ function onNodeDragStart(event: NodeDragEvent) {
  */
 function onNodeDragStop(event: NodeDragEvent) {
   const node = event.node
-  if (viewportSettings.value.snapToGrid && dragStartPositions.size > 0) {
+  // 参考线优先（规格 D3）：本帧吸到参考线时跳过 20px 网格吸附，两者共存不叠加
+  const hadGuide = snapGuides.value.horizontal != null || snapGuides.value.vertical != null
+  if (viewportSettings.value.snapToGrid && dragStartPositions.size > 0 && !hadGuide) {
     nodes.value = applySnapOnRelease(
       nodes.value as unknown as FlowNode[],
       dragStartPositions,
@@ -2064,6 +2139,8 @@ function onNodeDragStop(event: NodeDragEvent) {
     }, 500)
   }
   dragStartPositions = new Map()
+  dragAnchorId = null
+  snapGuides.value = {}
   // 分组是 vue-flow 父节点：拖子节点到边缘会 expandParent 撑大框 ⇒ 拖完贴回包围盒。
   fitGroups()
   persistUserEdit()
@@ -2162,6 +2239,34 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
 }
 
 /**
+ * SP-B 多选工具条的「对齐/等距」入口（MultiSelectToolbar → Overlay → 这里）。
+ *
+ * 复用 handleArrangeNodes 这条既有执行通道（前端算坐标 + setNodes + persistUserEdit +
+ * 自动聚焦 + 只读守卫 + 畸形请求提示），⛔ 不另起一条落库路径。
+ * 选中集合取 toolbarSelectionIds（与工具条上显示的集合同源；选中分组时只含分组自身）。
+ */
+async function handleAlignSelection(payload:
+  | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+  | { kind: 'distribute'; axis: 'x' | 'y' }) {
+  const nodeIds = toolbarSelectionIds.value
+  if (payload.kind === 'align') {
+    await handleArrangeNodes({ nodeIds, mode: 'align', alignMode: payload.alignMode })
+    return
+  }
+  await handleArrangeNodes({ nodeIds, mode: 'distribute', axis: payload.axis })
+}
+
+/**
+ * arrange 派发的合法取值白名单（执行器侧校验用）。
+ * 派发层 applyArrangeLayout 对畸形 align/distribute 是 no-op（不落 grid 分支，
+ * 否则「对齐」意图会被静默换成「网格重排」），但静默 no-op 在用户看来就是
+ * 「我点了对齐，什么都没发生」⇒ 在执行器这一层显式拦下并给出可见提示。
+ */
+const ARRANGE_MODES: readonly string[] = ['along_edges', 'grid', 'align', 'distribute']
+const ARRANGE_ALIGN_MODES: readonly string[] = ['left', 'centerH', 'right', 'top', 'centerV', 'bottom']
+const ARRANGE_AXES: readonly string[] = ['x', 'y']
+
+/**
  * agent 工具 `arrange_nodes`（SSE canvas_command → AgentSideRail emit）的消费端。
  * 坐标类变更必须在前端执行（画布活动态 nodes.value 是真相源，走 Nest 改库会被下一次
  * saveCanvas 整份覆盖），故这里算完 setNodes 后 persistUserEdit（落 undo 栈 + 存库）。
@@ -2169,15 +2274,40 @@ function handleLayoutSelection(mode: 'along_edges' | 'grid') {
  */
 async function handleArrangeNodes(payload: {
   nodeIds: string[]
-  mode: 'along_edges' | 'grid'
+  mode: 'along_edges' | 'grid' | 'align' | 'distribute'
   gap?: number
   edges?: { source: string; target: string }[]
+  alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+  axis?: 'x' | 'y'
 }) {
   const ids = (payload?.nodeIds ?? []).filter((id) => typeof id === 'string' && id)
   if (ids.length < 2) return
   if (agentReadOnly.value) {
     ElMessage.warning('此画布属于其他账号，Agent 无法整理画布')
     return
+  }
+  // 运行时值来自 agent 自由字符串（mode 已归一，alignMode/axis 未必合法）⇒ 显式校验。
+  // ⚠️ 必须按「原值」比对而非 String() 归一：若 mode 是非字符串（如 ["align"]），
+  // String() 会把它变成 "align" 而放行，但派发层判的是 req.mode === 'align'（假）
+  // ⇒ 会静默落到 grid 分支（对齐意图被换成网格重排）。
+  const mode = payload?.mode
+  if (typeof mode !== 'string' || !ARRANGE_MODES.includes(mode)) {
+    ElMessage.warning('不支持的整理方式')
+    return
+  }
+  if (mode === 'align') {
+    const alignMode = payload?.alignMode
+    if (typeof alignMode !== 'string' || !ARRANGE_ALIGN_MODES.includes(alignMode)) {
+      ElMessage.warning('对齐方式无效，请指定左/中/右/上/中/下')
+      return
+    }
+  }
+  if (mode === 'distribute') {
+    const axis = payload?.axis
+    if (typeof axis !== 'string' || !ARRANGE_AXES.includes(axis)) {
+      ElMessage.warning('分布轴无效，请指定水平(x)或垂直(y)')
+      return
+    }
   }
   const current = nodes.value as unknown as FlowNode[]
   const next = applyArrangeLayout(current, payload, edges.value.map((e) => ({ source: e.source, target: e.target })))
@@ -4941,6 +5071,8 @@ const mobileBatchActions: MobileShellBatchActions = {
   duplicateUpstream: handleToolbarDuplicateUpstream,
   addAgentRef: handleAddToAgentRefs,
   layout: handleLayoutSelection,
+  /** SP-B 对齐/分布：与 PC 工具条同一个处理器（移动端不另造一套）。 */
+  align: handleAlignSelection,
   download: handlePackageDownload,
   delete: handleDeleteSelection,
 }
@@ -5215,6 +5347,19 @@ onUnmounted(() => {
           @pane-context-menu="onPaneContextMenu"
           @edge-click="onEdgeClick"
         >
+          <!-- SP-B 拖拽智能参考线：挂在 vue-flow 的变换容器槽（#zoom-pane）——
+               该槽渲染在 .vue-flow__transformationpane 内（transform: translate+scale，
+               transform-origin 0 0），所以这里直接用 flow 坐标就随缩放/平移精确对齐，
+               页面不做 flow→screen 换算。bounds 给出 flow 空间的可视范围，
+               免得缩放 <1 时线只覆盖屏幕的一小段。 -->
+          <template #zoom-pane>
+            <GuideLines
+              :horizontal="snapGuides.horizontal?.position"
+              :vertical="snapGuides.vertical?.position"
+              :bounds="snapBounds"
+            />
+          </template>
+
           <Background
             v-if="viewportSettings.gridVisible"
             :variant="viewportSettings.gridVariant"
@@ -5240,6 +5385,7 @@ onUnmounted(() => {
             @group-color="handleGroupColorSelection"
             @delete="handleDeleteSelection"
             @layout="handleLayoutSelection"
+            @align="handleAlignSelection"
             @generate-video="handleGenerateVideoFromSelection"
             @download="handlePackageDownload"
             @add-agent-ref="handleAddToAgentRefs()"

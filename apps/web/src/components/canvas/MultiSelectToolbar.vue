@@ -22,6 +22,10 @@ const emit = defineEmits<{
   ungroup: []
   delete: []
   layout: [mode: 'along_edges' | 'grid']
+  /** SP-B 对齐/分布：kind 区分六向对齐与两轴等距。 */
+  align: [payload:
+    | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+    | { kind: 'distribute'; axis: 'x' | 'y' }]
   generateVideo: []
   download: [mode: 'full_package' | 'lightweight' | 'media_list_only']
   addAgentRef: []
@@ -136,6 +140,18 @@ function onExport(mode: 'full_package' | 'lightweight' | 'media_list_only') {
 function onLayout(mode: 'along_edges' | 'grid') {
   layoutMenuOpen.value = false
   emit('layout', mode)
+}
+
+/**
+ * SP-B 对齐/分布：六向对齐 + 两轴等距。
+ * 负载用判别联合（kind）而不是把 mode 摊平成字符串——消费端据此映射到
+ * `handleArrangeNodes` 的 mode/alignMode/axis，避免「两个可选字段同时存在」的歧义。
+ */
+function onAlign(payload:
+  | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+  | { kind: 'distribute'; axis: 'x' | 'y' }) {
+  layoutMenuOpen.value = false
+  emit('align', payload)
 }
 
 function onDocClick(event: MouseEvent) {
@@ -409,6 +425,63 @@ onUnmounted(() => {
             @click="onLayout('grid')"
           >
             自动网格
+          </button>
+          <!-- SP-B：对齐六向 + 两轴等距（复用既有 .export-menu-item，不新增配色） -->
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'align', alignMode: 'left' })"
+          >
+            左对齐
+          </button>
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'align', alignMode: 'centerH' })"
+          >
+            水平居中
+          </button>
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'align', alignMode: 'right' })"
+          >
+            右对齐
+          </button>
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'align', alignMode: 'top' })"
+          >
+            顶对齐
+          </button>
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'align', alignMode: 'centerV' })"
+          >
+            垂直居中
+          </button>
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'align', alignMode: 'bottom' })"
+          >
+            底对齐
+          </button>
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'distribute', axis: 'x' })"
+          >
+            水平等距
+          </button>
+          <button
+            type="button"
+            class="export-menu-item"
+            @click="onAlign({ kind: 'distribute', axis: 'y' })"
+          >
+            垂直等距
           </button>
         </div>
       </div>

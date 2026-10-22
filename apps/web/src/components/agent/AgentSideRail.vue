@@ -120,6 +120,8 @@ import {
   type UtterancePool,
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
+import MobileRecentWorksStrip, { type RecentWorkItem } from '@/components/mobile/MobileRecentWorksStrip.vue'
+import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { barShape } from './composer/mobileBarLayout'
 import { classifyGesture } from './composer/holdGesture'
@@ -207,8 +209,17 @@ const emit = defineEmits<{
   proposeWaitStart: [nodeId: string]
   /** P0-C（2026-10-13）：propose 等待结束——CanvasPage 解除 PUT 载荷强制声明 */
   proposeWaitEnd: []
-  /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
-  arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
+  /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges / align / distribute），CanvasPage 应用布局 */
+  arrangeNodes: [payload: {
+    nodeIds: string[]
+    mode: 'grid' | 'along_edges' | 'align' | 'distribute'
+    gap: number
+    edges?: { source: string; target: string }[]
+    /** align 的六向口径（left|centerH|right|top|centerV|bottom）。 */
+    alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+    /** distribute 的轴（x=水平等距 / y=垂直等距）。 */
+    axis?: 'x' | 'y'
+  }]
   /**
    * 分组工具组（2026-10-21）：Agent 自主打组 / 解组 / 改分组色。
    *
@@ -1627,6 +1638,11 @@ async function bootstrapThread() {
 
 onMounted(() => {
   void bootstrapThread()
+  // A3：回访作品带数据 —— 挂载即拉（不是等抽屉打开），因为带子在对话页签顶部。
+  // 只在移动端拉：PC 侧栏不渲染这条带子（AGENTS.md 移动端呈现第 1/2 条）。
+  if (isMobileLayout.value) void loadRecentWorks()
+  // A1 二期：金句定时轮换（empty 相 7 条 > 4 位 ⇒ 长尾要能露出来）。
+  utteranceRotationCtl.start()
   void loadProviderBootstrap().then(() => {
     if (!planningModel.value && preferences.value?.defaultTextModel) {
       planningModel.value = preferences.value.defaultTextModel
@@ -2455,12 +2471,27 @@ const currentUtterancePhase = computed<UtterancePhase>(() =>
 
 /**
  * 轮换偏移：池大于展示位时（empty 7 条 > 4 位）必须轮换，否则第 5 条之后永不露出。
- * 驱动 = 池维度切换（相变 / 挂素材 / 卸素材）。
- * ⚠️ 定时轮换未做：需要 reduced-motion 守卫 + 聚焦暂停 + 卸载清理，是独立风险面，留 A1 二期。
+ * 驱动 = 池维度切换（相变 / 挂素材 / 卸素材）**+ 定时轮换**（A1 二期）。
+ *
+ * A1 二期补上「时间」这个驱动维度：原先只靠相变推进 ⇒ 用户停在同一相时
+ * 第 5~7 条永不露出，等于白写。定时轮换的守卫（reduced-motion / 聚焦暂停 /
+ * 池大小 / 卸载清理）全部在 `useUtteranceRotation` 里，本处只负责接线。
  */
 const utteranceRotation = ref(0)
 watch(currentUtterancePhase, () => {
   utteranceRotation.value += 1
+})
+
+/** 轮换间隔：7s（够长到不被注意，够短到长尾能露出来） */
+const UTTERANCE_ROTATION_INTERVAL_MS = 7_000
+
+const utteranceRotationCtl = useUtteranceRotation({
+  rotation: utteranceRotation,
+  intervalMs: UTTERANCE_ROTATION_INTERVAL_MS,
+  poolSize: () => (EXAMPLE_UTTERANCE_POOL[currentUtterancePhase.value] ?? []).length,
+  visibleCount: 4,
+  // composer 获得焦点时暂停：用户正在写字，金句在脚下跳会干扰
+  paused: composerFocused,
 })
 
 const exampleUtterances = computed(() =>
@@ -3250,9 +3281,13 @@ function handleEvent(event: { type: string; data: unknown }) {
         groupId?: string
         exportMode?: 'full_package' | 'lightweight'
         attachments?: SidebarAttachment[]
-        mode?: 'grid' | 'along_edges'
+        mode?: 'grid' | 'along_edges' | 'align' | 'distribute'
         gap?: number
         edges?: { source: string; target: string }[]
+        /** align 的六向口径（SP-B）：mode=align 时必带，CanvasPage 侧校验值域。 */
+        alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+        /** distribute 的轴（SP-B）：mode=distribute 时必带，CanvasPage 侧校验值域。 */
+        axis?: 'x' | 'y'
         /** render_canvas_view 产物（spec §4.6 第 2 跳）。净化在 AgentSvgCard 内做（§4.5）。 */
         svg?: string
         title?: string
@@ -3307,11 +3342,17 @@ function handleEvent(event: { type: string; data: unknown }) {
       } else if (cmd.type === 'open_image_editor' && cmd.nodeId) {
         emit('openImageEditor', cmd.nodeId)
       } else if (cmd.type === 'arrange_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
+        // SP-B：mode **原样透传**（不再把非 along_edges 一律收窄成 grid）——
+        // align/distribute 是两种独立意图，收窄会把「对齐」静默变成「网格重排」。
+        // 脏 mode / 缺 alignMode / 脏 axis 的校验与用户可见提示统一放在消费端
+        // （CanvasPage.handleArrangeNodes），本层只做传输。
         emit('arrangeNodes', {
           nodeIds: cmd.nodeIds,
-          mode: cmd.mode === 'along_edges' ? 'along_edges' : 'grid',
+          mode: cmd.mode ?? 'grid',
           gap: cmd.gap ?? 40,
           edges: cmd.edges?.length ? cmd.edges : undefined,
+          ...(cmd.mode === 'align' && cmd.alignMode ? { alignMode: cmd.alignMode } : {}),
+          ...(cmd.mode === 'distribute' && cmd.axis ? { axis: cmd.axis } : {}),
         })
       } else if (cmd.type === 'group_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
         // 标题 trim 后空串按无标题处理（与 CanvasPage 的命名口径一致）
@@ -3620,6 +3661,46 @@ interface ProjectCard {
 const projects = ref<ProjectCard[]>([])
 const projectsLoading = ref(false)
 const projectsError = ref(false)
+
+/**
+ * A3 · 回访作品带数据（移动端对话页签顶部）。
+ *
+ * 与 `projects`（PC 抽屉项目列表）**刻意复用同一个接口** `canvasApi.list()`：
+ * 后端 list 已增 `coverUrl` / `coverNodeId`（只返回封面 URL，不返回原始 canvasData），
+ * 而作品带要的正是「最近生成的产物图 + 产物节点 id」。
+ * 复用而非新开接口 ⇒ 少一次请求、少一套鉴权、少一份契约漂移面。
+ *
+ * 拉取时机：组件挂载时（不是抽屉打开时）—— 作品带在对话页签顶部，
+ * 抽屉打开与否它都该在。失败时静默降级为「不显示」（一条带子不该把对话面板搞崩）。
+ */
+const recentWorks = ref<RecentWorkItem[]>([])
+async function loadRecentWorks() {
+  try {
+    const res = await canvasApi.list({ timeout: PROJECT_LIST_TIMEOUT_MS })
+    const list = (res.data?.data ?? []) as Array<{
+      id: string
+      title: string
+      coverUrl: string | null
+      coverNodeId: string | null
+      updatedAt: string
+    }>
+    recentWorks.value = list
+  } catch {
+    recentWorks.value = []
+  }
+}
+
+/**
+ * 点作品 = 打开该画布；带 focusNode 时**定位到那张产物图**
+ * （跨项目定位通道由 CanvasPage 的 consumeFocusNodeQuery 消费，见
+ * `CanvasPage.focusNodeQuery.test.ts` 的接线顺序契约）。
+ */
+function handleRecentWorkOpen(payload: { id: string; focusNodeId: string | null }) {
+  const target = payload.focusNodeId
+    ? `/workflow/${encodeURIComponent(payload.id)}?focusNode=${encodeURIComponent(payload.focusNodeId)}`
+    : `/workflow/${encodeURIComponent(payload.id)}`
+  window.location.assign(target)
+}
 /** 抽屉项目预览条数（2026-10-19 用户裁决）：默认只露最近 8 个，其余收进「展开更多」。
  *  数字依据（截图实测）：抽屉首屏列表区 ≈ 590 CSS px（微信 webview，safe-area=0），
  *  项目卡 60px/条（卡体 52 + flex gap 8）⇒ 8 条 = 480px，「展开更多」按钮与第 8 条
@@ -4028,6 +4109,17 @@ defineExpose({
               class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3"
               @scroll.passive="onChatScroll"
             >
+            <!-- A3 · 回访作品带（移动端）：「画布记得你的模样」= 最近作品条。
+                 ⚠️ 位置在**空态块之前**（不是塞进空态块里）：空态判据是
+                 `!agent.messages.length`，而移动端进项目即 loadHistory ⇒ 有历史时
+                 空态不渲染 ⇒ 塞进去等于「上线后没人看得见」（实测：移动端 `/workflow`
+                 → location.assign 跳最近项目 → 拉历史）。
+                 在滚动流内 ⇒ 随消息流上推，不常驻吸顶（设计规范 §3.2 简洁三原则）。 -->
+            <MobileRecentWorksStrip
+              v-if="isMobileLayout"
+              :works="recentWorks"
+              @open="handleRecentWorkOpen"
+            />
             <div v-if="showProductVisualEmptyState" class="agent-empty agent-pv-empty px-3 py-10 text-center">
               <p class="text-sm">描述你的产品视觉需求</p>
               <p class="mt-1 text-[11px] opacity-70">上传产品图后说明用途；风格在方案卡片中选择</p>
