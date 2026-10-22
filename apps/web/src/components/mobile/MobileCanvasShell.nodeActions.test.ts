@@ -33,6 +33,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     duplicateUpstream: noop(),
     addAgentRef: noop(),
     layout: noop(),
+    // SP-B（#554，master 合并进来）：判别联合载荷必须原样透传，mock 同步补上
+    align: noop(),
     download: noop(),
     delete: noop(),
   }
