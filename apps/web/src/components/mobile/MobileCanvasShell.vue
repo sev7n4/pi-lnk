@@ -38,6 +38,7 @@ import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
 import MobileNodeViewer from './MobileNodeViewer.vue'
+import MobileNodeCoachMark from './MobileNodeCoachMark.vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
 import type { NodeRef } from '@/composables/useNodeRefs'
@@ -409,6 +410,8 @@ onUnmounted(() => stopMobileTaskPolling())
     :data="viewerNode.data"
     @close="props.onViewerClose"
   />
+  <!-- R1-T7：节点交互范式反转一次性引导（点按播放 · 长按编辑），仅画布页签首进一次 -->
+  <MobileNodeCoachMark v-if="mobileAppTab === 'canvas'" />
 </template>
 
 <style scoped>
