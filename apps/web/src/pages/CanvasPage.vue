@@ -5291,7 +5291,7 @@ onUnmounted(() => {
           @close="closeGridSliceWorkbench"
         />
         <DockStudioToolbar
-          v-if="!refinePanelNode && !gridSlicePanelNode && !dockGatedByPendingConfirm"
+          v-if="!isMobileLayout && !refinePanelNode && !gridSlicePanelNode && !dockGatedByPendingConfirm"
           :collapsed="dockCollapsedByOverlay || isMobileLayout"
           @collapse-change="mobileDockExpanded = $event"
           :node="editorNode"
