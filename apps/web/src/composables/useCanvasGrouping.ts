@@ -1,4 +1,5 @@
 import type { Node } from '@vue-flow/core'
+import { alignNodes, distributeNodes, type AlignSixWay, type LayoutNode } from '@lnkpi/shared'
 
 type FlowNode = Node & { dimensions?: { width?: number; height?: number } }
 
@@ -306,7 +307,7 @@ export function layoutNodesAlongEdges(
   return next
 }
 
-export type ArrangeMode = 'grid' | 'along_edges'
+export type ArrangeMode = 'grid' | 'along_edges' | 'align' | 'distribute'
 
 /** arrange_nodes（agent 工具）与多选工具栏共用的派发参数。 */
 export interface ArrangeRequest {
@@ -315,11 +316,18 @@ export interface ArrangeRequest {
   gap?: number
   /** along_edges 的有向边；缺省时退回画布全量边（同手动「顺着连线」）。 */
   edges?: LayoutEdge[]
+  /** align 的六向口径（left|centerH|right|top|centerV|bottom），对齐到选中集极值/中线。 */
+  alignMode?: AlignSixWay
+  /** distribute 的轴（x=水平等距 / y=垂直等距），需 ≥3 个节点才有效果。 */
+  axis?: 'x' | 'y'
 }
 
 /**
- * 按 mode 派发到两个既有布局函数，零新建算法。
+ * 按 mode 派发到既有布局函数，零新建算法。
  * 抽成纯函数是为了可测：CanvasPage 只负责 setNodes + persist + 聚焦。
+ *
+ * align / distribute 复用 shared 的纯函数（alignNodes / distributeNodes），
+ * 它们返回**局部坐标**（已减 parentNode 偏移）⇒ 可直接写回 FlowNode.position。
  */
 export function applyArrangeLayout(
   nodes: FlowNode[],
@@ -329,6 +337,14 @@ export function applyArrangeLayout(
   const ids = (req?.nodeIds ?? []).filter((id) => typeof id === 'string' && id)
   if (ids.length < 2) return nodes
   const gap = typeof req.gap === 'number' && Number.isFinite(req.gap) ? req.gap : 40
+  if (req.mode === 'align' && req.alignMode) {
+    const pos = alignNodes(nodes as unknown as LayoutNode[], ids, req.alignMode)
+    return nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n))
+  }
+  if (req.mode === 'distribute' && req.axis) {
+    const pos = distributeNodes(nodes as unknown as LayoutNode[], ids, req.axis)
+    return nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n))
+  }
   if (req.mode === 'along_edges') {
     const edges = req.edges?.length ? req.edges : canvasEdges
     return layoutNodesAlongEdges(nodes, edges, ids, gap)

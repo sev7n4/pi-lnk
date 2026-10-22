@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { applyArrangeLayout, type FlowNode } from './useCanvasGrouping'
 
-function node(id: string, x: number, y: number, type = 'image'): FlowNode {
-  return { id, type, position: { x, y }, data: {} }
+// w/h 走 dimensions（真实画布里 vue-flow 测量后的尺寸通道），缺省则按 type 走 NODE_SIZES 兜底。
+function node(id: string, x: number, y: number, type = 'image', w?: number, h?: number): FlowNode {
+  return {
+    id,
+    type,
+    position: { x, y },
+    data: {},
+    ...(w === undefined && h === undefined ? {} : { dimensions: { width: w, height: h } }),
+  }
 }
 
 function posOf(nodes: FlowNode[]) {
@@ -64,5 +71,23 @@ describe('applyArrangeLayout（arrange_nodes 工具与多选工具栏共用派�
     const with20 = posOf(applyArrangeLayout(nodes.map((n) => ({ ...n })), { nodeIds: ['a', 'b'], mode: 'grid', gap: 20 }))
     expect(withDefault).toEqual(withNaN)
     expect(with20.b.x).toBe(withDefault.b.x - 20)
+  })
+
+  it('applyArrangeLayout mode=align 调 alignNodes 并落局部坐标', () => {
+    // a 左缘 100、b 左缘 300 ⇒ left 对齐目标 = 100 ⇒ b.x = 100
+    const nodes = [node('a', 100, 0, 'image', 280, 160), node('b', 300, 0, 'image', 280, 280)]
+    const next = applyArrangeLayout(nodes, { nodeIds: ['a', 'b'], mode: 'align', alignMode: 'left' })
+    expect(next.find((n) => n.id === 'b')!.position.x).toBe(100)
+  })
+
+  it('applyArrangeLayout mode=distribute 调 distributeNodes', () => {
+    // a.left=0(宽100) c.right=400 ⇒ span=400, totalW=300, gap=50 ⇒ b.left=0+100+50=150
+    const nodes = [
+      node('a', 0, 0, 'image', 100, 50),
+      node('b', 120, 0, 'image', 100, 50),
+      node('c', 300, 0, 'image', 100, 50),
+    ]
+    const next = applyArrangeLayout(nodes, { nodeIds: ['a', 'b', 'c'], mode: 'distribute', axis: 'x' })
+    expect(next.find((n) => n.id === 'b')!.position.x).toBe(150)
   })
 })
