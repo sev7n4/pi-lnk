@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject, ref } from 'vue'
+import { useLongPress } from '@/composables/useLongPress'
+import {
+  CANVAS_NODE_OPEN_CONTEXT_MENU_KEY,
+  CANVAS_NODE_CLICK_GUARD_KEY,
+  type CanvasNodeOpenContextMenuFn,
+  type CanvasNodeClickGuard,
+} from '@/composables/canvasNodeActions'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
 
 const props = defineProps<{
+  id?: string
   type: 'image' | 'video' | 'audio' | 'text'
   data?: { url?: string; poster?: string; content?: string }
   status?: string
@@ -12,10 +20,57 @@ const emit = defineEmits<{ (e: 'tap'): void }>()
 
 const cfg = computed(() => nodeTypeConfigs[props.type])
 const badge = computed(() => cfg.value.statusBadge(props.status))
+
+const openContextMenu = inject<CanvasNodeOpenContextMenuFn>(CANVAS_NODE_OPEN_CONTEXT_MENU_KEY, () => {})
+const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
+  consumeSuppression: () => false,
+  markSuppressed: () => {},
+})
+
+const { bindings } = useLongPress(() => {
+  if (openContextMenu) openContextMenu(props.id ?? '')
+})
+
+const audioEl = ref<HTMLAudioElement | null>(null)
+const playing = ref(false)
+function toggleAudio() {
+  const el = audioEl.value
+  if (!el) return
+  if (playing.value) {
+    el.pause()
+    playing.value = false
+    return
+  }
+  playing.value = true
+  try {
+    const p = el.play() as Promise<void> | undefined
+    if (p && typeof p.catch === 'function') p.catch(() => {})
+  } catch {
+    /* jsdom 无媒体实现，忽略 */
+  }
+}
+
+function onTileClick() {
+  if (props.type === 'audio') {
+    toggleAudio()
+    return
+  }
+  if (clickGuard?.consumeSuppression?.()) return
+  emit('tap')
+}
 </script>
 
 <template>
-  <div class="mobile-node-tile" :data-type="type" @click="emit('tap')">
+  <div
+    class="mobile-node-tile"
+    :data-type="type"
+    :data-playing="playing ? 'true' : undefined"
+    @click="onTileClick"
+    @touchstart="bindings.onTouchstart"
+    @touchmove="bindings.onTouchmove"
+    @touchend="bindings.onTouchend"
+    @touchcancel="bindings.onTouchcancel"
+  >
     <img
       v-if="type === 'image' && data?.url"
       :src="data.url"
@@ -32,7 +87,8 @@ const badge = computed(() => cfg.value.statusBadge(props.status))
       class="mobile-node-media"
     />
     <div v-else-if="type === 'audio'" class="mobile-audio-wave" role="img" aria-label="音频波形占位">
-      <button class="mobile-audio-play" type="button" aria-label="播放">▶</button>
+      <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
+      <audio ref="audioEl" :src="data?.url" />
     </div>
     <p v-else-if="type === 'text'" class="mobile-node-text">{{ data?.content || '空文本' }}</p>
 

@@ -18,9 +18,11 @@ describe('MobileNodeTile', () => {
 
   it('audio: 渲染波形占位 + 播放钮，无原生 controls', () => {
     const w = mount(MobileNodeTile, { props: { type: 'audio', data: { url: 'a.mp3' } } })
-    expect(w.find('audio').exists()).toBe(false)
     expect(w.find('.mobile-audio-wave').exists()).toBe(true)
     expect(w.find('.mobile-audio-play').exists()).toBe(true)
+    const audio = w.find('audio')
+    expect(audio.exists()).toBe(true)
+    expect(audio.attributes('controls')).toBeUndefined()
   })
 
   it('text: 渲染截断内容，无标题栏', () => {
