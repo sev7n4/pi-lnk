@@ -1967,7 +1967,7 @@ function syncMultiSelectionFromNodes() {
  */
 const snapGuides = ref<SnapPrev>({})
 /** 参考线在 flow 坐标里的可见范围（供 GuideLines 把线画满可视区，缩放 <1 时也不缺一段）。 */
-const snapBounds = ref<{ x: number; y: number; w: number; h: number } | null>(null)
+const snapBounds = ref<{ x: number; y: number; w: number; h: number } | undefined>(undefined)
 /** 多选拖拽的锚点节点 id：整批按它算同一个吸附量 ⇒ 批内相对阵列不变。 */
 let dragAnchorId: string | null = null
 /** 候选裁剪的视口边距（flow 坐标）：视口外一圈仍参与吸附，避免边缘抖动。 */
