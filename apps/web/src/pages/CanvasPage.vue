@@ -58,6 +58,7 @@ import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
 import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
 import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
 import CanvasNodeAudio from '@/components/canvas/CanvasNodeAudio.vue'
+import NodeRenderer from '@/components/canvas/NodeRenderer.vue'
 import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
@@ -1362,10 +1363,10 @@ function handleSelectionBatchStop() {
 const nodeTypes = {
   // 🔴 2026-10-17 prompt 节点下线：渲染分支仅为存量兜底保留（无创建入口；Dock 已降级只读）。
   prompt: CanvasNodePrompt,
-  image: CanvasNodeImage,
-  video: CanvasNodeVideo,
-  text: CanvasNodeText,
-  audio: CanvasNodeAudio,
+  image: NodeRenderer,
+  video: NodeRenderer,
+  text: NodeRenderer,
+  audio: NodeRenderer,
   // 2026-10-21 分组回归原生节点形态：整框可拖 / 单击选中由 vue-flow 提供。
   // ⛔ 它只在内存里存在，保存时会被 foldGroups 折叠回 canvasData.groups。
   group: CanvasNodeGroup,
