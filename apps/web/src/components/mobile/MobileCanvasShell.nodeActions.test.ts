@@ -70,6 +70,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onNodeActionClose: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
+    viewerNode: null,
+    onViewerClose: vi.fn(),
     ...overrides,
   }
 }
@@ -140,6 +142,31 @@ describe('MobileCanvasShell 长按动作集成', () => {
     })
     await w.find('[data-action="close"]').trigger('click')
     expect(onNodeEditorClose).toHaveBeenCalled()
+    w.unmount()
+  })
+})
+
+describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
+  it('viewerNode 设置 → 渲染全屏查看器（图灯箱）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ viewerNode: { id: 'n1', type: 'image', data: { url: 'x.png' } } }),
+      attachTo: document.body,
+    })
+    expect(w.findComponent({ name: 'MobileNodeViewer' }).exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('查看器返回 → onViewerClose', async () => {
+    const onViewerClose = vi.fn()
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        viewerNode: { id: 'n1', type: 'text', data: { content: '短文' } },
+        onViewerClose,
+      }),
+      attachTo: document.body,
+    })
+    await w.find('.viewer-back').trigger('click')
+    expect(onViewerClose).toHaveBeenCalled()
     w.unmount()
   })
 })

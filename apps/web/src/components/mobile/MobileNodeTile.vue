@@ -7,7 +7,11 @@ import {
   type MobileNodeActionRequestFn,
   type CanvasNodeClickGuard,
 } from '@/composables/canvasNodeActions'
+import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
+
+/** 文本节点：超过该字数的 tap 走 TTS 朗读，否则开阅读器（D-A，R1-T6） */
+const TTS_THRESHOLD = 120
 
 const props = defineProps<{
   id?: string
@@ -16,7 +20,8 @@ const props = defineProps<{
   status?: string
 }>()
 
-const emit = defineEmits<{ (e: 'tap'): void }>()
+const emit = defineEmits<{ (e: 'tap'): void; (e: 'open-reader'): void }>()
+const tts = useTextToSpeech()
 
 const cfg = computed(() => nodeTypeConfigs[props.type])
 const badge = computed(() => cfg.value.statusBadge(props.status))
@@ -58,8 +63,22 @@ function onTileClick() {
     toggleAudio()
     return
   }
+  if (props.type === 'text') {
+    handleTextTap()
+    return
+  }
   if (clickGuard?.shouldSuppress?.()) return
   emit('tap')
+}
+
+/** 文本范式反转（D-A）：长文朗读、短文开阅读器；主动作不再"打开节点详情" */
+function handleTextTap() {
+  const content = props.data?.content ?? ''
+  if (content.length > TTS_THRESHOLD) {
+    tts.speak(content)
+  } else {
+    emit('open-reader')
+  }
 }
 </script>
 

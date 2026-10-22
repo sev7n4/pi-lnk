@@ -154,6 +154,7 @@ import {
   CANVAS_REF_PICK_NODE_IDS_KEY,
   CANVAS_REF_PICK_REJECT_KEY,
   MOBILE_NODE_ACTION_REQUEST_KEY,
+  MOBILE_NODE_OPEN_VIEWER_KEY,
   type CanvasGroupResizeFn,
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
@@ -2416,6 +2417,25 @@ function applyMobileEditorPatch(patch: Record<string, unknown>) {
   if (!node) return
   patchNodeData(node.id, patch)
   persistUserEdit()
+}
+
+/**
+ * 移动端 tap → 全屏查看器（R1-T4/T6）：图灯箱 / 视频播放 / 文本阅读器。
+ * 文本节点由 MobileNodeTile 按 D-A 分流：长文 tap = TTS 朗读，短文 tap = 开阅读器；
+ * 两者都经本注入在画布壳层承接，节点组件不直接依赖壳层。
+ */
+const mobileViewerNode = ref<{
+  id?: string
+  type: 'image' | 'video' | 'audio' | 'text'
+  data?: any
+} | null>(null)
+
+provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
+  mobileViewerNode.value = node
+})
+
+function closeMobileViewer() {
+  mobileViewerNode.value = null
 }
 
 function enterMultiSelectMode(seedId: string) {
@@ -5565,6 +5585,8 @@ onUnmounted(() => {
       :on-node-action-close="closeMobileNodeAction"
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
+      :viewer-node="mobileViewerNode"
+      :on-viewer-close="closeMobileViewer"
     />
 
     <MembershipModal v-model="showMembership" />

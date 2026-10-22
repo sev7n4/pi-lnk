@@ -37,6 +37,7 @@ import MobileTaskSheet from './MobileTaskSheet.vue'
 import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
+import MobileNodeViewer from './MobileNodeViewer.vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
 import type { NodeRef } from '@/composables/useNodeRefs'
@@ -126,6 +127,9 @@ const props = defineProps<{
   onNodeActionClose: () => void
   onNodeEditorClose: () => void
   onNodeEditorPatch: (patch: Record<string, unknown>) => void
+  /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
+  viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
+  onViewerClose: () => void
 }>()
 
 /** 移动端编辑 sheet 上下文：节点 + 上游/引用/提及（与桌面 DockStudioToolbar 同源） */
@@ -397,6 +401,13 @@ onUnmounted(() => stopMobileTaskPolling())
     :generating="mobileEditor.generating"
     @close="props.onNodeEditorClose"
     @patch="props.onNodeEditorPatch"
+  />
+  <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接） -->
+  <MobileNodeViewer
+    v-if="viewerNode"
+    :type="viewerNode.type"
+    :data="viewerNode.data"
+    @close="props.onViewerClose"
   />
 </template>
 
