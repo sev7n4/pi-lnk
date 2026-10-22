@@ -18,10 +18,10 @@ echo "  入口 js : $ENTRY"
 echo "  入口 css: $CSS"
 for old in index-BH1cb-6k.js index-Blx76l8a.js; do
   code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 12 "$BASE/assets/$old")
-  echo "  旧 $old → $code（期望 404）"
+  echo "  旧 ${old} → ${code}（期望 404）"
 done
 code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 12 "$BASE/assets/$ENTRY")
-echo "  新 $ENTRY → $code（期望 200）"
+echo "  新 ${ENTRY} → ${code}（期望 200）"
 
 echo
 echo "=== 层② 产物字面量（coverUrl / coverNodeId / 作品带文案 / 印记资产） ==="
