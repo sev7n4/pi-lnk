@@ -45,6 +45,7 @@ import { studioApi } from '@/services/studio-api'
 import { canvasApi } from '@/services/canvas-api'
 import { resolveUpstreamContext } from '@/composables/useUpstreamNodeContext'
 import { resolveNodeRefs, type LocalRefBinding, type NodeRef } from '@/composables/useNodeRefs'
+import type { MentionOption } from '@/components/canvas/MentionInput.vue'
 import {
   MISSING_REFS_CONFIRM_MESSAGE,
   MISSING_REFS_CONFIRM_TITLE,
@@ -54,10 +55,7 @@ import {
 import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating, isPendingConfirmNode } from '@/constants/dockStudio'
 import { nodeHasUsableOutput, shouldApplyGenerationPoll } from '@/utils/generationPollGate'
 import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
-import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
-import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
-import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
-import CanvasNodeAudio from '@/components/canvas/CanvasNodeAudio.vue'
+import NodeRenderer from '@/components/canvas/NodeRenderer.vue'
 import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
@@ -158,6 +156,8 @@ import {
   CANVAS_REF_PICK_ACTIVE_KEY,
   CANVAS_REF_PICK_NODE_IDS_KEY,
   CANVAS_REF_PICK_REJECT_KEY,
+  MOBILE_NODE_ACTION_REQUEST_KEY,
+  MOBILE_NODE_OPEN_VIEWER_KEY,
   type CanvasGroupResizeFn,
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
@@ -917,18 +917,18 @@ const selectedRefs = computed((): NodeRef[] => {
   })
 })
 
-const mentionOptions = computed((): Array<{ id: string; label: string; type: string }> => {
-  const refOptions = selectedRefs.value
+/** 引用候选 → 提及选项（桌面 Dock 与移动端编辑 sheet 共用同一逻辑，避免漂移） */
+function buildMentionOptions(
+  refs: NodeRef[],
+  allNodes: EditableFlowNode[],
+): MentionOption[] {
+  const refOptions = refs
     .filter((ref) => !ref.stale)
-    .map((ref) => ({
-      id: ref.refId,
-      label: ref.refKey,
-      type: ref.mediaType,
-    }))
+    .map((ref) => ({ id: ref.refId, label: ref.refKey, type: ref.mediaType }))
   if (refOptions.length) return refOptions
 
-  const out: Array<{ id: string; label: string; type: string }> = []
-  for (const n of nodes.value) {
+  const out: MentionOption[] = []
+  for (const n of allNodes) {
     const data = n.data as Record<string, unknown>
     out.push({
       id: n.id,
@@ -937,7 +937,11 @@ const mentionOptions = computed((): Array<{ id: string; label: string; type: str
     })
   }
   return out
-})
+}
+
+const mentionOptions = computed((): MentionOption[] =>
+  buildMentionOptions(selectedRefs.value, nodes.value),
+)
 
 const multiSelectCanGenerateVideo = computed(() => {
   if (multiSelectedIds.value.length < 2) return false
@@ -1365,10 +1369,10 @@ function handleSelectionBatchStop() {
 const nodeTypes = {
   // 🔴 2026-10-17 prompt 节点下线：渲染分支仅为存量兜底保留（无创建入口；Dock 已降级只读）。
   prompt: CanvasNodePrompt,
-  image: CanvasNodeImage,
-  video: CanvasNodeVideo,
-  text: CanvasNodeText,
-  audio: CanvasNodeAudio,
+  image: NodeRenderer,
+  video: NodeRenderer,
+  text: NodeRenderer,
+  audio: NodeRenderer,
   // 2026-10-21 分组回归原生节点形态：整框可拖 / 单击选中由 vue-flow 提供。
   // ⛔ 它只在内存里存在，保存时会被 foldGroups 折叠回 canvasData.groups。
   group: CanvasNodeGroup,
@@ -2486,6 +2490,83 @@ provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)
 
 const renameRequestNodeId = ref<string | null>(null)
 provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
+
+/**
+ * 移动端长按动作 sheet（R1-T5）：与 PC 右键上下文菜单解耦的独立入口。
+ * 移动端 `MobileNodeTile` 长按经 `useLongPress` 走本注入，打开本端动作 sheet；
+ * 选中动作后由 `handleMobileNodeAction(key, nodeId)` 复用桌面同一套重命名/删除/复制/多选/编辑逻辑。
+ */
+const mobileActionNode = ref<{ id: string; type: string; data?: any } | null>(null)
+const mobileEditorNode = ref<EditableFlowNode | null>(null)
+
+provide(MOBILE_NODE_ACTION_REQUEST_KEY, (node: { id: string; type: string; data?: any }) => {
+  mobileActionNode.value = node
+})
+
+/** 移动端编辑 sheet 的节点上下文（复用桌面 resolve 逻辑，与 DockStudioToolbar 同源） */
+const mobileEditorRefs = computed((): NodeRef[] => {
+  const node = mobileEditorNode.value
+  if (!node) return []
+  return resolveNodeRefs({
+    targetNodeId: node.id,
+    targetType: String(node.type),
+    nodes: nodes.value,
+    edges: edges.value.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    localRefs: (node.data?.localRefs as LocalRefBinding[]) ?? [],
+    refOrder: (node.data?.refOrder as string[]) ?? [],
+  })
+})
+
+const mobileEditor = computed(() => {
+  const node = mobileEditorNode.value
+  if (!node) return null
+  return {
+    node,
+    upstream: resolveUpstreamContext(node.id, nodes.value, edges.value),
+    refs: mobileEditorRefs.value,
+    mentions: buildMentionOptions(mobileEditorRefs.value, nodes.value),
+    generating: isNodeGenerating(String((node.data as Record<string, unknown>)?.status ?? '')),
+  }
+})
+
+function openMobileNodeEditor(nodeId: string) {
+  const node = findNodeById(nodeId)
+  mobileEditorNode.value = node ?? null
+}
+
+function closeMobileNodeAction() {
+  mobileActionNode.value = null
+}
+
+function closeMobileNodeEditor() {
+  mobileEditorNode.value = null
+}
+
+function applyMobileEditorPatch(patch: Record<string, unknown>) {
+  const node = mobileEditorNode.value
+  if (!node) return
+  patchNodeData(node.id, patch)
+  persistUserEdit()
+}
+
+/**
+ * 移动端 tap → 全屏查看器（R1-T4/T6）：图灯箱 / 视频播放 / 文本阅读器。
+ * 文本节点由 MobileNodeTile 按 D-A 分流：长文 tap = TTS 朗读，短文 tap = 开阅读器；
+ * 两者都经本注入在画布壳层承接，节点组件不直接依赖壳层。
+ */
+const mobileViewerNode = ref<{
+  id?: string
+  type: 'image' | 'video' | 'audio' | 'text'
+  data?: any
+} | null>(null)
+
+provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
+  mobileViewerNode.value = node
+})
+
+function closeMobileViewer() {
+  mobileViewerNode.value = null
+}
 
 function enterMultiSelectMode(seedId: string) {
   // 已在多选态：长按另一节点 = 把它**加入/移出**选区，而不是重置整份选区。
@@ -4386,6 +4467,22 @@ function handleDuplicateSelection(
   }
 }
 
+/** 单节点真删（分组节点走解组）；PC 右键与移动端动作 sheet 共用，避免两套删除逻辑漂移 */
+function removeSingleNode(nodeId: string) {
+  // 分组节点 = 解组（留节点）；其余节点真删
+  if (isGroupNode(nodes.value.find((n) => n.id === nodeId) as unknown as FlowNode)) {
+    handleUngroupSelection(nodeId)
+    return
+  }
+  const toRemove = new Set<string>([nodeId])
+  rememberGenerationFieldsBeforeRemove(toRemove)
+  nodes.value = nodes.value.filter((entry) => !toRemove.has(entry.id))
+  edges.value = edges.value.filter((edge) => !toRemove.has(edge.source) && !toRemove.has(edge.target))
+  // 被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
+  forgetGroupsForRemovedNodes(toRemove)
+  persistUserEdit()
+}
+
 function handleContextAction(action: string) {
   const menu = contextMenu.value
   contextMenu.value = null
@@ -4441,19 +4538,36 @@ function handleContextAction(action: string) {
   }
 
   if (action === 'delete' && menu.nodeId) {
-    // 分组节点 = 解组（留节点）；其余节点真删
-    if (isGroupNode(nodes.value.find((n) => n.id === menu.nodeId) as unknown as FlowNode)) {
-      handleUngroupSelection(menu.nodeId)
-      return
-    }
-    const toRemove = new Set<string>([menu.nodeId])
-    rememberGenerationFieldsBeforeRemove(toRemove)
-    nodes.value = nodes.value.filter((entry) => !toRemove.has(entry.id))
-    edges.value = edges.value.filter((edge) => !toRemove.has(edge.source) && !toRemove.has(edge.target))
-    // 被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
-    forgetGroupsForRemovedNodes(toRemove)
-    persistUserEdit()
+    removeSingleNode(menu.nodeId)
     return
+  }
+}
+
+/**
+ * 移动端动作 sheet 动作分发（R1-T5）：复用桌面同一套重命名/删除/复制/多选/引用/编辑真源逻辑，
+ * 不另起一套。与 PC 右键 `handleContextAction` 解耦——PC 用 `contextMenu` 状态，移动端用注入键触发。
+ */
+function handleMobileNodeAction(action: string, nodeId: string) {
+  switch (action) {
+    case 'rename':
+      renameRequestNodeId.value = nodeId
+      break
+    case 'multi-select':
+      enterMultiSelectMode(nodeId)
+      break
+    case 'reference':
+      handleAddToAgentRefs([nodeId])
+      break
+    case 'duplicate':
+      handleDuplicateSelection(nodeId, 'none')
+      break
+    case 'delete':
+      removeSingleNode(nodeId)
+      break
+    case 'edit':
+      // 打开复用 DockStudioRouter 的编辑 sheet（删 Dock 后编辑不丢链）
+      openMobileNodeEditor(nodeId)
+      break
   }
 }
 
@@ -5436,7 +5550,7 @@ onUnmounted(() => {
           @close="closeGridSliceWorkbench"
         />
         <DockStudioToolbar
-          v-if="!refinePanelNode && !gridSlicePanelNode && !dockGatedByPendingConfirm"
+          v-if="!isMobileLayout && !refinePanelNode && !gridSlicePanelNode && !dockGatedByPendingConfirm"
           :collapsed="dockCollapsedByOverlay || isMobileLayout"
           @collapse-change="mobileDockExpanded = $event"
           :node="editorNode"
@@ -5611,6 +5725,14 @@ onUnmounted(() => {
       :history-locate="handleHistoryLocate"
       :history-retry="handleHistoryRetry"
       :batch-actions="mobileBatchActions"
+      :mobile-action-node="mobileActionNode"
+      :mobile-editor="mobileEditor"
+      :on-node-action="(key: string, nodeId: string) => handleMobileNodeAction(key, nodeId)"
+      :on-node-action-close="closeMobileNodeAction"
+      :on-node-editor-close="closeMobileNodeEditor"
+      :on-node-editor-patch="applyMobileEditorPatch"
+      :viewer-node="mobileViewerNode"
+      :on-viewer-close="closeMobileViewer"
     />
 
     <MembershipModal v-model="showMembership" />

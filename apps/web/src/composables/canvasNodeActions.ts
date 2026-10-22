@@ -41,6 +41,22 @@ export const CANVAS_NODE_OPEN_CONTEXT_MENU_KEY: InjectionKey<CanvasNodeOpenConte
   'canvasNodeOpenContextMenu',
 )
 
+/** 移动端长按节点 → 请求打开本端动作 sheet（2026-10-22 R1-T5）：与 PC 右键上下文菜单解耦。 */
+export type MobileNodeActionRequestFn = (node: { id: string; type: string; data?: any }) => void
+export const MOBILE_NODE_ACTION_REQUEST_KEY: InjectionKey<MobileNodeActionRequestFn> = Symbol(
+  'mobileNodeActionRequest',
+)
+
+/** 移动端 tap 节点 → 请求打开全屏查看器（图灯箱/视频播放/文本阅读器，R1-T4）：与长按动作 sheet 解耦。 */
+export type MobileNodeOpenViewerFn = (node: {
+  id?: string
+  type: 'image' | 'video' | 'audio' | 'text'
+  data?: any
+}) => void
+export const MOBILE_NODE_OPEN_VIEWER_KEY: InjectionKey<MobileNodeOpenViewerFn> = Symbol(
+  'mobileNodeOpenViewer',
+)
+
 /**
  * 长按后抑制紧随的合成 click（2026-10-19 D-6）：touchend preventDefault 在个别
  * WebKit 版本不总抑制 click，节点组件与页面级 @node-click 经此对象双保险。
