@@ -37,6 +37,10 @@ const emit = defineEmits<{
   duplicateUpstream: []
   addAgentRef: []
   layout: [mode: 'along_edges' | 'grid']
+  /** SP-B 对齐/分布（六向 + 两轴等距）——载荷必须带 $event 透传。 */
+  align: [payload:
+    | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+    | { kind: 'distribute'; axis: 'x' | 'y' }]
   download: [mode: 'full_package' | 'lightweight' | 'media_list_only']
   delete: []
 }>()
@@ -157,6 +161,7 @@ function onWarning() {
       @duplicate-upstream="emit('duplicateUpstream')"
       @add-agent-ref="emit('addAgentRef')"
       @layout="emit('layout', $event)"
+      @align="emit('align', $event)"
       @download="emit('download', $event)"
       @delete="emit('delete')"
       @close="moreOpen = false"

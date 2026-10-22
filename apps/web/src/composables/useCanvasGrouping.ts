@@ -1,4 +1,11 @@
 import type { Node } from '@vue-flow/core'
+import {
+  alignNodes,
+  distributeNodes,
+  type AlignSixWay,
+  type LayoutNode,
+  type SnapCandidate,
+} from '@lnkpi/shared'
 
 type FlowNode = Node & { dimensions?: { width?: number; height?: number } }
 
@@ -69,6 +76,64 @@ export function applySnapOnRelease(
     const s = dragStarts.get(n.id)
     return s ? { ...n, position: { x: s.x + shiftX, y: s.y + shiftY } } : n
   })
+}
+
+// ══════════════════════════════════════════════════════════
+// 拖拽智能参考线：候选构造（SP-B T9a）
+//
+// `computeSnapGuides`（@lnkpi/shared）只跳过 `isSelf`，**从不读 `parentId`**
+// ⇒「谁配当吸附目标」的全部判定必须在本层做完。
+// ══════════════════════════════════════════════════════════
+
+/** 视口裁剪矩形（flow 坐标）。 */
+export interface SnapBounds {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/** 两个矩形是否相交（贴边也算相交 —— 边界候选仍可能是 8px 内的吸附目标）。 */
+function rectsIntersect(a: SnapBounds, b: SnapBounds): boolean {
+  return a.x <= b.x + b.w && a.x + a.w >= b.x && a.y <= b.y + b.h && a.y + a.h >= b.y
+}
+
+/**
+ * 构造拖拽参考线的吸附候选（box 为 flow 坐标）。
+ *
+ * 排除规则（本层全责）：
+ * 1. **被拖节点自己** —— 它是移动方，不是目标；
+ * 2. **被拖节点的父节点** —— 否则分组会跟父分组互吸（框套框）；
+ * 3. **被拖节点自己的子节点** —— 它们随组一起移动，是「移动目标」而非吸附目标；
+ * 4. **其余一律保留**：⚠️ 被拖节点**没有父节点**时，其他顶层节点必须仍是候选。
+ *    （曾经的缺陷：用 `n.parentNode !== dragged.parentNode` 过滤 ⇒ 两侧都是
+ *    undefined 时把**所有**顶层候选全丢掉 ⇒ 顶层拖拽静默失去吸附能力。）
+ *
+ * 候选的 `parentId` = **该候选节点自己的父节点**（`computeSnapGuides` 不读它，
+ * 仅供调用方/调试判断层级关系；**不是**被拖节点的父节点）。
+ *
+ * `opts.bounds`（可选）：只保留与该矩形相交的候选 —— 规格 §9 的性能护栏
+ * （大画布不扫描全部节点；调用方按「视口 + 边距」传入）。
+ */
+export function buildSnapCandidates(
+  nodes: FlowNode[],
+  dragId: string,
+  opts?: { bounds?: SnapBounds },
+): SnapCandidate[] {
+  const dragged = nodes.find((n) => n.id === dragId)
+  const parentId = dragged?.parentNode
+  const bounds = opts?.bounds
+  const out: SnapCandidate[] = []
+  for (const n of nodes) {
+    if (n.id === dragId) continue // 规则 1
+    if (parentId && n.id === parentId) continue // 规则 2
+    if (n.parentNode === dragId) continue // 规则 3
+    const { w, h } = getNodeSize(n)
+    const box = { x: n.position.x, y: n.position.y, w, h }
+    if (bounds && !rectsIntersect(box, bounds)) continue // 规则 4 之外的性能裁剪
+    out.push({ id: n.id, box, parentId: n.parentNode, isSelf: false })
+  }
+  return out
 }
 
 export function layoutNodesInGrid(nodes: FlowNode[], selectedIds: string[], gap = 40): FlowNode[] {
@@ -306,7 +371,7 @@ export function layoutNodesAlongEdges(
   return next
 }
 
-export type ArrangeMode = 'grid' | 'along_edges'
+export type ArrangeMode = 'grid' | 'along_edges' | 'align' | 'distribute'
 
 /** arrange_nodes（agent 工具）与多选工具栏共用的派发参数。 */
 export interface ArrangeRequest {
@@ -315,11 +380,21 @@ export interface ArrangeRequest {
   gap?: number
   /** along_edges 的有向边；缺省时退回画布全量边（同手动「顺着连线」）。 */
   edges?: LayoutEdge[]
+  /** align 的六向口径（left|centerH|right|top|centerV|bottom），对齐到选中集极值/中线。 */
+  alignMode?: AlignSixWay
+  /** distribute 的轴（x=水平等距 / y=垂直等距），需 ≥3 个节点才有效果。 */
+  axis?: 'x' | 'y'
 }
 
 /**
- * 按 mode 派发到两个既有布局函数，零新建算法。
+ * 按 mode 派发到既有布局函数，零新建算法。
  * 抽成纯函数是为了可测：CanvasPage 只负责 setNodes + persist + 聚焦。
+ *
+ * align / distribute 复用 shared 的纯函数（alignNodes / distributeNodes），
+ * 它们返回**局部坐标**（已减 parentNode 偏移）⇒ 可直接写回 FlowNode.position。
+ *
+ * ⚠️ align 缺 alignMode / distribute 缺 axis = **畸形请求 ⇒ no-op**（返回原数组引用），
+ * 绝不落 grid 分支：否则「对齐」意图会被静默换成「网格重排」（另一种会搬动所有节点的动作）。
  */
 export function applyArrangeLayout(
   nodes: FlowNode[],
@@ -329,6 +404,19 @@ export function applyArrangeLayout(
   const ids = (req?.nodeIds ?? []).filter((id) => typeof id === 'string' && id)
   if (ids.length < 2) return nodes
   const gap = typeof req.gap === 'number' && Number.isFinite(req.gap) ? req.gap : 40
+  if (req.mode === 'align') {
+    // 缺 alignMode = 畸形请求（规格：align 必带 alignMode）⇒ no-op。
+    // ⚠️ 不得落到末尾的 grid 分支：那会把「对齐」意图静默换成「网格重排」。
+    if (!req.alignMode) return nodes
+    const pos = alignNodes(nodes as unknown as LayoutNode[], ids, req.alignMode)
+    return nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n))
+  }
+  if (req.mode === 'distribute') {
+    // 缺 axis 同理：畸形请求 ⇒ no-op（退化 distribute 本身也是 no-op，语义一致）。
+    if (!req.axis) return nodes
+    const pos = distributeNodes(nodes as unknown as LayoutNode[], ids, req.axis)
+    return nodes.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n))
+  }
   if (req.mode === 'along_edges') {
     const edges = req.edges?.length ? req.edges : canvasEdges
     return layoutNodesAlongEdges(nodes, edges, ids, gap)

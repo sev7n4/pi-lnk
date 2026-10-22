@@ -209,8 +209,17 @@ const emit = defineEmits<{
   proposeWaitStart: [nodeId: string]
   /** P0-C（2026-10-13）：propose 等待结束——CanvasPage 解除 PUT 载荷强制声明 */
   proposeWaitEnd: []
-  /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
-  arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
+  /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges / align / distribute），CanvasPage 应用布局 */
+  arrangeNodes: [payload: {
+    nodeIds: string[]
+    mode: 'grid' | 'along_edges' | 'align' | 'distribute'
+    gap: number
+    edges?: { source: string; target: string }[]
+    /** align 的六向口径（left|centerH|right|top|centerV|bottom）。 */
+    alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+    /** distribute 的轴（x=水平等距 / y=垂直等距）。 */
+    axis?: 'x' | 'y'
+  }]
   /**
    * 分组工具组（2026-10-21）：Agent 自主打组 / 解组 / 改分组色。
    *
@@ -3272,9 +3281,13 @@ function handleEvent(event: { type: string; data: unknown }) {
         groupId?: string
         exportMode?: 'full_package' | 'lightweight'
         attachments?: SidebarAttachment[]
-        mode?: 'grid' | 'along_edges'
+        mode?: 'grid' | 'along_edges' | 'align' | 'distribute'
         gap?: number
         edges?: { source: string; target: string }[]
+        /** align 的六向口径（SP-B）：mode=align 时必带，CanvasPage 侧校验值域。 */
+        alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+        /** distribute 的轴（SP-B）：mode=distribute 时必带，CanvasPage 侧校验值域。 */
+        axis?: 'x' | 'y'
         /** render_canvas_view 产物（spec §4.6 第 2 跳）。净化在 AgentSvgCard 内做（§4.5）。 */
         svg?: string
         title?: string
@@ -3329,11 +3342,17 @@ function handleEvent(event: { type: string; data: unknown }) {
       } else if (cmd.type === 'open_image_editor' && cmd.nodeId) {
         emit('openImageEditor', cmd.nodeId)
       } else if (cmd.type === 'arrange_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
+        // SP-B：mode **原样透传**（不再把非 along_edges 一律收窄成 grid）——
+        // align/distribute 是两种独立意图，收窄会把「对齐」静默变成「网格重排」。
+        // 脏 mode / 缺 alignMode / 脏 axis 的校验与用户可见提示统一放在消费端
+        // （CanvasPage.handleArrangeNodes），本层只做传输。
         emit('arrangeNodes', {
           nodeIds: cmd.nodeIds,
-          mode: cmd.mode === 'along_edges' ? 'along_edges' : 'grid',
+          mode: cmd.mode ?? 'grid',
           gap: cmd.gap ?? 40,
           edges: cmd.edges?.length ? cmd.edges : undefined,
+          ...(cmd.mode === 'align' && cmd.alignMode ? { alignMode: cmd.alignMode } : {}),
+          ...(cmd.mode === 'distribute' && cmd.axis ? { axis: cmd.axis } : {}),
         })
       } else if (cmd.type === 'group_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
         // 标题 trim 后空串按无标题处理（与 CanvasPage 的命名口径一致）
