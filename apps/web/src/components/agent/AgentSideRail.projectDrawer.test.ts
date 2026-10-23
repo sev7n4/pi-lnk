@@ -127,6 +127,22 @@ vi.mock('mermaid', () => ({
   default: { initialize: vi.fn(), render: vi.fn().mockResolvedValue({ svg: '' }) },
 }))
 
+/**
+ * 用例间泄漏治理（2026-10-24 CI 红灯取证）。
+ *
+ * 抽屉 Teleport 到 `document.body`，而本文件的用例是用 `mountRail()` 真挂载整个
+ * `AgentSideRail` 的。此前只 `document.body.innerHTML = ''` 抹 DOM 而不 unmount
+ * ⇒ 上一个用例的 rail 实例**仍然活着**：后续用例任何一次响应式更新都会让它把
+ * 已被抹掉的卡片重新插回 body ⇒ 全局 `querySelectorAll('.project-card')` 多算
+ * （CI 实测：期望 8 得 11、期望 30 得 33，多出的正是首个用例的 3 条 fixture）。
+ * ⭐ 所以治理点是「卸载」，不是「把断言改宽」——后者会把泄漏固化成契约。
+ */
+const mountedRails: Array<{ unmount: () => void }> = []
+afterEach(() => {
+  for (const rail of mountedRails.splice(0)) rail.unmount()
+  document.body.innerHTML = ''
+})
+
 async function mountRail() {
   const { mount, flushPromises } = await import('@vue/test-utils')
   const { createPinia, setActivePinia } = await import('pinia')
@@ -155,6 +171,7 @@ async function mountRail() {
     props: { sessionId: 's1' },
   })
   await flushPromises()
+  mountedRails.push(w)
   return w
 }
 
