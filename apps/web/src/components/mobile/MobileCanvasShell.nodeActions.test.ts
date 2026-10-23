@@ -17,8 +17,9 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     openDrawer: noop(),
     newChat: noop(),
     openHistory: noop(),
-    openPanel: noop(),
-    openAssetLibrary: noop(),
+    // IA v4（#558）：契约新增 goHome（顶栏品牌字标 → 回工作台 hero）；
+    // openPanel / openAssetLibrary 随发现页社区化退役（资产库改由 composer 附件卡直达）
+    goHome: noop(),
   }
   const batchActions = {
     done: noop(),
