@@ -164,6 +164,7 @@ import {
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
+import { useCanvasRefPickAdd } from '@/composables/useCanvasRefPickAdd'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { summarizeMobileNodeTasks } from '@/composables/mobileNodeTaskSummary'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
@@ -2217,11 +2218,12 @@ function onNodeClick(event: NodeMouseEvent) {
     const nodeId = event.node.id
     const node = findNodeById(nodeId)
     if (!node) return
-    const result = agentRailRef.value?.addFromCanvasNodes([{
+    const result = addNodesToRefs([{
       id: node.id,
       type: node.type,
       data: (node.data ?? {}) as Record<string, unknown>,
-    }]) ?? { added: 0, empty: 0, duplicate: 0, addedNodeIds: [] }
+    }])
+    bumpSessionAdded(result.added)
     if (result.added > 0) {
       for (const id of result.addedNodeIds) pickMode.markPicked(id)
     } else if (result.empty) {
@@ -4589,9 +4591,14 @@ function handleAddToAgentRefs(sourceIds?: string[]) {
       type: node.type,
       data: (node.data ?? {}) as Record<string, unknown>,
     }))
-  const result = agentRailRef.value?.addFromCanvasNodes(focusNodes)
-  agentRailRef.value?.openPanel()
-  if (pickMode.active.value && result?.addedNodeIds?.length) {
+  const result = addNodesToRefs(focusNodes)
+  if (isMobileLayout.value) {
+    // 移动端侧栏不可见：不再依赖 openPanel（静默 no-op），改走画布窗态 toast 给反馈
+    showRefPickToast(result.added)
+  } else {
+    agentRailRef.value?.openPanel()
+  }
+  if (pickMode.active.value && result.addedNodeIds.length) {
     for (const id of result.addedNodeIds) pickMode.markPicked(id)
   }
 }
@@ -4612,6 +4619,7 @@ function handleCanvasRefPickToggle() {
     agentRailRef.value?.openPanel()
   }
   pickMode.activate()
+  resetSessionAdded()
   const ids = multiSelectedIds.value.length
     ? [...multiSelectedIds.value]
     : selectedNodeId.value
@@ -4626,8 +4634,9 @@ function handleCanvasRefPickToggle() {
       type: node.type,
       data: (node.data ?? {}) as Record<string, unknown>,
     }))
-  const result = agentRailRef.value?.addFromCanvasNodes(focusNodes)
-  if (result?.addedNodeIds?.length) {
+  const result = addNodesToRefs(focusNodes)
+  bumpSessionAdded(result.added)
+  if (result.addedNodeIds.length) {
     for (const id of result.addedNodeIds) pickMode.markPicked(id)
   }
 }
@@ -5191,6 +5200,15 @@ const canvasAreaRef = ref<HTMLElement | null>(null)
 
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
 const pickMode = useCanvasRefPickMode()
+// 引用写入/反馈单一真源：直接写 useSidebarAttachments 单例，移动端不再依赖 agentRailRef。
+const {
+  addNodesToRefs,
+  bumpSessionAdded,
+  resetSessionAdded,
+  showRefPickToast,
+  sessionAdded,
+  refPickToast,
+} = useCanvasRefPickAdd()
 const { isMobileLayout } = useAgentMobileLayout()
 
 // 分组框的 draggable 随布局切换（GC4）：PC 整框可拖是本批的核心诉求；
@@ -5364,11 +5382,12 @@ watch(
       pendingExclusiveSelectId = null
     }
     if (prev && !active && isMobileLayout.value) {
-      // 引用拾取结束 ⇒ 回到对话页签（composer 面板随贴底容器回归）
+      // 引用拾取结束 ⇒ 回到对话页签（composer 面板随贴底容器回归），
+      // 并弹画布窗态 toast 反馈（替代移动端 no-op 的 openPanel）
       mobileCanvasView.value = false
       mobileCanvasImm.value = false
       mobileAppTab.value = 'chat'
-      nextTick(() => agentRailRef.value?.openPanel())
+      showRefPickToast(sessionAdded.value)
     }
   },
 )
@@ -5514,6 +5533,14 @@ onUnmounted(() => {
           :picked-count="pickMode.pickedCount.value"
           @done="pickMode.deactivate()"
         />
+        <Teleport to="body">
+          <div
+            v-if="refPickToast"
+            class="ref-pick-toast neo-glass-lite"
+            role="status"
+            aria-live="polite"
+          >已引用 {{ refPickToast.count }} 个节点，可在对话中发送</div>
+        </Teleport>
         <CanvasFloatingChrome
           v-if="!canvasChromeHidden && !isMobileLayout"
           :title="sessionTitle"
@@ -6019,6 +6046,29 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 画布窗态引用 toast：Teleport 到 body，移动端贴底容器/veiled 态下仍可见 */
+.ref-pick-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+  z-index: 4000;
+  transform: translateX(-50%);
+  max-width: min(420px, calc(100% - 24px));
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--neo-text-primary);
+  box-shadow: var(--neo-hi-shadow);
+  white-space: nowrap;
+  animation: ref-pick-toast-in 160ms ease-out;
+}
+
+@keyframes ref-pick-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 /* PR2 空态引导（V-3）：居中弱提示，pointer-events-none 不挡画布手势 */
 .mobile-canvas-empty {
   position: absolute;

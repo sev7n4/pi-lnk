@@ -1,5 +1,32 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import { mergeFocusNodeRef, nodeToSidebarAttachment, useSidebarAttachments } from './useSidebarAttachments'
+
+// 单例化后所有调用共享同一份 pendingAttachments，跨 it 必须清干净
+beforeEach(() => {
+  useSidebarAttachments().clear()
+})
+
+describe('useSidebarAttachments (singleton)', () => {
+  it('two callers share the same pendingAttachments', () => {
+    const a = useSidebarAttachments()
+    a.addFromPayload({ id: '1', mediaType: 'image', sourceKind: 'upload', label: 'a', url: 'https://x/1.jpg' })
+    const b = useSidebarAttachments()
+    expect(b.pendingAttachments.value).toHaveLength(1)
+  })
+
+  it('addFromCanvasNodesDetailed returns added/duplicate counts and dedups', () => {
+    const { addFromCanvasNodesDetailed, pendingAttachments } = useSidebarAttachments()
+    const nodes = [
+      { id: 'n1', type: 'image', data: { url: 'https://x/1.jpg' } },
+      { id: 'n1', type: 'image', data: { url: 'https://x/1.jpg' } },
+      { id: 'n2', type: 'image', data: { url: 'https://x/2.jpg' } },
+    ]
+    const r = addFromCanvasNodesDetailed(nodes)
+    expect(r.added).toBe(2)
+    expect(r.duplicate).toBe(1)
+    expect(pendingAttachments.value).toHaveLength(2)
+  })
+})
 
 describe('useSidebarAttachments', () => {
   it('dedupes by url', () => {
