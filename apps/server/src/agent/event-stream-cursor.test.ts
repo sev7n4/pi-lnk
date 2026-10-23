@@ -113,6 +113,57 @@ describe('GET runs/events 的 SSE 游标（multi-device Task 4）', () => {
 
     expect(runEventStream).toHaveBeenCalledWith('s1:t1', { lastEventId: undefined })
   })
+
+  it('订阅建立必须**立刻**写一帧（首个业务事件可能几十秒后才到）——变异点：删掉就绪帧', async () => {
+    const runEventStream = vi.fn(async function* () {})
+    const ctrl = makeController(runEventStream)
+    const res = makeFakeRes()
+
+    await ctrl.runEvents('s1', 's1:t1', undefined, req, res as never)
+
+    expect(
+      res.chunks[0],
+      '订阅建立即写就绪帧：浏览器拿到响应头才算「连上了」，否则整段静默期都处于未连接状态',
+    ).toBe(': observer-ready\n\n')
+  })
+
+  it('必须发 X-Accel-Buffering: no（nginx 默认缓冲会把 34 字节心跳憋死）——变异点：删掉该头', async () => {
+    const runEventStream = vi.fn(async function* () {})
+    const ctrl = makeController(runEventStream)
+    const res = makeFakeRes()
+
+    await ctrl.runEvents('s1', 's1:t1', undefined, req, res as never)
+
+    expect(
+      res.setHeader,
+      '生产实证：25 次订阅全部 0 字节，就是因为 nginx proxy_buffering 把 SSE 帧憋在缓冲区',
+    ).toHaveBeenCalledWith('X-Accel-Buffering', 'no')
+  })
+
+  it('心跳到达即解除首帧闸门（常驻连接不得被 30s 误杀）——变异点：心跳不 clearTimeout', async () => {
+    vi.useFakeTimers()
+    try {
+      // 永不结束的流：仿真实订阅（pi-runtime 靠 idle 判定存活，不 EOF）
+      const runEventStream = vi.fn(async function* () {
+        await new Promise<void>(() => {})
+        yield { type: 'never' }
+      })
+      const ctrl = makeController(runEventStream)
+      const res = makeFakeRes()
+
+      void ctrl.runEvents('s1', 's1:t1', undefined, req, res as never)
+
+      await vi.advanceTimersByTimeAsync(16_000) // 首个心跳
+      expect(res.end, '心跳已到 ⇒ 闸门解除').not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(
+        res.end,
+        '常驻连接不得在 30s 被闸门 end（否则前端每 30s 全量重连）',
+      ).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('AgentService.runEventStream 游标透传（multi-device Task 4）', () => {
