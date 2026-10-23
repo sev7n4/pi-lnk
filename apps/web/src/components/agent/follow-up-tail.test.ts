@@ -34,6 +34,27 @@ function streamOf(chunks: string[], signal?: AbortSignal) {
   }
 }
 
+/**
+ * 按时序发帧的流：第 2 帧起每帧间隔 `gapMs`（受 fake timers 控制），
+ * 发完后挂起等 abort —— 仿真「服务端周期性心跳的常驻连接」。
+ */
+function timedStream(signal: AbortSignal, chunks: string[], gapMs: number) {
+  let i = 0
+  return {
+    getReader: () => ({
+      read: async (): Promise<{ done: boolean; value?: Uint8Array }> => {
+        if (i < chunks.length) {
+          if (i > 0) await new Promise((r) => setTimeout(r, gapMs))
+          return { done: false, value: enc.encode(chunks[i++]) }
+        }
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+        })
+      },
+    }),
+  }
+}
+
 /** 发完 chunks 后连接被掐断（read 抛错）——仿真「断网」。 */
 function streamResetAfter(chunks: string[]) {
   let i = 0
@@ -134,6 +155,19 @@ describe('follow-up-tail 重连行为（multi-device Task 5）', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(deps.urls).toHaveLength(1)
     expect(listener.getState()).toBe('idle')
+  })
+
+  it('401/403（鉴权失效）不重连——重连只会再拿一次同样的状态码', async () => {
+    for (const code of [401, 403]) {
+      const deps = makeDeps({
+        fetchImpl: () => Promise.resolve({ status: code, ok: false, body: null } as TailResponseLike),
+      })
+      const listener = createFollowUpTailListener(deps)
+      await listener.start()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(deps.urls, `${code} 不得触发重连`).toHaveLength(1)
+      expect(listener.getState()).toBe('idle')
+    }
   })
 
   it('重连预算耗尽后停止（maxReconnects=3 ⇒ 共 4 次），不无限重挂', async () => {
@@ -242,7 +276,7 @@ describe('follow-up-tail 重连行为（multi-device Task 5）', () => {
     await p
   })
 
-  it('idle 闸门：无业务事件 20s 即断（不得用心跳保活）', async () => {
+  it('idle 闸门：服务端彻底静默（一帧都没有）才断——常驻兜底，不是心跳策略', async () => {
     const deps = makeDeps({
       idleMs: 20_000,
       fetchImpl: (_url, init) =>
@@ -272,13 +306,90 @@ describe('follow-up-tail 重连行为（multi-device Task 5）', () => {
     expect(deps.texts).toEqual(['ok', 'ok2'])
   })
 
-  it('轮次上限：超过 maxRounds 次 start 后不再挂（默认 3）', async () => {
+  // 2026-10-24 契约变更：常驻订阅**没有**轮次上限。旧契约「挂 3 轮就不听了」是 tail
+  // 语义（只补本轮收尾后的那一小段）；多端一致性要求「只要会话开着就一直在听」，
+  // 有上限就等于「第 4 次之后本端又聋了」。显式传 maxRounds 仍按调用方意图生效。
+  it('常驻订阅：默认无轮次上限（第 5 次 start 仍真的发起请求）——变异点：maxRounds 改回 3', async () => {
     const deps = makeDeps()
+    const listener = createFollowUpTailListener(deps)
+    for (let i = 0; i < 5; i++) await listener.start()
+    expect(deps.urls, '常驻订阅不得有「几轮之后就不听了」的上限').toHaveLength(5)
+  })
+
+  it('显式传 maxRounds 时上限仍然生效（不破坏调用方意图）', async () => {
+    const deps = makeDeps({ maxRounds: 2 })
     const listener = createFollowUpTailListener(deps)
     await listener.start()
     await listener.start()
     await listener.start()
-    await listener.start()
-    expect(deps.urls).toHaveLength(3)
+    expect(deps.urls).toHaveLength(2)
+  })
+
+  it('idle 由任何帧刷新：连续心跳把闸门一路往后推（常驻连接不被前端掐断）——变异点：只认业务事件', async () => {
+    const deps = makeDeps({
+      idleMs: 10_000,
+      fetchImpl: (_url, init) =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          // 服务端 15s 一帧的心跳形态（无 id 行、无业务语义），两帧间隔 6s
+          body: timedStream(init.signal, ['data: {"type":"heartbeat"}\n\n', 'data: {"type":"heartbeat"}\n\n'], 6_000),
+        } as TailResponseLike),
+    })
+    const listener = createFollowUpTailListener(deps)
+    const p = listener.start()
+    await vi.advanceTimersByTimeAsync(1) // 建连 + 第 1 个心跳（idle ⇒ 10s）
+    await vi.advanceTimersByTimeAsync(6_000) // 第 2 个心跳（idle ⇒ 16s）
+    // 累计 12s > idleMs(10s)：只有心跳刷新了 idle 才可能还活着
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(listener.getState(), '心跳必须刷新 idle，否则常驻订阅名存实亡').toBe('streaming')
+    listener.abort()
+    await p
+  })
+
+  it('回合收束帧回调 onTurnEnd：text_delta 不算收束，done 与 turn_ack 各一次', async () => {
+    let ends = 0
+    const deps = makeDeps({
+      onTurnEnd: () => {
+        ends += 1
+      },
+      fetchImpl: (_url, init) =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          body: streamOf(
+            [frame(1, 'text_delta', { text: 'a' }), frame(2, 'done', {}), frame(3, 'turn_ack', {})],
+            init.signal,
+          ),
+        } as TailResponseLike),
+    })
+    const listener = createFollowUpTailListener(deps)
+    const p = listener.start()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(deps.texts).toEqual(['a'])
+    expect(ends, 'done 与 turn_ack 都是收束（onTurnEnd 需幂等，故允许来两次）').toBe(2)
+    listener.abort()
+    await p
+  })
+
+  it('失败帧（error / turn_not_submitted）同样是收束——变异点：去掉收束判定', async () => {
+    let ends = 0
+    const deps = makeDeps({
+      onTurnEnd: () => {
+        ends += 1
+      },
+      fetchImpl: (_url, init) =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          body: streamOf([frame(1, 'error', {}), frame(2, 'turn_not_submitted', {})], init.signal),
+        } as TailResponseLike),
+    })
+    const listener = createFollowUpTailListener(deps)
+    const p = listener.start()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(ends, '轮失败也必须有收束信号，否则旁观气泡永远转圈').toBe(2)
+    listener.abort()
+    await p
   })
 })
