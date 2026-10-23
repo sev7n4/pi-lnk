@@ -1108,3 +1108,108 @@ describe("2026-10-18 上游对齐：notifyGeneration / snapshot / 409 快照 res
 		expect((err as { status?: number }).status).toBe(404);
 	});
 });
+
+/**
+ * ⭐⭐ 2026-10-24：`retryOnMissing` —— 404 的两种语义拆分。
+ *
+ * 根因（生产取证）：`GET /api/agent/runs/events` 实测 **47ms 断流**、15s 心跳从未发出。
+ * pi-runtime 的 `GET /sessions/:key/events` 在 `manager.hasKey(key)` 为假时回 **404**，
+ * 而 `hasKey` 查的是**内存 Map**（`session-manager.sessions`）：
+ *   ① lane 只在**该 threadKey 上真的跑过一轮**时才创建；
+ *   ② 未活跃 lane 被 sweeper 按 `sessionTtlMs`（默认 30 分钟）回收（只关内存、磁盘保留）。
+ * ⇒ 「另一端还没在这个 thread 上发过消息」/「跑完超过 TTL」都会命中 404。
+ *
+ * 旧语义把 404 一律当「会话已删除」⇒ 立即 onError 终止 ⇒ 旁听流 47ms 断流。
+ *
+ * ⇒ `retryOnMissing`（**默认 false**，既有调用方语义不变）时：
+ *   - 404 归入**退避重试**（等 lane 真的出现），**不消耗 120s 网络错误预算**；
+ *   - 真删除的会话最多多等 120s 才放弃（旁听是只读旁路，延迟放弃无副作用）。
+ */
+describe("2026-10-24 streamEvents：404 = lane 未驻留（retryOnMissing）", () => {
+	it("retryOnMissing 开启时 404 不终止：必须持续重试（等 lane 出现）", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return new Response("not found", { status: 404 });
+			}) as typeof fetch,
+		});
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e), { retryOnMissing: true });
+		// 首次退避 250ms ⇒ 400ms 内至少应有 2 次探测
+		await new Promise((r) => setTimeout(r, 700));
+		cancel();
+		expect(calls, "404 必须被重试（lane 可能稍后才被另一端创建）").toBeGreaterThanOrEqual(2);
+		expect(errors, "404 不得触发 onError（那会让旁听流永久终止）").toHaveLength(0);
+	});
+
+	it("retryOnMissing 开启时 404 不消耗 120s 网络错误预算（否则旁听端永远接不上）", async () => {
+		// 用 fake timers 推进「远超过 120s」：若 404 消耗预算 ⇒ 会 onError(504) 终止。
+		vi.useFakeTimers();
+		try {
+			let calls = 0;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async () => {
+					calls++;
+					return new Response("not found", { status: 404 });
+				}) as typeof fetch,
+			});
+			const errors: unknown[] = [];
+			const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e), { retryOnMissing: true });
+			// 推进 10 分钟（远超 120s 预算）
+			await vi.advanceTimersByTimeAsync(600_000);
+			cancel();
+			expect(calls, "长时间 404 也必须持续探测").toBeGreaterThan(2);
+			expect(errors, "404 不得因预算耗尽而终止（预算只针对真实网络错误）").toHaveLength(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("retryOnMissing 关闭（默认）时 404 仍是终态（既有调用方语义不变）", async () => {
+		let calls = 0;
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => {
+				calls++;
+				return new Response("not found", { status: 404 });
+			}) as typeof fetch,
+		});
+		const errors: PiRuntimeError[] = [];
+		const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e as PiRuntimeError));
+		await new Promise((r) => setTimeout(r, 50));
+		cancel();
+		expect(calls, "默认语义下 404 只请求一次").toBe(1);
+		expect(errors).toHaveLength(1);
+		expect(errors[0].status).toBe(404);
+	});
+
+	it("retryOnMissing 下 404 期间真实网络错误仍受 120s 预算约束（防真死循环）", async () => {
+		vi.useFakeTimers();
+		try {
+			let calls = 0;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async () => {
+					calls++;
+					// 交替：404（不消耗预算）与 500（消耗预算）
+					return calls % 2 === 1
+						? new Response("not found", { status: 404 })
+						: new Response("boom", { status: 500 });
+				}) as typeof fetch,
+			});
+			const errors: PiRuntimeError[] = [];
+			const cancel = client.streamEvents("s1", () => {}, (e) => errors.push(e as PiRuntimeError), {
+				retryOnMissing: true,
+			});
+			await vi.advanceTimersByTimeAsync(200_000);
+			cancel();
+			expect(errors.length, "真实网络错误耗尽 120s 预算后必须放弃（防无限重连打爆上游）").toBeGreaterThan(0);
+			expect(errors[0]!.status).toBe(504);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
