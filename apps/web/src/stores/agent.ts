@@ -43,6 +43,7 @@ import {
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 import { useAuthStore } from '@/stores/auth'
+import { randomId } from '@/utils/randomId'
 
 export interface AgentStreamMessage {
   id: string
@@ -108,13 +109,14 @@ type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'
  * Vue DOM 复用错位 ⇒ 肉眼「消息顺序乱」。
  *
  * ⚠️ 生产是 `http://`（非安全上下文）⇒ `crypto.randomUUID` 不可用（[SecureContext]
- * 限定）⇒ 兜底分支不是防御性代码，是生产主路径（守卫：agent.messageIdentity.test.ts）。
+ * 限定）⇒ **不得裸调它**：守卫 `randomId.guard.test.ts` 会拦下（历史上三次踩坑
+ * 都是「点完一律提交失败、nginx 侧 0 请求」——请求根本没发出去）。统一走
+ * `randomId()`：它自带「时间戳 + 随机串」降级，那条降级路径才是生产主路径，
+ * 不是防御性代码（守卫：agent.messageIdentity.test.ts）。
  * Task 9 的 `clientId` 复用本函数（plan「Interfaces · Produces」）。
  */
 export function nextLocalMessageId(): string {
-  return typeof crypto?.randomUUID === 'function'
-    ? `msg-${crypto.randomUUID()}`
-    : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  return `msg-${randomId()}`
 }
 
 export const useAgentStore = defineStore('agent', () => {
