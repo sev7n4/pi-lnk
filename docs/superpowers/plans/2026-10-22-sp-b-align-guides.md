@@ -44,7 +44,7 @@
 - Consumes: `getNodeSize(node)`, `getAbsolutePosition(node, nodes)`（SP-A 既有，同文件）
 - Produces: `export type AlignSixWay = 'left'|'centerH'|'right'|'top'|'centerV'|'bottom'`；`export function alignNodes(nodes: LayoutNode[], ids: string[], mode: AlignSixWay): Record<string, { x: number; y: number }>` —— 返回**局部坐标**新位置（已减去 parent 绝对偏移），未选中节点不在映射中。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 import { alignNodes, type AlignSixWay, type LayoutNode } from './layout'
@@ -85,12 +85,12 @@ describe('alignNodes', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd packages/shared && npx vitest run src/canvas/layout.test.ts -t alignNodes`
 Expected: FAIL（`alignNodes` 未定义）
 
-- [ ] **Step 3: 实现（追加到 layout.ts 末尾）**
+- [x] **Step 3: 实现（追加到 layout.ts 末尾）**
 
 ```ts
 export type AlignSixWay = 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
@@ -139,12 +139,12 @@ export function alignNodes(nodes: LayoutNode[], ids: string[], mode: AlignSixWay
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd packages/shared && npx vitest run src/canvas/layout.test.ts -t alignNodes`
 Expected: PASS（5 用例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/shared/src/canvas/layout.ts packages/shared/src/canvas/layout.test.ts
@@ -163,7 +163,7 @@ git commit -m "feat(shared): SP-B alignNodes 六向对齐纯函数（Figma 口�
 - Consumes: `getNodeSize`, `getAbsolutePosition`（同文件）
 - Produces: `export function distributeNodes(nodes: LayoutNode[], ids: string[], axis: 'x' | 'y'): Record<string, { x: number; y: number }>` —— 相邻包围盒**空隙相等**、首尾锚定；`ids.length < 3` 返回 `{}`（no-op）；返回局部坐标。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 describe('distributeNodes', () => {
@@ -190,12 +190,12 @@ describe('distributeNodes', () => {
 })
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd packages/shared && npx vitest run src/canvas/layout.test.ts -t distributeNodes`
 Expected: FAIL
 
-- [ ] **Step 3: 实现（追加到 layout.ts）**
+- [x] **Step 3: 实现（追加到 layout.ts）**
 
 ```ts
 /**
@@ -230,12 +230,12 @@ export function distributeNodes(nodes: LayoutNode[], ids: string[], axis: 'x' | 
 }
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `cd packages/shared && npx vitest run src/canvas/layout.test.ts -t distributeNodes`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/shared/src/canvas/layout.ts packages/shared/src/canvas/layout.test.ts
@@ -264,7 +264,7 @@ git commit -m "feat(shared): SP-B distributeNodes 等空隙分布纯函数（首
   ```
   调用方负责：传入**视口内**候选、标记 `isSelf`（被拖节点）与 `parentId`（被拖节点父），算法跳过这两者。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```ts
 describe('computeSnapGuides', () => {
@@ -297,12 +297,12 @@ describe('computeSnapGuides', () => {
 })
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd packages/shared && npx vitest run src/canvas/layout.test.ts -t computeSnapGuides`
 Expected: FAIL
 
-- [ ] **Step 3: 实现（追加到 layout.ts，算法吸收官方 React Flow Helper Lines）**
+- [x] **Step 3: 实现（追加到 layout.ts，算法吸收官方 React Flow Helper Lines）**
 
 ```ts
 export const SNAP_RADIUS = 8
@@ -370,12 +370,12 @@ export function computeSnapGuides(
 }
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `cd packages/shared && npx vitest run src/canvas/layout.test.ts -t computeSnapGuides`
 Expected: PASS
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/shared/src/canvas/layout.ts packages/shared/src/canvas/layout.test.ts
@@ -394,7 +394,7 @@ git commit -m "feat(shared): SP-B computeSnapGuides 拖拽参考线算法（6 �
 - Consumes: 本任务只改 schema 与 canvasCommand 负载；执行端不动（Task 6/7 接）
 - Produces: `mode` 联合扩 `'grid'|'along_edges'|'align'|'distribute'`；选 `align` 时命令带 `alignMode`，选 `distribute` 时带 `axis`；canvasCommand 仍 `type:'arrange_nodes'`。**不点名 prompt-registry**（description 已在，靠之承担发现能力）。
 
-- [ ] **Step 1: 写失败测试（arrange-nodes.test.ts 追加）**
+- [x] **Step 1: 写失败测试（arrange-nodes.test.ts 追加）**
 
 ```ts
 it("mode=align 带 alignMode 透传命令", async () => {
@@ -412,12 +412,12 @@ it("mode=distribute 带 axis 透传命令", async () => {
 })
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd services/pi-runtime && npx node --test src/tools/arrange-nodes.test.ts 2>&1 | tail -20`（或仓库既定 test 命令）
 Expected: 新用例 FAIL（mode 不接受 align）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 - `parameters` 中 `mode` 改为 `Type.String({ description: "grid | along_edges | align | distribute" })`
 - 新增 `align_mode: Type.Optional(Type.String({ description: "align 时必填: left|centerH|right|top|centerV|bottom" }))`、`axis: Type.Optional(Type.String({ description: "distribute 时必填: x|y" }))`
@@ -425,12 +425,12 @@ Expected: 新用例 FAIL（mode 不接受 align）
 - 命令对象 `{ type:'arrange_nodes', nodeIds, mode, gap, ...(mode==='align' && p.align_mode ? { alignMode: p.align_mode } : {}), ...(mode==='distribute' && p.axis ? { axis: p.axis } : {}), ...(mode==='along_edges' && edges?.length ? { edges } : {}) }`
 - `description` 末尾追加：「也支持 mode=align（align_mode 六向）/ distribute（axis x|y）做精确对齐与等距分布」——零 L6 预算（不进 prompt-registry）
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: 同 Step 2
 Expected: 全绿（含既有用例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add services/pi-runtime/src/tools/arrange-nodes.ts services/pi-runtime/src/tools/arrange-nodes.test.ts
@@ -451,7 +451,7 @@ git commit -m "feat(runtime): arrange_nodes 扩 align/distribute mode（canvas_c
 - Consumes: `alignNodes` / `distributeNodes`（Task 1/2，从 `@lnkpi/shared` 导入——确认 barrel 已导出；若未导出在 shared barrel 补导出）
 - Produces: `ArrangeMode = 'grid'|'along_edges'|'align'|'distribute'`；`ArrangeRequest` 扩 `alignMode?` / `axis?`；`applyArrangeLayout` 在 `mode==='align'` 调 `alignNodes`、在 `mode==='distribute'` 调 `distributeNodes`，把返回的局部坐标映射落到 `FlowNode.position`（shared 已返局部坐标，直接用）。
 
-- [ ] **Step 1: 写失败测试（useCanvasGrouping.arrange.test.ts 追加）**
+- [x] **Step 1: 写失败测试（useCanvasGrouping.arrange.test.ts 追加）**
 
 ```ts
 it('applyArrangeLayout mode=align 调 alignNodes 并落局部坐标', () => {
@@ -466,12 +466,12 @@ it('applyArrangeLayout mode=distribute 调 distributeNodes', () => {
 })
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd apps/web && npx vitest run src/composables/useCanvasGrouping.arrange.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 ```ts
 export type ArrangeMode = 'grid' | 'along_edges' | 'align' | 'distribute'
@@ -505,12 +505,12 @@ export function applyArrangeLayout(nodes: FlowNode[], req: ArrangeRequest, canva
 
 > `gap` 变量在原 `applyArrangeLayout` 内已定义（`const gap = ...`），保留。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: 同 Step 2
 Expected: PASS（含既有 3 处 arrange 用例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/web/src/composables/useCanvasGrouping.ts apps/web/src/composables/useCanvasGrouping.arrange.test.ts
@@ -528,7 +528,7 @@ git commit -m "feat(web): useCanvasGrouping 派发扩 align/distribute（消费 
 - Consumes: 同 Task 4 的 canvasCommand 形态（`type:'arrange_nodes'` + `mode` + `alignMode`/`axis`）
 - Produces: `ArrangeRequest` 联合扩 `'align'|'distribute'` 分支；`emit('arrangeNodes', payload)` 透传完整负载（含 `alignMode`/`axis`）
 
-- [ ] **Step 1: 扩类型与 emit**
+- [x] **Step 1: 扩类型与 emit**
 
 把 `AgentSideRail.vue:208` 的：
 ```ts
@@ -551,12 +551,12 @@ emit('arrangeNodes', {
 })
 ```
 
-- [ ] **Step 2: 类型检查**
+- [x] **Step 2: 类型检查**
 
 Run: `cd apps/web && npx vue-tsc --noEmit -p tsconfig.json`（约 11 分钟；改 .vue 必跑）
 Expected: 无 `arrangeNodes` 相关类型错误
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add apps/web/src/components/agent/AgentSideRail.vue
@@ -574,7 +574,7 @@ git commit -m "feat(web): AgentSideRail arrangeNodes 事件透传 align/distribu
 - Consumes: `applyArrangeLayout`（Task 5，已支持四 mode）
 - Produces: `handleArrangeNodes` 接收四 mode 联合；`align`/`distribute` 走 `applyArrangeLayout` 后 `setNodes` + `persistUserEdit` + 自动聚焦（与现有同构）；`agentReadOnly` 守卫复用（Review Focus #6）。
 
-- [ ] **Step 1: 扩 handleArrangeNodes 签名与分支**
+- [x] **Step 1: 扩 handleArrangeNodes 签名与分支**
 
 `CanvasPage.vue:2166` 函数改为：
 ```ts
@@ -606,12 +606,12 @@ async function handleArrangeNodes(payload: {
 ```
 （原 `handleArrangeNodes` 已调用 `applyArrangeLayout`，仅需把 `mode` 联合与 `alignMode`/`axis` 透传进去——上面为完整替换。）
 
-- [ ] **Step 2: 类型检查**
+- [x] **Step 2: 类型检查**
 
 Run: `cd apps/web && npx vue-tsc --noEmit -p tsconfig.json`
 Expected: 无错误
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add apps/web/src/pages/CanvasPage.vue
@@ -629,7 +629,7 @@ git commit -m "feat(web): CanvasPage handleArrangeNodes 接收 align/distribute�
 - Consumes: `handleArrangeNodes` 经 `CanvasPage` 的 `@align` 接线（Task 7 已支持四 mode）
 - Produces: `emit('align', { kind:'align'; alignMode } | { kind:'distribute'; axis })`；`CanvasPage` 在 `@align` 处把负载转成 `handleArrangeNodes` 入参（`mode` 映射：`kind:'align'→mode:'align', alignMode`；`kind:'distribute'→mode:'distribute', axis`）。
 
-- [ ] **Step 1: 加 emit 与 handler**
+- [x] **Step 1: 加 emit 与 handler**
 
 `defineEmits` 追加：`align: [payload: { kind: 'align'; alignMode: 'left'|'centerH'|'right'|'top'|'centerV'|'bottom' } | { kind: 'distribute'; axis: 'x'|'y' }]`
 ```ts
@@ -639,7 +639,7 @@ function onAlign(payload: { kind: 'align'; alignMode: any } | { kind: 'distribut
 }
 ```
 
-- [ ] **Step 2: 模板加按钮组（在「整理布局」菜单同区块，新增 align 分组，复用 `.toolbar-action` / `.export-menu` 令牌类）**
+- [x] **Step 2: 模板加按钮组（在「整理布局」菜单同区块，新增 align 分组，复用 `.toolbar-action` / `.export-menu` 令牌类）**
 
 ```html
 <button type="button" class="export-menu-item" @click="onAlign({ kind: 'align', alignMode: 'left' })">左对齐</button>
@@ -653,7 +653,7 @@ function onAlign(payload: { kind: 'align'; alignMode: any } | { kind: 'distribut
 ```
 （图标优先用既有 `src/assets/icons/*.png` mask 资产风格；无对应图标时用文字按钮，保持令牌配色。）
 
-- [ ] **Step 3: 接线 CanvasPage `@align`**
+- [x] **Step 3: 接线 CanvasPage `@align`**
 
 `CanvasPage.vue:5125` 附近 `@layout="handleLayoutSelection"` 后面加：
 ```html
@@ -661,16 +661,16 @@ function onAlign(payload: { kind: 'align'; alignMode: any } | { kind: 'distribut
 ```
 （`multiSelectedIds` 为现有多选集合；与 `handleLayoutSelection` 取选中节点同源。）
 
-- [ ] **Step 4: 组件测试**
+- [x] **Step 4: 组件测试**
 
 `apps/web/src/components/canvas/MultiSelectToolbar.test.ts` 追加：点击「左对齐」→ emit `align` 且 `payload.kind==='align' && alignMode==='left'`。
 
-- [ ] **Step 5: 守卫 + 类型**
+- [x] **Step 5: 守卫 + 类型**
 
 Run: `cd apps/web && npx vitest run src/components/canvas/MultiSelectToolbar.test.ts && npx vue-tsc --noEmit -p tsconfig.json`
 Expected: 组件测试 PASS；tsc 无错误
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add apps/web/src/components/canvas/MultiSelectToolbar.vue apps/web/src/components/canvas/MultiSelectToolbar.test.ts apps/web/src/pages/CanvasPage.vue
@@ -690,7 +690,7 @@ git commit -m "feat(web): 多选工具条加 align 六向 + distribute H/V（des
 - Consumes: `computeSnapGuides`（Task 3，从 `@lnkpi/shared`）
 - Produces: 拖拽中实时吸附（覆盖被拖节点 position）+ `horizontal`/`vertical` guide 状态 → GuideLines 渲染；松手时 guide 优先于 20px 网格。
 
-- [ ] **Step 1: 写 GuideLines.vue（纯展示组件）**
+- [x] **Step 1: 写 GuideLines.vue（纯展示组件）**
 
 ```vue
 <script setup lang="ts">
@@ -708,7 +708,7 @@ defineProps<{ horizontal?: number; vertical?: number }>() // flow 坐标（y / x
 ```
 > `--lnk-accent` 是 L2 令牌（design-token 体系内），不新增 hex；投放于 vue-flow 的 viewport transform 容器内即随缩放/平移精确（规格 §3.4）。
 
-- [ ] **Step 2: CanvasPage 拖拽拦截**
+- [x] **Step 2: CanvasPage 拖拽拦截**
 
 - 新增响应式 `const snapGuides = ref<{ horizontal?: number; vertical?: number }>({})`
 - `onNodeDragStart`（:2034）末尾加 `snapGuides.value = {}`
@@ -731,7 +731,7 @@ defineProps<{ horizontal?: number; vertical?: number }>() // flow 坐标（y / x
   ```
   > 候选的 `parentId` 传被拖节点的 parent，使同父兄弟被跳过（Review Focus #5）。视口裁剪用现有 viewport 状态（`useVueFlow` 的 `viewport` 或 `getViewportForBounds`，沿用仓库既有取视口方式）。
 
-- [ ] **Step 3: onNodeDragStop 优先级（Review Focus #4）**
+- [x] **Step 3: onNodeDragStop 优先级（Review Focus #4）**
 
 `CanvasPage.vue:2046` `onNodeDragStop`：若 `snapGuides.value` 有命中（本帧拖拽吸了参考线），**跳过** `applySnapOnRelease`（20px 网格）：
 ```ts
@@ -743,17 +743,17 @@ if (viewportSettings.value.snapToGrid && dragStartPositions.size > 0 && !hadGuid
 snapGuides.value = {}
 ```
 
-- [ ] **Step 4: 挂载 GuideLines**
+- [x] **Step 4: 挂载 GuideLines**
 
 在 vue-flow 容器内（`<VueFlow>` 同级或内部 viewport 层）加 `<GuideLines :horizontal="snapGuides.horizontal" :vertical="snapGuides.vertical" />`。
 
-- [ ] **Step 5: 测试 + 守卫**
+- [x] **Step 5: 测试 + 守卫**
 
 新增 `GuideLines.test.ts`：传 `horizontal=100` → 渲染一条水平线且 `top:100px`；不传 → 无。
 Run: `cd apps/web && npx vitest run src/components/canvas/GuideLines.test.ts && npx vue-tsc --noEmit -p tsconfig.json`
 Expected: PASS；tsc 无错
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add apps/web/src/components/canvas/GuideLines.vue apps/web/src/components/canvas/GuideLines.test.ts apps/web/src/pages/CanvasPage.vue
@@ -771,14 +771,14 @@ git commit -m "feat(web): 拖拽智能参考线（computeSnapGuides 接线 + Gui
 - Consumes: `handleArrangeNodes`（Task 7，四 mode）
 - Produces: `emit('align', payload)`（同 Task 8 形状）；`CanvasPage` 对该 sheet 的 `@align` 接线同 Task 8 Step 3。
 
-- [ ] **Step 1: 加 emit + handler**
+- [x] **Step 1: 加 emit + handler**
 
 `defineEmits` 加：`align: [payload: { kind: 'align'; alignMode: any } | { kind: 'distribute'; axis: any }]`
 ```ts
 function onAlign(payload: any) { emit('align', payload) }
 ```
 
-- [ ] **Step 2: 模板加 align 六向（在 `view==='layout'` 区块追加，复用 `.msms-item` 令牌类）**
+- [x] **Step 2: 模板加 align 六向（在 `view==='layout'` 区块追加，复用 `.msms-item` 令牌类）**
 
 ```html
 <button type="button" class="msms-item" @click="onAlign({ kind: 'align', alignMode: 'left' })">左对齐</button>
@@ -791,14 +791,14 @@ function onAlign(payload: any) { emit('align', payload) }
 <button type="button" class="msms-item" @click="onAlign({ kind: 'distribute', axis: 'y' })">垂直等距</button>
 ```
 
-- [ ] **Step 3: 接线 CanvasPage `@align`（移动端 sheet 同 Task 8 Step 3 的 `@align` 绑定）**
+- [x] **Step 3: 接线 CanvasPage `@align`（移动端 sheet 同 Task 8 Step 3 的 `@align` 绑定）**
 
-- [ ] **Step 4: 测试 + 类型**
+- [x] **Step 4: 测试 + 类型**
 
 `MobileMultiSelectMoreSheet.test.ts` 追加：点击「左对齐」→ emit `align` 且 `alignMode==='left'`。
 Run: `cd apps/web && npx vitest run src/components/mobile/MobileMultiSelectMoreSheet.test.ts && npx vue-tsc --noEmit -p tsconfig.json`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add apps/web/src/components/mobile/MobileMultiSelectMoreSheet.vue apps/web/src/components/mobile/MobileMultiSelectMoreSheet.test.ts apps/web/src/pages/CanvasPage.vue
@@ -807,31 +807,74 @@ git commit -m "feat(web): 移动端更多 sheet 加 align 六向（复用 shared
 
 ---
 
+## 执行台账（2026-10-23 落地审计回填）
+
+**产出**：
+
+- PR #554 `feat(web): SP-B 画布对齐六向 + 等距分布 + 拖拽智能参考线` → squash `7471901a`
+  （web 与 pi-runtime 均已上线；agent 通道 `arrange_nodes(mode=align|distribute)` 生产可用）。
+- PR #557 `fix(web): SP-B R1 拖拽吸附平滑化` → squash `4d0d3376`
+  （用户真机反馈「不丝滑 / 被吸住 / 步阶太大」后的手感修复，规格 §14 R1 addendum）。
+
+**提交对应关系**：Task 1~10 在开发分支 `feat/sp-b-align-guides`（16 提交）内完成，随 #554 squash 合入 ⇒
+**逐 Task 的 commit 对应关系已随 squash 丢失**（SP-A 台账尚可逐条对应，本包不可）⇒ 归属以本文件
+Step 清单 + 规格 §2.1 六项范围为准；功能证据见规格 §15.2 审计表（代码级逐条）。
+
+### ⭐ 执行中发现并修正的 2 处（与 SP-A 台账体例一致）
+
+1. **shared `computeSnapGuides` 的两处真 bug**（SP-B 落地时即修，shared 提交 `2bd7da8d`）：
+   - `snapped` 的锚点贴线方向写反（`pos + dragOffset` 误写成减号）⇒ 非首要锚点配对被放到线的错误一侧；
+   - 「同一根线取更近拖拽锚点」的比较式带无条件 `|| keepPrev` ⇒ 更优配对被更差配对覆盖（节点被拉偏）。
+   两者均做「改回即红」变异验证。
+2. **R1 真机手感缺陷**（PR #557，规格 §14）：① 受控模式丢弃 vue-flow `dimensions` 变更 ⇒
+   媒体节点按 NODE_SIZES 方框兜底（16:9 视频真实 320×180 被估成 320×320，中心/底边差 70-140px）；
+   ② prev 参考线**无限粘滞**（`!keepPrev && dist > radius` 对 prev 不设距离上限，与规格
+   「超出 radius + hysteresis 才解除」相反）；③ 阈值是 flow 坐标、未按 `1/zoom` 换算 ⇒ 放大态步阶翻倍。
+   三条全修 + 5 项变异验证（释放带 / 切换余量 / dimensions 捕获 / zoom 换算 / sizeOf 注入）。
+
+### ⭐ 2026-10-23 落地审计（代码级逐条，基准 `origin/master` @ `7fc3672f`）
+
+- 规格 §2.1 六项范围 + 本文件 Task 1~10：**逐条有代码证据，全部落地**（证据表见规格 §15.2）。
+- 本计划点名的 8 个测试文件：7 个独立存在；**`MultiSelectToolbarOverlay.test.ts` 不存在** ⇒
+  Overlay（包装层）的触发断言并入 `MultiSelectToolbar.test.ts`（「整理布局」菜单含六向对齐 +
+  两轴等距、点击 emit 判别联合负载）⇒ 覆盖等价，无缺口。
+- **三处未闭合（均非功能缺失）**：
+  - **G1 真机走查清单 §1~§7 未确认**（对齐六向 / 等距分布 / 参考线基础行为 / 移动端一致 /
+    agent 自然语言触发 / SP-A 回归 / 生产复测；用户仅确认了 §8 的手感 7 条）
+    ⇒ 规格 §10 的「目视 + 生产复测」是 SP-B 验收标准，**验收未闭环**，待用户登录态执行
+    `docs/superpowers/2026-10-22-sp-b-align-guides-verify-checklist.md`。
+  - **G2 本台账此前未回填**（本节即补齐；SP-A 同类文档有完整台账 + 偏离记录，本包原先缺失）。
+  - **G3 规格 §6.1/§6.2 坐标口径表述与实现相反**（规格写「返回绝对位置」，实现返回局部坐标）
+    ⇒ 已订正为「以实现为准（局部坐标，父偏移已扣除）」，**不改实现**（局部更安全：调用方直接写
+    `node.position`，无需再反算父偏移）。
+
+---
+
 ## Task 11: 守卫 + 跨包全量验证
 
 **Files:** 无新增；跑既有守卫与构建
 
-- [ ] **Step 1: shared 全量**
+- [x] **Step 1: shared 全量**
 
 Run: `cd packages/shared && npx vitest run src/canvas/layout.test.ts`
 Expected: alignNodes + distributeNodes + computeSnapGuides 全绿
 
-- [ ] **Step 2: web 设计令牌守卫（AGENTS.md 铁律）**
+- [x] **Step 2: web 设计令牌守卫（AGENTS.md 铁律）**
 
 Run: `cd apps/web && npx vitest run src/styles/design-token.test.ts src/styles/theme-usage.test.ts`
 Expected: PASS（确认未新增 hex/rgba/text-white）
 
-- [ ] **Step 3: 根 build + 各包 tsc**
+- [x] **Step 3: 根 build + 各包 tsc**
 
 Run: `pnpm build`（根目录）+ `cd apps/web && npx vue-tsc --noEmit -p tsconfig.json`
 Expected: 六包全绿；tsc 无错
 
-- [ ] **Step 4: pi-runtime 契约测试**
+- [x] **Step 4: pi-runtime 契约测试**
 
 Run: `cd services/pi-runtime && npx node --test src/tools/arrange-nodes.test.ts`（+ 既有 tiering 测试）
 Expected: 全绿
 
-- [ ] **Step 5: 提交（若无改动则跳过）**
+- [x] **Step 5: 提交（若无改动则跳过）**
 
 仅当验证发现需修补时才提交；否则本任务为验证闸门。
 
