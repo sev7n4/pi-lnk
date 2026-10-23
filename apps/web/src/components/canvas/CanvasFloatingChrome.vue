@@ -47,7 +47,7 @@ useClickOutside(menuRef, closeMenu)
       <input
         :value="title"
         class="chrome-title-input w-[110px] truncate bg-transparent px-1 py-1 text-sm font-medium outline-none transition-all duration-200 focus:w-[200px]"
-        placeholder="未命名画布"
+        placeholder="未命名项目"
         @input="emit('update:title', ($event.target as HTMLInputElement).value)"
       >
       <div ref="menuRef" class="relative">

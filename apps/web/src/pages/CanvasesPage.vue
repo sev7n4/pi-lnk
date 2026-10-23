@@ -9,7 +9,8 @@ import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import type { Session } from '@lnkpi/shared'
 
 /**
- * 画布管理器（2026-10-21 P1 从 WorkflowPage 迁出）。
+ * 项目管理器（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
+ * 画布+对话=项目，本页即「我的项目」全量管理）。
  *
  * 主页只留 compact 区（5 个 + 「查看全部」→本页）；本页承接完整能力：
  * 全量列表 / 搜索 / 多选批删 / 重命名 / 复制 / 删除 / 新建。逻辑全在
@@ -29,7 +30,7 @@ async function createCanvas() {
     return
   }
   try {
-    const { data } = await sessionsApi.create({ title: '未命名画布' })
+    const { data } = await sessionsApi.create({})
     router.push({
       path: `/workflow/${data.data.id}`,
       query: { openAgent: '1' },
@@ -48,8 +49,8 @@ onMounted(() => {
   <div class="mx-auto max-w-7xl px-6 pb-20 pt-8">
     <div class="mb-6 flex flex-wrap items-center gap-3">
       <div class="mr-auto">
-        <h1 class="font-display text-2xl font-semibold text-fg">我的画布</h1>
-        <p class="mt-1 text-sm text-fg-3">搜索、整理、批量管理你的全部画布</p>
+        <h1 class="font-display text-2xl font-semibold text-fg">我的项目</h1>
+        <p class="mt-1 text-sm text-fg-3">搜索、整理、批量管理你的全部项目</p>
       </div>
       <RouterLink to="/workflow" class="btn-ghost text-sm">← 返回主页</RouterLink>
       <button
@@ -59,12 +60,12 @@ onMounted(() => {
         class="btn-primary text-sm"
         @click="createCanvas"
       >
-        新建画布
+        新建项目
       </button>
     </div>
 
     <div v-if="!auth.isLoggedIn" class="py-20 text-center">
-      <p class="mb-4 text-sm text-fg-3">登录后查看你的画布</p>
+      <p class="mb-4 text-sm text-fg-3">登录后查看你的项目</p>
       <button data-testid="canvases-login" type="button" class="btn-primary" @click="auth.openLogin()">
         登录
       </button>
@@ -82,7 +83,7 @@ onMounted(() => {
           :value="sessions.sessionSearch.value"
           type="search"
           class="input-field w-48 text-xs"
-          placeholder="搜索画布..."
+          placeholder="搜索项目..."
           @input="sessions.sessionSearch.value = ($event.target as HTMLInputElement).value"
         />
         <button
@@ -147,15 +148,15 @@ onMounted(() => {
         data-testid="canvases-empty-search"
         desc="换个关键词试试，或清空搜索条件"
       >
-        没有匹配的画布
+        没有匹配的项目
       </AppEmptyState>
 
       <AppEmptyState
         v-else
         data-testid="canvases-empty"
-        desc="创建第一张画布，开始创作"
+        desc="创建第一个项目，开始创作"
       >
-        还没有画布
+        还没有项目
         <template #action>
           <button
             v-if="auth.isLoggedIn"
@@ -164,7 +165,7 @@ onMounted(() => {
             class="btn-primary text-sm"
             @click="createCanvas"
           >
-            新建画布
+            新建项目
           </button>
         </template>
       </AppEmptyState>

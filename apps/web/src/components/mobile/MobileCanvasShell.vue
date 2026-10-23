@@ -18,7 +18,7 @@
  *
  * 本壳层自身只在 CanvasPage 的 `v-if="isMobileLayout"` 下渲染，内部不再判断断点。
  */
-import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { studioApi } from '@/services/studio-api'
 import type { GenerationRecord } from '@/services/studio-api'
@@ -46,8 +46,8 @@ export interface MobileShellAgentActions {
   openDrawer: () => void
   newChat: () => void
   openHistory: () => void
-  openPanel: () => void
-  openAssetLibrary: () => void
+  /** IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero（项目页回前门） */
+  goHome: () => void
 }
 
 export interface MobileShellBatchActions {
@@ -176,16 +176,6 @@ function onMobileTaskRetry(nodeId: string) {
   showMobileTaskSheet.value = false
 }
 
-/** 发现页「资料库」= 画布资产库：切回对话页签（props.onTabChange）后展开 Agent 面板 */
-async function onDiscoverGotoCanvas() {
-  props.onTabChange('chat')
-  // 资产库选择器挂在 composer 面板内 ⇒ 须等面板随页签切换重渲染后再展开。
-  // 漏掉这一步 nextTick 会让 openAssetLibrary 打在旧树上（静默失效，不报错）。
-  await nextTick()
-  props.agentActions.openPanel()
-  props.agentActions.openAssetLibrary()
-}
-
 /** 任务轮询（顶栏 ⋯ 动态项徽标）：进入画布页签启动、离开停止 */
 const TASK_ACTIVE_STATUSES = new Set([
   'pending',
@@ -259,6 +249,7 @@ onUnmounted(() => stopMobileTaskPolling())
     @open-drawer="agentActions.openDrawer"
     @new-chat="agentActions.newChat"
     @open-history="agentActions.openHistory"
+    @go-home="agentActions.goHome"
     @publish="onPublish"
     @import-workflow="onImportWorkflow"
     @export-workflow="onExportPack([], 'full_package')"
@@ -273,7 +264,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :failed="saveFailed"
     @save="onSave"
   />
-  <DiscoverPane v-if="mobileAppTab === 'discover'" @goto-canvas="onDiscoverGotoCanvas" />
+  <DiscoverPane v-if="mobileAppTab === 'discover'" />
   <ProfilePane
     v-if="mobileAppTab === 'mine'"
     @open-membership="openMembership"

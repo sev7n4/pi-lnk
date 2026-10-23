@@ -291,7 +291,7 @@ const {
   selectedNodeId,
   selectedNode,
 } = useSelectedNodeEditor(nodes)
-const sessionTitle = ref('未命名画布')
+const sessionTitle = ref('未命名项目')
 const sessionOwnerId = ref<string | null>(null)
 const agentReadOnly = computed(
   () => !!auth.user?.id && !!sessionOwnerId.value && auth.user.id !== sessionOwnerId.value,
@@ -4941,8 +4941,9 @@ const agentRailActions: MobileShellAgentActions = {
   openDrawer: () => agentRailRef.value?.openSessionDrawer(),
   newChat: () => agentRailRef.value?.newAgentSession(),
   openHistory: () => agentRailRef.value?.openThreadHistory(),
-  openPanel: () => agentRailRef.value?.openPanel(),
-  openAssetLibrary: () => agentRailRef.value?.openAssetLibrary(),
+  // IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero。移动端全链路的前门，
+  // 壳层长在本页内 ⇒ 这是项目页回 hero 唯一常驻路（登录/登出重登也过 hero）。
+  goHome: () => void router.push('/workflow'),
 }
 const mobileBatchActions: MobileShellBatchActions = {
   done: exitMultiSelectMode,

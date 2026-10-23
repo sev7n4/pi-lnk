@@ -19,30 +19,53 @@ const router = useRouter()
 const auth = useAuthStore()
 useSessionRedirect()
 
-/** IA v3.1（2026-10-19 用户裁决）：移动端初始化入口 =【对话】页 + 默认项目。
- *  移动端访问主站 /workflow：有项目 → 整页进最近项目（list 按 updatedAt desc）；
- *  无项目 → 静默新建默认空白项目再进入（1 画布，CanvasPage 挂载后 bootstrapThread
- *  自动建首个对话）。未登录/网络失败留在主站不打断。 */
+/** IA v4（2026-10-23 用户裁决）：移动端入口 = hero（品牌）优先、最近项目（效率）其次。
+ *  已登录回访：有项目 → 整页进最近项目（list 按 updatedAt desc）；
+ *  未登录 / 登录后 / 登出重登 / 已登录但无项目：留在 hero——品牌叙事 + 锚是唯一
+ *  创作入口（点按即新建项目）。IA v3.1 的「无项目静默新建」分支已撤：项目是用户
+ *  意图，不是入口的副作用（静默建出来的空项目进列表还得兜底编号）。
+ *  ⚠️ 一次性分发语义：本标签页会话内只跳一次——首次进 /workflow 跳最近项目后，
+ *  顶栏字标/回退再进 /workflow 落在 hero（否则「回 hero」按钮会被立刻弹走）。
+ *  登录态对话内完成（openLogin 是模态，不换页）⇒ 登录后用户本就在 hero 上。
+ *  持久化走 sessionStorage（新开标签页重新分发、刷新不重跳）；隐私模式等写入
+ *  失败时静默降级为模块级一次性（同一语义的窄化版）。 */
+const MOBILE_ENTRY_KEY = 'lnk.mobileEntry.dispatched'
+let mobileEntryDispatchedFallback = false
+
+function mobileEntryDispatched(): boolean {
+  try {
+    return sessionStorage.getItem(MOBILE_ENTRY_KEY) === '1'
+  } catch {
+    // 隐私模式等读取失败：回落模块级一次性（同一语义的窄化版）
+    return mobileEntryDispatchedFallback
+  }
+}
+
+function markMobileEntryDispatched(): void {
+  try {
+    sessionStorage.setItem(MOBILE_ENTRY_KEY, '1')
+  } catch {
+    // 隐私模式等写入失败：仅本次页面生命周期内不重复分发，功能不坏
+    mobileEntryDispatchedFallback = true
+  }
+}
+
 const { isMobileLayout } = useAgentMobileLayout()
-let mobileEntryDispatched = false
 watch(
   isMobileLayout,
   (mobile) => {
-    if (!mobile || mobileEntryDispatched) return
-    mobileEntryDispatched = true
+    if (!mobile || mobileEntryDispatched()) return
+    markMobileEntryDispatched()
     void (async () => {
       try {
         const res = await canvasApi.list()
         const list = (res.data?.data ?? []) as Array<{ id: string }>
         if (list.length) {
           window.location.assign(`/workflow/${list[0].id}`)
-          return
         }
-        const created = await canvasApi.create()
-        const createdId = (created.data?.data as { id?: string } | undefined)?.id
-        if (createdId) window.location.assign(`/workflow/${createdId}`)
+        // 无项目 ⇒ 留 hero（IA v4：不再静默新建）
       } catch {
-        /* 留在主站 */
+        /* 未登录/网络失败：留在主站 hero */
       }
     })()
   },
@@ -128,7 +151,7 @@ async function createCanvas() {
   }
   try {
     const { data } = await sessionsApi.create({
-      title: prompt.value || '未命名画布',
+      ...(prompt.value.trim() ? { title: prompt.value.trim() } : {}),
     })
     router.push({
       path: `/workflow/${data.data.id}`,
@@ -197,20 +220,39 @@ watch(
 <template>
   <div>
     <!-- 2026-10-22 用户裁定「霸屏铺满」：hero 是全宽首屏（不再龟缩在 max-w-7xl 卡片里），
-         滚动后才是我的画布 / 社区精选——同一个页面，不是两个页面 -->
+         滚动后才是我的项目 / 社区精选——同一个页面，不是两个页面 -->
     <SignatureHero v-model="prompt" @create="createCanvas" />
 
     <div class="mx-auto max-w-7xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8">
-      <!-- 我的画布：compact 区（2026-10-21 P1 迁出管理器，完整能力见 /canvases） -->
+      <!-- 我的项目：compact 区（2026-10-21 P1 迁出管理器，完整能力见 /canvases）。
+           IA v4（2026-10-23）：画布+对话=项目，与移动端作品带首卡同族补【新建项目】卡。 -->
     <section v-if="auth.isLoggedIn" class="mb-12">
       <div class="mb-4 flex items-center justify-between gap-3">
-        <h2 class="text-lg font-semibold text-fg">我的画布</h2>
+        <h2 class="text-lg font-semibold text-fg">我的项目</h2>
         <div class="flex items-center gap-2">
           <button class="btn-ghost text-sm" @click="openPublish">发布作品</button>
           <RouterLink to="/canvases" class="btn-ghost text-sm">查看全部 →</RouterLink>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <!-- 新建项目卡（IA v4 2026-10-23）：与移动端作品带首卡同族——虚线框 +
+             圆盘加号 + label；卡槽尺寸对齐 SessionCard（aspect-[4/3]），
+             视觉语言与移动端 tile 一致（一把完成：两端同一语义）。 -->
+        <button
+          data-testid="workflow-create-project"
+          type="button"
+          class="group flex aspect-[4/3] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-line-subtle transition hover:bg-hover"
+          @click="createCanvas"
+        >
+          <span
+            class="flex h-10 w-10 items-center justify-center rounded-full bg-accent-subtle text-fg-accent transition group-hover:scale-105"
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" aria-hidden="true">
+              <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+            </svg>
+          </span>
+          <span class="text-sm text-fg-3 transition group-hover:text-fg">新建项目</span>
+        </button>
         <SessionCard
           v-for="session in sessions.visibleSessions(COMPACT_SESSIONS_COUNT)"
           :key="session.id"
@@ -224,7 +266,7 @@ watch(
         v-if="!sessions.mySessions.value.length && !sessions.loading.value"
         class="py-8 text-center text-sm text-fg-3"
       >
-        还没有画布，去创建一个吧
+        还没有项目，去创建一个吧
       </p>
     </section>
 

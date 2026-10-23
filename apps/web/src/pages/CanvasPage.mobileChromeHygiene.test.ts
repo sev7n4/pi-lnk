@@ -92,7 +92,7 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     expect(topBarCode).not.toContain('pointsText')
     // 有效性配对：顶栏仍有真实入口（对话页新建卡 / 画布页 ⋯ 菜单）
     expect(topBarCode).toContain('create-card--bar')
-    expect(topBarCode).toContain('画布管理菜单')
+    expect(topBarCode).toContain('项目管理菜单')
   })
 
   it('⋯ 菜单按频次重排 + 导出二级（完整包 / 轻量包）', () => {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SignatureHero from './SignatureHero.vue'
 import CreativeLauncher from './CreativeLauncher.vue'
+import MobileTriptychRow from '@/components/mobile/MobileTriptychRow.vue'
 
 // ⚠️ jsdom 环境下 `fileURLToPath()` 必须收字符串：全局 URL 是 jsdom 的实现，
 // 把 URL **对象**传给 Node 的 fileURLToPath 会报 "The URL must be of scheme file"。
@@ -182,6 +183,22 @@ describe('SignatureHero', () => {
     // 「对话」（输入框）与「锚」必须在同一舞台容器内——空间即故事
     expect(stage.findComponent(CreativeLauncher).exists()).toBe(true)
     expect(stage.find('[data-testid="ink-anchor"]').exists()).toBe(true)
+  })
+
+  it('IA v4：移动端补三联叙事行（对话 → 锚 → 画布），签名面令牌 + 桌面隐藏', () => {
+    const wrapper = mountHero()
+    const row = wrapper.findComponent(MobileTriptychRow)
+    expect(row.exists(), '窄屏 stage 竖排后「对话/画布」标签消失 ⇒ 必须补 legend 行').toBe(true)
+    // 桌面三联由 stage 三列承担，legend 行只服务窄屏
+    expect(row.classes()).toContain('lg:hidden')
+    // 签名面必须走 on-signature 家族（tone prop 由 hero 显式给定）
+    expect(row.props('tone')).toBe('signature')
+    // 装饰叙事：不新增按钮（上方「锚是唯一动作入口」锁的是全 hero 维度，这里补组件维度）
+    expect(row.findAll('button')).toHaveLength(0)
+    // 读序在 hero 文本里成立：slogan 之后、stage 之前
+    const html = wrapper.html()
+    expect(html.indexOf('triptych-row')).toBeGreaterThan(html.indexOf('lnk-hero-lockup'))
+    expect(html.indexOf('triptych-row')).toBeLessThan(html.indexOf('lnk-stage'))
   })
 
   it('墨点动效：三颗墨点在锚上落域内，且受 reduced-motion 守卫', () => {

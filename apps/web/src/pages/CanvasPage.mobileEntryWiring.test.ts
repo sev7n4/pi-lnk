@@ -88,19 +88,29 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
     expect(shell).toContain('studioApi.listGenerations({ sessionId: props.sessionId })')
   })
 
-  it('发现页「资料库」：切页签后须等 nextTick 再展开资产库（选择器挂在 composer 面板内）', () => {
-    // 资产库选择器挂在 composer 面板内 ⇒ 面板随页签切换重渲染后才可展开。
-    // 漏掉 nextTick 会让 openAssetLibrary 打在旧树上（静默失效，不报错）。
-    const handler = stripComments(
-      shell.match(/async function onDiscoverGotoCanvas[\s\S]*?\n}/)?.[0] ?? '',
+  it('IA v4：发现页不再有「资料库」行，资产库改由画布页 composer 附件卡直达', () => {
+    // 2026-10-23 IA v4：发现页签改承载社区/分享（DiscoverPane 社区化），
+    // 「资料库」跨页签入口随之撤除——资产库在画布页本身可达（composer ＋ 菜单
+    // 的「资产库」瓦片，移动端同一张卡，无 isMobileLayout 分支）。
+    const pane = stripComments(read('../components/mobile/DiscoverPane.vue'))
+    expect(pane, '资料库行已撤（社区流才是发现页主叙事）').not.toContain('资料库')
+    expect(pane, '不再有跨页签跳转 emit').not.toContain('goto-canvas')
+    // 有效性配对：资产库入口确实还在画布页（防「撤入口」变成「没人能打开资产库」）
+    const rail = read('../components/agent/AgentSideRail.vue')
+    expect(rail, 'composer 附件卡「资产库」瓦片必须在位').toContain('资产库')
+    expect(rail, '瓦片点击仍直开资产库选择器').toContain('@click="pickAssetLibrary"')
+    // 死代码链一并退役：壳层不再有 onDiscoverGotoCanvas / nextTick 编排
+    expect(stripComments(shell), '壳层不得残留 onDiscoverGotoCanvas').not.toContain(
+      'onDiscoverGotoCanvas',
     )
-    expect(handler, '壳层必须提供 onDiscoverGotoCanvas').toContain('await nextTick()')
-    const tickAt = handler.indexOf('await nextTick()')
-    const openAt = handler.indexOf('props.agentActions.openAssetLibrary')
-    expect(tickAt, '必须先 await nextTick').toBeGreaterThan(-1)
-    expect(openAt, '展开资产库必须排在 nextTick 之后').toBeGreaterThan(tickAt)
-    // 有效性配对：确实调到了 openAssetLibrary（防 indexOf=-1 假绿）
-    expect(openAt).toBeGreaterThan(-1)
+    expect(shell, 'DiscoverPane 不再接 @goto-canvas').not.toContain('@goto-canvas')
+    // 契约里的 openAssetLibrary 条目同步撤除（否则接口声明了一个无人调用的动作）
+    expect(stripComments(shell), 'MobileShellAgentActions 不得残留 openAssetLibrary').not.toContain(
+      'openAssetLibrary',
+    )
+    expect(stripComments(page), 'CanvasPage 侧 agentActions 不得残留 openAssetLibrary').not.toContain(
+      'openAssetLibrary',
+    )
   })
 
   it('空态引导：画布页签 + 空 nodes 才显示', () => {

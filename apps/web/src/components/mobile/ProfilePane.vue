@@ -4,6 +4,7 @@
  * （点击展开二级卡片：外观 + 模型配置，后续二级项在此追加）/ 进入官方 / 退出登录。
  * 砍：成长计划、券码、下载电脑版、关注服务号（本项目不存在）。 */
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
+const router = useRouter()
 
 const nickname = computed(() => auth.user?.nickname || '未登录')
 
@@ -45,6 +47,18 @@ function openOfficialSite() {
     return
   }
   window.open(OFFICIAL_SITE_URL, '_blank', 'noopener,noreferrer')
+}
+
+/**
+ * 退出登录（IA v4 M12，2026-10-23 用户裁定「退出后登录跳转要过移动端 hero，加深品牌印象」）：
+ * 登出后回 /workflow（工作台 hero）。此时已登录态不成立 ⇒ 移动端入口分发的
+ * `canvasApi.list()` 必 401 ⇒ 必然**留在 hero** 而不会被弹进最近项目；
+ * hero 的锚（唯一创作入口）再触发登录弹窗 ⇒ 登出→重登全程过 hero。
+ * ⛔ 不得只调 auth.logout()：那会把用户留在项目页/我的页这类无品牌语境的壳层里。
+ */
+function onLogout() {
+  auth.logout()
+  void router.push('/workflow')
 }
 </script>
 
@@ -154,7 +168,7 @@ function openOfficialSite() {
       v-if="auth.isLoggedIn"
       type="button"
       class="logout-btn"
-      @click="auth.logout()"
+      @click="onLogout"
     >
       退出登录
     </button>
