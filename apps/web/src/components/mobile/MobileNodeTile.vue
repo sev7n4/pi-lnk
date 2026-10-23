@@ -4,6 +4,7 @@ import { useLongPress } from '@/composables/useLongPress'
 import {
   MOBILE_NODE_ACTION_REQUEST_KEY,
   CANVAS_NODE_CLICK_GUARD_KEY,
+  CANVAS_MULTI_SELECT_ACTIVE_KEY,
   type MobileNodeActionRequestFn,
   type CanvasNodeClickGuard,
 } from '@/composables/canvasNodeActions'
@@ -11,6 +12,7 @@ import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
 import { resolveMobileNodeState } from '@/composables/mobileNodeState'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
+import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import {
   resolveImageNodeDisplaySize,
   resolveVideoNodeDisplaySize,
@@ -28,8 +30,26 @@ const props = defineProps<{
     content?: string
     status?: string
     generationStartedAt?: string
+    /** 提议的提示词（propose 建节点时写入 data.prompt）——R4-T1 起在瓦片上直接可见 */
+    prompt?: string
+    /** 提议的上下文标签 */
+    label?: string
+    /** 模型 / 比例 / 分辨率（按模态各一） */
+    imageModel?: string
+    videoModel?: string
+    textModel?: string
+    audioModel?: string
+    imageAspect?: string
+    imageResolution?: string
+    videoSettings?: unknown
   }
   status?: string
+  /**
+   * R4-T4：节点是否被选中（vue-flow 的 node 对象字段，经 `NodeRenderer` 的
+   * `v-bind="attrs"` 落到这里）。声明成 prop 才能拿到布尔语义——否则它只是一个
+   * DOM attribute。多选勾选徽标依赖它。
+   */
+  selected?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -107,6 +127,38 @@ function onRetryClick(e: Event) {
 }
 
 /**
+ * R4-T1：提议内容的参数摘要（模型 · 比例 · 分辨率）。
+ *
+ * ⭐ 为什么移动端要有这一行：PC 靠常驻的参数面板承载这些参数
+ *   （`NodePendingPrompt` 注释明说「比例 / 分辨率 / 张数等参数由 dock 的设置面板承载，
+ *   不在此重复」）；**移动端没有常驻 dock**（R1 已删）⇒ 参数在移动端别处不可见 ⇒
+ *   在瓦片上补一行摘要，用户不点开任何东西就知道 agent 想用什么参数生成。
+ *
+ * 只取**实际有值**的项（缺省模型不猜、不显示占位）。
+ */
+const proposeParams = computed(() => {
+  const d = (props.data ?? {}) as Record<string, unknown>
+  const model = d.imageModel ?? d.videoModel ?? d.textModel ?? d.audioModel
+  const parts: string[] = []
+  if (typeof model === 'string' && model.trim()) parts.push(model.trim())
+  if (typeof d.imageAspect === 'string' && d.imageAspect.trim()) parts.push(d.imageAspect.trim())
+  if (typeof d.imageResolution === 'string' && d.imageResolution.trim()) parts.push(d.imageResolution.trim())
+  return parts.join(' · ')
+})
+
+/**
+ * 是否有提议内容可显示。
+ *
+ * ⭐ 判据与 PC 的 `NodePendingPrompt` 同源（status === pending_confirm 且提示词非空），
+ *   但**移动端多一条**：待确认时磁贴角标让位给提议卡自带 chip
+ *   （避免「角标：待确认 + chip：待确认」两处重复标识）。
+ */
+const showPropose = computed(() => {
+  if (state.value !== 'pending') return false
+  return String(props.data?.prompt ?? '').trim().length > 0
+})
+
+/**
  * 磁贴外框：与桌面包络同源（图 280 / 视频 320，见 mediaNodeDisplaySize）；
  * 文本 / 音频走 NODE_SIZES 同值（280×160 / 280×140）。
  * ⭐ 为什么磁贴必须自带确定尺寸：addNode 不写 style/dimensions ⇒ vue-flow 按内容测量，
@@ -133,6 +185,18 @@ const tileStyle = computed(() => ({
  * 与音频波纹、文本「空文本」并列，让空节点自解释类型。
  */
 const placeholderLabel = computed(() => (props.type === 'video' ? '视频' : '图片'))
+
+/**
+ * R4-T4：多选勾选徽标。
+ *
+ * ⭐ 断链修复：PC 的勾选徽标是 `.neo-node-multi-badge`（`NeoBaseNode.vue:175`），
+ *   其 CSS 选择器绑定 `.neo-node`（`neo-node.css:428`）⇒ **移动端磁贴（`.mobile-node-tile`）
+ *   永远命中不到** ⇒ 移动端进入多选后用户看不出哪些节点被选中（只有底部计数）。
+ *   判据复用 PC 同一注入键 `CANVAS_MULTI_SELECT_ACTIVE_KEY` + 节点 `selected`，
+ *   但**用磁贴自有类名**（不改 PC 的 `.neo-node*` 样式 ⇒ PC 零 diff）。
+ */
+const multiSelectActive = inject(CANVAS_MULTI_SELECT_ACTIVE_KEY, ref(false))
+const isMultiSelected = computed(() => multiSelectActive.value && props.selected === true)
 
 const mobileActionRequest = inject<MobileNodeActionRequestFn>(MOBILE_NODE_ACTION_REQUEST_KEY, () => {})
 const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
@@ -219,6 +283,24 @@ function handleTextTap() {
       <span class="mobile-node-generating-label">生成中</span>
       <span class="mobile-node-elapsed">{{ elapsedText }}</span>
     </div>
+    <!--
+      R4-T1：提议内容直接长在瓦片上（D1）。
+      ⭐ 用户的设计意图：「提示词直接在节点瓦片上，省去了点击的二次动作」。
+      复用 PC 的 `NodePendingPrompt`（零新判据——它内部已判 pending_confirm + 提示词非空）；
+      提议的 prompt/模型/比例本就早于 propose 写进了 node.data，只是移动端一直没渲染。
+      下方补一行移动端特有的参数摘要（移动端无常驻 dock）。
+    -->
+    <div v-else-if="showPropose" class="mobile-node-propose">
+      <NodePendingPrompt
+        :prompt="data?.prompt"
+        :label="data?.label"
+        :status="data?.status"
+        hide-hint
+      />
+      <p v-if="proposeParams" class="mobile-node-params" data-testid="mobile-node-params">
+        {{ proposeParams }}
+      </p>
+    </div>
     <img
       v-else-if="type === 'image' && data?.url"
       :src="data.url"
@@ -273,7 +355,18 @@ function handleTextTap() {
       <span class="mobile-node-placeholder-label">{{ placeholderLabel }}</span>
     </div>
 
-    <span v-if="badge" class="mobile-node-badge" :data-tone="badge.tone">{{ badge.label }}</span>
+    <!--
+      状态角标（R3-T2）。⚠️ pending 态让位给提议卡自带的「待确认」chip
+      （R4-T1）：否则同一节点上会出现「角标：待确认 + chip：待确认」两处重复标识。
+    -->
+    <span v-if="badge && !showPropose" class="mobile-node-badge" :data-tone="badge.tone">{{ badge.label }}</span>
+
+    <!-- R4-T4：多选勾选徽标（PC 的 `.neo-node-multi-badge` 选择器绑定 `.neo-node`，移动端命中不到） -->
+    <span v-if="isMultiSelected" class="mobile-node-multi-badge" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4">
+        <path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </span>
 
     <!--
       R3-T3 失败态重试入口（D-C error 行：红边 + 「重试」入口）。
@@ -457,6 +550,59 @@ function handleTextTap() {
   word-break: break-word;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+
+/* R4-T1：提议内容容器（提示词卡 + 参数摘要）
+   —— 提议内容直接长在瓦片上，用户不点开任何东西就能读到 agent 想生成什么。 */
+.mobile-node-propose {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--lnk-space-2);
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: var(--lnk-space-2);
+}
+
+/* 参数摘要：模型 · 比例 · 分辨率（移动端特有——PC 靠常驻参数面板承载） */
+.mobile-node-params {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 移动端磁贴比 PC 节点小 ⇒ 提示词正文截断更短（PC 5 行，移动端 3 行）。
+   （hint 那行由 `NodePendingPrompt` 的 `hide-hint` prop 关掉，不靠 CSS 藏。） */
+.mobile-node-propose :deep(.node-pending-prompt-text) {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* R4-T4：多选勾选徽标（磁贴自有类名，不复用 PC 的 `.neo-node-multi-badge`——那个绑定 `.neo-node`） */
+.mobile-node-multi-badge {
+  position: absolute;
+  top: var(--lnk-space-2);
+  right: var(--lnk-space-2);
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-accent);
+  color: var(--lnk-accent-on-signature);
+  pointer-events: none;
+}
+
+.mobile-node-multi-badge svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* 状态角标：绝对定位浮于媒体之上，不挤占内容布局 */
