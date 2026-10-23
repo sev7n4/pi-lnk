@@ -261,3 +261,55 @@ describe('MultiSelectToolbar: 缺提示词态', () => {
     expect(wrapper.find('[data-testid="selection-batch-generate"]').exists()).toBe(true)
   })
 })
+
+// 2026-10-23 IA 重排：10 个平级动作 → 两组（重排 / 规整）+ 紧凑网格。
+// 起因：10 行竖排在下缘会被裁掉（用户实测「菜单太长被遮挡」）。
+describe('MultiSelectToolbar：整理布局分组下拉（IA 重排）', () => {
+  const props = {
+    selectedIds: ['a', 'b', 'c'],
+    screenPosition: { x: 100, y: 80 },
+  }
+
+  it('下拉按「重排 / 规整」分组，10 项一个不少（分组只改信息架构，不改能力集）', async () => {
+    const wrapper = mount(MultiSelectToolbar, { props })
+    const trigger = wrapper.findAll('button').find((b) => b.attributes('aria-label') === '整理布局')!
+    await trigger!.trigger('click')
+
+    const menu = wrapper.find('[data-testid="layout-menu-groups"]')
+    expect(menu.exists(), '整理布局下拉应有分组容器').toBe(true)
+    expect(menu.text(), '应有「重排」分组标题').toContain('重排')
+    expect(menu.text(), '应有「规整」分组标题').toContain('规整')
+
+    for (const id of [
+      'layout-along',
+      'layout-grid',
+      'layout-align-left',
+      'layout-align-centerH',
+      'layout-align-right',
+      'layout-align-top',
+      'layout-align-centerV',
+      'layout-align-bottom',
+      'layout-distribute-x',
+      'layout-distribute-y',
+    ]) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists(), `下拉应有 ${id}`).toBe(true)
+    }
+
+    // ⛔ 六向不得落在「重排」之后的首位（分组错位 = 语义误导）：紧跟「规整」标题之后
+    const labels = Array.from(menu.findAll('.export-menu__label')).map((el) => el.text())
+    expect(labels).toEqual(['重排', '规整'])
+
+    wrapper.unmount()
+  })
+
+  it('分组后点击行为不变：emit align 判别联合 + 菜单关闭', async () => {
+    const wrapper = mount(MultiSelectToolbar, { props })
+    const trigger = wrapper.findAll('button').find((b) => b.attributes('aria-label') === '整理布局')!
+    await trigger!.trigger('click')
+    const bottom = wrapper.find('[data-testid="layout-align-bottom"]')
+    await bottom.trigger('click')
+    expect(wrapper.emitted('align')).toEqual([[{ kind: 'align', alignMode: 'bottom' }]])
+    expect(wrapper.find('[data-testid="layout-menu-groups"]').exists(), '点击后菜单应关闭').toBe(false)
+    wrapper.unmount()
+  })
+})
