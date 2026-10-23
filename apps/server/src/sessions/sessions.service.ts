@@ -15,7 +15,7 @@ export class SessionsService {
     const session = await this.prisma.session.create({
       data: {
         userId,
-        title: title || '未命名画布',
+        title: title || '未命名项目',
       },
     })
 
@@ -120,7 +120,7 @@ export class SessionsService {
     const session = await this.prisma.session.create({
       data: {
         userId,
-        title: `${src.title || '未命名画布'} 副本`,
+        title: `${src.title || '未命名项目'} 副本`,
         canvasData: src.canvasData,
       },
     })

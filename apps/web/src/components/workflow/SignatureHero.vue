@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import CreativeLauncher from './CreativeLauncher.vue'
+import MobileTriptychRow from '@/components/mobile/MobileTriptychRow.vue'
 import {
   BRAND_LOGO_URL,
   BRAND_SLOGAN_LEAD,
@@ -96,6 +97,18 @@ function onAnchorClick() {
           <template v-for="(seg, i) in sloganSegments" :key="i"><span v-if="seg.accent" class="lnk-slogan-accent">{{ seg.text }}</span><span v-else-if="seg.mascot" class="lnk-slogan-mascot"><span class="lnk-slogan-mascot-gap" aria-hidden="true"></span>{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>
         </h1>
       </div>
+
+      <!-- 移动端三联叙事行（IA v4，2026-10-23 用户裁定「窄屏也要讲三联」）：
+           桌面三联由 stage 三列承担（「对话 / 画布」标签 hidden lg:block），
+           移动端竖排后两个标签整体消失 ⇒ 叙事断档、只剩锚一个意象。
+           这里用一行紧凑图标 legend 补回读序：对话 → 锚 → 画布。
+           ⚠️ 行内中锚是**装饰叙事**（span 非 button）——真创作入口是下方
+           168px 落款印章，两个入口会打架。
+           ⛔ 签名面只用 on-signature 家族令牌；随主题翻转的面板文字/强调色
+           压恒深签名底会静默降对比度（「颜色放反」事故家族，见组件注释）。
+           ⚠️ 本注释里禁写具体令牌名：SignatureHero.test.ts 断言 hero 渲染
+           产物不出现面板文字令牌字样，注释会被 wrapper.html() 序列化出来。 -->
+      <MobileTriptychRow class="mt-6 lg:hidden" tone="signature" />
 
       <!-- 叙事舞台（2026-10-22 用户裁定「空间即故事」）：输入框进三联左侧——它本来
            就是「对话」，从此不再坐在叙事位 200px 开外。左「说」→ 中「锚」→ 右「落」，

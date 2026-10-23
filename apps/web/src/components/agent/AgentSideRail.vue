@@ -110,7 +110,6 @@ import {
   getAgentSkill,
 } from '@/constants/agentSkillMap'
 import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
-import { BRAND_LOGO_URL } from '@/constants/brand'
 import {
   buildDraftFromUtterance,
   pickUtteranceContext,
@@ -1794,7 +1793,7 @@ function newAgentSession() {
   recoveredPhaseHint.value = null
   agentThreadId.value = createAgentThreadId(props.sessionId)
   persistActiveThreadId(props.sessionId, agentThreadId.value)
-  ElMessage.info('已新建对话')
+  ElMessage.info('已开始新对话')
   // 新会话：列表清空，跟随状态一并复位（否则会卡在「回看历史」态）
   followLatest.value = true
   hasNewBelow.value = false
@@ -2523,17 +2522,6 @@ function fillFromUtterance(u: string) {
   nextTick(() => composerRef.value?.focus())
 }
 
-/**
- * 移动端三联：点锚 = **进入输入态**（2026-10-22 用户裁定「暂设为可点」）。
- * ⛔ 只聚焦、**不提交**：发送意图必须由用户显式表达（与 fillFromUtterance 同款聚焦
- * 模式），提交仍归 composer 发送键——否则同一屏出现两个「开始创作」入口，
- * 用户点锚却没发出去会以为坏了。
- */
-function focusComposerFromTriptych() {
-  if (props.readOnly || agent.isStreaming) return
-  nextTick(() => composerRef.value?.focus())
-}
-
 async function startNewTask() {
   if (agent.isStreaming || isUploading.value) return
   await sendMessage('__new_task__')
@@ -2549,7 +2537,8 @@ async function createOwnCanvas() {
     return
   }
   try {
-    const { data } = await sessionsApi.create({ title: '我的画布' })
+    // IA v4（2026-10-23）：不传 title ⇒ 后端默认「未命名项目」（list 兜底编号）
+    const { data } = await sessionsApi.create({})
     void router.push(`/workflow/${data.data.id}`)
   } catch {
     goToWorkflowHome()
@@ -2616,7 +2605,7 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
     sidebar.clear()
     agent.startAssistantMessage()
     agent.appendText(
-      '⚠️ 此画布不属于当前账号，无法写入。请返回工作台新建画布，或使用画布所有者账号登录。',
+      '⚠️ 此画布不属于当前账号，无法写入。请返回工作台新建项目，或使用画布所有者账号登录。',
     )
     agent.finishStreaming()
     await nextTick()
@@ -2767,14 +2756,14 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
         // ⚠️ 用词刻意**不写**「生成服务不可达」：那断言的是不可达（需真实健康探测佐证），
         // 这里只证实了「连接中断且没收到内容」。把未证实的事说成事实会误导排查。
         agent.appendTurnNotice(
-          '\n\n⚠️ 本轮连接中断，没有收到任何回复内容。可点「重试」；若仍无响应，点「新建对话」后重发。',
+          '\n\n⚠️ 本轮连接中断，没有收到任何回复内容。可点「重试」；若仍无响应，点「新对话」后重发。',
         )
       }
     }
 
     const last = agent.messages[agent.messages.length - 1]
     if (!runCancelled.value && last?.role === 'assistant' && !last.content.trim()) {
-      agent.appendText('（本轮无文本回复。若还需确认，可再发「确认」；或点「新建对话」后重试。）')
+      agent.appendText('（本轮无文本回复。若还需确认，可再发「确认」；或点「新对话」后重试。）')
     }
     agent.finishStreaming()
     await reconcileLatestAssistant()
@@ -3797,8 +3786,6 @@ defineExpose({
   newAgentSession,
   openThreadHistory,
   closeThreadHistory,
-  /** IA v3.1：发现页「资料库」直通——切回对话页签后由宿主调用，打开资产库选择器 */
-  openAssetLibrary: pickAssetLibrary,
   openPanel,
   closePanel,
   setComposerInput,
@@ -4086,13 +4073,13 @@ defineExpose({
             class="agent-readonly-banner mx-3 mt-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2.5 text-[11px] leading-relaxed text-warning"
           >
             <p>此画布属于其他账号，Agent 无法写入节点。</p>
-            <p class="mt-1 opacity-80">请新建自己的画布，或使用画布所有者账号登录。</p>
+            <p class="mt-1 opacity-80">请新建自己的项目，或使用画布所有者账号登录。</p>
             <div class="mt-2.5 flex flex-wrap gap-2">
               <button type="button" class="agent-readonly-btn" @click="goToWorkflowHome">
                 返回工作台
               </button>
               <button type="button" class="agent-readonly-btn agent-readonly-btn-primary" @click="createOwnCanvas">
-                新建画布
+                新建项目
               </button>
             </div>
           </div>
@@ -4112,13 +4099,16 @@ defineExpose({
             <!-- A3 · 回访作品带（移动端）：「画布记得你的模样」= 最近作品条。
                  ⚠️ 位置在**空态块之前**（不是塞进空态块里）：空态判据是
                  `!agent.messages.length`，而移动端进项目即 loadHistory ⇒ 有历史时
-                 空态不渲染 ⇒ 塞进去等于「上线后没人看得见」（实测：移动端 `/workflow`
-                 → location.assign 跳最近项目 → 拉历史）。
-                 在滚动流内 ⇒ 随消息流上推，不常驻吸顶（设计规范 §3.2 简洁三原则）。 -->
+                 空态不渲染 ⇒ 塞进去等于「上线后没人看得见」。
+                 在滚动流内 ⇒ 随消息流上推，不常驻吸顶（设计规范 §3.2 简洁三原则）。
+                 IA v4（2026-10-23）：首卡【新建项目】复用抽屉 newProject（同一行为），
+                 「全部 N 个 ›」开抽屉项目区（全量列表 + 重命名/删除，零新页面）。 -->
             <MobileRecentWorksStrip
               v-if="isMobileLayout"
               :works="recentWorks"
               @open="handleRecentWorkOpen"
+              @create="newProject"
+              @open-all="openSessionDrawer"
             />
             <div v-if="showProductVisualEmptyState" class="agent-empty agent-pv-empty px-3 py-10 text-center">
               <p class="text-sm">描述你的产品视觉需求</p>
@@ -4140,50 +4130,10 @@ defineExpose({
             <!-- P1-1：通用首屏 —— persona 压成一行轻量文案（P1-1.3），视觉重心让给
                  4 条按画布相选取的样例 chips（P1-1.1）；点击 chips 只填充输入框（P1-1.2）。 -->
             <div v-else-if="!agent.messages.length" class="agent-empty agent-composer-firstscreen px-3 pb-2 pt-6">
-              <!-- 移动端叙事头（2026-10-22 用户裁定「窄屏也要讲三联」）：墨鱼 → 墨滴 →
-                   三联（左对话 / 中锚定 / 右画布）。
-                   ⛔ 三联**横向压成一行**——竖排会丢掉「左→中→右」的读序，而那正是这条
-                   动线唯一要传达的东西；窄屏放不下桌面那套（168px 锚），就把三节点压成
-                   一行 56px 高的图标条，锚居中作视觉重心。
-                   ⛔ 点锚**只进输入态、不提交**：发送意图必须由用户显式表达（与
-                   fillFromUtterance 同款聚焦模式），提交仍归 composer 发送键 ⇒ 两个入口不打架。
-                   桌面侧栏窄且已有 persona 行 ⇒ `lg:hidden`，桌面零变化。 -->
-              <div class="lnk-triptych mb-4 lg:hidden" data-testid="mobile-triptych">
-                <img :src="BRAND_LOGO_URL" alt="" class="lnk-triptych__mascot" aria-hidden="true">
-                <span class="lnk-triptych__drop" aria-hidden="true" />
-                <span class="lnk-triptych__drop lnk-triptych__drop--b" aria-hidden="true" />
-                <div class="lnk-triptych__row">
-                  <span class="lnk-triptych__node">
-                    <svg class="lnk-triptych__icon" viewBox="0 0 16 14" aria-hidden="true">
-                      <path d="M2.7 2h10.6v6.4H7.2l-2.9 2.6V8.4H2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-                    </svg>
-                    对话
-                  </span>
-                  <button
-                    type="button"
-                    class="lnk-triptych__anchor"
-                    data-testid="mobile-triptych-anchor"
-                    aria-label="点击锚，开始描述你的创意"
-                    @click="focusComposerFromTriptych"
-                  >
-                    <span class="lnk-triptych__glyph" aria-hidden="true" />
-                    锚定
-                  </button>
-                  <span class="lnk-triptych__node">
-                    <svg class="lnk-triptych__icon" viewBox="0 0 16 14" aria-hidden="true">
-                      <rect x="2.4" y="2.2" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-                      <rect x="8.6" y="2.2" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-                      <rect x="2.4" y="7.8" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-                      <rect x="8.6" y="7.8" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-                    </svg>
-                    画布
-                  </span>
-                </div>
-                <p class="lnk-triptych__slogan">
-                  墨鱼π，锚定你的创意
-                  <span class="lnk-triptych__slogan-sub">一点一滴落在画布</span>
-                </p>
-              </div>
+              <!-- 2026-10-23 IA v4：移动端三联叙事（对话 / 锚 / 画布）已迁到工作台 hero
+                   （SignatureHero 挂 MobileTriptychRow，签名面专用令牌）。此处不再重复——
+                   用户裁定「去掉对话页空态上面重复的部分（很丑）」：品牌叙事归 hero，
+                   空态只留功能内容（persona / chips / 传图引导）。 -->
               <p class="agent-composer-persona hidden text-center text-[12px] leading-relaxed lg:block" data-testid="agent-persona-line">
                 lnk·π 助手 · 说一句创意，我来画
               </p>
@@ -6888,125 +6838,4 @@ defineExpose({
   color: var(--lnk-text-secondary);
 }
 
-/* ===== 移动端三联叙事头（2026-10-22 用户裁定「窄屏也要讲三联」）=====
-   ⛔ 令牌纪律：这一块挂在**对话面板**上，而对话面板随主题翻转 ⇒ 只用常规令牌
-   （accent / text-secondary / text-muted），**禁 on-signature 家族**——那是恒深签名面
-   专用，压在翻转面上会重演「颜色放反」那类事故。
-   ⛔ 布局纪律：三联必须横向一行（flex-row），竖排会丢掉「左→中→右」的读序。 */
-.lnk-triptych {
-  position: relative;
-  padding-top: 40px;
-  text-align: center;
-}
-
-.lnk-triptych__mascot {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 26px;
-  height: 26px;
-  transform: translateX(-50%);
-  user-select: none;
-}
-
-/* 墨滴：与签名面同款水滴形（尖头朝上 + 重力加速 + 下落拉长），落程压到 34px */
-.lnk-triptych__drop {
-  position: absolute;
-  top: 26px;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  margin-left: -10px;
-  border-radius: 0 50% 50% 50%;
-  background: var(--lnk-accent);
-  opacity: 0;
-  pointer-events: none;
-  animation: lnk-triptych-drop 3.6s cubic-bezier(0.42, 0, 0.85, 0.45) infinite;
-}
-
-.lnk-triptych__drop--b {
-  margin-left: 4px;
-  animation-delay: 1.2s;
-}
-
-@keyframes lnk-triptych-drop {
-  0% {
-    transform: translate(0, 0) scale(0.5) rotate(45deg);
-    opacity: 0;
-  }
-  10% {
-    opacity: 0.85;
-  }
-  72% {
-    opacity: 0.85;
-  }
-  100% {
-    transform: translate(0, 34px) scale(0.82, 1.22) rotate(45deg);
-    opacity: 0;
-  }
-}
-
-.lnk-triptych__row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-}
-
-.lnk-triptych__node {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  color: var(--lnk-text-muted);
-  font-size: var(--lnk-text-2xs);
-}
-
-.lnk-triptych__icon {
-  width: 18px;
-  height: 16px;
-}
-
-.lnk-triptych__anchor {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--lnk-accent);
-  font-size: var(--lnk-text-2xs);
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.lnk-triptych__glyph {
-  display: block;
-  width: 26px;
-  height: 30px;
-  background: currentColor;
-  -webkit-mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
-  mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
-}
-
-.lnk-triptych__slogan {
-  margin-top: 12px;
-  color: var(--lnk-text-secondary);
-  font-size: var(--lnk-text-xs);
-  line-height: 1.7;
-}
-
-.lnk-triptych__slogan-sub {
-  display: block;
-  color: var(--lnk-text-muted);
-  font-size: var(--lnk-text-2xs);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .lnk-triptych__drop {
-    animation: none;
-    opacity: 0;
-  }
-}
 </style>

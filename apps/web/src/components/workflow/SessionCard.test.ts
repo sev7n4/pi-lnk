@@ -121,8 +121,8 @@ describe('SessionCard 行为不变量（迁移不许回归）', () => {
     expect(wrapper.find('[data-testid="canvas-cover-fallback"]').exists()).toBe(true)
   })
 
-  it('标题为空时回落「未命名画布」', () => {
+  it('标题为空时回落「未命名项目」', () => {
     const wrapper = mountCard({ title: '' })
-    expect(wrapper.text()).toContain('未命名画布')
+    expect(wrapper.text()).toContain('未命名项目')
   })
 })

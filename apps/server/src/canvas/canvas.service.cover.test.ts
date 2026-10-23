@@ -4,8 +4,10 @@
  * 目标：`GET /agent/canvas/list` 在只返回卡片元数据的前提下，额外给出
  * - `coverUrl`   最近生成的产物图 URL（无产物时为 null ⇒ 前端用墨鱼默认封面）
  * - `coverNodeId` 该产物节点 id（前端据此跨项目定位到那张图）
- * - `title`     无标题时兜底为「画布 N」（按时间倒序编号）—— 一排「未命名画布」
+ * - `title`     无标题时兜底为「项目 N」（按时间倒序编号）—— 一排同名未命名
  *                等于没有识别线索，而封面图的唯一识别价值就在这儿。
+ *                （IA v4 2026-10-23：项目=画布+对话；未命名判定同时认
+ *                 新默认值「未命名项目」与历史默认值「未命名画布」）
  *
  * 事实依据（2026-10-22 生产库实测，apps/server 侧 canvasData 结构）：
  * - 产物节点 = `data.status === 'completed'` 且 `data.url` 非空
@@ -117,7 +119,7 @@ describe('CanvasService.list → 回访作品带封面字段（A3）', () => {
     expect(rows[1].coverUrl).toBeNull()
   })
 
-  it('标题兜底：空标题按时间倒序编号为「画布 N」（识别线索不能是一排「未命名画布」）', async () => {
+  it('标题兜底：空标题按时间倒序编号为「项目 N」（识别线索不能是一排同名未命名）', async () => {
     findMany.mockResolvedValue([
       { ...SESSION, id: 's1', title: '', canvasData: null },
       { ...SESSION, id: 's2', title: '   ', canvasData: null },
@@ -126,9 +128,32 @@ describe('CanvasService.list → 回访作品带封面字段（A3）', () => {
 
     const rows = await svc.list('u1')
     // list 按 updatedAt desc 返回 ⇒ 第 1 个是最新的，编号从 1 起
-    expect(rows[0].title).toBe('画布 1')
-    expect(rows[1].title).toBe('画布 2')
+    expect(rows[0].title).toBe('项目 1')
+    expect(rows[1].title).toBe('项目 2')
     expect(rows[2].title).toBe('有名字的')
+  })
+
+  it('标题兜底：create() 新旧默认落库值都编号，trim 后匹配，「像而不是」不误伤', async () => {
+    // 2026-10-23 真机走查实证：前端多处 create() 不传 title ⇒ 存储恒为默认串（非空）
+    // ⇒ 只判空串的兜底永不触发 ⇒ 作品带里多条同名未命名不可分。
+    // IA v4（2026-10-23）：默认值从「未命名画布」改为「未命名项目」，但**存量项目
+    // 标题恒为旧值**（用户截图里那几条）⇒ 判定必须同时认两个值，否则存量永远显示旧名。
+    // 判据 = 两个默认落库值本身（不是任意串），各配一个「像而不是」反例钉死精确匹配
+    // ——防止实现退化成 includes() 一类宽判据误伤真标题。
+    findMany.mockResolvedValue([
+      { ...SESSION, id: 's1', title: '未命名项目', canvasData: null },
+      { ...SESSION, id: 's2', title: '未命名画布', canvasData: null },
+      { ...SESSION, id: 's3', title: '未命名项目pro', canvasData: null },
+      { ...SESSION, id: 's4', title: ' 未命名画布 ', canvasData: null },
+      { ...SESSION, id: 's5', title: '大闸蟹礼盒', canvasData: null },
+    ])
+
+    const rows = await svc.list('u1')
+    expect(rows[0].title).toBe('项目 1')
+    expect(rows[1].title).toBe('项目 2')
+    expect(rows[2].title).toBe('未命名项目pro')
+    expect(rows[3].title).toBe('项目 3')
+    expect(rows[4].title).toBe('大闸蟹礼盒')
   })
 
   it('响应体不带原始 canvasData（列表瘦身不被破坏）', async () => {

@@ -127,7 +127,7 @@ describe('P3-G 画布兜底 / 标题口径 / 墨圈（走查「没有设计品�
   it('displayCanvasTitle 口径本身有单测兜底（防此处假绿）', () => {
     const util = read('../utils/displayCanvasTitle.test.ts')
     expect(util).toContain('layout-smoke-1792588745')
-    expect(util).toContain('未命名画布')
+    expect(util).toContain('未命名项目')
   })
 })
 

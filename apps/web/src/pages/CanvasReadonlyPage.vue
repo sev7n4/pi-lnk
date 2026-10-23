@@ -58,7 +58,7 @@ async function forkToMyCanvas() {
   forking.value = true
   try {
     const { data } = await worksApi.forkCanvas(workId.value)
-    ElMessage.success('已复制到你的画布')
+    ElMessage.success('已复制到你的项目')
     router.push(`/workflow/${data.data.id}`)
   } catch {
     ElMessage.error('复制失败，请确认已登录')
@@ -81,7 +81,7 @@ function backToShare() {
         <span v-if="work" class="text-sm text-fg-2">{{ work.title }}</span>
       </div>
       <button class="btn-primary text-sm" :disabled="forking" @click="forkToMyCanvas">
-        {{ forking ? '复制中…' : '复制到我的画布' }}
+        {{ forking ? '复制中…' : '复制到我的项目' }}
       </button>
     </div>
 
