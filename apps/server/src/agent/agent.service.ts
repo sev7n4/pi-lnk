@@ -673,10 +673,21 @@ export class AgentService {
    * multi-device Task 4：`opts.lastEventId`（**追加在末尾**，参数位置纪律）——
    * 旁听端断线重连时把浏览器 Last-Event-ID 传进来，pi-runtime 据此增量续传；
    * 未传维持既有 `live:true`（from=now）语义。服务端闸门（/^\d+$/）在 controller。
+   *
+   * ⭐⭐ 2026-10-24：`opts.signal` —— **客户端断开必须能终止本生成器**。
+   *
+   * 背景：`retryOnMissing` 让 404 走「无限期等 lane 出现」⇒ pi-runtime 客户端
+   * 永不回调 onError ⇒ 本生成器的 `finished` 永远为 false ⇒ 生成器永远挂在
+   * `await new Promise(resolve => { notify = resolve })` 上。
+   * ⇒ 浏览器一断开，Nest 侧就会**永久留下**一条每 ≤5s 轮询 pi-runtime 的订阅
+   * （每个 observer 一条）⇒ 资源泄漏 + 无谓上游压力。
+   *
+   * ⇒ controller 必须把「客户端断开」映射成 `signal.abort()`，
+   *   本方法据此退订（`unsubscribe()`）并结束生成器。
    */
   async *runEventStream(
     sessionKey: string,
-    opts?: { lastEventId?: string },
+    opts?: { lastEventId?: string; signal?: AbortSignal },
   ): AsyncGenerator<AgentStreamEvent> {
     const piUrl = this.getPiRuntimeUrl()
     // 维护态（PI_RUNTIME_MODE=off / 未配 URL）：旁听无处可挂，直接空流。
@@ -703,19 +714,36 @@ export class AgentService {
         notify?.()
       },
       // multi-device Task 4：lastEventId 透传（undefined 时 client 走既有 from=now 分支）。
-      { live: true, lastEventId: opts?.lastEventId },
+      //
+      // ⭐⭐ 2026-10-24：retryOnMissing —— pi-runtime 的 lane 是**内存态、per-thread、
+      // 带 TTL**（session-manager `this.sessions` + `sessionTtlMs` 默认 30 分钟）：
+      // 「另一端还没在这个 thread 上发过消息」或「跑完超过 TTL」都会让
+      // `GET /sessions/:key/events` 返回 **404**。旧语义把 404 当「会话已删除」
+      // ⇒ 旁听流 47ms 断流（生产实测），常驻订阅名存实亡。
+      // ⇒ 旁听流用 retryOnMissing：404 归入退避重试，等 lane 真的被建起来。
+      { live: true, lastEventId: opts?.lastEventId, retryOnMissing: true },
     )
+    // ⭐ 客户端断开 ⇒ 唤醒等待并退订（否则上面说的「每 observer 一条永久轮询」泄漏）。
+    // 只注册**一个** abort 监听（不在循环里反复 add，否则长连接会撞 EventEmitter
+    // 的 MaxListeners 告警）。
+    const onAbort = () => notify?.()
+    if (opts?.signal) {
+      if (opts.signal.aborted) onAbort()
+      else opts.signal.addEventListener('abort', onAbort, { once: true })
+    }
     try {
       while (true) {
         while (queue.length > 0) {
           yield queue.shift() as AgentStreamEvent
         }
         if (finished) return
+        if (opts?.signal?.aborted) return
         await new Promise<void>((resolve) => {
           notify = resolve
         })
       }
     } finally {
+      if (opts?.signal) opts.signal.removeEventListener('abort', onAbort)
       unsubscribe()
     }
   }

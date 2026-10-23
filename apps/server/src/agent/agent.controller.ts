@@ -639,9 +639,33 @@ export class AgentController {
         // 客户端已断开，循环/关闭会清理
       }
     }, 15_000)
+    // ⭐⭐ 2026-10-24：客户端断开必须**终止**旁听订阅。
+    //
+    // 背景：service 侧 `retryOnMissing` 让 404 走「无限期等 lane 出现」⇒ pi-runtime
+    // 客户端永不回调 onError ⇒ 生成器永不结束 ⇒ 浏览器一断开，Nest 侧就会**永久留下**
+    // 一条每 ≤5s 轮询 pi-runtime 的订阅（每个 observer 一条）⇒ 资源泄漏 + 无谓上游压力。
+    //
+    // ⇒ 把「客户端断开」映射成 `abort.abort()`，service 收到后立即退订并结束生成器。
+    //
+    // ⚠️⚠️ 判据用 **`res.on('close')` + `!res.writableFinished`**，**不用** `req.on('close')`。
+    // 实测（2026-10-24，本机 Node 24 + Express 4 + express.raw）：
+    //   - `req.on('close')` 在**请求体被读完**时就会触发（58ms），而响应还在持续推送
+    //     ⇒ 一旦有人给本端点加 body / 换 raw parser，订阅会被**瞬间 abort**
+    //     ⇒ 退化成「连上即断」的老故障（Node 16+ 改过 `req.close` 语义）。
+    //     本端点当前是 GET（无 body）才侥幸没踩到——那是隐含前提，不是保证。
+    //   - `res.on('close')` 只在**响应真正结束**时触发：
+    //     客户端掐断 ⇒ close 且 `writableFinished=false`（提前结束）；
+    //     服务端自己 `res.end()` ⇒ close 且 `writableFinished=true`（正常收尾）。
+    //     ⇒ 用 `!writableFinished` 区分「客户端断连」与「正常收尾」，两种都幂等无副作用。
+    const abort = new AbortController()
+    const onClientGone = () => {
+      if (!res.writableFinished) abort.abort()
+    }
+    res.on('close', onClientGone)
     try {
       for await (const event of this.agentService.runEventStream(threadId?.trim() || sessionId, {
         lastEventId: cursor,
+        signal: abort.signal,
       })) {
         if (!firstFrameSeen) {
           firstFrameSeen = true
@@ -664,7 +688,14 @@ export class AgentController {
     } finally {
       clearTimeout(idleTimer)
       clearInterval(heartbeatTimer)
-      res.end()
+      // 解绑断连监听：避免长连接在 res 上留悬挂监听器（每个 res 一个实例，
+      // 但同一 res 上 close 只触发一次 ⇒ 摘掉更干净，也防 future 复用 res 时误触发）。
+      res.off('close', onClientGone)
+      try {
+        res.end()
+      } catch {
+        // 客户端已断开：res.end() 可能抛（ERR_STREAM_WRITE_AFTER_END 等）⇒ 忽略。
+      }
     }
   }
 
