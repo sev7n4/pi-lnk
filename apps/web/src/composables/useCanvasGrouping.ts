@@ -115,20 +115,31 @@ function rectsIntersect(a: SnapBounds, b: SnapBounds): boolean {
  * `opts.bounds`（可选）：只保留与该矩形相交的候选 —— 规格 §9 的性能护栏
  * （大画布不扫描全部节点；调用方按「视口 + 边距」传入）。
  */
+/**
+ * SP-B 参考线候选（排除规则 + 视口裁剪）。
+ *
+ * `opts.sizeOf`：SP-B R1（2026-10-23）新增的**实测尺寸注入点**。媒体节点
+ * （image/video）真实尺寸随素材比例（16:9 视频 320×180），而 `getNodeSize`
+ * 的 NODE_SIZES 兜底是方框包络（320×320）——按兜底算吸附几何，中心/底边
+ * 会差 70-140px：节点视觉边没到线就突然被弹回、guide 线悬在节点旁边。
+ * 调用方（CanvasPage）把 vue-flow ResizeObserver 实测尺寸经此注入；
+ * 缺省仍走 getNodeSize（分组框/文本/音频与实测一致，且测试造数零依赖）。
+ */
 export function buildSnapCandidates(
   nodes: FlowNode[],
   dragId: string,
-  opts?: { bounds?: SnapBounds },
+  opts?: { bounds?: SnapBounds; sizeOf?: (node: FlowNode) => { w: number; h: number } },
 ): SnapCandidate[] {
   const dragged = nodes.find((n) => n.id === dragId)
   const parentId = dragged?.parentNode
   const bounds = opts?.bounds
+  const sizeOf = opts?.sizeOf ?? getNodeSize
   const out: SnapCandidate[] = []
   for (const n of nodes) {
     if (n.id === dragId) continue // 规则 1
     if (parentId && n.id === parentId) continue // 规则 2
     if (n.parentNode === dragId) continue // 规则 3
-    const { w, h } = getNodeSize(n)
+    const { w, h } = sizeOf(n)
     const box = { x: n.position.x, y: n.position.y, w, h }
     if (bounds && !rectsIntersect(box, bounds)) continue // 规则 4 之外的性能裁剪
     out.push({ id: n.id, box, parentId: n.parentNode, isSelf: false })
