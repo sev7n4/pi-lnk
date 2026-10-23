@@ -255,6 +255,15 @@ describe('SignatureHero', () => {
     expect(brand).toContain("export const BRAND_SLOGAN_MAIN_MASCOT_BEFORE = '记住你的模样'")
   })
 
+  it('IA v4：窄屏副文案不得出现孤字换行（实测「画布记住你的模样」7 字占 96px > 列宽 93px）', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    // 窄屏右列宽 = (342 - 132 - 24) / 2 = 93px；7 个 CJK 字 @11px ≈ 88px 才放得下
+    // （实测 12px 时每字 13.7px ⇒ 96px ⇒ 差 3px 被拆成「画布记住你的 / 样」孤字）。
+    expect(src, '窄屏副文案须用 2xs(11px)').toMatch(
+      /class="mt-2 text-\[length:var\(--lnk-text-2xs\)\][^"]*"[\s\S]{0,200}画布记住你的模样/,
+    )
+  })
+
   it('IA v4：底部留出公司信息位（内容待补，位置先定）', () => {
     const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
     expect(src, 'hero 底部须有公司信息预留位').toContain('lnk-company-slot')

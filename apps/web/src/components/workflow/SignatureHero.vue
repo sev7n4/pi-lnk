@@ -118,7 +118,7 @@ function onAnchorClick() {
             <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
               对话
             </p>
-            <p class="mt-2 text-[length:var(--lnk-text-xs)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)] lg:text-[length:var(--lnk-text-base)]">
+            <p class="mt-2 text-[length:var(--lnk-text-2xs)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)] lg:text-[length:var(--lnk-text-base)]">
               你说出想法
             </p>
           </div>
@@ -191,7 +191,7 @@ function onAnchorClick() {
             <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
               画布
             </p>
-            <p class="mt-2 text-[length:var(--lnk-text-xs)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)] lg:text-[length:var(--lnk-text-base)]">
+            <p class="mt-2 text-[length:var(--lnk-text-2xs)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)] lg:text-[length:var(--lnk-text-base)]">
               墨鱼替你落墨<br>画布记住你的模样
             </p>
           </div>
