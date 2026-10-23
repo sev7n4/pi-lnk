@@ -2638,6 +2638,10 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   cancelledPresentation.value = null
   cancelledProgressText.value = null
   streamAbortController = new AbortController()
+  // 主流起飞前先让位：常驻订阅与主流订阅的是同一会话，两边同时挂着会把
+  // 同一份 text_delta 收两遍（气泡里出现双倍文本）。
+  releaseObserverTurn()
+  followUpTail.abort()
   agentStream.start()
 
   try {
@@ -2783,13 +2787,23 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
  * 旁听「本轮之后」的事件（纯订阅，不发 prompt）——multi-device Task 5 接线层。
  *
  * 循环 / 退避 / 游标逻辑在 `follow-up-tail.ts`（依赖可注入 ⇒ 重连行为可单测），
- * 这里只做接线：turn 收尾后 `start()`，页面可见性恢复时 `resume()`，卸载时 `abort()`。
+ * 这里只做接线：**挂载即订阅**（会话级常驻），会话/线程切换重启，页面可见性恢复
+ * `resume()`，卸载时 `abort()`。
+ *
+ * ⭐⭐ 2026-10-24：订阅时机从「turn 收尾之后」改为「挂载即订阅」。原语义下，
+ * 另一端正在跑的那轮本端**根本不会订阅**（唯一入口在 sendMessage 的收尾分支）
+ * ⇒ 多端一致性的主诉（PC 发消息、手机不刷新能看到）在代码路径上不可能成立。
  *
  * 行为契约（详见 follow-up-tail.ts 头注释）：
  *  ① 断线按指数退避重连，且带 `lastEventId` 游标续传（Review Focus #1：只补增量不重放）；
- *  ② idle 20s 闸门只被业务事件刷新（Task 4 起服务端 15s 心跳不得让静默会话永不断）；
- *  ③ 404 = 会话已删除不重连；重连预算累计不重置（防「连上即断」死循环）。
+ *  ② idle 由任何帧刷新（常驻化后不再只认业务事件）；
+ *  ③ 404 = 会话已删除不重连；重连预算累计不重置（防「连上即断」死循环）；
+ *  ④ 本端主流在跑时不订阅（那一份文本已由 POST 响应体送达，再收就是重复）。
  */
+
+/** 本端是否正处于「旁观另一端的那一轮」（有自己新建的 assistant 影子）。 */
+const observerTurnActive = ref(false)
+
 const followUpTail = createFollowUpTailListener({
   fetchImpl: (url, init) => fetch(url, init),
   headers: () => authHeaders(),
@@ -2799,27 +2813,66 @@ const followUpTail = createFollowUpTailListener({
       `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
     ),
   onTextDelta: (text) => {
-    // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent），
-    // text_delta 增量直接追加到最后一条 assistant 下面 —— 正是「同一段接着写」。
+    // ⛔ 本端主流在跑：同一份 text_delta 已经从 POST 响应体到了，旁听再追加就是双倍文本。
+    if (agent.isStreaming) return
+    // 旁观另一端的那一轮：本地还没有这条 assistant 的影子 ⇒ 先起一条再追加。
+    if (!observerTurnActive.value) {
+      agent.startAssistantMessage()
+      agent.isStreaming = true
+      observerTurnActive.value = true
+    }
+    // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
     agent.appendText(text)
     scrollToBottom()
   },
   onCanvasAction: (data) => emit('canvasActions', [data as never]),
+  onTurnEnd: () => {
+    // 幂等：done 之后还有 turn_ack，会来第二次
+    if (!observerTurnActive.value) return
+    observerTurnActive.value = false
+    agent.finishStreaming()
+    // 旁观拿到的是增量片段，收尾必须以服务端权威历史为准纠正一次（漏帧/乱序的自愈口）。
+    // 传 0：那一轮已在另一端跑完，不做终态轮询（否则旁观端会跟着睡 5s×N）。
+    void reconcileLatestAssistant(0)
+    emit('turnComplete')
+    scrollToBottom()
+  },
 })
 
-/** turn 收尾后挂旁听：followUp 是收尾边界之后才接住、由 pi-runtime drain 派生的新一代。 */
+/** 订阅当前会话（幂等：内部先 abort 旧流）。 */
 function listenFollowUpTail(): Promise<void> {
   return followUpTail.start()
 }
 
-/** Task 5：页面从后台切回时恢复旁听（idle 直接挂；backoff 中跳过排队；健康流不打断）。 */
+/** 本端要自己发一轮了：先结束旁观轮，再停订阅（避免与主流双份消费）。 */
+function releaseObserverTurn(): void {
+  if (!observerTurnActive.value) return
+  observerTurnActive.value = false
+  agent.finishStreaming()
+}
+
+/** Task 5：页面从后台切回时恢复订阅（idle 直接挂；backoff 中跳过排队；健康流不打断）。 */
 function onFollowUpTailVisibility(): void {
   if (document.visibilityState === 'visible') void followUpTail.resume()
 }
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onFollowUpTailVisibility)
+  // 常驻订阅：打开会话就挂上，与「谁在说话」无关。
+  // 本端正在跑主流时（`agent.isStreaming`）不挂——那份内容主流自己会给。
+  if (!agent.isStreaming) void listenFollowUpTail()
 })
+
+// 会话 / 线程切换后重挂：订阅 URL 携带 threadId，线程变了旧流就在听错的对象。
+watch(
+  [() => props.sessionId, () => agentThreadId.value],
+  () => {
+    releaseObserverTurn()
+    followUpTail.abort()
+    if (!agent.isStreaming) void listenFollowUpTail()
+  },
+)
+
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onFollowUpTailVisibility)
   followUpTail.abort()
@@ -2879,8 +2932,14 @@ async function reconnectStream() {
   }
 }
 
-/** 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。 */
-async function reconcileLatestAssistant() {
+/**
+ * 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。
+ *
+ * @param maxPolls 终态轮询次数上限（默认 `RECONCILE_MAX_POLLS`）。
+ *   旁观端传 `0`：那一轮在**另一端**已经跑完（收到 done 才走到这里），
+ *   没必要再等终态，拉一次权威历史纠正漏帧即可（多端场景下一等就是几分钟的睡循环）。
+ */
+async function reconcileLatestAssistant(maxPolls = RECONCILE_MAX_POLLS) {
   const pull = async () => {
     const res = await fetch(
       apiUrl(
@@ -2911,7 +2970,7 @@ async function reconcileLatestAssistant() {
     // 2026-10-01 修正：达阈值后**先做一次真实健康探测**再决定是否告警——
     // 状态读取失败（304/抖动/单次 5xx）不等于 runtime 不可达，探测健康就必须闭嘴。
     let consecutiveNulls = 0
-    for (let i = 0; i < RECONCILE_MAX_POLLS; i++) {
+    for (let i = 0; i < maxPolls; i++) {
       const read = await fetchThreadStateSafe(agentThreadId.value)
       if (read.ok) {
         consecutiveNulls = 0

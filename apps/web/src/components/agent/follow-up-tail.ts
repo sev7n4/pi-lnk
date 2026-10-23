@@ -1,16 +1,23 @@
 /**
- * 旁听流（followUp tail）的循环与退避重连（multi-device Task 5 · Review Focus #1）。
+ * 会话级订阅流的循环与退避重连（multi-device Task 5 · Review Focus #1）。
  *
  * 为什么从 AgentSideRail.vue 抽出来：原实现是 SFC 里的模块级函数 + 模块级状态
  * （rounds / abort controller 跨组件实例共享），既无法单测「重连是否带游标」，
  * 多实例挂载时还会共享 3 轮配额。本工厂把状态收进实例，依赖（fetch / 计时）
  * 全部可注入 ⇒ 重连行为可以在 Node 里直接断言（fetch URL 即 observable exit）。
  *
- * 行为契约（plan Task 5）：
+ * ⭐⭐ 2026-10-24 语义变更：**从「本轮收尾后的 tail」改为「会话级常驻订阅」**。
+ * 原语义只覆盖「本端 turn 收尾之后由 drain 派生的新一代」，而多端一致性的主诉
+ * ——「另一端在跑，本端不刷新也能看见」——在本端不发消息时根本不会订阅。
+ * 现在挂载即订阅（接线层负责），轮次上限取消，靠服务端心跳维持长连接。
+ *
+ * 行为契约（plan Task 5 + 2026-10-24 常驻化修订）：
  *  ① 断线按指数退避重连，且**带游标** `lastEventId` 续传（只补增量不重放）；
  *  ② 游标为 null 时绝不拼空值（pi-runtime 会落进 afterSeq=-1 全量重放）；
- *  ③ idle 闸门只被**业务事件**刷新（Task 4 起服务端 15s 心跳不得让静默会话永不断）；
- *  ④ 404 = 会话已删除，不重连；重连预算**累计不重置**（防「连上即断」死循环）。
+ *  ③ idle 闸门被**任何帧**刷新（含心跳）：常驻订阅的寿命应由服务端决定，
+ *     前端只兜「服务端彻底静默」（默认 45s > 心跳 15s×2，容忍一次心跳丢失）；
+ *  ④ 404 = 会话已删除，不重连；重连预算**累计不重置**（防「连上即断」死循环）；
+ *  ⑤ 收到回合收束帧（done / turn_ack）回调 `onTurnEnd`，由宿主收尾旁观轮。
  */
 import { backoffWithJitter } from './backoff'
 import { buildObserverStreamUrl, extractSseFrames, parseSseFrameSeq } from './observer-stream'
@@ -35,9 +42,17 @@ export interface FollowUpTailDeps {
   baseUrl: () => string
   onTextDelta: (text: string) => void
   onCanvasAction: (data: unknown) => void
-  /** 空闲闸门：这么久没有**业务事件**就断开（默认 20s）。 */
+  /**
+   * 回合收束（收到 `done` / `turn_ack`）：旁观轮到此为止，由宿主收尾
+   * （结束 streaming、拉权威历史纠正）。可能被调用多次（done 后还有 ack）⇒ 需幂等。
+   */
+  onTurnEnd?: () => void
+  /** 空闲闸门：这么久没收到**任何帧**就断开（默认 45s，须 > 服务端心跳周期×2）。 */
   idleMs?: number
-  /** 每实例最多几轮（turn 完成次数维度，默认 3）。 */
+  /**
+   * 每实例最多几轮（turn 完成次数维度）。
+   * 默认 **Infinity**：常驻订阅没有「几轮之后就不听了」的道理——那正是多端不一致的来源。
+   */
   maxRounds?: number
   /** 单轮内退避重连上限（默认 5）。 */
   maxReconnects?: number
@@ -46,6 +61,18 @@ export interface FollowUpTailDeps {
 }
 
 export type FollowUpTailState = 'idle' | 'connecting' | 'streaming' | 'backoff'
+
+/**
+ * 回合收束事件：收到任一即通知宿主收尾旁观轮。
+ *
+ * - `done`：pi `agent_end` 的映射，一轮正常结束（turn_ack 在其后，故 onTurnEnd 可能来两次）；
+ * - `turn_ack`：Task 6 的服务端裁定帧；
+ * - `error` / `turn_not_submitted`：轮失败或未被受理 —— 同样是「这一轮到此为止」，
+ *   不通知的话旁观端会永远停在 streaming（气泡一直转圈）。
+ */
+function isTurnTerminal(type: string): boolean {
+  return type === 'done' || type === 'turn_ack' || type === 'error' || type === 'turn_not_submitted'
+}
 
 export interface FollowUpTailListener {
   /** 新一轮：掐掉旧流重新挂（turn 完成路径的语义）。 */
@@ -61,8 +88,8 @@ export interface FollowUpTailListener {
 }
 
 export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTailListener {
-  const idleMs = deps.idleMs ?? 20_000
-  const maxRounds = deps.maxRounds ?? 3
+  const idleMs = deps.idleMs ?? 45_000
+  const maxRounds = deps.maxRounds ?? Number.POSITIVE_INFINITY
   const maxReconnects = deps.maxReconnects ?? 5
   const backoffBaseMs = deps.backoffBaseMs ?? 250
   const backoffCapMs = deps.backoffCapMs ?? 5000
@@ -122,6 +149,10 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
               // 批次中途被 abort（新一轮开始）⇒ 剩余帧不再处理，避免旧流尾巴
               // 在新流已开之后又追加一段文本。
               if (local.signal.aborted) break
+              // 任何帧（含心跳与就绪注释帧）都刷新 idle：常驻订阅的寿命由服务端决定，
+              // 前端闸门只兜「服务端彻底静默」。旧契约「只认业务事件」是为 tail 设计的
+              // （有硬上限），常驻化后若沿用，静默会话会被前端自己 20s 掐断。
+              idleTimer.refresh()
               // 游标先落帧：哪怕 payload 解析失败也不丢断点位置
               const seq = parseSseFrameSeq(frame)
               if (seq !== undefined) lastSeq = seq
@@ -137,12 +168,10 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
               // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
               if (payload.type === 'text_delta') {
                 deps.onTextDelta((payload.data as { text?: string } | undefined)?.text ?? '')
-                // idle 只被**业务事件**刷新：Task 4 起服务端每 15s 发心跳帧，
-                // 用心跳刷新会让静默会话永不断连，违背「旁听流有硬上限」的前提。
-                idleTimer.refresh()
               } else if (payload.type === 'canvas_action') {
-                idleTimer.refresh()
                 deps.onCanvasAction(payload.data)
+              } else if (isTurnTerminal(payload.type)) {
+                deps.onTurnEnd?.()
               }
             }
           }
