@@ -21,6 +21,17 @@ const props = defineProps<{
   label?: string
   /** 节点状态；仅 pending_confirm 渲染 */
   status?: string
+  /**
+   * 隐藏底部提示行（「可在提示词卡片上「编辑」后确认」）。
+   *
+   * ⭐ R4-T1（2026-10-23）新增，**默认 false ⇒ PC 行为逐字节不变**。
+   *   移动端瓦片复用本组件，但移动端的编辑入口在编辑 sheet、不在卡片上
+   *   ⇒ 那句 PC 语境提示在移动端是错的 ⇒ 由移动端传 `hide-hint` 关掉。
+   *
+   *   ⛔ 刻意做成 prop 而不是移动端用 CSS `:deep()` 隐藏——靠样式藏别人的文案
+   *   在 PC 改文案时会露出不相关内容，且 jsdom 不计算 scoped 样式（测不到）。
+   */
+  hideHint?: boolean
 }>()
 
 const text = computed(() => String(props.prompt ?? '').trim())
@@ -33,7 +44,7 @@ const labelText = computed(() => String(props.label ?? '').trim())
     <span class="node-pending-prompt-chip" data-testid="node-pending-prompt-chip">待确认</span>
     <p v-if="labelText" class="node-pending-prompt-label">{{ labelText }}</p>
     <p class="node-pending-prompt-text" data-testid="node-pending-prompt-text">{{ text }}</p>
-    <p class="node-pending-prompt-hint">可在提示词卡片上「编辑」后确认</p>
+    <p v-if="!hideHint" class="node-pending-prompt-hint">可在提示词卡片上「编辑」后确认</p>
   </div>
 </template>
 
