@@ -99,8 +99,8 @@ describe('视口原语（SP-C）', () => {
 
 ## Task 4: 收尾验证
 
-- [ ] **Step 1: 根 build**（`pnpm build` ⇒ 六包全绿；跨包纪律）
-- [ ] **Step 2: shared + web 全量测试**（含 design-token / theme-usage 守卫）
+- [x] **Step 1: 根 build**（`pnpm build` ⇒ 六包全绿；跨包纪律）
+- [x] **Step 2: shared + web 全量测试**（含 design-token / theme-usage 守卫）
 - [x] **Step 3: 变异验证**（每项「改回即红」）：
   1. 回合末恢复全览 fitView ⇒ N3 守卫红；
   2. 恢复时不 clamp ⇒ N5 红；
@@ -142,3 +142,12 @@ describe('视口原语（SP-C）', () => {
 ### 规格无 §9
 
 规格实际只到 §8（与后续包的关系），无「§9 状态行」⇒ 状态回填以本文件为准。
+
+### 测试与构建汇总（Task 4 Step 1/2，2026-10-24）
+
+- **根 build 六包全绿**：`pnpm build` EXIT=0（shared / agent / pi-runtime / server `tsc` Done，web `vite build` built in 4m24s）。
+  ⚠️ 环境坑：worktree 里 `pnpm install` 不会自动 `prisma generate` ⇒ 首跑 `apps/server` 报一片 `Property 'x' does not exist on type 'PrismaService'`（`@prisma/client` 无导出成员）。手动 `cd apps/server && npx prisma generate` 后即过——**与本次改动无关**，是 worktree 环境缺失步骤。
+- **shared 全量 57 文件全绿**（EXIT=0）。
+- **web 全量 348 文件全覆盖全绿**（分 10 块串行跑；块大小 15~58 文件）。
+  分块中出现 3 次 `Test timed out in 5000ms`（AdminModelsPage / AgentMermaidBlock / ProviderConfigDialog）⇒ **均为高负载假红**：单独重跑三者 EXIT=0 全绿，且三者与 canvas 视口改动无任何关联。
+- `vue-tsc -b`（CI 对齐口径）EXIT=0。
