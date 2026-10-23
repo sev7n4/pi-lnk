@@ -10,6 +10,8 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
+import MobileNodeWaveform from './MobileNodeWaveform.vue'
+import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { resolveMobileNodeState } from '@/composables/mobileNodeState'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
@@ -213,6 +215,18 @@ const { bindings } = useLongPress(() => {
 
 const audioEl = ref<HTMLAudioElement | null>(null)
 const playing = ref(false)
+
+/**
+ * D-D 音频波形。
+ *
+ * ⭐ 数据可能不落地（无 url / 跨域拿不到 / 没有 Web Audio）⇒ 组件始终拿到定长
+ *   64 点数据：优先真实峰值，否则 nodeId 哈希的确定性占位（同节点永不跳变）。
+ *   组件层不关心来源，由 `MobileNodeWaveform` 按 source 决定视觉强弱。
+ */
+const { peaks: waveformPeaks, source: waveformSource, loading: waveformLoading } = useNodeWaveform({
+  nodeId: () => props.id,
+  url: () => props.data?.url,
+})
 function toggleAudio() {
   const el = audioEl.value
   if (!el) return
@@ -316,8 +330,13 @@ function handleTextTap() {
       playsinline
       class="mobile-node-media"
     />
-    <div v-else-if="type === 'audio'" class="mobile-audio-wave" role="img" aria-label="音频波形占位">
+    <div v-else-if="type === 'audio'" class="mobile-audio-wave">
       <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
+      <MobileNodeWaveform
+        :peaks="waveformPeaks"
+        :source="waveformSource"
+        :loading="waveformLoading"
+      />
       <audio ref="audioEl" :src="data?.url" />
     </div>
     <p v-else-if="type === 'text'" class="mobile-node-text">{{ data?.content || '空文本' }}</p>
@@ -491,7 +510,7 @@ function handleTextTap() {
   object-fit: cover;
 }
 
-/* 音频：44px 播放钮 + 波形占位条（D-D 真数据到达前的前端先行形态） */
+/* 音频：44px 播放钮 + 波形条（D-D）。波形条自带描边令牌与「波形加载中」微标。 */
 .mobile-audio-wave {
   display: flex;
   width: 100%;
@@ -500,18 +519,6 @@ function handleTextTap() {
   gap: var(--lnk-space-3);
   padding: var(--lnk-space-3);
   box-sizing: border-box;
-}
-
-.mobile-audio-wave::after {
-  content: '';
-  flex: 1;
-  height: 36px;
-  border-radius: var(--lnk-radius-full);
-  background: repeating-linear-gradient(
-    90deg,
-    var(--lnk-border-strong) 0 2px,
-    transparent 2px 7px
-  );
 }
 
 .mobile-audio-play {
