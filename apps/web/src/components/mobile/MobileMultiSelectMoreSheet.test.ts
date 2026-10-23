@@ -121,3 +121,51 @@ describe('MobileMultiSelectMoreSheet（PR3）', () => {
     w.unmount()
   })
 })
+
+// 2026-10-23 IA 重排：10 个平级动作 → 两张分组卡片（重排 / 规整）+ 紧凑网格。
+// 起因：10 行竖排（10 × 44px）在移动端 sheet 里被底部裁掉。
+describe('MobileMultiSelectMoreSheet：整理布局分组卡片（IA 重排）', () => {
+  it('整理布局视图分「重排 / 规整」两张卡片，六向进紧凑网格（不再 10 行竖排）', async () => {
+    const w = mountSheet()
+    q('[data-testid="msms-layout"]')!.click()
+    await flushPromises()
+
+    expect(q('[data-testid="msms-card-rearrange"]'), '应有「重排」卡片').not.toBeNull()
+    expect(q('[data-testid="msms-card-tidy"]'), '应有「规整」卡片').not.toBeNull()
+    expect(q('[data-testid="msms-align-grid"]'), '六向应在紧凑网格里').not.toBeNull()
+
+    // 分组标题文案（用户靠它理解「重排 vs 规整」的差别）
+    expect(q('[data-testid="msms-card-rearrange"]')!.textContent).toContain('重排')
+    expect(q('[data-testid="msms-card-tidy"]')!.textContent).toContain('规整')
+
+    // ⛔ 六向不得再散在「重排」卡片里（分组错位 = 语义误导）
+    const rearrange = q('[data-testid="msms-card-rearrange"]')!
+    expect(rearrange.querySelectorAll('[data-testid^="msms-align-"]').length).toBe(0)
+
+    // 竖排 10 项已消失：layout 视图内 .msms-item 计数为 0（改卡片/网格）
+    const layoutView = q('[data-testid="msms-layout-groups"]')!
+    expect(layoutView.querySelectorAll('.msms-item').length).toBe(0)
+
+    w.unmount()
+  })
+
+  it('「重排」两项与「规整」八项仍全部可点且 emit 正确负载（分组不改行为）', async () => {
+    const w = mountSheet()
+    q('[data-testid="msms-layout"]')!.click()
+    await flushPromises()
+
+    q('[data-testid="msms-layout-grid"]')!.click()
+    await flushPromises()
+    expect(w.emitted('layout')).toEqual([['grid']])
+
+    q('[data-testid="msms-back"]')!.click()
+    await flushPromises()
+    q('[data-testid="msms-layout"]')!.click()
+    await flushPromises()
+    q('[data-testid="msms-align-bottom"]')!.click()
+    await flushPromises()
+    expect(w.emitted('align')).toEqual([[{ kind: 'align', alignMode: 'bottom' }]])
+
+    w.unmount()
+  })
+})

@@ -154,6 +154,24 @@ function onAlign(payload:
   emit('align', payload)
 }
 
+/**
+ * 六向对齐项（2026-10-23 IA 重排）：下拉里 3 列 × 2 行紧凑网格
+ * —— 上行水平三向、下行垂直三向，语义自带分组。
+ * ⚠️ `id` 决定 testid（`layout-align-<id>`），改名会打断既有守卫测试。
+ */
+const ALIGN_ITEMS: ReadonlyArray<{
+  id: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+  label: string
+  alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+}> = [
+  { id: 'left', label: '左对齐', alignMode: 'left' },
+  { id: 'centerH', label: '水平居中', alignMode: 'centerH' },
+  { id: 'right', label: '右对齐', alignMode: 'right' },
+  { id: 'top', label: '顶对齐', alignMode: 'top' },
+  { id: 'centerV', label: '垂直居中', alignMode: 'centerV' },
+  { id: 'bottom', label: '底对齐', alignMode: 'bottom' },
+]
+
 function onDocClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
   if (!target?.closest('[data-export-menu]')) {
@@ -410,79 +428,60 @@ onUnmounted(() => {
         </button>
         <div
           v-if="layoutMenuOpen"
-          class="export-menu neo-chrome absolute left-0 top-full z-50 mt-1 min-w-[8.5rem] rounded-lg py-1"
+          class="export-menu layout-menu neo-chrome absolute left-0 top-full z-50 mt-1 min-w-[12rem] rounded-lg py-1"
+          data-testid="layout-menu-groups"
         >
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onLayout('along_edges')"
-          >
-            顺着连线
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onLayout('grid')"
-          >
-            自动网格
-          </button>
-          <!-- SP-B：对齐六向 + 两轴等距（复用既有 .export-menu-item，不新增配色） -->
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'align', alignMode: 'left' })"
-          >
-            左对齐
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'align', alignMode: 'centerH' })"
-          >
-            水平居中
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'align', alignMode: 'right' })"
-          >
-            右对齐
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'align', alignMode: 'top' })"
-          >
-            顶对齐
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'align', alignMode: 'centerV' })"
-          >
-            垂直居中
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'align', alignMode: 'bottom' })"
-          >
-            底对齐
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'distribute', axis: 'x' })"
-          >
-            水平等距
-          </button>
-          <button
-            type="button"
-            class="export-menu-item"
-            @click="onAlign({ kind: 'distribute', axis: 'y' })"
-          >
-            垂直等距
-          </button>
+          <!-- 2026-10-23 IA 重排：10 平级 → 两组（重排 / 规整）。
+               分组依据 = 动作语义分层（spec §16）：重排=重新决定整批位置（互斥择一）、
+               规整=在现有位置微调（可叠加）。原来 10 行竖排在下缘会被裁掉。 -->
+          <div class="export-menu__label">重排</div>
+          <div class="export-menu__grid">
+            <button
+              type="button"
+              class="export-menu-item export-menu-item--compact"
+              data-testid="layout-along"
+              @click="onLayout('along_edges')"
+            >
+              顺着连线
+            </button>
+            <button
+              type="button"
+              class="export-menu-item export-menu-item--compact"
+              data-testid="layout-grid"
+              @click="onLayout('grid')"
+            >
+              自动网格
+            </button>
+          </div>
+          <div class="export-menu__label">规整</div>
+          <div class="export-menu__grid">
+            <button
+              v-for="item in ALIGN_ITEMS"
+              :key="item.id"
+              type="button"
+              class="export-menu-item export-menu-item--compact"
+              :data-testid="`layout-align-${item.id}`"
+              @click="onAlign({ kind: 'align', alignMode: item.alignMode })"
+            >
+              {{ item.label }}
+            </button>
+            <button
+              type="button"
+              class="export-menu-item export-menu-item--compact"
+              data-testid="layout-distribute-x"
+              @click="onAlign({ kind: 'distribute', axis: 'x' })"
+            >
+              水平等距
+            </button>
+            <button
+              type="button"
+              class="export-menu-item export-menu-item--compact"
+              data-testid="layout-distribute-y"
+              @click="onAlign({ kind: 'distribute', axis: 'y' })"
+            >
+              垂直等距
+            </button>
+          </div>
         </div>
       </div>
       <div
@@ -618,6 +617,33 @@ onUnmounted(() => {
 .export-menu-item:hover {
   background: var(--neo-hover-bg);
   color: var(--neo-text-primary);
+}
+
+/* ── 整理布局下拉：分組 + 兩列緊湊（2026-10-23 IA 重排）────────────────
+   原 10 行豎排在視口下緣會被裁掉 ⇒ 兩組（重排 / 規整）+ 3×2 網格。
+   分組標籤複用本浮層既有的 neo 文字色（深色玻璃底上才有對比），
+   新增的間距/字號一律走 --lnk-* 令牌。 */
+.layout-menu {
+  max-height: min(70vh, 22rem);
+  overflow-y: auto;
+}
+
+.export-menu__label {
+  padding: var(--lnk-space-2) var(--lnk-space-3) var(--lnk-space-1);
+  font-size: var(--lnk-text-2xs);
+  color: var(--neo-text-secondary);
+  opacity: 0.75;
+}
+
+.export-menu__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.export-menu-item--compact {
+  padding: 0.3rem 0.5rem;
+  font-size: var(--lnk-text-xs);
+  text-align: center;
 }
 
 /* 分组背景色触发钮（2026-10-13）：内外环结构——外环为中性描边圆钮，

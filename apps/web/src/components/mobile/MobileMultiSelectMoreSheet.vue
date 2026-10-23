@@ -92,6 +92,24 @@ function onDownload(mode: 'full_package' | 'lightweight' | 'media_list_only') {
 function onDelete() {
   emit('delete')
 }
+
+/**
+ * 六向对齐项（2026-10-23 IA 重排）：3 列 × 2 行网格
+ * —— 上行水平三向、下行垂直三向，语义自带分组，无需再加小标题。
+ * ⚠️ `id` 决定 testid（`msms-align-<id>`），改名会打断既有守卫测试。
+ */
+const ALIGN_ITEMS: ReadonlyArray<{
+  id: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+  label: string
+  alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+}> = [
+  { id: 'left', label: '左对齐', alignMode: 'left' },
+  { id: 'centerH', label: '水平居中', alignMode: 'centerH' },
+  { id: 'right', label: '右对齐', alignMode: 'right' },
+  { id: 'top', label: '顶对齐', alignMode: 'top' },
+  { id: 'centerV', label: '垂直居中', alignMode: 'centerV' },
+  { id: 'bottom', label: '底对齐', alignMode: 'bottom' },
+]
 </script>
 
 <template>
@@ -124,39 +142,56 @@ function onDelete() {
       />
     </div>
 
-    <!-- 整理布局 -->
-    <div v-else-if="view === 'layout'" class="msms-list">
-      <button type="button" class="msms-item" data-testid="msms-layout-along" @click="onLayout('along_edges')">
-        <span class="msms-item__label">顺着连线排列</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-layout-grid" @click="onLayout('grid')">
-        <span class="msms-item__label">自动网格排列</span>
-      </button>
-      <!-- SP-B：对齐六向 + 两轴等距（复用既有 .msms-item，不新增配色） -->
-      <button type="button" class="msms-item" data-testid="msms-align-left" @click="onAlign({ kind: 'align', alignMode: 'left' })">
-        <span class="msms-item__label">左对齐</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-align-centerH" @click="onAlign({ kind: 'align', alignMode: 'centerH' })">
-        <span class="msms-item__label">水平居中</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-align-right" @click="onAlign({ kind: 'align', alignMode: 'right' })">
-        <span class="msms-item__label">右对齐</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-align-top" @click="onAlign({ kind: 'align', alignMode: 'top' })">
-        <span class="msms-item__label">顶对齐</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-align-centerV" @click="onAlign({ kind: 'align', alignMode: 'centerV' })">
-        <span class="msms-item__label">垂直居中</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-align-bottom" @click="onAlign({ kind: 'align', alignMode: 'bottom' })">
-        <span class="msms-item__label">底对齐</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-distribute-x" @click="onAlign({ kind: 'distribute', axis: 'x' })">
-        <span class="msms-item__label">水平等距</span>
-      </button>
-      <button type="button" class="msms-item" data-testid="msms-distribute-y" @click="onAlign({ kind: 'distribute', axis: 'y' })">
-        <span class="msms-item__label">垂直等距</span>
-      </button>
+    <!-- 整理布局（2026-10-23 IA 重排：10 平级 → 2 组卡片「重排 / 规整」）
+         分组依据 = 动作语义分层（见 spec §16）：「重排」重新决定整批位置（互斥择一）、
+         「规整」在现有位置上微调（可叠加）。10 项竖排会被底部裁掉 ⇒ 改卡片 + 紧凑网格。 -->
+    <div v-else-if="view === 'layout'" class="msms-layout" data-testid="msms-layout-groups">
+      <section class="msms-card" data-testid="msms-card-rearrange">
+        <header class="msms-card__head">
+          <span class="msms-card__title">重排</span>
+          <span class="msms-card__hint">重新决定这批节点的整体位置</span>
+        </header>
+        <div class="msms-card__row">
+          <button type="button" class="msms-tile" data-testid="msms-layout-along" @click="onLayout('along_edges')">
+            <span class="msms-tile__label">顺着连线</span>
+            <span class="msms-tile__hint">按连线分层</span>
+          </button>
+          <button type="button" class="msms-tile" data-testid="msms-layout-grid" @click="onLayout('grid')">
+            <span class="msms-tile__label">自动网格</span>
+            <span class="msms-tile__hint">等距铺排</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="msms-card" data-testid="msms-card-tidy">
+        <header class="msms-card__head">
+          <span class="msms-card__title">规整</span>
+          <span class="msms-card__hint">在现有位置上微调</span>
+        </header>
+        <!-- 六向 = 3 列 × 2 行：上行水平三向、下行垂直三向（语义自带分组，无需小标题） -->
+        <div class="msms-align" data-testid="msms-align-grid">
+          <button
+            v-for="item in ALIGN_ITEMS"
+            :key="item.id"
+            type="button"
+            class="msms-align__btn"
+            :data-testid="`msms-align-${item.id}`"
+            @click="onAlign({ kind: 'align', alignMode: item.alignMode })"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+        <div class="msms-card__row">
+          <button type="button" class="msms-tile" data-testid="msms-distribute-x" @click="onAlign({ kind: 'distribute', axis: 'x' })">
+            <span class="msms-tile__label">水平等距</span>
+            <span class="msms-tile__hint">左右间隙相等</span>
+          </button>
+          <button type="button" class="msms-tile" data-testid="msms-distribute-y" @click="onAlign({ kind: 'distribute', axis: 'y' })">
+            <span class="msms-tile__label">垂直等距</span>
+            <span class="msms-tile__hint">上下间隙相等</span>
+          </button>
+        </div>
+      </section>
     </div>
 
     <!-- 导出 -->
@@ -272,6 +307,106 @@ function onDelete() {
   flex: none;
   border-radius: var(--lnk-radius-full);
   border: 0.5px solid var(--lnk-border-subtle);
+}
+
+/* ── 整理布局：分组卡片（2026-10-23 IA 重排）────────────────────────────
+   原 10 项竖排（10 × 44px）在移动端 sheet 里被底部裁掉 ⇒ 改两张卡片
+   （重排 / 规整）+ 紧凑网格，高度降到 ~5 行；语义分组见 spec §16。 */
+.msms-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lnk-space-3);
+  padding-bottom: var(--lnk-space-2);
+}
+
+.msms-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lnk-space-2);
+  padding: var(--lnk-space-3);
+  border-radius: var(--lnk-radius-md);
+  background: var(--lnk-surface-raised);
+  border: 0.5px solid var(--lnk-border-subtle);
+}
+
+.msms-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--lnk-space-2);
+}
+
+.msms-card__title {
+  font-size: var(--lnk-text-sm);
+  font-weight: 600;
+  color: var(--lnk-text-primary);
+}
+
+.msms-card__hint {
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-muted);
+}
+
+.msms-card__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--lnk-space-2);
+}
+
+.msms-tile {
+  display: flex;
+  min-height: var(--lnk-touch-target);
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--lnk-space-2) var(--lnk-space-3);
+  border: none;
+  border-radius: var(--lnk-radius-sm);
+  background: var(--lnk-surface-sunken);
+  color: var(--lnk-text-primary);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--lnk-duration-fast) ease;
+}
+
+.msms-tile:active {
+  background: var(--lnk-pressed-overlay);
+}
+
+.msms-tile__label {
+  font-size: var(--lnk-text-sm);
+}
+
+.msms-tile__hint {
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-muted);
+}
+
+/* 六向 = 3 列 × 2 行：上行水平三向、下行垂直三向 */
+.msms-align {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--lnk-space-2);
+}
+
+.msms-align__btn {
+  min-height: var(--lnk-touch-target);
+  padding: 0 var(--lnk-space-2);
+  border: none;
+  border-radius: var(--lnk-radius-sm);
+  background: var(--lnk-surface-sunken);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-sm);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--lnk-duration-fast) ease;
+}
+
+.msms-align__btn:active {
+  background: var(--lnk-pressed-overlay);
 }
 
 .msms-back {
