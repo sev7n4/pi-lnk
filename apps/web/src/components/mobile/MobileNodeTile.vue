@@ -52,6 +52,12 @@ const tileStyle = computed(() => ({
   height: `${tileSize.value.height}px`,
 }))
 
+/**
+ * 空图 / 空视频的类型名（占位标签）。
+ * 与音频波纹、文本「空文本」并列，让空节点自解释类型。
+ */
+const placeholderLabel = computed(() => (props.type === 'video' ? '视频' : '图片'))
+
 const mobileActionRequest = inject<MobileNodeActionRequestFn>(MOBILE_NODE_ACTION_REQUEST_KEY, () => {})
 const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
   shouldSuppress: () => false,
@@ -86,6 +92,12 @@ function toggleAudio() {
 
 function onTileClick() {
   if (props.type === 'audio') {
+    // R2-T2：空音频（无 url）不播一个不存在的源，改为交策略（→ 编辑 sheet）。
+    // 有 url 时仍内联播放（不进 viewer/editor 路由）。
+    if (!props.data?.url) {
+      emit('tap')
+      return
+    }
     toggleAudio()
     return
   }
@@ -127,7 +139,7 @@ function handleTextTap() {
       alt=""
     />
     <video
-      v-else-if="type === 'video'"
+      v-else-if="type === 'video' && data?.url"
       :src="data?.url"
       :poster="data?.poster"
       preload="none"
@@ -140,6 +152,39 @@ function handleTextTap() {
       <audio ref="audioEl" :src="data?.url" />
     </div>
     <p v-else-if="type === 'text'" class="mobile-node-text">{{ data?.content || '空文本' }}</p>
+    <!--
+      空图 / 空视频的类型占位（2026-10-23 真机走查）：
+      空节点时磁贴里没有任何媒体元素 ⇒ 只剩卡面 + 描边 ⇒ 几何形状成了唯一线索，
+      图片（正方形）与视频（矩形条）视觉上无法区分。补「类型图标 + 类型名」，
+      与音频波纹 / 文本「空文本」形成一致的类型可辨识性。
+      图标 path 复用 NeoBaseNode.vue 同款，保证与桌面节点类型图标一致。
+    -->
+    <div v-else class="mobile-node-placeholder" :data-type="type">
+      <svg
+        v-if="type === 'image'"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
+        <rect x="2.5" y="3" width="19" height="18" rx="3" />
+        <circle cx="8" cy="9" r="2" />
+        <path d="M21.5 15.5l-5-5L4 21" />
+      </svg>
+      <svg
+        v-else-if="type === 'video'"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <polygon points="23 7 16 12 23 17 23 7" />
+        <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+      </svg>
+      <span class="mobile-node-placeholder-label">{{ placeholderLabel }}</span>
+    </div>
 
     <span v-if="badge" class="mobile-node-badge" :data-tone="badge.tone">{{ badge.label }}</span>
   </div>
@@ -247,5 +292,32 @@ function handleTextTap() {
 
 .mobile-node-badge[data-tone='error'] {
   color: var(--lnk-status-error);
+}
+
+/* 空图 / 空视频的类型占位（2026-10-23 真机走查·辨识度）
+   —— 空节点无媒体元素时只剩卡面 + 描边，图片（正方形）与视频（矩形条）无法区分；
+   补「类型图标 + 类型名」，与音频波纹 / 文本「空文本」并列。 */
+.mobile-node-placeholder {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lnk-space-2);
+  box-sizing: border-box;
+  color: var(--lnk-text-muted);
+}
+
+.mobile-node-placeholder svg {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+
+.mobile-node-placeholder-label {
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-text-muted);
 }
 </style>
