@@ -157,6 +157,19 @@ describe('follow-up-tail 重连行为（multi-device Task 5）', () => {
     expect(listener.getState()).toBe('idle')
   })
 
+  it('401/403（鉴权失效）不重连——重连只会再拿一次同样的状态码', async () => {
+    for (const code of [401, 403]) {
+      const deps = makeDeps({
+        fetchImpl: () => Promise.resolve({ status: code, ok: false, body: null } as TailResponseLike),
+      })
+      const listener = createFollowUpTailListener(deps)
+      await listener.start()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(deps.urls, `${code} 不得触发重连`).toHaveLength(1)
+      expect(listener.getState()).toBe('idle')
+    }
+  })
+
   it('重连预算耗尽后停止（maxReconnects=3 ⇒ 共 4 次），不无限重挂', async () => {
     const deps = makeDeps({
       backoffBaseMs: 100,

@@ -131,8 +131,9 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
             headers: deps.headers(),
             signal: local.signal,
           })
-          // 404 = 会话已删除（pi-runtime 语义）：重连无意义，直接退
-          if (res.status === 404) return
+          // 404 = 会话已删除（pi-runtime 语义）；401/403 = 鉴权失效（token 过期 / 被登出）。
+          // 两者重连都无意义（重连只会再拿一次同样的状态码）⇒ 直接退，避免重连风暴。
+          if (res.status === 404 || res.status === 401 || res.status === 403) return
           if (!res.ok || !res.body) throw new Error(`observer stream HTTP ${res.status}`)
           idleTimer.refresh()
           state = 'streaming'

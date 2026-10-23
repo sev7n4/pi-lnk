@@ -2841,7 +2841,15 @@ const followUpTail = createFollowUpTailListener({
 
 /** 订阅当前会话（幂等：内部先 abort 旧流）。 */
 function listenFollowUpTail(): Promise<void> {
+  // 未登录不订阅：订阅必须带鉴权头，没 token 时请求只会拿到 401，并连带一轮
+  // 无意义的退避重连。守卫放在**入口**（而非各调用点）⇒ 挂载 / 切会话 / 可见性恢复全覆盖。
+  if (!hasAuthToken()) return Promise.resolve()
   return followUpTail.start()
+}
+
+/** 是否持有可用 token（与 `authHeaders` 同源口径）。 */
+function hasAuthToken(): boolean {
+  return Boolean(localStorage.getItem('token'))
 }
 
 /** 本端要自己发一轮了：先结束旁观轮，再停订阅（避免与主流双份消费）。 */
@@ -2853,7 +2861,9 @@ function releaseObserverTurn(): void {
 
 /** Task 5：页面从后台切回时恢复订阅（idle 直接挂；backoff 中跳过排队；健康流不打断）。 */
 function onFollowUpTailVisibility(): void {
-  if (document.visibilityState === 'visible') void followUpTail.resume()
+  if (document.visibilityState !== 'visible') return
+  if (!hasAuthToken()) return
+  void followUpTail.resume()
 }
 
 onMounted(() => {

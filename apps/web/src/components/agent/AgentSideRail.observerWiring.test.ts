@@ -78,4 +78,11 @@ describe('AgentSideRail 会话级订阅接线（multi-device 收尾 P0）', () =
       '旁观收尾直接拉权威历史（传 0 跳过 5s×N 的终态轮询：那一轮已在另一端跑完）',
     ).toContain('reconcileLatestAssistant(0)')
   })
+
+  it('⑥ 未登录不订阅（没 token 只会拿到 401，还会连带一轮无意义的退避重连）', () => {
+    expect(code, '订阅前必须校验 token').toContain('hasAuthToken()')
+    expect(code, 'token 守卫必须落在订阅入口（挂载 / 切会话 / 可见性恢复全覆盖）').toMatch(
+      /function listenFollowUpTail\(\)[\s\S]{0,200}hasAuthToken\(\)/,
+    )
+  })
 })
