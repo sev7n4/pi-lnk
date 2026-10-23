@@ -7,7 +7,6 @@ import NodeRenderer from '@/components/canvas/NodeRenderer.vue'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const NR = readFileSync(join(HERE, '..', 'canvas', 'NodeRenderer.vue'), 'utf8')
 const TILE = readFileSync(join(HERE, 'MobileNodeTile.vue'), 'utf8')
 
 function setMobile(on: boolean) {

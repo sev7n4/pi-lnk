@@ -62,7 +62,7 @@ function onTileOpen() {
  * （桌面角标 `NodeTaskCornerActions` 走的也是它）⇒ ⛔ 不新建重试通路，
  * 移动端与桌面共用同一套重试语义（换模型重试等 overrides 也自动可用）。
  */
-const retryNode = inject<CanvasNodeRetryFn>(CANVAS_NODE_RETRY_KEY, null)
+const retryNode = inject<CanvasNodeRetryFn | null>(CANVAS_NODE_RETRY_KEY, null)
 function onTileRetry() {
   if (!retryNode) return
   void retryNode(props.id)
