@@ -486,9 +486,9 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 */
 	const BASELINE: Record<string, number> = {
 		core: 693,
-		"core+writeTools": 2677,
+		"core+writeTools": 2694,
 		"core+genTools": 1084,
-		"core+writeTools+genTools": 3068,
+		"core+writeTools+genTools": 3085,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -513,9 +513,13 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 2026-10-21 SP-A 第 23 条点名 create_nodes_batch（canvas_daily_ops v1.4.0）：
 		// 正文 60 字（Δ=+61）⇒ 3039→3100（余量 161→100），含 todoTools 最紧组合 3186（余量 14，贴线）；
 		// 压回 28 字后 3039→3068（余量 161→132），最紧组合 3154（余量 46）。
+		// 2026-10-23 工具契约消歧（arrange_nodes 语义分层，canvas_daily_ops v1.4.1）：
+		// 第 19 条原把「对齐」并入 grid/along_edges（模型据此只会用 grid ⇒ 用户要左对齐却拿到网格重排），
+		// 现拆出 align/distribute 判据；初版 Δ=+44 ⇒ 最紧组合 3198（余量 2，几乎触线）⇒ 压到 Δ=+17：
+		// 3068→3085（余量 132→115），最紧组合 3154→3171（余量 46→29）。抬预算仍属人工决策，本次未抬。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(132);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(115);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────

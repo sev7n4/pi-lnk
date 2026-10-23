@@ -45,7 +45,7 @@
 | 35 | `memory-scope-isolation` | 记忆归属与「记忆 ≠ 当前观察」 | core | 记忆条目带 scope/sessionId/crossCanvas |
 | 40 | `media-tool-policy` | 写工具策略 | writeTools | 4. 用户要创建媒体节点或明确「生成一张…」时：upsert_media_node 建节点（可带 prompt）… |
 | 45 | `canvas-view-card` | 画布视图卡片策略 | writeTools | 16. 用户问「为什么/怎么/关系/结构/流程/解释/说明/分析/对比/梳理… |
-| 46 | `canvas-daily-ops` | 画布日常操作 | writeTools | 19. 用户要求「整理/排版/排列/按关系展开/对齐」节点：用 arrange_nodes… |
+| 46 | `canvas-daily-ops` | 画布日常操作 | writeTools | 19. 整理/排版/铺开节点用 arrange_nodes（grid 无序 / along_edges 有向）… |
 | 50 | `gen-gate` | 生成工具策略 | genTools | 11. run_image/video/text/audio_generation 仅对已 propose_genera… |
 | 55 | `todo-write-tool` | 任务计划汇报（todo_write） | todoTools | 多步任务开工前 todo_write 提交清单（全量覆写），完成即更新，全部完成交空数组… |
 | 60 | `readonly-session-guard` | 写操作守卫 | core（除非 writeTools） | 10. 当前会话仅开放只读查询工具（画布摘要/节点/生成状态/素材列表等）；创建、修改、连线… |
@@ -71,8 +71,8 @@
 |---|---|
 | 硬线 `STATIC_BUDGET_CHARS` | 3200 |
 | 预警线 `STATIC_BUDGET_WARN_CHARS` | 2720（= 3200 × 0.85） |
-| 全组合当前实测 | **3068**（已过预警线，硬线内） |
-| **余量** | **132 字符**（硬线 3200 − 实测 3068） |
+| 全组合当前实测 | **3085**（已过预警线，硬线内） |
+| **余量** | **115 字符**（硬线 3200 − 实测 3085） |
 <!-- END:budget-table -->
 
 **余量是硬事实，不是估计。** 加新规则前先跑 `pnpm prompt:lint` 看余量。
