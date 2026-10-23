@@ -245,12 +245,16 @@ describe('P3-J 签名画面叙事与材质（走查「叙事仪式感」轮，20
 describe('P3-K 叙事动线与仪式动效（走查「叙事仪式感」轮·第二批，2026-10-22）', () => {
   const HERO_SRC = stripComments(HERO)
 
-  it('输入站进三联：stage 承载输入框（空间即故事，不再大宽度孤条）', () => {
+  it('输入站进三联：stage 承载创作入口（空间即故事，不再大宽度孤条）', () => {
     expect(HERO_SRC, '叙事舞台容器').toContain('lnk-stage')
-    // 2026-10-23：输入站类名改为 .lnk-talk-input（窄屏它被挪到三列**下方**独占一行，
-    // 桌面仍在左列内）——守卫的是「输入框在叙事舞台内」，不是某个旧类名。
-    expect(HERO_SRC, '输入站位（左「说」）').toContain('lnk-talk-input')
-    expect(HERO_SRC, '输入站必须挂在叙事舞台内（不是大宽度孤条）').toContain('lnk-stage')
+    // 2026-10-24 用户裁定·第 5 点：「描述你的创意」输入框**整体退场**（用户基本不在
+    // 品牌页打字）⇒ 输入站改由【滑动解锁】接管，类名 .lnk-talk-input → .lnk-talk-slide
+    // （窄屏它在三列**下方**独占一行，桌面仍在左列内）。
+    // 守卫的是「创作入口在叙事舞台内」，不是某个旧类名。
+    expect(HERO_SRC, '创作入口位（左「说」）').toContain('lnk-talk-slide')
+    expect(HERO_SRC, '创作入口必须挂在叙事舞台内（不是大宽度孤条）').toContain('lnk-stage')
+    // ⛔ 输入框不得复活（hero 里不再有输入站组件）
+    expect(HERO_SRC, 'hero 不得再引 CreativeLauncher').not.toContain('CreativeLauncher')
   })
 
   it('墨点动效：落域 + 三颗墨点 + 落距同源（--lnk-drop-fall）', () => {

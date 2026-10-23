@@ -75,7 +75,6 @@ watch(
   { immediate: true },
 )
 
-const prompt = ref('')
 const works = ref<Work[]>([])
 // 2026-10-21 P1：主页只留一行精选（4 张），完整作品流移至 /community。
 // 分类筛选（activeCategory）随之撤出——分类维度由 type 决定，属社区页职责。
@@ -158,20 +157,19 @@ async function createCanvas() {
   //  · 无项目 ⇒ 新建项目并直接进它的【对话】页——用户已明确表达创作意图，
   //    此刻创建是「把意图落地」，不是入口副作用；
   //  品牌页上除锚之外没有任何其他创建入口 ⇒【新建项目】由【对话】页承载。
-  // PC 端保持原语义（hero 输入框 + 锚 = 开一个新项目）。
+  // PC 端保持原语义（hero 锚 = 开一个新项目）。
   if (isMobileLayout.value && recentProjectId.value) {
     router.push(`/workflow/${recentProjectId.value}`)
     return
   }
   try {
     const { data } = await sessionsApi.create({
-      ...(prompt.value.trim() ? { title: prompt.value.trim() } : {}),
+      title: '未命名画布',
     })
     router.push({
       path: `/workflow/${data.data.id}`,
       query: {
         openAgent: '1',
-        ...(prompt.value.trim() ? { initialPrompt: prompt.value.trim() } : {}),
       },
     })
   } catch {
@@ -235,7 +233,7 @@ watch(
   <div>
     <!-- 2026-10-22 用户裁定「霸屏铺满」：hero 是全宽首屏（不再龟缩在 max-w-7xl 卡片里），
          滚动后才是我的项目 / 社区精选——同一个页面，不是两个页面 -->
-    <SignatureHero v-model="prompt" @create="createCanvas" />
+    <SignatureHero @create="createCanvas" />
 
     <!-- ⛔ 窄屏整块隐藏（2026-10-23 用户裁定）：移动端品牌页只有【品牌】内容，
          覆盖手机全屏 ⇒ 这里只装「我的项目 / 社区精选 / 发布弹窗」，窄屏一律不渲染
@@ -327,7 +325,7 @@ watch(
     <PublishNeoTVDialog
       v-model="showPublish"
       :sessions="userSessions"
-      :default-title="prompt || userSessions[0]?.title"
+      :default-title="userSessions[0]?.title"
       @published="fetchWorks"
       @locate-node="handlePublishLocateNode"
     />

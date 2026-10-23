@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BRAND_LOGO_URL, BRAND_NAME } from '@/constants/brand'
+import { BRAND_LOGO_URL, BRAND_SHORT_NAME } from '@/constants/brand'
 
 withDefaults(
   defineProps<{
@@ -10,7 +10,8 @@ withDefaults(
   {
     size: 'md',
     showName: false,
-    name: BRAND_NAME,
+    // 2026-10-23 用户裁定：品牌展示位（导航左上角）只露「lnk π」，全名留给法务文书
+    name: BRAND_SHORT_NAME,
   },
 )
 
