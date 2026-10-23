@@ -223,9 +223,13 @@ describe('SignatureHero', () => {
     expect(src, '窄屏左列须 display:contents（输入框才能落到第二行）').toMatch(
       /\.lnk-col-talk\s*\{[^}]*display:\s*contents/,
     )
-    // ④ 桌面恢复：输入框回到左列内（talk 列 display:flex）
-    expect(src, '桌面左列须恢复为 flex 列（输入框回到对话列内）').toMatch(
-      /\.lnk-col-talk\s*\{[^}]*display:\s*flex/,
+    // ④ 桌面恢复：输入框回到左列内（talk 列 = 内容列 + 装饰线列两格；
+    //    窄屏那套 display:contents 只对 <lg 生效）
+    expect(src, '桌面左列须恢复为 grid 两格（内容 | 装饰线）').toMatch(
+      /\.lnk-col-talk\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/,
+    )
+    expect(src, '窄屏左列才用 display:contents（输入框落到第二行）').toMatch(
+      /\.lnk-col-talk\s*\{[^}]*display:\s*contents/,
     )
     // ⑤ 中列宽度锁死 = 锚盘宽（否则 CTA 文字撑宽中列 ⇒ 左右列被压扁、三叙事散架）
     expect(src, '中列宽度须锁死（CTA 不得撑宽中列）').toMatch(
@@ -253,6 +257,39 @@ describe('SignatureHero', () => {
     expect(brand, '旧文案已撤').not.toContain('让画布记住你的模样')
     // ③ inline 墨鱼位仍须是主行子串（改文案后不能漂移，否则墨鱼静默消失）
     expect(brand).toContain("export const BRAND_SLOGAN_MAIN_MASCOT_BEFORE = '记住你的模样'")
+  })
+
+  it('⛔ 桌面端（lg）不得被窄屏改动牵连（用户 2026-10-23 提醒）', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    // 背景：把移动端改成左右结构时，PC 端一度被连带破坏（实测 1440×900，基线 = 移动端改动前）：
+    //   · 窄屏的 grid-area: talk/anchor/canvas 残留 ⇒ lg 下 grid-template-areas:none
+    //     让所有 item 退化成 auto 放置 ⇒ 三列错乱（中列被挤到右侧、右列与中列重叠、
+    //     锚偏离 slogan 中轴 348px）；
+    //   · 装饰线被留在列内 ⇒ PC 上跑到输入框下方 / 与文字组同 x（竖排了）；
+    //   · 中列被锁成锚盘宽（168）⇒ 原设计是 CTA 自然宽（186），CTA 溢出中列。
+    // 判据：lg 断点里这四条必须都在（逐条对应上面的实测缺陷）。
+    const lg = src.slice(src.indexOf('@media (min-width: 1024px)'))
+    expect(lg, 'lg 必须清掉窄屏的 grid-area 引用').toMatch(
+      /\.lnk-talk-label,\s*\.lnk-talk-input,\s*\.lnk-col-anchor,\s*\.lnk-col-canvas\s*\{[^}]*grid-area:\s*auto/,
+    )
+    expect(lg, 'lg 中列必须解锁（width:auto ⇒ 回到原设计的 CTA 自然宽）').toMatch(
+      /\.lnk-col-anchor\s*\{[^}]*width:\s*auto/,
+    )
+    expect(lg, 'lg 右列必须占满 1fr 格（width:100% ≡ 原设计的 w-full）').toMatch(
+      /\.lnk-col-canvas\s*\{[^}]*width:\s*100%/,
+    )
+    expect(lg, 'lg 两侧必须 minmax(0,1fr)（否则锚偏离 slogan 中轴）').toContain(
+      'grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)',
+    )
+    // 装饰线在 lg 下必须横排定位（左侧线的 grid-area 指向 talk 列第二格）
+    expect(src, '装饰线须有语义 class（lg 下按列定位）').toContain('lnk-deco-left')
+    expect(src, '装饰线须有语义 class（lg 下按列定位）').toContain('lnk-deco-right')
+    expect(lg, '左装饰线须在 talk 列右侧、与列中线齐').toMatch(
+      /\.lnk-deco-left\s*\{[^}]*grid-area:\s*1 \/ 2 \/ 3 \/ 3/,
+    )
+    expect(lg, '右装饰线须在右列左侧、与列中线齐').toMatch(
+      /\.lnk-deco-right\s*\{[^}]*grid-area:\s*1 \/ 1 \/ 2 \/ 2/,
+    )
   })
 
   it('IA v4：窄屏副文案不得出现孤字换行（实测「画布记住你的模样」7 字占 96px > 列宽 93px）', () => {
