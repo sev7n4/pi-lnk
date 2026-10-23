@@ -75,6 +75,12 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onNodeEditorPatch: vi.fn(),
     viewerNode: null,
     onViewerClose: vi.fn(),
+    // R3-T4：壳层聚合状态栏（默认无任务态）
+    nodeGeneratingCount: 0,
+    nodePendingNodes: [],
+    nodeGeneratingElapsed: '',
+    onNodePendingConfirm: vi.fn(),
+    onNodePendingCancel: vi.fn(),
     ...overrides,
   }
 }

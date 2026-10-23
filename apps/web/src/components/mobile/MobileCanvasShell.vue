@@ -18,7 +18,7 @@
  *
  * 本壳层自身只在 CanvasPage 的 `v-if="isMobileLayout"` 下渲染，内部不再判断断点。
  */
-import { onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { studioApi } from '@/services/studio-api'
 import type { GenerationRecord } from '@/services/studio-api'
@@ -29,6 +29,8 @@ import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
 import MobileTopBar from './MobileTopBar.vue'
 import MobileTabBar from './MobileTabBar.vue'
 import MobileSaveStatus from './MobileSaveStatus.vue'
+import MobileNodeStatusBar from './MobileNodeStatusBar.vue'
+import type { MobilePendingNode } from '@/composables/mobileNodeTaskSummary'
 import DiscoverPane from './DiscoverPane.vue'
 import ProfilePane from './ProfilePane.vue'
 import MobileCanvasCreateFab from './MobileCanvasCreateFab.vue'
@@ -138,6 +140,17 @@ const props = defineProps<{
   /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
   viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
   onViewerClose: () => void
+  /** ── R3-T4 壳层聚合状态栏（D-C 状态机的壳层聚合）── */
+  /** 正在生成的节点数（0 = 无） */
+  nodeGeneratingCount: number
+  /** 待确认节点（id + 标题）——空数组 = 无 */
+  nodePendingNodes: MobilePendingNode[]
+  /** 生成已耗时（无则不显示） */
+  nodeGeneratingElapsed?: string
+  /** 确认 = 走桌面同一套 propose confirm 语义 */
+  onNodePendingConfirm: (nodeId: string) => void
+  /** 拒绝 = 走桌面同一套 propose cancel 语义 */
+  onNodePendingCancel: (nodeId: string) => void
 }>()
 
 /** 移动端编辑 sheet 上下文：节点 + 上游/引用/提及（与桌面 DockStudioToolbar 同源） */
@@ -243,6 +256,15 @@ function stopMobileTaskPolling() {
   }
 }
 
+/**
+ * R3-T4：底部带互斥判据——有节点任务状态（生成中 / 待确认）时，
+ * 让位给 `MobileNodeStatusBar`（与 `MobileSaveStatus` 同带，不能重叠）。
+ * ⚠️ 保存失败的优先级更高（丢数据比任务态更急）——那条在模板里单独判。
+ */
+const hasNodeTaskState = computed(
+  () => props.nodeGeneratingCount > 0 || props.nodePendingNodes.length > 0,
+)
+
 watch(
   [() => props.mobileAppTab, () => props.sessionId],
   ([tab]) => {
@@ -285,12 +307,23 @@ onUnmounted(() => stopMobileTaskPolling())
     @open-tasks="showMobileTaskSheet = true"
   />
   <!-- 2026-10-21：自动保存状态行——静默成功只报异常（失败红胶囊可点重试，保存中仅呼吸点）；
-       多选态不出（与动作条抢位） -->
+       多选态不出（与动作条抢位）。
+       ⚠️ 与 R3-T4 的节点状态栏**互斥**：保存失败优先（丢数据比任务态更急），
+       否则有节点任务时让位给状态栏（两者同在底部带，会重叠）。 -->
   <MobileSaveStatus
-    v-if="mobileAppTab === 'canvas' && !multiSelectActive"
+    v-if="mobileAppTab === 'canvas' && !multiSelectActive && (saveFailed || !hasNodeTaskState)"
     :saving="saving"
     :failed="saveFailed"
     @save="onSave"
+  />
+  <!-- R3-T4：壳层聚合状态栏——把画布各节点的「生成中 / 待确认」收敛成一条 -->
+  <MobileNodeStatusBar
+    v-if="mobileAppTab === 'canvas' && !multiSelectActive && hasNodeTaskState"
+    :generating-count="nodeGeneratingCount"
+    :pending-nodes="nodePendingNodes"
+    :elapsed-text="nodeGeneratingElapsed"
+    @confirm="onNodePendingConfirm"
+    @cancel="onNodePendingCancel"
   />
   <DiscoverPane v-if="mobileAppTab === 'discover'" />
   <ProfilePane
