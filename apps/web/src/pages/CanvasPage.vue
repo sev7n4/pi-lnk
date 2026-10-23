@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick, provide, watch, h, type Ref } from 'vue'
+import { ref, onMounted, onUnmounted, onBeforeUnmount, computed, nextTick, provide, watch, h, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   VueFlow,
@@ -165,6 +165,8 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { summarizeMobileNodeTasks } from '@/composables/mobileNodeTaskSummary'
+import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import { useViewportGestures } from '@/composables/useViewportGestures'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
 import RefineWorkbench from '@/components/canvas/refine/RefineWorkbench.vue'
@@ -4325,6 +4327,59 @@ async function handleProposeConfirmCancel(nodeId: string) {
 }
 
 /**
+ * R3-T4：移动端壳层聚合状态栏的数据源。
+ *
+ * 把画布各节点的「生成中 / 待确认」收敛成一条（判据来自纯函数
+ * `summarizeMobileNodeTasks`，与磁贴 / 徽标同源于 `resolveMobileNodeState`）。
+ * ⭐ 只给「数量 + 最早起始时间」——**不假造进度百分比**（全仓无生成进度字段）。
+ */
+const mobileNodeTaskSummary = computed(() =>
+  summarizeMobileNodeTasks(
+    nodes.value.map((n) => {
+      const data = (n.data ?? {}) as Record<string, unknown>
+      return {
+        id: n.id,
+        type: String(n.type),
+        data,
+        title: typeof data.title === 'string' ? data.title : undefined,
+      }
+    }),
+  ),
+)
+
+/** 聚合条的计时：按最早起始时间算已耗时（1s 一跳，仅在有生成中时跑）。 */
+const mobileNodeTaskElapsed = ref('')
+let mobileNodeTaskTimer: ReturnType<typeof setInterval> | null = null
+
+function syncMobileNodeTaskTimer() {
+  if (mobileNodeTaskTimer) {
+    clearInterval(mobileNodeTaskTimer)
+    mobileNodeTaskTimer = null
+  }
+  if (mobileNodeTaskSummary.value.generatingCount <= 0) {
+    mobileNodeTaskElapsed.value = ''
+    return
+  }
+  const tick = () => {
+    const startedAt = mobileNodeTaskSummary.value.earliestStartedAt
+    mobileNodeTaskElapsed.value = startedAt
+      ? formatElapsed(startedAt, Date.now())
+      : ''
+  }
+  tick()
+  mobileNodeTaskTimer = setInterval(tick, 1000)
+}
+
+watch(
+  () => mobileNodeTaskSummary.value.generatingCount,
+  () => syncMobileNodeTaskTimer(),
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  if (mobileNodeTaskTimer) clearInterval(mobileNodeTaskTimer)
+})
+
+/**
  * ADR-0011 T1/T4：节点内联「编辑」——置**显式编辑意图**并选中该节点：
  * dock 门控放行（用户要改提示词 / 参数），改完仍走 dock 生成按钮确认
  * （同一 confirmProposeWait → /answers 路径，不新造第二套确认语义）。
@@ -5811,6 +5866,11 @@ onUnmounted(() => {
       :on-node-editor-patch="applyMobileEditorPatch"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"
+      :node-generating-count="mobileNodeTaskSummary.generatingCount"
+      :node-pending-nodes="mobileNodeTaskSummary.pendingNodes"
+      :node-generating-elapsed="mobileNodeTaskElapsed"
+      :on-node-pending-confirm="handleAgentGenerateNode"
+      :on-node-pending-cancel="handleProposeConfirmCancel"
     />
 
     <MembershipModal v-model="showMembership" />

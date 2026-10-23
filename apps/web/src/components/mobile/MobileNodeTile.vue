@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import { useLongPress } from '@/composables/useLongPress'
 import {
   MOBILE_NODE_ACTION_REQUEST_KEY,
@@ -9,6 +9,8 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
+import { resolveMobileNodeState } from '@/composables/mobileNodeState'
+import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import {
   resolveImageNodeDisplaySize,
   resolveVideoNodeDisplaySize,
@@ -20,15 +22,89 @@ const TTS_THRESHOLD = 120
 const props = defineProps<{
   id?: string
   type: 'image' | 'video' | 'audio' | 'text'
-  data?: { url?: string; poster?: string; content?: string }
+  data?: {
+    url?: string
+    poster?: string
+    content?: string
+    status?: string
+    generationStartedAt?: string
+  }
   status?: string
 }>()
 
-const emit = defineEmits<{ (e: 'tap'): void; (e: 'open-reader'): void }>()
+const emit = defineEmits<{
+  (e: 'tap'): void
+  (e: 'open-reader'): void
+  (e: 'retry'): void
+}>()
 const tts = useTextToSpeech()
 
 const cfg = computed(() => nodeTypeConfigs[props.type])
-const badge = computed(() => cfg.value.statusBadge(props.status))
+
+/**
+ * R3-T2：节点状态的取值来源。
+ *
+ * ⭐ 断链修复：此前 `NodeRenderer` 传给磁贴的 props 只有 `id / type / data`
+ *   （+ `v-bind="attrs"`），**没有 status** ⇒ `statusBadge()` 恒返回 null
+ *   ⇒ 状态徽标当前根本不渲染（桌面组件自己读 `data.status`，所以桌面无此问题）。
+ *
+ * ⚠️ 为什么不新增一个平行的 `status` prop 给桌面组件：`CanvasNodeImage` 等
+ *   桌面组件的 props 里**没有** `status`（status 在 `data` 里）⇒ 传过去会
+ *   fallthrough 成 DOM 属性（`status="generating"` 落到节点根 div）= DOM 污染。
+ *   而 `data` 本来就整体传给磁贴 ⇒ 直接从 `data.status` 读，零额外 prop、零污染。
+ *   `status` prop 保留为「显式覆盖」入口（外部可直接传）。
+ */
+const effectiveStatus = computed(() => props.status ?? props.data?.status)
+const badge = computed(() => cfg.value.statusBadge(effectiveStatus.value))
+
+/**
+ * R3-T3：五态（判据来自纯函数 `resolveMobileNodeState`，与徽标 / 壳层状态栏
+ * 消费同一答案）。瓦片按态渲染轻态：generating = 骨架 + 不确定态进度环，
+ * error = 红边 + 重试入口，pending = 待确认角标。
+ */
+const state = computed(() =>
+  resolveMobileNodeState({ type: props.type, data: props.data as Record<string, unknown> }),
+)
+
+/**
+ * 生成计时（R3-T3）。
+ *
+ * ⭐ **不假造进度百分比**：全仓取证——节点数据里唯一百分比是 `uploadProgress`
+ *   （仅上传态）；生成态只有 `generationStartedAt` + 已耗时
+ *   （`AgentSideRail.vue:1125` 明写「progress / eta：现链路只有已耗时」）。
+ *   ⇒ 这里只显示计时（复用桌面同款 `formatElapsed`），绝不显示假的 0%→100%。
+ */
+const nowMs = ref(Date.now())
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+
+function stopElapsedTimer() {
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+function syncElapsedTimer() {
+  stopElapsedTimer()
+  if (state.value !== 'generating') return
+  elapsedTimer = setInterval(() => {
+    nowMs.value = Date.now()
+  }, 1000)
+}
+
+watch(state, syncElapsedTimer, { immediate: true })
+onBeforeUnmount(stopElapsedTimer)
+
+const elapsedText = computed(() =>
+  formatElapsed(props.data?.generationStartedAt, nowMs.value),
+)
+
+/** 重试（R3-T3）：复用桌面同一注入键 `CANVAS_NODE_RETRY_KEY`，不新建。 */
+function onRetryClick(e: Event) {
+  e.stopPropagation()
+  e.preventDefault()
+  emit('retry')
+}
 
 /**
  * 磁贴外框：与桌面包络同源（图 280 / 视频 320，见 mediaNodeDisplaySize）；
@@ -124,6 +200,7 @@ function handleTextTap() {
   <div
     class="mobile-node-tile"
     :data-type="type"
+    :data-state="state"
     :data-playing="playing ? 'true' : undefined"
     :style="tileStyle"
     @click="onTileClick"
@@ -132,8 +209,18 @@ function handleTextTap() {
     @touchend="bindings.onTouchend"
     @touchcancel="bindings.onTouchcancel"
   >
+    <!--
+      R3-T3 生成中轻态：骨架 + 不确定态进度环 + 计时。
+      ⛔ 不显示任何百分比（全仓无生成进度字段，假造比不做更糟）。
+      生成中不渲染旧媒体（用户看到的是「正在重做」而非旧图）。
+    -->
+    <div v-if="state === 'generating'" class="mobile-node-generating">
+      <span class="mobile-node-spinner" aria-hidden="true" />
+      <span class="mobile-node-generating-label">生成中</span>
+      <span class="mobile-node-elapsed">{{ elapsedText }}</span>
+    </div>
     <img
-      v-if="type === 'image' && data?.url"
+      v-else-if="type === 'image' && data?.url"
       :src="data.url"
       class="mobile-node-media"
       alt=""
@@ -187,6 +274,25 @@ function handleTextTap() {
     </div>
 
     <span v-if="badge" class="mobile-node-badge" :data-tone="badge.tone">{{ badge.label }}</span>
+
+    <!--
+      R3-T3 失败态重试入口（D-C error 行：红边 + 「重试」入口）。
+      44px 触控目标（`--lnk-touch-target`）—— 磁贴小，命中区不能更小。
+      动作走桌面同一注入键 `CANVAS_NODE_RETRY_KEY`（由 NodeRenderer 转发），
+      ⛔ 不新建重试通路。
+    -->
+    <button
+      v-if="state === 'error'"
+      type="button"
+      class="mobile-node-retry"
+      aria-label="重试生成"
+      @click="onRetryClick"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+        <path d="M21 3v6h-6" />
+      </svg>
+    </button>
   </div>
 </template>
 
@@ -206,6 +312,82 @@ function handleTextTap() {
 
 .mobile-node-tile:active {
   transform: scale(0.98);
+}
+
+/* ── R3-T3 状态轻态（D-C generating / error 两行）──────────────────────── */
+
+/* 失败态：红边（内容照常可见，用户能看见自己那张图 + 知道失败了） */
+.mobile-node-tile[data-state='error'] {
+  border-color: var(--lnk-error-border);
+}
+
+/* 生成中：骨架 + 不确定态进度环 + 计时（轻量，不堆 PC 卡） */
+.mobile-node-generating {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lnk-space-2);
+  box-sizing: border-box;
+  color: var(--lnk-text-muted);
+}
+
+/* 不确定态进度环：匀速旋转，无百分比（⛔ 不假造进度） */
+.mobile-node-spinner {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 2px solid var(--lnk-border-strong);
+  border-top-color: var(--lnk-accent);
+  border-radius: var(--lnk-radius-full);
+  animation: mobile-node-spin 0.8s linear infinite;
+}
+
+@keyframes mobile-node-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mobile-node-generating-label {
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-text-muted);
+}
+
+.mobile-node-elapsed {
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 重试入口：44px 触控目标（磁贴小，命中区不能更小） */
+.mobile-node-retry {
+  position: absolute;
+  right: var(--lnk-space-2);
+  bottom: var(--lnk-space-2);
+  display: inline-flex;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-error);
+  box-shadow: 0 0 0 1px var(--lnk-error-border);
+}
+
+.mobile-node-retry svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mobile-node-retry:active {
+  background: var(--lnk-surface-overlay);
 }
 
 /* 媒体撑满磁贴：cover 裁填——绝不按原始像素渲染、绝不溢出节点框 */
@@ -290,8 +472,20 @@ function handleTextTap() {
   line-height: var(--lnk-lh-2xs);
 }
 
+/* 三态配色（R3-T2 补齐 busy / warn）。
+   ⚠️ 用 --lnk-error / --lnk-warning / --lnk-info（深浅成对的 L2 语义色），
+   **不是** --lnk-status-error——那个变量全仓未定义（既有两处引用都是错引用，
+   error 徽标颜色实际不生效），本 PR 一并修正。 */
 .mobile-node-badge[data-tone='error'] {
-  color: var(--lnk-status-error);
+  color: var(--lnk-error);
+}
+
+.mobile-node-badge[data-tone='warn'] {
+  color: var(--lnk-warning);
+}
+
+.mobile-node-badge[data-tone='busy'] {
+  color: var(--lnk-info);
 }
 
 /* 空图 / 空视频的类型占位（2026-10-23 真机走查·辨识度）
