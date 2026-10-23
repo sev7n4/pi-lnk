@@ -58,6 +58,24 @@ export const MOBILE_NODE_OPEN_VIEWER_KEY: InjectionKey<MobileNodeOpenViewerFn> =
 )
 
 /**
+ * 移动端 tap **空节点** → 请求打开编辑 sheet（R2-T2，2026-10-23 真机走查）。
+ *
+ * ⭐ 为什么需要它：真机走查发现「点空白节点会进入空白全屏」——
+ *   `NodeRenderer.onTileOpen` 无条件开 viewer，而 viewer 的 img/video 均 `v-if="url"`
+ *   ⇒ 空节点 tap 得到一片空白。
+ *   修法：tap 意图由纯函数 `resolveMobileNodeTapIntent` 单一判定（viewer / editor / inline），
+ *   空节点 → editor（编辑 sheet = 「点击生成/撰写」主动作，D-C 状态机的 empty 行）。
+ */
+export type MobileNodeOpenEditorFn = (node: {
+  id?: string
+  type: 'image' | 'video' | 'audio' | 'text'
+  data?: any
+}) => void
+export const MOBILE_NODE_OPEN_EDITOR_KEY: InjectionKey<MobileNodeOpenEditorFn> = Symbol(
+  'mobileNodeOpenEditor',
+)
+
+/**
  * 长按后抑制紧随的合成 click（2026-10-19 D-6）：touchend preventDefault 在个别
  * WebKit 版本不总抑制 click，节点组件与页面级 @node-click 经此对象双保险。
  * markSuppressed 记一个 350ms 短窗；窗口外的 click 一律放行。

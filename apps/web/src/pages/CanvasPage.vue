@@ -159,6 +159,7 @@ import {
   CANVAS_REF_PICK_REJECT_KEY,
   MOBILE_NODE_ACTION_REQUEST_KEY,
   MOBILE_NODE_OPEN_VIEWER_KEY,
+  MOBILE_NODE_OPEN_EDITOR_KEY,
   type CanvasGroupResizeFn,
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
@@ -1921,6 +1922,11 @@ function handleDockAdd(type: DockNodeType) {
   selectOnlyNode(id)
   persistUserEdit()
   void focusNodeById(id)
+  // R2-T3（2026-10-23 真机走查）：R1 删掉移动端 Dock 后，「选中即开编辑器」这条路在移动端断了
+  // ⇒ 新建节点后没有任何编辑器承载，用户拿不到一个可写 prompt 的入口。
+  // 移动端直接打开编辑 sheet（复用 R1 的 MobileNodeEditorSheet，Q3「create/edit 同源」）。
+  // ⛔ PC 路径一行不动（桌面仍靠选中开 DockStudioToolbar）。
+  if (isMobileLayout.value) openMobileNodeEditor(id)
 }
 
 function selectOnlyNode(id: string) {
@@ -2622,6 +2628,17 @@ const mobileViewerNode = ref<{
 
 provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
   mobileViewerNode.value = node
+})
+
+/**
+ * 移动端 tap **空节点** → 打开编辑 sheet（R2-T2，2026-10-23 真机走查）。
+ *
+ * ⭐ 真机走查反馈「点空白节点会进入空白全屏」——`NodeRenderer` 原先无条件开 viewer，
+ * 而 viewer 的 img/video 均 `v-if="url"` ⇒ 空节点 tap 得到一片空白。
+ * 现在由纯函数 `resolveMobileNodeTapIntent` 判定意图，空节点路由到这里（= 编辑 sheet）。
+ */
+provide(MOBILE_NODE_OPEN_EDITOR_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
+  if (node?.id) openMobileNodeEditor(node.id)
 })
 
 function closeMobileViewer() {
