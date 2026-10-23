@@ -108,8 +108,9 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
     expect(fn, '必须能定位 focusNodeById').not.toBe('')
     expect(fn).toContain('const enteringFromConversation = !mobileCanvasView.value')
     expect(fn).toMatch(/mobileCanvasImm\.value\s*=\s*enteringFromConversation[\s\S]*?:\s*mobileCanvasImm\.value/)
-    // 有效性配对：从对话页进入时仍按待确认判据决定 imm（ADR-0011 T6 未被削弱）
-    expect(fn).toContain('isPendingConfirmNode(')
+    // ⚠️ 2026-10-23 用户裁决取代了 ADR-0011 T6：从对话页定位**一律窗态**
+    // （「打开历史项目默认进【对话】页，对话是创造的启动」）⇒ 待确认判据不再决定 imm。
+    expect(fn).toContain('mobileCanvasImm.value = enteringFromConversation ? true : mobileCanvasImm.value')
     // 批量定位同规则
     const batch = page.match(/async function focusNodesByIds\([\s\S]*?\n}/)?.[0] ?? ''
     expect(batch).toContain('const enteringFromConversation = !mobileCanvasView.value')

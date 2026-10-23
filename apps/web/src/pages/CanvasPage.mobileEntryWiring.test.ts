@@ -113,6 +113,30 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
     )
   })
 
+  it('IA v4（第 5 点）：打开历史项目落【对话】页而非【画布】页', () => {
+    // 用户原话：「回访用户进入对话页后，点击历史项目图标，默认进【对话】页而不是
+    // 【画布】页，对话是创造的启动。」
+    // ⇒ 跨项目定位（作品带点历史作品 → ?focusNode=）后不得再把页签切成 canvas：
+    // 停在对话页签 + 窗态（画布可见 + composer 同屏），既看得见定位到的产物、
+    // 又留着输入入口。
+    const page = stripComments(read('./CanvasPage.vue'))
+    const focusSingle = page.slice(page.indexOf('async function focusNodeById'))
+    const focusBatch = page.slice(page.indexOf('async function focusNodesByIds'))
+    for (const [name, body] of [
+      ['focusNodeById', focusSingle],
+      ['focusNodesByIds', focusBatch],
+    ] as const) {
+      expect(
+        body.slice(0, body.indexOf('\n}')),
+        `${name}：定位后不得切画布页签（对话是创造的启动）`,
+      ).not.toContain("mobileAppTab.value = 'canvas'")
+    }
+    // 正向：从对话页定位 ⇒ 窗态（画布可见 + composer 同屏）；已在画布视图内定位 ⇒ 不改入口语义
+    const immRule = 'mobileCanvasImm.value = enteringFromConversation ? true : mobileCanvasImm.value'
+    expect(focusSingle.slice(0, focusSingle.indexOf('\n}'))).toContain(immRule)
+    expect(focusBatch.slice(0, focusBatch.indexOf('\n}'))).toContain(immRule)
+  })
+
   it('空态引导：画布页签 + 空 nodes 才显示', () => {
     expect(page).toMatch(/v-if="isMobileLayout && mobileAppTab === 'canvas' && !nodes\.length"/)
     expect(page).toContain('data-testid="mobile-canvas-empty"')

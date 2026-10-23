@@ -51,6 +51,8 @@ function markMobileEntryDispatched(): void {
 }
 
 const { isMobileLayout } = useAgentMobileLayout()
+/** 最近项目 id（移动端点锚用）：入口分发时顺手记下最近的那一个。 */
+const recentProjectId = ref<string | null>(null)
 watch(
   isMobileLayout,
   (mobile) => {
@@ -61,6 +63,7 @@ watch(
         const res = await canvasApi.list()
         const list = (res.data?.data ?? []) as Array<{ id: string }>
         if (list.length) {
+          recentProjectId.value = list[0].id
           window.location.assign(`/workflow/${list[0].id}`)
         }
         // 无项目 ⇒ 留 hero（IA v4：不再静默新建）
@@ -149,6 +152,17 @@ async function createCanvas() {
     auth.openLogin()
     return
   }
+  // 移动端品牌页点「锚」= **开始创作**（2026-10-23 用户裁决）：
+  //  · 有项目 ⇒ 进最近项目的【对话】页（不新建）——延续「回访进最近项目」的效率语义，
+  //    也避免替用户凭空建一个空项目；
+  //  · 无项目 ⇒ 新建项目并直接进它的【对话】页——用户已明确表达创作意图，
+  //    此刻创建是「把意图落地」，不是入口副作用；
+  //  品牌页上除锚之外没有任何其他创建入口 ⇒【新建项目】由【对话】页承载。
+  // PC 端保持原语义（hero 输入框 + 锚 = 开一个新项目）。
+  if (isMobileLayout.value && recentProjectId.value) {
+    router.push(`/workflow/${recentProjectId.value}`)
+    return
+  }
   try {
     const { data } = await sessionsApi.create({
       ...(prompt.value.trim() ? { title: prompt.value.trim() } : {}),
@@ -223,10 +237,18 @@ watch(
          滚动后才是我的项目 / 社区精选——同一个页面，不是两个页面 -->
     <SignatureHero v-model="prompt" @create="createCanvas" />
 
-    <div class="mx-auto max-w-7xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8">
-      <!-- 我的项目：compact 区（2026-10-21 P1 迁出管理器，完整能力见 /canvases）。
-           IA v4（2026-10-23）：画布+对话=项目，与移动端作品带首卡同族补【新建项目】卡。 -->
-    <section v-if="auth.isLoggedIn" class="mb-12">
+    <!-- ⛔ 窄屏整块隐藏（2026-10-23 用户裁定）：移动端品牌页只有【品牌】内容，
+         覆盖手机全屏 ⇒ 这里只装「我的项目 / 社区精选 / 发布弹窗」，窄屏一律不渲染
+         （**连外层 padding 也要去掉**：留着 pb-20/pt-6 会凭空多出 104px 空白，
+         品牌页就「覆盖不满」一屏了——实测 scrollHeight 1004 vs 视口 844）。
+         发布弹窗走 el-dialog 的 teleport（挂 body）⇒ 父容器隐藏不影响它。 -->
+    <div class="mx-auto hidden max-w-7xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8 lg:block">
+    <!-- 我的项目：compact 区（2026-10-21 P1 迁出管理器，完整能力见 /canvases）。
+         IA v4（2026-10-23）：画布+对话=项目，与移动端作品带首卡同族补【新建项目】卡。
+         ⛔ 移动端品牌页只有【品牌】内容（2026-10-23 用户裁定：移动端 hero = 品牌页，
+         覆盖手机全屏，不需要个人项目 + 社区精选）⇒ 本区块窄屏隐藏；
+         移动端的个人项目由【对话】页承载（作品带首卡 + 抽屉全量列表）。 -->
+    <section v-if="auth.isLoggedIn" class="mb-12 hidden lg:block">
       <div class="mb-4 flex items-center justify-between gap-3">
         <h2 class="text-lg font-semibold text-fg">我的项目</h2>
         <div class="flex items-center gap-2">
@@ -270,7 +292,9 @@ watch(
       </p>
     </section>
 
-    <section>
+    <!-- 社区精选：窄屏隐藏（2026-10-23 用户裁定：社区由移动端【发现】页承载，
+         品牌页只讲品牌；PC 端此处仍是社区精选入口）。 -->
+    <section class="hidden lg:block">
       <div class="mb-4 flex items-center justify-between gap-4">
         <h2 class="text-lg font-semibold text-fg">社区精选</h2>
         <RouterLink to="/community" class="btn-ghost text-sm">去发现 →</RouterLink>

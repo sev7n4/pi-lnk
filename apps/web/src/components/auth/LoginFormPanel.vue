@@ -4,8 +4,12 @@ import { useAuthStore } from '@/stores/auth'
 import BrandLogo from '@/components/brand/BrandLogo.vue'
 import { ICP_TEXT, PRIVACY_PATH, PRIVACY_TITLE, TERMS_PATH, TERMS_TITLE } from '@/constants/brand'
 
+const props = withDefaults(defineProps<{ standalone?: boolean }>(), { standalone: false })
+
 const emit = defineEmits<{
   'request-send-code': [phone: string]
+  /** 登录/注册成功（页面模式宿主据此跳转；弹窗模式无监听者 ⇒ 无副作用） */
+  success: []
 }>()
 
 type AuthMode = 'login' | 'register'
@@ -32,7 +36,9 @@ const submitLabel = computed(() => {
 const agreementVerb = computed(() => (mode.value === 'register' ? '注册' : '登录'))
 
 watch(
-  () => auth.showLoginDialog,
+  // 页面模式（standalone）：宿主是独立 /login 页，没有弹窗开关 ⇒ 恒视为「打开」，
+  // 直接拉一次鉴权配置（拿固定验证码提示）。弹窗模式仍看 showLoginDialog。
+  () => (props.standalone ? true : auth.showLoginDialog),
   async (open) => {
     if (!open) {
       clearCountdown()
@@ -128,6 +134,7 @@ async function handleSubmit() {
     } else {
       await auth.login(phone.value.trim(), code.value.trim())
     }
+    emit('success')
   } catch (err) {
     error.value = mapAuthFormError(err, mode.value)
   } finally {

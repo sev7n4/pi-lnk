@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SignatureHero from './SignatureHero.vue'
 import CreativeLauncher from './CreativeLauncher.vue'
-import MobileTriptychRow from '@/components/mobile/MobileTriptychRow.vue'
 
 // ⚠️ jsdom 环境下 `fileURLToPath()` 必须收字符串：全局 URL 是 jsdom 的实现，
 // 把 URL **对象**传给 Node 的 fileURLToPath 会报 "The URL must be of scheme file"。
@@ -185,20 +184,41 @@ describe('SignatureHero', () => {
     expect(stage.find('[data-testid="ink-anchor"]').exists()).toBe(true)
   })
 
-  it('IA v4：移动端补三联叙事行（对话 → 锚 → 画布），签名面令牌 + 桌面隐藏', () => {
+  it('IA v4：窄屏完整复刻 PC 三叙事（对话标签组 / 墨鱼→墨滴→锚 / 画布标签组）', () => {
     const wrapper = mountHero()
-    const row = wrapper.findComponent(MobileTriptychRow)
-    expect(row.exists(), '窄屏 stage 竖排后「对话/画布」标签消失 ⇒ 必须补 legend 行').toBe(true)
-    // 桌面三联由 stage 三列承担，legend 行只服务窄屏
-    expect(row.classes()).toContain('lg:hidden')
-    // 签名面必须走 on-signature 家族（tone prop 由 hero 显式给定）
-    expect(row.props('tone')).toBe('signature')
-    // 装饰叙事：不新增按钮（上方「锚是唯一动作入口」锁的是全 hero 维度，这里补组件维度）
-    expect(row.findAll('button')).toHaveLength(0)
-    // 读序在 hero 文本里成立：slogan 之后、stage 之前
-    const html = wrapper.html()
-    expect(html.indexOf('triptych-row')).toBeGreaterThan(html.indexOf('lnk-hero-lockup'))
-    expect(html.indexOf('triptych-row')).toBeLessThan(html.indexOf('lnk-stage'))
+    // ① 对话标签组：窄屏不再 hidden（PC 是 lg 才显示，窄屏曾是"只剩锚一个意象"）
+    const stage = wrapper.find('.lnk-stage')
+    expect(stage.exists()).toBe(true)
+    const talkLabel = stage.text()
+    expect(talkLabel).toContain('对话')
+    expect(talkLabel).toContain('你说出想法')
+    expect(talkLabel).toContain('画布')
+    expect(talkLabel).toContain('墨鱼替你落墨')
+    // ② 标签组不得带 hidden（窄屏隐藏 = 叙事断档）
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    expect(
+      src,
+      '⛔ 「对话」「画布」标签组必须窄屏可见（2026-10-23 用户裁定：窄屏完整复刻 PC 三叙事）',
+    ).not.toMatch(/class="hidden[^"]*"\s*>\s*<p[^>]*>\s*(对话|画布)\s*</)
+    expect(src).not.toMatch(/hidden[^"]*"[^>]*>\s*<p[^>]*>\s*(对话|画布)\s*</)
+    // ③ 墨鱼→墨滴→锚 在窄屏也必须有位（落域不得 display:none）
+    expect(src).not.toContain('.lnk-drop-zone {\n  display: none;')
+    // ④ 窄屏尺寸组：锚盘 / 落程 / 墨鱼有压缩值，lg 还原 PC 尺寸
+    expect(src).toContain('--lnk-anchor-size')
+    expect(src).toContain('--lnk-drop-fall')
+    expect(src).toContain('--lnk-mascot-size')
+  })
+
+  it('⛔ 不得有「三联 legend」旁挂行（用户 2026-10-23 裁定：多出来、违背品牌设计意图）', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    // 曾经的 MobileTriptychRow（对话-锚定-画布 小图标行）是叙事的二次转述，已删除
+    expect(src, 'hero 里不得再引用三联 legend 组件').not.toContain('MobileTriptychRow')
+    expect(src).not.toContain('triptych-row')
+    // 也不得在别处复活：组件文件本身已删除
+    expect(
+      existsSync(join(HERE, '..', 'mobile', 'MobileTriptychRow.vue')),
+      'MobileTriptychRow.vue 应已删除',
+    ).toBe(false)
   })
 
   it('墨点动效：三颗墨点在锚上落域内，且受 reduced-motion 守卫', () => {
