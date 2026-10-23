@@ -9,6 +9,10 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
+import {
+  resolveImageNodeDisplaySize,
+  resolveVideoNodeDisplaySize,
+} from '@/components/canvas/mediaNodeDisplaySize'
 
 /** 文本节点：超过该字数的 tap 走 TTS 朗读，否则开阅读器（D-A，R1-T6） */
 const TTS_THRESHOLD = 120
@@ -25,6 +29,28 @@ const tts = useTextToSpeech()
 
 const cfg = computed(() => nodeTypeConfigs[props.type])
 const badge = computed(() => cfg.value.statusBadge(props.status))
+
+/**
+ * 磁贴外框：与桌面包络同源（图 280 / 视频 320，见 mediaNodeDisplaySize）；
+ * 文本 / 音频走 NODE_SIZES 同值（280×160 / 280×140）。
+ * ⭐ 为什么磁贴必须自带确定尺寸：addNode 不写 style/dimensions ⇒ vue-flow 按内容测量，
+ *   而 <img>/<video> 的固有尺寸是原始像素 ⇒ 不钉死外框，每张图一个尺寸且撑破节点框。
+ */
+const TEXT_TILE_SIZE = { width: 280, height: 160 }
+const AUDIO_TILE_SIZE = { width: 280, height: 140 }
+
+const tileSize = computed(() => {
+  const data = (props.data ?? {}) as Record<string, unknown>
+  if (props.type === 'image') return resolveImageNodeDisplaySize(data)
+  if (props.type === 'video') return resolveVideoNodeDisplaySize(data)
+  if (props.type === 'audio') return AUDIO_TILE_SIZE
+  return TEXT_TILE_SIZE
+})
+
+const tileStyle = computed(() => ({
+  width: `${tileSize.value.width}px`,
+  height: `${tileSize.value.height}px`,
+}))
 
 const mobileActionRequest = inject<MobileNodeActionRequestFn>(MOBILE_NODE_ACTION_REQUEST_KEY, () => {})
 const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
@@ -87,6 +113,7 @@ function handleTextTap() {
     class="mobile-node-tile"
     :data-type="type"
     :data-playing="playing ? 'true' : undefined"
+    :style="tileStyle"
     @click="onTileClick"
     @touchstart="bindings.onTouchstart"
     @touchmove="bindings.onTouchmove"
@@ -117,3 +144,108 @@ function handleTextTap() {
     <span v-if="badge" class="mobile-node-badge" :data-tone="badge.tone">{{ badge.label }}</span>
   </div>
 </template>
+
+<style scoped>
+/* 磁贴根元素：圆角裁切（外框尺寸由 script 区 tileStyle 内联钉死，内联优先故此处不写宽高）。
+   卡面 + 发丝线对所有类型生效——媒体加载后 cover 撑满自然盖住卡面；
+   空节点（无 url）也保持为一个可见的浅卡，不会是隐形框。 */
+.mobile-node-tile {
+  position: relative;
+  overflow: hidden;
+  border: 0.5px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-lg);
+  background: var(--lnk-surface-base);
+  box-sizing: border-box;
+  transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+
+.mobile-node-tile:active {
+  transform: scale(0.98);
+}
+
+/* 媒体撑满磁贴：cover 裁填——绝不按原始像素渲染、绝不溢出节点框 */
+.mobile-node-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 音频：44px 播放钮 + 波形占位条（D-D 真数据到达前的前端先行形态） */
+.mobile-audio-wave {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  gap: var(--lnk-space-3);
+  padding: var(--lnk-space-3);
+  box-sizing: border-box;
+}
+
+.mobile-audio-wave::after {
+  content: '';
+  flex: 1;
+  height: 36px;
+  border-radius: var(--lnk-radius-full);
+  background: repeating-linear-gradient(
+    90deg,
+    var(--lnk-border-strong) 0 2px,
+    transparent 2px 7px
+  );
+}
+
+.mobile-audio-play {
+  display: inline-flex;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-md);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-audio-play:active {
+  background: var(--lnk-pressed-overlay);
+}
+
+/* 文本：3 行截断 + 省略（设计 §5.4） */
+.mobile-node-text {
+  display: -webkit-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: var(--lnk-space-3);
+  overflow: hidden;
+  box-sizing: border-box;
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  color: var(--lnk-text-primary);
+  word-break: break-word;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* 状态角标：绝对定位浮于媒体之上，不挤占内容布局 */
+.mobile-node-badge {
+  position: absolute;
+  top: var(--lnk-space-2);
+  left: var(--lnk-space-2);
+  padding: 0 var(--lnk-space-1);
+  border-radius: var(--lnk-radius-xs);
+  background: var(--lnk-surface-overlay);
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+}
+
+.mobile-node-badge[data-tone='error'] {
+  color: var(--lnk-status-error);
+}
+</style>
