@@ -45,6 +45,7 @@ import { studioApi } from '@/services/studio-api'
 import { canvasApi } from '@/services/canvas-api'
 import { resolveUpstreamContext } from '@/composables/useUpstreamNodeContext'
 import { resolveNodeRefs, type LocalRefBinding, type NodeRef } from '@/composables/useNodeRefs'
+import type { MentionOption } from '@/components/canvas/MentionInput.vue'
 import {
   MISSING_REFS_CONFIRM_MESSAGE,
   MISSING_REFS_CONFIRM_TITLE,
@@ -54,10 +55,7 @@ import {
 import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating, isPendingConfirmNode } from '@/constants/dockStudio'
 import { nodeHasUsableOutput, shouldApplyGenerationPoll } from '@/utils/generationPollGate'
 import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
-import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
-import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
-import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
-import CanvasNodeAudio from '@/components/canvas/CanvasNodeAudio.vue'
+import NodeRenderer from '@/components/canvas/NodeRenderer.vue'
 import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
@@ -100,6 +98,7 @@ import {
   getAbsolutePosition,
   getNodeSize,
   getSelectionBounds,
+  groupNodeSize,
   isGroupNode,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
@@ -158,6 +157,8 @@ import {
   CANVAS_REF_PICK_ACTIVE_KEY,
   CANVAS_REF_PICK_NODE_IDS_KEY,
   CANVAS_REF_PICK_REJECT_KEY,
+  MOBILE_NODE_ACTION_REQUEST_KEY,
+  MOBILE_NODE_OPEN_VIEWER_KEY,
   type CanvasGroupResizeFn,
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
@@ -917,18 +918,18 @@ const selectedRefs = computed((): NodeRef[] => {
   })
 })
 
-const mentionOptions = computed((): Array<{ id: string; label: string; type: string }> => {
-  const refOptions = selectedRefs.value
+/** 引用候选 → 提及选项（桌面 Dock 与移动端编辑 sheet 共用同一逻辑，避免漂移） */
+function buildMentionOptions(
+  refs: NodeRef[],
+  allNodes: EditableFlowNode[],
+): MentionOption[] {
+  const refOptions = refs
     .filter((ref) => !ref.stale)
-    .map((ref) => ({
-      id: ref.refId,
-      label: ref.refKey,
-      type: ref.mediaType,
-    }))
+    .map((ref) => ({ id: ref.refId, label: ref.refKey, type: ref.mediaType }))
   if (refOptions.length) return refOptions
 
-  const out: Array<{ id: string; label: string; type: string }> = []
-  for (const n of nodes.value) {
+  const out: MentionOption[] = []
+  for (const n of allNodes) {
     const data = n.data as Record<string, unknown>
     out.push({
       id: n.id,
@@ -937,7 +938,11 @@ const mentionOptions = computed((): Array<{ id: string; label: string; type: str
     })
   }
   return out
-})
+}
+
+const mentionOptions = computed((): MentionOption[] =>
+  buildMentionOptions(selectedRefs.value, nodes.value),
+)
 
 const multiSelectCanGenerateVideo = computed(() => {
   if (multiSelectedIds.value.length < 2) return false
@@ -1365,10 +1370,10 @@ function handleSelectionBatchStop() {
 const nodeTypes = {
   // 🔴 2026-10-17 prompt 节点下线：渲染分支仅为存量兜底保留（无创建入口；Dock 已降级只读）。
   prompt: CanvasNodePrompt,
-  image: CanvasNodeImage,
-  video: CanvasNodeVideo,
-  text: CanvasNodeText,
-  audio: CanvasNodeAudio,
+  image: NodeRenderer,
+  video: NodeRenderer,
+  text: NodeRenderer,
+  audio: NodeRenderer,
   // 2026-10-21 分组回归原生节点形态：整框可拖 / 单击选中由 vue-flow 提供。
   // ⛔ 它只在内存里存在，保存时会被 foldGroups 折叠回 canvasData.groups。
   group: CanvasNodeGroup,
@@ -1974,13 +1979,54 @@ let dragAnchorId: string | null = null
 const SNAP_VIEWPORT_MARGIN = 200
 
 /**
+ * SP-B R1（2026-10-23 实测反馈「被吸住/步阶太大」）：vue-flow ResizeObserver
+ * 实测尺寸表（offsetWidth/Height = flow 坐标真实盒）。
+ *
+ * ⛔ 只进本表、**不写 nodes.value**：测量值是渲染层事实，写进 nodes 会随
+ * persistUserEdit 落进持久化 JSON（存储格式自 SP-A 起只认 position/style）。
+ *
+ * 为什么需要它：媒体节点真实尺寸随素材比例（16:9 视频 320×180），而
+ * `getNodeSize` 的 NODE_SIZES 兜底是方框包络（320×320）——按兜底盒算吸附，
+ * 中心/底边差 70-140px ⇒ 节点视觉边还没贴线就被弹回、guide 线悬在节点旁，
+ * 观感正是「不连贯的大步阶」。
+ */
+const measuredNodeSizes = new Map<string, { w: number; h: number }>()
+
+/**
+ * 屏幕空间吸附阈值（CSS px）：半径 8 / 迟滞带 3，按 1/zoom 换算成 flow 坐标
+ * 传给 computeSnapGuides ⇒ 任意缩放下「吸入距离 / 松脱带」在屏幕上等大：
+ * 放大细看时不再有 16px 起跳的大步阶，缩小总览时也不失效。
+ */
+const SNAP_SCREEN_RADIUS = 8
+const SNAP_SCREEN_HYSTERESIS = 3
+
+/** 吸附几何的节点尺寸解析：实测 > 分组框 style（groupNodeSize）> NODE_SIZES 兜底。 */
+function snapSizeOf(node: FlowNode): { w: number; h: number } {
+  const measured = measuredNodeSizes.get(node.id)
+  if (measured) return measured
+  if (isGroupNode(node)) {
+    const g = groupNodeSize(node)
+    return { w: g.width, h: g.height }
+  }
+  return getNodeSize(node)
+}
+
+/**
  * 当前视口在 flow 坐标里的可见范围（规格 §9 性能护栏的裁剪基准）。
  * flow = (screen - translate) / zoom ⇒ 屏幕左上角反投影回 flow 坐标。
  * 副作用：把结果回填 snapBounds，供 GuideLines 画线时确定可视范围。
+ *
+ * R1 缓存：拖拽中视口不变（容器尺寸/平移恒定，仅滚轮缩放会变）⇒ zoom 不变
+ * 就直接返回缓存，省掉每帧 getBoundingClientRect 强布局；每次拖拽开始
+ * （onNodeDragStart）清缓存，保证两次拖拽之间发生过平移/缩放后重算。
  */
+let snapBoundsCache: { x: number; y: number; w: number; h: number } | undefined
+let snapBoundsZoom = 1
+
 function snapViewportBounds(): { x: number; y: number; w: number; h: number } {
   const vp = vueFlowRef.value?.getViewport?.() ?? { x: 0, y: 0, zoom: 1 }
   const zoom = vp.zoom || 1
+  if (snapBoundsCache && zoom === snapBoundsZoom) return snapBoundsCache
   const rect = (vueFlowRef.value?.$el as HTMLElement | undefined)?.getBoundingClientRect?.()
   const bounds = {
     x: -vp.x / zoom - SNAP_VIEWPORT_MARGIN,
@@ -1988,13 +2034,16 @@ function snapViewportBounds(): { x: number; y: number; w: number; h: number } {
     w: (rect?.width || 1000) / zoom + SNAP_VIEWPORT_MARGIN * 2,
     h: (rect?.height || 1000) / zoom + SNAP_VIEWPORT_MARGIN * 2,
   }
+  snapBoundsCache = bounds
+  snapBoundsZoom = zoom
   snapBounds.value = bounds
   return bounds
 }
 
 /**
  * 拖拽吸附计算：**只按锚点算一次**，返回整批要平移的 delta。
- * 候选走 buildSnapCandidates（排除自身/父/子 + 视口裁剪），几何走 shared 的 computeSnapGuides。
+ * 候选走 buildSnapCandidates（排除自身/父/子 + 视口裁剪 + sizeOf 实测尺寸注入），
+ * 几何走 shared 的 computeSnapGuides。
  * 多选拖拽若逐节点各算各的，会把批内相对阵列扯散 ⇒ 统一按锚点算、整批同移。
  */
 function computeDragSnapGuides(flow: FlowNode[], anchorId: string): { dx: number; dy: number } {
@@ -2003,9 +2052,14 @@ function computeDragSnapGuides(flow: FlowNode[], anchorId: string): { dx: number
   // 候选盒归一到 flow 绝对坐标（分组子节点的 position 是父相对）
   const absNodes: FlowNode[] = flow.map((n) => ({ ...n, position: getAbsolutePosition(n, flow) }))
   const anchorAbs = getAbsolutePosition(anchor, flow)
-  const { w, h } = getNodeSize(anchor)
-  const cands = buildSnapCandidates(absNodes, anchorId, { bounds: snapViewportBounds() })
-  const res = computeSnapGuides({ x: anchorAbs.x, y: anchorAbs.y, w, h }, cands, { prev: snapGuides.value })
+  const size = snapSizeOf(anchor)
+  const zoom = vueFlowRef.value?.getViewport?.().zoom || 1
+  const cands = buildSnapCandidates(absNodes, anchorId, { bounds: snapViewportBounds(), sizeOf: snapSizeOf })
+  const res = computeSnapGuides({ x: anchorAbs.x, y: anchorAbs.y, w: size.w, h: size.h }, cands, {
+    snapRadius: SNAP_SCREEN_RADIUS / zoom,
+    hysteresis: SNAP_SCREEN_HYSTERESIS / zoom,
+    prev: snapGuides.value,
+  })
   const guides: SnapPrev = {}
   if (res.horizontal) guides.horizontal = { position: res.horizontal.position, sourceNodeId: res.horizontal.sourceNodeId }
   if (res.vertical) guides.vertical = { position: res.vertical.position, sourceNodeId: res.vertical.sourceNodeId }
@@ -2052,6 +2106,14 @@ function onNodesChange(changes: NodeChange[]) {
       if (!next.some((node) => node.id === item.id)) {
         next = [...next, { id: item.id, type: item.type, position: item.position, data: item.data, selected: item.selected }]
         changed = true
+      }
+    } else if (change.type === 'dimensions' && change.dimensions) {
+      // SP-B R1：vue-flow ResizeObserver 实测尺寸只进 measuredNodeSizes（吸附几何的
+      // 真实盒来源），不置 changed——测量不产生可见位移，避免无谓重渲染与落库。
+      const dw = change.dimensions.width
+      const dh = change.dimensions.height
+      if (typeof dw === 'number' && dw > 0 && typeof dh === 'number' && dh > 0) {
+        measuredNodeSizes.set(change.id, { w: dw, h: dh })
       }
     }
   }
@@ -2109,6 +2171,8 @@ function onNodeDragStart(event: NodeDragEvent) {
   // 新一轮拖拽：清掉上一轮的参考线命中；锚点取 vue-flow 的主节点（缺失时退回批内首个）
   snapGuides.value = {}
   dragAnchorId = event.node?.id ?? dragStartPositions.keys().next().value ?? null
+  // 两次拖拽之间用户可能平移/缩放过 ⇒ 视口缓存作废，本拖拽首帧重算
+  snapBoundsCache = undefined
 }
 
 /**
@@ -2486,6 +2550,83 @@ provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)
 
 const renameRequestNodeId = ref<string | null>(null)
 provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
+
+/**
+ * 移动端长按动作 sheet（R1-T5）：与 PC 右键上下文菜单解耦的独立入口。
+ * 移动端 `MobileNodeTile` 长按经 `useLongPress` 走本注入，打开本端动作 sheet；
+ * 选中动作后由 `handleMobileNodeAction(key, nodeId)` 复用桌面同一套重命名/删除/复制/多选/编辑逻辑。
+ */
+const mobileActionNode = ref<{ id: string; type: string; data?: any } | null>(null)
+const mobileEditorNode = ref<EditableFlowNode | null>(null)
+
+provide(MOBILE_NODE_ACTION_REQUEST_KEY, (node: { id: string; type: string; data?: any }) => {
+  mobileActionNode.value = node
+})
+
+/** 移动端编辑 sheet 的节点上下文（复用桌面 resolve 逻辑，与 DockStudioToolbar 同源） */
+const mobileEditorRefs = computed((): NodeRef[] => {
+  const node = mobileEditorNode.value
+  if (!node) return []
+  return resolveNodeRefs({
+    targetNodeId: node.id,
+    targetType: String(node.type),
+    nodes: nodes.value,
+    edges: edges.value.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    localRefs: (node.data?.localRefs as LocalRefBinding[]) ?? [],
+    refOrder: (node.data?.refOrder as string[]) ?? [],
+  })
+})
+
+const mobileEditor = computed(() => {
+  const node = mobileEditorNode.value
+  if (!node) return null
+  return {
+    node,
+    upstream: resolveUpstreamContext(node.id, nodes.value, edges.value),
+    refs: mobileEditorRefs.value,
+    mentions: buildMentionOptions(mobileEditorRefs.value, nodes.value),
+    generating: isNodeGenerating(String((node.data as Record<string, unknown>)?.status ?? '')),
+  }
+})
+
+function openMobileNodeEditor(nodeId: string) {
+  const node = findNodeById(nodeId)
+  mobileEditorNode.value = node ?? null
+}
+
+function closeMobileNodeAction() {
+  mobileActionNode.value = null
+}
+
+function closeMobileNodeEditor() {
+  mobileEditorNode.value = null
+}
+
+function applyMobileEditorPatch(patch: Record<string, unknown>) {
+  const node = mobileEditorNode.value
+  if (!node) return
+  patchNodeData(node.id, patch)
+  persistUserEdit()
+}
+
+/**
+ * 移动端 tap → 全屏查看器（R1-T4/T6）：图灯箱 / 视频播放 / 文本阅读器。
+ * 文本节点由 MobileNodeTile 按 D-A 分流：长文 tap = TTS 朗读，短文 tap = 开阅读器；
+ * 两者都经本注入在画布壳层承接，节点组件不直接依赖壳层。
+ */
+const mobileViewerNode = ref<{
+  id?: string
+  type: 'image' | 'video' | 'audio' | 'text'
+  data?: any
+} | null>(null)
+
+provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
+  mobileViewerNode.value = node
+})
+
+function closeMobileViewer() {
+  mobileViewerNode.value = null
+}
 
 function enterMultiSelectMode(seedId: string) {
   // 已在多选态：长按另一节点 = 把它**加入/移出**选区，而不是重置整份选区。
@@ -4386,6 +4527,22 @@ function handleDuplicateSelection(
   }
 }
 
+/** 单节点真删（分组节点走解组）；PC 右键与移动端动作 sheet 共用，避免两套删除逻辑漂移 */
+function removeSingleNode(nodeId: string) {
+  // 分组节点 = 解组（留节点）；其余节点真删
+  if (isGroupNode(nodes.value.find((n) => n.id === nodeId) as unknown as FlowNode)) {
+    handleUngroupSelection(nodeId)
+    return
+  }
+  const toRemove = new Set<string>([nodeId])
+  rememberGenerationFieldsBeforeRemove(toRemove)
+  nodes.value = nodes.value.filter((entry) => !toRemove.has(entry.id))
+  edges.value = edges.value.filter((edge) => !toRemove.has(edge.source) && !toRemove.has(edge.target))
+  // 被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
+  forgetGroupsForRemovedNodes(toRemove)
+  persistUserEdit()
+}
+
 function handleContextAction(action: string) {
   const menu = contextMenu.value
   contextMenu.value = null
@@ -4441,19 +4598,36 @@ function handleContextAction(action: string) {
   }
 
   if (action === 'delete' && menu.nodeId) {
-    // 分组节点 = 解组（留节点）；其余节点真删
-    if (isGroupNode(nodes.value.find((n) => n.id === menu.nodeId) as unknown as FlowNode)) {
-      handleUngroupSelection(menu.nodeId)
-      return
-    }
-    const toRemove = new Set<string>([menu.nodeId])
-    rememberGenerationFieldsBeforeRemove(toRemove)
-    nodes.value = nodes.value.filter((entry) => !toRemove.has(entry.id))
-    edges.value = edges.value.filter((edge) => !toRemove.has(edge.source) && !toRemove.has(edge.target))
-    // 被删节点要从分组里摘掉，否则分组框会指向不存在的节点。
-    forgetGroupsForRemovedNodes(toRemove)
-    persistUserEdit()
+    removeSingleNode(menu.nodeId)
     return
+  }
+}
+
+/**
+ * 移动端动作 sheet 动作分发（R1-T5）：复用桌面同一套重命名/删除/复制/多选/引用/编辑真源逻辑，
+ * 不另起一套。与 PC 右键 `handleContextAction` 解耦——PC 用 `contextMenu` 状态，移动端用注入键触发。
+ */
+function handleMobileNodeAction(action: string, nodeId: string) {
+  switch (action) {
+    case 'rename':
+      renameRequestNodeId.value = nodeId
+      break
+    case 'multi-select':
+      enterMultiSelectMode(nodeId)
+      break
+    case 'reference':
+      handleAddToAgentRefs([nodeId])
+      break
+    case 'duplicate':
+      handleDuplicateSelection(nodeId, 'none')
+      break
+    case 'delete':
+      removeSingleNode(nodeId)
+      break
+    case 'edit':
+      // 打开复用 DockStudioRouter 的编辑 sheet（删 Dock 后编辑不丢链）
+      openMobileNodeEditor(nodeId)
+      break
   }
 }
 
@@ -5437,7 +5611,7 @@ onUnmounted(() => {
           @close="closeGridSliceWorkbench"
         />
         <DockStudioToolbar
-          v-if="!refinePanelNode && !gridSlicePanelNode && !dockGatedByPendingConfirm"
+          v-if="!isMobileLayout && !refinePanelNode && !gridSlicePanelNode && !dockGatedByPendingConfirm"
           :collapsed="dockCollapsedByOverlay || isMobileLayout"
           @collapse-change="mobileDockExpanded = $event"
           :node="editorNode"
@@ -5612,6 +5786,14 @@ onUnmounted(() => {
       :history-locate="handleHistoryLocate"
       :history-retry="handleHistoryRetry"
       :batch-actions="mobileBatchActions"
+      :mobile-action-node="mobileActionNode"
+      :mobile-editor="mobileEditor"
+      :on-node-action="(key: string, nodeId: string) => handleMobileNodeAction(key, nodeId)"
+      :on-node-action-close="closeMobileNodeAction"
+      :on-node-editor-close="closeMobileNodeEditor"
+      :on-node-editor-patch="applyMobileEditorPatch"
+      :viewer-node="mobileViewerNode"
+      :on-viewer-close="closeMobileViewer"
     />
 
     <MembershipModal v-model="showMembership" />

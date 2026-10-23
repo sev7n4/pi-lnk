@@ -242,10 +242,10 @@ describe('computeSnapGuides', () => {
     expect(r.vertical).toBeUndefined(); expect(r.horizontal).toBeUndefined()
     expect(r.snapped).toEqual({ x: 95, y: 200 })
   })
-  it('hysteresis：prev 线在半径+0.5 内保持', () => {
+  it('hysteresis：prev 线在半径+0.5 释放带内保持', () => {
     const cands = [{ id: 'o', box: { x: 100, y: 0, w: 80, h: 80 } }]
     const r1 = computeSnapGuides(drag, cands)
-    const drag2 = { ...drag, x: 109 } // 距 prev 100 差 9（>8 但 ≤8.5）
+    const drag2 = { ...drag, x: 108.2 } // 距 prev 100 差 8.2（>radius 8，但 ≤8+0.5 释放带）
     const r2 = computeSnapGuides(drag2, cands, { prev: { vertical: r1.vertical } })
     expect(r2.vertical?.position).toBe(100)
   })
@@ -255,11 +255,11 @@ describe('computeSnapGuides', () => {
     expect(r.vertical).toBeUndefined()
   })
   it('hysteresis 保线时不得把拖拽锚点换到更差的配对（否则节点被拉偏）', () => {
-    // 被拖左缘 9、候选左缘 0 ⇒ 9px > 半径 8，只能靠 prev 保线。
+    // 被拖左缘 8.2、候选左缘 0 ⇒ 8.2px > 半径 8，只能靠 prev 保线（释放带内）。
     // 保线只保证「这根线还在」，吸附位置必须用**最近**的拖拽锚点（左缘，off=0），
     // 不能被同线的 centerX 配对覆盖（那会把节点拉到 100 而不是 0）。
     const cands = [{ id: 'o', box: { x: 0, y: 0, w: 200, h: 100 } }]
-    const r = computeSnapGuides({ x: 9, y: 500, w: 200, h: 100 }, cands, {
+    const r = computeSnapGuides({ x: 8.2, y: 500, w: 200, h: 100 }, cands, {
       prev: { vertical: { position: 0, sourceNodeId: 'o' } },
     })
     expect(r.vertical?.position).toBe(0)
@@ -283,5 +283,68 @@ describe('computeSnapGuides', () => {
     // 候选很宽 ⇒ 只有 centerX 配对落在半径内：被拖中心 145、候选中心 145
     expect(r2.vertical?.position).toBe(145)
     expect(r2.snapped.x, '中心对齐 145 ⇒ 左缘 95（原地不动）').toBe(95)
+  })
+})
+
+// ══════════════════════════════════════════════════════
+// SP-B R1（2026-10-23）实测反馈「被吸住 / 步阶太大 / 不连贯」平滑化回归
+// ══════════════════════════════════════════════════════
+describe('computeSnapGuides R1：粘滞释放带 + 切换余量', () => {
+  // 两条邻近垂直候选线：left=0 与 left=6（相距 6px，模拟两条边几乎对齐的节点）。
+  // ⚠️ 盒宽取 200：把候选自身的 right/centerX 线（100/106）推离拖拽锚点
+  //    （left∈[1,12]、right∈[51,62]、cx∈[26,37]），否则它们会混进半径内
+  //    把场景搅成「谁更近」的浮点噪声之争（实测踩过：4.6 处 left 与 centerX
+  //    距离差 1e-15，任一条都可能赢）。
+  const nearCands = [
+    { id: 'a', box: { x: 0, y: 0, w: 200, h: 100 } },
+    { id: 'b', box: { x: 6, y: 0, w: 200, h: 100 } },
+  ]
+  /** 释放带专用：只有一条候选线（0），半径内无其他线干扰。 */
+  const soloCands = [{ id: 'a', box: { x: 0, y: 0, w: 200, h: 100 } }]
+  const dragAt = (x: number) => ({ x, y: 300, w: 50, h: 50 })
+  const opts = { snapRadius: 8, hysteresis: 3 }
+  const prevA = { vertical: { position: 0, sourceNodeId: 'a' } }
+
+  it('⛔ 回归：prev 线离开释放带（radius+hysteresis）必须脱钩', () => {
+    // 旧实现 `if (!keepPrev && dist > radius) continue` 对 prev 配对不设距离上限
+    // ⇒ 吸上永不脱钩（只有别的线更近才被顶掉）——正是「被吸住」的体感来源。
+    const edge = computeSnapGuides(dragAt(11), soloCands, { ...opts, prev: prevA })
+    expect(edge.vertical?.position, '11 = 8+3 释放带边界内仍保持').toBe(0)
+    expect(edge.snapped.x, '保持即拉回线上').toBe(0)
+
+    const beyond = computeSnapGuides(dragAt(11.5), soloCands, { ...opts, prev: prevA })
+    expect(beyond.vertical, '超出释放带不得再粘住').toBeUndefined()
+    expect(beyond.snapped.x, '脱钩后节点自由跟手').toBe(11.5)
+  })
+
+  it('⛔ 回归：邻近两线临界点，挑战线需近过 hysteresis 余量才接管（防横跳）', () => {
+    // 无余量时鼠标在两线中点（x=3）附近微抖，「谁更近」反复易主 ⇒ 节点在
+    // x=0 / x=6 两线间来回跳（不连贯）。有余量 ⇒ 贴住不跳。
+    const at3 = computeSnapGuides(dragAt(3), nearCands, { ...opts, prev: prevA })
+    expect(at3.vertical?.position, '中点并列仍贴 prev 线').toBe(0)
+
+    const at3_9 = computeSnapGuides(dragAt(3.9), nearCands, { ...opts, prev: prevA })
+    expect(at3_9.vertical?.position, '挑战线仅近 0.1（<余量 3）不接管').toBe(0)
+
+    const at4_6 = computeSnapGuides(dragAt(4.6), nearCands, { ...opts, prev: prevA })
+    expect(at4_6.vertical?.position, '挑战线近过余量（1.4 < 4.6-3）才接管').toBe(6)
+    expect(at4_6.snapped.x, '接管后贴到新线').toBe(6)
+  })
+
+  it('接管后反向也要近过余量才换回（迟滞窗口对称，防中点抖动）', () => {
+    const at4_6 = computeSnapGuides(dragAt(4.6), nearCands, { ...opts, prev: prevA })
+    const prevB = { vertical: at4_6.vertical! }
+    const back2 = computeSnapGuides(dragAt(2), nearCands, { ...opts, prev: prevB })
+    expect(back2.vertical?.position, '回拖仅近 2（<余量 3）仍贴 b 线').toBe(6)
+    const back1 = computeSnapGuides(dragAt(1), nearCands, { ...opts, prev: prevB })
+    expect(back1.vertical?.position, 'a 线近过余量（1 < 5-3）才换回').toBe(0)
+  })
+
+  it('阈值由调用方传入：CanvasPage 按 1/zoom 换算 ⇒ 屏幕空间手感与缩放无关', () => {
+    const cands = [{ id: 'o', box: { x: 100, y: 0, w: 80, h: 80 } }]
+    const r4 = computeSnapGuides({ x: 104, y: 200, w: 100, h: 50 }, cands, { snapRadius: 4 })
+    expect(r4.vertical?.position, 'dist 4 ≤ 传入半径 4 命中').toBe(100)
+    const r5 = computeSnapGuides({ x: 105, y: 200, w: 100, h: 50 }, cands, { snapRadius: 4 })
+    expect(r5.vertical, 'dist 5 > 传入半径 4 不命中').toBeUndefined()
   })
 })

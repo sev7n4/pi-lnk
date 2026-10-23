@@ -244,3 +244,45 @@
 
 本规格无 SVG 附件、无 Mermaid 图（§5 框图为 ASCII，不参与 `verify-spec-figures` 扫描）。
 如需补 Mermaid 架构图，后续补并跑 `pnpm verify-spec-figures --file <本文件>`。
+
+---
+
+## 14. R1 addendum（2026-10-23 实测反馈：「能用但不丝滑 / 被吸住 / 步阶太大」）
+
+#554 上线后真机走查发现拖拽吸附手感缺陷。定位到**两条独立缺陷叠加**，本 addendum 记录裁决与修复口径；
+§3/§6.3 的算法共识不变，以下为修正与增强。
+
+### 14.1 缺陷 A：吸附几何用方框兜底估媒体节点尺寸（视觉根因）
+
+- 现象：拖 16:9 视频节点靠近别节点时，视觉边还没贴线就被弹回一大截，guide 线悬在节点旁边。
+- 根因：媒体节点真实尺寸随素材比例（`CanvasNodeVideo/Image` 的 displaySize：长边 320/280 包络），
+  而 §6.3 依赖的 `getNodeSize` 在 `node.dimensions` 缺失时按 NODE_SIZES **方框**兜底
+  （video 320×320）——而受控模式下 `onNodesChange` **整条丢弃** vue-flow 的
+  `dimensions` 变更（ResizeObserver 实测 offsetWidth/Height），兜底永远生效。
+- 裁决（D5）：**接入实测尺寸，但绝不进持久化 JSON**。web 侧维护非持久化
+  `measuredNodeSizes` Map（dimensions 变更只填表、不置 changed）；`buildSnapCandidates`
+  增 `opts.sizeOf` 注入点；CanvasPage 的 `snapSizeOf` 解析链 =
+  实测 > `groupNodeSize`（分组框 style 权威）> `getNodeSize` 兜底。
+  存储格式零改动（SP-A 纪律：只认 position/style）。
+
+### 14.2 缺陷 B：prev 参考线无限粘滞 + 阈值不随缩放换算（手感根因）
+
+- 现象：吸上后拖到哪都粘着（只有别的线更近才顶掉）；放大细看时 8px 吸入距离在屏幕上
+  变成 16px 起跳的大步阶。
+- 根因：旧实现 `if (!keepPrev && dist > radius) continue` 对 prev 线配对**不设距离上限**
+  ——与 §6.3 规格「超出 snapRadius + hysteresis 才解除」相反；且 SNAP_RADIUS=8 是 flow
+  坐标，未按 1/zoom 换算成屏幕空间。
+- 裁决（D6）：
+  1. **释放带**：prev 线在 `radius + hysteresis` 内保持，超出即脱钩（回归规格原文）；
+  2. **切换余量**：挑战线需比 prev 线**近过 hysteresis 余量**才接管——防两条邻近线
+     （相距几 px）中点附近鼠标微抖造成节点在两线间反复横跳；
+  3. **屏幕空间阈值**：CanvasPage 传 `snapRadius: 8/zoom`、`hysteresis: 3/zoom`
+     （SNAP_SCREEN_RADIUS / SNAP_SCREEN_HYSTERESIS）⇒ 任意缩放手感一致；
+  4. 每帧成本：视口 rect 在拖拽中缓存（zoom 不变直接返回），免逐帧强布局。
+
+### 14.3 回归守卫
+
+- `layout.test.ts`：释放带脱钩 / 切换余量接管 / 迟滞窗口对称 / 阈值由调用方传入（zoom 无关）；
+- `useCanvasGrouping.snapCandidates.test.ts`：sizeOf 注入后候选盒取实测值、实测盒决定命中；
+- `CanvasPage.snapGuides.test.ts`：dimensions 捕获、zoom 换算、snapSizeOf 解析链、视口缓存
+  （静态断言）；「prev 无限粘滞」的两条旧期望（9px 仍保持）按规格修正为释放带语义。

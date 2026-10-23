@@ -35,6 +35,14 @@ import MobileCanvasCreateFab from './MobileCanvasCreateFab.vue'
 import MobileCreateSheet from './MobileCreateSheet.vue'
 import MobileTaskSheet from './MobileTaskSheet.vue'
 import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
+import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
+import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
+import MobileNodeViewer from './MobileNodeViewer.vue'
+import MobileNodeCoachMark from './MobileNodeCoachMark.vue'
+import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
+import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
+import type { NodeRef } from '@/composables/useNodeRefs'
+import type { MentionOption } from '@/components/canvas/MentionInput.vue'
 import AccountPanel from '@/components/account/AccountPanel.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
 import UsagePanel from '@/components/usage/UsagePanel.vue'
@@ -119,7 +127,27 @@ const props = defineProps<{
   historyLocate: (payload: { recordId: string; nodeId?: string | null }) => void
   historyRetry: (nodeId: string) => void
   batchActions: MobileShellBatchActions
+  /** 移动端长按动作 sheet 状态（R1-T5）：由 CanvasPage 经 provide 触发，壳层仅渲染 */
+  mobileActionNode: MobileNodeActionNode | null
+  /** 移动端编辑 sheet 上下文（复用桌面 resolve 逻辑）：null = 未打开 */
+  mobileEditor: MobileEditorContext | null
+  onNodeAction: (key: string, nodeId: string) => void
+  onNodeActionClose: () => void
+  onNodeEditorClose: () => void
+  onNodeEditorPatch: (patch: Record<string, unknown>) => void
+  /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
+  viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
+  onViewerClose: () => void
 }>()
+
+/** 移动端编辑 sheet 上下文：节点 + 上游/引用/提及（与桌面 DockStudioToolbar 同源） */
+export interface MobileEditorContext {
+  node: EditableFlowNode
+  upstream: UpstreamNodeContext
+  refs: NodeRef[]
+  mentions: MentionOption[]
+  generating: boolean
+}
 
 const auth = useAuthStore()
 
@@ -356,6 +384,33 @@ onUnmounted(() => stopMobileTaskPolling())
     @retry="onMobileTaskRetry"
     @close="showMobileTaskSheet = false"
   />
+  <!-- R1-T5：移动端长按动作 sheet（重命名/引用/副本/多选/编辑/删除） -->
+  <MobileNodeActionSheet
+    v-if="mobileActionNode"
+    :node="mobileActionNode"
+    @action="(key: string) => props.onNodeAction(key, (mobileActionNode as MobileNodeActionNode).id)"
+    @close="props.onNodeActionClose"
+  />
+  <!-- R1-T5：移动端编辑 sheet（复用 DockStudioRouter，删 Dock 后编辑不丢链） -->
+  <MobileNodeEditorSheet
+    v-if="mobileEditor"
+    :node="mobileEditor.node"
+    :upstream="mobileEditor.upstream"
+    :refs="mobileEditor.refs"
+    :mentions="mobileEditor.mentions"
+    :generating="mobileEditor.generating"
+    @close="props.onNodeEditorClose"
+    @patch="props.onNodeEditorPatch"
+  />
+  <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接） -->
+  <MobileNodeViewer
+    v-if="viewerNode"
+    :type="viewerNode.type"
+    :data="viewerNode.data"
+    @close="props.onViewerClose"
+  />
+  <!-- R1-T7：节点交互范式反转一次性引导（点按播放 · 长按编辑），仅画布页签首进一次 -->
+  <MobileNodeCoachMark v-if="mobileAppTab === 'canvas'" />
 </template>
 
 <style scoped>
