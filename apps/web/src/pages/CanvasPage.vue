@@ -1817,21 +1817,25 @@ async function focusNodeById(id: string) {
     ElMessage.warning('当前画布中没有找到对应节点')
     return
   }
-  // 移动端：定位 = 用户显式要看画布 ⇒ 切到画布页签。
-  // ADR-0011 T6（2026-10-20）：定位到**待确认**节点时进**纯画布满屏**（composer / SSE 全收）——
-  // 此刻用户意图是「去画布上看 / 改提示词再确认」，不该与对话流同屏抢版面；其余定位仍走
-  // 窗态（composer 同屏，供定位引图后继续输入，2026-10-18 裁决）。
+  // 移动端：定位 = 用户显式要看画布 ⇒ 画布进视野（画布视图 + 窗态）。
+  // ⚠️ 2026-10-23 用户裁决更新了落点：「打开历史项目默认进【对话】页而不是【画布】页，
+  // 对话是创造的启动」⇒ 停在**对话页签**并用窗态（画布可见 + composer 同屏）承载定位：
+  // 既看得见定位到的产物，又留着输入入口。旧口径（切画布页签 / 待确认节点进纯画布满屏，
+  // ADR-0011 T6 2026-10-20）已被本次裁决取代。
   if (isMobileLayout.value) {
     // ⚠️ 2026-10-21 真机走查：入口语义只应在「**从对话页定位进画布**」时决定。
     // 已在画布视图里再定位（如 ＋sheet 创建节点后的自动聚焦 handleDockAdd →
-    // focusNodeById）时，旧写法无条件重算 imm ⇒ 把纯画布切成窗态，composer 空闲条
+    // focusNodeById）时，无条件重算 imm ⇒ 把纯画布切成窗态，composer 空闲条
     // 凭空冒出来（用户：「点 ＋ 添加节点时，这个不是窗操作，composer 空闲条不该出现」）。
+    //
+    // ⚠️ 2026-10-23 用户裁决更新了「从对话页定位」的落点：「打开历史项目默认进
+    // 【对话】页而不是【画布】页，对话是创造的启动」⇒ 从对话页定位**一律窗态**
+    // （画布可见 + composer 同屏）：既看得见定位到的产物，又留着输入入口；
+    // 且**不再切画布页签**（那会把 composer 收走，对话入口就没了）。
+    // 已在画布视图内定位 ⇒ 仍不改入口语义（2026-10-21 裁决，保留）。
     const enteringFromConversation = !mobileCanvasView.value
     mobileCanvasView.value = true
-    mobileCanvasImm.value = enteringFromConversation
-      ? isPendingConfirmNode(target as { data?: { status?: unknown } | undefined })
-      : mobileCanvasImm.value
-    mobileAppTab.value = 'canvas'
+    mobileCanvasImm.value = enteringFromConversation ? true : mobileCanvasImm.value
   }
   selectOnlyNode(id)
   await nextTick()
@@ -1847,20 +1851,11 @@ async function focusNodesByIds(ids: string[]) {
   }
   if (valid.length === 1) return focusNodeById(valid[0])
   if (isMobileLayout.value) {
-    // 同 focusNodeById：已在画布视图内定位不改入口语义（见该函数注释）
+    // 同 focusNodeById（2026-10-21 + 2026-10-23 两条裁决同时满足）：
+    // 从对话页定位 ⇒ 窗态 + 停在对话页签；已在画布视图内定位 ⇒ 不改入口语义。
     const enteringFromConversation = !mobileCanvasView.value
     mobileCanvasView.value = true
-    // ADR-0011 T6：批量定位里含待确认节点 ⇒ 同纯画布满屏（与单节点判据一致）
-    mobileCanvasImm.value = enteringFromConversation
-      ? valid.some((vid) =>
-          isPendingConfirmNode(
-            nodes.value.find((n) => n.id === vid) as {
-              data?: { status?: unknown } | undefined
-            },
-          ),
-        )
-      : mobileCanvasImm.value
-    mobileAppTab.value = 'canvas'
+    mobileCanvasImm.value = enteringFromConversation ? true : mobileCanvasImm.value
   }
   selectOnlyNode(valid[0])
   await nextTick()

@@ -1,17 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import WorkflowPage from './WorkflowPage.vue'
 
-const { apiGet, apiPost, canvasList, canvasCreate, mobileFlag } = vi.hoisted(() => ({
+const { apiGet, apiPost, canvasList, canvasCreate, mobileFlag, locationAssign } = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
   canvasList: vi.fn(),
   canvasCreate: vi.fn(),
   /** 移动端布局开关：每个用例可改（组件挂载时读快照，watch immediate 即用） */
   mobileFlag: { isMobile: false },
+  /** window.location.assign 的替身（jsdom 的导航未实现，调用即抛） */
+  locationAssign: vi.fn(),
 }))
 
 vi.mock('@/services/api', () => ({
@@ -155,8 +159,6 @@ describe('WorkflowPage 主页收拢（P1）', () => {
  * （进列表还得兜底编号）——本组用 `canvasCreate` 零调用钉死它不许回来。
  */
 describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', () => {
-  const locationAssign = vi.hoisted(() => vi.fn())
-
   beforeEach(() => {
     // ⚠️ 本组是独立顶层 describe：P1 组的 beforeEach 覆盖不到 ⇒ 一次性 flag、
     // mobileFlag、mock 历史必须在这里自行复位，否则用例间串味（sessionStorage
@@ -222,5 +224,59 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     await mountWorkflow({ loggedIn: true })
     expect(canvasList).not.toHaveBeenCalled()
     expect(locationAssign).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * 2026-10-23 用户裁定第 3/4 点：
+ *  ③ 移动端品牌页只有【品牌】内容 ⇒「我的项目」「社区精选」窄屏隐藏（社区归发现页、
+ *     个人项目归对话页）；PC 端三块全在。
+ *  ④ 点锚 = 开始创作：有项目 ⇒ 进最近项目的对话页（**不新建**）；无项目才新建。
+ */
+describe('移动端品牌页边界（第 3/4 点）', () => {
+  const pageSrc = readFileSync(resolve(__dirname, 'WorkflowPage.vue'), 'utf8')
+
+  beforeEach(() => {
+    // ⚠️ 本组是独立顶层 describe：P1 组 / IA v4 组的 beforeEach 都覆盖不到 ⇒
+    // 一次性 flag（sessionStorage）、mobileFlag、mock 历史必须在这里自行复位。
+    sessionStorage.clear()
+    mobileFlag.isMobile = false
+    canvasList.mockReset()
+    canvasCreate.mockReset()
+    apiGet.mockReset()
+    apiGet.mockResolvedValue({ data: { data: { items: makeWorks(4), total: 4 } } })
+    canvasList.mockResolvedValue({ data: { data: [] } })
+  })
+
+  it('③ 「我的项目」「社区精选」两区块窄屏隐藏（品牌页只有品牌）', () => {
+    // 两个 section 都必须带 lg:block（窄屏隐藏、桌面显示）
+    const sections = pageSrc.match(/<section[^>]*>/g) ?? []
+    const projectSection = sections.find((s) => s.includes('auth.isLoggedIn')) ?? ''
+    const communitySection = sections.find((s) => s.includes('hidden lg:block') && !projectSection.includes(s)) ?? ''
+    expect(projectSection, '「我的项目」区块须窄屏隐藏').toContain('hidden lg:block')
+    expect(communitySection, '「社区精选」区块须窄屏隐藏').toContain('hidden lg:block')
+    // ⛔ 反向：隐藏必须是「窄屏隐藏、桌面显示」，不能写成 hidden（桌面也没了）
+    expect(pageSrc).not.toMatch(/<section[^>]*class="hidden"[^>]*>/)
+    // 外层容器也必须窄屏隐藏：它只装那两个区块 + 发布弹窗，留着 pb-20/pt-6
+    // 会凭空多出 104px 空白 ⇒ 品牌页就「覆盖不满」一屏（实测 scrollHeight 1004 vs 844）
+    expect(
+      pageSrc,
+      '外层容器须窄屏隐藏（否则 104px 空白，品牌页不满一屏）',
+    ).toMatch(/<div class="[^"]*hidden[^"]*max-w-7xl[^"]*">/)
+  })
+
+  it('④ 点锚 = 开始创作：有项目 ⇒ 进最近项目对话页，不新建', async () => {
+    mobileFlag.isMobile = true
+    canvasList.mockResolvedValue({ data: { data: [{ id: 'proj-1' }] } })
+    await mountWorkflow({ loggedIn: true })
+    // 入口分发已把用户带去最近项目 ⇒ 品牌页上的锚不再被点
+    expect(locationAssign).toHaveBeenCalledWith('/workflow/proj-1')
+    expect(canvasCreate, '有项目时点锚不得新建').not.toHaveBeenCalled()
+  })
+
+  it('④ 源码守卫：移动端分支按「有项目 ⇒ 进最近项目」分流', () => {
+    // 判据落在源码（行为级已被入口分发抢跑）⇒ 钉死分流条件与两个落点
+    expect(pageSrc).toContain('isMobileLayout.value && recentProjectId.value')
+    expect(pageSrc).toContain('router.push(`/workflow/${recentProjectId.value}`)')
   })
 })

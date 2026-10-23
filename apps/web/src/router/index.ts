@@ -13,6 +13,13 @@ const router = createRouter({
       component: () => import('@/pages/WorkflowPage.vue'),
     },
     {
+      // 独立注册/登录页（2026-10-23 用户裁决第 6 点）：退出登录后回「身份页」而不是
+      // 品牌页；登录成功再回 /workflow 品牌页 ⇒ 登出→重登全程的品牌链路不丢。
+      path: '/login',
+      name: 'login',
+      component: () => import('@/pages/LoginPage.vue'),
+    },
+    {
       path: '/workflow/:sessionId',
       name: 'canvas',
       component: () => import('@/pages/CanvasPage.vue'),

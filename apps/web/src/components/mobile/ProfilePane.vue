@@ -50,15 +50,15 @@ function openOfficialSite() {
 }
 
 /**
- * 退出登录（IA v4 M12，2026-10-23 用户裁定「退出后登录跳转要过移动端 hero，加深品牌印象」）：
- * 登出后回 /workflow（工作台 hero）。此时已登录态不成立 ⇒ 移动端入口分发的
- * `canvasApi.list()` 必 401 ⇒ 必然**留在 hero** 而不会被弹进最近项目；
- * hero 的锚（唯一创作入口）再触发登录弹窗 ⇒ 登出→重登全程过 hero。
- * ⛔ 不得只调 auth.logout()：那会把用户留在项目页/我的页这类无品牌语境的壳层里。
+ * 退出登录（2026-10-23 用户裁决第 6 点：「点【我的】-退出登录，应直接跳转到注册登录页，
+ * 无需跳到品牌页」）：
+ * 登出 ⇒ 回**身份页** /login（不是品牌页）——身份事件回到身份入口，用户在那里重新登录；
+ * 登录成功再回 /workflow 品牌页（品牌链路不丢）。
+ * ⛔ 不得只调 auth.logout()：那会把用户留在「我的」页这类已无身份归属的壳层里。
  */
 function onLogout() {
   auth.logout()
-  void router.push('/workflow')
+  void router.push('/login')
 }
 </script>
 

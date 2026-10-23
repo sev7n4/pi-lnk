@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import CreativeLauncher from './CreativeLauncher.vue'
-import MobileTriptychRow from '@/components/mobile/MobileTriptychRow.vue'
 import {
   BRAND_LOGO_URL,
   BRAND_SLOGAN_LEAD,
@@ -74,7 +73,7 @@ function onAnchorClick() {
 <template>
   <section
     data-testid="signature-hero"
-    class="lnk-hero-screen relative isolate overflow-hidden px-6 py-24 sm:px-10 lg:py-32"
+    class="lnk-hero-screen relative isolate overflow-hidden px-6 py-12 sm:px-10 lg:py-32"
     style="background: var(--lnk-surface-signature)"
   >
     <!-- 墨流粒子：只动 transform/opacity；reduced-motion 下静止 -->
@@ -98,29 +97,22 @@ function onAnchorClick() {
         </h1>
       </div>
 
-      <!-- 移动端三联叙事行（IA v4，2026-10-23 用户裁定「窄屏也要讲三联」）：
-           桌面三联由 stage 三列承担（「对话 / 画布」标签 hidden lg:block），
-           移动端竖排后两个标签整体消失 ⇒ 叙事断档、只剩锚一个意象。
-           这里用一行紧凑图标 legend 补回读序：对话 → 锚 → 画布。
-           ⚠️ 行内中锚是**装饰叙事**（span 非 button）——真创作入口是下方
-           168px 落款印章，两个入口会打架。
-           ⛔ 签名面只用 on-signature 家族令牌；随主题翻转的面板文字/强调色
-           压恒深签名底会静默降对比度（「颜色放反」事故家族，见组件注释）。
-           ⚠️ 本注释里禁写具体令牌名：SignatureHero.test.ts 断言 hero 渲染
-           产物不出现面板文字令牌字样，注释会被 wrapper.html() 序列化出来。 -->
-      <MobileTriptychRow class="mt-6 lg:hidden" tone="signature" />
-
       <!-- 叙事舞台（2026-10-22 用户裁定「空间即故事」）：输入框进三联左侧——它本来
            就是「对话」，从此不再坐在叙事位 200px 开外。左「说」→ 中「锚」→ 右「落」，
            一条动线一次读完；移动端自然竖排（输入 → 锚 → 落点注脚），锚+门阶始终首屏可见。
            ⚠️ 两侧必须 minmax(0,1fr)：裸 1fr 的隐式 min 是 min-content，左右列内容宽度
-           不等会把中列挤偏——实测锚因此偏离 slogan 中轴 30px（750 vs 720）。 -->
-      <div class="lnk-stage mt-12 grid justify-items-center gap-y-12 lg:mt-0 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-x-10">
+           不等会把中列挤偏——实测锚因此偏离 slogan 中轴 30px（750 vs 720）。
+           ⛔ 2026-10-23 用户裁定：窄屏也**完整复刻**这三叙事（对话标签组 / 墨鱼→墨滴→锚 /
+           画布标签组），只是尺寸压缩；不得另造一条「三联 legend」插在旁边（那是对叙事的
+           二次转述，用户判定为多出来、违背品牌设计意图）。 -->
+      <div class="lnk-stage mt-6 grid justify-items-center gap-y-6 lg:mt-0 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-x-10 lg:gap-y-12">
         <!-- 左：对话（输入站） -->
         <div class="flex w-full flex-col items-center gap-3 lg:flex-row lg:items-center lg:justify-end lg:gap-6">
           <div class="lnk-stage__talk flex w-full max-w-md flex-col items-center gap-3 lg:max-w-none lg:items-end">
-            <div class="hidden text-center lg:block lg:text-right">
-              <p class="text-[length:var(--lnk-text-lg)] font-medium text-[color:var(--lnk-text-on-signature)]">
+            <!-- 窄屏也显示「对话 / 你说出想法」（2026-10-23）：PC 三叙事的左列内容整体复用，
+                 字号按窄屏降一档（lg 断点还原 PC 尺寸）。 -->
+            <div class="text-center lg:text-right">
+              <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
                 对话
               </p>
               <p class="mt-2 text-[length:var(--lnk-text-base)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)]">
@@ -179,8 +171,9 @@ function onAnchorClick() {
             <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: -64px; --sy: 52px" />
             <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: 60px; --sy: 58px" />
           </button>
-          <!-- 门阶（2026-10-22 用户裁定「入口升层」）：全页唯一动作入口的标记 -->
-          <p class="lnk-anchor__cta mt-7">
+          <!-- 门阶（2026-10-22 用户裁定「入口升层」）：全页唯一动作入口的标记。
+               窄屏收紧上间距（2026-10-23：移动端品牌页要一屏装下完整三叙事） -->
+          <p class="lnk-anchor__cta mt-5 lg:mt-7">
             点击锚，进入创作
           </p>
         </div>
@@ -189,7 +182,9 @@ function onAnchorClick() {
         <div class="flex w-full flex-col items-center gap-3 lg:flex-row lg:items-center lg:justify-start lg:gap-6">
           <span class="hidden h-px w-16 shrink-0 bg-gradient-to-r from-overlay/30 to-transparent lg:block" aria-hidden="true" />
           <div class="text-center lg:text-left">
-            <p class="hidden text-[length:var(--lnk-text-lg)] font-medium text-[color:var(--lnk-text-on-signature)] lg:block">
+            <!-- 窄屏也显示「画布」标签（2026-10-23）：PC 三叙事的右列内容整体复用，
+                 字号按窄屏降一档（lg 断点还原 PC 尺寸）。 -->
+            <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
               画布
             </p>
             <p class="mt-2 text-[length:var(--lnk-text-base)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)]">
@@ -211,11 +206,31 @@ function onAnchorClick() {
   align-items: center;
   min-height: calc(100vh - var(--neo-header-height));
   min-height: calc(100dvh - var(--neo-header-height));
-  /* 墨滴落域的唯一真相源：落域高度与 keyframe 落距都引用它，改一处即同步。
-     144px = stage 在 lg 下的 48px 空隙 + 96px 落程——落域吃掉空隙后锚的位置不变 */
-  --lnk-drop-fall: 144px;
-  /* 墨滴起点：悬在落域顶的墨鱼（40px）下方，墨从它身上离开的那条线 */
-  --lnk-drop-start: 32px;
+  /* ===== 窄屏尺寸组（2026-10-23 用户裁定「移动端品牌页 = 完整复刻 PC 三叙事」）=====
+     移动端品牌页要一屏装下完整三叙事（对话标签组 + 输入框 + 墨鱼→墨滴→锚 + 画布标签组），
+     而 PC 端那套尺寸（锚 168px / 落程 144px / 墨鱼 40px）是给三列横排设计的。
+     ⇒ 窄屏用压缩值、lg 断点还原 PC 值（沿用本文件已有的 lg 断点写法，不引入新补丁）。
+     变量清单：落程（墨鱼→墨滴→锚）/ 墨滴起点 / 锚盘尺寸 / 锚 glyph 尺寸 / 墨鱼尺寸。 */
+  --lnk-drop-fall: 72px;
+  --lnk-drop-start: 22px;
+  --lnk-anchor-size: 132px;
+  --lnk-anchor-glyph-w: 54px;
+  --lnk-anchor-glyph-h: 62px;
+  --lnk-mascot-size: 32px;
+}
+
+@media (min-width: 1024px) {
+  .lnk-hero-screen {
+    /* 墨滴落域的唯一真相源：落域高度与 keyframe 落距都引用它，改一处即同步。
+       144px = stage 在 lg 下的 48px 空隙 + 96px 落程——落域吃掉空隙后锚的位置不变 */
+    --lnk-drop-fall: 144px;
+    /* 墨滴起点：悬在落域顶的墨鱼（40px）下方，墨从它身上离开的那条线 */
+    --lnk-drop-start: 32px;
+    --lnk-anchor-size: 168px;
+    --lnk-anchor-glyph-w: 70px;
+    --lnk-anchor-glyph-h: 80px;
+    --lnk-mascot-size: 40px;
+  }
 }
 
 /* slogan 唯一重音（2026-10-22 用户裁定）：签名面专用强调紫。
@@ -258,16 +273,12 @@ function onAnchorClick() {
    DOM 序在落域之后 ⇒ 墨滴被盘面自然吞没）。对位由 flex 居中结构保证，不依赖视口。
    2026-10-22 第三批反馈 ④：水滴形——尖头朝上（border-radius 的 0 角旋转到正上方），
    下落途中被重力拉长（scaleY > scaleX）。
-   只动 transform/opacity；reduced-motion 下静止且不可见。 */
+   只动 transform/opacity；reduced-motion 下静止且不可见。
+   ⚠️ 2026-10-23：窄屏**也显示**（移动端品牌页完整复刻 PC 三叙事 ⇒ 墨鱼→墨滴→锚
+   必须在位），落域高度改由 --lnk-drop-fall 决定（窄屏 72px / PC 144px）。 */
 .lnk-drop-zone {
-  display: none;
-}
-
-@media (min-width: 1024px) {
-  .lnk-drop-zone {
-    display: block;
-    height: var(--lnk-drop-fall);
-  }
+  display: block;
+  height: var(--lnk-drop-fall);
 }
 
 /* 墨鱼悬在洒下的墨正上方：落域顶、水平居中——与墨滴、锚同一条垂直轴。
@@ -282,8 +293,8 @@ function onAnchorClick() {
 
 .lnk-mascot-hang__img {
   display: block;
-  width: 40px;
-  height: 40px;
+  width: var(--lnk-mascot-size);
+  height: var(--lnk-mascot-size);
   user-select: none;
 }
 
@@ -332,8 +343,8 @@ function onAnchorClick() {
 .lnk-anchor {
   position: relative;
   display: grid;
-  width: 168px;
-  height: 168px;
+  width: var(--lnk-anchor-size);
+  height: var(--lnk-anchor-size);
   flex-shrink: 0;
   place-items: center;
   border: none;
@@ -374,8 +385,8 @@ function onAnchorClick() {
 /* 品牌生成锚 glyph（源 94×106）：currentColor 上色 + mask 成形 */
 .lnk-anchor__glyph {
   display: block;
-  width: 70px;
-  height: 80px;
+  width: var(--lnk-anchor-glyph-w);
+  height: var(--lnk-anchor-glyph-h);
   background: currentColor;
   -webkit-mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
   mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
