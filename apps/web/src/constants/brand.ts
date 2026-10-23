@@ -1,4 +1,9 @@
 export const BRAND_NAME = 'lnk π超创平台'
+/**
+ * 品牌字标短名（2026-10-23 用户裁定）：导航左上角等**品牌展示位**只露「lnk π」，
+ * 完整名 BRAND_NAME 保留给法务文书（用户协议 / 隐私政策标题与正文）。
+ */
+export const BRAND_SHORT_NAME = 'lnk π'
 export const BRAND_LOGO_URL = '/brand/mascot-logo.png'
 export const LEGAL_ENTITY = '墨鱼π科技技术有限公司'
 export const SUPPORT_EMAIL = 'sev7nseason@outlook.com'

@@ -12,9 +12,12 @@ withDefaults(defineProps<{
   compact?: boolean
   rootClass?: string
   ownsModal?: boolean
+  /** 2026-10-23 用户裁定：品牌页不展示个人积分（叙事位保持纯净），其余页面不变 */
+  hidePoints?: boolean
 }>(), {
   compact: false,
   ownsModal: true,
+  hidePoints: false,
 })
 
 const auth = useAuthStore()
@@ -33,7 +36,7 @@ function openTopup() {
 <template>
   <template v-if="auth.isLoggedIn">
     <div class="flex items-center gap-2" :class="[rootClass, $attrs.class]">
-      <AccountPointsPill @click="openMembership" />
+      <AccountPointsPill v-if="!hidePoints" @click="openMembership" />
       <AccountUserMenu :compact="compact" @open-topup="openTopup" />
     </div>
     <MembershipModal v-if="ownsModal" v-model="showMembership" />

@@ -710,6 +710,28 @@ function canShowUserMessageActions(msg: AgentStreamMessage): boolean {
   return msg.role === 'user' && !msg.streaming && !props.readOnly
 }
 
+/*
+ * 2026-10-23 用户反馈（移动端）：用户气泡常驻「编辑/复制/复用本轮」三个图标
+ * 把卡片撑得很高，挤压对话流。移动端改为默认收起，**点气泡**浮出在卡片下方；
+ * 桌面（hover 语义可用）维持原状。
+ * 状态用「每消息一个 Set 快照」整体替换（Vue3 Set 响应式需替换引用才可靠触发）。
+ */
+const mobileUserActionsOpen = ref<Set<string>>(new Set())
+
+function toggleUserMessageActions(id: string) {
+  const next = new Set(mobileUserActionsOpen.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  mobileUserActionsOpen.value = next
+}
+
+function onUserBubbleClick(msg: AgentStreamMessage) {
+  if (!isMobileLayout.value) return
+  if (msg.role !== 'user' || isMessageUnderEdit(msg)) return
+  if (!canShowUserMessageActions(msg)) return
+  toggleUserMessageActions(msg.id)
+}
+
 async function copyUserMessage(msg: AgentStreamMessage) {
   const text = visibleUserContent(msg).trim()
   if (!text) return
@@ -4158,6 +4180,7 @@ defineExpose({
                   isMessageUnderEdit(msg) ? 'agent-bubble-user--editing' : '',
                   isUserSystemEvent(msg) ? 'agent-bubble-user--system' : '',
                 ]"
+                @click="onUserBubbleClick(msg)"
               >
                 <AgentProseBlock
                   v-if="shouldRenderSchemeDraftProse(msg)"
@@ -4330,6 +4353,7 @@ defineExpose({
                     !isMessageUnderEdit(msg)
                   "
                   class="agent-msg-actions"
+                  :class="{ 'is-open': mobileUserActionsOpen.has(msg.id) }"
                 >
                   <template v-if="msg.role === 'assistant'">
                   <button
@@ -5251,7 +5275,11 @@ defineExpose({
   z-index: 70;
   height: auto;
   max-height: none;
-  overflow: visible;
+  /* 2026-10-23 溢出修复（第 3 道闸）：overflow-y 保持 visible（popover/浮层向下出），
+     但横向用 clip 硬裁——此前 overflow:visible 让气泡内长 token 的溢出一路
+     顶到 document，整页被推着横移（用户截图「页面可以往左滑」）。
+     clip 不创建滚动容器，纵向行为不变。 */
+  overflow-x: clip;
   border: none;
   background: transparent;
   box-shadow: none;
@@ -5764,6 +5792,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* 2026-10-23 溢出修复：对话流永不横向滚动——长 token 由 overflow-wrap 折行，
+     兜底裁剪（内容宽度仍可能瞬时超过容器，不能放它把外层顶出去） */
+  overflow-x: hidden;
 }
 
 /* ---- 回到底部浮标（回看历史时出现） ---- */
@@ -5953,12 +5984,28 @@ defineExpose({
 
 .agent-bubble-user {
   max-width: 88%;
+  /* 2026-10-23 移动端溢出修复：flex 子项的隐式 min-width 是 min-content，
+     长 URL / 宽表格 token 会把卡片撑出容器（页面整体横移的推手之一） */
+  min-width: 0;
   border: 1px solid var(--agent-user-border);
   border-radius: 16px;
   background: var(--agent-user-bg);
   color: var(--agent-user-text);
   box-shadow: var(--agent-user-shadow);
   padding: 8px 12px;
+}
+
+/*
+ * 2026-10-23 移动端文字溢出修复（用户截图：SSE 流里的裸 markdown 表格 + 长 URL
+ * 把整页顶得横向滚动）。
+ * - overflow-wrap: anywhere：超长不可断 token（URL/管道表格）在任意字符处折行，
+ *   继承到气泡内所有正文节点（whitespace-pre-wrap 的正文 <p> 一并覆盖）；
+ * - 气泡容器 min-width: 0：允许收缩到容器宽以内，而不是被 min-content 顶破。
+ * 桌面侧栏同样受益（窄栏长 URL 同理），无视觉副作用。
+ */
+.agent-bubble {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /*
@@ -6214,6 +6261,34 @@ defineExpose({
 
 .agent-turn--user:hover .agent-msg-actions,
 .agent-bubble-user:hover ~ .agent-msg-actions {
+  opacity: 1;
+}
+
+/*
+ * 2026-10-23 移动端用户气泡操作行（用户反馈：三图标常驻把卡片撑得很高）：
+ * 默认收起；点气泡后浮出在**卡片下方**（absolute，不占卡片高度）。
+ * 只作用于移动 dock 作用域——桌面 hover 语义可用，维持常驻弱显不变。
+ * is-open 由 onUserBubbleClick 按消息 id 切换（见 script）。
+ */
+.agent-panel-mobile-dock .agent-turn--user {
+  position: relative;
+}
+
+.agent-panel-mobile-dock .agent-turn--user .agent-msg-actions {
+  display: none;
+}
+
+.agent-panel-mobile-dock .agent-turn--user .agent-msg-actions.is-open {
+  display: flex;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  margin-top: 2px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lnk-surface-raised) 94%, transparent);
+  box-shadow: var(--lnk-shadow-xs);
   opacity: 1;
 }
 

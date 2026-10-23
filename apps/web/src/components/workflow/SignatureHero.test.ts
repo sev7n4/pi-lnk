@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SignatureHero from './SignatureHero.vue'
-import CreativeLauncher from './CreativeLauncher.vue'
+import SlideToCreate from './SlideToCreate.vue'
 
 // ⚠️ jsdom 环境下 `fileURLToPath()` 必须收字符串：全局 URL 是 jsdom 的实现，
 // 把 URL **对象**传给 Node 的 fileURLToPath 会报 "The URL must be of scheme file"。
@@ -21,30 +21,38 @@ const stripComments = (src: string) =>
     .replace(/(^|[^:\w])\/\/.*$/gm, '$1')
 
 function mountHero() {
-  // 2026-10-22 起 hero 无 RouterLink / 无 greeting prop（用户裁定纯净霸屏），裸挂载即可
-  return mount(SignatureHero, {
-    props: { modelValue: '' },
-  })
+  // 2026-10-24 起 hero 无 modelValue prop（「描述你的创意」输入框整体退场，
+  // 创作入口 = 锚 + 滑动解锁），裸挂载即可。
+  return mount(SignatureHero)
 }
 
 describe('SignatureHero', () => {
-  it('Enter 与锚触发同一个 create 动作（单 CTA）', async () => {
+  it('滑动解锁与锚触发同一个 create 动作（双入口同源）', async () => {
     const wrapper = mountHero()
-    await wrapper.find('input').trigger('keydown.enter')
+    // 2026-10-24 用户裁定·第 5 点：输入框退场，创作入口 = 锚 + 滑动解锁 ⇒
+    // 两个入口必须发同一个 create（不是两个不同的动作）。
+    const knob = wrapper.find('.lnk-slide__knob')
+    expect(knob.exists()).toBe(true)
+    await knob.trigger('keydown', { key: 'Enter' })
     await wrapper.find('[data-testid="ink-anchor"]').trigger('click')
     expect(wrapper.emitted('create')).toHaveLength(2)
   })
 
-  it('锚是唯一动作入口（signature 下 composer 无内嵌按钮；hero 无第二个按钮）', () => {
+  it('创作入口恰为两个：锚 + 滑动解锁把手（无第三个按钮）', () => {
     const wrapper = mountHero()
-    // 2026-10-21 用户裁定「入口是锚」⇒ 全 hero 只有一个 button：锚本身。
+    // 2026-10-24 用户裁定·第 5 点：输入框退场后，hero 上的动作入口恰两个——
+    // 锚（印章）与滑动解锁把手；两者都必须可达，且没有多余按钮。
     const buttons = wrapper.findAll('button')
-    expect(buttons).toHaveLength(1)
-    expect(buttons[0]!.attributes('data-testid')).toBe('ink-anchor')
-    expect(buttons[0]!.attributes('aria-label')).toBe('点击锚，进入创作')
-    const launcher = wrapper.findComponent(CreativeLauncher)
-    expect(launcher.props('tone')).toBe('signature')
-    expect(launcher.findAll('button')).toHaveLength(0)
+    expect(buttons).toHaveLength(2)
+    // ⛔ 不按 DOM 顺序断言：滑条在左列、锚在中列 ⇒ 滑条按钮在前
+    const anchor = wrapper.find('[data-testid="ink-anchor"]')
+    expect(anchor.exists()).toBe(true)
+    expect(anchor.attributes('aria-label')).toBe('点击锚，进入创作')
+    const knob = wrapper.find('.lnk-slide__knob')
+    expect(knob.exists()).toBe(true)
+    expect(knob.attributes('aria-label')).toBe('滑动进入创作')
+    // 滑动组件本体在位（双入口之二）
+    expect(wrapper.findComponent(SlideToCreate).exists()).toBe(true)
   })
 
   it('旧「告诉我你的想法」guide 入口不存在', () => {
@@ -63,11 +71,18 @@ describe('SignatureHero', () => {
     expect(html).not.toContain('text-fg-3')
   })
 
-  it('输入框在深底上走 signature 变体（placeholder 不用 text-fg-3）', () => {
-    const wrapper = mountHero()
-    const launcher = wrapper.findComponent(CreativeLauncher)
-    expect(launcher.props('tone')).toBe('signature')
-    expect(launcher.html()).not.toContain('text-fg-3')
+  it('滑动条在深底上走签名面令牌（不用浅色主题文字令牌）', () => {
+    // 2026-10-24 用户裁定·第 5 点：输入框退场 ⇒ 断言对象换成滑动条：
+    // 它坐在恒深签名底上 ⇒ 只许 on-signature / stamp 家族令牌。
+    const src = stripComments(readFileSync(join(HERE, 'SlideToCreate.vue'), 'utf8'))
+    expect(src).toContain('var(--lnk-surface-on-signature)')
+    expect(src).toContain('var(--lnk-stamp-face-on-signature)')
+    expect(src).toContain('var(--lnk-stamp-ink-on-signature)')
+    // ⛔ 随主题翻转的令牌禁入（浅色主题下会翻成近黑、沉进墨里）
+    expect(src).not.toContain('--lnk-hi-bg')
+    expect(src).not.toContain('--lnk-hi-text')
+    expect(src).not.toContain('--lnk-accent-text')
+    expect(src).not.toContain('text-fg-3')
   })
 
   it('粒子 / 墨鱼 / 锚脉冲动效都被 prefers-reduced-motion 降级', () => {
@@ -172,15 +187,19 @@ describe('SignatureHero', () => {
     expect(text).not.toContain('Agent 把创作落地')
     expect(text).not.toContain('你下指令')
     expect(text).toContain('你说出想法')
-    expect(text).toContain('墨鱼替你落墨')
+    // 2026-10-24 用户裁定·第 3 点：右列副文案 = 「墨鱼π替你落墨」
+    // （「画布记住你的模样」退场——主 h1 slogan 已有「让世界记住你的模样」，不重复）
+    expect(text).toContain('墨鱼π')
+    expect(text).toContain('替你落墨')
+    expect(text).not.toContain('画布记住你的模样')
   })
 
-  it('叙事动线：输入站进三联（stage 同时承载输入框与锚，不再分离）', () => {
+  it('叙事动线：滑动解锁进三联（stage 同时承载滑动条与锚，不再分离）', () => {
     const wrapper = mountHero()
     const stage = wrapper.find('.lnk-stage')
     expect(stage.exists()).toBe(true)
-    // 「对话」（输入框）与「锚」必须在同一舞台容器内——空间即故事
-    expect(stage.findComponent(CreativeLauncher).exists()).toBe(true)
+    // 「对话」（滑动解锁）与「锚」必须在同一舞台容器内——空间即故事
+    expect(stage.findComponent(SlideToCreate).exists()).toBe(true)
     expect(stage.find('[data-testid="ink-anchor"]').exists()).toBe(true)
   })
 
@@ -193,7 +212,7 @@ describe('SignatureHero', () => {
     expect(talkLabel).toContain('对话')
     expect(talkLabel).toContain('你说出想法')
     expect(talkLabel).toContain('画布')
-    expect(talkLabel).toContain('墨鱼替你落墨')
+    expect(talkLabel).toContain('墨鱼π')
     // ② 标签组不得带 hidden（窄屏隐藏 = 叙事断档）
     const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
     expect(
@@ -211,24 +230,24 @@ describe('SignatureHero', () => {
 
   it('IA v4：窄屏三叙事横排（左右结构），与 PC 端同构', () => {
     const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
-    // ① 窄屏栅格：三列 areas（对话 | 锚 | 画布）+ 输入框独占第二行
+    // ① 窄屏栅格：三列 areas（对话 | 锚 | 画布）+ 滑动解锁独占第二行
     expect(src, '窄屏必须是三列横排（areas）').toContain(
-      "'talk anchor canvas'\n    'input input input'",
+      "'talk anchor canvas'\n    'slide slide slide'",
     )
     // ② 三列各自是 stage 的 grid item（列名不能丢）
-    for (const cls of ['lnk-talk-label', 'lnk-col-anchor', 'lnk-col-canvas', 'lnk-talk-input']) {
+    for (const cls of ['lnk-talk-label', 'lnk-col-anchor', 'lnk-col-canvas', 'lnk-talk-slide']) {
       expect(src, `${cls} 必须在叙事舞台内`).toContain(cls)
     }
-    // ③ 左列用 display:contents：否则 talk 列的子元素（输入框）排不进 areas 第二行
-    expect(src, '窄屏左列须 display:contents（输入框才能落到第二行）').toMatch(
+    // ③ 左列用 display:contents：否则 talk 列的子元素（滑动条）排不进 areas 第二行
+    expect(src, '窄屏左列须 display:contents（滑动条才能落到第二行）').toMatch(
       /\.lnk-col-talk\s*\{[^}]*display:\s*contents/,
     )
-    // ④ 桌面恢复：输入框回到左列内（talk 列 = 内容列 + 装饰线列两格；
+    // ④ 桌面恢复：滑动条回到左列内（talk 列 = 内容列 + 装饰线列两格；
     //    窄屏那套 display:contents 只对 <lg 生效）
     expect(src, '桌面左列须恢复为 grid 两格（内容 | 装饰线）').toMatch(
       /\.lnk-col-talk\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/,
     )
-    expect(src, '窄屏左列才用 display:contents（输入框落到第二行）').toMatch(
+    expect(src, '窄屏左列才用 display:contents（滑动条落到第二行）').toMatch(
       /\.lnk-col-talk\s*\{[^}]*display:\s*contents/,
     )
     // ⑤ 中列宽度锁死 = 锚盘宽（否则 CTA 文字撑宽中列 ⇒ 左右列被压扁、三叙事散架）
@@ -270,7 +289,7 @@ describe('SignatureHero', () => {
     // 判据：lg 断点里这四条必须都在（逐条对应上面的实测缺陷）。
     const lg = src.slice(src.indexOf('@media (min-width: 1024px)'))
     expect(lg, 'lg 必须清掉窄屏的 grid-area 引用').toMatch(
-      /\.lnk-talk-label,\s*\.lnk-talk-input,\s*\.lnk-col-anchor,\s*\.lnk-col-canvas\s*\{[^}]*grid-area:\s*auto/,
+      /\.lnk-talk-label,\s*\.lnk-talk-slide,\s*\.lnk-col-anchor,\s*\.lnk-col-canvas\s*\{[^}]*grid-area:\s*auto/,
     )
     expect(lg, 'lg 中列必须解锁（width:auto ⇒ 回到原设计的 CTA 自然宽）').toMatch(
       /\.lnk-col-anchor\s*\{[^}]*width:\s*auto/,
@@ -296,9 +315,13 @@ describe('SignatureHero', () => {
     const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
     // 窄屏右列宽 = (342 - 132 - 24) / 2 = 93px；7 个 CJK 字 @11px ≈ 88px 才放得下
     // （实测 12px 时每字 13.7px ⇒ 96px ⇒ 差 3px 被拆成「画布记住你的 / 样」孤字）。
+    // 2026-10-24 用户裁定·第 3 点后副文案改为「墨鱼π / 替你落墨」（更短），
+    // 但字号降档的纪律不变 ⇒ 仍须断言 2xs(11px) + 窄屏断行点。
     expect(src, '窄屏副文案须用 2xs(11px)').toMatch(
-      /class="mt-2 text-\[length:var\(--lnk-text-2xs\)\][^"]*"[\s\S]{0,200}画布记住你的模样/,
+      /class="mt-2 text-\[length:var\(--lnk-text-2xs\)\][^"]*"[\s\S]{0,200}替你落墨/,
     )
+    // 窄屏断行点保留在「墨鱼π」之后 ⇒ 桌面端仍读作一句「墨鱼π替你落墨」
+    expect(src, '窄屏须在「墨鱼π」后断行').toContain('墨鱼π<br class="lg:hidden">替你落墨')
   })
 
   it('IA v4：底部留出公司信息位（内容待补，位置先定）', () => {
@@ -458,5 +481,64 @@ describe('SignatureHero · 反馈批次（墨鱼归位 / 输入框 / 紫晕 / �
     // 内阴线也必须跟着刻痕走，否则浅色主题下会描成白线
     const anchorRule = src.slice(src.indexOf('.lnk-anchor {'), src.indexOf('.lnk-anchor:hover'))
     expect(anchorRule).toContain('var(--lnk-stamp-ink-on-signature) 20%')
+  })
+})
+
+/**
+ * 2026-10-23/24 用户六点裁定的回归锁（品牌页移动端）：
+ *   ③ 右列副文案 = 「墨鱼π替你落墨」（「画布记住你的模样」退场）；
+ *   ④ 【对话】↔【锚】↔【画布】的连接线在窄屏补齐（PC 端几何零变化）；
+ *   ⑤ 「描述你的创意」输入框整体退场 ⇒ 创作入口 = 锚 + 滑动解锁（双入口）。
+ * 另：① 品牌字标短名、② 品牌页去主题切换/积分（见 brand.ts / AppHeader / AccountChrome）。
+ */
+describe('SignatureHero · 用户六点（品牌页移动端）', () => {
+  it('③ 右列副文案是「墨鱼π替你落墨」，「画布记住你的模样」已退场', () => {
+    const wrapper = mountHero()
+    const text = wrapper.text()
+    expect(text).toContain('墨鱼π')
+    expect(text).toContain('替你落墨')
+    expect(text, '副文案退场（与主 h1 的「让世界记住你的模样」不重复）').not.toContain(
+      '画布记住你的模样',
+    )
+    // 桌面端仍读作一句（窄屏才断行）
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    expect(src).toContain('墨鱼π<br class="lg:hidden">替你落墨')
+  })
+
+  it('④ 窄屏补连接线：锚两侧各一条，桌面端隐藏（PC 几何零变化）', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    // 两条窄屏专用连接线在 DOM 里（锚列内，左右各一）
+    expect(src).toContain('lnk-anchor__link--left')
+    expect(src).toContain('lnk-anchor__link--right')
+    // 绝对定位：不占 grid 轨道 ⇒ 不挤压窄屏三列（窄屏右列实测仅 93px）
+    const linkBlock = src.slice(src.indexOf('.lnk-anchor__link {'))
+    expect(linkBlock, '连接线须绝对定位（不改列宽）').toContain('position: absolute')
+    // 桌面端隐藏这两条（PC 用列内 deco 线）
+    expect(linkBlock).toMatch(/@media \(min-width: 1024px\)\s*\{[^}]*\.lnk-anchor__link\s*\{[^}]*display:\s*none/)
+    // PC 端那两条列内 deco 线仍在（桌面几何零变化）
+    expect(src).toContain('lnk-deco-left')
+    expect(src).toContain('lnk-deco-right')
+  })
+
+  it('⑤ 输入框整体退场：hero 里不再有输入框 / 不再有 modelValue 契约', () => {
+    const wrapper = mountHero()
+    expect(wrapper.find('input').exists(), '「描述你的创意」输入框已退场').toBe(false)
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    expect(src, 'hero 不得再引 CreativeLauncher').not.toContain('CreativeLauncher')
+    expect(src, 'hero 不得再有 modelValue 契约').not.toContain('modelValue')
+    // 创作入口 = 锚 + 滑动解锁，两者同发 create
+    expect(wrapper.find('[data-testid="ink-anchor"]').exists()).toBe(true)
+    expect(wrapper.findComponent(SlideToCreate).exists()).toBe(true)
+  })
+
+  it('⑤ 滑动解锁把手机：把手是真 button（键盘可达）+ 触发同一个 create', async () => {
+    const wrapper = mountHero()
+    const knob = wrapper.find('.lnk-slide__knob')
+    expect(knob.exists()).toBe(true)
+    expect(knob.element.tagName).toBe('BUTTON')
+    // 空格 / 回车等效于滑满（键盘用户不必拖拽）
+    await knob.trigger('keydown', { key: ' ' })
+    expect(wrapper.emitted('create')).toHaveLength(1)
   })
 })
