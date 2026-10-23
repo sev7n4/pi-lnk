@@ -86,39 +86,43 @@ function onAnchorClick() {
         <!-- 品牌 slogan（用户裁定）：双行叙事，先共鸣后承诺；主行即页面唯一 h1。
              只用 on-signature 实色令牌——品牌渐变禁载小字（F-5 3.67:1 不过 AA） -->
         <p
-          class="text-[length:var(--lnk-text-md)] leading-[var(--lnk-lh-md)] text-[color:var(--lnk-text-on-signature-muted)] sm:text-[length:var(--lnk-text-lg)] sm:leading-[var(--lnk-lh-lg)]"
+          class="text-[length:var(--lnk-text-base)] leading-[var(--lnk-lh-base)] text-[color:var(--lnk-text-on-signature-muted)] sm:text-[length:var(--lnk-text-lg)] sm:leading-[var(--lnk-lh-lg)]"
         >
           {{ BRAND_SLOGAN_LEAD }}
         </p>
         <h1
-          class="mt-3 font-bold text-[length:var(--lnk-text-2xl)] leading-[var(--lnk-lh-2xl)] text-[color:var(--lnk-text-on-signature)] sm:text-[length:var(--lnk-text-3xl)] sm:leading-[var(--lnk-lh-3xl)] lg:text-[length:var(--lnk-text-4xl)] lg:leading-[var(--lnk-lh-4xl)]"
+          class="mt-3 font-bold text-[length:var(--lnk-text-xl)] leading-[var(--lnk-lh-xl)] text-[color:var(--lnk-text-on-signature)] sm:text-[length:var(--lnk-text-3xl)] sm:leading-[var(--lnk-lh-3xl)] lg:text-[length:var(--lnk-text-4xl)] lg:leading-[var(--lnk-lh-4xl)]"
         >
           <template v-for="(seg, i) in sloganSegments" :key="i"><span v-if="seg.accent" class="lnk-slogan-accent">{{ seg.text }}</span><span v-else-if="seg.mascot" class="lnk-slogan-mascot"><span class="lnk-slogan-mascot-gap" aria-hidden="true"></span>{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>
         </h1>
       </div>
 
-      <!-- 叙事舞台（2026-10-22 用户裁定「空间即故事」）：输入框进三联左侧——它本来
-           就是「对话」，从此不再坐在叙事位 200px 开外。左「说」→ 中「锚」→ 右「落」，
-           一条动线一次读完；移动端自然竖排（输入 → 锚 → 落点注脚），锚+门阶始终首屏可见。
+      <!-- 叙事舞台（2026-10-22 用户裁定「空间即故事」+ 2026-10-23「移动端也做成左右结构」）：
+           左「说」→ 中「锚」→ 右「落」，一条动线一次读完。
+           ⚠️ 2026-10-23 用户裁决（移动端）：三叙事在窄屏**也要横排**（左右结构）——
+           竖排时「对话 / 锚 / 画布」三段被拆成三屏，叙事性弱、也看不清楚；
+           横排后一屏读完「对话 · 锚 · 画布」，与 PC 端同构（只是尺寸压缩）。
+           ⇒ 窄屏三列：对话标签组 | 锚 | 画布标签组；输入框在叙事带**下方**独占一行
+             （93px 的窄列放不下输入框；落在下方仍是「你说出想法」的落笔处）。
+           ⇒ 桌面（lg）恢复：输入框回到左列内（对话列），三列横排。
            ⚠️ 两侧必须 minmax(0,1fr)：裸 1fr 的隐式 min 是 min-content，左右列内容宽度
            不等会把中列挤偏——实测锚因此偏离 slogan 中轴 30px（750 vs 720）。
-           ⛔ 2026-10-23 用户裁定：窄屏也**完整复刻**这三叙事（对话标签组 / 墨鱼→墨滴→锚 /
-           画布标签组），只是尺寸压缩；不得另造一条「三联 legend」插在旁边（那是对叙事的
-           二次转述，用户判定为多出来、违背品牌设计意图）。 -->
-      <div class="lnk-stage mt-6 grid justify-items-center gap-y-6 lg:mt-0 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-x-10 lg:gap-y-12">
-        <!-- 左：对话（输入站） -->
-        <div class="flex w-full flex-col items-center gap-3 lg:flex-row lg:items-center lg:justify-end lg:gap-6">
-          <div class="lnk-stage__talk flex w-full max-w-md flex-col items-center gap-3 lg:max-w-none lg:items-end">
-            <!-- 窄屏也显示「对话 / 你说出想法」（2026-10-23）：PC 三叙事的左列内容整体复用，
-                 字号按窄屏降一档（lg 断点还原 PC 尺寸）。 -->
-            <div class="text-center lg:text-right">
-              <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
-                对话
-              </p>
-              <p class="mt-2 text-[length:var(--lnk-text-base)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)]">
-                你说出想法
-              </p>
-            </div>
+           ⛔ 窄屏/桌面共用一份 DOM（不得另造一条「三联 legend」：那是叙事的二次转述，
+           用户判定为多出来、违背品牌设计意图）。 -->
+      <div class="lnk-stage mt-6 lg:mt-0">
+        <!-- 左：对话（标签组 + 输入站） -->
+        <div class="lnk-col-talk">
+          <!-- 窄屏也显示「对话 / 你说出想法」（2026-10-23）：PC 三叙事的左列内容整体复用，
+               字号按窄屏降一档（lg 断点还原 PC 尺寸）。 -->
+          <div class="lnk-talk-label text-center lg:text-right">
+            <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
+              对话
+            </p>
+            <p class="mt-2 text-[length:var(--lnk-text-xs)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)] lg:text-[length:var(--lnk-text-base)]">
+              你说出想法
+            </p>
+          </div>
+          <div class="lnk-talk-input">
             <CreativeLauncher
               class="w-full"
               :model-value="props.modelValue"
@@ -131,7 +135,7 @@ function onAnchorClick() {
         </div>
 
         <!-- 中：落域（墨鱼悬顶 + 墨滴散落）+ 落款印章（唯一创作入口）+ 门阶 pill -->
-        <div class="relative flex flex-col items-center">
+        <div class="lnk-col-anchor relative flex flex-col items-center">
           <!-- 墨滴落域（2026-10-22 用户裁定「一点一滴视觉化」+「墨鱼在洒下的墨的上方」）：
                墨鱼悬在落域顶（恰在居中末行「记住你的模样。」正下方），三颗水滴墨从它身上
                散开、落入锚顶——墨鱼 → 墨滴 → 锚一条垂直轴，对位由 flex 居中结构保证。
@@ -179,7 +183,7 @@ function onAnchorClick() {
         </div>
 
         <!-- 右：画布（落点） -->
-        <div class="flex w-full flex-col items-center gap-3 lg:flex-row lg:items-center lg:justify-start lg:gap-6">
+        <div class="lnk-col-canvas">
           <span class="hidden h-px w-16 shrink-0 bg-gradient-to-r from-overlay/30 to-transparent lg:block" aria-hidden="true" />
           <div class="text-center lg:text-left">
             <!-- 窄屏也显示「画布」标签（2026-10-23）：PC 三叙事的右列内容整体复用，
@@ -187,12 +191,17 @@ function onAnchorClick() {
             <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
               画布
             </p>
-            <p class="mt-2 text-[length:var(--lnk-text-base)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)]">
+            <p class="mt-2 text-[length:var(--lnk-text-xs)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)] lg:text-[length:var(--lnk-text-base)]">
               墨鱼替你落墨<br>画布记住你的模样
             </p>
           </div>
         </div>
       </div>
+
+      <!-- 底部公司信息预留位（2026-10-23 用户要求：底部留白待补公司相关信息）。
+           现在只占位不放内容：位置与高度先定下来，内容到位时直接往里加，
+           不用再动上面的布局（避免「加信息 ⇒ 重新排版 ⇒ 叙事带被挤变形」）。 -->
+      <div class="lnk-company-slot" aria-hidden="true" />
     </div>
   </section>
 </template>
@@ -266,6 +275,98 @@ function onAnchorClick() {
 .lnk-mascot {
   animation: lnk-mascot-breathe 4s ease-in-out infinite;
   filter: drop-shadow(var(--lnk-accent-glow));
+}
+
+/* ===== 叙事舞台的栅格（2026-10-23 用户裁决：移动端也做成左右结构）=====
+   窄屏：对话标签组 | 锚 | 画布标签组 **横排三列**，输入框在叙事带下方独占一行
+   （93px 的窄列放不下输入框；落在下方仍是「你说出想法」的落笔处）。
+   桌面（lg）：恢复三列，输入框回到左列内（对话列），与 PC 原设计一致。
+
+   ⚠️ 栅格全部写在这里（不用 Tailwind 的 grid/grid-cols 工具类）：scoped CSS 与
+   工具类同优先级（0,1,0）⇒ 靠书写顺序决胜，很脆（grid-cols 的任意值与
+   grid-template-areas 也表达不了 areas）⇒ 单一出处更稳。
+   ⚠️ 窄屏左列用 display:contents：让 talk 列的子元素（标签组 / 输入框）直接
+   参与外层 grid，从而把输入框放到第二行（否则它是 talk 列的孙级，排不进 areas）。 */
+.lnk-stage {
+  display: grid;
+  grid-template-areas:
+    'talk anchor canvas'
+    'input input input';
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  /* 窄屏：stretch 让左右两列**等宽填满**（justify-items:center 会让每列各取内容宽
+     ⇒ 「对话」列 65px、「画布」列 93px，两边不对称、叙事带就歪了）。
+     文字居中由列内 text-center 负责；输入框用 justify-self:center 保持居中。 */
+  justify-items: stretch;
+  column-gap: 12px;
+  row-gap: 20px;
+}
+
+.lnk-col-talk {
+  display: contents;
+}
+
+.lnk-talk-label {
+  grid-area: talk;
+}
+
+.lnk-talk-input {
+  grid-area: input;
+  justify-self: center;
+  width: 100%;
+  max-width: 280px;
+}
+
+.lnk-col-anchor {
+  grid-area: anchor;
+  /* 中列宽度锁死 = 锚盘宽：任何内容（CTA 文字等）都不许把中列撑宽——
+     撑宽会挤压左右两列 ⇒ 三叙事散架。 */
+  width: var(--lnk-anchor-size);
+  max-width: 100%;
+}
+
+.lnk-col-canvas {
+  grid-area: canvas;
+}
+
+@media (min-width: 1024px) {
+  .lnk-stage {
+    grid-template-areas: none;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    justify-items: center;
+    column-gap: 40px;
+    row-gap: 48px;
+  }
+
+  /* 桌面：talk 列恢复为普通列（标签组在上、输入框在下、装饰线在左） */
+  .lnk-col-talk {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 12px;
+  }
+
+  .lnk-talk-label,
+  .lnk-talk-input {
+    grid-area: auto;
+  }
+
+  .lnk-talk-input {
+    max-width: none;
+  }
+}
+
+/* 底部公司信息预留位（2026-10-23 用户要求：底部留白待补公司信息）。
+   高度先定死 ⇒ 内容到位时只往里加，不会把上面的叙事带挤变形。 */
+.lnk-company-slot {
+  min-height: 96px;
+}
+
+@media (min-width: 1024px) {
+  .lnk-company-slot {
+    min-height: 72px;
+  }
 }
 
 /* ===== 墨滴落域（2026-10-22 用户裁定「一点一滴视觉化」）=====
@@ -498,11 +599,24 @@ function onAnchorClick() {
   align-items: center;
   border: 1px solid color-mix(in srgb, var(--lnk-text-on-signature) 24%, transparent);
   border-radius: 999px;
-  padding: 7px calc(18px - 0.18em) 7px 18px;
-  font-size: var(--lnk-text-md);
-  line-height: var(--lnk-lh-md);
-  letter-spacing: 0.18em;
+  /* 窄屏（2026-10-23 三列横排）：CTA 必须收窄到中列宽内（--lnk-anchor-size 132px）
+     —— 桌面那套 16px 字 + 0.18em 字距 + 36px 内边距 = 187px，会把中列撑到 186px，
+     左右两列被压到 65px（文案全换行）⇒ 三叙事就散了。 */
+  padding: 6px 10px;
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
   color: var(--lnk-text-on-signature);
+}
+
+@media (min-width: 1024px) {
+  .lnk-anchor__cta {
+    padding: 7px calc(18px - 0.18em) 7px 18px;
+    font-size: var(--lnk-text-md);
+    line-height: var(--lnk-lh-md);
+    letter-spacing: 0.18em;
+  }
 }
 
 /* 动效只三处（规格 §7.4），但每一处都必须能被系统「减少动态效果」停掉 */

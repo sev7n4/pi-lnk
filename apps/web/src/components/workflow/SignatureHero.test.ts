@@ -99,7 +99,7 @@ describe('SignatureHero', () => {
     const wrapper = mountHero()
     const text = wrapper.text()
     expect(text).toContain('你体内早就有一囊墨，只是…没有找到你的锚。')
-    expect(text).toContain('墨鱼π，锚定你的创意，一点一滴洒在画布，让画布记住你的模样。')
+    expect(text).toContain('墨鱼π，锚定你的创意，一点一滴洒在画布，让世界记住你的模样。')
     // 小字禁走品牌渐变（F-5：渐变末端白字 3.67:1 不过 AA）——只许 on-signature 实色
     const html = wrapper.html()
     expect(html).toContain('var(--lnk-text-on-signature-muted)')
@@ -135,7 +135,7 @@ describe('SignatureHero', () => {
     const wrapper = mountHero()
     const h1 = wrapper.find('h1')
     // 切分渲染不得改写文案：拼接结果必须逐字等于 BRAND_SLOGAN_MAIN
-    expect(h1.text()).toBe('墨鱼π，锚定你的创意，一点一滴洒在画布，让画布记住你的模样。')
+    expect(h1.text()).toBe('墨鱼π，锚定你的创意，一点一滴洒在画布，让世界记住你的模样。')
     const accent = wrapper.find('.lnk-slogan-accent')
     expect(accent.exists()).toBe(true)
     expect(accent.text()).toBe('锚定')
@@ -207,6 +207,60 @@ describe('SignatureHero', () => {
     expect(src).toContain('--lnk-anchor-size')
     expect(src).toContain('--lnk-drop-fall')
     expect(src).toContain('--lnk-mascot-size')
+  })
+
+  it('IA v4：窄屏三叙事横排（左右结构），与 PC 端同构', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    // ① 窄屏栅格：三列 areas（对话 | 锚 | 画布）+ 输入框独占第二行
+    expect(src, '窄屏必须是三列横排（areas）').toContain(
+      "'talk anchor canvas'\n    'input input input'",
+    )
+    // ② 三列各自是 stage 的 grid item（列名不能丢）
+    for (const cls of ['lnk-talk-label', 'lnk-col-anchor', 'lnk-col-canvas', 'lnk-talk-input']) {
+      expect(src, `${cls} 必须在叙事舞台内`).toContain(cls)
+    }
+    // ③ 左列用 display:contents：否则 talk 列的子元素（输入框）排不进 areas 第二行
+    expect(src, '窄屏左列须 display:contents（输入框才能落到第二行）').toMatch(
+      /\.lnk-col-talk\s*\{[^}]*display:\s*contents/,
+    )
+    // ④ 桌面恢复：输入框回到左列内（talk 列 display:flex）
+    expect(src, '桌面左列须恢复为 flex 列（输入框回到对话列内）').toMatch(
+      /\.lnk-col-talk\s*\{[^}]*display:\s*flex/,
+    )
+    // ⑤ 中列宽度锁死 = 锚盘宽（否则 CTA 文字撑宽中列 ⇒ 左右列被压扁、三叙事散架）
+    expect(src, '中列宽度须锁死（CTA 不得撑宽中列）').toMatch(
+      /\.lnk-col-anchor\s*\{[^}]*width:\s*var\(--lnk-anchor-size\)/,
+    )
+    // ⑥ 窄屏 CTA 必须收窄（桌面那套 187px 会撑爆中列）
+    expect(src, '窄屏 CTA 字号须降档').toMatch(
+      /\.lnk-anchor__cta\s*\{[^}]*font-size:\s*var\(--lnk-text-sm\)/,
+    )
+  })
+
+  it('IA v4：slogan 窄屏 3 行（lead 1 行 + 主行 2 行），并改「让世界记住你的模样」', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    // ① 字号：lead 降 base(14px)、主行降 xl(20px)——窄屏 5 行太占
+    expect(src, 'lead 窄屏字号须为 base').toMatch(
+      /class="[^"]*text-\[length:var\(--lnk-text-base\)\][^"]*"\s*>\s*\{\{ BRAND_SLOGAN_LEAD/,
+    )
+    expect(src, '主行窄屏字号须为 xl').toContain('text-[length:var(--lnk-text-xl)] leading-[var(--lnk-lh-xl)]')
+    // ② 文案：两端共用的单一真相源（constants/brand）
+    // ⚠️ 剥注释后再断言：迁移说明里写着旧文案（记录历史决策），裸读会把注释当字面量 ⇒ 假红
+    const brand = stripComments(readFileSync(join(HERE, '..', '..', 'constants', 'brand.ts'), 'utf8'))
+    expect(brand, 'slogan 主行必须是「让世界记住你的模样」').toContain(
+      '让世界记住你的模样',
+    )
+    expect(brand, '旧文案已撤').not.toContain('让画布记住你的模样')
+    // ③ inline 墨鱼位仍须是主行子串（改文案后不能漂移，否则墨鱼静默消失）
+    expect(brand).toContain("export const BRAND_SLOGAN_MAIN_MASCOT_BEFORE = '记住你的模样'")
+  })
+
+  it('IA v4：底部留出公司信息位（内容待补，位置先定）', () => {
+    const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
+    expect(src, 'hero 底部须有公司信息预留位').toContain('lnk-company-slot')
+    expect(src, '预留位须有确定高度（内容到位时不挤压上方叙事带）').toMatch(
+      /\.lnk-company-slot\s*\{[^}]*min-height:/,
+    )
   })
 
   it('⛔ 不得有「三联 legend」旁挂行（用户 2026-10-23 裁定：多出来、违背品牌设计意图）', () => {
@@ -339,10 +393,12 @@ describe('SignatureHero · 反馈批次（墨鱼归位 / 输入框 / 紫晕 / �
   it('墨鱼 → 墨滴 → 锚同轴：三联两侧 minmax(0,1fr)，锚不再偏离 slogan 中轴', () => {
     const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
     // 2026-10-22 实测：裸 1fr 的隐式 min 是 min-content，左右列不等宽把锚挤偏 30px
+    // 2026-10-23：栅格改由 scoped CSS 承载（Tailwind 任意值表达不了 grid-template-areas，
+    // 且与 scoped 规则同优先级靠顺序决胜太脆）⇒ 判据跟到 CSS 的 grid-template-columns。
     expect(
       src,
       '两侧轨道必须 minmax(0,1fr) 才能等宽，锚才真正落在 slogan 中轴上',
-    ).toContain('lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]')
+    ).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)')
   })
 
   it('锚盘走印章令牌（主题不变式），不再用随主题翻转的 hi 对', () => {
