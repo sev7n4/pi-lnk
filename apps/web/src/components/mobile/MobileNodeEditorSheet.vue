@@ -39,6 +39,17 @@ withDefaults(
 const emit = defineEmits<{
   close: []
   patch: [patch: Record<string, unknown>]
+  /**
+   * R4-T2：透传 `DockStudioRouter` 的 `generate`。
+   *
+   * ⭐ 断链修复：原先只接了 `patch` / `close` ⇒ `DockStudioRouter` 声明的
+   *   `generate` / `removeRef` / `continueShot` / `refine` 四个 emit **被丢弃**
+   *   ⇒ 移动端在编辑 sheet 里改完提示词**点「生成」毫无反应**（dock panel 的
+   *   `onGenerate` 先 emit patch 再 emit generate，后半段被吞）。
+   */
+  generate: []
+  /** R4-T2：透传 `removeRef`（移动端编辑 sheet 里可删引用芯片） */
+  removeRef: [ref: NodeRef]
 }>()
 </script>
 
@@ -58,6 +69,8 @@ const emit = defineEmits<{
         :mentions="mentions"
         :generating="generating"
         @patch="(p: Record<string, unknown>) => emit('patch', p)"
+        @remove-ref="(r: NodeRef) => emit('removeRef', r)"
+        @generate="emit('generate')"
         @close="emit('close')"
       />
     </div>

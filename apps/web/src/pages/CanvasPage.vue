@@ -2618,6 +2618,90 @@ function applyMobileEditorPatch(patch: Record<string, unknown>) {
 }
 
 /**
+ * R4-T2：移动端编辑 sheet 的「生成」——补齐被丢弃的 `DockStudioRouter.generate`。
+ *
+ * ⭐ 断链修复：原先 `MobileNodeEditorSheet` 只接 `patch` / `close` ⇒ dock panel 的
+ *   `onGenerate`（先 emit patch 再 emit generate）后半段被吞 ⇒ **移动端改完提示词
+ *   点「生成」毫无反应**。
+ *
+ * 复用 PC 的判据纯函数（`isNodeBusy` / `isDockGenerateBusy` /
+ * `shouldConfirmDirectGenerateWithoutRefs` / `resolveNodeRefs`），
+ * ⛔ **不动 PC 的 `handleNodeGenerate`**（它依赖 PC dock 上下文 `editorNode` +
+ * `debouncedNodePatch.flush()`；移动端 patch 是立即落库，无 flush 步骤）
+ * ⇒ PC 零 diff，两端语义靠「共用纯函数」保持一致。
+ */
+async function handleMobileNodeGenerate() {
+  const node = mobileEditorNode.value
+  if (!node) return
+  // 生成中再点 = 取消（与 PC dock 生成按钮同语义）
+  if (isNodeBusy(node.id) || isDockGenerateBusy(node.data?.status)) {
+    cancelGeneration(node.id)
+    return
+  }
+  // 卡在 propose 等待 → 先显式确认（与 PC 同：避免 flush 回写 stale draft
+  // 导致 runtime 轮询误判取消——2026-10-06 生产事故的教训）
+  void agentRailRef.value?.confirmProposeWait?.(node.id)
+  const fresh = findNodeById(node.id)
+  if (!fresh) return
+  if (isNodeBusy(fresh.id) || isDockGenerateBusy(fresh.data?.status)) {
+    cancelGeneration(fresh.id)
+    return
+  }
+  // RB-D6①：本轮侧栏有图但节点无任何 refs（宽判定含上游边）⇒ 二次确认
+  const agentStore = useAgentStore()
+  const freshData = (fresh.data ?? {}) as Record<string, unknown>
+  const refCount = resolveNodeRefs({
+    targetNodeId: fresh.id,
+    targetType: String(fresh.type),
+    nodes: nodes.value,
+    edges: edges.value,
+    localRefs: (freshData.localRefs as LocalRefBinding[]) ?? [],
+    refOrder: (freshData.refOrder as string[]) ?? [],
+  }).filter((r) => !r.stale).length
+  if (
+    shouldConfirmDirectGenerateWithoutRefs({
+      nodeType: String(fresh.type),
+      refCount,
+      sidebarImageCount: latestUserSidebarImageCount(agentStore.messages),
+    })
+  ) {
+    try {
+      await ElMessageBox.confirm(MISSING_REFS_CONFIRM_MESSAGE, MISSING_REFS_CONFIRM_TITLE, {
+        confirmButtonText: '直接生成',
+        cancelButtonText: '先绑定参考图',
+        type: 'warning',
+      })
+    } catch {
+      return // 用户取消：不生成（Nest RB-D5 门禁仍兜底）
+    }
+  }
+  closeMobileNodeEditor()
+  await generateForNode(fresh as EditableFlowNode)
+}
+
+/**
+ * R4-T2：移动端编辑 sheet 里删除引用芯片。
+ *
+ * ⭐ 判据**照抄 PC 的 `handleRemoveRef`**（`:4319`）：edge 类引用删边、
+ *   本地引用按 `binding.id !== ref.refId` 过滤。差别只在落库通道：
+ *   PC 用 `patchSelectedNode`（依赖 PC 的 `editorNode`），移动端用
+ *   `patchNodeData(node.id, …)`（依赖 `mobileEditorNode`）⇒ PC 零 diff。
+ */
+function handleMobileNodeRemoveRef(ref: NodeRef) {
+  const node = mobileEditorNode.value
+  if (!node) return
+  if (ref.sourceKind === 'edge' && ref.edgeId) {
+    deleteEdgeById(ref.edgeId)
+    return
+  }
+  const localRefs = ((node.data?.localRefs as LocalRefBinding[]) ?? []).filter(
+    (binding) => binding.id !== ref.refId,
+  )
+  patchNodeData(node.id, { localRefs })
+  persistUserEdit()
+}
+
+/**
  * 移动端 tap → 全屏查看器（R1-T4/T6）：图灯箱 / 视频播放 / 文本阅读器。
  * 文本节点由 MobileNodeTile 按 D-A 分流：长文 tap = TTS 朗读，短文 tap = 开阅读器；
  * 两者都经本注入在画布壳层承接，节点组件不直接依赖壳层。
@@ -4682,7 +4766,10 @@ function handleContextAction(action: string) {
 function handleMobileNodeAction(action: string, nodeId: string) {
   switch (action) {
     case 'rename':
-      renameRequestNodeId.value = nodeId
+      // R4-T3：移动端重命名改由动作 sheet 内联完成（见 `handleMobileNodeRename`）——
+      // PC 的行内重命名由 `NeoBaseNode` 消费 `CANVAS_NODE_RENAME_REQUEST_KEY`，
+      // 而移动端不渲染 `NeoBaseNode` ⇒ 原接线在移动端完全静默失效（点了零反馈）。
+      // 这里不再写 `renameRequestNodeId`（避免陈旧 id 卡在非 null）。
       break
     case 'multi-select':
       enterMultiSelectMode(nodeId)
@@ -4701,6 +4788,20 @@ function handleMobileNodeAction(action: string, nodeId: string) {
       openMobileNodeEditor(nodeId)
       break
   }
+  // R4-T4：动作 sheet 选完即关（原先不关 ⇒ sheet 一直盖在屏幕底部；
+  // 只有选「编辑」时被 z-index 更高的编辑 sheet 盖住——那是盖住，不是关闭）。
+  closeMobileNodeAction()
+}
+
+/**
+ * R4-T3：移动端重命名提交（来自动作 sheet 的内联输入框）。
+ *
+ * 落库复用既有 `renameNodeById`（`patchNodeData({ title })` 合并语义
+ * ⇒ 不覆盖/清空 prompt / 模型 / 比例等字段）。
+ */
+function handleMobileNodeRename(nodeId: string, title: string) {
+  renameNodeById(nodeId, title)
+  closeMobileNodeAction()
 }
 
 function openPublish() {
@@ -5862,8 +5963,11 @@ onUnmounted(() => {
       :mobile-editor="mobileEditor"
       :on-node-action="(key: string, nodeId: string) => handleMobileNodeAction(key, nodeId)"
       :on-node-action-close="closeMobileNodeAction"
+      :on-node-rename="handleMobileNodeRename"
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
+      :on-node-editor-generate="handleMobileNodeGenerate"
+      :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"
       :node-generating-count="mobileNodeTaskSummary.generatingCount"
