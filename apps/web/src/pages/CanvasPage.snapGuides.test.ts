@@ -55,8 +55,7 @@ function flowNode(id: string, x: number, y: number, opts?: { parent?: string; w?
 
 describe('SP-B 参考线：CanvasPage 接线', () => {
   it('⛔ 候选构造走 buildSnapCandidates，页面不内联 parentNode 过滤', () => {
-    const src = pageSource()
-    const body = functionBody(src, 'function computeDragSnapGuides(')
+    const body = functionBody(pageSource(), 'function computeDragSnapGuides(')
     expect(body, '候选必须由 buildSnapCandidates 构造').toContain('buildSnapCandidates(')
     expect(body, '吸附几何必须由 shared 的 computeSnapGuides 出').toContain('computeSnapGuides(')
     // 曾经的缺陷：`n.parentNode !== <被拖节点 parent>` 内联过滤，两侧都是 undefined
@@ -70,7 +69,7 @@ describe('SP-B 参考线：CanvasPage 接线', () => {
     // 状态声明用 shared 的 SnapPrev（position + sourceNodeId 双字段）
     expect(src).toMatch(/const snapGuides = ref<SnapPrev>\(\{\}\)/)
     // 落值时两个朝向都补齐 sourceNodeId
-    const body = functionBody(src, 'function computeDragSnapGuides(')
+    const body = functionBody(pageSource(), 'function computeDragSnapGuides(')
     expect(body).toMatch(/guides\.horizontal = \{ position: res\.horizontal\.position, sourceNodeId: res\.horizontal\.sourceNodeId \}/)
     expect(body).toMatch(/guides\.vertical = \{ position: res\.vertical\.position, sourceNodeId: res\.vertical\.sourceNodeId \}/)
     // prev 传的是这份对象状态（读 prev.<朝向>.position）
@@ -78,8 +77,7 @@ describe('SP-B 参考线：CanvasPage 接线', () => {
   })
 
   it('⛔ 多选拖拽只按锚点算一次，整批同移同一 delta（相对阵列不变）', () => {
-    const src = pageSource()
-    const body = functionBody(src, 'function onNodesChange(')
+    const body = functionBody(pageSource(), 'function onNodesChange(')
     // 一次 tick 只算一次吸附量（锚点），绝不按 change.id 逐节点算
     const calls = body.match(/computeDragSnapGuides\(/g) ?? []
     expect(calls, 'onNodesChange 里只能有一处 computeDragSnapGuides 调用').toHaveLength(1)
@@ -94,7 +92,7 @@ describe('SP-B 参考线：CanvasPage 接线', () => {
 
   it('⛔ 拖拽开始重置 guide 状态；拖拽结束参考线优先于 20px 网格', () => {
     const src = pageSource()
-    const start = functionBody(src, 'function onNodeDragStart(')
+    const start = functionBody(pageSource(), 'function onNodeDragStart(')
     expect(start, '新一轮拖拽必须清空上一轮的 guide 命中').toMatch(/snapGuides\.value = \{\}/)
     expect(start, '锚点取 vue-flow 事件的主节点（拖不动时退回批内首个）').toMatch(
       /dragAnchorId = event\.node\?\.id \?\? dragStartPositions\.keys\(\)\.next\(\)\.value \?\? null/,
@@ -132,7 +130,7 @@ describe('SP-B 参考线：CanvasPage 接线', () => {
   it('视口裁剪：候选按当前视口四至 + 边距裁剪（规格 §9 性能护栏）', () => {
     const src = pageSource()
     expect(functionBody(src, 'function computeDragSnapGuides(')).toMatch(/bounds: snapViewportBounds\(\)/)
-    const bounds = functionBody(src, 'function snapViewportBounds(')
+    const bounds = functionBody(pageSource(), 'function snapViewportBounds(')
     // flow = (screen - translate) / zoom：屏幕左上角反投影回 flow 坐标
     expect(bounds).toMatch(/x: -vp\.x \/ zoom - SNAP_VIEWPORT_MARGIN/)
     expect(bounds).toMatch(/y: -vp\.y \/ zoom - SNAP_VIEWPORT_MARGIN/)
@@ -146,6 +144,41 @@ describe('SP-B 参考线：CanvasPage 接线', () => {
     )
     expect(body, '被拖节点的包围盒也取绝对坐标').toContain('getAbsolutePosition(anchor, flow)')
   })
+
+  // ── R1（2026-10-23 实测反馈平滑化）接线断言 ──
+  it('⛔ R1：onNodesChange 接住 dimensions 变更进 measuredNodeSizes', () => {
+    const body = functionBody(pageSource(), 'function onNodesChange(')
+    // vue-flow ResizeObserver 实测通道：旧实现整条丢弃 ⇒ getNodeSize 永远走
+    // NODE_SIZES 方框兜底 ⇒ 16:9 媒体节点吸附几何差 70-140px
+    expect(body, '必须处理 dimensions 变更').toMatch(/change\.type === 'dimensions'/)
+    expect(body, '实测尺寸写入 measuredNodeSizes').toMatch(/measuredNodeSizes\.set\(change\.id/)
+  })
+
+  it('⛔ R1：吸附阈值按 1/zoom 换算（屏幕空间手感），锚点盒走 snapSizeOf', () => {
+    const body = functionBody(pageSource(), 'function computeDragSnapGuides(')
+    expect(body, '锚点盒尺寸走 snapSizeOf（实测优先，不再 getNodeSize 直出）').toMatch(
+      /const size = snapSizeOf\(anchor\)/,
+    )
+    expect(body, '半径 = 屏幕空间 8px / zoom').toMatch(/snapRadius: SNAP_SCREEN_RADIUS \/ zoom/)
+    expect(body, '迟滞 = 屏幕空间 3px / zoom').toMatch(/hysteresis: SNAP_SCREEN_HYSTERESIS \/ zoom/)
+    expect(body, '候选注入 sizeOf（实测尺寸）').toMatch(/sizeOf: snapSizeOf/)
+  })
+
+  it('⛔ R1：snapSizeOf 尺寸解析链 = 实测 > 分组框 style > NODE_SIZES 兜底', () => {
+    const body = functionBody(pageSource(), 'function snapSizeOf(')
+    expect(body, '实测优先').toMatch(/measuredNodeSizes\.get\(node\.id\)/)
+    expect(body, '分组框走 groupNodeSize（style 权威）').toMatch(/isGroupNode\(node\)[\s\S]*groupNodeSize\(node\)/)
+    expect(body, '兜底 getNodeSize').toMatch(/getNodeSize\(node\)/)
+  })
+
+  it('⛔ R1：视口边界拖拽中缓存（zoom 不变直接返回），每次拖拽开始作废', () => {
+    const bounds = functionBody(pageSource(), 'function snapViewportBounds(')
+    expect(bounds, 'zoom 不变走缓存（免每帧 getBoundingClientRect 强布局）').toMatch(
+      /if \(snapBoundsCache && zoom === snapBoundsZoom\) return snapBoundsCache/,
+    )
+    const start = functionBody(pageSource(), 'function onNodeDragStart(')
+    expect(start, '新一轮拖拽作废视口缓存（两次拖拽间可能平移/缩放过）').toMatch(/snapBoundsCache = undefined/)
+  })
 })
 
 // ══════════════════════════════════════════════════════════
@@ -156,11 +189,19 @@ describe('SP-B 参考线：批内同移与 prev 形状（接线依赖的纯语�
   // 候选：box {0,0,200,100} ⇒ 垂直锚 left=0 / right=200 / centerX=100
   const cands = buildSnapCandidates([flowNode('anchor', 9, 500, { w: 200, h: 100 }), flowNode('cand', 0, 0, { w: 200, h: 100 })], 'anchor')
 
-  it('prev 是对象形状时：hysteresis 在半径外仍保持上一条线（不闪）', () => {
-    const dragBox = { x: 9, y: 500, w: 200, h: 100 } // 左边距候选左边 9px > SNAP_RADIUS(8)
-    const res = computeSnapGuides(dragBox, cands, { prev: { vertical: { position: 0, sourceNodeId: 'cand' } } })
-    expect(res.vertical, '0.5px hysteresis 内应保留原线').toEqual({ position: 0, sourceNodeId: 'cand' })
+  it('prev 是对象形状时：hysteresis 释放带（radius+0.5）内保持上一条线（不闪）', () => {
+    const within = { x: 8.2, y: 500, w: 200, h: 100 } // 距候选左边 8.2px：>radius(8) 但 ≤8.5
+    const res = computeSnapGuides(within, cands, { prev: { vertical: { position: 0, sourceNodeId: 'cand' } } })
+    expect(res.vertical, '释放带内应保留原线').toEqual({ position: 0, sourceNodeId: 'cand' })
     expect(res.snapped.x, '吸附后左边贴到候选左边').toBe(0)
+  })
+
+  it('⛔ R1 回归：prev 线离开释放带必须脱钩（旧实现无限粘滞 = 实测「被吸住」）', () => {
+    // 旧实现对 prev 配对不设距离上限 ⇒ 吸上后拖到哪都粘着，只有别的线更近才顶掉。
+    const beyond = { x: 9, y: 500, w: 200, h: 100 } // 距候选左边 9px > 8.5 释放带
+    const res = computeSnapGuides(beyond, cands, { prev: { vertical: { position: 0, sourceNodeId: 'cand' } } })
+    expect(res.vertical, '超出释放带不得再粘住').toBeUndefined()
+    expect(res.snapped.x, '脱钩后节点自由跟手').toBe(9)
   })
 
   it('⛔ prev 若退化成裸数字：同一帧就丢线（这正是必须存 sourceNodeId 的原因）', () => {

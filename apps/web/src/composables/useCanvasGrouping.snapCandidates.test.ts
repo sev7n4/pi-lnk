@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildSnapCandidates, type FlowNode } from './useCanvasGrouping'
+import { computeSnapGuides } from '@lnkpi/shared'
+import { buildSnapCandidates, getNodeSize, type FlowNode } from './useCanvasGrouping'
 
 /**
  * 拖拽智能参考线的候选构造（SP-B T9a）。
@@ -108,5 +109,45 @@ describe('buildSnapCandidates（拖拽参考线候选构造）', () => {
   it('没有 bounds 时不做任何裁剪（全部合法候选都返回）', () => {
     const nodes = [node('drag', 0, 0), node('far', 9999, 9999)]
     expect(ids(buildSnapCandidates(nodes, 'drag'))).toEqual(['far'])
+  })
+})
+
+// ══════════════════════════════════════════════════════
+// SP-B R1（2026-10-23）：sizeOf 实测尺寸注入
+// ══════════════════════════════════════════════════════
+describe('buildSnapCandidates：sizeOf 实测尺寸注入', () => {
+  const videoNode = (x: number, y: number): FlowNode =>
+    ({ id: 'v', type: 'video', position: { x, y }, data: {} }) as FlowNode
+
+  it('⛔ 回归：媒体节点按实测盒进候选，不再按 NODE_SIZES 方框兜底', () => {
+    // 16:9 视频真实 320×180；兜底方框 320×320 ⇒ 底边/中心差 140/70px：
+    // 节点视觉边没贴线就被弹回、guide 线悬在节点旁（用户实测「步阶太大」的几何根因）。
+    const nodes = [node('drag', 0, 300), videoNode(0, 0)]
+    const sizeOf = (n: FlowNode) => (n.id === 'v' ? { w: 320, h: 180 } : getNodeSize(n))
+    expect(
+      buildSnapCandidates(nodes, 'drag', { sizeOf }).find((c) => c.id === 'v')!.box,
+      '候选盒取实测 320×180',
+    ).toEqual({ x: 0, y: 0, w: 320, h: 180 })
+    expect(
+      buildSnapCandidates(nodes, 'drag').find((c) => c.id === 'v')!.box,
+      '不传 sizeOf 时维持 getNodeSize 兜底（320×320 方框）',
+    ).toEqual({ x: 0, y: 0, w: 320, h: 320 })
+  })
+
+  it('实测盒决定命中：视频实测中心命中被拖 text 中心，兜底方框则不命中', () => {
+    // 被拖 text 280×160 @ (0,300) ⇒ centerY = 380
+    const nodes = [node('drag', 0, 300, { w: 280, h: 160 }), videoNode(0, 290)]
+    const sizeOf = (n: FlowNode) => (n.id === 'v' ? { w: 320, h: 180 } : getNodeSize(n))
+    const hit = computeSnapGuides(
+      { x: 0, y: 300, w: 280, h: 160 },
+      buildSnapCandidates(nodes, 'drag', { sizeOf }),
+    )
+    expect(hit.horizontal?.position, '视频实测中心 290+90=380 = text 中心 380').toBe(380)
+
+    const fallback = computeSnapGuides(
+      { x: 0, y: 300, w: 280, h: 160 },
+      buildSnapCandidates(nodes, 'drag'),
+    )
+    expect(fallback.horizontal, '兜底方框中心 290+160=450 差 70 ⇒ 不命中').toBeUndefined()
   })
 })

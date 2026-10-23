@@ -98,6 +98,7 @@ import {
   getAbsolutePosition,
   getNodeSize,
   getSelectionBounds,
+  groupNodeSize,
   isGroupNode,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
@@ -1978,13 +1979,54 @@ let dragAnchorId: string | null = null
 const SNAP_VIEWPORT_MARGIN = 200
 
 /**
+ * SP-B R1（2026-10-23 实测反馈「被吸住/步阶太大」）：vue-flow ResizeObserver
+ * 实测尺寸表（offsetWidth/Height = flow 坐标真实盒）。
+ *
+ * ⛔ 只进本表、**不写 nodes.value**：测量值是渲染层事实，写进 nodes 会随
+ * persistUserEdit 落进持久化 JSON（存储格式自 SP-A 起只认 position/style）。
+ *
+ * 为什么需要它：媒体节点真实尺寸随素材比例（16:9 视频 320×180），而
+ * `getNodeSize` 的 NODE_SIZES 兜底是方框包络（320×320）——按兜底盒算吸附，
+ * 中心/底边差 70-140px ⇒ 节点视觉边还没贴线就被弹回、guide 线悬在节点旁，
+ * 观感正是「不连贯的大步阶」。
+ */
+const measuredNodeSizes = new Map<string, { w: number; h: number }>()
+
+/**
+ * 屏幕空间吸附阈值（CSS px）：半径 8 / 迟滞带 3，按 1/zoom 换算成 flow 坐标
+ * 传给 computeSnapGuides ⇒ 任意缩放下「吸入距离 / 松脱带」在屏幕上等大：
+ * 放大细看时不再有 16px 起跳的大步阶，缩小总览时也不失效。
+ */
+const SNAP_SCREEN_RADIUS = 8
+const SNAP_SCREEN_HYSTERESIS = 3
+
+/** 吸附几何的节点尺寸解析：实测 > 分组框 style（groupNodeSize）> NODE_SIZES 兜底。 */
+function snapSizeOf(node: FlowNode): { w: number; h: number } {
+  const measured = measuredNodeSizes.get(node.id)
+  if (measured) return measured
+  if (isGroupNode(node)) {
+    const g = groupNodeSize(node)
+    return { w: g.width, h: g.height }
+  }
+  return getNodeSize(node)
+}
+
+/**
  * 当前视口在 flow 坐标里的可见范围（规格 §9 性能护栏的裁剪基准）。
  * flow = (screen - translate) / zoom ⇒ 屏幕左上角反投影回 flow 坐标。
  * 副作用：把结果回填 snapBounds，供 GuideLines 画线时确定可视范围。
+ *
+ * R1 缓存：拖拽中视口不变（容器尺寸/平移恒定，仅滚轮缩放会变）⇒ zoom 不变
+ * 就直接返回缓存，省掉每帧 getBoundingClientRect 强布局；每次拖拽开始
+ * （onNodeDragStart）清缓存，保证两次拖拽之间发生过平移/缩放后重算。
  */
+let snapBoundsCache: { x: number; y: number; w: number; h: number } | undefined
+let snapBoundsZoom = 1
+
 function snapViewportBounds(): { x: number; y: number; w: number; h: number } {
   const vp = vueFlowRef.value?.getViewport?.() ?? { x: 0, y: 0, zoom: 1 }
   const zoom = vp.zoom || 1
+  if (snapBoundsCache && zoom === snapBoundsZoom) return snapBoundsCache
   const rect = (vueFlowRef.value?.$el as HTMLElement | undefined)?.getBoundingClientRect?.()
   const bounds = {
     x: -vp.x / zoom - SNAP_VIEWPORT_MARGIN,
@@ -1992,13 +2034,16 @@ function snapViewportBounds(): { x: number; y: number; w: number; h: number } {
     w: (rect?.width || 1000) / zoom + SNAP_VIEWPORT_MARGIN * 2,
     h: (rect?.height || 1000) / zoom + SNAP_VIEWPORT_MARGIN * 2,
   }
+  snapBoundsCache = bounds
+  snapBoundsZoom = zoom
   snapBounds.value = bounds
   return bounds
 }
 
 /**
  * 拖拽吸附计算：**只按锚点算一次**，返回整批要平移的 delta。
- * 候选走 buildSnapCandidates（排除自身/父/子 + 视口裁剪），几何走 shared 的 computeSnapGuides。
+ * 候选走 buildSnapCandidates（排除自身/父/子 + 视口裁剪 + sizeOf 实测尺寸注入），
+ * 几何走 shared 的 computeSnapGuides。
  * 多选拖拽若逐节点各算各的，会把批内相对阵列扯散 ⇒ 统一按锚点算、整批同移。
  */
 function computeDragSnapGuides(flow: FlowNode[], anchorId: string): { dx: number; dy: number } {
@@ -2007,9 +2052,14 @@ function computeDragSnapGuides(flow: FlowNode[], anchorId: string): { dx: number
   // 候选盒归一到 flow 绝对坐标（分组子节点的 position 是父相对）
   const absNodes: FlowNode[] = flow.map((n) => ({ ...n, position: getAbsolutePosition(n, flow) }))
   const anchorAbs = getAbsolutePosition(anchor, flow)
-  const { w, h } = getNodeSize(anchor)
-  const cands = buildSnapCandidates(absNodes, anchorId, { bounds: snapViewportBounds() })
-  const res = computeSnapGuides({ x: anchorAbs.x, y: anchorAbs.y, w, h }, cands, { prev: snapGuides.value })
+  const size = snapSizeOf(anchor)
+  const zoom = vueFlowRef.value?.getViewport?.().zoom || 1
+  const cands = buildSnapCandidates(absNodes, anchorId, { bounds: snapViewportBounds(), sizeOf: snapSizeOf })
+  const res = computeSnapGuides({ x: anchorAbs.x, y: anchorAbs.y, w: size.w, h: size.h }, cands, {
+    snapRadius: SNAP_SCREEN_RADIUS / zoom,
+    hysteresis: SNAP_SCREEN_HYSTERESIS / zoom,
+    prev: snapGuides.value,
+  })
   const guides: SnapPrev = {}
   if (res.horizontal) guides.horizontal = { position: res.horizontal.position, sourceNodeId: res.horizontal.sourceNodeId }
   if (res.vertical) guides.vertical = { position: res.vertical.position, sourceNodeId: res.vertical.sourceNodeId }
@@ -2056,6 +2106,14 @@ function onNodesChange(changes: NodeChange[]) {
       if (!next.some((node) => node.id === item.id)) {
         next = [...next, { id: item.id, type: item.type, position: item.position, data: item.data, selected: item.selected }]
         changed = true
+      }
+    } else if (change.type === 'dimensions' && change.dimensions) {
+      // SP-B R1：vue-flow ResizeObserver 实测尺寸只进 measuredNodeSizes（吸附几何的
+      // 真实盒来源），不置 changed——测量不产生可见位移，避免无谓重渲染与落库。
+      const dw = change.dimensions.width
+      const dh = change.dimensions.height
+      if (typeof dw === 'number' && dw > 0 && typeof dh === 'number' && dh > 0) {
+        measuredNodeSizes.set(change.id, { w: dw, h: dh })
       }
     }
   }
@@ -2113,6 +2171,8 @@ function onNodeDragStart(event: NodeDragEvent) {
   // 新一轮拖拽：清掉上一轮的参考线命中；锚点取 vue-flow 的主节点（缺失时退回批内首个）
   snapGuides.value = {}
   dragAnchorId = event.node?.id ?? dragStartPositions.keys().next().value ?? null
+  // 两次拖拽之间用户可能平移/缩放过 ⇒ 视口缓存作废，本拖拽首帧重算
+  snapBoundsCache = undefined
 }
 
 /**

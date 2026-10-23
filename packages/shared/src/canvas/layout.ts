@@ -384,14 +384,62 @@ const SNAP_ANCHORS: Record<string, { o: Orient; resolve: (b: SnapBox) => number 
   centerY: { o: 'h', resolve: (b) => b.y + b.h / 2 },
 }
 
-interface BestV { dist: number; pos: number; id: string; dragOffset: number; isPrev?: boolean }
+/** 一条「拖拽锚点 ↔ 候选锚点」同朝向配对（pos = 候选线所在的 flow 坐标）。 */
+interface SnapPair { dist: number; pos: number; id: string; dragOffset: number }
+
+/** 半径内取最近的一条线（同线自然落到更近的拖拽锚点——配对级比较自带此性质）。 */
+function nearestWithinRadius(pairs: SnapPair[], radius: number): SnapPair | undefined {
+  let best: SnapPair | undefined
+  for (const p of pairs) {
+    if (p.dist > radius) continue
+    if (!best || p.dist < best.dist) best = p
+  }
+  return best
+}
+
+/**
+ * 单朝向选线（SP-B R1 平滑化，2026-10-23 用户实测反馈「不丝滑/被吸住/步阶太大」）：
+ *
+ * ① 半径内取最近线（换线只认更近，并列取先碰到的一条 ⇒ 候选顺序稳定则不闪）；
+ * ② **prev 粘滞**：prev 线在 `radius + hysteresis` 释放带内仍有配对 ⇒ 保持原线，
+ *    除非挑战线明显更近（近过 hysteresis 余量）才接管。余量存在的原因：
+ *    两条邻近线（如相距 6px）的中点附近，鼠标微抖会让「谁更近」反复易主，
+ *    无余量时节点在两线之间来回跳 = 横向抖动；有余量则贴住不跳；
+ * ③ prev 线整体离开释放带 ⇒ 交还①（可能无线 ⇒ 节点自由跟手）。
+ *
+ * ⛔ 历史缺陷（R1 修复）：旧实现 `if (!keepPrev && dist > radius) continue` 对
+ *    prev 线配对**不设距离上限** —— 一旦吸上就永不脱钩（只有别的线更近才被顶掉），
+ *    与规格「超出 SNAP_RADIUS + hysteresis 才解除」相反，正是「被吸住」的体感来源。
+ */
+function pickGuideLine(
+  pairs: SnapPair[],
+  prevPos: number | undefined,
+  radius: number,
+  hys: number,
+): SnapPair | undefined {
+  const best = nearestWithinRadius(pairs, radius)
+  if (prevPos == null) return best
+  // prev 线上距离拖拽锚点最近的配对（释放带内的保持对象）
+  let prevBest: SnapPair | undefined
+  for (const p of pairs) {
+    if (Math.abs(p.pos - prevPos) > hys) continue
+    if (!prevBest || p.dist < prevBest.dist) prevBest = p
+  }
+  if (!prevBest || prevBest.dist > radius + hys) return best // ③ 释放
+  if (!best || best.pos === prevPos) return prevBest // 同线：取更近的拖拽锚点
+  // ② 挑战线需近过余量才接管；否则保持 prev（贴住不跳）
+  return best.dist < prevBest.dist - hys ? best : prevBest
+}
 
 /**
  * 拖拽智能参考线（移植 React Flow xyflow Helper Lines + manta SpatialIndex 思路）：
  * - 6 锚点；每个朝向（h/v）在阈值内只取**一条最近线**；
- * - hysteresis 0.5px：prev 线在 radius+hysteresis 内保持，防抖；
+ * - hysteresis：prev 线在 `snapRadius + hysteresis` 内保持（防抖），
+ *   挑战线需近过 hysteresis 余量才接管（防邻近两线临界点反复横跳）；
  * - 跳过 isSelf（调用方已标）；
  * - 视口裁剪由调用方做（候选只传视口内）。
+ * - **阈值语义由调用方决定**：屏幕空间手感（半径/迟滞按 1/zoom 换算）由
+ *   CanvasPage 传入 flow 空间的 snapRadius/hysteresis，本函数保持纯几何。
  */
 export function computeSnapGuides(
   dragBox: SnapBox,
@@ -405,34 +453,19 @@ export function computeSnapGuides(
     const off = (a.o === 'v' ? dragBox.x : dragBox.y) - pos
     return { name, o: a.o, pos, off }
   })
-  let bestV: (BestV & { o: 'v' }) | undefined
-  let bestH: (BestV & { o: 'h' }) | undefined
+  const pairs: Record<Orient, SnapPair[]> = { v: [], h: [] }
   for (const c of candidates) {
     if (c.isSelf) continue
     for (const ca of Object.values(SNAP_ANCHORS)) {
       const cpos = ca.resolve(c.box)
       for (const da of dragAnchors) {
         if (da.o !== ca.o) continue
-        const dist = Math.abs(da.pos - cpos)
-        const prevPos = ca.o === 'v' ? opts.prev?.vertical?.position : opts.prev?.horizontal?.position
-        const keepPrev = prevPos != null && Math.abs(cpos - prevPos) <= hys
-        if (!keepPrev && dist > radius) continue
-        const cur = ca.o === 'v' ? bestV : bestH
-        // 同一根线 ⇒ 取**更近**的拖拽锚点：keepPrev 只保证「这根线被保留」，
-        //   不该把锚点换到更差的配对上（否则节点被拉偏：左缘吸附被 centerX 覆盖）。
-        // 换线 ⇒ 更近的赢；或 prev 线优先于非 prev 线。
-        const sameLine = !!cur && cur.pos === cpos
-        const better =
-          !cur ||
-          (sameLine ? dist < cur.dist : dist < cur.dist || (keepPrev && !cur.isPrev))
-        if (better) {
-          const nb = { dist, pos: cpos, id: c.id, dragOffset: da.off, isPrev: keepPrev }
-          if (ca.o === 'v') bestV = { ...nb, o: 'v' }
-          else bestH = { ...nb, o: 'h' }
-        }
+        pairs[ca.o].push({ dist: Math.abs(da.pos - cpos), pos: cpos, id: c.id, dragOffset: da.off })
       }
     }
   }
+  const bestV = pickGuideLine(pairs.v, opts.prev?.vertical?.position, radius, hys)
+  const bestH = pickGuideLine(pairs.h, opts.prev?.horizontal?.position, radius, hys)
   const snapped = { x: dragBox.x, y: dragBox.y }
   // 锚点贴到线 cpos ⇒ 新原点 = cpos + off（off = 原点 - 锚点坐标）。
   // ⛔ 不是 cpos - off：那会把非首要锚点（right/centerX）的配对放到线的错误一侧。
