@@ -52,7 +52,7 @@ async function mountPage() {
   return wrapper
 }
 
-describe('CanvasesPage 画布管理器（P1）', () => {
+describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', () => {
   beforeEach(() => {
     sessionsList.mockReset()
     sessionsCreate.mockReset()
@@ -86,7 +86,7 @@ describe('CanvasesPage 画布管理器（P1）', () => {
     const wrapper = await mountPage()
     await wrapper.find('[data-testid="canvases-search"]').setValue('不存在的画布')
     await flushPromises()
-    expect(wrapper.text()).toContain('没有匹配的画布')
+    expect(wrapper.text()).toContain('没有匹配的项目')
   })
 
   it('进入管理模式后出现批删按钮', async () => {
@@ -97,7 +97,7 @@ describe('CanvasesPage 画布管理器（P1）', () => {
     expect(wrapper.find('[data-testid="canvases-manage"]').text()).toContain('完成')
   })
 
-  it('新建画布走 sessionsApi.create 并跳转', async () => {
+  it('新建项目走 sessionsApi.create 并跳转', async () => {
     const wrapper = await mountPage()
     sessionsCreate.mockResolvedValue({ data: { data: { id: 's_new' } } })
     await wrapper.find('[data-testid="canvases-create"]').trigger('click')
@@ -114,9 +114,9 @@ describe('CanvasesPage 画布管理器（P1）', () => {
     expect(wrapper.find('[data-testid="canvases-login"]').exists()).toBe(true)
   })
 
-  it('页面标题为「我的画布」且有返回主页入口', async () => {
+  it('页面标题为「我的项目」且有返回主页入口', async () => {
     const wrapper = await mountPage()
-    expect(wrapper.text()).toContain('我的画布')
+    expect(wrapper.text()).toContain('我的项目')
     expect(wrapper.find('a[href="/workflow"]').exists()).toBe(true)
   })
 })

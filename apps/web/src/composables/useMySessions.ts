@@ -3,10 +3,12 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
+import { displayCanvasTitle } from '@/utils/displayCanvasTitle'
 import type { Session } from '@lnkpi/shared'
 
 /**
- * 「我的画布」会话管理器（2026-10-21 P1 从 WorkflowPage 整体迁出）。
+ * 「我的项目」会话管理器（2026-10-21 P1 从 WorkflowPage 整体迁出；
+ * 2026-10-23 IA v4 收口「项目」语义）。
  *
  * 主页只留compact 区（5 个 + 「查看全部」），完整管理器能力（搜索/多选/批删/
  * 重命名/复制/删除）落在 /canvases。两页共用本组合式，逻辑单点维护。
@@ -31,7 +33,7 @@ export function useMySessions() {
   const filteredSessions = computed(() => {
     const q = sessionSearch.value.trim().toLowerCase()
     if (!q) return mySessions.value
-    return mySessions.value.filter((s) => (s.title || '未命名画布').toLowerCase().includes(q))
+    return mySessions.value.filter((s) => displayCanvasTitle(s.title).toLowerCase().includes(q))
   })
 
   /** 搜索态不做截断（用户主动筛选，要看全结果）；非搜索态按 limit 截断。 */
@@ -87,7 +89,7 @@ export function useMySessions() {
     if (!selectedSessionIds.value.length) return
     try {
       await ElMessageBox.confirm(
-        `确定删除选中的 ${selectedSessionIds.value.length} 个画布？此操作不可恢复。`,
+        `确定删除选中的 ${selectedSessionIds.value.length} 个项目？此操作不可恢复。`,
         '批量删除',
         { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
       )
@@ -99,7 +101,7 @@ export function useMySessions() {
       await fetch()
       selectedSessionIds.value = []
       manageSessions.value = false
-      ElMessage.success(`已删除 ${data.data.deleted} 个画布`)
+      ElMessage.success(`已删除 ${data.data.deleted} 个项目`)
     } catch {
       ElMessage.error('批量删除失败，请稍后重试')
     }
@@ -109,8 +111,8 @@ export function useMySessions() {
     closeMenu()
     let value: string
     try {
-      const result = await ElMessageBox.prompt('输入新的画布名称', '重命名', {
-        inputValue: session.title || '未命名画布',
+      const result = await ElMessageBox.prompt('输入新的项目名称', '重命名', {
+        inputValue: displayCanvasTitle(session.title),
         inputPattern: /\S/,
         inputErrorMessage: '名称不能为空',
         confirmButtonText: '保存',
@@ -146,8 +148,8 @@ export function useMySessions() {
     closeMenu()
     try {
       await ElMessageBox.confirm(
-        `确定删除「${session.title || '未命名画布'}」？此操作不可恢复。`,
-        '删除画布',
+        `确定删除「${displayCanvasTitle(session.title)}」？此操作不可恢复。`,
+        '删除项目',
         { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
       )
     } catch {

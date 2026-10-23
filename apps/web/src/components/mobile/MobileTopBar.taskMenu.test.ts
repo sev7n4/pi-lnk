@@ -27,10 +27,37 @@ beforeEach(() => {
   document.body.innerHTML = ''
 })
 
+// IA v4（2026-10-23 用户裁决）：① 品牌字标可点回 hero；② 「新建对话」→「新对话」
+// 与抽屉「新建项目」拉开级差（线程级 vs 项目级）。
+describe('MobileTopBar：IA v4 品牌字标与「新对话」改名', () => {
+  it('对话页签：品牌字标存在且点击 emit go-home（项目页回 hero 唯一常驻路）', async () => {
+    const wrapper = mountBar({ tab: 'chat' })
+    const brand = q('[data-testid="mobile-topbar-brand"]')
+    expect(brand).not.toBeNull()
+    brand!.click()
+    await flushPromises()
+    expect(wrapper.emitted('go-home')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('对话页签：文案是「新对话」而非「新建对话」（与「新建项目」拉开级差）', () => {
+    const wrapper = mountBar({ tab: 'chat' })
+    expect(q('.create-card__label')?.textContent).toBe('新对话')
+    expect(document.body.textContent).not.toContain('新建对话')
+    wrapper.unmount()
+  })
+
+  it('画布页签不显示品牌字标（字标只服务对话页回 hero）', () => {
+    const wrapper = mountBar({ tab: 'canvas' })
+    expect(q('[data-testid="mobile-topbar-brand"]')).toBeNull()
+    wrapper.unmount()
+  })
+})
+
 describe('MobileTopBar：⋯ 菜单任务动态项（PR2）', () => {
   it('无任务记录 → 菜单项不出现', async () => {
     const wrapper = mountBar({ hasTaskHistory: false, taskActiveCount: 0 })
-    q('.bar-btn[aria-label="画布管理菜单"]')!.click()
+    q('.bar-btn[aria-label="项目管理菜单"]')!.click()
     await flushPromises()
     expect(q('[data-testid="bar-menu-task"]')).toBeNull()
     wrapper.unmount()
@@ -38,7 +65,7 @@ describe('MobileTopBar：⋯ 菜单任务动态项（PR2）', () => {
 
   it('有任务 + 运行中 2 → 「任务（2）」，点按 emit open-tasks', async () => {
     const wrapper = mountBar({ hasTaskHistory: true, taskActiveCount: 2 })
-    q('.bar-btn[aria-label="画布管理菜单"]')!.click()
+    q('.bar-btn[aria-label="项目管理菜单"]')!.click()
     await flushPromises()
     const item = q('[data-testid="bar-menu-task"]')
     expect(item).not.toBeNull()
@@ -51,7 +78,7 @@ describe('MobileTopBar：⋯ 菜单任务动态项（PR2）', () => {
 
   it('仅有历史无运行中 → 纯「任务」文案（仍可达，不成死角）', async () => {
     const wrapper = mountBar({ hasTaskHistory: true, taskActiveCount: 0 })
-    q('.bar-btn[aria-label="画布管理菜单"]')!.click()
+    q('.bar-btn[aria-label="项目管理菜单"]')!.click()
     await flushPromises()
     const item = q('[data-testid="bar-menu-task"]')
     expect(item!.textContent?.trim()).toBe('任务')

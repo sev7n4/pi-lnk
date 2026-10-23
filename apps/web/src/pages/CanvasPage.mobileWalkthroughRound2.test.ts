@@ -127,11 +127,14 @@ describe('语音识别功能下线（2026-10-21 用户裁决：移动端 + PC �
   const rail = readComponent('agent/AgentSideRail.vue')
   const railCode = stripComments(rail)
 
-  it('裸条文案只承诺「点按输入」，不再出现「按住说话」', () => {
-    expect(rail).toContain('MOBILE_BAR_IDLE_HINT')
-    expect(rail).toContain('{{ MOBILE_BAR_IDLE_HINT }}')
-    // 有效性配对：常量值就是「点按输入」
-    expect(rail).toMatch(/MOBILE_BAR_IDLE_HINT = '点按输入'/)
+  it('裸条文案不承诺语音能力：轮换短金句，绝不再出现「按住说话」', () => {
+    // A1（2026-10-22）：提示位从写死常量改为轮换的 mobileBarIdleHint。
+    // 真意图（用户裁决）是「条上不得承诺已下线的语音能力」，不是「必须有个叫 X 的常量」——
+    // 故判据卡行为不卡常量名：① 提示位存在且是动态的 ② 剥注释后全文件无「按住说话」。
+    expect(rail).toContain('{{ mobileBarIdleHint }}')
+    expect(rail).toContain('BARE_HINT_POOL[currentUtterancePhase.value]')
+    // 兜底值仍是「点按输入」——池为空时也不得退回语音文案
+    expect(rail).toContain("return '点按输入'")
     // 剥注释后，模板与脚本都不得再有「按住说话」承诺
     expect(railCode).not.toContain('按住说话')
   })

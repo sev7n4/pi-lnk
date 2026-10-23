@@ -113,11 +113,15 @@ import {
 import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
 import {
   buildDraftFromUtterance,
+  pickUtteranceContext,
   selectExampleUtterances,
   type CanvasPhase,
+  type UtterancePhase,
   type UtterancePool,
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
+import MobileRecentWorksStrip, { type RecentWorkItem } from '@/components/mobile/MobileRecentWorksStrip.vue'
+import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { barShape } from './composer/mobileBarLayout'
 import { classifyGesture } from './composer/holdGesture'
@@ -205,8 +209,17 @@ const emit = defineEmits<{
   proposeWaitStart: [nodeId: string]
   /** P0-C（2026-10-13）：propose 等待结束——CanvasPage 解除 PUT 载荷强制声明 */
   proposeWaitEnd: []
-  /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges），CanvasPage 应用布局 */
-  arrangeNodes: [payload: { nodeIds: string[]; mode: 'grid' | 'along_edges'; gap: number; edges?: { source: string; target: string }[] }]
+  /** arrange_nodes 工具：agent 触发自动排列（grid / along_edges / align / distribute），CanvasPage 应用布局 */
+  arrangeNodes: [payload: {
+    nodeIds: string[]
+    mode: 'grid' | 'along_edges' | 'align' | 'distribute'
+    gap: number
+    edges?: { source: string; target: string }[]
+    /** align 的六向口径（left|centerH|right|top|centerV|bottom）。 */
+    alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+    /** distribute 的轴（x=水平等距 / y=垂直等距）。 */
+    axis?: 'x' | 'y'
+  }]
   /**
    * 分组工具组（2026-10-21）：Agent 自主打组 / 解组 / 改分组色。
    *
@@ -1625,6 +1638,11 @@ async function bootstrapThread() {
 
 onMounted(() => {
   void bootstrapThread()
+  // A3：回访作品带数据 —— 挂载即拉（不是等抽屉打开），因为带子在对话页签顶部。
+  // 只在移动端拉：PC 侧栏不渲染这条带子（AGENTS.md 移动端呈现第 1/2 条）。
+  if (isMobileLayout.value) void loadRecentWorks()
+  // A1 二期：金句定时轮换（empty 相 7 条 > 4 位 ⇒ 长尾要能露出来）。
+  utteranceRotationCtl.start()
   void loadProviderBootstrap().then(() => {
     if (!planningModel.value && preferences.value?.defaultTextModel) {
       planningModel.value = preferences.value.defaultTextModel
@@ -1776,7 +1794,7 @@ function newAgentSession() {
   recoveredPhaseHint.value = null
   agentThreadId.value = createAgentThreadId(props.sessionId)
   persistActiveThreadId(props.sessionId, agentThreadId.value)
-  ElMessage.info('已新建对话')
+  ElMessage.info('已开始新对话')
   // 新会话：列表清空，跟随状态一并复位（否则会卡在「回看历史」态）
   followLatest.value = true
   hasNewBelow.value = false
@@ -1945,10 +1963,26 @@ const mobileBarIdle = computed(
 )
 
 /**
- * 空闲条文案（2026-10-21 用户裁决：语音识别功能整体下线，移动端 + PC）。
- * 能力本身没了，条上只承诺点按输入。
+ * 空闲条文案不再写死：改为轮换当前相的短金句，见下方 mobileBarIdleHint
+ * （定义在 currentUtterancePhase 之后 —— 它依赖池维度，顺序不能提前）。
+ * 语音识别已于 2026-10-21 整体下线（移动端 + PC），条上不再承诺语音能力。
  */
-const MOBILE_BAR_IDLE_HINT = '点按输入'
+
+/**
+ * A1：空态 chips 区固定一位「传图」引导位。
+ *
+ * 为什么必须有它：真实语料里一半依赖素材，而 attachment 相的触发前提是「用户
+ * 已传图」——空态只给不依赖素材的短句，用户根本想不到传图 ⇒ attachment 池一条
+ * 都曝不了光，加了等于白加。
+ *
+ * ⚠️ 它不是金句：不入池、不轮换、点击走 pickImage 而非 fillFromUtterance，
+ * 因此**不计入 golden_quote_picked**（另计 entry_attachment_cta）——否则分不清
+ * 点击率来自金句还是引导位。
+ * 只在 empty 相出现：有素材时 attachment 池本身就是素材话术，再挂「传图」是噪音。
+ */
+const showAttachmentCta = computed(
+  () => !props.readOnly && currentUtterancePhase.value === 'empty',
+)
 
 /* ---- 条级手势（2026-10-21 语音下线）：只保留「点按切输入态」。
  * 语音识别移除后不再有 hold / 上滑取消两种手势分支；拖动（滚动手势）不误触发展开。
@@ -2357,26 +2391,58 @@ function fillExampleUtterance(text: string) {
 }
 
 /**
- * P1-1.1：首屏通用样例池 —— 按画布相（空画布 / 有选中 / 有产物）给出 ≤4 条样例。
- * 空画布条目复用产品视觉分支（PRODUCT_VISUAL_GUIDANCE）的口吻，但改写为通用短句。
+ * A1：首屏金句池（短句版）—— 按池维度给出 ≤4 条。
+ *
+ * ⚠️ SSOT 是 outputs/移动端入口-金句文案清单.html，本池是副本：改文案先改清单，再同步这里。
+ * 约束（清单 R1/R2/R4）：chips ≤16 汉字 / 裸条 ≤14 汉字 / 禁内部术语 / 禁「：+」清单式句式。
+ * 旧的 40 字长句已废弃 —— 那是需求文档口吻，与本产品「你说一句就够了」的定位相悖。
  */
 const EXAMPLE_UTTERANCE_POOL: UtterancePool = {
   empty: [
-    '这是我们的大闸蟹礼盒，帮我做一套电商包装推广图：主视觉 + 结构图 + 送礼场景，风格喜庆高级',
-    '用这张产品实拍图出电商主图和两张生活场景图，突出产品卖点和质感',
-    '画一个产品落地页 hero 区块，标题「把灵感变成图像」，配一张氛围插图',
-    '新建一个文字节点，帮我先把创意思路列成大纲',
+    '帮我做一套儿童绘本',
+    '帮我创作一首民谣歌曲',
+    '生成人物角色的三视图和场景图',
+    '给我做一套小红书种草视频',
+    '画一座会呼吸的灯塔',
+    '把我的一天画成四格',
+    '出一套生鲜闸蟹快递包装材料',
   ],
   selection: [
-    '把选中的节点重画成扁平插画风',
-    '基于选中节点再出两张风格变体',
-    '给选中节点补一段详情页文案',
+    '把它重画成扁平插画',
+    '再出两张风格变体',
+    '换个季节和光线',
+    '把背景换成纯色',
+  ],
+  attachment: [
+    '让模特换上这件衣服',
+    '用这几张图片作为分镜生成一段视频',
+    '用这个实拍图，出一套电商上架套图',
+    '给这个产品做一套TVC广告视频',
+    '给我这个产品做一套营销推广方案',
   ],
   artifact: [
-    '把当前产物改成竖版海报构图',
-    '基于当前产物再生成一张深色背景版本',
-    '为当前产物配一段电商卖点文案',
+    '再来1套，风格不一样的',
+    '改成竖版海报',
+    '再来一张深色版',
+    '把两张拼成一组',
   ],
+}
+
+/**
+ * 裸条提示位轮换池（≤14 汉字，一行放得下）—— 对应清单里标 data-bare="1" 的条目。
+ * 裸条只有一行，比 chips 更窄，故不是所有 chips 条目都能上裸条。
+ */
+const BARE_HINT_POOL: Record<UtterancePhase, string[]> = {
+  empty: [
+    '画一座会呼吸的灯塔',
+    '把我的一天画成四格',
+    '帮我做一套儿童绘本',
+    '帮我创作一首民谣歌曲',
+    '出一套生鲜闸蟹快递包装材料',
+  ],
+  selection: ['把它重画成扁平插画', '再出两张风格变体', '换个季节和光线', '把背景换成纯色'],
+  attachment: ['让模特换上这件衣服'],
+  artifact: ['再来1套，风格不一样的', '改成竖版海报', '再来一张深色版', '把两张拼成一组'],
 }
 
 /** 画布相派生：选中优先（selection），其次看是否有已产出物（artifact），否则空画布（empty）。 */
@@ -2391,9 +2457,61 @@ const currentCanvasPhase = computed<CanvasPhase>(() => {
   return hasArtifact ? 'artifact' : 'empty'
 })
 
-const exampleUtterances = computed(() =>
-  selectExampleUtterances(currentCanvasPhase.value, EXAMPLE_UTTERANCE_POOL),
+/**
+ * A1 · B′ 决策：池维度 = 画布相 ∪ composer 素材态。
+ * hasAttachments 直接取 pendingAttachmentItems（派生自 sidebar.pendingAttachments）——
+ * 现成信号，零新增状态。attachment 优先级高于任何画布相。
+ */
+const currentUtterancePhase = computed<UtterancePhase>(() =>
+  pickUtteranceContext({
+    phase: currentCanvasPhase.value,
+    hasAttachments: pendingAttachmentItems.value.length > 0,
+  }),
 )
+
+/**
+ * 轮换偏移：池大于展示位时（empty 7 条 > 4 位）必须轮换，否则第 5 条之后永不露出。
+ * 驱动 = 池维度切换（相变 / 挂素材 / 卸素材）**+ 定时轮换**（A1 二期）。
+ *
+ * A1 二期补上「时间」这个驱动维度：原先只靠相变推进 ⇒ 用户停在同一相时
+ * 第 5~7 条永不露出，等于白写。定时轮换的守卫（reduced-motion / 聚焦暂停 /
+ * 池大小 / 卸载清理）全部在 `useUtteranceRotation` 里，本处只负责接线。
+ */
+const utteranceRotation = ref(0)
+watch(currentUtterancePhase, () => {
+  utteranceRotation.value += 1
+})
+
+/** 轮换间隔：7s（够长到不被注意，够短到长尾能露出来） */
+const UTTERANCE_ROTATION_INTERVAL_MS = 7_000
+
+const utteranceRotationCtl = useUtteranceRotation({
+  rotation: utteranceRotation,
+  intervalMs: UTTERANCE_ROTATION_INTERVAL_MS,
+  poolSize: () => (EXAMPLE_UTTERANCE_POOL[currentUtterancePhase.value] ?? []).length,
+  visibleCount: 4,
+  // composer 获得焦点时暂停：用户正在写字，金句在脚下跳会干扰
+  paused: composerFocused,
+})
+
+const exampleUtterances = computed(() =>
+  selectExampleUtterances(
+    currentUtterancePhase.value,
+    EXAMPLE_UTTERANCE_POOL,
+    utteranceRotation.value,
+  ),
+)
+
+/**
+ * 空闲条文案（替代固定「点按输入」）：轮换当前相的短句，兼作灵感入口。
+ * 语音识别已于 2026-10-21 整体下线，条上不再承诺语音。
+ */
+const mobileBarIdleHint = computed(() => {
+  const items = BARE_HINT_POOL[currentUtterancePhase.value] ?? []
+  if (!items.length) return '点按输入'
+  const i = utteranceRotation.value % items.length
+  return items[i < 0 ? i + items.length : i]
+})
 
 /**
  * P1-1.2：样例 chips 点击只填充输入框（focus + 可编辑草稿），绝不自动提交 ——
@@ -2420,7 +2538,8 @@ async function createOwnCanvas() {
     return
   }
   try {
-    const { data } = await sessionsApi.create({ title: '我的画布' })
+    // IA v4（2026-10-23）：不传 title ⇒ 后端默认「未命名项目」（list 兜底编号）
+    const { data } = await sessionsApi.create({})
     void router.push(`/workflow/${data.data.id}`)
   } catch {
     goToWorkflowHome()
@@ -2487,7 +2606,7 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
     sidebar.clear()
     agent.startAssistantMessage()
     agent.appendText(
-      '⚠️ 此画布不属于当前账号，无法写入。请返回工作台新建画布，或使用画布所有者账号登录。',
+      '⚠️ 此画布不属于当前账号，无法写入。请返回工作台新建项目，或使用画布所有者账号登录。',
     )
     agent.finishStreaming()
     await nextTick()
@@ -2638,14 +2757,14 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
         // ⚠️ 用词刻意**不写**「生成服务不可达」：那断言的是不可达（需真实健康探测佐证），
         // 这里只证实了「连接中断且没收到内容」。把未证实的事说成事实会误导排查。
         agent.appendTurnNotice(
-          '\n\n⚠️ 本轮连接中断，没有收到任何回复内容。可点「重试」；若仍无响应，点「新建对话」后重发。',
+          '\n\n⚠️ 本轮连接中断，没有收到任何回复内容。可点「重试」；若仍无响应，点「新对话」后重发。',
         )
       }
     }
 
     const last = agent.messages[agent.messages.length - 1]
     if (!runCancelled.value && last?.role === 'assistant' && !last.content.trim()) {
-      agent.appendText('（本轮无文本回复。若还需确认，可再发「确认」；或点「新建对话」后重试。）')
+      agent.appendText('（本轮无文本回复。若还需确认，可再发「确认」；或点「新对话」后重试。）')
     }
     agent.finishStreaming()
     await reconcileLatestAssistant()
@@ -3128,9 +3247,13 @@ function handleEvent(event: { type: string; data: unknown }) {
         groupId?: string
         exportMode?: 'full_package' | 'lightweight'
         attachments?: SidebarAttachment[]
-        mode?: 'grid' | 'along_edges'
+        mode?: 'grid' | 'along_edges' | 'align' | 'distribute'
         gap?: number
         edges?: { source: string; target: string }[]
+        /** align 的六向口径（SP-B）：mode=align 时必带，CanvasPage 侧校验值域。 */
+        alignMode?: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+        /** distribute 的轴（SP-B）：mode=distribute 时必带，CanvasPage 侧校验值域。 */
+        axis?: 'x' | 'y'
         /** render_canvas_view 产物（spec §4.6 第 2 跳）。净化在 AgentSvgCard 内做（§4.5）。 */
         svg?: string
         title?: string
@@ -3185,11 +3308,17 @@ function handleEvent(event: { type: string; data: unknown }) {
       } else if (cmd.type === 'open_image_editor' && cmd.nodeId) {
         emit('openImageEditor', cmd.nodeId)
       } else if (cmd.type === 'arrange_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
+        // SP-B：mode **原样透传**（不再把非 along_edges 一律收窄成 grid）——
+        // align/distribute 是两种独立意图，收窄会把「对齐」静默变成「网格重排」。
+        // 脏 mode / 缺 alignMode / 脏 axis 的校验与用户可见提示统一放在消费端
+        // （CanvasPage.handleArrangeNodes），本层只做传输。
         emit('arrangeNodes', {
           nodeIds: cmd.nodeIds,
-          mode: cmd.mode === 'along_edges' ? 'along_edges' : 'grid',
+          mode: cmd.mode ?? 'grid',
           gap: cmd.gap ?? 40,
           edges: cmd.edges?.length ? cmd.edges : undefined,
+          ...(cmd.mode === 'align' && cmd.alignMode ? { alignMode: cmd.alignMode } : {}),
+          ...(cmd.mode === 'distribute' && cmd.axis ? { axis: cmd.axis } : {}),
         })
       } else if (cmd.type === 'group_nodes' && cmd.nodeIds && cmd.nodeIds.length >= 2) {
         // 标题 trim 后空串按无标题处理（与 CanvasPage 的命名口径一致）
@@ -3498,6 +3627,46 @@ interface ProjectCard {
 const projects = ref<ProjectCard[]>([])
 const projectsLoading = ref(false)
 const projectsError = ref(false)
+
+/**
+ * A3 · 回访作品带数据（移动端对话页签顶部）。
+ *
+ * 与 `projects`（PC 抽屉项目列表）**刻意复用同一个接口** `canvasApi.list()`：
+ * 后端 list 已增 `coverUrl` / `coverNodeId`（只返回封面 URL，不返回原始 canvasData），
+ * 而作品带要的正是「最近生成的产物图 + 产物节点 id」。
+ * 复用而非新开接口 ⇒ 少一次请求、少一套鉴权、少一份契约漂移面。
+ *
+ * 拉取时机：组件挂载时（不是抽屉打开时）—— 作品带在对话页签顶部，
+ * 抽屉打开与否它都该在。失败时静默降级为「不显示」（一条带子不该把对话面板搞崩）。
+ */
+const recentWorks = ref<RecentWorkItem[]>([])
+async function loadRecentWorks() {
+  try {
+    const res = await canvasApi.list({ timeout: PROJECT_LIST_TIMEOUT_MS })
+    const list = (res.data?.data ?? []) as Array<{
+      id: string
+      title: string
+      coverUrl: string | null
+      coverNodeId: string | null
+      updatedAt: string
+    }>
+    recentWorks.value = list
+  } catch {
+    recentWorks.value = []
+  }
+}
+
+/**
+ * 点作品 = 打开该画布；带 focusNode 时**定位到那张产物图**
+ * （跨项目定位通道由 CanvasPage 的 consumeFocusNodeQuery 消费，见
+ * `CanvasPage.focusNodeQuery.test.ts` 的接线顺序契约）。
+ */
+function handleRecentWorkOpen(payload: { id: string; focusNodeId: string | null }) {
+  const target = payload.focusNodeId
+    ? `/workflow/${encodeURIComponent(payload.id)}?focusNode=${encodeURIComponent(payload.focusNodeId)}`
+    : `/workflow/${encodeURIComponent(payload.id)}`
+  window.location.assign(target)
+}
 /** 抽屉项目预览条数（2026-10-19 用户裁决）：默认只露最近 8 个，其余收进「展开更多」。
  *  数字依据（截图实测）：抽屉首屏列表区 ≈ 590 CSS px（微信 webview，safe-area=0），
  *  项目卡 60px/条（卡体 52 + flex gap 8）⇒ 8 条 = 480px，「展开更多」按钮与第 8 条
@@ -3594,8 +3763,6 @@ defineExpose({
   newAgentSession,
   openThreadHistory,
   closeThreadHistory,
-  /** IA v3.1：发现页「资料库」直通——切回对话页签后由宿主调用，打开资产库选择器 */
-  openAssetLibrary: pickAssetLibrary,
   openPanel,
   closePanel,
   setComposerInput,
@@ -3883,13 +4050,13 @@ defineExpose({
             class="agent-readonly-banner mx-3 mt-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2.5 text-[11px] leading-relaxed text-warning"
           >
             <p>此画布属于其他账号，Agent 无法写入节点。</p>
-            <p class="mt-1 opacity-80">请新建自己的画布，或使用画布所有者账号登录。</p>
+            <p class="mt-1 opacity-80">请新建自己的项目，或使用画布所有者账号登录。</p>
             <div class="mt-2.5 flex flex-wrap gap-2">
               <button type="button" class="agent-readonly-btn" @click="goToWorkflowHome">
                 返回工作台
               </button>
               <button type="button" class="agent-readonly-btn agent-readonly-btn-primary" @click="createOwnCanvas">
-                新建画布
+                新建项目
               </button>
             </div>
           </div>
@@ -3906,6 +4073,20 @@ defineExpose({
               class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3"
               @scroll.passive="onChatScroll"
             >
+            <!-- A3 · 回访作品带（移动端）：「画布记得你的模样」= 最近作品条。
+                 ⚠️ 位置在**空态块之前**（不是塞进空态块里）：空态判据是
+                 `!agent.messages.length`，而移动端进项目即 loadHistory ⇒ 有历史时
+                 空态不渲染 ⇒ 塞进去等于「上线后没人看得见」。
+                 在滚动流内 ⇒ 随消息流上推，不常驻吸顶（设计规范 §3.2 简洁三原则）。
+                 IA v4（2026-10-23）：首卡【新建项目】复用抽屉 newProject（同一行为），
+                 「全部 N 个 ›」开抽屉项目区（全量列表 + 重命名/删除，零新页面）。 -->
+            <MobileRecentWorksStrip
+              v-if="isMobileLayout"
+              :works="recentWorks"
+              @open="handleRecentWorkOpen"
+              @create="newProject"
+              @open-all="openSessionDrawer"
+            />
             <div v-if="showProductVisualEmptyState" class="agent-empty agent-pv-empty px-3 py-10 text-center">
               <p class="text-sm">描述你的产品视觉需求</p>
               <p class="mt-1 text-[11px] opacity-70">上传产品图后说明用途；风格在方案卡片中选择</p>
@@ -3926,10 +4107,25 @@ defineExpose({
             <!-- P1-1：通用首屏 —— persona 压成一行轻量文案（P1-1.3），视觉重心让给
                  4 条按画布相选取的样例 chips（P1-1.1）；点击 chips 只填充输入框（P1-1.2）。 -->
             <div v-else-if="!agent.messages.length" class="agent-empty agent-composer-firstscreen px-3 pb-2 pt-6">
-              <p class="agent-composer-persona text-center text-[12px] leading-relaxed" data-testid="agent-persona-line">
+              <!-- 2026-10-23 IA v4：移动端三联叙事（对话 / 锚 / 画布）已迁到工作台 hero
+                   （SignatureHero 挂 MobileTriptychRow，签名面专用令牌）。此处不再重复——
+                   用户裁定「去掉对话页空态上面重复的部分（很丑）」：品牌叙事归 hero，
+                   空态只留功能内容（persona / chips / 传图引导）。 -->
+              <p class="agent-composer-persona hidden text-center text-[12px] leading-relaxed lg:block" data-testid="agent-persona-line">
                 lnk·π 助手 · 说一句创意，我来画
               </p>
               <div class="agent-example-chips mt-3 flex flex-wrap justify-center gap-2">
+                <!-- A1 传图引导位：不是金句，不计入 golden_quote_picked。
+                     只在 empty 相出现——有素材时 attachment 池已承担素材话术。 -->
+                <button
+                  v-if="showAttachmentCta"
+                  type="button"
+                  class="agent-example-chip agent-example-chip--cta rounded-lg border border-dashed px-3 py-1.5 text-left text-[12px] leading-snug"
+                  data-testid="agent-attachment-cta"
+                  @click="pickImage"
+                >
+                  传一张图再说话
+                </button>
                 <button
                   v-for="u in exampleUtterances"
                   :key="u"
@@ -4700,7 +4896,7 @@ defineExpose({
                   </button>
                 </div>
                 <!-- P1-5.3 空闲态 affordance：纯 span 提示（非 placeholder）；桌面恒不渲染 -->
-                <span v-if="mobileBarIdle" class="composer-bar-hint">{{ MOBILE_BAR_IDLE_HINT }}</span>
+                <span v-if="mobileBarIdle" class="composer-bar-hint">{{ mobileBarIdleHint }}</span>
               </div>
               <input
                 ref="fileInputRef"
@@ -6618,4 +6814,5 @@ defineExpose({
   background: var(--lnk-hover-overlay);
   color: var(--lnk-text-secondary);
 }
+
 </style>

@@ -166,3 +166,26 @@ describe("arrange_nodes L2 只读校验（有 client）", () => {
 		assert.equal(commandOf(r)["mode"], "grid");
 	});
 });
+
+describe("arrange_nodes align/distribute 扩 mode（canvas_command 透传，不点名 prompt）", () => {
+	it("mode=align 带 alignMode 透传命令", async () => {
+		const { tool } = setup();
+		const r = await run(tool!, { node_ids: ["a", "b", "c"], mode: "align", align_mode: "left" });
+		const cmd = commandOf(r);
+		assert.equal(cmd["type"], "arrange_nodes");
+		assert.equal(cmd["mode"], "align");
+		assert.equal(cmd["alignMode"], "left");
+	});
+	it("mode=distribute 带 axis 透传命令", async () => {
+		const { tool } = setup();
+		const r = await run(tool!, { node_ids: ["a", "b", "c"], mode: "distribute", axis: "x" });
+		const cmd = commandOf(r);
+		assert.equal(cmd["mode"], "distribute");
+		assert.equal(cmd["axis"], "x");
+	});
+	it("mode=align 缺 align_mode → 命令不带 alignMode 键（不臆造参数）", async () => {
+		const { tool } = setup();
+		const r = await run(tool!, { node_ids: ["a", "b", "c"], mode: "align" });
+		assert.deepEqual(commandOf(r), { type: "arrange_nodes", nodeIds: ["a", "b", "c"], mode: "align", gap: 40 });
+	});
+});

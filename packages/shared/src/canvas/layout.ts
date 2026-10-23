@@ -290,3 +290,190 @@ export function placeBatchNodes(
   }
   return result
 }
+
+export type AlignSixWay = 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
+
+/** 节点绝对包围盒（含 parentNode 偏移）；尺寸走既有 getNodeSize。 */
+function absBox(node: LayoutNode, nodes: LayoutNode[]) {
+  const abs = getAbsolutePosition(node, nodes)
+  const { w, h } = getNodeSize(node)
+  return { x: abs.x, y: abs.y, w, h, left: abs.x, right: abs.x + w, top: abs.y, bottom: abs.y + h,
+    cx: abs.x + w / 2, cy: abs.y + h / 2 }
+}
+
+/**
+ * 把 ids 节点按 mode 对齐到选中集极值/中线（Figma 口径）。
+ * 返回**局部坐标**新位置（已减 parent 绝对偏移）；未选中节点不在映射中。
+ * 坐标零模型参与：只重排，不改尺寸/内容（HN1 纪律同构）。
+ */
+export function alignNodes(nodes: LayoutNode[], ids: string[], mode: AlignSixWay): Record<string, { x: number; y: number }> {
+  const sel = nodes.filter((n) => ids.includes(n.id))
+  if (sel.length === 0) return {}
+  const boxes = sel.map((n) => ({ id: n.id, ...absBox(n, nodes) }))
+  let target = 0
+  if (mode === 'left') target = Math.min(...boxes.map((b) => b.left))
+  else if (mode === 'right') target = Math.max(...boxes.map((b) => b.right))
+  else if (mode === 'centerH') target = (Math.min(...boxes.map((b) => b.left)) + Math.max(...boxes.map((b) => b.right))) / 2
+  else if (mode === 'top') target = Math.min(...boxes.map((b) => b.top))
+  else if (mode === 'bottom') target = Math.max(...boxes.map((b) => b.bottom))
+  else if (mode === 'centerV') target = (Math.min(...boxes.map((b) => b.top)) + Math.max(...boxes.map((b) => b.bottom))) / 2
+  const out: Record<string, { x: number; y: number }> = {}
+  for (const b of boxes) {
+    const node = sel.find((n) => n.id === b.id)!
+    const abs = getAbsolutePosition(node, nodes)
+    const offX = abs.x - node.position.x
+    const offY = abs.y - node.position.y
+    let nx = abs.x
+    let ny = abs.y
+    if (mode === 'left') nx = target
+    else if (mode === 'right') nx = target - b.w
+    else if (mode === 'centerH') nx = target - b.w / 2
+    else if (mode === 'top') ny = target
+    else if (mode === 'bottom') ny = target - b.h
+    else if (mode === 'centerV') ny = target - b.h / 2
+    out[b.id] = { x: nx - offX, y: ny - offY }
+  }
+  return out
+}
+
+/**
+ * 沿 axis 把 ids 节点等空隙分布（Figma "distribute spacing"）：相邻包围盒空隙相等，
+ * 首尾锚定不动。ids.length<3 → no-op 返回空映射。返回局部坐标。
+ */
+export function distributeNodes(nodes: LayoutNode[], ids: string[], axis: 'x' | 'y'): Record<string, { x: number; y: number }> {
+  const sel = nodes.filter((n) => ids.includes(n.id))
+  if (sel.length < 3) return {}
+  const boxes = sel.map((n) => ({ id: n.id, ...absBox(n, nodes) }))
+  const sorted = [...boxes].sort((p, q) => (axis === 'x' ? p.left - q.left : p.top - q.top))
+  const first = sorted[0]
+  const last = sorted[sorted.length - 1]
+  const span = axis === 'x' ? last.right - first.left : last.bottom - first.top
+  const totalSize = sorted.reduce((s, b) => s + (axis === 'x' ? b.w : b.h), 0)
+  const gap = (span - totalSize) / (sorted.length - 1)
+  const out: Record<string, { x: number; y: number }> = {}
+  let cursor = axis === 'x' ? first.left : first.top
+  for (let i = 0; i < sorted.length; i++) {
+    const b = sorted[i]
+    if (i === 0 || i === sorted.length - 1) {
+      cursor += (axis === 'x' ? b.w : b.h) + gap
+      continue
+    }
+    const node = sel.find((n) => n.id === b.id)!
+    const lead = axis === 'x' ? b.left : b.top
+    const delta = cursor - lead
+    out[b.id] = { x: node.position.x + (axis === 'x' ? delta : 0), y: node.position.y + (axis === 'y' ? delta : 0) }
+    cursor += (axis === 'x' ? b.w : b.h) + gap
+  }
+  return out
+}
+
+export interface SnapBox { x: number; y: number; w: number; h: number }
+export interface SnapCandidate { id: string; box: SnapBox; parentId?: string; isSelf?: boolean }
+export interface SnapPrev { horizontal?: { position: number; sourceNodeId: string }; vertical?: { position: number; sourceNodeId: string } }
+export interface SnapResult { horizontal?: { position: number; sourceNodeId: string }; vertical?: { position: number; sourceNodeId: string }; snapped: { x: number; y: number } }
+export const SNAP_RADIUS = 8
+export const SNAP_HYSTERESIS = 0.5
+
+type Orient = 'h' | 'v'
+const SNAP_ANCHORS: Record<string, { o: Orient; resolve: (b: SnapBox) => number }> = {
+  left: { o: 'v', resolve: (b) => b.x },
+  right: { o: 'v', resolve: (b) => b.x + b.w },
+  centerX: { o: 'v', resolve: (b) => b.x + b.w / 2 },
+  top: { o: 'h', resolve: (b) => b.y },
+  bottom: { o: 'h', resolve: (b) => b.y + b.h },
+  centerY: { o: 'h', resolve: (b) => b.y + b.h / 2 },
+}
+
+/** 一条「拖拽锚点 ↔ 候选锚点」同朝向配对（pos = 候选线所在的 flow 坐标）。 */
+interface SnapPair { dist: number; pos: number; id: string; dragOffset: number }
+
+/** 半径内取最近的一条线（同线自然落到更近的拖拽锚点——配对级比较自带此性质）。 */
+function nearestWithinRadius(pairs: SnapPair[], radius: number): SnapPair | undefined {
+  let best: SnapPair | undefined
+  for (const p of pairs) {
+    if (p.dist > radius) continue
+    if (!best || p.dist < best.dist) best = p
+  }
+  return best
+}
+
+/**
+ * 单朝向选线（SP-B R1 平滑化，2026-10-23 用户实测反馈「不丝滑/被吸住/步阶太大」）：
+ *
+ * ① 半径内取最近线（换线只认更近，并列取先碰到的一条 ⇒ 候选顺序稳定则不闪）；
+ * ② **prev 粘滞**：prev 线在 `radius + hysteresis` 释放带内仍有配对 ⇒ 保持原线，
+ *    除非挑战线明显更近（近过 hysteresis 余量）才接管。余量存在的原因：
+ *    两条邻近线（如相距 6px）的中点附近，鼠标微抖会让「谁更近」反复易主，
+ *    无余量时节点在两线之间来回跳 = 横向抖动；有余量则贴住不跳；
+ * ③ prev 线整体离开释放带 ⇒ 交还①（可能无线 ⇒ 节点自由跟手）。
+ *
+ * ⛔ 历史缺陷（R1 修复）：旧实现 `if (!keepPrev && dist > radius) continue` 对
+ *    prev 线配对**不设距离上限** —— 一旦吸上就永不脱钩（只有别的线更近才被顶掉），
+ *    与规格「超出 SNAP_RADIUS + hysteresis 才解除」相反，正是「被吸住」的体感来源。
+ */
+function pickGuideLine(
+  pairs: SnapPair[],
+  prevPos: number | undefined,
+  radius: number,
+  hys: number,
+): SnapPair | undefined {
+  const best = nearestWithinRadius(pairs, radius)
+  if (prevPos == null) return best
+  // prev 线上距离拖拽锚点最近的配对（释放带内的保持对象）
+  let prevBest: SnapPair | undefined
+  for (const p of pairs) {
+    if (Math.abs(p.pos - prevPos) > hys) continue
+    if (!prevBest || p.dist < prevBest.dist) prevBest = p
+  }
+  if (!prevBest || prevBest.dist > radius + hys) return best // ③ 释放
+  if (!best || best.pos === prevPos) return prevBest // 同线：取更近的拖拽锚点
+  // ② 挑战线需近过余量才接管；否则保持 prev（贴住不跳）
+  return best.dist < prevBest.dist - hys ? best : prevBest
+}
+
+/**
+ * 拖拽智能参考线（移植 React Flow xyflow Helper Lines + manta SpatialIndex 思路）：
+ * - 6 锚点；每个朝向（h/v）在阈值内只取**一条最近线**；
+ * - hysteresis：prev 线在 `snapRadius + hysteresis` 内保持（防抖），
+ *   挑战线需近过 hysteresis 余量才接管（防邻近两线临界点反复横跳）；
+ * - 跳过 isSelf（调用方已标）；
+ * - 视口裁剪由调用方做（候选只传视口内）。
+ * - **阈值语义由调用方决定**：屏幕空间手感（半径/迟滞按 1/zoom 换算）由
+ *   CanvasPage 传入 flow 空间的 snapRadius/hysteresis，本函数保持纯几何。
+ */
+export function computeSnapGuides(
+  dragBox: SnapBox,
+  candidates: SnapCandidate[],
+  opts: { snapRadius?: number; hysteresis?: number; prev?: SnapPrev } = {},
+): SnapResult {
+  const radius = opts.snapRadius ?? SNAP_RADIUS
+  const hys = opts.hysteresis ?? SNAP_HYSTERESIS
+  const dragAnchors = Object.entries(SNAP_ANCHORS).map(([name, a]) => {
+    const pos = a.resolve(dragBox)
+    const off = (a.o === 'v' ? dragBox.x : dragBox.y) - pos
+    return { name, o: a.o, pos, off }
+  })
+  const pairs: Record<Orient, SnapPair[]> = { v: [], h: [] }
+  for (const c of candidates) {
+    if (c.isSelf) continue
+    for (const ca of Object.values(SNAP_ANCHORS)) {
+      const cpos = ca.resolve(c.box)
+      for (const da of dragAnchors) {
+        if (da.o !== ca.o) continue
+        pairs[ca.o].push({ dist: Math.abs(da.pos - cpos), pos: cpos, id: c.id, dragOffset: da.off })
+      }
+    }
+  }
+  const bestV = pickGuideLine(pairs.v, opts.prev?.vertical?.position, radius, hys)
+  const bestH = pickGuideLine(pairs.h, opts.prev?.horizontal?.position, radius, hys)
+  const snapped = { x: dragBox.x, y: dragBox.y }
+  // 锚点贴到线 cpos ⇒ 新原点 = cpos + off（off = 原点 - 锚点坐标）。
+  // ⛔ 不是 cpos - off：那会把非首要锚点（right/centerX）的配对放到线的错误一侧。
+  if (bestV) snapped.x = bestV.pos + bestV.dragOffset
+  if (bestH) snapped.y = bestH.pos + bestH.dragOffset
+  return {
+    vertical: bestV ? { position: bestV.pos, sourceNodeId: bestV.id } : undefined,
+    horizontal: bestH ? { position: bestH.pos, sourceNodeId: bestH.id } : undefined,
+    snapped,
+  }
+}

@@ -68,6 +68,23 @@
     color: var(--neo-text-primary);
   }
 
+  /* 媒体卡片统一语言（2026-10-22 走查轮）：画布卡（SessionCard）与作品卡（WorkCard）
+     共用同一套面 / 描边 / hover。此前两卡各写一套（--lnk-border-subtle vs overlay/[0.08]、
+     shadow-md vs 全 accent + glow）⇒ 同页并置被用户读成「两个设计系统、颜色割裂」。
+     hover 取含蓄档：accent 28% 混色描边 + shadow-md（不用 glow，避免整屏发亮）。 */
+  .lnk-media-card {
+    border-color: var(--lnk-border-subtle);
+    background: var(--lnk-surface-base);
+    transition:
+      border-color 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .lnk-media-card:hover {
+    border-color: color-mix(in srgb, var(--lnk-accent) 28%, var(--lnk-border-subtle));
+    box-shadow: var(--lnk-shadow-md);
+  }
+
   .input-field {
     @apply w-full rounded-xl px-4 py-3 text-sm outline-none transition;
     border: 1px solid var(--neo-border-strong);

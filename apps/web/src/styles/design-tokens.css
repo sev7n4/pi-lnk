@@ -224,6 +224,22 @@
   --lnk-surface-signature: var(--lnk-ink-1000);      /* #131318 */
   --lnk-text-on-signature: #f4f4f8;                  /* 14.15:1 AAA */
   --lnk-text-on-signature-muted: #b9bdc9;            /*  8.27:1 AAA */
+  /* 签名面专属（主题不变式，随 on-signature 系同值）：
+     ① 强调紫字——签名面上的 slogan 重音。⛔ 不能用 --lnk-accent-text：
+        它随主题翻转（浅色下是紫 700），压恒深签名底只有 2.4:1。
+     ② 容器面——签名面上的输入框等「井」。⛔ 不能用 surface-sunken：
+        它随主题翻转（浅色下是 #e6e9f0 浅面），on-signature 浅字压上去
+        会静默不可见（2026-10-22 修复签名输入框浅色主题 bug 时引入）。 */
+  --lnk-accent-on-signature: var(--lnk-purple-300);
+  --lnk-surface-on-signature: var(--lnk-ink-1050);   /* #0e0e12 */
+  /* ③ 印章（落款锚）：盘面恒白 + 刻痕恒墨。
+     ⛔ 绝不能用 --lnk-hi-bg / --lnk-hi-text —— 那是一对**随主题翻转**的高对比令牌
+     （深主题白底墨字 / 浅主题墨底白字），本意是压在**会翻转的页面底**上取最高对比。
+     签名面是**不翻转**的恒深墨底，翻转令牌落上去必然反色：浅色主题下盘面变成近黑
+     #17181d 压 #131318 底（≈1.2:1）⇒ 整颗锚沉进墨里看不见（2026-10-22 用户实测指出
+     「白天应该放白色高亮的，两个颜色反过来才对」）。 */
+  --lnk-stamp-face-on-signature: #f4f4f8;             /* 盘面：恒白（同 text-on-signature） */
+  --lnk-stamp-ink-on-signature: var(--lnk-ink-1000);  /* 刻痕：恒墨，压盘面 14.15:1 */
 
   /* 边框 */
   --lnk-border-subtle: rgba(255, 255, 255, 0.08);
@@ -362,6 +378,14 @@
   --lnk-surface-signature: var(--lnk-ink-1000);      /* #131318 */
   --lnk-text-on-signature: #f4f4f8;                  /* 14.15:1 AAA */
   --lnk-text-on-signature-muted: #b9bdc9;            /*  8.27:1 AAA */
+  /* 签名面专属：与深色块同值，主题不变式（理由见深色块注释）。 */
+  --lnk-accent-on-signature: var(--lnk-purple-300);
+  --lnk-surface-on-signature: var(--lnk-ink-1050);   /* #0e0e12 */
+  /* 印章：与深色块**同值**，主题不变式（理由见深色块注释）。
+     ⚠️ 本节其余令牌多是「深字压浅底」的走向，印章这对是「恒白盘 + 恒墨痕」——
+     因为签名底不翻转，盘面必须恒白，不是写反了。 */
+  --lnk-stamp-face-on-signature: #f4f4f8;
+  --lnk-stamp-ink-on-signature: var(--lnk-ink-1000);
 
   --lnk-border-subtle: rgba(23, 25, 35, 0.1);
   --lnk-border-default: rgba(23, 25, 35, 0.14);

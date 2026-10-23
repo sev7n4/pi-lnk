@@ -1,7 +1,7 @@
 <script setup lang="ts">
-/** 移动端应用骨架 · 顶栏（2026-10-19 IA v3.2 对话驱动叙事）：
- * 【对话】页签 = [≡ 左上·项目抽屉] [+ 新对话] [🕘 历史对话]（右侧）；
- * 【画布】页签 = [⋯ 画布管理菜单（任务动态项：有任务才出现；PR4 起按频次重排，
+/** 移动端应用骨架 · 顶栏（2026-10-19 IA v3.2 对话驱动叙事；2026-10-23 IA v4）：
+ * 【对话】页签 = [≡ 左上·项目抽屉] [墨鱼π 字标＝回工作台 hero] [+ 新对话] [🕘 历史对话]（右侧）；
+ * 【画布】页签 = [⋯ 项目管理菜单（任务动态项：有任务才出现；PR4 起按频次重排，
  *   「保存画布」移除改自动保存状态行，导出带二级）]；
  * 【发现】【我的】= 透明占位（保持 --lnk-topbar-h 高度一致，不放任何入口）。
  * 2026-10-19 用户裁决：顶栏「未命名画布」标题输入整体移除——对话驱动叙事下
@@ -9,6 +9,9 @@
  * IA v3.2（用户拍板「推荐方案」）：新建对话/历史对话从抽屉移出，升为对话页
  * 右上角常驻图标——抽屉=项目世界（容器层），右上角=当前项目的对话世界
  * （内容层），职责边界一眼可读。
+ * IA v4（2026-10-23 用户裁决）：① 「新建对话」→「新对话」（线程级），与抽屉
+ * 「新建项目」（项目级）拉开级差；② 品牌字标可点回 hero——壳层在项目页内，
+ * 没有这条路就回不了前门；③ 「画布管理菜单」→「项目管理菜单」（项目语义收口）。
  * 2026-10-21 用户裁决：积分胶囊撤出顶栏（对话/画布双页）——积分是账户属性
  * 非任务上下文，「我的」页已有同一数字（信息重复）；余额在「我的-我的积分」
  * 与花销时刻（状态行预估/充值入口）展示。 */
@@ -27,6 +30,9 @@ const emit = defineEmits<{
   'open-drawer': []
   'new-chat': []
   'open-history': []
+  /** IA v4（2026-10-23）：顶栏品牌字标可点 = 回工作台 hero（品牌回家）。
+   *  壳层（四页签）长在项目页内，hero 是独立页 ⇒ 没有这条路就回不去前门。 */
+  'go-home': []
   publish: []
   'import-workflow': []
   'export-workflow': []
@@ -101,18 +107,34 @@ onUnmounted(() => {
       </svg>
     </button>
 
+    <!-- IA v4（2026-10-23）：品牌字标 = 回工作台 hero 的入口（待拍②拍板）。
+         移动端全链路 = 登录 → hero（品牌满屏）→ 对话页；壳层在项目页内，
+         字标是项目页回前门唯一常驻路。不放墨鱼图标（作品带首卡同款克制：
+         品牌字标足够，别再堆形象）。 -->
+    <button
+      v-if="props.tab === 'chat'"
+      type="button"
+      class="bar-brand"
+      data-testid="mobile-topbar-brand"
+      aria-label="返回工作台"
+      @click="emit('go-home')"
+    >
+      墨鱼<span class="bar-brand__pi">π</span>
+    </button>
+
     <!-- 右侧工具簇：对话页 +/🕘 ｜ 画布页 ⋯ 菜单（积分已撤出，见头部裁决注释） -->
     <div class="bar-actions">
       <template v-if="props.tab === 'chat'">
-        <!-- 「新建对话」卡（IA v3.3，2026-10-19 用户裁决）：与抽屉「新建项目」
-             同族 create-card 的顶栏紧凑变体——胶囊承托 + 右侧小圆盘加号。 -->
+        <!-- 「新对话」卡（IA v3.3 顶栏紧凑变体；IA v4 2026-10-23 改名：
+             与抽屉「新建项目」拉开级差——新对话=线程级（当前项目内重置对话），
+             新建项目=项目级（新画布+首对话），两个名字都准确但会混。 -->
         <button
           type="button"
           class="create-card create-card--bar"
-          title="新建对话"
+          title="新对话"
           @click="emit('new-chat')"
         >
-          <span class="create-card__label">新建对话</span>
+          <span class="create-card__label">新对话</span>
           <span class="create-card__disc" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -137,7 +159,7 @@ onUnmounted(() => {
         <button
           type="button"
           class="bar-btn"
-          aria-label="画布管理菜单"
+          aria-label="项目管理菜单"
           @click.stop="toggleMenu"
         >
           <svg viewBox="0 0 24 24" fill="currentColor">
@@ -249,6 +271,30 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   margin-left: auto;
+}
+
+/* 品牌字标（IA v4 2026-10-23）：回工作台 hero 的常驻路。用字标不用墨鱼图标——
+   作品带首卡同款克制（「不要太多墨鱼」），π 用品牌紫点睛。 */
+.bar-brand {
+  display: inline-flex;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--lnk-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bar-brand__pi {
+  margin-left: 1px;
+  color: var(--lnk-accent-text);
 }
 
 /* 「新建对话」卡：create-card 家族的顶栏紧凑变体（抽屉「新建项目」同族，

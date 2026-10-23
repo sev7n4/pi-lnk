@@ -18,7 +18,7 @@
  *
  * 本壳层自身只在 CanvasPage 的 `v-if="isMobileLayout"` 下渲染，内部不再判断断点。
  */
-import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { studioApi } from '@/services/studio-api'
 import type { GenerationRecord } from '@/services/studio-api'
@@ -35,6 +35,14 @@ import MobileCanvasCreateFab from './MobileCanvasCreateFab.vue'
 import MobileCreateSheet from './MobileCreateSheet.vue'
 import MobileTaskSheet from './MobileTaskSheet.vue'
 import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
+import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
+import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
+import MobileNodeViewer from './MobileNodeViewer.vue'
+import MobileNodeCoachMark from './MobileNodeCoachMark.vue'
+import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
+import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
+import type { NodeRef } from '@/composables/useNodeRefs'
+import type { MentionOption } from '@/components/canvas/MentionInput.vue'
 import AccountPanel from '@/components/account/AccountPanel.vue'
 import PointsPanel from '@/components/points/PointsPanel.vue'
 import UsagePanel from '@/components/usage/UsagePanel.vue'
@@ -46,8 +54,8 @@ export interface MobileShellAgentActions {
   openDrawer: () => void
   newChat: () => void
   openHistory: () => void
-  openPanel: () => void
-  openAssetLibrary: () => void
+  /** IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero（项目页回前门） */
+  goHome: () => void
 }
 
 export interface MobileShellBatchActions {
@@ -63,6 +71,13 @@ export interface MobileShellBatchActions {
   duplicateUpstream: () => void
   addAgentRef: () => void
   layout: (mode: 'along_edges' | 'grid') => void
+  /**
+   * SP-B 对齐/分布载荷（判别联合）：kind 决定走六向对齐还是两轴等距，
+   * alignMode / axis 必须原样透传（缺了会让「对齐」静默退化成网格重排）。
+   */
+  align: (payload:
+    | { kind: 'align'; alignMode: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom' }
+    | { kind: 'distribute'; axis: 'x' | 'y' }) => void
   /**
    * 导出模式载荷必须透传（'full_package' | 'lightweight' | 'media_list_only'）。
    * ⚠️ 早先版本把它写成 `() => void`，@download 的 $event 被吞掉 ⇒ 移动端「轻量包 /
@@ -112,7 +127,27 @@ const props = defineProps<{
   historyLocate: (payload: { recordId: string; nodeId?: string | null }) => void
   historyRetry: (nodeId: string) => void
   batchActions: MobileShellBatchActions
+  /** 移动端长按动作 sheet 状态（R1-T5）：由 CanvasPage 经 provide 触发，壳层仅渲染 */
+  mobileActionNode: MobileNodeActionNode | null
+  /** 移动端编辑 sheet 上下文（复用桌面 resolve 逻辑）：null = 未打开 */
+  mobileEditor: MobileEditorContext | null
+  onNodeAction: (key: string, nodeId: string) => void
+  onNodeActionClose: () => void
+  onNodeEditorClose: () => void
+  onNodeEditorPatch: (patch: Record<string, unknown>) => void
+  /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
+  viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
+  onViewerClose: () => void
 }>()
+
+/** 移动端编辑 sheet 上下文：节点 + 上游/引用/提及（与桌面 DockStudioToolbar 同源） */
+export interface MobileEditorContext {
+  node: EditableFlowNode
+  upstream: UpstreamNodeContext
+  refs: NodeRef[]
+  mentions: MentionOption[]
+  generating: boolean
+}
 
 const auth = useAuthStore()
 
@@ -167,16 +202,6 @@ function onMobileTaskLocate(payload: { recordId: string; nodeId?: string | null 
 function onMobileTaskRetry(nodeId: string) {
   props.historyRetry(nodeId)
   showMobileTaskSheet.value = false
-}
-
-/** 发现页「资料库」= 画布资产库：切回对话页签（props.onTabChange）后展开 Agent 面板 */
-async function onDiscoverGotoCanvas() {
-  props.onTabChange('chat')
-  // 资产库选择器挂在 composer 面板内 ⇒ 须等面板随页签切换重渲染后再展开。
-  // 漏掉这一步 nextTick 会让 openAssetLibrary 打在旧树上（静默失效，不报错）。
-  await nextTick()
-  props.agentActions.openPanel()
-  props.agentActions.openAssetLibrary()
 }
 
 /** 任务轮询（顶栏 ⋯ 动态项徽标）：进入画布页签启动、离开停止 */
@@ -252,6 +277,7 @@ onUnmounted(() => stopMobileTaskPolling())
     @open-drawer="agentActions.openDrawer"
     @new-chat="agentActions.newChat"
     @open-history="agentActions.openHistory"
+    @go-home="agentActions.goHome"
     @publish="onPublish"
     @import-workflow="onImportWorkflow"
     @export-workflow="onExportPack([], 'full_package')"
@@ -266,7 +292,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :failed="saveFailed"
     @save="onSave"
   />
-  <DiscoverPane v-if="mobileAppTab === 'discover'" @goto-canvas="onDiscoverGotoCanvas" />
+  <DiscoverPane v-if="mobileAppTab === 'discover'" />
   <ProfilePane
     v-if="mobileAppTab === 'mine'"
     @open-membership="openMembership"
@@ -324,6 +350,7 @@ onUnmounted(() => stopMobileTaskPolling())
     @duplicate-upstream="batchActions.duplicateUpstream"
     @add-agent-ref="batchActions.addAgentRef"
     @layout="batchActions.layout($event)"
+    @align="batchActions.align($event)"
     @download="batchActions.download($event)"
     @delete="batchActions.delete"
   />
@@ -357,6 +384,33 @@ onUnmounted(() => stopMobileTaskPolling())
     @retry="onMobileTaskRetry"
     @close="showMobileTaskSheet = false"
   />
+  <!-- R1-T5：移动端长按动作 sheet（重命名/引用/副本/多选/编辑/删除） -->
+  <MobileNodeActionSheet
+    v-if="mobileActionNode"
+    :node="mobileActionNode"
+    @action="(key: string) => props.onNodeAction(key, (mobileActionNode as MobileNodeActionNode).id)"
+    @close="props.onNodeActionClose"
+  />
+  <!-- R1-T5：移动端编辑 sheet（复用 DockStudioRouter，删 Dock 后编辑不丢链） -->
+  <MobileNodeEditorSheet
+    v-if="mobileEditor"
+    :node="mobileEditor.node"
+    :upstream="mobileEditor.upstream"
+    :refs="mobileEditor.refs"
+    :mentions="mobileEditor.mentions"
+    :generating="mobileEditor.generating"
+    @close="props.onNodeEditorClose"
+    @patch="props.onNodeEditorPatch"
+  />
+  <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接） -->
+  <MobileNodeViewer
+    v-if="viewerNode"
+    :type="viewerNode.type"
+    :data="viewerNode.data"
+    @close="props.onViewerClose"
+  />
+  <!-- R1-T7：节点交互范式反转一次性引导（点按播放 · 长按编辑），仅画布页签首进一次 -->
+  <MobileNodeCoachMark v-if="mobileAppTab === 'canvas'" />
 </template>
 
 <style scoped>

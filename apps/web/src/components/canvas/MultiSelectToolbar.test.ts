@@ -30,6 +30,42 @@ describe('MultiSelectToolbar layout menu', () => {
   })
 })
 
+describe('MultiSelectToolbar: SP-B 对齐/等距入口', () => {
+  const props = {
+    selectedIds: ['a', 'b', 'c'],
+    screenPosition: { x: 100, y: 80 },
+  }
+
+  it('「整理布局」菜单含六向对齐 + 两轴等距，点击后 emit align（判别联合负载）', async () => {
+    const wrapper = mount(MultiSelectToolbar, { props })
+    const trigger = wrapper.findAll('button').find((b) => b.attributes('aria-label') === '整理布局')
+    expect(trigger).toBeTruthy()
+    await trigger!.trigger('click')
+
+    for (const label of ['左对齐', '水平居中', '右对齐', '顶对齐', '垂直居中', '底对齐', '水平等距', '垂直等距']) {
+      expect(
+        wrapper.findAll('button').some((b) => b.text() === label),
+        `菜单里应有「${label}」`,
+      ).toBe(true)
+    }
+
+    const left = wrapper.findAll('button').find((b) => b.text() === '左对齐')
+    await left!.trigger('click')
+    expect(wrapper.emitted('align')).toEqual([[{ kind: 'align', alignMode: 'left' }]])
+    // 点击后菜单关闭（layoutMenuOpen 复位），避免菜单悬在画布上
+    expect(wrapper.findAll('button').some((b) => b.text() === '左对齐')).toBe(false)
+
+    await trigger!.trigger('click')
+    const distX = wrapper.findAll('button').find((b) => b.text() === '水平等距')
+    await distX!.trigger('click')
+    expect(wrapper.emitted('align')).toEqual([
+      [{ kind: 'align', alignMode: 'left' }],
+      [{ kind: 'distribute', axis: 'x' }],
+    ])
+    wrapper.unmount()
+  })
+})
+
 describe('MultiSelectToolbar: 图标化', () => {
   it('所有动作按钮均为图标（内含 svg）+ aria-label，不再使用纯文字', () => {
     const wrapper = mount(MultiSelectToolbar, {

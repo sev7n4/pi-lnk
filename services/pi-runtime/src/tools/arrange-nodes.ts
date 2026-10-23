@@ -72,15 +72,19 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 			"完成后视口自动平移到这些节点，并返回已排列数、未找到的 id、along_edges 是否降级为 grid（degraded）。" +
 			"【何时不该用】要改节点文字用 set_node_text；要新建节点用 upsert_media_node；" +
 			"只想查看有多少节点或当前布局用 get_canvas_summary / get_canvas_layout——" +
-			"「看一眼」不要触发重排，除非用户明确要求整理或排列。",
+			"「看一眼」不要触发重排，除非用户明确要求整理或排列。" +
+			"也支持 mode=align（align_mode=left|centerH|right|top|centerV|bottom 做六向精确对齐）/ " +
+			"distribute（axis=x|y 做等距分布，需≥3 个节点）。",
 
 		parameters: Type.Object({
 			node_ids: Type.Array(Type.String(), {
 				description: "Canvas node ids to arrange; at least 2 to have effect",
 			}),
 			mode: Type.String({
-				description: "grid | along_edges; grid ignores edges, along_edges requires edges",
+				description: "grid | along_edges | align | distribute; grid ignores edges, along_edges requires edges",
 			}),
+			align_mode: Type.Optional(Type.String({ description: "align 时必填: left|centerH|right|top|centerV|bottom" })),
+			axis: Type.Optional(Type.String({ description: "distribute 时必填: x|y" })),
 			gap: Type.Optional(Type.Number({ description: "pixel gap between nodes, default 40" })),
 			edges: Type.Optional(
 				Type.Array(Type.Object({
@@ -94,12 +98,15 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 		execute: async (_id, p: {
 			node_ids: string[];
 			mode: string;
+			align_mode?: string;
+			axis?: string;
 			gap?: number;
 			edges?: ArrangeEdge[];
 		}, _onUpdate, tc?: LnkpiToolContext) => {
 			const nodeIds = Array.isArray(p.node_ids) ? [...new Set(p.node_ids.filter((id) => typeof id === "string"))] : [];
 			const gap = typeof p.gap === "number" && Number.isFinite(p.gap) ? p.gap : 40;
-			let mode: "grid" | "along_edges" = p.mode === "along_edges" ? "along_edges" : "grid";
+			let mode: "grid" | "along_edges" | "align" | "distribute" =
+				p.mode === "along_edges" || p.mode === "align" || p.mode === "distribute" ? p.mode : "grid";
 
 			// L2：只读校验（尽力而为）。无 client（纯文本模式）时跳过，行为与旧版逐字节一致。
 			let verified = false;
@@ -163,6 +170,8 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 					mode,
 					gap,
 					...(mode === "along_edges" && edges?.length ? { edges } : {}),
+					...(mode === "align" && p.align_mode ? { alignMode: p.align_mode } : {}),
+					...(mode === "distribute" && p.axis ? { axis: p.axis } : {}),
 				}],
 			);
 		},
