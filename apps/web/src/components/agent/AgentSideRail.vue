@@ -3991,8 +3991,8 @@ defineExpose({
               <p v-if="!isMobileLayout" class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
             </div>
             <div class="flex items-center gap-0.5">
-              <!-- 新建 agent 会话 -->
-              <button type="button" class="agent-head-btn" title="新建对话" @click="newAgentSession">
+              <!-- 新建 agent 会话（IA v4：与移动端顶栏同名「新对话」——同一动作两端同名词） -->
+              <button type="button" class="agent-head-btn" title="新对话" @click="newAgentSession">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
                   <path stroke-linecap="round" d="M12 5v14M5 12h14" />
                 </svg>
