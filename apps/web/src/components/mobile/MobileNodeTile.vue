@@ -20,7 +20,7 @@ const TTS_THRESHOLD = 120
 const props = defineProps<{
   id?: string
   type: 'image' | 'video' | 'audio' | 'text'
-  data?: { url?: string; poster?: string; content?: string }
+  data?: { url?: string; poster?: string; content?: string; status?: string }
   status?: string
 }>()
 
@@ -28,7 +28,22 @@ const emit = defineEmits<{ (e: 'tap'): void; (e: 'open-reader'): void }>()
 const tts = useTextToSpeech()
 
 const cfg = computed(() => nodeTypeConfigs[props.type])
-const badge = computed(() => cfg.value.statusBadge(props.status))
+
+/**
+ * R3-T2：节点状态的取值来源。
+ *
+ * ⭐ 断链修复：此前 `NodeRenderer` 传给磁贴的 props 只有 `id / type / data`
+ *   （+ `v-bind="attrs"`），**没有 status** ⇒ `statusBadge()` 恒返回 null
+ *   ⇒ 状态徽标当前根本不渲染（桌面组件自己读 `data.status`，所以桌面无此问题）。
+ *
+ * ⚠️ 为什么不新增一个平行的 `status` prop 给桌面组件：`CanvasNodeImage` 等
+ *   桌面组件的 props 里**没有** `status`（status 在 `data` 里）⇒ 传过去会
+ *   fallthrough 成 DOM 属性（`status="generating"` 落到节点根 div）= DOM 污染。
+ *   而 `data` 本来就整体传给磁贴 ⇒ 直接从 `data.status` 读，零额外 prop、零污染。
+ *   `status` prop 保留为「显式覆盖」入口（外部可直接传）。
+ */
+const effectiveStatus = computed(() => props.status ?? props.data?.status)
+const badge = computed(() => cfg.value.statusBadge(effectiveStatus.value))
 
 /**
  * 磁贴外框：与桌面包络同源（图 280 / 视频 320，见 mediaNodeDisplaySize）；
@@ -290,8 +305,20 @@ function handleTextTap() {
   line-height: var(--lnk-lh-2xs);
 }
 
+/* 三态配色（R3-T2 补齐 busy / warn）。
+   ⚠️ 用 --lnk-error / --lnk-warning / --lnk-info（深浅成对的 L2 语义色），
+   **不是** --lnk-status-error——那个变量全仓未定义（既有两处引用都是错引用，
+   error 徽标颜色实际不生效），本 PR 一并修正。 */
 .mobile-node-badge[data-tone='error'] {
-  color: var(--lnk-status-error);
+  color: var(--lnk-error);
+}
+
+.mobile-node-badge[data-tone='warn'] {
+  color: var(--lnk-warning);
+}
+
+.mobile-node-badge[data-tone='busy'] {
+  color: var(--lnk-info);
 }
 
 /* 空图 / 空视频的类型占位（2026-10-23 真机走查·辨识度）

@@ -23,25 +23,38 @@ import {
  */
 export type MobileNodeState = 'empty' | 'generating' | 'pending' | 'confirmed' | 'error'
 
+/**
+ * 只看 status 的三态判定（generating / pending / error），不含内容判定。
+ *
+ * ⭐ 单独导出：徽标（`nodeTypeConfigs.statusBadge`）只反映**状态**，
+ *   不该关心节点有没有内容——若复用 `resolveMobileNodeState` 就得伪造一个
+ *   `type` + 空 data 来绕开内容判定（`type:'image'` 硬编码是妥协）。
+ *   判据仍收在同一处 ⇒ 单一真源不破。
+ */
+export type MobileNodeStatusOnly = 'generating' | 'pending' | 'error'
+
+export function resolveMobileNodeStateFromStatus(status: unknown): MobileNodeStatusOnly | null {
+  const s = String(status ?? '')
+  // 生成态优先（含 fallback_pending = 降级等待，仍是「在跑」）
+  if (isNodeGenerating(s)) return 'generating'
+  // 待确认（agent 已提议，等用户在节点上确认/取消）——ADR-0011 的阻塞态
+  if (s === NODE_PENDING_CONFIRM_STATUS) return 'pending'
+  // 失败态
+  if (s === NODE_GENERATION_STATUS.error || s === NODE_GENERATION_STATUS.failed) return 'error'
+  return null
+}
+
 export function resolveMobileNodeState(node: {
   type: string
   data?: Record<string, unknown> | null
 }): MobileNodeState {
   const data = node.data ?? {}
-  const status = String(data.status ?? '')
 
-  // 1) 生成态优先（含 fallback_pending = 降级等待，仍是「在跑」）
-  if (isNodeGenerating(status)) return 'generating'
+  // 1) 状态优先（generating / pending / error）
+  const statusOnly = resolveMobileNodeStateFromStatus(data.status)
+  if (statusOnly) return statusOnly
 
-  // 2) 待确认（agent 已提议，等用户在节点上确认/取消）——ADR-0011 的阻塞态
-  if (status === NODE_PENDING_CONFIRM_STATUS) return 'pending'
-
-  // 3) 失败态
-  if (status === NODE_GENERATION_STATUS.error || status === NODE_GENERATION_STATUS.failed) {
-    return 'error'
-  }
-
-  // 4) 内容判定：文本看 content，其余看 url
+  // 2) 内容判定：文本看 content，其余看 url
   if (node.type === 'text') {
     return String(data.content ?? '').trim() ? 'confirmed' : 'empty'
   }
