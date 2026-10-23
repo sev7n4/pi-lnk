@@ -42,6 +42,6 @@ entries:
     order: 60
     contentHash: e0f6673a9974
   - id: canvas_daily_ops
-    version: 1.4.0
+    version: 1.4.1
     order: 46
-    contentHash: e899b2caa41a
+    contentHash: 36df4f730890

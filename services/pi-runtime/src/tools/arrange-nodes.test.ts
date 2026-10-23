@@ -64,11 +64,26 @@ function commandOf(res: Awaited<ReturnType<typeof run>>): Record<string, unknown
 }
 
 describe("arrange_nodes 基础契约（无 client，逐字节旧行为）", () => {
-	it("tier=ui_command，mode 脏值收窄 grid，gap 缺省 40", async () => {
+	it("tier=ui_command，gap 缺省 40", async () => {
 		const { tool } = setup();
 		assert.equal(tool.tier, "ui_command");
-		const r = await run(tool!, { node_ids: ["a", "b"], mode: "xyz" });
+		const r = await run(tool!, { node_ids: ["a", "b"], mode: "grid" });
 		assert.deepEqual(commandOf(r), { type: "arrange_nodes", nodeIds: ["a", "b"], mode: "grid", gap: 40 });
+	});
+
+	// ⛔ 2026-10-23 契约消歧：旧行为「mode 脏值收窄 grid」是把**歧义写成了期望**——
+	//   模型把 align 拼成 "aligned" 时会静默执行网格重排（前端注释早已警告：
+	//   「静默落到 grid 分支 ⇒ 对齐意图被换成网格重排」）。现在必须**报错**让模型自纠。
+	it("⛔ mode 脏值 → 抛错并列出允许值（不再静默收窄 grid）", async () => {
+		const { tool } = setup();
+		await assert.rejects(
+			() => run(tool!, { node_ids: ["a", "b"], mode: "aligned" }),
+			/mode 必须是 grid \| along_edges \| align \| distribute/,
+		);
+		await assert.rejects(
+			() => run(tool!, { node_ids: ["a", "b"], mode: "" }),
+			/mode 必须是/,
+		);
 	});
 
 	it("along_edges 无 edges → 降级 grid 并标 degraded", async () => {
@@ -183,9 +198,58 @@ describe("arrange_nodes align/distribute 扩 mode（canvas_command 透传，不�
 		assert.equal(cmd["mode"], "distribute");
 		assert.equal(cmd["axis"], "x");
 	});
-	it("mode=align 缺 align_mode → 命令不带 alignMode 键（不臆造参数）", async () => {
+
+	// 等距分布需 ≥3 节点：前端对 <3 是 no-op ⇒ 若不回灌，模型会以为「已经排好了」
+	it("distribute 仅 2 个有效节点 → 标 degraded（不静默无反应）", async () => {
+		const { tool } = setup(fakeClient({ nodes: [{ id: "a" }, { id: "b" }] }));
+		const r = await run(tool!, { node_ids: ["a", "b"], mode: "distribute", axis: "x" });
+		assert.equal(payloadOf(r)["degraded"], "distribute_below_three_nodes");
+	});
+	// ⛔ 2026-10-23 契约消歧：旧行为「缺 align_mode → 命令不带 alignMode 键」= 静默发残缺命令
+	//   ⇒ 前端对缺参命令 no-op ⇒ 用户看到「点了没反应」且无从得知原因。现在必须报错。
+	it("⛔ mode=align 缺 align_mode → 抛错（不再发残缺命令）", async () => {
 		const { tool } = setup();
-		const r = await run(tool!, { node_ids: ["a", "b", "c"], mode: "align" });
-		assert.deepEqual(commandOf(r), { type: "arrange_nodes", nodeIds: ["a", "b", "c"], mode: "align", gap: 40 });
+		await assert.rejects(
+			() => run(tool!, { node_ids: ["a", "b", "c"], mode: "align" }),
+			/mode=align 必须带 align_mode/,
+		);
+	});
+	it("⛔ mode=align 的 align_mode 非法值 → 抛错（列允许值）", async () => {
+		const { tool } = setup();
+		await assert.rejects(
+			() => run(tool!, { node_ids: ["a", "b", "c"], mode: "align", align_mode: "leftish" }),
+			/left \| centerH \| right \| top \| centerV \| bottom/,
+		);
+	});
+	it("⛔ mode=distribute 缺 axis / 非法 axis → 抛错", async () => {
+		const { tool } = setup();
+		await assert.rejects(
+			() => run(tool!, { node_ids: ["a", "b", "c"], mode: "distribute" }),
+			/mode=distribute 必须带 axis/,
+		);
+		await assert.rejects(
+			() => run(tool!, { node_ids: ["a", "b", "c"], mode: "distribute", axis: "horizontally" }),
+			/mode=distribute 必须带 axis/,
+		);
+	});
+});
+
+// 2026-10-23 契约消歧：description 必须把四个 mode 按**两个语义层**讲清，
+// 否则模型只有一条安全路径（用 grid 糊弄一切）——这正是用户「说了左对齐却拿到网格重排」的成因。
+describe("arrange_nodes 契约描述（语义分层可发现性）", () => {
+	it("description 含两层判据与四 mode 的选择依据", () => {
+		const { tool } = setup();
+		const d = tool!.description;
+		assert.match(d, /重排层/, "应说明重排层");
+		assert.match(d, /规整层/, "应说明规整层");
+		assert.match(d, /mode=grid/, "应点名 grid");
+		assert.match(d, /mode=along_edges/, "应点名 along_edges");
+		assert.match(d, /mode=align/, "应点名 align");
+		assert.match(d, /mode=distribute/, "应点名 distribute");
+		assert.match(d, /重排结果本身已含对齐与等距/, "应说明重排与规整的关系（避免叠加无意义操作）");
+	});
+	it("description 声明参数非法会报错（模型据此自纠而非猜）", () => {
+		const { tool } = setup();
+		assert.match(tool!.description, /写错或缺参会直接报错/);
 	});
 });
