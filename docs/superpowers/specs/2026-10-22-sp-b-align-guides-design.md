@@ -116,8 +116,13 @@
 - 计算基准值：
   - `left` → 选中集最小左缘；`right` → 最大右缘；`centerH` → 选中集水平中心（bbox 中心）或各节点中心平均（取 bbox 中心，直觉稳定）；
   - 垂直三向同理（上缘 / 下缘 / 垂直中心）；
-- 返回 `{ [id]: {x,y} }`：仅受影响 id 的新**绝对位置**；未选中节点返回空映射；
-- 无 parent 节点则绝对=局部，调用方负责回填局部坐标（与 `applyLayoutOps` 既有做法一致）。
+- 返回 `{ [id]: {x,y} }`：仅受影响 id 的新位置；未选中节点返回空映射；
+- **坐标口径（2026-10-23 落地审计订正）**：实现返回的是**局部坐标**（父相对；父节点偏移已在
+  函数内扣除，见 `packages/shared/src/canvas/layout.ts` `alignNodes` 注释「返回**局部坐标**新位置
+  （已减 parent 绝对偏移）」）—— 与本节原表述「返回绝对位置、调用方负责回填局部坐标」相反。
+  ⇒ 以**实现口径为准**（局部坐标更安全：调用方直接写 `node.position` 即可，不需要再拿父偏移做
+  反算，避免二次偏移 bug）；调用方 `applyArrangeLayout` 按局部消费，与既有 `applyLayoutOps`
+  行为一致。本条只订正表述，**不改实现**。
 
 ### 6.2 `distributeNodes(nodes, ids, axis)`
 
@@ -125,7 +130,7 @@
 - 按当前左缘（x）/ 上缘（y）排序；**首尾锚定不动**；
 - 相邻包围盒**空隙相等**：解 `gap = (lastEdge - firstEdge - Σ其他宽度) / (n-1)`，
   中间节点依次落位使 `prevEdge + width + gap = curEdge`；
-- 返回受影响中间节点的新绝对位置映射；
+- 返回受影响中间节点的新位置映射（坐标口径同 §6.1：**局部坐标**，父偏移已扣除）。
 - 与 D2 一致：是"等空隙"而非"等中心距"（窄节点旁不会显松）。
 
 ### 6.3 `computeSnapGuides(dragBox, candidateBoxes, opts)`
@@ -286,3 +291,61 @@
 - `useCanvasGrouping.snapCandidates.test.ts`：sizeOf 注入后候选盒取实测值、实测盒决定命中；
 - `CanvasPage.snapGuides.test.ts`：dimensions 捕获、zoom 换算、snapSizeOf 解析链、视口缓存
   （静态断言）；「prev 无限粘滞」的两条旧期望（9px 仍保持）按规格修正为释放带语义。
+
+---
+
+## 15. 落地审计（2026-10-23）
+
+审计对象 = **SP-A**（`2026-10-20-agent-canvas-batch-layout-design.md`）+ **SP-B**（本规格）两个包。
+方法 = **代码级逐条核对**（不采信台账声明；台账可能漏项或与实现漂移），基准 = `origin/master` @ `7fc3672f`。
+
+### 15.1 SP-A 落地核对（§9 文件级改动 9 项 + §1.2 核心目标）
+
+| 规格条目 | 代码证据 | 判定 |
+|---|---|---|
+| shared 放置内核 + 原语上移（§9-1） | `packages/shared/src/canvas/layout.ts`：`placeBatchNodes` / `snapToGrid` / `rectsOverlap` / `NODE_SIZES` / `getNodeSize` / `getAbsolutePosition` / `LayoutNode` 齐备 | ✅ |
+| shared barrel 导出（§9-2） | `@lnkpi/shared` 转出 canvas 模块（web 与 server 两侧均可 import） | ✅ |
+| Nest `canvas-layout.util.ts` 切 re-export（§9-3） | `apps/server/src/agent/canvas-layout.util.ts`：3 处 `from '@lnkpi/shared'` | ✅ |
+| `addNodesBatch` 扩展：edges 同事务解析 + key 校验 + items cap + 放置内核（§9-4） | `agent-canvas-tools.service.ts`：`:76 BATCH_NODES_MAX=12`、`:929 addNodesBatch`、`:989 placeBatchNodes` | ✅ |
+| controller DTO：+edges + `@ArrayMaxSize`（§9-5） | `agent-canvas-tools.controller.ts`：`:161 @ArrayMaxSize(BATCH_NODES_MAX)`、`:171-172 edges?: EdgeDto[]` | ✅ |
+| pi-runtime `create_nodes_batch` + 单批上限（§9-6） | `services/pi-runtime/src/tools/canvas-write.ts`：`:1002` 工具定义、`:1044` 上限校验 | ✅ |
+| tiering 常驻登记（§9-7） | `services/pi-runtime/src/tools/tiering.ts`：`:101 "create_nodes_batch"` | ✅ |
+| 前端回合末视口分流（§9-8） | `CanvasPage.vue`：`:1738` 有新节点 `fitView({ nodes: newNodeIds, … })` / `:1740` 无新节点维持现状分支 | ✅ |
+| prompt 点名 + contentHash 同步（§9-9） | `prompt-registry/rules/canvas_daily_ops.md:15`「多节点用 create_nodes_batch。」（12 字 ≤ 30） | ✅ |
+| **§1.2 核心目标**：单建与批建同享一个内核 | `upsertMediaNode`(`:1076`) → `addNodesBatch`(`:1116`) → `placeBatchNodes`(`:989`) 链路成立 | ✅ |
+| §8.2 登记的另两处旧网格公式 | `agent-canvas-tools.service.ts:1707`、`:2856`（`uploadMediaToCanvas` 等其他创建路径）仍在 | ✅ **有意不做**（§8.2 原文「本规格只替换 addNodesBatch 这一处……避免改动面静默扩大」，登记 §12） |
+
+⇒ **SP-A 代码 100% 落地，无功能缺口**（台账另记有 3 处「计划不完备」的偏离与 1 处自身回归，均已在
+`plans/2026-10-20-agent-canvas-batch-layout.md` 执行台账中登记并修正）。
+
+### 15.2 SP-B 落地核对（§2.1 六项范围 + Task 1~10 + 生产）
+
+| 规格条目 | 代码证据 | 判定 |
+|---|---|---|
+| shared 三原语（§2.1-1） | `layout.ts`：`alignNodes` / `distributeNodes` / `computeSnapGuides` | ✅ |
+| 坐标变更走前端 canvas_command、**不新增** Nest HTTP op（§2.1-2 / §7） | `CanvasPage.vue` `handleArrangeNodes` 分支消费；Nest 侧无新 op | ✅ |
+| pi 工具 `arrange_nodes` 扩 `mode: align/distribute`（§2.1-3） | `services/pi-runtime/src/tools/arrange-nodes.ts`：align/distribute 共 10 处 | ✅ |
+| PC 工具条六向 + 等距按钮组（§2.1-4） | `MultiSelectToolbar.vue`（19 处）+ `MultiSelectToolbarOverlay.vue`（4 处） | ✅ |
+| 移动端「更多」sheet（§2.1-5） | `MobileMultiSelectMoreSheet.vue`（18 处） | ✅ |
+| 拖拽参考线（§2.1-6） | `GuideLines.vue` + `CanvasPage.vue` 接线 + `CanvasPage.snapGuides.test.ts` | ✅ |
+| 生产上线 | web 入口 chunk / CanvasPage 分包含新特征；容器 `lnkpi-api:<sha>` healthy；**pi-runtime 生产镜像 = `pi-runtime:7471901a`，而 `7471901a` 正是 master 上 `services/pi-runtime` 的最新提交**（此后 master 未再动该目录）⇒ agent 通道在生产可用 | ✅ |
+| 手感缺陷（R1） | §14 两处根因已修；5 项变异验证「改回即红」；用户真机确认 ok | ✅ |
+
+⇒ **SP-B 代码与生产 100% 落地**。
+
+### 15.3 三处未闭合（均**非功能缺失**）
+
+| # | 缺口 | 性质 | 处置 |
+|---|---|---|---|
+| G1 | **真机走查清单 §1~§7 未确认**（对齐六向 / 等距分布 / 参考线基础行为 / 移动端一致 / agent 自然语言触发 / SP-A 回归 / 生产复测；用户仅确认了 §8 的手感 7 条） | **验收未闭环**（规格 §10 的「目视 + 生产复测」是 SP-B 的验收标准） | 待用户登录态 + 硬刷新执行 `2026-10-22-sp-b-align-guides-verify-checklist.md` |
+| G2 | **本包 plan 的执行台账未回填**（checkbox 全为未勾选；SP-A 同类文档有完整台账 + 偏离记录） | 交付记录缺失 | 已回填（见 `plans/2026-10-22-sp-b-align-guides.md` 执行台账节） |
+| G3 | **§6.1/§6.2 坐标口径表述与实现相反**（规格写「返回绝对位置」，实现返回局部坐标） | 文档口径漂移 | **以实现为准**（局部更安全：调用方直接写 `node.position`，无需反算父偏移），已订正规格表述，**不改实现** |
+
+### 15.4 与 SP-A §12 路线图对齐（SP-B 之后的剩余包）
+
+**SP-C 视口恢复**（viewport 入序列化 + loadSession 恢复 + 回合末无新节点分支的 fitView 劫持）/
+**SP-D 连线校验**（isValidConnection + 服务端端点/环校验 + add_edge 去重）/
+**SP-E 并发与暂存底座**（canvasVersion CAS + stage 透传 UI + 回合 checkpoint）/
+**SP-F 分组深化+内核合一**（parentNode 序列化 + 分组折叠 + 前端布局实现迁入 shared）/
+**SP-G 缓议池**（resize / z-order / 旋转 / 分页摘要 / 只读接口鉴权）。
+SP-B 的 shared 原语是 SP-F「前端布局实现迁入 shared」的**前置依赖** ⇒ 该前置现已具备。
