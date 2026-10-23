@@ -223,7 +223,7 @@ describe('SignatureHero', () => {
     expect(src, '窄屏左列须 display:contents（输入框才能落到第二行）').toMatch(
       /\.lnk-col-talk\s*\{[^}]*display:\s*contents/,
     )
-    // ④ 桌面恢复：输入框回到左列内（talk 列 = 内容列 + 装饰线列两格，
+    // ④ 桌面恢复：输入框回到左列内（talk 列 = 内容列 + 装饰线列两格；
     //    窄屏那套 display:contents 只对 <lg 生效）
     expect(src, '桌面左列须恢复为 grid 两格（内容 | 装饰线）').toMatch(
       /\.lnk-col-talk\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/,
@@ -261,7 +261,7 @@ describe('SignatureHero', () => {
 
   it('⛔ 桌面端（lg）不得被窄屏改动牵连（用户 2026-10-23 提醒）', () => {
     const src = stripComments(readFileSync(join(HERE, 'SignatureHero.vue'), 'utf8'))
-    // 背景：把移动端改成左右结构时，PC 端一度被连带破坏（实测）：
+    // 背景：把移动端改成左右结构时，PC 端一度被连带破坏（实测 1440×900，基线 = 移动端改动前）：
     //   · 窄屏的 grid-area: talk/anchor/canvas 残留 ⇒ lg 下 grid-template-areas:none
     //     让所有 item 退化成 auto 放置 ⇒ 三列错乱（中列被挤到右侧、右列与中列重叠、
     //     锚偏离 slogan 中轴 348px）；
