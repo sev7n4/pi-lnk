@@ -136,7 +136,8 @@ describe('GET runs/events 的 SSE 游标（multi-device Task 4）', () => {
 
     expect(
       res.setHeader,
-      '生产实证：25 次订阅全部 0 字节，就是因为 nginx proxy_buffering 把 SSE 帧憋在缓冲区',
+      '逐响应声明「本响应不缓冲」：生产 /api/ 目前已 proxy_buffering off，但反代配置会变，' +
+        '而 SSE 一旦被缓冲就是「连接建立、零字节、静默失效」这种极难排查的故障',
     ).toHaveBeenCalledWith('X-Accel-Buffering', 'no')
   })
 

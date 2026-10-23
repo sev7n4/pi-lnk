@@ -604,15 +604,20 @@ ssh root@119.29.173.89 "ls -1t /var/log/nginx/access.log" && grep -oE 'CanvasPag
 
 1. **订阅入口偏窄**：web 侧唯一入口是 `sendMessage` 的收尾分支 ⇒ 旁观端（另一端发起的那一轮）
    压根不订阅。设计目标里的「常驻 session SSE，与谁发起无关」被实现成了「本轮收尾后的 tail」。
-2. **nginx 缓冲**：默认 `proxy_buffering on`，34 字节的心跳永远填不满 buffer ⇒ 浏览器收不到
-   第一个字节，前端 fetch 连响应头都拿不到 ⇒ 判定「没连上」⇒ 退避重连（生产那 25 次的来源）。
+2. **首帧前不写任何字节**：浏览器要等**响应头**才算「连上了」，而改前本链路在首个业务事件
+   （可能几十秒后）之前不写任何字节 ⇒ 前端整段静默期都处于「未连接」状态 ⇒ 用户切走 /
+   组件卸载 / 重挂即 abort ⇒ nginx access log 只留下「200 + **0 字节**」，看不出原因。
+   修复：订阅建立即写就绪帧（`: observer-ready`）。
+   ⚠️ **归因订正**：初稿把 0 字节归给「nginx `proxy_buffering on` 憋住心跳」，复核生产配置
+   （`/etc/nginx/conf.d/lnkpi.conf` 的 `location /api/` **已** `proxy_buffering off`）后推翻。
+   `X-Accel-Buffering: no` 仍保留，但定性为**防御性**（反代配置会变），不是本问题的成因。
 3. **闸门把常驻连接杀掉**：首帧前 30s idle 只认**业务事件**，心跳不算 ⇒ 静默会话在第 30s 被
    `res.end()`，只来得及发 1 个心跳 ⇒ 前端每 30s 全量重连，常驻名存实亡。
 
 **改动：**
 
-- `apps/server/src/agent/agent.controller.ts`：订阅建立即写就绪帧；`X-Accel-Buffering: no`；
-  心跳到达即解除首帧闸门。
+- `apps/server/src/agent/agent.controller.ts`：订阅建立即写就绪帧（让前端立刻拿到响应头）；
+  心跳到达即解除首帧闸门；`X-Accel-Buffering: no`（**防御性**，非本问题成因，见上订正）。
 - `apps/web/src/components/agent/follow-up-tail.ts`：默认无轮次上限（常驻，旧值 3 等于「第 4 次
   之后本端又聋了」）；idle 由**任何帧**刷新（默认 45s > 心跳 15s×2）；新增 `onTurnEnd`
   （`done` / `turn_ack` / `error` / `turn_not_submitted` 都是收束）。

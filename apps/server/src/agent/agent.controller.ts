@@ -600,11 +600,13 @@ export class AgentController {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
-    // ⭐⭐ nginx 默认 `proxy_buffering on` ⇒ 上游的 SSE 帧会被憋在 nginx 缓冲区里，
-    // 直到 buffer 满或上游结束才吐给浏览器。对本端点是致命的：心跳只有 34 字节，
-    // 15s 一帧也填不满 buffer ⇒ 浏览器**永远收不到第一个字节**，fetch 的响应头都拿不到
-    // ⇒ 前端判定「连接没建立」⇒ 退避重连 ⇒ 生产实证：25 次订阅全部 0 字节。
-    // `X-Accel-Buffering: no` 是 nginx 的官方开关，逐响应禁用缓冲（不影响其它路由）。
+    // ⚠️ 关于 `X-Accel-Buffering: no`（2026-10-24 复核后保留，但**不是**生产问题的成因）：
+    // 生产 CVM 的 `/etc/nginx/conf.d/lnkpi.conf` 里 `location /api/` **已经**设了
+    // `proxy_buffering off` ⇒ 旁听流**不受** nginx 缓冲。
+    // 保留这个头的理由是**防御性**：反代配置会变（新增 location / 换 CDN / 换机器），
+    // 而 SSE 一旦被缓冲就会重演「连接建立但收不到任何字节」的静默故障，且排查成本极高
+    // （nginx access log 里只看到 200 + 0 字节，看不出是缓冲）。
+    // ⇒ 逐响应声明「本响应不缓冲」，不依赖任何外层配置。
     res.setHeader('X-Accel-Buffering', 'no')
 
     // idle 闸门收窄（multi-device Task 4，plan 已知坑「旁听流 30s idle ⇒ 重连风暴」）：
@@ -616,6 +618,11 @@ export class AgentController {
     // 「连上了」，而本链路首个业务事件可能几十秒后才到。没有这一帧，前端在整段静默期里
     // 都处于「未连接」状态（用户切走 / 组件卸载 ⇒ 直接 abort，永远收不到后续事件）。
     // ⚠️ 用 `:` 注释行而非 `data:`：注释帧不触发前端的 firstFrameSeen，也不该被当成业务事件。
+    //
+    // 生产实证（2026-10-24）：改前 25 次订阅在 nginx access log 里全是「200 + 0 字节」。
+    // 归因**不是** nginx 缓冲（该机 `/api/` 已 `proxy_buffering off`），而是：改前首帧前
+    // 不写任何字节 ⇒ 客户端始终拿不到响应头 ⇒ 处于「未建立」状态；此时任何一次掐断
+    // （重挂 / 切走 / 重连）都只留下「200 + 0 字节」——看不出原因的静默故障记录。
     res.write(': observer-ready\n\n')
     const idleTimer = setTimeout(() => {
       res.end()
