@@ -577,6 +577,10 @@ export class AgentController {
   async runEvents(
     @Query('sessionId') sessionId: string,
     @Query('threadId') threadId: string | undefined,
+    // multi-device Task 4：浏览器 EventSource 断线重连时自动带上的 Last-Event-ID
+    // （以 ?lastEventId= 形态由前端显式拼入）。只放行非负整数字符串——空串/畸形值
+    // 会被 pi-runtime 解析进 `afterSeq=-1` 全量重放分支（plan 已知坑：重放风暴）。
+    @Query('lastEventId') lastEventId: string | undefined,
     @Req() req: Request & { user: { sub: string } },
     @Res() res: Response,
   ) {
@@ -589,17 +593,41 @@ export class AgentController {
     if (presenceThreadId && presenceThreadId !== sessionId) {
       recordSessionSeen(presenceThreadId)
     }
+    const cursor = /^\d+$/.test(lastEventId?.trim() ?? '') ? lastEventId!.trim() : undefined
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
 
+    // idle 闸门收窄（multi-device Task 4，plan 已知坑「旁听流 30s idle ⇒ 重连风暴」）：
+    // 30s 只用于**首帧前**（等不到首帧 = 订阅没起来，断开让前端退避重试）；
+    // 首帧之后连接转常驻，靠 15s 心跳帧保活（与主链路 chat/conversation 同款，
+    // 防 nginx/浏览器把静默长连接当死连接掐掉）。
+    let firstFrameSeen = false
     const idleTimer = setTimeout(() => {
       res.end()
     }, 30_000)
+    const heartbeatTimer = setInterval(() => {
+      try {
+        res.write('data: {"type":"heartbeat"}\n\n')
+      } catch {
+        // 客户端已断开，循环/关闭会清理
+      }
+    }, 15_000)
     try {
-      for await (const event of this.agentService.runEventStream(threadId?.trim() || sessionId)) {
-        res.write(`data: ${JSON.stringify(event)}\n\n`)
-        idleTimer.refresh()
+      for await (const event of this.agentService.runEventStream(threadId?.trim() || sessionId, {
+        lastEventId: cursor,
+      })) {
+        if (!firstFrameSeen) {
+          firstFrameSeen = true
+          clearTimeout(idleTimer)
+        }
+        // multi-device Task 4：透传 pi-runtime 的单调 seq 为 SSE id 行——
+        // 浏览器据此维护 Last-Event-ID，断线重连自动带回，实现断点续传（D1）。
+        // ⚠️ 无 seq 的合成事件不写 id 行：写了会让 Last-Event-ID 指向不存在的
+        // seq ⇒ 重连从错误的游标续传（错位丢帧比丢整帧更难查）。
+        const seq = (event as { seq?: number }).seq
+        const idLine = seq === undefined ? '' : `id: ${seq}\n`
+        res.write(`${idLine}data: ${JSON.stringify(event)}\n\n`)
       }
     } catch (err) {
       // 旁听流断开是常态（30s idle / 前端卸载），但也可能是 runtime 不可达——
@@ -609,6 +637,7 @@ export class AgentController {
       )
     } finally {
       clearTimeout(idleTimer)
+      clearInterval(heartbeatTimer)
       res.end()
     }
   }

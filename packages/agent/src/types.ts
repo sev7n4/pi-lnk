@@ -84,6 +84,18 @@ export interface AgentStreamEvent {
     // 对齐 Codex `NotSubmittedReason`：被拒绝的提交**不得**退化成一个新回合。
     // 409 是传输层信号，语义太薄（UI 拿不到 reason 就没法分文案），故显式下发。
     | 'turn_not_submitted'
+    // D4（multi-device Task 6，spec §5.2 ConversationAck）：流末尾的**服务端裁定**。
+    // data: { runId?: string; mode: 'run' | 'steer' | 'followup'; reason?: 'not_idle' | 'not_steerable' }
+    //   · run         —— 空闲 ⇒ 本流发起新 run（owner，唯一落库者）
+    //   · steer       —— 忙碌 ⇒ 发言并入在跑 run 的 steer 队列（本轮 turn 边界接住）
+    //   · followup    —— 忙碌且 steer 塞不进去 ⇒ followUp 兜底（收尾边界接住，消息不蒸发）
+    //   · reason      —— 仅 mode!=='run' 时出现：说明为什么不是新开一轮（恒 not_idle）
+    //   · runId       —— 观测值（事件流里的 runId）；runtime 未透传时**不出现该键**
+    //   · messageId   —— 本期不出现（插话落库是 Task 8；提前发就是假装已落库）
+    // ⚠️ 与 turn_not_submitted 并存而非取代：后者是「未受理」的结构化拒绝（409 当刻下发），
+    // 本事件是「已受理、归属如下」的末尾裁定——双失败 / 非 409 失败都不发（那些场景
+    // 已有 turn_not_submitted / error 把话说清，ack 再发就是二次编造）。
+    | 'turn_ack'
     | 'done'
     | 'error'
   data: unknown
