@@ -131,7 +131,7 @@ function onAnchorClick() {
               @create="emit('create')"
             />
           </div>
-          <span class="hidden h-px w-16 shrink-0 bg-gradient-to-l from-overlay/30 to-transparent lg:block" aria-hidden="true" />
+          <span class="lnk-deco-left hidden h-px w-16 shrink-0 bg-gradient-to-l from-overlay/30 to-transparent lg:block" aria-hidden="true" />
         </div>
 
         <!-- 中：落域（墨鱼悬顶 + 墨滴散落）+ 落款印章（唯一创作入口）+ 门阶 pill -->
@@ -184,8 +184,8 @@ function onAnchorClick() {
 
         <!-- 右：画布（落点） -->
         <div class="lnk-col-canvas">
-          <span class="hidden h-px w-16 shrink-0 bg-gradient-to-r from-overlay/30 to-transparent lg:block" aria-hidden="true" />
-          <div class="text-center lg:text-left">
+          <span class="lnk-deco-right hidden h-px w-16 shrink-0 bg-gradient-to-r from-overlay/30 to-transparent lg:block" aria-hidden="true" />
+          <div class="lnk-canvas-text text-center lg:text-left">
             <!-- 窄屏也显示「画布」标签（2026-10-23）：PC 三叙事的右列内容整体复用，
                  字号按窄屏降一档（lg 断点还原 PC 尺寸）。 -->
             <p class="text-[length:var(--lnk-text-base)] font-medium text-[color:var(--lnk-text-on-signature)] lg:text-[length:var(--lnk-text-lg)]">
@@ -319,8 +319,10 @@ function onAnchorClick() {
 
 .lnk-col-anchor {
   grid-area: anchor;
-  /* 中列宽度锁死 = 锚盘宽：任何内容（CTA 文字等）都不许把中列撑宽——
-     撑宽会挤压左右两列 ⇒ 三叙事散架。 */
+  /* 窄屏：中列宽度锁死 = 锚盘宽：任何内容（CTA 文字等）都不许把中列撑宽——
+     撑宽会挤压左右两列 ⇒ 三叙事散架。
+     ⚠️ 桌面（lg）必须**解锁**（width:auto）：原设计中列宽 = CTA 自然宽（186px），
+     锁成锚盘宽（168px）会让 CTA 溢出中列 ⇒ 与原设计不符。 */
   width: var(--lnk-anchor-size);
   max-width: 100%;
 }
@@ -330,30 +332,83 @@ function onAnchorClick() {
 }
 
 @media (min-width: 1024px) {
+  /* ⚠️ 桌面（lg）必须**逐条还原**原设计，不得被窄屏改动牵连
+     （2026-10-23 用户提醒：「不要破坏现在 web 端的结构和样式设计」）。
+     原设计 = 三列 grid + 左列 [标签组/输入框 竖排 + 右向装饰线] + 右列 [左向装饰线 + 文字组]，
+     两条装饰线分别指向中列的锚。窄屏那套（display:contents / areas / 输入框下移）只对 <lg 生效。 */
   .lnk-stage {
     grid-template-areas: none;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
     justify-items: center;
     column-gap: 40px;
     row-gap: 48px;
   }
 
-  /* 桌面：talk 列恢复为普通列（标签组在上、输入框在下、装饰线在左） */
-  .lnk-col-talk {
-    display: flex;
-    width: 100%;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 12px;
-  }
-
+  /* ⚠️ 先把窄屏的 grid-area 引用**全部清掉**：lg 下 grid-template-areas: none，
+     残留的 grid-area: talk/anchor/canvas 会让这些 item 退化成 auto 放置
+     ⇒ 三列顺序错乱（中列被挤到右侧、右列与中列重叠、锚偏离 slogan 中轴 348px）。
+     ⚠️ 这条必须排在下面各条 grid-area 定位**之前**（同优先级靠书写顺序决胜）。 */
   .lnk-talk-label,
-  .lnk-talk-input {
+  .lnk-talk-input,
+  .lnk-col-anchor,
+  .lnk-col-canvas {
     grid-area: auto;
   }
 
+  /* 桌面：中列宽度回到原设计（由 CTA 自然撑开），窄屏的锁宽只服务 <lg */
+  .lnk-col-anchor {
+    width: auto;
+  }
+
+  /* 左列：内容（右对齐、标签在上输入框在下）+ 装饰线在其右侧（指向中列） */
+  .lnk-col-talk {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    column-gap: 24px;
+    align-items: center;
+    justify-items: end;
+  }
+
+  .lnk-talk-label {
+    grid-area: 1 / 1 / 2 / 2;
+    justify-self: end;
+  }
+
   .lnk-talk-input {
+    grid-area: 2 / 1 / 3 / 2;
+    justify-self: end;
+    width: 100%;
     max-width: none;
+  }
+
+  .lnk-deco-left {
+    grid-area: 1 / 2 / 3 / 3;
+    align-self: center;
+  }
+
+  /* 右列：装饰线在左（指向中列）+ 文字组在其右侧。
+     ⚠️ width:100% = 原设计的 w-full：右列必须占满 1fr 格（否则按内容宽 200px 缩在
+     格子里，左右两列宽度不等 ⇒ 与原设计的 315/315 不符）。 */
+  .lnk-col-canvas {
+    display: grid;
+    width: 100%;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 24px;
+    align-items: center;
+    justify-items: start;
+  }
+
+  .lnk-deco-right {
+    grid-area: 1 / 1 / 2 / 2;
+    align-self: center;
+  }
+
+  .lnk-canvas-text {
+    grid-area: 1 / 2 / 2 / 3;
+    justify-self: start;
   }
 }
 
