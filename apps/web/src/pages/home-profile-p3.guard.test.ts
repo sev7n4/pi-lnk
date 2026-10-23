@@ -247,7 +247,10 @@ describe('P3-K 叙事动线与仪式动效（走查「叙事仪式感」轮·第
 
   it('输入站进三联：stage 承载输入框（空间即故事，不再大宽度孤条）', () => {
     expect(HERO_SRC, '叙事舞台容器').toContain('lnk-stage')
-    expect(HERO_SRC, '输入站位（左「说」）').toContain('lnk-stage__talk')
+    // 2026-10-23：输入站类名改为 .lnk-talk-input（窄屏它被挪到三列**下方**独占一行，
+    // 桌面仍在左列内）——守卫的是「输入框在叙事舞台内」，不是某个旧类名。
+    expect(HERO_SRC, '输入站位（左「说」）').toContain('lnk-talk-input')
+    expect(HERO_SRC, '输入站必须挂在叙事舞台内（不是大宽度孤条）').toContain('lnk-stage')
   })
 
   it('墨点动效：落域 + 三颗墨点 + 落距同源（--lnk-drop-fall）', () => {
@@ -310,16 +313,18 @@ describe('P3-L 墨鱼归位 / 输入框 / 紫晕减重 / 水滴（走查「叙�
     expect(
       read('../constants/brand.ts'),
       '该词若不再是主行子串，切分渲染会静默丢掉 inline 墨鱼位',
-    ).toContain('让画布记住你的模样')
+    ).toContain('让世界记住你的模样')
   })
 
   it('①′ 墨鱼 → 墨滴 → 锚同轴：三联两侧 minmax(0,1fr)，锚真正落在 slogan 中轴', () => {
     // 2026-10-22 实测：裸 1fr 的隐式 min 是 min-content，左右列不等宽把中列挤偏
     // 30px（锚 cx 750.1 vs slogan 中轴 720，四档视口一致）
+    // 2026-10-23：栅格改由 scoped CSS 承载（Tailwind 的 grid-cols 任意值表达不了
+    // grid-template-areas，且与 scoped 规则同优先级靠顺序决胜太脆）⇒ 判据跟到 CSS。
     expect(
       HERO_SRC,
       '两侧轨道必须 minmax(0,1fr) 才能等宽',
-    ).toContain('lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]')
+    ).toContain('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)')
   })
 
   it('② signature 输入框：聚焦走容器 focus-within，紫 ring 退场', () => {

@@ -18,7 +18,14 @@ export const PRIVACY_PATH = '/privacy'
  * 一律用 on-signature 实色令牌。
  */
 export const BRAND_SLOGAN_LEAD = '你体内早就有一囊墨，只是…没有找到你的锚。'
-export const BRAND_SLOGAN_MAIN = '墨鱼π，锚定你的创意，一点一滴洒在画布，让画布记住你的模样。'
+/**
+ * 2026-10-23 用户裁决：「让画布记住你的模样」→「让世界记住你的模样」——
+ * 品牌承诺从工具（画布）升到世界（作品走出画布才被世界记住）。
+ * ⛔ 移动端与 PC 端共用这一句（单一真相源）⇒ 改这里两端同时生效。
+ * ⚠️ BRAND_SLOGAN_MAIN_MASCOT_BEFORE（inline 墨鱼位）必须仍是本句子串：
+ * 「让世界记住你的模样」含「记住你的模样」⇒ 墨鱼位不受影响（单测锁父句相等）。
+ */
+export const BRAND_SLOGAN_MAIN = '墨鱼π，锚定你的创意，一点一滴洒在画布，让世界记住你的模样。'
 /**
  * 主行中的唯一强调词（2026-10-22 用户裁定「slogan 需要一个视觉重音」）。
  *
