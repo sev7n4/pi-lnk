@@ -3,6 +3,8 @@ import type { CanvasAction, CanvasData } from '@lnkpi/shared'
 import {
   applyActionsToFlow,
   canvasDataToFlow,
+  extrasForCanvasSave,
+  flowToCanvasData,
   type FlowEdge,
   type FlowNode,
 } from './useCanvasActions'
@@ -212,5 +214,27 @@ describe('SP-A：混合批量 actions 一次应用齐全（create_nodes_batch �
       { type: 'add_node', payload: { id: 'image-1', nodeType: 'image', position: { x: 999, y: 999 }, data: { status: 'draft' } } } as unknown as CanvasAction,
     ])
     expect(replay.nodes.filter((n) => n.id === 'image-1')).toHaveLength(1)
+  })
+})
+
+// SP-C（2026-10-23）：视口入序列化，但必须是「可选键」——
+// 不传时 payload 里**连键都不能有**（否则存量画布形状变了，且等于凭空产生一次 migration）。
+describe('SP-C：canvasData 序列化透传可选 viewport（N1/N2）', () => {
+  it('传 viewport ⇒ 产出含该键且逐值全等', () => {
+    const data = flowToCanvasData([node('a')], [], { viewport: { x: -120, y: 33, zoom: 1.25 } })
+    expect(data.viewport).toEqual({ x: -120, y: 33, zoom: 1.25 })
+  })
+
+  it('不传 ⇒ 产出**不含** viewport 键（不是 viewport: undefined）', () => {
+    const data = flowToCanvasData([node('a')], [])
+    expect('viewport' in data).toBe(false)
+    expect(data.viewport).toBeUndefined()
+  })
+
+  it('extrasForCanvasSave 透传 viewport；不传则 extras 也不含该键', () => {
+    const withVp = extrasForCanvasSave({ viewport: { x: 1, y: 2, zoom: 0.5 } })
+    expect(withVp.viewport).toEqual({ x: 1, y: 2, zoom: 0.5 })
+    const without = extrasForCanvasSave({ groups: [] })
+    expect('viewport' in without).toBe(false)
   })
 })

@@ -173,6 +173,12 @@ export function flowToCanvasData(
     previousCanvas?: Pick<CanvasData, 'compositionRunGroup'>
     /** 2026-10-20 分组侧车（分组不再是节点，单列一份随画布落库）。 */
     groups?: CanvasData['groups']
+    /**
+     * SP-C（2026-10-23）视口：可选。
+     * ⛔ 不传 ⇒ 产出的对象里**没有这个键**（不是 `viewport: undefined`）——
+     *    存量画布 payload 形状零变化，不产生 migration（N1/N2）。
+     */
+    viewport?: CanvasData['viewport']
   },
 ): CanvasData {
   const ids = new Set(nodes.map((n) => n.id))
@@ -201,6 +207,10 @@ export function flowToCanvasData(
   if (extras?.groups && extras.groups.length > 0) {
     data.groups = extras.groups
   }
+  // SP-C 视口：只在显式传入时写入键本身（不写 viewport: undefined ⇒ N1）
+  if (extras?.viewport) {
+    data.viewport = extras.viewport
+  }
   return data
 }
 
@@ -208,6 +218,8 @@ export type CanvasSaveExtras = {
   compositionRunGroup?: CanvasData['compositionRunGroup']
   previousCanvas?: Pick<CanvasData, 'compositionRunGroup'>
   groups?: CanvasData['groups']
+  /** SP-C：视口；省略 ⇒ 落库 payload 不含该键（N1）。 */
+  viewport?: CanvasData['viewport']
 }
 
 /** Prefer in-memory extras; if both are empty, keep a server-side compositionRunGroup. */
@@ -216,11 +228,14 @@ export function extrasForCanvasSave(input: {
   lastKnown?: CanvasData['compositionRunGroup'] | null
   server?: CanvasData['compositionRunGroup'] | null
   groups?: CanvasData['groups'] | null
+  /** SP-C：当前视口；不传 ⇒ extras 不含 viewport（⇒ 落库不写该键，N1）。 */
+  viewport?: CanvasData['viewport'] | null
 }): CanvasSaveExtras {
   const extras: CanvasSaveExtras = {}
   if (input.current) extras.compositionRunGroup = input.current
   const previous = input.lastKnown ?? input.server ?? undefined
   if (previous) extras.previousCanvas = { compositionRunGroup: previous }
   if (input.groups && input.groups.length > 0) extras.groups = input.groups
+  if (input.viewport) extras.viewport = input.viewport
   return extras
 }
