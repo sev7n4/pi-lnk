@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick, provide, watch, h, type Ref } from 'vue'
+import { ref, onMounted, onUnmounted, onBeforeUnmount, computed, nextTick, provide, watch, h, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   VueFlow,
@@ -159,11 +159,14 @@ import {
   CANVAS_REF_PICK_REJECT_KEY,
   MOBILE_NODE_ACTION_REQUEST_KEY,
   MOBILE_NODE_OPEN_VIEWER_KEY,
+  MOBILE_NODE_OPEN_EDITOR_KEY,
   type CanvasGroupResizeFn,
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { summarizeMobileNodeTasks } from '@/composables/mobileNodeTaskSummary'
+import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import { useViewportGestures } from '@/composables/useViewportGestures'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
 import RefineWorkbench from '@/components/canvas/refine/RefineWorkbench.vue'
@@ -1916,6 +1919,11 @@ function handleDockAdd(type: DockNodeType) {
   selectOnlyNode(id)
   persistUserEdit()
   void focusNodeById(id)
+  // R2-T3（2026-10-23 真机走查）：R1 删掉移动端 Dock 后，「选中即开编辑器」这条路在移动端断了
+  // ⇒ 新建节点后没有任何编辑器承载，用户拿不到一个可写 prompt 的入口。
+  // 移动端直接打开编辑 sheet（复用 R1 的 MobileNodeEditorSheet，Q3「create/edit 同源」）。
+  // ⛔ PC 路径一行不动（桌面仍靠选中开 DockStudioToolbar）。
+  if (isMobileLayout.value) openMobileNodeEditor(id)
 }
 
 function selectOnlyNode(id: string) {
@@ -2617,6 +2625,17 @@ const mobileViewerNode = ref<{
 
 provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
   mobileViewerNode.value = node
+})
+
+/**
+ * 移动端 tap **空节点** → 打开编辑 sheet（R2-T2，2026-10-23 真机走查）。
+ *
+ * ⭐ 真机走查反馈「点空白节点会进入空白全屏」——`NodeRenderer` 原先无条件开 viewer，
+ * 而 viewer 的 img/video 均 `v-if="url"` ⇒ 空节点 tap 得到一片空白。
+ * 现在由纯函数 `resolveMobileNodeTapIntent` 判定意图，空节点路由到这里（= 编辑 sheet）。
+ */
+provide(MOBILE_NODE_OPEN_EDITOR_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
+  if (node?.id) openMobileNodeEditor(node.id)
 })
 
 function closeMobileViewer() {
@@ -4303,6 +4322,59 @@ async function handleProposeConfirmCancel(nodeId: string) {
 }
 
 /**
+ * R3-T4：移动端壳层聚合状态栏的数据源。
+ *
+ * 把画布各节点的「生成中 / 待确认」收敛成一条（判据来自纯函数
+ * `summarizeMobileNodeTasks`，与磁贴 / 徽标同源于 `resolveMobileNodeState`）。
+ * ⭐ 只给「数量 + 最早起始时间」——**不假造进度百分比**（全仓无生成进度字段）。
+ */
+const mobileNodeTaskSummary = computed(() =>
+  summarizeMobileNodeTasks(
+    nodes.value.map((n) => {
+      const data = (n.data ?? {}) as Record<string, unknown>
+      return {
+        id: n.id,
+        type: String(n.type),
+        data,
+        title: typeof data.title === 'string' ? data.title : undefined,
+      }
+    }),
+  ),
+)
+
+/** 聚合条的计时：按最早起始时间算已耗时（1s 一跳，仅在有生成中时跑）。 */
+const mobileNodeTaskElapsed = ref('')
+let mobileNodeTaskTimer: ReturnType<typeof setInterval> | null = null
+
+function syncMobileNodeTaskTimer() {
+  if (mobileNodeTaskTimer) {
+    clearInterval(mobileNodeTaskTimer)
+    mobileNodeTaskTimer = null
+  }
+  if (mobileNodeTaskSummary.value.generatingCount <= 0) {
+    mobileNodeTaskElapsed.value = ''
+    return
+  }
+  const tick = () => {
+    const startedAt = mobileNodeTaskSummary.value.earliestStartedAt
+    mobileNodeTaskElapsed.value = startedAt
+      ? formatElapsed(startedAt, Date.now())
+      : ''
+  }
+  tick()
+  mobileNodeTaskTimer = setInterval(tick, 1000)
+}
+
+watch(
+  () => mobileNodeTaskSummary.value.generatingCount,
+  () => syncMobileNodeTaskTimer(),
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  if (mobileNodeTaskTimer) clearInterval(mobileNodeTaskTimer)
+})
+
+/**
  * ADR-0011 T1/T4：节点内联「编辑」——置**显式编辑意图**并选中该节点：
  * dock 门控放行（用户要改提示词 / 参数），改完仍走 dock 生成按钮确认
  * （同一 confirmProposeWait → /answers 路径，不新造第二套确认语义）。
@@ -5789,6 +5861,11 @@ onUnmounted(() => {
       :on-node-editor-patch="applyMobileEditorPatch"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"
+      :node-generating-count="mobileNodeTaskSummary.generatingCount"
+      :node-pending-nodes="mobileNodeTaskSummary.pendingNodes"
+      :node-generating-elapsed="mobileNodeTaskElapsed"
+      :on-node-pending-confirm="handleAgentGenerateNode"
+      :on-node-pending-cancel="handleProposeConfirmCancel"
     />
 
     <MembershipModal v-model="showMembership" />

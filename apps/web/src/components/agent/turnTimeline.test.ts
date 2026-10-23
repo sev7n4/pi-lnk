@@ -118,6 +118,37 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(gapNotices).toHaveLength(0)
   })
 
+  it('D2（Task 2）：truncated 账本重放 ⇒ 顶部置一条「尾部未捕获」标注（方向与 partial 相反）', () => {
+    const events: TimelineEvent[] = [
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'propose_generation', args: {} } },
+      { type: 'tool_result', data: { toolCallId: 'c1', name: 'propose_generation', result: {} } },
+    ]
+    const tl = replayTimelineEvents(events as never[], '正文', { truncated: true })
+    expect(tl.parts[0]?.kind).toBe('notice')
+    expect((tl.parts[0] as { text?: string }).text).toContain('未捕获到生成结束')
+
+    // 对照：不传 truncated ⇒ 不出「尾部缺口」标注（键不出现纪律）
+    const plain = replayTimelineEvents(events as never[], '正文')
+    const tailNotices = byKind(plain, 'notice').filter((n) => n.text.includes('未捕获到生成结束'))
+    expect(tailNotices).toHaveLength(0)
+  })
+
+  it('D2（Task 2）：partial（头部缺口）与 truncated（尾部缺口）必须分别标注，不混用', () => {
+    const events: TimelineEvent[] = [
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'propose_generation', args: {} } },
+    ]
+    // 两者同时为真（两头都不齐）⇒ 两条标注都在，且文案互不串味
+    const both = replayTimelineEvents(events as never[], '正文', { partial: true, truncated: true })
+    const notices = byKind(both, 'notice').map((n) => n.text)
+    expect(notices.some((t) => t.includes('前半段'))).toBe(true)
+    expect(notices.some((t) => t.includes('未捕获到生成结束'))).toBe(true)
+
+    // ⛔ 反例锁：只有 partial 时**不得**出现尾部缺口文案（否则会说谎：尾部其实看到了）
+    const headOnly = replayTimelineEvents(events as never[], '正文', { partial: true })
+    const headNotices = byKind(headOnly, 'notice').map((n) => n.text)
+    expect(headNotices.some((t) => t.includes('未捕获到生成结束'))).toBe(false)
+  })
+
   it('反例锁：首事件是工具 ⇒ 首块 kind !== thinking（unshift 不复活）', () => {
     const tl = feed([
       { type: 'tool_call', data: { toolCallId: 'c1', name: 'get_canvas_summary' } },

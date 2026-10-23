@@ -49,6 +49,22 @@ export interface AgentMessageMetadata {
   partial?: boolean
   /** 缺口起点：本流捕获到的首个全局序号（此序号之前的事件没被看到）。仅 `partial` 时携带。 */
   gapFrom?: number
+  /**
+   * D2（multi-device Task 2）：本条账本**尾部被截断**（消费方断连 / 连接被掐断，
+   * Nest 侧只拿到 run 的前缀，后续事件仍在 pi 侧发生但没被捕获）。
+   *
+   * 与 `partial` 的区别必须讲清楚——**方向相反**：
+   * - `partial` = **头部**缺口（没看到 run 起点，前半段在别的流/别的连接里）；
+   * - `truncated` = **尾部**缺口（看到了起点，但后半段没被捕获）。
+   *
+   * ⛔ 绝不用 `partial` 表达截断：那样会让读端以为「前半段没看到」，而实际上
+   * 前半段在、后半段丢——方向说反比不说更糟。
+   *
+   * 两种标志可同时为真（`partial:true, truncated:true`）：账本既非全量、也不是全量的一半，
+   * 而是「两头都不齐」。此时读端**必须**回退到「以 pi 侧 transcript 为准」的路径，
+   * 不得拿本行当全量重放。
+   */
+  truncated?: boolean
   /** PR4 历史修复：本行被判定为影子行时指向 owner 消息 id；读取出口据此过滤。 */
   supersededBy?: string
 }

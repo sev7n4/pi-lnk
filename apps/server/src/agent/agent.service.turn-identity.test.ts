@@ -13,7 +13,8 @@
  *   A. 409 ⇒ 本流降级为 **shadow**：**不落库**、不结算，但事件照常转发（进度可见）；
  *   B. 结构化拒绝 `turn_not_submitted{reason}` 必须下发 —— 409 是传输层信号，
  *      UI 拿不到 reason 就分不出「已并入 / 当前不可插话」两种文案；
- *   C. 用户发言不得蒸发：409 后必须走 steer 队列；steer 也失败 ⇒ reason=not_steerable；
+ *   C. 用户发言不得蒸发：409 后必须走 steer 队列；steer 也失败 ⇒ followUp 兜底
+ *      （D4 Task 6）；两者都失败 ⇒ reason=not_steerable；
  *   D. 落库事件带 pi-runtime **会话级全局 seq**（`gSeq`），与 `afterSeq` 同编号空间
  *      —— 局部 `seq` 是每条流各自从 1 起，跨流不可比。
  */
@@ -211,6 +212,9 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     const pi = stubPiClient([...TYPICAL_TURN])
     pi.prompt.mockRejectedValue(busy)
     pi.steer.mockRejectedValue(new Error('session gone'))
+    // D4（Task 6）：steer 失败后有 followUp 兜底 ⇒ 必须让兜底也失败，
+    // 才回到 not_steerable（否则 followup 受理成功，reason 应是 not_idle）。
+    pi.followUp.mockRejectedValue(new Error('session gone'))
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
 
     const out: Array<{ type: string; data?: unknown }> = []
@@ -218,6 +222,8 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
       out.push(e)
     }
 
+    // 兜底确实被尝试过（不是直接放弃）——「队列满时消息蒸发」的止血点。
+    expect(pi.followUp).toHaveBeenCalledTimes(1)
     const refusal = out.find((e) => e.type === 'turn_not_submitted')
     expect(refusal?.data).toEqual({ reason: 'not_steerable' })
     expect(assistantCreates()).toHaveLength(0)

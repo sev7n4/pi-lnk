@@ -573,11 +573,14 @@ describe('AgentService pi-runtime switch (B4)', () => {
       'main',
       expect.objectContaining({ forceSkills: undefined }),
     )
+    // D4（multi-device Task 6）：流末尾追加 turn_ack（服务端裁定：本流 owner 新开一轮）。
+    // done（agent_end 映射）位置不变，turn_ack 恒在其后——plan Task 6「流末尾」。
     expect(events.map((e) => e.type)).toEqual([
       'pi_agent_start',
       'text_delta',
       'text_delta',
       'done',
+      'turn_ack',
     ])
     expect(events[1].data).toEqual({ text: 'pi-' })
     expect(events[2].data).toEqual({ text: 'hello' })
@@ -1231,8 +1234,9 @@ const runMemoryInjection = async (items: unknown[], tag: string): Promise<string
     const second = drain()
     const [a, b] = await Promise.all([first, second])
 
-    expect(a).toEqual(['done'])
-    expect(b).toEqual(['done'])
+    // Task 6：流末尾追加 turn_ack（回合归属裁定）
+    expect(a).toEqual(['done', 'turn_ack'])
+    expect(b).toEqual(['done', 'turn_ack'])
     // 常驻会话：每轮都走一次幂等 create（resume），但没有任何删除
     expect(pi.createSession).toHaveBeenCalledTimes(2)
     expect(pi.deleteSession).not.toHaveBeenCalled()

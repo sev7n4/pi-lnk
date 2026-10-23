@@ -43,6 +43,7 @@ import {
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 import { useAuthStore } from '@/stores/auth'
+import { randomId } from '@/utils/randomId'
 
 export interface AgentStreamMessage {
   id: string
@@ -100,10 +101,26 @@ type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'
   metadata?: string | null
 }
 
+/**
+ * 本地消息 id 的唯一生成口（multi-device Task 3 · R6）。
+ *
+ * 旧实现 `msg-${Date.now()}` 在**同一毫秒**内多次调用必撞（同 tick 的 user +
+ * assistant 气泡、插话气泡与正常发送同刻），撞 id ⇒ `v-for :key` 重复 ⇒
+ * Vue DOM 复用错位 ⇒ 肉眼「消息顺序乱」。
+ *
+ * ⚠️ 生产是 `http://`（非安全上下文）⇒ `crypto.randomUUID` 不可用（[SecureContext]
+ * 限定）⇒ **不得裸调它**：守卫 `randomId.guard.test.ts` 会拦下（历史上三次踩坑
+ * 都是「点完一律提交失败、nginx 侧 0 请求」——请求根本没发出去）。统一走
+ * `randomId()`：它自带「时间戳 + 随机串」降级，那条降级路径才是生产主路径，
+ * 不是防御性代码（守卫：agent.messageIdentity.test.ts）。
+ * Task 9 的 `clientId` 复用本函数（plan「Interfaces · Produces」）。
+ */
+export function nextLocalMessageId(): string {
+  return `msg-${randomId()}`
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const messages = ref<AgentStreamMessage[]>([])
-  /** 本地消息 id 序号：与 `msg-${Date.now()}` 组合出**唯一** id（见 insertUserMessageBeforeAssistant）。 */
-  let localMsgSeq = 0
   const isStreaming = ref(false)
   /** Q2（2026-10-14）：本回合实时预估积分（usage_delta 事件逐段覆盖，turn 结束清位）。
    * 状态行 running 段「预估 -N积分」数据源；纯展示预估，P2 落账后由 settled 权威值替代。 */
@@ -210,9 +227,7 @@ export const useAgentStore = defineStore('agent', () => {
       }
     }
     const msg: AgentStreamMessage = {
-      // ⚠️ id 必须唯一：插话气泡可能与同毫秒的正常发送撞 `msg-${Date.now()}`。
-      //    撞 id 会让 v-for 的 :key 重复 ⇒ 渲染错乱。
-      id: `msg-${Date.now()}-${localMsgSeq++}`,
+      id: nextLocalMessageId(),
       role: 'user',
       content,
       ...(extras?.entryId ? { entryId: extras.entryId } : {}),
@@ -243,7 +258,7 @@ export const useAgentStore = defineStore('agent', () => {
     // TURN-IDENTITY PR3：新回合开始清掉「发言被拒」瞬时态，避免跨回合误显示
     turnRefusal.value = null
     messages.value.push({
-      id: `msg-${Date.now()}`,
+      id: nextLocalMessageId(),
       role: 'user',
       content,
       attachments: extras?.attachments?.map((attachment) => ({ ...attachment })),
@@ -280,7 +295,7 @@ export const useAgentStore = defineStore('agent', () => {
     // Q2：新回合开始，清掉上一回合的实时预估（状态行只显示本回合消耗）
     liveEstimatedCredits.value = null
     const msg: AgentStreamMessage = {
-      id: `msg-${Date.now()}`,
+      id: nextLocalMessageId(),
       role: 'assistant',
       content: '',
       streaming: true,
@@ -736,8 +751,11 @@ export const useAgentStore = defineStore('agent', () => {
       if (isFeatureOn('turn_timeline') && meta?.executionEvents?.length) {
         // TURN-IDENTITY PR3：`partial` 是服务端判定的「账本不完整」（本流没捕获到
         // run 起点）⇒ 重放时置顶一条缺口标注，不让残缺过程冒充完整过程。
+        // D2（multi-device Task 2）：`truncated` 是「尾部未捕获」（本流没等到 agent_end，
+        // pi 侧那轮仍在跑）⇒ 方向与 partial 相反，**分别**标注，不混用。
         timeline = replayTimelineEvents(meta.executionEvents, persisted.content, {
           partial: meta.partial === true,
+          truncated: meta.truncated === true,
         })
       }
       // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在

@@ -85,6 +85,18 @@ describe('插话/尾随入队落库（2026-10-21）', () => {
     })
   })
 
+  it('⭐ 入队落库带 queued:true（D5：被消费前一直是「排队中」）', async () => {
+    const s = newService()
+    await s.steerPiRun({ sessionId: 's1', threadId: 't1', text: '再加一只猫' })
+    await s.followUpPiRun({ sessionId: 's1', threadId: 't1', text: '等下换成夜景' })
+
+    // 变异点：落库时不写 queued ⇒ 该行默认 false ⇒「排队中」永远显示不出来，
+    // 而终态转换（消费后置 false）也就没有起点。
+    for (const call of agentMessageUpsert.mock.calls) {
+      expect(call[0].create.queued).toBe(true)
+    }
+  })
+
   it('⭐ 落库内容是「用户原话」，不是发给 pi 的拼装文本', async () => {
     const s = newService()
     await s.steerPiRun({ sessionId: 's1', threadId: 't1', text: '再加一只猫' })

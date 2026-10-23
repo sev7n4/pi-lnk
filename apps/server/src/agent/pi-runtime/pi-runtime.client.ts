@@ -587,17 +587,23 @@ export class PiRuntimeClient {
 	 *  - HTTP 404（会话已删除）：终止并回调 onError（本轮 turn 已结束，属预期）；
 	 *  - body clean end（服务端正常关闭）：直接返回，不重连、不回调 onError。
 	 *  - 返回的取消函数随时可调；取消后不再重连。
+	 *
+	 * multi-device Task 4：opts.lastEventId —— **首连**即带游标（旁听端断线重连
+	 * 时把浏览器 Last-Event-ID 传进来，从断点续传而非重放/丢增量）。未传时维持
+	 * 既有 live/重放语义；传了则优先于 from=now（与服务端「lastEventId 优先」一致）。
+	 * ⚠️ 调用方必须只传合法非负整数字符串（controller 已做 /^\d+$/ 闸门）——
+	 * 空串/畸形值会落进 pi-runtime 的 `afterSeq=-1` 全量重放分支（plan 已知坑）。
 	 */
 	streamEvents(
 		sessionId: string,
 		onEvent: (event: PiRuntimeEvent) => void,
 		onError?: (err: unknown) => void,
-		opts?: { live?: boolean },
+		opts?: { live?: boolean; lastEventId?: string },
 	): () => void {
 		const controller = new AbortController();
 		const RECONNECT_BUDGET_MS = 120_000;
 		void (async () => {
-			let lastEventId: string | undefined;
+			let lastEventId: string | undefined = opts?.lastEventId;
 			let backoff = 250;
 			// 快照 resync 后强制转 live（上游范式「快照+增量」）：重放型消费者的
 			// afterSeq=-1 在残缺 buffer 上必然再 409（`-1 >= droppedFromSeq` 恒假），
