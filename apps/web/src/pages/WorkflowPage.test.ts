@@ -14,7 +14,13 @@ const { apiGet, apiPost, canvasList, canvasCreate, mobileFlag, locationAssign } 
   canvasCreate: vi.fn(),
   /** 移动端布局开关：每个用例可改（组件挂载时读快照，watch immediate 即用） */
   mobileFlag: { isMobile: false },
-  /** window.location.assign 的替身（jsdom 的导航未实现，调用即抛） */
+  /**
+   * window.location.assign 的替身（jsdom 的导航未实现，调用即抛）。
+   *
+   * ⚠️ 2026-10-24 性能修复后，移动端入口分发**不再用** location.assign
+   *    （整页刷新会让移动端首屏总传输翻倍），改走 router.replace。
+   *    本替身保留：用于**断言不再调用它**（防回归到整页刷新）。
+   */
   locationAssign: vi.fn(),
 }))
 
@@ -54,7 +60,7 @@ vi.mock('element-plus', () => ({
   ElMessageBox: { confirm: vi.fn(async () => true) },
 }))
 
-const routerMocks = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }))
+const routerMocks = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }))
 vi.mock('vue-router', () => ({
   useRouter: () => routerMocks,
   useRoute: () => ({ params: {}, query: {} }),
@@ -105,6 +111,9 @@ describe('WorkflowPage 主页收拢（P1）', () => {
     canvasList.mockResolvedValue({ data: { data: [] } })
     apiGet.mockResolvedValue({ data: { data: { items: makeWorks(10), total: 10 } } })
     canvasCreate.mockReset()
+    // 2026-10-24：移动端分发改走 router.replace ⇒ mock 历史必须复位，否则用例间串味
+    routerMocks.push.mockReset()
+    routerMocks.replace.mockReset()
     mobileFlag.isMobile = false
     sessionStorage.clear()
   })
@@ -167,6 +176,9 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     mobileFlag.isMobile = false
     canvasList.mockReset()
     canvasCreate.mockReset()
+    // 2026-10-24：移动端分发改走 router.replace ⇒ mock 历史必须复位，否则用例间串味
+    routerMocks.push.mockReset()
+    routerMocks.replace.mockReset()
     // jsdom 的 location.assign 是「未实现导航」（调用即抛 Not implemented）；
     // 换成可断言的 mock。spread 保留 href/origin 等其余属性，降低替换面。
     Object.defineProperty(window, 'location', {
@@ -177,14 +189,18 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     locationAssign.mockReset()
   })
 
-  it('已登录回访：有项目 ⇒ 整页跳最近项目（list[0]），且不新建', async () => {
+  it('已登录回访：有项目 ⇒ 跳最近项目（list[0]），且不新建', async () => {
     mobileFlag.isMobile = true
     canvasList.mockResolvedValue({
       data: { data: [{ id: 'proj-1' }, { id: 'proj-2' }] },
     })
     await mountWorkflow({ loggedIn: true })
-    expect(locationAssign).toHaveBeenCalledWith('/workflow/proj-1')
-    expect(locationAssign).toHaveBeenCalledTimes(1)
+    // 2026-10-24 性能修复：改走 router.replace（不再整页刷新）。
+    // ⛔ 仍断言「没调 location.assign」——防回归到整页刷新
+    //    （那会让移动端首屏总传输从 ~590KB 涨到 ~1.2MB）。
+    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-1')
+    expect(routerMocks.replace).toHaveBeenCalledTimes(1)
+    expect(locationAssign, '移动端入口分发不得再整页刷新').not.toHaveBeenCalled()
     expect(canvasCreate).not.toHaveBeenCalled()
   })
 
@@ -192,7 +208,7 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     mobileFlag.isMobile = true
     canvasList.mockResolvedValue({ data: { data: [] } })
     const wrapper = await mountWorkflow({ loggedIn: true })
-    expect(locationAssign).not.toHaveBeenCalled()
+    expect(routerMocks.replace).not.toHaveBeenCalled()
     expect(canvasCreate, '项目是用户意图，不是入口的副作用').not.toHaveBeenCalled()
     // hero 仍在场：品牌叙事 + 锚是唯一创作入口（点按即新建项目）
     expect(wrapper.find('.signature-hero-stub').exists()).toBe(true)
@@ -202,7 +218,7 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     mobileFlag.isMobile = true
     canvasList.mockRejectedValue(new Error('401'))
     await mountWorkflow()
-    expect(locationAssign).not.toHaveBeenCalled()
+    expect(routerMocks.replace).not.toHaveBeenCalled()
     expect(canvasCreate).not.toHaveBeenCalled()
   })
 
@@ -210,11 +226,11 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     mobileFlag.isMobile = true
     canvasList.mockResolvedValue({ data: { data: [{ id: 'proj-1' }] } })
     await mountWorkflow({ loggedIn: true })
-    expect(locationAssign).toHaveBeenCalledTimes(1)
-    locationAssign.mockReset()
+    expect(routerMocks.replace).toHaveBeenCalledTimes(1)
+    routerMocks.replace.mockReset()
     // 模拟顶栏字标 / 浏览器回退：WorkflowPage 再次挂载，flag 已在 ⇒ 落在 hero
     const second = await mountWorkflow({ loggedIn: true })
-    expect(locationAssign).not.toHaveBeenCalled()
+    expect(routerMocks.replace).not.toHaveBeenCalled()
     expect(second.find('.signature-hero-stub').exists()).toBe(true)
   })
 
@@ -224,6 +240,8 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     await mountWorkflow({ loggedIn: true })
     expect(canvasList).not.toHaveBeenCalled()
     expect(locationAssign).not.toHaveBeenCalled()
+    // 2026-10-24：桌面端也不该有任何跳转（分发只对移动端生效）
+    expect(routerMocks.replace).not.toHaveBeenCalled()
   })
 })
 
@@ -243,6 +261,9 @@ describe('移动端品牌页边界（第 3/4 点）', () => {
     mobileFlag.isMobile = false
     canvasList.mockReset()
     canvasCreate.mockReset()
+    // 2026-10-24：移动端分发改走 router.replace ⇒ mock 历史必须复位，否则用例间串味
+    routerMocks.push.mockReset()
+    routerMocks.replace.mockReset()
     apiGet.mockReset()
     apiGet.mockResolvedValue({ data: { data: { items: makeWorks(4), total: 4 } } })
     canvasList.mockResolvedValue({ data: { data: [] } })
@@ -270,7 +291,8 @@ describe('移动端品牌页边界（第 3/4 点）', () => {
     canvasList.mockResolvedValue({ data: { data: [{ id: 'proj-1' }] } })
     await mountWorkflow({ loggedIn: true })
     // 入口分发已把用户带去最近项目 ⇒ 品牌页上的锚不再被点
-    expect(locationAssign).toHaveBeenCalledWith('/workflow/proj-1')
+    // 2026-10-24 性能修复：分发改走 router.replace（不再整页刷新）
+    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-1')
     expect(canvasCreate, '有项目时点锚不得新建').not.toHaveBeenCalled()
   })
 

@@ -1,15 +1,6 @@
 <script setup lang="ts">
-import { watch, onMounted, onBeforeUnmount, shallowRef } from 'vue'
-import { EditorContent, Editor } from '@tiptap/vue-3'
-import StarterKit from '@tiptap/starter-kit'
-import Placeholder from '@tiptap/extension-placeholder'
-import Typography from '@tiptap/extension-typography'
-import { Table } from '@tiptap/extension-table'
-import { TableRow } from '@tiptap/extension-table-row'
-import { TableCell } from '@tiptap/extension-table-cell'
-import { TableHeader } from '@tiptap/extension-table-header'
-import { Markdown } from 'tiptap-markdown'
-import type { MarkdownStorage } from 'tiptap-markdown'
+import { watch, onMounted, onBeforeUnmount, shallowRef, ref, defineAsyncComponent, type Component } from 'vue'
+import type { Editor, MarkdownStorage } from '@/components/canvas/tiptapSetup'
 import './PromptMarkdownEditor.css'
 
 const props = defineProps<{ visible: boolean; modelValue: string; title?: string }>()
@@ -19,8 +10,42 @@ const emit = defineEmits<{
   save: [string]
 }>()
 
+/**
+ * tiptap 全家改为**按需加载**（2026-10-24 性能修复）。
+ *
+ * 之前在顶层静态 import ⇒ tiptap + prosemirror 进画布页主分包的同步依赖
+ * （生产实测 295.6KB gzip，占全部依赖 77%），而编辑器只在双击节点时才打开。
+ * 现在只有用户真的打开编辑器时才下载这段代码（之后走浏览器缓存）。
+ *
+ * ⚠️ `defineAsyncComponent` 保留 `<EditorContent>` 的模板用法不变 ——
+ *    它就是一个渲染组件，异步挂载不影响 Editor 实例的读写时机。
+ *
+ * ⚠️ 加载中时 `editor.value` 为 undefined ⇒ 模板里的 `editor?.chain()` 全部
+ *    走可选链（原有写法），不会抛错；`isActive()` 也已有 `?? false` 兜底。
+ */
+const EditorContent = defineAsyncComponent(async () => {
+  const mod = await import('@/components/canvas/tiptapSetup')
+  return mod.EditorContent as Component
+})
+
 const editor = shallowRef<Editor>()
+/** tiptap 模块是否已加载（用于加载态提示，避免用户以为没反应）。 */
+const tiptapLoading = ref(false)
+/** tiptap 模块加载 Promise（并发调用只加载一次）。 */
+let tiptapPromise: Promise<typeof import('@/components/canvas/tiptapSetup')> | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 关闭意图的缓冲：模块未加载时用户就关了弹层 ⇒ 记下来，chunk 到位后补传。
+ *
+ * ⚠️ 这是「不丢用户内容」的关键：内层若从未见过 `visible: true → false`，
+ *    就不会执行 flushSave ⇒ 编辑内容丢失。
+ *
+ * ⚠️ 声明必须在 ensureEditor **之前**：ensureEditor 里会读它，
+ *    而 `let` 是块级作用域（提升但有 TDZ）—— 声明在后面会抛
+ *    "Cannot access 'pendingSaveOnLoad' before initialization"。
+ */
+let pendingSaveOnLoad = false
 
 function getMarkdown(): string {
   const storage = editor.value?.storage as { markdown?: MarkdownStorage } | undefined
@@ -32,6 +57,11 @@ function flushSave() {
     clearTimeout(saveTimer)
     saveTimer = null
   }
+  // ⛔ 编辑器实例还没建起来（tiptap 仍在加载）⇒ **绝不能把空串写回**：
+  //    父组件的 v-model 会被置空 ⇒ 用户原有内容被清空（数据丢失）。
+  //    异步化引入的新窗口：用户「刚打开就立刻关闭」，模块还没到。
+  //    此时的正确行为是「什么都不做」—— 内容还没被编辑过，无需保存。
+  if (!editor.value) return
   const md = getMarkdown()
   emit('update:modelValue', md)
   emit('save', md)
@@ -42,33 +72,59 @@ function scheduleSave() {
   saveTimer = setTimeout(flushSave, 400)
 }
 
-function ensureEditor() {
+/**
+ * 确保 tiptap 已加载且编辑器实例已建立。
+ *
+ * ⛔ 关键不变式：**编辑器实例创建后，`visible` 的下降沿仍会触发 flushSave**。
+ *    异步化只挪动了「模块何时到位」，没有改变「关闭时保存」这条语义 ——
+ *    否则用户编辑的内容会静默丢失（绝不能接受的回归）。
+ *
+ * 实现：`ensureEditor()` 是 async，但 watch 回调里用 `.then()` 串起后续动作，
+ * 保证「创建实例 → setContent → 聚焦」的顺序与同步版一致。
+ */
+async function ensureEditor(): Promise<void> {
   if (editor.value) return
-  editor.value = new Editor({
-    extensions: [
-      StarterKit,
-      Typography,
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      Placeholder.configure({ placeholder: '输入或生成提示词内容...' }),
-      Markdown.configure({ html: false, transformPastedText: true, transformCopiedText: true }),
-    ],
-    content: props.modelValue || '',
-    onUpdate: () => scheduleSave(),
-  })
+  if (!tiptapPromise) {
+    tiptapPromise = import('@/components/canvas/tiptapSetup')
+  }
+  tiptapLoading.value = true
+  try {
+    const mod = await tiptapPromise
+    if (editor.value) return
+    editor.value = mod.createPromptEditor({
+      content: props.modelValue || '',
+      onUpdate: () => scheduleSave(),
+    })
+    // 用户在模块加载期间就关闭了弹层 ⇒ 此刻补一次保存，
+    // 否则「刚打开就输入再关闭」的内容会丢（异步化引入的新窗口）。
+    if (pendingSaveOnLoad) {
+      pendingSaveOnLoad = false
+      flushSave()
+    }
+  } finally {
+    tiptapLoading.value = false
+  }
 }
 
 watch(
   () => props.visible,
   (v, wasVisible) => {
     if (v) {
-      ensureEditor()
-      editor.value?.commands.setContent(props.modelValue || '')
-      setTimeout(() => editor.value?.commands.focus('end'), 50)
+      void ensureEditor().then(() => {
+        if (!editor.value) return
+        editor.value?.commands.setContent(props.modelValue || '')
+        setTimeout(() => editor.value?.commands.focus('end'), 50)
+      })
     } else {
-      if (wasVisible) flushSave()
+      if (wasVisible) {
+        // ⛔ 模块仍在加载 ⇒ 此时 flushSave 会因「空实例守卫」直接返回，
+        //    而模块到位后没人再触发保存 ⇒ 用户内容丢失。
+        //    ⇒ 先记下关闭意图，等模块到位后由 ensureEditor 补一次 flushSave。
+        if (!editor.value && tiptapLoading.value) {
+          pendingSaveOnLoad = true
+        }
+        flushSave()
+      }
     }
   },
 )
@@ -87,7 +143,21 @@ function onKeydown(event: KeyboardEvent) {
   close()
 }
 
+/**
+ * 关闭弹层。
+ *
+ * ⚠️ 若 tiptap 仍在加载（用户「刚打开就立刻关」），此时编辑器实例还不存在，
+ *    但**模块加载完成后会继续创建实例并 setContent** ⇒ 必须在关闭前把
+ *    「等模块到位后补一次保存」这件事记下来，否则用户刚输入的内容会丢。
+ *
+ * 这与 flushSave 的空实例守卫是一对：守卫防「没内容时清空」，
+ * 这里防「有内容时没保存」。
+ */
 function close() {
+  if (!editor.value && tiptapLoading.value) {
+    // 模块还在路上 ⇒ 记住「到位后要保存一次」
+    pendingSaveOnLoad = true
+  }
   emit('update:visible', false)
 }
 
@@ -141,7 +211,13 @@ onBeforeUnmount(() => {
 
           <div class="prompt-md-scroll">
             <div class="prompt-md-column">
-              <EditorContent :editor="editor" class="prompt-md-editor" />
+              <!-- tiptap 按需加载中（2026-10-24 性能修复）：给一句提示，
+                   否则用户双击后看到空白会以为没反应。
+                   ⚠️ 用 Tailwind 语义类（text-fg-3）而不是新增 CSS：
+                   本组件样式全在独立 PromptMarkdownEditor.css 里，
+                   而 Tailwind 工具类是全局的，不会被该文件的作用域规则覆盖。 -->
+              <p v-if="tiptapLoading" class="prompt-md-loading text-fg-3">编辑器加载中…</p>
+              <EditorContent v-else :editor="editor" class="prompt-md-editor" />
             </div>
           </div>
 

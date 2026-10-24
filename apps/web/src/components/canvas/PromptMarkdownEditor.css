@@ -92,6 +92,16 @@
   margin: 0 auto;
 }
 
+/* tiptap 按需加载中（2026-10-24 性能修复）：占位高度对齐编辑器，
+   避免「加载中」时弹层塌陷、加载完成后内容跳动。 */
+.prompt-md-loading {
+  min-height: 52vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
 .prompt-md-editor .tiptap {
   min-height: 52vh;
   outline: none;
