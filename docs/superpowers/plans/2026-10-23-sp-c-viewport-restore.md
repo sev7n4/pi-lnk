@@ -151,3 +151,19 @@ describe('视口原语（SP-C）', () => {
 - **web 全量 348 文件全覆盖全绿**（分 10 块串行跑；块大小 15~58 文件）。
   分块中出现 3 次 `Test timed out in 5000ms`（AdminModelsPage / AgentMermaidBlock / ProviderConfigDialog）⇒ **均为高负载假红**：单独重跑三者 EXIT=0 全绿，且三者与 canvas 视口改动无任何关联。
 - `vue-tsc -b`（CI 对齐口径）EXIT=0。
+
+### 生产取证（Task 4 Step 4，2026-10-24 09:07 部署后）
+
+部署：master `db00d116`（squash of PR #576）⇒ Deploy to Tencent Cloud run 40048268868 **success**；生产 dist 137 个 assets 全部 09:07 同一时刻（一次完整构建）。
+
+| 层 | 证据 | 判定 |
+|---|---|---|
+| ① 采集在位 | 生产全 assets `viewportChange` 12 处（= 本地对照 12）；CanvasPage chunk `onPersist` 5 处（我的 composable 接线） | ✅ |
+| ② 序列化（N1/N2） | `useCanvasActions-CUvLZOa9.js`：`e!=null&&e.viewport&&(i.viewport=e.viewport)`（flowToCanvasData 通道）+ `d.viewport&&(n.viewport=d.viewport)`（extrasForCanvasSave 通道）⇒ **条件写入，不传即无键** | ✅ |
+| ③ 回合末（N3） | `fitView({padding:0.24})` 特征值 `0.24` 在生产 CanvasPage chunk **0 命中**（本地对照同 0）；`0.45`（保留的新节点聚焦）2 处在位 | ✅ 全览已删 |
+| ④ 恢复（N5/N6） | `setViewport` 4 处在 CanvasPage chunk（clampViewport/isViewportUsable 经 barrel 打包，函数名被压缩故不可直接 grep，以 setViewport 调用点为代理） | ✅ 在位 |
+| ⑤ 构建一致 | dist 137 文件 mtime 全部 09:07；index.html → `index-DYMt49EP.js` | ✅ |
+
+⚠️ 踩坑记录：初版取证 grep `clampViewport`/`isViewportUsable`/`SP-C（N3）` **本地 dist 同样 0 命中** ⇒ minify 删除注释 + 压缩函数名，不是没上线。改用穿透 minify 的属性名/数字字面量做正反两轮对照（本地 dist 为对照组）才得到可信结论。另：本地 dist 与生产 chunk 大小差 72KB、fitView 计数 17 vs 18 —— chunk 切分归属差异（mobile 壳等组件的调用点被切进不同 chunk），非代码差异；源码树已验 `git diff 47eb820d db00d116` 为空、master 无后续提交。
+
+**剩余真机行为验收（需登录态，用户侧）**：① 刷新页面后视角停在原处（N1/N6 链路）；② 无新节点回合结束后视口三值不动（N3 代码层已证，行为层待确认）；③ 2 节点等距 no-op（S-PB §2.3 已验过同款防抖链路，可参考）。
