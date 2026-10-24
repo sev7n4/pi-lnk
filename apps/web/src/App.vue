@@ -4,7 +4,6 @@ import { useRoute } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import LoginDialog from '@/components/auth/LoginDialog.vue'
 import { useAuthStore } from '@/stores/auth'
-import { schedulePreloadAfterFirstPaint } from '@/composables/useRoutePreload'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -12,16 +11,25 @@ const isImmersiveCanvas = computed(() => route.name === 'canvas')
 
 onMounted(() => {
   void auth.restoreSession()
-  // 2026-10-24 性能修复（**二次修正**）：预热改为「首屏彻底就绪之后」。
+  // ⛔⛔ 2026-10-24 **三次修正**：全局预热**彻底删掉**，一行都不留。
   //
-  // ⛔ 初版是「挂载即空闲预热」—— 那次是生产事故的元凶：
-  //    预热在 4166ms 拉起画布页整棵依赖树（338KB + 24 个 chunk），
-  //    与首屏资源抢同域 6 个 HTTP/1.1 连接 ⇒ 535KB 的品牌 logo 被从
-  //    2.1 秒拖到 13 秒、API 排队 ⇒ 用户报「品牌页出不来 + 登录出问题」。
+  // 演进（三次都是生产事故逼出来的）：
+  //   ① 挂载即空闲预热 ⇒ 与首屏抢连接 ⇒ 535KB 的品牌 logo 从 2.1s 拖到 13s、
+  //      API 排队 ⇒ 用户报「品牌页出不来 + 登录出问题」（#581 已删）
+  //   ② 改为等 `load` 事件 ⇒ `load` **只等首屏必要资源，不等懒加载 chunk**
+  //      ⇒ 仍在抢（#582 改为 `load` + 3s 延迟）
+  //   ③ `load` + 3s 仍不够 —— **对话页实测**：用户连点历史项目 1/2/3/4，
+  //      每次都建一条 **SSE 长连接**（`/api/agent/runs/events`），
+  //      同域 HTTP/1.1 只有 **6 个连接**；旧 SSE 未释放时新 SSE 又建
+  //      ⇒ 连接被占满 ⇒ `threads` / `events` 排队 **55 秒**（Network 一片红）。
+  //      而全局预热此时又拉起 CanvasPage 338KB + 26 个 chunk ⇒ **再抢一轮**。
   //
-  // ✅ 现在等 `load` 事件（首屏资源全下完）才预热 ⇒ 不再抢任何连接。
-  //    另有一路「用户意图触发」（指针移到锚上）由品牌页负责，命中率更高。
-  if (!isImmersiveCanvas.value) schedulePreloadAfterFirstPaint()
+  // ⭐ **结论：全局预热在任何页面都是有害的** —— 它无法知道「用户接下来要去哪」，
+  //    却要为此付出「与当前页面的 SSE / API 抢连接」的**确定**代价，
+  //    而收益（点创作命中缓存）只在用户真的去画布时才兑现。
+  //
+  // ✅ 只保留**用户意图触发**（`SignatureHero` 的 `preloadOnIntent`）：
+  //    指针移到锚 / 焦点进入 / 触摸滑条 ⇒ 意图明确，且此刻首屏早已就绪。
 })
 </script>
 
