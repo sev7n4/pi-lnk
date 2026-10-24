@@ -1,5 +1,7 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+// 2026-10-25：与 `CanvasService.list` 共用同一套封面抽取口径（响应体不带 canvasData）。
+import { readCover } from '../canvas/canvas-cover'
 
 @Injectable()
 export class SessionsService {
@@ -22,12 +24,43 @@ export class SessionsService {
     return this.formatSession(session)
   }
 
+  /**
+   * 列表（「我的项目」/ 发布选项目）：**只回卡片级字段，不带 canvasData**。
+   *
+   * ⭐ 2026-10-25 取证：旧实现 `findMany` 不带 `select` ⇒ 每条把整份画布 JSON
+   *   （`canvasData`）序列化返回，165 个项目时整包 **589KB**，还要对每条各做一次
+   *   `JSON.parse`。代价不只是慢：一次几百 KB 的传输中途若链路静默死亡（代理 / NAT
+   *   残留），TCP 连接既不完成也不报错，Chrome 对单 host 的 6 条 HTTP/1.1 连接被这类
+   *   僵尸占满 ⇒ 后续一切请求（含项目抽屉的列表）排队饿死，「项目加载中」转不完。
+   *
+   * 封面与 `CanvasService.list`（`GET /agent/canvas/list`）**同一套抽取口径**
+   * （`canvas-cover.ts`）：DB 层读 canvasData 只为在服务端解析出 `coverUrl`，
+   * 响应体里不出现 canvasData —— 否则同一项目在抽屉里和主页卡片上会显示不同封面。
+   *
+   * 需要整份画布请走 `findOne` —— 它仍返回全量 canvasData，不受本瘦身影响。
+   */
   async findAll(userId: string) {
     const sessions = await this.prisma.session.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        userId: true,
+        createdAt: true,
+        updatedAt: true,
+        // 只为了在服务端解析出封面：这个字段**不会**出现在响应体里。
+        canvasData: true,
+      },
     })
-    return sessions.map((s) => this.formatSession(s))
+    return sessions.map((s) => ({
+      id: s.id,
+      title: s.title,
+      userId: s.userId,
+      createdAt: s.createdAt.toISOString(),
+      updatedAt: s.updatedAt.toISOString(),
+      coverUrl: readCover(s.canvasData).coverUrl,
+    }))
   }
 
   async findOne(id: string, userId?: string) {

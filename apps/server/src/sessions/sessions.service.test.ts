@@ -161,3 +161,91 @@ describe('SessionsService.update —— pending_confirm 状态转移守卫', () 
     expect(JSON.parse(update.mock.calls[0][0].data.canvasData as string).nodes[0].data.status).toBe('completed')
   })
 })
+
+// ── findAll：列表瘦身（2026-10-25 取证）───────────────────────────────────────
+// 旧实现 `findMany` 不带 select ⇒ 165 个项目的整份画布 JSON 一起下发，实测 **589KB**。
+// 后果不只是慢：几百 KB 的传输中途若链路静默死亡（代理 / NAT 残留），TCP 连接既不完成
+// 也不报错，Chrome 对单 host 的 6 条 HTTP/1.1 连接被这类僵尸占满 ⇒ 后续一切请求排队饿死
+// （项目抽屉「项目加载中」转不完）。瘦身口径与 `CanvasService.list` 一致：服务端解析出
+// 封面 URL，响应体只回卡片字段。
+describe('SessionsService.findAll —— 列表不带 canvasData，只回卡片字段 + 封面 URL', () => {
+  const ROW = {
+    id: 's1',
+    title: '大闸蟹礼盒',
+    userId: 'u1',
+    canvasData: JSON.stringify({
+      nodes: [
+        {
+          id: 'n1',
+          type: 'image',
+          data: { status: 'completed', url: 'https://cdn/a.png', generationStartedAt: '2026-10-22T10:00:00Z' },
+        },
+      ],
+      edges: [],
+    }),
+    createdAt: new Date('2026-10-01T00:00:00Z'),
+    updatedAt: new Date('2026-10-22T10:00:00Z'),
+  }
+
+  async function findAllWith(rows: Array<Record<string, unknown>>) {
+    const findMany = vi.fn(async () => rows)
+    const svc = (
+      await Test.createTestingModule({
+        providers: [SessionsService, { provide: PrismaService, useValue: { session: { findMany } } }],
+      }).compile()
+    ).get(SessionsService)
+    return { svc, findMany, out: await svc.findAll('u1') }
+  }
+
+  it('响应体不含 canvasData（整份画布 JSON 不出服务端）', async () => {
+    const { out } = await findAllWith([ROW])
+    expect(out[0]).not.toHaveProperty('canvasData')
+    expect(Object.keys(out[0]!).sort()).toEqual(['coverUrl', 'createdAt', 'id', 'title', 'updatedAt', 'userId'])
+  })
+
+  it('封面由服务端算好，只回一个 URL（与 CanvasService.list 同口径）', async () => {
+    const { out } = await findAllWith([ROW])
+    expect(out[0]!.coverUrl).toBe('https://cdn/a.png')
+  })
+
+  it('体积守卫：165 个项目（每条 canvasData 3.5KB）响应体仍远小于旧版 589KB', async () => {
+    const rows = Array.from({ length: 165 }, (_, i) => ({
+      ...ROW,
+      id: `s${i}`,
+      canvasData: JSON.stringify({
+        nodes: [
+          {
+            id: 'n1',
+            type: 'image',
+            data: { status: 'completed', url: `https://cdn/${i}.png`, generationStartedAt: '2026-10-22T10:00:00Z' },
+          },
+        ],
+        edges: [],
+        pad: 'x'.repeat(3500),
+      }),
+    }))
+    const { out } = await findAllWith(rows)
+    const bytes = Buffer.byteLength(JSON.stringify(out), 'utf8')
+    // 旧实现 ≈ 589KB；瘦身上限取 60KB（165 条 × (id+title+时间戳+URL) ≈ 25KB，留一倍余量）
+    expect(bytes, `列表响应体 ${bytes} B，应远小于旧版 589KB`).toBeLessThan(60_000)
+  })
+
+  it('findMany 仍 select canvasData —— 只为在服务端解析封面，这个字段不下发', async () => {
+    const { findMany } = await findAllWith([ROW])
+    const arg = findMany.mock.calls[0]![0] as { select: Record<string, unknown> }
+    expect(arg.select.canvasData).toBe(true)
+    expect(arg.select.id).toBe(true)
+  })
+
+  it('脏 canvasData（非法 JSON）不抛错，封面降级为 null', async () => {
+    const { out } = await findAllWith([{ ...ROW, canvasData: '{not-json' }])
+    expect(out[0]!.coverUrl).toBeNull()
+    expect(out[0]).not.toHaveProperty('canvasData')
+  })
+
+  it('无产物节点（canvasData 为 null）⇒ 封面 null，列表照常返回', async () => {
+    const { out } = await findAllWith([{ ...ROW, canvasData: null }])
+    expect(out[0]!.coverUrl).toBeNull()
+    expect(out[0]!.title).toBe('大闸蟹礼盒')
+  })
+})

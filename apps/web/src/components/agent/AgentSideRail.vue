@@ -102,6 +102,7 @@ import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput, { type MentionOption } from '@/components/canvas/MentionInput.vue'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { createFollowUpTailListener } from './follow-up-tail'
+import { applyTailVisibility } from './tail-visibility'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
@@ -2881,18 +2882,34 @@ function releaseObserverTurn(): void {
   agent.finishStreaming()
 }
 
-/** Task 5：页面从后台切回时恢复订阅（idle 直接挂；backoff 中跳过排队；健康流不打断）。 */
+/**
+ * 可见性：前台恢复常驻订阅，**后台立刻释放**。
+ *
+ * ⭐ 2026-10-25：原实现只处理「切回前台」（resume），**从不释放后台订阅** ⇒
+ *   每个后台标签页永久占着一条 SSE 长连接（常驻订阅断线 5s 封顶重连、永不放弃）。
+ *   Chrome 对单个 host 只有 6 条 HTTP/1.1 连接，后台页一多、再叠加偶发的传输卡死，
+ *   前台请求就全部排队饿死（项目抽屉「项目加载中」转不完的成因之一，同批取证）。
+ *
+ * 切回来不丢内容：`resume()` 带 `lastSeq` 游标续传，只补增量不重放（见
+ * `follow-up-tail.ts`）；idle 直接挂、backoff 中跳过排队、健康流不打断。
+ */
 function onFollowUpTailVisibility(): void {
-  if (document.visibilityState !== 'visible') return
-  if (!hasAuthToken()) return
-  void followUpTail.resume()
+  // 策略本身在 `tail-visibility.ts`（依赖可注入 ⇒ 可单测），这里只做接线。
+  applyTailVisibility({
+    isVisible: () => document.visibilityState === 'visible',
+    hasAuthToken,
+    isMainStreamRunning: () => agent.isStreaming,
+    resume: () => void followUpTail.resume(),
+    abort: () => followUpTail.abort(),
+  })
 }
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onFollowUpTailVisibility)
   // 常驻订阅：打开会话就挂上，与「谁在说话」无关。
   // 本端正在跑主流时（`agent.isStreaming`）不挂——那份内容主流自己会给。
-  if (!agent.isStreaming) void listenFollowUpTail()
+  // 后台标签页（例如「在新标签页打开」）不挂：看不见就不该占着连接，切回来再补。
+  if (!agent.isStreaming && document.visibilityState === 'visible') void listenFollowUpTail()
 })
 
 // 会话 / 线程切换后重挂：订阅 URL 携带 threadId，线程变了旧流就在听错的对象。

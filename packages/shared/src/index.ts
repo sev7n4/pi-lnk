@@ -108,6 +108,14 @@ export interface Session {
   title: string
   userId: string
   canvasData?: CanvasData
+  /**
+   * 列表接口（`GET /api/sessions`）服务端算好的封面 URL。
+   *
+   * 2026-10-25：列表不再下发整份 `canvasData`（165 项目实测 589KB，传输中途卡死
+   * 会占满 Chrome 单 host 的 6 条连接 ⇒ 后续请求全部饿死），改由服务端解析出封面。
+   * 单条拉取（`GET /api/sessions/:id`）仍带全量 canvasData，本字段为空。
+   */
+  coverUrl?: string | null
   createdAt: string
   updatedAt: string
 }
