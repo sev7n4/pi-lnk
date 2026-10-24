@@ -15,6 +15,7 @@ import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { resolveMobileNodeState } from '@/composables/mobileNodeState'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
+import { mediaInfoLine } from '@/utils/mediaInfoFormat'
 import {
   resolveImageNodeDisplaySize,
   resolveVideoNodeDisplaySize,
@@ -44,6 +45,13 @@ const props = defineProps<{
     imageAspect?: string
     imageResolution?: string
     videoSettings?: unknown
+    /**
+     * 媒体属性摘要（走查②，2026-10-24）：PC 三卡由 `MediaInfoSummary`
+     * 渲染「尺寸/分辨率 · 比例 · 大小」（视频另有时长/格式），移动端瓦片
+     * 重构后整条消失 ⇒ 在同一 `data.mediaInfo` 上补回对等的一行。
+     * 字段缺失时不渲染（⛔ 不猜不占位）。
+     */
+    mediaInfo?: unknown
   }
   status?: string
   /**
@@ -159,6 +167,32 @@ const showPropose = computed(() => {
   if (state.value !== 'pending') return false
   return String(props.data?.prompt ?? '').trim().length > 0
 })
+
+/**
+ * 媒体属性一行（走查②，2026-10-24）。
+ *
+ * PC 三卡（CanvasNodeImage/Video/Audio）都有 `MediaInfoSummary` footer：
+ * 图片「1024×1024 · 1:1 · 1.2MB」/ 视频「1920×1080 · 16:9 · 8.4MB」/
+ * 音频「0:12 · MP3 · 240KB」。移动端重构后整条消失，用户在原 WEB 端
+ * 能看到的尺寸/分辨率/大小没了 ⇒ 在同一 `data.mediaInfo` 上补回。
+ *
+ * ⭐ 判据单一真源：`mediaInfoLine`（utils/mediaInfoFormat）——PC 的
+ *   MediaInfoSummary 也消费它，两边永不走漂。
+ * ⛔ 只显示真实有值的字段：无 mediaInfo / 字段缺失 ⇒ 空串 ⇒ 不渲染。
+ */
+const mediaInfoText = computed(() => {
+  const info = props.data?.mediaInfo
+  if (!info || typeof info !== 'object') return ''
+  return mediaInfoLine(info as Parameters<typeof mediaInfoLine>[0])
+})
+
+/**
+ * 空态主动作提示（走查③，2026-10-24）：新建节点不再自动弹编辑 sheet
+ * （用户裁决：创建 ≠ 编辑，auto-open 是 R2 的权宜），空瓦片自身必须
+ * 把「点按进入编辑」这个入口写出来——否则用户拿到一个不知能干嘛的空卡。
+ * 文案与 D-C 状态机 empty 行的主动作一致（ tap ⇒ 编辑 sheet）。
+ */
+const emptyCtaLabel = computed(() => (props.type === 'text' ? '点按撰写' : '点按生成'))
 
 /**
  * 磁贴外框：与桌面包络同源（图 280 / 视频 320，见 mediaNodeDisplaySize）；
@@ -315,31 +349,45 @@ function handleTextTap() {
         {{ proposeParams }}
       </p>
     </div>
-    <img
-      v-else-if="type === 'image' && data?.url"
-      :src="data.url"
-      class="mobile-node-media"
-      alt=""
-    />
-    <video
-      v-else-if="type === 'video' && data?.url"
-      :src="data?.url"
-      :poster="data?.poster"
-      preload="none"
-      muted
-      playsinline
-      class="mobile-node-media"
-    />
-    <div v-else-if="type === 'audio'" class="mobile-audio-wave">
-      <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
-      <MobileNodeWaveform
-        :peaks="waveformPeaks"
-        :source="waveformSource"
-        :loading="waveformLoading"
-      />
-      <audio ref="audioEl" :src="data?.url" />
+    <div v-else-if="type === 'image' && data?.url" class="mobile-node-media-box">
+      <img :src="data.url" class="mobile-node-media" alt="" />
+      <!-- 走查②：PC MediaInfoSummary 的移动端对等物（尺寸 · 比例 · 大小） -->
+      <p v-if="mediaInfoText" class="mobile-node-media-info" data-testid="mobile-node-media-info">
+        {{ mediaInfoText }}
+      </p>
     </div>
-    <p v-else-if="type === 'text'" class="mobile-node-text">{{ data?.content || '空文本' }}</p>
+    <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">
+      <video
+        :src="data?.url"
+        :poster="data?.poster"
+        preload="none"
+        muted
+        playsinline
+        class="mobile-node-media"
+      />
+      <p v-if="mediaInfoText" class="mobile-node-media-info" data-testid="mobile-node-media-info">
+        {{ mediaInfoText }}
+      </p>
+    </div>
+    <div v-else-if="type === 'audio'" class="mobile-node-media-box">
+      <div class="mobile-audio-wave">
+        <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
+        <MobileNodeWaveform
+          :peaks="waveformPeaks"
+          :source="waveformSource"
+          :loading="waveformLoading"
+        />
+      </div>
+      <audio ref="audioEl" :src="data?.url" />
+      <p v-if="mediaInfoText" class="mobile-node-media-info" data-testid="mobile-node-media-info">
+        {{ mediaInfoText }}
+      </p>
+    </div>
+    <div v-else-if="type === 'text'" class="mobile-node-text-wrap">
+      <p class="mobile-node-text">{{ data?.content || '空文本' }}</p>
+      <!-- 走查③：空文本也要有点按入口（tap ⇒ 编辑 sheet） -->
+      <span v-if="!data?.content" class="mobile-node-text-cta">{{ emptyCtaLabel }}</span>
+    </div>
     <!--
       空图 / 空视频的类型占位（2026-10-23 真机走查）：
       空节点时磁贴里没有任何媒体元素 ⇒ 只剩卡面 + 描边 ⇒ 几何形状成了唯一线索，
@@ -372,6 +420,8 @@ function handleTextTap() {
         <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
       </svg>
       <span class="mobile-node-placeholder-label">{{ placeholderLabel }}</span>
+      <!-- 走查③：空态主动作提示（tap 整卡 ⇒ 编辑 sheet，D-C empty 行） -->
+      <span class="mobile-node-empty-cta">{{ emptyCtaLabel }}</span>
     </div>
 
     <!--
@@ -502,19 +552,63 @@ function handleTextTap() {
   background: var(--lnk-surface-overlay);
 }
 
+/* 媒体盒（走查②）：媒体撑满剩余空间 + 属性行沉底——与 PC 节点卡
+   「媒体 + MediaInfoSummary footer」同构，不叠加、不遮画。
+   ⛔ 属性行只用主题成对令牌（surface/text-muted）：它贴在卡内而非覆在媒体上，
+     随主题翻转是正确行为；覆媒体的字幕才需要固定色，这里没有。 */
+.mobile-node-media-box {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
 /* 媒体撑满磁贴：cover 裁填——绝不按原始像素渲染、绝不溢出节点框 */
 .mobile-node-media {
   display: block;
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
   object-fit: cover;
+}
+
+/* 属性行（尺寸 · 比例 · 大小）：PC MediaInfoSummary 的移动端对等物 */
+.mobile-node-media-info {
+  flex: none;
+  margin: 0;
+  padding: 2px 6px 3px;
+  background: var(--lnk-surface-base);
+  color: var(--lnk-text-muted);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 空态主动作提示（走查③）：小而清晰，accent 文本色读作「可点」 */
+.mobile-node-empty-cta {
+  margin-top: 2px;
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-accent-text);
+}
+
+.mobile-node-text-cta {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-accent-text);
 }
 
 /* 音频：44px 播放钮 + 波形条（D-D）。波形条自带描边令牌与「波形加载中」微标。 */
 .mobile-audio-wave {
   display: flex;
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
   align-items: center;
   gap: var(--lnk-space-3);
   padding: var(--lnk-space-3);
@@ -543,10 +637,19 @@ function handleTextTap() {
 }
 
 /* 文本：3 行截断 + 省略（设计 §5.4） */
-.mobile-node-text {
-  display: -webkit-box;
+.mobile-node-text-wrap {
+  display: flex;
   width: 100%;
   height: 100%;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.mobile-node-text {
+  display: -webkit-box;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   margin: 0;
   padding: var(--lnk-space-3);
   overflow: hidden;

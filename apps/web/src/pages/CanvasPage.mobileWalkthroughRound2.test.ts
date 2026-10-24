@@ -33,14 +33,20 @@ describe('多选累加（2026-10-21 真机：长按第二张图 ⇒ 第一张被
   })
 
   it('上下文 sheet 的「多选」文案随态变化（多选 / 加入多选 / 移出多选）', () => {
-    const menu = readComponent('canvas/CanvasContextMenu.vue')
+    // 2026-10-24 走查①：CanvasContextMenu 的移动端 sheet 分支已删（双入口叠加 ⇒ 两张
+    // 相同的卡），三态文案迁移到 MobileNodeActionSheet（移动端长按唯一入口）。
+    const menu = readComponent('mobile/MobileNodeActionSheet.vue')
     expect(menu).toContain('multiSelectActive')
     expect(menu).toContain("return '多选'")
     expect(menu).toContain("'加入多选'")
     expect(menu).toContain("'移出多选'")
-    // 接线：页面把多选态与「该节点是否在选区内」传下去
-    expect(page).toContain(':multi-select-active="mobileMultiSelectActive"')
-    expect(page).toContain(':multi-select-selected=')
+    // 接线：页面在长按注入时下发多选态与「该节点是否在选区内」
+    expect(page).toContain('multiSelectActive: mobileMultiSelectActive.value')
+    expect(page).toContain('multiSelectSelected: multiSelectedIds.value.includes(node.id)')
+    // 有效性配对：CanvasContextMenu 移动端分支确实已删（否则双入口回潮）
+    const ctx = readComponent('canvas/CanvasContextMenu.vue')
+    expect(ctx).not.toContain('ctx-sheet')
+    expect(ctx).not.toContain('Teleport')
   })
 })
 

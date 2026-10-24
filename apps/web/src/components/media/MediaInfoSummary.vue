@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { MediaRefWarningLevel } from '@lnkpi/shared'
-import { formatMediaBytes, formatMediaDimensions, formatMediaDuration } from '@/utils/mediaInfoFormat'
+import { mediaInfoLine } from '@/utils/mediaInfoFormat'
 
 const props = defineProps<{
   kind?: 'image' | 'video' | 'audio'
@@ -15,28 +15,8 @@ const props = defineProps<{
   refWarning?: MediaRefWarningLevel
 }>()
 
-const parts = computed(() => {
-  const line: string[] = []
-  const size = formatMediaBytes(props.bytes)
-  if (props.kind === 'audio') {
-    const dur = formatMediaDuration(props.durationSec)
-    if (dur) line.push(dur)
-    if (props.format?.trim()) line.push(props.format.trim())
-    if (size) line.push(size)
-    return line
-  }
-  if (props.kind === 'video') {
-    if (props.resolution?.trim()) line.push(props.resolution.trim())
-    if (props.aspectRatio?.trim()) line.push(props.aspectRatio.trim())
-    if (size) line.push(size)
-    return line
-  }
-  const dims = formatMediaDimensions(props.width, props.height)
-  if (dims) line.push(dims)
-  if (props.aspectRatio?.trim()) line.push(props.aspectRatio.trim())
-  if (size) line.push(size)
-  return line
-})
+// 分段判据的单一真源在 utils/mediaInfoFormat（移动端瓦片共用同一份，2026-10-24）
+const line = computed(() => mediaInfoLine(props))
 
 const refWarningLabel = computed(() => {
   if (props.refWarning === 'error') return 'ref 过大'
@@ -46,8 +26,8 @@ const refWarningLabel = computed(() => {
 </script>
 
 <template>
-  <div v-if="parts.length || refWarningLabel" class="neo-media-info-summary nodrag">
-    <span v-if="parts.length" class="neo-media-info-summary-text">{{ parts.join(' · ') }}</span>
+  <div v-if="line || refWarningLabel" class="neo-media-info-summary nodrag">
+    <span v-if="line" class="neo-media-info-summary-text">{{ line }}</span>
     <span
       v-if="refWarningLabel"
       class="neo-media-info-summary-warn"
