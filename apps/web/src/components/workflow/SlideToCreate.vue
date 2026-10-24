@@ -12,8 +12,13 @@ import { computed, ref } from 'vue'
  * - 触摸滚动：touch-action: pan-y —— 横向拖动归本组件，纵向滚动不被吞。
  * - 键盘可达：把手是真 <button>，Enter / 空格等效于滑满。
  * - reduced-motion：提示文字的流光停掉，拖拽/点击行为不受影响。
+ *
+ * 2026-10-24 性能修复：新增 `disabled` —— 创作进行中禁止再次触发
+ * （否则会并发创建多个会话，用户以为没反应就反复滑）。
  */
 const emit = defineEmits<{ create: [] }>()
+
+const props = defineProps<{ disabled?: boolean }>()
 
 const KNOB = 48 // 把手直径（px），与 CSS 保持一致
 const TRACK_PADDING = 8 // 轨道左右内边距合计
@@ -27,7 +32,7 @@ let pointerStartX = 0
 let maxSpan = 240
 
 function onPointerDown(e: PointerEvent) {
-  if (unlocked.value) return
+  if (unlocked.value || props.disabled) return
   dragging.value = true
   const width = trackEl.value?.clientWidth ?? 320
   maxSpan = Math.max(1, width - KNOB - TRACK_PADDING)
@@ -51,7 +56,7 @@ function onPointerUp() {
 }
 
 function fire() {
-  if (unlocked.value) return
+  if (unlocked.value || props.disabled) return
   unlocked.value = true
   knobX.value = maxSpan
   emit('create')
@@ -63,6 +68,7 @@ function fire() {
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (props.disabled) return
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
     fire()
@@ -80,7 +86,7 @@ const fillStyle = computed(() => ({
   <div
     ref="trackEl"
     class="lnk-slide"
-    :class="{ 'lnk-slide--unlocked': unlocked }"
+    :class="{ 'lnk-slide--unlocked': unlocked, 'lnk-slide--disabled': disabled }"
     data-testid="slide-to-create"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -88,12 +94,13 @@ const fillStyle = computed(() => ({
     @pointercancel="onPointerUp"
   >
     <span class="lnk-slide__fill" aria-hidden="true" :style="fillStyle" />
-    <span class="lnk-slide__hint" aria-hidden="true">{{ '滑动进入创作' }}</span>
+    <span class="lnk-slide__hint" aria-hidden="true">{{ disabled ? '正在进入画布…' : '滑动进入创作' }}</span>
     <p class="lnk-slide__sr-only">滑动进入创作：按住圆形把手向右拖到底后松手，或聚焦把手后按回车</p>
     <button
       type="button"
       class="lnk-slide__knob"
       :style="knobStyle"
+      :disabled="disabled"
       aria-label="滑动进入创作"
       @keydown="onKeyDown"
     >
@@ -124,6 +131,17 @@ const fillStyle = computed(() => ({
 
 .lnk-slide--unlocked {
   cursor: default;
+}
+
+/* 加载中（2026-10-24 性能修复）：禁二次触发。
+   ⛔ 只用 on-signature 家族令牌（恒深签名底，主题不变式）。 */
+.lnk-slide--disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.lnk-slide--disabled .lnk-slide__knob {
+  cursor: progress;
 }
 
 /* 拖动进度墨迹：accent 淡雾随把手推进（不抢锚的紫的唯一性，只做方向暗示） */

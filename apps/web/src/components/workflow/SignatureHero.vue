@@ -28,6 +28,16 @@ import {
 // 创作入口收敛为【锚】+【滑动解锁】双入口（滑动解锁与锚同发 create）。
 const emit = defineEmits<{ create: [] }>()
 
+/**
+ * 加载态（2026-10-24 性能修复）：由**父组件**持有。
+ *
+ * 为什么不是本组件自持：加载态的终点是「画布页挂载完成」，
+ * 只有父组件（WorkflowPage）知道创建会话与路由跳转的完成时刻。
+ * 本组件自持的话，加载环会在 600ms（盖章动画）后就消失，
+ * 而真正的等待还在继续 ⇒ 反馈提前撤掉，等于没改。
+ */
+const props = defineProps<{ creating?: boolean }>()
+
 // slogan 主行切分：单一真相源是 BRAND_SLOGAN_MAIN 整句，按标记词切段渲染——
 // 不复制文案，防两处漂移；拼接结果必须等于整句（SignatureHero.test.ts 锁定）。
 // 两处标记：accent（视觉重音）+ mascot（inline 墨鱼位，插在该词之前）。
@@ -62,7 +72,19 @@ const sloganSegments = computed(() => {
 const stamping = ref(false)
 let stampTimer: number | undefined
 
+/**
+ * 加载态（2026-10-24 性能修复）：读父组件的 prop（见 props.creating 的说明）。
+ *
+ * ⛔ 语义纪律（签名面纪律）：加载提示坐在**恒深签名底**上 ⇒ 只允许消费
+ *    on-signature 家族令牌（主题不变式）。禁 --lnk-hi-bg / --lnk-hi-text /
+ *    --lnk-accent-text：它们随主题翻转，压在**不翻转**的签名底上会翻成
+ *    近黑/低对比（与 SignatureHero 锚盘面同一纪律，见本文件历史注释）。
+ */
+const creating = computed(() => props.creating === true)
+
 function onAnchorClick() {
+  // 防重入：加载中不再重复触发（否则会并发创建多个会话）
+  if (creating.value) return
   emit('create')
   stamping.value = true
   window.clearTimeout(stampTimer)
@@ -130,7 +152,8 @@ function onAnchorClick() {
                ⚠️ 窄屏独占一行（三列下方）；桌面（lg）回到左列内（与原输入框同位），
                桌面端几何零变化。 -->
           <div class="lnk-talk-slide">
-            <SlideToCreate @create="emit('create')" />
+            <!-- :disabled=creating —— 加载中禁止二次触发（否则并发建多个会话） -->
+            <SlideToCreate :disabled="creating" @create="emit('create')" />
           </div>
           <span class="lnk-deco-left hidden h-px w-16 shrink-0 bg-gradient-to-l from-overlay/30 to-transparent lg:block" aria-hidden="true" />
         </div>
@@ -159,8 +182,10 @@ function onAnchorClick() {
             type="button"
             data-testid="ink-anchor"
             class="lnk-anchor"
-            :class="{ 'lnk-anchor--stamping': stamping }"
-            aria-label="点击锚，进入创作"
+            :class="{ 'lnk-anchor--stamping': stamping, 'lnk-anchor--creating': creating }"
+            :aria-label="creating ? '正在进入创作' : '点击锚，进入创作'"
+            :aria-busy="creating ? 'true' : undefined"
+            :disabled="creating"
             @click="onAnchorClick"
           >
             <span class="lnk-anchor__halo" aria-hidden="true" />
@@ -175,6 +200,9 @@ function onAnchorClick() {
             <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: 82px; --sy: -18px" />
             <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: -64px; --sy: 52px" />
             <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: 60px; --sy: 58px" />
+            <!-- 加载指示（2026-10-24 性能修复）：印章面上的一圈进度环。
+                 ⛔ 只用 on-signature 家族令牌（恒深签名底，主题不变式）。 -->
+            <span v-if="creating" class="lnk-anchor__spinner" aria-hidden="true" />
           </button>
           <!-- 窄屏连接线（2026-10-23/24 用户裁定·第 4 点）：【对话】↔【锚】↔【画布】
                之间的横向连接线在窄屏原本整段丢失（PC 端那两条 deco 线是 lg 才显示的）
@@ -184,9 +212,11 @@ function onAnchorClick() {
           <span class="lnk-anchor__link lnk-anchor__link--left" aria-hidden="true" />
           <span class="lnk-anchor__link lnk-anchor__link--right" aria-hidden="true" />
           <!-- 门阶（2026-10-22 用户裁定「入口升层」）：全页唯一动作入口的标记。
-               窄屏收紧上间距（2026-10-23：移动端品牌页要一屏装下完整三叙事） -->
-          <p class="lnk-anchor__cta mt-5 lg:mt-7">
-            点击锚，进入创作
+               窄屏收紧上间距（2026-10-23：移动端品牌页要一屏装下完整三叙事）。
+               加载态（2026-10-24 性能修复）：文案切到「正在进入画布…」，
+               ⛔ 只用 on-signature 令牌（恒深签名底，主题不变式）。 -->
+          <p class="lnk-anchor__cta mt-5 lg:mt-7" :aria-live="creating ? 'polite' : undefined">
+            {{ creating ? '正在进入画布…' : '点击锚，进入创作' }}
           </p>
         </div>
 
@@ -678,6 +708,40 @@ function onAnchorClick() {
   pointer-events: none;
 }
 
+/* ===== 加载态（2026-10-24 性能修复）=====
+ * 点击创作后要经历「建会话 → 路由跳转 → 画布页分包下载 → 画布页挂载」，
+ * 弱网下数秒。此前零反馈 ⇒ 用户感知「点了没反应」。
+ *
+ * ⛔ 令牌纪律：这一圈环坐在**印章盘面**上，而盘面走 on-signature 家族
+ *    （主题不变式，恒深）⇒ 环也必须用 on-signature 令牌，
+ *    禁 --lnk-accent / --lnk-hi-*（后者随主题翻转，压恒深底会失配）。
+ */
+.lnk-anchor__spinner {
+  position: absolute;
+  inset: 14px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--lnk-stamp-ink-on-signature) 22%, transparent);
+  border-top-color: var(--lnk-stamp-ink-on-signature);
+  animation: lnk-anchor-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
+/* 加载中：印章整体降一档亮度，让旋转环读得出来（不改盘面色，只加滤镜） */
+.lnk-anchor--creating {
+  cursor: progress;
+  filter: brightness(0.82);
+}
+
+.lnk-anchor--creating .lnk-anchor__glyph {
+  opacity: 0.35;
+}
+
+@keyframes lnk-anchor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .lnk-anchor--stamping .lnk-anchor__spark {
   animation: lnk-anchor-spark 0.6s ease-out forwards;
 }
@@ -739,6 +803,12 @@ function onAnchorClick() {
 
   .lnk-anchor--stamping,
   .lnk-anchor--stamping .lnk-anchor__spark {
+    animation: none;
+  }
+
+  /* 加载环（2026-10-24）：减少动态效果下停转 —— 但**保留环本身**
+     （否则用户完全看不到「正在加载」的信号，退化成无反馈）。 */
+  .lnk-anchor__spinner {
     animation: none;
   }
 }

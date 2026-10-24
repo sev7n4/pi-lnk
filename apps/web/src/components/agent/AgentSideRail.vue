@@ -3751,12 +3751,16 @@ async function loadRecentWorks() {
  * 点作品 = 打开该画布；带 focusNode 时**定位到那张产物图**
  * （跨项目定位通道由 CanvasPage 的 consumeFocusNodeQuery 消费，见
  * `CanvasPage.focusNodeQuery.test.ts` 的接线顺序契约）。
+ *
+ * ⚠️ 2026-10-24 性能修复：改用 router.push，不再 window.location.assign。
+ *    assign = 整页刷新 ⇒ 丢弃当前 DOM，重下 index.html + 入口 JS(384KB gzip)
+ *    + 入口 CSS(68KB gzip)，再叠加画布页自己的分包 ⇒ 从对话页进画布要多付一倍。
  */
 function handleRecentWorkOpen(payload: { id: string; focusNodeId: string | null }) {
   const target = payload.focusNodeId
     ? `/workflow/${encodeURIComponent(payload.id)}?focusNode=${encodeURIComponent(payload.focusNodeId)}`
     : `/workflow/${encodeURIComponent(payload.id)}`
-  window.location.assign(target)
+  void router.push(target)
 }
 /** 抽屉项目预览条数（2026-10-19 用户裁决）：默认只露最近 8 个，其余收进「展开更多」。
  *  数字依据（截图实测）：抽屉首屏列表区 ≈ 590 CSS px（微信 webview，safe-area=0），
@@ -3788,14 +3792,16 @@ async function loadProjects() {
 }
 function openProject(id: string) {
   closeSessionDrawer()
-  window.location.assign(`/workflow/${id}`)
+  // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
+  void router.push(`/workflow/${id}`)
 }
 async function newProject() {
   try {
     const res = await canvasApi.create()
     const created = res.data?.data as { id?: string } | undefined
     if (!created?.id) throw new Error('no id')
-    window.location.assign(`/workflow/${created.id}`)
+    // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
+    void router.push(`/workflow/${created.id}`)
   } catch {
     ElMessage.error('新建项目失败，请重试')
   }

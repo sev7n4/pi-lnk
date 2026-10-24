@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useMySessions } from '@/composables/useMySessions'
+import { preloadCanvasChunk } from '@/composables/useRoutePreload'
 import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
@@ -64,7 +65,13 @@ watch(
         const list = (res.data?.data ?? []) as Array<{ id: string }>
         if (list.length) {
           recentProjectId.value = list[0].id
-          window.location.assign(`/workflow/${list[0].id}`)
+          // ⚠️ 用 router.replace 而非 window.location.assign（2026-10-24 性能修复）：
+          // assign = 整页刷新 ⇒ 丢弃当前 DOM，重下 index.html + 入口 JS(455KB gzip)
+          // + 入口 CSS(94KB gzip)，再叠加画布页自己的 ~798KB ⇒ 移动端首屏总传输 ~2MB。
+          // replace 走 SPA 路由 ⇒ 入口资源复用缓存，只付画布页那一份。
+          // ⚠️ 必须 replace 不是 push：这是「自动分发」，不该在浏览器历史里留一条
+          // 返回即回品牌页的记录（push 会让用户按返回键又弹回品牌页）。
+          await router.replace(`/workflow/${list[0].id}`)
         }
         // 无项目 ⇒ 留 hero（IA v4：不再静默新建）
       } catch {
@@ -82,6 +89,19 @@ const FEATURED_WORKS_COUNT = 4
 const loading = ref(false)
 const showPublish = ref(false)
 const userSessions = ref<Session[]>([])
+
+/**
+ * 创作进行中（2026-10-24 性能修复）：点击创作到画布页就绪之间的加载态。
+ *
+ * ⛔ 为什么状态在**本页**而不是 SignatureHero 内部：
+ *    加载的终点是「画布页挂载完成」，只有本页知道创建会话 + 路由跳转的完成时刻。
+ *    放在 hero 内部的话，加载环会在盖章动画（600ms）后就撤掉，
+ *    而真实等待还在继续 ⇒ 反馈提前消失 = 没改。
+ *
+ * 置 false 的时机：路由跳转已发起（画布页接管后续）即可——
+ * 画布页有自己的挂载反馈，不该让品牌页的环一直悬着。
+ */
+const creating = ref(false)
 
 // 2026-10-21 P1：会话管理逻辑整体迁到 composables/useMySessions.ts，
 // 主页只消费 compact 视图（COMPACT_SESSIONS_COUNT 个 + 「查看全部」→ /canvases）。
@@ -151,29 +171,37 @@ async function createCanvas() {
     auth.openLogin()
     return
   }
-  // 移动端品牌页点「锚」= **开始创作**（2026-10-23 用户裁决）：
-  //  · 有项目 ⇒ 进最近项目的【对话】页（不新建）——延续「回访进最近项目」的效率语义，
-  //    也避免替用户凭空建一个空项目；
-  //  · 无项目 ⇒ 新建项目并直接进它的【对话】页——用户已明确表达创作意图，
-  //    此刻创建是「把意图落地」，不是入口副作用；
-  //  品牌页上除锚之外没有任何其他创建入口 ⇒【新建项目】由【对话】页承载。
-  // PC 端保持原语义（hero 锚 = 开一个新项目）。
-  if (isMobileLayout.value && recentProjectId.value) {
-    router.push(`/workflow/${recentProjectId.value}`)
-    return
-  }
+  // 加载态：置位后由 finally 复位（防重入 + 保证异常路径也复位）
+  if (creating.value) return
+  creating.value = true
   try {
-    const { data } = await sessionsApi.create({
-      title: '未命名画布',
-    })
-    router.push({
-      path: `/workflow/${data.data.id}`,
-      query: {
-        openAgent: '1',
-      },
-    })
-  } catch {
-    router.push(`/workflow/demo-${Date.now()}`)
+    // 移动端品牌页点「锚」= **开始创作**（2026-10-23 用户裁决）：
+    //  · 有项目 ⇒ 进最近项目的【对话】页（不新建）——延续「回访进最近项目」的效率语义，
+    //    也避免替用户凭空建一个空项目；
+    //  · 无项目 ⇒ 新建项目并直接进它的【对话】页——用户已明确表达创作意图，
+    //    此刻创建是「把意图落地」，不是入口副作用；
+    //  品牌页上除锚之外没有任何其他创建入口 ⇒【新建项目】由【对话】页承载。
+    // PC 端保持原语义（hero 锚 = 开一个新项目）。
+    if (isMobileLayout.value && recentProjectId.value) {
+      await router.push(`/workflow/${recentProjectId.value}`)
+      return
+    }
+    try {
+      const { data } = await sessionsApi.create({
+        title: '未命名画布',
+      })
+      await router.push({
+        path: `/workflow/${data.data.id}`,
+        query: {
+          openAgent: '1',
+        },
+      })
+    } catch {
+      await router.push(`/workflow/demo-${Date.now()}`)
+    }
+  } finally {
+    // 路由已切换 ⇒ 画布页接管，本页的加载态不再需要
+    creating.value = false
   }
 }
 
@@ -219,6 +247,9 @@ onMounted(() => {
   fetchWorks()
   // 组合式内部已在 onMounted 里注册 pointerdown 监听并首fetch，此处只需首拉
   void sessions.fetch()
+  // 2026-10-24 性能修复：品牌页是「点击创作」的发生地 ⇒ **立即**预热画布页分包。
+  // App.vue 的空闲预热兜底全局，但等空闲（最长 3s timeout）太晚——这里不等待。
+  preloadCanvasChunk()
 })
 
 watch(
@@ -233,7 +264,7 @@ watch(
   <div>
     <!-- 2026-10-22 用户裁定「霸屏铺满」：hero 是全宽首屏（不再龟缩在 max-w-7xl 卡片里），
          滚动后才是我的项目 / 社区精选——同一个页面，不是两个页面 -->
-    <SignatureHero @create="createCanvas" />
+    <SignatureHero :creating="creating" @create="createCanvas" />
 
     <!-- ⛔ 窄屏整块隐藏（2026-10-23 用户裁定）：移动端品牌页只有【品牌】内容，
          覆盖手机全屏 ⇒ 这里只装「我的项目 / 社区精选 / 发布弹窗」，窄屏一律不渲染
