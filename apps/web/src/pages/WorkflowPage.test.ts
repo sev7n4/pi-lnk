@@ -7,11 +7,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import WorkflowPage from './WorkflowPage.vue'
 
-const { apiGet, apiPost, canvasList, canvasCreate, mobileFlag, locationAssign } = vi.hoisted(() => ({
+const { apiGet, apiPost, canvasList, canvasCreate, sessionsCreate, mobileFlag, locationAssign } = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
   canvasList: vi.fn(),
   canvasCreate: vi.fn(),
+  sessionsCreate: vi.fn(),
   /** 移动端布局开关：每个用例可改（组件挂载时读快照，watch immediate 即用） */
   mobileFlag: { isMobile: false },
   /**
@@ -39,7 +40,7 @@ vi.mock('@/services/canvas-api', () => ({
 vi.mock('@/services/sessions-api', () => ({
   sessionsApi: {
     list: vi.fn(async () => ({ data: { data: [] } })),
-    create: vi.fn(),
+    create: sessionsCreate,
     rename: vi.fn(),
     duplicate: vi.fn(),
     remove: vi.fn(),
@@ -55,8 +56,19 @@ vi.mock('@/router/useSessionRedirect', () => ({ useSessionRedirect: () => {} }))
 vi.mock('@/composables/useAgentMobileLayout', () => ({
   useAgentMobileLayout: () => ({ isMobileLayout: ref(mobileFlag.isMobile) }),
 }))
+const { elMessage } = vi.hoisted(() => {
+  const elMessage = Object.assign(vi.fn(() => ({ close: vi.fn() })), {
+    success: vi.fn(),
+    error: vi.fn(),
+  }) as unknown as {
+    (opts: { type?: string; message?: string; duration?: number }): { close: () => void }
+    success: (msg?: string) => void
+    error: (msg?: string) => void
+  }
+  return { elMessage }
+})
 vi.mock('element-plus', () => ({
-  ElMessage: { success: vi.fn(), error: vi.fn() },
+  ElMessage: elMessage,
   ElMessageBox: { confirm: vi.fn(async () => true) },
 }))
 
@@ -68,7 +80,10 @@ vi.mock('vue-router', () => ({
 
 // 子组件全部 stub，避免拉进真实依赖链
 const stubs = {
-  SignatureHero: { template: '<div class="signature-hero-stub" />' },
+  SignatureHero: {
+    name: 'SignatureHero',
+    template: '<button class="signature-hero-stub" @click="$emit(\'create\')" />',
+  },
   SessionCard: { template: '<div class="session-card-stub" />', props: ['session'] },
   WorkCard: { template: '<div class="work-card-stub" />', props: ['work'] },
   PublishNeoTVDialog: { template: '<div />' },
@@ -158,6 +173,52 @@ describe('WorkflowPage 主页收拢（P1）', () => {
     // 故删除写死形状的过时断言。
     const wrapper = await mountWorkflow()
     expect(wrapper.find('.category-tabs-stub').exists()).toBe(false)
+  })
+})
+
+describe('createCanvas 创建守卫与失败处理（fix/createcanvas-guard）', () => {
+  beforeEach(() => {
+    sessionsCreate.mockReset()
+  })
+
+  it('创建成功：携带 openAgent 跳转到画布页', async () => {
+    sessionsCreate.mockResolvedValueOnce({ data: { data: { id: 's_ok' } } })
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    await wrapper.find('.signature-hero-stub').trigger('click')
+    await flushPromises()
+    expect(routerMocks.push).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/workflow/s_ok' }),
+    )
+    expect(elMessage.error).not.toHaveBeenCalled()
+  })
+
+  it('创建失败：不兜底到 demo 假画布，而是报错提示', async () => {
+    sessionsCreate.mockRejectedValueOnce(new Error('network'))
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    await wrapper.find('.signature-hero-stub').trigger('click')
+    await flushPromises()
+    expect(routerMocks.push).not.toHaveBeenCalledWith(
+      expect.stringContaining('demo-'),
+    )
+    expect(elMessage.error).toHaveBeenCalled()
+  })
+
+  it('并发点击只创建一次（重入守卫 + loading 反馈）', async () => {
+    let resolve!: (v: unknown) => void
+    sessionsCreate.mockImplementationOnce(
+      () => new Promise((r) => { resolve = r }),
+    )
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    const btn = wrapper.find('.signature-hero-stub')
+    const p1 = btn.trigger('click')
+    const p2 = btn.trigger('click') // 第二次并发点击
+    expect(sessionsCreate).toHaveBeenCalledTimes(1)
+    resolve({ data: { data: { id: 's_guard' } } })
+    await Promise.all([p1, p2])
+    await flushPromises()
+    expect(routerMocks.push).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/workflow/s_guard' }),
+    )
   })
 })
 

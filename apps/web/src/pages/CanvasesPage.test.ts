@@ -3,12 +3,16 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import CanvasesPage from './CanvasesPage.vue'
 
-const { sessionsList, sessionsCreate, sessionsRemoveMany, authState, pushMock } = vi.hoisted(() => ({
+const { sessionsList, sessionsCreate, sessionsRemoveMany, authState, pushMock, elMessage } = vi.hoisted(() => ({
   sessionsList: vi.fn(),
   sessionsCreate: vi.fn(),
   sessionsRemoveMany: vi.fn(),
   pushMock: vi.fn(),
   authState: { isLoggedIn: true },
+  elMessage: Object.assign(vi.fn(() => ({ close: vi.fn() })), {
+    success: vi.fn(),
+    error: vi.fn(),
+  }),
 }))
 
 vi.mock('@/services/sessions-api', () => ({
@@ -23,7 +27,7 @@ vi.mock('@/services/sessions-api', () => ({
 }))
 
 vi.mock('element-plus', () => ({
-  ElMessage: { success: vi.fn(), error: vi.fn() },
+  ElMessage: elMessage,
   ElMessageBox: { confirm: vi.fn(async () => true), prompt: vi.fn() },
 }))
 

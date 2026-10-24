@@ -15,6 +15,7 @@ import SessionCard from '@/components/workflow/SessionCard.vue'
 import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import SignatureHero from '@/components/workflow/SignatureHero.vue'
 import type { Session } from '@lnkpi/shared'
+import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -186,10 +187,16 @@ async function createCanvas() {
       await router.push(`/workflow/${recentProjectId.value}`)
       return
     }
+    // 2026-10-24 修复（fix/createcanvas-guard）：创建失败不再静默兜底到不存在的
+    // demo 画布（违反 delivery-no-pseudoblock 纪律）——网络失败应让用户看到明确错误并重试，
+    // 而非掉进一个僵尸会话。客户端超时 20s（默认 120s）避免弱网/连接池卡死时上百秒零反馈。
+    const loading = ElMessage({ type: 'info', message: '正在创建画布…', duration: 0 })
     try {
-      const { data } = await sessionsApi.create({
-        title: '未命名画布',
-      })
+      const { data } = await sessionsApi.create(
+        { title: '未命名画布' },
+        { timeout: 20_000 },
+      )
+      loading.close()
       await router.push({
         path: `/workflow/${data.data.id}`,
         query: {
@@ -197,7 +204,8 @@ async function createCanvas() {
         },
       })
     } catch {
-      await router.push(`/workflow/demo-${Date.now()}`)
+      loading.close()
+      ElMessage.error('创建画布失败，请检查网络后重试')
     }
   } finally {
     // 路由已切换 ⇒ 画布页接管，本页的加载态不再需要
