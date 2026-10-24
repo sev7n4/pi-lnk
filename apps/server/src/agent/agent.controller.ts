@@ -563,14 +563,17 @@ export class AgentController {
   }
 
   /**
-   * 旁听众管（纯订阅、不触发 run）：给「点了 followUp 就走开」的人一个切回来还能看见的通道。
+   * 会话级事件订阅（纯订阅、不触发 run）——多端同会话一致性的**传输主干**。
    *
-   * 主 `chat/conversation` 在 `agent_end` 就收尾了，而 followUp 是在**收尾边界之后**才接住、
-   * 由 pi-runtime `drainAfterRun` 派生出的新一代 —— 那一段不在主流里。本端点只旁听、不驱动，
-   * 且**收到 `agent_end` 不自动收尾**（否则恰好把续跑那一代切掉）。
+   * 两个消费场景，同一条流：
+   *  ① **本端**：`chat/conversation` 在 `agent_end` 就收尾了，而 followUp 是在**收尾边界之后**
+   *     才接住、由 pi-runtime `drainAfterRun` 派生出的新一代 —— 那一段不在主流里；
+   *  ② **旁观端**（2026-10-24 补）：另一端正在跑的那轮，本端若不订阅就只有刷新才看得见。
+   *     ⇒ 本端点必须**常驻可订阅**，与「谁发起的」无关。
    *
    * ⚠️ SSE 在本链路永不 EOF（pi-runtime 靠 idle 判定存活），所以必须有空闲闸门：
-   * 30s 无任何事件就主动 end，避免每个静默会话都白占一条长连接。
+   * 30s 无任何帧就主动 end，避免订阅没起来时白占一条长连接。**心跳也算帧**（见下），
+   * 因此健康连接不会被闸门误杀。
    */
   @Get('runs/events')
   @UseGuards(AuthGuard)
@@ -597,25 +600,72 @@ export class AgentController {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
+    // ⚠️ 关于 `X-Accel-Buffering: no`（2026-10-24 复核后保留，但**不是**生产问题的成因）：
+    // 生产 CVM 的 `/etc/nginx/conf.d/lnkpi.conf` 里 `location /api/` **已经**设了
+    // `proxy_buffering off` ⇒ 旁听流**不受** nginx 缓冲。
+    // 保留这个头的理由是**防御性**：反代配置会变（新增 location / 换 CDN / 换机器），
+    // 而 SSE 一旦被缓冲就会重演「连接建立但收不到任何字节」的静默故障，且排查成本极高
+    // （nginx access log 里只看到 200 + 0 字节，看不出是缓冲）。
+    // ⇒ 逐响应声明「本响应不缓冲」，不依赖任何外层配置。
+    res.setHeader('X-Accel-Buffering', 'no')
 
     // idle 闸门收窄（multi-device Task 4，plan 已知坑「旁听流 30s idle ⇒ 重连风暴」）：
     // 30s 只用于**首帧前**（等不到首帧 = 订阅没起来，断开让前端退避重试）；
     // 首帧之后连接转常驻，靠 15s 心跳帧保活（与主链路 chat/conversation 同款，
     // 防 nginx/浏览器把静默长连接当死连接掐掉）。
     let firstFrameSeen = false
+    // ⭐⭐ 订阅建立**立刻**写一帧（SSE 注释，不进 data 通道）：浏览器要等响应头才算
+    // 「连上了」，而本链路首个业务事件可能几十秒后才到。没有这一帧，前端在整段静默期里
+    // 都处于「未连接」状态（用户切走 / 组件卸载 ⇒ 直接 abort，永远收不到后续事件）。
+    // ⚠️ 用 `:` 注释行而非 `data:`：注释帧不触发前端的 firstFrameSeen，也不该被当成业务事件。
+    //
+    // 生产实证（2026-10-24）：改前 25 次订阅在 nginx access log 里全是「200 + 0 字节」。
+    // 归因**不是** nginx 缓冲（该机 `/api/` 已 `proxy_buffering off`），而是：改前首帧前
+    // 不写任何字节 ⇒ 客户端始终拿不到响应头 ⇒ 处于「未建立」状态；此时任何一次掐断
+    // （重挂 / 切走 / 重连）都只留下「200 + 0 字节」——看不出原因的静默故障记录。
+    res.write(': observer-ready\n\n')
     const idleTimer = setTimeout(() => {
       res.end()
     }, 30_000)
     const heartbeatTimer = setInterval(() => {
       try {
         res.write('data: {"type":"heartbeat"}\n\n')
+        // 心跳也是「连接活着」的证据：收到心跳即解除首帧闸门。
+        // 否则静默会话的常驻连接会在第 30s 被闸门 end（只来得及发 1 个心跳）
+        // ⇒ 前端每 30s 全量重连，常驻订阅名存实亡。
+        firstFrameSeen = true
+        clearTimeout(idleTimer)
       } catch {
         // 客户端已断开，循环/关闭会清理
       }
     }, 15_000)
+    // ⭐⭐ 2026-10-24：客户端断开必须**终止**旁听订阅。
+    //
+    // 背景：service 侧 `retryOnMissing` 让 404 走「无限期等 lane 出现」⇒ pi-runtime
+    // 客户端永不回调 onError ⇒ 生成器永不结束 ⇒ 浏览器一断开，Nest 侧就会**永久留下**
+    // 一条每 ≤5s 轮询 pi-runtime 的订阅（每个 observer 一条）⇒ 资源泄漏 + 无谓上游压力。
+    //
+    // ⇒ 把「客户端断开」映射成 `abort.abort()`，service 收到后立即退订并结束生成器。
+    //
+    // ⚠️⚠️ 判据用 **`res.on('close')` + `!res.writableFinished`**，**不用** `req.on('close')`。
+    // 实测（2026-10-24，本机 Node 24 + Express 4 + express.raw）：
+    //   - `req.on('close')` 在**请求体被读完**时就会触发（58ms），而响应还在持续推送
+    //     ⇒ 一旦有人给本端点加 body / 换 raw parser，订阅会被**瞬间 abort**
+    //     ⇒ 退化成「连上即断」的老故障（Node 16+ 改过 `req.close` 语义）。
+    //     本端点当前是 GET（无 body）才侥幸没踩到——那是隐含前提，不是保证。
+    //   - `res.on('close')` 只在**响应真正结束**时触发：
+    //     客户端掐断 ⇒ close 且 `writableFinished=false`（提前结束）；
+    //     服务端自己 `res.end()` ⇒ close 且 `writableFinished=true`（正常收尾）。
+    //     ⇒ 用 `!writableFinished` 区分「客户端断连」与「正常收尾」，两种都幂等无副作用。
+    const abort = new AbortController()
+    const onClientGone = () => {
+      if (!res.writableFinished) abort.abort()
+    }
+    res.on('close', onClientGone)
     try {
       for await (const event of this.agentService.runEventStream(threadId?.trim() || sessionId, {
         lastEventId: cursor,
+        signal: abort.signal,
       })) {
         if (!firstFrameSeen) {
           firstFrameSeen = true
@@ -638,7 +688,14 @@ export class AgentController {
     } finally {
       clearTimeout(idleTimer)
       clearInterval(heartbeatTimer)
-      res.end()
+      // 解绑断连监听：避免长连接在 res 上留悬挂监听器（每个 res 一个实例，
+      // 但同一 res 上 close 只触发一次 ⇒ 摘掉更干净，也防 future 复用 res 时误触发）。
+      res.off('close', onClientGone)
+      try {
+        res.end()
+      } catch {
+        // 客户端已断开：res.end() 可能抛（ERR_STREAM_WRITE_AFTER_END 等）⇒ 忽略。
+      }
     }
   }
 

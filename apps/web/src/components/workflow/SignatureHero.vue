@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import CreativeLauncher from './CreativeLauncher.vue'
+import SlideToCreate from './SlideToCreate.vue'
 import {
   BRAND_LOGO_URL,
   BRAND_SLOGAN_LEAD,
@@ -23,8 +23,10 @@ import {
 // 不依赖视口/字体；行内留等宽垫片保住断行节奏。⑬ 输入框重做；⑭ 锚外环紫晕减重；
 // ⑮ 墨点改水滴形。另修：三联两侧 1fr 被 min-content 撑得不均等 ⇒ 锚比 slogan 中轴
 // 偏右 30px（实测 750.1 vs 720）⇒ 改 minmax(0,1fr) 归中。
-const props = defineProps<{ modelValue: string }>()
-const emit = defineEmits<{ 'update:modelValue': [v: string]; create: [] }>()
+// 2026-10-23/24 用户裁定（六点·第 5 点）：⑸「描述你的创意」输入框**整体退场**
+// （用户基本不在品牌页打字）⇒ hero 不再有输入框，也不再需要 v-model；
+// 创作入口收敛为【锚】+【滑动解锁】双入口（滑动解锁与锚同发 create）。
+const emit = defineEmits<{ create: [] }>()
 
 // slogan 主行切分：单一真相源是 BRAND_SLOGAN_MAIN 整句，按标记词切段渲染——
 // 不复制文案，防两处漂移；拼接结果必须等于整句（SignatureHero.test.ts 锁定）。
@@ -110,7 +112,7 @@ function onAnchorClick() {
            ⛔ 窄屏/桌面共用一份 DOM（不得另造一条「三联 legend」：那是叙事的二次转述，
            用户判定为多出来、违背品牌设计意图）。 -->
       <div class="lnk-stage mt-6 lg:mt-0">
-        <!-- 左：对话（标签组 + 输入站） -->
+        <!-- 左：对话（标签组） -->
         <div class="lnk-col-talk">
           <!-- 窄屏也显示「对话 / 你说出想法」（2026-10-23）：PC 三叙事的左列内容整体复用，
                字号按窄屏降一档（lg 断点还原 PC 尺寸）。 -->
@@ -122,14 +124,13 @@ function onAnchorClick() {
               你说出想法
             </p>
           </div>
-          <div class="lnk-talk-input">
-            <CreativeLauncher
-              class="w-full"
-              :model-value="props.modelValue"
-              tone="signature"
-              @update:model-value="emit('update:modelValue', $event)"
-              @create="emit('create')"
-            />
+          <!-- 滑动解锁（2026-10-23/24 用户裁定·第 5 点）：原「描述你的创意」输入框**整体退场**
+               （用户基本不在品牌页打字）⇒ 创作入口收敛为【锚】+【滑动解锁】双入口。
+               滑动把手从左划到右 = 寓意「从对话滑向画布」，松手过阈值即触发与锚同一个 create。
+               ⚠️ 窄屏独占一行（三列下方）；桌面（lg）回到左列内（与原输入框同位），
+               桌面端几何零变化。 -->
+          <div class="lnk-talk-slide">
+            <SlideToCreate @create="emit('create')" />
           </div>
           <span class="lnk-deco-left hidden h-px w-16 shrink-0 bg-gradient-to-l from-overlay/30 to-transparent lg:block" aria-hidden="true" />
         </div>
@@ -175,6 +176,13 @@ function onAnchorClick() {
             <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: -64px; --sy: 52px" />
             <span class="lnk-anchor__spark" aria-hidden="true" style="--sx: 60px; --sy: 58px" />
           </button>
+          <!-- 窄屏连接线（2026-10-23/24 用户裁定·第 4 点）：【对话】↔【锚】↔【画布】
+               之间的横向连接线在窄屏原本整段丢失（PC 端那两条 deco 线是 lg 才显示的）
+               ⇒ 这里补两条窄屏专用的：从锚盘左右边缘向外延伸，指向两侧叙事标签。
+               ⛔ 桌面（lg）不显示这两条：PC 端沿用原有列内 deco 线（.lnk-deco-*），
+               桌面几何零变化。 -->
+          <span class="lnk-anchor__link lnk-anchor__link--left" aria-hidden="true" />
+          <span class="lnk-anchor__link lnk-anchor__link--right" aria-hidden="true" />
           <!-- 门阶（2026-10-22 用户裁定「入口升层」）：全页唯一动作入口的标记。
                窄屏收紧上间距（2026-10-23：移动端品牌页要一屏装下完整三叙事） -->
           <p class="lnk-anchor__cta mt-5 lg:mt-7">
@@ -192,7 +200,7 @@ function onAnchorClick() {
               画布
             </p>
             <p class="mt-2 text-[length:var(--lnk-text-2xs)] leading-relaxed text-[color:var(--lnk-text-on-signature-muted)] lg:text-[length:var(--lnk-text-base)]">
-              墨鱼替你落墨<br>画布记住你的模样
+              墨鱼π<br class="lg:hidden">替你落墨
             </p>
           </div>
         </div>
@@ -278,25 +286,25 @@ function onAnchorClick() {
 }
 
 /* ===== 叙事舞台的栅格（2026-10-23 用户裁决：移动端也做成左右结构）=====
-   窄屏：对话标签组 | 锚 | 画布标签组 **横排三列**，输入框在叙事带下方独占一行
-   （93px 的窄列放不下输入框；落在下方仍是「你说出想法」的落笔处）。
-   桌面（lg）：恢复三列，输入框回到左列内（对话列），与 PC 原设计一致。
+   窄屏：对话标签组 | 锚 | 画布标签组 **横排三列**，滑动解锁在叙事带下方独占一行
+   （93px 的窄列放不下滑动条；落在下方仍是「你说出想法」的落笔处）。
+   桌面（lg）：恢复三列，滑动解锁回到左列内（对话列），与 PC 原设计一致。
 
    ⚠️ 栅格全部写在这里（不用 Tailwind 的 grid/grid-cols 工具类）：scoped CSS 与
    工具类同优先级（0,1,0）⇒ 靠书写顺序决胜，很脆（grid-cols 的任意值与
    grid-template-areas 也表达不了 areas）⇒ 单一出处更稳。
-   ⚠️ 窄屏左列用 display:contents：让 talk 列的子元素（标签组 / 输入框）直接
-   参与外层 grid，从而把输入框放到第二行（否则它是 talk 列的孙级，排不进 areas）。 */
+   ⚠️ 窄屏左列用 display:contents：让 talk 列的子元素（标签组）直接
+   参与外层 grid，从而把滑动条放到第二行（否则它是 talk 列的孙级，排不进 areas）。 */
 .lnk-stage {
   display: grid;
   grid-template-areas:
     'talk anchor canvas'
-    'input input input';
+    'slide slide slide';
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   /* 窄屏：stretch 让左右两列**等宽填满**（justify-items:center 会让每列各取内容宽
      ⇒ 「对话」列 65px、「画布」列 93px，两边不对称、叙事带就歪了）。
-     文字居中由列内 text-center 负责；输入框用 justify-self:center 保持居中。 */
+     文字居中由列内 text-center 负责；滑动条用 justify-self:center 保持居中。 */
   justify-items: stretch;
   column-gap: 12px;
   row-gap: 20px;
@@ -310,8 +318,9 @@ function onAnchorClick() {
   grid-area: talk;
 }
 
-.lnk-talk-input {
-  grid-area: input;
+/* 滑动解锁位（2026-10-23/24 用户裁定·第 5 点）：原输入框位，窄屏独占第二行。 */
+.lnk-talk-slide {
+  grid-area: slide;
   justify-self: center;
   width: 100%;
   max-width: 280px;
@@ -345,12 +354,12 @@ function onAnchorClick() {
     row-gap: 48px;
   }
 
-  /* ⚠️ 先把窄屏的 grid-area 引用**全部清掉**：lg 下 grid-template-areas: none，
-     残留的 grid-area: talk/anchor/canvas 会让这些 item 退化成 auto 放置
+  /* ⚠️ 先把窄屏的 grid-area 引用**全部清掉**：lg 下 grid-template-areas: none,
+     残留的 grid-area: talk/anchor/canvas/slide 会让这些 item 退化成 auto 放置
      ⇒ 三列顺序错乱（中列被挤到右侧、右列与中列重叠、锚偏离 slogan 中轴 348px）。
      ⚠️ 这条必须排在下面各条 grid-area 定位**之前**（同优先级靠书写顺序决胜）。 */
   .lnk-talk-label,
-  .lnk-talk-input,
+  .lnk-talk-slide,
   .lnk-col-anchor,
   .lnk-col-canvas {
     grid-area: auto;
@@ -361,7 +370,7 @@ function onAnchorClick() {
     width: auto;
   }
 
-  /* 左列：内容（右对齐、标签在上输入框在下）+ 装饰线在其右侧（指向中列） */
+  /* 左列：内容（右对齐、标签在上滑动条在下）+ 装饰线在其右侧（指向中列） */
   .lnk-col-talk {
     display: grid;
     width: 100%;
@@ -377,7 +386,7 @@ function onAnchorClick() {
     justify-self: end;
   }
 
-  .lnk-talk-input {
+  .lnk-talk-slide {
     grid-area: 2 / 1 / 3 / 2;
     justify-self: end;
     width: 100%;
@@ -492,6 +501,43 @@ function onAnchorClick() {
   100% {
     transform: translate(var(--drop-dx1, var(--drop-dx0, 0)), calc(var(--lnk-drop-fall) - var(--lnk-drop-start))) scale(0.82, 1.22) rotate(45deg);
     opacity: 0;
+  }
+}
+
+/* ===== 窄屏连接线（2026-10-23/24 用户裁定·第 4 点）=====
+   PC 端那两条连接线是列内元素（.lnk-deco-left / .lnk-deco-right，lg 才显示），
+   窄屏整段丢失 ⇒ 【对话】↔【锚】↔【画布】读起来是三个孤立块。
+   这里补两条窄屏专用：从锚盘左右边缘向外延伸的横向渐变线，指向两侧叙事标签。
+
+   ⚠️ 绝对定位（不占 grid 轨道）：窄屏三列宽度已被中列锚盘（132px）+ 两侧标签
+   占满（实测窄屏右列仅 93px）⇒ 再插两条 grid 列会把标签挤到换行/孤字。
+   绝对定位让线「浮」在列间隙与标签边缘之上，不改任何列宽 ⇒ 不破坏 IA v4 几何。
+   ⛔ 桌面（lg）隐藏：PC 端沿用列内 deco 线，桌面几何零变化。 */
+.lnk-anchor__link {
+  position: absolute;
+  top: 50%;
+  width: 28px;
+  height: 1px;
+  pointer-events: none;
+}
+
+/* 左线：从锚盘左边缘向左延伸（渐变向右最实 ⇒ 指向锚） */
+.lnk-anchor__link--left {
+  right: 100%;
+  margin-right: 4px;
+  background: linear-gradient(to left, rgb(var(--lnk-overlay-rgb) / 0.3), transparent);
+}
+
+/* 右线：从锚盘右边缘向右延伸（渐变向左最实 ⇒ 指向锚） */
+.lnk-anchor__link--right {
+  left: 100%;
+  margin-left: 4px;
+  background: linear-gradient(to right, rgb(var(--lnk-overlay-rgb) / 0.3), transparent);
+}
+
+@media (min-width: 1024px) {
+  .lnk-anchor__link {
+    display: none;
   }
 }
 

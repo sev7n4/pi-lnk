@@ -597,6 +597,43 @@ ssh root@119.29.173.89 "ls -1t /var/log/nginx/access.log" && grep -oE 'CanvasPag
 
 ---
 
+## 批次 B′ · 常驻订阅（2026-10-24 补，收尾 P0）
+
+**为什么补这一批。** #547 合并并上线后做生产取证：`GET /api/agent/runs/events` 共 25 次订阅，
+**全部 0 字节**（仅 1 次 34 字节 = 一个心跳帧）。三层原因，缺任何一层都是「功能还在、但看不见」：
+
+1. **订阅入口偏窄**：web 侧唯一入口是 `sendMessage` 的收尾分支 ⇒ 旁观端（另一端发起的那一轮）
+   压根不订阅。设计目标里的「常驻 session SSE，与谁发起无关」被实现成了「本轮收尾后的 tail」。
+2. **首帧前不写任何字节**：浏览器要等**响应头**才算「连上了」，而改前本链路在首个业务事件
+   （可能几十秒后）之前不写任何字节 ⇒ 前端整段静默期都处于「未连接」状态 ⇒ 用户切走 /
+   组件卸载 / 重挂即 abort ⇒ nginx access log 只留下「200 + **0 字节**」，看不出原因。
+   修复：订阅建立即写就绪帧（`: observer-ready`）。
+   ⚠️ **归因订正**：初稿把 0 字节归给「nginx `proxy_buffering on` 憋住心跳」，复核生产配置
+   （`/etc/nginx/conf.d/lnkpi.conf` 的 `location /api/` **已** `proxy_buffering off`）后推翻。
+   `X-Accel-Buffering: no` 仍保留，但定性为**防御性**（反代配置会变），不是本问题的成因。
+3. **闸门把常驻连接杀掉**：首帧前 30s idle 只认**业务事件**，心跳不算 ⇒ 静默会话在第 30s 被
+   `res.end()`，只来得及发 1 个心跳 ⇒ 前端每 30s 全量重连，常驻名存实亡。
+
+**改动：**
+
+- `apps/server/src/agent/agent.controller.ts`：订阅建立即写就绪帧（让前端立刻拿到响应头）；
+  心跳到达即解除首帧闸门；`X-Accel-Buffering: no`（**防御性**，非本问题成因，见上订正）。
+- `apps/web/src/components/agent/follow-up-tail.ts`：默认无轮次上限（常驻，旧值 3 等于「第 4 次
+  之后本端又聋了」）；idle 由**任何帧**刷新（默认 45s > 心跳 15s×2）；新增 `onTurnEnd`
+  （`done` / `turn_ack` / `error` / `turn_not_submitted` 都是收束）。
+- `apps/web/src/components/agent/AgentSideRail.vue`：挂载即订阅；会话/线程切换重挂；本端主流
+  起飞前让位（否则同一份 `text_delta` 收两遍）；旁观轮生命周期（新建 assistant 影子 →
+  收束后 `finishStreaming` + 拉一次权威历史纠正，传 `0` 跳过终态轮询）。
+- 新增 `AgentSideRail.observerWiring.test.ts`：把「什么时候订阅」钉成静态契约（组件 3000 行，
+  挂载测试代价过高；不锁住的话，挪回 turn 收尾分支会让功能**静默消失**）。
+
+**验收**：Task 11 场景 A（PC 发消息，手机不刷新能看到进度与结果）在本批之后**首次可达**。
+
+⚠️ **仍有缺口**：打开会话时那一轮若已跑了一半，前半段文本拿不到（订阅是 `from=now` 语义）。
+补齐需要 Task 7 步 5 的 snapshot 端点（批次 B 遗留）：客户端「先 snapshot 再增量」。
+
+---
+
 ## 回滚顺序
 
 倒序执行，每步独立可回：

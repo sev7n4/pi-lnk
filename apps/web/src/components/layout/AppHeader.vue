@@ -45,6 +45,10 @@ const activeTab = computed(() => {
   return '/workflow'
 })
 
+// 2026-10-23 用户裁定「品牌页只有一个墨色」：/workflow（签名画面页）不提供主题切换，
+// 也不展示个人积分——品牌叙事位保持纯净；主题切换仍可用画布页右上角入口。
+const isBrandPage = computed(() => route.path === '/workflow')
+
 const studioActive = computed(() => activeTab.value === '/studio')
 
 function navigate(path: string) {
@@ -153,9 +157,10 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="flex shrink-0 items-center gap-2 sm:gap-3">
-        <!-- 主题切换提到全站：此前只有画布页有入口，其余 16 条路由进不去 -->
-        <ThemeToggle class="h-8 w-8 rounded-lg text-fg-2 hover:bg-surface-elevated hover:text-fg" />
-        <AccountChrome />
+        <!-- 主题切换提到全站：此前只有画布页有入口，其余 16 条路由进不去。
+             ⛔ 品牌页（/workflow）例外：签名画面恒为墨色，不随主题翻转 -->
+        <ThemeToggle v-if="!isBrandPage" class="h-8 w-8 rounded-lg text-fg-2 hover:bg-surface-elevated hover:text-fg" />
+        <AccountChrome :hide-points="isBrandPage" />
       </div>
     </div>
   </header>

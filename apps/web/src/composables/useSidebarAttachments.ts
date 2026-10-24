@@ -69,9 +69,14 @@ export function nodeToSidebarAttachment(node: FocusNodeLike): SidebarAttachment 
   }
 }
 
+// 模块级单例：一个 agent 会话的待发送引用本就是全局唯一，单例语义正确。
+// 此前声明在函数内 ⇒ 每次调用新建局部态，移动端 AgentSideRail 为 null 时引用被静默丢弃。
+// 升为单例后，画布（CanvasPage）与侧栏（AgentSideRail）共享同一份 pendingAttachments，
+// 侧栏实例为空也不丢数据；清理仍由 AgentSideRail 在发送/新建会话时显式 clear()。
+const pendingAttachments = ref<SidebarAttachment[]>([])
+const refOrder = computed(() => pendingAttachments.value.map((a) => a.id))
+
 export function useSidebarAttachments() {
-  const pendingAttachments = ref<SidebarAttachment[]>([])
-  const refOrder = computed(() => pendingAttachments.value.map((a) => a.id))
 
   function addFromPayload(item: SidebarAttachment) {
     if (pendingAttachments.value.length >= SIDEBAR_ATTACHMENT_MAX) return

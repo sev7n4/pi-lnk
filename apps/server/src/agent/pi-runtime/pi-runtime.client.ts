@@ -584,7 +584,6 @@ export class PiRuntimeClient {
 	 * 重连语义（P0-③）：
 	 *  - 网络错误 / 非 404 HTTP 错误：250ms 起指数退避（封顶 5s），总预算 120s；
 	 *  - 重连请求携带 ?lastEventId=<最后收到的 seq>，服务端增量重放（需 pi-runtime ≥ 对应版本）；
-	 *  - HTTP 404（会话已删除）：终止并回调 onError（本轮 turn 已结束，属预期）；
 	 *  - body clean end（服务端正常关闭）：直接返回，不重连、不回调 onError。
 	 *  - 返回的取消函数随时可调；取消后不再重连。
 	 *
@@ -593,12 +592,32 @@ export class PiRuntimeClient {
 	 * 既有 live/重放语义；传了则优先于 from=now（与服务端「lastEventId 优先」一致）。
 	 * ⚠️ 调用方必须只传合法非负整数字符串（controller 已做 /^\d+$/ 闸门）——
 	 * 空串/畸形值会落进 pi-runtime 的 `afterSeq=-1` 全量重放分支（plan 已知坑）。
+	 *
+	 * ⭐⭐ 2026-10-24：404 的语义被**拆分**为「会话真没了」与「lane 尚未驻留」。
+	 *
+	 * 生产取证（2026-10-24，`/api/agent/runs/events` 实测 47ms 断流）：pi-runtime 的
+	 * `GET /sessions/:key/events` 在 `manager.hasKey(key)` 为假时返回 404。而
+	 * `hasKey` 查的是**内存 Map**（session-manager.ts `this.sessions`）：
+	 *  ① lane 只在**该 threadKey 上真的跑过一轮**时才创建；
+	 *  ② 未活跃的 lane 会被 sweeper 按 `sessionTtlMs`（默认 30 分钟）回收（只关内存，
+	 *     磁盘保留）。
+	 * ⇒ 「另一端还没在这个 thread 上发过消息」或「跑完超过 TTL」都会命中 404。
+	 *
+	 * ⛔ 旧语义把 404 一律当「会话已删除」⇒ 立即 onError 终止 ⇒ 旁听流 47ms 断流
+	 *    ⇒ 常驻订阅名存实亡（前端 clean-end 后也不重连，见 follow-up-tail.ts）。
+	 *
+	 * ⭐ 新语义：`opts.retryOnMissing`（**默认 false**，保持主流等既有调用方的
+	 * 「404 = 真没了」语义不变）时，404 归入**退避重试**路径而非终止：
+	 *  - 首次 404 走正常退避（250ms 起），预算照旧 120s；
+	 *  - 预算耗尽仍 404 ⇒ 才回调 onError（此时确实该放弃）。
+	 * 这样「lane 稍后才被另一端创建」的场景能被自动接上，而真删除的会话
+	 * 最多多耗 120s 才放弃（旁听是只读旁路，延迟放弃无副作用）。
 	 */
 	streamEvents(
 		sessionId: string,
 		onEvent: (event: PiRuntimeEvent) => void,
 		onError?: (err: unknown) => void,
-		opts?: { live?: boolean; lastEventId?: string },
+		opts?: { live?: boolean; lastEventId?: string; retryOnMissing?: boolean },
 	): () => void {
 		const controller = new AbortController();
 		const RECONNECT_BUDGET_MS = 120_000;
@@ -676,16 +695,33 @@ export class PiRuntimeClient {
 					return; // body clean end = 会话删除/turn 结束：不重连
 				} catch (err) {
 					if (controller.signal.aborted) return;
-					// 404 会话没了 / 409 快照 resync 也失败（旧版 pi-runtime 无快照端点）：
-					// **两者重连都无意义**，立即终止并上报。
-					if (err instanceof PiRuntimeError && (err.status === 404 || err.status === 409)) {
+					// 409 快照 resync 也失败（旧版 pi-runtime 无快照端点）：**重连无意义**，立即终止并上报。
+					if (err instanceof PiRuntimeError && err.status === 409) {
 						onError?.(err);
 						return;
 					}
-					if (firstFailureAt === undefined) firstFailureAt = Date.now();
-					else if (Date.now() - firstFailureAt >= RECONNECT_BUDGET_MS) {
-						onError?.(new PiRuntimeError("streamEvents: reconnect budget exhausted", 504));
+					// ⭐ 404 的两种语义（2026-10-24）：
+					//  - 默认：会话真没了 ⇒ 立即终止（保持既有调用方的语义不变）。
+					//  - retryOnMissing（旁听流）：lane 尚未驻留 / 已被 TTL 回收 ⇒
+					//    **无限期等待** lane 出现（见下方「不消耗重连预算」的说明）。
+					const isMissing = err instanceof PiRuntimeError && err.status === 404;
+					if (isMissing && !opts?.retryOnMissing) {
+						onError?.(err);
 						return;
+					}
+					// ⚠️ 只有**真实网络错误**才消耗 120s 重连预算。
+					// 「lane 不存在」是旁听流的**常态**（另一端还没在这个 thread 上发过消息，
+					// 或 lane 已被 TTL 回收）⇒ 若也计入预算，120s 后必放弃 ⇒
+					// 旁听端在「另一端 3 分钟后才发消息」的场景下永远接不上。
+					// ⇒ isMissing 走**不设预算**的持续等待（退避封顶 5s ⇒ 最多 5s 一次探测）。
+					if (!isMissing) {
+						if (firstFailureAt === undefined) firstFailureAt = Date.now();
+						else if (Date.now() - firstFailureAt >= RECONNECT_BUDGET_MS) {
+							onError?.(
+								new PiRuntimeError("streamEvents: reconnect budget exhausted", 504),
+							);
+							return;
+						}
 					}
 					await new Promise((r) => setTimeout(r, backoff));
 					backoff = Math.min(backoff * 2, 5_000);

@@ -710,6 +710,28 @@ function canShowUserMessageActions(msg: AgentStreamMessage): boolean {
   return msg.role === 'user' && !msg.streaming && !props.readOnly
 }
 
+/*
+ * 2026-10-23 用户反馈（移动端）：用户气泡常驻「编辑/复制/复用本轮」三个图标
+ * 把卡片撑得很高，挤压对话流。移动端改为默认收起，**点气泡**浮出在卡片下方；
+ * 桌面（hover 语义可用）维持原状。
+ * 状态用「每消息一个 Set 快照」整体替换（Vue3 Set 响应式需替换引用才可靠触发）。
+ */
+const mobileUserActionsOpen = ref<Set<string>>(new Set())
+
+function toggleUserMessageActions(id: string) {
+  const next = new Set(mobileUserActionsOpen.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  mobileUserActionsOpen.value = next
+}
+
+function onUserBubbleClick(msg: AgentStreamMessage) {
+  if (!isMobileLayout.value) return
+  if (msg.role !== 'user' || isMessageUnderEdit(msg)) return
+  if (!canShowUserMessageActions(msg)) return
+  toggleUserMessageActions(msg.id)
+}
+
 async function copyUserMessage(msg: AgentStreamMessage) {
   const text = visibleUserContent(msg).trim()
   if (!text) return
@@ -2638,6 +2660,10 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   cancelledPresentation.value = null
   cancelledProgressText.value = null
   streamAbortController = new AbortController()
+  // 主流起飞前先让位：常驻订阅与主流订阅的是同一会话，两边同时挂着会把
+  // 同一份 text_delta 收两遍（气泡里出现双倍文本）。
+  releaseObserverTurn()
+  followUpTail.abort()
   agentStream.start()
 
   try {
@@ -2783,13 +2809,23 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
  * 旁听「本轮之后」的事件（纯订阅，不发 prompt）——multi-device Task 5 接线层。
  *
  * 循环 / 退避 / 游标逻辑在 `follow-up-tail.ts`（依赖可注入 ⇒ 重连行为可单测），
- * 这里只做接线：turn 收尾后 `start()`，页面可见性恢复时 `resume()`，卸载时 `abort()`。
+ * 这里只做接线：**挂载即订阅**（会话级常驻），会话/线程切换重启，页面可见性恢复
+ * `resume()`，卸载时 `abort()`。
+ *
+ * ⭐⭐ 2026-10-24：订阅时机从「turn 收尾之后」改为「挂载即订阅」。原语义下，
+ * 另一端正在跑的那轮本端**根本不会订阅**（唯一入口在 sendMessage 的收尾分支）
+ * ⇒ 多端一致性的主诉（PC 发消息、手机不刷新能看到）在代码路径上不可能成立。
  *
  * 行为契约（详见 follow-up-tail.ts 头注释）：
  *  ① 断线按指数退避重连，且带 `lastEventId` 游标续传（Review Focus #1：只补增量不重放）；
- *  ② idle 20s 闸门只被业务事件刷新（Task 4 起服务端 15s 心跳不得让静默会话永不断）；
- *  ③ 404 = 会话已删除不重连；重连预算累计不重置（防「连上即断」死循环）。
+ *  ② idle 由任何帧刷新（常驻化后不再只认业务事件）；
+ *  ③ 404 = 会话已删除不重连；重连预算累计不重置（防「连上即断」死循环）；
+ *  ④ 本端主流在跑时不订阅（那一份文本已由 POST 响应体送达，再收就是重复）。
  */
+
+/** 本端是否正处于「旁观另一端的那一轮」（有自己新建的 assistant 影子）。 */
+const observerTurnActive = ref(false)
+
 const followUpTail = createFollowUpTailListener({
   fetchImpl: (url, init) => fetch(url, init),
   headers: () => authHeaders(),
@@ -2799,27 +2835,76 @@ const followUpTail = createFollowUpTailListener({
       `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
     ),
   onTextDelta: (text) => {
-    // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent），
-    // text_delta 增量直接追加到最后一条 assistant 下面 —— 正是「同一段接着写」。
+    // ⛔ 本端主流在跑：同一份 text_delta 已经从 POST 响应体到了，旁听再追加就是双倍文本。
+    if (agent.isStreaming) return
+    // 旁观另一端的那一轮：本地还没有这条 assistant 的影子 ⇒ 先起一条再追加。
+    if (!observerTurnActive.value) {
+      agent.startAssistantMessage()
+      agent.isStreaming = true
+      observerTurnActive.value = true
+    }
+    // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
     agent.appendText(text)
     scrollToBottom()
   },
   onCanvasAction: (data) => emit('canvasActions', [data as never]),
+  onTurnEnd: () => {
+    // 幂等：done 之后还有 turn_ack，会来第二次
+    if (!observerTurnActive.value) return
+    observerTurnActive.value = false
+    agent.finishStreaming()
+    // 旁观拿到的是增量片段，收尾必须以服务端权威历史为准纠正一次（漏帧/乱序的自愈口）。
+    // 传 0：那一轮已在另一端跑完，不做终态轮询（否则旁观端会跟着睡 5s×N）。
+    void reconcileLatestAssistant(0)
+    emit('turnComplete')
+    scrollToBottom()
+  },
 })
 
-/** turn 收尾后挂旁听：followUp 是收尾边界之后才接住、由 pi-runtime drain 派生的新一代。 */
+/** 订阅当前会话（幂等：内部先 abort 旧流）。 */
 function listenFollowUpTail(): Promise<void> {
+  // 未登录不订阅：订阅必须带鉴权头，没 token 时请求只会拿到 401，并连带一轮
+  // 无意义的退避重连。守卫放在**入口**（而非各调用点）⇒ 挂载 / 切会话 / 可见性恢复全覆盖。
+  if (!hasAuthToken()) return Promise.resolve()
   return followUpTail.start()
 }
 
-/** Task 5：页面从后台切回时恢复旁听（idle 直接挂；backoff 中跳过排队；健康流不打断）。 */
+/** 是否持有可用 token（与 `authHeaders` 同源口径）。 */
+function hasAuthToken(): boolean {
+  return Boolean(localStorage.getItem('token'))
+}
+
+/** 本端要自己发一轮了：先结束旁观轮，再停订阅（避免与主流双份消费）。 */
+function releaseObserverTurn(): void {
+  if (!observerTurnActive.value) return
+  observerTurnActive.value = false
+  agent.finishStreaming()
+}
+
+/** Task 5：页面从后台切回时恢复订阅（idle 直接挂；backoff 中跳过排队；健康流不打断）。 */
 function onFollowUpTailVisibility(): void {
-  if (document.visibilityState === 'visible') void followUpTail.resume()
+  if (document.visibilityState !== 'visible') return
+  if (!hasAuthToken()) return
+  void followUpTail.resume()
 }
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onFollowUpTailVisibility)
+  // 常驻订阅：打开会话就挂上，与「谁在说话」无关。
+  // 本端正在跑主流时（`agent.isStreaming`）不挂——那份内容主流自己会给。
+  if (!agent.isStreaming) void listenFollowUpTail()
 })
+
+// 会话 / 线程切换后重挂：订阅 URL 携带 threadId，线程变了旧流就在听错的对象。
+watch(
+  [() => props.sessionId, () => agentThreadId.value],
+  () => {
+    releaseObserverTurn()
+    followUpTail.abort()
+    if (!agent.isStreaming) void listenFollowUpTail()
+  },
+)
+
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onFollowUpTailVisibility)
   followUpTail.abort()
@@ -2879,8 +2964,14 @@ async function reconnectStream() {
   }
 }
 
-/** 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。 */
-async function reconcileLatestAssistant() {
+/**
+ * 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。
+ *
+ * @param maxPolls 终态轮询次数上限（默认 `RECONCILE_MAX_POLLS`）。
+ *   旁观端传 `0`：那一轮在**另一端**已经跑完（收到 done 才走到这里），
+ *   没必要再等终态，拉一次权威历史纠正漏帧即可（多端场景下一等就是几分钟的睡循环）。
+ */
+async function reconcileLatestAssistant(maxPolls = RECONCILE_MAX_POLLS) {
   const pull = async () => {
     const res = await fetch(
       apiUrl(
@@ -2911,7 +3002,7 @@ async function reconcileLatestAssistant() {
     // 2026-10-01 修正：达阈值后**先做一次真实健康探测**再决定是否告警——
     // 状态读取失败（304/抖动/单次 5xx）不等于 runtime 不可达，探测健康就必须闭嘴。
     let consecutiveNulls = 0
-    for (let i = 0; i < RECONCILE_MAX_POLLS; i++) {
+    for (let i = 0; i < maxPolls; i++) {
       const read = await fetchThreadStateSafe(agentThreadId.value)
       if (read.ok) {
         consecutiveNulls = 0
@@ -4158,6 +4249,7 @@ defineExpose({
                   isMessageUnderEdit(msg) ? 'agent-bubble-user--editing' : '',
                   isUserSystemEvent(msg) ? 'agent-bubble-user--system' : '',
                 ]"
+                @click="onUserBubbleClick(msg)"
               >
                 <AgentProseBlock
                   v-if="shouldRenderSchemeDraftProse(msg)"
@@ -4330,6 +4422,7 @@ defineExpose({
                     !isMessageUnderEdit(msg)
                   "
                   class="agent-msg-actions"
+                  :class="{ 'is-open': mobileUserActionsOpen.has(msg.id) }"
                 >
                   <template v-if="msg.role === 'assistant'">
                   <button
@@ -5251,7 +5344,11 @@ defineExpose({
   z-index: 70;
   height: auto;
   max-height: none;
-  overflow: visible;
+  /* 2026-10-23 溢出修复（第 3 道闸）：overflow-y 保持 visible（popover/浮层向下出），
+     但横向用 clip 硬裁——此前 overflow:visible 让气泡内长 token 的溢出一路
+     顶到 document，整页被推着横移（用户截图「页面可以往左滑」）。
+     clip 不创建滚动容器，纵向行为不变。 */
+  overflow-x: clip;
   border: none;
   background: transparent;
   box-shadow: none;
@@ -5764,6 +5861,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* 2026-10-23 溢出修复：对话流永不横向滚动——长 token 由 overflow-wrap 折行，
+     兜底裁剪（内容宽度仍可能瞬时超过容器，不能放它把外层顶出去） */
+  overflow-x: hidden;
 }
 
 /* ---- 回到底部浮标（回看历史时出现） ---- */
@@ -5953,12 +6053,28 @@ defineExpose({
 
 .agent-bubble-user {
   max-width: 88%;
+  /* 2026-10-23 移动端溢出修复：flex 子项的隐式 min-width 是 min-content，
+     长 URL / 宽表格 token 会把卡片撑出容器（页面整体横移的推手之一） */
+  min-width: 0;
   border: 1px solid var(--agent-user-border);
   border-radius: 16px;
   background: var(--agent-user-bg);
   color: var(--agent-user-text);
   box-shadow: var(--agent-user-shadow);
   padding: 8px 12px;
+}
+
+/*
+ * 2026-10-23 移动端文字溢出修复（用户截图：SSE 流里的裸 markdown 表格 + 长 URL
+ * 把整页顶得横向滚动）。
+ * - overflow-wrap: anywhere：超长不可断 token（URL/管道表格）在任意字符处折行，
+ *   继承到气泡内所有正文节点（whitespace-pre-wrap 的正文 <p> 一并覆盖）；
+ * - 气泡容器 min-width: 0：允许收缩到容器宽以内，而不是被 min-content 顶破。
+ * 桌面侧栏同样受益（窄栏长 URL 同理），无视觉副作用。
+ */
+.agent-bubble {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /*
@@ -6214,6 +6330,34 @@ defineExpose({
 
 .agent-turn--user:hover .agent-msg-actions,
 .agent-bubble-user:hover ~ .agent-msg-actions {
+  opacity: 1;
+}
+
+/*
+ * 2026-10-23 移动端用户气泡操作行（用户反馈：三图标常驻把卡片撑得很高）：
+ * 默认收起；点气泡后浮出在**卡片下方**（absolute，不占卡片高度）。
+ * 只作用于移动 dock 作用域——桌面 hover 语义可用，维持常驻弱显不变。
+ * is-open 由 onUserBubbleClick 按消息 id 切换（见 script）。
+ */
+.agent-panel-mobile-dock .agent-turn--user {
+  position: relative;
+}
+
+.agent-panel-mobile-dock .agent-turn--user .agent-msg-actions {
+  display: none;
+}
+
+.agent-panel-mobile-dock .agent-turn--user .agent-msg-actions.is-open {
+  display: flex;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  margin-top: 2px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lnk-surface-raised) 94%, transparent);
+  box-shadow: var(--lnk-shadow-xs);
   opacity: 1;
 }
 
