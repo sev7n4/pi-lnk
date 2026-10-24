@@ -384,7 +384,14 @@ watch(
       <p v-else class="py-8 text-center text-sm text-fg-3">社区还没有作品，去发现看看 →</p>
     </section>
 
+    <!-- ⚠️ v-if="showPublish" 是**必需**的，不是保险（2026-10-24 性能修复·二次）：
+         `defineAsyncComponent` 会在组件**被渲染时**就发起 chunk 加载，
+         与组件内部是否可见无关。父容器虽然是 `hidden lg:block`，
+         但组件照样在模板里 ⇒ 照样渲染 ⇒ 照样加载
+         ⇒ 实测品牌页首屏在 5213ms 又来一批（PublishNeoTVDialog + 11 个 element-plus chunk）。
+         ⇒ 必须让它**在真的要开的时候才挂载**。 -->
     <PublishNeoTVDialog
+      v-if="showPublish"
       v-model="showPublish"
       :sessions="userSessions"
       :default-title="userSessions[0]?.title"

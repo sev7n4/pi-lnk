@@ -121,6 +121,16 @@ describe('品牌页首屏不得拉入画布链（请求数）', () => {
     expect(workflowPage, 'PublishNeoTVDialog 必须用 defineAsyncComponent').toMatch(
       /defineAsyncComponent\(\(\)\s*=>\s*import\(['"]@\/components\/works\/PublishNeoTVDialog\.vue['"]\)\)/,
     )
+    // ⛔⛔ `v-if` 是**必需**的，不是保险：
+    //    `defineAsyncComponent` 在组件**被渲染时**就发起 chunk 加载，与内部是否可见无关。
+    //    父容器是 `hidden lg:block` ⇒ 组件照样渲染 ⇒ 照样加载
+    //    ⇒ 实测首屏在 5213ms 又来一批（PublishNeoTVDialog + 11 个 element-plus chunk）。
+    const tag = workflowPage.match(/<PublishNeoTVDialog[\s\S]{0,400}?\/>/)?.[0] ?? ''
+    expect(tag, '找不到 PublishNeoTVDialog 标签').not.toBe('')
+    expect(
+      tag,
+      '⛔ PublishNeoTVDialog 必须带 v-if="showPublish"（否则异步组件照样在首屏加载）',
+    ).toContain('v-if="showPublish"')
   })
 })
 
