@@ -61,26 +61,30 @@ describe('品牌页性能修复：路由预加载', () => {
     ).not.toContain('preloadCanvasChunk()')
   })
 
-  it('⛔ 应用挂载时**不得**预热（必须等首屏 load 之后）', () => {
-    // ⛔ 同一事故的第二处元凶：App.vue 挂载即空闲预热
-    //（`requestIdleCallback` 在首屏资源还在下载时就会触发）。
-    // ✅ 现在只挂 `load` 监听：首屏资源全下完才预热 ⇒ 不抢连接。
-    expect(app, 'App.vue 不得在挂载时直接预热').not.toContain('scheduleIdlePreload()')
-    expect(app, 'App.vue 必须走「首屏就绪后」预热').toContain('schedulePreloadAfterFirstPaint()')
+  it('⛔⛔ App.vue 不得有**任何**全局预热（三次事故后的最终结论）', () => {
+    // ⛔⛔ 这条是 2026-10-24 **三次**生产事故的最终防线。
+    //
+    // 演进：
+    //   ① 挂载即空闲预热 ⇒ 与首屏抢连接 ⇒ logo 2.1s→13s、API 排队（#581 删）
+    //   ② 等 `load` 事件 ⇒ `load` 不等懒加载 chunk ⇒ 仍在抢（#582 改 load+3s）
+    //   ③ load+3s 仍不够 —— **对话页实测**：连点历史项目 1/2/3/4，
+    //      每次建一条 SSE 长连接（`/api/agent/runs/events`），
+    //      同域 HTTP/1.1 只有 6 个连接，旧 SSE 未释放时新 SSE 又建
+    //      ⇒ 连接占满 ⇒ threads/events 排队 **55 秒**（Network 一片红）。
+    //      全局预热此时又拉 CanvasPage 338KB + 26 chunk ⇒ **再抢一轮**。
+    //
+    // ⭐ **结论：全局预热在任何页面都有害** —— 它不知道用户接下来要去哪，
+    //    却必定付出「与当前页面的 SSE / API 抢连接」的代价。
+    expect(app, '⛔ App.vue 不得 import 预热模块').not.toContain('useRoutePreload')
+    expect(app, '⛔ App.vue 不得调用任何预热（全局预热 = 抢连接）').not.toContain('Preload')
   })
 
-  it('首屏就绪后预热：必须等 load 事件**且再延迟**', () => {
-    // ⛔ 若改成 `document.readyState !== 'loading'` 之类（DOMContentLoaded）
-    //    ⇒ 首屏资源（logo/大 chunk）还在下载 ⇒ 又回到抢连接的坑。
-    expect(preload, '必须监听 load 事件').toContain("window.addEventListener('load'")
-    expect(preload, '必须提供 load 后预热的入口').toContain('schedulePreloadAfterFirstPaint')
-    // ⛔⛔ 第二次踩的坑：`load` **只等首屏必要资源，不等懒加载 chunk** ——
-    //    实测品牌页 load 在 8634ms 触发，而它 20+ 个懒加载 chunk 到 10.2s 才完成
-    //    ⇒ 只等 load 就预热 = 仍在抢首屏连接（第二轮事故，API 排到 10.3s）。
-    //    ⇒ 必须有「load 之后的额外延迟」。
-    expect(preload, '⛔ load 之后必须还有额外延迟（load 不等懒加载 chunk）').toMatch(
-      /PRELOAD_DELAY_AFTER_LOAD_MS|setTimeout\([^)]*preload/,
-    )
+  it('✅ 预热只能来自用户意图（SignatureHero 的 preloadOnIntent）', () => {
+    // 唯一被允许的预热时机：指针移到锚 / 焦点进入 / 触摸滑条
+    // ⇒ 意图明确，且此刻首屏早已就绪 ⇒ 不抢任何连接。
+    const hero = stripComments(read('../components/workflow/SignatureHero.vue'))
+    expect(hero, 'SignatureHero 必须挂意图触发').toContain('preloadOnIntent(')
+    expect(preload, '必须提供意图触发入口').toContain('preloadOnIntent')
   })
 
   it('意图触发预热：挂在锚与滑条上（移动端无 hover，靠 touchstart）', () => {
