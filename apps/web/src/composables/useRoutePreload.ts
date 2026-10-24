@@ -84,20 +84,34 @@ export function preloadCanvasChunk(): void {
 /**
  * 首屏彻底就绪后预热。
  *
- * ⛔ **必须等 `load` 事件**（或已经过了），不能在挂载时调用 ——
- *    `load` 之前首屏资源还在下载，预热会与之抢连接（见文件头的事故取证）。
+ * ⛔ **必须等 `load` 事件 + 一个额外延迟**：
+ *    `load` 只等「首屏必要资源」（html / css / 入口 js / img），
+ *    **不等懒加载 chunk** —— 实测品牌页 `load` 在 8634ms 触发，
+ *    而它的 20+ 个懒加载 chunk 要到 10.2s 才全部完成。
+ *    ⇒ 只等 `load` 就预热 ⇒ 仍在抢首屏连接（第二轮事故）。
+ *    ⇒ 额外延迟让首屏的 chunk 队列先排完。
  *
  * - 已经 `load` 过（用户晚进入某页）⇒ 直接在下一个空闲回调里预热；
- * - 还没 `load` ⇒ 挂 `load` 监听，等到了再预热。
+ * - 还没 `load` ⇒ 挂 `load` 监听，等到了再延迟。
  */
 export function schedulePreloadAfterFirstPaint(): void {
-  const run = () => onIdle(() => preloadCanvasChunk())
+  const run = () => {
+    setTimeout(() => onIdle(() => preloadCanvasChunk()), PRELOAD_DELAY_AFTER_LOAD_MS)
+  }
   if (document.readyState === 'complete') {
     run()
     return
   }
   window.addEventListener('load', run, { once: true })
 }
+
+/**
+ * `load` 之后的额外延迟（ms）。
+ *
+ * 依据：品牌页实测 `load` 8634ms，其懒加载 chunk 全部完成在 ~10.2s
+ * ⇒ 取 3000ms 可让首屏队列先排完（预热约在 11.6s 发起）。
+ */
+const PRELOAD_DELAY_AFTER_LOAD_MS = 3000
 
 /**
  * 用户意图触发预热（推荐入口）。

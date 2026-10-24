@@ -69,11 +69,18 @@ describe('品牌页性能修复：路由预加载', () => {
     expect(app, 'App.vue 必须走「首屏就绪后」预热').toContain('schedulePreloadAfterFirstPaint()')
   })
 
-  it('首屏就绪后预热：必须等 load 事件', () => {
+  it('首屏就绪后预热：必须等 load 事件**且再延迟**', () => {
     // ⛔ 若改成 `document.readyState !== 'loading'` 之类（DOMContentLoaded）
     //    ⇒ 首屏资源（logo/大 chunk）还在下载 ⇒ 又回到抢连接的坑。
     expect(preload, '必须监听 load 事件').toContain("window.addEventListener('load'")
     expect(preload, '必须提供 load 后预热的入口').toContain('schedulePreloadAfterFirstPaint')
+    // ⛔⛔ 第二次踩的坑：`load` **只等首屏必要资源，不等懒加载 chunk** ——
+    //    实测品牌页 load 在 8634ms 触发，而它 20+ 个懒加载 chunk 到 10.2s 才完成
+    //    ⇒ 只等 load 就预热 = 仍在抢首屏连接（第二轮事故，API 排到 10.3s）。
+    //    ⇒ 必须有「load 之后的额外延迟」。
+    expect(preload, '⛔ load 之后必须还有额外延迟（load 不等懒加载 chunk）').toMatch(
+      /PRELOAD_DELAY_AFTER_LOAD_MS|setTimeout\([^)]*preload/,
+    )
   })
 
   it('意图触发预热：挂在锚与滑条上（移动端无 hover，靠 touchstart）', () => {
@@ -92,6 +99,27 @@ describe('品牌页性能修复：路由预加载', () => {
     //    （try/catch 只管同步抛错）⇒ 必须显式 .catch()。
     expect(preload, '动态 import 必须显式 .catch 兜底').toMatch(
       /import\('@\/pages\/CanvasPage\.vue'\)\.catch\(/,
+    )
+  })
+})
+
+describe('品牌页首屏不得拉入画布链（请求数）', () => {
+  const workflowPage = stripComments(read('./WorkflowPage.vue'))
+
+  it('⛔ 发布弹窗必须异步加载（它拖进整条画布链）', () => {
+    // ⛔ 2026-10-24 第二轮事故取证：品牌页首屏 **51 个同域请求 / 1.3MB**，
+    //    其中 20+ 个是画布页 chunk：
+    //      PublishNeoTVDialog → stores/canvasEditor → services/studio-api
+    //                                        → components/canvas/refine/*
+    //                          → CanvasLocateButton → AgentTurnTimeline → UniversalModelSelector → …
+    //    而它在模板里的位置是 `hidden lg:block` 容器内 ⇒ 窄屏（主场景）根本用不到。
+    //    ⇒ 6 个连接被占满 9 轮往返 ⇒ 535KB 的 logo 拖到 8 秒、API 排到 10.3 秒。
+    expect(
+      workflowPage,
+      '⛔ PublishNeoTVDialog 不得静态 import（会把画布链拖进品牌页首屏）',
+    ).not.toMatch(/^import\s+PublishNeoTVDialog\s+from/m)
+    expect(workflowPage, 'PublishNeoTVDialog 必须用 defineAsyncComponent').toMatch(
+      /defineAsyncComponent\(\(\)\s*=>\s*import\(['"]@\/components\/works\/PublishNeoTVDialog\.vue['"]\)\)/,
     )
   })
 })
