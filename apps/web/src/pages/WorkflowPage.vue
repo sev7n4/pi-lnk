@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Work } from '@lnkpi/shared'
 import { api } from '@/services/api'
@@ -11,7 +11,32 @@ import { useMySessions } from '@/composables/useMySessions'
 import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
-import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
+/**
+ * 发布弹窗改为**异步组件**（2026-10-24 性能修复·二次）。
+ *
+ * ## 为什么必须异步
+ *
+ * `PublishNeoTVDialog` 的依赖链是**整条画布链**：
+ *   PublishNeoTVDialog
+ *     ├─ stores/canvasEditor        → services/studio-api + components/canvas/refine/*
+ *     └─ CanvasLocateButton         → AgentTurnTimeline → UniversalModelSelector → …
+ *
+ * 而它在本页的位置是 `hidden lg:block` 容器内 ⇒
+ * **窄屏（= 移动端，用户主要场景）完全用不到**，
+ * 桌面端也只有点「发布作品」才用得到。
+ *
+ * 静态 import 的代价（生产实测）：
+ *   品牌页首屏 **51 个同域请求 / 1.3MB**，其中 20+ 个是画布页的 chunk
+ *   （studio-api / refine 链 / AgentTurnTimeline / UniversalModelSelector /
+ *     el-drawer / UsagePanel / SubscriptionPanel / PointsPanel / char …）。
+ *   ⇒ 6 个 HTTP/1.1 连接被占满 9 轮往返 ⇒ **535KB 的品牌 logo 从 2.1 秒拖到 8 秒**，
+ *     **API 请求排到 10 秒后才发出**（= 用户说的「登录出问题」）。
+ *
+ * ✅ 异步化后这条链彻底脱离品牌页首屏 ⇒ 请求数与字节数大降，
+ *    首屏连接槽空出来 ⇒ logo 与 API 都不用排队。
+ *    弹窗本身在用户点「发布作品」时才加载（那一下晚几百 ms，可接受）。
+ */
+const PublishNeoTVDialog = defineAsyncComponent(() => import('@/components/works/PublishNeoTVDialog.vue'))
 import SignatureHero from '@/components/workflow/SignatureHero.vue'
 import type { Session } from '@lnkpi/shared'
 
