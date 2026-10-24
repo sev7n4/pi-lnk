@@ -28,6 +28,7 @@ import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
+import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
 import { useGenerationPolling, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
 import { buildNodeMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
@@ -1739,9 +1740,9 @@ async function handleAgentTurnComplete() {
     if (newNodeIds.length > 0) {
       // 有新节点：只把新区域带入视口，不劫持用户的全局缩放（SP-A 规格 §5.4）
       await vueFlowRef.value?.fitView({ nodes: newNodeIds, padding: 0.45, maxZoom: 1.05, duration: 360 })
-    } else {
-      await vueFlowRef.value?.fitView({ padding: 0.24, duration: 360 })
     }
+    // ⛔ SP-C（N3）：无新节点的回合**不再**拉全览 —— 视角是用户的状态，
+    //    系统没有明确理由时不得替用户改视角。要回全览：底部控制条既有「回到全览」按钮。
   } catch {
     // ignore（含组件卸载竞态：vueFlowRef 已置空）
   }
@@ -4859,6 +4860,8 @@ async function saveCanvas() {
         lastKnown: lastKnownCompositionRunGroup.value,
         server: serverGroup,
         groups: folded.groups,
+        // SP-C：视口随画布落库（可选键；为 null 时 payload 不含 viewport ⇒ 存量形状不变 N1）
+        viewport: viewportTracker.pending,
       }),
     )
     if (canvasData.compositionRunGroup) {
@@ -5017,6 +5020,8 @@ async function loadSession() {
           edges: Edge[]
           compositionRunGroup?: CompositionRunGroup
           groups?: CanvasGroup[]
+          /** SP-C：落库的视口（可选；存量画布没有 ⇒ 走默认 fitView，N1） */
+          viewport?: { x: number; y: number; zoom: number }
         }
       }
     }>(
@@ -5027,6 +5032,7 @@ async function loadSession() {
     if (agentReadOnly.value) {
       ElMessage.warning('此画布属于其他账号，Agent 无法写入画布')
     }
+    const serverViewport = data.data.canvasData?.viewport
     if (data.data.canvasData?.nodes?.length) {
       // 2026-10-01 修：服务端 canvasData 里可能存在同 id 重复节点（存量数据），
       // 进入前端前先按 id 收敛，避免重复被「原样加载 → saveCanvas 覆盖」再次固化。
@@ -5051,6 +5057,10 @@ async function loadSession() {
       ) as EditableFlowNode[]
       reconcileGroups()
       applyGroupDraggable(isMobileLayout.value)
+      // SP-C：必须等 nodes 真正应用完（进入测量盒）再恢复视口，否则 setViewport 没有意义（R5）。
+      // 无 viewport / 脏值 ⇒ restoreViewport 内部判否，维持默认 fitView（N1：存量画布行为零变化）。
+      await nextTick()
+      restoreViewport(serverViewport)
     } else {
       // 空画布就是空画布：不再伪造 prompt-1 占位节点（2026-09-29 拍板，spec 场景 A）。
       // 伪造节点会让用户以为「画布上本来就有东西」，且一旦拖动就会触发 saveCanvas()
@@ -5196,6 +5206,28 @@ async function loadSessions() {
 
 const vueFlowRef = ref<InstanceType<typeof VueFlow> | null>(null)
 const canvasAreaRef = ref<HTMLElement | null>(null)
+
+// ── SP-C（2026-10-23）视口一等状态化 ──────────────────────────────────
+// 视角是用户的状态：调好的视角要活过刷新（G1）；系统没有明确理由不得改视角（G2/N3）。
+// 采集侧：视口是高频事件 ⇒ 只记 pending、防抖窗口内合并成一次落库（N4），绝不逐事件写库。
+const viewportTracker = createViewportTracker({
+  onPersist: () => {
+    void saveCanvas()
+  },
+})
+
+/** vue-flow `viewportChange` 事件入口（模板 `@viewport-change` 挂这个）。 */
+function onViewportChange(payload?: unknown) {
+  viewportTracker.note(payload)
+}
+
+/** 恢复侧：可用 ⇒ `setViewport(clamp(vp), { duration: 0 })`（N5/N6）；脏值 ⇒ 不恢复，走默认 fitView。 */
+const restoreViewport = createViewportRestorer(
+  () =>
+    vueFlowRef.value as {
+      setViewport?: (vp: { x: number; y: number; zoom: number }, options?: { duration?: number }) => void
+    } | null,
+)
 
 
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
@@ -5561,6 +5593,7 @@ onUnmounted(() => {
 
         <VueFlow
           ref="vueFlowRef"
+          @viewport-change="onViewportChange"
           :nodes="flowNodes"
           :edges="flowEdges"
           :apply-default="false"
