@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import SlideToCreate from './SlideToCreate.vue'
+import { preloadOnIntent } from '@/composables/useRoutePreload'
 import {
   BRAND_LOGO_URL,
   BRAND_SLOGAN_LEAD,
@@ -37,6 +38,26 @@ const emit = defineEmits<{ create: [] }>()
  * 而真正的等待还在继续 ⇒ 反馈提前撤掉，等于没改。
  */
 const props = defineProps<{ creating?: boolean }>()
+
+/**
+ * 意图触发预热画布页分包（2026-10-24 性能修复·二次修正）。
+ *
+ * ⛔ **为什么不能在这里（或页面挂载时）立即预热**：
+ *    生产事故实测 —— 预热在 4166ms 拉起画布页整棵依赖树（338KB + 24 个 chunk），
+ *    与首屏资源抢同域 6 个 HTTP/1.1 连接 ⇒ 535KB 的品牌 logo 从 2.1 秒拖到
+ *    13 秒、API 排队 ⇒ 用户报「品牌页出不来 + 连登录都出问题」。
+ *
+ * ✅ **意图触发**：指针移到锚 / 焦点进入 / 触摸滑条 ⇒ 此刻用户已明确表达意图，
+ *    且首屏早已就绪（`load` 已过）⇒ 不抢任何连接。
+ *
+ * 两个入口都挂（锚 = 桌面主路径，滑条 = 移动端主路径 —— 移动端没有 hover，
+ * 靠 `touchstart` 抢在 `click` 之前）。
+ */
+onMounted(() => {
+  // ⛔ 必须等 DOM 出来（onMounted 时模板已渲染，可用 querySelector）
+  preloadOnIntent(document.querySelector('[data-testid="ink-anchor"]'))
+  preloadOnIntent(document.querySelector('[data-testid="slide-to-create"]'))
+})
 
 // slogan 主行切分：单一真相源是 BRAND_SLOGAN_MAIN 整句，按标记词切段渲染——
 // 不复制文案，防两处漂移；拼接结果必须等于整句（SignatureHero.test.ts 锁定）。

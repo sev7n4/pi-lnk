@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import LoginDialog from '@/components/auth/LoginDialog.vue'
 import { useAuthStore } from '@/stores/auth'
-import { scheduleIdlePreload } from '@/composables/useRoutePreload'
+import { schedulePreloadAfterFirstPaint } from '@/composables/useRoutePreload'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -12,11 +12,16 @@ const isImmersiveCanvas = computed(() => route.name === 'canvas')
 
 onMounted(() => {
   void auth.restoreSession()
-  // 2026-10-24 性能修复：空闲时预热画布页分包。
-  // 「进入项目」是全站最重的跳转（CanvasPage + 依赖 ≈ 798KB gzip），
-  // 等用户点了才开始下载 ⇒ 在 ~300KB/s 出网带宽上白等 2~3 秒。
-  // 已在画布页时该分包早已加载，此处预热是空操作。
-  if (!isImmersiveCanvas.value) scheduleIdlePreload()
+  // 2026-10-24 性能修复（**二次修正**）：预热改为「首屏彻底就绪之后」。
+  //
+  // ⛔ 初版是「挂载即空闲预热」—— 那次是生产事故的元凶：
+  //    预热在 4166ms 拉起画布页整棵依赖树（338KB + 24 个 chunk），
+  //    与首屏资源抢同域 6 个 HTTP/1.1 连接 ⇒ 535KB 的品牌 logo 被从
+  //    2.1 秒拖到 13 秒、API 排队 ⇒ 用户报「品牌页出不来 + 登录出问题」。
+  //
+  // ✅ 现在等 `load` 事件（首屏资源全下完）才预热 ⇒ 不再抢任何连接。
+  //    另有一路「用户意图触发」（指针移到锚上）由品牌页负责，命中率更高。
+  if (!isImmersiveCanvas.value) schedulePreloadAfterFirstPaint()
 })
 </script>
 

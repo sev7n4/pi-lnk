@@ -20,6 +20,8 @@ import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const read = (p: string) => readFileSync(join(here, p), 'utf8')
+/** vite.config.ts 在 apps/web/ 根，不在 src/ 下 ⇒ 单独一个读取器。 */
+const readWebRoot = (p: string) => readFileSync(join(here, '..', '..', p), 'utf8')
 
 /** 剥注释后再定位调用位置——注释里出现函数名会让断言命中叙述文本而非代码
  *  （迁移说明写进注释是本仓规范，全文扫描断言必假红）。 */
@@ -34,6 +36,7 @@ describe('品牌页性能修复：路由预加载', () => {
   const preload = stripComments(read('../composables/useRoutePreload.ts'))
   const workflowPage = stripComments(read('./WorkflowPage.vue'))
   const app = stripComments(read('../App.vue'))
+  const hero = stripComments(read('../components/workflow/SignatureHero.vue'))
 
   it('预热用的是**字面量**动态 import（Vite 靠字面量识别懒加载边界）', () => {
     // ⛔ 若改成变量路径（const p = '@/pages/CanvasPage.vue'; import(p)），
@@ -44,20 +47,82 @@ describe('品牌页性能修复：路由预加载', () => {
     )
   })
 
-  it('品牌页挂载时**立即**预热（不等空闲——等空闲就等于没修）', () => {
-    expect(workflowPage, '品牌页必须调用预热').toContain('preloadCanvasChunk()')
-    const m = workflowPage.match(/onMounted\([\s\S]{0,600}?\n\}\)/)
+  it('⛔ 品牌页挂载时**不得**预热（首屏期预热 = 生产事故元凶）', () => {
+    // ⛔⛔ 这条是 2026-10-24 生产事故的直接防线。
+    // 实测：品牌页 onMounted 立即预热 ⇒ 4166ms 拉起画布页整棵依赖树
+    //（338KB + 24 个 chunk）⇒ 与首屏资源抢同域 6 个 HTTP/1.1 连接
+    // ⇒ 535KB 的品牌 logo 从 2.1 秒被拖到 13 秒、API 排队
+    // ⇒ 用户报「品牌页出不来 + 连登录都出问题」。
+    const m = workflowPage.match(/onMounted\([\s\S]{0,800}?\n\}\)/)
     expect(m, '找不到 WorkflowPage 的 onMounted 块').not.toBeNull()
-    expect(m![0], '预热必须在 onMounted 里，不能藏在别处').toContain('preloadCanvasChunk()')
+    expect(
+      m![0],
+      '⛔ 品牌页 onMounted 里不得预热：首屏期预热会抢连接、拖垮首屏与 API',
+    ).not.toContain('preloadCanvasChunk()')
   })
 
-  it('应用启动时空闲预热（兜底：从别的页面进画布也受益）', () => {
-    expect(app, 'App.vue 必须调用空闲预热').toContain('scheduleIdlePreload()')
+  it('⛔ 应用挂载时**不得**预热（必须等首屏 load 之后）', () => {
+    // ⛔ 同一事故的第二处元凶：App.vue 挂载即空闲预热
+    //（`requestIdleCallback` 在首屏资源还在下载时就会触发）。
+    // ✅ 现在只挂 `load` 监听：首屏资源全下完才预热 ⇒ 不抢连接。
+    expect(app, 'App.vue 不得在挂载时直接预热').not.toContain('scheduleIdlePreload()')
+    expect(app, 'App.vue 必须走「首屏就绪后」预热').toContain('schedulePreloadAfterFirstPaint()')
+  })
+
+  it('首屏就绪后预热：必须等 load 事件', () => {
+    // ⛔ 若改成 `document.readyState !== 'loading'` 之类（DOMContentLoaded）
+    //    ⇒ 首屏资源（logo/大 chunk）还在下载 ⇒ 又回到抢连接的坑。
+    expect(preload, '必须监听 load 事件').toContain("window.addEventListener('load'")
+    expect(preload, '必须提供 load 后预热的入口').toContain('schedulePreloadAfterFirstPaint')
+  })
+
+  it('意图触发预热：挂在锚与滑条上（移动端无 hover，靠 touchstart）', () => {
+    expect(hero, 'SignatureHero 必须挂意图触发').toContain('preloadOnIntent(')
+    expect(hero, '必须挂到创作锚上').toContain('ink-anchor')
+    expect(hero, '必须挂到滑条上（移动端主路径）').toContain('slide-to-create')
+    // 三个事件：桌面 hover / 键盘 focus / 移动触摸
+    expect(preload, '必须支持 pointerenter（桌面）').toContain('pointerenter')
+    expect(preload, '必须支持 focusin（键盘可达）').toContain('focusin')
+    expect(preload, '必须支持 touchstart（移动端）').toContain('touchstart')
   })
 
   it('预热失败不阻断主流程（预热是优化，不是功能依赖）', () => {
-    // 预热必须包在 try/catch 里：离线/弱网下失败时仍要能走正常点击路径。
-    expect(preload, '预热必须 try/catch 兜底').toMatch(/try\s*\{[\s\S]*?import\('@\/pages\/CanvasPage\.vue'\)[\s\S]*?\}\s*catch/)
+    // 预热必须吞掉失败：离线/弱网下失败时仍要能走正常点击路径。
+    // ⚠️ 注意：动态 import 的 rejection **不会被外层 try/catch 捕获**
+    //    （try/catch 只管同步抛错）⇒ 必须显式 .catch()。
+    expect(preload, '动态 import 必须显式 .catch 兜底').toMatch(
+      /import\('@\/pages\/CanvasPage\.vue'\)\.catch\(/,
+    )
+  })
+})
+
+describe('element-plus 按需引入：不做 manualChunks 合并（已实测否决）', () => {
+  const vite = readWebRoot('vite.config.ts')
+
+  it('⛔ 不得用 manualChunks 把 element-plus 合成一个 chunk', () => {
+    // ⛔ 2026-10-24 实测否决：加 manualChunks 后 `element-plus` chunk 变成
+    //    **324.5KB(gzip)** 且含 ElTree / ElUpload / ElCascader / ElDatePicker
+    //    （只被 admin 页用到）⇒ **tree-shaking 失效**
+    //    （把 `element-plus/es/index.mjs` 聚合入口拉进同一 chunk，
+    //      它的全部 re-export 都必须保留）⇒ 按需省下的 315KB 全数吐回。
+    //
+    // ✅ 那 11 个小 chunk 合计仅 48.7KB(gzip)，与入口并行下载，不在关键路径上
+    //    （关键路径是 535KB 的品牌 logo + 140KB 的入口）⇒ 不需要合并。
+    //
+    // 判据：源码里不得出现**可执行的** manualChunks 配置
+    //（注释里提到「manualChunks」是允许的 —— 那段注释记录了否决理由）。
+    const code = vite
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
+    expect(code, '⛔ 不得用 manualChunks 合并 element-plus（tree-shaking 会失效）').not.toContain(
+      'manualChunks',
+    )
+  })
+
+  it('✅ 按需引入必须保留（resolver + importStyle）', () => {
+    expect(vite, '必须配置 ElementPlusResolver').toContain('ElementPlusResolver')
+    // importStyle 必须是 css/sass（不写则不带样式 ⇒ 组件裸奔）
+    expect(vite, '必须指定 importStyle').toMatch(/importStyle:\s*'(css|sass)'/)
   })
 })
 
