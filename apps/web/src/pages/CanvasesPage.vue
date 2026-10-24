@@ -7,6 +7,7 @@ import { useMySessions } from '@/composables/useMySessions'
 import SessionCard from '@/components/workflow/SessionCard.vue'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import type { Session } from '@lnkpi/shared'
+import { ElMessage } from 'element-plus'
 
 /**
  * 项目管理器（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
@@ -29,14 +30,19 @@ async function createCanvas() {
     auth.openLogin()
     return
   }
+  // 2026-10-24 修复（fix/createcanvas-guard）：失败不再静默回主页（用户只看到无反应），
+  // 改为明确报错 + 20s 客户端超时（默认 120s）避免上百秒零反馈。
+  const loading = ElMessage({ type: 'info', message: '正在创建画布…', duration: 0 })
   try {
-    const { data } = await sessionsApi.create({})
+    const { data } = await sessionsApi.create({}, { timeout: 20_000 })
+    loading.close()
     router.push({
       path: `/workflow/${data.data.id}`,
       query: { openAgent: '1' },
     })
   } catch {
-    router.push('/workflow')
+    loading.close()
+    ElMessage.error('创建画布失败，请检查网络后重试')
   }
 }
 
