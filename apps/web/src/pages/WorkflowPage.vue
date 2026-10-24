@@ -8,7 +8,6 @@ import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useMySessions } from '@/composables/useMySessions'
-import { preloadCanvasChunk } from '@/composables/useRoutePreload'
 import { canvasApi } from '@/services/canvas-api'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
@@ -247,9 +246,16 @@ onMounted(() => {
   fetchWorks()
   // 组合式内部已在 onMounted 里注册 pointerdown 监听并首fetch，此处只需首拉
   void sessions.fetch()
-  // 2026-10-24 性能修复：品牌页是「点击创作」的发生地 ⇒ **立即**预热画布页分包。
-  // App.vue 的空闲预热兜底全局，但等空闲（最长 3s timeout）太晚——这里不等待。
-  preloadCanvasChunk()
+  // 2026-10-24 性能修复（**二次修正**）：⛔ **不再在此立即预热**。
+  //
+  // 初版「品牌页挂载即预热画布页」是生产事故的元凶：它在 4166ms 拉起
+  // 画布页整棵依赖树（338KB + 24 个 chunk），与首屏资源抢同域 6 个连接 ⇒
+  // 535KB 的品牌 logo 被从 2.1 秒拖到 13 秒、API 排队 ⇒
+  // 用户报「品牌页出不来 + 连登录都出问题」。
+  //
+  // ✅ 改为**用户意图触发**：指针移到锚 / 焦点进入 / 触摸滑条时才预热。
+  //    此刻用户已明确表达意图，且首屏早已就绪 ⇒ 不抢任何连接。
+  //    兜底那一路（首屏 load 之后预热）在 App.vue。
 })
 
 watch(
