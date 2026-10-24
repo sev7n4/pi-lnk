@@ -4,6 +4,10 @@ export interface MobileNodeActionNode {
   id: string
   type: string
   data?: any
+  /** 是否已处于多选态（决定「多选」项文案，2026-10-24 走查①恢复） */
+  multiSelectActive?: boolean
+  /** 该节点当前是否已在多选选区内（「加入」还是「移出」） */
+  multiSelectSelected?: boolean
 }
 
 /**
@@ -11,6 +15,9 @@ export interface MobileNodeActionNode {
  * 只负责列出动作并把用户意图以 `action(key)` 上抛，真正的动作分发（重命名/删除/复制/多选/
  * 编辑）由页面层 `handleMobileNodeAction` 复用桌面 `handleContextAction` 同一套逻辑执行，
  * 避免两套实现漂移。
+ *
+ * 走查①（2026-10-24）：本 sheet 是移动端长按的**唯一**入口——CanvasContextMenu 的
+ * 旧 D-6 移动端 sheet 分支已删（双入口会同时触发弹出两张相同的卡）。
  */
 const props = defineProps<{ node: MobileNodeActionNode }>()
 const emit = defineEmits<{
@@ -20,14 +27,25 @@ const emit = defineEmits<{
   rename: [title: string]
 }>()
 
-const actions: { key: string; label: string; danger?: boolean }[] = [
+/**
+ * 「多选」项文案随态变化（判据源自 2026-10-21 走查，随 CanvasContextMenu 移动端
+ * 分支一并迁移到此）：
+ * 未进多选态 = 「多选」（进入多选态）；已在多选态 = 「加入多选」/「移出多选」
+ * （长按第二张图时**加入**选区，而不是重置整份选区）。
+ */
+const multiSelectLabel = computed(() => {
+  if (!props.node.multiSelectActive) return '多选'
+  return props.node.multiSelectSelected ? '移出多选' : '加入多选'
+})
+
+const actions = computed<{ key: string; label: string; danger?: boolean }[]>(() => [
   { key: 'rename', label: '重命名' },
   { key: 'reference', label: '引用' },
   { key: 'duplicate', label: '副本' },
-  { key: 'multi-select', label: '多选' },
+  { key: 'multi-select', label: multiSelectLabel.value },
   { key: 'edit', label: '编辑' },
   { key: 'delete', label: '删除', danger: true },
-]
+])
 
 /**
  * R4-T3：重命名内联态。

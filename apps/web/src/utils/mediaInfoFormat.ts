@@ -63,6 +63,58 @@ export function aspectRatioLabel(width?: number, height?: number): string | null
   return `${Math.round(width / g)}:${Math.round(height / g)}`
 }
 
+/** 媒体属性摘要的结构形状（与 `NodeMediaInfoSummary` 同构，刻意不 import 以防环） */
+export interface MediaInfoLike {
+  kind?: 'image' | 'video' | 'audio'
+  width?: number
+  height?: number
+  bytes?: number
+  aspectRatio?: string
+  resolution?: string
+  durationSec?: number
+  format?: string
+}
+
+/**
+ * 媒体属性一行的「分段」单一真源（2026-10-24 走查②：移动端瓦片要显示，
+ * PC 的 `MediaInfoSummary` 也要显示 ⇒ 判据只能有一份）。
+ *
+ * 顺序即展示顺序（与 PC 既有逐字一致）：
+ * - 音频：时长 · 格式 · 大小
+ * - 视频：分辨率 · 比例 · 大小
+ * - 图片：尺寸 · 比例 · 大小
+ *
+ * ⛔ 只取**实际有值**的项：缺字段不猜、不补占位（假造比不显示更糟）。
+ */
+export function mediaInfoParts(info: MediaInfoLike): string[] {
+  const line: string[] = []
+  const size = formatMediaBytes(info.bytes)
+  if (info.kind === 'audio') {
+    const dur = formatMediaDuration(info.durationSec)
+    if (dur) line.push(dur)
+    if (info.format?.trim()) line.push(info.format.trim())
+    if (size) line.push(size)
+    return line
+  }
+  if (info.kind === 'video') {
+    if (info.resolution?.trim()) line.push(info.resolution.trim())
+    if (info.aspectRatio?.trim()) line.push(info.aspectRatio.trim())
+    if (size) line.push(size)
+    return line
+  }
+  const dims = formatMediaDimensions(info.width, info.height)
+  if (dims) line.push(dims)
+  if (info.aspectRatio?.trim()) line.push(info.aspectRatio.trim())
+  if (size) line.push(size)
+  return line
+}
+
+/** 属性一行的拼接（无任何有效分段时返回空串 ⇒ 调用方不渲染） */
+export function mediaInfoLine(info: MediaInfoLike | undefined | null): string {
+  if (!info) return ''
+  return mediaInfoParts(info).join(' · ')
+}
+
 export function truncateUrl(url: string, max = 48): string {
   if (url.length <= max) return url
   const head = Math.ceil((max - 1) / 2)

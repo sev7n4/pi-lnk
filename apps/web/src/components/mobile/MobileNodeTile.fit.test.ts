@@ -81,7 +81,14 @@ describe('MobileNodeTile 媒体适配（fit）', () => {
       const css = styleBlock(SRC)
       expect(css).toMatch(/\.mobile-node-media\s*\{[^}]*object-fit:\s*cover/)
       expect(css).toMatch(/\.mobile-node-media\s*\{[^}]*width:\s*100%/)
-      expect(css).toMatch(/\.mobile-node-media\s*\{[^}]*height:\s*100%/)
+      // 走查②（2026-10-24）：属性行沉底后，媒体区从「height: 100%」改为
+      // 「flex: 1 + min-height: 0」——弹性撑满剩余空间、可被属性行压缩，
+      // 无属性行时仍等价于撑满（cover 裁填写在 .mobile-node-media-box 上）。
+      expect(css).toMatch(/\.mobile-node-media\s*\{[^}]*flex:\s*1/)
+      expect(css).toMatch(/\.mobile-node-media\s*\{[^}]*min-height:\s*0/)
+      // 有效性配对：媒体盒纵向铺满（属性行沉底的容器前提）
+      expect(css).toMatch(/\.mobile-node-media-box\s*\{[^}]*flex-direction:\s*column/)
+      expect(css).toMatch(/\.mobile-node-media-box\s*\{[^}]*height:\s*100%/)
     })
 
     it('音频播放钮 ≥44px 触控热区', () => {

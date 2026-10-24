@@ -1921,11 +1921,12 @@ function handleDockAdd(type: DockNodeType) {
   selectOnlyNode(id)
   persistUserEdit()
   void focusNodeById(id)
-  // R2-T3（2026-10-23 真机走查）：R1 删掉移动端 Dock 后，「选中即开编辑器」这条路在移动端断了
-  // ⇒ 新建节点后没有任何编辑器承载，用户拿不到一个可写 prompt 的入口。
-  // 移动端直接打开编辑 sheet（复用 R1 的 MobileNodeEditorSheet，Q3「create/edit 同源」）。
+  // 走查③（2026-10-24 用户裁决）：新建节点**不再自动弹编辑 sheet**。
+  // R2-T3 那样做是因为当时空瓦片没有任何编辑器入口（权宜）；但现在
+  // ① 空瓦片自带「点按生成/撰写」提示（MobileNodeTile 的 emptyCtaLabel），
+  // ② tap 空瓦片即路由到编辑 sheet（mobileNodeOpenPolicy 的 empty 行）
+  // ⇒ auto-open 反而成了「创建被编辑器劫持 + 关不回去」的走查④⑤ complaint。
   // ⛔ PC 路径一行不动（桌面仍靠选中开 DockStudioToolbar）。
-  if (isMobileLayout.value) openMobileNodeEditor(id)
 }
 
 function selectOnlyNode(id: string) {
@@ -2562,11 +2563,24 @@ provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
  * 移动端 `MobileNodeTile` 长按经 `useLongPress` 走本注入，打开本端动作 sheet；
  * 选中动作后由 `handleMobileNodeAction(key, nodeId)` 复用桌面同一套重命名/删除/复制/多选/编辑逻辑。
  */
-const mobileActionNode = ref<{ id: string; type: string; data?: any } | null>(null)
+const mobileActionNode = ref<{
+  id: string
+  type: string
+  data?: any
+  /** 走查①（2026-10-24）：多选态下发到动作 sheet——「多选」项文案随态变化
+   *  （未进多选 = 进入多选；已在多选态 = 加入/移出），与页面级
+   *  `enterMultiSelectMode` 的累加语义配套（2026-10-21 走查的判据不能丢）。 */
+  multiSelectActive?: boolean
+  multiSelectSelected?: boolean
+} | null>(null)
 const mobileEditorNode = ref<EditableFlowNode | null>(null)
 
 provide(MOBILE_NODE_ACTION_REQUEST_KEY, (node: { id: string; type: string; data?: any }) => {
-  mobileActionNode.value = node
+  mobileActionNode.value = {
+    ...node,
+    multiSelectActive: mobileMultiSelectActive.value,
+    multiSelectSelected: multiSelectedIds.value.includes(node.id),
+  }
 })
 
 /** 移动端编辑 sheet 的节点上下文（复用桌面 resolve 逻辑，与 DockStudioToolbar 同源） */
@@ -4551,6 +4565,12 @@ function saveNodeAsset(nodeId: string) {
 }
 
 function onNodeContextMenu(event: NodeMouseEvent) {
+  // 走查①（2026-10-24）：移动端长按的唯一入口是 R1-T5 的 `MobileNodeActionSheet`
+  // （`MobileNodeTile` 的 useLongPress ⇒ MOBILE_NODE_ACTION_REQUEST_KEY）。
+  // 浏览器长按还会派发原生 contextmenu ⇒ vue-flow 的 node-context-menu 到此，
+  // 若不拦，PC 的 CanvasContextMenu（旧 D-6 移动 sheet 已删）会与动作 sheet
+  // **同时弹出两张一模一样的卡片框**。⛔ PC 右键路径不受影响（鼠标 contextmenu）。
+  if (isMobileLayout.value) return
   event.event.preventDefault()
   const { x, y } = getEventCoords(event.event)
   const data = event.node.data as Record<string, unknown> | undefined
@@ -4566,6 +4586,9 @@ function onNodeContextMenu(event: NodeMouseEvent) {
 }
 
 function onPaneContextMenu(event: MouseEvent | TouchEvent) {
+  // 走查① 同族问题：空白处长按的 PC 节点拾取器在移动端同样不该出现
+  // （移动端入口是 ＋FAB ⇒ MobileCreateSheet）。
+  if (isMobileLayout.value) return
   event.preventDefault()
   const { x, y } = getEventCoords(event)
   // Blank canvas: open node picker directly (no intermediate menu / upload-media)
@@ -6060,18 +6083,6 @@ onUnmounted(() => {
       :has-url="contextMenu.hasUrl"
       :media-kind="contextMenu.mediaKind"
       :mime-type="contextMenu.mimeType"
-      :mobile="isMobileLayout"
-      :multi-select-active="mobileMultiSelectActive"
-      :multi-select-selected="
-        !!contextMenu.nodeId && multiSelectedIds.includes(contextMenu.nodeId)
-      "
-      :multi-selected-count="
-        contextMenu.nodeId &&
-        multiSelectedIds.includes(contextMenu.nodeId) &&
-        multiSelectedIds.length > 1
-          ? multiSelectedIds.length
-          : 1
-      "
       @action="handleContextAction"
       @close="closeContextMenu"
     />
