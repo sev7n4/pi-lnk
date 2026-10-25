@@ -405,7 +405,7 @@ onUnmounted(() => {
         title="加入 Agent 引用"
         @click="emit('addAgentRef')"
       >
-        <CanvasRefTargetIcon :size="18" />
+        <CanvasRefTargetIcon :size="22" />
       </button>
       <div
         v-if="selectedIds.length >= 2"

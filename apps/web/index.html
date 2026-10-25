@@ -35,7 +35,13 @@
         }
       })()
     </script>
-    <link rel="icon" type="image/png" href="/brand/mascot-logo.png" />
+    <!-- 品牌徽标 favicon（2026-10-26 用户裁定）。
+         徽标是「盘 + 锚」的双色资产，盘色不随主题变 ⇒ 单版在另一套配色下会沉进
+         标签页底色（黑盘落深色标签页只剩白锚）。这里按 prefers-color-scheme 给两版：
+         默认（浅色标签页）黑盘白锚，深色偏好覆盖为白盘黑锚。
+         旧值 /brand/mascot-logo.png 是 535KB 的吉祥物整图，当标签页图标过大。 -->
+    <link rel="icon" type="image/png" href="/brand/anchor-badge.png" />
+    <link rel="icon" type="image/png" media="(prefers-color-scheme: dark)" href="/brand/anchor-badge-invert.png" />
     <!-- viewport-fit=cover：让 env(safe-area-inset-*) 在 iOS 全面屏上生效；
          缺了它 inset 恒为 0，移动端 sheet 的安全区补偿全部失效 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />

@@ -461,7 +461,7 @@ function onDragStart(event: DragEvent, asset: CanvasAssetItem) {
                   aria-label="加入 Agent 引用"
                   @click.stop="addToAgent(asset)"
                 >
-                  <CanvasRefTargetIcon :size="12" />
+                  <CanvasRefTargetIcon :size="18" />
                 </button>
                 <button
                   type="button"

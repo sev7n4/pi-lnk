@@ -119,7 +119,13 @@ const fillStyle = computed(() => ({
       aria-label="滑动进入创作"
       @keydown="onKeyDown"
     >
-      <img class="lnk-slide__glyph" :src="anchorBadge" alt="" aria-hidden="true" />
+      <img
+        class="lnk-slide__glyph"
+        :src="anchorBadge"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      >
     </button>
   </div>
 </template>
@@ -235,11 +241,18 @@ const fillStyle = computed(() => ({
   outline-offset: 3px;
 }
 
+/* 把手 glyph = 双色徽标（2026-10-26 用户裁定④「解锁进创作图标：双色徽标」）。
+   ⛔ 徽标**不能走 mask**：mask 会把黑盘/白锚压成单一 currentColor，丢掉双色——
+      必须 <img> 原样出图（与画布落点标记 CanvasRefTargetIcon 同源同资产）。
+   36px 在 48 把手里占 75%：徽标撑到只剩 ~6px 白圈边 ⇒ 读作「一枚徽章压在章面上」。
+   ⚠️ 旧版 22px 只占 46%，白边 13px ⇒ 盘与徽标被读成**两个独立图标叠加**，
+      且徽标本体只有 20px（用户实测「图标太小」）——放大到 36px 两个问题一起解。 */
 .lnk-slide__glyph {
   display: block;
-  width: 22px;
-  height: 25px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
+  pointer-events: none;
 }
 
 .lnk-slide--unlocked .lnk-slide__knob {

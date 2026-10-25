@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { BRAND_LOGO_URL, BRAND_SHORT_NAME } from '@/constants/brand'
+import { BRAND_SHORT_NAME } from '@/constants/brand'
+import { useBrandMark } from '@/composables/useBrandMark'
+
+// 2026-10-26 用户裁定：品牌标志位改用**双色徽标**（盘 + 锚）。
+// 取址由 useBrandMark() 统一按主题反相（浅底黑盘白锚 / 深底白盘黑锚）——
+// 徽标是定色资产，单版在另一套主题下会沉进背景，只能出两版。
+const { brandMarkUrl } = useBrandMark()
 
 withDefaults(
   defineProps<{
@@ -27,7 +33,7 @@ const sizeClass: Record<string, string> = {
 <template>
   <div class="brand-logo inline-flex items-center gap-2">
     <img
-      :src="BRAND_LOGO_URL"
+      :src="brandMarkUrl"
       :alt="name"
       class="brand-logo__img object-contain"
       :class="sizeClass[size]"
@@ -38,8 +44,9 @@ const sizeClass: Record<string, string> = {
 </template>
 
 <style scoped>
+/* 2026-10-26：紫色投影随徽标一起撤掉 —— 它是给旧紫色 3D 吉祥物配的「墨紫色柔光」，
+   压在墨黑单色徽标上会在盘缘挂一圈紫边（显脏）。徽标自带盘+锚双层对比，不需要外发光。 */
 .brand-logo__img {
   background: transparent;
-  filter: drop-shadow(0 4px 14px rgba(99, 102, 241, 0.28));
 }
 </style>

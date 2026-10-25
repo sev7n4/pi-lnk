@@ -20,6 +20,9 @@ import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
 import { isFeatureOn } from '@/composables/useFeatureFlag'
 import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
+// 双色品牌徽标（黑盘 + 白锚 + 外环）：2026-10-26 用户裁定「composer 定位锚用双色徽标」，
+// 与画布落点标记 CanvasRefTargetIcon 同源同资产 ⇒「锚」在全产品统一成一支。
+import anchorBadge from '@/assets/icons/anchor-badge.png'
 // 分组色键白名单（2026-10-21 下沉到 @lnkpi/shared，这里走前端 re-export）。
 // 用在 canvas_command 的 set_group_color 分支做最后一道防线。
 // ⛔ `GROUP_COLOR_KEYS` 的元素类型是字面量联合，`includes` 不接受任意 string ⇒
@@ -4926,9 +4929,16 @@ defineExpose({
                     aria-label="引用画布节点"
                     @click.stop="toggleCanvasRefPick"
                   >
-                    <!-- 2026-10-18：定位锚品牌 glyph（用户供图抠像素材），mask + currentColor 主题自适应；
-                         is-active 高亮由按钮 color（accent）自动传导 -->
-                    <span class="composer-locate-glyph" aria-hidden="true" />
+                    <!-- 2026-10-26 用户裁定④：定位锚改**双色徽标**（黑盘 + 白锚 + 外环）。
+                         ⛔ 徽标不能走 mask（会压成单色、丢掉双色）⇒ 必须 <img> 原样出图；
+                            也因此不再吃按钮的 currentColor，高亮改由外层盘（is-active）承载。 -->
+                    <img
+                      class="composer-locate-glyph"
+                      :src="anchorBadge"
+                      alt=""
+                      aria-hidden="true"
+                      draggable="false"
+                    >
                   </button>
                 </div>
                 <!-- P1-5.3 空闲态 affordance：纯 span 提示（非 placeholder）；桌面恒不渲染 -->
@@ -6651,15 +6661,18 @@ defineExpose({
   transform: translate(-50%, -50%);
 }
 
-/* 定位锚 glyph（源 93×93，素材已镜像为指向左 45°）：
- * 与生成锚完全相同的处理——纯 currentColor 继承按钮色 + mask 成形，无环无特殊配色。 */
+/* 定位锚 glyph（2026-10-26 用户裁定④）：改**双色徽标**（黑盘 + 白锚 + 外环）。
+ * ⛔ 不再走 mask：mask 会把徽标压成单一 currentColor，双色全丢 ⇒ 必须 <img> 原样出图。
+ * 16px 落在 22px 的幽灵盘里 ⇒ 盘还留 ~3px 中灰圈边（读作「盘的边」，不是「第二个圆」）；
+ * 徽标撑到盘的 73% ⇒ 与旧 20px 纯锚线条同视觉体量，不会退回「小图标」。
+ * 高亮（pick 模式）仍由外层 .composer-canvas-ref-btn.is-active 的盘色承载——
+ * 徽标本身是定色资产，不吃 currentColor（这与旧实现唯一的语义差别，已写进注释防回退）。 */
 .composer-locate-glyph {
   display: block;
-  width: 15px;
-  height: 15px;
-  background: currentColor;
-  -webkit-mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
-  mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .composer-canvas-ref-btn::after {
@@ -6679,8 +6692,8 @@ defineExpose({
 .propose-locate-disc {
   position: relative;
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   border-radius: var(--lnk-radius-full);
   background: color-mix(in srgb, var(--lnk-text-muted) 60%, var(--lnk-surface-base));
@@ -6695,8 +6708,8 @@ defineExpose({
   position: absolute;
   inset: 0;
   margin: auto;
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
   background: currentColor;
   -webkit-mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
   mask: url('@/assets/icons/anchor-locate.png') center / contain no-repeat;
