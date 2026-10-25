@@ -26,6 +26,25 @@ function mountHero() {
   return mount(SignatureHero)
 }
 
+describe('SignatureHero · 入口分发失败反馈（PR-0）', () => {
+  it('error 非空时在锚下方显示内联提示，且可点它重试（INV-6）', async () => {
+    const wrapper = mount(SignatureHero, { props: { error: '项目加载失败' } })
+    // ⛔ 缺了这一段，移动端断网进 /workflow 看到的是一个毫无变化的品牌页 ——
+    //    用户分不清是失败了还是在加载（2026-10-19 同类事故的观感）。
+    expect(wrapper.text()).toContain('项目加载失败')
+    const retry = wrapper.find('[data-testid="hero-error-retry"]')
+    expect(retry.exists()).toBe(true)
+    await retry.trigger('click')
+    // 重试与点锚是同一意图 ⇒ 复用 create 事件，不新造第二个出口
+    expect(wrapper.emitted('create')).toHaveLength(1)
+  })
+
+  it('error 为空时不渲染提示（正常路径零侵入）', () => {
+    const wrapper = mount(SignatureHero)
+    expect(wrapper.find('[data-testid="hero-error-retry"]').exists()).toBe(false)
+  })
+})
+
 describe('SignatureHero', () => {
   it('滑动解锁与锚触发同一个 create 动作（双入口同源）', async () => {
     const wrapper = mountHero()

@@ -36,8 +36,12 @@ const emit = defineEmits<{ create: [] }>()
  * 只有父组件（WorkflowPage）知道创建会话与路由跳转的完成时刻。
  * 本组件自持的话，加载环会在 600ms（盖章动画）后就消失，
  * 而真正的等待还在继续 ⇒ 反馈提前撤掉，等于没改。
+ *
+ * `error`（2026-10-25 PR-0，INV-6）：入口分发（移动端自动进入）失败时，父组件把错误
+ * 文案传进来，本组件在锚下方渲染一行「<文案> · 重试」。同理由父组件持有 ——
+ * 只有它知道失败发生了；重试复用 create 事件（点重试与点锚是同一意图）。
  */
-const props = defineProps<{ creating?: boolean }>()
+const props = defineProps<{ creating?: boolean; error?: string }>()
 
 /**
  * 意图触发预热画布页分包（2026-10-24 性能修复·二次修正）。
@@ -238,6 +242,23 @@ function onAnchorClick() {
                ⛔ 只用 on-signature 令牌（恒深签名底，主题不变式）。 -->
           <p class="lnk-anchor__cta mt-5 lg:mt-7" :aria-live="creating ? 'polite' : undefined">
             {{ creating ? '正在进入画布…' : '点击锚，进入创作' }}
+          </p>
+          <!-- 入口分发失败的内联反馈（2026-10-25 PR-0，INV-6）。
+               为什么必须有：移动端断网/弱网进 /workflow 时，旧的实现是 catch 里一句
+               空注释「留在主站 hero」⇒ 用户看到的是一个毫无变化的品牌页，分不清是
+               失败了还是在加载（与 2026-10-19「项目加载中」事故同源的观感问题）。
+               处置沿用仓库既有「加载失败 + 重试」内联形态，不新造异常页/组件。
+               ⚠️ 重试复用 create 事件：点重试与点锚是同一意图（再进一次），
+                  少一个事件出口就少一处漂移面。
+               ⛔ 只用 on-signature 家族令牌（恒深签名底，主题不变式）。 -->
+          <p
+            v-if="error"
+            class="lnk-anchor__error"
+            data-testid="hero-error-retry"
+            role="status"
+            @click="emit('create')"
+          >
+            {{ error }} · 重试
           </p>
         </div>
 
@@ -794,6 +815,31 @@ function onAnchorClick() {
   letter-spacing: 0.04em;
   white-space: nowrap;
   color: var(--lnk-text-on-signature);
+}
+
+/* 入口分发失败内联提示（2026-10-25 PR-0）。
+   ⛔ 只用 on-signature 家族（恒深签名底，主题不变式）—— 禁入随主题翻转的
+      hi 对 / accent-text / surface-sunken（AGENTS.md 签名面纪律）。
+   视觉上刻意弱于 CTA：一行小字 + 可点，不抢锚的唯一入口地位。 */
+.lnk-anchor__error {
+  margin-top: 10px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: var(--lnk-text-on-signature-muted);
+  background: color-mix(in srgb, var(--lnk-text-on-signature) 10%, transparent);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.lnk-anchor__error:hover,
+.lnk-anchor__error:focus-visible {
+  color: var(--lnk-text-on-signature);
+  background: color-mix(in srgb, var(--lnk-text-on-signature) 18%, transparent);
 }
 
 @media (min-width: 1024px) {

@@ -77,8 +77,40 @@ function markMobileEntryDispatched(): void {
 }
 
 const { isMobileLayout } = useAgentMobileLayout()
-/** 最近项目 id（移动端点锚用）：入口分发时顺手记下最近的那一个。 */
+/**
+ * 最近项目 id（移动端点锚用）：入口分发时顺手记下最近的那一个。
+ *
+ * ⚠️ 2026-10-25 PR-0：仍然保留（**不是**漏删）—— 它还被 `createCanvas()` 的点锚分支
+ * 消费，那个函数属于 PR-1 Task 4 的改动面。PR-0 只改"这个 id 怎么选"（择优），
+ * 不改"点锚时怎么用它"。Task 4 删 `createCanvas` 时才连同本变量一起删。
+ */
 const recentProjectId = ref<string | null>(null)
+/**
+ * 入口分发失败的内联反馈（2026-10-25 PR-0，INV-6）。
+ *
+ * ⛔ 旧实现 catch 里只有一句空注释「留在主站 hero」⇒ 用户看到的是一个毫无变化的
+ *    品牌页，分不清是失败了还是在加载（与 2026-10-19「项目加载中」事故同源）。
+ *    新语义：仍**不创建、不跳转**（失败不能被当成零项目），但要让用户看见并能重试。
+ *    由父组件持有、传给 SignatureHero 的 `error` prop 渲染（重试即再点一次锚）。
+ */
+const entryError = ref<string | null>(null)
+
+/** 入口分发列表项：只需要 id 与封面代理字段（择优用）。 */
+interface EntryProjectLite {
+  id: string
+  coverUrl: string | null
+}
+
+/**
+ * 项目列表超时（毫秒）。
+ *
+ * ⚠️ 与 AgentSideRail 的 `PROJECT_LIST_TIMEOUT_MS` 同值同义，**不新造数字**：
+ * 2026-10-19 事故的形态是「弱网/代理路径下 body 永不落地 ⇒ axios promise 不 settle
+ * ⇒ 转圈转不完」，抽屉侧当时加了 15s 兜底，**入口侧漏修** —— 不传 timeout 会走
+ * `api.ts` 的默认 120_000ms ⇒ 移动端用户最长等 2 分钟且毫无反馈。
+ */
+const ENTRY_LIST_TIMEOUT_MS = 15_000
+
 watch(
   isMobileLayout,
   (mobile) => {
@@ -86,21 +118,26 @@ watch(
     markMobileEntryDispatched()
     void (async () => {
       try {
-        const res = await canvasApi.list()
-        const list = (res.data?.data ?? []) as Array<{ id: string }>
+        const res = await canvasApi.list({ timeout: ENTRY_LIST_TIMEOUT_MS })
+        const list = (res.data?.data ?? []) as EntryProjectLite[]
         if (list.length) {
-          recentProjectId.value = list[0].id
+          // 落点择优（2026-10-25 PR-0）：优先「最近有产物」，其次 updatedAt desc。
+          // ⚠️ 这**有意改变**了旧行为（原为 list[0]）：最近更新的可能是个刚建的空项目，
+          //    穿透进去用户看不到任何产物。全部无产物时回落 list[0]，不把用户困住。
+          const target = list.find((p) => p.coverUrl) ?? list[0]!
+          // 点锚分支（createCanvas）复用同一个目标 ⇒ 两条移动端路径落点一致
+          recentProjectId.value = target.id
           // ⚠️ 用 router.replace 而非 window.location.assign（2026-10-24 性能修复）：
           // assign = 整页刷新 ⇒ 丢弃当前 DOM，重下 index.html + 入口 JS(455KB gzip)
           // + 入口 CSS(94KB gzip)，再叠加画布页自己的 ~798KB ⇒ 移动端首屏总传输 ~2MB。
           // replace 走 SPA 路由 ⇒ 入口资源复用缓存，只付画布页那一份。
           // ⚠️ 必须 replace 不是 push：这是「自动分发」，不该在浏览器历史里留一条
           // 返回即回品牌页的记录（push 会让用户按返回键又弹回品牌页）。
-          await router.replace(`/workflow/${list[0].id}`)
+          await router.replace(`/workflow/${target.id}`)
         }
         // 无项目 ⇒ 留 hero（IA v4：不再静默新建）
       } catch {
-        /* 未登录/网络失败：留在主站 hero */
+        entryError.value = '项目加载失败'
       }
     })()
   },
@@ -303,7 +340,10 @@ watch(
   <div>
     <!-- 2026-10-22 用户裁定「霸屏铺满」：hero 是全宽首屏（不再龟缩在 max-w-7xl 卡片里），
          滚动后才是我的项目 / 社区精选——同一个页面，不是两个页面 -->
-    <SignatureHero :creating="creating" @create="createCanvas" />
+    <!-- 2026-10-25 PR-0：`error` 承载入口分发失败的内联反馈（INV-6）。
+         点那行「重试」会再发一次 create ⇒ 走 createCanvas ⇒ 未登录则弹登录，
+         已登录则重跑一次进入。重试与点锚同一意图，故共用 create 事件。 -->
+    <SignatureHero :creating="creating" :error="entryError ?? undefined" @create="createCanvas" />
 
     <!-- ⛔ 窄屏整块隐藏（2026-10-23 用户裁定）：移动端品牌页只有【品牌】内容，
          覆盖手机全屏 ⇒ 这里只装「我的项目 / 社区精选 / 发布弹窗」，窄屏一律不渲染

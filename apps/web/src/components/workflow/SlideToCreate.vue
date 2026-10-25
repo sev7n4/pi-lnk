@@ -55,6 +55,20 @@ function onPointerUp() {
   }
 }
 
+/**
+ * 系统打断（来电 / 手势接管 / 触摸被取消）⇒ 回中位，**不触发** create。
+ *
+ * ⚠️ 2026-10-25 PR-0：此前 `pointercancel` 与 `pointerup` 共用同一处理器，
+ *   于是「已拖过阈值时被系统打断」会被当成「用户松手确认」⇒ 莫名进创作。
+ *   语义差别：pointerup 是用户**主动确认**；pointercancel 是手势被**系统接管**，
+ *   用户从未表达"我要进" ⇒ 只能回中位。
+ */
+function onPointerCancel() {
+  if (!dragging.value) return
+  dragging.value = false
+  knobX.value = 0
+}
+
 function fire() {
   if (unlocked.value || props.disabled) return
   unlocked.value = true
@@ -91,7 +105,7 @@ const fillStyle = computed(() => ({
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
-    @pointercancel="onPointerUp"
+    @pointercancel="onPointerCancel"
   >
     <span class="lnk-slide__fill" aria-hidden="true" :style="fillStyle" />
     <span class="lnk-slide__hint" aria-hidden="true">{{ disabled ? '正在进入画布…' : '滑动进入创作' }}</span>

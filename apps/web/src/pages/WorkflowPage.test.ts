@@ -79,10 +79,16 @@ vi.mock('vue-router', () => ({
 }))
 
 // 子组件全部 stub，避免拉进真实依赖链
+// ⚠️ SignatureHero 的 stub 渲染 error：入口分发失败时 WorkflowPage 要把错误文案传给它，
+//    这是跨组件的可见反馈契约（INV-6）。若 stub 不渲染 props，`wrapper.text()` 观测不到，
+//    "用户看不到反馈"这个 bug 会被测试放过去。
 const stubs = {
   SignatureHero: {
     name: 'SignatureHero',
-    template: '<button class="signature-hero-stub" @click="$emit(\'create\')" />',
+    props: ['creating', 'error'],
+    template:
+      '<button class="signature-hero-stub" @click="$emit(\'create\')" />' +
+      '<span v-if="error" class="hero-error-stub">{{ error }}</span>',
   },
   SessionCard: { template: '<div class="session-card-stub" />', props: ['session'] },
   WorkCard: { template: '<div class="work-card-stub" />', props: ['work'] },
@@ -250,19 +256,41 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     locationAssign.mockReset()
   })
 
-  it('已登录回访：有项目 ⇒ 跳最近项目（list[0]），且不新建', async () => {
+  it('已登录回访：优先进「最近有产物」的项目，而非 list[0]', async () => {
     mobileFlag.isMobile = true
+    // list[0] 是刚建的空项目（coverUrl null，updatedAt 更新），list[1] 才有产物。
+    // 旧行为跳 list[0] ⇒ 用户穿透进去看不到任何产物。
     canvasList.mockResolvedValue({
-      data: { data: [{ id: 'proj-1' }, { id: 'proj-2' }] },
+      data: {
+        data: [
+          { id: 'proj-empty', coverUrl: null, updatedAt: '2026-10-25T10:00:00Z' },
+          { id: 'proj-has-art', coverUrl: 'https://cdn/x.png', updatedAt: '2026-10-24T10:00:00Z' },
+        ],
+      },
     })
     await mountWorkflow({ loggedIn: true })
-    // 2026-10-24 性能修复：改走 router.replace（不再整页刷新）。
-    // ⛔ 仍断言「没调 location.assign」——防回归到整页刷新
-    //    （那会让移动端首屏总传输从 ~590KB 涨到 ~1.2MB）。
-    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-1')
+    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-has-art')
     expect(routerMocks.replace).toHaveBeenCalledTimes(1)
     expect(locationAssign, '移动端入口分发不得再整页刷新').not.toHaveBeenCalled()
     expect(canvasCreate).not.toHaveBeenCalled()
+  })
+
+  it('全部项目都无产物时回落 list[0]（择优不能把用户困住）', async () => {
+    mobileFlag.isMobile = true
+    canvasList.mockResolvedValue({
+      data: { data: [{ id: 'proj-1', coverUrl: null }, { id: 'proj-2', coverUrl: null }] },
+    })
+    await mountWorkflow({ loggedIn: true })
+    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-1')
+  })
+
+  it('入口分发的 list 带 15s 超时（防弱网下 2 分钟零反馈，10-19 事故同形态）', async () => {
+    mobileFlag.isMobile = true
+    canvasList.mockResolvedValue({ data: { data: [{ id: 'proj-1' }] } })
+    await mountWorkflow({ loggedIn: true })
+    // ⚠️ 不带 timeout 会走 api.ts 默认 120_000ms ⇒ 连接僵死时用户等 2 分钟且无反馈。
+    //    抽屉侧（AgentSideRail.loadProjects）早已用 PROJECT_LIST_TIMEOUT_MS，入口侧漏修。
+    expect(canvasList).toHaveBeenCalledWith(expect.objectContaining({ timeout: 15_000 }))
   })
 
   it('M1：无项目 ⇒ 留 hero，绝不静默新建（IA v3.1 分支已撤）', async () => {
@@ -281,6 +309,17 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
     await mountWorkflow()
     expect(routerMocks.replace).not.toHaveBeenCalled()
     expect(canvasCreate).not.toHaveBeenCalled()
+  })
+
+  it('list 失败 ⇒ 不新建、不跳转，且**必须有可见反馈**（INV-6）', async () => {
+    mobileFlag.isMobile = true
+    canvasList.mockRejectedValue(new Error('boom'))
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    expect(canvasCreate, '失败不得被当成零项目去创建').not.toHaveBeenCalled()
+    expect(routerMocks.replace).not.toHaveBeenCalled()
+    // ⛔ 旧实现 catch 是空注释「留在主站 hero」⇒ 用户看到的是一个毫无变化的品牌页，
+    //    不知道是失败了还是在加载。这里断言错误文案真的传到了 hero（经 stub 渲染）。
+    expect(wrapper.text()).toContain('加载失败')
   })
 
   it('一次性分发：同会话二次进 /workflow（顶栏字标回 hero）不再被弹走', async () => {
