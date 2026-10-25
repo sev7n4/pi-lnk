@@ -141,10 +141,11 @@ const props = defineProps<{
   onNodeActionClose: () => void
   onNodeEditorClose: () => void
   onNodeEditorPatch: (patch: Record<string, unknown>) => void
-  /** R4-T2：移动端编辑 sheet 的「生成」（补齐被丢弃的 DockStudioRouter.generate） */
-  onNodeEditorGenerate: () => void
-  /** R4-T2：移动端编辑 sheet 里删除引用芯片 */
-  onNodeEditorRemoveRef: (ref: NodeRef) => void
+  /**
+   * D8 / J1 / K1（2026-10-25）：移动端**轻量编辑器**的「发给 agent 修改」出口
+   * —— ⛔ 不再有本地提交（生成权归 agent）与删除引用 emit（PC dock 专用契约已移除）。
+   */
+  onNodeEditorSendToAgent: (payload: { prompt: string; opinion: string }) => void
   /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
   viewerNode: { id?: string; type: 'image' | 'video' | 'text'; data?: any } | null
   onViewerClose: () => void
@@ -444,8 +445,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :generating="mobileEditor.generating"
     @close="props.onNodeEditorClose"
     @patch="props.onNodeEditorPatch"
-    @generate="props.onNodeEditorGenerate"
-    @remove-ref="props.onNodeEditorRemoveRef"
+    @send-to-agent="props.onNodeEditorSendToAgent"
   />
   <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接） -->
   <MobileNodeViewer

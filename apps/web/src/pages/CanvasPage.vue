@@ -2657,6 +2657,36 @@ function closeMobileNodeAction() {
   mobileActionNode.value = null
 }
 
+/**
+ * D8 / J1 / K1（2026-10-25 规格 §4.2）：移动端轻量编辑器的「**发给 agent 修改**」。
+ *
+ * ⭐ 模式①（agent 驱动）下**生成权归 agent** —— 本函数**不提交生成**，只做三件事：
+ *   ① 把改后的提示词**写回节点**（落库，磁贴立即可见）
+ *   ② 把「我的意见」放进 **composer 输入框**（用户自己按下发送 = 保留意图表达权）
+ *   ③ **切回对话页签**（看得见落地，§4.5 可见性铁律）
+ *
+ * ⭐ 为什么不给本地提交：参数由 agent 在提议阶段写死（`proposeGeneration`），
+ *   用户看不到也改不了参数 ⇒ 本地提交会让人误以为参数可控。
+ */
+function handleMobileNodeSendToAgent(payload: { prompt: string; opinion: string }) {
+  const node = mobileEditorNode.value
+  if (!node) return
+  // ① 写回改后的提示词
+  const nextPrompt = payload.prompt.trim()
+  if (nextPrompt && nextPrompt !== String((node.data as Record<string, unknown>)?.prompt ?? '')) {
+    patchNodeData(node.id, { prompt: nextPrompt })
+    persistUserEdit()
+  }
+  closeMobileNodeEditor()
+  // ② 意见进 composer 输入框（用户自己发送）
+  const opinion = payload.opinion.trim()
+  if (opinion) {
+    agentRailRef.value?.setComposerInput?.(opinion)
+  }
+  // ③ 切回对话页签（看得见落地）
+  mobileAppTab.value = 'chat'
+}
+
 function closeMobileNodeEditor() {
   mobileEditorNode.value = null
 }
@@ -2668,67 +2698,6 @@ function applyMobileEditorPatch(patch: Record<string, unknown>) {
   persistUserEdit()
 }
 
-/**
- * R4-T2：移动端编辑 sheet 的「生成」——补齐被丢弃的 `DockStudioRouter.generate`。
- *
- * ⭐ 断链修复：原先 `MobileNodeEditorSheet` 只接 `patch` / `close` ⇒ dock panel 的
- *   `onGenerate`（先 emit patch 再 emit generate）后半段被吞 ⇒ **移动端改完提示词
- *   点「生成」毫无反应**。
- *
- * 复用 PC 的判据纯函数（`isNodeBusy` / `isDockGenerateBusy` /
- * `shouldConfirmDirectGenerateWithoutRefs` / `resolveNodeRefs`），
- * ⛔ **不动 PC 的 `handleNodeGenerate`**（它依赖 PC dock 上下文 `editorNode` +
- * `debouncedNodePatch.flush()`；移动端 patch 是立即落库，无 flush 步骤）
- * ⇒ PC 零 diff，两端语义靠「共用纯函数」保持一致。
- */
-async function handleMobileNodeGenerate() {
-  const node = mobileEditorNode.value
-  if (!node) return
-  // 生成中再点 = 取消（与 PC dock 生成按钮同语义）
-  if (isNodeBusy(node.id) || isDockGenerateBusy(node.data?.status)) {
-    cancelGeneration(node.id)
-    return
-  }
-  // 卡在 propose 等待 → 先显式确认（与 PC 同：避免 flush 回写 stale draft
-  // 导致 runtime 轮询误判取消——2026-10-06 生产事故的教训）
-  void agentRailRef.value?.confirmProposeWait?.(node.id)
-  const fresh = findNodeById(node.id)
-  if (!fresh) return
-  if (isNodeBusy(fresh.id) || isDockGenerateBusy(fresh.data?.status)) {
-    cancelGeneration(fresh.id)
-    return
-  }
-  // RB-D6①：本轮侧栏有图但节点无任何 refs（宽判定含上游边）⇒ 二次确认
-  const agentStore = useAgentStore()
-  const freshData = (fresh.data ?? {}) as Record<string, unknown>
-  const refCount = resolveNodeRefs({
-    targetNodeId: fresh.id,
-    targetType: String(fresh.type),
-    nodes: nodes.value,
-    edges: edges.value,
-    localRefs: (freshData.localRefs as LocalRefBinding[]) ?? [],
-    refOrder: (freshData.refOrder as string[]) ?? [],
-  }).filter((r) => !r.stale).length
-  if (
-    shouldConfirmDirectGenerateWithoutRefs({
-      nodeType: String(fresh.type),
-      refCount,
-      sidebarImageCount: latestUserSidebarImageCount(agentStore.messages),
-    })
-  ) {
-    try {
-      await ElMessageBox.confirm(MISSING_REFS_CONFIRM_MESSAGE, MISSING_REFS_CONFIRM_TITLE, {
-        confirmButtonText: '直接生成',
-        cancelButtonText: '先绑定参考图',
-        type: 'warning',
-      })
-    } catch {
-      return // 用户取消：不生成（Nest RB-D5 门禁仍兜底）
-    }
-  }
-  closeMobileNodeEditor()
-  await generateForNode(fresh as EditableFlowNode)
-}
 
 /**
  * R4-T2：移动端编辑 sheet 里删除引用芯片。
@@ -6312,7 +6281,7 @@ onUnmounted(() => {
       :on-node-rename="handleMobileNodeRename"
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
-      :on-node-editor-generate="handleMobileNodeGenerate"
+      :on-node-editor-send-to-agent="handleMobileNodeSendToAgent"
       :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"

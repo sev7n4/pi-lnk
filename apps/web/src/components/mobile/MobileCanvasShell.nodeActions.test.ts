@@ -74,8 +74,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onNodeAction: vi.fn(),
     onNodeActionClose: vi.fn(),
     onNodeRename: vi.fn(),
-    onNodeEditorGenerate: vi.fn(),
-    onNodeEditorRemoveRef: vi.fn(),
+    // D8/J1/K1（2026-10-25）：编辑器改为「发给 agent 修改」，本地提交与删引用 emit 已移除
+    onNodeEditorSendToAgent: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
     viewerNode: null,
@@ -149,10 +149,12 @@ describe('MobileCanvasShell 长按动作集成', () => {
     w.unmount()
   })
 
-  it('mobileEditor 设置 → 渲染编辑 sheet 且挂载 DockStudioRouter（删 Dock 后编辑不丢链）', () => {
+  it('mobileEditor 设置 → 渲染编辑 sheet（轻量编辑器，不挂 PC dock）', () => {
     const w = mount(MobileCanvasShell, { props: baseProps({ mobileEditor: editorContext }), attachTo: document.body })
     expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(true)
-    expect(w.findComponent({ name: 'DockStudioRouter' }).exists()).toBe(true)
+    expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(true)
+    // ⛔ D8/J1/K1（2026-10-25）：移动端编辑器**不再挂 PC studio dock**（参数所有权归 agent）
+    expect(w.findComponent({ name: 'DockStudioRouter' }).exists()).toBe(false)
     w.unmount()
   })
 
