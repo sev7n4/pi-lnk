@@ -89,9 +89,18 @@ export function useProjectWorkspace() {
    * ⛔ 不传 title：标题由后端默认值决定（IA v4 = 「未命名项目」）。
    *    前端传死「未命名画布」是 IA v4 之前的旧行为，且会让后端 list 的
    *    「未命名 → 项目 N」编号兜底对新建项失效（`canvas.service.ts:37-43`）。
+   *
+   * @param opts.timeoutMs 客户端超时（毫秒）。**调用方应显式带上**：axios 默认
+   *    120s，弱网下会让用户「上百秒零反馈」（10-24 修复要求明确报错 + 20s 超时）。
+   *    收敛通道时最容易丢的就是这个超时 ⇒ 做成参数而不是藏在调用点。
    */
-  async function create(): Promise<ProjectCard> {
-    const res = await canvasApi.create()
+  async function create(opts?: { timeoutMs?: number }): Promise<ProjectCard> {
+    // ⛔ 默认路径**零参数**调 canvasApi.create：契约「不传 title」= title 不进请求体
+    //    （IA v4 标题由后端默认值决定）。下游守卫锁的就是这个零参调用 ⇒ 不要为了
+    //    塞 config 而把 title 位显式写成 undefined（那会让调用变成「两个参数」）。
+    const res = opts?.timeoutMs
+      ? await canvasApi.create(undefined, { timeout: opts.timeoutMs })
+      : await canvasApi.create()
     const created = res.data?.data as ProjectCard | undefined
     if (!created?.id) throw new Error('create project failed: no id in response')
     rememberProject(created.id)

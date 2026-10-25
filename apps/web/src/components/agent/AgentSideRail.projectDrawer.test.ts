@@ -20,13 +20,19 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 const here = dirname(fileURLToPath(import.meta.url))
 const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
 const style = sfc.slice(sfc.indexOf('<style'), sfc.lastIndexOf('</style>'))
-const tpl = sfc
-  .slice(sfc.indexOf('<template>'), sfc.lastIndexOf('</template>'))
+
+// 2026-10-25 Task 7：项目抽屉已抽成 ProjectPanel.vue（断点中立，PC 与移动端共用）。
+// 项目抽屉专属的样式/模板契约改读 ProjectPanel.vue；对话历史面板的 .thread-history-*
+// 仍留 AgentSideRail.vue，其守卫断言继续读 AgentSideRail.vue。
+const panelSfc = readFileSync(join(here, '..', 'project', 'ProjectPanel.vue'), 'utf8')
+const panelStyle = panelSfc.slice(panelSfc.indexOf('<style'), panelSfc.lastIndexOf('</style>'))
+const panelTpl = panelSfc
+  .slice(panelSfc.indexOf('<template>'), panelSfc.lastIndexOf('</template>'))
   .replace(/<!--[\s\S]*?-->/g, '')
 
 describe('mobile session drawer: project cards must not be shrunk into hairlines (2026-10-19 incident)', () => {
   it('drawer direct children are shrink-proof (root cause: overflow:hidden zeroes auto min size)', () => {
-    const rule = style.match(/\.session-drawer\s*>\s*\*\s*\{[^}]*\}/)?.[0]
+    const rule = panelStyle.match(/\.session-drawer\s*>\s*\*\s*\{[^}]*\}/)?.[0]
     expect(rule, '抽屉直接子项缺少 flex-shrink:0 保护——项目卡会被压成 1px 细线').toBeTruthy()
     expect(rule).toContain('flex-shrink: 0')
   })
@@ -39,11 +45,11 @@ describe('mobile session drawer: project cards must not be shrunk into hairlines
 
   it('paired: hazard neutralized, not deleted — overflow:hidden stays, scroll strategy stays', () => {
     // 有效性配对①：圆角裁剪仍靠 overflow:hidden（不允许靠删 hazard 来"修"）
-    expect(style).toMatch(/\.project-card\s*\{[^}]*overflow:\s*hidden/)
+    expect(panelStyle).toMatch(/\.project-card\s*\{[^}]*overflow:\s*hidden/)
     // 有效性配对②：溢出策略仍是抽屉滚动，而不是把子项压扁
-    expect(style).toMatch(/\.session-drawer\s*\{[^}]*overflow-y:\s*auto/)
+    expect(panelStyle).toMatch(/\.session-drawer\s*\{[^}]*overflow-y:\s*auto/)
     // 有效性配对③：保护规则确实挂在抽屉容器下（规则存在但选择器写错 = 没生效）
-    expect(style).toContain('.session-drawer > *')
+    expect(panelStyle).toContain('.session-drawer > *')
   })
 })
 
@@ -52,18 +58,18 @@ describe('mobile session drawer: project cards must not be shrunk into hairlines
 // 但 v-for 仍遍历全量（预览静默失效）。
 describe('mobile session drawer: project preview wiring (default 8 + expand more)', () => {
   it('v-for iterates the preview slice, not the full list', () => {
-    expect(sfc).toContain('PROJECTS_PREVIEW_COUNT')
-    expect(sfc).toContain('visibleProjects')
-    expect(tpl).toContain('v-for="project in visibleProjects"')
+    expect(panelSfc).toContain('PROJECTS_PREVIEW_COUNT')
+    expect(panelSfc).toContain('visibleProjects')
+    expect(panelTpl).toContain('v-for="project in visibleProjects"')
     // 配对：全量数组仍在脚本里（展开态的数据源），只是模板不再直接遍历它
-    expect(sfc).not.toMatch(/v-for="project in projects"/)
+    expect(panelSfc).not.toMatch(/v-for="project in projects"/)
   })
 
   it('expand control is a real button with counted copy + toggle handler', () => {
-    expect(tpl).toContain('class="session-drawer__expand"')
-    expect(tpl).toContain('toggleProjectsExpanded')
-    expect(tpl).toContain('展开更多（还有')
-    expect(style).toMatch(/\.session-drawer__expand\s*\{[^}]*text-align:\s*center/)
+    expect(panelTpl).toContain('class="session-drawer__expand"')
+    expect(panelTpl).toContain('toggleProjectsExpanded')
+    expect(panelTpl).toContain('展开更多（还有')
+    expect(panelStyle).toMatch(/\.session-drawer__expand\s*\{[^}]*text-align:\s*center/)
   })
 })
 

@@ -3,17 +3,19 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import CanvasesPage from './CanvasesPage.vue'
 
-const { sessionsList, sessionsCreate, sessionsRemoveMany, authState, pushMock, elMessage } = vi.hoisted(() => ({
-  sessionsList: vi.fn(),
-  sessionsCreate: vi.fn(),
-  sessionsRemoveMany: vi.fn(),
-  pushMock: vi.fn(),
-  authState: { isLoggedIn: true },
-  elMessage: Object.assign(vi.fn(() => ({ close: vi.fn() })), {
-    success: vi.fn(),
-    error: vi.fn(),
-  }),
-}))
+const { sessionsList, sessionsCreate, sessionsRemoveMany, canvasCreate, authState, pushMock, elMessage } =
+  vi.hoisted(() => ({
+    sessionsList: vi.fn(),
+    sessionsCreate: vi.fn(),
+    sessionsRemoveMany: vi.fn(),
+    canvasCreate: vi.fn(),
+    pushMock: vi.fn(),
+    authState: { isLoggedIn: true },
+    elMessage: Object.assign(vi.fn(() => ({ close: vi.fn() })), {
+      success: vi.fn(),
+      error: vi.fn(),
+    }),
+  }))
 
 vi.mock('@/services/sessions-api', () => ({
   sessionsApi: {
@@ -23,6 +25,15 @@ vi.mock('@/services/sessions-api', () => ({
     duplicate: vi.fn(),
     remove: vi.fn(),
     removeMany: sessionsRemoveMany,
+  },
+}))
+
+// 2026-10-25 PR-2：新建项目改走 useProjectWorkspace（唯一 create 通道）⇒ 落到 canvasApi.create。
+vi.mock('@/services/canvas-api', () => ({
+  canvasApi: {
+    list: vi.fn(),
+    create: canvasCreate,
+    update: vi.fn(),
   },
 }))
 
@@ -101,12 +112,14 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     expect(wrapper.find('[data-testid="canvases-manage"]').text()).toContain('完成')
   })
 
-  it('新建项目走 sessionsApi.create 并跳转', async () => {
+  it('新建项目走 useProjectWorkspace（唯一 create 通道）并跳转', async () => {
     const wrapper = await mountPage()
-    sessionsCreate.mockResolvedValue({ data: { data: { id: 's_new' } } })
+    canvasCreate.mockResolvedValue({ data: { data: { id: 's_new' } } })
     await wrapper.find('[data-testid="canvases-create"]').trigger('click')
     await flushPromises()
-    expect(sessionsCreate).toHaveBeenCalled()
+    expect(canvasCreate).toHaveBeenCalled()
+    // 旧通道不得再被调用（收敛的回归守卫）
+    expect(sessionsCreate, '新建不得再走 sessionsApi.create').not.toHaveBeenCalled()
     expect(pushMock).toHaveBeenCalled()
   })
 

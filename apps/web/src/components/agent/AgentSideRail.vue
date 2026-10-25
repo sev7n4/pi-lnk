@@ -121,7 +121,9 @@ import {
   type UtterancePool,
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
-import MobileRecentWorksStrip, { type RecentWorkItem } from '@/components/mobile/MobileRecentWorksStrip.vue'
+import RecentProjectsStrip from '@/components/project/RecentProjectsStrip.vue'
+import ProjectPanel from '@/components/project/ProjectPanel.vue'
+import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
 import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { barShape } from './composer/mobileBarLayout'
@@ -1661,9 +1663,9 @@ async function bootstrapThread() {
 
 onMounted(() => {
   void bootstrapThread()
-  // A3：回访作品带数据 —— 挂载即拉（不是等抽屉打开），因为带子在对话页签顶部。
-  // 只在移动端拉：PC 侧栏不渲染这条带子（AGENTS.md 移动端呈现第 1/2 条）。
-  if (isMobileLayout.value) void loadRecentWorks()
+  // A3：回访作品带数据 —— 挂载即拉（断点中立：PC 左栏与移动端对话框顶部都展示，
+  // 不再是移动端专属）。projects 来自 useProjectWorkspace 单一数据源，作品带与抽屉共用。
+  void loadProjects()
   // A1 二期：金句定时轮换（empty 相 7 条 > 4 位 ⇒ 长尾要能露出来）。
   utteranceRotationCtl.start()
   void loadProviderBootstrap().then(() => {
@@ -2561,11 +2563,13 @@ async function createOwnCanvas() {
     return
   }
   try {
-    // IA v4（2026-10-23）：不传 title ⇒ 后端默认「未命名项目」（list 兜底编号）
-    const { data } = await sessionsApi.create({})
-    void router.push(`/workflow/${data.data.id}`)
+    // 2026-10-25 PR-2：通道换成 useProjectWorkspace.create（唯一 create 通道）。
+    // ⚠️ 失败不再静默 goToWorkflowHome（用户零反馈：点了没反应，还被弹回品牌页），
+    //    改为明确报错——与 CanvasesPage / WorkflowPage 的 10-24 修复对齐。
+    const created = await createProject()
+    void router.push(`/workflow/${created.id}`)
   } catch {
-    goToWorkflowHome()
+    ElMessage.error('新建项目失败，请重试')
   }
 }
 
@@ -3726,43 +3730,23 @@ function closeThreadHistory() {
  * 2026-10-19 兜底：list 曾在 CVM 旧接口返回 2.4MB（165 项目×完整 canvasData），
  * 弱网/代理路径下 body 永不落地 ⇒ axios promise 不 settle ⇒ 「项目加载中」转不完。
  * 双保险：请求级 15s 超时 + 失败态重试按钮（后端 select 瘦身已随本分支修复）。 */
-const PROJECT_LIST_TIMEOUT_MS = 15_000
-interface ProjectCard {
-  id: string
-  title: string
-  updatedAt: string
-}
-const projects = ref<ProjectCard[]>([])
-const projectsLoading = ref(false)
-const projectsError = ref(false)
-
 /**
- * A3 · 回访作品带数据（移动端对话页签顶部）。
+ * A3 · 回访作品带 + PC 抽屉项目列表：**共用 `useProjectWorkspace` 单一数据源**
+ * （INV-10：收敛前 `loadProjects()` 与 `loadRecentWorks()` 各调一次 `canvasApi.list`，
+ * 同一接口请求两遍、存进两个 ref，纯浪费）。
  *
- * 与 `projects`（PC 抽屉项目列表）**刻意复用同一个接口** `canvasApi.list()`：
- * 后端 list 已增 `coverUrl` / `coverNodeId`（只返回封面 URL，不返回原始 canvasData），
- * 而作品带要的正是「最近生成的产物图 + 产物节点 id」。
- * 复用而非新开接口 ⇒ 少一次请求、少一套鉴权、少一份契约漂移面。
- *
- * 拉取时机：组件挂载时（不是抽屉打开时）—— 作品带在对话页签顶部，
- * 抽屉打开与否它都该在。失败时静默降级为「不显示」（一条带子不该把对话面板搞崩）。
+ * - `projects` / `projectsLoading` / `projectsError` 直接取自 workspace（抽屉用）。
+ * - 作品带 `:works="projects"` 同消费这一个 ref（断点中立，PC 左栏与移动端对话框顶部都展示）。
+ * - 作品带失败静默降级由 workspace 的 `error` 兜底（一条带子不该把对话面板搞崩，spec §3.6）。
  */
-const recentWorks = ref<RecentWorkItem[]>([])
-async function loadRecentWorks() {
-  try {
-    const res = await canvasApi.list({ timeout: PROJECT_LIST_TIMEOUT_MS })
-    const list = (res.data?.data ?? []) as Array<{
-      id: string
-      title: string
-      coverUrl: string | null
-      coverNodeId: string | null
-      updatedAt: string
-    }>
-    recentWorks.value = list
-  } catch {
-    recentWorks.value = []
-  }
-}
+const {
+  projects,
+  loading: projectsLoading,
+  error: projectsError,
+  list,
+  // 2026-10-25 PR-2：创建通道收敛到 workspace（全仓唯一 create 通道）。
+  create: createProject,
+} = useProjectWorkspace()
 
 /**
  * 点作品 = 打开该画布；带 focusNode 时**定位到那张产物图**
@@ -3779,33 +3763,15 @@ function handleRecentWorkOpen(payload: { id: string; focusNodeId: string | null 
     : `/workflow/${encodeURIComponent(payload.id)}`
   void router.push(target)
 }
-/** 抽屉项目预览条数（2026-10-19 用户裁决）：默认只露最近 8 个，其余收进「展开更多」。
- *  数字依据（截图实测）：抽屉首屏列表区 ≈ 590 CSS px（微信 webview，safe-area=0），
- *  项目卡 60px/条（卡体 52 + flex gap 8）⇒ 8 条 = 480px，「展开更多」按钮与第 8 条
- *  同屏可见、不需滚动即发现；Safari 带安全区时首屏更矮，8 仍是安全值。
- *  列表按 updatedAt desc 返回（canvas.service.list orderBy）⇒ 前 8 = 最近 8 个。
- *  一次点击展开全部（数据已在前端，无分页请求）；再点「收起」回预览态。 */
-const PROJECTS_PREVIEW_COUNT = 8
-const projectsExpanded = ref(false)
-const visibleProjects = computed(() =>
-  projectsExpanded.value ? projects.value : projects.value.slice(0, PROJECTS_PREVIEW_COUNT),
-)
-function toggleProjectsExpanded() {
-  projectsExpanded.value = !projectsExpanded.value
-}
+/**
+ * 拉取项目列表（抽屉 + 作品带共用）。委托给 useProjectWorkspace 单一数据源
+ * （INV-10：本函数不再直接调 canvasApi.list），失败由 workspace 的 `error` 兜底。
+ * 防重入：已有请求在途时直接返回，避免抽屉打开与挂载两处并发重复拉取。
+ * ⚠️ 抽屉的「预览 8 条 + 展开更多」逻辑已随 ProjectPanel 抽出（断点中立，PC 同用）。
+ */
 async function loadProjects() {
   if (projectsLoading.value) return
-  projectsLoading.value = true
-  projectsError.value = false
-  try {
-    const res = await canvasApi.list({ timeout: PROJECT_LIST_TIMEOUT_MS })
-    projects.value = (res.data?.data ?? []) as ProjectCard[]
-  } catch {
-    /* 拉取失败显式暴露重试入口，绝不留无限 loading */
-    projectsError.value = true
-  } finally {
-    projectsLoading.value = false
-  }
+  await list()
 }
 function openProject(id: string) {
   closeSessionDrawer()
@@ -3814,9 +3780,9 @@ function openProject(id: string) {
 }
 async function newProject() {
   try {
-    const res = await canvasApi.create()
-    const created = res.data?.data as { id?: string } | undefined
-    if (!created?.id) throw new Error('no id')
+    // 2026-10-25 PR-2：通道换成 useProjectWorkspace.create（唯一 create 通道）；
+    // 不传 title ⇒ 后端默认「未命名项目」（IA v4）。
+    const created = await createProject()
     // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
     void router.push(`/workflow/${created.id}`)
   } catch {
@@ -3923,84 +3889,21 @@ defineExpose({
         </button>
       </Teleport>
 
-      <!-- 项目抽屉（IA v3.2）：移动端顶栏 ≡ 唤起——纯项目世界（新建项目 + 项目卡片增删改查）。
-           对话层职责（新建对话/历史对话）已升为对话页右上角图标，抽屉不再混入。 -->
-      <Teleport to="body">
-        <Transition name="session-drawer">
-          <div v-if="sessionDrawerOpen" class="session-drawer-layer" @click.self="closeSessionDrawer">
-            <div class="session-drawer" role="dialog" aria-label="项目列表">
-              <!-- 「新建项目」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。
-                   与 MobileTopBar 顶栏「新建对话」同族 create-card（scoped 样式各自定义）。
-                   整卡可点；圆盘是装饰 span（按钮内不嵌按钮）。 -->
-              <button
-                type="button"
-                class="create-card"
-                @click="newProject()"
-              >
-                <span class="create-card__label">新建项目</span>
-                <span class="create-card__disc" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25">
-                    <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-                  </svg>
-                </span>
-              </button>
-              <p class="session-drawer__caption">项目</p>
-              <div
-                v-for="project in visibleProjects"
-                :key="project.id"
-                class="project-card"
-                :class="{ 'is-current': project.id === sessionId }"
-              >
-                <button
-                  type="button"
-                  class="project-card__main"
-                  @click="openProject(project.id)"
-                >
-                  <span class="block truncate text-xs font-medium">{{ project.title || '未命名项目' }}</span>
-                  <span class="block text-[10px] opacity-60">{{ formatSessionTime(project.updatedAt) }}</span>
-                </button>
-                <button
-                  type="button"
-                  class="project-card__more"
-                  aria-label="重命名项目"
-                  @click.stop="renameProject(project)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.5 5.5 4 4L8 20H4v-4L14.5 5.5Z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  class="project-card__more is-danger"
-                  aria-label="删除项目"
-                  @click.stop="deleteProject(project)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7m3 0-.7 12a2 2 0 0 1-2 1.9H9.2a2 2 0 0 1-2-1.9L6.5 7" />
-                  </svg>
-                </button>
-              </div>
-              <!-- 「展开更多 / 收起」（2026-10-19 用户裁决）：默认预览最近 8 条，
-                    按钮与第 8 条同屏不折叠；剩余计数随列表长度实时变化。
-                    加载中/失败态不显示（那时没有可展开的稳定列表）。 -->
-              <button
-                v-if="!projectsLoading && !projectsError && projects.length > PROJECTS_PREVIEW_COUNT"
-                type="button"
-                class="session-drawer__expand"
-                @click="toggleProjectsExpanded"
-              >
-                {{ projectsExpanded ? '收起' : `展开更多（还有 ${projects.length - PROJECTS_PREVIEW_COUNT} 个）` }}
-              </button>
-              <p v-if="projectsLoading" class="session-drawer__empty">项目加载中…</p>
-              <p v-else-if="projectsError" class="session-drawer__empty">
-                项目加载失败
-                <button type="button" class="session-drawer__retry" @click="loadProjects">重试</button>
-              </p>
-              <p v-else-if="!projects.length" class="session-drawer__empty">暂无项目</p>
-            </div>
-          </div>
-        </Transition>
-      </Teleport>
+      <!-- 项目抽屉（2026-10-25 Task 7 抽出）：断点中立，PC 与移动端共用同一 ProjectPanel。
+           纯项目世界（新建项目 + 项目卡片增删改查），对话层职责已升为对话页右上角图标。 -->
+      <ProjectPanel
+        :open="sessionDrawerOpen"
+        :projects="projects"
+        :current-id="sessionId"
+        :loading="projectsLoading"
+        :error="projectsError"
+        @close="closeSessionDrawer"
+        @create="newProject"
+        @open="openProject"
+        @rename="renameProject"
+        @remove="deleteProject"
+        @retry="loadProjects"
+      />
 
       <!-- 对话历史面板（IA v3.2）：移动端对话页右上角 🕘 唤起——当前项目下的对话切换。
            与 PC 面板头部 popover 同源（threads/fetchThreads/selectThread），移动端头部被 CSS 隐藏故独立成面层。 -->
@@ -4187,16 +4090,17 @@ defineExpose({
               class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3"
               @scroll.passive="onChatScroll"
             >
-            <!-- A3 · 回访作品带（移动端）：「画布记得你的模样」= 最近作品条。
+            <!-- A3 · 回访作品带（断点中立：PC 左栏与移动端对话框顶部共用同一组件）：
+                 「画布记得你的模样」= 最近作品条。
                  ⚠️ 位置在**空态块之前**（不是塞进空态块里）：空态判据是
-                 `!agent.messages.length`，而移动端进项目即 loadHistory ⇒ 有历史时
+                 `!agent.messages.length`，而进项目即 loadHistory ⇒ 有历史时
                  空态不渲染 ⇒ 塞进去等于「上线后没人看得见」。
                  在滚动流内 ⇒ 随消息流上推，不常驻吸顶（设计规范 §3.2 简洁三原则）。
                  IA v4（2026-10-23）：首卡【新建项目】复用抽屉 newProject（同一行为），
-                 「全部 N 个 ›」开抽屉项目区（全量列表 + 重命名/删除，零新页面）。 -->
-            <MobileRecentWorksStrip
-              v-if="isMobileLayout"
-              :works="recentWorks"
+                 「全部 N 个 ›」开抽屉项目区（全量列表 + 重命名/删除，零新页面）。
+                 数据来自 useProjectWorkspace 单一数据源（`:works="projects"`），与抽屉共用。 -->
+            <RecentProjectsStrip
+              :works="projects"
               @open="handleRecentWorkOpen"
               @create="newProject"
               @open-all="openSessionDrawer"
@@ -5550,89 +5454,12 @@ defineExpose({
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-/* ---- 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起，历史会话 + 新建对话 ---- */
-/* 2026-10-19 真机反馈：「页签失灵」实锤场景之一——抽屉遮罩 inset:0 盖住页签（z95>80），
- * 点页签只触发遮罩 @click.self 关抽屉、页签不切，第二次点才生效。
- * 遮罩 bottom 避开页签区（--lnk-tabbar-h 由 MobileTabBar 发布），页签任何时候可点；
- * tab 变化经 mobileAppTab prop watch 自动收抽屉。 */
-.session-drawer-layer {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  /* 兜底 56px = 页签基础高度：变量未发布时也不得回落成盖住页签 */
-  bottom: var(--lnk-tabbar-h, 56px);
-  z-index: 95;
-  background: rgba(0, 0, 0, 0.35);
-}
+/* 项目抽屉样式已随 ProjectPanel.vue 抽出（断点中立，2026-10-25 Task 7）：
+ * .session-drawer / .session-drawer-layer / .create-card* / .project-card* /
+ * .session-drawer__expand* / .session-drawer__retry / .session-drawer-{enter,leave}*
+ * 全部移至 ProjectPanel.vue 的 scoped 样式。本文件仅保留对话历史面板的
+ * .thread-history-*，以及项目/历史共用的 .session-drawer__caption / .session-drawer__empty。 */
 
-.session-drawer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(78vw, 320px);
-  padding: calc(env(safe-area-inset-top, 0px) + 14px) 12px calc(env(safe-area-inset-bottom, 0px) + 14px);
-  background: var(--lnk-surface-canvas);
-  overflow-y: auto;
-}
-
-/* ⛔ 2026-10-19 真机事故（移动端抽屉「项目清单看不到」）：抽屉是**定高** flex 列容器
- * （position:absolute; top:0; bottom:0），项目卡又带 overflow:hidden ⇒ 按 flex 规范
- * §4.5「自动最小尺寸」对 overflow≠visible 的项归零 ⇒ flex-shrink 合法地把卡片压到 0。
- * 账号项目数一超出视口（实测 165 项），全部项目卡被压成 ~1px 细线：只剩 0.5px 边框
- * + 8px gap，标题/时间/图标/卡片底色全被裁掉，抽屉沦为一条永远滚不完的「细线带」。
- * create-card/caption 只因 overflow 可见才靠 min-height:auto 侥幸幸存，不可依赖。
- * ⇒ 抽屉直接子项一律不许收缩；溢出交给抽屉自身的 overflow-y:auto 滚动。 */
-.session-drawer > * {
-  flex-shrink: 0;
-}
-
-/* 「新建」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。
- * 圆盘 = accent 渐变实底 + on-accent 白加号（--lnk-text-on-accent 两主题均 #fff，
- * 白字写在令牌里合法；圆盘与项目卡右侧图标按钮同列 rhythm）。
- * 顶栏「新建对话」= 同族 create-card--bar（MobileTopBar.vue 各自 scoped 定义）。 */
-.create-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 12px 12px 12px 14px;
-  border: 0.5px solid var(--lnk-border-subtle);
-  border-radius: 12px;
-  background: var(--lnk-surface-raised);
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-sm, 13px);
-  font-weight: 500;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.create-card:active {
-  background: var(--lnk-accent-subtle);
-}
-
-.create-card__disc {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--lnk-accent-gradient);
-  color: var(--lnk-text-on-accent);
-}
-
-.create-card__disc svg {
-  width: 15px;
-  height: 15px;
-}
 
 .session-drawer__caption {
   padding: 6px 4px 0;
@@ -5642,68 +5469,6 @@ defineExpose({
   color: var(--lnk-text-muted);
 }
 
-/* 项目卡片（IA v3.1）：主区点击=打开项目，右侧笔形=重命名 */
-.project-card {
-  display: flex;
-  align-items: stretch;
-  border: 0.5px solid var(--lnk-border-subtle);
-  border-radius: 12px;
-  background: var(--lnk-surface-raised);
-  overflow: hidden;
-}
-
-.project-card.is-current {
-  /* --lnk-accent-border 已在 design-tokens.css 双主题定义（2026-10-19 补令牌），
-     不再写 var() fallback——fallback 会把「引用未定义令牌」静默降级成另一个值。 */
-  border-color: var(--lnk-accent-border);
-}
-
-.project-card__main {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 10px 4px 10px 12px;
-  border: none;
-  background: transparent;
-  color: var(--lnk-text-primary);
-  text-align: left;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.project-card__main:active {
-  background: var(--lnk-accent-subtle);
-}
-
-.project-card__more {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  flex-shrink: 0;
-  border: none;
-  background: transparent;
-  color: var(--lnk-text-muted);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.project-card__more:active {
-  background: color-mix(in srgb, var(--lnk-text-primary) 8%, transparent);
-}
-
-.project-card__more svg {
-  width: 15px;
-  height: 15px;
-}
-
-.project-card__more.is-danger {
-  color: var(--lnk-error);
-}
 
 /* 对话历史面板（IA v3.2）：对话页右上角 🕘 唤起；与抽屉同族视觉，z 序高于抽屉。
  * 2026-10-19 真机反馈：「页签失灵」实锤场景之二——本遮罩 inset:0 盖住页签（z96>80），
@@ -5737,7 +5502,7 @@ defineExpose({
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
-/* 同 .session-drawer > *：定高/限高 flex 列容器里子项一律不许收缩，
+/* 同 ProjectPanel 的 .session-drawer > *：定高/限高 flex 列容器里子项一律不许收缩，
  * 防「overflow:hidden 子项被压成细线」事故家族复发（2026-10-19 抽屉事故同款机理）。 */
 .thread-history-sheet > * {
   flex-shrink: 0;
@@ -5760,16 +5525,6 @@ defineExpose({
   background: var(--lnk-surface-raised);
 }
 
-.session-drawer__retry {
-  margin-left: 6px;
-  padding: 2px 10px;
-  border: 0.5px solid var(--lnk-border-subtle);
-  border-radius: 999px;
-  background: var(--lnk-surface-raised);
-  color: var(--lnk-accent-text);
-  font-size: var(--lnk-text-xs, 12px);
-  cursor: pointer;
-}
 
 .session-drawer__empty {
   padding: 18px 4px;
@@ -5778,46 +5533,6 @@ defineExpose({
   color: var(--lnk-text-muted);
 }
 
-/* 「展开更多 / 收起」（2026-10-19 用户裁决）：项目预览的折叠控制——轻量文字按钮，
- * 不抢项目卡的视觉；与第 8 条同屏可见（默认预览 8 条的几何依据见
- * PROJECTS_PREVIEW_COUNT 注释）。:active 用 accent 文字色给触控反馈。 */
-.session-drawer__expand {
-  display: block;
-  width: 100%;
-  padding: 10px 4px;
-  border: none;
-  background: transparent;
-  color: var(--lnk-text-muted);
-  font-size: var(--lnk-text-xs, 12px);
-  text-align: center;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.session-drawer__expand:active {
-  color: var(--lnk-accent-text);
-}
-
-.session-drawer-enter-active,
-.session-drawer-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.session-drawer-enter-active .session-drawer,
-.session-drawer-leave-active .session-drawer {
-  transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.session-drawer-enter-from,
-.session-drawer-leave-to {
-  opacity: 0;
-}
-
-.session-drawer-enter-from .session-drawer,
-.session-drawer-leave-to .session-drawer {
-  transform: translateX(-100%);
-}
 
 /* 「＋」附件卡（照竞品卡片）：四瓦片 浅底/按下反馈 */
 .attach-tile {

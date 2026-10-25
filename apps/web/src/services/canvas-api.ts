@@ -5,7 +5,9 @@ import type { GenerationDiagnostic } from '@lnkpi/shared'
 export const canvasApi = {
   /** config 仅在项目抽屉调用处带 15s 超时（弱网兜底，见 AgentSideRail.loadProjects） */
   list: (config?: AxiosRequestConfig) => api.get('/agent/canvas/list', config),
-  create: (title?: string) => api.post('/agent/canvas/create', { title }),
+  /** config 可带客户端超时（新建通道收敛后由 CanvasesPage 传 20s，见 useProjectWorkspace.create） */
+  create: (title?: string, config?: AxiosRequestConfig) =>
+    api.post('/agent/canvas/create', { title }, config),
   update: (id: string, data: { title?: string; canvasData?: unknown }) =>
     api.put('/agent/canvas/update', { id, ...data }),
   optimizePrompt: (prompt: string, style?: string) =>

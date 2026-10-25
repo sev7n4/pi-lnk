@@ -29,6 +29,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
 import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
+import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
 import { useGenerationPolling, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
 import { buildNodeMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
@@ -61,6 +62,8 @@ import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
 import CanvasFloatingChrome from '@/components/canvas/CanvasFloatingChrome.vue'
+// 2026-10-25 PR-2：PC 端项目面板（与移动端共用 ProjectPanel，断点中立）。
+import ProjectPanel from '@/components/project/ProjectPanel.vue'
 import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
@@ -5454,7 +5457,96 @@ provide(CANVAS_REF_PICK_ACTIVE_KEY, pickMode.active)
 provide(CANVAS_REF_PICK_NODE_IDS_KEY, pickMode.pickedNodeIds)
 provide(CANVAS_REF_PICK_REJECT_KEY, pickRejectNodeId)
 
+/**
+ * PC 端项目面板（2026-10-25 PR-2 Task 8）。
+ *
+ * - 数据源：`useProjectWorkspace`（项目 CRUD + 最近项目记忆的**单一真源**），
+ *   与移动端抽屉同源；面板本体复用 `ProjectPanel`（断点中立，PR-2 Task 7 抽出）。
+ * - ⛔ 列表**按需拉取**（点开时才 list）：AgentSideRail 的作品带已拉过同一份数据，
+ *   挂载期再拉一遍就是 INV-10 收敛前的「同一接口请求两遍」老毛病。
+ * - 处理器语义与 AgentSideRail 的项目抽屉保持一致（同样的确认框/报错文案），
+ *   避免两端同一动作两种反馈。
+ */
+const {
+  projects: projectWsProjects,
+  loading: projectWsLoading,
+  error: projectWsError,
+  list: loadProjectList,
+  create: createProjectEntry,
+  rename: renameProjectEntry,
+  remove: removeProjectEntry,
+  rememberProject,
+} = useProjectWorkspace()
+
+const projectPanelOpen = ref(false)
+
+function openProjectPanel() {
+  projectPanelOpen.value = true
+  void loadProjectList()
+}
+
+function closeProjectPanel() {
+  projectPanelOpen.value = false
+}
+
+async function handleProjectCreate() {
+  try {
+    const created = await createProjectEntry()
+    closeProjectPanel()
+    void router.push(`/workflow/${created.id}`)
+  } catch {
+    ElMessage.error('新建项目失败，请重试')
+  }
+}
+
+function handleProjectOpen(id: string) {
+  closeProjectPanel()
+  // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
+  void router.push(`/workflow/${id}`)
+}
+
+async function handleProjectRename(project: ProjectCard) {
+  try {
+    const { value } = await ElMessageBox.prompt('项目名称', '重命名项目', {
+      inputValue: project.title,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputPattern: /\S+/,
+      inputErrorMessage: '名称不能为空',
+    })
+    await renameProjectEntry(project.id, value.trim())
+    ElMessage.success('已重命名')
+  } catch {
+    /* 取消/失败静默 */
+  }
+}
+
+async function handleProjectRemove(project: ProjectCard) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${project.title || '未命名项目'}」？此操作不可恢复。`,
+      '删除项目',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await removeProjectEntry(project.id)
+    ElMessage.success('已删除')
+  } catch {
+    ElMessage.error('删除失败，请稍后重试')
+  }
+}
+
+function handleProjectRetry() {
+  void loadProjectList()
+}
+
 onMounted(() => {
+  // 2026-10-25 PR-2 Task 8：写入「最近项目」记忆。
+  // ⛔ 守卫 sessionId 非空：空串会写坏记忆（下次进入创作解析到不存在的项目）。
+  if (sessionId.value) rememberProject(sessionId.value)
   registerLocateNodeHandler(handleHistoryLocate)
   void loadProviderBootstrap().catch(() => {
     // Dock falls back to catalog defaults until bootstrap succeeds
@@ -5605,6 +5697,26 @@ onUnmounted(() => {
           @publish="openPublish"
           @import-workflow="openWorkflowImportPicker"
           @export-workflow="handleExportPack([], 'full_package')"
+          @project-click="openProjectPanel"
+        />
+
+        <!-- 2026-10-25 PR-2：PC 端项目面板（与移动端共用 ProjectPanel）。
+             v-if="!isMobileLayout"：移动端项目抽屉由 AgentSideRail 自己的那份负责，
+             此处不再重复挂载一个同款 Teleport 面板。 -->
+        <ProjectPanel
+          v-if="!isMobileLayout"
+          :open="projectPanelOpen"
+          :projects="projectWsProjects"
+          :current-id="sessionId"
+          :loading="projectWsLoading"
+          :error="projectWsError"
+          :reserve-tabbar="false"
+          @close="closeProjectPanel"
+          @create="handleProjectCreate"
+          @open="handleProjectOpen"
+          @rename="handleProjectRename"
+          @remove="handleProjectRemove"
+          @retry="handleProjectRetry"
         />
 
         <RefineCanvasBack
