@@ -5710,6 +5710,7 @@ onUnmounted(() => {
           :current-id="sessionId"
           :loading="projectWsLoading"
           :error="projectWsError"
+          :reserve-tabbar="false"
           @close="closeProjectPanel"
           @create="handleProjectCreate"
           @open="handleProjectOpen"

@@ -7,6 +7,9 @@
 // ⚠️ Teleport DOM 泄漏治理：面板 Teleport 到 body，wrapper.html() 看不到内容，
 //    断言必须查 document.body；且用例间必须 unmount（否则上一个实例仍活着，
 //    响应式更新会把卡片插回 body ⇒ 全局 querySelectorAll 多算）。
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ProjectPanel from './ProjectPanel.vue'
@@ -35,6 +38,7 @@ async function mountPanel(props: Partial<{
   currentId: string
   loading: boolean
   error: boolean
+  reserveTabbar: boolean
 }> = {}) {
   const w = mount(ProjectPanel, {
     props: {
@@ -160,5 +164,33 @@ describe('ProjectPanel：项目抽屉（断点中立组件）', () => {
     await mountPanel({ open: false })
     expect(document.body.querySelector('.session-drawer-layer')).toBeNull()
     expect(document.body.querySelectorAll('.project-card').length).toBe(0)
+  })
+
+  it('底部页签预留：默认让开页签（移动端），reserveTabbar=false 走整屏（PC）', async () => {
+    // 默认（移动端）：遮罩保留 56px 兜底 —— 这是 2026-10-19「页签失灵」事故的安全网
+    const mobile = await mountPanel({})
+    expect(
+      document.body.querySelector('.session-drawer-layer')?.classList.contains('is-full-bleed'),
+    ).toBe(false)
+    mobile.unmount()
+    mounted.splice(0, 1)
+    document.body.innerHTML = ''
+
+    // PC：无底部页签 ⇒ 整屏，否则底部留 56px 空条（点不到 = 关不掉）+ 抽屉矮一截
+    await mountPanel({ reserveTabbar: false })
+    expect(
+      document.body.querySelector('.session-drawer-layer')?.classList.contains('is-full-bleed'),
+    ).toBe(true)
+  })
+
+  it('样式契约：整屏变体把 bottom 归零，移动端兜底仍是 56px', () => {
+    // jsdom 不计算布局 ⇒ 几何类断言落在 CSS 块契约上（与本仓既有做法一致）
+    const sfc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ProjectPanel.vue'), 'utf8')
+    const style = sfc.slice(sfc.indexOf('<style'), sfc.lastIndexOf('</style>'))
+    // 移动端安全网不得被摘掉
+    expect(style).toContain('bottom: var(--lnk-tabbar-h, 56px)')
+    const full = style.match(/\.session-drawer-layer\.is-full-bleed\s*\{[^}]*\}/)?.[0]
+    expect(full, '必须存在整屏变体规则').toBeTruthy()
+    expect(full).toContain('bottom: 0')
   })
 })

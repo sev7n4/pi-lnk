@@ -52,6 +52,9 @@ describe('PC 画布页项目入口（PR-2 Task 8）', () => {
     expect(panel).toContain(':open="projectPanelOpen"')
     expect(panel).toContain(':projects="projectWsProjects"')
     expect(panel).toContain(':current-id="sessionId"')
+    // PC 无底部页签 ⇒ 必须让开页签的兜底（56px）失效，否则遮罩底部留空条：
+    // 点不到 = 关不掉面板，且抽屉比视口矮一截。
+    expect(panel, 'PC 端必须传 reserve-tabbar=false').toContain(':reserve-tabbar="false"')
     // 六个动作全部接线（新建 / 打开 / 重命名 / 删除 / 重试 / 关闭）
     for (const [evt, handler] of [
       ['@close', 'closeProjectPanel'],

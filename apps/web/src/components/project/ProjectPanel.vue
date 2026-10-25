@@ -16,13 +16,25 @@ import { computed, ref } from 'vue'
 import type { ProjectCard } from '@/composables/useProjectWorkspace'
 import { formatSessionTime } from '@/utils/formatSessionTime'
 
-const props = defineProps<{
-  open: boolean
-  projects: ProjectCard[]
-  currentId: string
-  loading: boolean
-  error: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    projects: ProjectCard[]
+    currentId: string
+    loading: boolean
+    error: boolean
+    /**
+     * 是否为**底部页签**预留空间。
+     *
+     * ⚠️ 56px 兜底是**移动端专属**的安全网：`--lnk-tabbar-h` 由 MobileTabBar 发布，
+     *    变量未发布时也**不得回落成盖住页签**（2026-10-19「页签失灵」事故）。
+     *    但 PC 根本没有页签 ⇒ 沿用兜底会：① 遮罩底部留 56px 空条（点不到 = 关不掉
+     *    面板）；② 抽屉比视口矮 56px。⇒ PC 传 false 走整屏。
+     */
+    reserveTabbar?: boolean
+  }>(),
+  { reserveTabbar: true },
+)
 
 const emit = defineEmits<{
   close: []
@@ -50,7 +62,13 @@ function onOpen(id: string) {
 <template>
   <Teleport to="body">
     <Transition name="session-drawer">
-      <div v-if="open" class="session-drawer-layer" data-test="project-panel" @click.self="emit('close')">
+      <div
+        v-if="open"
+        class="session-drawer-layer"
+        :class="{ 'is-full-bleed': !reserveTabbar }"
+        data-test="project-panel"
+        @click.self="emit('close')"
+      >
         <div class="session-drawer" role="dialog" aria-label="项目列表">
           <!-- 「新建项目」卡（IA v3.3，2026-10-19 用户裁决）：文字左 + 圆盘加号右。 -->
           <button type="button" class="create-card" @click="emit('create')">
@@ -124,6 +142,13 @@ function onOpen(id: string) {
   bottom: var(--lnk-tabbar-h, 56px);
   z-index: 95;
   background: rgba(0, 0, 0, 0.35);
+}
+
+/* PC 形态（reserveTabbar=false）：无底部页签 ⇒ 遮罩整屏。
+ * ⛔ 不用这条的话底部会留 56px 空条（--lnk-tabbar-h 未发布时的兜底值）：
+ *    那条空条既点不到（关不掉面板）、抽屉又比视口矮一截。 */
+.session-drawer-layer.is-full-bleed {
+  bottom: 0;
 }
 
 .session-drawer {
