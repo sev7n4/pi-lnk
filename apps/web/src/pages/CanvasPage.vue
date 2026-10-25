@@ -4809,6 +4809,49 @@ function handleContextAction(action: string) {
  * 移动端动作 sheet 动作分发（R1-T5）：复用桌面同一套重命名/删除/复制/多选/引用/编辑真源逻辑，
  * 不另起一套。与 PC 右键 `handleContextAction` 解耦——PC 用 `contextMenu` 状态，移动端用注入键触发。
  */
+/**
+ * 删除撤销提示（D5 / 规格 §4.11.10）
+ *
+ * ⭐ iOS HIG：*"Undo beats 'Are you sure?' for reversible actions"* ——
+ *   节点删除**可撤销**（`useCanvasUndoStack` 明确处理 delete→undo 的 url/status
+ *   恢复）⇒ 首选「删除 + 撤销提示」，**不用**二次确认弹层（那是"用模态换安全感"）。
+ *   仅**不可撤销**的删除（级联删上游 / 跨项目）才走确认弹层。
+ *
+ * ⭐ 形态对齐：iOS Toast/HUD ↔ Android Snackbar（MD3 `R5.16`：可撤销操作给
+ *   **一个** action，时长足够）。**不走 `MobileSheet`** —— toast 是短暂反馈，
+ *   Sheet 是模态浮层，语义不同（§4.11.9 对等表）。
+ * ⛔ 只用 `--lnk-*` 令牌（G-15）：结构照既有 `.ref-pick-toast`，但**不复用它的
+ *   `--neo-*` 写法**（AGENTS.md 明令禁用旧令牌）。
+ */
+const UNDO_TOAST_DURATION_MS = 5000
+
+const undoToast = ref<{ message: string; onAction: () => void } | null>(null)
+let undoToastTimer: ReturnType<typeof setTimeout> | null = null
+
+function dismissUndoToast() {
+  if (undoToastTimer) {
+    clearTimeout(undoToastTimer)
+    undoToastTimer = null
+  }
+  undoToast.value = null
+}
+
+/** 展示可撤销提示（单一 action，时长 ≥5s 留出误删恢复窗口） */
+function showUndoToast(message: string, onAction: () => void, durationMs = UNDO_TOAST_DURATION_MS) {
+  if (undoToastTimer) clearTimeout(undoToastTimer)
+  undoToast.value = { message, onAction }
+  undoToastTimer = setTimeout(() => {
+    undoToast.value = null
+    undoToastTimer = null
+  }, durationMs)
+}
+
+/** 点「撤销」⇒ 回退一次并落库（与既有键盘 undo 同一路径） */
+function undoLastDelete() {
+  dismissUndoToast()
+  if (canvasUndo.undo()) void saveCanvas()
+}
+
 function handleMobileNodeAction(action: string, nodeId: string) {
   switch (action) {
     case 'rename':
@@ -4826,9 +4869,16 @@ function handleMobileNodeAction(action: string, nodeId: string) {
     case 'duplicate':
       handleDuplicateSelection(nodeId, 'none')
       break
-    case 'delete':
+    case 'delete': {
+      // D5 / §4.11.10：撤销优先（不是二次确认）—— 分组节点走解组、不真删 ⇒ 不给撤销提示
+      const target = nodes.value.find((n) => n.id === nodeId) as unknown as FlowNode | undefined
+      const isUngroup = target ? isGroupNode(target) : false
       removeSingleNode(nodeId)
+      if (!isUngroup) {
+        showUndoToast('节点已删除', undoLastDelete)
+      }
       break
+    }
     case 'edit':
       // 打开复用 DockStudioRouter 的编辑 sheet（删 Dock 后编辑不丢链）
       openMobileNodeEditor(nodeId)
@@ -5741,6 +5791,24 @@ onUnmounted(() => {
             aria-live="polite"
           >已引用 {{ refPickToast.count }} 个节点，可在对话中发送</div>
         </Teleport>
+        <!-- 删除撤销提示（D5 / §4.11.10）：底部浮层 + 单一「撤销」action（MD3 R5.16） -->
+        <Teleport to="body">
+          <div
+            v-if="undoToast"
+            class="mobile-undo-toast"
+            role="status"
+            aria-live="polite"
+            data-testid="mobile-undo-toast"
+          >
+            <span class="mobile-undo-toast-text">{{ undoToast.message }}</span>
+            <button
+              type="button"
+              class="mobile-undo-toast-action"
+              data-testid="mobile-undo-toast-action"
+              @click="undoLastDelete"
+            >撤销</button>
+          </div>
+        </Teleport>
         <CanvasFloatingChrome
           v-if="!canvasChromeHidden && !isMobileLayout"
           :title="sessionTitle"
@@ -6274,6 +6342,59 @@ onUnmounted(() => {
 }
 
 @keyframes ref-pick-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* 删除撤销提示（D5 / §4.11.10）：底部浮层 + 单一「撤销」action
+   —— 结构参照 .ref-pick-toast，但**只用 --lnk-* 令牌**（禁 --neo-*，G-15） */
+.mobile-undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  gap: var(--lnk-space-3);
+  transform: translateX(-50%);
+  max-width: min(420px, calc(100% - 24px));
+  padding: var(--lnk-space-2) var(--lnk-space-2) var(--lnk-space-2) var(--lnk-space-4);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  box-shadow: var(--lnk-shadow-lg);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-medium);
+  color: var(--lnk-text-primary);
+  white-space: nowrap;
+  animation: mobile-undo-toast-in 160ms ease-out;
+}
+
+.mobile-undo-toast-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 单一 action（MD3 R5.16：限一个 action） */
+.mobile-undo-toast-action {
+  flex: none;
+  min-height: 32px;
+  padding: 0 var(--lnk-space-3);
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: transparent;
+  color: var(--lnk-accent);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-semibold);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-undo-toast-action:active {
+  background: var(--lnk-pressed-overlay);
+}
+
+@keyframes mobile-undo-toast-in {
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
