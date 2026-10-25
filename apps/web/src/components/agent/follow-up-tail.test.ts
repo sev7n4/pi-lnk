@@ -567,4 +567,56 @@ describe('follow-up-tail：abort 立刻掐断（无幽灵订阅）', () => {
     await flush()
     expect(active, 'abort 后不得残留任何订阅（切会话/关页后旧订阅还挂着）').toBe(0)
   })
+
+  // ── 2026-10-26 生产事故：同一 thread 被同时开了 6 条 SSE ────────────────────
+  // 事故：画布页把同源 HTTP/1.1 的 6 个连接槽位占满 ⇒ 画布数据请求排队不 settle
+  //      ⇒ 「画布是空的」；且后续自动保存会把这份空画布整份 PUT 回服务端。
+  // 修复：不变量从「调用点自觉」改成**模块内部的结构性保证**——
+  //      ① abort() 一次掐掉**全部**在途轮次（旧实现只掐 current）；
+  //      ② 最新轮次胜出：旧轮在循环顶部自杀。
+  // ⇒ 判据落在**可观测出口**（同时在飞的 fetch 峰值 / 在途轮次数）。
+
+  it('⭐ 2026-10-26：任何时刻最多一条连接在飞（并发 start/resume 也不许并发出两条）', async () => {
+    let active = 0
+    let peak = 0
+    const deps = makeDeps({
+      fetchImpl: (_url, init) => {
+        active += 1
+        peak = Math.max(peak, active)
+        // attempt 被 abort ⇔ 这一程订阅真正结束（唯一出口）。
+        init.signal.addEventListener('abort', () => { active -= 1 }, { once: true })
+        return Promise.resolve({ status: 200, ok: true, body: streamOf([], init.signal) } as TailResponseLike)
+      },
+    })
+    const listener = createFollowUpTailListener(deps)
+
+    // 敌意序列：并发 start × 3 → 并发 resume × 2 → 长时间运行
+    await Promise.all([listener.start(), listener.start(), listener.start()])
+    await flush()
+    await Promise.all([listener.resume(), listener.resume()])
+    await flush()
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(peak, '任何时刻都不得有两条订阅并存（6 条 ⇒ 吃满浏览器连接槽位）').toBe(1)
+    expect(listener.getLiveCount(), '在途轮次必须 ≤1（>1 ⇒ 有旧轮没被掐干净）').toBeLessThanOrEqual(1)
+
+    listener.abort()
+    await flush()
+    expect(active, 'abort 后不得残留任何订阅').toBe(0)
+    expect(listener.getLiveCount(), 'abort 后在途轮次必须归零').toBe(0)
+  })
+
+  it('⭐ 2026-10-26：abort 必须掐掉**全部**在途轮次（旧实现只掐 current ⇒ 旧轮变僵尸）', async () => {
+    const deps = makeDeps({
+      fetchImpl: (_url, init) =>
+        Promise.resolve({ status: 200, ok: true, body: streamOf([], init.signal) } as TailResponseLike),
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    await flush()
+    expect(listener.getLiveCount(), '正常运行时在途轮次应为 1').toBe(1)
+    listener.abort()
+    await flush()
+    expect(listener.getLiveCount(), 'abort 后在途轮次必须归零（不能只掐 current 一个）').toBe(0)
+  })
 })

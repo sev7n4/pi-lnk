@@ -2902,6 +2902,16 @@ function ensureSharedSubscription(): SharedSubscription | null {
   if (sharedSubscription && sharedChannelName === name) return sharedSubscription
   // 会话/线程变了 ⇒ 换频道（不同 threadId 是不同的事实源）
   sharedSubscription?.stop()
+  // ⭐⭐ 2026-10-26 生产取证修复：**换频道时必须掐掉旧连接**。
+  //
+  // 事故形态：同一画布页因 threadId 抖动（bootstrap 解析线程）先后开出 6 条
+  //   `/api/agent/runs/events`，全部被服务端挂住（6 = Chrome 同源连接上限）
+  //   ⇒ 画布数据请求 `GET /api/sessions/<id>` 排不上 ⇒ **画布显示为空**；
+  //     首页 `canvas/list` 15s 超时 ⇒「项目加载失败 · 重试」。
+  //
+  // 旧代码只 `stop()` 了共享频道，**没掐订阅连接** ⇒ 旧 thread 的 SSE 一直挂着。
+  // ⇒ 这里显式 abort：换事实源 ⇒ 旧事实源的连接必须立刻归零。
+  followUpTail.abort()
   sharedChannelName = name
   sharedSubscription = createSharedSubscription({
     channelName: name,
