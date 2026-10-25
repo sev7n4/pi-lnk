@@ -144,7 +144,7 @@ const props = defineProps<{
   /** R4-T2：移动端编辑 sheet 里删除引用芯片 */
   onNodeEditorRemoveRef: (ref: NodeRef) => void
   /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
-  viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
+  viewerNode: { id?: string; type: 'image' | 'video' | 'text'; data?: any } | null
   onViewerClose: () => void
   /** ── R3-T4 壳层聚合状态栏（D-C 状态机的壳层聚合）── */
   /** 正在生成的节点数（0 = 无） */

@@ -3,6 +3,7 @@ import { computed, inject, useAttrs } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import {
   MOBILE_NODE_OPEN_VIEWER_KEY,
+  isViewableNodeType,
   MOBILE_NODE_OPEN_EDITOR_KEY,
   CANVAS_NODE_RETRY_KEY,
   type MobileNodeOpenViewerFn,
@@ -56,7 +57,10 @@ function onTileOpen() {
   const node = { id: props.id, type: props.type, data: props.data }
   const intent = resolveMobileNodeTapIntent(node)
   if (intent === 'viewer') {
-    openViewer(node)
+    // D2：类型已收窄为不含 audio ⇒ 运行时再守一道（audio 永不进查看器）
+    if (isViewableNodeType(node.type)) {
+      openViewer({ id: node.id, type: node.type, data: node.data })
+    }
     return
   }
   if (intent === 'editor') {
