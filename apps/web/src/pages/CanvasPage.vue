@@ -28,6 +28,7 @@ import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
+import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canvasLoadGuard'
 import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
 import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
@@ -306,6 +307,20 @@ const agentReadOnly = computed(
   () => !!auth.user?.id && !!sessionOwnerId.value && auth.user.id !== sessionOwnerId.value,
 )
 const saving = ref(false)
+/**
+ * ⭐⭐ 2026-10-26：画布数据加载状态（整份覆盖保存的准入依据）。
+ *
+ * 见 `canvasLoadGuard.ts` 的事故链：加载失败/未完成时本地画布不完整，
+ * 任何整份 PUT 都会**用残缺覆盖服务端真画布** ⇒ 不可逆的数据丢失。
+ */
+const canvasLoadState = ref<CanvasLoadState>('idle')
+/**
+ * 被守卫拦下的保存 ⇒ 加载成功后**补做**（否则用户刚画的东西会丢）。
+ * 只记一次布尔：多次触发合并成一次补做。
+ */
+let deferredCanvasSave = false
+/** 提示只报一次，避免自动保存反复触发时刷屏。 */
+let deferredSaveWarned = false
 /** 2026-10-21 用户裁决：保存状态行改「静默成功，只报异常」——成功态零渲染，
  *  仅失败点亮红胶囊（点按重试）。自动保存成功不再打时间戳（无消费方）。 */
 const saveFailed = ref(false)
@@ -4860,6 +4875,27 @@ async function hydrateCompositionRunGroupFromSession() {
 async function saveCanvas() {
   saving.value = true
   try {
+    // ⛔⛔ 2026-10-26 生产取证修复：**画布未成功加载 ⇒ 禁止整份覆盖保存**。
+    //
+    // 事故链（每段都有生产证据）：
+    //   ① 连接被同一 thread 的 6 条并发 SSE 占满（= Chrome 同源连接上限）
+    //      ⇒ `GET /sessions/<id>` 排队不 settle ⇒ 节点数组停在初始空态
+    //      ⇒ 用户看到「画布是空的」，而且**连报错都没有**；
+    //   ② `saveCanvas()` 是**整份覆盖 PUT**，且**原本没有这道守卫**
+    //      ⇒ 视口 tracker（`viewportChange` 防抖后）/ 生成记录回填 / 回合轮询
+    //        任一触发自动保存，就把这份「空画布」PUT 回服务端
+    //      ⇒ **服务端真画布被抹掉** ⇒ 下次进来就是真的空了。
+    //
+    // ⇒ 这里拦住并**延后**：加载成功后补做一次（否则用户在等待期间画的内容会丢）。
+    if (shouldBlockCanvasOverwrite(canvasLoadState.value)) {
+      deferredCanvasSave = true
+      saveFailed.value = true
+      if (!deferredSaveWarned) {
+        deferredSaveWarned = true
+        ElMessage.warning('画布尚未加载完成，已暂停自动保存')
+      }
+      return
+    }
     let serverGroup: CompositionRunGroup | undefined
     if (!compositionRunGroup.value && !lastKnownCompositionRunGroup.value) {
       try {
@@ -5036,6 +5072,8 @@ function hydrateCanvasEdges(
 }
 
 async function loadSession() {
+  // ⭐ 2026-10-26：进入加载态 ⇒ 此刻起「整份覆盖保存」被守卫拦住（见 canvasLoadGuard.ts）。
+  canvasLoadState.value = 'loading'
   try {
     const { data } = await api.get<{
       data: {
@@ -5097,7 +5135,18 @@ async function loadSession() {
       compositionRunGroup.value = null
       lastKnownCompositionRunGroup.value = null
     }
+    // ⭐ 2026-10-26：加载成功 ⇒ 解除「整份覆盖保存」守卫，并把此前被拦下的保存**补做**。
+    //   （不补做 ⇒ 用户在等待期间画的内容会丢；补做 ⇒ 空画布不会覆盖真画布。）
+    canvasLoadState.value = 'loaded'
+    deferredSaveWarned = false
+    if (deferredCanvasSave) {
+      deferredCanvasSave = false
+      void saveCanvas()
+    }
   } catch {
+    // ⭐ 2026-10-26：加载失败 ⇒ 本地画布不可信 ⇒ **保持禁止整份覆盖**，
+    //   直到下一次加载成功（否则失败态的一次自动保存就会抹掉服务端真画布）。
+    canvasLoadState.value = 'failed'
     // 同样不再伪造 prompt-1 占位节点：那是本地假数据，用户一旦拖动就会触发
     // saveCanvas() 把假节点 PUT 覆盖掉服务端真画布（静默数据丢失）。
     // 改为空画布 + 明确报错，让「加载失败」这件事对用户可见。
