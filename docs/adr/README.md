@@ -25,6 +25,10 @@
 | [0009-vendor-capability-first.md](./0009-vendor-capability-first.md) | Accepted | pi-runtime 开发必须先查 vendor 能力面，禁止自研等价物 |
 | [0010-agent-turn-undo-runtime-tool.md](./0010-agent-turn-undo-runtime-tool.md) | 待立项评审 | 回合级撤销需 runtime 批量移除工具，只评估不拍板 |
 | [0011-propose-confirm-single-surface.md](./0011-propose-confirm-single-surface.md) | Accepted | 提议确认收敛为单一锚定表面（节点即确认面），对齐上游 host-owns-UI，dock 按状态门控 |
+| [0013-mobile-node-interaction-mode-and-carriers.md](./0013-mobile-node-interaction-mode-and-carriers.md) | **Proposed**（待复核） | 移动端节点交互分模式①agent 驱动（主战场）/ ②用户主动 FAB+（次要）；模式① 三载体=类型原生查看器 + 轻量「提示词+意见」编辑器（参数只读）+ 生成权归 agent；标注=手指自由圈选出一张带标记的整图；锚=双向连接器与统一载荷信封，标注经「⚓ 带回对话」回传 |
+
+> ⚠️ **编号说明**：本 ADR 编为 `0013`（承接 `0012-enter-creation-anchor-ritual`，该 ADR 已在另一分支待合入）。
+> 若 `0012` 在本 ADR 合入前尚未进 master，合并时需按实际顺序重编号或一并补入索引。
 
 ## 模板
 
