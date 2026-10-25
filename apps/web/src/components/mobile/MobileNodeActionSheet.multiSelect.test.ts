@@ -16,7 +16,8 @@ describe('MobileNodeActionSheet 多选文案三态（随走查①迁移）', () 
     multiSelectActive?: boolean
     multiSelectSelected?: boolean
   }) {
-    const w = mount(MobileNodeActionSheet, { props: { node } })
+    // ⚠️ 2026-10-25（§4.11 Menu 化）：走 `MobileSheet` 基座 ⇒ 必须 stub teleport
+    const w = mount(MobileNodeActionSheet, { props: { node }, global: { stubs: { teleport: true } } })
     const btn = w.find('[data-action="multi-select"]')
     const text = btn.text()
     w.unmount()
@@ -43,6 +44,7 @@ describe('MobileNodeActionSheet 多选文案三态（随走查①迁移）', () 
   it('文案是计算属性（态变化时按钮文案随之变，不是挂载时定死）', async () => {
     const w = mount(MobileNodeActionSheet, {
       props: { node: { id: 'n1', type: 'image', multiSelectActive: false } },
+      global: { stubs: { teleport: true } },
     })
     expect(w.find('[data-action="multi-select"]').text()).toBe('多选')
     await w.setProps({ node: { id: 'n1', type: 'image', multiSelectActive: true, multiSelectSelected: true } })

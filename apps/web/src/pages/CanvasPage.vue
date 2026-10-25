@@ -4869,6 +4869,18 @@ function handleMobileNodeAction(action: string, nodeId: string) {
     case 'duplicate':
       handleDuplicateSelection(nodeId, 'none')
       break
+    case 'duplicate-upstream':
+      // D6：副本（含上游）—— 复用 PC 既有能力（CanvasContextMenu 的 'duplicate-upstream' 同一条）
+      handleDuplicateSelection(nodeId, 'upstream')
+      break
+    case 'save-asset':
+      // D6：存入资产库 —— 复用 PC 既有能力（CanvasContextMenu 的 'save-asset' 同一条）
+      saveNodeAsset(nodeId)
+      break
+    case 'save-local':
+      // D6：保存到本地 —— 复用 PC 既有能力（CanvasContextMenu 的 'download-image' 同一条）
+      downloadNodeImage(nodeId)
+      break
     case 'delete': {
       // D5 / §4.11.10：撤销优先（不是二次确认）—— 分组节点走解组、不真删 ⇒ 不给撤销提示
       const target = nodes.value.find((n) => n.id === nodeId) as unknown as FlowNode | undefined
