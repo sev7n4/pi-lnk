@@ -5,6 +5,23 @@ export const BRAND_NAME = 'lnk π超创平台'
  */
 export const BRAND_SHORT_NAME = 'lnk π'
 export const BRAND_LOGO_URL = '/brand/mascot-logo.png'
+/**
+ * 品牌**标志**位（导航头 / 法务页头 / favicon）用双色徽标（2026-10-26 用户裁定）。
+ *
+ * ⛔ 为什么不能直接改 `BRAND_LOGO_URL` 指向徽标：那一个常量同时供 5 个位
+ *    （导航头 BrandLogo / 隐私·协议页头 / favicon / slogan 下**吉祥物** / AI 助手头像）。
+ *    用户 2026-10-26 裁定①「slogan 下的品牌形象吉祥物**不做替换**」⇒ 吉祥物继续走
+ *    `BRAND_LOGO_URL`，标志位另立这两个常量，二者互不牵连。
+ *
+ * ⛔ 为什么必须是**两版**：徽标是「盘 + 锚」的双色资产，盘色不随主题变。
+ *    黑盘落在深色导航头上会整枚沉进背景、只剩白锚（读不出徽标）；
+ *    白盘落在浅色法务页上同理。⇒ 按主题反相取用：
+ *      · 浅色主题（浅底）→ 黑盘白锚（anchor-badge.png）
+ *      · 深色主题（深底）→ 白盘黑锚（anchor-badge-invert.png，严格 RGB 反相）
+ *    取用逻辑收在 `useBrandMark()`，三个消费位共用，防各自写歪。
+ */
+export const BRAND_MARK_ON_LIGHT_URL = '/brand/anchor-badge.png'
+export const BRAND_MARK_ON_DARK_URL = '/brand/anchor-badge-invert.png'
 export const LEGAL_ENTITY = '墨鱼π科技技术有限公司'
 export const SUPPORT_EMAIL = 'sev7nseason@outlook.com'
 export const ICP_TEXT = 'ICP备案号申请中'

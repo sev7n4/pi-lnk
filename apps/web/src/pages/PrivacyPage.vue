@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import {
-  BRAND_LOGO_URL,
   BRAND_NAME,
   ICP_TEXT,
   LEGAL_ENTITY,
   PRIVACY_TITLE,
   SUPPORT_EMAIL,
 } from '@/constants/brand'
+import { useBrandMark } from '@/composables/useBrandMark'
+
+// 2026-10-26 用户裁定：页头品牌标志位改用双色徽标（按主题反相，见 useBrandMark）。
+const { brandMarkUrl } = useBrandMark()
 </script>
 
 <template>
   <div class="legal-page mx-auto max-w-3xl px-6 pb-16 pt-10">
     <RouterLink to="/" class="legal-page__brand inline-flex items-center gap-2 text-fg transition hover:text-fg">
-      <img :src="BRAND_LOGO_URL" :alt="BRAND_NAME" class="h-8 w-8 object-contain">
+      <img :src="brandMarkUrl" :alt="BRAND_NAME" class="h-8 w-8 object-contain">
       <span class="font-display text-base font-semibold">{{ BRAND_NAME }}</span>
     </RouterLink>
 

@@ -243,7 +243,7 @@ const { bindings: longPressBindings } = useLongPress(() => {
         @click="onAddToAgent"
         @mousedown.stop
       >
-        <CanvasRefTargetIcon :size="13" />
+        <CanvasRefTargetIcon :size="20" />
       </button>
     </div>
 

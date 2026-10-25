@@ -303,8 +303,11 @@ function onAnchorClick() {
   --lnk-drop-fall: 72px;
   --lnk-drop-start: 22px;
   --lnk-anchor-size: 132px;
-  --lnk-anchor-glyph-w: 54px;
-  --lnk-anchor-glyph-h: 62px;
+  /* glyph box：锚源图已裁掉透明留白 ⇒ box 即锚的可见范围。
+     60×98 在 132 盘里让锚高占 ~58%（旧 54×62 因留白只占 ~25%，看着像小点缀）。
+     实测基准：裁图前锚高仅 41px/165px 盘 = 25%，裁图 + 放大后达 ~58%。 */
+  --lnk-anchor-glyph-w: 60px;
+  --lnk-anchor-glyph-h: 98px;
   --lnk-mascot-size: 32px;
 }
 
@@ -316,8 +319,9 @@ function onAnchorClick() {
     /* 墨滴起点：悬在落域顶的墨鱼（40px）下方，墨从它身上离开的那条线 */
     --lnk-drop-start: 32px;
     --lnk-anchor-size: 168px;
-    --lnk-anchor-glyph-w: 70px;
-    --lnk-anchor-glyph-h: 80px;
+    /* 76×124 在 168 盘里让锚高占 ~58%（旧 70×80 因源图留白只占 ~25%） */
+    --lnk-anchor-glyph-w: 76px;
+    --lnk-anchor-glyph-h: 124px;
     --lnk-mascot-size: 40px;
   }
 }

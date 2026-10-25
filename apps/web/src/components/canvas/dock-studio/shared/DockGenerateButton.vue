@@ -71,11 +71,12 @@ const emit = defineEmits<{
     box-shadow 0.15s ease;
 }
 
-/* 生成锚 glyph（源 94×106）：currentColor 上色 + mask 成形 */
+/* 生成锚 glyph（源 94×106）：currentColor 上色 + mask 成形。
+   20×22：28/32/36 按钮里占 ~62%，纯线条锚需要足够 box 才不显单薄（旧 15×17 偏小）。 */
 .dock-generate-btn__glyph {
   display: block;
-  width: 15px;
-  height: 17px;
+  width: 20px;
+  height: 22px;
   background: currentColor;
   -webkit-mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
   mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
