@@ -20,6 +20,10 @@ import { describe, expect, it } from 'vitest'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SFC_PATH = join(HERE, 'AgentSideRail.vue')
+// 2026-10-25 Task 7：项目抽屉已抽成 ProjectPanel.vue（断高中立）。
+// .session-drawer-layer 遮罩规则随之移到 ProjectPanel.vue 的 scoped 样式，故该断言改读它。
+const PANEL_PATH = join(HERE, '..', 'project', 'ProjectPanel.vue')
+const panelSfc = readFileSync(PANEL_PATH, 'utf8')
 
 /** 提取 `selector { ... }` 规则块（本组件遮罩规则无嵌套，首个 `}` 即块尾） */
 function extractRuleBlock(sfc: string, selector: string): string {
@@ -44,8 +48,8 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
     expect(block).not.toMatch(/inset:\s*0/)
   })
 
-  it('session-drawer-layer 遮罩同样让开页签区（兜底 56px 加固）', () => {
-    const block = extractRuleBlock(sfc, '.session-drawer-layer')
+  it('session-drawer-layer 遮罩同样让开页签区（兜底 56px 加固；已随 ProjectPanel 抽出）', () => {
+    const block = extractRuleBlock(panelSfc, '.session-drawer-layer')
     expect(block).toContain('position: fixed')
     expect(block).toContain('bottom: var(--lnk-tabbar-h, 56px)')
     expect(block).not.toMatch(/inset:\s*0/)
