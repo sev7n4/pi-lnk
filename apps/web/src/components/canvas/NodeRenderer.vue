@@ -3,6 +3,8 @@ import { computed, inject, useAttrs } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import {
   MOBILE_NODE_OPEN_VIEWER_KEY,
+  MOBILE_NODE_TOGGLE_SELECT_KEY,
+  type MobileNodeToggleSelectFn,
   isViewableNodeType,
   MOBILE_NODE_OPEN_EDITOR_KEY,
   CANVAS_NODE_RETRY_KEY,
@@ -81,6 +83,15 @@ function onTileRetry() {
   if (!retryNode) return
   void retryNode(props.id)
 }
+
+/**
+ * D4 / H1（§4.9 选择模式）：磁贴在选择模式下轻点 = 切换选中（不开查看器）。
+ * ⭐ 走注入键由 CanvasPage 承接（与 tap / retry 同款分层，⛔ 不让磁贴直接依赖壳层）。
+ */
+const toggleSelectNode = inject<MobileNodeToggleSelectFn>(MOBILE_NODE_TOGGLE_SELECT_KEY, () => {})
+function onTileToggleSelect() {
+  toggleSelectNode(props.id)
+}
 </script>
 
 <template>
@@ -93,5 +104,6 @@ function onTileRetry() {
     @tap="onTileOpen"
     @open-reader="onTileOpen"
     @retry="onTileRetry"
+    @toggle-select="onTileToggleSelect"
   />
 </template>

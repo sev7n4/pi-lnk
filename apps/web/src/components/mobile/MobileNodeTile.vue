@@ -67,6 +67,11 @@ const emit = defineEmits<{
   (e: 'tap'): void
   (e: 'open-reader'): void
   (e: 'retry'): void
+  /**
+   * D4 / H1（§4.9 选择模式）：选择模式下轻点 = **切换选中**（对标 iOS 照片多选）
+   * —— 不开查看器、不弹 Menu。⛔ 只在选择模式下发；常态轻点仍走 `tap`。
+   */
+  (e: 'toggle-select'): void
 }>()
 const tts = useTextToSpeech()
 
@@ -240,6 +245,16 @@ const placeholderLabel = computed(() => (props.type === 'video' ? '视频' : '�
  */
 const multiSelectActive = inject(CANVAS_MULTI_SELECT_ACTIVE_KEY, ref(false))
 const isMultiSelected = computed(() => multiSelectActive.value && props.selected === true)
+/**
+ * D4 / H1：选择模式是否激活（**统一取布尔**）。
+ *
+ * ⭐ 为什么不用模板直接判 `multiSelectActive`：注入方可能是**真 ref**（生产：
+ *   CanvasPage `provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)`），
+ *   也可能是**普通对象 `{ value: boolean }`**（测试注入形态）⇒ 模板对真 ref 会解包、
+ *   对普通对象不解包 ⇒ 直接判会得到「对象恒 truthy」的错判。走 computed 后两种
+ *   形态都取 `.value` ⇒ 一致。
+ */
+const isSelectionMode = computed(() => multiSelectActive.value === true)
 
 const mobileActionRequest = inject<MobileNodeActionRequestFn>(MOBILE_NODE_ACTION_REQUEST_KEY, () => {})
 const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
@@ -249,6 +264,12 @@ const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
 
 const { bindings } = useLongPress(() => {
   const id = props.id
+  // D4 / H1（§4.9）：**选择模式内的长按 = 同义切换选中**，不再弹单节点 Menu
+  // （避免退回单节点管理语境，破坏 selection mode 的心智）。
+  if (isSelectionMode.value) {
+    emit('toggle-select')
+    return
+  }
   if (id && mobileActionRequest) {
     mobileActionRequest({ id, type: props.type, data: props.data })
   }
@@ -286,6 +307,17 @@ function toggleAudio() {
 }
 
 function onTileClick() {
+  /**
+   * ⭐ D4 / H1（§4.9 选择模式）：**选择模式下轻点 = 切换选中**，不打开查看器、
+   *   不弹 Menu（对标 iOS 照片多选：进入模式后纯靠轻点选节点）。
+   *   ⭐ 多选态信号用**已有的** `CANVAS_MULTI_SELECT_ACTIVE_KEY` 注入
+   *   （R4-T4 起用于多选徽标）⇒ 不新增第二个真源。
+   */
+  if (isSelectionMode.value) {
+    emit('toggle-select')
+    return
+  }
+
   /**
    * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：
    * tap 意图由纯函数 `resolveMobileNodeTapIntent` 单一判定（不各写一遍，审阅焦点 #2）。
@@ -490,6 +522,25 @@ function handleTextTap() {
       （R4-T1）：否则同一节点上会出现「角标：待确认 + chip：待确认」两处重复标识。
     -->
     <span v-if="badge && !showPropose" class="mobile-node-badge" :data-tone="badge.tone">{{ badge.label }}</span>
+
+    <!--
+      D4 / H1（§4.9 选择模式）：**全局圆圈指示器** —— 进入选择模式后画布上
+      **所有**节点右上角浮现圆形指示器（未选 = 空心圈 / 已选 = 实心 + 对勾），
+      这是模式的**唯一发现入口**（对标 iOS 照片多选）。
+      ⭐ 与上面的「多选勾选徽标」并存：徽标只在**已选**时出现（既有 R4-T4 行为），
+      指示器在**选择模式全程**出现（含未选节点）—— 两者形态不同、不冲突。
+    -->
+    <span
+      v-if="isSelectionMode"
+      class="mobile-node-select-indicator"
+      :class="{ 'is-selected': isMultiSelected }"
+      data-testid="mobile-node-select-indicator"
+      aria-hidden="true"
+    >
+      <svg v-if="isMultiSelected" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4">
+        <path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </span>
 
     <!-- R4-T4：多选勾选徽标（PC 的 `.neo-node-multi-badge` 选择器绑定 `.neo-node`，移动端命中不到） -->
     <span v-if="isMultiSelected" class="mobile-node-multi-badge" aria-hidden="true">
@@ -773,6 +824,30 @@ function handleTextTap() {
 .mobile-node-propose :deep(.node-pending-prompt-text) {
   -webkit-line-clamp: 3;
   line-clamp: 3;
+}
+
+/* D4 / H1：选择模式圆形指示器（未选 = 空心圈 / 已选 = 实心 + 对勾）
+   —— 视觉尺寸 20px（磁贴小），但它是**纯信号**不承载点击（点击走整块磁贴） */
+.mobile-node-select-indicator {
+  position: absolute;
+  top: var(--lnk-space-2);
+  right: var(--lnk-space-2);
+  z-index: 2;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-canvas);
+  border: 2px solid var(--lnk-text-primary);
+  color: var(--lnk-accent-on-signature);
+  pointer-events: none;
+}
+
+.mobile-node-select-indicator.is-selected {
+  background: var(--lnk-accent);
+  border-color: var(--lnk-accent);
 }
 
 /* R4-T4：多选勾选徽标（磁贴自有类名，不复用 PC 的 `.neo-node-multi-badge`——那个绑定 `.neo-node`） */

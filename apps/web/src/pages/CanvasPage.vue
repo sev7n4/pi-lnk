@@ -148,6 +148,7 @@ import { fileToPersistedPayload, persistMediaUrl } from '@/composables/useMediaU
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
   CANVAS_MULTI_SELECT_ACTIVE_KEY,
+  MOBILE_NODE_TOGGLE_SELECT_KEY,
   CANVAS_GROUP_RESIZE_KEY,
   CANVAS_NODE_ADD_AGENT_KEY,
   CANVAS_NODE_CANCEL_KEY,
@@ -2572,6 +2573,26 @@ provide(CANVAS_NODE_CLICK_GUARD_KEY, {
  */
 const mobileMultiSelectActive = ref(false)
 provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)
+
+/**
+ * D4 / H1（§4.9 选择模式）：**轻点即选** —— 选择模式下轻点任意节点 = 切换其选中态。
+ * ⭐ 复用既有 `toggleNodeInMultiSelect`（含 vue-flow selected 同步 + 选区回写），
+ *   不新造第二套选区语义；首次轻点 = 进入模式并选中该节点。
+ */
+provide(MOBILE_NODE_TOGGLE_SELECT_KEY, (nodeId: string) => {
+  if (!mobileMultiSelectActive.value) {
+    enterMultiSelectMode(nodeId)
+    return
+  }
+  toggleNodeInMultiSelect(nodeId)
+})
+
+/** D4 / H1：选择模式的「全选」= 选中当前画布全部节点 */
+function selectAllMobileNodes() {
+  if (!mobileMultiSelectActive.value) return
+  selectNodeIds(nodes.value.map((n) => n.id))
+}
+
 
 const renameRequestNodeId = ref<string | null>(null)
 provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
@@ -5476,6 +5497,8 @@ const agentRailActions: MobileShellAgentActions = {
 }
 const mobileBatchActions: MobileShellBatchActions = {
   done: exitMultiSelectMode,
+  // D4 / H1（§4.9 选择模式）：「全选」
+  selectAll: selectAllMobileNodes,
   generate: handleSelectionBatchGenerate,
   regenerate: handleSelectionBatchRegenerate,
   stop: handleSelectionBatchStop,

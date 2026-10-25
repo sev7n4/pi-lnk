@@ -62,6 +62,8 @@ export interface MobileShellAgentActions {
 
 export interface MobileShellBatchActions {
   done: () => void
+  /** D4 / H1（§4.9 选择模式）：全选当前画布所有节点 */
+  selectAll: () => void
   generate: () => void
   regenerate: () => void
   stop: () => void
@@ -377,6 +379,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :selection-batch="(selectionBatch as any)"
     :can-ungroup="multiSelectCanUngroup"
     :group-color-key="multiSelectGroupColorKey"
+    @select-all="batchActions.selectAll"
     @done="batchActions.done"
     @generate="batchActions.generate"
     @regenerate="batchActions.regenerate"

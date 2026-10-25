@@ -23,6 +23,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
   }
   const batchActions = {
     done: noop(),
+    // D4 / H1（§4.9 选择模式）：「全选」（接口新增 ⇒ mock 同步）
+    selectAll: noop(),
     generate: noop(),
     regenerate: noop(),
     stop: noop(),
@@ -112,7 +114,13 @@ beforeEach(() => {
 
 describe('MobileCanvasShell 长按动作集成', () => {
   it('mobileActionNode 设置 → 渲染动作 sheet', () => {
-    const w = mount(MobileCanvasShell, { props: baseProps({ mobileActionNode: actionNode }), attachTo: document.body })
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ mobileActionNode: actionNode }),
+      attachTo: document.body,
+      // ⚠️ 2026-10-25（§4.11 Menu 化）：动作 sheet 走 `MobileSheet` 基座（含 Teleport）
+      //    ⇒ Teleport 内容被移出 wrapper 子树 ⇒ `w.find` 找不到 ⇒ 必须 stub teleport
+      global: { stubs: { teleport: true } },
+    })
     expect(w.findComponent({ name: 'MobileNodeActionSheet' }).exists()).toBe(true)
     w.unmount()
   })
@@ -122,6 +130,7 @@ describe('MobileCanvasShell 长按动作集成', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({ mobileActionNode: actionNode, onNodeAction }),
       attachTo: document.body,
+      global: { stubs: { teleport: true } },
     })
     await w.find('[data-action="delete"]').trigger('click')
     expect(onNodeAction).toHaveBeenCalledWith('delete', 'n1')
@@ -133,6 +142,7 @@ describe('MobileCanvasShell 长按动作集成', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({ mobileActionNode: actionNode, onNodeActionClose }),
       attachTo: document.body,
+      global: { stubs: { teleport: true } },
     })
     await w.find('[data-action="cancel"]').trigger('click')
     expect(onNodeActionClose).toHaveBeenCalled()
@@ -177,7 +187,9 @@ describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
       }),
       attachTo: document.body,
     })
-    await w.find('.viewer-back').trigger('click')
+    // ⚠️ 2026-10-25（D2）：左上 `‹`（`.viewer-back`）已删 ⇒ 改为**右上角 X**
+    //    （`data-testid="mobile-viewer-close"`，内联 SVG，§4.11.5 禁文本字符当图标）
+    await w.find('[data-testid="mobile-viewer-close"]').trigger('click')
     expect(onViewerClose).toHaveBeenCalled()
     w.unmount()
   })

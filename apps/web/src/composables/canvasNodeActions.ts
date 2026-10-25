@@ -48,6 +48,18 @@ export const MOBILE_NODE_ACTION_REQUEST_KEY: InjectionKey<MobileNodeActionReques
 )
 
 /**
+ * D4 / H1（§4.9 选择模式）：移动端**选择模式下轻点节点** = 切换该节点的选中态
+ * （对标 iOS 照片多选：进入模式后纯靠轻点选节点，不再走「长按 → 弹菜单 → 点多选」）。
+ *
+ * ⭐ 语义：**切换**（已选 ⇒ 取消选中；未选 ⇒ 加入选中）—— 复用页面层既有的
+ *   `toggleNodeInMultiSelect`，不新造选区语义。
+ */
+export type MobileNodeToggleSelectFn = (nodeId: string) => void
+export const MOBILE_NODE_TOGGLE_SELECT_KEY: InjectionKey<MobileNodeToggleSelectFn> = Symbol(
+  'mobileNodeToggleSelect',
+)
+
+/**
  * 移动端 tap 节点 → 请求打开全屏查看器（图灯箱/视频播放/文本阅读器，R1-T4）：
  * 与长按动作 sheet 解耦。
  *
