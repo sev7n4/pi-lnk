@@ -1,5 +1,5 @@
 /**
- * A3 · 移动端回访作品带（MobileRecentWorksStrip）
+ * A3 · 移动端回访作品带（RecentProjectsStrip）
  *
  * 形态契约（《A3 回访作品带 · 封面与交互设计规范》v1 2026-10-22 / v2 2026-10-23 IA v4）：
  * - 落点：移动端【对话】页签滚动流顶部（不是空态下半屏 —— 实测移动端几乎不渲染空态）
@@ -22,7 +22,7 @@ import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import MobileRecentWorksStrip, { type RecentWorkItem } from './MobileRecentWorksStrip.vue'
+import RecentProjectsStrip, { type RecentWorkItem } from './RecentProjectsStrip.vue'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -33,13 +33,13 @@ const WORKS: RecentWorkItem[] = [
 ]
 
 function mountStrip(works: RecentWorkItem[], now?: number) {
-  return mount(MobileRecentWorksStrip, {
+  return mount(RecentProjectsStrip, {
     props: now === undefined ? { works } : { works, now },
     global: { stubs: { RouterLink: true } },
   })
 }
 
-describe('MobileRecentWorksStrip · A3 回访作品带（v1 契约保持）', () => {
+describe('RecentProjectsStrip · A3 回访作品带（v1 契约保持）', () => {
   beforeEach(() => {
     localStorage.clear()
   })
@@ -113,7 +113,7 @@ describe('MobileRecentWorksStrip · A3 回访作品带（v1 契约保持）', ()
   })
 })
 
-describe('MobileRecentWorksStrip v2 · IA v4（2026-10-23）', () => {
+describe('RecentProjectsStrip v2 · IA v4（2026-10-23）', () => {
   const NOW = Date.parse('2026-10-23T12:00:00.000Z')
 
   function makeWorks(n: number): RecentWorkItem[] {
@@ -188,7 +188,7 @@ describe('MobileRecentWorksStrip v2 · IA v4（2026-10-23）', () => {
   })
 
   it('契约：封面环双主题基线化 + 发丝线 + 遮罩不撞令牌棘轮', () => {
-    const sfc = readFileSync(join(here, 'MobileRecentWorksStrip.vue'), 'utf8')
+    const sfc = readFileSync(join(here, 'RecentProjectsStrip.vue'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/<!--[\s\S]*?-->/g, '')
       .replace(/\/\/[^\n]*/g, '')

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * A3 · 移动端回访作品带（2026-10-22 v1；2026-10-23 IA v4 v2）
+ * A3 · 回访作品带（断点中立，PC 与移动端共用；2026-10-22 v1；2026-10-23 IA v4 v2）
  *
  * 形态契约见《A3 回访作品带 · 封面与交互设计规范》：
- * - 落点：移动端【对话】页签滚动流顶部（**不是**空态下半屏 —— 实测移动端几乎
- *   不渲染空态：`/workflow` → `location.assign` 跳最近项目 → `loadHistory` ⇒
+ * - 落点：对话页签滚动流顶部（**不是**空态下半屏 —— 实测移动端几乎不渲染空态：
+ *   进入创作走 `router.replace`（10-24 起不再整页刷新）⇒ `loadHistory` 保留消息 ⇒
  *   `agent.messages.length > 0` ⇒ 空态判据不成立）
  * - ≤4 张横滑；88px 封面 + 单行标题 + 相对时间
  * - **不设「继续创作」按钮**：卡片本身即入口，多一个按钮 = 第二入口 = 注意力竞争
@@ -22,7 +22,8 @@
  * - 底部 1px 发丝线（--lnk-border-subtle）：与消息流的边界（深色下两边皆深、
  *   原来完全糊在一起）
  *
- * 移动端专用呈现 ⇒ 落 components/mobile/（AGENTS.md「移动端呈现」第 4 条）。
+ * 断点中立呈现 ⇒ 落 components/project/（PC 左栏与移动端对话框顶部共用同一组件，
+ * 形态分档由消费方决定；spec §6.3 允许只改展示数量与排布，不改 props/emits/数据流）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 

@@ -121,7 +121,8 @@ import {
   type UtterancePool,
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
-import MobileRecentWorksStrip, { type RecentWorkItem } from '@/components/mobile/MobileRecentWorksStrip.vue'
+import RecentProjectsStrip from '@/components/project/RecentProjectsStrip.vue'
+import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
 import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { barShape } from './composer/mobileBarLayout'
@@ -1661,9 +1662,9 @@ async function bootstrapThread() {
 
 onMounted(() => {
   void bootstrapThread()
-  // A3：回访作品带数据 —— 挂载即拉（不是等抽屉打开），因为带子在对话页签顶部。
-  // 只在移动端拉：PC 侧栏不渲染这条带子（AGENTS.md 移动端呈现第 1/2 条）。
-  if (isMobileLayout.value) void loadRecentWorks()
+  // A3：回访作品带数据 —— 挂载即拉（断点中立：PC 左栏与移动端对话框顶部都展示，
+  // 不再是移动端专属）。projects 来自 useProjectWorkspace 单一数据源，作品带与抽屉共用。
+  void loadProjects()
   // A1 二期：金句定时轮换（empty 相 7 条 > 4 位 ⇒ 长尾要能露出来）。
   utteranceRotationCtl.start()
   void loadProviderBootstrap().then(() => {
@@ -3726,43 +3727,21 @@ function closeThreadHistory() {
  * 2026-10-19 兜底：list 曾在 CVM 旧接口返回 2.4MB（165 项目×完整 canvasData），
  * 弱网/代理路径下 body 永不落地 ⇒ axios promise 不 settle ⇒ 「项目加载中」转不完。
  * 双保险：请求级 15s 超时 + 失败态重试按钮（后端 select 瘦身已随本分支修复）。 */
-const PROJECT_LIST_TIMEOUT_MS = 15_000
-interface ProjectCard {
-  id: string
-  title: string
-  updatedAt: string
-}
-const projects = ref<ProjectCard[]>([])
-const projectsLoading = ref(false)
-const projectsError = ref(false)
-
 /**
- * A3 · 回访作品带数据（移动端对话页签顶部）。
+ * A3 · 回访作品带 + PC 抽屉项目列表：**共用 `useProjectWorkspace` 单一数据源**
+ * （INV-10：收敛前 `loadProjects()` 与 `loadRecentWorks()` 各调一次 `canvasApi.list`，
+ * 同一接口请求两遍、存进两个 ref，纯浪费）。
  *
- * 与 `projects`（PC 抽屉项目列表）**刻意复用同一个接口** `canvasApi.list()`：
- * 后端 list 已增 `coverUrl` / `coverNodeId`（只返回封面 URL，不返回原始 canvasData），
- * 而作品带要的正是「最近生成的产物图 + 产物节点 id」。
- * 复用而非新开接口 ⇒ 少一次请求、少一套鉴权、少一份契约漂移面。
- *
- * 拉取时机：组件挂载时（不是抽屉打开时）—— 作品带在对话页签顶部，
- * 抽屉打开与否它都该在。失败时静默降级为「不显示」（一条带子不该把对话面板搞崩）。
+ * - `projects` / `projectsLoading` / `projectsError` 直接取自 workspace（抽屉用）。
+ * - 作品带 `:works="projects"` 同消费这一个 ref（断点中立，PC 左栏与移动端对话框顶部都展示）。
+ * - 作品带失败静默降级由 workspace 的 `error` 兜底（一条带子不该把对话面板搞崩，spec §3.6）。
  */
-const recentWorks = ref<RecentWorkItem[]>([])
-async function loadRecentWorks() {
-  try {
-    const res = await canvasApi.list({ timeout: PROJECT_LIST_TIMEOUT_MS })
-    const list = (res.data?.data ?? []) as Array<{
-      id: string
-      title: string
-      coverUrl: string | null
-      coverNodeId: string | null
-      updatedAt: string
-    }>
-    recentWorks.value = list
-  } catch {
-    recentWorks.value = []
-  }
-}
+const {
+  projects,
+  loading: projectsLoading,
+  error: projectsError,
+  list,
+} = useProjectWorkspace()
 
 /**
  * 点作品 = 打开该画布；带 focusNode 时**定位到那张产物图**
@@ -3793,19 +3772,14 @@ const visibleProjects = computed(() =>
 function toggleProjectsExpanded() {
   projectsExpanded.value = !projectsExpanded.value
 }
+/**
+ * 拉取项目列表（抽屉 + 作品带共用）。委托给 useProjectWorkspace 单一数据源
+ * （INV-10：本函数不再直接调 canvasApi.list），失败由 workspace 的 `error` 兜底。
+ * 防重入：已有请求在途时直接返回，避免抽屉打开与挂载两处并发重复拉取。
+ */
 async function loadProjects() {
   if (projectsLoading.value) return
-  projectsLoading.value = true
-  projectsError.value = false
-  try {
-    const res = await canvasApi.list({ timeout: PROJECT_LIST_TIMEOUT_MS })
-    projects.value = (res.data?.data ?? []) as ProjectCard[]
-  } catch {
-    /* 拉取失败显式暴露重试入口，绝不留无限 loading */
-    projectsError.value = true
-  } finally {
-    projectsLoading.value = false
-  }
+  await list()
 }
 function openProject(id: string) {
   closeSessionDrawer()
@@ -4187,16 +4161,17 @@ defineExpose({
               class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3"
               @scroll.passive="onChatScroll"
             >
-            <!-- A3 · 回访作品带（移动端）：「画布记得你的模样」= 最近作品条。
+            <!-- A3 · 回访作品带（断点中立：PC 左栏与移动端对话框顶部共用同一组件）：
+                 「画布记得你的模样」= 最近作品条。
                  ⚠️ 位置在**空态块之前**（不是塞进空态块里）：空态判据是
-                 `!agent.messages.length`，而移动端进项目即 loadHistory ⇒ 有历史时
+                 `!agent.messages.length`，而进项目即 loadHistory ⇒ 有历史时
                  空态不渲染 ⇒ 塞进去等于「上线后没人看得见」。
                  在滚动流内 ⇒ 随消息流上推，不常驻吸顶（设计规范 §3.2 简洁三原则）。
                  IA v4（2026-10-23）：首卡【新建项目】复用抽屉 newProject（同一行为），
-                 「全部 N 个 ›」开抽屉项目区（全量列表 + 重命名/删除，零新页面）。 -->
-            <MobileRecentWorksStrip
-              v-if="isMobileLayout"
-              :works="recentWorks"
+                 「全部 N 个 ›」开抽屉项目区（全量列表 + 重命名/删除，零新页面）。
+                 数据来自 useProjectWorkspace 单一数据源（`:works="projects"`），与抽屉共用。 -->
+            <RecentProjectsStrip
+              :works="projects"
               @open="handleRecentWorkOpen"
               @create="newProject"
               @open-all="openSessionDrawer"
