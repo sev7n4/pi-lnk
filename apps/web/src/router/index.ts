@@ -61,16 +61,6 @@ const router = createRouter({
       component: () => import('@/pages/StoriesPage.vue'),
     },
     {
-      path: '/text-studio',
-      name: 'text-studio',
-      component: () => import('@/pages/studios/TextStudioPage.vue'),
-    },
-    {
-      path: '/image-studio',
-      name: 'image-studio',
-      component: () => import('@/pages/studios/ImageStudioPage.vue'),
-    },
-    {
       path: '/profile',
       name: 'profile',
       component: () => import('@/pages/ProfilePage.vue'),
@@ -85,26 +75,6 @@ const router = createRouter({
       path: '/points',
       name: 'points',
       component: () => import('@/pages/PointsPage.vue'),
-    },
-    {
-      path: '/video-studio',
-      name: 'video-studio',
-      component: () => import('@/pages/studios/VideoStudioPage.vue'),
-    },
-    {
-      path: '/audio-studio',
-      name: 'audio-studio',
-      component: () => import('@/pages/studios/AudioStudioPage.vue'),
-    },
-    {
-      path: '/video-editor',
-      name: 'video-editor',
-      component: () => import('@/pages/studios/VideoEditorPage.vue'),
-    },
-    {
-      path: '/generation-records',
-      name: 'generation-records',
-      component: () => import('@/pages/studios/GenerationRecordsPage.vue'),
     },
     {
       // 开发预览（仅用于本地肉眼验证 Agent 回合时间线新旧对比，无后端依赖）
