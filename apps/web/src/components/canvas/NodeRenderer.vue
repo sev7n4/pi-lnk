@@ -44,17 +44,27 @@ const openEditor = inject<MobileNodeOpenEditorFn>(MOBILE_NODE_OPEN_EDITOR_KEY, (
 
 /**
  * tap 意图由纯函数单一判定（审阅焦点 #2：策略不在三处各写一遍）。
- * - viewer：有内容的图/视/文 → 全屏查看器
- * - editor：空节点（无 url / 无内容）→ 编辑 sheet（D-C 状态机 empty 行）
- * - inline：有音频的音频节点 → 磁贴内联播放（不进本函数）
+ * - viewer：有产物的图/视/文（pending / confirmed / 失败但有旧产物）→ 全屏查看器
+ * - editor：编辑 sheet（编辑器入口改走长按 Menu；单击不进编辑器）
+ * - inline：音频 → 磁贴内联播放（不进本函数）
+ * - none：空 / 生成中 / 失败且无旧产物 → 无 op（轻提示由磁贴给出，不开任何全屏层）
+ *
+ * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：'none' 必须
+ *   **既不开 viewer 也不开 editor**——否则空节点又回到 R2 的「空白全屏」症状。
  */
 function onTileOpen() {
   const node = { id: props.id, type: props.type, data: props.data }
-  if (resolveMobileNodeTapIntent(node) === 'editor') {
+  const intent = resolveMobileNodeTapIntent(node)
+  if (intent === 'viewer') {
+    openViewer(node)
+    return
+  }
+  if (intent === 'editor') {
     openEditor(node)
     return
   }
-  openViewer(node)
+  // 'inline'：磁贴自己内联处理（音频播放），不进本函数
+  // 'none'：无 op + 轻提示（提示由 MobileNodeTile 给出）——不开 viewer / editor
 }
 
 /**

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import { useLongPress } from '@/composables/useLongPress'
+import { resolveMobileNodeTapIntent } from '@/composables/mobileNodeOpenPolicy'
 import {
   MOBILE_NODE_ACTION_REQUEST_KEY,
   CANVAS_NODE_CLICK_GUARD_KEY,
@@ -187,12 +188,18 @@ const mediaInfoText = computed(() => {
 })
 
 /**
- * 空态主动作提示（走查③，2026-10-24）：新建节点不再自动弹编辑 sheet
- * （用户裁决：创建 ≠ 编辑，auto-open 是 R2 的权宜），空瓦片自身必须
- * 把「点按进入编辑」这个入口写出来——否则用户拿到一个不知能干嘛的空卡。
- * 文案与 D-C 状态机 empty 行的主动作一致（ tap ⇒ 编辑 sheet）。
+ * 空态主动作提示（走查③，2026-10-24；D1/D3 修订 2026-10-25）：
+ * 新建节点不再自动弹编辑 sheet（用户裁决：创建 ≠ 编辑，auto-open 是 R2 的权宜），
+ * 空瓦片自身必须把「长按编辑 / 长按撰写」这个入口写出来——否则用户拿到一个不知能干嘛的空卡。
+ *
+ * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：
+ * 单击不再进编辑器 ⇒ CTA 文案随之从「点按生成 / 点按撰写」改为「长按编辑 / 长按撰写」
+ * （文案与「轻提示」共用同一串，见 `longPressLabel`）。
  */
-const emptyCtaLabel = computed(() => (props.type === 'text' ? '点按撰写' : '点按生成'))
+const longPressLabel = computed(() => (props.type === 'text' ? '长按撰写' : '长按编辑'))
+
+/** 空瓦片 CTA 文案（= 长按引导文案，与 P1「单击 = 查看」一致）。 */
+const emptyCtaLabel = longPressLabel
 
 /**
  * 磁贴外框：与桌面包络同源（图 280 / 视频 320，见 mediaNodeDisplaySize）；
@@ -279,14 +286,30 @@ function toggleAudio() {
 }
 
 function onTileClick() {
+  /**
+   * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：
+   * tap 意图由纯函数 `resolveMobileNodeTapIntent` 单一判定（不各写一遍，审阅焦点 #2）。
+   * - 'none'（空 / 生成中 / 失败无旧产物）⇒ 无 op + 轻提示「长按编辑 / 长按撰写」，
+   *   **不开 viewer、不开 editor**（管理操作只走长按）；
+   * - 'viewer'（pending / confirmed / 失败但有旧产物）⇒ 交 NodeRenderer 开查看器；
+   * - 'inline'（音频）⇒ 磁贴内联播放（不进查看器 / 编辑器）。
+   */
+  const intent = resolveMobileNodeTapIntent({
+    type: props.type,
+    data: props.data as Record<string, unknown>,
+  })
+
   if (props.type === 'audio') {
-    // R2-T2：空音频（无 url）不播一个不存在的源，改为交策略（→ 编辑 sheet）。
-    // 有 url 时仍内联播放（不进 viewer/editor 路由）。
+    // R2-T2：空音频（无 url）不播一个不存在的源；P1 下也不再进编辑器 ⇒ 轻提示。
     if (!props.data?.url) {
-      emit('tap')
+      showHint()
       return
     }
     toggleAudio()
+    return
+  }
+  if (intent === 'none') {
+    showHint()
     return
   }
   if (props.type === 'text') {
@@ -296,6 +319,36 @@ function onTileClick() {
   if (clickGuard?.shouldSuppress?.()) return
   emit('tap')
 }
+
+/**
+ * 轻提示（P1「单击 = 查看」的落地）：无 op 时告诉用户「改走长按」，1.5s 自动消失。
+ *
+ * ⭐ 为什么在磁贴内而不是全局 toast：全局 toast 需 CanvasPage 承接（本任务不碰），
+ *   而磁贴本身就在用户手指底下 ⇒ 就地提示最短路径、不遮挡画布。
+ * ⛔ 不进任何全屏层（规格 §6.2：「无 op + 提示」= 轻 toast，不开查看器 / 编辑器）。
+ */
+const HINT_DURATION_MS = 1500
+const hint = ref('')
+let hintTimer: ReturnType<typeof setTimeout> | null = null
+
+function showHint() {
+  hint.value = longPressLabel.value
+  if (hintTimer) clearTimeout(hintTimer)
+  hintTimer = setTimeout(() => {
+    hint.value = ''
+    hintTimer = null
+  }, HINT_DURATION_MS)
+}
+
+function clearHint() {
+  if (hintTimer) {
+    clearTimeout(hintTimer)
+    hintTimer = null
+  }
+  hint.value = ''
+}
+
+onBeforeUnmount(clearHint)
 
 /** 文本范式反转（D-A）：长文朗读、短文开阅读器；主动作不再"打开节点详情" */
 function handleTextTap() {
@@ -423,6 +476,14 @@ function handleTextTap() {
       <!-- 走查③：空态主动作提示（tap 整卡 ⇒ 编辑 sheet，D-C empty 行） -->
       <span class="mobile-node-empty-cta">{{ emptyCtaLabel }}</span>
     </div>
+
+    <!--
+      轻提示（P1「单击 = 查看」）：空 / 生成中 / 失败无旧产物时 tap 的唯一反馈——
+      就地告诉用户「改走长按」，1.5s 自动消失（不进任何全屏层）。
+    -->
+    <span v-if="hint" class="mobile-node-hint" data-testid="mobile-node-hint" role="status">
+      {{ hint }}
+    </span>
 
     <!--
       状态角标（R3-T2）。⚠️ pending 态让位给提议卡自带的「待确认」chip
@@ -585,6 +646,26 @@ function handleTextTap() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 轻提示（P1「单击 = 查看」）：tap 无 op 时的就地引导（1.5s 自动消失）
+   —— 绝对定位浮在磁贴上方，不占布局、不遮挡长按。 */
+.mobile-node-hint {
+  position: absolute;
+  left: 50%;
+  bottom: var(--lnk-space-2);
+  transform: translateX(-50%);
+  max-width: calc(100% - var(--lnk-space-4));
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+  border-radius: var(--lnk-radius-sm);
+  background: var(--lnk-surface-overlay);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 /* 空态主动作提示（走查③）：小而清晰，accent 文本色读作「可点」 */
