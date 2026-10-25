@@ -170,21 +170,29 @@ describe('element-plus 按需引入：不做 manualChunks 合并（已实测否�
 
 describe('品牌页性能修复：移动端不整页刷新', () => {
   const workflowPage = stripComments(read('./WorkflowPage.vue'))
+  const enterCreationSrc = stripComments(read('../composables/useEnterCreation.ts'))
 
   it('移动端分发用 router.replace 而非 window.location.assign', () => {
-    // ⛔ location.assign = 整页刷新 ⇒ 丢弃当前 DOM，重下 index.html + 入口 JS + 入口 CSS，
-    //    再叠加画布页自己的分包 ⇒ 移动端首屏总传输 ≈ 2MB（桌面只付 798KB）。
-    expect(workflowPage, '移动端不应再用 location.assign').not.toContain('window.location.assign')
-    expect(workflowPage, '移动端分发必须走 router.replace').toContain('router.replace(`')
+    // ⚠️ 2026-10-25 PR-1 Task 4：跳转语句已从 WorkflowPage 移入 useEnterCreation
+    //    （入口分发改走 composable）。本断言随之转移，守的行为不变：
+    //    「不得整页刷新 + 自动分发必须 replace」。
+    expect(enterCreationSrc, '移动端不应再用 location.assign').not.toContain('window.location.assign')
+    expect(enterCreationSrc, '移动端分发必须走 router.replace').toContain('router.replace.bind(router)')
   })
 
   it('用 replace 而非 push（自动分发不该在历史里留返回记录）', () => {
-    // ⚠️ 2026-10-25 PR-0：入口分发的目标变量由 `list[0].id` 改名为 `target.id`
-    //    （落点择优：优先有产物的项目）。正则跟随重命名 —— 锁的是**行为**
-    //    「自动分发那一处必须是 replace」，不是变量名本身（名字会变，行为不会）。
-    const m = workflowPage.match(/router\.(replace|push)\(`\/workflow\/\$\{target\.id\}`\)/)
-    expect(m, '找不到移动端分发跳转').not.toBeNull()
-    expect(m![1], '移动端自动分发必须是 replace（push 会让返回键弹回品牌页）').toBe('replace')
+    // ⚠️ 2026-10-25 PR-1 Task 4：入口分发改走 `useEnterCreation()`，跳转语句从
+    //    WorkflowPage 移到了 composable 内。本断言**随之转移**，但守的行为不变：
+    //    「自动分发必须是 replace，不能是 push」。
+    //    - WorkflowPage 侧：确认自动分发确实委托给了 enterCreation 且传了 replace
+    //    - composable 侧：确认那里真的有 router.replace 分支
+    expect(workflowPage, '移动端自动分发必须委托给 enterCreation').toContain(
+      'enterCreation({ allowImplicitCreate: false, replace: true })',
+    )
+    const enterCreationSrc = stripComments(read('../composables/useEnterCreation.ts'))
+    expect(enterCreationSrc, '自动分发必须走 router.replace（push 会让返回键弹回品牌页）').toContain(
+      'router.replace.bind(router)',
+    )
   })
 
   it('⛔ 全仓不得再有 location.assign（对话页进画布同样受害）', () => {
@@ -201,26 +209,31 @@ describe('品牌页性能修复：移动端不整页刷新', () => {
 })
 
 describe('品牌页性能修复：加载态可见', () => {
+  // ⚠️ 2026-10-25 PR-1 Task 4：加载态的所有者从 WorkflowPage 的 `creating`
+  //    移到 `useEnterCreation()` 的 `entering`（INV-8 防连点与加载态是同一份状态，
+  //    页面层再自持一份必然漂移）。守卫随之转移，**守的行为不变**：
+  //    置位 / finally 复位 / 防重入 / 透传 hero 与滑条。
+  const enterCreationSrc = stripComments(read('../composables/useEnterCreation.ts'))
   const workflowPage = stripComments(read('./WorkflowPage.vue'))
   const hero = stripComments(read('../components/workflow/SignatureHero.vue'))
   const slide = stripComments(read('../components/workflow/SlideToCreate.vue'))
 
-  it('createCanvas 期间置 loading 态，并在 finally 复位', () => {
-    expect(workflowPage, '必须有 creating 状态').toContain('const creating = ref(false)')
+  it('进入期间置 loading 态，并在 finally 复位', () => {
+    expect(enterCreationSrc, '必须有 entering 状态').toContain('const entering = ref(false)')
     // ⛔ 复位必须在 finally：异常路径（建会话失败）不复位 ⇒ 页面永久卡在加载态。
-    expect(workflowPage, 'creating 必须在 finally 里复位').toMatch(
-      /finally\s*\{[\s\S]{0,200}?creating\.value = false/,
+    expect(enterCreationSrc, 'entering 必须在 finally 里复位').toMatch(
+      /finally\s*\{[\s\S]{0,200}?entering\.value = false/,
     )
   })
 
   it('防重入：加载中不再重复触发（否则并发建多个会话）', () => {
-    expect(workflowPage, 'createCanvas 必须防重入').toMatch(
-      /if\s*\(creating\.value\)\s*return/,
+    expect(enterCreationSrc, 'enterCreation 必须防重入').toMatch(
+      /if\s*\(entering\.value\)\s*return/,
     )
   })
 
   it('加载态透传到 hero 与滑条（两个创作入口都要反馈）', () => {
-    expect(workflowPage, 'creating 必须传给 SignatureHero').toContain(':creating="creating"')
+    expect(workflowPage, 'entering 必须传给 SignatureHero').toContain(':creating="entering"')
     expect(hero, 'hero 必须消费 creating prop').toContain('props.creating')
     expect(slide, '滑条必须支持 disabled（防二次触发）').toContain('disabled')
   })

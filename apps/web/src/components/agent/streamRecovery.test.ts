@@ -21,6 +21,20 @@ vi.mock('@/services/api-base', () => ({
   apiUrl: (path: string) => `http://localhost:5100${path.startsWith('/') ? path : `/${path}`}`,
 }))
 
+/**
+ * ⭐ 本 describe 的三个用例就是 **INV-3（进入既有项目后恢复既有 thread，不新建 thread）**
+ *    与 **INV-1（list 非空时进入创作产生 0 个新 Session 行）** 的守卫。
+ *
+ * 2026-10-25 PR-1 Task 5 说明：原计划要求在此补一条「已有带消息的 thread 优先复用」
+ * 用例 —— 经核对它与下面第 1、2 条**语义重复**（都会立即通过，证明不了任何东西），
+ * 按 TDD 纪律不加。改为把这三个用例与不变量的对应关系写明，让"锁定"的目的
+ * （后人知道改这里会破坏什么）达成，而不是制造一个永远绿的假测试。
+ *
+ * 对应关系：
+ *   · prefers cached thread when it has messages        ⇒ INV-3 主路径（有缓存且缓存有消息）
+ *   · falls back to first non-empty thread when cached…  ⇒ INV-3 兜底（缓存空了就找有消息的）
+ *   · creates new thread when nothing has messages       ⇒ 唯一允许新建 thread 的场景（真空项目）
+ */
 describe('resolveBootstrapThreadId', () => {
   it('prefers cached thread when it has messages', async () => {
     const id = await resolveBootstrapThreadId('sess1', {

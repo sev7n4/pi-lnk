@@ -8,7 +8,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useMySessions } from '@/composables/useMySessions'
-import { canvasApi } from '@/services/canvas-api'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
+import { useEnterCreation } from '@/composables/useEnterCreation'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
 /**
@@ -77,69 +78,23 @@ function markMobileEntryDispatched(): void {
 }
 
 const { isMobileLayout } = useAgentMobileLayout()
-/**
- * 最近项目 id（移动端点锚用）：入口分发时顺手记下最近的那一个。
- *
- * ⚠️ 2026-10-25 PR-0：仍然保留（**不是**漏删）—— 它还被 `createCanvas()` 的点锚分支
- * 消费，那个函数属于 PR-1 Task 4 的改动面。PR-0 只改"这个 id 怎么选"（择优），
- * 不改"点锚时怎么用它"。Task 4 删 `createCanvas` 时才连同本变量一起删。
- */
-const recentProjectId = ref<string | null>(null)
-/**
- * 入口分发失败的内联反馈（2026-10-25 PR-0，INV-6）。
- *
- * ⛔ 旧实现 catch 里只有一句空注释「留在主站 hero」⇒ 用户看到的是一个毫无变化的
- *    品牌页，分不清是失败了还是在加载（与 2026-10-19「项目加载中」事故同源）。
- *    新语义：仍**不创建、不跳转**（失败不能被当成零项目），但要让用户看见并能重试。
- *    由父组件持有、传给 SignatureHero 的 `error` prop 渲染（重试即再点一次锚）。
- */
-const entryError = ref<string | null>(null)
 
-/** 入口分发列表项：只需要 id 与封面代理字段（择优用）。 */
-interface EntryProjectLite {
-  id: string
-  coverUrl: string | null
-}
-
-/**
- * 项目列表超时（毫秒）。
- *
- * ⚠️ 与 AgentSideRail 的 `PROJECT_LIST_TIMEOUT_MS` 同值同义，**不新造数字**：
- * 2026-10-19 事故的形态是「弱网/代理路径下 body 永不落地 ⇒ axios promise 不 settle
- * ⇒ 转圈转不完」，抽屉侧当时加了 15s 兜底，**入口侧漏修** —— 不传 timeout 会走
- * `api.ts` 的默认 120_000ms ⇒ 移动端用户最长等 2 分钟且毫无反馈。
- */
-const ENTRY_LIST_TIMEOUT_MS = 15_000
+// ⚠️ 必须声明在下面的 watch **之前**：watch 带 `immediate: true`，挂载即执行；
+//    若把解构放在 watch 之后会撞 TDZ（"Cannot access 'enterCreation' before initialization"）。
+const { enterCreation, entering, error } = useEnterCreation()
+const { create: createProject } = useProjectWorkspace()
 
 watch(
   isMobileLayout,
   (mobile) => {
     if (!mobile || mobileEntryDispatched()) return
     markMobileEntryDispatched()
-    void (async () => {
-      try {
-        const res = await canvasApi.list({ timeout: ENTRY_LIST_TIMEOUT_MS })
-        const list = (res.data?.data ?? []) as EntryProjectLite[]
-        if (list.length) {
-          // 落点择优（2026-10-25 PR-0）：优先「最近有产物」，其次 updatedAt desc。
-          // ⚠️ 这**有意改变**了旧行为（原为 list[0]）：最近更新的可能是个刚建的空项目，
-          //    穿透进去用户看不到任何产物。全部无产物时回落 list[0]，不把用户困住。
-          const target = list.find((p) => p.coverUrl) ?? list[0]!
-          // 点锚分支（createCanvas）复用同一个目标 ⇒ 两条移动端路径落点一致
-          recentProjectId.value = target.id
-          // ⚠️ 用 router.replace 而非 window.location.assign（2026-10-24 性能修复）：
-          // assign = 整页刷新 ⇒ 丢弃当前 DOM，重下 index.html + 入口 JS(455KB gzip)
-          // + 入口 CSS(94KB gzip)，再叠加画布页自己的 ~798KB ⇒ 移动端首屏总传输 ~2MB。
-          // replace 走 SPA 路由 ⇒ 入口资源复用缓存，只付画布页那一份。
-          // ⚠️ 必须 replace 不是 push：这是「自动分发」，不该在浏览器历史里留一条
-          // 返回即回品牌页的记录（push 会让用户按返回键又弹回品牌页）。
-          await router.replace(`/workflow/${target.id}`)
-        }
-        // 无项目 ⇒ 留 hero（IA v4：不再静默新建）
-      } catch {
-        entryError.value = '项目加载失败'
-      }
-    })()
+    if (!auth.isLoggedIn) return
+    // 一次性穿透（既有语义，本次不改）：已登录 ⇒ 直接进目标项目。
+    // ⚠️ `replace: true` —— 自动分发不该在浏览器历史里留「返回即回品牌页」的记录
+    //    （2026-10-24 性能修复的结论，push 会让用户按返回键又弹回品牌页）。
+    // ⚠️ `allowImplicitCreate: false` —— 无手势，零项目 ⇒ 留品牌页，不创建（IA v4）。
+    void enterCreation({ allowImplicitCreate: false, replace: true })
   },
   { immediate: true },
 )
@@ -162,8 +117,11 @@ const userSessions = ref<Session[]>([])
  *
  * 置 false 的时机：路由跳转已发起（画布页接管后续）即可——
  * 画布页有自己的挂载反馈，不该让品牌页的环一直悬着。
+ *
+ * ⚠️ 2026-10-25 PR-1 Task 4：`creating` 已**删除** —— 加载态改由
+ *    `useEnterCreation().entering` 提供（那是进入/创建流程的唯一真源，
+ *    防连点 INV-8 也在那里）。页面层不再自持一份，避免两份状态漂移。
  */
-const creating = ref(false)
 
 // 2026-10-21 P1：会话管理逻辑整体迁到 composables/useMySessions.ts，
 // 主页只消费 compact 视图（COMPACT_SESSIONS_COUNT 个 + 「查看全部」→ /canvases）。
@@ -228,51 +186,49 @@ function openCanvas(sessionId: string) {
   router.push(`/workflow/${sessionId}`)
 }
 
-async function createCanvas() {
+/**
+ * 点锚 / 滑动解锁 = **进入创作**（D-3：回到创作现场，不是新建）。
+ *
+ * ⭐ 两端同一条路径（INV-5）：PC 与移动端都走 `useEnterCreation().enterCreation()`。
+ *    收敛前 PC 走"UI 动作触发创建"（每次点锚 `sessionsApi.create` ⇒ 项目堆积的直接
+ *    成因）、移动端走"自动路由 + 点锚进最近"，两套实现各改各的。
+ *
+ * ⚠️ `allowImplicitCreate: true`：这是**用户手势**，零项目时建 1 个默认项目
+ *    是「把意图落地」；与之相对的移动端自动进入（无手势）传 false ⇒ 留品牌页。
+ */
+
+/**
+ * PC 品牌页【新建项目】卡（`data-testid="workflow-create-project"`）：**显式新建**。
+ *
+ * ⛔ 刻意不走 `enterCreation()` —— 它是"我要开一个新项目"的显式意图，
+ *    若改成进入最近项目，用户点「新建」却回到老项目，交互底线就破了（§3.4）。
+ * ⚠️ 该卡原来与锚共用 `createCanvas()`；锚语义改为"进入"后必须分离，
+ *    否则锚会被这个卡连坐成"新建"。
+ */
+async function onCreateProject() {
   if (!auth.isLoggedIn) {
     auth.openLogin()
     return
   }
-  // 加载态：置位后由 finally 复位（防重入 + 保证异常路径也复位）
-  if (creating.value) return
-  creating.value = true
   try {
-    // 移动端品牌页点「锚」= **开始创作**（2026-10-23 用户裁决）：
-    //  · 有项目 ⇒ 进最近项目的【对话】页（不新建）——延续「回访进最近项目」的效率语义，
-    //    也避免替用户凭空建一个空项目；
-    //  · 无项目 ⇒ 新建项目并直接进它的【对话】页——用户已明确表达创作意图，
-    //    此刻创建是「把意图落地」，不是入口副作用；
-    //  品牌页上除锚之外没有任何其他创建入口 ⇒【新建项目】由【对话】页承载。
-    // PC 端保持原语义（hero 锚 = 开一个新项目）。
-    if (isMobileLayout.value && recentProjectId.value) {
-      await router.push(`/workflow/${recentProjectId.value}`)
-      return
-    }
-    // 2026-10-24 修复（fix/createcanvas-guard）：创建失败不再静默兜底到不存在的
-    // demo 画布（违反 delivery-no-pseudoblock 纪律）——网络失败应让用户看到明确错误并重试，
-    // 而非掉进一个僵尸会话。客户端超时 20s（默认 120s）避免弱网/连接池卡死时上百秒零反馈。
-    const loading = ElMessage({ type: 'info', message: '正在创建画布…', duration: 0 })
-    try {
-      const { data } = await sessionsApi.create(
-        { title: '未命名画布' },
-        { timeout: 20_000 },
-      )
-      loading.close()
-      await router.push({
-        path: `/workflow/${data.data.id}`,
-        query: {
-          openAgent: '1',
-        },
-      })
-    } catch {
-      loading.close()
-      ElMessage.error('创建画布失败，请检查网络后重试')
-    }
-  } finally {
-    // 路由已切换 ⇒ 画布页接管，本页的加载态不再需要
-    creating.value = false
+    const p = await createProject()
+    await router.push({ path: `/workflow/${p.id}`, query: { openAgent: '1' } })
+  } catch {
+    // 创建失败不再静默兜底（10-24 fix/createcanvas-guard 的行为保留）：
+    // 由 useProjectWorkspace 抛出，这里以行内错误呈现，不跳 demo-
+    ElMessage.error('创建画布失败，请检查网络后重试')
   }
 }
+
+// 移动端：沿用既有一次性自动进入（sessionStorage['lnk.mobileEntry.dispatched']），
+// 只把「进最近项目」的实现换成 enterCreation()；零项目 ⇒ 留品牌页（allowImplicitCreate: false）。
+// ⚠️ PC 端**没有**对应的 watch —— D5=B 明确 PC 不穿透（品牌页常驻 + 滚动即项目网格）。
+// ⚠️ router.replace 必须保留：自动分发不该在浏览器历史里留「返回即回品牌页」的记录。
+watch(isMobileLayout, (mobile) => {
+  if (!mobile || mobileEntryDispatched()) return
+  markMobileEntryDispatched()
+  if (auth.isLoggedIn) void enterCreation({ allowImplicitCreate: false })
+}, { immediate: true })
 
 function viewWork(workId: string) {
   router.push(`/share/${workId}`)
@@ -303,7 +259,10 @@ async function openPublish() {
     const { data } = await sessionsApi.list()
     userSessions.value = data.data
     if (!userSessions.value.length) {
-      await createCanvas()
+      // 「发布作品」需要一个项目作为落点：零项目时先建一个（显式新建语义），
+      // 与旧行为一致（创建后进画布页）。⛔ 不走 enterCreation —— 那是"进入最近"，
+      // 会把用户带去老项目而不是为发布准备新落点。
+      await onCreateProject()
       return
     }
     showPublish.value = true
@@ -341,9 +300,9 @@ watch(
     <!-- 2026-10-22 用户裁定「霸屏铺满」：hero 是全宽首屏（不再龟缩在 max-w-7xl 卡片里），
          滚动后才是我的项目 / 社区精选——同一个页面，不是两个页面 -->
     <!-- 2026-10-25 PR-0：`error` 承载入口分发失败的内联反馈（INV-6）。
-         点那行「重试」会再发一次 create ⇒ 走 createCanvas ⇒ 未登录则弹登录，
+         点那行「重试」会再发一次 create ⇒ 走 enterCreation ⇒ 未登录则弹登录，
          已登录则重跑一次进入。重试与点锚同一意图，故共用 create 事件。 -->
-    <SignatureHero :creating="creating" :error="entryError ?? undefined" @create="createCanvas" />
+    <SignatureHero :creating="entering" :error="error ?? undefined" @create="() => enterCreation({ allowImplicitCreate: true })" />
 
     <!-- ⛔ 窄屏整块隐藏（2026-10-23 用户裁定）：移动端品牌页只有【品牌】内容，
          覆盖手机全屏 ⇒ 这里只装「我的项目 / 社区精选 / 发布弹窗」，窄屏一律不渲染
@@ -372,7 +331,7 @@ watch(
           data-testid="workflow-create-project"
           type="button"
           class="group flex aspect-[4/3] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-line-subtle transition hover:bg-hover"
-          @click="createCanvas"
+          @click="onCreateProject"
         >
           <span
             class="flex h-10 w-10 items-center justify-center rounded-full bg-accent-subtle text-fg-accent transition group-hover:scale-105"
