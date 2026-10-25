@@ -104,6 +104,15 @@ export type FollowUpTailState = 'idle' | 'connecting' | 'streaming' | 'backoff'
 interface RunToken {
   /** 显式终止（用户切走 / 组件卸载 / 换会话）。 */
   stopped: boolean
+  /**
+   * 轮次序号：**最新轮次胜出**。
+   *
+   * ⭐ 2026-10-26 生产取证：同一 (sessionId, threadId) 被**同时开了 6 条** SSE，
+   *   6 > Chrome 同源 6 连接上限 ⇒ 画布页自己的连接把普通请求全饿死
+   *   （`GET /api/sessions/<id>` 排队 ⇒ **画布显示为空**）。
+   *   ⇒ 结构性保证：**任何时刻只允许最新一轮继续发请求**，旧轮一律自杀。
+   */
+  seq: number
   /** 整轮的 signal：只被显式 abort 触发（idle 不碰它，idle 只掐当前这一程）。 */
   round: AbortController
   /** 当前这一程的 controller：显式 abort 与 idle 闸门都会掐它。 */
@@ -164,6 +173,13 @@ export interface FollowUpTailListener {
   resume: () => Promise<void>
   abort: () => void
   getState: () => FollowUpTailState
+  /**
+   * ⭐ 2026-10-26 可观测出口：**当前在途的轮次数量**。
+   *
+   * 正常值恒为 ≤1（最新轮次胜出）。>1 ⇒ 有旧轮没被掐干净 ⇒ 连接泄漏。
+   * 生产事故的判据就是它：同一 thread 出现 6 条并发 SSE。
+   */
+  getLiveCount: () => number
 }
 
 export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTailListener {
@@ -177,18 +193,30 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
   let rounds = 0
   let lastSeq: number | null = null
   let state: FollowUpTailState = 'idle'
-  /** 当前正在跑的那一轮（null = 没有）。`abort()` 通过它掐断所有在途资源。 */
+  /** 当前正在跑的那一轮（null = 没有）。 */
   let current: RunToken | null = null
+  /**
+   * ⭐ 2026-10-26：**所有**在途轮次。
+   *
+   * ⛔ 旧实现只有一个 `current` ⇒ 一旦有第二轮覆盖了 `current`，
+   *   更早的轮次就**再也掐不掉了**（它们各自还在重连 ⇒ 各自占着一条连接）。
+   *   生产实测同一 thread 出现 6 条并发 SSE ⇒ 6 个连接把浏览器槽位吃干。
+   *   ⇒ `abort()` 必须能一次掐掉**全部**在途轮次。
+   */
+  const live = new Set<RunToken>()
+  /** 轮次序号（自增）：**最新轮次胜出**，旧轮在循环顶部自杀。 */
+  let roundSeq = 0
 
   function abort(): void {
-    if (current) {
-      current.stopped = true
+    for (const token of [...live]) {
+      token.stopped = true
       // 掐整轮：退避 / 冷却等待立刻醒来（否则要等满时长 ⇒ 幽灵订阅）。
-      current.round.abort()
+      token.round.abort()
       // 掐当前这一程：在途 fetch 立即失败。
-      current.attempt?.abort()
-      current = null
+      token.attempt?.abort()
     }
+    live.clear()
+    current = null
     // 复位状态：否则「start() 掐旧流开新流」时 run() 的 idle 闸门会把新一轮挡住。
     state = 'idle'
   }
@@ -222,10 +250,12 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
     }
     const token: RunToken = {
       stopped: false,
+      seq: ++roundSeq,
       round: new AbortController(),
       attempt: null,
     }
     current = token
+    live.add(token)
     // 累计重连预算：**不因单次连接成功而重置**。若重置，「连上即断」的死循环
     // （每次 HTTP 200、立刻流断）会让预算永远耗不尽——实测 1.4s 内重连 8 次。
     // 轮内退避等级同样随累计次数指数增长（ cap 封顶），健康长流被 idle 闸门收尾。
@@ -238,6 +268,13 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
     let reconnects = 0
     try {
       while (!token.stopped) {
+        // ⭐ 2026-10-26：最新轮次胜出。若有更新的轮次已经开起来（并发 start/resume），
+        //   本轮立即自杀 ⇒ **任何时刻只可能有一条连接在飞**。
+        if (token.seq !== roundSeq) {
+          token.stopped = true
+          token.attempt?.abort()
+          break
+        }
         state = 'connecting'
         const url = buildObserverStreamUrl(deps.baseUrl(), lastSeq)
         const attempt = new AbortController()
@@ -354,6 +391,7 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
         }
       }
     } finally {
+      live.delete(token)
       // 只清理「自己还是当前轮」：被新一轮 abort 掉旧轮时，finally 慢一步
       // 会把新轮的引用清掉（visibility 重挂路径会触发这个竞态）。
       if (current === token) {
@@ -382,5 +420,6 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
     },
     abort,
     getState: () => state,
+    getLiveCount: () => live.size,
   }
 }
