@@ -149,13 +149,44 @@ describe('ProjectPanel：项目抽屉（断点中立组件）', () => {
     expect(w.emitted('close')).toHaveLength(1)
   })
 
-  it('加载中与空态各自有文案，且不显示「展开更多」', async () => {
-    const loading = await mountPanel({ loading: true, projects: makeProjects(30) })
+  it('加载态：**一条都没有**时才占位提示', async () => {
+    await mountPanel({ loading: true, projects: [] })
     expect(document.body.textContent).toContain('项目加载中…')
-    expect(document.body.querySelector('.session-drawer__expand')).toBeNull()
-    loading.unmount()
-    mounted.splice(0, 1)
+  })
 
+  it('加载态：**已有数据**时不占位（后台刷新不该把可用的清单顶掉）', async () => {
+    // ⛔ 2026-10-25 生产实证：旧实现是「loading ⇒ 显示『项目加载中…』」，
+    //    把上面 8 个能用的项目顶成一句提示 ⇒ 用户以为没加载出来。
+    await mountPanel({ loading: true, projects: makeProjects(30) })
+    expect(document.body.textContent).not.toContain('项目加载中…')
+    expect(document.body.querySelectorAll('.project-card').length).toBe(8)
+  })
+
+  it('后台刷新进行中：「展开更多」按钮**仍在**（旧实现被 !loading 卡掉 ⇒ 摸不到）', async () => {
+    await mountPanel({ loading: true, projects: makeProjects(30) })
+    const btn = document.body.querySelector('.session-drawer__expand')
+    expect(btn, '刷新期间也必须能展开到其余项目').not.toBeNull()
+    expect(btn?.textContent).toContain('展开更多（还有 22 个）')
+  })
+
+  it('失败态：**无数据**才整块报错并给重试', async () => {
+    await mountPanel({ error: true, projects: [] })
+    expect(document.body.textContent).toContain('项目加载失败')
+    expect(document.body.querySelector('.session-drawer__retry')).not.toBeNull()
+  })
+
+  it('失败态：**已有数据**时清单照常显示，只给不阻塞的提示（不再整块报错）', async () => {
+    // ⛔ 2026-10-25 生产实证：旧实现失败时 projects 被清空 + 整块报错 ⇒
+    //    用户正在看的项目「一起消失」，既没得看也没得选。
+    await mountPanel({ error: true, projects: makeProjects(30) })
+    expect(document.body.querySelectorAll('.project-card').length).toBe(8)
+    expect(document.body.textContent).not.toContain('项目加载失败')
+    expect(document.body.textContent).toContain('刷新失败')
+    // 重试入口仍在
+    expect(document.body.querySelector('.session-drawer__retry')).not.toBeNull()
+  })
+
+  it('空态文案', async () => {
     await mountPanel({ projects: [] })
     expect(document.body.textContent).toContain('暂无项目')
   })

@@ -175,3 +175,83 @@ describe('useProjectWorkspace', () => {
     expect(ws.projects.value.map((p) => p.id)).toEqual(['p2'])
   })
 })
+
+// ---------------------------------------------------------------------------
+// 2026-10-25 生产实证（用户报「点全部项目 → 抽屉只显示几个 → 过会变项目加载失败」）：
+//   ① 一次后台刷新失败**把已加载的清单清空** ⇒ 用户正在看的项目一起消失；
+//   ② 同一时刻重复拉列表 ⇒ 两个请求抢同一条被 SSE 占满的连接通道 ⇒ 后到的那个超时；
+//   ③ 抽屉打开时无条件重拉 ⇒ 必然发出一次注定排队的请求。
+// ---------------------------------------------------------------------------
+describe('useProjectWorkspace：失败不得毁掉已有数据 / 不重复打接口', () => {
+  beforeEach(() => {
+    listMock.mockReset()
+    createMock.mockReset()
+    updateMock.mockReset()
+    removeMock.mockReset()
+    seedUser('u1')
+  })
+
+  it('刷新失败**不清空**已有清单（error 仍是「这次没拿到」的信号）', async () => {
+    const ws = useProjectWorkspace()
+    listMock.mockResolvedValue({ data: { data: [proj('p1'), proj('p2')] } })
+    await ws.list()
+    expect(ws.projects.value.map((p) => p.id)).toEqual(['p1', 'p2'])
+
+    // 后台刷新失败
+    listMock.mockRejectedValue(new Error('timeout'))
+    const out = await ws.list()
+    expect(ws.error.value, 'error 必须置位：调用方靠它区分「失败」与「零项目」').toBe(true)
+    expect(
+      ws.projects.value.map((p) => p.id),
+      '失败不得清空已有清单（清空 = 用户正在看的项目一起消失）',
+    ).toEqual(['p1', 'p2'])
+    expect(out, '返回值仍要表达「这次没拿到」⇒ 空数组').toEqual([])
+  })
+
+  it('同一时刻的重复 list 只发一次请求（single-flight）', async () => {
+    const ws = useProjectWorkspace()
+    let resolveFn: (v: unknown) => void = () => {}
+    listMock.mockImplementation(
+      () => new Promise((res) => { resolveFn = res as (v: unknown) => void }),
+    )
+    const a = ws.list()
+    const b = ws.list()
+    expect(listMock, '并发调用必须共享同一个在途请求').toHaveBeenCalledTimes(1)
+    resolveFn({ data: { data: [proj('p1')] } })
+    await a
+    await b
+    expect(ws.projects.value.map((p) => p.id)).toEqual(['p1'])
+  })
+
+  it('loadIfStale：数据还新鲜时不重复请求；已失败（数据是旧的）时仍要重试得动', async () => {
+    const ws = useProjectWorkspace()
+    listMock.mockResolvedValue({ data: { data: [proj('p1')] } })
+    await ws.list()
+    listMock.mockClear()
+
+    // 新鲜期内 ⇒ 不发请求，直接用内存里的
+    await ws.loadIfStale()
+    expect(listMock, '新鲜期内不得重复打接口（会排队 → 15s 超时 → 假失败）').toHaveBeenCalledTimes(0)
+    expect(ws.projects.value.map((p) => p.id)).toEqual(['p1'])
+
+    // 失败后数据仍是旧的 ⇒ 刷新必须真的重试（否则用户点「重试」永远没反应）
+    listMock.mockRejectedValue(new Error('timeout'))
+    await ws.list()
+    expect(ws.error.value).toBe(true)
+    listMock.mockClear()
+    listMock.mockResolvedValue({ data: { data: [proj('p1'), proj('p9')] } })
+    await ws.list()
+    expect(listMock, '失败后的重试必须真的发请求').toHaveBeenCalledTimes(1)
+    expect(ws.error.value).toBe(false)
+    expect(ws.projects.value.map((p) => p.id)).toEqual(['p1', 'p9'])
+  })
+
+  it('新建的项目立刻进清单（新建完在抽屉里要能看见自己刚建的）', async () => {
+    const ws = useProjectWorkspace()
+    listMock.mockResolvedValue({ data: { data: [proj('p1')] } })
+    await ws.list()
+    createMock.mockResolvedValue({ data: { data: proj('p-new') } })
+    await ws.create()
+    expect(ws.projects.value.map((p) => p.id)).toEqual(['p-new', 'p1'])
+  })
+})

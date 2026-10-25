@@ -3744,6 +3744,7 @@ const {
   loading: projectsLoading,
   error: projectsError,
   list,
+  loadIfStale,
   // 2026-10-25 PR-2：创建通道收敛到 workspace（全仓唯一 create 通道）。
   create: createProject,
 } = useProjectWorkspace()
@@ -3768,9 +3769,24 @@ function handleRecentWorkOpen(payload: { id: string; focusNodeId: string | null 
  * （INV-10：本函数不再直接调 canvasApi.list），失败由 workspace 的 `error` 兜底。
  * 防重入：已有请求在途时直接返回，避免抽屉打开与挂载两处并发重复拉取。
  * ⚠️ 抽屉的「预览 8 条 + 展开更多」逻辑已随 ProjectPanel 抽出（断点中立，PC 同用）。
+ *
+ * ⭐ 2026-10-25：走 `loadIfStale`（**数据还新鲜就不发请求**）。
+ *    抽屉打开几乎总是紧跟在「进页面那一次拉取」之后 ⇒ 那份数据已经在了。
+ *    而**再发一次**的代价不是几十毫秒：画布页的 SSE/轮询已占满同域 HTTP/1.1 的
+ *    6 个连接（见 App.vue 注释：排队可达 55 秒）⇒ 多发一次就是排一次队 ⇒
+ *    15s 超时先到 ⇒ 「项目加载失败」。生产实证：抽屉里 8 个项目在报错时一起消失。
  */
 async function loadProjects() {
   if (projectsLoading.value) return
+  await loadIfStale()
+}
+
+/**
+ * 抽屉里的「重试」= **强制**重新拉一次。
+ * ⛔ 不能走 loadIfStale：失败态下数据可能是旧的（loadedAt 还在新鲜期内）⇒
+ *    走 loadIfStale 会「刚点重试就返回旧数据」⇒ 用户永远重试不出来。
+ */
+async function retryLoadProjects() {
   await list()
 }
 function openProject(id: string) {
@@ -3902,7 +3918,7 @@ defineExpose({
         @open="openProject"
         @rename="renameProject"
         @remove="deleteProject"
-        @retry="loadProjects"
+        @retry="retryLoadProjects"
       />
 
       <!-- 对话历史面板（IA v3.2）：移动端对话页右上角 🕘 唤起——当前项目下的对话切换。

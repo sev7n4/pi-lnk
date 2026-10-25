@@ -172,6 +172,12 @@ async function mountRail() {
   })
   await router.push('/')
   await router.isReady()
+  // ⛔ 2026-10-25：项目清单是**模块级单例**（多份实例 = 多份请求，见 useProjectWorkspace）
+  //    且带「新鲜期」⇒ 上一条用例拉到的清单还留在缓存里 ⇒ 挂载时抽屉**不会**重新拉
+  //    ⇒ 本用例会看到**上一条用例的 fixture 数量**（实测「期望 8 实得 3」）。
+  //    ⇒ 挂载前强制刷新一次，让每个用例都以当前 fixtures 为准。
+  const { useProjectWorkspace } = await import('@/composables/useProjectWorkspace')
+  await useProjectWorkspace().list()
   const w = mount(AgentSideRail, {
     global: { plugins: [router] },
     props: { sessionId: 's1' },

@@ -221,7 +221,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const canvasEditor = useCanvasEditorStore()
-const { registerLocateNodeHandler, closeInspector, openInspector } = useMediaInspector()
+const { registerLocateNodeHandler, locateNodeHandler, closeInspector, openInspector } = useMediaInspector()
 const sessionId = computed(() => route.params.sessionId as string)
 
 interface CanvasEdge {
@@ -5471,7 +5471,7 @@ const {
   projects: projectWsProjects,
   loading: projectWsLoading,
   error: projectWsError,
-  list: loadProjectList,
+  loadIfStale: loadProjectList,
   create: createProjectEntry,
   rename: renameProjectEntry,
   remove: removeProjectEntry,
@@ -5619,7 +5619,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  registerLocateNodeHandler(null)
+  // ⚠️ 2026-10-25：切项目现在会**重挂载** CanvasPage（App.vue 的 RouterView 加了 key）。
+  //    `locateNodeHandler` 是 useMediaInspector 的**模块级共享 ref** ⇒ 旧实例卸载时
+  //    无条件置 null 会把**新实例**刚注册的处理函数抹掉 ⇒ 切项目后「从生成记录定位节点」失效。
+  //    ⇒ 只在「当前注册的就是我这个」时才清。
+  if (locateNodeHandler.value === handleHistoryLocate) registerLocateNodeHandler(null)
   if (pickModeKeydownHandler) {
     window.removeEventListener('keydown', pickModeKeydownHandler)
   }

@@ -45,44 +45,104 @@ export interface ProjectCard {
  * ⚠️ 与 AgentSideRail 的 `PROJECT_LIST_TIMEOUT_MS` 同值同义，**不新造数字**：
  * 2026-10-19 事故的形态是「弱网/代理路径下 body 永不落地 ⇒ axios promise
  * 不 settle ⇒『项目加载中』转不完」。删这个兜底 = 事故回归。
+ *
+ * ⚠️ 但它**不能**被当成「服务端慢」的解释：2026-10-25 生产实测，最重的账号
+ *    （266 个项目）端点总耗时仅 **56ms**（容器内直测 DB+解析）。真正的失败形态是
+ *    **请求根本没发出去**——画布页的 SSE/轮询把同域 HTTP/1.1 的 6 个连接占满
+ *    （见 App.vue 注释：排队可达 55 秒），列表请求在浏览器队列里排着，
+ *    15s 超时先到 ⇒ 假阳性失败（nginx 日志里连这条请求都没有）。
  */
 export const PROJECT_LIST_TIMEOUT_MS = 15_000
+
+/**
+ * 列表「新鲜期」（毫秒）：这段时间内再要列表直接用内存里的，不发请求。
+ *
+ * ⭐ 为什么需要：打开项目抽屉若总是重新拉一次，就会在**连接已被 SSE 占满**的
+ * 画布页上排一次队（然后 15s 超时）。而抽屉要的数据**刚刚已经拿到过**。
+ */
+export const PROJECT_LIST_FRESH_MS = 30_000
 
 /** 最近项目记忆键：按 userId 分区 ⇒ 换号天然隔离，登出不主动清理。 */
 function storageKey(userId: string): string {
   return `lnkpi:lastProjectId:${userId}`
 }
 
-export function useProjectWorkspace() {
-  const projects = ref<ProjectCard[]>([])
-  const loading = ref(false)
-  const error = ref(false)
+// ⭐⭐ 模块级状态：项目列表是**全站唯一**的事实。
+//
+// 收敛前每个调用方各 `useProjectWorkspace()` 一次 ⇒ 各自一份 refs、各拉一次接口：
+// 画布页上同时存在 ① 侧栏作品带 ② 项目抽屉 ③ PC 项目面板 ④ 进入创作解析。
+// 而画布页的 SSE/轮询已把同域 6 个连接占满 ⇒ 这些**重复**的列表请求在浏览器
+// 队列里排队 ⇒ 15s 超时先到 ⇒ 「项目加载失败」（2026-10-25 生产实证）。
+// ⇒ 共享一份：一次请求，全站一份数据，抽屉开箱即用。
+const projects = ref<ProjectCard[]>([])
+const loading = ref(false)
+const error = ref(false)
+const lastProjectId = ref<string | null>(null)
+/** 最近一次**成功**取到列表的时间戳（0 = 从未成功过） */
+const loadedAt = ref(0)
+/** 在途请求（single-flight）：并发调用共享同一个 promise，不重复打接口 */
+let inflight: Promise<ProjectCard[]> | null = null
 
-  const lastProjectId = ref<string | null>(null)
-
-  /**
-   * 拉取项目列表。**这是全仓唯一的 `canvasApi.list` 调用点**（INV-10）——
-   * 收敛前 `loadProjects()` 与 `loadRecentWorks()` 各拉一遍同一个接口、
-   * 存进两个 ref，纯浪费（254 项目时尤其明显）。
-   */
-  async function list(opts?: { timeoutMs?: number }): Promise<ProjectCard[]> {
-    loading.value = true
-    error.value = false
-    try {
-      const res = await canvasApi.list({ timeout: opts?.timeoutMs ?? PROJECT_LIST_TIMEOUT_MS })
-      projects.value = (res.data?.data ?? []) as ProjectCard[]
-      return projects.value
-    } catch {
-      // INV-6：失败不创建、不跳转；是否重试交给调用方（抽屉显式报错，
-      // 作品带静默降级——两种容错策略见 spec §3.6）
-      error.value = true
-      projects.value = []
-      return []
-    } finally {
-      loading.value = false
-    }
+/**
+ * 拉取项目列表。**这是全仓唯一的 `canvasApi.list` 调用点**（INV-10）。
+ *
+ * @param opts.timeoutMs 客户端超时（默认 15s，见 PROJECT_LIST_TIMEOUT_MS 的警告）。
+ */
+export function list(opts?: { timeoutMs?: number }): Promise<ProjectCard[]> {
+  // single-flight：同一时刻只允许一个列表请求在途。
+  // 收敛前抽屉打开与挂载两处各发一次 ⇒ 两个请求抢同一条被 SSE 占满的连接通道
+  // ⇒ 先到的成功、后到的失败 ⇒ 失败方还会把已拿到的清单清空（见 catch 的注释）。
+  if (inflight) return inflight
+  loading.value = true
+  error.value = false
+  let p: Promise<ProjectCard[]>
+  try {
+    p = canvasApi
+      .list({ timeout: opts?.timeoutMs ?? PROJECT_LIST_TIMEOUT_MS })
+      .then((res) => {
+        projects.value = (res.data?.data ?? []) as ProjectCard[]
+        loadedAt.value = Date.now()
+        return projects.value
+      })
+      .catch(() => {
+        // ⛔ 失败**不再清空**已有清单。
+        //    一次后台刷新失败不该把用户正在看的项目抹掉（2026-10-25 生产实证：
+        //    抽屉里 8 个项目在「项目加载失败」出现时一起消失 ⇒ 用户既没得看也没得选）。
+        //    ⚠️ `error=true` 仍是「这次没拿到」的信号：调用方**必须先判 error 再判空**
+        //    （useEnterCreation 靠这个避免把「加载失败」误判成「零项目」⇒ 触发创建）。
+        error.value = true
+        return [] as ProjectCard[]
+      })
+      .finally(() => {
+        loading.value = false
+        inflight = null
+      })
+  } catch {
+    // 同步抛错（极罕见）：按失败处理，不让调用方拿到未处理的异常
+    error.value = true
+    loading.value = false
+    return Promise.resolve([] as ProjectCard[])
   }
+  inflight = p
+  return p
+}
 
+/**
+ * 取列表，但**只在数据不新鲜时才真的发请求**（抽屉打开走这条）。
+ * 目的：不要在「连接已被占满」的画布页上重复排队一次注定超时的请求。
+ */
+export function loadIfStale(opts?: { timeoutMs?: number }): Promise<ProjectCard[]> {
+  if (
+    projects.value.length > 0 &&
+    loadedAt.value > 0 &&
+    Date.now() - loadedAt.value < PROJECT_LIST_FRESH_MS
+  ) {
+    return Promise.resolve(projects.value)
+  }
+  return list(opts)
+}
+
+export function useProjectWorkspace() {
   /**
    * 新建项目（**唯一 create 通道**）。
    *
@@ -104,6 +164,10 @@ export function useProjectWorkspace() {
     const created = res.data?.data as ProjectCard | undefined
     if (!created?.id) throw new Error('create project failed: no id in response')
     rememberProject(created.id)
+    // 新建的项目立刻进清单（否则用户新建完在抽屉里看不到自己刚建的项目）
+    if (!projects.value.some((p) => p.id === created.id)) {
+      projects.value = [created, ...projects.value]
+    }
     return created
   }
 
@@ -164,7 +228,9 @@ export function useProjectWorkspace() {
     loading,
     error,
     lastProjectId,
+    loadedAt,
     list,
+    loadIfStale,
     create,
     rename,
     remove,
@@ -180,4 +246,5 @@ export type ProjectWorkspaceRefs = {
   loading: Ref<boolean>
   error: Ref<boolean>
   lastProjectId: Ref<string | null>
+  loadedAt: Ref<number>
 }
