@@ -179,7 +179,10 @@ describe('品牌页性能修复：移动端不整页刷新', () => {
   })
 
   it('用 replace 而非 push（自动分发不该在历史里留返回记录）', () => {
-    const m = workflowPage.match(/router\.(replace|push)\(`\/workflow\/\$\{list\[0\]\.id\}`\)/)
+    // ⚠️ 2026-10-25 PR-0：入口分发的目标变量由 `list[0].id` 改名为 `target.id`
+    //    （落点择优：优先有产物的项目）。正则跟随重命名 —— 锁的是**行为**
+    //    「自动分发那一处必须是 replace」，不是变量名本身（名字会变，行为不会）。
+    const m = workflowPage.match(/router\.(replace|push)\(`\/workflow\/\$\{target\.id\}`\)/)
     expect(m, '找不到移动端分发跳转').not.toBeNull()
     expect(m![1], '移动端自动分发必须是 replace（push 会让返回键弹回品牌页）').toBe('replace')
   })
