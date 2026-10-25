@@ -36,8 +36,17 @@ export function useEnterCreation() {
    *     创建就是「入口副作用」⇒ 留品牌页，不创建（IA v4，10-23 撤销了静默新建）。
    *   ⚠️ 这个参数是 spec §3.2「隐式创建只发生在手势之后」的唯一实现载体，
    *     删了它就会退回 IA v3.1 的静默新建。
+   * @param opts.replace 用 `router.replace` 而非 `router.push`。
+   *   - `true`：**自动分发**专用 —— 这是系统替用户做的跳转，不该在浏览器历史里
+   *     留一条「返回即回品牌页」的记录（2026-10-24 性能修复的结论；
+   *     `push` 会让用户按返回键又弹回品牌页）。
+   *   - `false`（默认）：**用户手势**（点锚 / 点新建卡）—— 用户主动发起，
+   *     理应能返回。
    */
-  async function enterCreation(opts?: { allowImplicitCreate?: boolean }): Promise<void> {
+  async function enterCreation(opts?: {
+    allowImplicitCreate?: boolean
+    replace?: boolean
+  }): Promise<void> {
     // INV-8 必须放最前：list 超时 15s，没有这个标志连点会并发 router.push
     if (entering.value) return
     if (!auth.isLoggedIn) {
@@ -45,6 +54,7 @@ export function useEnterCreation() {
       auth.openLogin()
       return
     }
+    const navigate = opts?.replace ? router.replace.bind(router) : router.push.bind(router)
     entering.value = true
     error.value = null
     try {
@@ -59,7 +69,7 @@ export function useEnterCreation() {
         if (opts?.allowImplicitCreate === false) return // 穿透路径 ⇒ 留品牌页
         try {
           const created = await ws.create()
-          await router.push({ path: `/workflow/${created.id}`, query: { openAgent: '1' } })
+          await navigate({ path: `/workflow/${created.id}`, query: { openAgent: '1' } })
         } catch {
           // 不跳转、不进 demo-（spec §3.6）：失败要让用户看见并能重试
           error.value = '创建画布失败，请检查网络后重试'
@@ -71,7 +81,7 @@ export function useEnterCreation() {
       // ⚠️ openAgent=1 两条路径都带（INV-9）：其真实作用是
       //    `agentRailRef.openPanel()`（PC 左栏 agent 面板）。不带 ⇒ 老项目不进
       //    对话态，D-3「默认切到对话页」在 PC 上假绿。
-      await router.push({ path: `/workflow/${target.id}`, query: { openAgent: '1' } })
+      await navigate({ path: `/workflow/${target.id}`, query: { openAgent: '1' } })
     } finally {
       entering.value = false
     }

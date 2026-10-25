@@ -182,49 +182,94 @@ describe('WorkflowPage 主页收拢（P1）', () => {
   })
 })
 
-describe('createCanvas 创建守卫与失败处理（fix/createcanvas-guard）', () => {
+/**
+ * 2026-10-25 PR-1 Task 4：`createCanvas()` 已删除，锚/滑动改走 `enterCreation()`。
+ *
+ * ⛔ 本 describe **不是删掉了事** —— 它保护的行为仍然在，只是入口换了：
+ *    - 「创建成功带 openAgent」 ⇒ 由 useEnterCreation 承担（见其单测）
+ *    - 「失败不兜底 demo」   ⇒ 由 useEnterCreation 的 error 分支承担
+ *    - 「并发点击只创建一次」⇒ 由 `entering` 防连点承担（INV-8）
+ * 页面层现在只断言**接线正确**（谁调谁、不调谁），具体语义在 composable 单测里。
+ */
+describe('锚入口接线（Task 4：createCanvas → enterCreation）', () => {
+  const pageSrc = readFileSync(resolve(__dirname, 'WorkflowPage.vue'), 'utf8')
+
   beforeEach(() => {
+    sessionStorage.clear()
+    mobileFlag.isMobile = false
+    canvasList.mockReset()
+    canvasCreate.mockReset()
     sessionsCreate.mockReset()
+    routerMocks.push.mockReset()
+    routerMocks.replace.mockReset()
   })
 
-  it('创建成功：携带 openAgent 跳转到画布页', async () => {
-    sessionsCreate.mockResolvedValueOnce({ data: { data: { id: 's_ok' } } })
+  it('锚/滑动入口不再直接调用 create，改走 enterCreation（静态辅助）', () => {
+    expect(pageSrc).not.toMatch(/sessionsApi\.create\(/)
+    expect(pageSrc).not.toMatch(/canvasApi\.create\(/)
+    expect(pageSrc).toContain('enterCreation')
+  })
+
+  it('创建失败不再跳 demo- 兜底（fix/createcanvas-guard 的行为仍在）', () => {
+    expect(pageSrc).not.toContain('demo-${Date.now()}')
+  })
+
+  it('PC 端不做穿透：没有「非移动端条件下自动 enterCreation」的 watch（D5=B / INV-7b）', () => {
+    // ⛔ 致命回归守卫：穿透 watch 会让 PC 用户一进 /workflow 就被弹走，
+    //    品牌页与其下方的项目网格永远看不见。
+    expect(pageSrc).not.toMatch(/watch\(\s*showBrandHero/)
+  })
+
+  it('PC 品牌页新建卡绑定的是显式新建，不是 enterCreation（B-2 #2）', () => {
+    // 那张卡 `@click="createCanvas"` 已随 createCanvas 消失；若改绑 enterCreation
+    // 就错了 —— 它是显式新建，改了就成了"进最近项目"。
+    expect(pageSrc).not.toMatch(/workflow-create-project[\s\S]{0,400}@click="enterCreation/)
+  })
+
+  it('recentProjectId 已随 createCanvas 一并删除（B-2 #3，不留死代码）', () => {
+    expect(pageSrc).not.toContain('recentProjectId')
+  })
+
+  it('点锚（已登录、有项目）：不新建，进目标项目并带 openAgent', async () => {
+    mobileFlag.isMobile = false // PC：不穿透，点锚才进
+    canvasList.mockResolvedValue({
+      data: { data: [{ id: 'proj-1', coverUrl: 'https://cdn/x.png' }] },
+    })
     const wrapper = await mountWorkflow({ loggedIn: true })
     await wrapper.find('.signature-hero-stub').trigger('click')
     await flushPromises()
-    expect(routerMocks.push).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/workflow/s_ok' }),
-    )
-    expect(elMessage.error).not.toHaveBeenCalled()
+    expect(sessionsCreate, '点锚不得再走 sessionsApi.create').not.toHaveBeenCalled()
+    expect(canvasCreate, '有项目时点锚不得新建').not.toHaveBeenCalled()
+    expect(routerMocks.push).toHaveBeenCalledWith({
+      path: '/workflow/proj-1',
+      query: { openAgent: '1' },
+    })
   })
 
-  it('创建失败：不兜底到 demo 假画布，而是报错提示', async () => {
-    sessionsCreate.mockRejectedValueOnce(new Error('network'))
-    const wrapper = await mountWorkflow({ loggedIn: true })
+  it('点锚（未登录）：弹登录，不创建、不跳转（D-1）', async () => {
+    // ⚠️ 必须 mount 之后再取 auth store：`mountWorkflow()` 内部会
+    //    `setActivePinia(createPinia())` 换掉 store 实例，mount 前 spy 的
+    //    是**旧实例** ⇒ spy 永远等不到调用（假红）。
+    const wrapper = await mountWorkflow()
+    const openLogin = vi.spyOn(useAuthStore(), 'openLogin')
     await wrapper.find('.signature-hero-stub').trigger('click')
     await flushPromises()
-    expect(routerMocks.push).not.toHaveBeenCalledWith(
-      expect.stringContaining('demo-'),
-    )
-    expect(elMessage.error).toHaveBeenCalled()
+    expect(openLogin).toHaveBeenCalled()
+    expect(sessionsCreate).not.toHaveBeenCalled()
+    expect(routerMocks.push).not.toHaveBeenCalled()
   })
 
-  it('并发点击只创建一次（重入守卫 + loading 反馈）', async () => {
-    let resolve!: (v: unknown) => void
-    sessionsCreate.mockImplementationOnce(
-      () => new Promise((r) => { resolve = r }),
-    )
+  it('点【新建项目】卡（PC 品牌页）：走显式新建，带 openAgent', async () => {
+    canvasCreate.mockResolvedValue({ data: { data: { id: 'p-new' } } })
     const wrapper = await mountWorkflow({ loggedIn: true })
-    const btn = wrapper.find('.signature-hero-stub')
-    const p1 = btn.trigger('click')
-    const p2 = btn.trigger('click') // 第二次并发点击
-    expect(sessionsCreate).toHaveBeenCalledTimes(1)
-    resolve({ data: { data: { id: 's_guard' } } })
-    await Promise.all([p1, p2])
+    await wrapper.find('[data-testid="workflow-create-project"]').trigger('click')
     await flushPromises()
-    expect(routerMocks.push).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/workflow/s_guard' }),
-    )
+    expect(canvasCreate).toHaveBeenCalledTimes(1)
+    expect(canvasCreate, '不传 title：由后端默认值决定（IA v4）').toHaveBeenCalledWith()
+    expect(routerMocks.push).toHaveBeenCalledWith({
+      path: '/workflow/p-new',
+      query: { openAgent: '1' },
+    })
   })
 })
 
@@ -269,7 +314,11 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
       },
     })
     await mountWorkflow({ loggedIn: true })
-    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-has-art')
+    // ⚠️ 2026-10-25 Task 4：导航改由 useEnterCreation 发出，统一带 openAgent=1（INV-9）
+    expect(routerMocks.replace).toHaveBeenCalledWith({
+      path: '/workflow/proj-has-art',
+      query: { openAgent: '1' },
+    })
     expect(routerMocks.replace).toHaveBeenCalledTimes(1)
     expect(locationAssign, '移动端入口分发不得再整页刷新').not.toHaveBeenCalled()
     expect(canvasCreate).not.toHaveBeenCalled()
@@ -281,7 +330,10 @@ describe('IA v4 移动端入口分发（hero 优先，最近项目其次）', ()
       data: { data: [{ id: 'proj-1', coverUrl: null }, { id: 'proj-2', coverUrl: null }] },
     })
     await mountWorkflow({ loggedIn: true })
-    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-1')
+    expect(routerMocks.replace).toHaveBeenCalledWith({
+      path: '/workflow/proj-1',
+      query: { openAgent: '1' },
+    })
   })
 
   it('入口分发的 list 带 15s 超时（防弱网下 2 分钟零反馈，10-19 事故同形态）', async () => {
@@ -388,17 +440,25 @@ describe('移动端品牌页边界（第 3/4 点）', () => {
 
   it('④ 点锚 = 开始创作：有项目 ⇒ 进最近项目对话页，不新建', async () => {
     mobileFlag.isMobile = true
-    canvasList.mockResolvedValue({ data: { data: [{ id: 'proj-1' }] } })
+    canvasList.mockResolvedValue({ data: { data: [{ id: 'proj-1', coverUrl: null }] } })
     await mountWorkflow({ loggedIn: true })
-    // 入口分发已把用户带去最近项目 ⇒ 品牌页上的锚不再被点
-    // 2026-10-24 性能修复：分发改走 router.replace（不再整页刷新）
-    expect(routerMocks.replace).toHaveBeenCalledWith('/workflow/proj-1')
+    // 2026-10-25 PR-1 Task 4：移动端自动进入改走 useEnterCreation()，
+    //    落点解析（含「有产物优先」）与导航都在 composable 内，页面层只委托。
+    // 2026-10-24 性能修复：自动分发走 router.replace（不再整页刷新）。
+    expect(routerMocks.replace).toHaveBeenCalledWith({
+      path: '/workflow/proj-1',
+      query: { openAgent: '1' },
+    })
     expect(canvasCreate, '有项目时点锚不得新建').not.toHaveBeenCalled()
   })
 
-  it('④ 源码守卫：移动端分支按「有项目 ⇒ 进最近项目」分流', () => {
-    // 判据落在源码（行为级已被入口分发抢跑）⇒ 钉死分流条件与两个落点
-    expect(pageSrc).toContain('isMobileLayout.value && recentProjectId.value')
-    expect(pageSrc).toContain('router.push(`/workflow/${recentProjectId.value}`)')
+  it('④ 源码守卫：移动端自动进入委托给 enterCreation，且带 replace + 不隐式创建', () => {
+    // ⚠️ 2026-10-25 PR-1 Task 4 改写：旧守卫钉的是页面内联分流
+    //    （`isMobileLayout.value && recentProjectId.value`），该分支已随
+    //    `createCanvas()` 删除而移入 `useEnterCreation()`。
+    //    新守卫钉**委托本身**与两个关键参数 —— 它们各自防一种真实退化：
+    //      · `allowImplicitCreate: false` ⇒ 防退回「无项目静默新建」（IA v3.1，10-23 已撤）
+    //      · `replace: true`            ⇒ 防自动分发改用 push，返回键把用户弹回品牌页
+    expect(pageSrc).toContain('enterCreation({ allowImplicitCreate: false, replace: true })')
   })
 })

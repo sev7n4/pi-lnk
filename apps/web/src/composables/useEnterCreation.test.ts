@@ -5,14 +5,15 @@ import { setActivePinia, createPinia } from 'pinia'
  * ⚠️ mock 句柄走 `vi.hoisted`：`vi.mock` 工厂会被提升到 import 之前，
  * 工厂里直接引用顶层 const 会撞 TDZ（Task 1 踩过，报 "error when mocking a module"）。
  */
-const { push, listMock, createMock, removeMock } = vi.hoisted(() => ({
+const { push, replace, listMock, createMock, removeMock } = vi.hoisted(() => ({
   push: vi.fn(),
+  replace: vi.fn(),
   listMock: vi.fn(),
   createMock: vi.fn(),
   removeMock: vi.fn(),
 }))
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace }) }))
 vi.mock('@/services/canvas-api', () => ({
   canvasApi: { list: () => listMock(), create: () => createMock(), update: vi.fn() },
 }))
@@ -39,6 +40,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
   push.mockReset()
+  replace.mockReset()
   listMock.mockReset()
   createMock.mockReset()
 })
@@ -161,5 +163,27 @@ describe('useEnterCreation', () => {
     listMock.mockResolvedValue({ data: { data: [PROJ('p-latest')] } })
     await enterCreation()
     expect(error.value).toBeNull()
+  })
+
+  it('replace:true 走 router.replace，且不碰 push（自动分发不留历史，INV-7b 配套）', async () => {
+    seedLoggedIn()
+    listMock.mockResolvedValue({ data: { data: [PROJ('p-latest')] } })
+    const { enterCreation } = useEnterCreation()
+    await enterCreation({ allowImplicitCreate: false, replace: true })
+    expect(replace).toHaveBeenCalledWith({
+      path: '/workflow/p-latest',
+      query: { openAgent: '1' },
+    })
+    // ⛔ 2026-10-24 性能修复的结论：push 会让用户按返回键又弹回品牌页
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('默认走 router.push（用户手势理应能返回）', async () => {
+    seedLoggedIn()
+    listMock.mockResolvedValue({ data: { data: [PROJ('p-latest')] } })
+    const { enterCreation } = useEnterCreation()
+    await enterCreation()
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(replace).not.toHaveBeenCalled()
   })
 })
