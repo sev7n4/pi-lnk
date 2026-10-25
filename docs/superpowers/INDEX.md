@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **381 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **397 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,16 +13,16 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 134 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 241 | 内容已定稿或功能已落地，作为历史依据 |
+| 🟢 living | 137 | 仍在演进，改动前先看这份 |
+| 🔒 frozen | 254 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 6 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 其他 | 62 | 20 |
-| 画布工具与交互 | 59 | 26 |
+| 其他 | 73 | 21 |
+| 画布工具与交互 | 64 | 28 |
 | 生成管线（图像/视频/3D） | 40 | 9 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | Agent 交互与可见性 | 31 | 15 |
@@ -42,10 +42,11 @@
 
 ## 按主题浏览
 
-### 其他（62 份）
+### 其他（73 份）
 
-<details><summary>🟢 living · 20 份</summary>
+<details><summary>🟢 living · 21 份</summary>
 
+- `docs/superpowers/plans/2026-10-23-sp-c-viewport-restore.md`
 - `docs/superpowers/specs/2026-10-17-mobile-composer-sse-boundary-design.md` ★design
 - `docs/superpowers/specs/2026-10-17-agent-turn-identity-design.md` ★design
 - `docs/superpowers/specs/2026-10-17-agent-composer-overlay-trace-boundary-design.md` ★design
@@ -69,13 +70,23 @@
 
 </details>
 
-<details><summary>🔒 frozen · 42 份</summary>
+<details><summary>🔒 frozen · 52 份</summary>
 
+- `docs/superpowers/plans/2026-10-26-shared-agent-subscription.md`
+- `docs/superpowers/specs/2026-10-26-shared-agent-subscription-design.md` ★design
+- `docs/superpowers/plans/2026-10-24-brand-anchor-icons.md`
+- `docs/superpowers/specs/2026-10-23-sp-c-viewport-restore-design.md` ★design
+- `docs/superpowers/plans/2026-10-22-sp-b-align-guides.md`
+- `docs/superpowers/specs/2026-10-22-sp-b-align-guides-design.md` ★design
 - `docs/superpowers/plans/2026-10-21-turn-continuity.md`
 - `docs/superpowers/specs/2026-10-21-turn-continuity-design.md` ★design
+- `docs/superpowers/specs/2026-10-21-turn-continuity-batch3-design.md` ★design
+- `docs/superpowers/specs/2026-10-21-steer-history-persist-design.md` ★design
 - `docs/superpowers/plans/2026-10-21-multi-device-consistency.md`
 - `docs/superpowers/specs/2026-10-21-multi-device-consistency-evidence.md` ★design
 - `docs/superpowers/specs/2026-10-21-multi-device-consistency-design.md` ★design
+- `docs/superpowers/plans/2026-10-21-group-frame-size-and-resize.md`
+- `docs/superpowers/plans/2026-10-21-group-frame-size-and-resize-pr.md`
 - `docs/superpowers/plans/2026-10-17-alipay-sandbox-verification.md`
 - `docs/superpowers/specs/2026-10-17-agent-turn-identity-codex-review.md` ★design
 - `docs/superpowers/plans/2026-10-16-agent-composer-uiux.md`
@@ -116,10 +127,12 @@
 
 </details>
 
-### 画布工具与交互（59 份）
+### 画布工具与交互（64 份）
 
-<details><summary>🟢 living · 26 份</summary>
+<details><summary>🟢 living · 28 份</summary>
 
+- `docs/superpowers/plans/2026-10-25-mobile-node-lifecycle.md`
+- `docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-design.md` ★design
 - `docs/superpowers/plans/2026-10-20-group-native-node.md`
 - `docs/superpowers/plans/2026-10-20-agent-canvas-batch-layout.md`
 - `docs/superpowers/plans/2026-10-19-propose-confirm-single-surface.md`
@@ -149,8 +162,11 @@
 
 </details>
 
-<details><summary>🔒 frozen · 33 份</summary>
+<details><summary>🔒 frozen · 36 份</summary>
 
+- `docs/superpowers/plans/2026-10-23-mobile-node-refactor-r4.md`
+- `docs/superpowers/plans/2026-10-23-mobile-node-refactor-r3.md`
+- `docs/superpowers/plans/2026-10-23-mobile-node-refactor-r2.md`
 - `docs/superpowers/specs/2026-10-20-agent-canvas-batch-layout-design.md` ★design
 - `docs/superpowers/specs/2026-10-16-canvas-write-tool-chain-design.md` ★design
 - `docs/superpowers/plans/2026-10-13-propose-outcome-metric-p2.md`

@@ -34,14 +34,14 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  close: []
-  patch: [patch: Record<string, unknown>]
+  (e: 'close'): void
+  (e: 'patch', patch: Record<string, unknown>): void
   /**
    * 模式①：把「改后提示词 + 我的意见」交给 agent（**不是**本地提交）。
    * ⭐ 页面层负责：写回提示词 → 切回对话页签 → 把意见放进 composer 输入框
    *   （用户自己按下发送 = 保留意图表达权，§4.5「看得见落地」）。
    */
-  'send-to-agent': [payload: { prompt: string; opinion: string }]
+  (e: 'send-to-agent', payload: { prompt: string; opinion: string }): void
 }>()
 
 const nodeData = computed(() => (props.node.data ?? {}) as Record<string, unknown>)

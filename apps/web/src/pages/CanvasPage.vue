@@ -171,6 +171,7 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useCanvasRefPickAdd } from '@/composables/useCanvasRefPickAdd'
+import { useSidebarAttachments } from '@/composables/useSidebarAttachments'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { summarizeMobileNodeTasks } from '@/composables/mobileNodeTaskSummary'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
@@ -2687,6 +2688,102 @@ function handleMobileNodeSendToAgent(payload: { prompt: string; opinion: string 
   mobileAppTab.value = 'chat'
 }
 
+/* ── 标注层（L1 / M1 · 规格 §4.3 + §4.5）──────────────────────────── */
+
+/**
+ * 每次标注的唯一序号 —— ⭐ `useSidebarAttachments.addFromPayload` 会按
+ * `url` **或** `sourceNodeId` 去重 ⇒ 若同一节点连续两次标注用同一个
+ * `sourceNodeId`，**第二次会被静默丢弃**（用户看不到任何反馈）。
+ * ⇒ 每次标注的 `sourceNodeId` 必须唯一（`${nodeId}#annotate-${n}`）。
+ */
+let mobileAnnotateSeq = 0
+
+/** 标注浮层的当前上下文（节点 id + 意见） */
+const mobileAnnotate = ref<{ nodeId: string; nodeTitle: string } | null>(null)
+/** 标注浮层是否上传中 */
+const mobileAnnotateUploading = ref(false)
+/** 标注浮层是否降级（无 CORS / 取不到帧 ⇒ 只带文字） */
+const mobileAnnotateDegraded = ref(false)
+/** 标注浮层错误文案 */
+const mobileAnnotateError = ref('')
+
+/** 打开标注浮层（由查看器的 `annotate` 事件触发） */
+function openMobileAnnotateSheet(payload: { imageBlob?: Blob; degraded: boolean }) {
+  const node = mobileViewerNode.value
+  if (!node) return
+  mobileAnnotate.value = { nodeId: node.id ?? '', nodeTitle: nodeTitleOf(node) }
+  mobileAnnotateDegraded.value = payload.degraded
+  mobileAnnotateError.value = ''
+}
+
+/** 节点标题（引用标签用） */
+function nodeTitleOf(node: { id?: string; type: string; data?: any }): string {
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const t = typeof data.title === 'string' ? data.title.trim() : ''
+  if (t) return t
+  const label = typeof data.label === 'string' ? data.label.trim() : ''
+  if (label) return label
+  const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : ''
+  if (prompt) return prompt.slice(0, 24)
+  return '节点'
+}
+
+/**
+ * 提交标注 ⇒ 上传合成图 ⇒ 写入 composer 引用 ⇒ 切回对话页（规格 §4.5 M1）。
+ *
+ * ⭐ 契约要点：
+ *  - 引用契约**拒 blob URL** ⇒ 合成图必须先 `fileToPersistedPayload` 上传；
+ *  - ⛔ 降级（无 CORS / 取不到帧）⇒ 只带文字，并**明说**「本条只带文字，未附截图」；
+ *  - `sourceNodeId` 每次唯一（见 `mobileAnnotateSeq`）⇒ 同节点连续两次标注都能进 composer。
+ */
+async function handleMobileAnnotateSend(payload: {
+  opinion: string
+  imageBlob?: Blob
+  degraded: boolean
+}) {
+  const ctx = mobileAnnotate.value
+  if (!ctx) return
+  const opinion = payload.opinion.trim()
+  mobileAnnotateUploading.value = true
+  mobileAnnotateError.value = ''
+  try {
+    let url: string | undefined
+    if (payload.imageBlob) {
+      const file = new File([payload.imageBlob], 'annotate.png', { type: 'image/png' })
+      const uploaded = await fileToPersistedPayload(file)
+      if (uploaded.url.startsWith('blob:')) throw new Error('合成图未持久化')
+      url = uploaded.url
+    }
+    // 唯一 sourceNodeId ⇒ 同节点连续两次标注都会被接收
+    const sourceNodeId = `${ctx.nodeId}#annotate-${++mobileAnnotateSeq}`
+    addFromPayload({
+      id: `annotate-${Date.now()}-${mobileAnnotateSeq}`,
+      mediaType: url ? 'image' : 'text',
+      sourceKind: 'canvasNode',
+      label: ctx.nodeTitle || '标注',
+      ...(url ? { url } : {}),
+      ...(opinion ? { text: opinion } : {}),
+      sourceNodeId,
+    })
+    mobileAnnotate.value = null
+    // 看得见落地（§4.5 可见性铁律）：切回对话页签，用户在 composer 看到芯片
+    mobileAppTab.value = 'chat'
+    if (!url) {
+      ElMessage.info('本条只带文字，未附截图')
+    }
+  } catch (err) {
+    mobileAnnotateError.value = err instanceof Error ? err.message : '上传失败，请重试'
+  } finally {
+    mobileAnnotateUploading.value = false
+  }
+}
+
+/** 关闭标注浮层 */
+function closeMobileAnnotateSheet() {
+  mobileAnnotate.value = null
+  mobileAnnotateError.value = ''
+}
+
 function closeMobileNodeEditor() {
   mobileEditorNode.value = null
 }
@@ -2746,6 +2843,28 @@ provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'vide
 provide(MOBILE_NODE_OPEN_EDITOR_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
   if (node?.id) openMobileNodeEditor(node.id)
 })
+
+/**
+ * 查看器右上「⋯」⇒ 打开**与长按同一个 Menu**（§4.6 同源同容器，避免双入口分裂）。
+ * ⭐ 长按菜单已经是「节点操作全集」⇒ 复用它，不再做第二套操作集。
+ */
+function openMobileNodeMenuFromViewer() {
+  const node = mobileViewerNode.value
+  if (!node?.id) return
+  mobileActionNode.value = { id: node.id, type: node.type, data: node.data }
+}
+
+/**
+ * 查看器底部主栏动作（§4.11.6：高频操作放下方拇指区）。
+ * ⭐ 当前只承载「改词」⇒ 打开轻量编辑器（模式①：改词 + 意见 → 发给 agent）。
+ */
+function handleMobileViewerBottomAction(key: string) {
+  if (key !== 'edit') return
+  const node = mobileViewerNode.value
+  if (!node?.id) return
+  closeMobileViewer()
+  openMobileNodeEditor(node.id)
+}
 
 function closeMobileViewer() {
   mobileViewerNode.value = null
@@ -5369,6 +5488,8 @@ const {
   refPickToast,
 } = useCanvasRefPickAdd()
 const { isMobileLayout } = useAgentMobileLayout()
+// 标注引用写入：直接写 useSidebarAttachments 单例（与 addNodesToRefs 同一条通路）
+const { addFromPayload } = useSidebarAttachments()
 
 // 分组框的 draggable 随布局切换（GC4）：PC 整框可拖是本批的核心诉求；
 // 移动端整块框会吃掉平移/长按手势，所以关掉（沿用侧车时代的口径）。
@@ -6282,6 +6403,15 @@ onUnmounted(() => {
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
       :on-node-editor-send-to-agent="handleMobileNodeSendToAgent"
+      :on-viewer-annotate="openMobileAnnotateSheet"
+      :on-viewer-more="openMobileNodeMenuFromViewer"
+      :on-viewer-bottom-action="handleMobileViewerBottomAction"
+      :mobile-annotate="mobileAnnotate"
+      :mobile-annotate-uploading="mobileAnnotateUploading"
+      :mobile-annotate-degraded="mobileAnnotateDegraded"
+      :mobile-annotate-error="mobileAnnotateError"
+      :on-mobile-annotate-send="handleMobileAnnotateSend"
+      :on-mobile-annotate-close="closeMobileAnnotateSheet"
       :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"

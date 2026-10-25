@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MobileNodeViewer from './MobileNodeViewer.vue'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// ⚠️ vitest 是 ESM ⇒ `__dirname` 不可用（仓库既有约定：fileURLToPath(import.meta.url)）
+const HERE = dirname(fileURLToPath(import.meta.url))
 
 /**
  * D2（2026-10-25 规格 §6.2 / §4.1 P3）：全屏查看器必须有**两条**退出通道
@@ -68,5 +74,35 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     } finally {
       pause.mockRestore()
     }
+  })
+
+  // ── 标注态（L1 · §4.3：只有一支笔）──────────────────────────────────
+  describe('标注态（显式进入 + 轻点即画）', () => {
+    it('有「圈选」入口（显式进入，⛔ 不做隐式双击手势）', () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'https://x/a.png' } } })
+      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      w.unmount()
+    })
+
+    it('文本节点不提供圈选入口（文本走文字引用，无底图）', () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'text', data: { content: '你好' } } })
+      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('点「圈选」⇒ 进入标注态（画布覆盖层出现 + 按钮文案变「取消」）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'https://x/a.png' } } })
+      await w.get('[data-testid="mobile-viewer-annotate"]').trigger('click')
+      expect(w.find('[data-testid="mobile-viewer-ink"]').isVisible()).toBe(true)
+      expect(w.get('[data-testid="mobile-viewer-annotate"]').text()).toContain('取消')
+      w.unmount()
+    })
+
+    it('标注态下画布覆盖层独占手势（touch-action: none ⇒ 单指不滚动/缩放）', () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'https://x/a.png' } } })
+      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
+      expect(src).toMatch(/\.viewer-ink\s*\{[^}]*touch-action:\s*none/)
+      w.unmount()
+    })
   })
 })

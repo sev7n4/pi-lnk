@@ -76,6 +76,16 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onNodeRename: vi.fn(),
     // D8/J1/K1（2026-10-25）：编辑器改为「发给 agent 修改」，本地提交与删引用 emit 已移除
     onNodeEditorSendToAgent: vi.fn(),
+    // D8/L1/M1（2026-10-25）：查看器标注 → 标注浮层 的接线
+    onViewerAnnotate: vi.fn(),
+    onViewerMore: vi.fn(),
+    onViewerBottomAction: vi.fn(),
+    mobileAnnotate: null,
+    mobileAnnotateUploading: false,
+    mobileAnnotateDegraded: false,
+    mobileAnnotateError: '',
+    onMobileAnnotateSend: vi.fn(),
+    onMobileAnnotateClose: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
     viewerNode: null,
