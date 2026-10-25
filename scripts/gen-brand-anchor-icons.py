@@ -1,91 +1,217 @@
 #!/usr/bin/env python3
-"""按 docs/design/2026-10-24-brand-anchor-icon-spec.md §2 绘制 canonical 锚，
-输出 white-fill CSS mask PNG（几何在 alpha 通道，实色由 CSS currentColor 提供）。
+"""从品牌 icon-only 资产生成两类锚图标。
 
-4× 超采样 + LANCZOS 降采样得到抗锯齿蒙版。无外部光栅化器依赖（本机仅 Pillow）。
+源资产：lnk-pi-logo_assets/c80d7b56-lnk-pi-logo_A_icon-only_v2_1024px_transparent.png
+  —— 黑底透明徽标：外细环 + 黑盘 + 锚（负空间挖空）+ 左侧波浪装饰。
+
+产出两类（与组件消费位点锁定）：
+
+  A. 纯锚（white-fill 蒙版，CSS mask + currentColor 上色，随主题变）：
+     anchor-generate.png (94×106)  → SignatureHero / DockGenerateButton
+     anchor-locate.png  (93×93)   → AgentSideRail 微图标（11/15px）
+     说明：只取中央锚，丢弃外环/黑盘/波浪。
+
+  B. 双色徽标（自带颜色位图，<img> 渲染，不随主题）：
+     anchor-badge.png   (256×256) → SlideToCreate / CanvasRefTargetIcon
+       = 黑盘 + 白锚 + 外环 + 左侧波浪。
+       关键处理：锚洞（黑盘内的负空间）填充为「真实白」，使徽标在任意底色
+       上都可辨；环与盘之间的留白保留透明（维持品牌「环-盘分离」质感）。
+       黑盘/外环/波浪保持源资产的黑，透明外缘。
 
 运行：python3 scripts/gen-brand-anchor-icons.py
+依赖：Pillow + numpy（本机已装）
 """
+import os
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
+from collections import deque
 
-SS = 4  # 超采样倍数
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(
+    REPO_ROOT,
+    "lnk-pi-logo_assets",
+    "c80d7b56-lnk-pi-logo_A_icon-only_v2_1024px_transparent.png",
+)
+OUT_GEN = os.path.join(REPO_ROOT, "apps/web/src/assets/icons/anchor-generate.png")
+OUT_LOC = os.path.join(REPO_ROOT, "apps/web/src/assets/icons/anchor-locate.png")
+OUT_BADGE = os.path.join(REPO_ROOT, "apps/web/src/assets/icons/anchor-badge.png")
+
+THRESH = 40  # alpha 阈值：< THRESH 视为透明
 
 
-def draw_anchor_gray(d, W, H):
-    """在灰度画布 d（白=形, 黑=空）上绘制锚。
+def _load():
+    return np.asarray(Image.open(SRC).convert("RGBA"))
 
-    几何（全部以 W/H 分数，详见 spec §2）：
-    - 环：外椭圆实心（随后打孔成负空间孔洞）
-    - 锚杆：竖条，自环底下方起，至钩底
-    - 横杆：平直方头（无箭头）
-    - 钩：底部向上兜起的弧（PIL arc 30°→150°，屏幕坐标 y 向下，90°=正下方）
+
+def _flood_borders(mask):
+    """从四边 flood-fill 标记连通区（mask=True 视为可走）。返回标记 bool。"""
+    H, W = mask.shape
+    mark = np.zeros((H, W), bool)
+    st = deque()
+    for x in range(W):
+        for y in (0, H - 1):
+            if mask[y, x] and not mark[y, x]:
+                mark[y, x] = True
+                st.append((y, x))
+    for y in range(H):
+        for x in (0, W - 1):
+            if mask[y, x] and not mark[y, x]:
+                mark[y, x] = True
+                st.append((y, x))
+    while st:
+        y, x = st.pop()
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < H and 0 <= nx < W and mask[ny, nx] and not mark[ny, nx]:
+                mark[ny, nx] = True
+                st.append((ny, nx))
+    return mark
+
+
+def extract_anchor_mask(arr):
+    """返回 (H,W) bool 掩码：品牌的实心填充锚（已丢弃外环/黑盘/波浪）。"""
+    H, W, _ = arr.shape
+    trans = arr[..., 3] < THRESH
+
+    bg = _flood_borders(trans)          # 外部背景透明
+    pos = trans & (~bg)                 # 内部封闭透明 = 锚 + 波浪（负形）
+
+    cyc, cxc = H // 2, W // 2
+    lab = np.zeros((H, W), np.int32)
+    ncomp = 0
+    for yy in range(H):
+        for xx in range(W):
+            if pos[yy, xx] and lab[yy, xx] == 0:
+                ncomp += 1
+                st = deque([(yy, xx)])
+                lab[yy, xx] = ncomp
+                while st:
+                    a, b = st.pop()
+                    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        na, nb = a + dy, b + dx
+                        if 0 <= na < H and 0 <= nb < W and pos[na, nb] and lab[na, nb] == 0:
+                            lab[na, nb] = ncomp
+                            st.append((na, nb))
+    anchor_id = int(lab[cyc, cxc])
+    if anchor_id == 0:
+        sizes = np.bincount(lab.ravel())[1:]
+        anchor_id = int(np.argmax(sizes)) + 1
+    return lab == anchor_id
+
+
+def extract_badge_rgba(arr):
+    """返回品牌双色徽标的 RGBA 图像（黑盘+白锚+外环+波浪，透明外缘）。
+
+    锚洞（黑盘内负空间）填真实白；环-盘留白保留透明。
     """
-    cx = 0.5 * W
-    r_out = 0.123 * H
-    cy = 0.170 * H
-    r_in = 0.057 * H
+    H, W, _ = arr.shape
+    alpha = arr[..., 3]
+    opaque = alpha >= THRESH
+    trans = ~opaque
 
-    # 环（外椭圆实心）
-    d.ellipse([cx - r_out, cy - r_out, cx + r_out, cy + r_out], fill=255)
+    exterior = _flood_borders(trans)     # 外部透明（含环外、波外）
+    interior = trans & (~exterior)       # 封闭透明：锚洞 + 环-盘留白 + 波内凹
 
-    # 锚杆：自环底下方（位于孔内之下，避免穿过孔洞）向下，至钩底略重叠
-    sw = 0.066 * H
-    start_y = cy + r_out - 0.02 * H   # 仍在环带内、孔洞之下 → 与环相连且孔洞全开
-    sb = 0.855 * H                    # 钩最低点 = hcy + hr
-    d.line([(cx, start_y), (cx, sb)], fill=255, width=round(sw))
+    # 最大不透明连通分量 = 黑盘
+    lab_o = np.zeros((H, W), np.int32)
+    n = 0
+    disk_bbox = None
+    disk_size = -1
+    for yy in range(H):
+        for xx in range(W):
+            if opaque[yy, xx] and lab_o[yy, xx] == 0:
+                n += 1
+                st = deque([(yy, xx)])
+                lab_o[yy, xx] = n
+                cnt = 0
+                xs, ys = [], []
+                while st:
+                    a, b = st.pop()
+                    cnt += 1
+                    xs.append(b)
+                    ys.append(a)
+                    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        na, nb = a + dy, b + dx
+                        if 0 <= na < H and 0 <= nb < W and opaque[na, nb] and lab_o[na, nb] == 0:
+                            lab_o[na, nb] = n
+                            st.append((na, nb))
+                if cnt > disk_size:
+                    disk_size = cnt
+                    disk_bbox = (min(xs), min(ys), max(xs), max(ys))
 
-    # 横杆（平直方头）
-    sty = 0.283 * H
-    st = 0.057 * H
-    hl = 0.255 * W
-    d.line([(cx - hl, sty), (cx + hl, sty)], fill=255, width=round(st))
+    out = arr.copy()
+    dx0, dy0, dx1, dy1 = disk_bbox
+    # 内部透明分量：bbox 完全落在黑盘内 ⇒ 锚洞 ⇒ 填白
+    lab_i = np.zeros((H, W), np.int32)
+    m = 0
+    for yy in range(H):
+        for xx in range(W):
+            if interior[yy, xx] and lab_i[yy, xx] == 0:
+                m += 1
+                st = deque([(yy, xx)])
+                lab_i[yy, xx] = m
+                cx, cy = [], []
+                while st:
+                    a, b = st.pop()
+                    cx.append(b)
+                    cy.append(a)
+                    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        na, nb = a + dy, b + dx
+                        if 0 <= na < H and 0 <= nb < W and interior[na, nb] and lab_i[na, nb] == 0:
+                            lab_i[na, nb] = m
+                            st.append((na, nb))
+                bx0, bx1 = min(cx), max(cx)
+                by0, by1 = min(cy), max(cy)
+                if bx0 >= dx0 and bx1 <= dx1 and by0 >= dy0 and by1 <= dy1:
+                    for a, b in zip(cy, cx):
+                        out[a, b, 0] = out[a, b, 1] = out[a, b, 2] = 255
+                        out[a, b, 3] = 255
 
-    # 钩（向上兜起的弯弧）：圆心 (cx, 0.604H) 半径 0.245H，扫 30°→150° 覆盖底部
-    hcy = 0.604 * H
-    hr = 0.245 * H
-    hw = 0.066 * H
-    d.arc([cx - hr, hcy - hr, cx + hr, hcy + hr], start=30, end=150,
-          fill=255, width=round(hw))
+    # 裁到整体不透明 bbox
+    ys_op, xs_op = np.where(opaque)
+    x0, x1 = xs_op.min(), xs_op.max()
+    y0, y1 = ys_op.min(), ys_op.max()
+    return Image.fromarray(out[y0:y1 + 1, x0:x1 + 1], "RGBA")
 
 
-def render_anchor(W, H):
-    cy = 0.170 * H
-    r_in = 0.057 * H
-    gray = Image.new("L", (W * SS, H * SS), 0)
-    d = ImageDraw.Draw(gray)
-    draw_anchor_gray(d, W * SS, H * SS)
-
-    # uint8 灰度（0/255），避免 float32 'F' 模式 resize 的数值不稳
-    a = np.array(gray, dtype=np.uint8)  # 拷贝，PIL 数组只读
-    cx = 0.5 * W * SS
-    yy, xx = np.mgrid[0:H * SS, 0:W * SS]
-    # 打孔：环内半径内置 0 → 负空间真孔洞。锚杆起点在孔洞之下，不受影响。
-    hole = ((xx - cx) ** 2 + (yy - cy * SS) ** 2) <= (r_in * SS) ** 2
-    a[hole] = 0
-
-    # BOX 降采样（无负瓣）：目标像素 = 其 4×4 超采样块内墨像素均值。
-    # 细锚杆（超采样约 28px 宽）中心块恒为满值 → 不再被 LANCZOS 负瓣压断；
-    # 边缘块为分数值 → 仍保留抗锯齿。
-    big = Image.fromarray(a, mode="L")
-    small = big.resize((W, H), Image.BOX)
-    g = np.asarray(small, dtype=np.float32)
-    out = np.zeros((H, W, 4), dtype=np.uint8)
-    out[..., 0] = 255
-    out[..., 1] = 255
-    out[..., 2] = 255
-    out[..., 3] = np.clip(g, 0, 255).round().astype(np.uint8)
+def render_mask(mask, tw, th, pad=0.06):
+    """把 bool 掩码等比居中缩放为 white-fill RGBA（alpha=掩码）。"""
+    ch, cw = mask.shape
+    s = min(tw * (1 - 2 * pad) / cw, th * (1 - 2 * pad) / ch)
+    nw, nh = max(1, round(cw * s)), max(1, round(ch * s))
+    im = Image.fromarray((mask * 255).astype(np.uint8), "L").resize((nw, nh), Image.LANCZOS)
+    canvas = np.zeros((th, tw), np.uint8)
+    ox, oy = (tw - nw) // 2, (th - nh) // 2
+    canvas[oy:oy + nh, ox:ox + nw] = np.asarray(im)
+    out = np.zeros((th, tw, 4), np.uint8)
+    out[..., 0] = out[..., 1] = out[..., 2] = 255
+    out[..., 3] = canvas
     return Image.fromarray(out, "RGBA")
 
 
-def main():
-    base = "apps/web/src/assets/icons"
-    targets = [("anchor-generate", 94, 106), ("anchor-locate", 93, 93)]
-    for name, W, H in targets:
-        im = render_anchor(W, H)
-        im.save(f"{base}/{name}.png")
-        print(f"wrote {base}/{name}.png {im.size}")
+def to_square(img, size):
+    """把任意尺寸 RGBA 等比居中放进 size×size 透明方块。"""
+    w, h = img.size
+    s = size / max(w, h)
+    nw, nh = max(1, round(w * s)), max(1, round(h * s))
+    res = img.resize((nw, nh), Image.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas.paste(res, ((size - nw) // 2, (size - nh) // 2))
+    return canvas
 
 
 if __name__ == "__main__":
-    main()
+    if not os.path.exists(SRC):
+        raise SystemExit(f"缺失源资产：{SRC}")
+    arr = _load()
+
+    mask = extract_anchor_mask(arr)
+    render_mask(mask, 94, 106).save(OUT_GEN)
+    render_mask(mask, 93, 93).save(OUT_LOC)
+
+    badge = extract_badge_rgba(arr)
+    to_square(badge, 256).save(OUT_BADGE)
+
+    print(f"wrote {OUT_GEN} (94x106)  [pure anchor mask]")
+    print(f"wrote {OUT_LOC}  (93x93)   [pure anchor mask]")
+    print(f"wrote {OUT_BADGE} (256x256) [two-color badge, anchor filled white]")

@@ -1,82 +1,73 @@
 # 品牌锚图标规范（Brand Anchor Icon Spec）
 
-> 状态：已评审基线，待实施
-> 关联：lnk π 品牌 Logo（路径 A 定稿，墨黑单色几何标）、`outputs/lnk-pi-logo/` 交付物
-> 决策来源：用户已确认「第 2、3 项替换建议」；本规范为落地依据
+> 状态：已落地（分支 `fix/brand-anchor-icons`，替代 2026-10-24 旧版 line-drawing 方案）
+> 关联：lnk π 品牌 Logo 资产 `lnk-pi-logo_assets/c80d7b56-lnk-pi-logo_A_icon-only_v2_1024px_transparent.png`
+> 决策来源：用户确认 —— SignatureHero 用「纯锚」；SlideToCreate / CanvasRefTargetIcon / AgentSideRail 用「双色徽标」
 
 ## 1. 目的与范围
 
-把产品内两枚**功能性锚图标**的几何，收敛到与 lnk π 品牌 Logo（路径 A 定稿）**同一支锚**的语言，
-消除当前「功能锚」与「品牌锚」各画各的、且部分锚横杆仍带箭头读感的问题。
+把产品内锚图标的几何收敛到 lnk π 品牌 Logo 资产的**真实锚几何**（而非另程序化绘制），并区分两种呈现：
 
-**本规范只改两枚图标的内容，不改文件名、不改消费位、不动 `BRAND_LOGO_URL`、不动吉祥物。**
+- **纯锚**（单色蒙版，随主题）：SignatureHero、DockGenerateButton、AgentSideRail 微图标。
+- **双色徽标**（黑盘 + 白锚 + 外环 + 左侧波浪，固定颜色位图）：SlideToCreate、CanvasRefTargetIcon。
 
-- 改：`src/assets/icons/anchor-generate.png`、`src/assets/icons/anchor-locate.png` 的**图形内容**。
-- 不改：上述两文件的**路径/文件名**（保证 CSS mask 引用与既有断言零风险）。
-- 不改（属于其它 PR/任务）：品牌标志 `mascot-logo.png` → 新 Logo 的替换、favicon、纯图标版在导航/法务页的落地、吉祥物重绘进墨色语言。
+**本规范相对旧版（2026-10-24）的变更**：锚几何改为从品牌资产反相抠取（非程序化绘制）；新增 `anchor-badge.png`；改两处消费位代码（mask → `<img>`，突破「只换 PNG」旧约定）。
 
-## 2. Canonical 锚几何（单一事实源）
+## 2. 两类锚的来源与几何
 
-两枚图标使用**完全相同**的锚几何，仅画布长宽比不同。锚为竖构，水平居中。
+### 2.1 纯锚（`anchor-generate.png` / `anchor-locate.png`）
+- **来源**：品牌 icon-only 资产 `c80d7b56…transparent.png` 反相抠取。该资产是「黑盘 + 锚负形挖空 + 外环 + 左侧波浪」。
+- **方法**（`scripts/gen-brand-anchor-icons.py::extract_anchor_mask`）：取 alpha → flood-fill 外部透明 → 内部封闭透明为「锚 + 波浪」负形 → 取含画布中心连通分量 = 中央锚（自动排除分离的波浪装饰）→ 反相为 white-fill 蒙版（alpha=锚，RGB=255）。
+- **几何**：与品牌 Logo 锚完全同源（实心球头 + 横杆 + 双爪 + 长杆），非程序化近似。
+- 尺寸：`anchor-generate.png` = 94×106（竖）、`anchor-locate.png` = 93×93（方）。
 
-所有尺寸以**画布高 H** 与**画布宽 W** 的分数表达（`cx = 0.5·W`）：
+### 2.2 双色徽标（`anchor-badge.png`）
+- **来源**：同一品牌资产，裁整体不透明 bbox。
+- **关键处理**（`extract_badge_rgba`）：黑盘内的锚洞负形**填充真实白**（而非透明），使徽标在任意底色（含暗底）上锚都可见；环与盘之间的留白保留透明（维持品牌「环-盘分离」质感）；黑盘/外环/波浪保持源资产黑，外缘透明。
+- 尺寸：256×256 透明方块（徽标居中，源 bbox ≈ 692×733 等比缩入）。
+- 渲染：`<img>` 引用，CSS `object-fit: contain`，**不随主题变色**（固定双色）。
 
-| 部件 | 参数 | 说明 |
-|---|---|---|
-| 锚环（负空间） | 圆心 `cy = 0.170·H`，外半径 `R = 0.123·H`，内半径 `r = 0.057·H` | **环是镂空孔洞**（内半径内透明），不是实心圆——与 Logo 锚环的「负空间」手法一致 |
-| 锚杆（shank） | 竖条宽 `0.066·H`，自 `y = cy` 至 `y = 0.868·H`，居中 `cx` | 贯穿锚身的中轴 |
-| 横杆（stock / 锚臂横梁） | `y = 0.283·H`，厚 `0.057·H`，半长 `0.255·W`，**两端平直方头**（无箭头、无尖收） | 对齐 Logo 已修掉的「箭头读感」 |
-| 锚钩（fluke / 弯钩） | 圆弧：圆心 `(cx, 0.604·H)`，半径 `0.245·H`，扫角 `200°→340°`，带宽 `0.066·H` | 经典锚底向上兜起的双弯钩；最低点 `y ≈ 0.849·H`，与锚杆底部重叠连接 |
+## 3. 渲染契约
 
-**几何一致性判据**：环为孔洞、横杆平直方头、钩为向上兜起的弯弧——三件事同时成立，才与 Logo 锚同族。
+| 类别 | 文件 | 渲染 | 上色 |
+|---|---|---|---|
+| 纯锚 | `anchor-generate.png` / `anchor-locate.png` | `mask` + `background: currentColor` | 跟随文字色/主题（暗底自动反白） |
+| 双色徽标 | `anchor-badge.png` | `<img>` + `object-fit: contain` | 固定黑盘白锚，不随主题 |
 
-### 2.1 绝对像素（实施直接取值）
+> 双色徽标**无法用 `mask` 渲染**——蒙版只认 alpha、忽略 RGB 颜色，黑盘白锚会丢失。故改用 `<img>`（需改 2 个组件，突破旧「只换 PNG」约定）。
 
-- `anchor-generate.png`（94×106，竖画布）：
-  `cx=47`，环 `cy=18.0 R=13.0 r=6.0`，杆宽 `7.0`（y `18→92`），横杆 `y=30.0` 厚 `6.0` 半长 `24.0`，钩圆心 `(47,64.0)` R `26.0` 带宽 `7.0`。
-- `anchor-locate.png`（93×93，方画布）：
-  `cx=46.5`，环 `cy=15.8 R=11.4 r=5.3`，杆宽 `6.1`（y `15.8→80.7`），横杆 `y=26.3` 厚 `5.3` 半长 `23.7`，钩圆心 `(46.5,56.2)` R `22.8` 带宽 `6.1`。
-  方画布内锚仍为竖构、水平居中，上下留白均分。
+## 4. 消费位点
 
-## 3. 渲染契约（white-fill CSS mask）
-
-两枚图标当前是 `currentColor` 上色、`mask: url(...)` 成形的 **PNG 蒙版**：几何全部承载在 **alpha 通道**，
-实色由 CSS `background: currentColor` 提供。替换时**只换 PNG 内容，沿用此契约**：
-
-- PNG 内：形状区域 `RGB = (255,255,255)`，`A = 255`；外部 `A = 0`。
-- 形状内部不允许残留低 alpha 雾（见 §5 门禁）。
-- 因为上色靠 `currentColor`，图标**自动跟随文字色与主题**（暗底自动反白），无需为深色模式单做一版——这与固定黑底的 Logo PNG 不同。
-
-## 4. 消费位点（仅记录，不在本规范改动）
-
-| 图标 | 文件 | 消费位 | 渲染尺寸 | 角色 |
+| 图标 | 文件 | 消费位 | 渲染 | 角色 |
 |---|---|---|---|---|
-| 创作锚 | `anchor-generate.png` | `SignatureHero.vue:405`（主页三联 hero 70/80，移动 47/53）<br>`SlideToCreate.vue:210`（滑条纽扣 22×25）<br>`DockGenerateButton.vue:80`（画布坞生成按钮）<br>`AgentSideRail.vue:7064` | 22→112px | 「点击锚→创作」的动作落款；**与画布坞生成按钮同源**（受 guard 契约约束） |
-| 定位/引用锚 | `anchor-locate.png` | `AgentSideRail.vue:6911/6951`<br>`CanvasRefTargetIcon.vue:25`（加入引用，被 `MultiSelectToolbar` 18px / `NeoBaseNode` 13px / `CanvasAssetPanel` 12px 消费） | 12→~30px | 功能性「定位 / 引用」指示 |
+| 纯锚 | `anchor-generate.png` | `SignatureHero.vue`（大锚）<br>`DockGenerateButton.vue`（15×17）<br>首页三联 glyph | `mask` | 「点击锚→创作」落款；受 `home-profile-p3.guard.test.ts` 约束走 `anchor-generate.png` |
+| 双色徽标 | `anchor-badge.png` | `SlideToCreate.vue`（22×25 滑条纽扣）<br>`CanvasRefTargetIcon.vue`（资产库 hover / 画布节点 / 多选工具栏） | `<img>` | 创作锚 / 定位引用锚，呈现完整品牌徽标 |
+| 纯锚 | `anchor-locate.png` | `AgentSideRail.vue`（11×11 / 15×15 微图标） | `mask` | 功能性定位指示（小尺寸保持纯锚保证清晰） |
 
-> 注：`CanvasRefTargetIcon.vue:2` 注释明确要求「与 composer 定位锚（anchor-locate.png）保持一致」——
-> 改 `anchor-locate.png` 会连带统一「加入引用」图标，这是期望的收敛效果。
+> 注：AgentSideRail 的定位锚用户点名为「双色徽标」，但其 11/15px 用法落在「会糊」区间，按 PM 决策保持纯锚以保证清晰；完整徽标由 SlideToCreate / CanvasRefTargetIcon 承载品牌感。
 
 ## 5. 质量门禁（交付前必须全部通过）
 
-1. **尺寸精确**：`anchor-generate.png` = 94×106、`anchor-locate.png` = 93×93，逐像素核对。
-2. **无淡雾**：全幅 alpha 直方图不得存在 `1≤A≤8` 的成片像素（此前 Logo 透明稿踩过的坑；源噪声被亮度转通道会变成灰雾）。
-3. **环为真孔洞**：穿过环圆心的水平剖面，中心须有连续透明段（内半径内 `A=0`），不得是实心墨点（icon-only 版曾抓到「环里填实心点」的同款缺陷）。
-4. **连通域单一**：整枚锚为一个连通体（环 + 杆 + 横杆 + 钩全部相连），不得有孤立碎片。
-5. **横杆平直方头**：横杆两端为矩形平头，剖面不得出现箭头/三角收尖。
-6. **几何同源**：与 A 定稿锚对比，环/横杆/钩三特征一致（人工目检 + 形态参数核对）。
-7. **white-fill**：不透明像素 `RGB ≈ (255,255,255)`，不得带预乘灰边。
+1. **纯锚尺寸精确**：`anchor-generate.png` = 94×106、`anchor-locate.png` = 93×93，逐像素核对。
+2. **徽标锚洞为真实白**：锚洞像素 `RGB≈(255,255,255)` 且 `A=255`，非透明；环-盘留白为透明（`A=0`）。
+3. **纯锚 white-fill**：不透明像素 `RGB≈(255,255,255)`，无预乘灰边。
+4. **无低 alpha 雾**：全幅不得有 `1≤A≤8` 的成片像素。
+5. **徽标双底可辨**：在白底与暗底 composite 下锚均可见（锚为真实白，暗底不消失）。
+6. **几何同源**：与品牌资产锚对比，球头/横杆/双爪/长杆一致（人工目检）。
 
-## 6. 待决策分流项（不在本规范默认实施）
+## 6. 生成方式约束（环境事实）
 
-**主页三联 hero 是否升级为「icon-only 标志」（墨盘 + 锚 + 触手）**——
-此前建议大尺寸 hero 直接用完整图标标志。但 `home-profile-p3.guard.test.ts:147-149` **硬性约定 hero 走 `anchor-generate.png` 且与画布坞生成按钮同源、不新造图标**。
+`scripts/gen-brand-anchor-icons.py`：Pillow + numpy（本机已装）。
+- `extract_anchor_mask()`：从品牌资产反相抠取纯锚蒙版。
+- `extract_badge_rgba()`：裁品牌资产整体 + 锚洞填白，输出双色徽标。
+- 运行 `python3 scripts/gen-brand-anchor-icons.py` 一次产出三文件，随资产提交，保证可复现。
 
-- 本规范默认：**hero 继续使用 `anchor-generate.png`（纯锚）**，仅几何对齐 Logo，零测试风险、零契约冲突。
-- 若用户坚持 hero 渲染完整 icon-only 标志：需**新增一枚资产**（如 `brand-ink-anchor.png`）+ 改 `SignatureHero.vue` 引用 + **同步修改上述 guard 测试断言**（放松「不新造图标」约束）。该项作为**独立后续 PR**，不在本规范落地。
+## 7. 与旧版（2026-10-24）的差异
 
-## 7. 生成方式约束（环境事实）
+- 旧版：程序化绘制 line-drawing 锚（负空间环 + 平直方头 + 弯钩），仅 `mask`，不新增文件、不改代码。
+- 本次：纯锚改为**品牌资产真实几何**提取；新增双色徽标 `anchor-badge.png`，并用 `<img>` 渲染（改 `SlideToCreate.vue` / `CanvasRefTargetIcon.vue` 两组件）。
 
-本机无 `rsvg-convert` / `inkscape` / `cairosvg` / `sharp` 等光栅化器，仅 `Pillow 12.3`。
-故以 **Pillow + numpy 距离场**在 4× 超采样下绘制 canonical 锚几何，再 LANCZOS 降采样得到带抗锯齿的蒙版 PNG。
-生成脚本随资产一同提交，保证可复现（见实施计划）。
+## 8. 待办 / 已知限制
+
+- 双色徽标在**暗底**若仍希望保持「黑盘」质感（而非反相），当前已通过「锚洞填白」保证锚可见；若某消费位确为暗底且黑盘不可见，可再出「白盘版」或对该 `<img>` 加 `filter: invert(1)`（当前 SlideToCreate 坐于 stamp-face 浅底、CanvasRefTargetIcon 主要位于浅色画布，无需）。
+- AgentSideRail 的 11/15px 定位锚维持纯锚；若后续坚持要徽标，可单独出简化徽标（去外环/波浪）。

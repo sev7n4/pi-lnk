@@ -4,7 +4,8 @@
  *   主文案 14 / text-fg；次文案 12 / text-fg-3；CTA 由调用方传入但句式统一。
  *
  * illustration 为可选的 IP 插画 URL。本期仓库无 IP 资产（assets/ 下只有
- * anchor-generate / anchor-locate / send-arrow 三张功能性图标），故一律不传，
+ * anchor-generate / anchor-locate（纯锚蒙版）/ anchor-badge（双色徽标）/ send-arrow
+ * 几张功能性图标），故一律不传，
  * 靠文案承担情绪；不新造资产、不用 emoji 顶替。资产就绪后按 props 接入，
  * 届时文案无需改动。
  *

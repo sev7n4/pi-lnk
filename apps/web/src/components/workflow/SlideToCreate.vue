@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import anchorBadge from '@/assets/icons/anchor-badge.png'
 
 /**
  * 滑动进入创作（2026-10-23 用户裁定「双入口」）：苹果滑动解锁的视觉语言——
@@ -118,7 +119,7 @@ const fillStyle = computed(() => ({
       aria-label="滑动进入创作"
       @keydown="onKeyDown"
     >
-      <span class="lnk-slide__glyph" aria-hidden="true" />
+      <img class="lnk-slide__glyph" :src="anchorBadge" alt="" aria-hidden="true" />
     </button>
   </div>
 </template>
@@ -238,9 +239,7 @@ const fillStyle = computed(() => ({
   display: block;
   width: 22px;
   height: 25px;
-  background: currentColor;
-  -webkit-mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
-  mask: url('@/assets/icons/anchor-generate.png') center / contain no-repeat;
+  object-fit: contain;
 }
 
 .lnk-slide--unlocked .lnk-slide__knob {
