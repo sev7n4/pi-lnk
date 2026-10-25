@@ -1,13 +1,13 @@
 {
- "total": 381,
+ "total": 396,
  "by_status": {
-  "living": 134,
-  "frozen": 241,
-  "superseded": 6
+  "living": 138,
+  "frozen": 251,
+  "superseded": 7
  },
  "by_topic": {
-  "other": 62,
-  "canvas-tool": 59,
+  "other": 71,
+  "canvas-tool": 65,
   "generation-pipeline": 40,
   "canvas-product": 34,
   "agent-ux": 31,
@@ -27,7 +27,7 @@
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 106
+  "2026-10": 121
  },
  "items": [
   {
@@ -1714,6 +1714,24 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/specs/2026-10-21-steer-history-persist-design.md",
+   "name": "2026-10-21-steer-history-persist-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-21-turn-continuity-batch3-design.md",
+   "name": "2026-10-21-turn-continuity-batch3-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/specs/2026-10-21-turn-continuity-design.md",
    "name": "2026-10-21-turn-continuity-design.md",
    "month": "2026-10",
@@ -1721,6 +1739,42 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-22-sp-b-align-guides-design.md",
+   "name": "2026-10-22-sp-b-align-guides-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-23-sp-c-viewport-restore-design.md",
+   "name": "2026-10-23-sp-c-viewport-restore-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-design.md",
+   "name": "2026-10-25-mobile-node-lifecycle-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-review-draft.md",
+   "name": "2026-10-25-mobile-node-lifecycle-review-draft.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "canvas-tool"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -3442,6 +3496,24 @@
    "topic": "canvas-tool"
   },
   {
+   "path": "docs/superpowers/plans/2026-10-21-group-frame-size-and-resize-pr.md",
+   "name": "2026-10-21-group-frame-size-and-resize-pr.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-21-group-frame-size-and-resize.md",
+   "name": "2026-10-21-group-frame-size-and-resize.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/plans/2026-10-21-multi-device-consistency.md",
    "name": "2026-10-21-multi-device-consistency.md",
    "month": "2026-10",
@@ -3458,6 +3530,69 @@
    "status": "frozen",
    "reason": "2026-10 非活跃主题",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-22-sp-b-align-guides.md",
+   "name": "2026-10-22-sp-b-align-guides.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-23-mobile-node-refactor-r2.md",
+   "name": "2026-10-23-mobile-node-refactor-r2.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-23-mobile-node-refactor-r3.md",
+   "name": "2026-10-23-mobile-node-refactor-r3.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-23-mobile-node-refactor-r4.md",
+   "name": "2026-10-23-mobile-node-refactor-r4.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-23-sp-c-viewport-restore.md",
+   "name": "2026-10-23-sp-c-viewport-restore.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-24-brand-anchor-icons.md",
+   "name": "2026-10-24-brand-anchor-icons.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-25-mobile-node-lifecycle.md",
+   "name": "2026-10-25-mobile-node-lifecycle.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
   }
  ]
 }

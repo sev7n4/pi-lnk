@@ -682,7 +682,7 @@ v1 经自上而下自审，修正以下冲突 / 重复 / 遗漏（详见文内�
 **落地上必须解决的三个技术点**（v1.3 新增，均有现成件可复用）：
 
 1. **合成「带标记的整图」** = canvas 合成：底图（`<img>`/`<video>` 当前帧/波形 canvas）+ 标记路径 + 输出 PNG blob。
-   - 图片底图须**同源化**再 `drawImage` ⇒ 复用 `services/media-url.ts` 的 `sameOriginApiMediaUrl`（已有，正是为 canvas 像素读取而写：把 `/api/uploads/` 绝对地址折叠为同源、把外部生成图折叠为 `/api/media/proxy`）。
+   - 图片底图须**同源化**再 `drawImage` ⇒ 复用 `apps/web/src/services/media-url.ts` 的 `sameOriginApiMediaUrl`（已有，正是为 canvas 像素读取而写：把 `/api/uploads/` 绝对地址折叠为同源、把外部生成图折叠为 `/api/media/proxy`）。
    - ⚠️ **代理仅支持图片**（`media.controller` 白名单只放行图片）⇒ **视频不能靠代理取帧**。视频帧方案：优先用 `<video>` 元素 + `crossOrigin="anonymous"` 直接 `drawImage`；若源站无 CORS 头则**降级为「暂停 + 文字意见，不带图」**（诚实降级，不静默失败）。
 2. **blob → 可用引用 URL**：引用契约**明确拒绝 blob URL**（`packages/shared/src/sidebarAttachments.ts`：`item.url?.startsWith('blob:')` 抛错）⇒ 合成后必须**上传**再进引用。复用 `useMediaUpload` 的 `fileToPersistedPayload`（`File` → 上传 → 持久 URL），产物落 `pendingAttachments`。
    - ⇒ 引用芯片在上传完成前**不能**出现在 composer（否则服务端会拒）⇒ 需一个「上传中」态。
