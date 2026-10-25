@@ -62,6 +62,26 @@ export function useEnterCreation() {
       // ⛔ 必须先判 error 再判空：list 失败时 projects 也是空数组，
       //    先判空会把「加载失败」误判成「零项目」⇒ 触发创建 ⇒ 违反 INV-6。
       if (ws.error.value) {
+        // ⭐ 2026-10-26 生产事故修复：**list 失败时用「记忆的项目」兜底**。
+        //
+        // 事故形态：品牌页点锚 →「正在进入画布…」→ 15 秒 →「项目加载失败 · 重试」，
+        //   重试依旧失败。DevTools：4 条 `GET /api/agent/canvas/list` 全部 15s
+        //   超时被取消、**已传输 0 B**；同窗口 nginx access.log 里**一条都没有**
+        //   ⇒ 请求根本没离开浏览器（排在浏览器的连接队列里）。
+        // 根因：会话级常驻订阅占满同源 HTTP/1.1 的 6 个连接 ⇒ 普通请求排队饿死。
+        //
+        // ✅「记忆的项目」来自 localStorage（按 userId 分区）⇒ **不需要任何请求**
+        //   ⇒ list 拿不到时仍能进画布，而不是把用户堵在错误态。
+        //
+        // ⚠️ 两条既有契约**不动**：
+        //   ① 「优先进最近有产物的项目」依赖 list 数据 ⇒ 正常路径仍先 list 再择优；
+        //   ② 移动端**自动分发**路径（allowImplicitCreate=false）list 失败时不跳转
+        //      且必须有可见反馈 ⇒ 兜底**只对手势路径**生效。
+        const remembered = opts?.allowImplicitCreate === false ? null : ws.resolveLastProjectId()
+        if (remembered) {
+          await navigate({ path: `/workflow/${remembered}`, query: { openAgent: '1' } })
+          return
+        }
         error.value = '项目加载失败'
         return
       }

@@ -74,6 +74,40 @@ describe('useEnterCreation', () => {
     expect(createMock).toHaveBeenCalledTimes(1)
   })
 
+  it('⭐ 2026-10-26 事故修复：list 失败 + 有记忆的项目 ⇒ 进记忆项目（不被错误态堵死）', async () => {
+    seedLoggedIn('u1')
+    // 记忆键 = lnkpi:lastProjectId:<userId>（useProjectWorkspace.storageKey）
+    localStorage.setItem('lnkpi:lastProjectId:u1', 'p-remembered')
+    // 连接饥饿时 list 会超时失败 ⇒ ws.error=true、projects=[]
+    listMock.mockRejectedValue(new Error('timeout'))
+    const { enterCreation, error } = useEnterCreation()
+    await enterCreation()
+    expect(push).toHaveBeenCalledWith({ path: '/workflow/p-remembered', query: { openAgent: '1' } })
+    expect(error.value).toBe(null) // ⛔ 不再把用户堵在「项目加载失败」
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('list 失败 + 无记忆 ⇒ 仍是「项目加载失败」且不跳转（INV-6 不动）', async () => {
+    seedLoggedIn('u1')
+    listMock.mockRejectedValue(new Error('timeout'))
+    const { enterCreation, error } = useEnterCreation()
+    await enterCreation()
+    expect(error.value).toBe('项目加载失败')
+    expect(push).not.toHaveBeenCalled()
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('移动端自动分发（allowImplicitCreate:false）+ list 失败 ⇒ 兜底**不生效**（不跳转）', async () => {
+    seedLoggedIn('u1')
+    localStorage.setItem('lnkpi:lastProjectId:u1', 'p-remembered')
+    listMock.mockRejectedValue(new Error('timeout'))
+    const { enterCreation, error } = useEnterCreation()
+    await enterCreation({ allowImplicitCreate: false })
+    // ⛔ 自动分发路径没有用户手势 ⇒ 不得替用户决定进哪个项目（既有契约）
+    expect(push).not.toHaveBeenCalled()
+    expect(error.value).toBe('项目加载失败')
+  })
+
   it('未登录：弹登录，不创建、不自动进项目（D-1）', async () => {
     const auth = useAuthStore()
     auth.isLoggedIn // computed：只读，确认可访问
