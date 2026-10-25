@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
 import { useMySessions } from '@/composables/useMySessions'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import SessionCard from '@/components/workflow/SessionCard.vue'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import type { Session } from '@lnkpi/shared'
@@ -20,6 +20,8 @@ import { ElMessage } from 'element-plus'
 const router = useRouter()
 const auth = useAuthStore()
 const sessions = useMySessions()
+// 2026-10-25 PR-2：创建通道收敛到 useProjectWorkspace（全仓唯一 create 通道）。
+const { create: createProject } = useProjectWorkspace()
 
 async function openCanvas(sessionId: string) {
   router.push(`/workflow/${sessionId}`)
@@ -32,12 +34,14 @@ async function createCanvas() {
   }
   // 2026-10-24 修复（fix/createcanvas-guard）：失败不再静默回主页（用户只看到无反应），
   // 改为明确报错 + 20s 客户端超时（默认 120s）避免上百秒零反馈。
+  // ⚠️ 2026-10-25 PR-2：通道换成 useProjectWorkspace.create（唯一 create 通道），
+  //    但**20s 超时必须显式带过去**——收敛时最容易丢的就是它。
   const loading = ElMessage({ type: 'info', message: '正在创建画布…', duration: 0 })
   try {
-    const { data } = await sessionsApi.create({}, { timeout: 20_000 })
+    const created = await createProject({ timeoutMs: 20_000 })
     loading.close()
     router.push({
-      path: `/workflow/${data.data.id}`,
+      path: `/workflow/${created.id}`,
       query: { openAgent: '1' },
     })
   } catch {

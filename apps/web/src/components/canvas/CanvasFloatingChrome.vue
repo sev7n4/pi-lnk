@@ -16,6 +16,11 @@ const emit = defineEmits<{
   publish: []
   importWorkflow: []
   exportWorkflow: []
+  /**
+   * 2026-10-25 PR-2：点「项目名 ▾」⇒ 请求打开项目列表（ProjectPanel），用于切换项目。
+   * ⛔ 只发事件、不自己实现面板：面板形态由 ProjectPanel 独占（PC 与移动端同一份）。
+   */
+  'project-click': []
 }>()
 
 const router = useRouter()
@@ -44,6 +49,34 @@ useClickOutside(menuRef, closeMenu)
     </button>
 
     <div class="neo-chrome pointer-events-auto flex items-center gap-1.5 rounded-xl px-2 py-1">
+      <!-- 2026-10-25 PR-2：项目入口（点开项目列表以切换项目）。
+           沿用现有 chrome 容器与间距，不新增 hex；新代码走 --lnk-* 令牌
+           （旧 --neo-* 体系只减不增，见 text-token-guard）。 -->
+      <button
+        type="button"
+        class="chrome-project-btn flex h-7 max-w-[140px] items-center gap-1 rounded-lg px-1.5 text-xs transition"
+        title="项目列表"
+        @click.stop="emit('project-click')"
+      >
+        <svg
+          class="h-3.5 w-3.5 shrink-0"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"
+          />
+        </svg>
+        <span class="truncate">{{ title || '未命名项目' }}</span>
+        <svg class="h-3 w-3 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M7 10l5 5 5-5z" />
+        </svg>
+      </button>
+
       <input
         :value="title"
         class="chrome-title-input w-[110px] truncate bg-transparent px-1 py-1 text-sm font-medium outline-none transition-all duration-200 focus:w-[200px]"
@@ -107,6 +140,17 @@ useClickOutside(menuRef, closeMenu)
 <style scoped>
 .chrome-title-input {
   color: var(--neo-text-primary);
+}
+
+/* 2026-10-25 PR-2：项目入口按钮。刻意与标题输入框区分——输入框是「改名」，
+   本按钮是「换项目」；颜色取次级文本色以免抢输入框的主位。 */
+.chrome-project-btn {
+  color: var(--lnk-text-secondary);
+}
+
+.chrome-project-btn:hover {
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-primary);
 }
 
 .chrome-title-input::placeholder {

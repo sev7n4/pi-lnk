@@ -2563,11 +2563,13 @@ async function createOwnCanvas() {
     return
   }
   try {
-    // IA v4（2026-10-23）：不传 title ⇒ 后端默认「未命名项目」（list 兜底编号）
-    const { data } = await sessionsApi.create({})
-    void router.push(`/workflow/${data.data.id}`)
+    // 2026-10-25 PR-2：通道换成 useProjectWorkspace.create（唯一 create 通道）。
+    // ⚠️ 失败不再静默 goToWorkflowHome（用户零反馈：点了没反应，还被弹回品牌页），
+    //    改为明确报错——与 CanvasesPage / WorkflowPage 的 10-24 修复对齐。
+    const created = await createProject()
+    void router.push(`/workflow/${created.id}`)
   } catch {
-    goToWorkflowHome()
+    ElMessage.error('新建项目失败，请重试')
   }
 }
 
@@ -3742,6 +3744,8 @@ const {
   loading: projectsLoading,
   error: projectsError,
   list,
+  // 2026-10-25 PR-2：创建通道收敛到 workspace（全仓唯一 create 通道）。
+  create: createProject,
 } = useProjectWorkspace()
 
 /**
@@ -3776,9 +3780,9 @@ function openProject(id: string) {
 }
 async function newProject() {
   try {
-    const res = await canvasApi.create()
-    const created = res.data?.data as { id?: string } | undefined
-    if (!created?.id) throw new Error('no id')
+    // 2026-10-25 PR-2：通道换成 useProjectWorkspace.create（唯一 create 通道）；
+    // 不传 title ⇒ 后端默认「未命名项目」（IA v4）。
+    const created = await createProject()
     // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
     void router.push(`/workflow/${created.id}`)
   } catch {
