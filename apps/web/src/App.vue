@@ -38,7 +38,15 @@ onMounted(() => {
     <div v-if="!isImmersiveCanvas" class="pointer-events-none fixed inset-0 bg-hero-gradient" />
     <AppHeader v-if="!isImmersiveCanvas" />
     <main class="relative z-10" :class="isImmersiveCanvas ? 'h-[100dvh] overflow-hidden' : ''">
-      <RouterView />
+      <!-- ⛔ 2026-10-25：`:key="route.path"` 不是可有可无的优化，是**切项目能生效**的前提。
+           同一路由只换 param（/workflow/a → /workflow/b）时，Vue Router 默认**复用组件实例**
+           ⇒ onMounted 不再跑 ⇒ CanvasPage 的 `loadSession()` 不再执行 ⇒ 画布停在旧项目
+           （生产实证：回访用户点【历史项目】进另一个项目，画布内容不变）。
+           而 CanvasPage 的 loadSession() 是**合并**语义（mergeCanvasNodesFromServer），
+           复用实例下即便补触发也会把两个项目的节点并起来 ⇒ 必须是**全新实例**。
+           ⛔ key 取 **path** 而非 fullPath：focusNode 消费后会 `router.replace` 改 query，
+              fullPath 随之变化 ⇒ 重挂载 ⇒ 又触发消费 ⇒ 循环。 -->
+      <RouterView :key="route.path" />
     </main>
     <LoginDialog />
   </div>

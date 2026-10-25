@@ -112,18 +112,29 @@ function onOpen(id: string) {
             </button>
           </div>
           <!-- 「展开更多 / 收起」（2026-10-19 用户裁决）：默认预览最近 8 条，按钮与第 8 条
-               同屏不折叠；剩余计数随列表长度实时变化。加载中/失败态不显示。 -->
+               同屏不折叠；剩余计数随列表长度实时变化。
+               ⛔ 2026-10-25：可见性只取决于「**有没有更多项目**」，**不再取决于 loading/error**。
+                  此前被 `!loading && !error` 卡住 ⇒ 后台刷新一进行按钮就消失 ⇒
+                  账号有 266 个项目时，用户只看得见 8 个、且「展开更多」在刷新期间根本摸不到。 -->
           <button
-            v-if="!loading && !error && projects.length > PROJECTS_PREVIEW_COUNT"
+            v-if="projects.length > PROJECTS_PREVIEW_COUNT"
             type="button"
             class="session-drawer__expand"
             @click="toggleProjectsExpanded"
           >
             {{ projectsExpanded ? '收起' : `展开更多（还有 ${projects.length - PROJECTS_PREVIEW_COUNT} 个）` }}
           </button>
-          <p v-if="loading" class="session-drawer__empty">项目加载中…</p>
-          <p v-else-if="error" class="session-drawer__empty">
+          <!-- 加载态：只在**一条都还没有**时占位。否则一次后台刷新会把可用的清单顶掉
+               —— 用户看到「项目加载中…」，而能用的项目就在它上面。 -->
+          <p v-if="loading && !projects.length" class="session-drawer__empty">项目加载中…</p>
+          <!-- 失败态：**有数据 ⇒ 清单照常显示**，只给一条不阻塞的提示
+               （「刷新失败」≠「没有数据」）；无数据 ⇒ 才整块报错。 -->
+          <p v-else-if="error && !projects.length" class="session-drawer__empty">
             项目加载失败
+            <button type="button" class="session-drawer__retry" @click="emit('retry')">重试</button>
+          </p>
+          <p v-else-if="error" class="session-drawer__stale-hint">
+            刷新失败，当前显示的是上次的结果。
             <button type="button" class="session-drawer__retry" @click="emit('retry')">重试</button>
           </p>
           <p v-else-if="!projects.length" class="session-drawer__empty">暂无项目</p>
@@ -295,6 +306,15 @@ function onOpen(id: string) {
 
 .session-drawer__empty {
   padding: 18px 4px;
+  font-size: var(--lnk-text-xs, 12px);
+  text-align: center;
+  color: var(--lnk-text-muted);
+}
+
+/* 刷新失败但**已有数据**时的提示（不阻塞清单）：比「项目加载失败」弱一档 ——
+   用户此刻是「有东西可看、只是可能不是最新的」。 */
+.session-drawer__stale-hint {
+  padding: 10px 4px;
   font-size: var(--lnk-text-xs, 12px);
   text-align: center;
   color: var(--lnk-text-muted);
