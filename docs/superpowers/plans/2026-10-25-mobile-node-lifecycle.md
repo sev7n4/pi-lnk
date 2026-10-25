@@ -122,7 +122,7 @@ import { describe, it, expect } from 'vitest'
 import { resolveMobileNodeTapIntent } from './mobileNodeOpenPolicy'
 
 describe('resolveMobileNodeTapIntent（状态门控 · D1/D3）', () => {
-  it('empty 节点 tap = none（不���编辑器）', () => {
+  it('empty 节点 tap = none（不进编辑器）', () => {
     expect(resolveMobileNodeTapIntent({ type: 'image', data: {} })).toBe('none')
     expect(resolveMobileNodeTapIntent({ type: 'text', data: {} })).toBe('none')
     expect(resolveMobileNodeTapIntent({ type: 'image', data: null })).toBe('none')
