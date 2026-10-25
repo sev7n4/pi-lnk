@@ -4,11 +4,11 @@
 
 **Goal:** 让移动端画布节点有一套单一可查的手势门控（4 类节点 × 5 态 × 2 手势 + 多选态叠加），并把模式①（agent 驱动）的主闭环在移动端打通：看产物 → 手指圈一下 → 写一句 → 锚回传 → agent 重生成。
 
-**Architecture:** 分三个包落地。**M1 原则闭环**只改纯函数与既有组件的退出通道，不引入新组件；**M2** 分两半——「操作集补全」（在既有动作 sheet 上加三项 + 加状态门控 + 删除确认）与「载体改造」（新建轻量编辑器 + 标注浮层，拆掉 `MobileNodeEditorSheet` 对 `DockStudioRouter` 的复用）；**M3** 补行为级守卫与真机走查清单。
+**Architecture:** 分三个包落地。**M1 原则闭环**只改纯函数与既有组件的退出通道，不引入新组件；**M2** 分两半——「操作集补全 + 跨端组件哲学」（长按浮层改 **Menu 语义** + 一级 ≤5 项分层 + 状态门控 + 删除走**撤销优先** + 浮层统一 `MobileSheet` 基座 + 图标体系统一）与「载体改造」（新建轻量编辑器 + 标注浮层，拆掉 `MobileNodeEditorSheet` 对 `DockStudioRouter` 的复用）；**M3** 补行为级守卫与真机走查清单。
 
 **Tech Stack:** Vue 3 `<script setup>` + TypeScript、vitest（jsdom）、Pinia、vue-flow、原生 canvas（标注合成）、`@lnkpi/shared` 的 `SidebarAttachment` 契约。
 
-**Spec:** `docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-design.md`（规范真相源，876 行）——执行者须同时读它与 `docs/adr/0013-mobile-node-interaction-mode-and-carriers.md`（决策真相源）。
+**Spec:** `docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-design.md`（规范真相源，1137 行，含 **§4.11 跨端视觉与组件哲学（iOS HIG / Material 3 对齐）**）——执行者须同时读它与 `docs/adr/0013-mobile-node-interaction-mode-and-carriers.md`（决策真相源，含决定八）。
 **原始评审稿（归档）：** `docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-review-draft.md`（只作决策追溯，实施不依据）。
 
 ---
@@ -18,7 +18,7 @@
 以下约束**逐条来自规格**，每个任务的隐含要求都包含本节。
 
 - **G-1 移动端 tap 永不进编辑器**：空节点 / generating / error(无旧产物) 的 tap = 无 op + 轻提示「长按编辑 / 长按撰写」；pending / confirmed 的 tap = 查看。（规格 §5.1）
-- **G-2 长按是唯一管理入口**：所有节点管理操作只从长按动作 sheet 进；本体不铺胶囊按钮、不铺锚按钮。（规格 §4.4 第 3 点、§4.6）
+- **G-2 长按是唯一管理入口**：所有节点管理操作只从长按唤起的 **Menu** 进（**不是** Action Sheet，HIG 语义：reveal ≠ clarify）；本体不铺胶囊按钮、不铺锚按钮。（规格 §4.11.2、§4.4 第 3 点、§4.6）
 - **G-3 全屏层必须可退**：查看器与编辑 sheet 同时具备「右上 X」与「下滑关闭」；退出即停（视频 `pause()`、朗读停止）。（规格 §4.1 P3）
 - **G-4 模式① 移动端编辑器无参数控件、无「生成」钮**：源码级断言 `MobileNodeEditorSheet.vue` 不含 `DockStudioRouter`。（规格 §4.2 J1/K1、§10.2 G-7/G-8）
 - **G-5 标注只有一支笔**：只做手指自由圈选；产出「带标记的整图 + 一句文字」；不做区域裁切、不引入坐标契约、不做多工具栏。（规格 §4.3 L1）
@@ -27,12 +27,17 @@
 - **G-8 回传必须看得见落地**：切回对话页 + composer 出现芯片 + （失败时）明确 toast，三者至少其一；视频无 CORS 时**只带文字**并明说降级，不静默丢图。（规格 §4.5 可见性铁律、§10.2 G-11/G-12）
 - **G-9 零新契约、零服务端改动**：标注引用复用 `SidebarAttachment` 现有字段（`mediaType` / `url` / `text` / `sourceNodeId` / `label` / `sourceKind`）；`packages/shared` 与 `apps/server` **不改一行**。（规格 §5.4、§7）
 - **G-10 blob URL 不可入引用**：合成图必须先上传（`useMediaUpload.fileToPersistedPayload`）才写入 `pendingAttachments`；引用芯片需「上传中」态。（规格 §4.3 技术点 2）
-- **G-11 破坏性操作**：删除 = 置底 + 红色 + **二次确认**；未确认不得删节点。（规格 §4.4、§10.2 G-5）
+- **G-11 破坏性操作（撤销优先）**：删除**可撤销** ⇒ 直接删除 + Snackbar「撤销」（时长 ≥5s，单一 action，MD3 `R5.16`）；**不可撤销**的删除（级联删上游 / 跨项目）才走确认弹层，且破坏性**置顶**红色。Menu 内删除**置底 + 前置分隔线**。（规格 §4.11.4、§4.11.10、§10.2 G-5/G-17）
 - **G-12 状态门控**：generating 态长按**不出现**「引用 / 副本 / 资产库 / 保存到本地」。（规格 §5.1、§6.4）
 - **G-13 音频永不进查看器**：`MobileNodeViewer` 的 `type` 不含 `audio`；音频的查看走磁贴内联。（规格 §6.2）
 - **G-14 不造假**：不造进度百分比（只给「N 个生成中 · 耗时」）；波形取不到真实 peaks 时保持占位；视频取不到帧时诚实降级。（规格 §5.1、§4.3）
 - **G-15 设计令牌**：只消费 `apps/web/src/styles/design-tokens.css` 的 `--lnk-*` 令牌；**禁** `--neo-*`、禁裸 hex / 裸 rgba。（仓库既有纪律）
 - **G-16 PC 零 diff**：本计划所有改动**只动移动端路径**（`components/mobile/**` + `composables/mobile*` + `pages/CanvasPage.vue` 的移动端分支）；PC 组件与 `apps/server` 不改。例外：`apps/web/src/components/agent/AgentSidebarRefChip.vue` 的缩略图预览是 PC/移动端共用组件 ⇒ 改动必须**只加不破**（PC 现有快照测试必须仍绿）。
+- **G-17 菜单数量上限**：长按 Menu **一级 ≤5 项**；低频项（副本含上游 / 存入资产库 / 保存到本地）进二级「更多」；⛔ 禁可滚动的 Action Sheet。（规格 §4.11.3，HIG「含取消 ≤4 按钮」）
+- **G-18 图标体系**：**零第三方图标库**；新增图标一律**内联 SVG**（24 网格 + `stroke-width:2`，照抄 `MobileSheet` 既有范式）；⛔ 禁文本字符（`‹` `×` `⋯`）当功能图标；**锚是唯一例外**（品牌位图 `anchor-locate.png`，守卫已锁）。（规格 §4.11.5）
+- **G-19 浮层基座唯一**：移动端浮层一律走 `MobileSheet`（scrim + 拖拽把手 + 圆角 + 阴影 + 安全区 + Teleport body）；⛔ 禁新写第二套 sheet 皮肤；圆角/动效用令牌（禁硬编码）且**必须支持 `prefers-reduced-motion`**。（规格 §4.11.8）
+- **G-20 命中区与可达性**：所有可点控件命中区 **≥44px**（`--lnk-touch-target`，已有守卫）；**高频操作放下方**（查看器「改词」在底部主栏，顶部只放 X · ⋯）。（规格 §4.11.6）
+- **G-21 动词短语文案**：操作项文案用动词短语（「引用到对话 / 创建副本 / 编辑提示词 / 删除节点」），⛔ 不用「Yes / OK」；破坏性确认标题须**说明后果**。（规格 §4.11.7）
 
 **测试纪律（仓库既有，逐任务适用）：**
 
@@ -58,7 +63,11 @@ cmd > /tmp/x.log 2>&1; echo EXIT=$?
 4. **上传失败 / 弱网**：合成图必须先上传才能进引用（契约拒 blob）。用户点「⚓ 带回对话」后若网络慢，**不能**出现"点了没反应"，也不能提前把 blob 塞进 composer（服务端会拒）。→ Task 7（上传中态 + 失败 toast + blob 不入引用）。
 5. **多选态下点已选中的节点**：应**取消选中**而不是"无反应"或"重新选中"；且多选态下长按**不得**弹单节点动作 sheet（否则退回单节点语境，破坏 selection mode 的心智）。→ Task 5。
 
+6. **长按浮层的可滚动手势**：HIG 明文「避免可滚动的 Action Sheet」——若把 11 项平铺进一个可滚动浮层，用户在滑动时会**误触按钮**（HIG 原文：*"scrolling an action sheet can be hard to do without inadvertently tapping a button"*）。⇒ 一级 ≤5 项 + 二级「更多」，且**禁止**一级浮层出现滚动条。→ Task 4。
+
 > 另有一条**实现期易踩**的（非用户输入）：改 `MobileNodeEditorSheet` 的契约会打破既有测试断言（`DockStudioRouter` 的 `generate` emit 透传 / R4-T2 断链修复用例）⇒ Task 6 必须**同步改**那些断言，且 PR 描述要标注「本 PR 会影响 `MobileNodeEditorSheet` 相关测试」（规格 §11 R-1）。
+>
+> 再一条：改 `MobileNodeActionSheet` 的**结构**（Menu 化 + 走 `MobileSheet` 基座）会打破它现有的 **6 个测试**（`MobileNodeActionSheet.test.ts` / `.r4.test.ts` / `.multiSelect.test.ts`）⇒ Task 4 必须**逐条重写**而非删除（保留「重命名内联」「多选三态文案」等行为语义），且与 Task 9 合并为一个 PR（规格 R-10）。
 
 ---
 
@@ -69,14 +78,16 @@ cmd > /tmp/x.log 2>&1; echo EXIT=$?
 | `apps/web/src/composables/mobileNodeOpenPolicy.ts` | 节点 → tap 意图（**引入状态门控**，D1/D3） | 1 |
 | `apps/web/src/composables/mobileNodeOpenPolicy.test.ts` | 门控真值表 | 1 |
 | `apps/web/src/components/mobile/MobileNodeTile.vue` | 节点本体（空瓦片 CTA 文案） | 1 |
-| `apps/web/src/components/mobile/MobileNodeViewer.vue` | 全屏查看器（X + 下滑 + 停播；删 audio 死分支） | 2 |
+| `apps/web/src/components/mobile/MobileNodeViewer.vue` | 全屏查看器（X + 下滑 + 停播；删 audio 死分支；**`‹` → 内联 SVG**；右上 X + ⋯；改词下沉底部） | 2, 9 |
 | `apps/web/src/components/mobile/MobileNodeViewer.test.ts` | 退出通道断言 | 2 |
-| `apps/web/src/components/mobile/MobileNodeActionSheet.vue` | 长按动作 sheet（新增三项 + 状态门控） | 4 |
-| `apps/web/src/components/mobile/MobileNodeActionSheet.test.ts` | 操作集 + 门控断言 | 4 |
-| `apps/web/src/pages/CanvasPage.vue` | 页面层分发（删除确认 / 新增三个动作 / 编辑器接线） | 3, 4, 6, 8 |
+| `apps/web/src/components/mobile/MobileNodeActionSheet.vue` | 长按 **Menu**（Menu 化 + 走 `MobileSheet` 基座 + 一级/二级分层 + 状态门控 + 动词短语文案） | 4, 9 |
+| `apps/web/src/components/mobile/MobileNodeActionSheet.test.ts` | 操作集 + 门控 + 分层上限断言 | 4 |
+| `apps/web/src/components/mobile/MobileSheet.vue` | **浮层唯一基座**（令牌化 + reduce-motion + `actions` slot） | 9 |
+| `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **新增**：跨端视觉语言静态守卫（无文本字符图标 / 走基座 / 令牌化 / reduce-motion） | 9 |
+| `apps/web/src/pages/CanvasPage.vue` | 页面层分发（删除撤销 / 新增三个动作 / 编辑器接线 / 查看器底部主栏） | 3, 4, 6, 8, 9 |
 | `apps/web/src/components/mobile/MobileNodeEditorSheet.vue` | **重写**：轻量「提示词 + 意见」编辑器（不挂 `DockStudioRouter`） | 6 |
 | `apps/web/src/components/mobile/MobileNodeEditorSheet.test.ts` | 契约断言（无 dock / 无生成钮 / 参数只读） | 6 |
-| `apps/web/src/composables/mobileNodeActionPolicy.ts` | **新增**：节点状态 → 可用操作集（纯函数，sheet 与页面层共用） | 4 |
+| `apps/web/src/composables/mobileNodeActionPolicy.ts` | **新增**：节点状态 → 可用操作集 + **一级/二级分层**（纯函数，menu 与页面层共用） | 4 |
 | `apps/web/src/composables/mobileNodeActionPolicy.test.ts` | 门控真值表 | 4 |
 | `apps/web/src/composables/mobileAnnotateIntent.ts` | **新增**：节点类型 → 标注底图来源（纯函数） | 7 |
 | `apps/web/src/composables/mobileAnnotateIntent.test.ts` | 底图来源真值表 | 7 |
@@ -315,19 +326,23 @@ git commit -m "fix(mobile): 查看器加右上 X + 下滑关闭 + 退出即停�
 
 ---
 
-## Task 3: 删除二次确认（D5）
+## Task 3: 删除走「撤销优先」（D5 / §4.11.10）
+
+> ⚠️ **本任务已按规格 §4.11.10 修订**（iOS HIG：*"Undo beats 'Are you sure?' for reversible actions"*）。仓库**已有** `useCanvasUndoStack`（`undo()` / `canUndo`）且明确支持 delete→undo 恢复 url/status ⇒ **首选「删除 + Snackbar 撤销」**，二次确认弹层只作为**不可撤销删除**的兜底。
+> **实现时先 grep 仓库既有 toast/snackbar 范式**（`grep -rn "ElMessage\|snackbar\|toast" apps/web/src/components/mobile | head`），沿用既有组件，**不新造提示组件**。
 
 **Files:**
 - Modify: `apps/web/src/pages/CanvasPage.vue`
-- Test: `apps/web/src/pages/CanvasPage.mobileDeleteConfirm.test.ts`（**新增**，静态源码契约形态，参照同目录既有 `CanvasPage.mobile*.test.ts` 写法）
+- Modify: `apps/web/src/composables/useCanvasUndoStack.ts`（**仅在需要暴露「删除并可撤销」入口时**；核心 `undo()` 已有，不重写）
+- Test: `apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts`（**新增**，静态源码契约形态，参照同目录既有 `CanvasPage.mobile*.test.ts` 写法）
 
 **Interfaces:**
-- Consumes: `ElMessageBox`（element-plus，项目既有确认弹窗用法）或既有 `ProposeConfirmOverlay` 通道 —— **实施时先 grep 仓库既有二次确认写法**（`grep -rn "ElMessageBox" apps/web/src | head`），沿用既有范式，**不新造弹窗组件**。
-- Produces: `removeSingleNode(nodeId)` 的调用点从动作分发直达改为「先确认再删」。
+- Consumes: `canvasUndo`（`CanvasPage.vue:415` 已创建，含 `undo()` / `canUndo`）；既有 toast/snackbar 组件。
+- Produces: 删除后弹出**可撤销**提示（时长 ≥5s + 单一「撤销」action，MD3 `R5.16`）；点「撤销」⇒ `canvasUndo.undo()` ⇒ 节点恢复。**不可撤销的删除**（级联删上游 / 跨项目）⇒ 走确认弹层（破坏性**置顶**红色，§4.11.4）。
 
 - [ ] **Step 1: 写失败测试**
 
-新建 `apps/web/src/pages/CanvasPage.mobileDeleteConfirm.test.ts`（静态契约形态，参照同目录既有测试）：
+新建 `apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts`（静态契约形态，参照同目录既有测试）：
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -336,11 +351,16 @@ import { join } from 'node:path'
 
 const SRC = readFileSync(join(__dirname, 'CanvasPage.vue'), 'utf-8')
 
-describe('删除二次确认（D5）', () => {
-  it('移动端删除动作必须先确认，不得直达 removeSingleNode', () => {
+describe('删除走撤销优先（D5 / §4.11.10）', () => {
+  it('移动端删除动作必须产出可撤销提示（撤销优先），不得静默删除', () => {
     const dispatch = SRC.slice(SRC.indexOf('function handleMobileNodeAction'))
     const deleteCase = dispatch.slice(0, dispatch.indexOf('case ', 10))
-    expect(deleteCase).toMatch(/confirm/i)
+    // 要么走撤销（undo / 可撤销提示），要么走确认（confirm）—— 二者必居其一，不得裸删
+    expect(deleteCase).toMatch(/undo|confirm|撤销/i)
+  })
+
+  it('删除后必须有可撤销提示的落地接线（canvasUndo.undo 被调用）', () => {
+    expect(SRC).toMatch(/canvasUndo\.undo\(/)
   })
 })
 ```
@@ -348,7 +368,7 @@ describe('删除二次确认（D5）', () => {
 - [ ] **Step 2: 跑测试确认失败**
 
 ```bash
-cd apps/web && /Users/4seven/.nvm/versions/node/v24.13.0/bin/node ./node_modules/vitest/vitest.mjs run src/pages/CanvasPage.mobileDeleteConfirm.test.ts --maxWorkers=1 --no-file-parallelism > /tmp/t3.log 2>&1; echo EXIT=$?; tail -15 /tmp/t3.log
+cd apps/web && /Users/4seven/.nvm/versions/node/v24.13.0/bin/node ./node_modules/vitest/vitest.mjs run src/pages/CanvasPage.mobileDeleteUndo.test.ts --maxWorkers=1 --no-file-parallelism > /tmp/t3.log 2>&1; echo EXIT=$?; tail -15 /tmp/t3.log
 ```
 
 Expected: FAIL —— `case 'delete'` 分支当前直接 `removeSingleNode(nodeId)`。
@@ -363,62 +383,84 @@ Expected: FAIL —— `case 'delete'` 分支当前直接 `removeSingleNode(nodeI
       break
 ```
 
-改为**先确认**（沿用仓库既有二次确认范式；下例以 `ElMessageBox` 为例，实施时以 grep 到的既有范式为准）：
+改为**「删除 + 可撤销提示」**（撤销优先；确认弹层只作不可撤销删除的兜底）：
 
 ```ts
     case 'delete':
-      // D5：删除是破坏性操作 ⇒ 二次确认（规格 §4.4 破坏性置底+红色+二次确认）
-      void confirmThen(() => {
-        removeSingleNode(nodeId)
-        closeMobileNodeAction()
+      // D5 / §4.11.10：删除可撤销 ⇒ 优先「删除 + Snackbar 撤销」（iOS: Undo beats 'Are you sure?'）
+      removeSingleNode(nodeId)
+      closeMobileNodeAction()
+      showUndoToast({
+        message: '节点已删除',
+        actionLabel: '撤销',
+        duration: 5000,
+        onAction: () => {
+          canvasUndo.undo()
+          void saveCanvas()
+        },
       })
       break
 ```
 
-其中 `confirmThen` 是本次新增的本地辅助（`ElMessageBox.confirm` 的薄封装，取消时**不**执行回调、不关 sheet——用户按 P3 语义留在原层）。若仓库既有 `ProposeConfirmOverlay` 通道更适合，则改为走它。
+- `showUndoToast` = **沿用仓库既有 toast/snackbar 组件**的薄封装（实施时以 grep 到的既有范式为准，不新造提示组件）；若无既有组件则新建 `MobileUndoToast.vue`（**单一 action**、时长 ≥5s，MD3 `R5.16`）。
+- **不可撤销的删除**（级联删上游 / 跨项目）⇒ 改走确认弹层，且破坏性按钮**置顶**红色（§4.11.4）。
+- ⚠️ `removeSingleNode` 内部已通过 `persistUserEdit` 进撤销栈（`CanvasPage.vue:415` 的 `canvasUndo`）⇒ 删除后 `canvasUndo.undo()` 可恢复节点。**实施时须实测验证 undo 确实恢复 url/status**（`useCanvasUndoStack.ts:6-9` 的 delete→undo session cache 机制）。
 
 > ⚠️ 注意 `closeMobileNodeAction()` 在 `handleMobileNodeAction` 末尾统一调用 ⇒ 走异步确认时**不能**在末尾提前关掉 sheet，否则确认框会挂在已关闭的 sheet 上。上面代码把关闭动作放进回调里，并在末尾用 `return` 跳过统一关闭。
 
 - [ ] **Step 4: 跑测试确认通过**
 
 ```bash
-cd apps/web && /Users/4seven/.nvm/versions/node/v24.13.0/bin/node ./node_modules/vitest/vitest.mjs run src/pages/CanvasPage.mobileDeleteConfirm.test.ts src/pages/CanvasPage.mobileWalkthroughRound2.test.ts --maxWorkers=1 --no-file-parallelism > /tmp/t3b.log 2>&1; echo EXIT=$?; tail -20 /tmp/t3b.log
+cd apps/web && /Users/4seven/.nvm/versions/node/v24.13.0/bin/node ./node_modules/vitest/vitest.mjs run src/pages/CanvasPage.mobileDeleteUndo.test.ts src/pages/CanvasPage.mobileWalkthroughRound2.test.ts --maxWorkers=1 --no-file-parallelism > /tmp/t3b.log 2>&1; echo EXIT=$?; tail -20 /tmp/t3b.log
 cd apps/web && npx vue-tsc -b > /tmp/t3c.log 2>&1; echo TSC_EXIT=$?
 ```
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add apps/web/src/pages/CanvasPage.vue apps/web/src/pages/CanvasPage.mobileDeleteConfirm.test.ts
-git commit -m "fix(mobile): 删除节点走二次确认 (D5)"
+git add apps/web/src/pages/CanvasPage.vue apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts
+git commit -m "fix(mobile): 删除节点走「撤销优先」而非二次确认 (D5/§4.11.10)"
 ```
 
 ---
 
-## Task 4: 动作 sheet 操作集补全 + 状态门控（D6 / D7）
+## Task 4: 长按菜单化 + 操作集补全 + 状态门控（D6 / D7 / §4.11）
+
+> ⚠️ **本任务已按规格 §4.11 修订**：长按浮层从「Action Sheet」改为 **Menu 语义**（HIG：*"people expect a menu to appear when they choose to reveal it"*），并施加**一级 ≤5 项**上限（§4.11.3）。**本任务与 Task 9 合并为一个 PR**（避免同一组件两轮重写，见规格 R-10）。
+> ⚠️ **不要新造浮层皮肤**：`MobileNodeActionSheet` 现状是裸 `position:fixed` div（无 scrim / 无拖拽把手 / 无圆角 / 无 Teleport ⇒ 点浮层外画布不会关）⇒ **必须改走既有 `MobileSheet` 基座**（§4.11.8）。
 
 **Files:**
 - Create: `apps/web/src/composables/mobileNodeActionPolicy.ts`
 - Create: `apps/web/src/composables/mobileNodeActionPolicy.test.ts`
-- Modify: `apps/web/src/components/mobile/MobileNodeActionSheet.vue`
+- Modify: `apps/web/src/components/mobile/MobileNodeActionSheet.vue`（**改走 `MobileSheet` 基座 + Menu 化 + 一级/二级分层 + 动词短语文案**）
 - Modify: `apps/web/src/components/mobile/MobileNodeActionSheet.test.ts`
+- Modify: `apps/web/src/components/mobile/MobileNodeActionSheet.r4.test.ts`
+- Modify: `apps/web/src/components/mobile/MobileNodeActionSheet.multiSelect.test.ts`
 - Modify: `apps/web/src/pages/CanvasPage.vue`
 
 **Interfaces:**
-- Consumes: `resolveMobileNodeState(node)` from `@/composables/mobileNodeState`
+- Consumes: `resolveMobileNodeState(node)` from `@/composables/mobileNodeState`；`MobileSheet.vue`（基座）
 - Produces:
   ```ts
   export type MobileNodeActionKey =
     | 'rename' | 'reference' | 'duplicate' | 'duplicate-upstream'
     | 'save-asset' | 'save-local' | 'multi-select' | 'edit' | 'delete'
 
+  export type MobileNodeMenuTier = 'primary' | 'more'
+
   export function resolveMobileNodeActions(node: {
     id: string
     type: string
     data?: Record<string, unknown> | null
   }): MobileNodeActionKey[]
+
+  /** 一级 / 二级分层（§4.11.3）：一级 ≤5 项，低频项进二级「更多」 */
+  export function resolveMobileNodeMenuTiers(
+    node: { id: string; type: string; data?: Record<string, unknown> | null },
+  ): { primary: MobileNodeActionKey[]; more: MobileNodeActionKey[] }
   ```
-  - **顺序固定**（规格 §4.4 频率分层）：`edit` 置顶（高频主操作）→ 中频平铺 → `delete` 置底。
+  - **一级 ≤5 项**：`edit` / `reference` / `duplicate` / `multi-select` / `delete`（+「更多」入口）⇒ **低频三项 `duplicate-upstream` / `save-asset` / `save-local` 进二级**。
+  - **顺序固定**（规格 §4.4 频率分层 + §4.11.4）：`edit` 置顶（高频主操作）→ 中频平铺 → `delete` 置底**且前置分隔线**（Menu 内破坏性置底；确认弹层内置顶）。
   - **门控**（规格 §5.1 / G-12）：`generating` 态**不返回** `reference` / `duplicate` / `duplicate-upstream` / `save-asset` / `save-local`；`empty` 态**不返回** `duplicate-upstream` / `save-asset` / `save-local`（无产物）；`delete` 在 `generating` 态**不返回**（G-11 + 规格 §6.4「默认禁止」）。
 
 - [ ] **Step 1: 写失败测试**
@@ -427,7 +469,7 @@ git commit -m "fix(mobile): 删除节点走二次确认 (D5)"
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { resolveMobileNodeActions } from './mobileNodeActionPolicy'
+import { resolveMobileNodeActions, resolveMobileNodeMenuTiers } from './mobileNodeActionPolicy'
 
 describe('resolveMobileNodeActions（操作集 + 状态门控）', () => {
   it('confirmed 节点 = 全集，且 edit 置顶、delete 置底', () => {
@@ -466,6 +508,25 @@ describe('resolveMobileNodeActions（操作集 + 状态门控）', () => {
     expect(keys).toContain('edit')
     expect(keys).toContain('reference')
     expect(keys).toContain('delete')
+  })
+
+  it('一级 ≤5 项：低频三项进二级「更多」（§4.11.3 HIG 上限）', () => {
+    const { primary, more } = resolveMobileNodeMenuTiers({
+      type: 'image',
+      data: { url: 'https://x/a.png' },
+    })
+    expect(primary.length).toBeLessThanOrEqual(5)
+    expect(more).toContain('duplicate-upstream')
+    expect(more).toContain('save-asset')
+    expect(more).toContain('save-local')
+    expect(primary).not.toContain('save-local')
+    expect(primary).not.toContain('save-asset')
+    expect(primary).not.toContain('duplicate-upstream')
+  })
+
+  it('一级末位是 delete（Menu 内破坏性置底，§4.11.4）', () => {
+    const { primary } = resolveMobileNodeMenuTiers({ type: 'image', data: { url: 'https://x/a.png' } })
+    expect(primary[primary.length - 1]).toBe('delete')
   })
 })
 ```
@@ -1209,6 +1270,125 @@ git commit -m "test(mobile): 节点交互行为级守卫 12 条 + 引用芯片�
 
 ---
 
+## Task 9: 跨端组件哲学落地——浮层基座收敛 + 图标体系统一（§4.11 / N1）
+
+> ⚠️ **本任务与 Task 4 合并为一个 PR**（同一组件两轮重写风险高，见规格 R-10）。若 Task 4 已把 `MobileNodeActionSheet` 改走 `MobileSheet` 基座，本任务只剩**基座自身令牌化 + reduce-motion + 查看器图标替换 + 静态守卫**。
+> 依据：Apple HIG（Action sheets / Layout / Writing / Reduce Motion）+ Material 3（`R5.7` `R5.9` `R5.16`）—— 完整原文引用见规格 §4.11 与附录 A。
+
+**Files:**
+- Modify: `apps/web/src/components/mobile/MobileSheet.vue`（**基座令牌化 + reduce-motion**）
+- Modify: `apps/web/src/components/mobile/MobileNodeViewer.vue`（**`‹` → 内联 SVG；右上 X + ⋯；改词下沉底部**）
+- Modify: `apps/web/src/components/mobile/MobileNodeViewer.test.ts`
+- Modify: `apps/web/src/pages/CanvasPage.vue`（查看器「改词」入口下移到底部主栏）
+- Create: `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts`（**静态守卫**）
+
+**Interfaces:**
+- Consumes: `MobileSheet.vue`（基座，`title` / `subtitle` / `maxHeight` props + `close` emit）
+- Produces:
+  - `MobileSheet` 新增 slot `actions`（底部主栏区域，承载 pending 的「确认 / 取消」与 confirmed 的「改词」）—— 供 Task 2 / Task 7 挂载。
+  - `MobileNodeViewer` 新增 prop `bottomActions?: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }>`，渲染在底部主栏。
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts`（静态源码契约形态，参照既有 `home-profile-p3.guard.test.ts`）：
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+const MOBILE_DIR = join(__dirname)
+
+function read(name: string) {
+  return readFileSync(join(MOBILE_DIR, name), 'utf-8')
+}
+
+describe('跨端视觉与组件哲学守卫（§4.11）', () => {
+  it('G-16 移动端模板不得用文本字符当功能图标（‹ × ⋯）', () => {
+    const files = readdirSync(MOBILE_DIR).filter((f) => f.endsWith('.vue'))
+    const offenders: string[] = []
+    for (const f of files) {
+      const src = read(f)
+      // 只查按钮内容里的裸字符图标
+      if (/>\s*[‹×⋯]\s*</.test(src)) offenders.push(f)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('G-15 长按浮层必须走 MobileSheet 基座（含 scrim / handle / Teleport）', () => {
+    const src = read('MobileNodeActionSheet.vue')
+    expect(src).toContain('MobileSheet')
+    expect(src).not.toMatch(/position:\s*fixed/)
+  })
+
+  it('MobileSheet 有 reduce-motion 分支（§4.11.8）', () => {
+    const src = read('MobileSheet.vue')
+    expect(src).toMatch(/prefers-reduced-motion/)
+  })
+
+  it('MobileSheet 圆角与动效使用令牌（禁硬编码 20px / 0.25s）', () => {
+    const src = read('MobileSheet.vue')
+    expect(src).toContain('--lnk-radius-')
+    expect(src).toContain('--lnk-duration-')
+    expect(src).not.toMatch(/border-radius:\s*20px/)
+  })
+
+  it('查看器退出键不是文本字符 ‹（改内联 SVG）', () => {
+    const src = read('MobileNodeViewer.vue')
+    expect(src).not.toMatch(/>\s*‹\s*</)
+    expect(src).toContain('<svg')
+  })
+})
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+```bash
+cd apps/web && /Users/4seven/.nvm/versions/node/v24.13.0/bin/node ./node_modules/vitest/vitest.mjs run src/components/mobile/mobileVisualLanguage.guards.test.ts --maxWorkers=1 --no-file-parallelism > /tmp/t9.log 2>&1; echo EXIT=$?; tail -25 /tmp/t9.log
+```
+
+Expected: FAIL —— 至少「文本字符当图标」「长按浮层未走基座」「reduce-motion 缺失」「硬编码圆角/动效」中的若干条。
+
+- [ ] **Step 3: 最小实现**
+
+1. **`MobileSheet.vue`**：
+   - 圆角 `border-radius: 20px 20px 0 0` ⇒ `var(--lnk-radius-2xl) var(--lnk-radius-2xl) 0 0`（24px）。
+   - 动效 `transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1)` ⇒ `var(--lnk-duration-base)` + `var(--lnk-ease-decelerate)`。
+   - 新增 reduce-motion 分支：
+     ```css
+     @media (prefers-reduced-motion: reduce) {
+       .m-sheet-enter-active,
+       .m-sheet-leave-active,
+       .m-sheet-enter-active .m-sheet,
+       .m-sheet-leave-active .m-sheet {
+         transition: none;
+       }
+     }
+     ```
+   - 新增 `actions` slot（底部主栏容器，`flex: none`，位于 `m-sheet-body` 之后）。
+2. **`MobileNodeViewer.vue`**：
+   - `‹` 文本字符 ⇒ 内联 SVG（照抄 `MobileSheet.vue` 的 `.m-sheet-close svg` 写法：`viewBox="0 0 24 24"` + `stroke-width="2"` + `stroke-linecap="round"`，路径取 chevron 左箭头）。
+   - 右上角 = **X（退出）+ ⋯（操作全集）** 两枚；「改词」移到**底部主栏**（新增 `bottomActions` prop）。
+   - ⛔ 禁引入第三方图标库（仓库零图标库是品牌优势，§4.11.5）。
+3. **`CanvasPage.vue`**：查看器「改词」入口改为传 `bottomActions`；`⋯` 走 `MobileSheet` 浮层。
+4. 若守卫测试有红项 ⇒ 回到对应处补齐（**不要**改守卫让它绿）。
+
+- [ ] **Step 4: 跑测试确认通过**
+
+```bash
+cd apps/web && /Users/4seven/.nvm/versions/node/v24.13.0/bin/node ./node_modules/vitest/vitest.mjs run src/components/mobile/mobileVisualLanguage.guards.test.ts src/components/mobile/MobileNodeViewer.test.ts src/components/mobile/MobileSheet.test.ts --maxWorkers=1 --no-file-parallelism > /tmp/t9b.log 2>&1; echo EXIT=$?; tail -25 /tmp/t9b.log
+cd apps/web && npx vue-tsc -b > /tmp/t9c.log 2>&1; echo TSC_EXIT=$?
+```
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add apps/web/src/components/mobile/MobileSheet.vue apps/web/src/components/mobile/MobileNodeViewer.vue apps/web/src/components/mobile/MobileNodeViewer.test.ts apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts apps/web/src/pages/CanvasPage.vue
+git commit -m "refactor(mobile): 浮层统一 MobileSheet 基座 + 图标体系统一 + reduce-motion (§4.11/N1)"
+```
+
+---
+
 ## 交付与验收
 
 **每个任务完成的标准**：该任务的 5 个 Step 全绿 + `vue-tsc -b` EXIT=0 + 本任务的测试单独跑通过 + 已 commit。
@@ -1224,7 +1404,14 @@ done
 cd apps/web && npx vue-tsc -b > /tmp/tsc.log 2>&1; echo TSC_EXIT=$?
 ```
 
-**真机走查**：按规格 §10.3 的 21 项清单（W-1 … W-21）逐项勾选，**W-21 是源码断言**（移动端编辑器无 dock），其余需真机。
+**真机走查**：按规格 §10.3 的 23 项清单（W-1 … W-22，含 W-2b / W-9b / W-20b）逐项勾选，**W-21 是源码断言**（移动端编辑器无 dock），其余需真机。
+
+**PR 分组建议**（降低 review 负担）：
+- **PR-A（M1）**：Task 1 + Task 2 + Task 5 —— 原则闭环（纯函数门控 + 查看器退出 + 多选视觉）。
+- **PR-B（M2 跨端组件哲学）**：Task 4 + Task 9 —— ⚠️ **必须同一 PR**（同一组件 `MobileNodeActionSheet` 两轮重写风险高，规格 R-10）。
+- **PR-C（M2 载体改造）**：Task 6 —— 独立 PR（改契约 + 改他人既有测试，规格 R-1 最高风险）。
+- **PR-D（M2 迭代闭环）**：Task 3 + Task 7 + Task 8 —— 标注层 + 锚回传 + 撤销 + 守卫。
+- **PR-E（M3）**：真机走查结果回填 + 规格升版。
 
 **PR 注意事项（规格 §11 R-1）**：
 - PR 描述必须写明：**本 PR 会影响 `MobileNodeEditorSheet` 相关既有测试**（`DockStudioRouter` 的 `generate` 透传 / R4-T2 断链修复用例）—— 合并 master 后需同步他人 mock。

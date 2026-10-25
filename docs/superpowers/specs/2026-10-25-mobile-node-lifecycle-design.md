@@ -19,6 +19,7 @@
 | 图 4 | 内嵌 Mermaid | 锚的双向载荷信封（对话→画布取 / 画布→对话传） | §4.5 | 验收「传送一律经锚」；新增载荷是否需新图标 |
 | 图 5 | 内嵌 Mermaid | 标注产出的合成与回传管线（底图 → 标记 → 合成 → 上传 → 芯片） | §5.3 | 验收 CORS 降级与上传态是否被显式处理 |
 | 图 6 | 内嵌 Mermaid | 生命周期七阶段 × 五态的映射（回边与边界事件） | §4.1 | 验收两模型边界未混 |
+| 图 7 | 内嵌 Mermaid | 移动端组件语义三分（Menu / Action Sheet / Sheet 的判据） | §4.11.4 | 验收「揭示选项」与「动作澄清」未混用；验收容器选型 |
 
 ---
 
@@ -167,33 +168,36 @@ flowchart LR
 
 ### 4.4 决定三：操作全集按「频率 × 风险」归类 + 跨平台形态
 
-**iOS / Android 多操作的设计范式**：
+> ⚠️ **本节已被 §4.11 修订**（上一轮自审）：容器语义（Menu vs Action Sheet）、数量上限、破坏性位置、删除确认方式四处与 HIG 冲突，以 **§4.11 为准**；本节保留"频率 × 风险"归类表与"不铺胶囊"原则（仍有效）。
 
-- **iOS HIG**：对象有多个操作时，标准范式是 **Action Sheet（底部上拉动作面板）**——长按或「⋯」触发，列出全部相关操作；**破坏性操作用红色按钮**；配一个 Cancel。iOS 13+ 另提供 **`UIMenu` 下拉菜单**。
+**iOS / Android 多操作的设计范式**（⚠️ 见 §4.11.2 的修正）：
+
+- **iOS HIG**：对象有多个操作时，标准范式是 **Menu（菜单）**——长按或「⋯」触发，列出相关操作；**破坏性操作用红色按钮**。**Action Sheet 只用于"为一次动作做澄清"**（如删除确认）。
 - **Material（Android）对等**：**Modal Bottom Sheet** + **`⋮` 溢出菜单**，与 iOS Action Sheet 语义一致。
 - **跨平台统一结论**：采用**底部 Action Sheet** 作为唯一操作容器——iOS/Android 原生都支持、认知一致、不引入平台专属控件。**不**在卡片上铺多个胶囊/文字按钮（拥挤、与「单击=查看」冲突、跨端不一致）。
 
-| 操作 | 频率 | 风险 | 在 sheet 中的处理 |
+| 操作 | 频率 | 风险 | 在 Menu 中的处理 |
 |---|---|---|---|
 | 编辑 | 高 | 无 | 置顶首项 + 图标，视为默认主操作 |
 | 重命名 | 中 | 无 | 列表项 |
 | 引用 | 中 | 无 | 列表项 + toast |
 | 副本 | 中 | 无 | 列表项 |
-| 副本（含上游） | 低 | 无 | 列表项（M2 新增） |
-| 存入资产库 | 低 | 无 | 列表项（M2 新增） |
-| 保存到本地 | 低 | 无 | 列表项（M2 新增） |
+| 副本（含上游） | 低 | 无 | **二级**（M2 新增） |
+| 存入资产库 | 低 | 无 | **二级**（M2 新增） |
+| 保存到本地 | 低 | 无 | **二级**（M2 新增） |
 | 多选 | 中 | 无 | 列表项（进入选择模式） |
-| 删除 | 低 | **高（破坏性）** | **置底、红色、二次确认** |
+| 删除 | 低 | **高（破坏性）** | **置底、红色、前置分隔线**；执行前若可撤销 ⇒ 走 Snackbar 撤销（§4.11.10） |
 | 取消生成 | 仅 generating | 中 | 上下文项（仅 generating 出现） |
 | 查看参数 | 仅 generating | 无 | 上下文项（仅 generating，只读） |
 
 **形态与位置原则**：
 
-1. **唯一容器 = 底部 Action Sheet**，所有管理操作聚合，符合 P2 长按唯一入口。
-2. **频率分层在 sheet 内体现**：高频（编辑）置顶；低频平铺；破坏性（删除）置底红色。
-3. **不铺胶囊按钮**：卡片保持极简（仅内容 + 属性行），避免与「单击=查看」冲突。
-4. **画布双入口（可选）**：若长按在真机 discoverability 不足，卡片右上角加「⋯」（`UIMenu` / `⋮` 等价），与长按**同源同容器**。待拍板（§9-E）。**查看器内的「⋯」为必带**（§4.6）。
-5. **退出一致性**：sheet 内操作执行完即关，删除走二次确认子层。
+1. **唯一容器 = Menu（菜单）**（长按 / 「⋯」），**破坏性确认另用 Action Sheet / 确认弹层**（§4.11.2）。
+2. **一级 ≤ 4–5 项**，低频项进二级「更多」（§4.11.3）；⛔ 禁止可滚动的 Action Sheet。
+3. **频率分层在 Menu 内体现**：高频（编辑）置顶；低频进二级；破坏性（删除）置底红色 + 分隔线。
+4. **不铺胶囊按钮**：卡片保持极简（仅内容 + 属性行），避免与「单击=查看」冲突。
+5. **画布双入口（可选）**：若长按在真机 discoverability 不足，卡片右上角加「⋯」（`UIMenu` / `⋮` 等价），与长按**同源同容器**。待拍板（§9-E）。**查看器内的「⋯」为必带**（§4.6）。
+6. **退出一致性**：Menu 内操作执行完即关；删除按 §4.11.10 走「撤销优先」或确认弹层。
 
 ### 4.5 决定四：锚 = 双向连接器 + 统一载荷信封（M1）
 
@@ -238,8 +242,9 @@ flowchart LR
 
 - **查看器（全屏）右上角与 X 并列放一枚「⋯」，必带**，且与画布「⋯」**同源同容器**（同一组件、同一操作集定义，避免双入口分裂）。理由：全屏沉浸查看时用户随时可能「引用 / 存本地 / 副本 / 改词」，若强制先退出再长按，会打断播放流——iOS Photos 全屏右上「⋯」即此范式。
 - **查看器操作集 = 内容强相关裁剪子集**：引用 / 副本 / 副本含上游 / 存入资产库 / 保存到本地 / 改词重生成（编辑）/ 删除。**不含**多选、重命名（二者为画布态语义）。**音频无查看器**，此裁剪子集对音频不适用。
-- **不退出查看器**：点「⋯」开 Action Sheet 覆盖于查看器之上（更高 z 层），底层媒体保持；选非删除操作后关 sheet 回查看器继续查看 / 播放。仅「删除」关闭查看器。与 P3「退出即停」不冲突——P3 的「停」只在真正退出查看器时触发。
+- **不退出查看器**：点「⋯」开 **Menu** 覆盖于查看器之上（更高 z 层，走 `MobileSheet` 基座），底层媒体保持；选非删除操作后关浮层回查看器继续查看 / 播放。仅「删除」关闭查看器。与 P3「退出即停」不冲突——P3 的「停」只在真正退出查看器时触发。
 - **不建议「仅放提示词编辑」**：查看器高频需求是内容相关操作，只放编辑会漏掉其他内容操作，操作集不对称。
+- ⚠️ **§4.11.6 修正**：**「改词」从右上角下沉到底部主栏**（iOS 可达性：高频操作放下方拇指区，顶部只放低频的退出类）。⇒ 查看器右上 = **X（退出）· ⋯（全集）** 两枚图标。
 
 ### 4.7 决定六：磁贴提示词显示分级与贯穿更新（G1）
 
@@ -279,11 +284,11 @@ flowchart LR
 - **tap → 进查看器看 propose 产出**；**音频例外**：音频无查看器，pending 查看 = 内联播放 propose + 壳层状态栏「确认 · 取消」。
 - 查看器内分两层：**决策层**（确认 / 取消）+ **操作层**（改词 / 全集）。
 - 确认 / 取消同时出现在「壳层状态栏」与「查看器底部主栏」，两处一致、非重复——前者是画布态常驻入口，后者是沉浸态入口。
-- **右上高频图标「改词」（铅笔）**：进**轻量编辑器**（模式①：提示词 + 意见，**无参数 / 无生成钮**）改词。改词与确认互斥——改词不触发确认，视为放弃当前 propose、把修改意见回传 agent。
-- **右上「⋯」**：全集（引用 / 副本 / 副本含上游 / 存入资产库 / 保存到本地 / 删除）。
-- **引用**：保留在「⋯」内（第二高频但属轻动作，不升常驻图标，避免右上四图标拥挤）。若真机走查发现引用发现性不足再升级。
-- **confirmed 态查看器**：右上 = X + 「改词」（铅笔，高频）+ 「⋯」（含引用）。**无底部确认栏**。**查看器内置标注层**（§4.3）：图片圈选区域 / 视频暂停圈当前帧 / 音频波形划选 / 文本选段 → 生成引用块 → 经锚回 composer。
-- **本体是否铺高频按钮**：**不铺**。pending 本体的「确认 / 取消」已由壳层状态栏承载；confirmed 本体保持极简；每张卡铺「编辑」「引用」会拥挤、与「单击=查看」冲突、跨端不一致。**高频图标只进查看器（全屏有空间），本体不铺。**
+- ⚠️ **§4.11.6 修正：「改词」下沉到查看器底部主栏**（不再放右上角）——iOS 可达性原则「高频操作放下方拇指区，顶部只放低频退出类」。进**轻量编辑器**（模式①：提示词 + 意见，**无参数 / 无生成钮**）改词。改词与确认互斥——改词不触发确认，视为放弃当前 propose、把修改意见回传 agent。
+- **右上「⋯」**：全集（引用 / 副本 / 副本含上游 / 存入资产库 / 保存到本地 / 删除），走 `MobileSheet` 浮层（§4.11.8）。
+- **引用**：保留在「⋯」内（第二高频但属轻动作，不升常驻图标，避免右上拥挤）。若真机走查发现引用发现性不足再升级。
+- **confirmed 态查看器**：右上 = **X + 「⋯」**（低频退出类）；**底部主栏 = 「改词」**（高频，下沉）；**无底部确认栏**。**查看器内置标注层**（§4.3）：图片圈选区域 / 视频暂停圈当前帧 / 音频波形划选 / 文本选段 → 生成引用块 → 经锚回 composer。
+- **本体是否铺高频按钮**：**不铺**。pending 本体的「确认 / 取消」已由壳层状态栏承载；confirmed 本体保持极简；每张卡铺「编辑」「引用」会拥挤、与「单击=查看」冲突、跨端不一致。**高频入口只进查看器（全屏有空间），本体不铺。**
 
 ### 4.9 决定八：多选选择模式（H1）
 
@@ -347,6 +352,204 @@ flowchart TD
 3. **以五态为交互门控唯一真相源**；生命周期只驱动引导语与入口先后次序。
 4. **往返由状态机回边表达**：「改词重生成」= confirmed → generating，生命周期不另设阶段。
 5. **删除是生命周期终点边界事件**，不在五态中占一位；删除语义（二次确认、落库、节点消失）在 §6.4 处理。
+
+### 4.11 决定十：跨端视觉与组件哲学（iOS HIG / Material 3 对齐）
+
+> 本节是**上一轮自审新增**。起因：评审追问「本次涉及的图标、组件、交互是否充分借鉴了 iOS 的极简与品牌高端哲学（Android 下也用）」。经逐条比对 Apple HIG 原文与 Material 3 规范，**发现 3 处组件选型错误、4 处规范盲区**，本节给出修正判据。
+> ⛔ **本节结论优先于 §4.4 / §4.6 中与之冲突的表述**；冲突处已在原地标注「见 §4.11」。
+
+#### 4.11.1 品牌高端哲学的三条（Apple HIG 的 Clarity / Deference / Depth）
+
+iOS 的"高端"不是"多"，是**三层克制**。据此本项目的移动端组件哲学定为：
+
+| 原则 | HIG 原文含义 | 本项目落法（可判定） |
+|---|---|---|
+| **Deference 谦逊** | UI 服务内容，不与内容争 | **chrome 让位**：磁贴只放内容 + 属性行；不铺按钮（P2）；查看器除必要层不叠控件 |
+| **Clarity 清晰** | 一眼可辨、可预测 | **一屏一主动作**：pending 查看器底部只有一组「确认 / 取消」；查看器右上最多 3 个图标（X · 改词 · ⋯），**第 4 个一律不铺** |
+| **Depth 层次** | 用层与材质表达层级 | 统一 `MobileSheet` 基座（scrim + 拖拽把手 + 圆角 + 阴影）表达"浮起"；层级靠 `--lnk-z-*` 与表面令牌，不靠加边框 |
+
+⭐ **一句判据**：**"这个界面能不能被删掉一半而更好用？"**——能删的都删。Apple 的极简是**减法纪律**，不是视觉风格。
+
+#### 4.11.2 修正一：长按 = **Menu**，不是 Action Sheet（组件选型错误）
+
+**Apple HIG 现行原文（Action sheets）**：
+
+> "Use an action sheet — **not a menu** — to provide choices related to an action. People are accustomed to having an action sheet appear when they perform an action that might require clarifying choices. **In contrast, people expect a menu to appear when they choose to reveal it.**"
+
+⇒ 按此判据，**本项目的组件选型有两处错**：
+
+| 场景 | 现状（规格 §4.4 / §4.6） | HIG 判据 | **修正** |
+|---|---|---|---|
+| **长按节点 → 列出管理操作** | 底部 Action Sheet | 用户是"**主动揭示**更多" ⇒ 应是 **Menu**（`UIMenu` / context menu） | **改用 Menu 语义**：长按唤起「菜单」，语义上是"揭示一组选项"，**不是"为一次动作做澄清"** |
+| **删除 → 确认** | 二次确认弹层 | "为一次动作做澄清" ⇒ **正是 Action Sheet** | 保留为 **Action Sheet / 确认弹层**（破坏性确认） |
+
+- ✅ **修正后的组件分工（跨端一致）**（判据流程见**图 7 · 移动端组件语义三分**）：
+  - **Menu（菜单）** = 长按唤起、承载管理操作全集（编辑 / 重命名 / 引用 / 副本 / 多选 / 资产库 / 本地 / 删除）。
+  - **Action Sheet（确认）** = 仅用于**破坏性确认**（删除二次确认）。
+  - **Sheet（浮层）** = 需要输入或持续交互的载体（编辑器 / 标注浮层 / 任务面板）—— 走统一 `MobileSheet` 基座。
+- ⛔ **否决「长按直接弹 Action Sheet 承载 11 项操作」**：既违 HIG 语义（reveal ≠ clarify），又违数量上限（见 4.11.3）。
+- **Material 3 对等**：MD3 的 context menu / overflow menu 同样是"揭示一组选项"，Android 侧落在 **`⋮` 溢出菜单 / context menu**；破坏性确认落在 **dialog**。⇒ **两端语义同构**。
+
+#### 4.11.3 修正二：Menu / Action Sheet 的**数量上限**（HIG 硬约束）
+
+**Apple HIG 原文**：
+
+> "**Avoid displaying more than four buttons in an action sheet, including the Cancel button.** … Because the Cancel button is required, aim to provide no more than three additional choices."
+> "**Avoid letting an action sheet scroll.** … scrolling an action sheet can be hard to do without inadvertently tapping a button."
+
+⚠️ **现状违反此约束**：`MobileNodeActionSheet.vue` 现有 **6 项 + 取消 = 7 个按钮**（重命名 / 引用 / 副本 / 多选 / 编辑 / 删除 / 取消），而规格 §4.4 的 M2 目标态是 **11 项全平铺**。⇒ **两条都超出 HIG 上限**。
+
+**修正判据（分层降载）**：
+
+1. **Menu 一级只放 ≤ 4–5 项高频项**（对齐 HIG 的 scannable 原则：菜单要"短而可扫读"）：编辑 / 引用 / 副本 / 多选 / 删除。
+2. **低频项下沉到二级**（M2 新增的三项：副本含上游 / 存入资产库 / 保存到本地）—— 收进「⋯ 更多」子菜单 / 二级 sheet，**不在一级平铺**。
+3. **Action Sheet（含 Cancel）≤ 4 个按钮**：删除确认 = 「删除」+「取消」= 2 个，**有余量**。
+4. ⛔ **禁止可滚动的 Action Sheet**（HIG 明文）；若一级菜单放不下 ⇒ **必须分层**，不是加滚动。
+5. ⭐ **降载优先序**（低端机 / 小屏优先）：一级 ≤ 4（编辑·引用·副本·更多）⇒ 多选 / 删除进「更多」；只在 confirmed + 大屏时才把「多选 / 删除」提到一级。
+   - MD3 对等：MD3 的 overflow menu 同样限制可见项数、其余进 overflow；`R5.7` 明文「**Limit action icons to 2-3**，超出进 more menu」。
+
+#### 4.11.4 修正三：破坏性操作的**位置**（HIG 现行 = 置顶，不是置底）
+
+**Apple HIG 现行原文**：
+
+> "Make destructive choices visually prominent. Use the **destructive** style for buttons that perform destructive actions, and **place these buttons at the top of the action sheet** where they tend to be most noticeable."
+
+⚠️ **冲突**：规格 §4.4 现写「删除 **置底**、红色」——这是 **iOS 8 时代的老做法**（当年 destructive 在底部），HIG 现已改为**置顶**。
+
+**修正判据**：
+
+| 载体 | 破坏性位置 | 理由 |
+|---|---|---|
+| **Menu（一级 / 二级）** | **置底 + 分隔线 + 红色** | Menu 的惯例是「组内 destructive 在末位」；破坏性靠"与常规项分离"表达 |
+| **Action Sheet（删除确认）** | **置顶 + 红色** | HIG 现行明文 |
+
+- ⇒ **不矛盾**：两句话说的是**两种不同载体**。规格原有的"删除置底"在 **Menu** 语境下仍成立（保留），但**删除确认弹层内的「删除」按钮须置顶**（新增）。
+- ⚠️ **实现层提醒**：`MobileNodeActionSheet` 现状把 danger 放在**列表末尾**且无分隔线——若改为 Menu 语义，需补**分隔线**（destructive 前）以达"视觉显著"。
+
+**图 7 · 移动端组件语义三分（HIG 判据）**
+
+```mermaid
+flowchart TD
+  U["用户触发节点上的动作"] --> Q{"用户是在<br/>\"揭示一组选项\"<br/>还是<br/>\"为一次动作做澄清\"？"}
+  Q -->|"揭示一组选项"| M["Menu（菜单）<br/>长按 / 右上 ⋯<br/>一级 ≤4-5 项 + 二级<br/>破坏性置底 + 红色 + 分隔线"]
+  Q -->|"为一次动作做澄清"| A["Action Sheet（确认）<br/>仅破坏性确认<br/>含取消 ≤4 按钮<br/>破坏性置顶 + 红色"]
+  Q -->|"需要输入 / 持续交互"| S["Sheet（浮层）<br/>统一 MobileSheet 基座<br/>scrim + 把手 + 圆角 + 安全区"]
+  M -->|"执行后"| S
+  A -->|"确认后"| S
+```
+
+#### 4.11.5 图标体系：SF Symbols 式优先，但**不新造**
+
+**Apple HIG / Apple HIG skill 原文**：
+
+> "**SF Symbols first.** If a system glyph exists … use it. **Custom icons only when no equivalent exists.**"
+> "Use SF Symbols consistently." / "Never rely on color alone to communicate status."
+
+**本项目的现实约束（取证）**：
+
+| 事实 | 取证 |
+|---|---|
+| 仓库**无任何图标库依赖**（`apps/web/package.json` 25 个依赖，无 lucide / heroicons / material-icons / fontawesome） | `apps/web/package.json` |
+| 品牌图标资产**仅 3 个**：`anchor-generate.png` / `anchor-locate.png` / `send-arrow.png` | `apps/web/src/assets/icons/` |
+| 移动端现有做法：查看器用 **`‹` 文本字符**当返回键；`MobileMultiSelectMoreSheet` 用**纯文字按钮 + CSS 几何**（无 svg） | `MobileNodeViewer.vue:12` |
+| 品牌守卫已锁「**锚用既有品牌资产，不新造图标**」 | `apps/web/src/pages/home-profile-p3.guard.test.ts:147-152` |
+
+**修正判据（图标）**：
+
+1. ⛔ **不引入第三方图标库**（品牌高端的敌人是"图标风格混杂"）——**保持零图标库**这一现状（这是优势，不是缺口）。
+2. ✅ **新增图标一律内联 SVG**，线宽统一 `--lnk-icon-stroke`（1.5px）、尺寸取 `--lnk-icon-{sm,md,lg}`，**几何与品牌锚同一套**（圆头圆角、24 网格）——参照既有 `MobileSheet.vue` 的关闭图标写法（内联 `svg viewBox="0 0 24 24" stroke-width="2"`）。
+3. ⛔ **禁用文本字符当图标**：`‹` / `×` / `⋯` 这类字符**不得**作为功能图标——`‹` 是细笔画（U+2039）、在不同字重下形态不稳定，是本规格 §附录 B「‹ 识别失败」的根因。⇒ 改为内联 SVG（chevron.left / xmark）。
+4. ✅ **图标只承载"动作"，不承载"状态"**：状态用色 + 文案（避免"仅靠颜色传达"）。
+5. ⭐ **锚是唯一例外**：`anchor-locate.png` 是品牌资产，**必须用位图、不得用 SVG 替代**（守卫已锁）——它是"品牌高端"的锚点，恰恰因为它是**唯一手工资产**才显珍贵。
+
+#### 4.11.6 触控与可达性：44pt 是**下限**，拇指区是**位置**
+
+| 判据 | 数值 / 规则 | 取证与现状 |
+|---|---|---|
+| **最小命中区** | **≥ 44×44pt**（iOS）/ **≥ 48×48dp**（Android MD3） | 令牌 `--lnk-touch-target: 44px` **已达标**（`design-tokens.css:184`，且 `design-token.test.ts:478` 有守卫 `≥44`） |
+| **图标按钮视觉尺寸 vs 命中区** | 视觉 16–22px，**命中区仍须 44pt**（靠 padding 撑开，不用放大 glyph） | `MobileSheet` 的关闭按钮已正确：44×44 命中 + 16px svg |
+| **拇指可达区** | 主操作放**屏幕下 1/3**；顶部只放低频 | 规格 §4.6 的"查看器右上 3 图标" = 顶部低频操作 ✅；但**「改词」是高频** ⇒ 见下条 |
+| **危险动作不置于拇指区盲区** | 删除不在随手可触处 | 删除经二级入口 + 确认，符合 |
+| **横向双按钮间距** | 相邻命中区间距 ≥ 8pt（防误触） | `MobileMultiSelectMoreSheet` 的 3 列网格已按 `gap: var(--lnk-space-2)` = 8px ✅ |
+
+⚠️ **新发现的一处冲突**：§4.6 / §4.8 把「**改词**」列为查看器右上角常驻图标（高频），但 **iOS 的可达性原则是"高频操作放下方"**（拇指区）⇒ **「改词」不该在右上角**。
+
+**修正判据（可达性）**：查看器右上角 = **X（退出）· ⋯（操作全集）** 两个图标（低频、退出类，符合顶部）；**「改词」下沉到查看器底部主栏**（pending 态底部已有「确认 / 取消」组 ⇒ 改词作为独立一枚按钮置于同栏左侧或作为独立底部按钮）。⇒ 与 §4.8「pending 底部主栏」自然合并，**且解决了 §4.11.1「一屏一主动作」的拥挤**。
+
+#### 4.11.7 文案：动作特定动词，不用「Yes / OK」
+
+**Apple HIG**：「Use action-specific verbs (Save Changes, Delete Photo) instead of Yes / OK」。
+
+**现状**：`MobileNodeActionSheet` 的按钮是**纯名词**（重命名 / 引用 / 副本 / 多选 / 编辑 / 删除），而 `MobileMultiSelectMoreSheet` 用**动词短语**（生成 / 停止 / 重新生成 / 分组 / 导出）。
+
+**修正判据**：移动端操作项文案统一为**动词短语**，与既有 `MobileMultiSelectMoreSheet` 对齐：
+「重命名」→「重命名」✅（已是动词）/「引用」→「**引用到对话**」/「副本」→「**创建副本**」/「多选」→「**多选节点**」/「编辑」→「**编辑提示词**」/「删除」→「**删除节点**」。
+⚠️ **例外**：**动作对象唯一且无歧义时**可保留短名词（如「取消」「确定」）——但确认弹层的标题须说明**后果**（HIG：「no destructive verb without confirmation copy that says what will happen」）⇒ 二次确认文案为「**删除节点？** 删除后可通过撤销恢复」。
+
+#### 4.11.8 材质与动效：统一到 `MobileSheet` 基座
+
+| 判据 | 规范 | 现状取证 |
+|---|---|---|
+| **浮层基座唯一** | 所有移动端浮层走 `MobileSheet`（scrim + 拖拽把手 + 圆角 20px + 阴影 + 250ms decelerate + 底部安全区） | ⚠️ **`MobileNodeActionSheet` 是裸 `position:fixed` div**（无 scrim / 无把手 / 无圆角 / 无 Teleport）⇒ **与 `MobileSheet` 两套实现并存** |
+| **Teleport 到 body** | 画布区有 `transform`，`fixed` 会被困住 | `MobileSheet` 已用 `Teleport to body` ✅；`MobileNodeActionSheet` 未用 ⇒ 潜在定位陷阱 |
+| **拖拽把手** | MD3 `R5.9`：bottom sheet 必须有可见 drag handle | `MobileSheet` 有（40×4px）✅；`MobileNodeActionSheet` 无 ❌ |
+| **scrim** | 模态浮层必须遮罩底层 | `MobileSheet` 有（`--lnk-scrim`）✅；`MobileNodeActionSheet` 无 ❌ ⇒ **点了 sheet 外的画布不会关**（现状真缺陷） |
+| **动效时长 / 曲线** | 统一 `--lnk-duration-*` + `--lnk-ease-decelerate`；iOS 惯例 0.25s decelerate | `MobileSheet` 用硬编码 `0.25s cubic-bezier(0.22,1,0.36,1)` ⚠️ **未用令牌** ⇒ 应改 `--lnk-duration-base` + `--lnk-ease-decelerate` |
+| **Reduce Motion** | 必须支持 `prefers-reduced-motion` | 仓库已有先例（`neo-node.css:651`、`LoginVideoPanel.vue:182`）；⚠️ `MobileSheet` 未处理 ⇒ **浮层过渡不减震**（Apple HIG：Reduce Motion 必须尊重） |
+| **圆角刻度** | 用 `--lnk-radius-*`，禁魔法值 | ⚠️ `MobileSheet` 硬编码 `20px`（应 `--lnk-radius-2xl`=24px 或新增 sheet 令牌）；`ProfilePane` 硬编码 `14px` ⇒ 属既有债，本规格只约束**新增/改动面** |
+
+⇒ **本节产出一条硬判据**：**移动端浮层一律走 `MobileSheet` 基座；不得新写第二套 sheet 皮肤。**
+
+#### 4.11.9 Android / Material 3 对等表（双端一致）
+
+| 语义 | **iOS（HIG）** | **Android（MD3）** | **本项目统一实现** |
+|---|---|---|---|
+| 揭示一组选项 | Menu（`UIMenu` / context menu） | context menu / `⋮` overflow menu | **Menu**（长按 / 右上「⋯」）—— 一级 ≤4–5 项，低频进二级 |
+| 破坏性确认 | Action Sheet / Alert（destructive 置顶 + 红色） | Dialog（destructive 红色 + 确认/取消） | **确认弹层**：标题说后果，「删除节点」置顶红色，≤4 按钮 |
+| 输入 / 持续交互 | Sheet | Modal bottom sheet | **`MobileSheet`**（唯一基座） |
+| 批量操作 | — | Bottom app bar + overflow | **底部动作条**（`MobileMultiSelectBar`，已有） |
+| 短暂反馈 | Toast / HUD | Snackbar（带 1 个 action） | **Snackbar/toast**；⚠️ **可撤销动作优先给"撤销"**（见 4.11.10） |
+| 破坏性后Undo | 「Undo beats 'Are you sure?' for reversible actions」 | `R5.16`：可撤销操作给 action（如 Undo），限 1 个 | **删除节点 ⇒ 优先「删除 + Snackbar 撤销」而非二次确认弹层** |
+| 选中态 | 圆圈/对勾（Photos 多选） | Checkbox | **圆形指示器 + 对勾**（§4.9 H1）✅ |
+
+#### 4.11.10 删除的 iOS 最优解：**撤销优先于确认**（与 §4.4 A1 冲突，须拍板）
+
+**Apple HIG / HIG skill 原文**：
+
+> "**Undo beats 'Are you sure?' for reversible actions.**" / "**Minimize modality + prefer undo.**"
+
+**本项目的现实**：仓库**已有画布撤销栈** —— `useCanvasUndoStack.ts`（`undo()` / `redo()` / `canUndo`，且**明确处理 delete→undo 的 url/status 恢复**：`CanvasPage.vue:325-331` 的 session cache 注释 + `useCanvasUndoStack.ts:6-9`）。
+
+⚠️ **⇒ 规格 §4.4 A1「删除二次确认」不是 iOS 最优解**：节点删除**可撤销** ⇒ 正确形态是「**直接删除 + Snackbar「撤销」**」，而非「删除 → 弹窗 → 确认」。
+
+**修正判据**：
+
+- **首选（iOS 最优）**：删除立即执行 → 底部 Snackbar「**撤销**」→ 用户点则恢复（复用 `useCanvasUndoStack`）。
+- **兜底**：若删除**不可撤销**（如级联删除上游、跨项目删除），才用**二次确认弹层**（destructive 置顶 + 标题说后果）。
+- ⛔ **禁止**「无撤销能力的删除 + 确认弹层」——那是"用模态换安全感"，违反 iOS 的 Deference。
+
+⇒ 与既有拍板项的关系：**A1 需修订为 A4**（见 §9 / §14 拍板表）。本项**必须由发起人拍板**，因为它改变了"删除"这条最破坏性动作的整套交互。
+
+#### 4.11.11 本节产出的可验收判据（进 §10 测试策略）
+
+| # | 判据 | 验收方式 |
+|---|---|---|
+| V-1 | 长按唤起的**不是** Action Sheet 语义（是 Menu：一级 ≤5 项、可二级下钻） | 组件层断言一级项数 ≤5；断言存在「更多」二级入口 |
+| V-2 | 删除确认弹层**按钮数 ≤4**（含取消）；「删除节点」**置顶**且红色 | 组件层断言首个可点项为破坏性项 |
+| V-3 | 移动端浮层**全部**走 `MobileSheet`（scrim + handle + Teleport body + 圆角令牌） | 静态守卫：`components/mobile/*.vue` 禁止裸 `position:fixed` 全屏浮层（除 `MobileSheet` 自身） |
+| V-4 | 功能图标**无文本字符**（禁 `‹` `×` `⋯` 作图标） | 静态守卫：移动端模板禁出现这些字符作为按钮内容 |
+| V-5 | 所有命中区 **≥44px**；图标按钮视觉 ≤22px 但命中区 44px | 令牌守卫已覆盖 `--lnk-touch-target`；新增：图标按钮 `min-width/min-height` 断言 |
+| V-6 | 浮层过渡尊重 `prefers-reduced-motion` | 静态守卫：`MobileSheet` 含 reduce-motion 分支 |
+| V-7 | 删除**带撤销**（Snackbar「撤销」）或（不可撤销时）确认弹层说明后果 | 行为级：删除后出现可撤销提示；断言撤销可恢复节点 |
+| V-8 | 操作文案为**动词短语** | 组件层断言文案集合 |
+
+#### 4.11.12 本节**不做**的事（明确排除）
+
+- ❌ **不引入第三方图标库**（保持零图标库，避免风格混杂）。
+- ❌ **不做视觉稿 / 不做深色模式专项**（本规格只管交互判据；视觉稿待打样阶段另立）。
+- ❌ **不追求像素级还原 iOS**（跨端一致 > 拟态；MD3 对等即可）。
+- ❌ **不改 PC 端任何视觉/交互**（本节只约束移动端改动面）。
+- ❌ **不清理既有硬编码圆角/动效的存量债**（`ProfilePane` / `MobileSheet` 旧值），只约束**本次新增与改动**。
 
 ---
 
@@ -628,6 +831,13 @@ flowchart TD
 | 16 | `apps/web/src/components/agent/AgentSidebarRefChip.vue` | **改** | §5.3 | 标注图芯片（缩略图 = 带标记整图）可点开预览 |
 | 17 | `apps/web/src/components/mobile/MobileMultiSelectBar.vue` | **改** | D4/§4.9 | 选择模式视觉（全局圆圈）+ 底部动作条 |
 | 18 | `apps/web/src/components/canvas/annotateModel.ts` | **复用（不改）** | §4.3 | 只取「像素叠加」那半（画笔/矩形路径），不复用「改图」语义 |
+| 19 | `apps/web/src/components/mobile/MobileNodeActionSheet.vue` | **改（Menu 化）** | **§4.11.2/§4.11.3/§4.11.4/§4.11.8** | 改用 `MobileSheet` 基座（scrim + 把手 + Teleport body + 圆角令牌）；一级 ≤5 项 + 二级「更多」；破坏性前置分隔线 + 红色；文案改动词短语；**禁文本字符当图标** |
+| 20 | `apps/web/src/components/mobile/MobileNodeActionSheet.test.ts` | **改/增** | §4.11.3/§4.11.7 | 一级项数上限 / 二级下钻 / 破坏性位置与文案 / 浮层基座断言（V-1、V-2、V-8） |
+| 21 | `apps/web/src/components/mobile/MobileSheet.vue` | **改** | §4.11.8 | 圆角改令牌（`--lnk-radius-2xl`）；动效改 `--lnk-duration-base` + `--lnk-ease-decelerate`；**补 `prefers-reduced-motion` 分支** |
+| 22 | `apps/web/src/components/mobile/MobileNodeViewer.vue` | **改** | §4.11.5/§4.11.6 | `‹` 文本字符 → 内联 SVG（chevron）；右上 = X + ⋯ 两枚；「改词」下沉底部主栏 |
+| 23 | `apps/web/src/composables/useCanvasUndoStack.ts` | **复用（不改）** | §4.11.10 | 删除撤销能力已存在（`undo()` + delete→undo 的 session cache 恢复） |
+| 24 | `apps/web/src/components/mobile/MobileUndoToast.vue`（或复用既有 toast） | **新增/改** | §4.11.10 | 删除后 Snackbar「撤销」（时长 ≥5s + 单一 action，MD3 `R5.16`） |
+| 25 | `apps/web/src/styles/*.guard.test.ts` | **新增守卫** | §4.11.8/§4.11.5 | 禁移动端模板出现 `‹`/`×`/`⋯` 文本字符作图标；禁裸 `position:fixed` 全屏浮层（除 `MobileSheet`） |
 
 **服务端与 shared**：**零改动**（§5.4）。
 
@@ -635,13 +845,13 @@ flowchart TD
 
 ## 10. 测试策略与验收标准
 
-### 8.1 测试分层
+### 10.1 测试分层
 
 | 层 | 手段 | 覆盖 |
 |---|---|---|
 | 纯函数单测 | vitest | `resolveMobileNodeTapIntent`（D1）、`composeAnnotatedImage`（合成）、`mobileAnnotateIntent`（底图来源）、`sameOriginApiMediaUrl`（同源化） |
-| 组件测试 | vitest + mount | 查看器退出通道（D2）、动作 sheet 门控与新操作（D6/D7）、标注浮层（上传中 / 降级 / 锚接线）、多选视觉（D4） |
-| 契约测试 | vitest（静态源码契约） | 移动端编辑器**无** `DockStudioRouter` 引用、**无**「生成」钮、参数区只读（D8 的关键守卫） |
+| 组件测试 | vitest + mount | 查看器退出通道（D2）、动作 sheet 门控与新操作（D6/D7）、标注浮层（上传中 / 降级 / 锚接线）、多选视觉（D4）、**跨端组件哲学 V-1..V-8（§4.11.11）** |
+| 契约测试 | vitest（静态源码契约） | 移动端编辑器**无** `DockStudioRouter` 引用、**无**「生成」钮、参数区只读（D8 的关键守卫）；**移动端模板禁文本字符当图标 / 禁第二套 sheet 皮肤（§4.11.5/§4.11.8）** |
 | 真机走查 | 人工 | §8.3 清单（逐格勾选） |
 
 ⚠️ **测试纪律（本项目既有）**：
@@ -650,7 +860,7 @@ flowchart TD
 - 类型检查对齐 CI：apps/web build = `vue-tsc -b`（非 `--noEmit -p`）。**抽组件后必跑 `vue-tsc -b`**（旧测试里的派生变量会成孤儿 ⇒ `TS6133` 卡住构建，而 vitest 不报）。
 - 改契约后预期他人 mock 会撞（PR 的 CI 跑 merge commit ⇒ 本地查不出）⇒ 合并 master 后同步。
 
-### 8.2 行为级守卫（不允许退化的关键断言）
+### 10.2 行为级守卫（不允许退化的关键断言）
 
 | 守卫 | 断言 | 防什么 |
 |---|---|---|
@@ -666,22 +876,30 @@ flowchart TD
 | G-10 | 标注浮层回传按钮用 `anchor-locate.png`（品牌守卫） | 品牌语汇破坏 |
 | G-11 | 标注回传后切回对话页 + composer 出现芯片 | P6「看得见落地」 |
 | G-12 | 视频无 CORS 时产出**只带文字**并有明确 toast | 静默丢图 |
+| G-13 | 长按唤起的浮层是 **Menu 语义**（一级项数 ≤5 + 存在二级「更多」），**不是** Action Sheet | §4.11.2 组件选型回退 |
+| G-14 | 破坏性确认弹层**含取消 ≤4 按钮**且「删除节点」**置顶**红色 | §4.11.3/§4.11.4 违反 HIG 硬约束 |
+| G-15 | 移动端浮层**走 `MobileSheet` 基座**（scrim + handle + Teleport body） | §4.11.8 两套 sheet 皮肤并存 |
+| G-16 | 移动端模板**无** `‹` `×` `⋯` 文本字符充当功能图标 | §4.11.5 图标一致性退化 |
+| G-17 | 删除后出现**可撤销**提示（撤销可恢复节点）；不可撤销时才用确认弹层 | §4.11.10 退回"模态换安全感" |
+| G-18 | 所有图标按钮命中区 **≥44px**（视觉 glyph 可小） | §4.11.6 可达性退化 |
 
-### 8.3 真机走查清单（按矩阵逐格勾选）
+### 10.3 真机走查清单（按矩阵逐格勾选）
 
 | # | 场景 | 期望 | ☐ |
 |---|---|---|---|
 | W-1 | 画布空节点 tap | 无 op + toast「长按编辑 / 长按撰写」 | ☐ |
-| W-2 | 画布空节点长按 | 动作 sheet 出现（编辑/重命名/引用/多选/删除，**无**三项新操作） | ☐ |
+| W-2 | 画布空节点长按 | **Menu** 出现（一级 ≤5 项：编辑 / 引用 / 副本 / 更多 / 删除，**无**三项新操作） | ☐ |
+| W-2b | Menu 内点「更多」 | 二级浮层含「副本含上游 / 存入资产库 / 保存到本地」 | ☐ |
 | W-3 | pending 节点 tap | 进查看器看 propose 产出 | ☐ |
 | W-4 | pending 节点长按 | 全集（含三项新操作） | ☐ |
 | W-5 | confirmed 图片节点 tap | 灯箱，可双指缩放 | ☐ |
 | W-6 | confirmed 音频节点 tap | **不**进查看器（磁贴内联播放） | ☐ |
 | W-7 | 查看器右上 X | 关闭回画布，视频已暂停 | ☐ |
 | W-8 | 查看器下滑 | 关闭回画布 | ☐ |
-| W-9 | 查看器点「⋯」 | 底部 Action Sheet，**不**关闭查看器 | ☐ |
+| W-9 | 查看器点「⋯」 | 底部 **Menu** 浮层（scrim + 拖拽把手），**不**关闭查看器 | ☐ |
+| W-9b | 查看器右上角 | **仅 X + ⋯ 两枚图标**；「改词」在**底部**主栏 | ☐ |
 | W-10 | pending 查看器底部「确认」 | 节点落 confirmed | ☐ |
-| W-11 | 查看器点「改词」铅笔 | 进轻量编辑器（**无参数控件、无生成钮**） | ☐ |
+| W-11 | 查看器**底部**点「改词」 | 进轻量编辑器（**无参数控件、无生成钮**） | ☐ |
 | W-12 | 轻量编辑器写意见 →「发给 agent 修改」 | 切回对话页，composer 出现引用芯片 | ☐ |
 | W-13 | 查看器点「圈选」 | 显式进入标注态，单指可画 | ☐ |
 | W-14 | 圈完写意见 →「⚓ 带回对话」 | 上传中 → 切回对话页 + 芯片缩略图=带标记整图 | ☐ |
@@ -690,8 +908,10 @@ flowchart TD
 | W-17 | 多选：长按 → 多选 | 全局节点浮现圆形指示器 | ☐ |
 | W-18 | 多选：轻点另一个节点 | 切换选中，**不开查看器** | ☐ |
 | W-19 | 多选：底部「完成」 | 退模式，圆圈消失 | ☐ |
-| W-20 | 删除节点长按 → 删除 | 二次确认弹窗；取消后节点仍在 | ☐ |
+| W-20 | 删除节点长按 → 删除 | 节点立即删除 + 底部 Snackbar「**撤销**」；点撤销可恢复 | ☐ |
+| W-20b | 点击浮层外的 scrim | 浮层关闭（不误触底层画布） | ☐ |
 | W-21 | 模式① 节点长按 → 编辑 | 轻量编辑器；**源码断言无 dock** | ☐ |
+| W-22 | 系统开启「减弱动态效果」 | 浮层过渡不动画（reduce-motion 生效） | ☐ |
 
 ---
 
@@ -708,6 +928,9 @@ flowchart TD
 | R-7 | **长按 discoverability 不足** | 用户找不到管理入口 | 保留 §9-E 的 E2 升级选项（卡片右上「⋯」，同源同容器）；真机走查 W-2 验证 |
 | R-8 | **agent 看不懂圈选位置** | 迭代返工 | 整图 + 标记 + 文字三合一；**可观测判据**：agent 反问「你指哪」⇒ 需评估区域裁切 + 坐标（另开 ADR，不悄悄改） |
 | R-9 | **规范漂移**：本文档与 ADR-0013 双写，结论漂移 | 实施依据不一致 | 以 ADR-0013 为**决策**真相源、本文档为**规范**真相源；ADR 转 Accepted 时本文档同步升版 |
+| R-10 | **Menu 化改动面被低估**：长按浮层从「Action Sheet」改「Menu」牵动组件语义、二级下钻、删除位置、文案、图标 —— 现有 `MobileNodeActionSheet` 的 6 个既有测试全部要改 | M2 范围变大、PR 变大 | 与 Task 4（操作集补全）**合并为一个 PR** 改，不拆两次（避免同一组件两轮重写）；既有 6 项测试按 §4.11 逐条重写而非删 |
+| R-11 | **删除改「撤销优先」⇒ 误删无确认拦截** | 用户误删且错过撤销窗口 ⇒ 数据丢失 | Snackbar 时长 ≥5s + 单一「撤销」按钮（MD3 `R5.16`）；**不可撤销的删除**（级联删上游 / 跨项目）仍走确认弹层；真机验 W-20 |
+| R-12 | **浮层收敛到 `MobileSheet` 可能触发既有样式回归** | 其他移动端浮层（`MobileMultiSelectMoreSheet` 等）视觉变化 | 本期只收敛**本次改动面**（`MobileNodeActionSheet` + `MobileNodeViewer`）；`MobileSheet` 自身的圆角/动效令牌化是**纯等价替换**（20px→24px 圆角、硬编码曲线→令牌），需截图比对 |
 
 ---
 
@@ -716,11 +939,13 @@ flowchart TD
 | 包 | 内容 | 依赖 | 状态 |
 |---|---|---|---|
 | **M1 原则闭环（P0）** | D1 tap 门控 / D2 查看器 X + 下滑 + 停播 / D3 多选态门控 / 空瓦片 CTA 文案 | — | 本规格实施 |
-| **M2 操作集 + 载体 + 迭代（P1）** | D5 删除确认 / D6 三项新操作 / D7 长按门控 / §4.8 pending 查看 / §4.3 标注层 / §4.7 磁贴提示词 / §4.9 多选视觉 / **D8 轻量编辑器 + 发给 agent** / §4.5 锚语汇 | M1 | 本规格实施 |
-| **M3 固化** | 行为级守卫（§8.2 十二条）/ 真机走查清单（§8.3）/ 规格随实现升版 | M1 + M2 | 本规格实施 |
+| **M2 操作集 + 载体 + 迭代（P1）** | D5 删除确认 / D6 三项新操作 / D7 长按门控 / §4.8 pending 查看 / §4.3 标注层 / §4.7 磁贴提示词 / §4.9 多选视觉 / **D8 轻量编辑器 + 发给 agent** / §4.5 锚语汇 / **§4.11 跨端组件哲学（Menu 化 + 数量上限 + 撤销优先 + 图标体系统一 + 浮层收敛 `MobileSheet`）** | M1 | 本规格实施 |
+| **M3 固化** | 行为级守卫（§10.2 十八条）/ 真机走查清单（§10.3）/ 规格随实现升版 | M1 + M2 | 本规格实施 |
 | M3 可选（仅记录） | 提示词迭代历史与回滚（§4.7 末条） | M2 | **不在本规格范围** |
 | 后续（另开 ADR） | 视频服务端取帧（若 R-3 成真） | M2 实测 | **不在本规格范围** |
 | 后续（另开 ADR） | 区域裁切 + 结构化坐标（若 R-8 成真） | M2 实测 | **不在本规格范围** |
+| 后续（另开 ADR） | 存量浮层统一收敛 `MobileSheet`（`MobileMultiSelectMoreSheet` / `ProfilePane` 等非本次改动面） | M2 | **不在本规格范围**（本期只约束改动面，R-12） |
+| 后续 | 引入图标库（评估跨端一致性 vs 品牌混杂） | — | **明确不做**（§4.11.5：零图标库是品牌资产的优势） |
 | 后续 | 移动端画布节点右上角锚（对齐 PC） | — | **明确不做**（§4.6 克制原则 + P2 单入口） |
 | 后续 | 模式② 全量参数 | — | **明确不做**（§2 范围） |
 | 后续 | PC 端节点交互优化 | — | **明确不做**（本规格只做 PC 对齐盘点） |
@@ -765,14 +990,14 @@ flowchart TD
 
 ---
 
-## 14. 决策建议（拍板项 A–M）
+## 14. 决策建议（拍板项 A–N）
 
 > **状态**：以下为**建议**，待发起人逐条复核；复核通过后 `ADR-0013` 转 `Accepted`，本节转「已拍板」。
 > 完整论证（备选方案对比 / 后果 / 将来要注意）见 `docs/adr/0013-mobile-node-interaction-mode-and-carriers.md`。
 
 | # | 议题 | 选项 | 建议 | 一句话理由 |
 |---|---|---|---|---|
-| A | 操作集范围 | A1 全补 + 删除确认 / A2 只做 M1 / A3 全补 +「重新生成」入长按 | **A1** | D5/D6 是既有承诺（PC 有、移动端缺），补齐无争议 |
+| A | 操作集范围 | A1 全补 + 删除确认 / A2 只做 M1 / A3 全补 +「重新生成」入长按 / **A4 全补 + 删除走「撤销优先」**（§4.11.10 新增） | **A4** | D5/D6 是既有承诺（PC 有、移动端缺）；但 iOS 判据是「**Undo beats 'Are you sure?'**」，仓库**已有** `useCanvasUndoStack` 且明确支持 delete→undo ⇒ 首选"删除 + Snackbar 撤销" |
 | B | 生成中能否删除 | B1 禁止 / B2 允许但二次确认 | **B1** | 生成中删除 = 中断已消耗积分的任务；B2 的文案反而在教用户「可以中断」 |
 | C | 新建后引导 | C1 一次性 toast / C2 仅空瓦片 CTA / C3 无 | **C2** | 模式① 空节点由 agent 创建；模式② 才需引导 ⇒ toast 是噪音 |
 | D | 音频查看器分支 | D1 删 `type` 中 audio / D2 保留死分支 | **D1** | 音频永不进查看器 ⇒ 死分支必被误调得空白屏 |
@@ -785,12 +1010,14 @@ flowchart TD
 | K | 生成归属（模式①） | K1 归 agent / K2 保留「生成」钮 / K3 双轨 | **K1** | 绕过 propose 确认 = 双执行路径 + 状态归属混乱 |
 | L | 标注层形态（模式①） | L1 手指自由圈选 + 带标记整图 / L2 精确裁切 + 坐标契约 / L3 复用 PC 全套工具 | **L1** | ⭐ agent 要的是「图+话」不是「图+坐标」 |
 | M | 标注回传的锚形态 | M1 锚作标注浮层主按钮 / M2 查看器右上独立锚 / M3 自动回传 | **M1** | 锚在产出物诞生地、一步完成；复用 `anchor-locate.png`（品牌守卫禁新造图标） |
+| N | **跨端组件哲学（iOS HIG / MD3）** | N1 全量采纳 §4.11（Menu 化 + 数量上限 + 撤销优先 + 图标体系统一 + 统一 MobileSheet）（推荐）/ N2 只采纳图标与材质部分（保留 Action Sheet + 二次确认）/ N3 仅记录不实施 | **N1** | HIG 三处硬约束（容器语义 / 数量上限 / 破坏性位置）当前**全部违反**；iOS 判据「Undo beats Are you sure?」有仓库既有 `useCanvasUndoStack` 支撑 |
 
-⭐ **三项最需要复核时重点看的代价**（ADR「负面 / 代价」节已完整记录）：
+⭐ **四项最需要复核时重点看的代价**（ADR「负面 / 代价」节已完整记录）：
 
 1. **J1 意味着移动端模式① 不再能自己改参数重跑** —— 参数敏感型用户是真实的能力回退（模式② 保留最小参数集作补偿）。
 2. **L1 的视频能力弱于图片** —— 媒体代理白名单仅放行图片，视频跨域无 CORS 头时只能「暂停 + 文字意见、不带图」。
 3. **K1/J1 改契约会打破 `MobileNodeEditorSheet` 既有测试断言** —— 合并 master 后需同步他人 mock（这是 PR 的 CI 风险点 R-1）。
+4. **N1 的代价：低频操作被下沉二级 ⇒ 多一次点击** —— 「存入资产库 / 保存到本地 / 副本含上游」三项从一级 Menu 移到二级「更多」；换来的是一级 ≤4–5 项的可扫读性（HIG 硬约束）。另：**删除改「撤销优先」后，误删不再有确认拦截**，完全依赖 Snackbar 的可见时长与撤销按钮 ⇒ 需真机验证 Snackbar 时长（建议 ≥5s）与可达性。
 
 ---
 
@@ -810,6 +1037,40 @@ flowchart TD
 | 长按动作分发六键；delete 直连 `removeSingleNode` 无确认（D5） | `apps/web/src/pages/CanvasPage.vue:4794-4822` |
 | 长按动作集六项（缺口三项的对照基线） | `apps/web/src/components/mobile/MobileNodeActionSheet.vue:41-48` |
 | PC 下载图片 / 存入资产库 / 副本含上游 | `apps/web/src/components/canvas/CanvasContextMenu.vue:69-93` |
+
+**§4.11 跨端组件哲学的取证（同一基线直读）**：
+
+| 事实 | 位置 |
+|---|---|
+| **既有高质量浮层基座**（scrim + 40×4 拖拽把手 + 20px 圆角 + 阴影 + 250ms decelerate + 底部安全区 + Teleport body） | `apps/web/src/components/mobile/MobileSheet.vue`（全文） |
+| ⚠️ **长按浮层是裸 `position:fixed` div**（无 scrim / 无把手 / 无圆角 / **无 Teleport**）⇒ 与 `MobileSheet` 两套实现并存 | `apps/web/src/components/mobile/MobileNodeActionSheet.vue`（`<style scoped>` 段：`.mobile-action-sheet{position:fixed;bottom:0;z-index:80}`） |
+| ⚠️ **长按浮层无遮罩 ⇒ 点浮层外的画布不会关闭** | 同上（无 scrim 元素；`MobileSheet` 有 `m-sheet-scrim` + `@click="dismiss"`） |
+| ⚠️ **长按浮层现有 7 个按钮**（重命名/引用/副本/多选/编辑/删除 + 取消）⇒ **超 HIG「含取消 ≤4」上限** | `MobileNodeActionSheet.vue:41-48`（`actions` computed）+ 模板「取消」按钮 |
+| ⚠️ **长按浮层按钮为纯名词**（非动词短语） | 同上（`label: '重命名'` / `'引用'` / `'副本'` / `'多选'` / `'编辑'` / `'删除'`） |
+| ⚠️ **查看器退出键是文本字符 `‹`**（U+2039 细笔画，形态随字重不稳） | `apps/web/src/components/mobile/MobileNodeViewer.vue:12` |
+| ⚠️ **`MobileSheet` 关闭图标 = 内联 SVG**（`viewBox 0 0 24 24` + `stroke-width:2`）⇒ **既有正确范式**，可照抄 | `MobileSheet.vue`（`.m-sheet-close svg`） |
+| ✅ **触控目标令牌已达标 44px**（且有守卫 `≥44`） | `apps/web/src/styles/design-tokens.css:184`；守卫 `apps/web/src/styles/design-token.test.ts:478` |
+| ✅ **既有图标刻度令牌**（`--lnk-icon-{sm,md,lg}` + `--lnk-icon-stroke: 1.5px`） | `design-tokens.css`（图标节） |
+| ⚠️ **仓库零图标库依赖**（25 个依赖中无 lucide/heroicons/material-icons/fontawesome） | `apps/web/package.json` |
+| ✅ **品牌图标资产仅 3 个** | `apps/web/src/assets/icons/`（`anchor-generate.png` / `anchor-locate.png` / `send-arrow.png`） |
+| ⚠️ **品牌守卫锁「锚用既有资产、不新造图标」** | `apps/web/src/pages/home-profile-p3.guard.test.ts:147-152` |
+| ✅ **画布撤销栈已存在**（`undo()` / `redo()` / `canUndo`）+ **明确支持 delete→undo 恢复 url/status** | `apps/web/src/composables/useCanvasUndoStack.ts:5-9`、`:39-53`、`:164`、`:193`；接线 `apps/web/src/pages/CanvasPage.vue:415`、`:3462-3466` |
+| ⚠️ **`MobileSheet` 动效用硬编码**（`0.25s cubic-bezier(0.22,1,0.36,1)`，未用 `--lnk-duration-*` / `--lnk-ease-*`） | `MobileSheet.vue`（`.m-sheet-enter-active`） |
+| ⚠️ **`MobileSheet` 圆角硬编码 `20px`**（未用 `--lnk-radius-*`） | `MobileSheet.vue`（`.m-sheet{border-radius:20px 20px 0 0}`） |
+| ⚠️ **`MobileSheet` 无 `prefers-reduced-motion` 分支**（仓库已有先例） | 同上；先例 `apps/web/src/styles/neo-node.css:651`、`apps/web/src/components/auth/LoginVideoPanel.vue:182` |
+| ✅ **多选批量条已用「更多 ⋯」+ 动词短语**（对齐 §4.11.7 的正确范式） | `apps/web/src/components/mobile/MobileMultiSelectMoreSheet.vue`（生成 / 停止 / 重新生成 / 分组 / 导出） |
+| ✅ **多选条已有「完成」钮 + 已有 sheet**（不重复造，§4.9） | `apps/web/src/components/mobile/MobileMultiSelectBar.vue` |
+
+**外部规范引用（§4.11 的判据来源）**：
+
+| 规范 | 引用要点 |
+|---|---|
+| Apple HIG · Action sheets | 「Use an action sheet — **not a menu** — to provide choices related to an action… people expect a **menu** to appear when they **choose to reveal it**」；「**Avoid displaying more than four buttons** in an action sheet, including the Cancel button」；「**Avoid letting an action sheet scroll**」；「place [destructive] buttons at the **top** of the action sheet」 |
+| Apple HIG · Layout（触控） | 最小命中区 **44×44pt**；icon-only 按钮命中区仍须 44pt（glyph 17–22pt） |
+| Apple HIG · Writing | 用**动作特定动词**（Save Changes / Delete Photo），不用 Yes / OK；破坏性动词必须配**说明后果**的确认文案 |
+| Apple HIG · Reduce Motion | 必须尊重 `prefers-reduced-motion` |
+| Apple Design（Clarity / Deference / Depth） | 三条品牌哲学（§4.11.1 的框架来源） |
+| Material 3 · Bottom app bar / Sheets | overflow menu 打开为 **bottom sheet**；`R5.7` limit action icons to **2-3**；`R5.9` bottom sheet 必须有 **visible drag handle**；`R5.12` confirm 用 text button、dismiss 在左；`R5.16` 可撤销操作给**一个** action（如 Undo） |
 | 瓦片 tap 无多选门控（D4） | `apps/web/src/components/mobile/MobileNodeTile.vue`（`onTileClick`） |
 | **移动端编辑 sheet 直接复用 PC studio dock 全量参数**（D8 / §4.2） | `apps/web/src/components/mobile/MobileNodeEditorSheet.vue:2,77-87`（import + 挂载 `DockStudioRouter`） |
 | **PC studio dock 体量**：6 panel + 12 shared ≈ 4800 行 | `apps/web/src/components/canvas/dock-studio/panels/*`（Audio 548 / Image 476 / Video 494 / Text 217 / Prompt 90）+ `dock-studio/shared/*`（DockRefChip 288 / GuidePickerPopover 477 …） |
