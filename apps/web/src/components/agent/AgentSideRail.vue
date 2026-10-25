@@ -103,6 +103,12 @@ import MentionInput, { type MentionOption } from '@/components/canvas/MentionInp
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { createFollowUpTailListener } from './follow-up-tail'
 import { applyTailVisibility } from './tail-visibility'
+import {
+  createSharedSubscription,
+  shouldOpenConnection,
+  type SharedEvent,
+  type SharedSubscription,
+} from './shared-subscription'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
@@ -2831,6 +2837,101 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
 /** 本端是否正处于「旁观另一端的那一轮」（有自己新建的 assistant 影子）。 */
 const observerTurnActive = ref(false)
 
+/**
+ * ⭐ 2026-10-26 根治：把「语义事件的应用」从订阅回调里**抽成独立函数**。
+ *
+ * 为什么抽：跨标签页共享转发的是**语义事件**（文本增量 / 画布动作 / 回合收束），
+ * 而订阅模块的判定逻辑（游标 / 退避 / idle 闸门 / 终态）**一行不改**（规格 G-2）
+ * ⇒ 共享必须落在**宿主回调**这一层 ⇒ 「直连收到」与「共享转发收到」要**同一段代码**，
+ * 否则两边语义会漂移（历史事故模式）。
+ */
+
+/** 应用文本增量（本地）——直连与跨标签页两条路径共用。 */
+function applyTextDelta(text: string): void {
+  // ⛔ 本端主流在跑：同一份 text_delta 已经从 POST 响应体到了，旁听再追加就是双倍文本。
+  if (agent.isStreaming) return
+  // 旁观另一端的那一轮：本地还没有这条 assistant 的影子 ⇒ 先起一条再追加。
+  if (!observerTurnActive.value) {
+    agent.startAssistantMessage()
+    agent.isStreaming = true
+    observerTurnActive.value = true
+  }
+  // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
+  agent.appendText(text)
+  scrollToBottom()
+}
+
+/** 应用画布动作（本地）——直连与跨标签页两条路径共用。 */
+function applyCanvasAction(data: unknown): void {
+  emit('canvasActions', [data as never])
+}
+
+/** 回合收束（本地）——直连与跨标签页两条路径共用。 */
+function applyTurnEnd(): void {
+  // 幂等：done 之后还有 turn_ack，会来第二次
+  if (!observerTurnActive.value) return
+  observerTurnActive.value = false
+  agent.finishStreaming()
+  // 旁观拿到的是增量片段，收尾必须以服务端权威历史为准纠正一次（漏帧/乱序的自愈口）。
+  // 传 0：那一轮已在另一端跑完，不做终态轮询（否则旁观端会跟着睡 5s×N）。
+  void reconcileLatestAssistant(0)
+  emit('turnComplete')
+  scrollToBottom()
+}
+
+/**
+ * ⭐ 跨标签页共享（2026-10-26 根治）：同一会话的 N 个标签页 ⇒ **全局只开 1 条**订阅连接。
+ *
+ * 为什么必须有：常驻订阅是**每标签页一条长连接**（靠服务端心跳维持，实测 30s+ 不关闭），
+ * 而 Chrome 对同源 HTTP/1.1 只有 **6 个连接** ⇒ 标签页一多，普通请求（项目列表等）
+ * 全部排队饿死（2026-10-26 生产事故：品牌页点锚卡 15 秒 ⇒「项目加载失败」⇒ 重试无效）。
+ *
+ * 降级：无 BroadcastChannel（老浏览器）⇒ **各自订阅**（= 改动前行为），零新增故障面。
+ */
+let sharedSubscription: SharedSubscription | null = null
+let sharedChannelName = ''
+
+/** 当前标签页是否可见（隐藏 ⇒ 不占连接、让出 leader —— #587 语义）。 */
+function isTabVisible(): boolean {
+  return document.visibilityState === 'visible'
+}
+
+/** 取（或按会话/线程重建）共享订阅。 */
+function ensureSharedSubscription(): SharedSubscription | null {
+  const name = `lnkpi:agent-sub:${props.sessionId}:${agentThreadId.value}`
+  if (sharedSubscription && sharedChannelName === name) return sharedSubscription
+  // 会话/线程变了 ⇒ 换频道（不同 threadId 是不同的事实源）
+  sharedSubscription?.stop()
+  sharedChannelName = name
+  sharedSubscription = createSharedSubscription({
+    channelName: name,
+    onEvent: (ev: SharedEvent) => {
+      if (ev.kind === 'text_delta') applyTextDelta(ev.text)
+      else if (ev.kind === 'canvas_action') applyCanvasAction(ev.data)
+      else applyTurnEnd()
+    },
+    onLeadership: (isLeader) => {
+      // ⛔ 只有「该开连接的人」才开：follower / 隐藏页都不得自己开
+      //   （follower 开 ⇒ 回到「N 标签页 N 条连接」的病态）。
+      const shared = sharedSubscription
+      const degraded = shared?.status().degraded ?? false
+      if (shouldOpenConnection({ degraded, isLeader, visible: isTabVisible() })) {
+        void followUpTail.start()
+      } else {
+        // 让出 leader ⇒ 掐掉本标签页的连接
+        followUpTail.abort()
+      }
+    },
+    onDegrade: () => {
+      // 无 BroadcastChannel ⇒ 各自订阅（= 改动前行为）
+      void followUpTail.start()
+    },
+  })
+  sharedSubscription.start()
+  sharedSubscription.setVisible(isTabVisible())
+  return sharedSubscription
+}
+
 const followUpTail = createFollowUpTailListener({
   fetchImpl: (url, init) => fetch(url, init),
   headers: () => authHeaders(),
@@ -2840,29 +2941,17 @@ const followUpTail = createFollowUpTailListener({
       `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
     ),
   onTextDelta: (text) => {
-    // ⛔ 本端主流在跑：同一份 text_delta 已经从 POST 响应体到了，旁听再追加就是双倍文本。
-    if (agent.isStreaming) return
-    // 旁观另一端的那一轮：本地还没有这条 assistant 的影子 ⇒ 先起一条再追加。
-    if (!observerTurnActive.value) {
-      agent.startAssistantMessage()
-      agent.isStreaming = true
-      observerTurnActive.value = true
-    }
-    // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
-    agent.appendText(text)
-    scrollToBottom()
+    applyTextDelta(text)
+    // 转发给其他标签页（leader 才有连接 ⇒ follower 才能看到同一段）
+    sharedSubscription?.broadcast({ kind: 'text_delta', text })
   },
-  onCanvasAction: (data) => emit('canvasActions', [data as never]),
+  onCanvasAction: (data) => {
+    applyCanvasAction(data)
+    sharedSubscription?.broadcast({ kind: 'canvas_action', data })
+  },
   onTurnEnd: () => {
-    // 幂等：done 之后还有 turn_ack，会来第二次
-    if (!observerTurnActive.value) return
-    observerTurnActive.value = false
-    agent.finishStreaming()
-    // 旁观拿到的是增量片段，收尾必须以服务端权威历史为准纠正一次（漏帧/乱序的自愈口）。
-    // 传 0：那一轮已在另一端跑完，不做终态轮询（否则旁观端会跟着睡 5s×N）。
-    void reconcileLatestAssistant(0)
-    emit('turnComplete')
-    scrollToBottom()
+    applyTurnEnd()
+    sharedSubscription?.broadcast({ kind: 'turn_end' })
   },
 })
 
@@ -2871,6 +2960,16 @@ function listenFollowUpTail(): Promise<void> {
   // 未登录不订阅：订阅必须带鉴权头，没 token 时请求只会拿到 401，并连带一轮
   // 无意义的退避重连。守卫放在**入口**（而非各调用点）⇒ 挂载 / 切会话 / 可见性恢复全覆盖。
   if (!hasAuthToken()) return Promise.resolve()
+  const shared = ensureSharedSubscription()
+  if (shared && !shared.status().degraded) {
+    // 共享可用 ⇒ **只有可见的 leader 才真正开连接**（判据见 shared-subscription-core）。
+    // follower 在这里返回即可：它要的事件由 leader 转发过来。
+    if (shouldOpenConnection({ degraded: false, isLeader: shared.isLeader(), visible: isTabVisible() })) {
+      if (followUpTail.getState() === 'idle') void followUpTail.start()
+    }
+    return Promise.resolve()
+  }
+  // 降级（无 BroadcastChannel）⇒ 各自订阅（= 改动前行为）
   return followUpTail.start()
 }
 
@@ -2898,12 +2997,23 @@ function releaseObserverTurn(): void {
  * `follow-up-tail.ts`）；idle 直接挂、backoff 中跳过排队、健康流不打断。
  */
 function onFollowUpTailVisibility(): void {
+  const visible = isTabVisible()
+  // 共享层：隐藏 ⇒ 让出 leader（不再占连接）；可见 ⇒ 重新参与选举（可能接管）。
+  sharedSubscription?.setVisible(visible)
   // 策略本身在 `tail-visibility.ts`（依赖可注入 ⇒ 可单测），这里只做接线。
   applyTailVisibility({
-    isVisible: () => document.visibilityState === 'visible',
+    isVisible: () => visible,
     hasAuthToken,
     isMainStreamRunning: () => agent.isStreaming,
-    resume: () => void followUpTail.resume(),
+    resume: () => {
+      // ⛔ 只有「该开连接的人」才 resume —— follower resume 会自己开一条连接 ⇒ 回到病态。
+      const shared = sharedSubscription
+      const shouldOpen = shared
+        ? shouldOpenConnection({ degraded: shared.status().degraded, isLeader: shared.isLeader(), visible })
+        : true
+      if (!shouldOpen) return
+      void followUpTail.resume()
+    },
     abort: () => followUpTail.abort(),
   })
 }
@@ -2928,6 +3038,10 @@ watch(
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onFollowUpTailVisibility)
+  // 共享层也要退（离开频道 + 释放 leader 身份）⇒ 别的标签页能立刻接管。
+  sharedSubscription?.stop()
+  sharedSubscription = null
+  sharedChannelName = ''
   followUpTail.abort()
 })
 
