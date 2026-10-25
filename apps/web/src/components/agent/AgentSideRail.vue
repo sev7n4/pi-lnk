@@ -2894,9 +2894,81 @@ function applyTurnEnd(): void {
 let sharedSubscription: SharedSubscription | null = null
 let sharedChannelName = ''
 
+/**
+ * ⭐⭐⭐ 2026-10-26 生产取证：**全局 SSE 槽位（跨标签页、跨画布）**。
+ *
+ * 事故形态（生产实证，2026-10-26）：
+ *   用户同时开着多个画布标签页时，**每个标签页各挂一条**常驻订阅
+ *   （不同 session ⇒ 上一版的「同 session 共享」合并不了）
+ *   ⇒ 累计到 **6 条** = Chrome 同源 HTTP/1.1 的连接上限
+ *   ⇒ 之后**所有**普通请求排队饿死（实测 50 条请求 0 字节传输）：
+ *     · 画布载荷 `GET /sessions/:id` 排不上 ⇒ **画布显示为空**
+ *     · 积分面板 `GET /membership/points` 排不上 ⇒ **显示「0 积分 + 加载中…」**
+ *       （实测服务端 29ms 就返回 119466 ⇒ 界面上的 0 是假 0）
+ *
+ * ⇒ 这里用**一个与 session/thread 无关的全局频道**选举「谁持有唯一那条订阅连接」：
+ *   可见页优先（隐藏页让位，见 #587 语义）⇒ **整个浏览器最多 1 条常驻订阅**
+ *   ⇒ 给普通请求留出 5 条槽位。
+ *
+ * ⚠️ 代价（产品取舍，必须让用户知道）：
+ *   多窗口同时打开不同画布时，**只有拿到全局槽位的那一个窗口**有「另一端在跑」的
+ *   实时推送；其余窗口降级为「不实时」——这是同源 6 连接硬上限下的必然取舍。
+ */
+let sseSlotSubscription: SharedSubscription | null = null
+
+/** 本标签页是否持有「全局唯一那条订阅连接」。 */
+function holdsGlobalSseSlot(): boolean {
+  const slot = sseSlotSubscription
+  // 无 BroadcastChannel（老浏览器）⇒ 降级：各自订阅（= 改动前行为），零新增故障面。
+  if (!slot || slot.status().degraded) return true
+  return slot.isLeader()
+}
+
 /** 当前标签页是否可见（隐藏 ⇒ 不占连接、让出 leader —— #587 语义）。 */
 function isTabVisible(): boolean {
   return document.visibilityState === 'visible'
+}
+
+/**
+ * 连接开/关的**唯一判据**（所有触发点都调它：会话 leader 变化 / 全局槽位变化 / 可见性变化）。
+ *
+ * ⛔ 判定必须在**一处**：多处各判一次 ⇒ 条件漂移 ⇒ 同一时刻出现两条连接。
+ */
+function evaluateConnection(): void {
+  const shared = sharedSubscription
+  const degraded = shared?.status().degraded ?? false
+  const allowed =
+    shouldOpenConnection({
+      degraded,
+      isLeader: shared?.isLeader() ?? true,
+      visible: isTabVisible(),
+    }) && holdsGlobalSseSlot()
+  if (allowed) {
+    // ⛔ 只在真的没有连接时开：`start()` 会掐旧流重开，重复调用 ⇒ 连接抖动。
+    if (followUpTail.getState() === 'idle') void followUpTail.start()
+  } else {
+    // 让出 leader / 槽位 / 变隐藏 ⇒ 掐掉本标签页的连接
+    followUpTail.abort()
+  }
+}
+
+/** 取（并启动）全局槽位订阅。 */
+function ensureSseSlotSubscription(): SharedSubscription | null {
+  if (sseSlotSubscription) return sseSlotSubscription
+  sseSlotSubscription = createSharedSubscription({
+    // ⭐ 与 session/thread **无关**的固定频道名 ⇒ 所有标签页、所有画布共用一个槽位。
+    channelName: 'lnkpi:agent-sse-slot',
+    onEvent: () => {},
+    onLeadership: () => {
+      evaluateConnection()
+    },
+    onDegrade: () => {
+      evaluateConnection()
+    },
+  })
+  sseSlotSubscription.start()
+  sseSlotSubscription.setVisible(isTabVisible())
+  return sseSlotSubscription
 }
 
 /** 取（或按会话/线程重建）共享订阅。 */
@@ -2923,21 +2995,15 @@ function ensureSharedSubscription(): SharedSubscription | null {
       else if (ev.kind === 'canvas_action') applyCanvasAction(ev.data)
       else applyTurnEnd()
     },
-    onLeadership: (isLeader) => {
+    onLeadership: () => {
       // ⛔ 只有「该开连接的人」才开：follower / 隐藏页都不得自己开
       //   （follower 开 ⇒ 回到「N 标签页 N 条连接」的病态）。
-      const shared = sharedSubscription
-      const degraded = shared?.status().degraded ?? false
-      if (shouldOpenConnection({ degraded, isLeader, visible: isTabVisible() })) {
-        void followUpTail.start()
-      } else {
-        // 让出 leader ⇒ 掐掉本标签页的连接
-        followUpTail.abort()
-      }
+      //   ⇒ 判定统一走 evaluateConnection()（会话 leader + 全局槽位 + 可见性 三者与）。
+      evaluateConnection()
     },
     onDegrade: () => {
       // 无 BroadcastChannel ⇒ 各自订阅（= 改动前行为）
-      void followUpTail.start()
+      evaluateConnection()
     },
   })
   sharedSubscription.start()
@@ -2973,17 +3039,17 @@ function listenFollowUpTail(): Promise<void> {
   // 未登录不订阅：订阅必须带鉴权头，没 token 时请求只会拿到 401，并连带一轮
   // 无意义的退避重连。守卫放在**入口**（而非各调用点）⇒ 挂载 / 切会话 / 可见性恢复全覆盖。
   if (!hasAuthToken()) return Promise.resolve()
+  // ⭐ 先参与全局槽位选举（跨标签页/跨画布只允许 1 条常驻订阅）。
+  ensureSseSlotSubscription()
   const shared = ensureSharedSubscription()
+  // 判定统一走一处（会话 leader + 全局槽位 + 可见性）。
+  evaluateConnection()
   if (shared && !shared.status().degraded) {
-    // 共享可用 ⇒ **只有可见的 leader 才真正开连接**（判据见 shared-subscription-core）。
-    // follower 在这里返回即可：它要的事件由 leader 转发过来。
-    if (shouldOpenConnection({ degraded: false, isLeader: shared.isLeader(), visible: isTabVisible() })) {
-      if (followUpTail.getState() === 'idle') void followUpTail.start()
-    }
+    // 共享可用 ⇒ follower 在这里返回即可：它要的事件由 leader 转发过来。
     return Promise.resolve()
   }
   // 降级（无 BroadcastChannel）⇒ 各自订阅（= 改动前行为）
-  return followUpTail.start()
+  return Promise.resolve()
 }
 
 /** 是否持有可用 token（与 `authHeaders` 同源口径）。 */
@@ -3013,6 +3079,8 @@ function onFollowUpTailVisibility(): void {
   const visible = isTabVisible()
   // 共享层：隐藏 ⇒ 让出 leader（不再占连接）；可见 ⇒ 重新参与选举（可能接管）。
   sharedSubscription?.setVisible(visible)
+  // ⭐ 全局槽位同样要跟随可见性：隐藏页必须把唯一的订阅连接让给可见页。
+  sseSlotSubscription?.setVisible(visible)
   // 策略本身在 `tail-visibility.ts`（依赖可注入 ⇒ 可单测），这里只做接线。
   applyTailVisibility({
     isVisible: () => visible,
@@ -3055,6 +3123,9 @@ onUnmounted(() => {
   sharedSubscription?.stop()
   sharedSubscription = null
   sharedChannelName = ''
+  // ⭐ 退出全局槽位 ⇒ 别的标签页能立刻接管那条唯一的订阅连接。
+  sseSlotSubscription?.stop()
+  sseSlotSubscription = null
   followUpTail.abort()
 })
 

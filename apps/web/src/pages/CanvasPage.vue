@@ -28,6 +28,7 @@ import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
+import { patchDiffers, pickInflightRecords, shouldPollNode } from '@/utils/generationPollScope'
 import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canvasLoadGuard'
 import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
 import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
@@ -704,10 +705,20 @@ function startPollingForGeneratingRecords() {
       continue
     }
     const data = n.data as Record<string, unknown>
-    // Fix #1: accept any node with generationRecordId, regardless of status,
-    // so terminal-state records (completed/failed) get fetched and re-applied
-    // to nodes that lost recordId/url on loadSession().
-    if (data.generationRecordId) {
+    // ⭐⭐ 2026-10-26 生产取证修复：**只轮询「还在生成中」的节点**。
+    //
+    // 事故形态：旧实现把**所有**带 recordId 的节点都塞进轮询队列
+    //   （原注释明说「不管状态」），而轮询是**串行**的
+    //   （useGenerationPolling.pollOnce 里 for + await）
+    //   ⇒ 77 个节点的画布 ⇒ **每轮 77 条串行请求**（一轮约 2 秒），
+    //     且每次 loadSession() 都无条件重入（回合后还有 15 次轮询重载）
+    //   ⇒ 长期占死同源连接槽位（Chrome 每源 6 条）
+    //   ⇒ **画布载荷请求排队饿死 ⇒ 画布显示为空**（实测 55 秒内 336 条请求）。
+    //
+    // 终态记录（completed/failed/error）的产物由
+    //   `reconcileMissingGenerationRecords()` 的**一条 list 接口**一次性回填，
+    //   功能不丢、请求量从 N 条降到 1 条。
+    if (shouldPollNode(data.status, Boolean(data.generationRecordId))) {
       tasks.push({ recordId: String(data.generationRecordId), nodeId: n.id })
     }
   }
@@ -5191,11 +5202,24 @@ async function reconcileMissingGenerationRecords() {
     const data = n.data as Record<string, unknown>
     return data?.status === NODE_GENERATION_STATUS.completed && !data?.mediaInfo
   })
-  if (!missingRecordId.length && !missingMediaInfo.length) return
+  // ⛔ 2026-10-26：不再「没有缺失就早退」——早退会让**服务端权威的轮询范围**拿不到。
+  //   现在这 1 条 list 请求同时承担两件事：
+  //     ① 决定「谁还需要持续轮询」（服务端记录状态是权威，本地节点状态可能陈旧）；
+  //     ② 一次性把终态记录的产物回填到节点（替代旧的 N 条逐条轮询）。
+  //   ⇒ 请求量从「每轮 N 条」降到「每次 loadSession 1 条」。
   try {
     const { data } = await studioApi.listGenerations({ sessionId: sessionId.value })
     const records = data.data ?? []
     if (!records.length) return
+
+    // ① 服务端记录是权威 ⇒ 用它决定「谁还需要持续轮询」
+    //    （另一端发起的生成，本地节点状态可能还没同步过来）
+    const inflight = pickInflightRecords(records).filter((r) => r.nodeId)
+    if (inflight.length) {
+      generationPolling.start(
+        inflight.map((r) => ({ recordId: r.id, nodeId: String(r.nodeId) })),
+      )
+    }
     const byNodeId = new Map<string, GenerationRecord>()
     const byRecordId = new Map<string, GenerationRecord>()
     for (const r of records) {
@@ -5203,11 +5227,31 @@ async function reconcileMissingGenerationRecords() {
       byRecordId.set(r.id, r)
     }
     let patched = 0
-    for (const node of missingRecordId) {
+    // ⭐ 2026-10-26：回填范围从「缺 recordId 的节点」扩到「**产物与记录不一致**的节点」
+    //   —— 这正是旧实现靠「每轮逐条轮询」隐式承担的那部分（Fix #1/#2 的场景）。
+    //   ⛔ 只在**真的有差异**时才写 ⇒ 避免每次 loadSession 都写几十个节点。
+    const patchTargets = new Set<string>([
+      ...missingRecordId.map((n) => n.id),
+      ...missingMediaInfo.map((n) => n.id),
+      ...nodes.value
+        .filter((n) => {
+          if (n.type !== 'image' && n.type !== 'video' && n.type !== 'text' && n.type !== 'audio') {
+            return false
+          }
+          const d = n.data as Record<string, unknown>
+          if (!d.generationRecordId) return false
+          return !d.url && !Array.isArray(d.images) && !d.content
+        })
+        .map((n) => n.id),
+    ])
+    for (const nodeId of patchTargets) {
+      const node = nodes.value.find((n) => n.id === nodeId)
+      if (!node) continue
       const rec = byNodeId.get(node.id)
       if (!rec) continue
       const patch = buildStudioRecordPatch(node, rec)
       if (!patch) continue
+      if (!patchDiffers(node.data as Record<string, unknown>, patch)) continue
       patchNodeData(node.id, patch)
       patched += 1
     }
