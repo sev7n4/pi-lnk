@@ -41,13 +41,21 @@ export function resolveMobileNodeActions(node: {
   data?: Record<string, unknown> | null
 }): MobileNodeActionKey[] {
   const state = resolveMobileNodeState({ type: node.type, data: node.data })
-  // 有产物才允许「产物类」操作（引用 / 副本 / 存库 / 本地）
+  // 有产物才允许「产物类」操作（副本 / 存库 / 本地）
   const hasContent = state === 'confirmed' || state === 'pending' || state === 'error'
 
   const keys: MobileNodeActionKey[] = ['edit']
   keys.push('rename')
+  // ⭐ 「引用」按**状态分别**门控（规格 §6.4 两张裁剪集对「引用」的处置不同）：
+  //   · empty：**保留**（§6.4「empty 裁剪集」明确含「引用」）
+  //       —— 引用 = `handleAddToAgentRefs([nodeId])` ⇒ 把**提示词**带给 agent；
+  //       模式① 的撰写本就发生在对话页（§4.2）⇒ 引用「只有提示词、无产物」的
+  //       空节点，是把这段提示词交给 agent 的**正规路径**，裁掉会断掉协作闭环。
+  //   · generating：**禁止**（§6.4「generating 受限集」明文「产物未定」）
+  //   · pending / confirmed / error：**有**（全集）
+  if (state !== 'generating') keys.push('reference')
   if (hasContent) {
-    keys.push('reference', 'duplicate', 'duplicate-upstream', 'save-asset', 'save-local')
+    keys.push('duplicate', 'duplicate-upstream', 'save-asset', 'save-local')
   }
   keys.push('multi-select')
   // 生成中不删（中断一个已消耗积分的任务）—— 规格 §6.4 / 拍板项 B1

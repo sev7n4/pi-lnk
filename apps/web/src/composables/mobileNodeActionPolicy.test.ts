@@ -107,4 +107,67 @@ describe('resolveMobileNodeMenuTiers（一级 / 二级分层 · §4.11.3）', ()
     const { primary, more } = resolveMobileNodeMenuTiers(node)
     expect([...primary, ...more].sort()).toEqual([...all].sort())
   })
+
+  // ── 规格裁剪集精确表（§5.1 总门控表 + §6.4 两张裁剪集）──────────────
+  // ⭐ 这张表是本规格的**核心判据**：Menu 的可用操作集必须**逐项精确**等于
+  //   规格所列，不得多也不得少。多 = 让用户点了没反应；少 = 断掉协作路径。
+  // ⚠️ 实施期自审发现过一处偏差：empty 态曾裁掉「引用」——而「引用」是把
+  //   提示词带给 agent 的正规路径（模式① 撰写发生在对话页，§4.2）⇒ 已修正。
+  describe('规格裁剪集精确表（§5.1 + §6.4）', () => {
+    const FULL = [
+      'edit', 'rename', 'reference', 'duplicate', 'duplicate-upstream',
+      'save-asset', 'save-local', 'multi-select', 'delete',
+    ]
+
+    it('empty 态 = 编辑/重命名/引用/多选/删除（§6.4「empty 裁剪集」）', () => {
+      const keys = resolveMobileNodeActions({ type: 'image', data: {} })
+      expect([...keys].sort()).toEqual(
+        ['delete', 'edit', 'multi-select', 'reference', 'rename'],
+      )
+      // 产物类三项不出现
+      expect(keys).not.toContain('duplicate')
+      expect(keys).not.toContain('duplicate-upstream')
+      expect(keys).not.toContain('save-asset')
+      expect(keys).not.toContain('save-local')
+    })
+
+    it('empty 态**保留「引用」**（把提示词带给 agent 的正规路径，§4.2）', () => {
+      const keys = resolveMobileNodeActions({ type: 'image', data: {} })
+      expect(keys).toContain('reference')
+    })
+
+    it('generating 态 = 编辑/重命名/多选（§6.4「generating 受限集」：引用也禁）', () => {
+      const keys = resolveMobileNodeActions({
+        type: 'image',
+        data: { status: 'generating' },
+      })
+      expect([...keys].sort()).toEqual(['edit', 'multi-select', 'rename'])
+      // 禁：删除 / 副本 / 资产库 / 本地
+      expect(keys).not.toContain('delete')
+      expect(keys).not.toContain('duplicate')
+      expect(keys).not.toContain('save-asset')
+      expect(keys).not.toContain('save-local')
+    })
+
+    it('pending / confirmed 态 = 全集（9 项，§5.1）', () => {
+      const pending = resolveMobileNodeActions({
+        type: 'image',
+        data: { status: 'pending_confirm', url: 'x.png' },
+      })
+      expect([...pending].sort()).toEqual([...FULL].sort())
+      const confirmed = resolveMobileNodeActions({
+        type: 'image',
+        data: { status: 'completed', url: 'x.png' },
+      })
+      expect([...confirmed].sort()).toEqual([...FULL].sort())
+    })
+
+    it('error 态 = 全集（含重试引导，§5.1）', () => {
+      const keys = resolveMobileNodeActions({
+        type: 'image',
+        data: { status: 'error', url: 'x.png' },
+      })
+      expect([...keys].sort()).toEqual([...FULL].sort())
+    })
+  })
 })
