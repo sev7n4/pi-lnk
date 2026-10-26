@@ -110,31 +110,14 @@ describe('品牌页性能修复：路由预加载', () => {
 describe('品牌页首屏不得拉入画布链（请求数）', () => {
   const workflowPage = stripComments(read('./WorkflowPage.vue'))
 
-  it('⛔ 发布弹窗必须异步加载（它拖进整条画布链）', () => {
-    // ⛔ 2026-10-24 第二轮事故取证：品牌页首屏 **51 个同域请求 / 1.3MB**，
-    //    其中 20+ 个是画布页 chunk：
-    //      PublishNeoTVDialog → stores/canvasEditor → services/studio-api
-    //                                        → components/canvas/refine/*
-    //                          → CanvasLocateButton → AgentTurnTimeline → UniversalModelSelector → …
-    //    而它在模板里的位置是 `hidden lg:block` 容器内 ⇒ 窄屏（主场景）根本用不到。
-    //    ⇒ 6 个连接被占满 9 轮往返 ⇒ 535KB 的 logo 拖到 8 秒、API 排到 10.3 秒。
+  it('⛔ 发布弹窗已从主页整体退场（2026-10-26 规格收敛 v2：发布回归画布内 chrome）', () => {
+    // 演进：2026-10-24 修复 = 「异步加载 + v-if 收敛」（当时弹窗还在主页）；
+    // 2026-10-26 收敛 v2 = 弹窗连同「发布作品」入口一并退出主页（发布唯一宿主
+    // = CanvasPage chrome + 移动端菜单）⇒ 最强首屏守卫 = 主页源码零引用。
     expect(
       workflowPage,
-      '⛔ PublishNeoTVDialog 不得静态 import（会把画布链拖进品牌页首屏）',
-    ).not.toMatch(/^import\s+PublishNeoTVDialog\s+from/m)
-    expect(workflowPage, 'PublishNeoTVDialog 必须用 defineAsyncComponent').toMatch(
-      /defineAsyncComponent\(\(\)\s*=>\s*import\(['"]@\/components\/works\/PublishNeoTVDialog\.vue['"]\)\)/,
-    )
-    // ⛔⛔ `v-if` 是**必需**的，不是保险：
-    //    `defineAsyncComponent` 在组件**被渲染时**就发起 chunk 加载，与内部是否可见无关。
-    //    父容器是 `hidden lg:block` ⇒ 组件照样渲染 ⇒ 照样加载
-    //    ⇒ 实测首屏在 5213ms 又来一批（PublishNeoTVDialog + 11 个 element-plus chunk）。
-    const tag = workflowPage.match(/<PublishNeoTVDialog[\s\S]{0,400}?\/>/)?.[0] ?? ''
-    expect(tag, '找不到 PublishNeoTVDialog 标签').not.toBe('')
-    expect(
-      tag,
-      '⛔ PublishNeoTVDialog 必须带 v-if="showPublish"（否则异步组件照样在首屏加载）',
-    ).toContain('v-if="showPublish"')
+      '⛔ 主页不得引用 PublishNeoTVDialog（连异步组件都不留，首屏零画布链）',
+    ).not.toContain('PublishNeoTVDialog')
   })
 })
 
@@ -202,8 +185,9 @@ describe('品牌页性能修复：移动端不整页刷新', () => {
     expect(rail, 'AgentSideRail 不得再用 location.assign（整页刷新 ⇒ 传输翻倍）').not.toContain(
       'window.location.assign',
     )
-    // 有效性配对：改成 router.push 后必须真的 push 了
-    expect(rail, '打开项目必须走 router.push').toContain('router.push(`/workflow/${id}`)')
+    // 有效性配对：rail 内仍存的导航必须走 router。2026-10-26 收敛 v2 后
+    // 「打开项目」随 ProjectPanel 退役（唯一宿主 = 创作首页行卡 openCanvas）；
+    // rail 内仅剩「新建项目成功后进项目」一条 push。
     expect(rail, '新建项目必须走 router.push').toContain('router.push(`/workflow/${created.id}`)')
   })
 })

@@ -1,6 +1,6 @@
 # 门面收敛与续作面统一（Project Gallery Consolidation）设计规格
 
-状态：待评审 · **v2（2026-10-26 晚，评审中途用户拍板微信式收敛，见修订记录）**
+状态：已实施（2026-10-26，Task 0–10 全部完成，分支 `feat/project-gallery-consolidation` → PR #614；prod 取证四层待合并部署后执行）· **v2（2026-10-26 晚，评审中途用户拍板微信式收敛，见修订记录）**
 前置：
 - INV-10：全仓唯一 `canvasApi.list` 调用点 = `useProjectWorkspace`（`composables/useProjectWorkspace.ts`）
 - **ADR-0012「品牌页点锚 = 进入创作」**（仪式感定位，本规格不改动该语义；v2 定义「进入创作后的落点」）
@@ -242,7 +242,13 @@ flowchart TD
 
 - 执行：`pnpm verify-spec-figures --file docs/superpowers/specs/2026-10-26-project-gallery-consolidation-design.md`
 - 结果（2026-10-26 v2）：`✓ … 0 个错误，0 个警告`（EXIT=0）。
+- 实施终局复跑（2026-10-26 Task 10）：`pnpm verify-spec-figures` 全量 EXIT=0（175 篇在范围内，0 错误 2 警告，本文件无警告）。
 - 图 1/2/4 内嵌 Mermaid（≤12 节点、标签引号）；图 3 为 `assets/` SVG（①②③ 标注 + 图例）；§0 索引齐全、图号 1–4 连续、每图正文引用。R1–R8 全过。
+- **§10 验收对照（Task 10 人工核对，2026-10-26）**：
+  - 单测：`projectCoverFallback` 3/3（实现为两态方案，见 Task 5 Ruling）；创作首页行卡封面/点击/空态/搜索/批删（CanvasesPage.test 10 用例）；CanvasFloatingChrome 返回接线；useProjectWorkspace 单源共享——全部 EXIT=0。
+  - grep 守卫（Grep 工具全目录）：`useMySessions` / `sessionsApi.list` / `RecentProjectsStrip` / `ProjectPanel`（生产代码）/ `openProjectPanel` / `projectCardAdapter` 零命中；对话页模板无列表组件（反向断言守卫在位）。
+  - 集成/回归：`vue-tsc -b` EXIT=0；进入创作首页单次列表请求（single-flight + 登录守卫）。
+  - 目视验收（prod 取证四层）：**待合并部署后执行**（复测脚本口径同移动端生命周期 `scripts/verify/prod-mobile-lifecycle.sh`）。
 
 ---
 
