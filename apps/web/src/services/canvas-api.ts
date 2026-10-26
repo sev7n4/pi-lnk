@@ -10,6 +10,12 @@ export const canvasApi = {
     api.post('/agent/canvas/create', { title }, config),
   update: (id: string, data: { title?: string; canvasData?: unknown }) =>
     api.put('/agent/canvas/update', { id, ...data }),
+  /**
+   * SP-D（ADR-0014）：手拉边落库走服务端统一校验通道（端点存在/禁自环/禁成环 fail-closed），
+   * 与 agent connect_nodes 同一服务方法；硬非法 ⇒ 400，message 逐条点名 `source -> target (reason)`。
+   */
+  connectNodes: (sessionId: string, edges: Array<{ source: string; target: string }>) =>
+    api.post('/agent/canvas/connect-nodes', { sessionId, edges }),
   optimizePrompt: (prompt: string, style?: string) =>
     api.post<{ data: { optimized: string } }>('/agent/chat/optimize-prompt', { prompt, style }),
   confirmMaterialPlatformFallback: (id: string) =>

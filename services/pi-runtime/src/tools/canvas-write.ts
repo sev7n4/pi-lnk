@@ -978,7 +978,9 @@ export function createCanvasWriteTools(
 			tier: "graph_batch",
 			name: "connect_nodes",
 			label: "连节点",
-			description: `Connect canvas nodes with directed edges (max ${CONNECT_NODES_MAX_EDGES} edges per call)`,
+			description: `Connect canvas nodes with directed edges (max ${CONNECT_NODES_MAX_EDGES} edges per call). ` +
+				"Endpoints must be existing node ids; self-loops and cycles are rejected server-side (fail-closed); " +
+				"duplicate same-direction edges are skipped idempotently.",
 			parameters: Type.Object({
 				edges: Type.Array(
 					Type.Object({
@@ -1004,6 +1006,7 @@ export function createCanvasWriteTools(
 			description:
 				`Create multiple canvas nodes in one atomic call (draft only, max ${CREATE_NODES_BATCH_MAX_NODES} nodes + ${CREATE_NODES_BATCH_MAX_EDGES} edges per call). ` +
 				"Edges reference nodes in the same batch by their key, or existing nodes by id. " +
+				"Self-loops and cycles in edges are rejected server-side (fail-closed); duplicate same-direction edges are skipped idempotently. " +
 				"Nodes are placed server-side (no coordinates accepted) and laid out in a tidy chain. " +
 				"Does NOT start generation: call propose_generation per node afterwards.",
 			parameters: Type.Object({
