@@ -72,7 +72,8 @@ async function createCanvas() {
 }
 
 onMounted(() => {
-  void listProjects()   // 进首页强制新鲜：管理页要可管的真数据，不走 loadIfStale
+  // 未登录不发请求（必然 401）：登录引导分支自己接住（回归契约：未登录零请求）
+  if (auth.isLoggedIn) void listProjects()   // 进首页强制新鲜：管理页要可管的真数据，不走 loadIfStale
 })
 
 /** 行卡视图：预解析封面三态（模板内两次独立调用无法做类型窄化）。 */

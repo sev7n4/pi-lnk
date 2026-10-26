@@ -90,10 +90,6 @@ const stubs = {
       '<button class="signature-hero-stub" @click="$emit(\'create\')" />' +
       '<span v-if="error" class="hero-error-stub">{{ error }}</span>',
   },
-  SessionCard: { template: '<div class="session-card-stub" />', props: ['session'] },
-  WorkCard: { template: '<div class="work-card-stub" />', props: ['work'] },
-  PublishNeoTVDialog: { template: '<div />' },
-  CategoryTabs: { template: '<div class="category-tabs-stub" />' },
   RouterLink: { template: '<a :href="to"><slot /></a>', props: ['to'] },
 }
 
@@ -125,7 +121,7 @@ async function mountWorkflow(opts: { loggedIn?: boolean } = {}) {
   return wrapper
 }
 
-describe('WorkflowPage 主页收拢（P1）', () => {
+describe('WorkflowPage 主页品牌化（P3，规格收敛 v2）', () => {
   beforeEach(() => {
     apiGet.mockReset()
     canvasList.mockReset()
@@ -139,38 +135,30 @@ describe('WorkflowPage 主页收拢（P1）', () => {
     sessionStorage.clear()
   })
 
-  it('作品流降级为一行精选：只渲染 4 张卡 + 「去发现」入口，无分类 tab，无大网格', async () => {
-    const wrapper = await mountWorkflow()
-    expect(wrapper.find('[data-testid="home-featured-row"]').exists()).toBe(true)
-    expect(wrapper.findAll('.work-card-stub')).toHaveLength(4)
-    expect(wrapper.text()).toContain('去发现')
-    // 分类 tabs 已从主页撤出（移至 /community）
-    expect(wrapper.find('.category-tabs-stub').exists()).toBe(false)
-    // 大网格容器不存在
-    expect(wrapper.find('[data-testid="home-works-grid"]').exists()).toBe(false)
-  })
-
-  it('发布入口在「我的项目」头部（P3-D 归位：不再挂社区精选底部；需登录态）', async () => {
-    // 2026-10-21 P3-D 用户裁定「发布归位」⇒ 入口移到「我的项目」头部，
-    // 该区块 v-if 登录态 ⇒ 本测试置登录态后再断言（未登录走 hero 锚创建）。
+  it('⛔ 主页纯品牌：「我的项目」「社区精选」「发布作品」一律不得回流', async () => {
+    // 2026-10-26 规格收敛 v2（P3）：列表唯一真身 = 创作首页（/canvases），
+    // 社区唯一入口 = /community，发布唯一入口 = 画布内 chrome + 移动端菜单。
     const wrapper = await mountWorkflow({ loggedIn: true })
-    expect(wrapper.text()).toContain('发布作品')
+    expect(wrapper.text()).not.toContain('我的项目')
+    expect(wrapper.text()).not.toContain('社区精选')
+    expect(wrapper.text()).not.toContain('发布作品')
+    expect(wrapper.text()).not.toContain('查看全部')
+    expect(wrapper.find('[data-testid="home-featured-row"]').exists()).toBe(false)
+    expect(wrapper.find('.work-card-stub').exists()).toBe(false)
+    expect(wrapper.find('.category-tabs-stub').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="workflow-create-project"]').exists()).toBe(false)
   })
 
-  it('精选行只取前 4 条（不渲染全部作品）', async () => {
-    apiGet.mockResolvedValue({ data: { data: { items: makeWorks(10), total: 10 } } })
-    const wrapper = await mountWorkflow()
-    expect(wrapper.findAll('.work-card-stub').length).toBeLessThanOrEqual(4)
+  it('主页唯一内容 = hero（品牌 + 锚 CTA），无第二内容区', async () => {
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    expect(wrapper.find('.signature-hero-stub').exists()).toBe(true)
+    // 页面根下不再有 hidden lg:block 的滚动内容容器（P3 删空壳）
+    expect(wrapper.html()).not.toContain('max-w-7xl')
   })
 
   it('横幅已移除：页面不再有营销横幅 section', async () => {
     const wrapper = await mountWorkflow()
     expect(wrapper.html()).not.toContain('CarouselBanner')
-  })
-
-  it('分享/观看入口不常驻在精选卡上（P0 已净化的封面）', async () => {
-    const wrapper = await mountWorkflow()
-    expect(wrapper.text()).not.toContain('立即观看')
   })
 
   it('主页不渲染分类 tabs（分类消费已归 /community，常量本体归 shared）', async () => {
@@ -259,18 +247,8 @@ describe('锚入口接线（Task 4：createCanvas → enterCreation）', () => {
     expect(routerMocks.push).not.toHaveBeenCalled()
   })
 
-  it('点【新建项目】卡（PC 品牌页）：走显式新建，带 openAgent', async () => {
-    canvasCreate.mockResolvedValue({ data: { data: { id: 'p-new' } } })
-    const wrapper = await mountWorkflow({ loggedIn: true })
-    await wrapper.find('[data-testid="workflow-create-project"]').trigger('click')
-    await flushPromises()
-    expect(canvasCreate).toHaveBeenCalledTimes(1)
-    expect(canvasCreate, '不传 title：由后端默认值决定（IA v4）').toHaveBeenCalledWith()
-    expect(routerMocks.push).toHaveBeenCalledWith({
-      path: '/workflow/p-new',
-      query: { openAgent: '1' },
-    })
-  })
+  // 「点【新建项目】卡」用例已随 workflow-create-project 卡整体退场（2026-10-26
+  // 规格收敛 v2）：显式新建入口 = 创作首页（/canvases），主页只剩锚一个入口。
 })
 
 /**
@@ -421,21 +399,12 @@ describe('移动端品牌页边界（第 3/4 点）', () => {
     canvasList.mockResolvedValue({ data: { data: [] } })
   })
 
-  it('③ 「我的项目」「社区精选」两区块窄屏隐藏（品牌页只有品牌）', () => {
-    // 两个 section 都必须带 lg:block（窄屏隐藏、桌面显示）
-    const sections = pageSrc.match(/<section[^>]*>/g) ?? []
-    const projectSection = sections.find((s) => s.includes('auth.isLoggedIn')) ?? ''
-    const communitySection = sections.find((s) => s.includes('hidden lg:block') && !projectSection.includes(s)) ?? ''
-    expect(projectSection, '「我的项目」区块须窄屏隐藏').toContain('hidden lg:block')
-    expect(communitySection, '「社区精选」区块须窄屏隐藏').toContain('hidden lg:block')
-    // ⛔ 反向：隐藏必须是「窄屏隐藏、桌面显示」，不能写成 hidden（桌面也没了）
-    expect(pageSrc).not.toMatch(/<section[^>]*class="hidden"[^>]*>/)
-    // 外层容器也必须窄屏隐藏：它只装那两个区块 + 发布弹窗，留着 pb-20/pt-6
-    // 会凭空多出 104px 空白 ⇒ 品牌页就「覆盖不满」一屏（实测 scrollHeight 1004 vs 844）
-    expect(
-      pageSrc,
-      '外层容器须窄屏隐藏（否则 104px 空白，品牌页不满一屏）',
-    ).toMatch(/<div class="[^"]*hidden[^"]*max-w-7xl[^"]*">/)
+  it('③ 「我的项目」「社区精选」区块已整体退场（2026-10-26 规格收敛 v2）', () => {
+    // 原 2026-10-23 裁定是「窄屏隐藏、桌面显示」；规格收敛 v2 升级为**整体退场**：
+    // 列表唯一真身 = 创作首页（/canvases），社区唯一入口 = /community ⇒
+    // 主页不得再有任何内容 section / 内容容器（纯品牌）。
+    expect(pageSrc, '主页不得再有任何内容 <section>').not.toContain('<section')
+    expect(pageSrc, '主页不得再保留 max-w-7xl 内容容器').not.toContain('max-w-7xl')
   })
 
   it('④ 点锚 = 开始创作：有项目 ⇒ 进最近项目对话页，不新建', async () => {
