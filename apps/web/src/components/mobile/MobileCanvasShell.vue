@@ -533,8 +533,13 @@ onUnmounted(() => stopMobileTaskPolling())
 .mobile-account-back,
 .mobile-account-close {
   flex: none;
-  width: 32px;
-  height: 32px;
+  /* ⭐ 命中区提到 44px（--lnk-touch-target）：原为 32×32，违反 §4.11.6
+     触控目标铁律（V-5 断言在 2026-10-26 对账中抓出）。
+     视觉 glyph 仍是 16px 内联 SVG（只放大命中区，不放大图形）。 */
+  min-width: var(--lnk-touch-target);
+  min-height: var(--lnk-touch-target);
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
   display: inline-flex;
   align-items: center;
   justify-content: center;
