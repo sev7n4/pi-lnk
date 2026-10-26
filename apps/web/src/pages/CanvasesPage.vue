@@ -2,26 +2,26 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { useMySessions } from '@/composables/useMySessions'
+import { useProjectManager } from '@/composables/useProjectManager'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
+import type { ProjectCard } from '@/composables/useProjectWorkspace'
 import SessionCard from '@/components/workflow/SessionCard.vue'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import type { Session } from '@lnkpi/shared'
 import { ElMessage } from 'element-plus'
 
 /**
- * 项目管理器（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
- * 画布+对话=项目，本页即「我的项目」全量管理）。
+ * 创作首页（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
+ * 画布+对话=项目，本页即「我的项目」全量管理；2026-10-26 规格收敛 v2：
+ * 数据面切 useProjectWorkspace 单源（INV-10），管理状态机由 useProjectManager 承载。
  *
- * 主页只留 compact 区（5 个 + 「查看全部」→本页）；本页承接完整能力：
- * 全量列表 / 搜索 / 多选批删 / 重命名 / 复制 / 删除 / 新建。逻辑全在
- * `useMySessions` 组合式里，与主页共用单点维护。
+ * 本页承接完整能力：全量列表 / 搜索 / 多选批删 / 重命名 / 复制 / 删除 / 新建。
  */
 const router = useRouter()
 const auth = useAuthStore()
-const sessions = useMySessions()
+const mgr = useProjectManager()
 // 2026-10-25 PR-2：创建通道收敛到 useProjectWorkspace（全仓唯一 create 通道）。
-const { create: createProject } = useProjectWorkspace()
+const { create: createProject, list: listProjects } = useProjectWorkspace()
 
 async function openCanvas(sessionId: string) {
   router.push(`/workflow/${sessionId}`)
@@ -51,7 +51,7 @@ async function createCanvas() {
 }
 
 onMounted(() => {
-  void sessions.fetch()
+  void listProjects()   // 进首页强制新鲜：管理页要可管的真数据，不走 loadIfStale
 })
 </script>
 
@@ -83,46 +83,46 @@ onMounted(() => {
 
     <template v-else>
       <div class="mb-4 flex flex-wrap items-center gap-3">
-        <span v-if="sessions.mySessions.value.length" class="text-xs text-fg-3">
-          {{ sessions.filteredSessions.value.length }} 个
+        <span v-if="mgr.projects.value.length" class="text-xs text-fg-3">
+          {{ mgr.filtered.value.length }} 个
         </span>
         <span class="flex-1" />
         <input
-          v-if="sessions.mySessions.value.length"
+          v-if="mgr.projects.value.length"
           data-testid="canvases-search"
-          :value="sessions.sessionSearch.value"
+          :value="mgr.search.value"
           type="search"
           class="input-field w-48 text-xs"
           placeholder="搜索项目..."
-          @input="sessions.sessionSearch.value = ($event.target as HTMLInputElement).value"
+          @input="mgr.search.value = ($event.target as HTMLInputElement).value"
         />
         <button
-          v-if="sessions.mySessions.value.length"
+          v-if="mgr.projects.value.length"
           data-testid="canvases-manage"
           type="button"
           class="rounded-lg px-2.5 py-1.5 text-xs transition"
           :class="
-            sessions.manageSessions.value
+            mgr.manageMode.value
               ? 'bg-accent-subtle text-fg-accent'
               : 'text-fg-3 hover:bg-hover'
           "
-          @click="sessions.toggleManage()"
+          @click="mgr.toggleManage()"
         >
-          {{ sessions.manageSessions.value ? '完成' : '管理' }}
+          {{ mgr.manageMode.value ? '完成' : '管理' }}
         </button>
         <button
-          v-if="sessions.manageSessions.value && sessions.selectedSessionIds.value.length"
+          v-if="mgr.manageMode.value && mgr.selectedIds.value.length"
           data-testid="canvases-batch-delete"
           type="button"
           class="rounded-lg bg-danger-bg px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger-bg-hover"
-          @click="sessions.batchDelete()"
+          @click="mgr.batchDelete()"
         >
-          删除选中 ({{ sessions.selectedSessionIds.value.length }})
+          删除选中 ({{ mgr.selectedIds.value.length }})
         </button>
       </div>
 
       <div
-        v-if="sessions.loading.value"
+        v-if="mgr.loading.value"
         class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
       >
         <div
@@ -133,28 +133,28 @@ onMounted(() => {
       </div>
 
       <div
-        v-else-if="sessions.visibleSessions(Number.POSITIVE_INFINITY).length"
+        v-else-if="mgr.filtered.value.length"
         class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
       >
         <SessionCard
-          v-for="session in sessions.visibleSessions(Number.POSITIVE_INFINITY)"
+          v-for="session in mgr.filtered.value"
           :key="session.id"
           class="session-card-menu-anchor"
-          :session="session as Session"
-          :manage-mode="sessions.manageSessions.value"
-          :selected="sessions.selectedSessionIds.value.includes(session.id)"
-          :menu-open="sessions.openMenuId.value === session.id"
+          :session="session as unknown as Session"
+          :manage-mode="mgr.manageMode.value"
+          :selected="mgr.selectedIds.value.includes(session.id)"
+          :menu-open="mgr.openMenuId.value === session.id"
           @open="openCanvas(session.id)"
-          @toggle-menu="sessions.toggleMenu(session.id)"
-          @rename="sessions.rename(session as Session)"
-          @duplicate="sessions.duplicate(session as Session)"
-          @delete="sessions.remove(session as Session)"
-          @toggle-select="sessions.toggleSelect(session.id)"
+          @toggle-menu="mgr.toggleMenu(session.id)"
+          @rename="mgr.renameProject(session as unknown as ProjectCard)"
+          @duplicate="mgr.duplicateProject(session.id)"
+          @delete="mgr.removeProject(session as unknown as ProjectCard)"
+          @toggle-select="mgr.toggleSelect(session.id)"
         />
       </div>
 
       <AppEmptyState
-        v-else-if="sessions.sessionSearch.value"
+        v-else-if="mgr.search.value"
         data-testid="canvases-empty-search"
         desc="换个关键词试试，或清空搜索条件"
       >
