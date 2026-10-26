@@ -3,12 +3,11 @@ import { ref, onMounted, watch, computed, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Work } from '@lnkpi/shared'
 import { api } from '@/services/api'
-import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
-// 2026-10-26 规格收敛 v2（Task 3）：主页 compact 网格切单源 useProjectWorkspace；
-// useMySessions 双源退役（Task 4 删）。SessionCard 仍消费 Session 形态 ⇒ 经临时 adapter。
+// 2026-10-26 规格收敛 v2（Task 3/4）：主页 compact 网格切单源 useProjectWorkspace，
+// 旧双源组合式已删除。SessionCard 仍消费 Session 形态 ⇒ 经临时 adapter。
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { toSessionLike } from '@/utils/projectCardAdapter'
 import { useEnterCreation } from '@/composables/useEnterCreation'
@@ -107,7 +106,7 @@ const works = ref<Work[]>([])
 const FEATURED_WORKS_COUNT = 4
 const loading = ref(false)
 const showPublish = ref(false)
-const userSessions = ref<Session[]>([])
+const userSessions = ref<Array<{ id: string; title: string }>>([])
 
 /**
  * 创作进行中（2026-10-24 性能修复）：点击创作到画布页就绪之间的加载态。
@@ -262,8 +261,10 @@ async function openPublish() {
     return
   }
   try {
-    const { data } = await sessionsApi.list()
-    userSessions.value = data.data
+    // 2026-10-26 Task 4：旧 GET /sessions 列表端点已删（D1），发布落点选择切单源 list；
+    // 弹窗只消费 {id,title}（PublishNeoTVDialog props 契约），ProjectCard 为其超集。
+    const projects = await listProjects()
+    userSessions.value = projects.map((p) => ({ id: p.id, title: p.title }))
     if (!userSessions.value.length) {
       // 「发布作品」需要一个项目作为落点：零项目时先建一个（显式新建语义），
       // 与旧行为一致（创建后进画布页）。⛔ 不走 enterCreation —— 那是"进入最近"，
