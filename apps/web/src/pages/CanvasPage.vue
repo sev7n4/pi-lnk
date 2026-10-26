@@ -5662,7 +5662,9 @@ function onMobileTabChange(tab: MobileAppTab) {
  * AgentSideRail、mobileStudioDockOpen、focusNodeById、pickMode watch 共用）。
  */
 const agentRailActions: MobileShellAgentActions = {
-  openDrawer: () => agentRailRef.value?.openSessionDrawer(),
+  // 2026-10-26 规格收敛 v2（D7/D10）：≡ 原「项目抽屉」退场，语义升级为返回创作首页
+  // （项目列表唯一真身 = /canvases 行卡；切换/新建项目都在列表页完成）。
+  backToCreationHome: () => void router.push('/canvases'),
   newChat: () => agentRailRef.value?.newAgentSession(),
   openHistory: () => agentRailRef.value?.openThreadHistory(),
   // IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero。移动端全链路的前门，

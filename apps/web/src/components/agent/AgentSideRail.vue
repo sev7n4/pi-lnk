@@ -8,7 +8,6 @@ import { useAuthStore } from '@/stores/auth'
 import type { SidebarAttachment } from '@lnkpi/shared'
 import { normalizeMentionedKeys, SIDEBAR_ATTACHMENT_MAX } from '@lnkpi/shared'
 import { apiUrl } from '@/services/api-base'
-import { sessionsApi } from '@/services/sessions-api'
 import NeoAgentLogo from '@/components/agent/NeoAgentLogo.vue'
 import { applyPiUserMessageEvent } from '@/components/agent/queueBubbleSync'
 import AgentRefStrip from '@/components/agent/AgentRefStrip.vue'
@@ -132,8 +131,7 @@ import {
   type UtterancePool,
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
-import ProjectPanel from '@/components/project/ProjectPanel.vue'
-import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { barShape } from './composer/mobileBarLayout'
@@ -149,8 +147,7 @@ import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agen
 import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
 import { describeActivity } from '@/components/agent/activityLine'
 import { buildStatusLine } from '@/components/agent/composer/statusLine'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { canvasApi } from '@/services/canvas-api'
+import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
   id: string
@@ -3913,17 +3910,6 @@ function reconcileFromNodes(rawNodes: CanvasNodeLike[]) {
   taskProgress.value = next
 }
 
-/** 会话抽屉（IA v3）：移动端顶栏 ≡ 唤起——纯项目世界（新建项目 + 项目卡片）。
- * 新建对话/历史对话已升为对话页右上角图标（IA v3.2），不再经抽屉。 */
-const sessionDrawerOpen = ref(false)
-function openSessionDrawer() {
-  sessionDrawerOpen.value = true
-  void loadProjects()
-}
-function closeSessionDrawer() {
-  sessionDrawerOpen.value = false
-}
-
 /** IA v3.2：移动端「对话历史」面板（🕘 唤起）——复用 threads/fetchThreads/selectThread，
  * 独立于 PC 面板头部 popover（移动端头部被 CSS 隐藏）。 */
 const mobileThreadHistoryOpen = ref(false)
@@ -3943,33 +3929,26 @@ function closeThreadHistory() {
  * 弱网/代理路径下 body 永不落地 ⇒ axios promise 不 settle ⇒ 「项目加载中」转不完。
  * 双保险：请求级 15s 超时 + 失败态重试按钮（后端 select 瘦身已随本分支修复）。 */
 /**
- * A3 · 回访作品带 + PC 抽屉项目列表：**共用 `useProjectWorkspace` 单一数据源**
+ * A3 · 项目列表数据：**共用 `useProjectWorkspace` 单一数据源**
  * （INV-10：收敛前 `loadProjects()` 与 `loadRecentWorks()` 各调一次 `canvasApi.list`，
  * 同一接口请求两遍、存进两个 ref，纯浪费）。
  *
- * - `projects` / `projectsLoading` / `projectsError` 直接取自 workspace（抽屉用）。
- * - 作品带 `:works="projects"` 同消费这一个 ref（断点中立，PC 左栏与移动端对话框顶部都展示）。
- * - 作品带失败静默降级由 workspace 的 `error` 兜底（一条带子不该把对话面板搞崩，spec §3.6）。
+ * 2026-10-26 规格收敛 v2（D10）：项目抽屉已退场——本文件不再承载项目增删改查
+ * （管理能力唯一收敛到创作首页行卡），仅保留列表数据供挂载期拉取。
  */
 const {
-  projects,
   loading: projectsLoading,
-  error: projectsError,
-  list,
   loadIfStale,
-  // 2026-10-25 PR-2：创建通道收敛到 workspace（全仓唯一 create 通道）。
   create: createProject,
 } = useProjectWorkspace()
 
 /**
- * 拉取项目列表（抽屉共用）。委托给 useProjectWorkspace 单一数据源
+ * 挂载期拉取项目列表。委托给 useProjectWorkspace 单一数据源
  * （INV-10：本函数不再直接调 canvasApi.list），失败由 workspace 的 `error` 兜底。
- * 防重入：已有请求在途时直接返回，避免抽屉打开与挂载两处并发重复拉取。
- * ⚠️ 抽屉的「预览 8 条 + 展开更多」逻辑已随 ProjectPanel 抽出（断点中立，PC 同用）。
+ * 防重入：已有请求在途时直接返回。
  *
  * ⭐ 2026-10-25：走 `loadIfStale`（**数据还新鲜就不发请求**）。
- *    抽屉打开几乎总是紧跟在「进页面那一次拉取」之后 ⇒ 那份数据已经在了。
- *    而**再发一次**的代价不是几十毫秒：画布页的 SSE/轮询已占满同域 HTTP/1.1 的
+ *    而再发一次的代价不是几十毫秒：画布页的 SSE/轮询已占满同域 HTTP/1.1 的
  *    6 个连接（见 App.vue 注释：排队可达 55 秒）⇒ 多发一次就是排一次队 ⇒
  *    15s 超时先到 ⇒ 「项目加载失败」。生产实证：抽屉里 8 个项目在报错时一起消失。
  */
@@ -3978,80 +3957,16 @@ async function loadProjects() {
   await loadIfStale()
 }
 
-/**
- * 抽屉里的「重试」= **强制**重新拉一次。
- * ⛔ 不能走 loadIfStale：失败态下数据可能是旧的（loadedAt 还在新鲜期内）⇒
- *    走 loadIfStale 会「刚点重试就返回旧数据」⇒ 用户永远重试不出来。
- */
-async function retryLoadProjects() {
-  await list()
-}
-function openProject(id: string) {
-  closeSessionDrawer()
-  // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
-  void router.push(`/workflow/${id}`)
-}
-async function newProject() {
-  try {
-    // 2026-10-25 PR-2：通道换成 useProjectWorkspace.create（唯一 create 通道）；
-    // 不传 title ⇒ 后端默认「未命名项目」（IA v4）。
-    const created = await createProject()
-    // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
-    void router.push(`/workflow/${created.id}`)
-  } catch {
-    ElMessage.error('新建项目失败，请重试')
-  }
-}
-async function renameProject(project: ProjectCard) {
-  try {
-    const { value } = await ElMessageBox.prompt('项目名称', '重命名项目', {
-      inputValue: project.title,
-      confirmButtonText: '保存',
-      cancelButtonText: '取消',
-      inputPattern: /\S+/,
-      inputErrorMessage: '名称不能为空',
-    })
-    const title = value.trim()
-    await canvasApi.update(project.id, { title })
-    project.title = title
-    ElMessage.success('已重命名')
-  } catch {
-    /* 取消/失败静默 */
-  }
-}
-
-/** 删除项目（与主页「我的画布」同源：DELETE /sessions/:id）。不可恢复，二次确认。 */
-async function deleteProject(project: ProjectCard) {
-  try {
-    await ElMessageBox.confirm(
-      `确定删除「${project.title || '未命名项目'}」？此操作不可恢复。`,
-      '删除项目',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await sessionsApi.remove(project.id)
-    projects.value = projects.value.filter((p) => p.id !== project.id)
-    ElMessage.success('已删除')
-  } catch {
-    ElMessage.error('删除失败，请稍后重试')
-  }
-}
-
 /** 页签是全局导航（IA v3）：遮罩只盖到页签上沿，页签任何时候都可点；
- * tab 一变即收抽屉/历史面板，避免「面板开着切了页签、面板还挂在上面」。 */
+ * tab 一变即收历史面板，避免「面板开着切了页签、面板还挂在上面」。 */
 watch(
   () => props.mobileAppTab,
   (tab, prev) => {
-    if (tab !== prev && sessionDrawerOpen.value) closeSessionDrawer()
     if (tab !== prev && mobileThreadHistoryOpen.value) closeThreadHistory()
   },
 )
 
 defineExpose({
-  openSessionDrawer,
   /** IA v3.2：MobileTopBar 右上角 + / 🕘 —— 新对话（当前项目上下文）/ 对话历史面板 */
   newAgentSession,
   openThreadHistory,
@@ -4102,21 +4017,8 @@ defineExpose({
         </button>
       </Teleport>
 
-      <!-- 项目抽屉（2026-10-25 Task 7 抽出）：断点中立，PC 与移动端共用同一 ProjectPanel。
-           纯项目世界（新建项目 + 项目卡片增删改查），对话层职责已升为对话页右上角图标。 -->
-      <ProjectPanel
-        :open="sessionDrawerOpen"
-        :projects="projects"
-        :current-id="sessionId"
-        :loading="projectsLoading"
-        :error="projectsError"
-        @close="closeSessionDrawer"
-        @create="newProject"
-        @open="openProject"
-        @rename="renameProject"
-        @remove="deleteProject"
-        @retry="retryLoadProjects"
-      />
+      <!-- 项目抽屉已退场（规格收敛 v2 D10，2026-10-26）：管理唯一收敛到创作首页；
+           移动端顶栏 ≡ 改为返回创作首页导航（见 CanvasPage agentRailActions）。 -->
 
       <!-- 对话历史面板（IA v3.2）：移动端对话页右上角 🕘 唤起——当前项目下的对话切换。
            与 PC 面板头部 popover 同源（threads/fetchThreads/selectThread），移动端头部被 CSS 隐藏故独立成面层。 -->
@@ -5661,10 +5563,10 @@ defineExpose({
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-/* 项目抽屉样式已随 ProjectPanel.vue 抽出（断点中立，2026-10-25 Task 7）：
+/* 项目抽屉样式已随抽屉退场而删除（规格收敛 v2 D10，2026-10-26）：
  * .session-drawer / .session-drawer-layer / .create-card* / .project-card* /
  * .session-drawer__expand* / .session-drawer__retry / .session-drawer-{enter,leave}*
- * 全部移至 ProjectPanel.vue 的 scoped 样式。本文件仅保留对话历史面板的
+ * 均已不存在。本文件仅保留对话历史面板的
  * .thread-history-*，以及项目/历史共用的 .session-drawer__caption / .session-drawer__empty。 */
 
 

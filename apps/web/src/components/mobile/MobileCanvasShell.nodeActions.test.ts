@@ -14,7 +14,8 @@ function noop() {
 
 function baseProps(overrides: Record<string, unknown> = {}) {
   const agentActions = {
-    openDrawer: noop(),
+    // 2026-10-26（D7/D10）：原 openDrawer（项目抽屉）退场，≡ 改为返回创作首页
+    backToCreationHome: noop(),
     newChat: noop(),
     openHistory: noop(),
     // IA v4（#558）：契约新增 goHome（顶栏品牌字标 → 回工作台 hero）；

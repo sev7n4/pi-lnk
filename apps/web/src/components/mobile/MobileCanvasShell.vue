@@ -54,7 +54,8 @@ import TopupModal from '@/components/membership/TopupModal.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 
 export interface MobileShellAgentActions {
-  openDrawer: () => void
+  /** 2026-10-26（D7/D10）：≡ 原唤起项目抽屉，抽屉退场后 = 返回创作首页（/canvases）。 */
+  backToCreationHome: () => void
   newChat: () => void
   openHistory: () => void
   /** IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero（项目页回前门） */
@@ -353,7 +354,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :tab="mobileAppTab"
     :task-active-count="mobileTaskActiveCount"
     :has-task-history="mobileTaskHasHistory"
-    @open-drawer="agentActions.openDrawer"
+    @back-to-creation-home="agentActions.backToCreationHome"
     @new-chat="agentActions.newChat"
     @open-history="agentActions.openHistory"
     @go-home="agentActions.goHome"
