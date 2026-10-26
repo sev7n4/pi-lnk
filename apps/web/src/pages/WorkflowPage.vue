@@ -7,8 +7,10 @@ import { sessionsApi } from '@/services/sessions-api'
 import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
-import { useMySessions } from '@/composables/useMySessions'
+// 2026-10-26 规格收敛 v2（Task 3）：主页 compact 网格切单源 useProjectWorkspace；
+// useMySessions 双源退役（Task 4 删）。SessionCard 仍消费 Session 形态 ⇒ 经临时 adapter。
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
+import { toSessionLike } from '@/utils/projectCardAdapter'
 import { useEnterCreation } from '@/composables/useEnterCreation'
 import WorkCard from '@/components/works/WorkCard.vue'
 import SessionCard from '@/components/workflow/SessionCard.vue'
@@ -123,10 +125,14 @@ const userSessions = ref<Session[]>([])
  *    防连点 INV-8 也在那里）。页面层不再自持一份，避免两份状态漂移。
  */
 
-// 2026-10-21 P1：会话管理逻辑整体迁到 composables/useMySessions.ts，
-// 主页只消费 compact 视图（COMPACT_SESSIONS_COUNT 个 + 「查看全部」→ /canvases）。
-const sessions = useMySessions()
+// 2026-10-26 规格收敛 v2（Task 3）：compact 网格数据切单源；管理逻辑已迁
+// useProjectManager（CanvasesPage）。主页只读 projects，不再持有独立状态。
+const { projects, loading: projectsLoading, list: listProjects } = useProjectWorkspace()
 const COMPACT_SESSIONS_COUNT = 5
+/** compact 视图：前 N 个项目经临时 adapter 转 SessionCard 形态（P3 随区块删除）。 */
+const compactSessions = computed(
+  () => projects.value.slice(0, COMPACT_SESSIONS_COUNT).map((p) => toSessionLike(p) as unknown as Session),
+)
 
 // 精选行：只取最新 4 条。「去发现 →」把完整作品流交给 /community。
 const featuredWorks = computed(() => works.value.slice(0, FEATURED_WORKS_COUNT))
@@ -273,8 +279,10 @@ async function openPublish() {
 
 onMounted(() => {
   fetchWorks()
-  // 组合式内部已在 onMounted 里注册 pointerdown 监听并首fetch，此处只需首拉
-  void sessions.fetch()
+  // 2026-10-26 Task 3 Ruling：计划原定「主页不再拉列表」，但 PR#1 可能先于 P3
+  // 上线——直落主页时无人拉列表 ⇒ compact 网格恒空。改为单源 list()（single-flight +
+  // 模块共享，成本与原先一致）；P3 删区块时连同此调用一并移除。
+  void listProjects()
   // 2026-10-24 性能修复（**二次修正**）：⛔ **不再在此立即预热**。
   //
   // 初版「品牌页挂载即预热画布页」是生产事故的元凶：它在 4166ms 拉起
@@ -290,7 +298,7 @@ onMounted(() => {
 watch(
   () => auth.isLoggedIn,
   () => {
-    void sessions.fetch()
+    void listProjects()
   },
 )
 </script>
@@ -343,7 +351,7 @@ watch(
           <span class="text-sm text-fg-3 transition group-hover:text-fg">新建项目</span>
         </button>
         <SessionCard
-          v-for="session in sessions.visibleSessions(COMPACT_SESSIONS_COUNT)"
+          v-for="session in compactSessions"
           :key="session.id"
           class="session-card-menu-anchor"
           :session="session"
@@ -352,7 +360,7 @@ watch(
         />
       </div>
       <p
-        v-if="!sessions.mySessions.value.length && !sessions.loading.value"
+        v-if="!projects.length && !projectsLoading"
         class="py-8 text-center text-sm text-fg-3"
       >
         还没有项目，去创建一个吧
