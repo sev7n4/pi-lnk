@@ -4,8 +4,8 @@
 // 挂载代价与回归面都不划算）——本文件沿用同一形态。
 //
 // 覆盖三组契约：
-//   ① CanvasFloatingChrome 暴露「项目名 ▾」入口（emit project-click，不新增 hex）；
-//   ② CanvasPage 接上该入口并渲染 ProjectPanel；挂载时写入「最近项目」记忆；
+//   ① CanvasFloatingChrome 渲染「‹ 返回创作首页」入口（emit back，D7 纯微信式，▾ 已退役）；
+//   ② CanvasPage 接上 back 返回创作首页；PC 项目面板已退场；挂载时写入「最近项目」记忆；
 //   ③ 全仓**唯一 create 通道**：canvasApi.create / sessionsApi.create 只允许出现在
 //      useProjectWorkspace.ts 里（收敛前散落 5 处、两条 service 混用）。
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -26,46 +26,34 @@ describe('PC 画布页项目入口（PR-2 Task 8）', () => {
   const chrome = read('../components/canvas/CanvasFloatingChrome.vue')
   const page = read('./CanvasPage.vue')
 
-  it('① CanvasFloatingChrome 暴露「项目名 ▾」入口并 emit project-click', () => {
-    expect(stripComments(chrome)).toContain("'project-click': []")
-    // 入口按钮：项目图标 + 项目名 + 下拉箭头（▾）
-    const btn = chrome.match(/<button[\s\S]*?class="chrome-project-btn[\s\S]*?>/)?.[0] ?? ''
-    expect(btn, '必须能定位「项目名 ▾」按钮').toContain('chrome-project-btn')
-    expect(btn).toContain("emit('project-click')")
-    // 项目名取自 title prop（与标题输入框同源），不是另造一份状态
-    expect(chrome).toContain('<span class="truncate">{{ title || \'未命名项目\' }}</span>')
+  it('① CanvasFloatingChrome 渲染返回创作首页入口并 emit back（纯微信式，规格 v2 D7）', () => {
+    expect(stripComments(chrome)).toContain('back: []')
+    // 返回按钮：‹ 图标 + 「返回创作首页」语义（导航决定权在 CanvasPage）
+    const btn = chrome.match(/<button[\s\S]*?title="返回创作首页"[\s\S]*?>[\s\S]*?<\/button>/)?.[0] ?? ''
+    expect(btn, '必须能定位「返回创作首页」按钮').toContain("emit('back')")
+    // ⛔ 纯微信式：「项目名 ▾」下拉已退役（切换项目 = 返回创作首页再点另一个）
+    expect(stripComments(chrome), 'project-click 旧语义必须移除').not.toContain("'project-click'")
+    expect(stripComments(chrome), '▾ 箭头必须移除').not.toContain('M7 10l5 5 5-5z')
+    // 项目名由既有 title 输入框承载（纯标题，可改名）
+    expect(stripComments(chrome)).toContain('chrome-title-input')
   })
 
-  it('① 新按钮不新增 hex：走 --lnk-* 令牌（旧 --neo-* 体系只减不增）', () => {
+  it('① 样式不新增 hex：走令牌（旧 --neo-* 体系只减不增）', () => {
     const style = chrome.slice(chrome.indexOf('<style'), chrome.lastIndexOf('</style>'))
     expect(style).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
-    const rule = style.match(/\.chrome-project-btn\s*\{[^}]*\}/)?.[0] ?? ''
-    expect(rule, '项目入口按钮必须有样式规则').toContain('var(--lnk-')
   })
 
-  it('② CanvasPage 接上 project-click，并渲染断点中立的 ProjectPanel', () => {
+  it('② CanvasPage 接上 back 返回创作首页；PC 项目面板已退场（D7 纯微信式）', () => {
     const tag = page.match(/<CanvasFloatingChrome[\s\S]*?\/>/)?.[0] ?? ''
-    expect(tag, '必须能定位 CanvasFloatingChrome 开标签').toContain('@project-click="openProjectPanel"')
+    expect(tag, '必须能定位 CanvasFloatingChrome 开标签').toContain('@back="backToCreationHome"')
+    expect(tag, '旧 project-click 接线必须移除').not.toContain('@project-click')
+    // ⛔ 面板退场：PC 端不再挂载 ProjectPanel（重命名/删除/复制由创作首页行卡承载）
+    expect(stripComments(page), 'ProjectPanel 必须从 CanvasPage 退场').not.toContain('<ProjectPanel')
+  })
 
-    const panel = page.match(/<ProjectPanel[\s\S]*?\/>/)?.[0] ?? ''
-    expect(panel, '必须能定位 ProjectPanel 开标签').toContain('<ProjectPanel')
-    expect(panel).toContain(':open="projectPanelOpen"')
-    expect(panel).toContain(':projects="projectWsProjects"')
-    expect(panel).toContain(':current-id="sessionId"')
-    // PC 无底部页签 ⇒ 必须让开页签的兜底（56px）失效，否则遮罩底部留空条：
-    // 点不到 = 关不掉面板，且抽屉比视口矮一截。
-    expect(panel, 'PC 端必须传 reserve-tabbar=false').toContain(':reserve-tabbar="false"')
-    // 六个动作全部接线（新建 / 打开 / 重命名 / 删除 / 重试 / 关闭）
-    for (const [evt, handler] of [
-      ['@close', 'closeProjectPanel'],
-      ['@create', 'handleProjectCreate'],
-      ['@open', 'handleProjectOpen'],
-      ['@rename', 'handleProjectRename'],
-      ['@remove', 'handleProjectRemove'],
-      ['@retry', 'handleProjectRetry'],
-    ] as const) {
-      expect(panel, `ProjectPanel 必须接线 ${evt}`).toContain(`${evt}="${handler}"`)
-    }
+  it('② 返回创作首页 = router.push(\'/canvases\')（切换项目走列表，D7 纯微信式）', () => {
+    const fn = page.match(/function backToCreationHome\(\)\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(fn, '必须能定位 backToCreationHome').toContain("router.push('/canvases')")
   })
 
   it('② 挂载时写入「最近项目」记忆，且空 sessionId 不得写坏记忆', () => {
@@ -76,13 +64,15 @@ describe('PC 画布页项目入口（PR-2 Task 8）', () => {
     expect(stripComments(page)).toMatch(/if \(sessionId\.value\) rememberProject\(sessionId\.value\)/)
   })
 
-  it('② 面板按需拉列表：不在挂载期重复请求（INV-10 老毛病）', () => {
-    const fn = page.match(/function openProjectPanel\(\)\s*\{[^}]*\}/)?.[0] ?? ''
-    expect(fn, '打开面板时才拉列表').toContain('loadProjectList()')
-    expect(fn).toContain('projectPanelOpen.value = true')
+  it('② 返回语义替代面板入口：openProjectPanel 不再由 chrome 触发（D7 纯微信式）', () => {
+    // chrome 的唯一项目入口已改为 back；openProjectPanel（若暂存）不得再被模板引用
+    expect(stripComments(page)).not.toContain('@project-click="openProjectPanel"')
+    expect(stripComments(page)).toContain('@back="backToCreationHome"')
   })
 
-  it('③ 全仓唯一 create 通道：create 只允许出现在 useProjectWorkspace.ts', () => {
+  // ⏱ timeout 60s：本用例同步遍历全 src 读文件，4 核/8GB 换页压力下 >5s（默认限时）
+  // 是机器瓶颈而非代码问题（2026-10-26 实测 15-22s），放宽时间预算、断言不变。
+  it('③ 全仓唯一 create 通道：create 只允许出现在 useProjectWorkspace.ts', { timeout: 60_000 }, () => {
     const allowed = join(srcRoot, 'composables', 'useProjectWorkspace.ts')
     const hits: string[] = []
     const walk = (dir: string) => {
