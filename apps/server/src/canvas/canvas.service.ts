@@ -68,4 +68,13 @@ export class CanvasService {
     if (!session) throw new NotFoundException('Session not found')
     return this.prisma.session.update({ where: { id }, data })
   }
+
+  /** SP-D（ADR-0014）：浏览器侧连线端点（connect-nodes）的属主校验，与 update 同口径。 */
+  async assertSessionOwned(id: string, userId: string) {
+    const session = await this.prisma.session.findFirst({
+      where: { id, userId },
+      select: { id: true },
+    })
+    if (!session) throw new NotFoundException('Session not found')
+  }
 }

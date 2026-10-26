@@ -35,7 +35,9 @@ import {
   type LocalRefBinding,
   type NodeType,
   type SidebarAttachment,
+  validateEdgeAdditions,
   validateSidebarAttachments,
+  wouldCreateCycle,
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { PersistRemoteService } from '../assets/persist-remote.service'
@@ -1038,6 +1040,9 @@ export class AgentCanvasToolsService {
       const idByKey = new Map(mapping.map((m) => [m.key, m.nodeId]))
       const nodeIds = new Set(canvas.nodes.map((n) => n.id))
       const unresolved: string[] = []
+      // SP-D（ADR-0014）：批内自环/成环 fail-closed（基线 = 画布存量边 + 本批已接受边）
+      const accEdges: Array<{ source: string; target: string }> = [...canvas.edges]
+      const invalidShapes: string[] = []
       const seenEdges = new Set<string>()
       for (const e of input.edges) {
         const source = idByKey.get(e.source) ?? (nodeIds.has(e.source) ? e.source : null)
@@ -1046,9 +1051,18 @@ export class AgentCanvasToolsService {
           unresolved.push(`${e.source} -> ${e.target}`)
           continue
         }
+        if (source === target) {
+          invalidShapes.push(`${source} -> ${target} (self-loop)`)
+          continue
+        }
         const dedupeKey = `${source}->${target}`
         if (seenEdges.has(dedupeKey)) continue
+        if (wouldCreateCycle(accEdges, source, target)) {
+          invalidShapes.push(`${source} -> ${target} (cycle)`)
+          continue
+        }
         seenEdges.add(dedupeKey)
+        accEdges.push({ source, target })
         actions.push({
           type: 'add_edge',
           payload: {
@@ -1057,6 +1071,11 @@ export class AgentCanvasToolsService {
             target,
           },
         })
+      }
+      if (invalidShapes.length > 0) {
+        throw new BadRequestException(
+          `edges 非法（禁自环、禁成环）：${invalidShapes.join('; ')}`,
+        )
       }
       if (unresolved.length > 0) {
         throw new BadRequestException(
@@ -1263,22 +1282,24 @@ export class AgentCanvasToolsService {
     stage?: boolean
   }): Promise<{ actions: CanvasAction[] }> {
     const { canvas } = await this.loadSession(input.sessionId)
-    const actions: CanvasAction[] = []
-    const existing = new Set(canvas.edges.map((e) => `${e.source}->${e.target}`))
-
-    for (const edge of input.edges) {
-      const key = `${edge.source}->${edge.target}`
-      if (existing.has(key)) continue
-      existing.add(key)
-      actions.push({
-        type: 'add_edge',
-        payload: {
-          id: edgeId(edge.source, edge.target),
-          source: edge.source,
-          target: edge.target,
-        },
-      })
+    // SP-D（ADR-0014）：统一连线校验 chokepoint——端点存在性(N1)/自环(N2)/环(N3)
+    // 硬非法整批 fail-closed；duplicate 幂等跳过(N4)，不报错不产生第二条。
+    const result = validateEdgeAdditions(canvas.nodes, canvas.edges, input.edges)
+    const hardRejected = result.rejected.filter((r) => r.reason !== 'duplicate')
+    if (hardRejected.length > 0) {
+      throw new BadRequestException(
+        `connect_nodes: ${hardRejected.length} 条边被拒（端点须存在、禁自环、禁成环）：` +
+          hardRejected.map((r) => `${r.edge.source} -> ${r.edge.target} (${r.reason})`).join('; '),
+      )
     }
+    const actions: CanvasAction[] = result.valid.map((v) => ({
+      type: 'add_edge',
+      payload: {
+        id: v.id,
+        source: v.source,
+        target: v.target,
+      },
+    }))
 
     await this.applyOrStage(input.sessionId, actions, input.stage)
     return { actions }

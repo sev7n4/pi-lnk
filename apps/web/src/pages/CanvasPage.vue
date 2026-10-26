@@ -1415,18 +1415,46 @@ const nodeTypes = {
   group: CanvasNodeGroup,
 }
 
-function onConnect(connection: Connection) {
+/**
+ * SP-D（ADR-0014）：连线前的廉价本地拦截（拖线时即时反馈）。
+ * 只拦「确定非法」的两类：自环 + 本地已存在的同向对；
+ * 环检测不在前端做（前端不知远端完整图，实时判环必误拦/漏拦）——以服务端为权威。
+ */
+function isValidConnection(connection: Connection | null): boolean {
+  if (!connection?.source || !connection.target) return false
+  if (connection.source === connection.target) return false
+  return !edges.value.some(
+    (e) => e.source === connection.source && e.target === connection.target,
+  )
+}
+
+async function onConnect(connection: Connection) {
   connectCompleted = true
   pendingConnect.value = null
   connectPicker.value = null
+  const source = connection.source
+  const target = connection.target
+  if (!source || !target) return
+  const edgeId = `e-${source}-${target}`
   addEdge({
-    id: `e-${connection.source}-${connection.target}`,
-    source: connection.source,
-    target: connection.target,
+    id: edgeId,
+    source,
+    target,
     sourceHandle: connection.sourceHandle ?? undefined,
     targetHandle: connection.targetHandle ?? undefined,
   })
-  persistUserEdit()
+  // 撤销检查点保留（纯本地内存）；落库不再 persistUserEdit 整份直存——
+  // SP-D（ADR-0014）：改走服务端统一校验通道（端点/自环/环 fail-closed），服务端已持久化。
+  canvasUndo.commitAfterChange()
+  try {
+    await canvasApi.connectNodes(sessionId.value, [{ source, target }])
+  } catch (err) {
+    // 校验拒绝或网络失败 ⇒ 回滚乐观边，保持本地与服务端一致
+    edges.value = edges.value.filter((e) => e.id !== edgeId)
+    canvasUndo.commitAfterChange()
+    const reason = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(reason ? `连线被拒：${reason}` : '连线保存失败，请重试')
+  }
 }
 
 function onConnectStart(params: OnConnectStartParams & { event?: MouseEvent | TouchEvent }) {
@@ -6057,6 +6085,7 @@ onUnmounted(() => {
           :snap-grid="[viewportSettings.gridGap, viewportSettings.gridGap]"
           :connection-radius="48"
           :delete-key-code="null"
+          :is-valid-connection="isValidConnection"
           fit-view-on-init
           class="canvas-flow h-full"
           :style="canvasEdgeStyle"

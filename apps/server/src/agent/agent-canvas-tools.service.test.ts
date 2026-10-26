@@ -325,6 +325,116 @@ describe('AgentCanvasToolsService', () => {
     expect(canvas.edges[0].target).toBe('b')
   })
 
+  // SP-D（ADR-0014）：connectNodes 统一校验——端点/自环/环 fail-closed，重复幂等
+  it('connectNodes 拒绝悬空端点（missing-node，整批 fail-closed）', async () => {
+    canvas = {
+      nodes: [{ id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    }
+    await expect(
+      svc.connectNodes({
+        sessionId: 's1',
+        edges: [
+          { source: 'a', target: 'b' },
+          { source: 'a', target: 'ghost' },
+        ],
+      }),
+    ).rejects.toThrow(/ghost.*missing-node|missing-node.*ghost/s)
+    expect(canvas.edges).toHaveLength(0)
+  })
+
+  it('connectNodes 拒绝自环', async () => {
+    canvas = {
+      nodes: [{ id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    }
+    await expect(
+      svc.connectNodes({ sessionId: 's1', edges: [{ source: 'a', target: 'a' }] }),
+    ).rejects.toThrow(/self-loop/)
+    expect(canvas.edges).toHaveLength(0)
+  })
+
+  it('connectNodes 拒绝成环（a->b 已存在时 b->a）', async () => {
+    canvas = {
+      nodes: [
+        { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'image', position: { x: 280, y: 0 }, data: {} },
+      ],
+      edges: [{ id: 'e-a-b', source: 'a', target: 'b' }],
+    }
+    await expect(
+      svc.connectNodes({ sessionId: 's1', edges: [{ source: 'b', target: 'a' }] }),
+    ).rejects.toThrow(/cycle/)
+    expect(canvas.edges).toHaveLength(1)
+  })
+
+  it('connectNodes 重复同向对幂等跳过（零动作不报错）', async () => {
+    canvas = {
+      nodes: [
+        { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'image', position: { x: 280, y: 0 }, data: {} },
+      ],
+      edges: [{ id: 'e-a-b', source: 'a', target: 'b' }],
+    }
+    const result = await svc.connectNodes({
+      sessionId: 's1',
+      edges: [{ source: 'a', target: 'b' }],
+    })
+    expect(result.actions).toHaveLength(0)
+  })
+
+  it('addNodesBatch edges 批内互相成环 ⇒ 整批 400（cycle）', async () => {
+    canvas = {
+      nodes: [
+        { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'image', position: { x: 280, y: 0 }, data: {} },
+      ],
+      edges: [],
+    }
+    await expect(
+      svc.addNodesBatch({
+        sessionId: 's1',
+        userId: 'u1',
+        items: [{ key: 'k1', title: '新节点', targetType: 'image' }],
+        edges: [
+          { source: 'k1', target: 'a' },
+          { source: 'a', target: 'k1' },
+        ],
+      }),
+    ).rejects.toThrow(/cycle/)
+    expect(canvas.edges).toHaveLength(0)
+  })
+
+  it('addNodesBatch edges 自环 ⇒ 400（self-loop）', async () => {
+    canvas = {
+      nodes: [{ id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    }
+    await expect(
+      svc.addNodesBatch({
+        sessionId: 's1',
+        userId: 'u1',
+        items: [{ key: 'k1', title: '新节点', targetType: 'image' }],
+        edges: [{ source: 'a', target: 'a' }],
+      }),
+    ).rejects.toThrow(/self-loop/)
+    expect(canvas.edges).toHaveLength(0)
+  })
+
+  it('addNodesBatch edges 合法时正常产边（key 与画布 id 混合解析）', async () => {
+    canvas = {
+      nodes: [{ id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    }
+    const result = await svc.addNodesBatch({
+      sessionId: 's1',
+      userId: 'u1',
+      items: [{ key: 'k1', title: '新节点', targetType: 'image' }],
+      edges: [{ source: 'k1', target: 'a' }],
+    })
+    expect(result.actions.some((x) => x.type === 'add_edge')).toBe(true)
+  })
+
   it('setNodePrompt updates prompt on node', async () => {
     canvas = {
       nodes: [{ id: 'img-1', type: 'image', position: { x: 0, y: 0 }, data: {} }],
