@@ -3,7 +3,7 @@ import {
   type MobileNodeStatusOnly,
 } from '@/composables/mobileNodeState'
 
-export type PrimaryTap = 'preview' | 'play' | 'open-reader' | 'tts'
+export type PrimaryTap = 'preview' | 'play' | 'open-reader'
 
 export type BadgeTone = 'idle' | 'busy' | 'warn' | 'error'
 
@@ -65,7 +65,7 @@ export const nodeTypeConfigs: Record<string, NodeTypeConfig> = {
   },
   text: {
     type: 'text',
-    primaryTap: 'tts',
+    primaryTap: 'open-reader',
     statusBadge: badgeByStatus,
   },
 }

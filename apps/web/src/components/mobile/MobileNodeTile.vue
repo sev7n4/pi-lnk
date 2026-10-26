@@ -9,7 +9,6 @@ import {
   type MobileNodeActionRequestFn,
   type CanvasNodeClickGuard,
 } from '@/composables/canvasNodeActions'
-import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { nodeTypeConfigs } from './nodeTypeConfigs'
 import MobileNodeWaveform from './MobileNodeWaveform.vue'
 import { useNodeWaveform } from '@/composables/useNodeWaveform'
@@ -22,8 +21,11 @@ import {
   resolveVideoNodeDisplaySize,
 } from '@/components/canvas/mediaNodeDisplaySize'
 
-/** 文本节点：超过该字数的 tap 走 TTS 朗读，否则开阅读器（D-A，R1-T6） */
-const TTS_THRESHOLD = 120
+/**
+ * 文本节点 tap 行为见 `handleTextTap`：统一打开阅读器（规格 §6.2），
+ * 朗读不作为单击默认动作 —— 阅读器内置「朗读 / 停止」（§6.2「可朗读、可停」，
+ * 退出即停）。早先「长文直接 TTS」属于实现偏离书面规格，已移除。
+ */
 
 const props = defineProps<{
   id?: string
@@ -73,8 +75,6 @@ const emit = defineEmits<{
    */
   (e: 'toggle-select'): void
 }>()
-const tts = useTextToSpeech()
-
 const cfg = computed(() => nodeTypeConfigs[props.type])
 
 /**
@@ -278,6 +278,19 @@ const { bindings } = useLongPress(() => {
 const audioEl = ref<HTMLAudioElement | null>(null)
 const playing = ref(false)
 
+/** 视频瓦片：无海报时主动取首帧（preload=metadata 已解码首帧），避免纯白框 */
+const videoTileRef = ref<HTMLVideoElement | null>(null)
+function onVideoMeta() {
+  if (!props.data?.poster && videoTileRef.value) {
+    try {
+      // 跳到首帧附近强制绘制一帧（部分浏览器 metadata 阶段允许 seek）
+      videoTileRef.value.currentTime = 0.1
+    } catch {
+      /* 个别浏览器在 metadata 阶段不允许 seek，忽略即可 */
+    }
+  }
+}
+
 /**
  * D-D 音频波形。
  *
@@ -382,14 +395,13 @@ function clearHint() {
 
 onBeforeUnmount(clearHint)
 
-/** 文本范式反转（D-A）：长文朗读、短文开阅读器；主动作不再"打开节点详情" */
+/**
+ * 文本节点 tap → 打开阅读器（规格 §6.2：≤120 字磁贴直显；>120 字全屏阅读器）。
+ * 朗读不作为单击默认动作——阅读器内置「朗读 / 停止」按钮（§6.2「可朗读、可停」，
+ * 退出即停），用户想听再点。早先「长文直接 TTS」与书面规格冲突，已移除。
+ */
 function handleTextTap() {
-  const content = props.data?.content ?? ''
-  if (content.length > TTS_THRESHOLD) {
-    tts.speak(content)
-  } else {
-    emit('open-reader')
-  }
+  emit('open-reader')
 }
 </script>
 
@@ -443,13 +455,22 @@ function handleTextTap() {
     </div>
     <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">
       <video
+        ref="videoTileRef"
         :src="data?.url"
         :poster="data?.poster"
-        preload="none"
+        preload="metadata"
         muted
         playsinline
         class="mobile-node-media"
+        @loadedmetadata="onVideoMeta"
       />
+      <!-- 播放态提示：无海报时也让用户识别"这是个可播放视频"，而非白框；
+           pointer-events:none 不抢 tap（tap 仍由磁贴开查看器） -->
+      <span class="mobile-node-video-play" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="8 5 19 12 8 19 8 5" fill="currentColor" stroke="none" />
+        </svg>
+      </span>
       <p v-if="mediaInfoText" class="mobile-node-media-info" data-testid="mobile-node-media-info">
         {{ mediaInfoText }}
       </p>
@@ -683,6 +704,23 @@ function handleTextTap() {
   min-height: 0;
   width: 100%;
   object-fit: cover;
+}
+
+/* 视频瓦片播放提示：浮于媒体之上同心圆，pointer-events:none 不抢 tap */
+.mobile-node-video-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--lnk-radius-full);
+  background: rgba(0, 0, 0, 0.42);
+  color: #fff;
+  pointer-events: none;
 }
 
 /* 属性行（尺寸 · 比例 · 大小）：PC MediaInfoSummary 的移动端对等物 */
