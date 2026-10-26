@@ -101,4 +101,13 @@ describe('MobileNodeStatusBar（壳层聚合状态栏）', () => {
     expect(rule).toMatch(/position:\s*fixed/)
     expect(rule).toMatch(/bottom:/)
   })
+
+  it('点「N 个生成中」区 → emit open-tasks（§16-① 顶栏退役后的任务入口承接）', async () => {
+    const w = mount(MobileNodeStatusBar, {
+      props: { generatingCount: 2, pendingNodes: [] },
+    })
+    await w.find('[data-testid="mobile-node-status-open-tasks"]').trigger('click')
+    expect(w.emitted('open-tasks')).toHaveLength(1)
+    w.unmount()
+  })
 })

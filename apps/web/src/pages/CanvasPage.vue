@@ -6468,6 +6468,7 @@ onUnmounted(() => {
       :canvas-chrome-hidden="canvasChromeHidden"
       :dock-expanded="mobileDockExpanded"
       :composer-visible="mobileCanvasComposerVisible"
+      :canvas-view-visible="mobileCanvasView"
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
       :on-publish="openPublish"

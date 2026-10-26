@@ -117,6 +117,10 @@ const props = defineProps<{
   /** 画布视图的「窗态」：composer 空闲条与 FAB 同一基线（见 MobileCanvasCreateFab
    *  的尺寸计算——48=48 无内缩余量，窗态下 ＋FAB 直接不渲染，由 composer 盖住这一带） */
   composerVisible: boolean
+  /** 画布视图可见（跨形态真相源：窗态 / 沉浸满屏 / 画布页签门态三形态共用，§16-②）。
+   *  节点状态栏与保存状态行的门控判据——有画布在眼前，待确认/生成中就该看见（真机走查
+   *  2026-10-27 实证：定位切画布=窗态看不到确认/取消，点节点进 viewer 才有决策按钮）。 */
+  canvasViewVisible: boolean
   /** ── 共享动作（CanvasPage 核心逻辑）── */
   onTabChange: (tab: MobileAppTab) => void
   onSave: () => void
@@ -349,7 +353,12 @@ onUnmounted(() => stopMobileTaskPolling())
   <!-- 移动端应用骨架（IA v3）：顶栏三区 + 底部四页签 + 发现/我的两页 + 账号二级面板
        + 自动保存状态行 + ＋FAB + 新建/任务 sheet + 多选动作条。
        本壳层由 CanvasPage 的 `v-if="isMobileLayout"` 包裹，内部不再判断断点。 -->
+  <!-- 2026-10-27 用户裁决（§16-①）：画布页签**不渲染顶栏卡片**——「整个这个卡片在
+       移动端画布页就不应该存在」。桌面式项目管理卡（⋯ 任务/发布作品/导入导出工作流）
+       退役：任务入口迁状态栏（点击「N 个生成中 / 待确认」开任务 sheet），发布/导入导出
+       为工作流页级操作（hero 前门可达，低频不占画布）。仅保留安全区占位防瓦片顶入刘海。 -->
   <MobileTopBar
+    v-if="mobileAppTab !== 'canvas'"
     :tab="mobileAppTab"
     :task-active-count="mobileTaskActiveCount"
     :has-task-history="mobileTaskHasHistory"
@@ -368,19 +377,23 @@ onUnmounted(() => stopMobileTaskPolling())
        ⚠️ 与 R3-T4 的节点状态栏**互斥**：保存失败优先（丢数据比任务态更急），
        否则有节点任务时让位给状态栏（两者同在底部带，会重叠）。 -->
   <MobileSaveStatus
-    v-if="mobileAppTab === 'canvas' && !multiSelectActive && (saveFailed || !hasNodeTaskState)"
+    v-if="canvasViewVisible && !multiSelectActive && (saveFailed || !hasNodeTaskState)"
     :saving="saving"
     :failed="saveFailed"
     @save="onSave"
   />
-  <!-- R3-T4：壳层聚合状态栏——把画布各节点的「生成中 / 待确认」收敛成一条 -->
+  <!-- R3-T4：壳层聚合状态栏——把画布各节点的「生成中 / 待确认」收敛成一条。
+       门控（§16-② 修订，2026-10-27 真机实证）：**画布视图可见即常驻**——
+       窗态（定位切画布、页签停对话）/ 沉浸满屏 / 画布页签门态三形态都在眼前；
+       原门控 `mobileAppTab==='canvas'` 漏掉窗态 ⇒ 定位落地后确认/取消不可见。 -->
   <MobileNodeStatusBar
-    v-if="mobileAppTab === 'canvas' && !multiSelectActive && hasNodeTaskState"
+    v-if="canvasViewVisible && !multiSelectActive && hasNodeTaskState"
     :generating-count="nodeGeneratingCount"
     :pending-nodes="nodePendingNodes"
     :elapsed-text="nodeGeneratingElapsed"
     @confirm="onNodePendingConfirm"
     @cancel="onNodePendingCancel"
+    @open-tasks="showMobileTaskSheet = true"
   />
   <DiscoverPane v-if="mobileAppTab === 'discover'" />
   <ProfilePane

@@ -55,6 +55,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     canvasChromeHidden: false,
     dockExpanded: false,
     composerVisible: false,
+    // §16-②（2026-10-27）：画布视图可见（跨形态真相源）——状态栏/保存行的新门控
+    canvasViewVisible: true,
     onTabChange: noop(),
     onSave: noop(),
     onPublish: noop(),
@@ -259,6 +261,64 @@ describe('MobileCanvasShell 查看器底部主栏（pending 决策层，§4.8）
     expect(labels).not.toContain('拒绝')
     expect(labels).not.toContain('确认')
     expect(labels).toContain('改词')
+    w.unmount()
+  })
+})
+
+describe('MobileCanvasShell §16 真机走查二轮（2026-10-27）', () => {
+  const taskProps = {
+    nodeGeneratingCount: 2,
+    nodePendingNodes: [{ id: 'n9', title: '图' }],
+  }
+
+  it('§16-② 窗态（tab=chat + canvasViewVisible）→ 状态栏常驻（定位落地即见确认/取消）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ mobileAppTab: 'chat', ...taskProps }),
+      attachTo: document.body,
+      global: { stubs: { teleport: true } },
+    })
+    expect(w.find('[data-testid="mobile-node-status-bar"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('§16-② 纯对话（canvasViewVisible=false）→ 状态栏不渲染（画布不在眼前不占底带）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ mobileAppTab: 'chat', canvasViewVisible: false, ...taskProps }),
+      attachTo: document.body,
+      global: { stubs: { teleport: true } },
+    })
+    expect(w.find('[data-testid="mobile-node-status-bar"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('§16-② 状态栏「N 个生成中」可点 → emit open-tasks（顶栏退役后的任务入口承接）', async () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ nodeGeneratingCount: 2, nodePendingNodes: [] }),
+      attachTo: document.body,
+      global: { stubs: { teleport: true } },
+    })
+    await w.find('[data-testid="mobile-node-status-open-tasks"]').trigger('click')
+    expect(w.text()).toContain('生成任务的定位与重试')
+    w.unmount()
+  })
+
+  it('§16-① 画布页签不渲染顶栏卡片（⋯ 项目管理菜单退役）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ mobileAppTab: 'canvas' }),
+      attachTo: document.body,
+      global: { stubs: { teleport: true } },
+    })
+    expect(w.findComponent({ name: 'MobileTopBar' }).exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('§16-① 对话页签仍渲染顶栏（≡ 抽屉 / 新对话 / 历史）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ mobileAppTab: 'chat', canvasViewVisible: false }),
+      attachTo: document.body,
+      global: { stubs: { teleport: true } },
+    })
+    expect(w.findComponent({ name: 'MobileTopBar' }).exists()).toBe(true)
     w.unmount()
   })
 })
