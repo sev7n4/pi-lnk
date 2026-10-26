@@ -220,7 +220,23 @@ describe('MobileCanvasShell 查看器底部主栏（pending 决策层，§4.8）
     w.unmount()
   })
 
-  it('pending_confirm + 无产物 → 拒绝 / 确认（不给改词）', () => {
+  it('pending_confirm + 无产物 + 有提示词 → 拒绝 / 改词 / 确认（§4.8 审核内容层：改词不依赖产物）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        viewerNode: {
+          id: 'n1',
+          type: 'image',
+          data: { prompt: '赛博朋克城市夜景', status: 'pending_confirm' },
+        },
+      }),
+      attachTo: document.body,
+    })
+    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    expect(labels).toEqual(['拒绝', '改词', '确认'])
+    w.unmount()
+  })
+
+  it('pending_confirm + 无产物且无提示词 → 拒绝 / 确认（无可改内容，不给改词）', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({
         viewerNode: { id: 'n1', type: 'text', data: { status: 'pending_confirm' } },
