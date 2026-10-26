@@ -1,19 +1,20 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectManager } from '@/composables/useProjectManager'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
-import type { ProjectCard } from '@/composables/useProjectWorkspace'
-import SessionCard from '@/components/workflow/SessionCard.vue'
+import CanvasCoverFallback from '@/components/workflow/CanvasCoverFallback.vue'
+import { projectCoverFallback } from '@/utils/projectCoverFallback'
+import { displayCanvasTitle } from '@/utils/displayCanvasTitle'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
-import type { Session } from '@lnkpi/shared'
 import { ElMessage } from 'element-plus'
 
 /**
  * 创作首页（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
  * 画布+对话=项目，本页即「我的项目」全量管理；2026-10-26 规格收敛 v2：
- * 数据面切 useProjectWorkspace 单源（INV-10），管理状态机由 useProjectManager 承载。
+ * 数据面切 useProjectWorkspace 单源（INV-10），管理状态机由 useProjectManager 承载；
+ * 列表形态 = 微信式单行卡（Task 5）：[封面 40px][名称][相对时间]，行内菜单管理。
  *
  * 本页承接完整能力：全量列表 / 搜索 / 多选批删 / 重命名 / 复制 / 删除 / 新建。
  */
@@ -23,8 +24,28 @@ const mgr = useProjectManager()
 // 2026-10-25 PR-2：创建通道收敛到 useProjectWorkspace（全仓唯一 create 通道）。
 const { create: createProject, list: listProjects } = useProjectWorkspace()
 
-async function openCanvas(sessionId: string) {
-  router.push(`/workflow/${sessionId}`)
+/** 打开项目：封面节点存在时带 focusNode 深链（CanvasPage:1962 消费 query）。 */
+function openCanvas(p: { id: string; coverNodeId: string | null }) {
+  router.push({
+    path: `/workflow/${p.id}`,
+    query: p.coverNodeId ? { focusNode: p.coverNodeId } : {},
+  })
+}
+
+/** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / M 月 N 日（承作品带口径）。 */
+function relativeTime(iso: string): string {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  const diff = Math.max(0, Date.now() - t)
+  const min = Math.floor(diff / 60_000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return `${min} 分钟前`
+  const hour = Math.floor(min / 60)
+  if (hour < 24) return `${hour} 小时前`
+  const day = Math.floor(hour / 24)
+  if (day < 30) return `${day} 天前`
+  const d = new Date(t)
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日`
 }
 
 async function createCanvas() {
@@ -53,16 +74,20 @@ async function createCanvas() {
 onMounted(() => {
   void listProjects()   // 进首页强制新鲜：管理页要可管的真数据，不走 loadIfStale
 })
+
+/** 行卡视图：预解析封面三态（模板内两次独立调用无法做类型窄化）。 */
+const rows = computed(() =>
+  mgr.filtered.value.map((p) => ({ ...p, cover: projectCoverFallback(p) })),
+)
 </script>
 
 <template>
   <div class="mx-auto max-w-7xl px-6 pb-20 pt-8">
     <div class="mb-6 flex flex-wrap items-center gap-3">
       <div class="mr-auto">
-        <h1 class="font-display text-2xl font-semibold text-fg">我的项目</h1>
-        <p class="mt-1 text-sm text-fg-3">搜索、整理、批量管理你的全部项目</p>
+        <h1 class="font-display text-2xl font-semibold text-fg">创作首页</h1>
+        <p class="mt-1 text-sm text-fg-3">继续你的创作</p>
       </div>
-      <RouterLink to="/workflow" class="btn-ghost text-sm">← 返回主页</RouterLink>
       <button
         v-if="auth.isLoggedIn"
         data-testid="canvases-create"
@@ -134,23 +159,92 @@ onMounted(() => {
 
       <div
         v-else-if="mgr.filtered.value.length"
-        class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
+        class="flex flex-col gap-2"
       >
-        <SessionCard
-          v-for="session in mgr.filtered.value"
-          :key="session.id"
-          class="session-card-menu-anchor"
-          :session="session as unknown as Session"
-          :manage-mode="mgr.manageMode.value"
-          :selected="mgr.selectedIds.value.includes(session.id)"
-          :menu-open="mgr.openMenuId.value === session.id"
-          @open="openCanvas(session.id)"
-          @toggle-menu="mgr.toggleMenu(session.id)"
-          @rename="mgr.renameProject(session as unknown as ProjectCard)"
-          @duplicate="mgr.duplicateProject(session.id)"
-          @delete="mgr.removeProject(session as unknown as ProjectCard)"
-          @toggle-select="mgr.toggleSelect(session.id)"
-        />
+        <div
+          v-for="p in rows"
+          :key="p.id"
+          class="session-card-menu-anchor flex items-center gap-3 rounded-xl border border-line bg-surface-base px-3 py-2 transition hover:bg-hover"
+        >
+          <!-- 管理模式：选择框占据行首 -->
+          <button
+            v-if="mgr.manageMode.value"
+            data-testid="canvases-row-select"
+            type="button"
+            class="flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition"
+            :class="
+              mgr.selectedIds.value.includes(p.id)
+                ? 'border-transparent bg-accent-subtle text-fg-accent'
+                : 'border-line text-transparent hover:bg-hover'
+            "
+            :aria-pressed="mgr.selectedIds.value.includes(p.id)"
+            @click="mgr.toggleSelect(p.id)"
+          >
+            ✓
+          </button>
+          <!-- 封面 40px：coverUrl 三态（image / CanvasCoverFallback 兜底） -->
+          <button
+            type="button"
+            class="flex h-10 w-10 shrink-0 items-center overflow-hidden rounded-lg bg-surface-sunken"
+            @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : openCanvas(p)"
+          >
+            <img
+              v-if="p.cover.type === 'image'"
+              :src="p.cover.value"
+              class="h-full w-full object-cover"
+              alt=""
+            />
+            <CanvasCoverFallback v-else :seed="p.id" />
+          </button>
+          <!-- 名称 -->
+          <button
+            type="button"
+            class="min-w-0 flex-1 truncate text-left text-sm text-fg"
+            @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : openCanvas(p)"
+          >
+            {{ displayCanvasTitle(p.title) }}
+          </button>
+          <!-- 相对时间 -->
+          <span class="shrink-0 text-xs text-fg-3">{{ relativeTime(p.updatedAt) }}</span>
+          <!-- 行内菜单（管理模式下隐藏，选择语义优先） -->
+          <div v-if="!mgr.manageMode.value" class="relative">
+            <button
+              data-testid="canvases-row-menu"
+              type="button"
+              class="flex h-7 w-7 items-center justify-center rounded-lg text-fg-3 transition hover:bg-hover hover:text-fg"
+              aria-label="项目操作"
+              @click.stop="mgr.toggleMenu(p.id)"
+            >
+              ⋯
+            </button>
+            <div
+              v-if="mgr.openMenuId.value === p.id"
+              class="absolute right-0 top-8 z-10 w-28 overflow-hidden rounded-xl border border-line bg-surface-base py-1 shadow-lg"
+            >
+              <button
+                type="button"
+                class="block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-hover"
+                @click="mgr.renameProject(p)"
+              >
+                重命名
+              </button>
+              <button
+                type="button"
+                class="block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-hover"
+                @click="mgr.duplicateProject(p.id)"
+              >
+                创建副本
+              </button>
+              <button
+                type="button"
+                class="block w-full px-3 py-1.5 text-left text-xs text-danger transition hover:bg-hover"
+                @click="mgr.removeProject(p)"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <AppEmptyState
