@@ -108,25 +108,59 @@ export function createAgentThreadId(sessionId: string): string {
 }
 
 /**
- * 多端共享对话（2026-10-26）：bootstrap 始终收敛到确定式共享 threadId，
- * 忽略本地缓存与历史列表——旧逻辑优先缓存/首个有消息的 thread，会让每端各玩各的。
+ * 多端共享对话（2026-10-26）：bootstrap 默认收敛到确定式共享 threadId（= sessionId），
+ * 跨设备实时 + 续聊成立。
  *
- * 任一端打开画布都进入同一条对话，是跨设备实时 + 续聊的前提。
- * `opts` 保留签名以兼容调用方（AgentSideRail.bootstrapThread），但不再参与判定。
+ * ⚠️ 但与「③ 重跑」共存：re-run 会把活跃线程切到 pi fork 出的分支线程（newKey）并持久化。
+ * 若一律回落共享线程，重跑结果在刷新后丢失（Phase 1 曾引入此回归）。
+ * 故优先恢复专用 fork key 记录的分支线程（仅当其确有消息），否则回落共享线程。
+ * 用专用 key 而非复用 normal key / 解析 newKey 格式：彻底绕开格式猜测，
+ * 也避免旧隔离时代 sessionId:random 随机线程（陈旧缓存）回潮成「每端各玩各的」。
  */
 export async function resolveBootstrapThreadId(
   sessionId: string,
-  _opts: {
+  opts: {
     cachedThreadId: string | null
     threads: Array<{ id: string }>
     messageCountFor: (threadId: string) => Promise<number>
   },
 ): Promise<string> {
-  return createAgentThreadId(sessionId)
+  const { messageCountFor } = opts
+  const shared = createAgentThreadId(sessionId)
+  const forked = getForkedThreadId(sessionId)
+  if (forked && forked !== shared) {
+    const count = await messageCountFor(forked)
+    if (count > 0) return forked
+    clearForkedThreadId(sessionId) // 分支线程已空（异常/竞态）→ 清陈旧 fork key，回落共享
+  }
+  return shared
 }
 
 export function persistActiveThreadId(sessionId: string, threadId: string) {
   localStorage.setItem(lastThreadStorageKey(sessionId), threadId)
+}
+
+/**
+ * ③ 重跑分支线程专用持久化 key。
+ *
+ * 多端共享对话下，普通活跃线程恒为确定式共享线程 `sessionId`（见 createAgentThreadId）。
+ * 但「③ 重跑」会 fork 出一条 pi 分支线程（newKey）作为新活跃线程，必须单独持久化，
+ * 否则刷新后 bootstrap 回落共享线程会把重跑结果丢掉（Phase 1 曾引入此回归）。
+ *
+ * 不写入普通 `lastThreadStorageKey`（那是共享线程的键，写它会与 legacy 随机线程混淆），
+ * 也不解析 newKey 字符串格式（pi 的 key 格式不稳定），专用一把 key 记录「当前激活的分支线程」。
+ */
+export function lastForkedThreadStorageKey(sessionId: string) {
+  return `lnkpi:agentThreadFork:${sessionId}`
+}
+export function getForkedThreadId(sessionId: string): string | null {
+  return localStorage.getItem(lastForkedThreadStorageKey(sessionId))
+}
+export function persistForkedThreadId(sessionId: string, threadId: string) {
+  localStorage.setItem(lastForkedThreadStorageKey(sessionId), threadId)
+}
+export function clearForkedThreadId(sessionId: string) {
+  localStorage.removeItem(lastForkedThreadStorageKey(sessionId))
 }
 
 /** Generate an idempotency key for POST /api/agent/chat/conversation. */

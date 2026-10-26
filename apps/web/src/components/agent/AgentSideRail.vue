@@ -85,6 +85,7 @@ import {
   buildIdempotencyKey,
   createAgentThreadId,
   persistActiveThreadId,
+  persistForkedThreadId,
   resolveBootstrapThreadId,
   checkRuntimeHealthViaNest,
   fetchThreadStateSafe,
@@ -3396,6 +3397,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       if (nextThreadId && nextThreadId !== agentThreadId.value) {
         agentThreadId.value = nextThreadId
         persistActiveThreadId(props.sessionId, nextThreadId)
+        // ③ 重跑分支线程写入专用 fork key：bootstrap 刷新后据此恢复，否则回落共享线程会丢重跑结果
+        persistForkedThreadId(props.sessionId, nextThreadId)
       }
       break
     }

@@ -6,6 +6,8 @@ import {
   randomThreadSuffix,
   resolveBootstrapThreadId,
   persistActiveThreadId,
+  persistForkedThreadId,
+  lastForkedThreadStorageKey,
   shouldPollRuntimeHealth,
   checkRuntimeHealthViaNest,
   isStreamStale,
@@ -36,13 +38,84 @@ vi.mock('@/services/api-base', () => ({
  *   · creates new thread when nothing has messages       ⇒ 唯一允许新建 thread 的场景（真空项目）
  */
 describe('resolveBootstrapThreadId（多端共享对话）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('始终收敛到确定式共享 threadId（= sessionId），忽略缓存与历史列表', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+    })
     const id = await resolveBootstrapThreadId('sess1', {
       cachedThreadId: 'sess1:cached',
       threads: [{ id: 'sess1:other' }],
       messageCountFor: async () => 0,
     })
     expect(id).toBe('sess1')
+  })
+})
+
+describe('resolveBootstrapThreadId（③ 重跑分支线程恢复）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('无 fork key → 收敛到共享线程，即便 legacy 随机线程有消息也不恢复', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+    })
+    const id = await resolveBootstrapThreadId('sess1', {
+      cachedThreadId: 'sess1:legacy-random',
+      threads: [{ id: 'sess1:legacy-random' }],
+      messageCountFor: async () => 5,
+    })
+    expect(id).toBe('sess1')
+  })
+
+  it('有 fork key 且分支线程有消息 → 恢复分支线程', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+    })
+    persistForkedThreadId('sess1', 'pi-fork-xyz')
+    const id = await resolveBootstrapThreadId('sess1', {
+      cachedThreadId: null,
+      threads: [],
+      messageCountFor: async (tid: string) => (tid === 'pi-fork-xyz' ? 3 : 0),
+    })
+    expect(id).toBe('pi-fork-xyz')
+  })
+
+  it('有 fork key 但分支线程已空 → 清 fork key 并回落共享线程', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+      removeItem: (k: string) => {
+        delete store[k]
+      },
+    })
+    persistForkedThreadId('sess1', 'pi-fork-empty')
+    const id = await resolveBootstrapThreadId('sess1', {
+      cachedThreadId: null,
+      threads: [],
+      messageCountFor: async () => 0,
+    })
+    expect(id).toBe('sess1')
+    expect(store[lastForkedThreadStorageKey('sess1')]).toBeUndefined()
   })
 })
 
