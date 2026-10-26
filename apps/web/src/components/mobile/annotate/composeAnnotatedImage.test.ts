@@ -76,6 +76,17 @@ describe('composeAnnotatedImage（整图 + 标记 → 合成）', () => {
     expect(calls.filter((c) => c.op === 'stroke')).toHaveLength(0)
   })
 
+  it('⭐ 底图为空（null）⇒ 降级：只画标记、**不**画底图（§8 单测要点「底图为空的降级」）', () => {
+    const { calls, factory } = stubCanvas()
+    // 底图取不到（跨域无 CORS / 视频无帧）⇒ 调用方传 null
+    composeAnnotatedImage(null, 100, 100, [{ points: [{ x: 5, y: 6 }] }], factory)
+    // ⛔ 不得调用 drawImage（没有底图可画）⇒ 断言「不造假」
+    expect(calls.filter((c) => c.op === 'drawImage')).toHaveLength(0)
+    // ✅ 但标记仍要画出来（否则等于静默丢标记）
+    expect(calls.filter((c) => c.op === 'arc')).toHaveLength(1)
+    expect(calls.filter((c) => c.op === 'fill')).toHaveLength(1)
+  })
+
   it('空 marks ⇒ 只画底图，不报错', () => {
     const { calls, factory } = stubCanvas()
     expect(() => composeAnnotatedImage(null, 100, 100, [], factory)).not.toThrow()
