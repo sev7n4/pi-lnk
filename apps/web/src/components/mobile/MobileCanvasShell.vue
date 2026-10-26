@@ -178,8 +178,12 @@ const props = defineProps<{
 
 /**
  * 查看器底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区）。
- * ⭐ pending 节点：决策层（拒绝 / 确认）+ 操作层（改词，有产物才给）——
+ * ⭐ pending 节点：决策层（拒绝 / 确认）+ 操作层（改词，**有产物或有提示词即给**）——
  *   与壳层状态栏同源同语义（§4.8：确认/取消同时出现在状态栏与查看器底部）。
+ *   ⚠️ 2026-10-26 修订（§4.8 审核内容层）：propose 产物要确认后才生成 ⇒
+ *   pending 改词门控不能再挂「有产物」（否则待确认的图/视频节点无改词入口）；
+ *   改为「有产物 **或** data.prompt 非空」——改词 = 放弃 propose 回传 agent，
+ *   恰是无产物态的核心修改路径。
  * confirmed / 其它有产物节点：仅「改词」。
  */
 const viewerBottomActions = computed(() => {
@@ -193,9 +197,10 @@ const viewerBottomActions = computed(() => {
       ? Boolean(String(data.content ?? '').trim())
       : Boolean(String(data.url ?? '').trim())
   const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = []
+  const hasPrompt = Boolean(String(data.prompt ?? '').trim())
   if (isPending) {
     actions.push({ key: 'pending-cancel', label: '拒绝' })
-    if (hasContent) actions.push({ key: 'edit', label: '改词' })
+    if (hasContent || hasPrompt) actions.push({ key: 'edit', label: '改词' })
     actions.push({ key: 'pending-confirm', label: '确认', variant: 'primary' })
     return actions
   }
