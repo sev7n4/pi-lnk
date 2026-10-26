@@ -35,33 +35,14 @@ vi.mock('@/services/api-base', () => ({
  *   · falls back to first non-empty thread when cached…  ⇒ INV-3 兜底（缓存空了就找有消息的）
  *   · creates new thread when nothing has messages       ⇒ 唯一允许新建 thread 的场景（真空项目）
  */
-describe('resolveBootstrapThreadId', () => {
-  it('prefers cached thread when it has messages', async () => {
+describe('resolveBootstrapThreadId（多端共享对话）', () => {
+  it('始终收敛到确定式共享 threadId（= sessionId），忽略缓存与历史列表', async () => {
     const id = await resolveBootstrapThreadId('sess1', {
       cachedThreadId: 'sess1:cached',
       threads: [{ id: 'sess1:other' }],
-      messageCountFor: async (tid) => (tid === 'sess1:cached' ? 3 : 0),
-    })
-    expect(id).toBe('sess1:cached')
-  })
-
-  it('falls back to first non-empty thread when cached is empty', async () => {
-    const id = await resolveBootstrapThreadId('sess1', {
-      cachedThreadId: 'sess1:empty',
-      threads: [{ id: 'sess1:empty' }, { id: 'sess1:busy' }],
-      messageCountFor: async (tid) => (tid === 'sess1:busy' ? 5 : 0),
-    })
-    expect(id).toBe('sess1:busy')
-  })
-
-  it('creates new thread when nothing has messages', async () => {
-    vi.stubGlobal('crypto', { randomUUID: () => 'new-thread' })
-    const id = await resolveBootstrapThreadId('sess1', {
-      cachedThreadId: null,
-      threads: [],
       messageCountFor: async () => 0,
     })
-    expect(id).toBe('sess1:new-thread')
+    expect(id).toBe('sess1')
   })
 })
 
@@ -96,14 +77,12 @@ describe('randomThreadSuffix', () => {
   })
 })
 
-describe('createAgentThreadId', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
+describe('createAgentThreadId（多端共享对话）', () => {
+  it('等于 sessionId（确定式，跨设备收敛到同一条对话）', () => {
+    expect(createAgentThreadId('sess1')).toBe('sess1')
   })
 
   it('never uses :main suffix', () => {
-    vi.stubGlobal('crypto', { randomUUID: () => 'abc-def' })
-    expect(createAgentThreadId('sess1')).toBe('sess1:abc-def')
     expect(createAgentThreadId('sess1')).not.toContain(':main')
   })
 })

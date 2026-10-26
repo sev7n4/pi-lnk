@@ -92,37 +92,36 @@ export function randomThreadSuffix(): string {
   return randomId()
 }
 
-/** Build a session-scoped agent thread id (never reuse `:main`). */
+/**
+ * 多端共享对话（2026-10-26）：threadId 由 sessionId **确定派生**，不再随机。
+ *
+ * 同一画布在任意设备登录都收敛到同一条 threadId ⇒ 跨设备实时同步（observer SSE /
+ * 历史接口 / 共享订阅频道均以 threadId 为键）与续聊自然成立。
+ * 推翻 2026-08-07「重进生成新 threadId」的隔离语义（详见
+ * docs/superpowers/specs/2026-10-21-multi-device-consistency-design.md §4.1 / 证据报告）。
+ *
+ * ⚠️ 不要再加随机后缀：那是「每端各玩各的」的根因。需要多条对话时另行设计，
+ * 而非回到随机 threadId。
+ */
 export function createAgentThreadId(sessionId: string): string {
-  return `${sessionId}:${randomThreadSuffix()}`
+  return sessionId
 }
 
 /**
- * Pick thread to restore after canvas refresh.
- * Avoids blank UI when localStorage points at an empty thread (e.g. after「新建对话」).
+ * 多端共享对话（2026-10-26）：bootstrap 始终收敛到确定式共享 threadId，
+ * 忽略本地缓存与历史列表——旧逻辑优先缓存/首个有消息的 thread，会让每端各玩各的。
+ *
+ * 任一端打开画布都进入同一条对话，是跨设备实时 + 续聊的前提。
+ * `opts` 保留签名以兼容调用方（AgentSideRail.bootstrapThread），但不再参与判定。
  */
 export async function resolveBootstrapThreadId(
   sessionId: string,
-  opts: {
+  _opts: {
     cachedThreadId: string | null
     threads: Array<{ id: string }>
     messageCountFor: (threadId: string) => Promise<number>
   },
 ): Promise<string> {
-  const { cachedThreadId, threads, messageCountFor } = opts
-
-  if (cachedThreadId) {
-    const cachedCount = await messageCountFor(cachedThreadId)
-    if (cachedCount > 0) return cachedThreadId
-  }
-
-  for (const th of threads) {
-    const count = await messageCountFor(th.id)
-    if (count > 0) return th.id
-  }
-
-  if (cachedThreadId) return cachedThreadId
-  if (threads[0]?.id) return threads[0].id
   return createAgentThreadId(sessionId)
 }
 
